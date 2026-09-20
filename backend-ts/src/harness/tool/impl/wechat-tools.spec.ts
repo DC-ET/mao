@@ -1,10 +1,9 @@
 import { writeFileSync } from 'node:fs';
-import { mkdtempSync } from 'node:fs';
 import http from 'node:http';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { useTmpDir } from '../../../testing/tmp-dir.js';
 import { SendWechatFileTool, SendWechatImageTool } from './wechat-tools.js';
 
 describe('WechatTools', () => {
@@ -30,7 +29,7 @@ describe('WechatTools', () => {
   const send = { sendImage: vi.fn(async () => true), sendFile: vi.fn(async () => true) };
 
   it('sends local and remote images and files', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'wx-'));
+    const dir = useTmpDir('wx-');
     const imgPath = join(dir, 'a.png');
     writeFileSync(imgPath, png);
     const imageTool = new SendWechatImageTool(pathSandbox as never, support, upload, send);

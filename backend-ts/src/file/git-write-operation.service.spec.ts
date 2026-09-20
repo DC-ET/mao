@@ -1,9 +1,8 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { describe, expect, it, vi } from 'vitest';
+import { useTmpDir } from '../testing/tmp-dir.js';
 import { PathSandbox } from '../harness/safety/path-sandbox.js';
 import type { RuntimeDataResolver } from '../harness/runtime/runtime-data-resolver.js';
 import type { ActivityService } from '../session/activity.service.js';
@@ -45,7 +44,7 @@ const describeGit = gitAvailable() ? describe : describe.skip;
 
 describeGit('GitWriteOperationService git', () => {
   it('commitInputFiltersSensitiveAndBinaryAndFairlyTruncates', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-gwrite-'));
+    const dir = useTmpDir('mao-gwrite-');
     const repo = join(dir, 'repo');
     mkdirSync(repo, { recursive: true });
     run(repo, 'git', 'init');
@@ -78,7 +77,7 @@ describeGit('GitWriteOperationService git', () => {
   });
 
   it('renamedSensitivePathNeverIncludesDiff', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-grename-'));
+    const dir = useTmpDir('mao-grename-');
     const repo = join(dir, 'renamed');
     mkdirSync(repo, { recursive: true });
     run(repo, 'git', 'init');
@@ -105,7 +104,7 @@ describeGit('GitWriteOperationService git', () => {
   });
 
   it('refreshFetchesSelectedRemoteAndReportsAheadBehind', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-grefresh-'));
+    const dir = useTmpDir('mao-grefresh-');
     const remote = join(dir, 'remote.git');
     run(dir, 'git', 'init', '--bare', remote);
     const repo = join(dir, 'refresh-repo');
@@ -138,7 +137,7 @@ describeGit('GitWriteOperationService git', () => {
   });
 
   it('refreshPrefersUpstreamRemoteOverOrigin', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-gup-'));
+    const dir = useTmpDir('mao-gup-');
     const upstream = join(dir, 'upstream.git');
     run(dir, 'git', 'init', '--bare', upstream);
     const repo = join(dir, 'upstream-refresh');
@@ -160,7 +159,7 @@ describeGit('GitWriteOperationService git', () => {
   });
 
   it('refreshFailureReturnsLocalStatusAndSanitizedError', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-gfail-'));
+    const dir = useTmpDir('mao-gfail-');
     const repo = join(dir, 'failed-refresh');
     mkdirSync(repo, { recursive: true });
     run(repo, 'git', 'init');
@@ -179,7 +178,7 @@ describeGit('GitWriteOperationService git', () => {
   });
 
   it('multipleRemotesWithoutOriginCannotBeConfirmed', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-gmulti-'));
+    const dir = useTmpDir('mao-gmulti-');
     const repo = join(dir, 'multi-remote');
     mkdirSync(repo, { recursive: true });
     run(repo, 'git', 'init');
@@ -197,7 +196,7 @@ describeGit('GitWriteOperationService git', () => {
   });
 
   it('commits local changes and records local activity', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-gcommit-'));
+    const dir = useTmpDir('mao-gcommit-');
     const repo = join(dir, 'repo');
     mkdirSync(repo, { recursive: true });
     run(repo, 'git', 'init');

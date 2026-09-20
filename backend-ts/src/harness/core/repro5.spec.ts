@@ -1,7 +1,7 @@
 import { describe, it, vi } from 'vitest';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { useTmpDir } from '../../testing/tmp-dir.js';
 import { CrashRecoveryRunner } from './crash-recovery-runner.js';
 
 vi.mock('../../session/ws/ws-streaming-event-listener.js', () => ({
@@ -11,8 +11,7 @@ vi.mock('../../session/ws/ws-streaming-event-listener.js', () => ({
 describe('repro5', () => {
   it('snapshot vs scan ids', async () => {
     vi.useFakeTimers();
-    const dir = join(tmpdir(), 'mao-repro5-' + Date.now());
-    mkdirSync(dir, { recursive: true });
+    const dir = useTmpDir('mao-repro5-');
     writeFileSync(join(dir, 'deploy.lock'), JSON.stringify({
       startedAt: Math.floor(Date.now() / 1000), oldPort: 9080, newPort: 9081, status: 'starting', drainSec: 60,
     }));

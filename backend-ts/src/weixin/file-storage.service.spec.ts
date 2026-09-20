@@ -1,13 +1,12 @@
-import { mkdtempSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { useTmpDir } from '../testing/tmp-dir.js';
 import { DEFAULT_WEIXIN_BOT_CONFIG } from './types.js';
 import { sanitizeFileName, StorageException, WeixinFileStorageService } from './file-storage.service.js';
 
 describe('WeixinFileStorageService', () => {
   const service = new WeixinFileStorageService({ ...DEFAULT_WEIXIN_BOT_CONFIG, maxInboundFileMb: 1 });
-  const tempDir = mkdtempSync(join(tmpdir(), 'weixin-fs-'));
 
   it('sanitizeFileName_stripsPathTraversalUnix', () => {
     expect(sanitizeFileName('../../evil.pdf')).toBe('evil.pdf');
@@ -44,6 +43,7 @@ describe('WeixinFileStorageService', () => {
   });
 
   it('saveFile_writesToDateSubdir', () => {
+    const tempDir = useTmpDir('weixin-fs-');
     const bytes = Buffer.from('hello pdf');
     const saved = service.saveFile(tempDir, '报告.pdf', bytes);
     expect(saved.includes('weixin-files')).toBe(true);
@@ -52,6 +52,7 @@ describe('WeixinFileStorageService', () => {
   });
 
   it('saveFile_duplicateName_appendsTimestampNotOverwrite', () => {
+    const tempDir = useTmpDir('weixin-fs-');
     const saved1 = service.saveFile(tempDir, 'a.pdf', Buffer.from('first'));
     const saved2 = service.saveFile(tempDir, 'a.pdf', Buffer.from('second'));
     expect(saved1).not.toBe(saved2);
@@ -60,16 +61,19 @@ describe('WeixinFileStorageService', () => {
   });
 
   it('saveFile_oversize_throwsStorageException', () => {
+    const tempDir = useTmpDir('weixin-fs-');
     const bytes = Buffer.alloc(1024 * 1024 + 1);
     expect(() => service.saveFile(tempDir, 'big.pdf', bytes)).toThrow(StorageException);
     expect(() => service.saveFile(tempDir, 'big.pdf', bytes)).toThrow(/大小限制/);
   });
 
   it('saveFile_emptyBytes_throwsStorageException', () => {
+    const tempDir = useTmpDir('weixin-fs-');
     expect(() => service.saveFile(tempDir, 'empty.pdf', Buffer.alloc(0))).toThrow(StorageException);
   });
 
   it('saveFile_returnsAbsolutePath', () => {
+    const tempDir = useTmpDir('weixin-fs-');
     const saved = service.saveFile(tempDir, 'x.txt', Buffer.from([1]));
     expect(saved.startsWith('/')).toBe(true);
   });

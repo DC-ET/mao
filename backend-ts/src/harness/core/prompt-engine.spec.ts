@@ -1,7 +1,7 @@
-import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
+import { useTmpDir } from '../../testing/tmp-dir.js';
 import { WEIXIN_PROJECT_KEY } from '../../domain/types.js';
 import { AgentExecutionContext } from './agent-execution-context.js';
 import { PromptEngine } from './prompt-engine.js';
@@ -23,7 +23,7 @@ function tool(name: string): Tool {
 
 describe('PromptEngine', () => {
   it('buildRequestExpandsMarkersAndAddsCloudPromptSkillsAndTools', async () => {
-    const workspace = mkdtempSync(join(tmpdir(), 'pe-ws-'));
+    const workspace = useTmpDir('pe-ws-');
     writeFileSync(join(workspace, 'AGENTS.md'), '# agents\nrule-one\n');
     const skillLoader = {
       hasSkill: vi.fn((n: string) => n === 'java'),
@@ -121,7 +121,7 @@ describe('PromptEngine', () => {
   });
 
   it('injects embed channel base and skips coding workspace when page tools exist', async () => {
-    const workspace = mkdtempSync(join(tmpdir(), 'pe-embed-'));
+    const workspace = useTmpDir('pe-embed-');
     writeFileSync(join(workspace, 'AGENTS.md'), '# agents\nshould-not-appear\n');
     const engine = new PromptEngine(
       { hasSkill: () => false, getAllNames: () => [], getAllDocuments: () => [] } as never,
@@ -165,7 +165,7 @@ describe('PromptEngine', () => {
   });
 
   it('keeps coding workspace guidance when page tools are absent', async () => {
-    const workspace = mkdtempSync(join(tmpdir(), 'pe-code-'));
+    const workspace = useTmpDir('pe-code-');
     writeFileSync(join(workspace, 'AGENTS.md'), '# agents\nrule-coding\n');
     const engine = new PromptEngine(
       { hasSkill: () => false, getAllNames: () => [], getAllDocuments: () => [] } as never,

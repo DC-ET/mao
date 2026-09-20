@@ -7,9 +7,9 @@ import {
   readDeployLock,
   shouldDeferAllRecoveryDuringDeploy,
 } from './deploy-lock.js';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { useTmpDir } from '../../testing/tmp-dir.js';
 
 describe('deploy-lock', () => {
   it('parses SQL datetime', () => {
@@ -19,8 +19,7 @@ describe('deploy-lock', () => {
   });
 
   it('reads deploy lock json', () => {
-    const dir = join(tmpdir(), `mao-deploy-lock-${Date.now()}`);
-    mkdirSync(dir, { recursive: true });
+    const dir = useTmpDir('mao-deploy-lock-');
     writeFileSync(join(dir, 'deploy.lock'), JSON.stringify({
       startedAt: 1_700_000_000,
       oldPort: 9080,
@@ -31,7 +30,6 @@ describe('deploy-lock', () => {
     const lock = readDeployLock(dir);
     expect(lock?.oldPort).toBe(9080);
     expect(lock?.newPort).toBe(9081);
-    rmSync(dir, { recursive: true, force: true });
   });
 
   it('skips sessions active during deploy', () => {

@@ -1,9 +1,8 @@
 import http from 'node:http';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { useTmpDir } from '../../../testing/tmp-dir.js';
 import { GenerateImageTool } from './generate-image-tool.js';
 
 describe('GenerateImageTool', () => {
@@ -22,7 +21,7 @@ describe('GenerateImageTool', () => {
   afterAll(() => new Promise<void>((resolve, reject) => server.close((e) => e ? reject(e) : resolve())));
 
   it('generates images from local mock api', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'img-'));
+    const dir = useTmpDir('img-');
     const tool = new GenerateImageTool({
       findFirstActiveImageModel: async () => ({
         modelId: 'gpt-image', baseUrl: `http://127.0.0.1:${port}`, apiKey: 'k',
@@ -40,7 +39,7 @@ describe('GenerateImageTool', () => {
   });
 
   it('injects client impersonation headers when configured', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'img-'));
+    const dir = useTmpDir('img-');
     const tool = new GenerateImageTool({
       findFirstActiveImageModel: async () => ({
         modelId: 'gpt-image', baseUrl: `http://127.0.0.1:${port}`, apiKey: 'k', clientImpersonation: 'codex',

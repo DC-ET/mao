@@ -1,8 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { useTmpDir } from '../../testing/tmp-dir.js';
 import { PathSandbox } from '../safety/path-sandbox.js';
 import { RuntimeDataResolver } from '../runtime/runtime-data-resolver.js';
 import { OutputRingBuffer, type PtyFactory, type PtyLike, type SpawnPtyOptions } from './remote-terminal.js';
@@ -83,7 +82,7 @@ async function newManager(overrides: Partial<TerminalManagerConfig> = {}, extra:
   ecpInjector?: { injectForUser: (userId: number) => Promise<string | null> };
   larkUatInjector?: { injectForUser: (userId: number) => Promise<{ uat: string; appId: string } | null> };
 } = {}): Promise<{ manager: TerminalManager; root: string }> {
-  const root = await mkdtemp(join(tmpdir(), 'mao-term-'));
+  const root = useTmpDir('mao-term-');
   const sandbox = new PathSandbox(root);
   const manager = new TerminalManager({
     pathSandbox: sandbox,
@@ -243,7 +242,7 @@ describe('TerminalManager', () => {
 
   it('counts in-flight creations against the limits', async () => {
     // create 内 buildEnv 有 await：并发创建必须靠占位而非已注册数量来判上限
-    const root = await mkdtemp(join(tmpdir(), 'mao-term-'));
+    const root = useTmpDir('mao-term-');
     let release: (() => void) | null = null;
     const gate = new Promise<void>((resolve) => { release = resolve; });
     const manager = new TerminalManager({
@@ -264,7 +263,7 @@ describe('TerminalManager', () => {
   });
 
   it('releases the reserved slot when spawning fails', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'mao-term-'));
+    const root = useTmpDir('mao-term-');
     let fail = true;
     const manager = new TerminalManager({
       pathSandbox: new PathSandbox(root),
@@ -283,7 +282,7 @@ describe('TerminalManager', () => {
   });
 
   it('kills a pty whose reservation was cancelled mid-create', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'mao-term-'));
+    const root = useTmpDir('mao-term-');
     let release: (() => void) | null = null;
     const gate = new Promise<void>((resolve) => { release = resolve; });
     const manager = new TerminalManager({
@@ -303,7 +302,7 @@ describe('TerminalManager', () => {
   });
 
   it('reports filesystem failures as TerminalSpawnError', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'mao-term-'));
+    const root = useTmpDir('mao-term-');
     const manager = new TerminalManager({
       pathSandbox: new PathSandbox(root),
       // 虚拟 HOME 落在一个普通文件下：mkdirSync 必然失败
@@ -518,7 +517,7 @@ describe('TerminalManager', () => {
   });
 
   it('survives git credential lookup failures', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'mao-term-'));
+    const root = useTmpDir('mao-term-');
     const manager = new TerminalManager({
       pathSandbox: new PathSandbox(root),
       runtimeResolver: RuntimeDataResolver.forTest(join(root, 'runtime'), join(root, 'users')),
@@ -556,7 +555,7 @@ describe('TerminalManager', () => {
   });
 
   it('uses the username from params without touching userLookup', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'mao-term-'));
+    const root = useTmpDir('mao-term-');
     const findById = vi.fn(async (id: number) => ({ id, username: `user${id}` }));
     const manager = new TerminalManager({
       pathSandbox: new PathSandbox(root),

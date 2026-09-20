@@ -7,9 +7,8 @@ import { CompositeAgentEventListener } from './composite-agent-event-listener.js
 import { EnvironmentInfoProvider } from './environment-info-provider.js';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import type { AgentEventListener } from './agent-event-listener.js';
+import { useTmpDir } from '../../testing/tmp-dir.js';
 import { UPDATE_WITH_BOUNDARY_CAS } from './session-compaction.mapper.js';
 
 describe('TokenEstimator', () => {
@@ -367,7 +366,7 @@ describe('EnvironmentInfoProvider', () => {
   const provider = new EnvironmentInfoProvider();
 
   it('detectReportsGitWorkspaceAndRuntimeDefaults', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-env-'));
+    const dir = useTmpDir('mao-env-');
     mkdirSync(join(dir, 'repo', 'subdir'), { recursive: true });
     mkdirSync(join(dir, 'repo', '.git'), { recursive: true });
     const info = await provider.detect(join(dir, 'repo', 'subdir'));
@@ -378,7 +377,7 @@ describe('EnvironmentInfoProvider', () => {
   });
 
   it('detectReturnsFalseWhenWorkspaceIsBlankOrNotGit', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-env-'));
+    const dir = useTmpDir('mao-env-');
     expect((await provider.detect(null)).isGit).toBe(false);
     expect((await provider.detect(dir)).isGit).toBe(false);
   });
@@ -399,7 +398,7 @@ describe('EnvironmentInfoProvider', () => {
   });
 
   it('fromSessionMergesCloudSessionOverridesWithDetectedValues', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-env-'));
+    const dir = useTmpDir('mao-env-');
     mkdirSync(join(dir, '.git'), { recursive: true });
     const info = await provider.fromSessionOrDetect({
       userId: 1,

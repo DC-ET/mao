@@ -1,24 +1,15 @@
-import { mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { useTmpDir } from '../testing/tmp-dir.js';
 import { buildQuotedInjection } from './quoted-injection.js';
 
 const LONG_TEXT = '长'.repeat(600);
 const PARENT_ID = 'om_test_parent';
 
-const workspaces: string[] = [];
-
 async function makeWorkspace(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'quoted-injection-'));
-  workspaces.push(dir);
-  return dir;
+  return useTmpDir('quoted-injection-');
 }
-
-afterEach(async () => {
-  const { rm } = await import('node:fs/promises');
-  await Promise.all(workspaces.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
-});
 
 describe('buildQuotedInjection', () => {
   it('returns short text as-is without writing any file', async () => {

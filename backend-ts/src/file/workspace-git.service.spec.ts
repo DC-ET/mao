@@ -1,9 +1,8 @@
 import { mkdirSync, writeFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
+import { useTmpDir } from '../testing/tmp-dir.js';
 import { PathSandbox } from '../harness/safety/path-sandbox.js';
 import { EXCLUDED_REPO_DIRS, WorkspaceGitService } from './workspace-git.service.js';
 
@@ -24,7 +23,7 @@ const describeGit = gitAvailable() ? describe : describe.skip;
 
 describeGit('WorkspaceGitService', () => {
   async function setupRepo() {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-git-'));
+    const dir = useTmpDir('mao-git-');
     const service = new WorkspaceGitService(new PathSandbox(join(dir, 'sandbox-root')));
     const repo = join(dir, 'repo');
     mkdirSync(repo, { recursive: true });

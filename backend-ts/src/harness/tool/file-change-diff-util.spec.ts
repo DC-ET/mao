@@ -6,8 +6,7 @@ import type { LlmAdapter } from '../llm/chat-request.js';
 import { CloudWorkspaceResolver } from '../safety/cloud-workspace-resolver.js';
 import { PathSandbox } from '../safety/path-sandbox.js';
 import { BusinessException } from '../../common/business-exception.js';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { useTmpDir } from '../../testing/tmp-dir.js';
 import { join } from 'node:path';
 
 describe('FileChangeDiffUtil', () => {
@@ -123,14 +122,14 @@ describe('CloudWorkspaceResolver', () => {
   });
 
   it('resolveProjectWorkspace_staysUnderUserSandbox', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-ws-'));
+    const dir = useTmpDir('mao-ws-');
     const sandbox = new PathSandbox(dir);
     const p = CloudWorkspaceResolver.resolveProjectWorkspace(sandbox, 42, 'demo');
     expect(p.replaceAll('\\', '/')).toMatch(/\/42\/projects\/demo$/);
   });
 
   it('assertUnderUserSandbox_rejectsEscape', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-ws-'));
+    const dir = useTmpDir('mao-ws-');
     const sandbox = new PathSandbox(dir);
     expect(() => CloudWorkspaceResolver.assertUnderUserSandbox(sandbox, 1, join(dir, '2'))).toThrow(BusinessException);
   });

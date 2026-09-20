@@ -1,5 +1,5 @@
-import { mkdtempSync, existsSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { useTmpDir } from '../../../testing/tmp-dir.js';
 import { join } from 'node:path';
 import { writeFile as writeFileAsync } from 'node:fs/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -62,8 +62,7 @@ describe('ReadFeishuDocTool', () => {
 describe('FeishuDownloadFileTool', () => {
   let workspace = '';
 
-  beforeEach(() => { workspace = mkdtempSync(join(tmpdir(), 'feishu-tool-')); });
-  afterEach(() => { rmSync(workspace, { recursive: true, force: true }); });
+  beforeEach(() => { workspace = useTmpDir('feishu-tool-'); });
 
   const makeTool = (options: {
     appId?: string | null;
@@ -153,8 +152,7 @@ describe('SendFeishuImageTool', () => {
   let workspace = '';
   let sandbox = null as unknown as PathSandbox;
 
-  beforeEach(() => { workspace = mkdtempSync(join(tmpdir(), 'feishu-send-')); sandbox = new PathSandbox(workspace); });
-  afterEach(() => { rmSync(workspace, { recursive: true, force: true }); });
+  beforeEach(() => { workspace = useTmpDir('feishu-send-'); sandbox = new PathSandbox(workspace); });
 
   const makeSupport = (overrides: Partial<FeishuMediaSendSupport> = {}): FeishuMediaSendSupport => ({
     resolveSendTarget: vi.fn(async () => ({ appId: '1', receiveId: 'oc_chat', receiveIdType: 'chat_id' })),
@@ -201,8 +199,7 @@ describe('SendFeishuFileTool', () => {
   let workspace = '';
   let sandbox = null as unknown as PathSandbox;
 
-  beforeEach(() => { workspace = mkdtempSync(join(tmpdir(), 'feishu-send-file-')); sandbox = new PathSandbox(workspace); });
-  afterEach(() => { rmSync(workspace, { recursive: true, force: true }); });
+  beforeEach(() => { workspace = useTmpDir('feishu-send-file-'); sandbox = new PathSandbox(workspace); });
 
   const makeSupport = (overrides: Partial<FeishuMediaSendSupport> = {}): FeishuMediaSendSupport => ({
     resolveSendTarget: vi.fn(async () => ({ appId: '2', receiveId: 'ou_user', receiveIdType: 'union_id' })),

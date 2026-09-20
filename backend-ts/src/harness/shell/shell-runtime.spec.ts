@@ -1,15 +1,14 @@
 import { mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { describe, expect, it, vi } from 'vitest';
+import { useTmpDir } from '../../testing/tmp-dir.js';
 import { PathSandbox } from '../safety/path-sandbox.js';
 import { RuntimeDataResolver } from '../runtime/runtime-data-resolver.js';
 import { OutputManager, ShellSessionManager } from './shell-session-manager.js';
 
 describe('ShellSessionManager', () => {
   it('shellSessionManagerCreatesListsAndClosesRealShellSessions', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-shell-'));
+    const dir = useTmpDir('mao-shell-');
     mkdirSync(join(dir, 'runtime'), { recursive: true });
     const manager = new ShellSessionManager(
       new PathSandbox(dir),
@@ -30,7 +29,7 @@ describe('ShellSessionManager', () => {
   });
 
   it('serializes commands on a shared shell session', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-shell-'));
+    const dir = useTmpDir('mao-shell-');
     mkdirSync(join(dir, 'runtime'), { recursive: true });
     mkdirSync(join(dir, 'users'), { recursive: true });
     const manager = new ShellSessionManager(
@@ -49,7 +48,7 @@ describe('ShellSessionManager', () => {
   });
 
   it('ignores asynchronous pipe errors after closing a shell session', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-shell-'));
+    const dir = useTmpDir('mao-shell-');
     const manager = new ShellSessionManager(
       new PathSandbox(dir),
       RuntimeDataResolver.forTest(join(dir, 'runtime'), join(dir, 'users')),
@@ -63,7 +62,7 @@ describe('ShellSessionManager', () => {
   });
 
   it('injects GIT_TOKEN env vars and GIT_ASKPASS for user credentials', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-shell-'));
+    const dir = useTmpDir('mao-shell-');
     mkdirSync(join(dir, 'runtime'), { recursive: true });
     mkdirSync(join(dir, 'users'), { recursive: true });
     const manager = new ShellSessionManager(
@@ -86,7 +85,7 @@ describe('ShellSessionManager', () => {
     const prevSecret = process.env.APP_GIT_CREDENTIAL_SECRET;
     process.env.GIT_TOKEN_git_acg_team = 'leaked-from-ops';
     process.env.APP_GIT_CREDENTIAL_SECRET = 'leaked-secret';
-    const dir = await mkdtemp(join(tmpdir(), 'mao-shell-'));
+    const dir = useTmpDir('mao-shell-');
     mkdirSync(join(dir, 'runtime'), { recursive: true });
     mkdirSync(join(dir, 'users'), { recursive: true });
     const manager = new ShellSessionManager(
@@ -111,7 +110,7 @@ describe('ShellSessionManager', () => {
   });
 
   it('refreshUserEnvironment clears leftover GIT_TOKEN keys from a previous identity', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-shell-'));
+    const dir = useTmpDir('mao-shell-');
     mkdirSync(join(dir, 'runtime'), { recursive: true });
     mkdirSync(join(dir, 'users'), { recursive: true });
     const manager = new ShellSessionManager(
@@ -134,7 +133,7 @@ describe('ShellSessionManager', () => {
   });
 
   it('captures stderr in the response and output file without persisting protocol markers', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-shell-'));
+    const dir = useTmpDir('mao-shell-');
     mkdirSync(join(dir, 'runtime'), { recursive: true });
     const manager = new ShellSessionManager(
       new PathSandbox(dir),
@@ -153,7 +152,7 @@ describe('ShellSessionManager', () => {
   });
 
   it('captures the command exit code and keeps it out of the next read', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-shell-'));
+    const dir = useTmpDir('mao-shell-');
     mkdirSync(join(dir, 'runtime'), { recursive: true });
     const manager = new ShellSessionManager(
       new PathSandbox(dir),
@@ -176,7 +175,7 @@ describe('ShellSessionManager', () => {
   });
 
   it('kills the whole process group when a session closes', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-shell-'));
+    const dir = useTmpDir('mao-shell-');
     mkdirSync(join(dir, 'runtime'), { recursive: true });
     const manager = new ShellSessionManager(
       new PathSandbox(dir),
@@ -197,7 +196,7 @@ describe('ShellSessionManager', () => {
   });
 
   it('returns early on wait_for and keeps the rest of the output for the next read', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-shell-'));
+    const dir = useTmpDir('mao-shell-');
     mkdirSync(join(dir, 'runtime'), { recursive: true });
     const manager = new ShellSessionManager(
       new PathSandbox(dir),
@@ -228,7 +227,7 @@ describe('ShellSessionManager', () => {
   });
 
   it('keeps buffering output while nobody reads so a resumed read still sees it', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-shell-'));
+    const dir = useTmpDir('mao-shell-');
     mkdirSync(join(dir, 'runtime'), { recursive: true });
     const manager = new ShellSessionManager(
       new PathSandbox(dir),
@@ -252,7 +251,7 @@ describe('ShellSessionManager', () => {
   });
 
   it('does not re-register a consumed marker as a fake pending command', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-shell-'));
+    const dir = useTmpDir('mao-shell-');
     mkdirSync(join(dir, 'runtime'), { recursive: true });
     const manager = new ShellSessionManager(
       new PathSandbox(dir), RuntimeDataResolver.forTest(join(dir, 'runtime'), join(dir, 'users')),
@@ -283,7 +282,7 @@ describe('ShellSessionManager', () => {
   });
 
   it('stops waiting as soon as the session is closed', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-shell-'));
+    const dir = useTmpDir('mao-shell-');
     mkdirSync(join(dir, 'runtime'), { recursive: true });
     const manager = new ShellSessionManager(
       new PathSandbox(dir),
@@ -306,7 +305,7 @@ describe('ShellSessionManager', () => {
   });
 
   it('treats wait_for plus an immediate exit as completed so the next await is not needed', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-shell-'));
+    const dir = useTmpDir('mao-shell-');
     mkdirSync(join(dir, 'runtime'), { recursive: true });
     const manager = new ShellSessionManager(
       new PathSandbox(dir),
@@ -333,7 +332,7 @@ describe('ShellSessionManager', () => {
   });
 
   it('lets a later read finish after wait_for returned and the shell then exited', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-shell-'));
+    const dir = useTmpDir('mao-shell-');
     mkdirSync(join(dir, 'runtime'), { recursive: true });
     const manager = new ShellSessionManager(
       new PathSandbox(dir),
@@ -361,7 +360,7 @@ describe('ShellSessionManager', () => {
   });
 
   it('does not leak a marker that arrives split across two chunks', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-shell-'));
+    const dir = useTmpDir('mao-shell-');
     mkdirSync(join(dir, 'runtime'), { recursive: true });
     const manager = new ShellSessionManager(
       new PathSandbox(dir),
@@ -386,7 +385,7 @@ describe('ShellSessionManager', () => {
   });
 
   it('shellSessionManagerEnforcesLimitsAndCleanup', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-shell-'));
+    const dir = useTmpDir('mao-shell-');
     const manager = new ShellSessionManager(
       new PathSandbox(dir),
       RuntimeDataResolver.forTest(join(dir, 'runtime'), join(dir, 'users')),
@@ -402,7 +401,7 @@ describe('ShellSessionManager', () => {
 
   it('runs cleanupExpiredSessions on the scheduled interval', () => {
     vi.useFakeTimers();
-    const dir = '/tmp/mao-shell-timer';
+    const dir = useTmpDir('mao-shell-timer-');
     const manager = new ShellSessionManager(
       new PathSandbox(dir),
       RuntimeDataResolver.forTest(join(dir, 'runtime'), join(dir, 'users')),

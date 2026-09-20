@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
+import { rmSync } from 'node:fs';
 import {
   decodeAesKey,
   decryptWeixinAes128Ecb,
@@ -11,6 +12,20 @@ import { encryptAes128Ecb } from '../crypto/aes-gcm.js';
 import { WeixinMediaService } from './media.service.js';
 import { DEFAULT_WEIXIN_BOT_CONFIG } from './types.js';
 import type { WeixinHttpClient, WeixinHttpResponse } from './weixin-http.js';
+
+// media.service.downloadImage/downloadFile 会往 tmpdir()/weixin-media 固定目录写文件，
+// 测试中把 tmpdir() 重定向到本文件专属目录，结束后整体删除，避免 /tmp/weixin-media 无限累积。
+const { mediaTmpRoot } = vi.hoisted(() => ({
+  mediaTmpRoot: `/tmp/weixin-media-spec-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+}));
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:os')>();
+  return { ...actual, tmpdir: () => mediaTmpRoot };
+});
+
+afterAll(() => {
+  rmSync(mediaTmpRoot, { recursive: true, force: true });
+});
 
 describe('WeixinMediaService', () => {
   it('decodeAesKey_raw16BytesBase64', () => {

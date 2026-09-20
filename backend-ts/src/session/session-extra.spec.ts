@@ -1,6 +1,6 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { useTmpDir } from '../testing/tmp-dir.js';
 import { describe, expect, it, vi } from 'vitest';
 import { BusinessException } from '../common/business-exception.js';
 import { SessionService } from './session.service.js';
@@ -50,7 +50,7 @@ function makeService() {
     findById: vi.fn(async () => ({ id: 9, name: 'A' })),
     findByIds: vi.fn(async () => []),
   };
-  const pathSandbox = { getWorkspaceRoot: () => mkdtempSync(join(tmpdir(), 'ws-')) };
+  const pathSandbox = { getWorkspaceRoot: () => useTmpDir('ws-') };
   const env = { detect: vi.fn(async () => ({ isGit: false, platform: 'darwin', shell: 'bash', osVersion: 'Darwin' })) };
   const git = { clone: vi.fn() };
   const service = new SessionService(
@@ -375,7 +375,7 @@ describe('GitOperationService helpers', () => {
 
   it('cloneWithoutCredentials', async () => {
     const git = new GitOperationService({ getTokenMapByUser: async () => ({}) });
-    const dir = mkdtempSync(join(tmpdir(), 'clone-'));
+    const dir = useTmpDir('clone-');
     const result = await git.clone('https://example.invalid/repo.git', null, join(dir, 'r'), 1);
     expect(result.success).toBe(false);
     expect(result.error).toBeTruthy();

@@ -1,8 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { describe, expect, it } from 'vitest';
+import { useTmpDir } from '../testing/tmp-dir.js';
 import { UserSkillService } from './user-skill.service.js';
 
 function skill(name: string, description: string, body: string): string {
@@ -11,7 +10,7 @@ function skill(name: string, description: string, body: string): string {
 
 describe('UserSkillService', () => {
   it('listsReadsUploadsAndDeletesUserSkills', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-uskill-'));
+    const dir = useTmpDir('mao-uskill-');
     const service = new UserSkillService(dir);
     const existing = join(dir, '7', 'existing');
     mkdirSync(existing, { recursive: true });
@@ -51,7 +50,7 @@ describe('UserSkillService', () => {
   });
 
   it('restoresExecutableBitsForUploadedScripts', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-uskill-'));
+    const dir = useTmpDir('mao-uskill-');
     const service = new UserSkillService(dir);
     const uploaded = service.uploadUserSkill(7, [
       { originalFilename: 'cli/SKILL.md', buffer: Buffer.from(skill('cli', 'CLI', 'Body')) },
@@ -70,7 +69,7 @@ describe('UserSkillService', () => {
   });
 
   it('returnsFailuresForInvalidUploadReadAndDeleteRequests', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-uskill-'));
+    const dir = useTmpDir('mao-uskill-');
     const service = new UserSkillService(dir);
     expect(service.listUserSkills(7)).toEqual([]);
     expect(service.listAllUserSkills()).toEqual([]);

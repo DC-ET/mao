@@ -1,8 +1,7 @@
 import { mkdirSync, writeFileSync, existsSync, readFileSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { describe, expect, it, vi } from 'vitest';
+import { useTmpDir } from '../testing/tmp-dir.js';
 import { BusinessException } from '../common/business-exception.js';
 import { FileEntityRepository, FileService, type FileEntity } from './file.service.js';
 import { WorkspaceBrowseService } from './workspace-browse.service.js';
@@ -16,7 +15,7 @@ import { chmodSync } from 'node:fs';
 
 describe('FileService', () => {
   async function setup() {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-file-'));
+    const dir = useTmpDir('mao-file-');
     const repo = {
       insert: vi.fn(async (file) => {
         file.id = 1;
@@ -165,7 +164,7 @@ describe('FileService', () => {
 
 describe('WorkspaceBrowseService', () => {
   it('listsDirectoriesAndReadsFileSlices', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-ws-'));
+    const dir = useTmpDir('mao-ws-');
     const workspace = join(dir, 'workspace');
     mkdirSync(join(workspace, 'dir'), { recursive: true });
     writeFileSync(join(workspace, 'dir', 'a.txt'), 'line1\nline2\nline3');
@@ -187,7 +186,7 @@ describe('WorkspaceBrowseService', () => {
   });
 
   it('readsPngImageWithDataUri', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-ws-'));
+    const dir = useTmpDir('mao-ws-');
     const workspace = join(dir, 'workspace');
     mkdirSync(workspace, { recursive: true });
     const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
@@ -201,7 +200,7 @@ describe('WorkspaceBrowseService', () => {
   });
 
   it('rejectsBinaryTextRead', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-ws-'));
+    const dir = useTmpDir('mao-ws-');
     const workspace = join(dir, 'workspace');
     mkdirSync(workspace, { recursive: true });
     writeFileSync(join(workspace, 'binary.bin'), Buffer.from([0x00, 0x01, 0x02, 0xFF]));
@@ -210,7 +209,7 @@ describe('WorkspaceBrowseService', () => {
   });
 
   it('downloadReturnsFileInfo', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-ws-'));
+    const dir = useTmpDir('mao-ws-');
     const workspace = join(dir, 'workspace');
     mkdirSync(workspace, { recursive: true });
     writeFileSync(join(workspace, 'hello.txt'), 'hello');
@@ -222,7 +221,7 @@ describe('WorkspaceBrowseService', () => {
   });
 
   it('pdfPreviewValidatesMagicAndSandbox', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-pdf-'));
+    const dir = useTmpDir('mao-pdf-');
     const workspace = join(dir, 'sessions/1');
     mkdirSync(join(workspace, 'docs'), { recursive: true });
     const pdf = Buffer.from('%PDF-1.4\n%%EOF\n');
@@ -252,7 +251,7 @@ describe('WorkspaceBrowseService', () => {
   });
 
   it('rejectsSymlinkPointingOutsideSandbox', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-link-'));
+    const dir = useTmpDir('mao-link-');
     const workspace = join(dir, 'sessions/8');
     mkdirSync(workspace, { recursive: true });
     const outside = join(dir, 'outside-link-target.pdf');
@@ -263,7 +262,7 @@ describe('WorkspaceBrowseService', () => {
   });
 
   it('zipIncludesNestedDirsAndSkipsSymlinks', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-zip-'));
+    const dir = useTmpDir('mao-zip-');
     const workspace = join(dir, 'workspace');
     mkdirSync(join(workspace, 'dir', 'sub'), { recursive: true });
     writeFileSync(join(workspace, 'dir', 'a.txt'), 'a');
@@ -281,7 +280,7 @@ describe('WorkspaceBrowseService', () => {
   });
 
   it('workspaceZipRejectsOversizedDirectory', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-zip-'));
+    const dir = useTmpDir('mao-zip-');
     const workspace = join(dir, 'workspace');
     mkdirSync(join(workspace, 'sub'), { recursive: true });
     writeFileSync(join(workspace, 'sub', 'big.bin'), Buffer.alloc(1024));
@@ -306,7 +305,7 @@ describe('GitWriteOperationService helpers', () => {
   });
 
   it('askpassScriptIsValidAndReturnsConfiguredToken', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-askpass-'));
+    const dir = useTmpDir('mao-askpass-');
     const script = join(dir, 'git-askpass.sh');
     writeSync(script, ASKPASS);
     chmodSync(script, 0o700);
