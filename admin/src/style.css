@@ -1,11 +1,15 @@
 :root {
   --mao-ink: #1d1d1f;
-  --mao-muted: #86868b;
+  /* muted 需满足小字 AA：白底/画布上 ≥4.5:1（#86868b 仅约 3.5:1，已弃用） */
+  --mao-muted: #6e6e73;
   --mao-canvas: #f5f5f7;
   --mao-surface: #ffffff;
   --mao-border: #e0e0e0;
   --mao-accent: #0066cc;
   --mao-accent-bg: rgba(0, 102, 204, 0.08);
+  --mao-danger: #d70015;
+  --mao-warn: #b25000;
+  --mao-success: #1a7f37;
   --el-color-primary: #0066cc;
   --el-color-primary-light-3: #3385d6;
   --el-color-primary-light-5: #66a3e0;

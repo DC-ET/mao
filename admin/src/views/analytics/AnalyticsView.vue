@@ -1,23 +1,27 @@
 <template>
   <div class="analytics-view">
-    <el-card class="toolbar-card">
-      <div class="toolbar">
-        <div class="toolbar-info">
-          <div class="toolbar-title">用量分析</div>
-          <div class="toolbar-hint">
-            {{ periodText }}，环比对照 {{ previousText }}；数字均为窗口内新增。环比色：红=上升、绿=下降。
-            <span v-if="fetchedAtText">· 数据获取于 {{ fetchedAtText }}</span>
-          </div>
+    <div class="page-toolbar">
+      <div class="toolbar-info">
+        <div class="toolbar-period">
+          <span class="period-text">{{ periodText }}</span>
+          <span class="toolbar-hint">环比 {{ previousText }} · 数字均为窗口内新增</span>
+          <el-tooltip
+            placement="top"
+            content="环比配色：红=上升、绿=下降，仅表示方向，不区分指标好坏"
+          >
+            <el-icon class="hint-info" aria-label="环比配色说明"><InfoFilled /></el-icon>
+          </el-tooltip>
         </div>
-        <div class="toolbar-actions">
-          <span class="toolbar-label">统计周期</span>
-          <el-segmented v-model="period" :options="periodOptions" @change="handlePeriodChange" />
-          <el-button :loading="activeLoading" @click="handleRefresh">
-            <el-icon><Refresh /></el-icon>
-          </el-button>
-        </div>
+        <div v-if="fetchedAtText" class="toolbar-meta">数据获取于 {{ fetchedAtText }}</div>
       </div>
-    </el-card>
+      <div class="toolbar-actions">
+        <span class="toolbar-label">统计周期</span>
+        <el-segmented v-model="period" :options="periodOptions" @change="handlePeriodChange" />
+        <el-button :loading="activeLoading" aria-label="刷新" @click="handleRefresh">
+          <el-icon><Refresh /></el-icon>
+        </el-button>
+      </div>
+    </div>
 
     <el-tabs v-model="activeTab" class="analytics-tabs" @tab-change="handleTabChange">
       <el-tab-pane v-for="tab in TABS" :key="tab.value" :label="tab.label" :name="tab.value" />
@@ -33,7 +37,7 @@
       :hint="emptyCopy.hint"
       @relax="relaxPeriod"
     />
-    <OverviewEmpty v-else-if="isOverviewEmpty" />
+    <OverviewEmpty v-else-if="isOverviewEmpty" @relax="relaxPeriod" />
     <template v-else>
       <OverviewTab
         v-if="activeTab === 'overview'"
@@ -78,7 +82,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Refresh } from '@element-plus/icons-vue'
+import { InfoFilled, Refresh } from '@element-plus/icons-vue'
 import { invalidateAnalytics, useScopeQuery } from './composables/useScopeQuery'
 import {
   PERIOD_OPTIONS,
@@ -378,31 +382,59 @@ watch(
 </script>
 
 <style scoped>
-.toolbar-card {
+.page-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
   margin-bottom: 12px;
+  padding: 4px 0 12px;
+  border-bottom: 1px solid var(--mao-border);
 }
 
 .analytics-tabs {
   margin-bottom: 16px;
 }
 
-.toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+.toolbar-info {
+  min-width: 0;
 }
 
-.toolbar-title {
-  font-size: 15px;
+.toolbar-period {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.period-text {
+  font-size: 14px;
   font-weight: 600;
   color: var(--mao-ink);
+  font-variant-numeric: tabular-nums;
 }
 
 .toolbar-hint {
-  margin-top: 4px;
   font-size: 13px;
   color: var(--mao-muted);
+}
+
+.hint-info {
+  color: var(--mao-muted);
+  cursor: help;
+  font-size: 14px;
+}
+
+.hint-info:hover,
+.hint-info:focus-visible {
+  color: var(--mao-accent);
+}
+
+.toolbar-meta {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--mao-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .toolbar-actions {
@@ -425,8 +457,9 @@ watch(
 }
 
 @media (max-width: 768px) {
-  .toolbar {
-    flex-wrap: wrap;
+  .page-toolbar {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .toolbar-actions {

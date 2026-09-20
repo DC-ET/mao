@@ -10,7 +10,7 @@
 
 | 命令 | 对应管理后台 | 说明 |
 |------|--------------|------|
-| `analytics overview` | 总览 Tab | 运行态 + 窗口合计 + 环比 + Token spark + 规则洞察 |
+| `analytics overview` | 总览 Tab | 运行态（实时/窗口）+ 窗口合计 + 环比 + Token spark + 构成与规则洞察 |
 | `analytics trends` | 趋势 Tab | 日序列（会话/消息/Token/后台调用） |
 | `analytics models` | 模型 Tab | 模型用量聚合 |
 | `analytics users` | 用户 Tab | 用户活跃排行/明细，支持 `--limit` |

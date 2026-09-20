@@ -72,7 +72,7 @@
         </el-table-column>
         <el-table-column label="操作" width="100" class-name="hide-on-mobile">
           <template #default="{ row }">
-            <button class="linkish" type="button" @click="go(`/llm-call?userId=${row.userId}`)">调用流水</button>
+            <button class="linkish" type="button" @click="go(`/llm-calls?userId=${row.userId}`)">调用流水</button>
           </template>
         </el-table-column>
       </el-table>

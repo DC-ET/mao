@@ -190,7 +190,7 @@ const qualityTrendChartOption = computed(() => {
   }
 })
 
-const AXIS_MUTED = '#86868b'
+const AXIS_MUTED = '#6e6e73'
 const SPLIT_MUTED = 'rgba(0, 0, 0, 0.06)'
 
 /** 与 chart-options.ts 对齐：天数 >30 时默认聚焦最近 30 天，仍可拖动查看全周期。 */

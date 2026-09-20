@@ -25,7 +25,7 @@
           class="metric secondary"
           :class="{ clickable: !!item.path }"
           role="button"
-          tabindex="0"
+          :tabindex="item.path ? 0 : -1"
           @click="go(item.path)"
           @keydown.enter.prevent="go(item.path)"
           @keydown.space.prevent="go(item.path)"
@@ -48,24 +48,50 @@
           <template #header>
             <div class="card-header">
               <span>运行态</span>
-              <span class="card-hint">实时快照，不随统计周期变化</span>
+              <span class="card-hint">实时与窗口口径已分组</span>
             </div>
           </template>
-          <div class="live-grid">
-            <div
-              v-for="item in liveItems"
-              :key="item.label"
-              class="live-item"
-              :class="[item.tone, { clickable: !!item.path }]"
-              role="button"
-              :tabindex="item.path ? 0 : -1"
-              @click="go(item.path)"
-              @keydown.enter.prevent="go(item.path)"
-            >
-              <span class="live-label">{{ item.label }}</span>
-              <span class="live-value">{{ formatNumber(item.value) }}</span>
+
+          <div class="live-block">
+            <div class="live-block-label">实时快照 · 不随统计周期变化</div>
+            <div class="live-grid live-grid--2">
+              <div
+                v-for="item in liveRealtime"
+                :key="item.label"
+                class="live-item"
+                :class="[item.tone, { clickable: !!item.path }]"
+                role="button"
+                :tabindex="item.path ? 0 : -1"
+                @click="go(item.path)"
+                @keydown.enter.prevent="go(item.path)"
+                @keydown.space.prevent="go(item.path)"
+              >
+                <span class="live-label">{{ item.label }}</span>
+                <span class="live-value">{{ formatNumber(item.value) }}</span>
+              </div>
             </div>
           </div>
+
+          <div class="live-block">
+            <div class="live-block-label">窗口结果 · 随统计周期</div>
+            <div class="live-grid live-grid--3">
+              <div
+                v-for="item in liveWindow"
+                :key="item.label"
+                class="live-item"
+                :class="[item.tone, { clickable: !!item.path }]"
+                role="button"
+                :tabindex="item.path ? 0 : -1"
+                @click="go(item.path)"
+                @keydown.enter.prevent="go(item.path)"
+                @keydown.space.prevent="go(item.path)"
+              >
+                <span class="live-label">{{ item.label }}</span>
+                <span class="live-value">{{ formatNumber(item.value) }}</span>
+              </div>
+            </div>
+          </div>
+
           <div class="live-actions">
             <el-button link type="primary" @click="go('/sessions?phase=FAILED')">查看失败会话</el-button>
             <el-button link type="primary" @click="go('/analytics?tab=sessions')">会话结构详情</el-button>
@@ -87,14 +113,13 @@
               </button>
               <span v-else>{{ item.text }}</span>
             </li>
+            <li v-if="insights.length === 0" class="muted">窗口内暂无异常洞察</li>
           </ul>
-          <div class="compare-grid">
-            <div v-for="row in compareRows" :key="row.label" class="compare-row">
+          <div class="compose-grid">
+            <div class="compose-title">窗口构成（非重复环比）</div>
+            <div v-for="row in composeRows" :key="row.label" class="compose-row">
               <span class="label">{{ row.label }}</span>
-              <span class="current">{{ formatNumber(row.current) }}</span>
-              <span class="delta" :class="deltaClass(row.delta)">
-                {{ deltaText(row.delta) }}
-              </span>
+              <span class="current" :class="{ fail: row.fail }">{{ formatNumber(row.value) }}</span>
             </div>
           </div>
         </el-card>
@@ -146,15 +171,15 @@ const secondaryMetrics = computed(() => [
     label: '新增会话',
     display: formatCompact(totals.value.sessions),
     delta: delta(totals.value.sessions, previous.value.sessions),
-    sub: `活跃用户 ${formatNumber(totals.value.activeUsers)}`,
-    path: '/analytics?tab=trends'
+    sub: `完成 ${formatNumber(totals.value.completedSessions)} · 失败 ${formatNumber(totals.value.failedSessions)}`,
+    path: '/analytics?tab=sessions'
   },
   {
     label: '消息数',
     display: formatCompact(totals.value.messages),
     delta: delta(totals.value.messages, previous.value.messages),
-    sub: `失败会话 ${formatNumber(totals.value.failedSessions)}`,
-    path: '/analytics?tab=sessions'
+    sub: `后台调用 ${formatNumber(totals.value.backgroundCalls)}`,
+    path: '/analytics?tab=trends'
   },
   {
     label: '活跃用户',
@@ -165,41 +190,55 @@ const secondaryMetrics = computed(() => [
   }
 ])
 
-const liveItems = computed(() => {
+type LiveItem = {
+  label: string
+  value: number
+  tone: string
+  path: string | undefined
+}
+
+const liveRealtime = computed<LiveItem[]>(() => {
   const overview = props.payload?.overview || {}
   const phase = props.payload?.phaseDistribution || []
   const live = (key: string) => Number(overview[key] ?? 0)
   const fromPhase = (name: string) => phase.find((p) => p.phase === name)?.count ?? 0
   return [
-    // 实时快照 0 是合法值；仅在字段缺失时回退到窗口统计，避免把周期数据误当实时展示
-    { label: '运行中', value: overview['runningSessions'] != null ? live('runningSessions') : fromPhase('RUNNING'), tone: 'run', path: '/sessions?phase=RUNNING' },
-    { label: '等待审批', value: overview['waitingSessions'] != null ? live('waitingSessions') : fromPhase('WAITING_APPROVAL'), tone: 'wait', path: '/sessions?phase=WAITING_APPROVAL' },
-    { label: '失败（窗口）', value: fromPhase('FAILED'), tone: 'fail', path: '/sessions?phase=FAILED' },
-    { label: '已取消（窗口）', value: fromPhase('CANCELLED'), tone: 'muted', path: undefined }
+    {
+      label: '运行中',
+      value: overview['runningSessions'] != null ? live('runningSessions') : fromPhase('RUNNING'),
+      tone: 'run',
+      path: '/sessions?phase=RUNNING'
+    },
+    {
+      label: '等待审批',
+      value: overview['waitingSessions'] != null ? live('waitingSessions') : fromPhase('WAITING_APPROVAL'),
+      tone: 'wait',
+      path: '/sessions?phase=WAITING_APPROVAL'
+    }
   ]
 })
 
-const compareRows = computed(() => [
-  {
-    label: '会话',
-    current: totals.value.sessions,
-    delta: delta(totals.value.sessions, previous.value.sessions)
-  },
-  {
-    label: '消息',
-    current: totals.value.messages,
-    delta: delta(totals.value.messages, previous.value.messages)
-  },
-  {
-    label: 'Token',
-    current: totals.value.totalTokens,
-    delta: delta(totals.value.totalTokens, previous.value.totalTokens)
-  },
-  {
-    label: '活跃用户',
-    current: totals.value.activeUsers,
-    delta: delta(totals.value.activeUsers, previous.value.activeUsers)
-  }
+const liveWindow = computed<LiveItem[]>(() => {
+  const phase = props.payload?.phaseDistribution || []
+  const fromPhase = (name: string) => phase.find((p) => p.phase === name)?.count ?? 0
+  return [
+    {
+      label: '已完成',
+      value: totals.value.completedSessions || fromPhase('COMPLETED'),
+      tone: 'done',
+      path: '/analytics?tab=sessions'
+    },
+    { label: '失败', value: fromPhase('FAILED'), tone: 'fail', path: '/sessions?phase=FAILED' },
+    { label: '已取消', value: fromPhase('CANCELLED'), tone: 'muted', path: undefined }
+  ]
+})
+
+/** 构成明细：补充指标条之外的结构信息，避免与环比重复 */
+const composeRows = computed(() => [
+  { label: '对话 Token', value: totals.value.chatTokens, fail: false },
+  { label: '后台 Token', value: totals.value.backgroundTokens, fail: false },
+  { label: '完成会话', value: totals.value.completedSessions, fail: false },
+  { label: '失败会话', value: totals.value.failedSessions, fail: true }
 ])
 
 function formatNumber(value: number): string {
@@ -279,14 +318,15 @@ export default {
 }
 
 .value {
-  font-size: 26px;
+  font-size: 24px;
   font-weight: 700;
   line-height: 1.2;
   color: var(--mao-ink);
+  font-variant-numeric: tabular-nums;
 }
 
 .primary .value {
-  font-size: 32px;
+  font-size: 36px;
 }
 
 .delta {
@@ -294,6 +334,7 @@ export default {
   font-weight: 600;
   padding: 1px 6px;
   border-radius: 4px;
+  font-variant-numeric: tabular-nums;
 }
 
 .delta.up {
@@ -302,7 +343,7 @@ export default {
 }
 
 .delta.down {
-  color: #1a7f37;
+  color: var(--mao-success);
   background: rgba(52, 199, 89, 0.12);
 }
 
@@ -323,10 +364,27 @@ export default {
   margin-top: 4px;
 }
 
+.live-block + .live-block {
+  margin-top: 14px;
+}
+
+.live-block-label {
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--mao-muted);
+}
+
 .live-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
+}
+
+.live-grid--2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.live-grid--3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .live-item {
@@ -344,6 +402,11 @@ export default {
   box-shadow: 0 0 0 1px var(--mao-accent);
 }
 
+.live-item.clickable:focus-visible {
+  outline: 2px solid var(--mao-accent);
+  outline-offset: 2px;
+}
+
 .live-label {
   display: block;
   font-size: 12px;
@@ -356,14 +419,23 @@ export default {
   font-size: 22px;
   font-weight: 700;
   color: var(--mao-ink);
+  font-variant-numeric: tabular-nums;
 }
 
 .live-item.fail .live-value {
-  color: #ff3b30;
+  color: var(--mao-danger);
 }
 
 .live-item.run .live-value {
-  color: #0066cc;
+  color: var(--mao-accent);
+}
+
+.live-item.wait .live-value {
+  color: var(--mao-warn);
+}
+
+.live-item.done .live-value {
+  color: var(--mao-success);
 }
 
 .live-actions {
@@ -391,6 +463,10 @@ export default {
   color: #c9252d;
 }
 
+.insights li.muted {
+  color: var(--mao-muted);
+}
+
 .insight-link {
   padding: 0;
   border: none;
@@ -405,26 +481,46 @@ export default {
   color: var(--mao-accent);
 }
 
-.compare-grid {
-  margin-top: 8px;
+.insight-link:focus-visible {
+  outline: 2px solid var(--mao-accent);
+  outline-offset: 2px;
+  border-radius: 2px;
 }
 
-.compare-row {
+.compose-grid {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--mao-border);
+}
+
+.compose-title {
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: var(--mao-muted);
+}
+
+.compose-row {
   display: grid;
-  grid-template-columns: 72px 1fr auto;
+  grid-template-columns: 88px 1fr;
   gap: 8px;
   align-items: center;
   padding: 6px 0;
   font-size: 13px;
 }
 
-.compare-row .label {
+.compose-row .label {
   color: var(--mao-muted);
 }
 
-.compare-row .current {
+.compose-row .current {
+  text-align: right;
   font-weight: 600;
   color: var(--mao-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.compose-row .current.fail {
+  color: var(--mao-danger);
 }
 
 @media (max-width: 960px) {
@@ -440,6 +536,21 @@ export default {
 
   .metric:first-child {
     border-top: none;
+  }
+
+  .live-grid--3 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 480px) {
+  .live-grid--2,
+  .live-grid--3 {
+    grid-template-columns: 1fr;
+  }
+
+  .primary .value {
+    font-size: 30px;
   }
 }
 </style>

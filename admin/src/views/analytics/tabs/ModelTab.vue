@@ -33,7 +33,7 @@
           </template>
           <div class="dist-rows">
             <div v-for="item in sceneRows" :key="item.key" class="dist-row">
-              <button class="linkish" type="button" @click="go(`/llm-call?scene=${item.key}`)">
+              <button class="linkish" type="button" @click="go(`/llm-calls?scene=${item.key}`)">
                 {{ sceneLabel(item.key) }}
               </button>
               <span class="tokens">{{ formatNumber(item.callTokens) }}</span>
@@ -71,7 +71,7 @@
             <span class="card-hint">质量列来自 llm_call，延迟为均值</span>
             <el-button v-if="selectedModelId != null" link type="danger" @click="clearSelection">清除选中</el-button>
             <el-button :disabled="modelStats.length === 0" @click="exportRows">导出 CSV</el-button>
-            <el-button type="primary" link @click="go('/llm-call')">调用流水</el-button>
+            <el-button type="primary" link @click="go('/llm-calls')">调用流水</el-button>
           </div>
         </div>
       </template>
@@ -87,7 +87,7 @@
         </template>
         <el-table-column label="模型" min-width="150" show-overflow-tooltip>
           <template #default="{ row }">
-            <button class="linkish" type="button" @click.stop="go(`/llm-call?modelId=${row.modelId}`)">
+            <button class="linkish" type="button" @click.stop="go(`/llm-calls?modelId=${row.modelId}`)">
               {{ row.modelName || '未命名' }}
             </button>
           </template>
