@@ -1,26 +1,48 @@
 <template>
   <div class="model-tab">
-    <el-card class="block">
-      <template #header>
-        <div class="card-header">
-          <span>模型 Token 占比</span>
-          <div class="header-actions">
-            <el-checkbox
-              :model-value="includeConnectivity"
-              @update:model-value="handleConnectivityChange"
-            >
-              含自检调用
-            </el-checkbox>
-            <el-button type="primary" link @click="go('/models')">模型管理</el-button>
-          </div>
-        </div>
-      </template>
-      <BaseChart
-        :option="donutOption(modelTokenItems, 'Token 总量', formatTokens(totalTokens))"
-        :empty="modelTokenItems.length === 0"
-        :height="300"
-      />
-    </el-card>
+    <el-row :gutter="16" class="block-row">
+      <el-col :xs="24" :md="12">
+        <el-card class="block">
+          <template #header>
+            <div class="card-header">
+              <span>模型 Token 占比</span>
+              <div class="header-actions">
+                <el-checkbox
+                  :model-value="includeConnectivity"
+                  @update:model-value="handleConnectivityChange"
+                >
+                  含自检调用
+                </el-checkbox>
+                <el-button type="primary" link @click="go('/models')">模型管理</el-button>
+              </div>
+            </div>
+          </template>
+          <BaseChart
+            :option="donutOption(modelTokenItems, 'Token 总量', formatTokens(totalTokens))"
+            :empty="modelTokenItems.length === 0"
+            :height="300"
+          />
+        </el-card>
+      </el-col>
+      <el-col :xs="24" :md="12">
+        <el-card class="block">
+          <template #header>
+            <div class="card-header">
+              <span>用户 Token 占比</span>
+              <div class="header-actions">
+                <span class="card-hint">Top 10 + 其他</span>
+                <el-button type="primary" link @click="go('/users')">用户管理</el-button>
+              </div>
+            </div>
+          </template>
+          <BaseChart
+            :option="donutOption(userTokenItems, 'Token 总量', formatTokens(userTokenTotal))"
+            :empty="userTokenItems.length === 0"
+            :height="300"
+          />
+        </el-card>
+      </el-col>
+    </el-row>
 
     <el-row :gutter="16" class="block-row">
       <el-col :xs="24" :md="12">
@@ -191,6 +213,19 @@ const modelTokenItems = computed<RankItem[]>(() =>
     10
   )
 )
+
+const userTokenSource = computed(() => props.payload?.userTokenTop || [])
+const userTokenItems = computed<RankItem[]>(() =>
+  topWithOthers(
+    userTokenSource.value.map((row) => ({
+      name: row.displayName || row.username || '未知',
+      value: Number(row.totalTokens || 0)
+    })),
+    10
+  )
+)
+// 环图中心与图例合计一致：用户 Token 与模型 totalTokens 口径不同（消息 Token vs 模型合计），不共用 totalTokens
+const userTokenTotal = computed(() => userTokenSource.value.reduce((sum, row) => sum + Number(row.totalTokens || 0), 0))
 
 function tokenShare(value: unknown): number {
   return percent(Number(value || 0), totalTokens.value)

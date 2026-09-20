@@ -685,12 +685,13 @@ export class AdminAnalyticsService {
     const { range, previous } = this.resolveWindows(days, endOffset);
     const callOpts = { excludeConnectivity: opts?.excludeConnectivity !== false };
     const sceneModelId = opts?.sceneModelId != null && Number.isFinite(opts.sceneModelId) ? Number(opts.sceneModelId) : null;
-    const [modelStats, previousTotals, trends, sceneRows, protocolRows] = await Promise.all([
+    const [modelStats, previousTotals, trends, sceneRows, protocolRows, userTokenTop] = await Promise.all([
       this.modelStats(range, callOpts),
       this.previousTotals(previous, callOpts),
       this.trends(range, callOpts),
       this.store.selectLlmCallSceneStats(range, { ...callOpts, modelId: sceneModelId }),
       this.store.selectLlmCallProtocolStats(range, callOpts),
+      this.userTokenTop(range, MAX_SCOPE_LIMIT),
     ]);
     return {
       period: this.periodMeta(range, previous),
@@ -703,6 +704,8 @@ export class AdminAnalyticsService {
       protocolStats: namedCountRows(protocolRows),
       sceneModelId,
       excludeConnectivity: callOpts.excludeConnectivity,
+      // 模型页并排展示「用户 Token 占比」：与用户 Tab tokenTop 同源，按 Token 截断
+      userTokenTop,
     };
   }
 
