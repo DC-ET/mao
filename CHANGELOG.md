@@ -15,6 +15,19 @@
 
 ---
 
+## 0.0.159 (2026-09-20)
+
+### 后端
+
+- `open_web_page` 网页正文默认输出上限从 500000 字符下调到 50000 字符（约 1.2~1.5 万 tokens），
+  避免单个网页正文一次性占满会话上下文、把活跃上下文从数万 token 顶到数十万 token。
+- `open_web_page` 正文被截断时不再丢弃后半部分：完整内容会写入会话 runtime 目录
+  `runtime/<userId>/<sessionId>/webPages/<url-slug>.md`，并在工具返回的 `full_content_file` 字段给出该路径，
+  同时在 `content` 末尾追加截断提示，引导 Agent 用 `read_file`（支持 offset/limit 分页）或 `grep_search` 回读被截断内容，
+  而不是反复重新抓取同一网页。落盘失败（含 LOCAL 模式）时仅告警，仍返回截断后的内容并说明本次不可恢复。
+- 运行参数 `harness.webPage.maxOutputLength` 的默认值同步调整为 50000（管理后台「运行参数」可改，重启后端生效；Flyway `V117` 同步刷新该项说明文案）。
+- 运维清理调度器新增清理 `runtime/<uid>/<sid>/webPages/` 下超过 `MAO_CLEANUP_SHELL_MAX_AGE_DAYS`（默认 7 天）的网页全文文件，避免落盘无限增长。
+
 ## 0.0.158 (2026-09-19)
 
 ### 管理后台

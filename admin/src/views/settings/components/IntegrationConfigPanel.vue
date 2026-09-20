@@ -305,7 +305,7 @@ const groups = computed<GroupDef[]>(() => [
       { key: 'harness.webPage.connectTimeout', label: '连接超时 (ms)', type: 'number', min: 1000, max: 120000, hint: '默认 10000' },
       { key: 'harness.webPage.readTimeout', label: '读取超时 (ms)', type: 'number', min: 1000, max: 600000, hint: '默认 30000' },
       { key: 'harness.webPage.maxRawBytes', label: '原始内容上限 (字节)', type: 'number', min: 1024, max: 104857600, hint: '默认 1048576 (1MB)' },
-      { key: 'harness.webPage.maxOutputLength', label: '输出字符上限', type: 'number', min: 1000, max: 10000000, hint: '默认 500000' },
+      { key: 'harness.webPage.maxOutputLength', label: '输出字符上限', type: 'number', min: 1000, max: 10000000, hint: '默认 50000，超出部分写入 runtime 临时文件可回读' },
       { key: 'harness.webPage.userAgent', label: 'User-Agent' },
     ],
   },

@@ -137,7 +137,7 @@ web_search 工具支持 Tavily / TinyFish 双实现，在管理后台「系统�
 
 ### Harness 调参（0.0.89 起迁移至管理后台，勿再改 yml）
 
-上下文压缩（`harness.compaction.*`：开关/上下文窗口/触发比例/摘要上限/循环中途压缩）、LLM 超时与限流重试（`harness.llm.*`）、网页抓取（`harness.webPage.*`）、Shell 会话（`harness.shell.*`），已全部迁入管理后台「系统设置 → 集成配置」。均为启动时构建，**保存后需重启后端生效**；`application.yml` 不再读取这些键。Agent 级压缩覆盖（agent `configJson` 的 `compaction` 节点）优先于全局默认值。子代理执行无总时长限制（`harness.delegate.*` 已于 0.0.91 废弃）。
+上下文压缩（`harness.compaction.*`：开关/上下文窗口/触发比例/摘要上限/循环中途压缩）、LLM 超时与限流重试（`harness.llm.*`）、网页抓取（`harness.webPage.*`：连接/读取超时、原始 HTML 字节上限、正文输出字符上限、User-Agent；`maxOutputLength` 默认 50000 字符，超出即截断并把完整正文落盘到会话 runtime 目录 `webPages/` 供 Agent 按需回读）、Shell 会话（`harness.shell.*`），已全部迁入管理后台「系统设置 → 集成配置」。均为启动时构建，**保存后需重启后端生效**；`application.yml` 不再读取这些键。Agent 级压缩覆盖（agent `configJson` 的 `compaction` 节点）优先于全局默认值。子代理执行无总时长限制（`harness.delegate.*` 已于 0.0.91 废弃）。
 
 ### 运维清理调度器（0.0.76 新增）
 
@@ -146,7 +146,7 @@ web_search 工具支持 Tavily / TinyFish 双实现，在管理后台「系统�
 | 变量 | 默认 | 说明 |
 |------|------|------|
 | `MAO_CLEANUP_INTERVAL_MS` | 86400000（1 天） | 清理调度间隔 |
-| `MAO_CLEANUP_SHELL_MAX_AGE_DAYS` | 7 | shell 输出文件（`runtime/<uid>/<sid>/shellOutput/`）保留天数 |
+| `MAO_CLEANUP_SHELL_MAX_AGE_DAYS` | 7 | 会话 runtime 下 `shellOutput/sh-*.out` 与 `webPages/*.md`（网页全文落盘）的保留天数 |
 | `MAO_CLEANUP_SKILLS` | true | 是否清理会话 runtime 下的 skills 链接目录（活跃会话跳过）。技能以符号链接指向源目录，清理只删链接，不影响源与已全局安装的 CLI |
 
 ### 密钥轮换注意

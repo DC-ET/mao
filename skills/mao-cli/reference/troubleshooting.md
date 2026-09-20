@@ -99,6 +99,12 @@
 
 长会话接近窗口上限时自动压缩，界面有提示属正常。云端（CLOUD）会话中被压缩的原始消息已按压缩批次归档为 JSONL 文件（会话 runtime 目录下的 `compaction/`），Agent 可用读文件/搜索工具回读历史细节，无需重申全部背景；本地（LOCAL）会话不产生归档。压缩摘要请求复用当前会话主模型请求的前缀（含 Responses 协议的 `prompt_cache_key`），以便命中上游前缀缓存；最终是否命中仍由模型供应商决定。压缩指令以系统通知发出，不会当作用户原话；压缩后会把最新一条真实用户消息接回上下文，避免 Agent 把「只做交接、不要继续执行」当成当前任务。
 
+压缩在轮末检查，因此**单轮暴涨**（例如一次 `open_web_page` 拉回几十万字符正文）可能在当轮就顶到窗口上限，压缩只能在下一次检查点生效。`open_web_page` 已把正文默认上限压到 50000 字符并在截断时落盘完整内容（见 `runtime/<uid>/<sid>/webPages/`），正是为了降低这种单轮暴涨的概率。
+
+## 网页正文截断
+
+`open_web_page` 抓取的正文超过 `harness.webPage.maxOutputLength`（默认 50000 字符）时只返回前 50000 字符，并在返回 JSON 里带 `truncated: true`、`full_content_file`（完整正文的落盘文件路径）和 `message`（回读指引）。Agent 需要被截断的部分时应使用 `read_file`（支持 `offset`/`limit` 分页）或 `grep_search` 读取该文件，不要重新抓取同一网页。落盘位置为会话 runtime 目录下的 `webPages/<url-slug>.md`，仅 CLOUD 会话；LOCAL 会话、缺少 userId/sessionId 或写盘失败时不会落盘，此时被截断部分本次不可恢复，工具返回里会明确说明。
+
 ## mao-cli / mao-agent
 
 | 问题 | 处理 |

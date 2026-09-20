@@ -834,6 +834,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     shellLarkUatInjector: larkUatInjector,
     webSearch: () => settingService.getWebSearchConfig(),
     webPage: harnessTuning.webPage,
+    runtimeDataResolver: runtimeResolver,
     imageModelLookup: modelService,
     uploadDir,
     getUploadBaseUrl: async () => (await settingService.getUploadConfig()).baseUrl,

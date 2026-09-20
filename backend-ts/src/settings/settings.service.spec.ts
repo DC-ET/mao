@@ -288,7 +288,7 @@ describe('SystemSettingService', () => {
     expect(cfg).toEqual({
       compaction: { enabled: true, contextWindowTokens: 256000, triggerRatio: 0.8, maxSummaryTokens: 12000, loopMidwayCompact: true },
       llm: { rateLimitMaxRetries: 10, rateLimitRetryDelaySeconds: 2, rateLimitMaxRetryDelaySeconds: 30, callTimeoutSeconds: 120, httpCallTimeoutSeconds: 180, streamIdleTimeoutSeconds: 300 },
-      webPage: { connectTimeout: 10000, readTimeout: 30000, maxRawBytes: 1048576, maxOutputLength: 500000, userAgent: 'Mozilla/5.0 (compatible; AgentWorkbench/1.0)' },
+      webPage: { connectTimeout: 10000, readTimeout: 30000, maxRawBytes: 1048576, maxOutputLength: 50000, userAgent: 'Mozilla/5.0 (compatible; AgentWorkbench/1.0)' },
       shell: { maxSessionsPerConversation: 30, sessionIdleTimeoutMinutes: 30, sessionMaxLifetimeHours: 2 },
     });
   });

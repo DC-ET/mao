@@ -386,7 +386,7 @@ export class SystemSettingService {
         connectTimeout: optPositiveInt(webPageConnectRaw, 10000),
         readTimeout: optPositiveInt(webPageReadRaw, 30000),
         maxRawBytes: optPositiveInt(webPageMaxRawBytesRaw, 1048576),
-        maxOutputLength: optPositiveInt(webPageMaxOutputRaw, 500000),
+        maxOutputLength: optPositiveInt(webPageMaxOutputRaw, 50000),
         userAgent: webPageUserAgentRaw ?? DEFAULT_HARNESS_WEB_PAGE_USER_AGENT,
       },
       shell: {

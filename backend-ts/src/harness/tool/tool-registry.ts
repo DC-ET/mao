@@ -9,6 +9,7 @@ import type { BackgroundTaskManager } from '../core/background-task-manager.js';
 import type { GitCredentialLookup } from '../../session/types.js';
 import type { WebSearchConfig } from '../../settings/types.js';
 import type { WebPageConfig } from './impl/open-web-page-tool.js';
+import type { RuntimeDataResolver } from '../runtime/runtime-data-resolver.js';
 import type { ImageModelLookup } from './impl/generate-image-tool.js';
 import type { WeixinMediaToolSupport, WeixinMediaUploadService, WeixinSendService } from './impl/wechat-tools.js';
 import type {
@@ -61,6 +62,7 @@ export interface DefaultToolRegistryDeps {
   shellLarkUatInjector?: ShellLarkUatInjector | null;
   webSearch: () => Promise<WebSearchConfig>;
   webPage: WebPageConfig;
+  runtimeDataResolver: RuntimeDataResolver;
   imageModelLookup: ImageModelLookup;
   uploadDir: string;
   getUploadBaseUrl?: () => Promise<string>;
@@ -103,7 +105,7 @@ export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRe
       deps.shellLarkUatInjector,
     ),
     new WebSearchTool(deps.webSearch),
-    new OpenWebPageTool(deps.webPage),
+    new OpenWebPageTool(deps.webPage, deps.runtimeDataResolver),
     new GenerateImageTool(deps.imageModelLookup, deps.uploadDir, deps.getUploadBaseUrl ?? (async () => '')),
     new TaskCreateTool(deps.sessionTodoMapper),
     new TaskListTool(deps.sessionTodoMapper),

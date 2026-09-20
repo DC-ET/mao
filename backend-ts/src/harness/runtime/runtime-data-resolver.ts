@@ -32,6 +32,11 @@ export class RuntimeDataResolver {
     return path.join(this.resolveSessionRuntimeDir(userId, sessionId), 'compaction');
   }
 
+  /** 网页全文落盘目录：open_web_page 截断时存放完整内容，供 Agent 按需回读。 */
+  resolveWebPageCacheDir(userId: number, sessionId: number): string {
+    return path.join(this.resolveSessionRuntimeDir(userId, sessionId), 'webPages');
+  }
+
   resolveIncomingDir(userId: number, sessionId: number): string {
     return path.join(this.resolveSessionRuntimeDir(userId, sessionId), 'incoming');
   }

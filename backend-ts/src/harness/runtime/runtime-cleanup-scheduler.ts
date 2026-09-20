@@ -14,12 +14,14 @@ export interface RuntimeCleanupProperties {
 export interface RuntimeCleanupResult {
   shellOutputRemoved: number;
   skillsRemoved: number;
+  webPageRemoved: number;
 }
 
 /**
  * 系统级运维调度器：不跑 LLM，直接在服务端定时清理 runtime 目录下的临时数据。
  * 清理范围：
  *   - `runtime/<uid>/<sid>/shellOutput/sh-*.out`（按文件 mtime，超过 shellOutputMaxAgeDays 天）
+ *   - `runtime/<uid>/<sid>/webPages/*.md`（网页全文落盘，与 shell 输出同周期）
  *   - `runtime/<uid>/<sid>/skills`（同步副本目录，cleanupSkills 开启时）
  * 该组件与对话式 ScheduledTask 无关，不产生消息、不消耗模型调用。
  */
@@ -51,11 +53,11 @@ export class RuntimeCleanupScheduler {
 
   async runCleanup(): Promise<RuntimeCleanupResult> {
     if (this.running || !existsSync(this.runtimeRoot)) {
-      return { shellOutputRemoved: 0, skillsRemoved: 0 };
+      return { shellOutputRemoved: 0, skillsRemoved: 0, webPageRemoved: 0 };
     }
     this.running = true;
     try {
-      const result: RuntimeCleanupResult = { shellOutputRemoved: 0, skillsRemoved: 0 };
+      const result: RuntimeCleanupResult = { shellOutputRemoved: 0, skillsRemoved: 0, webPageRemoved: 0 };
       const userDirs = this.safeReadDir(this.runtimeRoot);
       for (const userId of userDirs) {
         const userRoot = resolve(this.runtimeRoot, userId);
@@ -65,7 +67,8 @@ export class RuntimeCleanupScheduler {
           const sessionRoot = resolve(userRoot, sessionId);
           if (!statSync(sessionRoot).isDirectory()) continue;
           if (this.properties.shellOutputMaxAgeDays > 0) {
-            result.shellOutputRemoved += this.cleanupShellOutput(sessionRoot);
+            result.shellOutputRemoved += this.cleanupAgedFiles(join(sessionRoot, 'shellOutput'), 'sh-', '.out');
+            result.webPageRemoved += this.cleanupAgedFiles(join(sessionRoot, 'webPages'), '', '.md');
           }
           if (this.properties.cleanupSkills) {
             const skillsDir = join(sessionRoot, 'skills');
@@ -83,14 +86,14 @@ export class RuntimeCleanupScheduler {
     }
   }
 
-  private cleanupShellOutput(sessionRoot: string): number {
-    const outputDir = join(sessionRoot, 'shellOutput');
-    if (!existsSync(outputDir)) return 0;
+  /** 按 mtime 清理指定目录下带固定前缀/后缀的文件；shellOutput 与 webPages 共用。 */
+  private cleanupAgedFiles(dir: string, prefix: string, suffix: string): number {
+    if (!existsSync(dir)) return 0;
     let removed = 0;
     const cutoffMs = Date.now() - this.properties.shellOutputMaxAgeDays * 24 * 3600_000;
-    for (const name of this.safeReadDir(outputDir)) {
-      if (!name.startsWith('sh-') || !name.endsWith('.out')) continue;
-      const filePath = join(outputDir, name);
+    for (const name of this.safeReadDir(dir)) {
+      if (!name.startsWith(prefix) || !name.endsWith(suffix)) continue;
+      const filePath = join(dir, name);
       try {
         const stat = statSync(filePath);
         if (!stat.isFile()) continue;
@@ -122,7 +125,8 @@ export class RuntimeCleanupScheduler {
   }
 
   private logResult(result: RuntimeCleanupResult): void {
-    if (result.shellOutputRemoved === 0 && result.skillsRemoved === 0) return;
-    harnessLog('info', `Runtime cleanup: removed ${result.shellOutputRemoved} shell output files, ${result.skillsRemoved} skills dirs (root=${this.runtimeRoot})`);
+    if (result.shellOutputRemoved === 0 && result.skillsRemoved === 0 && result.webPageRemoved === 0) return;
+    harnessLog('info', `Runtime cleanup: removed ${result.shellOutputRemoved} shell output files, `
+      + `${result.webPageRemoved} web page caches, ${result.skillsRemoved} skills dirs (root=${this.runtimeRoot})`);
   }
 }
