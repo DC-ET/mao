@@ -1,23 +1,41 @@
 <template>
   <div class="analytics-view">
-    <el-card class="toolbar-card">
-      <div class="toolbar">
-        <div class="toolbar-info">
-          <div class="toolbar-title">用量分析</div>
-          <div class="toolbar-hint">
-            {{ periodText }}，环比对照 {{ previousText }}；数字均为窗口内新增。环比色：红=上升、绿=下降。
-            <span v-if="fetchedAtText">· 数据获取于 {{ fetchedAtText }}</span>
-          </div>
+    <div class="page-toolbar">
+      <div class="toolbar-info">
+        <div class="toolbar-period">
+          <span class="period-text">{{ periodText }}</span>
+          <span class="toolbar-hint">环比 {{ previousText }} · 数字均为窗口内新增</span>
+          <el-tooltip
+            placement="top"
+            content="环比配色：红=上升、绿=下降，仅表示方向，不区分指标好坏"
+          >
+            <el-icon class="hint-info" aria-label="环比配色说明"><InfoFilled /></el-icon>
+          </el-tooltip>
         </div>
-        <div class="toolbar-actions">
-          <span class="toolbar-label">统计周期</span>
-          <el-segmented v-model="period" :options="periodOptions" @change="handlePeriodChange" />
-          <el-button :loading="activeLoading" @click="handleRefresh">
-            <el-icon><Refresh /></el-icon>
-          </el-button>
-        </div>
+        <div v-if="fetchedAtText" class="toolbar-meta">数据获取于 {{ fetchedAtText }}</div>
       </div>
-    </el-card>
+      <div class="toolbar-actions">
+        <span class="toolbar-label">统计周期</span>
+        <el-segmented v-model="period" :options="periodOptions" @change="handlePeriodChange" />
+        <span class="toolbar-label auto-refresh-label">自动刷新</span>
+        <el-select
+          v-model="autoRefreshMs"
+          class="auto-refresh-select"
+          :class="{ 'is-on': autoRefreshMs > 0 }"
+          aria-label="自动刷新间隔"
+        >
+          <el-option
+            v-for="opt in AUTO_REFRESH_OPTIONS"
+            :key="opt.value"
+            :label="opt.label"
+            :value="opt.value"
+          />
+        </el-select>
+        <el-button :loading="activeLoading" aria-label="刷新" @click="handleRefresh">
+          <el-icon><Refresh /></el-icon>
+        </el-button>
+      </div>
+    </div>
 
     <el-tabs v-model="activeTab" class="analytics-tabs" @tab-change="handleTabChange">
       <el-tab-pane v-for="tab in TABS" :key="tab.value" :label="tab.label" :name="tab.value" />
@@ -33,7 +51,7 @@
       :hint="emptyCopy.hint"
       @relax="relaxPeriod"
     />
-    <OverviewEmpty v-else-if="isOverviewEmpty" />
+    <OverviewEmpty v-else-if="isOverviewEmpty" @relax="relaxPeriod" />
     <template v-else>
       <OverviewTab
         v-if="activeTab === 'overview'"
@@ -76,9 +94,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onActivated, onBeforeUnmount, onDeactivated, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Refresh } from '@element-plus/icons-vue'
+import { InfoFilled, Refresh } from '@element-plus/icons-vue'
 import { invalidateAnalytics, useScopeQuery } from './composables/useScopeQuery'
 import {
   PERIOD_OPTIONS,
@@ -140,6 +158,16 @@ const sceneModelId = ref<number | undefined>(
 // 「含自检调用」开关仅属于模型 Tab：默认含（URL 无 conn 时），conn=0 表示排除
 const includeConnectivity = ref(route.query.conn !== '0')
 const periodOptions = PERIOD_OPTIONS
+/** 0=关闭；仅内存态，不持久化，保证默认关闭 */
+const AUTO_REFRESH_OPTIONS = [
+  { label: '关闭', value: 0 },
+  { label: '5s', value: 5_000 },
+  { label: '10s', value: 10_000 },
+  { label: '30s', value: 30_000 },
+  { label: '1m', value: 60_000 }
+] as const
+const autoRefreshMs = ref(0)
+let autoRefreshTimer: ReturnType<typeof setInterval> | null = null
 let everLoaded = false
 
 const overview = useScopeQuery<OverviewPayload>('overview')
@@ -312,6 +340,34 @@ function handleRefresh() {
   void loadActive(true)
 }
 
+function stopAutoRefresh() {
+  if (autoRefreshTimer != null) {
+    clearInterval(autoRefreshTimer)
+    autoRefreshTimer = null
+  }
+}
+
+function startAutoRefresh() {
+  stopAutoRefresh()
+  if (autoRefreshMs.value <= 0) return
+  autoRefreshTimer = setInterval(() => {
+    // 后台标签页或 keep-alive 切走时跳过，避免无请求
+    if (document.hidden) return
+    if (!route.path.startsWith('/analytics')) return
+    if (activeLoading.value) return
+    handleRefresh()
+  }, autoRefreshMs.value)
+}
+
+watch(autoRefreshMs, startAutoRefresh)
+
+onActivated(() => {
+  if (autoRefreshMs.value > 0) startAutoRefresh()
+})
+
+onDeactivated(stopAutoRefresh)
+onBeforeUnmount(stopAutoRefresh)
+
 function relaxPeriod() {
   period.value = 7
   handlePeriodChange()
@@ -378,31 +434,59 @@ watch(
 </script>
 
 <style scoped>
-.toolbar-card {
+.page-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
   margin-bottom: 12px;
+  padding: 4px 0 12px;
+  border-bottom: 1px solid var(--mao-border);
 }
 
 .analytics-tabs {
   margin-bottom: 16px;
 }
 
-.toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+.toolbar-info {
+  min-width: 0;
 }
 
-.toolbar-title {
-  font-size: 15px;
+.toolbar-period {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.period-text {
+  font-size: 14px;
   font-weight: 600;
   color: var(--mao-ink);
+  font-variant-numeric: tabular-nums;
 }
 
 .toolbar-hint {
-  margin-top: 4px;
   font-size: 13px;
   color: var(--mao-muted);
+}
+
+.hint-info {
+  color: var(--mao-muted);
+  cursor: help;
+  font-size: 14px;
+}
+
+.hint-info:hover,
+.hint-info:focus-visible {
+  color: var(--mao-accent);
+}
+
+.toolbar-meta {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--mao-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .toolbar-actions {
@@ -417,6 +501,22 @@ watch(
   color: var(--mao-muted);
 }
 
+.auto-refresh-label {
+  margin-left: 4px;
+}
+
+.auto-refresh-select {
+  width: 88px;
+}
+
+.auto-refresh-select.is-on :deep(.el-select__wrapper) {
+  box-shadow: 0 0 0 1px var(--mao-accent) inset;
+}
+
+.auto-refresh-select :deep(.el-select__selected-item) {
+  font-variant-numeric: tabular-nums;
+}
+
 .panel-loading {
   min-height: 280px;
   padding: 16px;
@@ -425,8 +525,9 @@ watch(
 }
 
 @media (max-width: 768px) {
-  .toolbar {
-    flex-wrap: wrap;
+  .page-toolbar {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .toolbar-actions {

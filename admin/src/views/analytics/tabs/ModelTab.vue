@@ -1,26 +1,48 @@
 <template>
   <div class="model-tab">
-    <el-card class="block">
-      <template #header>
-        <div class="card-header">
-          <span>模型 Token 占比</span>
-          <div class="header-actions">
-            <el-checkbox
-              :model-value="includeConnectivity"
-              @update:model-value="handleConnectivityChange"
-            >
-              含自检调用
-            </el-checkbox>
-            <el-button type="primary" link @click="go('/models')">模型管理</el-button>
-          </div>
-        </div>
-      </template>
-      <BaseChart
-        :option="donutOption(modelTokenItems, 'Token 总量', formatCompact(totalTokens))"
-        :empty="modelTokenItems.length === 0"
-        :height="300"
-      />
-    </el-card>
+    <el-row :gutter="16" class="block-row">
+      <el-col :xs="24" :md="12">
+        <el-card class="block">
+          <template #header>
+            <div class="card-header">
+              <span>模型 Token 占比</span>
+              <div class="header-actions">
+                <el-checkbox
+                  :model-value="includeConnectivity"
+                  @update:model-value="handleConnectivityChange"
+                >
+                  含自检调用
+                </el-checkbox>
+                <el-button type="primary" link @click="go('/models')">模型管理</el-button>
+              </div>
+            </div>
+          </template>
+          <BaseChart
+            :option="donutOption(modelTokenItems, 'Token 总量', formatTokens(totalTokens))"
+            :empty="modelTokenItems.length === 0"
+            :height="300"
+          />
+        </el-card>
+      </el-col>
+      <el-col :xs="24" :md="12">
+        <el-card class="block">
+          <template #header>
+            <div class="card-header">
+              <span>用户 Token 占比</span>
+              <div class="header-actions">
+                <span class="card-hint">Top 10 + 其他</span>
+                <el-button type="primary" link @click="go('/users')">用户管理</el-button>
+              </div>
+            </div>
+          </template>
+          <BaseChart
+            :option="donutOption(userTokenItems, 'Token 总量', formatTokens(userTokenTotal))"
+            :empty="userTokenItems.length === 0"
+            :height="300"
+          />
+        </el-card>
+      </el-col>
+    </el-row>
 
     <el-row :gutter="16" class="block-row">
       <el-col :xs="24" :md="12">
@@ -33,10 +55,10 @@
           </template>
           <div class="dist-rows">
             <div v-for="item in sceneRows" :key="item.key" class="dist-row">
-              <button class="linkish" type="button" @click="go(`/llm-call?scene=${item.key}`)">
+              <button class="linkish" type="button" @click="go(`/llm-calls?scene=${item.key}`)">
                 {{ sceneLabel(item.key) }}
               </button>
-              <span class="tokens">{{ formatNumber(item.callTokens) }}</span>
+              <span class="tokens">{{ formatTokens(item.callTokens) }}</span>
               <span class="meta">{{ formatNumber(item.callCount) }} 次</span>
             </div>
             <div v-if="sceneRows.length === 0" class="dist-empty">窗口内暂无调用流水</div>
@@ -54,7 +76,7 @@
           <div class="dist-rows">
             <div v-for="item in protocolRows" :key="item.key" class="dist-row">
               <span class="name">{{ item.key }}</span>
-              <span class="tokens">{{ formatNumber(item.callTokens) }}</span>
+              <span class="tokens">{{ formatTokens(item.callTokens) }}</span>
               <span class="meta">{{ formatNumber(item.callCount) }} 次</span>
             </div>
             <div v-if="protocolRows.length === 0" class="dist-empty">窗口内暂无调用流水</div>
@@ -71,7 +93,7 @@
             <span class="card-hint">质量列来自 llm_call，延迟为均值</span>
             <el-button v-if="selectedModelId != null" link type="danger" @click="clearSelection">清除选中</el-button>
             <el-button :disabled="modelStats.length === 0" @click="exportRows">导出 CSV</el-button>
-            <el-button type="primary" link @click="go('/llm-call')">调用流水</el-button>
+            <el-button type="primary" link @click="go('/llm-calls')">调用流水</el-button>
           </div>
         </div>
       </template>
@@ -87,7 +109,7 @@
         </template>
         <el-table-column label="模型" min-width="150" show-overflow-tooltip>
           <template #default="{ row }">
-            <button class="linkish" type="button" @click.stop="go(`/llm-call?modelId=${row.modelId}`)">
+            <button class="linkish" type="button" @click.stop="go(`/llm-calls?modelId=${row.modelId}`)">
               {{ row.modelName || '未命名' }}
             </button>
           </template>
@@ -144,7 +166,7 @@ import { useRouter } from 'vue-router'
 import BaseChart from '../../../components/BaseChart.vue'
 import { CHART_PALETTE } from '../../../utils/echarts'
 import { llmCallSceneLabel, formatMs } from '../../../utils/llmCallLabels'
-import { donutOption, formatCompact, formatNumber, topWithOthers, type RankItem } from '../chart-options'
+import { donutOption, formatNumber, formatTokens, topWithOthers, type RankItem } from '../chart-options'
 import { exportCsv } from '../utils/csv'
 import { percent } from '../composables/metrics'
 import type { ModelsPayload } from '../types'
@@ -191,6 +213,19 @@ const modelTokenItems = computed<RankItem[]>(() =>
     10
   )
 )
+
+const userTokenSource = computed(() => props.payload?.userTokenTop || [])
+const userTokenItems = computed<RankItem[]>(() =>
+  topWithOthers(
+    userTokenSource.value.map((row) => ({
+      name: row.displayName || row.username || '未知',
+      value: Number(row.totalTokens || 0)
+    })),
+    10
+  )
+)
+// 环图中心与图例合计一致：用户 Token 与模型 totalTokens 口径不同（消息 Token vs 模型合计），不共用 totalTokens
+const userTokenTotal = computed(() => userTokenSource.value.reduce((sum, row) => sum + Number(row.totalTokens || 0), 0))
 
 function tokenShare(value: unknown): number {
   return percent(Number(value || 0), totalTokens.value)

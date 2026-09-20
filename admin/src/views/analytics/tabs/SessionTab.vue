@@ -81,7 +81,7 @@
       </div>
       <div class="actions">
         <el-button type="primary" link @click="go('/sessions?phase=FAILED')">查看失败会话</el-button>
-        <el-button link @click="go(withWindow('/llm-call?success=false'))">查看失败调用</el-button>
+        <el-button link @click="go(withWindow('/llm-calls?success=false'))">查看失败调用</el-button>
       </div>
     </el-card>
 
@@ -117,7 +117,7 @@
                 v-if="typeof item.key === 'number' && item.key > 0"
                 class="linkish"
                 type="button"
-                @click="go(withWindow(`/llm-call?success=false&modelId=${item.key}`))"
+                @click="go(withWindow(`/llm-calls?success=false&modelId=${item.key}`))"
               >
                 {{ item.name }}
               </button>
@@ -134,12 +134,12 @@
           <template #header>
             <div class="card-header">
               <span>失败切片 · 场景 Top5</span>
-              <el-button type="primary" link @click="go('/llm-call?success=false')">调用流水</el-button>
+              <el-button type="primary" link @click="go('/llm-calls?success=false')">调用流水</el-button>
             </div>
           </template>
           <div class="fail-rows">
             <div v-for="item in failByScene" :key="`s-${item.key}`" class="fail-row">
-              <button class="linkish" type="button" @click="go(withWindow(`/llm-call?success=false&scene=${item.key}`))">
+              <button class="linkish" type="button" @click="go(withWindow(`/llm-calls?success=false&scene=${item.key}`))">
                 {{ sceneLabel(String(item.key)) }}
               </button>
               <span class="fail">{{ formatNumber(item.failCount) }}</span>
@@ -210,7 +210,7 @@ function sceneLabel(scene: string): string {
   return llmCallSceneLabel(scene)
 }
 
-/** 后端统计窗口是 YYYY-MM-DD 日期区间；SessionListView 不消费时间参数，仅 llm-call 支持透传 */
+/** 后端统计窗口是 YYYY-MM-DD 日期区间；SessionListView 不消费时间参数，仅 llm-calls 支持透传 */
 function withWindow(path: string): string {
   const meta = props.payload?.period
   if (!meta) return path

@@ -10,7 +10,7 @@
 
 | 命令 | 对应管理后台 | 说明 |
 |------|--------------|------|
-| `analytics overview` | 总览 Tab | 运行态 + 窗口合计 + 环比 + Token spark + 规则洞察 |
+| `analytics overview` | 总览 Tab | 运行态（实时/窗口）+ 窗口合计 + 环比 + Token spark + 构成与规则洞察 |
 | `analytics trends` | 趋势 Tab | 日序列（会话/消息/Token/后台调用） |
 | `analytics models` | 模型 Tab | 模型用量聚合 |
 | `analytics users` | 用户 Tab | 用户活跃排行/明细，支持 `--limit` |
@@ -32,7 +32,7 @@
 - 按半开区间 `[start 00:00:00, end+1 00:00:00)` 过滤 `created_at`
 - 除 `overview` 中的实时运行态外，所有数字均为**窗口内新增**，不是全表累计
 - 环比窗口是紧邻的上一个等长窗口（如 days=7 时为前 7 天；昨日的环比为前日）
-- Token 分两类：`chatTokens` 来自 `message.token_count`（对话消耗），`backgroundTokens` 来自 `llm_usage`（后台调用，如会话标题、Git 提交信息生成），`totalTokens` 为两者之和
+- Token 分两类：`chatTokens` 来自 `message.token_count`（对话消耗），`backgroundTokens` 来自 `llm_usage`（后台调用，如会话标题、Git 提交信息生成），`totalTokens` 为两者之和；管理后台 UI 紧凑展示用 K/M/B（千/百万/十亿）
 - 会话结局：窗口内**创建**的会话按 phase 分布；`livePhases` / `overview.runningSessions` 等为实时快照，不与窗口分布混算
 - 环比色约定：红=上升、绿=下降（纯方向口径，不区分指标好坏）
 

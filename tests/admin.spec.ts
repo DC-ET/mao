@@ -63,19 +63,32 @@ test.describe('Analytics Homepage', () => {
     await login(page)
   })
 
-  test('should show period control and KPI cards', async ({ page }) => {
-    await expect(page.locator('.toolbar-title')).toHaveText('用量分析')
+  test('should show period control and overview metrics', async ({ page }) => {
+    await expect(page.locator('.layout-header .page-title')).toHaveText('用量分析')
     await expect(page.locator('text=统计周期')).toBeVisible()
-    const kpiCards = page.locator('.kpi-row .el-card')
-    await expect(kpiCards.first()).toBeVisible({ timeout: 10_000 })
-    await expect(kpiCards).toHaveCount(4)
+    await expect(page.locator('.page-toolbar .period-text')).toBeVisible({ timeout: 10_000 })
+    const metrics = page.locator('.metric-strip .metric')
+    await expect(metrics.first()).toBeVisible({ timeout: 10_000 })
+    await expect(metrics).toHaveCount(4)
+    await expect(page.locator('.metric.primary .label')).toHaveText('Token 消耗')
   })
 
-  test('should show trend and ranking sections', async ({ page }) => {
-    await expect(page.locator('.el-card__header').filter({ hasText: '会话与消息趋势' })).toBeVisible({ timeout: 10_000 })
-    await expect(page.locator('.el-card__header').filter({ hasText: 'Token 消耗趋势' })).toBeVisible()
-    await expect(page.locator('.el-card__header').filter({ hasText: 'Agent Token 排行' })).toBeVisible()
-    await expect(page.locator('.el-card__header').filter({ hasText: '模型用量明细' })).toBeVisible()
+  test('should show auto-refresh control default off', async ({ page }) => {
+    await expect(page.locator('text=自动刷新')).toBeVisible({ timeout: 10_000 })
+    await expect(page.locator('.auto-refresh-select')).toBeVisible()
+    await expect(page.locator('.auto-refresh-select')).not.toHaveClass(/is-on/)
+  })
+
+  test('should show overview live sections and insights', async ({ page }) => {
+    await expect(page.locator('.live-block-label').filter({ hasText: '实时快照' })).toBeVisible({ timeout: 10_000 })
+    await expect(page.locator('.live-block-label').filter({ hasText: '窗口结果' })).toBeVisible()
+    await expect(page.locator('.compose-title')).toContainText('窗口构成')
+    await expect(page.locator('.el-card__header').filter({ hasText: '窗口洞察' })).toBeVisible()
+  })
+
+  test('should open trends tab charts', async ({ page }) => {
+    await page.locator('.el-tabs__item:has-text("趋势")').click()
+    await expect(page.locator('.el-card__header').filter({ hasText: '用量趋势' })).toBeVisible({ timeout: 10_000 })
   })
 })
 

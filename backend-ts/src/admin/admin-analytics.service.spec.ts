@@ -274,6 +274,9 @@ describe('AdminAnalyticsService', () => {
     expect(result.periodTotals).toEqual({ totalTokens: 490 });
     expect(result.sceneStats[0]).toMatchObject({ key: 'agent', callTokens: 800 });
     expect(result.protocolStats[0]).toMatchObject({ key: 'openai-compatible', callCount: 10 });
+    expect(result.userTokenTop).toEqual([
+      expect.objectContaining({ userId: 1, displayName: 'Ada', totalTokens: 700 }),
+    ]);
   });
 
   it('usersScopeMergesLlmCallColumns', async () => {

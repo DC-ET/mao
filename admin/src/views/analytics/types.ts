@@ -151,6 +151,8 @@ export interface ModelsPayload {
   protocolStats?: NamedCallStat[]
   sceneModelId?: number | null
   excludeConnectivity?: boolean
+  /** 窗口内按 Token 排序截断的用户分布（与用户 Tab tokenTop 同源），供模型页并排环图 */
+  userTokenTop?: Array<{ userId: number; username?: string; displayName?: string; totalTokens: number }>
 }
 
 export interface UserActivityRow {

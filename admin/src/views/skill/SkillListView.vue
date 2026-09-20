@@ -70,7 +70,7 @@
       <!-- System skill table -->
       <el-table
         v-if="activeTab === 'system' && !isMobile"
-        :data="filteredSkillDocs"
+        :data="pagedSkillDocs"
         v-loading="loading"
         stripe
         style="margin-top: 16px"
@@ -112,7 +112,7 @@
       <!-- Personal skill table -->
       <el-table
         v-else-if="activeTab === 'personal' && !isMobile"
-        :data="filteredPersonalSkills"
+        :data="pagedPersonalSkills"
         v-loading="loading"
         stripe
         style="margin-top: 16px"
@@ -200,6 +200,16 @@
         </el-card>
         <el-empty v-if="!loading && mobileRows.length === 0" description="暂无数据" />
       </div>
+
+      <ResponsivePagination
+        v-if="total > 0"
+        class="pagination"
+        v-model:current-page="currentPage"
+        v-model:page-size="pageSize"
+        :page-sizes="[10, 20, 50, 100]"
+        :total="total"
+        @size-change="handleSizeChange"
+      />
     </el-card>
 
     <!-- Skill content dialog -->
@@ -223,13 +233,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted } from 'vue'
+import { computed, ref, onMounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
 import { api } from '../../api'
 import { useAuthStore } from '../../stores/auth'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
+import ResponsivePagination from '../../components/ResponsivePagination.vue'
 
 const { isMobile } = useBreakpoint()
 const authStore = useAuthStore()
@@ -241,6 +252,8 @@ const skillDocs = ref<any[]>([])
 const personalSkills = ref<any[]>([])
 const agents = ref<any[]>([])
 const keyword = ref('')
+const currentPage = ref(1)
+const pageSize = ref(10)
 const detailVisible = ref(false)
 const currentDoc = ref<any>(null)
 const isDragover = ref(false)
@@ -298,8 +311,34 @@ const filteredPersonalSkills = computed(() => {
       .toLowerCase().includes(kw))
 })
 
-const mobileRows = computed(() =>
+const filteredRows = computed(() =>
   activeTab.value === 'personal' ? filteredPersonalSkills.value : filteredSkillDocs.value)
+
+const total = computed(() => filteredRows.value.length)
+
+const pagedSkillDocs = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  return filteredSkillDocs.value.slice(start, start + pageSize.value)
+})
+
+const pagedPersonalSkills = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  return filteredPersonalSkills.value.slice(start, start + pageSize.value)
+})
+
+const mobileRows = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  return filteredRows.value.slice(start, start + pageSize.value)
+})
+
+// 关键词或 tab 变化后回第一页，避免停在已无数据的空页
+watch([keyword, activeTab], () => {
+  currentPage.value = 1
+})
+
+function handleSizeChange() {
+  currentPage.value = 1
+}
 
 function mobileKey(row: any) {
   return activeTab.value === 'personal' ? `${row.userId}-${row.name}` : row.name
@@ -444,6 +483,9 @@ async function handleDelete(row: any) {
     }
     ElMessage.success(`Skill「${row.name}」已删除`)
     await fetchActiveTab()
+    // 当前页删空时回退页码，避免停留在空白页
+    const maxPage = Math.max(1, Math.ceil(total.value / pageSize.value))
+    if (currentPage.value > maxPage) currentPage.value = maxPage
   } catch {
     // Error handled by interceptor
   }
@@ -465,6 +507,10 @@ onMounted(fetchActiveTab)
 
 .search-form {
   margin-bottom: 16px;
+}
+.pagination {
+  margin-top: 20px;
+  justify-content: flex-end;
 }
 .upload-zone {
   border: 2px dashed var(--el-color-primary-light-3);

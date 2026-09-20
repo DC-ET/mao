@@ -38,11 +38,20 @@ export function formatNumber(value: number): string {
   return value.toLocaleString('zh-CN')
 }
 
-/** 大数用中文万/亿，避免坐标轴与卡片被长数字撑开。 */
+/** 计数类大数用中文万/亿，避免坐标轴与卡片被长数字撑开。 */
 export function formatCompact(value: number): string {
   const abs = Math.abs(value)
   if (abs >= 1e8) return `${trimZero(value / 1e8)} 亿`
   if (abs >= 1e4) return `${trimZero(value / 1e4)} 万`
+  return String(value)
+}
+
+/** Token 紧凑单位按业界惯例：K=千、M=百万、B=十亿。 */
+export function formatTokens(value: number): string {
+  const abs = Math.abs(value)
+  if (abs >= 1e9) return `${trimZero(value / 1e9)}B`
+  if (abs >= 1e6) return `${trimZero(value / 1e6)}M`
+  if (abs >= 1e3) return `${trimZero(value / 1e3)}K`
   return String(value)
 }
 
@@ -52,17 +61,17 @@ function trimZero(value: number): string {
 
 /** 阶段配色按枚举绑定，零值阶段被过滤后颜色不会错位。图表与会话 Tab 的 live 标签共用。 */
 export const PHASE_COLORS: Record<string, string> = {
-  IDLE: '#8e8e93',
+  IDLE: '#6e6e73',
   RUNNING: '#0066cc',
   RESUMING: '#5ac8fa',
-  WAITING_APPROVAL: '#ff9500',
+  WAITING_APPROVAL: '#b25000',
   COMPLETED: '#34c759',
-  FAILED: '#ff3b30',
-  CANCELLED: '#c7c7cc'
+  FAILED: '#d70015',
+  CANCELLED: '#8e8e93'
 }
 
 export function phaseColor(phase: string): string {
-  return PHASE_COLORS[phase] || '#86868b'
+  return PHASE_COLORS[phase] || '#6e6e73'
 }
 
 /* ---- 图表配色从 CSS 变量读取，与页面主题保持一致 ---- */
@@ -72,7 +81,7 @@ function cssVar(name: string, fallback: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
 }
 
-export const AXIS_LABEL_COLOR = () => cssVar('--mao-muted', '#86868b')
+export const AXIS_LABEL_COLOR = () => cssVar('--mao-muted', '#6e6e73')
 export const SPLIT_LINE_COLOR = () => cssVar('--mao-border', 'rgba(0, 0, 0, 0.06)')
 export const INK_COLOR = () => cssVar('--mao-ink', '#1d1d1f')
 export const SURFACE_COLOR = () => cssVar('--mao-surface', '#ffffff')
@@ -94,13 +103,13 @@ function categoryAxis(dates: string[]) {
   }
 }
 
-function valueAxis(name: string) {
+function valueAxis(name: string, format: (v: number) => string = formatCompact) {
   return {
     type: 'value' as const,
     name,
     nameTextStyle: { color: AXIS_LABEL_COLOR(), fontSize: 11 },
     splitLine: { lineStyle: { color: SPLIT_LINE_COLOR() } },
-    axisLabel: { color: AXIS_LABEL_COLOR(), fontSize: 11, formatter: (v: number) => formatCompact(v) }
+    axisLabel: { color: AXIS_LABEL_COLOR(), fontSize: 11, formatter: (v: number) => format(v) }
   }
 }
 
@@ -174,7 +183,7 @@ export function tokenTrendOption(trends: TrendPoint[]): ChartOption {
     grid: { ...baseGrid, bottom: zoom ? 28 : 4 },
     dataZoom: zoom,
     xAxis: { ...categoryAxis(dates), boundaryGap: true },
-    yAxis: valueAxis('Token'),
+    yAxis: valueAxis('Token', formatTokens),
     series: [
       {
         name: '对话 Token',
@@ -211,7 +220,7 @@ function tooltipRows(params: TooltipParam[], dates: string[], withTotal = false)
   const total = withTotal && params.length > 1
     ? `<br/>合计<span style="float:right;margin-left:16px;font-weight:600">${formatNumber(params.reduce((s, p) => s + (p.value ?? 0), 0))}</span>`
     : ''
-  return `<div style="min-width:150px"><div style="margin-bottom:4px;color:#86868b">${escapeHtml(date)}</div>${rows}${total}</div>`
+  return `<div style="min-width:150px"><div style="margin-bottom:4px;color:#6e6e73">${escapeHtml(date)}</div>${rows}${total}</div>`
 }
 
 /** 环形图：中心显示主指标，legend 右侧竖排；item.color 优先，否则按调色板顺序取色。 */
@@ -265,8 +274,12 @@ export function donutOption(items: RankItem[], centerLabel: string, centerValue:
   }
 }
 
-/** 横向条形排行：名称在左，数值贴条尾。 */
-export function rankBarOption(items: RankItem[], color: string): ChartOption {
+/** 横向条形排行：名称在左，数值贴条尾。Token 排行传 formatTokens。 */
+export function rankBarOption(
+  items: RankItem[],
+  color: string,
+  format: (v: number) => string = formatCompact
+): ChartOption {
   const ordered = [...items].reverse()
   return {
     tooltip: {
@@ -298,7 +311,7 @@ export function rankBarOption(items: RankItem[], color: string): ChartOption {
           position: 'right',
           fontSize: 11,
           color: AXIS_LABEL_COLOR(),
-          formatter: (p: unknown) => formatCompact((p as { value: number }).value)
+          formatter: (p: unknown) => format((p as { value: number }).value)
         },
         data: ordered.map((item) => item.value)
       }
