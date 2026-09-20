@@ -46,6 +46,9 @@ class FakeWebSocket {
 ;(globalThis as any).WebSocket = FakeWebSocket
 
 const { useStreamWS } = await import('./useStreamWS')
+const { useSessionStore } = await import('../stores/session')
+
+type ChatMessageLike = { id: string; role: 'user' | 'assistant' | 'system'; content: string; createdAt: string; images?: string[] }
 
 beforeEach(() => {
   setActivePinia(createPinia())
@@ -79,5 +82,65 @@ describe('useStreamWS reconnect', () => {
     expect(sockets).toHaveLength(3)
     sockets[2].open()
     await expect(connect()).resolves.toBeUndefined()
+  })
+})
+
+describe('useStreamWS user_message_saved', () => {
+  it('side_user_ 前缀的边路任务乐观消息只替换 ID，不追加重复回显', async () => {
+    const { connect, subscribe } = useStreamWS()
+    const pending = connect()
+    sockets[0].open()
+    await pending
+    await subscribe('501')
+
+    const sessionStore = useSessionStore()
+    sessionStore.addUserMessage('501', {
+      id: 'side_user_1786850982000',
+      role: 'user',
+      content: '/var/log/btmp1 看下这个文件是什么文件',
+      createdAt: '2026-09-20 19:21:12',
+    } satisfies ChatMessageLike)
+
+    sockets[0].onmessage?.({
+      target: sockets[0],
+      data: JSON.stringify({
+        type: 'user_message_saved',
+        sessionId: 501,
+        data: { content: '/var/log/btmp1 看下这个文件是什么文件', messageId: 77 },
+      }),
+    })
+
+    const msgs = (sessionStore.getMessages('501') ?? []) as ChatMessageLike[]
+    expect(msgs.filter(m => m.role === 'user')).toHaveLength(1)
+    expect(msgs[0].id).toBe('77')
+  })
+
+  it('msg_ 前缀的主会话乐观消息同样只替换 ID，不追加重复回显', async () => {
+    const { connect, subscribe } = useStreamWS()
+    const pending = connect()
+    sockets[0].open()
+    await pending
+    await subscribe('9')
+
+    const sessionStore = useSessionStore()
+    sessionStore.addUserMessage('9', {
+      id: 'msg_1786850982000_user',
+      role: 'user',
+      content: '你好',
+      createdAt: '2026-09-20 19:21:12',
+    })
+
+    sockets[0].onmessage?.({
+      target: sockets[0],
+      data: JSON.stringify({
+        type: 'user_message_saved',
+        sessionId: 9,
+        data: { content: '你好', messageId: 88 },
+      }),
+    })
+
+    const msgs = (sessionStore.getMessages('9') ?? []) as ChatMessageLike[]
+    expect(msgs.filter(m => m.role === 'user')).toHaveLength(1)
+    expect(msgs[0].id).toBe('88')
   })
 })
