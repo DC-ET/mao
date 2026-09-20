@@ -73,6 +73,12 @@ test.describe('Analytics Homepage', () => {
     await expect(page.locator('.metric.primary .label')).toHaveText('Token 消耗')
   })
 
+  test('should show auto-refresh control default off', async ({ page }) => {
+    await expect(page.locator('text=自动刷新')).toBeVisible({ timeout: 10_000 })
+    await expect(page.locator('.auto-refresh-select')).toBeVisible()
+    await expect(page.locator('.auto-refresh-select')).not.toHaveClass(/is-on/)
+  })
+
   test('should show overview live sections and insights', async ({ page }) => {
     await expect(page.locator('.live-block-label').filter({ hasText: '实时快照' })).toBeVisible({ timeout: 10_000 })
     await expect(page.locator('.live-block-label').filter({ hasText: '窗口结果' })).toBeVisible()

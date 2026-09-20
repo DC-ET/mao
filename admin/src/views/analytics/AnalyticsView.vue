@@ -17,6 +17,20 @@
       <div class="toolbar-actions">
         <span class="toolbar-label">统计周期</span>
         <el-segmented v-model="period" :options="periodOptions" @change="handlePeriodChange" />
+        <span class="toolbar-label auto-refresh-label">自动刷新</span>
+        <el-select
+          v-model="autoRefreshMs"
+          class="auto-refresh-select"
+          :class="{ 'is-on': autoRefreshMs > 0 }"
+          aria-label="自动刷新间隔"
+        >
+          <el-option
+            v-for="opt in AUTO_REFRESH_OPTIONS"
+            :key="opt.value"
+            :label="opt.label"
+            :value="opt.value"
+          />
+        </el-select>
         <el-button :loading="activeLoading" aria-label="刷新" @click="handleRefresh">
           <el-icon><Refresh /></el-icon>
         </el-button>
@@ -80,7 +94,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onActivated, onBeforeUnmount, onDeactivated, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { InfoFilled, Refresh } from '@element-plus/icons-vue'
 import { invalidateAnalytics, useScopeQuery } from './composables/useScopeQuery'
@@ -144,6 +158,16 @@ const sceneModelId = ref<number | undefined>(
 // 「含自检调用」开关仅属于模型 Tab：默认含（URL 无 conn 时），conn=0 表示排除
 const includeConnectivity = ref(route.query.conn !== '0')
 const periodOptions = PERIOD_OPTIONS
+/** 0=关闭；仅内存态，不持久化，保证默认关闭 */
+const AUTO_REFRESH_OPTIONS = [
+  { label: '关闭', value: 0 },
+  { label: '5s', value: 5_000 },
+  { label: '10s', value: 10_000 },
+  { label: '30s', value: 30_000 },
+  { label: '1m', value: 60_000 }
+] as const
+const autoRefreshMs = ref(0)
+let autoRefreshTimer: ReturnType<typeof setInterval> | null = null
 let everLoaded = false
 
 const overview = useScopeQuery<OverviewPayload>('overview')
@@ -316,6 +340,34 @@ function handleRefresh() {
   void loadActive(true)
 }
 
+function stopAutoRefresh() {
+  if (autoRefreshTimer != null) {
+    clearInterval(autoRefreshTimer)
+    autoRefreshTimer = null
+  }
+}
+
+function startAutoRefresh() {
+  stopAutoRefresh()
+  if (autoRefreshMs.value <= 0) return
+  autoRefreshTimer = setInterval(() => {
+    // 后台标签页或 keep-alive 切走时跳过，避免无请求
+    if (document.hidden) return
+    if (!route.path.startsWith('/analytics')) return
+    if (activeLoading.value) return
+    handleRefresh()
+  }, autoRefreshMs.value)
+}
+
+watch(autoRefreshMs, startAutoRefresh)
+
+onActivated(() => {
+  if (autoRefreshMs.value > 0) startAutoRefresh()
+})
+
+onDeactivated(stopAutoRefresh)
+onBeforeUnmount(stopAutoRefresh)
+
 function relaxPeriod() {
   period.value = 7
   handlePeriodChange()
@@ -447,6 +499,22 @@ watch(
 .toolbar-label {
   font-size: 13px;
   color: var(--mao-muted);
+}
+
+.auto-refresh-label {
+  margin-left: 4px;
+}
+
+.auto-refresh-select {
+  width: 88px;
+}
+
+.auto-refresh-select.is-on :deep(.el-select__wrapper) {
+  box-shadow: 0 0 0 1px var(--mao-accent) inset;
+}
+
+.auto-refresh-select :deep(.el-select__selected-item) {
+  font-variant-numeric: tabular-nums;
 }
 
 .panel-loading {
