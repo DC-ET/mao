@@ -5,7 +5,7 @@
         <div class="metric primary">
           <div class="label">Token 消耗</div>
           <div class="value-row">
-            <span class="value">{{ formatCompact(totalTokens) }}</span>
+            <span class="value">{{ formatTokens(totalTokens) }}</span>
             <span v-if="tokenDelta !== null" class="delta" :class="deltaClass(tokenDelta)">
               {{ deltaText(tokenDelta) }}
             </span>
@@ -119,7 +119,7 @@
             <div class="compose-title">窗口构成（非重复环比）</div>
             <div v-for="row in composeRows" :key="row.label" class="compose-row">
               <span class="label">{{ row.label }}</span>
-              <span class="current" :class="{ fail: row.fail }">{{ formatNumber(row.value) }}</span>
+              <span class="current" :class="{ fail: row.fail }">{{ row.valueText }}</span>
             </div>
           </div>
         </el-card>
@@ -133,7 +133,7 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import BaseChart from '../../../components/BaseChart.vue'
 import { CHART_PALETTE } from '../../../utils/echarts'
-import { formatCompact, sparklineOption } from '../chart-options'
+import { formatCompact, formatTokens, sparklineOption } from '../chart-options'
 import { delta, deltaClass, deltaText } from '../composables/metrics'
 import type { OverviewPayload, PeriodTotals, PreviousTotals } from '../types'
 
@@ -235,10 +235,10 @@ const liveWindow = computed<LiveItem[]>(() => {
 
 /** 构成明细：补充指标条之外的结构信息，避免与环比重复 */
 const composeRows = computed(() => [
-  { label: '对话 Token', value: totals.value.chatTokens, fail: false },
-  { label: '后台 Token', value: totals.value.backgroundTokens, fail: false },
-  { label: '完成会话', value: totals.value.completedSessions, fail: false },
-  { label: '失败会话', value: totals.value.failedSessions, fail: true }
+  { label: '对话 Token', valueText: formatTokens(totals.value.chatTokens), fail: false },
+  { label: '后台 Token', valueText: formatTokens(totals.value.backgroundTokens), fail: false },
+  { label: '完成会话', valueText: formatNumber(totals.value.completedSessions), fail: false },
+  { label: '失败会话', valueText: formatNumber(totals.value.failedSessions), fail: true }
 ])
 
 function formatNumber(value: number): string {

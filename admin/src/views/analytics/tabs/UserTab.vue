@@ -22,7 +22,7 @@
         </div>
       </template>
       <BaseChart
-        :option="rankBarOption(tokenItems, CHART_PALETTE[0])"
+        :option="rankBarOption(tokenItems, CHART_PALETTE[0], formatTokens)"
         :empty="tokenItems.length === 0"
         :height="Math.max(200, tokenItems.length * 34 + 32)"
       />
@@ -85,7 +85,7 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import BaseChart from '../../../components/BaseChart.vue'
 import { CHART_PALETTE } from '../../../utils/echarts'
-import { formatNumber, rankBarOption, type RankItem } from '../chart-options'
+import { formatNumber, formatTokens, rankBarOption, type RankItem } from '../chart-options'
 import { exportCsv } from '../utils/csv'
 import { formatDateTime } from '../../../utils/datetime'
 import type { UsersPayload } from '../types'

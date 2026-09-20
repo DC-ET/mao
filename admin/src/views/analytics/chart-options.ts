@@ -38,11 +38,20 @@ export function formatNumber(value: number): string {
   return value.toLocaleString('zh-CN')
 }
 
-/** 大数用中文万/亿，避免坐标轴与卡片被长数字撑开。 */
+/** 计数类大数用中文万/亿，避免坐标轴与卡片被长数字撑开。 */
 export function formatCompact(value: number): string {
   const abs = Math.abs(value)
   if (abs >= 1e8) return `${trimZero(value / 1e8)} 亿`
   if (abs >= 1e4) return `${trimZero(value / 1e4)} 万`
+  return String(value)
+}
+
+/** Token 紧凑单位按业界惯例：K=千、M=百万、B=十亿。 */
+export function formatTokens(value: number): string {
+  const abs = Math.abs(value)
+  if (abs >= 1e9) return `${trimZero(value / 1e9)}B`
+  if (abs >= 1e6) return `${trimZero(value / 1e6)}M`
+  if (abs >= 1e3) return `${trimZero(value / 1e3)}K`
   return String(value)
 }
 
@@ -94,13 +103,13 @@ function categoryAxis(dates: string[]) {
   }
 }
 
-function valueAxis(name: string) {
+function valueAxis(name: string, format: (v: number) => string = formatCompact) {
   return {
     type: 'value' as const,
     name,
     nameTextStyle: { color: AXIS_LABEL_COLOR(), fontSize: 11 },
     splitLine: { lineStyle: { color: SPLIT_LINE_COLOR() } },
-    axisLabel: { color: AXIS_LABEL_COLOR(), fontSize: 11, formatter: (v: number) => formatCompact(v) }
+    axisLabel: { color: AXIS_LABEL_COLOR(), fontSize: 11, formatter: (v: number) => format(v) }
   }
 }
 
@@ -174,7 +183,7 @@ export function tokenTrendOption(trends: TrendPoint[]): ChartOption {
     grid: { ...baseGrid, bottom: zoom ? 28 : 4 },
     dataZoom: zoom,
     xAxis: { ...categoryAxis(dates), boundaryGap: true },
-    yAxis: valueAxis('Token'),
+    yAxis: valueAxis('Token', formatTokens),
     series: [
       {
         name: '对话 Token',
@@ -265,8 +274,12 @@ export function donutOption(items: RankItem[], centerLabel: string, centerValue:
   }
 }
 
-/** 横向条形排行：名称在左，数值贴条尾。 */
-export function rankBarOption(items: RankItem[], color: string): ChartOption {
+/** 横向条形排行：名称在左，数值贴条尾。Token 排行传 formatTokens。 */
+export function rankBarOption(
+  items: RankItem[],
+  color: string,
+  format: (v: number) => string = formatCompact
+): ChartOption {
   const ordered = [...items].reverse()
   return {
     tooltip: {
@@ -298,7 +311,7 @@ export function rankBarOption(items: RankItem[], color: string): ChartOption {
           position: 'right',
           fontSize: 11,
           color: AXIS_LABEL_COLOR(),
-          formatter: (p: unknown) => formatCompact((p as { value: number }).value)
+          formatter: (p: unknown) => format((p as { value: number }).value)
         },
         data: ordered.map((item) => item.value)
       }

@@ -16,7 +16,7 @@
         </div>
       </template>
       <BaseChart
-        :option="donutOption(modelTokenItems, 'Token 总量', formatCompact(totalTokens))"
+        :option="donutOption(modelTokenItems, 'Token 总量', formatTokens(totalTokens))"
         :empty="modelTokenItems.length === 0"
         :height="300"
       />
@@ -36,7 +36,7 @@
               <button class="linkish" type="button" @click="go(`/llm-calls?scene=${item.key}`)">
                 {{ sceneLabel(item.key) }}
               </button>
-              <span class="tokens">{{ formatNumber(item.callTokens) }}</span>
+              <span class="tokens">{{ formatTokens(item.callTokens) }}</span>
               <span class="meta">{{ formatNumber(item.callCount) }} 次</span>
             </div>
             <div v-if="sceneRows.length === 0" class="dist-empty">窗口内暂无调用流水</div>
@@ -54,7 +54,7 @@
           <div class="dist-rows">
             <div v-for="item in protocolRows" :key="item.key" class="dist-row">
               <span class="name">{{ item.key }}</span>
-              <span class="tokens">{{ formatNumber(item.callTokens) }}</span>
+              <span class="tokens">{{ formatTokens(item.callTokens) }}</span>
               <span class="meta">{{ formatNumber(item.callCount) }} 次</span>
             </div>
             <div v-if="protocolRows.length === 0" class="dist-empty">窗口内暂无调用流水</div>
@@ -144,7 +144,7 @@ import { useRouter } from 'vue-router'
 import BaseChart from '../../../components/BaseChart.vue'
 import { CHART_PALETTE } from '../../../utils/echarts'
 import { llmCallSceneLabel, formatMs } from '../../../utils/llmCallLabels'
-import { donutOption, formatCompact, formatNumber, topWithOthers, type RankItem } from '../chart-options'
+import { donutOption, formatNumber, formatTokens, topWithOthers, type RankItem } from '../chart-options'
 import { exportCsv } from '../utils/csv'
 import { percent } from '../composables/metrics'
 import type { ModelsPayload } from '../types'
