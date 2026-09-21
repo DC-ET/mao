@@ -353,7 +353,7 @@ const {
 })
 let restoreGeneration = 0
 
-watch(() => sessionStore.activeSessionId, (newSid) => {
+function restoreForActiveSession(newSid: string | null) {
   const generation = ++restoreGeneration
   cancelRestore()
   if (!newSid) {
@@ -374,6 +374,10 @@ watch(() => sessionStore.activeSessionId, (newSid) => {
     completeRestore(scrollGeneration)
     nextTick(() => chatInputRef.value?.focusInput())
   })
+}
+
+watch(() => sessionStore.activeSessionId, (newSid) => {
+  restoreForActiveSession(newSid)
 })
 
 watch(isNewTaskMode, (enabled) => {
@@ -483,6 +487,11 @@ onMounted(async () => {
   window.addEventListener('resize', syncMobileViewport, { passive: true })
   window.visualViewport?.addEventListener('resize', syncKeyboardOpen, { passive: true })
   syncKeyboardOpen()
+
+  // 任务执行中进入设置页再返回工作台时，TaskView/ChatPanel 整体卸载重建，
+  // 而 store 的 activeSessionId 未变化，watcher 不会触发 → 新实例的
+  // restoreSession 不执行，表现为执行状态不更新。挂载时兜底恢复一次。
+  restoreForActiveSession(sessionStore.activeSessionId)
 
   // 获取模型列表，用于新建任务模式下判断视觉能力
   try {
