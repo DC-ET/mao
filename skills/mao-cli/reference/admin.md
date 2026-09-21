@@ -66,7 +66,7 @@ CLI：`mao agent list|get|create|update` 等（见 [agent.md](agent.md)）。
 
 ## 指令管理
 
-维护快捷指令。页面分两个 Tab：
+侧边栏位于「能力」分组、「Skills 管理」下方。维护快捷指令。页面分两个 Tab：
 
 | Tab | 内容 |
 |-----|------|
@@ -153,7 +153,7 @@ CLI：`mao llm-call list`（见 [llm-call.md](llm-call.md)）。
 
 ## 飞书机器人通道
 
-「飞书机器人」页面管理飞书自建应用机器人：每个机器人独立配置 App ID / App Secret、Agent、模型，可启用/停用/删除。App Secret 以 `APP_FEISHU_BOT_SECRET` 加密存储，不返回明文；未配置该密钥时无法添加机器人。
+侧边栏位于「能力」分组、「Skills 管理」上方。「飞书机器人」页面管理飞书自建应用机器人：每个机器人独立配置 App ID / App Secret、Agent、模型，可启用/停用/删除。App Secret 以 `APP_FEISHU_BOT_SECRET` 加密存储，不返回明文；未配置该密钥时无法添加机器人。
 
 启用后服务端与飞书建立长连接接收消息：用户在飞书内私聊或群里 @ 机器人即可触发对应 Agent。用户绑定流程见 [feishu-bot.md](feishu-bot.md)。
 

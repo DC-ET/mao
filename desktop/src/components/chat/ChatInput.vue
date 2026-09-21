@@ -846,8 +846,17 @@ const editor = useEditor({
 // ===== Draft (per-session input draft) =====
 
 function buildCurrentDraft(): DraftEntry {
+  let html = editorContent.value || ''
+  const ed = editor.value
+  if (ed) {
+    try {
+      if (!ed.isDestroyed) html = ed.getHTML()
+    } catch {
+      // 卸载过程中 schema 可能已空，回退纯文本
+    }
+  }
   return {
-    html: editor.value?.getHTML() ?? '',
+    html,
     text: editorContent.value,
     files: pendingFiles.value.map((item) => ({ file: item.file, previewUrl: item.previewUrl })),
   }
@@ -1386,7 +1395,11 @@ onBeforeUnmount(() => {
     fileSearchDebounce = null
   }
   // 兜底保存当前草稿（覆盖 KeepAlive 淘汰 / 路由离开）
-  saveDraft(props.draftKey)
+  try {
+    saveDraft(props.draftKey)
+  } catch {
+    // 编辑器已随父级卸载时 getHTML 可能抛错，不能阻断路由切换
+  }
   const entry = props.draftKey ? draftStore.getDraft(props.draftKey) : undefined
   // 预览 URL 所有权已随草稿转移：仍有草稿条目时不 revoke，避免切回后预览失效
   if (!entry) {

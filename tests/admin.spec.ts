@@ -305,12 +305,25 @@ test.describe('Sidebar Navigation', () => {
     await expect(page.locator('.el-menu-item-group__title')).toContainText(['能力', '运行', '安全', '系统'])
   })
 
+  test('should place feishu bot above skills and commands below', async ({ page }) => {
+    const labels = (await page.locator('.sidebar-menu .el-menu-item').allTextContents())
+      .map(text => text.replace(/\s+/g, ' ').trim())
+    const skillIdx = labels.findIndex(text => text.includes('Skills 管理'))
+    const feishuIdx = labels.findIndex(text => text.includes('飞书机器人'))
+    const commandIdx = labels.findIndex(text => text.includes('指令管理'))
+    expect(skillIdx).toBeGreaterThanOrEqual(0)
+    expect(feishuIdx).toBe(skillIdx - 1)
+    expect(commandIdx).toBe(skillIdx + 1)
+  })
+
   test('should navigate between all pages via sidebar', async ({ page }) => {
     const navItems = [
       { label: '用量分析', url: /\/analytics$/ },
       { label: 'Agent 管理', url: /\/agents$/ },
       { label: '模型管理', url: /\/models$/ },
+      { label: '飞书机器人', url: /\/feishu-bots$/ },
       { label: 'Skills 管理', url: /\/skills$/ },
+      { label: '指令管理', url: /\/system-commands$/ },
       { label: '会话管理', url: /\/sessions$/ },
       { label: '调用流水', url: /\/llm-calls$/ },
       { label: '用户管理', url: /\/users$/ },

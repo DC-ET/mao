@@ -106,7 +106,9 @@ const menuGroups: MenuGroup[] = [
     items: [
       { index: '/agents', label: 'Agent 管理', icon: Monitor, permission: 'agent:read' },
       { index: '/models', label: '模型管理', icon: Connection, permission: 'model:read' },
+      { index: '/feishu-bots', label: '飞书机器人', icon: ChatLineRound, adminOnly: true },
       { index: '/skills', label: 'Skills 管理', icon: MagicStick, permission: 'agent:read' },
+      { index: '/system-commands', label: '指令管理', icon: Promotion, adminOnly: true },
       { index: '/mcp-servers', label: 'MCP 服务器', icon: Link, adminOnly: true }
     ]
   },
@@ -132,8 +134,6 @@ const menuGroups: MenuGroup[] = [
     id: 'system',
     label: '系统',
     items: [
-      { index: '/system-commands', label: '指令管理', icon: Promotion, adminOnly: true },
-      { index: '/feishu-bots', label: '飞书机器人', icon: ChatLineRound, adminOnly: true },
       { index: '/settings', label: '系统设置', icon: Setting, permission: 'settings:read' }
     ]
   }

@@ -55,6 +55,16 @@
           </el-icon>
         </div>
       </el-tooltip>
+      <el-tooltip content="设置" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
+        <router-link
+          to="/settings"
+          class="theme-toggle settings-toggle"
+          :class="{ active: isSettingsRoute }"
+          aria-label="设置"
+        >
+          <el-icon :size="16"><Setting /></el-icon>
+        </router-link>
+      </el-tooltip>
       <template v-if="authStore.user">
         <el-dropdown @command="handleCommand" trigger="click">
           <div class="nav-user" role="button" aria-label="用户菜单">
@@ -67,10 +77,6 @@
               <el-dropdown-item command="profile">
                 <el-icon><User /></el-icon>
                 个人信息
-              </el-dropdown-item>
-              <el-dropdown-item command="settings">
-                <el-icon><Setting /></el-icon>
-                设置
               </el-dropdown-item>
               <el-dropdown-item command="logout">
                 <el-icon><SwitchButton /></el-icon>
@@ -320,8 +326,6 @@ async function handleUpdateClick() {
 async function handleCommand(command: string) {
   if (command === 'profile') {
     router.push('/settings/profile')
-  } else if (command === 'settings') {
-    router.push('/settings')
   } else if (command === 'logout') {
     await authStore.logout()
   }
@@ -474,6 +478,11 @@ async function handleCommand(command: string) {
 .theme-toggle:hover {
   color: var(--aw-nav-text);
   background: rgba(0, 0, 0, 0.06);
+}
+
+a.settings-toggle {
+  text-decoration: none;
+  color: var(--aw-nav-text-muted);
 }
 
 .theme-toggle.active {

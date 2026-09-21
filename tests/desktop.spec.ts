@@ -472,3 +472,37 @@ test.describe('Session Search', () => {
     await expect(page.locator('.top-nav')).toHaveCount(0)
   })
 })
+
+// ─────────────────────────────────────────────────────────
+// Desktop - Settings entry
+// ─────────────────────────────────────────────────────────
+test.describe('Desktop - Settings entry', () => {
+  test('should show settings gear on top nav and open settings page', async ({ page }) => {
+    await mockLoggedInDesktopApi(page)
+    await page.goto('/settings/profile')
+    await expect(page.locator('.settings-toggle')).toBeVisible({ timeout: 15_000 })
+    await expect(page.locator('.settings-toggle')).toHaveClass(/active/)
+    await expect(page.locator('.settings-layout')).toBeVisible()
+    await expect(page.locator('.settings-title')).toHaveText('设置')
+    await expect(page.getByRole('heading', { name: '个人信息' })).toBeVisible()
+  })
+
+  test('should open settings when clicking top nav gear from workbench', async ({ page }) => {
+    await mockLoggedInDesktopApi(page)
+    await page.goto('/')
+    await expect(page.getByRole('heading', { name: '今天想完成什么？' })).toBeVisible({ timeout: 15_000 })
+    await page.locator('.settings-toggle').click()
+    await expect(page.locator('.settings-layout')).toBeVisible({ timeout: 10_000 })
+    await expect(page.locator('.settings-title')).toHaveText('设置')
+  })
+
+  test('should keep profile and logout in avatar menu without settings', async ({ page }) => {
+    await mockLoggedInDesktopApi(page)
+    await page.goto('/')
+    await page.waitForSelector('.top-nav', { timeout: 15_000 })
+    await page.getByRole('button', { name: '用户菜单' }).click()
+    await expect(page.getByRole('menuitem', { name: '个人信息' })).toBeVisible()
+    await expect(page.getByRole('menuitem', { name: '退出登录' })).toBeVisible()
+    await expect(page.getByRole('menuitem', { name: '设置' })).toHaveCount(0)
+  })
+})
