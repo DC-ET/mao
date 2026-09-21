@@ -36,6 +36,7 @@ function baseSessionService() {
     updatePhase: vi.fn(async () => undefined),
     cleanupIncompleteTail: vi.fn(async () => 0),
     getPhase: vi.fn(async (): Promise<string | null> => null),
+    getMessages: vi.fn(async () => []),
   };
 }
 
@@ -512,6 +513,32 @@ describe('AgentFeishuInboundHandler', () => {
     expect(harness.execute).toHaveBeenCalledTimes(1);
     expect(updates).toContainEqual({ status: 'RUNNING', content: '正在重试，请稍候…' });
     expect(updates).toContainEqual({ status: 'COMPLETED', content: '重试后的答案' });
+  });
+
+  it('retryExecution continues the progress card round from prior assistant messages', async () => {
+    const sessionService = makeSessionService({
+      getPhase: vi.fn(async () => 'FAILED'),
+      getMessages: vi.fn(async () => [
+        { role: 'USER' }, { role: 'ASSISTANT' }, { role: 'TOOL' }, { role: 'ASSISTANT' },
+      ]),
+      getLatestAssistantReply: vi.fn(async () => '重试后的答案'),
+    });
+    const rounds: number[] = [];
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) } as never,
+      createCancelFlag: makeFlag,
+      releaseCancelFlag: vi.fn(),
+      listenerFactory: async () => listener,
+      onExecutionFinished: async () => undefined,
+    });
+    await handler.retryExecution(7, async () => ({
+      update: async (_status: string, round: number) => { rounds.push(round); },
+    }));
+    await vi.waitFor(() => {
+      expect(rounds.length).toBeGreaterThan(0);
+    });
+    expect(rounds[0]).toBe(2);
   });
 
   it('retryExecution returns ok without waiting for the full execution', async () => {

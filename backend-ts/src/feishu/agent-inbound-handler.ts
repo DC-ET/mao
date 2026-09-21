@@ -5,7 +5,7 @@ import { userMessagePayloadOf } from '../session/ws/streaming-ws-handler.js';
 import { wsEvent } from '../session/ws/ws-event.js';
 import { CompositeAgentEventListener } from '../harness/core/composite-agent-event-listener.js';
 import { NoopAgentEventListener } from '../harness/core/agent-event-listener.js';
-import { FeishuCardProgressListener, type FeishuCardProgress } from './card-progress-listener.js';
+import { FeishuCardProgressListener, countCompletedAgentRounds, type FeishuCardProgress } from './card-progress-listener.js';
 import { isInboundFileMessage } from './event-normalizer.js';
 
 export interface FeishuSessionAdapter {
@@ -13,6 +13,8 @@ export interface FeishuSessionAdapter {
   /** 保存用户消息。metadata 用于标记该消息与某条队列行的关联（hydrate 判断消息是否已落库）。 */
   saveUserMessage(sessionId: number, content: unknown, metadata?: string | null): Promise<void>;
   getLatestAssistantReply(sessionId: number): Promise<string>;
+  /** 读取会话消息，供失败重试把进度卡片轮次接到已完成的助手轮之后。 */
+  getMessages?(sessionId: number): Promise<Array<{ role?: string | null }>>;
   /** 执行前重置会话 phase（如 RUNNING），避免上一轮终态（FAILED/CANCELLED）触发 AgentLoop 取消。 */
   updatePhase?(sessionId: number, phase: string): Promise<void>;
   /** 清理取消/失败执行残留的不完整消息尾部，避免污染后续上下文。 */
@@ -239,10 +241,16 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     try {
       await this.options.sessionService.cleanupIncompleteTail?.(sessionId);
       await this.options.sessionService.updatePhase?.(sessionId, 'RUNNING');
-      cardListener = new FeishuCardProgressListener(progress);
+      let roundOffset = 0;
+      try {
+        roundOffset = countCompletedAgentRounds(await this.options.sessionService.getMessages?.(sessionId));
+      } catch {
+        roundOffset = 0;
+      }
+      cardListener = new FeishuCardProgressListener(progress, roundOffset);
       // 立刻把原失败卡刷成执行中，避免用户点击后卡片仍停留在失败态。
       try {
-        await progress.update('RUNNING', 0, '正在重试，请稍候…', []);
+        await progress.update('RUNNING', roundOffset, '正在重试，请稍候…', []);
       } catch (error) {
         console.warn(`飞书重试进度卡片首次 PATCH 失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
       }

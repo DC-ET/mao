@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FeishuCardProgressListener } from './card-progress-listener.js';
+import { FeishuCardProgressListener, countCompletedAgentRounds } from './card-progress-listener.js';
 
 describe('FeishuCardProgressListener', () => {
   it('updates one round with content and tool summary, then completes', async () => {
@@ -35,6 +35,61 @@ describe('FeishuCardProgressListener', () => {
     expect(updates[updates.length - 1]).toEqual(['first：first', 'second：执行中…']);
   });
 
+  it('shows the shell command while the tool is still running', async () => {
+    const updates: string[][] = [];
+    const listener = new FeishuCardProgressListener({
+      update: async (_status, _round, _content, tools) => { updates.push(tools); },
+    });
+    listener.onRoundStart(1);
+    listener.onToolCallStart({ id: 'sh', function: { name: 'shell', arguments: '{"command":"npm test"}' } });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(updates[0]).toEqual(['shell：`npm test`（执行中）']);
+  });
+
+  it('refreshes the card when streamed shell arguments become parseable', async () => {
+    const updates: string[][] = [];
+    const listener = new FeishuCardProgressListener({
+      update: async (_status, _round, _content, tools) => { updates.push(tools); },
+    });
+    listener.onRoundStart(1);
+    listener.onToolCallStart({ id: 'sh', function: { name: 'shell', arguments: '{"command":' } });
+    listener.onToolCallArgsDelta('sh', '{"command":"pwd && ls"}');
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(updates[0]).toEqual(['shell：执行中…']);
+    expect(updates[updates.length - 1]).toEqual(['shell：`pwd && ls`（执行中）']);
+  });
+
+  it('truncates a long running shell command and keeps write_stdin readable', async () => {
+    const updates: string[][] = [];
+    const listener = new FeishuCardProgressListener({
+      update: async (_status, _round, _content, tools) => { updates.push(tools); },
+    });
+    const longCommand = `echo ${'a'.repeat(100)}`;
+    listener.onRoundStart(1);
+    listener.onToolCallStart({ id: 'long', function: { name: 'shell', arguments: JSON.stringify({ command: longCommand }) } });
+    listener.onToolCallStart({ id: 'stdin', function: { name: 'shell', arguments: '{"action":"write_stdin","input":"hello world"}' } });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(updates[0][0]).toBe(`shell：\`${longCommand.slice(0, 80)}…\`（执行中）`);
+    expect(updates[updates.length - 1]).toEqual([
+      `shell：\`${longCommand.slice(0, 80)}…\`（执行中）`,
+      'shell：写入 stdin: hello world（执行中）',
+    ]);
+  });
+
+  it('replaces the running shell command with the result summary', async () => {
+    const updates: string[][] = [];
+    const listener = new FeishuCardProgressListener({
+      update: async (_status, _round, _content, tools) => { updates.push(tools); },
+    });
+    listener.onRoundStart(1);
+    listener.onToolCallStart({ id: 'sh', function: { name: 'shell', arguments: '{"command":"pwd"}' } });
+    listener.onToolCallResult('sh', '{"exit_code":0,"output":"/tmp"}');
+    listener.onRoundEnd(1);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(updates[0]).toEqual(['shell：`pwd`（执行中）']);
+    expect(updates[updates.length - 1]).toEqual(['shell：执行 pwd']);
+  });
+
   it('swallows card update failures', async () => {
     const listener = new FeishuCardProgressListener({ update: async () => { throw new Error('offline'); } });
     listener.onMessageEnd({ promptTokens: 0, completionTokens: 0, totalTokens: 0 });
@@ -55,5 +110,36 @@ describe('FeishuCardProgressListener', () => {
     release();
     await cancelled;
     expect(updates).toEqual(['RUNNING', 'CANCELLED']);
+  });
+
+  it('offsets recovered loop rounds so the card continues from prior history', async () => {
+    const updates: Array<{ round: number; tools: string[] }> = [];
+    const listener = new FeishuCardProgressListener({
+      update: async (_status, round, _content, tools) => { updates.push({ round, tools }); },
+    }, 78);
+    listener.onRoundStart(1);
+    listener.onToolCallStart({ id: 'sh', function: { name: 'shell', arguments: '{"command":"pwd"}' } });
+    listener.onToolCallResult('sh', '{"exit_code":0,"output":"/tmp"}');
+    listener.onRoundEnd(1);
+    await listener.complete('done');
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(updates[0]).toEqual({ round: 79, tools: ['shell：`pwd`（执行中）'] });
+    expect(updates[updates.length - 2]).toEqual({ round: 79, tools: ['shell：执行 pwd'] });
+    expect(updates[updates.length - 1]).toEqual({ round: 79, tools: [] });
+  });
+});
+
+describe('countCompletedAgentRounds', () => {
+  it('counts assistant messages after the last user turn', () => {
+    expect(countCompletedAgentRounds(null)).toBe(0);
+    expect(countCompletedAgentRounds([])).toBe(0);
+    expect(countCompletedAgentRounds([
+      { role: 'USER' }, { role: 'ASSISTANT' }, { role: 'TOOL' }, { role: 'ASSISTANT' },
+    ])).toBe(2);
+    expect(countCompletedAgentRounds([
+      { role: 'USER' }, { role: 'ASSISTANT' },
+      { role: 'USER' }, { role: 'ASSISTANT' }, { role: 'ASSISTANT' }, { role: 'ASSISTANT' },
+    ])).toBe(3);
+    expect(countCompletedAgentRounds([{ role: 'SYSTEM' }, { role: 'ASSISTANT' }])).toBe(1);
   });
 });
