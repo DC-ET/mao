@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeFeishuEvent } from './event-normalizer.js';
+import { isInboundFileMessage, normalizeFeishuEvent } from './event-normalizer.js';
 
 describe('normalizeFeishuEvent', () => {
   it('parses p2p text message with sender ids', () => {
@@ -338,6 +338,9 @@ describe('normalizeFeishuEvent', () => {
     expect(event!.messageType).toBe('file');
     expect(event!.fileKey).toBe('file_xyz');
     expect(event!.fileName).toBe('report.pdf');
+    expect(isInboundFileMessage(event!)).toBe(true);
+    expect(isInboundFileMessage({ messageType: 'image' })).toBe(false);
+    expect(isInboundFileMessage({ messageType: 'text' })).toBe(false);
   });
 
   it('parses post rich text message with embedded images (图片+文字)', () => {

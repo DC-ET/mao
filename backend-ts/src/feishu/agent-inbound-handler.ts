@@ -6,6 +6,7 @@ import { wsEvent } from '../session/ws/ws-event.js';
 import { CompositeAgentEventListener } from '../harness/core/composite-agent-event-listener.js';
 import { NoopAgentEventListener } from '../harness/core/agent-event-listener.js';
 import { FeishuCardProgressListener, type FeishuCardProgress } from './card-progress-listener.js';
+import { isInboundFileMessage } from './event-normalizer.js';
 
 export interface FeishuSessionAdapter {
   getOrCreateSession(accountId: string, context: FeishuInboundContext): Promise<{ id: number; workspace?: string | null; executionUserId?: number | null }>;
@@ -119,6 +120,10 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
   private readonly interrupted = new Set<number>();
   /** p2p chat 级互斥：序列化指令判定→指针切换→归属确定的临界区（key = accountId:sender）。 */
   private readonly p2pChatMutex = new Map<string, Promise<void>>();
+  /** 同一会话的文件入站下载/落库门闩：后续文字执行前必须等在途文件 ingest 完成。 */
+  private readonly fileIngestGates = new Map<number, Promise<unknown>>();
+  /** 会话忙碌时暂存的文件引用，合并进下一句文字或在空闲时落库（不单独触发 Agent）。 */
+  private readonly pendingAttachments = new Map<number, string[]>();
 
   constructor(private readonly options: {
     sessionService: FeishuSessionAdapter;
@@ -315,7 +320,15 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
    * 执行/入队在锁外按 sessionId 粒度互斥，旧会话执行不阻塞新会话消息（允许并行）。
    */
   private async onP2pMessage(context: FeishuInboundContext): Promise<FeishuReply | null> {
-    const outcome = await this.withP2pChatLock(context, () => this.resolveP2pInbound(context));
+    const outcome = await this.withP2pChatLock(context, async () => {
+      const resolved = await this.resolveP2pInbound(context);
+      // 文件入站放在 chat 锁内：下一句文字的归属判定会等到下载/落库完成，避免未带附件就开跑。
+      if (!resolved.intercepted && resolved.session != null && isInboundFileMessage(context)) {
+        await this.ingestFileWithoutExecute(resolved.session, context);
+        return { ...resolved, intercepted: true };
+      }
+      return resolved;
+    });
     if (outcome.confirm != null) {
       await this.reply(context, outcome.confirm.text, outcome.confirm.sessionId ?? undefined);
     }
@@ -413,6 +426,11 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     context: FeishuInboundContext,
   ): Promise<FeishuReply | null> {
     const sessionId = session.id;
+    if (isInboundFileMessage(context)) {
+      await this.ingestFileWithoutExecute(session, context);
+      return null;
+    }
+    await this.awaitFileIngest(sessionId);
     const message = await this.buildMessage(context, session.workspace ?? null);
 
     // 忙时立即入队（不等待锁）：同一会话执行中（含崩溃恢复中的 RUNNING/RESUMING），
@@ -440,20 +458,20 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
         this.interrupted.delete(sessionId);
       }
     });
-    // 本消息执行结束（或入队后队列需推进）时，尝试接力消费下一个排队任务；
+    // 本消息执行结束（或入队后队列需推进）时，先把忙碌期间收到的文件落库，再接力消费队列；
     // 上一任务 FAILED 时不再自动消费下一条（延续失败上下文执行会产生不可信结果）。
-    if (executed && phase !== 'FAILED') void this.drainNext(sessionId).catch((error) => {
-      console.error(`飞书队列消费接力异常, sessionId=${sessionId}`, error);
-    });
+    if (executed && phase !== 'FAILED') {
+      void this.flushAttachmentsAndDrain(sessionId, session.executionUserId ?? context.maoUserId ?? null)
+        .catch((error) => {
+          console.error(`飞书队列消费接力异常, sessionId=${sessionId}`, error);
+        });
+    }
     return null;
   }
 
   /** 供 CrashRecoveryRunner 恢复后接力消费：检查是否有排队消息待执行。 */
   async drainNextIfPending(sessionId: number): Promise<void> {
-    const queueService = this.options.queueService;
-    if (queueService == null) return;
-    if (!(await queueService.hasPending(sessionId))) return;
-    void this.drainNext(sessionId).catch((error) => {
+    void this.flushAttachmentsAndDrain(sessionId, null).catch((error) => {
       console.error(`飞书队列消费异常, sessionId=${sessionId}`, error);
     });
   }
@@ -478,11 +496,21 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     }
   }
 
-  private async drainNext(sessionId: number): Promise<void> {
+  private async flushAttachmentsAndDrain(sessionId: number, executionUserId: number | null): Promise<void> {
+    const ingest = this.fileIngestGates.get(sessionId);
+    if (ingest != null) await ingest;
+    await this.drainNext(sessionId, executionUserId);
+  }
+
+  private async drainNext(sessionId: number, executionUserId: number | null = null): Promise<void> {
     const queueService = this.options.queueService;
-    if (queueService == null) return;
     const phase = await this.withLock(sessionId, async () => {
       if (await this.isBusyOrRecovering(sessionId)) return null;
+      // 忙碌期间暂存的文件必须在会话锁内落库，避免与 execute / 下一次 ingest 交错丢附件或插进执行中的消息流。
+      if (this.hasPendingAttachments(sessionId)) {
+        await this.persistPendingAttachments(sessionId, executionUserId);
+      }
+      if (queueService == null) return null;
       const item = await queueService.claimNext(sessionId);
       if (item == null) return null;
       this.busy.add(sessionId);
@@ -568,18 +596,7 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
       const metadata = queueRow != null ? JSON.stringify({ [AgentFeishuInboundHandler.QUEUE_METADATA_KEY]: queueRow.id }) : null;
       const messageForEcho = message;
       await this.options.sessionService.saveUserMessage(sessionId, message, metadata);
-      // 多端同步：飞书通道落库的用户消息同步广播给该用户所有已连接端（桌面/Web/安卓），
-      // content/images 由统一提取器解析，桌面端按 messageId 去重后回显。
-      if (executionUserId != null) {
-        const payload = userMessagePayloadOf(messageForEcho);
-        this.options.registry?.send(executionUserId, wsEvent('user_message_saved', sessionId, {
-          messageId: null,
-          source: 'feishu',
-          tempEventId: '',
-          content: payload.content,
-          ...(payload.images.length > 0 ? { images: payload.images } : {}),
-        }));
-      }
+      this.echoUserMessageSaved(sessionId, executionUserId, messageForEcho);
       const eventId = await this.options.harnessService.prepareMessage(sessionId, message);
       executionId = eventId || '';
       const listener = await this.options.listenerFactory?.(sessionId, context, executionId);
@@ -674,6 +691,101 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     const media = await this.options.downloadMedia?.(context, workspace) ?? null;
     if (media == null) return text;
     return this.composeContent(text, media);
+  }
+
+  /** 纯文件入站：下载并写入会话（或忙碌时暂存），不 execute / 不入队 / 不发进度卡。 */
+  private ingestFileWithoutExecute(
+    session: { id: number; workspace?: string | null; executionUserId?: number | null },
+    context: FeishuInboundContext,
+  ): Promise<void> {
+    return this.runFileIngest(session.id, () => this.doIngestFile(session, context));
+  }
+
+  private async doIngestFile(
+    session: { id: number; workspace?: string | null; executionUserId?: number | null },
+    context: FeishuInboundContext,
+  ): Promise<void> {
+    const sessionId = session.id;
+    const media = await this.options.downloadMedia?.(context, session.workspace ?? null)
+      ?? { images: [], imagePaths: [], filePaths: [], errors: [] };
+    const content = this.fileAttachmentContent(context, media);
+    if (await this.isBusyOrRecovering(sessionId)) {
+      this.stashPendingAttachment(sessionId, content);
+      return;
+    }
+    await this.withLock(sessionId, async () => {
+      if (await this.isBusyOrRecovering(sessionId)) {
+        this.stashPendingAttachment(sessionId, content);
+        return;
+      }
+      await this.saveAttachmentMessage(sessionId, content, session.executionUserId ?? context.maoUserId ?? null);
+    });
+  }
+
+  private fileAttachmentContent(context: FeishuInboundContext, media: FeishuMediaDownload): string {
+    const named = context.fileName?.trim();
+    const label = named != null && named !== ''
+      ? `[文件:${named}]`
+      : (context.text?.trim() || '[文件]');
+    const composed = this.composeContent(label, media);
+    return typeof composed === 'string' ? composed : label;
+  }
+
+  private stashPendingAttachment(sessionId: number, content: string): void {
+    const trimmed = content.trim();
+    if (trimmed === '') return;
+    const existing = this.pendingAttachments.get(sessionId) ?? [];
+    existing.push(trimmed);
+    this.pendingAttachments.set(sessionId, existing);
+  }
+
+  private hasPendingAttachments(sessionId: number): boolean {
+    const lines = this.pendingAttachments.get(sessionId);
+    return lines != null && lines.length > 0;
+  }
+
+  /** 将暂存附件写入会话。调用方必须已持有该 sessionId 的 withLock。 */
+  private async persistPendingAttachments(sessionId: number, executionUserId: number | null): Promise<void> {
+    const lines = this.pendingAttachments.get(sessionId);
+    if (lines == null || lines.length === 0) return;
+    this.pendingAttachments.delete(sessionId);
+    const content = lines.join('\n');
+    await this.saveAttachmentMessage(sessionId, content, executionUserId);
+  }
+
+  private async saveAttachmentMessage(sessionId: number, content: string, executionUserId: number | null): Promise<void> {
+    if (content.trim() === '') return;
+    await this.options.sessionService.saveUserMessage(sessionId, content, null);
+    this.echoUserMessageSaved(sessionId, executionUserId, content);
+  }
+
+  private runFileIngest<T>(sessionId: number, fn: () => Promise<T>): Promise<T> {
+    const previous = this.fileIngestGates.get(sessionId) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => { release = resolve; });
+    const queued = previous.then(() => current);
+    this.fileIngestGates.set(sessionId, queued);
+    return previous.then(fn).finally(() => {
+      release();
+      if (this.fileIngestGates.get(sessionId) === queued) this.fileIngestGates.delete(sessionId);
+    });
+  }
+
+  private async awaitFileIngest(sessionId: number): Promise<void> {
+    const gate = this.fileIngestGates.get(sessionId);
+    if (gate != null) await gate;
+  }
+
+  private echoUserMessageSaved(sessionId: number, executionUserId: number | null, message: unknown): void {
+    if (executionUserId == null) return;
+    const payload = userMessagePayloadOf(message);
+    this.options.registry?.send(executionUserId, wsEvent('user_message_saved', sessionId, {
+      messageId: null,
+      source: 'feishu',
+      tempEventId: '',
+      content: payload.content,
+      ...(payload.images.length > 0 ? { images: payload.images } : {}),
+    }));
   }
 
   private composeContent(text: string, media: FeishuMediaDownload): string | FeishuContentPart[] {

@@ -352,6 +352,35 @@ describe('FeishuInboundProcessor', () => {
     expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({ text: '[文件:a.pdf msg=om_1]' }));
   });
 
+  it('pre-downloads group file in background and upgrades log content with local path', async () => {
+    messageService.claimInboundMessage.mockResolvedValueOnce(true);
+    messageService.recordGroupMessage.mockResolvedValueOnce(201);
+    const downloadGroupFile = vi.fn(async () => '/ws/feishu-chat/1/oc_group/report.pdf');
+    const processor = new FeishuInboundProcessor(makeHandler(), { messageService, downloadGroupFile });
+    await processor.process('1', makeEvent({ messageType: 'file', fileKey: 'file_1', fileName: 'report.pdf', text: '', isBotMentioned: false }));
+    expect(messageService.recordGroupMessage).toHaveBeenCalledWith('1',
+      expect.objectContaining({ text: '[文件:report.pdf msg=om_1]' }), false);
+    await vi.waitFor(() => expect(downloadGroupFile).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(messageService.updateGroupMessageContent)
+      .toHaveBeenCalledWith(201, '[文件已保存: @{/ws/feishu-chat/1/oc_group/report.pdf}@]'));
+  });
+
+  it('does not build group context when a mentioned file is ingested', async () => {
+    messageService.claimInboundMessage.mockResolvedValueOnce(true);
+    messageService.recordGroupMessage.mockResolvedValueOnce(202);
+    messageService.buildGroupContext.mockClear();
+    const onMessage = vi.fn(async () => null);
+    const processor = new FeishuInboundProcessor(makeHandler(onMessage), {
+      messageService,
+      authorizeSender: async () => true,
+    });
+    await processor.process('1', makeEvent({
+      messageType: 'file', fileKey: 'file_1', fileName: 'a.pdf', text: '', isBotMentioned: true,
+    }));
+    expect(onMessage).toHaveBeenCalledOnce();
+    expect(messageService.buildGroupContext).not.toHaveBeenCalled();
+  });
+
   it('normalizes p2p post image+text keeping text and image keys (图片+文字)', async () => {
     messageService.claimInboundMessage.mockResolvedValueOnce(true);
     const onMessage = vi.fn(async (ctx: FeishuInboundContext) => ({ text: ctx.text }));

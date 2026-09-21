@@ -1642,10 +1642,26 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     await writeFile(target, buffer);
     return target;
   };
+  const downloadFeishuGroupFile = async (accountId: string, event: FeishuNormalizedMessage): Promise<string | null> => {
+    if (event.chatType !== 'group' || event.chatId == null || event.messageId == null || event.fileKey == null) return null;
+    const client = await getFeishuClient(Number(accountId));
+    if (client == null) return null;
+    const workspace = resolveFeishuChatWorkspace(cfg.app.harness.workspaceRoot, accountId, event.chatId);
+    const maxBytes = Math.max(1, cfg.feishu.bot.file.maxInboundFileMb) * 1024 * 1024;
+    const { buffer } = await downloadFeishuMediaBuffer(client, event.messageId, event.fileKey, 'file', maxBytes);
+    if (buffer.length === 0) return null;
+    const dir = chatFilesDirOf(workspace);
+    mkdirSync(dir, { recursive: true });
+    const fileName = sanitizeFeishuFileName(event.fileName, `feishu-${event.fileKey}`);
+    const target = resolve(dir, fileName);
+    await writeFile(target, buffer);
+    return target;
+  };
   const feishuInboundProcessor = new FeishuInboundProcessor(feishuInboundHandler, {
     messageService: feishuMessageService,
     resolveSenderName: resolveFeishuSenderName,
     downloadGroupImage: downloadFeishuGroupImage,
+    downloadGroupFile: downloadFeishuGroupFile,
     resolveThreadSession: async (accountId, event) => {
       const result = await feishuMessageService.findThreadSession(String(accountId), event.threadId);
       return result == null ? null : { sessionId: result.sessionId };

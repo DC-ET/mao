@@ -1,5 +1,5 @@
 import type { FeishuInboundHandler, FeishuNormalizedMessage, FeishuInboundContext, FeishuReply } from './types.js';
-import { inboundImageKeys } from './event-normalizer.js';
+import { inboundImageKeys, isInboundFileMessage } from './event-normalizer.js';
 import type { FeishuMessageService } from './message.service.js';
 import { botSenderLabel, isBotSender } from './message.service.js';
 import { describeMessageText, FEISHU_CARD_UPGRADE_FALLBACK } from './message-detail.js';
@@ -20,6 +20,8 @@ export interface FeishuInboundProcessorOptions {
   resolveQuotedMessage?: (accountId: string, event: FeishuNormalizedMessage) => Promise<string | null>;
   /** 群聊图片入站即下载（非懒加载）：按 imageKey 下载并返回落盘绝对路径嵌入占位文本；null/抛错表示失败，保留懒加载占位符。 */
   downloadGroupImage?: (accountId: string, event: FeishuNormalizedMessage, imageKey: string, index: number) => Promise<string | null>;
+  /** 群聊文件入站即下载：返回落盘绝对路径嵌入占位文本；null/抛错保留懒加载占位符。 */
+  downloadGroupFile?: (accountId: string, event: FeishuNormalizedMessage) => Promise<string | null>;
   /** 话题会话映射查询：threadId 存在且映射命中（机器人已在该话题中）时免 @ 触发。 */
   resolveThreadSession?: (accountId: string, event: FeishuNormalizedMessage) => Promise<{ sessionId: number } | null>;
   /** interactive 卡片入站占位升级：事件 content 被飞书降级时按 messageId 拉详情补真实文本；null/抛错保留占位。 */
@@ -100,6 +102,18 @@ export class FeishuInboundProcessor {
         return;
       }
       const resolvedUserId = await this.options.resolveUserId?.(accountId, named);
+      // 纯文件：只下载并交给 handler 落库，不拼群上下文、不触发任务（飞书文件与文字分两条消息）。
+      if (isInboundFileMessage(named)) {
+        const quotedContext = await this.resolveQuoted(accountId, named);
+        const fileContext: FeishuInboundContext = {
+          ...named, accountId, messageId, maoUserId: resolvedUserId ?? undefined,
+          senderLabel: this.options.senderLabel?.(named) ?? defaultSenderLabel(named),
+          quotedContext,
+        };
+        await this.runInChatOrder(accountId, named.chatId, () => this.handler.onMessage(fileContext));
+        completed = true;
+        return;
+      }
       // 同群内上下文读取排在更早消息的入库之后（runInChatOrder 保序），保证图片等先到消息已可见。
       const group = await this.runInChatOrder(accountId, named.chatId,
         () => messageService.buildGroupContext(accountId, { ...named, accountId, messageId, maoUserId: resolvedUserId ?? undefined }));
@@ -142,7 +156,7 @@ export class FeishuInboundProcessor {
     }
   }
 
-  /** 群消息后台富化（不阻塞入库与触发时序）：补齐发送人显示名；图片消息入站预下载，
+  /** 群消息后台富化（不阻塞入库与触发时序）：补齐发送人显示名；图片/文件消息入站预下载，
    * 成功则将日志行占位文本升级为携带 @{路径}@ 引用（Agent 免工具直接读取），失败保留懒加载占位符；
    * interactive 卡片事件 content 被飞书降级时，按 messageId 拉详情补真实文本。 */
   private async enrichGroupMessage(accountId: string, logId: number, event: FeishuNormalizedMessage): Promise<void> {
@@ -154,6 +168,7 @@ export class FeishuInboundProcessor {
         await messageService.updateGroupMessageSenderName(logId, resolved.senderName);
       }
       await this.prewarmGroupImage(accountId, logId, event);
+      await this.prewarmGroupFile(accountId, logId, event);
       await this.prewarmGroupCardText(accountId, logId, event);
     } catch (error) {
       console.warn(`飞书群消息后台富化失败, messageId=${event.messageId}: ${error instanceof Error ? error.message : String(error)}`);
@@ -179,6 +194,18 @@ export class FeishuInboundProcessor {
       ? `[图片已保存: ${refs.join(' ')}]`
       : `${event.text}\n${refs.join('\n')}`;
     await this.options.messageService?.updateGroupMessageContent(logId, content);
+  }
+
+  /** 群文件预下载：成功回填日志行为本地路径引用；失败保留 msg 占位符走 feishu_download_file 懒加载兜底。 */
+  private async prewarmGroupFile(accountId: string, logId: number, event: FeishuNormalizedMessage): Promise<void> {
+    if (!isInboundFileMessage(event) || this.options.downloadGroupFile == null) return;
+    try {
+      const path = await this.options.downloadGroupFile(accountId, event);
+      if (path == null || path === '') return;
+      await this.options.messageService?.updateGroupMessageContent(logId, `[文件已保存: @{${path}}@]`);
+    } catch (error) {
+      console.warn(`飞书群文件预下载失败, messageId=${event.messageId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   /** interactive 卡片预升级：事件 content 被飞书降级为占位时，按 messageId 拉详情补真实文本。

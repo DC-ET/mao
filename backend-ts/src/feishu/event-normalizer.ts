@@ -153,6 +153,11 @@ export function inboundImageKeys(event: Pick<FeishuNormalizedMessage, 'messageTy
   return [];
 }
 
+/** 飞书独立文件消息：不能与文字同条发送，入站只下载/落库，不单独触发 Agent。 */
+export function isInboundFileMessage(event: Pick<FeishuNormalizedMessage, 'messageType'>): boolean {
+  return event.messageType === 'file';
+}
+
 function asRecord(value: unknown): Record<string, any> {
   return value != null && typeof value === 'object' ? value as Record<string, any> : {};
 }

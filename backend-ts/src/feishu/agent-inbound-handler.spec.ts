@@ -655,9 +655,10 @@ describe('AgentFeishuInboundHandler', () => {
     ], null);
   });
 
-  it('appends file path references and download errors to the message', async () => {
+  it('saves inbound file without executing the agent', async () => {
     const sessionService = makeSessionService();
     const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const createProgressCard = vi.fn(async () => null);
     const handler = new AgentFeishuInboundHandler({
       sessionService,
       harnessService: harness as never,
@@ -668,10 +669,135 @@ describe('AgentFeishuInboundHandler', () => {
         errors: ['b.pdf（接收失败）'],
       }),
       listenerFactory: async () => listener,
+      createProgressCard,
     });
     await handler.onMessage(makeContext({ messageType: 'file', fileKey: 'file_1', fileName: 'a.pdf', text: '[文件:a.pdf]' }));
     expect(sessionService.saveUserMessage).toHaveBeenCalledWith(7, expect.stringContaining('@{/ws/a.pdf}@'), null);
     expect(sessionService.saveUserMessage).toHaveBeenCalledWith(7, expect.stringContaining('[以下文件接收失败：b.pdf（接收失败）]'), null);
+    expect(harness.execute).not.toHaveBeenCalled();
+    expect(harness.prepareMessage).not.toHaveBeenCalled();
+    expect(createProgressCard).not.toHaveBeenCalled();
+  });
+
+  it('executes the following text once after ingesting a file', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      downloadMedia: async (context) => context.messageType === 'file'
+        ? { images: [], imagePaths: [], filePaths: ['/ws/a.pdf'], errors: [] }
+        : { images: [], imagePaths: [], filePaths: [], errors: [] },
+      listenerFactory: async () => listener,
+    });
+    await handler.onMessage(makeContext({
+      messageType: 'file', fileKey: 'file_1', fileName: 'a.pdf', text: '[文件:a.pdf]', messageId: 'om_file',
+    }));
+    await handler.onMessage(makeContext({ text: '请分析这个文件', messageId: 'om_text' }));
+    expect(harness.execute).toHaveBeenCalledOnce();
+    expect(sessionService.saveUserMessage).toHaveBeenCalledTimes(2);
+    expect(sessionService.saveUserMessage).toHaveBeenNthCalledWith(1, 7, expect.stringContaining('@{/ws/a.pdf}@'), null);
+    expect(sessionService.saveUserMessage).toHaveBeenNthCalledWith(2, 7, expect.stringContaining('请分析这个文件'), null);
+  });
+
+  it('waits for in-flight file ingest before executing a following text', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const order: string[] = [];
+    const sessionService = makeSessionService();
+    const harness = {
+      prepareMessage: vi.fn(() => 'e'),
+      execute: vi.fn(async () => { order.push('execute'); }),
+    };
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      downloadMedia: async (context) => {
+        if (context.messageType === 'file') {
+          order.push('file-download-start');
+          await gate;
+          order.push('file-download-done');
+          return { images: [], imagePaths: [], filePaths: ['/ws/a.pdf'], errors: [] };
+        }
+        return { images: [], imagePaths: [], filePaths: [], errors: [] };
+      },
+      listenerFactory: async () => listener,
+    });
+    const fileDone = handler.onMessage(makeContext({
+      messageType: 'file', fileKey: 'file_1', fileName: 'a.pdf', text: '[文件:a.pdf]', messageId: 'om_file',
+    }));
+    await vi.waitFor(() => expect(order).toContain('file-download-start'));
+    const textDone = handler.onMessage(makeContext({ text: '请分析', messageId: 'om_text' }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(order).not.toContain('execute');
+    release();
+    await Promise.all([fileDone, textDone]);
+    expect(order).toEqual(['file-download-start', 'file-download-done', 'execute']);
+    expect(harness.execute).toHaveBeenCalledOnce();
+  });
+
+  it('stashes a file received while busy and persists it after the current task without a second execute', async () => {
+    let release!: () => void;
+    const firstGate = new Promise<void>((resolve) => { release = resolve; });
+    const sessionService = makeSessionService();
+    const harness = {
+      prepareMessage: vi.fn(() => 'e'),
+      execute: vi.fn(async () => { await firstGate; }),
+    };
+    const queueService = makeQueueService();
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      downloadMedia: async (context) => context.messageType === 'file'
+        ? { images: [], imagePaths: [], filePaths: ['/ws/a.pdf'], errors: [] }
+        : { images: [], imagePaths: [], filePaths: [], errors: [] },
+      listenerFactory: async () => listener,
+      createCancelFlag: makeFlag,
+      queueService,
+    });
+    const first = handler.onMessage(makeContext({ text: '长任务', messageId: 'om_1' }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await handler.onMessage(makeContext({
+      messageType: 'file', fileKey: 'file_1', fileName: 'a.pdf', text: '[文件:a.pdf]', messageId: 'om_file',
+    }));
+    expect(sessionService.saveUserMessage).toHaveBeenCalledTimes(1);
+    expect(harness.execute).toHaveBeenCalledOnce();
+    release();
+    await first;
+    await vi.waitFor(() => expect(sessionService.saveUserMessage).toHaveBeenCalledTimes(2));
+    expect(sessionService.saveUserMessage).toHaveBeenLastCalledWith(7, expect.stringContaining('@{/ws/a.pdf}@'), null);
+    expect(harness.execute).toHaveBeenCalledOnce();
+  });
+
+  it('persists a busy-session file under the session lock when queueService is absent', async () => {
+    let release!: () => void;
+    const firstGate = new Promise<void>((resolve) => { release = resolve; });
+    const sessionService = makeSessionService();
+    const harness = {
+      prepareMessage: vi.fn(() => 'e'),
+      execute: vi.fn(async () => { await firstGate; }),
+    };
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      downloadMedia: async (context) => context.messageType === 'file'
+        ? { images: [], imagePaths: [], filePaths: ['/ws/a.pdf'], errors: [] }
+        : { images: [], imagePaths: [], filePaths: [], errors: [] },
+      listenerFactory: async () => listener,
+      createCancelFlag: makeFlag,
+    });
+    const first = handler.onMessage(makeContext({ text: '长任务', messageId: 'om_1' }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await handler.onMessage(makeContext({
+      messageType: 'file', fileKey: 'file_1', fileName: 'a.pdf', text: '[文件:a.pdf]', messageId: 'om_file',
+    }));
+    expect(sessionService.saveUserMessage).toHaveBeenCalledTimes(1);
+    release();
+    await first;
+    await vi.waitFor(() => expect(sessionService.saveUserMessage).toHaveBeenCalledTimes(2));
+    expect(sessionService.saveUserMessage).toHaveBeenNthCalledWith(1, 7, expect.stringContaining('长任务'), null);
+    expect(sessionService.saveUserMessage).toHaveBeenNthCalledWith(2, 7, expect.stringContaining('@{/ws/a.pdf}@'), null);
+    expect(harness.execute).toHaveBeenCalledOnce();
   });
 
   it('does not drain the queue when the direct message execution fails', async () => {
@@ -1100,6 +1226,27 @@ describe('AgentFeishuInboundHandler p2p multi-session', () => {
     await first;
   });
 
+  it('records a p2p file mapping without executing until a following text arrives', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const control = makeP2pControl();
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      listenerFactory: async () => listener,
+      p2pSessionControl: control as never,
+      downloadMedia: async () => ({ images: [], imagePaths: [], filePaths: ['/ws/a.pdf'], errors: [] }),
+    });
+    await handler.onMessage(makeP2pContext({
+      messageType: 'file', fileKey: 'file_1', fileName: 'a.pdf', text: '[文件:a.pdf]', messageId: 'om_file',
+    }));
+    expect(control.recordMessageMapping).toHaveBeenCalledWith('1', 'om_file', 7, 'IN');
+    expect(harness.execute).not.toHaveBeenCalled();
+    expect(sessionService.saveUserMessage).toHaveBeenCalledWith(7, expect.stringContaining('@{/ws/a.pdf}@'), null);
+    await handler.onMessage(makeP2pContext({ text: '请分析', messageId: 'om_text' }));
+    expect(harness.execute).toHaveBeenCalledOnce();
+  });
+
   // ─── 话题会话 ────────────────────────────────────────────────────────
 
   it('routes thread root message to a new thread session', async () => {
@@ -1139,6 +1286,29 @@ describe('AgentFeishuInboundHandler p2p multi-session', () => {
     });
     await handler.onMessage(makeContext({ threadId: 'omt_abc', messageId: 'om_reply', parentId: 'om_root', rootId: 'om_root' }));
     expect(harness.execute).toHaveBeenCalledWith(10, 'e', expect.anything(), expect.anything(), 42);
+  });
+
+  it('ingests a thread file without executing', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const threadControl = {
+      findSession: vi.fn(async () => ({ sessionId: 10, rootMessageId: 'om_root' })),
+      getOrCreateSession: vi.fn(async () => ({ sessionId: 10, rootMessageId: 'om_root', workspace: '/ws/thread', executionUserId: 42 })),
+    };
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      listenerFactory: async () => listener,
+      threadSessionControl: threadControl as never,
+      downloadMedia: async () => ({ images: [], imagePaths: [], filePaths: ['/ws/a.pdf'], errors: [] }),
+    });
+    await handler.onMessage(makeContext({
+      threadId: 'omt_abc', messageId: 'om_file', parentId: 'om_root', rootId: 'om_root',
+      messageType: 'file', fileKey: 'file_1', fileName: 'a.pdf', text: '[文件:a.pdf]',
+    }));
+    expect(harness.execute).not.toHaveBeenCalled();
+    expect(sessionService.saveUserMessage).toHaveBeenCalledWith(10, expect.stringContaining('@{/ws/a.pdf}@'), null);
   });
 
   it('falls back to group session when threadSessionControl returns null (error path)', async () => {
