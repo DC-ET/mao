@@ -17,7 +17,7 @@
         :sending="sending"
         :session-id="sid"
         :compaction-events="compactionEvents"
-        @add-to-command="openWithContent"
+        @add-to-command="(content: string) => commandEditDialogRef?.open({ content })"
       />
 
       <div v-if="showTypingIndicator" class="typing-indicator">
@@ -53,6 +53,8 @@
     />
       <p class="readonly-hint">子代理由主会话委派，不可在此追问或单独停止。可在主会话点击停止以取消。</p>
     </div>
+
+    <CommandEditDialog ref="commandEditDialogRef" />
   </div>
 </template>
 
@@ -62,7 +64,6 @@ import { Opportunity } from '@element-plus/icons-vue'
 import { useSessionStore } from '../../stores/session'
 import { useStreamWS } from '../../composables/useStreamWS'
 import { useToolApprovals } from '../../composables/useChat'
-import { useCommandDrawer } from '../../composables/useCommandDrawer'
 import { api } from '../../api'
 import { ElMessage } from 'element-plus'
 import {
@@ -75,6 +76,7 @@ import ChatRoundList from './ChatRoundList.vue'
 import QuestionPanel from './QuestionPanel.vue'
 import ApprovalStack from './ApprovalStack.vue'
 import ExecutionErrorBanner from './ExecutionErrorBanner.vue'
+import CommandEditDialog from '../command/CommandEditDialog.vue'
 
 const props = defineProps<{
   childSessionId: number
@@ -84,7 +86,7 @@ const props = defineProps<{
 const sessionStore = useSessionStore()
 const { subscribe, unsubscribe, retryExecution, sendAskUserQuestionsResult } = useStreamWS()
 const { pendingApprovals, confirmApproval } = useToolApprovals()
-const { openWithContent } = useCommandDrawer()
+const commandEditDialogRef = ref<InstanceType<typeof CommandEditDialog>>()
 
 const messagesContainer = ref<HTMLElement | null>(null)
 const agentType = ref(props.agentType || '')

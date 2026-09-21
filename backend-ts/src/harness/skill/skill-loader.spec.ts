@@ -1,14 +1,13 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { describe, expect, it } from 'vitest';
+import { useTmpDir } from '../../testing/tmp-dir.js';
 import { SkillLoader } from './skill-loader.js';
 import { PathSandbox } from '../safety/path-sandbox.js';
 
 describe('SkillLoader', () => {
   it('loadsSkillMdDocumentsAndInvalidatesCache', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-skills-'));
+    const dir = useTmpDir('mao-skills-');
     mkdirSync(join(dir, 'demo'), { recursive: true });
     writeFileSync(join(dir, 'demo', 'SKILL.md'), '---\nname: demo\ndescription: Demo skill\n---\nBody\n');
     const loader = new SkillLoader(new PathSandbox(dir), dir, 300);

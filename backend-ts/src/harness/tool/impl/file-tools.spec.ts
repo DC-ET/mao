@@ -1,9 +1,8 @@
 import { mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { describe, expect, it } from 'vitest';
 import sharp from 'sharp';
+import { useTmpDir } from '../../../testing/tmp-dir.js';
 import { PathSandbox } from '../../safety/path-sandbox.js';
 import { ReadFileTool } from './read-file-tool.js';
 import { WriteFileTool } from './write-file-tool.js';
@@ -12,13 +11,13 @@ import { GlobSearchTool } from './glob-search-tool.js';
 import { GrepSearchTool } from './grep-search-tool.js';
 import { PRIVATE_DIFF_FIELD } from '../file-change-diff-util.js';
 
-async function tmp(): Promise<string> {
-  return mkdtemp(join(tmpdir(), 'mao-file-tools-'));
+function tmp(): string {
+  return useTmpDir('mao-file-tools-');
 }
 
 describe('ReadFileTool', () => {
   it('readsWholeFileAndSupportsAliasPathFields', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     writeFileSync(join(dir, 'a.txt'), 'one\ntwo\nthree');
     const tool = new ReadFileTool(new PathSandbox(dir));
     const result = JSON.parse(await tool.execute(JSON.stringify({ file_path: 'a.txt' })));
@@ -27,7 +26,7 @@ describe('ReadFileTool', () => {
   });
 
   it('readsOffsetAndLimitWindow', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     writeFileSync(join(dir, 'a.txt'), 'one\ntwo\nthree\nfour');
     const tool = new ReadFileTool(new PathSandbox(dir));
     const result = JSON.parse(await tool.execute(JSON.stringify({ path: 'a.txt', offset: 1, limit: 2 })));
@@ -36,7 +35,7 @@ describe('ReadFileTool', () => {
   });
 
   it('does not count a trailing newline as an extra line', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     const tool = new ReadFileTool(new PathSandbox(dir));
     writeFileSync(join(dir, 'trailing.txt'), 'one\ntwo\n');
     expect(JSON.parse(await tool.execute(JSON.stringify({ path: 'trailing.txt' }))).total_lines).toBe(2);
@@ -47,7 +46,7 @@ describe('ReadFileTool', () => {
   });
 
   it('normalizes CRLF line endings', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     writeFileSync(join(dir, 'crlf.txt'), 'one\r\ntwo\r\n');
     const tool = new ReadFileTool(new PathSandbox(dir));
     const result = JSON.parse(await tool.execute(JSON.stringify({ path: 'crlf.txt' })));
@@ -56,7 +55,7 @@ describe('ReadFileTool', () => {
   });
 
   it('returnsFriendlyErrorsForMissingPathMissingFileAndDirectories', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     mkdirSync(join(dir, 'dir'));
     const tool = new ReadFileTool(new PathSandbox(dir));
     expect(JSON.parse(await tool.execute('{}')).content).toContain('缺少必填参数');
@@ -65,7 +64,7 @@ describe('ReadFileTool', () => {
   });
 
   it('truncatesVeryLargeOutput', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     const content = Array.from({ length: 6000 }, (_, i) => `line-${i}-abcdefghijklmnopqrstuvwxyz`).join('\n');
     writeFileSync(join(dir, 'large.txt'), content);
     const tool = new ReadFileTool(new PathSandbox(dir));
@@ -74,7 +73,7 @@ describe('ReadFileTool', () => {
   });
 
   it('readsPngImageWithDataUri', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     await sharp({ create: { width: 32, height: 24, channels: 3, background: { r: 0, g: 0, b: 255 } } })
       .png().toFile(join(dir, 'shot.png'));
     const tool = new ReadFileTool(new PathSandbox(dir));
@@ -88,7 +87,7 @@ describe('ReadFileTool', () => {
   });
 
   it('resizesLargePngForPromptBudget', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     await sharp({ create: { width: 2048, height: 2048, channels: 3, background: { r: 10, g: 20, b: 30 } } })
       .png().toFile(join(dir, 'huge.png'));
     const tool = new ReadFileTool(new PathSandbox(dir));
@@ -101,7 +100,7 @@ describe('ReadFileTool', () => {
   });
 
   it('rejectsFakePngExtensionWithInvalidContent', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     writeFileSync(join(dir, 'fake.png'), 'not an image');
     const tool = new ReadFileTool(new PathSandbox(dir));
     const result = JSON.parse(await tool.execute(JSON.stringify({ path: 'fake.png' })));
@@ -109,7 +108,7 @@ describe('ReadFileTool', () => {
   });
 
   it('readsAbsolutePathOutsideWorkspace', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     const outside = await tmp();
     writeFileSync(join(outside, 'pic.txt'), 'outside content');
     const tool = new ReadFileTool(new PathSandbox(dir));
@@ -120,7 +119,7 @@ describe('ReadFileTool', () => {
 
 describe('WriteFileTool', () => {
   it('reportsLineDeltasWhenOverwritingExistingFile', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     const lines = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => `line ${from + i}`).join('\n');
     writeFileSync(join(dir, 'sample.txt'), lines(1, 100));
     const tool = new WriteFileTool(new PathSandbox(dir));
@@ -130,7 +129,7 @@ describe('WriteFileTool', () => {
   });
 
   it('reportsTotalLinesWhenCreatingFile', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     const tool = new WriteFileTool(new PathSandbox(dir));
     const result = JSON.parse(await tool.execute(JSON.stringify({
       path: 'created.txt',
@@ -142,14 +141,14 @@ describe('WriteFileTool', () => {
   });
 
   it('does not count a trailing newline as an extra line', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     const tool = new WriteFileTool(new PathSandbox(dir));
     const result = JSON.parse(await tool.execute(JSON.stringify({ path: 't.txt', content: 'one\ntwo\n' })));
     expect(result.file_change.total_lines).toBe(2);
   });
 
   it('preserves original BOM and CRLF when overwriting an existing file', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     writeFileSync(join(dir, 'legacy.txt'), '\uFEFFold\r\nline\r\n');
     const tool = new WriteFileTool(new PathSandbox(dir));
     const result = JSON.parse(await tool.execute(JSON.stringify({ path: 'legacy.txt', content: 'new\nline\n' })));
@@ -160,7 +159,7 @@ describe('WriteFileTool', () => {
 
 describe('EditFileTool', () => {
   it('replacesAUniqueMatchAndReportsDiffPayload', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     writeFileSync(join(dir, 'a.txt'), 'alpha\nold\nbeta\n');
     const tool = new EditFileTool(new PathSandbox(dir));
     const result = JSON.parse(await tool.execute(JSON.stringify({
@@ -174,7 +173,7 @@ describe('EditFileTool', () => {
   });
 
   it('preserves original BOM and CRLF on a unique replacement', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     writeFileSync(join(dir, 'a.txt'), '\uFEFFalpha\r\nold\r\nbeta\r\n');
     const tool = new EditFileTool(new PathSandbox(dir));
     const result = JSON.parse(await tool.execute(JSON.stringify({
@@ -185,7 +184,7 @@ describe('EditFileTool', () => {
   });
 
   it('rejectsAmbiguousMatchWithoutReplaceAllAndLeavesFileUnchanged', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     writeFileSync(join(dir, 'a.txt'), 'alpha\nold\nbeta\nold\n');
     const tool = new EditFileTool(new PathSandbox(dir));
     const result = JSON.parse(await tool.execute(JSON.stringify({
@@ -202,7 +201,7 @@ describe('EditFileTool', () => {
   });
 
   it('replacesAllOccurrencesWhenReplaceAllIsTrue', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     writeFileSync(join(dir, 'a.txt'), 'alpha\nold\nbeta\nold\n');
     const tool = new EditFileTool(new PathSandbox(dir));
     const result = JSON.parse(await tool.execute(JSON.stringify({
@@ -216,7 +215,7 @@ describe('EditFileTool', () => {
   });
 
   it('acceptsReplaceAllAsStringTrue', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     writeFileSync(join(dir, 'a.txt'), 'old old');
     const tool = new EditFileTool(new PathSandbox(dir));
     const result = JSON.parse(await tool.execute(JSON.stringify({
@@ -228,7 +227,7 @@ describe('EditFileTool', () => {
   });
 
   it('truncatesLongOccurrencePreviewInAmbiguousError', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     const long = `prefix-${'x'.repeat(200)}`;
     writeFileSync(join(dir, 'a.txt'), `${long}\n${long}`);
     const tool = new EditFileTool(new PathSandbox(dir));
@@ -241,7 +240,7 @@ describe('EditFileTool', () => {
   });
 
   it('rejectsIdenticalOldAndNewStringsWithoutEditingFile', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     writeFileSync(join(dir, 'a.txt'), 'alpha');
     const tool = new EditFileTool(new PathSandbox(dir));
     const result = JSON.parse(await tool.execute(JSON.stringify({
@@ -255,7 +254,7 @@ describe('EditFileTool', () => {
   });
 
   it('returnsErrorsWhenFileMissingOrNeedleMissing', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     writeFileSync(join(dir, 'a.txt'), 'alpha');
     const tool = new EditFileTool(new PathSandbox(dir));
     const missingFile = JSON.parse(await tool.execute(JSON.stringify({
@@ -278,7 +277,7 @@ describe('EditFileTool', () => {
 
 describe('SearchTools', () => {
   it('globSearchFindsNestedPathPatternRegardlessOfProcessCwd', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     mkdirSync(join(dir, 'desktop'));
     writeFileSync(join(dir, 'desktop/package.json'), '{}');
     const tool = new GlobSearchTool(new PathSandbox(dir));
@@ -289,7 +288,7 @@ describe('SearchTools', () => {
   });
 
   it('globSearchDoesNotMarkExactLimitAsTruncated', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     mkdirSync(join(dir, 'src/main'), { recursive: true });
     writeFileSync(join(dir, 'src/main/App.java'), 'class App {}');
     writeFileSync(join(dir, 'README.md'), 'docs');
@@ -302,7 +301,7 @@ describe('SearchTools', () => {
   });
 
   it('globSearchSupportsBracesClassesAndLiteralDots', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     mkdirSync(join(dir, 'src/nested'), { recursive: true });
     for (const file of ['src/a.ts', 'src/nested/b.js', 'src/nested/c.ts', 'src/catalog', 'src/a.log']) {
       writeFileSync(join(dir, file), '');
@@ -315,7 +314,7 @@ describe('SearchTools', () => {
   });
 
   it('globSearchMarksOnlyAdditionalMatchesAsTruncated', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     writeFileSync(join(dir, 'a.txt'), '');
     writeFileSync(join(dir, 'b.txt'), '');
     const tool = new GlobSearchTool(new PathSandbox(dir));
@@ -326,7 +325,7 @@ describe('SearchTools', () => {
   });
 
   it('globSearchUsesExplicitIgnoreRulesAndSkipsSymlinkLoops', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     mkdirSync(join(dir, 'node_modules'));
     writeFileSync(join(dir, 'node_modules/a.txt'), '');
     writeFileSync(join(dir, '.hidden.txt'), '');
@@ -339,7 +338,7 @@ describe('SearchTools', () => {
   });
 
   it('globSearchRestrictsSingleFileScope', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     writeFileSync(join(dir, 'a.txt'), '');
     writeFileSync(join(dir, 'b.txt'), '');
     const tool = new GlobSearchTool(new PathSandbox(dir));
@@ -348,7 +347,7 @@ describe('SearchTools', () => {
   });
 
   it('globSearchReportsMissingPathsAndInvalidLimits', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     const tool = new GlobSearchTool(new PathSandbox(dir));
     const missing = JSON.parse(await tool.execute(JSON.stringify({ path: 'missing', pattern: '*' })));
     expect(missing.error).toBeTruthy();
@@ -359,7 +358,7 @@ describe('SearchTools', () => {
   });
 
   it('grepSearchFindsMatchesInSingleFilePath', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     mkdirSync(join(dir, 'desktop/src'), { recursive: true });
     writeFileSync(join(dir, 'desktop/src/useChat.ts'), 'export function useChat() {}\nneedle line\n');
     const tool = new GrepSearchTool(new PathSandbox(dir));
@@ -373,7 +372,7 @@ describe('SearchTools', () => {
   });
 
   it('grepSearchFindsMatchesWithContextAndIgnoreCase', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     mkdirSync(join(dir, 'src'));
     writeFileSync(join(dir, 'src/a.txt'), 'before\nNeedle here\nafter\n');
     writeFileSync(join(dir, 'src/b.md'), 'needle ignored by glob\n');
@@ -394,7 +393,7 @@ describe('SearchTools', () => {
   });
 
   it('grepSearchRecursiveGlobMatchesRootFilesWithoutRg', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     writeFileSync(join(dir, 'README.md'), 'needle root\n');
     mkdirSync(join(dir, 'docs'), { recursive: true });
     writeFileSync(join(dir, 'docs/guide.md'), 'needle nested\n');
@@ -407,7 +406,7 @@ describe('SearchTools', () => {
   });
 
   it('grepSearchStreamsLargeLogsWithoutRg', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     writeFileSync(join(dir, 'fin.log'), `${'ordinary log line\n'.repeat(700000)}before\nNeedle 中文\nafter`);
     const tool = new GrepSearchTool(new PathSandbox(dir));
     (tool as unknown as { rgAvailable: boolean }).rgAvailable = false;
@@ -421,7 +420,7 @@ describe('SearchTools', () => {
   });
 
   it('grepSearchDeduplicatesOverlappingContextWithoutRg', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     writeFileSync(join(dir, 'a.txt'), 'before\r\nneedle\r\nneedle\r\nbetween\r\nneedle\r\nafter\r\n');
     const tool = new GrepSearchTool(new PathSandbox(dir));
     (tool as unknown as { rgAvailable: boolean }).rgAvailable = false;
@@ -432,7 +431,7 @@ describe('SearchTools', () => {
   });
 
   it('grepSearchDoesNotInventAnEmptyLineAtEofWithoutRg', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     writeFileSync(join(dir, 'a.txt'), 'text\n');
     const tool = new GrepSearchTool(new PathSandbox(dir));
     (tool as unknown as { rgAvailable: boolean }).rgAvailable = false;
@@ -441,7 +440,7 @@ describe('SearchTools', () => {
   });
 
   it('grepSearchReportsMissingPathsWithoutRg', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     const tool = new GrepSearchTool(new PathSandbox(dir));
     (tool as unknown as { rgAvailable: boolean }).rgAvailable = false;
     const result = JSON.parse(await tool.execute(JSON.stringify({ pattern: 'needle', path: join(dir, 'missing') })));
@@ -450,7 +449,7 @@ describe('SearchTools', () => {
   });
 
   it('grepSearchReportsTraversalErrorsWithoutRg', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     symlinkSync(join(dir, 'missing'), join(dir, 'broken.txt'));
     const tool = new GrepSearchTool(new PathSandbox(dir));
     (tool as unknown as { rgAvailable: boolean }).rgAvailable = false;
@@ -459,7 +458,7 @@ describe('SearchTools', () => {
   });
 
   it('grepSearchStopsBeforeTraversingMoreFilesOnceTruncated', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     writeFileSync(join(dir, 'a.txt'), 'needle\n');
     symlinkSync(join(dir, 'missing'), join(dir, 'z.txt'));
     const tool = new GrepSearchTool(new PathSandbox(dir));
@@ -470,7 +469,7 @@ describe('SearchTools', () => {
   });
 
   it('grepSearchMarksTruncatedWhenOutputLimitIsExceeded', async () => {
-    const dir = await tmp();
+    const dir = tmp();
     writeFileSync(join(dir, 'a.txt'), 'needle one\nneedle two\n');
     const tool = new GrepSearchTool(new PathSandbox(dir));
     (tool as unknown as { rgAvailable: boolean }).rgAvailable = false;

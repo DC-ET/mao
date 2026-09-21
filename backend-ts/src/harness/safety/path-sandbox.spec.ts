@@ -1,13 +1,12 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { describe, expect, it } from 'vitest';
+import { useTmpDir } from '../../testing/tmp-dir.js';
 import { IllegalArgumentException, PathSandbox, SecurityException } from './path-sandbox.js';
 
 describe('PathSandbox', () => {
   it('resolvesRelativePathsUnderDefaultWorkspace', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-sandbox-'));
+    const dir = useTmpDir('mao-sandbox-');
     const sandbox = new PathSandbox(dir);
     expect(sandbox.resolve('src/../README.md')).toBe(join(dir, 'README.md'));
     expect(sandbox.resolveAsFile('README.md')).toBe(join(dir, 'README.md'));
@@ -15,7 +14,7 @@ describe('PathSandbox', () => {
   });
 
   it('resolvesRelativePathsUnderSessionWorkspace', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-sandbox-'));
+    const dir = useTmpDir('mao-sandbox-');
     const sessionWorkspace = join(dir, 'sessions', '1');
     mkdirSync(sessionWorkspace, { recursive: true });
     const sandbox = new PathSandbox(join(dir, 'default'));
@@ -24,7 +23,7 @@ describe('PathSandbox', () => {
   });
 
   it('allowsAbsolutePathsUnderSessionWorkspace', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-sandbox-'));
+    const dir = useTmpDir('mao-sandbox-');
     const sessionWorkspace = join(dir, '2', 'projects', 'mao');
     mkdirSync(join(sessionWorkspace, 'backend'), { recursive: true });
     const sandbox = new PathSandbox(join(dir, 'default'));
@@ -33,14 +32,14 @@ describe('PathSandbox', () => {
   });
 
   it('allowsAbsolutePathsUnderDefaultWorkspaceRoot', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-sandbox-'));
+    const dir = useTmpDir('mao-sandbox-');
     const sandbox = new PathSandbox(dir);
     const nested = join(dir, 'projects', 'mao');
     expect(sandbox.resolve(nested)).toBe(nested);
   });
 
   it('rejectsEmptyTildeAndEscapingPaths', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-sandbox-'));
+    const dir = useTmpDir('mao-sandbox-');
     const sandbox = new PathSandbox(dir);
     expect(() => sandbox.resolve('')).toThrow(IllegalArgumentException);
     expect(() => sandbox.resolve('~/secret')).toThrow(SecurityException);
@@ -49,8 +48,9 @@ describe('PathSandbox', () => {
   });
 
   it('allowsRegisteredAbsoluteRoots', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mao-sandbox-'));
-    const allowed = dir + '-allowed';
+    const dir = useTmpDir('mao-sandbox-');
+    // 必须位于 dir 内部，否则 useTmpDir 清理回调不会删除它
+    const allowed = join(dir, 'allowed-root');
     mkdirSync(allowed, { recursive: true });
     const file = join(allowed, 'skill.md');
     const { writeFileSync } = await import('node:fs');

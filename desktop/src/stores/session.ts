@@ -1095,8 +1095,7 @@ export const useSessionStore = defineStore('session', () => {
       const isStreamingAssistant = message.role === 'assistant'
         && streamingAssistantMessageIds.get(sid) === String(message.id)
       const isReplacedOptimisticUser = message.role === 'user'
-        && (String(message.id).startsWith('msg_') || String(message.id).startsWith('side_user_')
-          || String(message.id).startsWith('subagent-user-'))
+        && isOptimisticUserId(String(message.id))
         && newlyFetchedUsers.some(fetched => fetched.content === message.content
           && JSON.stringify(fetched.images ?? []) === JSON.stringify(message.images ?? []))
       if (!isReplacedOptimisticUser
@@ -1416,6 +1415,13 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
+  const OPTIMISTIC_USER_ID_PREFIXES = ['msg_', 'side_user_', 'subagent-user-']
+
+  /** 乐观插入（尚未落库）的用户消息 ID 判定：user_message_saved 替换 / fetch 合并去重共用。 */
+  function isOptimisticUserId(id: string): boolean {
+    return OPTIMISTIC_USER_ID_PREFIXES.some(prefix => id.startsWith(prefix))
+  }
+
   /**
    * 追加消息到会话
    */
@@ -1433,9 +1439,9 @@ export const useSessionStore = defineStore('session', () => {
     const list = sessionMessages.value.get(sid)
     if (!list) return
 
-    // 从后往前找最后一条指定角色的消息
+    // 从后往前找最后一条指定角色的乐观消息（临时 ID），替换为数据库真实 ID
     for (let i = list.length - 1; i >= 0; i--) {
-      if (list[i].role === role && String(list[i].id).startsWith('msg_')) {
+      if (list[i].role === role && isOptimisticUserId(String(list[i].id))) {
         list[i].id = realId
         sessionMessages.value.set(sid, [...list])
         return
@@ -1799,6 +1805,7 @@ export const useSessionStore = defineStore('session', () => {
     truncateMessagesAfter,
     updateMessageContent,
     appendMessage,
+    isOptimisticUserId,
     updateLastMessageId,
     // Todo cache
     setTodos,

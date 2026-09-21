@@ -20,7 +20,7 @@
         :sending="sending"
         :session-id="hasRealSession ? String(realSessionId) : ''"
         :compaction-events="compactionEvents"
-        @add-to-command="openWithContent"
+        @add-to-command="(content: string) => commandEditDialogRef?.open({ content })"
       />
 
       <div v-if="sideCompacting" class="compaction-hint" role="status">
@@ -99,6 +99,8 @@
         @update:model-id="handleModelSwitch"
       />
     </div>
+
+    <CommandEditDialog ref="commandEditDialogRef" />
   </div>
 </template>
 
@@ -117,7 +119,6 @@ import { collectAgentsMdContent } from '../../utils/agentsMd'
 import { nowDateTime } from '../../utils/datetime'
 import { normalizeMessageRole } from '../../types/chat'
 import type { QuestionAnswer } from '../../types/chat'
-import { useCommandDrawer } from '../../composables/useCommandDrawer'
 import { useToolApprovals } from '../../composables/useChat'
 import { uploadImages } from '../../utils/imageUpload'
 import { uploadPendingFiles } from '../../utils/chatFileUpload'
@@ -127,6 +128,7 @@ import QuestionPanel from './QuestionPanel.vue'
 import QueuePanel from './QueuePanel.vue'
 import ApprovalStack from './ApprovalStack.vue'
 import ExecutionErrorBanner from './ExecutionErrorBanner.vue'
+import CommandEditDialog from '../command/CommandEditDialog.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchImagesAsFiles } from '../../utils/file'
 import type { QueueMessage } from '../../types/chat'
@@ -143,8 +145,9 @@ const props = defineProps<{
 const sessionStore = useSessionStore()
 const draftStore = useDraftStore()
 const { connect, createSideSession, sendMessage, cancel, retryExecution, subscribe, unsubscribe, sendAskUserQuestionsResult, enqueueMessage, insertMessage, deleteQueueMessage: wsDeleteQueueMessage, reorderQueueMessage: wsReorderQueueMessage, onMessageSaved, offMessageSaved } = useStreamWS()
-const { openWithContent } = useCommandDrawer()
 const { pendingApprovals, confirmApproval } = useToolApprovals()
+
+const commandEditDialogRef = ref<InstanceType<typeof CommandEditDialog>>()
 
 
 const parentExecutionMode = inject<Ref<string>>('executionMode', ref('CLOUD'))

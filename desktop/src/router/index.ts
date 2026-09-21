@@ -81,6 +81,16 @@ const routes: RouteRecordRaw[] = [
             component: () => import('../views/settings/McpServersView.vue')
           },
           {
+            path: 'skills',
+            name: 'Skills',
+            component: () => import('../views/settings/SkillsView.vue')
+          },
+          {
+            path: 'commands',
+            name: 'Commands',
+            component: () => import('../views/settings/CommandsView.vue')
+          },
+          {
             path: 'scheduled-tasks',
             name: 'ScheduledTasks',
             component: () => import('../components/ScheduledTaskPanel.vue')

@@ -1,9 +1,9 @@
-import { existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { SkillSyncService } from './skill-sync-service.js';
 import { RuntimeDataResolver } from '../runtime/runtime-data-resolver.js';
+import { useTmpDir } from '../../testing/tmp-dir.js';
 
 function makeService(root: string, systemFolder: string, userDir = join(root, 'users')) {
   const runtime = RuntimeDataResolver.forTest(join(root, 'runtime'), join(root, 'home'));
@@ -24,7 +24,7 @@ function makeSystemSkill(root: string, body = 'body'): string {
 
 describe('SkillSyncService', () => {
   it('syncs system and user skills then lists documents', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'skills-'));
+    const root = useTmpDir('skills-');
     const systemFolder = makeSystemSkill(root);
     const userDir = join(root, 'users');
     mkdirSync(join(userDir, '7', 'mine'), { recursive: true });
@@ -40,7 +40,7 @@ describe('SkillSyncService', () => {
   });
 
   it('links each skill to its source folder instead of copying', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'skills-link-'));
+    const root = useTmpDir('skills-link-');
     const systemFolder = makeSystemSkill(root);
     const { runtime, svc } = makeService(root, systemFolder);
     await svc.syncToSession({ id: 6, name: 'a', systemPrompt: 'p', skillNames: '["java"]' }, 7, 31);
@@ -51,7 +51,7 @@ describe('SkillSyncService', () => {
   });
 
   it('serves the latest source content through the link without re-syncing', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'skills-live-'));
+    const root = useTmpDir('skills-live-');
     const systemFolder = makeSystemSkill(root);
     mkdirSync(join(systemFolder, 'scripts'), { recursive: true });
     writeFileSync(join(systemFolder, 'scripts', 'run.sh'), 'echo v1');
@@ -67,7 +67,7 @@ describe('SkillSyncService', () => {
   });
 
   it('recreates the link after the runtime skills dir was cleaned up, keeping the source intact', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'skills-cleaned-'));
+    const root = useTmpDir('skills-cleaned-');
     const systemFolder = makeSystemSkill(root);
     const { runtime, svc } = makeService(root, systemFolder);
     const agent = { id: 5, name: 'a', systemPrompt: 'p', skillNames: '["java"]' };
@@ -87,7 +87,7 @@ describe('SkillSyncService', () => {
   });
 
   it('replaces a legacy real directory with a symlink', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'skills-legacy-'));
+    const root = useTmpDir('skills-legacy-');
     const systemFolder = makeSystemSkill(root);
     const { runtime, svc } = makeService(root, systemFolder);
     const target = join(runtime.resolveSkillsDir(7, 41), 'java');
@@ -101,7 +101,7 @@ describe('SkillSyncService', () => {
   });
 
   it('fixes a dangling or wrong symlink', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'skills-dangling-'));
+    const root = useTmpDir('skills-dangling-');
     const systemFolder = makeSystemSkill(root);
     const { runtime, svc } = makeService(root, systemFolder);
     const skillsDir = runtime.resolveSkillsDir(7, 51);
@@ -115,7 +115,7 @@ describe('SkillSyncService', () => {
   });
 
   it('reports skills removed from agent config after a prior sync', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'skills-removed-'));
+    const root = useTmpDir('skills-removed-');
     const systemFolder = makeSystemSkill(root);
     const userDir = join(root, 'users');
     mkdirSync(join(userDir, '7', 'mine'), { recursive: true });

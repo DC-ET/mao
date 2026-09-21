@@ -1,20 +1,13 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { CompactionArchiveService } from './compaction-archive.service.js';
 import { RuntimeDataResolver } from '../runtime/runtime-data-resolver.js';
+import { useTmpDir } from '../../testing/tmp-dir.js';
 
 describe('CompactionArchiveService', () => {
-  const tmpRoots: string[] = [];
-
-  afterEach(() => {
-    for (const root of tmpRoots.splice(0)) rmSync(root, { recursive: true, force: true });
-  });
-
   function makeService(): { service: CompactionArchiveService; runtimeRoot: string } {
-    const runtimeRoot = mkdtempSync(join(tmpdir(), 'mao-archive-'));
-    tmpRoots.push(runtimeRoot);
+    const runtimeRoot = useTmpDir('mao-archive-');
     return {
       service: new CompactionArchiveService(RuntimeDataResolver.forTest(runtimeRoot, runtimeRoot)),
       runtimeRoot,
@@ -93,9 +86,8 @@ describe('CompactionArchiveService', () => {
   });
 
   it('writeFailureIsSwallowedWithWarning', () => {
-    const blocker = join(mkdtempSync(join(tmpdir(), 'mao-archive-')), 'blocker');
+    const blocker = join(useTmpDir('mao-archive-'), 'blocker');
     writeFileSync(blocker, 'x', 'utf8');
-    tmpRoots.push(join(blocker, '..'));
     // resolveCompactionDir 指向已存在普通文件的子路径 → mkdirSync 必然失败，但服务内部吞掉异常
     const service = new CompactionArchiveService({
       resolveCompactionDir: () => join(blocker, 'sub'),
@@ -104,7 +96,7 @@ describe('CompactionArchiveService', () => {
   });
 
   it('replacesImageDataUriInPlainTextAndMultimodalContentKeepsNonImageAndHttpUrls', () => {
-    const { service } = makeService();
+    const { service, runtimeRoot } = makeService();
     const messages2 = [
       { id: 1, role: 'USER', content: '前缀 data:image/jpeg;base64,AbC123 后缀' },
       {
@@ -119,7 +111,7 @@ describe('CompactionArchiveService', () => {
       },
     ] as never[];
     service.writeArchive('CLOUD', 7, 5, 1, messages2);
-    const dir = join(tmpRoots[tmpRoots.length - 1], '7', '5', 'compaction');
+    const dir = join(runtimeRoot, '7', '5', 'compaction');
     const lines = readLines(dir, 'compaction-001.jsonl');
     expect(lines[0].content).toBe('前缀 [image data URI omitted: image/jpeg] 后缀');
     const parts = JSON.parse(lines[1].content as string) as Array<Record<string, unknown>>;

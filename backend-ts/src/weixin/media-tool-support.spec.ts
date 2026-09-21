@@ -1,7 +1,7 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { useTmpDir } from '../testing/tmp-dir.js';
 import { PathSandbox } from '../harness/safety/path-sandbox.js';
 import { WeixinMediaToolSupport } from './media-tool-support.js';
 import { bindWeixinSessionPeer, resetWeixinSessionPeerForTests } from './session-peer.js';
@@ -13,15 +13,18 @@ describe('WeixinMediaToolSupport', () => {
     resetWeixinSessionPeerForTests();
   });
 
-  const tempDir = mkdtempSync(join(tmpdir(), 'weixin-tool-'));
   const accountRepository = { findByUserId: vi.fn() };
   const contextTokenRepository = { findByAccountId: vi.fn(), getLatestToken: vi.fn() };
-  const pathSandbox = new PathSandbox(tempDir);
-  const support = new WeixinMediaToolSupport(
-    accountRepository as unknown as WeixinAccountRepository,
-    contextTokenRepository as unknown as ContextTokenRepository,
-    pathSandbox,
-  );
+
+  function makeSupport() {
+    const tempDir = useTmpDir('weixin-tool-');
+    const support = new WeixinMediaToolSupport(
+      accountRepository as unknown as WeixinAccountRepository,
+      contextTokenRepository as unknown as ContextTokenRepository,
+      new PathSandbox(tempDir),
+    );
+    return { tempDir, support };
+  }
 
   function account(userId: number, accountId: string) {
     return {
@@ -32,21 +35,25 @@ describe('WeixinMediaToolSupport', () => {
   }
 
   it('resolveTarget_nullUserId', async () => {
+    const { support } = makeSupport();
     expect(await support.resolveTarget(null)).toBeNull();
   });
 
   it('resolveTarget_noBoundAccount', async () => {
+    const { support } = makeSupport();
     accountRepository.findByUserId.mockResolvedValue(null);
     expect(await support.resolveTarget(100)).toBeNull();
   });
 
   it('resolveTarget_noContextToken', async () => {
+    const { support } = makeSupport();
     accountRepository.findByUserId.mockResolvedValue(account(100, 'acc-1'));
     contextTokenRepository.findByAccountId.mockResolvedValue([]);
     expect(await support.resolveTarget(100)).toBeNull();
   });
 
   it('resolveTarget_ok', async () => {
+    const { support } = makeSupport();
     accountRepository.findByUserId.mockResolvedValue(account(100, 'acc-1'));
     contextTokenRepository.findByAccountId.mockResolvedValue([{ wxUserId: 'wx-user-1' }]);
     const target = await support.resolveTarget(100);
@@ -56,12 +63,14 @@ describe('WeixinMediaToolSupport', () => {
   });
 
   it('loadBytes_localFile', async () => {
+    const { tempDir, support } = makeSupport();
     writeFileSync(join(tempDir, 'report.pdf'), Buffer.from([1, 2, 3, 4, 5]));
     const bytes = await support.loadBytes('report.pdf', tempDir, 1024);
     expect([...bytes]).toEqual([1, 2, 3, 4, 5]);
   });
 
   it('loadBytes_localFileAbsolute', async () => {
+    const { tempDir, support } = makeSupport();
     const file = join(tempDir, 'pic.png');
     writeFileSync(file, Buffer.from([0x01]));
     const bytes = await support.loadBytes(file, null, 1024);
@@ -69,23 +78,28 @@ describe('WeixinMediaToolSupport', () => {
   });
 
   it('loadBytes_fileTooLarge', async () => {
+    const { tempDir, support } = makeSupport();
     writeFileSync(join(tempDir, 'big.bin'), Buffer.alloc(100));
     await expect(support.loadBytes('big.bin', tempDir, 50)).rejects.toThrow(/文件过大/);
   });
 
   it('loadBytes_missingFile', async () => {
+    const { tempDir, support } = makeSupport();
     await expect(support.loadBytes('nope.txt', tempDir, 1024)).rejects.toThrow(/文件不存在/);
   });
 
   it('loadBytes_nonHttpSchemeGoesToLocalPath', async () => {
+    const { support } = makeSupport();
     await expect(support.loadBytes('ftp://example.com/a.png', null, 1024)).rejects.toThrow(/文件不存在/);
   });
 
   it('errorJson_wellFormed', () => {
+    const { support } = makeSupport();
     expect(support.errorJson('出错了')).toBe('{"error":"出错了"}');
   });
 
   it('resolveTarget_usesBoundPeerWhenMultipleContacts', async () => {
+    const { support } = makeSupport();
     bindWeixinSessionPeer(9, 'wx-user-2');
     accountRepository.findByUserId.mockResolvedValue(account(100, 'acc-1'));
     contextTokenRepository.findByAccountId.mockResolvedValue([{ wxUserId: 'wx-user-1' }, { wxUserId: 'wx-user-2' }]);
@@ -96,6 +110,7 @@ describe('WeixinMediaToolSupport', () => {
   });
 
   it('resolveTarget_refusesGuessWhenMultipleContactsAndUnbound', async () => {
+    const { support } = makeSupport();
     accountRepository.findByUserId.mockResolvedValue(account(100, 'acc-1'));
     contextTokenRepository.findByAccountId.mockResolvedValue([{ wxUserId: 'wx-user-1' }, { wxUserId: 'wx-user-2' }]);
     expect(await support.resolveTarget(100, 10)).toBeNull();

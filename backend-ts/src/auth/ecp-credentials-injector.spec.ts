@@ -1,12 +1,12 @@
-import { mkdtemp, readFile, stat } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { describe, expect, it, vi } from 'vitest';
+import { useTmpDir } from '../testing/tmp-dir.js';
 import { createEcpCredentialsInjector } from './ecp-credentials-injector.js';
 
 describe('createEcpCredentialsInjector', () => {
   it('writes AccessOne layout and returns token when session is active', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'mao-ecp-inject-'));
+    const home = useTmpDir('mao-ecp-inject-');
     const sessions = {
       findByUserId: vi.fn(async () => ({
         sessionTokenEnc: 'enc',
@@ -26,7 +26,7 @@ describe('createEcpCredentialsInjector', () => {
   });
 
   it('returns null without writing when session is missing or expired', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'mao-ecp-inject-'));
+    const home = useTmpDir('mao-ecp-inject-');
     const sessions = {
       findByUserId: vi.fn(async () => null),
       decryptToken: vi.fn(() => 'token'),
@@ -37,7 +37,7 @@ describe('createEcpCredentialsInjector', () => {
   });
 
   it('clears stale AccessOne layout when session renew failed', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'mao-ecp-inject-'));
+    const home = useTmpDir('mao-ecp-inject-');
     const accountDir = join(home, '.config', 'com.access.accessone', 'profiles', 'mao');
     const sessions = {
       findByUserId: vi.fn(async () => ({
@@ -65,7 +65,7 @@ describe('createEcpCredentialsInjector', () => {
   });
 
   it('clears stale AccessOne layout when session expired', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'mao-ecp-inject-'));
+    const home = useTmpDir('mao-ecp-inject-');
     const sessions = {
       findByUserId: vi.fn(async () => ({
         sessionTokenEnc: 'enc',

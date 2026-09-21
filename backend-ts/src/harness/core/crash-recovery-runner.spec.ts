@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { useTmpDir } from '../../testing/tmp-dir.js';
 
 vi.mock('../../session/ws/ws-streaming-event-listener.js', () => {
   class WsStreamingEventListener {
@@ -228,7 +228,7 @@ describe('CrashRecoveryRunner deferred rescan', () => {
   it('deferredRescanRecoversSessionsCreatedAfterInitialScan', async () => {
     vi.useFakeTimers();
     try {
-      const dir = join(tmpdir(), `mao-crash-rescan-${Date.now()}`);
+      const dir = useTmpDir('mao-crash-rescan-');
       writeDeployLock(dir, 0);
       // 初始扫描：仅会话 1；补扫 pass：出现新会话 2（部署窗口内新建、随旧实例死亡）。
       const { runner, sessionMapper, pending } = makeDeferredRunner(dir, [[1], [1, 2]]);
@@ -241,7 +241,6 @@ describe('CrashRecoveryRunner deferred rescan', () => {
       await Promise.all(pending);
       expect(sessionMapper.selectById).toHaveBeenCalledWith(1);
       expect(sessionMapper.selectById).toHaveBeenCalledWith(2);
-      rmSync(dir, { recursive: true, force: true });
     } finally {
       vi.useRealTimers();
     }
@@ -250,7 +249,7 @@ describe('CrashRecoveryRunner deferred rescan', () => {
   it('rescanDoesNotDoubleRecoverSnapshotCandidates', async () => {
     vi.useFakeTimers();
     try {
-      const dir = join(tmpdir(), `mao-crash-rescan-dedup-${Date.now()}`);
+      const dir = useTmpDir('mao-crash-rescan-dedup-');
       writeDeployLock(dir, 0);
       // 补扫 pass 仍看到会话 1（快照里已有）：首次恢复后 phase 已是 COMPLETED，
       // 恢复前重查会跳过，不会重复恢复。
@@ -284,7 +283,6 @@ describe('CrashRecoveryRunner deferred rescan', () => {
       await vi.advanceTimersByTimeAsync(15_000);
       await Promise.all(pending);
       expect(harnessExecute).toHaveBeenCalledTimes(1);
-      rmSync(dir, { recursive: true, force: true });
     } finally {
       vi.useRealTimers();
     }
@@ -293,7 +291,7 @@ describe('CrashRecoveryRunner deferred rescan', () => {
   it('rescanSkipsSessionRecoveredMeanwhile', async () => {
     vi.useFakeTimers();
     try {
-      const dir = join(tmpdir(), `mao-crash-rescan-terminal-${Date.now()}`);
+      const dir = useTmpDir('mao-crash-rescan-terminal-');
       writeDeployLock(dir, 0);
       // 补扫发现会话 2，但恢复前重查时已进入终态（如用户手动续跑完成）——跳过。
       const pending: Promise<void>[] = [];
@@ -331,7 +329,6 @@ describe('CrashRecoveryRunner deferred rescan', () => {
       await Promise.all(pending);
       expect(sessionMapper.selectById).toHaveBeenCalledWith(2);
       expect(harnessExecute).toHaveBeenCalledTimes(1);
-      rmSync(dir, { recursive: true, force: true });
     } finally {
       vi.useRealTimers();
     }
@@ -340,7 +337,7 @@ describe('CrashRecoveryRunner deferred rescan', () => {
   it('rescanDoesNotDoubleRunSessionStillRecovering', async () => {
     vi.useFakeTimers();
     try {
-      const dir = join(tmpdir(), `mao-crash-rescan-inflight-${Date.now()}`);
+      const dir = useTmpDir('mao-crash-rescan-inflight-');
       writeDeployLock(dir, 0);
       // 首轮恢复仍在执行（harness 长时挂起）时补扫再次扫到同一会话：
       // 此时 DB phase 已被恢复流程写回 RUNNING，只靠 phase 重查无法区分「崩溃遗留」，
@@ -376,7 +373,6 @@ describe('CrashRecoveryRunner deferred rescan', () => {
       releaseExecute?.();
       await Promise.all(pending);
       expect(harnessExecute).toHaveBeenCalledTimes(1);
-      rmSync(dir, { recursive: true, force: true });
     } finally {
       vi.useRealTimers();
     }

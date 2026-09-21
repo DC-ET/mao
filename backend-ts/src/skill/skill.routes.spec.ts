@@ -2,9 +2,8 @@ import Fastify from 'fastify';
 import multipart from '@fastify/multipart';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { describe, expect, it, vi } from 'vitest';
+import { useTmpDir } from '../testing/tmp-dir.js';
 import { handleError } from '../common/http-error.js';
 import { registerSkillRoutes } from './skill.routes.js';
 import { UserSkillService } from './user-skill.service.js';
@@ -17,10 +16,10 @@ import type { AgentLookup } from '../session/types.js';
 
 describe('skill routes', () => {
   it('listsAndReadsSkillDocsAndUserSkills', async () => {
-    const skillsDir = await mkdtemp(join(tmpdir(), 'mao-sdoc-'));
+    const skillsDir = useTmpDir('mao-sdoc-');
     mkdirSync(join(skillsDir, 'demo'), { recursive: true });
     writeFileSync(join(skillsDir, 'demo', 'SKILL.md'), '---\nname: demo\ndescription: Demo\n---\nHello\n');
-    const userDir = await mkdtemp(join(tmpdir(), 'mao-user-s-'));
+    const userDir = useTmpDir('mao-user-s-');
     const loader = new SkillLoader(new PathSandbox(skillsDir), skillsDir, 1);
     const app = Fastify();
     app.setErrorHandler(handleError);
@@ -65,8 +64,8 @@ describe('skill routes', () => {
   });
 
   it('listsAdminUserSkillsWithUsernamesAndChecksPermission', async () => {
-    const skillsDir = await mkdtemp(join(tmpdir(), 'mao-sdoc-'));
-    const userDir = await mkdtemp(join(tmpdir(), 'mao-user-s-'));
+    const skillsDir = useTmpDir('mao-sdoc-');
+    const userDir = useTmpDir('mao-user-s-');
     mkdirSync(join(userDir, '7', 'mine'), { recursive: true });
     writeFileSync(join(userDir, '7', 'mine', 'SKILL.md'), '---\nname: mine\ndescription: Mine\n---\nBody\n');
     const loader = new SkillLoader(new PathSandbox(skillsDir), skillsDir, 1);
@@ -122,8 +121,8 @@ describe('skill routes', () => {
   });
 
   it('rejectsSyncPackageForForeignSession', async () => {
-    const skillsDir = await mkdtemp(join(tmpdir(), 'mao-sdoc-'));
-    const userDir = await mkdtemp(join(tmpdir(), 'mao-user-s-'));
+    const skillsDir = useTmpDir('mao-sdoc-');
+    const userDir = useTmpDir('mao-user-s-');
     const loader = new SkillLoader(new PathSandbox(skillsDir), skillsDir, 1);
     const app = Fastify();
     app.setErrorHandler(handleError);
@@ -157,8 +156,8 @@ describe('skill routes', () => {
   });
 
   it('uploadKeepsSkillFolderPathFromMultipartFilename', async () => {
-    const skillsDir = await mkdtemp(join(tmpdir(), 'mao-sdoc-'));
-    const userDir = await mkdtemp(join(tmpdir(), 'mao-user-s-'));
+    const skillsDir = useTmpDir('mao-sdoc-');
+    const userDir = useTmpDir('mao-user-s-');
     const loader = new SkillLoader(new PathSandbox(skillsDir), skillsDir, 1);
     const app = Fastify();
     await app.register(multipart);

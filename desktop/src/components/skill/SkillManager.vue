@@ -1,216 +1,207 @@
 <template>
-  <el-drawer
-    v-model="visible"
-    title="我的技能"
-    direction="rtl"
-    size="420px"
-    class="management-drawer"
-    :before-close="handleClose"
-  >
-    <div class="skill-drawer-body">
-      <!-- Upload area -->
-      <div
-        class="upload-zone"
-        :class="{ 'is-dragover': isDragover }"
-        @dragover.prevent="isDragover = true"
-        @dragleave.prevent="isDragover = false"
-        @drop.prevent="handleDrop"
-        @click="triggerFileInput"
-      >
-        <input
-          ref="fileInputRef"
-          type="file"
-          webkitdirectory
-          multiple
-          style="display: none"
-          @change="handleFileInputChange"
-        />
-        <div class="upload-icon">
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-            <polyline points="17 8 12 3 7 8" />
-            <line x1="12" y1="3" x2="12" y2="15" />
-          </svg>
-        </div>
-        <div class="upload-text">拖拽或点击上传技能文件夹</div>
-        <div class="upload-hint">上传个人技能，将在所有智能体中自动生效，每个文件夹必须包含 SKILL.md 文件</div>
+  <div class="skill-manager">
+    <!-- Upload area -->
+    <div
+      class="upload-zone"
+      :class="{ 'is-dragover': isDragover }"
+      @dragover.prevent="isDragover = true"
+      @dragleave.prevent="isDragover = false"
+      @drop.prevent="handleDrop"
+      @click="triggerFileInput"
+    >
+      <input
+        ref="fileInputRef"
+        type="file"
+        webkitdirectory
+        multiple
+        style="display: none"
+        @change="handleFileInputChange"
+      />
+      <div class="upload-icon">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+          <polyline points="17 8 12 3 7 8" />
+          <line x1="12" y1="3" x2="12" y2="15" />
+        </svg>
       </div>
-
-      <el-tabs v-model="activeTab" class="skill-tabs">
-        <el-tab-pane label="系统技能" name="system">
-          <div class="system-skills-hint">
-            系统预置技能，对所有用户生效，仅可查看详情。
-          </div>
-
-          <div class="skill-list">
-            <div v-if="systemLoading" class="skill-empty">加载中...</div>
-            <div v-else-if="systemSkills.length === 0" class="skill-empty">暂无系统技能</div>
-            <div v-else class="skill-cards">
-              <el-tooltip
-                v-for="skill in systemSkills"
-                :key="skill.name"
-                :content="skill.description || '暂无描述'"
-                placement="left"
-                :show-after="300"
-              >
-                <div class="skill-card">
-                  <div class="skill-card-header">
-                    <div class="skill-name">
-                      <span class="skill-name-text">{{ skill.name }}</span>
-                      <el-tag size="small" type="info" class="system-tag">系统</el-tag>
-                    </div>
-                    <div class="skill-actions">
-                      <el-tooltip content="查看内容" :show-after="300" placement="top">
-                        <button class="skill-btn" @click="handleViewSystem(skill)">
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
-                          </svg>
-                        </button>
-                      </el-tooltip>
-                    </div>
-                  </div>
-                  <div class="skill-desc">{{ skill.description || '暂无描述' }}</div>
-                </div>
-              </el-tooltip>
-            </div>
-          </div>
-        </el-tab-pane>
-
-        <el-tab-pane label="已上传" name="uploaded">
-          <div class="skill-list">
-            <div v-if="loading" class="skill-empty">加载中...</div>
-            <div v-else-if="skills.length === 0" class="skill-empty">暂无已上传技能</div>
-            <div v-else class="skill-cards">
-              <el-tooltip
-                v-for="skill in skills"
-                :key="skill.name"
-                :content="skill.description || '暂无描述'"
-                placement="left"
-                :show-after="300"
-              >
-                <div class="skill-card">
-                  <div class="skill-card-header">
-                    <div class="skill-name">
-                      <span class="skill-name-text">{{ skill.name }}</span>
-                    </div>
-                    <div class="skill-actions">
-                      <template v-if="deletingName === skill.name">
-                        <button class="skill-btn skill-btn-confirm-delete" @click="confirmDelete(skill)">
-                          <el-icon :size="14"><Check /></el-icon>
-                        </button>
-                        <button class="skill-btn" @click="deletingName = null">
-                          <el-icon :size="14"><Close /></el-icon>
-                        </button>
-                      </template>
-                      <template v-else>
-                        <el-tooltip content="查看内容" :show-after="300" placement="top">
-                          <button class="skill-btn" @click="handleViewUploaded(skill)">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
-                            </svg>
-                          </button>
-                        </el-tooltip>
-                        <el-tooltip content="删除" :show-after="300" placement="top">
-                          <button class="skill-btn skill-btn-danger" @click="deletingName = skill.name">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                              <polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                            </svg>
-                          </button>
-                        </el-tooltip>
-                      </template>
-                    </div>
-                  </div>
-                  <div class="skill-desc">{{ skill.description || '暂无描述' }}</div>
-                </div>
-              </el-tooltip>
-            </div>
-          </div>
-        </el-tab-pane>
-
-        <el-tab-pane v-if="isElectron" name="local">
-          <template #label>
-            <span>本地技能</span>
-            <el-badge
-              v-if="pendingLocalSkills.length > 0"
-              :value="pendingLocalSkills.length"
-              class="local-tab-badge"
-            />
-          </template>
-
-          <div class="local-skills-hint">
-            来自 <code>{{ localSkillsDir }}</code>
-            <button
-              v-if="localSkillsDir"
-              type="button"
-              class="link-btn"
-              @click="openLocalSkillsDir"
-            >
-              打开目录
-            </button>
-            <br />
-            这些技能无需上传即可直接用于「本地模式」任务；如需在「云端模式」任务中使用，请先上传。
-          </div>
-
-          <div
-            v-if="!localLoading && !localError && pendingLocalSkills.length > 0"
-            class="local-skills-toolbar"
-          >
-            <button
-              type="button"
-              class="upload-all-btn"
-              :disabled="uploadingAll || uploading"
-              @click="uploadAllLocalSkills"
-            >
-              {{ uploadingAll ? '上传中...' : `一键全部上传 (${pendingLocalSkills.length})` }}
-            </button>
-          </div>
-
-          <div class="skill-list">
-            <div v-if="localLoading" class="skill-empty">扫描本地技能中...</div>
-            <div v-else-if="localError" class="skill-empty skill-empty-error">{{ localError }}</div>
-            <div v-else-if="pendingLocalSkills.length === 0" class="skill-empty">
-              暂无待上传的本地技能
-            </div>
-            <div v-else class="skill-cards">
-              <el-tooltip
-                v-for="skill in pendingLocalSkills"
-                :key="skill.folderName"
-                :content="skill.description || '暂无描述'"
-                placement="left"
-                :show-after="300"
-              >
-                <div class="skill-card">
-                  <div class="skill-card-header">
-                    <div class="skill-name">
-                      <span class="skill-name-text">{{ skill.name }}</span>
-                    </div>
-                    <div class="skill-actions">
-                      <el-tooltip content="查看内容" :show-after="300" placement="top">
-                        <button class="skill-btn" @click="handleViewLocal(skill)">
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
-                          </svg>
-                        </button>
-                      </el-tooltip>
-                      <button
-                        class="skill-upload-btn"
-                        :disabled="uploadingAll || uploading || uploadingFolder === skill.folderName"
-                        @click="uploadLocalSkill(skill)"
-                      >
-                        {{ uploadingFolder === skill.folderName ? '上传中...' : '上传' }}
-                      </button>
-                    </div>
-                  </div>
-                  <div class="skill-desc">{{ skill.description || '暂无描述' }}</div>
-                </div>
-              </el-tooltip>
-            </div>
-          </div>
-        </el-tab-pane>
-      </el-tabs>
+      <div class="upload-text">拖拽或点击上传技能文件夹</div>
+      <div class="upload-hint">上传个人技能，将在所有智能体中自动生效，每个文件夹必须包含 SKILL.md 文件</div>
     </div>
 
-    <!-- Skill detail dialog (on top of drawer) -->
+    <el-tabs v-model="activeTab" class="skill-tabs">
+      <el-tab-pane label="系统技能" name="system">
+        <div class="system-skills-hint">
+          系统预置技能，对所有用户生效，仅可查看详情。
+        </div>
+
+        <div class="skill-list">
+          <div v-if="systemLoading" class="skill-empty">加载中...</div>
+          <div v-else-if="systemSkills.length === 0" class="skill-empty">暂无系统技能</div>
+          <div v-else class="skill-cards">
+            <el-tooltip
+              v-for="skill in systemSkills"
+              :key="skill.name"
+              :content="skill.description || '暂无描述'"
+              placement="left"
+              :show-after="300"
+            >
+              <div class="skill-card">
+                <div class="skill-card-header">
+                  <div class="skill-name">
+                    <span class="skill-name-text">{{ skill.name }}</span>
+                    <el-tag size="small" type="info" class="system-tag">系统</el-tag>
+                  </div>
+                  <div class="skill-actions">
+                    <el-tooltip content="查看内容" :show-after="300" placement="top">
+                      <button class="skill-btn" @click="handleViewSystem(skill)">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
+                        </svg>
+                      </button>
+                    </el-tooltip>
+                  </div>
+                </div>
+                <div class="skill-desc">{{ skill.description || '暂无描述' }}</div>
+              </div>
+            </el-tooltip>
+          </div>
+        </div>
+      </el-tab-pane>
+
+      <el-tab-pane label="已上传" name="uploaded">
+        <div class="skill-list">
+          <div v-if="loading" class="skill-empty">加载中...</div>
+          <div v-else-if="skills.length === 0" class="skill-empty">暂无已上传技能</div>
+          <div v-else class="skill-cards">
+            <el-tooltip
+              v-for="skill in skills"
+              :key="skill.name"
+              :content="skill.description || '暂无描述'"
+              placement="left"
+              :show-after="300"
+            >
+              <div class="skill-card">
+                <div class="skill-card-header">
+                  <div class="skill-name">
+                    <span class="skill-name-text">{{ skill.name }}</span>
+                  </div>
+                  <div class="skill-actions">
+                    <template v-if="deletingName === skill.name">
+                      <button class="skill-btn skill-btn-confirm-delete" @click="confirmDelete(skill)">
+                        <el-icon :size="14"><Check /></el-icon>
+                      </button>
+                      <button class="skill-btn" @click="deletingName = null">
+                        <el-icon :size="14"><Close /></el-icon>
+                      </button>
+                    </template>
+                    <template v-else>
+                      <el-tooltip content="查看内容" :show-after="300" placement="top">
+                        <button class="skill-btn" @click="handleViewUploaded(skill)">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
+                          </svg>
+                        </button>
+                      </el-tooltip>
+                      <el-tooltip content="删除" :show-after="300" placement="top">
+                        <button class="skill-btn skill-btn-danger" @click="deletingName = skill.name">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                          </svg>
+                        </button>
+                      </el-tooltip>
+                    </template>
+                  </div>
+                </div>
+                <div class="skill-desc">{{ skill.description || '暂无描述' }}</div>
+              </div>
+            </el-tooltip>
+          </div>
+        </div>
+      </el-tab-pane>
+
+      <el-tab-pane v-if="isElectron" name="local">
+        <template #label>
+          <span>本地技能</span>
+          <el-badge
+            v-if="pendingLocalSkills.length > 0"
+            :value="pendingLocalSkills.length"
+            class="local-tab-badge"
+          />
+        </template>
+
+        <div class="local-skills-hint">
+          来自 <code>{{ localSkillsDir }}</code>
+          <button
+            v-if="localSkillsDir"
+            type="button"
+            class="link-btn"
+            @click="openLocalSkillsDir"
+          >
+            打开目录
+          </button>
+          <br />
+          这些技能无需上传即可直接用于「本地模式」任务；如需在「云端模式」任务中使用，请先上传。
+        </div>
+
+        <div
+          v-if="!localLoading && !localError && pendingLocalSkills.length > 0"
+          class="local-skills-toolbar"
+        >
+          <button
+            type="button"
+            class="upload-all-btn"
+            :disabled="uploadingAll || uploading"
+            @click="uploadAllLocalSkills"
+          >
+            {{ uploadingAll ? '上传中...' : `一键全部上传 (${pendingLocalSkills.length})` }}
+          </button>
+        </div>
+
+        <div class="skill-list">
+          <div v-if="localLoading" class="skill-empty">扫描本地技能中...</div>
+          <div v-else-if="localError" class="skill-empty skill-empty-error">{{ localError }}</div>
+          <div v-else-if="pendingLocalSkills.length === 0" class="skill-empty">
+            暂无待上传的本地技能
+          </div>
+          <div v-else class="skill-cards">
+            <el-tooltip
+              v-for="skill in pendingLocalSkills"
+              :key="skill.folderName"
+              :content="skill.description || '暂无描述'"
+              placement="left"
+              :show-after="300"
+            >
+              <div class="skill-card">
+                <div class="skill-card-header">
+                  <div class="skill-name">
+                    <span class="skill-name-text">{{ skill.name }}</span>
+                  </div>
+                  <div class="skill-actions">
+                    <el-tooltip content="查看内容" :show-after="300" placement="top">
+                      <button class="skill-btn" @click="handleViewLocal(skill)">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
+                        </svg>
+                      </button>
+                    </el-tooltip>
+                    <button
+                      class="skill-upload-btn"
+                      :disabled="uploadingAll || uploading || uploadingFolder === skill.folderName"
+                      @click="uploadLocalSkill(skill)"
+                    >
+                      {{ uploadingFolder === skill.folderName ? '上传中...' : '上传' }}
+                    </button>
+                  </div>
+                </div>
+                <div class="skill-desc">{{ skill.description || '暂无描述' }}</div>
+              </div>
+            </el-tooltip>
+          </div>
+        </div>
+      </el-tab-pane>
+    </el-tabs>
+
+    <!-- Skill detail dialog -->
     <el-dialog
       v-model="detailVisible"
       :title="`技能详情：${currentDoc?.name || ''}`"
@@ -227,15 +218,13 @@
         />
       </div>
     </el-dialog>
-  </el-drawer>
+  </div>
 </template>
-
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Check, Close } from '@element-plus/icons-vue'
 import { api } from '../../api'
-import { useSkillDrawer } from '../../composables/useSkillDrawer'
 import MarkdownContent from '../common/MarkdownContent.vue'
 
 interface SkillDoc {
@@ -258,8 +247,6 @@ interface LocalSkillDoc {
   description: string
   folderPath: string
 }
-
-const { visible } = useSkillDrawer()
 
 const isElectron = typeof window !== 'undefined' && !!window.electronAPI?.listLocalSkills
 
@@ -295,15 +282,15 @@ const pendingLocalSkills = computed(() => {
   })
 })
 
-watch(visible, (val) => {
-  if (val) fetchAll()
+onMounted(() => {
+  fetchAll()
 })
 
 async function fetchAll() {
   try {
     await Promise.all([fetchSkills(), fetchSystemSkills(), fetchLocalSkills()])
   } catch {
-    // 拦截器已统一 toast，避免 watch 回调 unhandledrejection
+    // 拦截器已统一 toast，避免 unhandledrejection
   }
 }
 
@@ -409,10 +396,6 @@ function openLocalSkillsDir() {
   if (localSkillsDir.value && window.electronAPI?.openFolder) {
     window.electronAPI.openFolder(localSkillsDir.value)
   }
-}
-
-function handleClose(done: () => void) {
-  done()
 }
 
 // ========== Upload ==========
@@ -645,7 +628,7 @@ function formatBytes(bytes: number): string {
 </script>
 
 <style scoped>
-.skill-drawer-body {
+.skill-manager {
   padding: 0 4px;
 }
 

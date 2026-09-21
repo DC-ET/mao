@@ -95,7 +95,7 @@
           @edit="startEdit"
           @cancel-edit="cancelEdit"
           @confirm-edit="confirmEdit"
-          @add-to-command="openWithContent"
+          @add-to-command="(content: string) => commandEditDialogRef?.open({ content })"
         />
 
         <div v-if="showTypingIndicator" class="typing-indicator">
@@ -185,6 +185,8 @@
         @update:git-branch="handleNewTaskGitBranchChange"
       />
     </template>
+
+    <CommandEditDialog ref="commandEditDialogRef" />
   </div>
 </template>
 
@@ -196,7 +198,6 @@ import { useChat, normalizeMessageRole, type ChatMessage } from '../../composabl
 import { useChatScroll } from '../../composables/useChatScroll'
 import { useAgentStore } from '../../stores/agent'
 import { useSessionStore, type TaskPhase } from '../../stores/session'
-import { useCommandDrawer } from '../../composables/useCommandDrawer'
 import { useDraftStore } from '../../stores/draft'
 import { api } from '../../api'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -206,6 +207,7 @@ import ChatRoundList from './ChatRoundList.vue'
 import ChatInput from './ChatInput.vue'
 import QueuePanel from './QueuePanel.vue'
 import ApprovalStack from './ApprovalStack.vue'
+import CommandEditDialog from '../command/CommandEditDialog.vue'
 import QuestionPanel from './QuestionPanel.vue'
 import ExecutionErrorBanner from './ExecutionErrorBanner.vue'
 import StarterPrompts from './StarterPrompts.vue'
@@ -246,7 +248,7 @@ const agentStore = useAgentStore()
 const sessionStore = useSessionStore()
 const draftStore = useDraftStore()
 const router = useRouter()
-const { openWithContent } = useCommandDrawer()
+const commandEditDialogRef = ref<InstanceType<typeof CommandEditDialog>>()
 
 const chatInputRef = ref<InstanceType<typeof ChatInput>>()
 const models = ref<Array<{ id: number; supportsVision: boolean }>>([])
@@ -351,7 +353,7 @@ const {
 })
 let restoreGeneration = 0
 
-watch(() => sessionStore.activeSessionId, (newSid) => {
+function restoreForActiveSession(newSid: string | null) {
   const generation = ++restoreGeneration
   cancelRestore()
   if (!newSid) {
@@ -372,6 +374,10 @@ watch(() => sessionStore.activeSessionId, (newSid) => {
     completeRestore(scrollGeneration)
     nextTick(() => chatInputRef.value?.focusInput())
   })
+}
+
+watch(() => sessionStore.activeSessionId, (newSid) => {
+  restoreForActiveSession(newSid)
 })
 
 watch(isNewTaskMode, (enabled) => {
@@ -481,6 +487,11 @@ onMounted(async () => {
   window.addEventListener('resize', syncMobileViewport, { passive: true })
   window.visualViewport?.addEventListener('resize', syncKeyboardOpen, { passive: true })
   syncKeyboardOpen()
+
+  // 任务执行中进入设置页再返回工作台时，TaskView/ChatPanel 整体卸载重建，
+  // 而 store 的 activeSessionId 未变化，watcher 不会触发 → 新实例的
+  // restoreSession 不执行，表现为执行状态不更新。挂载时兜底恢复一次。
+  restoreForActiveSession(sessionStore.activeSessionId)
 
   // 获取模型列表，用于新建任务模式下判断视觉能力
   try {

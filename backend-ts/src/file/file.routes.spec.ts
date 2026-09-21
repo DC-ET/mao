@@ -12,9 +12,8 @@ import type { SessionService } from '../session/session.service.js';
 import type { PathSandbox } from '../harness/safety/path-sandbox.js';
 import { RuntimeDataResolver } from '../harness/runtime/runtime-data-resolver.js';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { mkdtemp } from 'node:fs/promises';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { useTmpDir } from '../testing/tmp-dir.js';
 
 describe('file routes', () => {
   it('listsWorkspaceAndGitJsonEndpoints', async () => {
@@ -67,9 +66,9 @@ describe('file routes', () => {
     const gitCommitMessageService = {
       generate: vi.fn(async () => ({ title: 'feat: x', message: 'feat: x\n\n- y' })),
     } as unknown as GitCommitMessageService;
-    const root = await mkdtemp(join(tmpdir(), 'mao-files-'));
+    const root = useTmpDir('mao-files-');
     mkdirSync(join(root, '7', 'projects', 'demo'), { recursive: true });
-    const runtimeDir = await mkdtemp(join(tmpdir(), 'mao-runtime-'));
+    const runtimeDir = useTmpDir('mao-runtime-');
     const pathSandbox = { getWorkspaceRoot: () => root } as PathSandbox;
     const runtimeDataResolver = new RuntimeDataResolver(runtimeDir, join(root, 'home'));
     registerFileRoutes(app, {

@@ -769,11 +769,13 @@ export function useStreamWS() {
           const remoteMsgId = data?.messageId != null ? String(data.messageId) : null
           const hasRemoteEcho = content !== '' || (images != null && images.length > 0)
 
-          // 本端刚发送的乐观消息：最后一条 msg_* 用户消息，其内容与本事件一致 → 只替换 ID。
+          // 本端刚发送的乐观消息：最后一条乐观用户消息（msg_/side_user_ 等临时 ID 前缀），
+          // 其内容与本事件一致 → 只替换 ID。注意边路任务乐观 ID 是 side_user_ 前缀，
+          // 不能只判 msg_，否则会误判为远端回显、追加出重复的用户消息。
           const list = sessionStore.getMessages(sid) ?? []
           const lastUser = [...list].reverse().find(m => m.role === 'user')
           const isLocalOptimistic = lastUser != null
-            && String(lastUser.id).startsWith('msg_')
+            && sessionStore.isOptimisticUserId(String(lastUser.id))
             && (lastUser.content === content || lastUser.content.trim() === '')
 
           if (isLocalOptimistic && remoteMsgId != null) {

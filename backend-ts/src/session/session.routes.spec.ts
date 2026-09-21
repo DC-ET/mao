@@ -12,9 +12,8 @@ import type { SessionTodoRepository, SubagentExecutionRepository } from './activ
 import type { AgentLookup, LlmModelLookup, UserLookup } from './types.js';
 import type { PathSandbox } from '../harness/safety/path-sandbox.js';
 import type { OssStsService } from '../oss/oss-sts.service.js';
-import { mkdtemp } from 'node:fs/promises';
+import { useTmpDir } from '../testing/tmp-dir.js';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { mkdirSync, writeFileSync } from 'node:fs';
 
 function session(overrides: Record<string, unknown> = {}) {
@@ -88,7 +87,7 @@ describe('session and admin routes', () => {
       findByIds: vi.fn(async () => [{ id: 7, username: 'u', displayName: 'User' }]),
       listOptions: vi.fn(async () => [{ id: 7, username: 'u', displayName: 'User' }]),
     };
-    const root = await mkdtemp(join(tmpdir(), 'mao-sess-'));
+    const root = useTmpDir('mao-sess-');
     mkdirSync(join(root, '7', 'projects', 'demo'), { recursive: true });
     writeFileSync(join(root, '7', 'projects', 'demo', '.git'), '');
     const pathSandbox = { getWorkspaceRoot: () => root } as PathSandbox;

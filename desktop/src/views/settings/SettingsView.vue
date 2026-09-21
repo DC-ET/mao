@@ -36,6 +36,12 @@
         <router-link to="/settings/mcp-servers" class="settings-nav-item" active-class="active">
           MCP 服务器
         </router-link>
+        <router-link to="/settings/skills" class="settings-nav-item" active-class="active">
+          我的技能
+        </router-link>
+        <router-link to="/settings/commands" class="settings-nav-item" active-class="active">
+          我的指令
+        </router-link>
         <router-link to="/settings/scheduled-tasks" class="settings-nav-item" active-class="active">
           定时任务
         </router-link>
