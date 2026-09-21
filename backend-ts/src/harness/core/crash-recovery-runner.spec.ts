@@ -189,7 +189,7 @@ describe('CrashRecoveryRunner deferred rescan', () => {
     }));
   }
 
-  function makeDeferredRunner(runtimeDir: string, scanSequence: number[][]) {
+  function makeDeferredRunner(runtimeDir: string, scanSequence: number[][], locallyActiveIds: number[] = []) {
     const pending: Promise<void>[] = [];
     // collectCandidates 每轮扫描调用 selectByPhase 两次（RUNNING + RESUMING），
     // 这里按「轮」推进序列：每轮两次调用消费同一个 ids 元素。
@@ -221,6 +221,7 @@ describe('CrashRecoveryRunner deferred rescan', () => {
       vi.fn().mockResolvedValue(undefined),
       undefined,
       undefined,
+      (sessionId: number) => locallyActiveIds.includes(sessionId),
     );
     return { runner, sessionMapper, pending };
   }
@@ -241,6 +242,60 @@ describe('CrashRecoveryRunner deferred rescan', () => {
       await Promise.all(pending);
       expect(sessionMapper.selectById).toHaveBeenCalledWith(1);
       expect(sessionMapper.selectById).toHaveBeenCalledWith(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('deferredRescanRunsWhenInitialScanFindsNothing', async () => {
+    vi.useFakeTimers();
+    try {
+      const dir = useTmpDir('mao-crash-rescan-empty-');
+      writeDeployLock(dir, 0);
+      // 初始扫描为空：会话在蓝绿部署窗口内创建于旧实例、随旧实例 drain 被 kill，
+      // 新实例启动时刻 DB 里还没有这条 RUNNING 记录。只有延迟恢复的全库补扫能兜住它，
+      // 否则会话永久停在 RUNNING（飞书进度卡卡在「正在处理」）。
+      const { runner, sessionMapper, pending } = makeDeferredRunner(dir, [[], [2]]);
+      await runner.run();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(sessionMapper.selectById).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(15_000);
+      await Promise.all(pending);
+      expect(sessionMapper.selectById).toHaveBeenCalledWith(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('noDeferredRescanWhenDeployLockIsNotRecent', async () => {
+    vi.useFakeTimers();
+    try {
+      const dir = useTmpDir('mao-crash-rescan-nodeploy-');
+      // 普通重启（无 deploy.lock）：初始候选为空即收工，不安排额外的全库补扫。
+      const { runner, sessionMapper, pending } = makeDeferredRunner(dir, [[], [2]]);
+      await runner.run();
+      await vi.advanceTimersByTimeAsync(120_000);
+      await Promise.all(pending);
+      expect(sessionMapper.selectById).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('deferredRescanSkipsSessionsRunningLocally', async () => {
+    vi.useFakeTimers();
+    try {
+      const dir = useTmpDir('mao-crash-rescan-local-');
+      writeDeployLock(dir, 0);
+      // 补扫同时扫到崩溃遗留的会话 2 与本实例正在执行的会话 3：只恢复前者，
+      // 否则会对正在跑的执行并发重跑同一会话。
+      const { runner, sessionMapper, pending } = makeDeferredRunner(dir, [[], [2, 3]], [3]);
+      await runner.run();
+      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.advanceTimersByTimeAsync(15_000);
+      await Promise.all(pending);
+      expect(sessionMapper.selectById).toHaveBeenCalledWith(2);
+      expect(sessionMapper.selectById).not.toHaveBeenCalledWith(3);
     } finally {
       vi.useRealTimers();
     }

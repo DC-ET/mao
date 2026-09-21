@@ -69,6 +69,12 @@ export class CrashRecoveryRunner {
     private readonly subagentCoordinator?: SubagentRecoveryCoordinator,
     /** 恢复续跑时的额外事件监听（如飞书进度卡片续更）；返回 null 表示该会话无需额外监听。 */
     private readonly createExtraListeners?: (sessionId: number, userId: number | null, executionId: string) => Promise<RecoveryExtraListener | null>,
+    /**
+     * 本实例内存中是否正在执行该会话（如 AgentLoop 已挂 cancel flag）。
+     * 延迟全库补扫据此排除「本实例正常执行中」的会话——它们 phase 同样是 RUNNING，
+     * 仅凭 DB 无法与崩溃遗留区分，不排除会对同一会话并发跑两次执行。
+     */
+    private readonly isSessionLocallyActive?: (sessionId: number) => boolean,
   ) {}
 
   async run(): Promise<void> {
@@ -77,8 +83,9 @@ export class CrashRecoveryRunner {
 
   private async runPass(deferred: boolean): Promise<void> {
     const deployLock = readDeployLock(this.runtimeDir);
+    const recentDeploy = isRecentDeployLock(deployLock);
     const deferAll = !deferred && shouldDeferAllRecoveryDuringDeploy(deployLock);
-    const skipDeployActive = !deferred && isRecentDeployLock(deployLock);
+    const skipDeployActive = !deferred && recentDeploy;
     // 蓝绿部署窗口内不得执行子代理协调器恢复：协调器会直接 claim RUNNING 中的
     // 子代理 execution 并重跑父会话，绕过 deploy defer 守卫导致新旧实例对同一会话
     // 双实例并发执行。统一推迟到 deferred pass（此时 deployLock 已过窗口）。
@@ -91,7 +98,7 @@ export class CrashRecoveryRunner {
     // drain 收尾后触发）做全库补扫，兜住「部署窗口内新建、随旧实例排空死亡」的会话。
     const candidates = deferred && !this.deferredScan
       ? this.deferredCandidates
-      : await this.collectCandidates(blocked);
+      : await this.collectCandidates(blocked, deferred && this.deferredScan);
     const { recover, skipped } = deferAll
       ? { recover: [], skipped: candidates }
       : this.partitionForDeploy(candidates, skipDeployActive, deployLock);
@@ -103,7 +110,6 @@ export class CrashRecoveryRunner {
         'info',
         `Deferring crash recovery for ${candidates.length} session(s) during blue-green deploy (status=${deployLock?.status})`,
       );
-      this.scheduleDeferredRecovery(deployDrainSec(deployLock));
     } else if (skipped.length > 0) {
       // 蓝绿部署中仍在排空实例上活跃的会话：记录快照，延迟恢复只重试这批，不重新全库扫描。
       this.deferredCandidates = skipped;
@@ -111,9 +117,12 @@ export class CrashRecoveryRunner {
         'info',
         `Skipping crash recovery for ${skipped.length} session(s) still active on draining instance during blue-green deploy`,
       );
-      if (!deferred) {
-        this.scheduleDeferredRecovery(deployDrainSec(deployLock));
-      }
+    }
+    // 部署窗口内必须调度一次延迟恢复，哪怕初始扫描候选为空：会话可能在旧实例上创建、
+    // 恰在 drain 时才随旧实例被 kill，新实例启动时刻扫描根本看不到它（phase 尚未写入），
+    // 只有延迟恢复的全库补扫能兜住这类漏网会话。
+    if (!deferred && recentDeploy) {
+      this.scheduleDeferredRecovery(deployDrainSec(deployLock));
     }
 
     if (recover.length === 0) return;
@@ -126,7 +135,7 @@ export class CrashRecoveryRunner {
    * 从 DB 收集崩溃遗留的 RUNNING/RESUMING 会话候选（排除子代理、被协调器阻塞的会话），
    * 并按 session.id 去重。
    */
-  private async collectCandidates(blocked: Set<number>): Promise<Session[]> {
+  private async collectCandidates(blocked: Set<number>, excludeLocallyActive = false): Promise<Session[]> {
     const running = this.sessionMapper.selectByPhase ? await this.sessionMapper.selectByPhase('RUNNING') : [];
     const resuming = this.sessionMapper.selectByPhase ? await this.sessionMapper.selectByPhase('RESUMING') : [];
     return [...running, ...resuming].filter((session, index, all) =>
@@ -135,6 +144,9 @@ export class CrashRecoveryRunner {
       && !blocked.has(session.id)
       // 本实例已在恢复中的会话：其 phase 被恢复流程置为 RUNNING，重查无法与「崩溃遗留」区分
       && !this.recovering.has(session.id)
+      // 全库补扫时排除本实例正常执行中的会话：它们 phase 同样为 RUNNING，但并非崩溃遗留，
+      // 纳入会对同一会话并发跑两次 harness 执行。
+      && !(excludeLocallyActive && this.isSessionLocallyActive?.(session.id) === true)
       && all.findIndex((item) => item.id === session.id) === index);
   }
 

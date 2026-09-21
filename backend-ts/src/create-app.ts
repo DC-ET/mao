@@ -2065,6 +2065,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       const progress = await createFeishuRecoveryProgress(sessionId);
       return progress == null ? null : new FeishuCardProgressListener(progress);
     },
+    // 延迟全库补扫排除本实例正在执行的会话（AgentLoop 已挂 flag）：其 phase 虽是 RUNNING，
+    // 但属于正常运行而非崩溃遗留，纳入会与正在跑的执行并发重跑同一会话。
+    (sessionId) => agentLoop.getCancelFlag(sessionId) != null,
   );
   void crash.run().catch((e) => console.error('Crash recovery failed', e)).then(async () => {
     // 等崩溃恢复初始扫描提交后再触发队列接力。hydrate 对崩溃时在途执行的 RUNNING 队列行按
