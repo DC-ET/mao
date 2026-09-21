@@ -4,8 +4,12 @@ import { defaultEcpConfig, parseEcpConfig, validateEcpConfig } from './ecp.confi
 describe('ecp.config', () => {
   it('parses default config', () => {
     expect(parseEcpConfig(null).enabled).toBe(false);
-    expect(parseEcpConfig(JSON.stringify(defaultEcpConfig())).appCode).toBe('EK6301');
-    expect(parseEcpConfig(JSON.stringify(defaultEcpConfig())).larkAppId).toBe('');
+    const parsed = parseEcpConfig(JSON.stringify(defaultEcpConfig()));
+    expect(parsed.appCode).toBe('EK0001');
+    expect(parsed.baseUrl).toBe('https://ecp.example.com/api/v1');
+    expect(parsed.desktopCallbackUrl).toBe('https://mao.example.com/auth/ecp/feishu-callback');
+    expect(parsed.adminCallbackUrl).toBe('https://mao.example.com/admin/auth/ecp/feishu-callback');
+    expect(parsed.larkAppId).toBe('');
   });
 
   it('accepts legacy JSON without larkAppId', () => {

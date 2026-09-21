@@ -2,9 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { CompanySsoClient, MAX_SSO_BODY_BYTES } from './company-sso.client.js';
 import type { CompanySsoConfig } from './company-sso.config.js';
 
-const checkUrl = 'https://sgs.acg.team/api/sso-auth/auth/checkToken';
+const checkUrl = 'https://sso.example.com/auth/checkToken';
 
-export const config: CompanySsoConfig = { enabled: true, allowedDomains: ['acg.team'], allowedOrigins: ['https://host.example.test'], accessTtlSeconds: 1800, timeoutMs: 3000, requireHttps: true };
+export const config: CompanySsoConfig = { enabled: true, allowedDomains: ['example.com'], allowedOrigins: ['https://host.example.test'], accessTtlSeconds: 1800, timeoutMs: 3000, requireHttps: true };
 const claims = () => ({ id: 3089, sub: 'ignored', email: 'Synthetic@example.test', realName: 'Test', exp: Math.floor(Date.now() / 1000) + 3600, environment: 'prod' });
 const response = (body: unknown) => new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } });
 
@@ -18,7 +18,7 @@ describe('CompanySsoClient', () => {
     expect(init).toMatchObject({ method: 'GET', redirect: 'error', headers: { Accept: 'application/json' } });
   });
 
-  it.each(['https://acg.team/business/check?app=mao&scope=a%2Fb', 'https://child.sgs.acg.team:8443/other/check?app=two'])('passes the supplied business URL to GET: %s', async (url) => {
+  it.each(['https://example.com/business/check?app=mao&scope=a%2Fb', 'https://child.sgs.example.com:8443/other/check?app=two'])('passes the supplied business URL to GET: %s', async (url) => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response({ code: 0, success: true, data: { illegal: false, claims: claims() } }));
     await new CompanySsoClient(fetcher).verify('synthetic+token/=', url, config);
     const expected = new URL(url);
@@ -54,7 +54,7 @@ describe('CompanySsoClient', () => {
     }
   });
 
-  it.each(['https://evilacg.team/check', 'https://acg.team.evil.com/check', 'http://acg.team', 'https://acg.team?token=existing', 'not a URL'])('rejects %s before any outbound request', async (url) => {
+  it.each(['https://evilexample.com/check', 'https://example.com.evil.com/check', 'http://example.com', 'https://example.com?token=existing', 'not a URL'])('rejects %s before any outbound request', async (url) => {
     const fetcher = vi.fn<typeof fetch>();
     await expect(new CompanySsoClient(fetcher).verify('synthetic', url, config)).rejects.toMatchObject({ status: 400 });
     expect(fetcher).not.toHaveBeenCalled();

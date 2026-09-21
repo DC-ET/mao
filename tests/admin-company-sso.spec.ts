@@ -27,8 +27,8 @@ test.describe('Company SSO validation', () => {
   })
 
   test('accepts canonical HTTPS origins, subdomain patterns and unrestricted web origins without expansion', () => {
-    const origins = ['https://portal.example.com', 'https://portal.example.com:8443', 'https://*.acg.team', 'https://*.acg.team:8443', 'https://*.sub.acg.team', '*']
-    const config = { ...defaults, enabled: true, allowedDomains: ['acg.team'], allowedOrigins: origins }
+    const origins = ['https://portal.example.com', 'https://portal.example.com:8443', 'https://*.example.com', 'https://*.example.com:8443', 'https://*.sub.example.com', '*']
+    const config = { ...defaults, enabled: true, allowedDomains: ['example.com'], allowedOrigins: origins }
     expect(validateCompanySsoConfig({ ...config, allowedOrigins: [...origins, ...origins] })).toEqual(config)
     expect(parseCompanySsoConfig(JSON.stringify(config))).toEqual(config)
     expect(validateCompanySsoConfig({ ...config, allowedOrigins: ['*'] }).allowedOrigins).toEqual(['*'])
@@ -38,14 +38,14 @@ test.describe('Company SSO validation', () => {
 
   test('rejects malformed subdomain patterns and unrestricted-origin lookalikes', () => {
     const origins = [
-      'http://*.acg.team', 'https://*', 'https://*acg.team', 'https://acg.*.team', 'https://*.*.acg.team',
-      'https://*.acg.team/', 'https://*.acg.team/path', 'https://*.acg.team?', 'https://*.acg.team#',
-      'https://user:pass@*.acg.team', 'https://*.user@acg.team', 'https://*.acg.team:443',
-      'https://*.acg.team:0', 'https://*.acg.team:08443', 'https://*.acg.team:65536', 'https://*.ACG.team', 'https://*.acg.team.',
+      'http://*.example.com', 'https://*', 'https://*example.com', 'https://example.*.com', 'https://*.*.example.com',
+      'https://*.example.com/', 'https://*.example.com/path', 'https://*.example.com?', 'https://*.example.com#',
+      'https://user:pass@*.example.com', 'https://*.user@example.com', 'https://*.example.com:443',
+      'https://*.example.com:0', 'https://*.example.com:08443', 'https://*.example.com:65536', 'https://*.EXAMPLE.com', 'https://*.example.com.',
       'https://*.localhost', 'https://*.127.0.0.1', 'https://*.127.1', 'https://*.0x7f.1', 'https://*.[::1]',
-      'https://*.-bad.team', 'https://*.bad-.team', 'https://*.acg..team', 'https://*.acg_team.com',
+      'https://*.-bad.team', 'https://*.bad-.team', 'https://*.example..com', 'https://*.acg_team.com',
       `https://*.${'a'.repeat(64)}.team`, `https://*.${Array(4).fill('a'.repeat(63)).join('.')}`,
-      ' https://*.acg.team', 'https://*.acg.team\n', '* ', ' *', '**', 'null', 'http://acg.team',
+      ' https://*.example.com', 'https://*.example.com\n', '* ', ' *', '**', 'null', 'http://example.com',
     ]
     for (const origin of origins) {
       expect(() => parseCompanySsoConfig(JSON.stringify({ ...defaults, allowedOrigins: [origin] })), origin).toThrow(/allowedOrigins/)
@@ -149,30 +149,30 @@ test.describe('Company SSO settings UI', () => {
   })
 
   test('saves and reloads wildcard origins with their security guidance', async ({ page }) => {
-    const config = { ...defaults, enabled: true, allowedDomains: ['acg.team'], allowedOrigins: ['https://*.acg.team:8443'] }
+    const config = { ...defaults, enabled: true, allowedDomains: ['example.com'], allowedOrigins: ['https://*.example.com:8443'] }
     const writes = await openSettings(page, JSON.stringify(config))
     const panel = page.locator('#setting-group-company-sso')
     const origins = panel.locator('textarea').nth(1)
-    await expect(origins).toHaveValue('https://*.acg.team:8443')
+    await expect(origins).toHaveValue('https://*.example.com:8443')
     await expect(panel).toContainText('宿主Origin白名单')
     await expect(panel).toContainText('任意层级子域，不含根域')
     await expect(panel).toContainText('默认 HTTPS 443')
     await expect(panel).toContainText('* 放开全部网页来源（包括 HTTP 和 null Origin）')
     await expect(panel).toContainText('仍须有效 SSO，校验域名白名单限制不变')
-    await origins.fill('https://*.acg.team, https://*.acg.team:8443\n*\nhttps://*.acg.team')
+    await origins.fill('https://*.example.com, https://*.example.com:8443\n*\nhttps://*.example.com')
     await panel.getByRole('button', { name: '保存', exact: true }).click()
     await expect(page.locator('.el-message--success')).toBeVisible()
     expect(writes).toHaveLength(1)
-    expect(JSON.parse(writes[0]!.body.value)).toEqual({ ...config, allowedOrigins: ['https://*.acg.team', 'https://*.acg.team:8443', '*'] })
+    expect(JSON.parse(writes[0]!.body.value)).toEqual({ ...config, allowedOrigins: ['https://*.example.com', 'https://*.example.com:8443', '*'] })
     await page.reload()
-    await expect(origins).toHaveValue('https://*.acg.team\nhttps://*.acg.team:8443\n*')
+    await expect(origins).toHaveValue('https://*.example.com\nhttps://*.example.com:8443\n*')
     await expect(panel.getByRole('button', { name: '保存', exact: true })).toBeEnabled()
   })
 
   test('rejects wildcard port zero without submitting a PUT', async ({ page }) => {
     const writes = await openSettings(page, JSON.stringify(defaults))
     const panel = page.locator('#setting-group-company-sso')
-    await panel.locator('textarea').nth(1).fill('https://*.acg.team:0')
+    await panel.locator('textarea').nth(1).fill('https://*.example.com:0')
     await panel.getByRole('button', { name: '保存', exact: true }).click()
     await expect(page.locator('.el-message--error')).toContainText('端口必须为 1–65535')
     expect(writes).toHaveLength(0)
@@ -198,7 +198,7 @@ test.describe('Company SSO settings UI', () => {
     })
   }
 
-  for (const raw of ['{', JSON.stringify({ ...defaults, timeoutMs: '3000' }), JSON.stringify({ ...defaults, requireHttps: true }), JSON.stringify({ ...defaults, allowedDomains: [' example.com'] }), JSON.stringify({ ...defaults, allowedOrigins: ['https://*.*.acg.team'] })]) {
+  for (const raw of ['{', JSON.stringify({ ...defaults, timeoutMs: '3000' }), JSON.stringify({ ...defaults, requireHttps: true }), JSON.stringify({ ...defaults, allowedDomains: [' example.com'] }), JSON.stringify({ ...defaults, allowedOrigins: ['https://*.*.example.com'] })]) {
     test(`blocks overwriting malformed stored configuration: ${raw}`, async ({ page }) => {
       const writes = await openSettings(page, raw)
       const panel = page.locator('#setting-group-company-sso')
@@ -225,9 +225,9 @@ test.describe('Company SSO settings UI', () => {
     await panel.getByRole('button', { name: '保存', exact: true }).click()
     await expect(page.locator('.el-message--error')).toContainText('精确 HTTPS Origin')
     expect(writes).toHaveLength(0)
-    await panel.locator('textarea').nth(1).fill('https://*.*.acg.team')
+    await panel.locator('textarea').nth(1).fill('https://*.*.example.com')
     await panel.getByRole('button', { name: '保存', exact: true }).click()
-    await expect(page.locator('.el-message--error').filter({ hasText: 'https://*.*.acg.team' })).toBeVisible()
+    await expect(page.locator('.el-message--error').filter({ hasText: 'https://*.*.example.com' })).toBeVisible()
     expect(writes).toHaveLength(0)
     await panel.locator('textarea').nth(1).fill('https://portal.example.com')
     await panel.getByRole('button', { name: '保存', exact: true }).click()

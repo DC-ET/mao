@@ -58,8 +58,8 @@
 | 后台字段 | 默认 | 说明 |
 |------|------|------|
 | 启用 ECP 飞书登录 | 关闭 | 开启后新增 ECP 飞书入口，不关闭其它登录方式 |
-| appCode | EK6301 | ECP 应用编码 |
-| ECP API Base URL | `https://ecp.acg.team/api/v1` | 生产网关 |
+| appCode | EK0001 | ECP 应用编码 |
+| ECP API Base URL | `https://ecp.example.com/api/v1` | 示例网关，部署时改成实际地址 |
 | loginVariant | PARTNER | 飞书授权变体，联调可调 |
 | 桌面回调 URL | `https://mao.example.com/auth/ecp/feishu-callback` | 须与对外站点同源，并在 ECP 登记 |
 | 管理后台回调 URL | `https://mao.example.com/admin/auth/ecp/feishu-callback` | 同上 |
@@ -73,24 +73,24 @@
 | 后台字段 | 默认 | 说明 |
 |------|------|------|
 | 启用公司 SSO | 关闭 | 开启前必须配置以下两类白名单 |
-| 宿主 Origin 白名单 | 空 | 支持精确 HTTPS Origin、`https://*.acg.team` 子域模式或 `*` 全来源；不填路径或尾斜杠 |
-| 校验域名白名单 | 空 | 如 `acg.team,sso.example.com`；每项允许自身及其所有子域名，不填协议、路径、端口或通配符 |
+| 宿主 Origin 白名单 | 空 | 支持精确 HTTPS Origin、`https://*.example.com` 子域模式或 `*` 全来源；不填路径或尾斜杠 |
+| 校验域名白名单 | 空 | 如 `example.com,sso.example.com`；每项允许自身及其所有子域名，不填协议、路径、端口或通配符 |
 | Access 有效期（秒） | 1800 | 60～3600 秒；实际不超过官方返回的 SSO 剩余有效期，不限制连续使用时长 |
 | 校验超时（毫秒） | 3000 | 单次官方校验超时，1～30000 毫秒 |
 
 宿主 Origin 可混合填写以下规则（逗号或换行分隔）：
 
-- `https://admin.acg.team`：精确匹配该 Origin。
-- `https://*.acg.team`：匹配 `https://a.acg.team`、`https://a.b.acg.team` 等任意层级子域，不包含根域 `https://acg.team`，根域需单独登记。仅匹配 HTTPS 默认端口；需要非默认端口时填写 `https://*.acg.team:8443`，端口严格匹配。
+- `https://admin.example.com`：精确匹配该 Origin。
+- `https://*.example.com`：匹配 `https://a.example.com`、`https://a.b.example.com` 等任意层级子域，不包含根域 `https://example.com`，根域需单独登记。仅匹配 HTTPS 默认端口；需要非默认端口时填写 `https://*.example.com:8443`，端口严格匹配。
 - `*`：不限制网页来源，包括 HTTP 页面和 `null` Origin；换票 CORS 允许所有来源，但不允许 Cookie 凭据模式。仍须有效 SSO Token，Mao 换票接口和校验 URL 仍要求 HTTPS，校验域名白名单保持独立生效。
 
-子域模式不匹配 `evilacg.team`、`acg.team.evil.com`，不允许部分星号、多重星号、路径、查询、片段或用户名密码。配置 `*` 表示配置人员明确放开网页来源限制。
+子域模式不匹配 `evilexample.com`、`example.com.evil.com`，不允许部分星号、多重星号、路径、查询、片段或用户名密码。配置 `*` 表示配置人员明确放开网页来源限制。
 
 保存需 `settings:write` 权限；完整配置一次保存，非法值不会部分写入。升级需执行 V107 系统设置迁移；旧环境配置不导入，请在后台重新填写。关闭 SSO 后新换票被拒绝，不立即撤销已有 access，也不取消已受理任务。已开始换票请求使用其读取的配置快照。
 
 TLS 终止代理属于服务器基础设施，不是 SSO 业务设置：`TRUSTED_PROXY_ADDRESSES` 仍由部署环境配置，默认不信任代理；必须填直连 Mao 的代理精确 IP，如 `127.0.0.1,::1`，禁止通配符或任意来源转发头。
 
-域名白名单支持完整域名或上级域名：`acg.team` 匹配 `acg.team`、`a.acg.team`、`b.acg.team` 及更深子域，不匹配 `evilacg.team` 或 `acg.team.evil.com`；`sso.acg.team` 仅覆盖自身及其下级子域。所有匹配域名及其路径的身份校验信任由配置人员判定；不另做 DNS 私网地址过滤。不同校验地址必须属于同一员工身份体系，身份源仍为 `company_sso`，不会按 URL 创建新身份源。
+域名白名单支持完整域名或上级域名：`example.com` 匹配 `example.com`、`a.example.com`、`b.example.com` 及更深子域，不匹配 `evilexample.com` 或 `example.com.evil.com`；`sso.example.com` 仅覆盖自身及其下级子域。所有匹配域名及其路径的身份校验信任由配置人员判定；不另做 DNS 私网地址过滤。不同校验地址必须属于同一员工身份体系，身份源仍为 `company_sso`，不会按 URL 创建新身份源。
 
 `auth.checkUrl` 必须为 HTTPS URL，不带用户名密码、片段或已有 `token` 查询参数；请求不跟随重定向。SDK 每次换票以 JSON `{checkUrl}` 传入地址，SSO Token 仍仅放在 Authorization Header。原 `SSO_CHECK_URL` 不再使用。
 

@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { corsForRequest } from '../config/cors-policy.js';
 import { authenticateRequest, isPublicPath } from './jwt-hook.js';
 import { registerCompanySsoRoutes } from './company-sso.routes.js';
-const checkUrl = 'https://sgs.acg.team/api/sso-auth/auth/checkToken';
+const checkUrl = 'https://sso.example.com/auth/checkToken';
 import { JwtService } from '../crypto/jwt.service.js';
 
 /** Exercise real Fastify ordering: TLS proxy -> CORS -> JWT bypass -> exchange. */
@@ -16,7 +16,7 @@ describe('SSO exchange application boundary', () => {
     const exchange = vi.fn(async () => ({ ...jwt.generateCompanySsoToken(42, 'synthetic', 300), refreshAfter: 240, user: { id: 42, displayName: 'Test' }, action: 'existing' as const }));
     const audit = vi.fn(async () => {});
     const app = Fastify({ trustProxy: ['127.0.0.1'] });
-    const config = { enabled: true, allowedDomains: ['acg.team'], allowedOrigins: ['https://portal.example.test'], accessTtlSeconds: 1800, timeoutMs: 3000, requireHttps: true as const };
+    const config = { enabled: true, allowedDomains: ['example.com'], allowedOrigins: ['https://portal.example.test'], accessTtlSeconds: 1800, timeoutMs: 3000, requireHttps: true as const };
     const settings = { getCompanySsoConfig: async () => config };
     await app.register(cors, { delegator: async (req: FastifyRequest) => corsForRequest(req, path, settings) });
     app.addHook('preHandler', async (request, reply) => {

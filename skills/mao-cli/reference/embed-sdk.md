@@ -71,7 +71,7 @@ const chat = MaoChat.init({
   agentId: 1,
   auth: {
     type: 'company-sso',
-    checkUrl: 'https://sgs.acg.team/api/sso-auth/auth/checkToken',
+    checkUrl: 'https://sso.example.com/auth/checkToken',
     // 必须每次读取最新凭证；companyLogin 是示意，替换为宿主真实 API。
     getSsoToken: async () => companyLogin.getCurrentToken(),
   },
@@ -83,7 +83,7 @@ const chat = MaoChat.init({
 
 ### 部署与身份要求
 
-1. 在管理后台「系统设置 → 集成配置 → 公司 SSO」启用并登记宿主 Origin（精确 HTTPS、`https://*.acg.team` 子域或 `*` 全来源）、校验域名白名单；保存后新换票即时生效，不使用 `SSO_*` 环境变量，详见 [配置参考](config.md#公司-ssoweb-embed-sdk)。全站启用 ECP 飞书登录不影响 Embed SDK 换票。另按部署要求配置 TLS 终止代理的受信 IP。域名白名单支持完整域名或上级域名，每项覆盖自身及所有子域，信任范围由配置人员判定。
+1. 在管理后台「系统设置 → 集成配置 → 公司 SSO」启用并登记宿主 Origin（精确 HTTPS、`https://*.example.com` 子域或 `*` 全来源）、校验域名白名单；保存后新换票即时生效，不使用 `SSO_*` 环境变量，详见 [配置参考](config.md#公司-ssoweb-embed-sdk)。全站启用 ECP 飞书登录不影响 Embed SDK 换票。另按部署要求配置 TLS 终止代理的受信 IP。域名白名单支持完整域名或上级域名，每项覆盖自身及所有子域，信任范围由配置人员判定。
 2. `auth.checkUrl` 必填，由业务系统指定 HTTPS 校验地址（不带用户名密码、片段或已有 `token` 查询参数），服务端校验域名后调用，禁止重定向。地址可以不同，但仍须采用公司 checkToken 协议：GET query `token`；成功响应须 `code=0`、`success=true`、`data.illegal=false`，可信 claims 提供 `id`、`email`、`realName`、`exp`。所有地址共用同一员工身份体系。
 3. **可信邮箱**是唯一身份键（精确匹配、区分大小写）。测试/生产等环境的公司用户 `claims.id` 可以不同，同一邮箱视为同一人。首次登录按邮箱唯一匹配已有启用账号（含管理员），否则创建普通用户；该邮箱已有 `company_sso` 绑定则直接复用。禁用/删除账号、同一邮箱对应多个 Mao 用户时拒绝自动关联。SSO 不授予、不撤销管理员角色。
 4. 绑定按邮箱保存，不覆盖原角色、密码或飞书绑定。换票凭证与该用户普通 Mao 登录等权，没有 SDK 专用 Agent/接口范围。公司侧更换邮箱即视为新身份。

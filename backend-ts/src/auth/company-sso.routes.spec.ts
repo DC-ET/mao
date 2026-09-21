@@ -4,9 +4,9 @@ import { registerCompanySsoRoutes } from './company-sso.routes.js';
 import { CompanySsoError } from './company-sso.error.js';
 import type { CompanySsoConfig } from './company-sso.config.js';
 
-const checkUrl = 'https://sgs.acg.team/custom/check?application=mao';
+const checkUrl = 'https://sgs.example.com/custom/check?application=mao';
 
-const config: CompanySsoConfig = { enabled: true, allowedDomains: ['acg.team'], allowedOrigins: ['https://host.example.test'], accessTtlSeconds: 1800, timeoutMs: 3000, requireHttps: true };
+const config: CompanySsoConfig = { enabled: true, allowedDomains: ['example.com'], allowedOrigins: ['https://host.example.test'], accessTtlSeconds: 1800, timeoutMs: 3000, requireHttps: true };
 const settings = { getCompanySsoConfig: async () => config };
 const result = { action: 'created' as const, accessToken: 'synthetic-access', expiresIn: 1800, expiresAt: 9999999999000, refreshAfter: 1680, user: { id: 4, displayName: 'Test' } };
 
@@ -62,9 +62,9 @@ describe('company SSO routes', () => {
   });
 
   it.each([undefined, {}, [], { checkUrl: 123 }, { checkUrl: '' }, { checkUrl, email: 'spoof@example.test' },
-    { checkUrl, subject: '123' }, { checkUrl, token: 'spoof' }, { checkUrl: 'https://evilacg.team/check' },
-    { checkUrl: 'https://acg.team.evil.com/check' }, { checkUrl: `${checkUrl}&token=existing` },
-    { checkUrl: 'https://acg.team/check?q='.padEnd(2049, 'a') },
+    { checkUrl, subject: '123' }, { checkUrl, token: 'spoof' }, { checkUrl: 'https://evilexample.com/check' },
+    { checkUrl: 'https://example.com.evil.com/check' }, { checkUrl: `${checkUrl}&token=existing` },
+    { checkUrl: 'https://example.com/check?q='.padEnd(2049, 'a') },
   ])('rejects missing, extra or invalid body fields %j before service invocation', async (payload) => {
     const app = Fastify({ trustProxy: ['127.0.0.1'] });
     app.addHook('onRequest', async (request) => { request.headers['x-forwarded-proto'] = 'https'; });
@@ -82,7 +82,7 @@ describe('company SSO routes', () => {
     app.addHook('onRequest', async (request) => { request.headers['x-forwarded-proto'] = 'https'; });
     const exchange = vi.fn().mockResolvedValue(result);
     registerCompanySsoRoutes(app, { exchange }, settings);
-    const longUrl = 'https://acg.team/check?q='.padEnd(2048, 'a');
+    const longUrl = 'https://example.com/check?q='.padEnd(2048, 'a');
     const payload = JSON.stringify({ checkUrl: longUrl }).replaceAll('a', '\\u0061');
     expect(payload.length).toBeGreaterThan(1024);
     try {

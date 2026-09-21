@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { validateCompanySsoCheckUrl, validateCompanySsoConfig, type CompanySsoConfig } from './company-sso.config.js';
 import { loadConfig, resetConfigCache } from '../config/app-config.js';
 
-const config: CompanySsoConfig = { enabled: true, allowedDomains: ['acg.team'], allowedOrigins: ['https://host.example.test'], accessTtlSeconds: 1800, timeoutMs: 3000, requireHttps: true };
+const config: CompanySsoConfig = { enabled: true, allowedDomains: ['example.com'], allowedOrigins: ['https://host.example.test'], accessTtlSeconds: 1800, timeoutMs: 3000, requireHttps: true };
 afterEach(() => { vi.unstubAllEnvs(); resetConfigCache(); });
 
 describe('company SSO configuration', () => {
@@ -24,9 +24,9 @@ describe('company SSO configuration', () => {
     expect(() => validateCompanySsoConfig({ ...config, ...override })).toThrow();
   });
 
-  it.each(['', 'https://acg.team', '*.acg.team', 'acg.team/path', 'acg.team:443', 'acg.team.',
-    'acg..team', '-acg.team', 'acg-.team', 'a_b.team', ' acg.team', '127.0.0.1', '127.1', '[::1]',
-    'localhost', '%61cg.team', 'acg.team?x', 'user@acg.team', `${'a'.repeat(64)}.team`, `${'a'.repeat(63)}.`.repeat(4) + 'team',
+  it.each(['', 'https://example.com', '*.example.com', 'example.com/path', 'example.com:443', 'example.com.',
+    'example..com', '-example.com', 'example-.com', 'a_b.team', ' example.com', '127.0.0.1', '127.1', '[::1]',
+    'localhost', '%65xample.com', 'example.com?x', 'user@example.com', `${'a'.repeat(64)}.team`, `${'a'.repeat(63)}.`.repeat(4) + 'team',
   ])('rejects malformed or non-DNS domain %s', (domain) => {
     expect(() => validateCompanySsoConfig({ ...config, allowedDomains: [domain] })).toThrow();
   });
@@ -37,31 +37,31 @@ describe('company SSO configuration', () => {
 });
 
 describe('company SSO check URL boundary', () => {
-  it.each(['acg.team', 'sgs.acg.team', 'a.b.acg.team', 'ACG.TEAM'])('allows configured domain and its subdomains: %s', (host) => {
+  it.each(['example.com', 'sgs.example.com', 'a.b.example.com', 'EXAMPLE.COM'])('allows configured domain and its subdomains: %s', (host) => {
     expect(validateCompanySsoCheckUrl(`https://${host}/business/check?app=mao`, config).hostname).toBe(host.toLowerCase());
   });
 
   it('supports a full domain without allowing its parent or siblings', () => {
-    const exact = { ...config, allowedDomains: ['sgs.acg.team'] };
-    expect(validateCompanySsoCheckUrl('https://sgs.acg.team/check', exact).hostname).toBe('sgs.acg.team');
-    expect(validateCompanySsoCheckUrl('https://child.sgs.acg.team/check', exact).hostname).toBe('child.sgs.acg.team');
-    for (const host of ['acg.team', 'other.acg.team', 'evilsgs.acg.team']) {
+    const exact = { ...config, allowedDomains: ['sgs.example.com'] };
+    expect(validateCompanySsoCheckUrl('https://sgs.example.com/check', exact).hostname).toBe('sgs.example.com');
+    expect(validateCompanySsoCheckUrl('https://child.sgs.example.com/check', exact).hostname).toBe('child.sgs.example.com');
+    for (const host of ['example.com', 'other.example.com', 'evilsgs.example.com']) {
       expect(() => validateCompanySsoCheckUrl(`https://${host}`, exact)).toThrow();
     }
   });
 
-  it.each([undefined, null, 1, '', '/check', 'https://', 'https://evilacg.team/check', 'https://acg.team.evil.com',
-    'https://unknown.test', 'https:///acg.team/check', 'http://acg.team/check', 'https://user:pass@acg.team/check', 'https://@acg.team/check',
-    'https://acg.team/check#', 'https://acg.team/check#fragment', 'https://acg.team/check?token=x',
-    'https://acg.team/check?%74oken=x', 'https://acg.team/check?Token=x', 'https://acg.team/check?token',
-    'https://acg.team/check?token=a&token=b', 'https://acg.team./check', 'https://acg.team/\ncheck',
-    'https://acg.team\\evil.com/check', 'https://127.0.0.1/check',
+  it.each([undefined, null, 1, '', '/check', 'https://', 'https://evilexample.com/check', 'https://example.com.evil.com',
+    'https://unknown.test', 'https:///example.com/check', 'http://example.com/check', 'https://user:pass@example.com/check', 'https://@example.com/check',
+    'https://example.com/check#', 'https://example.com/check#fragment', 'https://example.com/check?token=x',
+    'https://example.com/check?%74oken=x', 'https://example.com/check?Token=x', 'https://example.com/check?token',
+    'https://example.com/check?token=a&token=b', 'https://example.com./check', 'https://example.com/\ncheck',
+    'https://example.com\\evil.com/check', 'https://127.0.0.1/check',
   ])('rejects invalid or untrusted URL %j with 400', (url) => {
     expect(() => validateCompanySsoCheckUrl(url, config)).toThrow(expect.objectContaining({ status: 400 }));
   });
 
   it('accepts 2048 characters and rejects 2049', () => {
-    const url = 'https://acg.team/check?q='.padEnd(2048, 'a');
+    const url = 'https://example.com/check?q='.padEnd(2048, 'a');
     expect(validateCompanySsoCheckUrl(url, config).href).toBe(url);
     expect(() => validateCompanySsoCheckUrl(`${url}a`, config)).toThrow(expect.objectContaining({ status: 400 }));
   });

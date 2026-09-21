@@ -3,7 +3,7 @@ import { isSensitiveChildEnvKey, sanitizeInheritedEnv } from './sensitive-env.js
 
 describe('sensitive-env', () => {
   it('flags git tokens, askpass and backend secrets', () => {
-    expect(isSensitiveChildEnvKey('GIT_TOKEN_git_acg_team')).toBe(true);
+    expect(isSensitiveChildEnvKey('GIT_TOKEN_git_example_com')).toBe(true);
     expect(isSensitiveChildEnvKey('GIT_ASKPASS')).toBe(true);
     expect(isSensitiveChildEnvKey('GIT_TERMINAL_PROMPT')).toBe(true);
     expect(isSensitiveChildEnvKey('APP_GIT_CREDENTIAL_SECRET')).toBe(true);
@@ -28,14 +28,14 @@ describe('sensitive-env', () => {
   it('strips sensitive keys and preserves the rest', () => {
     const out = sanitizeInheritedEnv({
       PATH: '/usr/bin',
-      GIT_TOKEN_git_acg_team: 'leak',
+      GIT_TOKEN_git_example_com: 'leak',
       APP_GIT_CREDENTIAL_SECRET: 'secret',
       MYSQL_URL: 'jdbc:…',
       MAO_TOKEN: 'stale',
       WORKSPACE_ROOT: '/data/ws',
     });
     expect(out).toEqual({ PATH: '/usr/bin', WORKSPACE_ROOT: '/data/ws' });
-    expect(out.GIT_TOKEN_git_acg_team).toBeUndefined();
+    expect(out.GIT_TOKEN_git_example_com).toBeUndefined();
     expect(out.APP_GIT_CREDENTIAL_SECRET).toBeUndefined();
   });
 });

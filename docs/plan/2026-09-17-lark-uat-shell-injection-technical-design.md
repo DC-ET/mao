@@ -120,12 +120,12 @@ sequenceDiagram
 ```json
 {
   "enabled": false,
-  "appCode": "EK6301",
-  "baseUrl": "https://ecp.acg.team/api/v1",
+  "appCode": "EK0001",
+  "baseUrl": "https://ecp.example.com/api/v1",
   "loginVariant": "PARTNER",
   "timeoutMs": 10000,
-  "desktopCallbackUrl": "https://mao.etarch.cn/auth/ecp/feishu-callback",
-  "adminCallbackUrl": "https://mao.etarch.cn/admin/auth/ecp/feishu-callback",
+  "desktopCallbackUrl": "https://mao.example.com/auth/ecp/feishu-callback",
+  "adminCallbackUrl": "https://mao.example.com/admin/auth/ecp/feishu-callback",
   "larkAppId": ""
 }
 ```

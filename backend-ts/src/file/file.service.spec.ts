@@ -302,7 +302,7 @@ describe('GitWriteOperationService helpers', () => {
   });
 
   it('envVarNameForDomainReplacesDotsAndDashes', () => {
-    expect(envVarNameForDomain('git.acg.team')).toBe('GIT_TOKEN_git_acg_team');
+    expect(envVarNameForDomain('git.example.com')).toBe('GIT_TOKEN_git_example_com');
   });
 
   it('askpassScriptIsValidAndReturnsConfiguredToken', async () => {
@@ -312,11 +312,11 @@ describe('GitWriteOperationService helpers', () => {
     chmodSync(script, 0o700);
     const syntax = spawnSync('bash', ['-n', script]);
     expect(syntax.status).toBe(0);
-    const username = spawnSync('bash', [script, "Username for 'https://git.acg.team':"], { encoding: 'utf8' });
+    const username = spawnSync('bash', [script, "Username for 'https://git.example.com':"], { encoding: 'utf8' });
     expect(username.stdout.trim()).toBe('oauth2');
-    const password = spawnSync('bash', [script, "Password for 'https://oauth2@git.acg.team':"], {
+    const password = spawnSync('bash', [script, "Password for 'https://oauth2@git.example.com':"], {
       encoding: 'utf8',
-      env: { ...process.env, GIT_TOKEN_git_acg_team: 'secret-token' },
+      env: { ...process.env, GIT_TOKEN_git_example_com: 'secret-token' },
     });
     expect(password.stdout.trim()).toBe('secret-token');
   });

@@ -6,11 +6,11 @@
 
 ## 1. 需求背景与目标
 
-CLOUD 定时任务与 Agent shell 在服务端执行，当前仅注入短效 `MAO_TOKEN`（Mao JWT），可供 `mao-cli` / `mao-agent` 调用 Mao API。内部业务 CLI（如 `bigdata-cli` → `bd.acg.team`）要求 **人维度** 的 ECP `sessionToken`（`Authorization: Bearer`），短效 Mao JWT 无法替代。
+CLOUD 定时任务与 Agent shell 在服务端执行，当前仅注入短效 `MAO_TOKEN`（Mao JWT），可供 `mao-cli` / `mao-agent` 调用 Mao API。内部业务 CLI（如 `bigdata-cli` → `gateway.example.com`）要求 **人维度** 的 ECP `sessionToken`（`Authorization: Bearer`），短效 Mao JWT 无法替代。
 
 目标：在管理后台开启 ECP 登录后，用户通过 **ECP 飞书** 登录 Mao；服务端加密保存 ECP `sessionToken`，在 12 小时 TTL 内由常驻任务自动 renew；CLOUD shell 将会话票写入虚拟 HOME 的 AccessOne 兼容目录，使 `bigdata-cli` / `access-cli auth resolve` 能读到 Bearer 票。
 
-**确定采用：ECP 原生 HTTP Session API + Mao 自签 JWT 双票，不使用 `@acg/ecp-sdk` 接管前端路由/菜单/权限。**
+**确定采用：ECP 原生 HTTP Session API + Mao 自签 JWT 双票，不使用第三方 ECP SDK 接管前端路由/菜单/权限。**
 
 ## 2. 已确认需求与范围
 
@@ -19,8 +19,8 @@ CLOUD 定时任务与 Agent shell 在服务端执行，当前仅注入短效 `MA
 1. 管理后台「集成配置」开关；**开启 ECP 后关闭**密码/LDAP/Mao 飞书/公司 SSO 登录入口，后端同步拒绝对应接口。
 2. ECP 飞书 OAuth：`POST feishu-authorizations` → 跳转 `authorizeUrl` → HTTPS 回调 → `POST sessions`（`loginMethod: FEISHU_CALLBACK`）。
 3. 回调 URL（须在 ECP 登记）：
-   - 桌面 / Web / 安卓：`https://mao.etarch.cn/auth/ecp/feishu-callback`
-   - 管理后台：`https://mao.etarch.cn/admin/auth/ecp/feishu-callback`
+   - 桌面 / Web / 安卓：`https://mao.example.com/auth/ecp/feishu-callback`
+   - 管理后台：`https://mao.example.com/admin/auth/ecp/feishu-callback`
 4. 用户映射：**仅邮箱**（`data.user.email`）；`user_external_identity.provider='ecp'`，`subject=email`；冲突策略对齐公司 SSO（多账号同邮箱、管理员账号等拒绝自动合并）。
 5. 签发 Mao JWT（access/refresh）供 REST/WS/`MAO_TOKEN`；ECP `sessionToken` AES-GCM 加密存入 `user_ecp_session`。
 6. 常驻 **EcpRenewScheduler**：到期前约 30 分钟 `POST /public/session/renew`；用户行锁；先落库新票；renew 丢响应禁止用旧票狂重试。
@@ -30,7 +30,7 @@ CLOUD 定时任务与 Agent shell 在服务端执行，当前仅注入短效 `MA
 
 ### 2.2 本期明确不做
 
-- `@acg/ecp-sdk`、Spring starter、OAuth2/OIDC（无 refresh_token，TTL 更短）
+- 第三方 ECP SDK、Spring starter、OAuth2/OIDC（无 refresh_token，TTL 更短）
 - ECP 密码/OTP 登录、选公司/选身份、`unionId` 映射
 - 用 ECP 角色覆盖 Mao 权限；Embed SDK 公司 SSO 改 ECP
 - `mao-cli` 浏览器飞书登录；LOCAL/Electron 本机覆盖真实 AccessOne 目录
@@ -40,8 +40,8 @@ CLOUD 定时任务与 Agent shell 在服务端执行，当前仅注入短效 `MA
 
 | 项 | 值 |
 |---|---|
-| Base URL | `https://ecp.acg.team/api/v1` |
-| appCode | `EK6301`（可配置，默认此值） |
+| Base URL | `https://ecp.example.com/api/v1` |
+| appCode | `EK0001`（可配置，默认此值） |
 | 飞书授权 | `POST /public/login/apps/{appCode}/feishu-authorizations` |
 | 换票 | `POST /public/login/apps/{appCode}/sessions`，`loginMethod: FEISHU_CALLBACK` |
 | 校验 | `GET /public/session?appCode=`，`Authorization: Bearer` |
@@ -70,7 +70,7 @@ CLOUD 定时任务与 Agent shell 在服务端执行，当前仅注入短效 `MA
 CLOUD 任务 / shell
   → 读 user_ecp_session 解密
   → 写入虚拟 HOME AccessOne 布局
-  → bigdata-cli 经 access-cli 读 Bearer 调 bd.acg.team
+  → bigdata-cli 经 access-cli 读 Bearer 调 gateway.example.com
 
 后台 EcpRenewScheduler（常驻）
   → 扫描 expires_at 在 30 分钟内且 renew_status=ACTIVE
@@ -112,12 +112,12 @@ sequenceDiagram
 ```json
 {
   "enabled": false,
-  "appCode": "EK6301",
-  "baseUrl": "https://ecp.acg.team/api/v1",
+  "appCode": "EK0001",
+  "baseUrl": "https://ecp.example.com/api/v1",
   "loginVariant": "PARTNER",
   "timeoutMs": 10000,
-  "desktopCallbackUrl": "https://mao.etarch.cn/auth/ecp/feishu-callback",
-  "adminCallbackUrl": "https://mao.etarch.cn/admin/auth/ecp/feishu-callback"
+  "desktopCallbackUrl": "https://mao.example.com/auth/ecp/feishu-callback",
+  "adminCallbackUrl": "https://mao.example.com/admin/auth/ecp/feishu-callback"
 }
 ```
 

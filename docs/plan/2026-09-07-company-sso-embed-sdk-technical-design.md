@@ -93,7 +93,7 @@ SSO Token 只传给换票接口，不发送给普通业务接口，不写入 URL
 
 ### 5.2 SSO 适配器内部返回契约
 
-开发补充（2026-09-07）：接入方已提供公司 `GET https://sgs.acg.team/api/sso-auth/auth/checkToken?token=<凭证>` 的成功响应样例。实现固定该地址，要求 `code=0`、`success=true`、`data.illegal=false`，从经官方校验的 `data.claims` 读取 `id`、`email`、`realName` 和 `exp`（秒）；`id` 转字符串作 subject，身份源固定 `company_sso`。样例不含明确应用密钥要求，因此不引入虚构密钥参数。不保存或复用样例中的真实凭证。
+开发补充（2026-09-07）：接入方已提供公司 `GET https://sso.example.com/auth/checkToken?token=<凭证>` 的成功响应样例。实现固定该地址，要求 `code=0`、`success=true`、`data.illegal=false`，从经官方校验的 `data.claims` 读取 `id`、`email`、`realName` 和 `exp`（秒）；`id` 转字符串作 subject，身份源固定 `company_sso`。样例不含明确应用密钥要求，因此不引入虚构密钥参数。不保存或复用样例中的真实凭证。
 
 上游唯一已知传参方式为 query，这是原“Token 不进 URL”原则的协议例外：浏览器到 Mao 仍只用 Header，Mao 到 SSO 使用官方 query，并禁止日志输出该 URL。SSO 网关脱敏、claims.id 不回收、停用/撤销失败响应仍须联调核实，不能从成功样例推断。内部异常和未知响应拒绝换票（503），明确 `illegal=true` 或已过期返回401。
 

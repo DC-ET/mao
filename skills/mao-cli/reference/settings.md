@@ -14,7 +14,7 @@
 {"enabled":false,"allowedDomains":[],"allowedOrigins":[],"accessTtlSeconds":1800,"timeoutMs":3000}
 ```
 
-启用时两个白名单均必填，校验域名匹配自身及子域；宿主 Origin 支持精确 HTTPS Origin、`https://*.acg.team` 子域模式（不含根域，端口严格匹配）或 `*` 全来源。TTL 为 60–3600 秒，timeout 为 1–30000 毫秒；未知字段、缺失字段及非法值拒绝保存，不接受 `requireHttps` 开关。保存后新换票即时生效，`SSO_*` 环境变量不再读取或导入。校验 URL 仍由业务系统 `MaoChat.init` 指定。详见 [配置参考](config.md#公司-ssoweb-embed-sdk)。
+启用时两个白名单均必填，校验域名匹配自身及子域；宿主 Origin 支持精确 HTTPS Origin、`https://*.example.com` 子域模式（不含根域，端口严格匹配）或 `*` 全来源。TTL 为 60–3600 秒，timeout 为 1–30000 毫秒；未知字段、缺失字段及非法值拒绝保存，不接受 `requireHttps` 开关。保存后新换票即时生效，`SSO_*` 环境变量不再读取或导入。校验 URL 仍由业务系统 `MaoChat.init` 指定。详见 [配置参考](config.md#公司-ssoweb-embed-sdk)。
 
 ## 命令选择
 

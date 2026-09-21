@@ -23,7 +23,7 @@
 判别：
 
 ```bash
-HOST=https://mao.acg.team   # 换成实际桌面域名
+HOST=https://mao.example.com   # 换成实际桌面域名
 curl -sS "$HOST/admin/" | grep -o '<title>[^<]*</title>'
 curl -sS "$HOST/admin/index.html" | grep -o '<title>[^<]*</title>'
 curl -sS "$HOST/admin/login" | grep -o '<title>[^<]*</title>'

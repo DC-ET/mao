@@ -16,10 +16,10 @@
           <el-switch v-model="model.enabled" />
         </el-form-item>
         <el-form-item label="appCode">
-          <el-input v-model="model.appCode" placeholder="EK6301" />
+          <el-input v-model="model.appCode" placeholder="EK0001" />
         </el-form-item>
         <el-form-item label="ECP API Base URL">
-          <el-input v-model="model.baseUrl" placeholder="https://ecp.acg.team/api/v1" />
+          <el-input v-model="model.baseUrl" placeholder="https://ecp.example.com/api/v1" />
         </el-form-item>
         <el-form-item label="loginVariant">
           <el-input v-model="model.loginVariant" placeholder="PARTNER" />
