@@ -44,7 +44,7 @@ cd ../admin && npm run build
 
 - 支持精确 HTTPS Origin、`https://*.example.com` 子域规则与 `*` 全来源；子域不含根域、端口严格匹配，CORS 与 POST 共用规则，保留认证及校验域名限制。
 - 后端 `npm run build && npm test` 通过：172 文件、1695 项通过，12 项 MySQL 测试仍跳过；管理后台 `npm run build` 通过，隔离 Playwright `admin-company-sso.spec.ts` 21 项通过。
-- 原 reviewer 复用两轮：第 1 轮发现 P3 通配端口 0 的前后端差异，已修复并补“零 PUT”UI 回归；第 2 轮无新增 bug。112 组前后端 Origin 配置对比全部一致。报告保留于 `docs/code-review/code_review_20260908110758.md`。
+- 原 reviewer 复用两轮：第 1 轮发现 P3 通配端口 0 的前后端差异，已修复并补“零 PUT”UI 回归；第 2 轮无新增 bug。112 组前后端 Origin 配置对比全部一致。报告保留于 `docs/code-review/2026-09-08-code-review-01.md`。
 - SDK 无改动，不需重新生成 SDK 产物。测试使用 mock API，临时 Vite 服务已关闭；未部署、未执行真实 SSO/数据库联调。
 
 ## 隔离 MySQL 集成测试
