@@ -827,6 +827,42 @@ describe('AgentFeishuInboundHandler', () => {
     expect(harness.execute).toHaveBeenCalledOnce();
   });
 
+  it('persists a busy-session file even when the current task fails', async () => {
+    let release!: () => void;
+    const firstGate = new Promise<void>((resolve) => { release = resolve; });
+    const sessionService = makeSessionService();
+    const harness = {
+      prepareMessage: vi.fn(() => 'e'),
+      execute: vi.fn(async () => { await firstGate; throw new Error('llm down'); }),
+    };
+    const queueService = makeQueueService();
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      downloadMedia: async (context) => context.messageType === 'file'
+        ? { images: [], imagePaths: [], filePaths: ['/ws/a.pdf'], errors: [] }
+        : { images: [], imagePaths: [], filePaths: [], errors: [] },
+      listenerFactory: async () => listener,
+      createCancelFlag: makeFlag,
+      releaseCancelFlag: vi.fn(),
+      onReply: vi.fn(async (): Promise<string | null> => null),
+      queueService,
+    });
+    const first = handler.onMessage(makeContext({ text: '长任务', messageId: 'om_1' }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await handler.onMessage(makeContext({
+      messageType: 'file', fileKey: 'file_1', fileName: 'a.pdf', text: '[文件:a.pdf]', messageId: 'om_file',
+    }));
+    expect(sessionService.saveUserMessage).toHaveBeenCalledTimes(1);
+    release();
+    await first;
+    // FAILED 只应阻止队列接力，暂存附件仍必须落库
+    await vi.waitFor(() => expect(sessionService.saveUserMessage).toHaveBeenCalledTimes(2));
+    expect(sessionService.saveUserMessage).toHaveBeenLastCalledWith(7, expect.stringContaining('@{/ws/a.pdf}@'), null);
+    expect(queueService.claimNext).not.toHaveBeenCalled();
+    expect(harness.execute).toHaveBeenCalledOnce();
+  });
+
   it('does not drain the queue when the direct message execution fails', async () => {
     const sessionService = makeSessionService();
     const harness = {

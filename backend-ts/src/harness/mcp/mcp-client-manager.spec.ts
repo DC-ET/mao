@@ -60,13 +60,28 @@ describe('McpClientManager', () => {
     expect(await mgr.callTool(11, 99, 'missing', '{}')).toContain('not found');
   });
 
+  it('rejects invalid arguments JSON without calling the MCP tool', async () => {
+    const mgr = new McpClientManager();
+    await mgr.connectAndListTools(12, { id: 4, name: 'fs', serverType: TYPE_STDIO, command: 'node' }, {});
+    callTool.mockClear();
+    for (const bad of ['not-json', '{"path":', '[1,2]', '"text"']) {
+      const result = JSON.parse(await mgr.callTool(12, 4, 'read', bad));
+      expect(result.error).toContain('参数不是合法 JSON 对象');
+    }
+    expect(callTool).not.toHaveBeenCalled();
+    // 空参数仍按 {} 正常调用
+    callTool.mockResolvedValueOnce({ content: [{ text: 'ok' }] });
+    expect(await mgr.callTool(12, 4, 'read', '')).toBe('ok');
+    expect(callTool).toHaveBeenCalledWith({ name: 'read', arguments: {} });
+  });
+
   it('formats errors structured content and image parts', async () => {
     const mgr = new McpClientManager();
     await mgr.connectAndListTools(1, { id: 1, name: 'http', serverType: TYPE_HTTP, url: 'https://mcp.example/rpc' }, {});
     callTool.mockResolvedValueOnce({ isError: true, content: [{ text: 'boom' }] });
     expect(JSON.parse(await mgr.callTool(1, 1, 't', '{}')).error).toBe('boom');
     callTool.mockResolvedValueOnce({ structuredContent: { a: 1 } });
-    expect(JSON.parse(await mgr.callTool(1, 1, 't', 'not-json'))).toEqual({ a: 1 });
+    expect(JSON.parse(await mgr.callTool(1, 1, 't', '{"q":1}'))).toEqual({ a: 1 });
     callTool.mockResolvedValueOnce({ content: [{ type: 'image' }] });
     expect(await mgr.callTool(1, 1, 't', '')).toContain('图片');
     callTool.mockRejectedValueOnce(new Error('timeout "x"'));

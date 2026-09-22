@@ -467,9 +467,11 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
       }
     });
     // 本消息执行结束（或入队后队列需推进）时，先把忙碌期间收到的文件落库，再接力消费队列；
-    // 上一任务 FAILED 时不再自动消费下一条（延续失败上下文执行会产生不可信结果）。
-    if (executed && phase !== 'FAILED') {
-      void this.flushAttachmentsAndDrain(sessionId, session.executionUserId ?? context.maoUserId ?? null)
+    // 上一任务 FAILED 时不再自动消费下一条（延续失败上下文执行会产生不可信结果），
+    // 但附件落库与上一轮成败无关，FAILED 也必须落，否则用户发的文件只留在内存里、
+    // 后续提问在会话历史中看不到文件路径。
+    if (executed) {
+      void this.flushAttachmentsAndDrain(sessionId, session.executionUserId ?? context.maoUserId ?? null, phase !== 'FAILED')
         .catch((error) => {
           console.error(`飞书队列消费接力异常, sessionId=${sessionId}`, error);
         });
@@ -504,10 +506,22 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     }
   }
 
-  private async flushAttachmentsAndDrain(sessionId: number, executionUserId: number | null): Promise<void> {
+  /** drain=false 时只落暂存附件、不接力消费队列（上一轮 FAILED 的收尾路径）。 */
+  private async flushAttachmentsAndDrain(sessionId: number, executionUserId: number | null, drain = true): Promise<void> {
     const ingest = this.fileIngestGates.get(sessionId);
     if (ingest != null) await ingest;
-    await this.drainNext(sessionId, executionUserId);
+    if (drain) {
+      await this.drainNext(sessionId, executionUserId);
+      return;
+    }
+    if (!this.hasPendingAttachments(sessionId)) return;
+    await this.withLock(sessionId, async () => {
+      // 会话又忙起来则留给下一次收尾，与 drainNext 的判定保持一致
+      if (await this.isBusyOrRecovering(sessionId)) return;
+      if (this.hasPendingAttachments(sessionId)) {
+        await this.persistPendingAttachments(sessionId, executionUserId);
+      }
+    });
   }
 
   private async drainNext(sessionId: number, executionUserId: number | null = null): Promise<void> {

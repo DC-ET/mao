@@ -162,6 +162,51 @@ describe('ShellSessionTool marker and environment handling', () => {
     expect(result.completed).toBe(true);
   });
 
+  it('closes the session when write_stdin makes the shell exit', async () => {
+    let alive = true;
+    const shellSession = {
+      sessionId: 'sh-1',
+      writeStdin: vi.fn(),
+      incrementCommandCount: vi.fn(),
+      touch: vi.fn(),
+      setCurrentWorkdir: vi.fn(),
+      currentWorkdir: '/tmp',
+      outputFile: '/tmp/out.log',
+      isAlive: () => alive,
+      peekBuffer: () => '',
+      pendingCommand: null as { marker: string; keepSession: boolean; persist: boolean; taskId: string | null } | null,
+      beginCommand(marker: string, keepSession: boolean, persist = true, taskId: string | null = null) {
+        shellSession.pendingCommand = { marker, keepSession, persist, taskId };
+      },
+    };
+    const sessionManager = {
+      getOrCreate: vi.fn(() => shellSession),
+      getSession: vi.fn(() => shellSession),
+      close: vi.fn(),
+      listByConversation: vi.fn(() => [shellSession]),
+    };
+    const outputManager = {
+      readUntilMarker: vi.fn(async () => {
+        alive = false;
+        shellSession.pendingCommand = null;
+        return { output: 'bye\n', truncated: false, completed: true, exitCode: 0, matched: null, shellExited: true };
+      }),
+    };
+    const tool = new ShellSessionTool(
+      { resolve: vi.fn((p: string) => p), resolveLenient: vi.fn((p: string) => p) } as never,
+      sessionManager as never,
+      outputManager as never,
+      { submit: vi.fn() } as never,
+      null,
+    );
+    const result = JSON.parse(await tool.execute(
+      JSON.stringify({ action: 'write_stdin', session_id: 'sh-1', input: 'exit' }), 11, 7, '/tmp',
+    ));
+    // 返回文案说「会话已关闭」，就必须真的回收，否则死会话继续占用会话数配额
+    expect(result.message).toContain('会话已关闭');
+    expect(sessionManager.close).toHaveBeenCalledWith('sh-1');
+  });
+
   it('reports the real exit code and falls back to -1 when the marker never arrives', async () => {
     const failed = harness({ exitCode: 7 });
     const withCode = JSON.parse(await failed.tool.execute(JSON.stringify({ command: 'false' }), 11, 7, '/tmp'));

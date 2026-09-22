@@ -119,6 +119,34 @@ describe('OutputRingBuffer', () => {
     expect(replay).not.toContain('abcde');
   });
 
+  it('keeps the tail of a single oversized frame instead of dropping everything', () => {
+    const buffer = new OutputRingBuffer(10);
+    buffer.append('0123456789abcdef');
+    const replay = buffer.read();
+    expect(replay.startsWith('\r\n[历史输出过长，已截断前面部分]\r\n')).toBe(true);
+    expect(replay.endsWith('6789abcdef')).toBe(true);
+    expect(buffer.isEmpty()).toBe(false);
+  });
+
+  it('does not split multi-byte characters when truncating an oversized frame', () => {
+    const buffer = new OutputRingBuffer(7);
+    buffer.append('一二三');
+    const replay = buffer.read();
+    expect(replay.endsWith('二三')).toBe(true);
+    expect(replay).not.toContain('\uFFFD');
+  });
+
+  it('keeps the last whole character when the limit is smaller than one character', () => {
+    // 上限被配成个位数时，尾部窗口整个落在某个字符内部，不能因此回放出空正文
+    const buffer = new OutputRingBuffer(2);
+    buffer.append('一二');
+    const replay = buffer.read();
+    expect(replay.endsWith('二')).toBe(true);
+    expect(replay).not.toContain('\uFFFD');
+    buffer.append('三');
+    expect(buffer.read().endsWith('三')).toBe(true);
+  });
+
   it('is empty after clear and ignores empty appends', () => {
     const buffer = new OutputRingBuffer(16);
     buffer.append('');

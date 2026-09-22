@@ -6,6 +6,8 @@ import type { EcpSessionStore } from './ecp-session.repository.js';
 const TICK_INTERVAL_MS = 60_000;
 const RENEW_LEAD_MS = 30 * 60_000;
 const BATCH_SIZE = 20;
+/** RENEWING 超过该时长仍未收敛即视为进程崩溃遗留（单次 renew 只需秒级）。 */
+const STALE_RENEWING_MS = 5 * 60_000;
 
 export type EcpConfigSource = () => Promise<EcpConfig>;
 
@@ -42,6 +44,7 @@ export class EcpRenewScheduler {
     try {
       const config = await this.getConfig();
       if (!config.enabled) return;
+      await this.recoverStaleRenewing();
       const before = formatDateTime(new Date(Date.now() + RENEW_LEAD_MS));
       const due = await this.sessions.listDueForRenew(before, BATCH_SIZE);
       for (const row of due) {
@@ -51,6 +54,19 @@ export class EcpRenewScheduler {
       console.error('EcpRenewScheduler tick failed', e);
     } finally {
       this.running = false;
+    }
+  }
+
+  /**
+   * markRenewing 之后进程被 kill 会把行永久留在 RENEWING，而 listDueForRenew 只捞 ACTIVE，
+   * 该用户的票到期后再也不会自动续期。每跳复位一次超时的中间态，让它重新进入续期队列。
+   */
+  private async recoverStaleRenewing(): Promise<void> {
+    if (this.sessions.recoverStaleRenewing == null) return;
+    const cutoff = formatDateTime(new Date(Date.now() - STALE_RENEWING_MS));
+    const recovered = await this.sessions.recoverStaleRenewing(cutoff);
+    if (recovered > 0) {
+      console.warn(`ECP 续期中间态复位: ${recovered} 行 RENEWING 超过 ${STALE_RENEWING_MS / 60_000} 分钟未收敛，已置回 ACTIVE`);
     }
   }
 

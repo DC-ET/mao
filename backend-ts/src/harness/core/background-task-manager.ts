@@ -3,7 +3,10 @@ import { parseObject } from '../tool/json.js';
 
 /** 后台任务注入上下文的整体长度上限（字符）。 */
 const MAX_RESULT_LENGTH = 10000;
+/** 已完成但无人领取（跨会话遗留）的结果保留时长。 */
 const ABANDONED_THRESHOLD_MS = 30 * 60 * 1000;
+/** 仍未结束的任务保留上限：超过即认为不可能再有人领结果，才允许回收登记表。 */
+const UNFINISHED_HARD_EXPIRY_MS = 24 * 60 * 60 * 1000;
 
 interface TaskEntry {
   sessionId: number | null;
@@ -12,7 +15,7 @@ interface TaskEntry {
   result?: string;
   error?: unknown;
   submitTimeMs: number;
-  cancelled: boolean;
+  overdueWarned: boolean;
 }
 
 /** awaitResult 的三态：任务不存在 / 仍在跑（未消费） / 已完成（已消费）。 */
@@ -24,14 +27,17 @@ export type AwaitTaskResult =
 export class BackgroundTaskManager {
   private readonly tasks = new Map<string, TaskEntry>();
 
+  /** now 可注入，便于测试超时回收而不依赖真实时钟。 */
+  constructor(private readonly now: () => number = () => Date.now()) {}
+
   submit(sessionId: number | null, task: () => Promise<string> | string): string {
     const taskId = 'bg-' + process.hrtime.bigint().toString();
     const entry: TaskEntry = {
       sessionId,
       promise: Promise.resolve().then(task),
       done: false,
-      submitTimeMs: Date.now(),
-      cancelled: false,
+      submitTimeMs: this.now(),
+      overdueWarned: false,
     };
     entry.promise.then(
       (r) => { entry.done = true; entry.result = r; },
@@ -44,7 +50,7 @@ export class BackgroundTaskManager {
 
   async consumeCompletedResults(sessionId: number | null): Promise<Record<string, string>> {
     const completed: Record<string, string> = {};
-    const now = Date.now();
+    const now = this.now();
     for (const taskId of [...this.tasks.keys()]) {
       const entry = this.tasks.get(taskId);
       if (!entry) continue;
@@ -62,11 +68,23 @@ export class BackgroundTaskManager {
           continue;
         }
         this.tasks.delete(taskId);
-      } else if (now - entry.submitTimeMs > ABANDONED_THRESHOLD_MS) {
-        if (sessionId !== entry.sessionId) continue;
-        entry.cancelled = true;
+        continue;
+      }
+      // 仍在跑的任务必须留在登记表里：长时构建超过 30 分钟很常见，提前移除会让
+      // 结果永久无人消费（自动注入拿不到），模型再 await_async 也只会得到「任务不存在」。
+      // 硬过期回收不限所属会话（会话可能已死、永远不再来消费），但下面的超时告警限所属会话。
+      if (now - entry.submitTimeMs > UNFINISHED_HARD_EXPIRY_MS) {
         this.tasks.delete(taskId);
-        harnessLog('warn', `Cancelled abandoned background task: ${taskId} session=${entry.sessionId}`);
+        harnessLog('warn', `Dropped background task after hard expiry: ${taskId} session=${entry.sessionId}`);
+        continue;
+      }
+      if (sessionId !== entry.sessionId) continue;
+      if (!entry.overdueWarned && now - entry.submitTimeMs > ABANDONED_THRESHOLD_MS) {
+        entry.overdueWarned = true;
+        harnessLog(
+          'warn',
+          `Background task still running after ${ABANDONED_THRESHOLD_MS / 60_000} minutes, keeping it for delivery: ${taskId} session=${entry.sessionId}`,
+        );
       }
     }
     return completed;

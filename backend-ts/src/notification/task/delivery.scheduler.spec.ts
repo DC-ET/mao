@@ -92,6 +92,43 @@ describe('WebhookDeliveryScheduler', () => {
     scheduler.stop();
   });
 
+  it('keeps polling after the properties source fails', async () => {
+    vi.useFakeTimers();
+    const store = {
+      recoverInterrupted: vi.fn(async () => undefined),
+      listDue: vi.fn(async () => []),
+      claim: vi.fn(),
+      countPending: vi.fn(async () => 0),
+      updateById: vi.fn(),
+      deleteHistory: vi.fn(),
+    };
+    let fail = true;
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const scheduler = new WebhookDeliveryScheduler(
+      store as never,
+      async () => {
+        if (fail) throw new Error('ECONNREFUSED');
+        return { workerDelayMs: 1000, batchSize: 10, maxAttempts: 3 };
+      },
+      { decrypt: vi.fn() } as never,
+      { get: vi.fn() } as never,
+    );
+    try {
+      scheduler.start();
+      await vi.advanceTimersByTimeAsync(0);
+      // 参数读取失败不得中断调度链，否则投递永久停摆
+      expect(errorSpy).toHaveBeenCalledWith('任务通知调度参数读取失败，1 分钟后重试', expect.any(Error));
+      expect(store.listDue).not.toHaveBeenCalled();
+      fail = false;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(store.listDue).toHaveBeenCalled();
+    } finally {
+      scheduler.stop();
+      errorSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it('deliverTerminalWriteUsesStatusCasWhenStoreSupportsIt', async () => {
     for (const casOk of [true, false]) {
       const delivery = {

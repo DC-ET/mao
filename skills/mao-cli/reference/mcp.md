@@ -79,4 +79,4 @@ mao mcp set-status --id 1 --status DISABLED
 - 管理后台「MCP 服务器」对应全局 `mcp list/create/...`
 - 桌面端「MCP」对应 `mcp me-*` 与 `mcp preferences`
 
-对话中 Agent 实际调用 MCP 工具不走本 CLI，走 WebSocket 会话与 Harness。
+对话中 Agent 实际调用 MCP 工具不走本 CLI，走 WebSocket 会话与 Harness。模型给出的参数不是合法 JSON 对象时（输出被截断等），0.0.177 起直接返回「MCP 工具参数不是合法 JSON 对象，请重新生成参数后重试」并跳过本次调用，不再兜底成 `{}` 发给 MCP 服务器。

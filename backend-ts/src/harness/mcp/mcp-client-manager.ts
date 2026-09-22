@@ -49,8 +49,14 @@ export class McpClientManager {
   async callTool(sessionId: number | null, serverId: number, toolName: string, argumentsJson: string): Promise<string> {
     const client = sessionId != null ? this.sessionClients.get(sessionId)?.get(serverId) : undefined;
     if (!client) return JSON.stringify({ error: `MCP connection not found for serverId=${serverId}` });
+    const args = parseArguments(argumentsJson);
+    // 参数非法（模型输出被截断等）时兜底成 {} 会让 MCP 工具在缺参数下执行或报无关业务错，
+    // 模型拿到的是误导性结果而非「参数不合法，重试」。与内置工具一致：直接返回错误、不发起调用。
+    if (args == null) {
+      harnessLog('warn', `MCP callTool rejected invalid arguments JSON: serverId=${serverId}, tool=${toolName}`);
+      return JSON.stringify({ error: `MCP 工具参数不是合法 JSON 对象，请重新生成参数后重试: ${toolName}` });
+    }
     try {
-      const args = parseArguments(argumentsJson);
       // 必须有超时：MCP 服务器挂起会拖死整轮 Promise.all 工具执行
       const result = await this.withTimeout(
         client.callTool({ name: toolName, arguments: args }),
@@ -188,13 +194,14 @@ function parseArgs(argsJson: string | null | undefined): string[] {
   }
 }
 
-function parseArguments(argumentsJson: string | null | undefined): Record<string, unknown> {
+/** 解析工具参数；非法 JSON 或非对象返回 null（调用方据此拒绝调用），空参数视为 {}。 */
+function parseArguments(argumentsJson: string | null | undefined): Record<string, unknown> | null {
   if (!argumentsJson || argumentsJson.trim() === '') return {};
   try {
     const parsed = JSON.parse(argumentsJson) as unknown;
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
   } catch {
-    return {};
+    return null;
   }
 }
 

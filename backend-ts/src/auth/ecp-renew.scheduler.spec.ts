@@ -25,6 +25,28 @@ describe('EcpRenewScheduler', () => {
     expect(sessions.saveRenewed).not.toHaveBeenCalled();
   });
 
+  it('recovers stale RENEWING rows before scanning for due sessions', async () => {
+    const calls: string[] = [];
+    const sessions = {
+      recoverStaleRenewing: vi.fn(async () => { calls.push('recover'); return 2; }),
+      listDueForRenew: vi.fn(async () => { calls.push('list'); return []; }),
+      markRenewing: vi.fn(async () => true),
+      saveRenewed: vi.fn(),
+      markFailed: vi.fn(),
+      decryptToken: vi.fn(() => 'old-token'),
+    };
+    const scheduler = new EcpRenewScheduler(
+      sessions as never,
+      async () => ({ ...defaultEcpConfig(), enabled: true }),
+      { renewSession: vi.fn() },
+      (t) => `enc-${t}`,
+    );
+    await scheduler.tick();
+    // markRenewing 后崩溃留下的中间态必须先复位，否则该用户永远不再进入续期队列
+    expect(sessions.recoverStaleRenewing).toHaveBeenCalledTimes(1);
+    expect(calls).toEqual(['recover', 'list']);
+  });
+
   it('saves renewed token on success', async () => {
     const expiresAt = new Date(Date.now() + 3600_000);
     const sessions = {

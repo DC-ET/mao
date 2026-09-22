@@ -309,7 +309,11 @@ export class ShellSessionTool extends BaseTool {
       const marker = this.newMarker();
       this.writeCommand(session, input, marker, true, null);
       const result = await this.outputManager.readUntilMarker(session, marker, yieldTimeMs, waitFor);
-      return toJson(this.formatResult(session, result, await this.resolveCurrentWorkdir(session, result)));
+      const payload = this.formatResult(session, result, await this.resolveCurrentWorkdir(session, result));
+      // 与 exec / pending 分支一致：输入含 exit 让 bash 退出时必须回收会话，
+      // 否则返回文案说「会话已关闭」而死会话仍占着会话数配额。
+      this.settleSession(session, result, true);
+      return toJson(payload);
     } finally {
       releaseCommand();
     }

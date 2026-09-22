@@ -64,7 +64,8 @@ export function useToolApprovals() {
   ensureApprovalListener()
 
   async function confirmApproval(requestId: string, approved: boolean) {
-    const item = pendingApprovals.value.find(a => a.requestId === requestId)
+    const index = pendingApprovals.value.findIndex(a => a.requestId === requestId)
+    const item = index >= 0 ? pendingApprovals.value[index] : undefined
     if (item?.sessionId) sessionStore.decrementPendingApproval(item.sessionId)
     pendingApprovals.value = pendingApprovals.value.filter(a => a.requestId !== requestId)
     if (requestId && isElectron) {
@@ -72,7 +73,18 @@ export function useToolApprovals() {
     }
     if (item?.sessionId) {
       const { sendToolApproval } = useStreamWS()
-      await sendToolApproval(item.sessionId, requestId, approved)
+      const sent = await sendToolApproval(item.sessionId, requestId, approved)
+      if (!sent) {
+        // 发送失败（断线/重连超时）时必须把审批项放回原位：服务端仍停在
+        // WAITING_APPROVAL 等回包，静默移除会让用户失去重试入口、任务像卡死。
+        if (!pendingApprovals.value.some(a => a.requestId === requestId)) {
+          const restored = pendingApprovals.value.slice()
+          restored.splice(Math.min(index, restored.length), 0, item)
+          pendingApprovals.value = restored
+          sessionStore.incrementPendingApproval(item.sessionId)
+        }
+        ElMessage.error('审批发送失败，网络连接不可用，请重试')
+      }
     }
   }
 
@@ -529,7 +541,10 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
         pendingCallbacks.set(sid, { resolve, reject })
       }).then(() => {
         if (startedAt.value) {
-          const lastMsg = messages.value[messages.value.length - 1]
+          // 必须按本次发送的 sid 取消息：messages 绑的是活跃会话，等待期间用户可能已切走，
+          // 否则耗时会写到另一个会话最后一条 assistant 上。
+          const list = sessionStore.getMessages(sid)
+          const lastMsg = list[list.length - 1]
           if (lastMsg && lastMsg.role === 'assistant') {
             lastMsg.durationMs = Date.now() - new Date(startedAt.value).getTime()
           }

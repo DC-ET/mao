@@ -51,11 +51,12 @@ describe('StreamingWsHandler', () => {
     listSubagentSessions: vi.fn(async () => []),
     cleanupIncompleteTail: vi.fn(async () => 0), updateContextTokens: vi.fn(),
     getLastUserMessage: vi.fn(async () => message(3, 'USER')),
+    deleteMessageById: vi.fn(async () => undefined),
   };
   const taskTerminalService = { finishExecution: vi.fn() };
   const messageQueueService = {
     listPending: vi.fn(async () => []), enqueue: vi.fn(), dequeue: vi.fn(), getById: vi.fn(),
-    delete: vi.fn(), reorder: vi.fn(),
+    delete: vi.fn(), reorder: vi.fn(), enqueueHead: vi.fn(async () => undefined),
   };
   const localToolSessionRegistry = {
     setUserForSession: vi.fn(), isConnected: vi.fn(), failAllForSession: vi.fn(), failAllForUser: vi.fn(),
@@ -624,6 +625,70 @@ describe('StreamingWsHandler', () => {
     // CANCELLED 属用户主动决策：结束后照常自动消费下一条
     expect(messageQueueService.dequeue).toHaveBeenCalledWith(11);
     vi.useRealTimers();
+  });
+
+  it('deletes the auto-saved user message when the executor rejects the auto-consumed task', async () => {
+    vi.clearAllMocks();
+    executor.tasks.length = 0;
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('CLOUD', 'COMPLETED'));
+    const queued = { id: 8, sessionId: 11, userId: 7, content: '#{next}#', sortOrder: 1, images: null };
+    let pending = [queued];
+    messageQueueService.listPending.mockImplementation(async () => pending);
+    messageQueueService.dequeue.mockImplementation(async () => {
+      const head = pending[0] ?? null;
+      pending = [];
+      return head;
+    });
+    sessionService.saveMessage.mockResolvedValue(message(100, 'USER'));
+    const submit = vi.spyOn(executor, 'submit').mockImplementationOnce(() => {
+      throw new Error('Agent executor rejected: active=100 queued=200');
+    });
+    try {
+      await handler.autoConsumeQueue(11, 7);
+    } finally {
+      submit.mockRestore();
+    }
+    // 回补队首的同时必须删掉已落库的 USER，否则下次消费会重复落库同一条消息
+    expect(messageQueueService.enqueueHead).toHaveBeenCalledWith(11, 7, '#{next}#', null, null);
+    expect(sessionService.deleteMessageById).toHaveBeenCalledWith(11, 100);
+  });
+
+  it('rolls back the dequeued message when broadcasting the consumed event fails', async () => {
+    vi.clearAllMocks();
+    executor.tasks.length = 0;
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('CLOUD', 'COMPLETED'));
+    let pending = [{ id: 9, sessionId: 11, userId: 7, content: '#{next}#', sortOrder: 1, images: null }];
+    messageQueueService.listPending.mockImplementation(async () => pending);
+    messageQueueService.dequeue.mockImplementation(async () => {
+      const head = pending[0] ?? null;
+      pending = [];
+      return head;
+    });
+    sessionService.saveMessage.mockResolvedValue(message(101, 'USER'));
+    registry.send.mockImplementationOnce(() => undefined) // queue_updated
+      .mockImplementationOnce(() => { throw new Error('socket gone'); }); // queue_message_consumed
+    try {
+      await handler.autoConsumeQueue(11, 7);
+    } finally {
+      registry.send.mockReset();
+    }
+    expect(messageQueueService.enqueueHead).toHaveBeenCalledWith(11, 7, '#{next}#', null, null);
+    expect(sessionService.deleteMessageById).toHaveBeenCalledWith(11, 101);
+  });
+
+  it('does not write a CANCELLED terminal phase when the session is idle', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('CLOUD', 'IDLE'));
+    await handler.handleTextMessage(ws, JSON.stringify({ type: 'cancel', sessionId: 11 }));
+    // 空闲会话没有在途执行：只回 pending 取消，不得把 IDLE 落成 CANCELLED
+    expect(taskTerminalService.finishExecution).not.toHaveBeenCalled();
+    expect(registry.send).toHaveBeenCalledWith(7, expect.objectContaining({
+      type: 'cancelled',
+      data: expect.objectContaining({ pending: true }),
+    }));
   });
 
   it('cancel insert skillSync mcpReport and sideTask', async () => {

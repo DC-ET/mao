@@ -97,6 +97,9 @@ export type TaskNotificationPropertiesSource = TaskNotificationProperties | (() 
 /** SENDING 卡死行恢复的执行间隔：每 tick 一次代价过高，节流为每分钟。 */
 const RECOVERY_INTERVAL_MS = 60_000;
 
+/** 调度参数读取失败后的重排间隔。 */
+const PROPERTIES_RETRY_DELAY_MS = 60_000;
+
 export class WebhookDeliveryScheduler {
   private lastRecoveryAt = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -138,14 +141,21 @@ export class WebhookDeliveryScheduler {
   /** setTimeout 链轮询：每轮重新读取 workerDelayMs，后台改轮询间隔无需重启。 */
   private scheduleNext(): void {
     void this.resolveProperties()
-      .then((p) => {
-        if (this.stopped) return;
-        this.timer = setTimeout(() => {
-          this.timer = null;
-          void this.dispatchDueDeliveries().finally(() => this.scheduleNext());
-        }, Math.max(1000, p.workerDelayMs));
-      })
-      .catch((e) => console.error('任务通知调度参数读取失败，1 分钟后重试', e));
+      .then((p) => this.armTimer(Math.max(1000, p.workerDelayMs)))
+      .catch((e) => {
+        // 参数读取失败（DB 抖动等）必须重排：不续链会让整条投递轮询永久停摆，
+        // 后续 PENDING/WAITING_WS 的通知直到进程重启都不再被扫描。
+        console.error('任务通知调度参数读取失败，1 分钟后重试', e);
+        this.armTimer(PROPERTIES_RETRY_DELAY_MS);
+      });
+  }
+
+  private armTimer(delayMs: number): void {
+    if (this.stopped) return;
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      void this.dispatchDueDeliveries().finally(() => this.scheduleNext());
+    }, delayMs);
   }
 
   async recoverInterruptedDeliveries(): Promise<void> {

@@ -21,6 +21,8 @@ export interface EcpSessionStore {
   saveRenewed(id: number, sessionTokenEnc: string, expiresAt: Date): Promise<void>;
   markFailed(id: number): Promise<void>;
   clearFailed(userId: number): Promise<void>;
+  /** 把卡死在 RENEWING 的行复位为 ACTIVE（进程在 markRenewing 后崩溃/重启的遗留，可选）。 */
+  recoverStaleRenewing?(cutoff: string): Promise<number>;
 }
 
 /** 本地判定 ECP 票是否仍可用于 CLOUD / 飞书通道（不打 ECP HTTP）。 */
@@ -115,6 +117,20 @@ export class MysqlEcpSessionRepository implements EcpSessionStore {
 
   async markFailed(id: number): Promise<void> {
     await this.db.updateById('user_ecp_session', id, { renewStatus: 'FAILED' });
+  }
+
+  /**
+   * markRenewing 之后进程被 kill（部署重启/OOM）会把行永久留在 RENEWING：
+   * listDueForRenew 只捞 ACTIVE，clearFailed 只救 FAILED，该用户的自动续期会彻底停摆。
+   * 与 task_notification_delivery 的 recoverInterrupted 同构，按 updated_at 超时复位。
+   */
+  async recoverStaleRenewing(cutoff: string): Promise<number> {
+    const result = await this.db.execute(
+      `UPDATE user_ecp_session SET renew_status = 'ACTIVE'
+       WHERE renew_status = 'RENEWING' AND updated_at < ?`,
+      [cutoff],
+    );
+    return result.affectedRows ?? 0;
   }
 
   async clearFailed(userId: number): Promise<void> {

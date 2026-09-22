@@ -12,9 +12,16 @@ export class OutputRingBuffer {
     if (data === '') return;
     this.chunks.push(data);
     this.bytes += Buffer.byteLength(data, 'utf8');
-    while (this.bytes > this.maxBytes && this.chunks.length > 0) {
+    while (this.bytes > this.maxBytes && this.chunks.length > 1) {
       const dropped = this.chunks.shift()!;
       this.bytes -= Buffer.byteLength(dropped, 'utf8');
+      this.truncated = true;
+    }
+    // 单帧就超过上限时不能连它一起丢（否则最近输出全没、回放一片空白），
+    // 只保留这一帧的尾部字节。
+    if (this.bytes > this.maxBytes && this.chunks.length === 1) {
+      this.chunks[0] = tailWithinBytes(this.chunks[0], this.maxBytes);
+      this.bytes = Buffer.byteLength(this.chunks[0], 'utf8');
       this.truncated = true;
     }
   }
@@ -22,7 +29,7 @@ export class OutputRingBuffer {
   /** 回放内容；曾被截断时前置一行提示。 */
   read(): string {
     const body = this.chunks.join('');
-    if (body === '') return '';
+    if (body === '' && !this.truncated) return '';
     return this.truncated ? `\r\n[历史输出过长，已截断前面部分]\r\n${body}` : body;
   }
 
@@ -35,6 +42,23 @@ export class OutputRingBuffer {
     this.bytes = 0;
     this.truncated = false;
   }
+}
+
+/** 保留字符串末尾不超过 maxBytes 的部分，并对齐到 UTF-8 字符边界（避免切出乱码）。 */
+function tailWithinBytes(text: string, maxBytes: number): string {
+  const buf = Buffer.from(text, 'utf8');
+  if (buf.length <= maxBytes) return text;
+  let start = buf.length - maxBytes;
+  // 0b10xxxxxx 是 UTF-8 续字节：向后挪到首字节、丢掉被切开的半个字符。
+  // 不能向前挪——那会把首字节一起带上，结果超出 maxBytes，违背本函数的用途。
+  while (start < buf.length && (buf[start] & 0xc0) === 0x80) start += 1;
+  if (start >= buf.length) {
+    // 上限比单个字符还小（被配成个位数）时窗口整个落在某字符内部，向后扫会扫空。
+    // 此时宁可略微超出上限也要留下最后一个完整字符，否则回放只剩一行截断提示。
+    start = buf.length - 1;
+    while (start > 0 && (buf[start] & 0xc0) === 0x80) start -= 1;
+  }
+  return buf.subarray(start).toString('utf8');
 }
 
 export interface RemoteTerminalInfo {

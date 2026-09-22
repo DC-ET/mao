@@ -1066,7 +1066,8 @@ export class StreamingWsHandler {
   private async handleCancel(userId: number, root: Record<string, unknown>): Promise<void> {
     const sessionId = this.getLong(root, 'sessionId');
     if (sessionId == null) return;
-    if (!(await this.requireOwnedSession(userId, sessionId))) return;
+    const session = await this.requireOwnedSession(userId, sessionId);
+    if (!session) return;
     // 用户点击停止：立刻取消该会话等待中的页面操作，不让工具挂到超时。
     this.deps.embedPageToolRegistry.failSession(sessionId, '用户已停止任务，页面操作已取消');
     if (!this.cancelFlags.has(sessionId)) {
@@ -1077,7 +1078,14 @@ export class StreamingWsHandler {
       // 并把此处写入的 CANCELLED 覆盖回 RUNNING，用户的取消被静默丢弃。
       this.pendingCancels.set(sessionId, Date.now());
       this.deps.registry.send(userId, wsEvent('cancelled', sessionId, { pending: true, executionId: this.runningExecutionIds.get(sessionId) ?? '' }));
-      await this.finishCancelledSession(sessionId, userId, this.runningExecutionIds.get(sessionId) ?? randomUUID());
+      // 仅在确有在途执行时落终态：IDLE 既不在活跃集合也不在终态集合，
+      // finishExecution 会放行 IDLE→CANCELLED，把从未运行过的会话标成「已取消」。
+      const inFlight = this.executionClaims.has(sessionId)
+        || this.runningTasks.has(sessionId)
+        || this.isSessionActive(session.phase);
+      if (inFlight) {
+        await this.finishCancelledSession(sessionId, userId, this.runningExecutionIds.get(sessionId) ?? randomUUID());
+      }
       return;
     }
     const executionId = this.runningExecutionIds.get(sessionId) ?? '';
@@ -1255,37 +1263,48 @@ export class StreamingWsHandler {
         this.executionClaims.delete(sessionId);
         return;
       }
-      // 定时任务 busy 入队来源：执行终态后回写 lastExecutionStatus
-      if (head.scheduledTaskId != null) {
-        this.queueScheduledTaskIds.set(sessionId, head.scheduledTaskId);
-      }
-      await this.sendQueueUpdated(sessionId, userId);
       const content = head.content ?? '';
       let imageList: string[] = [];
       if (head.images) {
         try { imageList = JSON.parse(head.images) as string[]; } catch { /* ignore */ }
       }
-      const messageContent: unknown = imageList.length === 0 ? content : contentParts(content, imageList);
-      let savedMessage;
-      try {
-        savedMessage = await this.deps.sessionService.saveMessage(sessionId, 'USER', messageContent, null, null, null, 0, null);
-      } catch (e) {
-        // M-3：队列行已出队（dequeue 已删除），saveMessage 失败必须回补队首，否则消息静默丢失。
-        console.error(`Failed to save auto-consumed message for session ${sessionId}, re-enqueueing`, e);
-        // 回补时透传来源任务 id，并清内存映射，避免绑定丢失与陈旧回写
-        this.queueScheduledTaskIds.delete(sessionId);
-        await this.deps.messageQueueService.enqueueHead(sessionId, userId, content, head.images ?? null, head.scheduledTaskId ?? null);
+      // M-3：dequeue 已把队列行删除，之后任一步失败都必须统一补偿——回补队首 + 删掉可能
+      // 已落库的 USER 消息，否则分别表现为消息静默丢失、无执行的孤儿消息、或下次消费重复落库。
+      let savedMessageId: number | null = null;
+      const compensate = async (stage: string, error: unknown): Promise<void> => {
+        console.error(`Auto-consume failed after dequeue for session ${sessionId} at ${stage}, rolling back`, error);
         this.executionClaims.delete(sessionId);
         this.autoConsumingSessionIds.delete(sessionId);
-        await this.sendQueueUpdated(sessionId, userId);
-        return;
-      }
-      this.deps.titleService.scheduleForFirstUserMessage(sessionId, savedMessage.id, messageContent);
-      const consumed: Record<string, unknown> = { messageId: String(savedMessage.id), content };
-      if (imageList.length > 0) consumed.images = imageList;
-      this.deps.registry.send(userId, wsEvent('queue_message_consumed', sessionId, consumed));
-      this.autoConsumingSessionIds.add(sessionId);
+        // 回补时透传来源任务 id，并清内存映射，避免绑定丢失与陈旧回写
+        this.queueScheduledTaskIds.delete(sessionId);
+        if (savedMessageId != null) {
+          try {
+            await this.deps.sessionService.deleteMessageById(sessionId, savedMessageId);
+          } catch (e) {
+            console.error(`Failed to delete orphan auto-saved message ${savedMessageId} for session ${sessionId}`, e);
+          }
+        }
+        try {
+          await this.deps.messageQueueService.enqueueHead(sessionId, userId, content, head.images ?? null, head.scheduledTaskId ?? null);
+          await this.sendQueueUpdated(sessionId, userId);
+        } catch (e) {
+          console.error(`Failed to re-enqueue auto-consumed message for session ${sessionId}`, e);
+        }
+      };
       try {
+        // 定时任务 busy 入队来源：执行终态后回写 lastExecutionStatus
+        if (head.scheduledTaskId != null) {
+          this.queueScheduledTaskIds.set(sessionId, head.scheduledTaskId);
+        }
+        await this.sendQueueUpdated(sessionId, userId);
+        const messageContent: unknown = imageList.length === 0 ? content : contentParts(content, imageList);
+        const savedMessage = await this.deps.sessionService.saveMessage(sessionId, 'USER', messageContent, null, null, null, 0, null);
+        savedMessageId = savedMessage.id ?? null;
+        this.deps.titleService.scheduleForFirstUserMessage(sessionId, savedMessage.id, messageContent);
+        const consumed: Record<string, unknown> = { messageId: String(savedMessage.id), content };
+        if (imageList.length > 0) consumed.images = imageList;
+        this.deps.registry.send(userId, wsEvent('queue_message_consumed', sessionId, consumed));
+        this.autoConsumingSessionIds.add(sessionId);
         this.deps.agentExecutor(async () => {
           await new Promise((r) => setTimeout(r, 500));
           await this.handleSendMessage(userId, {
@@ -1297,13 +1316,9 @@ export class StreamingWsHandler {
             },
           }, true);
         });
-      } catch (submitErr) {
-        // 提交被拒时释放占位并回补队列，避免消息已出队却永不执行
-        this.executionClaims.delete(sessionId);
-        this.autoConsumingSessionIds.delete(sessionId);
-        this.queueScheduledTaskIds.delete(sessionId);
-        await this.deps.messageQueueService.enqueueHead(sessionId, userId, content, head.images ?? null, head.scheduledTaskId ?? null);
-        throw submitErr;
+      } catch (e) {
+        await compensate('post-dequeue', e);
+        return;
       }
     } catch (e) {
       console.error(`Failed to auto-consume queue for session ${sessionId}`, e);
