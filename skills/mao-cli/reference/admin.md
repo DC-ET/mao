@@ -103,7 +103,9 @@ CLI：`mao admin-session ...`（见 [admin-session.md](admin-session.md)）。
 
 ## 定时任务
 
-查看 Cron、启用/暂停、删除任意用户任务（需 `session:read`，与列表同门槛）；支持关键词/用户/Agent/状态/完结筛选与分页；定位 `QUEUED`（会话忙时排队）与失败记录。
+查看 Cron、启用/暂停、删除任意用户任务（读需 `session:read`，写他人任务需 `scheduled-task:write`）；支持关键词/用户/Agent/状态/完结筛选与分页；定位 `QUEUED`（会话忙时排队）与失败记录。
+
+列表「查看」进详情弹窗：提示词全文（可复制）、Cron 与一次性标记、完结/执行情况、所属会话。列表「编辑」可改名称、Cron 与提示词，并切换「一次性任务」；Cron 实时预览未来 3 次触发时间（北京时间），不合法则置灰保存；改 Cron 形态时开关自动跟随。无 `scheduled-task:write` 时他人任务只读（开关置灰、无编辑/删除）。
 
 CLI：`mao scheduled-task ...`（创建通常由 Agent 工具完成）。
 

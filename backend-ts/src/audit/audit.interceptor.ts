@@ -13,12 +13,29 @@ const AUDITED_PREFIXES = [
   '/v1/admin',
   '/v1/system-settings',
 ];
+/**
+ * 只审计变更方法的前缀：这些资源的读接口仍对 session:read 开放，
+ * 但跨用户改他人数据需要留痕（定时任务是代表用户长期自动执行的任务，改动影响面大）。
+ */
+const AUDITED_WRITE_PREFIXES = ['/v1/scheduled-tasks'];
+/** 读取型 POST（每次编辑击键都会调用的预览接口），审计它们只会淹没日志。 */
+const AUDITED_WRITE_EXCLUDES = ['/v1/scheduled-tasks/cron-preview'];
+const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
-export function shouldAudit(path: string | null | undefined, _method?: string): boolean {
+export function shouldAudit(path: string | null | undefined, method?: string): boolean {
   if (path == null || path.startsWith('/v1/auth') || path.startsWith('/v1/audit/logs')) {
     return false;
   }
-  return AUDITED_PREFIXES.some((prefix) => path.startsWith(prefix));
+  if (AUDITED_PREFIXES.some((prefix) => path.startsWith(prefix))) {
+    return true;
+  }
+  if (!WRITE_METHODS.has(method ?? '')) {
+    return false;
+  }
+  if (AUDITED_WRITE_EXCLUDES.some((prefix) => path.startsWith(prefix))) {
+    return false;
+  }
+  return AUDITED_WRITE_PREFIXES.some((prefix) => path.startsWith(prefix));
 }
 
 export function resolveAction(method: string): string {
