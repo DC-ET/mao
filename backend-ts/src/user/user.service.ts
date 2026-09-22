@@ -18,8 +18,8 @@ export class UserService {
     private readonly passwordHasher: PasswordHasher,
   ) {}
 
-  async listUsers(page: number, size: number, keyword?: string, status?: number | null): Promise<MpPage<User>> {
-    const { records, total } = await this.userRepo.selectPage(page, size, keyword, status);
+  async listUsers(page: number, size: number, keyword?: string, status?: number | null, authSource?: string | null): Promise<MpPage<User>> {
+    const { records, total } = await this.userRepo.selectPage(page, size, keyword, status, authSource);
     return mpPage(records, total, page, size);
   }
 

@@ -1,17 +1,8 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import { pickHomePath } from '../utils/home'
 import { chunkReloadTarget } from './chunk-reload'
-
-/** 首页：管理员进用量分析；非管理员按已有权限落到首个可用页面 */
-function pickHomePath(isAdmin: boolean, hasPermission: (p: string) => boolean): string {
-  if (isAdmin) return '/analytics'
-  if (hasPermission('session:read')) return '/sessions'
-  if (hasPermission('agent:read')) return '/agents'
-  if (hasPermission('user:read')) return '/users'
-  if (hasPermission('settings:read')) return '/settings'
-  return '/forbidden'
-}
 
 const routes: RouteRecordRaw[] = [
   {

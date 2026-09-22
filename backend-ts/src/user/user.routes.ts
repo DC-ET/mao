@@ -38,7 +38,8 @@ export function registerUserRoutes(
     const size = queryInt(request, 'size', 20);
     const keyword = queryOptStr(request, 'keyword');
     const status = queryOptInt(request, 'status');
-    const pageResult = await userService.listUsers(page, size, keyword, status);
+    const authSource = queryOptStr(request, 'authSource');
+    const pageResult = await userService.listUsers(page, size, keyword, status, authSource);
     const records = pageResult.records;
     const roleMap = await userService.batchGetUserRoles(records.map((u) => u.id!).filter(Boolean));
     const voList = records.map((u) => toUserVO(u, roleMap.get(u.id!) ?? []));

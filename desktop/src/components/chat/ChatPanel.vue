@@ -566,7 +566,8 @@ async function handleQueueEdit(msg: QueueMessage) {
       return
     }
   }
-  await deleteQueueMessage(msg.id)
+  const deleted = await deleteQueueMessage(msg.id)
+  if (!deleted) return
   chatInputRef.value?.restoreContent(msg.content, files)
   nextTick(() => chatInputRef.value?.focusInput())
 }
@@ -678,8 +679,8 @@ async function handleSend(text: string, files: File[], pendingUploads?: File[]) 
     const sent = await sendMessageWithQueue(text, files, pendingUploads)
     if (sent) {
       if (draftKeyAtSend) draftStore.clearDraft(draftKeyAtSend)
-      // await 期间用户可能已切走会话：仅当 UI 未被作废时才清空当前输入框
-      if (generation === sendGeneration) chatInputRef.value?.clearInput()
+      // await 期间用户可能已切走并改过输入：原文未改仍清空，避免再发一次
+      clearInputIfUnedited(text, generation)
       nextTick(scrollToBottomSmooth)
     }
     return
@@ -691,10 +692,9 @@ async function handleSend(text: string, files: File[], pendingUploads?: File[]) 
   try {
     const saved = await sendMessageAndWaitForSave(text, files, pendingUploads)
     if (saved && draftKeyAtSend) draftStore.clearDraft(draftKeyAtSend)
-    // 若 KeepAlive 切回已作废本轮 UI，勿清空用户可能已重新编辑的输入
-    if (saved && generation === sendGeneration) {
-      chatInputRef.value?.clearInput()
-    }
+    // 切回聊天 Tab 会作废本轮代数，避免清掉用户回来后新打的字。
+    // 输入仍是刚发出的原文时仍要清空，否则看起来像没发出去、再按一次会重发。
+    if (saved) clearInputIfUnedited(text, generation)
     // 新建任务首发失败：createSession 成功已跳转新会话，键切换时草稿被存入 'new' 槽位、
     // 编辑器被清空。失败需回填到当前输入框，避免用户误以为内容丢失。
     // 输入框已有内容（用户切回新建任务时草稿已自动恢复/重新输入）则跳过，防止覆盖。
@@ -714,6 +714,13 @@ async function handleSend(text: string, files: File[], pendingUploads?: File[]) 
   }
 
   nextTick(scrollToBottomSmooth)
+}
+
+function clearInputIfUnedited(sentText: string, generation: number) {
+  const current = chatInputRef.value?.getPlainText() ?? ''
+  if (generation === sendGeneration || current === sentText) {
+    chatInputRef.value?.clearInput()
+  }
 }
 
 function handleStop() {

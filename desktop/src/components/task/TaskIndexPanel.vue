@@ -127,7 +127,7 @@
                   class="session-title-input"
                   @keydown="onEditKeydown"
                   @click.stop
-                  @blur="confirmEdit()"
+                  @blur="onEditBlur()"
                 />
                 <span v-else class="session-title">{{ session.summary || session.title || '新任务' }}</span>
               </div>
@@ -216,7 +216,7 @@
                   class="session-title-input"
                   @keydown="onEditKeydown"
                   @click.stop
-                  @blur="confirmEdit()"
+                  @blur="onEditBlur()"
                 />
                 <div v-else class="focus-item-text">
                   <div class="focus-title-row">
@@ -290,7 +290,7 @@
                       class="session-title-input"
                       @keydown="onEditKeydown"
                       @click.stop
-                      @blur="confirmEdit()"
+                      @blur="onEditBlur()"
                     />
                     <template v-else>
                       <span class="session-title">{{ session.summary || session.title || '新任务' }}</span>
@@ -371,7 +371,7 @@
                   class="session-title-input"
                   @keydown="onEditKeydown"
                   @click.stop
-                  @blur="confirmEdit()"
+                  @blur="onEditBlur()"
                 />
                 <span v-else class="session-title">{{ session.summary || session.title || '新任务' }}</span>
                 <span class="focus-workspace-tag">{{ workspaceLabel(session) }}</span>
@@ -1051,6 +1051,15 @@ function startEdit(e: MouseEvent, session: Session) {
       input.focus()
       input.select()
     }
+  })
+}
+
+function onEditBlur() {
+  nextTick(() => {
+    if (!editingSessionId.value) return
+    const active = document.activeElement
+    if (active?.closest('.session-item-actions')) return
+    void confirmEdit()
   })
 }
 

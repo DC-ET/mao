@@ -212,7 +212,7 @@ async function handleSubmit() {
   try {
     if (isEditing.value && editingId.value != null) {
       const payload: { accessToken?: string; description?: string } = {
-        description: form.value.description.trim() || undefined
+        description: form.value.description.trim()
       }
       if (form.value.accessToken.trim()) {
         payload.accessToken = form.value.accessToken.trim()

@@ -800,12 +800,14 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     }
   }
 
-  async function deleteQueueMessage(queueId: string) {
-    if (!sessionId.value) return
+  async function deleteQueueMessage(queueId: string): Promise<boolean> {
+    if (!sessionId.value) return false
     await connect()
     if (!await wsDeleteQueueMessage(sessionId.value, queueId)) {
       ElMessage.error('操作失败，网络连接不可用，请重试')
+      return false
     }
+    return true
   }
 
   async function reorderQueueMessage(queueId: string, direction: 'up' | 'down') {

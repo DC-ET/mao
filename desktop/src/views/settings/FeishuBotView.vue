@@ -126,6 +126,10 @@ async function openAuthPage() {
 function startPolling() {
   clearPollTimer()
   pollStartedAt = Date.now()
+  // 已绑定后再点「重新绑定」时，状态接口本来就是 bound。
+  // 只有身份或绑定时间相对发起时发生变化，才算这次授权完成。
+  const baselineUnionId = unionId.value
+  const baselineBoundAt = boundAt.value
   pollTimer = window.setInterval(async () => {
     // 授权二维码 5 分钟过期，超时后停止轮询。
     if (Date.now() - pollStartedAt > 5 * 60 * 1000) {
@@ -135,11 +139,14 @@ function startPolling() {
     }
     try {
       const { data } = await api.get<FeishuBindingStatus>('/feishu/binding/status')
-      if (data?.bound === true) {
+      const nextUnionId = data?.unionId ?? ''
+      const nextBoundAt = data?.boundAt ?? ''
+      const bindingChanged = nextUnionId !== baselineUnionId || nextBoundAt !== baselineBoundAt
+      if (data?.bound === true && bindingChanged) {
         clearPollTimer()
         authorized.value = true
-        unionId.value = data.unionId ?? ''
-        boundAt.value = data.boundAt ?? ''
+        unionId.value = nextUnionId
+        boundAt.value = nextBoundAt
         statusText.value = '绑定成功'
         dialogVisible.value = false
         ElMessage.success('飞书账号绑定成功')

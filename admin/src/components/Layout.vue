@@ -81,6 +81,7 @@ import { ElMessageBox } from 'element-plus'
 import { useAuthStore } from '../stores/auth'
 import { useTabStore } from '../stores/tabs'
 import { useBreakpoint } from '../composables/useBreakpoint'
+import { homeTitle, pickHomePath } from '../utils/home'
 import TabBar from './TabBar.vue'
 import SideMenu from './SideMenu.vue'
 import ChangePasswordDialog from '../views/user/ChangePasswordDialog.vue'
@@ -125,6 +126,12 @@ watch(
 watch(isMobile, (mobile) => {
   if (!mobile) drawerVisible.value = false
 })
+
+watch(() => authStore.user, (user) => {
+  if (!user) return
+  const path = pickHomePath(authStore.isAdmin, (permission) => authStore.hasPermission(permission))
+  tabStore.setHomePath(path, homeTitle(path))
+}, { immediate: true })
 
 watch(route, (newRoute) => {
   tabStore.addTab(newRoute)

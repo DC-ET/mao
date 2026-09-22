@@ -129,6 +129,12 @@ function formatTabTitle(tab: TerminalTab): string {
   opacity: 1;
 }
 
+@media (max-width: 768px), (hover: none) {
+  .terminal-tab-close {
+    opacity: 1;
+  }
+}
+
 .terminal-tab-close:hover {
   background: var(--aw-hairline);
   color: var(--aw-ink);

@@ -31,6 +31,20 @@ describe('MysqlUserRepository identity email serialization', () => {
     }
   });
 
+  it('filters auth source with the same rule as resolveAuthSource', async () => {
+    const sqls: string[] = [];
+    const db = {
+      queryOne: vi.fn(async (sql: string) => { sqls.push(sql); return { cnt: 0 }; }),
+      query: vi.fn(async (sql: string) => { sqls.push(sql); return []; }),
+    };
+    const repo = new MysqlUserRepository(db as unknown as Db);
+    await repo.selectPage(1, 10, undefined, null, 'LDAP');
+    expect(sqls[0]).toContain('password_hash');
+    expect(sqls[0]).toContain('feishu_user_id');
+    await repo.selectPage(1, 10, undefined, null, 'nope');
+    expect(sqls[2]).not.toContain('feishu_user_id');
+  });
+
   it('rejects concurrent duplicate/deleted-email occupancy without writing', async () => {
     const { repo, tx } = setup([{ id: 9 }]);
     await expect(repo.insert({ username: 'synthetic', email: 'Taken@example.test' })).rejects.toThrow('该邮箱已被其他用户使用');

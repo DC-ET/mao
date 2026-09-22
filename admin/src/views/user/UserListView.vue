@@ -77,7 +77,7 @@
         按角色「{{ roleFilterName }}」筛选需要后端支持 roleId 查询参数（当前 listUsers 仅支持 keyword/status），已在评审文档 #6/#7 中记录；本页暂未做角色过滤。
       </el-alert>
 
-      <el-table v-if="!isMobile" :data="displayedUsers" v-loading="loading" stripe @selection-change="handleSelectionChange">
+      <el-table v-if="!isMobile" :data="users" v-loading="loading" stripe @selection-change="handleSelectionChange">
         <template #empty>
           <el-empty description="暂无数据" :image-size="60" />
         </template>
@@ -117,8 +117,8 @@
         <el-table-column prop="createdAt" label="创建时间" width="180" :formatter="formatDateTimeColumn" />
         <el-table-column label="操作" width="260" fixed="right">
           <template #default="{ row }">
+            <el-button type="primary" link size="small" @click="handleDetail(row)">详情</el-button>
             <template v-if="canWrite">
-              <el-button type="primary" link size="small" @click="handleDetail(row)">详情</el-button>
               <el-button type="primary" link size="small" @click="handleEdit(row)">编辑</el-button>
               <el-tooltip
                 :disabled="row.authSource === 'LOCAL'"
@@ -147,7 +147,6 @@
                 {{ row.status === 1 ? '禁用' : '启用' }}
               </el-button>
             </template>
-            <span v-else class="text-muted">—</span>
           </template>
         </el-table-column>
       </el-table>
@@ -190,8 +189,8 @@
             </el-tag>
           </div>
           <div class="user-card-actions">
+            <el-button type="primary" link size="small" @click="handleDetail(row)">详情</el-button>
             <template v-if="canWrite">
-              <el-button type="primary" link size="small" @click="handleDetail(row)">详情</el-button>
               <el-button type="primary" link size="small" @click="handleEdit(row)">编辑</el-button>
               <el-button
                 type="primary"
@@ -314,12 +313,6 @@ function isRowSelectable(row: any) {
   return !(isCurrentUser(row) && row.status === 1)
 }
 
-/** 账号类型为前端过滤（后端 listUsers 无 authType 参数），仅作用于当前页 */
-const displayedUsers = computed(() => {
-  if (!filters.authSource) return users.value
-  return users.value.filter((u) => (u.authSource || 'LOCAL') === filters.authSource)
-})
-
 async function fetchRolesOptions() {
   try {
     const { data } = await api.get('/roles')
@@ -340,6 +333,7 @@ async function fetchUsers() {
     if (filters.status !== undefined && filters.status !== null) {
       params.status = filters.status
     }
+    if (filters.authSource) params.authSource = filters.authSource
 
     const { data } = await api.get('/users', { params })
     if (seq !== fetchUsersSeq) return

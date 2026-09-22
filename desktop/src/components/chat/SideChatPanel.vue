@@ -92,11 +92,13 @@
         :execution-mode="parentExecutionMode"
         :model-id="currentModelId"
         :model-supports-vision="currentModelSupportsVision"
+        :permission-level="sidePermissionLevel"
         :is-new-task="false"
         @send="handleChatSend"
         @stop="handleStop"
         @continue="handleRetryExecution"
         @update:model-id="handleModelSwitch"
+        @update:permission-level="handleSidePermissionChange"
       />
     </div>
 
@@ -183,6 +185,38 @@ const canContinue = computed(() =>
 let pendingSendCleanup: (() => void) | null = null
 const selectedModelId = ref<number | undefined>(undefined)
 const sideModelId = ref<number | undefined>(undefined)
+
+const sidePermissionTouched = ref(false)
+const sidePermissionLevel = ref('READ_ONLY')
+
+function inheritedPermissionLevel(): string {
+  if (realSessionId.value > 0) {
+    const side = sessionStore.sessions.find(item => String(item.id) === String(realSessionId.value))
+    if (side?.permissionLevel) return side.permissionLevel
+  }
+  return parentSession.value?.permissionLevel || 'READ_ONLY'
+}
+
+watch(inheritedPermissionLevel, (level) => {
+  if (!sidePermissionTouched.value) sidePermissionLevel.value = level
+}, { immediate: true })
+
+async function handleSidePermissionChange(level: string) {
+  if (level === sidePermissionLevel.value) return
+  sidePermissionTouched.value = true
+  const previous = sidePermissionLevel.value
+  sidePermissionLevel.value = level
+  if (!hasRealSession.value) return
+  const sid = String(realSessionId.value)
+  sessionStore.updateSession(sid, { permissionLevel: level })
+  try {
+    await api.patch(`/sessions/${sid}`, { permissionLevel: level })
+  } catch {
+    sidePermissionLevel.value = previous
+    sessionStore.updateSession(sid, { permissionLevel: previous })
+    ElMessage.error('权限级别更新失败，请重试')
+  }
+}
 
 const currentModelId = computed(() => {
   if (hasRealSession.value) {
@@ -618,7 +652,8 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
           currentModelId.value,
           localSkills,
           agentsMdContent,
-          imageUrls
+          imageUrls,
+          sidePermissionLevel.value
         )
         if (!created) {
           rollbackOptimisticMessages(placeholderCacheKey.value, optimisticUserId)
@@ -745,11 +780,13 @@ async function insertQueueMessage(queueId: string) {
   }
 }
 
-async function deleteQueueMessage(queueId: string) {
-  if (!hasRealSession.value) return
+async function deleteQueueMessage(queueId: string): Promise<boolean> {
+  if (!hasRealSession.value) return false
   if (!await wsDeleteQueueMessage(String(realSessionId.value), queueId)) {
     ElMessage.error('操作失败，网络连接不可用，请重试')
+    return false
   }
+  return true
 }
 
 async function reorderQueueMessage(queueId: string, direction: 'up' | 'down') {
@@ -782,7 +819,8 @@ async function handleQueueEdit(msg: QueueMessage) {
       return
     }
   }
-  await deleteQueueMessage(msg.id)
+  const deleted = await deleteQueueMessage(msg.id)
+  if (!deleted) return
   chatInputRef.value?.restoreContent(msg.content, files)
   nextTick(() => chatInputRef.value?.focusInput())
 }

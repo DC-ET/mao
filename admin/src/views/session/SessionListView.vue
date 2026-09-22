@@ -159,7 +159,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, onActivated } from 'vue'
+import { ref, reactive, onMounted, onActivated, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
@@ -198,12 +198,26 @@ const agentOptions = ref<Array<{ id: number; name: string }>>([])
 
 function applyRouteQuery() {
   const q = route.query
-  if (typeof q.userId === 'string' && q.userId) filters.userId = Number(q.userId)
-  if (typeof q.agentId === 'string' && q.agentId) filters.agentId = Number(q.agentId)
-  if (typeof q.executionMode === 'string') filters.executionMode = q.executionMode
-  if (typeof q.phase === 'string') filters.phase = q.phase
-  if (typeof q.status === 'string') filters.status = q.status
-  if (typeof q.keyword === 'string') filters.keyword = q.keyword
+  filters.userId = typeof q.userId === 'string' && q.userId ? Number(q.userId) : null
+  filters.agentId = typeof q.agentId === 'string' && q.agentId ? Number(q.agentId) : null
+  filters.executionMode = typeof q.executionMode === 'string' ? q.executionMode : ''
+  filters.phase = typeof q.phase === 'string' ? q.phase : ''
+  filters.status = typeof q.status === 'string' ? q.status : ''
+  filters.keyword = typeof q.keyword === 'string' ? q.keyword : ''
+}
+
+/** 上次已经写进筛选表单的 query。地址没变时只刷新列表，不冲掉表单里尚未写入 URL 的条件。 */
+let appliedQuery = ''
+
+function syncRouteAndFetch() {
+  if (route.name !== 'Sessions') return
+  const next = JSON.stringify(route.query)
+  if (next !== appliedQuery) {
+    appliedQuery = next
+    applyRouteQuery()
+    currentPage.value = 1
+  }
+  fetchSessions()
 }
 
 function phaseTagType(phase: string): 'primary' | 'success' | 'danger' | 'warning' | 'info' {
@@ -330,9 +344,16 @@ function tokenPercent(row: { contextTokens?: number; contextWindowTokens?: numbe
 }
 
 onMounted(() => {
+  appliedQuery = JSON.stringify(route.query)
   applyRouteQuery()
   fetchSessions()
   fetchOptions()
+})
+
+// 组件被 keep-alive 缓存时，query 变化不会重建页面。
+// 只在会话列表自己的地址上同步，避免切到详情时把筛选清掉。
+watch(() => route.fullPath, () => {
+  syncRouteAndFetch()
 })
 
 // When returning from the session detail page (kept alive), refresh the list
@@ -344,7 +365,7 @@ onActivated(() => {
     activatedOnce = true
     return
   }
-  fetchSessions()
+  syncRouteAndFetch()
 })
 </script>
 

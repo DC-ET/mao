@@ -27,6 +27,14 @@ export function userMessagePayloadOf(messageContent: unknown): UserMessagePayloa
   }
   return { content: '', images: [] };
 }
+
+const SIDE_PERMISSION_LEVELS = new Set(['READ_ONLY', 'READ_WRITE', 'SMART', 'FULL']);
+
+/** 边路创建时带上输入框里选的权限；缺省或非法值沿用父会话。 */
+function sidePermissionLevel(requested: unknown, parentLevel: string | null | undefined): string | null | undefined {
+  if (typeof requested === 'string' && SIDE_PERMISSION_LEVELS.has(requested)) return requested;
+  return parentLevel;
+}
 import type { JwtService } from '../../crypto/jwt.service.js';
 import { contentParts, WsStreamingEventListener, type AgentEventListener, type WsListenerDeps } from './ws-streaming-event-listener.js';
 import type { StreamingWsRegistry, WsSocket } from './streaming-ws-registry.js';
@@ -785,7 +793,8 @@ export class StreamingWsHandler {
     }
     const sideSession: Session = {
       userId, agentId: parentSession.agentId, executionMode: parentSession.executionMode,
-      workspace: parentSession.workspace, projectKey: parentSession.projectKey, permissionLevel: parentSession.permissionLevel,
+      workspace: parentSession.workspace, projectKey: parentSession.projectKey,
+      permissionLevel: sidePermissionLevel(data.permissionLevel, parentSession.permissionLevel),
       modelId: resolvedModelId ?? undefined, isGit: parentSession.isGit, platform: parentSession.platform,
       shellPath: parentSession.shellPath, osVersion: parentSession.osVersion, status: 'ACTIVE',
       parentSessionId, sessionType: 'SIDE_TASK', title: '任务',

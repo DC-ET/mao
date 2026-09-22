@@ -1322,6 +1322,10 @@ function insertFileReference(filePath: string) {
   ed.commands.focus()
 }
 
+function getPlainText(): string {
+  return editor.value?.getText({ blockSeparator: '\n' }).trim() ?? ''
+}
+
 function clearInput() {
   if (editor.value) {
     editor.value.commands.clearContent()
@@ -1394,7 +1398,7 @@ function restoreContent(text: string, files: File[]) {
   }
 }
 
-defineExpose({ focusInput, insertFileReference, clearInput, hasDraft, restoreContent, insertText })
+defineExpose({ focusInput, insertFileReference, clearInput, getPlainText, hasDraft, restoreContent, insertText })
 
 onBeforeUnmount(() => {
   unregisterChatInput(props.registerKey)

@@ -20,6 +20,8 @@ export const useTabStore = defineStore('tabs', () => {
     { path: '/analytics', fullPath: '/analytics', title: '用量分析', name: 'Analytics', closable: false }
   ])
   const activeTabPath = ref('/analytics')
+  /** 当前用户不可关闭的首页。非管理员不是用量分析。 */
+  const homePath = ref('/analytics')
 
   // 以 route.path 而非 fullPath 作为身份键：用量分析等页面把筛选条件同步进 query
   // 并 router.replace，若按 fullPath 建标签，每次切换周期/子 Tab 都会新增一个同名标签。
@@ -29,6 +31,7 @@ export const useTabStore = defineStore('tabs', () => {
     if (existing) {
       // 记住最新 query，保证切走再点回来能回到用户上次的筛选条件
       existing.fullPath = route.fullPath
+      existing.closable = path !== homePath.value
       activeTabPath.value = path
       return
     }
@@ -43,7 +46,7 @@ export const useTabStore = defineStore('tabs', () => {
       fullPath: route.fullPath,
       title,
       name: route.name?.toString() || '',
-      closable: path !== '/analytics'
+      closable: path !== homePath.value
     })
     activeTabPath.value = path
   }
@@ -73,6 +76,33 @@ export const useTabStore = defineStore('tabs', () => {
     }
   }
 
+  /**
+   * 按当前用户重置不可关闭的首页标签。
+   * 非管理员不再留着一条点开就会被守卫弹走的「用量分析」。
+   */
+  function setHomePath(path: string, title: string) {
+    if (!path || path === '/forbidden') return
+    const previous = homePath.value
+    homePath.value = path
+    for (const tab of tabs.value) {
+      tab.closable = tab.path !== path
+    }
+    const existing = tabs.value.find(t => t.path === path)
+    if (existing) {
+      existing.closable = false
+      if (!existing.title) existing.title = title
+      tabs.value = [existing, ...tabs.value.filter(t => t !== existing)]
+    } else {
+      tabs.value.unshift({ path, fullPath: path, title, name: title, closable: false })
+    }
+    if (previous !== path && previous === '/analytics' && activeTabPath.value !== '/analytics') {
+      tabs.value = tabs.value.filter(t => t.path !== '/analytics')
+    }
+    if (!tabs.value.some(t => t.path === activeTabPath.value) && tabs.value.length > 0) {
+      activeTabPath.value = tabs.value[0].path
+    }
+  }
+
   function updateTabTitle(path: string, title: string) {
     const tab = tabs.value.find(t => t.path === path)
     if (tab) {
@@ -80,5 +110,5 @@ export const useTabStore = defineStore('tabs', () => {
     }
   }
 
-  return { tabs, activeTabPath, addTab, removeTab, setActiveTab, updateTabTitle }
+  return { tabs, activeTabPath, addTab, removeTab, setActiveTab, setHomePath, updateTabTitle }
 })

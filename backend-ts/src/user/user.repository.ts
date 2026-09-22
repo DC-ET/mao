@@ -3,6 +3,19 @@ import type { Db } from '../db/db.js';
 import { notDeleted } from '../db/db.js';
 import type { User, UserRepository } from './types.js';
 
+/** 与 UserService.resolveAuthSource 同一口径，下推到列表查询。 */
+function authSourceWhere(authSource: string | null | undefined): string | null {
+  const source = authSource?.trim().toUpperCase();
+  const noPassword = '(password_hash IS NULL OR TRIM(password_hash) = \'\')';
+  const noFeishu = '(feishu_user_id IS NULL OR TRIM(feishu_user_id) = \'\')';
+  const hasPassword = '(password_hash IS NOT NULL AND TRIM(password_hash) <> \'\')';
+  const hasFeishu = '(feishu_user_id IS NOT NULL AND TRIM(feishu_user_id) <> \'\')';
+  if (source === 'LOCAL') return hasPassword;
+  if (source === 'FEISHU') return `(${noPassword} AND ${hasFeishu})`;
+  if (source === 'LDAP') return `(${noPassword} AND ${noFeishu})`;
+  return null;
+}
+
 export class MysqlUserRepository implements UserRepository {
   constructor(private readonly db: Db) {}
 
@@ -99,7 +112,7 @@ export class MysqlUserRepository implements UserRepository {
     });
   }
 
-  async selectPage(page: number, size: number, keyword?: string, status?: number | null): Promise<{ records: User[]; total: number }> {
+  async selectPage(page: number, size: number, keyword?: string, status?: number | null, authSource?: string | null): Promise<{ records: User[]; total: number }> {
     const where: string[] = [notDeleted()];
     const params: unknown[] = [];
     if (keyword && keyword.trim()) {
@@ -111,6 +124,8 @@ export class MysqlUserRepository implements UserRepository {
       where.push('status = ?');
       params.push(status);
     }
+    const authSourceSql = authSourceWhere(authSource);
+    if (authSourceSql) where.push(authSourceSql);
     const whereSql = where.join(' AND ');
     const countRow = await this.db.queryOne<{ cnt: number }>(`SELECT COUNT(*) AS cnt FROM \`user\` WHERE ${whereSql}`, params);
     const total = Number(countRow?.cnt ?? 0);

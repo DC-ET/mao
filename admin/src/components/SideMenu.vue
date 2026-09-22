@@ -59,6 +59,7 @@ import {
   Tickets
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
+import { pickHomePath } from '../utils/home'
 
 withDefaults(
   defineProps<{
@@ -156,7 +157,8 @@ const activeMenu = computed(() => {
 })
 
 function goHome() {
-  router.push('/analytics')
+  const path = pickHomePath(authStore.isAdmin, (permission) => authStore.hasPermission(permission))
+  router.push(path === '/forbidden' ? '/login' : path)
   emit('select')
 }
 

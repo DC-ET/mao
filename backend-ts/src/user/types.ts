@@ -58,7 +58,7 @@ export interface UserRepository {
   insert(user: User): Promise<number>;
   updateById(user: User): Promise<void>;
   updateFields(id: number, fields: Record<string, unknown>): Promise<void>;
-  selectPage(page: number, size: number, keyword?: string, status?: number | null): Promise<{ records: User[]; total: number }>;
+  selectPage(page: number, size: number, keyword?: string, status?: number | null, authSource?: string | null): Promise<{ records: User[]; total: number }>;
 }
 
 export interface RoleRepository {
