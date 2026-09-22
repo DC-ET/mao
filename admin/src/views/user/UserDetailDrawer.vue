@@ -27,7 +27,7 @@
       <el-tabs v-model="activeTab" class="detail-tabs">
         <!-- 会话 -->
         <el-tab-pane label="会话" name="sessions">
-          <el-table :data="sessions" v-loading="loadingTab === 'sessions'" size="small" stripe>
+          <el-table :data="sessions" v-loading="loadingTabs['sessions']" size="small" stripe>
             <template #empty><el-empty description="暂无会话" :image-size="48" /></template>
             <el-table-column prop="id" label="ID" width="64" />
             <el-table-column prop="title" label="标题" min-width="180" show-overflow-tooltip />
@@ -57,7 +57,7 @@
 
         <!-- 定时任务 -->
         <el-tab-pane label="定时任务" name="tasks">
-          <el-table :data="tasks" v-loading="loadingTab === 'tasks'" size="small" stripe>
+          <el-table :data="tasks" v-loading="loadingTabs['tasks']" size="small" stripe>
             <template #empty><el-empty description="暂无定时任务" :image-size="48" /></template>
             <el-table-column prop="id" label="ID" width="64" />
             <el-table-column prop="name" label="任务名称" min-width="150" show-overflow-tooltip />
@@ -90,7 +90,7 @@
 
         <!-- 快捷指令 -->
         <el-tab-pane label="快捷指令" name="commands">
-          <el-table :data="commands" v-loading="loadingTab === 'commands'" size="small" stripe>
+          <el-table :data="commands" v-loading="loadingTabs['commands']" size="small" stripe>
             <template #empty><el-empty description="暂无快捷指令" :image-size="48" /></template>
             <el-table-column prop="id" label="ID" width="64" />
             <el-table-column prop="name" label="名称" width="160" show-overflow-tooltip />
@@ -101,7 +101,7 @@
 
         <!-- 个人技能 -->
         <el-tab-pane label="个人技能" name="skills">
-          <el-table :data="skills" v-loading="loadingTab === 'skills'" size="small" stripe>
+          <el-table :data="skills" v-loading="loadingTabs['skills']" size="small" stripe>
             <template #empty><el-empty description="暂无个人技能" :image-size="48" /></template>
             <el-table-column prop="name" label="名称" width="180" show-overflow-tooltip />
             <el-table-column prop="description" label="描述" min-width="240" show-overflow-tooltip>
@@ -113,11 +113,18 @@
 
         <!-- Git 凭证 -->
         <el-tab-pane label="Git 凭证" name="git">
-          <el-table :data="gitCredentials" v-loading="loadingTab === 'git'" size="small" stripe>
+          <el-table :data="gitCredentials" v-loading="loadingTabs['git']" size="small" stripe>
             <template #empty><el-empty description="暂无 Git 凭证" :image-size="48" /></template>
             <el-table-column prop="id" label="ID" width="64" />
             <el-table-column prop="domain" label="域名" width="180" />
-            <el-table-column prop="accessToken" label="Token" width="140" />
+            <!-- 后端 toVO 恒返回 '****'，展示原值没有信息量：改为配置状态标签并让出宽度给备注 -->
+            <el-table-column label="Token" width="90">
+              <template #default="{ row }">
+                <el-tag :type="row.accessToken ? 'success' : 'info'" size="small">
+                  {{ row.accessToken ? '已配置' : '未配置' }}
+                </el-tag>
+              </template>
+            </el-table-column>
             <el-table-column prop="description" label="备注" min-width="160" show-overflow-tooltip>
               <template #default="{ row }">{{ row.description || '-' }}</template>
             </el-table-column>
@@ -132,7 +139,7 @@
 
         <!-- MCP 服务器 -->
         <el-tab-pane label="MCP 服务器" name="mcp">
-          <el-table :data="mcpServers" v-loading="loadingTab === 'mcp'" size="small" stripe>
+          <el-table :data="mcpServers" v-loading="loadingTabs['mcp']" size="small" stripe>
             <template #empty><el-empty description="暂无个人 MCP 服务器" :image-size="48" /></template>
             <el-table-column prop="id" label="ID" width="64" />
             <el-table-column prop="name" label="名称" width="160" show-overflow-tooltip />
@@ -155,11 +162,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
 import { formatDateTime, formatDateTimeColumn } from '../../utils/datetime'
+// 复用全站统一的阶段文案（含 IDLE / WAITING_APPROVAL），勿在本页自造映射
+import { phaseLabel } from '../../utils/labels'
 import { useAuthStore } from '../../stores/auth'
 
 interface UserRow {
@@ -187,7 +196,10 @@ const authStore = useAuthStore()
 const router = useRouter()
 
 const activeTab = ref('sessions')
-const loadingTab = ref('')
+// 六个 Tab 的数据是并行加载的，加载态必须按 Tab 独立记录：
+// 早期用单个字符串 ref，后发起的请求会覆盖先发起的，最先返回的又把它清空，
+// 结果默认展示的「会话」Tab 几乎从不显示骨架，其余在途 Tab 也提前失去 spinner。
+const loadingTabs = reactive<Record<string, boolean>>({})
 const canWrite = computed(() => authStore.hasPermission('user:write'))
 
 const drawerTitle = computed(() =>
@@ -210,18 +222,13 @@ const mcpServers = ref<any[]>([])
 function phaseTagType(phase: string): 'primary' | 'success' | 'danger' | 'warning' | 'info' {
   switch (phase) {
     case 'RUNNING': return 'primary'
+    case 'RESUMING': return 'primary'
+    case 'WAITING_APPROVAL': return 'warning'
     case 'COMPLETED': return 'success'
     case 'FAILED': return 'danger'
     case 'CANCELLED': return 'warning'
     default: return 'info'
   }
-}
-
-function phaseLabel(phase: string): string {
-  const labels: Record<string, string> = {
-    RUNNING: '运行中', COMPLETED: '已完成', FAILED: '失败', CANCELLED: '已取消'
-  }
-  return labels[phase] || phase || '-'
 }
 
 function execStatusLabel(status: string): string {
@@ -245,7 +252,7 @@ function handleOpen() {
 
 async function loadSessions() {
   if (!props.user) return
-  loadingTab.value = 'sessions'
+  loadingTabs['sessions'] = true
   try {
     const { data } = await api.get('/admin/sessions', {
       params: { userId: props.user.id, page: sessionsPage.value, size: TAB_PAGE_SIZE }
@@ -253,13 +260,13 @@ async function loadSessions() {
     sessions.value = data?.records || []
     sessionsTotal.value = data?.total || 0
   } catch { /* 拦截器已提示失败 */ } finally {
-    loadingTab.value = ''
+    loadingTabs['sessions'] = false
   }
 }
 
 async function loadTasks() {
   if (!props.user) return
-  loadingTab.value = 'tasks'
+  loadingTabs['tasks'] = true
   try {
     const { data } = await api.get('/scheduled-tasks/all', {
       params: { userId: props.user.id, pageNum: tasksPage.value, pageSize: TAB_PAGE_SIZE }
@@ -267,51 +274,51 @@ async function loadTasks() {
     tasks.value = data?.records || []
     tasksTotal.value = data?.total || 0
   } catch { /* 拦截器已提示失败 */ } finally {
-    loadingTab.value = ''
+    loadingTabs['tasks'] = false
   }
 }
 
 async function loadCommands() {
   if (!props.user) return
-  loadingTab.value = 'commands'
+  loadingTabs['commands'] = true
   try {
     const { data } = await api.get('/admin/user-commands', { params: { userId: props.user.id } })
     commands.value = data || []
   } catch { /* 拦截器已提示失败 */ } finally {
-    loadingTab.value = ''
+    loadingTabs['commands'] = false
   }
 }
 
 async function loadSkills() {
   if (!props.user) return
-  loadingTab.value = 'skills'
+  loadingTabs['skills'] = true
   try {
     const { data } = await api.get('/admin/user-skills', { params: { userId: props.user.id } })
     skills.value = data || []
   } catch { /* 拦截器已提示失败 */ } finally {
-    loadingTab.value = ''
+    loadingTabs['skills'] = false
   }
 }
 
 async function loadGitCredentials() {
   if (!props.user) return
-  loadingTab.value = 'git'
+  loadingTabs['git'] = true
   try {
     const { data } = await api.get(`/admin/users/${props.user.id}/git-credentials`)
     gitCredentials.value = data || []
   } catch { /* 拦截器已提示失败 */ } finally {
-    loadingTab.value = ''
+    loadingTabs['git'] = false
   }
 }
 
 async function loadMcpServers() {
   if (!props.user) return
-  loadingTab.value = 'mcp'
+  loadingTabs['mcp'] = true
   try {
     const { data } = await api.get(`/admin/users/${props.user.id}/mcp-servers`)
     mcpServers.value = data || []
   } catch { /* 拦截器已提示失败 */ } finally {
-    loadingTab.value = ''
+    loadingTabs['mcp'] = false
   }
 }
 

@@ -222,32 +222,39 @@ async function pollStatus() {
     if (data.status === 'confirmed') {
       // 确认绑定：confirm POST 成功后才把状态置为 confirmed 并结束轮询；
       // 失败时保持轮询与「请确认登录」提示，避免 UI 误报「绑定成功！」
-      if (data.botToken && data.baseUrl && data.ilinkUserId) {
-        try {
-          await api.post('/weixin/binding/confirm', null, {
-            params: {
-              sessionKey: qrcodeData.value.sessionKey,
-              botToken: data.botToken,
-              baseUrl: data.baseUrl,
-              ilinkUserId: data.ilinkUserId
-            }
-          })
-        } catch (confirmError) {
-          console.error('确认绑定失败:', confirmError)
-          confirmFailures++
-          // 后端 confirm 幂等，持续重试即可；仅前两次弹提示，避免后端不可用时每 3s 刷屏
-          if (confirmFailures <= 2) {
-            ElMessage.error('绑定确认失败，正在重试…')
+      // 参数缺失说明后端下发不完整，confirm 请求根本发不出去：
+      // 必须当异常路径处理，不能落到下面的成功收尾去弹「绑定成功！」
+      if (!data.botToken || !data.baseUrl || !data.ilinkUserId) {
+        stopStatusPolling()
+        scanStatus.value = 'expired'
+        ElMessage.error('绑定信息不完整，请重新扫码')
+        return
+      }
+
+      try {
+        await api.post('/weixin/binding/confirm', null, {
+          params: {
+            sessionKey: qrcodeData.value.sessionKey,
+            botToken: data.botToken,
+            baseUrl: data.baseUrl,
+            ilinkUserId: data.ilinkUserId
           }
-          // confirm 失败重试同样受总时长上限约束
-          if (pollingActive && Date.now() - pollStartedAt <= POLL_TOTAL_TIMEOUT_MS) {
-            statusPollingTimer = window.setTimeout(pollStatus, 3000)
-          } else if (pollingActive) {
-            stopStatusPolling()
-            scanStatus.value = 'expired'
-          }
-          return
+        })
+      } catch (confirmError) {
+        console.error('确认绑定失败:', confirmError)
+        confirmFailures++
+        // 后端 confirm 幂等，持续重试即可；仅前两次弹提示，避免后端不可用时每 3s 刷屏
+        if (confirmFailures <= 2) {
+          ElMessage.error('绑定确认失败，正在重试…')
         }
+        // confirm 失败重试同样受总时长上限约束
+        if (pollingActive && Date.now() - pollStartedAt <= POLL_TOTAL_TIMEOUT_MS) {
+          statusPollingTimer = window.setTimeout(pollStatus, 3000)
+        } else if (pollingActive) {
+          stopStatusPolling()
+          scanStatus.value = 'expired'
+        }
+        return
       }
 
       scanStatus.value = data.status

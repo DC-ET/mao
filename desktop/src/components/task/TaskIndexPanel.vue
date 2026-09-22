@@ -858,10 +858,14 @@ async function onGroupNewTask(group: { sessions: Session[] }) {
 }
 
 function openGroupFolder(group: { key: string }) {
-  const workspace = group.key.startsWith('LOCAL:') ? group.key.substring(6) : ''
-  if (workspace && window.electronAPI?.openFolder) {
-    window.electronAPI.openFolder(workspace)
+  // 与同组的 openTerminal 一致给出三端提示：早期静默 return，Web/安卓上点击毫无反应像坏掉
+  if (typeof window === 'undefined' || !window.electronAPI?.openFolder) {
+    ElMessage.info('在文件浏览器中打开仅在桌面客户端可用')
+    return
   }
+  const workspace = group.key.startsWith('LOCAL:') ? group.key.substring(6) : ''
+  if (!workspace) return
+  window.electronAPI.openFolder(workspace)
 }
 
 function openTerminal(group: { key: string }) {

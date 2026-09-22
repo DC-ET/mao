@@ -64,7 +64,9 @@ watch(route, (newRoute) => {
 
 **触发**：进入用量分析（管理后台首页），切换统计周期或子 Tab（总览/趋势/模型/用户/Agent）若干次。
 
-**影响**：每一个 query 组合都被当成一个新页面，顶栏堆积多个同名「用量分析」标签（`closable: true`，与固定的 `/analytics` 默认标签并存）。正常使用几分钟就能刷出十几个标签，标签栏被挤满、无法分辨、只能逐个关闭。这同时放大了历史文档记录的「keep-alive 无 include 缓存无界增长」问题——每个 fullPath 都是一份独立缓存。
+**影响**：每一个 query 组合都被当成一个新页面，顶栏堆积多个同名「用量分析」标签（`closable: true`，与固定的 `/analytics` 默认标签并存）。正常使用几分钟就能刷出十几个标签，标签栏被挤满、无法分辨、只能逐个关闭。
+
+> 补充核验：`Layout.vue:57-63` 的 `keep-alive` 是按 `viewRoute.path` 做 key 的（仅 `SessionDetail` 用 fullPath），所以本问题**不会**额外放大组件缓存数量，影响面仅限标签栏。
 
 **建议**：`addTab` 改用 `route.path`（或 `route.name`）作为唯一键，标签内记录最近一次 `fullPath` 用于点击时还原 query。这样同一页面的筛选变化只更新现有标签，不再新增。
 

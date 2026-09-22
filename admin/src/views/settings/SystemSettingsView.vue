@@ -234,12 +234,17 @@ function toNumberOrNull(raw: string | undefined): number | undefined {
   return Number.isFinite(n) ? n : undefined
 }
 
+// 无条件以服务端值覆盖：早期只填 undefined 的键，导致「刷新」对已渲染字段完全无效——
+// 既不丢弃本地未保存编辑也不拉取最新值，多人同时改配置时还会用陈旧值覆盖别人的修改。
+// secret 字段仍统一置空，空串在保存时语义为「不修改」。
 function syncPlainModel() {
   for (const row of settings.value) {
     if (SPECIAL_KEYS.has(row.settingKey)) continue
-    if (plainModel[row.settingKey] === undefined) {
-      plainModel[row.settingKey] = row.isSecret === 1 ? '' : (row.value ?? '')
-    }
+    plainModel[row.settingKey] = row.isSecret === 1 ? '' : (row.value ?? '')
+  }
+  // 待清除标记是绑在刷新前那批值上的，同步后必须一起丢弃，否则下次保存会误清空 secret
+  if (pendingClearKeys.value.size > 0) {
+    pendingClearKeys.value = new Set()
   }
 }
 

@@ -56,7 +56,7 @@
           </button>
           <button
             class="action-btn insert-btn"
-            :disabled="insertingQueueId === item.msg.id"
+            :disabled="insertingQueueId !== null"
             title="立即发送"
             @click="handleInsert(item.msg.id)"
           >
@@ -119,6 +119,15 @@ const queueMessages = computed(() => {
 
 const expanded = ref(false)
 const insertingQueueId = ref<string | null>(null)
+let insertResetTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearInserting() {
+  insertingQueueId.value = null
+  if (insertResetTimer) {
+    clearTimeout(insertResetTimer)
+    insertResetTimer = null
+  }
+}
 /** 排序 in-flight 防重：禁用编辑/上移/下移，列表刷新或超时后解除 */
 const reordering = ref(false)
 let reorderResetTimer: ReturnType<typeof setTimeout> | null = null
@@ -127,7 +136,7 @@ let reorderResetTimer: ReturnType<typeof setTimeout> | null = null
 // (consumed by backend, or deleted by user/error)
 watch(queueMessages, (newMessages) => {
   if (insertingQueueId.value && !newMessages.some(m => m.id === insertingQueueId.value)) {
-    insertingQueueId.value = null
+    clearInserting()
   }
   reordering.value = false
 })
@@ -142,7 +151,7 @@ const activePhase = computed(() => {
 })
 watch(activePhase, (phase) => {
   if (insertingQueueId.value && phase && ['CANCELLED', 'COMPLETED', 'FAILED', 'IDLE'].includes(phase)) {
-    insertingQueueId.value = null
+    clearInserting()
   }
 })
 
@@ -190,9 +199,19 @@ const queueView = computed(() =>
   })
 )
 
+/**
+ * 插入防重：成功时由队列/phase watch 复位，兜底 8s 超时复位。
+ * WS 发送失败时队列与 phase 都不变，两个 watch 都不触发；而本函数的守卫判的是
+ * 「有没有任何一条在途」，少了超时兜底会让整个队列的「立即发送」失效到本轮执行结束。
+ */
 function handleInsert(queueId: string) {
   if (insertingQueueId.value) return
   insertingQueueId.value = queueId
+  if (insertResetTimer) clearTimeout(insertResetTimer)
+  insertResetTimer = setTimeout(() => {
+    insertingQueueId.value = null
+    insertResetTimer = null
+  }, 8000)
   emit('insert', queueId)
 }
 
@@ -210,6 +229,7 @@ function handleReorder(queueId: string, direction: 'up' | 'down') {
 
 onBeforeUnmount(() => {
   if (reorderResetTimer) clearTimeout(reorderResetTimer)
+  if (insertResetTimer) clearTimeout(insertResetTimer)
 })
 
 async function handleDelete(queueId: string) {

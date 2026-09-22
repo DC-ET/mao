@@ -622,12 +622,18 @@ function closeFilePanel() {
 
 // ===== File reference: fetch files =====
 
+// 乱序保护：防抖只能合并连续输入，跨越 300ms 的两次过滤仍会产生并发请求。
+// 缺少序号校验时慢响应会覆盖新结果，用户按回车就引用到错误的文件（同 FileViewer 的 loadFileSeq）。
+let fetchFilesSeq = 0
+
 async function fetchWorkspaceFiles(filter: string) {
+  const seq = ++fetchFilesSeq
   filePanelLoading.value = true
   try {
     const isElectron = typeof window !== 'undefined' && (window as any).electronAPI
     if (props.executionMode === 'LOCAL' && isElectron && props.workspace) {
       const result = await (window as any).electronAPI.listWorkspaceFiles(props.workspace, filter || undefined, 20)
+      if (seq !== fetchFilesSeq) return
       workspaceFiles.value = result || []
     } else {
       // CLOUD mode — call backend API
@@ -636,21 +642,26 @@ async function fetchWorkspaceFiles(filter: string) {
         const { data } = await api.get('/files/workspace-list', {
           params: { sessionId, filter: filter || undefined, limit: 20 },
         })
+        if (seq !== fetchFilesSeq) return
         workspaceFiles.value = data?.files || []
       } else if (props.workspaceMode === 'existing' && props.cloudProjectKey) {
         // New task with an existing cloud project selected — use project-level API
         const { data } = await api.get('/files/project-list', {
           params: { projectKey: props.cloudProjectKey, filter: filter || undefined, limit: 20 },
         })
+        if (seq !== fetchFilesSeq) return
         workspaceFiles.value = data?.files || []
       } else {
+        if (seq !== fetchFilesSeq) return
         workspaceFiles.value = []
       }
     }
   } catch {
+    if (seq !== fetchFilesSeq) return
     workspaceFiles.value = []
   } finally {
-    filePanelLoading.value = false
+    // 只有最新一轮请求能收起 loading，否则先返回的旧请求会提前清掉骨架
+    if (seq === fetchFilesSeq) filePanelLoading.value = false
   }
 }
 

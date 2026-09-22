@@ -365,11 +365,18 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     notifyTabsChanged()
   }
 
+  // 与菜单文案「关闭其他文件」对齐：只关文件/diff Tab，保留边路任务与子代理 Tab。
+  // 早期实现是 state.tabs = [当前 tab]，会连带关掉边路任务，且漏掉 closeTab 里的
+  // markSideTaskClosed 记账，导致用户关掉的边路 Tab 在 restoreSideTaskTabs 时又冒出来。
   function closeOtherTabs(tabId: string) {
     const state = getSessionState()
-    const tab = state.tabs.find(t => t.id === tabId)
-    state.tabs = tab ? [tab] : []
-    state.activeTabId = tabId
+    state.tabs = state.tabs.filter(t => t.id === tabId || (t.type !== 'file' && t.type !== 'diff'))
+    if (state.tabs.some(t => t.id === tabId)) {
+      state.activeTabId = tabId
+    } else if (state.activeTabId !== 'chat' && !state.tabs.some(t => t.id === state.activeTabId)) {
+      // 在 chat Tab 上右键「关闭其他文件」：tabId 不在 state.tabs 里，回落到 chat
+      state.activeTabId = 'chat'
+    }
     notifyTabsChanged()
   }
 

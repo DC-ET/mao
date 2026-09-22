@@ -211,7 +211,7 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, onMounted } from 'vue'
+import { reactive, ref, onMounted, onActivated } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Refresh } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
@@ -431,6 +431,19 @@ onMounted(() => {
   applyQueryFilters()
   fetchRecords()
   fetchFilterOptions()
+})
+
+// 本页 keepAlive: true，切走再回来不会重跑 onMounted。调用流水是持续增长的实时流水表，
+// 沿用缓存视图会让人误判「最近没有调用」，因此激活时按当前 URL 筛选重新拉取。
+// 首次挂载时 activated 紧随 mounted 触发，必须跳过，否则首屏请求两次。
+let firstActivation = true
+onActivated(() => {
+  if (firstActivation) {
+    firstActivation = false
+    return
+  }
+  applyQueryFilters()
+  fetchRecords()
 })
 </script>
 

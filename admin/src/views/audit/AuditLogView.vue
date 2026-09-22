@@ -159,7 +159,7 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, onMounted, onDeactivated, onBeforeUnmount } from 'vue'
+import { reactive, ref, onMounted, onActivated, onDeactivated, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { Refresh } from '@element-plus/icons-vue'
 import { api } from '../../api'
@@ -206,10 +206,15 @@ function goUserSessions(row: { userId?: number | null }) {
 
 function handleAutoRefreshChange(enabled: string | number | boolean) {
   if (enabled) {
-    autoRefreshTimer = setInterval(() => fetchLogs(), AUTO_REFRESH_INTERVAL_MS)
+    startAutoRefresh()
   } else {
     stopAutoRefresh()
   }
+}
+
+function startAutoRefresh() {
+  stopAutoRefresh()
+  autoRefreshTimer = setInterval(() => fetchLogs(), AUTO_REFRESH_INTERVAL_MS)
 }
 
 function stopAutoRefresh() {
@@ -283,6 +288,15 @@ onMounted(() => {
 })
 
 onDeactivated(stopAutoRefresh)
+
+// 本页 keepAlive: true，切走只 deactivate。必须在回来时按开关状态重启定时器，
+// 否则开关仍显示开启但列表再也不刷新，用户会以为自己在盯实时审计。
+onActivated(() => {
+  if (autoRefresh.value) {
+    startAutoRefresh()
+    fetchLogs()
+  }
+})
 
 onBeforeUnmount(stopAutoRefresh)
 </script>

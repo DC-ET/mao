@@ -3,7 +3,11 @@
     <div class="panel-header">
       <el-icon class="header-icon" :size="12"><ChatDotRound /></el-icon>
       <span class="header-label">Agent 想了解：</span>
-      <span v-if="items.length > 1" class="header-badge">{{ items.length }}</span>
+      <span
+        v-if="items.length > 1"
+        class="header-badge"
+        :title="`共 ${items.length} 组提问待回答，答完当前一组后自动进入下一组`"
+      >1/{{ items.length }}</span>
     </div>
 
     <div class="question-card">
@@ -125,15 +129,12 @@ const answeredTabs = ref<Record<number, boolean>>({})
 const selections = ref<Record<number, string[]>>({})
 const customInputs = ref<Record<number, string>>({})
 
-const currentRequestId = computed(() => {
-  const last = props.items[props.items.length - 1]
-  return last?.requestId
-})
+// 按到达顺序先答最早那组：早期取 items[items.length - 1]，堆积多组时
+// 头部 badge 显示总数，但较早的 requestId 在 UI 上完全不可达，对应的 Agent 分支会一直等待。
+// 答完一组后服务端移除该项，本面板自动接上下一组（watch(currentRequestId) 负责重置作答状态）。
+const currentRequestId = computed(() => props.items[0]?.requestId)
 
-const currentQuestions = computed<Question[]>(() => {
-  const last = props.items[props.items.length - 1]
-  return last?.questions ?? []
-})
+const currentQuestions = computed<Question[]>(() => props.items[0]?.questions ?? [])
 
 watch(currentRequestId, (_newId, oldId) => {
   if (oldId === undefined) return

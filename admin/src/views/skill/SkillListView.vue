@@ -193,7 +193,9 @@
               @confirm="handleDelete(row)"
             >
               <template #reference>
-                <el-button type="danger" link :disabled="activeTab === 'personal' && !canWrite">删除</el-button>
+                <!-- 与桌面表格一致：系统与个人 Skills 的删除都要求 agent:write，
+                     早期写成 activeTab === 'personal' && !canWrite，系统 Tab 恒为可点 -->
+                <el-button type="danger" link :disabled="!canWrite">删除</el-button>
               </template>
             </el-popconfirm>
           </div>

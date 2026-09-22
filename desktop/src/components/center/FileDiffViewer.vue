@@ -128,7 +128,12 @@ async function syncViewer() {
 
   if (mode.value === 'SNAPSHOT') {
     disposePatchEditor()
-    if (!diffContainer.value) return
+    // 容器不在 DOM 中 = 当前是 Markdown 预览模式（v-if 拆掉了容器）：
+    // 必须销毁已有编辑器，否则来回切换预览/源码会残留 Monaco 实例
+    if (!diffContainer.value) {
+      disposeDiffEditor()
+      return
+    }
     const language = monacoLangFromExtension(props.change.path)
     if (!diffEditor) {
       diffEditor = monaco.editor.createDiffEditor(diffContainer.value, {
@@ -223,11 +228,20 @@ async function handleMarkdownClick(e: MouseEvent) {
   openFileTab(resolvedPath, title)
 }
 
+// 仅在切换到另一个文件时回到预览：change 是 deep watch 的目标，
+// Git 状态刷新会重建同一文件的 change 对象，此时不能把用户正在看的源码打回预览。
 watch(
-  [() => props.change, isDark],
+  () => props.change.path,
   () => {
-    // Reset view mode when file changes
     viewMode.value = 'preview'
+  },
+)
+
+// showSource 必须参与依赖：源码容器由 v-if 控制，点「源码」后才挂载，
+// 少了它 syncViewer 不会重跑，Monaco 永不创建，源码视图恒为空白。
+watch(
+  [() => props.change, isDark, showSource],
+  () => {
     void syncViewer()
   },
   { deep: true, flush: 'post', immediate: true },
