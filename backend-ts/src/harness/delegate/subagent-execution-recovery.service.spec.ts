@@ -48,4 +48,39 @@ describe('SubagentExecutionRecoveryService', () => {
     await service.recover(execution as never);
     expect(buildSubContext).toHaveBeenCalled();
   });
+
+  it('fails a LOCAL child when the desktop does not connect within the wait', async () => {
+    const executionMapper = {
+      claimRecovering: vi.fn(async () => true),
+      updateTerminal: vi.fn(async () => undefined),
+    };
+    const sessionMapper = {
+      selectById: vi.fn(async (id: number) => ({
+        id, phase: 'RUNNING', userId: 7, executionMode: id === 2 ? 'LOCAL' : 'CLOUD',
+      })),
+    };
+    const sessionService = {
+      updatePhase: vi.fn(async () => undefined),
+      getMessagesAfterId: vi.fn(async () => []),
+      saveMessage: vi.fn(async () => undefined),
+      cleanupIncompleteTailAfterId: vi.fn(async () => undefined),
+    };
+    const visibilityService = { executeVisible: vi.fn(), finishSubagent: vi.fn(async () => undefined) };
+    const service = new SubagentExecutionRecoveryService(
+      executionMapper as never, sessionMapper as never, sessionService as never,
+      { loadValidated: vi.fn(async () => null), boundaryOf: vi.fn(() => 0) } as never,
+      { getDefinition: vi.fn(() => ({ name: 'coder' })) } as never,
+      vi.fn(async () => ({ currentRound: 0 })) as never,
+      { registerCancelFlag: vi.fn(() => ({ get: () => false })), removeCancelFlag: vi.fn() } as never,
+      visibilityService as never,
+      { isConnected: vi.fn(async () => false), setUserForSession: vi.fn(), removeSession: vi.fn() } as never,
+      0,
+    );
+    await service.recover(execution as never);
+    expect(visibilityService.executeVisible).not.toHaveBeenCalled();
+    expect(executionMapper.updateTerminal).toHaveBeenCalledWith(55, expect.objectContaining({
+      status: 'FAILED',
+      result: '子代理恢复失败：LOCAL 客户端未在恢复等待期内连接',
+    }));
+  });
 });

@@ -87,9 +87,13 @@ export class AuthService {
   }
 }
 
-export function formatNow(): string {
-  const d = new Date();
+/** 墙钟字符串，固定 Asia/Shanghai，与库内 `expires_at` 的字符串比较同一时钟。 */
+export function formatShanghaiDateTime(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
-  const tz = new Date(d.toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }));
+  const tz = new Date(date.toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }));
   return `${tz.getFullYear()}-${pad(tz.getMonth() + 1)}-${pad(tz.getDate())} ${pad(tz.getHours())}:${pad(tz.getMinutes())}:${pad(tz.getSeconds())}`;
+}
+
+export function formatNow(): string {
+  return formatShanghaiDateTime(new Date());
 }

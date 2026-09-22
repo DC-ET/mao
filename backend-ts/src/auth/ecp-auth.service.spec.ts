@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { JwtService } from '../crypto/jwt.service.js';
+import { formatShanghaiDateTime } from './auth.service.js';
 import { EcpAuthService } from './ecp-auth.service.js';
 import { defaultEcpConfig } from './ecp.config.js';
 import { ECP_PENDING, ECP_SUCCESS } from './ecp-oauth.repository.js';
@@ -35,7 +36,14 @@ describe('EcpAuthService', () => {
     );
     const result = await service.startFeishuLogin('desktop');
     expect(result.state).toBe('ecp-state-9');
-    expect(stateRepo.insert).toHaveBeenCalledWith(expect.objectContaining({ state: 'ecp-state-9' }));
+    const inserted = stateRepo.insert.mock.calls[0][0] as { state: string; expiresAt: string };
+    expect(inserted.state).toBe('ecp-state-9');
+    const expected = formatShanghaiDateTime(new Date(Date.now() + 300_000));
+    expect(Math.abs(Date.parse(inserted.expiresAt.replace(' ', 'T') + '+08:00') - Date.parse(expected.replace(' ', 'T') + '+08:00'))).toBeLessThan(2000);
+  });
+
+  it('formats Shanghai wall clock instead of the process timezone', () => {
+    expect(formatShanghaiDateTime(new Date('2026-01-01T00:00:00.000Z'))).toBe('2026-01-01 08:00:00');
   });
 
   it('invokes onAuthenticated after successful callback', async () => {

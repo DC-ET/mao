@@ -205,8 +205,9 @@ export class ScheduledTaskService {
     if (cronExpression != null) {
       this.parseCron(cronExpression);
       task.cronExpression = cronExpression;
-      // 未显式指定 once 时，换 cron 后按新形态重判一次性属性
-      if (once == null && task.once == null) task.once = isOneShotCron(cronExpression) ? 1 : 0;
+      // 未显式指定 once 时，换 cron 后按新形态重判一次性属性。
+      // 存量行的 once 是 0/1 而不是 null，不能再要求 task.once == null。
+      if (once == null) task.once = isOneShotCron(cronExpression) ? 1 : 0;
       const next = this.calculateNextFireTime(cronExpression);
       task.nextFireTime = next;
       if (next != null) {
@@ -264,6 +265,7 @@ export class ScheduledTaskService {
     }
     if (task.id != null) this.inFlight.add(task.id);
     let submitted = false;
+    const previousNextFireTime = task.nextFireTime ?? null;
     try {
       // M-5 同类约束：此处仅增量写 nextFireTime，禁止用 listDue 的 T0 快照整行回写，
       // 否则会覆盖扫描到执行之间用户对 name/prompt/cron/status 的修改。
@@ -272,7 +274,8 @@ export class ScheduledTaskService {
       await this.store.updateById({ id: task.id!, nextFireTime });
       const executionId = randomUUID();
       const userId = task.userId!;
-      this.agentExecutor(async () => {
+      try {
+        this.agentExecutor(async () => {
         try {
           await withSessionLock(task.sessionId!, async () => {
             // 进入执行阶段才算「运行中违纪」：入队失败/会话为空等未真正执行
@@ -404,6 +407,18 @@ export class ScheduledTaskService {
         }
       });
       submitted = true;
+      } catch (e) {
+        // 池满拒绝发生在回调开始之前：本次触发还没跑，必须把 nextFireTime 还回 due，
+        // 否则扫描 catch 会把它记成 FAILED 并跳到下一档（每天一次要等到明天，一次性要等到明年）。
+        if (!isExecutorRejected(e)) throw e;
+        task.nextFireTime = previousNextFireTime;
+        try {
+          await this.store.updateById({ id: task.id!, nextFireTime: previousNextFireTime });
+        } catch (rollbackError) {
+          console.error(`定时任务提交被拒绝后回滚 nextFireTime 失败, id=${task.id}`, rollbackError);
+        }
+        console.warn(`定时任务提交被拒绝，保留本次触发以便下轮扫描, id=${task.id}`, e);
+      }
     } finally {
       if (!submitted && task.id != null) this.inFlight.delete(task.id);
     }
@@ -538,6 +553,11 @@ export class ScheduledTaskScheduler {
         try {
           await this.service.executeTask(task);
         } catch (e) {
+          if (isExecutorRejected(e)) {
+            // executeTask 已尽量回滚 nextFireTime。这里再推进会把没跑成的触发吃掉。
+            console.error(`Scheduled task submit rejected, leaving it due: id=${task.id}, name=${task.name}`, e);
+            continue;
+          }
           console.error(`Failed to execute scheduled task: id=${task.id}, name=${task.name}`, e);
           // 增量写：task 是 listDue 的 T0 快照，整行回写会覆盖用户并发修改
           await this.store.updateById({
@@ -551,4 +571,8 @@ export class ScheduledTaskScheduler {
       this.scanning = false;
     }
   }
+}
+
+function isExecutorRejected(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AgentExecutorRejectedError';
 }

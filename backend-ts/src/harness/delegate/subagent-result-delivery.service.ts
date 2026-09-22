@@ -129,7 +129,10 @@ export class SubagentResultDeliveryService {
         agentType: execution.agentType ?? null,
       },
     });
-    const assistantId = await tx.insert('message', {
+    // 正常完成路径先插通知、再单独把 delivery_status 写成 DELIVERED。
+    // 两步之间崩溃时状态仍是 PENDING，恢复不能再插一条相同通知。
+    const existingId = await this.findBackgroundNotice(tx, parentSessionId, execution);
+    const assistantId = existingId ?? await tx.insert('message', {
       sessionId: parentSessionId,
       role: 'ASSISTANT',
       content,
@@ -142,7 +145,7 @@ export class SubagentResultDeliveryService {
       sourceSessionId: execution.childSessionId,
       deleted: 0,
     });
-    if (this.fileChangeRepo && execution.childSessionId != null) {
+    if (existingId == null && this.fileChangeRepo && execution.childSessionId != null) {
       await this.copyFileChanges(execution.childSessionId, assistantId, parentSessionId);
     }
     const now = nowSql();
@@ -201,6 +204,27 @@ export class SubagentResultDeliveryService {
     const parentToolCallId = execution.parentToolCallId ?? `recovered_subagent_execution_${execution.id}`;
     await mapper.updateById(execution.id!, { invocationType, parentToolCallId });
     return { ...execution, invocationType, parentToolCallId };
+  }
+
+  private async findBackgroundNotice(
+    tx: Db, parentSessionId: number, execution: SubagentExecution,
+  ): Promise<number | null> {
+    if (execution.id == null || execution.childSessionId == null) return null;
+    const rows = await tx.query<{ id?: number; metadata?: string | null }>(
+      `SELECT id, metadata FROM message
+       WHERE session_id = ? AND role = 'ASSISTANT' AND deleted = 0 AND source_session_id = ?`,
+      [parentSessionId, execution.childSessionId],
+    );
+    for (const row of rows) {
+      if (row.id == null || row.metadata == null || row.metadata === '') continue;
+      try {
+        const meta = JSON.parse(row.metadata) as { backgroundSubagentCompletion?: { executionId?: number } };
+        if (meta.backgroundSubagentCompletion?.executionId === execution.id) return row.id;
+      } catch {
+        // 损坏的 metadata 不当作已投递通知
+      }
+    }
+    return null;
   }
 
   private async findMessagePair(

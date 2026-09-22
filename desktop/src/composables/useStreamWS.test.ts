@@ -143,4 +143,29 @@ describe('useStreamWS user_message_saved', () => {
     expect(msgs.filter(m => m.role === 'user')).toHaveLength(1)
     expect(msgs[0].id).toBe('88')
   })
+
+  it('连续两组提问按到达顺序保留，后到的不清空先到的', async () => {
+    const { connect, subscribe } = useStreamWS()
+    const pending = connect()
+    sockets[0].open()
+    await pending
+    await subscribe('9')
+
+    const sessionStore = useSessionStore()
+    const push = (requestId: string) => {
+      sockets[0].onmessage?.({
+        target: sockets[0],
+        data: JSON.stringify({
+          type: 'ask_user_questions',
+          sessionId: 9,
+          data: { requestId, questions: [{ id: requestId, prompt: requestId }] },
+        }),
+      })
+    }
+    push('first')
+    push('second')
+
+    const queued = sessionStore.sessionPendingQuestions.get('9') ?? []
+    expect(queued.map(q => q.requestId)).toEqual(['first', 'second'])
+  })
 })

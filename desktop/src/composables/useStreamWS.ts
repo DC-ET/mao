@@ -996,8 +996,8 @@ export function useStreamWS() {
 
       case 'ask_user_questions': {
         if (sessionId && data) {
-          // Clear stale questions — the agent has moved on to a new question
-          sessionStore.clearAskQuestions(sessionId)
+          // 同一轮可以并行多组提问，重连也会把全部 pending 逐条重推。
+          // 按到达顺序追加；同 requestId 由 store 去重。清空留给终态、停止和 cancelled 事件。
           sessionStore.appendAskQuestion(sessionId, {
             requestId: data.requestId,
             questions: data.questions || [],

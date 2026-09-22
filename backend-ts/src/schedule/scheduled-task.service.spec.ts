@@ -169,6 +169,55 @@ describe('ScheduledTaskService', () => {
     expect(final.nextFireTime).toBeNull();
   });
 
+  it('reclassifies once when the cron shape changes and once is omitted', async () => {
+    vi.mocked(store.selectById).mockResolvedValue({
+      id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', status: 'ACTIVE', once: 0, fireCount: 0, prompt: 'hello',
+    });
+    const toOneShot = await service.updateTask(1, 7, null, null, '0 0 8 15 8 ?');
+    expect(toOneShot.once).toBe(1);
+
+    vi.mocked(store.selectById).mockResolvedValue({
+      id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 8 15 8 ?', status: 'ACTIVE', once: 1, fireCount: 0, prompt: 'hello',
+    });
+    const toDaily = await service.updateTask(1, 7, null, null, '0 0 9 * * *');
+    expect(toDaily.once).toBe(0);
+  });
+
+  it('keeps an explicit once flag when the cron shape would say otherwise', async () => {
+    vi.mocked(store.selectById).mockResolvedValue({
+      id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', status: 'ACTIVE', once: 0, fireCount: 0, prompt: 'hello',
+    });
+    const updated = await service.updateTask(1, 7, null, null, '0 0 8 15 8 ?', null, false);
+    expect(updated.once).toBe(0);
+  });
+
+  it('restores the due slot when the executor rejects the submit', async () => {
+    const due = '2026-09-22 09:00:00';
+    const localStore: ScheduledTaskStore = {
+      insert: vi.fn(),
+      updateById: vi.fn(),
+      deleteById: vi.fn(),
+      selectById: vi.fn(),
+      listByUser: vi.fn(async () => []),
+      listAll: vi.fn(async () => ({ records: [], total: 0 })),
+      listDue: vi.fn(async () => []),
+    };
+    const rejected = new Error('pool full');
+    rejected.name = 'AgentExecutorRejectedError';
+    const svc = new ScheduledTaskService(
+      localStore, stubs as never, { enqueue: vi.fn() }, { executeFromEvent: vi.fn() }, { finishExecution: vi.fn() },
+      { sendText: vi.fn() } as never,
+      { findByUserId: vi.fn(async () => null) } as never, { findByAccountId: vi.fn(async () => []) } as never,
+      () => { throw rejected; },
+    );
+    await svc.executeTask({
+      id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', prompt: 'hello', fireCount: 0, nextFireTime: due,
+    });
+    const writes = vi.mocked(localStore.updateById).mock.calls.map(([row]) => row);
+    expect(writes.at(-1)?.nextFireTime).toBe(due);
+    expect(writes.some((row) => row.lastExecutionStatus === 'FAILED')).toBe(false);
+  });
+
   it('detects one-shot cron shapes', () => {
     expect(isOneShotCron('0 0 8 15 8 ?')).toBe(true);
     expect(isOneShotCron('23 0 18 13 8 *')).toBe(true);

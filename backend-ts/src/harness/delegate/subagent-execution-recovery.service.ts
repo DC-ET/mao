@@ -1,4 +1,7 @@
 import { nowSql } from '../../common/datetime.js';
+
+/** 桌面端重连 LOCAL 子代理的上限。超时后失败该子执行，避免父会话恢复被无限挂起。 */
+const LOCAL_RECOVERY_CONNECT_WAIT_MS = 60_000;
 import type { SubagentExecution } from '../../session/types.js';
 import type { AgentLoop } from '../core/agent-loop.js';
 import type { Message, Session, SessionCompactionService, SessionMapper, SessionService } from '../deps.js';
@@ -20,6 +23,7 @@ export class SubagentExecutionRecoveryService {
     private readonly agentLoop: AgentLoop,
     private readonly visibilityService: SubAgentVisibilityService,
     private readonly localRegistry: LocalToolSessionRegistry,
+    private readonly localConnectWaitMs = LOCAL_RECOVERY_CONNECT_WAIT_MS,
   ) {}
 
   async recover(execution: SubagentExecution): Promise<void> {
@@ -73,7 +77,7 @@ export class SubagentExecutionRecoveryService {
           this.localRegistry.setUserForSession(child.id!, parent.userId);
         }
         const connected = await this.waitForLocal(child.id!, cancel);
-        if (!connected) throw new Error('子代理恢复失败：LOCAL 客户端未在恢复等待期内连接');
+        if (!connected) throw new Error('LOCAL 客户端未在恢复等待期内连接');
       }
       const run = await this.visibilityService.executeVisible(child, context, false);
       const collector = run.collector;
@@ -129,9 +133,12 @@ export class SubagentExecutionRecoveryService {
     childSessionId: number,
     cancel: { get(): boolean },
   ): Promise<boolean> {
+    const deadline = Date.now() + Math.max(0, this.localConnectWaitMs);
     while (!cancel.get()) {
       if (await this.localRegistry.isConnected(childSessionId)) return true;
-      await sleep(1000);
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return false;
+      await sleep(Math.min(1000, remaining));
     }
     return false;
   }

@@ -5,7 +5,7 @@ import type { JwtService } from '../crypto/jwt.service.js';
 import { UserService } from '../user/user.service.js';
 import type { LoginVO, User, UserRepository } from '../user/types.js';
 import type { AuthService } from './auth.service.js';
-import { formatNow } from './auth.service.js';
+import { formatNow, formatShanghaiDateTime } from './auth.service.js';
 import { EcpClient, resolveEcpOAuthState } from './ecp.client.js';
 import type { EcpCallbackTarget, EcpConfig } from './ecp.config.js';
 import { callbackUrlForTarget } from './ecp.config.js';
@@ -187,7 +187,5 @@ export class EcpAuthService {
 }
 
 function plusSeconds(seconds: number): string {
-  const date = new Date(Date.now() + seconds * 1000);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  return formatShanghaiDateTime(new Date(Date.now() + seconds * 1000));
 }

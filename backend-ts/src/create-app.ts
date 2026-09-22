@@ -247,6 +247,7 @@ import { FeishuInboundQueueRepository } from './feishu/inbound-queue.repository.
 import { MysqlFeishuProgressCardRepository } from './feishu/progress-card.repository.js';
 import { FeishuTaskQueueService } from './feishu/inbound-queue.service.js';
 import { FeishuCardActionService } from './feishu/card-action.service.js';
+import { persistFeishuCancelIfIdle } from './feishu/cancel-running.js';
 import { readFeishuDocMarkdown } from './feishu/doc-reader.js';
 import { fetchFeishuMessageDetail } from './feishu/message-detail.js';
 import { feishuSendTargetOf, sendFeishuFile, sendFeishuImage } from './feishu/media-sender.js';
@@ -1787,19 +1788,17 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     // M-6：插队按钮「中断+接力」收敛为一条原子路径——空闲时由 interrupt 内部排空兜底，
     // 命中时中断后立即排空，避免与 onMessage 接力窗口相互踩踏/滞留。
     interruptAndDrain: (sessionId) => feishuInboundHandler.interruptAndDrain(sessionId),
-    // 进度卡「取消任务」：置位 AgentLoop / 飞书 handler 取消标志 + 关闭 shell；
-    // 重启后续跑尚未挂 flag 时补写 CANCELLED，与桌面端输入框停止同语义。
-    // 用 cancel 而非 interrupt：interrupt 会标记「被下一条指令中断」，取消按钮应显示「任务已取消」。
+    // 进度卡「取消任务」：置位 AgentLoop / 飞书 handler 取消标志 + 关闭 shell。
+    // 已有执行（含崩溃恢复）只置 flag，等循环收尾再落 CANCELLED，避免提前终态后新消息与续跑并行。
+    // 重启后续跑尚未挂 flag 时才补写 CANCELLED。用 cancel 而非 interrupt：interrupt 会标记「被下一条指令中断」。
     cancelRunning: async (sessionId) => {
       feishuInboundHandler.cancel(sessionId);
-      const hadLoop = agentLoop.getCancelFlag(sessionId) != null;
-      const persisted = await persistCancelledIfActive(sessionId);
-      if (!hadLoop && persisted) {
-        void feishuInboundHandler.drainNextIfPending(sessionId).catch((error) => {
-          console.error(`飞书取消后队列接力失败, sessionId=${sessionId}`, error);
-        });
-      }
-      return hadLoop || persisted;
+      return persistFeishuCancelIfIdle({
+        sessionId,
+        hadLoop: agentLoop.getCancelFlag(sessionId) != null,
+        persistCancelledIfActive,
+        drainNextIfPending: (id) => feishuInboundHandler.drainNextIfPending(id),
+      });
     },
     // 失败卡「重试」：凭仍保留的进度卡片映射定位 bot，PATCH 点击的那张失败卡并基于历史续跑。
     retryFailed: async (sessionId, cardMessageId) => {
