@@ -73,6 +73,8 @@ export class ShellSessionTool extends BaseTool {
       + '- wait_for：正则；命中输出即提前返回（completed=false），命令继续在后台运行。\n'
       + '返回 completed=false 时命令仍在运行，会话被保留，用 await_async + session_id 继续等待；'
       + '完整输出始终写入 output_file。'
+      + '命令默认在当前工作区根目录执行；传 workdir 时工具会自动 cd，无需在 command 里再写 cd。'
+      + '工作区内的任务不要在 command 里 cd 到绝对路径，直接用相对路径即可。'
       + '常驻会话里不要用 exit/exec 结束循环（会杀掉整个 bash）；应使用 break。'
       + '若进程已退出，await_async 会交付剩余输出并 completed=true，不要再续等。';
   }
@@ -84,7 +86,7 @@ export class ShellSessionTool extends BaseTool {
         command: { type: 'string', description: '要执行的命令（用于 exec 动作）' },
         session_id: { type: 'string', description: '会话 ID。省略时执行一次性命令；提供时复用已有会话。' },
         input: { type: 'string', description: '要写入 stdin 的输入（用于 write_stdin 动作）' },
-        workdir: { type: 'string', description: '工作目录：支持相对路径和任意绝对路径' },
+        workdir: { type: 'string', description: '工作目录。省略时默认在当前工作区根目录执行，仅当任务需要其他目录时才传' },
         yield_time_ms: { type: 'integer', description: '等待输出的最长时间，单位毫秒（exec 默认 300000，write_stdin 默认 5000，await_async 默认 60000）' },
         wait_for: { type: 'string', description: `正则，命中输出即提前返回（最长 ${MAX_WAIT_FOR_LENGTH} 字符）。例如等服务启动打印 "Listening on"。若命中后进程已退出（命令含 exit）则 completed=true，不要再 await_async。` },
         async: { type: 'boolean', description: '是否在后台运行并立即返回 task_id（默认 false，仅用于 exec 动作）' },

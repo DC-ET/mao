@@ -459,7 +459,7 @@ private static final int IMAGE_TOKEN_ESTIMATE = 1000;
 17. `ReadFileToolTest`：各格式、超大文件、伪装扩展名、非图片不受影响
 18. `ToolMediaInjectorTest`：合成消息结构断言
 19. `OpenAiLlmAdapterTest`：注入后请求体含 `image_url`
-20. 更新 `CLAUDE.md` 工具说明（如需要）
+20. 更新 `AGENTS.md` 工具说明（如需要）
 
 ## 7. 落地清单
 

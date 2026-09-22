@@ -495,7 +495,7 @@ expect(tc.argsText).toBe('{"q":"mao"}');     // ← 断言了错误的累加语�
 - **构建产物入 git**：`desktop/public/embed/*.js` 两份共约 360 KB 已被 git 跟踪。`.gitignore` 有全局 `dist/` 规则但未覆盖 public 下的产物。这会让每次 SDK 改动都产生大 diff，且存在"产物与源码不同步"的风险。建议改为部署时构建（`scripts/deploy-desktop.sh` 目前无 embed 相关校验，可加一步产物存在性/版本校验）。
 - `vite.config.ts:16` 与 `vitest.config.ts:9` 都用了 `__dirname`，vite 8 构建/测试时各有一条警告（`configLoader: 'native'` 不支持），建议改 `import.meta.dirname`。
 - `sdk/embed/.npmrc` 设了 `legacy-peer-deps=true`，建议注明原因或移除。
-- **`docs/plan/2026-09-04-embed-sdk-technical-design.md` 首行状态仍写"设计定稿，未开工"**，而实现已完成并上线产物。按 CLAUDE.md 的文档同步约定应更新状态。
+- **`docs/plan/2026-09-04-embed-sdk-technical-design.md` 首行状态仍写"设计定稿，未开工"**，而实现已完成并上线产物。按 AGENTS.md 的文档同步约定应更新状态。
 
 ## 9. 功能设计缺口对照设计文档
 

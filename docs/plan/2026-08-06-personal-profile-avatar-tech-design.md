@@ -225,7 +225,7 @@
 ### 验证（1 项）
 - [ ] 后端 `mvn compile`（含可选单测）+ 前端 `vue-tsc` / `npm run build` 通过
 
-> 说明：本方案不涉及数据库迁移、不涉及 admin、不涉及安卓原生壳（`android/` 目录零改动），按 CLAUDE.md 约定改动 `backend/` 与 `desktop/` 后更新 CHANGELOG。
+> 说明：本方案不涉及数据库迁移、不涉及 admin、不涉及安卓原生壳（`android/` 目录零改动），按 AGENTS.md 约定改动 `backend/` 与 `desktop/` 后更新 CHANGELOG。
 
 ## 9. 风险与边界
 

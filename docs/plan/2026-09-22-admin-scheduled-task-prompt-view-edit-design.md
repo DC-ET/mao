@@ -11,7 +11,7 @@
 | 3 | 编辑权限门槛 | **新增权限点 `scheduled-task:write`**（默认授予 ADMIN） | `V118__scheduled_task_write_permission.sql`；路由读写门槛拆分 |
 | 4 | 审计 | **纳入**：`/v1/scheduled-tasks` 的变更方法写审计，读取与 cron 预览不写 | `audit.interceptor.ts`（`AUDITED_WRITE_PREFIXES` + 排除预览） |
 | 5 | Cron 预览接口 | **本次一起做** | `POST /v1/scheduled-tasks/cron-preview` + 编辑弹窗防抖预览 |
-| 6 | 发布流程 | 本服务走独立流程：**提交推送代码 → `/data` 目录执行部署脚本**（`bash /data/deploy-mao.sh`，脚本内 `git pull` + 构建三端 + 后端蓝绿重启）；不走 PMO/发布平台 | 见 `mao/CLAUDE.md` 与 `/data/deploy-mao.sh` |
+| 6 | 发布流程 | 本服务走独立流程：**提交推送代码 → `/data` 目录执行部署脚本**（`bash /data/deploy-mao.sh`，脚本内 `git pull` + 构建三端 + 后端蓝绿重启）；不走 PMO/发布平台 | 见 `mao/AGENTS.md` 与 `/data/deploy-mao.sh` |
 
 ## 1. 需求
 
