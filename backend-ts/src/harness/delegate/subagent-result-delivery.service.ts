@@ -1,4 +1,5 @@
 import { nowSql } from '../../common/datetime.js';
+import { MISSING_TOOL_RESULT_PLACEHOLDER } from '../core/message-history-normalizer.js';
 import type { Db } from '../../db/db.js';
 import type { FileChange, Message, Session, SubagentExecution } from '../../session/types.js';
 import { harnessLog } from '../log.js';
@@ -65,27 +66,35 @@ export class SubagentResultDeliveryService {
       let assistantId = existing.assistant?.id ?? null;
       let toolId = existing.tool?.id ?? null;
       if (!existing.complete) {
-        await this.removeIncompletePair(tx, parentSessionId, toolCallId);
-        assistantId = await tx.insert('message', {
-          sessionId: parentSessionId,
-          role: 'ASSISTANT',
-          content: '',
-          thinkingContent: null,
-          toolCallId: null,
-          toolCalls: JSON.stringify([{
-            id: toolCallId,
-            type: 'function',
-            function: {
-              name: 'delegate',
-              arguments: JSON.stringify(SubagentRecoveryResultFactory.invocationArguments(execution)),
-            },
-          }]),
-          tokenCount: 0,
-          modelId: null,
-          metadata: null,
-          sourceSessionId: null,
-          deleted: 0,
-        });
+        if (existing.assistant?.id != null) {
+          // 原助手消息上可能还有正文和同轮其它工具调用，只换掉缺失或占位的这一条 TOOL。
+          assistantId = existing.assistant.id;
+          if (existing.tool?.id != null) {
+            await tx.execute('UPDATE message SET deleted = 1 WHERE id = ?', [existing.tool.id]);
+          }
+        } else {
+          await this.removeIncompletePair(tx, parentSessionId, toolCallId);
+          assistantId = await tx.insert('message', {
+            sessionId: parentSessionId,
+            role: 'ASSISTANT',
+            content: '',
+            thinkingContent: null,
+            toolCallId: null,
+            toolCalls: JSON.stringify([{
+              id: toolCallId,
+              type: 'function',
+              function: {
+                name: 'delegate',
+                arguments: JSON.stringify(SubagentRecoveryResultFactory.invocationArguments(execution)),
+              },
+            }]),
+            tokenCount: 0,
+            modelId: null,
+            metadata: null,
+            sourceSessionId: null,
+            deleted: 0,
+          });
+        }
         toolId = await tx.insert('message', {
           sessionId: parentSessionId,
           role: 'TOOL',
@@ -187,8 +196,8 @@ export class SubagentResultDeliveryService {
       await tx.execute(
         `UPDATE subagent_execution
          SET delivery_status = 'SUPPRESSED',
-             status = CASE WHEN status IN ('RUNNING', 'RECOVERING') THEN 'CANCELLED' ELSE status END,
-             completed_at = CASE WHEN status IN ('RUNNING', 'RECOVERING') THEN ? ELSE completed_at END
+             completed_at = CASE WHEN status IN ('RUNNING', 'RECOVERING') THEN ? ELSE completed_at END,
+             status = CASE WHEN status IN ('RUNNING', 'RECOVERING') THEN 'CANCELLED' ELSE status END
          WHERE parent_session_id = ? AND delivery_status = 'PENDING'`,
         [nowSql(), parentSessionId],
       );
@@ -246,7 +255,9 @@ export class SubagentResultDeliveryService {
         // Damaged assistant rows are removed below before reconstruction.
       }
     }
-    return { assistant, tool, complete: assistant != null && tool != null };
+    // 占位不是真实输出。替换时只动这一条 TOOL，不拆整条助手消息。
+    const placeholder = tool != null && tool.content === MISSING_TOOL_RESULT_PLACEHOLDER;
+    return { assistant, tool, complete: assistant != null && tool != null && !placeholder };
   }
 
   private async removeIncompletePair(tx: Db, parentSessionId: number, toolCallId: string): Promise<void> {

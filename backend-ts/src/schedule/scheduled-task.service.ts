@@ -266,10 +266,24 @@ export class ScheduledTaskService {
     if (task.id != null) this.inFlight.add(task.id);
     let submitted = false;
     const previousNextFireTime = task.nextFireTime ?? null;
+    let cronUsedForAdvance = task.cronExpression!;
+    let advancedNext: string | null = null;
     try {
+      // 推进下一档之前先读库。扫描快照上的 cron 可能已被用户改掉；
+      // 已暂停的任务还没开跑，不能先把本次档期吃掉。
+      const beforeRun = task.id != null ? await this.store.selectById(task.id) : null;
+      if (beforeRun != null && beforeRun.status != null && beforeRun.status !== 'ACTIVE') {
+        return;
+      }
+      if (beforeRun?.cronExpression) {
+        cronUsedForAdvance = beforeRun.cronExpression;
+        task.cronExpression = beforeRun.cronExpression;
+      }
+      if (beforeRun?.once != null) task.once = beforeRun.once;
       // M-5 同类约束：此处仅增量写 nextFireTime，禁止用 listDue 的 T0 快照整行回写，
       // 否则会覆盖扫描到执行之间用户对 name/prompt/cron/status 的修改。
-      const nextFireTime = this.calculateNextFireTime(task.cronExpression!);
+      const nextFireTime = this.calculateNextFireTime(cronUsedForAdvance);
+      advancedNext = nextFireTime;
       task.nextFireTime = nextFireTime;
       await this.store.updateById({ id: task.id!, nextFireTime });
       const executionId = randomUUID();
@@ -290,10 +304,13 @@ export class ScheduledTaskService {
               }
               task.name = latest.name;
               task.prompt = latest.prompt ?? task.prompt;
-              task.cronExpression = latest.cronExpression;
+              task.cronExpression = latest.cronExpression ?? task.cronExpression;
               task.status = latest.status;
+              task.once = latest.once ?? task.once;
               task.fireCount = latest.fireCount ?? task.fireCount;
               if (task.status != null && task.status !== 'ACTIVE') {
+                // 下一档已经写过，但这次还没执行。暂停/停用时还回进入本方法前的档期。
+                await this.restoreNextFireIfUnchanged(task.id!, advancedNext, previousNextFireTime);
                 return;
               }
               const session = await this.sessionService.getSession(task.sessionId!);
@@ -318,8 +335,8 @@ export class ScheduledTaskService {
                   lastFireTime: enqueuedAt,
                   fireCount: (latest.fireCount ?? task.fireCount ?? 0) + 1,
                 };
-                // once 任务：入队即视为本次触发已消费，立即完结，避免次年同日再次命中 listDue。
-                if (latest.once === 1 || task.once === 1) {
+                // once 只看锁内重读。触发前快照里的 once=1 不能把用户刚改成循环的任务提前完结。
+                if (latest.once === 1) {
                   patch.finished = 1;
                   patch.finishedAt = enqueuedAt;
                   patch.nextFireTime = null;
@@ -391,12 +408,16 @@ export class ScheduledTaskService {
               patch.fireCount = (task.fireCount ?? 0) + 1;
               const latest = task.id != null ? await this.store.selectById(task.id) : null;
               if (latest != null && latest.status === 'ACTIVE') {
-                const next = this.calculateNextFireTime(latest.cronExpression ?? task.cronExpression!);
+                const latestCron = latest.cronExpression ?? cronUsedForAdvance;
+                const next = this.calculateNextFireTime(latestCron);
                 // 一次性任务执行过一次即完结（cron 固定月+日时 next 永远是明年同一天，不能靠 next==null 判定）
                 if (next == null || latest.once === 1) {
                   patch.finished = 1;
                   patch.finishedAt = now;
                   patch.nextFireTime = null;
+                } else if (latestCron !== cronUsedForAdvance) {
+                  // 开跑前按旧 cron 推进过下一档。执行期间 cron 已变，按新表达式重写，避免仍按旧档期触发。
+                  patch.nextFireTime = next;
                 }
               }
               await this.store.updateById(patch);
@@ -421,6 +442,25 @@ export class ScheduledTaskService {
       }
     } finally {
       if (!submitted && task.id != null) this.inFlight.delete(task.id);
+    }
+  }
+
+  /**
+   * 未开跑就放弃本次触发时，把 nextFireTime 还回推进前的值。
+   * 仅当库里仍是我们刚写下去的那一档时才还：用户随后又改过计划则保留他们的值。
+   */
+  private async restoreNextFireIfUnchanged(
+    taskId: number | undefined,
+    writtenNext: string | null,
+    previousNext: string | null,
+  ): Promise<void> {
+    if (taskId == null) return;
+    try {
+      const current = await this.store.selectById(taskId);
+      if (current == null || current.nextFireTime !== writtenNext) return;
+      await this.store.updateById({ id: taskId, nextFireTime: previousNext });
+    } catch (error) {
+      console.error(`定时任务未执行，回滚 nextFireTime 失败, id=${taskId}`, error);
     }
   }
 

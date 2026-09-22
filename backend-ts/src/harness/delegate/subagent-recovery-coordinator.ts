@@ -41,7 +41,7 @@ export class SubagentRecoveryCoordinator {
     harnessLog('info', `parent_recovery_wait parent=${parentId} childExecutions=${executions.map((row) => row.id).join(',')}`);
     let parent = await this.sessionMapper.selectById(parentId);
     if (!parent || isTerminal(parent.phase)) {
-      await this.deliveryService.suppressForParent(parentId);
+      await this.suppressParent(parentId, executions);
       return;
     }
     await Promise.all(executions.map(async (execution) => {
@@ -54,22 +54,36 @@ export class SubagentRecoveryCoordinator {
     }));
     parent = await this.sessionMapper.selectById(parentId);
     if (!parent || isTerminal(parent.phase)) {
-      await this.deliveryService.suppressForParent(parentId);
+      await this.suppressParent(parentId, executions);
       return;
+    }
+    // 先投递真实结果，再补占位。反过来的话，占位 TOOL 会让 deliver 以为配对已完整，
+    // 父会话续跑时读到的是「结果丢失」而不是子代理输出。
+    for (const execution of [...executions].sort((a, b) => (a.id ?? 0) - (b.id ?? 0))) {
+      if (execution.id != null) await this.deliveryService.deliver(execution.id);
     }
     const compaction = await this.compactionService.loadValidated(parentId);
     const boundary = this.compactionService.boundaryOf(compaction);
     await this.sessionService.cleanupIncompleteTailAfterId?.(parentId, boundary);
-    for (const execution of [...executions].sort((a, b) => (a.id ?? 0) - (b.id ?? 0))) {
-      if (execution.id != null) await this.deliveryService.deliver(execution.id);
-    }
     parent = await this.sessionMapper.selectById(parentId);
     if (!parent || isTerminal(parent.phase)) {
-      await this.deliveryService.suppressForParent(parentId);
+      await this.suppressParent(parentId, executions);
       return;
     }
     harnessLog('info', `parent_recovery_start parent=${parentId}`);
     await recoverParent(parent);
+  }
+
+  /** 父会话已终态：抑制投递，并把仍停在运行中的子会话收成取消。 */
+  private async suppressParent(parentId: number, executions: SubagentExecution[]): Promise<void> {
+    await this.deliveryService.suppressForParent(parentId);
+    for (const execution of executions) {
+      const childId = execution.childSessionId;
+      if (childId == null) continue;
+      const child = await this.sessionMapper.selectById(childId);
+      if (!child || isTerminal(child.phase)) continue;
+      await this.sessionService.updatePhase(childId, 'CANCELLED');
+    }
   }
 }
 

@@ -83,4 +83,30 @@ describe('SubagentExecutionRecoveryService', () => {
       result: '子代理恢复失败：LOCAL 客户端未在恢复等待期内连接',
     }));
   });
+
+  it('cancels the child session when the parent is already terminal', async () => {
+    const executionMapper = {
+      claimRecovering: vi.fn(async () => true),
+      updateTerminal: vi.fn(async () => true),
+    };
+    const sessionMapper = {
+      selectById: vi.fn(async (id: number) => ({
+        id, phase: id === 1 ? 'CANCELLED' : 'RUNNING', userId: 7,
+      })),
+    };
+    const sessionService = { updatePhase: vi.fn(async () => undefined) };
+    const service = new SubagentExecutionRecoveryService(
+      executionMapper as never, sessionMapper as never, sessionService as never,
+      { loadValidated: vi.fn(), boundaryOf: vi.fn(() => 0) } as never,
+      { getDefinition: vi.fn() } as never,
+      vi.fn() as never,
+      { registerCancelFlag: vi.fn(), removeCancelFlag: vi.fn() } as never,
+      { executeVisible: vi.fn(), finishSubagent: vi.fn() } as never,
+      { isConnected: vi.fn(), removeSession: vi.fn() } as never,
+    );
+    await service.recover(execution as never);
+    expect(executionMapper.claimRecovering).not.toHaveBeenCalled();
+    expect(executionMapper.updateTerminal).toHaveBeenCalledWith(55, expect.objectContaining({ status: 'CANCELLED' }));
+    expect(sessionService.updatePhase).toHaveBeenCalledWith(2, 'CANCELLED');
+  });
 });

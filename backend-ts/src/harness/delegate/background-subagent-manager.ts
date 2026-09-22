@@ -618,8 +618,9 @@ export class BackgroundSubagentManager {
       }
 
       if (execution.id != null) {
-        await this.deps.subagentExecutionMapper.updateById(execution.id, {
-          status,
+        // 条件更新：父会话取消可能已把行写成 CANCELLED。无条件 updateById 会把它改回完成。
+        const applied = await this.deps.subagentExecutionMapper.updateTerminal(execution.id, {
+          status: status as 'COMPLETED' | 'FAILED' | 'CANCELLED',
           result: resultText,
           totalRounds: subContext.currentRound,
           totalPromptTokens: collector.totalUsage?.promptTokens ?? 0,
@@ -627,6 +628,7 @@ export class BackgroundSubagentManager {
           totalToolCalls: collector.toolCallCount,
           completedAt: nowSql(),
         });
+        if (!applied) return;
       }
       await this.deps.visibilityService.finishSubagent(childSessionId, childSession.userId, status, runExecutionId);
       await this.onCompleted(execution, childSession, status, resultText, subContext, collector);
@@ -645,12 +647,13 @@ export class BackgroundSubagentManager {
     childSession: Session,
   ): Promise<void> {
     if (execution.id == null) return;
-    await this.deps.subagentExecutionMapper.updateById(execution.id, {
+    const applied = await this.deps.subagentExecutionMapper.updateTerminal(execution.id, {
       status: 'CANCELLED',
       result: '后台子代理已随父会话取消',
       deliveryStatus: 'SUPPRESSED',
       completedAt: nowSql(),
     });
+    if (!applied) return;
     await this.deps.visibilityService.finishSubagent(childSession.id!, childSession.userId, 'CANCELLED', '');
   }
 
@@ -660,11 +663,12 @@ export class BackgroundSubagentManager {
   ): Promise<void> {
     const resultText = '后台子代理已取消';
     if (execution.id != null) {
-      await this.deps.subagentExecutionMapper.updateById(execution.id, {
+      const applied = await this.deps.subagentExecutionMapper.updateTerminal(execution.id, {
         status: 'CANCELLED',
         result: resultText,
         completedAt: nowSql(),
       });
+      if (!applied) return;
     }
     await this.onCompleted(execution, childSession, 'CANCELLED', resultText, null, null);
   }
@@ -786,14 +790,15 @@ export class BackgroundSubagentManager {
     try {
       if (execution.id != null) {
         const latest = await this.deps.subagentExecutionMapper.findById(execution.id);
-        if (latest?.deliveryStatus === 'SUPPRESSED') return;
+        if (latest?.deliveryStatus === 'SUPPRESSED' && isTerminal(latest.status)) return;
       }
       if (execution.id != null) {
-        await this.deps.subagentExecutionMapper.updateById(execution.id, {
+        const applied = await this.deps.subagentExecutionMapper.updateTerminal(execution.id, {
           status: 'FAILED',
           result: message,
           completedAt: nowSql(),
         });
+        if (!applied) return;
       }
       await this.deps.visibilityService.finishSubagent(childSession.id!, childSession.userId, 'FAILED', runExecutionId);
 

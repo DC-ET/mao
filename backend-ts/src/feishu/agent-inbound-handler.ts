@@ -215,24 +215,29 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
       }
       outcome = { ok: true };
       // 不阻塞锁与回调：runRetry 自己收尾 busy / cancelFlag。
+      // 成功或取消后再排空。忙标志必须先清掉，否则 drainNext 会认为本轮还在跑而直接返回。
       void this.runRetry(sessionId, progress)
-        .catch((error) => {
-          console.error(`飞书重试后台执行未捕获异常, sessionId=${sessionId}`, error);
-        })
-        .finally(() => {
+        .then(async (phase) => {
           this.busy.delete(sessionId);
           this.interrupted.delete(sessionId);
+          if (phase !== 'FAILED') await this.drainNextIfPending(sessionId);
+        })
+        .catch((error) => {
+          this.busy.delete(sessionId);
+          this.interrupted.delete(sessionId);
+          console.error(`飞书重试后台执行未捕获异常, sessionId=${sessionId}`, error);
         });
     });
     return outcome;
   }
 
   /** 重试执行主体：不 saveUserMessage / prepareMessage，直接 execute 续跑历史。 */
-  private async runRetry(sessionId: number, progress: FeishuCardProgress): Promise<void> {
+  private async runRetry(sessionId: number, progress: FeishuCardProgress): Promise<'COMPLETED' | 'CANCELLED' | 'FAILED'> {
     const cancelFlag = this.options.createCancelFlag?.(sessionId) ?? NOOP_CANCEL_FLAG;
     this.cancelFlags.set(sessionId, cancelFlag);
     let executionId = '';
     let cardListener: FeishuCardProgressListener | null = null;
+    let outcome: 'COMPLETED' | 'CANCELLED' | 'FAILED' = 'FAILED';
     const stubContext = {
       accountId: '0', chatType: 'unknown', chatId: null, senderId: null, senderUnionId: null,
       messageId: null, senderType: 'user', messageType: 'text', text: '', mentions: [],
@@ -267,7 +272,8 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
         await this.options.sessionService.cleanupIncompleteTail?.(sessionId);
         await cardListener.cancel(wasInterrupted);
         await this.options.onExecutionFinished?.(sessionId, stubContext, executionId, 'CANCELLED');
-        return;
+        outcome = 'CANCELLED';
+        return outcome;
       }
       await this.options.onExecutionFinished?.(sessionId, stubContext, executionId, 'COMPLETED');
       const text = await this.options.sessionService.getLatestAssistantReply(sessionId);
@@ -275,6 +281,8 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
       if (cardUpdated === false && text != null && text !== '') {
         await this.reply(stubContext, text, sessionId).catch(() => undefined);
       }
+      outcome = 'COMPLETED';
+      return outcome;
     } catch (error) {
       console.error(`飞书重试执行失败, sessionId=${sessionId}`, error);
       await this.options.sessionService.cleanupIncompleteTail?.(sessionId);
@@ -284,6 +292,8 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
       if ((cardListener == null || cardUpdated === false) && failText !== '') {
         await this.reply(stubContext, failText, sessionId).catch(() => undefined);
       }
+      outcome = 'FAILED';
+      return outcome;
     } finally {
       this.removeCancelFlag(sessionId, cancelFlag);
     }

@@ -468,4 +468,101 @@ describe('ScheduledTaskService', () => {
     expect(listDue).toHaveBeenCalledTimes(1);
     expect(executeTask).not.toHaveBeenCalled();
   });
+
+  it('restores the due slot when the task is paused before it starts', async () => {
+    const due = '2026-09-22 09:00:00';
+    const row: Record<string, unknown> = {
+      id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', status: 'ACTIVE',
+      prompt: 'hello', once: 0, fireCount: 0, nextFireTime: due,
+    };
+    const localStore: ScheduledTaskStore = {
+      insert: vi.fn(),
+      updateById: vi.fn(async (patch) => { Object.assign(row, patch); }),
+      deleteById: vi.fn(),
+      selectById: vi.fn(async () => row),
+      listByUser: vi.fn(async () => []),
+      listAll: vi.fn(async () => ({ records: [], total: 0 })),
+      listDue: vi.fn(async () => []),
+    };
+    const saveMessage = vi.fn();
+    let ran: Promise<void> | null = null;
+    const svc = new ScheduledTaskService(
+      localStore, { getSession: vi.fn(), updatePhase: vi.fn(), saveMessage, getMessages: vi.fn() } as never,
+      { enqueue: vi.fn() }, { executeFromEvent: vi.fn() }, { finishExecution: vi.fn() },
+      { sendText: vi.fn() } as never,
+      { findByUserId: vi.fn(async () => null) } as never, { findByAccountId: vi.fn(async () => []) } as never,
+      (fn) => { row.status = 'PAUSED'; ran = Promise.resolve().then(fn); },
+    );
+    await svc.executeTask({
+      id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', prompt: 'hello', once: 0, fireCount: 0, nextFireTime: due,
+    });
+    await ran;
+    expect(saveMessage).not.toHaveBeenCalled();
+    expect(row.nextFireTime).toBe(due);
+    expect(row.status).toBe('PAUSED');
+  });
+
+  it('does not finish a task whose once flag was cleared while waiting to enqueue', async () => {
+    const row: Record<string, unknown> = {
+      id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', status: 'ACTIVE',
+      prompt: 'q', once: 1, fireCount: 0, nextFireTime: '2026-09-22 09:00:00',
+    };
+    const localStore: ScheduledTaskStore = {
+      insert: vi.fn(),
+      updateById: vi.fn(async (patch) => { Object.assign(row, patch); }),
+      deleteById: vi.fn(),
+      selectById: vi.fn(async () => row),
+      listByUser: vi.fn(async () => []),
+      listAll: vi.fn(async () => ({ records: [], total: 0 })),
+      listDue: vi.fn(async () => []),
+    };
+    const enqueue = vi.fn(async () => undefined);
+    let ran: Promise<void> | null = null;
+    const svc = new ScheduledTaskService(
+      localStore, { getSession: vi.fn(async () => ({ id: 11, phase: 'RUNNING' })), updatePhase: vi.fn(), saveMessage: vi.fn(), getMessages: vi.fn() } as never,
+      { enqueue }, { executeFromEvent: vi.fn() }, { finishExecution: vi.fn() },
+      { sendText: vi.fn() } as never,
+      { findByUserId: vi.fn(async () => null) } as never, { findByAccountId: vi.fn(async () => []) } as never,
+      (fn) => { row.once = 0; ran = Promise.resolve().then(fn); },
+    );
+    await svc.executeTask({
+      id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', prompt: 'q', once: 1, fireCount: 0,
+    });
+    await ran;
+    expect(enqueue).toHaveBeenCalled();
+    expect(row.finished).not.toBe(1);
+    expect(row.nextFireTime).not.toBeNull();
+  });
+
+  it('rewrites nextFireTime from the cron changed during the run', async () => {
+    const row: Record<string, unknown> = {
+      id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', status: 'ACTIVE',
+      prompt: 'hello', once: 0, fireCount: 0, nextFireTime: '2026-09-22 09:00:00',
+    };
+    const localStore: ScheduledTaskStore = {
+      insert: vi.fn(),
+      updateById: vi.fn(async (patch) => { Object.assign(row, patch); }),
+      deleteById: vi.fn(),
+      selectById: vi.fn(async () => row),
+      listByUser: vi.fn(async () => []),
+      listAll: vi.fn(async () => ({ records: [], total: 0 })),
+      listDue: vi.fn(async () => []),
+    };
+    let ran: Promise<void> | null = null;
+    const svc = new ScheduledTaskService(
+      localStore,
+      { getSession: vi.fn(async () => ({ id: 11, phase: 'IDLE' })), updatePhase: vi.fn(), saveMessage: vi.fn(async () => ({ id: 88 })), getMessages: vi.fn(async () => []) } as never,
+      { enqueue: vi.fn() }, { executeFromEvent: vi.fn(async () => undefined) }, { finishExecution: vi.fn() },
+      { sendText: vi.fn() } as never,
+      { findByUserId: vi.fn(async () => null) } as never, { findByAccountId: vi.fn(async () => []) } as never,
+      (fn) => { row.cronExpression = '0 0 * * * *'; ran = Promise.resolve().then(fn); },
+    );
+    await svc.executeTask({
+      id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', prompt: 'hello', once: 0, fireCount: 0,
+    });
+    await ran;
+    expect(row.cronExpression).toBe('0 0 * * * *');
+    expect(row.nextFireTime).toBe(svc.calculateNextFireTime('0 0 * * * *'));
+    expect(row.finished).not.toBe(1);
+  });
 });

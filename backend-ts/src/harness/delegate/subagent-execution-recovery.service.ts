@@ -36,6 +36,9 @@ export class SubagentExecutionRecoveryService {
       await this.executionMapper.updateTerminal(execution.id, {
         status: 'CANCELLED', result: '子代理已随父会话取消', completedAt: nowSql(),
       });
+      if (child?.id != null && !isTerminal(child.phase)) {
+        await this.sessionService.updatePhase(child.id, 'CANCELLED');
+      }
       return;
     }
     if (!child) {

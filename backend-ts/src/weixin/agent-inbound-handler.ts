@@ -1,4 +1,5 @@
 import type { ContentPart, Message, Session } from '../domain/types.js';
+import { isActivePhase } from '../session/session-vo.js';
 import type { StreamingWsRegistry } from '../session/ws/streaming-ws-registry.js';
 import { userMessagePayloadOf } from '../session/ws/streaming-ws-handler.js';
 import { wsEvent } from '../session/ws/ws-event.js';
@@ -29,14 +30,29 @@ export interface WeixinHandlerSessionService {
   updateContextTokens(sessionId: number, tokens: number): Promise<void>;
   /** 按会话范围回滚单条消息（消息被更新消息取代时清理孤立 USER，可选）。 */
   deleteMessageById?(sessionId: number, messageId: number): Promise<void>;
+  getSession?(sessionId: number): Promise<{ phase?: string | null } | null>;
 }
+
+const FOREIGN_LOOP_WAIT_MS = 60_000;
+/**
+ * 桌面收尾先改阶段、再摘旗标，然后才可能排 500ms 的队列自动消费。
+ * 旗标消失后还要安静超过这段延迟，才算 finally 已经开始消费或明确放弃。
+ */
+const FOREIGN_LOOP_QUIET_MS = 800;
+
+type CancelFlag = { get(): boolean; set(v: boolean): void };
 
 export interface AgentWeixinInboundHandlerDeps {
   weixinSessionService: WeixinSessionService;
   harnessService: WeixinHarnessService;
   sessionService: WeixinHandlerSessionService;
   accountRepository: WeixinAccountRepository;
-  agentLoop: { registerCancelFlag(sessionId: number): { get(): boolean; set(v: boolean): void } };
+  agentLoop: {
+    registerCancelFlag(sessionId: number): CancelFlag;
+    getCancelFlag?(sessionId: number): CancelFlag | undefined;
+    requestCancel?(sessionId: number): void;
+    removeCancelFlag?(sessionId: number): void;
+  };
   shellSessionManager: { closeByConversation(sessionId: number): void };
   registry: StreamingWsRegistry;
   taskTerminalService: { finishExecution(sessionId: number, userId: number, phase: string, executionId: string, reason?: string): Promise<void> };
@@ -64,7 +80,7 @@ export function appendDownloadErrorNotice(body: string | null | undefined, faile
 export class AgentWeixinInboundHandler implements WeixinInboundHandler {
   static appendDownloadErrorNotice = appendDownloadErrorNotice;
 
-  private readonly cancelFlags = new Map<number, { get(): boolean; set(v: boolean): void }>();
+  private readonly cancelFlags = new Map<number, CancelFlag>();
   private readonly generations = new Map<number, number>();
   private readonly sessionLocks = new Map<number, Promise<void>>();
   private readonly agentExecutor: (fn: () => Promise<void>) => void;
@@ -148,14 +164,20 @@ export class AgentWeixinInboundHandler implements WeixinInboundHandler {
         console.info(`微信消息已被更新消息取代, sessionId=${sessionId}, gen=${generation}`);
         // 本条消息已被更新的消息取代且不会被执行：回滚刚落库的 USER 消息，
         // 否则历史中留下没有回复的孤立 USER，持续污染后续 LLM 上下文。
-        if (savedMessageId != null) {
-          try {
-            await this.deps.sessionService?.deleteMessageById?.(sessionId, savedMessageId);
-          } catch (e) {
-            console.warn(`回滚被取代的微信用户消息失败, sessionId=${sessionId}, messageId=${savedMessageId}`, e);
-          }
-        }
+        await this.rollbackSupersededUserMessage(sessionId, savedMessageId);
         resolve(null);
+        return;
+      }
+      const released = await this.waitForForeignLoop(sessionId);
+      if (this.stopped || !this.isCurrentGeneration(sessionId, generation)) {
+        await this.rollbackSupersededUserMessage(sessionId, savedMessageId);
+        resolve(null);
+        return;
+      }
+      if (!released) {
+        console.warn(`微信消息放弃执行：桌面端循环未在等待期内结束, sessionId=${sessionId}`);
+        await this.rollbackSupersededUserMessage(sessionId, savedMessageId);
+        resolve({ text: '当前会话仍在执行，请稍后再发。' });
         return;
       }
       const cancelFlag = this.deps.agentLoop!.registerCancelFlag(sessionId);
@@ -214,20 +236,102 @@ export class AgentWeixinInboundHandler implements WeixinInboundHandler {
         if (this.cancelFlags.get(sessionId) === cancelFlag) {
           this.cancelFlags.delete(sessionId);
         }
+        // buildContext 在 AgentLoop.execute 之前抛出时，循环的 finally 不会摘旗标。
+        // 只摘仍是本次注册的那一把，避免删掉桌面或自动消费刚换上的新旗标。
+        this.releaseOwnLoopFlag(sessionId, cancelFlag);
       }
     });
   }
 
   private abortRunningExecution(sessionId: number, userId: number): void {
-    const flag = this.cancelFlags.get(sessionId);
+    const local = this.cancelFlags.get(sessionId);
+    const loopFlag = this.deps.agentLoop?.getCancelFlag?.(sessionId);
+    const flag = local ?? loopFlag;
     if (flag != null) {
       flag.set(true);
       this.deps.registry?.send(userId, wsEvent('session_status', sessionId, { phase: 'CANCELLING' }));
     }
+    // 桌面端循环持有的是 AgentLoop 上那把旗标，不在本 handler 的 Map 里。
+    // 必须在 registerCancelFlag 换旗之前先置位，否则旧循环看不到取消。
+    if (loopFlag != null && loopFlag !== local) loopFlag.set(true);
+    this.deps.agentLoop?.requestCancel?.(sessionId);
     try {
       this.deps.shellSessionManager?.closeByConversation(sessionId);
     } catch (e) {
       console.debug(`关闭微信会话 Shell 失败, sessionId=${sessionId}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  /**
+   * 桌面端（或其他非本 handler）正在跑同一会话时，先等它退出再注册新旗标。
+   * 代理循环从 execute 返回时就会摘掉旗标，阶段改写和 500ms 队列自动消费都在这之后。
+   * 所以「Map 里没有旗标」不算退出：阶段仍活跃、读阶段失败、或刚空闲但还没过安静窗口，都不开跑。
+   */
+  private async waitForForeignLoop(sessionId: number): Promise<boolean> {
+    const loop = this.deps.agentLoop;
+    if (loop?.getCancelFlag == null) return true;
+    const own = this.cancelFlags.get(sessionId);
+    const foreign = loop.getCancelFlag(sessionId);
+    if (foreign === own && foreign != null) return true;
+    if (foreign != null) {
+      foreign.set(true);
+      loop.requestCancel?.(sessionId);
+    }
+    const deadline = Date.now() + FOREIGN_LOOP_WAIT_MS;
+    let quietSince: number | null = null;
+    while (Date.now() < deadline) {
+      if (this.stopped) return false;
+      const current = loop.getCancelFlag(sessionId);
+      const phase = await this.readPhase(sessionId);
+      // 仍有别人的旗标，或阶段仍活跃：继续等。读失败不算空闲。
+      if ((current != null && current !== own) || phase === 'active' || phase === 'unknown') {
+        quietSince = null;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        continue;
+      }
+      if (quietSince == null) quietSince = Date.now();
+      if (Date.now() - quietSince >= FOREIGN_LOOP_QUIET_MS) return true;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    // 空闲阶段上挂着一把到点还没人摘的旗标，不会再被收尾清掉。留下它的话，后面每条微信都要再空等一轮。
+    const stuckPhase = await this.readPhase(sessionId);
+    if (stuckPhase === 'idle') this.releaseForeignFlag(sessionId, own);
+    return false;
+  }
+
+  private releaseOwnLoopFlag(sessionId: number, cancelFlag: CancelFlag): void {
+    const loop = this.deps.agentLoop;
+    if (loop?.removeCancelFlag == null) return;
+    if (loop.getCancelFlag != null && loop.getCancelFlag(sessionId) !== cancelFlag) return;
+    loop.removeCancelFlag(sessionId);
+  }
+
+  private releaseForeignFlag(sessionId: number, own: CancelFlag | undefined): void {
+    const loop = this.deps.agentLoop;
+    if (loop?.removeCancelFlag == null || loop.getCancelFlag == null) return;
+    const stuck = loop.getCancelFlag(sessionId);
+    if (stuck == null || stuck === own) return;
+    loop.removeCancelFlag(sessionId);
+  }
+
+  private async readPhase(sessionId: number): Promise<'active' | 'idle' | 'unknown'> {
+    const sessionService = this.deps.sessionService;
+    if (sessionService?.getSession == null) return 'unknown';
+    try {
+      const session = await sessionService.getSession(sessionId);
+      if (session == null) return 'idle';
+      return isActivePhase(session.phase) ? 'active' : 'idle';
+    } catch {
+      return 'unknown';
+    }
+  }
+
+  private async rollbackSupersededUserMessage(sessionId: number, savedMessageId: number | null): Promise<void> {
+    if (savedMessageId == null) return;
+    try {
+      await this.deps.sessionService?.deleteMessageById?.(sessionId, savedMessageId);
+    } catch (e) {
+      console.warn(`回滚被取代的微信用户消息失败, sessionId=${sessionId}, messageId=${savedMessageId}`, e);
     }
   }
 

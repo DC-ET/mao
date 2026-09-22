@@ -515,6 +515,26 @@ describe('AgentFeishuInboundHandler', () => {
     expect(updates).toContainEqual({ status: 'COMPLETED', content: '重试后的答案' });
   });
 
+  it('drains the feishu queue after a successful retry', async () => {
+    const sessionService = makeSessionService({
+      getPhase: vi.fn(async () => 'FAILED'),
+      getLatestAssistantReply: vi.fn(async () => '重试后的答案'),
+    });
+    const claimNext = vi.fn(async () => null);
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) } as never,
+      createCancelFlag: makeFlag,
+      releaseCancelFlag: vi.fn(),
+      listenerFactory: async () => listener,
+      onExecutionFinished: vi.fn(async () => undefined),
+      queueService: makeQueueService({ claimNext }),
+    });
+    const result = await handler.retryExecution(7, async () => ({ update: async () => undefined }));
+    expect(result).toEqual({ ok: true });
+    await vi.waitFor(() => expect(claimNext).toHaveBeenCalledWith(7));
+  });
+
   it('retryExecution continues the progress card round from prior assistant messages', async () => {
     const sessionService = makeSessionService({
       getPhase: vi.fn(async () => 'FAILED'),

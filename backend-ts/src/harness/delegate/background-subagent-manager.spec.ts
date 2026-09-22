@@ -316,3 +316,58 @@ describe('BackgroundSubagentManager retry bookkeeping', () => {
     expect(snap.recentOutput).not.toContain(conclusion);
   });
 });
+
+describe('BackgroundSubagentManager terminal write', () => {
+  it('does not overwrite a cancel that landed while the child was finishing', async () => {
+    const execution: Record<string, unknown> = {
+      id: 7, parentSessionId: 1, childSessionId: 42, agentType: 'reviewer',
+      status: 'RUNNING', invocationType: 'BACKGROUND', deliveryStatus: 'PENDING',
+    };
+    const updateTerminal = vi.fn(async (_id: number, data: Record<string, unknown>) => {
+      if (execution.status !== 'RUNNING' && execution.status !== 'RECOVERING') return false;
+      Object.assign(execution, data);
+      return true;
+    });
+    const finishSubagent = vi.fn(async () => undefined);
+    const manager = new BackgroundSubagentManager({
+      harnessService: () => ({
+        buildContext: async () => ({
+          tools: [] as Array<{ getName(): string }>,
+          availableSkillDocs: new Map<string, string>(),
+          currentRound: 1,
+        }),
+      }),
+      subagentExecutionMapper: {
+        findById: vi.fn(async () => execution),
+        updateTerminal,
+        updateById: vi.fn(async (_id: number, data: Record<string, unknown>) => { Object.assign(execution, data); }),
+      },
+      sessionMapper: { selectById: vi.fn(async () => ({ id: 1, phase: 'RUNNING', userId: 7 })) },
+      sessionService: { saveMessage: vi.fn(async () => ({ id: 1 })), getMessages: vi.fn(async () => []) },
+      agentLoop: () => ({
+        getCancelFlag: () => undefined,
+        registerCancelFlag: () => ({ get: () => false, set: () => undefined }),
+        removeCancelFlag: () => undefined,
+      }),
+      visibilityService: {
+        executeVisible: vi.fn(async () => {
+          execution.status = 'CANCELLED';
+          execution.deliveryStatus = 'SUPPRESSED';
+          execution.result = '后台子代理已随父会话取消';
+          return { collector: new SubAgentResultCollector(), executionId: 'e1' };
+        }),
+        finishSubagent,
+      },
+      localToolSessionRegistry: { removeSession: vi.fn() },
+    } as never);
+
+    await (manager as unknown as {
+      runBackground: (execution: unknown, child: unknown, definition: unknown) => Promise<void>;
+    }).runBackground(execution, { id: 42, userId: 7 }, { name: 'reviewer' });
+
+    expect(updateTerminal).toHaveBeenCalled();
+    expect(execution.status).toBe('CANCELLED');
+    expect(execution.result).toBe('后台子代理已随父会话取消');
+    expect(finishSubagent).not.toHaveBeenCalled();
+  });
+});

@@ -97,6 +97,235 @@ describe('AgentWeixinInboundHandler cancel replace', () => {
     expect(sessionService.updatePhase).not.toHaveBeenCalled();
     handler.shutdown();
   });
+
+  it('waits for a desktop loop to release before starting', async () => {
+    const desktopFlag = new AtomicBoolean(false);
+    let current: AtomicBoolean | undefined = desktopFlag;
+    const weixinFlag = new AtomicBoolean(false);
+    let phase = 'RUNNING';
+    const execute = vi.fn(async () => undefined);
+    const deleteMessageById = vi.fn(async () => undefined);
+    const handler = new AgentWeixinInboundHandler({
+      weixinSessionService: { getOrCreateWeixinSession: vi.fn(async () => ({ id: 100, userId: 1 })) },
+      harnessService: { prepareMessage: vi.fn(async () => 'exec-1'), execute },
+      sessionService: {
+        saveMessage: vi.fn(async () => ({ id: 10, content: 'msg' })),
+        updatePhase: vi.fn(),
+        getMessages: vi.fn(async () => [{ role: 'ASSISTANT', content: 'wx-reply' }]),
+        cleanupIncompleteTail: vi.fn(async () => 0),
+        updateContextTokens: vi.fn(),
+        deleteMessageById,
+        getSession: vi.fn(async () => ({ phase })),
+      },
+      accountRepository: { findByAccountId: vi.fn(async () => ({ userId: 1 })) },
+      agentLoop: {
+        getCancelFlag: () => current,
+        requestCancel: () => { current?.set(true); },
+        registerCancelFlag: () => { current = weixinFlag; return weixinFlag; },
+      },
+      shellSessionManager: { closeByConversation: vi.fn() },
+      registry: { send: vi.fn() },
+      taskTerminalService: { finishExecution: vi.fn() },
+      activityService: { record: vi.fn(async () => ({ id: 1 })) },
+      activityHeartbeat: { touch: vi.fn() },
+      sessionTodoMapper: { deleteBySessionId: vi.fn(), selectBySessionId: vi.fn(async () => []) },
+      modelService: { getModel: vi.fn(async () => ({ supportsVision: 0 })) },
+      weixinFileStorageService: { saveFile: vi.fn() },
+    } as unknown as AgentWeixinInboundHandlerDeps);
+
+    const pending = handler.onMessage({ accountId: 'acc-1', body: 'from-weixin' } as WeixinInboundMessageContext);
+    await vi.waitFor(() => expect(desktopFlag.get()).toBe(true));
+    expect(execute).not.toHaveBeenCalled();
+    current = undefined;
+    phase = 'CANCELLED';
+    await expect(pending).resolves.toEqual({ text: 'wx-reply' });
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(deleteMessageById).not.toHaveBeenCalled();
+    handler.shutdown();
+  });
+
+  it('does not start while the desktop flag is still held after the phase leaves running', async () => {
+    const desktopFlag = new AtomicBoolean(false);
+    let current: AtomicBoolean | undefined = desktopFlag;
+    let phase = 'RUNNING';
+    const execute = vi.fn(async () => undefined);
+    const handler = new AgentWeixinInboundHandler({
+      weixinSessionService: { getOrCreateWeixinSession: vi.fn(async () => ({ id: 100, userId: 1 })) },
+      harnessService: { prepareMessage: vi.fn(async () => 'exec-1'), execute },
+      sessionService: {
+        saveMessage: vi.fn(async () => ({ id: 10, content: 'msg' })),
+        updatePhase: vi.fn(),
+        getMessages: vi.fn(async () => [{ role: 'ASSISTANT', content: 'wx-reply' }]),
+        cleanupIncompleteTail: vi.fn(async () => 0),
+        updateContextTokens: vi.fn(),
+        deleteMessageById: vi.fn(),
+        getSession: vi.fn(async () => ({ phase })),
+      },
+      accountRepository: { findByAccountId: vi.fn(async () => ({ userId: 1 })) },
+      agentLoop: {
+        getCancelFlag: () => current,
+        requestCancel: () => { desktopFlag.set(true); },
+        registerCancelFlag: () => new AtomicBoolean(false),
+      },
+      shellSessionManager: { closeByConversation: vi.fn() },
+      registry: { send: vi.fn() },
+      taskTerminalService: { finishExecution: vi.fn() },
+      activityService: { record: vi.fn(async () => ({ id: 1 })) },
+      activityHeartbeat: { touch: vi.fn() },
+      sessionTodoMapper: { deleteBySessionId: vi.fn(), selectBySessionId: vi.fn(async () => []) },
+      modelService: { getModel: vi.fn(async () => ({ supportsVision: 0 })) },
+      weixinFileStorageService: { saveFile: vi.fn() },
+    } as unknown as AgentWeixinInboundHandlerDeps);
+
+    const pending = handler.onMessage({ accountId: 'acc-1', body: 'from-weixin' } as WeixinInboundMessageContext);
+    await vi.waitFor(() => expect(desktopFlag.get()).toBe(true));
+    phase = 'CANCELLED';
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(execute).not.toHaveBeenCalled();
+    current = undefined;
+    await expect(pending).resolves.toEqual({ text: 'wx-reply' });
+    handler.shutdown();
+  });
+
+  it('does not start when the desktop flag is already gone but the phase is still running', async () => {
+    let phase = 'RUNNING';
+    let current: AtomicBoolean | undefined;
+    const queued = new AtomicBoolean(false);
+    const execute = vi.fn(async () => undefined);
+    const handler = new AgentWeixinInboundHandler({
+      weixinSessionService: { getOrCreateWeixinSession: vi.fn(async () => ({ id: 100, userId: 1 })) },
+      harnessService: { prepareMessage: vi.fn(async () => 'exec-1'), execute },
+      sessionService: {
+        saveMessage: vi.fn(async () => ({ id: 10, content: 'msg' })),
+        updatePhase: vi.fn(),
+        getMessages: vi.fn(async () => [{ role: 'ASSISTANT', content: 'wx-reply' }]),
+        cleanupIncompleteTail: vi.fn(async () => 0),
+        updateContextTokens: vi.fn(),
+        deleteMessageById: vi.fn(),
+        getSession: vi.fn(async () => ({ phase })),
+      },
+      accountRepository: { findByAccountId: vi.fn(async () => ({ userId: 1 })) },
+      agentLoop: {
+        getCancelFlag: () => current,
+        requestCancel: () => undefined,
+        registerCancelFlag: () => new AtomicBoolean(false),
+      },
+      shellSessionManager: { closeByConversation: vi.fn() },
+      registry: { send: vi.fn() },
+      taskTerminalService: { finishExecution: vi.fn() },
+      activityService: { record: vi.fn(async () => ({ id: 1 })) },
+      activityHeartbeat: { touch: vi.fn() },
+      sessionTodoMapper: { deleteBySessionId: vi.fn(), selectBySessionId: vi.fn(async () => []) },
+      modelService: { getModel: vi.fn(async () => ({ supportsVision: 0 })) },
+      weixinFileStorageService: { saveFile: vi.fn() },
+    } as unknown as AgentWeixinInboundHandlerDeps);
+
+    const pending = handler.onMessage({ accountId: 'acc-1', body: 'from-weixin' } as WeixinInboundMessageContext);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(execute).not.toHaveBeenCalled();
+    phase = 'CANCELLED';
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(execute).not.toHaveBeenCalled();
+    current = queued;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(execute).not.toHaveBeenCalled();
+    current = undefined;
+    await expect(pending).resolves.toEqual({ text: 'wx-reply' });
+    expect(execute).toHaveBeenCalledTimes(1);
+    handler.shutdown();
+  });
+
+  it('drops the cancel flag when execution fails before the agent loop', async () => {
+    const flags = new Map<number, AtomicBoolean>();
+    const removeCancelFlag = vi.fn((sessionId: number) => { flags.delete(sessionId); });
+    let executeCalls = 0;
+    const handler = new AgentWeixinInboundHandler({
+      weixinSessionService: { getOrCreateWeixinSession: vi.fn(async () => ({ id: 100, userId: 1 })) },
+      harnessService: {
+        prepareMessage: vi.fn(async () => 'exec-1'),
+        execute: vi.fn(async () => {
+          executeCalls += 1;
+          if (executeCalls === 1) throw new Error('模型不存在');
+        }),
+      },
+      sessionService: {
+        saveMessage: vi.fn(async () => ({ id: 10, content: 'msg' })),
+        updatePhase: vi.fn(),
+        getMessages: vi.fn(async () => [{ role: 'ASSISTANT', content: 'wx-reply' }]),
+        cleanupIncompleteTail: vi.fn(async () => 0),
+        updateContextTokens: vi.fn(),
+        deleteMessageById: vi.fn(),
+        getSession: vi.fn(async () => ({ phase: 'FAILED' })),
+      },
+      accountRepository: { findByAccountId: vi.fn(async () => ({ userId: 1 })) },
+      agentLoop: {
+        registerCancelFlag: (sessionId: number) => {
+          const flag = new AtomicBoolean(false);
+          flags.set(sessionId, flag);
+          return flag;
+        },
+        getCancelFlag: (sessionId: number) => flags.get(sessionId),
+        requestCancel: (sessionId: number) => flags.get(sessionId)?.set(true),
+        removeCancelFlag,
+      },
+      shellSessionManager: { closeByConversation: vi.fn() },
+      registry: { send: vi.fn() },
+      taskTerminalService: { finishExecution: vi.fn() },
+      activityService: { record: vi.fn(async () => ({ id: 1 })) },
+      activityHeartbeat: { touch: vi.fn() },
+      sessionTodoMapper: { deleteBySessionId: vi.fn(), selectBySessionId: vi.fn(async () => []) },
+      modelService: { getModel: vi.fn(async () => ({ supportsVision: 0 })) },
+      weixinFileStorageService: { saveFile: vi.fn() },
+    } as unknown as AgentWeixinInboundHandlerDeps);
+
+    const first = await handler.onMessage({ accountId: 'acc-1', body: 'first' } as WeixinInboundMessageContext);
+    expect(first?.text).toContain('请稍后再试');
+    expect(removeCancelFlag).toHaveBeenCalledWith(100);
+    expect(flags.has(100)).toBe(false);
+
+    const second = await handler.onMessage({ accountId: 'acc-1', body: 'second' } as WeixinInboundMessageContext);
+    expect(second?.text).toBe('wx-reply');
+    expect(executeCalls).toBe(2);
+    handler.shutdown();
+  });
+
+  it('does not treat an idle phase with a live desktop flag as a stale loop', async () => {
+    const desktopFlag = new AtomicBoolean(true);
+    const execute = vi.fn(async () => undefined);
+    const handler = new AgentWeixinInboundHandler({
+      weixinSessionService: { getOrCreateWeixinSession: vi.fn(async () => ({ id: 100, userId: 1 })) },
+      harnessService: { prepareMessage: vi.fn(async () => 'exec-1'), execute },
+      sessionService: {
+        saveMessage: vi.fn(async () => ({ id: 10, content: 'msg' })),
+        updatePhase: vi.fn(),
+        getMessages: vi.fn(async () => []),
+        cleanupIncompleteTail: vi.fn(async () => 0),
+        updateContextTokens: vi.fn(),
+        deleteMessageById: vi.fn(),
+        getSession: vi.fn(async () => ({ phase: 'IDLE' })),
+      },
+      accountRepository: { findByAccountId: vi.fn(async () => ({ userId: 1 })) },
+      agentLoop: {
+        getCancelFlag: () => desktopFlag,
+        requestCancel: () => undefined,
+        registerCancelFlag: () => new AtomicBoolean(false),
+      },
+      shellSessionManager: { closeByConversation: vi.fn() },
+      registry: { send: vi.fn() },
+      taskTerminalService: { finishExecution: vi.fn() },
+      activityService: { record: vi.fn(async () => ({ id: 1 })) },
+      activityHeartbeat: { touch: vi.fn() },
+      sessionTodoMapper: { deleteBySessionId: vi.fn(), selectBySessionId: vi.fn(async () => []) },
+      modelService: { getModel: vi.fn(async () => ({ supportsVision: 0 })) },
+      weixinFileStorageService: { saveFile: vi.fn() },
+    } as unknown as AgentWeixinInboundHandlerDeps);
+
+    const pending = handler.onMessage({ accountId: 'acc-1', body: 'from-weixin' } as WeixinInboundMessageContext);
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    expect(execute).not.toHaveBeenCalled();
+    handler.shutdown();
+    await expect(pending).resolves.toBeNull();
+  });
 });
 
 describe('AgentWeixinInboundHandler file error', () => {
