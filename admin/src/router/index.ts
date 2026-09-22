@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import { chunkReloadTarget } from './chunk-reload'
 
 /** 首页：管理员进用量分析；非管理员按已有权限落到首个可用页面 */
 function pickHomePath(isAdmin: boolean, hasPermission: (p: string) => boolean): string {
@@ -139,6 +140,19 @@ const routes: RouteRecordRaw[] = [
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes
+})
+
+// 部署后旧标签仍引用已删除的懒加载脚本。导航失败时整页打开目标地址以加载新版本，
+// 短时间内只跳转一次，避免新版本本身缺文件时反复刷新。
+router.onError((error, to) => {
+  let storage: Storage | null = null
+  try {
+    storage = window.sessionStorage
+  } catch {
+    storage = null
+  }
+  const href = chunkReloadTarget(error, router.resolve(to).href, storage)
+  if (href) window.location.assign(href)
 })
 
 // Navigation guard

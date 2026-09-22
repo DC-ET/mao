@@ -278,6 +278,8 @@ bash scripts/deploy-desktop.sh
 cd backend-ts && npm ci && npm run build && ./restart.sh
 ```
 
+只更新管理后台时，部署前已经打开的页面不必先手动刷新：点到尚未打开过的菜单时，若旧脚本已经不在服务器上，会自动整页打开该菜单并加载新版本（0.0.180 起）。已经打开过的菜单照常切换。若自动跳转后仍不对，再强制刷新一次。
+
 Flyway 在启动时自动迁移；升级期间勿多实例并发启动后端。
 
 管理端也可 `GET /v1/admin/runtime/restart` 触发 `${MAO_ROOT_DIR}/backend-ts/restart.sh`。
