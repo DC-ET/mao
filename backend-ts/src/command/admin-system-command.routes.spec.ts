@@ -162,6 +162,119 @@ describe('admin system/user command routes', () => {
     await app.close();
   });
 
+  it('promotesPersonalCommandToSystemCommandAndKeepsTheOriginal', async () => {
+    const personal: UserCommand[] = [{
+      id: 21,
+      userId: 7,
+      name: 'my_cmd',
+      content: '个人指令内容',
+    }];
+    const { app, commandRepo } = await createApp({ commands: { personal } });
+
+    const promoted = JSON.parse((await app.inject({
+      method: 'POST',
+      url: '/v1/admin/user-commands/7/21/promote',
+      payload: {},
+    })).body);
+    expect(promoted.code).toBe(0);
+    expect(promoted.data).toMatchObject({
+      id: 100,
+      userId: 0,
+      name: 'my_cmd',
+      content: '个人指令内容',
+    });
+    expect(commandRepo.insert).toHaveBeenCalledWith(expect.objectContaining({
+      userId: 0,
+      name: 'my_cmd',
+      content: '个人指令内容',
+    }));
+    expect(commandRepo.deleteById).not.toHaveBeenCalled();
+
+    const renamed = JSON.parse((await app.inject({
+      method: 'POST',
+      url: '/v1/admin/user-commands/7/21/promote',
+      payload: { name: ' shared_cmd ', content: '调整后的内容' },
+    })).body);
+    expect(renamed.code).toBe(0);
+    expect(commandRepo.insert).toHaveBeenCalledWith(expect.objectContaining({
+      userId: 0,
+      name: 'shared_cmd',
+      content: '调整后的内容',
+    }));
+
+    await app.close();
+  });
+
+  it('rejectsPromoteWhenNameConflictsSourceMissingOrInvalid', async () => {
+    const commandRepo = createRepo({
+      findByIdAndUserId: vi.fn(async (id: number, userId: number) => {
+        if (id === 21 && userId === 7) {
+          return { id: 21, userId: 7, name: 'my_cmd', content: '个人指令内容' };
+        }
+        return null;
+      }),
+      findByUserIdAndName: vi.fn(async (_userId: number, name: string) => (
+        name === 'my_cmd' ? { id: 1, userId: 0, name: 'my_cmd', content: '已有系统指令' } : null
+      )),
+    });
+    const { app } = await createApp({ commandRepo });
+
+    const duplicate = JSON.parse((await app.inject({
+      method: 'POST',
+      url: '/v1/admin/user-commands/7/21/promote',
+      payload: {},
+    })).body);
+    expect(duplicate.code).toBe(3012);
+    expect(commandRepo.insert).not.toHaveBeenCalled();
+
+    const missing = JSON.parse((await app.inject({
+      method: 'POST',
+      url: '/v1/admin/user-commands/7/999/promote',
+      payload: {},
+    })).body);
+    expect(missing.code).toBe(404);
+
+    const invalidUser = JSON.parse((await app.inject({
+      method: 'POST',
+      url: '/v1/admin/user-commands/0/21/promote',
+      payload: {},
+    })).body);
+    expect(invalidUser.code).toBe(400);
+
+    const badName = JSON.parse((await app.inject({
+      method: 'POST',
+      url: '/v1/admin/user-commands/7/21/promote',
+      payload: { name: 'bad name' },
+    })).body);
+    expect(badName.code).toBeGreaterThan(0);
+
+    const emptyContent = JSON.parse((await app.inject({
+      method: 'POST',
+      url: '/v1/admin/user-commands/7/21/promote',
+      payload: { name: 'fresh_name', content: '   ' },
+    })).body);
+    expect(emptyContent.code).toBeGreaterThan(0);
+    expect(commandRepo.insert).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
+  it('rejectsPromoteForNonAdmin', async () => {
+    const { app } = await createApp({
+      admin: false,
+      commands: {
+        personal: [{ id: 21, userId: 7, name: 'my_cmd', content: '个人指令内容' }],
+      },
+    });
+    const res = JSON.parse((await app.inject({
+      method: 'POST',
+      url: '/v1/admin/user-commands/7/21/promote',
+      payload: {},
+    })).body);
+    expect(res.code).toBe(1002);
+    await app.close();
+  });
+
   it('rejectsNonAdminAccess', async () => {
     const { app } = await createApp({ admin: false });
     const res = JSON.parse((await app.inject({ method: 'GET', url: '/v1/admin/user-commands' })).body);

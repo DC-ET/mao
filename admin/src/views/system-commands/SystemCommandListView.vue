@@ -38,7 +38,7 @@
         type="info"
         :closable="false"
         show-icon
-        title="个人指令由用户在桌面端创建与编辑，此处可查看与删除；如需新建或修改请由对应用户操作。"
+        title="个人指令由用户在桌面端创建与编辑。此处可查看、删除，或将其复制为系统指令供全体用户使用；原个人指令保留。"
         style="margin-bottom: 12px"
       />
 
@@ -113,9 +113,10 @@
         <el-table-column label="更新时间" width="170" class-name="hide-on-mobile" label-class-name="hide-on-mobile">
           <template #default="{ row }">{{ formatDateTimeColumn(row, null, row.updatedAt || row.createdAt) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="140" fixed="right">
+        <el-table-column label="操作" width="250" fixed="right">
           <template #default="{ row }">
             <el-button type="primary" link size="small" @click="openDetail(row)">查看</el-button>
+            <el-button v-if="isAdmin" type="primary" link size="small" @click="openPromote(row)">添加到系统指令</el-button>
             <el-popconfirm
               v-if="isAdmin"
               :title="`确认删除「${userLabel(row)}」的指令「${row.name}」？`"
@@ -157,17 +158,19 @@
                 </template>
               </el-popconfirm>
             </template>
-            <el-popconfirm
-              v-else-if="activeTab === 'personal' && isAdmin"
-              :title="`确认删除「${userLabel(row)}」的指令「${row.name}」？`"
-              confirm-button-text="删除"
-              cancel-button-text="取消"
-              @confirm="handleDeletePersonal(row)"
-            >
-              <template #reference>
-                <el-button type="danger" link size="small">删除</el-button>
-              </template>
-            </el-popconfirm>
+            <template v-else-if="activeTab === 'personal' && isAdmin">
+              <el-button type="primary" link size="small" @click="openPromote(row)">添加到系统指令</el-button>
+              <el-popconfirm
+                :title="`确认删除「${userLabel(row)}」的指令「${row.name}」？`"
+                confirm-button-text="删除"
+                cancel-button-text="取消"
+                @confirm="handleDeletePersonal(row)"
+              >
+                <template #reference>
+                  <el-button type="danger" link size="small">删除</el-button>
+                </template>
+              </el-popconfirm>
+            </template>
           </div>
         </el-card>
         <el-empty v-if="!loading && pagedRows.length === 0" :description="emptyText" />
@@ -227,6 +230,42 @@
           <pre>{{ detailRow.content }}</pre>
         </div>
       </div>
+      <template v-if="activeTab === 'personal' && isAdmin" #footer>
+        <el-button @click="detailVisible = false">关闭</el-button>
+        <el-button type="primary" @click="openPromoteFromDetail">添加到系统指令</el-button>
+      </template>
+    </ResponsiveDialog>
+
+    <ResponsiveDialog
+      v-if="promoteVisible"
+      v-model="promoteVisible"
+      title="添加到系统指令"
+      width="560px"
+    >
+      <el-form ref="promoteFormRef" :model="promoteForm" :rules="formRules" label-width="90px">
+        <el-form-item label="来源用户">
+          <span>{{ promoteSource ? userLabel(promoteSource) : '' }}</span>
+        </el-form-item>
+        <el-form-item label="指令名称" prop="name">
+          <el-input
+            v-model="promoteForm.name"
+            placeholder="字母、数字、中文、下划线、连字符"
+          />
+          <div class="form-hint">复制为全局系统指令，全体用户可用。原个人指令保留。名称不能与已有系统指令重复。</div>
+        </el-form-item>
+        <el-form-item label="指令内容" prop="content">
+          <el-input
+            v-model="promoteForm.content"
+            type="textarea"
+            :rows="8"
+            placeholder="指令内容（提示词模板）"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="promoteVisible = false">取消</el-button>
+        <el-button type="primary" :loading="promoting" @click="handlePromote">添加</el-button>
+      </template>
     </ResponsiveDialog>
   </div>
 </template>
@@ -311,8 +350,17 @@ const formRef = ref<FormInstance>()
 const editingId = ref<number | null>(null)
 const detailVisible = ref(false)
 const detailRow = ref<CommandRow | null>(null)
+const promoteVisible = ref(false)
+const promoting = ref(false)
+const promoteFormRef = ref<FormInstance>()
+const promoteSource = ref<CommandRow | null>(null)
 
 const form = reactive({
+  name: '',
+  content: '',
+})
+
+const promoteForm = reactive({
   name: '',
   content: '',
 })
@@ -433,6 +481,41 @@ function userLabel(row: CommandRow) {
 function openDetail(row: CommandRow) {
   detailRow.value = row
   detailVisible.value = true
+}
+
+function openPromote(row: CommandRow) {
+  promoteSource.value = row
+  promoteForm.name = row.name || ''
+  promoteForm.content = row.content || ''
+  promoteVisible.value = true
+}
+
+function openPromoteFromDetail() {
+  const row = detailRow.value
+  if (!row) return
+  detailVisible.value = false
+  openPromote(row)
+}
+
+async function handlePromote() {
+  const source = promoteSource.value
+  if (source?.userId == null || source.id == null) return
+  const valid = await promoteFormRef.value?.validate().catch(() => false)
+  if (!valid) return
+
+  promoting.value = true
+  try {
+    await api.post(`/admin/user-commands/${source.userId}/${source.id}/promote`, {
+      name: promoteForm.name.trim(),
+      content: promoteForm.content,
+    })
+    ElMessage.success('已添加到系统指令')
+    promoteVisible.value = false
+  } catch {
+    // interceptor handles toast
+  } finally {
+    promoting.value = false
+  }
 }
 
 function openCreate() {

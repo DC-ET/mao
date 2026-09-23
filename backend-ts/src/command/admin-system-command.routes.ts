@@ -28,6 +28,11 @@ interface UpdateSystemCommandRequest {
   content?: string;
 }
 
+interface PromotePersonalCommandRequest {
+  name?: string;
+  content?: string;
+}
+
 export function registerAdminSystemCommandRoutes(app: FastifyInstance, deps: AdminSystemCommandRouteDeps): void {
   const { commandRepo, permissionService, userLookup } = deps;
 
@@ -143,6 +148,40 @@ export function registerAdminSystemCommandRoutes(app: FastifyInstance, deps: Adm
     if (command == null || command.userId === SYSTEM_USER_ID) {
       return sendJson(reply, 200, fail(404, '指令不存在'));
     }
+    return sendOk(reply, toAdminVO(command));
+  });
+
+  // 提升：把个人指令复制为系统指令（user_id=0）。原个人指令保留。
+  // 可选 body.name / body.content 覆盖后再写入，便于避开已有系统指令重名或微调正文。
+  app.post('/v1/admin/user-commands/:userId/:id/promote', async (request, reply) => {
+    await requireAdmin(permissionService, request);
+    const userId = Number(pathParam(request, 'userId'));
+    if (!Number.isInteger(userId) || userId <= 0) {
+      return sendJson(reply, 200, fail(400, '无效的用户 ID'));
+    }
+    const source = await commandRepo.findByIdAndUserId(pathId(request), userId);
+    if (source == null || source.userId === SYSTEM_USER_ID) {
+      return sendJson(reply, 200, fail(404, '指令不存在'));
+    }
+
+    const body = bodyOf<PromotePersonalCommandRequest>(request);
+    const name = hasText(body.name) ? body.name!.trim() : source.name;
+    const content = body.content !== undefined ? body.content : source.content;
+    if (!hasText(name)) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '指令名称不能为空');
+    }
+    if (!hasText(content)) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '指令内容不能为空');
+    }
+    validateName(name);
+
+    const existing = await commandRepo.findByUserIdAndName(SYSTEM_USER_ID, name);
+    if (existing != null) {
+      throw new BusinessException(ErrorCode.COMMAND_NAME_DUPLICATE);
+    }
+
+    const command: UserCommand = { userId: SYSTEM_USER_ID, name, content };
+    await commandRepo.insert(command);
     return sendOk(reply, toAdminVO(command));
   });
 

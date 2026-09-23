@@ -19,10 +19,13 @@ const HELP = `用法:
   mao system-command list-personal
   mao system-command get-personal --user-id <用户ID> --id <指令ID>
   mao system-command delete-personal --user-id <用户ID> --id <指令ID>
+  mao system-command promote-personal --user-id <用户ID> --id <指令ID> [--name <名称>] [--content <内容>]
 
 说明:
   管理端指令管理：系统指令（全体用户可见，user_id=0）CRUD，
   以及跨用户查看/删除个人指令（user_id>0），需管理员权限。
+  promote-personal 把个人指令复制为系统指令，原个人指令保留；
+  可用 --name / --content 覆盖后再写入，以避开系统指令重名。
 `;
 
 async function handle(ctx) {
@@ -106,6 +109,23 @@ async function handle(ctx) {
         ...common,
         method: 'DELETE',
         path: `/admin/user-commands/${userId}/${id}`,
+      });
+      outputResult(result, globals);
+      return;
+    }
+    case 'promote-personal': {
+      const userId = requireNumber(flags, 'user-id', '用户 ID');
+      const id = requireNumber(flags, 'id', '指令 ID');
+      const body = {};
+      const name = optionalString(flags, 'name');
+      const content = optionalString(flags, 'content');
+      if (name !== undefined) body.name = name;
+      if (content !== undefined) body.content = content;
+      const result = await request({
+        ...common,
+        method: 'POST',
+        path: `/admin/user-commands/${userId}/${id}/promote`,
+        body,
       });
       outputResult(result, globals);
       return;
