@@ -85,6 +85,10 @@ CLI：全局目录 `mao skill-docs`；发给指定用户 `mao skill-docs assign 
 
 新增/编辑用户、禁用、重置密码、分配角色。
 
+列表「账号类型」列标注账号来源（后端 `authSource`）：本地 / LDAP / 飞书 / ECP / 公司 SSO，可按来源筛选。来源判定顺序：有本地密码 → 本地；否则看 `user_external_identity.provider` → ECP 或公司 SSO；再看飞书绑定 → 飞书；其余为 LDAP。仅本地账号可重置密码。
+
+ECP、公司 SSO、飞书首次登录自动建号时，用户名取邮箱前缀（小写，非字母数字下划线转 `_`）；前缀被占用则追加 8 位稳定后缀，邮箱不可用时才退回 `sso_/ecp_/feishu_` + 身份 ID。
+
 CLI：`mao user ...`（见 [user.md](user.md)）。
 
 ## 角色权限

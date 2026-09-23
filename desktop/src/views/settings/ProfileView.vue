@@ -114,6 +114,10 @@ const authSourceLabel = computed(() => {
       return '本地账号'
     case 'FEISHU':
       return '飞书'
+    case 'ECP':
+      return 'ECP'
+    case 'COMPANY_SSO':
+      return '公司 SSO'
     case 'LDAP':
       return 'LDAP 目录账号'
     default:

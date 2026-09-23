@@ -1,9 +1,9 @@
-import { randomUUID } from 'node:crypto';
 import type { Db } from '../db/db.js';
 import type { User } from '../user/types.js';
 import { lockUserIdentityWrites } from '../user/user-email.js';
 import type { VerifiedSsoIdentity } from './company-sso.client.js';
 import { CompanySsoError } from './company-sso.error.js';
+import { buildUniqueUsername, usernameTaken } from './username.js';
 
 export type SsoAssociationAction = 'created' | 'bound' | 'existing';
 
@@ -54,7 +54,8 @@ export class CompanySsoIdentityRepository {
         }
         const role = await tx.queryOne<{ id: number }>('SELECT id FROM role WHERE code = ? AND deleted = 0 FOR UPDATE', ['USER']);
         if (!role) throw new CompanySsoError('service_unavailable');
-        user = { username: `sso_${randomUUID().replaceAll('-', '')}`, displayName: identity.displayName, email: identity.email, passwordHash: null, status: 1, deleted: 0 };
+        const username = await buildUniqueUsername(identity.email, { prefix: 'sso', seed: subject }, usernameTaken(tx));
+        user = { username, displayName: identity.displayName, email: identity.email, passwordHash: null, status: 1, deleted: 0 };
         user.id = await tx.insert('user', user);
         await tx.insert('user_role', { userId: user.id, roleId: role.id });
       }

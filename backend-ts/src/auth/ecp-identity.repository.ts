@@ -1,9 +1,9 @@
-import { randomUUID } from 'node:crypto';
 import type { Db } from '../db/db.js';
 import type { User } from '../user/types.js';
 import { lockUserIdentityWrites } from '../user/user-email.js';
 import { EcpError } from './ecp.error.js';
 import type { EcpSessionUser } from './ecp.client.js';
+import { buildUniqueUsername, usernameTaken } from './username.js';
 
 export type EcpAssociationAction = 'created' | 'bound' | 'existing';
 
@@ -53,7 +53,7 @@ export class EcpIdentityRepository {
         const role = await tx.queryOne<{ id: number }>('SELECT id FROM role WHERE code = ? AND deleted = 0 FOR UPDATE', ['USER']);
         if (!role) throw new EcpError('ECP 登录服务暂不可用');
         user = {
-          username: `ecp_${randomUUID().replaceAll('-', '')}`,
+          username: await buildUniqueUsername(identity.email, { prefix: 'ecp', seed: subject }, usernameTaken(tx)),
           displayName: identity.displayName,
           email: identity.email,
           passwordHash: null,

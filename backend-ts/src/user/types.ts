@@ -6,6 +6,8 @@ export interface User {
   avatarUrl?: string | null;
   passwordHash?: string | null;
   feishuUserId?: string | null;
+  /** 由 user_external_identity 带出（只读，不落 user 表），用于判定外部登录来源。 */
+  externalProvider?: string | null;
   status?: number | null;
   lastLoginAt?: string | null;
   deleted?: number;

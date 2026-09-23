@@ -1,7 +1,12 @@
 import { assertEmailAvailable, lockUserIdentityWrites } from './user-email.js';
 import type { Db } from '../db/db.js';
 import { notDeleted } from '../db/db.js';
+import { COMPANY_SSO_PROVIDER, ECP_PROVIDER, externalProviderInList } from '../auth/external-provider.js';
 import type { User, UserRepository } from './types.js';
+
+/** 账号来源判定所需的外部身份提供方；单行子查询，避免多提供方绑定时 LEFT JOIN 放大行数。 */
+const EXTERNAL_PROVIDER_COLUMN =
+  '(SELECT e.provider FROM user_external_identity e WHERE e.user_id = `user`.id ORDER BY e.id LIMIT 1) AS external_provider';
 
 /** 与 UserService.resolveAuthSource 同一口径，下推到列表查询。 */
 function authSourceWhere(authSource: string | null | undefined): string | null {
@@ -10,9 +15,14 @@ function authSourceWhere(authSource: string | null | undefined): string | null {
   const noFeishu = '(feishu_user_id IS NULL OR TRIM(feishu_user_id) = \'\')';
   const hasPassword = '(password_hash IS NOT NULL AND TRIM(password_hash) <> \'\')';
   const hasFeishu = '(feishu_user_id IS NOT NULL AND TRIM(feishu_user_id) <> \'\')';
+  const hasProvider = (provider: string) =>
+    `EXISTS (SELECT 1 FROM user_external_identity e WHERE e.user_id = \`user\`.id AND e.provider = '${provider}')`;
+  const noExternalProvider = `NOT EXISTS (SELECT 1 FROM user_external_identity e WHERE e.user_id = \`user\`.id AND e.provider IN (${externalProviderInList()}))`;
   if (source === 'LOCAL') return hasPassword;
-  if (source === 'FEISHU') return `(${noPassword} AND ${hasFeishu})`;
-  if (source === 'LDAP') return `(${noPassword} AND ${noFeishu})`;
+  if (source === 'ECP') return `(${noPassword} AND ${hasProvider(ECP_PROVIDER)})`;
+  if (source === 'COMPANY_SSO') return `(${noPassword} AND ${hasProvider(COMPANY_SSO_PROVIDER)})`;
+  if (source === 'FEISHU') return `(${noPassword} AND ${hasFeishu} AND ${noExternalProvider})`;
+  if (source === 'LDAP') return `(${noPassword} AND ${noFeishu} AND ${noExternalProvider})`;
   return null;
 }
 
@@ -20,14 +30,14 @@ export class MysqlUserRepository implements UserRepository {
   constructor(private readonly db: Db) {}
 
   findById(id: number): Promise<User | null> {
-    return this.db.queryOne<User>(`SELECT * FROM \`user\` WHERE id = ? AND ${notDeleted()}`, [id]);
+    return this.db.queryOne<User>(`SELECT *, ${EXTERNAL_PROVIDER_COLUMN} FROM \`user\` WHERE id = ? AND ${notDeleted()}`, [id]);
   }
 
   async findByIds(ids: number[]): Promise<User[]> {
     if (ids.length === 0) return [];
     const placeholders = ids.map(() => '?').join(',');
     return this.db.query<User>(
-      `SELECT * FROM \`user\` WHERE id IN (${placeholders}) AND ${notDeleted()}`,
+      `SELECT *, ${EXTERNAL_PROVIDER_COLUMN} FROM \`user\` WHERE id IN (${placeholders}) AND ${notDeleted()}`,
       ids,
     );
   }
@@ -39,15 +49,15 @@ export class MysqlUserRepository implements UserRepository {
   }
 
   findByUsername(username: string): Promise<User | null> {
-    return this.db.queryOne<User>(`SELECT * FROM \`user\` WHERE username = ? AND ${notDeleted()}`, [username]);
+    return this.db.queryOne<User>(`SELECT *, ${EXTERNAL_PROVIDER_COLUMN} FROM \`user\` WHERE username = ? AND ${notDeleted()}`, [username]);
   }
 
   findByEmail(email: string): Promise<User | null> {
-    return this.db.queryOne<User>(`SELECT * FROM \`user\` WHERE email = ? AND ${notDeleted()}`, [email]);
+    return this.db.queryOne<User>(`SELECT *, ${EXTERNAL_PROVIDER_COLUMN} FROM \`user\` WHERE email = ? AND ${notDeleted()}`, [email]);
   }
 
   findByFeishuUserId(feishuUserId: string): Promise<User | null> {
-    return this.db.queryOne<User>(`SELECT * FROM \`user\` WHERE feishu_user_id = ? AND ${notDeleted()}`, [feishuUserId]);
+    return this.db.queryOne<User>(`SELECT *, ${EXTERNAL_PROVIDER_COLUMN} FROM \`user\` WHERE feishu_user_id = ? AND ${notDeleted()}`, [feishuUserId]);
   }
 
   async countByUsername(username: string): Promise<number> {
@@ -131,7 +141,7 @@ export class MysqlUserRepository implements UserRepository {
     const total = Number(countRow?.cnt ?? 0);
     const offset = (page - 1) * size;
     const records = await this.db.query<User>(
-      `SELECT * FROM \`user\` WHERE ${whereSql} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+      `SELECT *, ${EXTERNAL_PROVIDER_COLUMN} FROM \`user\` WHERE ${whereSql} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
       [...params, size, offset],
     );
     return { records, total };

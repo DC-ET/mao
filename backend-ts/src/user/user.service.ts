@@ -3,6 +3,7 @@ import { ErrorCode } from '../common/error-code.js';
 import { mpPage, type MpPage } from '../common/json.js';
 import { hasText } from '../common/case.js';
 import type { PermissionService } from '../permission/permission.service.js';
+import { externalAuthSource } from '../auth/external-provider.js';
 import type { PasswordHasher, Role, User, UserRepository } from './types.js';
 
 const USERNAME_PATTERN = /^[a-zA-Z0-9_]{3,64}$/;
@@ -169,6 +170,10 @@ export class UserService {
   static resolveAuthSource(user: User): string {
     if (hasText(user.passwordHash ?? undefined)) {
       return 'LOCAL';
+    }
+    const external = externalAuthSource(user.externalProvider);
+    if (external) {
+      return external;
     }
     if (hasText(user.feishuUserId ?? undefined)) {
       return 'FEISHU';

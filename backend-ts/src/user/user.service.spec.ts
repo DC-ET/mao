@@ -105,6 +105,13 @@ describe('UserService', () => {
   it('resolveAuthSource', () => {
     expect(UserService.resolveAuthSource({ username: 'a', passwordHash: 'x' })).toBe('LOCAL');
     expect(UserService.resolveAuthSource({ username: 'a', feishuUserId: 'f' })).toBe('FEISHU');
+    expect(UserService.resolveAuthSource({ username: 'a', externalProvider: 'ecp' })).toBe('ECP');
+    expect(UserService.resolveAuthSource({ username: 'a', externalProvider: 'company_sso' })).toBe('COMPANY_SSO');
+    expect(UserService.resolveAuthSource({ username: 'a', externalProvider: 'unknown_provider' })).toBe('LDAP');
+    // 本地密码优先于外部绑定；已绑定外部身份的账号不再计入 LDAP。
+    expect(UserService.resolveAuthSource({ username: 'a', passwordHash: 'x', externalProvider: 'ecp' })).toBe('LOCAL');
+    expect(UserService.resolveAuthSource({ username: 'a', feishuUserId: 'f', externalProvider: 'ecp' })).toBe('ECP');
+    expect(UserService.resolveAuthSource({ username: 'a', externalProvider: ' ' })).toBe('LDAP');
     expect(UserService.resolveAuthSource({ username: 'a' })).toBe('LDAP');
   });
 

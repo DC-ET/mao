@@ -56,6 +56,9 @@
             >
               <el-option label="本地" value="LOCAL" />
               <el-option label="LDAP" value="LDAP" />
+              <el-option label="飞书" value="FEISHU" />
+              <el-option label="ECP" value="ECP" />
+              <el-option label="公司 SSO" value="COMPANY_SSO" />
             </el-select>
           </el-form-item>
           <el-form-item label="状态">
@@ -102,7 +105,7 @@
         <el-table-column label="账号类型" width="100">
           <template #default="{ row }">
             <el-tag :type="row.authSource === 'LOCAL' ? 'primary' : 'info'" size="small">
-              {{ row.authSource === 'LOCAL' ? '本地' : 'LDAP' }}
+              {{ authSourceLabel(row.authSource) }}
             </el-tag>
           </template>
         </el-table-column>
@@ -122,7 +125,7 @@
               <el-button type="primary" link size="small" @click="handleEdit(row)">编辑</el-button>
               <el-tooltip
                 :disabled="row.authSource === 'LOCAL'"
-                content="LDAP 用户密码由目录服务管理"
+                content="非本地账号密码由对应登录服务管理"
                 placement="top"
               >
                 <span>
@@ -185,7 +188,7 @@
           <div class="user-card-row">
             <span class="user-card-label">类型</span>
             <el-tag :type="row.authSource === 'LOCAL' ? 'primary' : 'info'" size="small">
-              {{ row.authSource === 'LOCAL' ? '本地' : 'LDAP' }}
+              {{ authSourceLabel(row.authSource) }}
             </el-tag>
           </div>
           <div class="user-card-actions">
@@ -285,6 +288,19 @@ const filters = reactive({
   status: undefined as number | undefined,
   authSource: undefined as string | undefined
 })
+
+/** 与后端 UserService.resolveAuthSource 的取值一一对应。 */
+const AUTH_SOURCE_LABELS: Record<string, string> = {
+  LOCAL: '本地',
+  LDAP: 'LDAP',
+  FEISHU: '飞书',
+  ECP: 'ECP',
+  COMPANY_SSO: '公司 SSO'
+}
+
+function authSourceLabel(source?: string | null) {
+  return (source && AUTH_SOURCE_LABELS[source]) || source || '-'
+}
 
 const formDialogVisible = ref(false)
 const formMode = ref<'create' | 'edit'>('create')

@@ -9,6 +9,7 @@ function setup(options: { binding?: boolean; matches?: object[]; boundUser?: obj
   const tx = {
     queryOne: vi.fn(async (sql: string) => {
       if (sql.includes('user_identity_write_lock')) return { id: 1 };
+      if (sql.includes('username =')) return null;
       if (sql.includes('subject =')) return options.binding ? { userId: 4 } : null;
       if (sql.includes('`user` WHERE id')) return options.boundUser === undefined ? user : options.boundUser;
       if (sql.includes('user_id')) {
@@ -62,8 +63,22 @@ describe('CompanySsoIdentityRepository', () => {
     expect((await repo.resolve(identity)).action).toBe('created');
     expect(tx.insert.mock.calls.map(([table]) => table)).toEqual(['user', 'user_role', 'user_external_identity']);
     expect(tx.insert).toHaveBeenCalledWith('user_external_identity', expect.objectContaining({ subject: identity.email }));
+    expect(tx.insert).toHaveBeenCalledWith('user', expect.objectContaining({ username: 'synthetic' }));
     expect(state().committed).toBe(true);
     expect(tx.queryOne.mock.calls[0][0]).toContain('user_identity_write_lock');
+  });
+
+  it('suffixes the email prefix username when it is already taken', async () => {
+    const { repo, tx } = setup();
+    tx.queryOne.mockImplementation(async (sql: string) => {
+      if (sql.includes('user_identity_write_lock')) return { id: 1 };
+      if (sql.includes('username =')) return { id: 9 };
+      if (sql.includes('subject =')) return null;
+      if (sql.includes('FROM role')) return { id: 2 };
+      return null;
+    });
+    await repo.resolve(identity);
+    expect(tx.insert).toHaveBeenCalledWith('user', expect.objectContaining({ username: expect.stringMatching(/^synthetic_[0-9a-f]{8}$/) }));
   });
 
   it.each([

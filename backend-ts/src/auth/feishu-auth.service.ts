@@ -8,6 +8,7 @@ import type { LoginVO, User, UserRepository, UserRoleRepository } from '../user/
 import type { FeishuOAuthSettings } from '../settings/types.js';
 import { FEISHU_APP_TOKEN_URL, FEISHU_AUTHORIZE_URL, FEISHU_TOKEN_URL, FEISHU_USER_INFO_URL } from '../settings/settings-test.service.js';
 import { formatNow } from './auth.service.js';
+import { buildUniqueUsername } from './username.js';
 
 export const FEISHU_PENDING = 'PENDING';
 export const FEISHU_SUCCESS = 'SUCCESS';
@@ -231,7 +232,7 @@ export class FeishuAuthService {
     }
     if (!user) {
       user = {
-        username: await this.buildUniqueUsername(email, feishuUserId),
+        username: await this.resolveUsername(email, feishuUserId),
         displayName: hasText(name) ? name : '飞书用户',
         email,
         avatarUrl,
@@ -269,17 +270,12 @@ export class FeishuAuthService {
     return extra.findByEmail ? extra.findByEmail(email) : null;
   }
 
-  private async buildUniqueUsername(email: string, fallbackId: string): Promise<string> {
-    const username = this.buildUsernameFromEmail(email, fallbackId);
-    const existing = await this.userRepo.findByUsername(username);
-    if (!existing) {
-      return username;
-    }
-    const uuid = uuidName(`${email}${fallbackId}`).replace(/-/g, '').slice(0, 8);
-    const suffix = `_${uuid}`;
-    const maxPrefixLength = Math.max(1, 64 - suffix.length);
-    const prefix = username.length > maxPrefixLength ? username.slice(0, maxPrefixLength) : username;
-    return prefix + suffix;
+  private resolveUsername(email: string, fallbackId: string): Promise<string> {
+    return buildUniqueUsername(
+      email,
+      { prefix: 'feishu', seed: fallbackId },
+      async (username) => (await this.userRepo.findByUsername(username)) !== null,
+    );
   }
 
   resolveFeishuUserId(userInfo: Record<string, unknown>, email: string): string {
@@ -291,20 +287,6 @@ export class FeishuAuthService {
       return `email_${uuidName(email.toLowerCase())}`;
     }
     throw new BusinessException(5002, '飞书用户 ID 和邮箱均为空');
-  }
-
-  buildUsernameFromEmail(email: string, fallbackId: string): string {
-    if (hasText(email)) {
-      const at = email.indexOf('@');
-      const prefix = at > 0 ? email.slice(0, at) : email;
-      let normalized = prefix.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
-      normalized = normalized.replace(/_+/g, '_').replace(/^_+|_+$/g, '');
-      if (hasText(normalized)) {
-        return normalized.length > 64 ? normalized.slice(0, 64) : normalized;
-      }
-    }
-    const username = `feishu_${fallbackId.replace(/[^A-Za-z0-9_]/g, '_')}`;
-    return username.length > 64 ? username.slice(0, 64) : username;
   }
 
   private firstText(node: Record<string, unknown>, ...fields: string[]): string {

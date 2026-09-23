@@ -41,8 +41,30 @@ describe('MysqlUserRepository identity email serialization', () => {
     await repo.selectPage(1, 10, undefined, null, 'LDAP');
     expect(sqls[0]).toContain('password_hash');
     expect(sqls[0]).toContain('feishu_user_id');
+    expect(sqls[0]).toContain('user_external_identity');
+    await repo.selectPage(1, 10, undefined, null, 'ECP');
+    expect(sqls[2]).toContain("e.provider = 'ecp'");
+    await repo.selectPage(1, 10, undefined, null, 'COMPANY_SSO');
+    expect(sqls[4]).toContain("e.provider = 'company_sso'");
+    await repo.selectPage(1, 10, undefined, null, 'FEISHU');
+    expect(sqls[6]).toContain("e.provider IN ('ecp', 'company_sso')");
     await repo.selectPage(1, 10, undefined, null, 'nope');
-    expect(sqls[2]).not.toContain('feishu_user_id');
+    expect(sqls[8]).not.toContain('feishu_user_id');
+  });
+
+  it('reads the external provider alongside the user row', async () => {
+    const sqls: string[] = [];
+    const db = {
+      queryOne: vi.fn(async (sql: string) => { sqls.push(sql); return null; }),
+      query: vi.fn(async (sql: string) => { sqls.push(sql); return []; }),
+    };
+    const repo = new MysqlUserRepository(db as unknown as Db);
+    await repo.findById(1);
+    await repo.findByUsername('a');
+    await repo.selectPage(1, 10);
+    expect(sqls[0]).toContain('AS external_provider');
+    expect(sqls[1]).toContain('AS external_provider');
+    expect(sqls[3]).toContain('AS external_provider');
   });
 
   it('rejects concurrent duplicate/deleted-email occupancy without writing', async () => {

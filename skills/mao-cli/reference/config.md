@@ -178,8 +178,11 @@ web_search 工具支持 Tavily / TinyFish 双实现，在管理后台「系统�
 | 本地密码 | 默认 |
 | LDAP | 部署配置启用 |
 | 飞书 OAuth | 部署配置启用 |
+| ECP 飞书登录 | 管理后台「系统设置 → 集成配置 → ECP 飞书登录」启用 |
 | 公司 SSO 换票 | Web Embed SDK 回调提供公司 Token，Mao 官方校验后签发 access，自动续期，不签发 refresh |
 | JWT | 桌面/管理后台/CLI 共用；管理接口看权限不看 token 来源 |
+
+用户信息里的 `authSource` 标注账号来源：`LOCAL` / `LDAP` / `FEISHU` / `ECP` / `COMPANY_SSO`。
 
 云端 CLOUD shell 会为当前会话用户注入短效 `MAO_TOKEN`，供 `mao` CLI 免登录；若该用户经 ECP 飞书登录且票仍有效，同时注入 `ECP_TOKEN`（明文 ECP `sessionToken`）。
 
