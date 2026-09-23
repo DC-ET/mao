@@ -1359,6 +1359,10 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   };
   const feishuInboundHandler = new AgentFeishuInboundHandler({
     registry: wsRegistry,
+    resolveStreamUserId: async (sessionId) => {
+      const session = await sessionService.getSession(sessionId).catch(() => null);
+      return session?.userId ?? null;
+    },
     sessionService: {
       getOrCreateSession: async (accountId, context) => {
         const triggerUserId = await resolveFeishuUserId(accountId, context);

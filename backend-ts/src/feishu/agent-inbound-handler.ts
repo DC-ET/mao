@@ -132,6 +132,12 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     harnessService: FeishuHarnessService;
     /** 多端同步：用户消息落库后按执行归属用户广播 user_message_saved（未配置时跳过）。 */
     registry?: StreamingWsRegistry;
+    /**
+     * 流式事件与终态 session_status 的接收用户（会话 owner）。
+     * 网页端在上一轮结束后会屏蔽流式事件，直到收到带 executionId 的 RUNNING；
+     * 必须发给实际接收流式事件的用户，不能只发给本次触发者。
+     */
+    resolveStreamUserId?: (sessionId: number) => Promise<number | null>;
     createCancelFlag?: (sessionId: number) => CancelFlag;
     releaseCancelFlag?: (sessionId: number) => void;
     /** 「立即发送」按钮中断当前执行时的回调（如关闭该会话的 shell、置位 AgentLoop 取消标志）。 */
@@ -260,6 +266,7 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
         console.warn(`飞书重试进度卡片首次 PATCH 失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
       }
       executionId = randomUUID();
+      await this.broadcastRunning(sessionId, executionId, null);
       const listener = await this.options.listenerFactory?.(sessionId, stubContext, executionId)
         ?? new NoopAgentEventListener();
       await this.options.harnessService.execute(
@@ -631,6 +638,8 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
       this.echoUserMessageSaved(sessionId, executionUserId, messageForEcho);
       const eventId = await this.options.harnessService.prepareMessage(sessionId, message);
       executionId = eventId || '';
+      // 先于 execute：已打开的网页在上一轮 COMPLETED 后会丢弃流式事件，直到这条 RUNNING。
+      await this.broadcastRunning(sessionId, executionId, executionUserId);
       const listener = await this.options.listenerFactory?.(sessionId, context, executionId);
       if (listener == null) throw new Error('Feishu listenerFactory is required to execute a harness session');
       await this.options.harnessService.execute(
@@ -806,6 +815,27 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
   private async awaitFileIngest(sessionId: number): Promise<void> {
     const gate = this.fileIngestGates.get(sessionId);
     if (gate != null) await gate;
+  }
+
+  /**
+   * 通知已连接客户端新一轮执行开始。优先发给会话 owner（与流式事件、终态同一用户），
+   * 解析失败时回退到本次执行归属用户。
+   */
+  private async broadcastRunning(sessionId: number, executionId: string, fallbackUserId: number | null): Promise<void> {
+    const registry = this.options.registry;
+    if (registry == null || executionId.trim() === '') return;
+    let userId = fallbackUserId;
+    if (this.options.resolveStreamUserId != null) {
+      try {
+        const resolved = await this.options.resolveStreamUserId(sessionId);
+        if (resolved != null) userId = resolved;
+      } catch (error) {
+        console.warn(`飞书执行开始广播解析用户失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    if (userId == null) return;
+    registry.send(userId, wsEvent('session_status', sessionId, { phase: 'RUNNING', executionId }));
+    registry.send(userId, wsEvent('session_list_update', sessionId, { phase: 'RUNNING' }));
   }
 
   private echoUserMessageSaved(sessionId: number, executionUserId: number | null, message: unknown): void {

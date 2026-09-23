@@ -77,6 +77,72 @@ describe('AgentFeishuInboundHandler', () => {
     }));
   });
 
+  it('broadcasts RUNNING with the new executionId to the session owner before the harness starts', async () => {
+    const sessionService = makeSessionService();
+    const order: string[] = [];
+    const harness = {
+      prepareMessage: vi.fn(() => 'exec-2'),
+      execute: vi.fn(async () => { order.push('execute'); }),
+    };
+    const registry = {
+      send: vi.fn((_userId: number, event: { type: string }) => { order.push(event.type); }),
+    };
+    const resolveStreamUserId = vi.fn(async () => 9);
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      registry: registry as never,
+      resolveStreamUserId,
+      createCancelFlag: makeFlag,
+      listenerFactory: async () => listener,
+    });
+    await handler.onMessage(makeContext({ text: '下一轮', maoUserId: 42 }));
+    expect(resolveStreamUserId).toHaveBeenCalledWith(7);
+    expect(registry.send).toHaveBeenCalledWith(9, {
+      type: 'session_status', sessionId: 7, data: { phase: 'RUNNING', executionId: 'exec-2' },
+    });
+    expect(registry.send).toHaveBeenCalledWith(9, {
+      type: 'session_list_update', sessionId: 7, data: { phase: 'RUNNING' },
+    });
+    expect(order.indexOf('session_status')).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf('session_status')).toBeLessThan(order.indexOf('execute'));
+    expect(order.indexOf('session_list_update')).toBeLessThan(order.indexOf('execute'));
+  });
+
+  it('falls back to the triggering user when the session owner cannot be resolved', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'exec-3'), execute: vi.fn(async () => undefined) };
+    const registry = { send: vi.fn() };
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      registry: registry as never,
+      resolveStreamUserId: vi.fn(async () => { throw new Error('db down'); }),
+      createCancelFlag: makeFlag,
+      listenerFactory: async () => listener,
+    });
+    await handler.onMessage(makeContext({ text: '回退', maoUserId: 42 }));
+    expect(registry.send).toHaveBeenCalledWith(42, expect.objectContaining({
+      type: 'session_status',
+      data: expect.objectContaining({ phase: 'RUNNING', executionId: 'exec-3' }),
+    }));
+  });
+
+  it('does not broadcast RUNNING when the harness returns an empty execution id', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => ''), execute: vi.fn(async () => undefined) };
+    const registry = { send: vi.fn() };
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      registry: registry as never,
+      createCancelFlag: makeFlag,
+      listenerFactory: async () => listener,
+    });
+    await handler.onMessage(makeContext({ text: '无执行号' }));
+    expect(registry.send).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: 'session_status' }));
+  });
+
   it('passes the triggering Mao user to the harness without changing session ownership', async () => {
     const sessionService = makeSessionService();
     const harness = { prepareMessage: vi.fn(() => 'exec-1'), execute: vi.fn(async () => undefined) };
@@ -490,9 +556,12 @@ describe('AgentFeishuInboundHandler', () => {
     };
     const onExecutionFinished = vi.fn(async () => undefined);
     const updates: Array<{ status: string; content: string }> = [];
+    const registry = { send: vi.fn() };
     const handler = new AgentFeishuInboundHandler({
       sessionService,
       harnessService: harness as never,
+      registry: registry as never,
+      resolveStreamUserId: vi.fn(async () => 9),
       createCancelFlag: makeFlag,
       releaseCancelFlag: vi.fn(),
       listenerFactory: async () => listener,
@@ -511,6 +580,11 @@ describe('AgentFeishuInboundHandler', () => {
       expect(onExecutionFinished).toHaveBeenCalledWith(7, expect.anything(), expect.any(String), 'COMPLETED');
     });
     expect(harness.execute).toHaveBeenCalledTimes(1);
+    expect(registry.send).toHaveBeenCalledWith(9, expect.objectContaining({
+      type: 'session_status',
+      sessionId: 7,
+      data: expect.objectContaining({ phase: 'RUNNING', executionId: expect.any(String) }),
+    }));
     expect(updates).toContainEqual({ status: 'RUNNING', content: '正在重试，请稍候…' });
     expect(updates).toContainEqual({ status: 'COMPLETED', content: '重试后的答案' });
   });
