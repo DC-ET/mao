@@ -64,14 +64,14 @@ describe('FeishuCardProgressListener', () => {
     const listener = new FeishuCardProgressListener({
       update: async (_status, _round, _content, tools) => { updates.push(tools); },
     });
-    const longCommand = `echo ${'a'.repeat(100)}`;
+    const longCommand = `echo ${'a'.repeat(260)}`;
     listener.onRoundStart(1);
     listener.onToolCallStart({ id: 'long', function: { name: 'shell', arguments: JSON.stringify({ command: longCommand }) } });
     listener.onToolCallStart({ id: 'stdin', function: { name: 'shell', arguments: '{"action":"write_stdin","input":"hello world"}' } });
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    expect(updates[0][0]).toBe(`shell：\`${longCommand.slice(0, 80)}…\`（执行中）`);
+    expect(updates[0][0]).toBe(`shell：\`${longCommand.slice(0, 240)}…\`（执行中）`);
     expect(updates[updates.length - 1]).toEqual([
-      `shell：\`${longCommand.slice(0, 80)}…\`（执行中）`,
+      `shell：\`${longCommand.slice(0, 240)}…\`（执行中）`,
       'shell：写入 stdin: hello world（执行中）',
     ]);
   });

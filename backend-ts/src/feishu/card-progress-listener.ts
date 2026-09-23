@@ -155,7 +155,8 @@ export function countCompletedAgentRounds(messages: Array<{ role?: string | null
   return count;
 }
 
-const RUNNING_COMMAND_MAX = 80;
+/** 飞书工作区命令常以 `cd …/oc_<id> &&` 开头，前缀约 80 字；留出后面的实际命令。 */
+const RUNNING_COMMAND_MAX = 240;
 
 function formatToolLine(tool: ToolProgress): string {
   if (tool.summary) return `${tool.name}：${tool.summary}`;
