@@ -22,6 +22,22 @@
             style="width: 220px"
           />
         </el-form-item>
+        <el-form-item v-if="activeTab === 'personal'" label="用户">
+          <el-select
+            v-model="filterUserId"
+            clearable
+            filterable
+            placeholder="全部用户"
+            style="width: 220px"
+          >
+            <el-option
+              v-for="user in personalUserOptions"
+              :key="user.id"
+              :label="userOptionLabel(user)"
+              :value="user.id"
+            />
+          </el-select>
+        </el-form-item>
       </el-form>
 
       <!-- System tab: upload area -->
@@ -309,6 +325,7 @@ const skillDocs = ref<any[]>([])
 const personalSkills = ref<any[]>([])
 const agents = ref<any[]>([])
 const keyword = ref('')
+const filterUserId = ref<number | null>(null)
 const currentPage = ref(1)
 const pageSize = ref(10)
 const detailVisible = ref(false)
@@ -366,12 +383,30 @@ const filteredSkillDocs = computed(() => {
     `${doc.name || ''} ${doc.description || ''}`.toLowerCase().includes(kw))
 })
 
+const personalUserOptions = computed(() => {
+  const seen = new Map<number, { id: number; username?: string | null; displayName?: string | null }>()
+  for (const row of personalSkills.value) {
+    const userId = Number(row.userId)
+    if (!Number.isInteger(userId) || userId <= 0 || seen.has(userId)) continue
+    const known = userOptions.value.find((user) => user.id === userId)
+    seen.set(userId, {
+      id: userId,
+      username: row.username ?? known?.username,
+      displayName: row.displayName ?? known?.displayName,
+    })
+  }
+  return [...seen.values()].sort((a, b) => userOptionLabel(a).localeCompare(userOptionLabel(b), 'zh'))
+})
+
 const filteredPersonalSkills = computed(() => {
   const kw = keyword.value.trim().toLowerCase()
-  if (!kw) return personalSkills.value
-  return personalSkills.value.filter(row =>
-    `${row.name || ''} ${row.description || ''} ${row.username || ''} ${row.displayName || ''} ${row.userId ?? ''}`
-      .toLowerCase().includes(kw))
+  const userId = filterUserId.value
+  return personalSkills.value.filter((row) => {
+    if (userId != null && Number(row.userId) !== userId) return false
+    if (!kw) return true
+    return `${row.name || ''} ${row.description || ''} ${row.username || ''} ${row.displayName || ''} ${row.userId ?? ''}`
+      .toLowerCase().includes(kw)
+  })
 })
 
 const filteredRows = computed(() =>
@@ -395,7 +430,7 @@ const mobileRows = computed(() => {
 })
 
 // 关键词或 tab 变化后回第一页，避免停在已无数据的空页
-watch([keyword, activeTab], () => {
+watch([keyword, filterUserId, activeTab], () => {
   currentPage.value = 1
 })
 
