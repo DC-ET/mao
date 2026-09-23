@@ -1,7 +1,7 @@
 <template>
   <div class="session-detail">
-    <!-- Header -->
-    <el-page-header @back="router.push('/sessions')" :title="'返回列表'">
+    <!-- Header：桌面用 el-page-header；移动端压成单行，避免标题竖排 + 按钮换行吃掉半屏 -->
+    <el-page-header v-if="!isMobile" @back="router.push('/sessions')" :title="'返回列表'">
       <template #content>
         <span class="page-title">{{ sessionInfo?.title || '会话详情' }}</span>
       </template>
@@ -12,14 +12,41 @@
         </el-button>
       </template>
     </el-page-header>
+    <div v-else class="mobile-page-bar">
+      <el-button text class="mobile-back" aria-label="返回列表" @click="router.push('/sessions')">
+        <el-icon><ArrowLeft /></el-icon>
+      </el-button>
+      <span class="page-title">{{ sessionInfo?.title || '会话详情' }}</span>
+      <div class="mobile-page-actions">
+        <el-button text :loading="exporting" aria-label="导出记录" @click="exportMessages">
+          <el-icon><Download /></el-icon>
+        </el-button>
+        <el-button text :loading="infoLoading || messagesLoading" aria-label="刷新" @click="fetchDetail">
+          <el-icon><Refresh /></el-icon>
+        </el-button>
+      </div>
+    </div>
 
-    <div class="detail-layout">
+    <div ref="detailLayoutRef" class="detail-layout">
       <!-- Session info -->
-      <el-card class="info-card" v-loading="infoLoading">
+      <el-card class="info-card" :class="{ 'is-collapsed': isMobile && !infoExpanded }" v-loading="infoLoading">
         <template #header>
-          <span class="card-header">会话信息</span>
+          <div class="card-header-bar">
+            <span class="card-header">会话信息</span>
+            <button
+              v-if="isMobile"
+              type="button"
+              class="info-toggle"
+              :aria-expanded="infoExpanded"
+              @click="toggleInfo"
+            >
+              <span v-if="!infoExpanded" class="info-summary">{{ mobileInfoSummary }}</span>
+              <span v-else class="info-toggle-text">收起</span>
+              <el-icon class="info-arrow" :class="{ expanded: infoExpanded }"><ArrowDown /></el-icon>
+            </button>
+          </div>
         </template>
-        <el-descriptions v-if="sessionInfo" :column="1" border size="small">
+        <el-descriptions v-if="sessionInfo && (!isMobile || infoExpanded)" :column="1" border size="small">
           <el-descriptions-item label="ID">{{ sessionInfo.id }}</el-descriptions-item>
           <el-descriptions-item label="用户">
             <router-link v-if="sessionInfo.userId != null" class="drill-link" :to="`/sessions?userId=${sessionInfo.userId}`">
@@ -84,26 +111,37 @@
 import { ref, computed, nextTick, onMounted, onActivated, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Refresh } from '@element-plus/icons-vue'
+import { Refresh, Download, ArrowDown, ArrowLeft } from '@element-plus/icons-vue'
 import { api } from '../../api'
 import { formatDateTime } from '../../utils/datetime'
 import { executionModeLabel, phaseLabel } from '../../utils/labels'
+import { useBreakpoint } from '../../composables/useBreakpoint'
 import { mapApiMessagesToChat } from './utils/chatMessage'
 import type { ChatMessage } from './types/chat'
 import MessageGroup from './components/MessageGroup.vue'
 
 const route = useRoute()
 const router = useRouter()
+const { isMobile } = useBreakpoint()
 const infoLoading = ref(false)
 const messagesLoading = ref(false)
 const loadingMore = ref(false)
 const chatContainerRef = ref<HTMLElement | null>(null)
+const detailLayoutRef = ref<HTMLElement | null>(null)
 const sessionInfo = ref<any>(null)
 const messages = ref<ChatMessage[]>([])
 const hasMore = ref(false)
 const nextBeforeMessageId = ref<string | null>(null)
 const exporting = ref(false)
+// 移动端会话信息默认收起：把屏幕留给聊天记录（桌面端不受影响，始终展开）
+const infoExpanded = ref(false)
 const ROUND_LIMIT = 5
+
+const mobileInfoSummary = computed(() => {
+  const info = sessionInfo.value
+  if (!info) return ''
+  return [info.userName, info.agentName, phaseLabel(info.phase)].filter(Boolean).join(' · ')
+})
 
 interface MessageTurn {
   key: string
@@ -179,7 +217,8 @@ async function fetchDetail() {
 async function loadMoreMessages() {
   const id = route.params.id
   if (!hasMore.value || !nextBeforeMessageId.value || loadingMore.value) return
-  const container = chatContainerRef.value
+  // 与 keepChatViewport 用同一个滚动宿主，否则移动端（滚动在 detail-layout）锚定会跑偏
+  const container = scrollHost()
   const previousScrollHeight = container?.scrollHeight || 0
   const previousScrollTop = container?.scrollTop || 0
   loadingMore.value = true
@@ -252,9 +291,22 @@ async function exportMessages() {
   }
 }
 
+/** 桌面端聊天区自己滚；移动端聊天区随内容伸展，滚动由 detail-layout 承担 */
+function scrollHost(): HTMLElement | null {
+  return (isMobile.value ? detailLayoutRef.value : chatContainerRef.value) ?? chatContainerRef.value
+}
+
+/** 展开会话信息在页面顶部，移动端顺手滚回顶部，否则用户看不到刚展开的内容 */
+async function toggleInfo() {
+  infoExpanded.value = !infoExpanded.value
+  if (!isMobile.value || !infoExpanded.value) return
+  await nextTick()
+  detailLayoutRef.value?.scrollTo({ top: 0 })
+}
+
 async function scrollChatToBottom() {
   await nextTick()
-  const container = chatContainerRef.value
+  const container = scrollHost()
   if (container) {
     container.scrollTop = container.scrollHeight
   }
@@ -262,7 +314,7 @@ async function scrollChatToBottom() {
 
 async function keepChatViewport(previousScrollHeight: number, previousScrollTop: number) {
   await nextTick()
-  const container = chatContainerRef.value
+  const container = scrollHost()
   if (container) {
     container.scrollTop = container.scrollHeight - previousScrollHeight + previousScrollTop
   }
@@ -296,6 +348,79 @@ onActivated(() => {
 .page-title {
   font-size: 16px;
   font-weight: 600;
+}
+
+/* 移动端页头：单行标题 + 图标操作，替代会被挤成竖排的 el-page-header */
+.mobile-page-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+}
+
+.mobile-page-bar .page-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-back {
+  flex-shrink: 0;
+  margin-left: 0;
+  padding: 6px 8px;
+  font-size: 18px;
+}
+
+.mobile-page-actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.mobile-page-actions :deep(.el-button) {
+  margin-left: 0;
+  padding: 6px 8px;
+  font-size: 18px;
+}
+
+.card-header-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.info-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 60%;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mao-accent);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.info-toggle .info-summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--mao-muted);
+}
+
+.info-arrow {
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+
+.info-arrow.expanded {
+  transform: rotate(180deg);
 }
 
 .detail-layout {
@@ -370,12 +495,27 @@ onActivated(() => {
 @media (max-width: 768px) {
   .detail-layout {
     flex-direction: column;
+    gap: 12px;
+    margin-top: 12px;
+    /* 会话信息展开后可整体滚动，聊天区保持最小可用高度 */
+    overflow-y: auto;
   }
 
   .info-card {
     width: 100%;
     max-height: none;
     overflow: visible;
+    flex: 0 0 auto;
+  }
+
+  /* 收起态不占正文高度，只剩卡片头一行 */
+  .info-card.is-collapsed :deep(.el-card__body) {
+    display: none;
+  }
+
+  .chat-card {
+    flex: 1 0 auto;
+    min-height: 56vh;
   }
 }
 </style>
