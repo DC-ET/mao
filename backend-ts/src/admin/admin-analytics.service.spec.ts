@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { addDaysYmd, shanghaiYmd } from '../common/json.js';
-import { AdminAnalyticsDbStore, AdminAnalyticsService, type AnalyticsRange } from './admin-analytics.service.js';
+import { addDaysYmd, formatDateTime, shanghaiYmd } from '../common/json.js';
+import {
+  AdminAnalyticsDbStore,
+  AdminAnalyticsService,
+  buildTrendBucketKeys,
+  type AnalyticsRange,
+} from './admin-analytics.service.js';
 
 const range: AnalyticsRange = {
   days: 7,
@@ -451,6 +456,93 @@ describe('AdminAnalyticsDbStore', () => {
         expect(params).toContain('2026-01-08 00:00:00');
       }
     }
+  });
+
+  it('buildTrendBucketKeysStopsAtCurrentHourWhenWindowIncludesToday', () => {
+    const todayRange: AnalyticsRange = {
+      days: 1,
+      startYmd: '2026-09-23',
+      endYmd: '2026-09-23',
+      startAt: '2026-09-23 00:00:00',
+      endAtExclusive: '2026-09-24 00:00:00',
+    };
+    const keys = buildTrendBucketKeys(todayRange, 'hour', new Date('2026-09-23T02:15:00+08:00'));
+    expect(keys).toEqual(['2026-09-23 00:00', '2026-09-23 01:00', '2026-09-23 02:00']);
+  });
+
+  it('buildTrendBucketKeysFillsFullHoursForAPastWindow', () => {
+    const past: AnalyticsRange = {
+      days: 2,
+      startYmd: '2026-09-21',
+      endYmd: '2026-09-22',
+      startAt: '2026-09-21 00:00:00',
+      endAtExclusive: '2026-09-23 00:00:00',
+    };
+    const keys = buildTrendBucketKeys(past, 'hour', new Date('2026-09-23T10:00:00+08:00'));
+    expect(keys).toHaveLength(48);
+    expect(keys[0]).toBe('2026-09-21 00:00');
+    expect(keys.at(-1)).toBe('2026-09-22 23:00');
+    expect(buildTrendBucketKeys(past, 'day')).toEqual(['2026-09-21', '2026-09-22']);
+  });
+
+  it('trendsScopeHourlyBucketsThroughNowAndKeepsDailyDefault', async () => {
+    const statistics = { getOverview: vi.fn(async () => ({})) };
+    const store = buildStore();
+    const hourKey = `${today} 00:00`;
+    store.selectDailySessionCounts = vi.fn(async () => [{ day: hourKey, count: 4 }]);
+    store.selectDailyMessageStats = vi.fn(async () => [{ day: hourKey, count: 8, tokens: 800 }]);
+    store.selectDailyUsageStats = vi.fn(async () => [{ day: hourKey, totalTokens: 200, callCount: 3 }]);
+    store.selectDailyLlmCallStats = vi.fn(async () => [
+      { day: hourKey, callCount: 10, failCount: 1, promptTokens: 1000, cachedTokens: 200, callTokens: 1500 },
+    ]);
+    const service = new AdminAnalyticsService(statistics as never, store as never);
+
+    const beforeHour = `${formatDateTime(new Date()).slice(0, 13)}:00`;
+    const hourly = (await service.trendsScope(1, 0, { granularity: 'hour' })) as Record<string, any>;
+    const afterHour = `${formatDateTime(new Date()).slice(0, 13)}:00`;
+
+    expect(hourly.granularity).toBe('hour');
+    expect(hourly.trends[0]).toMatchObject({ date: hourKey, sessions: 4, messages: 8, callCount: 10 });
+    expect([beforeHour, afterHour]).toContain(hourly.trends.at(-1).date);
+    expect(hourly.trends.length).toBeLessThanOrEqual(24);
+    expect(store.selectDailySessionCounts).toHaveBeenCalledWith(expect.anything(), 'hour');
+    expect(store.selectDailyLlmCallStats).toHaveBeenCalledWith(expect.anything(), expect.anything(), 'hour');
+
+    const dailyStore = buildStore();
+    const dailyService = new AdminAnalyticsService(statistics as never, dailyStore as never);
+    const daily = (await dailyService.trendsScope(1, 1, { granularity: 'day' })) as Record<string, any>;
+    expect(daily.granularity).toBe('day');
+    expect(daily.trends).toHaveLength(1);
+    expect(daily.trends[0].date).toBe(addDaysYmd(today, -1));
+  });
+
+  it('trendsScopeHourlyYesterdayIsTwentyFourHours', async () => {
+    const statistics = { getOverview: vi.fn(async () => ({})) };
+    const store = buildStore();
+    const service = new AdminAnalyticsService(statistics as never, store as never);
+
+    const result = (await service.trendsScope(1, 1, { granularity: 'hour' })) as Record<string, any>;
+    const yesterday = addDaysYmd(today, -1);
+
+    expect(result.trends).toHaveLength(24);
+    expect(result.trends[0].date).toBe(`${yesterday} 00:00`);
+    expect(result.trends[23].date).toBe(`${yesterday} 23:00`);
+  });
+
+  it('hourlyQueriesGroupByShanghaiHour', async () => {
+    const db = { query: vi.fn(async () => []), queryOne: vi.fn(async () => null) };
+    const store = new AdminAnalyticsDbStore(db as never);
+
+    await store.selectDailySessionCounts(range, 'hour');
+    await store.selectDailyMessageStats(range, 'hour');
+    await store.selectDailyUsageStats(range, 'hour');
+    await store.selectDailyLlmCallStats(range, { excludeConnectivity: true }, 'hour');
+    await store.selectDailySessionCounts(range, 'day');
+
+    const sqls = db.query.mock.calls.map((call) => String(call[0]));
+    expect(sqls.slice(0, 4).every((sql) => sql.includes(`DATE_FORMAT(created_at, '%Y-%m-%d %H:00')`))).toBe(true);
+    expect(sqls[4]).toContain('DATE(created_at)');
+    expect(sqls[4]).not.toContain('DATE_FORMAT');
   });
 
   it('aggregates scalar counters via queryOne', async () => {

@@ -15,6 +15,7 @@ function help() {
 
 命令:
   mao admin-session list [--page] [--size] [--user-id] [--agent-id] [--execution-mode] [--phase] [--keyword] [--status]
+  # --keyword 匹配标题/摘要/消息内容；命消息时 records 含 matchSnippet
   mao admin-session get --id
   mao admin-session messages --id [--round-limit] [--before-message-id]
   mao admin-session archive --id

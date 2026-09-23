@@ -27,6 +27,7 @@ function makeService() {
     pageSessionsByFilter: vi.fn(),
     count: vi.fn(async () => 0),
     selectMessageSearchCandidates: vi.fn(),
+    selectPage: vi.fn(async () => ({ records: [], total: 0 })),
     list: vi.fn(),
     insert: vi.fn(async (s: Session) => { s.id = 99; return 99; }),
     lockActiveSessionById: vi.fn(),
@@ -67,6 +68,7 @@ function makeService() {
   } as unknown as SessionRepository;
   const messageRepo = {
     selectMessagesForSearch: vi.fn(),
+    selectFirstMatchingMessages: vi.fn(async () => []),
     listBySession: vi.fn(async () => []),
     insert: vi.fn(async (m: Message) => { m.id = 199; return 199; }),
     logicalDeleteBySession: vi.fn(),
@@ -427,5 +429,35 @@ describe('SessionService embed source', () => {
       { userId: 7, agentId: 9, source: 'embed' }, 0, 50,
     );
     expect(result.items[0].source).toBe('embed');
+  });
+
+  it('admin list matches message content and returns match snippets', async () => {
+    const { service, sessionRepo, messageRepo } = makeService();
+    vi.mocked(sessionRepo.selectPage).mockResolvedValue({
+      records: [session(31, '排障会话', 'NORMAL', 9, '2026-08-07 10:00:00')],
+      total: 1,
+    });
+    vi.mocked(messageRepo.selectFirstMatchingMessages).mockResolvedValue([
+      { sessionId: 31, content: '用户反馈登录页面一直报 500 错误' },
+    ]);
+
+    const result = await service.listSessionsForAdmin(1, 10, null, null, null, null, '登录页面', null);
+    const call = vi.mocked(sessionRepo.selectPage).mock.calls[0];
+    expect(String(call[2])).toContain('title LIKE');
+    expect(String(call[2])).toContain('FROM message m');
+    expect(call[3]).toEqual(['%登录页面%', '%登录页面%', '%登录页面%', 'ACTIVE']);
+    expect(result.matchSnippets[31]).toContain('登录页面');
+    expect(result.matchSnippets[31]).toContain('500');
+  });
+
+  it('admin list without keyword skips message snippet load', async () => {
+    const { service, sessionRepo, messageRepo } = makeService();
+    vi.mocked(sessionRepo.selectPage).mockResolvedValue({
+      records: [session(31, '排障会话', 'NORMAL', 9, '2026-08-07 10:00:00')],
+      total: 1,
+    });
+    const result = await service.listSessionsForAdmin(1, 10, null, null, null, null, '  ', null);
+    expect(result.matchSnippets).toEqual({});
+    expect(messageRepo.selectFirstMatchingMessages).not.toHaveBeenCalled();
   });
 });

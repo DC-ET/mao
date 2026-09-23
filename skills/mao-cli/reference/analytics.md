@@ -11,7 +11,7 @@
 | 命令 | 对应管理后台 | 说明 |
 |------|--------------|------|
 | `analytics overview` | 总览 Tab | 运行态（实时/窗口）+ 窗口合计 + 环比 + Token spark + 构成与规则洞察 |
-| `analytics trends` | 趋势 Tab | 日序列（会话/消息/Token/后台调用） |
+| `analytics trends` | 趋势 Tab | 按天或按小时的序列（会话/消息/Token/后台调用）；`--granularity hour\|day`，默认 day |
 | `analytics models` | 模型 Tab | 模型用量聚合 |
 | `analytics users` | 用户 Tab | 用户活跃排行/明细，支持 `--limit` |
 | `analytics agents` | Agent Tab | Agent 排行，支持 `--limit` |
@@ -25,6 +25,7 @@
 | `--days` | 否 | 整数 | 30 | 统计天数窗口，服务端 clamp 到 1–90 | `days` |
 | `--end-offset` | 否 | 整数 | 0 | 窗口结束日相对今天的前移天数（0=今日结尾，1=昨日结尾），服务端 clamp 到 0–365 | `endOffset` |
 | `--limit` | 否 | 整数 | 20 | 仅 `users` / `agents`：排行条数，服务端 clamp 到 1–100 | `limit` |
+| `--granularity` | 否 | `hour` \| `day` | `day` | 仅 `trends`：横轴粒度。`hour` 为 Asia/Shanghai 整点；窗口含今天时停在当前整点 | `granularity` |
 
 ### 统计口径
 
@@ -71,7 +72,8 @@
 
 | 字段 | 说明 |
 |------|------|
-| `trends[]` | 逐日补零：`date` / `sessions` / `messages` / `chatTokens` / `backgroundTokens` / `totalTokens` / `backgroundCalls` |
+| `granularity` | `day` 或 `hour`。`date` 在 day 下为 `YYYY-MM-DD`，在 hour 下为 `YYYY-MM-DD HH:00` |
+| `trends[]` | 按粒度补零：`date` / `sessions` / `messages` / `chatTokens` / `backgroundTokens` / `totalTokens` / `backgroundCalls` |
 | `periodTotals` / `previousTotals` | 同 overview 口径 |
 
 ### models
@@ -132,6 +134,7 @@
 ```bash
 mao analytics overview
 mao analytics trends --days 7 --raw
+mao analytics trends --days 1 --granularity hour --raw
 mao analytics models --days 30 --raw
 mao analytics models --days 7 --raw   # 质量列与 sceneStats
 mao analytics users --days 7 --limit 50 --raw

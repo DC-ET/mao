@@ -80,7 +80,13 @@ export function registerAdminSessionRoutes(app: FastifyInstance, deps: AdminSess
     const userMap = await batchLoadUsers(records);
     const agentMap = await batchLoadAgents(records);
     const modelMap = await batchLoadModels(records, agentMap);
-    const voList = records.map((s) => toAdminSessionVO(s, userMap, agentMap, modelMap));
+    const voList = records.map((s) => toAdminSessionVO(
+      s,
+      userMap,
+      agentMap,
+      modelMap,
+      s.id != null ? pageResult.matchSnippets?.[s.id] : undefined,
+    ));
     return sendOk(reply, {
       records: voList,
       total: pageResult.total,

@@ -15,7 +15,7 @@ export interface AdminSessionLister {
     phase?: string,
     keyword?: string,
     status?: string,
-  ): Promise<{ records: unknown[]; total: number; current: number; size: number }>;
+  ): Promise<{ records: unknown[]; total: number; current: number; size: number; matchSnippets?: Record<number, string> }>;
 }
 
 export interface AdminRouteDeps {
@@ -71,7 +71,8 @@ export function registerAdminAnalyticsRoutes(app: FastifyInstance, deps: AdminRo
   app.get('/v1/admin/analytics/trends', async (req, reply) => {
     await requireAdmin(deps.permissionService, req);
     const { days, endOffset, excludeConnectivity } = parseAnalyticsQuery(req.query as AnalyticsQueryRaw);
-    sendJson(reply, 200, ok(await deps.analytics.trendsScope(days, endOffset, { excludeConnectivity })));
+    const granularity = (req.query as { granularity?: string }).granularity === 'hour' ? 'hour' : 'day';
+    sendJson(reply, 200, ok(await deps.analytics.trendsScope(days, endOffset, { excludeConnectivity, granularity })));
   });
 
   app.get('/v1/admin/analytics/models', async (req, reply) => {

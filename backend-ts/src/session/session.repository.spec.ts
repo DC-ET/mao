@@ -82,6 +82,8 @@ describe('MessageRepository', () => {
     await repo.deleteFromId(1, 2);
     expect(await repo.selectMessagesForSearch([], 'k')).toEqual([]);
     await repo.selectMessagesForSearch([1, 2], 'k');
+    expect(await repo.selectFirstMatchingMessages([], 'k')).toEqual([]);
+    await repo.selectFirstMatchingMessages([1, 2], 'k');
   });
 });
 

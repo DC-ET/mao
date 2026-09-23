@@ -425,6 +425,30 @@ export class MessageRepository {
       [...sessionIds, escapedKeyword],
     );
   }
+
+  /** 管理端关键词命中片段：每会话取第一条命中消息（任意角色）。 */
+  selectFirstMatchingMessages(
+    sessionIds: number[],
+    escapedKeyword: string,
+  ): Promise<Array<{ sessionId: number; content: string | null }>> {
+    if (sessionIds.length === 0) {
+      return Promise.resolve([]);
+    }
+    const placeholders = sessionIds.map(() => '?').join(',');
+    return this.db.query<{ sessionId: number; content: string | null }>(
+      `SELECT t.sessionId AS sessionId, t.content AS content
+       FROM (
+         SELECT m.session_id AS sessionId, m.content AS content,
+                ROW_NUMBER() OVER (PARTITION BY m.session_id ORDER BY m.id ASC) AS rn
+         FROM message m
+         WHERE m.deleted = 0
+           AND m.session_id IN (${placeholders})
+           AND m.content LIKE CONCAT('%', ?, '%') ESCAPE '\\\\'
+       ) t
+       WHERE t.rn = 1`,
+      [...sessionIds, escapedKeyword],
+    );
+  }
 }
 
 export class FileChangeRepository {

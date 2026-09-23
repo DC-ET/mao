@@ -26,13 +26,16 @@
 | `--agent-id` | 否 | 整数 | — | Agent ID | `agentId` |
 | `--execution-mode` | 否 | 字符串 | — | 执行模式，如 `CLOUD`/`LOCAL` | `executionMode` |
 | `--phase` | 否 | 字符串 | — | 阶段，如 `IDLE`/`RUNNING` 等 | `phase` |
-| `--keyword` | 否 | 字符串 | — | 标题等关键词 | `keyword` |
+| `--keyword` | 否 | 字符串 | — | 标题/摘要/消息内容关键词 | `keyword` |
 | `--status` | 否 | 字符串 | — | 会话状态 | `status` |
 
 `GET /admin/sessions`
 
+关键词会同时匹配标题、摘要与消息正文（任意角色）。命消息时记录带 `matchSnippet`（命中片段），便于拿聊天记录反查会话。
+
 ```bash
 mao admin-session list --user-id 1 --execution-mode LOCAL --page 1 --size 20
+mao admin-session list --keyword "登录页面报 500"
 ```
 
 ## 命令：admin-session get
@@ -110,5 +113,5 @@ mao admin-session archive --id 100
 
 ## 成功失败判断
 
-- 列表成功：`data.records` + `total`/`page`/`size`
+- 列表成功：`data.records` + `total`/`page`/`size`；关键词命中消息时记录含 `matchSnippet`
 - 会话不存在：业务错误 message

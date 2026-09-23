@@ -74,6 +74,7 @@ export interface OverviewPayload {
 
 export interface TrendsPayload {
   period: AnalyticsPeriodMeta
+  granularity?: 'hour' | 'day'
   trends: TrendPoint[]
   periodTotals: PeriodTotals & {
     callCount?: number
@@ -228,4 +229,5 @@ export interface AnalyticsQuery {
   limit?: number
   modelId?: number
   excludeConnectivity?: boolean
+  granularity?: 'hour' | 'day'
 }

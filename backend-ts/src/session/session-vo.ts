@@ -76,6 +76,7 @@ export interface AdminSessionVO {
   createdAt?: string | null;
   updatedAt?: string | null;
   lastActivityAt?: string | null;
+  matchSnippet?: string | null;
 }
 
 export interface MessageVO {
@@ -199,6 +200,7 @@ export function toAdminSessionVO(
   userMap: Map<number, { displayName?: string | null; username: string }>,
   agentMap: Map<number, { name: string; defaultModelId?: number | null }>,
   modelMap: Map<number, LlmModelRef>,
+  matchSnippet?: string | null,
 ): AdminSessionVO {
   const vo: AdminSessionVO = {
     id: session.id,
@@ -216,6 +218,9 @@ export function toAdminSessionVO(
     updatedAt: javaLocalDateTimeString(session.updatedAt),
     lastActivityAt: javaLocalDateTimeString(session.lastActivityAt),
   };
+  if (matchSnippet != null) {
+    vo.matchSnippet = matchSnippet;
+  }
   if (session.userId != null) {
     const user = userMap.get(session.userId);
     if (user) {

@@ -1,7 +1,7 @@
 import type { Db } from '../db/db.js';
 import { notDeleted } from '../db/db.js';
 import type { Agent, LlmModel, UserRow } from '../domain/types.js';
-import { addDaysYmd, shanghaiYmd } from '../common/json.js';
+import { addDaysYmd, formatDateTime, shanghaiYmd } from '../common/json.js';
 import type { StatisticsService } from '../statistics/statistics.service.js';
 
 /** 统计窗口：闭区间日期 + 半开时间区间 [startAt, endAtExclusive)，避免 23:59:59 边界丢数据。 */
@@ -12,6 +12,9 @@ export interface AnalyticsRange {
   startAt: string;
   endAtExclusive: string;
 }
+
+/** 趋势横轴：day 为日历日，hour 为 Asia/Shanghai 整点。 */
+export type TrendGranularity = 'day' | 'hour';
 
 export interface DailySessionRow {
   day: string;
@@ -112,9 +115,9 @@ export interface LlmCallFilterOpts {
 }
 
 export interface AdminAnalyticsStore {
-  selectDailySessionCounts(range: AnalyticsRange): Promise<DailySessionRow[]>;
-  selectDailyMessageStats(range: AnalyticsRange): Promise<DailyMessageRow[]>;
-  selectDailyUsageStats(range: AnalyticsRange): Promise<DailyUsageRow[]>;
+  selectDailySessionCounts(range: AnalyticsRange, granularity?: TrendGranularity): Promise<DailySessionRow[]>;
+  selectDailyMessageStats(range: AnalyticsRange, granularity?: TrendGranularity): Promise<DailyMessageRow[]>;
+  selectDailyUsageStats(range: AnalyticsRange, granularity?: TrendGranularity): Promise<DailyUsageRow[]>;
   selectLivePhaseCounts(): Promise<PhaseCountRow[]>;
   selectPhaseCounts(range: AnalyticsRange): Promise<PhaseCountRow[]>;
   selectSessionCountsByAgent(range: AnalyticsRange): Promise<GroupSessionRow[]>;
@@ -126,7 +129,11 @@ export interface AdminAnalyticsStore {
   selectUsageStatsByModel(range: AnalyticsRange): Promise<GroupUsageRow[]>;
   selectSessionTypeCounts(range: AnalyticsRange): Promise<NamedCountRow[]>;
   selectExecutionModeCounts(range: AnalyticsRange): Promise<NamedCountRow[]>;
-  selectDailyLlmCallStats(range: AnalyticsRange, opts?: LlmCallFilterOpts): Promise<LlmCallDailyRow[]>;
+  selectDailyLlmCallStats(
+    range: AnalyticsRange,
+    opts?: LlmCallFilterOpts,
+    granularity?: TrendGranularity,
+  ): Promise<LlmCallDailyRow[]>;
   selectLlmCallStatsByModel(range: AnalyticsRange, opts?: LlmCallFilterOpts): Promise<LlmCallModelRow[]>;
   selectLlmCallSceneStats(range: AnalyticsRange, opts?: LlmCallFilterOpts): Promise<LlmCallNamedRow[]>;
   selectLlmCallProtocolStats(range: AnalyticsRange, opts?: LlmCallFilterOpts): Promise<LlmCallNamedRow[]>;
@@ -152,32 +159,42 @@ export interface AdminAnalyticsStore {
 export class AdminAnalyticsDbStore implements AdminAnalyticsStore {
   constructor(private readonly db: Db) {}
 
-  selectDailySessionCounts(range: AnalyticsRange): Promise<DailySessionRow[]> {
+  /** 小时桶用墙上时钟整点，与连接时区 +08:00 一致，不随进程时区变化。 */
+  private trendBucketExpr(granularity: TrendGranularity = 'day'): string {
+    return granularity === 'hour'
+      ? `DATE_FORMAT(created_at, '%Y-%m-%d %H:00')`
+      : `DATE(created_at)`;
+  }
+
+  selectDailySessionCounts(range: AnalyticsRange, granularity: TrendGranularity = 'day'): Promise<DailySessionRow[]> {
+    const bucket = this.trendBucketExpr(granularity);
     return this.db.query(
-      `SELECT DATE(created_at) AS day, COUNT(*) AS count
+      `SELECT ${bucket} AS day, COUNT(*) AS count
        FROM session
        WHERE created_at >= ? AND created_at < ? AND deleted = 0
-       GROUP BY DATE(created_at)`,
+       GROUP BY ${bucket}`,
       [range.startAt, range.endAtExclusive],
     );
   }
 
-  selectDailyMessageStats(range: AnalyticsRange): Promise<DailyMessageRow[]> {
+  selectDailyMessageStats(range: AnalyticsRange, granularity: TrendGranularity = 'day'): Promise<DailyMessageRow[]> {
+    const bucket = this.trendBucketExpr(granularity);
     return this.db.query(
-      `SELECT DATE(created_at) AS day, COUNT(*) AS count, COALESCE(SUM(token_count), 0) AS tokens
+      `SELECT ${bucket} AS day, COUNT(*) AS count, COALESCE(SUM(token_count), 0) AS tokens
        FROM message
        WHERE created_at >= ? AND created_at < ? AND deleted = 0
-       GROUP BY DATE(created_at)`,
+       GROUP BY ${bucket}`,
       [range.startAt, range.endAtExclusive],
     );
   }
 
-  selectDailyUsageStats(range: AnalyticsRange): Promise<DailyUsageRow[]> {
+  selectDailyUsageStats(range: AnalyticsRange, granularity: TrendGranularity = 'day'): Promise<DailyUsageRow[]> {
+    const bucket = this.trendBucketExpr(granularity);
     return this.db.query(
-      `SELECT DATE(created_at) AS day, COALESCE(SUM(total_tokens), 0) AS totalTokens, COUNT(*) AS callCount
+      `SELECT ${bucket} AS day, COALESCE(SUM(total_tokens), 0) AS totalTokens, COUNT(*) AS callCount
        FROM llm_usage
        WHERE created_at >= ? AND created_at < ?
-       GROUP BY DATE(created_at)`,
+       GROUP BY ${bucket}`,
       [range.startAt, range.endAtExclusive],
     );
   }
@@ -305,10 +322,15 @@ export class AdminAnalyticsDbStore implements AdminAnalyticsStore {
     return { sql: clauses.join(' AND '), params };
   }
 
-  selectDailyLlmCallStats(range: AnalyticsRange, opts?: LlmCallFilterOpts): Promise<LlmCallDailyRow[]> {
+  selectDailyLlmCallStats(
+    range: AnalyticsRange,
+    opts?: LlmCallFilterOpts,
+    granularity: TrendGranularity = 'day',
+  ): Promise<LlmCallDailyRow[]> {
     const { sql, params } = this.llmCallWhere(range, opts);
+    const bucket = this.trendBucketExpr(granularity);
     return this.db.query(
-      `SELECT DATE(created_at) AS day,
+      `SELECT ${bucket} AS day,
               COUNT(*) AS callCount,
               COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0) AS failCount,
               COALESCE(SUM(prompt_tokens), 0) AS promptTokens,
@@ -316,7 +338,7 @@ export class AdminAnalyticsDbStore implements AdminAnalyticsStore {
               COALESCE(SUM(total_tokens), 0) AS callTokens
        FROM llm_call
        WHERE ${sql}
-       GROUP BY DATE(created_at)`,
+       GROUP BY ${bucket}`,
       params,
     );
   }
@@ -639,12 +661,17 @@ export class AdminAnalyticsService {
     };
   }
 
-  /** 趋势：日序列（含 llm_call 调用质量）+ 窗口合计 + 环比。 */
-  async trendsScope(days: number, endOffset = 0, opts?: { excludeConnectivity?: boolean }): Promise<Record<string, unknown>> {
+  /** 趋势：按天或按小时补零（含 llm_call 调用质量）+ 窗口合计 + 环比。 */
+  async trendsScope(
+    days: number,
+    endOffset = 0,
+    opts?: { excludeConnectivity?: boolean; granularity?: TrendGranularity },
+  ): Promise<Record<string, unknown>> {
     const { range, previous } = this.resolveWindows(days, endOffset);
+    const granularity: TrendGranularity = opts?.granularity === 'hour' ? 'hour' : 'day';
     const callOpts = { excludeConnectivity: opts?.excludeConnectivity !== false };
     const [trends, activeUsers, previousTotals, quality, prevQuality] = await Promise.all([
-      this.trends(range, callOpts),
+      this.trends(range, { ...callOpts, granularity }),
       this.store.countActiveUsers(range),
       this.previousTotals(previous, callOpts),
       this.store.selectLlmCallQualitySummary(range, callOpts),
@@ -664,6 +691,7 @@ export class AdminAnalyticsService {
     };
     return {
       period: this.periodMeta(range, previous),
+      granularity,
       trends,
       periodTotals,
       previousTotals: {
@@ -887,29 +915,29 @@ export class AdminAnalyticsService {
 
   private async trends(
     range: AnalyticsRange,
-    callOpts?: { excludeConnectivity?: boolean },
+    callOpts?: { excludeConnectivity?: boolean; granularity?: TrendGranularity },
   ): Promise<Array<Record<string, unknown>>> {
+    const granularity: TrendGranularity = callOpts?.granularity === 'hour' ? 'hour' : 'day';
     const opts = { excludeConnectivity: callOpts?.excludeConnectivity !== false };
     const [sessionRows, messageRows, usageRows, callRows] = await Promise.all([
-      this.store.selectDailySessionCounts(range),
-      this.store.selectDailyMessageStats(range),
-      this.store.selectDailyUsageStats(range),
-      this.store.selectDailyLlmCallStats(range, opts),
+      this.store.selectDailySessionCounts(range, granularity),
+      this.store.selectDailyMessageStats(range, granularity),
+      this.store.selectDailyUsageStats(range, granularity),
+      this.store.selectDailyLlmCallStats(range, opts, granularity),
     ]);
-    const sessions = dayMap(sessionRows, (r) => r.day, (r) => r.count);
-    const messages = dayMap(messageRows, (r) => r.day, (r) => r.count);
-    const chatTokens = dayMap(messageRows, (r) => r.day, (r) => r.tokens);
-    const backgroundTokens = dayMap(usageRows, (r) => r.day, (r) => r.totalTokens);
-    const backgroundCalls = dayMap(usageRows, (r) => r.day, (r) => r.callCount);
-    const callCount = dayMap(callRows, (r) => r.day, (r) => r.callCount);
-    const callFailCount = dayMap(callRows, (r) => r.day, (r) => r.failCount);
-    const callTokens = dayMap(callRows, (r) => r.day, (r) => r.callTokens);
-    const promptTokens = dayMap(callRows, (r) => r.day, (r) => r.promptTokens);
-    const cachedTokens = dayMap(callRows, (r) => r.day, (r) => r.cachedTokens);
+    const sessions = bucketMap(sessionRows, (r) => r.day, (r) => r.count, granularity);
+    const messages = bucketMap(messageRows, (r) => r.day, (r) => r.count, granularity);
+    const chatTokens = bucketMap(messageRows, (r) => r.day, (r) => r.tokens, granularity);
+    const backgroundTokens = bucketMap(usageRows, (r) => r.day, (r) => r.totalTokens, granularity);
+    const backgroundCalls = bucketMap(usageRows, (r) => r.day, (r) => r.callCount, granularity);
+    const callCount = bucketMap(callRows, (r) => r.day, (r) => r.callCount, granularity);
+    const callFailCount = bucketMap(callRows, (r) => r.day, (r) => r.failCount, granularity);
+    const callTokens = bucketMap(callRows, (r) => r.day, (r) => r.callTokens, granularity);
+    const promptTokens = bucketMap(callRows, (r) => r.day, (r) => r.promptTokens, granularity);
+    const cachedTokens = bucketMap(callRows, (r) => r.day, (r) => r.cachedTokens, granularity);
 
     const rows: Array<Record<string, unknown>> = [];
-    for (let i = 0; i < range.days; i++) {
-      const date = addDaysYmd(range.startYmd, i);
+    for (const date of buildTrendBucketKeys(range, granularity)) {
       const chat = chatTokens.get(date) ?? 0;
       const background = backgroundTokens.get(date) ?? 0;
       const calls = callCount.get(date) ?? 0;
@@ -1205,6 +1233,45 @@ function namedCountRows(rows: LlmCallNamedRow[]): Array<Record<string, unknown>>
     .sort((a, b) => b.callTokens - a.callTokens || b.callCount - a.callCount);
 }
 
+/**
+ * 趋势横轴刻度。按天为窗口内每个日历日；按小时为每个整点。
+ * 窗口包含今天时，小时序列停在当前整点，避免未到来的小时被画成 0。
+ */
+export function buildTrendBucketKeys(
+  range: AnalyticsRange,
+  granularity: TrendGranularity,
+  now: Date = new Date(),
+): string[] {
+  if (granularity !== 'hour') {
+    const keys: string[] = [];
+    for (let i = 0; i < range.days; i++) {
+      keys.push(addDaysYmd(range.startYmd, i));
+    }
+    return keys;
+  }
+  const keys: string[] = [];
+  const limit = range.days * 24;
+  let cursor = `${range.startYmd} 00:00`;
+  const endExclusive = `${addDaysYmd(range.endYmd, 1)} 00:00`;
+  const nowKey = `${formatDateTime(now).slice(0, 13)}:00`;
+  const capAtNow = range.endYmd >= shanghaiYmd(now);
+  for (let i = 0; i < limit && cursor < endExclusive; i++) {
+    if (capAtNow && cursor > nowKey) break;
+    keys.push(cursor);
+    cursor = addHoursKey(cursor, 1);
+  }
+  return keys.length > 0 ? keys : [`${range.startYmd} 00:00`];
+}
+
+function addHoursKey(key: string, hours: number): string {
+  const [date, time] = key.split(' ');
+  const [y, m, d] = date.split('-').map(Number);
+  const hh = Number(time.slice(0, 2));
+  const dt = new Date(Date.UTC(y, m - 1, d, hh + hours));
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${dt.getUTCFullYear()}-${pad(dt.getUTCMonth() + 1)}-${pad(dt.getUTCDate())} ${pad(dt.getUTCHours())}:00`;
+}
+
 function buildRange(endYmd: string, days: number): AnalyticsRange {
   const startYmd = addDaysYmd(endYmd, -(days - 1));
   return {
@@ -1284,16 +1351,31 @@ function buildOverviewInsights(
   return insights.slice(0, 3);
 }
 
-/** DATE() 在 dateStrings 模式下是 'YYYY-MM-DD'，这里统一截断以兼容 Date 兜底。 */
-function dayMap<T>(rows: T[], key: (row: T) => unknown, value: (row: T) => unknown): Map<string, number> {
+/** 日桶截成 YYYY-MM-DD；小时桶规范成 YYYY-MM-DD HH:00。 */
+function bucketMap<T>(
+  rows: T[],
+  key: (row: T) => unknown,
+  value: (row: T) => unknown,
+  granularity: TrendGranularity,
+): Map<string, number> {
   const result = new Map<string, number>();
   for (const row of rows) {
-    const k = key(row);
-    if (k != null) {
-      result.set(String(k).slice(0, 10), toNumber(value(row)));
+    const id = normalizeBucket(key(row), granularity);
+    if (id != null) {
+      result.set(id, toNumber(value(row)));
     }
   }
   return result;
+}
+
+function normalizeBucket(raw: unknown, granularity: TrendGranularity): string | null {
+  if (raw == null) return null;
+  const text = String(raw);
+  if (granularity === 'hour') {
+    if (text.length < 13) return null;
+    return `${text.slice(0, 13)}:00`;
+  }
+  return text.slice(0, 10);
 }
 
 function phaseMap(rows: PhaseCountRow[]): Map<string, number> {

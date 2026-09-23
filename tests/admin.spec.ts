@@ -88,7 +88,17 @@ test.describe('Analytics Homepage', () => {
 
   test('should open trends tab charts', async ({ page }) => {
     await page.locator('.el-tabs__item:has-text("趋势")').click()
-    await expect(page.locator('.el-card__header').filter({ hasText: '用量趋势' })).toBeVisible({ timeout: 10_000 })
+    const titles = page.locator('.trends-tab .chart-title')
+    await expect(titles.filter({ hasText: '流量' })).toBeVisible({ timeout: 10_000 })
+    await expect(titles.filter({ hasText: 'Token' })).toBeVisible()
+    await expect(titles.filter({ hasText: '调用' })).toBeVisible()
+    await expect(titles.filter({ hasText: '质量' })).toBeVisible()
+    const grain = page.locator('.trends-tab .grain-bar')
+    await expect(grain).toBeVisible()
+    await expect(grain.locator('.el-segmented__item.is-selected')).toHaveText('小时')
+    await grain.locator('.el-segmented__item', { hasText: '天' }).click()
+    await expect(page).toHaveURL(/grain=day/)
+    await expect(grain.locator('.el-segmented__item.is-selected')).toHaveText('天')
   })
 })
 

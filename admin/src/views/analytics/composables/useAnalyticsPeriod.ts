@@ -19,6 +19,17 @@ export function periodToQueryValue(value: PeriodValue): string {
   return String(value)
 }
 
+export type TrendGrain = 'hour' | 'day'
+
+/** 统计周期不足 7 天时默认按小时，否则按天。 */
+export function defaultTrendGrain(period: PeriodValue): TrendGrain {
+  return resolvePeriod(period).days < 7 ? 'hour' : 'day'
+}
+
+export function normalizeTrendGrain(raw: unknown, period: PeriodValue): TrendGrain {
+  return raw === 'hour' || raw === 'day' ? raw : defaultTrendGrain(period)
+}
+
 export function periodFromQueryValue(raw: unknown): PeriodValue {
   if (raw === 'today' || raw === 'yesterday') return raw
   const n = Number(raw)
@@ -33,5 +44,5 @@ export function buildAnalyticsQuery(period: PeriodValue, limit?: number): Analyt
 
 /** 缓存键含周期，换周期自然 miss；force 由调用方先 invalidate。 */
 export function periodKey(scope: string, query: AnalyticsQuery): string {
-  return `${scope}|${query.days}|${query.endOffset}|${query.limit ?? ''}|${query.modelId ?? ''}|${query.excludeConnectivity ?? ''}`
+  return `${scope}|${query.days}|${query.endOffset}|${query.limit ?? ''}|${query.modelId ?? ''}|${query.excludeConnectivity ?? ''}|${query.granularity ?? ''}`
 }

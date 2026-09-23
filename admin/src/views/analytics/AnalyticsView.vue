@@ -64,8 +64,8 @@
         v-else-if="activeTab === 'trends'"
         :payload="trendsPayload"
         :loading="activeLoading"
-        :view="trendView"
-        @update:view="handleTrendViewChange"
+        :grain="grain"
+        @update:grain="handleGrainChange"
       />
       <ModelTab
         v-else-if="activeTab === 'models'"
@@ -101,8 +101,11 @@ import { invalidateAnalytics, useScopeQuery } from './composables/useScopeQuery'
 import {
   PERIOD_OPTIONS,
   buildAnalyticsQuery,
+  defaultTrendGrain,
+  normalizeTrendGrain,
   periodFromQueryValue,
-  periodToQueryValue
+  periodToQueryValue,
+  type TrendGrain
 } from './composables/useAnalyticsPeriod'
 import { formatDateTime } from '../../utils/datetime'
 
@@ -135,8 +138,6 @@ const TABS = [
 ] as const
 
 type TabId = (typeof TABS)[number]['value']
-type TrendView = 'traffic' | 'token' | 'calls' | 'quality'
-const TREND_VIEWS: readonly string[] = ['traffic', 'token', 'calls', 'quality']
 
 const EMPTY_COPY: Record<Exclude<TabId, 'overview'>, { title: string; hint: string }> = {
   trends: { title: '窗口内暂无趋势数据', hint: '可切换更长周期观察波动。' },
@@ -150,8 +151,8 @@ const route = useRoute()
 const router = useRouter()
 
 const period = ref<PeriodValue>(periodFromQueryValue(route.query.period ?? route.query.days ?? 'today'))
+const grain = ref<TrendGrain>(normalizeTrendGrain(route.query.grain, period.value))
 const activeTab = ref<TabId>(normalizeTab(route.query.tab))
-const trendView = ref<TrendView>(normalizeTrendView(route.query.view))
 const sceneModelId = ref<number | undefined>(
   route.query.modelId != null && route.query.modelId !== '' ? Number(route.query.modelId) : undefined
 )
@@ -251,11 +252,6 @@ function normalizeTab(raw: unknown): TabId {
   return (TABS.some((tab) => tab.value === value) ? value : 'overview') as TabId
 }
 
-function normalizeTrendView(raw: unknown): TrendView {
-  const value = String(raw || 'traffic')
-  return (TREND_VIEWS.includes(value) ? value : 'traffic') as TrendView
-}
-
 function currentQuery() {
   const needsLimit = activeTab.value === 'users' || activeTab.value === 'agents'
   // 后端 scope 上限 100：用户/Agent 明细尽量拉满，减少 Top 20 截断
@@ -268,6 +264,9 @@ function currentQuery() {
       query.modelId = sceneModelId.value
     }
   }
+  if (activeTab.value === 'trends') {
+    query.granularity = grain.value
+  }
   return query
 }
 
@@ -275,11 +274,11 @@ async function loadActive(force = false) {
   await activeScope.value.fetchScope(currentQuery(), force)
 }
 
-/** tab/period/view/conn/modelId 全部以 URL query 为唯一数据源，同步出去供分享与刷新还原 */
+/** tab/period/grain/conn/modelId 以 URL query 为唯一数据源，同步出去供分享与刷新还原 */
 function syncUrl() {
   const nextTab = activeTab.value
   const nextPeriod = periodToQueryValue(period.value)
-  const nextView = nextTab === 'trends' ? trendView.value : null
+  const nextGrain = grain.value
   const nextConn = includeConnectivity.value ? null : '0'
   const nextModelId =
     nextTab === 'models' && sceneModelId.value != null && Number.isFinite(sceneModelId.value)
@@ -288,7 +287,8 @@ function syncUrl() {
   if (
     route.query.tab === nextTab &&
     route.query.period === nextPeriod &&
-    (route.query.view ?? null) === nextView &&
+    route.query.view == null &&
+    (route.query.grain ?? null) === nextGrain &&
     (route.query.conn ?? null) === nextConn &&
     (route.query.modelId ?? null) === nextModelId
   ) {
@@ -299,11 +299,8 @@ function syncUrl() {
     tab: nextTab,
     period: nextPeriod
   }
-  if (nextView != null) {
-    query.view = nextView
-  } else {
-    delete query.view
-  }
+  delete query.view
+  query.grain = nextGrain
   if (nextConn != null) {
     query.conn = nextConn
   } else {
@@ -324,15 +321,17 @@ function handleTabChange() {
   void loadActive(false)
 }
 
-function handleTrendViewChange(value: TrendView) {
-  trendView.value = value
-  syncUrl()
-}
-
 function handlePeriodChange() {
+  grain.value = defaultTrendGrain(period.value)
   invalidateAnalytics()
   syncUrl()
   void loadActive(true)
+}
+
+function handleGrainChange(value: TrendGrain) {
+  grain.value = value
+  syncUrl()
+  void loadActive(false)
 }
 
 function handleRefresh() {
@@ -390,25 +389,26 @@ function handleModelsRefresh(include: boolean) {
 // ---- 浏览器前进/后退、外部分享链接等 URL 直变：由此 watch 驱动状态与加载 ----
 
 watch(
-  () => [route.query.tab, route.query.period, route.query.view, route.query.conn, route.query.modelId] as const,
-  ([tabValue, periodValue, viewValue, connValue, modelIdValue]) => {
+  () => [route.query.tab, route.query.period, route.query.grain, route.query.conn, route.query.modelId] as const,
+  ([tabValue, periodValue, grainValue, connValue, modelIdValue]) => {
     const nextTab = normalizeTab(tabValue)
     const nextPeriod = periodFromQueryValue(periodValue ?? 'today')
-    const nextView = normalizeTrendView(viewValue)
+    const nextGrain = normalizeTrendGrain(grainValue, nextPeriod)
     const nextIncludeConn = connValue !== '0'
     const nextModelId =
       modelIdValue != null && modelIdValue !== '' && Number.isFinite(Number(modelIdValue))
         ? Number(modelIdValue)
         : undefined
     const periodChanged = nextPeriod !== period.value
+    const grainChanged = nextGrain !== grain.value
     const connChanged = nextIncludeConn !== includeConnectivity.value
-    const viewChanged = nextView !== trendView.value
     const modelChanged = nextModelId !== sceneModelId.value
 
     if (periodChanged) {
       period.value = nextPeriod
       invalidateAnalytics()
     }
+    if (grainChanged) grain.value = nextGrain
     if (connChanged) {
       includeConnectivity.value = nextIncludeConn
       if (nextTab === 'models') invalidateAnalytics('models')
@@ -417,17 +417,27 @@ watch(
       sceneModelId.value = nextModelId
       invalidateAnalytics('models')
     }
-    if (viewChanged) trendView.value = nextView
 
     const tabChanged = nextTab !== activeTab.value
     activeTab.value = nextTab
 
-    if (periodChanged || (modelChanged && nextTab === 'models') || (connChanged && nextTab === 'models')) {
+    if (
+      periodChanged ||
+      (grainChanged && nextTab === 'trends') ||
+      (modelChanged && nextTab === 'models') ||
+      (connChanged && nextTab === 'models')
+    ) {
       void loadActive(true)
     } else if (tabChanged || !everLoaded) {
       void loadActive(false)
     }
     everLoaded = true
+    // 趋势图已同页平铺，旧链接里的 view 不再表示当前图表
+    if (route.query.view != null) {
+      const query = { ...route.query }
+      delete query.view
+      void router.replace({ query })
+    }
   },
   { immediate: true }
 )

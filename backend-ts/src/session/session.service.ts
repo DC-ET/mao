@@ -406,7 +406,7 @@ export class SessionService {
     phase?: string | null,
     keyword?: string | null,
     status?: string | null,
-  ): Promise<{ records: Session[]; total: number; current: number; size: number }> {
+  ): Promise<{ records: Session[]; total: number; current: number; size: number; matchSnippets: Record<number, string> }> {
     const clauses: string[] = [];
     const params: unknown[] = [];
     if (userId != null) {
@@ -431,15 +431,43 @@ export class SessionService {
         params.push(phase);
       }
     }
-    if (keyword != null && keyword.length > 0) {
-      clauses.push('(title LIKE ? OR summary LIKE ?)');
-      params.push(`%${keyword}%`, `%${keyword}%`);
+    const trimmedKeyword = keyword != null ? keyword.trim() : '';
+    if (trimmedKeyword.length > 0) {
+      const escaped = escapeLike(trimmedKeyword);
+      // 标题/摘要/消息正文任一命中即可；消息覆盖用户与助手，便于按聊天记录反查会话
+      clauses.push(
+        `(title LIKE ? ESCAPE '\\\\' OR summary LIKE ? ESCAPE '\\\\' OR id IN (
+          SELECT m.session_id FROM message m
+          WHERE m.deleted = 0 AND m.content LIKE CONCAT('%', ?, '%') ESCAPE '\\\\'
+        ))`,
+      );
+      params.push(`%${escaped}%`, `%${escaped}%`, `%${escaped}%`);
     }
     clauses.push('status = ?');
     params.push(status != null && status.length > 0 ? status : 'ACTIVE');
     const whereSql = clauses.length > 0 ? clauses.join(' AND ') : '1=1';
     const result = await this.sessionRepo.selectPage(page, size, whereSql, params, 'ORDER BY created_at DESC');
-    return { ...result, current: page, size };
+    const matchSnippets = await this.loadAdminMatchSnippets(result.records, trimmedKeyword);
+    return { ...result, current: page, size, matchSnippets };
+  }
+
+  private async loadAdminMatchSnippets(records: Session[], keyword: string): Promise<Record<number, string>> {
+    if (keyword.length === 0 || records.length === 0) {
+      return {};
+    }
+    const sessionIds = records.map((s) => s.id).filter((id): id is number => id != null);
+    if (sessionIds.length === 0) {
+      return {};
+    }
+    const hits = await this.messageRepo.selectFirstMatchingMessages(sessionIds, escapeLike(keyword));
+    const matchSnippets: Record<number, string> = {};
+    for (const hit of hits) {
+      const text = this.extractVisibleText(hit.content ?? null);
+      if (text == null || text.length === 0) continue;
+      const snippet = buildSnippet(text, keyword);
+      if (snippet != null) matchSnippets[hit.sessionId] = snippet;
+    }
+    return matchSnippets;
   }
 
   async getSession(id: number): Promise<Session> {

@@ -86,8 +86,19 @@ export const SPLIT_LINE_COLOR = () => cssVar('--mao-border', 'rgba(0, 0, 0, 0.06
 export const INK_COLOR = () => cssVar('--mao-ink', '#1d1d1f')
 export const SURFACE_COLOR = () => cssVar('--mao-surface', '#ffffff')
 
-function mmdd(date: string): string {
-  return date.slice(5)
+export function isHourlyTrendDate(date: string): boolean {
+  return date.includes(':')
+}
+
+/** 单日按小时只标 HH:mm；跨天小时标 MM-DD HH:mm；按天标 MM-DD。 */
+export function trendCategoryLabels(dates: string[]): string[] {
+  const hourly = dates.some(isHourlyTrendDate)
+  const singleDay = hourly && new Set(dates.map((date) => date.slice(0, 10))).size <= 1
+  return dates.map((date) => {
+    if (!hourly) return date.slice(5, 10)
+    if (singleDay) return date.slice(11, 16)
+    return `${date.slice(5, 10)} ${date.slice(11, 16)}`
+  })
 }
 
 const baseGrid = { left: 8, right: 8, bottom: 4, top: 32, containLabel: true }
@@ -95,7 +106,7 @@ const baseGrid = { left: 8, right: 8, bottom: 4, top: 32, containLabel: true }
 function categoryAxis(dates: string[]) {
   return {
     type: 'category' as const,
-    data: dates.map(mmdd),
+    data: trendCategoryLabels(dates),
     boundaryGap: false,
     axisTick: { show: false },
     axisLine: { lineStyle: { color: SPLIT_LINE_COLOR() } },
@@ -123,12 +134,14 @@ export const trendLegend = {
   textStyle: { fontSize: 12 }
 }
 
-/** 天数较多时默认聚焦最近 30 天，仍可拖动查看全周期。 */
-function dataZoom(days: number) {
-  if (days <= 30) return undefined
+/** 按天超过 30 天聚焦最近 30 天；按小时超过 48 小时聚焦最近 48 小时。 */
+export function trendDataZoom(count: number, hourly: boolean) {
+  const windowSize = hourly ? 48 : 30
+  if (count <= windowSize) return undefined
+  const start = Math.max(0, 100 - (windowSize / count) * 100)
   return [
-    { type: 'inside' as const, start: Math.max(0, 100 - (30 / days) * 100), end: 100 },
-    { type: 'slider' as const, height: 16, bottom: 0, start: Math.max(0, 100 - (30 / days) * 100), end: 100 }
+    { type: 'inside' as const, start, end: 100 },
+    { type: 'slider' as const, height: 16, bottom: 0, start, end: 100 }
   ]
 }
 
@@ -141,7 +154,8 @@ export interface SingleSeriesSpec {
 /** 单序列小多图：避免双 y 轴把不同单位的序列画在一起。 */
 export function seriesTrendOption(trends: TrendPoint[], specs: SingleSeriesSpec[]): ChartOption {
   const dates = trends.map((t) => t.date)
-  const zoom = dataZoom(trends.length)
+  const hourly = dates.some(isHourlyTrendDate)
+  const zoom = trendDataZoom(trends.length, hourly)
   return {
     color: specs.map((s) => s.color),
     tooltip: {
@@ -171,7 +185,8 @@ export function seriesTrendOption(trends: TrendPoint[], specs: SingleSeriesSpec[
 /** Token 堆叠柱状图：对话 Token + 后台调用 Token。 */
 export function tokenTrendOption(trends: TrendPoint[]): ChartOption {
   const dates = trends.map((t) => t.date)
-  const zoom = dataZoom(trends.length)
+  const hourly = dates.some(isHourlyTrendDate)
+  const zoom = trendDataZoom(trends.length, hourly)
   return {
     color: [CHART_PALETTE[0], CHART_PALETTE[2]],
     tooltip: {

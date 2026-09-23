@@ -12,7 +12,7 @@
         <FilterPanel>
           <template #always>
             <el-form-item label="关键词">
-              <el-input v-model="filters.keyword" placeholder="标题/摘要" clearable style="width: 160px" @keyup.enter="handleSearch" @clear="handleSearch" />
+              <el-input v-model="filters.keyword" placeholder="标题/摘要/消息内容" clearable style="width: 200px" @keyup.enter="handleSearch" @clear="handleSearch" />
             </el-form-item>
             <el-form-item>
               <el-button type="primary" @click="handleSearch">查询</el-button>
@@ -63,7 +63,12 @@
           <el-empty description="暂无数据" :image-size="60" />
         </template>
         <el-table-column prop="id" label="ID" width="80" />
-        <el-table-column prop="title" label="标题" min-width="200" show-overflow-tooltip />
+        <el-table-column prop="title" label="标题" min-width="200">
+          <template #default="{ row }">
+            <div>{{ row.title || '-' }}</div>
+            <div v-if="row.matchSnippet" class="match-snippet" :title="row.matchSnippet">命中消息：{{ row.matchSnippet }}</div>
+          </template>
+        </el-table-column>
         <el-table-column prop="userName" label="用户" width="120" show-overflow-tooltip />
         <el-table-column prop="agentName" label="Agent" width="120" show-overflow-tooltip />
         <el-table-column prop="executionMode" label="执行模式" width="100">
@@ -106,6 +111,10 @@
           <div class="mobile-card-head">
             <span class="mobile-card-title">{{ row.title || '-' }}</span>
             <el-tag :type="phaseTagType(row.phase)" size="small">{{ phaseLabel(row.phase) }}</el-tag>
+          </div>
+          <div v-if="row.matchSnippet" class="mobile-card-row match-snippet">
+            <span class="mobile-card-label">消息</span>
+            <span>{{ row.matchSnippet }}</span>
           </div>
           <div class="mobile-card-row">
             <span class="mobile-card-label">用户</span>
@@ -385,6 +394,16 @@ onActivated(() => {
 
 .search-form .el-form-item {
   margin-bottom: 12px;
+}
+
+.match-snippet {
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--el-text-color-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .mobile-card-list {

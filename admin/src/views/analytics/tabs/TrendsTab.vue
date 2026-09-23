@@ -1,15 +1,21 @@
 <template>
   <div class="trends-tab">
-    <el-card class="block">
-      <template #header>
-        <div class="card-header">
-          <span>用量趋势</span>
-          <el-segmented :model-value="view" :options="VIEW_OPTIONS" @update:model-value="emit('update:view', $event as TrendView)" />
-        </div>
-      </template>
-
-      <template v-if="view === 'traffic'">
-        <div class="card-hint">会话与消息分图展示，避免双轴误读</div>
+    <div class="grain-bar">
+      <span class="grain-label">时间粒度</span>
+      <el-segmented
+        :model-value="grain"
+        :options="GRAIN_OPTIONS"
+        @update:model-value="emit('update:grain', $event as TrendGrain)"
+      />
+    </div>
+    <div class="chart-grid">
+      <el-card class="block span-2">
+        <template #header>
+          <div class="card-header">
+            <span class="chart-title">流量</span>
+            <span class="card-hint">会话与消息分图展示，避免双轴误读</span>
+          </div>
+        </template>
         <el-row :gutter="16">
           <el-col :xs="24" :md="12">
             <div class="mini-title">会话</div>
@@ -20,23 +26,38 @@
             <BaseChart :option="messageTrendOption" :empty="!hasTraffic" :height="260" />
           </el-col>
         </el-row>
-      </template>
+      </el-card>
 
-      <template v-else-if="view === 'token'">
-        <div class="card-hint">对话 Token + 后台调用 Token（llm_usage）</div>
-        <BaseChart :option="tokenTrendChartOption" :empty="!hasTokens" :height="300" />
-      </template>
+      <el-card class="block">
+        <template #header>
+          <div class="card-header">
+            <span class="chart-title">Token</span>
+            <span class="card-hint">对话 Token + 后台调用 Token</span>
+          </div>
+        </template>
+        <BaseChart :option="tokenTrendChartOption" :empty="!hasTokens" :height="260" />
+      </el-card>
 
-      <template v-else-if="view === 'calls'">
-        <div class="card-hint">llm_call 调用次数与失败次数（默认排除连通性测试）</div>
-        <BaseChart :option="callTrendChartOption" :empty="!hasCalls" :height="300" />
-      </template>
+      <el-card class="block">
+        <template #header>
+          <div class="card-header">
+            <span class="chart-title">调用</span>
+            <span class="card-hint">次数与失败次数，默认排除连通性测试</span>
+          </div>
+        </template>
+        <BaseChart :option="callTrendChartOption" :empty="!hasCalls" :height="260" />
+      </el-card>
 
-      <template v-else>
-        <div class="card-hint">成功率与缓存命中率（百分比轴）</div>
-        <BaseChart :option="qualityTrendChartOption" :empty="!hasQuality" :height="300" />
-      </template>
-    </el-card>
+      <el-card class="block span-2">
+        <template #header>
+          <div class="card-header">
+            <span class="chart-title">质量</span>
+            <span class="card-hint">成功率与缓存命中率（百分比轴）</span>
+          </div>
+        </template>
+        <BaseChart :option="qualityTrendChartOption" :empty="!hasQuality" :height="260" />
+      </el-card>
+    </div>
 
     <el-card v-if="qualitySummary" class="block">
       <template #header>
@@ -71,28 +92,32 @@
 import { computed } from 'vue'
 import BaseChart from '../../../components/BaseChart.vue'
 import { CHART_PALETTE } from '../../../utils/echarts'
-import { formatNumber, seriesTrendOption, tokenTrendOption, type TrendPoint } from '../chart-options'
+import {
+  formatNumber,
+  isHourlyTrendDate,
+  seriesTrendOption,
+  tokenTrendOption,
+  trendCategoryLabels,
+  trendDataZoom,
+  type TrendPoint
+} from '../chart-options'
+import type { TrendGrain } from '../composables/useAnalyticsPeriod'
 import type { TrendsPayload } from '../types'
 
-const VIEW_OPTIONS = [
-  { label: '流量', value: 'traffic' },
-  { label: 'Token', value: 'token' },
-  { label: '调用', value: 'calls' },
-  { label: '质量', value: 'quality' }
+const GRAIN_OPTIONS = [
+  { label: '小时', value: 'hour' },
+  { label: '天', value: 'day' }
 ] as const
-
-type TrendView = (typeof VIEW_OPTIONS)[number]['value']
 
 const props = defineProps<{
   payload: TrendsPayload | null
   loading?: boolean
-  view?: TrendView
+  grain?: TrendGrain
 }>()
 
-const emit = defineEmits<{ (e: 'update:view', value: TrendView): void }>()
+const emit = defineEmits<{ (e: 'update:grain', value: TrendGrain): void }>()
 
-// 视图选择由父组件持久化到 URL（view=...），本组件只做受控回显
-const view = computed<TrendView>(() => props.view ?? 'traffic')
+const grain = computed<TrendGrain>(() => props.grain ?? 'day')
 
 const trends = computed<TrendPoint[]>(() => props.payload?.trends || [])
 const qualitySummary = computed(() => props.payload?.callQuality)
@@ -113,7 +138,8 @@ const tokenTrendChartOption = computed(() => tokenTrendOption(trends.value))
 
 const callTrendChartOption = computed(() => {
   const dates = trends.value.map((t) => t.date)
-  const zoom = dataZoom(trends.value.length)
+  const hourly = dates.some(isHourlyTrendDate)
+  const zoom = trendDataZoom(trends.value.length, hourly)
   return {
     color: [CHART_PALETTE[0], CHART_PALETTE[5]],
     tooltip: { trigger: 'axis' as const },
@@ -122,9 +148,9 @@ const callTrendChartOption = computed(() => {
     dataZoom: zoom,
     xAxis: {
       type: 'category' as const,
-      data: dates.map((d) => d.slice(5)),
+      data: trendCategoryLabels(dates),
       axisTick: { show: false },
-      axisLabel: { color: AXIS_MUTED, fontSize: 11 }
+      axisLabel: { color: AXIS_MUTED, fontSize: 11, hideOverlap: true }
     },
     yAxis: {
       type: 'value' as const,
@@ -151,7 +177,8 @@ const callTrendChartOption = computed(() => {
 
 const qualityTrendChartOption = computed(() => {
   const dates = trends.value.map((t) => t.date)
-  const zoom = dataZoom(trends.value.length)
+  const hourly = dates.some(isHourlyTrendDate)
+  const zoom = trendDataZoom(trends.value.length, hourly)
   return {
     color: [CHART_PALETTE[1], CHART_PALETTE[4]],
     tooltip: { trigger: 'axis' as const },
@@ -160,10 +187,10 @@ const qualityTrendChartOption = computed(() => {
     dataZoom: zoom,
     xAxis: {
       type: 'category' as const,
-      data: dates.map((d) => d.slice(5)),
+      data: trendCategoryLabels(dates),
       boundaryGap: false,
       axisTick: { show: false },
-      axisLabel: { color: AXIS_MUTED, fontSize: 11 }
+      axisLabel: { color: AXIS_MUTED, fontSize: 11, hideOverlap: true }
     },
     yAxis: {
       type: 'value' as const,
@@ -193,16 +220,6 @@ const qualityTrendChartOption = computed(() => {
 const AXIS_MUTED = '#6e6e73'
 const SPLIT_MUTED = 'rgba(0, 0, 0, 0.06)'
 
-/** 与 chart-options.ts 对齐：天数 >30 时默认聚焦最近 30 天，仍可拖动查看全周期。 */
-function dataZoom(days: number) {
-  if (days <= 30) return undefined
-  const start = Math.max(0, 100 - (30 / days) * 100)
-  return [
-    { type: 'inside' as const, start, end: 100 },
-    { type: 'slider' as const, height: 16, bottom: 0, start, end: 100 }
-  ]
-}
-
 function rateText(value: unknown): string {
   return value == null ? '-' : `${value}%`
 }
@@ -213,7 +230,35 @@ export default { name: 'TrendsTab' }
 </script>
 
 <style scoped>
+.grain-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.grain-label {
+  font-size: 13px;
+  color: var(--mao-muted);
+}
+
+.chart-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.chart-grid > .span-2 {
+  grid-column: 1 / -1;
+}
+
 .block {
+  margin-bottom: 0;
+}
+
+.chart-grid + .block {
   margin-bottom: 16px;
 }
 
@@ -222,12 +267,17 @@ export default { name: 'TrendsTab' }
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  flex-wrap: wrap;
+}
+
+.chart-title {
+  font-weight: 600;
 }
 
 .card-hint {
   font-size: 12px;
   color: var(--mao-muted);
-  margin-bottom: 8px;
+  margin-bottom: 0;
 }
 
 .mini-title {
@@ -263,6 +313,10 @@ export default { name: 'TrendsTab' }
 }
 
 @media (max-width: 768px) {
+  .chart-grid {
+    grid-template-columns: 1fr;
+  }
+
   .quality-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

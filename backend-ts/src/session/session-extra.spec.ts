@@ -39,6 +39,7 @@ function makeService() {
     selectUserStarts: vi.fn(async () => []),
     selectRange: vi.fn(async () => []),
     selectMessagesForSearch: vi.fn(async () => []),
+    selectFirstMatchingMessages: vi.fn(async () => []),
     selectLastUserMessage: vi.fn(async () => null),
   };
   const fileChangeRepo = {
