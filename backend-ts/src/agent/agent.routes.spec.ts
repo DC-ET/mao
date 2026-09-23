@@ -108,7 +108,48 @@ describe('CRUD routes', () => {
       method: 'PUT', url: '/v1/agents/1/experiences/1', payload: { content: 'u' },
     })).statusCode).toBe(200);
     expect((await app.inject({ method: 'DELETE', url: '/v1/agents/1/experiences/1' })).statusCode).toBe(200);
+    expect(agentService.listAgents).toHaveBeenCalledWith(7, undefined, false);
     await app.close();
+  });
+
+  it('lists disabled agents only with agent read permission and toggles enabled', async () => {
+    const agent = { id: 1, name: 'A', systemPrompt: 'p', isDefault: 0, enabled: 1 };
+    const agentService = {
+      listAgents: vi.fn(async () => [agent]),
+      getAgentExperiences: vi.fn(async () => []),
+      getAgentSuggestedQuestions: vi.fn(async () => []),
+      setEnabled: vi.fn(async () => ({ ...agent, enabled: 0 })),
+    };
+    const userRepo = { findById: vi.fn(async () => null) };
+    const permissionService = { hasPermission: vi.fn(async () => false) };
+    const app = await appWithUser((f) => registerAgentRoutes(f, {
+      agentService: agentService as never,
+      experienceService: {} as never,
+      suggestedQuestionService: {} as never,
+      userRepo: userRepo as never,
+      mcpServerValidator: {} as never,
+      permissionService,
+    }));
+    try {
+      await app.inject({ method: 'GET', url: '/v1/agents?includeDisabled=true' });
+      expect(agentService.listAgents).toHaveBeenCalledWith(7, undefined, false);
+      expect((await app.inject({ method: 'PATCH', url: '/v1/agents/1/enabled', payload: { enabled: false } })).statusCode).toBe(403);
+      expect(agentService.setEnabled).not.toHaveBeenCalled();
+
+      permissionService.hasPermission.mockImplementation(async (_userId: number, code: string) => code === 'agent:read' || code === 'agent:write');
+      await app.inject({ method: 'GET', url: '/v1/agents?includeDisabled=true&keyword=coder' });
+      expect(agentService.listAgents).toHaveBeenLastCalledWith(7, 'coder', true);
+
+      const invalid = await app.inject({ method: 'PATCH', url: '/v1/agents/1/enabled', payload: { enabled: 'no' } });
+      expect(invalid.json().code).not.toBe(0);
+      expect(agentService.setEnabled).not.toHaveBeenCalled();
+
+      const toggled = await app.inject({ method: 'PATCH', url: '/v1/agents/1/enabled', payload: { enabled: false } });
+      expect(toggled.json().data.enabled).toBe(false);
+      expect(agentService.setEnabled).toHaveBeenCalledWith(1, false);
+    } finally {
+      await app.close();
+    }
   });
 
   it('model command user admin and mcp preference routes', async () => {

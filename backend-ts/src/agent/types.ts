@@ -13,6 +13,8 @@ export interface Agent {
   mcpServerIds?: string | null;
   defaultModelId?: number | null;
   isDefault?: number | null;
+  /** 1-启用 0-停用；缺省视为启用 */
+  enabled?: number | null;
   deleted?: number;
   createdAt?: string | null;
   updatedAt?: string | null;
@@ -61,12 +63,13 @@ export interface SuggestedQuestionInput {
 }
 
 export interface AgentRepository {
-  selectList(keyword?: string | null): Promise<Agent[]>;
+  selectList(keyword?: string | null, includeDisabled?: boolean): Promise<Agent[]>;
   findById(id: number): Promise<Agent | null>;
   findDefault(): Promise<Agent | null>;
   insert(agent: Agent): Promise<number>;
   updateById(agent: Agent, operatorId: number, writePrompt: boolean): Promise<void>;
   deleteById(id: number): Promise<void>;
+  updateEnabled(id: number, enabled: number): Promise<void>;
   clearDefaultFlag(): Promise<void>;
   removeSkillName(skillName: string): Promise<number>;
   listPromptVersions(agentId: number): Promise<AgentPromptVersion[]>;

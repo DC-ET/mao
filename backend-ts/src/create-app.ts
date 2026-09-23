@@ -556,7 +556,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       findById: (id) => agentRepo.findById(id) as never,
       findByIds: (ids) => agentRepo.findByIds(ids) as never,
       requireDefaultAgent: () => agentService.requireDefaultAgent() as never,
-      listOptions: async () => (await agentRepo.selectList()).map((a) => ({ id: a.id!, name: a.name })),
+      listOptions: async () => (await agentRepo.selectList(null, true)).map((a) => ({ id: a.id!, name: a.name })),
     },
     pathSandbox, envInfo, commandService, gitOps, sessionCompactionService, sessionCompactionEventService, todoRepo,
     runtimeSessionCleanup(runtimeRoot),
@@ -635,8 +635,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const mcpPref = new UserMcpPreferenceService(new UserMcpPreferenceMapper(db));
   const mcpServerService = new McpServerService(mcpMapper, mcpCipher, mcpPref, userRepo, {
     selectById: (id) => agentRepo.findById(id),
-    listAll: () => agentRepo.selectList(),
-    selectList: () => agentRepo.selectList(),
+    listAll: () => agentRepo.selectList(null, true),
+    selectList: () => agentRepo.selectList(null, true),
   });
   const mcpClient = new McpClientManager(cfg.app.mcp.clientTimeoutSeconds);
   const mcpToolsRegistry = new McpToolsRegistry();
@@ -1908,7 +1908,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         findById: (id: number) => agentRepo.findById(id),
         findByIds: (ids: number[]) => agentRepo.findByIds(ids),
         requireDefaultAgent: () => agentService.requireDefaultAgent(),
-        listOptions: async () => (await agentRepo.selectList()).map((a) => ({ id: a.id!, name: a.name })),
+        listOptions: async () => (await agentRepo.selectList(null, true)).map((a) => ({ id: a.id!, name: a.name })),
       } as never,
       modelLookup: {
         findById: (id: number) => modelRepo.findById(id),
@@ -1933,7 +1933,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         findById: (id: number) => agentRepo.findById(id),
         findByIds: (ids: number[]) => agentRepo.findByIds(ids),
         requireDefaultAgent: () => agentService.requireDefaultAgent(),
-        listOptions: async () => (await agentRepo.selectList()).map((a) => ({ id: a.id!, name: a.name })),
+        listOptions: async () => (await agentRepo.selectList(null, true)).map((a) => ({ id: a.id!, name: a.name })),
       } as never,
       modelLookup: {
         findById: (id: number) => modelRepo.findById(id),
@@ -1962,7 +1962,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         findById: (id: number) => agentRepo.findById(id),
         findByIds: (ids: number[]) => agentRepo.findByIds(ids),
         requireDefaultAgent: () => agentService.requireDefaultAgent(),
-        listOptions: async () => (await agentRepo.selectList()).map((a) => ({ id: a.id!, name: a.name })),
+        listOptions: async () => (await agentRepo.selectList(null, true)).map((a) => ({ id: a.id!, name: a.name })),
       } as never,
       permissionService,
       userLookup: {

@@ -23,6 +23,7 @@ describe('AgentService', () => {
     listPromptVersions: vi.fn(),
     rollbackPrompt: vi.fn(),
     deleteById: vi.fn(),
+    updateEnabled: vi.fn(),
     clearDefaultFlag: vi.fn(),
     removeSkillName: vi.fn(),
   };
@@ -69,6 +70,7 @@ describe('AgentService', () => {
     vi.mocked(agentRepo.findById).mockResolvedValue(existing);
 
     expect(await service.listAgents(7, 'old')).toEqual([existing]);
+    expect(agentRepo.selectList).toHaveBeenCalledWith('old', false);
     expect(await service.getAgent(1)).toBe(existing);
 
     const experiences = [experienceInputOf(null, 'tip', 0, true)];
@@ -88,6 +90,7 @@ describe('AgentService', () => {
     expect(created.skillNames).toContain('skill-a');
     expect(created.mcpServerIds).toContain('10');
     expect(created.isDefault).toBe(1);
+    expect(created.enabled).toBe(1);
     expect(agentRepo.insert).toHaveBeenCalledWith(created);
     expect(experienceService.syncExperiences).toHaveBeenCalledWith(created.id, experiences);
 
@@ -146,6 +149,27 @@ describe('AgentService', () => {
   it('get rejects missing agents', async () => {
     vi.mocked(agentRepo.findById).mockResolvedValue(null);
     await expect(service.getAgent(404)).rejects.toBeInstanceOf(BusinessException);
+  });
+
+  it('setEnabledRejectsDefaultAndPersistsOthers', async () => {
+    vi.mocked(agentRepo.findById).mockResolvedValue(agent(1, 'default', 1));
+    await expect(service.setEnabled(1, false)).rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
+    expect(agentRepo.updateEnabled).not.toHaveBeenCalled();
+
+    const plain = agent(2, 'coder', 0);
+    vi.mocked(agentRepo.findById).mockResolvedValue(plain);
+    expect((await service.setEnabled(2, false)).enabled).toBe(0);
+    expect(agentRepo.updateEnabled).toHaveBeenCalledWith(2, 0);
+    expect((await service.setEnabled(2, true)).enabled).toBe(1);
+    expect(agentRepo.updateEnabled).toHaveBeenCalledWith(2, 1);
+  });
+
+  it('updateRejectsMakingDisabledAgentDefault', async () => {
+    vi.mocked(agentRepo.findById).mockResolvedValue({ ...agent(2, 'coder', 0), enabled: 0 });
+    await expect(
+      service.updateAgent(7, 2, null, null, null, null, null, null, null, 1, undefined),
+    ).rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
+    expect(agentRepo.clearDefaultFlag).not.toHaveBeenCalled();
   });
 
   it('deleteRejectsDefaultAgent', async () => {

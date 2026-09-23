@@ -33,6 +33,8 @@ CLI：`mao model list|create|update|delete|set-status|test`（见 [model.md](mod
 
 创建不同职责的智能体（代码、运维、文档等）。创建、编辑和复制共用四个 Tab，切换不会丢失输入；保存统一校验，错误自动定位到对应分组。
 
+列表可按启用/停用筛选。有 `agent:write` 时可停用或重新启用：停用后，桌面 / Web / 安卓新建任务时的 Agent 列表以及 `mao agent list` 不再显示该 Agent，也不能用它新建会话；已有会话可以继续。默认 Agent 不能停用，需先把默认改到其他启用中的 Agent。飞书机器人、微信通道的下拉仍能看到已停用项（标记「已停用」且不可新选）；微信若仍指向已停用 Agent，下次进线会回退到默认 Agent。
+
 | Tab | 内容 |
 |------|------|
 | 基本信息 | 头像、名称、描述、Skills（留空默认全部）、MCP 服务器（留空不启用）、默认 Agent、默认模型（留空跟随系统默认） |
@@ -44,7 +46,7 @@ CLI：`mao model list|create|update|delete|set-status|test`（见 [model.md](mod
 
 头像支持 PNG / JPEG / WebP，最大 2 MiB、4096 × 4096 像素，不支持动画；服务端验证、去除元数据并缩放至 512 × 512 范围后转为 PNG。上传或移除后须保存 Agent 才生效；复制继承头像。后台列表、客户端 Agent 选择入口与 Embed SDK 使用同一头像；Embed SDK 浮窗标题同时显示 Agent 名称。未配置头像时使用原有默认标识。头像属于公开展示资源，请勿上传敏感图片。上传与保存需要 `agent:write` 权限。
 
-CLI：`mao agent list|get|create|update` 等（见 [agent.md](agent.md)）。
+CLI：`mao agent list|get|create|update|set-enabled` 等（见 [agent.md](agent.md)）。`list` 默认不含已停用项，管理查看加 `--include-disabled`。
 
 ### 系统提示词版本与回滚
 
@@ -61,10 +63,12 @@ CLI：`mao agent list|get|create|update` 等（见 [agent.md](agent.md)）。
 
 | Tab | 内容 |
 |-----|------|
-| 系统 Skills | 全局目录（`skill-docs`）：搜索、上传目录包、查看正文、删除 |
-| 个人 Skills | 全站用户在桌面端上传的个人技能（`/admin/user-skills`）：按用户展示、关键词搜索、查看正文、删除；不在此上传 |
+| 系统 Skills | 全局目录（`skill-docs`）：搜索、上传目录包、查看正文、删除。全体用户可用 |
+| 个人 Skills | 各用户的个人技能（`/admin/user-skills`）：按用户展示、关键词搜索、查看正文、删除。也可在此选择用户后上传目录包，只写入这些用户的个人技能，不会进入系统技能库 |
 
-个人 Skills 列表读需 `agent:read`，删除需 `agent:write`。CLI 全局目录：`mao skill-docs`（见 [skill-docs.md](skill-docs.md)）；个人技能本用户操作：`mao skill`（见 [skill.md](skill.md)）。
+只适用于部分用户的技能不要传到系统 Skills。在「个人 Skills」里选择目标用户后上传，效果与这些用户自己在桌面端上传相同：仅他们可用，并在其所有智能体中生效；同名个人技能会被覆盖。若与系统技能同名，这些用户使用这份个人技能。拖放会按松手时选中的用户上传，读取目录完成前不能切换页签。`node_modules`、`.git`、`.svn`、`dist`、`__MACOSX` 会跳过；最多 500 个文件、单文件 20MB、总量 50MB。手机端可查看和删除，上传请在电脑浏览器完成。列表读需 `agent:read`，上传与删除需 `agent:write`。
+
+CLI：全局目录 `mao skill-docs`；发给指定用户 `mao skill-docs assign --dir ./my-skill --user-ids 1,2`（见 [skill-docs.md](skill-docs.md)）。本用户自己的个人技能：`mao skill`（见 [skill.md](skill.md)）。
 
 ## 指令管理
 

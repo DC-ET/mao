@@ -47,7 +47,7 @@ Mao 不是又一个 ChatGPT 套壳，也不是 Dify / n8n 那样的低代码工�
 |---|---|
 | **Harness 引擎** | Think-Act-Observe 循环、流式输出、上下文压缩、崩溃恢复；不是 LLM 网关。 |
 | **CLOUD / LOCAL** | 云端在服务器执行；本地经 Electron 或 `mao-agent --local` 在本机执行，支持只读 / 读写 / 智能审批 / 完全权限。 |
-| **多 Agent** | 角色提示词、Skill、MCP、经验、推荐问题；提示词可版本化与回滚。 |
+| **多 Agent** | 角色提示词、Skill、MCP、经验、推荐问题；提示词可版本化与回滚。可在管理后台停用，停用后使用侧列表不再展示。 |
 | **工具与扩展** | Shell、文件、搜索、网页、文生图、子代理委派；Skill + 全局/用户级 MCP。 |
 | **协作** | 边路任务、后台子代理（`default` / `explorer` / `worker` / `reviewer`）、定时任务、完成通知。 |
 | **工作区** | 云端新建 / 复用 / Git HTTPS clone；文件树与 Git diff 只读浏览；CLOUD 可开服务端交互终端。 |

@@ -65,7 +65,7 @@ const GLOBAL_HELP = `mao-cli — Mao 用户端与管理后台统一 CLI
   user            用户管理
   role            角色与权限
   permission      权限点列表
-  skill-docs      全局 Skill 文档
+  skill-docs      全局 Skill 文档；assign 写入指定用户的个人技能
   admin-session   管理端会话检索
   runtime         运行监控
   analytics       分析汇总 / 分维度

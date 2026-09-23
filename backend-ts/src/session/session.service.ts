@@ -88,6 +88,9 @@ export class SessionService {
     if (agent == null) {
       throw new BusinessException(ErrorCode.AGENT_NOT_FOUND);
     }
+    if (agent.enabled === 0) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '该 Agent 已停用');
+    }
 
     const session: Session = {
       userId,

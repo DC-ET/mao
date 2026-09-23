@@ -240,10 +240,11 @@ test.describe('Skills Management', () => {
     await expect(page.locator('.skill-tabs .el-tabs__item')).toContainText(['系统 Skills', '个人 Skills'])
     await page.click('.skill-tabs .el-tabs__item:has-text("个人 Skills")')
     await expect(page.locator('.el-tabs__item.is-active')).toContainText('个人 Skills')
-    await expect(page.locator('.upload-zone')).toHaveCount(0)
+    await expect(page.getByText('目标用户')).toBeVisible()
+    await expect(page.locator('.upload-text')).toContainText('拖动或点击上传到所选用户')
     await expect(page.locator('.el-table thead th')).toContainText(['用户', '名称', '描述'])
     await page.click('.skill-tabs .el-tabs__item:has-text("系统 Skills")')
-    await expect(page.locator('.upload-zone')).toBeVisible()
+    await expect(page.locator('.upload-text')).toContainText('拖动或点击上传 Skills 目录')
   })
 })
 

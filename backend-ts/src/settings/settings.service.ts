@@ -558,6 +558,12 @@ export class SystemSettingService {
       if (!agent) {
         throw new BusinessException(ErrorCode.PARAM_INVALID, '指定的 Agent 不存在');
       }
+      if (agent.enabled === 0) {
+        const current = (await this.settingRepo.findByKey(key))?.value ?? '';
+        if (current.trim() !== value!.trim()) {
+          throw new BusinessException(ErrorCode.PARAM_INVALID, '指定的 Agent 已停用');
+        }
+      }
       return;
     }
     if (key === WEIXIN_MODEL_ID_KEY || key === SESSION_TITLE_MODEL_ID_KEY || key === GIT_COMMIT_MESSAGE_MODEL_ID_KEY) {

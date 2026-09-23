@@ -22,6 +22,12 @@
             @clear="handleSearch"
           />
         </el-form-item>
+        <el-form-item label="状态">
+          <el-select v-model="statusFilter" clearable placeholder="全部" style="width: 120px" @change="handleStatusFilter">
+            <el-option label="启用" value="enabled" />
+            <el-option label="停用" value="disabled" />
+          </el-select>
+        </el-form-item>
         <el-form-item>
           <el-button type="primary" @click="handleSearch">查询</el-button>
         </el-form-item>
@@ -42,6 +48,13 @@
           </template>
         </el-table-column>
         <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip />
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">
+            <el-tag :type="row.enabled === false ? 'info' : 'success'" size="small">
+              {{ row.enabled === false ? '停用' : '启用' }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="创建人" width="120" show-overflow-tooltip class-name="hide-on-mobile" label-class-name="hide-on-mobile">
           <template #default="{ row }">{{ row.creatorName || '-' }}</template>
         </el-table-column>
@@ -52,12 +65,24 @@
           <template #default="{ row }">{{ row.experiences?.length || 0 }}</template>
         </el-table-column>
         <el-table-column prop="createdAt" label="创建时间" width="180" :formatter="formatDateTimeColumn" />
-        <el-table-column label="操作" width="270" fixed="right">
+        <el-table-column label="操作" width="330" fixed="right">
           <template #default="{ row }">
             <template v-if="canWrite">
               <el-button type="primary" link size="small" @click="handleCopy(row)">复制</el-button>
               <el-button type="primary" link size="small" @click="handleEdit(row)">编辑</el-button>
               <el-button type="primary" link size="small" @click="historyAgent = row">提示词版本</el-button>
+              <el-tooltip v-if="row.isDefault && row.enabled !== false" content="默认 Agent 不可停用" placement="top">
+                <span class="disabled-btn-wrap">
+                  <el-button type="danger" link size="small" disabled>停用</el-button>
+                </span>
+              </el-tooltip>
+              <el-button
+                v-else
+                :type="row.enabled === false ? 'success' : 'danger'"
+                link
+                size="small"
+                @click="handleToggleEnabled(row)"
+              >{{ row.enabled === false ? '启用' : '停用' }}</el-button>
               <el-tooltip v-if="row.isDefault" content="默认 Agent 不可删除" placement="top">
                 <span class="disabled-btn-wrap">
                   <el-button type="danger" link size="small" disabled>删除</el-button>
@@ -76,6 +101,9 @@
             <el-avatar :size="32" :src="resolveAgentAvatarUrl(row.avatarUrl)" shape="square">{{ row.name?.slice(0, 1) || 'A' }}</el-avatar>
             <span class="mobile-card-title">{{ row.name }}</span>
             <el-tag v-if="row.isDefault" type="warning" size="small">默认</el-tag>
+            <el-tag :type="row.enabled === false ? 'info' : 'success'" size="small">
+              {{ row.enabled === false ? '停用' : '启用' }}
+            </el-tag>
           </div>
           <div class="mobile-card-row">
             <span class="mobile-card-label">描述</span>
@@ -90,6 +118,17 @@
               <el-button type="primary" link @click="handleCopy(row)">复制</el-button>
               <el-button type="primary" link @click="handleEdit(row)">编辑</el-button>
               <el-button type="primary" link @click="historyAgent = row">提示词版本</el-button>
+              <el-tooltip v-if="row.isDefault && row.enabled !== false" content="默认 Agent 不可停用" placement="top">
+                <span class="disabled-btn-wrap">
+                  <el-button type="danger" link disabled>停用</el-button>
+                </span>
+              </el-tooltip>
+              <el-button
+                v-else
+                :type="row.enabled === false ? 'success' : 'danger'"
+                link
+                @click="handleToggleEnabled(row)"
+              >{{ row.enabled === false ? '启用' : '停用' }}</el-button>
               <el-tooltip v-if="row.isDefault" content="默认 Agent 不可删除" placement="top">
                 <span class="disabled-btn-wrap">
                   <el-button type="danger" link disabled>删除</el-button>
@@ -151,6 +190,7 @@ const loading = ref(false)
 const loadingDetail = ref(false)
 const allAgents = ref<any[]>([])
 const searchQuery = ref('')
+const statusFilter = ref('')
 const currentPage = ref(1)
 const pageSize = ref(10)
 const dialogVisible = ref(false)
@@ -165,7 +205,7 @@ async function fetchAgents() {
   loading.value = true
   try {
     const { data } = await api.get('/agents', {
-      params: { keyword: searchQuery.value }
+      params: { keyword: searchQuery.value, includeDisabled: true }
     })
     if (seq !== fetchAgentsSeq) return
     allAgents.value = data || []
@@ -174,15 +214,24 @@ async function fetchAgents() {
   }
 }
 
-const total = computed(() => allAgents.value.length)
+const matchedAgents = computed(() => {
+  if (statusFilter.value === 'enabled') return allAgents.value.filter((row) => row.enabled !== false)
+  if (statusFilter.value === 'disabled') return allAgents.value.filter((row) => row.enabled === false)
+  return allAgents.value
+})
+const total = computed(() => matchedAgents.value.length)
 const filteredAgents = computed(() => {
   const start = (currentPage.value - 1) * pageSize.value
-  return allAgents.value.slice(start, start + pageSize.value)
+  return matchedAgents.value.slice(start, start + pageSize.value)
 })
 
 function handleSearch() {
   currentPage.value = 1
   fetchAgents()
+}
+
+function handleStatusFilter() {
+  currentPage.value = 1
 }
 
 function handleSizeChange() {
@@ -223,6 +272,25 @@ async function handleEdit(row: any) {
     dialogVisible.value = true
   } catch { /* 拦截器已提示失败 */ } finally {
     loadingDetail.value = false
+  }
+}
+
+async function handleToggleEnabled(row: any) {
+  const enable = row.enabled === false
+  const actionText = enable ? '启用' : '停用'
+  try {
+    await ElMessageBox.confirm(
+      enable
+        ? `确定要启用 Agent「${row.name}」吗？启用后会重新出现在使用侧的 Agent 列表中。`
+        : `确定要停用 Agent「${row.name}」吗？停用后使用侧的 Agent 列表不再显示，也不能用它新建会话。已有会话可以继续。`,
+      '确认',
+      { type: enable ? 'success' : 'warning' }
+    )
+    await api.patch(`/agents/${row.id}/enabled`, { enabled: enable })
+    ElMessage.success(`${actionText}成功`)
+    fetchAgents()
+  } catch {
+    // Cancelled or error handled by interceptor
   }
 }
 

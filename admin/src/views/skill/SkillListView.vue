@@ -8,7 +8,7 @@
         </div>
       </template>
 
-      <el-tabs v-model="activeTab" class="skill-tabs" @tab-change="handleTabChange">
+      <el-tabs v-model="activeTab" class="skill-tabs" :before-leave="beforeLeaveSkillTab" @tab-change="handleTabChange">
         <el-tab-pane label="系统 Skills" name="system" />
         <el-tab-pane label="个人 Skills" name="personal" />
       </el-tabs>
@@ -38,7 +38,7 @@
           v-else
           class="upload-zone"
           :class="{ 'is-dragover': isDragover }"
-          v-loading="uploading"
+          v-loading="uploadBusy"
           element-loading-text="上传中..."
           @dragover.prevent="isDragover = true"
           @dragleave.prevent="isDragover = false"
@@ -55,17 +55,72 @@
           />
           <el-icon class="upload-icon"><UploadFilled /></el-icon>
           <div class="upload-text">拖动或点击上传 Skills 目录</div>
-          <div class="upload-hint">可一次选择或拖入一个或多个包含 SKILL.md 的目录。</div>
+          <div class="upload-hint">可一次选择或拖入一个或多个包含 SKILL.md 的目录。node_modules、.git、dist 等目录会跳过。</div>
         </div>
       </template>
-      <el-alert
-        v-else
-        type="info"
-        :closable="false"
-        show-icon
-        title="个人 Skills 由用户在桌面端上传，此处可查看与删除；如需上传请由对应用户操作。"
-        style="margin-bottom: 12px"
-      />
+      <template v-else>
+        <el-alert
+          v-if="isMobile"
+          type="info"
+          :closable="false"
+          show-icon
+          title="手机端可查看、删除已有个人 Skill；上传到指定用户请在电脑浏览器完成。"
+          style="margin-bottom: 12px"
+        />
+        <el-alert
+          v-else-if="!canWrite"
+          type="info"
+          :closable="false"
+          show-icon
+          title="当前账号只能查看个人 Skills。上传到指定用户需要管理 Agent 权限。"
+          style="margin-bottom: 12px"
+        />
+        <template v-else>
+          <el-form :inline="true" class="assign-form" @submit.prevent>
+            <el-form-item label="目标用户">
+              <el-select
+                v-model="assignUserIds"
+                multiple
+                filterable
+                collapse-tags
+                collapse-tags-tooltip
+                clearable
+                placeholder="选择要添加个人技能的用户"
+                style="width: 420px"
+              >
+                <el-option
+                  v-for="user in userOptions"
+                  :key="user.id"
+                  :label="userOptionLabel(user)"
+                  :value="user.id"
+                />
+              </el-select>
+            </el-form-item>
+          </el-form>
+          <div
+            class="upload-zone"
+            :class="{ 'is-dragover': isDragover, 'is-blocked': assignUserIds.length === 0 }"
+            v-loading="uploadBusy"
+            element-loading-text="上传中..."
+            @dragover.prevent="isDragover = true"
+            @dragleave.prevent="isDragover = false"
+            @drop.prevent="handleDrop"
+            @click="triggerFileInput"
+          >
+            <input
+              ref="fileInputRef"
+              type="file"
+              webkitdirectory
+              multiple
+              style="display: none"
+              @change="handleFileInputChange"
+            />
+            <el-icon class="upload-icon"><UploadFilled /></el-icon>
+            <div class="upload-text">拖动或点击上传到所选用户</div>
+            <div class="upload-hint">只写入所选用户的个人技能，不会成为系统技能，也不影响其他用户。同名技能会被覆盖，并在这些用户的所有智能体中生效。node_modules、.git、dist 等目录会跳过。</div>
+          </div>
+        </template>
+      </template>
 
       <!-- System skill table -->
       <el-table
@@ -236,7 +291,7 @@
 
 <script setup lang="ts">
 import { computed, ref, onMounted, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
 import { api } from '../../api'
 import { useAuthStore } from '../../stores/auth'
@@ -260,14 +315,16 @@ const detailVisible = ref(false)
 const currentDoc = ref<any>(null)
 const isDragover = ref(false)
 const fileInputRef = ref<HTMLInputElement | null>(null)
-const uploading = ref(false)
+const uploadBusy = ref(false)
+const userOptions = ref<Array<{ id: number; username?: string | null; displayName?: string | null }>>([])
+const assignUserIds = ref<number[]>([])
 
 async function fetchSkillDocs() {
   loading.value = true
   try {
     const [{ data }, agentRes] = await Promise.all([
       api.get('/skill-docs'),
-      api.get('/agents')
+      api.get('/agents', { params: { includeDisabled: true } })
     ])
     skillDocs.value = data || []
     agents.value = agentRes.data || []
@@ -279,8 +336,12 @@ async function fetchSkillDocs() {
 async function fetchPersonalSkills() {
   loading.value = true
   try {
-    const { data } = await api.get('/admin/user-skills')
-    personalSkills.value = data || []
+    const skillsReq = api.get('/admin/user-skills')
+    const usersReq = api.get('/admin/user-skills/options/users').catch(() => null)
+    const skillsRes = await skillsReq
+    personalSkills.value = skillsRes.data || []
+    const usersRes = await usersReq
+    if (usersRes) userOptions.value = usersRes.data || []
   } catch { /* 拦截器已提示失败 */ } finally {
     loading.value = false
   }
@@ -350,6 +411,14 @@ function userLabel(row: any) {
   return row.displayName || row.username || `用户#${row.userId}`
 }
 
+function userOptionLabel(user: { id: number; username?: string | null; displayName?: string | null }) {
+  const name = user.displayName || user.username || `用户#${user.id}`
+  if (user.username && user.displayName && user.displayName !== user.username) {
+    return `${user.displayName}（${user.username}）`
+  }
+  return name
+}
+
 function relatedAgentCount(skillName: string) {
   return agents.value.filter(agent => (agent.skillNames || []).includes(skillName)).length
 }
@@ -375,41 +444,88 @@ async function handleView(row: any) {
 
 // ========== Upload ==========
 
+type UploadTarget = { kind: 'system' } | { kind: 'personal'; userIds: number[] }
+
+const SKILL_UPLOAD_EXCLUDED_DIRS = ['node_modules/', '.git/', '.svn/', 'dist/', '__MACOSX/']
+const SKILL_UPLOAD_MAX_FILES = 500
+const SKILL_UPLOAD_MAX_TOTAL = 50 * 1024 * 1024
+const SKILL_UPLOAD_MAX_SINGLE = 20 * 1024 * 1024
+
+function beforeLeaveSkillTab() {
+  if (!uploadBusy.value) return true
+  ElMessage.warning('正在处理上传，请稍候再切换')
+  return false
+}
+
+function captureUploadTarget(): UploadTarget {
+  if (activeTab.value === 'personal') {
+    return { kind: 'personal', userIds: [...assignUserIds.value] }
+  }
+  return { kind: 'system' }
+}
+
 function triggerFileInput() {
+  if (uploadBusy.value) return
+  if (activeTab.value === 'personal' && assignUserIds.value.length === 0) {
+    ElMessage.warning('请先选择要添加技能的用户')
+    return
+  }
   fileInputRef.value?.click()
 }
 
 function handleFileInputChange(e: Event) {
   const input = e.target as HTMLInputElement
   if (input.files && input.files.length > 0) {
-    uploadFiles(Array.from(input.files))
+    const files = Array.from(input.files)
+    const target = captureUploadTarget()
     input.value = '' // reset so same folder can be selected again
+    void uploadFiles(files, target)
   }
 }
 
-function handleDrop(e: DragEvent) {
+async function handleDrop(e: DragEvent) {
   isDragover.value = false
+  if (uploadBusy.value) return
+  const target = captureUploadTarget()
+  if (target.kind === 'personal' && target.userIds.length === 0) {
+    ElMessage.warning('请先选择要添加技能的用户')
+    return
+  }
   const items = e.dataTransfer?.items
   if (!items) return
 
+  uploadBusy.value = true
   const files: File[] = []
   const pending: Promise<void>[] = []
+  const readState = { failed: false }
 
   for (let i = 0; i < items.length; i++) {
     const entry = items[i]?.webkitGetAsEntry?.()
     if (entry) {
-      pending.push(readEntryRecursive(entry, '', files))
+      pending.push(readEntryRecursive(entry, '', files, readState))
     }
   }
 
-  Promise.all(pending).then(() => {
-    if (files.length > 0) {
-      uploadFiles(files)
+  try {
+    await Promise.all(pending)
+    if (readState.failed) {
+      ElMessage.error('读取目录失败，已取消上传')
+      return
     }
-  })
+    if (files.length > 0) {
+      await uploadFiles(files, target, { busyHeld: true })
+    }
+  } finally {
+    uploadBusy.value = false
+  }
 }
 
-function readEntryRecursive(entry: FileSystemEntry, basePath: string, files: File[]): Promise<void> {
+function readEntryRecursive(
+  entry: FileSystemEntry,
+  basePath: string,
+  files: File[],
+  readState: { failed: boolean },
+): Promise<void> {
   return new Promise((resolve) => {
     if (entry.isFile) {
       const fileEntry = entry as FileSystemFileEntry
@@ -420,7 +536,10 @@ function readEntryRecursive(entry: FileSystemEntry, basePath: string, files: Fil
         const newFile = new File([file], relativePath, { type: file.type })
         files.push(newFile)
         resolve()
-      }, () => resolve())
+      }, () => {
+        readState.failed = true
+        resolve()
+      })
     } else if (entry.isDirectory) {
       const dirEntry = entry as FileSystemDirectoryEntry
       const dirReader = dirEntry.createReader()
@@ -436,11 +555,14 @@ function readEntryRecursive(entry: FileSystemEntry, basePath: string, files: Fil
               cb([...entries, ...moreEntries])
             })
           }
-        }, () => cb([]))
+        }, () => {
+          readState.failed = true
+          cb([])
+        })
       }
 
       readAll(dirReader, (entries) => {
-        const childPromises = entries.map((child) => readEntryRecursive(child, dirPath, files))
+        const childPromises = entries.map((child) => readEntryRecursive(child, dirPath, files, readState))
         Promise.all(childPromises).then(() => resolve())
       })
     } else {
@@ -449,28 +571,115 @@ function readEntryRecursive(entry: FileSystemEntry, basePath: string, files: Fil
   })
 }
 
-async function uploadFiles(files: File[]) {
-  if (uploading.value) return
-  uploading.value = true
+function assignTargetSummary(userIds: number[]) {
+  const labels = userIds.map((id) => {
+    const user = userOptions.value.find((item) => item.id === id)
+    return user ? userOptionLabel(user) : `用户#${id}`
+  })
+  if (labels.length <= 8) return labels.join('、')
+  return `${labels.slice(0, 8).join('、')} 等 ${labels.length} 人`
+}
 
-  const formData = new FormData()
-  for (const file of files) {
-    // webkitRelativePath preserves the folder structure, e.g. "bigdata-cli/SKILL.md"
-    const relativePath = (file as any).webkitRelativePath || file.name
-    formData.append('files', file, relativePath)
-  }
-
+async function confirmAssignUpload(userIds: number[]) {
   try {
-    const { data } = await api.post('/skill-docs/upload', formData, {
+    await ElMessageBox.confirm(
+      `将把技能写入以下用户的个人技能，不会成为系统技能，也不影响其他用户：${assignTargetSummary(userIds)}。同名个人技能会被覆盖，并在这些用户的所有智能体中生效。`,
+      '添加到指定用户',
+      { confirmButtonText: '上传', cancelButtonText: '取消', type: 'warning' },
+    )
+    return true
+  } catch {
+    return false
+  }
+}
+
+function skillRelativePath(file: File) {
+  const named = file as File & { webkitRelativePath?: string }
+  return (named.webkitRelativePath || file.name).replace(/\\/g, '/')
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes}B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)}MB`
+}
+
+function prepareSkillUploadFiles(files: File[]) {
+  const valid: File[] = []
+  let totalSize = 0
+  let excludedCount = 0
+  for (const file of files) {
+    const relativePath = skillRelativePath(file)
+    if (SKILL_UPLOAD_EXCLUDED_DIRS.some((dir) => relativePath.includes(dir))) {
+      excludedCount++
+      continue
+    }
+    if (file.size > SKILL_UPLOAD_MAX_SINGLE) {
+      ElMessage.error(`文件过大（${formatBytes(file.size)}）：${relativePath}，单文件上限 ${formatBytes(SKILL_UPLOAD_MAX_SINGLE)}`)
+      return null
+    }
+    totalSize += file.size
+    if (totalSize > SKILL_UPLOAD_MAX_TOTAL) {
+      ElMessage.error(`上传总大小超过 ${formatBytes(SKILL_UPLOAD_MAX_TOTAL)} 上限，请精简技能目录后重试`)
+      return null
+    }
+    valid.push(file)
+  }
+  if (valid.length > SKILL_UPLOAD_MAX_FILES) {
+    ElMessage.error(`文件数量超过 ${SKILL_UPLOAD_MAX_FILES} 上限（当前 ${valid.length} 个），请精简技能目录后重试`)
+    return null
+  }
+  if (valid.length === 0) {
+    ElMessage.error(excludedCount > 0 ? '所选内容中无可上传的文件（已排除 node_modules/.git 等目录）' : '未选择任何文件')
+    return null
+  }
+  return valid
+}
+
+async function uploadFiles(files: File[], target: UploadTarget, options?: { busyHeld?: boolean }) {
+  if (uploadBusy.value && !options?.busyHeld) return
+  if (!options?.busyHeld) uploadBusy.value = true
+  let sent = false
+  try {
+    const prepared = prepareSkillUploadFiles(files)
+    if (!prepared) return
+    if (target.kind === 'personal') {
+      if (target.userIds.length === 0) {
+        ElMessage.warning('请先选择要添加技能的用户')
+        return
+      }
+      if (!(await confirmAssignUpload(target.userIds))) return
+    }
+
+    const formData = new FormData()
+    for (const file of prepared) {
+      formData.append('files', file, skillRelativePath(file))
+    }
+    if (target.kind === 'personal') {
+      formData.append('userIds', target.userIds.join(','))
+    }
+
+    sent = true
+    const { data } = await api.post(target.kind === 'personal' ? '/admin/user-skills/upload' : '/skill-docs/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' }
     })
-    const names = data || []
-    ElMessage.success(`Skills 上传成功：${names.join(', ')}`)
-    await fetchSkillDocs()
+    if (target.kind === 'personal') {
+      const names = (data?.skills || []).join(', ')
+      const count = data?.users?.length || target.userIds.length
+      ElMessage.success(names ? `已将 ${names} 添加到 ${count} 个用户` : `已添加到 ${count} 个用户`)
+      await fetchPersonalSkills()
+    } else {
+      const names = data || []
+      ElMessage.success(`Skills 上传成功：${names.join(', ')}`)
+      await fetchSkillDocs()
+    }
   } catch {
-    // Error handled by interceptor
+    // 拦截器已提示失败。个人技能可能已写入部分用户，刷新后列表才和磁盘一致。
+    if (target.kind === 'personal' && sent) {
+      await fetchPersonalSkills()
+    }
   } finally {
-    uploading.value = false
+    if (!options?.busyHeld) uploadBusy.value = false
   }
 }
 
@@ -510,6 +719,9 @@ onMounted(fetchActiveTab)
 .search-form {
   margin-bottom: 16px;
 }
+.assign-form {
+  margin-bottom: 12px;
+}
 .pagination {
   margin-top: 20px;
   justify-content: flex-end;
@@ -523,10 +735,13 @@ onMounted(fetchActiveTab)
   transition: all 0.2s;
   background: var(--el-fill-color-blank);
 }
-.upload-zone:hover,
-.upload-zone.is-dragover {
+.upload-zone:hover:not(.is-blocked),
+.upload-zone.is-dragover:not(.is-blocked) {
   border-color: var(--el-color-primary);
   background: var(--el-color-primary-light-9);
+}
+.upload-zone.is-blocked {
+  cursor: not-allowed;
 }
 .upload-icon {
   font-size: 48px;

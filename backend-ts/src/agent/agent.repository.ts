@@ -15,9 +15,12 @@ import type {
 export class MysqlAgentRepository implements AgentRepository {
   constructor(private readonly db: Db) {}
 
-  selectList(keyword?: string | null): Promise<Agent[]> {
+  selectList(keyword?: string | null, includeDisabled = false): Promise<Agent[]> {
     const where: string[] = [notDeleted()];
     const params: unknown[] = [];
+    if (!includeDisabled) {
+      where.push('enabled = 1');
+    }
     if (keyword != null && keyword.length > 0) {
       where.push('name LIKE ?');
       params.push(`%${keyword}%`);
@@ -47,7 +50,7 @@ export class MysqlAgentRepository implements AgentRepository {
 
   findDefault(): Promise<Agent | null> {
     return this.db.queryOne<Agent>(
-      `SELECT * FROM agent WHERE is_default = 1 AND ${notDeleted()} LIMIT 1`,
+      `SELECT * FROM agent WHERE is_default = 1 AND enabled = 1 AND ${notDeleted()} LIMIT 1`,
     );
   }
 
@@ -64,6 +67,7 @@ export class MysqlAgentRepository implements AgentRepository {
         mcpServerIds: agent.mcpServerIds,
         defaultModelId: agent.defaultModelId ?? null,
         isDefault: agent.isDefault ?? 0,
+        enabled: agent.enabled ?? 1,
         deleted: 0,
       });
       await tx.insert('agent_prompt_versions', {
@@ -137,6 +141,10 @@ export class MysqlAgentRepository implements AgentRepository {
 
   async deleteById(id: number): Promise<void> {
     await this.db.updateById('agent', id, { deleted: 1 });
+  }
+
+  async updateEnabled(id: number, enabled: number): Promise<void> {
+    await this.db.updateById('agent', id, { enabled });
   }
 
   async clearDefaultFlag(): Promise<void> {

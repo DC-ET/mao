@@ -10,6 +10,7 @@ export interface Agent {
   description: string
   executionMode: string
   isDefault?: boolean
+  enabled?: boolean
 }
 
 export const useAgentStore = defineStore('agent', () => {
@@ -26,7 +27,7 @@ export const useAgentStore = defineStore('agent', () => {
     loading.value = true
     try {
       const { data } = await api.get('/agents')
-      agents.value = data || []
+      agents.value = (data || []).filter((agent: Agent) => agent.enabled !== false)
     } catch {
       agents.value = []
     } finally {

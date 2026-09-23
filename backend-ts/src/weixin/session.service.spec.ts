@@ -103,6 +103,13 @@ describe('WeixinSessionService', () => {
     expect(sessionService.createSession).toHaveBeenCalledTimes(1);
   });
 
+  it('resolveWeixinAgentFallsBackWhenConfiguredAgentDisabled', async () => {
+    systemSettingService.getValue.mockResolvedValue('10');
+    agentService.getAgent.mockResolvedValue({ id: 10, name: 'off', enabled: 0 });
+    agentService.requireDefaultAgent.mockResolvedValue({ id: 99, name: 'default' });
+    expect((await service.resolveWeixinAgent()).id).toBe(99);
+  });
+
   it('resolveWeixinAgentFallsBackToDefaultWhenUnset', async () => {
     systemSettingService.getValue.mockResolvedValue('');
     agentService.requireDefaultAgent.mockResolvedValue({ id: 99, name: 'default' });

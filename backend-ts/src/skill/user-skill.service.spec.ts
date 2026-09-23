@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { useTmpDir } from '../testing/tmp-dir.js';
@@ -87,4 +87,52 @@ describe('UserSkillService', () => {
       buffer: Buffer.from('---\nname: bad\n---\nbody\n'),
     }]).message).toContain('description');
   });
+
+  it('replacesSkillOnlyAfterStagingSucceeds', () => {
+    const dir = useTmpDir('mao-uskill-');
+    const service = new UserSkillService(dir);
+    const folder = join(dir, '7', 'keep');
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, 'SKILL.md'), skill('keep', 'Keep', 'Old'));
+
+    const invalid = service.uploadUserSkill(7, [
+      { originalFilename: 'keep/SKILL.md', buffer: Buffer.from(skill('keep', 'Keep', 'New')) },
+      { originalFilename: 'bad/readme.md', buffer: Buffer.from('x') },
+    ]);
+    expect(invalid.code).toBe(400);
+    expect(readFileSync(join(folder, 'SKILL.md'), 'utf8')).toContain('Old');
+
+    const replaced = service.uploadUserSkill(7, [
+      { originalFilename: 'keep/SKILL.md', buffer: Buffer.from(skill('keep', 'Keep', 'New')) },
+      { originalFilename: 'other/SKILL.md', buffer: Buffer.from(skill('other', 'Other', 'Body')) },
+    ]);
+    expect(replaced.code).toBe(0);
+    expect(replaced.data).toEqual(['keep', 'other']);
+    expect(readFileSync(join(folder, 'SKILL.md'), 'utf8')).toContain('New');
+    expect(readFileSync(join(dir, '7', 'other', 'SKILL.md'), 'utf8')).toContain('Body');
+    expect(service.listUserSkills(7).map((item) => item.name).sort()).toEqual(['keep', 'other']);
+  });
+
+  it.skipIf(typeof process.getuid === 'function' && process.getuid() === 0)(
+    'keepsExistingSkillWhenReplaceCannotStart',
+    () => {
+      const dir = useTmpDir('mao-uskill-');
+      const service = new UserSkillService(dir);
+      const userDir = join(dir, '7');
+      const folder = join(userDir, 'keep');
+      mkdirSync(folder, { recursive: true });
+      writeFileSync(join(folder, 'SKILL.md'), skill('keep', 'Keep', 'Old'));
+      chmodSync(userDir, 0o555);
+      try {
+        const failed = service.uploadUserSkill(7, [
+          { originalFilename: 'keep/SKILL.md', buffer: Buffer.from(skill('keep', 'Keep', 'New')) },
+        ]);
+        expect(failed.code).toBe(500);
+        expect(failed.message).toContain('原技能未替换');
+        expect(readFileSync(join(folder, 'SKILL.md'), 'utf8')).toContain('Old');
+      } finally {
+        chmodSync(userDir, 0o755);
+      }
+    },
+  );
 });

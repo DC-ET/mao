@@ -29,6 +29,8 @@ export interface AgentVO {
   creatorId?: number | null;
   creatorName?: string | null;
   isDefault?: boolean;
+  /** false 表示已停用。使用侧列表不返回停用项；管理端 includeDisabled 时才会看到 */
+  enabled?: boolean;
   /** Agent 默认模型 ID：会话未显式选模型时的优先回退（null=未配置，再回退全局默认模型） */
   defaultModelId?: number | null;
   skillNames?: string[];

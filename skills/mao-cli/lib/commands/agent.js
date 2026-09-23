@@ -15,8 +15,9 @@ const { request } = require('../http');
 const { outputResult } = require('../output');
 
 const HELP = `用法:
-  mao agent list [--keyword <关键词>]
+  mao agent list [--keyword <关键词>] [--include-disabled]
   mao agent get --id <id>
+  mao agent set-enabled --id <id> --enabled true|false
   mao agent create --name <名称> --system-prompt <提示词> [--description] [--tags] [--skill-names] [--experiences-json] [--suggested-questions-json] [--is-default true|false]
   mao agent update --id <id> [--name] [--description] [--system-prompt] [--tags] [--skill-names] [--experiences-json] [--suggested-questions-json] [--is-default true|false]
   mao agent delete --id <id>
@@ -139,11 +140,30 @@ async function handle(ctx) {
 
   switch (subcommand) {
     case 'list': {
+      const includeDisabled = optionalBoolean(flags, 'include-disabled');
       const result = await request({
         ...common,
         method: 'GET',
         path: '/agents',
-        query: { keyword: optionalString(flags, 'keyword') },
+        query: {
+          keyword: optionalString(flags, 'keyword'),
+          includeDisabled: includeDisabled ? true : undefined,
+        },
+      });
+      outputResult(result, globals);
+      return;
+    }
+    case 'set-enabled': {
+      const id = requireNumber(flags, 'id', 'Agent ID');
+      const enabled = optionalBoolean(flags, 'enabled');
+      if (enabled === undefined) {
+        throw createCliError('缺少必填参数 --enabled（true 启用 / false 停用）');
+      }
+      const result = await request({
+        ...common,
+        method: 'PATCH',
+        path: `/agents/${id}/enabled`,
+        body: { enabled },
       });
       outputResult(result, globals);
       return;

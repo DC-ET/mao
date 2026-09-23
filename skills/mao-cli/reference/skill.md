@@ -2,7 +2,7 @@
 
 ## 模块职责
 
-管理当前用户的个人 Skill（`/user-skills`），以及下载 LOCAL 模式技能同步包（`/skills/sync-package`，二进制 zip）。全局技能目录见 [skill-docs.md](skill-docs.md)。管理后台「Skills 管理 → 个人 Skills」可跨用户查看与删除（`/admin/user-skills`），CLI 仅操作当前用户。
+管理当前用户的个人 Skill（`/user-skills`），以及下载 LOCAL 模式技能同步包（`/skills/sync-package`，二进制 zip）。全局技能目录见 [skill-docs.md](skill-docs.md)。管理后台「Skills 管理 → 个人 Skills」可跨用户查看、删除，以及把技能上传到指定用户（`/admin/user-skills`）。本命令只操作当前用户；发给指定用户用 `mao skill-docs assign`。
 
 ## 命令选择
 

@@ -91,7 +91,13 @@
                       placeholder="默认 Agent"
                       style="width: 100%"
                     >
-                      <el-option v-for="agent in agents" :key="agent.id" :label="agentLabel(agent)" :value="String(agent.id)" />
+                      <el-option
+                        v-for="agent in agents"
+                        :key="agent.id"
+                        :label="agentLabel(agent)"
+                        :value="String(agent.id)"
+                        :disabled="agent.enabled === false"
+                      />
                     </el-select>
                     <el-select
                       v-else-if="isModelSetting(row.settingKey)"
@@ -396,7 +402,7 @@ onBeforeUnmount(() => {
 
 async function fetchAgents() {
   try {
-    const { data } = await api.get('/agents')
+    const { data } = await api.get('/agents', { params: { includeDisabled: true } })
     agents.value = data || []
   } catch {
     agents.value = []
@@ -430,7 +436,8 @@ async function fetchSettings() {
 }
 
 function agentLabel(agent: any) {
-  return agent.isDefault ? `${agent.name}（默认）` : agent.name
+  const name = agent.isDefault ? `${agent.name}（默认）` : agent.name
+  return agent.enabled === false ? `${name}（已停用）` : name
 }
 
 function modelLabel(model: any) {

@@ -2,7 +2,7 @@
 
 ## 用途
 
-管理服务端全局技能目录（`skill-docs`）：列表、详情、multipart 上传、删除。供 Agent 的 `skillNames` 引用。管理后台同页另有「个人 Skills」Tab，聚合各用户 `/user-skills`（接口 `/admin/user-skills`，支持可选 `userId` 参数仅返回该用户技能），本命令不覆盖。
+管理服务端全局技能目录（`skill-docs`）：列表、详情、multipart 上传、删除。供 Agent 的 `skillNames` 引用。`assign` 把同一份技能目录写入指定用户的个人技能，不进入全局库。管理后台同页「个人 Skills」Tab 聚合各用户 `/user-skills`（接口 `/admin/user-skills`，支持可选 `userId` 参数仅返回该用户技能），并提供同样的指定用户上传。
 
 ## 命令选择
 
@@ -10,8 +10,9 @@
 |------|------|
 | 查看全部技能 | `skill-docs list` |
 | 查看正文 | `skill-docs get` |
-| 从本地目录上传 | `skill-docs upload` |
-| 删除技能文件夹 | `skill-docs delete` |
+| 从本地目录上传到全局库 | `skill-docs upload` |
+| 写入指定用户的个人技能 | `skill-docs assign` |
+| 删除全局技能文件夹 | `skill-docs delete` |
 
 ## 命令：skill-docs list
 
@@ -57,6 +58,21 @@ mao skill-docs upload --dir ./my-skill
 mao skill-docs upload --dir ./skills-root
 ```
 
+## 命令：skill-docs assign
+
+| 参数 | 必填 | 类型 | 含义 |
+|------|------|------|------|
+| `--dir` | 是 | 路径 | 本地技能目录或技能根目录，规则与 `upload` 相同 |
+| `--user-ids` | 是 | 逗号分隔的用户 ID | 写入这些用户的个人技能，例如 `1,2` |
+
+`POST /admin/user-skills/upload`，multipart 字段 `userIds`（逗号分隔）与 `files`。需 `agent:write`。一次最多 100 个用户。用户必须已存在；同名个人技能会被覆盖，替换失败时保留该用户原来的技能。不会写入全局技能库，其他用户不受影响。这些用户的所有智能体会自动带上该技能；若与系统技能同名，仅这些用户改用这份个人技能。请求中断或文件数超限时整批不写入。管理后台上传还会跳过 `node_modules`、`.git`、`.svn`、`dist`、`__MACOSX`，并限制最多 500 个文件、单文件 20MB、总量 50MB。
+
+成功 `data`：`skills` 为已导入技能名，`users` 为实际写入的用户（`id`、`username`、`displayName`）。
+
+```bash
+mao skill-docs assign --dir ./my-skill --user-ids 12,34
+```
+
 ## 命令：skill-docs delete
 
 | 参数 | 必填 | 类型 | 含义 |
@@ -72,6 +88,7 @@ mao skill-docs delete --name my-skill
 ## 成功失败判断
 
 - 上传无文件 / 无合法相对路径 → CLI 或服务端报错
+- `assign` 未指定用户、用户 ID 非法、用户不存在、上传中断或文件数超限 → 业务错误；中断和超限不会写入任何用户。多名用户中途失败时，message 会列出已经写成功的用户
 - 删除不存在 → 业务错误 message（如 Skill not found）
 - 成功：`code===0`
 

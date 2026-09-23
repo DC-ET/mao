@@ -101,7 +101,12 @@ export class WeixinSessionService {
     if (hasText(configured)) {
       try {
         const agentId = Number(configured!.trim());
-        return await this.agentService.getAgent(agentId);
+        const agent = await this.agentService.getAgent(agentId);
+        if (agent.enabled === 0) {
+          console.warn(`微信智能体已停用 (${configured}), 回退到默认 Agent`);
+        } else {
+          return agent;
+        }
       } catch (e) {
         console.warn(`微信智能体配置无效 (${configured}), 回退到默认 Agent: ${e instanceof Error ? e.message : String(e)}`);
       }

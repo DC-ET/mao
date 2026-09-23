@@ -88,7 +88,7 @@ mao auth login --username <用户名> --password <密码>
 1. 401 → 云端/微信先查 `MAO_TOKEN`；本地终端再 `auth login` / `auth refresh`
 2. 按模块读 `reference/*.md` 查参数
 3. 用户会话 → `session`；全站检索 → `admin-session`
-4. 个人技能 → `skill`；全局技能 → `skill-docs`
+4. 个人技能 → `skill`；全局技能 → `skill-docs`；把技能发给指定用户（个人技能，不进全局库）→ `skill-docs assign`
 5. 先 `agent list` + `model list-active`，再 `session create`
 6. `mao-admin session` / `skill` 自动映射到 `admin-session` / `skill-docs`
 7. 跨模块流程 → [business_process.md](business_process.md)

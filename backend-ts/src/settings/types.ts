@@ -22,7 +22,7 @@ export interface SettingsRuntimeConfig {
 }
 
 export interface AgentLookup {
-  findById(id: number): Promise<{ id?: number } | null>;
+  findById(id: number): Promise<{ id?: number; enabled?: number | null } | null>;
 }
 
 export interface ModelLookup {

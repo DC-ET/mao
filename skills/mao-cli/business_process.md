@@ -22,7 +22,7 @@
 - [ ] 至少一个可用模型 + 默认模型
 - [ ] 已创建普通用户或接入 LDAP/飞书
 - [ ] 角色权限合理（普通用户无敏感管理权限）
-- [ ] 至少一个可用 Agent
+- [ ] 至少一个启用中的 Agent（停用的不会出现在使用侧列表，也不能用来新建会话）
 - [ ] CLOUD 任务可创建并正常回复
 - [ ] 如需 LOCAL：Electron 或 `mao-agent --local` 已验证
 - [ ] 如需私有 Git：HTTPS clone + Git 凭证已验证
@@ -65,7 +65,7 @@
 - 不发送对话，不写入/插入/重排消息队列
 - 定时任务**创建**多由 Agent 工具 `create_scheduled_task` 完成
 - `session`：当前用户会话；`admin-session`：全站检索
-- `skill`：个人 `user-skills`；`skill-docs`：全局目录；管理后台个人 Tab 走 `admin/user-skills`（聚合展示）
+- `skill`：个人 `user-skills`；`skill-docs`：全局目录；`skill-docs assign` 把技能写入指定用户的个人技能（`POST /admin/user-skills/upload`）。管理后台个人 Tab 走 `admin/user-skills`（聚合展示，并可上传到指定用户）
 - MCP 用户级 `mcp me-*`；全局 `mcp list/create/...` 需管理员
 
 ## 对话 vs REST 选型

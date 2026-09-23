@@ -134,7 +134,13 @@
         </el-form-item>
         <el-form-item label="Agent">
           <el-select v-model="form.agentId" clearable filterable placeholder="使用默认 Agent" class="form-select">
-            <el-option v-for="agent in agents" :key="agent.id" :label="agentLabel(agent)" :value="agent.id" />
+            <el-option
+              v-for="agent in agents"
+              :key="agent.id"
+              :label="agentLabel(agent)"
+              :value="agent.id"
+              :disabled="agent.enabled === false"
+            />
           </el-select>
         </el-form-item>
         <el-form-item label="模型">
@@ -223,7 +229,7 @@ async function loadData() {
   try {
     const [{ data: botData }, { data: agentData }, { data: modelData }] = await Promise.all([
       api.get('/admin/feishu-bots'),
-      api.get('/agents'),
+      api.get('/agents', { params: { includeDisabled: true } }),
       api.get('/models/active')
     ])
     bots.value = botData || []
@@ -306,7 +312,8 @@ function openEdit(bot: FeishuBot) {
 }
 
 function agentLabel(agent: any) {
-  return agent.isDefault ? `${agent.name}（默认）` : agent.name
+  const name = agent.isDefault ? `${agent.name}（默认）` : agent.name
+  return agent.enabled === false ? `${name}（已停用）` : name
 }
 
 function modelLabel(model: any) {
@@ -315,7 +322,9 @@ function modelLabel(model: any) {
 
 function agentName(agentId: number | null | undefined) {
   if (agentId == null) return '默认 Agent'
-  return agents.value.find(agent => agent.id === agentId)?.name || `Agent #${agentId}`
+  const agent = agents.value.find(item => item.id === agentId)
+  if (!agent) return `Agent #${agentId}`
+  return agent.enabled === false ? `${agent.name}（已停用）` : agent.name
 }
 
 function modelName(modelId: number | null | undefined) {

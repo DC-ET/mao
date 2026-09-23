@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fail } from '../common/result.js';
 import { parseSkillMdContent, validateSkillMd } from '../harness/skill/skill-md.js';
@@ -121,6 +121,15 @@ export class UserSkillService {
     if (files == null || files.length === 0) {
       return fail(400, 'No files provided');
     }
+    const grouped = groupSkillFiles(files);
+    if (grouped.size === 0) {
+      return fail(400, 'No valid skill folders found. Each skill must be in a subdirectory.');
+    }
+    for (const [skillName, group] of grouped) {
+      const validationError = validateSkillGroup(skillName, group);
+      if (validationError != null) return fail(400, validationError);
+    }
+
     const userDir = this.getUserSkillsDir(userId);
     try {
       mkdirSync(userDir, { recursive: true });
@@ -128,63 +137,41 @@ export class UserSkillService {
       return fail(500, `Failed to create user skills directory: ${(e as Error).message}`);
     }
 
-    const grouped = new Map<string, UploadedSkillFile[]>();
-    for (const file of files) {
-      const originalName = file.originalFilename;
-      if (originalName == null || originalName.trim().length === 0) continue;
-      const normalized = originalName.replace(/\\/g, '/');
-      const slashIdx = normalized.indexOf('/');
-      if (slashIdx <= 0) continue;
-      const skillName = normalized.slice(0, slashIdx);
-      if (skillName.startsWith('.')) continue;
-      const list = grouped.get(skillName) ?? [];
-      list.push(file);
-      grouped.set(skillName, list);
-    }
-    if (grouped.size === 0) {
-      return fail(400, 'No valid skill folders found. Each skill must be in a subdirectory.');
-    }
-
-    for (const [skillName, group] of grouped) {
-      const hasSkillMd = group.some((f) => relativeAfterSkill(f.originalFilename) === 'SKILL.md');
-      if (!hasSkillMd) {
-        return fail(400, `Skill '${skillName}' is missing SKILL.md file`);
+    const token = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    const stageRoot = join(this.userSkillsDir, '.staging', String(userId), token);
+    const backupRoot = join(this.userSkillsDir, '.staging', String(userId), `${token}-bak`);
+    const importedNames = [...grouped.keys()];
+    let committed = false;
+    let restoreFailed = false;
+    try {
+      mkdirSync(stageRoot, { recursive: true });
+      for (const [skillName, group] of grouped) {
+        writeSkillGroup(join(stageRoot, skillName), group);
       }
-      const skillMdFile = group.find((f) => relativeAfterSkill(f.originalFilename) === 'SKILL.md');
-      if (skillMdFile != null) {
-        const content = skillMdFile.buffer.toString('utf8');
-        const validationError = validateSkillMd(content, skillName);
-        if (validationError != null) {
-          return fail(400, validationError);
+      mkdirSync(backupRoot, { recursive: true });
+      const swapped: string[] = [];
+      try {
+        for (const skillName of importedNames) {
+          swapStagedSkill(userDir, stageRoot, backupRoot, skillName);
+          swapped.push(skillName);
         }
+        committed = true;
+      } catch (e) {
+        const detail = (e as Error).message;
+        const previousRestored = restoreSwappedSkills(userDir, backupRoot, swapped);
+        restoreFailed = !previousRestored || detail.includes('原技能恢复失败');
+        const suffix = restoreFailed ? '。原技能可能未能恢复' : '。原技能未替换';
+        console.error(`Failed to replace user skill for ${userId}: ${detail}`);
+        return fail(500, `Failed to write file: ${detail}${suffix}`);
       }
-    }
-
-    const importedNames: string[] = [];
-    for (const [skillName, group] of grouped) {
-      const existingFolder = join(userDir, skillName);
-      if (existsSync(existingFolder) && statSync(existingFolder).isDirectory()) {
-        try {
-          rmSync(existingFolder, { recursive: true, force: true });
-          console.info(`Overwriting existing user skill: ${skillName}`);
-        } catch (e) {
-          return fail(500, `Failed to overwrite skill: ${(e as Error).message}`);
-        }
-      }
-      for (const file of group) {
-        const relativePath = relativeAfterSkill(file.originalFilename);
-        if (relativePath.length === 0 || relativePath.includes('/.')) continue;
-        const targetFile = join(userDir, skillName, relativePath);
-        try {
-          mkdirSync(dirname(targetFile), { recursive: true });
-          writeFileSync(targetFile, file.buffer, { mode: uploadFileMode(relativePath, file.buffer) });
-        } catch (e) {
-          console.error(`Failed to write file ${targetFile}: ${(e as Error).message}`);
-          return fail(500, `Failed to write file: ${(e as Error).message}`);
-        }
-      }
-      if (!importedNames.includes(skillName)) {
-        importedNames.push(skillName);
+    } catch (e) {
+      if (committed) throw e;
+      console.error(`Failed to stage user skill for ${userId}: ${(e as Error).message}`);
+      return fail(500, `Failed to write file: ${(e as Error).message}。原技能未替换`);
+    } finally {
+      rmSync(stageRoot, { recursive: true, force: true });
+      if (committed || !restoreFailed) {
+        rmSync(backupRoot, { recursive: true, force: true });
       }
     }
     console.info(`User ${userId} uploaded ${importedNames.length} skills: ${importedNames}`);
@@ -223,6 +210,93 @@ export class UserSkillService {
     }
     return { folder: skillFolder };
   }
+}
+
+function groupSkillFiles(files: UploadedSkillFile[]): Map<string, UploadedSkillFile[]> {
+  const grouped = new Map<string, UploadedSkillFile[]>();
+  for (const file of files) {
+    const originalName = file.originalFilename;
+    if (originalName == null || originalName.trim().length === 0) continue;
+    const normalized = originalName.replace(/\\/g, '/');
+    const slashIdx = normalized.indexOf('/');
+    if (slashIdx <= 0) continue;
+    const skillName = normalized.slice(0, slashIdx);
+    if (skillName.startsWith('.') || skillName === '..' || skillName.includes('\0')) continue;
+    const list = grouped.get(skillName) ?? [];
+    list.push(file);
+    grouped.set(skillName, list);
+  }
+  return grouped;
+}
+
+function validateSkillGroup(skillName: string, group: UploadedSkillFile[]): string | null {
+  const hasSkillMd = group.some((file) => relativeAfterSkill(file.originalFilename) === 'SKILL.md');
+  if (!hasSkillMd) return `Skill '${skillName}' is missing SKILL.md file`;
+  const skillMdFile = group.find((file) => relativeAfterSkill(file.originalFilename) === 'SKILL.md');
+  if (skillMdFile == null) return `Skill '${skillName}' is missing SKILL.md file`;
+  return validateSkillMd(skillMdFile.buffer.toString('utf8'), skillName);
+}
+
+function writeSkillGroup(folder: string, group: UploadedSkillFile[]): void {
+  const resolvedFolder = resolve(folder);
+  for (const file of group) {
+    const relativePath = relativeAfterSkill(file.originalFilename);
+    if (relativePath.length === 0 || relativePath.includes('/.')) continue;
+    if (relativePath.split('/').some((segment) => segment === '..' || segment.length === 0)) {
+      throw new Error(`Invalid path: ${relativePath}`);
+    }
+    const targetFile = join(folder, relativePath);
+    const resolvedTarget = resolve(targetFile);
+    if (resolvedTarget !== resolvedFolder && !resolvedTarget.startsWith(resolvedFolder + sep)) {
+      throw new Error(`Invalid path: ${relativePath}`);
+    }
+    mkdirSync(dirname(targetFile), { recursive: true });
+    writeFileSync(targetFile, file.buffer, { mode: uploadFileMode(relativePath, file.buffer) });
+  }
+}
+
+function swapStagedSkill(userDir: string, stageRoot: string, backupRoot: string, skillName: string): void {
+  const finalFolder = resolve(userDir, skillName);
+  const userRoot = resolve(userDir);
+  if (finalFolder !== userRoot && !finalFolder.startsWith(userRoot + sep)) {
+    throw new Error(`Invalid skill name: ${skillName}`);
+  }
+  const stagedFolder = join(stageRoot, skillName);
+  const backupFolder = join(backupRoot, skillName);
+  let backedUp = false;
+  if (existsSync(finalFolder)) {
+    renameSync(finalFolder, backupFolder);
+    backedUp = true;
+    console.info(`Overwriting existing user skill: ${skillName}`);
+  }
+  try {
+    renameSync(stagedFolder, finalFolder);
+  } catch (e) {
+    if (backedUp) {
+      try {
+        renameSync(backupFolder, finalFolder);
+      } catch (restoreErr) {
+        throw new Error(`${(e as Error).message}；原技能恢复失败: ${(restoreErr as Error).message}`);
+      }
+    }
+    throw e;
+  }
+}
+
+function restoreSwappedSkills(userDir: string, backupRoot: string, swapped: string[]): boolean {
+  let ok = true;
+  for (const skillName of [...swapped].reverse()) {
+    const finalFolder = resolve(userDir, skillName);
+    const backupFolder = join(backupRoot, skillName);
+    try {
+      if (existsSync(finalFolder)) rmSync(finalFolder, { recursive: true, force: true });
+      if (existsSync(backupFolder)) renameSync(backupFolder, finalFolder);
+    } catch (e) {
+      ok = false;
+      console.error(`Failed to restore user skill ${skillName}: ${(e as Error).message}`);
+    }
+  }
+  return ok;
 }
 
 function relativeAfterSkill(originalName: string | null | undefined): string {

@@ -25,8 +25,8 @@ export class AgentService {
     private readonly modelLookup?: AgentModelLookup,
   ) {}
 
-  listAgents(_userId: number, keyword?: string | null): Promise<Agent[]> {
-    return this.agentRepo.selectList(keyword);
+  listAgents(_userId: number, keyword?: string | null, includeDisabled = false): Promise<Agent[]> {
+    return this.agentRepo.selectList(keyword, includeDisabled);
   }
 
   async getAgent(id: number): Promise<Agent> {
@@ -75,6 +75,7 @@ export class AgentService {
       creatorId: userId,
       defaultModelId: defaultModelId ?? null,
       isDefault: isDefault != null ? isDefault : 0,
+      enabled: 1,
     };
     if (skillNames != null && skillNames.length > 0) {
       agent.skillNames = JSON.stringify(skillNames);
@@ -126,6 +127,9 @@ export class AgentService {
     }
     if (isDefault != null) {
       if (isDefault === 1) {
+        if (agent.enabled === 0) {
+          throw new BusinessException(ErrorCode.PARAM_INVALID, '已停用的 Agent 不能设为默认，请先启用');
+        }
         await this.agentRepo.clearDefaultFlag();
       }
       agent.isDefault = isDefault;
@@ -147,6 +151,19 @@ export class AgentService {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '版本号必须为正整数');
     }
     return this.agentRepo.rollbackPrompt(id, version, operatorId);
+  }
+
+  async setEnabled(id: number, enabled: boolean): Promise<Agent> {
+    const agent = await this.getAgent(id);
+    const next = enabled ? 1 : 0;
+    if (next === 0 && agent.isDefault === 1) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '不能停用默认 Agent，请先指定其他默认 Agent');
+    }
+    if ((agent.enabled ?? 1) !== next) {
+      await this.agentRepo.updateEnabled(id, next);
+      agent.enabled = next;
+    }
+    return agent;
   }
 
   async deleteAgent(id: number): Promise<void> {

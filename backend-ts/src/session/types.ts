@@ -176,6 +176,8 @@ export interface AgentRef {
   skillNames?: string | null;
   /** Agent 默认模型 ID：会话未显式选模型时的优先回退 */
   defaultModelId?: number | null;
+  /** 0-停用；缺省或 1 为启用 */
+  enabled?: number | null;
 }
 
 export interface LlmModelRef {

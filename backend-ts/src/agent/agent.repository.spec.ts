@@ -42,7 +42,15 @@ describe('MysqlAgentRepository', () => {
     const db = mockDb();
     const repo = new MysqlAgentRepository(db as never);
     await repo.selectList();
+    expect(db.query).toHaveBeenCalledWith(expect.stringContaining('enabled = 1'), []);
     await repo.selectList('coder');
+    expect(db.query).toHaveBeenLastCalledWith(expect.stringContaining('enabled = 1'), ['%coder%']);
+    await repo.selectList(null, true);
+    expect(String(db.query.mock.calls.at(-1)?.[0])).not.toContain('enabled = 1');
+    await repo.findDefault();
+    expect(db.queryOne).toHaveBeenCalledWith(expect.stringContaining('enabled = 1'));
+    await repo.updateEnabled(5, 0);
+    expect(db.updateById).toHaveBeenCalledWith('agent', 5, { enabled: 0 });
     await repo.findById(1);
     await repo.selectById(1);
     expect(await repo.findByIds([])).toEqual([]);

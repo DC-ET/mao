@@ -3,7 +3,7 @@ import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { hasText } from '../common/case.js';
 import { requirePermission, requireUserId, sendOk } from '../common/http-error.js';
-import { bodyOf, pathId } from '../common/request.js';
+import { bodyOf, pathId, queryOptBool, queryOptStr } from '../common/request.js';
 import type { UserRepository } from '../user/types.js';
 import { experienceInputOf } from './agent-experience.service.js';
 import type { AgentExperienceService } from './agent-experience.service.js';
@@ -74,8 +74,13 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
 
   app.get('/v1/agents', async (request, reply) => {
     const userId = requireUserId(request);
-    const keyword = (request.query as { keyword?: string }).keyword;
-    const agents = await agentService.listAgents(userId, keyword);
+    const keyword = queryOptStr(request, 'keyword');
+    const wantDisabled = queryOptBool(request, 'includeDisabled') === true;
+    const includeDisabled = wantDisabled && (
+      await permissionService.hasPermission(userId, 'agent:read')
+      || await permissionService.hasPermission(userId, 'agent:write')
+    );
+    const agents = await agentService.listAgents(userId, keyword, includeDisabled);
     const voList = await Promise.all(agents.map((agent) => toVO(agent, agentService, userRepo)));
     return sendOk(reply, voList);
   });
@@ -157,6 +162,16 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
     return sendOk(reply, await toVO(agent, agentService, userRepo));
   });
 
+  app.patch('/v1/agents/:id/enabled', async (request, reply) => {
+    await requireAgentWrite(request);
+    const body = bodyOf<{ enabled?: boolean }>(request);
+    if (typeof body.enabled !== 'boolean') {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, 'enabled 必须为布尔值');
+    }
+    const agent = await agentService.setEnabled(pathId(request), body.enabled);
+    return sendOk(reply, await toVO(agent, agentService, userRepo));
+  });
+
   app.delete('/v1/agents/:id', async (request, reply) => {
     await requireAgentWrite(request);
     await agentService.deleteAgent(pathId(request));
@@ -223,6 +238,7 @@ async function toVO(agent: Agent, agentService: AgentService, userRepo: UserRepo
     systemPrompt: agent.systemPrompt,
     creatorId: agent.creatorId,
     isDefault: agent.isDefault != null && agent.isDefault === 1,
+    enabled: agent.enabled !== 0,
     defaultModelId: agent.defaultModelId ?? null,
     createdAt: agent.createdAt ?? null,
     experiences: [],

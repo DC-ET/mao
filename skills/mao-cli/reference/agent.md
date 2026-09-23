@@ -44,6 +44,7 @@
 | 查看详情 | `agent get` |
 | 新建 | `agent create` |
 | 修改 | `agent update` |
+| 停用/启用 | `agent set-enabled` |
 | 删除 | `agent delete` |
 | 经验列表 | `agent experience list` |
 | 新增经验 | `agent experience create` |
@@ -56,18 +57,46 @@
 
 ### 用途
 
-列出当前用户可见的 Agent。
+列出使用侧可见的 Agent。默认只返回启用中的 Agent；已停用的不会出现，也不能用来新建会话。
 
 ### 参数说明
 
 | 参数 | 必填 | 类型 | 含义 |
 |------|------|------|------|
 | `--keyword` | 否 | 字符串 | 按名称等关键词过滤，对应查询参数 `keyword` |
+| `--include-disabled` | 否 | 布尔 | 同时列出已停用 Agent。需要 `agent:read` 或 `agent:write`，否则服务端忽略 |
 
 ### 示例
 
 ```bash
 mao agent list --keyword 助手 --json
+mao agent list --include-disabled --json
+```
+
+返回元素含 `enabled`（布尔）。管理后台列表使用 `includeDisabled=true`。
+
+---
+
+## 命令：mao agent set-enabled
+
+### 用途
+
+停用或启用 Agent。需要 `agent:write`。默认 Agent 不能停用；已停用的 Agent 不能设为默认。停用后使用侧列表不再展示，且不能用它新建会话。已有会话可以继续。
+
+### 参数说明
+
+| 参数 | 必填 | 类型 | 含义 |
+|------|------|------|------|
+| `--id` | 是 | 整数 | Agent ID |
+| `--enabled` | 是 | 布尔 `true/false` | `true` 启用，`false` 停用 |
+
+`PATCH /agents/{id}/enabled`，请求体 `{ "enabled": true|false }`。
+
+### 示例
+
+```bash
+mao agent set-enabled --id 3 --enabled false
+mao agent set-enabled --id 3 --enabled true
 ```
 
 ---
@@ -76,7 +105,7 @@ mao agent list --keyword 助手 --json
 
 ### 用途
 
-按 ID 获取 Agent 详情（含 tags、skillNames、experiences、suggestedQuestions）。
+按 ID 获取 Agent 详情（含 tags、skillNames、experiences、suggestedQuestions、enabled）。已停用的 Agent 仍可按 ID 查看。
 
 ### 参数说明
 

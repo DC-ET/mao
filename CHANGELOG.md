@@ -19,17 +19,29 @@
 
 ### 前端（桌面 / Web / 安卓）
 
+- 新建任务时的智能体列表不再显示已停用的 Agent。
 - 从飞书卡片「会话详情」或地址栏 `/tasks/{id}` 进入时，左侧任务栏会展开该会话所在分组，若它排在分组默认可见条数之外也会露出来，并滚动到对应一行。聚焦模式下若落在「历史」折叠区，会一并展开。
 
 ### 后端
 
+- Agent 可停用、启用（已有 Agent 默认仍为启用）。使用侧 `GET /v1/agents` 只返回启用中的 Agent；带 `includeDisabled=true` 且具备 `agent:read` 或 `agent:write` 时才返回全部。`PATCH /v1/agents/{id}/enabled`（`agent:write`）切换状态。默认 Agent 不能停用，已停用的也不能设为默认。已停用的 Agent 不能新建会话；已有会话可以继续。微信通道若仍指向已停用 Agent，会回退到默认 Agent。
+- 管理端可将技能目录写入指定用户的个人技能，而不是系统技能库：`POST /v1/admin/user-skills/upload`（`agent:write`，multipart 字段 `userIds` 与 `files`）。同名个人技能会被覆盖，其他用户不受影响。选择用户用 `GET /v1/admin/user-skills/options/users`（`agent:read`）。
+- 指定用户上传在请求中断或超过文件数时整批不写入。覆盖个人技能时先写入临时目录，替换失败会留下原来的技能；多名用户里后面的人失败时，响应会带上已经写成功的用户。
 - 修复飞书后续消息在已打开的网页会话里只有用户消息、没有执行过程的问题：每一轮开始（含失败卡重试）会先广播带 `executionId` 的 `RUNNING`，网页端才会结束上一轮的流式屏蔽并接上工具调用与回复，不必整页刷新。
 - 修复全新空库首次启动迁移失败的问题：迁移脚本中的 `DELIMITER` 存储过程语法 TS 版 Flyway 执行器不识别，现改由 mysql 客户端逐文件执行（E2E 搭建脚本内处理，应用内行为不变）。
 
 ### 管理后台
 
+- Agent 管理可停用或启用智能体，并按状态筛选。停用后仍留在管理列表，可再次启用；默认 Agent 的停用按钮不可用。飞书机器人和系统设置里的微信智能体下拉会标出已停用项，且不能新选它们。
+- Skills 管理的「个人 Skills」可以先选择用户，再上传技能目录。技能只进入这些用户的个人技能，不会变成全体可用的系统技能；同名个人技能会被覆盖，并在这些用户的所有智能体中生效。手机端仍只查看和删除。
+- 拖放上传会按松手时的页签和已选用户提交，读取目录期间不能切换页签。上传会跳过 node_modules、.git、dist 等目录，并限制文件数量和体积；失败后会刷新个人技能列表。
 - E2E 测试基础设施改进：新增 `scripts/e2e-setup.sh` 一键搭建隔离测试环境（本地 MySQL 建 `mao_e2e` 库、执行全部迁移、写入最小种子数据、生成 `backend-ts/.env.e2e`）；`npm test` 通过 `tests/global-setup.ts` 自动拉起隔离后端(:9180)与 admin/desktop dev server，已在监听的端口自动复用，测试结束自动回收，不再要求手工起三端，也不会误连线上 9080。运行期数据目录（runtime/users/workspace/uploads）一并重定向到 `backend-ts/.e2e-data/`，与生产 `/opt/mao-data` 完全隔离。
 - 修复 6 个 E2E 测试文件与 UI 演进脱节导致的失败：Agent 编辑「最佳实践」启停改为 el-switch 后的断言、`/users/me` mock 缺 `isAdmin` 导致登录落地页被软回退、侧边栏 `span:has-text` 选择器失效、Agent/模型表头列变更、退出登录缺确认弹窗步骤、ElMessage 多条弹出时的歧义匹配。
+
+### 终端 CLI（mao-cli）
+
+- `mao agent list` 默认不列出已停用 Agent；有 Agent 读权限时可用 `--include-disabled` 查看全部。`mao agent set-enabled --id <id> --enabled true|false` 启停。
+- `mao skill-docs assign --dir <目录> --user-ids 1,2` 把技能写入指定用户的个人技能，不进入全局技能库。
 
 ## 0.0.181 (2026-09-22)
 

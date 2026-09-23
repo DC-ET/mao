@@ -4,7 +4,7 @@ import { PassThrough } from 'node:stream';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { requirePermission, requireUserId, sendJson } from '../common/http-error.js';
-import { pathParam, queryOptInt } from '../common/request.js';import { ok } from '../common/result.js';
+import { pathParam, queryOptInt } from '../common/request.js';import { fail, ok } from '../common/result.js';
 import type { SkillSyncService } from '../harness/skill/skill-sync-service.js';
 import type { AgentLookup, UserLookup } from '../session/types.js';
 import type { SessionService } from '../session/session.service.js';
@@ -77,6 +77,65 @@ export function registerAdminUserSkillRoutes(
         displayName: user?.displayName ?? null,
       };
     })));
+  });
+
+  app.get('/v1/admin/user-skills/options/users', async (request, reply) => {
+    const userId = requireUserId(request);
+    await requirePermission(permissionService, userId, 'agent:read');
+    const users = await userLookup.listOptions();
+    return sendJson(reply, 200, ok(users.map((user) => ({
+      id: Number(user.id),
+      username: user.username,
+      displayName: user.displayName ?? null,
+    }))));
+  });
+
+  // 写入指定用户的个人技能目录，不进入系统技能库。同名目录按个人技能上传规则覆盖。
+  app.post('/v1/admin/user-skills/upload', async (request, reply) => {
+    const currentUserId = requireUserId(request);
+    await requirePermission(permissionService, currentUserId, 'agent:write');
+    const collected = await collectAdminSkillUpload(request);
+    if (!collected.ok) {
+      return sendJson(reply, 200, fail(400, collected.message));
+    }
+    const { files, userIdValues } = collected;
+    const parsed = parseAssignUserIds(userIdValues);
+    if (!parsed.ok) {
+      return sendJson(reply, 200, fail(400, parsed.message));
+    }
+    const users = await userLookup.findByIds(parsed.ids);
+    const userMap = new Map(users.map((user) => [Number(user.id), user]));
+    const missing = parsed.ids.filter((id) => !userMap.has(id));
+    if (missing.length > 0) {
+      return sendJson(reply, 200, fail(400, `用户不存在: ${missing.join(',')}`));
+    }
+
+    const applied: number[] = [];
+    let skills: string[] = [];
+    for (const targetId of parsed.ids) {
+      const result = userSkillService.uploadUserSkill(targetId, files);
+      if (result.code !== 0 || result.data == null) {
+        const prefix = applied.length > 0
+          ? `已写入用户 ${applied.join(',')}，写入用户 ${targetId} 失败: `
+          : '';
+        return sendJson(reply, 200, {
+          code: result.code === 0 ? 500 : result.code,
+          message: `${prefix}${result.message}`,
+          data: {
+            skills,
+            users: applied.map((id) => assignedUser(userMap, id)),
+          },
+          timestamp: Date.now(),
+        });
+      }
+      applied.push(targetId);
+      skills = result.data;
+    }
+    console.info(`Admin ${currentUserId} assigned skills [${skills.join(', ')}] to users [${applied.join(', ')}]`);
+    return sendJson(reply, 200, ok({
+      skills,
+      users: parsed.ids.map((id) => assignedUser(userMap, id)),
+    }));
   });
 
   app.get('/v1/admin/user-skills/:userId/:name', async (request, reply) => {
@@ -178,6 +237,95 @@ export function registerSkillRoutes(app: FastifyInstance, deps: SkillRouteDeps):
   registerAdminUserSkillRoutes(app, deps);
   registerSkillDocRoutes(app, deps);
   registerSkillSyncRoutes(app, deps);
+}
+
+const MAX_ASSIGN_USERS = 100;
+
+export function parseAssignUserIds(values: string[]): { ok: true; ids: number[] } | { ok: false; message: string } {
+  const ids: number[] = [];
+  const seen = new Set<number>();
+  for (const raw of values) {
+    const text = raw.trim();
+    if (!text) continue;
+    let tokens: string[];
+    if (text.startsWith('[')) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        return { ok: false, message: 'userIds 格式不正确' };
+      }
+      if (!Array.isArray(parsed)) return { ok: false, message: 'userIds 格式不正确' };
+      tokens = parsed.map((item) => String(item).trim());
+    } else {
+      tokens = text.split(/[\s,]+/);
+    }
+    for (const token of tokens) {
+      if (!token) continue;
+      if (!/^[1-9]\d*$/.test(token)) {
+        return { ok: false, message: `无效的用户 ID: ${token}` };
+      }
+      const id = Number(token);
+      if (!Number.isSafeInteger(id)) {
+        return { ok: false, message: `无效的用户 ID: ${token}` };
+      }
+      if (seen.has(id)) continue;
+      seen.add(id);
+      ids.push(id);
+    }
+  }
+  if (ids.length === 0) return { ok: false, message: '请指定至少一个用户' };
+  if (ids.length > MAX_ASSIGN_USERS) {
+    return { ok: false, message: `一次最多指定 ${MAX_ASSIGN_USERS} 个用户` };
+  }
+  return { ok: true, ids };
+}
+
+function assignedUser(
+  userMap: Map<number, { username: string; displayName?: string | null }>,
+  id: number,
+): { id: number; username: string | null; displayName: string | null } {
+  const user = userMap.get(id);
+  return {
+    id,
+    username: user?.username ?? null,
+    displayName: user?.displayName ?? null,
+  };
+}
+
+function multipartAbortMessage(error: unknown): string {
+  const code = typeof error === 'object' && error != null && 'code' in error ? String((error as { code: unknown }).code) : '';
+  if (code === 'FST_FILES_LIMIT') {
+    return '上传文件数量超过上限，已中止且未写入。请去掉 node_modules、.git 等目录后重试';
+  }
+  if (code === 'FST_REQ_FILE_TOO_LARGE') {
+    return '上传文件过大，已中止且未写入';
+  }
+  const detail = error instanceof Error && error.message ? error.message : '上传内容不完整';
+  return `上传未完成，已中止且未写入：${detail}`;
+}
+
+async function collectAdminSkillUpload(
+  request: FastifyRequest,
+): Promise<{ ok: true; files: UploadedSkillFile[]; userIdValues: string[] } | { ok: false; message: string }> {
+  const files: UploadedSkillFile[] = [];
+  const userIdValues: string[] = [];
+  try {
+    const parts = request.parts({ preservePath: true });
+    for await (const part of parts) {
+      if (part.type === 'file') {
+        files.push({
+          originalFilename: part.filename,
+          buffer: await part.toBuffer(),
+        });
+      } else if (part.fieldname === 'userIds' || part.fieldname === 'userId') {
+        userIdValues.push(String(part.value ?? ''));
+      }
+    }
+  } catch (error) {
+    return { ok: false, message: multipartAbortMessage(error) };
+  }
+  return { ok: true, files, userIdValues };
 }
 
 async function collectNamedFiles(request: FastifyRequest, fieldName: string): Promise<UploadedSkillFile[]> {

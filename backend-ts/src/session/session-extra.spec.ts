@@ -161,6 +161,13 @@ describe('SessionService extra', () => {
     await expect(service.createSession(7, 99, 'x')).rejects.toBeInstanceOf(BusinessException);
   });
 
+  it('createSessionRejectsDisabledAgent', async () => {
+    const { service, agentLookup, sessionRepo } = makeService();
+    agentLookup.findById.mockResolvedValue({ id: 9, name: 'A', enabled: 0 });
+    await expect(service.createSession(7, 9, 'x')).rejects.toBeInstanceOf(BusinessException);
+    expect(sessionRepo.insert).not.toHaveBeenCalled();
+  });
+
   it('lists groups search messages rounds and cleanup', async () => {
     const { service, sessionRepo, messageRepo, fileChangeRepo, agentLookup } = makeService();
     sessionRepo.list.mockResolvedValue([
