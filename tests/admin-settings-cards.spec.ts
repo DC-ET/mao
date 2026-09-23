@@ -26,9 +26,10 @@ test('plain categories render as card forms', async ({ page }) => {
   await page.goto('/admin/settings')
   await page.waitForSelector('.settings-layout', { timeout: 10_000 })
 
-  for (const title of ['代码', '会话', '审计', '微信', '运行环境']) {
-    await expect(page.locator('.group-title', { hasText: title })).toBeVisible()
+  for (const title of ['代码', '审计', '微信', '运行环境']) {
+    await expect(page.locator('.group-title', { hasText: title }).first()).toBeVisible()
   }
+  await expect(page.locator('[id="setting-cat-会话"] .group-title')).toBeVisible()
 
   // 模型选择卡：代码/会话分类用下拉，初始带值
   const codeCard = page.locator('.group-card', { hasText: '代码' })
@@ -52,7 +53,7 @@ test('category card batch save round-trip', async ({ page }) => {
 
   await input.fill('365')
   await uiCard.locator('button', { hasText: '保存' }).click()
-  await expect(page.locator('.el-message', { hasText: '已保存' })).toBeVisible({ timeout: 10_000 })
+  await expect(page.locator('.el-message', { hasText: '已保存' }).first()).toBeVisible({ timeout: 10_000 })
 
   const token = await page.evaluate(() => localStorage.getItem('token'))
   const read = async () => {
@@ -66,6 +67,6 @@ test('category card batch save round-trip', async ({ page }) => {
 
   await input.fill(original)
   await uiCard.locator('button', { hasText: '保存' }).click()
-  await expect(page.locator('.el-message', { hasText: '已保存' })).toBeVisible({ timeout: 10_000 })
+  await expect(page.locator('.el-message', { hasText: '已保存' }).first()).toBeVisible({ timeout: 10_000 })
   expect(await read()).toBe(original)
 })

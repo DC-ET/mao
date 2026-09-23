@@ -14,6 +14,15 @@ describe('audit interceptor', () => {
     expect(shouldAudit(null)).toBe(false);
   });
 
+  it('只审计定时任务的变更方法，预览接口不写日志', () => {
+    expect(shouldAudit('/v1/scheduled-tasks', 'GET')).toBe(false);
+    expect(shouldAudit('/v1/scheduled-tasks/all', 'GET')).toBe(false);
+    expect(shouldAudit('/v1/scheduled-tasks/12', 'GET')).toBe(false);
+    expect(shouldAudit('/v1/scheduled-tasks/12', 'PUT')).toBe(true);
+    expect(shouldAudit('/v1/scheduled-tasks/12', 'DELETE')).toBe(true);
+    expect(shouldAudit('/v1/scheduled-tasks/cron-preview', 'POST')).toBe(false);
+  });
+
   it('resolveActionAndObjectFields', () => {
     expect(resolveAction('POST')).toBe('CREATE');
     expect(resolveAction('PUT')).toBe('UPDATE');

@@ -108,7 +108,7 @@ private async renewOne(config: EcpConfig, row: { id?: number; sessionTokenEnc: s
 WHERE renew_status = 'ACTIVE' AND expires_at <= ?
 ```
 
-**触发条件**：`markRenewing` 成功之后、`saveRenewed` / `markFailed` 之前进程终止——按 `CLAUDE.md` 的运维流程，`restart-backend.sh` 部署重启是常规操作，而续期窗口是到期前 30 分钟、每 60 秒一跳，用户量和发版频率一叠加就会命中。
+**触发条件**：`markRenewing` 成功之后、`saveRenewed` / `markFailed` 之前进程终止——按 `AGENTS.md` 的运维流程，`restart-backend.sh` 部署重启是常规操作，而续期窗口是到期前 30 分钟、每 60 秒一跳，用户量和发版频率一叠加就会命中。
 
 **错误结果**：该行 `renew_status` 停在 `RENEWING`。`listDueForRenew` 只捞 `ACTIVE`，永远不会再续期；`clearFailed`（`:120-125`）只处理 `FAILED`，也救不回来。而 `isUsableEcpSession`（`:27-37`）只排除 `FAILED` 和已过期，所以在 `expires_at` 到点前系统仍认为这张票可用、不会提示重新绑定；到点后才突然变成「无有效 ECP 票」，CLOUD 工具与飞书入站门控一起失效，只能靠用户自己重新走一次 ECP 登录（`upsert` 会把状态写回 `ACTIVE`）。
 

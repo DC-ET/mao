@@ -21,6 +21,7 @@ const HELP = `用法:
 说明:
   创建定时任务当前由 Agent 内置工具 create_scheduled_task 完成，用户 REST API 暂未暴露 create。
   list-all 需 session:read 权限；筛选参数与管理后台一致。
+  update/delete 他人任务需 scheduled-task:write 权限（本人任务不受限）；任务名称 ≤200 字符、提示词 ≤10000 字符。
 `;
 
 const STATUSES = new Set(['ACTIVE', 'PAUSED']);

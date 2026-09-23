@@ -104,7 +104,7 @@ async function openSettings(page: Page, raw: string | null | undefined, canWrite
     const path = new URL(request.url()).pathname
     let data: unknown = []
     if (path.endsWith('/auth/admin/login') || path.endsWith('/auth/login')) data = { accessToken: 'sso-test-token', refreshToken: 'sso-test-refresh' }
-    if (path.endsWith('/users/me')) data = { id: 1, username: 'admin', permissions: ['settings:read', ...(canWrite ? ['settings:write'] : [])] }
+    if (path.endsWith('/users/me')) data = { id: 1, username: 'admin', isAdmin: true, permissions: ['settings:read', ...(canWrite ? ['settings:write'] : [])] }
     if (path.endsWith('/system-settings')) data = raw === undefined ? [] : [{ settingKey: COMPANY_SSO_KEY, value: raw, editable, category: '认证' }]
     if (request.method() === 'PUT') {
       writes.push({ url: path, body: request.postDataJSON() })
@@ -145,7 +145,7 @@ test.describe('Company SSO settings UI', () => {
     expect(JSON.parse(writes[0]!.body.value)).toEqual({ ...defaults, enabled: true, allowedDomains: ['example.com', 'sub.example.com'], allowedOrigins: ['https://portal.example.com', 'https://portal.example.com:8443'] })
     await expect(panel).toContainText('MaoChat.init')
     await expect(panel).toContainText('同一员工身份体系')
-    await expect(page.locator('.setting-section').filter({ hasText: '单条 JSON 完整快照保存' })).toHaveCount(1)
+    await expect(page.locator('.setting-section').filter({ hasText: COMPANY_SSO_KEY })).toHaveCount(1)
   })
 
   test('saves and reloads wildcard origins with their security guidance', async ({ page }) => {

@@ -565,4 +565,59 @@ describe('ScheduledTaskService', () => {
     expect(row.nextFireTime).toBe(svc.calculateNextFireTime('0 0 * * * *'));
     expect(row.finished).not.toBe(1);
   });
+
+  it('rejects blank or over-long name/prompt on create', async () => {
+    await expect(service.createTask(7, 5, 11, '   ', 'hello', '0 0 9 * * *')).rejects.toThrow('任务名称不能为空');
+    await expect(service.createTask(7, 5, 11, null as never, 'hello', '0 0 9 * * *')).rejects.toThrow('任务名称不能为空');
+    await expect(service.createTask(7, 5, 11, 'n', '  ', '0 0 9 * * *')).rejects.toThrow('任务提示词不能为空');
+    await expect(service.createTask(7, 5, 11, 'n'.repeat(201), 'hello', '0 0 9 * * *')).rejects.toThrow('任务名称不能超过 200 字符');
+    await expect(service.createTask(7, 5, 11, 'n', 'p'.repeat(10001), '0 0 9 * * *')).rejects.toThrow('任务提示词不能超过 10000 字符');
+  });
+
+  it('trims name/prompt on create and only validates fields present in update', async () => {
+    const created = await service.createTask(7, 5, 11, '  morning  ', '  do it  ', '0 0 9 * * *');
+    expect(created.name).toBe('morning');
+    expect(created.prompt).toBe('do it');
+
+    vi.mocked(store.selectById).mockResolvedValue({
+      id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', status: 'ACTIVE', once: 0, fireCount: 0, name: 'n', prompt: 'p',
+    });
+    // 只改状态：不校验也不覆盖 name/prompt
+    const toggled = await service.updateTask(1, 7, null, null, null, 'PAUSED');
+    expect(toggled.name).toBe('n');
+    expect(toggled.prompt).toBe('p');
+    await expect(service.updateTask(1, 7, '  ', null, null, null)).rejects.toThrow('任务名称不能为空');
+    await expect(service.updateTask(1, 7, null, '', null, null)).rejects.toThrow('任务提示词不能为空');
+  });
+
+  it('previews cron runs with the same parser and timezone as the scheduler', () => {
+    const daily = service.previewCron('0 0 9 * * ?', 3);
+    expect(daily.valid).toBe(true);
+    expect(daily.oneShot).toBe(false);
+    expect(daily.message).toBeNull();
+    expect(daily.nextFireTimes).toHaveLength(3);
+    expect(daily.nextFireTimes[0]).toMatch(/^\d{4}-\d{2}-\d{2} 09:00:00$/);
+    // 同日多次触发时严格递增
+    expect(daily.nextFireTimes[1] > daily.nextFireTimes[0]).toBe(true);
+
+    const oneShot = service.previewCron('0 0 8 15 8 ?', 2);
+    expect(oneShot.valid).toBe(true);
+    expect(oneShot.oneShot).toBe(true);
+    expect(oneShot.nextFireTimes[0]).toMatch(/^\d{4}-08-15 08:00:00$/);
+  });
+
+  it('reports invalid cron without throwing and clamps the preview count', () => {
+    const invalid = service.previewCron('not-a-cron');
+    expect(invalid.valid).toBe(false);
+    expect(invalid.nextFireTimes).toEqual([]);
+    expect(invalid.message).toContain('无效的 cron 表达式');
+
+    const empty = service.previewCron('   ');
+    expect(empty.valid).toBe(false);
+    expect(empty.message).toBe('cron 表达式不能为空');
+
+    expect(service.previewCron('0 0 9 * * *', 0).nextFireTimes).toHaveLength(1);
+    expect(service.previewCron('0 0 9 * * *', 999).nextFireTimes).toHaveLength(10);
+    expect(service.previewCron('0 0 9 * * *', Number.NaN).nextFireTimes).toHaveLength(3);
+  });
 });

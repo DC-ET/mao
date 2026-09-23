@@ -101,7 +101,7 @@
         <el-table-column prop="lastFireTime" label="上次触发" width="180" :formatter="formatDateTimeColumn" />
         <el-table-column prop="nextFireTime" label="下次触发" width="180" :formatter="formatDateTimeColumn" />
         <el-table-column prop="createdAt" label="创建时间" width="180" :formatter="formatDateTimeColumn" />
-        <el-table-column label="操作" width="220" fixed="right">
+        <el-table-column label="操作" width="300" fixed="right">
           <template #default="{ row }">
             <el-switch
               v-model="row.status"
@@ -110,23 +110,22 @@
               inline-prompt
               active-text="启"
               inactive-text="停"
-              :disabled="!!row.finished"
+              :disabled="!!row.finished || !canModify(row)"
+              :title="canModify(row) ? '' : '需要「管理定时任务」权限才能修改他人任务'"
               style="margin-right: 12px"
               @change="handleToggleStatus(row)"
             />
-            <el-button
-              v-if="row.sessionId"
-              type="primary"
-              link
-              size="small"
-              @click="router.push(`/sessions/${row.sessionId}`)"
-            >查看会话</el-button>
-            <el-divider direction="vertical" />
-            <el-popconfirm title="确认删除此定时任务？" @confirm="handleDelete(row.id)">
-              <template #reference>
-                <el-button type="danger" link size="small">删除</el-button>
-              </template>
-            </el-popconfirm>
+            <el-button type="primary" link size="small" @click="openDetail(row)">查看</el-button>
+            <template v-if="canModify(row)">
+              <el-divider direction="vertical" />
+              <el-button type="primary" link size="small" @click="openEdit(row)">编辑</el-button>
+              <el-divider direction="vertical" />
+              <el-popconfirm title="确认删除此定时任务？" @confirm="handleDelete(row.id)">
+                <template #reference>
+                  <el-button type="danger" link size="small">删除</el-button>
+                </template>
+              </el-popconfirm>
+            </template>
           </template>
         </el-table-column>
       </el-table>
@@ -170,21 +169,21 @@
               inline-prompt
               active-text="启"
               inactive-text="停"
-              :disabled="!!row.finished"
+              :disabled="!!row.finished || !canModify(row)"
+              :title="canModify(row) ? '' : '需要「管理定时任务」权限才能修改他人任务'"
               @change="handleToggleStatus(row)"
             />
-            <el-button
-              v-if="row.sessionId"
-              type="primary"
-              link
-              @click="router.push(`/sessions/${row.sessionId}`)"
-            >查看会话</el-button>
-            <el-divider direction="vertical" />
-            <el-popconfirm title="确认删除此定时任务？" @confirm="handleDelete(row.id)">
-              <template #reference>
-                <el-button type="danger" link>删除</el-button>
-              </template>
-            </el-popconfirm>
+            <el-button type="primary" link @click="openDetail(row)">查看</el-button>
+            <template v-if="canModify(row)">
+              <el-divider direction="vertical" />
+              <el-button type="primary" link @click="openEdit(row)">编辑</el-button>
+              <el-divider direction="vertical" />
+              <el-popconfirm title="确认删除此定时任务？" @confirm="handleDelete(row.id)">
+                <template #reference>
+                  <el-button type="danger" link>删除</el-button>
+                </template>
+              </el-popconfirm>
+            </template>
           </div>
         </el-card>
         <el-empty v-if="!loading && tasks.length === 0" description="暂无定时任务" />
@@ -200,21 +199,47 @@
         @size-change="handleSizeChange"
       />
     </el-card>
+
+    <ScheduledTaskDetailDialog
+      v-model="detailVisible"
+      :task="currentTask"
+      :user-name="currentTask ? userName(currentTask.userId) : ''"
+      :agent-name="currentTask ? agentName(currentTask.agentId) : ''"
+      :can-edit="currentTask ? canModify(currentTask) : false"
+      @edit="openEdit"
+    />
+
+    <ScheduledTaskFormDialog
+      v-model="formVisible"
+      :task="currentTask"
+      @saved="fetchTasks"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { api } from '../../api'
-import { useRouter } from 'vue-router'
 import { formatDateTime, formatDateTimeColumn } from '../../utils/datetime'
 import { ElMessage } from 'element-plus'
 import { useBreakpoint } from '../../composables/useBreakpoint'
+import { useAuthStore } from '../../stores/auth'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
 import FilterPanel from '../../components/FilterPanel.vue'
+import ScheduledTaskDetailDialog from './ScheduledTaskDetailDialog.vue'
+import ScheduledTaskFormDialog from './ScheduledTaskFormDialog.vue'
+import { execStatusLabel as statusLabel, execStatusTagType as statusTagType } from './task-display'
+import type { ScheduledTaskRow } from './types'
 
 const { isMobile } = useBreakpoint()
-const router = useRouter()
+const authStore = useAuthStore()
+
+/** 他人任务的写操作需要「管理定时任务」权限，与后端 scheduled-task:write 门槛一致；本人任务不受限。 */
+const canManageOthers = computed(() => authStore.hasPermission('scheduled-task:write'))
+
+function canModify(task: ScheduledTaskRow): boolean {
+  return task.userId === authStore.user?.id || canManageOthers.value
+}
 
 // 关键词输入 300ms 防抖，输入即查（对齐 McpServerListView）
 let keywordDebounceTimer: ReturnType<typeof setTimeout> | null = null
@@ -229,26 +254,7 @@ onUnmounted(() => {
   if (keywordDebounceTimer) clearTimeout(keywordDebounceTimer)
 })
 
-interface ScheduledTask {
-  id: number
-  userId: number
-  agentId: number
-  sessionId: number
-  name: string
-  prompt: string
-  cronExpression: string
-  status: string
-  once: number
-  lastFireTime: string | null
-  lastExecutionStatus: string | null
-  nextFireTime: string | null
-  fireCount: number
-  finished: boolean | number
-  finishedAt: string | null
-  createdAt: string
-}
-
-const tasks = ref<ScheduledTask[]>([])
+const tasks = ref<ScheduledTaskRow[]>([])
 const loading = ref(false)
 const pageNum = ref(1)
 const pageSize = ref(20)
@@ -325,7 +331,7 @@ async function fetchTasks() {
   }
 }
 
-async function handleToggleStatus(task: ScheduledTask) {
+async function handleToggleStatus(task: ScheduledTaskRow) {
   try {
     await api.put(`/scheduled-tasks/${task.id}`, { status: task.status })
     ElMessage.success(task.status === 'ACTIVE' ? '已启用' : '已暂停')
@@ -365,24 +371,19 @@ function handleSizeChange() {
   fetchTasks()
 }
 
-function statusTagType(status: string) {
-  switch (status) {
-    case 'COMPLETED': return 'success'
-    case 'FAILED': return 'danger'
-    case 'SKIPPED': return 'warning'
-    case 'QUEUED': return 'primary'
-    default: return 'info'
-  }
+const detailVisible = ref(false)
+const formVisible = ref(false)
+const currentTask = ref<ScheduledTaskRow | null>(null)
+
+function openDetail(row: ScheduledTaskRow) {
+  currentTask.value = row
+  detailVisible.value = true
 }
 
-function statusLabel(status: string) {
-  switch (status) {
-    case 'COMPLETED': return '成功'
-    case 'FAILED': return '失败'
-    case 'SKIPPED': return '跳过'
-    case 'QUEUED': return '排队中'
-    default: return status
-  }
+function openEdit(row: ScheduledTaskRow) {
+  currentTask.value = row
+  detailVisible.value = false
+  formVisible.value = true
 }
 
 onMounted(() => {

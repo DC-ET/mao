@@ -53,7 +53,7 @@ npm test
 ## 提交规范
 
 - 保持改动聚焦，避免无关重构
-- 遵循项目现有代码风格（见 [CLAUDE.md](CLAUDE.md)）
+- 遵循项目现有代码风格（见 [AGENTS.md](AGENTS.md)）
 - 涉及 API 或数据库变更时，补充 Flyway 迁移脚本
 - 当前界面仅支持中文，新增 UI 文案请使用中文
 

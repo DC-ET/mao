@@ -18,7 +18,7 @@
 | 1 | 缺少操作系统级用户隔离，所有终端以后端进程账号运行，普通用户实际获得服务器 Shell | **不再假装有隔离**。改为「仅管理员可用」权限模型：新增 `terminal:use` 权限点，迁移只授予 role_id=1（ADMIN）。文档第 11 章直白写明「授予 `terminal:use` 等于授予服务器 root shell」。不做容器/系统账号隔离，并在第 3.2 节列为明确不做 |
 | 2 | session 归属校验不能替代系统权限隔离 | **承认**。v2 中归属校验只有一个作用：决定终端的 cwd 挂在哪个任务的 workspace、以及 terminalId 能被谁 attach。它不是安全边界，文档不再把它写成安全措施 |
 | 3 | Docker 镜像以 root 运行，PTY 获得容器 root 权限 | **事实修正**：当前部署不是 Docker。仓库无 Dockerfile / compose，docker daemon 未运行；实际形态是 `node dist/main.js` + `setsid nohup` 蓝绿双端口（9080 ↔ 9081）+ nginx upstream 切换（`scripts/lib/blue-green.sh`、`backend-ts/restart.sh`）。实测活跃进程 PID 3307722，`/proc/3307722/exe` → fnm 的 node v24.3.0，**owner 为 root，无 systemd 限制**。因此风险比 v1.0 描述的更高而非更低：PTY 直接拿到宿主机 root。第 11 章据实改写 |
-| 4 | 权限控制描述不准确：`PermissionInterceptor` 不会因接口在 `/v1/**` 就自动 RBAC | **已核实并修正**：backend-ts 全仓没有 `@RequirePermission` 装饰器，也没有 PermissionInterceptor（CLAUDE.md 该处表述与代码不符）。权限一律靠 routes 内显式 `await requirePermission(permissionService, userId, 'xxx')`（全库 18 处，如 `settings.routes.ts:31/37/45`）。v2 的终端 REST 三个接口逐个显式调用，WS 侧在 attach 时再查一次 |
+| 4 | 权限控制描述不准确：`PermissionInterceptor` 不会因接口在 `/v1/**` 就自动 RBAC | **已核实并修正**：backend-ts 全仓没有 `@RequirePermission` 装饰器，也没有 PermissionInterceptor（AGENTS.md 该处表述与代码不符）。权限一律靠 routes 内显式 `await requirePermission(permissionService, userId, 'xxx')`（全库 18 处，如 `settings.routes.ts:31/37/45`）。v2 的终端 REST 三个接口逐个显式调用，WS 侧在 attach 时再查一次 |
 | 5 | 后端重启恢复承诺不可实现（注册表在进程内存） | **v2 不承诺跨重启恢复**。只承诺网络断线重连。「后端重启（含蓝绿部署）后所有终端丢失」写入第 10 章验收标准，视为预期行为 |
 | 6 | WS 设计冲突：单例连接却在握手 URL 绑单个 terminalId；断线期间未消费 PTY 输出会阻塞子进程 | **v2 改为单连接多路复用**：握手 URL 不带 terminalId 也不带 token；连接后首帧 `auth`，再用 `attach` 消息逐个绑定 terminalId，所有帧都带 terminalId 字段。断线后后端**继续消费** PTY 输出写入环形缓冲，重新 attach 时先把缓冲刷给前端 |
 | 7 | 高权限通道安全设计不足：任意 Origin、URL 长期携带 JWT | **token 不进 URL**（沿用 `/ws/stream` 的首帧 auth 范式，见 `streaming-ws-handler.ts:157-176`）。**Origin 限制与一次性 attach ticket 本期不做**——用户明确「先不考虑安全的问题」，第 3.2 节列为不做，第 11 章列为已知风险 |
@@ -160,7 +160,7 @@ CLOUD 任务下点击终端按钮，打开**后端服务器上**的交互式伪�
 
 - 线上目录 `/opt/mao`（与会话工作区 `/opt/mao-data/workspace/...` 是两套 git 检出）。
 - 非 Docker：`node dist/main.js` + `setsid nohup` 蓝绿双端口（9080 ↔ 9081）+ nginx upstream 切换。实测活跃 PID 3307722，node v24.3.0（fnm），**以 root 运行，无 systemd**。
-- 工作区真实根 `/opt/mao-data/workspace`（CLAUDE.md 提到的 `/opt/mao/data/workspace` 不存在）；会话工作区 `{root}/{userId}/{sessionId}`，命名项目 `{root}/{userId}/projects/{slug}`。
+- 工作区真实根 `/opt/mao-data/workspace`（AGENTS.md 提到的 `/opt/mao/data/workspace` 不存在）；会话工作区 `{root}/{userId}/{sessionId}`，命名项目 `{root}/{userId}/projects/{slug}`。
 - 虚拟 HOME 根 `/opt/mao-data/users`（`app-config.ts:166`，可用 `MAO_USER_HOME_DIR` 覆盖）；实测 `/opt/mao-data/users/{1,2,3}` 存在且为 `drwx------`，**其中没有 .bashrc / .profile**（这是 3.1.3 需要写默认 rc 的原因）。
 - runtime 根 `/opt/mao-data/runtime`（`app-config.ts:165`），结构 `{userId}/{sessionId}/{shellOutput,skills,incoming,git-askpass.sh}`。
 - 编译工具链齐备：node v24.3.0、python3 3.12.7、gcc 11.4.0、GNU Make 4.3，`~/.cache/node-gyp/24.3.0` 已存在。

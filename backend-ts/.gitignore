@@ -5,3 +5,5 @@ coverage/
 config/application-local.yml
 *.log
 *.pid
+.env.e2e
+.e2e-data/

@@ -78,7 +78,7 @@ test('all three tabs preserve values and save the complete payload', async ({ pa
   await selectTab(dialog, '最佳实践')
   await dialog.getByRole('button', { name: '+ 添加经验', exact: true }).click()
   await dialog.getByPlaceholder('请输入经验正文（最长 300 字）').fill('保留经验')
-  await dialog.locator('.el-tab-pane:visible .experience-status').click()
+  await dialog.locator('.el-tab-pane:visible .experience-panel .el-switch').click()
   await selectTab(dialog, '基本信息')
   await chooseOption(page, dialog, 'Skills', 'mock-skill')
   await chooseOption(page, dialog, 'MCP 服务器', 'mock-mcp（HTTP）')
@@ -99,7 +99,7 @@ test('all three tabs preserve values and save the complete payload', async ({ pa
       await expect(dialog.getByPlaceholder(promptPlaceholder)).toHaveAttribute('rows', '15')
     } else {
       await expect(dialog.getByPlaceholder('请输入经验正文（最长 300 字）')).toHaveValue('保留经验')
-      await expect(dialog.locator('.experience-status')).toHaveText('停用')
+      await expect(dialog.locator('.experience-panel .el-switch')).not.toHaveClass(/is-checked/)
     }
   }
   await dialog.getByRole('button', { name: '创建', exact: true }).click()

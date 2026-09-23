@@ -379,7 +379,7 @@ ACTIVE ──收到终态（含级联判定）──▶ TERMINAL ──未 ACK �
 1. `WebSocketConfig.java`：`setMaxSessionIdleTimeout` 改为 `@Value("${app.ws.idle-timeout-ms:90000}")`（application.yml 默认 90000，保持现状行为）。
 2. `StreamingWsHandler.resolveClientType` 与 `StreamingWsRegistry.normalizeClientType`：识别 `"android"`（日志与能力区分）；非 electron 行为不变（仍 CLOUD 模式，无 `tool_execute` 下发）。
 
-> 后端改动需发版生效，重启动作由用户执行（遵循 CLAUDE.md 禁令）。
+> 后端改动需发版生效，重启动作由用户执行（遵循 AGENTS.md 禁令）。
 
 ### 6.2 安卓原生层（`android/android/app/src/main/java/cn/etarch/mao/app/`）
 
@@ -488,7 +488,7 @@ ACTIVE ──收到终态（含级联判定）──▶ TERMINAL ──未 ACK �
 | XSS 利用插件发令牌 | token 被发往任意地址 | `wss://` + host/path 白名单；token 内存持有不落盘；日志脱敏 |
 | 换账号重放旧缓冲 | 隐私泄漏 | 缓冲按 userId 隔离；退出登录清除缓冲 |
 | 系统备份恢复缓冲文件 | 隐私泄漏 | 缓冲放 `noBackupFilesDir`，不进系统备份 |
-| 后端发版重启 | 改动需生效 | 遵循 CLAUDE.md，重启动作由用户执行 |
+| 后端发版重启 | 改动需生效 | 遵循 AGENTS.md，重启动作由用户执行 |
 
 ## 9. 明确不做事项（防止范围蔓延）
 

@@ -2,7 +2,9 @@
 
 ## 模块职责
 
-查询和维护定时任务：列表、详情、更新名称/提示词/cron/状态、删除。默认仅操作当前用户任务；持 `session:read` 的管理端可跨用户详情/更新/删除（与 `list-all` 同门槛）。
+查询和维护定时任务：列表、详情、更新名称/提示词/cron/状态/一次性开关、删除。默认仅操作当前用户任务；持 `session:read` 的管理端可跨用户查看（`list-all` / 详情），持 `scheduled-task:write` 的管理端可跨用户更新/删除/启停。
+
+任务名称上限 200 字符，提示词上限 10000 字符，均不允许为空（服务端校验，超限返回参数错误）。
 
 ## 明确不包含
 
@@ -87,7 +89,7 @@ mao scheduled-task get --id 3 --json
 
 ### 用途
 
-更新任务名称、提示词、cron 表达式或状态。服务端会校验 cron 表达式，并在恢复 ACTIVE 时重新计算下次触发时间。本人任务直接可改；他人任务需 `session:read`（管理端启停/删除）。
+更新任务名称、提示词、cron 表达式或状态。服务端会校验 cron 表达式与名称/提示词长度，并在恢复 ACTIVE 时重新计算下次触发时间。本人任务直接可改；他人任务需 `scheduled-task:write`（管理端编辑/启停/删除）。
 
 ### 参数说明
 
@@ -114,7 +116,7 @@ mao scheduled-task update --id 3 --cron-expression '0 0 9 * * *'
 
 ### 用途
 
-删除定时任务。本人任务直接可删；他人任务需 `session:read`。
+删除定时任务。本人任务直接可删；他人任务需 `scheduled-task:write`。
 
 ### 参数说明
 
@@ -127,6 +129,16 @@ mao scheduled-task update --id 3 --cron-expression '0 0 9 * * *'
 ```bash
 mao scheduled-task delete --id 3
 ```
+
+---
+
+## Cron 预览（REST）
+
+`POST /scheduled-tasks/cron-preview`（需 `session:read`），请求体 `{ "expression": "0 0 9 * * ?", "count": 3 }`，返回 `{ valid, oneShot, nextFireTimes[], message }`：
+
+- `valid=false` 时带 `message`（该接口用正常响应对表达式的错误，方便编辑过程中反复预览）；`count` 取值 1..10。
+- `nextFireTimes` 与调度器同源（同一 croner 解析 + Asia/Shanghai），即预览看到的触发时间就是实际执行时间。
+- 管理后台定时任务「编辑」弹窗已内置该预览；CLI 暂未提供 `scheduled-task preview` 子命令。
 
 ## 返回字段
 

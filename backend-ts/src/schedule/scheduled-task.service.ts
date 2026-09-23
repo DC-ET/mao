@@ -101,6 +101,21 @@ export function isOneShotCron(expression: string): boolean {
   return fixed(sec) && fixed(min) && fixed(hour) && fixed(dom) && fixed(month) && any(dow);
 }
 
+export interface CronPreview {
+  valid: boolean;
+  /** 是否一次性任务（按 cron 形态判定，与创建/更新时的判定同源）。 */
+  oneShot: boolean;
+  nextFireTimes: string[];
+  message: string | null;
+}
+
+export const MAX_TASK_NAME_LENGTH = 200;
+export const MAX_TASK_PROMPT_LENGTH = 10000;
+
+const PREVIEW_DEFAULT_COUNT = 3;
+const PREVIEW_MIN_COUNT = 1;
+const PREVIEW_MAX_COUNT = 10;
+
 export interface ScheduleTaskTerminalService {
   finishExecution(sessionId: number, userId: number, phase: string, executionId: string, reason?: string): Promise<void>;
 }
@@ -115,6 +130,62 @@ export interface ScheduleWeixinAccountRepo {
 
 export interface ScheduleWeixinTokenRepo {
   findByAccountId(accountId: string): Promise<Array<{ wxUserId: string }>>;
+}
+
+/** 任务名称校验：与 scheduled_task.name VARCHAR(200) NOT NULL 对齐。 */
+export function normalizeTaskName(name: string | null | undefined): string {
+  const value = (name ?? '').trim();
+  if (value.length === 0) {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, '任务名称不能为空');
+  }
+  if (value.length > MAX_TASK_NAME_LENGTH) {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, `任务名称不能超过 ${MAX_TASK_NAME_LENGTH} 字符`);
+  }
+  return value;
+}
+
+/** 提示词校验：任务本体为空则该任务没有任何可执行内容。 */
+export function normalizeTaskPrompt(prompt: string | null | undefined): string {
+  const value = (prompt ?? '').trim();
+  if (value.length === 0) {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, '任务提示词不能为空');
+  }
+  if (value.length > MAX_TASK_PROMPT_LENGTH) {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, `任务提示词不能超过 ${MAX_TASK_PROMPT_LENGTH} 字符`);
+  }
+  return value;
+}
+
+export function clampPreviewCount(count: number): number {
+  if (!Number.isFinite(count)) return PREVIEW_DEFAULT_COUNT;
+  return Math.min(PREVIEW_MAX_COUNT, Math.max(PREVIEW_MIN_COUNT, Math.trunc(count)));
+}
+
+/**
+ * Cron 预览：与调度器共用 normalizeSpringCron + croner + Asia/Shanghai，
+ * 保证「预览看到的触发时间」就是「实际执行时间」。非法表达式不抛异常。
+ */
+export function buildCronPreview(cronExpression: string, count: number = PREVIEW_DEFAULT_COUNT): CronPreview {
+  const normalized = normalizeSpringCron(cronExpression ?? '');
+  if (normalized.length === 0) {
+    return { valid: false, oneShot: false, nextFireTimes: [], message: 'cron 表达式不能为空' };
+  }
+  const oneShot = isOneShotCron(normalized);
+  try {
+    const cron = new Cron(normalized, { timezone: 'Asia/Shanghai' });
+    const runs = cron.nextRuns(clampPreviewCount(count));
+    if (runs.length === 0) {
+      return { valid: false, oneShot, nextFireTimes: [], message: '该表达式没有可计算的下次触发时间' };
+    }
+    return { valid: true, oneShot, nextFireTimes: runs.map((d) => formatDateTime(d)), message: null };
+  } catch (e) {
+    return {
+      valid: false,
+      oneShot: false,
+      nextFireTimes: [],
+      message: `无效的 cron 表达式: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
 }
 
 const sessionLocks = new Map<number, Promise<void>>();
@@ -179,9 +250,11 @@ export class ScheduledTaskService {
   }
 
   async createTask(userId: number, agentId: number, sessionId: number, name: string, prompt: string, cronExpression: string, once?: boolean): Promise<ScheduledTask> {
+    const validName = normalizeTaskName(name);
+    const validPrompt = normalizeTaskPrompt(prompt);
     this.parseCron(cronExpression);
     const task: ScheduledTask = {
-      userId, agentId, sessionId, name, prompt, cronExpression,
+      userId, agentId, sessionId, name: validName, prompt: validPrompt, cronExpression,
       // 显式 once 优先；未指定时按 cron 形态自动判定（固定月+日视为一次性）
       once: once != null ? (once ? 1 : 0) : (isOneShotCron(cronExpression) ? 1 : 0),
       status: 'ACTIVE', fireCount: 0,
@@ -193,8 +266,8 @@ export class ScheduledTaskService {
 
   async updateTask(taskId: number, userId: number, name?: string | null, prompt?: string | null, cronExpression?: string | null, status?: string | null, once?: boolean | null, opts?: { allowNonOwner?: boolean }): Promise<ScheduledTask> {
     const task = await this.getTaskOwnedByUser(taskId, userId, opts?.allowNonOwner);
-    if (name != null) task.name = name;
-    if (prompt != null) task.prompt = prompt;
+    if (name != null) task.name = normalizeTaskName(name);
+    if (prompt != null) task.prompt = normalizeTaskPrompt(prompt);
     if (once != null) task.once = once ? 1 : 0;
     if (status != null) {
       if (status !== 'ACTIVE' && status !== 'PAUSED') {
@@ -462,6 +535,11 @@ export class ScheduledTaskService {
     } catch (error) {
       console.error(`定时任务未执行，回滚 nextFireTime 失败, id=${taskId}`, error);
     }
+  }
+
+  /** Cron 预览入口：路由层直接调用（只读，不落库）。 */
+  previewCron(cronExpression: string, count?: number): CronPreview {
+    return buildCronPreview(cronExpression, count ?? PREVIEW_DEFAULT_COUNT);
   }
 
   calculateNextFireTime(cronExpression: string): string | null {

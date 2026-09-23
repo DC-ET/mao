@@ -60,7 +60,7 @@ test('settings batch save round-trip persists and restores value', async ({ page
   // 改动并保存
   await sessionInput.fill(`${original}-x`)
   await ossCard.locator('button', { hasText: '保存' }).click()
-  await expect(page.locator('.el-message', { hasText: '已保存' })).toBeVisible({ timeout: 10_000 })
+  await expect(page.locator('.el-message', { hasText: '已保存' }).first()).toBeVisible({ timeout: 10_000 })
 
   // 回读确认
   const resp = await page.request.get('/api/v1/system-settings', {
@@ -73,7 +73,7 @@ test('settings batch save round-trip persists and restores value', async ({ page
   // 还原
   await sessionInput.fill(original)
   await ossCard.locator('button', { hasText: '保存' }).click()
-  await expect(page.locator('.el-message', { hasText: '已保存' })).toBeVisible({ timeout: 10_000 })
+  await expect(page.locator('.el-message', { hasText: '已保存' }).first()).toBeVisible({ timeout: 10_000 })
   const resp2 = await page.request.get('/api/v1/system-settings', {
     headers: { Authorization: `Bearer ${await page.evaluate(() => localStorage.getItem('token'))}` },
   })
