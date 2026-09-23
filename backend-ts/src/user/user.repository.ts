@@ -5,22 +5,22 @@ import { COMPANY_SSO_PROVIDER, ECP_PROVIDER, externalProviderInList } from '../a
 import type { User, UserRepository } from './types.js';
 
 /** 账号来源判定所需的外部身份提供方；单行子查询，避免多提供方绑定时 LEFT JOIN 放大行数。 */
-const EXTERNAL_PROVIDER_COLUMN =
-  '(SELECT e.provider FROM user_external_identity e WHERE e.user_id = `user`.id ORDER BY e.id LIMIT 1) AS external_provider';
+const EXTERNAL_PROVIDER_SQL =
+  '(SELECT e.provider FROM user_external_identity e WHERE e.user_id = `user`.id ORDER BY e.id LIMIT 1)';
+const EXTERNAL_PROVIDER_COLUMN = `${EXTERNAL_PROVIDER_SQL} AS external_provider`;
 
-/** 与 UserService.resolveAuthSource 同一口径，下推到列表查询。 */
+/** 与 UserService.resolveAuthSource 同一口径（都取最早绑定的 provider），下推到列表查询。 */
 function authSourceWhere(authSource: string | null | undefined): string | null {
   const source = authSource?.trim().toUpperCase();
   const noPassword = '(password_hash IS NULL OR TRIM(password_hash) = \'\')';
   const noFeishu = '(feishu_user_id IS NULL OR TRIM(feishu_user_id) = \'\')';
   const hasPassword = '(password_hash IS NOT NULL AND TRIM(password_hash) <> \'\')';
   const hasFeishu = '(feishu_user_id IS NOT NULL AND TRIM(feishu_user_id) <> \'\')';
-  const hasProvider = (provider: string) =>
-    `EXISTS (SELECT 1 FROM user_external_identity e WHERE e.user_id = \`user\`.id AND e.provider = '${provider}')`;
-  const noExternalProvider = `NOT EXISTS (SELECT 1 FROM user_external_identity e WHERE e.user_id = \`user\`.id AND e.provider IN (${externalProviderInList()}))`;
+  // 同时绑定 ECP 与公司 SSO 的账号只归入最早绑定的那个来源，否则筛选会重复命中。
+  const noExternalProvider = `(COALESCE(${EXTERNAL_PROVIDER_SQL}, '') NOT IN (${externalProviderInList()}))`;
   if (source === 'LOCAL') return hasPassword;
-  if (source === 'ECP') return `(${noPassword} AND ${hasProvider(ECP_PROVIDER)})`;
-  if (source === 'COMPANY_SSO') return `(${noPassword} AND ${hasProvider(COMPANY_SSO_PROVIDER)})`;
+  if (source === 'ECP') return `(${noPassword} AND ${EXTERNAL_PROVIDER_SQL} = '${ECP_PROVIDER}')`;
+  if (source === 'COMPANY_SSO') return `(${noPassword} AND ${EXTERNAL_PROVIDER_SQL} = '${COMPANY_SSO_PROVIDER}')`;
   if (source === 'FEISHU') return `(${noPassword} AND ${hasFeishu} AND ${noExternalProvider})`;
   if (source === 'LDAP') return `(${noPassword} AND ${noFeishu} AND ${noExternalProvider})`;
   return null;

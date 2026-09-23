@@ -43,11 +43,11 @@ describe('MysqlUserRepository identity email serialization', () => {
     expect(sqls[0]).toContain('feishu_user_id');
     expect(sqls[0]).toContain('user_external_identity');
     await repo.selectPage(1, 10, undefined, null, 'ECP');
-    expect(sqls[2]).toContain("e.provider = 'ecp'");
+    expect(sqls[2]).toContain("= 'ecp'");
     await repo.selectPage(1, 10, undefined, null, 'COMPANY_SSO');
-    expect(sqls[4]).toContain("e.provider = 'company_sso'");
+    expect(sqls[4]).toContain("= 'company_sso'");
     await repo.selectPage(1, 10, undefined, null, 'FEISHU');
-    expect(sqls[6]).toContain("e.provider IN ('ecp', 'company_sso')");
+    expect(sqls[6]).toContain("NOT IN ('ecp', 'company_sso')");
     await repo.selectPage(1, 10, undefined, null, 'nope');
     expect(sqls[8]).not.toContain('feishu_user_id');
   });
