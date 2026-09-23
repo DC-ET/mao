@@ -904,6 +904,13 @@ export class SessionService {
     return groupFileChanges(await this.fileChangeRepo.listByMessageIds(sessionId, messageIds));
   }
 
+  async getFileChangeSummariesByMessageIds(sessionId: number, messageIds: number[] | null): Promise<Map<number, FileChange[]>> {
+    if (messageIds == null || messageIds.length === 0) {
+      return new Map();
+    }
+    return groupFileChanges(await this.fileChangeRepo.listSummaryByMessageIds(sessionId, messageIds));
+  }
+
   async cleanupIncompleteTail(sessionId: number): Promise<number> {
     return this.cleanupIncompleteTailList(sessionId, await this.getMessages(sessionId));
   }

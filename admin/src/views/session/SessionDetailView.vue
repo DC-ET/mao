@@ -1,5 +1,5 @@
 <template>
-  <div class="session-detail" v-loading="loading">
+  <div class="session-detail">
     <!-- Header -->
     <el-page-header @back="router.push('/sessions')" :title="'返回列表'">
       <template #content>
@@ -7,7 +7,7 @@
       </template>
       <template #extra>
         <el-button :loading="exporting" @click="exportMessages">导出记录</el-button>
-        <el-button :loading="loading" @click="fetchDetail">
+        <el-button :loading="infoLoading || messagesLoading" @click="fetchDetail">
           <el-icon><Refresh /></el-icon>
         </el-button>
       </template>
@@ -15,11 +15,11 @@
 
     <div class="detail-layout">
       <!-- Session info -->
-      <el-card v-if="sessionInfo" class="info-card">
+      <el-card class="info-card" v-loading="infoLoading">
         <template #header>
           <span class="card-header">会话信息</span>
         </template>
-        <el-descriptions :column="1" border size="small">
+        <el-descriptions v-if="sessionInfo" :column="1" border size="small">
           <el-descriptions-item label="ID">{{ sessionInfo.id }}</el-descriptions-item>
           <el-descriptions-item label="用户">
             <router-link v-if="sessionInfo.userId != null" class="drill-link" :to="`/sessions?userId=${sessionInfo.userId}`">
@@ -51,12 +51,12 @@
       </el-card>
 
       <!-- Chat messages -->
-      <el-card class="chat-card">
+      <el-card class="chat-card" v-loading="messagesLoading">
         <template #header>
           <span class="card-header">聊天记录 ({{ messageTurns.length }} 轮对话)</span>
         </template>
 
-        <div v-if="messages.length === 0 && !loading" class="empty-state">
+        <div v-if="messages.length === 0 && !messagesLoading" class="empty-state">
           <el-empty description="暂无消息" />
         </div>
 
@@ -65,11 +65,14 @@
             <el-button :loading="loadingMore" @click="loadMoreMessages">加载更多</el-button>
           </div>
           <MessageGroup
-            v-for="turn in messageTurns"
+            v-for="(turn, index) in messageTurns"
             :key="turn.user?.id || turn.assistants[0]?.id || turn.key"
             :user-message="turn.user"
             :assistant-messages="turn.assistants"
             :workspace="sessionInfo?.workspace"
+            :is-last-turn="index === messageTurns.length - 1"
+            :phase="sessionInfo?.phase"
+            :phase-ready="sessionInfo != null"
           />
         </div>
       </el-card>
@@ -91,7 +94,8 @@ import MessageGroup from './components/MessageGroup.vue'
 
 const route = useRoute()
 const router = useRouter()
-const loading = ref(false)
+const infoLoading = ref(false)
+const messagesLoading = ref(false)
 const loadingMore = ref(false)
 const chatContainerRef = ref<HTMLElement | null>(null)
 const sessionInfo = ref<any>(null)
@@ -145,20 +149,31 @@ let latestFetchSeq = 0
 async function fetchDetail() {
   const id = route.params.id
   const seq = ++latestFetchSeq
-  loading.value = true
-  try {
-    const [sessionRes, messagesRes] = await Promise.all([
-      api.get(`/admin/sessions/${id}`),
-      api.get(`/admin/sessions/${id}/messages`, { params: { roundLimit: ROUND_LIMIT } })
-    ])
-    // 路由已切换或组件重新触发加载时，丢弃过期响应，避免旧会话数据覆盖新会话
-    if (seq !== latestFetchSeq) return
-    sessionInfo.value = sessionRes.data
-    applyMessagePage(messagesRes.data, false)
-    await scrollChatToBottom()
-  } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
-    if (seq === latestFetchSeq) loading.value = false
+  infoLoading.value = true
+  messagesLoading.value = true
+  if (String(sessionInfo.value?.id ?? '') !== String(id)) {
+    sessionInfo.value = null
+    messages.value = []
+    hasMore.value = false
+    nextBeforeMessageId.value = null
   }
+  // 会话信息很轻，先单独落地，避免被消息里的工具输出拖住整页
+  const sessionTask = api.get(`/admin/sessions/${id}`).then((res) => {
+    if (seq !== latestFetchSeq) return
+    sessionInfo.value = (res as { data?: unknown }).data
+  }).catch(() => { /* 拦截器已提示失败 */ }).finally(() => {
+    if (seq === latestFetchSeq) infoLoading.value = false
+  })
+  const messagesTask = api.get(`/admin/sessions/${id}/messages`, {
+    params: { roundLimit: ROUND_LIMIT, compact: true }
+  }).then(async (res) => {
+    if (seq !== latestFetchSeq) return
+    applyMessagePage((res as { data?: unknown }).data, false)
+    await scrollChatToBottom()
+  }).catch(() => { /* 拦截器已提示失败 */ }).finally(() => {
+    if (seq === latestFetchSeq) messagesLoading.value = false
+  })
+  await Promise.all([sessionTask, messagesTask])
 }
 
 async function loadMoreMessages() {
@@ -172,6 +187,7 @@ async function loadMoreMessages() {
     const { data } = await api.get(`/admin/sessions/${id}/messages`, {
       params: {
         roundLimit: ROUND_LIMIT,
+        compact: true,
         beforeMessageId: nextBeforeMessageId.value
       }
     })

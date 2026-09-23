@@ -69,6 +69,7 @@ describe('session and admin routes', () => {
       updateModelId: vi.fn(),
       getMessagesByRounds: vi.fn(async () => ({ messages: [], hasMore: false, nextBeforeMessageId: null })),
       getFileChangesByMessageIds: vi.fn(async () => new Map()),
+      getFileChangeSummariesByMessageIds: vi.fn(async () => new Map()),
       editMessageAndTruncate: vi.fn(async () => ({ id: 2, sessionId: 1, role: 'USER', content: 'edited' })),
       listSessionsForAdmin: vi.fn(async () => ({ records: [session()], total: 1, current: 1, size: 20 })),
     } as unknown as SessionService;
@@ -156,6 +157,30 @@ describe('session and admin routes', () => {
     expect((await json('GET', '/v1/admin/sessions/options/users')).body.data[0].username).toBe('u');
     expect((await json('GET', '/v1/admin/sessions/options/agents')).body.data[0].name).toBe('Agent');
     expect(sessionService.togglePin).toHaveBeenCalled();
+    expect(sessionService.getFileChangeSummariesByMessageIds).not.toHaveBeenCalled();
+    await fastify.close();
+  });
+
+  it('admin message compact omits diff payload and truncates tool output', async () => {
+    const { fastify, sessionService } = await app();
+    vi.mocked(sessionService.getMessagesByRounds).mockResolvedValue({
+      messages: [{
+        id: 8,
+        sessionId: 1,
+        role: 'TOOL',
+        content: `{"stdout":"${'a'.repeat(5000)}","exit_code":1}`,
+        toolCallId: 'c1',
+      }],
+      hasMore: false,
+      nextBeforeMessageId: null,
+    });
+    const res = await fastify.inject({ method: 'GET', url: '/v1/admin/sessions/1/messages?compact=true' });
+    const body = JSON.parse(res.body);
+    expect(sessionService.getFileChangeSummariesByMessageIds).toHaveBeenCalled();
+    expect(sessionService.getFileChangesByMessageIds).not.toHaveBeenCalled();
+    expect(body.data.messages[0].content.startsWith('Tool execution failed')).toBe(true);
+    expect(body.data.messages[0].content.length).toBeLessThanOrEqual(4000);
+    expect(body.data.messages[0].content).toContain('已截断');
     await fastify.close();
   });
 

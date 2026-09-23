@@ -501,4 +501,21 @@ export class FileChangeRepository {
       [sessionId, ...messageIds],
     );
   }
+
+  /**
+   * 管理端聊天记录只展示路径和行数。diff 正文是 MEDIUMTEXT，SELECT * 会把整段快照从磁盘读出来。
+   */
+  listSummaryByMessageIds(sessionId: number, messageIds: number[]): Promise<FileChange[]> {
+    if (messageIds.length === 0) {
+      return Promise.resolve([]);
+    }
+    const placeholders = messageIds.map(() => '?').join(',');
+    return this.db.query<FileChange>(
+      `SELECT id, message_id, session_id, file_path, change_type, lines_added, lines_deleted
+       FROM message_file_change
+       WHERE session_id = ? AND message_id IN (${placeholders})
+       ORDER BY id ASC`,
+      [sessionId, ...messageIds],
+    );
+  }
 }

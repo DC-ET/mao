@@ -97,5 +97,12 @@ describe('FileChangeRepository', () => {
     expect(await repo.listBySession(1)).toEqual([{ id: 1 }]);
     expect(await repo.listByMessageIds(1, [])).toEqual([]);
     await repo.listByMessageIds(1, [2, 3]);
+    expect(await repo.listSummaryByMessageIds(1, [])).toEqual([]);
+    await repo.listSummaryByMessageIds(1, [2, 3]);
+    const summarySql = String(db.query.mock.calls.at(-1)?.[0]);
+    expect(summarySql).toContain('file_path');
+    expect(summarySql).not.toContain('before_content');
+    expect(summarySql).not.toContain('after_content');
+    expect(summarySql).not.toContain('patch_content');
   });
 });

@@ -1,9 +1,9 @@
 <template>
   <div class="file-change-panel" v-if="changes.length > 0">
-    <div class="file-change-header" @click="isExpanded = !isExpanded">
+    <div class="file-change-header" @click="toggleExpanded">
       <div class="file-change-info">
         <el-icon class="file-change-icon" :size="14"><Document /></el-icon>
-        <span class="file-change-label">文件变更 ({{ changes.length }})</span>
+        <span class="file-change-label">文件变更 ({{ mergedChanges.length }})</span>
       </div>
       <el-icon class="expand-icon" :class="{ expanded: isExpanded }"><ArrowDown /></el-icon>
     </div>
@@ -25,18 +25,50 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { Document, ArrowDown } from '@element-plus/icons-vue'
 import type { FileChange } from '../types/chat'
 import { toRelativeWorkspacePath } from '../../../utils/workspace-path'
 
 const props = defineProps<{ changes: FileChange[]; workspace?: string }>()
 
+/** 同一路径多次写入合并成一行，和客户端文件变更面板一致。 */
+const mergedChanges = computed(() => {
+  const byPath = new Map<string, FileChange>()
+  for (const change of props.changes) {
+    const linesAdded = Number(change.linesAdded) || 0
+    const linesDeleted = Number(change.linesDeleted) || 0
+    const existing = byPath.get(change.path)
+    if (!existing) {
+      byPath.set(change.path, { ...change, linesAdded, linesDeleted })
+      continue
+    }
+    existing.linesAdded += linesAdded
+    existing.linesDeleted += linesDeleted
+    if ((change.type || '').toUpperCase() === 'CREATED') existing.type = 'CREATED'
+  }
+  return [...byPath.values()]
+})
+
+const userToggled = ref(false)
 const isExpanded = ref(true)
+
+watch(
+  () => mergedChanges.value.length,
+  (count) => {
+    if (!userToggled.value) isExpanded.value = count <= 4
+  },
+  { immediate: true }
+)
+
+function toggleExpanded() {
+  userToggled.value = true
+  isExpanded.value = !isExpanded.value
+}
 
 const displayChanges = computed(() => {
   const ws = props.workspace
-  return props.changes.map(c => ({
+  return mergedChanges.value.map(c => ({
     ...c,
     displayPath: ws ? toRelativeWorkspacePath(ws, c.path) : c.path
   }))

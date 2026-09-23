@@ -28,7 +28,7 @@
     </div>
     <div v-else class="orphan-hint">无对应用户消息</div>
 
-    <!-- Collapsible process block (thinking + tool calls + file changes) -->
+    <!-- Collapsible process block (thinking + tool calls) -->
     <div v-if="hasProcess" class="process-block">
       <div class="process-header" @click="processExpanded = !processExpanded">
         <el-icon class="process-arrow" :class="{ expanded: processExpanded }"><ArrowDown /></el-icon>
@@ -40,7 +40,6 @@
           <ThinkingBlock v-if="item.type === 'thinking'" :thinking="item.content" />
           <div v-else-if="item.type === 'text'" class="process-text markdown-body" v-html="renderMarkdown(item.content)" />
           <ToolCallGroup v-else-if="item.type === 'tools' && item.toolCalls" :tool-calls="item.toolCalls" />
-          <FileChangePanel v-else-if="item.type === 'fileChanges' && item.fileChanges" :changes="item.fileChanges" :workspace="workspace" />
         </template>
       </div>
     </div>
@@ -51,9 +50,16 @@
         <div class="message-time">
           <span>{{ formatDateTime(finalReply.createdAt) }}</span>
         </div>
-        <div class="assistant-text markdown-body" v-html="renderMarkdown(finalReply.content)" />
+        <div class="assistant-text markdown-body" v-html="finalReplyHtml" />
       </div>
     </div>
+
+    <!-- 一轮结束后在末尾合并展示；执行中的当前轮先不展示，和客户端一致 -->
+    <FileChangePanel
+      v-if="showFileChanges"
+      :changes="aggregatedFileChanges"
+      :workspace="workspace"
+    />
   </div>
 </template>
 
@@ -62,16 +68,25 @@ import { computed, ref } from 'vue'
 import { ArrowDown } from '@element-plus/icons-vue'
 import { formatDateTime } from '../../../utils/datetime'
 import { renderMarkdown } from '../composables/useMarkdown'
-import type { ChatMessage } from '../types/chat'
+import type { ChatMessage, FileChange } from '../types/chat'
 import ThinkingBlock from './ThinkingBlock.vue'
 import ToolCallGroup from './ToolCallGroup.vue'
 import FileChangePanel from './FileChangePanel.vue'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   userMessage: ChatMessage | null
   assistantMessages: ChatMessage[]
   workspace?: string
-}>()
+  isLastTurn?: boolean
+  phase?: string
+  phaseReady?: boolean
+}>(), {
+  isLastTurn: false,
+  phase: '',
+  phaseReady: false
+})
+
+const ACTIVE_PHASES = new Set(['RUNNING', 'WAITING_APPROVAL', 'CANCELLING'])
 
 const userCollapsed = ref(true)
 const processExpanded = ref(false)
@@ -89,14 +104,28 @@ const finalReply = computed(() => {
 })
 
 const finalReplyText = computed(() => finalReply.value?.content?.trim() || '')
+const finalReplyHtml = computed(() => renderMarkdown(finalReply.value?.content || ''))
 
-// Process items: intermediate messages fully + thinking/tools/fileChanges from final message
-// Final answer text is rendered outside the collapse (same intent as desktop ChatRoundList)
+const aggregatedFileChanges = computed((): FileChange[] => {
+  const list: FileChange[] = []
+  for (const msg of props.assistantMessages) {
+    if (msg.fileChanges?.length) list.push(...msg.fileChanges)
+  }
+  return list
+})
+
+const showFileChanges = computed(() => {
+  if (aggregatedFileChanges.value.length === 0) return false
+  if (props.isLastTurn && !props.phaseReady) return false
+  return !(props.isLastTurn && ACTIVE_PHASES.has(props.phase))
+})
+
+// Process items: intermediate messages fully + thinking/tools from final message.
+// File changes are aggregated once after the reply, matching desktop ChatRoundList.
 type ProcessItem =
   | { type: 'thinking'; content: string }
   | { type: 'text'; content: string }
   | { type: 'tools'; toolCalls: ChatMessage['toolCalls'] }
-  | { type: 'fileChanges'; fileChanges: ChatMessage['fileChanges'] }
 
 const processItems = computed((): ProcessItem[] => {
   const items: ProcessItem[] = []
@@ -113,9 +142,6 @@ const processItems = computed((): ProcessItem[] => {
     const tc = getVisibleToolCalls(msg)
     if (tc.length > 0) {
       items.push({ type: 'tools', toolCalls: tc })
-    }
-    if (msg.fileChanges && msg.fileChanges.length > 0) {
-      items.push({ type: 'fileChanges', fileChanges: msg.fileChanges })
     }
   }
   return items

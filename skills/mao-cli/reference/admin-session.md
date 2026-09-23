@@ -57,14 +57,16 @@ mao admin-session get --id 100
 | `--id` | 是 | 整数 | — | 会话 ID | 路径 |
 | `--round-limit` | 否 | 整数 | 5 | 拉取轮次数 | `roundLimit` |
 | `--before-message-id` | 否 | 整数 | — | 向前翻页游标 | `beforeMessageId` |
+| `--compact` | 否 | 开关 | 关 | 精简载荷：不返回文件 diff 正文，并截断工具输出与过长参数 | `compact=true` |
 
 `GET /admin/sessions/{id}/messages`
 
-成功 `data` 含 `messages`、`hasMore`、`nextBeforeMessageId`。
+成功 `data` 含 `messages`、`hasMore`、`nextBeforeMessageId`。管理后台详情页使用 `--compact`；需要完整工具输出和 diff 时不要加这个开关（与详情页「导出记录」相同）。
 
 ```bash
 mao admin-session messages --id 100 --round-limit 5
 mao admin-session messages --id 100 --before-message-id 500
+mao admin-session messages --id 100 --compact
 ```
 
 ## 命令：admin-session options-users

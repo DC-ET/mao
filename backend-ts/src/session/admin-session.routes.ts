@@ -1,8 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import { requireAdmin, sendOk } from '../common/http-error.js';
-import { collectEntityIds, parseEntityId, pathId, queryInt, queryOptInt, queryOptStr } from '../common/request.js';
+import { collectEntityIds, parseEntityId, pathId, queryInt, queryOptBool, queryOptInt, queryOptStr } from '../common/request.js';
 import type { SessionService } from './session.service.js';
 import type { AgentLookup, AgentRef, LlmModelLookup, Session, UserLookup } from './types.js';
+import { compactAdminTranscript } from './admin-message-compact.js';
 import { toAdminSessionVO, toMessageVOList } from './session-vo.js';
 
 export interface AdminSessionRouteDeps {
@@ -114,9 +115,15 @@ export function registerAdminSessionRoutes(app: FastifyInstance, deps: AdminSess
     const roundLimit = queryOptInt(request, 'roundLimit') ?? 5;
     const beforeMessageId = queryOptInt(request, 'beforeMessageId') ?? null;
     const page = await sessionService.getMessagesByRounds(id, roundLimit, beforeMessageId);
-    const changesByMsg = await sessionService.getFileChangesByMessageIds(id, page.messages.map((m) => m.id!));
+    const messageIds = page.messages.map((m) => m.id!);
+    // compact：详情页不展示 diff，工具卡片也只画出截断后的输出。导出仍走完整载荷。
+    const compact = queryOptBool(request, 'compact') === true;
+    const changesByMsg = compact
+      ? await sessionService.getFileChangeSummariesByMessageIds(id, messageIds)
+      : await sessionService.getFileChangesByMessageIds(id, messageIds);
+    const messages = compact ? compactAdminTranscript(page.messages) : page.messages;
     return sendOk(reply, {
-      messages: toMessageVOList(page.messages, changesByMsg),
+      messages: toMessageVOList(messages, changesByMsg),
       hasMore: page.hasMore,
       nextBeforeMessageId: page.nextBeforeMessageId,
     });

@@ -17,7 +17,7 @@ function help() {
   mao admin-session list [--page] [--size] [--user-id] [--agent-id] [--execution-mode] [--phase] [--keyword] [--status]
   # --keyword 匹配标题/摘要/消息内容；命消息时 records 含 matchSnippet
   mao admin-session get --id
-  mao admin-session messages --id [--round-limit] [--before-message-id]
+  mao admin-session messages --id [--round-limit] [--before-message-id] [--compact]
   mao admin-session archive --id
   mao admin-session delete --id
   mao admin-session options-users
@@ -61,6 +61,7 @@ async function run(ctx, subcommand, _rest, flags) {
       const result = await get(ctx, `/admin/sessions/${id}/messages`, pickDefined({
         roundLimit: getNumber(flags, 'round-limit'),
         beforeMessageId: getNumber(flags, 'before-message-id'),
+        compact: hasFlag(flags, 'compact') ? true : undefined,
       }));
       emitResult(result, { raw: ctx.raw });
       return;
