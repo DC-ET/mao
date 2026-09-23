@@ -122,6 +122,15 @@ export function useTaskPanelPrefs() {
     scheduleSave()
   }
 
+  /** 深链定位：只展开，已展开时不改偏好。 */
+  function expandGroup(key: string) {
+    if (!collapsedGroups.value.has(key)) return
+    const next = new Set(collapsedGroups.value)
+    next.delete(key)
+    collapsedGroups.value = next
+    scheduleSave()
+  }
+
   function sortGroups<T extends { key: string }>(groups: T[]): T[] {
     if (groupOrder.value.length === 0) {
       return groups
@@ -168,6 +177,7 @@ export function useTaskPanelPrefs() {
     saveOrder,
     isGroupCollapsed,
     toggleGroupCollapsed,
+    expandGroup,
     sortGroups,
     onDragEnd
   }

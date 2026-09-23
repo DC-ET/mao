@@ -100,6 +100,7 @@
             <div
               v-for="session in group.sessions.slice(0, getVisibleCount(group.key))"
               :key="session.id"
+              :data-session-id="session.id"
               class="session-item"
               :class="{
                 active: String(session.id) === String(activeSessionId),
@@ -199,6 +200,7 @@
             <div
               v-for="session in visibleFocusMainSessions"
               :key="session.id"
+              :data-session-id="session.id"
               class="session-item focus-item"
               :class="{
                 active: String(session.id) === String(activeSessionId),
@@ -274,6 +276,7 @@
                 <div
                   v-for="session in historySessions"
                   :key="session.id"
+                  :data-session-id="session.id"
                   class="session-item focus-item"
                   :class="{
                     active: String(session.id) === String(activeSessionId),
@@ -355,6 +358,7 @@
             <div
               v-for="session in archivedSessions"
               :key="session.id"
+              :data-session-id="session.id"
               class="session-item archive-item"
               :class="{
                 active: String(session.id) === String(activeSessionId),
@@ -445,6 +449,7 @@ import { useTerminal } from '../../composables/useTerminal'
 import { removeSessionTabsFor } from '../../composables/useCenterTabs'
 import { useTaskPanelPrefs } from '../../composables/useTaskPanelPrefs'
 import { cloudGroupKey, formatCloudGroupLabel, groupIconKind, isSharedCloudProject } from '../../utils/cloud-project'
+import { planFocusReveal, planGroupReveal } from '../../utils/taskSidebarReveal'
 import { sessionToFocusCandidate, sortByFocusPriority, isHistoryEligible } from '../../utils/focusSort'
 import feishuLogo from '../../assets/feishu-logo.svg'
 import weixinLogo from '../../assets/weixin-logo.png'
@@ -464,7 +469,7 @@ const emit = defineEmits<{
 const router = useRouter()
 const sessionStore = useSessionStore()
 const { createTerminal, isOpen: terminalOpen } = useTerminal()
-const { sortGroups, onDragEnd, loadPrefs, isGroupCollapsed, toggleGroupCollapsed } = useTaskPanelPrefs()
+const { sortGroups, onDragEnd, loadPrefs, isGroupCollapsed, toggleGroupCollapsed, expandGroup } = useTaskPanelPrefs()
 
 const DEFAULT_VISIBLE = 5
 const EXPAND_STEP = 20
@@ -835,6 +840,82 @@ onUnmounted(() => {
   resizeObserver?.disconnect()
 })
 
+/**
+ * 从地址进入会话（飞书卡片「会话详情」、搜索、刷新）时，
+ * 展开所在分组、露出默认只显示前几条之外的那一行，并滚到可见区域。
+ * 会话还没进列表时先不滚，等它出现再定位一次。
+ * 用户随后手动收起分组不会被立刻再展开。
+ */
+let revealToken = 0
+
+async function revealActiveSession(id: string | null) {
+  const token = ++revealToken
+  if (!id || props.collapsed) return
+  await nextTick()
+  if (token !== revealToken) return
+
+  if (props.listMode === 'focus') {
+    const plan = planFocusReveal(
+      id,
+      focusMainSessions.value.map((s) => String(s.id)),
+      historySessions.value.map((s) => String(s.id)),
+      focusVisibleCount.value,
+      historyCollapsed.value,
+    )
+    if (!plan) {
+      if (sessionStore.getSessionEntity(id)?.status === 'ARCHIVED') {
+        await revealArchivedSession(id, token)
+      }
+      return
+    }
+    if (plan.expandHistory) historyCollapsed.value = false
+    if (plan.visibleCount > focusVisibleCount.value) focusVisibleCount.value = plan.visibleCount
+  } else {
+    const plan = planGroupReveal(
+      id,
+      groupedSessions.value.map((g) => ({ key: g.key, sessionIds: g.sessions.map((s) => String(s.id)) })),
+      isGroupCollapsed,
+      getVisibleCount,
+    )
+    if (!plan) {
+      if (sessionStore.getSessionEntity(id)?.status === 'ARCHIVED') {
+        await revealArchivedSession(id, token)
+      }
+      return
+    }
+    if (plan.expand) expandGroup(plan.groupKey)
+    if (plan.visibleCount > getVisibleCount(plan.groupKey)) {
+      expandedCounts.value.set(plan.groupKey, plan.visibleCount)
+      expandedCounts.value = new Map(expandedCounts.value)
+    }
+  }
+
+  await nextTick()
+  if (token !== revealToken) return
+  scrollSessionIntoView(id)
+}
+
+async function revealArchivedSession(id: string, token: number) {
+  archiveCollapsed.value = false
+  if (!archivedSessions.value.some((s) => String(s.id) === String(id))) {
+    await loadArchive()
+  }
+  await nextTick()
+  if (token !== revealToken) return
+  scrollSessionIntoView(id)
+}
+
+function scrollSessionIntoView(sessionId: string) {
+  const root = panelEl.value?.querySelector('.panel-content') as HTMLElement | null
+  if (!root) return
+  const el = root.querySelector(`[data-session-id="${CSS.escape(String(sessionId))}"]`) as HTMLElement | null
+  if (!el) return
+  const rootRect = root.getBoundingClientRect()
+  const elRect = el.getBoundingClientRect()
+  if (elRect.top >= rootRect.top && elRect.bottom <= rootRect.bottom) return
+  root.scrollTop += elRect.top - rootRect.top - (root.clientHeight - el.offsetHeight) / 2
+}
+
 async function onGroupNewTask(group: { sessions: Session[] }) {
   const last = group.sessions[0] // already sorted by updatedAt desc
   if (!last) return
@@ -1100,6 +1181,24 @@ function onEditKeydown(e: KeyboardEvent) {
 function getVisibleCount(key: string): number {
   return expandedCounts.value.get(key) ?? DEFAULT_VISIBLE
 }
+
+/** 当前会话是否已出现在对应列表里。列表晚于路由到位时（深链补进行）会再定位一次。 */
+function sidebarRevealKey(): string {
+  const id = activeSessionId.value
+  if (!id || props.collapsed) return ''
+  if (props.listMode === 'focus') {
+    const inMain = focusMainSessions.value.some((s) => String(s.id) === String(id))
+    const inHistory = historySessions.value.some((s) => String(s.id) === String(id))
+    return `focus:${id}:${inMain}:${inHistory}:${sessionStore.focusLoaded}`
+  }
+  const inGroup = groupedSessions.value.some((g) => g.sessions.some((s) => String(s.id) === String(id)))
+  const archived = sessionStore.getSessionEntity(id)?.status === 'ARCHIVED'
+  return `std:${id}:${inGroup}:${archived}`
+}
+
+watch(sidebarRevealKey, () => {
+  void revealActiveSession(activeSessionId.value)
+})
 
 function canExpandGroup(group: { key: string; sessions: Session[] }): boolean {
   const visible = getVisibleCount(group.key)
