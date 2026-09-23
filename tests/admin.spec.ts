@@ -44,7 +44,7 @@ test.describe('Login Page', () => {
     await page.fill('input[placeholder="密码"]', 'wrongpass')
     await page.click('button:has-text("登录")')
     // Element Plus error message appears
-    await expect(page.locator('.el-message--error')).toBeVisible({ timeout: 10_000 })
+    await expect(page.locator('.el-message--error').first()).toBeVisible({ timeout: 10_000 })
   })
 
   test('should not submit with empty fields', async ({ page }) => {
@@ -65,7 +65,7 @@ test.describe('Analytics Homepage', () => {
 
   test('should show period control and overview metrics', async ({ page }) => {
     await expect(page.locator('.layout-header .page-title')).toHaveText('用量分析')
-    await expect(page.locator('text=统计周期')).toBeVisible()
+    await expect(page.getByText('统计周期', { exact: true })).toBeVisible()
     await expect(page.locator('.page-toolbar .period-text')).toBeVisible({ timeout: 10_000 })
     const metrics = page.locator('.metric-strip .metric')
     await expect(metrics.first()).toBeVisible({ timeout: 10_000 })
@@ -98,7 +98,7 @@ test.describe('Analytics Homepage', () => {
 test.describe('Agent Management', () => {
   test.beforeEach(async ({ page }) => {
     await login(page)
-    await page.click('span:has-text("Agent 管理")')
+    await page.click('.sidebar-menu .el-menu-item:has-text("Agent 管理")')
     await page.waitForSelector('.agent-list', { timeout: 10_000 })
   })
 
@@ -112,7 +112,7 @@ test.describe('Agent Management', () => {
     const table = page.locator('.el-table')
     await expect(table).toBeVisible()
     // Table should have column headers
-    await expect(table.locator('thead th')).toContainText(['ID', '名称', '描述', '模型', '标签', '创建时间', '操作'])
+    await expect(table.locator('thead th')).toContainText(['ID', '名称', '描述', '创建人', 'Skills', '经验数', '创建时间', '操作'])
   })
 
   test('should show agent data rows', async ({ page }) => {
@@ -141,7 +141,7 @@ test.describe('Agent Management', () => {
 test.describe('Model Management', () => {
   test.beforeEach(async ({ page }) => {
     await login(page)
-    await page.click('span:has-text("模型管理")')
+    await page.click('.sidebar-menu .el-menu-item:has-text("模型管理")')
     await page.waitForSelector('.model-list', { timeout: 10_000 })
   })
 
@@ -153,7 +153,7 @@ test.describe('Model Management', () => {
   test('should show model table with data', async ({ page }) => {
     const table = page.locator('.el-table')
     await expect(table).toBeVisible()
-    await expect(table.locator('thead th')).toContainText(['ID', '名称', '供应商', '模型标识', 'API 地址', '视觉', '默认', '状态', '操作'])
+    await expect(table.locator('thead th')).toContainText(['ID', '名称', '供应商', '模型标识', 'API 地址', '上下文窗口', '操作'])
     await expect(page.locator('.el-table__inner-wrapper')).toBeVisible({ timeout: 15_000 })
   })
 
@@ -166,7 +166,7 @@ test.describe('Model Management', () => {
     await expect(searchForm).toContainText('视觉')
     await expect(searchForm).toContainText('默认')
     await expect(page.locator('button:has-text("查询")')).toBeVisible()
-    await expect(page.locator('button:has-text("重置")')).toBeVisible()
+    await expect(page.getByRole('button', { name: '重置', exact: true })).toBeVisible()
   })
 
   test('should open add model dialog', async ({ page }) => {
@@ -183,7 +183,7 @@ test.describe('Model Management', () => {
 test.describe('User Management', () => {
   test.beforeEach(async ({ page }) => {
     await login(page)
-    await page.click('span:has-text("用户管理")')
+    await page.click('.sidebar-menu .el-menu-item:has-text("用户管理")')
     await page.waitForSelector('.user-list', { timeout: 10_000 })
   })
 
@@ -202,7 +202,7 @@ test.describe('User Management', () => {
   test('should show search filters', async ({ page }) => {
     await expect(page.locator('input[placeholder="用户名 / 显示名 / 邮箱"]')).toBeVisible()
     await expect(page.locator('button:has-text("查询")')).toBeVisible()
-    await expect(page.locator('button:has-text("重置")')).toBeVisible()
+    await expect(page.getByRole('button', { name: '重置', exact: true })).toBeVisible()
   })
 
   test('should open create user dialog', async ({ page }) => {
@@ -219,7 +219,7 @@ test.describe('User Management', () => {
 test.describe('Skills Management', () => {
   test.beforeEach(async ({ page }) => {
     await login(page)
-    await page.click('span:has-text("Skills 管理")')
+    await page.click('.sidebar-menu .el-menu-item:has-text("Skills 管理")')
     await page.waitForSelector('.skill-list', { timeout: 10_000 })
   })
 
@@ -253,7 +253,7 @@ test.describe('Skills Management', () => {
 test.describe('Session Management', () => {
   test.beforeEach(async ({ page }) => {
     await login(page)
-    await page.click('span:has-text("会话管理")')
+    await page.click('.sidebar-menu .el-menu-item:has-text("会话管理")')
     await page.waitForSelector('.session-list', { timeout: 10_000 })
   })
 
@@ -274,7 +274,7 @@ test.describe('Session Management', () => {
   test('should have filter form elements', async ({ page }) => {
     await expect(page.locator('input[placeholder="标题/摘要"]')).toBeVisible()
     await expect(page.locator('button:has-text("查询")')).toBeVisible()
-    await expect(page.locator('button:has-text("重置")')).toBeVisible()
+    await expect(page.getByRole('button', { name: '重置', exact: true })).toBeVisible()
   })
 
   test('should navigate to session detail on click', async ({ page }) => {
@@ -333,7 +333,7 @@ test.describe('Sidebar Navigation', () => {
     ]
 
     for (const item of navItems) {
-      await page.click(`span:has-text("${item.label}")`)
+      await page.click(`.sidebar-menu .el-menu-item:has-text("${item.label}")`)
       // Wait for route change
       await page.waitForURL(item.url, { timeout: 10_000 })
       // The active menu item indicator should be visible
@@ -351,23 +351,23 @@ test.describe('Governance Console', () => {
   })
 
   test('should render role permission page', async ({ page }) => {
-    await page.click('span:has-text("角色权限")')
+    await page.click('.sidebar-menu .el-menu-item:has-text("角色权限")')
     await page.waitForURL(/\/roles$/)
     await expect(page.locator('text=角色列表')).toBeVisible({ timeout: 10_000 })
     await expect(page.locator('text=权限分配')).toBeVisible()
   })
 
   test('should render audit log page with filters', async ({ page }) => {
-    await page.click('span:has-text("审计日志")')
+    await page.click('.sidebar-menu .el-menu-item:has-text("审计日志")')
     await page.waitForURL(/\/audit-logs$/)
     await expect(page.locator('.audit-log')).toBeVisible({ timeout: 10_000 })
     await expect(page.locator('button:has-text("查询")')).toBeVisible()
   })
 
   test('should render analytics homepage and settings pages', async ({ page }) => {
-    await expect(page.locator('text=统计周期')).toBeVisible({ timeout: 10_000 })
+    await expect(page.getByText('统计周期', { exact: true })).toBeVisible({ timeout: 10_000 })
 
-    await page.click('span:has-text("系统设置")')
+    await page.click('.sidebar-menu .el-menu-item:has-text("系统设置")')
     await page.waitForURL(/\/settings$/)
     await expect(page.locator('.system-settings')).toBeVisible({ timeout: 10_000 })
     await expect(page.locator('.group-card').first()).toBeVisible()
@@ -384,9 +384,9 @@ test.describe('Tab Bar', () => {
 
   test('should show tabs when navigating between pages', async ({ page }) => {
     // Open a few pages
-    await page.click('span:has-text("Agent 管理")')
+    await page.click('.sidebar-menu .el-menu-item:has-text("Agent 管理")')
     await page.waitForURL(/\/agents$/)
-    await page.click('span:has-text("模型管理")')
+    await page.click('.sidebar-menu .el-menu-item:has-text("模型管理")')
     await page.waitForURL(/\/models$/)
 
     // Tab bar should have multiple tabs
@@ -396,7 +396,7 @@ test.describe('Tab Bar', () => {
   })
 
   test('should switch pages by clicking tabs', async ({ page }) => {
-    await page.click('span:has-text("Agent 管理")')
+    await page.click('.sidebar-menu .el-menu-item:has-text("Agent 管理")')
     await page.waitForURL(/\/agents$/)
 
     // Click analytics homepage tab to go back
@@ -416,6 +416,8 @@ test.describe('Logout', () => {
     await page.click('.user-info')
     // Click logout
     await page.locator('.el-dropdown-menu__item:has-text("退出登录")').click()
+    // Confirm logout in ElMessageBox
+    await page.getByRole('button', { name: '退出', exact: true }).click()
     // Should redirect to login
     await page.waitForURL(/\/login/, { timeout: 10_000 })
     await expect(page.locator('.login-card')).toBeVisible()

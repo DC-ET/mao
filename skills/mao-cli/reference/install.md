@@ -107,7 +107,7 @@ cd backend-ts && npm test          # 后端单测
 cd backend-ts && npm run build     # 编译检查
 ```
 
-根目录 Playwright E2E 需先启动三端：`npm test`。
+根目录 Playwright E2E：首次先 `bash scripts/e2e-setup.sh`（本地 MySQL 建 mao_e2e 库+迁移+种子，生成 backend-ts/.env.e2e）；随后 `npm test` 自动拉起隔离后端(:9180)+admin/desktop dev server，勿连线上 9080。
 
 ## 安装 mao-cli（本 Skill）
 

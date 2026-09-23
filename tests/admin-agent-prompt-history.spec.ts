@@ -12,7 +12,7 @@ async function setup(page: Page, canWrite = true) {
     const path = new URL(route.request().url()).pathname
     let data: unknown = []
     if (path.endsWith('/auth/admin/login') || path.endsWith('/auth/login')) data = { accessToken: 'test-token', refreshToken: 'test-refresh' }
-    else if (path.endsWith('/users/me')) data = { id: 1, username: 'admin', displayName: '管理员', permissions: canWrite ? ['agent:read', 'agent:write'] : ['agent:read'] }
+    else if (path.endsWith('/users/me')) data = { id: 1, username: 'admin', displayName: '管理员', isAdmin: true, permissions: canWrite ? ['agent:read', 'agent:write'] : ['agent:read'] }
     else if (path.endsWith('/prompt-versions/1/rollback')) {
       rollbackCount++
       agent.systemPrompt = versions[versions.length - 1].systemPrompt

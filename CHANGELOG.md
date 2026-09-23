@@ -15,6 +15,17 @@
 
 ---
 
+## 0.0.182 (2026-09-23)
+
+### 后端
+
+- 修复全新空库首次启动迁移失败的问题：迁移脚本中的 `DELIMITER` 存储过程语法 TS 版 Flyway 执行器不识别，现改由 mysql 客户端逐文件执行（E2E 搭建脚本内处理，应用内行为不变）。
+
+### 管理后台
+
+- E2E 测试基础设施改进：新增 `scripts/e2e-setup.sh` 一键搭建隔离测试环境（本地 MySQL 建 `mao_e2e` 库、执行全部迁移、写入最小种子数据、生成 `backend-ts/.env.e2e`）；`npm test` 通过 `tests/global-setup.ts` 自动拉起隔离后端(:9180)与 admin/desktop dev server，已在监听的端口自动复用，测试结束自动回收，不再要求手工起三端，也不会误连线上 9080。运行期数据目录（runtime/users/workspace/uploads）一并重定向到 `backend-ts/.e2e-data/`，与生产 `/opt/mao-data` 完全隔离。
+- 修复 6 个 E2E 测试文件与 UI 演进脱节导致的失败：Agent 编辑「最佳实践」启停改为 el-switch 后的断言、`/users/me` mock 缺 `isAdmin` 导致登录落地页被软回退、侧边栏 `span:has-text` 选择器失效、Agent/模型表头列变更、退出登录缺确认弹窗步骤、ElMessage 多条弹出时的歧义匹配。
+
 ## 0.0.181 (2026-09-22)
 
 ### 管理后台

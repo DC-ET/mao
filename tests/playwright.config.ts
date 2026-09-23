@@ -4,6 +4,9 @@ export default defineConfig({
   testDir: '.',
   timeout: 30_000,
   retries: 0,
+  // global-setup.ts：幂等拉起隔离后端(:9180) + admin(:5200) + desktop(:5201)。
+  // 环境准备见 scripts/e2e-setup.sh。
+  globalSetup: './global-setup.ts',
   use: {
     baseURL: 'http://localhost:5200',
     headless: true,
