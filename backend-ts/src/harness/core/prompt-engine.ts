@@ -2,7 +2,6 @@ import { readFileSync, existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { hasText } from '../../common/case.js';
 import { WEIXIN_PROJECT_KEY } from '../../domain/types.js';
-import { isFeishuChannelSession } from '../tool/feishu-channel-tool.js';
 import type { ChatMessage, ChatRequest, ToolDefinition } from '../llm/chat-request.js';
 import type { PathSandbox } from '../safety/path-sandbox.js';
 import type { RuntimeDataResolver } from '../runtime/runtime-data-resolver.js';
@@ -228,7 +227,6 @@ export class PromptEngine {
     sb += this.toolBehaviorHints(context);
     sb += this.subagentToolHints(context);
     sb += this.weixinMediaToolHints(context);
-    sb += this.feishuAskHint(context);
     if (embedPageAgent) {
       sb += EMBED_PAGE_AGENT_HINTS;
     }
@@ -399,24 +397,6 @@ export class PromptEngine {
         + '2. 全新任务请使用 `spawn_subagent` 新建子代理，不要追问无关子代理\n\n';
     }
     return sb;
-  }
-
-  /**
-   * 仅对飞书会话补充「该不该问」的门槛与作答位置。
-   * 飞书提问会挂起任务直到用户作答（最长 15 分钟），而用户不一定及时看到进度卡片，
-   * 因此必须收紧触发条件，否则任务会被频繁阻塞。
-   */
-  private feishuAskHint(context: AgentExecutionContext): string {
-    if (!isFeishuChannelSession(context.projectKey, context.workspace)) return '';
-    if (!(context.tools ?? []).some((tool) => tool.getName() === 'ask_user_questions')) return '';
-    return '## 飞书提问\n\n'
-      + '当前会话在飞书中进行。确实需要用户作答时调用 `ask_user_questions`，用户在进度卡片的表单里提交；'
-      + '调用该工具后等待工具结果，不要在正文里再要求用户打字回复。\n'
-      + '提问会挂起任务直到用户作答（最长 15 分钟），而用户不一定及时看到卡片，因此：\n'
-      + '- 仅当缺少关键信息、且无法通过已有上下文、工作区文件或合理假设自行推进时才提问。\n'
-      + '- 能自己查证或按惯例合理假设的，先推进并在回复里说明假设，不要为了「确认一下」而提问。\n'
-      + '- 一轮里把需要确认的问题一次问完，不要分多轮反复打断。\n'
-      + '- 目标明确的执行类请求，不要提问，直接做。\n\n';
   }
 
   private weixinMediaToolHints(context: AgentExecutionContext): string {

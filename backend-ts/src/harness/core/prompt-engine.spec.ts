@@ -96,7 +96,7 @@ describe('PromptEngine', () => {
     expect(user).toContain('src/App.ts');
   });
 
-  it('feishuChannelTellsTheModelToWaitForTheCardForm', async () => {
+  it('feishuChannelDoesNotInjectAskUserQuestionsHint', async () => {
     const engine = new PromptEngine(
       { hasSkill: () => false, getAllNames: () => [], getAllDocuments: () => [] } as never,
       { getWorkspaceRoot: () => '/ws' } as never,
@@ -111,28 +111,10 @@ describe('PromptEngine', () => {
     context.tools = [tool('ask_user_questions'), tool('read_file')];
     const request = await engine.buildRequest(context);
     const system = request.messages[0].content as string;
-    expect(system).toContain('用户在进度卡片的表单里提交');
-    expect(system).toContain('不要在正文里再要求用户打字回复');
+    // 飞书会话不再单独注入 ask_user_questions 引导；通用工具引导仍存在
     expect(system).toContain('使用ask_user_questions工具');
-    // 飞书提问会挂起任务，必须带上门槛与"目标明确就别问"的约束，否则任务被频繁阻塞
-    expect(system).toContain('提问会挂起任务直到用户作答');
-    expect(system).toContain('目标明确的执行类请求，不要提问');
-
-    const group = new AgentExecutionContext();
-    group.projectKey = 'oc_group';
-    group.workspace = '/opt/mao-data/workspace/feishu-chat/2/oc_group';
-    group.executionMode = 'CLOUD';
-    group.tools = [tool('ask_user_questions')];
-    const groupRequest = await engine.buildRequest(group);
-    expect(groupRequest.messages[0].content).toContain('进度卡片的表单');
-
-    const desktop = new AgentExecutionContext();
-    desktop.projectKey = 'proj';
-    desktop.workspace = '/ws';
-    desktop.executionMode = 'CLOUD';
-    desktop.tools = [tool('ask_user_questions')];
-    const desktopRequest = await engine.buildRequest(desktop);
-    expect(desktopRequest.messages[0].content).not.toContain('进度卡片的表单');
+    expect(system).not.toContain('## 飞书提问');
+    expect(system).not.toContain('用户在进度卡片的表单里提交');
   });
 
   it('weixinChannelAddsDefaultExperiencesAndMediaHints', async () => {
