@@ -33,6 +33,7 @@
     "archiver": "^7.0.1",
     "bcrypt": "^6.0.0",
     "croner": "^9.1.0",
+    "dingtalk-stream": "^2.1.6-beta.1",
     "fastify": "^5.4.0",
     "jsdom": "^26.1.0",
     "jsonwebtoken": "^9.0.2",

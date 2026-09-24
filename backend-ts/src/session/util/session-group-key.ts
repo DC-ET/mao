@@ -5,6 +5,9 @@ export const LOCAL_UNSET = 'LOCAL:未设置';
 const FEISHU_GROUP_WORKSPACE = '/feishu-chat/';
 const FEISHU_PRIVATE_GROUP_PREFIX = 'FEISHU_PRIVATE:';
 const FEISHU_GROUP_PREFIX = 'FEISHU_GROUP:';
+const DINGTALK_GROUP_WORKSPACE = '/dingtalk-chat/';
+const DINGTALK_PRIVATE_GROUP_PREFIX = 'DINGTALK_PRIVATE:';
+const DINGTALK_GROUP_PREFIX = 'DINGTALK_GROUP:';
 
 export function feishuGroupKey(session: Session): string | null {
   if (session.projectKey != null && /^feishu-\d+-private-\d+$/.test(session.projectKey)) {
@@ -18,6 +21,37 @@ export function feishuGroupKey(session: Session): string | null {
 
 export function isFeishuGroupKey(key: string): boolean {
   return key.startsWith(FEISHU_PRIVATE_GROUP_PREFIX) || key.startsWith(FEISHU_GROUP_PREFIX);
+}
+
+export function dingtalkGroupKey(session: Session): string | null {
+  if (session.projectKey != null && /^dingtalk-\d+-private-\d+$/.test(session.projectKey)) {
+    return `${DINGTALK_PRIVATE_GROUP_PREFIX}${session.agentId ?? 'null'}`;
+  }
+  if (session.workspace?.replace(/\\/g, '/').includes(DINGTALK_GROUP_WORKSPACE)) {
+    return `${DINGTALK_GROUP_PREFIX}${session.workspace}`;
+  }
+  return null;
+}
+
+export function isDingtalkGroupKey(key: string): boolean {
+  return key.startsWith(DINGTALK_PRIVATE_GROUP_PREFIX) || key.startsWith(DINGTALK_GROUP_PREFIX);
+}
+
+export function applyDingtalkFilter(groupKey: string): GroupFilterSql {
+  if (groupKey.startsWith(DINGTALK_PRIVATE_GROUP_PREFIX)) {
+    const agentId = groupKey.slice(DINGTALK_PRIVATE_GROUP_PREFIX.length);
+    return {
+      clauses: ['execution_mode = ?', 'agent_id = ?', 'project_key LIKE ?'],
+      params: ['CLOUD', agentId === 'null' ? null : Number(agentId), 'dingtalk-%-private-%'],
+    };
+  }
+  if (groupKey.startsWith(DINGTALK_GROUP_PREFIX)) {
+    return {
+      clauses: ['execution_mode = ?', 'workspace = ?'],
+      params: ['CLOUD', groupKey.slice(DINGTALK_GROUP_PREFIX.length)],
+    };
+  }
+  throw new Error(`Invalid Dingtalk groupKey: ${groupKey}`);
 }
 
 export function applyFeishuFilter(groupKey: string): GroupFilterSql {
@@ -44,7 +78,7 @@ export interface GroupFilterSql {
 
 export function of(sessionOrMode: Session | string | null | undefined, workspace?: string | null): string {
   if (sessionOrMode && typeof sessionOrMode === 'object') {
-    return feishuGroupKey(sessionOrMode) ?? ofMode(sessionOrMode.executionMode, sessionOrMode.workspace);
+    return feishuGroupKey(sessionOrMode) ?? dingtalkGroupKey(sessionOrMode) ?? ofMode(sessionOrMode.executionMode, sessionOrMode.workspace);
   }
   return ofMode(sessionOrMode as string | null | undefined, workspace);
 }
@@ -53,7 +87,7 @@ export function ofMode(executionMode: string | null | undefined, workspace: stri
   if (executionMode !== 'CLOUD') {
     return workspace != null && workspace.length > 0 ? `LOCAL:${workspace}` : LOCAL_UNSET;
   }
-  if (workspace != null && (workspace.includes('/projects/') || workspace.includes(FEISHU_GROUP_WORKSPACE))) {
+  if (workspace != null && (workspace.includes('/projects/') || workspace.includes(FEISHU_GROUP_WORKSPACE) || workspace.includes(DINGTALK_GROUP_WORKSPACE))) {
     return `CLOUD:${workspace}`;
   }
   return CLOUD_TEMP;
@@ -65,6 +99,12 @@ export function formatLabel(key: string, agentName?: string, groupName?: string)
   }
   if (key.startsWith(FEISHU_GROUP_PREFIX)) {
     return `${agentName ?? '未知 Agent'}:${groupName ?? '飞书群聊'}`;
+  }
+  if (key.startsWith(DINGTALK_PRIVATE_GROUP_PREFIX)) {
+    return agentName ?? '未知 Agent';
+  }
+  if (key.startsWith(DINGTALK_GROUP_PREFIX)) {
+    return `${agentName ?? '未知 Agent'}:${groupName ?? '钉钉群聊'}`;
   }
   if (CLOUD_TEMP === key) {
     return '临时工作区';
@@ -116,6 +156,9 @@ export function applyFilter(groupKey: string | null | undefined): GroupFilterSql
   if (isFeishuGroupKey(groupKey)) {
     return applyFeishuFilter(groupKey);
   }
+  if (isDingtalkGroupKey(groupKey)) {
+    return applyDingtalkFilter(groupKey);
+  }
   if (LOCAL_UNSET === groupKey) {
     return {
       clauses: ['execution_mode = ?', '(workspace IS NULL OR workspace = ?)'],
@@ -130,8 +173,8 @@ export function applyFilter(groupKey: string | null | undefined): GroupFilterSql
   }
   if (CLOUD_TEMP === groupKey) {
     return {
-      clauses: ['execution_mode = ?', '(workspace IS NULL OR workspace = ? OR (workspace NOT LIKE ? AND workspace NOT LIKE ?))'],
-      params: ['CLOUD', '', '%/projects/%', '%/feishu-chat/%'],
+      clauses: ['execution_mode = ?', '(workspace IS NULL OR workspace = ? OR (workspace NOT LIKE ? AND workspace NOT LIKE ? AND workspace NOT LIKE ?))'],
+      params: ['CLOUD', '', '%/projects/%', '%/feishu-chat/%', '%/dingtalk-chat/%'],
     };
   }
   if (groupKey.startsWith('CLOUD:')) {
@@ -193,6 +236,9 @@ export const SessionGroupKey = {
   feishuGroupKey,
   isFeishuGroupKey,
   applyFeishuFilter,
+  dingtalkGroupKey,
+  isDingtalkGroupKey,
+  applyDingtalkFilter,
   ofMode,
   formatLabel,
   compareKeys,

@@ -127,6 +127,22 @@ web_search 工具支持 Tavily / TinyFish 双实现，在管理后台「系统�
 
 注意：飞书应用需开通「获取用户 union_id」权限，否则无法识别发送者身份，全员按未绑定处理。使用详见 [feishu-bot.md](feishu-bot.md)。
 
+### 钉钉机器人通道（可选，默认关闭）
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `DINGTALK_BOT_ENABLED` | false | 钉钉机器人通道总开关 |
+| `DINGTALK_BOT_RECONCILE_INTERVAL_MS` | 5000 | 扫表间隔 |
+| `APP_DINGTALK_BOT_SECRET` | - | 机器人 Client Secret 的 AES-GCM 密钥，不复用飞书那一项 |
+| `DINGTALK_OAUTH_CLIENT_ID` / `DINGTALK_OAUTH_SECRET` / `DINGTALK_OAUTH_REDIRECT_URI` | - | 绑定用登录应用，须与机器人同一企业 |
+| `DINGTALK_PROGRESS_CARD_TEMPLATE_ID` | - | 进度卡模板，可被机器人行覆盖 |
+| `DINGTALK_QUEUE_CARD_TEMPLATE_ID` | - | 排队卡模板 |
+| `DINGTALK_BOT_REPLY_MAX_LENGTH` | 2000 | markdown 截断长度 |
+| `DINGTALK_BOT_GROUP_CONTEXT_MAX_ITEMS` | 10 | @ 往来条数 |
+| `DINGTALK_BOT_GROUP_CONTEXT_MAX_MINUTES` | 120 | @ 往来时间窗 |
+
+使用详见 [dingtalk-bot.md](dingtalk-bot.md)。任务完成通知里的钉钉 Webhook 与本通道无关。
+
 ### 微信 Bot（可选，默认开启）
 
 `WEIXIN_BOT_ENABLED`（默认 true）为微信 Bot 总开关；语音回复依赖本机 `silk-encoder` / `ffmpeg`。绑定流程见 [weixin.md](weixin.md)。管理后台系统设置可指定 `weixin.agentId`、`weixin.modelId`。

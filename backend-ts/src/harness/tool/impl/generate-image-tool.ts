@@ -87,7 +87,7 @@ export class GenerateImageTool extends BaseTool {
 - quality 可选：auto（默认）、high、medium、low。日常快速出图用 low/medium，精细成图用 high。
 - n 可选：1–10，默认 1。
 - model 可选：覆盖后台默认模型。别名 flare=gpt-image-2.5-flare（快速），sunburst=gpt-image-2.5-sunburst（精细/复杂指令）。用户点名模型时只用该模型，失败不要换其他模型重画后交回。
-- 成功后返回 images[].image_url（可展示）与 images[].image_path（本地路径，可交给 send_wechat_image / feishu_send_image 等工具）。
+- 成功后返回 images[].image_url（可展示）与 images[].image_path（本地路径，可交给 send_wechat_image / feishu_send_image / dingtalk_send_image 等工具）。
 - 若结果含 revised_prompt，说明上游改写了提示词，解释画面与用户描述不完全一致时可引用。
 - 需要对已有图片做修改时请用 edit_image，不要用 generate_image 重画。
 - 若没有可用文生图模型（model_type=image），工具会报错，请提示用户先在管理后台配置。

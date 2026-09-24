@@ -23,7 +23,7 @@ export const BACKGROUND_SUBAGENT_TOOLS = [
 ] as const;
 
 /** 所有子代理（前台委派与后台）都不可用。提问只由主会话发起。 */
-export const SUBAGENT_EXCLUDED_TOOLS = ['ask_user_questions'] as const;
+export const SUBAGENT_EXCLUDED_TOOLS = ['ask_user_questions', 'dingtalk_send_image', 'dingtalk_send_file'] as const;
 
 export interface BackgroundSpawnResult {
   ok: boolean;

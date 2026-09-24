@@ -28,6 +28,11 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/task/TaskView.vue')
       },
       {
+        path: 'dingtalk/bind/:state',
+        name: 'DingtalkBind',
+        component: () => import('../views/settings/DingtalkBindRedirect.vue')
+      },
+      {
         path: 'tasks/:sessionId',
         name: 'Task',
         component: () => import('../views/task/TaskView.vue')
@@ -74,6 +79,11 @@ const routes: RouteRecordRaw[] = [
             path: 'feishu-bot',
             name: 'FeishuBot',
             component: () => import('../views/settings/FeishuBotView.vue')
+          },
+          {
+            path: 'dingtalk-bot',
+            name: 'DingtalkBot',
+            component: () => import('../views/settings/DingtalkBotView.vue')
           },
           {
             path: 'mcp-servers',

@@ -13,4 +13,12 @@ describe('session group key', () => {
     expect(formatLabel('FEISHU_PRIVATE:7', 'Coder')).toBe('Coder');
     expect(formatLabel('FEISHU_GROUP:/opt/mao-data/workspace/feishu-chat/1/oc_group', 'Coder', '告警群')).toBe('Coder:告警群');
   });
+
+  it('keeps DingTalk workspaces out of the temporary cloud bucket', () => {
+    const workspace = '/opt/mao-data/workspace/dingtalk-chat/1/cidgroup';
+    expect(ofMode('CLOUD', workspace)).toBe(`CLOUD:${workspace}`);
+    expect(of({ agentId: 4, projectKey: 'dingtalk-1-private-8', executionMode: 'CLOUD' })).toBe('DINGTALK_PRIVATE:4');
+    expect(formatLabel('DINGTALK_PRIVATE:4', 'Coder')).toBe('Coder');
+    expect(formatLabel('DINGTALK_GROUP:/opt/mao-data/workspace/dingtalk-chat/1/cidgroup', 'Coder', '项目群')).toBe('Coder:项目群');
+  });
 });

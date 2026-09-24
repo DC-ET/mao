@@ -127,6 +127,12 @@ CLI：`mao weixin ...`（见 [weixin.md](weixin.md)）。
 
 详见 [feishu-bot.md](feishu-bot.md)。
 
+## 钉钉机器人（可选）
+
+「设置 → 钉钉Bot」绑定钉钉账号：发起授权 → 在钉钉页面确认 → 本页轮询绑定结果。一个钉钉 userid 对应一个 Mao 用户。未绑定的人在钉钉里会收到「点我绑定」短链，登录后再跳到钉钉授权。解绑后机器人认不出这个人，原会话和工作区保留。
+
+详见 [dingtalk-bot.md](dingtalk-bot.md)。
+
 ## 个人 Skill 与 mao-cli
 
 上传个人 Skill 覆盖同名系统 Skill。「设置」中还可管理 Git 凭证、任务面板偏好等。

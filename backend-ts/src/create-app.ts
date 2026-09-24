@@ -252,6 +252,8 @@ import { readFeishuDocMarkdown } from './feishu/doc-reader.js';
 import { fetchFeishuMessageDetail } from './feishu/message-detail.js';
 import { feishuSendTargetOf, sendFeishuFile, sendFeishuImage } from './feishu/media-sender.js';
 import { FeishuCardProgressListener, countCompletedAgentRounds, type FeishuCardProgress } from './feishu/card-progress-listener.js';
+import { createDingtalkRuntime } from './dingtalk/runtime.js';
+import type { DingtalkMediaSendSupport } from './harness/tool/impl/dingtalk-tools.js';
 import { buildFeishuProgressCard, feishuSessionDetailUrl } from './feishu/progress-card.js';
 import { FeishuAskFormStore } from './feishu/ask-form-store.js';
 import { FeishuActiveProgressRegistry } from './feishu/active-progress.js';
@@ -827,6 +829,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     (fn) => agentExecutor.submit(fn),
   );
 
+  const dingtalkMediaHolder: { current: DingtalkMediaSendSupport | null } = { current: null };
   const toolRegistry = createDefaultToolRegistry({
     pathSandbox,
     sessionTodoMapper: todoMapper,
@@ -910,6 +913,17 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         if (messageId != null && sessionId != null && target.receiveIdType !== 'chat_id') {
           await feishuMessageService.recordP2pMessage(target.appId, messageId, sessionId, 'OUT');
         }
+      },
+    },
+    dingtalkMediaSendSupport: {
+      resolveSendTarget: (sessionId) => dingtalkMediaHolder.current?.resolveSendTarget(sessionId) ?? Promise.resolve(null),
+      sendImage: async (target, bytes, fileName) => {
+        if (dingtalkMediaHolder.current == null) throw new Error('钉钉通道未就绪');
+        return dingtalkMediaHolder.current.sendImage(target, bytes, fileName);
+      },
+      sendFile: async (target, fileName, bytes) => {
+        if (dingtalkMediaHolder.current == null) throw new Error('钉钉通道未就绪');
+        return dingtalkMediaHolder.current.sendFile(target, fileName, bytes);
       },
     },
     definitionRegistry,
@@ -1895,6 +1909,41 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       });
     },
   });
+  const dingtalk = createDingtalkRuntime({
+    db,
+    config: {
+      enabled: cfg.dingtalk.enabled,
+      appSecretKey: cfg.dingtalk.appSecretKey,
+      reconcileIntervalMs: cfg.dingtalk.reconcileIntervalMs,
+      reconnectBaseMs: cfg.dingtalk.reconnectBaseMs,
+      reconnectMaxMs: cfg.dingtalk.reconnectMaxMs,
+      maxConsecutiveFailures: cfg.dingtalk.maxConsecutiveFailures,
+      oauth: cfg.dingtalk.oauth,
+      progressCardTemplateId: cfg.dingtalk.progressCardTemplateId,
+      queueCardTemplateId: cfg.dingtalk.queueCardTemplateId,
+      replyMaxLength: cfg.dingtalk.replyMaxLength,
+      groupContextMaxItems: cfg.dingtalk.groupContext.maxItems,
+      groupContextMaxMinutes: cfg.dingtalk.groupContext.maxMinutes,
+    },
+    workspaceRoot: cfg.app.harness.workspaceRoot,
+    jwt,
+    permissionService,
+    sessionService,
+    sessionRepo,
+    harness,
+    agentLoop,
+    wsRegistry,
+    agentService,
+    modelService,
+    userRepo,
+    settingService,
+    taskTerminal,
+    activityService,
+    activityHeartbeat,
+    todoMapper,
+    shellManager,
+  });
+  dingtalkMediaHolder.current = dingtalk.mediaSend;
   const feishuMonitor = new FeishuMonitorService(cfg.feishu.bot, feishuBots, feishuInboundProcessor, async (data) => feishuCardActionService.handle(data, ''));
 
   const analyticsService = new AnalyticsService(new AnalyticsDbStore(db));
@@ -2061,6 +2110,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       monitorReconnect: { reconnect: (botId: number) => feishuMonitor.reconnect(botId) },
     });
     registerFeishuBindingRoutes(api, { jwt, repository: feishuBinding, auth: feishu });
+    dingtalk.registerRoutes(api);
     registerTaskNotificationPreferenceRoutes(api, { preference: notifPref, jwt });
     await attachWebSocket(api, {
       handler: wsHandler,
@@ -2087,6 +2137,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   ecpRenewScheduler.start();
   weixinMonitor.start();
   feishuMonitor.start();
+  dingtalk.start();
   void pendingBindingMessages.listRecoverable().then(async (pending) => {
     for (const message of pending) {
       if (pendingBindingProcessor == null) return;
@@ -2136,11 +2187,16 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         await feishuInboundHandler.drainNextIfPending(sessionId).catch((error) => {
           console.error(`飞书崩溃恢复后队列接力消费失败, sessionId=${sessionId}`, error);
         });
+        await dingtalk.onCrashFinished(sessionId, phase).catch((error) => {
+          console.error(`钉钉崩溃恢复后队列接力消费失败, sessionId=${sessionId}`, error);
+        });
       }
     },
     subagentCoordinator,
     // 恢复续跑时挂载飞书进度卡片续更：崩溃前在途任务的卡片不会停留在「正在处理」。
     async (sessionId) => {
+      const dingtalkRecovered = await dingtalk.recoverProgress(sessionId);
+      if (dingtalkRecovered != null) return new FeishuCardProgressListener(dingtalkRecovered.progress, dingtalkRecovered.roundOffset);
       const recovered = await createFeishuRecoveryProgress(sessionId);
       return recovered == null ? null : new FeishuCardProgressListener(recovered.progress, recovered.roundOffset);
     },
@@ -2153,6 +2209,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     // 「消息是否已写入会话历史」分支：已落库→删除（其消息由崩溃恢复重放）；未落库→复位为 QUEUED（重新消费，不丢）。
     // 这里只消费真正的 QUEUED 排队行；若会话仍在被崩溃恢复续跑，drainNextIfPending 的
     // isBusyOrRecovering（DB phase RUNNING/RESUMING）会兜住不抢跑。
+    await dingtalk.hydrate().catch((error) => console.error('钉钉入站队列启动恢复失败', error));
     const sessionIds = await feishuTaskQueue.hydrate();
     for (const sessionId of sessionIds) {
       await feishuInboundHandler.drainNextIfPending(sessionId).catch((error) => {
@@ -2173,6 +2230,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       runtimeCleanup.stop();
       weixinMonitor.shutdown();
       feishuMonitor.shutdown();
+      dingtalk.shutdown();
       weixinInboundHandler.shutdown();
       wsRegistry.shutdown();
       await app.close();

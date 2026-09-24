@@ -11,6 +11,8 @@ export function isPublicPath(method: string, rawUrl: string): boolean {
   if ((method === 'GET' || method === 'HEAD') && path.startsWith('/uploads/')) {
     return true;
   }
+  if (method === 'GET' && /^\/v1\/dingtalk\/bind\/[^/]+$/.test(path)) return true;
+  if (method === 'GET' && path === '/v1/dingtalk/oauth/callback') return true;
   return false;
 }
 

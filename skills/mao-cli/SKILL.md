@@ -19,6 +19,7 @@ Mao 的**产品文档唯一正文**（可独立分发）+ **REST 操作 CLI**。
 | 管理后台怎么用 / Agent 头像与分组编辑 / 提示词版本与回滚 | [reference/admin.md](reference/admin.md) |
 | 桌面 Web 端（任务、工作区、终端、通知、微信等） | [reference/desktop.md](reference/desktop.md) |
 | 飞书机器人通道（绑定 / 群聊@机器人 / 多机器人配置） | [reference/feishu-bot.md](reference/feishu-bot.md) |
+| 钉钉机器人通道（绑定 / 群聊@机器人 / 多机器人配置） | [reference/dingtalk-bot.md](reference/dingtalk-bot.md) |
 | Electron LOCAL、工具审批、打包与自动更新 | [reference/electron.md](reference/electron.md) |
 | 安卓壳、远程前端、APK OTA | [reference/android.md](reference/android.md) |
 | 终端对话客户端 mao-agent | [reference/mao-agent.md](reference/mao-agent.md) |
@@ -48,6 +49,7 @@ Mao 的**产品文档唯一正文**（可独立分发）+ **REST 操作 CLI**。
 - 会话 `search` / `messages` 全文检索（管理端 UI 可用）
 - 工作区 Git 写操作（commit/push 等，CLI 仅只读诊断）
 - 飞书机器人管理端 CRUD（`/v1/admin/feishu-bots`，见 [reference/feishu-bot.md](reference/feishu-bot.md) 直接调 REST）
+- 钉钉机器人管理端 CRUD（`/v1/admin/dingtalk-bots`，见 [reference/dingtalk-bot.md](reference/dingtalk-bot.md) 直接调 REST）
 
 ## 安装与就绪（Agent 执行，勿让用户安装）
 

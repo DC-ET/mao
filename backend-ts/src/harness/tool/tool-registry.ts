@@ -44,6 +44,7 @@ import {
 } from './impl/scheduled-task-tools.js';
 import { SendWechatFileTool, SendWechatImageTool } from './impl/wechat-tools.js';
 import { FeishuDownloadFileTool, ReadFeishuDocTool, SendFeishuFileTool, SendFeishuImageTool } from './impl/feishu-tools.js';
+import { SendDingtalkFileTool, SendDingtalkImageTool, type DingtalkMediaSendSupport } from './impl/dingtalk-tools.js';
 import { createPageTools } from './impl/page-tools.js';
 import type { EmbedPageToolRegistry } from '../embed-page-tool-registry.js';
 
@@ -77,6 +78,7 @@ export interface DefaultToolRegistryDeps {
   feishuMessageDetailFetcher: FeishuMessageDetailFetcher;
   feishuMaxInboundFileBytes: number;
   feishuMediaSendSupport: FeishuMediaSendSupport;
+  dingtalkMediaSendSupport: DingtalkMediaSendSupport;
   definitionRegistry: AgentDefinitionRegistry;
   harnessService: HarnessService;
   agentLoop: AgentLoop;
@@ -123,6 +125,8 @@ export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRe
     new FeishuDownloadFileTool(deps.feishuToolSupport, deps.feishuGroupMediaLookup, deps.feishuMediaDownloader, deps.feishuMaxInboundFileBytes, deps.feishuMessageDetailFetcher),
     new SendFeishuImageTool(deps.pathSandbox, deps.feishuMediaSendSupport),
     new SendFeishuFileTool(deps.pathSandbox, deps.feishuMediaSendSupport),
+    new SendDingtalkImageTool(deps.pathSandbox, deps.dingtalkMediaSendSupport),
+    new SendDingtalkFileTool(deps.pathSandbox, deps.dingtalkMediaSendSupport),
     new SpawnSubagentTool(deps.backgroundSubagentManager, deps.definitionRegistry),
     new SubagentFollowupTool(deps.backgroundSubagentManager),
     new CheckSubagentTool(deps.backgroundSubagentManager),

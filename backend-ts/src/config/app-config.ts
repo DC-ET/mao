@@ -3,6 +3,20 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse as parseYaml } from 'yaml';
 
+export interface DingtalkBotConfig {
+  enabled: boolean;
+  appSecretKey: string;
+  reconcileIntervalMs: number;
+  reconnectBaseMs: number;
+  reconnectMaxMs: number;
+  maxConsecutiveFailures: number;
+  oauth: { clientId: string; clientSecret: string; redirectUri: string };
+  progressCardTemplateId: string;
+  queueCardTemplateId: string;
+  replyMaxLength: number;
+  groupContext: { maxItems: number; maxMinutes: number };
+}
+
 export interface FeishuBotConfig {
   enabled: boolean;
   appSecretKey: string;
@@ -53,6 +67,7 @@ export interface AppConfig {
   feishu: {
     bot: FeishuBotConfig;
   };
+  dingtalk: DingtalkBotConfig;
   app: {
     rootDir: string;
     gitCredential: { secretKey: string };
@@ -136,6 +151,19 @@ const DEFAULTS: AppConfig = {
     expiration: 86400000,
     refreshExpiration: 604800000,
     shellExpiration: 7200000,
+  },
+  dingtalk: {
+    enabled: false,
+    appSecretKey: '',
+    reconcileIntervalMs: 5000,
+    reconnectBaseMs: 1000,
+    reconnectMaxMs: 30000,
+    maxConsecutiveFailures: 5,
+    oauth: { clientId: '', clientSecret: '', redirectUri: '' },
+    progressCardTemplateId: '',
+    queueCardTemplateId: '',
+    replyMaxLength: 2000,
+    groupContext: { maxItems: 10, maxMinutes: 120 },
   },
   feishu: {
     bot: {
@@ -322,6 +350,14 @@ function coerceTypes(cfg: AppConfig): AppConfig {
   cfg.app.harness.cleanup.shellOutputMaxAgeDays = n(process.env.MAO_CLEANUP_SHELL_MAX_AGE_DAYS ?? cfg.app.harness.cleanup.shellOutputMaxAgeDays, 7);
   cfg.app.harness.cleanup.cleanupSkills = b(process.env.MAO_CLEANUP_SKILLS ?? cfg.app.harness.cleanup.cleanupSkills, true);
   cfg.spring.flyway.enabled = b(process.env.FLYWAY_ENABLED ?? cfg.spring.flyway.enabled, true);
+  cfg.dingtalk.enabled = b(process.env.DINGTALK_BOT_ENABLED ?? cfg.dingtalk.enabled, false);
+  cfg.dingtalk.reconcileIntervalMs = n(process.env.DINGTALK_BOT_RECONCILE_INTERVAL_MS ?? cfg.dingtalk.reconcileIntervalMs, 5000);
+  cfg.dingtalk.reconnectBaseMs = n(process.env.DINGTALK_BOT_RECONNECT_BASE_MS ?? cfg.dingtalk.reconnectBaseMs, 1000);
+  cfg.dingtalk.reconnectMaxMs = n(process.env.DINGTALK_BOT_RECONNECT_MAX_MS ?? cfg.dingtalk.reconnectMaxMs, 30000);
+  cfg.dingtalk.maxConsecutiveFailures = n(process.env.DINGTALK_BOT_MAX_CONSECUTIVE_FAILURES ?? cfg.dingtalk.maxConsecutiveFailures, 5);
+  cfg.dingtalk.replyMaxLength = n(process.env.DINGTALK_BOT_REPLY_MAX_LENGTH ?? cfg.dingtalk.replyMaxLength, 2000);
+  cfg.dingtalk.groupContext.maxItems = n(process.env.DINGTALK_BOT_GROUP_CONTEXT_MAX_ITEMS ?? cfg.dingtalk.groupContext.maxItems, 10);
+  cfg.dingtalk.groupContext.maxMinutes = n(process.env.DINGTALK_BOT_GROUP_CONTEXT_MAX_MINUTES ?? cfg.dingtalk.groupContext.maxMinutes, 120);
   cfg.feishu.bot.enabled = b(process.env.FEISHU_BOT_ENABLED ?? cfg.feishu.bot.enabled, false);
   cfg.feishu.bot.longConnection.enabled = b(process.env.FEISHU_BOT_LC_ENABLED ?? cfg.feishu.bot.longConnection.enabled, true);
   cfg.feishu.bot.longConnection.reconcileIntervalMs = n(process.env.FEISHU_BOT_RECONCILE_INTERVAL_MS ?? cfg.feishu.bot.longConnection.reconcileIntervalMs, 5000);
@@ -380,6 +416,14 @@ export function loadConfig(): AppConfig {
   if (process.env.APP_FEISHU_BOT_SECRET) {
     cfg.feishu.bot.appSecretKey = process.env.APP_FEISHU_BOT_SECRET;
   }
+  if (process.env.APP_DINGTALK_BOT_SECRET) {
+    cfg.dingtalk.appSecretKey = process.env.APP_DINGTALK_BOT_SECRET;
+  }
+  if (process.env.DINGTALK_OAUTH_CLIENT_ID) cfg.dingtalk.oauth.clientId = process.env.DINGTALK_OAUTH_CLIENT_ID;
+  if (process.env.DINGTALK_OAUTH_SECRET) cfg.dingtalk.oauth.clientSecret = process.env.DINGTALK_OAUTH_SECRET;
+  if (process.env.DINGTALK_OAUTH_REDIRECT_URI) cfg.dingtalk.oauth.redirectUri = process.env.DINGTALK_OAUTH_REDIRECT_URI;
+  if (process.env.DINGTALK_PROGRESS_CARD_TEMPLATE_ID) cfg.dingtalk.progressCardTemplateId = process.env.DINGTALK_PROGRESS_CARD_TEMPLATE_ID;
+  if (process.env.DINGTALK_QUEUE_CARD_TEMPLATE_ID) cfg.dingtalk.queueCardTemplateId = process.env.DINGTALK_QUEUE_CARD_TEMPLATE_ID;
   cached = cfg;
   return cfg;
 }

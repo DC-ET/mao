@@ -138,6 +138,9 @@ export function summarize(toolName: string | null | undefined, argumentsJson: st
     case 'feishu_send_image':
     case 'feishu_send_file':
       return summarizeFeishuTool(toolName.toLowerCase(), argumentsJson, result);
+    case 'dingtalk_send_image':
+    case 'dingtalk_send_file':
+      return summarizeDingtalkTool(toolName.toLowerCase(), argumentsJson, result);
     case 'create_scheduled_task':
       return summarizeCreateScheduledTask(argumentsJson, result);
     case 'update_scheduled_task':
@@ -479,6 +482,24 @@ function summarizeListScheduledTasks(result: string | null | undefined): string 
   if (has(node, 'total')) return `定时任务列表 (${Number(node.total)} 个)`;
   if (Array.isArray(node.tasks)) return `定时任务列表 (${node.tasks.length} 个)`;
   return '查询定时任务';
+}
+
+function summarizeDingtalkTool(toolName: string, argumentsJson: string | null | undefined, result: string | null | undefined): string {
+  const node = asObj(parseJson(result));
+  const labels: Record<string, string> = {
+    dingtalk_send_image: '发送钉钉图片',
+    dingtalk_send_file: '发送钉钉文件',
+  };
+  const label = labels[toolName];
+  if (has(node, 'error') || node?.success === false) return `${label} (失败)`;
+  const named = extractJsonString(result, 'filename');
+  const argName = toolName === 'dingtalk_send_file'
+    ? (extractJsonString(argumentsJson, 'filename') || extractJsonString(argumentsJson, 'file'))
+    : extractJsonString(argumentsJson, 'image');
+  const detail = named || (argName?.startsWith('http') ? formatUrl(argName) : truncateFilename(argName));
+  const summary = detail ? `${label}: ${truncate(detail, 60)}` : label;
+  if (node?.success === true) return `${summary} (成功)`;
+  return summary;
 }
 
 function summarizeFeishuTool(toolName: string, argumentsJson: string | null | undefined, result: string | null | undefined): string {

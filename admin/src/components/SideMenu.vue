@@ -108,6 +108,7 @@ const menuGroups: MenuGroup[] = [
       { index: '/agents', label: 'Agent 管理', icon: Monitor, permission: 'agent:read' },
       { index: '/models', label: '模型管理', icon: Connection, permission: 'model:read' },
       { index: '/feishu-bots', label: '飞书机器人', icon: ChatLineRound, adminOnly: true },
+      { index: '/dingtalk-bots', label: '钉钉机器人', icon: ChatLineRound, adminOnly: true },
       { index: '/skills', label: 'Skills 管理', icon: MagicStick, permission: 'agent:read' },
       { index: '/system-commands', label: '指令管理', icon: Promotion, adminOnly: true },
       { index: '/mcp-servers', label: 'MCP 服务器', icon: Link, adminOnly: true }

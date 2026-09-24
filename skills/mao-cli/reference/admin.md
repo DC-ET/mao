@@ -173,6 +173,12 @@ CLI：`mao llm-call list`（见 [llm-call.md](llm-call.md)）。
 
 REST：`/v1/admin/feishu-bots` 系列（详见 [feishu-bot.md](feishu-bot.md)）。
 
+## 钉钉机器人通道
+
+侧边栏在「飞书机器人」旁。「钉钉机器人」管理企业内部应用机器人：Client ID、Client Secret、Robot Code、Agent、模型、进度卡 / 排队卡模板，可启用、停用、删除和重连。Secret 以 `APP_DINGTALK_BOT_SECRET` 加密存储，列表不返回明文。未配置该密钥时无法保存 Secret。
+
+启用后服务端用 Stream 收消息。用户绑定见 [dingtalk-bot.md](dingtalk-bot.md)。REST：`/v1/admin/dingtalk-bots`。
+
 ## 管理员上线清单
 
 正式开放前建议完成 [business_process.md](business_process.md) 中的检查项。

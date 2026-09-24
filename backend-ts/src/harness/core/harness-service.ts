@@ -24,6 +24,7 @@ import type { ActiveContextCalculator } from './active-context-calculator.js';
 import type { ToolRegistry } from '../tool/tool-registry.js';
 import type { Tool } from '../tool/tool.js';
 import { isWeixinChannelTool } from '../tool/weixin-channel-tool.js';
+import { isDingtalkChannelSession, isDingtalkChannelTool } from '../tool/dingtalk-channel-tool.js';
 import { isFeishuChannelSession, isFeishuChannelTool } from '../tool/feishu-channel-tool.js';
 import { FileChangeDiffUtil } from '../tool/file-change-diff-util.js';
 import type { SkillLoader } from '../skill/skill-loader.js';
@@ -433,13 +434,17 @@ export class HarnessService {
   static filterToolsForSession(tools: Tool[], projectKey: string | null | undefined, workspace?: string | null): Tool[] {
     const result = [...tools];
     if (projectKey === WEIXIN_PROJECT_KEY) {
-      return result.filter((t) => t.getName() !== ASK_USER_QUESTIONS);
+      return result.filter((t) => t.getName() !== ASK_USER_QUESTIONS && !isFeishuChannelTool(t) && !isDingtalkChannelTool(t));
     }
-    // 飞书主会话在进度卡上作答，保留 ask_user_questions。微信通道工具仍不暴露。
+    // 钉钉会话不提供提问，也不暴露飞书 / 微信通道工具。
+    if (isDingtalkChannelSession(projectKey, workspace)) {
+      return result.filter((t) => t.getName() !== ASK_USER_QUESTIONS && !isWeixinChannelTool(t) && !isFeishuChannelTool(t));
+    }
+    // 飞书主会话在进度卡上作答，保留 ask_user_questions。微信与钉钉通道工具不暴露。
     if (isFeishuChannelSession(projectKey, workspace)) {
-      return result.filter((t) => !isWeixinChannelTool(t));
+      return result.filter((t) => !isWeixinChannelTool(t) && !isDingtalkChannelTool(t));
     }
-    return result.filter((t) => !isWeixinChannelTool(t) && !isFeishuChannelTool(t));
+    return result.filter((t) => !isWeixinChannelTool(t) && !isFeishuChannelTool(t) && !isDingtalkChannelTool(t));
   }
 
   static filterPageTools(tools: Tool[], isEmbedSession: boolean): Tool[] {

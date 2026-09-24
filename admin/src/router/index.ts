@@ -102,6 +102,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '飞书机器人', keepAlive: true, adminOnly: true }
       },
       {
+        path: 'dingtalk-bots',
+        name: 'DingtalkBots',
+        component: () => import('../views/dingtalk-bot/DingtalkBotListView.vue'),
+        meta: { title: '钉钉机器人', keepAlive: true, adminOnly: true }
+      },
+      {
         path: 'settings',
         name: 'SystemSettings',
         component: () => import('../views/settings/SystemSettingsView.vue'),

@@ -10,5 +10,8 @@ describe('jwt-hook public paths', () => {
     expect(isPublicPath('GET', '/api/uploads/x')).toBe(true);
     expect(isPublicPath('POST', '/api/v1/users')).toBe(false);
     expect(isPublicPath('GET', '/api/v1/sessions')).toBe(false);
+    expect(isPublicPath('GET', '/api/v1/dingtalk/bind/abc')).toBe(true);
+    expect(isPublicPath('GET', '/api/v1/dingtalk/oauth/callback')).toBe(true);
+    expect(isPublicPath('POST', '/api/v1/dingtalk/binding')).toBe(false);
   });
 });

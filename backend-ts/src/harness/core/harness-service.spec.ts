@@ -10,7 +10,7 @@ import type { Tool } from '../tool/tool.js';
 import type { AgentLoop } from './agent-loop.js';
 import type { ToolRegistry } from '../tool/tool-registry.js';
 
-function fakeTool(name: string, weixin = false, feishu = false): Tool {
+function fakeTool(name: string, weixin = false, feishu = false, dingtalk = false): Tool {
   return {
     getName: () => name,
     getDescription: () => name,
@@ -19,6 +19,7 @@ function fakeTool(name: string, weixin = false, feishu = false): Tool {
     execute: () => '',
     ...(weixin ? { weixinChannelTool: true } : {}),
     ...(feishu ? { feishuChannelTool: true } : {}),
+    ...(dingtalk ? { dingtalkChannelTool: true } : {}),
   } as Tool;
 }
 
@@ -65,6 +66,24 @@ describe('HarnessService.filterToolsForSession', () => {
     expect(names(filtered)).toEqual(expect.arrayContaining(['ask_user_questions', 'read_file']));
     expect(names(filtered)).not.toContain('send_wechat_image');
     expect(names(filtered)).not.toContain('feishu_send_file');
+  });
+
+  it('dingtalkSessionDropsAskUserQuestionsAndFeishuTools', () => {
+    const list = [
+      ...tools('ask_user_questions', 'read_file'),
+      fakeTool('feishu_send_file', false, true),
+      fakeTool('dingtalk_send_image', false, false, true),
+    ];
+    const filtered = HarnessService.filterToolsForSession(list, 'dingtalk-2-private-9', '/opt/mao-data/workspace/dingtalk-chat/2/p2p-9');
+    expect(names(filtered)).toContain('dingtalk_send_image');
+    expect(names(filtered)).toContain('read_file');
+    expect(names(filtered)).not.toContain('ask_user_questions');
+    expect(names(filtered)).not.toContain('feishu_send_file');
+    expect(names(filtered)).not.toContain('send_wechat_image');
+    const feishu = HarnessService.filterToolsForSession(list, 'feishu-2-private-9');
+    expect(names(feishu)).toContain('feishu_send_file');
+    expect(names(feishu)).toContain('ask_user_questions');
+    expect(names(feishu)).not.toContain('dingtalk_send_image');
   });
 
   it('nullProjectKeyBehavesAsNonWeixinChannel', () => {

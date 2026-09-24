@@ -53,7 +53,7 @@ Mao 不是又一个 ChatGPT 套壳，也不是 Dify / n8n 那样的低代码工�
 | **工作区** | 云端新建 / 复用 / Git HTTPS clone；文件树与 Git diff 只读浏览；CLOUD 可开服务端交互终端。 |
 | **治理** | RBAC、管理 API 审计、用量分析、调用流水；本地账号 / LDAP / 飞书登录。 |
 | **多端** | 管理后台、Web / Electron、安卓 APP（CLOUD）、终端 `mao-agent`、REST `mao-cli`。 |
-| **通道** | 飞书机器人、微信 Bot、页面 Embed SDK（可操作宿主页面）。 |
+| **通道** | 飞书机器人、钉钉机器人、微信 Bot、页面 Embed SDK（可操作宿主页面）。 |
 
 任意 [OpenAI 兼容](skills/mao-cli/reference/admin.md#模型管理) 模型均可接入。若你要的是画布编排或托管服务，更适合看 Dify、n8n；若要对齐 Codex 类编码助手但数据不出域，看 [与 Codex 的对比](skills/mao-cli/reference/project.md#与-openai-codex-对比)。
 
@@ -177,6 +177,7 @@ mao agent list
 | [安卓](skills/mao-cli/reference/android.md) | Capacitor 壳远程加载 Web，仅 CLOUD |
 | [mao-agent](skills/mao-cli/reference/mao-agent.md) | 终端 REPL / CI（`-p`） |
 | [飞书机器人](skills/mao-cli/reference/feishu-bot.md) | 私聊或群里 @ 机器人 |
+| [钉钉机器人](skills/mao-cli/reference/dingtalk-bot.md) | 私聊或群里 @ 机器人 |
 | [微信 Bot](skills/mao-cli/reference/weixin.md) | 扫码绑定后在微信里对话 |
 | [Embed SDK](skills/mao-cli/reference/embed-sdk.md) | 内部网页嵌入对话浮窗，可操作当前页面 |
 

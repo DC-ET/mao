@@ -221,6 +221,10 @@ describe('ToolResultSummarizer', () => {
     expect(ToolResultSummarizer.summarize('feishu_send_file', '{"file":"/tmp/report.pdf","filename":"季度报告.pdf"}', '{"success":true}')).toBe('发送飞书文件: 季度报告.pdf (成功)');
     expect(ToolResultSummarizer.summarize('feishu_send_file', '{"file":"/tmp/report.pdf"}', '{"success":true}')).toBe('发送飞书文件: tmp/report.pdf (成功)');
     expect(ToolResultSummarizer.summarize('feishu_download_file', '{"message_id":"om_123"}', null)).toBe('下载飞书文件: om_123');
+    expect(ToolResultSummarizer.summarize('dingtalk_send_image', '{"image":"/tmp/chart.png"}', '{"success":true,"filename":"chart.png"}')).toBe('发送钉钉图片: chart.png (成功)');
+    expect(ToolResultSummarizer.summarize('dingtalk_send_file', '{"file":"/tmp/report.pdf","filename":"季度报告.pdf"}', '{"success":true,"filename":"季度报告.pdf"}')).toBe('发送钉钉文件: 季度报告.pdf (成功)');
+    expect(ToolResultSummarizer.summarize('dingtalk_send_image', '{}', '{"error":"缺少必填参数: image"}')).toBe('发送钉钉图片 (失败)');
+    expect(ToolResultSummarizer.summarize('dingtalk_send_file', null, null)).toBe('发送钉钉文件');
   });
 
   it.each([

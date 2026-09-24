@@ -2,15 +2,21 @@ import type { Session } from '../stores/session'
 
 /** 飞书群聊工作区路径标记：{workspaceRoot}/feishu-chat/{botId}/{chatId}，每个机器人×群聊独立目录。 */
 const FEISHU_CHAT_SEGMENT = 'feishu-chat'
+/** 钉钉工作区路径标记：{workspaceRoot}/dingtalk-chat/{botId}/{leaf}。 */
+const DINGTALK_CHAT_SEGMENT = 'dingtalk-chat'
 
 /** 微信通道固定 projectKey（与后端 WEIXIN_PROJECT_KEY 对齐）。 */
 export const WEIXIN_PROJECT_KEY = 'weixin-bot'
 
 /** 分组图标类型：飞书 / 微信 / 普通云端 / 本地文件夹。 */
-export type GroupIconKind = 'feishu' | 'weixin' | 'cloud' | 'folder'
+export type GroupIconKind = 'feishu' | 'dingtalk' | 'weixin' | 'cloud' | 'folder'
 
 export function isFeishuGroupKey(key: string): boolean {
   return key.startsWith('FEISHU_PRIVATE:') || key.startsWith('FEISHU_GROUP:')
+}
+
+export function isDingtalkGroupKey(key: string): boolean {
+  return key.startsWith('DINGTALK_PRIVATE:') || key.startsWith('DINGTALK_GROUP:')
 }
 
 export function isWeixinGroupSession(session: Pick<Session, 'projectKey'> | undefined | null): boolean {
@@ -22,6 +28,7 @@ export function groupIconKind(
   sessions?: Pick<Session, 'projectKey'>[]
 ): GroupIconKind {
   if (isFeishuGroupKey(key)) return 'feishu'
+  if (isDingtalkGroupKey(key)) return 'dingtalk'
   if (sessions?.some(isWeixinGroupSession)) return 'weixin'
   if (key.startsWith('CLOUD:')) return 'cloud'
   return 'folder'
@@ -30,6 +37,11 @@ export function groupIconKind(
 export function isFeishuChatWorkspace(workspace: string | undefined | null): boolean {
   if (!workspace) return false
   return workspace.replace(/\\/g, '/').split('/').includes(FEISHU_CHAT_SEGMENT)
+}
+
+export function isDingtalkChatWorkspace(workspace: string | undefined | null): boolean {
+  if (!workspace) return false
+  return workspace.replace(/\\/g, '/').split('/').includes(DINGTALK_CHAT_SEGMENT)
 }
 
 /** 飞书私聊工作区：…/feishu-chat/{botId}/private-{userId}（与群聊 oc_ 目录区分）。 */
@@ -64,11 +76,17 @@ export function cloudGroupKey(session: Pick<Session, 'executionMode' | 'workspac
   if (session.projectKey && /^feishu-\d+-private-\d+$/.test(session.projectKey)) {
     return `FEISHU_PRIVATE:${session.agentId ?? 'null'}`
   }
+  if (session.projectKey && /^dingtalk-\d+-private-\d+$/.test(session.projectKey)) {
+    return `DINGTALK_PRIVATE:${session.agentId ?? 'null'}`
+  }
   if (isSharedCloudProject(session)) {
     return `CLOUD:${session.workspace}`
   }
   if (isFeishuChatWorkspace(session.workspace)) {
     return `FEISHU_GROUP:${session.workspace}`
+  }
+  if (isDingtalkChatWorkspace(session.workspace)) {
+    return `DINGTALK_GROUP:${session.workspace}`
   }
   return 'CLOUD:临时工作区'
 }
@@ -78,6 +96,11 @@ export function formatCloudGroupLabel(
   session?: Pick<Session, 'agentName' | 'title'>
 ): string {
   if (key.startsWith('FEISHU_PRIVATE:')) return session?.agentName || '未知 Agent'
+  if (key.startsWith('DINGTALK_PRIVATE:')) return session?.agentName || '未知 Agent'
+  if (key.startsWith('DINGTALK_GROUP:')) {
+    const ws = key.substring('DINGTALK_GROUP:'.length)
+    return `${session?.agentName || '未知 Agent'}:${formatCloudGroupLabel(`CLOUD:${ws}`)}`
+  }
   if (key.startsWith('FEISHU_GROUP:')) {
     // 话题多会话下 session.title 是话题标题而非群名；分组标签用工作区路径合成稳定标识。
     const ws = key.substring('FEISHU_GROUP:'.length)
@@ -92,6 +115,13 @@ export function formatCloudGroupLabel(
       return parts[projectsIdx + 1]
     }
     // 飞书群聊工作区：…/feishu-chat/{botId}/{chatId} → 飞书群聊·{chatId 前缀}
+    const dingtalkIdx = parts.indexOf(DINGTALK_CHAT_SEGMENT)
+    if (dingtalkIdx >= 0 && dingtalkIdx < parts.length - 1) {
+      const botId = parts[dingtalkIdx + 1]
+      const lastSegment = parts[dingtalkIdx + 2] ?? ''
+      if (lastSegment.startsWith('p2p-')) return '钉钉私聊'
+      return `钉钉群${botId}·${lastSegment.slice(0, 10)}`
+    }
     const chatIdx = parts.indexOf(FEISHU_CHAT_SEGMENT)
     if (chatIdx >= 0 && chatIdx < parts.length - 1) {
       const botId = parts[chatIdx + 1]

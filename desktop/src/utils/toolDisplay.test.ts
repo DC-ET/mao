@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { getToolDisplayName, getToolInputPreview } from './toolDisplay'
 
+const dingtalkCases = [
+  { name: 'dingtalk_send_image', label: '发送钉钉图片', key: 'image', value: 'images/photo.png' },
+  { name: 'dingtalk_send_file', label: '发送钉钉文件', key: 'file', value: '/workspace/report.pdf' },
+]
+
 const feishuCases = [
   { name: 'feishu_read_doc', label: '读取飞书文档', key: 'link', value: 'https://example.feishu.cn/wiki/doc' },
   { name: 'feishu_download_file', label: '下载飞书文件', key: 'message_id', value: 'om_message' },
@@ -9,7 +14,7 @@ const feishuCases = [
 ]
 
 describe('getToolDisplayName', () => {
-  it.each(feishuCases)('$name 展示中文名', ({ name, label }) => {
+  it.each([...feishuCases, ...dingtalkCases])('$name 展示中文名', ({ name, label }) => {
     expect(getToolDisplayName(name)).toBe(label)
   })
 
@@ -22,7 +27,7 @@ describe('getToolDisplayName', () => {
 })
 
 describe('getToolInputPreview', () => {
-  it.each(feishuCases)('$name 使用真实参数', ({ name, key, value }) => {
+  it.each([...feishuCases, ...dingtalkCases])('$name 使用真实参数', ({ name, key, value }) => {
     expect(getToolInputPreview(name, { [key]: value })).toBe(value)
     expect(getToolInputPreview(name)).toBe('')
     expect(getToolInputPreview(name, null)).toBe('')

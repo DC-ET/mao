@@ -69,6 +69,9 @@
                     alt="微信"
                     draggable="false"
                   />
+                  <el-icon v-else-if="groupIconKind(group.key, group.sessions) === 'dingtalk'" :size="13">
+                    <ChatDotRound />
+                  </el-icon>
                   <el-icon v-else :size="13">
                     <PartlyCloudy v-if="groupIconKind(group.key, group.sessions) === 'cloud' && !isGroupCollapsed(group.key)" />
                     <Cloudy v-else-if="groupIconKind(group.key, group.sessions) === 'cloud'" />
@@ -441,7 +444,7 @@
 
 <script setup lang="ts">
 import { computed, ref, reactive, watch, nextTick, onMounted, onUnmounted } from 'vue'
-import { Refresh, Loading, Plus, Delete, Check, Close, Cloudy, PartlyCloudy, Folder, FolderOpened, EditPen, ArrowDown, ArrowRight, FolderChecked, RefreshLeft, Clock, Bell, BellFilled } from '@element-plus/icons-vue'
+import { Refresh, Loading, Plus, Delete, Check, Close, Cloudy, PartlyCloudy, Folder, FolderOpened, EditPen, ArrowDown, ArrowRight, FolderChecked, RefreshLeft, Clock, Bell, BellFilled, ChatDotRound } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { useSessionStore, type Session, type TaskPhase } from '../../stores/session'

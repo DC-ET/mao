@@ -33,6 +33,9 @@
         <router-link to="/settings/feishu-bot" class="settings-nav-item" active-class="active">
           飞书机器人
         </router-link>
+        <router-link to="/settings/dingtalk-bot" class="settings-nav-item" active-class="active">
+          钉钉Bot
+        </router-link>
         <router-link to="/settings/mcp-servers" class="settings-nav-item" active-class="active">
           MCP 服务器
         </router-link>
