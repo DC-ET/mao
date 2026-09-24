@@ -125,7 +125,7 @@ web_search 工具支持 Tavily / TinyFish 双实现，在管理后台「系统�
 | `FEISHU_BOT_MAX_CONSECUTIVE_FAILURES` | 5 | 连续失败告警阈值 |
 | `FEISHU_BOT_GROUP_CONTEXT_MAX_ITEMS` | 20 | 群聊上下文注入的最大消息条数 |
 
-注意：飞书应用需开通「获取用户 union_id」权限，否则无法识别发送者身份，全员按未绑定处理。提问时的应用内加急还需开通「发送应用内加急」（`im:message.urgent`）。使用详见 [feishu-bot.md](feishu-bot.md)。
+注意：飞书应用需开通「获取用户 union_id」权限，否则无法识别发送者身份，全员按未绑定处理。使用详见 [feishu-bot.md](feishu-bot.md)。
 
 ### 钉钉机器人通道（可选，默认关闭）
 

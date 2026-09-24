@@ -259,7 +259,6 @@ import { FeishuAskFormStore } from './feishu/ask-form-store.js';
 import { FeishuActiveProgressRegistry } from './feishu/active-progress.js';
 import { createFeishuAskMount } from './feishu/ask-mount.js';
 import { createFeishuPatchedProgress, type FeishuProgressHandle } from './feishu/patched-progress.js';
-import { createFeishuAskUrgentGate, urgentFeishuAppMessage } from './feishu/urgent-app.js';
 import { wsEvent } from './session/ws/ws-event.js';
 import { inboundImageKeys } from './feishu/event-normalizer.js';
 import { chatFilesDirOf } from './feishu/chat-files.js';
@@ -1279,12 +1278,6 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       patch: async (card) => {
         await client.im.v1.message.patch({ path: { message_id: cardMessageId }, data: { content: JSON.stringify(card) } });
       },
-      afterPatch: createFeishuAskUrgentGate((senderOpenId) => {
-        // 加急失败不影响表单。群禁止机器人加急、外部群、未开通权限都只记日志。
-        void urgentFeishuAppMessage(client, cardMessageId, senderOpenId).catch((error) => {
-          console.warn(`飞书提问应用内加急失败, sessionId=${sessionId}, messageId=${cardMessageId}: ${error instanceof Error ? error.message : String(error)}`);
-        });
-      }),
       buildCard: ({ status, round, content, tools, pendingAsks, elapsedMs }) => buildFeishuProgressCard(
         status, round, content, tools, cancelAction ?? undefined, elapsedMs, sessionDetailUrl, pendingAsks,
       ),
