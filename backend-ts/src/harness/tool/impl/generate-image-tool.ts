@@ -1,16 +1,70 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
-import http from 'node:http';
-import https from 'node:https';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { BaseTool } from '../tool.js';
 import { asInt, asText, errorJson, parseObject, toJson } from '../json.js';
 import { harnessLog } from '../../log.js';
 import type { LlmModel } from '../../deps.js';
-import { applyClientImpersonationHeaders } from '../../llm/client-impersonation-headers.js';
+import {
+  callImageGenerations,
+  normalizeImageModelName,
+  toImageApiError,
+  type ImageApiConfig,
+  type ImageApiResult,
+} from '../image-api-client.js';
 
 export interface ImageModelLookup {
   findFirstActiveImageModel(): Promise<LlmModel | null>;
+}
+
+const SIZES = new Set(['auto', '1024x1024', '1536x1024', '1024x1536']);
+const QUALITIES = new Set(['auto', 'high', 'medium', 'low']);
+
+export function buildImageApiConfig(
+  model: LlmModel,
+  modelOverride?: string | null,
+): ImageApiConfig {
+  const name = normalizeImageModelName(modelOverride?.trim() || model.modelId || '');
+  return {
+    baseUrl: (model.baseUrl ?? '').trim(),
+    apiKey: (model.apiKey ?? '').trim(),
+    model: name,
+    clientImpersonation: model.clientImpersonation,
+  };
+}
+
+/** 将 API 结果落盘 uploadDir 并组装工具返回 JSON 对象。 */
+export function materializeImageApiResult(
+  result: ImageApiResult,
+  uploadDir: string,
+  namePrefix: 'gen' | 'edit',
+  baseUrl: string,
+  prompt: string,
+): Record<string, unknown> {
+  mkdirSync(uploadDir, { recursive: true });
+  const images: Array<Record<string, unknown>> = [];
+  for (const item of result.images) {
+    const fileName = `${namePrefix}-${randomUUID()}${path.extname(item.fileName) || '.png'}`;
+    const filePath = path.join(uploadDir, fileName);
+    writeFileSync(filePath, item.bytes);
+    const base = (baseUrl ?? '').replace(/\/$/, '');
+    images.push({
+      image_url: base ? `${base}/${fileName}` : filePath,
+      image_path: filePath,
+      size_bytes: item.bytes.length,
+      source: item.source,
+      mime: item.mime,
+    });
+  }
+  const payload: Record<string, unknown> = {
+    images,
+    model: result.model ?? null,
+    size: result.size ?? null,
+    prompt,
+  };
+  if (result.revisedPrompt) payload.revised_prompt = result.revisedPrompt;
+  if (result.usage) payload.usage = result.usage;
+  return payload;
 }
 
 export class GenerateImageTool extends BaseTool {
@@ -22,16 +76,21 @@ export class GenerateImageTool extends BaseTool {
 
   getName(): string { return 'generate_image'; }
   getDescription(): string {
-    return '根据文字描述生成图片（文生图）。基于配置的文生图模型生成符合描述的图片，返回图片的访问 URL 与本地保存路径。帮助 Agent 完成绘图、示意图、配图等图片生成需求。';
+    return '根据文字描述生成图片（文生图）。基于后台配置的文生图模型（model_type=image）生成图片，返回访问 URL、本地保存路径与用量信息。支持绘制插画、示意图、配图等需求。';
   }
   getToolPrompt(): string {
     return `## generate_image 工具使用指南
 
-- generate_image 用于根据文字描述生成图片，底层调用配置的文生图模型（如 GPT Image 2）。
-- prompt 应使用英文或中文描述清楚画面内容、风格、构图等，描述越具体生成效果越好。
-- size 可选值：1024x1024、1024x1536、1536x1024（默认 1024x1024）。
-- 工具执行成功后返回图片的访问 URL（image_url）与本地保存路径（image_path），可直接用于展示或引用。
-- 若没有可用的文生图模型（model_type=image），工具会返回错误，请提示用户先在管理后台配置文生图模型。
+- generate_image 用于根据文字描述生成图片（文生图），底层调用管理后台配置的文生图模型。
+- prompt 应描述清楚画面内容、风格、构图等，越具体效果越好（中英文均可）。
+- size 可选：auto（默认）、1024x1024、1536x1024、1024x1536。
+- quality 可选：auto（默认）、high、medium、low。日常快速出图用 low/medium，精细成图用 high。
+- n 可选：1–10，默认 1。
+- model 可选：覆盖后台默认模型。别名 flare=gpt-image-2.5-flare（快速），sunburst=gpt-image-2.5-sunburst（精细/复杂指令）。用户点名模型时只用该模型，失败不要换其他模型重画后交回。
+- 成功后返回 images[].image_url（可展示）与 images[].image_path（本地路径，可交给 send_wechat_image / feishu_send_image 等工具）。
+- 若结果含 revised_prompt，说明上游改写了提示词，解释画面与用户描述不完全一致时可引用。
+- 需要对已有图片做修改时请用 edit_image，不要用 generate_image 重画。
+- 若没有可用文生图模型（model_type=image），工具会报错，请提示用户先在管理后台配置。
 `;
   }
   getInputSchema(): Record<string, unknown> {
@@ -39,8 +98,21 @@ export class GenerateImageTool extends BaseTool {
       type: 'object',
       properties: {
         prompt: { type: 'string', description: '图片内容描述，越具体越好（支持中英文）' },
-        size: { type: 'string', description: '生成图片尺寸：1024x1024 / 1024x1536 / 1536x1024（默认 1024x1024）' },
-        n: { type: 'integer', description: '生成图片数量（默认 1）' },
+        size: {
+          type: 'string',
+          description: '生成图片尺寸：auto / 1024x1024 / 1536x1024 / 1024x1536（默认 auto）',
+          enum: ['auto', '1024x1024', '1536x1024', '1024x1536'],
+        },
+        quality: {
+          type: 'string',
+          description: '图片质量：auto / high / medium / low（默认 auto）',
+          enum: ['auto', 'high', 'medium', 'low'],
+        },
+        n: { type: 'integer', description: '生成图片数量 1–10（默认 1）' },
+        model: {
+          type: 'string',
+          description: '可选，覆盖后台配置的模型名（支持别名 flare / sunburst）',
+        },
       },
       required: ['prompt'],
     };
@@ -51,87 +123,50 @@ export class GenerateImageTool extends BaseTool {
       properties: {
         images: { type: 'array' },
         model: { type: 'string' },
+        size: { type: 'string' },
         prompt: { type: 'string' },
+        revised_prompt: { type: 'string' },
+        usage: { type: 'object' },
       },
     };
   }
 
   protected async executeWithSession(argumentsJson: string): Promise<string> {
+    let model: LlmModel | null = null;
     try {
       const args = parseObject(argumentsJson) ?? {};
       const prompt = asText(args.prompt);
       if (!prompt || prompt.trim() === '') return errorJson('prompt 不能为空');
-      const model = await this.modelService.findFirstActiveImageModel();
+      model = await this.modelService.findFirstActiveImageModel();
       if (!model) return errorJson('没有可用的文生图模型，请先在管理后台配置 model_type=image 的模型');
-      const size = asText(args.size) ?? '1024x1024';
-      const n = Math.min(4, Math.max(1, args.n != null ? asInt(args.n, 1) : 1));
-      const body = JSON.stringify({ model: model.modelId, prompt, size, n, response_format: 'b64_json' });
-      const url = new URL((model.baseUrl ?? '').replace(/\/$/, '') + '/images/generations');
-      const json = await postJson(url, body, model.apiKey ?? '', model.clientImpersonation);
-      const parsed = JSON.parse(json) as { data?: Array<{ b64_json?: string; url?: string }> };
-      const images: Array<Record<string, unknown>> = [];
-      mkdirSync(this.uploadDir, { recursive: true });
-      for (const item of parsed.data ?? []) {
-        const fileName = `gen-${randomUUID()}.png`;
-        const filePath = path.join(this.uploadDir, fileName);
-        if (item.b64_json) {
-          const buf = Buffer.from(item.b64_json, 'base64');
-          writeFileSync(filePath, buf);
-          const baseUrl = await this.getBaseUrl();
-          images.push({
-            image_url: baseUrl ? `${baseUrl.replace(/\/$/, '')}/${fileName}` : filePath,
-            image_path: filePath,
-            size_bytes: buf.length,
-          });
-        } else if (item.url) {
-          images.push({ image_url: item.url, image_path: null, size_bytes: 0 });
-        }
-      }
-      return toJson({ images, model: model.modelId, prompt });
+
+      const sizeRaw = (asText(args.size) ?? 'auto').trim();
+      if (!SIZES.has(sizeRaw)) return errorJson(`size 不合法: ${sizeRaw}，可选 auto / 1024x1024 / 1536x1024 / 1024x1536`);
+      const qualityRaw = (asText(args.quality) ?? 'auto').trim();
+      if (!QUALITIES.has(qualityRaw)) return errorJson(`quality 不合法: ${qualityRaw}，可选 auto / high / medium / low`);
+      const n = Math.min(10, Math.max(1, args.n != null ? asInt(args.n, 1) : 1));
+      const modelOverride = asText(args.model);
+
+      const cfg = buildImageApiConfig(model, modelOverride);
+      if (!cfg.baseUrl) return errorJson('文生图模型未配置 base_url');
+      if (!cfg.model) return errorJson('文生图模型未配置 model_id');
+
+      const result = await callImageGenerations(cfg, {
+        prompt,
+        n,
+        size: sizeRaw,
+        quality: qualityRaw,
+      });
+      const baseUrl = await this.getBaseUrl();
+      return toJson(materializeImageApiResult(result, this.uploadDir, 'gen', baseUrl, prompt));
     } catch (e) {
-      harnessLog('error', 'GenerateImageTool failed', e);
-      return errorJson((e as Error).message);
+      const err = toImageApiError(e, model?.apiKey);
+      harnessLog('error', 'GenerateImageTool failed', err);
+      return toJson({
+        error: err.message,
+        error_code: err.errorCode,
+        ...(err.httpStatus != null ? { http_status: err.httpStatus } : {}),
+      });
     }
   }
-}
-
-function postJson(url: URL, body: string, apiKey: string, clientImpersonation?: string | null): Promise<string> {
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${apiKey}`,
-    'Content-Type': 'application/json',
-    'Content-Length': String(Buffer.byteLength(body)),
-  };
-  if (clientImpersonation === 'codex' || clientImpersonation === 'claude_code') {
-    applyClientImpersonationHeaders(headers, clientImpersonation);
-  }
-  return new Promise((resolve, reject) => {
-    const lib = url.protocol === 'https:' ? https : http;
-    const req = lib.request({
-      hostname: url.hostname,
-      port: url.port,
-      path: url.pathname + url.search,
-      method: 'POST',
-      headers,
-      timeout: 180_000,
-    }, (res) => {
-      const chunks: Buffer[] = [];
-      res.on('data', (c) => chunks.push(c as Buffer));
-      res.on('end', () => {
-        const text = Buffer.concat(chunks).toString('utf8');
-        if ((res.statusCode ?? 0) < 200 || (res.statusCode ?? 0) >= 300) {
-          reject(new Error(`Image API ${res.statusCode}: ${text.slice(0, 200)}`));
-          return;
-        }
-        resolve(text);
-      });
-    });
-    req.on('error', reject);
-    // M-8：timeout 选项只触发 'timeout' 事件，不监听则既不中止也不 reject，
-    // 图像 API 僵死时 Promise 永久挂起，整轮对话无限等待。
-    req.on('timeout', () => {
-      req.destroy(new Error('timeout'));
-    });
-    req.write(body);
-    req.end();
-  });
 }

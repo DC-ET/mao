@@ -59,6 +59,7 @@ function getToolDisplayName(name: string): string {
     web_search: '网页搜索',
     open_web_page: '打开网页',
     generate_image: '生成图片',
+    edit_image: '编辑图片',
     send_wechat_image: '发送微信图片',
     send_wechat_file: '发送微信文件',
     create_scheduled_task: '创建定时任务',

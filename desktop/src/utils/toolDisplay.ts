@@ -20,6 +20,7 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   web_search: '网页搜索',
   open_web_page: '打开网页',
   generate_image: '生成图片',
+  edit_image: '编辑图片',
   feishu_read_doc: '读取飞书文档',
   feishu_download_file: '下载飞书文件',
   feishu_send_image: '发送飞书图片',
@@ -52,6 +53,15 @@ export function getToolDisplayName(name: string): string {
 export function getToolInputPreview(name: string, input?: Record<string, unknown> | null): string {
   if (!input) return ''
   switch (name) {
+    case 'generate_image':
+    case 'edit_image': {
+      const prompt = input.prompt
+      if (typeof prompt === 'string' && prompt) return prompt.length > 60 ? prompt.slice(0, 60) + '...' : prompt
+      const images = input.image_paths ?? input.image
+      if (typeof images === 'string') return images
+      if (Array.isArray(images) && typeof images[0] === 'string') return images[0]
+      return ''
+    }
     case 'feishu_read_doc':
       return typeof input.link === 'string' ? input.link : ''
     case 'feishu_download_file':

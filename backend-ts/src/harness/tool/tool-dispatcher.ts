@@ -32,7 +32,7 @@ const MCP_TOOL_PREFIX = 'mcp__';
 const SERVER_ONLY_TOOLS = new Set([
   'task_create', 'task_update', 'task_list', 'task_delete',
   'spawn_subagent', 'subagent_followup', 'check_subagent', 'cancel_subagent', 'wait_subagents',
-  'web_search', 'open_web_page', 'generate_image',
+  'web_search', 'open_web_page', 'generate_image', 'edit_image',
   'send_wechat_image', 'send_wechat_file',
 ]);
 const WRITE_TOOLS = new Set(['write_file', 'edit_file']);

@@ -15,6 +15,18 @@
 
 ---
 
+## 0.0.190 (2026-09-24)
+
+### 后端
+
+- `generate_image` 文生图协议对齐（OpenAI Images）：请求仅发送 `model/prompt/n/size/quality`（支持 `quality` 与尺寸 `auto`，`n` 放宽到 1–10），去掉非标准的 `response_format`；统一 `Accept-Encoding: identity`、Bearer 防重复、10 分钟超时；对 `429/502/503/504` 与 `rate_limit_exceeded` 按 250ms/1s/2.5s 重试；支持响应 `b64_json` 与 `url`（含相对路径）双通道落盘，并回传 `usage` / `revised_prompt` / 响应内 `model`/`size`；异步 `task_id` 直接报错不轮询；错误契约带 `error_code`/`http_status`。
+- 新增 `edit_image` 改图工具：本地图片 1–N 张 + 可选蒙版，multipart 调用 `/images/edits`；支持 `size`/`quality`/`background`/`output_format`/`output_compression`/`model` 覆盖；不接受图片 URL；产物与文生图一致落盘并返回可展示 URL。
+- 模型仍由管理后台 `model_type=image` 配置（baseUrl / apiKey / model_id）；调用可用 `model` 覆盖（别名 `flare`/`sunburst` 归一为完整名，点名失败不换模）。
+
+### 前端（桌面 / Web / 安卓）
+
+- 工具卡片支持 `edit_image`「编辑图片」展示与参数预览。
+
 ## 0.0.189 (2026-09-24)
 
 ### 后端
