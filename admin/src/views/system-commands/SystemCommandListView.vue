@@ -7,7 +7,7 @@
             <div class="card-title">指令管理</div>
             <div class="card-hint">管理全局系统指令，以及各用户的个人快捷指令。</div>
           </div>
-          <el-button v-if="isAdmin && activeTab === 'system'" type="primary" @click="openCreate">新增指令</el-button>
+          <el-button v-if="canWrite && activeTab === 'system'" type="primary" @click="openCreate">新增指令</el-button>
         </div>
       </template>
 
@@ -67,7 +67,7 @@
         <el-table-column label="操作" width="180" fixed="right">
           <template #default="{ row }">
             <el-button type="primary" link size="small" @click="openDetail(row)">查看</el-button>
-            <template v-if="isAdmin">
+            <template v-if="canWrite">
               <el-button type="primary" link size="small" @click="openEdit(row)">编辑</el-button>
               <el-popconfirm
                 :title="`确认删除指令「${row.name}」？`"
@@ -116,9 +116,9 @@
         <el-table-column label="操作" width="250" fixed="right">
           <template #default="{ row }">
             <el-button type="primary" link size="small" @click="openDetail(row)">查看</el-button>
-            <el-button v-if="isAdmin" type="primary" link size="small" @click="openPromote(row)">添加到系统指令</el-button>
+            <el-button v-if="canWrite" type="primary" link size="small" @click="openPromote(row)">添加到系统指令</el-button>
             <el-popconfirm
-              v-if="isAdmin"
+              v-if="canWrite"
               :title="`确认删除「${userLabel(row)}」的指令「${row.name}」？`"
               confirm-button-text="删除"
               cancel-button-text="取消"
@@ -145,7 +145,7 @@
           <div class="mobile-card-content">{{ row.content }}</div>
           <div class="mobile-card-actions">
             <el-button type="primary" link size="small" @click="openDetail(row)">查看</el-button>
-            <template v-if="activeTab === 'system' && isAdmin">
+            <template v-if="activeTab === 'system' && canWrite">
               <el-button type="primary" link size="small" @click="openEdit(row)">编辑</el-button>
               <el-popconfirm
                 :title="`确认删除指令「${row.name}」？`"
@@ -158,7 +158,7 @@
                 </template>
               </el-popconfirm>
             </template>
-            <template v-else-if="activeTab === 'personal' && isAdmin">
+            <template v-else-if="activeTab === 'personal' && canWrite">
               <el-button type="primary" link size="small" @click="openPromote(row)">添加到系统指令</el-button>
               <el-popconfirm
                 :title="`确认删除「${userLabel(row)}」的指令「${row.name}」？`"
@@ -230,7 +230,7 @@
           <pre>{{ detailRow.content }}</pre>
         </div>
       </div>
-      <template v-if="activeTab === 'personal' && isAdmin" #footer>
+      <template v-if="activeTab === 'personal' && canWrite" #footer>
         <el-button @click="detailVisible = false">关闭</el-button>
         <el-button type="primary" @click="openPromoteFromDetail">添加到系统指令</el-button>
       </template>
@@ -283,8 +283,7 @@ import { formatDateTime, formatDateTimeColumn } from '../../utils/datetime'
 
 const { isMobile } = useBreakpoint()
 const authStore = useAuthStore()
-// 后端 /admin/system-commands 与 /admin/user-commands 均要求管理员，前端按 isAdmin 控制按钮显隐
-const isAdmin = computed(() => authStore.isAdmin)
+const canWrite = computed(() => authStore.hasPermission('command:write'))
 
 type TabType = 'system' | 'personal'
 

@@ -84,7 +84,6 @@ interface MenuItem {
   label: string
   icon: Component
   permission?: string
-  adminOnly?: boolean
 }
 
 interface MenuGroup {
@@ -98,7 +97,7 @@ const menuGroups: MenuGroup[] = [
     id: 'overview',
     label: '',
     items: [
-      { index: '/analytics', label: '用量分析', icon: TrendCharts, adminOnly: true }
+      { index: '/analytics', label: '用量分析', icon: TrendCharts, permission: 'analytics:read' }
     ]
   },
   {
@@ -107,11 +106,11 @@ const menuGroups: MenuGroup[] = [
     items: [
       { index: '/agents', label: 'Agent 管理', icon: Monitor, permission: 'agent:read' },
       { index: '/models', label: '模型管理', icon: Connection, permission: 'model:read' },
-      { index: '/feishu-bots', label: '飞书机器人', icon: ChatLineRound, adminOnly: true },
-      { index: '/dingtalk-bots', label: '钉钉机器人', icon: ChatLineRound, adminOnly: true },
-      { index: '/skills', label: 'Skills 管理', icon: MagicStick, permission: 'agent:read' },
-      { index: '/system-commands', label: '指令管理', icon: Promotion, adminOnly: true },
-      { index: '/mcp-servers', label: 'MCP 服务器', icon: Link, adminOnly: true }
+      { index: '/feishu-bots', label: '飞书机器人', icon: ChatLineRound, permission: 'feishu-bot:read' },
+      { index: '/dingtalk-bots', label: '钉钉机器人', icon: ChatLineRound, permission: 'dingtalk-bot:read' },
+      { index: '/skills', label: 'Skills 管理', icon: MagicStick, permission: 'skill:read' },
+      { index: '/system-commands', label: '指令管理', icon: Promotion, permission: 'command:read' },
+      { index: '/mcp-servers', label: 'MCP 服务器', icon: Link, permission: 'mcp:read' }
     ]
   },
   {
@@ -119,8 +118,8 @@ const menuGroups: MenuGroup[] = [
     label: '运行',
     items: [
       { index: '/sessions', label: '会话管理', icon: ChatDotRound, permission: 'session:read' },
-      { index: '/scheduled-tasks', label: '定时任务', icon: Timer, permission: 'session:read' },
-      { index: '/llm-calls', label: '调用流水', icon: Tickets, adminOnly: true }
+      { index: '/scheduled-tasks', label: '定时任务', icon: Timer, permission: 'scheduled-task:read' },
+      { index: '/llm-calls', label: '调用流水', icon: Tickets, permission: 'llm-call:read' }
     ]
   },
   {
@@ -128,8 +127,8 @@ const menuGroups: MenuGroup[] = [
     label: '安全',
     items: [
       { index: '/users', label: '用户管理', icon: User, permission: 'user:read' },
-      { index: '/roles', label: '角色权限', icon: Lock, permission: 'user:write' },
-      { index: '/audit-logs', label: '审计日志', icon: DocumentChecked, permission: 'user:read' }
+      { index: '/roles', label: '角色权限', icon: Lock, permission: 'role:read' },
+      { index: '/audit-logs', label: '审计日志', icon: DocumentChecked, permission: 'audit:read' }
     ]
   },
   {
@@ -142,7 +141,6 @@ const menuGroups: MenuGroup[] = [
 ]
 
 function canSee(item: MenuItem) {
-  if (item.adminOnly) return authStore.isAdmin
   return !item.permission || authStore.hasPermission(item.permission)
 }
 
@@ -158,7 +156,7 @@ const activeMenu = computed(() => {
 })
 
 function goHome() {
-  const path = pickHomePath(authStore.isAdmin, (permission) => authStore.hasPermission(permission))
+  const path = pickHomePath((permission) => authStore.hasPermission(permission))
   router.push(path === '/forbidden' ? '/login' : path)
   emit('select')
 }

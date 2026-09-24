@@ -2005,7 +2005,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       weixinVoiceReplyDefault: cfg.weixin.bot.voiceReply,
     });
     registerToolRoutes(api, { toolService: restToolService });
-    registerAuditLogRoutes(api, { auditLogService: auditService });
+    registerAuditLogRoutes(api, { auditLogService: auditService, permissionService });
     registerLlmCallRoutes(api, { llmCallService, permissionService });
     registerUploadRoutes(api, () => settingService.getUploadConfig());
     registerSessionRoutes(api, {

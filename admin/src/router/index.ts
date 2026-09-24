@@ -45,13 +45,13 @@ const routes: RouteRecordRaw[] = [
         path: 'skills',
         name: 'Skills',
         component: () => import('../views/skill/SkillListView.vue'),
-        meta: { title: 'Skills 管理', keepAlive: true, permission: 'agent:read' }
+        meta: { title: 'Skills 管理', keepAlive: true, permission: 'skill:read' }
       },
       {
         path: 'mcp-servers',
         name: 'McpServers',
         component: () => import('../views/mcp/McpServerListView.vue'),
-        meta: { title: 'MCP 服务器', keepAlive: true, adminOnly: true }
+        meta: { title: 'MCP 服务器', keepAlive: true, permission: 'mcp:read' }
       },
       {
         path: 'sessions',
@@ -63,49 +63,49 @@ const routes: RouteRecordRaw[] = [
         path: 'roles',
         name: 'Roles',
         component: () => import('../views/permission/RolePermissionView.vue'),
-        meta: { title: '角色权限', keepAlive: true, permission: 'user:write' }
+        meta: { title: '角色权限', keepAlive: true, permission: 'role:read' }
       },
       {
         path: 'audit-logs',
         name: 'AuditLogs',
         component: () => import('../views/audit/AuditLogView.vue'),
-        meta: { title: '审计日志', keepAlive: true, permission: 'user:read' }
+        meta: { title: '审计日志', keepAlive: true, permission: 'audit:read' }
       },
       {
         path: 'analytics',
         name: 'Analytics',
         component: () => import('../views/analytics/AnalyticsView.vue'),
-        meta: { title: '用量分析', keepAlive: true, adminOnly: true }
+        meta: { title: '用量分析', keepAlive: true, permission: 'analytics:read' }
       },
       {
         path: 'llm-calls',
         name: 'LlmCalls',
         component: () => import('../views/llm-call/LlmCallView.vue'),
-        meta: { title: '调用流水', keepAlive: true, adminOnly: true }
+        meta: { title: '调用流水', keepAlive: true, permission: 'llm-call:read' }
       },
       {
         path: 'scheduled-tasks',
         name: 'ScheduledTasks',
         component: () => import('../views/scheduled-tasks/index.vue'),
-        meta: { title: '定时任务', keepAlive: true, permission: 'session:read' }
+        meta: { title: '定时任务', keepAlive: true, permission: 'scheduled-task:read' }
       },
       {
         path: 'system-commands',
         name: 'SystemCommands',
         component: () => import('../views/system-commands/SystemCommandListView.vue'),
-        meta: { title: '指令管理', keepAlive: true, adminOnly: true }
+        meta: { title: '指令管理', keepAlive: true, permission: 'command:read' }
       },
       {
         path: 'feishu-bots',
         name: 'FeishuBots',
         component: () => import('../views/feishu-bot/FeishuBotListView.vue'),
-        meta: { title: '飞书机器人', keepAlive: true, adminOnly: true }
+        meta: { title: '飞书机器人', keepAlive: true, permission: 'feishu-bot:read' }
       },
       {
         path: 'dingtalk-bots',
         name: 'DingtalkBots',
         component: () => import('../views/dingtalk-bot/DingtalkBotListView.vue'),
-        meta: { title: '钉钉机器人', keepAlive: true, adminOnly: true }
+        meta: { title: '钉钉机器人', keepAlive: true, permission: 'dingtalk-bot:read' }
       },
       {
         path: 'settings',
@@ -181,14 +181,10 @@ router.beforeEach(async (to, _from, next) => {
     }
     const permission = to.meta.permission as string | undefined
     if (permission && !authStore.hasPermission(permission)) {
-      next('/forbidden')
-      return
-    }
-    // 管理员专属页面（MCP 服务器等）：权限维度已移除，改为管理员角色控制
-    if (to.meta.adminOnly && !authStore.isAdmin) {
-      // 首页（用量分析）对非管理员软回退到其有权限的首个页面，避免登录即无权限
+      // 登录后默认进用量分析。没有该读权限时落到其有权限的首个页面，避免一登录就无权限。
       if (to.path === '/analytics') {
-        next(pickHomePath(authStore.isAdmin, (p) => authStore.hasPermission(p)))
+        const home = pickHomePath((p) => authStore.hasPermission(p))
+        next(home === '/analytics' ? '/forbidden' : home)
         return
       }
       next('/forbidden')

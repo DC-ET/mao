@@ -17,7 +17,7 @@
 | 管理员：列表/详情/CRUD/启停/测试 | `mcp list` / `get` / `create` / `update` / `set-status` / `delete` / `test` |
 | 仅已启用的全局 MCP | `mcp enabled` |
 
-全局 MCP 命令需要管理员权限（403 表示非管理员）。
+全局 MCP 的列表和详情需要 `mcp:read`；创建、修改、启停、删除、测试需要 `mcp:write`。`mcp enabled` 同时接受 `mcp:read` 或 `agent:write`。私有 MCP（`mcp me-*`）只要求登录。
 
 ## 服务器类型
 

@@ -6,7 +6,7 @@
           <template #header>
             <div class="card-header">
               <span>角色列表</span>
-              <el-button type="primary" @click="handleCreateRole">
+              <el-button v-if="canWrite" type="primary" @click="handleCreateRole">
                 <el-icon><Plus /></el-icon>
                 新建角色
               </el-button>
@@ -20,7 +20,7 @@
             <el-table-column label="操作" width="140" fixed="right">
               <template #default="{ row }">
                 <el-button type="primary" link size="small" @click.stop="handleViewMembers(row)">成员</el-button>
-                <el-button type="primary" link size="small" @click.stop="handleEditRole(row)">编辑</el-button>
+                <el-button v-if="canWrite" type="primary" link size="small" @click.stop="handleEditRole(row)">编辑</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -34,7 +34,7 @@
               <span>权限分配</span>
               <el-button
                 :type="dirtyPermissions ? 'primary' : 'default'"
-                :disabled="!currentRole"
+                :disabled="!currentRole || !canWrite"
                 :loading="savingPermissions"
                 @click="savePermissions"
               >
@@ -50,13 +50,13 @@
               <el-tag size="small">{{ currentRole.code }}</el-tag>
             </div>
             <el-collapse v-model="expandedGroups" class="permission-groups">
-              <el-collapse-item v-for="group in permissionGroups" :key="group.prefix" :name="group.prefix">
+              <el-collapse-item v-for="group in permissionGroups" :key="group.id" :name="group.id">
                 <template #title>
                   <div class="group-title" @click.stop>
                     <el-checkbox
                       :model-value="isGroupAllSelected(group)"
                       :indeterminate="isGroupIndeterminate(group)"
-                      :disabled="savingPermissions"
+                      :disabled="savingPermissions || !canWrite"
                       @change="toggleGroup(group, $event as boolean)"
                     >
                       {{ group.label }}
@@ -67,7 +67,7 @@
                 <el-checkbox-group
                   :model-value="selectedPermissionIds"
                   class="permission-grid"
-                  :disabled="savingPermissions"
+                  :disabled="savingPermissions || !canWrite"
                   @update:model-value="onPermissionChange($event as number[])"
                 >
                   <el-checkbox
@@ -113,6 +113,7 @@ import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
+import { useAuthStore } from '../../stores/auth'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
 
 interface Role {
@@ -142,6 +143,8 @@ const dialogVisible = ref(false)
 const dialogMode = ref<'create' | 'edit'>('create')
 const roleFormRef = ref<FormInstance>()
 const router = useRouter()
+const authStore = useAuthStore()
+const canWrite = computed(() => authStore.hasPermission('role:write'))
 const roleForm = reactive({
   id: 0,
   name: '',
@@ -169,25 +172,50 @@ const roleFormRules: FormRules = {
   ]
 }
 
-/** 按权限码前缀（domain）分组，如 user:read → user */
+/** 与权限清单一致的分组。未知前缀单独成组，避免新码加进来后页面空白。 */
 interface PermissionGroup {
-  prefix: string
+  id: string
   label: string
   items: Permission[]
 }
 
+const PERMISSION_SECTIONS: { id: string; label: string; prefixes: string[] }[] = [
+  { id: 'capability', label: '能力', prefixes: ['agent', 'model', 'skill', 'feishu-bot', 'dingtalk-bot', 'command', 'mcp'] },
+  { id: 'runtime', label: '运行', prefixes: ['session', 'scheduled-task', 'llm-call', 'analytics'] },
+  { id: 'security', label: '安全', prefixes: ['user', 'role', 'audit'] },
+  { id: 'system', label: '系统', prefixes: ['settings'] },
+  { id: 'terminal', label: '云端终端', prefixes: ['terminal'] }
+]
+
+function permissionOrder(code: string, prefixes: string[]): number {
+  const prefix = code.split(':')[0] || 'other'
+  const index = prefixes.indexOf(prefix)
+  const action = code.endsWith(':read') ? 0 : code.endsWith(':write') ? 1 : 2
+  return (index < 0 ? prefixes.length : index) * 10 + action
+}
+
 const permissionGroups = computed<PermissionGroup[]>(() => {
-  const map = new Map<string, Permission[]>()
+  const byPrefix = new Map<string, Permission[]>()
   for (const perm of permissions.value) {
     const prefix = perm.code.split(':')[0] || 'other'
-    if (!map.has(prefix)) map.set(prefix, [])
-    map.get(prefix)!.push(perm)
+    if (!byPrefix.has(prefix)) byPrefix.set(prefix, [])
+    byPrefix.get(prefix)!.push(perm)
   }
-  return Array.from(map.entries()).map(([prefix, items]) => ({
-    prefix,
-    label: `${prefix}:*`,
-    items
-  }))
+  const used = new Set<string>()
+  const groups: PermissionGroup[] = []
+  for (const section of PERMISSION_SECTIONS) {
+    const items = section.prefixes.flatMap((prefix) => byPrefix.get(prefix) ?? [])
+    if (items.length === 0) continue
+    section.prefixes.forEach((prefix) => used.add(prefix))
+    items.sort((a, b) => permissionOrder(a.code, section.prefixes) - permissionOrder(b.code, section.prefixes) || a.code.localeCompare(b.code))
+    groups.push({ id: section.id, label: section.label, items })
+  }
+  for (const [prefix, items] of byPrefix) {
+    if (used.has(prefix)) continue
+    items.sort((a, b) => a.code.localeCompare(b.code))
+    groups.push({ id: prefix, label: prefix, items })
+  }
+  return groups
 })
 
 const expandedGroups = ref<string[]>([])
@@ -222,7 +250,7 @@ async function fetchAll() {
     roles.value = roleRes.data || []
     permissions.value = permissionRes.data || []
     if (expandedGroups.value.length === 0 && permissions.value.length > 0) {
-      expandedGroups.value = permissionGroups.value.map((g) => g.prefix)
+      expandedGroups.value = permissionGroups.value.map((g) => g.id)
     }
     if (!currentRole.value && roles.value.length > 0) {
       selectRole(roles.value[0])

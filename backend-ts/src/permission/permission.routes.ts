@@ -1,12 +1,12 @@
 import type { FastifyInstance } from 'fastify';
-import { requirePermission, requireUserId, sendOk } from '../common/http-error.js';
+import { requireAnyRequestPermission, requirePermission, requireRequestPermission, requireUserId, sendOk } from '../common/http-error.js';
 import { bodyOf, pathId } from '../common/request.js';
 import type { Permission, Role } from '../user/types.js';
 import type { PermissionService } from './permission.service.js';
 
 export function registerPermissionRoutes(app: FastifyInstance, permissionService: PermissionService): void {
   app.get('/v1/roles', async (request, reply) => {
-    requireUserId(request);
+    await requireAnyRequestPermission(permissionService, request, ['role:read', 'user:write']);
     const roles = await permissionService.listRoles();
     const voList = await Promise.all(roles.map((r) => toRoleVO(r, permissionService)));
     return sendOk(reply, voList);
@@ -14,7 +14,7 @@ export function registerPermissionRoutes(app: FastifyInstance, permissionService
 
   app.post('/v1/roles', async (request, reply) => {
     const userId = requireUserId(request);
-    await requirePermission(permissionService, userId, 'user:write');
+    await requirePermission(permissionService, userId, 'role:write');
     const body = bodyOf<{ name?: string; code?: string; description?: string }>(request);
     const role = await permissionService.createRole(body.name ?? '', body.code ?? '', body.description);
     return sendOk(reply, await toRoleVO(role, permissionService));
@@ -22,21 +22,21 @@ export function registerPermissionRoutes(app: FastifyInstance, permissionService
 
   app.put('/v1/roles/:id', async (request, reply) => {
     const userId = requireUserId(request);
-    await requirePermission(permissionService, userId, 'user:write');
+    await requirePermission(permissionService, userId, 'role:write');
     const body = bodyOf<{ name?: string; description?: string }>(request);
     const role = await permissionService.updateRole(pathId(request), body.name, body.description);
     return sendOk(reply, role ? await toRoleVO(role, permissionService) : null);
   });
 
   app.get('/v1/permissions', async (request, reply) => {
-    requireUserId(request);
+    await requireRequestPermission(permissionService, request, 'role:read');
     const list = await permissionService.listPermissions();
     return sendOk(reply, list.map(toPermissionVO));
   });
 
   app.put('/v1/roles/:id/permissions', async (request, reply) => {
     const userId = requireUserId(request);
-    await requirePermission(permissionService, userId, 'user:write');
+    await requirePermission(permissionService, userId, 'role:write');
     const body = bodyOf<{ permissionIds?: number[] }>(request);
     await permissionService.assignPermissions(pathId(request), body.permissionIds ?? []);
     return sendOk(reply);

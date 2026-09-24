@@ -2,7 +2,7 @@
 
 ## 用途
 
-管理员视角检索会话、查看详情与消息，以及筛选项（用户/Agent 下拉数据）。
+跨用户检索会话、查看详情与消息，以及筛选项（用户/Agent 下拉数据）。列表、详情和消息需要 `session:read`；归档和删除需要 `session:write`。用户下拉同时接受 `session:read`、`scheduled-task:read`、`llm-call:read`、`audit:read`；Agent 下拉同时接受前三个。定时任务、调用流水和审计复用这两个下拉，不因此打开会话列表。
 
 ## 命令选择
 
@@ -71,7 +71,7 @@ mao admin-session messages --id 100 --compact
 
 ## 命令：admin-session options-users
 
-无参数。`GET /admin/sessions/options/users`
+无参数。`GET /admin/sessions/options/users`。需要 `session:read`、`scheduled-task:read`、`llm-call:read`、`audit:read` 之一。
 
 返回 `{ id, username, displayName }[]`，用于筛选。
 
@@ -81,7 +81,7 @@ mao admin-session options-users
 
 ## 命令：admin-session options-agents
 
-无参数。`GET /admin/sessions/options/agents`
+无参数。`GET /admin/sessions/options/agents`。需要 `session:read`、`scheduled-task:read`、`llm-call:read` 之一。
 
 返回 `{ id, name }[]`。
 
@@ -95,7 +95,7 @@ mao admin-session options-agents
 |------|------|------|------|
 | `--id` | 是 | 整数 | 会话 ID |
 
-`DELETE /admin/sessions/{id}`（管理员）。运行中（RUNNING/WAITING_APPROVAL/RESUMING/CANCELLING）的会话会被拒绝（code 2001）；删除级联清理消息、上下文压缩与运行文件。
+`DELETE /admin/sessions/{id}`（需 `session:write`）。运行中（RUNNING/WAITING_APPROVAL/RESUMING/CANCELLING）的会话会被拒绝（code 2001）；删除级联清理消息、上下文压缩与运行文件。
 
 ```bash
 mao admin-session delete --id 100
@@ -107,7 +107,7 @@ mao admin-session delete --id 100
 |------|------|------|------|
 | `--id` | 是 | 整数 | 会话 ID |
 
-`PUT /admin/sessions/{id}/archive`（管理员），将状态置为 ARCHIVED。
+`PUT /admin/sessions/{id}/archive`（需 `session:write`），将状态置为 ARCHIVED。
 
 ```bash
 mao admin-session archive --id 100

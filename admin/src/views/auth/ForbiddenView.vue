@@ -18,11 +18,11 @@ const router = useRouter()
 const authStore = useAuthStore()
 
 function goHome() {
-  const path = pickHomePath(authStore.isAdmin, (permission) => authStore.hasPermission(permission))
+  const path = pickHomePath((permission) => authStore.hasPermission(permission))
   if (path !== '/forbidden') router.push(path)
 }
 
-const canGoHome = computed(() => pickHomePath(authStore.isAdmin, (permission) => authStore.hasPermission(permission)) !== '/forbidden')
+const canGoHome = computed(() => pickHomePath((permission) => authStore.hasPermission(permission)) !== '/forbidden')
 </script>
 
 <style scoped>

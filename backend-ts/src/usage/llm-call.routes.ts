@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { requireAdmin, requireUserId, sendOk } from '../common/http-error.js';
+import { requireRequestPermission, requireUserId, sendOk } from '../common/http-error.js';
 import { queryInt, queryOptBool, queryOptInt, queryOptStr } from '../common/request.js';
 import type { PermissionService } from '../permission/permission.service.js';
 import type { LlmCallService } from './llm-call.service.js';
@@ -18,7 +18,7 @@ function parseDateRange(startDate?: string, endDate?: string): { startAt?: strin
 
 export function registerLlmCallRoutes(app: FastifyInstance, deps: LlmCallRouteDeps): void {
   app.get('/v1/admin/llm-calls', async (request, reply) => {
-    await requireAdmin(deps.permissionService, request);
+    await requireRequestPermission(deps.permissionService, request, 'llm-call:read');
     const page = queryInt(request, 'page', 1);
     const size = queryInt(request, 'size', 20);
     const startDate = queryOptStr(request, 'startDate');

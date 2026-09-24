@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { hasText } from '../common/case.js';
-import { requireAdmin, sendJson, sendOk } from '../common/http-error.js';
+import { requireRequestPermission, sendJson, sendOk } from '../common/http-error.js';
 import { bodyOf, pathId, pathParam, queryOptInt, queryOptStr } from '../common/request.js';
 import { fail } from '../common/result.js';
 import { SYSTEM_USER_ID } from './command.service.js';
@@ -12,7 +12,7 @@ const NAME_PATTERN = /^[a-zA-Z0-9\u4e00-\u9fa5_-]+$/;
 
 export interface AdminSystemCommandRouteDeps {
   commandRepo: UserCommandRepository;
-  permissionService: { isAdmin(userId: number | null | undefined): Promise<boolean> };
+  permissionService: { hasPermission(userId: number, code: string): Promise<boolean> };
   userLookup?: {
     findByIds(ids: number[]): Promise<Array<{ id: number; username: string; displayName?: string | null }>>;
   };
@@ -38,14 +38,14 @@ export function registerAdminSystemCommandRoutes(app: FastifyInstance, deps: Adm
 
   // 列表：查询所有系统指令
   app.get('/v1/admin/system-commands', async (request, reply) => {
-    await requireAdmin(permissionService, request);
+    await requireRequestPermission(permissionService, request, 'command:read');
     const commands = await commandRepo.listByUserId(SYSTEM_USER_ID);
     return sendOk(reply, commands.map(toAdminVO));
   });
 
   // 详情：查询单条系统指令
   app.get('/v1/admin/system-commands/:id', async (request, reply) => {
-    await requireAdmin(permissionService, request);
+    await requireRequestPermission(permissionService, request, 'command:read');
     const command = await commandRepo.findByIdAndUserId(pathId(request), SYSTEM_USER_ID);
     if (command == null) {
       return sendJson(reply, 200, fail(404, '指令不存在'));
@@ -55,7 +55,7 @@ export function registerAdminSystemCommandRoutes(app: FastifyInstance, deps: Adm
 
   // 新增：创建系统指令
   app.post('/v1/admin/system-commands', async (request, reply) => {
-    await requireAdmin(permissionService, request);
+    await requireRequestPermission(permissionService, request, 'command:write');
     const body = bodyOf<CreateSystemCommandRequest>(request);
     if (!hasText(body.name)) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '指令名称不能为空');
@@ -77,7 +77,7 @@ export function registerAdminSystemCommandRoutes(app: FastifyInstance, deps: Adm
 
   // 编辑：更新系统指令
   app.put('/v1/admin/system-commands/:id', async (request, reply) => {
-    await requireAdmin(permissionService, request);
+    await requireRequestPermission(permissionService, request, 'command:write');
     const body = bodyOf<UpdateSystemCommandRequest>(request);
     if (!hasText(body.content)) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '指令内容不能为空');
@@ -104,7 +104,7 @@ export function registerAdminSystemCommandRoutes(app: FastifyInstance, deps: Adm
 
   // 删除：删除系统指令
   app.delete('/v1/admin/system-commands/:id', async (request, reply) => {
-    await requireAdmin(permissionService, request);
+    await requireRequestPermission(permissionService, request, 'command:write');
     const command = await commandRepo.findByIdAndUserId(pathId(request), SYSTEM_USER_ID);
     if (command == null) {
       throw new BusinessException(ErrorCode.COMMAND_NOT_FOUND);
@@ -117,7 +117,7 @@ export function registerAdminSystemCommandRoutes(app: FastifyInstance, deps: Adm
   // userId 过滤指定用户的个人指令）。兼容约定：不传任何新参数时返回全量数组；传入分页/关键词/用户后按条件过滤分页，
   // 返回结构仍为数组（前端按数组消费），条件过滤时的总数通过响应头 x-total-count 透出。
   app.get('/v1/admin/user-commands', async (request, reply) => {
-    await requireAdmin(permissionService, request);
+    await requireRequestPermission(permissionService, request, 'command:read');
     const pageNum = queryOptInt(request, 'pageNum');
     const pageSize = queryOptInt(request, 'pageSize');
     const keyword = queryOptStr(request, 'keyword');
@@ -139,7 +139,7 @@ export function registerAdminSystemCommandRoutes(app: FastifyInstance, deps: Adm
 
   // 详情：查询指定用户的个人指令
   app.get('/v1/admin/user-commands/:userId/:id', async (request, reply) => {
-    await requireAdmin(permissionService, request);
+    await requireRequestPermission(permissionService, request, 'command:read');
     const userId = Number(pathParam(request, 'userId'));
     if (!Number.isInteger(userId) || userId <= 0) {
       return sendJson(reply, 200, fail(400, '无效的用户 ID'));
@@ -154,7 +154,7 @@ export function registerAdminSystemCommandRoutes(app: FastifyInstance, deps: Adm
   // 提升：把个人指令复制为系统指令（user_id=0）。原个人指令保留。
   // 可选 body.name / body.content 覆盖后再写入，便于避开已有系统指令重名或微调正文。
   app.post('/v1/admin/user-commands/:userId/:id/promote', async (request, reply) => {
-    await requireAdmin(permissionService, request);
+    await requireRequestPermission(permissionService, request, 'command:write');
     const userId = Number(pathParam(request, 'userId'));
     if (!Number.isInteger(userId) || userId <= 0) {
       return sendJson(reply, 200, fail(400, '无效的用户 ID'));
@@ -187,7 +187,7 @@ export function registerAdminSystemCommandRoutes(app: FastifyInstance, deps: Adm
 
   // 删除：删除指定用户的个人指令
   app.delete('/v1/admin/user-commands/:userId/:id', async (request, reply) => {
-    await requireAdmin(permissionService, request);
+    await requireRequestPermission(permissionService, request, 'command:write');
     const userId = Number(pathParam(request, 'userId'));
     if (!Number.isInteger(userId) || userId <= 0) {
       return sendJson(reply, 200, fail(400, '无效的用户 ID'));

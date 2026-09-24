@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { hasText } from '../common/case.js';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
-import { requireAdmin, sendOk } from '../common/http-error.js';
+import { requireRequestPermission, sendOk } from '../common/http-error.js';
 import { bodyOf, pathId } from '../common/request.js';
 import { encryptAesGcm } from '../crypto/aes-gcm.js';
 import type { FeishuBotRuntimeStatus } from './monitor.service.js';
@@ -20,7 +20,7 @@ export interface FeishuMonitorReconnectPort {
 export interface FeishuBotRouteDeps {
   repository: FeishuBotRepository;
   secretKey: string;
-  permissionService: { isAdmin(userId: number | null | undefined): Promise<boolean> };
+  permissionService: { hasPermission(userId: number, code: string): Promise<boolean> };
   monitorStatus?: FeishuMonitorStatusPort;
   monitorReconnect?: FeishuMonitorReconnectPort;
 }
@@ -39,18 +39,18 @@ export function registerFeishuBotRoutes(app: FastifyInstance, deps: FeishuBotRou
   const { repository, permissionService } = deps;
 
   app.get('/v1/admin/feishu-bots', async (request, reply) => {
-    await requireAdmin(permissionService, request);
+    await requireRequestPermission(permissionService, request, 'feishu-bot:read');
     return sendOk(reply, (await repository.list()).map(toView));
   });
 
   app.get('/v1/admin/feishu-bots/:id', async (request, reply) => {
-    await requireAdmin(permissionService, request);
+    await requireRequestPermission(permissionService, request, 'feishu-bot:read');
     const bot = await requireBot(repository, pathId(request));
     return sendOk(reply, toView(bot));
   });
 
   app.post('/v1/admin/feishu-bots', async (request, reply) => {
-    await requireAdmin(permissionService, request);
+    await requireRequestPermission(permissionService, request, 'feishu-bot:write');
     const body = bodyOf<FeishuBotRequest>(request);
     requireText(body.appKey, 'appKey');
     requireText(body.name, 'name');
@@ -70,7 +70,7 @@ export function registerFeishuBotRoutes(app: FastifyInstance, deps: FeishuBotRou
   });
 
   app.put('/v1/admin/feishu-bots/:id', async (request, reply) => {
-    await requireAdmin(permissionService, request);
+    await requireRequestPermission(permissionService, request, 'feishu-bot:write');
     const bot = await requireBot(repository, pathId(request));
     const body = bodyOf<FeishuBotRequest>(request);
     if (body.appKey != null) requireText(body.appKey, 'appKey');
@@ -93,7 +93,7 @@ export function registerFeishuBotRoutes(app: FastifyInstance, deps: FeishuBotRou
   });
 
   app.delete('/v1/admin/feishu-bots/:id', async (request, reply) => {
-    await requireAdmin(permissionService, request);
+    await requireRequestPermission(permissionService, request, 'feishu-bot:write');
     await requireBot(repository, pathId(request));
     await repository.softDelete(pathId(request));
     return sendOk(reply);
@@ -109,7 +109,7 @@ export function registerFeishuBotRoutes(app: FastifyInstance, deps: FeishuBotRou
 
   // 连接运行状态：每个 bot 的长连接状态与最近失败原因（内存记录，进程重启后重建）。
   app.get('/v1/admin/feishu-bots/status', async (request, reply) => {
-    await requireAdmin(permissionService, request);
+    await requireRequestPermission(permissionService, request, 'feishu-bot:read');
     const bots = await repository.list();
     return sendOk(reply, bots.map((bot) => {
       const runtime = bot.id != null ? deps.monitorStatus?.getStatus(bot.id) ?? null : null;
@@ -129,7 +129,7 @@ export function registerFeishuBotRoutes(app: FastifyInstance, deps: FeishuBotRou
 
   // 触发立即重连：丢弃当前长连接 handle 并由 monitor 下一轮 reconcile 重建。
   app.post('/v1/admin/feishu-bots/:id/reconnect', async (request, reply) => {
-    await requireAdmin(permissionService, request);
+    await requireRequestPermission(permissionService, request, 'feishu-bot:write');
     const id = pathId(request);
     const bot = await requireBot(repository, id);
     if (bot.enabled !== 1) {
@@ -161,7 +161,7 @@ async function setEnabled(
   id: number,
   enabled: number,
 ): Promise<FastifyReply> {
-  await requireAdmin(permissionService, request);
+  await requireRequestPermission(permissionService, request, 'feishu-bot:write');
   const bot = await requireBot(repository, id);
   bot.enabled = enabled;
   await repository.update(bot);

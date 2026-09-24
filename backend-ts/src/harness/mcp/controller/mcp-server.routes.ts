@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { BusinessException } from '../../../common/business-exception.js';
 import { ErrorCode } from '../../../common/error-code.js';
-import { requireUserId, sendJson, sendOk } from '../../../common/http-error.js';
+import { requireAnyPermission, requireUserId, sendJson, sendOk } from '../../../common/http-error.js';
 import { bodyOf, pathId, queryOptStr } from '../../../common/request.js';
 import { fail } from '../../../common/result.js';
 import type { McpClientManager } from '../mcp-client-manager.js';
@@ -13,7 +13,7 @@ export interface McpServerRouteDeps {
   mcpServerService: McpServerService;
   mcpClientManager: McpClientManager;
   userMcpPreferenceService: UserMcpPreferenceService;
-  permissionService: { isAdmin(userId: number | null | undefined): Promise<boolean> };
+  permissionService: { hasPermission(userId: number, code: string): Promise<boolean> };
 }
 
 interface PreferenceItem {
@@ -116,14 +116,14 @@ export function registerMcpServerRoutes(app: FastifyInstance, deps: McpServerRou
 
   app.get('/v1/mcp-servers', async (request, reply) => {
     const userId = requireUserId(request);
-    await assertAdmin(permissionService, userId);
+    await requireAnyPermission(permissionService, userId, ['mcp:read']);
     return sendOk(reply, await mcpServerService.list(queryOptStr(request, 'keyword'), queryOptStr(request, 'status')));
   });
 
   // 管理端：查看指定用户创建的个人 MCP 服务器（env 不透出）。
   app.get('/v1/admin/users/:id/mcp-servers', async (request, reply) => {
     const adminId = requireUserId(request);
-    await assertAdmin(permissionService, adminId);
+    await requireAnyPermission(permissionService, adminId, ['user:read', 'mcp:read']);
     const targetUserId = Number((request.params as { id: string }).id);
     if (!Number.isInteger(targetUserId) || targetUserId <= 0) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '无效的用户 ID');
@@ -133,19 +133,19 @@ export function registerMcpServerRoutes(app: FastifyInstance, deps: McpServerRou
 
   app.get('/v1/mcp-servers/enabled', async (request, reply) => {
     const userId = requireUserId(request);
-    await assertAdmin(permissionService, userId);
+    await requireAnyPermission(permissionService, userId, ['mcp:read', 'agent:write']);
     return sendOk(reply, await mcpServerService.listEnabled());
   });
 
   app.get('/v1/mcp-servers/:id', async (request, reply) => {
     const userId = requireUserId(request);
-    await assertAdmin(permissionService, userId);
+    await requireAnyPermission(permissionService, userId, ['mcp:read']);
     return sendOk(reply, await mcpServerService.get(pathId(request)));
   });
 
   app.post('/v1/mcp-servers', async (request, reply) => {
     const userId = requireUserId(request);
-    await assertAdmin(permissionService, userId);
+    await requireAnyPermission(permissionService, userId, ['mcp:write']);
     const body = bodyOf<SaveMcpServerRequest>(request);
     const server = await mcpServerService.create(
       body.name ?? '', body.description ?? null, body.serverType ?? '',
@@ -156,7 +156,7 @@ export function registerMcpServerRoutes(app: FastifyInstance, deps: McpServerRou
 
   app.put('/v1/mcp-servers/:id', async (request, reply) => {
     const userId = requireUserId(request);
-    await assertAdmin(permissionService, userId);
+    await requireAnyPermission(permissionService, userId, ['mcp:write']);
     const body = bodyOf<SaveMcpServerRequest>(request);
     const server = await mcpServerService.update(
       pathId(request), body.name, body.description, body.serverType,
@@ -167,7 +167,7 @@ export function registerMcpServerRoutes(app: FastifyInstance, deps: McpServerRou
 
   app.put('/v1/mcp-servers/:id/status', async (request, reply) => {
     const userId = requireUserId(request);
-    await assertAdmin(permissionService, userId);
+    await requireAnyPermission(permissionService, userId, ['mcp:write']);
     const body = bodyOf<UpdateStatusRequest>(request);
     await mcpServerService.updateStatus(pathId(request), body.status ?? '');
     return sendOk(reply, await mcpServerService.get(pathId(request)));
@@ -175,14 +175,14 @@ export function registerMcpServerRoutes(app: FastifyInstance, deps: McpServerRou
 
   app.delete('/v1/mcp-servers/:id', async (request, reply) => {
     const userId = requireUserId(request);
-    await assertAdmin(permissionService, userId);
+    await requireAnyPermission(permissionService, userId, ['mcp:write']);
     await mcpServerService.delete(pathId(request));
     return sendOk(reply);
   });
 
   app.post('/v1/mcp-servers/:id/test', async (request, reply) => {
     const userId = requireUserId(request);
-    await assertAdmin(permissionService, userId);
+    await requireAnyPermission(permissionService, userId, ['mcp:write']);
     const server = await mcpServerService.getForRuntime(pathId(request));
     try {
       const tools = await mcpClientManager.testConnection(server, mcpServerService.decryptEnv(server));
@@ -203,13 +203,4 @@ function toPreferenceVo(server: McpServer, scope: string, userEnabled: boolean):
     status: server.status,
     userEnabled,
   };
-}
-
-async function assertAdmin(
-  permissionService: { isAdmin(userId: number | null | undefined): Promise<boolean> },
-  userId: number,
-): Promise<void> {
-  if (!(await permissionService.isAdmin(userId))) {
-    throw new BusinessException(403, '仅管理员可管理全局 MCP 服务器');
-  }
 }

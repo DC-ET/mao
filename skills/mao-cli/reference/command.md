@@ -4,7 +4,7 @@
 
 - `quick-command`：聚合可在输入框快速选用的 skills + commands
 - `command`：用户个人指令（user-commands）CRUD
-- `system-command`：管理端指令管理（系统指令 CRUD + 跨用户个人指令查看/删除/复制为系统指令），需管理员权限
+- `system-command`：管理端指令管理（系统指令 CRUD + 跨用户个人指令查看/删除/复制为系统指令）。查看需 `command:read`，写入需 `command:write`
 
 ## 命令选择
 
@@ -138,7 +138,7 @@ mao command delete --id 5
 
 ## system-command — 指令管理（管理员）
 
-管理端指令页对应 API，需管理员权限：
+管理端指令页对应 API。查看需 `command:read`，写入需 `command:write`：
 
 - 系统指令：`/v1/admin/system-commands`（`user_id=0`，全体用户可见；用户视角经 `GET /v1/user-commands/system`）
 - 个人指令：`/v1/admin/user-commands`（跨用户 `user_id>0`，可查看与删除；支持可选 `pageNum`/`pageSize`/`keyword`/`userId` 服务端分页与过滤，总数经 `x-total-count` 响应头返回，不传参数时返回全量数组）

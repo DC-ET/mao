@@ -15,8 +15,8 @@ export interface ScheduledTaskRouteDeps {
   permission?: PermissionService;
 }
 
-/** 读门槛：列表/详情/预览。 */
-const READ_PERMISSION = 'session:read';
+/** 读门槛：跨用户列表/详情/预览。 */
+const READ_PERMISSION = 'scheduled-task:read';
 /** 写门槛：编辑、启停、删除他人任务。 */
 const WRITE_PERMISSION = 'scheduled-task:write';
 

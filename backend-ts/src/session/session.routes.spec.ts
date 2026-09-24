@@ -108,7 +108,7 @@ describe('session and admin routes', () => {
       subagentExecutionRepo: { findByChildSessionIds: vi.fn(async () => []) } as unknown as SubagentExecutionRepository,
       sessionCompactionEventService: { listBySessionId: vi.fn(async () => []) } as unknown as SessionCompactionEventService,
     });
-    registerAdminSessionRoutes(fastify, { sessionService, userLookup, agentLookup, modelLookup, permissionService: { isAdmin: vi.fn(async () => true) } });
+    registerAdminSessionRoutes(fastify, { sessionService, userLookup, agentLookup, modelLookup, permissionService: { hasPermission: vi.fn(async () => true) } });
     const ossStsService = {
       generateStsToken: vi.fn(async () => ({
         accessKeyId: 'a', accessKeySecret: 'b', securityToken: 'c', expiration: 'e',
@@ -299,7 +299,7 @@ describe('session and admin routes', () => {
       userLookup: { findByIds: vi.fn(async () => []), listOptions: vi.fn(async () => []) } as unknown as UserLookup,
       agentLookup: { findByIds: vi.fn(async () => []), listOptions: vi.fn(async () => []) } as unknown as AgentLookup,
       modelLookup: { findByIds: vi.fn(async () => []) } as unknown as LlmModelLookup,
-      permissionService: { isAdmin: vi.fn(async () => false) },
+      permissionService: { hasPermission: vi.fn(async () => false) },
     });
     const deleted = JSON.parse((await fastify.inject({ method: 'DELETE', url: '/v1/admin/sessions/1' })).body);
     expect(deleted.code).toBe(1002);
@@ -307,6 +307,67 @@ describe('session and admin routes', () => {
     expect(archived.code).toBe(1002);
     expect(vi.mocked(sessionService.deleteSession)).not.toHaveBeenCalled();
     expect(vi.mocked(sessionService.archiveSession)).not.toHaveBeenCalled();
+    await fastify.close();
+  });
+
+  it('lets session:read list sessions but rejects archive and delete', async () => {
+    const fastify = Fastify();
+    fastify.setErrorHandler(handleError);
+    fastify.addHook('preHandler', (req, _r, done) => {
+      req.userId = 7;
+      done();
+    });
+    const sessionService = {
+      listSessionsForAdmin: vi.fn(async () => ({ records: [session()], total: 1, current: 1, size: 20 })),
+      getSession: vi.fn(async () => session()),
+      deleteSession: vi.fn(),
+      archiveSession: vi.fn(),
+    } as unknown as SessionService;
+    registerAdminSessionRoutes(fastify, {
+      sessionService,
+      userLookup: { findByIds: vi.fn(async () => [{ id: 7, username: 'u', displayName: 'User' }]), listOptions: vi.fn(async () => []) } as unknown as UserLookup,
+      agentLookup: { findByIds: vi.fn(async () => []), listOptions: vi.fn(async () => []) } as unknown as AgentLookup,
+      modelLookup: { findByIds: vi.fn(async () => []), findDefault: vi.fn(async () => null) } as unknown as LlmModelLookup,
+      permissionService: { hasPermission: vi.fn(async (_userId: number, code: string) => code === 'session:read') },
+    });
+    const listed = JSON.parse((await fastify.inject({ method: 'GET', url: '/v1/admin/sessions' })).body);
+    expect(listed.code).toBe(0);
+    expect(listed.data.total).toBe(1);
+    const deleted = JSON.parse((await fastify.inject({ method: 'DELETE', url: '/v1/admin/sessions/1' })).body);
+    expect(deleted.code).toBe(1002);
+    const archived = JSON.parse((await fastify.inject({ method: 'PUT', url: '/v1/admin/sessions/1/archive' })).body);
+    expect(archived.code).toBe(1002);
+    expect(vi.mocked(sessionService.deleteSession)).not.toHaveBeenCalled();
+    expect(vi.mocked(sessionService.archiveSession)).not.toHaveBeenCalled();
+    await fastify.close();
+  });
+
+  it('lets scheduled-task:read load filter options without opening the session list', async () => {
+    const fastify = Fastify();
+    fastify.setErrorHandler(handleError);
+    fastify.addHook('preHandler', (req, _r, done) => {
+      req.userId = 7;
+      done();
+    });
+    const sessionService = {
+      listSessionsForAdmin: vi.fn(async () => ({ records: [], total: 0, current: 1, size: 20 })),
+    } as unknown as SessionService;
+    registerAdminSessionRoutes(fastify, {
+      sessionService,
+      userLookup: { findByIds: vi.fn(async () => []), listOptions: vi.fn(async () => [{ id: 7, username: 'u', displayName: 'User' }]) } as unknown as UserLookup,
+      agentLookup: { findByIds: vi.fn(async () => []), listOptions: vi.fn(async () => [{ id: 9, name: 'Agent' }]) } as unknown as AgentLookup,
+      modelLookup: { findByIds: vi.fn(async () => []), findDefault: vi.fn(async () => null) } as unknown as LlmModelLookup,
+      permissionService: { hasPermission: vi.fn(async (_userId: number, code: string) => code === 'scheduled-task:read') },
+    });
+    const users = JSON.parse((await fastify.inject({ method: 'GET', url: '/v1/admin/sessions/options/users' })).body);
+    const agents = JSON.parse((await fastify.inject({ method: 'GET', url: '/v1/admin/sessions/options/agents' })).body);
+    expect(users.code).toBe(0);
+    expect(users.data[0].username).toBe('u');
+    expect(agents.code).toBe(0);
+    expect(agents.data[0].name).toBe('Agent');
+    const listed = JSON.parse((await fastify.inject({ method: 'GET', url: '/v1/admin/sessions' })).body);
+    expect(listed.code).toBe(1002);
+    expect(vi.mocked(sessionService.listSessionsForAdmin)).not.toHaveBeenCalled();
     await fastify.close();
   });
 });

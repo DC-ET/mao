@@ -66,7 +66,7 @@
 - 定时任务**创建**多由 Agent 工具 `create_scheduled_task` 完成
 - `session`：当前用户会话；`admin-session`：全站检索
 - `skill`：个人 `user-skills`；`skill-docs`：全局目录；`skill-docs assign` 把技能写入指定用户的个人技能（`POST /admin/user-skills/upload`）。管理后台个人 Tab 走 `admin/user-skills`（聚合展示，并可上传到指定用户）
-- MCP 用户级 `mcp me-*`；全局 `mcp list/create/...` 需管理员
+- MCP 用户级 `mcp me-*` 只要求登录；全局 `mcp list` 需 `mcp:read`，`mcp create` 等写操作需 `mcp:write`
 
 ## 对话 vs REST 选型
 

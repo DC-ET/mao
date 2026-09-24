@@ -70,7 +70,7 @@ export function createDingtalkRuntime(deps: {
   config: DingtalkRuntimeConfig;
   workspaceRoot: string;
   jwt: JwtService;
-  permissionService: { isAdmin(userId: number | null | undefined): Promise<boolean> };
+  permissionService: { hasPermission(userId: number, code: string): Promise<boolean> };
   sessionService: SessionService;
   sessionRepo: SessionRepository;
   harness: HarnessService;

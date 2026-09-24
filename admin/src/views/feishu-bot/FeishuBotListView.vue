@@ -7,7 +7,7 @@
             <div class="card-title">飞书机器人</div>
             <div class="card-hint">管理飞书自建应用机器人，并为每个机器人配置独立的 Agent 和模型。</div>
           </div>
-          <el-button v-if="isAdmin" type="primary" @click="openCreate">
+          <el-button v-if="canWrite" type="primary" @click="openCreate">
             <el-icon><Plus /></el-icon>
             添加机器人
           </el-button>
@@ -55,7 +55,7 @@
         </el-table-column>
         <el-table-column label="操作" width="260" fixed="right">
           <template #default="{ row }">
-            <template v-if="isAdmin">
+            <template v-if="canWrite">
               <el-button type="primary" link size="small" @click="openEdit(row)">编辑</el-button>
               <el-button
                 :type="row.enabled ? 'warning' : 'success'"
@@ -97,7 +97,7 @@
             </el-tag>
           </div>
           <div class="mobile-card-actions">
-            <template v-if="isAdmin">
+            <template v-if="canWrite">
               <el-button type="primary" link @click="openEdit(row)">编辑</el-button>
               <el-button :type="row.enabled ? 'warning' : 'success'" link @click="handleEnabledChange(row)">
                 {{ row.enabled ? '停用' : '启用' }}
@@ -186,8 +186,7 @@ interface FeishuBotRuntimeState {
 
 const { isMobile } = useBreakpoint()
 const authStore = useAuthStore()
-// 后端 /admin/feishu-bots 写接口要求管理员，前端按 isAdmin 控制按钮显隐
-const isAdmin = computed(() => authStore.isAdmin)
+const canWrite = computed(() => authStore.hasPermission('feishu-bot:write'))
 const loading = ref(false)
 const submitting = ref(false)
 const bots = ref<FeishuBot[]>([])

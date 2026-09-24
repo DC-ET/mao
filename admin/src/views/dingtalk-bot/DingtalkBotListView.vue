@@ -7,7 +7,7 @@
             <div class="card-title">钉钉机器人</div>
             <div class="card-hint">管理企业内部应用机器人。每个机器人独立 Agent / 模型，Stream 随启停热生效。</div>
           </div>
-          <el-button v-if="isAdmin" type="primary" @click="openCreate">
+          <el-button v-if="canWrite" type="primary" @click="openCreate">
             <el-icon><Plus /></el-icon>
             添加机器人
           </el-button>
@@ -50,7 +50,7 @@
         </el-table-column>
         <el-table-column label="操作" width="260" fixed="right">
           <template #default="{ row }">
-            <template v-if="isAdmin">
+            <template v-if="canWrite">
               <el-button type="primary" link size="small" @click="openEdit(row)">编辑</el-button>
               <el-button :type="row.enabled ? 'warning' : 'success'" link size="small" @click="handleEnabledChange(row)">
                 {{ row.enabled ? '停用' : '启用' }}
@@ -72,7 +72,7 @@
           <div class="mobile-card-row"><span>Client ID</span><span>{{ row.clientId }}</span></div>
           <div class="mobile-card-row"><span>Robot Code</span><span>{{ row.robotCode }}</span></div>
           <div class="mobile-card-row"><span>连接</span><span>{{ runtimeStatusLabel(runtimeStatusMap[row.id]?.status) }}</span></div>
-          <div class="mobile-card-actions" v-if="isAdmin">
+          <div class="mobile-card-actions" v-if="canWrite">
             <el-button type="primary" link @click="openEdit(row)">编辑</el-button>
             <el-button link :disabled="!row.enabled" @click="handleReconnect(row)">重连</el-button>
             <el-button type="danger" link @click="handleDelete(row)">删除</el-button>
@@ -149,7 +149,7 @@ interface DingtalkBot {
 
 const { isMobile } = useBreakpoint()
 const authStore = useAuthStore()
-const isAdmin = computed(() => authStore.isAdmin)
+const canWrite = computed(() => authStore.hasPermission('dingtalk-bot:write'))
 const loading = ref(false)
 const submitting = ref(false)
 const bots = ref<DingtalkBot[]>([])

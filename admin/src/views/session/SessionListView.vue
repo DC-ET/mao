@@ -99,8 +99,8 @@
         <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
             <el-button type="primary" link size="small" @click="handleView(row)">查看</el-button>
-            <el-button link size="small" @click="handleArchive(row)">归档</el-button>
-            <el-button type="danger" link size="small" @click="handleDelete(row)">删除</el-button>
+            <el-button v-if="canWrite" link size="small" @click="handleArchive(row)">归档</el-button>
+            <el-button v-if="canWrite" type="danger" link size="small" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -146,8 +146,8 @@
           </div>
           <div class="mobile-card-actions">
             <el-button type="primary" link @click="handleView(row)">查看</el-button>
-            <el-button link @click="handleArchive(row)">归档</el-button>
-            <el-button type="danger" link @click="handleDelete(row)">删除</el-button>
+            <el-button v-if="canWrite" link @click="handleArchive(row)">归档</el-button>
+            <el-button v-if="canWrite" type="danger" link @click="handleDelete(row)">删除</el-button>
           </div>
         </el-card>
         <el-empty v-if="!loading && sessions.length === 0" description="暂无数据" />
@@ -168,12 +168,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, onActivated, watch } from 'vue'
+import { computed, ref, reactive, onMounted, onActivated, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
 import { formatDateTime, formatDateTimeColumn } from '../../utils/datetime'
 import { useBreakpoint } from '../../composables/useBreakpoint'
+import { useAuthStore } from '../../stores/auth'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
 import FilterPanel from '../../components/FilterPanel.vue'
 import {
@@ -186,6 +187,8 @@ import {
 
 const route = useRoute()
 const router = useRouter()
+const authStore = useAuthStore()
+const canWrite = computed(() => authStore.hasPermission('session:write'))
 const { isMobile } = useBreakpoint()
 const loading = ref(false)
 const sessions = ref<any[]>([])

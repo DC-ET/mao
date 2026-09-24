@@ -5,7 +5,7 @@
         <div class="card-header">
           <span>MCP 服务器管理</span>
           <div class="header-actions">
-            <el-button type="primary" @click="openCreate">新增服务器</el-button>
+            <el-button v-if="canWrite" type="primary" @click="openCreate">新增服务器</el-button>
           </div>
         </div>
       </template>
@@ -63,7 +63,7 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="300" fixed="right">
+        <el-table-column v-if="canWrite" label="操作" width="300" fixed="right">
           <template #default="{ row }">
             <!-- 用户私有服务器仅提供治理操作（停用/启用/删除），不展示配置 -->
             <template v-if="isUserServer(row)">
@@ -137,7 +137,7 @@
             <span class="mobile-card-label">连接</span>
             <code class="conn-text">{{ connectionSummary(row) }}</code>
           </div>
-          <div class="mobile-card-actions">
+          <div v-if="canWrite" class="mobile-card-actions">
             <template v-if="isUserServer(row)">
               <el-button :type="row.status === 'ENABLED' ? 'warning' : 'success'" link @click="toggleStatus(row)">
                 {{ row.status === 'ENABLED' ? '停用' : '启用' }}
@@ -323,12 +323,15 @@ import { computed, reactive, ref } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { api } from '../../api'
+import { useAuthStore } from '../../stores/auth'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
 import FilterPanel from '../../components/FilterPanel.vue'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
 
 const { isMobile } = useBreakpoint()
+const authStore = useAuthStore()
+const canWrite = computed(() => authStore.hasPermission('mcp:write'))
 
 interface EnvItem {
   key: string

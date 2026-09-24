@@ -76,9 +76,19 @@ mao role assign-permissions --id 2 --permission-ids 1,2,3,5
 mao permission list
 ```
 
-返回权限点：`id`、`name`、`code`、`description`。
+返回权限点：`id`、`name`、`code`、`description`。`GET /permissions` 需要 `role:read`。`GET /roles` 需要 `role:read` 或 `user:write`（用户表单要选角色）。新建、编辑角色和保存权限集合需要 `role:write`。给用户绑角色仍是 `user:write`。
 
-`terminal:use`（0.0.97 起）授予云端终端使用权，等同于给出后端服务账号的 shell，默认只有 ADMIN 角色拥有，赋予他人前请确认信任边界。
+权限码按后台菜单成对出现（读进页面，写操作按钮和写接口）。当前目录：
+
+| 分组 | 权限码 |
+|------|--------|
+| 能力 | `agent:read` / `agent:write`，`model:read` / `model:write`，`skill:read` / `skill:write`，`feishu-bot:read` / `feishu-bot:write`，`dingtalk-bot:read` / `dingtalk-bot:write`，`command:read` / `command:write`，`mcp:read` / `mcp:write` |
+| 运行 | `session:read` / `session:write`，`scheduled-task:read` / `scheduled-task:write`，`llm-call:read`，`analytics:read` |
+| 安全 | `user:read` / `user:write`，`role:read` / `role:write`，`audit:read` |
+| 系统 | `settings:read` / `settings:write` |
+| 云端终端 | `terminal:use` |
+
+`terminal:use`（0.0.97 起）授予云端终端使用权，等同于给出后端服务账号的 shell，默认只有 ADMIN 角色拥有，赋予他人前请确认信任边界。普通用户角色只有 `agent:read`、`model:read`。`mcp:read` / `mcp:write` 只覆盖管理端治理，用户自己的 `/mcp-servers/me` 仍只要求登录。`GET /mcp-servers/enabled` 同时接受 `mcp:read` 或 `agent:write`。
 
 ## 成功失败判断
 

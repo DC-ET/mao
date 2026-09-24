@@ -25,6 +25,7 @@ function createRepo(bots: FeishuBot[]): FeishuBotRepository {
 
 async function createApp(bots: FeishuBot[], options: {
   admin?: boolean;
+  allow?: string[];
   status?: FeishuBotRuntimeStatus | null;
   reconnect?: (botId: number) => Promise<boolean>;
 } = {}) {
@@ -38,7 +39,11 @@ async function createApp(bots: FeishuBot[], options: {
   registerFeishuBotRoutes(app, {
     repository,
     secretKey: 'key',
-    permissionService: { isAdmin: vi.fn(async () => options.admin !== false) },
+    permissionService: {
+      hasPermission: vi.fn(async (_userId: number, code: string) => (
+        options.allow ? options.allow.includes(code) : options.admin !== false
+      )),
+    },
     monitorStatus: { getStatus: vi.fn((_botId: number) => options.status ?? null) },
     monitorReconnect: { reconnect: vi.fn(options.reconnect ?? (async () => true)) },
   });
@@ -103,6 +108,21 @@ describe('admin feishu bot status routes', () => {
     expect(status.code).toBe(1002);
     const reconnect = JSON.parse((await app.inject({ method: 'POST', url: '/v1/admin/feishu-bots/1/reconnect' })).body);
     expect(reconnect.code).toBe(1002);
+    await app.close();
+  });
+
+  it('allows feishu-bot:read to view status but not reconnect', async () => {
+    const reconnect = vi.fn(async () => true);
+    const { app } = await createApp([bot()], {
+      allow: ['feishu-bot:read'],
+      reconnect,
+      status: { botId: 1, status: 'ready', lastFailureReason: null, lastFailureAt: null, lastReadyAt: null },
+    });
+    const status = JSON.parse((await app.inject({ method: 'GET', url: '/v1/admin/feishu-bots/status' })).body);
+    expect(status.code).toBe(0);
+    const denied = JSON.parse((await app.inject({ method: 'POST', url: '/v1/admin/feishu-bots/1/reconnect' })).body);
+    expect(denied.code).toBe(1002);
+    expect(reconnect).not.toHaveBeenCalled();
     await app.close();
   });
 });

@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { requireAdmin } from '../common/http-error.js';
+import { requireRequestPermission } from '../common/http-error.js';
 import { sendJson } from '../common/http-error.js';
 import { ok } from '../common/result.js';
 import type { JwtService } from '../crypto/jwt.service.js';
@@ -22,7 +22,7 @@ export interface AdminRouteDeps {
   jwt: JwtService;
   analytics: AdminAnalyticsService;
   sessionLister?: AdminSessionLister;
-  permissionService: { isAdmin(userId: number | null | undefined): Promise<boolean> };
+  permissionService: { hasPermission(userId: number, code: string): Promise<boolean> };
 }
 
 interface AnalyticsQueryRaw {
@@ -57,26 +57,26 @@ function parseAnalyticsQuery(raw: AnalyticsQueryRaw): {
 export function registerAdminAnalyticsRoutes(app: FastifyInstance, deps: AdminRouteDeps): void {
   // 旧巨型汇总：管理后台已切换 scope 接口，暂留给 mao-cli / 兼容调用方。
   app.get('/v1/admin/analytics/summary', async (req, reply) => {
-    await requireAdmin(deps.permissionService, req);
+    await requireRequestPermission(deps.permissionService, req, 'analytics:read');
     const { days, endOffset } = parseAnalyticsQuery(req.query as AnalyticsQueryRaw);
     sendJson(reply, 200, ok(await deps.analytics.summary(days, endOffset)));
   });
 
   app.get('/v1/admin/analytics/overview', async (req, reply) => {
-    await requireAdmin(deps.permissionService, req);
+    await requireRequestPermission(deps.permissionService, req, 'analytics:read');
     const { days, endOffset } = parseAnalyticsQuery(req.query as AnalyticsQueryRaw);
     sendJson(reply, 200, ok(await deps.analytics.overview(days, endOffset)));
   });
 
   app.get('/v1/admin/analytics/trends', async (req, reply) => {
-    await requireAdmin(deps.permissionService, req);
+    await requireRequestPermission(deps.permissionService, req, 'analytics:read');
     const { days, endOffset, excludeConnectivity } = parseAnalyticsQuery(req.query as AnalyticsQueryRaw);
     const granularity = (req.query as { granularity?: string }).granularity === 'hour' ? 'hour' : 'day';
     sendJson(reply, 200, ok(await deps.analytics.trendsScope(days, endOffset, { excludeConnectivity, granularity })));
   });
 
   app.get('/v1/admin/analytics/models', async (req, reply) => {
-    await requireAdmin(deps.permissionService, req);
+    await requireRequestPermission(deps.permissionService, req, 'analytics:read');
     const { days, endOffset, excludeConnectivity, modelId } = parseAnalyticsQuery(req.query as AnalyticsQueryRaw);
     sendJson(
       reply,
@@ -86,19 +86,19 @@ export function registerAdminAnalyticsRoutes(app: FastifyInstance, deps: AdminRo
   });
 
   app.get('/v1/admin/analytics/users', async (req, reply) => {
-    await requireAdmin(deps.permissionService, req);
+    await requireRequestPermission(deps.permissionService, req, 'analytics:read');
     const { days, endOffset, limit, excludeConnectivity } = parseAnalyticsQuery(req.query as AnalyticsQueryRaw);
     sendJson(reply, 200, ok(await deps.analytics.usersScope(days, endOffset, limit, { excludeConnectivity })));
   });
 
   app.get('/v1/admin/analytics/agents', async (req, reply) => {
-    await requireAdmin(deps.permissionService, req);
+    await requireRequestPermission(deps.permissionService, req, 'analytics:read');
     const { days, endOffset, limit, excludeConnectivity } = parseAnalyticsQuery(req.query as AnalyticsQueryRaw);
     sendJson(reply, 200, ok(await deps.analytics.agentsScope(days, endOffset, limit, { excludeConnectivity })));
   });
 
   app.get('/v1/admin/analytics/sessions', async (req, reply) => {
-    await requireAdmin(deps.permissionService, req);
+    await requireRequestPermission(deps.permissionService, req, 'analytics:read');
     const { days, endOffset, excludeConnectivity } = parseAnalyticsQuery(req.query as AnalyticsQueryRaw);
     sendJson(reply, 200, ok(await deps.analytics.sessionsScope(days, endOffset, { excludeConnectivity })));
   });
@@ -106,7 +106,7 @@ export function registerAdminAnalyticsRoutes(app: FastifyInstance, deps: AdminRo
 
 export function registerAdminRuntimeRoutes(app: FastifyInstance, deps: AdminRouteDeps): void {
   app.get('/v1/admin/runtime/sessions', async (req, reply) => {
-    await requireAdmin(deps.permissionService, req);
+    await requireRequestPermission(deps.permissionService, req, 'session:read');
     const q = req.query as {
       page?: string;
       size?: string;

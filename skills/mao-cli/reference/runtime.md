@@ -28,7 +28,7 @@
 | `--keyword` | 否 | 字符串 | — | 关键词 | `keyword` |
 | `--status` | 否 | 字符串 | — | 状态 | `status` |
 
-`GET /admin/runtime/sessions`
+`GET /admin/runtime/sessions`（需 `session:read`）
 
 ```bash
 mao runtime sessions --page 1 --size 20

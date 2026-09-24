@@ -264,7 +264,7 @@
               @confirm="handleDelete(row)"
             >
               <template #reference>
-                <!-- 与桌面表格一致：系统与个人 Skills 的删除都要求 agent:write，
+                <!-- 与桌面表格一致：系统与个人 Skills 的删除都要求 skill:write。
                      早期写成 activeTab === 'personal' && !canWrite，系统 Tab 恒为可点 -->
                 <el-button type="danger" link :disabled="!canWrite">删除</el-button>
               </template>
@@ -317,7 +317,7 @@ import ResponsivePagination from '../../components/ResponsivePagination.vue'
 
 const { isMobile } = useBreakpoint()
 const authStore = useAuthStore()
-const canWrite = computed(() => authStore.hasPermission('agent:write'))
+const canWrite = computed(() => authStore.hasPermission('skill:write'))
 
 const activeTab = ref<'system' | 'personal'>('system')
 const loading = ref(false)

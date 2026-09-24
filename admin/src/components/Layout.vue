@@ -129,7 +129,7 @@ watch(isMobile, (mobile) => {
 
 watch(() => authStore.user, (user) => {
   if (!user) return
-  const path = pickHomePath(authStore.isAdmin, (permission) => authStore.hasPermission(permission))
+  const path = pickHomePath((permission) => authStore.hasPermission(permission))
   tabStore.setHomePath(path, homeTitle(path))
 }, { immediate: true })
 

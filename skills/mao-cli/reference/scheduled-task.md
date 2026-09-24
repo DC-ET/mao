@@ -2,7 +2,7 @@
 
 ## 模块职责
 
-查询和维护定时任务：列表、详情、更新名称/提示词/cron/状态/一次性开关、删除。默认仅操作当前用户任务；持 `session:read` 的管理端可跨用户查看（`list-all` / 详情），持 `scheduled-task:write` 的管理端可跨用户更新/删除/启停。
+查询和维护定时任务：列表、详情、更新名称/提示词/cron/状态/一次性开关、删除。默认仅操作当前用户任务；持 `scheduled-task:read` 的管理端可跨用户查看（`list-all` / 详情），持 `scheduled-task:write` 的管理端可跨用户更新/删除/启停。
 
 任务名称上限 200 字符，提示词上限 10000 字符，均不允许为空（服务端校验，超限返回参数错误）。
 
@@ -42,7 +42,7 @@ mao scheduled-task list --json
 
 ### 用途
 
-全量列出所有用户的定时任务（分页 + 筛选），需 `session:read` 权限。管理排查用。
+全量列出所有用户的定时任务（分页 + 筛选），需 `scheduled-task:read` 权限。管理排查用。
 
 ### 参数说明
 
@@ -134,7 +134,7 @@ mao scheduled-task delete --id 3
 
 ## Cron 预览（REST）
 
-`POST /scheduled-tasks/cron-preview`（需 `session:read`），请求体 `{ "expression": "0 0 9 * * ?", "count": 3 }`，返回 `{ valid, oneShot, nextFireTimes[], message }`：
+`POST /scheduled-tasks/cron-preview`（需 `scheduled-task:read`），请求体 `{ "expression": "0 0 9 * * ?", "count": 3 }`，返回 `{ valid, oneShot, nextFireTimes[], message }`：
 
 - `valid=false` 时带 `message`（该接口用正常响应对表达式的错误，方便编辑过程中反复预览）；`count` 取值 1..10。
 - `nextFireTimes` 与调度器同源（同一 croner 解析 + Asia/Shanghai），即预览看到的触发时间就是实际执行时间。

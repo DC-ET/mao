@@ -1,6 +1,6 @@
-/** 登录后的落地页，也是 Logo / 「返回首页」的目标。管理员进用量分析，其余按已有权限落到首个可用页面。 */
-export function pickHomePath(isAdmin: boolean, hasPermission: (permission: string) => boolean): string {
-  if (isAdmin) return '/analytics'
+/** 登录后的落地页，也是 Logo / 「返回首页」的目标。有用量分析权限进该页，否则按已有权限落到首个可用页面。 */
+export function pickHomePath(hasPermission: (permission: string) => boolean): string {
+  if (hasPermission('analytics:read')) return '/analytics'
   if (hasPermission('session:read')) return '/sessions'
   if (hasPermission('agent:read')) return '/agents'
   if (hasPermission('user:read')) return '/users'

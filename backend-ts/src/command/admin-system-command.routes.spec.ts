@@ -61,7 +61,7 @@ async function createApp(options: {
   });
   registerAdminSystemCommandRoutes(app, {
     commandRepo,
-    permissionService: { isAdmin: vi.fn(async () => options.admin !== false) },
+    permissionService: { hasPermission: vi.fn(async () => options.admin !== false) },
     userLookup: {
       findByIds: vi.fn(async (ids: number[]) => ids.map((id) => ({
         id,

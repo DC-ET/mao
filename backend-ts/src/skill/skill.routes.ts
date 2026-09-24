@@ -60,7 +60,7 @@ export function registerAdminUserSkillRoutes(
   // 列表：不传 userId 返回全部用户技能；传 userId 时仅返回该用户的技能（用户详情视图用）。
   app.get('/v1/admin/user-skills', async (request, reply) => {
     const userId = requireUserId(request);
-    await requirePermission(permissionService, userId, 'agent:read');
+    await requirePermission(permissionService, userId, 'skill:read');
     const targetUserId = queryOptInt(request, 'userId');
     if (targetUserId != null) {
       return sendJson(reply, 200, ok(userSkillService.listUserSkills(targetUserId)));
@@ -81,7 +81,7 @@ export function registerAdminUserSkillRoutes(
 
   app.get('/v1/admin/user-skills/options/users', async (request, reply) => {
     const userId = requireUserId(request);
-    await requirePermission(permissionService, userId, 'agent:read');
+    await requirePermission(permissionService, userId, 'skill:read');
     const users = await userLookup.listOptions();
     return sendJson(reply, 200, ok(users.map((user) => ({
       id: Number(user.id),
@@ -93,7 +93,7 @@ export function registerAdminUserSkillRoutes(
   // 写入指定用户的个人技能目录，不进入系统技能库。同名目录按个人技能上传规则覆盖。
   app.post('/v1/admin/user-skills/upload', async (request, reply) => {
     const currentUserId = requireUserId(request);
-    await requirePermission(permissionService, currentUserId, 'agent:write');
+    await requirePermission(permissionService, currentUserId, 'skill:write');
     const collected = await collectAdminSkillUpload(request);
     if (!collected.ok) {
       return sendJson(reply, 200, fail(400, collected.message));
@@ -140,7 +140,7 @@ export function registerAdminUserSkillRoutes(
 
   app.get('/v1/admin/user-skills/:userId/:name', async (request, reply) => {
     const currentUserId = requireUserId(request);
-    await requirePermission(permissionService, currentUserId, 'agent:read');
+    await requirePermission(permissionService, currentUserId, 'skill:read');
     const targetUserId = Number(pathParam(request, 'userId'));
     if (!Number.isInteger(targetUserId) || targetUserId <= 0) {
       return sendJson(reply, 200, { code: 400, message: 'Invalid userId' });
@@ -151,7 +151,7 @@ export function registerAdminUserSkillRoutes(
 
   app.delete('/v1/admin/user-skills/:userId/:name', async (request, reply) => {
     const currentUserId = requireUserId(request);
-    await requirePermission(permissionService, currentUserId, 'agent:write');
+    await requirePermission(permissionService, currentUserId, 'skill:write');
     const targetUserId = Number(pathParam(request, 'userId'));
     if (!Number.isInteger(targetUserId) || targetUserId <= 0) {
       return sendJson(reply, 200, { code: 400, message: 'Invalid userId' });
@@ -180,8 +180,8 @@ export function registerSkillDocRoutes(
 
   app.post('/v1/skill-docs/upload', async (request, reply) => {
     const userId = requireUserId(request);
-    // 系统级技能库写操作（覆盖系统技能），与个人 Skill 删除一致要求 agent:write
-    await requirePermission(permissionService, userId, 'agent:write');
+    // 系统级技能库写操作（覆盖系统技能），与个人 Skill 删除一致要求 skill:write
+    await requirePermission(permissionService, userId, 'skill:write');
     const files = await collectNamedFiles(request, 'files');
     const result = skillDocService.uploadSkill(files);
     return sendJson(reply, 200, result.code === 0 ? ok(result.data) : result);
@@ -189,8 +189,8 @@ export function registerSkillDocRoutes(
 
   app.delete('/v1/skill-docs/:name', async (request, reply) => {
     const userId = requireUserId(request);
-    // 删除会级联清理所有 Agent 的 skillName，破坏面大，须 agent:write
-    await requirePermission(permissionService, userId, 'agent:write');
+    // 删除会级联清理所有 Agent 的 skillName，破坏面大，须 skill:write
+    await requirePermission(permissionService, userId, 'skill:write');
     const skillName = pathParam(request, 'name');
     const result = skillDocService.deleteSkill(skillName);
     if (result.code === 0) {

@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { hasText } from '../common/case.js';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
-import { requireAdmin, sendOk } from '../common/http-error.js';
+import { requireRequestPermission, sendOk } from '../common/http-error.js';
 import { bodyOf, pathId } from '../common/request.js';
 import { encryptAesGcm } from '../crypto/aes-gcm.js';
 import type { DingtalkBotRuntimeStatus } from './monitor.service.js';
@@ -11,7 +11,7 @@ import type { DingtalkBot, DingtalkBotRepository, DingtalkBotView } from './type
 export interface DingtalkBotRouteDeps {
   repository: DingtalkBotRepository;
   secretKey: string;
-  permissionService: { isAdmin(userId: number | null | undefined): Promise<boolean> };
+  permissionService: { hasPermission(userId: number, code: string): Promise<boolean> };
   monitorStatus?: { getStatus(botId: number): DingtalkBotRuntimeStatus | null };
   monitorReconnect?: { reconnect(botId: number): Promise<boolean> };
 }
@@ -33,7 +33,7 @@ export function registerDingtalkBotRoutes(app: FastifyInstance, deps: DingtalkBo
   const { repository, permissionService } = deps;
 
   app.get('/v1/admin/dingtalk-bots/status', async (request, reply) => {
-    await requireAdmin(permissionService, request);
+    await requireRequestPermission(permissionService, request, 'dingtalk-bot:read');
     const bots = await repository.list();
     return sendOk(reply, bots.map((bot) => {
       const runtime = bot.id != null ? deps.monitorStatus?.getStatus(bot.id) ?? null : null;
@@ -51,17 +51,17 @@ export function registerDingtalkBotRoutes(app: FastifyInstance, deps: DingtalkBo
   });
 
   app.get('/v1/admin/dingtalk-bots', async (request, reply) => {
-    await requireAdmin(permissionService, request);
+    await requireRequestPermission(permissionService, request, 'dingtalk-bot:read');
     return sendOk(reply, (await repository.list()).map(toView));
   });
 
   app.get('/v1/admin/dingtalk-bots/:id', async (request, reply) => {
-    await requireAdmin(permissionService, request);
+    await requireRequestPermission(permissionService, request, 'dingtalk-bot:read');
     return sendOk(reply, toView(await requireBot(repository, pathId(request))));
   });
 
   app.post('/v1/admin/dingtalk-bots', async (request, reply) => {
-    await requireAdmin(permissionService, request);
+    await requireRequestPermission(permissionService, request, 'dingtalk-bot:write');
     const body = bodyOf<DingtalkBotRequest>(request);
     requireText(body.appKey, 'appKey');
     requireText(body.name, 'name');
@@ -86,7 +86,7 @@ export function registerDingtalkBotRoutes(app: FastifyInstance, deps: DingtalkBo
   });
 
   app.put('/v1/admin/dingtalk-bots/:id', async (request, reply) => {
-    await requireAdmin(permissionService, request);
+    await requireRequestPermission(permissionService, request, 'dingtalk-bot:write');
     const bot = await requireBot(repository, pathId(request));
     const body = bodyOf<DingtalkBotRequest>(request);
     if (body.appKey != null) requireText(body.appKey, 'appKey');
@@ -115,7 +115,7 @@ export function registerDingtalkBotRoutes(app: FastifyInstance, deps: DingtalkBo
   });
 
   app.delete('/v1/admin/dingtalk-bots/:id', async (request, reply) => {
-    await requireAdmin(permissionService, request);
+    await requireRequestPermission(permissionService, request, 'dingtalk-bot:write');
     await requireBot(repository, pathId(request));
     await repository.softDelete(pathId(request));
     return sendOk(reply);
@@ -125,7 +125,7 @@ export function registerDingtalkBotRoutes(app: FastifyInstance, deps: DingtalkBo
   app.post('/v1/admin/dingtalk-bots/:id/disable', async (request, reply) => setEnabled(request, reply, deps, pathId(request), 0));
 
   app.post('/v1/admin/dingtalk-bots/:id/reconnect', async (request, reply) => {
-    await requireAdmin(permissionService, request);
+    await requireRequestPermission(permissionService, request, 'dingtalk-bot:write');
     const id = pathId(request);
     const bot = await requireBot(repository, id);
     if (bot.enabled !== 1) throw new BusinessException(ErrorCode.PARAM_INVALID, '钉钉机器人已停用，无法重连');
@@ -144,7 +144,7 @@ export function registerDingtalkBotRoutes(app: FastifyInstance, deps: DingtalkBo
 }
 
 async function setEnabled(request: FastifyRequest, reply: FastifyReply, deps: DingtalkBotRouteDeps, id: number, enabled: number): Promise<FastifyReply> {
-  await requireAdmin(deps.permissionService, request);
+  await requireRequestPermission(deps.permissionService, request, 'dingtalk-bot:write');
   const bot = await requireBot(deps.repository, id);
   bot.enabled = enabled;
   await deps.repository.update(bot);

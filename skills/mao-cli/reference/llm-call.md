@@ -28,7 +28,7 @@
 
 ## 命令：llm-call list
 
-`GET /admin/llm-calls`（需管理员）
+`GET /admin/llm-calls`（需 `llm-call:read`）
 
 额外支持 `--user-id`、`--agent-id`。
 

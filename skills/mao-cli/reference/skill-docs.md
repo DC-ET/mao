@@ -44,7 +44,7 @@ mao skill-docs get --name bigdata-cli
 |------|------|------|------|
 | `--dir` | 是 | 路径 | 本地技能目录或技能根目录 |
 
-`POST /skill-docs/upload`，multipart 字段名 `files`。每个 part 的 filename 为相对路径，例如 `my-skill/SKILL.md`。需 `agent:write` 权限。
+`POST /skill-docs/upload`，multipart 字段名 `files`。每个 part 的 filename 为相对路径，例如 `my-skill/SKILL.md`。需 `skill:write` 权限。
 
 目录规则：
 
@@ -65,7 +65,7 @@ mao skill-docs upload --dir ./skills-root
 | `--dir` | 是 | 路径 | 本地技能目录或技能根目录，规则与 `upload` 相同 |
 | `--user-ids` | 是 | 逗号分隔的用户 ID | 写入这些用户的个人技能，例如 `1,2` |
 
-`POST /admin/user-skills/upload`，multipart 字段 `userIds`（逗号分隔）与 `files`。需 `agent:write`。一次最多 100 个用户。用户必须已存在；同名个人技能会被覆盖，替换失败时保留该用户原来的技能。不会写入全局技能库，其他用户不受影响。这些用户的所有智能体会自动带上该技能；若与系统技能同名，仅这些用户改用这份个人技能。请求中断或文件数超限时整批不写入。管理后台上传还会跳过 `node_modules`、`.git`、`.svn`、`dist`、`__MACOSX`，并限制最多 500 个文件、单文件 20MB、总量 50MB。
+`POST /admin/user-skills/upload`，multipart 字段 `userIds`（逗号分隔）与 `files`。需 `skill:write`。一次最多 100 个用户。用户必须已存在；同名个人技能会被覆盖，替换失败时保留该用户原来的技能。不会写入全局技能库，其他用户不受影响。这些用户的所有智能体会自动带上该技能；若与系统技能同名，仅这些用户改用这份个人技能。请求中断或文件数超限时整批不写入。管理后台上传还会跳过 `node_modules`、`.git`、`.svn`、`dist`、`__MACOSX`，并限制最多 500 个文件、单文件 20MB、总量 50MB。
 
 成功 `data`：`skills` 为已导入技能名，`users` 为实际写入的用户（`id`、`username`、`displayName`）。
 
@@ -79,7 +79,7 @@ mao skill-docs assign --dir ./my-skill --user-ids 12,34
 |------|------|------|------|
 | `--name` | 是 | 字符串 | 技能名 |
 
-`DELETE /skill-docs/{name}`，需 `agent:write` 权限。
+`DELETE /skill-docs/{name}`，需 `skill:write` 权限。
 
 ```bash
 mao skill-docs delete --name my-skill

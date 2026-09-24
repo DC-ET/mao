@@ -33,7 +33,7 @@
 
 ## REST API
 
-### 管理端（需管理员）
+### 管理端（读 `dingtalk-bot:read`，写 `dingtalk-bot:write`）
 
 | 方法 | 路径 | 说明 |
 |------|------|------|

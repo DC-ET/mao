@@ -22,8 +22,10 @@ export function requireUserId(request: FastifyRequest): number {
   return userId;
 }
 
+type PermissionChecker = { hasPermission(userId: number, code: string): Promise<boolean> };
+
 export async function requirePermission(
-  permissionService: { hasPermission(userId: number, code: string): Promise<boolean> },
+  permissionService: PermissionChecker,
   userId: number,
   code: string,
 ): Promise<void> {
@@ -32,14 +34,34 @@ export async function requirePermission(
   }
 }
 
-export async function requireAdmin(
-  permissionService: { isAdmin(userId: number | null | undefined): Promise<boolean> },
+export async function requireAnyPermission(
+  permissionService: PermissionChecker,
+  userId: number,
+  codes: readonly string[],
+): Promise<void> {
+  for (const code of codes) {
+    if (await permissionService.hasPermission(userId, code)) return;
+  }
+  throw new BusinessException(403, `无权限: ${codes.join(' 或 ')}`);
+}
+
+export async function requireRequestPermission(
+  permissionService: PermissionChecker,
   request: FastifyRequest,
+  code: string,
 ): Promise<number> {
   const userId = requireUserId(request);
-  if (!(await permissionService.isAdmin(userId))) {
-    throw new BusinessException(403, '需要管理员权限');
-  }
+  await requirePermission(permissionService, userId, code);
+  return userId;
+}
+
+export async function requireAnyRequestPermission(
+  permissionService: PermissionChecker,
+  request: FastifyRequest,
+  codes: readonly string[],
+): Promise<number> {
+  const userId = requireUserId(request);
+  await requireAnyPermission(permissionService, userId, codes);
   return userId;
 }
 

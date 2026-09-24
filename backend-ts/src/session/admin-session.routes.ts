@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { requireAdmin, sendOk } from '../common/http-error.js';
+import { requireAnyRequestPermission, requireRequestPermission, sendOk } from '../common/http-error.js';
 import { collectEntityIds, parseEntityId, pathId, queryInt, queryOptBool, queryOptInt, queryOptStr } from '../common/request.js';
 import type { SessionService } from './session.service.js';
 import type { AgentLookup, AgentRef, LlmModelLookup, Session, UserLookup } from './types.js';
@@ -11,12 +11,20 @@ export interface AdminSessionRouteDeps {
   userLookup: UserLookup;
   agentLookup: AgentLookup;
   modelLookup: LlmModelLookup;
-  permissionService: { isAdmin(userId: number | null | undefined): Promise<boolean> };
+  permissionService: { hasPermission(userId: number, code: string): Promise<boolean> };
 }
 
 export function registerAdminSessionRoutes(app: FastifyInstance, deps: AdminSessionRouteDeps): void {
   const { sessionService, userLookup, agentLookup, modelLookup, permissionService } = deps;
-  const requireAdminUser = (request: Parameters<typeof requireAdmin>[1]) => requireAdmin(permissionService, request);
+  const requireRead = (request: Parameters<typeof requireRequestPermission>[1]) =>
+    requireRequestPermission(permissionService, request, 'session:read');
+  const requireWrite = (request: Parameters<typeof requireRequestPermission>[1]) =>
+    requireRequestPermission(permissionService, request, 'session:write');
+  // 用户/Agent 下拉被会话、定时任务、调用流水、审计共用，只认 session:read 会让其他页面筛选器为空。
+  const requireUserOptions = (request: Parameters<typeof requireAnyRequestPermission>[1]) =>
+    requireAnyRequestPermission(permissionService, request, ['session:read', 'scheduled-task:read', 'llm-call:read', 'audit:read']);
+  const requireAgentOptions = (request: Parameters<typeof requireAnyRequestPermission>[1]) =>
+    requireAnyRequestPermission(permissionService, request, ['session:read', 'scheduled-task:read', 'llm-call:read']);
 
   async function batchLoadUsers(sessions: Session[]) {
     const ids = collectEntityIds(sessions.map((s) => s.userId));
@@ -48,7 +56,7 @@ export function registerAdminSessionRoutes(app: FastifyInstance, deps: AdminSess
   }
 
   app.get('/v1/admin/sessions/options/users', async (request, reply) => {
-    await requireAdminUser(request);
+    await requireUserOptions(request);
     const users = await userLookup.listOptions();
     return sendOk(reply, users.map((u) => ({
       id: u.id,
@@ -58,13 +66,13 @@ export function registerAdminSessionRoutes(app: FastifyInstance, deps: AdminSess
   });
 
   app.get('/v1/admin/sessions/options/agents', async (request, reply) => {
-    await requireAdminUser(request);
+    await requireAgentOptions(request);
     const agents = await agentLookup.listOptions();
     return sendOk(reply, agents.map((a) => ({ id: a.id, name: a.name })));
   });
 
   app.get('/v1/admin/sessions', async (request, reply) => {
-    await requireAdminUser(request);
+    await requireRead(request);
     const page = queryInt(request, 'page', 1);
     const size = queryInt(request, 'size', 20);
     const pageResult = await sessionService.listSessionsForAdmin(
@@ -97,7 +105,7 @@ export function registerAdminSessionRoutes(app: FastifyInstance, deps: AdminSess
   });
 
   app.get('/v1/admin/sessions/:id', async (request, reply) => {
-    await requireAdminUser(request);
+    await requireRead(request);
     const session = await sessionService.getSession(pathId(request));
     const single = [session];
     const agentMap = await batchLoadAgents(single);
@@ -110,7 +118,7 @@ export function registerAdminSessionRoutes(app: FastifyInstance, deps: AdminSess
   });
 
   app.get('/v1/admin/sessions/:id/messages', async (request, reply) => {
-    await requireAdminUser(request);
+    await requireRead(request);
     const id = pathId(request);
     const roundLimit = queryOptInt(request, 'roundLimit') ?? 5;
     const beforeMessageId = queryOptInt(request, 'beforeMessageId') ?? null;
@@ -130,13 +138,13 @@ export function registerAdminSessionRoutes(app: FastifyInstance, deps: AdminSess
   });
 
   app.delete('/v1/admin/sessions/:id', async (request, reply) => {
-    await requireAdminUser(request);
+    await requireWrite(request);
     await sessionService.deleteSession(pathId(request));
     return sendOk(reply);
   });
 
   app.put('/v1/admin/sessions/:id/archive', async (request, reply) => {
-    await requireAdminUser(request);
+    await requireWrite(request);
     await sessionService.archiveSession(pathId(request));
     return sendOk(reply);
   });
