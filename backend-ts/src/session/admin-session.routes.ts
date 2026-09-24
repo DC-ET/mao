@@ -2,7 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { requireAnyRequestPermission, requireRequestPermission, sendOk } from '../common/http-error.js';
 import { collectEntityIds, parseEntityId, pathId, queryInt, queryOptBool, queryOptInt, queryOptStr } from '../common/request.js';
 import type { SessionService } from './session.service.js';
-import type { AgentLookup, AgentRef, LlmModelLookup, Session, UserLookup } from './types.js';
+import type { AgentLookup, AgentRef, AskUserQuestionsRegistry, LlmModelLookup, Session, UserLookup } from './types.js';
+import { emptyQuestionRegistry } from './types.js';
 import { compactAdminTranscript } from './admin-message-compact.js';
 import { toAdminSessionVO, toMessageVOList } from './session-vo.js';
 
@@ -12,10 +13,12 @@ export interface AdminSessionRouteDeps {
   agentLookup: AgentLookup;
   modelLookup: LlmModelLookup;
   permissionService: { hasPermission(userId: number, code: string): Promise<boolean> };
+  askUserQuestionsRegistry?: AskUserQuestionsRegistry;
 }
 
 export function registerAdminSessionRoutes(app: FastifyInstance, deps: AdminSessionRouteDeps): void {
   const { sessionService, userLookup, agentLookup, modelLookup, permissionService } = deps;
+  const questionRegistry = deps.askUserQuestionsRegistry ?? emptyQuestionRegistry();
   const requireRead = (request: Parameters<typeof requireRequestPermission>[1]) =>
     requireRequestPermission(permissionService, request, 'session:read');
   const requireWrite = (request: Parameters<typeof requireRequestPermission>[1]) =>
@@ -53,6 +56,11 @@ export function registerAdminSessionRoutes(app: FastifyInstance, deps: AdminSess
     const defaultModel = await modelLookup.findDefault();
     if (defaultModel != null) map.set(0, defaultModel);
     return map;
+  }
+
+  /** 等待用户回答（ask_user_questions）的会话计数：内存态，phase 仍为 RUNNING，需单独透出给管理端展示。 */
+  function countPendingQuestions(sessions: Session[]): Map<number, number> {
+    return questionRegistry.countPendingBySessionIds(collectEntityIds(sessions.map((s) => s.id)));
   }
 
   app.get('/v1/admin/sessions/options/users', async (request, reply) => {
@@ -96,6 +104,10 @@ export function registerAdminSessionRoutes(app: FastifyInstance, deps: AdminSess
       modelMap,
       s.id != null ? pageResult.matchSnippets?.[s.id] : undefined,
     ));
+    const questionCounts = countPendingQuestions(records);
+    for (const vo of voList) {
+      vo.pendingQuestionCount = questionCounts.get(vo.id!) ?? 0;
+    }
     return sendOk(reply, {
       records: voList,
       total: pageResult.total,
@@ -109,12 +121,14 @@ export function registerAdminSessionRoutes(app: FastifyInstance, deps: AdminSess
     const session = await sessionService.getSession(pathId(request));
     const single = [session];
     const agentMap = await batchLoadAgents(single);
-    return sendOk(reply, toAdminSessionVO(
+    const vo = toAdminSessionVO(
       session,
       await batchLoadUsers(single),
       agentMap,
       await batchLoadModels(single, agentMap),
-    ));
+    );
+    vo.pendingQuestionCount = countPendingQuestions(single).get(parseEntityId(session.id) ?? 0) ?? 0;
+    return sendOk(reply, vo);
   });
 
   app.get('/v1/admin/sessions/:id/messages', async (request, reply) => {

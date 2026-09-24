@@ -2047,6 +2047,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         findDefault: () => modelRepo.findDefault(),
       } as never,
       permissionService,
+      askUserQuestionsRegistry,
     });
     registerTerminalRoutes(api, {
       terminalManager,

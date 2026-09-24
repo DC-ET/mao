@@ -76,6 +76,8 @@ export interface AdminSessionVO {
   createdAt?: string | null;
   updatedAt?: string | null;
   lastActivityAt?: string | null;
+  /** 当前等待用户回答的 ask_user_questions 数量（内存态，phase 仍为 RUNNING）。 */
+  pendingQuestionCount?: number;
   matchSnippet?: string | null;
 }
 

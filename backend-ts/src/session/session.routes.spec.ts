@@ -108,7 +108,15 @@ describe('session and admin routes', () => {
       subagentExecutionRepo: { findByChildSessionIds: vi.fn(async () => []) } as unknown as SubagentExecutionRepository,
       sessionCompactionEventService: { listBySessionId: vi.fn(async () => []) } as unknown as SessionCompactionEventService,
     });
-    registerAdminSessionRoutes(fastify, { sessionService, userLookup, agentLookup, modelLookup, permissionService: { hasPermission: vi.fn(async () => true) } });
+    registerAdminSessionRoutes(fastify, {
+      sessionService,
+      userLookup,
+      agentLookup,
+      modelLookup,
+      permissionService: { hasPermission: vi.fn(async () => true) },
+      // 等待用户回答的问答计数来自内存注册表（phase 仍为 RUNNING），管理端展示据此覆盖文案
+      askUserQuestionsRegistry: { countPendingBySessionIds: vi.fn(() => new Map([[1, 2]])) },
+    });
     const ossStsService = {
       generateStsToken: vi.fn(async () => ({
         accessKeyId: 'a', accessKeySecret: 'b', securityToken: 'c', expiration: 'e',
@@ -152,7 +160,9 @@ describe('session and admin routes', () => {
     expect((await json('DELETE', '/v1/sessions/1/todos/3')).body.code).toBe(0);
     expect((await json('GET', '/v1/sessions/1/queue')).body.data).toEqual([]);
     expect((await json('GET', '/v1/admin/sessions')).body.data.total).toBe(1);
+    expect((await json('GET', '/v1/admin/sessions')).body.data.records[0].pendingQuestionCount).toBe(2);
     expect((await json('GET', '/v1/admin/sessions/1')).body.data.id).toBe(1);
+    expect((await json('GET', '/v1/admin/sessions/1')).body.data.pendingQuestionCount).toBe(2);
     expect((await json('GET', '/v1/admin/sessions/1/messages')).body.data.messages).toEqual([]);
     expect((await json('GET', '/v1/admin/sessions/options/users')).body.data[0].username).toBe('u');
     expect((await json('GET', '/v1/admin/sessions/options/agents')).body.data[0].name).toBe('Agent');

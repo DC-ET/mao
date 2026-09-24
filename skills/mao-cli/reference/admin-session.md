@@ -117,3 +117,7 @@ mao admin-session archive --id 100
 
 - 列表成功：`data.records` + `total`/`page`/`size`；关键词命中消息时记录含 `matchSnippet`
 - 会话不存在：业务错误 message
+
+## 字段提示
+
+列表记录与详情 VO 均含 `pendingQuestionCount`：当前等待用户回答的提问数量（内存态，此时 `phase` 仍为 `RUNNING`）。`phase=RUNNING` 且该值大于 0 表示会话正在等用户答复，管理后台「任务阶段」显示为「等待回复」。

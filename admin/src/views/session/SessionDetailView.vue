@@ -67,7 +67,7 @@
             </el-tag>
           </el-descriptions-item>
           <el-descriptions-item label="任务阶段">
-            <el-tag :type="phaseTagType(sessionInfo.phase)" size="small">{{ phaseLabel(sessionInfo.phase) }}</el-tag>
+            <el-tag :type="phaseTagType(sessionInfo.phase, sessionInfo.pendingQuestionCount)" size="small">{{ phaseLabel(sessionInfo.phase, sessionInfo.pendingQuestionCount) }}</el-tag>
           </el-descriptions-item>
           <el-descriptions-item label="项目">{{ sessionInfo.projectKey || '-' }}</el-descriptions-item>
           <el-descriptions-item label="上下文Token">{{ sessionInfo.contextTokens || '-' }}</el-descriptions-item>
@@ -140,7 +140,7 @@ const ROUND_LIMIT = 5
 const mobileInfoSummary = computed(() => {
   const info = sessionInfo.value
   if (!info) return ''
-  return [info.userName, info.agentName, phaseLabel(info.phase)].filter(Boolean).join(' · ')
+  return [info.userName, info.agentName, phaseLabel(info.phase, info.pendingQuestionCount)].filter(Boolean).join(' · ')
 })
 
 interface MessageTurn {
@@ -172,7 +172,8 @@ const messageTurns = computed((): MessageTurn[] => {
   return turns
 })
 
-function phaseTagType(phase: string): 'primary' | 'success' | 'danger' | 'warning' | 'info' {
+function phaseTagType(phase: string, pendingQuestionCount?: number): 'primary' | 'success' | 'danger' | 'warning' | 'info' {
+  if (phase === 'RUNNING' && (pendingQuestionCount ?? 0) > 0) return 'warning'
   switch (phase) {
     case 'RUNNING': return 'primary'
     case 'COMPLETED': return 'success'

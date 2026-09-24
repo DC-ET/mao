@@ -80,7 +80,7 @@
         </el-table-column>
         <el-table-column prop="phase" label="任务阶段" width="120">
           <template #default="{ row }">
-            <el-tag :type="phaseTagType(row.phase)" size="small">{{ phaseLabel(row.phase) }}</el-tag>
+            <el-tag :type="phaseTagType(row.phase, row.pendingQuestionCount)" size="small">{{ phaseLabel(row.phase, row.pendingQuestionCount) }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="contextTokens" label="上下文Token" width="110" align="right" />
@@ -110,7 +110,7 @@
         <el-card v-for="row in sessions" :key="row.id" shadow="hover">
           <div class="mobile-card-head">
             <span class="mobile-card-title">{{ row.title || '-' }}</span>
-            <el-tag :type="phaseTagType(row.phase)" size="small">{{ phaseLabel(row.phase) }}</el-tag>
+            <el-tag :type="phaseTagType(row.phase, row.pendingQuestionCount)" size="small">{{ phaseLabel(row.phase, row.pendingQuestionCount) }}</el-tag>
           </div>
           <div v-if="row.matchSnippet" class="mobile-card-row match-snippet">
             <span class="mobile-card-label">消息</span>
@@ -232,7 +232,8 @@ function syncRouteAndFetch() {
   fetchSessions()
 }
 
-function phaseTagType(phase: string): 'primary' | 'success' | 'danger' | 'warning' | 'info' {
+function phaseTagType(phase: string, pendingQuestionCount?: number): 'primary' | 'success' | 'danger' | 'warning' | 'info' {
+  if (phase === 'RUNNING' && (pendingQuestionCount ?? 0) > 0) return 'warning'
   switch (phase) {
     case 'RUNNING': return 'primary'
     case 'COMPLETED': return 'success'

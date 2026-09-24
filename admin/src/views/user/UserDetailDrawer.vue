@@ -34,7 +34,7 @@
             <el-table-column prop="agentName" label="Agent" width="110" show-overflow-tooltip />
             <el-table-column prop="phase" label="阶段" width="100">
               <template #default="{ row }">
-                <el-tag :type="phaseTagType(row.phase)" size="small">{{ phaseLabel(row.phase) }}</el-tag>
+                <el-tag :type="phaseTagType(row.phase, row.pendingQuestionCount)" size="small">{{ phaseLabel(row.phase, row.pendingQuestionCount) }}</el-tag>
               </template>
             </el-table-column>
             <el-table-column prop="createdAt" label="创建时间" width="160" :formatter="formatDateTimeColumn" />
@@ -219,7 +219,8 @@ const skills = ref<any[]>([])
 const gitCredentials = ref<any[]>([])
 const mcpServers = ref<any[]>([])
 
-function phaseTagType(phase: string): 'primary' | 'success' | 'danger' | 'warning' | 'info' {
+function phaseTagType(phase: string, pendingQuestionCount?: number): 'primary' | 'success' | 'danger' | 'warning' | 'info' {
+  if (phase === 'RUNNING' && (pendingQuestionCount ?? 0) > 0) return 'warning'
   switch (phase) {
     case 'RUNNING': return 'primary'
     case 'RESUMING': return 'primary'

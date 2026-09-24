@@ -36,7 +36,12 @@ export function executionModeLabel(code: string | null | undefined): string {
   return labelOf(EXECUTION_MODE_LABELS, code)
 }
 
-export function phaseLabel(code: string | null | undefined): string {
+/** 等待用户回答 ask_user_questions 时 phase 仍为 RUNNING，展示层据此单独覆盖为「等待回复」。 */
+export function phaseLabel(
+  code: string | null | undefined,
+  pendingQuestionCount?: number | null
+): string {
+  if (code === 'RUNNING' && (pendingQuestionCount ?? 0) > 0) return '等待回复'
   return labelOf(PHASE_LABELS, code)
 }
 
