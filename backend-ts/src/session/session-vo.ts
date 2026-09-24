@@ -6,6 +6,7 @@ import type {
   FileChange,
   LlmModelRef,
   Message,
+  PendingAskQuestion,
   Session,
   SessionActivity,
   SessionCompactionEvent,
@@ -82,7 +83,8 @@ export interface AdminSessionVO {
 }
 
 export interface MessageVO {
-  id?: number;
+  /** 落库消息为数字主键；等待回复中的伪消息用 `pending-ask-*` 字符串 ID。 */
+  id?: number | string;
   role?: string;
   content?: string | null;
   thinkingContent?: string | null;
@@ -340,6 +342,33 @@ export function toMessageVOList(messages: Message[], changesByMsg: Map<number, F
     }
     return vo;
   });
+}
+
+/**
+ * 把内存里等待作答的 ask_user_questions 补成一条进行中的助手消息。
+ * 该轮 tool_calls 要等工具返回后才落库，管理端只读 DB 时会整段看不见。
+ */
+export function toPendingAskUserQuestionsMessageVOs(pending: PendingAskQuestion[]): MessageVO[] {
+  if (pending.length === 0) return [];
+  const toolCalls = pending.map((p) => ({
+    id: p.requestId,
+    name: 'ask_user_questions',
+    input: p.metadata != null
+      ? { questions: p.questions, metadata: p.metadata }
+      : { questions: p.questions },
+    summary: p.questions.length > 0
+      ? `向用户提问（等待回复，${p.questions.length} 个问题）`
+      : '向用户提问（等待回复）',
+    status: 'running',
+  }));
+  return [{
+    id: `pending-ask-${pending[0].requestId}`,
+    role: 'ASSISTANT',
+    content: null,
+    toolCalls: JSON.stringify(toolCalls),
+    tokenCount: 0,
+    createdAt: javaLocalDateTimeString(new Date()),
+  }];
 }
 
 export function toFileChangeVO(fc: FileChange): FileChangeVO {

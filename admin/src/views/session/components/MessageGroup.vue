@@ -97,10 +97,22 @@ function getVisibleToolCalls(msg: ChatMessage) {
   return msg.toolCalls?.filter(tc => !HIDDEN_TOOL_NAMES.has(tc.name)) || []
 }
 
+// 尾部「仅工具且仍在执行」的伪消息（等待回复中的 ask_user_questions）不算最终回复，
+// 避免把上一轮真正的回复挤进执行过程、末尾又留下空正文。
+function isInFlightToolOnly(msg: ChatMessage): boolean {
+  if (msg.content?.trim()) return false
+  const tools = msg.toolCalls
+  if (!tools?.length) return false
+  return tools.every(tc => tc.status === 'running' || tc.status === 'pending')
+}
+
 // Align with desktop useMessageRounds: last assistant message is always the final reply
 const finalReply = computed(() => {
   const msgs = props.assistantMessages
-  return msgs.length > 0 ? msgs[msgs.length - 1] : null
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (!isInFlightToolOnly(msgs[i])) return msgs[i]
+  }
+  return null
 })
 
 const finalReplyText = computed(() => finalReply.value?.content?.trim() || '')

@@ -53,7 +53,7 @@ export function normalizeApiToolCall(
       input: parseToolArguments(fn.arguments),
       result: overrides?.result,
       summary: (tc.summary as string | undefined) ?? overrides?.summary,
-      status: overrides?.status ?? 'success',
+      status: (tc.status as ToolCall['status']) ?? overrides?.status ?? 'success',
       isExpanded: false
     }
   }

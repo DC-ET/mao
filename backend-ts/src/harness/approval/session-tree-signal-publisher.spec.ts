@@ -15,7 +15,10 @@ describe('SessionTreeSignalPublisher', () => {
       listSideTasks: vi.fn(async () => []),
     };
     const approvalRegistry = { countForSessionIds: vi.fn(() => new Map()) };
-    const askUserQuestionsRegistry = { countPendingBySessionIds: vi.fn(() => new Map()) };
+    const askUserQuestionsRegistry = {
+    countPendingBySessionIds: vi.fn(() => new Map()),
+    getPendingForSession: vi.fn(() => []),
+  };
     const streamingWsRegistry = { send: vi.fn() };
     const publisher = new SessionTreeSignalPublisher(
       sessionMapper as never,

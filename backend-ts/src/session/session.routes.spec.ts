@@ -115,7 +115,10 @@ describe('session and admin routes', () => {
       modelLookup,
       permissionService: { hasPermission: vi.fn(async () => true) },
       // 等待用户回答的问答计数来自内存注册表（phase 仍为 RUNNING），管理端展示据此覆盖文案
-      askUserQuestionsRegistry: { countPendingBySessionIds: vi.fn(() => new Map([[1, 2]])) },
+      askUserQuestionsRegistry: {
+        countPendingBySessionIds: vi.fn(() => new Map([[1, 2]])),
+        getPendingForSession: vi.fn(() => []),
+      },
     });
     const ossStsService = {
       generateStsToken: vi.fn(async () => ({
@@ -191,6 +194,58 @@ describe('session and admin routes', () => {
     expect(body.data.messages[0].content.startsWith('Tool execution failed')).toBe(true);
     expect(body.data.messages[0].content.length).toBeLessThanOrEqual(4000);
     expect(body.data.messages[0].content).toContain('已截断');
+    await fastify.close();
+  });
+
+  it('admin messages append pending ask_user_questions only on the latest page', async () => {
+    const fastify = Fastify();
+    fastify.setErrorHandler(handleError);
+    fastify.addHook('preHandler', (req, _r, done) => {
+      req.userId = 7;
+      done();
+    });
+    const sessionService = {
+      getMessagesByRounds: vi.fn(async () => ({
+        messages: [{ id: 10, sessionId: 1, role: 'ASSISTANT', content: '我来确认几件事', toolCalls: null }],
+        hasMore: false,
+        nextBeforeMessageId: null,
+      })),
+      getFileChangesByMessageIds: vi.fn(async () => new Map()),
+      getFileChangeSummariesByMessageIds: vi.fn(async () => new Map()),
+    } as unknown as SessionService;
+    const questionRegistry = {
+      countPendingBySessionIds: vi.fn(() => new Map([[1, 1]])),
+      getPendingForSession: vi.fn(() => [{
+        requestId: 'req-live',
+        questions: [{ question: '选哪个租户？' }],
+        metadata: null,
+      }]),
+    };
+    registerAdminSessionRoutes(fastify, {
+      sessionService,
+      userLookup: { findByIds: vi.fn(async () => []), listOptions: vi.fn(async () => []) } as never,
+      agentLookup: { findById: vi.fn(), findByIds: vi.fn(async () => []), requireDefaultAgent: vi.fn(), listOptions: vi.fn(async () => []) } as never,
+      modelLookup: { findById: vi.fn(), findByIds: vi.fn(async () => []), findDefault: vi.fn(async () => null) } as never,
+      permissionService: { hasPermission: vi.fn(async () => true) },
+      askUserQuestionsRegistry: questionRegistry,
+    });
+
+    const latest = JSON.parse((await fastify.inject({
+      method: 'GET', url: '/v1/admin/sessions/1/messages',
+    })).body);
+    expect(latest.data.messages).toHaveLength(2);
+    const pending = latest.data.messages[1];
+    expect(pending.id).toBe('pending-ask-req-live');
+    expect(pending.role).toBe('ASSISTANT');
+    const toolCalls = JSON.parse(pending.toolCalls) as Array<{ id: string; name: string; status: string; input: { questions: unknown[] } }>;
+    expect(toolCalls[0]).toMatchObject({ id: 'req-live', name: 'ask_user_questions', status: 'running' });
+    expect(toolCalls[0].input.questions).toEqual([{ question: '选哪个租户？' }]);
+
+    const older = JSON.parse((await fastify.inject({
+      method: 'GET', url: '/v1/admin/sessions/1/messages?beforeMessageId=5',
+    })).body);
+    expect(older.data.messages).toHaveLength(1);
+    expect(older.data.messages[0].id).toBe(10);
     await fastify.close();
   });
 

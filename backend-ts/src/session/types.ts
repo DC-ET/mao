@@ -236,8 +236,16 @@ export interface ApprovalRegistry {
   countForSessionIds(ids: number[]): Map<number, number>;
 }
 
+/** 内存里等待用户作答的 ask_user_questions（尚未随整轮消息落库）。 */
+export interface PendingAskQuestion {
+  requestId: string;
+  questions: Array<Record<string, unknown>>;
+  metadata: Record<string, unknown> | null;
+}
+
 export interface AskUserQuestionsRegistry {
   countPendingBySessionIds(ids: number[]): Map<number, number>;
+  getPendingForSession(sessionId: number | null): PendingAskQuestion[];
 }
 
 export interface SessionTreeSignalPublisher {
@@ -276,7 +284,10 @@ export function emptyApprovalRegistry(): ApprovalRegistry {
 }
 
 export function emptyQuestionRegistry(): AskUserQuestionsRegistry {
-  return { countPendingBySessionIds: () => new Map() };
+  return {
+    countPendingBySessionIds: () => new Map(),
+    getPendingForSession: () => [],
+  };
 }
 
 export function noopTreePublisher(): SessionTreeSignalPublisher {

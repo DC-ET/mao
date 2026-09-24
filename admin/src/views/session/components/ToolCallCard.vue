@@ -7,6 +7,7 @@
       <div class="tool-status">
         <el-icon v-if="toolCall.status === 'success'" class="status-icon success"><Select /></el-icon>
         <el-icon v-else-if="toolCall.status === 'error'" class="status-icon error"><CloseBold /></el-icon>
+        <el-icon v-else-if="toolCall.status === 'running' || toolCall.status === 'pending'" class="status-icon running"><Loading /></el-icon>
         <el-icon v-if="hasExpandableBody" class="expand-icon" :class="{ expanded: isExpanded }"><ArrowDown /></el-icon>
       </div>
     </div>
@@ -46,7 +47,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Select, CloseBold, ArrowDown, CopyDocument } from '@element-plus/icons-vue'
+import { Select, CloseBold, ArrowDown, CopyDocument, Loading } from '@element-plus/icons-vue'
 import type { ToolCall } from '../types/chat'
 
 const props = defineProps<{ toolCall: ToolCall }>()
@@ -196,6 +197,15 @@ function toggleExpand() {
 
 .status-icon.success { color: var(--el-color-success); }
 .status-icon.error { color: var(--el-color-danger); }
+.status-icon.running {
+  color: var(--el-color-primary);
+  animation: tool-spin 1s linear infinite;
+}
+
+@keyframes tool-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
 
 .expand-icon {
   color: var(--el-text-color-secondary);

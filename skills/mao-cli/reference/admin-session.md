@@ -121,3 +121,5 @@ mao admin-session archive --id 100
 ## 字段提示
 
 列表记录与详情 VO 均含 `pendingQuestionCount`：当前等待用户回答的提问数量（内存态，此时 `phase` 仍为 `RUNNING`）。`phase=RUNNING` 且该值大于 0 表示会话正在等用户答复，管理后台「任务阶段」显示为「等待回复」。
+
+消息接口 `GET /admin/sessions/{id}/messages` 在**最新一页**（不传 `beforeMessageId`）末尾追加等待作答的 `ask_user_questions` 伪消息：`id` 形如 `pending-ask-*`，`toolCalls` 为扁平结构（`name`/`input`/`summary`/`status=running`）。该轮真实 tool_calls 尚未落库；用户作答并整轮写入后伪消息消失，由真实记录取代。历史分页不注入。
