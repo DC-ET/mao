@@ -95,7 +95,7 @@ flowchart TB
 - **双执行模式** — CLOUD / LOCAL；LOCAL 支持权限档位与工具审批
 - **MCP** — 管理后台全局 MCP；桌面端用户级私有 MCP；按 Agent 注入 `mcp__{server}__{tool}`
 - **多模态** — 模型类型分类；文生图；微信语音/图片/文件
-- **协作** — Side Task、后台子代理；内置 `default` / `explorer` / `worker` / `reviewer`（对齐 Codex：通用 / 调研 / 写码 / 审查），旧名 `researcher`→`explorer`、`coder`→`worker` 自动归一
+- **协作** — Side Task、后台子代理；内置 `default` / `explorer` / `worker` / `reviewer`（对齐 Codex：通用 / 调研 / 写码 / 审查），旧名 `researcher`→`explorer`、`coder`→`worker` 自动归一。子代理不能调用 `ask_user_questions`，向用户提问只发生在主会话
 - **任务自动化** — 定时任务；钉钉/飞书 Webhook 或微信通知
 - **工作区** — 云端新建/复用/Git HTTPS 初始化；Git 只读诊断
 - **WebSocket** — 流式对话、Token 追踪、上下文压缩提示

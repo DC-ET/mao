@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { AgentExecutionContext } from '../core/agent-execution-context.js';
+import type { Tool } from '../tool/tool.js';
 import { BackgroundSubagentManager, type BackgroundProgress } from './background-subagent-manager.js';
 import { SubAgentResultCollector } from './subagent-result-collector.js';
 
@@ -369,5 +371,22 @@ describe('BackgroundSubagentManager terminal write', () => {
     expect(execution.status).toBe('CANCELLED');
     expect(execution.result).toBe('后台子代理已随父会话取消');
     expect(finishSubagent).not.toHaveBeenCalled();
+  });
+});
+
+describe('BackgroundSubagentManager.buildSubContext', () => {
+  it('removes ask_user_questions from every subagent', async () => {
+    const ctx = new AgentExecutionContext();
+    ctx.tools = [
+      { getName: () => 'read_file' } as Tool,
+      { getName: () => 'ask_user_questions' } as Tool,
+      { getName: () => 'spawn_subagent' } as Tool,
+    ];
+    const manager = new BackgroundSubagentManager({
+      harnessService: () => ({ buildContext: async () => ctx }),
+    } as never);
+    const subCtx = await manager.buildSubContext({ id: 42 } as never, { name: 'default' });
+    const names = subCtx.tools.map((tool) => tool.getName());
+    expect(names).toEqual(['read_file']);
   });
 });

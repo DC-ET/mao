@@ -22,6 +22,9 @@ export const BACKGROUND_SUBAGENT_TOOLS = [
   'wait_subagents',
 ] as const;
 
+/** 所有子代理（前台委派与后台）都不可用。提问只由主会话发起。 */
+export const SUBAGENT_EXCLUDED_TOOLS = ['ask_user_questions'] as const;
+
 export interface BackgroundSpawnResult {
   ok: boolean;
   taskId?: number;
@@ -840,7 +843,7 @@ export class BackgroundSubagentManager {
     const ctx = await this.deps.harnessService().buildContext(childSession.id!);
     if (definition.systemPromptOverride) ctx.systemPrompt = definition.systemPromptOverride;
     ctx.agentName = definition.name + '-agent';
-    const excluded = new Set(['delegate', 'delegate_followup', ...BACKGROUND_SUBAGENT_TOOLS, ...(definition.excludedToolNames ?? [])]);
+    const excluded = new Set(['delegate', 'delegate_followup', ...BACKGROUND_SUBAGENT_TOOLS, ...SUBAGENT_EXCLUDED_TOOLS, ...(definition.excludedToolNames ?? [])]);
     const allowed = definition.allowedToolNames;
     ctx.tools = ctx.tools.filter((t) => {
       if (excluded.has(t.getName())) return false;

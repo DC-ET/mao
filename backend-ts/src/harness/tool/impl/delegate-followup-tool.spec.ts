@@ -196,8 +196,9 @@ describe('DelegateFollowupTool', () => {
     const fakeRead = { getName: () => 'read_file' } as Tool;
     const fakeWrite = { getName: () => 'write_file' } as Tool;
     const fakeEdit = { getName: () => 'edit_file' } as Tool;
+    const fakeAsk = { getName: () => 'ask_user_questions' } as Tool;
     const ctx = new AgentExecutionContext();
-    ctx.tools = [fakeDelegate, fakeFollowup, fakeRead, fakeWrite, fakeEdit];
+    ctx.tools = [fakeDelegate, fakeFollowup, fakeRead, fakeWrite, fakeEdit, fakeAsk];
     const hs = { buildContext: vi.fn().mockResolvedValue(ctx) } as unknown as HarnessService;
     const realDelegate = new DelegateTool(
       {} as AgentDefinitionRegistry, hs, {} as AgentLoop, {} as SessionService,
@@ -213,6 +214,7 @@ describe('DelegateFollowupTool', () => {
     expect(names).toContain('edit_file');
     expect(names).not.toContain('delegate');
     expect(names).not.toContain('delegate_followup');
+    expect(names).not.toContain('ask_user_questions');
   });
 
   it('explorerHasNoToolExclusionsAndResearcherNormalizes', () => {
