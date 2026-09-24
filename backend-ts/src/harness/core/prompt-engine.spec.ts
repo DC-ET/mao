@@ -114,6 +114,9 @@ describe('PromptEngine', () => {
     expect(system).toContain('用户在进度卡片的表单里提交');
     expect(system).toContain('不要在正文里再要求用户打字回复');
     expect(system).toContain('使用ask_user_questions工具');
+    // 飞书提问会挂起任务，必须带上门槛与"目标明确就别问"的约束，否则任务被频繁阻塞
+    expect(system).toContain('提问会挂起任务直到用户作答');
+    expect(system).toContain('目标明确的执行类请求，不要提问');
 
     const group = new AgentExecutionContext();
     group.projectKey = 'oc_group';
