@@ -208,6 +208,13 @@ export class ToolDispatcher {
     if (userId == null) {
       return JSON.stringify({ error: 'No connected client to receive questions' });
     }
+    // 飞书会话屏蔽提问（工具列表已滤掉，这里兜底拦截历史/幻觉调用，避免再次挂起任务）
+    if (sessionId != null) {
+      session ??= await this.sessionMapper.selectById(sessionId);
+      if (isFeishuChannelSession(session?.projectKey, session?.workspace)) {
+        return JSON.stringify({ error: '当前通道不支持向用户提问，请在回复中直接说明' });
+      }
+    }
     if (session == null && sessionId != null && this.feishuAsk != null) {
       session = await this.sessionMapper.selectById(sessionId);
     }

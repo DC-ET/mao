@@ -440,9 +440,9 @@ export class HarnessService {
     if (isDingtalkChannelSession(projectKey, workspace)) {
       return result.filter((t) => t.getName() !== ASK_USER_QUESTIONS && !isWeixinChannelTool(t) && !isFeishuChannelTool(t));
     }
-    // 飞书主会话在进度卡上作答，保留 ask_user_questions。微信与钉钉通道工具不暴露。
+    // 飞书会话屏蔽 ask_user_questions：进度卡表单作答易把任务挂起，体验差。微信与钉钉通道工具不暴露。
     if (isFeishuChannelSession(projectKey, workspace)) {
-      return result.filter((t) => !isWeixinChannelTool(t) && !isDingtalkChannelTool(t));
+      return result.filter((t) => t.getName() !== ASK_USER_QUESTIONS && !isWeixinChannelTool(t) && !isDingtalkChannelTool(t));
     }
     return result.filter((t) => !isWeixinChannelTool(t) && !isFeishuChannelTool(t) && !isDingtalkChannelTool(t));
   }

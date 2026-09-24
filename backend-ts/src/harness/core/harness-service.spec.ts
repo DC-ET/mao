@@ -43,10 +43,11 @@ describe('HarnessService.filterToolsForSession', () => {
     expect(names(filtered)).not.toContain('ask_user_questions');
   });
 
-  it('feishuPrivateAndGroupKeepAskUserQuestionsAndDropWeixinTools', () => {
+  it('feishuPrivateAndGroupDropAskUserQuestionsAndWeixinTools', () => {
     const withFeishu = [...tools('ask_user_questions', 'read_file'), fakeTool('feishu_send_file', false, true)];
     const privateFiltered = HarnessService.filterToolsForSession(withFeishu, 'feishu-1-private-2');
-    expect(names(privateFiltered)).toEqual(expect.arrayContaining(['ask_user_questions', 'read_file', 'feishu_send_file']));
+    expect(names(privateFiltered)).toEqual(expect.arrayContaining(['read_file', 'feishu_send_file']));
+    expect(names(privateFiltered)).not.toContain('ask_user_questions');
     expect(names(privateFiltered)).not.toContain('send_wechat_image');
 
     const groupFiltered = HarnessService.filterToolsForSession(
@@ -54,7 +55,8 @@ describe('HarnessService.filterToolsForSession', () => {
       'oc_group',
       '/opt/mao-data/workspace/feishu-chat/3/oc_group',
     );
-    expect(names(groupFiltered)).toEqual(expect.arrayContaining(['ask_user_questions', 'read_file']));
+    expect(names(groupFiltered)).toEqual(expect.arrayContaining(['read_file']));
+    expect(names(groupFiltered)).not.toContain('ask_user_questions');
     expect(names(groupFiltered)).not.toContain('send_wechat_image');
   });
 
@@ -82,7 +84,7 @@ describe('HarnessService.filterToolsForSession', () => {
     expect(names(filtered)).not.toContain('send_wechat_image');
     const feishu = HarnessService.filterToolsForSession(list, 'feishu-2-private-9');
     expect(names(feishu)).toContain('feishu_send_file');
-    expect(names(feishu)).toContain('ask_user_questions');
+    expect(names(feishu)).not.toContain('ask_user_questions');
     expect(names(feishu)).not.toContain('dingtalk_send_image');
   });
 
