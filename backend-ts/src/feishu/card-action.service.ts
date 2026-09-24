@@ -1,4 +1,6 @@
-import type { FeishuCardActionEvent, FeishuCardActionPort, FeishuCardActionResponse, FeishuCardActionValue, FeishuProgressCardActionValue } from './types.js';
+import type { FeishuCardActionEvent, FeishuCardActionPort, FeishuCardActionResponse, FeishuCardActionValue, FeishuAskCardActionValue, FeishuProgressCardActionValue } from './types.js';
+import { mapFeishuAskAnswers } from './ask-answers.js';
+import type { FeishuPendingAsk } from './ask-form-store.js';
 import { buildFeishuProgressCard } from './progress-card.js';
 
 /** 排队卡片终态/中间态 PATCH 内容构建（可选「会话详情」跳转按钮）。 */
@@ -92,6 +94,21 @@ export class FeishuCardActionService {
     patchCard: (botId: number, cardMessageId: string, card: Record<string, unknown>) => Promise<void>;
     /** 拼「会话详情」深链（已含 `/tasks/{id}`）；返回 undefined 时不渲染按钮。 */
     sessionDetailUrl?: (sessionId: number) => Promise<string | undefined> | string | undefined;
+    /** 进度卡上的提问表单。取消任务时先清掉，避免随后的进度更新把表单再画上去。 */
+    askForms?: {
+      get(sessionId: number, requestId: string): FeishuPendingAsk | null;
+      remove(sessionId: number, requestId: string): boolean;
+      clearSession(sessionId: number): void;
+      list(sessionId: number): FeishuPendingAsk[];
+    };
+    /** 按当前表单状态渲染进度卡；没有进度对象时调用方改用一张不含表单的卡。 */
+    renderProgressCard?: (sessionId: number) => Record<string, unknown> | null;
+    /** 给群内其他人补一次 PATCH。不得在回调返回前 await。 */
+    refreshProgress?: (sessionId: number) => void | Promise<unknown>;
+    /** 唤醒挂起的 ask_user_questions。返回 false 表示这轮提问已经不在了。 */
+    completeAsk?: (sessionId: number, requestId: string, resultJson: string) => boolean;
+    /** complete 成功后通知已连接的桌面/网页收起提问面板，并刷新会话树。 */
+    notifyAskAnswered?: (sessionId: number, requestId: string) => void;
   }) {}
 
   async handle(raw: unknown, _accountId: string): Promise<FeishuCardActionResponse | undefined> {
@@ -103,6 +120,10 @@ export class FeishuCardActionService {
       console.info(`飞书卡片动作 progress.${action.act}, sessionId=${action.sessionId}, openMessageId=${cardMessageIdForLog}`);
       if (action.act === 'retry') return this.handleProgressRetry(event, action);
       return this.handleProgressCancel(event, action);
+    }
+    if (action.kind === 'feishu_ask') {
+      console.info(`飞书卡片动作 ask.submit, sessionId=${action.sessionId}, requestId=${action.requestId}, openMessageId=${cardMessageIdForLog}`);
+      return this.handleAskSubmit(event, action);
     }
     const cardMessageId = event.context?.open_message_id ?? event.open_message_id;
     if (cardMessageId == null) return undefined;
@@ -128,6 +149,8 @@ export class FeishuCardActionService {
       return { toast: { type: 'error', content: '仅消息发送者可操作' } };
     }
     console.info(`飞书进度卡取消任务, sessionId=${action.sessionId}`);
+    // 先清表单，再让取消把挂起的提问唤醒。随后的进度更新读到的是空列表。
+    this.options.askForms?.clearSession(action.sessionId);
     const cancelled = await this.options.cancelRunning(action.sessionId);
     if (!cancelled) {
       return { toast: { type: 'info', content: '该任务已结束' } };
@@ -164,6 +187,73 @@ export class FeishuCardActionService {
         ),
       },
     };
+  }
+
+  /**
+   * 进度卡表单提交。只做内存完成和组卡：群内 PATCH 与桌面通知都不在返回前等待。
+   * 飞书要求回调 3 秒内带回整张新卡，否则客户端会还原成点击前的表单。
+   */
+  private handleAskSubmit(event: FeishuCardActionEvent, action: FeishuAskCardActionValue): FeishuCardActionResponse {
+    const operatorOpenId = event.operator?.open_id;
+    if (operatorOpenId == null || operatorOpenId !== action.sender) {
+      return { toast: { type: 'error', content: '仅消息发送者可操作' } };
+    }
+    const pending = this.options.askForms?.get(action.sessionId, action.requestId) ?? null;
+    if (pending == null) {
+      this.refreshLater(action.sessionId);
+      return {
+        toast: { type: 'info', content: '问题已失效' },
+        card: { type: 'raw', data: this.currentProgressCard(action.sessionId, action.sender) },
+      };
+    }
+    const mapped = mapFeishuAskAnswers(pending.questions, this.readFormValue(event.action), event.action?.name);
+    if (!mapped.ok) {
+      return {
+        toast: { type: 'warning', content: '请至少选择一项或填写其他' },
+        card: { type: 'raw', data: this.currentProgressCard(action.sessionId, action.sender) },
+      };
+    }
+    this.options.askForms?.remove(action.sessionId, action.requestId);
+    const card = this.currentProgressCard(action.sessionId, action.sender);
+    const completed = this.options.completeAsk?.(
+      action.sessionId, action.requestId, JSON.stringify({ answers: mapped.answers }),
+    ) === true;
+    this.refreshLater(action.sessionId);
+    if (!completed) {
+      return { toast: { type: 'info', content: '问题已失效' }, card: { type: 'raw', data: card } };
+    }
+    try {
+      this.options.notifyAskAnswered?.(action.sessionId, action.requestId);
+    } catch (error) {
+      console.warn(`飞书提问提交后通知客户端失败, sessionId=${action.sessionId}, requestId=${action.requestId}`, error);
+    }
+    return { toast: { type: 'success', content: '已提交' }, card: { type: 'raw', data: card } };
+  }
+
+  private currentProgressCard(sessionId: number, sender: string): Record<string, unknown> {
+    return this.options.renderProgressCard?.(sessionId)
+      ?? buildFeishuProgressCard('RUNNING', 0, '', [], { sessionId, sender });
+  }
+
+  private refreshLater(sessionId: number): void {
+    const refresh = this.options.refreshProgress;
+    if (refresh == null) return;
+    void Promise.resolve(refresh(sessionId)).catch((error) => {
+      console.warn(`飞书提问表单刷新进度卡失败, sessionId=${sessionId}`, error);
+    });
+  }
+
+  private readFormValue(action: FeishuCardActionEvent['action']): Record<string, unknown> {
+    const raw = action?.form_value;
+    if (typeof raw === 'string') {
+      try {
+        const parsed = JSON.parse(raw) as unknown;
+        if (parsed != null && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
+      } catch { /* 空表单按未作答处理 */ }
+      return {};
+    }
+    if (raw != null && typeof raw === 'object' && !Array.isArray(raw)) return raw as Record<string, unknown>;
+    return {};
   }
 
   private async resolveSessionDetailUrl(sessionId: number): Promise<string | undefined> {
@@ -244,6 +334,15 @@ export class FeishuCardActionService {
       if (!Number.isFinite(sessionId) || typeof sender !== 'string' || sender === '') return null;
       if (obj.act !== 'cancel' && obj.act !== 'retry') return null;
       return { kind: 'feishu_progress', act: obj.act, sessionId, sender };
+    }
+    if (obj.kind === 'feishu_ask') {
+      const sessionId = Number(obj.sessionId);
+      const sender = obj.sender;
+      const requestId = obj.requestId;
+      if (!Number.isFinite(sessionId) || typeof sender !== 'string' || sender === '') return null;
+      if (typeof requestId !== 'string' || requestId === '') return null;
+      if (obj.act !== 'submit') return null;
+      return { kind: 'feishu_ask', act: 'submit', sessionId, sender, requestId };
     }
     if (obj.kind !== 'feishu_queue') return null;
     const queueId = Number(obj.queueId);

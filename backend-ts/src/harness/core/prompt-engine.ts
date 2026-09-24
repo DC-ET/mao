@@ -2,6 +2,7 @@ import { readFileSync, existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { hasText } from '../../common/case.js';
 import { WEIXIN_PROJECT_KEY } from '../../domain/types.js';
+import { isFeishuChannelSession } from '../tool/feishu-channel-tool.js';
 import type { ChatMessage, ChatRequest, ToolDefinition } from '../llm/chat-request.js';
 import type { PathSandbox } from '../safety/path-sandbox.js';
 import type { RuntimeDataResolver } from '../runtime/runtime-data-resolver.js';
@@ -227,6 +228,7 @@ export class PromptEngine {
     sb += this.toolBehaviorHints(context);
     sb += this.subagentToolHints(context);
     sb += this.weixinMediaToolHints(context);
+    sb += this.feishuAskHint(context);
     if (embedPageAgent) {
       sb += EMBED_PAGE_AGENT_HINTS;
     }
@@ -397,6 +399,15 @@ export class PromptEngine {
         + '2. 全新任务请使用 `spawn_subagent` 新建子代理，不要追问无关子代理\n\n';
     }
     return sb;
+  }
+
+  /** 与「若可用则优先使用 ask_user_questions」并存，只对飞书会话补充作答位置。 */
+  private feishuAskHint(context: AgentExecutionContext): string {
+    if (!isFeishuChannelSession(context.projectKey, context.workspace)) return '';
+    if (!(context.tools ?? []).some((tool) => tool.getName() === 'ask_user_questions')) return '';
+    return '## 飞书提问\n\n'
+      + '当前会话在飞书中进行。需要用户作答时调用 `ask_user_questions`，用户在进度卡片的表单里提交。\n'
+      + '调用该工具后等待工具结果，不要在正文里再要求用户打字回复。\n\n';
   }
 
   private weixinMediaToolHints(context: AgentExecutionContext): string {

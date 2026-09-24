@@ -435,8 +435,9 @@ export class HarnessService {
     if (projectKey === WEIXIN_PROJECT_KEY) {
       return result.filter((t) => t.getName() !== ASK_USER_QUESTIONS);
     }
+    // 飞书主会话在进度卡上作答，保留 ask_user_questions。微信通道工具仍不暴露。
     if (isFeishuChannelSession(projectKey, workspace)) {
-      return result.filter((t) => !isWeixinChannelTool(t) && t.getName() !== ASK_USER_QUESTIONS);
+      return result.filter((t) => !isWeixinChannelTool(t));
     }
     return result.filter((t) => !isWeixinChannelTool(t) && !isFeishuChannelTool(t));
   }

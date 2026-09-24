@@ -96,6 +96,42 @@ describe('PromptEngine', () => {
     expect(user).toContain('src/App.ts');
   });
 
+  it('feishuChannelTellsTheModelToWaitForTheCardForm', async () => {
+    const engine = new PromptEngine(
+      { hasSkill: () => false, getAllNames: () => [], getAllDocuments: () => [] } as never,
+      { getWorkspaceRoot: () => '/ws' } as never,
+      RuntimeDataResolver.forTest('/tmp/rt', '/tmp/home'),
+      { getByUserIdAndName: async () => null } as never,
+      { getUserSkillDocuments: () => [] } as never,
+    );
+    const context = new AgentExecutionContext();
+    context.projectKey = 'feishu-2-private-9';
+    context.executionMode = 'CLOUD';
+    context.workspace = '/opt/mao-data/workspace/9/projects/feishu-2-private-9';
+    context.tools = [tool('ask_user_questions'), tool('read_file')];
+    const request = await engine.buildRequest(context);
+    const system = request.messages[0].content as string;
+    expect(system).toContain('用户在进度卡片的表单里提交');
+    expect(system).toContain('不要在正文里再要求用户打字回复');
+    expect(system).toContain('使用ask_user_questions工具');
+
+    const group = new AgentExecutionContext();
+    group.projectKey = 'oc_group';
+    group.workspace = '/opt/mao-data/workspace/feishu-chat/2/oc_group';
+    group.executionMode = 'CLOUD';
+    group.tools = [tool('ask_user_questions')];
+    const groupRequest = await engine.buildRequest(group);
+    expect(groupRequest.messages[0].content).toContain('进度卡片的表单');
+
+    const desktop = new AgentExecutionContext();
+    desktop.projectKey = 'proj';
+    desktop.workspace = '/ws';
+    desktop.executionMode = 'CLOUD';
+    desktop.tools = [tool('ask_user_questions')];
+    const desktopRequest = await engine.buildRequest(desktop);
+    expect(desktopRequest.messages[0].content).not.toContain('进度卡片的表单');
+  });
+
   it('weixinChannelAddsDefaultExperiencesAndMediaHints', async () => {
     const engine = new PromptEngine(
       { hasSkill: () => false, getAllNames: () => [], getAllDocuments: () => [] } as never,

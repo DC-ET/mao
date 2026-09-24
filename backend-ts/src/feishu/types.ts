@@ -78,7 +78,7 @@ export interface FeishuQueuePayload {
 }
 
 /** 卡片按钮回调动作值。 */
-export type FeishuCardActionValue = FeishuQueueCardActionValue | FeishuProgressCardActionValue;
+export type FeishuCardActionValue = FeishuQueueCardActionValue | FeishuProgressCardActionValue | FeishuAskCardActionValue;
 
 /** 排队卡片按钮动作值。 */
 export interface FeishuQueueCardActionValue {
@@ -95,6 +95,15 @@ export interface FeishuProgressCardActionValue {
   sender: string;
 }
 
+/** 进度卡提问表单的提交按钮。requestId 放在 value 里，不放进飞书组件 name。 */
+export interface FeishuAskCardActionValue {
+  kind: 'feishu_ask';
+  act: 'submit';
+  sessionId: number;
+  sender: string;
+  requestId: string;
+}
+
 /** 飞书卡片按钮回调事件（SDK RawCardActionEvent 精简版）。 */
 export interface FeishuCardActionEvent {
   context?: { open_message_id?: string; open_chat_id?: string };
@@ -102,7 +111,7 @@ export interface FeishuCardActionEvent {
   open_chat_id?: string;
   token?: string;
   operator?: { open_id?: string; user_id?: string; union_id?: string; name?: string };
-  action?: { value?: unknown; tag?: string };
+  action?: { value?: unknown; tag?: string; name?: string; form_value?: unknown };
 }
 
 /** 卡片动作处理结果（返回给 SDK 作为回调响应）。 */

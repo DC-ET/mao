@@ -1,3 +1,6 @@
+import { feishuAskCustomName, feishuAskSelectName, feishuAskSubmitName } from './ask-answers.js';
+import type { FeishuPendingAsk } from './ask-form-store.js';
+
 /** 飞书进度卡片状态：RUNNING 为执行中，其余为终态。 */
 export type FeishuCardStatus = 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
 
@@ -54,16 +57,21 @@ function sessionDetailButton(sessionDetailUrl: string): Record<string, unknown> 
  * @param elapsedMs 任务耗时；仅终态展示，执行中传 undefined 避免节流下展示过期读数。
  * @param sessionDetailUrl 网页端会话详情深链；非空时始终附「会话详情」按钮（执行中与「取消任务」并排）。
  * @param action 执行中渲染「取消任务」；FAILED 且带 botId/sender 时渲染「重试」。
+ * @param pendingAsks 执行中尚未提交的提问。终态忽略。每组一个 form，放在工具摘要下方、取消按钮上方。
  */
 export function buildFeishuProgressCard(
   status: FeishuCardStatus, round: number, content: string, tools: string[],
   action?: FeishuProgressCancelAction, elapsedMs?: number, sessionDetailUrl?: string,
+  pendingAsks?: FeishuPendingAsk[],
 ): Record<string, unknown> {
   const sections: Array<Record<string, unknown>> = [
     { tag: 'markdown', content: statusLineOf(status, round, elapsedMs), text_align: 'left', text_size: 'normal_v2' },
   ];
   if (content.trim() !== '') sections.push({ tag: 'markdown', content: content.slice(0, 6000), text_align: 'left', text_size: 'normal_v2' });
   if (tools.length > 0) sections.push({ tag: 'markdown', content: `**本轮工具**\n${tools.map((tool) => `- ${tool}`).join('\n').slice(0, 3000)}`, text_align: 'left', text_size: 'normal_v2' });
+  if (status === 'RUNNING' && pendingAsks != null && pendingAsks.length > 0) {
+    pendingAsks.forEach((ask, index) => sections.push(askForm(ask, index)));
+  }
   const buttons: Array<Record<string, unknown>> = [];
   // 执行中提供「取消任务」按钮（终态 PATCH 不带按钮，随卡片重写自动消失）。
   if (status === 'RUNNING' && action != null) {
@@ -93,6 +101,92 @@ export function buildFeishuProgressCard(
     config: { update_multi: true },
     body: { direction: 'vertical', padding: '12px 12px 12px 12px', elements: sections },
   };
+}
+
+/** 一组提问一个 form。选项说明写在 markdown 里，不塞进下拉项；requestId 只放按钮 value。 */
+function askForm(ask: FeishuPendingAsk, formIndex: number): Record<string, unknown> {
+  const elements: Array<Record<string, unknown>> = [];
+  ask.questions.forEach((question, index) => {
+    const markdown = questionMarkdown(question);
+    if (markdown !== '') {
+      elements.push({ tag: 'markdown', content: markdown, text_align: 'left', text_size: 'normal_v2' });
+    }
+    elements.push(selectElement(question, formIndex, index));
+    elements.push({
+      tag: 'input',
+      name: feishuAskCustomName(formIndex, index),
+      width: 'fill',
+      placeholder: { tag: 'plain_text', content: '其他（可选）' },
+    });
+  });
+  const submitValue = {
+    kind: 'feishu_ask',
+    act: 'submit',
+    sessionId: ask.sessionId,
+    requestId: ask.requestId,
+    sender: ask.senderOpenId,
+  };
+  elements.push({
+    tag: 'button',
+    text: { tag: 'plain_text', content: '提交' },
+    type: 'primary',
+    size: 'sm',
+    name: feishuAskSubmitName(formIndex),
+    form_action_type: 'submit',
+    // 进度卡上其它按钮靠顶层 value 回传；表单提交同时放 behaviors，两种回调形态都能识别。
+    value: submitValue,
+    behaviors: [{ type: 'callback', value: submitValue }],
+  });
+  return { tag: 'form', name: `ask_${formIndex}`, elements };
+}
+
+function questionMarkdown(question: Record<string, unknown>): string {
+  const header = typeof question.header === 'string' ? question.header.trim() : '';
+  const text = typeof question.question === 'string' ? question.question.trim() : '';
+  const lines: string[] = [];
+  if (header !== '') lines.push(`**${header}**`);
+  if (text !== '') lines.push(text);
+  const optionLines = optionLinesOf(question);
+  if (optionLines.length > 0) {
+    if (lines.length > 0) lines.push('');
+    lines.push(...optionLines);
+  }
+  return lines.join('\n');
+}
+
+function optionLinesOf(question: Record<string, unknown>): string[] {
+  if (!Array.isArray(question.options)) return [];
+  const lines: string[] = [];
+  for (const option of question.options) {
+    if (option == null || typeof option !== 'object') continue;
+    const label = plain(option, 'label');
+    if (label === '') continue;
+    const description = plain(option, 'description');
+    lines.push(description === '' ? `- ${label}` : `- ${label}：${description}`);
+  }
+  return lines;
+}
+
+function selectElement(question: Record<string, unknown>, formIndex: number, questionIndex: number): Record<string, unknown> {
+  const options = Array.isArray(question.options) ? question.options : [];
+  const choices = options.flatMap((option, optionIndex) => {
+    if (option == null || typeof option !== 'object') return [];
+    const label = plain(option, 'label');
+    if (label === '') return [];
+    return [{ text: { tag: 'plain_text', content: label }, value: String(optionIndex) }];
+  });
+  return {
+    tag: question.multiSelect === true ? 'multi_select_static' : 'select_static',
+    name: feishuAskSelectName(formIndex, questionIndex),
+    width: 'fill',
+    placeholder: { tag: 'plain_text', content: '请选择' },
+    options: choices,
+  };
+}
+
+function plain(record: object, key: string): string {
+  const value = (record as Record<string, unknown>)[key];
+  return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
 }
 
 /** 状态行：`**状态：处理完成** · 共 8 轮 · 耗时 8 分 26 秒`。 */

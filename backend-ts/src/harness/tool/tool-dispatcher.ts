@@ -2,6 +2,7 @@ import { harnessLog } from '../log.js';
 import type { LlmModelConfig } from '../llm/chat-request.js';
 import type { Session, SessionMapper, StreamingWsRegistry } from '../deps.js';
 import { wsEvent } from '../deps.js';
+import { isFeishuChannelSession } from './feishu-channel-tool.js';
 import type { LocalToolExecutor } from '../local/local-tool-executor.js';
 import type { LocalToolSessionRegistry } from '../local/local-tool-session-registry.js';
 import type { SessionTreeSignalPublisher } from '../approval/session-tree-signal-publisher.js';
@@ -20,6 +21,18 @@ import type { BackgroundTaskManager } from '../core/background-task-manager.js';
 import { parseObject } from './json.js';
 import type { TaskNotificationDelivery } from '../../notification/task/types.js';
 import { LLM_CALL_SCENES, LlmCallContext } from '../../usage/llm-call-context.js';
+
+/**
+ * 飞书进度卡上的提问表单。
+ * 只有本会话正在执行的进度卡可以挂；挂上之后跳过离线 Webhook。
+ */
+export interface FeishuAskMount {
+  hasRunningProgress(sessionId: number): boolean;
+  /** 写入表单并刷新卡片。返回 true 表示卡片上已经带上这组提问。 */
+  mount(sessionId: number, requestId: string, questions: Array<Record<string, unknown>>): Promise<boolean>;
+  /** 这组提问结束（提交、超时、取消、另一端作答）后清掉表单。已不在时不得再刷一张执行中的卡。 */
+  clearRequest(sessionId: number, requestId: string): void;
+}
 
 /** 用户离线时 ask_user_questions 的 Webhook 通知能力（由 notification/task 提供）。 */
 export interface AskUserOfflineNotifier {
@@ -56,6 +69,7 @@ export class ToolDispatcher {
     private readonly treeSignalPublisher: SessionTreeSignalPublisher,
     private readonly backgroundTaskManager?: BackgroundTaskManager | null,
     private readonly askUserOfflineNotifier?: AskUserOfflineNotifier | null,
+    private readonly feishuAsk: FeishuAskMount | null = null,
   ) {}
 
   /**
@@ -194,6 +208,11 @@ export class ToolDispatcher {
     if (userId == null) {
       return JSON.stringify({ error: 'No connected client to receive questions' });
     }
+    if (session == null && sessionId != null && this.feishuAsk != null) {
+      session = await this.sessionMapper.selectById(sessionId);
+    }
+    const feishuChannel = this.feishuAsk != null && sessionId != null
+      && isFeishuChannelSession(session?.projectKey, session?.workspace);
     const userOnline = this.streamingWsRegistry.hasConnection(userId);
     let questions: Array<Record<string, unknown>> = [];
     let metadata: Record<string, unknown> | null = null;
@@ -208,12 +227,32 @@ export class ToolDispatcher {
     } catch (e) {
       harnessLog('warn', `Failed to parse ask_user_questions arguments: ${(e as Error).message}`);
     }
+    // 飞书没有进度卡、桌面也不在线：不要在内存里空等。模型改用文字继续。
+    if (feishuChannel && !userOnline && !this.feishuAsk!.hasRunningProgress(sessionId!)) {
+      harnessLog('info', `ask_user_questions skipped: feishu session ${sessionId} has no progress card and no websocket`);
+      return JSON.stringify({ error: '当前通道无法向用户提问' });
+    }
     const requestId = this.askUserQuestionsRegistry.register(sessionId!, questions, metadata);
     this.treeSignalPublisher.publishForSession(sessionId!);
-    // 用户离线：复用任务通知的 Webhook 投递管道提醒用户回来回答；
-    // 重连后 handleSubscribe 会重推 pending 问题，用户可直接作答。
+    // 先挂上 wait，再把问题交给用户。否则飞书 PATCH 返回后用户立刻提交时，complete 会先于
+    // waitForAnswer 删掉登记，等待方会当成「没有这道题」。WebSocket 也要在刷新卡片之前发出，
+    // 避免用户已经在卡片上答完，桌面端却又被推开一块已结束的提问面板。
+    const waiting = this.askUserQuestionsRegistry.waitForAnswer(sessionId!, requestId);
+    const data: Record<string, unknown> = { requestId, questions };
+    if (metadata) data.metadata = metadata;
+    this.streamingWsRegistry.send(userId, wsEvent('ask_user_questions', sessionId, data));
+    let formMounted = false;
+    if (feishuChannel && questions.length > 0 && this.feishuAsk!.hasRunningProgress(sessionId!)) {
+      try {
+        formMounted = await this.feishuAsk!.mount(sessionId!, requestId, questions);
+      } catch (e) {
+        harnessLog('warn', `Failed to mount feishu ask form: sessionId=${sessionId}, error=${(e as Error).message}`);
+      }
+    }
+    // 用户离线且没挂上飞书表单：复用任务通知的 Webhook 提醒用户回来回答。
+    // 进度卡已经带上表单时不再发，避免用户在飞书里就能答还被叫去网页。
     let offlineDelivery: TaskNotificationDelivery | null = null;
-    if (!userOnline && sessionId != null && this.askUserOfflineNotifier) {
+    if (!userOnline && !formMounted && sessionId != null && this.askUserOfflineNotifier) {
       session ??= await this.sessionMapper.selectById(sessionId);
       try {
         offlineDelivery = await this.askUserOfflineNotifier.prepareAskUser(sessionId, userId, requestId, session?.title ?? null);
@@ -221,16 +260,20 @@ export class ToolDispatcher {
         harnessLog('warn', `Failed to prepare ask_user webhook notification: sessionId=${sessionId}, error=${(e as Error).message}`);
       }
     }
-    const data: Record<string, unknown> = { requestId, questions };
-    if (metadata) data.metadata = metadata;
-    this.streamingWsRegistry.send(userId, wsEvent('ask_user_questions', sessionId, data));
-    const result = await this.askUserQuestionsRegistry.waitForAnswer(sessionId!, requestId);
+    const result = await waiting;
     if (offlineDelivery) {
       const deliveryToSuppress = offlineDelivery;
       try {
         await this.askUserOfflineNotifier?.suppressPending(deliveryToSuppress);
       } catch (e) {
         harnessLog('warn', `Failed to suppress ask_user webhook notification: deliveryId=${deliveryToSuppress.id}, error=${(e as Error).message}`);
+      }
+    }
+    if (feishuChannel) {
+      try {
+        this.feishuAsk!.clearRequest(sessionId!, requestId);
+      } catch (e) {
+        harnessLog('warn', `Failed to clear feishu ask form: sessionId=${sessionId}, requestId=${requestId}, error=${(e as Error).message}`);
       }
     }
     if (!result.answered || result.cancelled) {

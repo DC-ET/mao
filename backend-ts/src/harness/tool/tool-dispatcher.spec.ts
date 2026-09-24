@@ -204,6 +204,144 @@ describe('ToolDispatcher', () => {
     expect(notifier.suppressPending).not.toHaveBeenCalled();
   });
 
+  function feishuAskMount(overrides: Partial<{
+    hasRunningProgress: (sessionId: number) => boolean;
+    mount: (sessionId: number, requestId: string, questions: Array<Record<string, unknown>>) => Promise<boolean>;
+    clearRequest: (sessionId: number, requestId: string) => void;
+  }> = {}) {
+    return {
+      hasRunningProgress: vi.fn(overrides.hasRunningProgress ?? (() => false)),
+      mount: vi.fn(overrides.mount ?? (async () => true)),
+      clearRequest: vi.fn(overrides.clearRequest ?? (() => undefined)),
+    };
+  }
+
+  function dispatcherWithFeishu(feishuAsk: ReturnType<typeof feishuAskMount>, notifier?: {
+    prepareAskUser: ReturnType<typeof vi.fn>;
+    suppressPending: ReturnType<typeof vi.fn>;
+  } | null) {
+    return new ToolDispatcher(
+      registry, localToolExecutor, dangerAssessor, sessionMapper, streamingWsRegistry,
+      askUserQuestionsRegistry, localToolSessionRegistry, treeSignalPublisher, null, notifier ?? null, feishuAsk,
+    );
+  }
+
+  it('feishuSessionMountsTheProgressCardAndSkipsTheOfflineWebhook', async () => {
+    const notifier = {
+      prepareAskUser: vi.fn().mockResolvedValue({ id: 5 }),
+      suppressPending: vi.fn().mockResolvedValue(undefined),
+    };
+    const feishuAsk = feishuAskMount({ hasRunningProgress: () => true, mount: async () => true });
+    const feishu = dispatcherWithFeishu(feishuAsk, notifier);
+    localToolSessionRegistry.getUserIdForSession.mockResolvedValue(9);
+    streamingWsRegistry.hasConnection.mockReturnValue(false);
+    sessionMapper.selectById.mockResolvedValue({
+      userId: 9, title: '飞书任务', projectKey: 'feishu-1-private-9', workspace: '/ws/feishu-1-private-9',
+    });
+    askUserQuestionsRegistry.register.mockReturnValue('req-1');
+    askUserQuestionsRegistry.waitForAnswer.mockResolvedValue({ answered: true, cancelled: false, resultJson: '{"answers":[{}]}' });
+    const result = await feishu.dispatch(
+      'ask_user_questions',
+      '{"questions":[{"question":"选哪个？","options":[{"label":"甲"}],"multiSelect":false}]}',
+      'CLOUD', 7, 'workspace',
+    );
+    expect(result).toBe('{"answers":[{}]}');
+    expect(feishuAsk.mount).toHaveBeenCalledWith(7, 'req-1', [expect.objectContaining({ question: '选哪个？' })]);
+    expect(notifier.prepareAskUser).not.toHaveBeenCalled();
+    expect(feishuAsk.clearRequest).toHaveBeenCalledWith(7, 'req-1');
+    expect(streamingWsRegistry.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('feishuSessionClearsTheFormAfterTimeout', async () => {
+    const feishuAsk = feishuAskMount({ hasRunningProgress: () => true });
+    const feishu = dispatcherWithFeishu(feishuAsk);
+    localToolSessionRegistry.getUserIdForSession.mockResolvedValue(9);
+    streamingWsRegistry.hasConnection.mockReturnValue(false);
+    sessionMapper.selectById.mockResolvedValue({ userId: 9, projectKey: 'feishu-1-private-9', workspace: '/ws' });
+    askUserQuestionsRegistry.register.mockReturnValue('req-1');
+    askUserQuestionsRegistry.waitForAnswer.mockResolvedValue({ answered: false, cancelled: false, resultJson: '{"error":"timeout"}' });
+    const result = await feishu.dispatch('ask_user_questions', '{"questions":[{"question":"q"}]}', 'CLOUD', 7, 'workspace');
+    expect(result).toContain('timeout');
+    expect(feishuAsk.clearRequest).toHaveBeenCalledWith(7, 'req-1');
+    expect(streamingWsRegistry.send).toHaveBeenCalledTimes(2);
+  });
+
+  it('feishuWithoutCardOrWebsocketReturnsImmediately', async () => {
+    const feishuAsk = feishuAskMount({ hasRunningProgress: () => false });
+    const feishu = dispatcherWithFeishu(feishuAsk);
+    localToolSessionRegistry.getUserIdForSession.mockResolvedValue(9);
+    streamingWsRegistry.hasConnection.mockReturnValue(false);
+    sessionMapper.selectById.mockResolvedValue({
+      userId: 9, projectKey: 'oc_group', workspace: '/data/workspace/feishu-chat/1/oc_group',
+    });
+    const result = await feishu.dispatch('ask_user_questions', '{"questions":[{"question":"q"}]}', 'CLOUD', 7, 'workspace');
+    expect(JSON.parse(result)).toEqual({ error: '当前通道无法向用户提问' });
+    expect(askUserQuestionsRegistry.register).not.toHaveBeenCalled();
+    expect(askUserQuestionsRegistry.waitForAnswer).not.toHaveBeenCalled();
+    expect(feishuAsk.mount).not.toHaveBeenCalled();
+    expect(streamingWsRegistry.send).not.toHaveBeenCalled();
+  });
+
+  it('feishuWithWebsocketStillPushesAskUserQuestions', async () => {
+    const feishuAsk = feishuAskMount({ hasRunningProgress: () => false });
+    const feishu = dispatcherWithFeishu(feishuAsk);
+    localToolSessionRegistry.getUserIdForSession.mockResolvedValue(9);
+    streamingWsRegistry.hasConnection.mockReturnValue(true);
+    sessionMapper.selectById.mockResolvedValue({ userId: 9, projectKey: 'feishu-1-private-9', workspace: '/ws' });
+    askUserQuestionsRegistry.register.mockReturnValue('req-ws');
+    askUserQuestionsRegistry.waitForAnswer.mockResolvedValue({ answered: true, cancelled: false, resultJson: '{"answers":[]}' });
+    await feishu.dispatch('ask_user_questions', '{"questions":[{"question":"q"}]}', 'CLOUD', 7, 'workspace');
+    expect(feishuAsk.mount).not.toHaveBeenCalled();
+    const sent = streamingWsRegistry.send.mock.calls.map((call) => call[1] as { type: string });
+    expect(sent.map((event) => event.type)).toContain('ask_user_questions');
+  });
+
+  it('nonFeishuSessionStillPreparesTheOfflineWebhookWhenFeishuMountIsWired', async () => {
+    const notifier = {
+      prepareAskUser: vi.fn().mockResolvedValue({ id: 8 }),
+      suppressPending: vi.fn().mockResolvedValue(undefined),
+    };
+    const feishuAsk = feishuAskMount();
+    const wired = dispatcherWithFeishu(feishuAsk, notifier);
+    localToolSessionRegistry.getUserIdForSession.mockResolvedValue(9);
+    streamingWsRegistry.hasConnection.mockReturnValue(false);
+    sessionMapper.selectById.mockResolvedValue({ userId: 9, title: '桌面任务', projectKey: 'proj', workspace: '/ws' });
+    askUserQuestionsRegistry.register.mockReturnValue('req-desktop');
+    askUserQuestionsRegistry.waitForAnswer.mockResolvedValue({ answered: true, cancelled: false, resultJson: '{"answers":[]}' });
+    await wired.dispatch('ask_user_questions', '{}', 'CLOUD', 7, 'workspace');
+    expect(notifier.prepareAskUser).toHaveBeenCalledWith(7, 9, 'req-desktop', '桌面任务');
+    expect(feishuAsk.mount).not.toHaveBeenCalled();
+    expect(feishuAsk.clearRequest).not.toHaveBeenCalled();
+  });
+
+  it('feishuAnswerSubmittedWhileTheCardIsRefreshingIsNotLost', async () => {
+    const questions = new AskUserQuestionsRegistry(2_000);
+    const feishuAsk = {
+      hasRunningProgress: () => true,
+      mount: vi.fn(async (sessionId: number, requestId: string) => {
+        questions.complete(sessionId, requestId, JSON.stringify({
+          answers: [{ question: '选哪个？', selectedLabels: ['甲'], customInput: null }],
+        }));
+        return true;
+      }),
+      clearRequest: vi.fn(),
+    };
+    const feishu = new ToolDispatcher(
+      registry, localToolExecutor, dangerAssessor, sessionMapper, streamingWsRegistry,
+      questions, localToolSessionRegistry, treeSignalPublisher, null, null, feishuAsk,
+    );
+    localToolSessionRegistry.getUserIdForSession.mockResolvedValue(9);
+    streamingWsRegistry.hasConnection.mockReturnValue(true);
+    sessionMapper.selectById.mockResolvedValue({ userId: 9, projectKey: 'feishu-1-private-9', workspace: '/ws' });
+    const result = await feishu.dispatch(
+      'ask_user_questions', '{"questions":[{"question":"选哪个？"}]}', 'CLOUD', 7, 'workspace',
+    );
+    expect(JSON.parse(result)).toEqual({
+      answers: [{ question: '选哪个？', selectedLabels: ['甲'], customInput: null }],
+    });
+    expect(feishuAsk.clearRequest).toHaveBeenCalled();
+  });
+
   it('unknownToolThrowsException', async () => {
     await expect(dispatcher.dispatch('missing', '{}')).rejects.toBeInstanceOf(IllegalArgumentException);
     await expect(dispatcher.dispatch('missing', '{}')).rejects.toThrow(/Unknown tool/);

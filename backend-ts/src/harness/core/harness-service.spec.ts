@@ -10,7 +10,7 @@ import type { Tool } from '../tool/tool.js';
 import type { AgentLoop } from './agent-loop.js';
 import type { ToolRegistry } from '../tool/tool-registry.js';
 
-function fakeTool(name: string, weixin = false): Tool {
+function fakeTool(name: string, weixin = false, feishu = false): Tool {
   return {
     getName: () => name,
     getDescription: () => name,
@@ -18,6 +18,7 @@ function fakeTool(name: string, weixin = false): Tool {
     getOutputSchema: () => ({}),
     execute: () => '',
     ...(weixin ? { weixinChannelTool: true } : {}),
+    ...(feishu ? { feishuChannelTool: true } : {}),
   } as Tool;
 }
 
@@ -41,21 +42,29 @@ describe('HarnessService.filterToolsForSession', () => {
     expect(names(filtered)).not.toContain('ask_user_questions');
   });
 
-  it('feishuChannelRemovesAskUserQuestionsAndWeixinTools', () => {
-    const filtered = HarnessService.filterToolsForSession(
+  it('feishuPrivateAndGroupKeepAskUserQuestionsAndDropWeixinTools', () => {
+    const withFeishu = [...tools('ask_user_questions', 'read_file'), fakeTool('feishu_send_file', false, true)];
+    const privateFiltered = HarnessService.filterToolsForSession(withFeishu, 'feishu-1-private-2');
+    expect(names(privateFiltered)).toEqual(expect.arrayContaining(['ask_user_questions', 'read_file', 'feishu_send_file']));
+    expect(names(privateFiltered)).not.toContain('send_wechat_image');
+
+    const groupFiltered = HarnessService.filterToolsForSession(
       tools('ask_user_questions', 'read_file'),
-      'feishu-1-private-2',
+      'oc_group',
+      '/opt/mao-data/workspace/feishu-chat/3/oc_group',
     );
-    expect(names(filtered)).toEqual(['read_file']);
+    expect(names(groupFiltered)).toEqual(expect.arrayContaining(['ask_user_questions', 'read_file']));
+    expect(names(groupFiltered)).not.toContain('send_wechat_image');
   });
 
   it('nonWeixinChannelKeepsAskUserQuestionsButRemovesWeixinTools', () => {
     const filtered = HarnessService.filterToolsForSession(
-      tools('ask_user_questions', 'read_file'),
+      [...tools('ask_user_questions', 'read_file'), fakeTool('feishu_send_file', false, true)],
       'some-project',
     );
     expect(names(filtered)).toEqual(expect.arrayContaining(['ask_user_questions', 'read_file']));
     expect(names(filtered)).not.toContain('send_wechat_image');
+    expect(names(filtered)).not.toContain('feishu_send_file');
   });
 
   it('nullProjectKeyBehavesAsNonWeixinChannel', () => {
