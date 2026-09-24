@@ -28,6 +28,8 @@ export function createFeishuPatchedProgress(deps: {
   /** 终态更新时清掉本会话表单，避免随后的 RUNNING 快照把已结束的提问再画上去。 */
   clearAsks: () => void;
   patch: (card: Record<string, unknown>) => Promise<void>;
+  /** 本次 PATCH 成功后的提问列表。空列表表示这张卡上已经没有待回答的题。 */
+  afterPatch?: (pendingAsks: FeishuPendingAsk[]) => void;
   buildCard: (input: FeishuProgressSnapshot & { pendingAsks: FeishuPendingAsk[]; elapsedMs?: number }) => Record<string, unknown>;
   startedAtMs: number;
   seed?: FeishuProgressSnapshot;
@@ -65,10 +67,12 @@ export function createFeishuPatchedProgress(deps: {
     last = { status, round, content, tools };
     const card = build(asksNow());
     await deps.patch(card);
-    const latest = build(asksNow());
+    const latestAsks = asksNow();
+    const latest = build(latestAsks);
     if (JSON.stringify(latest) !== JSON.stringify(card)) {
       await deps.patch(latest);
     }
+    deps.afterPatch?.(latestAsks);
   };
 
   return {

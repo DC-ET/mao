@@ -77,6 +77,43 @@ describe('飞书进度卡覆盖顺序', () => {
     expect(cards.at(-1)).not.toContain('req-1');
   });
 
+  it('PATCH 成功后交出当前提问；PATCH 失败则不交', async () => {
+    const store = new FeishuAskFormStore();
+    store.set(1, 'req-1', [question], 'ou_sender');
+    const delivered: string[][] = [];
+    const failing = createFeishuPatchedProgress({
+      listAsks: () => store.list(1),
+      clearAsks: () => store.clearSession(1),
+      patch: async () => { throw new Error('patch down'); },
+      afterPatch: (asks) => { delivered.push(asks.map((ask) => ask.requestId)); },
+      buildCard: ({ status, round, content, tools, pendingAsks, elapsedMs }) => buildFeishuProgressCard(
+        status, round, content, tools, { sessionId: 1, sender: 'ou_sender' }, elapsedMs, undefined, pendingAsks,
+      ),
+      startedAtMs: 0,
+      now: () => 1_000,
+      sleep: async () => undefined,
+      throttleMs: 0,
+    });
+    await expect(failing.update('RUNNING', 1, '执行中', [])).rejects.toThrow('patch down');
+    expect(delivered).toEqual([]);
+
+    const tracked = createFeishuPatchedProgress({
+      listAsks: () => store.list(1),
+      clearAsks: () => store.clearSession(1),
+      patch: async () => undefined,
+      afterPatch: (asks) => { delivered.push(asks.map((ask) => ask.requestId)); },
+      buildCard: ({ status, round, content, tools, pendingAsks, elapsedMs }) => buildFeishuProgressCard(
+        status, round, content, tools, { sessionId: 1, sender: 'ou_sender' }, elapsedMs, undefined, pendingAsks,
+      ),
+      startedAtMs: 0,
+      now: () => 1_000,
+      sleep: async () => undefined,
+      throttleMs: 0,
+    });
+    await tracked.update('RUNNING', 1, '执行中', []);
+    expect(delivered).toEqual([['req-1']]);
+  });
+
   it('终态更新清掉表单状态且卡片不含 requestId', async () => {
     const store = new FeishuAskFormStore();
     store.set(1, 'req-1', [question], 'ou_sender');
