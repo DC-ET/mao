@@ -37,18 +37,18 @@
         <template #empty>
           <el-empty description="暂无数据" :image-size="60" />
         </template>
-        <el-table-column prop="id" label="ID" width="80" />
-        <el-table-column prop="name" label="名称" min-width="120">
+        <el-table-column prop="id" label="ID" width="72" />
+        <el-table-column prop="name" label="名称" width="240" class-name="agent-name-col">
           <template #default="{ row }">
-            <span class="agent-identity">
+            <div class="agent-identity">
               <el-avatar :size="32" :src="resolveAgentAvatarUrl(row.avatarUrl)" shape="square">{{ row.name?.slice(0, 1) || 'A' }}</el-avatar>
-              <span>{{ row.name }}</span>
+              <span class="agent-name" :title="row.name">{{ row.name }}</span>
               <el-tag v-if="row.isDefault" type="warning" size="small">默认</el-tag>
-            </span>
+            </div>
           </template>
         </el-table-column>
-        <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip />
-        <el-table-column label="状态" width="90">
+        <el-table-column prop="description" label="描述" min-width="160" show-overflow-tooltip />
+        <el-table-column label="状态" width="88">
           <template #default="{ row }">
             <el-tag :type="row.enabled === false ? 'info' : 'success'" size="small">
               {{ row.enabled === false ? '停用' : '启用' }}
@@ -58,16 +58,16 @@
         <el-table-column label="创建人" width="120" show-overflow-tooltip class-name="hide-on-mobile" label-class-name="hide-on-mobile">
           <template #default="{ row }">{{ row.creatorName || '-' }}</template>
         </el-table-column>
-        <el-table-column label="Skills" width="110" align="right">
+        <el-table-column label="Skills" width="84" align="right">
           <template #default="{ row }">{{ row.skillNames?.length || 0 }}</template>
         </el-table-column>
-        <el-table-column label="经验数" width="90" align="right">
+        <el-table-column label="经验数" width="84" align="right">
           <template #default="{ row }">{{ row.experiences?.length || 0 }}</template>
         </el-table-column>
-        <el-table-column prop="createdAt" label="创建时间" width="180" :formatter="formatDateTimeColumn" />
-        <el-table-column label="操作" width="330" fixed="right">
+        <el-table-column prop="createdAt" label="创建时间" width="178" :formatter="formatDateTimeColumn" />
+        <el-table-column label="操作" width="280" fixed="right">
           <template #default="{ row }">
-            <template v-if="canWrite">
+            <div v-if="canWrite" class="row-actions">
               <el-button type="primary" link size="small" @click="handleCopy(row)">复制</el-button>
               <el-button type="primary" link size="small" @click="handleEdit(row)">编辑</el-button>
               <el-button type="primary" link size="small" @click="historyAgent = row">提示词版本</el-button>
@@ -89,7 +89,7 @@
                 </span>
               </el-tooltip>
               <el-button v-else type="danger" link size="small" @click="handleDelete(row)">删除</el-button>
-            </template>
+            </div>
             <span v-else class="op-muted">—</span>
           </template>
         </el-table-column>
@@ -315,11 +315,40 @@ onMounted(fetchAgents)
 
 <style scoped>
 .agent-identity {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+  max-width: 100%;
 }
-.agent-identity .el-avatar { flex-shrink: 0; }
+.agent-identity .el-avatar,
+.agent-identity .el-tag {
+  flex-shrink: 0;
+}
+.agent-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+:deep(.agent-name-col .cell) {
+  overflow-wrap: normal;
+  word-break: keep-all;
+}
+.row-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 8px;
+}
+.row-actions :deep(.el-button) {
+  margin-left: 0;
+}
+.row-actions .disabled-btn-wrap,
+.row-actions :deep(.el-tooltip__trigger) {
+  flex-shrink: 0;
+}
 .card-header {
   display: flex;
   justify-content: space-between;
@@ -331,7 +360,7 @@ onMounted(fetchAgents)
 
 .disabled-btn-wrap {
   display: inline-flex;
-  margin: 0 12px 0 0;
+  margin: 0;
 }
 
 .search-form {
