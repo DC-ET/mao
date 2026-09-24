@@ -112,6 +112,23 @@ describe('FeishuCardProgressListener', () => {
     expect(updates).toEqual(['RUNNING', 'CANCELLED']);
   });
 
+  it('keeps markdown breaks when newlines arrive as their own deltas', async () => {
+    const updates: string[] = [];
+    const listener = new FeishuCardProgressListener({
+      update: async (_status, _round, content) => { updates.push(content); },
+    });
+    listener.onRoundStart(1);
+    listener.onContentDelta('先给结论。');
+    listener.onContentDelta('\n\n');
+    listener.onToolCallStart({ id: 'ask', function: { name: 'ask_user_questions', arguments: '{}' } });
+    listener.onContentDelta('## 一、根因\n');
+    listener.onContentDelta('\n');
+    listener.onContentDelta('1. 提示词压过只读。');
+    listener.onRoundEnd(1);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(updates[updates.length - 1]).toBe('先给结论。\n\n## 一、根因\n\n1. 提示词压过只读。');
+  });
+
   it('offsets recovered loop rounds so the card continues from prior history', async () => {
     const updates: Array<{ round: number; tools: string[] }> = [];
     const listener = new FeishuCardProgressListener({

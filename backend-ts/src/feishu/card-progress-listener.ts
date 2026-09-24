@@ -30,7 +30,11 @@ export class FeishuCardProgressListener implements AgentEventListener {
   }
 
   onContentDelta(delta: string): void {
-    this.content = trimCardText(`${this.content}${delta}`);
+    // 换行、空行经常单独成为一个 delta。累积时不能 trim，否则段末换行被吃掉，
+    // 下一段会粘在上一句后面。询问态卡片会停在这份正文上，标题和列表就挤成一段。
+    if (delta === '' || this.content.length >= CARD_TEXT_MAX) return;
+    const next = this.content + delta;
+    this.content = next.length <= CARD_TEXT_MAX ? next : next.slice(0, CARD_TEXT_MAX);
   }
 
   onToolCallStart(toolCall: ToolCall): void {
@@ -99,7 +103,7 @@ export class FeishuCardProgressListener implements AgentEventListener {
 
   private async safeUpdate(status: 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED', round: number, content: string, tools: string[]): Promise<boolean> {
     try {
-      await this.progress.update(status, round, content, tools);
+      await this.progress.update(status, round, trimCardText(content), tools);
       return true;
     } catch (error) {
       console.warn(`飞书进度卡片更新失败: ${error instanceof Error ? error.message : String(error)}`);
@@ -129,8 +133,11 @@ export class FeishuCardProgressListener implements AgentEventListener {
   }
 }
 
+const CARD_TEXT_MAX = 6000;
+
+/** 只去掉整段首尾空白。内部换行必须保留，发出卡片时再调用。 */
 function trimCardText(value: string): string {
-  return value.trim().slice(0, 6000);
+  return value.trim().slice(0, CARD_TEXT_MAX);
 }
 
 function normalizeRoundOffset(value: number): number {
