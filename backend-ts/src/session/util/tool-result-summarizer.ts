@@ -127,6 +127,8 @@ export function summarize(toolName: string | null | undefined, argumentsJson: st
       return summarizeOpenWebPage(argumentsJson, result);
     case 'generate_image':
       return summarizeGenerateImage(argumentsJson, result);
+    case 'edit_image':
+      return summarizeEditImage(argumentsJson, result);
     case 'send_wechat_image':
       return summarizeSendWechatImage(argumentsJson, result);
     case 'send_wechat_file':
@@ -383,6 +385,18 @@ function summarizeGenerateImage(argumentsJson: string | null | undefined, result
   const node = asObj(parseJson(result));
   if (!node) return label;
   if (has(node, 'error')) return '生成图片 (失败)';
+  const count = Array.isArray(node.images) ? node.images.length : 0;
+  if (count > 0) return `${label} (${count} 张)`;
+  return label;
+}
+
+function summarizeEditImage(argumentsJson: string | null | undefined, result: string | null | undefined): string {
+  const prompt = extractJsonString(argumentsJson, 'prompt');
+  const label = `编辑图片${prompt != null ? `: ${truncate(prompt, 30)}` : ''}`;
+  if (result == null) return label;
+  const node = asObj(parseJson(result));
+  if (!node) return label;
+  if (has(node, 'error')) return '编辑图片 (失败)';
   const count = Array.isArray(node.images) ? node.images.length : 0;
   if (count > 0) return `${label} (${count} 张)`;
   return label;

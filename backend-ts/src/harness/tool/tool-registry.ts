@@ -37,6 +37,7 @@ import { ShellSessionTool, type ShellEcpInjector, type ShellLarkUatInjector, typ
 import { WebSearchTool } from './impl/web-search-tool.js';
 import { OpenWebPageTool } from './impl/open-web-page-tool.js';
 import { GenerateImageTool } from './impl/generate-image-tool.js';
+import { EditImageTool } from './impl/edit-image-tool.js';
 import { TaskCreateTool, TaskDeleteTool, TaskListTool, TaskUpdateTool } from './impl/task-tools.js';
 import {
   CreateScheduledTaskTool, DeleteScheduledTaskTool, ListScheduledTasksTool, UpdateScheduledTaskTool,
@@ -107,6 +108,7 @@ export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRe
     new WebSearchTool(deps.webSearch),
     new OpenWebPageTool(deps.webPage, deps.runtimeDataResolver),
     new GenerateImageTool(deps.imageModelLookup, deps.uploadDir, deps.getUploadBaseUrl ?? (async () => '')),
+    new EditImageTool(deps.imageModelLookup, deps.pathSandbox, deps.uploadDir, deps.getUploadBaseUrl ?? (async () => '')),
     new TaskCreateTool(deps.sessionTodoMapper),
     new TaskListTool(deps.sessionTodoMapper),
     new TaskUpdateTool(deps.sessionTodoMapper),

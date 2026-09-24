@@ -75,6 +75,7 @@ const toolIconMap: Record<string, Component> = {
   web_search: Search,
   open_web_page: Link,
   generate_image: Picture,
+  edit_image: Picture,
   send_wechat_image: Picture,
   send_wechat_file: Document,
   create_scheduled_task: Calendar,

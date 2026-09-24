@@ -21,7 +21,7 @@ Logo 与客户端预览图见 GitHub 仓库 `docs/assets/logo.png`、`docs/asset
 | Agent 引擎 | 内置 Harness 运行时，非仅 LLM 网关 |
 | 客户端 | 管理后台 + Web/Electron 桌面 + 安卓 APP（CLOUD）+ `mao-agent` 终端 CLI |
 | 协作 | Side Task、子代理委派、定时任务与完成通知 |
-| 扩展 | Skill + MCP + 内置工具（Shell/文件/搜索/文生图等） |
+| 扩展 | Skill + MCP + 内置工具（Shell/文件/搜索/文生图+改图等） |
 | 认证 | 本地账号 / LDAP / 飞书 SSO（可选） |
 
 若需要低代码工作流或开箱 SaaS，可考虑 Dify、n8n 等；若需要私有化、自选模型、服务端与本地工具边界可切换，选 Mao。
@@ -94,7 +94,7 @@ flowchart TB
 - **权限与治理** — RBAC；管理 REST 操作审计
 - **双执行模式** — CLOUD / LOCAL；LOCAL 支持权限档位与工具审批
 - **MCP** — 管理后台全局 MCP；桌面端用户级私有 MCP；按 Agent 注入 `mcp__{server}__{tool}`
-- **多模态** — 模型类型分类；文生图；微信语音/图片/文件
+- **多模态** — 模型类型分类；文生图/改图（generate_image / edit_image）；微信语音/图片/文件
 - **协作** — Side Task、后台子代理；内置 `default` / `explorer` / `worker` / `reviewer`（对齐 Codex：通用 / 调研 / 写码 / 审查），旧名 `researcher`→`explorer`、`coder`→`worker` 自动归一。子代理不能调用 `ask_user_questions`，向用户提问只发生在主会话
 - **任务自动化** — 定时任务；钉钉/飞书 Webhook 或微信通知
 - **工作区** — 云端新建/复用/Git HTTPS 初始化；Git 只读诊断
