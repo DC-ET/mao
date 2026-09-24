@@ -64,12 +64,18 @@ export function buildFeishuProgressCard(
   action?: FeishuProgressCancelAction, elapsedMs?: number, sessionDetailUrl?: string,
   pendingAsks?: FeishuPendingAsk[],
 ): Record<string, unknown> {
+  const waiting = status === 'RUNNING' && pendingAsks != null && pendingAsks.length > 0;
+  const visibleTools = waiting ? tools.filter((tool) => !isAskUserQuestionsToolLine(tool)) : tools;
   const sections: Array<Record<string, unknown>> = [
-    { tag: 'markdown', content: statusLineOf(status, round, elapsedMs), text_align: 'left', text_size: 'normal_v2' },
+    { tag: 'markdown', content: statusLineOf(status, round, elapsedMs, waiting), text_align: 'left', text_size: 'normal_v2' },
   ];
+  if (waiting) {
+    sections.push({ tag: 'markdown', content: waitingHint(pendingAsks.length), text_align: 'left', text_size: 'normal_v2' });
+  }
   if (content.trim() !== '') sections.push({ tag: 'markdown', content: content.slice(0, 6000), text_align: 'left', text_size: 'normal_v2' });
-  if (tools.length > 0) sections.push({ tag: 'markdown', content: `**本轮工具**\n${tools.map((tool) => `- ${tool}`).join('\n').slice(0, 3000)}`, text_align: 'left', text_size: 'normal_v2' });
-  if (status === 'RUNNING' && pendingAsks != null && pendingAsks.length > 0) {
+  if (visibleTools.length > 0) sections.push({ tag: 'markdown', content: `**本轮工具**\n${visibleTools.map((tool) => `- ${tool}`).join('\n').slice(0, 3000)}`, text_align: 'left', text_size: 'normal_v2' });
+  if (waiting) {
+    sections.push({ tag: 'hr' });
     pendingAsks.forEach((ask, index) => sections.push(askForm(ask, index)));
   }
   const buttons: Array<Record<string, unknown>> = [];
@@ -96,11 +102,27 @@ export function buildFeishuProgressCard(
       columns: buttons.map((button) => ({ tag: 'column', width: 'auto', vertical_align: 'top', elements: [button] })),
     });
   }
-  return {
+  const card: Record<string, unknown> = {
     schema: '2.0',
     config: { update_multi: true },
     body: { direction: 'vertical', padding: '12px 12px 12px 12px', elements: sections },
   };
+  if (waiting) {
+    card.header = { template: 'orange', title: { tag: 'plain_text', content: '等待你的回复' } };
+  }
+  return card;
+}
+
+/** 提问进行中时去掉「ask_user_questions：…（执行中）」：表单本身就是这步，再写执行中会让人以为不用操作。 */
+function isAskUserQuestionsToolLine(tool: string): boolean {
+  return tool.trim().toLowerCase().startsWith('ask_user_questions');
+}
+
+function waitingHint(askCount: number): string {
+  const lead = askCount > 1
+    ? `下面有 ${askCount} 道题，每道题填完后单独点「提交答案」。`
+    : '请在下面作答，然后点「提交答案」。';
+  return `${lead}\n我会停在这里等你，不用在卡片下面再发一条消息。`;
 }
 
 /** 一组提问一个 form。选项说明写在 markdown 里，不塞进下拉项；requestId 只放按钮 value。 */
@@ -128,9 +150,9 @@ function askForm(ask: FeishuPendingAsk, formIndex: number): Record<string, unkno
   };
   elements.push({
     tag: 'button',
-    text: { tag: 'plain_text', content: '提交' },
+    text: { tag: 'plain_text', content: '提交答案' },
     type: 'primary',
-    size: 'sm',
+    size: 'medium',
     name: feishuAskSubmitName(formIndex),
     form_action_type: 'submit',
     // 进度卡上其它按钮靠顶层 value 回传；表单提交同时放 behaviors，两种回调形态都能识别。
@@ -190,11 +212,12 @@ function plain(record: object, key: string): string {
 }
 
 /** 状态行：`**状态：处理完成** · 共 8 轮 · 耗时 8 分 26 秒`。 */
-function statusLineOf(status: FeishuCardStatus, round: number, elapsedMs?: number): string {
+function statusLineOf(status: FeishuCardStatus, round: number, elapsedMs?: number, waiting = false): string {
   const meta: string[] = [];
   if (round > 0) meta.push(status === 'RUNNING' ? `第 ${round} 轮` : `共 ${round} 轮`);
   if (status !== 'RUNNING' && elapsedMs != null) meta.push(`耗时 ${formatFeishuDuration(elapsedMs)}`);
-  return `**状态：${STATUS_TITLES[status]}**${meta.length > 0 ? ` · ${meta.join(' · ')}` : ''}`;
+  const title = waiting ? '等待你的回复' : STATUS_TITLES[status];
+  return `**状态：${title}**${meta.length > 0 ? ` · ${meta.join(' · ')}` : ''}`;
 }
 
 /** 耗时文本：`45 秒` / `8 分 26 秒` / `1 小时 2 分`（整分、整时省略零头）。 */

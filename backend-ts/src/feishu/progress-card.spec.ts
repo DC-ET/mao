@@ -7,6 +7,7 @@ type CardElement = {
   content?: string;
   required?: boolean;
   form_action_type?: string;
+  text?: { content?: string };
   value?: Record<string, unknown>;
   elements?: CardElement[];
   options?: Array<{ text?: { content?: string }; value?: string }>;
@@ -54,6 +55,7 @@ describe('飞书进度卡片状态行', () => {
   it('执行中保持「第 n 轮」且不展示耗时', () => {
     const card = buildFeishuProgressCard('RUNNING', 2, '', [], undefined, 506_000);
     expect(statusLineOf(card)).toBe('**状态：正在处理** · 第 2 轮');
+    expect(card.header).toBeUndefined();
   });
 
   it('取消与失败终态同样带耗时', () => {
@@ -181,9 +183,15 @@ describe('飞书进度卡片提问表单', () => {
 
   it('执行中同时放一组单选和一组多选，提交在 form 内、取消在 form 外', () => {
     const card = buildFeishuProgressCard(
-      'RUNNING', 2, '正文', ['read_file：执行中…'], cancelAction, undefined, 'https://mao.example.com/tasks/7',
+      'RUNNING', 2, '正文', ['ask_user_questions：向用户提问（执行中）', 'read_file：执行中…'], cancelAction, undefined, 'https://mao.example.com/tasks/7',
       [singleAsk, multiAsk],
     );
+    expect(card.header).toEqual({ template: 'orange', title: { tag: 'plain_text', content: '等待你的回复' } });
+    expect(statusLineOf(card)).toBe('**状态：等待你的回复** · 第 2 轮');
+    expect(JSON.stringify(card)).toContain('下面有 2 道题');
+    expect(JSON.stringify(card)).toContain('不用在卡片下面再发一条消息');
+    expect(JSON.stringify(card)).not.toContain('ask_user_questions');
+    expect(JSON.stringify(card)).toContain('read_file：执行中…');
     const forms = formsOf(card);
     expect(forms.map((form) => form.name)).toEqual(['ask_0', 'ask_1']);
     const tags = elementsOf(card).map((element) => element.tag);
@@ -216,6 +224,7 @@ describe('飞书进度卡片提问表单', () => {
     expect(new Set(names).size).toBe(names.length);
 
     const submit = forms[0].elements?.find((element) => element.tag === 'button');
+    expect(submit?.text?.content).toBe('提交答案');
     expect(submit?.name).toBe('submit_0');
     expect(forms[1].elements?.find((element) => element.tag === 'button')?.name).toBe('submit_1');
     expect(submit?.form_action_type).toBe('submit');
