@@ -59,43 +59,9 @@ Mao 不是又一个 ChatGPT 套壳，也不是 Dify / n8n 那样的低代码工�
 
 ## 架构
 
-```mermaid
-flowchart TB
-    subgraph clients["客户端"]
-        Admin["管理后台"]
-        Desktop["Web / Electron"]
-        Android["安卓 APP"]
-        Cli["mao-agent"]
-        Embed["Embed SDK"]
-        IM["飞书 / 微信"]
-    end
-
-    subgraph backend["后端 · NestJS + Fastify"]
-        API["REST /api/v1"]
-        WS["WebSocket 流式"]
-        Harness["Agent Harness"]
-        Tools["工具调度"]
-    end
-
-    subgraph exec["执行"]
-        Cloud["CLOUD · 服务端工作区"]
-        Local["LOCAL · Electron / CLI"]
-    end
-
-    LLM["OpenAI 兼容 LLM"]
-    MCP["MCP"]
-    DB[(MySQL 8)]
-
-    clients --> API
-    Desktop & Android & Cli & Embed <--> WS
-    WS --> Harness
-    Harness --> Tools
-    Tools --> Cloud
-    Tools -->|委托| Local
-    Tools --> MCP
-    Harness --> LLM
-    API --> DB
-```
+<p align="center">
+  <img src="docs/assets/architecture.png" alt="Mao 架构：客户端经 REST 与 WebSocket 进入 Harness，工具在 CLOUD 或 LOCAL 执行" width="960" />
+</p>
 
 生产环境单域名分流：桌面 `/`、管理后台 `/admin/`、API `/api/`、上传 `/uploads/`。
 
