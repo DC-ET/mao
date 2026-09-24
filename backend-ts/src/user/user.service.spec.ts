@@ -90,16 +90,25 @@ describe('UserService', () => {
     expect(userRepo.updateById).toHaveBeenCalledWith(existing);
   });
 
-  it('resetPasswordRejectsLdapUserAndUpdatesLocalUser', async () => {
-    const ldap = user(9, 'ldap', 'Ldap', null, null, 1);
-    vi.mocked(userRepo.findById).mockResolvedValue(ldap);
-    await expect(service.resetPassword(9, 'Newpass1')).rejects.toBeInstanceOf(BusinessException);
+  it('resetPasswordSetsLocalPasswordForExternalAndLocalUsers', async () => {
+    vi.mocked(userRepo.findById).mockResolvedValue(null);
+    await expect(service.resetPassword(404, 'Newpass1')).rejects.toBeInstanceOf(BusinessException);
+
+    const external = user(9, 'ldap', 'Ldap', null, null, 1);
+    vi.mocked(userRepo.findById).mockResolvedValue(external);
+    await expect(service.resetPassword(9, 'password')).rejects.toBeInstanceOf(BusinessException);
+    expect(external.passwordHash).toBeNull();
+
+    vi.mocked(hasher.hash).mockResolvedValue('new-hash');
+    await service.resetPassword(9, 'Newpass1');
+    expect(external.passwordHash).toBe('new-hash');
+    expect(userRepo.updateById).toHaveBeenCalledWith(external);
 
     const local = user(10, 'local', 'Local', null, 'old', 1);
     vi.mocked(userRepo.findById).mockResolvedValue(local);
-    vi.mocked(hasher.hash).mockResolvedValue('new-hash');
     await service.resetPassword(10, 'Newpass1');
     expect(local.passwordHash).toBe('new-hash');
+    expect(userRepo.updateById).toHaveBeenCalledWith(local);
   });
 
   it('resolveAuthSource', () => {

@@ -102,9 +102,6 @@ export class UserService {
 
   async resetPassword(id: number, newPassword: string): Promise<void> {
     const user = await this.getUser(id);
-    if (!hasText(user.passwordHash ?? undefined)) {
-      throw new BusinessException(ErrorCode.USER_PASSWORD_MANAGED_BY_LDAP);
-    }
     this.validatePassword(newPassword);
     user.passwordHash = await this.passwordHasher.hash(newPassword);
     await this.userRepo.updateById(user);

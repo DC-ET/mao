@@ -123,23 +123,14 @@
             <el-button type="primary" link size="small" @click="handleDetail(row)">详情</el-button>
             <template v-if="canWrite">
               <el-button type="primary" link size="small" @click="handleEdit(row)">编辑</el-button>
-              <el-tooltip
-                :disabled="row.authSource === 'LOCAL'"
-                content="非本地账号密码由对应登录服务管理"
-                placement="top"
+              <el-button
+                type="primary"
+                link
+                size="small"
+                @click="handleResetPassword(row)"
               >
-                <span>
-                  <el-button
-                    type="primary"
-                    link
-                    size="small"
-                    :disabled="row.authSource !== 'LOCAL'"
-                    @click="handleResetPassword(row)"
-                  >
-                    重置密码
-                  </el-button>
-                </span>
-              </el-tooltip>
+                重置密码
+              </el-button>
               <el-button
                 :type="row.status === 1 ? 'danger' : 'success'"
                 link
@@ -199,7 +190,6 @@
                 type="primary"
                 link
                 size="small"
-                :disabled="row.authSource !== 'LOCAL'"
                 @click="handleResetPassword(row)"
               >
                 重置密码
@@ -244,6 +234,7 @@
       :visible="true"
       :user-id="resetUserId"
       :username="resetUsername"
+      :auth-source="resetAuthSource"
       @update:visible="resetDialogVisible = $event"
       @saved="fetchUsers"
     />
@@ -311,6 +302,7 @@ const canWrite = computed(() => authStore.hasPermission('user:write'))
 const resetDialogVisible = ref(false)
 const resetUserId = ref<number | null>(null)
 const resetUsername = ref('')
+const resetAuthSource = ref<string | null>(null)
 
 const detailVisible = ref(false)
 const detailUser = ref<any | null>(null)
@@ -465,6 +457,7 @@ async function handleEdit(row: any) {
 function handleResetPassword(row: any) {
   resetUserId.value = row.id
   resetUsername.value = row.username
+  resetAuthSource.value = row.authSource ?? null
   resetDialogVisible.value = true
 }
 

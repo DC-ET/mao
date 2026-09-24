@@ -11,6 +11,15 @@
     <p class="user-hint">
       为用户 <strong>{{ username }}</strong> 设置新密码
     </p>
+    <el-alert
+      v-if="externalLoginLabel"
+      type="info"
+      :closable="false"
+      show-icon
+      class="source-hint"
+    >
+      该用户当前通过{{ externalLoginLabel }}登录。设置后可同时使用用户名和此密码登录，原登录方式仍然可用。账号类型会显示为「本地」。
+    </el-alert>
     <el-form
       ref="formRef"
       :model="form"
@@ -47,7 +56,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch } from 'vue'
+import { ref, reactive, watch, computed } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { api } from '../../api'
@@ -56,7 +65,21 @@ const props = defineProps<{
   visible: boolean
   userId: number | null
   username: string
+  authSource?: string | null
 }>()
+
+const AUTH_SOURCE_LABELS: Record<string, string> = {
+  LDAP: 'LDAP',
+  FEISHU: '飞书',
+  ECP: 'ECP',
+  COMPANY_SSO: '公司 SSO'
+}
+
+const externalLoginLabel = computed(() => {
+  const source = props.authSource?.trim()
+  if (!source || source === 'LOCAL') return ''
+  return AUTH_SOURCE_LABELS[source] || source
+})
 
 const emit = defineEmits<{
   'update:visible': [value: boolean]
@@ -120,7 +143,11 @@ async function handleSubmit() {
       newPassword: form.newPassword,
       confirmPassword: form.confirmPassword
     })
-    ElMessage.success('密码已重置，请告知用户尽快登录')
+    ElMessage.success(
+      externalLoginLabel.value
+        ? '已设置本地登录密码，请告知用户使用用户名和新密码登录'
+        : '密码已重置，请告知用户尽快登录'
+    )
     emit('update:visible', false)
     emit('saved')
   } catch {
@@ -136,5 +163,9 @@ async function handleSubmit() {
   margin: 0 0 16px;
   color: #606266;
   font-size: 14px;
+}
+
+.source-hint {
+  margin-bottom: 16px;
 }
 </style>
