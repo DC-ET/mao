@@ -3,8 +3,8 @@ import { buildUniqueUsername, fallbackUsername, usernameFromEmail, usernameWithS
 
 describe('usernameFromEmail', () => {
   it.each([
-    ['liqingbo@accesscorporate.com.cn', 'liqingbo'],
-    ['Zheng.Qinzhou@accesscorporate.com.cn', 'zheng_qinzhou'],
+    ['liqingbo@example.com', 'liqingbo'],
+    ['Zheng.Qinzhou@example.com', 'zheng_qinzhou'],
     ['  spaced@example.test  ', 'spaced'],
     ['a-b+c@example.test', 'a_b_c'],
   ])('normalizes %s to %s', (email, expected) => {
