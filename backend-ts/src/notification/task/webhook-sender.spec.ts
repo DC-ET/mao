@@ -28,8 +28,22 @@ describe('WebhookSender', () => {
       res.end(bodies.shift());
     });
     const sender = new DingTalkWebhookSender();
-    expect((await sender.send(`${base}/robot/send`, 'test')).success).toBe(true);
-    expect((await sender.send(`${base}/robot/send`, 'test')).success).toBe(false);
+    expect((await sender.send(`${base}/robot/send`, { text: 'test' })).success).toBe(true);
+    expect((await sender.send(`${base}/robot/send`, { text: 'test' })).success).toBe(false);
+  });
+
+  it('dingTalkIgnoresCardAndKeepsTextPayload', async () => {
+    let body = '';
+    const base = await listen((req, res) => {
+      req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+      req.on('end', () => {
+        res.setHeader('Content-Type', 'application/json');
+        res.end('{"errcode":0,"errmsg":"ok"}');
+      });
+    });
+    const sender = new DingTalkWebhookSender();
+    await sender.send(`${base}/robot/send`, { text: '纯文本', card: { header: { title: '卡片' } } });
+    expect(JSON.parse(body)).toEqual({ msgtype: 'text', text: { content: '纯文本' } });
   });
 
   it('feishuSupportsCurrentAndLegacySuccessCodes', async () => {
@@ -39,7 +53,40 @@ describe('WebhookSender', () => {
       res.end(bodies.shift());
     });
     const sender = new FeishuWebhookSender();
-    expect((await sender.send(`${base}/hook`, 'test')).success).toBe(true);
-    expect((await sender.send(`${base}/hook`, 'test')).success).toBe(true);
+    expect((await sender.send(`${base}/hook`, { text: 'test' })).success).toBe(true);
+    expect((await sender.send(`${base}/hook`, { text: 'test' })).success).toBe(true);
+  });
+
+  it('feishuSendsInteractiveCardWhenCardProvided', async () => {
+    let body = '';
+    const base = await listen((req, res) => {
+      req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+      req.on('end', () => {
+        res.setHeader('Content-Type', 'application/json');
+        res.end('{"code":0,"msg":"success"}');
+      });
+    });
+    const sender = new FeishuWebhookSender();
+    const card = { header: { template: 'green', title: { tag: 'plain_text', content: 'Mao Agent 任务通知' } }, elements: [] };
+    expect((await sender.send(`${base}/hook`, { text: '文本回退', card })).success).toBe(true);
+    const payload = JSON.parse(body) as Record<string, unknown>;
+    expect(payload.msg_type).toBe('interactive');
+    expect(payload.card).toEqual(card);
+    // 有卡片时不再发文本消息，避免同一次通知重复。
+    expect(payload.content).toBeUndefined();
+  });
+
+  it('feishuFallsBackToTextMessageWhenCardAbsent', async () => {
+    let body = '';
+    const base = await listen((req, res) => {
+      req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+      req.on('end', () => {
+        res.setHeader('Content-Type', 'application/json');
+        res.end('{"code":0,"msg":"success"}');
+      });
+    });
+    const sender = new FeishuWebhookSender();
+    await sender.send(`${base}/hook`, { text: '纯文本' });
+    expect(JSON.parse(body)).toEqual({ msg_type: 'text', content: { text: '纯文本' } });
   });
 });

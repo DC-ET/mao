@@ -152,7 +152,7 @@ describe('WebhookDeliveryScheduler', () => {
         { decrypt: vi.fn(() => 'https://hook') } as never,
         { get: vi.fn(() => ({ send: vi.fn(async () => webhookSuccess(200, 'ok')) })) } as never,
         undefined,
-        (fn: () => void) => { executed.push(fn()); },
+        (fn: () => void) => { executed.push(fn() as unknown as Promise<void>); },
       );
       await scheduler.dispatchDueDeliveries();
       await Promise.all(executed);
@@ -227,7 +227,7 @@ describe('WebhookDeliveryScheduler', () => {
       { decrypt: vi.fn(() => 'https://hook') } as never,
       { get: vi.fn(() => ({ send: vi.fn(async () => webhookSuccess(200, 'ok')) })) } as never,
       undefined,
-      (fn: () => void) => { executed.push(fn()); },
+      (fn: () => void) => { executed.push(fn() as unknown as Promise<void>); },
     );
     await scheduler.dispatchDueDeliveries();
     await Promise.all(executed);
@@ -257,18 +257,103 @@ describe('WebhookDeliveryScheduler', () => {
       { decrypt: vi.fn(() => 'https://hook') } as never,
       { get: vi.fn(() => ({ send })) } as never,
       undefined,
-      (fn: () => void) => { executed.push(fn()); },
+      (fn: () => void) => { executed.push(fn() as unknown as Promise<void>); },
     );
     await scheduler.dispatchDueDeliveries();
     await Promise.all(executed);
     expect(send).toHaveBeenCalledTimes(1);
-    const content = send.mock.calls[0][1] as string;
-    expect(content).toContain('提问通知');
-    expect(content).toContain('任务B');
-    expect(content).toContain('正在等待回答');
-    expect(content).not.toContain('已完成');
+    const message = send.mock.calls[0][1] as { text: string; card?: Record<string, unknown> };
+    expect(message.text).toContain('提问通知');
+    expect(message.text).toContain('任务B');
+    expect(message.text).toContain('正在等待回答');
+    expect(message.text).not.toContain('已完成');
+    // 飞书渠道发卡片：橙色头部 + 待作答提示。
+    const card = JSON.stringify(message.card);
+    expect(card).toContain('Mao Agent 提问通知');
+    expect(card).toContain('orange');
+    expect(card).toContain('等待你的回复');
     expect(store.updateById).toHaveBeenCalledWith(
       expect.objectContaining({ id: 9, status: DeliveryStatus.SUCCEEDED }),
     );
+  });
+
+  it('cardCarriesLatestUserMessageAndSessionDetailButton', async () => {
+    const delivery = {
+      id: 11, userId: 1, sessionId: 42, channel: 'FEISHU', webhookCiphertext: 'enc',
+      titleSnapshot: '任务C', terminalPhase: 'COMPLETED', status: DeliveryStatus.PENDING, attemptCount: 0,
+    };
+    const store = {
+      recoverInterrupted: vi.fn(async () => undefined),
+      listDue: vi.fn(async () => [delivery]),
+      claim: vi.fn(async () => true),
+      countPending: vi.fn(async () => 0),
+      updateById: vi.fn(async () => undefined),
+      deleteHistory: vi.fn(async () => undefined),
+    };
+    const send = vi.fn(async () => webhookSuccess(200, 'ok'));
+    const executed: Promise<void>[] = [];
+    const scheduler = new WebhookDeliveryScheduler(
+      store as never,
+      { workerDelayMs: 1000, batchSize: 10, maxAttempts: 3 },
+      { decrypt: vi.fn(() => 'https://hook') } as never,
+      { get: vi.fn(() => ({ send })) } as never,
+      undefined,
+      (fn: () => void) => { executed.push(fn() as unknown as Promise<void>); },
+    );
+    const latestUserMessage = vi.fn(async () => '帮我改一下登录页');
+    const sessionDetailUrl = vi.fn(async () => 'https://mao.example.com/tasks/42');
+    scheduler.setContextProvider({ latestUserMessage, sessionDetailUrl });
+    await scheduler.dispatchDueDeliveries();
+    await Promise.all(executed);
+    expect(latestUserMessage).toHaveBeenCalledWith(42);
+    expect(sessionDetailUrl).toHaveBeenCalledWith(42);
+    const card = JSON.stringify((send.mock.calls[0][1] as { card?: unknown }).card);
+    expect(card).toContain('帮我改一下登录页');
+    expect(card).toContain('会话详情');
+    expect(card).toContain('https://mao.example.com/tasks/42');
+    expect(card).toContain('green');
+  });
+
+  it('contextProviderFailuresDegradeWithoutBlockingDelivery', async () => {
+    const delivery = {
+      id: 12, userId: 1, sessionId: 43, channel: 'FEISHU', webhookCiphertext: 'enc',
+      titleSnapshot: '任务D', terminalPhase: 'FAILED', failureReason: '超时', status: DeliveryStatus.PENDING, attemptCount: 0,
+    };
+    const store = {
+      recoverInterrupted: vi.fn(async () => undefined),
+      listDue: vi.fn(async () => [delivery]),
+      claim: vi.fn(async () => true),
+      countPending: vi.fn(async () => 0),
+      updateById: vi.fn(async () => undefined),
+      deleteHistory: vi.fn(async () => undefined),
+    };
+    const send = vi.fn(async () => webhookSuccess(200, 'ok'));
+    const executed: Promise<void>[] = [];
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const scheduler = new WebhookDeliveryScheduler(
+      store as never,
+      { workerDelayMs: 1000, batchSize: 10, maxAttempts: 3 },
+      { decrypt: vi.fn(() => 'https://hook') } as never,
+      { get: vi.fn(() => ({ send })) } as never,
+      undefined,
+      (fn: () => void) => { executed.push(fn() as unknown as Promise<void>); },
+    );
+    scheduler.setContextProvider({
+      latestUserMessage: vi.fn(async () => { throw new Error('db down'); }),
+      sessionDetailUrl: vi.fn(async () => { throw new Error('db down'); }),
+    });
+    try {
+      await scheduler.dispatchDueDeliveries();
+      await Promise.all(executed);
+      // 上下文查询失败不阻断投递：仍发出卡片，只是少用户消息段与按钮。
+      expect(send).toHaveBeenCalledTimes(1);
+      const card = JSON.stringify((send.mock.calls[0][1] as { card?: unknown }).card);
+      expect(card).toContain('任务D');
+      expect(card).toContain('超时');
+      expect(card).not.toContain('会话详情');
+      expect(warnSpy).toHaveBeenCalledWith('任务通知读取本轮用户消息失败, sessionId=43', expect.any(Error));
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });
