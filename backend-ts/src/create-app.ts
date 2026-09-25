@@ -1620,14 +1620,20 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     const client = await getFeishuClient(Number(channel.appId));
     if (client == null) return;
     const target = feishuSendTargetOf(channel.appId, channel.chatId);
-    const response = await client.im.v1.message.create({
-      params: { receive_id_type: target.receiveIdType },
-      data: {
-        receive_id: target.receiveId,
-        msg_type: 'interactive',
-        content: JSON.stringify(buildFeishuProgressCard('COMPLETED', 0, text, [], undefined, undefined, await resolveFeishuSessionDetailUrl(sessionId))),
-      },
-    });
+    const data = {
+      msg_type: 'interactive',
+      content: JSON.stringify(buildFeishuProgressCard('COMPLETED', 0, text, [], undefined, undefined, await resolveFeishuSessionDetailUrl(sessionId))),
+    };
+    // 话题会话回复话题根消息：message.create 到 chat_id 会在话题群另起新话题，reply 才落入当前话题。
+    const threadRootMessageId = channel.chatType === 'group'
+      ? await feishuMessageService.findThreadRootMessageId(sessionId)
+      : null;
+    const response = threadRootMessageId != null
+      ? await client.im.v1.message.reply({ path: { message_id: threadRootMessageId }, data })
+      : await client.im.v1.message.create({
+        params: { receive_id_type: target.receiveIdType },
+        data: { ...data, receive_id: target.receiveId },
+      });
     // 私聊定时任务结果卡片可被回复/引用，记录卡片消息 → 会话映射供引用切换定位。
     const pushedMessageId = (response as { data?: { message_id?: string } }).data?.message_id ?? null;
     if (pushedMessageId != null && channel.chatType === 'p2p') {

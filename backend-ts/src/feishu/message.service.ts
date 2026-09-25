@@ -126,6 +126,17 @@ export class FeishuMessageService {
     }
   }
 
+  /** 查询话题会话的话题根消息 ID（reply 该 ID 会落入当前话题）；非话题会话或查询失败返回 null。 */
+  async findThreadRootMessageId(sessionId: number): Promise<string | null> {
+    try {
+      const rootMessageId = await this.repository.findThreadRootMessageId(sessionId);
+      return rootMessageId != null && rootMessageId !== '' ? rootMessageId : null;
+    } catch (error) {
+      console.warn(`查询飞书话题根消息ID失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }
+  }
+
   async getOrCreateGroup(accountId: string, context: FeishuInboundContext): Promise<FeishuConversation> {
     if (context.chatId == null) throw new Error('Feishu group message requires chatId');
     const existing = await this.repository.findGroupConversation(accountId, context.chatId);

@@ -80,6 +80,8 @@ export interface FeishuMessageRepository {
   clearAwaitingFirstMessageTitle(sessionId: number): Promise<void>;
   /** 查询会话最新入站消息 ID（用于 reply 发送）。私聊查 feishu_p2p_message，群聊查 feishu_group_message_log，话题查 feishu_thread_session.root_message_id。未找到返回 null。 */
   findLatestInboundMessageId(sessionId: number, channel: { appId: string; chatId: string; chatType: 'p2p' | 'group' }): Promise<string | null>;
+  /** 查询话题会话的话题根消息 ID（reply 该 ID 会落入当前话题）；非话题会话返回 null。 */
+  findThreadRootMessageId(sessionId: number): Promise<string | null>;
 }
 
 /** Persistence boundary for Feishu conversations. Session creation is deliberately
@@ -299,5 +301,13 @@ export class MysqlFeishuMessageRepository implements FeishuMessageRepository {
       [channel.appId, channel.chatId],
     );
     return groupRow?.messageId ?? null;
+  }
+
+  async findThreadRootMessageId(sessionId: number): Promise<string | null> {
+    const row = await this.db.queryOne<{ rootMessageId: string }>(
+      'SELECT root_message_id FROM feishu_thread_session WHERE session_id = ? LIMIT 1',
+      [sessionId],
+    );
+    return row?.rootMessageId ?? null;
   }
 }
