@@ -4,9 +4,11 @@ import { api } from '../api'
 import { getToken } from '../utils/auth-storage'
 
 const LEGACY_ORDER_KEY = 'task-group-order'
+const LEGACY_ALIASES_KEY = 'task-group-aliases'
 
 const groupOrder = ref<string[]>([])
 const collapsedGroups = ref<Set<string>>(new Set())
+const groupAliases = ref<Record<string, string>>({})
 const loaded = ref(false)
 const loading = ref(false)
 
@@ -28,6 +30,29 @@ function clearLegacyOrder() {
   localStorage.removeItem(LEGACY_ORDER_KEY)
 }
 
+/** 未登录兜底：分组别名写入 localStorage，LOCAL 分组重命名在未登录态也可用。 */
+function readLegacyAliases(): Record<string, string> {
+  try {
+    const saved = localStorage.getItem(LEGACY_ALIASES_KEY)
+    const parsed = saved ? JSON.parse(saved) : null
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function writeLegacyAliases(aliases: Record<string, string>) {
+  try {
+    localStorage.setItem(LEGACY_ALIASES_KEY, JSON.stringify(aliases))
+  } catch {
+    // localStorage 不可用（隐私模式等）时静默放弃，仅本次会话内生效
+  }
+}
+
+function clearLegacyAliases() {
+  localStorage.removeItem(LEGACY_ALIASES_KEY)
+}
+
 function scheduleSave() {
   if (saveTimer) clearTimeout(saveTimer)
   saveTimer = setTimeout(() => {
@@ -37,7 +62,10 @@ function scheduleSave() {
 }
 
 async function persistPrefs() {
-  if (!getToken()) return
+  if (!getToken()) {
+    writeLegacyAliases(groupAliases.value)
+    return
+  }
 
   if (savePromise) {
     await savePromise
@@ -45,9 +73,11 @@ async function persistPrefs() {
 
   savePromise = api.put('/user-preferences/task-panel', {
     groupOrder: groupOrder.value,
-    collapsedGroups: Array.from(collapsedGroups.value)
+    collapsedGroups: Array.from(collapsedGroups.value),
+    groupAliases: groupAliases.value
   }).then(() => {
     clearLegacyOrder()
+    clearLegacyAliases()
   }).catch(() => {
     ElMessage.warning('任务面板偏好保存失败，稍后将自动重试')
   }).finally(() => {
@@ -68,6 +98,7 @@ export function useTaskPanelPrefs() {
 
     if (!getToken()) {
       groupOrder.value = readLegacyOrder()
+      groupAliases.value = readLegacyAliases()
       loaded.value = true
       return
     }
@@ -78,21 +109,30 @@ export function useTaskPanelPrefs() {
         const { data } = await api.get('/user-preferences/task-panel')
         const serverOrder = Array.isArray(data?.groupOrder) ? data.groupOrder : []
         const serverCollapsed = Array.isArray(data?.collapsedGroups) ? data.collapsedGroups : []
+        const serverAliases =
+          data?.groupAliases && typeof data.groupAliases === 'object' && !Array.isArray(data.groupAliases)
+            ? data.groupAliases
+            : {}
 
-        if (serverOrder.length > 0 || serverCollapsed.length > 0) {
+        if (serverOrder.length > 0 || serverCollapsed.length > 0 || Object.keys(serverAliases).length > 0) {
           groupOrder.value = serverOrder
           collapsedGroups.value = new Set(serverCollapsed)
+          groupAliases.value = serverAliases
           clearLegacyOrder()
+          clearLegacyAliases()
         } else {
           const legacyOrder = readLegacyOrder()
           groupOrder.value = legacyOrder
           collapsedGroups.value = new Set()
-          if (legacyOrder.length > 0) {
+          groupAliases.value = readLegacyAliases()
+          // localStorage 已有本地偏好（顺序或别名）时推送到服务端，登录后多端同步
+          if (legacyOrder.length > 0 || Object.keys(groupAliases.value).length > 0) {
             scheduleSave()
           }
         }
       } catch {
         groupOrder.value = readLegacyOrder()
+        groupAliases.value = readLegacyAliases()
       } finally {
         loaded.value = true
         loading.value = false
@@ -104,6 +144,30 @@ export function useTaskPanelPrefs() {
 
   function saveOrder(order: string[]) {
     groupOrder.value = order
+    scheduleSave()
+  }
+
+  /**
+   * 重命名分组（设置别名）。分组 key 是会话归属/排序/折叠的唯一事实源，这里只动别名 map。
+   * 注意：groupOrder / collapsedGroups / groupAliases 三个 map 均按 key 存取，key 永不重命名；
+   * 若未来支持删除分组记录，需同步清理这三个 map。
+   */
+  function renameGroup(key: string, name: string) {
+    const trimmed = name.trim().slice(0, 50)  // 与后端 GROUP_ALIAS_MAX_LENGTH 一致
+    if (!trimmed) {
+      resetGroupAlias(key)
+      return
+    }
+    groupAliases.value = { ...groupAliases.value, [key]: trimmed }
+    scheduleSave()
+  }
+
+  /** 恢复默认名：等价保存时不带该 key。 */
+  function resetGroupAlias(key: string) {
+    if (!(key in groupAliases.value)) return
+    const next = { ...groupAliases.value }
+    delete next[key]
+    groupAliases.value = next
     scheduleSave()
   }
 
@@ -171,6 +235,7 @@ export function useTaskPanelPrefs() {
   return {
     groupOrder,
     collapsedGroups,
+    groupAliases,
     loaded,
     loading,
     loadPrefs,
@@ -179,6 +244,8 @@ export function useTaskPanelPrefs() {
     toggleGroupCollapsed,
     expandGroup,
     sortGroups,
-    onDragEnd
+    onDragEnd,
+    renameGroup,
+    resetGroupAlias
   }
 }

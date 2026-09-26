@@ -46,13 +46,14 @@ export class MysqlUserTaskPanelPreferenceRepository implements UserTaskPanelPref
       userId: row.userId,
       groupOrder: row.groupOrder,
       collapsedGroups: row.collapsedGroups,
+      groupAliases: row.groupAliases ?? '{}',
     });
   }
 
   async updateByUserId(row: UserTaskPanelPreference): Promise<void> {
     await this.db.execute(
-      'UPDATE user_task_panel_preference SET group_order = ?, collapsed_groups = ? WHERE user_id = ?',
-      [row.groupOrder, row.collapsedGroups, row.userId],
+      'UPDATE user_task_panel_preference SET group_order = ?, collapsed_groups = ?, group_aliases = ? WHERE user_id = ?',
+      [row.groupOrder, row.collapsedGroups, row.groupAliases ?? '{}', row.userId],
     );
   }
 }

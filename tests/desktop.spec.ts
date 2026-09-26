@@ -506,3 +506,87 @@ test.describe('Desktop - Settings entry', () => {
     await expect(page.getByRole('menuitem', { name: '设置' })).toHaveCount(0)
   })
 })
+
+// ─────────────────────────────────────────────────────────
+// Desktop - 任务分组右键重命名
+// 依赖 e2e 种子：一条 LOCAL 会话（workspace=/home/mao-e2e/demo-project，分组名 demo-project）
+// ─────────────────────────────────────────────────────────
+test.describe('Task Group Rename', () => {
+  /** 真实登录（连隔离后端 :9180），返回带 token 的已登录上下文。 */
+  async function loginDesktop(page: Page) {
+    await page.goto('/login')
+    await page.waitForSelector('.login-card', { timeout: 15_000 })
+    await page.fill('input[placeholder="用户名"]', 'admin')
+    await page.fill('input[placeholder="密码"]', 'admin123')
+    await page.getByRole('button', { name: '登录', exact: true }).click()
+    await page.waitForSelector('.task-layout, .task-index-panel', { timeout: 15_000 })
+  }
+
+  test('should rename group via context menu and persist after reload', async ({ page }) => {
+    await loginDesktop(page)
+    await page.goto('/')
+
+    const groupHeader = page.locator('.session-group .group-header').filter({ hasText: 'demo-project' }).first()
+    await expect(groupHeader).toBeVisible({ timeout: 10_000 })
+
+    // 右键分组头出现菜单 → 重命名
+    await groupHeader.click({ button: 'right' })
+    const menuItem = page.locator('.task-context-menu .context-menu-item', { hasText: '重命名' })
+    await expect(menuItem).toBeVisible()
+    await menuItem.click()
+
+    // 行内编辑：输入别名并回车
+    const renameInput = page.locator('.group-header .group-rename-input')
+    await expect(renameInput).toBeVisible()
+    await renameInput.fill('演示项目')
+    await renameInput.press('Enter')
+
+    // 标题变为别名，且 hover tooltip 显示推导名
+    const renamedHeader = page.locator('.session-group .group-header').filter({ hasText: '演示项目' }).first()
+    await expect(renamedHeader).toBeVisible()
+    await expect(renamedHeader.locator('.group-label')).toHaveAttribute('title', /demo-project/)
+
+    // 偏好已持久化（300ms 防抖后发出 PUT）：直连隔离后端 :9180 轮询校验
+    await expect.poll(async () =>
+      page.evaluate(async () => {
+        const token = localStorage.getItem('token')
+        if (!token) return {}
+        try {
+          const r = await fetch('http://localhost:9180/api/v1/user-preferences/task-panel', {
+            headers: { Authorization: `Bearer ${token}` },
+          })
+          const d = await r.json()
+          return d?.data?.groupAliases ?? {}
+        } catch {
+          return {}
+        }
+      })
+    , { timeout: 10_000 }).toEqual(expect.objectContaining({ 'LOCAL:/home/mao-e2e/demo-project': '演示项目' }))
+
+    // 刷新后别名仍生效
+    await page.reload()
+    await page.waitForSelector('.task-index-panel', { timeout: 15_000 })
+    await expect(page.locator('.session-group .group-header').filter({ hasText: '演示项目' }).first())
+      .toBeVisible({ timeout: 10_000 })
+
+    // 右键 → 重置名称，恢复默认名
+    const renamedAgain = page.locator('.session-group .group-header').filter({ hasText: '演示项目' }).first()
+    await renamedAgain.click({ button: 'right' })
+    const resetItem = page.locator('.task-context-menu .context-menu-item', { hasText: '重置名称' })
+    await expect(resetItem).toBeVisible()
+    await resetItem.click()
+    await expect(page.locator('.session-group .group-header').filter({ hasText: 'demo-project' }).first())
+      .toBeVisible({ timeout: 10_000 })
+  })
+
+  test('should not offer rename for non-renameable groups', async ({ page }) => {
+    await loginDesktop(page)
+    await page.goto('/')
+
+    // 种子里 3 条无 workspace 的 LOCAL 会话落入「未设置」分组（不可改名）：右键不应出现「重命名」
+    const unassignedHeader = page.locator('.session-group .group-header').filter({ hasText: '未设置' }).first()
+    if (await unassignedHeader.count() === 0) return // 无不可改名字分组可见时跳过
+    await unassignedHeader.click({ button: 'right' })
+    await expect(page.locator('.task-context-menu .context-menu-item', { hasText: '重命名' })).toHaveCount(0)
+  })
+})

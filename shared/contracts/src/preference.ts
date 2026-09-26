@@ -8,4 +8,5 @@ export interface WeixinPreferenceVO {
 export interface TaskPanelPreferenceState {
   groupOrder: string[];
   collapsedGroups: string[];
+  groupAliases: Record<string, string>;
 }

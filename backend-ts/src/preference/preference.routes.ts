@@ -3,7 +3,7 @@ import { requireUserId, sendOk } from '../common/http-error.js';
 import { bodyOf } from '../common/request.js';
 import type { UserTaskPanelPreferenceService } from './task-panel-preference.service.js';
 import type { UserWeixinPreferenceService } from './weixin-preference.service.js';
-import type { TaskPanelPreferenceState, WeixinPreferenceVO } from './types.js';
+import type { TaskPanelPreferenceSaveState, TaskPanelPreferenceState, WeixinPreferenceVO } from './types.js';
 
 export interface PreferenceRouteDeps {
   weixinPreferenceService: UserWeixinPreferenceService;
@@ -18,7 +18,10 @@ interface SaveWeixinPreferenceRequest {
 interface TaskPanelPreferenceRequest {
   groupOrder?: string[] | null;
   collapsedGroups?: string[] | null;
+  groupAliases?: Record<string, string> | null;
 }
+
+/** 区分「旧客户端未传（保留已有别名）」与「显式传 {}（清空）」。 */
 
 export function registerPreferenceRoutes(app: FastifyInstance, deps: PreferenceRouteDeps): void {
   registerUserWeixinPreferenceRoutes(app, deps);
@@ -57,9 +60,11 @@ export function registerUserTaskPanelPreferenceRoutes(app: FastifyInstance, deps
   app.put('/v1/user-preferences/task-panel', async (request, reply) => {
     const userId = requireUserId(request);
     const body = bodyOf<TaskPanelPreferenceRequest>(request);
-    const state: TaskPanelPreferenceState = {
+    const state: TaskPanelPreferenceSaveState = {
       groupOrder: body.groupOrder ?? [],
       collapsedGroups: body.collapsedGroups ?? [],
+      // 旧客户端不传 groupAliases 时保留已有别名（service 层区分 undefined 与 {}）。
+      groupAliases: body.groupAliases ?? undefined,
     };
     return sendOk(reply, toTaskPanelVO(await taskPanelPreferenceService.save(userId, state)));
   });
@@ -69,5 +74,6 @@ function toTaskPanelVO(state: TaskPanelPreferenceState): TaskPanelPreferenceStat
   return {
     groupOrder: state.groupOrder,
     collapsedGroups: state.collapsedGroups,
+    groupAliases: state.groupAliases,
   };
 }

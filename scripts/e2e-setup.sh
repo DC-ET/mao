@@ -143,7 +143,6 @@ if [[ "$SEED" == "1" ]]; then
   if [[ "$existing" != "0" ]]; then
     echo "  已有 $existing 条 session，跳过"
   else
-    # 说明：种子里 model_id=1/2 依赖 V003 等迁移插入的默认模型；若缺模型则先补。
     model_count="$(MYSQL_E2E -N -e "SELECT COUNT(*) FROM llm_model")"
     if [[ "$model_count" == "0" ]]; then
       MYSQL_E2E -e "INSERT INTO llm_model (name, provider, api_protocol, effort, base_url, api_key, model_id, is_default, status) VALUES ('e2e-mock', 'openai', 'OPENAI', '', 'https://mock.local/v1', 'sk-e2e', 'e2e-mock', 1, 1)" 2>/dev/null || \
@@ -154,11 +153,12 @@ INSERT INTO agent (name, description, system_prompt, creator_id) VALUES
  ('数据分析助手', '帮助用户分析数据', '你是数据分析助手', 1),
  ('代码助手', '帮助用户写代码', '你是代码助手', 1);
 
-INSERT INTO session (user_id, agent_id, title, status, phase, created_at, last_activity_at) VALUES
- (1, 1, '分析销售数据', 'ACTIVE', 'COMPLETED', NOW(), NOW()),
- (1, 2, '修复登录bug', 'ACTIVE', 'COMPLETED', NOW(), NOW()),
- (1, 1, '生成周报', 'ACTIVE', 'RUNNING', NOW(), NOW());
+INSERT INTO session (user_id, agent_id, title, status, phase, execution_mode, workspace, created_at, last_activity_at) VALUES
+ (1, 1, '分析销售数据', 'ACTIVE', 'COMPLETED', 'LOCAL', NULL, NOW(), NOW()),
+ (1, 2, '修复登录bug', 'ACTIVE', 'COMPLETED', 'LOCAL', NULL, NOW(), NOW()),
+ (1, 1, '生成周报', 'ACTIVE', 'RUNNING', 'LOCAL', NULL, NOW(), NOW());
 
+    MYSQL_E2E <<'SQL'
 INSERT INTO message (session_id, role, content, token_count, created_at) VALUES
  (1, 'USER', '帮我分析这份销售数据', 120, NOW()),
  (1, 'ASSISTANT', '好的，我来分析', 350, NOW()),
@@ -182,6 +182,14 @@ FROM llm_model m WHERE m.id = (SELECT MIN(id) FROM llm_model);
 SQL
     echo "  完成：agent/session/message/llm_usage/llm_call"
   fi
+
+  # 分组重命名 E2E 依赖：一条带 workspace 的 LOCAL 会话（分组名 demo-project，可改名）。
+  # 放在 if/else 之外：老 e2e 库（已有 session）也能补上这行种子（自带 NOT EXISTS 幂等守卫）。
+  MYSQL_E2E <<'SQL'
+INSERT INTO session (user_id, agent_id, title, status, phase, execution_mode, workspace, created_at, last_activity_at)
+SELECT 1, 1, '本地空间任务', 'ACTIVE', 'COMPLETED', 'LOCAL', '/home/mao-e2e/demo-project', NOW(), NOW()
+FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM session WHERE workspace = '/home/mao-e2e/demo-project');
+SQL
 fi
 
 echo "==> 生成 backend-ts/.env.e2e"

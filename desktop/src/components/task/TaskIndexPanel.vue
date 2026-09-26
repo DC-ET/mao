@@ -48,7 +48,7 @@
             @drop="onGroupDrop($event, index)"
             @dragend="onGroupDragEnd"
           >
-            <div class="group-header" @click="toggleGroup(group.key)">
+            <div class="group-header" @click="toggleGroup(group.key)" @contextmenu.prevent="openGroupContextMenu($event, group.key)">
               <div class="group-header-left">
                 <span class="group-icon" :class="`icon-${groupIconKind(group.key, group.sessions)}`">
                   <img
@@ -79,7 +79,20 @@
                     <Folder v-else />
                   </el-icon>
                 </span>
-                <span class="group-label">{{ group.label }}</span>
+                <input
+                  v-if="renamingGroupKey === group.key"
+                  v-model="renamingValue"
+                  class="session-title-input group-rename-input"
+                  :ref="(el) => setGroupRenameInput(group.key, el)"
+                  @keydown="onGroupRenameKeydown"
+                  @click.stop
+                  @blur="onGroupRenameBlur"
+                />
+                <span
+                  v-else
+                  class="group-label"
+                  :title="groupAliasTooltip(group.key)"
+                >{{ group.label }}</span>
                 <el-icon :size="11" class="group-expand-arrow">
                   <ArrowDown v-if="!isGroupCollapsed(group.key)" />
                   <ArrowRight v-else />
@@ -438,6 +451,17 @@
           <div class="context-menu-item danger" @click="menuDelete">删除</div>
         </template>
       </div>
+
+      <!-- 分组头右键菜单（仅可改名分组显示重命名，存在别名时显示重置） -->
+      <div
+        v-if="groupContextMenu.visible"
+        class="task-context-menu"
+        :style="{ left: groupContextMenu.x + 'px', top: groupContextMenu.y + 'px' }"
+        @click.stop
+      >
+        <div v-if="isGroupRenameable(groupContextMenu.key)" class="context-menu-item" @click="menuRenameGroup">重命名</div>
+        <div v-if="hasGroupAlias(groupContextMenu.key)" class="context-menu-item" @click="menuResetGroup">重置名称</div>
+      </div>
     </Teleport>
   </div>
 </template>
@@ -451,7 +475,7 @@ import { useSessionStore, type Session, type TaskPhase } from '../../stores/sess
 import { useTerminal } from '../../composables/useTerminal'
 import { removeSessionTabsFor } from '../../composables/useCenterTabs'
 import { useTaskPanelPrefs } from '../../composables/useTaskPanelPrefs'
-import { cloudGroupKey, formatCloudGroupLabel, groupIconKind, isSharedCloudProject, workspaceTailLabel } from '../../utils/cloud-project'
+import { cloudGroupKey, groupIconKind, isGroupRenameable, isSharedCloudProject, resolveGroupLabel } from '../../utils/cloud-project'
 import { planFocusReveal, planGroupReveal } from '../../utils/taskSidebarReveal'
 import { sessionToFocusCandidate, sortByFocusPriority, isHistoryEligible } from '../../utils/focusSort'
 import feishuLogo from '../../assets/feishu-logo.svg'
@@ -472,7 +496,7 @@ const emit = defineEmits<{
 const router = useRouter()
 const sessionStore = useSessionStore()
 const { createTerminal, isOpen: terminalOpen } = useTerminal()
-const { sortGroups, onDragEnd, loadPrefs, isGroupCollapsed, toggleGroupCollapsed, expandGroup } = useTaskPanelPrefs()
+const { sortGroups, onDragEnd, loadPrefs, isGroupCollapsed, toggleGroupCollapsed, expandGroup, groupAliases, renameGroup, resetGroupAlias } = useTaskPanelPrefs()
 
 const DEFAULT_VISIBLE = 5
 const EXPAND_STEP = 20
@@ -504,6 +528,25 @@ const contextMenu = reactive({
   sessionId: null as string | null,
   zone: 'standard' as 'standard' | 'archived',
 })
+
+// 分组头右键菜单状态
+const groupContextMenu = reactive({
+  visible: false,
+  x: 0,
+  y: 0,
+  key: '',
+})
+
+// 分组行内重命名状态（与既有会话重命名交互一致：Enter 提交 / Esc 取消 / 失焦提交 / 空值重置）
+const renamingGroupKey = ref<string | null>(null)
+const renamingValue = ref('')
+let groupRenameInputEl: HTMLInputElement | null = null
+
+function setGroupRenameInput(_key: string, el: unknown) {
+  // 只记引用：Vue3 function ref 在每次重渲染都会执行，这里若 focus/select 会吞掉用户输入
+  // （运行中会话的 WS 推送会触发列表重渲染）。
+  groupRenameInputEl = (el as HTMLInputElement | null) ?? null
+}
 
 /** 聚焦模式：全量 ACTIVE 主会话按优先级排序（服务端 tree* 信号 + 实时信号）。 */
 const focusedSessions = computed<Session[]>(() => {
@@ -567,6 +610,8 @@ function openContextMenu(e: MouseEvent, session: Session, zone: 'standard' | 'ar
   const menuHeight = 120
   const x = Math.min(e.clientX, window.innerWidth - menuWidth - 8)
   const y = Math.min(e.clientY, window.innerHeight - menuHeight - 8)
+  // 互斥：会话菜单打开时关闭分组菜单，避免两个浮层叠加
+  closeGroupContextMenu()
   contextMenu.sessionId = String(session.id)
   contextMenu.zone = zone
   contextMenu.x = Math.max(4, x)
@@ -608,6 +653,99 @@ function menuDelete() {
     return
   }
   confirmingDeleteId.value = id
+}
+
+function hasGroupAlias(key: string): boolean {
+  return !!groupAliases.value[key]?.trim()
+}
+
+/** 存在别名时 tooltip 提示真实推导名，避免用户忘记别名对应的目录。 */
+function groupAliasTooltip(key: string): string {
+  const alias = groupAliases.value[key]?.trim()
+  if (!alias) return ''
+  return `${alias}（${resolveGroupLabel(key, {})}）`
+}
+
+function openGroupContextMenu(e: MouseEvent, key: string) {
+  if (!isGroupRenameable(key) && !hasGroupAlias(key)) return
+  // 互斥：分组菜单打开时关闭会话菜单，避免两个浮层叠加
+  closeContextMenu()
+  const menuWidth = 140
+  const menuHeight = 80
+  const x = Math.min(e.clientX, window.innerWidth - menuWidth - 8)
+  const y = Math.min(e.clientY, window.innerHeight - menuHeight - 8)
+  groupContextMenu.key = key
+  groupContextMenu.x = Math.max(4, x)
+  groupContextMenu.y = Math.max(4, y)
+  groupContextMenu.visible = true
+}
+
+function menuRenameGroup() {
+  const key = groupContextMenu.key
+  closeGroupContextMenu()
+  if (!key) return
+  startGroupRename(key)
+}
+
+function menuResetGroup() {
+  const key = groupContextMenu.key
+  closeGroupContextMenu()
+  if (!key) return
+  resetGroupAlias(key)
+  ElMessage.success('已恢复默认名称')
+}
+
+function closeGroupContextMenu() {
+  groupContextMenu.visible = false
+}
+
+function startGroupRename(key: string) {
+  // 顺手关掉可能打开的会话右键菜单，避免两个浮层叠加
+  closeContextMenu()
+  renamingGroupKey.value = key
+  renamingValue.value = groupAliases.value[key]?.trim() ?? ''
+  nextTick(() => {
+    if (groupRenameInputEl) {
+      groupRenameInputEl.focus()
+      groupRenameInputEl.select()
+    }
+  })
+}
+
+function onGroupRenameBlur() {
+  nextTick(() => {
+    if (!renamingGroupKey.value) return
+    void confirmGroupRename()
+  })
+}
+
+async function confirmGroupRename() {
+  const key = renamingGroupKey.value
+  const value = renamingValue.value.trim()
+  if (!key) return
+  // 别名保存在本地偏好（renamedGroup 走 300ms 防抖 PUT），无异步失败路径；空值等价于重置。
+  if (value) {
+    renameGroup(key, value)
+  } else if (hasGroupAlias(key)) {
+    resetGroupAlias(key)
+  }
+  renamingGroupKey.value = null
+  renamingValue.value = ''
+}
+
+function cancelGroupRename() {
+  renamingGroupKey.value = null
+  renamingValue.value = ''
+}
+
+function onGroupRenameKeydown(e: KeyboardEvent) {
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    void confirmGroupRename()
+  } else if (e.key === 'Escape') {
+    e.preventDefault()
+    cancelGroupRename()
+  }
 }
 
 /** 窄面板删除兜底：确认弹窗 + 与行内确认相同的删除/跳转逻辑。 */
@@ -672,7 +810,7 @@ function isArchiving(id: string): boolean {
 
 function workspaceLabel(session: Session): string {
   const key = cloudGroupKey(session)
-  return formatGroupLabel(key, session)
+  return resolveGroupLabel(key, groupAliases.value, session)
 }
 
 function focusStatusLabel(session: Session): string {
@@ -740,13 +878,18 @@ watch(
 // 点击空白处关闭右键菜单
 function onGlobalClick() {
   if (contextMenu.visible) closeContextMenu()
+  if (groupContextMenu.visible) closeGroupContextMenu()
 }
 function onGlobalKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape' && contextMenu.visible) closeContextMenu()
+  if (e.key === 'Escape') {
+    if (contextMenu.visible) closeContextMenu()
+    if (groupContextMenu.visible) closeGroupContextMenu()
+  }
 }
 /** 滚动时关闭右键菜单：菜单是 fixed 定位不随内容滚动，残留在旧位置会误点中无关会话 */
 function onGlobalScroll() {
   if (contextMenu.visible) closeContextMenu()
+  if (groupContextMenu.visible) closeGroupContextMenu()
 }
 onMounted(() => {
   document.addEventListener('click', onGlobalClick)
@@ -986,7 +1129,7 @@ const groupedSessions = computed(() => {
 
   const result = entries.map(([key, sessions]) => ({
     key,
-    label: formatGroupLabel(key, sessions[0]),
+    label: resolveGroupLabel(key, groupAliases.value, sessions[0]),
     sessions: sessions.sort((a, b) => {
       if (a.running && !b.running) return -1
       if (!a.running && b.running) return 1
@@ -1001,19 +1144,6 @@ const groupedSessions = computed(() => {
   // 应用自定义排序
   return sortGroups(result)
 })
-
-function formatGroupLabel(key: string, session?: Session): string {
-  // FEISHU_* 与 CLOUD: 统一走 formatCloudGroupLabel：话题会话 title 是话题标题，不能当工作区/群名。
-  if (key.startsWith('FEISHU_PRIVATE:') || key.startsWith('FEISHU_GROUP:') || key.startsWith('CLOUD:')) {
-    return formatCloudGroupLabel(key, session)
-  }
-  if (key.startsWith('LOCAL:')) {
-    const ws = key.substring(6)
-    if (ws === '未设置') return '未设置'
-    return workspaceTailLabel(ws)
-  }
-  return key
-}
 
 const SIDE_ACTIVE_PHASES = new Set<TaskPhase>(['RUNNING', 'RESUMING', 'WAITING_APPROVAL', 'CANCELLING'])
 
@@ -1738,6 +1868,13 @@ function onGroupDragEnd() {
   border-radius: var(--aw-radius-xs);
   padding: 1px 6px;
   outline: none;
+}
+
+/* 分组头行内重命名输入框：宽度受限，避免撑开分组头 */
+.group-rename-input {
+  flex: 0 1 auto;
+  width: 90px;
+  max-width: 120px;
 }
 
 .session-item.editing {

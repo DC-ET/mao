@@ -140,8 +140,46 @@ export function formatCloudGroupLabel(
   return key
 }
 
-export function collectCloudProjectKeys(sessions: Session[]): string[] {
-  const keys = new Set<string>()
+/** 哪些分组 key 允许用户重命名：系统语义桶与 Agent 身份分组不允许（与后端 normalize 规则一致）。 */
+export function isGroupRenameable(key: string): boolean {
+  if (key.startsWith('LOCAL:')) {
+    return key.substring('LOCAL:'.length) !== '未设置'
+  }
+  if (key.startsWith('CLOUD:')) {
+    return key !== 'CLOUD:临时工作区'
+  }
+  return false
+}
+
+/**
+ * 分组显示名：用户别名 > 路径推导名。
+ * 不可改名分组（LOCAL:未设置 / CLOUD:临时工作区 / FEISHU_* / DINGTALK_*）忽略别名，走既有推导逻辑。
+ */
+export function resolveGroupLabel(
+  key: string,
+  aliases: Record<string, string>,
+  session?: Pick<Session, 'agentName' | 'title'> & { projectKey?: string; executionMode?: string; workspace?: string }
+): string {
+  const fallback = formatFallbackGroupLabel(key, session)
+  if (!isGroupRenameable(key)) return fallback
+  const alias = aliases[key]?.trim()
+  return alias ? alias : fallback
+}
+
+/** formatCloudGroupLabel 的超集：额外覆盖 LOCAL: 前缀（原 TaskIndexPanel.formatGroupLabel 逻辑）。 */
+function formatFallbackGroupLabel(
+  key: string,
+  session?: Pick<Session, 'agentName' | 'title'>
+): string {
+  if (key.startsWith('LOCAL:')) {
+    const ws = key.substring('LOCAL:'.length)
+    if (ws === '未设置') return '未设置'
+    return workspaceTailLabel(ws)
+  }
+  return formatCloudGroupLabel(key, session)
+}
+
+export function collectCloudProjectKeys(sessions: Session[]): string[] {  const keys = new Set<string>()
   for (const s of sessions) {
     if (isSharedCloudProject(s) && s.projectKey) {
       keys.add(s.projectKey)
