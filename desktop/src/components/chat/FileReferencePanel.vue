@@ -1,5 +1,5 @@
 <template>
-  <div v-if="visible" class="file-reference-panel" @mousedown.prevent>
+  <div v-if="visible" ref="rootRef" class="file-reference-panel" :style="panelStyle" @mousedown.prevent>
     <div v-if="loading" class="panel-loading">
       <span class="loading-text">搜索文件中...</span>
     </div>
@@ -35,7 +35,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 
 export interface WorkspaceFile {
   path: string
@@ -56,10 +56,44 @@ const emit = defineEmits<{
 }>()
 
 const selectedIndex = ref(0)
+const rootRef = ref<HTMLElement | null>(null)
+// 面板向上弹出（bottom: 100%），移动端键盘弹起后上方空间不足会被视口裁掉，
+// 打开时动态测量「面板底边到视口顶部」的可用高度收窄 max-height，保证面板完整可见。
+const availableHeight = ref<number | null>(null)
 
-watch(() => props.visible, (val) => {
-  if (val) selectedIndex.value = 0
-})
+const panelStyle = computed(() =>
+  availableHeight.value != null ? { maxHeight: `${availableHeight.value}px` } : undefined
+)
+
+function measureAvailableHeight() {
+  nextTick(() => {
+    const el = rootRef.value
+    if (!el) return
+    const top = el.getBoundingClientRect().top
+    // 留 8px 边距，并设下限避免极端情况下面板被压成 0
+    availableHeight.value = Math.max(160, Math.ceil(top) - 8)
+  })
+}
+
+watch(
+  () => props.visible,
+  (val) => {
+    if (val) {
+      selectedIndex.value = 0
+      availableHeight.value = null
+      measureAvailableHeight()
+    }
+  }
+)
+
+watch(
+  () => props.files,
+  () => {
+    selectedIndex.value = 0
+    // 文件列表异步加载完成后面板真实底边已确定，需重新测量
+    if (props.visible) measureAvailableHeight()
+  }
+)
 
 watch(() => props.filter, () => {
   selectedIndex.value = 0
