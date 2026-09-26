@@ -1,6 +1,6 @@
 'use strict'
 
-const { spawn } = require('child_process')
+const { execFileSync, spawn } = require('child_process')
 const crypto = require('crypto')
 const fs = require('fs')
 const os = require('os')
@@ -46,7 +46,8 @@ function resolveShellProtocol() {
       args: ['-NoProfile', '-NonInteractive', '-Command', '-'],
       isPowerShell: true,
       /** 命令执行完打印「结束标记 + 退出码」；标记与退出码必须合成单个字符串参数，否则会被各输出一行。 */
-      commandDone: (marker) => `if ($?) { echo "${marker} 0" } else { echo "${marker} 1" }`,
+      commandDone: (marker) =>
+        `if ($?) { echo "${marker} 0" } elseif ($LASTEXITCODE) { echo "${marker} $LASTEXITCODE" } else { echo "${marker} 1" }`,
       markerEcho: (marker) => `echo ${marker}`,
       chdir: (dir) => 'Set-Location -LiteralPath ' + psSingleQuote(dir),
       envSet: (name, value) => `$env:${name} = ${psSingleQuote(value)}`,
@@ -337,10 +338,20 @@ class LocalShellSession {
     if (!this.alive) return
     this.alive = false
     const pid = this.process.pid
-    if (pid != null) {
+    if (pid != null && process.platform === 'win32') {
+      // process.kill 在 Windows 上立刻返回，PowerShell 仍占着工作目录，随后删除目录会 EPERM。
+      // taskkill /T /F 会等到进程树退出再返回。
+      try {
+        execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], {
+          windowsHide: true,
+          timeout: 5000,
+          stdio: 'ignore',
+        })
+      } catch { /* 进程已退出 */ }
+    } else if (pid != null) {
       try { process.kill(-pid, 'SIGKILL') } catch { /* group already gone or unsupported */ }
+      try { this.process.kill('SIGKILL') } catch { /* ignore */ }
     }
-    try { this.process.kill('SIGKILL') } catch { /* ignore */ }
     try { this.process.stdin.end() } catch { /* ignore */ }
     // 立刻唤醒等待者，否则读取者会空等到 yield 超时才发现会话已关闭
     this.wake()
@@ -660,7 +671,9 @@ function createLocalShellRuntime(options = {}) {
   /** 写入命令并登记为等待中；提前返回后仍能凭 marker 继续读。 */
   function writeCommand(session, command, marker, keepSession, background) {
     session.beginCommand(marker, keepSession, true, background)
-    session.writeStdin(command + '\n' + protocol.commandDone(marker) + '\n')
+    // cmdlet 失败不会改写 $LASTEXITCODE。先清掉上一条原生命令留下的码，失败且没有新码时才回报 1。
+    const prelude = protocol.isPowerShell ? '$LASTEXITCODE = 0\n' : ''
+    session.writeStdin(prelude + command + '\n' + protocol.commandDone(marker) + '\n')
     session.incrementCommandCount()
     session.touch()
   }

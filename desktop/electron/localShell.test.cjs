@@ -8,31 +8,38 @@ const os = require('os')
 const path = require('path')
 const { createLocalShellRuntime, MAX_COMMAND_LENGTH, shellSingleQuote } = require('./localShell.cjs')
 
-function tempDir(t) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mao-local-shell-'))
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
-  return dir
-}
-
 function createRuntime(t, extra = {}) {
-  const dir = tempDir(t)
-  const runtime = createLocalShellRuntime({
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mao-local-shell-'))
+  // node:test 的 after 按注册顺序执行。删目录必须发生在所有 shell 关闭之后，
+  // 否则 Windows 上仍把该目录当作 cwd 的 powershell 会让 rm 得到 EPERM。
+  const closers = []
+  const track = (runtime) => {
+    closers.push(runtime)
+    return runtime
+  }
+  const runtime = track(createLocalShellRuntime({
     autoCleanup: false,
     buildEnv: async () => ({ ...process.env, TERM: 'dumb', PS1: '' }),
     refreshToken: (session) => {
-      session.writeStdin("export MAO_TOKEN='tok'\n")
+      const line = process.platform === 'win32'
+        ? "$env:MAO_TOKEN = 'tok'\n"
+        : "export MAO_TOKEN='tok'\n"
+      session.writeStdin(line)
     },
     resolveOutput: (_cid, shellId) => ({
       absPath: path.join(dir, `${shellId}.out`),
       displayPath: path.join(dir, `${shellId}.out`),
     }),
     ...extra,
-  })
+  }))
   t.after(() => {
-    runtime.closeAll()
-    runtime.stopCleanup()
+    for (const rt of closers) {
+      rt.closeAll()
+      rt.stopCleanup()
+    }
+    fs.rmSync(dir, { recursive: true, force: true })
   })
-  return { runtime, dir }
+  return { runtime, dir, track }
 }
 
 test('shellSingleQuote escapes embedded quotes', () => {
@@ -42,7 +49,9 @@ test('shellSingleQuote escapes embedded quotes', () => {
 test('exec captures stdout, stderr and the real exit code', async (t) => {
   const { runtime, dir } = createRuntime(t)
   const result = await runtime.handle(
-    { command: "printf 'validation failed\\n' >&2; false" },
+    { command: process.platform === 'win32'
+      ? "[Console]::Error.WriteLine('validation failed'); cmd /c exit 1"
+      : "printf 'validation failed\\n' >&2; false" },
     { conversationId: 11, workspace: dir, needApproval: false },
   )
   assert.equal(result.exit_code, 1)
@@ -89,24 +98,23 @@ test('reused session honors workdir by cd-ing before the command', async (t) => 
 })
 
 test('write_stdin returns immediately with a marker and refreshes token first', async (t) => {
-  const { runtime, dir } = createRuntime(t)
+  const { runtime, dir, track } = createRuntime(t)
   const writes = []
-  const withSpy = createLocalShellRuntime({
+  const withSpy = track(createLocalShellRuntime({
     autoCleanup: false,
     buildEnv: async () => ({ ...process.env, TERM: 'dumb', PS1: '' }),
     refreshToken: (session) => {
       writes.push('token')
-      session.writeStdin("export MAO_TOKEN='tok'\n")
+      const line = process.platform === 'win32'
+        ? "$env:MAO_TOKEN = 'tok'\n"
+        : "export MAO_TOKEN='tok'\n"
+      session.writeStdin(line)
     },
     resolveOutput: (_cid, shellId) => ({
       absPath: path.join(dir, `${shellId}.out`),
       displayPath: path.join(dir, `${shellId}.out`),
     }),
-  })
-  t.after(() => {
-    withSpy.closeAll()
-    withSpy.stopCleanup()
-  })
+  }))
   await withSpy.handle(
     { command: 'true', keep_session: true, session_id: 'sh-in' },
     { conversationId: 14, workspace: dir, needApproval: false },
@@ -125,8 +133,11 @@ test('write_stdin returns immediately with a marker and refreshes token first', 
 
 test('kills the whole process group when a session closes', async (t) => {
   const { runtime, dir } = createRuntime(t)
+  const command = process.platform === 'win32'
+    ? "$p = Start-Process -FilePath powershell.exe -ArgumentList '-NoProfile','-Command','Start-Sleep 300' -WindowStyle Hidden -PassThru; $p.Id"
+    : 'sleep 300 & echo $!'
   const started = await runtime.handle(
-    { command: 'sleep 300 & echo $!', keep_session: true, session_id: 'sh-tree' },
+    { command, keep_session: true, session_id: 'sh-tree' },
     { conversationId: 15, workspace: dir, needApproval: false },
   )
   const childPid = Number(started.output.trim().split('\n').pop())
@@ -158,7 +169,7 @@ test('enforces per-conversation session limits and command length', async (t) =>
 test('defaults missing action to exec and reports unknown actions', async (t) => {
   const { runtime, dir } = createRuntime(t)
   const execed = await runtime.handle(
-    { command: 'printf ok' },
+    { command: process.platform === 'win32' ? 'echo ok' : 'printf ok' },
     { conversationId: 18, workspace: dir, needApproval: false },
   )
   assert.equal(execed.exit_code, 0)
@@ -180,7 +191,7 @@ test('denies exec when approval callback returns false', async (t) => {
 test('exit code from the previous command does not leak into the next output', async (t) => {
   const { runtime, dir } = createRuntime(t)
   const failed = await runtime.handle(
-    { command: 'bash -c "exit 3"', keep_session: true, session_id: 'sh-exit' },
+    { command: process.platform === 'win32' ? 'cmd /c exit 3' : 'bash -c "exit 3"', keep_session: true, session_id: 'sh-exit' },
     { conversationId: 20, workspace: dir, needApproval: false },
   )
   assert.equal(failed.exit_code, 3)
@@ -196,7 +207,7 @@ test('async starts the command before returning session_id and await_async colle
   const { runtime, dir } = createRuntime(t)
   const startedAt = Date.now()
   const started = await runtime.handle(
-    { command: 'sleep 1; printf async-ok', async: true, keep_session: true, session_id: 'sh-async' },
+    { command: process.platform === 'win32' ? 'sleep 1; echo async-ok' : 'sleep 1; printf async-ok', async: true, keep_session: true, session_id: 'sh-async' },
     { conversationId: 21, workspace: dir, needApproval: false },
   )
   assert.ok(Date.now() - startedAt < 800)
@@ -235,7 +246,9 @@ test('wait_for returns early while the command keeps running, await_async collec
   const startedAt = Date.now()
   const early = await runtime.handle(
     {
-      command: "printf 'Listening on 3000\\n'; sleep 1; printf 'done\\n'",
+      command: process.platform === 'win32'
+        ? "echo 'Listening on 3000'; sleep 1; echo done"
+        : "printf 'Listening on 3000\\n'; sleep 1; printf 'done\\n'",
       wait_for: 'Listening on',
       keep_session: true,
       session_id: 'sh-wait',
@@ -284,7 +297,9 @@ test('await_async after wait_for still finishes when the shell later exits', asy
   const { runtime, dir } = createRuntime(t)
   const early = await runtime.handle(
     {
-      command: "printf 'record=SUCCESS\\n'; sleep 0.5; exit 0",
+      command: process.platform === 'win32'
+        ? "echo 'record=SUCCESS'; Start-Sleep -Milliseconds 500; exit 0"
+        : "printf 'record=SUCCESS\\n'; sleep 0.5; exit 0",
       wait_for: 'record=SUCCESS',
       keep_session: true,
       session_id: 'sh-delay-exit',
@@ -308,7 +323,7 @@ test('await_async after wait_for still finishes when the shell later exits', asy
 test('await_async resumes a timed-out command without losing output', async (t) => {
   const { runtime, dir } = createRuntime(t)
   const first = await runtime.handle(
-    { command: "sleep 1; printf 'late-line\\n'", yield_time_ms: 200, session_id: 'sh-resume' },
+    { command: process.platform === 'win32' ? "sleep 1; echo late-line" : "sleep 1; printf 'late-line\\n'", yield_time_ms: 200, session_id: 'sh-resume' },
     { conversationId: 24, workspace: dir, needApproval: false },
   )
   assert.equal(first.completed, false)
@@ -329,7 +344,9 @@ test('write_stdin feeds a running command instead of queueing a new marker', asy
   // 只回显长度：避免命令把 stdin 里排队的 marker 回显行原样打出来，被误判为命令结束
   const started = await runtime.handle(
     {
-      command: 'while read -r line; do printf \'len:%s\\n\' "${#line}"; done',
+      command: process.platform === 'win32'
+        ? "while ($true) { $line = [Console]::In.ReadLine(); if ($null -eq $line) { break }; Write-Output ('len:' + $line.Length) }"
+        : 'while read -r line; do printf \'len:%s\\n\' "${#line}"; done',
       yield_time_ms: 300,
       keep_session: true,
       session_id: 'sh-stdin',
@@ -403,7 +420,7 @@ test('does not leak a marker that arrives split across two chunks', async (t) =>
 test('write_stdin on a finished-but-unconsumed command is rejected instead of mis-answered', async (t) => {
   const { runtime, dir } = createRuntime(t)
   const early = await runtime.handle(
-    { command: 'sleep 0.4; echo finished', yield_time_ms: 150, keep_session: true, session_id: 'sh-stale' },
+    { command: process.platform === 'win32' ? 'Start-Sleep -Milliseconds 400; echo finished' : 'sleep 0.4; echo finished', yield_time_ms: 150, keep_session: true, session_id: 'sh-stale' },
     { conversationId: 29, workspace: dir, needApproval: false },
   )
   assert.equal(early.completed, false)
@@ -432,7 +449,7 @@ test('write_stdin on a finished-but-unconsumed command is rejected instead of mi
 test('double await_async cannot fake success or lose the session', async (t) => {
   const { runtime, dir } = createRuntime(t)
   const early = await runtime.handle(
-    { command: 'sleep 0.4; echo done', yield_time_ms: 150, keep_session: true, session_id: 'sh-race' },
+    { command: process.platform === 'win32' ? 'Start-Sleep -Milliseconds 400; echo done' : 'sleep 0.4; echo done', yield_time_ms: 150, keep_session: true, session_id: 'sh-race' },
     { conversationId: 30, workspace: dir, needApproval: false },
   )
   assert.equal(early.completed, false)
