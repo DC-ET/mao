@@ -454,3 +454,69 @@ test('double await_async cannot fake success or lose the session', async (t) => 
   assert.equal(probe.error, undefined)
   assert.match(probe.output, /alive/)
 })
+
+test('powershell host executes commands, reports exit code and stderr via injected protocol', async (t) => {
+  if (process.platform === 'win32') {
+    // 真实 win32 上 runtime 自身就会用 powershell.exe
+    const { runtime, dir } = createRuntime(t)
+    const result = await runtime.handle(
+      { command: "Write-Output 'ps-ok'" },
+      { conversationId: 41, workspace: dir, needApproval: false },
+    )
+    assert.equal(result.exit_code, 0)
+    assert.match(result.output, /ps-ok/)
+    return
+  }
+  // 非 Windows：用 pwsh 若可用则验证完整协议，否则跳过
+  let pwsh = null
+  try { pwsh = require('child_process').execFileSync('which', ['pwsh']).toString().trim() } catch { /* not installed */ }
+  if (!pwsh) { t.skip('pwsh not available on this platform'); return }
+  const { runtime, dir } = createRuntime(t, {
+    protocol: {
+      command: pwsh,
+      args: ['-NoProfile', '-NonInteractive', '-Command', '-'],
+      isPowerShell: true,
+      commandDone: (m) => `if ($?) { echo "${m} 0" } else { echo "${m} 1" }`,
+      markerEcho: (m) => `echo ${m}`,
+      chdir: (d) => "Set-Location -LiteralPath '" + d.replace(/'/g, "''") + "'",
+      envSet: (n, v) => `$env:${n} = '${String(v).replace(/'/g, "''")}'`,
+      envUnset: (n) => `Remove-Item Env:${n} -ErrorAction SilentlyContinue`,
+      initScript: '',
+    },
+  })
+  const result = await runtime.handle(
+    { command: "Write-Output 'ps-ok'; Write-Error 'ps-err' -ErrorAction Continue" },
+    { conversationId: 41, workspace: dir, needApproval: false },
+  )
+  assert.equal(result.completed, true)
+  assert.match(result.output, /ps-ok/)
+  assert.match(result.output, /ps-err/)
+  const fail = await runtime.handle(
+    { command: 'cmdlet-that-does-not-exist-xyz' },
+    { conversationId: 41, workspace: dir, needApproval: false },
+  )
+  assert.equal(fail.exit_code, 1)
+})
+
+test('spawn failure surfaces an explicit error instead of silent exit 1', async (t) => {
+  const { runtime, dir } = createRuntime(t, {
+    protocol: {
+      command: 'mao-nonexistent-shell-binary-xyz',
+      args: ['-c'],
+      isPowerShell: false,
+      commandDone: (m) => `echo ${m} $?`,
+      markerEcho: (m) => `echo ${m}`,
+      chdir: (d) => 'cd ' + d,
+      envSet: (n, v) => `export ${n}=${v}`,
+      envUnset: (n) => `unset ${n}`,
+      initScript: '',
+    },
+  })
+  const result = await runtime.handle(
+    { command: 'echo hi' },
+    { conversationId: 42, workspace: dir, needApproval: false },
+  )
+  assert.equal(result.completed, true)
+  assert.match(String(result.error || result.spawn_error || ''), /ENOENT|spawn/i)
+  assert.notEqual(result.exit_code, 0)
+})

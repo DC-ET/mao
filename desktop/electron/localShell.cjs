@@ -26,6 +26,49 @@ const BUFFER_KEEP_TAIL_CHARS = 8192
 /** 轮询上限：有新输出会立即唤醒，这里只兜底超时判定。 */
 const WAIT_SLICE_MS = 200
 
+function isWindowsPlatform() {
+  return process.platform === 'win32'
+}
+
+/** PowerShell 单引号字面量：内部单引号用双写转义。 */
+function psSingleQuote(value) {
+  return "'" + String(value).replace(/'/g, "''") + "'"
+}
+
+/**
+ * Windows 宿主没有 bash；Git Bash 的工作目录/路径语义与 cmd 不一致，按需求走 PowerShell。
+ * 命令经 stdin 逐条喂给常驻宿主，与 bash --norc --noprofile 等价。
+ */
+function resolveShellProtocol() {
+  if (isWindowsPlatform()) {
+    return {
+      command: 'powershell.exe',
+      args: ['-NoProfile', '-NonInteractive', '-Command', '-'],
+      isPowerShell: true,
+      /** 命令执行完打印「结束标记 + 退出码」；标记与退出码必须合成单个字符串参数，否则会被各输出一行。 */
+      commandDone: (marker) => `if ($?) { echo "${marker} 0" } else { echo "${marker} 1" }`,
+      markerEcho: (marker) => `echo ${marker}`,
+      chdir: (dir) => 'Set-Location -LiteralPath ' + psSingleQuote(dir),
+      envSet: (name, value) => `$env:${name} = ${psSingleQuote(value)}`,
+      envUnset: (name) => `Remove-Item Env:${name} -ErrorAction SilentlyContinue`,
+      /** 重定向输出下宿主默认用 OEM 代码页写 stdout（中文系统常为 GBK），先切 UTF-8。 */
+      initScript:
+        '[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false); ' +
+        '$OutputEncoding = New-Object System.Text.UTF8Encoding($false)',
+    }
+  }
+  return {
+    command: 'bash',
+    args: ['-c', 'exec 2>&1; exec bash --norc --noprofile'],
+    isPowerShell: false,
+    commandDone: (marker) => `echo ${marker} $?`,
+    markerEcho: (marker) => `echo ${marker}`,    chdir: (dir) => 'cd ' + shellSingleQuote(dir),
+    envSet: (name, value) => `export ${name}=${shellSingleQuote(value)}`,
+    envUnset: (name) => `unset ${name}`,
+    initScript: '',
+  }
+}
+
 /**
  * 缓冲区末尾与 marker 前缀重叠的长度：这段可能是刚到一半的结束标记，
  * 既不能当正文交给模型也不能落盘，等剩余字节到达再判定。
@@ -123,7 +166,8 @@ class LocalShellSession {
     this.lastConsumedMarker = null
     this.process.stdout.setEncoding('utf8')
     this.process.stderr.setEncoding('utf8')
-    this.process.stderr.resume()
+    // stderr 并入同一缓冲区，等价 bash 宿主里的 exec 2>&1（bash 路径下该管道本就为空）
+    this.process.stderr.on('data', (data) => this.onData(data))
     // 常驻读取：没有监听者时 Node 会直接丢弃 stdout 数据，
     // 提前放行（wait_for 命中 / 超时）后剩余输出与结束标记就再也读不到了。
     this.process.stdout.on('data', (data) => this.onData(data))
@@ -132,6 +176,13 @@ class LocalShellSession {
       this.wake()
     })
     this.process.on('exit', () => this.wake())
+    // spawn ENOENT 等启动失败只触发 error（exit 可能不触发）：必须显式标记，否则会话假活、模型只能看到空输出
+    this.spawnError = null
+    this.process.on('error', (e) => {
+      this.spawnError = e.message
+      this.alive = false
+      this.wake()
+    })
   }
 
   touch() {
@@ -142,7 +193,7 @@ class LocalShellSession {
     return this.alive && this.process.exitCode == null && !this.process.killed
   }
 
-  /** 进程已退出时的状态码：正常退出用 bash 的 exit code；被信号杀掉则为 -1。 */
+  /** 进程已退出时的状态码：正常退出用 bash 的 exit code；被信号杀掉或启动失败则为 -1。 */
   processExitStatus() {
     if (this.process.exitCode != null) return this.process.exitCode
     if (this.process.signalCode || !this.isAlive()) return -1
@@ -298,6 +349,7 @@ class LocalShellSession {
 
 function createLocalShellRuntime(options = {}) {
   const buildEnv = options.buildEnv || (async () => ({ ...process.env, TERM: 'dumb', PS1: '' }))
+  const protocol = options.protocol || resolveShellProtocol()
   const refreshToken = options.refreshToken || (() => {})
   const resolveOutput = options.resolveOutput
   const maxSessions = options.maxSessionsPerConversation ?? DEFAULT_MAX_SESSIONS
@@ -344,12 +396,21 @@ function createLocalShellRuntime(options = {}) {
     fs.mkdirSync(path.dirname(absPath), { recursive: true })
     fs.writeFileSync(absPath, '')
     const env = { ...(await buildEnv()), TERM: 'dumb', PS1: '' }
-    const child = spawnFn('bash', ['-c', 'exec 2>&1; exec bash --norc --noprofile'], {
+    const child = spawnFn(protocol.command, protocol.args, {
       cwd: workdir || undefined,
       env,
       stdio: ['pipe', 'pipe', 'pipe'],
-      detached: true,
+      // 非 Windows 上 detached 用于按进程组回收整棵命令树；Windows 下 powershell 不支持组 kill，改用直接 kill
+      detached: !isWindowsPlatform(),
+      windowsHide: isWindowsPlatform(),
     })
+    // spawn ENOENT 等错误只会异步触发 error 事件：不接住的话模型只能看到空输出 + exit 1，无法定位。
+    // LocalShellSession 内部也会挂 error 监听并记录 spawnError，这里的空监听只防 unhandled error 崩溃。
+    child.on('error', () => {})
+    // PowerShell 重定向输出默认走 OEM 代码页（中文系统常为 GBK），启动后先切 UTF-8
+    if (protocol.initScript) {
+      child.stdin.write(protocol.initScript + '\n')
+    }
     return new LocalShellSession(shellId, conversationId, child, workdir || '', absPath, displayPath)
   }
 
@@ -511,7 +572,7 @@ function createLocalShellRuntime(options = {}) {
   async function executeWithMarker(session, command, timeoutMs) {
     const marker = newMarker()
     session.beginCommand(marker, true, false)
-    session.writeStdin(command + '\necho ' + marker + ' $?\n')
+    session.writeStdin(command + '\n' + protocol.markerEcho(marker) + '\n')
     return readUntilMarker(session, marker, timeoutMs)
   }
 
@@ -536,7 +597,7 @@ function createLocalShellRuntime(options = {}) {
       const marker = newMarker()
       // pwd 属协议命令，输出不进落盘文件
       session.beginCommand(marker, true, false)
-      session.writeStdin('pwd\necho ' + marker + '\n')
+      session.writeStdin('pwd\n' + protocol.markerEcho(marker) + '\n')
       const pwd = await readUntilMarker(session, marker, WORKDIR_TIMEOUT_MS)
       if (pwd.completed) {
         const lines = pwd.output.split('\n').map((l) => l.trim()).filter((l) => l !== '')
@@ -568,6 +629,11 @@ function createLocalShellRuntime(options = {}) {
       current_workdir: currentWorkdir ?? session.currentWorkdir,
       output_file: session.displayPath,
     }
+    if (session.spawnError) {
+      // 宿主进程启动失败（如 ENOENT）：把根因透传给模型，而不是留一条空输出 + exit 1 的悬案
+      payload.error = `shell 宿主启动失败：${session.spawnError}`
+      payload.spawn_error = session.spawnError
+    }
     if (result.matched != null) payload.matched = result.matched
     if (result.shellExited) {
       payload.message = 'shell 进程已退出，会话已关闭。常驻 bash 里的 exit/exec 会结束整个会话。'
@@ -594,7 +660,7 @@ function createLocalShellRuntime(options = {}) {
   /** 写入命令并登记为等待中；提前返回后仍能凭 marker 继续读。 */
   function writeCommand(session, command, marker, keepSession, background) {
     session.beginCommand(marker, keepSession, true, background)
-    session.writeStdin(command + '\necho ' + marker + ' $?\n')
+    session.writeStdin(command + '\n' + protocol.commandDone(marker) + '\n')
     session.incrementCommandCount()
     session.touch()
   }
@@ -640,7 +706,7 @@ function createLocalShellRuntime(options = {}) {
     }
     injectToken(session)
     if (workdirArg && workdir) {
-      await executeWithMarker(session, 'cd ' + shellSingleQuote(workdir), WORKDIR_TIMEOUT_MS)
+      await executeWithMarker(session, protocol.chdir(workdir), WORKDIR_TIMEOUT_MS)
     }
     const marker = newMarker()
     if (args.async === true) {
@@ -834,6 +900,8 @@ function createLocalShellRuntime(options = {}) {
 module.exports = {
   createLocalShellRuntime,
   shellSingleQuote,
+  psSingleQuote,
+  resolveShellProtocol,
   MAX_COMMAND_LENGTH,
   DEFAULT_EXEC_YIELD_MS,
 }

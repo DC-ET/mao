@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cloudGroupKey, cloudWorkspaceIndicator, formatCloudGroupLabel, groupIconKind, isFeishuChatWorkspace, isFeishuGroupKey, isWeixinGroupSession } from './cloud-project'
+import { cloudGroupKey, cloudWorkspaceIndicator, formatCloudGroupLabel, groupIconKind, isFeishuChatWorkspace, isFeishuGroupKey, isWeixinGroupSession, workspaceTailLabel } from './cloud-project'
 
 const cloud = (workspace: string, extra: Partial<{ projectKey: string; agentId: string }> = {}) => ({ executionMode: 'CLOUD' as const, workspace, ...extra })
 
@@ -22,6 +22,18 @@ describe('cloudGroupKey', () => {
 
   it('keeps regular temp sessions in the temp bucket', () => {
     expect(cloudGroupKey(cloud('/opt/mao-data/workspace/2/sessions/xx'))).toBe('CLOUD:临时工作区')
+  })
+})
+
+describe('workspaceTailLabel', () => {
+  it('extracts last segment from POSIX paths', () => {
+    expect(workspaceTailLabel('/Users/me/code/mao')).toBe('mao')
+    expect(workspaceTailLabel('/opt/mao-data/workspace/')).toBe('workspace')
+  })
+
+  it('extracts last segment from Windows paths with backslashes', () => {
+    expect(workspaceTailLabel('D:\\projects\\aiprojects')).toBe('aiprojects')
+    expect(workspaceTailLabel('C:\\Users\\me\\code')).toBe('code')
   })
 })
 

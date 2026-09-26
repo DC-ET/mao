@@ -451,7 +451,7 @@ import { useSessionStore, type Session, type TaskPhase } from '../../stores/sess
 import { useTerminal } from '../../composables/useTerminal'
 import { removeSessionTabsFor } from '../../composables/useCenterTabs'
 import { useTaskPanelPrefs } from '../../composables/useTaskPanelPrefs'
-import { cloudGroupKey, formatCloudGroupLabel, groupIconKind, isSharedCloudProject } from '../../utils/cloud-project'
+import { cloudGroupKey, formatCloudGroupLabel, groupIconKind, isSharedCloudProject, workspaceTailLabel } from '../../utils/cloud-project'
 import { planFocusReveal, planGroupReveal } from '../../utils/taskSidebarReveal'
 import { sessionToFocusCandidate, sortByFocusPriority, isHistoryEligible } from '../../utils/focusSort'
 import feishuLogo from '../../assets/feishu-logo.svg'
@@ -1010,8 +1010,7 @@ function formatGroupLabel(key: string, session?: Session): string {
   if (key.startsWith('LOCAL:')) {
     const ws = key.substring(6)
     if (ws === '未设置') return '未设置'
-    const parts = ws.split('/').filter(Boolean)
-    return parts[parts.length - 1] || ws
+    return workspaceTailLabel(ws)
   }
   return key
 }

@@ -15,6 +15,20 @@
 
 ---
 
+## 0.0.202 (2026-09-26)
+
+### 桌面 Electron
+
+- 修复 Windows 本地（LOCAL）任务下命令执行工具全部失败的问题：本地 shell 宿主由硬编码的 `bash` 改为按平台选择，Windows 走常驻 `powershell.exe -NoProfile -NonInteractive -Command -`（启动后切 UTF-8 输出编码，`cd`/环境变量注入/退出码上报随协议适配），非 Windows 行为不变。
+- 修复 Windows 下 `glob_search` 及带 `glob` 参数的 `grep_search` 报 `minimatch is not a function` 的问题（minimatch v10 命名导出解构适配）。
+- 本地 shell 宿主启动失败（如找不到可执行文件）时向模型显式返回 `spawn_error`，不再表现为空输出 + exit 1。
+
+## 0.0.201 (2026-09-26)
+
+### 前端（桌面 / Web / 安卓）
+
+- 修复 Windows 环境下本地任务的分组标题显示完整路径（如 `D:\projects\aiprojects`）而非项目目录名的问题，分组名提取现已兼容反斜杠路径。
+
 ## 0.0.200 (2026-09-24)
 
 ### 后端

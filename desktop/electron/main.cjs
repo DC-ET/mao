@@ -6,7 +6,7 @@ const path = require('path')
 const os = require('os')
 const { autoUpdater } = require('electron-updater')
 const { TerminalManager } = require('./terminalManager.cjs')
-const { createLocalShellRuntime, shellSingleQuote } = require('./localShell.cjs')
+const { createLocalShellRuntime, resolveShellProtocol } = require('./localShell.cjs')
 const promptImageResizer = require('./promptImageResizer.cjs')
 const serverConfigLib = require('./serverConfig.cjs')
 
@@ -355,15 +355,17 @@ async function buildShellEnv() {
 }
 
 /**
- * 持久 bash 会话的 env 在 spawn 后不会自动更新；每次执行命令前重新 export。
+ * 持久 shell 会话的 env 在 spawn 后不会自动更新；每次执行命令前重新写入。
+ * bash 用 export，PowerShell 用 $env:。
  */
 function refreshMaoTokenInShellSession(session) {
   if (!session?.writeStdin) return
+  const protocol = resolveShellProtocol()
   const { token } = readAuthStore()
   if (token) {
-    session.writeStdin('export MAO_TOKEN=' + shellSingleQuote(token) + '\n')
+    session.writeStdin(protocol.envSet('MAO_TOKEN', token) + '\n')
   } else {
-    session.writeStdin('unset MAO_TOKEN\n')
+    session.writeStdin(protocol.envUnset('MAO_TOKEN') + '\n')
   }
 }
 
@@ -2299,7 +2301,7 @@ function globWithRg(pattern, scope, headLimit) {
 }
 
 function globWithNode(pattern, scope, headLimit) {
-  const minimatch = require('minimatch')
+  const { minimatch } = require('minimatch')
   const files = []
   const searchRoot = scope.cwd
 
@@ -2435,7 +2437,7 @@ function parseRgSingleFileLine(line, scope, workspaceRoot) {
 }
 
 function grepWithNode(pattern, scope, workspaceRoot, glob, ignoreCase, contextLines, maxOutputChars) {
-  const minimatch = require('minimatch')
+  const { minimatch } = require('minimatch')
   const flags = ignoreCase ? 'i' : ''
   let regex
   try {

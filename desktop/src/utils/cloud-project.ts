@@ -91,6 +91,12 @@ export function cloudGroupKey(session: Pick<Session, 'executionMode' | 'workspac
   return 'CLOUD:临时工作区'
 }
 
+/** 取工作区路径末段作为展示名（兼容 Windows 反斜杠路径，如 D:\projects\aiprojects → aiprojects）。 */
+export function workspaceTailLabel(workspace: string): string {
+  const parts = workspace.replace(/\\/g, '/').split('/').filter(Boolean)
+  return parts[parts.length - 1] || workspace
+}
+
 export function formatCloudGroupLabel(
   key: string,
   session?: Pick<Session, 'agentName' | 'title'>
@@ -129,7 +135,7 @@ export function formatCloudGroupLabel(
       if (lastSegment.startsWith('private-')) return '飞书私聊'
       return `飞书群${botId}·${lastSegment.slice(0, 10)}`
     }
-    return parts[parts.length - 1] || ws
+    return workspaceTailLabel(ws)
   }
   return key
 }
