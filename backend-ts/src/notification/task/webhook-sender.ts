@@ -1,4 +1,4 @@
-import type { NotificationChannel, WebhookSendResult } from './types.js';
+import type { NotificationChannel, WebhookMessage, WebhookSendResult } from './types.js';
 import { webhookFailure, webhookSuccess } from './types.js';
 
 /** Webhook 请求显式超时：不依赖 undici 默认空闲超时，慢速滴流对端也将在此时限内失败并进入重试。 */
@@ -17,7 +17,7 @@ export type FetchLike = (url: string, init: {
 
 export interface WebhookSender {
   channel(): NotificationChannel;
-  send(webhookUrl: string, content: string): Promise<WebhookSendResult>;
+  send(webhookUrl: string, message: WebhookMessage): Promise<WebhookSendResult>;
 }
 
 export class DingTalkWebhookSender implements WebhookSender {
@@ -27,9 +27,10 @@ export class DingTalkWebhookSender implements WebhookSender {
     return 'DINGTALK';
   }
 
-  async send(webhookUrl: string, content: string): Promise<WebhookSendResult> {
+  async send(webhookUrl: string, message: WebhookMessage): Promise<WebhookSendResult> {
     try {
-      const json = JSON.stringify({ msgtype: 'text', text: { content } });
+      // 钉钉渠道保持文本消息形态：卡片交互仅按需在飞书侧提供。
+      const json = JSON.stringify({ msgtype: 'text', text: { content: message.text } });
       const response = await this.fetchImpl(webhookUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json; charset=utf-8' },
@@ -43,8 +44,8 @@ export class DingTalkWebhookSender implements WebhookSender {
         return webhookSuccess(response.status, code);
       }
       const retryable = response.status === 429 || response.status >= 500;
-      const message = typeof root.errmsg === 'string' ? root.errmsg : '钉钉 Webhook 请求失败';
-      return webhookFailure(retryable, response.status, code, message);
+      const errorMessage = typeof root.errmsg === 'string' ? root.errmsg : '钉钉 Webhook 请求失败';
+      return webhookFailure(retryable, response.status, code, errorMessage);
     } catch {
       return webhookFailure(true, null, null, '钉钉 Webhook 网络请求失败');
     }
@@ -58,9 +59,12 @@ export class FeishuWebhookSender implements WebhookSender {
     return 'FEISHU';
   }
 
-  async send(webhookUrl: string, content: string): Promise<WebhookSendResult> {
+  async send(webhookUrl: string, message: WebhookMessage): Promise<WebhookSendResult> {
     try {
-      const json = JSON.stringify({ msg_type: 'text', content: { text: content } });
+      const payload = message.card != null
+        ? { msg_type: 'interactive', card: message.card }
+        : { msg_type: 'text', content: { text: message.text } };
+      const json = JSON.stringify(payload);
       const response = await this.fetchImpl(webhookUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json; charset=utf-8' },
@@ -75,10 +79,10 @@ export class FeishuWebhookSender implements WebhookSender {
         return webhookSuccess(response.status, code);
       }
       const retryable = response.status === 429 || response.status >= 500;
-      const message = typeof root.msg === 'string' ? root.msg
+      const errorMessage = typeof root.msg === 'string' ? root.msg
         : typeof root.StatusMessage === 'string' ? root.StatusMessage
           : '飞书 Webhook 请求失败';
-      return webhookFailure(retryable, response.status, code, message);
+      return webhookFailure(retryable, response.status, code, errorMessage);
     } catch {
       return webhookFailure(true, null, null, '飞书 Webhook 网络请求失败');
     }

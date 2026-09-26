@@ -119,7 +119,7 @@ mao pref task-notification set --enabled false
 
 ### 用途
 
-发送一次任务通知测试。未传 `--webhook-url` 时，服务端使用已保存的当前渠道 Webhook。
+发送一次任务通知测试。未传 `--webhook-url` 时，服务端使用已保存的当前渠道 Webhook。飞书渠道发卡片（与真实任务通知同形态），钉钉渠道发文本。
 
 ### 参数说明
 

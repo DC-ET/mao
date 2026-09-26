@@ -1,12 +1,13 @@
 import { formatDateTime } from '../../common/json.js';
 import { hasText, toSnakeRow } from '../../common/case.js';
 import type { Db } from '../../db/db.js';
-import { DeliveryStatus, parseNotificationChannel, type TaskNotificationDelivery } from './types.js';
+import { DeliveryStatus, parseNotificationChannel, type TaskNotificationDelivery, type WebhookMessage } from './types.js';
 import type { WebhookSecretCipher } from './webhook-secret-cipher.js';
 import type { WebhookSenderRegistry } from './webhook-sender.js';
 import { webhookFailure } from './types.js';
 import type { TaskNotificationMetrics } from './delivery.service.js';
 import { InMemoryTaskNotificationMetrics } from './delivery.service.js';
+import { buildTaskNotificationCard, buildTaskNotificationText, type TaskNotificationContentInput, type TaskNotificationPhase } from './feishu-notification-card.js';
 
 export interface DeliverySchedulerStore {
   recoverInterrupted(cutoff: string, now: string): Promise<void>;
@@ -94,6 +95,15 @@ export interface TaskNotificationProperties {
 /** 调度参数来源：静态对象（默认值/测试）或动态 getter（后台配置，保存后即时生效）。 */
 export type TaskNotificationPropertiesSource = TaskNotificationProperties | (() => Promise<TaskNotificationProperties>);
 
+/**
+ * 通知正文所需的运行时上下文（装配层注入）：本轮用户消息与会话详情深链。
+ * 取不到时对应段落/按钮不渲染，不影响通知投递。
+ */
+export interface TaskNotificationContextProvider {
+  latestUserMessage(sessionId: number): Promise<string | null>;
+  sessionDetailUrl(sessionId: number): Promise<string | null>;
+}
+
 /** SENDING 卡死行恢复的执行间隔：每 tick 一次代价过高，节流为每分钟。 */
 const RECOVERY_INTERVAL_MS = 60_000;
 
@@ -105,6 +115,7 @@ export class WebhookDeliveryScheduler {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
   private stopped = false;
+  private contextProvider: TaskNotificationContextProvider | null = null;
 
   constructor(
     private readonly store: DeliverySchedulerStore,
@@ -118,6 +129,11 @@ export class WebhookDeliveryScheduler {
   private async resolveProperties(): Promise<TaskNotificationProperties> {
     const source = this.propertiesSource;
     return typeof source === 'function' ? await source() : source;
+  }
+
+  /** 装配层注入通知上下文（用户消息 / 会话详情链接）；传 null 时卡片省略这两部分。 */
+  setContextProvider(provider: TaskNotificationContextProvider | null): void {
+    this.contextProvider = provider;
   }
 
   start(): void {
@@ -178,7 +194,8 @@ export class WebhookDeliveryScheduler {
       for (const delivery of due) {
         const claimed = await this.store.claim(delivery.id!, delivery.status!);
         if (claimed) {
-          this.execute(() => { void this.deliver(delivery); });
+          // 回调返回投递 Promise：装配层的线程池 submit 会忽略它，测试/后续扩展则能等待投递完成。
+          this.execute(() => this.deliver(delivery));
         }
       }
       this.metrics.pending(await this.store.countPending());
@@ -213,7 +230,7 @@ export class WebhookDeliveryScheduler {
       try {
         const channel = parseNotificationChannel(delivery.channel);
         const url = this.cipher.decrypt(delivery.webhookCiphertext!);
-        result = await this.senderRegistry.get(channel).send(url, this.buildContent(delivery));
+        result = await this.senderRegistry.get(channel).send(url, await this.buildMessage(delivery));
       } catch {
         result = webhookFailure(false, null, null, '通知配置不可用');
       }
@@ -255,16 +272,45 @@ export class WebhookDeliveryScheduler {
     }
   }
 
-  private buildContent(delivery: TaskNotificationDelivery): string {
-    if (delivery.terminalPhase === 'ASK_USER') {
-      return `Mao Agent 提问通知\n任务：${delivery.titleSnapshot}\nAgent 向你发起了提问，正在等待回答\n请回到对话页面查看并回复\n时间：${formatDateTime(new Date())}`;
+  /** 组装投递消息：飞书渠道发卡片，钉钉渠道用同源文本（保持既有形态）。 */
+  private async buildMessage(delivery: TaskNotificationDelivery): Promise<WebhookMessage> {
+    const input = await this.buildContentInput(delivery);
+    return { text: buildTaskNotificationText(input), card: buildTaskNotificationCard(input) };
+  }
+
+  private async buildContentInput(delivery: TaskNotificationDelivery): Promise<TaskNotificationContentInput> {
+    const sessionId = delivery.sessionId ?? null;
+    return {
+      phase: phaseOfDelivery(delivery.terminalPhase),
+      title: delivery.titleSnapshot ?? '未命名任务',
+      userMessage: sessionId == null ? null : await this.latestUserMessage(sessionId),
+      failureReason: delivery.failureReason ?? null,
+      sessionDetailUrl: sessionId == null ? null : await this.sessionDetailUrl(sessionId),
+    };
+  }
+
+  private async latestUserMessage(sessionId: number): Promise<string | null> {
+    const provider = this.contextProvider;
+    if (provider == null) return null;
+    try {
+      const value = await provider.latestUserMessage(sessionId);
+      return value != null && hasText(value) ? value : null;
+    } catch (e) {
+      console.warn(`任务通知读取本轮用户消息失败, sessionId=${sessionId}`, e);
+      return null;
     }
-    const result = delivery.terminalPhase === 'COMPLETED' ? '已完成' : '执行失败';
-    let content = `Mao Agent 任务通知\n任务：${delivery.titleSnapshot}\n结果：${result}\n时间：${formatDateTime(new Date())}`;
-    if (delivery.terminalPhase === 'FAILED' && hasText(delivery.failureReason)) {
-      content += `\n原因：${delivery.failureReason}`;
+  }
+
+  private async sessionDetailUrl(sessionId: number): Promise<string | null> {
+    const provider = this.contextProvider;
+    if (provider == null) return null;
+    try {
+      const value = await provider.sessionDetailUrl(sessionId);
+      return value != null && hasText(value) ? value : null;
+    } catch (e) {
+      console.warn(`任务通知生成会话详情链接失败, sessionId=${sessionId}`, e);
+      return null;
     }
-    return content;
   }
 
   private retryDelayMinutes(attempt: number): number {
@@ -277,4 +323,11 @@ export class WebhookDeliveryScheduler {
     if (value == null) return null;
     return value.length <= maxLength ? value : value.slice(0, maxLength);
   }
+}
+
+/** 投递相位映射：非 COMPLETED / ASK_USER 的终态按失败渲染（与改造前语义一致）。 */
+function phaseOfDelivery(terminalPhase: string | null | undefined): TaskNotificationPhase {
+  if (terminalPhase === 'ASK_USER') return 'ASK_USER';
+  if (terminalPhase === 'COMPLETED') return 'COMPLETED';
+  return 'FAILED';
 }

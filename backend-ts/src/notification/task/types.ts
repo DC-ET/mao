@@ -57,6 +57,15 @@ export interface TaskNotificationDelivery {
   updatedAt?: string | null;
 }
 
+/**
+ * Webhook 消息体。text 为通用纯文本正文；card 为飞书卡片 JSON（1.0 结构），
+ * 仅飞书渠道消费——存在时飞书发 interactive 卡片，否则回退文本消息。
+ */
+export interface WebhookMessage {
+  text: string;
+  card?: Record<string, unknown>;
+}
+
 export interface WebhookSendResult {
   success: boolean;
   retryable: boolean;

@@ -32,6 +32,7 @@ describe('FeishuMessageService', () => {
       findSessionChannel: vi.fn(async () => null),
       clearAwaitingFirstMessageTitle: vi.fn(async () => undefined),
       findLatestInboundMessageId: vi.fn(async () => null),
+      findThreadRootMessageId: vi.fn(async () => null),
       ...overrides,
     };
   }
@@ -312,6 +313,18 @@ describe('FeishuMessageService', () => {
     const failing = makeRepo({ findP2pMessageSession: vi.fn(async () => { throw new Error('db down'); }) });
     const serviceFailing = new FeishuMessageService(failing as never, { create: vi.fn() } as never, 20, 120);
     expect(await serviceFailing.findP2pMessageSession('1', 'om_1')).toBeNull();
+  });
+
+  it('finds the topic root message id and degrades to null on failure', async () => {
+    const repository = makeRepo({ findThreadRootMessageId: vi.fn(async () => 'om_root') });
+    const service = new FeishuMessageService(repository as never, { create: vi.fn() } as never, 20, 120);
+    expect(await service.findThreadRootMessageId(7)).toBe('om_root');
+    // 空串视为未命中（避免拿空 ID 去 reply）。
+    const empty = makeRepo({ findThreadRootMessageId: vi.fn(async () => '') });
+    expect(await new FeishuMessageService(empty as never, { create: vi.fn() } as never, 20, 120).findThreadRootMessageId(7)).toBeNull();
+    const failing = makeRepo({ findThreadRootMessageId: vi.fn(async () => { throw new Error('db down'); }) });
+    const serviceFailing = new FeishuMessageService(failing as never, { create: vi.fn() } as never, 20, 120);
+    expect(await serviceFailing.findThreadRootMessageId(7)).toBeNull();
   });
 
   it('finds thread session mapping and degrades to null on failure', async () => {

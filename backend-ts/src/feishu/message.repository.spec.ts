@@ -31,3 +31,19 @@ describe('MysqlFeishuMessageRepository p2p mapping', () => {
     expect(query).not.toHaveBeenCalled();
   });
 });
+
+describe('MysqlFeishuMessageRepository thread mapping', () => {
+  it('returns the topic root message id for a topic session', async () => {
+    const { repo, query } = setup([{ root_message_id: 'om_root' }]);
+    expect(await repo.findThreadRootMessageId(7)).toBe('om_root');
+    expect(query).toHaveBeenCalledWith(
+      'SELECT root_message_id FROM feishu_thread_session WHERE session_id = ? LIMIT 1',
+      [7],
+    );
+  });
+
+  it('returns null for a session without a topic mapping', async () => {
+    const { repo } = setup([]);
+    expect(await repo.findThreadRootMessageId(7)).toBeNull();
+  });
+});

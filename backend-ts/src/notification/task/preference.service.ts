@@ -1,6 +1,7 @@
 import { BusinessException } from '../../common/business-exception.js';
 import { ErrorCode } from '../../common/error-code.js';
 import { hasText } from '../../common/case.js';
+import { buildTaskNotificationCard } from './feishu-notification-card.js';
 import type { PreferenceView, UserTaskNotificationPreference } from './types.js';
 import { parseNotificationChannel } from './types.js';
 import type { WebhookSecretCipher } from './webhook-secret-cipher.js';
@@ -85,7 +86,11 @@ export class TaskNotificationPreferenceService {
       }
       resolvedUrl = this.cipher.decrypt(row.webhookCiphertext);
     }
-    const result = await this.senderRegistry.get(channel).send(resolvedUrl, 'Mao Agent 测试通知\n消息通知配置成功');
+    // 测试通知同时发卡片：让用户在后台点「测试」时就能看到真实任务通知的卡片形态（钉钉仍收文本）。
+    const result = await this.senderRegistry.get(channel).send(resolvedUrl, {
+      text: 'Mao Agent 测试通知\n消息通知配置成功',
+      card: buildTaskNotificationCard({ phase: 'COMPLETED', title: '消息通知配置成功' }),
+    });
     if (!result.success) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, result.error ?? '测试通知发送失败');
     }
