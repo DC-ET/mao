@@ -127,6 +127,10 @@
         <button v-if="role === 'user'" class="add-command-btn" @click="$emit('addToCommand', message.content)" title="添加到我的指令">
           <el-icon :size="12"><Plus /></el-icon>
         </button>
+        <button class="copy-btn" :class="{ copied }" @click="copyMessage">
+          <el-icon :size="12"><CopyDocument /></el-icon>
+          <span v-if="copied">已复制</span>
+        </button>
         <el-popover
           v-if="showDislike"
           :visible="dislikePopoverVisible"
@@ -145,8 +149,11 @@
             >
               <svg class="dislike-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path
-                  d="M17 1H21C21.55 1 22 1.45 22 2V13C22 13.55 21.55 14 21 14H17C16.45 14 16 13.55 16 13V2C16 1.45 16.45 1 17 1ZM17 3V12H20V3H17ZM14 1H3.5C2.53 1 1.71 1.69 1.53 2.61L0.03 10.11C-0.2 11.26 0.68 12.34 1.86 12.34H6.75L6.01 15.93C5.84 16.83 6.13 17.75 6.77 18.39C7.33 18.95 8.13 19.19 8.91 19.02C9.36 18.92 9.75 18.65 10.01 18.27L14 12.34V1ZM12 11.46L8.74 16.26C8.7 16.32 8.64 16.35 8.57 16.37C8.42 16.4 8.27 16.36 8.18 16.26C8.11 16.19 8.08 16.09 8.1 15.99L9.1 11.03C9.16 10.75 9.08 10.45 8.89 10.24C8.71 10.03 8.44 9.94 8.16 9.94H2V10C2.04 9.97 2.07 9.94 2.08 9.9L3.58 2.4C3.6 2.3 3.69 2.24 3.79 2.24H12V11.46Z"
-                  fill="currentColor"
+                  d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
                 />
               </svg>
               <span v-if="messageDisliked" class="dislike-text">已点踩</span>
@@ -175,10 +182,6 @@
             </button>
           </div>
         </el-popover>
-        <button class="copy-btn" :class="{ copied }" @click="copyMessage">
-          <el-icon :size="12"><CopyDocument /></el-icon>
-          <span v-if="copied">已复制</span>
-        </button>
       </div>
     </div>
   </div>
@@ -881,12 +884,14 @@ async function copyMessage() {
 .dislike-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 3px;
   padding: 2px 6px;
   border: none;
   background: transparent;
   color: var(--aw-ink-muted-48);
   font-size: var(--aw-text-fine);
+  line-height: 1;
   cursor: pointer;
   border-radius: var(--aw-radius-xs);
   transition: color 0.15s, background 0.15s;
@@ -909,6 +914,7 @@ async function copyMessage() {
 
 .dislike-icon {
   display: block;
+  margin-top: -1px; /* 与 el-icon 基线对齐：SVG 无字体基线，微调至与复制图标水平居中一致 */
 }
 
 .dislike-text {
