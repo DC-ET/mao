@@ -253,18 +253,19 @@ const filters = reactive({
 
 function applyQueryFilters() {
   const q = route.query
-  if (typeof q.scene === 'string' && q.scene) filters.scene = q.scene
+  filters.scene = typeof q.scene === 'string' ? q.scene : ''
   if (q.success === 'false' || q.success === '0') filters.success = false
-  if (q.success === 'true' || q.success === '1') filters.success = true
+  else if (q.success === 'true' || q.success === '1') filters.success = true
+  else filters.success = undefined
   const userId = Number(q.userId)
-  if (q.userId != null && q.userId !== '' && Number.isFinite(userId)) filters.userId = userId
+  filters.userId = q.userId != null && q.userId !== '' && Number.isFinite(userId) ? userId : undefined
   const agentId = Number(q.agentId)
-  if (q.agentId != null && q.agentId !== '' && Number.isFinite(agentId)) filters.agentId = agentId
-  if (typeof q.sessionId === 'string' && q.sessionId) filters.sessionId = q.sessionId
+  filters.agentId = q.agentId != null && q.agentId !== '' && Number.isFinite(agentId) ? agentId : undefined
+  filters.sessionId = typeof q.sessionId === 'string' ? q.sessionId : ''
   const modelId = Number(q.modelId)
-  if (q.modelId != null && q.modelId !== '' && Number.isFinite(modelId)) filters.modelId = modelId
-  if (typeof q.startDate === 'string' && q.startDate) filters.startDate = q.startDate
-  if (typeof q.endDate === 'string' && q.endDate) filters.endDate = q.endDate
+  filters.modelId = q.modelId != null && q.modelId !== '' && Number.isFinite(modelId) ? modelId : undefined
+  filters.startDate = typeof q.startDate === 'string' ? q.startDate : ''
+  filters.endDate = typeof q.endDate === 'string' ? q.endDate : ''
 }
 
 function formatNumber(value: number) {

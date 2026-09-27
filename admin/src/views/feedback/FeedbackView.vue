@@ -196,8 +196,15 @@ function handleReset() {
   refreshAll()
 }
 
+let firstActivation = true
 onMounted(refreshAll)
-onActivated(refreshAll)
+onActivated(() => {
+  if (firstActivation) {
+    firstActivation = false
+    return
+  }
+  refreshAll()
+})
 </script>
 
 <style scoped>
