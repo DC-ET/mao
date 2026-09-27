@@ -121,5 +121,6 @@ mao auth login --username <用户名> --password <密码>
 | 运行监控 | [reference/runtime.md](reference/runtime.md) |
 | 分析汇总 / 分维度 | [reference/analytics.md](reference/analytics.md) |
 | LLM 调用流水 | [reference/llm-call.md](reference/llm-call.md) |
+| 消息点踩反馈 | [reference/feedback.md](reference/feedback.md) |
 | 审计日志 | [reference/audit.md](reference/audit.md) |
 | 系统设置 | [reference/settings.md](reference/settings.md) |

@@ -3,6 +3,7 @@ import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { useSessionStore, type SessionEnvironmentInfo } from '../stores/session'
 import { useStreamWS } from './useStreamWS'
+import { loadDislikedIds } from './useMessageFeedback'
 import { collectLocalUnsyncedSkills } from '../utils/localSkills'
 import { collectAgentsMdContent } from '../utils/agentsMd'
 import { mapMessagesWithFileChanges, mapCompactionEvents } from '../utils/chatMessage'
@@ -191,6 +192,8 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
         preserveStreamingAssistant: Boolean(options?.preserveLiveStream),
       })
       sessionStore.setFileChanges(sid, allChanges)
+      // 会话消息加载后回显该会话内的点踩状态
+      void loadDislikedIds(sid)
       if (Array.isArray(data?.compactionEvents)) {
         sessionStore.setCompactionEvents(sid, mapCompactionEvents(data.compactionEvents))
       }

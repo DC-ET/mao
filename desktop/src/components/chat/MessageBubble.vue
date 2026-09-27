@@ -127,6 +127,54 @@
         <button v-if="role === 'user'" class="add-command-btn" @click="$emit('addToCommand', message.content)" title="添加到我的指令">
           <el-icon :size="12"><Plus /></el-icon>
         </button>
+        <el-popover
+          v-if="showDislike"
+          :visible="dislikePopoverVisible"
+          placement="top"
+          :width="220"
+          trigger="click"
+          popper-class="dislike-popover"
+        >
+          <template #reference>
+            <button
+              class="dislike-btn"
+              :class="{ disliked: messageDisliked, submitting: dislikeSubmitting }"
+              :disabled="dislikeSubmitting"
+              @click="toggleDislikePopover"
+              title="不满意此结果"
+            >
+              <svg class="dislike-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path
+                  d="M17 1H21C21.55 1 22 1.45 22 2V13C22 13.55 21.55 14 21 14H17C16.45 14 16 13.55 16 13V2C16 1.45 16.45 1 17 1ZM17 3V12H20V3H17ZM14 1H3.5C2.53 1 1.71 1.69 1.53 2.61L0.03 10.11C-0.2 11.26 0.68 12.34 1.86 12.34H6.75L6.01 15.93C5.84 16.83 6.13 17.75 6.77 18.39C7.33 18.95 8.13 19.19 8.91 19.02C9.36 18.92 9.75 18.65 10.01 18.27L14 12.34V1ZM12 11.46L8.74 16.26C8.7 16.32 8.64 16.35 8.57 16.37C8.42 16.4 8.27 16.36 8.18 16.26C8.11 16.19 8.08 16.09 8.1 15.99L9.1 11.03C9.16 10.75 9.08 10.45 8.89 10.24C8.71 10.03 8.44 9.94 8.16 9.94H2V10C2.04 9.97 2.07 9.94 2.08 9.9L3.58 2.4C3.6 2.3 3.69 2.24 3.79 2.24H12V11.46Z"
+                  fill="currentColor"
+                />
+              </svg>
+              <span v-if="messageDisliked" class="dislike-text">已点踩</span>
+            </button>
+          </template>
+          <div class="dislike-popover-body" @click.stop>
+            <div class="dislike-popover-title">{{ messageDisliked ? '已点踩，可重新选择原因' : '这个结果哪里不满意？' }}</div>
+            <div class="dislike-reason-list">
+              <button
+                v-for="option in FEEDBACK_REASON_OPTIONS"
+                :key="option.value"
+                class="dislike-reason-item"
+                :class="{ active: selectedReason === option.value }"
+                @click="chooseReason(option.value)"
+              >
+                {{ option.label }}
+              </button>
+            </div>
+            <button
+              v-if="messageDisliked"
+              class="dislike-cancel-btn"
+              :disabled="dislikeSubmitting"
+              @click="handleCancelDislike"
+            >
+              取消点踩
+            </button>
+          </div>
+        </el-popover>
         <button class="copy-btn" :class="{ copied }" @click="copyMessage">
           <el-icon :size="12"><CopyDocument /></el-icon>
           <span v-if="copied">已复制</span>
@@ -144,7 +192,7 @@ import {
 </script>
 
 <script setup lang="ts">
-import { computed, ref, watch, nextTick, inject } from 'vue'
+import { computed, ref, watch, nextTick, inject, onMounted, onUnmounted } from 'vue'
 import { Document, CopyDocument, Edit, Check, Close, Plus } from '@element-plus/icons-vue'
 import MarkdownContent from '../common/MarkdownContent.vue'
 import ToolCallGroup from './ToolCallGroup.vue'
@@ -164,6 +212,15 @@ import { formatDateTime } from '../../utils/datetime'
 import { copyText } from '../../utils/clipboard'
 import { isActiveSessionPhase } from '../../utils/sessionPhase'
 import { useSessionStore } from '../../stores/session'
+import {
+  FEEDBACK_REASON_OPTIONS,
+  isDislikeEligible,
+  isDislikeSubmitting,
+  isMessageDisliked,
+  removeDislike,
+  submitDislike
+} from '../../composables/useMessageFeedback'
+import type { FeedbackReason } from '../../api'
 
 const props = withDefaults(defineProps<{
   message: ChatMessage
@@ -176,6 +233,8 @@ const props = withDefaults(defineProps<{
   hideFileChanges?: boolean
   /** 消息所属会话 ID；用于读取该会话自身的 LLM 重试状态（多会话场景，缺省回退主会话） */
   sessionId?: string
+  /** 是否启用点踩按钮（主聊天/边路会话传入 true；子代理面板不传则不显示） */
+  dislikeEnabled?: boolean
 }>(), {
   showCopy: true,
   isLast: false,
@@ -183,7 +242,8 @@ const props = withDefaults(defineProps<{
   isEditing: false,
   hideThinking: false,
   hideFileChanges: false,
-  sessionId: ''
+  sessionId: '',
+  dislikeEnabled: false
 })
 
 const emit = defineEmits<{
@@ -414,6 +474,55 @@ function getToolCall(callId: string): ToolCall | undefined {
 
 const copied = ref(false)
 let copyTimer: ReturnType<typeof setTimeout> | null = null
+
+// ─── 点踩反馈 ───
+
+const showDislike = computed(() =>
+  props.dislikeEnabled
+  && role.value === 'assistant'
+  && isDislikeEligible(props.message.id)
+)
+
+const messageDisliked = computed(() => isMessageDisliked(props.sessionId, props.message.id))
+const dislikeSubmitting = computed(() => isDislikeSubmitting(props.message.id))
+
+const dislikePopoverVisible = ref(false)
+const selectedReason = ref<FeedbackReason | null>(null)
+
+function toggleDislikePopover() {
+  if (dislikeSubmitting.value) return
+  dislikePopoverVisible.value = !dislikePopoverVisible.value
+}
+
+// popover 受控模式下，点击按钮/弹层以外区域关闭
+function onDocumentClick(event: MouseEvent) {
+  if (!dislikePopoverVisible.value) return
+  const target = event.target as HTMLElement | null
+  if (target?.closest('.dislike-btn') || target?.closest('.dislike-popover-body') || target?.closest('.el-popover')) return
+  dislikePopoverVisible.value = false
+}
+
+onMounted(() => document.addEventListener('click', onDocumentClick))
+onUnmounted(() => document.removeEventListener('click', onDocumentClick))
+
+watch(() => props.message.id, () => {
+  dislikePopoverVisible.value = false
+  selectedReason.value = null
+})
+
+async function chooseReason(reason: FeedbackReason) {
+  selectedReason.value = reason
+  const ok = await submitDislike(props.sessionId, props.message.id, reason)
+  if (ok) dislikePopoverVisible.value = false
+}
+
+async function handleCancelDislike() {
+  const ok = await removeDislike(props.sessionId, props.message.id)
+  if (ok) {
+    dislikePopoverVisible.value = false
+    selectedReason.value = null
+  }
+}
 
 /** 复制时剥离内部标记语法：${skill}$、#{cmd}#、@{file}@ 只保留内容本身 */
 function stripInternalMarkers(text: string): string {
@@ -767,6 +876,105 @@ async function copyMessage() {
 
 .copy-btn.copied {
   color: var(--aw-success);
+}
+
+.dislike-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border: none;
+  background: transparent;
+  color: var(--aw-ink-muted-48);
+  font-size: var(--aw-text-fine);
+  cursor: pointer;
+  border-radius: var(--aw-radius-xs);
+  transition: color 0.15s, background 0.15s;
+  letter-spacing: -0.12px;
+}
+
+.dislike-btn:hover:not(:disabled) {
+  color: var(--aw-ink);
+  background: color-mix(in srgb, var(--aw-ink) 5%, transparent);
+}
+
+.dislike-btn.disliked {
+  color: var(--aw-danger, #e05252);
+}
+
+.dislike-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.dislike-icon {
+  display: block;
+}
+
+.dislike-text {
+  line-height: 1;
+}
+
+.dislike-popover-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dislike-popover-title {
+  font-size: var(--aw-text-fine);
+  color: var(--aw-ink);
+  font-weight: 500;
+}
+
+.dislike-reason-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dislike-reason-item {
+  padding: 6px 10px;
+  border: 1px solid var(--aw-hairline);
+  border-radius: var(--aw-radius-xs);
+  background: transparent;
+  color: var(--aw-ink-muted-80);
+  font-size: var(--aw-text-fine);
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.dislike-reason-item:hover {
+  border-color: var(--aw-primary);
+  color: var(--aw-ink);
+}
+
+.dislike-reason-item.active {
+  border-color: var(--aw-primary);
+  background: color-mix(in srgb, var(--aw-primary) 8%, transparent);
+  color: var(--aw-primary);
+}
+
+.dislike-cancel-btn {
+  padding: 5px 10px;
+  border: 1px solid var(--aw-hairline);
+  border-radius: var(--aw-radius-xs);
+  background: transparent;
+  color: var(--aw-ink-muted-48);
+  font-size: var(--aw-text-fine);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.dislike-cancel-btn:hover:not(:disabled) {
+  color: var(--aw-ink);
+  border-color: var(--aw-ink-muted-48);
+}
+
+.dislike-cancel-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .stream-indicator {

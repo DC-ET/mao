@@ -38,6 +38,8 @@ export const ErrorCode = {
   SCHEDULED_TASK_NOT_FOUND: { code: 3025, message: '定时任务不存在' },
   SCHEDULED_TASK_ACCESS_DENIED: { code: 3026, message: '无权操作该定时任务' },
   MESSAGE_ALREADY_COMPACTED: { code: 3027, message: '该消息已进入会话摘要，无法编辑' },
+  MESSAGE_NOT_FOUND: { code: 3030, message: '消息不存在' },
+  MESSAGE_ACCESS_DENIED: { code: 3031, message: '无权操作该消息' },
 
   INTERNAL_ERROR: { code: 5001, message: '服务内部错误' },
   DATABASE_ERROR: { code: 5002, message: '数据库错误' },

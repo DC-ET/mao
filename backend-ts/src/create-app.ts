@@ -124,6 +124,9 @@ import { AnalyticsDbStore, AnalyticsService } from './analytics/analytics.servic
 import { registerAnalyticsRoutes } from './analytics/analytics.routes.js';
 import { StatisticsDbStore, StatisticsService } from './statistics/statistics.service.js';
 import { registerStatisticsRoutes } from './statistics/statistics.routes.js';
+import { FeedbackRepository } from './feedback/feedback.repository.js';
+import { FeedbackDbLookup, FeedbackService } from './feedback/feedback.service.js';
+import { registerFeedbackRoutes } from './feedback/feedback.routes.js';
 import { AdminAnalyticsDbStore, AdminAnalyticsService } from './admin/admin-analytics.service.js';
 import { registerAdminAnalyticsRoutes, registerAdminRuntimeRoutes } from './admin/admin.routes.js';
 import { McpSecretCipher } from './harness/mcp/crypto/mcp-secret-cipher.js';
@@ -570,7 +573,16 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   pathSandbox.addAllowedRoot(runtimeRoot);
   const sessionRepo = new SessionRepository(db);
   const messageRepo = new MessageRepository(db);
-  const fileChangeRepo = new FileChangeRepository(db);
+  const feedbackRepository = new FeedbackRepository(db);
+  const feedbackMessageLookup = new FeedbackDbLookup(db);
+  const feedbackService = new FeedbackService(
+    feedbackRepository,
+    feedbackMessageLookup,
+    async (sessionId) => {
+      const session = await sessionRepo.findById(sessionId);
+      return session?.userId ?? null;
+    },
+  );  const fileChangeRepo = new FileChangeRepository(db);
   const compactionRepo = new SessionCompactionRepository(db);
   const sessionCompactionService = new SessionCompactionService(compactionRepo, messageRepo, sessionRepo);
   const sessionCompactionEventService = new SessionCompactionEventService(new SessionCompactionEventRepository(db));
@@ -2110,6 +2122,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     registerScheduledTaskRoutes(api, { service: scheduledService, jwt, permission: permissionService });
     registerAnalyticsRoutes(api, { analytics: analyticsService, jwt, permissionService });
     registerStatisticsRoutes(api, { statistics: statisticsService, jwt, permissionService });
+    registerFeedbackRoutes(api, { feedback: feedbackService, jwt, permissionService });
     const adminDeps = {
       jwt, analytics: adminAnalytics,
       sessionLister: sessionService as never,

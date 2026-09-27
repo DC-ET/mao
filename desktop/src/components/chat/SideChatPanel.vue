@@ -20,6 +20,7 @@
         :sending="sending"
         :session-id="hasRealSession ? String(realSessionId) : ''"
         :compaction-events="compactionEvents"
+        :dislike-enabled="hasRealSession"
         @add-to-command="(content: string) => commandEditDialogRef?.open({ content })"
       />
 
@@ -122,6 +123,7 @@ import { nowDateTime } from '../../utils/datetime'
 import { normalizeMessageRole } from '../../types/chat'
 import type { QuestionAnswer } from '../../types/chat'
 import { useToolApprovals } from '../../composables/useChat'
+import { loadDislikedIds } from '../../composables/useMessageFeedback'
 import { uploadImages } from '../../utils/imageUpload'
 import { uploadPendingFiles } from '../../utils/chatFileUpload'
 import ChatRoundList from './ChatRoundList.vue'
@@ -398,6 +400,8 @@ async function fetchMessages() {
     if (Array.isArray(data?.compactionEvents)) {
       sessionStore.setCompactionEvents(sid, mapCompactionEvents(data.compactionEvents))
     }
+    // 会话消息加载后回显该会话内的点踩状态
+    void loadDislikedIds(sid)
   } catch {
     // session might not exist yet
   }

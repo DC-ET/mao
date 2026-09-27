@@ -92,6 +92,7 @@
           :editing-message-id="editingMessageId"
           :can-edit-message="canEditMessage"
           :compaction-events="sessionStore.activeCompactionEvents"
+          :dislike-enabled="true"
           @edit="startEdit"
           @cancel-edit="cancelEdit"
           @confirm-edit="confirmEdit"

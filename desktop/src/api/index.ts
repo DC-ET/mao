@@ -306,3 +306,23 @@ export async function searchSessions(keyword: string, options?: { signal?: Abort
   } as any)
   return data?.items ?? []
 }
+
+// ─── 消息点踩反馈 ───
+
+export type FeedbackReason = 'WRONG_RESULT' | 'SLOW_RESPONSE' | 'NOT_SOLVED' | 'OTHER'
+
+/** 提交（或覆盖）某条 assistant 消息的点踩。 */
+export async function dislikeMessage(messageId: number, reason: FeedbackReason): Promise<void> {
+  await api.put(`/feedback/messages/${messageId}/dislike`, { reason })
+}
+
+/** 取消某条消息的点踩。 */
+export async function cancelDislikeMessage(messageId: number): Promise<void> {
+  await api.delete(`/feedback/messages/${messageId}/dislike`)
+}
+
+/** 拉取当前用户在指定会话内已点踩的消息 ID 列表（用于会话历史回显）。 */
+export async function fetchDislikedMessageIds(sessionId: number): Promise<number[]> {
+  const { data } = await api.get('/feedback/messages/disliked-ids', { params: { sessionId } })
+  return data?.ids ?? []
+}

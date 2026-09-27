@@ -4,6 +4,7 @@
     <MessageBubble
       :message="round.userMessage"
       :session-id="sessionId"
+      :dislike-enabled="dislikeEnabled"
       :show-time="true"
       :can-edit="canEditMessage?.(round.userMessage) ?? false"
       :is-editing="editingMessageId === round.userMessage.id"
@@ -33,6 +34,7 @@
             <MessageBubble
               :message="step"
               :session-id="sessionId"
+              :dislike-enabled="dislikeEnabled"
               :show-time="false"
               :show-copy="false"
               :hide-file-changes="true"
@@ -58,6 +60,7 @@
         v-if="round.finalReply"
         :message="round.finalReply"
         :session-id="sessionId"
+        :dislike-enabled="dislikeEnabled"
         :hide-thinking="true"
         :hide-file-changes="true"
       />
@@ -79,6 +82,7 @@
         v-if="round.finalReply"
         :message="round.finalReply"
         :session-id="sessionId"
+        :dislike-enabled="dislikeEnabled"
         :show-time="true"
         :hide-file-changes="true"
       />
@@ -100,6 +104,7 @@
     <MessageBubble
       :message="activeRound.userMessage"
       :session-id="sessionId"
+      :dislike-enabled="dislikeEnabled"
       :show-time="true"
       :can-edit="canEditMessage?.(activeRound.userMessage) ?? false"
       :is-editing="editingMessageId === activeRound.userMessage.id"
@@ -117,6 +122,7 @@
       <MessageBubble
         :message="msg"
         :session-id="sessionId"
+        :dislike-enabled="dislikeEnabled"
         :show-time="false"
         :show-copy="false"
         :hide-file-changes="true"
@@ -137,6 +143,7 @@
       <MessageBubble
         :message="msg"
         :session-id="sessionId"
+        :dislike-enabled="dislikeEnabled"
         :show-time="msg.role === 'user' || (msg.role === 'assistant' && idx < messages.length - 1)"
         :show-copy="msg.role === 'user'"
         :is-last="idx === messages.length - 1"
@@ -174,6 +181,8 @@ const props = defineProps<{
   compactionEvents?: CompactionEvent[]
   /** 会话 ID，透传给 MessageBubble 以按会话读取重试状态 */
   sessionId?: string
+  /** 是否显示点踩按钮（主聊天/边路会话 true；子代理面板不传） */
+  dislikeEnabled?: boolean
 }>()
 
 defineEmits<{

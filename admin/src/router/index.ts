@@ -84,6 +84,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '调用流水', keepAlive: true, permission: 'llm-call:read' }
       },
       {
+        path: 'feedback',
+        name: 'Feedback',
+        component: () => import('../views/feedback/FeedbackView.vue'),
+        meta: { title: '点踩反馈', keepAlive: true, permission: 'feedback:read' }
+      },
+      {
         path: 'scheduled-tasks',
         name: 'ScheduledTasks',
         component: () => import('../views/scheduled-tasks/index.vue'),
