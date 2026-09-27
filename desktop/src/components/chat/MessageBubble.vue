@@ -914,7 +914,7 @@ async function copyMessage() {
 
 .dislike-icon {
   display: block;
-  margin-top: -1px; /* 与 el-icon 基线对齐：SVG 无字体基线，微调至与复制图标水平居中一致 */
+  margin-top: -2px; /* SVG 无字体基线，微调至与复制图标（el-icon 12px）视觉水平居中一致 */
 }
 
 .dislike-text {
