@@ -30,6 +30,23 @@ export interface AgentEventListener {
 const TASK_TOOLS = new Set(['task_create', 'task_update', 'task_delete', 'task_list']);
 const FILE_TOOLS = new Set(['write_file', 'edit_file']);
 
+/**
+ * 流式 delta 合帧：content/thinking 拼接、tool args 全量快照降频，均按固定节拍下发。
+ * 前端消费语义不变（content 是纯追加、args 是全量替换），仅减少帧数与出流量。
+ * 其他类型事件发送前强制 flush，保证与流式 delta 的到达顺序一致。
+ */
+const DELTA_FLUSH_INTERVAL_MS = 40;
+
+/** 需要合帧的流式事件类型。 */
+type StreamDeltaType = 'content_delta' | 'thinking_delta';
+
+interface PendingDelta {
+  type: StreamDeltaType | 'tool_call_args_delta';
+  /** content/thinking 为待拼接文本；tool args 为全量快照。 */
+  payload: string;
+  toolCallId?: string;
+}
+
 export interface WsListenerDeps {
   registry: StreamingWsRegistry;
   activityService: {
@@ -45,6 +62,9 @@ export interface WsListenerDeps {
 
 export class WsStreamingEventListener implements AgentEventListener {
   private readonly toolCallInfo = new Map<string, [string, string | null]>();
+  /** 每类（args 按 toolCallId 细分）最多一条在途合帧。 */
+  private readonly pendingDeltas = new Map<string, PendingDelta>();
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly deps: WsListenerDeps,
@@ -54,8 +74,17 @@ export class WsStreamingEventListener implements AgentEventListener {
     private readonly supportsVision: boolean,
   ) {}
 
+  /** 释放定时器；执行结束/流重置时调用，未 flush 的尾部 delta 会随之一并发出。 */
+  dispose(): void {
+    this.flushDeltas();
+    if (this.flushTimer != null) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+  }
+
   onContentDelta(delta: string): void {
-    this.send('content_delta', { delta });
+    this.enqueueDelta({ type: 'content_delta', payload: delta });
   }
 
   onToolCallStart(toolCall: ToolCall): void {
@@ -106,6 +135,9 @@ export class WsStreamingEventListener implements AgentEventListener {
   }
 
   onMessageEnd(usage: ChatUsage): void {
+    // 尾部 delta 在 message_end 前发出（send 内部会先 flush），并清掉定时器，
+    // 避免流结束后定时器还残留一个空拍。
+    this.dispose();
     this.send('message_end', {
       prompt_tokens: usage.promptTokens,
       completion_tokens: usage.completionTokens,
@@ -115,6 +147,7 @@ export class WsStreamingEventListener implements AgentEventListener {
   }
 
   onError(t: unknown): void {
+    this.dispose();
     const message = t instanceof Error ? t.message : 'Agent 执行异常';
     this.send('error', { message: message || 'Agent 执行异常' });
     this.persistRuntimeStatus(null);
@@ -124,41 +157,41 @@ export class WsStreamingEventListener implements AgentEventListener {
     this.send('context_window', { estimated: estimatedTokens, actual: actualTokens });
     void this.deps.sessionService.updateContextTokens(this.sessionId, estimatedTokens).catch(() => {});
   }
-
   onCompactionStart(type: string, messageCount: number, estimatedTokens: number): void {
     const data = { type, messageCount, estimatedTokens };
     this.send('compaction_start', data);
     this.persistRuntimeStatus({ compacting: data });
   }
-
   onCompactionEnd(type: string, summaryTokens: number, savedTokens: number, durationMs: number): void {
     this.send('compaction_end', { type, summaryTokens, savedTokens, durationMs });
     this.persistRuntimeStatus(null);
   }
-
   onCompactionPersisted(eventId: number, triggerMode: string, prevBoundaryMsgId: number, boundaryMsgId: number, compactedMessageCount: number, summaryTokens: number, savedTokens: number, durationMs: number): void {
     this.send('compaction_marker', {
       id: eventId, triggerMode, prevBoundaryMsgId, boundaryMsgId, compactedMessageCount, summaryTokens, savedTokens, durationMs,
     });
   }
-
   onThinkingStart(): void {
+    this.dispose();
     this.deps.registry.setSessionThinking(this.sessionId, true);
     this.send('thinking_start', {});
   }
 
   onThinkingEnd(): void {
+    this.dispose();
     this.deps.registry.setSessionThinking(this.sessionId, false);
     this.send('thinking_end', {});
   }
 
-  onThinkingDelta(delta: string): void { this.send('thinking_delta', { delta }); }
+  onThinkingDelta(delta: string): void {
+    this.enqueueDelta({ type: 'thinking_delta', payload: delta });
+  }
   onLlmWaiting(phase: string, elapsedSeconds: number): void {
     const payload = { phase, elapsedSeconds };
     this.send('llm_waiting', payload);
     this.persistRuntimeStatus({ llmWaiting: payload });
-  }
-  onLlmStreamReset(): void {
+  }  onLlmStreamReset(): void {
+    this.dispose();
     this.toolCallInfo.clear();
     this.deps.registry.clearActiveToolCalls(this.sessionId);
     this.send('llm_stream_reset', {});
@@ -168,15 +201,50 @@ export class WsStreamingEventListener implements AgentEventListener {
     if (statusCode != null) payload.statusCode = statusCode;
     this.send('llm_retry', payload);
     this.persistRuntimeStatus({ llmRetry: payload });
-  }
-  onToolCallArgsDelta(toolCallId: string, argumentsDelta: string): void {
+  }  onToolCallArgsDelta(toolCallId: string, argumentsDelta: string): void {
     const info = this.toolCallInfo.get(toolCallId);
     if (info) info[1] = argumentsDelta;
     this.deps.registry.updateActiveToolCallArguments(this.sessionId, toolCallId, argumentsDelta);
-    this.send('tool_call_args_delta', { tool_call_id: toolCallId, arguments: argumentsDelta });
+    // 上游回调的是"合并后的完整 arguments"，直接降频为全量快照下发（前端按全量替换消费）。
+    this.enqueueDelta({ type: 'tool_call_args_delta', payload: argumentsDelta, toolCallId });
+  }
+
+  /** 合帧入队：key = 类型（tool args 追加 toolCallId），content/thinking 拼接、args 用最新全量覆盖。 */
+  private enqueueDelta(delta: PendingDelta): void {
+    const key = delta.toolCallId != null ? `${delta.type}:${delta.toolCallId}` : delta.type;
+    const pending = this.pendingDeltas.get(key);
+    if (pending && delta.type !== 'tool_call_args_delta') {
+      pending.payload += delta.payload;
+    } else {
+      this.pendingDeltas.set(key, delta);
+    }
+    this.scheduleFlush();
+  }
+
+  private scheduleFlush(): void {
+    if (this.flushTimer != null) return;
+    this.flushTimer = setTimeout(() => {
+      this.flushTimer = null;
+      this.flushDeltas();
+    }, DELTA_FLUSH_INTERVAL_MS);
+  }
+
+  private flushDeltas(): void {
+    if (this.pendingDeltas.size === 0) return;
+    const batch = [...this.pendingDeltas.values()];
+    this.pendingDeltas.clear();
+    for (const delta of batch) {
+      if (delta.type === 'tool_call_args_delta') {
+        this.send('tool_call_args_delta', { tool_call_id: delta.toolCallId, arguments: delta.payload });
+      } else {
+        this.send(delta.type, { delta: delta.payload });
+      }
+    }
   }
 
   private send(type: string, data: Record<string, unknown>): void {
+    // 非 delta 事件发送前强制 flush，保证流式 delta 与其他事件的到达顺序一致。
+    this.flushDeltas();
     this.deps.activityHeartbeat.touch(this.sessionId);
     this.deps.registry.send(this.userId, wsEvent(type, this.sessionId, { ...data, executionId: this.executionId }));
   }
@@ -195,7 +263,6 @@ export class WsStreamingEventListener implements AgentEventListener {
       this.send('activity', { id: activity.id, type: activityType, target, summary: activitySummary, status });
     } catch { /* ignore */ }
   }
-
   private async pushTodos(): Promise<void> {
     try {
       const todos = await this.deps.sessionTodoMapper.selectBySessionId(this.sessionId);
@@ -204,7 +271,6 @@ export class WsStreamingEventListener implements AgentEventListener {
       });
     } catch { /* ignore */ }
   }
-
   private pushFileChange(toolCallId: string, result: string): void {
     try {
       const resultNode = JSON.parse(result) as Record<string, unknown>;
@@ -218,8 +284,7 @@ export class WsStreamingEventListener implements AgentEventListener {
           for (const key of ['diff_mode', 'before_content', 'after_content', 'patch_content', 'patch_truncated', 'diff_unavailable_reason']) {
             if (diff[key] != null) changeData[key] = diff[key];
           }
-        }
-        this.send('file_change', changeData);
+        }        this.send('file_change', changeData);
       }
     } catch { /* ignore */ }
   }

@@ -180,6 +180,102 @@ describe('WsStreamingEventListener', () => {
     expect(contentParts('  ', [])).toEqual([]);
   });
 
+  it('coalesces content deltas into one flushed frame', async () => {
+    vi.useFakeTimers();
+    try {
+      const { listener, registry } = makeListener();
+      listener.onContentDelta('你');
+      listener.onContentDelta('好');
+      listener.onContentDelta('，');
+      // flush 前：无任何 content_delta 发出
+      let types = vi.mocked(registry.send).mock.calls.map((c) => (c[1] as { type: string }).type);
+      expect(types).not.toContain('content_delta');
+      await vi.advanceTimersByTimeAsync(50);
+      types = vi.mocked(registry.send).mock.calls.map((c) => (c[1] as { type: string }).type);
+      expect(types.filter((t) => t === 'content_delta')).toHaveLength(1);
+      const event = vi.mocked(registry.send).mock.calls
+        .map((c) => c[1] as { type: string; data?: { delta?: string } })
+        .find((e) => e.type === 'content_delta');
+      expect(event?.data?.delta).toBe('你好，');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('coalesces thinking deltas separately from content deltas', async () => {
+    vi.useFakeTimers();
+    try {
+      const { listener, registry } = makeListener();
+      listener.onThinkingDelta('a');
+      listener.onThinkingDelta('b');
+      listener.onContentDelta('x');
+      await vi.advanceTimersByTimeAsync(50);
+      const events = vi.mocked(registry.send).mock.calls.map((c) => c[1] as { type: string; data?: { delta?: string } });
+      const thinking = events.filter((e) => e.type === 'thinking_delta');
+      const content = events.filter((e) => e.type === 'content_delta');
+      expect(thinking).toHaveLength(1);
+      expect(thinking[0]?.data?.delta).toBe('ab');
+      expect(content).toHaveLength(1);
+      expect(content[0]?.data?.delta).toBe('x');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('flushes pending deltas before non-delta events to preserve ordering', () => {
+    const { listener, registry } = makeListener();
+    listener.onContentDelta('partial');
+    listener.onThinkingStart();
+    const calls = vi.mocked(registry.send).mock.calls.map((c) => c[1] as { type: string });
+    // thinking_start 发出时，积压的 content_delta 已先行发出
+    const contentIdx = calls.findIndex((e) => e.type === 'content_delta');
+    const startIdx = calls.findIndex((e) => e.type === 'thinking_start');
+    expect(contentIdx).toBeGreaterThanOrEqual(0);
+    expect(startIdx).toBe(contentIdx + 1);
+  });
+
+  it('sends latest full-args snapshot per tool call at reduced rate', async () => {
+    vi.useFakeTimers();
+    try {
+      const { listener, registry } = makeListener();
+      listener.onToolCallStart({ id: 'tc-1', function: { name: 'write_file', arguments: '{"a"' } } as never);
+      registry.send.mockClear();
+      // 同一 toolCall 的多次 args delta 只保留最新全量快照
+      listener.onToolCallArgsDelta('tc-1', '{"a":1');
+      listener.onToolCallArgsDelta('tc-1', '{"a":12');
+      listener.onToolCallArgsDelta('tc-1', '{"a":123}');
+      // 并行第二个 toolCall 的快照互不覆盖
+      listener.onToolCallArgsDelta('tc-2', '{"b":9}');
+      await vi.advanceTimersByTimeAsync(50);
+      const events = vi.mocked(registry.send).mock.calls
+        .map((c) => c[1] as { type: string; data?: { tool_call_id?: string; arguments?: string } })
+        .filter((e) => e.type === 'tool_call_args_delta');
+      expect(events).toHaveLength(2);
+      expect(events.find((e) => e.data?.tool_call_id === 'tc-1')?.data?.arguments).toBe('{"a":123}');
+      expect(events.find((e) => e.data?.tool_call_id === 'tc-2')?.data?.arguments).toBe('{"b":9}');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('dispose flushes trailing deltas and stops the timer', async () => {
+    vi.useFakeTimers();
+    try {
+      const { listener, registry } = makeListener();
+      listener.onContentDelta('tail');
+      listener.dispose();
+      const types = vi.mocked(registry.send).mock.calls.map((c) => (c[1] as { type: string }).type);
+      expect(types).toContain('content_delta');
+      // 定时器已清：推进时间不应再产生重复事件
+      await vi.advanceTimersByTimeAsync(100);
+      const count = vi.mocked(registry.send).mock.calls
+        .filter((c) => (c[1] as { type: string }).type === 'content_delta').length;
+      expect(count).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('ignores activity and todo failures', async () => {
     const { listener, activityService, sessionTodoMapper } = makeListener();
     activityService.record.mockRejectedValue(new Error('db'));

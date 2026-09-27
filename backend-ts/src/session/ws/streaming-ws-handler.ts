@@ -509,6 +509,7 @@ export class StreamingWsHandler {
       // 终态驱动消费门禁：FAILED 时不再自动消费队列下一条。默认 'FAILED' 保守兜底——
       // 任何遗漏赋值的分支都倾向「不消费」，宁可暂停也不错误消耗用户消息。
       let terminalPhase: 'COMPLETED' | 'CANCELLED' | 'FAILED' = 'FAILED';
+      const listenerRef: { current: WsStreamingEventListener | null } = { current: null };
       try {
         await this.deps.sessionService.updatePhase(sessionId, 'RUNNING');
         this.deps.registry.send(userId, wsEvent('session_status', sessionId, { phase: 'RUNNING', executionId }));
@@ -536,6 +537,7 @@ export class StreamingWsHandler {
           { registry: this.deps.registry, activityService: this.deps.activityService, activityHeartbeat: this.deps.activityHeartbeat, sessionTodoMapper: this.deps.sessionTodoMapper, sessionService: this.deps.sessionService },
           sessionId, userId, executionId, await this.resolveSupportsVision(session),
         );
+        listenerRef.current = listener;
         await this.deps.harnessService.executeFromEvent(sessionId, executionId, listener, cancelFlag);
         if (cancelFlag.get()) {
           await this.finishCancelledSession(sessionId, userId, executionId);
@@ -548,6 +550,7 @@ export class StreamingWsHandler {
         this.deps.registry.send(userId, wsEvent('error', sessionId, { message, executionId }));
         terminalPhase = await this.finishFailedSession(sessionId, userId, executionId, message);
       } finally {
+        listenerRef.current?.dispose();
         try {
           this.releaseSessionExecutionResources(sessionId);
         } catch (e) {
@@ -825,6 +828,7 @@ export class StreamingWsHandler {
     this.cancelFlags.set(sideSessionId, flag);
     const sideExecutionId = randomUUID();
     this.runningExecutionIds.set(sideSessionId, sideExecutionId);
+    let sideListener: WsStreamingEventListener | null = null;
     const futureRef = { current: null as unknown };
     try {
       const future = this.deps.agentExecutor(async () => {
@@ -851,6 +855,7 @@ export class StreamingWsHandler {
             { registry: this.deps.registry, activityService: this.deps.activityService, activityHeartbeat: this.deps.activityHeartbeat, sessionTodoMapper: this.deps.sessionTodoMapper, sessionService: this.deps.sessionService },
             sideSessionId, userId, sideExecutionId, await this.resolveSupportsVision(sideSession),
           );
+          sideListener = listener;
           await this.deps.harnessService.executeSideFirstMessage(parentSessionId, sideSessionId, inheritContext, listener, flag);
           if (flag.get()) {
             await this.deps.taskTerminalService.finishExecution(sideSessionId, userId, 'CANCELLED', sideExecutionId);
@@ -863,6 +868,7 @@ export class StreamingWsHandler {
           terminalPhase = await this.finishFailedSession(sideSessionId, userId, sideExecutionId, message);
           this.deps.registry.send(userId, wsEvent('error', sideSessionId, { message }));
         } finally {
+          sideListener?.dispose();
           try {
             this.releaseSessionExecutionResources(sideSessionId);
           } catch (e) {
@@ -1012,6 +1018,7 @@ export class StreamingWsHandler {
   ): Promise<void> {
     await this.withLock(this.sessionLocks, sessionId, async () => {
       let terminalPhase: 'COMPLETED' | 'CANCELLED' | 'FAILED' = 'FAILED';
+      const listenerRef: { current: WsStreamingEventListener | null } = { current: null };
       try {
         await this.deps.sessionService.updatePhase(sessionId, 'RUNNING');
         this.deps.registry.send(userId, wsEvent('session_status', sessionId, { phase: 'RUNNING', executionId }));
@@ -1022,6 +1029,7 @@ export class StreamingWsHandler {
           { registry: this.deps.registry, activityService: this.deps.activityService, activityHeartbeat: this.deps.activityHeartbeat, sessionTodoMapper: this.deps.sessionTodoMapper, sessionService: this.deps.sessionService },
           sessionId, userId, executionId, await this.resolveSupportsVision(session),
         );
+        listenerRef.current = listener;
         await this.deps.harnessService.executeFromEvent(sessionId, executionId, listener, cancelFlag);
         if (cancelFlag.get()) {
           await this.finishCancelledSession(sessionId, userId, executionId);
@@ -1034,6 +1042,7 @@ export class StreamingWsHandler {
         this.deps.registry.send(userId, wsEvent('error', sessionId, { message, executionId }));
         terminalPhase = await this.finishFailedSession(sessionId, userId, executionId, message);
       } finally {
+        listenerRef.current?.dispose();
         try {
           this.releaseSessionExecutionResources(sessionId);
         } catch (e) {

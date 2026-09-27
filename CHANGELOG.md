@@ -15,6 +15,13 @@
 
 ---
 
+## 0.0.207 (2026-09-27)
+
+### 后端
+
+- 服务出流量优化（P0/P1）：WebSocket 流式 delta（`content_delta`/`thinking_delta`）按 40ms 合帧下发，`tool_call_args_delta` 降频为最新全量快照——前端消费语义不变，流式对话出流量降约一个数量级；`/uploads/` 静态托管加 `Cache-Control: public, max-age=604800`，自动更新清单（`releases/` 下 yml/json、`latest*.yml`）保持 `no-cache` 避免客户端拿到旧版本号。
+- 运维配合（不进代码）：服务器 Nginx `/api/` 开启 gzip（JSON 5–10× 压缩），`/uploads/releases/` 清单禁缓存（修复清单被 immutable 缓存 7 天导致 OTA 延迟生效的问题）。
+
 ## 0.0.206 (2026-09-26)
 
 ### 前端（桌面 / Web / 安卓）

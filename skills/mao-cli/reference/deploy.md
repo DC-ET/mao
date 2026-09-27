@@ -187,11 +187,26 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_read_timeout 300s;
+
+        # JSON 响应压缩：messages/列表类接口 5–10× 出流量缩减
+        gzip on;
+        gzip_comp_level 5;
+        gzip_min_length 1024;
+        gzip_types application/json text/plain text/css application/javascript;
+        gzip_vary on;
     }
     location ^~ /uploads/ {
         alias /opt/mao-data/uploads/;
         expires 7d;
         add_header Cache-Control "public, immutable";
+        add_header Access-Control-Allow-Origin "*" always;
+    }
+
+    # 自动更新清单内容会变且被客户端轮询（Electron autoUpdater / 安卓 OTA），禁缓存。
+    # 注意：必须用 ^~ 前缀 location 且写在 ^~ /uploads/ 之前；正则 location 会被 ^~ 压制不生效。
+    location ^~ /uploads/releases/ {
+        alias /opt/mao-data/uploads/releases/;
+        add_header Cache-Control "no-cache" always;
         add_header Access-Control-Allow-Origin "*" always;
     }
 
