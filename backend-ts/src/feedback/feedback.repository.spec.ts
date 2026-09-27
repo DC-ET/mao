@@ -53,6 +53,26 @@ describe('FeedbackRepository SQL 构造', () => {
     expect(captured[0].params).toEqual(['2026-09-01', '2026-09-27']);
   });
 
+  it('sumByDayUsesSameDateWhereAsSumByReason', async () => {
+    const { repo, captured } = makeCaptureDb();
+    await repo.sumByDay('2026-09-01', '2026-09-27');
+    const sql = captured[0].sql;
+    // 与 sumByReason 共用 buildDetailWhere：表别名 f + 前缀条件，避免两侧口径漂移
+    expect(sql).toContain('FROM message_feedback f');
+    expect(sql).toContain('f.created_at >= ?');
+    expect(sql).toContain('DATE_FORMAT(f.created_at');
+    expect(captured[0].params).toEqual(['2026-09-01', '2026-09-27']);
+  });
+
+  it('sumByDaySupportsOpenEndedRange', async () => {
+    const { repo, captured } = makeCaptureDb();
+    await repo.sumByDay('2026-09-01', undefined);
+    expect(captured[0].params).toEqual(['2026-09-01']);
+
+    await repo.sumByDay(undefined, '2026-09-27');
+    expect(captured[1].params).toEqual(['2026-09-27']);
+  });
+
   it('listMessageIdsBySessionReadsCamelCaseKey', async () => {
     const { repo } = makeCaptureDb();
     // db 返回行键为 camelCase（messageId）；若实现误读 snake 键将得到 NaN

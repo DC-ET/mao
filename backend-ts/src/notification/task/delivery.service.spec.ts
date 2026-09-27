@@ -80,12 +80,38 @@ describe('TaskNotificationDeliveryService', () => {
       status: 'SUPPRESSED_WS',
       nextRetryAt: null,
     });
+    expect(askStore.updateIfStatus).toHaveBeenCalledTimes(1);
   });
 
-  it('suppressPendingIgnoresRowsWithoutCasSupport', async () => {
+  it('suppressesAskUserDeliveryAlreadyClaimedAsSending', async () => {
+    // 提问超时（15 分钟）后抑制：行已被调度器 claim 成 SENDING，仅 CAS PENDING 会静默失败，
+    // 用户仍会收到已失效的提问通知。必须补 SENDING 兜底。
+    const askStore: DeliveryStore = {
+      insert: vi.fn(async () => 1),
+      updateById: vi.fn(),
+      updateIfStatus: vi.fn(async (_id, expected) => expected === 'SENDING'),
+    };
+    const askService = new TaskNotificationDeliveryService(askStore, preferenceService, queueService, metrics);
+    await askService.suppressPending({ id: 9 });
+    expect(vi.mocked(askStore.updateIfStatus)!.mock.calls.map((c) => c[1])).toEqual(['PENDING', 'SENDING']);
+  });
+
+  it('suppressPendingDoesNotTouchTerminalRows', async () => {
+    // 已 SUCCEEDED / FAILED 的行不应被改状态，也不应报错中断等待方。
+    const askStore: DeliveryStore = { insert: vi.fn(async () => 1), updateById: vi.fn(), updateIfStatus: vi.fn(async () => false) };
+    const askService = new TaskNotificationDeliveryService(askStore, preferenceService, queueService, metrics);
+    await expect(askService.suppressPending({ id: 11 })).resolves.toBeUndefined();
+    expect(askStore.updateById).not.toHaveBeenCalled();
+  });
+
+  it('suppressPendingFallsBackToUpdateWithoutCasSupport', async () => {
     const plainStore: DeliveryStore = { insert: vi.fn(async () => 1), updateById: vi.fn() };
     const plainService = new TaskNotificationDeliveryService(plainStore, preferenceService, queueService, metrics);
-    await expect(plainService.suppressPending({ id: 5 })).resolves.toBeUndefined();
-    expect(plainStore.updateById).not.toHaveBeenCalled();
+    await plainService.suppressPending({ id: 5 });
+    expect(plainStore.updateById).toHaveBeenCalledWith({
+      id: 5,
+      status: 'SUPPRESSED_WS',
+      nextRetryAt: null,
+    });
   });
 });

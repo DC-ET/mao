@@ -76,13 +76,14 @@ export class FeedbackRepository {
     );
   }
 
-  sumByDay(startDate: string, endDate: string): Promise<FeedbackDailyRow[]> {
+  /** 与 sumByReason / listDetails 同一套日期口径：任一侧缺省即为开区间，不再整体降级为空。 */
+  sumByDay(startDate?: string, endDate?: string): Promise<FeedbackDailyRow[]> {
+    const { where, params } = buildDetailWhere({ startDate, endDate });
     return this.db.query<FeedbackDailyRow>(
-      `SELECT DATE_FORMAT(created_at, '%Y-%m-%d') AS date, COUNT(*) AS count
-       FROM message_feedback
-       WHERE created_at >= ? AND created_at < DATE_ADD(?, INTERVAL 1 DAY)
+      `SELECT DATE_FORMAT(f.created_at, '%Y-%m-%d') AS date, COUNT(*) AS count
+       FROM message_feedback f ${where}
        GROUP BY date ORDER BY date`,
-      [startDate, endDate],
+      params,
     );
   }
 

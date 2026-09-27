@@ -127,15 +127,42 @@ export class TaskNotificationDeliveryService {
     }
   }
 
-  /** 问题已回答/取消/超时后，抑制仍未发出的提问通知（仅 PENDING 行，已发出的不受影响）。 */
+  /**
+   * 问题已回答/取消/超时后，抑制仍未发出的提问通知。
+   *
+   * 提问的抑制窗口不是 0，而是「insert → 用户作答/超时」的整个等待期（最长可达
+   * ask_user_questions 的 15 分钟超时）。调度器随时可能已把该行 claim 成 SENDING，
+   * 因此与 resolveWebSocket 一样需要 SENDING 兜底 CAS，否则已失效的提问仍会被 webhook 发出。
+   */
   async suppressPending(delivery: TaskNotificationDelivery | null): Promise<void> {
-    if (delivery?.id == null || !this.store.updateIfStatus) {
+    if (delivery?.id == null) {
       return;
     }
-    await this.store.updateIfStatus(delivery.id, DeliveryStatus.PENDING, {
+    if (!this.store.updateIfStatus) {
+      await this.store.updateById({
+        id: delivery.id,
+        status: DeliveryStatus.SUPPRESSED_WS,
+        nextRetryAt: null,
+      });
+      return;
+    }
+    const suppressed = await this.store.updateIfStatus(delivery.id, DeliveryStatus.PENDING, {
       status: DeliveryStatus.SUPPRESSED_WS,
       nextRetryAt: null,
     });
+    if (suppressed) {
+      return;
+    }
+    // 已被调度器 claim 成 SENDING：webhook 可能还没发出去，deliver() 发送前会重查状态，
+    // 这里直接置抑制即可阻止本次发送（与 resolveWebSocket 的兜底策略一致）。
+    const late = await this.store.updateIfStatus(delivery.id, DeliveryStatus.SENDING, {
+      status: DeliveryStatus.SUPPRESSED_WS,
+      nextRetryAt: null,
+    });
+    if (!late) {
+      // 已 SUCCEEDED / FAILED 等终态：抑制无意义，也不该改状态。
+      console.info(`Task notification ${delivery.id}: ask_user suppression skipped (already in a terminal state)`);
+    }
   }
 
   async resolveWebSocket(delivery: TaskNotificationDelivery | null, delivered: boolean): Promise<void> {

@@ -46,8 +46,34 @@ interface OutboundItem {
   resultFuture: { resolve: (r: WsDeliveryResult) => void } | null;
 }
 
+/**
+ * 关键帧类型：终态、错误与工具结果。队列满时增量帧（content_delta / thinking_delta 等）可丢，
+ * 这些帧一旦丢失，客户端等待方（pendingCallbacks / activeExecutionIds / 执行态）会永久悬挂，
+ * 因此必须与普通帧分队列存放，不受普通队列容量限制。
+ */
+const CRITICAL_EVENT_TYPES = new Set([
+  'session_status',
+  'message_end',
+  'message_start',
+  'error',
+  'cancelled',
+  'tool_call_result',
+  'ask_user_questions',
+  'ask_user_questions_cancelled',
+  'queue_updated',
+  'queue_message_consumed',
+  'session_already_running',
+]);
+
+function isCriticalItem(item: OutboundItem): boolean {
+  return item.event != null && CRITICAL_EVENT_TYPES.has(item.event.type);
+}
+
 export class StreamingWsRegistry {
+  /** 增量帧队列：容量有限，满则可丢弃（丢一帧文本不影响执行态收敛）。 */
   private readonly outboundQueue: OutboundItem[] = [];
+  /** 关键帧队列：不受 capacity 限制，满时优先保证这些帧送达。 */
+  private readonly criticalQueue: OutboundItem[] = [];
   private readonly capacity: number;
   private running = true;
   private drainTimer: ReturnType<typeof setTimeout> | null = null;
@@ -81,10 +107,19 @@ export class StreamingWsRegistry {
       clearTimeout(this.drainTimer);
       this.drainTimer = null;
     }
+    // 停机时仍在队列里的关键帧必须给等待方一个确定结果，否则 sendWithResult 的
+    // resultFuture 永不 resolve，调用方的通知抑制/状态回写会被永久挂起。
+    for (const item of [...this.criticalQueue, ...this.outboundQueue]) {
+      if (item.resultFuture) {
+        item.resultFuture.resolve({ targetCount: 0, successCount: 0, failureCount: 0 });
+      }
+    }
+    this.criticalQueue.length = 0;
+    this.outboundQueue.length = 0;
   }
 
   getOutboundQueueSize(): number {
-    return this.outboundQueue.length;
+    return this.outboundQueue.length + this.criticalQueue.length;
   }
 
   register(session: WsSocket, userId: number, clientType: string | null | undefined, metadata?: WsAuthMetadata): void {
@@ -256,13 +291,9 @@ export class StreamingWsRegistry {
         resolve({ targetCount: 0, successCount: 0, failureCount: 0 });
         return;
       }
-      if (this.outboundQueue.length >= this.capacity) {
-        console.warn(`WS outbound queue full, dropping tracked event type=${event.type} for userId=${userId}`);
-        resolve({ targetCount: 0, successCount: 0, failureCount: 0 });
-        return;
-      }
-      this.outboundQueue.push({ userId, event, rawJson: null, target: 'ALL', resultFuture: { resolve } });
-      this.flushNow();
+      // 已跟踪（等待 resultFuture）的事件一律走关键队列：等待方必须拿到确定结果，
+      // 不能因普通队列满而被静默丢弃成「假成功」。
+      this.enqueueItem({ userId, event, rawJson: null, target: 'ALL', resultFuture: { resolve } });
     });
   }
 
@@ -341,11 +372,13 @@ export class StreamingWsRegistry {
 
   sendRaw(userId: number, json: string): void {
     if (userId == null || json == null) return;
-    if (this.outboundQueue.length >= this.capacity) {
-      console.warn(`WS outbound queue full, dropping raw message for userId=${userId}`);
-      return;
+    // 只入队、不立即冲刷：raw 帧沿用增量帧语义，由后续 send / 定时 drain 驱动投递，
+    // 到期检查发生在 deliver 入口（与改造前一致）。
+    if (this.outboundQueue.length < this.capacity) {
+      this.outboundQueue.push({ userId, event: null, rawJson: json, target: 'ALL', resultFuture: null });
+    } else {
+      console.warn(`WS outbound queue full (capacity reached), dropping raw message for userId=${userId}`);
     }
-    this.outboundQueue.push({ userId, event: null, rawJson: json, target: 'ALL', resultFuture: null });
   }
 
   hasConnection(userId: number): boolean {
@@ -369,14 +402,26 @@ export class StreamingWsRegistry {
     return this.sessionToUser.get(session.id) ?? null;
   }
 
-  private enqueue(userId: number, event: WsEvent, target: SendTarget): void {
-    if (userId == null || event == null) return;
-    if (this.outboundQueue.length >= this.capacity) {
-      console.warn(`WS outbound queue full (capacity reached), dropping event type=${event.type} for userId=${userId}`);
+  /**
+   * 统一入队：关键帧（终态 / 错误 / 结果 / 已跟踪事件）走独立关键队列，不受 capacity 限制；
+   * 增量帧走普通队列，满时才丢弃——丢一帧文本不会让客户端的执行态失去收敛路径。
+   */
+  private enqueueItem(item: OutboundItem): void {
+    if (item.userId == null) return;
+    if (item.event == null && item.rawJson == null) return;
+    if (isCriticalItem(item) || item.resultFuture != null) {
+      this.criticalQueue.push(item);
+    } else if (this.outboundQueue.length >= this.capacity) {
+      console.warn(`WS outbound queue full (capacity reached), dropping event type=${item.event?.type} for userId=${item.userId}`);
       return;
+    } else {
+      this.outboundQueue.push(item);
     }
-    this.outboundQueue.push({ userId, event, rawJson: null, target, resultFuture: null });
     this.flushNow();
+  }
+
+  private enqueue(userId: number, event: WsEvent, target: SendTarget): void {
+    this.enqueueItem({ userId, event, rawJson: null, target, resultFuture: null });
   }
 
   private scheduleDrain(): void {
@@ -388,6 +433,10 @@ export class StreamingWsRegistry {
   }
 
   private flushNow(): void {
+    // 关键帧优先冲刷，保证积压时终态/错误帧仍能及时到达并释放等待方。
+    while (this.criticalQueue.length > 0) {
+      this.deliver(this.criticalQueue.shift()!);
+    }
     while (this.outboundQueue.length > 0) {
       const item = this.outboundQueue.shift()!;
       this.deliver(item);

@@ -40,6 +40,7 @@ export const ErrorCode = {
   MESSAGE_ALREADY_COMPACTED: { code: 3027, message: '该消息已进入会话摘要，无法编辑' },
   MESSAGE_NOT_FOUND: { code: 3030, message: '消息不存在' },
   MESSAGE_ACCESS_DENIED: { code: 3031, message: '无权操作该消息' },
+  PREFERENCE_CONFLICT: { code: 3032, message: '偏好设置已在其他端被修改，请刷新后重试' },
 
   INTERNAL_ERROR: { code: 5001, message: '服务内部错误' },
   DATABASE_ERROR: { code: 5002, message: '数据库错误' },

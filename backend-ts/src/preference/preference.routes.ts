@@ -3,7 +3,7 @@ import { requireUserId, sendOk } from '../common/http-error.js';
 import { bodyOf } from '../common/request.js';
 import type { UserTaskPanelPreferenceService } from './task-panel-preference.service.js';
 import type { UserWeixinPreferenceService } from './weixin-preference.service.js';
-import type { TaskPanelPreferenceSaveState, TaskPanelPreferenceState, WeixinPreferenceVO } from './types.js';
+import type { TaskPanelPreferenceSaveState, TaskPanelPreferenceStateWithVersion, WeixinPreferenceVO } from './types.js';
 
 export interface PreferenceRouteDeps {
   weixinPreferenceService: UserWeixinPreferenceService;
@@ -19,6 +19,8 @@ interface TaskPanelPreferenceRequest {
   groupOrder?: string[] | null;
   collapsedGroups?: string[] | null;
   groupAliases?: Record<string, string> | null;
+  /** 客户端 GET 时拿到的 version；带上即启用乐观锁校验。 */
+  expectedVersion?: number | null;
 }
 
 /** 区分「旧客户端未传（保留已有别名）」与「显式传 {}（清空）」。 */
@@ -65,15 +67,17 @@ export function registerUserTaskPanelPreferenceRoutes(app: FastifyInstance, deps
       collapsedGroups: body.collapsedGroups ?? [],
       // 旧客户端不传 groupAliases 时保留已有别名（service 层区分 undefined 与 {}）。
       groupAliases: body.groupAliases ?? undefined,
+      expectedVersion: body.expectedVersion == null ? null : Number(body.expectedVersion),
     };
     return sendOk(reply, toTaskPanelVO(await taskPanelPreferenceService.save(userId, state)));
   });
 }
 
-function toTaskPanelVO(state: TaskPanelPreferenceState): TaskPanelPreferenceState {
+function toTaskPanelVO(state: TaskPanelPreferenceStateWithVersion): TaskPanelPreferenceStateWithVersion {
   return {
     groupOrder: state.groupOrder,
     collapsedGroups: state.collapsedGroups,
     groupAliases: state.groupAliases,
+    version: state.version,
   };
 }

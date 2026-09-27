@@ -65,8 +65,9 @@ api.interceptors.response.use(
     const { data } = response
     if (data.code !== 0) {
       ElMessage.error(data.message || '请求失败')
-      const err = new Error(data.message || '请求失败') as Error & { toastShown?: boolean }
+      const err = new Error(data.message || '请求失败') as Error & { toastShown?: boolean; code?: number }
       err.toastShown = true
+      err.code = data.code
       return Promise.reject(err)
     }
     return data

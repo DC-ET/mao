@@ -1,19 +1,28 @@
 import { describe, expect, it, vi } from 'vitest';
-import { UserTaskPanelPreferenceService, isGroupRenameable } from './task-panel-preference.service.js';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { TaskPanelPreferenceConflictException, UserTaskPanelPreferenceService, isGroupRenameable } from './task-panel-preference.service.js';
 import type { UserTaskPanelPreference, UserTaskPanelPreferenceRepository } from './types.js';
 
 describe('UserTaskPanelPreferenceService', () => {
   const mapper: UserTaskPanelPreferenceRepository = {
     findByUserId: vi.fn(),
     insert: vi.fn(),
-    updateByUserId: vi.fn(),
+    updateByUserId: vi.fn(async () => true),
   };
   const service = new UserTaskPanelPreferenceService(mapper);
+
+  beforeEach(() => {
+    // 版本号相关用例会改 updateByUserId 的返回值，必须复位，否则跨用例泄漏
+    vi.mocked(mapper.updateByUserId).mockReset();
+    vi.mocked(mapper.updateByUserId).mockResolvedValue(true);
+    vi.mocked(mapper.insert).mockReset();
+  });
 
   it('getReturnsEmptyMissingOrInvalidRowsAndParsesValidRows', async () => {
     vi.mocked(mapper.findByUserId).mockResolvedValue(null);
     expect((await service.get(1)).groupOrder).toEqual([]);
     expect((await service.get(1)).groupAliases).toEqual({});
+    expect((await service.get(1)).version).toBe(0);
 
     const invalid: UserTaskPanelPreference = { userId: 2, groupOrder: 'not-json', collapsedGroups: '' };
     vi.mocked(mapper.findByUserId).mockResolvedValue(invalid);
@@ -25,11 +34,14 @@ describe('UserTaskPanelPreferenceService', () => {
       groupOrder: '["a","b"]',
       collapsedGroups: '["x"]',
       groupAliases: '{"LOCAL:/ws/a":"AI 项目"}',
+      version: 4,
     };
     vi.mocked(mapper.findByUserId).mockResolvedValue(row);
     expect((await service.get(3)).groupOrder).toEqual(['a', 'b']);
     expect((await service.get(3)).collapsedGroups).toEqual(['x']);
     expect((await service.get(3)).groupAliases).toEqual({ 'LOCAL:/ws/a': 'AI 项目' });
+    // version 必须透出：客户端要靠它做乐观锁校验
+    expect((await service.get(3)).version).toBe(4);
 
     const parsedRow: UserTaskPanelPreference = {
       userId: 4,
@@ -73,13 +85,47 @@ describe('UserTaskPanelPreferenceService', () => {
     expect(updated.groupOrder).toEqual([]);
     expect(mapper.updateByUserId).toHaveBeenCalledWith(existing);
   });
+
+  it('saveRejectsStaleExpectedVersionInsteadOfOverwriting', async () => {
+    // 并发保存：A 端读到 version=3，B 端先写成 version=4。A 再保存必须失败，
+    // 否则 B 已成功的写入被 A 的旧快照静默覆盖。
+    vi.mocked(mapper.findByUserId).mockResolvedValue({ userId: 20, groupOrder: '[]', collapsedGroups: '[]', groupAliases: '{}', version: 4 });
+    await expect(service.save(20, {
+      groupOrder: ['a'],
+      collapsedGroups: [],
+      groupAliases: {},
+      expectedVersion: 3,
+    })).rejects.toBeInstanceOf(TaskPanelPreferenceConflictException);
+    expect(mapper.updateByUserId).not.toHaveBeenCalled();
+  });
+
+  it('saveRejectsWhenConcurrentWriteLandsBetweenSelectAndUpdate', async () => {
+    // SELECT 与 UPDATE 之间被抢先：updateByUserId 返回 false，同样按冲突处理。
+    vi.mocked(mapper.findByUserId).mockResolvedValue({ userId: 21, groupOrder: '[]', collapsedGroups: '[]', groupAliases: '{}', version: 2 });
+    vi.mocked(mapper.updateByUserId).mockResolvedValue(false);
+    await expect(service.save(21, { groupOrder: ['a'], collapsedGroups: [], groupAliases: {} }))
+      .rejects.toBeInstanceOf(TaskPanelPreferenceConflictException);
+  });
+
+  it('saveBumpsVersionOnSuccessAndKeepsWorkingWithoutExpectedVersion', async () => {
+    // 旧客户端不传 expectedVersion：不校验但仍返回新版本号
+    vi.mocked(mapper.findByUserId).mockResolvedValue({ userId: 22, groupOrder: '[]', collapsedGroups: '[]', groupAliases: '{}', version: 7 });
+    const saved = await service.save(22, { groupOrder: ['a'], collapsedGroups: [], groupAliases: {} });
+    expect(saved.version).toBe(8);
+    const written = vi.mocked(mapper.updateByUserId).mock.calls.at(-1)![0];
+    expect(written.version).toBe(7);
+
+    // 新客户端带对版本号：正常写入并返回 +1
+    const saved2 = await service.save(22, { groupOrder: ['b'], collapsedGroups: [], groupAliases: {}, expectedVersion: 7 });
+    expect(saved2.version).toBe(8);
+  });
 });
 
 describe('task-panel 别名归一化', () => {
   const mapper: UserTaskPanelPreferenceRepository = {
     findByUserId: vi.fn(),
     insert: vi.fn(),
-    updateByUserId: vi.fn(),
+    updateByUserId: vi.fn(async () => true),
   };
   const service = new UserTaskPanelPreferenceService(mapper);
 

@@ -49,7 +49,9 @@ export async function loadDislikedIds(sessionId: string | number): Promise<void>
     const ids = await fetchDislikedMessageIds(sid)
     dislikedBySession.set(sid, new Set(ids))
   } catch {
-    // 回显失败不阻断聊天，仅缺失高亮态
+    // 回显失败（网络/会话不存在/越权）不阻断聊天，仅缺失高亮态；
+    // 写空集合并留下已加载标记，避免同一会话反复请求一个注定失败的接口。
+    dislikedBySession.set(sid, new Set<number>())
   }
 }
 

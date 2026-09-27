@@ -1,14 +1,23 @@
+import { BusinessException } from '../common/business-exception.js';
+import { ErrorCode } from '../common/error-code.js';
 import type {
   TaskPanelPreferenceSaveState,
-  TaskPanelPreferenceState,
+  TaskPanelPreferenceStateWithVersion,
   UserTaskPanelPreference,
   UserTaskPanelPreferenceRepository,
 } from './types.js';
 
+/** 保存时 version 不匹配：别的端刚写过这行，客户端应重取后合并再保存。 */
+export class TaskPanelPreferenceConflictException extends BusinessException {
+  constructor() {
+    super(ErrorCode.PREFERENCE_CONFLICT);
+  }
+}
+
 export class UserTaskPanelPreferenceService {
   constructor(private readonly preferenceRepo: UserTaskPanelPreferenceRepository) {}
 
-  async get(userId: number): Promise<TaskPanelPreferenceState> {
+  async get(userId: number): Promise<TaskPanelPreferenceStateWithVersion> {
     const row = await this.preferenceRepo.findByUserId(userId);
     if (row == null) {
       return emptyState();
@@ -17,10 +26,17 @@ export class UserTaskPanelPreferenceService {
       groupOrder: parseStringList(row.groupOrder),
       collapsedGroups: parseStringList(row.collapsedGroups),
       groupAliases: parseStringMap(row.groupAliases),
+      version: Number(row.version ?? 0),
     };
   }
 
-  async save(userId: number, state: TaskPanelPreferenceSaveState): Promise<TaskPanelPreferenceState> {
+  /**
+   * 保存任务面板偏好。
+   *
+   * 带 `expectedVersion` 时走乐观锁：若这期间别的端已写过同一行，抛冲突异常而不是
+   * 用旧快照覆盖（读-改-整行写本身不是原子的，没有版本号就只能靠 last-write-wins）。
+   */
+  async save(userId: number, state: TaskPanelPreferenceSaveState): Promise<TaskPanelPreferenceStateWithVersion> {
     const normalized = normalize(state);
     const row = await this.preferenceRepo.findByUserId(userId);
     // 旧客户端不传 groupAliases（undefined）时保留已有别名；显式传 {} 才是清空。
@@ -28,26 +44,35 @@ export class UserTaskPanelPreferenceService {
       normalized.groupAliases !== undefined
         ? writeStringMap(normalized.groupAliases)
         : (row?.groupAliases != null ? row.groupAliases : writeStringMap({}));
+    const expectedVersion = state.expectedVersion == null ? null : Number(state.expectedVersion);
     if (row == null) {
       const created: UserTaskPanelPreference = {
         userId,
         groupOrder: writeStringList(normalized.groupOrder),
         collapsedGroups: writeStringList(normalized.collapsedGroups),
         groupAliases: aliasesJson,
+        version: 0,
       };
       await this.preferenceRepo.insert(created);
-    } else {
-      row.groupOrder = writeStringList(normalized.groupOrder);
-      row.collapsedGroups = writeStringList(normalized.collapsedGroups);
-      row.groupAliases = aliasesJson;
-      await this.preferenceRepo.updateByUserId(row);
+      return { ...normalized, groupAliases: parseStringMap(aliasesJson), version: 0 };
     }
-    return { ...normalized, groupAliases: parseStringMap(aliasesJson) };
+    if (expectedVersion != null && expectedVersion !== Number(row.version ?? 0)) {
+      throw new TaskPanelPreferenceConflictException();
+    }
+    row.groupOrder = writeStringList(normalized.groupOrder);
+    row.collapsedGroups = writeStringList(normalized.collapsedGroups);
+    row.groupAliases = aliasesJson;
+    const updated = await this.preferenceRepo.updateByUserId(row);
+    if (!updated) {
+      // SELECT 与 UPDATE 之间被并发写入抢先：同样按冲突处理，让客户端重取合并。
+      throw new TaskPanelPreferenceConflictException();
+    }
+    return { ...normalized, groupAliases: parseStringMap(aliasesJson), version: (row.version ?? 0) + 1 };
   }
 }
 
-export function emptyState(): TaskPanelPreferenceState {
-  return { groupOrder: [], collapsedGroups: [], groupAliases: {} };
+export function emptyState(): TaskPanelPreferenceStateWithVersion {
+  return { groupOrder: [], collapsedGroups: [], groupAliases: {}, version: 0 };
 }
 
 /** 别名 map 的存储 JSON（MySQL JSON 列，空 map 写 '{}'）。 */

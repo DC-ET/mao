@@ -76,4 +76,33 @@ describe('StreamingWsRegistry', () => {
     registry.sendToLocalClients(4, wsEvent('tool_execute', 10, { requestId: 'r' }));
     expect(send).not.toHaveBeenCalled();
   });
+
+  it('delivers terminal frames even when the delta queue is saturated', async () => {
+    const session = mockSocket('ws-full');
+    registry.register(session, 9, 'electron');
+    // 塞满普通队列（capacity=10）：此后增量帧应被丢弃
+    for (let i = 0; i < 20; i++) {
+      registry.send(9, wsEvent('content_delta', 10, { delta: `chunk-${i}` }));
+    }
+    const sent = (session.send as unknown as { mock: { calls: unknown[][] } }).mock.calls.map((c) => JSON.parse(String(c[0])).type);
+    expect(sent).not.toContain('chunk-19');
+    expect(registry.getOutboundQueueSize()).toBeLessThanOrEqual(10);
+
+    // 终态帧仍须送达：客户端等待方靠它收敛执行态
+    registry.send(9, wsEvent('session_status', 10, { phase: 'COMPLETED' }));
+    const after = (session.send as unknown as { mock: { calls: unknown[][] } }).mock.calls.map((c) => JSON.parse(String(c[0])).type);
+    expect(after).toContain('session_status');
+    expect(after[after.length - 1]).toBe('session_status');
+
+    const result = await registry.sendWithResult(9, wsEvent('message_end', 10, {}));
+    expect(result.successCount).toBe(1);
+  });
+
+  it('resolves pending tracked events on shutdown instead of hanging', async () => {
+    let resolved: unknown = null;
+    const pending = registry.sendWithResult(1, wsEvent('session_status', 10, { phase: 'COMPLETED' })).then((r) => { resolved = r; });
+    registry.shutdown();
+    await pending;
+    expect(resolved).toEqual({ targetCount: 0, successCount: 0, failureCount: 0 });
+  });
 });

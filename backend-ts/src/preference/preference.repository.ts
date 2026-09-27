@@ -47,13 +47,22 @@ export class MysqlUserTaskPanelPreferenceRepository implements UserTaskPanelPref
       groupOrder: row.groupOrder,
       collapsedGroups: row.collapsedGroups,
       groupAliases: row.groupAliases ?? '{}',
+      version: row.version ?? 0,
     });
   }
 
-  async updateByUserId(row: UserTaskPanelPreference): Promise<void> {
-    await this.db.execute(
-      'UPDATE user_task_panel_preference SET group_order = ?, collapsed_groups = ?, group_aliases = ? WHERE user_id = ?',
-      [row.groupOrder, row.collapsedGroups, row.groupAliases ?? '{}', row.userId],
+  /**
+   * 乐观锁更新：WHERE user_id = ? AND version = ?，命中才写并 version + 1。
+   * 返回 false 表示期间已有别的请求写过这行（并发保存），调用方必须重取合并而不是覆盖。
+   */
+  async updateByUserId(row: UserTaskPanelPreference): Promise<boolean> {
+    const expectedVersion = row.version ?? 0;
+    const result = await this.db.execute(
+      `UPDATE user_task_panel_preference
+          SET group_order = ?, collapsed_groups = ?, group_aliases = ?, version = ?
+        WHERE user_id = ? AND version = ?`,
+      [row.groupOrder, row.collapsedGroups, row.groupAliases ?? '{}', expectedVersion + 1, row.userId, expectedVersion],
     );
+    return result.affectedRows === 1;
   }
 }

@@ -82,16 +82,22 @@ describe('FeedbackService', () => {
     const repo = makeRepo();
     const service = new FeedbackService(repo, makeLookup(OWNERSHIP), async () => 9);
     await expect(service.listDislikedMessageIds(9, 5)).resolves.toEqual([11, 22]);
-
-    const foreign = new FeedbackService(repo, makeLookup(OWNERSHIP), async () => 9);
-    await expect(foreign.listDislikedMessageIds(123, 5)).resolves.toEqual([]);
     expect(repo.listMessageIdsBySession).toHaveBeenCalledTimes(1);
   });
 
-  it('listDislikedMessageIdsEmptyWhenSessionMissing', async () => {
+  it('listDislikedMessageIdsRejectsForeignSession', async () => {
+    // 非本人会话是权限问题：必须与「会话内没有点踩」区分开
+    const repo = makeRepo();
+    const service = new FeedbackService(repo, makeLookup(OWNERSHIP), async () => 9);
+    await expect(service.listDislikedMessageIds(123, 5)).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN.code });
+    expect(repo.listMessageIdsBySession).not.toHaveBeenCalled();
+  });
+
+  it('listDislikedMessageIdsRejectsMissingSession', async () => {
     const repo = makeRepo();
     const service = new FeedbackService(repo, makeLookup(OWNERSHIP), async () => null);
-    await expect(service.listDislikedMessageIds(9, 5)).resolves.toEqual([]);
+    await expect(service.listDislikedMessageIds(9, 5)).rejects.toMatchObject({ code: ErrorCode.SESSION_NOT_FOUND.code });
+    expect(repo.listMessageIdsBySession).not.toHaveBeenCalled();
   });
 
   it('summaryFillsAllReasonsWithLabels', async () => {
@@ -115,6 +121,19 @@ describe('FeedbackService', () => {
 
     await service.getSummary();
     expect(repo.sumByReason).toHaveBeenLastCalledWith(undefined, undefined);
+  });
+
+  it('summaryQueriesByDayWhenOnlyOneDateBoundIsGiven', async () => {
+    // 单侧日期时 byReason 有数据而 byDay 不能静默变空：两者必须同口径。
+    const repo = makeRepo();
+    const service = new FeedbackService(repo, makeLookup(OWNERSHIP), async () => 9);
+    const onlyStart = await service.getSummary('2026-09-01', undefined);
+    expect(onlyStart.byDay).toEqual([{ date: '2026-09-27', count: 4 }]);
+    expect(repo.sumByDay).toHaveBeenLastCalledWith('2026-09-01', undefined);
+
+    const onlyEnd = await service.getSummary(undefined, '2026-09-27');
+    expect(onlyEnd.byDay).toEqual([{ date: '2026-09-27', count: 4 }]);
+    expect(repo.sumByDay).toHaveBeenLastCalledWith(undefined, '2026-09-27');
   });
 
   it('listDetailsRejectsInvalidReasonFilter', async () => {

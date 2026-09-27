@@ -61,30 +61,102 @@ function scheduleSave() {
   }, 300)
 }
 
+/** 保存失败后的重试间隔（毫秒）：与「稍后将自动重试」文案对应，指数退避。 */
+const RETRY_DELAYS_MS = [1000, 3000, 10_000]
+const MAX_SAVE_ATTEMPTS = RETRY_DELAYS_MS.length + 1
+/** 服务端 PREFERENCE_CONFLICT（code 3032）：别端刚写过这行，需重取后合并再保存。 */
+const PREFERENCE_CONFLICT_CODE = 3032
+
+/** GET 返回的版本号，PUT 时回传以启用乐观锁校验。 */
+let savedVersion: number | null = null
+
+function conflictCodeOf(error: unknown): number | null {
+  // 响应拦截器对 HTTP 200 + code≠0 的 reject 会把 data.code 挂到 Error 上（无 response）；
+  // axios error（HTTP 4xx/5xx）则保留原始 response 对象。
+  const directCode = (error as { code?: unknown })?.code
+  if (typeof directCode === 'number') return directCode
+  const respCode = (error as { response?: { data?: { code?: unknown } } })?.response?.data?.code
+  return typeof respCode === 'number' ? respCode : null
+}
+
 async function persistPrefs() {
   if (!getToken()) {
     writeLegacyAliases(groupAliases.value)
     return
   }
 
+  // 等待在途请求结束，保证同一时刻只有一个 PUT（后端是读-改-整行写，并发会互相覆盖）。
   if (savePromise) {
     await savePromise
   }
 
-  savePromise = api.put('/user-preferences/task-panel', {
-    groupOrder: groupOrder.value,
-    collapsedGroups: Array.from(collapsedGroups.value),
-    groupAliases: groupAliases.value
-  }).then(() => {
-    clearLegacyOrder()
-    clearLegacyAliases()
-  }).catch(() => {
-    ElMessage.warning('任务面板偏好保存失败，稍后将自动重试')
-  }).finally(() => {
+  // 失败重试闭环：文案承诺「稍后将自动重试」，就必须真的重试。
+  // 重试时始终发送当前 ref 快照，因此不会把旧状态写回服务端；
+  // 遇到 3032（别端并发写过）先重取最新版本，再把本地修改合上去重试。
+  savePromise = (async () => {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const { data } = await api.put('/user-preferences/task-panel', {
+          groupOrder: groupOrder.value,
+          collapsedGroups: Array.from(collapsedGroups.value),
+          groupAliases: groupAliases.value,
+          ...(savedVersion == null ? {} : { expectedVersion: savedVersion }),
+        })
+        if (typeof data?.version === 'number') savedVersion = data.version
+        clearLegacyOrder()
+        clearLegacyAliases()
+        return
+      } catch (error) {
+        if (conflictCodeOf(error) === PREFERENCE_CONFLICT_CODE) {
+          // 服务端已被别端改写：以服务端为基线，只重放本地相对它的修改，避免丢改动。
+          if (await mergeWithServerThenSave(attempt)) return
+        }
+        if (attempt >= MAX_SAVE_ATTEMPTS) {
+          ElMessage.error('任务面板偏好保存失败，请检查网络后手动再试一次')
+          return
+        }
+        if (attempt === 1 && conflictCodeOf(error) !== PREFERENCE_CONFLICT_CODE) {
+          ElMessage.warning('任务面板偏好保存失败，稍后将自动重试')
+        }
+        await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[attempt - 1]))
+      }
+    }
+  })().finally(() => {
     savePromise = null
   })
 
   await savePromise
+}
+
+/** 冲突后重取服务端版本，并把本地尚未持久化的改动合并回去（增量重试一次）。 */
+async function mergeWithServerThenSave(attempt: number): Promise<boolean> {
+  try {
+    const { data } = await api.get('/user-preferences/task-panel')
+    if (typeof data?.version === 'number') savedVersion = data.version
+    const serverAliases =
+      data?.groupAliases && typeof data.groupAliases === 'object' && !Array.isArray(data.groupAliases)
+        ? data.groupAliases
+        : {}
+    // 本地独有的分组 key 优先保留（重命名/拖拽的结果），其余以服务端为准。
+    const mergedAliases: Record<string, string> = { ...serverAliases, ...groupAliases.value }
+    const { data: updated } = await api.put('/user-preferences/task-panel', {
+      groupOrder: groupOrder.value,
+      collapsedGroups: Array.from(collapsedGroups.value),
+      groupAliases: mergedAliases,
+      ...(savedVersion == null ? {} : { expectedVersion: savedVersion }),
+    })
+    if (typeof updated?.version === 'number') savedVersion = updated.version
+    groupAliases.value = mergedAliases
+    clearLegacyOrder()
+    clearLegacyAliases()
+    return true
+  } catch {
+    if (attempt >= MAX_SAVE_ATTEMPTS) {
+      ElMessage.error('任务面板偏好保存失败：其他端的修改与本地冲突，请刷新页面')
+      return true
+    }
+    return false
+  }
 }
 
 /**
@@ -107,6 +179,7 @@ export function useTaskPanelPrefs() {
     loadPromise = (async () => {
       try {
         const { data } = await api.get('/user-preferences/task-panel')
+        if (typeof data?.version === 'number') savedVersion = data.version
         const serverOrder = Array.isArray(data?.groupOrder) ? data.groupOrder : []
         const serverCollapsed = Array.isArray(data?.collapsedGroups) ? data.collapsedGroups : []
         const serverAliases =

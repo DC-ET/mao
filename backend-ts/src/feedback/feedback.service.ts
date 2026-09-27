@@ -84,17 +84,28 @@ export class FeedbackService {
     await this.repository.deleteByMessageId(messageId);
   }
 
-  /** 当前用户在指定会话内已点踩的消息 ID 列表（用于前端回显）；会话不存在或非本人会话返回空 */
+  /**
+   * 当前用户在指定会话内已点踩的消息 ID 列表（用于前端回显）。
+   * 会话不存在与「非本人会话」必须分开：前者是资源问题，后者是权限问题，
+   * 合并成空数组会让回显丢失时无法归因（也无法与「确实没有点踩」区分）。
+   */
   async listDislikedMessageIds(userId: number, sessionId: number): Promise<number[]> {
     const owner = await this.sessionOwnerLookup(sessionId);
-    if (owner == null || owner !== userId) return [];
+    if (owner == null) {
+      throw new BusinessException(ErrorCode.SESSION_NOT_FOUND);
+    }
+    if (owner !== userId) {
+      throw new BusinessException(ErrorCode.FORBIDDEN, '无权访问该会话');
+    }
     return this.repository.listMessageIdsBySession(sessionId);
   }
 
   async getSummary(startDate?: string, endDate?: string): Promise<FeedbackSummary> {
+    // byReason / byDay / total 必须同口径：任一侧日期缺省时按开区间处理，
+    // 不能让 byDay 单独退化成空数组（否则同一筛选下汇总卡与趋势图互相矛盾）。
     const [byReasonRows, byDay] = await Promise.all([
       this.repository.sumByReason(startDate, endDate),
-      startDate && endDate ? this.repository.sumByDay(startDate, endDate) : Promise.resolve([]),
+      this.repository.sumByDay(startDate, endDate),
     ]);
     const byReasonMap = new Map(byReasonRows.map((r) => [r.reason, r.count]));
     const byReason = FEEDBACK_REASONS.map((reason) => ({

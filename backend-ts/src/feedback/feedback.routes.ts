@@ -1,5 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { requireRequestPermission, requireUserId, sendJson } from '../common/http-error.js';
+import { BusinessException } from '../common/business-exception.js';
+import { ErrorCode } from '../common/error-code.js';
 import { fail, ok } from '../common/result.js';
 import type { JwtService } from '../crypto/jwt.service.js';
 import type { FeedbackService } from './feedback.service.js';
@@ -65,8 +67,17 @@ export function registerFeedbackRoutes(app: FastifyInstance, deps: FeedbackRoute
       sendJson(reply, 200, fail(2001, '无效的会话 ID'));
       return;
     }
-    const ids = await deps.feedback.listDislikedMessageIds(userId, sessionId);
-    sendJson(reply, 200, ok({ ids }));
+    try {
+      const ids = await deps.feedback.listDislikedMessageIds(userId, sessionId);
+      sendJson(reply, 200, ok({ ids }));
+    } catch (e) {
+      // 会话不存在或非本人会话：回显场景静默返回空数组，不阻断聊天、不弹错误提示
+      if (e instanceof BusinessException && (e.code === ErrorCode.SESSION_NOT_FOUND.code || e.code === ErrorCode.FORBIDDEN.code)) {
+        sendJson(reply, 200, ok({ ids: [] }));
+        return;
+      }
+      throw e;
+    }
   });
 
   // 管理端：汇总统计
