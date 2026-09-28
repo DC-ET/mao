@@ -97,7 +97,7 @@
                 link
                 size="small"
                 :loading="testingId === row.id"
-                :disabled="testingId === row.id"
+                :disabled="testingId != null"
                 @click="handleTest(row)"
               >测试</el-button>
               <el-button type="primary" link size="small" @click="handleCopy(row)">复制</el-button>
@@ -139,7 +139,7 @@
           </div>
           <div class="mobile-card-actions">
             <template v-if="canWrite">
-              <el-button type="primary" link :loading="testingId === row.id" @click="handleTest(row)">测试</el-button>
+              <el-button type="primary" link :loading="testingId === row.id" :disabled="testingId != null" @click="handleTest(row)">测试</el-button>
               <el-button type="primary" link @click="handleCopy(row)">复制</el-button>
               <el-button type="primary" link @click="handleEdit(row)">编辑</el-button>
               <el-button :type="row.status === 1 ? 'danger' : 'success'" link @click="handleToggleStatus(row)">

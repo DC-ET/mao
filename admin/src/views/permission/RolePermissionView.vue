@@ -328,8 +328,18 @@ async function saveRole() {
       await api.put(`/roles/${roleForm.id}`, roleForm)
       ElMessage.success('角色已更新')
     }
+    const editedId = dialogMode.value === 'edit' ? roleForm.id : null
+    const preserveDirty = editedId != null && dirtyPermissions.value && currentRole.value?.id === editedId
     dialogVisible.value = false
     await fetchAll()
+    if (editedId != null && currentRole.value?.id === editedId) {
+      const updated = roles.value.find((role) => role.id === editedId)
+      if (updated) {
+        // 权限勾选未保存时只刷新标题，避免 selectRole 清掉 dirty 状态
+        if (preserveDirty) currentRole.value = updated
+        else selectRole(updated)
+      }
+    }
   } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
     savingRole.value = false
   }

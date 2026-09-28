@@ -74,6 +74,9 @@
           <div class="mobile-card-row"><span>连接</span><span>{{ runtimeStatusLabel(runtimeStatusMap[row.id]?.status) }}</span></div>
           <div class="mobile-card-actions" v-if="canWrite">
             <el-button type="primary" link @click="openEdit(row)">编辑</el-button>
+            <el-button :type="row.enabled ? 'warning' : 'success'" link @click="handleEnabledChange(row)">
+              {{ row.enabled ? '停用' : '启用' }}
+            </el-button>
             <el-button link :disabled="!row.enabled" @click="handleReconnect(row)">重连</el-button>
             <el-button type="danger" link @click="handleDelete(row)">删除</el-button>
           </div>

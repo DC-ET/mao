@@ -100,7 +100,12 @@
           <template #default="{ row }">
             <el-button type="primary" link size="small" @click="handleView(row)">查看</el-button>
             <el-button v-if="canWrite" link size="small" @click="handleArchive(row)">归档</el-button>
-            <el-button v-if="canWrite" type="danger" link size="small" @click="handleDelete(row)">删除</el-button>
+            <el-tooltip v-if="canWrite && !canDelete(row)" content="会话运行中，无法删除；请先等待其结束或取消" placement="top">
+              <span class="disabled-btn-wrap">
+                <el-button type="danger" link size="small" disabled>删除</el-button>
+              </span>
+            </el-tooltip>
+            <el-button v-else-if="canWrite" type="danger" link size="small" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -147,7 +152,12 @@
           <div class="mobile-card-actions">
             <el-button type="primary" link @click="handleView(row)">查看</el-button>
             <el-button v-if="canWrite" link @click="handleArchive(row)">归档</el-button>
-            <el-button v-if="canWrite" type="danger" link @click="handleDelete(row)">删除</el-button>
+            <el-tooltip v-if="canWrite && !canDelete(row)" content="会话运行中，无法删除；请先等待其结束或取消" placement="top">
+              <span class="disabled-btn-wrap">
+                <el-button type="danger" link disabled>删除</el-button>
+              </span>
+            </el-tooltip>
+            <el-button v-else-if="canWrite" type="danger" link @click="handleDelete(row)">删除</el-button>
           </div>
         </el-card>
         <el-empty v-if="!loading && sessions.length === 0" description="暂无数据" />
@@ -343,6 +353,8 @@ async function handleDelete(row: any) {
   try {
     await api.delete(`/admin/sessions/${row.id}`)
     ElMessage.success('已删除')
+    const maxPage = Math.max(1, Math.ceil((total.value - 1) / pageSize.value))
+    if (currentPage.value > maxPage) currentPage.value = maxPage
     fetchSessions()
   } catch { /* 拦截器已提示失败 */ }
 }
@@ -398,6 +410,11 @@ onActivated(() => {
 
 .search-form .el-form-item {
   margin-bottom: 12px;
+}
+
+.disabled-btn-wrap {
+  display: inline-flex;
+  margin: 0;
 }
 
 .match-snippet {
