@@ -17,6 +17,13 @@ export class ScheduledTaskDbStore implements ScheduledTaskStore {
     await this.db.execute('UPDATE scheduled_task SET deleted = 1 WHERE id = ?', [id]);
   }
 
+  async deleteBySessionId(sessionId: number): Promise<void> {
+    await this.db.execute(
+      'UPDATE scheduled_task SET deleted = 1 WHERE session_id = ? AND deleted = 0',
+      [sessionId],
+    );
+  }
+
   selectById(id: number): Promise<ScheduledTask | null> {
     return this.db.queryOne(`SELECT * FROM scheduled_task WHERE id = ? AND ${notDeleted()}`, [id]);
   }
@@ -67,7 +74,7 @@ export class ScheduledTaskDbStore implements ScheduledTaskStore {
 
   listDue(now: string): Promise<ScheduledTask[]> {
     return this.db.query(
-      `SELECT * FROM scheduled_task WHERE status = 'ACTIVE' AND next_fire_time <= ? AND ${notDeleted()}`,
+      `SELECT * FROM scheduled_task WHERE status = 'ACTIVE' AND finished = 0 AND next_fire_time <= ? AND ${notDeleted()}`,
       [now],
     );
   }

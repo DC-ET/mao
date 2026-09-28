@@ -7,7 +7,7 @@ import { UserService } from '../user/user.service.js';
 import type { LoginVO, User, UserRepository, UserRoleRepository } from '../user/types.js';
 import type { FeishuOAuthSettings } from '../settings/types.js';
 import { FEISHU_APP_TOKEN_URL, FEISHU_AUTHORIZE_URL, FEISHU_TOKEN_URL, FEISHU_USER_INFO_URL } from '../settings/settings-test.service.js';
-import { formatNow } from './auth.service.js';
+import { formatNow, isShanghaiExpired } from './auth.service.js';
 import { buildUniqueUsername } from './username.js';
 
 export const FEISHU_PENDING = 'PENDING';
@@ -368,7 +368,7 @@ export class FeishuAuthService {
     if (!oauthState.expiresAt) {
       return true;
     }
-    return new Date(oauthState.expiresAt.replace(' ', 'T')) <= new Date();
+    return isShanghaiExpired(oauthState.expiresAt);
   }
 
   private markStateExpired(state: string): Promise<number> {

@@ -1,3 +1,4 @@
+import { isShanghaiExpired } from './auth.service.js';
 import { harnessLog } from '../harness/log.js';
 import { clearAccessOneEcpToken, writeAccessOneEcpToken } from '../harness/accessone-ecp-credentials.js';
 import type { MysqlEcpSessionRepository } from './ecp-session.repository.js';
@@ -24,7 +25,7 @@ export function createEcpCredentialsInjector(
         if (home) await clearAccessOneEcpToken(home);
         return null;
       }
-      if (new Date(row.expiresAt).getTime() <= Date.now()) {
+      if (isShanghaiExpired(row.expiresAt)) {
         harnessLog('warn', `Skip ECP_TOKEN inject: session expired at ${row.expiresAt}, userId=${userId}；需重新 ECP 飞书登录`);
         if (home) await clearAccessOneEcpToken(home);
         return null;

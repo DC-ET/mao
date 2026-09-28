@@ -44,6 +44,7 @@ const ASK_USER_QUESTIONS = 'ask_user_questions';
 const MCP_TOOL_PREFIX = 'mcp__';
 const SERVER_ONLY_TOOLS = new Set([
   'task_create', 'task_update', 'task_list', 'task_delete',
+  'create_scheduled_task', 'update_scheduled_task', 'list_scheduled_tasks', 'delete_scheduled_task',
   'spawn_subagent', 'subagent_followup', 'check_subagent', 'cancel_subagent', 'wait_subagents',
   'web_search', 'open_web_page', 'generate_image', 'edit_image',
   'send_wechat_image', 'send_wechat_file',
@@ -233,6 +234,9 @@ export class ToolDispatcher {
       }
     } catch (e) {
       harnessLog('warn', `Failed to parse ask_user_questions arguments: ${(e as Error).message}`);
+    }
+    if (questions.length === 0) {
+      return JSON.stringify({ error: 'questions 不能为空，请提供至少 1 个问题' });
     }
     // 飞书没有进度卡、桌面也不在线：不要在内存里空等。模型改用文字继续。
     if (feishuChannel && !userOnline && !this.feishuAsk!.hasRunningProgress(sessionId!)) {

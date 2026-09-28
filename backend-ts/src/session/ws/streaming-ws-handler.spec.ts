@@ -44,7 +44,7 @@ describe('StreamingWsHandler', () => {
     getEmbedSessionBinding: vi.fn(() => null),
   };
   const titleService = { scheduleForFirstUserMessage: vi.fn() };
-  const harnessService = { prepareMessage: vi.fn(), executeFromEvent: vi.fn(), executeSideFirstMessage: vi.fn() };
+  const harnessService = { prepareMessage: vi.fn(), executeFromEvent: vi.fn(), executeSideFirstMessage: vi.fn(), forkParentMessages: vi.fn() };
   const sessionService = {
     getSession: vi.fn(), saveMessage: vi.fn(), updatePhase: vi.fn(), updateField: vi.fn(),
     updateModelId: vi.fn(), getMessages: vi.fn(), editMessageAndTruncate: vi.fn(), save: vi.fn(),
@@ -252,6 +252,28 @@ describe('StreamingWsHandler', () => {
       data: expect.objectContaining({ message: '服务器繁忙，请稍后重试' }),
     }));
     submit.mockRestore();
+  });
+
+  it('does not start a side task when cancel arrives during fork', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('CLOUD', 'IDLE'));
+    sessionService.saveMessage.mockResolvedValue(message(99, 'USER'));
+    sessionService.save.mockImplementation(async (s: Session) => { s.id = 13; });
+    let releaseFork: () => void = () => {};
+    harnessService.forkParentMessages.mockReturnValue(new Promise<void>((resolve) => { releaseFork = resolve; }));
+
+    const creating = handler.handleTextMessage(ws, JSON.stringify({
+      type: 'create_side_session', sessionId: 11, data: { content: 'side work', contextMode: 'fork' },
+    }));
+    await vi.waitFor(() => expect(harnessService.forkParentMessages).toHaveBeenCalledWith(11, 13));
+    await handler.handleTextMessage(ws, JSON.stringify({ type: 'cancel', sessionId: 13 }));
+    releaseFork();
+    await creating;
+    await executor.runAll();
+
+    expect(harnessService.executeSideFirstMessage).not.toHaveBeenCalled();
+    expect(taskTerminalService.finishExecution).toHaveBeenCalledWith(13, 7, 'CANCELLED', expect.any(String));
   });
 
   it('sendMessageRejectsUnsupportedImagesAndDisconnectedLocalClient', async () => {

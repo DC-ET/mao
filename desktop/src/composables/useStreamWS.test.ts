@@ -144,6 +144,39 @@ describe('useStreamWS user_message_saved', () => {
     expect(msgs[0].id).toBe('88')
   })
 
+  it('纯图片乐观消息不会把带文字的远端消息吞掉', async () => {
+    const { connect, subscribe } = useStreamWS()
+    const pending = connect()
+    sockets[0].open()
+    await pending
+    await subscribe('9')
+
+    const sessionStore = useSessionStore()
+    sessionStore.addUserMessage('9', {
+      id: 'msg_1786850982000_user',
+      role: 'user',
+      content: '',
+      createdAt: '2026-09-20 19:21:12',
+      images: ['blob:local'],
+    })
+
+    sockets[0].onmessage?.({
+      target: sockets[0],
+      data: JSON.stringify({
+        type: 'user_message_saved',
+        sessionId: 9,
+        data: { content: '另一端发来的文字', messageId: 99 },
+      }),
+    })
+
+    const msgs = (sessionStore.getMessages('9') ?? []) as ChatMessageLike[]
+    const users = msgs.filter(m => m.role === 'user')
+    expect(users).toHaveLength(2)
+    expect(users[0].id).toBe('msg_1786850982000_user')
+    expect(users[1].content).toBe('另一端发来的文字')
+    expect(users[1].id).toBe('99')
+  })
+
   it('连续两组提问按到达顺序保留，后到的不清空先到的', async () => {
     const { connect, subscribe } = useStreamWS()
     const pending = connect()

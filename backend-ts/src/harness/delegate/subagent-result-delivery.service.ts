@@ -3,6 +3,7 @@ import { MISSING_TOOL_RESULT_PLACEHOLDER } from '../core/message-history-normali
 import type { Db } from '../../db/db.js';
 import type { FileChange, Message, Session, SubagentExecution } from '../../session/types.js';
 import { harnessLog } from '../log.js';
+import { fileChangeCopyKey, fileChangesAfterMessage } from './file-change-copy.js';
 import { SubagentExecutionMapper } from './subagent-execution.mapper.js';
 import { SubagentRecoveryResultFactory } from './subagent-recovery-result-factory.js';
 
@@ -155,7 +156,9 @@ export class SubagentResultDeliveryService {
       deleted: 0,
     });
     if (existingId == null && this.fileChangeRepo && execution.childSessionId != null) {
-      await this.copyFileChanges(execution.childSessionId, assistantId, parentSessionId);
+      await this.copyFileChanges(
+        execution.childSessionId, assistantId, parentSessionId, execution.executionStartMessageId ?? null,
+      );
     }
     const now = nowSql();
     await mapper.updateById(execution.id!, {
@@ -172,12 +175,17 @@ export class SubagentResultDeliveryService {
     childSessionId: number,
     noticeMessageId: number,
     parentSessionId: number,
+    afterMessageId: number | null,
   ): Promise<void> {
     const repo = this.fileChangeRepo;
     if (!repo) return;
     try {
-      const changes = await repo.listBySession(childSessionId);
+      const changes = fileChangesAfterMessage(await repo.listBySession(childSessionId), afterMessageId);
+      const seen = new Set((await repo.listBySession(parentSessionId)).map(fileChangeCopyKey));
       for (const change of changes) {
+        const key = fileChangeCopyKey(change);
+        if (seen.has(key)) continue;
+        seen.add(key);
         await repo.insert({
           ...change,
           id: undefined,

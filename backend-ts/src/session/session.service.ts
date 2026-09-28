@@ -60,6 +60,8 @@ export class SessionService {
     private readonly cleanupRuntimeDir?: (userId: number, sessionId: number) => void,
     /** 会话删除时关闭其全部云端终端的回调，可选。 */
     private readonly closeSessionTerminals?: (sessionId: number) => void,
+    /** 会话删除后清理绑定资源（如定时任务）。失败只记日志，不回滚已删除的会话。 */
+    private readonly onSessionDeleted?: (sessionId: number) => Promise<void> | void,
   ) {}
 
   async createSession(
@@ -491,6 +493,13 @@ export class SessionService {
     await this.sessionCompactionEventService.deleteBySessionId(id);
     await this.messageRepo.logicalDeleteBySession(id);
     await this.sessionRepo.logicalDelete(id);
+    if (this.onSessionDeleted) {
+      try {
+        await this.onSessionDeleted(id);
+      } catch (e) {
+        console.error(`Failed to clean resources bound to session ${id}`, e);
+      }
+    }
     // 文件清理失败不影响会话删除本身（记录日志即可）
     if (session != null) {
       try {
@@ -746,26 +755,24 @@ export class SessionService {
 
   async togglePin(id: number): Promise<void> {
     const session = await this.getSession(id);
-    session.isPinned = session.isPinned != null && session.isPinned === 1 ? 0 : 1;
-    await this.sessionRepo.updateById(session);
+    const isPinned = session.isPinned != null && session.isPinned === 1 ? 0 : 1;
+    await this.sessionRepo.updateFields(id, { isPinned });
   }
 
   async toggleFavorite(id: number): Promise<void> {
     const session = await this.getSession(id);
-    session.isFavorite = session.isFavorite != null && session.isFavorite === 1 ? 0 : 1;
-    await this.sessionRepo.updateById(session);
+    const isFavorite = session.isFavorite != null && session.isFavorite === 1 ? 0 : 1;
+    await this.sessionRepo.updateFields(id, { isFavorite });
   }
 
   async archiveSession(id: number): Promise<void> {
-    const session = await this.getSession(id);
-    session.status = 'ARCHIVED';
-    await this.sessionRepo.updateById(session);
+    await this.getSession(id);
+    await this.sessionRepo.updateFields(id, { status: 'ARCHIVED' });
   }
 
   async unarchiveSession(id: number): Promise<void> {
-    const session = await this.getSession(id);
-    session.status = 'ACTIVE';
-    await this.sessionRepo.updateById(session);
+    await this.getSession(id);
+    await this.sessionRepo.updateFields(id, { status: 'ACTIVE' });
   }
 
   async restoreRunningAfterApproval(sessionId: number): Promise<boolean> {
@@ -1031,34 +1038,29 @@ export class SessionService {
   }
 
   async updateSummary(sessionId: number, summary: string): Promise<void> {
-    const session = await this.getSession(sessionId);
-    session.summary = summary;
-    await this.sessionRepo.updateById(session);
+    await this.getSession(sessionId);
+    await this.sessionRepo.updateFields(sessionId, { summary });
   }
 
   async updateProjectKey(sessionId: number, projectKey: string): Promise<void> {
-    const session = await this.getSession(sessionId);
-    session.projectKey = projectKey;
-    await this.sessionRepo.updateById(session);
+    await this.getSession(sessionId);
+    await this.sessionRepo.updateFields(sessionId, { projectKey });
   }
 
   async updateTitle(sessionId: number, title: string): Promise<void> {
-    const session = await this.getSession(sessionId);
-    session.title = title;
-    await this.sessionRepo.updateById(session);
+    await this.getSession(sessionId);
+    await this.sessionRepo.updateFields(sessionId, { title });
   }
 
   async updatePermissionLevel(sessionId: number, permissionLevel: string): Promise<void> {
     permissionFromString(permissionLevel);
-    const session = await this.getSession(sessionId);
-    session.permissionLevel = permissionLevel;
-    await this.sessionRepo.updateById(session);
+    await this.getSession(sessionId);
+    await this.sessionRepo.updateFields(sessionId, { permissionLevel });
   }
 
   async updateModelId(sessionId: number, modelId: number): Promise<void> {
-    const session = await this.getSession(sessionId);
-    session.modelId = modelId;
-    await this.sessionRepo.updateById(session);
+    await this.getSession(sessionId);
+    await this.sessionRepo.updateFields(sessionId, { modelId });
   }
 
   async updateContextTokens(sessionId: number, contextTokens: number): Promise<void> {

@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { createReadStream } from 'node:fs';
-import { readdir, stat } from 'node:fs/promises';
+import { lstat, readdir } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import path from 'node:path';
 import { BaseTool } from '../tool.js';
@@ -148,7 +148,7 @@ export class GrepSearchTool extends BaseTool {
     };
     const files = scope.isSingleFile() && scope.singleFile
       ? [scope.singleFile]
-      : collectFiles(scope.cwd, globRe, scope.cwd);
+      : collectGrepFiles(scope.cwd, globRe, scope.cwd);
     for await (const file of files) {
       const relativePath = scope.outputFilePath(file, workspaceRoot);
       const input = createReadStream(file, { encoding: 'utf8' });
@@ -216,13 +216,26 @@ function globToFileRe(glob: string): RegExp {
   return new RegExp(`^${source}$`);
 }
 
-async function* collectFiles(dir: string, globRe: RegExp | null, root: string): AsyncGenerator<string> {
-  for (const name of await readdir(dir)) {
+/** 不跟随符号链接：断链会让整次搜索失败，环路会递归爆栈，指向目录外的链接会读出工作区之外的文件。 */
+export async function* collectGrepFiles(dir: string, globRe: RegExp | null, root: string): AsyncGenerator<string> {
+  let names: string[];
+  try {
+    names = await readdir(dir);
+  } catch {
+    return;
+  }
+  for (const name of names) {
     const full = path.join(dir, name);
-    const st = await stat(full);
+    let st;
+    try {
+      st = await lstat(full);
+    } catch {
+      continue;
+    }
+    if (st.isSymbolicLink()) continue;
     if (st.isDirectory()) {
       if (IGNORED_DIRS.has(name)) continue;
-      yield* collectFiles(full, globRe, root);
+      yield* collectGrepFiles(full, globRe, root);
     } else if (st.isFile()) {
       const rel = path.relative(root, full).split(path.sep).join('/');
       if (!globRe || globRe.test(rel) || globRe.test(name)) yield full;

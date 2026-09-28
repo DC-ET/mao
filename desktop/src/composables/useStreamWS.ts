@@ -776,9 +776,10 @@ export function useStreamWS() {
           // 不能只判 msg_，否则会误判为远端回显、追加出重复的用户消息。
           const list = sessionStore.getMessages(sid) ?? []
           const lastUser = [...list].reverse().find(m => m.role === 'user')
+          const remoteText = content.trim()
           const isLocalOptimistic = lastUser != null
             && sessionStore.isOptimisticUserId(String(lastUser.id))
-            && (lastUser.content === content || lastUser.content.trim() === '')
+            && (lastUser.content === content || (lastUser.content.trim() === '' && remoteText === ''))
 
           if (isLocalOptimistic && remoteMsgId != null) {
             sessionStore.updateLastMessageId(sid, 'user', remoteMsgId)

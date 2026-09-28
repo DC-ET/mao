@@ -11,7 +11,9 @@ export class SubAgentResultCollector implements AgentEventListener {
   toolCallCount = 0;
 
   onThinkingStart(): void {
-    this.contentBuilder.length = 0;
+    // 同一轮响应里思考块可以出现在正文之后（交错思考、尾部摘要）。
+    // 这里清 content 会把已经积累的回答丢掉，父代理只剩后半段甚至「无输出」。
+    // 整轮重置走 onLlmStreamReset，工具回合切换走 onToolCallStart。
     this.thinkingBuilder.length = 0;
   }
 

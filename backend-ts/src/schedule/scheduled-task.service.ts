@@ -77,6 +77,8 @@ export type ScheduledLiveExecution = (
   userId: number,
   executionId: string,
   savedMessage: Message,
+  /** 本次触发开始时刻。停止标记早于它视为陈旧，不取消这次执行。 */
+  startedAt?: number,
 ) => Promise<void>;
 
 /** Push the final assistant result to a Feishu channel session (no-op for non-Feishu sessions). */
@@ -288,7 +290,11 @@ export class ScheduledTaskService {
         task.finishedAt = null;
       }
     }
-    if (task.status === 'ACTIVE' && task.nextFireTime == null) {
+    // 已完结任务的 nextFireTime 为空。只改名称/提示词不得把它拉起来；
+    // 显式改 once，或把状态设回 ACTIVE，才按当前 cron 重新排期。
+    const reactivate = cronExpression == null && task.status === 'ACTIVE' && task.nextFireTime == null
+      && (once != null || status === 'ACTIVE');
+    if (reactivate) {
       const next = this.calculateNextFireTime(task.cronExpression!);
       task.nextFireTime = next;
       if (next != null) {
@@ -369,6 +375,7 @@ export class ScheduledTaskService {
             // 的路径不得误标正在运行的其它执行（L-2）。
             let executionStarted = false;
             let countThisRun = false;
+            let sessionGone = false;
             try {
               // 拿到锁后重读最新任务状态，排队期间可能已被更新/暂停/删除
               const latest = task.id != null ? await this.store.selectById(task.id) : null;
@@ -386,9 +393,16 @@ export class ScheduledTaskService {
                 await this.restoreNextFireIfUnchanged(task.id!, advancedNext, previousNextFireTime);
                 return;
               }
-              const session = await this.sessionService.getSession(task.sessionId!);
-              if (session == null) {
-                await this.markTaskResult(task, 'FAILED');
+              let session: Session;
+              try {
+                const loaded = await this.sessionService.getSession(task.sessionId!);
+                if (loaded == null) throw new BusinessException(ErrorCode.SESSION_NOT_FOUND);
+                session = loaded;
+              } catch (e) {
+                if (!(e instanceof BusinessException) || e.code !== ErrorCode.SESSION_NOT_FOUND.code) throw e;
+                // 会话已删：停掉后续档期。nextFireTime 在开跑前已经推进，这里必须清掉，
+                // 否则已删会话的循环任务会每个周期再失败一次。
+                sessionGone = true;
                 countThisRun = true;
                 return;
               }
@@ -423,6 +437,7 @@ export class ScheduledTaskService {
                 await this.store.updateById(patch);
                 return;
               }
+              const executionStartedAt = Date.now();
               await this.sessionService.updatePhase(task.sessionId!, 'RUNNING');
               executionStarted = true;
               let savedMessage: Message;
@@ -435,7 +450,7 @@ export class ScheduledTaskService {
                 return;
               }
               if (this.liveExecution != null) {
-                await this.liveExecution(session, userId, executionId, savedMessage);
+                await this.liveExecution(session, userId, executionId, savedMessage, executionStartedAt);
                 // liveExecution（runExecution）内部 catch 吞掉失败/取消并落终态后正常返回，
                 // 必须回读会话真实终态：FAILED/CANCELLED 时不得标 COMPLETED，
                 // 也不得把上一轮 ASSISTANT 旧回复误推给飞书/微信。
@@ -461,6 +476,11 @@ export class ScheduledTaskService {
               await this.sendFeishuReplyIfApplicable(task.sessionId!);
               countThisRun = true;
             } catch (e) {
+              if (e instanceof BusinessException && e.code === ErrorCode.SESSION_NOT_FOUND.code) {
+                sessionGone = true;
+                countThisRun = true;
+                return;
+              }
               countThisRun = true;
               // L-2：仅本次确实进入执行阶段才落 FAILED 终态；
               // busy 入队失败 / 会话为空等未执行路径不得改写同会话正在运行的执行。
@@ -473,6 +493,19 @@ export class ScheduledTaskService {
               await this.markTaskResult(task, 'FAILED');
             } finally {
               if (!countThisRun) return;
+              if (sessionGone) {
+                const now = formatDateTime(new Date());
+                await this.store.updateById({
+                  id: task.id!,
+                  finished: 1,
+                  finishedAt: now,
+                  nextFireTime: null,
+                  lastExecutionStatus: 'FAILED',
+                  lastFireTime: now,
+                  fireCount: (task.fireCount ?? 0) + 1,
+                });
+                return;
+              }
               // M-5：执行收尾只做「增量更新」——仅写执行结果字段，避免整行回写
               // T0 快照覆盖执行期间用户对 cron/prompt/name/status 的修改。
               const patch: Partial<ScheduledTask> & { id: number } = { id: task.id! };

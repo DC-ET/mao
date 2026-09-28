@@ -9,6 +9,7 @@ import { harnessLog } from '../log.js';
 import type { LocalToolSessionRegistry } from '../local/local-tool-session-registry.js';
 import { normalizeAgentType } from './agent-definition-registry.js';
 import type { AgentDefinition, AgentDefinitionRegistry } from './agent-definition-registry.js';
+import { fileChangeCopyKey, fileChangesAfterMessage } from './file-change-copy.js';
 import { SubAgentResultCollector } from './subagent-result-collector.js';
 import type { SubagentExecutionMapper } from './subagent-execution.mapper.js';
 import type { SubagentInvocationService } from './subagent-invocation.service.js';
@@ -761,16 +762,25 @@ export class BackgroundSubagentManager {
       parentId, 'ASSISTANT', content, null, null, null, 0, null, metadata,
     );
     if (saved.id != null) {
-      await this.copyFileChanges(childSession.id!, saved.id, parentId);
+      await this.copyFileChanges(childSession.id!, saved.id, parentId, execution.executionStartMessageId ?? null);
     }
   }
 
-  private async copyFileChanges(childSessionId: number, noticeMessageId: number, parentSessionId: number): Promise<void> {
+  private async copyFileChanges(
+    childSessionId: number,
+    noticeMessageId: number,
+    parentSessionId: number,
+    afterMessageId: number | null,
+  ): Promise<void> {
     const repo = this.deps.fileChangeRepo;
     if (!repo) return;
     try {
-      const changes = await repo.listBySession(childSessionId);
+      const changes = fileChangesAfterMessage(await repo.listBySession(childSessionId), afterMessageId);
+      const seen = new Set((await repo.listBySession(parentSessionId)).map(fileChangeCopyKey));
       for (const change of changes) {
+        const key = fileChangeCopyKey(change);
+        if (seen.has(key)) continue;
+        seen.add(key);
         await repo.insert({
           ...change,
           id: undefined,

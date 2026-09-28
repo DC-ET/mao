@@ -107,8 +107,8 @@ describe('SessionService archive', () => {
     const s: Session = { id: 10, userId: 7, status: 'ARCHIVED' };
     vi.mocked(sessionRepo.findById).mockResolvedValue(s);
     await service.unarchiveSession(10);
-    expect(s.status).toBe('ACTIVE');
-    expect(sessionRepo.updateById).toHaveBeenCalledWith(s);
+    expect(sessionRepo.updateFields).toHaveBeenCalledWith(10, { status: 'ACTIVE' });
+    expect(sessionRepo.updateById).not.toHaveBeenCalled();
   });
 
   it('unarchiveSessionThrowsWhenNotFound', async () => {

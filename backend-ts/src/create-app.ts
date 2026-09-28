@@ -592,8 +592,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const gitOps = new GitOperationService(gitLookup);
   const todoMapper = new SessionTodoMapper(db);
   const todoRepo = new SessionTodoRepository(db);
-  // TerminalManager 依赖 runtimeResolver（稍后构造），此处先占位，供会话删除回调延迟解引用
+  // TerminalManager / 定时任务存储都在后面才构造，会话删除回调延迟解引用
   let terminalManagerRef: TerminalManager | null = null;
+  let deleteScheduledTasksForSession: ((sessionId: number) => Promise<void>) | null = null;
   const sessionService = new SessionService(
     sessionRepo, messageRepo, fileChangeRepo,
     {
@@ -605,6 +606,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     pathSandbox, envInfo, commandService, gitOps, sessionCompactionService, sessionCompactionEventService, todoRepo,
     runtimeSessionCleanup(runtimeRoot),
     (sessionId) => { terminalManagerRef?.closeBySession(sessionId); },
+    (sessionId) => deleteScheduledTasksForSession?.(sessionId),
   );
   const sessionSvc = sessionService as never;
   const sessionMap = sessionRepo as never;
@@ -814,6 +816,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
 
   const holder: { harness?: HarnessService; loop?: AgentLoop } = {};
   const scheduledStore = new ScheduledTaskDbStore(db);
+  deleteScheduledTasksForSession = (sessionId) => scheduledStore.deleteBySessionId(sessionId);
 
   const notifCipher = new WebhookSecretCipher(cfg.app.taskNotification.secretKey);
   const senderRegistry = new WebhookSenderRegistry([new DingTalkWebhookSender(), new FeishuWebhookSender()]);
@@ -1091,8 +1094,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       await scheduledStore.updateById({ id: taskId, lastExecutionStatus: status });
     },
   } as never);
-  scheduledService.setLiveExecution((session, userId, executionId, saved) =>
-    wsHandler.executePersistedUserPrompt(session, userId, executionId, saved));
+  scheduledService.setLiveExecution((session, userId, executionId, saved, startedAt) =>
+    wsHandler.executePersistedUserPrompt(session, userId, executionId, saved, startedAt));
   scheduledService.setSessionBusyCheck((sessionId) => wsHandler.hasExecutionClaim(sessionId));
 
   const feishuMessageRepository = new MysqlFeishuMessageRepository(db);

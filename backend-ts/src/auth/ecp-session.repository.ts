@@ -1,5 +1,6 @@
 import { decryptAesGcm, encryptAesGcmNonNull } from '../crypto/aes-gcm.js';
 import type { Db } from '../db/db.js';
+import { isShanghaiExpired } from './auth.service.js';
 import { formatDateTime } from '../common/json.js';
 
 export type EcpRenewStatus = 'ACTIVE' | 'RENEWING' | 'FAILED';
@@ -33,7 +34,7 @@ export function isUsableEcpSession(
 ): boolean {
   if (row == null) return false;
   if (row.renewStatus === 'FAILED') return false;
-  if (new Date(row.expiresAt).getTime() <= now) return false;
+  if (isShanghaiExpired(row.expiresAt, now)) return false;
   const token = decryptToken(row.sessionTokenEnc);
   return token != null && token !== '';
 }

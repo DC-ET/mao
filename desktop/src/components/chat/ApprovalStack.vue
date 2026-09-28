@@ -56,7 +56,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { WarningFilled } from '@element-plus/icons-vue'
 import { copyText as copyToClipboard } from '../../utils/clipboard'
@@ -76,7 +76,7 @@ const titleMap: Record<string, string> = {
   edit_file: '文件编辑待审批'
 }
 
-defineProps<{
+const props = defineProps<{
   items: ApprovalItem[]
 }>()
 
@@ -86,6 +86,25 @@ const emit = defineEmits<{
 
 // 点击后立即标记已处理并禁用按钮：审批卡片保留到服务端响应前，防止重复提交
 const handledIds = ref(new Set<string>())
+const absentAfterHandle = new Set<string>()
+
+// 发送失败会把同一张卡放回队列。单卡时组件被 v-if 卸掉，状态碰巧清空；
+// 多卡时组件还在，必须在卡片离开再回来之后重新允许点击。
+watch(() => props.items.map((item) => item.requestId), (ids) => {
+  const present = new Set(ids)
+  for (const id of handledIds.value) {
+    if (!present.has(id)) absentAfterHandle.add(id)
+  }
+  let changed = false
+  const next = new Set(handledIds.value)
+  for (const id of absentAfterHandle) {
+    if (present.has(id) && next.delete(id)) {
+      absentAfterHandle.delete(id)
+      changed = true
+    }
+  }
+  if (changed) handledIds.value = next
+})
 
 function confirm(requestId: string, approved: boolean) {
   if (handledIds.value.has(requestId)) return

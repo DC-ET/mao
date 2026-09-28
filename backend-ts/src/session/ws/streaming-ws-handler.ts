@@ -51,6 +51,7 @@ export interface WsHandlerDeps {
     prepareMessage(sessionId: number, content: unknown): Promise<string> | string;
     executeFromEvent(sessionId: number, eventId: string, listener: AgentEventListener, cancelFlag: { get(): boolean; set(v: boolean): void }): Promise<void>;
     executeSideFirstMessage(parentId: number, sideId: number, contextMode: 'fork' | 'summary' | 'none', listener: AgentEventListener, cancelFlag: { get(): boolean; set(v: boolean): void }): Promise<void>;
+    forkParentMessages(parentId: number, sideId: number): Promise<void>;
   };
   sessionService: {
     getSession(id: number): Promise<Session | null>;
@@ -351,7 +352,10 @@ export class StreamingWsHandler {
       return;
     }
     const replacingExecution = data.replaceExecution === true;
-    const isAutoConsume = this.autoConsumingSessionIds.delete(sessionId);
+    // 只有「调用前已经落库」的自动消费/插队才拥有这个标记。手动 send 若无条件 delete，
+    // 会偷走 500ms 窗口里的标记，导致自动消费那次被当成普通发送再写一条同样的用户消息。
+    const ownsAutoConsume = claimAlreadyHeld && autoSavedMessageId != null;
+    const isAutoConsume = ownsAutoConsume && this.autoConsumingSessionIds.delete(sessionId);
     /** 自动消费的消息已出队并落库，任何未进入执行的早退都必须回补队首，否则消息永不执行 */
     const requeueIfClaimed = async () => {
       if (!claimAlreadyHeld) return;
@@ -444,19 +448,7 @@ export class StreamingWsHandler {
     // 注册完成后回调在下一个微任务执行，但此刻仍在同一同步段内，
     // 通过注册时返回值立即消费，避免用户点「停止」后任务照常跑完。
     const flag = this.deps.agentLoop.registerCancelFlag(sessionId);
-    const pendingCancelAt = this.pendingCancels.get(sessionId);
-    this.pendingCancels.delete(sessionId);
-    if (pendingCancelAt != null && pendingCancelAt >= sendStartedAt) {
-      // 用户已在执行提交前点「停止」：释放占位并落 CANCELLED 终态，不提交执行。
-      // 早于本次发送开始的残留标记（上次取消的遗留）在此被静默清除，不影响本次发送。
-      flag.set(true);
-      this.executionClaims.delete(sessionId);
-      this.autoConsumingSessionIds.delete(sessionId);
-      this.runningExecutionIds.delete(sessionId);
-      // 执行从未提交，取消标志必须一并摘除：AgentLoop 的取消标志集合是"本实例在途执行"的
-      // 唯一判据（停机收尾据此等待/标记、孤儿巡检据此排除本地活跃会话），泄漏会让该会话
-      // 永久被当成"仍在执行"。
-      this.deps.agentLoop.removeCancelFlag(sessionId);
+    if (this.takePendingCancel(sessionId, sendStartedAt, flag)) {
       // 定时任务 busy 入队消息在此窗口被取消：同步回写 CANCELLED 并清映射，避免永久 QUEUED + 误回写
       const scheduledTaskId = this.queueScheduledTaskIds.get(sessionId);
       if (scheduledTaskId != null) {
@@ -598,6 +590,7 @@ export class StreamingWsHandler {
     userId: number,
     executionId: string,
     savedMessage: Message,
+    startedAt?: number,
   ): Promise<void> {
     const sessionId = session.id!;
     this.deps.titleService.scheduleForFirstUserMessage(sessionId, savedMessage.id, savedMessage.content ?? '');
@@ -618,6 +611,12 @@ export class StreamingWsHandler {
     }));
     this.deps.registry.subscribe(userId, sessionId);
     const flag = this.deps.agentLoop.registerCancelFlag(sessionId);
+    // startedAt 由定时任务在 updatePhase(RUNNING) 之前记下。窗口内的停止早于本方法入口，
+    // 用入口时间会把标记当成陈旧清掉，随后 runExecution 又把 CANCELLED 盖回 RUNNING。
+    if (this.takePendingCancel(sessionId, startedAt ?? Date.now(), flag)) {
+      await this.finishCancelledSession(sessionId, userId, executionId);
+      return;
+    }
     this.cancelFlags.set(sessionId, flag);
     this.runningExecutionIds.set(sessionId, executionId);
     if (!this.executionClaims.has(sessionId)) this.executionClaims.add(sessionId);
@@ -662,6 +661,7 @@ export class StreamingWsHandler {
       this.sendSessionAlreadyRunning(userId, sessionId);
       return;
     }
+    const editStartedAt = Date.now();
     this.executionClaims.add(sessionId);
     if (session.executionMode === 'LOCAL') {
       this.deps.localToolSessionRegistry.setUserForSession(sessionId, userId);
@@ -685,6 +685,10 @@ export class StreamingWsHandler {
       const resolvedEventId = await this.deps.harnessService.prepareMessage(sessionId, messageContent);
       this.deps.registry.subscribe(userId, sessionId);
       const flag = this.deps.agentLoop.registerCancelFlag(sessionId);
+      if (this.takePendingCancel(sessionId, editStartedAt, flag)) {
+        await this.finishCancelledSession(sessionId, userId, resolvedEventId);
+        return;
+      }
       this.cancelFlags.set(sessionId, flag);
       this.runningExecutionIds.set(sessionId, resolvedEventId);
       this.submitExecution(sessionId, userId, resolvedEventId, (futureRef) =>
@@ -815,6 +819,19 @@ export class StreamingWsHandler {
     };
     await this.deps.sessionService.save(sideSession);
     const sideSessionId = sideSession.id!;
+    const sideStartedAt = Date.now();
+    const clientRequestId = typeof data.clientRequestId === 'string' ? data.clientRequestId : null;
+    // Fork 复制历史可能很久，且发生在注册 cancel flag 之前。先把会话 id 交给客户端，
+    // 这段时间点的停止会进 pendingCancels；复制结束后必须消费，否则新 flag 仍是 false，任务照跑。
+    this.deps.registry.send(userId, wsEvent('side_session_created', parentSessionId, {
+      sideSessionId, title: sideSession.title, ...(clientRequestId ? { clientRequestId } : {}),
+    }));
+    // 先复制主会话历史，再落边路首问。否则首问 id 更小：无压缩时排在历史前面，
+    // 有压缩边界时会被 id > boundary 整段排除，模型看不到这次提问。
+    if (contextMode === 'fork') {
+      await this.deps.harnessService.forkParentMessages(parentSessionId, sideSessionId);
+    }
+    const sideRunMode = contextMode === 'fork' ? 'none' : contextMode;
     if (sideSession.executionMode === 'LOCAL') {
       this.deps.localToolSessionRegistry.setUserForSession(sideSessionId, userId);
       this.deps.localSkillRegistry.report(sideSessionId, this.parseLocalSkills(data.localSkills));
@@ -822,10 +839,6 @@ export class StreamingWsHandler {
     }
     const messageContent = images.length === 0 ? content : contentParts(content, images);
     const savedMessage = await this.deps.sessionService.saveMessage(sideSessionId, 'USER', messageContent, null, null, null, 0, null);
-    const clientRequestId = typeof data.clientRequestId === 'string' ? data.clientRequestId : null;
-    this.deps.registry.send(userId, wsEvent('side_session_created', parentSessionId, {
-      sideSessionId, title: sideSession.title, ...(clientRequestId ? { clientRequestId } : {}),
-    }));
     this.deps.titleService.scheduleForFirstUserMessage(sideSessionId, savedMessage.id, messageContent);
     const sidePayload = userMessagePayloadOf(messageContent);
     this.deps.registry.send(userId, wsEvent('user_message_saved', sideSessionId, {
@@ -836,6 +849,10 @@ export class StreamingWsHandler {
     }));
     this.executionClaims.add(sideSessionId);
     const flag = this.deps.agentLoop.registerCancelFlag(sideSessionId);
+    if (this.takePendingCancel(sideSessionId, sideStartedAt, flag)) {
+      await this.finishCancelledSession(sideSessionId, userId, randomUUID());
+      return;
+    }
     this.cancelFlags.set(sideSessionId, flag);
     const sideExecutionId = randomUUID();
     this.runningExecutionIds.set(sideSessionId, sideExecutionId);
@@ -846,7 +863,12 @@ export class StreamingWsHandler {
       await this.withLock(this.sessionLocks, sideSessionId, async () => {
         let terminalPhase: 'COMPLETED' | 'CANCELLED' | 'FAILED' = 'FAILED';
         try {
-          await this.deps.sessionService.updateField(sideSessionId, 'phase', 'RUNNING');
+          if (flag.get()) {
+            await this.deps.taskTerminalService.finishExecution(sideSessionId, userId, 'CANCELLED', sideExecutionId);
+            terminalPhase = 'CANCELLED';
+            return;
+          }
+          await this.deps.sessionService.updatePhase(sideSessionId, 'RUNNING');
           this.deps.registry.send(userId, wsEvent('session_status', sideSessionId, { phase: 'RUNNING', executionId: sideExecutionId }));
           this.deps.treeSignalPublisher.publishIfSideTask(sideSessionId);
           if (sideSession.executionMode === 'LOCAL' && sideSession.agentId != null) {
@@ -867,7 +889,7 @@ export class StreamingWsHandler {
             sideSessionId, userId, sideExecutionId, await this.resolveSupportsVision(sideSession),
           );
           sideListener = listener;
-          await this.deps.harnessService.executeSideFirstMessage(parentSessionId, sideSessionId, contextMode, listener, flag);
+          await this.deps.harnessService.executeSideFirstMessage(parentSessionId, sideSessionId, sideRunMode, listener, flag);
           if (flag.get()) {
             await this.deps.taskTerminalService.finishExecution(sideSessionId, userId, 'CANCELLED', sideExecutionId);
             terminalPhase = 'CANCELLED';
@@ -1092,6 +1114,31 @@ export class StreamingWsHandler {
     }
   }
 
+  /**
+   * 消费「登记时间不早于本次提交开始」的停止标记。
+   * 命中时置位 flag 并摘掉占位，调用方负责落 CANCELLED、不再提交执行。
+   * 更早的残留标记在此清掉，避免误杀下一次发送。
+   */
+  private takePendingCancel(
+    sessionId: number,
+    startedAt: number,
+    flag: { get(): boolean; set(v: boolean): void },
+  ): boolean {
+    const pendingCancelAt = this.pendingCancels.get(sessionId);
+    this.pendingCancels.delete(sessionId);
+    if (pendingCancelAt == null || pendingCancelAt < startedAt) return false;
+    flag.set(true);
+    this.executionClaims.delete(sessionId);
+    this.autoConsumingSessionIds.delete(sessionId);
+    this.runningExecutionIds.delete(sessionId);
+    this.cancelFlags.delete(sessionId);
+    // 执行从未提交，取消标志必须一并摘除：AgentLoop 的取消标志集合是"本实例在途执行"的
+    // 唯一判据（停机收尾据此等待/标记、孤儿巡检据此排除本地活跃会话），泄漏会让该会话
+    // 永久被当成"仍在执行"。
+    this.deps.agentLoop.removeCancelFlag(sessionId);
+    return true;
+  }
+
   private async handleCancel(userId: number, root: Record<string, unknown>): Promise<void> {
     const sessionId = this.getLong(root, 'sessionId');
     if (sessionId == null) return;
@@ -1176,6 +1223,7 @@ export class StreamingWsHandler {
               return;
             }
           }
+          const insertStartedAt = Date.now();
           this.executionClaims.add(sessionId);
           // 插队消费带来源的定时任务消息：与 autoConsume 对齐，绑定后由 runExecution finally 回写
           if (item.scheduledTaskId != null) {
@@ -1200,6 +1248,7 @@ export class StreamingWsHandler {
             sessionId,
             data: {
               content, eventId: randomUUID(), clearTodos: false, replaceExecution: true, executionClaimHeld: true,
+              autoConsumeStartedAt: insertStartedAt,
               images: imageList, ...(savedMessage.id != null ? { autoSavedMessageId: savedMessage.id } : {}),
             },
           }, false);

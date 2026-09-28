@@ -11,6 +11,15 @@ describe('SubAgentResultCollector', () => {
     expect(collector.getResult()).toBe('');
   });
 
+  it('keeps content that arrived before a later thinking block', () => {
+    const collector = new SubAgentResultCollector();
+    collector.onContentDelta('先给出的结论');
+    collector.onThinkingStart();
+    collector.onThinkingDelta('补充推理');
+    collector.onContentDelta('以及后半句');
+    expect(collector.getResult()).toBe('先给出的结论以及后半句');
+  });
+
   it('keeps toolCallCount across stream resets and dedupes retried ids', () => {
     const collector = new SubAgentResultCollector();
     collector.onToolCallStart({ id: 'call-1' });

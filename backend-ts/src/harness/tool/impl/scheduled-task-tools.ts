@@ -126,7 +126,7 @@ export class ListScheduledTasksTool extends BaseTool {
 export class UpdateScheduledTaskTool extends BaseTool {
   constructor(private readonly scheduledTaskService: ScheduledTaskService) { super(); }
   getName(): string { return 'update_scheduled_task'; }
-  getDescription(): string { return '更新已有定时任务的名称、prompt、cron、once 或状态。仅维护用户已创建的任务；不要用本工具把执行中的轮询需求改造成新调度。'; }
+  getDescription(): string { return '更新已有定时任务的名称、prompt、cron、once 或状态。仅维护用户已创建的任务；不要用本工具把执行中的轮询需求改造成新调度。只改名称或提示词不会重新激活已完结任务；要重新排期须显式传入 cron、once 或把状态设回 ACTIVE。'; }
   getInputSchema(): Record<string, unknown> {
     return {
       type: 'object',

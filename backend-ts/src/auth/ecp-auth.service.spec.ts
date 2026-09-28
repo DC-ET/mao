@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { JwtService } from '../crypto/jwt.service.js';
-import { formatShanghaiDateTime } from './auth.service.js';
+import { formatShanghaiDateTime, parseShanghaiDateTime } from './auth.service.js';
 import { EcpAuthService } from './ecp-auth.service.js';
 import { defaultEcpConfig } from './ecp.config.js';
 import { ECP_PENDING, ECP_SUCCESS } from './ecp-oauth.repository.js';
@@ -44,6 +44,10 @@ describe('EcpAuthService', () => {
 
   it('formats Shanghai wall clock instead of the process timezone', () => {
     expect(formatShanghaiDateTime(new Date('2026-01-01T00:00:00.000Z'))).toBe('2026-01-01 08:00:00');
+  });
+
+  it('parses Shanghai wall clock as +08:00 regardless of process timezone', () => {
+    expect(parseShanghaiDateTime('2026-01-01 08:00:00')).toBe(Date.parse('2026-01-01T00:00:00.000Z'));
   });
 
   it('invokes onAuthenticated after successful callback', async () => {

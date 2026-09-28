@@ -717,9 +717,10 @@ async function handleSend(text: string, files: File[], pendingUploads?: File[]) 
   nextTick(scrollToBottomSmooth)
 }
 
-function clearInputIfUnedited(sentText: string, generation: number) {
+function clearInputIfUnedited(sentText: string, _generation: number) {
   const current = chatInputRef.value?.getPlainText() ?? ''
-  if (generation === sendGeneration || current === sentText) {
+  // 只在原文没被改过时清空。等待保存期间用户可以继续打字，代数没变不能当成「输入没变」。
+  if (current === sentText.trim()) {
     chatInputRef.value?.clearInput()
   }
 }

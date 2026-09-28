@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { BusinessException } from '../common/business-exception.js';
+import { ErrorCode } from '../common/error-code.js';
 import { isOneShotCron, normalizeSpringCron, ScheduledTaskScheduler, ScheduledTaskService, type ScheduledTaskStore } from './scheduled-task.service.js';
 
 describe('ScheduledTaskService', () => {
@@ -183,6 +184,64 @@ describe('ScheduledTaskService', () => {
     expect(toDaily.once).toBe(0);
   });
 
+  it('does not reactivate a finished task when only the name changes', async () => {
+    vi.mocked(store.selectById).mockResolvedValue({
+      id: 1, userId: 7, sessionId: 11, name: 'old', cronExpression: '0 0 9 * * *',
+      status: 'ACTIVE', once: 1, finished: 1, nextFireTime: null, fireCount: 1, prompt: 'hello',
+    });
+    vi.mocked(store.updateById).mockClear();
+    const updated = await service.updateTask(1, 7, 'new name', null, null, null);
+    expect(updated.name).toBe('new name');
+    expect(updated.finished).toBe(1);
+    expect(updated.nextFireTime).toBeNull();
+  });
+
+  it('reactivates a finished task when status is set back to ACTIVE', async () => {
+    vi.mocked(store.selectById).mockResolvedValue({
+      id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *',
+      status: 'ACTIVE', once: 0, finished: 1, nextFireTime: null, fireCount: 1, prompt: 'hello',
+    });
+    const updated = await service.updateTask(1, 7, null, null, null, 'ACTIVE');
+    expect(updated.finished).toBe(0);
+    expect(updated.nextFireTime).toBeTruthy();
+  });
+
+  it('finishes a task when its session has been deleted', async () => {
+    const localStore: ScheduledTaskStore = {
+      insert: vi.fn(),
+      updateById: vi.fn(),
+      deleteById: vi.fn(),
+      selectById: vi.fn(async () => ({
+        id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', status: 'ACTIVE',
+        name: 'daily', prompt: 'hello', once: 0, fireCount: 0, finished: 0,
+      })),
+      listByUser: vi.fn(async () => []),
+      listAll: vi.fn(async () => ({ records: [], total: 0 })),
+      listDue: vi.fn(async () => []),
+    };
+    const missing = new BusinessException(ErrorCode.SESSION_NOT_FOUND);
+    let ran: Promise<void> | null = null;
+    const svc = new ScheduledTaskService(
+      localStore,
+      { ...stubs, getSession: vi.fn(async () => { throw missing; }) } as never,
+      { enqueue: vi.fn() }, { executeFromEvent: vi.fn() }, { finishExecution: vi.fn() },
+      { sendText: vi.fn() } as never,
+      { findByUserId: vi.fn(async () => null) } as never,
+      { findByAccountId: vi.fn(async () => []) } as never,
+      (fn) => { ran = Promise.resolve().then(fn); },
+    );
+    await svc.executeTask({
+      id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', prompt: 'hello',
+      status: 'ACTIVE', once: 0, fireCount: 0, finished: 0, nextFireTime: '2026-09-28 09:00:00',
+    });
+    await ran;
+    const persisted = vi.mocked(localStore.updateById).mock.calls.map(([row]) => row);
+    const final = persisted.at(-1)!;
+    expect(final.finished).toBe(1);
+    expect(final.nextFireTime).toBeNull();
+    expect(final.lastExecutionStatus).toBe('FAILED');
+  });
+
   it('keeps an explicit once flag when the cron shape would say otherwise', async () => {
     vi.mocked(store.selectById).mockResolvedValue({
       id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', status: 'ACTIVE', once: 0, fireCount: 0, prompt: 'hello',
@@ -329,7 +388,7 @@ describe('ScheduledTaskService', () => {
     });
     await ran;
     expect(live).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 11 }), 7, expect.any(String), expect.objectContaining({ id: 88 }),
+      expect.objectContaining({ id: 11 }), 7, expect.any(String), expect.objectContaining({ id: 88 }), expect.any(Number),
     );
     expect(harness.executeFromEvent).not.toHaveBeenCalled();
     expect(terminal.finishExecution).not.toHaveBeenCalled();

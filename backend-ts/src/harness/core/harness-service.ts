@@ -325,6 +325,7 @@ export class HarnessService {
     // 页面工具只在绑定了 embed 页面连接的会话中暴露；其他会话（桌面/CLI/微信/子代理）不可见也不可调用。
     sessionTools = HarnessService.filterPageTools(sessionTools, this.embedSessionLookup?.isEmbedSession(sessionId) === true);
     const mcpWarnings: string[] = [];
+    let cloudMcpBound = false;
     if (this.mcpSyncService) {
       try {
         const mcpServers = await this.mcpSyncService.loadAgentServers(agent, session.userId ?? null);
@@ -336,6 +337,7 @@ export class HarnessService {
             }
           } else if (this.mcpClientManager) {
             const cloudResult = await this.mcpSyncService.connectForCloud(sessionId, mcpServers, this.mcpClientManager);
+            cloudMcpBound = true;
             for (const ref of cloudResult.tools) {
               sessionTools.push(new McpToolAdapter(ref, this.mcpClientManager));
             }
@@ -351,6 +353,7 @@ export class HarnessService {
     }
     context.tools = sessionTools;
 
+    try {
     let agentSkillNames: string[] | null = null;
     const skillNamesJson = agent.skillNames ?? agent.skills;
     if (hasText(skillNamesJson)) {
@@ -424,6 +427,20 @@ export class HarnessService {
       context.preparedRequest = await this.buildNormalRequest(context);
     }
     return context;
+    } catch (e) {
+      if (cloudMcpBound) await this.closeBoundCloudMcp(sessionId);
+      throw e;
+    }
+  }
+
+  /** buildContext 在连上云端 MCP 之后失败时回收连接。成功路径仍由 AgentLoop / WS finally 关闭。 */
+  private async closeBoundCloudMcp(sessionId: number): Promise<void> {
+    if (!this.mcpClientManager) return;
+    try {
+      await this.mcpClientManager.closeSession(sessionId);
+    } catch (e) {
+      harnessLog('warn', `Failed to close MCP clients after buildContext error for session ${sessionId}`, e);
+    }
   }
 
   private buildNormalRequest(context: AgentExecutionContext): Promise<ChatRequest> {
@@ -566,7 +583,7 @@ export class HarnessService {
    * 物理复制主会话的全部消息、file_change、compaction 记录到边路会话。
    * 复制逻辑参考 promoteSideTaskToMainSession 中的事务内消息复制模式。
    */
-  private async forkParentMessages(parentSessionId: number, sideSessionId: number): Promise<void> {
+  async forkParentMessages(parentSessionId: number, sideSessionId: number): Promise<void> {
     if (!this.db) throw new Error('Database is required for fork parent messages');
     await this.db.transaction(async (tx) => {
       // 1. 复制消息（维护 messageIdMap: 旧 ID → 新 ID）

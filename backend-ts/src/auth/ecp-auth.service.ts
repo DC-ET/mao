@@ -5,7 +5,7 @@ import type { JwtService } from '../crypto/jwt.service.js';
 import { UserService } from '../user/user.service.js';
 import type { LoginVO, User, UserRepository } from '../user/types.js';
 import type { AuthService } from './auth.service.js';
-import { formatNow, formatShanghaiDateTime } from './auth.service.js';
+import { formatNow, formatShanghaiDateTime, isShanghaiExpired } from './auth.service.js';
 import { EcpClient, resolveEcpOAuthState } from './ecp.client.js';
 import type { EcpCallbackTarget, EcpConfig } from './ecp.config.js';
 import { callbackUrlForTarget } from './ecp.config.js';
@@ -174,7 +174,7 @@ export class EcpAuthService {
   }
 
   private isExpired(oauthState: EcpOauthState): boolean {
-    return new Date(oauthState.expiresAt).getTime() <= Date.now();
+    return isShanghaiExpired(oauthState.expiresAt);
   }
 
   private async markStateExpired(state: string): Promise<void> {

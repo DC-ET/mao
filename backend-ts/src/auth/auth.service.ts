@@ -97,3 +97,21 @@ export function formatShanghaiDateTime(date: Date): string {
 export function formatNow(): string {
   return formatShanghaiDateTime(new Date());
 }
+
+/**
+ * 把库里的上海墙钟 `YYYY-MM-DD HH:mm:ss` 解析成绝对时间。
+ * `new Date('YYYY-MM-DD HH:mm:ss')` 按进程本地时区解释，和写侧固定的 Asia/Shanghai 不是同一时钟。
+ */
+export function parseShanghaiDateTime(value: string | null | undefined): number {
+  if (value == null) return Number.NaN;
+  const text = value.trim();
+  if (text === '') return Number.NaN;
+  if (/[zZ]$|[+-]\d{2}:?\d{2}$/.test(text)) return new Date(text).getTime();
+  const normalized = text.includes('T') ? text : text.replace(' ', 'T');
+  return new Date(`${normalized}+08:00`).getTime();
+}
+
+export function isShanghaiExpired(value: string | null | undefined, now = Date.now()): boolean {
+  const ts = parseShanghaiDateTime(value);
+  return !Number.isFinite(ts) || ts <= now;
+}

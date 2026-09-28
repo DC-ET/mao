@@ -25,7 +25,10 @@ describe('ToolDispatcher', () => {
   const serverTool = mockTool('task_create');
   const cloudTool = mockTool('read_file');
   const mcpTool = mockTool('mcp__filesystem__write_file');
-  const registry = new ToolRegistry([serverTool, cloudTool, mcpTool]);
+  const scheduledTools = [
+    'create_scheduled_task', 'update_scheduled_task', 'list_scheduled_tasks', 'delete_scheduled_task',
+  ].map(mockTool);
+  const registry = new ToolRegistry([serverTool, cloudTool, mcpTool, ...scheduledTools]);
   const localToolExecutor = { execute: vi.fn() } as unknown as LocalToolExecutor & { execute: ReturnType<typeof vi.fn> };
   const dangerAssessor = new DangerAssessor({ chat: vi.fn(), stream: vi.fn() } as unknown as LlmAdapter);
   const assessSpy = vi.spyOn(dangerAssessor, 'assess');
@@ -65,6 +68,7 @@ describe('ToolDispatcher', () => {
     cloudTool.execute.mockReset();
     serverTool.execute.mockReset();
     mcpTool.execute.mockReset();
+    for (const tool of scheduledTools) tool.execute.mockReset();
     assessSpy.mockClear();
   });
 
@@ -78,6 +82,24 @@ describe('ToolDispatcher', () => {
     const result = await dispatcher.dispatch('task_create', '{}', 'LOCAL', 7, 9, 'workspace', 'FULL', null);
     expect(result).toBe('server-result');
     expect(localToolExecutor.execute).not.toHaveBeenCalled();
+  });
+
+  it('dispatchesScheduledTaskToolsOnServerInLocalMode', async () => {
+    for (const tool of scheduledTools) {
+      tool.execute.mockResolvedValue('scheduled');
+      const result = await dispatcher.dispatch(tool.getName(), '{}', 'LOCAL', 7, 9, 'workspace', 'FULL', null);
+      expect(result).toBe('scheduled');
+    }
+    expect(localToolExecutor.execute).not.toHaveBeenCalled();
+  });
+
+  it('askUserQuestionsRejectsEmptyQuestionsWithoutWaiting', async () => {
+    localToolSessionRegistry.getUserIdForSession.mockResolvedValue(9);
+    streamingWsRegistry.hasConnection.mockReturnValue(true);
+    const result = await dispatcher.dispatch('ask_user_questions', '{"questions":[]}', 'CLOUD', 7, 'workspace');
+    expect(JSON.parse(result)).toEqual({ error: 'questions 不能为空，请提供至少 1 个问题' });
+    expect(askUserQuestionsRegistry.register).not.toHaveBeenCalled();
+    expect(askUserQuestionsRegistry.waitForAnswer).not.toHaveBeenCalled();
   });
 
   it('localReadOnlyRequiresApprovalForWriteAndShellTools', async () => {
@@ -133,7 +155,7 @@ describe('ToolDispatcher', () => {
     streamingWsRegistry.hasConnection.mockReturnValue(false);
     askUserQuestionsRegistry.register.mockReturnValue('req-offline');
     askUserQuestionsRegistry.waitForAnswer.mockResolvedValue({ answered: true, cancelled: false, resultJson: '{"answers":[{}]}' });
-    const result = await dispatcher.dispatch('ask_user_questions', '{}', 'CLOUD', 7, 'workspace');
+    const result = await dispatcher.dispatch('ask_user_questions', '{"questions":[{"id":"q1"}]}', 'CLOUD', 7, 'workspace');
     expect(result).toBe('{"answers":[{}]}');
     expect(askUserQuestionsRegistry.register).toHaveBeenCalled();
     // 未注入 notifier 时离线也照常等待（不报错），只是不发 Webhook
@@ -178,7 +200,7 @@ describe('ToolDispatcher', () => {
     askUserQuestionsRegistry.register.mockReturnValue('req-2');
     sessionMapper.selectById.mockResolvedValue({ userId: 9, title: '任务B' });
     askUserQuestionsRegistry.waitForAnswer.mockResolvedValue({ answered: false, cancelled: false, resultJson: '{"error":"timeout"}' });
-    const result = await offlineDispatcher.dispatch('ask_user_questions', '{}', 'CLOUD', 7, 'workspace');
+    const result = await offlineDispatcher.dispatch('ask_user_questions', '{"questions":[{"id":"q1"}]}', 'CLOUD', 7, 'workspace');
     expect(result).toContain('timeout');
     expect(notifier.prepareAskUser).toHaveBeenCalledWith(7, 9, 'req-2', '任务B');
     expect(notifier.suppressPending).toHaveBeenCalledWith({ id: 6 });
@@ -199,7 +221,7 @@ describe('ToolDispatcher', () => {
     askUserQuestionsRegistry.register.mockReturnValue('req-3');
     sessionMapper.selectById.mockResolvedValue({ userId: 9, title: '任务C' });
     askUserQuestionsRegistry.waitForAnswer.mockResolvedValue({ answered: true, cancelled: false, resultJson: '{"answers":[{}]}' });
-    const result = await offlineDispatcher.dispatch('ask_user_questions', '{}', 'CLOUD', 7, 'workspace');
+    const result = await offlineDispatcher.dispatch('ask_user_questions', '{"questions":[{"id":"q1"}]}', 'CLOUD', 7, 'workspace');
     expect(result).toBe('{"answers":[{}]}');
     expect(notifier.suppressPending).not.toHaveBeenCalled();
   });
@@ -272,7 +294,7 @@ describe('ToolDispatcher', () => {
     sessionMapper.selectById.mockResolvedValue({ userId: 9, title: '桌面任务', projectKey: 'proj', workspace: '/ws' });
     askUserQuestionsRegistry.register.mockReturnValue('req-desktop');
     askUserQuestionsRegistry.waitForAnswer.mockResolvedValue({ answered: true, cancelled: false, resultJson: '{"answers":[]}' });
-    await wired.dispatch('ask_user_questions', '{}', 'CLOUD', 7, 'workspace');
+    await wired.dispatch('ask_user_questions', '{"questions":[{"id":"q1"}]}', 'CLOUD', 7, 'workspace');
     expect(notifier.prepareAskUser).toHaveBeenCalledWith(7, 9, 'req-desktop', '桌面任务');
     expect(feishuAsk.mount).not.toHaveBeenCalled();
     expect(feishuAsk.clearRequest).not.toHaveBeenCalled();
