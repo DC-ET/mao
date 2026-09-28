@@ -28,8 +28,9 @@
     <Teleport to="body">
       <div
         v-if="contextMenu.visible"
+        ref="menuRef"
         class="tab-context-menu"
-        :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
+        :style="{ left: adjustedX + 'px', top: adjustedY + 'px' }"
         @click="contextMenu.visible = false"
       >
         <div class="context-menu-item" @click="$emit('close', contextMenu.tabId!)">
@@ -47,7 +48,7 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, onMounted, onUnmounted } from 'vue'
+import { reactive, ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { ChatDotRound, Document, DocumentCopy, Close } from '@element-plus/icons-vue'
 import type { Tab } from '../../types/file-browser'
 
@@ -70,6 +71,10 @@ const contextMenu = reactive({
   tabId: null as string | null,
 })
 
+const menuRef = ref<HTMLDivElement>()
+const adjustedX = ref(0)
+const adjustedY = ref(0)
+
 function onContextMenu(e: MouseEvent, tab: Tab) {
   if (tab.type === 'chat') return
   contextMenu.x = e.clientX
@@ -78,12 +83,39 @@ function onContextMenu(e: MouseEvent, tab: Tab) {
   contextMenu.visible = true
 }
 
+watch(() => [contextMenu.visible, contextMenu.x, contextMenu.y] as const, async ([vis, px, py]) => {
+  if (!vis) return
+  adjustedX.value = px
+  adjustedY.value = py
+  await nextTick()
+  const el = menuRef.value
+  if (!el) return
+  const rect = el.getBoundingClientRect()
+  const margin = 4
+  let nx = px
+  let ny = py
+  if (px + rect.width > window.innerWidth - margin) {
+    nx = Math.max(margin, window.innerWidth - rect.width - margin)
+  }
+  if (py + rect.height > window.innerHeight - margin) {
+    ny = Math.max(margin, window.innerHeight - rect.height - margin)
+  }
+  adjustedX.value = nx
+  adjustedY.value = ny
+})
+
 function hideContextMenu() {
   contextMenu.visible = false
 }
 
-onMounted(() => document.addEventListener('click', hideContextMenu))
-onUnmounted(() => document.removeEventListener('click', hideContextMenu))
+onMounted(() => {
+  document.addEventListener('click', hideContextMenu)
+  window.addEventListener('scroll', hideContextMenu, true)
+})
+onUnmounted(() => {
+  document.removeEventListener('click', hideContextMenu)
+  window.removeEventListener('scroll', hideContextMenu, true)
+})
 </script>
 
 <style scoped>

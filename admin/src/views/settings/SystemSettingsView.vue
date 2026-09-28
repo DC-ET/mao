@@ -151,8 +151,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, nextTick, onBeforeUnmount, onActivated } from 'vue'
-import { ElMessage } from 'element-plus'
+import { computed, reactive, ref, nextTick, onBeforeUnmount, onActivated, onMounted } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { api } from '../../api'
 import { useAuthStore } from '../../stores/auth'
@@ -444,8 +444,42 @@ function modelLabel(model: any) {
   return model.isDefault ? `${model.name}（默认）` : model.name
 }
 
-onActivated(() => {
+function hasUnsavedEdits(): boolean {
+  if (pendingClearKeys.value.size > 0) return true
+  for (const row of settings.value) {
+    if (SPECIAL_KEYS.has(row.settingKey)) continue
+    const current = plainModel[row.settingKey] ?? ''
+    const baseline = row.isSecret === 1 ? '' : (row.value ?? '')
+    if (current !== baseline) return true
+  }
+  return false
+}
+
+let firstActivation = true
+onMounted(() => {
   void fetchSettings()
+})
+
+onActivated(() => {
+  if (firstActivation) {
+    firstActivation = false
+    return
+  }
+  if (!hasUnsavedEdits()) {
+    void fetchSettings()
+    return
+  }
+  ElMessageBox.confirm('当前有未保存的修改，刷新将丢弃这些改动。', '未保存的修改', {
+    confirmButtonText: '丢弃并刷新',
+    cancelButtonText: '保留本地编辑',
+    type: 'warning'
+  })
+    .then(() => {
+      void fetchSettings()
+    })
+    .catch(() => {
+      // 保留本地编辑，不覆盖 plainModel / pendingClearKeys
+    })
 })
 </script>
 

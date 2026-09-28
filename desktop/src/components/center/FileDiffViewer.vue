@@ -309,7 +309,7 @@ onBeforeUnmount(disposeAll)
 }
 
 .open-file-btn:hover {
-  background: rgba(0, 102, 204, 0.08);
+  background: var(--aw-primary-hover);
 }
 
 .view-mode-toggle {
@@ -340,7 +340,7 @@ onBeforeUnmount(disposeAll)
 .mode-btn.active {
   color: var(--aw-primary);
   border-color: var(--aw-primary);
-  background: rgba(0, 102, 204, 0.06);
+  background: var(--aw-primary-hover);
 }
 
 .preview-container {

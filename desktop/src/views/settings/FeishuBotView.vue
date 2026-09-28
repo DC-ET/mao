@@ -37,7 +37,7 @@
         <el-icon class="dialog-icon" :size="42"><Connection /></el-icon>
         <p class="dialog-title">请在打开的飞书页面中完成授权</p>
         <p class="dialog-desc">授权完成后本页会自动检测绑定结果，请稍候。</p>
-        <button class="open-link-btn" :disabled="!authUrl" @click="openAuthPage">
+        <button class="open-link-btn" :disabled="!authUrl" @click="handleOpenAuthPage">
           重新打开授权页面
         </button>
         <p v-if="statusText" class="status-text">{{ statusText }}</p>
@@ -56,6 +56,7 @@ import { Connection } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
 import { useAuthStore } from '../../stores/auth'
+import { openExternalUrl } from '../../utils/capacitor'
 
 interface FeishuBindingLink {
   authUrl: string
@@ -105,7 +106,12 @@ async function startAuthorization() {
       return
     }
     dialogVisible.value = true
-    await openAuthPage()
+    const opened = await openAuthPage()
+    if (!opened) {
+      statusText.value = '授权页面被浏览器拦截，请允许弹窗后重试'
+      ElMessage.error('授权页面被浏览器拦截，请允许弹窗后重试')
+      return
+    }
     startPolling()
   } catch (error: unknown) {
     ElMessage.error(error instanceof Error ? error.message : '获取飞书授权链接失败')
@@ -114,12 +120,20 @@ async function startAuthorization() {
   }
 }
 
-async function openAuthPage() {
-  if (!authUrl.value) return
+async function openAuthPage(): Promise<boolean> {
+  if (!authUrl.value) return false
   if (window.electronAPI?.openFeishuAuthWindow) {
     await window.electronAPI.openFeishuAuthWindow(authUrl.value)
-  } else {
-    window.open(authUrl.value, '_blank', 'noopener,noreferrer')
+    return true
+  }
+  return openExternalUrl(authUrl.value)
+}
+
+async function handleOpenAuthPage() {
+  const opened = await openAuthPage()
+  if (!opened) {
+    statusText.value = '授权页面被浏览器拦截，请允许弹窗后重试'
+    ElMessage.error('授权页面被浏览器拦截，请允许弹窗后重试')
   }
 }
 

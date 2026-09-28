@@ -78,11 +78,14 @@ import { ref, nextTick, computed, reactive, onMounted, onUnmounted } from 'vue'
 import { Check, Close } from '@element-plus/icons-vue'
 import type { SideTaskItem, TaskPhase } from '../../stores/session'
 import { sideTaskToFocusCandidate, sortByFocusPriority } from '../../utils/focusSort'
+import { useRelativeTime, formatRelativeTime } from '../../composables/useRelativeTime'
 
 const props = defineProps<{
   tasks?: SideTaskItem[]
   listMode?: 'standard' | 'focus'
 }>()
+
+useRelativeTime()
 
 const emit = defineEmits<{
   'open-side-task': [payload: { sideSessionId: number; title: string }]
@@ -128,36 +131,15 @@ function phaseClass(phase: TaskPhase) {
 
 function taskStatusLabel(task: SideTaskItem) {
   switch (task.phase) {
-    case 'RUNNING': return `运行中 ${formatElapsed(task.startedAt || task.updatedAt || task.createdAt)}`
+    case 'RUNNING': return `运行中 ${formatRelativeTime(task.startedAt || task.updatedAt || task.createdAt)}`
     case 'RESUMING': return '恢复中'
     case 'WAITING_APPROVAL': return '待审批'
     case 'CANCELLING': return '取消中'
-    case 'COMPLETED': return `${formatElapsed(task.updatedAt || task.createdAt)}前完成`
+    case 'COMPLETED': return `${formatRelativeTime(task.updatedAt || task.createdAt)}前完成`
     case 'FAILED': return '已失败'
     case 'CANCELLED': return '已取消'
-    default: return formatElapsed(task.createdAt)
+    default: return formatRelativeTime(task.createdAt)
   }
-}
-
-function formatElapsed(time?: string) {
-  if (!time) return ''
-  const now = Date.now()
-  const t = new Date(time).getTime()
-  const diffMs = now - t
-  if (diffMs < 0) return ''
-
-  const seconds = Math.floor(diffMs / 1000)
-  if (seconds < 60) return '刚刚'
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}分`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}小时`
-  const days = Math.floor(hours / 24)
-  if (days < 30) return `${days}天`
-  const months = Math.floor(days / 30)
-  if (months < 12) return `${months}月`
-  const years = Math.floor(months / 12)
-  return `${years}年`
 }
 
 function handleClick(task: SideTaskItem) {

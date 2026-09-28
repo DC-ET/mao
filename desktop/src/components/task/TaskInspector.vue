@@ -747,7 +747,7 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
 
 .resize-handle:hover,
 .resize-handle:active {
-  background: rgba(0, 102, 204, 0.06);
+  background: var(--aw-primary-hover);
 }
 
 .resize-handle:hover::before,
@@ -1043,8 +1043,8 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   gap: 6px;
 }
 
-.git-add { color: #1a7f37; }
-.git-del { color: #cf222e; }
+.git-add { color: var(--aw-diff-add); }
+.git-del { color: var(--aw-diff-del); }
 .git-clean,
 .git-muted {
   color: var(--aw-ink-muted-48);
@@ -1107,12 +1107,12 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
 
 .phase-badge.running {
   color: var(--aw-primary);
-  background: rgba(0, 102, 204, 0.08);
+  background: var(--aw-primary-hover);
 }
 
 .phase-badge.waiting {
-  color: #b37400;
-  background: rgba(179, 116, 0, 0.08);
+  color: var(--aw-status-waiting);
+  background: var(--aw-status-waiting-bg);
 }
 
 .phase-badge.completed {
@@ -1132,7 +1132,7 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
 .phase-spinner {
   width: 10px;
   height: 10px;
-  border: 1.5px solid rgba(0, 102, 204, 0.2);
+  border: 1.5px solid var(--aw-primary-line);
   border-top-color: var(--aw-primary);
   border-radius: 50%;
   animation: inspector-spin 0.8s linear infinite;

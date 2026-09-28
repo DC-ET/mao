@@ -378,7 +378,7 @@ async function handleDelete(queueId: string) {
 }
 
 .insert-btn:hover:not(:disabled) {
-  background: rgba(0, 102, 204, 0.08);
+  background: var(--aw-primary-hover);
   color: var(--aw-primary-focus);
 }
 

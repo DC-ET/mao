@@ -184,8 +184,9 @@ async function handleRetryExecution() {
   sessionStore.ensureStreamingAssistantMessage(sid.value)
 }
 
-async function submitQuestionAnswer(requestId: string, answers: QuestionAnswer[]) {
-  await sendAskUserQuestionsResult(sid.value, requestId, answers)
+async function submitQuestionAnswer(requestId: string, answers: QuestionAnswer[], done: (ok: boolean) => void) {
+  const ok = await sendAskUserQuestionsResult(sid.value, requestId, answers)
+  done(ok)
   // Keep the panel until the server confirms completion with ask_user_questions_cancelled.
 }
 
@@ -313,12 +314,16 @@ watch(
     if (p && TERMINAL_PHASES.has(p) && prev && ACTIVE_PHASES.has(prev)) {
       void fetchMessages()
     }
-    // 重试后 phase 变为 RUNNING 时重置 retrying 状态
-    if (p === 'RUNNING' || p === 'WAITING_APPROVAL') {
+    // 重试后进入执行或终态时复位 retrying；error 路径 phase 不变，由下方 executionError watcher 兜底
+    if (p === 'RUNNING' || p === 'WAITING_APPROVAL' || (p && TERMINAL_PHASES.has(p))) {
       retrying.value = false
     }
   }
 )
+
+watch(executionError, (err) => {
+  if (err) retrying.value = false
+})
 
 onMounted(async () => {
   subscribe(sid.value)

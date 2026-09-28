@@ -13,28 +13,28 @@ export function isAndroidCapacitor(): boolean {
 
 /**
  * 三端统一外链打开：Electron IPC / Capacitor App·Browser 插件 / Web window.open 兜底。
- * 避免非 Electron 环境点击外链静默无响应。
+ * 避免非 Electron 环境点击外链静默无响应。返回是否成功打开（window.open 被拦截时 false）。
  */
-export async function openExternalUrl(url: string): Promise<void> {
+export async function openExternalUrl(url: string): Promise<boolean> {
   const electronApi = (window as any).electronAPI
   if (electronApi?.openExternal) {
     await electronApi.openExternal(url)
-    return
+    return true
   }
   if (isAndroidCapacitor()) {
     const plugins = (window as any).Capacitor?.Plugins
     try {
       if (plugins?.App?.openUrl) {
         await plugins.App.openUrl({ url })
-        return
+        return true
       }
       if (plugins?.Browser?.open) {
         await plugins.Browser.open({ url })
-        return
+        return true
       }
     } catch {
       // 插件不可用时落到 window.open 兜底
     }
   }
-  window.open(url, '_blank', 'noopener')
+  return !!window.open(url, '_blank', 'noopener')
 }

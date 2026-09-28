@@ -15,7 +15,7 @@
       </div>
       <div class="subagent-item-meta">
         <span v-if="task.agentType" class="subagent-type">{{ task.agentType }}</span>
-        <span class="subagent-elapsed">{{ formatElapsed(task.createdAt) }}</span>
+        <span class="subagent-elapsed">{{ formatRelativeTime(task.createdAt) }}</span>
       </div>
     </div>
   </div>
@@ -23,10 +23,13 @@
 
 <script setup lang="ts">
 import type { SubagentItem, TaskPhase } from '../../stores/session'
+import { useRelativeTime, formatRelativeTime } from '../../composables/useRelativeTime'
 
 defineProps<{
   tasks?: SubagentItem[]
 }>()
+
+useRelativeTime()
 
 const emit = defineEmits<{
   'open-subagent': [payload: { childSessionId: number; title: string }]
@@ -41,22 +44,6 @@ function phaseClass(phase: TaskPhase) {
     case 'CANCELLED': return 'cancelled'
     default: return 'idle'
   }
-}
-
-function formatElapsed(createdAt?: string) {
-  if (!createdAt) return ''
-  const now = Date.now()
-  const created = new Date(createdAt).getTime()
-  const diffMs = now - created
-  if (diffMs < 0) return ''
-  const seconds = Math.floor(diffMs / 1000)
-  if (seconds < 60) return '刚刚'
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}分`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}小时`
-  const days = Math.floor(hours / 24)
-  return `${days}天`
 }
 </script>
 

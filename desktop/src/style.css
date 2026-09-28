@@ -8,6 +8,10 @@
   --aw-primary-focus: #0071e3;
   --aw-primary-on-dark: #2997ff;
   --aw-primary-lighter: rgba(0, 102, 204, 0.10);
+  --aw-primary-soft: rgba(0, 102, 204, 0.05);
+  --aw-primary-hover: rgba(0, 102, 204, 0.08);
+  --aw-primary-ring: rgba(0, 102, 204, 0.12);
+  --aw-primary-line: rgba(0, 102, 204, 0.20);
   --aw-on-primary: #ffffff;
 
   /* Colors — Surface */
@@ -69,6 +73,17 @@
   --aw-status-waiting: #b37400;
   --aw-status-success: var(--aw-success);
   --aw-status-danger: var(--aw-danger);
+
+  /* Colors — Diff / change badges */
+  --aw-diff-add: #1a7f37;
+  --aw-diff-add-bg: rgba(26, 127, 55, 0.12);
+  --aw-diff-del: #cf222e;
+  --aw-diff-del-bg: rgba(207, 34, 46, 0.12);
+  --aw-diff-mod: #9a6700;
+  --aw-diff-mod-bg: rgba(154, 103, 0, 0.12);
+  --aw-diff-info: #0550ae;
+  --aw-diff-info-bg: rgba(5, 80, 174, 0.12);
+  --aw-status-waiting-bg: rgba(179, 116, 0, 0.08);
 
   /* Shadows — Single product shadow only */
   --aw-shadow-product: 3px 5px 30px 0 rgba(0, 0, 0, 0.22);
@@ -164,6 +179,16 @@ html.android-capacitor .theme-toggle {
   flex-shrink: 0;
   width: 32px;
   height: 32px;
+  position: relative;
+}
+
+html.android-capacitor .theme-toggle::before {
+  content: '';
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%);
 }
 
 html.android-capacitor .nav-user {
@@ -239,6 +264,10 @@ html.android-capacitor .terminal-keybar-btn {
 
   --aw-primary-on-dark: #2997ff;
   --aw-primary-lighter: rgba(41, 151, 255, 0.18);
+  --aw-primary-soft: rgba(41, 151, 255, 0.08);
+  --aw-primary-hover: rgba(41, 151, 255, 0.14);
+  --aw-primary-ring: rgba(41, 151, 255, 0.22);
+  --aw-primary-line: rgba(41, 151, 255, 0.32);
   --aw-accent: #2997ff;
   --aw-accent-rgb: 41, 151, 255;
   --aw-accent-bg: rgba(41, 151, 255, 0.12);
@@ -258,6 +287,17 @@ html.android-capacitor .terminal-keybar-btn {
   --aw-status-waiting: #e6b84c;
   --aw-status-success: var(--aw-success);
   --aw-status-danger: var(--aw-danger);
+
+  /* Colors — Diff / change badges */
+  --aw-diff-add: #3fb950;
+  --aw-diff-add-bg: rgba(63, 185, 80, 0.12);
+  --aw-diff-del: #f85149;
+  --aw-diff-del-bg: rgba(248, 81, 73, 0.12);
+  --aw-diff-mod: #d29922;
+  --aw-diff-mod-bg: rgba(210, 153, 34, 0.12);
+  --aw-diff-info: #58a6ff;
+  --aw-diff-info-bg: rgba(88, 166, 255, 0.12);
+  --aw-status-waiting-bg: rgba(230, 184, 76, 0.12);
 
   /* Terminal */
   --aw-terminal-bg: #252525;

@@ -93,10 +93,10 @@
         <button
           v-if="allAnswered"
           class="action-btn submit"
-          :disabled="!canSubmit || alreadySubmitted"
+          :disabled="!canSubmit || alreadySubmitted || submitting"
           @click="handleSubmit"
         >
-          {{ alreadySubmitted ? '已提交' : '提交' }}
+          {{ submitting ? '提交中…' : alreadySubmitted ? '已提交' : '提交' }}
         </button>
         <button
           v-else
@@ -114,6 +114,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 import { ChatDotRound, Check } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import type { PendingQuestion, Question, QuestionAnswer } from '../../types/chat'
 
 const props = defineProps<{
@@ -121,7 +122,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  submit: [requestId: string, answers: QuestionAnswer[]]
+  submit: [requestId: string, answers: QuestionAnswer[], done: (ok: boolean) => void]
 }>()
 
 const activeTab = ref(0)
@@ -226,12 +227,13 @@ function confirmAndNext() {
 
 // 已提交的 requestId：面板保留到服务端 ask_user_questions_cancelled 才移除，期间禁止重复提交
 const submittedRequestIds = ref<Set<string>>(new Set())
+const submitting = ref(false)
 const alreadySubmitted = computed(() => currentRequestId.value != null && submittedRequestIds.value.has(currentRequestId.value))
 
 function handleSubmit() {
   if (!canSubmit.value || !currentRequestId.value) return
-  if (submittedRequestIds.value.has(currentRequestId.value)) return
-  submittedRequestIds.value = new Set([...submittedRequestIds.value, currentRequestId.value])
+  const requestId = currentRequestId.value
+  if (submittedRequestIds.value.has(requestId) || submitting.value) return
 
   const answers: QuestionAnswer[] = currentQuestions.value.map((q, qi) => {
     const selectedLabels = selections.value[qi] ?? []
@@ -243,7 +245,15 @@ function handleSubmit() {
     }
   })
 
-  emit('submit', currentRequestId.value, answers)
+  submitting.value = true
+  emit('submit', requestId, answers, (ok: boolean) => {
+    submitting.value = false
+    if (ok) {
+      submittedRequestIds.value = new Set([...submittedRequestIds.value, requestId])
+    } else {
+      ElMessage.error('答案发送失败，请重试')
+    }
+  })
 }
 </script>
 

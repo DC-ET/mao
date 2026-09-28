@@ -111,7 +111,7 @@ function copyLink() {
 .url-input:focus {
   outline: none;
   border-color: var(--aw-primary);
-  box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.2);
+  box-shadow: 0 0 0 2px var(--aw-primary-line);
 }
 
 .dialog-footer {

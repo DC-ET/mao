@@ -140,7 +140,7 @@ function handleSelect(id: number) {
 }
 
 .model-option.active {
-  background: rgba(0, 102, 204, 0.08);
+  background: var(--aw-primary-hover);
 }
 
 .model-option-info {

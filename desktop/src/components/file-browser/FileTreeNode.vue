@@ -148,8 +148,8 @@ function handleClick() {
 
 .large-badge {
   font-size: 10px;
-  color: #b37400;
-  background: rgba(179, 116, 0, 0.08);
+  color: var(--aw-status-waiting);
+  background: var(--aw-status-waiting-bg);
   padding: 1px 5px;
   border-radius: var(--aw-radius-xs);
   flex-shrink: 0;
@@ -177,7 +177,7 @@ function handleClick() {
 }
 
 .retry-btn:hover {
-  background: rgba(0, 102, 204, 0.08);
+  background: var(--aw-primary-hover);
 }
 
 /* Dark mode */

@@ -306,7 +306,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, watch } from 'vue'
+import { computed, ref, onActivated, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
 import { api } from '../../api'
@@ -738,6 +738,15 @@ async function handleDelete(row: any) {
 }
 
 onMounted(fetchActiveTab)
+
+let firstActivation = true
+onActivated(() => {
+  if (firstActivation) {
+    firstActivation = false
+    return
+  }
+  void fetchActiveTab()
+})
 </script>
 
 <style scoped>

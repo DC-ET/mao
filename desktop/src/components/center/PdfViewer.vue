@@ -438,7 +438,7 @@ onUnmounted(() => {
 }
 
 .tool-btn.download:hover:not(:disabled) {
-  background: rgba(0, 102, 204, 0.08);
+  background: var(--aw-primary-hover);
 }
 
 .pdf-page-indicator {
@@ -510,7 +510,7 @@ onUnmounted(() => {
 }
 
 .retry-btn:hover {
-  background: rgba(0, 102, 204, 0.08);
+  background: var(--aw-primary-hover);
 }
 
 .pdf-scroll::-webkit-scrollbar {

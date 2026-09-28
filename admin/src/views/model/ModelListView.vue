@@ -240,7 +240,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, onMounted } from 'vue'
+import { computed, reactive, ref, onActivated, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
 import { useBreakpoint } from '../../composables/useBreakpoint'
@@ -508,6 +508,15 @@ async function handleToggleStatus(row: any) {
 
 onMounted(() => {
   fetchProviderOptions()
+  fetchModels()
+})
+
+let firstActivation = true
+onActivated(() => {
+  if (firstActivation) {
+    firstActivation = false
+    return
+  }
   fetchModels()
 })
 </script>

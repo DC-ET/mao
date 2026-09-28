@@ -30,7 +30,11 @@
           </el-tooltip>
         </div>
       </div>
-      <div v-if="filteredAgents.length === 0" class="empty-agents">暂无可用智能体</div>
+      <div v-if="agentStore.error" class="empty-agents">
+        <span>加载失败</span>
+        <button class="retry-btn" type="button" @click.stop="agentStore.fetchAgents()">重试</button>
+      </div>
+      <div v-else-if="filteredAgents.length === 0" class="empty-agents">暂无可用智能体</div>
     </div>
   </div>
 </template>
@@ -146,7 +150,7 @@ function expand() {
 }
 
 .change-btn:hover {
-  background: rgba(0, 102, 204, 0.08);
+  background: var(--aw-primary-hover);
 }
 
 .agent-grid {
@@ -172,12 +176,12 @@ function expand() {
 
 .agent-card:hover {
   border-color: var(--aw-primary);
-  box-shadow: 0 2px 8px rgba(0, 102, 204, 0.08);
+  box-shadow: 0 2px 8px var(--aw-primary-hover);
 }
 
 .agent-card.selected {
   border-color: var(--aw-primary);
-  background: rgba(0, 102, 204, 0.05);
+  background: var(--aw-primary-soft);
 }
 
 .agent-avatar {
@@ -214,6 +218,24 @@ function expand() {
   padding: 24px;
   color: var(--aw-ink-muted-48);
   font-size: var(--aw-text-fine);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.retry-btn {
+  border: none;
+  background: none;
+  color: var(--aw-primary);
+  cursor: pointer;
+  font-size: var(--aw-text-fine);
+  padding: 2px 8px;
+  border-radius: var(--aw-radius-xs);
+}
+
+.retry-btn:hover {
+  background: var(--aw-primary-lighter);
 }
 
 /* Scrollbar */

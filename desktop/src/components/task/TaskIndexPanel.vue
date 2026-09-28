@@ -155,7 +155,7 @@
               </div>
               <div v-if="showItemActions" class="session-item-actions">
                 <template v-if="confirmingDeleteId === session.id">
-                  <button class="action-btn action-confirm" @click="confirmDelete($event, session.id)" title="确认删除">
+                  <button class="action-btn action-confirm" @click="confirmDelete($event, session.id)" title="确认删除" :disabled="isDeleting(session.id)">
                     <el-icon :size="13"><Check /></el-icon>
                   </button>
                   <button class="action-btn action-cancel" @click="cancelDelete($event)" title="取消">
@@ -249,7 +249,7 @@
               </div>
               <div v-if="showItemActions" class="session-item-actions">
                 <template v-if="confirmingDeleteId === session.id">
-                  <button class="action-btn action-confirm" @click="confirmDelete($event, session.id)" title="确认删除">
+                  <button class="action-btn action-confirm" @click="confirmDelete($event, session.id)" title="确认删除" :disabled="isDeleting(session.id)">
                     <el-icon :size="13"><Check /></el-icon>
                   </button>
                   <button class="action-btn action-cancel" @click="cancelDelete($event)" title="取消">
@@ -321,7 +321,7 @@
                   </div>
                   <div v-if="showItemActions" class="session-item-actions">
                     <template v-if="confirmingDeleteId === session.id">
-                      <button class="action-btn action-confirm" @click="confirmDelete($event, session.id)" title="确认删除">
+                      <button class="action-btn action-confirm" @click="confirmDelete($event, session.id)" title="确认删除" :disabled="isDeleting(session.id)">
                         <el-icon :size="13"><Check /></el-icon>
                       </button>
                       <button class="action-btn action-cancel" @click="cancelDelete($event)" title="取消">
@@ -359,7 +359,7 @@
             </div>
             <div class="group-header-actions">
               <span v-if="archivedCount > 0" class="archive-count">{{ archivedCount }}</span>
-              <button class="group-add-btn" @click.stop="loadArchive(true)" title="刷新已归档">
+              <button class="group-add-btn" @click.stop="loadArchive(true)" title="刷新已归档" :disabled="archivedLoading">
                 <el-icon :size="12"><Refresh /></el-icon>
               </button>
             </div>
@@ -401,7 +401,7 @@
               </div>
               <div v-if="showItemActions" class="session-item-actions">
                 <template v-if="confirmingDeleteId === session.id">
-                  <button class="action-btn action-confirm" @click="confirmDelete($event, session.id)" title="确认删除">
+                  <button class="action-btn action-confirm" @click="confirmDelete($event, session.id)" title="确认删除" :disabled="isDeleting(session.id)">
                     <el-icon :size="13"><Check /></el-icon>
                   </button>
                   <button class="action-btn action-cancel" @click="cancelDelete($event)" title="取消">
@@ -475,6 +475,7 @@ import { useSessionStore, type Session, type TaskPhase } from '../../stores/sess
 import { useTerminal } from '../../composables/useTerminal'
 import { removeSessionTabsFor } from '../../composables/useCenterTabs'
 import { useTaskPanelPrefs } from '../../composables/useTaskPanelPrefs'
+import { useRelativeTime, formatRelativeTime } from '../../composables/useRelativeTime'
 import { cloudGroupKey, groupIconKind, isGroupRenameable, isSharedCloudProject, resolveGroupLabel } from '../../utils/cloud-project'
 import { planFocusReveal, planGroupReveal } from '../../utils/taskSidebarReveal'
 import { sessionToFocusCandidate, sortByFocusPriority, isHistoryEligible } from '../../utils/focusSort'
@@ -497,6 +498,7 @@ const router = useRouter()
 const sessionStore = useSessionStore()
 const { createTerminal, isOpen: terminalOpen } = useTerminal()
 const { sortGroups, onDragEnd, loadPrefs, isGroupCollapsed, toggleGroupCollapsed, expandGroup, groupAliases, renameGroup, resetGroupAlias } = useTaskPanelPrefs()
+useRelativeTime()
 
 const DEFAULT_VISIBLE = 5
 const EXPAND_STEP = 20
@@ -808,6 +810,10 @@ function isArchiving(id: string): boolean {
   return sessionStore.isArchiving(String(id))
 }
 
+function isDeleting(id: string): boolean {
+  return sessionStore.isDeleting(String(id))
+}
+
 function workspaceLabel(session: Session): string {
   const key = cloudGroupKey(session)
   return resolveGroupLabel(key, groupAliases.value, session)
@@ -831,14 +837,14 @@ function focusStatusLabel(session: Session): string {
   if (approval > 0) return `待审批${approval > 1 ? ` ×${approval}` : ''}`
   if (question > 0) return '待回答'
   if (session.phase === 'FAILED' || failedSide || session.treeFailed) return '已失败'
-  if (session.phase === 'RUNNING') return `运行中 ${formatDurationSince(session.startedAt || session.updatedAt || session.createdAt)}`
+  if (session.phase === 'RUNNING') return `运行中 ${formatRelativeTime(session.startedAt || session.updatedAt || session.createdAt)}`
   if (session.phase === 'RESUMING') return '恢复中'
   if (session.phase === 'WAITING_APPROVAL') return '待审批'
   if (session.phase === 'CANCELLING') return '取消中'
-  if (runningSide) return `运行中 ${formatDurationSince(runningSide.startedAt || runningSide.updatedAt || runningSide.createdAt)}`
-  if (session.treeRunning) return `运行中 ${formatDurationSince(session.updatedAt || session.createdAt)}`
+  if (runningSide) return `运行中 ${formatRelativeTime(runningSide.startedAt || runningSide.updatedAt || runningSide.createdAt)}`
+  if (session.treeRunning) return `运行中 ${formatRelativeTime(session.updatedAt || session.createdAt)}`
   switch (session.phase) {
-    case 'COMPLETED': return `${formatRelativeSince(session.updatedAt || session.createdAt)}前完成`
+    case 'COMPLETED': return `${formatRelativeTime(session.updatedAt || session.createdAt)}前完成`
     case 'CANCELLED': return '已取消'
     default: return '空闲'
   }
@@ -1180,36 +1186,7 @@ function effectivePhaseClass(session: Session): string {
 }
 
 function formatElapsed(session: Session) {
-  return formatRelativeSince(session.createdAt)
-}
-
-function formatDurationSince(time?: string) {
-  return formatTimeDiff(time)
-}
-
-function formatRelativeSince(time?: string) {
-  return formatTimeDiff(time)
-}
-
-function formatTimeDiff(time?: string) {
-  if (!time) return ''
-  const now = Date.now()
-  const t = new Date(time).getTime()
-  const diffMs = now - t
-  if (diffMs < 0) return ''
-
-  const seconds = Math.floor(diffMs / 1000)
-  if (seconds < 60) return '刚刚'
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}分`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}小时`
-  const days = Math.floor(hours / 24)
-  if (days < 30) return `${days}天`
-  const months = Math.floor(days / 30)
-  if (months < 12) return `${months}月`
-  const years = Math.floor(months / 12)
-  return `${years}年`
+  return formatRelativeTime(session.createdAt)
 }
 
 async function selectSession(session: Session) {
@@ -1236,9 +1213,10 @@ function cancelDelete(e?: MouseEvent) {
 
 async function confirmDelete(e: MouseEvent, sessionId: string) {
   e.stopPropagation()
+  if (confirmingDeleteId.value !== sessionId) return
   const wasActive = sessionStore.activeSessionId === sessionId
-  const deleted = await sessionStore.deleteSession(sessionId)
   confirmingDeleteId.value = null
+  const deleted = await sessionStore.deleteSession(sessionId)
   if (!deleted) {
     ElMessage.error('删除失败，请稍后重试')
     return
@@ -1925,7 +1903,7 @@ function onGroupDragEnd() {
 
 .resize-handle:hover,
 .resize-handle:active {
-  background: rgba(0, 102, 204, 0.06);
+  background: var(--aw-primary-hover);
 }
 
 .resize-handle:hover::before,

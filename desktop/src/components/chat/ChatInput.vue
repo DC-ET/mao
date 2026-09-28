@@ -135,7 +135,7 @@
         <img v-if="item.previewUrl" :src="item.previewUrl" class="file-preview-img" />
         <el-icon v-else><Document /></el-icon>
         <span class="file-name">{{ item.file.name }}</span>
-        <el-icon class="remove-file" :class="{ disabled: disabled }" @click="!disabled && removeFile(idx)"><Close /></el-icon>
+        <el-icon class="remove-file" :class="{ disabled: disabled }" role="button" aria-label="移除待发文件" @click="!disabled && removeFile(idx)"><Close /></el-icon>
       </div>
     </div>
 
@@ -384,7 +384,7 @@ const emit = defineEmits<{
 
 const sessionStore = useSessionStore()
 const isElectronClient = typeof window !== 'undefined' && !!(window as any).electronAPI
-const isTouchDevice = typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0)
+const isTouchDevice = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches
 const isMobileViewport = ref(typeof window !== 'undefined' ? window.innerWidth <= 768 : false)
 function syncMobileViewport() {
   isMobileViewport.value = window.innerWidth <= 768
@@ -1097,12 +1097,15 @@ function addPendingImage(file: File) {
     ElMessage.warning('最多上传 10 个附件')
     return
   }
+  // 同步入队占位，避免循环内长度检查被异步校验绕过
+  const entry = { file, previewUrl: URL.createObjectURL(file) }
+  pendingFiles.value.push(entry)
   checkFileSize(file).then(({ ok, limitMb }) => {
     if (!ok) {
       ElMessage.warning(`图片 ${file.name} 超过 ${limitMb}MB 限制`)
-      return
+      const idx = pendingFiles.value.indexOf(entry)
+      if (idx >= 0) removePendingFileAt(idx)
     }
-    pendingFiles.value.push({ file, previewUrl: URL.createObjectURL(file) })
   })
 }
 
@@ -1116,16 +1119,22 @@ async function addPendingFile(file: File) {
     ElMessage.warning('最多上传 10 个附件')
     return
   }
+  const entry = { file, previewUrl: '' }
+  pendingFiles.value.push(entry)
+  const removeEntry = () => {
+    const idx = pendingFiles.value.indexOf(entry)
+    if (idx >= 0) removePendingFileAt(idx)
+  }
   const { ok, limitMb } = await checkFileSize(file)
   if (!ok) {
     ElMessage.warning(`文件 ${file.name} 超过 ${limitMb}MB 限制`)
+    removeEntry()
     return
   }
   if (file.size === 0) {
     ElMessage.warning(`文件 ${file.name} 为空`)
-    return
+    removeEntry()
   }
-  pendingFiles.value.push({ file, previewUrl: '' })
 }
 
 /** 移除指定下标的待发条目（图片或文件）。 */
@@ -1443,7 +1452,7 @@ onBeforeUnmount(() => {
 
 .chat-input-card:focus-within {
   border-color: var(--aw-primary);
-  box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.08);
+  box-shadow: 0 0 0 2px var(--aw-primary-hover);
 }
 
 /* Centered new-session composer: larger editor, no top config bar */
@@ -1453,7 +1462,7 @@ onBeforeUnmount(() => {
 }
 
 .chat-input-card.layout-centered:focus-within {
-  box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.12), 0 4px 24px rgba(0, 0, 0, 0.04);
+  box-shadow: 0 0 0 3px var(--aw-primary-ring), 0 4px 24px rgba(0, 0, 0, 0.04);
 }
 
 .chat-input-card.layout-centered .textarea-area {

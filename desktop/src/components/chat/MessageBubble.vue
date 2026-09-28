@@ -623,7 +623,7 @@ async function copyMessage() {
 
 .user-text {
   color: var(--aw-ink);
-  background: rgba(0, 102, 204, 0.08);
+  background: var(--aw-primary-hover);
   border-top-right-radius: var(--aw-radius-xs);
   white-space: pre-line;
   padding: 8px 14px;

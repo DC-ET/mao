@@ -224,6 +224,8 @@ export const useSessionStore = defineStore('session', () => {
   const loadingMoreGroups = ref<Set<string>>(new Set())
   /** 归档/恢复进行中的会话 id（防重复点击并发请求） */
   const archivingIds = ref<Set<string>>(new Set())
+  /** 删除进行中的会话 id（防重复点击并发删除） */
+  const deletingIds = ref<Set<string>>(new Set())
   /** 已归档区 / 聚焦数据是否已加载过（用于增量刷新与静默重拉判断） */
   const archivedLoaded = ref(false)
   const focusLoaded = ref(false)
@@ -355,12 +357,18 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
+  let fetchSessionsSeq = 0
+  let fetchArchivedSeq = 0
+  let fetchFocusSeq = 0
+
   async function fetchSessions(silent = false) {
+    const seq = ++fetchSessionsSeq
     if (!silent) loading.value = true
     try {
       const { data } = await api.get('/sessions/groups', {
         params: { previewLimit: DEFAULT_GROUP_PREVIEW }
       })
+      if (seq !== fetchSessionsSeq) return
       const groups: any[] = data?.groups || []
       const ids: string[] = []
       const meta = new Map<string, SessionGroupMeta>()
@@ -393,7 +401,7 @@ export const useSessionStore = defineStore('session', () => {
         }
       }
     } finally {
-      loading.value = false
+      if (seq === fetchSessionsSeq) loading.value = false
     }
   }
 
@@ -581,11 +589,13 @@ export const useSessionStore = defineStore('session', () => {
 
   /** 已归档区分组列表（status=ARCHIVED）。 */
   async function fetchArchivedSessions(silent = false) {
+    const seq = ++fetchArchivedSeq
     if (!silent) archivedLoading.value = true
     try {
       const { data } = await api.get('/sessions/groups', {
         params: { previewLimit: 50, status: 'ARCHIVED' }
       })
+      if (seq !== fetchArchivedSeq) return
       const groups: any[] = data?.groups || []
       const ids: string[] = []
       const meta = new Map<string, SessionGroupMeta>()
@@ -607,17 +617,19 @@ export const useSessionStore = defineStore('session', () => {
       archivedGroupMeta.value = meta
       archivedLoaded.value = true
     } finally {
-      archivedLoading.value = false
+      if (seq === fetchArchivedSeq) archivedLoading.value = false
     }
   }
 
   /** 聚焦模式全量 ACTIVE 主会话（不带 groupKey）。 */
   async function fetchFocusSessions(silent = false) {
+    const seq = ++fetchFocusSeq
     if (!silent) focusLoading.value = true
     try {
       const { data } = await api.get('/sessions', {
         params: { status: 'ACTIVE' }
       })
+      if (seq !== fetchFocusSeq) return
       const items: Session[] = Array.isArray(data) ? data.map(normalizeSession) : []
       const ids: string[] = []
       for (const s of items) {
@@ -628,7 +640,7 @@ export const useSessionStore = defineStore('session', () => {
       focusSessionIds.value = ids
       focusLoaded.value = true
     } finally {
-      focusLoading.value = false
+      if (seq === fetchFocusSeq) focusLoading.value = false
     }
   }
 
@@ -1020,11 +1032,17 @@ export const useSessionStore = defineStore('session', () => {
     streamingAssistantMessageIds.delete(sid)
   }
 
+  function isDeleting(id: string): boolean {
+    return deletingIds.value.has(String(id))
+  }
+
   async function deleteSession(id: string): Promise<boolean> {
+    const sid = String(id)
+    if (deletingIds.value.has(sid)) return false
+    deletingIds.value = new Set(deletingIds.value).add(sid)
     try {
-      const existing = sessionEntities.value.get(String(id))
+      const existing = sessionEntities.value.get(sid)
       await api.delete(`/sessions/${id}`)
-      const sid = String(id)
       standardSessionIds.value = standardSessionIds.value.filter(x => x !== sid)
       archivedSessionIds.value = archivedSessionIds.value.filter(x => x !== sid)
       focusSessionIds.value = focusSessionIds.value.filter(x => x !== sid)
@@ -1050,6 +1068,10 @@ export const useSessionStore = defineStore('session', () => {
     } catch {
       // 拦截器已提示失败；返回 false 供调用方停止后续跳转，避免删除失败仍表现为成功
       return false
+    } finally {
+      const next = new Set(deletingIds.value)
+      next.delete(sid)
+      deletingIds.value = next
     }
   }
 
@@ -1689,6 +1711,7 @@ export const useSessionStore = defineStore('session', () => {
     archivedLoaded.value = false
     focusLoaded.value = false
     archivingIds.value = new Set()
+    deletingIds.value = new Set()
     loadingMoreGroups.value = new Set()
     activeSessionId.value = null
     loading.value = false
@@ -1763,6 +1786,7 @@ export const useSessionStore = defineStore('session', () => {
     focusLoaded,
     archivedLoaded,
     isArchiving,
+    isDeleting,
     upsertSessionEntity,
     getSessionEntity,
     updateSessionTreeSignals,

@@ -120,6 +120,7 @@ import { useAuthStore } from '../../stores/auth'
 import appIcon from '../../assets/app-icon-small.png'
 import { useTheme } from '../../utils/theme'
 import { readRedirectQuery, safeRedirect } from '../../utils/login-redirect'
+import { openExternalUrl } from '../../utils/capacitor'
 
 type LoginMode = 'password' | 'feishu'
 type FeishuProvider = 'mao' | 'ecp'
@@ -255,8 +256,13 @@ async function startFeishuLogin(provider: FeishuProvider) {
     } else {
       // Web / 安卓: 新窗口打开飞书授权页，轮询状态
       feishuStatusText.value = '请在打开的飞书授权页面中完成登录'
-      // noopener 防止新窗口反向操纵登录页（window.opener）
-      window.open(authUrl, '_blank', 'noopener,noreferrer')
+      const opened = await openExternalUrl(authUrl)
+      if (!opened) {
+        feishuStatusText.value = '授权页面被浏览器拦截，请允许弹窗后重试'
+        ElMessage.error('授权页面被浏览器拦截，请允许弹窗后重试')
+        backToPasswordLogin()
+        return
+      }
       startPolling(qr.pollInterval || 2)
     }
   } catch (error) {

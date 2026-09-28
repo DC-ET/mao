@@ -3,12 +3,12 @@
     <div class="nav-left" :class="{ 'is-mac': isMacPlatform }">
       <div class="nav-left-actions">
         <el-tooltip v-if="isSettingsRoute" content="返回工作台" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
-          <div class="theme-toggle" @click="goBackFromSettings">
+          <div class="theme-toggle" role="button" aria-label="返回工作台" @click="goBackFromSettings">
             <el-icon :size="16"><ArrowLeft /></el-icon>
           </div>
         </el-tooltip>
         <el-tooltip content="左侧面板" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
-          <div class="theme-toggle" :class="{ active: !leftCollapsed }" @click="toggleLeft">
+          <div class="theme-toggle" role="button" aria-label="左侧面板" :class="{ active: !leftCollapsed }" @click="toggleLeft">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <rect x="3" y="3" width="18" height="18" rx="2" /><line x1="9" y1="3" x2="9" y2="21" />
             </svg>
@@ -19,7 +19,7 @@
     <div class="nav-right">
       <SessionSearchPopover ref="searchPopoverRef" />
       <el-tooltip content="右侧面板" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
-        <div class="theme-toggle" :class="{ active: !rightCollapsed }" @click="toggleRight">
+        <div class="theme-toggle" role="button" aria-label="右侧面板" :class="{ active: !rightCollapsed }" @click="toggleRight">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <rect x="3" y="3" width="18" height="18" rx="2" /><line x1="15" y1="3" x2="15" y2="21" />
           </svg>
@@ -28,6 +28,8 @@
       <el-tooltip :content="terminalAvailability.tooltip" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
         <div
           class="theme-toggle terminal-toggle"
+          role="button"
+          :aria-label="terminalAvailability.tooltip"
           :class="{ active: terminalOpen, disabled: !terminalAvailability.enabled }"
           @click="toggleTerminal"
         >
@@ -39,6 +41,8 @@
       <el-tooltip :content="updateTooltip" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
         <div
           class="theme-toggle refresh-btn"
+          role="button"
+          :aria-label="updateTooltip"
           :class="{ 'has-update': showUpdateIndicator }"
           @click="handleUpdateClick"
         >
@@ -473,6 +477,18 @@ async function handleCommand(command: string) {
   cursor: pointer;
   color: var(--aw-nav-text-muted);
   transition: color 0.15s, background 0.15s;
+  position: relative;
+}
+
+@media (pointer: coarse) {
+  .theme-toggle::before {
+    content: '';
+    position: absolute;
+    inset: 50% auto auto 50%;
+    width: 44px;
+    height: 44px;
+    transform: translate(-50%, -50%);
+  }
 }
 
 .theme-toggle:hover {
@@ -487,7 +503,7 @@ a.settings-toggle {
 
 .theme-toggle.active {
   color: var(--aw-primary);
-  background: rgba(0, 102, 204, 0.1);
+  background: var(--aw-primary-lighter);
 }
 
 [data-theme="dark"] .theme-toggle:hover {

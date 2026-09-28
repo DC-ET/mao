@@ -269,7 +269,7 @@ async function copyText(text: string) {
 }
 
 .cmd-link:hover {
-  background: rgba(0, 102, 204, 0.08);
+  background: var(--aw-primary-hover);
 }
 
 .actions-spacer {

@@ -171,7 +171,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted } from 'vue'
+import { computed, ref, onActivated, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
 import { resolveAgentAvatarUrl } from '../../utils/agent-avatar'
@@ -311,6 +311,15 @@ async function handleDelete(row: any) {
 }
 
 onMounted(fetchAgents)
+
+let firstActivation = true
+onActivated(() => {
+  if (firstActivation) {
+    firstActivation = false
+    return
+  }
+  fetchAgents()
+})
 </script>
 
 <style scoped>

@@ -607,6 +607,20 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     }
     // 确保 assistant 占位消息存在以便流式输出
     sessionStore.ensureStreamingAssistantMessage(sid)
+    // 注册 pendingCallbacks：error 事件 reject 到本地 catch 复位 sending，避免幽灵运行中
+    try {
+      await new Promise<void>((resolve, reject) => {
+        pendingCallbacks.set(sid, { resolve, reject })
+      })
+      if (sessionId.value === sid) {
+        sending.value = false
+      }
+    } catch {
+      if (sessionId.value === sid) {
+        sending.value = false
+        startedAt.value = null
+      }
+    }
   }
 
   /**
@@ -944,9 +958,9 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     }
   }
 
-  async function submitQuestionAnswer(requestId: string, answers: QuestionAnswer[]) {
-    if (!sessionId.value) return
-    await sendAskUserQuestionsResult(sessionId.value, requestId, answers)
+  async function submitQuestionAnswer(requestId: string, answers: QuestionAnswer[]): Promise<boolean> {
+    if (!sessionId.value) return false
+    return sendAskUserQuestionsResult(sessionId.value, requestId, answers)
     // Keep the panel until the server confirms completion with ask_user_questions_cancelled.
   }
 

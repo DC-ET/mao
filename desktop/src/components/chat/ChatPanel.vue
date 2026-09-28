@@ -128,7 +128,7 @@
       <QuestionPanel
         v-if="activePendingQuestions.length > 0"
         :items="activePendingQuestions"
-        @submit="submitQuestionAnswer"
+        @submit="handleSubmitQuestion"
       />
 
       <div v-if="sessionId && !isNewTaskMode" class="side-task-entry">
@@ -203,7 +203,7 @@ import { useDraftStore } from '../../stores/draft'
 import { api } from '../../api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchImagesAsFiles } from '../../utils/file'
-import type { QueueMessage } from '../../types/chat'
+import type { QueueMessage, QuestionAnswer } from '../../types/chat'
 import ChatRoundList from './ChatRoundList.vue'
 import ChatInput from './ChatInput.vue'
 import QueuePanel from './QueuePanel.vue'
@@ -286,6 +286,10 @@ const {
   deleteQueueMessage,
   reorderQueueMessage
 } = useChat(agentId, executionMode, newTaskModelId, permissionLevel)
+
+function handleSubmitQuestion(requestId: string, answers: QuestionAnswer[], done: (ok: boolean) => void) {
+  submitQuestionAnswer(requestId, answers).then(done, () => done(false))
+}
 
 const historyLoading = computed(() => initialLoading.value || switchingSession.value)
 
@@ -735,9 +739,15 @@ function handleRetry() {
 
 async function handleModelSwitch(modelId: number) {
   // Keep new-task draft in sync so "新建会话" inherits the model just selected mid-chat
+  const prevModelId = newTaskModelId.value
   newTaskModelId.value = modelId
   if (!isNewTaskMode.value && sessionStore.activeSessionId) {
-    await sessionStore.updateSessionModel(sessionStore.activeSessionId, modelId)
+    try {
+      await sessionStore.updateSessionModel(sessionStore.activeSessionId, modelId)
+    } catch {
+      newTaskModelId.value = prevModelId
+      ElMessage.error('模型切换失败，请重试')
+    }
   }
 }
 
@@ -1054,7 +1064,7 @@ function handleNewTaskAgentChange(id: string | null) {
   flex-shrink: 0;
   width: 10px;
   height: 10px;
-  border: 1.5px solid rgba(0, 102, 204, 0.2);
+  border: 1.5px solid var(--aw-primary-line);
   border-top-color: var(--aw-primary);
   border-radius: 50%;
   animation: compaction-spin 0.8s linear infinite;

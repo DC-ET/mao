@@ -30,7 +30,7 @@
       <div class="dialog-content">
         <p class="dialog-title">请在打开的钉钉页面中完成授权</p>
         <p class="dialog-desc">授权完成后本页会自动检测绑定结果。</p>
-        <button class="open-link-btn" :disabled="!authUrl" @click="openAuthPage">重新打开授权页面</button>
+        <button class="open-link-btn" :disabled="!authUrl" @click="handleOpenAuthPage">重新打开授权页面</button>
         <p v-if="statusText" class="status-text">{{ statusText }}</p>
       </div>
       <template #footer>
@@ -45,6 +45,7 @@ import { onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
+import { openExternalUrl } from '../../utils/capacitor'
 
 interface BindingStatus { bound: boolean; userid?: string | null; boundAt?: string | null }
 
@@ -79,7 +80,12 @@ async function startAuthorization() {
       return
     }
     dialogVisible.value = true
-    window.open(authUrl.value, '_blank', 'noopener,noreferrer')
+    const opened = await openAuthPage()
+    if (!opened) {
+      statusText.value = '授权页面被浏览器拦截，请允许弹窗后重试'
+      ElMessage.error('授权页面被浏览器拦截，请允许弹窗后重试')
+      return
+    }
     startPolling()
   } catch (error: unknown) {
     ElMessage.error(error instanceof Error ? error.message : '获取钉钉授权链接失败')
@@ -88,8 +94,17 @@ async function startAuthorization() {
   }
 }
 
-function openAuthPage() {
-  if (authUrl.value) window.open(authUrl.value, '_blank', 'noopener,noreferrer')
+async function openAuthPage(): Promise<boolean> {
+  if (!authUrl.value) return false
+  return openExternalUrl(authUrl.value)
+}
+
+async function handleOpenAuthPage() {
+  const opened = await openAuthPage()
+  if (!opened) {
+    statusText.value = '授权页面被浏览器拦截，请允许弹窗后重试'
+    ElMessage.error('授权页面被浏览器拦截，请允许弹窗后重试')
+  }
 }
 
 function startPolling() {

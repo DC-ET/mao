@@ -820,9 +820,13 @@ async function handleRetryExecution() {
   sessionStore.ensureStreamingAssistantMessage(String(sid))
 }
 
-async function submitQuestionAnswer(requestId: string, answers: QuestionAnswer[]) {
-  if (!hasRealSession.value) return
-  await sendAskUserQuestionsResult(String(realSessionId.value), requestId, answers)
+async function submitQuestionAnswer(requestId: string, answers: QuestionAnswer[], done: (ok: boolean) => void) {
+  if (!hasRealSession.value) {
+    done(false)
+    return
+  }
+  const ok = await sendAskUserQuestionsResult(String(realSessionId.value), requestId, answers)
+  done(ok)
   // Keep the panel until the server confirms completion with ask_user_questions_cancelled.
 }
 
@@ -1012,7 +1016,7 @@ async function handleQueueEdit(msg: QueueMessage) {
   flex-shrink: 0;
   width: 10px;
   height: 10px;
-  border: 1.5px solid rgba(0, 102, 204, 0.2);
+  border: 1.5px solid var(--aw-primary-line);
   border-top-color: var(--aw-primary);
   border-radius: 50%;
   animation: compaction-spin 0.8s linear infinite;

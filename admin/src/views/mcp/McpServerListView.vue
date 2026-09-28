@@ -319,9 +319,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, onActivated, onMounted, onUnmounted } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
 import { useAuthStore } from '../../stores/auth'
 import { useBreakpoint } from '../../composables/useBreakpoint'
@@ -527,9 +527,17 @@ async function handleSubmit() {
 
 async function toggleStatus(row: any) {
   const next = row.status === 'ENABLED' ? 'DISABLED' : 'ENABLED'
-  await api.put(`/mcp-servers/${row.id}/status`, { status: next })
-  ElMessage.success(next === 'ENABLED' ? '已启用' : '已停用')
-  await loadData()
+  const action = next === 'ENABLED' ? '启用' : '停用'
+  try {
+    await ElMessageBox.confirm(`确定要${action} MCP 服务器「${row.name}」吗？`, '确认', {
+      type: next === 'ENABLED' ? 'success' : 'warning'
+    })
+    await api.put(`/mcp-servers/${row.id}/status`, { status: next })
+    ElMessage.success(next === 'ENABLED' ? '已启用' : '已停用')
+    await loadData()
+  } catch {
+    // Cancelled or error handled by interceptor
+  }
 }
 
 async function handleDelete(row: any) {
@@ -570,7 +578,25 @@ async function openTools(row: any) {
   }
 }
 
-loadData()
+onMounted(() => {
+  loadData()
+})
+
+onUnmounted(() => {
+  if (keywordDebounceTimer) {
+    clearTimeout(keywordDebounceTimer)
+    keywordDebounceTimer = null
+  }
+})
+
+let firstActivation = true
+onActivated(() => {
+  if (firstActivation) {
+    firstActivation = false
+    return
+  }
+  loadData()
+})
 </script>
 
 <style scoped>

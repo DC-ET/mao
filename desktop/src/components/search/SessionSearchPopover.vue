@@ -39,15 +39,16 @@
         >
           <template #prefix><el-icon :size="18"><Search /></el-icon></template>
         </el-input>
-        <template v-if="status !== 'idle' && status !== 'loading'">
+        <template v-if="status !== 'idle'">
           <div class="search-summary">
-            <span>{{ status === 'results' ? `找到 ${results.length} 个相关会话` : '搜索结果' }}</span>
+            <span>{{ status === 'loading' ? '搜索中…' : status === 'results' ? `找到 ${results.length} 个相关会话` : '搜索结果' }}</span>
             <span class="search-shortcuts"><kbd>↑</kbd><kbd>↓</kbd> 选择 <kbd>Enter</kbd> 打开 <kbd>Esc</kbd> 关闭</span>
           </div>
           <div class="search-body">
-          <div v-if="status === 'error'" class="search-tip">搜索失败，请重试</div>
+          <div v-if="status === 'loading'" class="search-tip">搜索中…</div>
+          <div v-else-if="status === 'error'" class="search-tip">搜索失败，请重试</div>
           <div v-else-if="status === 'empty'" class="search-tip">未找到相关会话</div>
-          <ul v-else class="search-results">
+          <ul v-else ref="resultsRef" class="search-results">
             <li
               v-for="(item, idx) in results"
               :key="item.id"
@@ -77,7 +78,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, onUnmounted } from 'vue'
+import { ref, nextTick, onUnmounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { Close, Search } from '@element-plus/icons-vue'
 import { searchSessions } from '../../api'
@@ -90,6 +91,7 @@ const router = useRouter()
 const route = useRoute()
 
 const inputRef = ref()
+const resultsRef = ref<HTMLUListElement>()
 const keyword = ref('')
 const results = ref<SessionSearchItem[]>([])
 const activeIndex = ref(0)
@@ -198,6 +200,12 @@ function onPanelKeydown(e: KeyboardEvent) {
   }
 }
 
+watch(activeIndex, async () => {
+  await nextTick()
+  const active = resultsRef.value?.querySelector<HTMLElement>('.search-result-item.active')
+  active?.scrollIntoView({ block: 'nearest' })
+})
+
 async function handleJump(item: SessionSearchItem) {
   isOpen.value = false
   if (item.sessionType === 'SIDE_TASK') {
@@ -281,6 +289,18 @@ defineExpose({ toggle, open: openSearch })
   cursor: pointer;
   color: var(--aw-nav-text-muted);
   transition: color 0.15s, background 0.15s;
+  position: relative;
+}
+
+@media (pointer: coarse) {
+  .search-toggle::before {
+    content: '';
+    position: absolute;
+    inset: 50% auto auto 50%;
+    width: 44px;
+    height: 44px;
+    transform: translate(-50%, -50%);
+  }
 }
 
 .search-toggle:hover {

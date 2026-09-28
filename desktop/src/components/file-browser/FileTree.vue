@@ -11,7 +11,13 @@
           clearable
           :prefix-icon="Search"
         />
-        <el-icon class="toolbar-refresh" :class="{ 'is-disabled': loading }" @click="handleRefresh"><Refresh /></el-icon>
+        <button
+          type="button"
+          class="toolbar-refresh"
+          aria-label="刷新文件树"
+          :disabled="loading"
+          @click="handleRefresh"
+        ><el-icon><Refresh /></el-icon></button>
       </div>
       <div class="file-tree-content" v-loading="loading">
         <div v-if="filteredTreeData.length === 0 && !loading" class="file-tree-empty">
@@ -329,16 +335,18 @@ onUnmounted(() => {
   color: var(--aw-ink-muted-48);
   cursor: pointer;
   padding: 4px;
+  border: none;
+  background: transparent;
   border-radius: var(--aw-radius-xs);
   transition: color 0.15s, background 0.15s;
 }
 
-.toolbar-refresh:hover:not(.is-disabled) {
+.toolbar-refresh:hover:not(:disabled) {
   color: var(--aw-ink);
   background: var(--aw-canvas-parchment);
 }
 
-.toolbar-refresh.is-disabled {
+.toolbar-refresh:disabled {
   opacity: 0.4;
   cursor: default;
 }
@@ -382,7 +390,7 @@ onUnmounted(() => {
   border-radius: 2px;
 }
 
-[data-theme="dark"] .toolbar-refresh:hover:not(.is-disabled) {
+[data-theme="dark"] .toolbar-refresh:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.06);
 }
 </style>

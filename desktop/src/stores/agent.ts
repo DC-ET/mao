@@ -17,10 +17,12 @@ export const useAgentStore = defineStore('agent', () => {
   const agents = ref<Agent[]>([])
   const activeAgent = ref<Agent | null>(null)
   const loading = ref(false)
+  const error = ref(false)
 
   async function fetchAgents() {
     if (!getToken()) {
       agents.value = []
+      error.value = false
       return
     }
 
@@ -28,8 +30,10 @@ export const useAgentStore = defineStore('agent', () => {
     try {
       const { data } = await api.get('/agents')
       agents.value = (data || []).filter((agent: Agent) => agent.enabled !== false)
+      error.value = false
     } catch {
       agents.value = []
+      error.value = true
     } finally {
       loading.value = false
     }
@@ -53,6 +57,7 @@ export const useAgentStore = defineStore('agent', () => {
     agents,
     activeAgent,
     loading,
+    error,
     fetchAgents,
     fetchAgent,
     getAgentById

@@ -38,7 +38,7 @@
         <button :class="['mode-btn', { active: viewMode === 'rendered' }]" @click="viewMode = 'rendered'">预览</button>
         <button :class="['mode-btn', { active: viewMode === 'source' }]" @click="viewMode = 'source'">源码</button>
       </div>
-      <button class="refresh-btn" @click="loadFile">
+      <button class="refresh-btn" type="button" aria-label="刷新" @click="loadFile">
         <el-icon :size="14"><Refresh /></el-icon>
       </button>
       <div class="file-editor-area">
@@ -352,7 +352,7 @@ onUnmounted(() => {
 }
 
 .retry-btn:hover {
-  background: rgba(0, 102, 204, 0.08);
+  background: var(--aw-primary-hover);
 }
 
 .file-content {
@@ -438,7 +438,7 @@ onUnmounted(() => {
 .mode-btn.active {
   color: var(--aw-primary);
   border-color: var(--aw-primary);
-  background: rgba(0, 102, 204, 0.06);
+  background: var(--aw-primary-hover);
 }
 
 .markdown-body {

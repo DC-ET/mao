@@ -131,7 +131,7 @@ function typeClass(type: string) {
 }
 
 .git-node-row:hover {
-  background: rgba(0, 102, 204, 0.06);
+  background: var(--aw-primary-hover);
 }
 
 .git-expand,
@@ -166,11 +166,11 @@ function typeClass(type: string) {
   justify-content: center;
 }
 
-.git-type.created { color: #1a7f37; background: rgba(26, 127, 55, 0.12); }
-.git-type.modified { color: #9a6700; background: rgba(154, 103, 0, 0.12); }
-.git-type.deleted { color: #cf222e; background: rgba(207, 34, 46, 0.12); }
+.git-type.created { color: var(--aw-diff-add); background: var(--aw-diff-add-bg); }
+.git-type.modified { color: var(--aw-diff-mod); background: var(--aw-diff-mod-bg); }
+.git-type.deleted { color: var(--aw-diff-del); background: var(--aw-diff-del-bg); }
 .git-type.renamed,
-.git-type.copied { color: #0550ae; background: rgba(5, 80, 174, 0.12); }
+.git-type.copied { color: var(--aw-diff-info); background: var(--aw-diff-info-bg); }
 
 .git-node-name {
   flex-shrink: 0;
@@ -202,8 +202,8 @@ function typeClass(type: string) {
   white-space: nowrap;
 }
 
-.add { color: #1a7f37; }
-.del { color: #cf222e; }
+.add { color: var(--aw-diff-add); }
+.del { color: var(--aw-diff-del); }
 
 [data-theme="dark"] .git-node-row:hover {
   background: rgba(255, 255, 255, 0.06);

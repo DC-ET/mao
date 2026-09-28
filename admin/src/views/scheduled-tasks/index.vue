@@ -27,23 +27,23 @@
             </el-form-item>
           </template>
           <el-form-item label="用户">
-            <el-select v-model="filters.userId" placeholder="全部用户" clearable filterable style="width: 160px">
+            <el-select v-model="filters.userId" placeholder="全部用户" clearable filterable style="width: 160px" @change="handleSearch">
               <el-option v-for="u in userOptions" :key="u.id" :label="u.displayName || u.username || `用户 #${u.id}`" :value="u.id" />
             </el-select>
           </el-form-item>
           <el-form-item label="Agent">
-            <el-select v-model="filters.agentId" placeholder="全部 Agent" clearable filterable style="width: 160px">
+            <el-select v-model="filters.agentId" placeholder="全部 Agent" clearable filterable style="width: 160px" @change="handleSearch">
               <el-option v-for="a in agentOptions" :key="a.id" :label="a.name || `Agent #${a.id}`" :value="a.id" />
             </el-select>
           </el-form-item>
           <el-form-item label="状态">
-            <el-select v-model="filters.status" placeholder="全部" clearable style="width: 120px">
+            <el-select v-model="filters.status" placeholder="全部" clearable style="width: 120px" @change="handleSearch">
               <el-option label="启用" value="ACTIVE" />
               <el-option label="暂停" value="PAUSED" />
             </el-select>
           </el-form-item>
           <el-form-item label="完结">
-            <el-select v-model="filters.finished" placeholder="全部" clearable style="width: 120px">
+            <el-select v-model="filters.finished" placeholder="全部" clearable style="width: 120px" @change="handleSearch">
               <el-option label="进行中" :value="false" />
               <el-option label="已完结" :value="true" />
             </el-select>
@@ -218,7 +218,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, onActivated, onMounted, onUnmounted } from 'vue'
 import { api } from '../../api'
 import { formatDateTime, formatDateTimeColumn } from '../../utils/datetime'
 import { ElMessage } from 'element-plus'
@@ -388,6 +388,15 @@ function openEdit(row: ScheduledTaskRow) {
 
 onMounted(() => {
   fetchLookups()
+  fetchTasks()
+})
+
+let firstActivation = true
+onActivated(() => {
+  if (firstActivation) {
+    firstActivation = false
+    return
+  }
   fetchTasks()
 })
 </script>

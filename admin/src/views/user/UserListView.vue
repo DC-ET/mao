@@ -248,7 +248,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onActivated, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -478,23 +478,39 @@ async function handleToggleStatus(row: any) {
   }
 }
 
-onMounted(async () => {
-  // 支持 /users?roleId=x：后端暂不支持按角色过滤，仅解析意图给出提示
+// 支持 /users?roleId=x：后端暂不支持按角色过滤，仅解析意图给出提示
+async function applyRoleQuery() {
   const roleIdRaw = route.query.roleId
   if (roleIdRaw) {
     const parsed = Number(roleIdRaw)
     if (Number.isFinite(parsed) && parsed > 0) {
       queryRoleId.value = parsed
-      await fetchRolesOptions()
+      if (!rolesCache.value.some((r) => r.id === parsed)) {
+        await fetchRolesOptions()
+      }
       roleFilterName.value = rolesCache.value.find((r) => r.id === parsed)?.name || `#${parsed}`
     } else {
       router.replace({ path: '/users' })
     }
+    return
   }
+  if (queryRoleId.value != null) {
+    queryRoleId.value = null
+    roleFilterName.value = ''
+  }
+}
+
+onMounted(async () => {
+  await applyRoleQuery()
   if (!authStore.user) {
     await authStore.fetchUserInfo()
   }
   fetchUsers()
+})
+
+// keep-alive key 是 path 不含 query，切回时需重新解析 roleId
+onActivated(() => {
+  void applyRoleQuery()
 })
 </script>
 

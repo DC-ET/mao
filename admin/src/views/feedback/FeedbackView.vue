@@ -81,9 +81,10 @@
 
       <ResponsivePagination
         v-model:currentPage="page"
-        :page-size="pageSize"
+        v-model:page-size="pageSize"
         :total="total"
         @current-change="fetchList"
+        @size-change="handleSizeChange"
       />
     </el-card>
   </div>
@@ -187,6 +188,11 @@ async function refreshAll() {
 function handleSearch() {
   page.value = 1
   refreshAll()
+}
+
+function handleSizeChange() {
+  page.value = 1
+  fetchList()
 }
 
 function handleReset() {
