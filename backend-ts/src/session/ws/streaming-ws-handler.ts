@@ -179,6 +179,11 @@ export class StreamingWsHandler {
     return this.executionClaims.has(sessionId) || this.runningTasks.has(sessionId);
   }
 
+  /** 本实例当前在途执行的会话（蓝绿排空前据此等待收尾，并标记被中断的会话）。 */
+  listActiveExecutionSessionIds(): number[] {
+    return [...new Set([...this.executionClaims, ...this.runningTasks.keys()])];
+  }
+
   afterConnectionClosed(session: WsSocket): void {
     const userId = this.deps.registry.getUserId(session);
     // 页面连接断开：先让该连接上所有等待中的页面工具立即失败，再注销连接与绑定。
@@ -448,6 +453,10 @@ export class StreamingWsHandler {
       this.executionClaims.delete(sessionId);
       this.autoConsumingSessionIds.delete(sessionId);
       this.runningExecutionIds.delete(sessionId);
+      // 执行从未提交，取消标志必须一并摘除：AgentLoop 的取消标志集合是"本实例在途执行"的
+      // 唯一判据（停机收尾据此等待/标记、孤儿巡检据此排除本地活跃会话），泄漏会让该会话
+      // 永久被当成"仍在执行"。
+      this.deps.agentLoop.removeCancelFlag(sessionId);
       // 定时任务 busy 入队消息在此窗口被取消：同步回写 CANCELLED 并清映射，避免永久 QUEUED + 误回写
       const scheduledTaskId = this.queueScheduledTaskIds.get(sessionId);
       if (scheduledTaskId != null) {

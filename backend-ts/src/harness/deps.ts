@@ -259,6 +259,10 @@ export interface StreamingWsRegistry {
 
 export interface SessionActivityHeartbeat {
   touch(sessionId: number | null | undefined): void;
+  /** 执行开始：挂独立定时心跳（长工具调用期间也要保持 last_activity_at 新鲜）。 */
+  start(sessionId: number | null | undefined): void;
+  /** 执行结束：停掉定时心跳。 */
+  stop(sessionId: number | null | undefined): void;
   clear(sessionId: number): void;
 }
 

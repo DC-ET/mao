@@ -33,6 +33,13 @@ describe('SessionRepository', () => {
     expect(await repo.updateWhere({}, 'id=?', [1])).toBe(0);
     expect(await repo.updateWhere({ phase: 'RUNNING' }, 'id=?', [1])).toBe(1);
     expect(await repo.claimRunningIfIdle(42)).toBe(1);
+    // CAS：仅当 phase 落在给定集合内才改写，且刷新 last_activity_at。
+    expect(await repo.markPhaseIfIn(42, 'RESUMING', ['RUNNING', 'RESUMING'])).toBe(1);
+    expect(db.execute).toHaveBeenCalledWith(
+      expect.stringContaining("phase IN (?, ?)"),
+      expect.arrayContaining(['RESUMING', 42, 'RUNNING']),
+    );
+    expect(await repo.markPhaseIfIn(42, 'RESUMING', [])).toBe(0);
     expect(await repo.updateTitleIfPlaceholder(42, 'NORMAL', '未命名会话', '新标题', '2026-08-18 12:00:00')).toBe(1);
     expect(db.execute).toHaveBeenCalledWith(
       expect.stringContaining("session_type = ? AND (title = ? OR title IS NULL OR TRIM(title) = '')"),

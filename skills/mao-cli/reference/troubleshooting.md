@@ -13,6 +13,7 @@
 | `/admin/` 白屏但 `/admin/login` 正常 | `curl` 看 `<title>`：若是 `Mao` 则误返回桌面 index。删掉 `rewrite ^/admin/` 与 `try_files ... /admin/index.html`，改用 `scripts/nginx/mao-admin-locations.conf`。见 [single-domain-nginx-migration.md](../../../docs/guides/single-domain-nginx-migration.md) |
 | 历史工作区文件找不到 | `WORKSPACE_ROOT` 是否与 `session.workspace` 前缀一致 |
 | 蓝绿后仍连旧端口 | 查 `MAO_RUNTIME_DIR/active-backend-port` 与 `mao-upstream.conf` |
+| 蓝绿部署后会话一直卡在「运行中」且消息无响应 | 消息在切流后仍落到待排空的旧实例，执行到一半被 kill，phase 停在 RUNNING 而启动期恢复扫描已跑完。0.0.211 起：旧实例见 `deploy.lock` 切流即静默 IM 入站并把中断会话原子标记 RESUMING，承接流量的实例每 30s 巡检孤儿会话（RUNNING 需静默超 120s、RESUMING 需静默超 45s）自动续跑；单实例安装（无 `active-backend-port`）也巡检。被在途子代理占用的父会话只在启动期恢复。部署后最坏约 2 分钟内自动续跑。仍卡住时查 `session.phase` 与 `logs/backend-ts-<port>.log` 里的 `orphan session` |
 | 蓝绿后飞书进度卡片一直「正在处理」但任务已完成 | 旧版崩溃恢复不 PATCH 卡片终态。0.0.113 起续跑成功/失败/取消会刷新原卡片；升级后端后对新恢复生效，已卡住的卡片不会自动改 |
 | 重启后续跑任务、飞书进度卡停在重启时的状态 | 旧版进度卡映射按 snake_case 取值，对不上 `Db` 的 camelCase，恢复监听挂不上。0.0.116 已修；已卡住的卡片不会自动改 |
 

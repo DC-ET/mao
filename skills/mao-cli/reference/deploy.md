@@ -135,7 +135,7 @@ chmod +x /opt/mao/backend-ts/restart.sh
 /opt/mao/backend-ts/restart.sh
 ```
 
-**蓝绿部署**：在 9080↔9081 备用端口启动新实例 → 健康检查 → 切换 Nginx upstream → 延迟停旧进程（`MAO_BLUE_GREEN_DRAIN_SEC` 默认 60s）。
+**蓝绿部署**：在 9080↔9081 备用端口启动新实例 → 健康检查 → 切换 Nginx upstream → 延迟停旧进程（`MAO_BLUE_GREEN_DRAIN_SEC` 默认 60s，建议 ≥20s）。0.0.211 起旧实例轮询 `deploy.lock`，确认切流完成（`status=switched` + `active-backend-port` 已指向新端口）后即静默飞书/微信/钉钉入站、等在途执行收尾（上限 40s，且随 `MAO_BLUE_GREEN_DRAIN_SEC` 收敛）、把仍被中断的会话标记 `RESUMING` 后自行退出——不再依赖 drain 定时器准点（systemd timer 可能晚几十秒）。承接流量的实例每 30s 巡检孤儿会话自动续跑；部署后的启动期延迟恢复也改为等排空窗口结束再执行，以杜绝与旧实例并发重跑。
 
 崩溃恢复：新实例启动时若处于部署窗口，仅推迟恢复初始扫描到的 RUNNING 会话（快照重放）；快照重放后 15s 做一次全库补扫，兜住部署窗口内新建、随旧实例停止而卡 RUNNING 的会话。飞书在途任务续跑会按会话加载进度卡映射并继续 PATCH；结束后把原卡片收成完成/失败/取消。若升级前卡片停在重启时的状态，是映射字段名读错导致监听没挂上（0.0.116 已修），已卡住的卡片不会自动刷新。
 

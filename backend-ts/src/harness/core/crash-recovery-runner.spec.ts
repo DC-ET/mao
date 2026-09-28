@@ -189,8 +189,16 @@ describe('CrashRecoveryRunner deferred rescan', () => {
     }));
   }
 
-  function makeDeferredRunner(runtimeDir: string, scanSequence: number[][], locallyActiveIds: number[] = []) {
+  function makeDeferredRunner(
+    runtimeDir: string,
+    scanSequence: number[][],
+    locallyActiveIds: number[] = [],
+    selfPort = 9081,
+  ) {
     const pending: Promise<void>[] = [];
+    // 本实例承接流量（active-backend-port = 自身端口），否则延迟恢复会被部署闸门推迟。
+    mkdirSync(runtimeDir, { recursive: true });
+    writeFileSync(join(runtimeDir, 'active-backend-port'), String(selfPort));
     // collectCandidates 每轮扫描调用 selectByPhase 两次（RUNNING + RESUMING），
     // 这里按「轮」推进序列：每轮两次调用消费同一个 ids 元素。
     let round = 0;
@@ -222,6 +230,7 @@ describe('CrashRecoveryRunner deferred rescan', () => {
       undefined,
       undefined,
       (sessionId: number) => locallyActiveIds.includes(sessionId),
+      selfPort,
     );
     return { runner, sessionMapper, pending };
   }
@@ -234,11 +243,13 @@ describe('CrashRecoveryRunner deferred rescan', () => {
       // 初始扫描：仅会话 1；补扫 pass：出现新会话 2（部署窗口内新建、随旧实例死亡）。
       const { runner, sessionMapper, pending } = makeDeferredRunner(dir, [[1], [1, 2]]);
       await runner.run();
-      // 快照重放（延迟恢复首次 pass）：只恢复快照里的会话 1。
+      // 部署窗口内（drainSec 60s + 60s 余量）不得执行延迟恢复：快照重放不做静默校验，
+      // 此时旧实例可能仍在跑这些会话，抢跑会双跑。
       await vi.advanceTimersByTimeAsync(60_000);
+      expect(sessionMapper.selectById).not.toHaveBeenCalledWith(1);
       expect(sessionMapper.selectById).not.toHaveBeenCalledWith(2);
-      // 全库补扫（快照重放后 RESCAN_DELAY_SEC 触发）：恢复漏掉的会话 2。
-      await vi.advanceTimersByTimeAsync(15_000);
+      // 超过排空窗口后：快照重放恢复会话 1，随后 RESCAN_DELAY_SEC 的全库补扫恢复会话 2。
+      await vi.advanceTimersByTimeAsync(160_000);
       await Promise.all(pending);
       expect(sessionMapper.selectById).toHaveBeenCalledWith(1);
       expect(sessionMapper.selectById).toHaveBeenCalledWith(2);
@@ -259,7 +270,7 @@ describe('CrashRecoveryRunner deferred rescan', () => {
       await runner.run();
       await vi.advanceTimersByTimeAsync(60_000);
       expect(sessionMapper.selectById).not.toHaveBeenCalled();
-      await vi.advanceTimersByTimeAsync(15_000);
+      await vi.advanceTimersByTimeAsync(160_000);
       await Promise.all(pending);
       expect(sessionMapper.selectById).toHaveBeenCalledWith(2);
     } finally {
@@ -291,8 +302,9 @@ describe('CrashRecoveryRunner deferred rescan', () => {
       // 否则会对正在跑的执行并发重跑同一会话。
       const { runner, sessionMapper, pending } = makeDeferredRunner(dir, [[], [2, 3]], [3]);
       await runner.run();
+      // 等过部署窗口（drainSec 60s + 60s 余量）再断言，避免命中"部署中推迟"分支。
       await vi.advanceTimersByTimeAsync(60_000);
-      await vi.advanceTimersByTimeAsync(15_000);
+      await vi.advanceTimersByTimeAsync(160_000);
       await Promise.all(pending);
       expect(sessionMapper.selectById).toHaveBeenCalledWith(2);
       expect(sessionMapper.selectById).not.toHaveBeenCalledWith(3);
@@ -332,10 +344,15 @@ describe('CrashRecoveryRunner deferred rescan', () => {
         { selectById: vi.fn().mockResolvedValue(null), selectDefault: vi.fn().mockResolvedValue(null) } as never,
         dir,
         { submit: (fn: () => Promise<void>) => { pending.push(fn()); } },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        9081,
       );
       await runner.run();
       await vi.advanceTimersByTimeAsync(60_000);
-      await vi.advanceTimersByTimeAsync(15_000);
+      await vi.advanceTimersByTimeAsync(160_000);
       await Promise.all(pending);
       expect(harnessExecute).toHaveBeenCalledTimes(1);
     } finally {
@@ -377,10 +394,15 @@ describe('CrashRecoveryRunner deferred rescan', () => {
         { selectById: vi.fn().mockResolvedValue(null), selectDefault: vi.fn().mockResolvedValue(null) } as never,
         dir,
         { submit: (fn: () => Promise<void>) => { pending.push(fn()); } },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        9081,
       );
       await runner.run();
       await vi.advanceTimersByTimeAsync(60_000);
-      await vi.advanceTimersByTimeAsync(15_000);
+      await vi.advanceTimersByTimeAsync(160_000);
       await Promise.all(pending);
       expect(sessionMapper.selectById).toHaveBeenCalledWith(2);
       expect(harnessExecute).toHaveBeenCalledTimes(1);
@@ -420,14 +442,274 @@ describe('CrashRecoveryRunner deferred rescan', () => {
         { selectById: vi.fn().mockResolvedValue(null), selectDefault: vi.fn().mockResolvedValue(null) } as never,
         dir,
         { submit: (fn: () => Promise<void>) => { pending.push(fn()); } },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        9081,
       );
       await runner.run();
       await vi.advanceTimersByTimeAsync(60_000);
-      await vi.advanceTimersByTimeAsync(15_000);
+      await vi.advanceTimersByTimeAsync(160_000);
       expect(harnessExecute).toHaveBeenCalledTimes(1);
       releaseExecute?.();
       await Promise.all(pending);
       expect(harnessExecute).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('CrashRecoveryRunner orphan sweep', () => {
+  /** 本地时区 `yyyy-MM-dd HH:mm:ss`（与 parseSqlDateTime 的解析口径一致）。 */
+  function sqlTime(offsetMs: number): string {
+    const d = new Date(Date.now() - offsetMs);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  }
+
+  function writeActivePort(dir: string, port: number): void {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'active-backend-port'), String(port));
+  }
+
+  function writeLock(dir: string, status: string, ageSec = 5): void {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'deploy.lock'), JSON.stringify({
+      startedAt: Math.floor(Date.now() / 1000) - ageSec,
+      oldPort: 9080,
+      newPort: 9081,
+      status,
+      drainSec: 60,
+    }));
+  }
+
+  interface SweepSession { id: number; phase: string; lastActivityAt?: string | null }
+
+  function makeSweepRunner(options: {
+    runtimeDir: string;
+    selfPort?: number;
+    sessions: SweepSession[];
+    locallyActiveIds?: number[];
+    blockedIds?: number[];
+  }) {
+    const pending: Promise<void>[] = [];
+    const sessionMapper = {
+      selectByPhase: vi.fn(async (phase: string) =>
+        options.sessions
+          .filter((s) => s.phase === phase)
+          .map((s) => ({
+            id: s.id, userId: 42, sessionType: 'DEFAULT', phase, modelId: null,
+            lastActivityAt: s.lastActivityAt ?? null,
+          }))),
+      selectById: vi.fn(async (id: number) => {
+        const found = options.sessions.find((s) => s.id === id);
+        if (found == null) return null;
+        return {
+          id, userId: 42, sessionType: 'DEFAULT', phase: found.phase, modelId: null,
+          lastActivityAt: found.lastActivityAt ?? null,
+        };
+      }),
+    };
+    const harnessExecute = vi.fn().mockResolvedValue(undefined);
+    const coordinator = { listBlockedSessionIds: vi.fn(async () => new Set(options.blockedIds ?? [])) };
+    const runner = new CrashRecoveryRunner(
+      sessionMapper as never,
+      { cleanupIncompleteTail: vi.fn().mockResolvedValue(0), updatePhase: vi.fn().mockResolvedValue(undefined) } as never,
+      { finishExecution: vi.fn().mockResolvedValue(undefined) } as never,
+      { execute: harnessExecute } as never,
+      { registerCancelFlag: vi.fn().mockReturnValue({ get: () => false }), removeCancelFlag: vi.fn() } as never,
+      { send: vi.fn() } as never,
+      {} as never,
+      { clear: vi.fn() } as never,
+      { selectBySessionId: vi.fn().mockResolvedValue([]) } as never,
+      { selectById: vi.fn().mockResolvedValue(null), selectDefault: vi.fn().mockResolvedValue(null) } as never,
+      options.runtimeDir,
+      { submit: (fn: () => Promise<void>) => { pending.push(fn()); } },
+      vi.fn().mockResolvedValue(undefined),
+      coordinator as never,
+      undefined,
+      (sessionId: number) => (options.locallyActiveIds ?? []).includes(sessionId),
+      options.selfPort,
+    );
+    return { runner, pending, sessionMapper, harnessExecute, coordinator };
+  }
+
+  it('skipsSweepWhenThisInstanceIsNotServingTraffic', async () => {
+    const dir = useTmpDir('mao-sweep-inactive-');
+    writeActivePort(dir, 9080);
+    const { runner, sessionMapper } = makeSweepRunner({
+      runtimeDir: dir,
+      selfPort: 9081,
+      sessions: [{ id: 5, phase: 'RESUMING' }],
+    });
+
+    await runner.sweepOrphans();
+
+    expect(sessionMapper.selectById).not.toHaveBeenCalled();
+  });
+
+  it('skipsSweepWhileDeployIsInFlight', async () => {
+    const dir = useTmpDir('mao-sweep-deploy-');
+    writeActivePort(dir, 9081);
+    // 排空中的旧实例仍在跑会话，抢过来会并发重复执行。
+    writeLock(dir, 'switched');
+    const { runner, sessionMapper } = makeSweepRunner({
+      runtimeDir: dir,
+      selfPort: 9081,
+      sessions: [{ id: 5, phase: 'RESUMING' }],
+    });
+
+    await runner.sweepOrphans();
+
+    expect(sessionMapper.selectById).not.toHaveBeenCalled();
+  });
+
+  it('skipsFreshSessionsButRecoversQuietResumingAndSilentRunning', async () => {
+    const dir = useTmpDir('mao-sweep-stale-');
+    writeActivePort(dir, 9081);
+    writeLock(dir, 'drained');
+    const { runner, sessionMapper, pending } = makeSweepRunner({
+      runtimeDir: dir,
+      selfPort: 9081,
+      sessions: [
+        // RUNNING 且刚有心跳：无法与"别的实例正在跑"区分，不能抢。
+        { id: 5, phase: 'RUNNING', lastActivityAt: sqlTime(5_000) },
+        // RESUMING 刚被写入：标记方可能仍在收尾（其心跳还会刷新时间戳），不能抢。
+        { id: 6, phase: 'RESUMING', lastActivityAt: sqlTime(5_000) },
+        // RESUMING 已静默超过阈值：标记方确实没了，立即恢复。
+        { id: 7, phase: 'RESUMING', lastActivityAt: sqlTime(60_000) },
+        // RUNNING 静默超过阈值：孤儿。
+        { id: 8, phase: 'RUNNING', lastActivityAt: sqlTime(10 * 60_000) },
+      ],
+    });
+
+    await runner.sweepOrphans();
+    await Promise.all(pending);
+
+    expect(sessionMapper.selectById).toHaveBeenCalledWith(7);
+    expect(sessionMapper.selectById).toHaveBeenCalledWith(8);
+    expect(sessionMapper.selectById).not.toHaveBeenCalledWith(5);
+    expect(sessionMapper.selectById).not.toHaveBeenCalledWith(6);
+  });
+
+  it('recoversRunningSessionThatStayedSilentPastThreshold', async () => {
+    const dir = useTmpDir('mao-sweep-orphan-');
+    writeActivePort(dir, 9081);
+    const { runner, sessionMapper, pending } = makeSweepRunner({
+      runtimeDir: dir,
+      selfPort: 9081,
+      sessions: [{ id: 21, phase: 'RUNNING', lastActivityAt: sqlTime(10 * 60_000) }],
+    });
+
+    await runner.sweepOrphans();
+    await Promise.all(pending);
+
+    expect(sessionMapper.selectById).toHaveBeenCalledWith(21);
+  });
+
+  it('skipsLocallyActiveSessions', async () => {
+    const dir = useTmpDir('mao-sweep-local-');
+    writeActivePort(dir, 9081);
+    const { runner, sessionMapper, pending } = makeSweepRunner({
+      runtimeDir: dir,
+      selfPort: 9081,
+      sessions: [{ id: 8, phase: 'RUNNING', lastActivityAt: sqlTime(10 * 60_000) }],
+      locallyActiveIds: [8],
+    });
+
+    await runner.sweepOrphans();
+    await Promise.all(pending);
+
+    expect(sessionMapper.selectById).not.toHaveBeenCalled();
+  });
+
+  it('skipsSessionsBlockedByInflightSubagentExecutions', async () => {
+    const dir = useTmpDir('mao-sweep-subagent-');
+    writeActivePort(dir, 9081);
+    // 父会话在等后台子代理，自身长时间无活动，但仍在正常运行——不能当孤儿重跑。
+    const { runner, sessionMapper, pending, coordinator } = makeSweepRunner({
+      runtimeDir: dir,
+      selfPort: 9081,
+      sessions: [{ id: 9, phase: 'RUNNING', lastActivityAt: sqlTime(10 * 60_000) }],
+      blockedIds: [9],
+    });
+
+    await runner.sweepOrphans();
+    await Promise.all(pending);
+
+    expect(coordinator.listBlockedSessionIds).toHaveBeenCalled();
+    expect(sessionMapper.selectById).not.toHaveBeenCalled();
+  });
+
+  it('sweepsAsSingleInstanceWhenActivePortFileIsMissing', async () => {
+    const dir = useTmpDir('mao-sweep-noport-');
+    // 单实例/非蓝绿安装不写 active-backend-port：没有第二个实例可抢，巡检必须照常生效，
+    // 否则"覆盖非部署原因的执行中断"在单实例环境静默失效。
+    const { runner, sessionMapper, pending } = makeSweepRunner({
+      runtimeDir: dir,
+      selfPort: 9080,
+      sessions: [{ id: 12, phase: 'RESUMING' }],
+    });
+
+    await runner.sweepOrphans();
+    await Promise.all(pending);
+
+    expect(sessionMapper.selectById).toHaveBeenCalledWith(12);
+  });
+
+  it('doesNotDegradeWhenDeployLockExistsWithoutActivePortFile', async () => {
+    const dir = useTmpDir('mao-sweep-noport-lock-');
+    writeLock(dir, 'starting');
+    const { runner, sessionMapper } = makeSweepRunner({
+      runtimeDir: dir,
+      selfPort: 9080,
+      sessions: [{ id: 13, phase: 'RESUMING' }],
+    });
+
+    await runner.sweepOrphans();
+
+    expect(sessionMapper.selectById).not.toHaveBeenCalled();
+  });
+
+  it('sweepsAfterDrainWindowEvenIfStatusStuckAtSwitched', async () => {
+    const dir = useTmpDir('mao-sweep-stuck-lock-');
+    writeActivePort(dir, 9081);
+    // drain 脚本异常没写 drained：状态停在 switched。不能因此让巡检停摆 15 分钟，
+    // 超过"排空窗口 + 余量"即视为部署已结束。
+    writeLock(dir, 'switched', 60 + 60 + 10);
+    const { runner, sessionMapper, pending } = makeSweepRunner({
+      runtimeDir: dir,
+      selfPort: 9081,
+      sessions: [{ id: 14, phase: 'RESUMING' }],
+    });
+
+    await runner.sweepOrphans();
+    await Promise.all(pending);
+
+    expect(sessionMapper.selectById).toHaveBeenCalledWith(14);
+  });
+
+  it('recoversOrphanOnIntervalAndStopsAfterStopPeriodicSweep', async () => {    vi.useFakeTimers();
+    try {
+      const dir = useTmpDir('mao-sweep-periodic-');
+      writeActivePort(dir, 9081);
+      const { runner, sessionMapper, pending } = makeSweepRunner({
+        runtimeDir: dir,
+        selfPort: 9081,
+        sessions: [{ id: 11, phase: 'RESUMING' }],
+      });
+
+      runner.startPeriodicSweep();
+      await vi.advanceTimersByTimeAsync(30_000);
+      await Promise.all(pending);
+      expect(sessionMapper.selectById).toHaveBeenCalledWith(11);
+
+      runner.stopPeriodicSweep();
+      sessionMapper.selectById.mockClear();
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(sessionMapper.selectById).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }

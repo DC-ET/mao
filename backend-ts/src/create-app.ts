@@ -159,6 +159,8 @@ import { ActiveContextCalculator } from './harness/core/active-context-calculato
 import { BackgroundTaskManager } from './harness/core/background-task-manager.js';
 import { CompactionConfig } from './harness/core/compaction-config.js';
 import { CrashRecoveryRunner } from './harness/core/crash-recovery-runner.js';
+import { DeployDrainWatcher } from './harness/core/deploy-drain-watcher.js';
+import { deployDrainSec, isDrainingInstance, readDeployLock } from './harness/core/deploy-lock.js';
 import { createAgentExecutor } from './harness/core/agent-executor.js';
 import { LocalAgentsMdRegistry } from './harness/core/local-agents-md-registry.js';
 import { RuntimeDataResolver } from './harness/runtime/runtime-data-resolver.js';
@@ -2258,6 +2260,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     // 延迟全库补扫排除本实例正在执行的会话（AgentLoop 已挂 flag）：其 phase 虽是 RUNNING，
     // 但属于正常运行而非崩溃遗留，纳入会与正在跑的执行并发重跑同一会话。
     (sessionId) => agentLoop.getCancelFlag(sessionId) != null,
+    // 孤儿会话巡检只在承接流量的实例上执行（对照 active-backend-port）。
+    cfg.server.port,
   );
   void crash.run().catch((e) => console.error('Crash recovery failed', e)).then(async () => {
     // 等崩溃恢复初始扫描提交后再触发队列接力。hydrate 对崩溃时在途执行的 RUNNING 队列行按
@@ -2273,9 +2277,73 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     }
   }).catch((error) => console.error('飞书入站队列启动恢复失败', error));
 
-  return {
-    app,
-    async close() {
+  // 启动期恢复扫描只覆盖"那一瞬间已存在"的遗留会话；会话可能是扫描窗口之后才在旧实例上
+  // 进入 RUNNING 的（消息落到待排空实例），必须靠周期巡检兜住。仅承接流量的实例执行。
+  crash.startPeriodicSweep();
+
+  let closing: Promise<void> | null = null;
+
+  /**
+   * 只有"蓝绿切流后本实例是被替换掉的旧端口"时才值得等待在途执行收尾——
+   * 此时新实例已经在承接流量，可以立刻接管被中断的会话。
+   * 普通重启（stop/restart）没有接手方，等待只会拖慢停机，交给下次启动的恢复扫描即可。
+   */
+  const isDrainingForDeploy = (): boolean => isDrainingInstance(cfg.app.harness.runtimeDir, cfg.server.port);
+
+  /**
+   * 等在途执行收尾；超过 graceMs 仍被中断的会话标记为 RESUMING，
+   * 由新实例（或下次启动）的崩溃恢复续跑——否则会话会永久停在 RUNNING，
+   * 表现为"消息发出去了，一直没响应"。
+   *
+   * 在途判定必须取两个来源的并集：AgentLoop 的取消标志覆盖全部执行入口
+   * （桌面 WS、飞书/钉钉/微信入站、定时任务、子代理），wsHandler 的 claim 集合额外兜底。
+   */
+  const listInFlightSessionIds = (): number[] => [
+    ...new Set([...agentLoop.listActiveSessionIds(), ...wsHandler.listActiveExecutionSessionIds()]),
+  ];
+  const settleInFlightExecutions = async (graceMs: number): Promise<void> => {
+    const deadline = Date.now() + graceMs;
+    while (Date.now() < deadline) {
+      if (listInFlightSessionIds().length === 0) return;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    const interrupted = listInFlightSessionIds();
+    if (interrupted.length === 0) return;
+    console.warn(`停机时仍有 ${interrupted.length} 个执行未收尾，尝试标记 RESUMING: ${interrupted.join(',')}`);
+    for (const sessionId of interrupted) {
+      try {
+        // CAS：若执行已在此期间收尾并写入终态，这里不会把终态改回 RESUMING。
+        await sessionService.markInterruptedIfActive(sessionId);
+      } catch (error) {
+        console.error(`标记被中断会话失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  };
+
+  /**
+   * 蓝绿排空前等待在途执行收尾的上限：必须明显小于发布脚本的 drain 窗口，
+   * 否则脚本会先 SIGTERM（再过 2s SIGKILL）把等待和标记一起截断。
+   */
+  const drainGraceMs = (): number => {
+    const lock = readDeployLock(cfg.app.harness.runtimeDir);
+    const drainWindowMs = deployDrainSec(lock) * 1000;
+    return Math.max(3_000, Math.min(40_000, drainWindowMs - 15_000));
+  };
+
+  /** 幂等关闭：可能被 drain 监听器与 SIGTERM 路径同时触发。 */
+  const closeApp = (): Promise<void> => {
+    if (closing != null) return closing;
+    closing = (async () => {
+      crash.stopPeriodicSweep();
+      drainWatcher.stop();
+      // 静默 IM 入站：长连接关掉后新消息自然落到新实例，避免停机窗口内再起新执行。
+      // 注：已建立的桌面 WS 连接无法在此刻切断（nginx reload 不断开长连接），
+      // 其新起的执行会被 settle 的等待/标记覆盖。
+      weixinMonitor.shutdown();
+      feishuMonitor.shutdown();
+      dingtalk.shutdown();
+      weixinInboundHandler.shutdown();
+      await settleInFlightExecutions(isDrainingForDeploy() ? drainGraceMs() : 0);
       scheduler.stop();
       deliveryScheduler.stop();
       ecpRenewScheduler.stop();
@@ -2283,14 +2351,27 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       terminalManager.stopCleanup();
       terminalManager.closeAll();
       runtimeCleanup.stop();
-      weixinMonitor.shutdown();
-      feishuMonitor.shutdown();
-      dingtalk.shutdown();
-      weixinInboundHandler.shutdown();
+      activityHeartbeat.stopAll();
       wsRegistry.shutdown();
       await app.close();
       await db.close();
-    },
+    })();
+    return closing;
+  };
+
+  const drainWatcher = new DeployDrainWatcher({
+    runtimeDir: cfg.app.harness.runtimeDir,
+    selfPort: cfg.server.port,
+    // 只认"本进程启动之后开始的部署"：端口在 9080↔9081 之间来回切，
+    // 历史残留的 switched 锁的 oldPort 可能正好等于本实例端口，不能据此自杀。
+    startedAtSec: Math.floor((Date.now() - process.uptime() * 1000) / 1000),
+    shutdown: closeApp,
+  });
+  drainWatcher.start();
+
+  return {
+    app,
+    close: closeApp,
   };
 }
 

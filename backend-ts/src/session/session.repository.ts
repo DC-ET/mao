@@ -1,6 +1,7 @@
 import type { Db } from '../db/db.js';
 import { notDeleted } from '../db/db.js';
 import { toSnakeRow } from '../common/case.js';
+import { nowSql } from '../common/datetime.js';
 import type { FileChange, Message, Session, SessionGroupPage } from './types.js';
 
 export const SESSION_SOURCE_VALUES = ['web', 'embed'] as const;
@@ -160,6 +161,22 @@ export class SessionRepository {
       { phase: 'RUNNING' },
       "id = ? AND (phase <> 'RUNNING' OR phase IS NULL) AND deleted = 0",
       [sessionId],
+    );
+  }
+
+  /**
+   * CAS：仅当 phase 落在他值集合内才改写（并刷新 last_activity_at）。
+   *
+   * 停机收尾必须用它而不是"先读后写"：执行线程可能在读完之后写入终态，
+   * 无条件写会把 COMPLETED/FAILED 覆盖回运行态，使已完成的会话被当成孤儿重新执行。
+   */
+  markPhaseIfIn(sessionId: number, phase: string, expected: string[]): Promise<number> {
+    if (expected.length === 0) return Promise.resolve(0);
+    const placeholders = expected.map(() => '?').join(', ');
+    return this.updateWhere(
+      { phase, lastActivityAt: nowSql() },
+      `id = ? AND deleted = 0 AND phase IN (${placeholders})`,
+      [sessionId, ...expected],
     );
   }
 

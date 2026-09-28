@@ -23,6 +23,7 @@ function makeService() {
     listSideTasks: vi.fn(async () => []),
     lockActiveSessionById: vi.fn(async () => 11),
     selectMessageSearchCandidates: vi.fn(async () => []),
+    markPhaseIfIn: vi.fn(async () => 1),
   };
   const messageRepo = {
     insert: vi.fn(async (m: { id?: number }) => { m.id = 21; return 21; }),
@@ -254,6 +255,19 @@ describe('SessionActivityHeartbeat', () => {
     expect(sessionService.touchLastActivity).toHaveBeenCalledTimes(1);
     hb.clear(1);
     hb.clear(null);
+  });
+});
+
+describe('SessionService.markInterruptedIfActive', () => {
+  it('marks only while the session is still in a running phase', async () => {
+    const { service, sessionRepo } = makeService();
+
+    expect(await service.markInterruptedIfActive(11)).toBe(true);
+    expect(sessionRepo.markPhaseIfIn).toHaveBeenCalledWith(11, 'RESUMING', ['RUNNING', 'RESUMING']);
+
+    // CAS 未命中（执行已写入终态）时返回 false，绝不覆盖终态。
+    sessionRepo.markPhaseIfIn.mockResolvedValue(0);
+    expect(await service.markInterruptedIfActive(11)).toBe(false);
   });
 });
 

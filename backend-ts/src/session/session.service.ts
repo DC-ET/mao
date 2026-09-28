@@ -979,6 +979,18 @@ export class SessionService {
     return message;
   }
 
+  /**
+   * 停机/排空收尾：仅当会话仍在运行态才标记为被中断（原子 CAS）。
+   *
+   * 不能"先 getSession 读 phase 再 updatePhase"——执行线程可能在两者之间写入 COMPLETED，
+   * 无条件写会把终态覆盖回 RESUMING，而已完成的会话随后会被孤儿巡检重新执行一遍。
+   * 返回是否真的标记成功。
+   */
+  async markInterruptedIfActive(sessionId: number): Promise<boolean> {
+    const affected = await this.sessionRepo.markPhaseIfIn(sessionId, 'RESUMING', ['RUNNING', 'RESUMING']);
+    return affected > 0;
+  }
+
   async updatePhase(sessionId: number, phase: string): Promise<void> {
     const session = await this.getSession(sessionId);
     const oldPhase = session.phase;

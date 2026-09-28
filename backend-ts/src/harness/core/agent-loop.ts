@@ -76,6 +76,15 @@ export class AgentLoop {
     return flag;
   }
 
+  /**
+   * 本实例正在执行的会话 id（取消标志的生命周期与一次执行严格对齐）。
+   * 覆盖全部执行入口：桌面 WS、飞书/钉钉/微信入站、定时任务、子代理、崩溃恢复续跑——
+   * 渠道入站执行不经过 StreamingWsHandler，只看它的 claim 集合会漏判"实例仍忙碌"。
+   */
+  listActiveSessionIds(): number[] {
+    return [...this.cancelFlags.keys()];
+  }
+
   getCancelFlag(sessionId: number | null | undefined): AtomicBoolean | undefined {
     return sessionId != null ? this.cancelFlags.get(sessionId) : undefined;
   }
@@ -143,6 +152,9 @@ export class AgentLoop {
   ): Promise<void> {
     let round = 0;
     let emptyResponseCount = 0;
+    const heartbeatSessionId = context.sessionId;
+    // 长工具调用期间轮级 touch 不会触发，这里挂独立心跳，避免执行中被误判为孤儿会话。
+    this.activityHeartbeat.start(heartbeatSessionId);
     try {
       let pendingSave: string | null = null;
       let pendingThinking: string | null = null;
@@ -454,6 +466,7 @@ export class AgentLoop {
       listener.onMessageEnd(context.totalUsage);
     } finally {
       const sessionId = context.sessionId;
+      this.activityHeartbeat.stop(heartbeatSessionId);
       if (sessionId != null) {
         this.cancelFlags.delete(sessionId);
         this.shellSessionManager.closeByConversation(sessionId);

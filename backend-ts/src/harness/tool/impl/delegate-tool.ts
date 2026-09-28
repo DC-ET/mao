@@ -130,9 +130,10 @@ export class DelegateTool extends BaseTool {
           childSession, subContext, childCancel.get(),
         );
       } finally {
-        if (!childCancel.get()) {
-          this.agentLoop.removeCancelFlag(childSession.id!);
-        }
+        // 无论是否被取消都要摘旗：标志没摘会让该会话永久被当成"本实例仍在执行"
+        // （停机收尾据此等待、孤儿巡检据此排除本地活跃会话），而 execute 被 skip 时
+        // AgentLoop.execute 的 finally 也不会替我们清理。
+        this.agentLoop.removeCancelFlag(childSession.id!);
         this.localToolSessionRegistry.removeSession?.(childSession.id!);
       }
       const collector = runResult.collector;
@@ -441,10 +442,9 @@ export class DelegateFollowupTool extends BaseTool {
         }
         runResult = await this.visibilityService.executeVisible(childSession, subContext, skip);
       } finally {
-        if (cancelFlagRegistered && !childCancel.get()) {
-          this.agentLoop.removeCancelFlag(childSessionId);
-          cancelFlagRegistered = false;
-        }
+        // 同上：取消时也必须摘旗，否则 skip 路径（execute 从未提交）会永久泄漏。
+        if (cancelFlagRegistered) this.agentLoop.removeCancelFlag(childSessionId);
+        cancelFlagRegistered = false;
         if (localRegistered) {
           this.localToolSessionRegistry.removeSession(childSessionId);
           localRegistered = false;

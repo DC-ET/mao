@@ -28,7 +28,7 @@ describe('AgentLoop', () => {
   const shellSessionManager = {
     closeByConversation: vi.fn(),
   } as unknown as ShellSessionManager & { closeByConversation: ReturnType<typeof vi.fn> };
-  const activityHeartbeat = { touch: vi.fn(), clear: vi.fn() };
+  const activityHeartbeat = { touch: vi.fn(), start: vi.fn(), stop: vi.fn(), clear: vi.fn() };
   const sessionService = {
     loadContextAnchor: vi.fn(),
     getMaxMessageId: vi.fn(),
@@ -356,6 +356,8 @@ describe('AgentLoop', () => {
     const l = listener();
     const p = persistence();
     const cancelFlag = agentLoop.registerCancelFlag(11);
+    // 停机收尾据此枚举本实例全部在途执行（含飞书/钉钉/微信入站，它们不经 wsHandler 登记）。
+    expect(agentLoop.listActiveSessionIds()).toContain(11);
     promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
     backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
     stubActiveContext(5);
@@ -378,6 +380,10 @@ describe('AgentLoop', () => {
     expect(p.onSaveToolMessage).not.toHaveBeenCalled();
     expect(ctx.messages.some((m) => m.role === 'assistant' || m.role === 'tool')).toBe(false);
     expect(l.onMessageEnd).toHaveBeenCalledTimes(1);
+    // 执行结束（无论正常收尾还是被取消）必须摘除标志：否则停机收尾会一直以为该会话在跑，
+    // 每次部署都白等满 grace，孤儿巡检也会永久跳过它。
+    expect(agentLoop.listActiveSessionIds()).not.toContain(11);
+    expect(activityHeartbeat.stop).toHaveBeenCalledWith(11);
   });
 
   it('keeps interleaved tool-call argument chunks bound to their index', async () => {

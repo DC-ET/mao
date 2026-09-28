@@ -46,6 +46,11 @@ describe('CrashRecoveryRunner', () => {
       llm as never,
       '/tmp/mao-runtime-test',
       { submit: (fn) => { submitted.push(fn); } },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      9080,
     );
     await runner.run();
     expect(submitted).toHaveLength(1);
@@ -77,12 +82,17 @@ describe('CrashRecoveryRunner', () => {
       { selectById: vi.fn(async () => ({ supportsVision: 1 })), selectDefault: vi.fn() } as never,
       '/tmp/mao-runtime-test',
       { submit: (fn) => { submitted.push(fn); } },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      9080,
     );
     // 模拟蓝绿部署下 deferAll/skip 分支在初始扫描写入的快照。
     (runner as unknown as { deferredCandidates: unknown[] }).deferredCandidates = [
       { id: 9, userId: 3, modelId: 1, phase: 'RUNNING' },
     ] as never;
-    await (runner as unknown as { runPass: (d: boolean) => Promise<void> }).runPass(true);
+    await (runner as unknown as { runPass: (d: boolean) => Promise<boolean> }).runPass(true);
     // 延迟恢复必须复用快照（session 9），不得重新扫描 DB。
     expect(selectByPhase).not.toHaveBeenCalled();
     expect(submitted).toHaveLength(1);
@@ -112,11 +122,16 @@ describe('CrashRecoveryRunner', () => {
       { selectById: vi.fn(async () => ({ supportsVision: 1 })), selectDefault: vi.fn() } as never,
       '/tmp/mao-runtime-test',
       { submit: (fn) => { submitted.push(fn); } },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      9080,
     );
     (runner as unknown as { deferredCandidates: unknown[] }).deferredCandidates = [
       { id: 9, userId: 3, modelId: 1, phase: 'RUNNING' },
     ] as never;
-    await (runner as unknown as { runPass: (d: boolean) => Promise<void> }).runPass(true);
+    await (runner as unknown as { runPass: (d: boolean) => Promise<boolean> }).runPass(true);
     expect(submitted).toHaveLength(1);
     await submitted[0]();
     expect(harness.execute).not.toHaveBeenCalled();

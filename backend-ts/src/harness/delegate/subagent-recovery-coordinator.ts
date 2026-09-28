@@ -35,6 +35,22 @@ export class SubagentRecoveryCoordinator {
     return blocked;
   }
 
+  /**
+   * 只读：当前被"在途子代理执行"占用的会话（父会话 + 子会话）。
+   * 孤儿会话巡检用它排除父会话——父会话等待后台子代理时自身可能长时间没有活动，
+   * 但仍在正常运行，不能当作孤儿重跑。注意这里只读，不触发任何恢复。
+   */
+  async listBlockedSessionIds(): Promise<Set<number>> {
+    const candidates = await this.executionMapper.listRecoveryCandidates();
+    const blocked = new Set<number>();
+    for (const execution of candidates) {
+      if (execution.parentSessionId == null) continue;
+      blocked.add(execution.parentSessionId);
+      if (execution.childSessionId != null) blocked.add(execution.childSessionId);
+    }
+    return blocked;
+  }
+
   private async recoverGroup(
     parentId: number, executions: SubagentExecution[], recoverParent: (session: Session) => Promise<void>,
   ): Promise<void> {

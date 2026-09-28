@@ -16,6 +16,8 @@ import {
   deployDrainSec,
   isRecentDeployLock,
   isSessionActiveDuringDeploy,
+  parseSqlDateTime,
+  readActiveBackendPort,
   readDeployLock,
   shouldDeferAllRecoveryDuringDeploy,
 } from './deploy-lock.js';
@@ -31,6 +33,9 @@ export interface RecoveryExtraListener extends AgentEventListener {
 
 export class CrashRecoveryRunner {
   private deferredTimer: ReturnType<typeof setTimeout> | null = null;
+  private sweepTimer: ReturnType<typeof setInterval> | null = null;
+  private sweeping = false;
+  private missingActivePortLogged = false;
   /**
    * 初始扫描时被推迟恢复的会话快照。蓝绿部署下延迟恢复首次只重放该快照，不重新扫描
    * DB——否则会把「重启后刚创建并正在活跃执行的会话」误判为崩溃遗留的 RUNNING 会话，
@@ -49,6 +54,32 @@ export class CrashRecoveryRunner {
   private readonly recovering = new Set<number>();
   /** 快照重放与全库补扫的间隔秒数：补扫前旧实例 drain 必须已收尾。 */
   private static readonly RESCAN_DELAY_SEC = 15;
+  /**
+   * 孤儿会话巡检间隔。启动期的一次性扫描（run/deferred）只能覆盖"扫描那一刻已存在"的
+   * 遗留会话；会话可能是扫描窗口之后才在旧实例上进入 RUNNING 的（消息落到待排空实例），
+   * 此时必须靠周期巡检兜住——它不依赖"旧实例几秒后死"这一时序假设。
+   */
+  private static readonly ORPHAN_SWEEP_INTERVAL_SEC = 30;
+  /**
+   * RUNNING 会话被判定为孤儿所需的静默时长。必须显著大于心跳间隔（30s），
+   * 否则会把"另一实例正在执行、只是恰好未刷新"的会话抢过来重复执行。
+   * RESUMING 是显式中断标记，不受此阈值约束。
+   */
+  private static readonly RUNNING_ORPHAN_STALE_SEC = 120;
+  /**
+   * RESUMING 会话被判定为孤儿所需的静默时长。标记方（排空中的旧实例）可能刚刚写入
+   * RESUMING 而进程尚未退出，其执行的心跳仍在刷新 last_activity_at（`touchLastActivity`
+   * 对 RUNNING/RESUMING 都会写）。阈值取得比心跳间隔（30s）大，确保"静默"意味着
+   * 那个仍在收尾的实例真的没了，避免两边同时跑同一会话。
+   */
+  private static readonly RESUMING_ORPHAN_STALE_SEC = 45;
+  /**
+   * 巡检对"部署仍在进行"的让路上限 = 排空窗口 + 本余量。超过即认为 drain 脚本已异常
+   * （例如没写成 `drained`），不再无限让路，否则孤儿会话会被压住 15 分钟。
+   */
+  private static readonly DEPLOY_SWEEP_GRACE_SEC = 60;
+  /** deferred pass 被部署窗口推迟后的重试间隔（重试本身不查库，成本很低）。 */
+  private static readonly DEFERRED_RETRY_DELAY_SEC = 15;
 
   constructor(
     private readonly sessionMapper: SessionMapper,
@@ -75,13 +106,135 @@ export class CrashRecoveryRunner {
      * 仅凭 DB 无法与崩溃遗留区分，不排除会对同一会话并发跑两次执行。
      */
     private readonly isSessionLocallyActive?: (sessionId: number) => boolean,
+    /** 本实例监听的后端端口；与 active-backend-port 一致时才允许执行孤儿巡检。 */
+    private readonly selfPort?: number,
   ) {}
 
   async run(): Promise<void> {
     await this.runPass(false);
   }
 
-  private async runPass(deferred: boolean): Promise<void> {
+
+  /**
+   * 启动孤儿会话巡检。与启动期的一次性恢复不同，它周期性复查 DB，
+   * 兜住"恢复扫描窗口之后才进入 RUNNING"的漏网会话（消息落到待排空实例的典型时序）。
+   */
+  startPeriodicSweep(): void {
+    if (this.sweepTimer != null) return;
+    this.sweepTimer = setInterval(() => {
+      void this.sweepOrphans().catch((e) => harnessLog('error', 'Orphan session sweep failed', e));
+    }, CrashRecoveryRunner.ORPHAN_SWEEP_INTERVAL_SEC * 1000);
+    this.sweepTimer.unref?.();
+  }
+
+  /** 停止巡检；同时取消尚未触发的延迟恢复 pass，避免进程关闭后仍去访问已关闭的 DB。 */
+  stopPeriodicSweep(): void {
+    if (this.sweepTimer != null) {
+      clearInterval(this.sweepTimer);
+      this.sweepTimer = null;
+    }
+    if (this.deferredTimer != null) {
+      clearTimeout(this.deferredTimer);
+      this.deferredTimer = null;
+    }
+  }
+
+  /**
+   * 孤儿会话巡检（单次）。
+   * 只有承接流量的实例执行，且部署进行中必须让路——排空中的旧实例仍可能在跑会话，
+   * 此时抢过来会并发重复执行。RESUMING 是"执行被中断、等待恢复"的显式标记，立即可恢复；
+   * RUNNING 无法与"别的实例正在跑"区分，必须等静默超过阈值。
+   */
+  async sweepOrphans(): Promise<void> {
+    if (this.sweeping) return;
+    this.sweeping = true;
+    try {
+      if (!this.isActiveInstance()) return;
+      if (this.isDeployBlockingSweep()) return;
+      const blocked = await this.listCoordinatorBlocked();
+      const candidates = await this.collectOrphanCandidates(blocked);
+      if (candidates.length === 0) return;
+      harnessLog('warn', `Found ${candidates.length} orphan session(s) outside deploy window, initiating recovery`);
+      for (const session of candidates) this.agentExecutor.submit(() => this.recoverSession(session));
+    } finally {
+      this.sweeping = false;
+    }
+  }
+
+  private isActiveInstance(): boolean {
+    if (this.selfPort == null) return false;
+    const active = readActiveBackendPort(this.runtimeDir);
+    if (active != null) return active === this.selfPort;
+    // 单实例/非蓝绿安装（start-backend.sh、Docker 首次启动）不写 active-backend-port：
+    // 此时没有第二个实例可抢，允许照常巡检（部署窗口仍由 isDeployBlockingSweep 挡住）。
+    // 缺失即停摆会让修复在单实例环境静默失效。
+    const lock = readDeployLock(this.runtimeDir);
+    if (lock != null && lock.oldPort === this.selfPort) {
+      // 端口文件缺失时无法用 active-backend-port 判断谁是承接方；此时若本实例正是被替换掉的
+      // 旧端口，就不能巡检，否则会与新实例并发重跑同一批会话（drain 脚本被跳过时会走到这里）。
+      return false;
+    }
+    if (!this.missingActivePortLogged) {
+      this.missingActivePortLogged = true;
+      harnessLog('info', `active-backend-port missing under ${this.runtimeDir}; treating port ${this.selfPort} as the only instance for orphan sweep`);
+    }
+    return true;
+  }
+
+  /**
+   * 巡检视角的"部署仍在进行"判定：超过排空窗口后不再无限让路。
+   * drain 脚本异常时不会写 `drained`，状态可能永远停在 `switched`，
+   * 若只按状态判断，孤儿巡检会被压住最长 `DEPLOY_LOCK_MAX_AGE_SEC`（15 分钟），
+   * 用户侧就是"消息一直是没反应"。
+   */
+  private isDeployBlockingSweep(): boolean {
+    const lock = readDeployLock(this.runtimeDir);
+    if (!shouldDeferAllRecoveryDuringDeploy(lock)) return false;
+    const elapsedSec = Math.floor(Date.now() / 1000) - (lock?.startedAt ?? 0);
+    return elapsedSec <= deployDrainSec(lock) + CrashRecoveryRunner.DEPLOY_SWEEP_GRACE_SEC;
+  }
+
+  /** 只读查询被在途子代理执行占用的会话；查询失败按"无阻塞"处理，避免巡检整体失效。 */
+  private async listCoordinatorBlocked(): Promise<Set<number>> {
+    if (this.subagentCoordinator == null) return new Set<number>();
+    try {
+      return await this.subagentCoordinator.listBlockedSessionIds();
+    } catch (e) {
+      harnessLog('warn', 'Failed to list subagent-blocked sessions for orphan sweep', e);
+      return new Set<number>();
+    }
+  }
+
+  private async collectOrphanCandidates(blocked: Set<number>): Promise<Session[]> {
+    const candidates = await this.collectCandidates(blocked, true);
+    const now = Date.now();
+    return candidates.filter((session) => {
+      const threshold = session.phase === 'RESUMING'
+        ? CrashRecoveryRunner.RESUMING_ORPHAN_STALE_SEC
+        : CrashRecoveryRunner.RUNNING_ORPHAN_STALE_SEC;
+      const last = parseSqlDateTime(session.lastActivityAt);
+      if (last == null) return true;
+      return (now - last.getTime()) / 1000 >= threshold;
+    });
+  }
+
+  /**
+   * 启动期一次性 pass（deferred=false）与部署后的延迟恢复 pass（deferred=true）。
+   *
+   * deferred pass（快照重放 + 全库补扫）必须等"旧实例确实已消失"才能执行：它的候选来自
+   * 「部署窗口内仍活跃的会话」快照，而快照重放不做静默校验，若在旧实例仍存活时执行，
+   * 就会与旧实例正在跑的执行并发重跑同一会话（补写 tool output + 双跑）。
+   * 因此这里与孤儿巡检共用同一把闸门；被推迟时重新排期，不推进 deferredScan 阶段。
+   */
+  private async runPass(deferred: boolean): Promise<boolean> {
+    if (deferred && (!this.isActiveInstance() || this.isDeployBlockingSweep())) {
+      harnessLog(
+        'info',
+        `Postponing deferred crash recovery: deploy still in flight or this instance is not serving traffic (status=${readDeployLock(this.runtimeDir)?.status ?? 'none'})`,
+      );
+      this.scheduleDeferredRecovery(CrashRecoveryRunner.DEFERRED_RETRY_DELAY_SEC);
+      return false;
+    }
     const deployLock = readDeployLock(this.runtimeDir);
     const recentDeploy = isRecentDeployLock(deployLock);
     const deferAll = !deferred && shouldDeferAllRecoveryDuringDeploy(deployLock);
@@ -125,10 +278,11 @@ export class CrashRecoveryRunner {
       this.scheduleDeferredRecovery(deployDrainSec(deployLock));
     }
 
-    if (recover.length === 0) return;
+    if (recover.length === 0) return true;
     const label = deferred ? 'deferred' : 'initial';
     harnessLog('warn', `Found ${recover.length} sessions stuck in RUNNING after restart, initiating ${label} recovery`);
     for (const session of recover) this.agentExecutor.submit(() => this.recoverSession(session));
+    return true;
   }
 
   /**
@@ -173,7 +327,9 @@ export class CrashRecoveryRunner {
     this.deferredTimer = setTimeout(() => {
       this.deferredTimer = null;
       // 第一步：重放初始扫描快照（此时 deferredScan 仍为 false，runPass 用快照作候选）。
-      void this.runPass(true).then(() => {
+      void this.runPass(true).then((ran) => {
+        // 被推迟（部署仍在进行/本实例未承接流量）时不推进阶段：由 runPass 自行重新排期。
+        if (!ran) return;
         // 第二步：快照重放完成后置位并延迟一轮全库补扫——此时旧实例 drain 已收尾，
         // 补扫才能安全捕获窗口内新建、随旧实例排空死亡但不在快照里的会话。
         if (!this.deferredScan) {
@@ -183,7 +339,11 @@ export class CrashRecoveryRunner {
             void this.runPass(true).catch((e) => harnessLog('error', 'Post-drain crash rescan failed', e));
           }, CrashRecoveryRunner.RESCAN_DELAY_SEC * 1000);
         }
-      }).catch((e) => harnessLog('error', 'Deferred crash recovery failed', e));
+      }).catch((e) => {
+        harnessLog('error', 'Deferred crash recovery failed', e);
+        // 异常也要重新排期：否则这次部署的补扫从此丢失（会话只能等下一轮重启）。
+        this.scheduleDeferredRecovery(CrashRecoveryRunner.DEFERRED_RETRY_DELAY_SEC);
+      });
     }, delaySec * 1000);
   }
 

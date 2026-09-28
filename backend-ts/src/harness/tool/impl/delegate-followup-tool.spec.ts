@@ -190,6 +190,30 @@ describe('DelegateFollowupTool', () => {
     expect(visibilityService.ensureSubscribed).toHaveBeenCalledWith(7, 100);
   });
 
+  it('parentCancelledFollowupSkipsAndReleasesChildCancelFlag', async () => {
+    sessionMapper.selectById.mockImplementation(async (id: number) =>
+      id === 1 ? parentSession(1) : childSession(100, 1, 'SUBAGENT', 'COMPLETED'));
+    subagentExecutionMapper.findByChildSessionId.mockResolvedValue({ agentType: 'reviewer' });
+    definitionRegistry.getDefinition.mockReturnValue({ name: 'reviewer' });
+    sessionMapper.claimRunningIfIdle.mockResolvedValue(1);
+    sessionCompactionService.loadValidated.mockResolvedValue(null);
+    // 父会话已被取消：子代理执行走 skip 分支（execute 从未提交，AgentLoop 的 finally 不会代偿）。
+    agentLoop.getCancelFlag.mockReturnValue(new AtomicBoolean(true));
+    agentLoop.registerCancelFlag.mockReturnValue(new AtomicBoolean(false));
+    const subCtx = new AgentExecutionContext();
+    delegateTool.buildSubContext.mockResolvedValue(subCtx);
+    visibilityService.executeVisible.mockResolvedValue({
+      collector: new SubAgentResultCollector(), executionId: 'exec-skip',
+    });
+    messageMapper.selectLast.mockResolvedValue(null);
+
+    await tool.execute('{"child_session_id":100,"task":"继续审查"}', 1, null);
+
+    expect(visibilityService.executeVisible).toHaveBeenCalledWith(expect.anything(), expect.anything(), true);
+    // 必须摘旗：泄漏会让该 id 永久留在"本实例在途执行"集合里，停机收尾每次都白等满 grace。
+    expect(agentLoop.removeCancelFlag).toHaveBeenCalledWith(100);
+  });
+
   it('buildSubContextPreservesWriteFileAndExcludesEditFileForReviewer', async () => {
     const fakeDelegate = { getName: () => 'delegate' } as Tool;
     const fakeFollowup = { getName: () => 'delegate_followup' } as Tool;
