@@ -99,4 +99,6 @@ mao git delete --id 2
 ## 注意事项
 
 - access token 属于敏感信息，避免写入 shell 历史时可改用环境变量拼命令
-- CLOUD `workspace-mode=git` 前应确保对应域名凭证已配置
+- 克隆地址（`workspace-mode=git` 的 `gitCloneUrl`）**不要携带账号或 Token**，服务端会直接拒绝；鉴权统一由该域名的凭证经 `GIT_ASKPASS` 与 `GIT_TOKEN_<域名>` 环境变量完成
+- 凭证会被写进工作区 `.git/config`、会话日志与对话历史，因此任何位置都不要把 Token 拼进仓库 URL
+- CLOUD `workspace-mode=git` 前应确保对应域名凭证已配置，否则私有仓库克隆会失败

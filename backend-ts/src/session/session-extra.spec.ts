@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { useTmpDir } from '../testing/tmp-dir.js';
 import { describe, expect, it, vi } from 'vitest';
@@ -7,7 +7,8 @@ import { SessionService } from './session.service.js';
 import { SessionGroupKey } from './util/session-group-key.js';
 import { SessionActivityHeartbeat } from './session-activity-heartbeat.js';
 import { TaskTerminalService } from './task-terminal.service.js';
-import { GitOperationService, injectHttpsToken, maskToken } from './git-operation.service.js';
+import { GitOperationService } from './git-operation.service.js';
+import { GitUrlParser } from './util/git-url-parser.js';
 
 function makeService() {
   const sessionRepo = {
@@ -387,21 +388,41 @@ describe('TaskTerminalService', () => {
   });
 });
 
-describe('GitOperationService helpers', () => {
-  it('injects and masks https tokens', () => {
-    expect(injectHttpsToken('https://git.example.com/a.git', 'tok')).toContain('oauth2:');
-    expect(injectHttpsToken('http://git.example.com/a.git', 'tok')).toBe('http://git.example.com/a.git');
-    expect(maskToken('https://oauth2:secret@git.example.com/a.git')).toContain('***');
-    expect(maskToken(null)).toBe('');
+describe('GitOperationService', () => {
+  it('rejects clone URLs that carry credentials', () => {
+    expect(() => GitUrlParser.validate('https://oauth2:secret@git.example.com/a.git')).toThrow(BusinessException);
+    expect(() => GitUrlParser.validate('https://L5qE9pn6816goV22Qvrr@git.acg.team/a/b.git')).toThrow(BusinessException);
+    expect(() => GitUrlParser.validate('https://git.acg.team/a/b.git')).not.toThrow();
   });
 
-  it('cloneWithoutCredentials', async () => {
-    const git = new GitOperationService({ getTokenMapByUser: async () => ({}) });
+  it('provides credentials via GIT_ASKPASS instead of the clone URL', async () => {
     const dir = useTmpDir('clone-');
-    const result = await git.clone('https://example.invalid/repo.git', null, join(dir, 'r'), 1);
+    const scripts: string[] = [];
+    const git = new GitOperationService(
+      { getTokenMapByUser: async () => ({ 'git.acg.team': 'tok-value' }) },
+      {
+        resolveGitAskpassScript: (userId, sessionId) => {
+          const script = join(dir, `git-askpass-${userId}-${sessionId}.sh`);
+          scripts.push(script);
+          return script;
+        },
+      },
+    );
+    const result = await git.clone('https://example.invalid/repo.git', null, join(dir, 'r'), 1, 9);
+    expect(result.success).toBe(false);
+    expect(scripts).toHaveLength(1);
+    expect(existsSync(scripts[0])).toBe(true);
+    expect(readFileSync(scripts[0], 'utf8')).toContain('GIT_TOKEN_');
+  });
+
+  it('clones anonymously when the user has no credentials', async () => {
+    const dir = useTmpDir('clone-');
+    const git = new GitOperationService(
+      { getTokenMapByUser: async () => ({}) },
+      { resolveGitAskpassScript: () => join(dir, 'unused.sh') },
+    );
+    const result = await git.clone('https://example.invalid/repo.git', null, join(dir, 'r'), 1, 9);
     expect(result.success).toBe(false);
     expect(result.error).toBeTruthy();
   });
 });
-void mkdirSync;
-void writeFileSync;

@@ -175,7 +175,7 @@ export class SessionService {
       const slug = GitUrlParser.extractSlug(gitCloneUrl);
       const projectPath = CloudWorkspaceResolver.resolveProjectWorkspace(this.pathSandbox, userId, slug);
       this.ensureWorkspaceDirectory(projectPath);
-      const result = await this.gitOperationService.clone(gitCloneUrl, gitBranch, projectPath, userId);
+      const result = await this.gitOperationService.clone(gitCloneUrl, gitBranch, projectPath, userId, session.id ?? null);
       if (!result.success) {
         this.deleteWorkspaceDirectory(projectPath);
         throw new BusinessException(ErrorCode.GIT_CLONE_FAILED, result.error ?? ErrorCode.GIT_CLONE_FAILED.message);

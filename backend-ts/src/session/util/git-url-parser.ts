@@ -22,6 +22,12 @@ export function validate(url: string | null | undefined): void {
       '不支持的协议，仅支持 HTTPS，示例: https://github.com/user/repo.git',
     );
   }
+  if (/^https:\/\/[^/@\s]+@/.test(trimmed)) {
+    throw new BusinessException(
+      ErrorCode.PARAM_INVALID,
+      '仓库地址不能携带账号或 Token，请在「设置 → Git 凭证」配置对应域名的 Access Token 后重试',
+    );
+  }
   if (!/^https:\/\/[^\s/]+(\/[^\s]+)+/.test(trimmed)) {
     throw new BusinessException(
       ErrorCode.PARAM_INVALID,

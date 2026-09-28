@@ -589,7 +589,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const sessionCompactionService = new SessionCompactionService(compactionRepo, messageRepo, sessionRepo);
   const sessionCompactionEventService = new SessionCompactionEventService(new SessionCompactionEventRepository(db));
   const envInfo = new EnvironmentInfoProvider();
-  const gitOps = new GitOperationService(gitLookup);
+  const runtimeResolver = new RuntimeDataResolver(cfg.app.harness.runtimeDir, cfg.app.harness.userHomeDir);
+  const gitOps = new GitOperationService(gitLookup, runtimeResolver);
   const todoMapper = new SessionTodoMapper(db);
   const todoRepo = new SessionTodoRepository(db);
   // TerminalManager / 定时任务存储都在后面才构造，会话删除回调延迟解引用
@@ -633,7 +634,6 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
 
   const userSkillsDir = cfg.app.harness.userSkillsDir || resolve(process.env.HOME ?? '/tmp', '.mao/data/userskills');
   const skillLoader = new SkillLoader(pathSandbox, cfg.app.harness.skillsDir, cfg.app.harness.skillsCacheSeconds);
-  const runtimeResolver = new RuntimeDataResolver(cfg.app.harness.runtimeDir, cfg.app.harness.userHomeDir);
   const ecpInjector = createEcpCredentialsInjector(
     ecpSessionRepo,
     (userId) => runtimeResolver.resolveUserHomeDir(userId),

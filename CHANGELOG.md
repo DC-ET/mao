@@ -15,6 +15,13 @@
 
 ---
 
+## 0.0.214 (2026-09-28)
+
+### 后端
+
+- Git 克隆不再把访问凭证拼进 clone URL。`workspace-mode=git` 克隆仓库时，Token 统一通过 `GIT_ASKPASS` 脚本 + `GIT_TOKEN_<域名>` 环境变量注入（与 Agent Shell、Git 写操作同一套机制），URL 始终保持 `https://<host>/<group>/<repo>.git`。此前实现会把 `https://oauth2:<token>@<host>/...` 交给 git，git 会把它原样写进工作区 `.git/config` 的 `remote.origin.url`，并出现在 `git remote -v`、`cat .git/config`、clone 报错等输出中，导致同机其他用户的工作区与会话日志可读到该 Token，形成跨用户凭证泄漏。
+- 克隆地址新增校验：URL 里携带 `user:pass@` 或 `token@` 形式凭证时直接拒绝并提示改用「设置 → Git 凭证」配置对应域名的 Access Token。
+
 ## 0.0.213 (2026-09-28)
 
 ### 前端（桌面 / Web / 安卓）
