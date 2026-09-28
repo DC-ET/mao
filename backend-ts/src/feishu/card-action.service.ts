@@ -83,6 +83,11 @@ export class FeishuCardActionService {
     /** 取消会话当前执行中的任务（进度卡「取消任务」按钮）；返回 false 表示当前无在执行任务。 */
     cancelRunning: (sessionId: number) => boolean | Promise<boolean>;
     /**
+     * 完成卡「点踩」toggle（飞书）：写库/删库 message_feedback 记录，并同步进度卡内存点踩态。
+     * 返回 null 表示未找到可反馈的任务结果（会话不存在或最后一条 ASSISTANT 消息已不存在）。
+     */
+    toggleDislike?: (sessionId: number) => Promise<{ disliked: boolean } | null>;
+    /**
      * 失败卡「重试」：基于会话历史续跑（不插入新用户消息），并 PATCH 原进度卡片。
      * cardMessageId 取自回调事件的 open_message_id（点击的那张失败卡）。
      */
@@ -119,6 +124,7 @@ export class FeishuCardActionService {
     if (action.kind === 'feishu_progress') {
       console.info(`飞书卡片动作 progress.${action.act}, sessionId=${action.sessionId}, openMessageId=${cardMessageIdForLog}`);
       if (action.act === 'retry') return this.handleProgressRetry(event, action);
+      if (action.act === 'dislike') return this.handleProgressDislike(event, action);
       return this.handleProgressCancel(event, action);
     }
     if (action.kind === 'feishu_ask') {
@@ -158,6 +164,36 @@ export class FeishuCardActionService {
     return {
       toast: { type: 'success', content: '正在取消任务' },
       card: { type: 'raw', data: buildQueueCardText('任务已取消', '已停止当前任务。', await this.resolveSessionDetailUrl(action.sessionId)) },
+    };
+  }
+
+  /**
+   * 完成卡「点踩」toggle：鉴权同取消任务（仅原发送者可点）。
+   * 回调必须带回整张新卡片（飞书 3 秒约束，否则客户端还原为点击前旧卡）。
+   * 卡片复用当前进度快照重建，保住完成卡的轮次、耗时与任务正文，只把点踩按钮切到 toggle 后的态。
+   * 与方案一致：群内其他人只更新点击者视图，不做额外 PATCH。
+   */
+  private async handleProgressDislike(event: FeishuCardActionEvent, action: FeishuProgressCardActionValue): Promise<FeishuCardActionResponse | undefined> {
+    const operatorOpenId = event.operator?.open_id;
+    if (operatorOpenId == null || operatorOpenId !== action.sender) {
+      return { toast: { type: 'error', content: '仅消息发送者可操作' } };
+    }
+    const toggleDislike = this.options.toggleDislike;
+    if (toggleDislike == null) return { toast: { type: 'info', content: '点踩功能不可用' } };
+    const result = await toggleDislike(action.sessionId);
+    if (result == null) {
+      return { toast: { type: 'info', content: '未找到可反馈的任务结果' } };
+    }
+    // 先落 toggle 态，再渲染快照：renderCurrent 会带上新的按钮文案/颜色。
+    // 快照缺失（进程重启后内存无进度对象）时退回一张完成态空卡，绝不能渲染成 RUNNING。
+    const card = this.options.renderProgressCard?.(action.sessionId)
+      ?? buildFeishuProgressCard(
+        'COMPLETED', 0, '', [], { sessionId: action.sessionId, sender: action.sender },
+        undefined, await this.resolveSessionDetailUrl(action.sessionId), undefined, result.disliked,
+      );
+    return {
+      toast: { type: result.disliked ? 'success' : 'info', content: result.disliked ? '已标记不满意' : '已取消点踩' },
+      card: { type: 'raw', data: card },
     };
   }
 
@@ -332,7 +368,7 @@ export class FeishuCardActionService {
       const sessionId = Number(obj.sessionId);
       const sender = obj.sender;
       if (!Number.isFinite(sessionId) || typeof sender !== 'string' || sender === '') return null;
-      if (obj.act !== 'cancel' && obj.act !== 'retry') return null;
+      if (obj.act !== 'cancel' && obj.act !== 'retry' && obj.act !== 'dislike') return null;
       return { kind: 'feishu_progress', act: obj.act, sessionId, sender };
     }
     if (obj.kind === 'feishu_ask') {

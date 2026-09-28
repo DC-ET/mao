@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { FeishuAskFormStore } from './ask-form-store.js';
 import { FeishuCardActionService } from './card-action.service.js';
 import { buildFeishuProgressCard } from './progress-card.js';
+import { createFeishuPatchedProgress } from './patched-progress.js';
 import type { FeishuCardActionPort, FeishuInboundQueueRow } from './types.js';
 
 function row(overrides: Partial<FeishuInboundQueueRow> = {}): FeishuInboundQueueRow {
@@ -16,6 +17,7 @@ function makeService(overrides: {
   interrupt?: (sessionId: number) => void;
   interruptAndDrain?: (sessionId: number) => void;
   cancelRunning?: (sessionId: number) => boolean;
+  toggleDislike?: (sessionId: number) => Promise<{ disliked: boolean } | null>;
   retryFailed?: (sessionId: number, cardMessageId: string) => Promise<
     | { ok: true }
     | { ok: false; reason: 'BUSY' | 'NOT_FAILED' | 'NO_PROGRESS' }
@@ -40,6 +42,7 @@ function makeService(overrides: {
   return new FeishuCardActionService({
     queuePort, interrupt, cancelRunning, patchCard,
     ...(overrides.interruptAndDrain != null ? { interruptAndDrain: overrides.interruptAndDrain } : {}),
+    ...(overrides.toggleDislike != null ? { toggleDislike: overrides.toggleDislike } : {}),
     ...(overrides.retryFailed != null ? { retryFailed: overrides.retryFailed } : {}),
     ...(overrides.sessionDetailUrl != null ? { sessionDetailUrl: overrides.sessionDetailUrl } : {}),
     ...(overrides.askForms != null ? { askForms: overrides.askForms } : {}),
@@ -304,8 +307,7 @@ describe('FeishuCardActionService', () => {
     expect(cancelRunning).not.toHaveBeenCalled();
   });
 
-  it('progress retry by original sender starts retry and returns RUNNING card', async () => {
-    const retryFailed = vi.fn(async () => ({ ok: true as const }));
+  it('progress retry by original sender starts retry and returns RUNNING card', async () => {    const retryFailed = vi.fn(async () => ({ ok: true as const }));
     const service = makeService({ retryFailed, sessionDetailUrl: () => 'https://mao.example.com/tasks/7' });
     const value = { kind: 'feishu_progress', act: 'retry', sessionId: 7, sender: 'ou_1' };
     const res = await service.handle(makeEvent(value, 'ou_1', 'cm_fail'), '');
@@ -343,8 +345,7 @@ describe('FeishuCardActionService', () => {
     expect(res).toEqual({ toast: { type: 'info', content: '重试功能不可用' } });
   });
 
-  it('progress cancel clears pending ask forms before stopping the task', async () => {
-    const askForms = new FeishuAskFormStore();
+  it('progress cancel clears pending ask forms before stopping the task', async () => {    const askForms = new FeishuAskFormStore();
     askForms.set(7, 'req-1', [{ question: '选哪个？' }], 'ou_1');
     const service = makeService({ askForms, cancelRunning: vi.fn(() => true) });
     const res = await service.handle(makeEvent({ kind: 'feishu_progress', act: 'cancel', sessionId: 7, sender: 'ou_1' }), '');
@@ -358,6 +359,137 @@ describe('FeishuCardActionService', () => {
     const service = makeService({ askForms, cancelRunning: vi.fn(() => true) });
     await service.handle(makeEvent({ kind: 'feishu_progress', act: 'cancel', sessionId: 7, sender: 'ou_1' }, 'ou_other'), '');
     expect(askForms.get(7, 'req-1')).not.toBeNull();
+  });
+});
+
+describe('FeishuCardActionService 完成卡点踩', () => {
+  const dislikeValue = { kind: 'feishu_progress', act: 'dislike', sessionId: 7, sender: 'ou_1' };
+
+  function dislikeCardButtons(res: unknown): Array<Record<string, unknown>> {
+    const elements = ((res as { card: { data: { body: { elements: Array<Record<string, unknown>> } } } }).card.data.body.elements) ?? [];
+    return elements.flatMap((element) => (element.columns as Array<{ elements: Array<Record<string, unknown>> }> | undefined)?.flatMap((column) => column.elements) ?? []);
+  }
+
+  it('点踩写入并回调红色「已点踩 · 再点取消」卡片', async () => {
+    const toggleDislike = vi.fn(async () => ({ disliked: true }));
+    const service = makeService({
+      toggleDislike,
+      renderProgressCard: () => buildFeishuProgressCard(
+        'COMPLETED', 8, '这是任务的最终结果正文。', ['read_file：读取完成'],
+        { sessionId: 7, sender: 'ou_1' }, 506_000, 'https://mao.example.com/tasks/7',
+      ),
+      sessionDetailUrl: () => 'https://mao.example.com/tasks/7',
+    });
+    const res = await service.handle(makeEvent(dislikeValue), '');
+    expect(toggleDislike).toHaveBeenCalledWith(7);
+    expect(res?.toast).toEqual({ type: 'success', content: '已标记不满意' });
+    const json = JSON.stringify(res);
+    // 回调必须带回整张完成卡：轮次、耗时、正文都不能丢（用户正是要评价这段结果）
+    expect(json).toContain('共 8 轮 · 耗时 8 分 26 秒');
+    expect(json).toContain('这是任务的最终结果正文。');
+    expect(json).toContain('read_file：读取完成');
+    // 按钮 value 保留，文案由调用方注入的快照决定（此处 mock 未接 setDisliked，仍为未点踩态）
+    const dislike = dislikeCardButtons(res).find((button) => (button.value as { act?: string })?.act === 'dislike');
+    expect(dislike?.value).toEqual({ kind: 'feishu_progress', act: 'dislike', sessionId: 7, sender: 'ou_1' });
+  });
+
+  it('快照按 setDisliked 后的状态渲染按钮', async () => {
+    // 用真实进度卡闭包验证：toggle 成功后回调返回的卡片带 toggle 后的按钮态与完整正文
+    const store = new FeishuAskFormStore();
+    const cards: Array<Record<string, unknown>> = [];
+    const progress = createFeishuPatchedProgress({
+      listAsks: () => store.list(7),
+      clearAsks: () => store.clearSession(7),
+      patch: async (card) => { cards.push(card); },
+      buildCard: ({ status, round, content, tools, elapsedMs, disliked }) => buildFeishuProgressCard(
+        status, round, content, tools, { sessionId: 7, sender: 'ou_1' }, elapsedMs, undefined, undefined, disliked,
+      ),
+      startedAtMs: 0,
+      now: () => 506_000,
+    });
+    await progress.update('COMPLETED', 8, '这是任务的最终结果正文。', ['read_file：读取完成']);
+    const toggleDislike = vi.fn(async () => {
+      progress.setDisliked(true);
+      return { disliked: true };
+    });
+    const service = makeService({ toggleDislike, renderProgressCard: () => progress.renderCurrent() });
+    const res = await service.handle(makeEvent(dislikeValue), '');
+    const json = JSON.stringify(res);
+    expect(json).toContain('共 8 轮 · 耗时 8 分 26 秒');
+    expect(json).toContain('这是任务的最终结果正文。');
+    const dislike = dislikeCardButtons(res).find((button) => (button.value as { act?: string })?.act === 'dislike');
+    expect(dislike?.text).toEqual({ tag: 'plain_text', content: '👎 已点踩 · 再点取消' });
+    expect(dislike?.type).toBe('danger');
+  });
+
+  it('快照缺失时退回完成态空卡，不会渲染成执行中', async () => {
+    const toggleDislike = vi.fn(async () => ({ disliked: true }));
+    const service = makeService({ toggleDislike, renderProgressCard: () => null });
+    const res = await service.handle(makeEvent(dislikeValue), '');
+    const json = JSON.stringify(res);
+    expect(json).toContain('处理完成');
+    expect(json).not.toContain('正在处理');
+    expect(json).not.toContain('取消任务');
+    expect(json).toContain('👎 已点踩 · 再点取消');
+  });
+
+  it('再次点击取消点踩并回调恢复未点踩态', async () => {
+    const toggleDislike = vi.fn(async () => ({ disliked: false }));
+    const service = makeService({ toggleDislike });
+    const res = await service.handle(makeEvent(dislikeValue), '');
+    expect(res?.toast).toEqual({ type: 'info', content: '已取消点踩' });
+    const dislike = dislikeCardButtons(res).find((button) => (button.value as { act?: string })?.act === 'dislike');
+    expect(dislike?.text).toEqual({ tag: 'plain_text', content: '👎 不满意' });
+    expect(dislike?.type).toBe('default');
+  });
+  it('非发送者点击被拒绝，不写库', async () => {
+    const toggleDislike = vi.fn(async () => ({ disliked: true }));
+    const service = makeService({ toggleDislike });
+    const res = await service.handle(makeEvent(dislikeValue, 'ou_other'), '');
+    expect(res).toEqual({ toast: { type: 'error', content: '仅消息发送者可操作' } });
+    expect(toggleDislike).not.toHaveBeenCalled();
+  });
+
+  it('无可反馈消息时 toast 且不回调卡片', async () => {
+    const toggleDislike = vi.fn(async () => null);
+    const service = makeService({ toggleDislike });
+    const res = await service.handle(makeEvent(dislikeValue), '');
+    expect(res).toEqual({ toast: { type: 'info', content: '未找到可反馈的任务结果' } });
+  });
+
+  it('未注入 toggleDislike 时提示不可用', async () => {
+    const service = makeService();
+    const res = await service.handle(makeEvent(dislikeValue), '');
+    expect(res).toEqual({ toast: { type: 'info', content: '点踩功能不可用' } });
+  });
+
+  it('点踩回调只更新点击者视图，不给群内其他人补 PATCH', async () => {
+    const toggleDislike = vi.fn(async () => ({ disliked: true }));
+    const refreshProgress = vi.fn(async () => undefined);
+    const service = makeService({ toggleDislike, refreshProgress });
+    await service.handle(makeEvent(dislikeValue), '');
+    await Promise.resolve();
+    // 方案 5.2.6：群内其他人靠回调响应只更新点击者视图，不做额外 PATCH
+    expect(refreshProgress).not.toHaveBeenCalled();
+  });
+
+  it('接受 JSON 字符串形态的 dislike value', async () => {
+    const toggleDislike = vi.fn(async () => ({ disliked: true }));
+    const service = makeService({ toggleDislike });
+    const res = await service.handle(makeEvent(JSON.stringify(dislikeValue)), '');
+    expect(res?.toast?.content).toBe('已标记不满意');
+    expect(toggleDislike).toHaveBeenCalledWith(7);
+  });
+
+  it('toggle 抛错时不崩溃，回调 info toast', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const toggleDislike = vi.fn(async () => { throw new Error('db down'); });
+      const service = makeService({ toggleDislike });
+      await expect(service.handle(makeEvent(dislikeValue), '')).rejects.toThrow('db down');
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

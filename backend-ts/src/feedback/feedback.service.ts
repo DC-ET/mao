@@ -1,7 +1,10 @@
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import type { Db } from '../db/db.js';
-import { FEEDBACK_REASONS, FeedbackRepository, type FeedbackReason } from './feedback.repository.js';
+import {
+  FEEDBACK_REASONS, FEISHU_DISLIKE_REASON,
+  FeedbackRepository, type FeedbackReason, type FeedbackSource,
+} from './feedback.repository.js';
 
 /** 明细摘要长度：取消息内容前 100 字符（按字符截断，避免多字节截半） */
 const PREVIEW_MAX_CHARS = 100;
@@ -16,6 +19,8 @@ export interface MessageOwnership {
 export interface FeedbackMessageLookup {
   /** 查询消息归属（会话 user/agent），不存在返回 null；role 非 ASSISTANT 也返回 null */
   findAssistantMessageOwner(messageId: number): Promise<MessageOwnership | null>;
+  /** 查询会话内最后一条 ASSISTANT 消息 ID（与 getLatestAssistantReply 同源口径），不存在返回 null */
+  findLatestAssistantMessageId(sessionId: number): Promise<number | null>;
 }
 
 export class FeedbackDbLookup implements FeedbackMessageLookup {
@@ -32,6 +37,16 @@ export class FeedbackDbLookup implements FeedbackMessageLookup {
     );
     if (!row) return null;
     return { messageId, sessionId: row.sessionId, userId: row.userId, agentId: row.agentId };
+  }
+
+  async findLatestAssistantMessageId(sessionId: number): Promise<number | null> {
+    const row = await this.db.queryOne<{ id: number }>(
+      `SELECT id FROM message
+       WHERE session_id = ? AND role = 'ASSISTANT' AND deleted = 0
+       ORDER BY created_at DESC, id DESC LIMIT 1`,
+      [sessionId],
+    );
+    return row == null ? null : Number(row.id);
   }
 }
 
@@ -50,6 +65,7 @@ export interface FeedbackSummary {
   agentName: string | null;
   reason: FeedbackReason;
   reasonLabel: string;
+  source: FeedbackSource;
   contentPreview: string | null;
   createdAt: string;
 }
@@ -64,6 +80,7 @@ export const REASON_LABELS: Record<FeedbackReason, string> = {
   SLOW_RESPONSE: '处理速度慢',
   NOT_SOLVED: '问题未解决',
   OTHER: '其他',
+  NO_REASON: '未选择原因（飞书）',
 };
 
 export class FeedbackService {
@@ -71,17 +88,41 @@ export class FeedbackService {
     private readonly repository: FeedbackRepository,
     private readonly messageLookup: FeedbackMessageLookup,
     private readonly sessionOwnerLookup: (sessionId: number) => Promise<number | null>,
+    /** 冗余统计字段：取会话使用的 Agent，读不到时写 null */
+    private readonly sessionAgentLookup: (sessionId: number) => Promise<number | null> = async () => null,
   ) {}
 
-  async dislike(userId: number, messageId: number, reason: string): Promise<void> {
+  async dislike(userId: number, messageId: number, reason: string, source: FeedbackSource = 'desktop'): Promise<void> {
     assertReason(reason);
     const ownership = await this.requireOwnedAssistantMessage(userId, messageId);
-    await this.repository.upsert(messageId, ownership.sessionId, ownership.userId, ownership.agentId, reason as FeedbackReason);
+    await this.repository.upsert(messageId, ownership.sessionId, ownership.userId, ownership.agentId, reason as FeedbackReason, source);
   }
 
   async cancelDislike(userId: number, messageId: number): Promise<void> {
     await this.requireOwnedAssistantMessage(userId, messageId);
     await this.repository.deleteByMessageId(messageId);
+  }
+
+  /**
+   * 会话级点踩 toggle（飞书进度卡点踩按钮）：取会话归属用户与最后一条 ASSISTANT 消息，
+   * 有记录则删除、无记录则插入。返回 null 表示无可反馈的任务结果（会话不存在/消息被清理）。
+   * 状态以 message_feedback 表为准，进程重启后再次点击结果一致。
+   * 判定不区分来源：同一条消息只保留一条反馈记录（桌面端与飞书共用 `uk_message(message_id)`），
+   * 任一侧的新反馈会覆盖另一侧的旧记录——与桌面端「已点踩可重新选择原因」的覆盖语义一致。
+   */
+  async toggleSessionDislike(userId: number, sessionId: number, source: FeedbackSource = 'desktop'): Promise<{ disliked: boolean } | null> {
+    const owner = await this.sessionOwnerLookup(sessionId);
+    if (owner == null) return null;
+    const messageId = await this.messageLookup.findLatestAssistantMessageId(sessionId);
+    if (messageId == null) return null;
+    const exists = await this.repository.existsByMessageId(messageId);
+    if (exists) {
+      await this.repository.deleteByMessageId(messageId);
+      return { disliked: false };
+    }
+    const agentId = await this.sessionAgentLookup(sessionId);
+    await this.repository.upsert(messageId, sessionId, owner, agentId, FEISHU_DISLIKE_REASON, source);
+    return { disliked: true };
   }
 
   /**

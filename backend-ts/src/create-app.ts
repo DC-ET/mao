@@ -124,7 +124,7 @@ import { AnalyticsDbStore, AnalyticsService } from './analytics/analytics.servic
 import { registerAnalyticsRoutes } from './analytics/analytics.routes.js';
 import { StatisticsDbStore, StatisticsService } from './statistics/statistics.service.js';
 import { registerStatisticsRoutes } from './statistics/statistics.routes.js';
-import { FeedbackRepository } from './feedback/feedback.repository.js';
+import { FEISHU_DISLIKE_SOURCE, FeedbackRepository } from './feedback/feedback.repository.js';
 import { FeedbackDbLookup, FeedbackService } from './feedback/feedback.service.js';
 import { registerFeedbackRoutes } from './feedback/feedback.routes.js';
 import { AdminAnalyticsDbStore, AdminAnalyticsService } from './admin/admin-analytics.service.js';
@@ -583,6 +583,10 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     async (sessionId) => {
       const session = await sessionRepo.findById(sessionId);
       return session?.userId ?? null;
+    },
+    async (sessionId) => {
+      const session = await sessionRepo.findById(sessionId);
+      return session?.agentId ?? null;
     },
   );  const fileChangeRepo = new FileChangeRepository(db);
   const compactionRepo = new SessionCompactionRepository(db);
@@ -1322,8 +1326,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       patch: async (card) => {
         await client.im.v1.message.patch({ path: { message_id: cardMessageId }, data: { content: JSON.stringify(card) } });
       },
-      buildCard: ({ status, round, content, tools, pendingAsks, elapsedMs }) => buildFeishuProgressCard(
-        status, round, content, tools, cancelAction ?? undefined, elapsedMs, sessionDetailUrl, pendingAsks,
+      buildCard: ({ status, round, content, tools, pendingAsks, elapsedMs, disliked }) => buildFeishuProgressCard(
+        status, round, content, tools, cancelAction ?? undefined, elapsedMs, sessionDetailUrl, pendingAsks, disliked,
       ),
       startedAtMs,
       seed: { status: 'RUNNING', round: seed?.round ?? 0, content: seed?.content ?? '', tools: [] },
@@ -1902,6 +1906,18 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         persistCancelledIfActive,
         drainNextIfPending: (id) => feishuInboundHandler.drainNextIfPending(id),
       });
+    },
+    // 完成卡「点踩」toggle：写库/删库 message_feedback（source=feishu），并把点踩态同步给
+    // 本会话的进度卡闭包，使回调返回的卡片渲染「已点踩 · 再点取消」。
+    // 与方案 5.2.6 一致：群内其他人只更新点击者视图，不做额外 PATCH。
+    // user_id 取会话所属用户（飞书会话由绑定用户创建，发送者即会话所有者）。
+    toggleDislike: async (sessionId) => {
+      const session = await sessionService.getSession(sessionId).catch(() => null);
+      if (session == null) return null;
+      const result = await feedbackService.toggleSessionDislike(session.userId, sessionId, FEISHU_DISLIKE_SOURCE);
+      if (result == null) return null;
+      feishuActiveProgress.current(sessionId)?.setDisliked(result.disliked);
+      return result;
     },
     // 失败卡「重试」：凭仍保留的进度卡片映射定位 bot，PATCH 点击的那张失败卡并基于历史续跑。
     retryFailed: async (sessionId, cardMessageId) => {

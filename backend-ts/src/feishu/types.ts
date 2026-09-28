@@ -90,7 +90,7 @@ export interface FeishuQueueCardActionValue {
 /** 进度卡按钮动作值（sender 为触发任务的原消息发送者 open_id，用于点击鉴权）。 */
 export interface FeishuProgressCardActionValue {
   kind: 'feishu_progress';
-  act: 'cancel' | 'retry';
+  act: 'cancel' | 'retry' | 'dislike';
   sessionId: number;
   sender: string;
 }

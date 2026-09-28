@@ -14,6 +14,8 @@ export interface FeishuProgressHandle {
   refresh(): Promise<void>;
   /** 同步按当前表单状态渲染最近快照，供卡片回调立即返回，不得等待 PATCH。 */
   renderCurrent(): Record<string, unknown>;
+  /** 记录完成卡点踩态（以 message_feedback 表为准的查询结果），后续 PATCH 与 renderCurrent 按该态渲染按钮。 */
+  setDisliked(disliked: boolean): void;
 }
 
 const DEFAULT_THROTTLE_MS = 250;
@@ -28,7 +30,7 @@ export function createFeishuPatchedProgress(deps: {
   /** 终态更新时清掉本会话表单，避免随后的 RUNNING 快照把已结束的提问再画上去。 */
   clearAsks: () => void;
   patch: (card: Record<string, unknown>) => Promise<void>;
-  buildCard: (input: FeishuProgressSnapshot & { pendingAsks: FeishuPendingAsk[]; elapsedMs?: number }) => Record<string, unknown>;
+  buildCard: (input: FeishuProgressSnapshot & { pendingAsks: FeishuPendingAsk[]; elapsedMs?: number; disliked?: boolean }) => Record<string, unknown>;
   startedAtMs: number;
   seed?: FeishuProgressSnapshot;
   now?: () => number;
@@ -42,6 +44,10 @@ export function createFeishuPatchedProgress(deps: {
   const throttleMs = deps.throttleMs ?? DEFAULT_THROTTLE_MS;
   let nextUpdateAt = 0;
   let chain: Promise<void> = Promise.resolve();
+  let disliked = false;
+  // 终态耗用在进入终态那一刻固化：renderCurrent 若按调用时刻重算，卡片挂多久耗时就涨多久
+  // （飞书完成卡长期挂着，用户几分钟后点踩会看到「耗时」被凭空拉长）。
+  let terminalElapsedMs: number | undefined;
   let last: FeishuProgressSnapshot = deps.seed ?? { status: 'RUNNING', round: 0, content: '', tools: [] };
 
   const enqueue = (task: () => Promise<void>): Promise<void> => {
@@ -56,11 +62,14 @@ export function createFeishuPatchedProgress(deps: {
   };
 
   const send = async (status: FeishuCardStatus, round: number, content: string, tools: string[]): Promise<void> => {
-    if (status !== 'RUNNING') deps.clearAsks();
-    const elapsedMs = status === 'RUNNING' ? undefined : Math.max(0, now() - deps.startedAtMs);
+    if (status !== 'RUNNING') {
+      deps.clearAsks();
+      terminalElapsedMs = Math.max(0, now() - deps.startedAtMs);
+    }
+    const elapsedMs = status === 'RUNNING' ? undefined : terminalElapsedMs;
     const asksNow = (): FeishuPendingAsk[] => (status === 'RUNNING' ? deps.listAsks() : []);
     const build = (pendingAsks: FeishuPendingAsk[]): Record<string, unknown> => deps.buildCard({
-      status, round, content, tools, pendingAsks, elapsedMs,
+      status, round, content, tools, pendingAsks, elapsedMs, disliked,
     });
     last = { status, round, content, tools };
     const card = build(asksNow());
@@ -83,8 +92,11 @@ export function createFeishuPatchedProgress(deps: {
     },
     renderCurrent() {
       const pendingAsks = last.status === 'RUNNING' ? deps.listAsks() : [];
-      const elapsedMs = last.status === 'RUNNING' ? undefined : Math.max(0, now() - deps.startedAtMs);
-      return deps.buildCard({ ...last, pendingAsks, elapsedMs });
+      const elapsedMs = last.status === 'RUNNING' ? undefined : terminalElapsedMs;
+      return deps.buildCard({ ...last, pendingAsks, elapsedMs, disliked });
+    },
+    setDisliked(value: boolean) {
+      disliked = value;
     },
     isRunning() {
       return last.status === 'RUNNING';

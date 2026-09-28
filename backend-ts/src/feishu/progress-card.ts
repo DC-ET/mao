@@ -12,6 +12,12 @@ export interface FeishuProgressCancelAction {
   botId?: number;
 }
 
+/** 完成卡「点踩」按钮文案：同一 act 服务端 toggle，已点踩态为红色高亮。 */
+export const FEISHU_DISLIKE_BUTTON = {
+  idle: '👎 不满意',
+  disliked: '👎 已点踩 · 再点取消',
+} as const;
+
 const STATUS_TITLES: Record<FeishuCardStatus, string> = {
   RUNNING: '正在处理',
   COMPLETED: '处理完成',
@@ -57,12 +63,13 @@ function sessionDetailButton(sessionDetailUrl: string): Record<string, unknown> 
  * @param elapsedMs 任务耗时；仅终态展示，执行中传 undefined 避免节流下展示过期读数。
  * @param sessionDetailUrl 网页端会话详情深链；非空时始终附「会话详情」按钮（执行中与「取消任务」并排）。
  * @param action 执行中渲染「取消任务」；FAILED 且带 botId/sender 时渲染「重试」。
+ * @param disliked 完成卡点踩态；COMPLETED 且 action != null 时渲染点踩按钮，true 为红色「已点踩 · 再点取消」。
  * @param pendingAsks 执行中尚未提交的提问。终态忽略。每组一个 form，放在工具摘要下方、取消按钮上方。
  */
 export function buildFeishuProgressCard(
   status: FeishuCardStatus, round: number, content: string, tools: string[],
   action?: FeishuProgressCancelAction, elapsedMs?: number, sessionDetailUrl?: string,
-  pendingAsks?: FeishuPendingAsk[],
+  pendingAsks?: FeishuPendingAsk[], disliked = false,
 ): Record<string, unknown> {
   const waiting = status === 'RUNNING' && pendingAsks != null && pendingAsks.length > 0;
   const visibleTools = waiting ? tools.filter((tool) => !isAskUserQuestionsToolLine(tool)) : tools;
@@ -79,6 +86,16 @@ export function buildFeishuProgressCard(
     pendingAsks.forEach((ask, index) => sections.push(askForm(ask, index)));
   }
   const buttons: Array<Record<string, unknown>> = [];
+  // 完成卡提供「点踩」：与桌面端点踩汇入同一张统计表，固定 NO_REASON、来源 feishu。
+  if (status === 'COMPLETED' && action != null && action.sender !== '') {
+    buttons.push({
+      tag: 'button',
+      text: { tag: 'plain_text', content: disliked ? FEISHU_DISLIKE_BUTTON.disliked : FEISHU_DISLIKE_BUTTON.idle },
+      type: disliked ? 'danger' : 'default',
+      size: 'sm',
+      value: { kind: 'feishu_progress', act: 'dislike', sessionId: action.sessionId, sender: action.sender },
+    });
+  }
   // 执行中提供「取消任务」按钮（终态 PATCH 不带按钮，随卡片重写自动消失）。
   if (status === 'RUNNING' && action != null) {
     buttons.push({

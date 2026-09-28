@@ -9,6 +9,7 @@ function handle(overrides: Partial<FeishuProgressHandle> = {}): FeishuProgressHa
     isRunning: () => true,
     refresh: vi.fn(async () => undefined),
     renderCurrent: () => ({ schema: '2.0' }),
+    setDisliked: vi.fn(),
     ...overrides,
   };
 }

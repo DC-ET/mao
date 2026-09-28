@@ -4,6 +4,7 @@ import { buildFeishuProgressCard, feishuSessionDetailUrl, formatFeishuDuration }
 type CardElement = {
   tag?: string;
   name?: string;
+  type?: string;
   content?: string;
   required?: boolean;
   form_action_type?: string;
@@ -30,6 +31,16 @@ function cancelButtonValue(card: Record<string, unknown>): Record<string, unknow
 
 function retryButtonValue(card: Record<string, unknown>): Record<string, unknown> | null {
   return progressActionValues(card).find((value) => value.act === 'retry') ?? null;
+}
+
+function dislikeButtonValue(card: Record<string, unknown>): Record<string, unknown> | null {
+  return progressActionValues(card).find((value) => value.act === 'dislike') ?? null;
+}
+
+function dislikeButtonElement(card: Record<string, unknown>): CardElement | undefined {
+  return elementsOf(card)
+    .flatMap((element) => element.columns?.flatMap((column) => column.elements) ?? [])
+    .find((element) => element.value?.act === 'dislike');
 }
 
 function progressActionValues(card: Record<string, unknown>): Array<Record<string, unknown>> {
@@ -126,6 +137,51 @@ describe('飞书进度卡片「会话详情」按钮', () => {
     const card = buildFeishuProgressCard('COMPLETED', 1, '完成', []);
     expect(sessionDetailButtons(card)).toEqual([]);
     expect(elementsOf(card).some((element) => element.tag === 'column_set')).toBe(false);
+  });
+});
+
+describe('飞书进度卡片「不满意」按钮', () => {
+  const cancelAction = { sessionId: 7, sender: 'ou_sender' };
+  const detailUrl = 'https://mao.example.com/tasks/7';
+
+  it('完成卡渲染点踩按钮，放在「会话详情」左侧', () => {
+    const card = buildFeishuProgressCard('COMPLETED', 1, '完成', [], cancelAction, 1000, detailUrl);
+    const buttons = elementsOf(card)
+      .flatMap((element) => element.columns?.flatMap((column) => column.elements) ?? []);
+    const dislikeIndex = buttons.findIndex((element) => element.value?.act === 'dislike');
+    const detailIndex = buttons.findIndex((element) => element.text?.content === '会话详情');
+    expect(dislikeIndex).toBeGreaterThanOrEqual(0);
+    expect(dislikeIndex).toBeLessThan(detailIndex);
+  });
+
+  it('未点踩态为中性灰 + 「不满意」文案', () => {
+    const button = dislikeButtonElement(buildFeishuProgressCard('COMPLETED', 1, '', [], cancelAction, 1000, detailUrl));
+    expect(button?.text?.content).toBe('👎 不满意');
+    expect(button?.type).toBe('default');
+  });
+
+  it('已点踩态为红色高亮 + 「已点踩 · 再点取消」文案', () => {
+    const button = dislikeButtonElement(buildFeishuProgressCard('COMPLETED', 1, '', [], cancelAction, 1000, detailUrl, undefined, true));
+    expect(button?.text?.content).toBe('👎 已点踩 · 再点取消');
+    expect(button?.type).toBe('danger');
+  });
+
+  it('按钮 value 绑定会话与发送者，供服务端 toggle 与鉴权', () => {
+    expect(dislikeButtonValue(buildFeishuProgressCard('COMPLETED', 1, '', [], cancelAction, 1000)))
+      .toEqual({ kind: 'feishu_progress', act: 'dislike', sessionId: 7, sender: 'ou_sender' });
+  });
+
+  it('非 COMPLETED 终态不渲染点踩按钮', () => {
+    for (const status of ['RUNNING', 'FAILED', 'CANCELLED'] as const) {
+      const card = buildFeishuProgressCard(status, 1, '', [], { sessionId: 7, sender: 'ou_sender', botId: 1 }, 1000, detailUrl);
+      expect(dislikeButtonValue(card)).toBeNull();
+    }
+  });
+
+  it('未点踩与已点踩的按钮 value 完全一致（同一个按钮 toggle）', () => {
+    const idle = dislikeButtonValue(buildFeishuProgressCard('COMPLETED', 1, '', [], cancelAction, 1000, detailUrl));
+    const disliked = dislikeButtonValue(buildFeishuProgressCard('COMPLETED', 1, '', [], cancelAction, 1000, detailUrl, undefined, true));
+    expect(disliked).toEqual(idle);
   });
 });
 

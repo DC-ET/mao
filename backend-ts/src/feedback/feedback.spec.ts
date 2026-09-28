@@ -8,6 +8,7 @@ function makeRepo(): FeedbackRepository {
   return {
     upsert: vi.fn(async () => undefined),
     deleteByMessageId: vi.fn(async () => true),
+    existsByMessageId: vi.fn(async () => false),
     listMessageIdsBySession: vi.fn(async () => [11, 22]),
     countTotal: vi.fn(async () => 2),
     sumByReason: vi.fn(async (_sd?: string, _ed?: string) => [
@@ -26,6 +27,7 @@ function makeRepo(): FeedbackRepository {
         agentId: 2,
         agentName: 'Coder',
         reason: 'WRONG_RESULT',
+        source: 'desktop',
         contentPreview: 'hello ${skill}$ world',
         createdAt: '2026-09-27T00:00:00.000Z',
       },
@@ -34,7 +36,10 @@ function makeRepo(): FeedbackRepository {
 }
 
 function makeLookup(ownership: Parameters<FeedbackMessageLookup['findAssistantMessageOwner']>[0] extends never ? never : Awaited<ReturnType<FeedbackMessageLookup['findAssistantMessageOwner']>>): FeedbackMessageLookup {
-  return { findAssistantMessageOwner: vi.fn(async () => ownership) };
+  return {
+    findAssistantMessageOwner: vi.fn(async () => ownership),
+    findLatestAssistantMessageId: vi.fn(async () => 11),
+  };
 }
 
 const OWNERSHIP = { messageId: 11, sessionId: 5, userId: 9, agentId: 2 };
@@ -44,7 +49,21 @@ describe('FeedbackService', () => {
     const repo = makeRepo();
     const service = new FeedbackService(repo, makeLookup(OWNERSHIP), async () => 9);
     await service.dislike(9, 11, 'WRONG_RESULT');
-    expect(repo.upsert).toHaveBeenCalledWith(11, 5, 9, 2, 'WRONG_RESULT');
+    expect(repo.upsert).toHaveBeenCalledWith(11, 5, 9, 2, 'WRONG_RESULT', 'desktop');
+  });
+
+  it('dislikePassesSourceThrough', async () => {
+    const repo = makeRepo();
+    const service = new FeedbackService(repo, makeLookup(OWNERSHIP), async () => 9);
+    await service.dislike(9, 11, 'NO_REASON', 'feishu');
+    expect(repo.upsert).toHaveBeenCalledWith(11, 5, 9, 2, 'NO_REASON', 'feishu');
+  });
+
+  it('dislikeAcceptsFeishuNoReason', async () => {
+    const repo = makeRepo();
+    const service = new FeedbackService(repo, makeLookup(OWNERSHIP), async () => 9);
+    await expect(service.dislike(9, 11, 'NO_REASON')).resolves.toBeUndefined();
+    expect(repo.upsert).toHaveBeenCalledTimes(1);
   });
 
   it('dislikeRejectsInvalidReason', async () => {
@@ -105,10 +124,11 @@ describe('FeedbackService', () => {
     const service = new FeedbackService(repo, makeLookup(OWNERSHIP), async () => 9);
     const summary = await service.getSummary('2026-09-01', '2026-09-27');
     expect(summary.total).toBe(4);
-    expect(summary.byReason.map((r) => r.reason)).toEqual(['WRONG_RESULT', 'SLOW_RESPONSE', 'NOT_SOLVED', 'OTHER']);
+    expect(summary.byReason.map((r) => r.reason)).toEqual(['WRONG_RESULT', 'SLOW_RESPONSE', 'NOT_SOLVED', 'OTHER', 'NO_REASON']);
     expect(summary.byReason.map((r) => r.label)).toEqual(Object.values(REASON_LABELS));
     expect(summary.byReason.find((r) => r.reason === 'WRONG_RESULT')?.count).toBe(3);
     expect(summary.byReason.find((r) => r.reason === 'SLOW_RESPONSE')?.count).toBe(0);
+    expect(summary.byReason.find((r) => r.reason === 'NO_REASON')?.label).toBe('未选择原因（飞书）');
     expect(summary.byDay).toEqual([{ date: '2026-09-27', count: 4 }]);
   });
 
@@ -148,10 +168,82 @@ describe('FeedbackService', () => {
     const page = await service.listDetails({ reason: 'WRONG_RESULT', page: 2, pageSize: 10 });
     expect(page.total).toBe(2);
     expect(page.items).toHaveLength(1);
-    expect(page.items[0]).toMatchObject({ reasonLabel: '结果错误', username: 'alice', agentName: 'Coder' });
+    expect(page.items[0]).toMatchObject({ reasonLabel: '结果错误', username: 'alice', agentName: 'Coder', source: 'desktop' });
     expect(page.items[0].contentPreview).toBe('hello skill world');
   });
 
+  it('listDetailsAcceptsNoReasonFilter', async () => {
+    const repo = makeRepo();
+    const service = new FeedbackService(repo, makeLookup(OWNERSHIP), async () => 9);
+    await expect(service.listDetails({ reason: 'NO_REASON', page: 1, pageSize: 20 })).resolves.toMatchObject({ total: 2 });
+  });
+});
+
+describe('FeedbackService.toggleSessionDislike', () => {
+  it('inserts feishu dislike when no record exists', async () => {
+    const repo = makeRepo();
+    const service = new FeedbackService(repo, makeLookup(OWNERSHIP), async () => 9, async () => 2);
+    await expect(service.toggleSessionDislike(9, 5, 'feishu')).resolves.toEqual({ disliked: true });
+    expect(repo.existsByMessageId).toHaveBeenCalledWith(11);
+    expect(repo.upsert).toHaveBeenCalledWith(11, 5, 9, 2, 'NO_REASON', 'feishu');
+    expect(repo.deleteByMessageId).not.toHaveBeenCalled();
+  });
+
+  it('deletes the record when it already exists', async () => {
+    const repo = makeRepo();
+    (repo.existsByMessageId as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    const service = new FeedbackService(repo, makeLookup(OWNERSHIP), async () => 9, async () => 2);
+    await expect(service.toggleSessionDislike(9, 5, 'feishu')).resolves.toEqual({ disliked: false });
+    expect(repo.deleteByMessageId).toHaveBeenCalledWith(11);
+    expect(repo.upsert).not.toHaveBeenCalled();
+  });
+
+  it('判定不区分来源：同一条消息已有桌面记录时，飞书 toggle 走删除分支', async () => {
+    // uk_message(message_id) 唯一键下同一条消息只有一行：桌面点踩过的消息在飞书再点一次即取消，
+    // 不会出现两行，也不会把桌面记录"升级"成飞书记录。
+    const repo = makeRepo();
+    (repo.existsByMessageId as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    const service = new FeedbackService(repo, makeLookup(OWNERSHIP), async () => 9, async () => 2);
+    await expect(service.toggleSessionDislike(9, 5, 'feishu')).resolves.toEqual({ disliked: false });
+    expect(repo.deleteByMessageId).toHaveBeenCalledWith(11);
+    expect(repo.upsert).not.toHaveBeenCalled();
+  });
+
+  it('returns null when the session is gone', async () => {
+    const repo = makeRepo();
+    const service = new FeedbackService(repo, makeLookup(OWNERSHIP), async () => null);
+    await expect(service.toggleSessionDislike(9, 5, 'feishu')).resolves.toBeNull();
+    expect(repo.upsert).not.toHaveBeenCalled();
+    expect(repo.deleteByMessageId).not.toHaveBeenCalled();
+  });
+
+  it('returns null when no assistant message remains', async () => {
+    const repo = makeRepo();
+    const lookup = makeLookup(OWNERSHIP);
+    (lookup.findLatestAssistantMessageId as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    const service = new FeedbackService(repo, lookup, async () => 9);
+    await expect(service.toggleSessionDislike(9, 5, 'feishu')).resolves.toBeNull();
+    expect(repo.upsert).not.toHaveBeenCalled();
+    expect(repo.deleteByMessageId).not.toHaveBeenCalled();
+  });
+
+  it('writes null agent id when the session agent cannot be resolved', async () => {
+    const repo = makeRepo();
+    const service = new FeedbackService(repo, makeLookup(OWNERSHIP), async () => 9, async () => null);
+    await service.toggleSessionDislike(9, 5, 'feishu');
+    expect(repo.upsert).toHaveBeenCalledWith(11, 5, 9, null, 'NO_REASON', 'feishu');
+  });
+
+  it('toggles back to not-disliked on the second call (DB as source of truth)', async () => {
+    const repo = makeRepo();
+    const service = new FeedbackService(repo, makeLookup(OWNERSHIP), async () => 9, async () => 2);
+    await service.toggleSessionDislike(9, 5, 'feishu');
+    (repo.existsByMessageId as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    await expect(service.toggleSessionDislike(9, 5, 'feishu')).resolves.toEqual({ disliked: false });
+  });
+});
+
+describe('buildPreview', () => {
   it('buildPreviewStripsMarkersAndTruncates', () => {
     expect(buildPreview('# ${skill}$ abc')).toBe('# skill abc');
     expect(buildPreview('a@{f}@b #{c}#d')).toBe('afb cd');

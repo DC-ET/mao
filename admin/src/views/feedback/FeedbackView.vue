@@ -32,7 +32,7 @@
       <el-form :inline="true" class="search-form">
         <el-form-item label="原因">
           <el-select v-model="filters.reason" clearable placeholder="全部" style="width: 150px" @change="handleSearch">
-            <el-option v-for="opt in REASON_OPTIONS" :key="opt.value" :label="opt.label" :value="opt.value" />
+            <el-option v-for="opt in reasonOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
           </el-select>
         </el-form-item>
         <el-form-item label="时间">
@@ -73,6 +73,11 @@
             <el-tag :type="reasonTagType(row.reason)" size="small">{{ row.reasonLabel }}</el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="来源" width="90">
+          <template #default="{ row }">
+            <el-tag :type="row.source === 'feishu' ? 'success' : 'info'" size="small">{{ sourceLabel(row.source) }}</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="消息内容" min-width="280" show-overflow-tooltip>
           <template #default="{ row }">
             <span v-if="row.contentPreview">{{ row.contentPreview }}</span>
@@ -100,6 +105,10 @@
             <span>{{ agentLabel(row) }}</span>
           </div>
           <div class="mobile-card-row">
+            <span class="mobile-card-label">来源</span>
+            <span>{{ sourceLabel(row.source) }}</span>
+          </div>
+          <div class="mobile-card-row">
             <span class="mobile-card-label">消息</span>
             <span v-if="row.contentPreview" class="feedback-card-preview">{{ row.contentPreview }}</span>
             <span v-else class="content-missing">（消息已不存在）</span>
@@ -120,7 +129,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onActivated, reactive, ref } from 'vue'
+import { computed, onMounted, onActivated, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { Refresh } from '@element-plus/icons-vue'
 import { api } from '../../api'
@@ -151,26 +160,30 @@ interface FeedbackDetailItem {
   agentName: string | null
   reason: string
   reasonLabel: string
+  source: string
   contentPreview: string | null
   createdAt: string
 }
 
-const REASON_OPTIONS = [
-  { value: 'WRONG_RESULT', label: '结果错误' },
-  { value: 'SLOW_RESPONSE', label: '处理速度慢' },
-  { value: 'NOT_SOLVED', label: '问题未解决' },
-  { value: 'OTHER', label: '其他' }
-]
-
-const REASON_TAG_TYPES: Record<string, 'danger' | 'warning' | 'info' | 'primary'> = {
+const REASON_TAG_TYPES: Record<string, 'danger' | 'warning' | 'info' | 'primary' | 'success'> = {
   WRONG_RESULT: 'danger',
   SLOW_RESPONSE: 'warning',
   NOT_SOLVED: 'info',
-  OTHER: 'primary'
+  OTHER: 'primary',
+  NO_REASON: 'success'
 }
 
 function reasonTagType(reason: string) {
   return REASON_TAG_TYPES[reason] ?? 'info'
+}
+
+const SOURCE_LABELS: Record<string, string> = {
+  feishu: '飞书',
+  desktop: '桌面端'
+}
+
+function sourceLabel(source: string) {
+  return SOURCE_LABELS[source] ?? '桌面端'
 }
 
 const router = useRouter()
@@ -197,6 +210,9 @@ const pageSize = ref(20)
 const filters = reactive<{ reason?: string }>({})
 const dateRange = ref<[string, string] | null>(null)
 
+/** 原因筛选项由汇总接口 byReason 动态取（含 NO_REASON），不硬编码；空态给占位避免下拉为空。 */
+const reasonOptions = computed(() => summary.value.byReason.map((item) => ({ value: item.reason, label: item.label })))
+
 function buildParams(): Record<string, unknown> {
   const params: Record<string, unknown> = {
     page: page.value,
@@ -212,8 +228,16 @@ async function fetchSummary() {
   const params: Record<string, unknown> = {}
   if (dateRange.value?.[0]) params.startDate = dateRange.value[0]
   if (dateRange.value?.[1]) params.endDate = dateRange.value[1]
-  const { data } = await api.get('/feedback/admin/summary', { params })
-  summary.value = data ?? { total: 0, byReason: [], byDay: [] }
+  try {
+    const { data } = await api.get('/feedback/admin/summary', { params })
+    summary.value = {
+      total: data?.total ?? 0,
+      byReason: data?.byReason ?? [],
+      byDay: data?.byDay ?? []
+    }
+  } catch {
+    // 汇总失败不影响明细：保留上一次 byReason，避免原因筛选项与汇总卡被清空
+  }
 }
 
 async function fetchList() {
@@ -228,7 +252,8 @@ async function fetchList() {
 }
 
 async function refreshAll() {
-  await Promise.all([fetchSummary(), fetchList()])
+  // allSettled：汇总或明细任一失败都不拖垮另一个（原因筛选项由汇总派生，接口抖动不能连带白屏）
+  await Promise.allSettled([fetchSummary(), fetchList()])
 }
 
 function handleSearch() {
