@@ -705,7 +705,8 @@ function startGroupRename(key: string) {
   // 顺手关掉可能打开的会话右键菜单，避免两个浮层叠加
   closeContextMenu()
   renamingGroupKey.value = key
-  renamingValue.value = groupAliases.value[key]?.trim() ?? ''
+  // 预填当前展示名（别名优先，无别名则推导名），与会话重命名预填标题的交互一致
+  renamingValue.value = resolveGroupLabel(key, groupAliases.value)
   nextTick(() => {
     if (groupRenameInputEl) {
       groupRenameInputEl.focus()
