@@ -352,6 +352,9 @@ watch(
 watch(
   () => props.sideSessionId,
   async (newId) => {
+    // 切换会话后容器内容整体更换，旧基准失效
+    lastScrollTop = -1
+    lastScrollHeight = -1
     if (newId > 0 && realSessionId.value <= 0) {
       const tempMsgs = sessionStore.getMessages(placeholderCacheKey.value)
       if (tempMsgs.length > 0) {
@@ -474,12 +477,23 @@ async function fetchQueue() {
 const userScrolledUp = ref(false)
 const isProgrammaticScroll = ref(false)
 const NEAR_BOTTOM = 80
+const SCROLL_UP_TOLERANCE = 2
 
 function isNearBottom(): boolean {
   const el = messagesContainer.value
   if (!el) return false
   return el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM
 }
+
+// 上次 scroll 事件的 scrollTop / scrollHeight。判定「用户上滑」必须看位置移动方向，
+// 只看「离底部多远」会把布局变化误判成手势（与主聊天 useChatScroll 同一套规则）：
+//  - QueuePanel / ApprovalStack 出现会压缩 clientHeight，scrollTop 未变而距底骤增；
+//  - 消息列表被 REST 覆盖（终态回填）导致内容塌陷，浏览器把 scrollTop 向下钳制；
+//  - 发送消息使 sending 变 true，ChatRoundList 把最后一轮从折叠态展开为平铺，
+//    scrollHeight 增长、scrollTop 相对变小。
+// 以上都不是用户手势，不得据此停止跟随——否则边路会话会停在顶部且后续流式也不动。
+let lastScrollTop = -1
+let lastScrollHeight = -1
 
 /** 仅在用户未主动上滑时滚动到底部（流式输出 / 消息变化时调用） */
 function scrollToBottom() {
@@ -490,6 +504,8 @@ function scrollToBottom() {
       if (!el) return
       isProgrammaticScroll.value = true
       el.scrollTop = el.scrollHeight
+      lastScrollTop = el.scrollTop
+      lastScrollHeight = el.scrollHeight
       requestAnimationFrame(() => {
         isProgrammaticScroll.value = false
       })
@@ -502,7 +518,11 @@ function scrollToBottomForce() {
   nextTick(() => {
     requestAnimationFrame(() => {
       const el = messagesContainer.value
-      if (el) el.scrollTop = el.scrollHeight
+      if (el) {
+        el.scrollTop = el.scrollHeight
+        lastScrollTop = el.scrollTop
+        lastScrollHeight = el.scrollHeight
+      }
     })
   })
 }
@@ -541,8 +561,28 @@ function handleScroll() {
   const el = messagesContainer.value
   if (!el) return
   if (isProgrammaticScroll.value) return
-  // 用户滚动离开底部时暂停自动滚动，滚回底部附近时恢复
-  userScrolledUp.value = !isNearBottom()
+  if (el.scrollTop !== lastScrollTop && el.scrollTop > 0) {
+    const contentShrank = lastScrollHeight >= 0 && el.scrollHeight < lastScrollHeight - 2
+    const contentGrew = lastScrollHeight >= 0 && el.scrollHeight > lastScrollHeight + 2
+    if (lastScrollTop < 0) {
+      // 无基准（容器重建 / 首帧）：按距底推断
+      userScrolledUp.value = !isNearBottom()
+    } else if (contentShrank || contentGrew) {
+      // 布局变化（塌陷钳制 / 追加消息 / 展开轮次）不是用户手势，不得停止跟随；
+      // 已上滑时仍按距底判断用户是否已滚回底部，避免读历史时被强行拽到底。
+      if (userScrolledUp.value) {
+        userScrolledUp.value = !isNearBottom()
+      }
+    } else if (el.scrollTop < lastScrollTop - SCROLL_UP_TOLERANCE) {
+      // 位置真正向上移动 = 用户主动上滑
+      userScrolledUp.value = true
+    } else if (isNearBottom()) {
+      // 位置向下且已回到近底部 = 恢复跟随
+      userScrolledUp.value = false
+    }
+  }
+  lastScrollTop = el.scrollTop
+  lastScrollHeight = el.scrollHeight
   // 滚到顶部时加载更多历史消息（与主聊天 ChatPanel 一致）
   if (el.scrollTop > 120) return
   if (sideMessageLoadingOlder.value) return
@@ -553,6 +593,9 @@ function handleScroll() {
     await nextTick()
     if (!userScrolledUp.value) return
     el.scrollTop = oldTop + el.scrollHeight - oldHeight
+    // 追加历史后位置是「保持」而非「上滑」
+    lastScrollTop = el.scrollTop
+    lastScrollHeight = el.scrollHeight
   })
 }
 
@@ -585,6 +628,9 @@ onMounted(async () => {
 
 onActivated(() => {
   userScrolledUp.value = false
+  // KeepAlive 恢复的容器 scrollTop 与缓存前无关，重新度量避免拿旧位置当基准
+  lastScrollTop = -1
+  lastScrollHeight = -1
   // 切回边路会话 tab（KeepAlive 恢复）时自动滚动到底部
   scrollToBottomForce()
   nextTick(() => chatInputRef.value?.focusInput())
