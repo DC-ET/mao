@@ -351,7 +351,7 @@ watch(pendingApprovals, () => syncToTaskView(), { deep: true })
 const messagesContainer = ref<HTMLElement>()
 const {
   userScrolledUp, scrollToBottom, beginRestore, completeRestore,
-  handleMarkdownRendered, handleWheel, handleTouchStart, handleTouchMove, handleScroll, cancelRestore, dispose: disposeScroll,
+  handleMarkdownRendered, handleWheel, handleTouchStart, handleTouchMove, handleScroll, cancelRestore, resetScrollBaseline, dispose: disposeScroll,
 } = useChatScroll(messagesContainer, {
   loadOlder: loadOlderMessages,
   canLoadOlder: () => sessionStore.activeMessageHasMore && !sessionStore.activeMessageLoadingOlder,
@@ -483,6 +483,8 @@ const typingRetry = computed(() => {
 watch(messagesContainer, (el, oldEl) => {
   oldEl?.removeEventListener('scroll', handleScroll)
   oldEl?.removeEventListener('wheel', handleWheel)
+  // 新容器的 scrollTop 起点与旧容器无关，重新度量避免误判上滑
+  resetScrollBaseline()
   el?.addEventListener('scroll', handleScroll, { passive: true })
   el?.addEventListener('wheel', handleWheel, { passive: true })
 }, { flush: 'post' })

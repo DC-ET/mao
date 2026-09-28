@@ -22,6 +22,12 @@
 - Git 克隆不再把访问凭证拼进 clone URL。`workspace-mode=git` 克隆仓库时，Token 统一通过 `GIT_ASKPASS` 脚本 + `GIT_TOKEN_<域名>` 环境变量注入（与 Agent Shell、Git 写操作同一套机制），URL 始终保持 `https://<host>/<group>/<repo>.git`。此前实现会把 `https://oauth2:<token>@<host>/...` 交给 git，git 会把它原样写进工作区 `.git/config` 的 `remote.origin.url`，并出现在 `git remote -v`、`cat .git/config`、clone 报错等输出中，导致同机其他用户的工作区与会话日志可读到该 Token，形成跨用户凭证泄漏。
 - 克隆地址新增校验：URL 里携带 `user:pass@` 或 `token@` 形式凭证时直接拒绝并提示改用「设置 → Git 凭证」配置对应域名的 Access Token。
 
+### 前端（桌面 / Web / 安卓）
+
+- 修复发送消息后对话区突然跳到顶部、之后流式输出也不再自动跟随的问题。消息入队后「待发送消息」面板、审批面板、问题面板出现时会压缩消息区高度，此前这被误判成用户向上翻看历史，自动滚动随即停摆；现在只有位置真正向上移动才算上滑，被压缩或消息替换引起的位置变化不再打断跟随。
+
+---
+
 ## 0.0.213 (2026-09-28)
 
 ### 后端
