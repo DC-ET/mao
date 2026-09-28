@@ -243,4 +243,50 @@ describe('非手势滚动不误判上滑（发送消息时消息区不跳顶）'
     s.handleScroll()
     expect(s.userScrolledUp.value).toBe(false)
   })
+
+  it('消息列表被 REST 覆盖塌陷时不停止跟随（发送消息后不跳顶）', async () => {
+    const s = setup()
+    await settledAtBottom(s)
+
+    // 贴底：scrollTop 1500 = scrollHeight 2000 - clientHeight 500
+    // 发送消息后 phase watcher 触发 fetchMessages，roundLimit=5 的 REST 结果
+    // 整体覆盖缓存 → 内容塌陷 1000px。浏览器先把 scrollTop 向下钳制到新的
+    // 最大可滚动值（2000→1000 时最大值 1500→500），随后才派发 scroll 事件。
+    // 关键盲区：塌陷瞬间 lastScrollTop 仍是旧内容下的 1500，钳制后的 500
+    // 反而「小于」基准，朴素的方向比较会误判成用户上滑而永久关死跟随。
+    s.el.scrollHeight = 1000          // 内容先塌陷（Vue 更新 DOM）
+    s.el.scrollTop = 500              // 浏览器同步钳制 scrollTop
+    s.handleScroll()                  // 随后派发 scroll 事件
+    // 钳制不是用户手势：必须保持跟随
+    expect(s.userScrolledUp.value).toBe(false)
+    // 后续流式输出仍要跟底
+    s.el.scrollHeight = 1400
+    s.scrollToBottom()
+    await frameSettled()
+    expect(s.el.scrollTop).toBe(900)
+  })
+
+  it('塌陷后距底仍大于阈值也不误判上滑，主动上滑仍然生效', async () => {
+    const s = setup()
+    await settledAtBottom(s)
+
+    // 塌陷且下方仍有内容（typing 指示器等）：scrollHeight 2000→1600，
+    // 浏览器钳制 scrollTop 到 1100，距底仍 200 ≥ 80。
+    s.el.scrollHeight = 1600
+    s.el.scrollTop = 1100
+    s.handleScroll()
+    // 塌陷钳制不得误判为用户上滑，即便距底已超过阈值
+    expect(s.userScrolledUp.value).toBe(false)
+    s.scrollToBottom()
+    await frameSettled()
+    expect(s.el.scrollTop).toBe(1100)
+
+    // 无论如何，用户真的主动上滑必须仍然生效
+    s.el.scrollTop = 400
+    s.handleScroll()
+    expect(s.userScrolledUp.value).toBe(true)
+    s.scrollToBottom()
+    await frameSettled()
+    expect(s.el.scrollTop).toBe(400)
+  })
 })

@@ -437,6 +437,55 @@ describe('session store 实体/投影模型', () => {
     expect(store.getMessages('1').map(m => m.id)).toEqual(['10', streaming.id])
   })
 
+  // roundLimit 只回最近 N 轮（hasMore=true 表示还有更早历史）；本地已通过分页
+  // 加载过更多轮次时，整体替换会把已加载的更早轮次丢掉，消息区内容塌陷、
+  // 滚动位置被浏览器钳制，表现为发送消息后对话区跳到顶部且不再自动跟随。
+  it('applyFetchedMessages 保留本地已分页加载、REST 未返回的更早轮次', () => {
+    const store = useSessionStore()
+    store.setMessages('1', [
+      { id: '1', role: 'user', content: '第一轮', createdAt: '2026-08-13 10:00:00' },
+      { id: '2', role: 'assistant', content: '第一轮回复', createdAt: '2026-08-13 10:01:00' },
+      { id: '3', role: 'user', content: '第二轮', createdAt: '2026-08-13 11:00:00' },
+      { id: '4', role: 'assistant', content: '第二轮回复', createdAt: '2026-08-13 11:01:00' },
+      { id: '5', role: 'user', content: '第三轮', createdAt: '2026-08-13 12:00:00' },
+      { id: '6', role: 'assistant', content: '第三轮回复', createdAt: '2026-08-13 12:01:00' },
+    ])
+    // roundLimit 只回最近两轮（3/4 与 5/6）
+    store.applyFetchedMessages('1', [
+      { id: '3', role: 'user', content: '第二轮', createdAt: '2026-08-13 11:00:00' },
+      { id: '4', role: 'assistant', content: '第二轮回复', createdAt: '2026-08-13 11:01:00' },
+      { id: '5', role: 'user', content: '第三轮', createdAt: '2026-08-13 12:00:00' },
+      { id: '6', role: 'assistant', content: '第三轮回复', createdAt: '2026-08-13 12:01:00' },
+    ])
+    // 更早的 1/2 必须仍在缓存里，否则消息区高度塌陷导致滚动跳顶
+    expect(store.getMessages('1').map(m => m.id)).toEqual(['1', '2', '3', '4', '5', '6'])
+  })
+
+  it('applyFetchedMessages 仅保留断点之前的更早轮次，尾部消息不重复', () => {
+    const store = useSessionStore()
+    store.setMessages('1', [
+      { id: '1', role: 'user', content: '更早一轮', createdAt: '2026-08-13 10:00:00' },
+      { id: '2', role: 'assistant', content: '更早一轮回复', createdAt: '2026-08-13 10:01:00' },
+      { id: '3', role: 'user', content: '最近一轮', createdAt: '2026-08-13 11:00:00' },
+    ])
+    // 队列消费写入、REST 尚未返回的用户消息（不在 fetchedIds 中，但位于断点之后）
+    store.addUserMessage('1', {
+      id: '99',
+      role: 'user',
+      content: '排队中的消息',
+      createdAt: '2026-08-13 12:00:00',
+    })
+
+    store.applyFetchedMessages('1', [
+      { id: '3', role: 'user', content: '最近一轮', createdAt: '2026-08-13 11:00:00' },
+    ])
+
+    const msgs = store.getMessages('1')
+    // 断点之前的更早轮次保留；断点之后的排队消息只出现一次
+    expect(msgs.map(m => m.id)).toEqual(['1', '2', '3', '99'])
+    expect(msgs.filter(m => m.content === '排队中的消息')).toHaveLength(1)
+  })
+
   it('聚焦模式已加载时新建任务进入聚焦列表', async () => {
     const store = useSessionStore()
     mockGet.mockResolvedValueOnce({ data: [makeSession('1')] })

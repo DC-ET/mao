@@ -602,6 +602,9 @@ function buildScrollAnchor(): string {
     segmentStructure,
     last?.toolCalls?.length || 0,
     last?.toolCalls?.map(t => t.status).join(',') || '',
+    // sending 切换会让最后一轮从折叠态展开为平铺（ChatRoundList），
+    // 可见高度突变，需要重新定位到底部
+    agentRunning.value ? 'run' : '',
     sessionStore.activeThinking,
     sessionStore.activeStreaming,
     sessionStore.activeLlmRetry ? 'retry' : '',

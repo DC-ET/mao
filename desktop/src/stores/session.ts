@@ -1097,8 +1097,17 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   /**
-   * REST 历史覆盖缓存时，保留尚未出现在响应里的尾部消息
-   *（队列自动消费刚写入的用户消息、以及正在流式输出的助手气泡）。
+   * REST 历史覆盖缓存时，保留缓存里「REST 未覆盖」的消息。
+   * REST 默认带 roundLimit（只回最近 N 轮，hasMore=true 表示还有更早的历史），
+   * 而本地缓存可能已通过分页加载了更多轮次。此时若直接用 REST 结果整体替换，
+   * 已加载的更早轮次会被丢弃，消息区内容塌陷、滚动位置被浏览器钳制，
+   * 表现为发送消息后对话区跳到顶部且不再自动跟随。
+   *
+   * 保留规则（从尾部向前）：
+   *  - 队列自动消费刚写入的用户消息（还没出现在 REST 响应里）
+   *  - 正在流式输出的助手气泡
+   *  - 被 REST 回显替换掉的乐观用户消息（按内容匹配，不重复上屏）
+   * 遇到第一条 REST 已有的消息就停：其后是 REST 覆盖范围，交由 REST 结果。
    */
   function applyFetchedMessages(
     sessionId: string,
@@ -1110,6 +1119,19 @@ export const useSessionStore = defineStore('session', () => {
     const localIds = new Set(local.map(m => String(m.id)))
     const fetchedIds = new Set(messages.map(m => String(m.id)))
     const newlyFetchedUsers = messages.filter(m => m.role === 'user' && !localIds.has(String(m.id)))
+    // 本地已加载、但 REST 本次未返回的更早轮次：保留在头部。
+    // REST 默认带 roundLimit（只回最近 N 轮，hasMore=true 表示还有更早历史），
+    // 本地可能已通过分页加载更多轮次；此处只保留「第一条 REST 已有消息」之前的本地消息，
+    // 之后的本地消息属于尾部（队列消费 / 流式气泡 / 待替换乐观消息），交给下方逻辑处理。
+    let firstFetchedIndex = -1
+    for (let i = 0; i < local.length; i++) {
+      if (fetchedIds.has(String(local[i].id))) { firstFetchedIndex = i; break }
+    }
+    const earlier = firstFetchedIndex > 0
+      ? local.slice(0, firstFetchedIndex).filter(m => !newlyFetchedUsers.some(fetched =>
+        fetched.content === m.content
+        && JSON.stringify(fetched.images ?? []) === JSON.stringify(m.images ?? [])))
+      : []
     const tail: ChatMessage[] = []
     for (let i = local.length - 1; i >= 0; i--) {
       const message = local[i]
@@ -1126,7 +1148,8 @@ export const useSessionStore = defineStore('session', () => {
       }
     }
     const prevStreamingId = streamingAssistantMessageIds.get(sid)
-    sessionMessages.value.set(sid, tail.length > 0 ? [...messages, ...tail] : messages)
+    const merged = [...earlier, ...messages, ...tail]
+    sessionMessages.value.set(sid, merged.length > 0 ? merged : messages)
     if (prevStreamingId && tail.some(m => String(m.id) === prevStreamingId)) {
       streamingAssistantMessageIds.set(sid, prevStreamingId)
     } else {
