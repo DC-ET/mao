@@ -50,7 +50,7 @@ export interface WsHandlerDeps {
   harnessService: {
     prepareMessage(sessionId: number, content: unknown): Promise<string> | string;
     executeFromEvent(sessionId: number, eventId: string, listener: AgentEventListener, cancelFlag: { get(): boolean; set(v: boolean): void }): Promise<void>;
-    executeSideFirstMessage(parentId: number, sideId: number, inherit: boolean, listener: AgentEventListener, cancelFlag: { get(): boolean; set(v: boolean): void }): Promise<void>;
+    executeSideFirstMessage(parentId: number, sideId: number, contextMode: 'fork' | 'summary' | 'none', listener: AgentEventListener, cancelFlag: { get(): boolean; set(v: boolean): void }): Promise<void>;
   };
   sessionService: {
     getSession(id: number): Promise<Session | null>;
@@ -770,7 +770,9 @@ export class StreamingWsHandler {
     const data = (root.data ?? {}) as Record<string, unknown>;
     if (typeof data.content !== 'string') return;
     const content = data.content;
-    const inheritContext = data.inheritContext === true;
+    const contextMode = data.contextMode === 'fork' || data.contextMode === 'summary'
+      ? data.contextMode
+      : 'none';
     const modelId = data.modelId != null ? Number(data.modelId) : null;
     const images = Array.isArray(data.images) ? data.images.map(String) : [];
     if ((!content || content.trim() === '') && images.length === 0) return;
@@ -856,7 +858,7 @@ export class StreamingWsHandler {
             sideSessionId, userId, sideExecutionId, await this.resolveSupportsVision(sideSession),
           );
           sideListener = listener;
-          await this.deps.harnessService.executeSideFirstMessage(parentSessionId, sideSessionId, inheritContext, listener, flag);
+          await this.deps.harnessService.executeSideFirstMessage(parentSessionId, sideSessionId, contextMode, listener, flag);
           if (flag.get()) {
             await this.deps.taskTerminalService.finishExecution(sideSessionId, userId, 'CANCELLED', sideExecutionId);
             terminalPhase = 'CANCELLED';

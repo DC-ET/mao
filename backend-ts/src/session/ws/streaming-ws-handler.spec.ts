@@ -240,7 +240,7 @@ describe('StreamingWsHandler', () => {
     });
 
     await handler.handleTextMessage(ws, JSON.stringify({
-      type: 'create_side_session', sessionId: 11, data: { content: 'side work', inheritContext: true },
+      type: 'create_side_session', sessionId: 11, data: { content: 'side work', contextMode: 'summary' },
     }));
 
     expect(taskTerminalService.finishExecution).toHaveBeenCalledWith(
@@ -411,7 +411,7 @@ describe('StreamingWsHandler', () => {
     sessionService.saveMessage.mockResolvedValue(message(99, 'USER'));
     sessionService.save.mockImplementation(async (s: Session) => { s.id = 13; });
     await handler.handleTextMessage(ws, JSON.stringify({
-      type: 'create_side_session', sessionId: 11, data: { content: 'side work', inheritContext: true, modelId: 9 },
+      type: 'create_side_session', sessionId: 11, data: { content: 'side work', contextMode: 'summary', modelId: 9 },
     }));
     await executor.runAll();
     expect(sessionService.save).toHaveBeenCalledWith(expect.objectContaining({
@@ -438,7 +438,7 @@ describe('StreamingWsHandler', () => {
     sessionService.getSession.mockResolvedValue(parent);
     llmModelMapper.selectById.mockResolvedValue({ supportsVision: 0 });
     await handler.handleTextMessage(ws, JSON.stringify({
-      type: 'create_side_session', sessionId: 11, data: { content: 'look', inheritContext: true, images: ['https://cdn.example/a.png'] },
+      type: 'create_side_session', sessionId: 11, data: { content: 'look', contextMode: 'summary', images: ['https://cdn.example/a.png'] },
     }));
     expect(sessionService.save).not.toHaveBeenCalled();
     expect(harnessService.executeSideFirstMessage).not.toHaveBeenCalled();

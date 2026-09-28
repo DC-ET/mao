@@ -75,9 +75,11 @@
       />
 
       <div v-if="!hasRealSession && displayMessages.length === 0" class="inherit-bar">
-        <el-checkbox v-model="inheritContext" size="small">
-          继承主任务上下文
-        </el-checkbox>
+        <el-radio-group v-model="contextMode" size="small">
+          <el-radio value="none">不继承</el-radio>
+          <el-radio value="summary">主会话摘要</el-radio>
+          <el-radio value="fork">Fork 主会话</el-radio>
+        </el-radio-group>
       </div>
 
       <ChatInput
@@ -173,7 +175,7 @@ const hasRealSession = computed(() => realSessionId.value > 0)
 // Stable cache key for placeholder tabs — tabId does not change when sideSessionId is assigned
 const placeholderCacheKey = computed(() => props.tabId)
 
-const inheritContext = ref(false)
+const contextMode = ref<'none' | 'summary' | 'fork'>('none')
 const sending = ref(false)
 const waitingForSave = ref(false)
 
@@ -364,6 +366,10 @@ watch(
       realSessionId.value = newId
       subscribe(String(newId))
       await loadSideSessionMeta()
+      // Fork 模式下后端已将主会话消息复制到边路会话，需从 REST 拉取以展示历史消息
+      if (contextMode.value === 'fork') {
+        await fetchMessages()
+      }
     } else if (newId > 0 && realSessionId.value !== newId) {
       realSessionId.value = newId
     }
@@ -389,6 +395,7 @@ async function loadSideSessionMeta() {
 async function fetchMessages() {
   if (!hasRealSession.value) return
   const sid = String(realSessionId.value)
+  sessionStore.clearMessagePageState(sid)
   try {
     const { data } = await api.get(`/sessions/${sid}/messages`, { params: { roundLimit: 5 } })
     const raw: Array<Record<string, unknown>> = data?.messages || []
@@ -400,10 +407,55 @@ async function fetchMessages() {
     if (Array.isArray(data?.compactionEvents)) {
       sessionStore.setCompactionEvents(sid, mapCompactionEvents(data.compactionEvents))
     }
+    sessionStore.setMessagePageState(
+      sid,
+      Boolean(data?.hasMore),
+      data?.nextBeforeMessageId != null ? String(data.nextBeforeMessageId) : null,
+    )
     // 会话消息加载后回显该会话内的点踩状态
     void loadDislikedIds(sid)
   } catch {
     // session might not exist yet
+  }
+}
+
+const sideMessageHasMore = computed(() => {
+  if (!hasRealSession.value) return false
+  return sessionStore.getMessageHasMore(String(realSessionId.value))
+})
+
+const sideMessageLoadingOlder = computed(() => {
+  if (!hasRealSession.value) return false
+  return sessionStore.getMessageLoadingOlder(String(realSessionId.value))
+})
+
+async function loadOlderMessages(): Promise<boolean> {
+  if (!hasRealSession.value) return false
+  const sid = String(realSessionId.value)
+  const hasMore = sessionStore.getMessageHasMore(sid)
+  const loading = sessionStore.getMessageLoadingOlder(sid)
+  const nextBeforeId = sessionStore.getMessageNextBeforeId(sid)
+  if (loading || !hasMore || !nextBeforeId) return false
+  sessionStore.setLoadingOlderMessages(sid, true)
+  try {
+    const { data } = await api.get(`/sessions/${sid}/messages`, {
+      params: { roundLimit: 5, beforeMessageId: nextBeforeId }
+    })
+    const raw: Array<Record<string, unknown>> = data?.messages || []
+    const { messages: olderMessages, allChanges } = mapMessagesWithFileChanges(raw)
+    sessionStore.prependMessages(sid, olderMessages)
+    const existingChanges = sessionStore.getFileChanges(sid)
+    sessionStore.setFileChanges(sid, [...allChanges, ...existingChanges])
+    sessionStore.setMessagePageState(
+      sid,
+      Boolean(data?.hasMore),
+      data?.nextBeforeMessageId != null ? String(data.nextBeforeMessageId) : null,
+    )
+    return true
+  } catch {
+    return false
+  } finally {
+    sessionStore.setLoadingOlderMessages(sid, false)
   }
 }
 
@@ -491,6 +543,17 @@ function handleScroll() {
   if (isProgrammaticScroll.value) return
   // 用户滚动离开底部时暂停自动滚动，滚回底部附近时恢复
   userScrolledUp.value = !isNearBottom()
+  // 滚到顶部时加载更多历史消息（与主聊天 ChatPanel 一致）
+  if (el.scrollTop > 120) return
+  if (sideMessageLoadingOlder.value) return
+  if (!sideMessageHasMore.value) return
+  const oldHeight = el.scrollHeight
+  const oldTop = el.scrollTop
+  void loadOlderMessages().then(async () => {
+    await nextTick()
+    if (!userScrolledUp.value) return
+    el.scrollTop = oldTop + el.scrollHeight - oldHeight
+  })
 }
 
 // 消息 / 流式状态变化时自动滚动（flush:'post' 确保 DOM 已更新）
@@ -652,7 +715,7 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
         const created = await createSideSession(
           parentSessionId,
           resolvedText,
-          inheritContext.value,
+          contextMode.value,
           currentModelId.value,
           localSkills,
           agentsMdContent,

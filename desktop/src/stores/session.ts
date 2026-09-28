@@ -1130,6 +1130,18 @@ export const useSessionStore = defineStore('session', () => {
     sessionMessageLoadingOlder.value.set(String(sessionId), loading)
   }
 
+  function getMessageHasMore(sessionId: string): boolean {
+    return sessionMessageHasMore.value.get(String(sessionId)) ?? false
+  }
+
+  function getMessageLoadingOlder(sessionId: string): boolean {
+    return sessionMessageLoadingOlder.value.get(String(sessionId)) ?? false
+  }
+
+  function getMessageNextBeforeId(sessionId: string): string | null {
+    return sessionMessageNextBeforeId.value.get(String(sessionId)) ?? null
+  }
+
   function clearMessagePageState(sessionId: string) {
     const sid = String(sessionId)
     sessionMessageHasMore.value.delete(sid)
@@ -1786,6 +1798,9 @@ export const useSessionStore = defineStore('session', () => {
     prependMessages,
     setMessagePageState,
     setLoadingOlderMessages,
+    getMessageHasMore,
+    getMessageLoadingOlder,
+    getMessageNextBeforeId,
     clearMessagePageState,
     addUserMessage,
     addAssistantMessage,

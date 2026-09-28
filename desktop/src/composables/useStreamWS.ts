@@ -494,7 +494,7 @@ export function useStreamWS() {
   async function createSideSession(
     parentSessionId: string,
     content: string,
-    inheritContext: boolean,
+    contextMode: 'fork' | 'summary' | 'none',
     modelId?: number,
     localSkills?: LocalSkillReport[],
     agentsMdContent?: string,
@@ -506,7 +506,7 @@ export function useStreamWS() {
       sessionId: Number(parentSessionId),
       data: {
         content,
-        inheritContext,
+        contextMode,
         images: images || [],
         ...(modelId != null ? { modelId } : {}),
         ...(localSkills && localSkills.length > 0 ? { localSkills } : {}),

@@ -4,9 +4,9 @@ import { AtomicBoolean } from '../atomic-boolean.js';
 import { harnessLog } from '../log.js';
 import { boolish, llmModelToConfig, wsEvent } from '../deps.js';
 import type {
-  AgentMapper, AgentExperienceService, FileChangeMapper, LlmModel, LlmModelMapper,
-  Session, SessionActivityHeartbeat, SessionCompactionService, SessionMapper, SessionService,
-  StreamingWsRegistry, TaskTerminalService, ActivityService,
+  AgentMapper, AgentExperienceService, FileChange, FileChangeMapper, LlmModel, LlmModelMapper,
+  Message, Session, SessionActivityHeartbeat, SessionCompaction, SessionCompactionService,
+  SessionMapper, SessionService, StreamingWsRegistry, TaskTerminalService, ActivityService,
 } from '../deps.js';
 import type { AgentEventListener } from './agent-event-listener.js';
 import { AgentLoop, type MessagePersistenceCallback, type ToolMessageSave } from './agent-loop.js';
@@ -39,7 +39,6 @@ import { shanghaiYmd } from '../../common/json.js';
 import { BusinessException } from '../../common/business-exception.js';
 import { ErrorCode } from '../../common/error-code.js';
 import type { ChatRequest, ChatUsage, ToolCall } from '../llm/chat-request.js';
-import type { FileChange } from '../deps.js';
 
 const ASK_USER_QUESTIONS = 'ask_user_questions';
 
@@ -539,12 +538,16 @@ export class HarnessService {
   async executeSideFirstMessage(
     parentSessionId: number,
     sideSessionId: number,
-    inheritContext: boolean,
+    contextMode: 'fork' | 'summary' | 'none',
     listener: AgentEventListener,
     cancelFlag?: AtomicBoolean | null,
   ): Promise<void> {
+    if (contextMode === 'fork') {
+      await this.forkParentMessages(parentSessionId, sideSessionId);
+    }
+    // fork 后边路会话已有完整历史消息，buildContext 会自动加载；summary/none 不改消息表
     const context = await this.buildContext(sideSessionId, listener, cancelFlag);
-    if (inheritContext) {
+    if (contextMode === 'summary') {
       const contextSummary = await this.generateContextSummary(parentSessionId);
       if (hasText(contextSummary)) {
         context.systemPrompt = (context.systemPrompt ?? '')
@@ -553,9 +556,88 @@ export class HarnessService {
         context.preparedRequest = null;
       }
     }
+    // contextMode === 'none': 跳过任何上下文注入
     const persistenceCallback = this.createPersistenceCallback(sideSessionId, context);
     await this.agentLoop.execute(context, listener, persistenceCallback);
     if (cancelFlag != null) this.agentLoop.removeCancelFlag(sideSessionId);
+  }
+
+  /**
+   * 物理复制主会话的全部消息、file_change、compaction 记录到边路会话。
+   * 复制逻辑参考 promoteSideTaskToMainSession 中的事务内消息复制模式。
+   */
+  private async forkParentMessages(parentSessionId: number, sideSessionId: number): Promise<void> {
+    if (!this.db) throw new Error('Database is required for fork parent messages');
+    await this.db.transaction(async (tx) => {
+      // 1. 复制消息（维护 messageIdMap: 旧 ID → 新 ID）
+      const messages = await tx.query<Message>(
+        `SELECT * FROM \`message\` WHERE session_id = ? AND deleted = 0 ORDER BY created_at ASC, id ASC`,
+        [parentSessionId],
+      );
+      const messageIdMap = new Map<number, number>();
+      for (const m of messages) {
+        const newId = await tx.insert('message', {
+          sessionId: sideSessionId,
+          role: m.role,
+          content: m.content,
+          thinkingContent: m.thinkingContent,
+          toolCallId: m.toolCallId,
+          toolCalls: m.toolCalls,
+          tokenCount: m.tokenCount,
+          modelId: m.modelId,
+          metadata: m.metadata,
+          sourceSessionId: parentSessionId,
+          createdAt: m.createdAt,
+          deleted: 0,
+        });
+        if (m.id != null) messageIdMap.set(m.id, newId);
+      }
+
+      // 2. 复制 file_change（通过 messageIdMap 重映射 messageId）
+      const fileChanges = await tx.query<FileChange>(
+        `SELECT * FROM message_file_change WHERE session_id = ? ORDER BY id ASC`,
+        [parentSessionId],
+      );
+      for (const change of fileChanges) {
+        if (change.messageId == null) continue;
+        const mappedMessageId = messageIdMap.get(change.messageId);
+        if (mappedMessageId == null) continue;
+        await tx.insert('message_file_change', {
+          messageId: mappedMessageId,
+          sessionId: sideSessionId,
+          filePath: (change as { filePath?: string }).filePath ?? change.path,
+          changeType: (change as { changeType?: string }).changeType ?? change.type,
+          linesAdded: change.linesAdded,
+          linesDeleted: change.linesDeleted,
+          diffMode: change.diffMode,
+          beforeContent: change.beforeContent,
+          afterContent: change.afterContent,
+          patchContent: change.patchContent,
+          patchTruncated: change.patchTruncated == null ? null : change.patchTruncated ? 1 : 0,
+          diffUnavailableReason: change.diffUnavailableReason,
+        });
+      }
+
+      // 3. 复制 compaction 记录（将 lastCompactedMsgId 重映射为新 ID）
+      const compaction = await tx.queryOne<SessionCompaction>(
+        `SELECT * FROM session_compaction WHERE session_id = ?`,
+        [parentSessionId],
+      );
+      if (compaction != null) {
+        const mappedBoundary = compaction.lastCompactedMsgId != null
+          ? messageIdMap.get(compaction.lastCompactedMsgId) ?? null
+          : null;
+        await tx.insert('session_compaction', {
+          sessionId: sideSessionId,
+          summaryText: compaction.summaryText,
+          lastCompactedMsgId: mappedBoundary,
+          compactCount: compaction.compactCount,
+          inputTokens: compaction.inputTokens,
+          outputTokens: compaction.outputTokens,
+          compactModel: compaction.compactModel,
+        });
+      }
+    });
   }
 
   private async generateContextSummary(parentSessionId: number): Promise<string | null> {

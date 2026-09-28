@@ -383,10 +383,18 @@ describe('HarnessService.buildContext and execute', () => {
 
   it('executeSideFirstMessageAppendsParentSummary', async () => {
     const { service, sessionService, agentLoop } = makeHarness();
-    await service.executeSideFirstMessage(1, 10, true, { onContentDelta: vi.fn() } as never);
+    await service.executeSideFirstMessage(1, 10, 'summary', { onContentDelta: vi.fn() } as never);
     expect(sessionService.getMessages).toHaveBeenCalledWith(1);
     const ctx = agentLoop.execute.mock.calls[0][0] as AgentExecutionContext;
     expect(ctx.systemPrompt).toContain('主任务背景摘要');
+  });
+
+  it('executeSideFirstMessageNoneDoesNotInject', async () => {
+    const { service, sessionService, agentLoop } = makeHarness();
+    await service.executeSideFirstMessage(1, 10, 'none', { onContentDelta: vi.fn() } as never);
+    expect(sessionService.getMessages).not.toHaveBeenCalled();
+    const ctx = agentLoop.execute.mock.calls[0][0] as AgentExecutionContext;
+    expect(ctx.systemPrompt).not.toContain('主任务背景摘要');
   });
 
   it('resolveModelFallsBackToDefault', async () => {
