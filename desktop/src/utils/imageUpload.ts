@@ -39,8 +39,12 @@ export async function uploadImages(files: File[], sessionId?: string | null): Pr
       sessionId: sessionId ? Number(sessionId) : null
     })
     stsToken = data
-  } catch {
-    ElMessage.error('获取上传凭证失败')
+  } catch (error) {
+    // 具体原因（连接超时 / OSS 未配置 / STS 鉴权失败）已由响应拦截器提示；
+    // 只有拦截器没有提示时才兜底，避免再弹一条通用文案把真实原因冲掉
+    if (!(error as Error & { toastShown?: boolean }).toastShown) {
+      ElMessage.error('获取上传凭证失败，请稍后重试')
+    }
     return []
   }
 

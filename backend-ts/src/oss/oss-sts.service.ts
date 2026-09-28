@@ -1,5 +1,51 @@
 import { BusinessException } from '../common/business-exception.js';
 
+/** AssumeRole 最多尝试次数（1 次原始 + 2 次重试）。 */
+const STS_MAX_ATTEMPTS = 3;
+/** 重试基础退避（毫秒）：第 n 次重试等待 base * 2^(n-1)，即 300ms、600ms。 */
+const STS_RETRY_BASE_DELAY_MS = 300;
+/** Aliyun SDK 底层 httpx 默认 connect/read timeout 仅 3s，首次连接（DNS+TLS+SDK 初始化）极易误判为 ConnectTimeout。 */
+const STS_CONNECT_TIMEOUT_MS = 5_000;
+const STS_READ_TIMEOUT_MS = 10_000;
+
+/**
+ * 判断 STS 失败是否值得重试。只覆盖瞬断（连接/读超时、连接被重置、限流），
+ * 配置类与鉴权类错误（InvalidParameter、AccessDenied、未配置等）必须立即返回给用户。
+ */
+function isTransientStsFailure(failure: unknown): boolean {
+  let cause: unknown = failure;
+  while (cause) {
+    if (cause instanceof BusinessException) return false;
+    if (cause instanceof Error) {
+      const msg = cause.message ?? '';
+      if (
+        // Aliyun SDK 传输层把各类超时统一抛成 RequestTimeoutError，消息前缀为 ConnectTimeout:/ReadTimeout:
+        cause.name === 'RequestTimeoutError'
+        || cause.name === 'RetryError'
+        || msg.includes('ConnectTimeout')
+        || msg.includes('ReadTimeout')
+        || msg.includes('socket hang up')
+        || msg.includes('ECONNRESET')
+        || msg.includes('ECONNREFUSED')
+        || msg.includes('ETIMEDOUT')
+        || msg.includes('EPIPE')
+        // 限流稍等即可再试
+        || msg.includes('Throttling')
+      ) {
+        return true;
+      }
+      cause = cause.cause;
+      continue;
+    }
+    break;
+  }
+  return false;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export interface StsTokenVO {
   accessKeyId: string;
   accessKeySecret: string;
@@ -24,13 +70,15 @@ export interface OssStsConfig {
   };
 }
 
+export interface AssumeRoleInput {
+  roleArn: string;
+  roleSessionName: string;
+  durationSeconds: number;
+  policy: string;
+}
+
 export interface AssumeRoleClient {
-  assumeRole(input: {
-    roleArn: string;
-    roleSessionName: string;
-    durationSeconds: number;
-    policy: string;
-  }): Promise<{
+  assumeRole(input: AssumeRoleInput): Promise<{
     accessKeyId: string;
     accessKeySecret: string;
     securityToken: string;
@@ -71,12 +119,12 @@ export class OssStsService {
                     }`;
     try {
       const client = await this.resolveClient(config);
-      const creds = await client.assumeRole({
+      const creds = await this.assumeRoleWithRetry(client, {
         roleArn: sts.roleArn,
         roleSessionName: `User_${userId}`,
         durationSeconds: sts.expire,
         policy,
-      });
+      }, userId);
       return {
         accessKeyId: creds.accessKeyId,
         accessKeySecret: creds.accessKeySecret,
@@ -91,6 +139,25 @@ export class OssStsService {
       console.error(`Failed to generate STS token for userId=${userId}`, e);
       throw new BusinessException(5001, `生成 OSS 临时凭证失败: ${(e as Error).message}`);
     }
+  }
+
+  private async assumeRoleWithRetry(
+    client: AssumeRoleClient,
+    input: AssumeRoleInput,
+    userId: number,
+  ) {
+    let lastFailure: unknown;
+    for (let attempt = 1; attempt <= STS_MAX_ATTEMPTS; attempt++) {
+      try {
+        return await client.assumeRole(input);
+      } catch (e) {
+        lastFailure = e;
+        if (attempt === STS_MAX_ATTEMPTS || !isTransientStsFailure(e)) throw e;
+        console.warn(`STS AssumeRole 第 ${attempt} 次尝试失败，重试中, userId=${userId}: ${(e as Error).message}`);
+        await sleep(STS_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1));
+      }
+    }
+    throw lastFailure;
   }
 
   private async resolveClient(config: OssStsConfig): Promise<AssumeRoleClient> {
@@ -139,6 +206,9 @@ export async function createAliyunAssumeRoleClient(sts: OssStsConfig['sts']): Pr
     accessKeyId: sts.accessKeyId,
     accessKeySecret: sts.accessKeySecret,
     endpoint: sts.endpoint.replace(/^https?:\/\//, ''),
+    // 覆盖 SDK 默认的 3s connect/read timeout：首次连接（DNS + TLS + SDK 初始化）常常超过 3s 被误判为 ConnectTimeout
+    connectTimeout: STS_CONNECT_TIMEOUT_MS,
+    readTimeout: STS_READ_TIMEOUT_MS,
   });
   return {
     async assumeRole(input) {

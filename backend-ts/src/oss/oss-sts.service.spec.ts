@@ -46,6 +46,44 @@ describe('OssStsService', () => {
     await expect(service.generateStsToken(1)).rejects.toBeInstanceOf(BusinessException);
   });
 
+  it('retriesOnceOnTransientConnectTimeoutAndReturnsCredentials', async () => {
+    const assumeRole = vi.fn()
+      .mockRejectedValueOnce(Object.assign(new Error('ConnectTimeout: Connect https://sts.cn-hangzhou.aliyuncs.com/ failed.'), { name: 'RequestTimeoutError' }))
+      .mockResolvedValue({
+        accessKeyId: 'tmp-ak', accessKeySecret: 'tmp-sk', securityToken: 'token', expiration: 'exp',
+      });
+    const service = new OssStsService(async () => oss, async () => ({ assumeRole }));
+    const vo = await service.generateStsToken(1);
+    expect(vo.accessKeyId).toBe('tmp-ak');
+    expect(assumeRole).toHaveBeenCalledTimes(2);
+  });
+
+  it('givesUpAfterMaxAttemptsAndReportsLastFailure', async () => {
+    const assumeRole = vi.fn()
+      .mockRejectedValue(Object.assign(new Error('ConnectTimeout: Connect https://sts.cn-hangzhou.aliyuncs.com/ failed.'), { name: 'RequestTimeoutError' }));
+    const service = new OssStsService(async () => oss, async () => ({ assumeRole }));
+    await expect(service.generateStsToken(1)).rejects.toThrow(/生成 OSS 临时凭证失败/);
+    expect(assumeRole).toHaveBeenCalledTimes(3);
+  });
+
+  it('doesNotRetryConfigurationErrors', async () => {
+    const assumeRole = vi.fn().mockRejectedValue(
+      new Error('code: 400, InvalidParameter.PolicyGrammar request id: r1'),
+    );
+    const service = new OssStsService(async () => oss, async () => ({ assumeRole }));
+    await expect(service.generateStsToken(1)).rejects.toThrow(/InvalidParameter.PolicyGrammar/);
+    expect(assumeRole).toHaveBeenCalledTimes(1);
+  });
+
+  it('doesNotRetryBusinessExceptionThrownByClientFactory', async () => {
+    const assumeRole = vi.fn();
+    const service = new OssStsService(async () => oss, async () => {
+      throw new BusinessException(5001, 'OSS 未配置，请在管理后台"系统设置→集成配置"中填写');
+    });
+    await expect(service.generateStsToken(1)).rejects.toThrow(/OSS 未配置/);
+    expect(assumeRole).not.toHaveBeenCalled();
+  });
+
   it('rejectsWhenOssNotConfigured', async () => {
     const service = new OssStsService(async () => null, async () => {
       throw new Error('should not be called');

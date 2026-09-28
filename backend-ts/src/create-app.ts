@@ -625,11 +625,15 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
 
   const ossSts = new OssStsService(
     () => settingService.getOssConfig(),
-    async (sts) => createAliyunAssumeRoleClient(sts).catch(() => ({
-      assumeRole: async () => {
-        throw new Error('OSS STS 客户端不可用');
-      },
-    })),
+    // 客户端创建失败时保留原始原因：静默替换会让「配置错误」和「网络抖动」都显示成同一条无信息量的错误
+    async (sts) => {
+      try {
+        return await createAliyunAssumeRoleClient(sts);
+      } catch (e) {
+        console.error('创建 OSS STS 客户端失败', e);
+        throw new Error(`创建 OSS STS 客户端失败: ${(e as Error).message}`);
+      }
+    },
   );
 
   const userSkillsDir = cfg.app.harness.userSkillsDir || resolve(process.env.HOME ?? '/tmp', '.mao/data/userskills');
