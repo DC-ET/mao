@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 1280px;
+    height: 1000px;
+    overflow: hidden;
+    background: #F5F2EA;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", sans-serif;
+    color: #1C1C1E;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page {
+    width: 1280px;
+    height: 1000px;
+    padding: 32px 44px 24px;
+    position: relative;
+  }
+  .feather {
+    position: absolute;
+    top: 28px; right: 40px;
+    width: 56px;
+    opacity: 0.95;
+  }
+  .title {
+    font-size: 32px; font-weight: 700; letter-spacing: -0.02em; color: #1C1C1E;
+  }
+  .subtitle {
+    margin-top: 8px;
+    font-size: 15px; color: #6B6560; letter-spacing: 0.01em;
+  }
+  .subtitle span { color: #C47A0A; font-weight: 600; }
+
+  .layer-label {
+    display: flex; align-items: center; gap: 8px;
+    margin: 14px 0 10px;
+    height: 18px;
+  }
+  .layer-label .dot {
+    width: 8px; height: 8px; border-radius: 50%; background: #F5A524;
+  }
+  .layer-label .txt {
+    font-size: 12.5px; font-weight: 700; color: #8A8070; letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  .layer-label .note {
+    margin-left: auto;
+    font-size: 11px; color: #9A9080; letter-spacing: 0;
+    white-space: nowrap;
+  }
+
+  /* Clients */
+  .clients {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 10px;
+  }
+  .client {
+    background: #FFFFFF;
+    border: 1px solid #E4DCC8;
+    border-radius: 12px;
+    padding: 12px 10px;
+    text-align: center;
+  }
+  .client .name {
+    font-size: 14.5px; font-weight: 600; color: #1C1C1E;
+  }
+  .client .role {
+    margin-top: 4px;
+    font-size: 11px; color: #8A8070;
+  }
+
+  /* Connector bus */
+  .bus {
+    margin: 10px 20px 0;
+    height: 32px;
+    position: relative;
+  }
+  .bus-line {
+    position: absolute;
+    left: 8%; right: 8%;
+    top: 18px;
+    height: 2px;
+    background: #F5A524;
+  }
+  .bus-tick {
+    position: absolute;
+    top: 8px;
+    width: 2px;
+    height: 22px;
+    background: #F5A524;
+    transform: translateX(-50%);
+  }
+  .bus-pill {
+    position: absolute;
+    left: 50%;
+    top: 0;
+    transform: translateX(-50%);
+    background: #C47A0A;
+    color: #FFF;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 4px 10px;
+    border-radius: 999px;
+    white-space: nowrap;
+    z-index: 2;
+  }
+
+  /* Panel */
+  .panel {
+    background: #FFFCF6;
+    border: 1.5px solid #E8C878;
+    border-radius: 16px;
+    padding: 16px 18px 18px;
+    position: relative;
+  }
+  .panel-title {
+    position: absolute;
+    top: -11px; left: 22px;
+    background: #F5F2EA;
+    padding: 0 10px;
+    font-size: 13px;
+    font-weight: 700;
+    color: #C47A0A;
+    letter-spacing: 0.06em;
+  }
+
+  /* Backend grid */
+  .backend {
+    display: grid;
+    grid-template-columns: 1.05fr 1.35fr 1.05fr;
+    gap: 14px;
+    margin-top: 6px;
+  }
+  .col {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .box {
+    background: #FFFFFF;
+    border: 1px solid #E4DCC8;
+    border-radius: 12px;
+    padding: 12px 14px;
+  }
+  .box.core {
+    background: linear-gradient(160deg, #FFF6DF 0%, #FFFFFF 85%);
+    border: 1.5px solid #F5A524;
+  }
+  .box .h {
+    font-size: 14.5px; font-weight: 700; color: #1C1C1E;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .box .tag {
+    font-size: 10px; font-weight: 700;
+    background: #F5A524; color: #1C1C1E;
+    padding: 2px 7px; border-radius: 999px;
+  }
+  .box .d {
+    margin-top: 5px;
+    font-size: 11.5px; color: #6B6560; line-height: 1.5;
+  }
+  .box .rows {
+    margin-top: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .mini {
+    background: #F5F2EA;
+    border: 1px solid #E4DCC8;
+    border-radius: 7px;
+    padding: 4px 8px;
+    font-size: 11px;
+    color: #4A453E;
+    font-weight: 500;
+  }
+
+  .harness-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: #FFF;
+    border: 1px solid #E4DCC8;
+    border-radius: 12px;
+    padding: 12px;
+  }
+  .harness-stack .hs-title {
+    font-size: 11px; font-weight: 700; color: #C47A0A; letter-spacing: 0.08em;
+    margin-bottom: 2px;
+  }
+  .hs-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 6px;
+  }
+  .hs-cell {
+    background: #FBF7EC;
+    border: 1px solid #EDE2C4;
+    border-radius: 8px;
+    padding: 8px 8px;
+    text-align: center;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: #3A342C;
+  }
+  .hs-cell.center {
+    grid-column: 1 / -1;
+    background: #FFF4D6;
+    border-color: #F0C56A;
+    font-size: 12.5px;
+    color: #1C1C1E;
+    padding: 10px;
+  }
+
+  /* Execution band */
+  .exec {
+    display: grid;
+    grid-template-columns: 1fr 1.1fr 1fr;
+    gap: 14px;
+    align-items: stretch;
+  }
+  .exec-card {
+    background: #FFFFFF;
+    border: 1px solid #E4DCC8;
+    border-radius: 14px;
+    padding: 12px 16px;
+  }
+  .exec-card.local {
+    border-color: #E8C878;
+    background: #FFFCF6;
+  }
+  .exec-card .h {
+    font-size: 16px; font-weight: 700; margin-bottom: 4px;
+  }
+  .exec-card .s {
+    font-size: 11.5px; color: #8A8070; margin-bottom: 10px;
+  }
+  .exec-card ul {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .exec-card li {
+    font-size: 12px;
+    color: #3A342C;
+    padding-left: 12px;
+    position: relative;
+    line-height: 1.45;
+  }
+  .exec-card li::before {
+    content: "";
+    position: absolute;
+    left: 0; top: 7px;
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: #F5A524;
+  }
+  .bridge {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 8px;
+    padding: 8px 4px;
+  }
+  .bridge .flow-box {
+    background: #FFFFFF;
+    border: 1px dashed #D9C9A0;
+    border-radius: 12px;
+    padding: 12px 14px;
+    text-align: center;
+  }
+  .bridge .flow-box .t {
+    font-size: 13px; font-weight: 700; color: #1C1C1E;
+  }
+  .bridge .flow-box .d {
+    margin-top: 4px;
+    font-size: 11px; color: #6B6560; line-height: 1.45;
+  }
+  .badge-row {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .pill {
+    background: #C47A0A;
+    color: #FFF;
+    font-size: 10.5px;
+    font-weight: 700;
+    padding: 4px 10px;
+    border-radius: 999px;
+  }
+  .pill.soft {
+    background: #F5E6B8;
+    color: #8A5A00;
+  }
+
+  /* Bottom notes */
+  .notes {
+    margin-top: 12px;
+    display: grid;
+    grid-template-columns: 1.4fr 1fr 1fr;
+    gap: 10px;
+  }
+  .note-card {
+    background: #EFEAE0;
+    border-radius: 12px;
+    padding: 10px 14px;
+  }
+  .note-card .h {
+    font-size: 11px; font-weight: 700; color: #8A8070; letter-spacing: 0.08em;
+    margin-bottom: 5px;
+  }
+  .note-card .d {
+    font-size: 11.5px; color: #4A453E; line-height: 1.5;
+  }
+</style>
+</head>
+<body>
+  <div class="page">
+    <img class="feather" src="file:///Users/yangjiayi/AiProjects/mao/docs/assets/logo-design/mao-feather-transparent.png" alt="" />
+
+    <div class="title">Mao 技术架构</div>
+    <div class="subtitle">客户端 → 接入层 → <span>Agent Harness</span> → 工具执行（CLOUD / LOCAL）　·　NestJS + Fastify　·　WebSocket 流式</div>
+
+    <!-- Clients -->
+    <div class="layer-label">
+      <div class="dot"></div>
+      <div class="txt">Clients · 接入端</div>
+      <div class="note">管理类走 REST；工作台 / CLI / Embed 另开 WebSocket 双向流</div>
+    </div>
+    <div class="clients">
+      <div class="client"><div class="name">管理后台</div><div class="role">RBAC · 审计 · 用量</div></div>
+      <div class="client"><div class="name">Web / Electron</div><div class="role">工作台 · LOCAL 执行</div></div>
+      <div class="client"><div class="name">安卓 APP</div><div class="role">CLOUD 远程加载</div></div>
+      <div class="client"><div class="name">mao-agent</div><div class="role">终端 CLI · LOCAL</div></div>
+      <div class="client"><div class="name">Embed SDK</div><div class="role">宿主页面可操作</div></div>
+      <div class="client"><div class="name">飞书 / 钉钉 / 微信</div><div class="role">机器人通道</div></div>
+    </div>
+
+    <!-- Bus -->
+    <div class="bus">
+      <div class="bus-line"></div>
+      <div class="bus-tick" style="left: 8.5%"></div>
+      <div class="bus-tick" style="left: 25%"></div>
+      <div class="bus-tick" style="left: 41.5%"></div>
+      <div class="bus-tick" style="left: 58%"></div>
+      <div class="bus-tick" style="left: 74.5%"></div>
+      <div class="bus-tick" style="left: 91%"></div>
+      <div class="bus-pill">REST /api/v1 · WS /api/ws/stream · 单域名分流</div>
+    </div>
+
+    <!-- Backend -->
+    <div class="layer-label" style="margin-top: 12px;">
+      <div class="dot"></div>
+      <div class="txt">Backend · NestJS + Fastify</div>
+      <div class="note">Result&lt;T&gt; · Audit + Permission 拦截器 · MySQL 8 + Flyway</div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">服务端域 · Domain Modules + Harness Engine</div>
+      <div class="backend">
+        <!-- Left: domain & data -->
+        <div class="col">
+          <div class="box">
+            <div class="h">领域模块</div>
+            <div class="d">按域拆分 routes / service / repository</div>
+            <div class="rows">
+              <div class="mini">agent</div>
+              <div class="mini">session</div>
+              <div class="mini">tool / skill</div>
+              <div class="mini">auth / RBAC</div>
+              <div class="mini">audit</div>
+              <div class="mini">model config</div>
+              <div class="mini">channel</div>
+            </div>
+          </div>
+          <div class="box">
+            <div class="h">持久化</div>
+            <div class="d">MySQL 8（Flyway 迁移）· 工作区文件系统 · uploads</div>
+            <div class="rows">
+              <div class="mini">会话 / 消息</div>
+              <div class="mini">Agent / 提示词版本</div>
+              <div class="mini">调用流水</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Center: harness -->
+        <div class="col">
+          <div class="harness-stack">
+            <div class="hs-title">AGENT HARNESS · Think-Act-Observe</div>
+            <div class="hs-row">
+              <div class="hs-cell">PromptEngine</div>
+              <div class="hs-cell">ContextManager</div>
+              <div class="hs-cell">Compaction</div>
+            </div>
+            <div class="hs-cell center">AgentLoop　·　流式输出　·　崩溃恢复</div>
+            <div class="hs-row">
+              <div class="hs-cell">ToolDispatcher</div>
+              <div class="hs-cell">ToolRegistry</div>
+              <div class="hs-cell">Skill / MCP</div>
+            </div>
+            <div class="hs-row">
+              <div class="hs-cell">LlmAdapter</div>
+              <div class="hs-cell">子代理 delegate</div>
+              <div class="hs-cell">LocalToolExecutor</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right: adapters & channels -->
+        <div class="col">
+          <div class="box">
+            <div class="h">LLM 接入</div>
+            <div class="d">OpenAI 兼容 API　·　多 Provider 适配　·　管理后台配 Key</div>
+            <div class="rows">
+              <div class="mini">chat / responses</div>
+              <div class="mini">effort / 用量</div>
+            </div>
+          </div>
+          <div class="box">
+            <div class="h">扩展面</div>
+            <div class="d">全局 / 用户级 MCP　·　Skill 目录　·　内置工具</div>
+            <div class="rows">
+              <div class="mini">Shell / 文件</div>
+              <div class="mini">搜索 / 网页</div>
+              <div class="mini">文生图 / 改图</div>
+            </div>
+          </div>
+          <div class="box">
+            <div class="h">通道与集成</div>
+            <div class="d">飞书 / 钉钉 / 微信 Bot　·　完成通知 Webhook　·　Embed</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Execution -->
+    <div class="layer-label">
+      <div class="dot"></div>
+      <div class="txt">Execution · 执行边界</div>
+      <div class="note">同一次任务可选择边界；LOCAL 高风险操作可审批</div>
+    </div>
+    <div class="exec">
+      <div class="exec-card">
+        <div class="h">CLOUD</div>
+        <div class="s">服务器工作区执行</div>
+        <ul>
+          <li>文件 / Shell / 搜索跑在服务端</li>
+          <li>浏览器、安卓、飞书、微信均可用</li>
+          <li>可开服务端交互终端</li>
+          <li>工作区 Git clone / 文件树 / diff</li>
+        </ul>
+      </div>
+      <div class="bridge">
+        <div class="flow-box">
+          <div class="t">ToolDispatcher 分流</div>
+          <div class="d">CLOUD → LocalToolExecutor 本机进程<br/>LOCAL → WebSocket 委托桌面 / CLI 执行</div>
+        </div>
+        <div class="badge-row">
+          <div class="pill">只读</div>
+          <div class="pill soft">读写</div>
+          <div class="pill soft">智能审批</div>
+          <div class="pill">完全权限</div>
+        </div>
+      </div>
+      <div class="exec-card local">
+        <div class="h">LOCAL</div>
+        <div class="s">Electron / mao-agent 本机执行</div>
+        <ul>
+          <li>修改的是你电脑上的目录</li>
+          <li>权限档位 + 工具审批</li>
+          <li>LocalToolExecutor 经 WS 回传</li>
+          <li>与 CLOUD 共用同一 Harness</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Notes -->
+    <div class="notes">
+      <div class="note-card">
+        <div class="h">通信模型</div>
+        <div class="d">管理后台、IM 机器人只访问 REST；Web / Electron、安卓、mao-agent、Embed SDK 与 WebSocket 双向流式通信。</div>
+      </div>
+      <div class="note-card">
+        <div class="h">生产分流</div>
+        <div class="d">单域名：桌面 <b>/</b>　管理 <b>/admin/</b>　API <b>/api/</b>　上传 <b>/uploads/</b></div>
+      </div>
+      <div class="note-card">
+        <div class="h">治理</div>
+        <div class="d">RBAC · 管理 API 审计 · 用量与调用流水 · 本地 / LDAP / 飞书登录</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

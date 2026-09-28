@@ -60,7 +60,7 @@ Mao 不是又一个 ChatGPT 套壳，也不是 Dify / n8n 那样的低代码工�
 ## 架构
 
 <p align="center">
-  <img src="docs/assets/architecture.png" alt="Mao 架构：客户端经 REST 与 WebSocket 进入 Harness，工具在 CLOUD 或 LOCAL 执行" width="960" />
+  <img src="docs/assets/mao-architecture-tech.png" alt="Mao 技术架构：客户端经 REST / WebSocket 进入 NestJS 后端与 Agent Harness，工具在 CLOUD 或 LOCAL 执行边界上落地" width="960" />
 </p>
 
 生产环境单域名分流：桌面 `/`、管理后台 `/admin/`、API `/api/`、上传 `/uploads/`。
