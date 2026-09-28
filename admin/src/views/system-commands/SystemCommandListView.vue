@@ -393,6 +393,14 @@ function applyFilter() {
   if (s.currentPage > maxPage) s.currentPage = maxPage
 }
 
+function readTotalCount(headers: unknown): number {
+  if (!headers || typeof headers !== 'object') return NaN
+  const bag = headers as { get?: (name: string) => unknown } & Record<string, unknown>
+  const raw = typeof bag.get === 'function' ? bag.get('x-total-count') : bag['x-total-count']
+  const value = Array.isArray(raw) ? raw[0] : raw
+  return Number(value)
+}
+
 let fetchSeq = 0
 async function loadActiveTab() {
   const seq = ++fetchSeq
@@ -409,7 +417,7 @@ async function loadActiveTab() {
         },
       })
       if (seq !== fetchSeq) return
-      const headerTotal = Number(headers?.['x-total-count'])
+      const headerTotal = readTotalCount(headers)
       serverTotal.value = Number.isFinite(headerTotal) ? headerTotal : (data || []).length
       tabStates.personal.rows = data || []
     } else {

@@ -62,7 +62,15 @@
             </el-select>
           </el-form-item>
           <el-form-item label="会话 ID">
-            <el-input v-model="filters.sessionId" clearable placeholder="会话 ID" style="width: 120px" @keyup.enter="handleSearch" @clear="handleSearch" />
+            <el-input
+              v-model="filters.sessionId"
+              clearable
+              placeholder="会话 ID"
+              inputmode="numeric"
+              style="width: 120px"
+              @keyup.enter="handleSearch"
+              @clear="handleSearch"
+            />
           </el-form-item>
           <el-form-item label="模型">
             <el-select
@@ -281,18 +289,42 @@ function formatCacheHit(row: { cachedTokens?: number | null; promptTokens?: numb
   return `${num} (${Math.round((cached / prompt) * 100)}%)`
 }
 
+function parseFilterId(raw: unknown): number | null {
+  const text = String(raw ?? '').trim()
+  if (!/^\d+$/.test(text)) return null
+  const id = Number(text)
+  return Number.isSafeInteger(id) ? id : null
+}
+
+/** 非法 ID 返回提示文案；空值表示不按该条件筛选。 */
+function filterIdError(): string | null {
+  const sessionRaw = filters.sessionId.trim()
+  if (sessionRaw && parseFilterId(sessionRaw) == null) return '会话 ID 需为数字'
+  if (filters.agentId != null && filters.agentId !== '' && parseFilterId(filters.agentId) == null) {
+    return 'Agent ID 需为数字'
+  }
+  return null
+}
+
+function rejectInvalidFilters(): boolean {
+  const message = filterIdError()
+  if (!message) return false
+  ElMessage.warning(message)
+  return true
+}
+
 function buildFilterParams(page: number, size: number): Record<string, unknown> {
   const params: Record<string, unknown> = { page, size }
   if (filters.scene) params.scene = filters.scene
   if (filters.success !== undefined) params.success = filters.success
   if (filters.userId != null) params.userId = filters.userId
   if (filters.agentId != null && filters.agentId !== '') {
-    const agentId = Number(filters.agentId)
-    if (Number.isFinite(agentId)) params.agentId = agentId
+    const agentId = parseFilterId(filters.agentId)
+    if (agentId != null) params.agentId = agentId
   }
-  if (filters.sessionId) {
-    const sessionId = Number(filters.sessionId)
-    if (Number.isFinite(sessionId)) params.sessionId = sessionId
+  if (filters.sessionId.trim()) {
+    const sessionId = parseFilterId(filters.sessionId)
+    if (sessionId != null) params.sessionId = sessionId
   }
   if (filters.modelId != null) params.modelId = filters.modelId
   if (filters.startDate) params.startDate = filters.startDate
@@ -302,6 +334,17 @@ function buildFilterParams(page: number, size: number): Record<string, unknown> 
 
 let fetchSeq = 0
 async function fetchRecords() {
+  if (rejectInvalidFilters()) return
+  await loadRecords()
+}
+
+function handleSearch() {
+  if (rejectInvalidFilters()) return
+  currentPage.value = 1
+  void loadRecords()
+}
+
+async function loadRecords() {
   const seq = ++fetchSeq
   loading.value = true
   try {
@@ -314,11 +357,6 @@ async function fetchRecords() {
   } catch { /* handled */ } finally {
     if (seq === fetchSeq) loading.value = false
   }
-}
-
-function handleSearch() {
-  currentPage.value = 1
-  fetchRecords()
 }
 
 function handleReset() {
@@ -348,6 +386,7 @@ function csvCell(value: unknown): string {
 }
 
 function handleExportCsv() {
+  if (rejectInvalidFilters()) return
   if (total.value > EXPORT_MAX_ROWS) {
     ElMessage.warning(`当前筛选共 ${total.value} 条，超出导出上限 ${EXPORT_MAX_ROWS} 条，请缩小筛选范围后重试`)
     return

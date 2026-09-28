@@ -24,7 +24,7 @@
             </el-form-item>
           </template>
           <el-form-item label="状态">
-            <el-select v-model="statusFilter" clearable placeholder="全部" style="width: 140px" @change="loadData()">
+            <el-select v-model="statusFilter" clearable placeholder="全部" style="width: 140px" @change="onStatusFilterChange">
               <el-option label="启用" value="ENABLED" />
               <el-option label="停用" value="DISABLED" />
             </el-select>
@@ -407,8 +407,8 @@ async function loadData() {
     })
     if (seq !== loadDataSeq) return
     servers.value = data || []
-    // 数据集变化后页码可能越界，回到第一页
-    currentPage.value = 1
+    const maxPage = Math.max(1, Math.ceil(servers.value.length / pageSize.value))
+    if (currentPage.value > maxPage) currentPage.value = maxPage
   } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
     if (seq === loadDataSeq) loading.value = false
   }
@@ -417,11 +417,17 @@ async function loadData() {
 // 关键词输入 300ms 防抖，避免逐字符触发请求风暴
 let keywordDebounceTimer: ReturnType<typeof setTimeout> | null = null
 function onKeywordInput() {
+  currentPage.value = 1
   if (keywordDebounceTimer) clearTimeout(keywordDebounceTimer)
   keywordDebounceTimer = setTimeout(() => {
     keywordDebounceTimer = null
     loadData()
   }, 300)
+}
+
+function onStatusFilterChange() {
+  currentPage.value = 1
+  loadData()
 }
 
 function connectionSummary(row: any) {

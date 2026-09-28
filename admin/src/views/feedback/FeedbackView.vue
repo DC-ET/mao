@@ -53,18 +53,20 @@
         </el-form-item>
       </el-form>
 
-      <el-table :data="items" v-loading="loading" stripe>
+      <el-table v-if="!isMobile" :data="items" v-loading="loading" stripe>
         <el-table-column label="时间" width="170">
           <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
         </el-table-column>
         <el-table-column label="用户" min-width="120">
-          <template #default="{ row }">{{ row.displayName || row.username || `用户 #${row.userId}` }}</template>
+          <template #default="{ row }">{{ userLabel(row) }}</template>
         </el-table-column>
         <el-table-column label="会话" width="100">
-          <template #default="{ row }">{{ row.sessionId }}</template>
+          <template #default="{ row }">
+            <el-button type="primary" link @click="goSession(row.sessionId)">{{ row.sessionId }}</el-button>
+          </template>
         </el-table-column>
         <el-table-column label="Agent" min-width="120">
-          <template #default="{ row }">{{ row.agentName || (row.agentId != null ? `#${row.agentId}` : '-') }}</template>
+          <template #default="{ row }">{{ agentLabel(row) }}</template>
         </el-table-column>
         <el-table-column label="原因" width="120">
           <template #default="{ row }">
@@ -79,6 +81,33 @@
         </el-table-column>
       </el-table>
 
+      <div v-else class="mobile-card-list" v-loading="loading">
+        <el-card v-for="row in items" :key="row.id" shadow="hover">
+          <div class="mobile-card-head">
+            <el-tag :type="reasonTagType(row.reason)" size="small">{{ row.reasonLabel }}</el-tag>
+            <span class="feedback-card-time">{{ formatDateTime(row.createdAt) }}</span>
+          </div>
+          <div class="mobile-card-row">
+            <span class="mobile-card-label">用户</span>
+            <span>{{ userLabel(row) }}</span>
+          </div>
+          <div class="mobile-card-row">
+            <span class="mobile-card-label">会话</span>
+            <el-button type="primary" link @click="goSession(row.sessionId)">{{ row.sessionId }}</el-button>
+          </div>
+          <div class="mobile-card-row">
+            <span class="mobile-card-label">Agent</span>
+            <span>{{ agentLabel(row) }}</span>
+          </div>
+          <div class="mobile-card-row">
+            <span class="mobile-card-label">消息</span>
+            <span v-if="row.contentPreview" class="feedback-card-preview">{{ row.contentPreview }}</span>
+            <span v-else class="content-missing">（消息已不存在）</span>
+          </div>
+        </el-card>
+        <el-empty v-if="!loading && items.length === 0" description="暂无数据" />
+      </div>
+
       <ResponsivePagination
         v-model:currentPage="page"
         v-model:page-size="pageSize"
@@ -92,9 +121,11 @@
 
 <script setup lang="ts">
 import { onMounted, onActivated, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { Refresh } from '@element-plus/icons-vue'
 import { api } from '../../api'
 import { formatDateTime } from '../../utils/datetime'
+import { useBreakpoint } from '../../composables/useBreakpoint'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
 
 interface FeedbackSummaryItem {
@@ -140,6 +171,21 @@ const REASON_TAG_TYPES: Record<string, 'danger' | 'warning' | 'info' | 'primary'
 
 function reasonTagType(reason: string) {
   return REASON_TAG_TYPES[reason] ?? 'info'
+}
+
+const router = useRouter()
+const { isMobile } = useBreakpoint()
+
+function userLabel(row: FeedbackDetailItem) {
+  return row.displayName || row.username || `用户 #${row.userId}`
+}
+
+function agentLabel(row: FeedbackDetailItem) {
+  return row.agentName || (row.agentId != null ? `#${row.agentId}` : '-')
+}
+
+function goSession(sessionId: number) {
+  router.push(`/sessions/${sessionId}`)
 }
 
 const summary = ref<FeedbackSummary>({ total: 0, byReason: [], byDay: [] })
@@ -253,5 +299,17 @@ onActivated(() => {
 .content-missing {
   color: var(--el-text-color-placeholder);
   font-style: italic;
+}
+
+.feedback-card-time {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--mao-muted);
+}
+
+.feedback-card-preview {
+  min-width: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 </style>

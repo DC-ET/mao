@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import router from '../router'
-import type { RouteLocationNormalized } from 'vue-router'
+import { isNavigationFailure, NavigationFailureType, type RouteLocationNormalized } from 'vue-router'
 
 export interface TabItem {
   /** 标签身份键：route.path（不含 query），同一页面的筛选变化复用同一个标签 */
@@ -51,29 +51,70 @@ export const useTabStore = defineStore('tabs', () => {
     activeTabPath.value = path
   }
 
-  function removeTab(targetPath: string) {
+  // 路由守卫可能中止跳转。先改标签再 push 会让高亮/闭合和实际页面脱节，
+  // 因此只在导航真正落地后更新；被取消或被更新的导航打断时，按当前路由回同步。
+  let navSeq = 0
+
+  function navigationCommitted(failure: unknown): boolean {
+    if (!isNavigationFailure(failure)) return true
+    return isNavigationFailure(failure, NavigationFailureType.duplicated)
+  }
+
+  function syncActiveFromRoute() {
+    activeTabPath.value = router.currentRoute.value.path
+  }
+
+  async function removeTab(targetPath: string) {
     const idx = tabs.value.findIndex(t => t.path === targetPath)
     if (idx === -1 || tabs.value.length <= 1) return
 
     const wasActive = activeTabPath.value === targetPath
-    tabs.value.splice(idx, 1)
-
-    if (wasActive) {
-      // Navigate to the adjacent tab (prefer the one on the left) for a
-      // predictable multi-tab experience.
-      const neighbor = tabs.value[Math.max(0, idx - 1)]
-      activeTabPath.value = neighbor.path
-      router.push(neighbor.fullPath)
+    if (!wasActive) {
+      tabs.value.splice(idx, 1)
+      return
     }
+
+    const neighbor = tabs.value[idx - 1] ?? tabs.value[idx + 1]
+    if (!neighbor) return
+
+    const seq = ++navSeq
+    let failure: unknown
+    try {
+      failure = await router.push(neighbor.fullPath)
+    } catch {
+      if (seq !== navSeq) return
+      syncActiveFromRoute()
+      return
+    }
+    if (seq !== navSeq) return
+    if (!navigationCommitted(failure)) {
+      syncActiveFromRoute()
+      return
+    }
+    const removeIdx = tabs.value.findIndex(t => t.path === targetPath)
+    if (removeIdx !== -1 && tabs.value.length > 1) tabs.value.splice(removeIdx, 1)
+    syncActiveFromRoute()
   }
 
-  function setActiveTab(path: string) {
-    activeTabPath.value = path
+  async function setActiveTab(path: string) {
     // 跳转用 fullPath（含 query），否则点回标签会丢掉该页面上次的筛选条件
     const target = tabs.value.find(t => t.path === path)?.fullPath ?? path
-    if (router.currentRoute.value.fullPath !== target) {
-      router.push(target)
+    if (router.currentRoute.value.fullPath === target) {
+      activeTabPath.value = path
+      return
     }
+    const seq = ++navSeq
+    let failure: unknown
+    try {
+      failure = await router.push(target)
+    } catch {
+      if (seq !== navSeq) return
+      syncActiveFromRoute()
+      return
+    }
+    if (seq !== navSeq) return
+    syncActiveFromRoute()
+    if (!navigationCommitted(failure)) return
   }
 
   /**

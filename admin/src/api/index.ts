@@ -55,6 +55,11 @@ api.interceptors.response.use(
       ElMessage.error(data.message || '请求失败')
       return Promise.reject(new Error(data.message))
     }
+    // 成功分支仍返回 Result 信封（调用方继续解构 data）。
+    // 额外挂上 headers：个人指令分页总数在 x-total-count，剥掉后页码会失效。
+    if (data && typeof data === 'object') {
+      return Object.assign(response.data, { headers: response.headers })
+    }
     return response.data
   },
   async (error) => {
