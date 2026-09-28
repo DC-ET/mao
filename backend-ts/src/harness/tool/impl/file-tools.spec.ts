@@ -448,13 +448,16 @@ describe('SearchTools', () => {
     expect(result.total_matches).toBeUndefined();
   });
 
-  it('grepSearchReportsTraversalErrorsWithoutRg', async () => {
+  it('grepSearchSkipsBrokenSymlinksWithoutRg', async () => {
     const dir = tmp();
+    writeFileSync(join(dir, 'ok.txt'), 'needle\n');
     symlinkSync(join(dir, 'missing'), join(dir, 'broken.txt'));
     const tool = new GrepSearchTool(new PathSandbox(dir));
     (tool as unknown as { rgAvailable: boolean }).rgAvailable = false;
     const result = JSON.parse(await tool.execute(JSON.stringify({ pattern: 'needle' })));
-    expect(result.error).toContain('ENOENT');
+    // 断链符号链接被跳过，不再让整次搜索失败（见 collectGrepFiles）
+    expect(result.error).toBeUndefined();
+    expect(result.total_matches).toBe(1);
   });
 
   it('grepSearchStopsBeforeTraversingMoreFilesOnceTruncated', async () => {
