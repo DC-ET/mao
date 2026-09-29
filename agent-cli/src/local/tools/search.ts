@@ -1,7 +1,7 @@
 import { execFile, type ExecFileException } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { resolveSandboxPath } from '../sandbox';
+import { resolvePathLenient } from '../sandbox';
 
 function globToRegExp(pattern: string): RegExp {
   const escaped = pattern
@@ -107,7 +107,7 @@ export async function handleGlobSearch(args: Record<string, unknown>, workspace:
   if (!pattern) return { files: [], error: 'pattern is required' };
   const headLimit = Number(args.head_limit ?? 100) || 100;
   try {
-    const resolvedPath = resolveSearchRoot(args.path, workspace, sessionId);
+    const resolvedPath = resolveSearchRoot(args.path, workspace);
     const scope = resolveSearchScope(resolvedPath);
     const files = (await isRgAvailable())
       ? await globWithRg(pattern, scope, headLimit)
@@ -118,12 +118,16 @@ export async function handleGlobSearch(args: Record<string, unknown>, workspace:
   }
 }
 
-/** 搜索根同样受沙箱约束：缺省用工作区自身，服务端给的 path 必须落在工作区/runtime 内。 */
-function resolveSearchRoot(rawPath: unknown, workspace: string | undefined, sessionId: number): string {
+/**
+ * 与 read_file 同一口径：相对路径按工作区解析，绝对路径直达任意位置；
+ * 缺省（未传 path）时仍用工作区自身。
+ */
+function resolveSearchRoot(rawPath: unknown, workspace: string | undefined): string {
   if (typeof rawPath === 'string' && rawPath.trim() !== '') {
-    return resolveSandboxPath(rawPath, workspace, sessionId);
+    return resolvePathLenient(rawPath, workspace);
   }
-  return resolveSandboxPath('.', workspace, sessionId);
+  if (!workspace) throw new Error('未提供搜索路径，且本次会话没有本地工作区');
+  return path.resolve(workspace);
 }
 
 interface GrepMatch {
@@ -292,7 +296,7 @@ export async function handleGrepSearch(args: Record<string, unknown>, workspace:
   const contextLines = Math.max(0, Number(args.context_lines ?? 0) || 0);
   const maxOutputChars = Number(args.max_output_chars ?? 10000) || 10000;
   try {
-    const resolvedPath = resolveSearchRoot(args.path, workspace, sessionId);
+    const resolvedPath = resolveSearchRoot(args.path, workspace);
     const scope = resolveSearchScope(resolvedPath);
     if (await isRgAvailable()) {
       return await grepWithRg(pattern, scope, glob, ignoreCase, contextLines, maxOutputChars);

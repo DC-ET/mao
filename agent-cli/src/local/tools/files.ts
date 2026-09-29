@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { assertNotSymlink, resolvePathLenient, resolveSandboxPath } from '../sandbox';
+import { assertNotSymlink, resolvePathLenient } from '../sandbox';
 import { withFileLock } from './file-write-lock';
 
 const IMAGE_EXT: Record<string, string> = {
@@ -236,7 +236,7 @@ export function handleReadFile(args: Record<string, unknown>, workspace: string 
   try {
     const filePath = extractFilePath(args);
     if (!filePath) return { content: '错误：缺少必填参数 path', total_lines: 0 };
-    const resolvedPath = resolveSandboxPath(filePath, workspace, sessionId);
+    const resolvedPath = resolvePathLenient(filePath, workspace);
     assertNotSymlink(resolvedPath, filePath);
     if (!fs.existsSync(resolvedPath)) return { content: `错误：文件不存在：${filePath}`, total_lines: 0 };
     if (!fs.statSync(resolvedPath).isFile()) return { content: `错误：不是普通文件：${filePath}`, total_lines: 0 };

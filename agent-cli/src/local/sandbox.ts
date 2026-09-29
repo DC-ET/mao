@@ -4,7 +4,13 @@ import { expandHome, resolveRuntimeDir } from './paths';
 
 /**
  * 路径沙箱：语义对齐后端 harness/safety/path-sandbox.ts（path.relative 判越界）。
- * 允许根为「本地工作区」+「本会话 runtime 目录」，服务端下发的任何路径都必须落在其中。
+ *
+ * 现在只服务于 shell 的 workdir 校验（本地 shell 仍要求工作目录落在信任边界内）。
+ * read_file / write_file / edit_file / glob_search / grep_search 已改用宽松解析
+ * （resolvePathLenient：相对路径按工作区、绝对路径直达），不再走这里的边界判定；
+ * 它们各自仍通过 assertNotSymlink 拒绝符号链接目标。
+ *
+ * 允许根为「本地工作区」+「本会话 runtime 目录」。
  */
 export class PathEscapeError extends Error {
   constructor(message: string) {

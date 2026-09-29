@@ -28,11 +28,12 @@
 
 ### 后端
 
-- `write_file` / `edit_file` 不再限制在工作区内：相对路径仍按当前会话工作区解析，绝对路径与 `~` 展开后的路径可读写任意位置，与 `read_file`、`shell` 的 `workdir` 行为对齐。写目标本身仍是符号链接时照旧拒绝（不跟随软链改写别的文件），同路径并行写仍按绝对路径串行化。
+- `write_file` / `edit_file` / `read_file`、`glob_search` / `grep_search` 的搜索根统一改为宽松路径解析（`resolveLenient`）：相对路径仍按当前会话工作区解析，绝对路径直达任意位置。原先只有 `read_file` 放开，写类与搜索类都锁在工作区内，模型想把产物写到工作区外只能整文件重写或先读到对话里，反而不易产生小 diff。`~` 开头路径在服务端仍然拒绝（无用户 HOME 概念）。
+- 文件面板（浏览目录、读取与预览文本 / 图片 / PDF、下载、打包）同步放开：此前除 `PathSandbox.resolve()` 外还有一层 `assertRealPathInWorkspace()`（对目标做 `realpathSync` 并要求落在工作区内），工作区内的符号链接指到外部时会被「路径访问被拒绝」挡住，现已移除这层二次校验；符号链接作为直接目标仍按「不是普通文件」拒绝。
 
 ### 终端 CLI（mao-agent）
 
-- LOCAL 模式的 `write_file` / `edit_file` 同步放开工作区限制（`read_file` 与 `glob_search` / `grep_search` 的边界不变），默认拒绝清单照旧覆盖 `~/.ssh`、`/etc/passwd|shadow|sudoers` 等敏感路径，`--local` 沙箱说明已更新。
+- LOCAL 模式与云端对齐：`read_file` / `write_file` / `edit_file`、`glob_search` / `grep_search` 的搜索根全部走宽松解析（相对路径按工作区、绝对路径直达任意位置），此前这三类在本地比云端更严，模型在 CLOUD 下能读 `/tmp` 与浏览器上传目录，LOCAL 下却被拦。默认拒绝清单照旧覆盖 `~/.ssh`、`/etc/passwd|shadow|sudoers` 等敏感路径；符号链接目标一律拒绝；同路径并行写仍按绝对路径串行化。`agent-cli/src/local/sandbox.ts` 的严格边界现在只服务于本地 shell 的 `workdir` 校验，`--local` 帮助文本已同步改写。
 
 ---
 

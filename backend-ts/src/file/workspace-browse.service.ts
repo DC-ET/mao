@@ -1,6 +1,6 @@
 import {
   closeSync, createWriteStream, existsSync, lstatSync, openSync, readFileSync,
-  readSync, readdirSync, realpathSync, rmSync, statSync, type Stats,
+  readSync, readdirSync, rmSync, statSync, type Stats,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, relative, resolve } from 'node:path';
@@ -10,7 +10,7 @@ import sharp from 'sharp';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { ImageFileSupport } from '../harness/tool/image-file-support.js';
-import { isUnder, PathSandbox, SecurityException } from '../harness/safety/path-sandbox.js';
+import { PathSandbox, SecurityException } from '../harness/safety/path-sandbox.js';
 
 const MAX_ENTRIES = 500;
 const DEFAULT_READ_LIMIT = 5000;
@@ -124,7 +124,6 @@ export class WorkspaceBrowseService {
     if (!lst.isFile() || lst.isSymbolicLink()) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, `不是普通文件：${relativePath}`);
     }
-    this.assertRealPathInWorkspace(filePath, sessionWorkspace, relativePath);
     let size = 0;
     try {
       size = statSync(filePath).size;
@@ -150,7 +149,6 @@ export class WorkspaceBrowseService {
     if (!lst.isFile() || lst.isSymbolicLink()) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, `不是普通文件：${relativePath}`);
     }
-    this.assertRealPathInWorkspace(filePath, sessionWorkspace, relativePath);
     let head: Buffer;
     try {
       head = readN(filePath, 8);
@@ -225,7 +223,6 @@ export class WorkspaceBrowseService {
     if (!lst.isFile() || lst.isSymbolicLink()) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, `不是普通文件：${relativePath}`);
     }
-    this.assertRealPathInWorkspace(filePath, sessionWorkspace, relativePath);
     if (ImageFileSupport.mimeFromPath(relativePath)) {
       return this.readImageFile(filePath, relativePath);
     }
@@ -325,26 +322,13 @@ export class WorkspaceBrowseService {
 
   private resolvePath(userPath: string, sessionWorkspace: string): string {
     try {
-      return this.pathSandbox.resolve(userPath, sessionWorkspace);
+      // 与 read_file 工具同一口径：相对路径按工作区解析，绝对路径直达任意位置。
+      return this.pathSandbox.resolveLenient(userPath, sessionWorkspace);
     } catch (e) {
       if (e instanceof SecurityException) {
         throw new BusinessException(ErrorCode.FORBIDDEN, '路径访问被拒绝');
       }
       throw new BusinessException(ErrorCode.PARAM_INVALID, (e as Error).message);
-    }
-  }
-
-  private assertRealPathInWorkspace(filePath: string, sessionWorkspace: string, relativePath: string): void {
-    try {
-      const realPath = realpathSync(filePath);
-      const realRoot = realpathSync(this.pathSandbox.getEffectiveWorkspaceRoot(sessionWorkspace));
-      if (!isUnder(realPath, realRoot)) {
-        console.warn(`Path escape via symlink blocked: ${relativePath} (real: ${realPath})`);
-        throw new BusinessException(ErrorCode.FORBIDDEN, '路径访问被拒绝');
-      }
-    } catch (e) {
-      if (e instanceof BusinessException) throw e;
-      throw new BusinessException(ErrorCode.PARAM_INVALID, `文件不存在：${relativePath}`);
     }
   }
 

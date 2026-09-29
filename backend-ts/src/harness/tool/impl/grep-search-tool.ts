@@ -29,7 +29,7 @@ export class GrepSearchTool extends BaseTool {
       type: 'object',
       properties: {
         pattern: { type: 'string', description: '要搜索的文本或正则表达式' },
-        path: { type: 'string', description: '搜索目录或文件，可选；默认使用当前会话的工作区根目录' },
+        path: { type: 'string', description: '搜索目录或文件，可选；默认使用当前会话的工作区根目录。相对路径按工作区解析，绝对路径可搜索工作区外目录' },
         glob: { type: 'string', description: '文件过滤 glob，例如 *.java、*.md' },
         ignore_case: { type: 'boolean', description: '是否忽略大小写，默认 false' },
         context_lines: { type: 'integer', description: '上下文行数，默认 0' },
@@ -61,7 +61,7 @@ export class GrepSearchTool extends BaseTool {
       const maxOutputChars = args.max_output_chars != null ? asInt(args.max_output_chars, DEFAULT_MAX_OUTPUT_CHARS) : DEFAULT_MAX_OUTPUT_CHARS;
       const pathArg = asText(args.path);
       const resolvedPath = pathArg && pathArg !== ''
-        ? this.pathSandbox.resolve(pathArg, workspace)
+        ? this.pathSandbox.resolveLenient(pathArg, workspace)
         : this.pathSandbox.getEffectiveWorkspaceRoot(workspace);
       const workspaceRoot = this.pathSandbox.getEffectiveWorkspaceRoot(workspace);
       const scope = SearchScope.from(resolvedPath);

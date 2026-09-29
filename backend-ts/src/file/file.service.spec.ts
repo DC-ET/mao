@@ -1,5 +1,5 @@
 import { mkdirSync, writeFileSync, existsSync, readFileSync, symlinkSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { useTmpDir } from '../testing/tmp-dir.js';
 import { BusinessException } from '../common/business-exception.js';
@@ -182,7 +182,25 @@ describe('WorkspaceBrowseService', () => {
     await expect(service.readFile(workspace, '', 0, 1)).rejects.toBeInstanceOf(BusinessException);
     await expect(service.readFile(workspace, 'missing.txt', 0, 1)).rejects.toBeInstanceOf(BusinessException);
     await expect(service.readFile(workspace, 'dir', 0, 1)).rejects.toBeInstanceOf(BusinessException);
-    await expect(service.readFile(workspace, '../escape.txt', 0, 1)).rejects.toBeInstanceOf(BusinessException);
+  });
+
+  it('browsesAndReadsPathsOutsideTheWorkspace', async () => {
+    const dir = useTmpDir('mao-ws-out-');
+    const workspace = join(dir, 'workspace');
+    const outside = join(dir, 'outside');
+    mkdirSync(workspace, { recursive: true });
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, 'note.txt'), 'outside line1\noutside line2');
+    const service = new WorkspaceBrowseService(new PathSandbox(workspace));
+    // 相对穿越与绝对路径都能到达工作区外（与 read_file 的 resolveLenient 同口径）
+    expect(await service.readFile(workspace, join('..', 'outside', 'note.txt'), 0, 10)).toMatchObject({
+      content: 'outside line1\noutside line2',
+      total_lines: 2,
+    });
+    const rel = await service.readFile(workspace, relative(workspace, join(outside, 'note.txt')), 0, 10);
+    expect(rel.content).toBe('outside line1\noutside line2');
+    const listing = service.listDirectory(workspace, relative(workspace, outside));
+    expect(listing.entries.map((e) => e.name)).toEqual(['note.txt']);
   });
 
   it('readsPngImageWithDataUri', async () => {
@@ -242,8 +260,13 @@ describe('WorkspaceBrowseService', () => {
     writeFileSync(join(workspace, 'empty.pdf'), Buffer.alloc(0));
     expect(() => service.readPdfFile(workspace, 'empty.pdf')).toThrow(/不是有效的 PDF/);
     expect(() => service.readPdfFile(workspace, 'missing.pdf')).toThrow(/文件不存在/);
-    writeFileSync(join(dir, 'outside.pdf'), pdf);
-    expect(() => service.readPdfFile(workspace, '../outside.pdf')).toThrow(/路径访问被拒绝/);
+    // workspace = dir/sessions/1，outside 文件放在 dir/sessions 下，用 ../ 指到它
+    writeFileSync(join(dir, 'sessions', 'outside.pdf'), pdf);
+    expect(service.readPdfFile(workspace, '../outside.pdf').fileName).toBe('outside.pdf');
+    // 绝对路径同样可达
+    const absOutside = join(dir, 'sessions', 'outside-abs.pdf');
+    writeFileSync(absOutside, pdf);
+    expect(service.readPdfFile(workspace, absOutside).fileName).toBe('outside-abs.pdf');
 
     const abs = join(workspace, 'abs.pdf');
     writeFileSync(abs, pdf);

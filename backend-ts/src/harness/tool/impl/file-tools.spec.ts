@@ -313,6 +313,30 @@ describe('EditFileTool', () => {
 });
 
 describe('SearchTools', () => {
+  it('searchToolsReachOutsideTheWorkspace', async () => {
+    const dir = tmp();
+    const outside = await tmp();
+    writeFileSync(join(outside, 'outside.txt'), 'needle outside\n');
+    const glob = new GlobSearchTool(new PathSandbox(dir));
+    const globResult = JSON.parse(await glob.execute(JSON.stringify({ pattern: '*.txt', path: outside })));
+    expect(globResult.error).toBeUndefined();
+    expect(globResult.files).toEqual(['outside.txt']);
+    expect(globResult.search_root).toBe(outside);
+
+    const rel = relative(dir, join(outside, 'outside.txt'));
+    const grep = new GrepSearchTool(new PathSandbox(dir));
+    (grep as unknown as { rgAvailable: boolean }).rgAvailable = false;
+    const grepResult = JSON.parse(await grep.execute(JSON.stringify({ pattern: 'needle', path: outside })));
+    expect(grepResult.error).toBeUndefined();
+    expect(grepResult.total_matches).toBe(1);
+    expect(grepResult.matches[0].file).toBe('outside.txt');
+
+    // 相对穿越同样可达
+    const relGlob = JSON.parse(await glob.execute(JSON.stringify({ pattern: '*.txt', path: rel })));
+    expect(relGlob.error).toBeUndefined();
+    expect(relGlob.files).toEqual(['outside.txt']);
+  });
+
   it('globSearchFindsNestedPathPatternRegardlessOfProcessCwd', async () => {
     const dir = tmp();
     mkdirSync(join(dir, 'desktop'));

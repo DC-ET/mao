@@ -111,10 +111,18 @@ describe('isWorkspaceWithin', () => {
 });
 
 describe('file tools honour the sandbox', () => {
-  it('read refuses to escape the workspace', () => {
+  it('sandbox helper still rejects escapes (used by shell workdir)', () => {
+    // resolveSandboxPath 现在只服务于 shell 的 workdir 校验，仍按严格边界拒绝越界。
+    expect(() => resolveSandboxPath('../../etc/passwd', workspace, SESSION_ID)).toThrow(PathEscapeError);
+  });
+
+  it('read_file may reach outside the workspace', () => {
     fs.writeFileSync(path.join(outside, 'secret.txt'), 'secret\n');
     const rel = path.relative(workspace, path.join(outside, 'secret.txt'));
-    expect(String(handleReadFile({ path: rel }, workspace, SESSION_ID).content)).toMatch(/拒绝访问工作区外路径/);
+    // splitLines 会去掉末尾空行，因此读到的是不带结尾换行的内容
+    expect(handleReadFile({ path: rel }, workspace, SESSION_ID).content).toBe('secret');
+    const abs = handleReadFile({ path: path.join(outside, 'secret.txt') }, workspace, SESSION_ID);
+    expect(abs.content).toBe('secret');
     expect(fs.readFileSync(path.join(outside, 'secret.txt'), 'utf8')).toBe('secret\n');
   });
 
@@ -155,10 +163,25 @@ describe('file tools honour the sandbox', () => {
       .toMatch(/拒绝操作符号链接/);
   });
 
-  it('search tools refuse roots outside the workspace', async () => {
-    const glob = await handleGlobSearch({ pattern: '*', path: outside }, workspace, SESSION_ID);
-    expect(String(glob.error)).toMatch(/拒绝访问工作区外路径/);
-    const grep = await handleGrepSearch({ pattern: 'x', path: '../..' }, workspace, SESSION_ID);
-    expect(String(grep.error)).toMatch(/拒绝访问工作区外路径/);
+  it('search tools may use roots outside the workspace', async () => {
+    fs.writeFileSync(path.join(outside, 'needle.txt'), 'hit\n');
+    const glob = await handleGlobSearch({ pattern: '*.txt', path: outside }, workspace, SESSION_ID);
+    expect(glob.error).toBeUndefined();
+    expect(glob.files).toEqual(['needle.txt']);
+
+    const grep = await handleGrepSearch({ pattern: 'hit', path: outside }, workspace, SESSION_ID);
+    expect(grep.error).toBeUndefined();
+    expect(grep.total_matches).toBe(1);
+
+    // 相对穿越与缺省（工作区自身）同样可用
+    const rel = path.relative(workspace, outside);
+    const relGlob = await handleGlobSearch({ pattern: '*.txt', path: rel }, workspace, SESSION_ID);
+    expect(relGlob.error).toBeUndefined();
+    expect(relGlob.files).toEqual(['needle.txt']);
+
+    fs.writeFileSync(path.join(workspace, 'inside.txt'), 'inside\n');
+    const defaultRoot = await handleGlobSearch({ pattern: '*.txt' }, workspace, SESSION_ID);
+    expect(defaultRoot.error).toBeUndefined();
+    expect(defaultRoot.files).toEqual(['inside.txt']);
   });
 });

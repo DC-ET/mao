@@ -30,7 +30,7 @@ export class GlobSearchTool extends BaseTool {
       type: 'object',
       properties: {
         pattern: { type: 'string', description: 'Glob 匹配模式，例如 *.java、src/**/*.xml' },
-        path: { type: 'string', description: '搜索根目录，可选；默认使用当前会话的工作区根目录' },
+        path: { type: 'string', description: '搜索根目录，可选；默认使用当前会话的工作区根目录。相对路径按工作区解析，绝对路径可搜索工作区外目录' },
         head_limit: { type: 'integer', minimum: 1, description: '最多返回的文件数，默认 100' },
       },
       required: ['pattern'],
@@ -60,7 +60,7 @@ export class GlobSearchTool extends BaseTool {
       const headLimit = args.head_limit != null ? asInt(args.head_limit, DEFAULT_HEAD_LIMIT) : DEFAULT_HEAD_LIMIT;
       const pathArg = asText(args.path);
       const resolvedPath = pathArg && pathArg !== ''
-        ? this.pathSandbox.resolve(pathArg, workspace)
+        ? this.pathSandbox.resolveLenient(pathArg, workspace)
         : this.pathSandbox.getEffectiveWorkspaceRoot(workspace);
       const scope = SearchScope.from(resolvedPath);
       const matcher = new Minimatch(pattern, { dot: true, matchBase: true, nonegate: true, nocomment: true });
