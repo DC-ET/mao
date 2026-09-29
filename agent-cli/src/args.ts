@@ -516,8 +516,10 @@ permissionLevel（只影响 LOCAL 审批，CLOUD 下不限制写文件）:
 CLOUD 要限权请改用工具集受限的 Agent。
 
 LOCAL 边界（仅 --local）:
-  沙箱             文件读写、glob/grep 搜索根、shell 的 workdir 必须落在信任工作区或本会话 runtime 内；
-                   ../ 越界、外部绝对路径、指向外部的符号链接一律拒绝
+  沙箱             glob/grep 搜索根必须落在信任工作区或本会话 runtime 内；../ 越界、
+                   外部绝对路径、指向外部的符号链接一律拒绝。
+                   write_file / edit_file 已放开：相对路径按工作区解析，绝对路径可读写任意位置；
+                   shell 的 workdir 也支持任意绝对路径（与云端一致）
   工作区权威       服务端下发的 workspace 只能等于本地工作区或位于其内部
   审批链           工作区信任（含读类工具，--yolo 不豁免）→ 默认拒绝清单（--i-know-what-im-doing 可豁免）
                    → --approve-rule → 本会话「总是允许」的精确条目 → --yolo/--force → TTY 确认；

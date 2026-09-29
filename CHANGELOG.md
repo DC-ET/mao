@@ -15,6 +15,18 @@
 
 ---
 
+## 0.0.217 (2026-09-29)
+
+### 后端
+
+- `write_file` / `edit_file` 不再限制在工作区内：相对路径仍按当前会话工作区解析，绝对路径与 `~` 展开后的路径可读写任意位置，与 `read_file`、`shell` 的 `workdir` 行为对齐。写目标本身仍是符号链接时照旧拒绝（不跟随软链改写别的文件），同路径并行写仍按绝对路径串行化。
+
+### 终端 CLI（mao-agent）
+
+- LOCAL 模式的 `write_file` / `edit_file` 同步放开工作区限制（`read_file` 与 `glob_search` / `grep_search` 的边界不变），默认拒绝清单照旧覆盖 `~/.ssh`、`/etc/passwd|shadow|sudoers` 等敏感路径，`--local` 沙箱说明已更新。
+
+---
+
 ## 0.0.216 (2026-09-29)
 
 ### 前端（桌面 / Web / 安卓）

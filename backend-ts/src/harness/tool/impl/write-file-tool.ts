@@ -22,7 +22,7 @@ export class WriteFileTool extends BaseTool {
     return {
       type: 'object',
       properties: {
-        path: { type: 'string', description: '相对于工作区根目录的文件路径' },
+        path: { type: 'string', description: '要写入的文件路径：相对路径基于当前会话工作区解析，绝对路径可写入工作区外' },
         content: { type: 'string', description: '要写入文件的内容' },
       },
       required: ['path', 'content'],
@@ -47,7 +47,7 @@ export class WriteFileTool extends BaseTool {
       if (filePathArg == null || content == null) {
         return toJson({ success: false, bytes_written: 0, error: '缺少必填参数: path, content' });
       }
-      const filePath = this.pathSandbox.resolve(filePathArg, workspace);
+      const filePath = this.pathSandbox.resolveLenient(filePathArg, workspace);
       // 与 edit_file 共用路径锁，避免并行写同一文件互相覆盖
       return await withFileLock(filePath, () => {
         const fileExisted = existsSync(filePath);

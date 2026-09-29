@@ -214,7 +214,8 @@ emoji / CJK 按整字符删除；粘贴多行文本原样进入草稿。
 `--local` 才涉及以下内容；CLOUD 模式工具全在服务端执行，不受此节约束。
 
 - **需要 bash**：shell 工具固定通过 bash 执行，启动时按 PATH → `/bin` → `/usr/bin` → `/usr/local/bin` → `/opt/homebrew/bin` 解析绝对路径，找不到即报错。容器镜像需自带可执行 bash。技能包解压为内置 Node 实现，**不需要 python3 或 unzip**
-- **路径沙箱 = 已信任工作区 + 本会话 runtime 目录**：`read_file` / `write_file` / `edit_file`、`glob_search` / `grep_search` 的搜索根、`shell` 的 `workdir` 都必须落在边界内。`../` 越界、边界外的绝对路径、指向外部的符号链接一律拒绝；`~` 展开后同样要在边界内
+- **路径沙箱 = 已信任工作区 + 本会话 runtime 目录**：`read_file`、`glob_search` / `grep_search` 的搜索根、`shell` 的 `workdir` 校验都必须落在边界内。`../` 越界、边界外的绝对路径、指向外部的符号链接一律拒绝；`~` 展开后同样要在边界内
+- **`write_file` / `edit_file` 已放开工作区限制**：相对路径按工作区解析，绝对路径可读写任意位置（云端与 LOCAL 一致）；仅目标本身是符号链接时仍拒绝
 - **同文件并行写串行化**：同一轮对同一路径的 `write_file` / `edit_file` 按绝对路径排队，避免后写者基于旧内容覆盖先写者
 - **写回保留原文件行尾**：已有文件的 CRLF / BOM 会在 `write_file` / `edit_file` 时保留（云端工具同样如此）；新建文件按模型给出的 LF 写入
 - **工作区以本地为权威**：服务端下发的 workspace 只能等于本地工作区或位于其内部，否则该次工具调用直接失败（`拒绝服务端下发的工作区 ...`）

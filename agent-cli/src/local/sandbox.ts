@@ -60,6 +60,19 @@ export function resolveSandboxPath(filePath: string, workspace: string | undefin
   throw new PathEscapeError(`拒绝访问工作区外路径：${filePath}（工作区 ${base}）`);
 }
 
+/**
+ * 不做边界判定的路径解析：相对路径仍基于工作区，绝对路径与 `~` 展开后原样使用。
+ * 用于 write_file —— 写文件不再限制在工作区内（与云端 write_file、shell workdir 一致）。
+ */
+export function resolvePathLenient(filePath: string, workspace: string | undefined): string {
+  const trimmed = filePath.trim();
+  if (trimmed === '') throw new PathEscapeError('路径不能为空');
+  const expanded = expandHome(trimmed);
+  if (path.isAbsolute(expanded)) return path.resolve(expanded);
+  if (!workspace) return path.resolve(expanded);
+  return path.resolve(path.resolve(workspace), expanded);
+}
+
 /** 服务端下发的 workspace 只有等于本地工作区或位于其内部时才可接受。 */
 export function isWorkspaceWithin(candidate: string, localWorkspace: string): boolean {
   return isUnder(realpathBoundary(candidate), realpathBoundary(localWorkspace));

@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { assertNotSymlink, resolveSandboxPath } from '../sandbox';
+import { assertNotSymlink, resolvePathLenient, resolveSandboxPath } from '../sandbox';
 import { withFileLock } from './file-write-lock';
 
 const IMAGE_EXT: Record<string, string> = {
@@ -272,7 +272,7 @@ export async function handleWriteFile(args: Record<string, unknown>, workspace: 
     if (!filePath) return { success: false, error: '缺少必填参数 path' };
     if (typeof args.content !== 'string') return { success: false, error: '缺少必填参数 content' };
     const content = args.content;
-    const resolvedPath = resolveSandboxPath(filePath, workspace, sessionId);
+    const resolvedPath = resolvePathLenient(filePath, workspace);
     return await withFileLock(resolvedPath, () => {
       assertNotSymlink(resolvedPath, filePath);
       const fileExisted = fs.existsSync(resolvedPath);
@@ -400,7 +400,7 @@ export async function handleEditFile(args: Record<string, unknown>, workspace: s
         error: 'old_string 与 new_string 完全相同，未执行编辑；请检查并提供实际需要修改的内容',
       };
     }
-    const resolvedPath = resolveSandboxPath(filePath, workspace, sessionId);
+    const resolvedPath = resolvePathLenient(filePath, workspace);
     return await withFileLock(resolvedPath, () => {
       assertNotSymlink(resolvedPath, filePath);
       if (!fs.existsSync(resolvedPath)) return { success: false, replacements: 0, error: `文件不存在：${filePath}` };

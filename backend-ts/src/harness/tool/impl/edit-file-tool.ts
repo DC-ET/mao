@@ -21,7 +21,7 @@ export class EditFileTool extends BaseTool {
     return {
       type: 'object',
       properties: {
-        path: { type: 'string', description: '相对于工作区根目录的文件路径' },
+        path: { type: 'string', description: '要编辑的文件路径：相对路径基于当前会话工作区解析，绝对路径可编辑工作区外文件' },
         old_string: { type: 'string', description: '需要查找并替换的精确字符串；默认必须在文件中只出现一次' },
         new_string: { type: 'string', description: '替换后的字符串' },
         replace_all: {
@@ -62,7 +62,7 @@ export class EditFileTool extends BaseTool {
           error: 'old_string 与 new_string 完全相同，未执行编辑；请检查并提供实际需要修改的内容',
         });
       }
-      const filePath = this.pathSandbox.resolve(filePathArg, workspace);
+      const filePath = this.pathSandbox.resolveLenient(filePathArg, workspace);
       // 并行工具调用可能同时编辑同一文件：按路径串行化 read-modify-write
       return await withFileLock(filePath, () => {
         if (!existsSync(filePath)) {

@@ -1,5 +1,5 @@
 import { mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative, dirname } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import sharp from 'sharp';
 import { useTmpDir } from '../../../testing/tmp-dir.js';
@@ -118,6 +118,29 @@ describe('ReadFileTool', () => {
 });
 
 describe('WriteFileTool', () => {
+  it('writesAbsolutePathOutsideWorkspace', async () => {
+    const dir = tmp();
+    const outside = await tmp();
+    const target = join(outside, 'outside.txt');
+    const tool = new WriteFileTool(new PathSandbox(dir));
+    const result = JSON.parse(await tool.execute(JSON.stringify({ path: target, content: 'outside content' })));
+    expect(result.success).toBe(true);
+    expect(result.file_change.type).toBe('CREATED');
+    expect(readFileSync(target, 'utf8')).toBe('outside content');
+  });
+
+  it('writesRelativeTraversalPathOutsideWorkspace', async () => {
+    const dir = tmp();
+    const sandboxRoot = dirname(dir);
+    writeFileSync(join(sandboxRoot, 'sibling.txt'), 'old');
+    const tool = new WriteFileTool(new PathSandbox(dir));
+    const rel = relative(dir, join(sandboxRoot, 'sibling.txt'));
+    const result = JSON.parse(await tool.execute(JSON.stringify({ path: rel, content: 'new' })));
+    expect(result.success).toBe(true);
+    expect(readFileSync(join(sandboxRoot, 'sibling.txt'), 'utf8')).toBe('new');
+    expect(join(dir, 'sibling.txt')).not.toBe(join(sandboxRoot, 'sibling.txt'));
+  });
+
   it('reportsLineDeltasWhenOverwritingExistingFile', async () => {
     const dir = tmp();
     const lines = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => `line ${from + i}`).join('\n');
@@ -158,6 +181,20 @@ describe('WriteFileTool', () => {
 });
 
 describe('EditFileTool', () => {
+  it('editsAbsolutePathOutsideWorkspace', async () => {
+    const dir = tmp();
+    const outside = await tmp();
+    const target = join(outside, 'outside.txt');
+    writeFileSync(target, 'alpha\nold\nbeta\n');
+    const tool = new EditFileTool(new PathSandbox(dir));
+    const result = JSON.parse(await tool.execute(JSON.stringify({
+      path: target, old_string: 'old', new_string: 'new',
+    })));
+    expect(result.success).toBe(true);
+    expect(result.replacements).toBe(1);
+    expect(readFileSync(target, 'utf8')).toBe('alpha\nnew\nbeta\n');
+  });
+
   it('replacesAUniqueMatchAndReportsDiffPayload', async () => {
     const dir = tmp();
     writeFileSync(join(dir, 'a.txt'), 'alpha\nold\nbeta\n');
