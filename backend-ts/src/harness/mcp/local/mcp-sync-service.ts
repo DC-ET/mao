@@ -64,13 +64,20 @@ export class McpSyncService {
 
   async connectForCloud(
     sessionId: number, servers: McpServer[], clientManager: McpClientManager,
+    cancelFlag?: { get(): boolean } | null,
   ): Promise<CloudConnectResult> {
     const tools: McpToolRef[] = [];
     const warnings: string[] = [];
     for (const server of servers) {
+      // 取消（用户点停止）必须打断连接：buildContext 阶段没有任何别的取消出口，
+      // 否则执行体到不了 finally，WS handler 的执行簿记永久残留。
+      if (cancelFlag?.get()) {
+        warnings.push(`${server.name}: 会话已取消`);
+        break;
+      }
       try {
         const env = this.mcpServerService.decryptEnv(server);
-        const listed = await clientManager.connectAndListTools(sessionId, server, env);
+        const listed = await clientManager.connectAndListTools(sessionId, server, env, cancelFlag);
         tools.push(...listed);
       } catch (e) {
         warnings.push(`${server.name}: ${(e as Error).message}`);

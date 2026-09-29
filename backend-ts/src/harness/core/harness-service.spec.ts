@@ -6,6 +6,7 @@ import { WEIXIN_PROJECT_KEY } from '../../domain/types.js';
 import { AgentExecutionContext } from './agent-execution-context.js';
 import { CompactionConfig } from './compaction-config.js';
 import { HarnessService } from './harness-service.js';
+import { AtomicBoolean } from '../atomic-boolean.js';
 import type { Tool } from '../tool/tool.js';
 import type { AgentLoop } from './agent-loop.js';
 import type { ToolRegistry } from '../tool/tool-registry.js';
@@ -230,12 +231,13 @@ function makeHarness(overrides: Record<string, unknown> = {}) {
   };
   const compactionConfig = new CompactionConfig();
   compactionConfig.enabled = false;
+  const mcpClientManager = { closeSession: vi.fn(async () => undefined) };
 
   const deps = {
     agentLoop, toolRegistry, skillLoader, skillSync, localSkills, localAgentsMd,
     sessionMapper, agentMapper, experienceService, llmModelMapper, fileChangeMapper,
     sessionService, sessionCompactionService, sessionHistoryLoader, orchestrator,
-    promptEngine, activeContext, compactionConfig, envInfo,
+    promptEngine, activeContext, compactionConfig, envInfo, mcpClientManager,
     ...overrides,
   };
 
@@ -260,6 +262,7 @@ function makeHarness(overrides: Record<string, unknown> = {}) {
     deps.compactionConfig,
     deps.envInfo as never,
     null,
+    deps.mcpClientManager as never,
     deps.skillSync as never,
   );
   return { service, ...deps };
@@ -357,6 +360,23 @@ describe('HarnessService.buildContext and execute', () => {
     const ctx = await service.buildContext(10);
     expect(ctx.availableSkillNames).toEqual(expect.arrayContaining(['mine']));
     expect(ctx.compactionConfig?.enabled).toBe(false);
+  });
+
+  it('buildContextForwardsCancelFlagToCloudMcpConnect', async () => {
+    // buildContext 在 LLM 首轮之前连接 MCP，用户此时点「停止」的唯一出口就在这里。
+    // 不传标志会让挂起的连接拖住整次执行，执行体到不了 finally，WS handler 的
+    // claim/future 永久残留（线上 session 2026 即此态）。
+    const { service, skillSync, agentMapper } = makeHarness();
+    agentMapper.selectById.mockResolvedValue({
+      id: 2, name: 'Coder', systemPrompt: 'p', skillNames: null, mcpServerIds: '[5]',
+    });
+    skillSync.loadAgentServers.mockResolvedValue([
+      { id: 5, name: 'baidu_map', serverType: 'HTTP', url: 'https://mcp.example.com' },
+    ]);
+    const cancelled = new AtomicBoolean(false);
+    await service.buildContext(10, null, cancelled);
+    expect(skillSync.connectForCloud).toHaveBeenCalledTimes(1);
+    expect(skillSync.connectForCloud.mock.calls[0][3]).toBe(cancelled);
   });
 
   it('executeFromEventRunsLoopAndPersistsAssistantAndToolMessages', async () => {

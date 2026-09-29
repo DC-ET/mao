@@ -19,31 +19,82 @@ type AnyClient = {
 export class McpClientManager {
   private readonly sessionClients = new Map<number, Map<number, AnyClient>>();
 
-  constructor(private readonly clientTimeoutSeconds = 120) {}
+  constructor(
+    private readonly clientTimeoutSeconds = 120,
+    /** 连接 + listTools 的整体超时：裸 fetch 无超时，SDK 的 SSE 还会退避重连，必须兜底 */
+    private readonly connectTimeoutSeconds = 60,
+  ) {}
 
-  async connectAndListTools(sessionId: number, server: McpServer, env: Record<string, string>): Promise<McpToolRef[]> {
-    const client = await this.connect(server, env);
-    let map = this.sessionClients.get(sessionId);
-    if (!map) {
-      map = new Map();
-      this.sessionClients.set(sessionId, map);
-    }
-    // 重连同一 serverId 时先关闭旧客户端，避免 STDIO 子进程泄漏
-    const previous = map.get(server.id!);
-    if (previous) {
-      await this.closeClient(`session-${sessionId}/server-${server.id} (stale)`, previous);
-    }
-    map.set(server.id!, client);
+  async connectAndListTools(
+    sessionId: number, server: McpServer, env: Record<string, string>,
+    cancelFlag?: { get(): boolean } | null,
+  ): Promise<McpToolRef[]> {
+    // 取消感知的连接：buildContext 在 LLM 首轮之前连接 MCP，用户此时点「停止」没有任何
+    // 别的出口。裸 fetch 没有超时，SDK 的 SSE 还会按退避重连（1s→30s 收敛，最多 2 次），
+    // 一次挂起就能把整次执行无限期拖住——执行体到不了 finally，WS handler 的 claim/future
+    // 永久残留，该会话后续发送与重试全被 session_already_running 拒绝。
+    // 用 race 而非在轮询回调里 throw：setInterval 回调中的异常不会 reject 外层 Promise，
+    // 调用方仍会永久挂起。
+    const deadline = Date.now() + this.connectTimeoutSeconds * 1000;
+    let poll: NodeJS.Timeout | undefined;
+    const abortPromise = new Promise<never>((_, reject) => {
+      poll = setInterval(() => {
+        if (cancelFlag?.get()) {
+          reject(new Error(`连接 MCP 服务器 ${server.name} 被取消`));
+          return;
+        }
+        if (Date.now() >= deadline) {
+          reject(new Error(`连接 MCP 服务器 ${server.name} 超时（${this.connectTimeoutSeconds}s）`));
+        }
+      }, 500);
+      // 主流程先行结束时不再由本定时器持有事件循环
+      poll.unref();
+    });
+
+    const connectAndList = async (): Promise<McpToolRef[]> => {
+      const client = await this.connect(server, env);
+      let map = this.sessionClients.get(sessionId);
+      if (!map) {
+        map = new Map();
+        this.sessionClients.set(sessionId, map);
+      }
+      // 重连同一 serverId 时先关闭旧客户端，避免 STDIO 子进程泄漏
+      const previous = map.get(server.id!);
+      if (previous) {
+        await this.closeClient(`session-${sessionId}/server-${server.id} (stale)`, previous);
+      }
+      map.set(server.id!, client);
+      const tools = await this.withTimeout(
+        client.listTools(),
+        this.connectTimeoutSeconds * 1000,
+        `MCP listTools 超时（${this.connectTimeoutSeconds}s）：${server.name}`,
+      );
+      const refs = await this.toToolRefs(server, tools);
+      harnessLog('info', `MCP client connected (CLOUD): session=${sessionId}, server=${server.name}, tools=${refs.length}`);
+      return refs;
+    };
+
     try {
-      const tools = await this.toToolRefs(server, await client.listTools());
-      harnessLog('info', `MCP client connected (CLOUD): session=${sessionId}, server=${server.name}, tools=${tools.length}`);
-      return tools;
+      return await Promise.race([connectAndList(), abortPromise]);
     } catch (e) {
-      // listTools 失败时不留下悬空连接
-      map.delete(server.id!);
-      await this.closeClient(`session-${sessionId}/server-${server.id} (listTools failed)`, client);
+      // 只回收本次 server 的连接：connectForCloud 逐个连接，误关整个会话会连带
+      // 断掉同会话里已连上的其它 server（那会让本轮工具整体不可用）。
+      await this.closeSessionServer(sessionId, server.id!);
       throw e;
+    } finally {
+      if (poll) clearInterval(poll);
     }
+  }
+
+  /** 关闭会话内单个 server 的连接（含 STDIO 子进程），不影响同会话其它 server。 */
+  private async closeSessionServer(sessionId: number, serverId: number): Promise<void> {
+    const map = this.sessionClients.get(sessionId);
+    if (!map) return;
+    const client = map.get(serverId);
+    if (!client) return;
+    map.delete(serverId);
+    if (map.size === 0) this.sessionClients.delete(sessionId);
+    await this.closeClient(`session-${sessionId}/server-${serverId}`, client);
   }
 
   async callTool(sessionId: number | null, serverId: number, toolName: string, argumentsJson: string): Promise<string> {

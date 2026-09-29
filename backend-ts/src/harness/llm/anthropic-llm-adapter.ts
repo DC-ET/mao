@@ -283,6 +283,9 @@ export class AnthropicLlmAdapter implements LlmAdapter {
 
     const waiting = setInterval(() => {
       if (this.isCancelled(cancelFlag)) {
+        // 响应头已到：poll 早已随 res 回调停止，此处的轮询是取消的唯一出口。
+        // 裸 destroy() 足以让 for await 以 Premature close 退出，错误由 stream() 的
+        // isCancelled 收敛成 Cancelled by user。
         body.destroy();
         return;
       }

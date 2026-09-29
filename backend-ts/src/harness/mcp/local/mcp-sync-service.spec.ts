@@ -99,4 +99,42 @@ describe('McpSyncService', () => {
     expect(tools[0].inputSchema.type).toBe('object');
     expect(tools[0].fullToolName).toBe('mcp__baidu_map__map_geocode');
   });
+
+  describe('connectForCloud', () => {
+    const connectAndListTools = vi.fn(async () => [{
+      serverId: 2, serverName: 'github', toolName: 'read', description: '', inputSchema: {}, fullToolName: 'mcp__github__read',
+    }]);
+    const clientManager = { connectAndListTools } as unknown as McpClientManager;
+    const decryptEnv = vi.fn(() => ({ TOKEN: 'x' }));
+
+    beforeEach(() => {
+      connectAndListTools.mockClear();
+      decryptEnv.mockClear();
+      decryptEnv.mockReturnValue({ TOKEN: 'x' });
+      (service as unknown as { mcpServerService: unknown }).mcpServerService = { decryptEnv };
+    });
+
+    it('passes the cancel flag through so a stop during connect can interrupt it', async () => {
+      // buildContext 阶段点「停止」的唯一出口就在这里：不传标志会让连接挂起整次执行，
+      // 执行体到不了 finally，WS handler 的 claim/future 永久残留。
+      const cancelled = { get: () => false };
+      await service.connectForCloud(21, [httpServer as never], clientManager, cancelled);
+      expect(connectAndListTools).toHaveBeenCalledTimes(1);
+      expect(connectAndListTools.mock.calls[0][3]).toBe(cancelled);
+    });
+
+    it('skips remaining servers once the session is cancelled', async () => {
+      const result = await service.connectForCloud(22, [httpServer as never, stdioServer as never], clientManager, { get: () => true });
+      expect(connectAndListTools).not.toHaveBeenCalled();
+      expect(result.tools).toEqual([]);
+      expect(result.warnings).toEqual(['github: 会话已取消']);
+    });
+
+    it('collects warnings without aborting the whole batch', async () => {
+      connectAndListTools.mockRejectedValueOnce(new Error('connect refused'));
+      const result = await service.connectForCloud(23, [httpServer as never], clientManager, null);
+      expect(result.tools).toEqual([]);
+      expect(result.warnings).toEqual(['github: connect refused']);
+    });
+  });
 });

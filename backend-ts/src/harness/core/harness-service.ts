@@ -336,7 +336,10 @@ export class HarnessService {
               sessionTools.push(new McpToolAdapter(ref, this.mcpClientManager ?? null));
             }
           } else if (this.mcpClientManager) {
-            const cloudResult = await this.mcpSyncService.connectForCloud(sessionId, mcpServers, this.mcpClientManager);
+            // 透传取消标志：buildContext 在 LLM 首轮之前连接 MCP，用户此时点「停止」
+            // 唯一的出口就在这里。不传会让连接挂起整次执行，执行体到不了 finally，
+            // WS handler 的 claim/future 永久残留（线上 session 2026 即此态）。
+            const cloudResult = await this.mcpSyncService.connectForCloud(sessionId, mcpServers, this.mcpClientManager, cancelFlag ?? null);
             cloudMcpBound = true;
             for (const ref of cloudResult.tools) {
               sessionTools.push(new McpToolAdapter(ref, this.mcpClientManager));
