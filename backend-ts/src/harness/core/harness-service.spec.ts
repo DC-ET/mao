@@ -232,12 +232,13 @@ function makeHarness(overrides: Record<string, unknown> = {}) {
   const compactionConfig = new CompactionConfig();
   compactionConfig.enabled = false;
   const mcpClientManager = { closeSession: vi.fn(async () => undefined) };
+  const db = null;
 
   const deps = {
     agentLoop, toolRegistry, skillLoader, skillSync, localSkills, localAgentsMd,
     sessionMapper, agentMapper, experienceService, llmModelMapper, fileChangeMapper,
     sessionService, sessionCompactionService, sessionHistoryLoader, orchestrator,
-    promptEngine, activeContext, compactionConfig, envInfo, mcpClientManager,
+    promptEngine, activeContext, compactionConfig, envInfo, mcpClientManager, db,
     ...overrides,
   };
 
@@ -261,11 +262,42 @@ function makeHarness(overrides: Record<string, unknown> = {}) {
     deps.activeContext as never,
     deps.compactionConfig,
     deps.envInfo as never,
-    null,
+    deps.db as never,
     deps.mcpClientManager as never,
     deps.skillSync as never,
   );
   return { service, ...deps };
+}
+
+/** forkParentMessages 用的假事务：按 SQL 关键字返回行，并记录全部 insert。 */
+function fakeTx(rows: {
+  messages?: Array<Record<string, unknown>>;
+  fileChanges?: unknown[];
+  compaction?: unknown;
+  events?: unknown[];
+}) {
+  const inserts: Array<{ table: string; values: Record<string, unknown> }> = [];
+  let nextId = 500;
+  const tx = {
+    query: vi.fn(async (sql: string, params: unknown[] = []) => {
+      if (sql.includes('session_compaction_event')) return rows.events ?? [];
+      if (sql.includes('message_file_change')) return rows.fileChanges ?? [];
+      if (sql.includes('FROM `message`')) {
+        const cut = params.length > 1 ? Number(params[1]) : null;
+        return cut == null ? rows.messages ?? [] : (rows.messages ?? []).filter((m) => Number(m.id) <= cut);
+      }
+      return [];
+    }),
+    queryOne: vi.fn(async (sql: string) => {
+      if (sql.includes('FROM session_compaction')) return rows.compaction ?? null;
+      return null;
+    }),
+    insert: vi.fn(async (table: string, values: Record<string, unknown>) => {
+      inserts.push({ table, values });
+      return nextId++;
+    }),
+  };
+  return { tx, inserts };
 }
 
 describe('HarnessService.buildContext and execute', () => {
@@ -422,5 +454,87 @@ describe('HarnessService.buildContext and execute', () => {
     expect(await service.resolveModel(3)).toEqual(model());
     expect(await service.resolveModel(null)).toEqual(model());
     expect(llmModelMapper.selectDefault).toHaveBeenCalled();
+  });
+});
+
+describe('HarnessService.forkParentMessages', () => {
+  function messagesWith(ids: number[]) {
+    return ids.map((id) => ({ id, sessionId: 1, role: id % 2 === 0 ? 'ASSISTANT' : 'USER', content: `m${id}` }));
+  }
+
+  it('copiesEverythingWhenNoCutPoint', async () => {
+    const { tx, inserts } = fakeTx({
+      messages: messagesWith([1, 2, 3, 4]),
+      fileChanges: [{ id: 1, messageId: 2, sessionId: 1, path: 'a.ts', type: 'CREATED' }],
+      compaction: { id: 1, sessionId: 1, summaryText: 'sum', lastCompactedMsgId: 2, compactCount: 1 },
+      events: [
+        { id: 1, sessionId: 1, prevBoundaryMsgId: 0, boundaryMsgId: 2, compactedMessageCount: 2 },
+      ],
+    });
+    const { service } = makeHarness({ db: { transaction: vi.fn(async (fn: (t: unknown) => unknown) => fn(tx)) } });
+    await service.forkParentMessages(1, 10, null);
+
+    expect(tx.query.mock.calls[0][0]).not.toContain('id <= ?');
+    expect(inserts.filter((i) => i.table === 'message')).toHaveLength(4);
+    expect(inserts.filter((i) => i.table === 'message').every((i) => i.values.sourceSessionId === 1)).toBe(true);
+    expect(inserts.filter((i) => i.table === 'message_file_change')).toHaveLength(1);
+    // file_change 的 messageId 被重映射到新 ID
+    expect(inserts.find((i) => i.table === 'message_file_change')!.values.messageId).not.toBe(2);
+    const compaction = inserts.find((i) => i.table === 'session_compaction')!;
+    expect(compaction.values.sessionId).toBe(10);
+    expect(compaction.values.lastCompactedMsgId).not.toBe(2);
+    const event = inserts.find((i) => i.table === 'session_compaction_event')!;
+    expect(event.values.sessionId).toBe(10);
+    expect(event.values.boundaryMsgId).not.toBe(2);
+    expect(event.values.prevBoundaryMsgId).toBe(0);
+  });
+
+  it('truncatesAndRemapsCompactionWhenCutPastBoundary', async () => {
+    const { tx, inserts } = fakeTx({
+      messages: messagesWith([1, 2, 3, 4, 5]),
+      compaction: { id: 1, sessionId: 1, summaryText: 'sum', lastCompactedMsgId: 2, compactCount: 3 },
+      events: [
+        { id: 1, sessionId: 1, prevBoundaryMsgId: 0, boundaryMsgId: 2, compactedMessageCount: 2 },
+        { id: 2, sessionId: 1, prevBoundaryMsgId: 2, boundaryMsgId: 4, compactedMessageCount: 2 },
+        { id: 3, sessionId: 1, prevBoundaryMsgId: 4, boundaryMsgId: 5, compactedMessageCount: 1 },
+      ],
+    });
+    const { service } = makeHarness({ db: { transaction: vi.fn(async (fn: (t: unknown) => unknown) => fn(tx)) } });
+    await service.forkParentMessages(1, 10, 4);
+
+    expect(tx.query.mock.calls[0][0]).toContain('id <= ?');
+    expect(tx.query.mock.calls[0][1]).toEqual([1, 4]);
+    expect(inserts.filter((i) => i.table === 'message')).toHaveLength(4);
+    expect(inserts.filter((i) => i.table === 'message').map((i) => i.values.content)).toEqual(['m1', 'm2', 'm3', 'm4']);
+    // 压缩记录仍在（边界 2 被复制过来了）；事件只保留 boundary <= 切点 的行，5 被跳过
+    expect(inserts.filter((i) => i.table === 'session_compaction')).toHaveLength(1);
+    const events = inserts.filter((i) => i.table === 'session_compaction_event');
+    expect(events).toHaveLength(2);
+    expect(events[0].values.boundaryMsgId).not.toBe(2);
+    expect(events[1].values.prevBoundaryMsgId).toBe(events[0].values.boundaryMsgId);
+  });
+
+  it('skipsCompactionWhenCutBeforeBoundary', async () => {
+    const { tx, inserts } = fakeTx({
+      messages: messagesWith([1, 2, 3, 4, 5]),
+      compaction: { id: 1, sessionId: 1, summaryText: 'sum', lastCompactedMsgId: 3, compactCount: 2 },
+      events: [
+        { id: 1, sessionId: 1, prevBoundaryMsgId: 0, boundaryMsgId: 3, compactedMessageCount: 3 },
+      ],
+    });
+    const { service } = makeHarness({ db: { transaction: vi.fn(async (fn: (t: unknown) => unknown) => fn(tx)) } });
+    await service.forkParentMessages(1, 10, 2);
+
+    expect(inserts.filter((i) => i.table === 'message')).toHaveLength(2);
+    expect(inserts.filter((i) => i.table === 'session_compaction')).toHaveLength(0);
+    expect(inserts.filter((i) => i.table === 'session_compaction_event')).toHaveLength(0);
+  });
+
+  it('keepsRawHistoryWhenNoCompactionRecord', async () => {
+    const { tx, inserts } = fakeTx({ messages: messagesWith([1, 2]) });
+    const { service } = makeHarness({ db: { transaction: vi.fn(async (fn: (t: unknown) => unknown) => fn(tx)) } });
+    await service.forkParentMessages(1, 10, null);
+    expect(inserts.filter((i) => i.table === 'message')).toHaveLength(2);
+    expect(inserts.filter((i) => i.table === 'session_compaction')).toHaveLength(0);
   });
 });

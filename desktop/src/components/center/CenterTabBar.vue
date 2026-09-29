@@ -14,6 +14,9 @@
       <el-tooltip v-if="tab.filePath" :content="tab.filePath" placement="bottom" :show-after="300">
         <span class="tab-title">{{ tab.title }}</span>
       </el-tooltip>
+      <el-tooltip v-else-if="tab.forkFrom?.label" :content="`分叉自主会话 · ${tab.forkFrom.label}`" placement="bottom" :show-after="300">
+        <span class="tab-title">{{ tab.title }}</span>
+      </el-tooltip>
       <span v-else class="tab-title">{{ tab.title }}</span>
       <button
         v-if="tab.type !== 'chat'"

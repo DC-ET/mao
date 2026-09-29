@@ -10,7 +10,7 @@ function makeService(overrides: Record<string, unknown> = {}) {
     ...overrides.sessionRepo as object,
   };
   const messageRepo = {
-    hasEarlierUserMessage: vi.fn(async () => false),
+    hasOwnEarlierUserMessage: vi.fn(async () => false),
     ...overrides.messageRepo as object,
   };
   const userCommands = {
@@ -150,14 +150,30 @@ describe('SessionTitleService', () => {
   });
 
   it('skips non-first messages and unsupported session types', async () => {
-    const earlier = makeService({ messageRepo: { hasEarlierUserMessage: vi.fn(async () => true) } });
+    const earlier = makeService({ messageRepo: { hasOwnEarlierUserMessage: vi.fn(async () => true) } });
     await earlier.service.generateAndApply(11, 21, 'hello');
     expect(earlier.llm.chat).not.toHaveBeenCalled();
 
     const subagent = makeService({ sessionRepo: { findById: vi.fn(async () => ({ id: 11, userId: 7, title: '子代理', sessionType: 'SUBAGENT' })) } });
     await subagent.service.generateAndApply(11, 21, 'hello');
-    expect(subagent.messageRepo.hasEarlierUserMessage).not.toHaveBeenCalled();
+    expect(subagent.messageRepo.hasOwnEarlierUserMessage).not.toHaveBeenCalled();
     expect(subagent.llm.chat).not.toHaveBeenCalled();
+  });
+
+  it('titles a forked side task whose earlier user messages are copies', async () => {
+    // 分叉边路任务的历史用户消息 source_session_id 均非空，判定为「没有更早的自己的用户消息」，
+    // 否则标题永远停在占位符「任务」。
+    const ctx = makeService({
+      sessionRepo: { findById: vi.fn(async () => ({
+        id: 12, userId: 7, title: '任务', sessionType: 'SIDE_TASK', parentSessionId: 11, modelId: 3,
+      })) },
+      messageRepo: { hasOwnEarlierUserMessage: vi.fn(async () => false) },
+    });
+    await ctx.service.generateAndApply(12, 22, '继续深挖压缩边界');
+    expect(ctx.messageRepo.hasOwnEarlierUserMessage).toHaveBeenCalledWith(12, 22);
+    expect(ctx.sessionRepo.updateTitleIfPlaceholder).toHaveBeenCalledWith(
+      12, 'SIDE_TASK', '任务', '排查登录接口超时', expect.any(String),
+    );
   });
 
   it('does not publish when a manual rename wins the conditional update', async () => {

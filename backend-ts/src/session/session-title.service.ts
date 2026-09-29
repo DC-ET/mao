@@ -65,7 +65,8 @@ export class SessionTitleService {
     try {
       const session = await this.sessionRepo.findById(sessionId);
       if (!session || !this.isEligible(session)) return;
-      if (await this.messageRepo.hasEarlierUserMessage(sessionId, messageId)) return;
+      // 忽略复制来的用户消息：分叉边路任务的历史用户消息全是复制来的，首条提问才该触发命名
+      if (await this.messageRepo.hasOwnEarlierUserMessage(sessionId, messageId)) return;
 
       const rawText = extractText(content);
       const hasImage = containsImage(content);

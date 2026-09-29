@@ -45,6 +45,14 @@ class FakeWebSocket {
 
 ;(globalThis as any).WebSocket = FakeWebSocket
 
+// useStreamWS 通过 window 广播 side_session_created / side_session_rejected；
+// 测试跑在 node 环境，用一个最小 EventTarget 替身顶上。
+class WindowEventTarget extends EventTarget {}
+const windowStub = new WindowEventTarget()
+Object.defineProperty(globalThis, 'window', {
+  value: windowStub, writable: true, configurable: true,
+})
+
 const { useStreamWS } = await import('./useStreamWS')
 const { useSessionStore } = await import('../stores/session')
 
@@ -200,5 +208,75 @@ describe('useStreamWS user_message_saved', () => {
 
     const queued = sessionStore.sessionPendingQuestions.get('9') ?? []
     expect(queued.map(q => q.requestId)).toEqual(['first', 'second'])
+  })
+})
+
+describe('useStreamWS side session creation', () => {
+  it('createSideSession 带切点时才下发 forkFromMessageId', async () => {
+    const { connect, createSideSession } = useStreamWS()
+    const pending = connect()
+    sockets[0].open()
+    await pending
+
+    await createSideSession('11', '继续深挖', 'fork', 3, undefined, undefined, [], 'READ_ONRITE' as string, 77)
+    await createSideSession('11', '全量分叉', 'fork')
+
+    const sideSends = sockets[0].sent.filter(m => m.type === 'create_side_session')
+    expect(sideSends).toHaveLength(2)
+    expect((sideSends[0].data as Record<string, unknown>).forkFromMessageId).toBe(77)
+    expect((sideSends[1].data as Record<string, unknown>).forkFromMessageId).toBeUndefined()
+  })
+
+  it('创建被拒时抛 side_session_rejected 事件，且不把父会话标成 FAILED', async () => {
+    const { connect, subscribe } = useStreamWS()
+    const pending = connect()
+    sockets[0].open()
+    await pending
+    await subscribe('11')
+
+    const sessionStore = useSessionStore()
+    sessionStore.updateSessionPhase('11', 'RUNNING')
+    const events: CustomEvent[] = []
+    const listener = (e: Event) => events.push(e as CustomEvent)
+    window.addEventListener('side_session_rejected', listener)
+
+    sockets[0].onmessage?.({
+      target: sockets[0],
+      data: JSON.stringify({
+        type: 'error',
+        sessionId: 11,
+        data: { message: '分叉来源消息不存在或已被删除，请刷新后重试', code: 'side_session_rejected' },
+      }),
+    })
+    window.removeEventListener('side_session_rejected', listener)
+
+    expect(events).toHaveLength(1)
+    expect(events[0].detail).toEqual({
+      message: '分叉来源消息不存在或已被删除，请刷新后重试',
+      parentSessionId: '11',
+    })
+    expect(sessionStore.getSessionPhase('11')).toBe('RUNNING')
+  })
+
+  it('普通 error 仍会走 FAILED 收敛路径', async () => {
+    const { connect, subscribe } = useStreamWS()
+    const pending = connect()
+    sockets[0].open()
+    await pending
+    await subscribe('11')
+
+    const sessionStore = useSessionStore()
+    const events: Event[] = []
+    const listener = (e: Event) => events.push(e)
+    window.addEventListener('side_session_rejected', listener)
+
+    sockets[0].onmessage?.({
+      target: sockets[0],
+      data: JSON.stringify({ type: 'error', sessionId: 11, data: { message: 'boom' } }),
+    })
+    window.removeEventListener('side_session_rejected', listener)
+
+    expect(events).toHaveLength(0)
+    expect(sessionStore.getSessionPhase('11')).toBe('FAILED')
   })
 })

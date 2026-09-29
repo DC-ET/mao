@@ -878,6 +878,11 @@ export class SessionService {
     return this.messageRepo.selectMessagesAfterId(sessionId, boundary);
   }
 
+  /** 取消息并校验归属：不存在、已删除或属于其他会话时返回 null。分叉切点校验用。 */
+  findOwnedMessage(sessionId: number, messageId: number): Promise<Message | null> {
+    return this.messageRepo.selectValidBoundaryMessage(sessionId, messageId);
+  }
+
   async getMessagesByRounds(sessionId: number, roundLimit: number, beforeMessageId: number | null): Promise<MessagePage> {
     const limit = Math.max(1, Math.min(roundLimit, 50));
     let beforeMessage: Message | null = null;

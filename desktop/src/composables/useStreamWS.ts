@@ -7,6 +7,7 @@ import { mapCompactionEvents } from '../utils/chatMessage'
 import { isAndroidCapacitor } from '../utils/capacitor'
 import { isElectronClient } from '../utils/platform'
 import { updateSideTaskTabTitleFor } from './useCenterTabs'
+import type { SideTaskContextMode } from '../types/file-browser'
 
 /// <reference types="vite/client" />
 
@@ -494,12 +495,13 @@ export function useStreamWS() {
   async function createSideSession(
     parentSessionId: string,
     content: string,
-    contextMode: 'fork' | 'summary' | 'none',
+    contextMode: SideTaskContextMode,
     modelId?: number,
     localSkills?: LocalSkillReport[],
     agentsMdContent?: string,
     images?: string[],
-    permissionLevel?: string
+    permissionLevel?: string,
+    forkFromMessageId?: number | null
   ): Promise<boolean> {
     const payload = {
       type: 'create_side_session',
@@ -511,7 +513,9 @@ export function useStreamWS() {
         ...(modelId != null ? { modelId } : {}),
         ...(localSkills && localSkills.length > 0 ? { localSkills } : {}),
         ...(agentsMdContent ? { agentsMdContent } : {}),
-        ...(permissionLevel ? { permissionLevel } : {})
+        ...(permissionLevel ? { permissionLevel } : {}),
+        // 按轮分叉的切点（被点击那一轮的助手最终回复 id）；缺省即全量分叉
+        ...(forkFromMessageId != null ? { forkFromMessageId } : {})
       }
     }
     return sendReliable(payload)
@@ -1020,6 +1024,14 @@ export function useStreamWS() {
       case 'error': {
         if (sessionId) {
           const message = (data?.message && String(data.message)) || 'Agent 执行异常'
+          // 边路任务创建被拒（切点失效 / 模型不支持图片 / 本地端未连接等）：
+          // 这不是父会话的执行失败，不能把它标成 FAILED，交给等待中的边路面板自行回滚。
+          if (data?.code === 'side_session_rejected') {
+            window.dispatchEvent(new CustomEvent('side_session_rejected', {
+              detail: { message, parentSessionId: sessionId },
+            }))
+            break
+          }
           sessionStore.setExecutionError(sessionId, message)
           sessionStore.updateSessionPhase(sessionId, 'FAILED' as TaskPhase)
           sessionStore.updateSideTaskPhase(Number(sessionId), 'FAILED' as TaskPhase)

@@ -149,6 +149,10 @@ const props = defineProps<{
   sideSessionId: number
   /** 创建入口预置的上下文继承方式（fork 图标入口）；未传默认「不继承」 */
   contextMode?: SideTaskContextMode
+  /** 分叉切点：被点击那一轮的助手最终回复 id（字符串形式），仅按轮分叉时传入 */
+  forkFromMessageId?: string
+  /** 分叉来源标签（该轮用户消息摘录 + 时间），仅用于 Tab hover，不参与发送 */
+  forkFromLabel?: string
 }>()
 
 const sessionStore = useSessionStore()
@@ -179,9 +183,19 @@ const hasRealSession = computed(() => realSessionId.value > 0)
 const placeholderCacheKey = computed(() => props.tabId)
 
 const contextMode = ref<'none' | 'summary' | 'fork'>(props.contextMode ?? 'none')
-// 占位 Tab 已挂载时入口又改了预置值（fork 图标 / 普通「+ 边路任务」）：同步到单选组
-watch(() => props.contextMode, (mode) => {
-  if (mode && !hasRealSession.value) contextMode.value = mode
+/** 消息 id 是数字字符串，解析失败（NaN）按无切点处理，等价于全量分叉 */
+function parseCutPoint(value: string | undefined): number | null {
+  if (!value) return null
+  const parsed = Number(value)
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null
+}
+const forkFromMessageId = ref<number | null>(parseCutPoint(props.forkFromMessageId))
+// 占位 Tab 已挂载时入口又改了预置值（fork 图标 / 普通「+ 边路任务」）：同步到单选组。
+// 只在会话创建前生效——创建后再改不影响已开始的执行。
+watch([() => props.contextMode, () => props.forkFromMessageId], ([mode, messageId]) => {
+  if (hasRealSession.value) return
+  if (mode) contextMode.value = mode
+  forkFromMessageId.value = parseCutPoint(messageId)
 })
 
 const sending = ref(false)
@@ -733,23 +747,14 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
     // 本监听仅在本次首次发送期间注册，用本地 realSessionId 绑定即可。
     const isFirstSideSend = !hasRealSession.value
     let expectedSavedSessionId: string | null = isFirstSideSend ? null : String(realSessionId.value)
-    let removeSideCreatedListener: (() => void) | undefined
+    // 本次发送注册的监听统一收尾：被拒、发送失败、异常、保存确认、卸载都必须走到它，
+    // 否则残留的 side_session_created 监听会被别处成功的创建命中，清掉本面板的输入框。
+    let disposeSendListeners: (() => void) | null = null
     try {
-      if (isFirstSideSend) {
-        const onSideCreated = (e: Event) => {
-          const detail = (e as CustomEvent).detail
-          if (detail?.sideSessionId == null || realSessionId.value > 0) return
-          expectedSavedSessionId = String(detail.sideSessionId)
-        }
-        window.addEventListener('side_session_created', onSideCreated)
-        removeSideCreatedListener = () => window.removeEventListener('side_session_created', onSideCreated)
-      }
-
       if (isFirstSideSend) {
         // 首次发送：先校验父会话存在，再插乐观消息，避免校验失败后留下幽灵消息
         const parentSessionId = sessionStore.activeSessionId
         if (!parentSessionId) {
-          removeSideCreatedListener?.()
           waitingForSave.value = false
           releaseSendLock()
           ElMessage.warning('主会话不存在，无法创建边路任务')
@@ -757,6 +762,39 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
         }
 
         const optimisticUserId = 'side_user_' + Date.now()
+        // 两个事件都按父会话 id 过滤：同父会话的另一个边路面板的开创 / 被拒，
+        // 不该写错本面板的等待状态。
+        const onSideCreated = (e: Event) => {
+          const detail = (e as CustomEvent).detail
+          if (detail?.sideSessionId == null || realSessionId.value > 0) return
+          if (detail?.parentSessionId != null && String(detail.parentSessionId) !== parentSessionId) return
+          expectedSavedSessionId = String(detail.sideSessionId)
+        }
+        const onSideRejected = (e: Event) => {
+          const detail = (e as CustomEvent).detail
+          if (detail?.parentSessionId != null && String(detail.parentSessionId) !== parentSessionId) return
+          // 创建被拒（切点失效 / 模型不支持图片 / 本地端未连接）：后端不建会话、也不发
+          // user_message_saved，必须在这里收尾。否则占位 Tab 里留下两条发不出去的幽灵消息，
+          // waitingForSave 还要干等 60 秒。
+          rollbackOptimisticMessages(placeholderCacheKey.value, optimisticUserId)
+          disposeSendListeners?.()
+          pendingSendCleanup = null
+          waitingForSave.value = false
+          releaseSendLock()
+          ElMessage.error(detail?.message || '边路任务创建失败，请重试')
+        }
+        window.addEventListener('side_session_created', onSideCreated)
+        window.addEventListener('side_session_rejected', onSideRejected)
+        disposeSendListeners = () => {
+          window.removeEventListener('side_session_created', onSideCreated)
+          window.removeEventListener('side_session_rejected', onSideRejected)
+        }
+        // 监听已挂上：await createSideSession 期间被卸载也要能摘掉
+        pendingSendCleanup = () => {
+          disposeSendListeners?.()
+          waitingForSave.value = false
+        }
+
         sessionStore.addUserMessage(placeholderCacheKey.value, {
           id: optimisticUserId,
           role: 'user',
@@ -774,11 +812,13 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
           localSkills,
           agentsMdContent,
           imageUrls,
-          sidePermissionLevel.value
+          sidePermissionLevel.value,
+          forkFromMessageId.value
         )
         if (!created) {
           rollbackOptimisticMessages(placeholderCacheKey.value, optimisticUserId)
-          removeSideCreatedListener?.()
+          disposeSendListeners?.()
+          pendingSendCleanup = null
           waitingForSave.value = false
           releaseSendLock()
           ElMessage.error('边路任务创建失败，网络连接不可用，请重试')
@@ -806,7 +846,7 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
         }
       }
     } catch (e) {
-      removeSideCreatedListener?.()
+      disposeSendListeners?.()
       waitingForSave.value = false
       releaseSendLock()
       ElMessage.error((e as Error)?.message || '消息发送失败，请重试')
@@ -819,12 +859,13 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
     const draftKeyAtSend = props.tabId
     let settled = false
     let saveTimeoutId: ReturnType<typeof setTimeout>
+    let callbackId = ''
     const finishWaiting = (clearInput: boolean) => {
       if (settled) return
       settled = true
       pendingSendCleanup = null
       clearTimeout(saveTimeoutId)
-      removeSideCreatedListener?.()
+      disposeSendListeners?.()
       offMessageSaved(callbackId)
       waitingForSave.value = false
       // 成功路径由 phase 终态/watcher 收敛 sending；保存确认本身不释放互斥
@@ -833,7 +874,7 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
         chatInputRef.value?.clearInput()
       }
     }
-    const callbackId = onMessageSaved((callbackSessionId: string, _messageId: string) => {
+    callbackId = onMessageSaved((callbackSessionId: string) => {
       if (expectedSavedSessionId != null && callbackSessionId === expectedSavedSessionId) {
         finishWaiting(true)
       }

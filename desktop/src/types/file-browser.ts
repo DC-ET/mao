@@ -11,8 +11,14 @@ export interface FileNode {
   error?: string
 }
 
-/** 边路任务创建时的上下文继承方式：不继承 / 主会话摘要 / Fork 主会话（复制主会话全部历史消息） */
+/** 边路任务创建时的上下文继承方式：不继承 / 主会话摘要 / Fork 主会话（复制主会话历史消息） */
 export type SideTaskContextMode = 'none' | 'summary' | 'fork'
+
+/** 分叉来源：messageId 是被点击那一轮的助手最终回复 id（即切点），label 是该轮的来源摘录 */
+export interface SideTaskForkSource {
+  messageId: string
+  label: string
+}
 
 export interface Tab {
   id: string            // 'chat' for chat tab, relative path for file tabs
@@ -25,6 +31,8 @@ export interface Tab {
   sideSessionId?: number
   /** 创建入口预置的上下文继承方式（占位 Tab 有意义：SideChatPanel 首条消息发出前展示并生效） */
   contextMode?: SideTaskContextMode
+  /** 分叉来源（占位 Tab 有意义：首条消息发出时随 create_side_session 一起上报，之后不再变化） */
+  forkFrom?: SideTaskForkSource
 }
 
 export interface SessionTabState {

@@ -159,3 +159,15 @@ export function useMessageRounds(messages: Ref<ChatMessage[]>, sending: Ref<bool
     toggleRound,
   }
 }
+
+/**
+ * 分叉切点只能是该轮助手的最终回复。
+ * 点到展开后的中间步骤时，改回这一轮的最终回复；该轮没有最终回复则不能分叉。
+ */
+export function resolveForkCutPoint(rounds: MessageRound[], messageId: string): string | null {
+  const round = rounds.find(candidate =>
+    candidate.finalReply?.id === messageId
+    || candidate.collapsedSteps.some(step => step.id === messageId)
+    || candidate.displaySteps.some(step => step.id === messageId))
+  return round?.finalReply?.id ?? null
+}

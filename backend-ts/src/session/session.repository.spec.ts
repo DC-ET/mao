@@ -73,10 +73,11 @@ describe('MessageRepository', () => {
     expect(await repo.selectMaxMessageId(1)).toBe(9);
     db.queryOne.mockResolvedValueOnce(null);
     expect(await repo.selectMaxMessageId(1)).toBe(0);
-    db.queryOne.mockResolvedValueOnce({ id: 1 });
-    expect(await repo.hasEarlierUserMessage(1, 3)).toBe(true);
+    // 分叉历史里的用户消息都是复制来的（source_session_id 非空），不算「更早的用户消息」
     db.queryOne.mockResolvedValueOnce(null);
-    expect(await repo.hasEarlierUserMessage(1, 3)).toBe(false);
+    expect(await repo.hasOwnEarlierUserMessage(1, 3)).toBe(false);
+    db.queryOne.mockResolvedValueOnce({ id: 2 });
+    expect(await repo.hasOwnEarlierUserMessage(1, 3)).toBe(true);
     await repo.selectUserStarts(1, 10, 5);
     await repo.selectUserStarts(1, null, 5);
     await repo.selectRange(1, 1, 10);

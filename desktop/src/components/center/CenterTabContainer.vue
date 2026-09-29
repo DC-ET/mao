@@ -19,6 +19,8 @@
         :tab-id="activeTabId"
         :side-session-id="activeTab.sideSessionId"
         :context-mode="activeTab.contextMode"
+        :fork-from-message-id="activeTab.forkFrom?.messageId"
+        :fork-from-label="activeTab.forkFrom?.label"
       />
       <SubagentChatPanel
         v-else-if="activeTab?.type === 'subagent' && activeTab.sideSessionId != null && activeTab.sideSessionId > 0"

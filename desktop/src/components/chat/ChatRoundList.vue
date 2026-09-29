@@ -5,7 +5,6 @@
       :message="round.userMessage"
       :session-id="sessionId"
       :dislike-enabled="dislikeEnabled"
-      :fork-enabled="forkEnabled"
       :show-time="true"
       :can-edit="canEditMessage?.(round.userMessage) ?? false"
       :is-editing="editingMessageId === round.userMessage.id"
@@ -36,7 +35,6 @@
               :message="step"
               :session-id="sessionId"
               :dislike-enabled="dislikeEnabled"
-              :fork-enabled="forkEnabled"
               :show-time="false"
               :show-copy="false"
               :hide-file-changes="true"
@@ -64,6 +62,7 @@
         :session-id="sessionId"
         :dislike-enabled="dislikeEnabled"
         :fork-enabled="forkEnabled"
+        @fork="handleFork"
         :hide-thinking="true"
         :hide-file-changes="true"
       />
@@ -87,6 +86,7 @@
         :session-id="sessionId"
         :dislike-enabled="dislikeEnabled"
         :fork-enabled="forkEnabled"
+        @fork="handleFork"
         :show-time="true"
         :hide-file-changes="true"
       />
@@ -109,7 +109,6 @@
       :message="activeRound.userMessage"
       :session-id="sessionId"
       :dislike-enabled="dislikeEnabled"
-      :fork-enabled="forkEnabled"
       :show-time="true"
       :can-edit="canEditMessage?.(activeRound.userMessage) ?? false"
       :is-editing="editingMessageId === activeRound.userMessage.id"
@@ -128,7 +127,6 @@
         :message="msg"
         :session-id="sessionId"
         :dislike-enabled="dislikeEnabled"
-        :fork-enabled="forkEnabled"
         :show-time="false"
         :show-copy="false"
         :hide-file-changes="true"
@@ -150,7 +148,6 @@
         :message="msg"
         :session-id="sessionId"
         :dislike-enabled="dislikeEnabled"
-        :fork-enabled="forkEnabled"
         :show-time="msg.role === 'user' || (msg.role === 'assistant' && idx < messages.length - 1)"
         :show-copy="msg.role === 'user'"
         :is-last="idx === messages.length - 1"
@@ -174,8 +171,9 @@
 import { toRef } from 'vue'
 import { ArrowDown } from '@element-plus/icons-vue'
 import type { ChatMessage, CompactionEvent } from '../../types/chat'
-import { useMessageRounds } from '../../composables/useMessageRounds'
+import { resolveForkCutPoint, useMessageRounds, type MessageRound } from '../../composables/useMessageRounds'
 import { formatDateTime } from '../../utils/datetime'
+import { stripInternalMarkers } from '../../utils/internalMarkers'
 import MessageBubble from './MessageBubble.vue'
 import FileChangePanel from './FileChangePanel.vue'
 import CompactionMarker from './CompactionMarker.vue'
@@ -194,12 +192,13 @@ const props = defineProps<{
   forkEnabled?: boolean
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   edit: [msg: ChatMessage]
   cancelEdit: []
   confirmEdit: [messageId: string, content: string]
   addToCommand: [content: string]
-  fork: []
+  /** 分叉到边路任务：messageId 是被点击那一轮的助手最终回复 id，label 是该轮来源摘录 */
+  fork: [payload: { messageId: string; label: string }]
 }>()
 
 const messagesRef = toRef(props, 'messages')
@@ -207,6 +206,7 @@ const sendingRef = toRef(props, 'sending')
 
 const {
   roundsExpanded,
+  messageRounds,
   historyRounds,
   activeRound,
   activeRoundMsgs,
@@ -222,6 +222,24 @@ function markersAfter(messageId?: string | number | null): CompactionEvent[] {
 function markersInMessages(messages: ChatMessage[]): CompactionEvent[] {
   const ids = new Set(messages.map(m => String(m.id)))
   return (props.compactionEvents ?? []).filter(ev => ids.has(String(ev.boundaryMsgId)))
+}
+
+/** 分叉来源标签：该轮用户消息的时间 + 可见文本前 12 字（剥离内部标记，避免把 ${skill}$ 之类原文露出来）。 */
+function forkLabelOf(round: MessageRound): string {
+  const time = formatDateTime(round.userMessage.createdAt)
+  const excerpt = stripInternalMarkers(round.userMessage.content ?? '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 12)
+  return excerpt ? `${time} · ${excerpt}` : time
+}
+
+function handleFork(messageId: string) {
+  const cutPoint = resolveForkCutPoint(messageRounds.value, messageId)
+  if (cutPoint == null) return
+  const round = messageRounds.value.find(r => r.finalReply?.id === cutPoint)
+  if (!round) return
+  emit('fork', { messageId: cutPoint, label: forkLabelOf(round) })
 }
 </script>
 

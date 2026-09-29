@@ -98,7 +98,7 @@
           @cancel-edit="cancelEdit"
           @confirm-edit="confirmEdit"
           @add-to-command="(content: string) => commandEditDialogRef?.open({ content })"
-          @fork="openSideTask?.('fork')"
+          @fork="openSideTask?.('fork', $event)"
         />
 
         <div v-if="showTypingIndicator" class="typing-indicator">
@@ -246,7 +246,9 @@ type SyncChatStateFn = (state: {
 }) => void
 const syncChatState = inject<SyncChatStateFn>('syncChatState')!
 const chatFocusInput = inject<Ref<(() => void) | null>>('chatFocusInput')!
-const openSideTask = inject<((contextMode?: SideTaskContextMode) => void) | undefined>('openSideTask', undefined)
+const openSideTask = inject<
+  ((contextMode?: SideTaskContextMode, fork?: { messageId: string; label: string }) => void) | undefined
+>('openSideTask', undefined)
 
 const agentStore = useAgentStore()
 const sessionStore = useSessionStore()

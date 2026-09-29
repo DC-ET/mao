@@ -1,8 +1,14 @@
 import { ref, computed, watch, effectScope, type Ref } from 'vue'
-import type { Tab, SessionTabState, SideTaskContextMode } from '../types/file-browser'
+import type { Tab, SessionTabState, SideTaskContextMode, SideTaskForkSource } from '../types/file-browser'
 import type { FileChange } from '../types/chat'
 import { getClosedSideTaskIds, markSideTaskClosed, unmarkSideTaskClosed, normalizeSideTaskTitle, type SideTaskSummary } from '../utils/side-task-tabs'
 import { useSessionStore } from '../stores/session'
+
+/** 边路任务创建入口的预置：上下文继承方式 + 分叉来源（按轮分叉时带切点）。 */
+export interface SideTaskEntryOptions {
+  contextMode?: SideTaskContextMode
+  fork?: SideTaskForkSource
+}
 
 // Module-level singleton state
 const sessionTabsMap = ref<Map<string, SessionTabState>>(new Map())
@@ -198,31 +204,44 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
    * 打开边路任务 Tab。如果已存在则直接激活。
    * 传入 sideSessionId=0 表示"待创建"状态。
    * 占位 Tab 的 id 可能是 side:-{timestamp}，需按 sideSessionId 字段匹配。
-   * contextMode 为创建入口预置的上下文继承方式（fork 入口传 'fork'），普通入口传 'none'。
+   * opts 为创建入口预置的上下文继承方式与分叉来源，只对**还没发出首条消息的占位 Tab** 生效：
+   * 复用占位 Tab 时整体覆写，把上一次入口留下的 fork / summary 残留清掉。
+   * 已是真实会话的 Tab 只激活——那里 contextMode 早已用完，forkFrom 是纯展示字段，
+   * 覆写会把分叉来源（Tab hover）清掉。
    */
-  function openSideTaskTab(sideSessionId: number, title: string, contextMode: SideTaskContextMode = 'none') {
+  function openSideTaskTab(sideSessionId: number, title: string, opts: SideTaskEntryOptions = {}) {
     const state = getSessionState()
     const existing = findSideTaskTab(state, sideSessionId)
     if (existing) {
-      // 复用已存在的 Tab：同步预置的继承方式，避免上一次入口留下的 fork / summary 残留
-      existing.contextMode = contextMode
+      if (existing.sideSessionId == null || existing.sideSessionId <= 0) {
+        // 复用已存在的占位 Tab：整体覆写预置，避免半更新状态
+        existing.contextMode = opts.contextMode ?? 'none'
+        existing.forkFrom = opts.fork ?? undefined
+      }
       state.activeTabId = existing.id
       notifyTabsChanged()
       return
     }
     const id = 'side:' + sideSessionId
-    const newTab: Tab = { id, type: 'side_task', title: normalizeSideTaskTitle(title), sideSessionId, contextMode }
+    const newTab: Tab = {
+      id, type: 'side_task', title: normalizeSideTaskTitle(title), sideSessionId,
+      contextMode: opts.contextMode ?? 'none', ...(opts.fork ? { forkFrom: opts.fork } : {}),
+    }
     state.tabs.push(newTab)
     state.activeTabId = id
     notifyTabsChanged()
   }
 
-  /** 预置已存在边路任务 Tab 的上下文继承方式（占位 Tab 已打开时由 fork 入口调用）。 */
-  function setSideTaskContextMode(tabId: string, contextMode: SideTaskContextMode) {
+  /**
+   * 原子覆写边路任务 Tab 的分叉预置（contextMode + 切点）。fork 传 null 表示清除切点。
+   * 两者描述同一件事，一次写完，避免出现「contextMode 是 fork 但没有切点」的半更新状态。
+   */
+  function setSideTaskFork(tabId: string, opts: SideTaskEntryOptions) {
     const state = getSessionState()
     const tab = state.tabs.find(t => t.id === tabId)
     if (!tab || tab.type !== 'side_task') return
-    tab.contextMode = contextMode
+    tab.contextMode = opts.contextMode ?? 'none'
+    tab.forkFrom = opts.fork ?? undefined
     notifyTabsChanged()
   }
 
@@ -407,7 +426,7 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     openFileTab,
     openDiffTab,
     openSideTaskTab,
-    setSideTaskContextMode,
+    setSideTaskFork,
     openSubagentTab,
     updateSideTaskTab,
     restoreSideTaskTabs,

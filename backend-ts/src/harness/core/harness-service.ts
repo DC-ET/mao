@@ -5,8 +5,9 @@ import { harnessLog } from '../log.js';
 import { boolish, llmModelToConfig, wsEvent } from '../deps.js';
 import type {
   AgentMapper, AgentExperienceService, FileChange, FileChangeMapper, LlmModel, LlmModelMapper,
-  Message, Session, SessionActivityHeartbeat, SessionCompaction, SessionCompactionService,
-  SessionMapper, SessionService, StreamingWsRegistry, TaskTerminalService, ActivityService,
+  Message, Session, SessionActivityHeartbeat, SessionCompaction, SessionCompactionEvent,
+  SessionCompactionService, SessionMapper, SessionService, StreamingWsRegistry, TaskTerminalService,
+  ActivityService,
 } from '../deps.js';
 import type { AgentEventListener } from './agent-event-listener.js';
 import { AgentLoop, type MessagePersistenceCallback, type ToolMessageSave } from './agent-loop.js';
@@ -583,17 +584,30 @@ export class HarnessService {
   }
 
   /**
-   * 物理复制主会话的全部消息、file_change、compaction 记录到边路会话。
+   * 物理复制主会话的消息、file_change、压缩状态到边路会话。
    * 复制逻辑参考 promoteSideTaskToMainSession 中的事务内消息复制模式。
+   *
+   * forkFromMessageId 非空时按轮截断：只复制该消息及其之前的内容（该 ID 即被点击那一轮的
+   * 助手最终回复）。切点落在压缩边界之前时不复制压缩状态——边路任务从第一条消息起就是
+   * 原始历史，保留压缩标记会谎称「前面是摘要」。
    */
-  async forkParentMessages(parentSessionId: number, sideSessionId: number): Promise<void> {
+  async forkParentMessages(
+    parentSessionId: number,
+    sideSessionId: number,
+    forkFromMessageId?: number | null,
+  ): Promise<void> {
     if (!this.db) throw new Error('Database is required for fork parent messages');
     await this.db.transaction(async (tx) => {
       // 1. 复制消息（维护 messageIdMap: 旧 ID → 新 ID）
-      const messages = await tx.query<Message>(
-        `SELECT * FROM \`message\` WHERE session_id = ? AND deleted = 0 ORDER BY created_at ASC, id ASC`,
-        [parentSessionId],
-      );
+      const messages = forkFromMessageId == null
+        ? await tx.query<Message>(
+            `SELECT * FROM \`message\` WHERE session_id = ? AND deleted = 0 ORDER BY created_at ASC, id ASC`,
+            [parentSessionId],
+          )
+        : await tx.query<Message>(
+            `SELECT * FROM \`message\` WHERE session_id = ? AND deleted = 0 AND id <= ? ORDER BY created_at ASC, id ASC`,
+            [parentSessionId, forkFromMessageId],
+          );
       const messageIdMap = new Map<number, number>();
       for (const m of messages) {
         const newId = await tx.insert('message', {
@@ -638,15 +652,17 @@ export class HarnessService {
         });
       }
 
-      // 3. 复制 compaction 记录（将 lastCompactedMsgId 重映射为新 ID）
+      // 3. 复制压缩状态：压缩记录与压缩事件同进同退。
+      //    边界重映射不到（切点落在边界之前，被摘要覆盖的消息没被复制过来）时整体不复制，
+      //    否则边路任务会顶着「前面是摘要」的标记跑纯原始历史。
       const compaction = await tx.queryOne<SessionCompaction>(
         `SELECT * FROM session_compaction WHERE session_id = ?`,
         [parentSessionId],
       );
-      if (compaction != null) {
-        const mappedBoundary = compaction.lastCompactedMsgId != null
-          ? messageIdMap.get(compaction.lastCompactedMsgId) ?? null
-          : null;
+      const mappedBoundary = compaction?.lastCompactedMsgId != null
+        ? messageIdMap.get(compaction.lastCompactedMsgId) ?? null
+        : null;
+      if (compaction != null && mappedBoundary != null) {
         await tx.insert('session_compaction', {
           sessionId: sideSessionId,
           summaryText: compaction.summaryText,
@@ -656,6 +672,34 @@ export class HarnessService {
           outputTokens: compaction.outputTokens,
           compactModel: compaction.compactModel,
         });
+
+        // 4. 复制压缩事件（标记锚点），边界字段一并经 messageIdMap 重映射
+        const events = await tx.query<SessionCompactionEvent>(
+          `SELECT * FROM session_compaction_event WHERE session_id = ? ORDER BY boundary_msg_id ASC, id ASC`,
+          [parentSessionId],
+        );
+        for (const event of events) {
+          if (event.boundaryMsgId == null) continue;
+          const mappedBoundaryMsgId = messageIdMap.get(event.boundaryMsgId);
+          if (mappedBoundaryMsgId == null) continue;
+          // prev 边界为 0 表示无前序边界，保持 0；非 0 但映射不到同样回落 0
+          const prev = event.prevBoundaryMsgId ?? 0;
+          const mappedPrevBoundary = prev > 0 ? messageIdMap.get(prev) ?? 0 : 0;
+          await tx.insert('session_compaction_event', {
+            sessionId: sideSessionId,
+            triggerMode: event.triggerMode,
+            prevBoundaryMsgId: mappedPrevBoundary,
+            boundaryMsgId: mappedBoundaryMsgId,
+            compactedMessageCount: event.compactedMessageCount,
+            promptTokens: event.promptTokens,
+            cachedTokens: event.cachedTokens,
+            completionTokens: event.completionTokens,
+            summaryTokens: event.summaryTokens,
+            savedTokens: event.savedTokens,
+            durationMs: event.durationMs,
+            compactModel: event.compactModel,
+          });
+        }
       }
     });
   }

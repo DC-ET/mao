@@ -339,9 +339,15 @@ export class MessageRepository {
     return Number(row?.mx ?? 0);
   }
 
-  async hasEarlierUserMessage(sessionId: number, messageId: number): Promise<boolean> {
+  /**
+   * 首条用户消息判定（标题生成用）：该消息之前是否还有本会话**自己发**的用户消息。
+   * 复制来的消息（source_session_id 非空）不算——分叉边路任务的历史用户消息全是复制来的，
+   * 只有用户在边路面板发的那条才该触发命名。
+   */
+  async hasOwnEarlierUserMessage(sessionId: number, messageId: number): Promise<boolean> {
     const row = await this.db.queryOne<{ id: number }>(
-      `SELECT id FROM \`message\` WHERE session_id = ? AND role = 'USER' AND id < ? AND ${notDeleted()} LIMIT 1`,
+      `SELECT id FROM \`message\` WHERE session_id = ? AND role = 'USER' AND source_session_id IS NULL
+        AND id < ? AND ${notDeleted()} LIMIT 1`,
       [sessionId, messageId],
     );
     return row != null;

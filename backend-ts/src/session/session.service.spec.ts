@@ -76,6 +76,7 @@ function makeService() {
     logicalDeleteAfter: vi.fn(),
     updateById: vi.fn(),
     selectLastUserMessage: vi.fn(),
+    selectValidBoundaryMessage: vi.fn(),
   } as unknown as MessageRepository;
   const agentLookup = {
     findByIds: vi.fn().mockResolvedValue([]),
@@ -459,5 +460,17 @@ describe('SessionService embed source', () => {
     const result = await service.listSessionsForAdmin(1, 10, null, null, null, null, '  ', null);
     expect(result.matchSnippets).toEqual({});
     expect(messageRepo.selectFirstMatchingMessages).not.toHaveBeenCalled();
+  });
+});
+
+describe('SessionService fork cut point', () => {
+  it('findOwnedMessage returns the message only when it belongs to the session', async () => {
+    const { service, messageRepo } = makeService();
+    vi.mocked(messageRepo.selectValidBoundaryMessage).mockResolvedValue(message(77, 20, 'reply'));
+    expect(await service.findOwnedMessage(20, 77)).toEqual(message(77, 20, 'reply'));
+    expect(messageRepo.selectValidBoundaryMessage).toHaveBeenCalledWith(20, 77);
+
+    vi.mocked(messageRepo.selectValidBoundaryMessage).mockResolvedValue(null);
+    expect(await service.findOwnedMessage(20, 78)).toBeNull();
   });
 });

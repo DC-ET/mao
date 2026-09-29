@@ -35,6 +35,14 @@ function sidePermissionLevel(requested: unknown, parentLevel: string | null | un
   if (typeof requested === 'string' && SIDE_PERMISSION_LEVELS.has(requested)) return requested;
   return parentLevel;
 }
+
+/**
+ * 边路任务创建被拒绝时回给父会话的 error。带 code 让客户端区分「这次创建没成」与运行期错误：
+ * 否则客户端会把父会话标成 FAILED，并在占位 Tab 里留下发不出去的幽灵消息。
+ */
+function sideRejection(message: string): { message: string; code: string } {
+  return { message, code: 'side_session_rejected' };
+}
 import type { JwtService } from '../../crypto/jwt.service.js';
 import { contentParts, WsStreamingEventListener, type AgentEventListener, type WsListenerDeps } from './ws-streaming-event-listener.js';
 import type { StreamingWsRegistry, WsSocket } from './streaming-ws-registry.js';
@@ -51,10 +59,11 @@ export interface WsHandlerDeps {
     prepareMessage(sessionId: number, content: unknown): Promise<string> | string;
     executeFromEvent(sessionId: number, eventId: string, listener: AgentEventListener, cancelFlag: { get(): boolean; set(v: boolean): void }): Promise<void>;
     executeSideFirstMessage(parentId: number, sideId: number, contextMode: 'fork' | 'summary' | 'none', listener: AgentEventListener, cancelFlag: { get(): boolean; set(v: boolean): void }): Promise<void>;
-    forkParentMessages(parentId: number, sideId: number): Promise<void>;
+    forkParentMessages(parentId: number, sideId: number, forkFromMessageId?: number | null): Promise<void>;
   };
   sessionService: {
     getSession(id: number): Promise<Session | null>;
+    findOwnedMessage(sessionId: number, messageId: number): Promise<Message | null>;
     saveMessage(sessionId: number, role: string, content: unknown, a: null, b: null, c: null, d: number, e: null): Promise<Message>;
     updatePhase(sessionId: number, phase: string): Promise<void>;
     updateField(sessionId: number, field: string, value: unknown): Promise<void>;
@@ -794,6 +803,11 @@ export class StreamingWsHandler {
     const contextMode = data.contextMode === 'fork' || data.contextMode === 'summary'
       ? data.contextMode
       : 'none';
+    // 按轮分叉的切点（被点击那一轮的助手最终回复 id）。非正整数一律按全量分叉处理。
+    const forkFromMessageId = typeof data.forkFromMessageId === 'number'
+      && Number.isInteger(data.forkFromMessageId) && data.forkFromMessageId > 0
+      ? data.forkFromMessageId
+      : null;
     const modelId = data.modelId != null ? Number(data.modelId) : null;
     const images = Array.isArray(data.images) ? data.images.map(String) : [];
     if ((!content || content.trim() === '') && images.length === 0) return;
@@ -801,7 +815,7 @@ export class StreamingWsHandler {
     if (!parentSession) return;
     this.deps.registry.subscribe(userId, parentSessionId);
     if (parentSession.executionMode === 'LOCAL' && !this.deps.registry.hasLocalClientConnection(userId)) {
-      this.deps.registry.send(userId, wsEvent('error', parentSessionId, { message: 'Local client is not connected. Please ensure the desktop app is running.' }));
+      this.deps.registry.send(userId, wsEvent('error', parentSessionId, sideRejection('Local client is not connected. Please ensure the desktop app is running.')));
       return;
     }
     const resolvedModelId = modelId ?? parentSession.modelId ?? null;
@@ -809,11 +823,20 @@ export class StreamingWsHandler {
       const probe: Session = { modelId: resolvedModelId ?? undefined, agentId: parentSession.agentId };
       const model = await this.resolveSessionModel(probe);
       if (!model || model.supportsVision !== 1) {
-        this.deps.registry.send(userId, wsEvent('error', parentSessionId, { message: '当前模型不支持图片输入，请切换支持视觉的模型' }));
+        this.deps.registry.send(userId, wsEvent('error', parentSessionId, sideRejection('当前模型不支持图片输入，请切换支持视觉的模型')));
         return;
       }
       if (images.length > 10) {
-        this.deps.registry.send(userId, wsEvent('error', parentSessionId, { message: '单条消息最多支持 10 张图片' }));
+        this.deps.registry.send(userId, wsEvent('error', parentSessionId, sideRejection('单条消息最多支持 10 张图片')));
+        return;
+      }
+    }
+    // 切点校验必须发生在创建边路会话之前：点击到发送之间可能隔很久，
+    // 若先建会话再发现切点失效，会留下一个空的边路任务。
+    if (contextMode === 'fork' && forkFromMessageId != null) {
+      const forkFrom = await this.deps.sessionService.findOwnedMessage(parentSessionId, forkFromMessageId);
+      if (forkFrom == null) {
+        this.deps.registry.send(userId, wsEvent('error', parentSessionId, sideRejection('分叉来源消息不存在或已被删除，请刷新后重试')));
         return;
       }
     }
@@ -837,7 +860,7 @@ export class StreamingWsHandler {
     // 先复制主会话历史，再落边路首问。否则首问 id 更小：无压缩时排在历史前面，
     // 有压缩边界时会被 id > boundary 整段排除，模型看不到这次提问。
     if (contextMode === 'fork') {
-      await this.deps.harnessService.forkParentMessages(parentSessionId, sideSessionId);
+      await this.deps.harnessService.forkParentMessages(parentSessionId, sideSessionId, forkFromMessageId);
     }
     const sideRunMode = contextMode === 'fork' ? 'none' : contextMode;
     if (sideSession.executionMode === 'LOCAL') {

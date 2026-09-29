@@ -48,6 +48,7 @@ describe('StreamingWsHandler', () => {
   const sessionService = {
     getSession: vi.fn(), saveMessage: vi.fn(), updatePhase: vi.fn(), updateField: vi.fn(),
     updateModelId: vi.fn(), getMessages: vi.fn(), editMessageAndTruncate: vi.fn(), save: vi.fn(),
+    findOwnedMessage: vi.fn(async () => null),
     listSubagentSessions: vi.fn(async () => []),
     cleanupIncompleteTail: vi.fn(async () => 0), updateContextTokens: vi.fn(),
     getLastUserMessage: vi.fn(async () => message(3, 'USER')),
@@ -266,7 +267,7 @@ describe('StreamingWsHandler', () => {
     const creating = handler.handleTextMessage(ws, JSON.stringify({
       type: 'create_side_session', sessionId: 11, data: { content: 'side work', contextMode: 'fork' },
     }));
-    await vi.waitFor(() => expect(harnessService.forkParentMessages).toHaveBeenCalledWith(11, 13));
+    await vi.waitFor(() => expect(harnessService.forkParentMessages).toHaveBeenCalledWith(11, 13, null));
     await handler.handleTextMessage(ws, JSON.stringify({ type: 'cancel', sessionId: 13 }));
     releaseFork();
     await creating;
@@ -276,8 +277,67 @@ describe('StreamingWsHandler', () => {
     expect(taskTerminalService.finishExecution).toHaveBeenCalledWith(13, 7, 'CANCELLED', expect.any(String));
   });
 
-  it('sendMessageRejectsUnsupportedImagesAndDisconnectedLocalClient', async () => {
+  it('rejects a side fork whose cut point no longer belongs to the parent', async () => {
     vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('CLOUD', 'IDLE'));
+    sessionService.findOwnedMessage.mockResolvedValue(null);
+
+    await handler.handleTextMessage(ws, JSON.stringify({
+      type: 'create_side_session', sessionId: 11,
+      data: { content: 'side work', contextMode: 'fork', forkFromMessageId: 77 },
+    }));
+
+    expect(registry.send).toHaveBeenCalledWith(7, expect.objectContaining({
+      type: 'error',
+      sessionId: 11,
+      data: expect.objectContaining({
+        message: '分叉来源消息不存在或已被删除，请刷新后重试',
+        code: 'side_session_rejected',
+      }),
+    }));
+    // 校验前置到建会话之前：不留下空边路任务，也不发 side_session_created
+    expect(sessionService.save).not.toHaveBeenCalled();
+    expect(registry.send).not.toHaveBeenCalledWith(7, expect.objectContaining({ type: 'side_session_created' }));
+    expect(harnessService.forkParentMessages).not.toHaveBeenCalled();
+  });
+
+  it('passes a valid cut point through to forkParentMessages', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('CLOUD', 'IDLE'));
+    sessionService.save.mockImplementation(async (s: Session) => { s.id = 13; });
+    sessionService.saveMessage.mockResolvedValue(message(99, 'USER'));
+    sessionService.findOwnedMessage.mockResolvedValue(message(77, 'ASSISTANT'));
+
+    await handler.handleTextMessage(ws, JSON.stringify({
+      type: 'create_side_session', sessionId: 11,
+      data: { content: 'side work', contextMode: 'fork', forkFromMessageId: 77 },
+    }));
+    await executor.runAll();
+
+    expect(sessionService.findOwnedMessage).toHaveBeenCalledWith(11, 77);
+    expect(harnessService.forkParentMessages).toHaveBeenCalledWith(11, 13, 77);
+  });
+
+  it('treats a malformed cut point as a full fork', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('CLOUD', 'IDLE'));
+    sessionService.save.mockImplementation(async (s: Session) => { s.id = 13; });
+    sessionService.saveMessage.mockResolvedValue(message(99, 'USER'));
+
+    await handler.handleTextMessage(ws, JSON.stringify({
+      type: 'create_side_session', sessionId: 11,
+      data: { content: 'side work', contextMode: 'fork', forkFromMessageId: -3 },
+    }));
+    await executor.runAll();
+
+    expect(sessionService.findOwnedMessage).not.toHaveBeenCalled();
+    expect(harnessService.forkParentMessages).toHaveBeenCalledWith(11, 13, null);
+  });
+
+  it('sendMessageRejectsUnsupportedImagesAndDisconnectedLocalClient', async () => {    vi.clearAllMocks();
     registry.getUserId.mockReturnValue(7);
     const cloud = session('CLOUD', 'IDLE');
     cloud.modelId = 2;

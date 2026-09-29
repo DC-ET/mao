@@ -99,7 +99,7 @@ describe('边路任务上下文继承方式', () => {
 
   it('fork 入口创建的占位 Tab 预置 fork 继承方式', () => {
     const tabs = setup()
-    tabs.openSideTaskTab(-1, '任务', 'fork')
+    tabs.openSideTaskTab(-1, '任务', { contextMode: 'fork' })
 
     const side = tabs.tabs.value.find(t => t.type === 'side_task')
     expect(side?.sideSessionId).toBe(-1)
@@ -115,7 +115,7 @@ describe('边路任务上下文继承方式', () => {
 
   it('复用占位 Tab 时同步继承方式，不残留上一次入口的 fork', () => {
     const tabs = setup()
-    tabs.openSideTaskTab(-1, '任务', 'fork')
+    tabs.openSideTaskTab(-1, '任务', { contextMode: 'fork' })
     tabs.openSideTaskTab(-1, '任务')
 
     const sideTabs = tabs.tabs.value.filter(t => t.type === 'side_task')
@@ -123,15 +123,71 @@ describe('边路任务上下文继承方式', () => {
     expect(sideTabs[0].contextMode).toBe('none')
   })
 
-  it('setSideTaskContextMode 只改指定的边路任务 Tab', () => {
+  it('按轮分叉的占位 Tab 同时记下切点与来源标签', () => {
+    const tabs = setup()
+    tabs.openSideTaskTab(-1, '任务', {
+      contextMode: 'fork',
+      fork: { messageId: '42', label: '2026-09-29 10:00 · 修复登录' },
+    })
+
+    const side = tabs.tabs.value.find(t => t.type === 'side_task')
+    expect(side?.contextMode).toBe('fork')
+    expect(side?.forkFrom).toEqual({ messageId: '42', label: '2026-09-29 10:00 · 修复登录' })
+  })
+
+  it('普通入口复用占位 Tab 时把切点一并清掉', () => {
+    const tabs = setup()
+    tabs.openSideTaskTab(-1, '任务', {
+      contextMode: 'fork',
+      fork: { messageId: '42', label: '2026-09-29 10:00 · 修复登录' },
+    })
+    tabs.openSideTaskTab(-1, '任务')
+
+    const side = tabs.tabs.value.find(t => t.type === 'side_task')
+    expect(side?.contextMode).toBe('none')
+    expect(side?.forkFrom).toBeUndefined()
+  })
+
+  it('从左侧任务栏重新打开已分叉的真实会话 Tab 时，分叉来源不被清掉', () => {
+    const tabs = setup()
+    const fork = { messageId: '42', label: '2026-09-29 10:00 · 修复登录' }
+    tabs.openSideTaskTab(-1, '任务', { contextMode: 'fork', fork })
+    const placeholder = tabs.tabs.value.find(t => t.type === 'side_task' && t.sideSessionId === -1)!
+    // side_session_created 之后：占位 Tab 变成真实会话，forkFrom 保留用于 hover
+    tabs.updateSideTaskTab(placeholder.id, 13, '修复登录超时')
+
+    // 左侧任务栏 / 检查器点这个边路任务：传真实 id，不带 opts
+    tabs.openSideTaskTab(13, '修复登录超时')
+
+    const side = tabs.tabs.value.find(t => t.sideSessionId === 13)
+    expect(side?.forkFrom).toEqual(fork)
+    expect(tabs.activeTabId.value).toBe(side?.id)
+  })
+
+  it('setSideTaskFork 原子覆写继承方式与切点，不留下半更新状态', () => {    const tabs = setup()
+    tabs.openSideTaskTab(-1, '任务', { contextMode: 'fork', fork: { messageId: '1', label: '第一轮' } })
+    const placeholder = tabs.tabs.value.find(t => t.type === 'side_task' && t.sideSessionId === -1)!
+
+    tabs.setSideTaskFork(placeholder.id, { contextMode: 'none' })
+
+    expect(placeholder.contextMode).toBe('none')
+    expect(placeholder.forkFrom).toBeUndefined()
+  })
+
+  it('setSideTaskFork 只改指定的边路任务 Tab', () => {
     const tabs = setup()
     tabs.openSideTaskTab(-1, '任务')
     openSideTaskTabFor(SESSION_ID, 7, '边路任务')
     const placeholder = tabs.tabs.value.find(t => t.type === 'side_task' && t.sideSessionId === -1)!
 
-    tabs.setSideTaskContextMode(placeholder.id, 'fork')
+    tabs.setSideTaskFork(placeholder.id, {
+      contextMode: 'fork',
+      fork: { messageId: '42', label: '2026-09-29 10:00 · 修复登录' },
+    })
 
     expect(placeholder.contextMode).toBe('fork')
+    expect(placeholder.forkFrom?.messageId).toBe('42')
     expect(tabs.tabs.value.find(t => t.sideSessionId === 7)?.contextMode).toBeUndefined()
+    expect(tabs.tabs.value.find(t => t.sideSessionId === 7)?.forkFrom).toBeUndefined()
   })
 })
