@@ -199,6 +199,8 @@ watch([() => props.contextMode, () => props.forkFromMessageId], ([mode, messageI
 })
 
 const sending = ref(false)
+/** 发送互斥：仅防双击/双 Enter 重入。与 sending（忙碌/loading）分离——执行中 sending 由 phase 置位，不能拿来拦入队。 */
+const sendInFlight = ref(false)
 const waitingForSave = ref(false)
 
 /** 边路会话处于 CANCELLED 终态且未在执行时，输入框为空显示「继续」按钮（续跑语义同重试） */
@@ -687,18 +689,12 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
   const trimmed = text.trim()
   if (!trimmed && (!files || files.length === 0) && (!pendingUploads || pendingUploads.length === 0)) return
 
-  // 与主聊天 prepareAndSendMessage 对齐：任何 await 之前同步置位互斥，
-  // 防止双击/双 Enter 在 connect/upload 期间再次进入并 createSideSession。
-  // 队列入队分支在确认走 enqueue 后释放，不占用 sending。
-  if (sending.value) return
-  sending.value = true
-  let sendLockHeld = true
-  const releaseSendLock = () => {
-    if (sendLockHeld) {
-      sendLockHeld = false
-      sending.value = false
-    }
-  }
+  // 发送互斥只防双击/双 Enter 重入，不能用 sending——执行中 phase watch 会把 sending 置 true
+  // 表示忙碌/loading，若在此拦下则执行中永远走不到入队分支。
+  if (sendInFlight.value) return
+  sendInFlight.value = true
+  /** 是否已进入非执行中发送路径并占用 sending（忙碌）；用于外层 catch 只在该路径复位 */
+  let busyClaimed = false
 
   try {
     await connect()
@@ -713,7 +709,6 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
     const imageUrls = files.length > 0 ? await uploadImages(files, uploadSessionId) : []
     // If user attached images but all uploads failed, do not send a text-only message by mistake.
     if (files.length > 0 && imageUrls.length === 0) {
-      releaseSendLock()
       return
     }
 
@@ -723,9 +718,9 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
       resolvedText = await uploadPendingFiles(resolvedText, pendingUploads, uploadSessionId)
     }
 
-    // 边路任务正在执行中：将消息加入队列（不占用 sending 互斥）
+    // 边路任务正在执行中：消息入队。不改动 sending——它由 phase 维护表示执行中，
+    // 入队后若误清会导致停止按钮/loading 提前消失。
     if (hasRealSession.value && isSideActive.value) {
-      releaseSendLock()
       const enqueued = await enqueueMessage(String(realSessionId.value), resolvedText, generateUUID(), imageUrls)
       if (!enqueued) {
         ElMessage.error('消息发送失败，网络连接不可用，请重试')
@@ -734,6 +729,13 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
       draftStore.clearDraft(props.tabId)
       chatInputRef.value?.clearInput()
       return
+    }
+
+    // 非执行中发送/首发：置忙碌。成功后由 phase 终态/watcher 收敛 sending；失败路径自行复位。
+    sending.value = true
+    busyClaimed = true
+    const releaseBusy = () => {
+      sending.value = false
     }
 
     const localSkills = await collectLocalUnsyncedSkills(parentExecutionMode.value, isElectron)
@@ -756,7 +758,7 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
         const parentSessionId = sessionStore.activeSessionId
         if (!parentSessionId) {
           waitingForSave.value = false
-          releaseSendLock()
+          releaseBusy()
           ElMessage.warning('主会话不存在，无法创建边路任务')
           return
         }
@@ -780,7 +782,7 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
           disposeSendListeners?.()
           pendingSendCleanup = null
           waitingForSave.value = false
-          releaseSendLock()
+          releaseBusy()
           ElMessage.error(detail?.message || '边路任务创建失败，请重试')
         }
         window.addEventListener('side_session_created', onSideCreated)
@@ -820,7 +822,7 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
           disposeSendListeners?.()
           pendingSendCleanup = null
           waitingForSave.value = false
-          releaseSendLock()
+          releaseBusy()
           ElMessage.error('边路任务创建失败，网络连接不可用，请重试')
           return
         }
@@ -840,7 +842,7 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
         if (!sent) {
           rollbackOptimisticMessages(sid, optimisticUserId)
           waitingForSave.value = false
-          releaseSendLock()
+          releaseBusy()
           ElMessage.error('消息发送失败，网络连接不可用，请重试')
           return
         }
@@ -848,7 +850,7 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
     } catch (e) {
       disposeSendListeners?.()
       waitingForSave.value = false
-      releaseSendLock()
+      releaseBusy()
       ElMessage.error((e as Error)?.message || '消息发送失败，请重试')
       return
     }
@@ -868,7 +870,7 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
       disposeSendListeners?.()
       offMessageSaved(callbackId)
       waitingForSave.value = false
-      // 成功路径由 phase 终态/watcher 收敛 sending；保存确认本身不释放互斥
+      // 成功路径由 phase 终态/watcher 收敛 sending；保存确认本身不释放忙碌态
       if (clearInput) {
         draftStore.clearDraft(draftKeyAtSend)
         chatInputRef.value?.clearInput()
@@ -883,10 +885,12 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
     // 设置超时，避免永远等待
     saveTimeoutId = setTimeout(() => finishWaiting(false), 60000)
   } catch (e) {
-    // connect/upload 等前置 await 异常：释放互斥，避免 sending 永久卡住
-    releaseSendLock()
+    // connect/upload 等前置 await 异常；若已占用 sending（非执行中路径）则复位，避免忙碌卡住
+    if (busyClaimed) sending.value = false
     waitingForSave.value = false
     ElMessage.error((e as Error)?.message || '消息发送失败，请重试')
+  } finally {
+    sendInFlight.value = false
   }
 }
 
