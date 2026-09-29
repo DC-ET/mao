@@ -1,5 +1,5 @@
 import { ref, computed, watch, effectScope, type Ref } from 'vue'
-import type { Tab, SessionTabState } from '../types/file-browser'
+import type { Tab, SessionTabState, SideTaskContextMode } from '../types/file-browser'
 import type { FileChange } from '../types/chat'
 import { getClosedSideTaskIds, markSideTaskClosed, unmarkSideTaskClosed, normalizeSideTaskTitle, type SideTaskSummary } from '../utils/side-task-tabs'
 import { useSessionStore } from '../stores/session'
@@ -198,19 +198,31 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
    * 打开边路任务 Tab。如果已存在则直接激活。
    * 传入 sideSessionId=0 表示"待创建"状态。
    * 占位 Tab 的 id 可能是 side:-{timestamp}，需按 sideSessionId 字段匹配。
+   * contextMode 为创建入口预置的上下文继承方式（fork 入口传 'fork'），普通入口传 'none'。
    */
-  function openSideTaskTab(sideSessionId: number, title: string) {
+  function openSideTaskTab(sideSessionId: number, title: string, contextMode: SideTaskContextMode = 'none') {
     const state = getSessionState()
     const existing = findSideTaskTab(state, sideSessionId)
     if (existing) {
+      // 复用已存在的 Tab：同步预置的继承方式，避免上一次入口留下的 fork / summary 残留
+      existing.contextMode = contextMode
       state.activeTabId = existing.id
       notifyTabsChanged()
       return
     }
     const id = 'side:' + sideSessionId
-    const newTab: Tab = { id, type: 'side_task', title: normalizeSideTaskTitle(title), sideSessionId }
+    const newTab: Tab = { id, type: 'side_task', title: normalizeSideTaskTitle(title), sideSessionId, contextMode }
     state.tabs.push(newTab)
     state.activeTabId = id
+    notifyTabsChanged()
+  }
+
+  /** 预置已存在边路任务 Tab 的上下文继承方式（占位 Tab 已打开时由 fork 入口调用）。 */
+  function setSideTaskContextMode(tabId: string, contextMode: SideTaskContextMode) {
+    const state = getSessionState()
+    const tab = state.tabs.find(t => t.id === tabId)
+    if (!tab || tab.type !== 'side_task') return
+    tab.contextMode = contextMode
     notifyTabsChanged()
   }
 
@@ -395,6 +407,7 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     openFileTab,
     openDiffTab,
     openSideTaskTab,
+    setSideTaskContextMode,
     openSubagentTab,
     updateSideTaskTab,
     restoreSideTaskTabs,

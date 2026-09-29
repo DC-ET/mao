@@ -18,6 +18,7 @@
         :key="activeTabId"
         :tab-id="activeTabId"
         :side-session-id="activeTab.sideSessionId"
+        :context-mode="activeTab.contextMode"
       />
       <SubagentChatPanel
         v-else-if="activeTab?.type === 'subagent' && activeTab.sideSessionId != null && activeTab.sideSessionId > 0"

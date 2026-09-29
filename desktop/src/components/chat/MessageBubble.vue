@@ -182,6 +182,20 @@
             </button>
           </div>
         </el-popover>
+        <button v-if="showFork" class="fork-btn" @click="$emit('fork')" title="Fork 到边路任务">
+          <svg class="fork-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <circle cx="6" cy="6" r="2.6" stroke="currentColor" stroke-width="1.5" />
+            <circle cx="18" cy="6" r="2.6" stroke="currentColor" stroke-width="1.5" />
+            <circle cx="12" cy="18" r="2.6" stroke="currentColor" stroke-width="1.5" />
+            <path
+              d="M18 8.6v.9a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2v-.9M12 11.5v3.9"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </button>
       </div>
     </div>
   </div>
@@ -238,6 +252,8 @@ const props = withDefaults(defineProps<{
   sessionId?: string
   /** 是否启用点踩按钮（主聊天/边路会话传入 true；子代理面板不传则不显示） */
   dislikeEnabled?: boolean
+  /** 是否显示「Fork 到边路任务」按钮（仅主聊天传入 true） */
+  forkEnabled?: boolean
 }>(), {
   showCopy: true,
   isLast: false,
@@ -246,7 +262,8 @@ const props = withDefaults(defineProps<{
   hideThinking: false,
   hideFileChanges: false,
   sessionId: '',
-  dislikeEnabled: false
+  dislikeEnabled: false,
+  forkEnabled: false
 })
 
 const emit = defineEmits<{
@@ -254,6 +271,7 @@ const emit = defineEmits<{
   cancelEdit: []
   confirmEdit: [content: string]
   addToCommand: [content: string]
+  fork: []
 }>()
 
 // Edit mode state
@@ -488,6 +506,9 @@ const showDislike = computed(() =>
 
 const messageDisliked = computed(() => isMessageDisliked(props.sessionId, props.message.id))
 const dislikeSubmitting = computed(() => isDislikeSubmitting(props.message.id))
+
+/** Fork 入口只对助手回复有意义：把主会话历史复制到新的边路任务 */
+const showFork = computed(() => props.forkEnabled && role.value === 'assistant')
 
 const dislikePopoverVisible = ref(false)
 const selectedReason = ref<FeedbackReason | null>(null)
@@ -919,6 +940,29 @@ async function copyMessage() {
 
 .dislike-text {
   line-height: 1;
+}
+
+.fork-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 6px;
+  border: none;
+  background: transparent;
+  color: var(--aw-ink-muted-48);
+  cursor: pointer;
+  border-radius: var(--aw-radius-xs);
+  transition: color 0.15s, background 0.15s;
+}
+
+.fork-btn:hover {
+  color: var(--aw-primary);
+  background: color-mix(in srgb, var(--aw-ink) 5%, transparent);
+}
+
+.fork-icon {
+  display: block;
+  margin-top: 1px; /* 与点踩图标同样下移，对齐 el-icon 12px 的视觉中线 */
 }
 
 .dislike-popover-body {

@@ -128,6 +128,7 @@ import { useToolApprovals } from '../../composables/useChat'
 import { loadDislikedIds } from '../../composables/useMessageFeedback'
 import { uploadImages } from '../../utils/imageUpload'
 import { uploadPendingFiles } from '../../utils/chatFileUpload'
+import type { SideTaskContextMode } from '../../types/file-browser'
 import ChatRoundList from './ChatRoundList.vue'
 import ChatInput from './ChatInput.vue'
 import QuestionPanel from './QuestionPanel.vue'
@@ -146,6 +147,8 @@ const messagesContainer = ref<HTMLElement>()
 const props = defineProps<{
   tabId: string
   sideSessionId: number
+  /** 创建入口预置的上下文继承方式（fork 图标入口）；未传默认「不继承」 */
+  contextMode?: SideTaskContextMode
 }>()
 
 const sessionStore = useSessionStore()
@@ -175,7 +178,12 @@ const hasRealSession = computed(() => realSessionId.value > 0)
 // Stable cache key for placeholder tabs — tabId does not change when sideSessionId is assigned
 const placeholderCacheKey = computed(() => props.tabId)
 
-const contextMode = ref<'none' | 'summary' | 'fork'>('none')
+const contextMode = ref<'none' | 'summary' | 'fork'>(props.contextMode ?? 'none')
+// 占位 Tab 已挂载时入口又改了预置值（fork 图标 / 普通「+ 边路任务」）：同步到单选组
+watch(() => props.contextMode, (mode) => {
+  if (mode && !hasRealSession.value) contextMode.value = mode
+})
+
 const sending = ref(false)
 const waitingForSave = ref(false)
 

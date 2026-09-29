@@ -89,3 +89,49 @@ describe('closeOtherTabs', () => {
     expect(tabs.tabs.value.filter(t => t.type === 'side_task').length).toBe(1)
   })
 })
+
+describe('边路任务上下文继承方式', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    localStorage.clear()
+    removeSessionTabsFor(SESSION_ID)
+  })
+
+  it('fork 入口创建的占位 Tab 预置 fork 继承方式', () => {
+    const tabs = setup()
+    tabs.openSideTaskTab(-1, '任务', 'fork')
+
+    const side = tabs.tabs.value.find(t => t.type === 'side_task')
+    expect(side?.sideSessionId).toBe(-1)
+    expect(side?.contextMode).toBe('fork')
+  })
+
+  it('普通入口新建时默认为不继承', () => {
+    const tabs = setup()
+    tabs.openSideTaskTab(-1, '任务')
+
+    expect(tabs.tabs.value.find(t => t.type === 'side_task')?.contextMode).toBe('none')
+  })
+
+  it('复用占位 Tab 时同步继承方式，不残留上一次入口的 fork', () => {
+    const tabs = setup()
+    tabs.openSideTaskTab(-1, '任务', 'fork')
+    tabs.openSideTaskTab(-1, '任务')
+
+    const sideTabs = tabs.tabs.value.filter(t => t.type === 'side_task')
+    expect(sideTabs.length).toBe(1)
+    expect(sideTabs[0].contextMode).toBe('none')
+  })
+
+  it('setSideTaskContextMode 只改指定的边路任务 Tab', () => {
+    const tabs = setup()
+    tabs.openSideTaskTab(-1, '任务')
+    openSideTaskTabFor(SESSION_ID, 7, '边路任务')
+    const placeholder = tabs.tabs.value.find(t => t.type === 'side_task' && t.sideSessionId === -1)!
+
+    tabs.setSideTaskContextMode(placeholder.id, 'fork')
+
+    expect(placeholder.contextMode).toBe('fork')
+    expect(tabs.tabs.value.find(t => t.sideSessionId === 7)?.contextMode).toBeUndefined()
+  })
+})

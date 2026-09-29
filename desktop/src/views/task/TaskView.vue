@@ -74,6 +74,7 @@ import { useWorkspaceGitProvider } from '../../composables/workspace-git-provide
 import { useTaskPanelPrefs } from '../../composables/useTaskPanelPrefs'
 import type { GitChangedFile } from '../../types/git'
 import type { FileChange } from '../../types/chat'
+import type { SideTaskContextMode } from '../../types/file-browser'
 import { getToken } from '../../utils/auth-storage'
 import { nowDateTime } from '../../utils/datetime'
 import { cloudProjectKeyForNewTask } from '../../utils/cloud-project'
@@ -201,7 +202,7 @@ function handleAddFileToChat(filePath: string) {
 
 // Center tabs
 const activeSessionIdRef = computed(() => sessionStore.activeSessionId ?? '')
-const { tabs, activeTab, activeTabId, openFileTab, openDiffTab, closeTab, closeAllFileTabs, closeOtherTabs, activateTab, openSideTaskTab, openSubagentTab, updateSideTaskTab, restoreSideTaskTabs } = useCenterTabs(activeSessionIdRef)
+const { tabs, activeTab, activeTabId, openFileTab, openDiffTab, closeTab, closeAllFileTabs, closeOtherTabs, activateTab, openSideTaskTab, setSideTaskContextMode, openSubagentTab, updateSideTaskTab, restoreSideTaskTabs } = useCenterTabs(activeSessionIdRef)
 
 // Derived state
 const sessionId = computed(() => sessionIdParam.value)
@@ -950,14 +951,16 @@ async function handleNewTaskFromGroup(payload: { agentId: string; executionMode:
   await navigateToNewTask(payload)
 }
 
-function handleNewSideTask() {
+function handleNewSideTask(contextMode: SideTaskContextMode = 'none') {
   const placeholder = tabs.value.find(t => t.type === 'side_task' && (t.sideSessionId == null || t.sideSessionId <= 0))
   if (placeholder) {
+    // 复用已存在的占位 Tab：同步继承方式，避免上一次入口留下的 fork 残留到普通新建
+    setSideTaskContextMode(placeholder.id, contextMode)
     activateTab(placeholder.id)
     return
   }
   const tempId = -Date.now()
-  openSideTaskTab(tempId, '任务')
+  openSideTaskTab(tempId, '任务', contextMode)
 }
 
 provide('openSideTask', handleNewSideTask)

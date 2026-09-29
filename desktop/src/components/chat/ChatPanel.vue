@@ -93,10 +93,12 @@
           :can-edit-message="canEditMessage"
           :compaction-events="sessionStore.activeCompactionEvents"
           :dislike-enabled="true"
+          :fork-enabled="true"
           @edit="startEdit"
           @cancel-edit="cancelEdit"
           @confirm-edit="confirmEdit"
           @add-to-command="(content: string) => commandEditDialogRef?.open({ content })"
+          @fork="openSideTask?.('fork')"
         />
 
         <div v-if="showTypingIndicator" class="typing-indicator">
@@ -204,6 +206,7 @@ import { api } from '../../api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchImagesAsFiles } from '../../utils/file'
 import type { QueueMessage, QuestionAnswer } from '../../types/chat'
+import type { SideTaskContextMode } from '../../types/file-browser'
 import ChatRoundList from './ChatRoundList.vue'
 import ChatInput from './ChatInput.vue'
 import QueuePanel from './QueuePanel.vue'
@@ -243,7 +246,7 @@ type SyncChatStateFn = (state: {
 }) => void
 const syncChatState = inject<SyncChatStateFn>('syncChatState')!
 const chatFocusInput = inject<Ref<(() => void) | null>>('chatFocusInput')!
-const openSideTask = inject<(() => void) | undefined>('openSideTask', undefined)
+const openSideTask = inject<((contextMode?: SideTaskContextMode) => void) | undefined>('openSideTask', undefined)
 
 const agentStore = useAgentStore()
 const sessionStore = useSessionStore()

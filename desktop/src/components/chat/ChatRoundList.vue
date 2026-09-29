@@ -5,6 +5,7 @@
       :message="round.userMessage"
       :session-id="sessionId"
       :dislike-enabled="dislikeEnabled"
+      :fork-enabled="forkEnabled"
       :show-time="true"
       :can-edit="canEditMessage?.(round.userMessage) ?? false"
       :is-editing="editingMessageId === round.userMessage.id"
@@ -35,6 +36,7 @@
               :message="step"
               :session-id="sessionId"
               :dislike-enabled="dislikeEnabled"
+              :fork-enabled="forkEnabled"
               :show-time="false"
               :show-copy="false"
               :hide-file-changes="true"
@@ -61,6 +63,7 @@
         :message="round.finalReply"
         :session-id="sessionId"
         :dislike-enabled="dislikeEnabled"
+        :fork-enabled="forkEnabled"
         :hide-thinking="true"
         :hide-file-changes="true"
       />
@@ -83,6 +86,7 @@
         :message="round.finalReply"
         :session-id="sessionId"
         :dislike-enabled="dislikeEnabled"
+        :fork-enabled="forkEnabled"
         :show-time="true"
         :hide-file-changes="true"
       />
@@ -105,6 +109,7 @@
       :message="activeRound.userMessage"
       :session-id="sessionId"
       :dislike-enabled="dislikeEnabled"
+      :fork-enabled="forkEnabled"
       :show-time="true"
       :can-edit="canEditMessage?.(activeRound.userMessage) ?? false"
       :is-editing="editingMessageId === activeRound.userMessage.id"
@@ -123,6 +128,7 @@
         :message="msg"
         :session-id="sessionId"
         :dislike-enabled="dislikeEnabled"
+        :fork-enabled="forkEnabled"
         :show-time="false"
         :show-copy="false"
         :hide-file-changes="true"
@@ -144,6 +150,7 @@
         :message="msg"
         :session-id="sessionId"
         :dislike-enabled="dislikeEnabled"
+        :fork-enabled="forkEnabled"
         :show-time="msg.role === 'user' || (msg.role === 'assistant' && idx < messages.length - 1)"
         :show-copy="msg.role === 'user'"
         :is-last="idx === messages.length - 1"
@@ -183,6 +190,8 @@ const props = defineProps<{
   sessionId?: string
   /** 是否显示点踩按钮（主聊天/边路会话 true；子代理面板不传） */
   dislikeEnabled?: boolean
+  /** 是否显示「Fork 到边路任务」按钮（仅主聊天 true） */
+  forkEnabled?: boolean
 }>()
 
 defineEmits<{
@@ -190,6 +199,7 @@ defineEmits<{
   cancelEdit: []
   confirmEdit: [messageId: string, content: string]
   addToCommand: [content: string]
+  fork: []
 }>()
 
 const messagesRef = toRef(props, 'messages')
