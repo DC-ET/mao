@@ -160,6 +160,7 @@ export class AgentLoop {
       let pendingThinking: string | null = null;
       let pendingSaveUsage: ChatUsage | null = null;
       let pendingSaveToolCalls: ToolCall[] | null = null;
+      let roundOpen = false;
 
       await this.ensureContextAnchorLoaded(context);
 
@@ -167,12 +168,26 @@ export class AgentLoop {
         round++;
         context.currentRound = round;
         listener.onRoundStart?.(round);
+        roundOpen = true;
+        const usageBeforeRound: ChatUsage = { ...context.totalUsage };
+        /** 收掉当前轮：onRoundStart/onRoundEnd 必须成对。取消路径统一走这里。 */
+        const closeRound = () => {
+          if (!roundOpen) return;
+          roundOpen = false;
+          listener.onRoundEnd?.(round);
+        };
+        /** 取消收尾：丢弃本轮未完成用量（消息已 rollback，不应记为正常完成），并关轮。 */
+        const abortRound = () => {
+          context.totalUsage = usageBeforeRound;
+          closeRound();
+        };
         const sessionId = context.sessionId;
         this.activityHeartbeat.touch(sessionId);
         const cancelFlag = this.resolveCancelFlag(context);
         if (await this.isCancelled(context)) {
           cancelFlag?.set(true);
-          return;
+          abortRound();
+          break;
         }
 
         const bgResults = await Promise.resolve(this.backgroundTaskManager.consumeCompletedResults(sessionId ?? null));
@@ -354,6 +369,7 @@ export class AgentLoop {
           }
           if (e instanceof Error && e.message.includes('Cancelled by user')) {
             harnessLog('info', `Agent loop round ${currentRound} cancelled by user for session ${sessionId}`);
+            abortRound();
             break;
           }
           throw e;
@@ -370,7 +386,7 @@ export class AgentLoop {
             }
             context.clearPendingToolCalls();
             // 与正常轮次对齐：start/end 必须成对，否则前端回合状态错乱
-            listener.onRoundEnd?.(round);
+            closeRound();
             continue;
           }
           const bgSubagentManager = this.backgroundSubagentManager?.();
@@ -378,14 +394,15 @@ export class AgentLoop {
             await bgSubagentManager.waitForAll(sessionId ?? null, cancelFlag ?? null);
             if (await this.isCancelled(context)) {
               cancelFlag?.set(true);
-              return;
+              abortRound();
+              break;
             }
             context.clearPendingToolCalls();
             // 与空响应/正常轮次对齐：start/end 必须成对，否则前端回合状态错乱
-            listener.onRoundEnd?.(round);
+            closeRound();
             continue;
           }
-          listener.onRoundEnd?.(round);
+          closeRound();
           break;
         }
 
@@ -402,6 +419,7 @@ export class AgentLoop {
           pendingSaveUsage = null;
           pendingSaveToolCalls = null;
           context.clearPendingToolCalls();
+          abortRound();
           break;
         }
 
@@ -434,7 +452,7 @@ export class AgentLoop {
         }
 
         context.clearPendingToolCalls();
-        listener.onRoundEnd?.(round);
+        closeRound();
 
         const loopConfig = context.compactionConfig;
         const midLoopAllowed = loopConfig != null
@@ -456,7 +474,8 @@ export class AgentLoop {
             if (e instanceof CompactionContextOverflowException || e instanceof CompactionStateReloadException) throw e;
             if (e instanceof CompactionCancelledException) {
               cancelFlag?.set(true);
-              return;
+              abortRound();
+              break;
             }
             harnessLog('warn', 'Mid-loop compaction failed, continuing with the original next request', e);
           }

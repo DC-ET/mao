@@ -80,6 +80,8 @@ describe('AgentLoop', () => {
       onContextWindow: vi.fn(),
       onThinkingStart: vi.fn(),
       onThinkingEnd: vi.fn(),
+      onRoundStart: vi.fn(),
+      onRoundEnd: vi.fn(),
     };
   }
 
@@ -493,6 +495,8 @@ describe('AgentLoop', () => {
     await agentLoop.execute(ctx, l, null);
     expect(llmAdapter.stream).not.toHaveBeenCalled();
     expect(shellSessionManager.closeByConversation).toHaveBeenCalledWith(99);
+    expect(l.onRoundEnd).toHaveBeenCalledTimes(1);
+    expect(l.onMessageEnd).toHaveBeenCalledTimes(1);
   });
 
   it('requestCancelSetsRegisteredFlag', () => {
@@ -513,6 +517,22 @@ describe('AgentLoop', () => {
     await agentLoop.execute(ctx, l, null);
     expect(llmAdapter.stream).not.toHaveBeenCalled();
     expect(shellSessionManager.closeByConversation).toHaveBeenCalledWith(11);
+    // 取消路径也必须成对收尾，否则监听器回合状态悬挂
+    expect(l.onRoundStart).toHaveBeenCalled();
+    expect(l.onRoundEnd).toHaveBeenCalledTimes(1);
+    expect(l.onMessageEnd).toHaveBeenCalledTimes(1);
+    expect(l.onRoundEnd.mock.calls[0][0]).toBe(l.onRoundStart.mock.calls[0][0]);
+  });
+
+  it('cancelBeforeLlmDoesNotReportCancelledRoundUsage', async () => {
+    const ctx = context();
+    ctx.totalUsage = { promptTokens: 10, completionTokens: 5, totalTokens: 15 };
+    const l = listener();
+    const cancelFlag = agentLoop.registerCancelFlag(11);
+    cancelFlag.set(true);
+    await agentLoop.execute(ctx, l, null);
+    // 轮首取消：本轮无增量用量，onMessageEnd 只带既有累计
+    expect(l.onMessageEnd).toHaveBeenCalledWith({ promptTokens: 10, completionTokens: 5, totalTokens: 15 });
   });
 
   it('midLoopCompactionTriggersWhenRequestNearWindow', async () => {

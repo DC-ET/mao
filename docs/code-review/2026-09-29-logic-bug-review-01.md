@@ -1,12 +1,17 @@
 # 代码审查报告：核心功能逻辑 BUG（2026-09-29）
 
+> **修复状态（2026-09-29，0.0.219）**：BUG-1 ~ BUG-6 已全部修复并通过回归。
+> 前端三条（BUG-2/3/5）改 `desktop/src/stores/session.ts`；后端三条改
+> `harness/core/agent-loop.ts`、`settings/*`、`feishu/*` + 迁移 `V126__feishu_enrich_pending_and_thread_watermark.sql`。
+> 发版说明见 `CHANGELOG.md` 0.0.219。
+
 ## 审查范围与方法
 
 覆盖后端 `backend-ts/src`（harness 引擎、session、usage、auth、permission、settings、schedule、file、compaction、
 path-sandbox、feishu 通道）与前端 `desktop/src`（stores、composables、utils），重点排查**逻辑 BUG**
 （状态不一致、时序竞态、边界错误、数据丢失、安全边界），不涉及风格与注释问题。
 
-本轮共核实 **6 个核心功能逻辑 BUG**（下文 BUG-1 ~ BUG-6），另有 3 项中低优先级问题列在附录、
+本轮共核实 **6 个核心功能逻辑 BUG**（下文 BUG-1 ~ BUG-6）；另有一项同源问题并入 BUG-1，
 6 项已确认属产品设计或误报（不作为 BUG，另见「已确认属于产品设计」一节）。
 
 > **覆盖度声明（请连同结论一起看）**
@@ -18,6 +23,15 @@ path-sandbox、feishu 通道）与前端 `desktop/src`（stores、composables、
 >   `message.service.ts` 的水位线过滤条件），不是仅采信子代理结论。
 > - 初稿曾把「写工具不校验路径」「CLOUD 无审批」「浏览接口软链」列为 BUG-6，经确认三者均为既定产品设计，已撤销，
 >   详见下方「已确认属于产品设计」一节。
+>
+> **二次复核（逐条对照源码后修订）**
+> - **BUG-1 影响下调**：`return` 路径漏发 `onMessageEnd` / `onRoundEnd` 属实，但前端/飞书均有外层兜底
+>   （`session_status` 终态事件、`runExecution` 的 `finally { listener.dispose() }`、飞书 `cardListener.cancel()`），
+>   原「回合悬挂 / 恢复出错」描述过高，严重程度由高降为中低。原附录 A（取消轮用量仍计入）同源，并入本条。
+> - **BUG-2 影响校正**：`requireSessionOwner` 为严格 `session.userId !== userId`，**不存在**跨账号内容泄露；
+>   原「越权可见性」表述撤销，保留换号残留脏请求与 `reset()` 契约违背。
+> - **附录 B、C 移除**：B 在取消语义下可接受（文档原已注明）；C 仅注释与实现表述相反、无运行时缺陷，
+>   价值不高，不再单列。
 
 ### 已剔除的误报（记录以免重复排查）
 
@@ -29,14 +43,16 @@ path-sandbox、feishu 通道）与前端 `desktop/src`（stores、composables、
 
 ---
 
-## BUG-1：取消/异常路径漏发回合结束与消息结束事件，前端回合状态悬挂
+## BUG-1：取消/异常路径漏发回合结束与消息结束事件（协议不对称）
 
-- **严重程度**：高
+- **严重程度**：中低（外层已有兜底，剩余为状态残留与卡片轮次展示缺口）
 - **位置**：`backend-ts/src/harness/core/agent-loop.ts:173-175`、`:379-381`、`:456-459`、`:466`
+- **修复**：`execute()` 内用 `closeRound` / `abortRound` 统一收口；取消路径补发 `onRoundEnd` 并走到 `onMessageEnd`，同时回滚本轮未完成用量。回归见 `agent-loop.spec.ts`。
 
 ### 问题
 
-`execute()` 的 while 循环内共 4 处退出路径，只有 1 条发全了收尾事件：
+`execute()` 的 while 循环内多处退出路径收尾事件不完整。3 处 `return` 同时绕过
+`onRoundEnd` 与 `onMessageEnd`：
 
 ```ts
 // L169：每轮开始必发 onRoundStart
@@ -65,34 +81,50 @@ if (bgSubagentManager?.hasRunning(...)) {
 listener.onMessageEnd(context.totalUsage);   // L466，上述三条 return 全部绕过
 ```
 
-同文件里另外 3 条路径（空响应重试 L373、子代理等待 L385、正常结束 L388、工具轮结束 L437）都显式调用了
-`listener.onRoundEnd?.(round)`，并在 L372/L384 两处写下注释「**start/end 必须成对，否则前端回合状态错乱**」。
-这 3 处 `return` 恰恰绕过了这条被自己反复强调的不变量。
+另外两条取消 `break` 路径（LLM 流 `Cancelled by user` L355-357、工具轮取消 L397-405）会走到
+`onMessageEnd`，但同样**不调用 `onRoundEnd`**。同文件空响应重试 L373、子代理等待 L385、
+正常结束 L388、工具轮结束 L437 都显式调用了 `listener.onRoundEnd?.(round)`，并在 L372/L384
+写下注释「**start/end 必须成对，否则前端回合状态错乱**」——上述路径恰恰绕过了这条不变量。
 
 ### 触发路径
 
-用户在回合进行中点击「停止」，且取消发生在轮首检查、子代理等待或 mid-loop 压缩任一环节。
+用户在回合进行中点击「停止」，且取消发生在轮首检查、子代理等待或 mid-loop 压缩任一环节
+（3 处 `return`）；或取消发生在 LLM 流/工具执行阶段（2 处 `break`，缺 `onRoundEnd`）。
 
-### 影响
+### 影响（二次复核后）
 
-- `WsStreamingEventListener` 不会收到 `onRoundEnd` / `onMessageEnd`，前端回合停留在「生成中」，
-  已发出的 `tool_call_start` 卡片不收尾（`onMessageEnd` 内部还有 `dispose()` 会 flush 尾部 delta 并
-  `persistRuntimeStatus(null)`，一并被跳过，`runtimeStatusJson` 残留 `compacting` / `llmWaiting` 等中间态）。
-- 刷新页面后前端依赖 `runtimeStatusJson` 恢复执行态，残留字段会导致恢复出错。
-- `agent-loop.ts` 的 `finally` 块仍会清理 cancelFlags 与 shell 会话，所以后端不泄漏，**纯粹是事件协议不对称**。
+代码不对称属实，但**原「前端回合悬挂」结论过高**，外层已兜底：
+
+- **WS 桌面/Web**：`streaming-ws-handler.ts` 的 `runExecution` 在 `executeFromEvent` 返回后按
+  `cancelFlag` 走 `finishCancelledSession` → `task-terminal.service` 下发 `session_status: CANCELLED`；
+  前端 `useStreamWS` 该分支会 `finishInterruptedStreamingMessage`、清 streaming/thinking/compacting、
+  结束未完成工具卡片。且 `runExecution` 的 `finally` **必定** `listener.dispose()`，尾部 delta 会被 flush。
+  因此**不会**出现「生成中」悬挂或工具卡永久转圈。
+- **`persistRuntimeStatus(null)` 确实被跳过**：`runtimeStatusJson` 可能残留 `compacting` / `llmWaiting`。
+  但 `applyRuntimeStatus` 仅在 `session.running` 为真时消费该字段，终态会话直接忽略，**不会**导致恢复出错；
+  只是脏数据留库，下次成功执行覆盖前无害。
+- **飞书卡片**：`FeishuCardProgressListener` 本就不实现/不依赖 `onMessageEnd`；取消时
+  `agent-inbound-handler` 会调用 `cardListener.cancel()` 终态化。缺 `onRoundEnd` 的影响仅是
+  最后一轮的 content/tools 未先 flush 到卡片 RUNNING 更新（终态文案仍会发出），属展示缺口。
+- **附带（原附录 A）**：工具轮取消后 `break` 仍走 `onMessageEnd(context.totalUsage)`，
+  `rollbackIncompleteRound` 已丢弃本轮消息，但 `totalUsage` 仍含本轮增量——取消被记为「正常完成」
+  且用量偏高。与本条同源。
+
+后端 `finally` 仍会清理 cancelFlags 与 shell/MCP 会话，不泄漏资源。
 
 ### 建议修复
 
-在 `execute()` 的 `finally` 之前统一收口，例如用 `try/finally` 包裹循环，用 `roundEnded` 标志保证
-`onRoundEnd` 只发一次，并在 `return` 路径补发 `onMessageEnd`；或将这 3 处 `return` 统一改为
-`listener.onRoundEnd?.(round); break;`。
+在 `execute()` 统一收口：用 `try/finally` 或 `roundEnded` 标志保证 `onRoundEnd` 只发一次，
+`return` 路径补发 `onMessageEnd`（或改为 `onRoundEnd` + `break`）；同时在取消分支把本轮未完成
+用量从 `totalUsage` 中剔除或不调用 `onMessageEnd` 的用量上报。
 
 ---
 
-## BUG-2：桌面端登出未清除「最后查看会话」，换号登录恢复到他人会话
+## BUG-2：桌面端登出未清除「最后查看会话」，换号登录发起他人会话请求
 
-- **严重程度**：高（越权可见性 + 换号数据串号）
+- **严重程度**：中（换号残留脏请求；**无内容泄露**）
 - **位置**：`desktop/src/stores/session.ts:1727-1769`（`reset`）、`:146`、`:744`、`desktop/src/stores/auth.ts:71`
+- **修复**：`reset()` 末尾补 `forgetLastSession()`。回归见 `session.test.ts`。
 
 ### 问题
 
@@ -112,7 +144,7 @@ function reset() {
 ```
 
 ```ts
-// auth.ts:66-72 logout()
+// auth.ts:66-72 clearLocalSession()（登出与 401 强制下线共用）
 useStreamWS().disconnect();
 useTerminalWS().disconnect();
 await useTerminal().reset();
@@ -135,18 +167,17 @@ if (getLastSessionId() === sid) { forgetLastSession() }
 用户 A 登录并进入会话 42 → 登出 → 用户 B 登录 → `TaskView.vue:922` 的 `navigateToLatestSession()`
 调用 `getLastSessionId()` 读到 `"42"` → 侧栏不含该会话 → 走 `fetchSession("42")` 校验。
 
-### 影响
+### 影响（二次复核后）
 
-- B 端向服务端请求 A 的会话详情。后端 `session.routes.ts` 的 `requireSessionOwner` 会拒绝越权读取，
-  因此**不会泄露内容**；但会表现为登录后一次无意义的失败请求与侧栏空态。
-- 若 A、B 同处一个团队/共享工作区且后端 owner 判定较宽，则存在看到他人会话的真实风险——取决于
-  `fetchSession` 的鉴权实现，本次未逐行确认，**建议按此复核**。
-- 违反 `reset()` 自身注释声明的「避免换号登录后残留幽灵流式气泡/已读错乱」。
+- B 端向服务端请求 A 的会话详情。`session.routes.ts` 的 `requireSessionOwner` 为严格
+  `session.userId !== userId`，**必然拒绝，不会泄露标题或内容**；团队/共享工作区不放宽该判定。
+- 表现为登录后一次无意义的 403 失败请求、`forgetLastSession()` 兜底后回退列表首项，属脏请求与体验噪音。
+- 违反 `reset()` 自身注释声明的「避免换号登录后残留幽灵流式气泡/已读错乱」的清理契约。
 
 ### 建议修复
 
 在 `reset()` 末尾补 `forgetLastSession()`；更稳妥的做法是把 `mao_last_session_id` 改为按用户 id 分键存储
-（如 `mao_last_session_id:{userId}`），从根上消除跨账号串号。
+（如 `mao_last_session_id:{userId}`），从根上消除跨账号残留。
 
 ---
 
@@ -154,6 +185,7 @@ if (getLastSessionId() === sid) { forgetLastSession() }
 
 - **严重程度**：中（静默丢消息）
 - **位置**：`desktop/src/stores/session.ts:1130-1135`（`earlier` 构造），对比 `:1142-1146`（tail 分支）
+- **修复**：`earlier` 过滤补上 `isOptimisticUserId`，与 tail 分支一致。回归见 `session.test.ts`。
 
 ### 问题
 
@@ -175,6 +207,7 @@ const isReplacedOptimisticUser = message.role === 'user'
 
 内容相同**本不足以判定两条是同一条**——用户在一条会话里完全可能两次发出「继续」这类相同指令。
 只有本地那条带乐观 ID（尚未落库、等着被 REST 回显替换）时，按内容匹配才是安全的。
+且乐观消息几乎总在尾部，`earlier` 段本不该做内容去重；一旦触发，删的是真实历史。
 
 ### 触发路径
 
@@ -188,7 +221,7 @@ const isReplacedOptimisticUser = message.role === 'user'
 
 ### 建议修复
 
-给 `earlier` 的过滤条件补上 `isOptimisticUserId(String(m.id))`，与 tail 分支保持一致。
+给 `earlier` 的过滤条件补上 `isOptimisticUserId(String(m.id))`（补上后该段实际不再误删），与 tail 分支保持一致。
 
 ---
 
@@ -196,6 +229,7 @@ const isReplacedOptimisticUser = message.role === 'user'
 
 - **严重程度**：中
 - **位置**：`backend-ts/src/settings/settings.service.ts:177-200`（`updateBatch`）
+- **修复**：写入循环包进 `settingRepo.transaction`；`SystemSettingRepository` 新增 `transaction`。回归见 `settings.service.spec.ts`。
 
 ### 问题
 
@@ -243,6 +277,7 @@ async updateBatch(items) {
 
 - **严重程度**：中
 - **位置**：`desktop/src/stores/session.ts:406-418`（`loadMoreInGroup`），配合 `:757-780`（`updateSession`）
+- **修复**：`SessionGroupMeta.loadedCount` 记账服务端已返回条数；`loadMoreInGroup` 用它作 offset，深链注入不计入。回归见 `session.test.ts`。
 
 ### 问题
 
@@ -317,10 +352,12 @@ if (!existing && updates.executionMode && next.status !== 'ARCHIVED') {
 非疏漏。若日后需要收敛，建议单独立项而非当作 BUG 修补——它会同时与 (a) 的「写路径放开」冲突。
 
 ---
+
 ## BUG-6：飞书群消息后置富化与上下文水位线推进竞态，图片/文件内容永远进不了群上下文
 
 - **严重程度**：中（功能静默失效）
 - **位置**：`backend-ts/src/feishu/inbound-processor.ts:93`、`:119`、`:162-196`
+- **修复**：`V126` 增加 `enrich_pending` 与话题水位线；注入与水位线遇未富化行即停、不跳洞；话题/群水位线分维度。回归见 `message.service.spec.ts`。
 
 ### 问题
 
@@ -344,6 +381,9 @@ const filtered = messages.filter((m) => ... && (m.id ?? 0) > watermark);
 if (maxLogId > watermark) { await this.repository.updateGroupContextWatermark(accountId, context.chatId!, maxLogId); }
 ```
 
+`recordGroupMessage` 与 `buildGroupContext` 走 `runInChatOrder` 保序，**但 `enrichGroupMessage` 不在锁内**。
+序锁只保证「占位行先于后续触发被读到」，不保证「内容已富化完毕」。
+
 ### 触发路径
 
 群友 A 发一条**不带 @** 的图片消息（落占位符行）→ 富化线程开始下载（数秒~数十秒）→
@@ -353,14 +393,15 @@ if (maxLogId > watermark) { await this.repository.updateGroupContextWatermark(ac
 ### 影响
 
 图片/文件已下载落盘、`updateGroupMessageContent` 也成功了，但 Agent **永远只见过占位符文本**，
-`@{}@` 引用形同虚设。`inbound-processor.ts:76-80` 的注释声称该设计正是为了避免此问题——
+`@{}@` 引用形同虚设。`inbound-processor.ts:34-35、88-89` 的注释声称该设计正是为了避免此问题——
 但序锁只覆盖了「日志行写入」，没有覆盖「内容富化」，修复实际未生效。
 
 ### 附带发现（同类根因，中高）
 
 `feishu_chat.last_context_log_id` 是 **(app_id, chat_id)** 粒度，而 `listGroupMessages` 在
-`threadId != null` 时会 `AND thread_id = ?` 过滤。混用话题的群里，一次非话题触发会把水位线推过话题消息的 id，
-导致话题内消息在两条注入路径上（`> watermark` 与溢出查询）都取不到，静默丢失。
+`threadId != null` 时会 `AND thread_id = ?` 过滤。混用话题的群里，一次非话题触发会把水位线推过话题消息的 id
+（`maxLogId` 取自未按 thread 过滤的全量窗口），导致话题内消息在两条注入路径上（`> watermark` 与溢出查询）
+都取不到，静默丢失。
 
 ### 建议修复
 
@@ -370,19 +411,11 @@ if (maxLogId > watermark) { await this.repository.updateGroupContextWatermark(ac
 
 ---
 
-## 附录：中低优先级问题（未计入 6 项）
-
-| # | 问题 | 位置 | 说明 |
-| --- | --- | --- | --- |
-| A | 工具轮被取消时 `break` 仍会走到 `onMessageEnd(totalUsage)` | `agent-loop.ts:396-405`、`:466` | `rollbackIncompleteRound` 已丢弃本轮消息，但 `context.totalUsage` 仍含本轮增量，取消被记为「正常完成」且用量偏高。与 BUG-1 同源，建议一并修。 |
-| B | 工具执行中途取消时已完成的结果不落上下文 | `agent-loop.ts:527-533`、`:543-545` | 取消语义下可接受（随后 `rollbackIncompleteRound` 会清理），记录备查。 |
-| C | 快速命令倒序替换的注释与实现行为相反 | `prompt-engine.ts:149-158` | 注释称「展开内容含 `#{...}#` 时错乱」，但倒序 + `matchAll` 快照恰恰使嵌套标记不再展开。当前无运行时 BUG，但会误导后续维护者改成前向替换而引入真实越界。 |
-
 ## 建议修复顺序
 
-1. **BUG-1**（事件协议不对称，影响所有取消场景，且会污染 `runtimeStatusJson` 恢复逻辑）
-2. **BUG-2**（越权可见性风险，改动量最小，1 行）
-3. **BUG-3**（静默丢用户消息）
-4. **BUG-5**（分页漏会话）
-5. **BUG-6**（飞书群图片/文件上下文静默失效）
-6. **BUG-4**（配置部分应用，触发概率较低但恢复成本高）
+1. **BUG-3**（静默丢用户消息，改动 1 行，数据正确性）
+2. **BUG-2**（换号残留脏请求，改动 1 行）
+3. **BUG-5**（分页漏会话，触发路径常规）
+4. **BUG-6**（飞书群图片/文件上下文静默失效）
+5. **BUG-4**（配置部分应用，触发概率较低但恢复成本高）
+6. **BUG-1**（事件协议不对称 + 取消轮用量偏高；外层已有兜底，优先级最低）

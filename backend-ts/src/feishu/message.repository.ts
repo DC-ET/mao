@@ -27,6 +27,8 @@ export interface FeishuGroupMessage {
   messageId?: string | null;
   threadId?: string | null;
   isMention: boolean;
+  /** 1=图片/文件/卡片内容尚未回填；水位线不得越过该行。 */
+  enrichPending?: boolean | number | null;
   createdAt?: string | null;
 }
 
@@ -37,6 +39,7 @@ export interface FeishuThreadSession {
   threadId: string;
   rootMessageId: string;
   sessionId: number;
+  lastContextLogId?: number | null;
 }
 
 export interface FeishuMessageRepository {
@@ -53,12 +56,16 @@ export interface FeishuMessageRepository {
   listGroupMessages(appId: string, chatId: string, limit: number, maxMinutes?: number, threadId?: string | null): Promise<FeishuGroupMessage[]>;
   /** 追溯注入窗口之前被丢弃的未注入普通消息（id > watermark 且 id < beforeId，不限时间），供溢出摘要。 */
   listOverflowGroupMessages(appId: string, chatId: string, watermark: number, beforeId: number, limit: number, threadId?: string | null): Promise<FeishuGroupMessage[]>;
-  /** 推进群聊上下文增量注入水位线（只前进不后退）。 */
+  /** 推进群聊上下文增量注入水位线（只前进不后退；仅非话题）。 */
   updateGroupContextWatermark(appId: string, chatId: string, logId: number): Promise<void>;
+  /** 推进话题上下文增量注入水位线（只前进不后退）。 */
+  updateThreadContextWatermark(appId: string, threadId: string, logId: number): Promise<void>;
   /** 写入溢出摘要缓存（logId 只前进不后退）。 */
   updateGroupContextSummary(appId: string, chatId: string, summary: string, logId: number): Promise<void>;
-  /** 回填群消息行的内容占位文本（如图片预下载完成后的本地路径引用）。 */
+  /** 回填群消息行的内容占位文本（如图片预下载完成后的本地路径引用），并清除 enrich_pending。 */
   updateGroupMessageContent(id: number, content: string): Promise<void>;
+  /** 富化收尾（无内容回填时也清标记），使该行可参与水位线推进。 */
+  markGroupMessageEnriched(id: number): Promise<void>;
   /** 回填群消息行的发送人显示名（入站时原始事件可能缺少姓名）。 */
   updateGroupMessageSenderName(id: number, senderName: string): Promise<void>;
   addGroupMember(appId: string, chatId: string, userId: number, openId: string, displayName: string): Promise<void>;
@@ -69,8 +76,8 @@ export interface FeishuMessageRepository {
   findP2pMessageSession(appId: string, messageId: string): Promise<number | null>;
   /** 记录话题→会话映射（INSERT IGNORE 防重）。 */
   recordThreadSession(params: { appId: string; chatId: string; threadId: string; rootMessageId: string; sessionId: number }): Promise<void>;
-  /** 按话题 ID 查归属会话；未记录返回 null。 */
-  findThreadSession(appId: string, threadId: string): Promise<{ sessionId: number; rootMessageId: string } | null>;
+  /** 按话题 ID 查归属会话（含话题水位线）；未记录返回 null。 */
+  findThreadSession(appId: string, threadId: string): Promise<{ sessionId: number; rootMessageId: string; lastContextLogId?: number | null } | null>;
   /** 会话 → 飞书通道绑定（创建时落行、不可变）：session_id 唯一，upsert 幂等；
    *  awaiting_first_message_title 用 GREATEST「只进不清」——指针切换的 upsert(false) 不会清掉 `---` 置上的待命名标志。 */
   upsertSessionChannel(sessionId: number, appId: string, chatId: string, chatType: 'p2p' | 'group', awaitingFirstMessageTitle?: boolean): Promise<void>;
@@ -158,10 +165,11 @@ export class MysqlFeishuMessageRepository implements FeishuMessageRepository {
     if (message.messageId == null || message.messageId === '') throw new Error('Feishu group message requires messageId');
     await this.db.execute(
       `INSERT IGNORE INTO feishu_group_message_log
-       (app_id, chat_id, sender_open_id, sender_name, msg_type, content, file_key, file_name, message_id, is_mention, thread_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (app_id, chat_id, sender_open_id, sender_name, msg_type, content, file_key, file_name, message_id, is_mention, thread_id, enrich_pending)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [message.appId, message.chatId, message.senderOpenId, message.senderName, message.msgType ?? 'text', message.content ?? null,
-        message.fileKey ?? null, message.fileName ?? null, message.messageId, message.isMention ? 1 : 0, message.threadId ?? null],
+        message.fileKey ?? null, message.fileName ?? null, message.messageId, message.isMention ? 1 : 0, message.threadId ?? null,
+        message.enrichPending ? 1 : 0],
     );
     const saved = await this.db.queryOne<{ id?: number }>(
       'SELECT id FROM feishu_group_message_log WHERE app_id = ? AND chat_id = ? AND message_id = ? LIMIT 1',
@@ -182,7 +190,8 @@ export class MysqlFeishuMessageRepository implements FeishuMessageRepository {
   listGroupMessages(appId: string, chatId: string, limit: number, maxMinutes = 120, threadId: string | null = null): Promise<FeishuGroupMessage[]> {
     const safeLimit = Math.max(1, Math.min(200, Math.floor(limit)));
     const safeMinutes = Math.max(1, Math.min(10080, Math.floor(maxMinutes)));
-    const threadFilter = threadId != null ? ' AND thread_id = ?' : '';
+    // 非话题上下文排除话题消息（话题有独立会话与水位线），避免两条注入路径互相污染。
+    const threadFilter = threadId != null ? ' AND thread_id = ?' : ' AND thread_id IS NULL';
     const params = threadId != null ? [appId, chatId, threadId] : [appId, chatId];
     return this.db.query<FeishuGroupMessage>(
       `SELECT * FROM feishu_group_message_log WHERE app_id = ? AND chat_id = ?${threadFilter}
@@ -193,7 +202,7 @@ export class MysqlFeishuMessageRepository implements FeishuMessageRepository {
 
   listOverflowGroupMessages(appId: string, chatId: string, watermark: number, beforeId: number, limit: number, threadId: string | null = null): Promise<FeishuGroupMessage[]> {
     const safeLimit = Math.max(1, Math.min(200, Math.floor(limit)));
-    const threadFilter = threadId != null ? ' AND thread_id = ?' : '';
+    const threadFilter = threadId != null ? ' AND thread_id = ?' : ' AND thread_id IS NULL';
     const params = threadId != null ? [appId, chatId, watermark, beforeId, threadId] : [appId, chatId, watermark, beforeId];
     return this.db.query<FeishuGroupMessage>(
       `SELECT * FROM feishu_group_message_log WHERE app_id = ? AND chat_id = ?
@@ -209,6 +218,13 @@ export class MysqlFeishuMessageRepository implements FeishuMessageRepository {
     );
   }
 
+  async updateThreadContextWatermark(appId: string, threadId: string, logId: number): Promise<void> {
+    await this.db.execute(
+      'UPDATE feishu_thread_session SET last_context_log_id = GREATEST(last_context_log_id, ?) WHERE app_id = ? AND thread_id = ?',
+      [logId, appId, threadId],
+    );
+  }
+
   async updateGroupContextSummary(appId: string, chatId: string, summary: string, logId: number): Promise<void> {
     await this.db.execute(
       'UPDATE feishu_chat SET context_summary = ?, context_summary_log_id = GREATEST(context_summary_log_id, ?) WHERE app_id = ? AND chat_id = ?',
@@ -217,7 +233,17 @@ export class MysqlFeishuMessageRepository implements FeishuMessageRepository {
   }
 
   updateGroupMessageContent(id: number, content: string): Promise<void> {
-    return this.db.execute('UPDATE feishu_group_message_log SET content = ? WHERE id = ?', [content, id]).then(() => undefined);
+    return this.db.execute(
+      'UPDATE feishu_group_message_log SET content = ?, enrich_pending = 0 WHERE id = ?',
+      [content, id],
+    ).then(() => undefined);
+  }
+
+  markGroupMessageEnriched(id: number): Promise<void> {
+    return this.db.execute(
+      'UPDATE feishu_group_message_log SET enrich_pending = 0 WHERE id = ?',
+      [id],
+    ).then(() => undefined);
   }
 
   updateGroupMessageSenderName(id: number, senderName: string): Promise<void> {
@@ -249,10 +275,10 @@ export class MysqlFeishuMessageRepository implements FeishuMessageRepository {
     );
   }
 
-  async findThreadSession(appId: string, threadId: string): Promise<{ sessionId: number; rootMessageId: string } | null> {
+  async findThreadSession(appId: string, threadId: string): Promise<{ sessionId: number; rootMessageId: string; lastContextLogId?: number | null } | null> {
     if (threadId == null || threadId === '') return null;
-    const row = await this.db.queryOne<{ sessionId: number; rootMessageId: string }>(
-      'SELECT session_id, root_message_id FROM feishu_thread_session WHERE app_id = ? AND thread_id = ? LIMIT 1',
+    const row = await this.db.queryOne<{ sessionId: number; rootMessageId: string; lastContextLogId?: number | null }>(
+      'SELECT session_id, root_message_id, last_context_log_id FROM feishu_thread_session WHERE app_id = ? AND thread_id = ? LIMIT 1',
       [appId, threadId],
     );
     return row ?? null;

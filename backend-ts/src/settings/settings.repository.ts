@@ -35,4 +35,8 @@ export class MysqlSystemSettingRepository implements SystemSettingRepository {
       editable: setting.editable,
     });
   }
+
+  transaction<T>(fn: (repo: SystemSettingRepository) => Promise<T>): Promise<T> {
+    return this.db.transaction((txDb) => fn(new MysqlSystemSettingRepository(txDb)));
+  }
 }

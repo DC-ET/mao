@@ -26,6 +26,7 @@ const messageService = {
   buildGroupContext: vi.fn(async () => ({ conversation: {} as never, messages: [], prompt: 'group context' })),
   updateGroupMessageContent: vi.fn(async () => undefined),
   updateGroupMessageSenderName: vi.fn(async () => undefined),
+  markGroupMessageEnriched: vi.fn(async () => undefined),
 };
 
 describe('FeishuInboundProcessor', () => {
@@ -54,7 +55,7 @@ describe('FeishuInboundProcessor', () => {
       sendReply,
     });
     await processor.process('1', makeEvent({ isBotMentioned: true }));
-    expect(messageService.recordGroupMessage).toHaveBeenCalledWith('1', expect.objectContaining({ messageId: 'om_1' }), true);
+    expect(messageService.recordGroupMessage).toHaveBeenCalledWith('1', expect.objectContaining({ messageId: 'om_1' }), true, { enrichPending: false });
     expect(onMessage).toHaveBeenCalledOnce();
     expect(sendReply).toHaveBeenCalledWith('1', expect.anything(), 'echo hello');
     expect(messageService.completeInboundMessage).toHaveBeenCalledWith('1', 'om_1');
@@ -160,7 +161,7 @@ describe('FeishuInboundProcessor', () => {
     });
     // 无 @、有 threadId、映射命中（机器人已在该话题中）→ 免 @ 触发。
     await processor.process('1', makeEvent({ isBotMentioned: false, threadId: 'omt_abc' }));
-    expect(messageService.recordGroupMessage).toHaveBeenCalledWith('1', expect.anything(), true);
+    expect(messageService.recordGroupMessage).toHaveBeenCalledWith('1', expect.anything(), true, { enrichPending: false });
     expect(onMessage).toHaveBeenCalledOnce();
   });
 
@@ -195,7 +196,7 @@ describe('FeishuInboundProcessor', () => {
     const onMessage = vi.fn(async () => ({ text: 'r' }));
     const processor = new FeishuInboundProcessor(makeHandler(onMessage), { messageService });
     await processor.process('1', makeEvent({ isBotMentioned: false }));
-    expect(messageService.recordGroupMessage).toHaveBeenCalledWith('1', expect.anything(), false);
+    expect(messageService.recordGroupMessage).toHaveBeenCalledWith('1', expect.anything(), false, { enrichPending: false });
     expect(onMessage).not.toHaveBeenCalled();
   });
 
@@ -265,7 +266,7 @@ describe('FeishuInboundProcessor', () => {
     expect(downloadGroupImage).toHaveBeenCalledOnce();
     // 先按懒加载占位符立即落日志，后台下载完成后再升级为本地路径引用。
     expect(messageService.recordGroupMessage).toHaveBeenCalledWith('1',
-      expect.objectContaining({ text: '[图片 msg=om_1]' }), false);
+      expect.objectContaining({ text: '[图片 msg=om_1]' }), false, { enrichPending: true });
     await vi.waitFor(() => expect(messageService.updateGroupMessageContent)
       .toHaveBeenCalledWith(101, '[图片已保存: @{/ws/feishu-chat/1/oc_group/feishu-image-om_1.png}@]'));
     expect(messageService.completeInboundMessage).toHaveBeenCalledWith('1', 'om_1');
@@ -283,7 +284,7 @@ describe('FeishuInboundProcessor', () => {
     try {
       await processor.process('1', makeEvent({ messageType: 'image', imageKey: 'img_1', text: '', isBotMentioned: false }));
       expect(messageService.recordGroupMessage).toHaveBeenCalledWith('1',
-        expect.objectContaining({ text: '[图片 msg=om_1]' }), false);
+        expect.objectContaining({ text: '[图片 msg=om_1]' }), false, { enrichPending: true });
       await new Promise((resolve) => setTimeout(resolve, 20));
       expect(messageService.updateGroupMessageContent).not.toHaveBeenCalled();
     } finally {
@@ -359,7 +360,7 @@ describe('FeishuInboundProcessor', () => {
     const processor = new FeishuInboundProcessor(makeHandler(), { messageService, downloadGroupFile });
     await processor.process('1', makeEvent({ messageType: 'file', fileKey: 'file_1', fileName: 'report.pdf', text: '', isBotMentioned: false }));
     expect(messageService.recordGroupMessage).toHaveBeenCalledWith('1',
-      expect.objectContaining({ text: '[文件:report.pdf msg=om_1]' }), false);
+      expect.objectContaining({ text: '[文件:report.pdf msg=om_1]' }), false, { enrichPending: true });
     await vi.waitFor(() => expect(downloadGroupFile).toHaveBeenCalledOnce());
     await vi.waitFor(() => expect(messageService.updateGroupMessageContent)
       .toHaveBeenCalledWith(201, '[文件已保存: @{/ws/feishu-chat/1/oc_group/report.pdf}@]'));
@@ -450,7 +451,7 @@ describe('FeishuInboundProcessor', () => {
       isBotMentioned: false,
     }));
     expect(messageService.recordGroupMessage).toHaveBeenCalledWith('1',
-      expect.objectContaining({ text: '[卡片消息]' }), false);
+      expect.objectContaining({ text: '[卡片消息]' }), false, { enrichPending: true });
   });
 
   it('upgrades degraded group card log content via message detail fetch', async () => {
@@ -468,7 +469,7 @@ describe('FeishuInboundProcessor', () => {
       isBotMentioned: false,
     }));
     expect(messageService.recordGroupMessage).toHaveBeenCalledWith('1',
-      expect.objectContaining({ text: '[卡片消息]' }), false);
+      expect.objectContaining({ text: '[卡片消息]' }), false, { enrichPending: true });
     await vi.waitFor(() => expect(messageService.updateGroupMessageContent)
       .toHaveBeenCalledWith(202, '状态：处理完成 · 任务已完成'));
     expect(resolveMessageText).toHaveBeenCalledWith('1', 'om_card_up');

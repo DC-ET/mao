@@ -486,6 +486,27 @@ describe('session store 实体/投影模型', () => {
     expect(msgs.filter(m => m.content === '排队中的消息')).toHaveLength(1)
   })
 
+  it('applyFetchedMessages 不按内容误删分页历史里的重复用户指令', () => {
+    const store = useSessionStore()
+    // 本地已分页加载：更早有一条真实落库的「继续」（id=1，非乐观 ID）
+    store.setMessages('1', [
+      { id: '1', role: 'user', content: '继续', createdAt: '2026-08-13 10:00:00' },
+      { id: '2', role: 'assistant', content: '好的', createdAt: '2026-08-13 10:01:00' },
+      { id: '3', role: 'user', content: '做任务', createdAt: '2026-08-13 11:00:00' },
+      { id: '4', role: 'assistant', content: '完成', createdAt: '2026-08-13 11:01:00' },
+    ])
+    // 用户再次发送内容相同的「继续」，REST 回显为 id=5
+    store.applyFetchedMessages('1', [
+      { id: '3', role: 'user', content: '做任务', createdAt: '2026-08-13 11:00:00' },
+      { id: '4', role: 'assistant', content: '完成', createdAt: '2026-08-13 11:01:00' },
+      { id: '5', role: 'user', content: '继续', createdAt: '2026-08-13 12:00:00' },
+    ])
+
+    // 历史 id=1 必须保留；新回显 id=5 也要在，两条同内容都存在
+    expect(store.getMessages('1').map(m => m.id)).toEqual(['1', '2', '3', '4', '5'])
+    expect(store.getMessages('1').filter(m => m.content === '继续')).toHaveLength(2)
+  })
+
   it('聚焦模式已加载时新建任务进入聚焦列表', async () => {
     const store = useSessionStore()
     mockGet.mockResolvedValueOnce({ data: [makeSession('1')] })
@@ -507,5 +528,63 @@ describe('session store 实体/投影模型', () => {
 
     expect(store.standardSessionIds).toContain('2')
     expect(store.focusSessionIds).toEqual([])
+  })
+
+  it('reset 清除持久化的最后查看会话，避免换号冷启动恢复他人会话', () => {
+    // vitest environment=node 无 localStorage，polyfill 供 persist/forget 路径使用
+    const storage = new Map<string, string>()
+    globalThis.localStorage = {
+      getItem: (k: string) => storage.get(k) ?? null,
+      setItem: (k: string, v: string) => { storage.set(k, v) },
+      removeItem: (k: string) => { storage.delete(k) },
+      clear: () => { storage.clear() },
+      key: () => null,
+      get length() { return storage.size },
+    } as Storage
+
+    const store = useSessionStore()
+    store.setActiveSession('42')
+    expect(store.getLastSessionId()).toBe('42')
+
+    store.reset()
+    expect(store.getLastSessionId()).toBeNull()
+  })
+
+  it('loadMoreInGroup 的 offset 不把深链注入的会话计入服务端已返回条数', async () => {
+    const store = useSessionStore()
+    const groupKey = 'CLOUD:临时工作区'
+    mockGet.mockResolvedValueOnce({
+      data: {
+        groups: [{
+          key: groupKey,
+          label: '临时工作区',
+          total: 5,
+          hasMore: true,
+          sessions: [makeSession('1'), makeSession('2')],
+        }],
+      },
+    })
+    await store.fetchSessions()
+    expect(store.getGroupMeta(groupKey)?.loadedCount).toBe(2)
+
+    // 深链注入预览外的同组会话（unshift 进投影），不得推高 offset
+    store.updateSession('50', makeSession('50', { executionMode: 'CLOUD' }))
+    expect(store.standardSessionIds).toContain('50')
+
+    mockGet.mockResolvedValueOnce({
+      data: {
+        items: [makeSession('3'), makeSession('4')],
+        total: 5,
+        hasMore: true,
+      },
+    })
+    await store.loadMoreInGroup(groupKey)
+    // offset 必须是预览条数 2，而不是本地投影 3
+    expect(mockGet).toHaveBeenLastCalledWith('/sessions', {
+      params: { groupKey, offset: 2, limit: 20 },
+    })
+    expect(store.getGroupMeta(groupKey)?.loadedCount).toBe(4)
+    // 注入的 50 与本页 3/4 都在列表里，但下一页 offset 仍按服务端返回条数推进
+    expect(store.standardSessionIds).toEqual(expect.arrayContaining(['1', '2', '50', '3', '4']))
   })
 })

@@ -177,7 +177,7 @@ export class SystemSettingService {
 
   /**
    * 批量更新：先对全部条目做存在性/可编辑性/取值校验，任一失败则整体失败；
-   * 校验通过后逐条落库。secret 语义同 update。
+   * 校验通过后在单事务内落库，中途失败整体回滚，避免半截配置。
    */
   async updateBatch(items: Array<{ key: string; value: string | null | undefined }>): Promise<SystemSetting[]> {
     const rows: Array<{ setting: SystemSetting; next: string | null }> = [];
@@ -191,17 +191,19 @@ export class SystemSettingService {
       }
       rows.push({ setting, next: await this.resolveNextValue(setting, item.value) });
     }
-    const result: SystemSetting[] = [];
-    for (const { setting, next } of rows) {
-      if (next == null) {
+    return this.settingRepo.transaction(async (tx) => {
+      const result: SystemSetting[] = [];
+      for (const { setting, next } of rows) {
+        if (next == null) {
+          result.push(this.masked(setting));
+          continue;
+        }
+        setting.value = next;
+        await tx.updateById(setting);
         result.push(this.masked(setting));
-        continue;
       }
-      setting.value = next;
-      await this.settingRepo.updateById(setting);
-      result.push(this.masked(setting));
-    }
-    return result;
+      return result;
+    });
   }
 
   async getCompanySsoConfig(): Promise<CompanySsoConfig> {

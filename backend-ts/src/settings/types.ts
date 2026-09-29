@@ -14,6 +14,8 @@ export interface SystemSettingRepository {
   list(category?: string | null): Promise<SystemSetting[]>;
   findByKey(key: string): Promise<SystemSetting | null>;
   updateById(setting: SystemSetting): Promise<void>;
+  /** 事务内执行批量写；任一失败整体回滚。 */
+  transaction<T>(fn: (repo: SystemSettingRepository) => Promise<T>): Promise<T>;
 }
 
 export interface SettingsRuntimeConfig {

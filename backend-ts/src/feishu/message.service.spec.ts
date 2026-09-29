@@ -22,7 +22,10 @@ describe('FeishuMessageService', () => {
       completeInboundMessage: vi.fn(),
       appendGroupMessage: vi.fn(),
       updateGroupContextWatermark: vi.fn(async () => undefined),
+      updateThreadContextWatermark: vi.fn(async () => undefined),
       updateGroupContextSummary: vi.fn(async () => undefined),
+      markGroupMessageEnriched: vi.fn(async () => undefined),
+      findThreadSession: vi.fn(async () => null),
       listGroupMessages: vi.fn(async () => []),
       listOverflowGroupMessages: vi.fn(async () => []),
       addGroupMember: vi.fn(),
@@ -397,5 +400,35 @@ describe('FeishuMessageService', () => {
     const service = new FeishuMessageService(repository as never, { create: vi.fn() } as never, 20, 120);
     await service.buildGroupContext('1', makeContext());
     expect(repository.listGroupMessages).toHaveBeenCalledWith('1', 'oc_group', 20, 120, null);
+  });
+
+  it('水位线不越过未富化完成的占位行，避免图片回填后永远进不了上下文', async () => {
+    const repository = makeRepo({
+      findGroupConversation: vi.fn(async () => ({ id: 1, appId: '1', chatId: 'oc_group', sessionId: 9, ownerUserId: 3, lastContextLogId: 0 })),
+      listGroupMessages: vi.fn(async () => [
+        { id: 10, appId: '1', chatId: 'oc_group', senderOpenId: 'ou_a', senderName: '张三', isMention: false, messageId: 'om_img', content: '[图片 msg=om_img]', enrichPending: 1 },
+        { id: 11, appId: '1', chatId: 'oc_group', senderOpenId: 'ou_b', senderName: '王五', isMention: false, messageId: 'om_txt', content: '后续文字', enrichPending: 0 },
+      ]),
+    });
+    const service = new FeishuMessageService(repository as never, { create: vi.fn() } as never, 20, 120);
+    const group = await service.buildGroupContext('1', makeContext({ messageId: 'om_trigger' }));
+    // 未富化行不注入；其后的就绪行也不能把水位线推过去（否则占位行被永久跳过）
+    expect(group.prompt).not.toContain('[图片 msg=om_img]');
+    expect(group.prompt).not.toContain('后续文字');
+    expect(repository.updateGroupContextWatermark).not.toHaveBeenCalled();
+  });
+
+  it('话题上下文水位线与群级水位线分离', async () => {
+    const repository = makeRepo({
+      findThreadSession: vi.fn(async () => ({ sessionId: 11, rootMessageId: 'om_root', lastContextLogId: 5 })),
+      listGroupMessages: vi.fn(async () => [
+        { id: 6, appId: '1', chatId: 'oc_group', senderOpenId: 'ou_a', senderName: '张三', isMention: false, messageId: 'om_t1', content: '话题内消息', threadId: 'omt_abc', enrichPending: 0 },
+      ]),
+    });
+    const service = new FeishuMessageService(repository as never, { create: vi.fn() } as never, 20, 120);
+    const group = await service.buildGroupContext('1', makeContext({ threadId: 'omt_abc', messageId: 'om_trigger' }));
+    expect(group.prompt).toContain('话题内消息');
+    expect(repository.updateGroupContextWatermark).not.toHaveBeenCalled();
+    expect(repository.updateThreadContextWatermark).toHaveBeenCalledWith('1', 'omt_abc', 6);
   });
 });

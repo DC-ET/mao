@@ -85,10 +85,14 @@ export class FeishuInboundProcessor {
         const threadSession = await this.options.resolveThreadSession(accountId, normalized).catch(() => null);
         if (threadSession != null) mentioned = true;
       }
-      // 群消息立即按到达顺序落日志（占位文本），慢操作（姓名解析/图片预下载）后置为异步富化；
-      // 否则图片下载期间后续 @ 触发会先读上下文并推进水位线，该图片将永远无法进入 Agent 会话。
+      // 群消息立即按到达顺序落日志（占位文本），慢操作（姓名解析/图片预下载）后置为异步富化。
+      // 需要富化的媒体/卡片行落 enrich_pending=1：水位线不得越过未富化行，
+      // 否则图片下载期间后续 @ 触发会推进水位线，回填后的内容永远进不了 Agent 会话。
+      const needsEnrich = inboundImageKeys(normalized).length > 0
+        || isInboundFileMessage(normalized)
+        || normalized.messageType === 'interactive';
       const logId = await this.runInChatOrder(accountId, normalized.chatId,
-        () => messageService.recordGroupMessage(accountId, { ...normalized, accountId }, mentioned));
+        () => messageService.recordGroupMessage(accountId, { ...normalized, accountId }, mentioned, { enrichPending: needsEnrich }));
       if (!mentioned) {
         void this.enrichGroupMessage(accountId, logId, normalized);
         completed = true;
@@ -160,8 +164,8 @@ export class FeishuInboundProcessor {
    * 成功则将日志行占位文本升级为携带 @{路径}@ 引用（Agent 免工具直接读取），失败保留懒加载占位符；
    * interactive 卡片事件 content 被飞书降级时，按 messageId 拉详情补真实文本。 */
   private async enrichGroupMessage(accountId: string, logId: number, event: FeishuNormalizedMessage): Promise<void> {
+    const messageService = this.options.messageService;
     try {
-      const messageService = this.options.messageService;
       if (messageService == null || event.chatType !== 'group') return;
       const resolved = await this.resolveSenderName(event, accountId);
       if (resolved?.senderName != null && resolved.senderName.trim() !== '') {
@@ -172,6 +176,13 @@ export class FeishuInboundProcessor {
       await this.prewarmGroupCardText(accountId, logId, event);
     } catch (error) {
       console.warn(`飞书群消息后台富化失败, messageId=${event.messageId}: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      // 无论富化成败都要放行水位线；失败时保留懒加载占位符，但不能永久卡住后续消息。
+      try {
+        await messageService?.markGroupMessageEnriched(logId);
+      } catch (error) {
+        console.warn(`飞书群消息富化完成标记失败, logId=${logId}: ${error instanceof Error ? error.message : String(error)}`);
+      }
     }
   }
 

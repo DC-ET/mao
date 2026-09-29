@@ -24,6 +24,7 @@ function fixture(value: string | null = JSON.stringify(defaults)) {
     findByKey: vi.fn(async () => row ? { ...row } : null),
     list: vi.fn(async () => row ? [{ ...row }] : []),
     updateById: vi.fn(async (next) => { row = { ...next }; }),
+    transaction: vi.fn(async (fn: (r: SystemSettingRepository) => Promise<unknown>) => fn(repo)),
   };
   const settings = new SystemSettingService(repo, { findById: async () => null }, { findById: async () => null }, { workspaceRoot: '', skillsDir: '' });
   return { settings, repo, remove: () => { row = null; } };

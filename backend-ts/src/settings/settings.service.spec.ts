@@ -21,6 +21,7 @@ describe('SystemSettingService', () => {
     list: vi.fn(),
     findByKey: vi.fn(),
     updateById: vi.fn(),
+    transaction: vi.fn(async (fn: (repo: SystemSettingRepository) => Promise<unknown>) => fn(mapper)),
   };
   const agentLookup: AgentLookup = { findById: vi.fn() };
   const modelLookup: ModelLookup = { findById: vi.fn() };
@@ -392,5 +393,26 @@ describe('SystemSettingService', () => {
       { key: 'missing.key', value: 'x' },
     ])).rejects.toThrow(/不存在/);
     expect(mapper.updateById).not.toHaveBeenCalled();
+  });
+
+  it('updateBatchWriteFailurePropagatesSoTransactionCanRollback', async () => {
+    // 写入阶段抛错必须向上传播，由 transaction 回滚前 N-1 条，不得吞成部分成功
+    const rowA = setting('upload.storageMode', '集成配置', 1);
+    const rowB = setting('audit.retentionDays', '审计', 1);
+    vi.mocked(mapper.findByKey).mockImplementation(async (key: string) => {
+      if (key === 'upload.storageMode') return { ...rowA };
+      if (key === 'audit.retentionDays') return { ...rowB };
+      return null;
+    });
+    let calls = 0;
+    vi.mocked(mapper.updateById).mockImplementation(async () => {
+      calls += 1;
+      if (calls === 2) throw new Error('db down');
+    });
+    await expect(service().updateBatch([
+      { key: 'upload.storageMode', value: 'oss' },
+      { key: 'audit.retentionDays', value: '365' },
+    ])).rejects.toThrow('db down');
+    expect(mapper.transaction).toHaveBeenCalled();
   });
 });

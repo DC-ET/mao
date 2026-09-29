@@ -121,6 +121,8 @@ export interface SessionGroupMeta {
   label: string
   total: number
   hasMore: boolean
+  /** 服务端该分组已返回的条数，作为 load-more 的 offset。不等于本地投影长度（深链注入不计入）。 */
+  loadedCount?: number
 }
 
 /** LLM 等待或可恢复错误重试进度 */
@@ -374,13 +376,14 @@ export const useSessionStore = defineStore('session', () => {
       const meta = new Map<string, SessionGroupMeta>()
       for (const g of groups) {
         const key = String(g.key)
+        const sessions: Session[] = (g.sessions || []).map(normalizeSession)
         meta.set(key, {
           label: g.label || key,
           total: Number(g.total) || 0,
-          hasMore: !!g.hasMore
+          hasMore: !!g.hasMore,
+          loadedCount: sessions.length
         })
-        for (const s of g.sessions || []) {
-          const normalized = normalizeSession(s)
+        for (const normalized of sessions) {
           // unread 以服务端为准（服务端 DB 是未读持久化权威；本地已读仅在 markAsRead API 成功后清除）
           upsertSessionEntity(normalized)
           applyRuntimeStatus(normalized)
@@ -411,11 +414,9 @@ export const useSessionStore = defineStore('session', () => {
     const meta = groupMeta.value.get(key)
     if (meta && !meta.hasMore) return false
 
-    // Capture offset before await for pagination; do not reuse after await for totals.
-    const offset = standardSessionIds.value.filter(id => {
-      const s = sessionEntities.value.get(id)
-      return s && cloudGroupKey(s) === key
-    }).length
+    // offset 必须以「服务端该分组已返回条数」为准，不能从本地投影反推：
+    // 深链注入（updateSession）会把预览外的会话 unshift 进投影，使 offset 偏大漏会话。
+    const offset = meta?.loadedCount ?? 0
     loadingMoreGroups.value = new Set(loadingMoreGroups.value).add(key)
     try {
       const { data } = await api.get('/sessions', {
@@ -424,7 +425,7 @@ export const useSessionStore = defineStore('session', () => {
       const items: Session[] = (data?.items || []).map(normalizeSession)
       if (items.length === 0) {
         if (meta) {
-          groupMeta.value.set(key, { ...meta, hasMore: false })
+          groupMeta.value.set(key, { ...meta, hasMore: false, loadedCount: offset })
           groupMeta.value = new Map(groupMeta.value)
         }
         return false
@@ -442,15 +443,13 @@ export const useSessionStore = defineStore('session', () => {
         standardSessionIds.value = [...standardSessionIds.value, ...appendedIds]
       }
 
-      const loadedAfter = standardSessionIds.value.filter(id => {
-        const s = sessionEntities.value.get(id)
-        return s && cloudGroupKey(s) === key
-      }).length
       const serverTotal = data?.total
       const nextMeta: SessionGroupMeta = {
         label: meta?.label || key,
-        total: serverTotal != null ? Number(serverTotal) : (meta?.total ?? loadedAfter),
-        hasMore: !!data?.hasMore
+        total: serverTotal != null ? Number(serverTotal) : (meta?.total ?? (meta?.loadedCount ?? 0) + items.length),
+        hasMore: !!data?.hasMore,
+        // 以服务端本页返回条数推进，即使其中部分已因深链注入在本地存在
+        loadedCount: offset + items.length
       }
       groupMeta.value.set(key, nextMeta)
       groupMeta.value = new Map(groupMeta.value)
@@ -601,13 +600,14 @@ export const useSessionStore = defineStore('session', () => {
       const meta = new Map<string, SessionGroupMeta>()
       for (const g of groups) {
         const key = String(g.key)
+        const sessions: Session[] = (g.sessions || []).map(normalizeSession)
         meta.set(key, {
           label: g.label || key,
           total: Number(g.total) || 0,
-          hasMore: !!g.hasMore
+          hasMore: !!g.hasMore,
+          loadedCount: sessions.length
         })
-        for (const s of g.sessions || []) {
-          const normalized = normalizeSession(s)
+        for (const normalized of sessions) {
           upsertSessionEntity(normalized)
           applyRuntimeStatus(normalized)
           ids.push(String(normalized.id))
@@ -761,7 +761,8 @@ export const useSessionStore = defineStore('session', () => {
       }
       const key = cloudGroupKey(next)
       if (!groupMeta.value.has(key)) {
-        groupMeta.value.set(key, { label: key, total: 1, hasMore: false })
+        // 服务端列表尚未为该分组分页过；注入的这条不计入 loadedCount
+        groupMeta.value.set(key, { label: key, total: 1, hasMore: false, loadedCount: 0 })
         groupMeta.value = new Map(groupMeta.value)
       }
     }
@@ -1127,10 +1128,14 @@ export const useSessionStore = defineStore('session', () => {
     for (let i = 0; i < local.length; i++) {
       if (fetchedIds.has(String(local[i].id))) { firstFetchedIndex = i; break }
     }
+    // 仅剔除「乐观用户消息被 REST 回显替换」；内容相同不足以判定同一条，
+    // 否则分页加载过的重复指令历史会被静默删掉。与 tail 分支保持同一判定。
     const earlier = firstFetchedIndex > 0
-      ? local.slice(0, firstFetchedIndex).filter(m => !newlyFetchedUsers.some(fetched =>
-        fetched.content === m.content
-        && JSON.stringify(fetched.images ?? []) === JSON.stringify(m.images ?? [])))
+      ? local.slice(0, firstFetchedIndex).filter(m => !(m.role === 'user'
+        && isOptimisticUserId(String(m.id))
+        && newlyFetchedUsers.some(fetched =>
+          fetched.content === m.content
+          && JSON.stringify(fetched.images ?? []) === JSON.stringify(m.images ?? []))))
       : []
     const tail: ChatMessage[] = []
     for (let i = local.length - 1; i >= 0; i--) {
@@ -1765,6 +1770,8 @@ export const useSessionStore = defineStore('session', () => {
     streamingAssistantMessageIds.clear()
     filteredToolCallIds.clear()
     viewingSideTaskId.value = null
+    // 登出/换号：清掉持久化的最后查看会话，避免 B 账号冷启动去 fetch A 的会话
+    forgetLastSession()
   }
 
   return {

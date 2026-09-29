@@ -202,7 +202,12 @@ export class FeishuMessageService {
     await this.repository.completeInboundMessage(accountId, messageId);
   }
 
-  async recordGroupMessage(accountId: string, context: FeishuInboundContext, isMention: boolean): Promise<number> {
+  async recordGroupMessage(
+    accountId: string,
+    context: FeishuInboundContext,
+    isMention: boolean,
+    options?: { enrichPending?: boolean },
+  ): Promise<number> {
     if (context.chatId == null || context.senderId == null) throw new Error('Feishu group message is missing chat or sender');
     return this.repository.appendGroupMessage({
       appId: accountId, chatId: context.chatId, senderOpenId: context.senderId,
@@ -211,10 +216,11 @@ export class FeishuMessageService {
       isMention, msgType: context.messageType ?? 'text',
       fileKey: context.fileKey ?? context.imageKey ?? null,
       fileName: context.fileName ?? null,
+      enrichPending: options?.enrichPending ?? false,
     });
   }
 
-  /** 回填群消息行内容（图片预下载完成后的本地路径引用等）。 */
+  /** 回填群消息行内容（图片预下载完成后的本地路径引用等），并清除 enrich_pending。 */
   async updateGroupMessageContent(logId: number, content: string): Promise<void> {
     await this.repository.updateGroupMessageContent(logId, content);
   }
@@ -222,6 +228,11 @@ export class FeishuMessageService {
   /** 回填群消息行发送人显示名。 */
   async updateGroupMessageSenderName(logId: number, senderName: string): Promise<void> {
     await this.repository.updateGroupMessageSenderName(logId, senderName);
+  }
+
+  /** 富化收尾：即使无内容回填也要清 enrich_pending，否则水位线永远停在该行之前。 */
+  async markGroupMessageEnriched(logId: number): Promise<void> {
+    await this.repository.markGroupMessageEnriched(logId);
   }
 
   async buildGroupContext(accountId: string, context: FeishuInboundContext): Promise<FeishuGroupContext> {
@@ -232,18 +243,49 @@ export class FeishuMessageService {
     // 已注入的历史随上一轮 USER 消息保存在会话上下文中，重复注入只会浪费 token；
     // @ 机器人的消息本身已作为会话消息保存，同样无需注入。
     // 消息中的文件/图片由 Agent 按需通过 feishu_download_file 工具懒加载，占位文本携带消息 ID。
-    const watermark = conversation.lastContextLogId ?? 0;
-    const filtered = messages.filter((message) =>
-      !message.isMention && message.messageId !== context.messageId && (message.id ?? 0) > watermark);
+    const watermark = await this.resolveContextWatermark(accountId, conversation, threadId);
+    // 未富化完成（图片/文件/卡片占位）的行不参与注入与水位线推进：
+    // 否则后续触发会把水位线推过占位行，回填后的真实内容永远进不了上下文。
+    const isPending = (message: FeishuGroupMessage) => message.enrichPending === true || Number(message.enrichPending ?? 0) === 1;
+    // 注入与水位线共用同一截断点：遇未富化行即停，不跳洞。
+    // 跳过占位行会把它永久留在水位线之下或之上（回填后进不了上下文 / 就绪消息重复注入）。
+    const filtered: FeishuGroupMessage[] = [];
+    let maxLogId = watermark;
+    for (const message of messages) {
+      const id = message.id ?? 0;
+      if (id <= watermark) continue;
+      if (isPending(message)) break;
+      maxLogId = Math.max(maxLogId, id);
+      if (message.isMention || message.messageId === context.messageId) continue;
+      filtered.push(message);
+    }
     // 被窗口淘汰（超出条数上限或时间窗）且从未注入过的更早消息：摘要后一次性注入，避免上下文断层。
-    const overflowSection = await this.buildOverflowSummary(accountId, context, conversation, messages, threadId);
+    const overflowSection = await this.buildOverflowSummary(accountId, context, conversation, messages, threadId, watermark);
     const lines = filtered.map((message) => `[${formatGroupTime(message.createdAt)}] ${message.senderName}：${message.content ?? ''}`);
     const prompt = [...(overflowSection != null ? [overflowSection] : []), ...lines].join('\n');
-    const maxLogId = messages.reduce((acc, message) => Math.max(acc, message.id ?? 0), watermark);
     if (maxLogId > watermark) {
-      await this.repository.updateGroupContextWatermark(accountId, context.chatId!, maxLogId);
+      await this.persistContextWatermark(accountId, conversation, threadId, maxLogId);
     }
     return { conversation, messages: filtered, prompt };
+  }
+
+  /** 话题水位线独立于群级水位线，避免非话题触发把话题消息从增量注入中永久跳过（反向同理）。 */
+  private async resolveContextWatermark(
+    accountId: string, conversation: FeishuConversation, threadId: string | null,
+  ): Promise<number> {
+    if (threadId == null) return conversation.lastContextLogId ?? 0;
+    const thread = await this.repository.findThreadSession(accountId, threadId).catch(() => null);
+    return thread?.lastContextLogId ?? 0;
+  }
+
+  private async persistContextWatermark(
+    accountId: string, conversation: FeishuConversation, threadId: string | null, logId: number,
+  ): Promise<void> {
+    if (threadId == null) {
+      await this.repository.updateGroupContextWatermark(accountId, conversation.chatId, logId);
+      return;
+    }
+    await this.repository.updateThreadContextWatermark(accountId, threadId, logId);
   }
 
   /** 溢出摘要：取注入窗口边界之前、水位线之后的未注入普通消息（最多 overflowWindow 条，不限时间），
@@ -251,11 +293,10 @@ export class FeishuMessageService {
   private async buildOverflowSummary(
     accountId: string, context: FeishuInboundContext,
     conversation: FeishuConversation, recentMessages: FeishuGroupMessage[],
-    threadId: string | null = null,
+    threadId: string | null = null, watermark = 0,
   ): Promise<string | null> {
     if (this.summarizer == null || recentMessages.length === 0) return null;
     const chatId = context.chatId!;
-    const watermark = conversation.lastContextLogId ?? 0;
     const beforeId = Math.min(...recentMessages.map((message) => message.id ?? 0));
     const overflow = await this.repository.listOverflowGroupMessages(accountId, chatId, watermark, beforeId, this.overflowWindow, threadId);
     if (overflow.length === 0) return null;
