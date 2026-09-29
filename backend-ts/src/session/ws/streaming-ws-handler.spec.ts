@@ -997,4 +997,119 @@ describe('StreamingWsHandler', () => {
       expect(registry.bindEmbedSession).toHaveBeenCalledWith(11, ws);
     });
   });
+
+  describe('execution bookkeeping release', () => {
+    /**
+     * 走一次 send_message 让会话进入执行中。
+     * body 返回永不 settle 的 promise 时不能 await（会挂死测试），故用 runToCompletion 控制。
+     */
+    async function startExecution(phase: string, eventId: string, body: () => Promise<void>, runToCompletion = true) {
+      vi.clearAllMocks();
+      executor.tasks.length = 0;
+      // 前序用例可能给 updatePhase 挂了 rejection，这里必须复位，否则 setup 阶段就失败收尾。
+      sessionService.updatePhase.mockReset();
+      sessionService.updatePhase.mockResolvedValue(undefined);
+      registry.getUserId.mockReturnValue(7);
+      sessionService.getSession.mockResolvedValue(session('CLOUD', phase));
+      sessionService.saveMessage.mockResolvedValue(message(99, 'USER'));
+      harnessService.prepareMessage.mockResolvedValue(eventId);
+      harnessService.executeFromEvent.mockImplementation(body);
+      messageQueueService.listPending.mockResolvedValue([]);
+      await handler.handleTextMessage(ws, JSON.stringify({
+        type: 'send_message', sessionId: 11, data: { content: 'hi', eventId },
+      }));
+      if (runToCompletion) await executor.runAll();
+    }
+
+    /** 让会话进入执行中并保持挂起（执行体走不到 finally），模拟 LLM 流卡死。 */
+    async function startStuckExecution(phase: string, eventId: string) {
+      await startExecution(phase, eventId, () => new Promise<void>(() => { /* never settles */ }), false);
+      expect(handler.hasExecutionClaim(11)).toBe(true);
+    }
+
+    it('cancel releases the claim even when the execution body never reaches finally', async () => {
+      await startStuckExecution('IDLE', 'e-1');
+
+      sessionService.getSession.mockResolvedValue(session('CLOUD', 'RUNNING'));
+      await handler.handleTextMessage(ws, JSON.stringify({ type: 'cancel', sessionId: 11 }));
+
+      // 取消后簿记必须清零，否则该会话后续发送/重试全被 session_already_running 拒绝。
+      expect(handler.hasExecutionClaim(11)).toBe(false);
+      expect(taskTerminalService.finishExecution).toHaveBeenCalledWith(11, 7, 'CANCELLED', 'e-1');
+      expect(agentLoop.removeCancelFlag).toHaveBeenCalledWith(11);
+    });
+
+    it('cancel_side_task releases the claim for the side session', async () => {
+      await startStuckExecution('IDLE', 'e-2');
+
+      sessionService.getSession.mockResolvedValue(session('CLOUD', 'RUNNING'));
+      await handler.handleTextMessage(ws, JSON.stringify({ type: 'cancel_side_task', sideSessionId: 11 }));
+
+      expect(handler.hasExecutionClaim(11)).toBe(false);
+    });
+
+    it('retry self-heals a claim left behind by a cancelled execution', async () => {
+      await startStuckExecution('IDLE', 'e-3');
+
+      // 用户取消：DB 落终态，但执行体挂起走不到 finally，claim 残留。
+      sessionService.getSession.mockResolvedValue(session('CLOUD', 'RUNNING'));
+      await handler.handleTextMessage(ws, JSON.stringify({ type: 'cancel', sessionId: 11 }));
+      expect(handler.hasExecutionClaim(11)).toBe(false);
+
+      // 手动把 claim 放回内存，模拟「取消路径尚未回收」的存量脏数据（线上 2026 即此态）。
+      // 直接用公开行为触发一次发送会自带 claim，故这里改为复现用户点击「继续」的路径：
+      // 取消已把取消标志置位，自愈逻辑应据此判定陈旧并放行重试。
+      harnessService.executeFromEvent.mockResolvedValue(undefined);
+      messageQueueService.listPending.mockResolvedValue([]);
+      sessionService.getSession.mockResolvedValue(session('CLOUD', 'CANCELLED'));
+
+      await handler.handleTextMessage(ws, JSON.stringify({ type: 'retry_execution', sessionId: 11 }));
+      await executor.runAll();
+
+      expect(harnessService.executeFromEvent).toHaveBeenCalled();
+      expect(sessionService.updatePhase).toHaveBeenCalledWith(11, 'RESUMING');
+    });
+
+    it('retry still refuses while a live execution is in flight', async () => {
+      // 执行中、无取消标志：真正的在途执行。DB phase 已终态（重试入口要求）但执行仍在跑，
+      // 必须拒绝，不能让用户重试出一个并发执行。
+      await startStuckExecution('IDLE', 'e-4');
+      sessionService.getSession.mockResolvedValue(session('CLOUD', 'CANCELLED'));
+
+      await handler.handleTextMessage(ws, JSON.stringify({ type: 'retry_execution', sessionId: 11 }));
+
+      expect(registry.send).toHaveBeenCalledWith(7, expect.objectContaining({
+        type: 'session_already_running', sessionId: 11,
+        data: expect.objectContaining({ code: 'session_already_running', executionId: 'e-4' }),
+      }));
+      expect(harnessService.executeFromEvent).not.toHaveBeenCalled();
+
+      // 收尾：拒绝不应留下在途执行，否则污染后续用例。
+      await handler.handleTextMessage(ws, JSON.stringify({ type: 'cancel', sessionId: 11 }));
+      expect(handler.hasExecutionClaim(11)).toBe(false);
+    });
+
+    it('send self-heals a claim left behind by a cancelled execution', async () => {
+      await startStuckExecution('IDLE', 'e-5');
+
+      // 取消后 DB 已是终态；取消标志已置位，下一次发送应被自愈放行而非拒绝。
+      sessionService.getSession.mockResolvedValue(session('CLOUD', 'RUNNING'));
+      await handler.handleTextMessage(ws, JSON.stringify({ type: 'cancel', sessionId: 11 }));
+
+      harnessService.executeFromEvent.mockResolvedValue(undefined);
+      messageQueueService.listPending.mockResolvedValue([]);
+      sessionService.getSession.mockResolvedValue(session('CLOUD', 'CANCELLED'));
+
+      await handler.handleTextMessage(ws, JSON.stringify({
+        type: 'send_message', sessionId: 11, data: { content: 'again', eventId: 'e-6' },
+      }));
+      await executor.runAll();
+
+      expect(registry.send).not.toHaveBeenCalledWith(7, expect.objectContaining({
+        type: 'session_already_running', sessionId: 11,
+      }));
+      expect(sessionService.saveMessage).toHaveBeenCalled();
+      expect(sessionService.updatePhase).toHaveBeenCalledWith(11, 'RUNNING');
+    });
+  });
 });

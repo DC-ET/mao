@@ -403,6 +403,10 @@ export class StreamingWsHandler {
         return;
       }
     }
+    if (!claimAlreadyHeld && this.hasStaleExecutionClaim(sessionId)) {
+      console.warn(`Clearing stale execution claim for session ${sessionId} before send`);
+      this.releaseExecutionBookkeeping(sessionId);
+    }
     if (!claimAlreadyHeld && this.executionClaims.has(sessionId)) {
       this.sendSessionAlreadyRunning(userId, sessionId);
       return;
@@ -656,6 +660,10 @@ export class StreamingWsHandler {
         this.deps.registry.send(userId, wsEvent('error', sessionId, { message: '单条消息最多支持 10 张图片' }));
         return;
       }
+    }
+    if (this.hasStaleExecutionClaim(sessionId)) {
+      console.warn(`Clearing stale execution claim for session ${sessionId} before edit-and-resend`);
+      this.releaseExecutionBookkeeping(sessionId);
     }
     if (this.executionClaims.has(sessionId)) {
       this.sendSessionAlreadyRunning(userId, sessionId);
@@ -939,6 +947,9 @@ export class StreamingWsHandler {
     const executionId = this.runningExecutionIds.get(sideSessionId) ?? '';
     this.abortRunningExecution(sideSessionId, userId);
     await this.finishCancelledSession(sideSessionId, userId, executionId);
+    // 与 handleCancel 一致：DB 终态之外必须回收内存簿记，否则边路会话的「继续」按钮
+    // 会被 already_running 永久拒绝。
+    this.releaseExecutionBookkeeping(sideSessionId, { future: this.runningTasks.get(sideSessionId) });
   }
 
   /**
@@ -959,6 +970,13 @@ export class StreamingWsHandler {
     }
     // 入口保证为终态（COMPLETED/FAILED/CANCELLED），供异常路径收敛回该状态。
     const entryPhase: string = session.phase!;
+    // 陈旧占位自愈：claim 在但没有任何在途执行 future，说明上一次执行的 finally 未跑到
+    // （取消时 LLM 流卡死即此类）。此时不能拒绝用户——那会让会话除重启服务外永远无法恢复，
+    // 必须先回收簿记再放行重试。
+    if (this.hasStaleExecutionClaim(sessionId)) {
+      console.warn(`Clearing stale execution claim for session ${sessionId} before retry`);
+      this.releaseExecutionBookkeeping(sessionId);
+    }
     if (this.executionClaims.has(sessionId)) {
       this.sendSessionAlreadyRunning(userId, sessionId);
       return;
@@ -1162,11 +1180,17 @@ export class StreamingWsHandler {
       if (inFlight) {
         await this.finishCancelledSession(sessionId, userId, this.runningExecutionIds.get(sessionId) ?? randomUUID());
       }
+      // 注意：此处不能回收簿记。pendingCancels 正是用来让「尚未注册取消标志」的在途提交
+      // 在恢复后自行收敛的（见 takePendingCancel），提前删掉会让取消被静默丢弃。
       return;
     }
     const executionId = this.runningExecutionIds.get(sessionId) ?? '';
     this.abortRunningExecution(sessionId, userId);
     await this.finishCancelledSession(sessionId, userId, executionId);
+    // 取消标志已注册，执行体理论上会靠自己的 finally 回收簿记；但它可能因 LLM 流卡死
+    // 永远走不到 finally。若不在此主动回收，claim/future 会永久残留，该会话后续的发送与
+    // 重试全被 session_already_running 拒绝（只能重启服务恢复）。
+    this.releaseExecutionBookkeeping(sessionId, { future: this.runningTasks.get(sessionId) });
   }
 
   private async handleEnqueueMessage(userId: number, root: Record<string, unknown>): Promise<void> {
@@ -1203,6 +1227,13 @@ export class StreamingWsHandler {
           if (!(await this.awaitExecutionRelease(sessionId, 30_000))) {
             this.deps.registry.send(userId, wsEvent('error', sessionId, { message: '旧任务取消超时，消息仍保留在队列中' }));
             return;
+          }
+          // awaitExecutionRelease 超时返回时簿记可能仍未回收；此处与其它入口对齐做陈旧占位自愈，
+          // 否则插队消息会被已失效的 claim 挡住，队列看起来永远卡住。
+          // 刚执行过 abortRunningExecution，取消标志必然已置位，故只按标志判定即可。
+          if (this.hasStaleExecutionClaim(sessionId)) {
+            console.warn(`Clearing stale execution claim for session ${sessionId} before queue insert`);
+            this.releaseExecutionBookkeeping(sessionId);
           }
           if (this.executionClaims.has(sessionId)) {
             this.sendSessionAlreadyRunning(userId, sessionId);
@@ -1554,6 +1585,47 @@ export class StreamingWsHandler {
     this.deps.askUserQuestionsRegistry.failAllForSession(sessionId);
     void this.abortSubagentChildren(sessionId);
     void userId;
+  }
+
+  /**
+   * 回收会话在 WS handler 内存中的执行簿记。
+   *
+   * 正常路径由执行体自己的 finally 负责；但取消路径只改 DB phase，若执行体因 LLM 流卡死
+   * 等原因走不到 finally，这些字段就永久残留，此后该会话的所有发送/重试都会被
+   * `session_already_running` 拒绝（只能重启服务恢复）。取消与陈旧占位自愈都必须走这里。
+   *
+   * `runningTasks` 只在 future 确实是当前记录到的那一个时才摘除：并发执行被后来的
+   * 提交替换时，旧执行体的 finally 不能把新执行的 future 一起删掉。
+   */
+  private releaseExecutionBookkeeping(
+    sessionId: number,
+    options: { future?: unknown } = {},
+  ): void {
+    if (options.future === undefined || this.runningTasks.get(sessionId) === options.future) {
+      this.runningTasks.delete(sessionId);
+    }
+    this.runningExecutionIds.delete(sessionId);
+    this.executionClaims.delete(sessionId);
+    this.cancelFlags.delete(sessionId);
+    this.pendingCancels.delete(sessionId);
+    this.autoConsumingSessionIds.delete(sessionId);
+    this.deps.agentLoop.removeCancelFlag(sessionId);
+  }
+
+  /**
+   * 判定 executionClaims 是否为陈旧占位：取消标志已置位。
+   *
+   * 用户点「停止」后 abortRunningExecution 会置位 cancel flag。正常执行体随后会靠自己的
+   * finally 回收簿记；若它因 LLM 流卡死等原因走不到 finally，claim/future 就永久残留，
+   * 此后该会话的发送与重试全被 `session_already_running` 拒绝（只能重启服务恢复）。
+   *
+   * 此时 claim 已不再对应任何合法执行，应自愈回收而非拒绝用户。反过来，执行中的会话
+   * 没有取消标志，判定为 false，重试照常被拒绝——DB phase 不作为判据：它由执行体自己写，
+   * 在途执行的 RUNNING 与已取消的 CANCELLED 都可能出现在这个位置。
+   */
+  private hasStaleExecutionClaim(sessionId: number): boolean {
+    if (!this.executionClaims.has(sessionId)) return false;
+    return this.cancelFlags.get(sessionId)?.get() === true;
   }
 
   private async abortSubagentChildren(parentSessionId: number): Promise<void> {
