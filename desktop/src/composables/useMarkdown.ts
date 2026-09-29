@@ -4,6 +4,7 @@ import { colorizeCode } from '../utils/monaco-colorize'
 import { monacoLangFromFence } from '../utils/monaco-lang'
 import { isExternalMarkdownLink } from '../utils/markdown-link'
 import { ensureCodeCopyDelegation } from '../utils/codeCopy'
+import { ensureExternalLinkDelegation } from '../utils/externalLink'
 
 function escapeHtml(text: string): string {
   return text
@@ -66,6 +67,7 @@ export async function renderMarkdown(
 ): Promise<string> {
   if (!text) return ''
   ensureCodeCopyDelegation()
+  ensureExternalLinkDelegation()
   const result = await createMarked(isDark).parse(text)
   if (typeof result !== 'string') return escapeHtml(text)
   // 统一消毒：防御各 renderer 之外的残留注入面
@@ -75,6 +77,7 @@ export async function renderMarkdown(
 export function renderInlineMarkdown(text: string): string {
   if (!text) return ''
   ensureCodeCopyDelegation()
+  ensureExternalLinkDelegation()
   const result = new Marked({ breaks: false }).parseInline(text)
   if (typeof result !== 'string') return escapeHtml(text)
   return DOMPurify.sanitize(result, SANITIZE_OPTIONS)

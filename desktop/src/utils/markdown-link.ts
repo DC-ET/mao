@@ -57,3 +57,25 @@ export function resolveMarkdownLink(baseFilePath: string, href: string): string 
 export function isExternalMarkdownLink(href: string): boolean {
   return /^(https?:\/\/|mailto:)/i.test(href.trim())
 }
+
+/** 由 document 委托接管、交给系统浏览器打开的协议。blob: 由本地下载逻辑自行管理，不在此列。 */
+const EXTERNAL_PROTOCOL_RE = /^(https?|mailto):/i
+
+/** 点击事件命中的锚点：外链内部可能包含 <code>、图片等子元素，要向上找到 <a>。 */
+function findAnchor(target: EventTarget | null): HTMLAnchorElement | null {
+  const el = target as HTMLElement | null
+  if (!el?.closest) return null
+  return el.closest('a') as HTMLAnchorElement | null
+}
+
+/**
+ * 取出点击目标对应的外链 URL；非外链点击（站内相对链接、锚点、
+ * javascript:/blob: 等协议、无锚点）返回 null。
+ * href 需 trim 后判空：空 href 的 <a> 点了也不该触发任何跳转。
+ */
+export function resolveExternalLinkHref(target: EventTarget | null): string | null {
+  const href = findAnchor(target)?.getAttribute('href')
+  if (!href) return null
+  const trimmed = href.trim()
+  return trimmed && EXTERNAL_PROTOCOL_RE.test(trimmed) ? trimmed : null
+}

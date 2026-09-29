@@ -217,6 +217,8 @@ async function handleMarkdownClick(e: MouseEvent) {
   e.preventDefault()
 
   if (isExternalMarkdownLink(href)) {
+    // 兜底路径：正常情况下 document 级 externalLink 委托已在捕获阶段接管外链
+    // （openExternalUrl），这里覆盖容器先于 document 收到点击的极端时序
     await openExternalUrl(href)
     return
   }

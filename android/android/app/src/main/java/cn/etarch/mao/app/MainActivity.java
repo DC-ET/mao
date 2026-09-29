@@ -32,6 +32,8 @@ import com.getcapacitor.BridgeActivity;
 /**
  * 主 Activity（Capacitor 壳）：
  * - 远程加载 https://mao.etarch.cn，AppUpdatePlugin OTA 升级
+ * - OpenUrlPlugin 用 ACTION_VIEW 把外链交给系统浏览器（WebView 不开多窗口，
+ *   页面里 target="_blank" 的 window.open 会失败，见 utils/externalLink.ts）
  * - 首屏加载走标准 HTTP 缓存（弱网复用已缓存资源），完成判定以「Vue 真正渲染」为准，
  *   8s 未完成显示重试入口（重试绕过缓存重拉入口文档）
  * - 回前台 WebView 无响应 / 页面空白兜底：onStart 延迟探测 evaluateJavascript，
@@ -109,6 +111,7 @@ public class MainActivity extends BridgeActivity {
         SplashScreen.installSplashScreen(this);
 
         registerPlugin(AppUpdatePlugin.class);
+        registerPlugin(OpenUrlPlugin.class);
         super.onCreate(savedInstanceState);
 
         // BridgeActivity 会 setTheme(NoActionBar)；再显式藏掉 ActionBar，杜绝标题「Mao」。

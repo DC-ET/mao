@@ -13,6 +13,12 @@
 
 安卓专用 UI 在 `desktop/` 中用 `android-capacitor` / `Capacitor.isNativePlatform()` 守卫。
 
+## 外链打开
+
+App 内点击 http/https/mailto 链接（助手回复、文件预览、下载对话框等）由 `desktop/src/utils/externalLink.ts` 在 document 级统一拦截，经 `openExternalUrl()` 落到原生 `OpenUrl` 插件，用 `ACTION_VIEW` 交给系统浏览器或对应 App。
+
+原因：WebView 未开启多窗口，页面里 `target="_blank"` 的 `window.open` 必然失败，不接管时点击无任何反应。工作区内文件相对链接、锚点跳转不受影响。若设备上没有可处理该链接的应用会给出提示。新增外链协议需同步 `OpenUrlPlugin.openUrl` 的白名单与前端 `EXTERNAL_PROTOCOL_RE`。
+
 ## 云端终端（0.0.97 起）
 
 CLOUD 任务可用云端终端（需 `terminal:use` 权限），安卓端额外提供底部虚拟按键条（Esc / Tab / Ctrl 粘滞 / 方向键 / Ctrl+C / Ctrl+D / 粘贴），软键盘弹出时面板自动避让。属纯前端能力，随 Web 部署生效，无需打 APK。LOCAL 任务的本地终端在安卓上仍不可用。详见 [desktop.md](desktop.md#终端)。
