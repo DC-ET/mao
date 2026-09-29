@@ -579,14 +579,31 @@ test.describe('Task Group Rename', () => {
       .toBeVisible({ timeout: 10_000 })
   })
 
-  test('should not offer rename for non-renameable groups', async ({ page }) => {
+  test('should offer rename for system bucket groups (方案 A)', async ({ page }) => {
     await loginDesktop(page)
     await page.goto('/')
 
-    // 种子里 3 条无 workspace 的 LOCAL 会话落入「未设置」分组（不可改名）：右键不应出现「重命名」
+    // 种子里无 workspace 的 LOCAL 会话落入「未设置」分组；方案 A 下系统桶也可改名
     const unassignedHeader = page.locator('.session-group .group-header').filter({ hasText: '未设置' }).first()
-    if (await unassignedHeader.count() === 0) return // 无不可改名字分组可见时跳过
+    if (await unassignedHeader.count() === 0) return // 无系统桶分组可见时跳过
     await unassignedHeader.click({ button: 'right' })
-    await expect(page.locator('.task-context-menu .context-menu-item', { hasText: '重命名' })).toHaveCount(0)
+    const menuItem = page.locator('.task-context-menu .context-menu-item', { hasText: '重命名' })
+    await expect(menuItem).toBeVisible()
+    await menuItem.click()
+
+    const renameInput = page.locator('.group-header .group-rename-input')
+    await expect(renameInput).toBeVisible()
+    await renameInput.fill('杂项')
+    await renameInput.press('Enter')
+    await expect(page.locator('.session-group .group-header').filter({ hasText: '杂项' }).first()).toBeVisible()
+
+    // 重置恢复「未设置」
+    const renamed = page.locator('.session-group .group-header').filter({ hasText: '杂项' }).first()
+    await renamed.click({ button: 'right' })
+    const resetItem = page.locator('.task-context-menu .context-menu-item', { hasText: '重置名称' })
+    await expect(resetItem).toBeVisible()
+    await resetItem.click()
+    await expect(page.locator('.session-group .group-header').filter({ hasText: '未设置' }).first())
+      .toBeVisible({ timeout: 10_000 })
   })
 })

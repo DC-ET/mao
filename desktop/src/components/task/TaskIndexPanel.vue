@@ -661,11 +661,13 @@ function hasGroupAlias(key: string): boolean {
   return !!groupAliases.value[key]?.trim()
 }
 
-/** 存在别名时 tooltip 提示真实推导名，避免用户忘记别名对应的目录。 */
+/** 存在别名时 tooltip 提示真实推导名，避免用户忘记别名对应的目录/渠道身份。 */
 function groupAliasTooltip(key: string): string {
   const alias = groupAliases.value[key]?.trim()
   if (!alias) return ''
-  return `${alias}（${resolveGroupLabel(key, {})}）`
+  // 推导名需带 group 内 session：飞书/钉钉标签依赖 agentName，缺省会显示「未知 Agent」
+  const group = groupedSessions.value.find((g) => g.key === key)
+  return `${alias}（${resolveGroupLabel(key, {}, group?.sessions?.[0])}）`
 }
 
 function openGroupContextMenu(e: MouseEvent, key: string) {
@@ -705,8 +707,10 @@ function startGroupRename(key: string) {
   // 顺手关掉可能打开的会话右键菜单，避免两个浮层叠加
   closeContextMenu()
   renamingGroupKey.value = key
-  // 预填当前展示名（别名优先，无别名则推导名），与会话重命名预填标题的交互一致
-  renamingValue.value = resolveGroupLabel(key, groupAliases.value)
+  // 预填当前展示名（别名优先，无别名则推导名），与会话重命名预填标题的交互一致。
+  // 优先取 groupedSessions 的 label：与分组头同源，且飞书/钉钉推导名带 agentName。
+  const group = groupedSessions.value.find((g) => g.key === key)
+  renamingValue.value = group?.label ?? resolveGroupLabel(key, groupAliases.value)
   nextTick(() => {
     if (groupRenameInputEl) {
       groupRenameInputEl.focus()

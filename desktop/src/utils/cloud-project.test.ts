@@ -78,19 +78,23 @@ describe('isGroupRenameable', () => {
     expect(isGroupRenameable('CLOUD:/opt/mao-data/workspace/2/projects/mao')).toBe(true)
   })
 
-  it('rejects system buckets and agent-identity groups', () => {
-    expect(isGroupRenameable('LOCAL:未设置')).toBe(false)
-    expect(isGroupRenameable('CLOUD:临时工作区')).toBe(false)
-    expect(isGroupRenameable('FEISHU_PRIVATE:7')).toBe(false)
-    expect(isGroupRenameable('FEISHU_GROUP:/ws/feishu-chat/1/oc_a')).toBe(false)
-    expect(isGroupRenameable('DINGTALK_PRIVATE:7')).toBe(false)
-    expect(isGroupRenameable('DINGTALK_GROUP:/ws/dingtalk-chat/1/p2p-x')).toBe(false)
-    expect(isGroupRenameable('UNKNOWN_KEY')).toBe(false)
+  it('allows system buckets and channel identity groups (方案 A 全部放开)', () => {
+    expect(isGroupRenameable('LOCAL:未设置')).toBe(true)
+    expect(isGroupRenameable('CLOUD:临时工作区')).toBe(true)
+    expect(isGroupRenameable('FEISHU_PRIVATE:7')).toBe(true)
+    expect(isGroupRenameable('FEISHU_GROUP:/ws/feishu-chat/1/oc_a')).toBe(true)
+    expect(isGroupRenameable('DINGTALK_PRIVATE:7')).toBe(true)
+    expect(isGroupRenameable('DINGTALK_GROUP:/ws/dingtalk-chat/1/p2p-x')).toBe(true)
+  })
+
+  it('rejects only empty keys', () => {
+    expect(isGroupRenameable('')).toBe(false)
+    expect(isGroupRenameable('   ')).toBe(false)
   })
 })
 
 describe('resolveGroupLabel', () => {
-  it('prefers alias over derived label for renameable groups', () => {
+  it('prefers alias over derived label for workspace groups', () => {
     expect(resolveGroupLabel('LOCAL:D:\\projects\\aiprojects', { 'LOCAL:D:\\projects\\aiprojects': 'AI 项目' }))
       .toBe('AI 项目')
     expect(resolveGroupLabel('CLOUD:/opt/1/projects/mao', { 'CLOUD:/opt/1/projects/mao': '主项目' }))
@@ -103,15 +107,30 @@ describe('resolveGroupLabel', () => {
     expect(resolveGroupLabel('CLOUD:/opt/1/projects/mao', { 'CLOUD:/opt/1/projects/mao': '  ' })).toBe('mao')
   })
 
-  it('ignores alias for non-renameable groups', () => {
-    expect(resolveGroupLabel('CLOUD:临时工作区', { 'CLOUD:临时工作区': '别名' })).toBe('临时工作区')
-    expect(resolveGroupLabel('LOCAL:未设置', { 'LOCAL:未设置': '别名' })).toBe('未设置')
+  it('prefers alias for system buckets and channel groups (方案 A)', () => {
+    expect(resolveGroupLabel('CLOUD:临时工作区', { 'CLOUD:临时工作区': '别名' })).toBe('别名')
+    expect(resolveGroupLabel('LOCAL:未设置', { 'LOCAL:未设置': '别名' })).toBe('别名')
     expect(
       resolveGroupLabel('FEISHU_PRIVATE:7', { 'FEISHU_PRIVATE:7': '别名' }, { agentName: 'Coder', title: 't' })
-    ).toBe('Coder')
+    ).toBe('别名')
+    expect(
+      resolveGroupLabel('FEISHU_GROUP:/ws/feishu-chat/1/oc_a', { 'FEISHU_GROUP:/ws/feishu-chat/1/oc_a': '告警群' }, { agentName: 'Coder', title: 't' })
+    ).toBe('告警群')
+    expect(
+      resolveGroupLabel('DINGTALK_PRIVATE:7', { 'DINGTALK_PRIVATE:7': '报销助手' }, { agentName: 'Coder', title: 't' })
+    ).toBe('报销助手')
   })
 
-  it('keeps feishu group composite label', () => {
+  it('falls back to derived label for channel groups without alias', () => {
+    expect(
+      resolveGroupLabel('FEISHU_PRIVATE:7', {}, { agentName: 'Coder', title: 't' })
+    ).toBe('Coder')
+    expect(
+      resolveGroupLabel('CLOUD:临时工作区', { 'CLOUD:临时工作区': '  ' })
+    ).toBe('临时工作区')
+  })
+
+  it('keeps feishu group composite label as fallback', () => {
     expect(
       resolveGroupLabel(
         'FEISHU_GROUP:/opt/mao-data/workspace/feishu-chat/1/oc_abc',

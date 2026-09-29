@@ -1,6 +1,6 @@
 # 任务分组右键重命名方案
 
-> 状态：设计完成，待实现
+> 状态：已实现（2026-09-28 起按方案 A 全部放开可改名范围，含系统桶与飞书/钉钉分组；见 `2026-09-28-task-group-rename-unlock-all-design.md`）
 > 关联代码：`desktop/src/components/task/TaskIndexPanel.vue`、`desktop/src/stores/session.ts`、`desktop/src/composables/useTaskPanelPrefs.ts`、`desktop/src/utils/cloud-project.ts`、`backend-ts/src/preference/*`、`shared/contracts/src/preference.ts`、`backend-ts/db/migration/V041__add_user_task_panel_preference.sql`
 
 ## 1. 背景与目标

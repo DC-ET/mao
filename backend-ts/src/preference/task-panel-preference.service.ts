@@ -100,8 +100,8 @@ function normalize(state: TaskPanelPreferenceSaveState): {
 const GROUP_ALIAS_MAX_LENGTH = 50;
 
 /**
- * 归一化别名 map：值 trim、截断 50 字符、剔除空值；剔除不可改名分组（飞书/钉钉分组标签是
- * Agent 身份合成语义，LOCAL:未设置 / CLOUD:临时工作区 是系统语义桶）。
+ * 归一化别名 map：值 trim、截断 50 字符、剔除空 key/空值。
+ * 方案 A：全部分组（含系统桶与飞书/钉钉身份分组）均允许别名，不再按 key 类型过滤。
  */
 function normalizeAliases(values: Record<string, string> | null | undefined): Record<string, string> {
   if (values == null || typeof values !== 'object' || Array.isArray(values)) {
@@ -119,15 +119,9 @@ function normalizeAliases(values: Record<string, string> | null | undefined): Re
   return result;
 }
 
-/** 与前端 `isGroupRenameable`（desktop/src/utils/cloud-project.ts）保持同一规则。 */
+/** 与前端 `isGroupRenameable`（desktop/src/utils/cloud-project.ts）保持同一规则：方案 A 全部放开，仅拒绝空 key。 */
 export function isGroupRenameable(key: string): boolean {
-  if (key.startsWith('LOCAL:')) {
-    return key.substring('LOCAL:'.length) !== '未设置';
-  }
-  if (key.startsWith('CLOUD:')) {
-    return key !== 'CLOUD:临时工作区';
-  }
-  return false;
+  return key.trim().length > 0;
 }
 
 function dedupe(values: string[] | null | undefined): string[] {

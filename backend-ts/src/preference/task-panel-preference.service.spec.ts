@@ -129,26 +129,34 @@ describe('task-panel 别名归一化', () => {
   };
   const service = new UserTaskPanelPreferenceService(mapper);
 
-  it('saveTrimsTruncatesAndFiltersNonRenameableKeys', async () => {
+  it('saveTrimsTruncatesAndFiltersInvalidEntries', async () => {
     vi.mocked(mapper.findByUserId).mockResolvedValue(null);
     const saved = await service.save(10, {
       groupOrder: [],
       collapsedGroups: [],
       groupAliases: {
         'LOCAL:/ws/a': '  AI 项目  ',
-        'LOCAL:未设置': '不允许',
-        'CLOUD:临时工作区': '不允许',
-        'FEISHU_PRIVATE:7': '不允许',
-        'FEISHU_GROUP:/ws/f': '不允许',
-        'DINGTALK_PRIVATE:7': '不允许',
-        'DINGTALK_GROUP:/ws/d': '不允许',
+        // 方案 A：系统桶与渠道身份分组均允许别名
+        'LOCAL:未设置': '未设置桶',
+        'CLOUD:临时工作区': '临时桶',
+        'FEISHU_PRIVATE:7': '私聊助手',
+        'FEISHU_GROUP:/ws/f': '告警群',
+        'DINGTALK_PRIVATE:7': '钉钉助手',
+        'DINGTALK_GROUP:/ws/d': '项目群',
         'LOCAL:/ws/b': 'x'.repeat(60),
         '': '空 key',
+        '   ': '空白 key',
         'LOCAL:/ws/c': '   ',
       },
     });
     expect(saved.groupAliases).toEqual({
       'LOCAL:/ws/a': 'AI 项目',
+      'LOCAL:未设置': '未设置桶',
+      'CLOUD:临时工作区': '临时桶',
+      'FEISHU_PRIVATE:7': '私聊助手',
+      'FEISHU_GROUP:/ws/f': '告警群',
+      'DINGTALK_PRIVATE:7': '钉钉助手',
+      'DINGTALK_GROUP:/ws/d': '项目群',
       'LOCAL:/ws/b': 'x'.repeat(50),
     });
   });
@@ -221,13 +229,17 @@ describe('isGroupRenameable', () => {
     expect(isGroupRenameable('CLOUD:/opt/mao/2/projects/mao')).toBe(true);
   });
 
-  it('rejects system buckets and agent-identity groups', () => {
-    expect(isGroupRenameable('LOCAL:未设置')).toBe(false);
-    expect(isGroupRenameable('CLOUD:临时工作区')).toBe(false);
-    expect(isGroupRenameable('FEISHU_PRIVATE:7')).toBe(false);
-    expect(isGroupRenameable('FEISHU_GROUP:/ws/feishu-chat/1/oc_a')).toBe(false);
-    expect(isGroupRenameable('DINGTALK_PRIVATE:7')).toBe(false);
-    expect(isGroupRenameable('DINGTALK_GROUP:/ws/dingtalk-chat/1/p2p-x')).toBe(false);
-    expect(isGroupRenameable('WEIRD_KEY')).toBe(false);
+  it('allows system buckets and channel identity groups (方案 A 全部放开)', () => {
+    expect(isGroupRenameable('LOCAL:未设置')).toBe(true);
+    expect(isGroupRenameable('CLOUD:临时工作区')).toBe(true);
+    expect(isGroupRenameable('FEISHU_PRIVATE:7')).toBe(true);
+    expect(isGroupRenameable('FEISHU_GROUP:/ws/feishu-chat/1/oc_a')).toBe(true);
+    expect(isGroupRenameable('DINGTALK_PRIVATE:7')).toBe(true);
+    expect(isGroupRenameable('DINGTALK_GROUP:/ws/dingtalk-chat/1/p2p-x')).toBe(true);
+  });
+
+  it('rejects only empty keys', () => {
+    expect(isGroupRenameable('')).toBe(false);
+    expect(isGroupRenameable('   ')).toBe(false);
   });
 });

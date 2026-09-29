@@ -140,20 +140,17 @@ export function formatCloudGroupLabel(
   return key
 }
 
-/** 哪些分组 key 允许用户重命名：系统语义桶与 Agent 身份分组不允许（与后端 normalize 规则一致）。 */
+/**
+ * 哪些分组 key 允许用户重命名：方案 A 全部放开（含系统桶与飞书/钉钉身份分组）。
+ * 与后端 normalize 规则一致；空 key 无意义仍拒绝。
+ */
 export function isGroupRenameable(key: string): boolean {
-  if (key.startsWith('LOCAL:')) {
-    return key.substring('LOCAL:'.length) !== '未设置'
-  }
-  if (key.startsWith('CLOUD:')) {
-    return key !== 'CLOUD:临时工作区'
-  }
-  return false
+  return key.trim().length > 0
 }
 
 /**
  * 分组显示名：用户别名 > 路径推导名。
- * 不可改名分组（LOCAL:未设置 / CLOUD:临时工作区 / FEISHU_* / DINGTALK_*）忽略别名，走既有推导逻辑。
+ * 全部分组均可设别名；无别名或别名为空白时回落推导名。
  */
 export function resolveGroupLabel(
   key: string,
