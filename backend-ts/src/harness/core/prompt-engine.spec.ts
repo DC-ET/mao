@@ -230,6 +230,54 @@ describe('PromptEngine', () => {
     logSpy.mockRestore();
   });
 
+  it('doesNotTreatCommandSyntaxDescriptionsAsRealCommands', async () => {
+    const logSpy = vi.spyOn(harnessLogModule, 'harnessLog').mockImplementation(() => undefined);
+    const getByUserIdAndName = vi.fn(async () => null);
+    const engine = new PromptEngine(
+      { hasSkill: () => false, getAllNames: () => [], getAllDocuments: () => [] } as never,
+      { getWorkspaceRoot: () => '/ws' } as never,
+      RuntimeDataResolver.forTest('/tmp/rt', '/tmp/home'),
+      { getByUserIdAndName } as never,
+      { getUserSkillDocuments: () => [] } as never,
+    );
+    const context = new AgentExecutionContext();
+    context.userId = 1;
+    // 文档里描述 marker 语法本身：占位名、被旧正则从中间截断出的假命令，一律原样保留、
+    // 不查表、不打日志。此前这些每轮 buildRequest 都刷 Command not found（线上曾全天 246 条）。
+    context.messages = [{
+      role: 'user',
+      content: '用法见 `#{...}#` 与 #{skill_name}#，空嵌套 #{#{}}#',
+    }];
+    const request = await engine.buildRequest(context);
+    expect(request.messages[1].content).toBe('用法见 `#{...}#` 与 #{skill_name}#，空嵌套 #{#{}}#');
+    expect(getByUserIdAndName).not.toHaveBeenCalled();
+    expect(logSpy).not.toHaveBeenCalledWith('warn', expect.stringContaining('Command not found'));
+    logSpy.mockRestore();
+  });
+
+  it('nestedCommandMarkerExpandsInnermostValidMarker', async () => {
+    // 命令名不含花括号，故 `#{#{review}#}#` 的外层无法成标记，正则落到内层唯一的合法
+    // 标记 `#{review}#` 并展开它。语义确定（每轮都从 DB 原文重放，不会二次展开），
+    // 也优于旧正则把 `#{review` 当命令名去查表后刷一条噪声。
+    const getByUserIdAndName = vi.fn(async (_uid: number, name: string) => (
+      name === 'review' ? { content: 'please review' } : null
+    ));
+    const engine = new PromptEngine(
+      { hasSkill: () => false, getAllNames: () => [], getAllDocuments: () => [] } as never,
+      { getWorkspaceRoot: () => '/ws' } as never,
+      RuntimeDataResolver.forTest('/tmp/rt', '/tmp/home'),
+      { getByUserIdAndName } as never,
+      { getUserSkillDocuments: () => [] } as never,
+    );
+    const context = new AgentExecutionContext();
+    context.userId = 1;
+    context.messages = [{ role: 'user', content: '嵌套写法 #{#{review}#}#' }];
+    const request = await engine.buildRequest(context);
+    expect(request.messages[1].content).toBe('嵌套写法 #{please review}#');
+    expect(getByUserIdAndName).toHaveBeenCalledTimes(1);
+    expect(getByUserIdAndName).toHaveBeenCalledWith(1, 'review');
+  });
+
   it('buildRequestInjectsSessionScopedPromptCacheKey', async () => {
     const engine = new PromptEngine(
       { hasSkill: () => false, getAllNames: () => [], getAllDocuments: () => [] } as never,

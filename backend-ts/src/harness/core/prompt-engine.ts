@@ -69,12 +69,21 @@ const EMBED_PAGE_AGENT_HINTS = `## 页面上下文与可见范围
 `;
 
 const SKILL_PATTERN = /\$\{([^}]+)\}\$/g;
-const COMMAND_PATTERN = /#\{([^}]+)\}#/g;
+// 命令名不含花括号与空白：既挡住 `#{#{}}#` 这类嵌套写法被从中间截断成假命令，
+// 也挡住 `${...}$` 之外的误匹配。文档里描述 marker 语法本身（如 `#{...}#`）的名字仍会
+// 匹配到，由 isBenignCommandName 统一放过，不查表也不打日志。
+const COMMAND_PATTERN = /#\{([^{}\s]+)\}#/g;
 const FILE_REF_PATTERN = /@\{([^}]+)\}@/g;
 const AGENTS_MD_MAX_LINES = 200;
 
 function isBenignTemplatePlaceholderName(name: string): boolean {
   return name === 'label';
+}
+
+/** 文档在描述 marker 语法本身时写的占位（如 `` `#{...}#` ``），不是真实命令名。 */
+const BENIGN_COMMAND_PLACEHOLDERS = new Set(['...', 'xxx', 'name', 'skill_name', 'command_name']);
+function isBenignCommandName(name: string): boolean {
+  return BENIGN_COMMAND_PLACEHOLDERS.has(name);
 }
 const AGENTS_MD_TRUNCATED_HINT = '\n> 当前仅展示前200行规则，读取AGENTS.md文件以了解更多规则。\n';
 
@@ -153,6 +162,9 @@ export class PromptEngine {
         const m = commandMatches[ci];
         if (m.index == null) continue;
         const commandName = m[1];
+        // 文档里对 marker 语法的字面描述（`` `#{...}#` ``、`#{skill_name}#`）不是命令：
+        // 原样保留且不查表、不打日志，否则每轮 buildRequest 都刷 Command not found。
+        if (isBenignCommandName(commandName)) continue;
         let command: { content?: string } | null = null;
         if (userId != null) {
           command = await this.userCommandService.getByUserIdAndName(userId, commandName);
