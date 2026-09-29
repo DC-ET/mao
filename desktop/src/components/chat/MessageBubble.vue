@@ -16,6 +16,24 @@
         <span class="bg-subagent-label">{{ backgroundCompletionLabel }}</span>
       </button>
 
+      <!-- 后台子代理失败/取消的原因摘要：短内容完整展示，长内容默认压成一行、展开看全文。
+           已完成态正文默认不在主会话展开，结果详情经上面卡片进入子会话查看 -->
+      <div v-if="isBackgroundNotice && backgroundNoticeFailed && message.content" class="bg-subagent-detail">
+        <MarkdownContent
+          v-if="!backgroundNoticeLong || noticeExpanded"
+          :content="message.content"
+          body-class="assistant-text markdown-body"
+        />
+        <div v-else class="bg-subagent-detail-excerpt">{{ noticeExcerptText }}</div>
+        <button
+          v-if="backgroundNoticeLong"
+          class="bg-subagent-detail-toggle"
+          @click="noticeExpanded = !noticeExpanded"
+        >
+          {{ noticeExpanded ? '收起' : '展开全部' }}
+        </button>
+      </div>
+
       <!-- 用户消息：正常态 -->
       <div v-if="role === 'user' && !isEditing" class="message-text user-text" :class="{ collapsed: isUserLong && userCollapsed }">
         <div v-if="message.images && message.images.length > 0 && !isEditing" class="message-images">
@@ -91,7 +109,7 @@
       <!-- assistant 回退：无 segments 时 -->
       <template v-else-if="role === 'assistant'">
         <MarkdownContent
-          v-if="message.content"
+          v-if="message.content && !isBackgroundNotice"
           :content="message.content"
           body-class="assistant-text markdown-body"
         />
@@ -182,7 +200,7 @@
             </button>
           </div>
         </el-popover>
-        <button v-if="showFork" class="fork-btn" @click="$emit('fork')" title="Fork 到边路任务">
+        <button v-if="showFork" class="fork-btn" @click="$emit('fork', props.message.id)" title="Fork 到边路任务">
           <svg class="fork-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
             <circle cx="6" cy="6" r="2.6" stroke="currentColor" stroke-width="1.5" />
             <circle cx="18" cy="6" r="2.6" stroke="currentColor" stroke-width="1.5" />
@@ -238,6 +256,14 @@ import {
   submitDislike
 } from '../../composables/useMessageFeedback'
 import type { FeedbackReason } from '../../api'
+import { stripInternalMarkers } from '../../utils/internalMarkers'
+import {
+  getBackgroundCompletion,
+  isBackgroundNoticeFailed,
+  isNoticeLong,
+  noticeExcerpt,
+  type BackgroundCompletionMeta
+} from '../../utils/backgroundNotice'
 
 const props = withDefaults(defineProps<{
   message: ChatMessage
@@ -271,7 +297,8 @@ const emit = defineEmits<{
   cancelEdit: []
   confirmEdit: [content: string]
   addToCommand: [content: string]
-  fork: []
+  /** 分叉到边路任务，payload 是被点击这一轮的助手最终回复 id（即切点） */
+  fork: [messageId: string]
 }>()
 
 // Edit mode state
@@ -308,18 +335,9 @@ function onEditKeydown(event: KeyboardEvent, action: 'confirm' | 'escape') {
 const sessionStore = useSessionStore()
 const role = computed(() => normalizeMessageRole(props.message.role))
 
-interface BackgroundCompletionMeta {
-  childSessionId?: number
-  executionId?: number
-  status?: string
-  agentType?: string
-}
-
-const backgroundCompletion = computed<BackgroundCompletionMeta | null>(() => {
-  const node = props.message.metadata?.backgroundSubagentCompletion
-  if (!node || typeof node !== 'object') return null
-  return node as BackgroundCompletionMeta
-})
+const backgroundCompletion = computed<BackgroundCompletionMeta | null>(() =>
+  getBackgroundCompletion(props.message)
+)
 
 const backgroundCompletionLabel = computed(() => {
   const b = backgroundCompletion.value
@@ -336,6 +354,20 @@ function openBackgroundSubagent() {
     openSubagent({ childSessionId: b.childSessionId, title: '后台子代理' })
   }
 }
+
+/** 后台子代理完成通知：正文默认不在主会话展开，避免子代理输出打断主会话阅读流 */
+const isBackgroundNotice = computed(() => backgroundCompletion.value != null)
+
+/** 失败/取消时保留原因摘要；已完成态只留入口卡片，详情点击进子会话 */
+const backgroundNoticeFailed = computed(() =>
+  isBackgroundNoticeFailed(backgroundCompletion.value?.status)
+)
+
+const backgroundNoticeLong = computed(() => isNoticeLong(props.message.content))
+
+const noticeExcerptText = computed(() => noticeExcerpt(props.message.content))
+
+const noticeExpanded = ref(false)
 
 const HIDDEN_TOOL_NAMES = new Set(['todo', 'task_list', 'task_create', 'task_update', 'task_delete'])
 
@@ -390,6 +422,8 @@ const isToolOnly = computed(() =>
 
 const timelineSegments = computed((): MessageSegment[] => {
   if (role.value !== 'assistant') return []
+  // 后台子代理通知的正文不走主会话时间线，由 bg-subagent-detail 单独负责折叠展示
+  if (isBackgroundNotice.value) return []
   if (props.message.segments?.length) {
     return props.message.segments.filter(seg =>
       seg.type === 'text' || (!props.hideThinking && seg.type === 'thinking') || (seg.type === 'tool' && !!visibleToolCalls.value.find(tc => tc.id === seg.callId))
@@ -548,14 +582,6 @@ async function handleCancelDislike() {
   }
 }
 
-/** 复制时剥离内部标记语法：${skill}$、#{cmd}#、@{file}@ 只保留内容本身 */
-function stripInternalMarkers(text: string): string {
-  return text
-    .replace(/\$\{([^}]+)\}\$/g, '$1')
-    .replace(/#\{([^}]+)\}#/g, '$1')
-    .replace(/@\{([^}]+)\}@/g, '$1')
-}
-
 async function copyMessage() {
   const text = stripInternalMarkers(props.message.content ?? '').trim()
   if (!text) return
@@ -632,6 +658,39 @@ async function copyMessage() {
 
 .bg-subagent-card.bg-CANCELLED .bg-subagent-dot {
   background: var(--aw-ink-muted-48);
+}
+
+.bg-subagent-detail {
+  margin-bottom: 6px;
+  color: var(--aw-body);
+  font-size: var(--aw-text-caption);
+  line-height: 2;
+  letter-spacing: -0.374px;
+  word-break: break-word;
+}
+
+.bg-subagent-detail-excerpt {
+  color: var(--aw-ink-muted-80);
+}
+
+.bg-subagent-detail-toggle {
+  display: inline-block;
+  margin-top: 2px;
+  padding: 2px 0;
+  border: none;
+  background: none;
+  color: var(--aw-primary);
+  font-size: var(--aw-text-fine);
+  cursor: pointer;
+  line-height: 1.5;
+}
+
+.bg-subagent-detail-toggle:hover {
+  opacity: 0.7;
+}
+
+:root[data-theme="dark"] .bg-subagent-detail-toggle {
+  color: var(--aw-primary-on-dark);
 }
 
 .message-text {

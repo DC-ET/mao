@@ -337,7 +337,8 @@ describe('StreamingWsHandler', () => {
     expect(harnessService.forkParentMessages).toHaveBeenCalledWith(11, 13, null);
   });
 
-  it('sendMessageRejectsUnsupportedImagesAndDisconnectedLocalClient', async () => {    vi.clearAllMocks();
+  it('sendMessageRejectsUnsupportedImagesAndDisconnectedLocalClient', async () => {
+    vi.clearAllMocks();
     registry.getUserId.mockReturnValue(7);
     const cloud = session('CLOUD', 'IDLE');
     cloud.modelId = 2;
