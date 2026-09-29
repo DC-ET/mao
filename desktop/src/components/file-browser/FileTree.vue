@@ -17,7 +17,7 @@
           aria-label="刷新文件树"
           :disabled="loading"
           @click="handleRefresh"
-        ><el-icon><Refresh /></el-icon></button>
+        ><el-icon :size="16"><Refresh /></el-icon></button>
       </div>
       <div class="file-tree-content" v-loading="loading">
         <div v-if="filteredTreeData.length === 0 && !loading" class="file-tree-empty">
@@ -331,10 +331,15 @@ onUnmounted(() => {
 
 .toolbar-refresh {
   flex-shrink: 0;
-  font-size: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  font-size: 16px;
   color: var(--aw-ink-muted-48);
   cursor: pointer;
-  padding: 4px;
+  padding: 0;
   border: none;
   background: transparent;
   border-radius: var(--aw-radius-xs);
