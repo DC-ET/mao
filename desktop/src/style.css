@@ -415,6 +415,21 @@ a:hover {
   background: var(--aw-primary-lighter);
 }
 
+/*
+ * Element Plus 输入框 / 多行输入统一为设置页小号正文（13px）：
+ * .el-input / .el-textarea 的 font-size 取 --el-font-size-base（17px），占位符与输入文字
+ * 因此比页面 13px 标签、12px 提示大一圈（如消息通知「留空则保留已配置地址」）。
+ * 这里按元素单类选择器声明 13px，与 ProfileView / McpServersView / GitCredentialsView
+ * 的输入框字号一致；组件级 2 类以上选择器（如工作区胶囊输入、设置弹窗）仍可覆盖。
+ */
+.el-input,
+.el-textarea,
+.el-input__inner,
+.el-textarea__inner {
+  font-family: var(--aw-font-text);
+  font-size: 13px;
+}
+
 /* Element Plus Dark Mode */
 [data-theme="dark"] {
   --el-bg-color: #141416;

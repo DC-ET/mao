@@ -20,6 +20,7 @@
 ### 前端（桌面 / Web / 安卓）
 
 - 修复大文件拆分 refactor 误删 `TaskIndexPanel` / `ChatInput` 样式导致任务侧栏与输入框布局失真的问题（样式恢复为共享 CSS 并在父组件非 scoped 引入）。
+- 修复 Element Plus 输入框文字（含 placeholder）过大的问题：`.el-input` / `.el-textarea` 整体字号由 17px 收敛为 13px，与页面标签、提示文字一致（消息通知 Webhook「留空则保留已配置地址」等占位文字随之变小）；`size="large"` 控件保持原尺寸，各组件自有定制优先级不变。
 
 ### 后端
 
