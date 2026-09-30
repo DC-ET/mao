@@ -152,7 +152,7 @@
                 <span v-else class="session-title">{{ session.summary || session.title || '新任务' }}</span>
               </div>
               <div class="session-item-meta">
-                <span v-if="session.running || hasActiveSideTask(session.id)" class="session-spinner"></span>
+                <span v-if="session.running || session.treeRunning || hasActiveSideTask(session.id)" class="session-spinner"></span>
                 <span v-if="(session.unread || hasUnreadSideTask(session.id)) && String(session.id) !== String(activeSessionId)" class="session-unread-dot"></span>
                 <span class="session-elapsed">{{ formatElapsed(session) }}</span>
               </div>
@@ -242,7 +242,7 @@
                 <div v-else class="focus-item-text">
                   <div class="focus-title-row">
                     <span class="session-title">{{ session.summary || session.title || '新任务' }}</span>
-                    <span v-if="session.running || hasActiveSideTask(session.id)" class="session-spinner"></span>
+                    <span v-if="session.running || session.treeRunning || hasActiveSideTask(session.id)" class="session-spinner"></span>
                   </div>
                   <div class="focus-subtitle-row">
                     <span class="focus-workspace-tag">{{ workspaceLabel(session) }}</span>
@@ -1372,13 +1372,27 @@ function toggleGroup(key: string) {
 function hasPendingApproval(sessionId: string): boolean {
   const sid = String(sessionId)
   if ((sessionStore.sessionPendingApprovals?.get(sid) ?? 0) > 0) return true
+  const session = sessionStore.getSessionEntity(sid)
+  // 服务端聚合兜底：实时 Map 仅存内存，刷新后只有列表 VO 的 tree 字段能恢复橙点
+  if ((session?.treePendingApprovalCount ?? session?.pendingApprovalCount ?? 0) > 0) return true
   return sessionStore.getSideTasks(sid).some(
     t => (sessionStore.sessionPendingApprovals?.get(String(t.id)) ?? 0) > 0
+      || (t.pendingApprovalCount ?? 0) > 0
   )
 }
 
 function hasPendingQuestion(sessionId: string): boolean {
-  return (sessionStore.sessionPendingQuestions?.get(String(sessionId))?.length ?? 0) > 0
+  const sid = String(sessionId)
+  if ((sessionStore.sessionPendingQuestions?.get(sid)?.length ?? 0) > 0) return true
+  const session = sessionStore.getSessionEntity(sid)
+  if ((session?.treePendingQuestionCount ?? session?.pendingQuestionCount ?? 0) > 0) return true
+  // 边路任务的提问事件 sessionId 是边路会话 id，实时记录在边路 id 名下，需聚合到父任务；
+  // 边路 VO 计数与聚焦排序同源（sideTaskToFocusCandidate），覆盖断线期间提问、重连后经
+  // side-tasks 端点刷新进缓存而实时表与父会话 tree 字段均滞后的场景
+  return sessionStore.getSideTasks(sid).some(
+    t => (sessionStore.sessionPendingQuestions?.get(String(t.id))?.length ?? 0) > 0
+      || (t.pendingQuestionCount ?? 0) > 0
+  )
 }
 
 // Drag handlers

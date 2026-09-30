@@ -588,3 +588,131 @@ describe('session store 实体/投影模型', () => {
     expect(store.standardSessionIds).toEqual(expect.arrayContaining(['1', '2', '50', '3', '4']))
   })
 })
+
+describe('session store 边路任务待处理计数同步', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    mockGet.mockReset()
+    mockPut.mockReset()
+    mockPost.mockReset()
+  })
+
+  function makeSideTask(overrides: Record<string, any> = {}): any {
+    return {
+      id: 11,
+      title: '边路',
+      phase: 'RUNNING',
+      createdAt: '2026-09-30T00:00:00',
+      unread: false,
+      pendingApprovalCount: 0,
+      pendingQuestionCount: 0,
+      ...overrides,
+    }
+  }
+
+  it('边路任务收到提问/取消事件时，VO 计数与实时表同步', async () => {
+    const store = useSessionStore()
+    store.updateSession('1', makeSession('1'))
+    mockGet.mockResolvedValueOnce({ data: [makeSideTask()] })
+    await store.refreshSideTasks('1')
+
+    store.appendAskQuestion('11', { requestId: 'r1', questions: [] })
+    expect(store.getSideTasks('1')[0].pendingQuestionCount).toBe(1)
+
+    store.appendAskQuestion('11', { requestId: 'r2', questions: [] })
+    expect(store.getSideTasks('1')[0].pendingQuestionCount).toBe(2)
+
+    store.removeAskQuestion('11', 'r1')
+    expect(store.getSideTasks('1')[0].pendingQuestionCount).toBe(1)
+  })
+
+  it('提问在别处被回答（取消事件到达）时同步归零，橙点可熄灭', async () => {
+    const store = useSessionStore()
+    store.updateSession('1', makeSession('1'))
+    // 断线期间拉到的缓存：服务端注册表仍有 1 个待回答
+    mockGet.mockResolvedValueOnce({ data: [makeSideTask({ pendingQuestionCount: 1 })] })
+    await store.refreshSideTasks('1')
+
+    // 客户端此前没收到提问事件：取消事件到达时列表不存在，不误清（可能还有其他未回答的问题）
+    store.removeAskQuestion('11', 'unknown-request')
+    expect(store.getSideTasks('1')[0].pendingQuestionCount).toBe(1)
+
+    // 追踪到提问后再取消：归零
+    store.appendAskQuestion('11', { requestId: 'r1', questions: [] })
+    expect(store.getSideTasks('1')[0].pendingQuestionCount).toBe(1)
+    store.removeAskQuestion('11', 'r1')
+    expect(store.getSideTasks('1')[0].pendingQuestionCount).toBe(0)
+  })
+
+  it('clearAskQuestions（执行终态/停止）归零边路 VO 计数', async () => {
+    const store = useSessionStore()
+    store.updateSession('1', makeSession('1'))
+    mockGet.mockResolvedValueOnce({ data: [makeSideTask({ pendingQuestionCount: 1 })] })
+    await store.refreshSideTasks('1')
+
+    store.clearAskQuestions('11')
+    expect(store.getSideTasks('1')[0].pendingQuestionCount).toBe(0)
+  })
+
+  it('树聚合归零信号清掉边路缓存的残留计数；聚合非零时不清', async () => {
+    const store = useSessionStore()
+    store.updateSession('1', makeSession('1'))
+    mockGet.mockResolvedValueOnce({ data: [makeSideTask({ pendingApprovalCount: 1, pendingQuestionCount: 1 })] })
+    await store.refreshSideTasks('1')
+
+    // 聚合非零（问题在树内其他会话名下）：不动边路自身计数
+    store.updateSessionTreeSignals('1', { treePendingQuestionCount: 1, treePendingApprovalCount: 1 })
+    expect(store.getSideTasks('1')[0].pendingQuestionCount).toBe(1)
+    expect(store.getSideTasks('1')[0].pendingApprovalCount).toBe(1)
+
+    // 聚合归零 = 服务端注册表树内已无待处理：残留计数必须清掉，否则橙点无法熄灭
+    store.updateSessionTreeSignals('1', { treePendingQuestionCount: 0, treePendingApprovalCount: 0 })
+    expect(store.getSideTasks('1')[0].pendingQuestionCount).toBe(0)
+    expect(store.getSideTasks('1')[0].pendingApprovalCount).toBe(0)
+  })
+
+  it('fetchSessions 的列表快照聚合为 0 时同样对账清残留（手动刷新可恢复）', async () => {
+    const store = useSessionStore()
+    store.updateSession('1', makeSession('1'))
+    mockGet.mockResolvedValueOnce({ data: [makeSideTask({ pendingQuestionCount: 1 })] })
+    await store.refreshSideTasks('1')
+    expect(store.getSideTasks('1')[0].pendingQuestionCount).toBe(1)
+
+    mockGet.mockResolvedValueOnce({
+      data: { groups: [{ key: 'CLOUD:临时工作区', label: '临时工作区', total: 1, hasMore: false, sessions: [makeSession('1', { treePendingQuestionCount: 0 })] }] },
+    })
+    await store.fetchSessions()
+    expect(store.getSideTasks('1')[0].pendingQuestionCount).toBe(0)
+  })
+
+  it('边路审批计数随实时增减同步', async () => {
+    const store = useSessionStore()
+    store.updateSession('1', makeSession('1'))
+    mockGet.mockResolvedValueOnce({ data: [makeSideTask()] })
+    await store.refreshSideTasks('1')
+
+    store.incrementPendingApproval('11')
+    expect(store.getSideTasks('1')[0].pendingApprovalCount).toBe(1)
+    store.incrementPendingApproval('11')
+    expect(store.getSideTasks('1')[0].pendingApprovalCount).toBe(2)
+    store.decrementPendingApproval('11')
+    expect(store.getSideTasks('1')[0].pendingApprovalCount).toBe(1)
+    store.decrementPendingApproval('11')
+    expect(store.getSideTasks('1')[0].pendingApprovalCount).toBe(0)
+  })
+
+  it('主会话的提问/审批事件不影响边路缓存', async () => {
+    const store = useSessionStore()
+    store.updateSession('1', makeSession('1'))
+    mockGet.mockResolvedValueOnce({ data: [makeSideTask()] })
+    await store.refreshSideTasks('1')
+
+    store.appendAskQuestion('1', { requestId: 'r-main', questions: [] })
+    store.incrementPendingApproval('1')
+    store.clearAskQuestions('1')
+    store.decrementPendingApproval('1')
+
+    expect(store.getSideTasks('1')[0].pendingQuestionCount).toBe(0)
+    expect(store.getSideTasks('1')[0].pendingApprovalCount).toBe(0)
+  })
+})

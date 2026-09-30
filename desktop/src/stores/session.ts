@@ -389,6 +389,12 @@ export const useSessionStore = defineStore('session', () => {
           // unread 以服务端为准（服务端 DB 是未读持久化权威；本地已读仅在 markAsRead API 成功后清除）
           upsertSessionEntity(normalized)
           applyRuntimeStatus(normalized)
+          // 列表 VO 的聚合计数来自请求时刻的服务端注册表：为 0 时同步清掉边路缓存的残留计数
+          reconcileSideTaskPendingCounts(
+            String(normalized.id),
+            normalized.treePendingApprovalCount,
+            normalized.treePendingQuestionCount
+          )
           ids.push(String(normalized.id))
         }
       }
@@ -521,6 +527,7 @@ export const useSessionStore = defineStore('session', () => {
       ...(signals.treeRunning != null ? { treeRunning: signals.treeRunning } : {}),
       ...(signals.treeFailed != null ? { treeFailed: signals.treeFailed } : {}),
     })
+    reconcileSideTaskPendingCounts(sid, signals.treePendingApprovalCount, signals.treePendingQuestionCount)
   }
 
   function isArchiving(id: string): boolean {
@@ -904,6 +911,46 @@ export const useSessionStore = defineStore('session', () => {
         sideTaskCache.value = new Map(sideTaskCache.value)
       }
     }
+  }
+
+  /** 把边路任务 VO 上的待审批/待回答计数与客户端实时状态同步（左侧橙点与聚焦排序同源消费该字段）。
+   *  仅当 sessionId 命中某个缓存的边路任务时生效，主会话/子代理调用为 no-op。 */
+  function syncSideTaskPendingCount(
+    sessionId: string,
+    field: 'pendingApprovalCount' | 'pendingQuestionCount',
+    count: number
+  ) {
+    const sid = String(sessionId)
+    for (const [, list] of sideTaskCache.value) {
+      const item = list.find(t => String(t.id) === sid)
+      if (item) {
+        if (item[field] !== count) {
+          item[field] = count
+          sideTaskCache.value = new Map(sideTaskCache.value)
+        }
+        return
+      }
+    }
+  }
+
+  /** 任务树聚合计数归零是权威信号：树内已无待审批/待回答时，边路缓存里残留的 VO 计数一并清零。
+   *  覆盖提问/审批在断线期间于飞书等入口被处理、终态事件全部丢失导致的计数残留。 */
+  function reconcileSideTaskPendingCounts(parentSessionId: string, approvalCount?: number, questionCount?: number) {
+    if ((approvalCount == null || approvalCount > 0) && (questionCount == null || questionCount > 0)) return
+    const list = sideTaskCache.value.get(String(parentSessionId))
+    if (!list) return
+    let changed = false
+    for (const item of list) {
+      if (approvalCount === 0 && item.pendingApprovalCount) {
+        item.pendingApprovalCount = 0
+        changed = true
+      }
+      if (questionCount === 0 && item.pendingQuestionCount) {
+        item.pendingQuestionCount = 0
+        changed = true
+      }
+    }
+    if (changed) sideTaskCache.value = new Map(sideTaskCache.value)
   }
 
   function removeSideTask(parentSessionId: string, sideSessionId: number) {
@@ -1602,16 +1649,20 @@ export const useSessionStore = defineStore('session', () => {
     const sid = String(sessionId)
     const current = sessionPendingApprovals.value.get(sid) ?? 0
     sessionPendingApprovals.value.set(sid, current + 1)
+    syncSideTaskPendingCount(sid, 'pendingApprovalCount', current + 1)
   }
 
   function decrementPendingApproval(sessionId: string) {
     const sid = String(sessionId)
     const current = sessionPendingApprovals.value.get(sid) ?? 0
-    if (current > 1) {
-      sessionPendingApprovals.value.set(sid, current - 1)
+    if (current === 0) return
+    const next = current - 1
+    if (next > 0) {
+      sessionPendingApprovals.value.set(sid, next)
     } else {
       sessionPendingApprovals.value.delete(sid)
     }
+    syncSideTaskPendingCount(sid, 'pendingApprovalCount', next)
   }
 
   // --- Queue message actions ---
@@ -1697,19 +1748,23 @@ export const useSessionStore = defineStore('session', () => {
     if (!list.some(q => q.requestId === question.requestId)) {
       list.push(question)
       sessionPendingQuestions.value.set(sid, [...list])
+      syncSideTaskPendingCount(sid, 'pendingQuestionCount', list.length)
     }
   }
 
   function removeAskQuestion(sessionId: string, requestId: string) {
     const sid = String(sessionId)
     const list = sessionPendingQuestions.value.get(sid)
-    if (list) {
-      sessionPendingQuestions.value.set(sid, list.filter(q => q.requestId !== requestId))
-    }
+    if (!list) return
+    const next = list.filter(q => q.requestId !== requestId)
+    sessionPendingQuestions.value.set(sid, next)
+    // 仅在客户端确实追踪该会话的提问时才回写计数，避免迟到的取消事件误清仍待回答的 VO 计数
+    syncSideTaskPendingCount(sid, 'pendingQuestionCount', next.length)
   }
 
   function clearAskQuestions(sessionId: string) {
     sessionPendingQuestions.value.delete(String(sessionId))
+    syncSideTaskPendingCount(String(sessionId), 'pendingQuestionCount', 0)
   }
 
   function setExecutionError(sessionId: string, message: string) {
