@@ -9,95 +9,27 @@
     }"
   >
     <!-- New task config bar (docked bottom layout only; centered uses chips in toolbar) -->
-    <div v-if="isNewTask && layout === 'docked'" class="new-task-config-bar">
-      <AgentSelector
-        :selected-agent-id="selectedAgentId"
-        @update:selected-agent-id="(id: string | null) => emit('update:selectedAgentId', id)"
-      />
-      <div class="config-row" :class="{ 'is-mobile': isTouchDevice }">
-        <div class="mode-selector">
-          <el-radio-group :model-value="executionMode" size="small" @change="handleModeChange">
-            <el-tooltip content="工具在云端服务器上执行，无需本地环境，随时随地可用" placement="top" :show-after="400">
-              <el-radio-button value="CLOUD">
-                <el-icon :size="12"><Cloudy /></el-icon> 云端模式
-              </el-radio-button>
-            </el-tooltip>
-            <el-tooltip content="工具在你本地电脑上执行，可直接访问本地文件和开发环境，需要桌面应用保持连接" placement="top" :show-after="400">
-              <el-radio-button value="LOCAL" :disabled="!isElectronClient">
-                <el-icon :size="12"><Monitor /></el-icon> 本地模式
-              </el-radio-button>
-            </el-tooltip>
-          </el-radio-group>
-        </div>
-        <el-select
-          v-if="executionMode === 'CLOUD'"
-          :model-value="workspaceMode"
-          size="small"
-          class="workspace-mode-select"
-          popper-class="workspace-mode-select-dropdown"
-          @update:model-value="onWorkspaceModeChange"
-        >
-          <el-option
-            v-for="opt in workspaceModeOptions"
-            :key="opt.value"
-            :label="opt.label"
-            :value="opt.value"
-          />
-        </el-select>
-        <div
-          v-if="executionMode === 'LOCAL'"
-          class="workspace-selector"
-          :class="{ 'has-workspace': !!workspace }"
-          @click="selectWorkspace"
-        >
-          <el-icon :size="13">
-            <WarningFilled v-if="!workspace" />
-            <FolderOpened v-else />
-          </el-icon>
-          <span>{{ workspace ? dirName : '选择工作目录' }}</span>
-        </div>
-        <div v-if="executionMode === 'CLOUD'" class="cloud-workspace-detail">
-          <template v-if="workspaceMode === 'existing'">
-            <el-select
-              :model-value="cloudProjectKey"
-              placeholder="选择工作区"
-              size="small"
-              class="cloud-project-select"
-              popper-class="cloud-project-select-dropdown"
-              @update:model-value="onCloudProjectKeyChange"
-            >
-              <el-option
-                v-for="p in cloudProjects"
-                :key="p.name"
-                :label="p.name"
-                :value="p.name"
-              />
-            </el-select>
-          </template>
-          <template v-else-if="workspaceMode === 'git'">
-            <el-input
-              :model-value="gitCloneUrl"
-              placeholder="Git 地址，如 https://git.example.com/xx/xxx.git"
-              size="small"
-              clearable
-              class="cloud-project-input"
-              @update:model-value="onGitCloneUrlChange"
-            />
-          </template>
-          <template v-else>
-            <el-input
-              :model-value="cloudProjectKey"
-              placeholder="项目（可选，留空=独立）"
-              size="small"
-              clearable
-              class="cloud-project-input"
-              @update:model-value="onCloudProjectKeyChange"
-            />
-          </template>
-        </div>
-      </div>
-      <div class="config-divider"></div>
-    </div>
+    <ChatNewTaskConfigBar
+      :is-new-task="isNewTask"
+      :layout="layout"
+      :is-touch-device="isTouchDevice"
+      :is-electron-client="isElectronClient"
+      :execution-mode="executionMode"
+      :workspace-mode="workspaceMode"
+      :workspace-mode-options="workspaceModeOptions"
+      :workspace="workspace"
+      :dir-name="dirName"
+      :cloud-project-key="cloudProjectKey"
+      :git-clone-url="gitCloneUrl"
+      :cloud-projects="cloudProjects"
+      :selected-agent-id="selectedAgentId"
+      :handle-mode-change="handleModeChange"
+      :on-workspace-mode-change="onWorkspaceModeChange"
+      :on-cloud-project-key-change="onCloudProjectKeyChange"
+      :on-git-clone-url-change="onGitCloneUrlChange"
+      :select-workspace="selectWorkspace"
+      @update:selected-agent-id="(id: string | null) => emit('update:selectedAgentId', id)"
+    />
 
     <!-- Editor area -->
     <div
@@ -105,7 +37,7 @@
       :class="{ 'new-task-textarea': isNewTask && layout === 'docked', 'is-dragging-file': draggingFile }"
       @dragover.prevent="handleDragOver"
       @dragenter.prevent="handleDragEnter"
-      @dragleave="handleDragLeave"
+      @dragleave.prevent="handleDragLeave"
       @drop.prevent="handleDropFiles"
     >
       <QuickCommandPanel
@@ -130,176 +62,94 @@
     </div>
 
     <!-- Pending files -->
-    <div v-if="pendingFiles.length > 0" class="pending-files">
-      <div v-for="(item, idx) in pendingFiles" :key="idx" class="pending-file">
-        <img v-if="item.previewUrl" :src="item.previewUrl" class="file-preview-img" />
-        <el-icon v-else><Document /></el-icon>
-        <span class="file-name">{{ item.file.name }}</span>
-        <el-icon class="remove-file" :class="{ disabled: disabled }" role="button" aria-label="移除待发文件" @click="!disabled && removeFile(idx)"><Close /></el-icon>
-      </div>
-    </div>
+    <ChatPendingFileList
+      :pending-files="pendingFiles"
+      :disabled="disabled"
+      :remove-file="removeFile"
+    />
 
     <!-- Bottom toolbar -->
-    <div class="toolbar">
-      <div class="toolbar-left">
-        <label class="add-btn" title="上传图片或文件" :class="{ disabled: disabled }">
-          <!-- LOCAL 模式不支持非图片文件上传，收窄 accept 避免选完才被拒 -->
-          <input type="file" multiple :accept="executionMode === 'LOCAL' ? 'image/*' : ''" :disabled="disabled" @change="handleFileSelect" style="display: none" />
-          <el-icon :size="16"><Plus /></el-icon>
-        </label>
-
-        <!-- Centered new-task chips（桌面：占工具条；移动：见下方 meta 行） -->
-        <template v-if="isNewTask && layout === 'centered' && !isMobileViewport">
-          <AgentChip
-            :selected-agent-id="selectedAgentId"
-            :disabled="disabled"
-            :is-mobile="false"
-            @update:selected-agent-id="id => emit('update:selectedAgentId', id)"
-          />
-          <WorkspaceChip
-            :execution-mode="executionMode"
-            :workspace="workspace"
-            :cloud-project-key="cloudProjectKey"
-            :project-key="projectKey"
-            :workspace-mode="workspaceMode"
-            :git-clone-url="gitCloneUrl"
-            :git-branch="gitBranch"
-            :cloud-projects="cloudProjects"
-            :is-new-task="isNewTask"
-            :disabled="disabled"
-            :is-mobile="false"
-            @update:execution-mode="handleModeChange"
-            @update:workspace="w => emit('update:workspace', w)"
-            @update:cloud-project-key="onCloudProjectKeyChange"
-            @update:workspace-mode="onWorkspaceModeChange"
-            @update:git-clone-url="onGitCloneUrlChange"
-            @update:git-branch="b => emit('update:gitBranch', b)"
-          />
-        </template>
-
-        <!-- Docked / session workspace indicator -->
-        <div
-          v-if="!(isNewTask && layout === 'centered')"
-          class="workspace-indicator"
-          :class="{ 'has-workspace': !!workspace || executionMode === 'CLOUD', 'cloud-mode': executionMode === 'CLOUD' }"
-          @click="executionMode !== 'CLOUD' && openWorkspace()"
-        >
-          <template v-if="executionMode === 'CLOUD'">
-            <el-icon :size="14"><Cloudy /></el-icon>
-            <span>{{ cloudIndicatorLabel }}</span>
-          </template>
-          <template v-else>
-            <el-icon :size="14">
-              <WarningFilled v-if="!workspace" />
-              <FolderOpened v-else />
-            </el-icon>
-            <span>{{ dirName || 'No workspace' }}</span>
-          </template>
-        </div>
-        <PermissionLevelSwitcher
-          v-if="executionMode === 'LOCAL'"
-          :current-level="permissionLevel"
-          @update:permission-level="$event => emit('update:permissionLevel', $event)"
-        />
-      </div>
-      <div class="toolbar-right">
-        <ModelSelector
-          :model-id="modelId"
-          :compact="isMobileViewport && layout === 'centered'"
-          @update:model-id="id => emit('update:modelId', id)"
-          @select="(id, modelIdStr) => emit('select:model', id, modelIdStr)"
-        />
-        <button
-          v-if="waitingForSave"
-          class="send-btn saving"
-          title="正在保存..."
-          disabled
-        >
-          <el-icon :size="16" class="is-loading"><Loading /></el-icon>
-        </button>
-        <button
-          v-else-if="loading && !canSend && !initializingWorkspace"
-          class="send-btn stop"
-          title="停止"
-          @click="handleStop()"
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-            <rect x="2" y="2" width="12" height="12" rx="2"/>
-          </svg>
-        </button>
-        <button
-          v-else-if="canContinue && !canSend && !initializingWorkspace"
-          class="send-btn continue"
-          title="继续"
-          @click="handleContinue()"
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M5 3.3v9.4c0 .65.72 1.04 1.27.69l7.32-4.7a.82.82 0 0 0 0-1.38L6.27 2.61A.82.82 0 0 0 5 3.3z"/>
-          </svg>
-        </button>
-        <button
-          v-else
-          class="send-btn"
-          :class="{ active: canSend }"
-          :disabled="!canSend"
-          :title="loading ? '加入队列 (Enter)' : '发送 (Enter)'"
-          @click="handleSend()"
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-            <path d="M12 19V5M12 5L5 12M12 5L19 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-        </button>
-      </div>
-    </div>
+    <ChatInputToolbar
+      :disabled="disabled"
+      :execution-mode="executionMode"
+      :is-new-task="isNewTask"
+      :layout="layout"
+      :is-mobile-viewport="isMobileViewport"
+      :selected-agent-id="selectedAgentId"
+      :workspace="workspace"
+      :cloud-project-key="cloudProjectKey"
+      :project-key="projectKey"
+      :workspace-mode="workspaceMode"
+      :git-clone-url="gitCloneUrl"
+      :git-branch="gitBranch"
+      :cloud-projects="cloudProjects"
+      :cloud-indicator-label="cloudIndicatorLabel"
+      :dir-name="dirName"
+      :permission-level="permissionLevel"
+      :model-id="modelId"
+      :waiting-for-save="waitingForSave"
+      :loading="loading"
+      :can-send="canSend"
+      :initializing-workspace="initializingWorkspace"
+      :can-continue="canContinue"
+      :handle-file-select="handleFileSelect"
+      :handle-mode-change="handleModeChange"
+      :on-cloud-project-key-change="onCloudProjectKeyChange"
+      :on-workspace-mode-change="onWorkspaceModeChange"
+      :on-git-clone-url-change="onGitCloneUrlChange"
+      :open-workspace="openWorkspace"
+      :handle-stop="handleStop"
+      :handle-continue="handleContinue"
+      :handle-send="handleSend"
+      @update:selected-agent-id="id => emit('update:selectedAgentId', id)"
+      @update:workspace="w => emit('update:workspace', w)"
+      @update:git-branch="b => emit('update:gitBranch', b)"
+      @update:permission-level="$event => emit('update:permissionLevel', $event)"
+      @update:model-id="id => emit('update:modelId', id)"
+      @select:model="(id, modelIdStr) => emit('select:model', id, modelIdStr)"
+    />
 
     <!-- 移动居中态：智能体/工作区配置条（输入与操作行下方，不占工具条横向空间） -->
-    <div v-if="isNewTask && layout === 'centered' && isMobileViewport" class="center-meta-row">
-      <AgentChip
-        :selected-agent-id="selectedAgentId"
-        :disabled="disabled"
-        :is-mobile="true"
-        @update:selected-agent-id="id => emit('update:selectedAgentId', id)"
-      />
-      <WorkspaceChip
-        :execution-mode="executionMode"
-        :workspace="workspace"
-        :cloud-project-key="cloudProjectKey"
-        :project-key="projectKey"
-        :workspace-mode="workspaceMode"
-        :git-clone-url="gitCloneUrl"
-        :git-branch="gitBranch"
-        :cloud-projects="cloudProjects"
-        :is-new-task="isNewTask"
-        :disabled="disabled"
-        :is-mobile="true"
-        @update:execution-mode="handleModeChange"
-        @update:workspace="w => emit('update:workspace', w)"
-        @update:cloud-project-key="onCloudProjectKeyChange"
-        @update:workspace-mode="onWorkspaceModeChange"
-        @update:git-clone-url="onGitCloneUrlChange"
-        @update:git-branch="b => emit('update:gitBranch', b)"
-      />
-    </div>
+    <ChatMobileConfigRow
+      :is-new-task="isNewTask"
+      :layout="layout"
+      :is-mobile-viewport="isMobileViewport"
+      :selected-agent-id="selectedAgentId"
+      :disabled="disabled"
+      :execution-mode="executionMode"
+      :workspace="workspace"
+      :cloud-project-key="cloudProjectKey"
+      :project-key="projectKey"
+      :workspace-mode="workspaceMode"
+      :git-clone-url="gitCloneUrl"
+      :git-branch="gitBranch"
+      :cloud-projects="cloudProjects"
+      :handle-mode-change="handleModeChange"
+      :on-cloud-project-key-change="onCloudProjectKeyChange"
+      :on-workspace-mode-change="onWorkspaceModeChange"
+      :on-git-clone-url-change="onGitCloneUrlChange"
+      @update:selected-agent-id="id => emit('update:selectedAgentId', id)"
+      @update:workspace="w => emit('update:workspace', w)"
+      @update:git-branch="b => emit('update:gitBranch', b)"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, inject } from 'vue'
-import { Document, Close, Plus, WarningFilled, FolderOpened, Cloudy, Monitor, Loading } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
 import { TextSelection } from '@tiptap/pm/state'
 import { Fragment, Slice } from '@tiptap/pm/model'
-import PermissionLevelSwitcher from './PermissionLevelSwitcher.vue'
-import AgentSelector from '../task/AgentSelector.vue'
-import AgentChip from './AgentChip.vue'
-import WorkspaceChip from './WorkspaceChip.vue'
-import ModelSelector from './ModelSelector.vue'
 import QuickCommandPanel from './QuickCommandPanel.vue'
 import FileReferencePanel from './FileReferencePanel.vue'
 import type { WorkspaceFile } from './FileReferencePanel.vue'
+import ChatNewTaskConfigBar from './ChatNewTaskConfigBar.vue'
+import ChatPendingFileList from './ChatPendingFileList.vue'
+import ChatInputToolbar from './ChatInputToolbar.vue'
+import ChatMobileConfigRow from './ChatMobileConfigRow.vue'
 import { QuickCommandNode } from './tiptap/QuickCommandNode'
 import { FileReferenceNode } from './tiptap/FileReferenceNode'
 import type { Agent } from '../../stores/agent'
@@ -960,7 +810,7 @@ function detectAutoComplete() {
   // 如果面板已经打开但不是由自动补全触发的，不干扰
   if (panelVisible.value && !autoComplete.value) return
   if (filePanelVisible.value) return
-  
+
   // 如果指令数据尚未加载过，先加载数据（用标志位判断，避免数据为空时重复请求）
   if (!commandsLoaded.value) {
     ensureCommandsLoaded().then(() => {
@@ -969,7 +819,7 @@ function detectAutoComplete() {
     })
     return
   }
-  
+
   const { state } = editor.value.view
   const { from } = state.selection
   const textBefore = state.doc.textBetween(Math.max(0, from - 50), from, '\n', '\n')
@@ -1006,13 +856,13 @@ function detectAutoComplete() {
   } catch (error) {
     return
   }
-  
+
   // 如果没有匹配，或该词已被 Esc 关闭过，关闭自动补全面板
   if (matched.length === 0 || lower === dismissedWord) {
     if (panelVisible.value && autoComplete.value) closePanel()
     return
   }
-  
+
   // 设置面板：使用当前词的范围
   const matchStart = from - currentWord.length
   slashRange.value = { from: matchStart, to: from }
@@ -1433,665 +1283,3 @@ onBeforeUnmount(() => {
   editor.value?.destroy()
 })
 </script>
-
-<style scoped>
-.chat-input-card {
-  display: flex;
-  flex-direction: column;
-  margin-bottom: 10px;
-  background: var(--aw-canvas);
-  border: 1px solid var(--aw-hairline);
-  border-radius: 16px;
-  padding: 0;
-  /* 安卓软键盘弹出后可视高度骤减：卡片参与收缩（收缩量由内部可滚动的配置区承担），
-     避免把输入框与发送按钮顶出可视区被键盘盖住 */
-  flex: 0 1 auto;
-  min-height: 0;
-  transition: border-color 0.2s, box-shadow 0.2s;
-}
-
-.chat-input-card:focus-within {
-  border-color: var(--aw-primary);
-  box-shadow: 0 0 0 2px var(--aw-primary-hover);
-}
-
-/* Centered new-session composer: larger editor, no top config bar */
-.chat-input-card.layout-centered {
-  border-radius: 20px;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.04);
-}
-
-.chat-input-card.layout-centered:focus-within {
-  box-shadow: 0 0 0 3px var(--aw-primary-ring), 0 4px 24px rgba(0, 0, 0, 0.04);
-}
-
-.chat-input-card.layout-centered .textarea-area {
-  padding: 16px 18px 8px;
-}
-
-.chat-input-card.layout-centered :deep(.rich-editor),
-.chat-input-card.layout-centered :deep(.rich-editor .ProseMirror) {
-  /* 与会话态输入框同字号（14px × 1.5 ≈ 21px/行），正文区留 2 行余量 */
-  min-height: 52px;
-  max-height: 280px;
-  font-size: var(--aw-text-caption);
-}
-
-.chat-input-card.layout-centered .toolbar {
-  padding: 10px 14px 12px;
-  flex-wrap: wrap;
-  min-height: 48px;
-}
-
-.chat-input-card.layout-centered .toolbar-left {
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.chat-input-card.layout-centered .toolbar-right {
-  gap: 8px;
-}
-
-.chat-input-card.layout-centered .send-btn {
-  width: 36px;
-  height: 36px;
-}
-
-@media (max-width: 768px) {
-  .chat-input-card.layout-centered {
-    border-radius: 16px;
-    box-shadow: 0 2px 16px rgba(0, 0, 0, 0.05);
-  }
-
-  .chat-input-card.layout-centered .textarea-area {
-    padding: 14px 14px 4px;
-  }
-
-  .chat-input-card.layout-centered :deep(.rich-editor),
-  .chat-input-card.layout-centered :deep(.rich-editor .ProseMirror) {
-    /* 14px × 1.5 ≈ 21px/行，2 行约 42px */
-    min-height: 42px;
-    font-size: var(--aw-text-caption);
-  }
-
-  /* 单行工具条：仅 + / 权限 / 模型 / 发送；智能体与工作区见下方 meta 行 */
-  .chat-input-card.layout-centered .toolbar {
-    flex-direction: row;
-    flex-wrap: nowrap;
-    align-items: center;
-    gap: 6px;
-    padding: 8px 10px 6px;
-    min-height: 48px;
-  }
-
-  .chat-input-card.layout-centered .toolbar-left {
-    flex: 1 1 auto;
-    min-width: 0;
-    flex-wrap: nowrap;
-    gap: 6px;
-  }
-
-  .chat-input-card.layout-centered .toolbar-right {
-    flex: 0 0 auto;
-    gap: 4px;
-    min-width: 0;
-  }
-
-  .chat-input-card.layout-centered .center-meta-row {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 8px;
-    padding: 8px 10px 12px;
-    border-top: 1px solid var(--aw-divider-soft);
-  }
-
-  .chat-input-card.layout-centered .add-btn {
-    width: 34px;
-    height: 34px;
-  }
-
-  .chat-input-card.layout-centered .send-btn {
-    width: 36px;
-    height: 36px;
-  }
-
-  /* 移动端：模型名放宽可视宽度，避免只剩「ds-v4.1-…」；字号/颜色沿用会话态输入框（12px） */
-  .chat-input-card.layout-centered .toolbar-right :deep(.model-name) {
-    max-width: 148px;
-    min-height: 34px;
-    display: inline-flex;
-    align-items: center;
-    padding: 0 8px;
-  }
-}
-
-/* Editor area */
-.textarea-area {
-  position: relative;
-  padding: 12px 16px;
-  flex-shrink: 0;
-}
-
-.textarea-area.is-dragging-file {
-  outline: 2px dashed var(--aw-primary);
-  outline-offset: -8px;
-}
-
-.chat-input-card.layout-centered .textarea-area.is-dragging-file {
-  border-radius: 12px;
-  outline-offset: -4px;
-}
-
-.textarea-area.new-task-textarea {
-  margin: 0 12px;
-  padding: 12px 14px;
-  background: var(--aw-canvas-parchment);
-  border-radius: 12px;
-}
-
-/* TipTap editor container */
-.rich-editor {
-  width: 100%;
-  min-height: 24px;
-  max-height: 240px;
-}
-
-:deep(.rich-editor .ProseMirror) {
-  width: 100%;
-  min-height: 24px;
-  max-height: 240px;
-  border: none;
-  outline: none;
-  background: transparent;
-  font-family: var(--aw-font-text);
-  font-size: var(--aw-text-caption);
-  line-height: 1.5;
-  color: var(--aw-body);
-  padding: 0;
-  overflow-y: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-:deep(.rich-editor .ProseMirror p) {
-  margin: 0;
-}
-
-:deep(.rich-editor .ProseMirror p.is-editor-empty:first-child::before) {
-  content: attr(data-placeholder);
-  color: var(--aw-ink-muted-48);
-  pointer-events: none;
-  float: left;
-  height: 0;
-}
-
-/* Tag chips in editor */
-:deep(.editor-tag) {
-  display: inline;
-  padding: 2px 8px;
-  border-radius: 10px;
-  font-weight: 500;
-  vertical-align: baseline;
-  letter-spacing: -0.1px;
-  cursor: default;
-}
-
-:deep(.editor-tag-skill) {
-  background: var(--aw-tag-skill);
-  color: var(--aw-tag-fg);
-}
-
-:deep(.editor-tag-command) {
-  background: var(--aw-tag-command);
-  color: var(--aw-tag-fg);
-}
-
-:deep(.editor-tag-file) {
-  background: var(--aw-tag-file);
-  color: var(--aw-tag-file-ink);
-}
-
-/* Pending files */
-.pending-files {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--aw-space-xxs);
-  padding: 4px 16px 0;
-  flex-shrink: 0;
-}
-
-.pending-file {
-  display: flex;
-  align-items: center;
-  gap: var(--aw-space-xxs);
-  padding: 3px 8px;
-  background: var(--aw-canvas-parchment);
-  border-radius: var(--aw-radius-xs);
-  font-size: var(--aw-text-fine);
-  color: var(--aw-ink-muted-80);
-}
-
-.file-name {
-  max-width: 140px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.remove-file {
-  cursor: pointer;
-  color: var(--aw-ink-muted-48);
-  transition: color 0.15s;
-}
-
-.remove-file:hover {
-  color: var(--aw-danger);
-}
-
-.file-preview-img {
-  width: 32px;
-  height: 32px;
-  object-fit: cover;
-  border-radius: var(--aw-radius-xs);
-  flex-shrink: 0;
-}
-
-/* Bottom toolbar */
-.toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 12px;
-  min-height: 40px;
-  min-width: 0;
-  flex-shrink: 0;
-}
-
-.toolbar-left {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  flex: 1 1 auto;
-}
-
-.toolbar-right {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
-  min-width: 0;
-  flex: 0 1 auto;
-}
-
-.toolbar-right :deep(.el-popover__reference-wrapper) {
-  min-width: 0;
-}
-
-.toolbar-right :deep(.model-name) {
-  display: block;
-  max-width: min(150px, 32vw);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Add button */
-.add-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  background: var(--aw-canvas-parchment);
-  color: var(--aw-ink-muted-80);
-  cursor: pointer;
-  transition: all 0.15s;
-  flex-shrink: 0;
-}
-
-.add-btn:hover {
-  opacity: 0.85;
-  transform: scale(1.05);
-}
-
-/* Workspace indicator */
-.workspace-indicator {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  font-size: var(--aw-text-fine);
-  color: var(--aw-warning);
-  cursor: pointer;
-  transition: color 0.15s;
-}
-
-.workspace-indicator.has-workspace {
-  color: var(--aw-ink-muted-80);
-}
-
-.workspace-indicator.cloud-mode {
-  color: var(--aw-primary);
-  cursor: default;
-}
-
-.workspace-indicator span {
-  max-width: 160px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.model-name {
-  font-size: var(--aw-text-fine);
-  color: var(--aw-ink-muted-80);
-  font-weight: 500;
-  user-select: none;
-}
-
-/* Send button */
-.send-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  border: none;
-  background: var(--aw-canvas-parchment);
-  color: var(--aw-ink-muted-48);
-  cursor: pointer;
-  transition: all 0.2s;
-  flex-shrink: 0;
-  padding: 0;
-}
-
-.send-btn.active {
-  background: var(--aw-primary);
-  color: var(--aw-on-primary);
-}
-
-.send-btn.active:hover {
-  background: var(--aw-primary-focus);
-  transform: scale(1.05);
-}
-
-.send-btn.stop {
-  background: var(--aw-danger);
-  color: #fff;
-}
-
-.send-btn.stop:hover {
-  background: color-mix(in srgb, var(--aw-danger) 85%, black);
-  transform: scale(1.05);
-}
-
-.send-btn.continue {
-  background: var(--aw-success);
-  color: #fff;
-}
-
-.send-btn.continue:hover {
-  background: color-mix(in srgb, var(--aw-success) 85%, black);
-  transform: scale(1.05);
-}
-
-.send-btn.saving {
-  background: var(--aw-canvas-parchment);
-  color: var(--aw-ink-muted-48);
-  cursor: default;
-}
-
-.send-btn.cancelling {
-  background: var(--aw-canvas-parchment);
-  color: var(--aw-ink-muted-48);
-  opacity: 0.6;
-  cursor: default;
-}
-
-.send-btn.cancelling:hover {
-  transform: none;
-}
-
-.send-btn.active:active {
-  transform: scale(0.95);
-}
-
-.send-btn:disabled {
-  cursor: default;
-}
-
-@media (max-width: 640px) {
-  .toolbar {
-    padding: 8px 10px;
-  }
-
-  .toolbar-left {
-    flex: 1 1 0;
-  }
-
-  .toolbar-right {
-    flex: 0 1 auto;
-    gap: 8px;
-  }
-
-  .workspace-indicator span {
-    max-width: 28vw;
-  }
-
-  .toolbar-right :deep(.model-name) {
-    max-width: 26vw;
-  }
-}
-
-/* New task config bar */
-.new-task-config-bar {
-  padding: 8px 16px 4px;
-  /* 可视高度不足（软键盘弹出 / 横屏矮窗口）时收缩此处，智能体列表内部滚动，编辑器与发送按钮保持可见 */
-  flex: 0 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  -webkit-overflow-scrolling: touch;
-}
-
-.config-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding-bottom: 10px;
-  flex-wrap: wrap;
-}
-
-.config-row.is-mobile .mode-selector {
-  width: 100%;
-}
-
-.config-row.is-mobile .mode-selector :deep(.el-radio-group) {
-  width: 100%;
-  display: flex;
-}
-
-.config-row.is-mobile .mode-selector :deep(.el-radio-button) {
-  flex: 1;
-}
-
-.config-row.is-mobile .mode-selector :deep(.el-radio-button__inner) {
-  width: 100%;
-  justify-content: center;
-}
-
-.config-divider {
-  border-top: 1px solid var(--aw-hairline);
-}
-
-.mode-selector {
-  display: flex;
-  align-items: center;
-}
-
-:deep(.config-row .el-radio-group) {
-  --el-radio-button-checked-bg-color: var(--aw-primary);
-  --el-radio-button-checked-border-color: var(--aw-primary);
-  --el-radio-button-checked-text-color: var(--aw-on-primary);
-}
-
-:deep(.config-row .el-radio-button__inner) {
-  padding: 5px 12px;
-  font-size: var(--aw-text-fine);
-  border-color: var(--aw-hairline);
-  background: var(--aw-canvas-parchment);
-  color: var(--aw-ink-muted-80);
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  transition: all 0.15s;
-}
-
-:deep(.config-row .el-radio-button__original-radio:checked + .el-radio-button__inner) {
-  background-color: var(--aw-primary);
-  border-color: var(--aw-primary);
-  color: var(--aw-on-primary);
-}
-
-.workspace-selector {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 10px;
-  background: var(--aw-canvas-parchment);
-  border: 1px solid var(--aw-hairline);
-  border-radius: 999px;
-  cursor: pointer;
-  font-size: var(--aw-text-fine);
-  color: var(--aw-warning);
-  transition: border-color 0.15s;
-}
-
-.workspace-selector:hover {
-  border-color: var(--aw-primary);
-}
-
-.workspace-selector.has-workspace {
-  color: var(--aw-ink-muted-80);
-}
-
-.workspace-selector span {
-  max-width: 200px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.cloud-workspace-detail {
-  width: 100%;
-  min-width: 0;
-}
-
-.workspace-mode-select {
-  width: 140px;
-  flex-shrink: 0;
-}
-
-:deep(.workspace-mode-select .el-input__wrapper),
-:deep(.workspace-mode-select .el-select__wrapper) {
-  border-radius: 999px;
-  background: var(--aw-canvas-parchment);
-  box-shadow: 0 0 0 1px var(--aw-hairline) inset;
-  padding: 2px 8px 2px 10px;
-  min-height: 26px;
-}
-
-:deep(.workspace-mode-select .el-input__inner),
-:deep(.workspace-mode-select .el-select__selected-item) {
-  font-size: var(--aw-text-fine);
-  height: 22px;
-  line-height: 22px;
-}
-
-:deep(.workspace-mode-select .el-input__suffix),
-:deep(.workspace-mode-select .el-select__caret) {
-  transform: scale(0.85);
-}
-
-.cloud-project-input,
-.cloud-project-select {
-  width: 100%;
-  min-width: 0;
-}
-
-:deep(.cloud-project-input .el-input__wrapper),
-:deep(.cloud-project-select .el-input__wrapper) {
-  border-radius: 999px;
-  background: var(--aw-canvas-parchment);
-  box-shadow: 0 0 0 1px var(--aw-hairline) inset;
-  padding: 2px 8px 2px 10px;
-  min-height: 26px;
-}
-
-:deep(.cloud-project-input .el-input__inner),
-:deep(.cloud-project-select .el-input__inner) {
-  font-size: var(--aw-text-fine);
-  height: 22px;
-  line-height: 22px;
-}
-
-:deep(.cloud-project-input .el-input__suffix),
-:deep(.cloud-project-select .el-input__suffix) {
-  transform: scale(0.85);
-}
-
-.chat-input-card.is-initializing-workspace {
-  pointer-events: none;
-  opacity: 0.92;
-}
-
-.chat-input-card.is-disabled {
-  opacity: 0.72;
-}
-
-.chat-input-card.is-disabled :deep(.ProseMirror) {
-  caret-color: transparent;
-}
-
-.add-btn.disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-  pointer-events: none;
-}
-
-.remove-file.disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-  pointer-events: none;
-}
-</style>
-
-<style>
-.workspace-mode-select-dropdown.el-select-dropdown,
-.cloud-project-select-dropdown.el-select-dropdown {
-  border-radius: var(--aw-radius-md);
-}
-
-.workspace-mode-select-dropdown .el-select-dropdown__item,
-.cloud-project-select-dropdown .el-select-dropdown__item {
-  font-size: var(--aw-text-fine);
-  height: 28px;
-  line-height: 28px;
-  padding: 0 12px;
-  font-weight: 400;
-  color: var(--aw-body);
-}
-
-/* 与「模型选择」列表对齐：选中项不用加粗主色，改用淡蓝底 + 深色文字 */
-.workspace-mode-select-dropdown .el-select-dropdown__item.is-selected,
-.cloud-project-select-dropdown .el-select-dropdown__item.is-selected {
-  font-weight: 400;
-  color: var(--aw-body);
-  background: var(--aw-primary-lighter);
-}
-</style>

@@ -26,406 +26,124 @@
       </div>
       <div class="panel-content">
         <template v-if="listMode === 'standard'">
-        <div v-if="loading" class="panel-loading">
-          <el-icon class="is-loading"><Loading /></el-icon>
-        </div>
-        <div v-else-if="groupedSessions.length === 0" class="panel-empty">
-          暂无任务
-        </div>
-        <template v-else>
-          <div 
-            v-for="(group, index) in groupedSessions" 
-            :key="group.key" 
-            class="session-group"
-            :class="{ 
-              'drag-over': dragOverIndex === index && dragIndex !== index,
-              'dragging': dragIndex === index 
-            }"
-            draggable="true"
-            @dragstart="onGroupDragStart($event, index)"
-            @dragover="onGroupDragOver($event, index)"
-            @dragleave="onGroupDragLeave"
-            @drop="onGroupDrop($event, index)"
-            @dragend="onGroupDragEnd"
-          >
-            <div class="group-header" @click="toggleGroup(group.key)" @contextmenu.prevent="openGroupContextMenu($event, group.key)">
-              <div class="group-header-left">
-                <span class="group-icon" :class="`icon-${groupIconKind(group.key, group.sessions)}`">
-                  <img
-                    v-if="groupIconKind(group.key, group.sessions) === 'feishu'"
-                    class="brand-icon"
-                    :src="feishuLogo"
-                    width="13"
-                    height="13"
-                    alt="飞书"
-                    draggable="false"
-                  />
-                  <img
-                    v-else-if="groupIconKind(group.key, group.sessions) === 'weixin'"
-                    class="brand-icon"
-                    :src="weixinLogo"
-                    width="13"
-                    height="13"
-                    alt="微信"
-                    draggable="false"
-                  />
-                  <el-icon v-else-if="groupIconKind(group.key, group.sessions) === 'dingtalk'" :size="13">
-                    <ChatDotRound />
-                  </el-icon>
-                  <el-icon v-else-if="groupIconKind(group.key, group.sessions) === 'embed'" :size="13">
-                    <Monitor />
-                  </el-icon>
-                  <el-icon v-else :size="13">
-                    <PartlyCloudy v-if="groupIconKind(group.key, group.sessions) === 'cloud' && !isGroupCollapsed(group.key)" />
-                    <Cloudy v-else-if="groupIconKind(group.key, group.sessions) === 'cloud'" />
-                    <FolderOpened v-else-if="!isGroupCollapsed(group.key)" />
-                    <Folder v-else />
-                  </el-icon>
-                </span>
-                <input
-                  v-if="renamingGroupKey === group.key"
-                  v-model="renamingValue"
-                  class="session-title-input group-rename-input"
-                  :ref="(el) => setGroupRenameInput(group.key, el)"
-                  @keydown="onGroupRenameKeydown"
-                  @click.stop
-                  @blur="onGroupRenameBlur"
-                />
-                <span
-                  v-else
-                  class="group-label"
-                  :title="groupAliasTooltip(group.key)"
-                >{{ group.label }}</span>
-                <el-icon :size="11" class="group-expand-arrow">
-                  <ArrowDown v-if="!isGroupCollapsed(group.key)" />
-                  <ArrowRight v-else />
-                </el-icon>
-              </div>
-              <div v-if="showItemActions" class="group-header-actions">
-                <button v-if="group.key.startsWith('LOCAL:')" class="group-add-btn" @click.stop="openGroupFolder(group)" title="在文件浏览器中打开">
-                  <el-icon :size="12"><FolderOpened /></el-icon>
-                </button>
-                <button v-if="group.key.startsWith('LOCAL:')" class="group-add-btn group-add-btn--terminal" @click.stop="openTerminal(group)" title="在终端中打开">
-                  <svg width="100%" height="100%" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" />
-                  </svg>
-                </button>
-                <button class="group-add-btn" @click.stop="onGroupNewTask(group)" title="在该分组新建任务">
-                  <el-icon :size="12"><Plus /></el-icon>
-                </button>
-              </div>
-            </div>
-            <template v-if="!isGroupCollapsed(group.key)">
-            <div
-              v-for="session in group.sessions.slice(0, getVisibleCount(group.key))"
-              :key="session.id"
-              :data-session-id="session.id"
-              class="session-item"
-              :class="{
-                active: String(session.id) === String(activeSessionId),
-                'confirming-delete': confirmingDeleteId === session.id,
-                editing: editingSessionId === session.id
-              }"
-              @click="selectSession(session)"
-              @contextmenu.prevent="openContextMenu($event, session, 'standard')"
-            >
-              <div class="session-item-main">
-                <span
-                  v-if="hasPendingApproval(session.id)"
-                  class="session-approval-dot"
-                  title="有待审批的命令"
-                ></span>
-                <span
-                  v-else-if="hasPendingQuestion(session.id)"
-                  class="session-question-dot"
-                  title="有待回答的问题"
-                ></span>
-                <span v-else class="session-phase-dot" :class="effectivePhaseClass(session)"></span>
-                <input
-                  v-if="editingSessionId === session.id"
-                  v-model="editingTitle"
-                  class="session-title-input"
-                  @keydown="onEditKeydown"
-                  @click.stop
-                  @blur="onEditBlur()"
-                />
-                <span v-else class="session-title">{{ session.summary || session.title || '新任务' }}</span>
-              </div>
-              <div class="session-item-meta">
-                <span v-if="session.running || session.treeRunning || hasActiveSideTask(session.id)" class="session-spinner"></span>
-                <span v-if="(session.unread || hasUnreadSideTask(session.id)) && String(session.id) !== String(activeSessionId)" class="session-unread-dot"></span>
-                <span class="session-elapsed">{{ formatElapsed(session) }}</span>
-              </div>
-              <div v-if="showItemActions" class="session-item-actions">
-                <template v-if="confirmingDeleteId === session.id">
-                  <button class="action-btn action-confirm" @click="confirmDelete($event, session.id)" title="确认删除" :disabled="isDeleting(session.id)">
-                    <el-icon :size="13"><Check /></el-icon>
-                  </button>
-                  <button class="action-btn action-cancel" @click="cancelDelete($event)" title="取消">
-                    <el-icon :size="13"><Close /></el-icon>
-                  </button>
-                </template>
-                <template v-else-if="editingSessionId === session.id">
-                  <button class="action-btn action-confirm" @click="confirmEdit($event)" title="确认">
-                    <el-icon :size="13"><Check /></el-icon>
-                  </button>
-                  <button class="action-btn action-cancel" @click="cancelEdit($event)" title="取消">
-                    <el-icon :size="13"><Close /></el-icon>
-                  </button>
-                </template>
-                <template v-else>
-                  <button class="action-btn action-edit" @click="startEdit($event, session)" title="重命名">
-                    <el-icon :size="13"><EditPen /></el-icon>
-                  </button>
-                  <button class="action-btn action-delete" @click="startDelete($event, session.id)" title="删除任务">
-                    <el-icon :size="13"><Delete /></el-icon>
-                  </button>
-                </template>
-              </div>
-            </div>
-            <div
-              v-if="canExpandGroup(group)"
-              class="group-toggle"
-              :class="{ disabled: isGroupLoadingMore(group.key) }"
-              @click="!isGroupLoadingMore(group.key) && showMore(group.key)"
-            >
-              {{ isGroupLoadingMore(group.key) ? '加载中…' : '展开更多' }}
-            </div>
-            <div
-              v-else-if="getVisibleCount(group.key) > DEFAULT_VISIBLE"
-              class="group-toggle"
-              @click="showLess(group.key)"
-            >
-              收起
-            </div>
-            </template>
-          </div>
-        </template>
+          <TaskSessionGroupList
+            :loading="loading"
+            :grouped-sessions="groupedSessions"
+            :drag-over-index="dragOverIndex"
+            :drag-index="dragIndex"
+            :renaming-group-key="renamingGroupKey"
+            v-model:renaming-value="renamingValue"
+            :show-item-actions="showItemActions"
+            :active-session-id="activeSessionId"
+            :confirming-delete-id="confirmingDeleteId"
+            :editing-session-id="editingSessionId"
+            v-model:editing-title="editingTitle"
+            :DEFAULT_VISIBLE="DEFAULT_VISIBLE"
+            :toggle-group="toggleGroup"
+            :open-group-context-menu="openGroupContextMenu"
+            :set-group-rename-input="setGroupRenameInput"
+            :on-group-rename-keydown="onGroupRenameKeydown"
+            :on-group-rename-blur="onGroupRenameBlur"
+            :group-alias-tooltip="groupAliasTooltip"
+            :is-group-collapsed="isGroupCollapsed"
+            :open-group-folder="openGroupFolder"
+            :open-terminal="openTerminal"
+            :on-group-new-task="onGroupNewTask"
+            :get-visible-count="getVisibleCount"
+            :select-session="selectSession"
+            :open-context-menu="openContextMenu"
+            :has-pending-approval="hasPendingApproval"
+            :has-pending-question="hasPendingQuestion"
+            :effective-phase-class="effectivePhaseClass"
+            :on-edit-keydown="onEditKeydown"
+            :on-edit-blur="onEditBlur"
+            :has-active-side-task="hasActiveSideTask"
+            :has-unread-side-task="hasUnreadSideTask"
+            :format-elapsed="formatElapsed"
+            :confirm-delete="confirmDelete"
+            :cancel-delete="cancelDelete"
+            :is-deleting="isDeleting"
+            :confirm-edit="confirmEdit"
+            :cancel-edit="cancelEdit"
+            :start-edit="startEdit"
+            :start-delete="startDelete"
+            :can-expand-group="canExpandGroup"
+            :is-group-loading-more="isGroupLoadingMore"
+            :show-more="showMore"
+            :show-less="showLess"
+            :on-group-drag-start="onGroupDragStart"
+            :on-group-drag-over="onGroupDragOver"
+            :on-group-drag-leave="onGroupDragLeave"
+            :on-group-drop="onGroupDrop"
+            :on-group-drag-end="onGroupDragEnd"
+          />
         </template>
 
         <!-- 聚焦模式：全量平铺 + 优先级排序 -->
         <template v-else>
-          <div v-if="focusLoading && focusedSessions.length === 0" class="panel-loading">
-            <el-icon class="is-loading"><Loading /></el-icon>
-          </div>
-          <div v-else-if="focusError" class="panel-error">
-            <span>聚焦列表加载失败</span>
-            <button class="retry-btn" @click="loadFocus()">重试</button>
-          </div>
-          <div v-else-if="focusedSessions.length === 0" class="panel-empty">
-            暂无任务
-          </div>
-          <template v-else>
-            <div
-              v-for="session in visibleFocusMainSessions"
-              :key="session.id"
-              :data-session-id="session.id"
-              class="session-item focus-item"
-              :class="{
-                active: String(session.id) === String(activeSessionId),
-                'confirming-delete': confirmingDeleteId === session.id,
-                editing: editingSessionId === session.id
-              }"
-              @click="selectSession(session)"
-              @contextmenu.prevent="openContextMenu($event, session, 'standard')"
-            >
-              <div class="session-item-main focus-item-content">
-                <span class="session-phase-dot" :class="effectivePhaseClass(session)"></span>
-                <input
-                  v-if="editingSessionId === session.id"
-                  v-model="editingTitle"
-                  class="session-title-input"
-                  @keydown="onEditKeydown"
-                  @click.stop
-                  @blur="onEditBlur()"
-                />
-                <div v-else class="focus-item-text">
-                  <div class="focus-title-row">
-                    <span class="session-title">{{ session.summary || session.title || '新任务' }}</span>
-                    <span v-if="session.running || session.treeRunning || hasActiveSideTask(session.id)" class="session-spinner"></span>
-                  </div>
-                  <div class="focus-subtitle-row">
-                    <span class="focus-workspace-tag">{{ workspaceLabel(session) }}</span>
-                    <span class="focus-status-label" :class="focusStatusClass(session)">{{ focusStatusLabel(session) }}</span>
-                  </div>
-                </div>
-              </div>
-              <div v-if="showItemActions" class="session-item-actions">
-                <template v-if="confirmingDeleteId === session.id">
-                  <button class="action-btn action-confirm" @click="confirmDelete($event, session.id)" title="确认删除" :disabled="isDeleting(session.id)">
-                    <el-icon :size="13"><Check /></el-icon>
-                  </button>
-                  <button class="action-btn action-cancel" @click="cancelDelete($event)" title="取消">
-                    <el-icon :size="13"><Close /></el-icon>
-                  </button>
-                </template>
-                <template v-else>
-                  <button class="action-btn action-edit" @click="startEdit($event, session)" title="重命名">
-                    <el-icon :size="13"><EditPen /></el-icon>
-                  </button>
-                  <button class="action-btn action-archive" @click="startArchive($event, session)" title="归档">
-                    <el-icon :size="13"><FolderChecked /></el-icon>
-                  </button>
-                  <button class="action-btn action-delete" @click="startDelete($event, session.id)" title="删除任务">
-                    <el-icon :size="13"><Delete /></el-icon>
-                  </button>
-                </template>
-              </div>
-            </div>
-            <div
-              v-if="focusMainSessions.length > FOCUS_DEFAULT_VISIBLE"
-              class="group-toggle"
-              @click="focusVisibleCount += FOCUS_EXPAND_STEP"
-            >
-              展开更多
-            </div>
-            <!-- 历史折叠区：已完成且超过 3 天无更新的任务 -->
-            <div v-if="historySessions.length > 0" class="focus-history">
-              <div class="group-header" @click="historyCollapsed = !historyCollapsed">
-                <div class="group-header-left">
-                  <el-icon :size="13" class="group-icon"><Clock /></el-icon>
-                  <span class="group-label">历史（{{ historySessions.length }}）</span>
-                  <el-icon :size="11" class="group-expand-arrow">
-                    <ArrowDown v-if="!historyCollapsed" />
-                    <ArrowRight v-else />
-                  </el-icon>
-                </div>
-              </div>
-              <template v-if="!historyCollapsed">
-                <div
-                  v-for="session in historySessions"
-                  :key="session.id"
-                  :data-session-id="session.id"
-                  class="session-item focus-item"
-                  :class="{
-                    active: String(session.id) === String(activeSessionId),
-                    'confirming-delete': confirmingDeleteId === session.id,
-                    editing: editingSessionId === session.id
-                  }"
-                  @click="selectSession(session)"
-                  @contextmenu.prevent="openContextMenu($event, session, 'standard')"
-                >
-                  <div class="session-item-main">
-                    <input
-                      v-if="editingSessionId === session.id"
-                      v-model="editingTitle"
-                      class="session-title-input"
-                      @keydown="onEditKeydown"
-                      @click.stop
-                      @blur="onEditBlur()"
-                    />
-                    <template v-else>
-                      <span class="session-title">{{ session.summary || session.title || '新任务' }}</span>
-                      <span class="focus-workspace-tag">{{ workspaceLabel(session) }}</span>
-                    </template>
-                  </div>
-                  <div class="session-item-meta">
-                    <span class="session-elapsed">{{ formatElapsed(session) }}</span>
-                  </div>
-                  <div v-if="showItemActions" class="session-item-actions">
-                    <template v-if="confirmingDeleteId === session.id">
-                      <button class="action-btn action-confirm" @click="confirmDelete($event, session.id)" title="确认删除" :disabled="isDeleting(session.id)">
-                        <el-icon :size="13"><Check /></el-icon>
-                      </button>
-                      <button class="action-btn action-cancel" @click="cancelDelete($event)" title="取消">
-                        <el-icon :size="13"><Close /></el-icon>
-                      </button>
-                    </template>
-                    <template v-else>
-                      <button class="action-btn action-edit" @click="startEdit($event, session)" title="重命名">
-                        <el-icon :size="13"><EditPen /></el-icon>
-                      </button>
-                      <button class="action-btn action-archive" @click="startArchive($event, session)" title="归档">
-                        <el-icon :size="13"><FolderChecked /></el-icon>
-                      </button>
-                      <button class="action-btn action-delete" @click="startDelete($event, session.id)" title="删除任务">
-                        <el-icon :size="13"><Delete /></el-icon>
-                      </button>
-                    </template>
-                  </div>
-                </div>
-              </template>
-            </div>
-          </template>
+          <TaskFocusList
+            :focus-loading="focusLoading"
+            :focus-error="focusError"
+            :focused-sessions="focusedSessions"
+            :visible-focus-main-sessions="visibleFocusMainSessions"
+            :focus-main-sessions="focusMainSessions"
+            :history-sessions="historySessions"
+            :active-session-id="activeSessionId"
+            :confirming-delete-id="confirmingDeleteId"
+            :editing-session-id="editingSessionId"
+            v-model:editing-title="editingTitle"
+            :show-item-actions="showItemActions"
+            :FOCUS_DEFAULT_VISIBLE="FOCUS_DEFAULT_VISIBLE"
+            :FOCUS_EXPAND_STEP="FOCUS_EXPAND_STEP"
+            v-model:focus-visible-count="focusVisibleCount"
+            v-model:history-collapsed="historyCollapsed"
+            :load-focus="loadFocus"
+            :select-session="selectSession"
+            :open-context-menu="openContextMenu"
+            :effective-phase-class="effectivePhaseClass"
+            :on-edit-keydown="onEditKeydown"
+            :on-edit-blur="onEditBlur"
+            :has-active-side-task="hasActiveSideTask"
+            :workspace-label="workspaceLabel"
+            :focus-status-class="focusStatusClass"
+            :focus-status-label="focusStatusLabel"
+            :confirm-delete="confirmDelete"
+            :cancel-delete="cancelDelete"
+            :is-deleting="isDeleting"
+            :start-edit="startEdit"
+            :start-archive="startArchive"
+            :start-delete="startDelete"
+            :format-elapsed="formatElapsed"
+          />
         </template>
 
         <!-- 已归档区（两种模式下都显示在底部） -->
-        <div class="archive-section">
-          <div class="group-header" @click="toggleArchive">
-            <div class="group-header-left">
-              <el-icon :size="13" class="group-icon icon-archive"><FolderOpened v-if="!archiveCollapsed" /><Folder v-else /></el-icon>
-              <span class="group-label">已归档</span>
-              <el-icon :size="11" class="group-expand-arrow">
-                <ArrowDown v-if="!archiveCollapsed" />
-                <ArrowRight v-else />
-              </el-icon>
-            </div>
-            <div class="group-header-actions">
-              <span v-if="archivedCount > 0" class="archive-count">{{ archivedCount }}</span>
-              <button class="group-add-btn" @click.stop="loadArchive(true)" title="刷新已归档" :disabled="archivedLoading">
-                <el-icon :size="12"><Refresh /></el-icon>
-              </button>
-            </div>
-          </div>
-          <template v-if="!archiveCollapsed">
-            <div v-if="archivedLoading && archivedSessions.length === 0" class="panel-loading">
-              <el-icon class="is-loading"><Loading /></el-icon>
-            </div>
-            <div v-else-if="archivedSessions.length === 0" class="side-task-empty">
-              暂无已归档任务
-            </div>
-            <div
-              v-for="session in archivedSessions"
-              :key="session.id"
-              :data-session-id="session.id"
-              class="session-item archive-item"
-              :class="{
-                active: String(session.id) === String(activeSessionId),
-                'confirming-delete': confirmingDeleteId === session.id,
-                editing: editingSessionId === session.id
-              }"
-              @click="selectSession(session)"
-              @contextmenu.prevent="openContextMenu($event, session, 'archived')"
-            >
-              <div class="session-item-main">
-                <input
-                  v-if="editingSessionId === session.id"
-                  v-model="editingTitle"
-                  class="session-title-input"
-                  @keydown="onEditKeydown"
-                  @click.stop
-                  @blur="onEditBlur()"
-                />
-                <span v-else class="session-title">{{ session.summary || session.title || '新任务' }}</span>
-                <span class="focus-workspace-tag">{{ workspaceLabel(session) }}</span>
-              </div>
-              <div class="session-item-meta">
-                <span class="session-elapsed">{{ formatElapsed(session) }}</span>
-              </div>
-              <div v-if="showItemActions" class="session-item-actions">
-                <template v-if="confirmingDeleteId === session.id">
-                  <button class="action-btn action-confirm" @click="confirmDelete($event, session.id)" title="确认删除" :disabled="isDeleting(session.id)">
-                    <el-icon :size="13"><Check /></el-icon>
-                  </button>
-                  <button class="action-btn action-cancel" @click="cancelDelete($event)" title="取消">
-                    <el-icon :size="13"><Close /></el-icon>
-                  </button>
-                </template>
-                <template v-else>
-                  <button class="action-btn action-restore" @click="doUnarchive(session.id)" title="恢复" :disabled="isArchiving(session.id)">
-                    <el-icon :size="13"><RefreshLeft /></el-icon>
-                  </button>
-                  <button class="action-btn action-edit" @click="startEdit($event, session)" title="重命名">
-                    <el-icon :size="13"><EditPen /></el-icon>
-                  </button>
-                  <button class="action-btn action-delete" @click="startDelete($event, session.id)" title="删除任务">
-                    <el-icon :size="13"><Delete /></el-icon>
-                  </button>
-                </template>
-              </div>
-            </div>
-          </template>
-        </div>
+        <TaskArchivedSection
+          :archive-collapsed="archiveCollapsed"
+          :archived-count="archivedCount"
+          :archived-loading="archivedLoading"
+          :archived-sessions="archivedSessions"
+          :active-session-id="activeSessionId"
+          :confirming-delete-id="confirmingDeleteId"
+          :editing-session-id="editingSessionId"
+          v-model:editing-title="editingTitle"
+          :show-item-actions="showItemActions"
+          :toggle-archive="toggleArchive"
+          :load-archive="loadArchive"
+          :select-session="selectSession"
+          :open-context-menu="openContextMenu"
+          :on-edit-keydown="onEditKeydown"
+          :on-edit-blur="onEditBlur"
+          :workspace-label="workspaceLabel"
+          :format-elapsed="formatElapsed"
+          :confirm-delete="confirmDelete"
+          :cancel-delete="cancelDelete"
+          :is-deleting="isDeleting"
+          :do-unarchive="doUnarchive"
+          :is-archiving="isArchiving"
+          :start-edit="startEdit"
+          :start-delete="startDelete"
+        />
       </div>
     </template>
     <div
@@ -436,42 +154,23 @@
     ></div>
 
     <!-- 右键菜单（Teleport 到 body，桌面右键 / 移动端长按） -->
-    <Teleport to="body">
-      <div
-        v-if="contextMenu.visible"
-        class="task-context-menu"
-        :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
-        @click.stop
-      >
-        <template v-if="contextMenu.zone === 'archived'">
-          <div class="context-menu-item" @click="menuUnarchive">恢复</div>
-          <div class="context-menu-item" @click="menuEditTitle">编辑标题</div>
-          <div class="context-menu-item danger" @click="menuDelete">删除</div>
-        </template>
-        <template v-else>
-          <div class="context-menu-item" @click="menuEditTitle">编辑标题</div>
-          <div class="context-menu-item" @click="menuArchive">归档</div>
-          <div class="context-menu-item danger" @click="menuDelete">删除</div>
-        </template>
-      </div>
-
-      <!-- 分组头右键菜单（仅可改名分组显示重命名，存在别名时显示重置） -->
-      <div
-        v-if="groupContextMenu.visible"
-        class="task-context-menu"
-        :style="{ left: groupContextMenu.x + 'px', top: groupContextMenu.y + 'px' }"
-        @click.stop
-      >
-        <div v-if="isGroupRenameable(groupContextMenu.key)" class="context-menu-item" @click="menuRenameGroup">重命名</div>
-        <div v-if="hasGroupAlias(groupContextMenu.key)" class="context-menu-item" @click="menuResetGroup">重置名称</div>
-      </div>
-    </Teleport>
+    <TaskContextMenu
+      :context-menu="contextMenu"
+      :group-context-menu="groupContextMenu"
+      :menu-archive="menuArchive"
+      :menu-unarchive="menuUnarchive"
+      :menu-edit-title="menuEditTitle"
+      :menu-delete="menuDelete"
+      :menu-rename-group="menuRenameGroup"
+      :menu-reset-group="menuResetGroup"
+      :has-group-alias="hasGroupAlias"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, reactive, watch, nextTick, onMounted, onUnmounted } from 'vue'
-import { Refresh, Loading, Plus, Delete, Check, Close, Cloudy, PartlyCloudy, Folder, FolderOpened, EditPen, ArrowDown, ArrowRight, FolderChecked, RefreshLeft, Clock, Bell, BellFilled, ChatDotRound, Monitor } from '@element-plus/icons-vue'
+import { Refresh, Plus, Bell, BellFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { useSessionStore, type Session, type TaskPhase } from '../../stores/session'
@@ -479,11 +178,13 @@ import { useTerminal } from '../../composables/useTerminal'
 import { removeSessionTabsFor } from '../../composables/useCenterTabs'
 import { useTaskPanelPrefs } from '../../composables/useTaskPanelPrefs'
 import { useRelativeTime, formatRelativeTime } from '../../composables/useRelativeTime'
-import { cloudGroupKey, groupIconKind, isEmbedGroupKey, isGroupRenameable, isSharedCloudProject, resolveGroupLabel } from '../../utils/cloud-project'
+import { cloudGroupKey, isEmbedGroupKey, isGroupRenameable, isSharedCloudProject, resolveGroupLabel } from '../../utils/cloud-project'
 import { planFocusReveal, planGroupReveal } from '../../utils/taskSidebarReveal'
 import { sessionToFocusCandidate, sortByFocusPriority, isHistoryEligible } from '../../utils/focusSort'
-import feishuLogo from '../../assets/feishu-logo.svg'
-import weixinLogo from '../../assets/weixin-logo.png'
+import TaskSessionGroupList from './TaskSessionGroupList.vue'
+import TaskFocusList from './TaskFocusList.vue'
+import TaskArchivedSection from './TaskArchivedSection.vue'
+import TaskContextMenu from './TaskContextMenu.vue'
 
 const props = defineProps<{
   collapsed: boolean
@@ -1428,861 +1129,3 @@ function onGroupDragEnd() {
   dragOverIndex.value = null
 }
 </script>
-
-<style scoped>
-.task-index-panel {
-  position: relative;
-  width: var(--aw-session-panel-width);
-  flex-shrink: 0;
-  background: var(--aw-canvas-parchment);
-  backdrop-filter: saturate(180%) blur(20px);
-  border-right: 1px solid var(--aw-divider-soft);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.task-index-panel.collapsed {
-  display: none;
-}
-
-.panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  flex-shrink: 0;
-}
-
-.header-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.panel-title {
-  font-family: var(--aw-font-display);
-  font-size: var(--aw-text-tagline);
-  font-weight: 600;
-  color: var(--aw-ink);
-  letter-spacing: 0.231px;
-}
-
-.refresh-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: none;
-  background: transparent;
-  border-radius: var(--aw-radius-xs);
-  color: var(--aw-ink-muted-48);
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-
-.refresh-btn:hover:not(:disabled) {
-  background: rgba(0, 0, 0, 0.06);
-  color: var(--aw-primary);
-}
-
-[data-theme="dark"] .refresh-btn:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.refresh-btn:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-.panel-content {
-  flex: 1;
-  overflow-y: auto;
-  padding: 0 8px 8px;
-}
-
-.panel-loading, .panel-empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 80px;
-  color: var(--aw-ink-muted-48);
-  font-size: var(--aw-text-caption);
-}
-
-.group-header {
-  position: relative;
-  font-size: var(--aw-text-micro);
-  font-weight: 500;
-  color: var(--aw-ink-muted-48);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  padding: 4px 4px;
-  display: flex;
-  align-items: center;
-  cursor: pointer;
-  user-select: none;
-  transition: color 0.15s;
-}
-
-.group-header:hover {
-  color: var(--aw-ink);
-}
-
-.group-header-left {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  flex: 1;
-}
-
-.group-label {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.group-expand-arrow {
-  flex-shrink: 0;
-  opacity: 0;
-  transition: opacity 0.15s;
-  color: var(--aw-ink-muted-48);
-}
-
-.group-header:hover .group-expand-arrow {
-  opacity: 0.7;
-}
-
-.task-index-panel:not(.actions-hidden) .group-header:hover .group-expand-arrow {
-  opacity: 0;
-}
-
-.group-header-actions {
-  position: absolute;
-  right: 4px;
-  top: 50%;
-  transform: translateY(-50%);
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 2px 4px 2px 12px;
-  border-radius: var(--aw-radius-xs);
-  background: var(--aw-canvas-parchment);
-  z-index: 1;
-  opacity: 0;
-  transition: opacity 0.15s;
-  pointer-events: none;
-}
-
-.group-header-actions::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 12px;
-  background: linear-gradient(to right, transparent, var(--aw-canvas-parchment));
-  pointer-events: none;
-}
-
-.group-header:hover .group-header-actions {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.group-add-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  border: none;
-  background: var(--aw-canvas-parchment);
-  border-radius: var(--aw-radius-xs);
-  color: var(--aw-ink-muted-48);
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-
-.group-add-btn--terminal {
-  width: 24px;
-  height: 24px;
-}
-
-.group-add-btn:hover {
-  background: var(--aw-surface-pearl);
-  color: var(--aw-primary);
-}
-
-.session-group {
-  transition: transform 0.15s, opacity 0.15s;
-}
-
-.session-group.dragging {
-  opacity: 0.5;
-  transform: scale(0.98);
-}
-
-.session-group.drag-over {
-  border-top: 2px solid var(--aw-primary);
-  margin-top: -2px;
-}
-
-.session-group.drag-over::before {
-  content: '';
-  position: absolute;
-  top: -1px;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: var(--aw-primary);
-  z-index: 1;
-}
-
-.group-icon {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  line-height: 0;
-}
-
-.group-icon .brand-icon {
-  display: block;
-  width: 13px;
-  height: 13px;
-  object-fit: contain;
-}
-
-.group-icon.icon-cloud {
-  color: #60a5fa;
-}
-
-.group-icon.icon-folder {
-  color: #f59e0b;
-}
-
-.group-toggle {
-  font-size: var(--aw-text-micro);
-  color: var(--aw-ink-muted-48);
-  padding: 4px 10px 6px 24px;
-  cursor: pointer;
-  user-select: none;
-  transition: color 0.15s;
-}
-
-.group-toggle.disabled {
-  cursor: default;
-  opacity: 0.6;
-}
-
-.group-toggle:hover {
-  color: var(--aw-ink);
-}
-
-.group-toggle.disabled:hover {
-  color: var(--aw-ink-muted-48);
-}
-
-.session-item {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 10px;
-  border-radius: var(--aw-radius-sm);
-  cursor: pointer;
-  transition: background 0.15s;
-  gap: 8px;
-}
-
-.session-item:hover {
-  background: rgba(0, 0, 0, 0.04);
-}
-
-.session-item.active {
-  background: var(--aw-primary-lighter);
-}
-
-.session-item-main {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
-}
-
-.session-phase-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.session-phase-dot.running { background: var(--aw-primary); }
-.session-phase-dot.waiting { background: var(--aw-status-waiting); }
-.session-phase-dot.completed { background: var(--aw-success); }
-.session-phase-dot.failed { background: var(--aw-danger); }
-.session-phase-dot.idle { background: var(--aw-hairline); }
-
-.session-unread-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background-color: #00d4aa;
-  flex-shrink: 0;
-  margin-right: 2px;
-}
-
-.session-approval-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #f59e0b;
-  flex-shrink: 0;
-  animation: pulse-approval 1.5s ease-in-out infinite;
-}
-
-@keyframes pulse-approval {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
-}
-
-.session-question-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #f59e0b;
-  flex-shrink: 0;
-  animation: pulse-question 1.5s ease-in-out infinite;
-}
-
-@keyframes pulse-question {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
-}
-
-.session-title {
-  font-size: var(--aw-text-caption);
-  color: var(--aw-ink);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  letter-spacing: -0.224px;
-}
-
-.session-item-meta {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-  transition: opacity 0.15s;
-}
-
-.session-item:hover .session-item-meta,
-.session-item.confirming-delete .session-item-meta,
-.session-item.editing .session-item-meta {
-  opacity: 0;
-}
-
-.task-index-panel.actions-hidden .session-item:hover .session-item-meta {
-  opacity: 1;
-}
-
-.session-spinner {
-  width: 10px;
-  height: 10px;
-  border: 1.5px solid var(--aw-hairline);
-  border-top-color: var(--aw-primary);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-.session-elapsed {
-  font-family: var(--aw-font-mono);
-  font-size: var(--aw-text-micro);
-  color: var(--aw-ink-muted-48);
-  letter-spacing: -0.1px;
-}
-
-.session-item-actions {
-  position: absolute;
-  right: 8px;
-  top: 50%;
-  transform: translateY(-50%);
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 2px 4px;
-  border-radius: var(--aw-radius-xs);
-  opacity: 0;
-  transition: opacity 0.15s;
-}
-
-.session-item:hover .session-item-actions,
-.session-item.confirming-delete .session-item-actions,
-.session-item.editing .session-item-actions {
-  opacity: 1;
-}
-
-.action-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border: none;
-  background: var(--aw-canvas-parchment);
-  border-radius: var(--aw-radius-xs);
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-  color: var(--aw-ink-muted-48);
-}
-
-.action-delete:hover {
-  background: #fee2e2;
-  color: var(--aw-danger);
-}
-
-.action-edit:hover {
-  background: #f3f4f6;
-  color: var(--aw-primary);
-}
-
-.session-title-input {
-  flex: 1;
-  min-width: 0;
-  font-size: var(--aw-text-caption);
-  color: var(--aw-ink);
-  letter-spacing: -0.224px;
-  background: var(--aw-surface-pearl);
-  border: 1px solid var(--aw-primary);
-  border-radius: var(--aw-radius-xs);
-  padding: 1px 6px;
-  outline: none;
-}
-
-/* 分组头行内重命名输入框：宽度受限，避免撑开分组头 */
-.group-rename-input {
-  flex: 0 1 auto;
-  width: 90px;
-  max-width: 120px;
-}
-
-.session-item.editing {
-  background: var(--aw-surface-pearl);
-}
-
-.action-confirm {
-  background: #fee2e2;
-  color: var(--aw-danger);
-}
-
-.action-confirm:hover {
-  background: #fecaca;
-}
-
-.action-cancel:hover {
-  background: #f3f4f6;
-  color: var(--aw-ink);
-}
-
-.session-item.confirming-delete {
-  background: rgba(220, 53, 69, 0.04);
-}
-
-/* Resize handle */
-.resize-handle {
-  position: absolute;
-  top: 0;
-  right: -8px;
-  width: 16px;
-  height: 100%;
-  cursor: col-resize;
-  touch-action: none;
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.resize-handle::before {
-  content: '';
-  width: 2px;
-  height: 32px;
-  border-radius: 1px;
-  background: var(--aw-hairline);
-  transition: background 0.15s, height 0.15s;
-}
-
-.resize-handle:hover,
-.resize-handle:active {
-  background: var(--aw-primary-hover);
-}
-
-.resize-handle:hover::before,
-.resize-handle:active::before {
-  background: var(--aw-primary);
-  height: 48px;
-}
-
-/* Wider touch target and visible grip on touch devices */
-@media (max-width: 768px), (pointer: coarse) {
-  .resize-handle {
-    width: 44px;
-    right: -22px;
-  }
-
-  .resize-handle::before {
-    width: 6px;
-    height: 56px;
-    border-radius: 3px;
-  }
-
-  .resize-handle:hover::before,
-  .resize-handle:active::before {
-    width: 8px;
-    height: 72px;
-  }
-}
-
-/* Scrollbar — hidden by default, visible on hover */
-.panel-content {
-  scrollbar-width: thin;
-  scrollbar-color: transparent transparent;
-  transition: scrollbar-color 0.3s;
-}
-
-.panel-content:hover {
-  scrollbar-color: var(--aw-hairline) transparent;
-}
-
-.panel-content::-webkit-scrollbar {
-  width: 4px;
-}
-
-.panel-content::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.panel-content::-webkit-scrollbar-thumb {
-  background: transparent;
-  border-radius: 2px;
-  transition: background 0.3s;
-}
-
-.panel-content:hover::-webkit-scrollbar-thumb {
-  background: var(--aw-hairline);
-}
-
-/* Dark mode */
-[data-theme="dark"] .task-index-panel {
-  background: var(--aw-canvas-parchment);
-}
-
-[data-theme="dark"] .session-item:hover {
-  background: rgba(255, 255, 255, 0.04);
-}
-
-[data-theme="dark"] .session-item.active {
-  background: var(--aw-primary-lighter);
-}
-
-[data-theme="dark"] .action-btn {
-  background: #1a1a2e;
-}
-
-[data-theme="dark"] .group-add-btn {
-  background: #1a1a2e;
-}
-
-[data-theme="dark"] .group-header-actions {
-  background: #1a1a2e;
-}
-
-[data-theme="dark"] .group-header-actions::before {
-  background: linear-gradient(to right, transparent, #1a1a2e);
-}
-
-[data-theme="dark"] .group-add-btn:hover {
-  background: #27272a;
-  color: var(--aw-primary);
-}
-
-[data-theme="dark"] .action-delete:hover {
-  background: #3b1520;
-  color: #f85149;
-}
-
-[data-theme="dark"] .action-edit:hover {
-  background: #27272a;
-  color: var(--aw-primary);
-}
-
-[data-theme="dark"] .session-title-input {
-  background: rgba(255, 255, 255, 0.06);
-  border-color: var(--aw-primary);
-}
-
-[data-theme="dark"] .session-item.editing {
-  background: rgba(255, 255, 255, 0.06);
-}
-
-[data-theme="dark"] .action-confirm {
-  background: #3b1520;
-  color: #f85149;
-}
-
-[data-theme="dark"] .action-confirm:hover {
-  background: #5c1d2e;
-}
-
-[data-theme="dark"] .action-cancel:hover {
-  background: #27272a;
-  color: var(--aw-ink);
-}
-
-[data-theme="dark"] .session-item.confirming-delete {
-  background: rgba(248, 81, 73, 0.06);
-}
-
-[data-theme="dark"] .group-icon.icon-cloud {
-  color: #93c5fd;
-}
-
-[data-theme="dark"] .group-icon.icon-folder {
-  color: #fbbf24;
-}
-
-[data-theme="dark"] .session-group.drag-over::before {
-  background: var(--aw-primary);
-}
-
-/* --- 模式切换 --- */
-.mode-toggle-btn {
-  margin-right: 2px;
-}
-
-/* 选中（聚焦模式）时图标高亮为选中蓝；hover 保持同色避免闪烁 */
-.mode-toggle-btn.active,
-.mode-toggle-btn.active:hover {
-  color: var(--aw-primary);
-}
-
-/* --- 聚焦模式 --- */
-.focus-item {
-  align-items: flex-start;
-  padding-block: 7px;
-}
-
-.focus-item .focus-item-content {
-  align-items: flex-start;
-  gap: 8px;
-}
-
-.focus-item .session-phase-dot {
-  margin-top: 7px;
-}
-
-.focus-item-text {
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.focus-title-row,
-.focus-subtitle-row {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-}
-
-.focus-title-row {
-  gap: 6px;
-}
-
-.focus-title-row .session-title {
-  flex: 1;
-  min-width: 0;
-}
-
-.focus-subtitle-row {
-  gap: 7px;
-  padding-right: 4px;
-}
-
-.focus-workspace-tag {
-  flex-shrink: 0;
-  font-size: var(--aw-text-micro);
-  color: var(--aw-ink-muted-48);
-  background: rgba(0, 0, 0, 0.05);
-  border-radius: var(--aw-radius-xs);
-  padding: 1px 5px;
-  max-width: 110px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  letter-spacing: -0.1px;
-}
-
-.focus-status-label {
-  flex-shrink: 0;
-  font-size: var(--aw-text-micro);
-  color: var(--aw-ink-muted-48);
-  white-space: nowrap;
-  letter-spacing: -0.1px;
-}
-
-.focus-status-label.status-waiting { color: var(--aw-status-waiting); }
-.focus-status-label.status-failed { color: var(--aw-danger); }
-.focus-status-label.status-running { color: var(--aw-primary); }
-.focus-status-label.status-completed { color: var(--aw-ink-muted-48); }
-
-.focus-history {
-  margin-top: 4px;
-  border-top: 1px dashed var(--aw-divider-soft);
-  padding-top: 2px;
-}
-
-/* --- 已归档区 --- */
-.archive-section {
-  margin-top: 4px;
-  border-top: 1px dashed var(--aw-divider-soft);
-  padding-top: 2px;
-}
-
-.archive-count {
-  font-family: var(--aw-font-mono);
-  font-size: var(--aw-text-micro);
-  color: var(--aw-ink-muted-48);
-  margin-right: 6px;
-}
-
-.group-header-left .icon-archive {
-  color: var(--aw-ink-muted-48);
-}
-
-.action-archive:hover {
-  background: #f3f4f6;
-  color: var(--aw-primary);
-}
-
-.action-restore:hover {
-  background: #dcfce7;
-  color: var(--aw-success);
-}
-
-[data-theme="dark"] .action-archive:hover {
-  background: #27272a;
-  color: var(--aw-primary);
-}
-
-[data-theme="dark"] .action-restore:hover {
-  background: #12331f;
-  color: #4ade80;
-}
-
-[data-theme="dark"] .focus-workspace-tag {
-  background: rgba(255, 255, 255, 0.08);
-}
-
-/* --- 聚焦加载失败 --- */
-.panel-error {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  padding: 24px 8px;
-  font-size: var(--aw-text-caption);
-  color: var(--aw-ink-muted-48);
-}
-
-.retry-btn {
-  border: 1px solid var(--aw-divider-soft);
-  background: var(--aw-surface);
-  color: var(--aw-ink);
-  border-radius: var(--aw-radius-xs);
-  padding: 4px 14px;
-  font-size: var(--aw-text-caption);
-  cursor: pointer;
-}
-
-.retry-btn:hover {
-  color: var(--aw-primary);
-  border-color: var(--aw-primary);
-}
-
-.side-task-empty {
-  font-size: var(--aw-text-caption);
-  color: var(--aw-ink-muted-48);
-  padding: 8px 0;
-}
-</style>
-
-<style>
-/* 右键菜单（Teleport 到 body，scoped 外） */
-.task-context-menu {
-  position: fixed;
-  z-index: 9999;
-  min-width: 140px;
-  padding: 4px 0;
-  background: var(--aw-surface, #fff);
-  border: 1px solid var(--aw-divider-soft, #e0e0e0);
-  border-radius: var(--aw-radius-sm);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
-  user-select: none;
-}
-
-.context-menu-item {
-  padding: 7px 16px;
-  font-size: var(--aw-text-caption);
-  color: var(--aw-ink, #1a1a1a);
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background 0.12s, color 0.12s;
-}
-
-.context-menu-item:hover {
-  background: var(--aw-canvas-parchment, #f5f5f5);
-  color: var(--aw-primary, #0066cc);
-}
-
-.context-menu-item.danger {
-  color: var(--aw-danger, #d92d20);
-}
-
-.context-menu-item.danger:hover {
-  background: #fee2e2;
-}
-
-[data-theme="dark"] .task-context-menu {
-  background: #2a2a2a;
-  border-color: var(--aw-hairline, #3a3a3a);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-}
-
-[data-theme="dark"] .context-menu-item {
-  color: var(--aw-ink, #e0e0e0);
-}
-
-[data-theme="dark"] .context-menu-item:hover {
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--aw-primary);
-}
-
-[data-theme="dark"] .context-menu-item.danger:hover {
-  background: #3b1520;
-  color: #f85149;
-}
-</style>
