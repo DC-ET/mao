@@ -24,9 +24,9 @@ describe('cloudGroupKey', () => {
     expect(cloudGroupKey(cloud('/opt/mao-data/workspace/2/sessions/xx'))).toBe('CLOUD:临时工作区')
   })
 
-  it('groups embed SDK sessions into the dedicated embed bucket regardless of workspace', () => {
-    expect(cloudGroupKey(cloud('/opt/mao-data/workspace/7/42', { source: 'embed' }))).toBe('EMBED')
-    expect(cloudGroupKey(cloud('/opt/mao-data/workspace/1/projects/demo', { source: 'embed' }))).toBe('EMBED')
+  it('groups embed SDK sessions per agent regardless of workspace', () => {
+    expect(cloudGroupKey(cloud('/opt/mao-data/workspace/7/42', { source: 'embed', agentId: '7' }))).toBe('EMBED:7')
+    expect(cloudGroupKey(cloud('/opt/mao-data/workspace/1/projects/demo', { source: 'embed', agentId: '7' }))).toBe('EMBED:7')
     expect(cloudGroupKey(cloud('/opt/mao-data/workspace/7/42', { source: 'web' }))).toBe('CLOUD:临时工作区')
   })
 })
@@ -53,10 +53,11 @@ describe('formatCloudGroupLabel', () => {
       .toBe('Coder:飞书群1·oc_abc')
   })
 
-  it('labels the embed bucket and honors aliases via resolveGroupLabel', () => {
-    expect(formatCloudGroupLabel('EMBED')).toBe('网页嵌入')
-    expect(resolveGroupLabel('EMBED', {})).toBe('网页嵌入')
-    expect(resolveGroupLabel('EMBED', { EMBED: '官网客服' })).toBe('官网客服')
+  it('labels embed groups with Agent name and honors aliases via resolveGroupLabel', () => {
+    expect(formatCloudGroupLabel('EMBED:7', { agentName: 'Coder', title: 'x' })).toBe('Coder')
+    expect(formatCloudGroupLabel('EMBED:7')).toBe('未知 Agent')
+    expect(resolveGroupLabel('EMBED:7', {})).toBe('未知 Agent')
+    expect(resolveGroupLabel('EMBED:7', { 'EMBED:7': '官网客服' })).toBe('官网客服')
   })
 })
 
@@ -78,7 +79,7 @@ describe('groupIconKind', () => {
     expect(groupIconKind('CLOUD:/opt/1/projects/weixin-bot', [{ projectKey: 'weixin-bot' }])).toBe('weixin')
     expect(groupIconKind('CLOUD:临时工作区')).toBe('cloud')
     expect(groupIconKind('CLOUD:/opt/1/projects/mao', [{ projectKey: 'mao' }])).toBe('cloud')
-    expect(groupIconKind('EMBED')).toBe('embed')
+    expect(groupIconKind('EMBED:7')).toBe('embed')
     expect(groupIconKind('LOCAL:/Users/me/code')).toBe('folder')
     expect(groupIconKind('UNKNOWN_KEY')).toBe('folder')
   })

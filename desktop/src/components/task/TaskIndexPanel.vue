@@ -479,7 +479,7 @@ import { useTerminal } from '../../composables/useTerminal'
 import { removeSessionTabsFor } from '../../composables/useCenterTabs'
 import { useTaskPanelPrefs } from '../../composables/useTaskPanelPrefs'
 import { useRelativeTime, formatRelativeTime } from '../../composables/useRelativeTime'
-import { cloudGroupKey, EMBED_GROUP_KEY, groupIconKind, isGroupRenameable, isSharedCloudProject, resolveGroupLabel } from '../../utils/cloud-project'
+import { cloudGroupKey, groupIconKind, isEmbedGroupKey, isGroupRenameable, isSharedCloudProject, resolveGroupLabel } from '../../utils/cloud-project'
 import { planFocusReveal, planGroupReveal } from '../../utils/taskSidebarReveal'
 import { sessionToFocusCandidate, sortByFocusPriority, isHistoryEligible } from '../../utils/focusSort'
 import feishuLogo from '../../assets/feishu-logo.svg'
@@ -1136,8 +1136,7 @@ const groupedSessions = computed(() => {
   entries.sort(([a], [b]) => {
     if (a === 'CLOUD:临时工作区') return -1
     if (b === 'CLOUD:临时工作区') return 1
-    if (a === EMBED_GROUP_KEY) return -1
-    if (b === EMBED_GROUP_KEY) return 1
+    if (isEmbedGroupKey(a) !== isEmbedGroupKey(b)) return isEmbedGroupKey(a) ? -1 : 1
     if (a.startsWith('CLOUD:') && !b.startsWith('CLOUD:')) return -1
     if (!a.startsWith('CLOUD:') && b.startsWith('CLOUD:')) return 1
     return a.localeCompare(b)

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyFilter, CLOUD_TEMP, compareKeys, EMBED, formatLabel, of, ofMode } from './session-group-key.js';
+import { applyFilter, CLOUD_TEMP, compareKeys, EMBED_PREFIX, formatLabel, of, ofMode } from './session-group-key.js';
 
 describe('session group key', () => {
   it('groups Feishu chat workspaces by their persistent workspace path', () => {
@@ -22,26 +22,44 @@ describe('session group key', () => {
     expect(formatLabel('DINGTALK_GROUP:/opt/mao-data/workspace/dingtalk-chat/1/cidgroup', 'Coder', '项目群')).toBe('Coder:项目群');
   });
 
-  it('routes embed sessions to a dedicated group regardless of workspace', () => {
+  it('routes embed sessions to a per-agent group regardless of workspace', () => {
     // SDK 会话工作区是 {workspaceRoot}/{userId}/{sessionId}，按旧规则会落进临时工作区
-    expect(of({ source: 'embed', executionMode: 'CLOUD', workspace: '/opt/mao-data/workspace/7/42' })).toBe(EMBED);
+    expect(of({ source: 'embed', agentId: 7, executionMode: 'CLOUD', workspace: '/opt/mao-data/workspace/7/42' })).toBe('EMBED:7');
     // 即使之后工作区变为共享项目路径，source 优先级最高
-    expect(of({ source: 'embed', executionMode: 'CLOUD', workspace: '/opt/mao-data/workspace/1/projects/demo' })).toBe(EMBED);
+    expect(of({ source: 'embed', agentId: 7, executionMode: 'CLOUD', workspace: '/opt/mao-data/workspace/1/projects/demo' })).toBe('EMBED:7');
+    expect(of({ source: 'embed', executionMode: 'CLOUD', workspace: '/opt/mao-data/workspace/7/42' })).toBe('EMBED:null');
     expect(of({ source: 'web', executionMode: 'CLOUD', workspace: '/opt/mao-data/workspace/7/42' })).toBe(CLOUD_TEMP);
     expect(of({ executionMode: 'CLOUD', workspace: null })).toBe(CLOUD_TEMP);
-    expect(formatLabel(EMBED)).toBe('网页嵌入');
+    // 组名显示 Agent 名（与飞书私聊分组一致）
+    expect(formatLabel('EMBED:7', 'Coder')).toBe('Coder');
+    expect(formatLabel('EMBED:7')).toBe('未知 Agent');
   });
 
-  it('orders embed group after the temp bucket and before other cloud groups', () => {
-    expect(compareKeys(CLOUD_TEMP, EMBED)).toBeLessThan(0);
-    expect(compareKeys(EMBED, 'CLOUD:/opt/mao-data/workspace/1/projects/demo')).toBeLessThan(0);
-    expect(compareKeys('LOCAL:/ws', EMBED)).toBeGreaterThan(0);
+  it('orders embed groups after the temp bucket and before other groups', () => {
+    expect(compareKeys(CLOUD_TEMP, 'EMBED:7')).toBeLessThan(0);
+    expect(compareKeys('EMBED:7', 'CLOUD:/opt/mao-data/workspace/1/projects/demo')).toBeLessThan(0);
+    expect(compareKeys('EMBED:7', 'LOCAL:/ws')).toBeLessThan(0);
+    // 同类组间按 key 字典序
+    expect(compareKeys('EMBED:2', 'EMBED:10')).toBeGreaterThan(0);
   });
 
-  it('filters embed group by source and keeps embed sessions out of the temp bucket filter', () => {
-    expect(applyFilter(EMBED)).toEqual({ clauses: ['source = ?'], params: ['embed'] });
+  it('filters embed groups by source and agent, keeping embed out of the temp filter', () => {
+    expect(applyFilter('EMBED:7')).toEqual({ clauses: ['source = ?', 'agent_id = ?'], params: ['embed', 7] });
+    expect(applyFilter('EMBED:null')).toEqual({ clauses: ['source = ?', 'agent_id IS NULL'], params: ['embed'] });
+    expect(() => applyFilter('EMBED:abc')).toThrow();
+    expect(() => applyFilter(EMBED_PREFIX)).toThrow();
     const temp = applyFilter(CLOUD_TEMP);
     expect(temp.clauses.some((c) => c.includes('source'))).toBe(true);
     expect(temp.params).toContain('embed');
+  });
+
+  it('applyFilter accepts every group key that of() can produce for embed sessions', () => {
+    // of() 对任意 agentId 都会产出 key（0 不是 nullish，会生成 EMBED:0）；
+    // applyFilter 必须接受全部产出，否则该分组在「展开更多」分页时报错。
+    for (const agentId of [null, 0, 1, 7, 42, -5]) {
+      const key = of({ source: 'embed', agentId, executionMode: 'CLOUD', workspace: '/opt/mao-data/workspace/7/42' });
+      expect(() => applyFilter(key)).not.toThrow();
+    }
+    expect(applyFilter('EMBED:0')).toEqual({ clauses: ['source = ?', 'agent_id = ?'], params: ['embed', 0] });
   });
 });

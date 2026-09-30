@@ -2,8 +2,8 @@ import type { Session } from '../types.js';
 
 export const CLOUD_TEMP = 'CLOUD:临时工作区';
 export const LOCAL_UNSET = 'LOCAL:未设置';
-/** Web 嵌入 SDK（source=embed）会话的独立分组，与工作区路径无关。 */
-export const EMBED = 'EMBED';
+/** Web 嵌入 SDK（source=embed）会话按 Agent 独立分组：EMBED:{agentId}，与工作区路径无关。 */
+export const EMBED_PREFIX = 'EMBED:';
 const FEISHU_GROUP_WORKSPACE = '/feishu-chat/';
 const FEISHU_PRIVATE_GROUP_PREFIX = 'FEISHU_PRIVATE:';
 const FEISHU_GROUP_PREFIX = 'FEISHU_GROUP:';
@@ -81,7 +81,7 @@ export interface GroupFilterSql {
 export function of(sessionOrMode: Session | string | null | undefined, workspace?: string | null): string {
   if (sessionOrMode && typeof sessionOrMode === 'object') {
     if (sessionOrMode.source === 'embed') {
-      return EMBED;
+      return `${EMBED_PREFIX}${sessionOrMode.agentId ?? 'null'}`;
     }
     return feishuGroupKey(sessionOrMode) ?? dingtalkGroupKey(sessionOrMode) ?? ofMode(sessionOrMode.executionMode, sessionOrMode.workspace);
   }
@@ -114,8 +114,8 @@ export function formatLabel(key: string, agentName?: string, groupName?: string)
   if (CLOUD_TEMP === key) {
     return '临时工作区';
   }
-  if (EMBED === key) {
-    return '网页嵌入';
+  if (key.startsWith(EMBED_PREFIX)) {
+    return agentName ?? '未知 Agent';
   }
   if (key.startsWith('CLOUD:')) {
     const ws = key.slice(6);
@@ -150,8 +150,9 @@ export function formatLabel(key: string, agentName?: string, groupName?: string)
 export function compareKeys(a: string, b: string): number {
   if (CLOUD_TEMP === a) return -1;
   if (CLOUD_TEMP === b) return 1;
-  if (EMBED === a) return -1;
-  if (EMBED === b) return 1;
+  const aEmbed = a.startsWith(EMBED_PREFIX);
+  const bEmbed = b.startsWith(EMBED_PREFIX);
+  if (aEmbed !== bEmbed) return aEmbed ? -1 : 1;
   const aCloud = a.startsWith('CLOUD:');
   const bCloud = b.startsWith('CLOUD:');
   if (aCloud && !bCloud) return -1;
@@ -169,10 +170,26 @@ export function applyFilter(groupKey: string | null | undefined): GroupFilterSql
   if (isDingtalkGroupKey(groupKey)) {
     return applyDingtalkFilter(groupKey);
   }
-  if (EMBED === groupKey) {
+  if (groupKey.startsWith(EMBED_PREFIX)) {
+    const agentId = groupKey.slice(EMBED_PREFIX.length);
+    if (agentId.length === 0) {
+      throw new Error(`Invalid Embed groupKey: ${groupKey}`);
+    }
+    if (agentId === 'null') {
+      return {
+        clauses: ['source = ?', 'agent_id IS NULL'],
+        params: ['embed'],
+      };
+    }
+    const n = Number(agentId);
+    // key 由 of() 生成，任意整数 agentId 都会产出（如 0 → EMBED:0），此处只做格式校验；
+    // 按语义范围拒绝会让该桶在「展开更多」分页时报错。
+    if (!Number.isInteger(n)) {
+      throw new Error(`Invalid Embed groupKey: ${groupKey}`);
+    }
     return {
-      clauses: ['source = ?'],
-      params: ['embed'],
+      clauses: ['source = ?', 'agent_id = ?'],
+      params: ['embed', n],
     };
   }
   if (LOCAL_UNSET === groupKey) {
@@ -248,7 +265,7 @@ function compareByUpdatedDesc(a: Session, b: Session): number {
 export const SessionGroupKey = {
   CLOUD_TEMP,
   LOCAL_UNSET,
-  EMBED,
+  EMBED_PREFIX,
   of,
   feishuGroupKey,
   isFeishuGroupKey,
