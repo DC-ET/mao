@@ -29,6 +29,7 @@ export class SpawnSubagentTool extends BaseTool {
       + '**委派纪律：**\n'
       + '1. 先快速分析整体任务，区分关键路径阻塞任务与可并行 sidecar；关键路径勿外包后干等\n'
       + '2. 子任务必须具体、自包含（目标、输入、期望输出、约束），实质性推进主任务\n'
+      + '   派发时通过 `title` 参数提供简短可区分的标题（建议 4-12 个字概括任务，不要照抄任务指令），便于并行子代理的识别与跟踪\n'
       + '3. 不要在同一未解决线程上重复派发；并行子任务写入范围不得重叠\n'
       + '4. 代码改动优先 worker；审查用 reviewer 且不要让其改代码\n'
       + '5. `wait_subagents` 慎用，仅在下一步被阻塞时调用；运行期间做不重叠的本地工作\n'
@@ -49,6 +50,7 @@ export class SpawnSubagentTool extends BaseTool {
           description: '子代理类型：\n' + roleList,
         },
         task: { type: 'string', description: '要派发的任务描述，包含目标、输入上下文、期望输出与约束' },
+        title: { type: 'string', description: '子代理会话标题（可选）。建议 4-12 个字概括任务目标，便于在并行子代理列表中区分；不传时系统按任务描述自动生成。' },
       },
       required: ['agent_type', 'task'],
     };
@@ -64,7 +66,7 @@ export class SpawnSubagentTool extends BaseTool {
     if (sessionId == null) return errorJson('缺少会话 ID');
     const toolCallId = ToolCallContext.getToolCallId();
     if (!toolCallId) return errorJson('缺少父工具调用 ID');
-    const result = await this.manager.spawn(sessionId, normalizeAgentType(agentType), task, toolCallId);
+    const result = await this.manager.spawn(sessionId, normalizeAgentType(agentType), task, toolCallId, asText(args.title));
     if (!result.ok) return errorJson(result.error ?? '创建后台子代理失败');
     return toJson({
       success: true,

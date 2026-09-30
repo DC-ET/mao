@@ -564,7 +564,9 @@ function summarizeDelegate(label: string, result: string | null | undefined): st
 
 function summarizeSpawnSubagent(argumentsJson: string | null | undefined, result: string | null | undefined): string {
   const agentType = extractJsonString(argumentsJson, 'agent_type');
-  const label = agentType ? `启动后台子代理 (${agentType})` : '启动后台子代理';
+  const customTitle = extractJsonString(argumentsJson, 'title')?.replace(/\s+/g, ' ').trim() || null;
+  const titlePart = customTitle ? `「${customTitle}」` : '';
+  const label = agentType ? `启动后台子代理${titlePart} (${agentType})` : `启动后台子代理${titlePart}`;
   if (result == null) return label;
   const node = asObj(parseJson(result));
   if (!node) return label;

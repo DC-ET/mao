@@ -319,6 +319,68 @@ describe('BackgroundSubagentManager retry bookkeeping', () => {
   });
 });
 
+describe('BackgroundSubagentManager.spawn child title', () => {
+  function buildSpawnManager(captured: { title?: string }) {
+    const manager = new BackgroundSubagentManager({
+      sessionMapper: { selectById: vi.fn(async () => ({ id: 1, phase: 'RUNNING', userId: 7 })) },
+      definitionRegistry: {
+        getDefinition: vi.fn(() => ({ name: 'explorer' })),
+        getAllDefinitions: vi.fn(() => []),
+      },
+      subagentInvocationService: {
+        createBackground: vi.fn(async (_parent: unknown, _type: string, _task: string, title: string) => {
+          captured.title = title;
+          return { child: { id: 42, userId: 7 }, execution: { id: 7, parentSessionId: 1 } };
+        }),
+      },
+      visibilityService: { notifySubagentCreated: vi.fn() },
+      localToolSessionRegistry: { setUserForSession: vi.fn(), removeSession: vi.fn() },
+      agentLoop: () => ({ registerCancelFlag: () => ({ get: () => false, set: () => undefined }) }),
+      agentExecutor: { submit: vi.fn() },
+      subagentExecutionMapper: {},
+    } as never);
+    return manager;
+  }
+
+  it('uses the custom title as-is when provided', async () => {
+    const captured: { title?: string } = {};
+    const manager = buildSpawnManager(captured);
+    const result = await manager.spawn(1, 'explorer', '调研登录模块的鉴权链路并输出报告', 'tc-1', '梳理登录鉴权链路');
+    expect(result.ok).toBe(true);
+    expect(captured.title).toBe('梳理登录鉴权链路');
+  });
+
+  it('truncates a custom title longer than 40 chars', async () => {
+    const captured: { title?: string } = {};
+    const manager = buildSpawnManager(captured);
+    const longTitle = 'a'.repeat(45);
+    await manager.spawn(1, 'explorer', '任务描述', 'tc-1', longTitle);
+    expect(captured.title).toBe('a'.repeat(40) + '...');
+  });
+
+  it('falls back to the generated title when the custom title is blank after cleaning', async () => {
+    const captured: { title?: string } = {};
+    const manager = buildSpawnManager(captured);
+    await manager.spawn(1, 'explorer', '短任务', 'tc-1', '  \n\t  ');
+    expect(captured.title).toBe('后台子代理(explorer): 短任务');
+  });
+
+  it('keeps the existing generated title when title is not provided', async () => {
+    const captured: { title?: string } = {};
+    const manager = buildSpawnManager(captured);
+    const task = 'b'.repeat(50);
+    await manager.spawn(1, 'worker', task, 'tc-1');
+    expect(captured.title).toBe('后台子代理(worker): ' + 'b'.repeat(40) + '...');
+  });
+
+  it('normalizes control characters and newlines in the custom title', async () => {
+    const captured: { title?: string } = {};
+    const manager = buildSpawnManager(captured);
+    await manager.spawn(1, 'explorer', '任务', 'tc-1', '  调研\n登录\t模块  ');
+    expect(captured.title).toBe('调研 登录 模块');
+  });
+});
+
 describe('BackgroundSubagentManager terminal write', () => {
   it('does not overwrite a cancel that landed while the child was finishing', async () => {
     const execution: Record<string, unknown> = {

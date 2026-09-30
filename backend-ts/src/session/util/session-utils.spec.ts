@@ -196,6 +196,10 @@ describe('ToolResultSummarizer', () => {
     expect(ToolResultSummarizer.summarize('ask_user_questions', '{}', '{"answers":[{},{}]}')).toBe('向用户提问 (2 个问题已回答)');
     expect(ToolResultSummarizer.summarize('ask_user_questions', '{}', '{"error":"timeout"}')).toBe('向用户提问 (超时或取消)');
     expect(ToolResultSummarizer.summarize('spawn_subagent', '{"agent_type":"explorer"}', '{"success":true,"task_id":193,"status":"RUNNING"}')).toBe('启动后台子代理 (explorer) #193 (运行中)');
+    expect(ToolResultSummarizer.summarize('spawn_subagent', '{"agent_type":"explorer","title":"梳理登录鉴权链路"}', '{"success":true,"task_id":193,"status":"RUNNING"}')).toBe('启动后台子代理「梳理登录鉴权链路」 (explorer) #193 (运行中)');
+    expect(ToolResultSummarizer.summarize('spawn_subagent', '{"agent_type":"explorer","title":""}', '{"success":true,"task_id":193,"status":"RUNNING"}')).toBe('启动后台子代理 (explorer) #193 (运行中)');
+    expect(ToolResultSummarizer.summarize('spawn_subagent', '{"agent_type":"explorer","title":"  "}', '{"success":true,"task_id":193,"status":"RUNNING"}')).toBe('启动后台子代理 (explorer) #193 (运行中)');
+    expect(ToolResultSummarizer.summarize('spawn_subagent', '{"agent_type":"explorer","title":"  梳理登录\\n链路  "}', '{"success":true,"task_id":193,"status":"RUNNING"}')).toBe('启动后台子代理「梳理登录 链路」 (explorer) #193 (运行中)');
     expect(ToolResultSummarizer.summarize('subagent_followup', '{}', '{"success":true,"task_id":194,"corrected":true,"status":"RUNNING"}')).toBe('追问后台子代理 #194 (纠偏运行中)');
     expect(ToolResultSummarizer.summarize('check_subagent', '{}', '{"background_subagents":[{},{}]}')).toBe('后台子代理进度 (2 个任务)');
     expect(ToolResultSummarizer.summarize('check_subagent', '{"task_id":193}', '{"status":"COMPLETED"}')).toBe('后台子代理 #193: COMPLETED');

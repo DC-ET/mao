@@ -84,6 +84,7 @@ export class BackgroundSubagentManager {
     agentType: string,
     task: string,
     parentToolCallId: string,
+    customTitle?: string | null,
   ): Promise<BackgroundSpawnResult> {
     const parentSession = await this.deps.sessionMapper.selectById(parentSessionId);
     if (!parentSession) return { ok: false, error: '父会话不存在: ' + parentSessionId };
@@ -96,7 +97,7 @@ export class BackgroundSubagentManager {
       };
     }
 
-    const childTitle = '后台子代理(' + canonicalType + '): ' + (task.length > 40 ? task.slice(0, 40) + '...' : task);
+    const childTitle = resolveChildTitle(customTitle, canonicalType, task);
     const { child, execution } = await this.deps.subagentInvocationService.createBackground(
       parentSession, canonicalType, task, childTitle, parentToolCallId,
     );
@@ -880,6 +881,21 @@ function statusLabel(status: string): string {
   if (status === 'FAILED') return '执行失败';
   if (status === 'CANCELLED') return '已取消';
   return status;
+}
+
+/** 子代理会话标题：主代理提供时完全使用自定义标题（清洗后），否则按任务描述拼接兜底。 */
+function resolveChildTitle(customTitle: string | null | undefined, agentType: string, task: string): string {
+  const cleaned = cleanTitle(customTitle);
+  if (cleaned) return cleaned;
+  return '后台子代理(' + agentType + '): ' + (task.length > 40 ? task.slice(0, 40) + '...' : task);
+}
+
+/** 清洗自定义标题：去控制字符、压缩空白（含换行）为单空格、trim；超过 40 字截断；清洗后为空返回 null。 */
+function cleanTitle(raw: string | null | undefined): string | null {
+  if (raw == null) return null;
+  const normalized = raw.replace(/[\u0000-\u001F\u007F]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!normalized) return null;
+  return normalized.length > 40 ? normalized.slice(0, 40) + '...' : normalized;
 }
 
 function truncate(text: string, maxLen: number): string {

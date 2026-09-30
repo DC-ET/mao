@@ -70,6 +70,8 @@ describe('getToolInputPreview', () => {
     { input: { path: 42, file_path: '/tmp/b' }, expected: '' },
     { input: { query: 'query', task: 'task' }, expected: 'query' },
     { input: { agent_type: 'worker', task: '修复问题' }, expected: 'worker: 修复问题' },
+    { input: { agent_type: 'worker', task: '修复问题', title: '修复登录鉴权' }, expected: 'worker: 修复登录鉴权' },
+    { input: { agent_type: 'worker', task: '修复问题', title: '   ' }, expected: 'worker: 修复问题' },
     { input: { agent_type: 'worker' }, expected: 'worker: ' },
     { input: { task: '修复问题' }, expected: '修复问题' },
     { input: { agent_type: '', task: '修复问题' }, expected: '修复问题' },
