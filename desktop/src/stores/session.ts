@@ -53,6 +53,8 @@ export interface Session {
   steps?: TaskStep[]
   projectKey?: string
   workspace?: string
+  /** 会话来源：web / embed，embed 会话在任务列表归入独立分组 */
+  source?: string
   isGit?: boolean
   platform?: string
   shell?: string

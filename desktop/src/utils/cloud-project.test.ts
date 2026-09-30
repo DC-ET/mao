@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { cloudGroupKey, cloudWorkspaceIndicator, formatCloudGroupLabel, groupIconKind, isFeishuChatWorkspace, isFeishuGroupKey, isGroupRenameable, isWeixinGroupSession, resolveGroupLabel, workspaceTailLabel } from './cloud-project'
 
-const cloud = (workspace: string, extra: Partial<{ projectKey: string; agentId: string }> = {}) => ({ executionMode: 'CLOUD' as const, workspace, ...extra })
+const cloud = (workspace: string, extra: Partial<{ projectKey: string; agentId: string; source: string }> = {}) => ({ executionMode: 'CLOUD' as const, workspace, ...extra })
 
 describe('isFeishuChatWorkspace', () => {
   it('detects feishu-chat workspace paths', () => {
@@ -22,6 +22,12 @@ describe('cloudGroupKey', () => {
 
   it('keeps regular temp sessions in the temp bucket', () => {
     expect(cloudGroupKey(cloud('/opt/mao-data/workspace/2/sessions/xx'))).toBe('CLOUD:临时工作区')
+  })
+
+  it('groups embed SDK sessions into the dedicated embed bucket regardless of workspace', () => {
+    expect(cloudGroupKey(cloud('/opt/mao-data/workspace/7/42', { source: 'embed' }))).toBe('EMBED')
+    expect(cloudGroupKey(cloud('/opt/mao-data/workspace/1/projects/demo', { source: 'embed' }))).toBe('EMBED')
+    expect(cloudGroupKey(cloud('/opt/mao-data/workspace/7/42', { source: 'web' }))).toBe('CLOUD:临时工作区')
   })
 })
 
@@ -46,6 +52,12 @@ describe('formatCloudGroupLabel', () => {
     expect(formatCloudGroupLabel('FEISHU_GROUP:/opt/mao-data/workspace/feishu-chat/1/oc_abc', { agentName: 'Coder', title: '告警群' }))
       .toBe('Coder:飞书群1·oc_abc')
   })
+
+  it('labels the embed bucket and honors aliases via resolveGroupLabel', () => {
+    expect(formatCloudGroupLabel('EMBED')).toBe('网页嵌入')
+    expect(resolveGroupLabel('EMBED', {})).toBe('网页嵌入')
+    expect(resolveGroupLabel('EMBED', { EMBED: '官网客服' })).toBe('官网客服')
+  })
 })
 
 describe('groupIconKind', () => {
@@ -66,6 +78,7 @@ describe('groupIconKind', () => {
     expect(groupIconKind('CLOUD:/opt/1/projects/weixin-bot', [{ projectKey: 'weixin-bot' }])).toBe('weixin')
     expect(groupIconKind('CLOUD:临时工作区')).toBe('cloud')
     expect(groupIconKind('CLOUD:/opt/1/projects/mao', [{ projectKey: 'mao' }])).toBe('cloud')
+    expect(groupIconKind('EMBED')).toBe('embed')
     expect(groupIconKind('LOCAL:/Users/me/code')).toBe('folder')
     expect(groupIconKind('UNKNOWN_KEY')).toBe('folder')
   })

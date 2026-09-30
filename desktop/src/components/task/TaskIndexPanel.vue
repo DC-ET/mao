@@ -72,6 +72,9 @@
                   <el-icon v-else-if="groupIconKind(group.key, group.sessions) === 'dingtalk'" :size="13">
                     <ChatDotRound />
                   </el-icon>
+                  <el-icon v-else-if="groupIconKind(group.key, group.sessions) === 'embed'" :size="13">
+                    <Monitor />
+                  </el-icon>
                   <el-icon v-else :size="13">
                     <PartlyCloudy v-if="groupIconKind(group.key, group.sessions) === 'cloud' && !isGroupCollapsed(group.key)" />
                     <Cloudy v-else-if="groupIconKind(group.key, group.sessions) === 'cloud'" />
@@ -468,7 +471,7 @@
 
 <script setup lang="ts">
 import { computed, ref, reactive, watch, nextTick, onMounted, onUnmounted } from 'vue'
-import { Refresh, Loading, Plus, Delete, Check, Close, Cloudy, PartlyCloudy, Folder, FolderOpened, EditPen, ArrowDown, ArrowRight, FolderChecked, RefreshLeft, Clock, Bell, BellFilled, ChatDotRound } from '@element-plus/icons-vue'
+import { Refresh, Loading, Plus, Delete, Check, Close, Cloudy, PartlyCloudy, Folder, FolderOpened, EditPen, ArrowDown, ArrowRight, FolderChecked, RefreshLeft, Clock, Bell, BellFilled, ChatDotRound, Monitor } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { useSessionStore, type Session, type TaskPhase } from '../../stores/session'
@@ -476,7 +479,7 @@ import { useTerminal } from '../../composables/useTerminal'
 import { removeSessionTabsFor } from '../../composables/useCenterTabs'
 import { useTaskPanelPrefs } from '../../composables/useTaskPanelPrefs'
 import { useRelativeTime, formatRelativeTime } from '../../composables/useRelativeTime'
-import { cloudGroupKey, groupIconKind, isGroupRenameable, isSharedCloudProject, resolveGroupLabel } from '../../utils/cloud-project'
+import { cloudGroupKey, EMBED_GROUP_KEY, groupIconKind, isGroupRenameable, isSharedCloudProject, resolveGroupLabel } from '../../utils/cloud-project'
 import { planFocusReveal, planGroupReveal } from '../../utils/taskSidebarReveal'
 import { sessionToFocusCandidate, sortByFocusPriority, isHistoryEligible } from '../../utils/focusSort'
 import feishuLogo from '../../assets/feishu-logo.svg'
@@ -1133,6 +1136,8 @@ const groupedSessions = computed(() => {
   entries.sort(([a], [b]) => {
     if (a === 'CLOUD:临时工作区') return -1
     if (b === 'CLOUD:临时工作区') return 1
+    if (a === EMBED_GROUP_KEY) return -1
+    if (b === EMBED_GROUP_KEY) return 1
     if (a.startsWith('CLOUD:') && !b.startsWith('CLOUD:')) return -1
     if (!a.startsWith('CLOUD:') && b.startsWith('CLOUD:')) return 1
     return a.localeCompare(b)

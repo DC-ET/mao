@@ -2,6 +2,7 @@ import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { getToken } from '../utils/auth-storage'
+import { EMBED_GROUP_KEY } from '../utils/cloud-project'
 
 const LEGACY_ORDER_KEY = 'task-group-order'
 const LEGACY_ALIASES_KEY = 'task-group-aliases'
@@ -290,6 +291,8 @@ export function useTaskPanelPrefs() {
     unknown.sort((a, b) => {
       if (a.key === 'CLOUD:临时工作区') return -1
       if (b.key === 'CLOUD:临时工作区') return 1
+      if (a.key === EMBED_GROUP_KEY) return -1
+      if (b.key === EMBED_GROUP_KEY) return 1
       if (a.key.startsWith('CLOUD:') && !b.key.startsWith('CLOUD:')) return -1
       if (!a.key.startsWith('CLOUD:') && b.key.startsWith('CLOUD:')) return 1
       return a.key.localeCompare(b.key)
@@ -301,7 +304,8 @@ export function useTaskPanelPrefs() {
   function onDragEnd(fromIndex: number, toIndex: number, currentKeys: string[]) {
     const newOrder = [...currentKeys]
     const [moved] = newOrder.splice(fromIndex, 1)
-    newOrder.splice(toIndex, 0, moved)
+    // 指示线画在目标分组上边缘，语义是「插到它前面」；向下拖时先删除会使目标前移一位，需 -1 校正。
+    newOrder.splice(fromIndex < toIndex ? toIndex - 1 : toIndex, 0, moved)
     saveOrder(newOrder)
   }
 

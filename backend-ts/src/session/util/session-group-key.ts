@@ -2,6 +2,8 @@ import type { Session } from '../types.js';
 
 export const CLOUD_TEMP = 'CLOUD:临时工作区';
 export const LOCAL_UNSET = 'LOCAL:未设置';
+/** Web 嵌入 SDK（source=embed）会话的独立分组，与工作区路径无关。 */
+export const EMBED = 'EMBED';
 const FEISHU_GROUP_WORKSPACE = '/feishu-chat/';
 const FEISHU_PRIVATE_GROUP_PREFIX = 'FEISHU_PRIVATE:';
 const FEISHU_GROUP_PREFIX = 'FEISHU_GROUP:';
@@ -78,6 +80,9 @@ export interface GroupFilterSql {
 
 export function of(sessionOrMode: Session | string | null | undefined, workspace?: string | null): string {
   if (sessionOrMode && typeof sessionOrMode === 'object') {
+    if (sessionOrMode.source === 'embed') {
+      return EMBED;
+    }
     return feishuGroupKey(sessionOrMode) ?? dingtalkGroupKey(sessionOrMode) ?? ofMode(sessionOrMode.executionMode, sessionOrMode.workspace);
   }
   return ofMode(sessionOrMode as string | null | undefined, workspace);
@@ -108,6 +113,9 @@ export function formatLabel(key: string, agentName?: string, groupName?: string)
   }
   if (CLOUD_TEMP === key) {
     return '临时工作区';
+  }
+  if (EMBED === key) {
+    return '网页嵌入';
   }
   if (key.startsWith('CLOUD:')) {
     const ws = key.slice(6);
@@ -142,6 +150,8 @@ export function formatLabel(key: string, agentName?: string, groupName?: string)
 export function compareKeys(a: string, b: string): number {
   if (CLOUD_TEMP === a) return -1;
   if (CLOUD_TEMP === b) return 1;
+  if (EMBED === a) return -1;
+  if (EMBED === b) return 1;
   const aCloud = a.startsWith('CLOUD:');
   const bCloud = b.startsWith('CLOUD:');
   if (aCloud && !bCloud) return -1;
@@ -159,6 +169,12 @@ export function applyFilter(groupKey: string | null | undefined): GroupFilterSql
   if (isDingtalkGroupKey(groupKey)) {
     return applyDingtalkFilter(groupKey);
   }
+  if (EMBED === groupKey) {
+    return {
+      clauses: ['source = ?'],
+      params: ['embed'],
+    };
+  }
   if (LOCAL_UNSET === groupKey) {
     return {
       clauses: ['execution_mode = ?', '(workspace IS NULL OR workspace = ?)'],
@@ -173,8 +189,8 @@ export function applyFilter(groupKey: string | null | undefined): GroupFilterSql
   }
   if (CLOUD_TEMP === groupKey) {
     return {
-      clauses: ['execution_mode = ?', '(workspace IS NULL OR workspace = ? OR (workspace NOT LIKE ? AND workspace NOT LIKE ? AND workspace NOT LIKE ?))'],
-      params: ['CLOUD', '', '%/projects/%', '%/feishu-chat/%', '%/dingtalk-chat/%'],
+      clauses: ['execution_mode = ?', '(workspace IS NULL OR workspace = ? OR (workspace NOT LIKE ? AND workspace NOT LIKE ? AND workspace NOT LIKE ?))', '(source IS NULL OR source != ?)'],
+      params: ['CLOUD', '', '%/projects/%', '%/feishu-chat/%', '%/dingtalk-chat/%', 'embed'],
     };
   }
   if (groupKey.startsWith('CLOUD:')) {
@@ -232,6 +248,7 @@ function compareByUpdatedDesc(a: Session, b: Session): number {
 export const SessionGroupKey = {
   CLOUD_TEMP,
   LOCAL_UNSET,
+  EMBED,
   of,
   feishuGroupKey,
   isFeishuGroupKey,

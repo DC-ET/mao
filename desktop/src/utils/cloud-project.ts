@@ -8,8 +8,11 @@ const DINGTALK_CHAT_SEGMENT = 'dingtalk-chat'
 /** 微信通道固定 projectKey（与后端 WEIXIN_PROJECT_KEY 对齐）。 */
 export const WEIXIN_PROJECT_KEY = 'weixin-bot'
 
-/** 分组图标类型：飞书 / 微信 / 普通云端 / 本地文件夹。 */
-export type GroupIconKind = 'feishu' | 'dingtalk' | 'weixin' | 'cloud' | 'folder'
+/** Web 嵌入 SDK（source=embed）会话的独立分组 key，与后端 SessionGroupKey.EMBED 对齐。 */
+export const EMBED_GROUP_KEY = 'EMBED'
+
+/** 分组图标类型：飞书 / 微信 / 普通云端 / 网页嵌入 / 本地文件夹。 */
+export type GroupIconKind = 'feishu' | 'dingtalk' | 'weixin' | 'cloud' | 'embed' | 'folder'
 
 export function isFeishuGroupKey(key: string): boolean {
   return key.startsWith('FEISHU_PRIVATE:') || key.startsWith('FEISHU_GROUP:')
@@ -27,6 +30,7 @@ export function groupIconKind(
   key: string,
   sessions?: Pick<Session, 'projectKey'>[]
 ): GroupIconKind {
+  if (key === EMBED_GROUP_KEY) return 'embed'
   if (isFeishuGroupKey(key)) return 'feishu'
   if (isDingtalkGroupKey(key)) return 'dingtalk'
   if (sessions?.some(isWeixinGroupSession)) return 'weixin'
@@ -69,7 +73,10 @@ export function cloudProjectKeyForNewTask(
   return session.projectKey
 }
 
-export function cloudGroupKey(session: Pick<Session, 'executionMode' | 'workspace'> & Partial<Pick<Session, 'projectKey' | 'agentId'>>): string {
+export function cloudGroupKey(session: Pick<Session, 'executionMode' | 'workspace'> & Partial<Pick<Session, 'projectKey' | 'agentId' | 'source'>>): string {
+  if (session.source === 'embed') {
+    return EMBED_GROUP_KEY
+  }
   if (session.executionMode !== 'CLOUD') {
     return session.workspace ? `LOCAL:${session.workspace}` : 'LOCAL:未设置'
   }
@@ -113,6 +120,7 @@ export function formatCloudGroupLabel(
     return `${session?.agentName || '未知 Agent'}:${formatCloudGroupLabel(`CLOUD:${ws}`)}`
   }
   if (key === 'CLOUD:临时工作区') return '临时工作区'
+  if (key === EMBED_GROUP_KEY) return '网页嵌入'
   if (key.startsWith('CLOUD:')) {
     const ws = key.substring(6)
     const parts = ws.replace(/\\/g, '/').split('/').filter(Boolean)
