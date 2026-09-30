@@ -1,6 +1,7 @@
 <template>
   <div class="layout">
     <TopNav />
+    <ConnectionBanner />
     <main class="layout-main">
       <router-view />
     </main>
@@ -10,6 +11,7 @@
 
 <script setup lang="ts">
 import TopNav from './TopNav.vue'
+import ConnectionBanner from './ConnectionBanner.vue'
 import TerminalPanel from '../terminal/TerminalPanel.vue'
 </script>
 

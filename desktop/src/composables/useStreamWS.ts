@@ -29,6 +29,8 @@ export interface LocalSkillReport {
 // Singleton state — shared across all components
 let ws: WebSocket | null = null
 const connected = ref(false)
+/** 是否曾成功建立连接：区分「首次连接中」与「断线重连中」，断线横幅据此避免首屏闪现 */
+const everConnected = ref(false)
 const reconnectDelay = ref(1000)
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null
@@ -198,6 +200,7 @@ export function useStreamWS() {
         // 已被更新的连接或 disconnect() 取代：本轮握手结果不再有效
         if (socket !== ws) return
         connected.value = true
+        everConnected.value = true
         reconnectDelay.value = 1000
         connectPromise = null
         pendingSettle = null
@@ -228,7 +231,19 @@ export function useStreamWS() {
         heartbeatTimer = setInterval(() => {
           if (ws?.readyState !== WebSocket.OPEN) return
           if (Date.now() - lastServerMessageAt > SERVER_SILENCE_TIMEOUT_MS) {
-            ws.close()
+            const dying = ws
+            dying.close()
+            // 半开连接（合盖休眠/拔线无 RST）下 close() 的关闭帧可能永远得不到应答，
+            // onclose 要等 OS 级 TCP 超时（分钟级）才触发；3s 内未关闭则强制按断开处理。
+            // 迟到的 onclose 会因 event.target !== ws 走早退分支，不会重复重连。
+            setTimeout(() => {
+              if (ws !== dying) return
+              ws = null
+              connected.value = false
+              stopHeartbeat()
+              sessionStore.clearAllLlmRetry()
+              scheduleReconnect()
+            }, 3_000)
             return
           }
           ws.send(JSON.stringify({ type: 'ping' }))
@@ -1093,6 +1108,7 @@ export function useStreamWS() {
 
   return {
     connected,
+    everConnected,
     connect,
     disconnect,
     getReadyState,

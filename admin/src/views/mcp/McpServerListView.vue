@@ -547,9 +547,13 @@ async function toggleStatus(row: any) {
 }
 
 async function handleDelete(row: any) {
-  await api.delete(`/mcp-servers/${row.id}`)
-  ElMessage.success('删除成功')
-  await loadData()
+  try {
+    await api.delete(`/mcp-servers/${row.id}`)
+    ElMessage.success('删除成功')
+    await loadData()
+  } catch {
+    // Error handled by interceptor
+  }
 }
 
 async function openTest(row: any) {

@@ -104,7 +104,7 @@
         <el-table-column label="操作" width="300" fixed="right">
           <template #default="{ row }">
             <el-switch
-              v-model="row.status"
+              :model-value="row.status"
               active-value="ACTIVE"
               inactive-value="PAUSED"
               inline-prompt
@@ -113,7 +113,7 @@
               :disabled="!!row.finished || !canModify(row)"
               :title="canModify(row) ? '' : '需要「管理定时任务」权限才能修改他人任务'"
               style="margin-right: 12px"
-              @change="handleToggleStatus(row)"
+              @change="(val: string | number | boolean) => handleToggleStatus(row, val)"
             />
             <el-button type="primary" link size="small" @click="openDetail(row)">查看</el-button>
             <template v-if="canModify(row)">
@@ -163,7 +163,7 @@
           </div>
           <div class="mobile-card-actions">
             <el-switch
-              v-model="row.status"
+              :model-value="row.status"
               active-value="ACTIVE"
               inactive-value="PAUSED"
               inline-prompt
@@ -171,7 +171,7 @@
               inactive-text="停"
               :disabled="!!row.finished || !canModify(row)"
               :title="canModify(row) ? '' : '需要「管理定时任务」权限才能修改他人任务'"
-              @change="handleToggleStatus(row)"
+              @change="(val: string | number | boolean) => handleToggleStatus(row, val)"
             />
             <el-button type="primary" link @click="openDetail(row)">查看</el-button>
             <template v-if="canModify(row)">
@@ -221,7 +221,7 @@
 import { ref, reactive, computed, onActivated, onMounted, onUnmounted } from 'vue'
 import { api } from '../../api'
 import { formatDateTime, formatDateTimeColumn } from '../../utils/datetime'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import { useAuthStore } from '../../stores/auth'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
@@ -331,13 +331,23 @@ async function fetchTasks() {
   }
 }
 
-async function handleToggleStatus(task: ScheduledTaskRow) {
+async function handleToggleStatus(task: ScheduledTaskRow, next: string | number | boolean) {
+  // 模板用 :model-value 而非 v-model：确认前不翻转，无需失败回滚，也天然防快速连拨竞态
+  const nextStatus = next === 'ACTIVE' ? 'ACTIVE' : 'PAUSED'
+  const action = nextStatus === 'ACTIVE' ? '启用' : '暂停'
   try {
-    await api.put(`/scheduled-tasks/${task.id}`, { status: task.status })
-    ElMessage.success(task.status === 'ACTIVE' ? '已启用' : '已暂停')
+    await ElMessageBox.confirm(`确定要${action}定时任务「${task.name}」吗？`, '确认', {
+      type: nextStatus === 'ACTIVE' ? 'success' : 'warning'
+    })
   } catch {
-    // revert on error
-    task.status = task.status === 'ACTIVE' ? 'PAUSED' : 'ACTIVE'
+    return
+  }
+  try {
+    await api.put(`/scheduled-tasks/${task.id}`, { status: nextStatus })
+    task.status = nextStatus
+    ElMessage.success(nextStatus === 'ACTIVE' ? '已启用' : '已暂停')
+  } catch {
+    // 拦截器已提示失败
   }
 }
 

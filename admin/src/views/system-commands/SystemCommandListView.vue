@@ -274,7 +274,7 @@
 import { computed, onActivated, reactive, ref } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
-import { api } from '../../api'
+import { api, apiGetWithHeaders } from '../../api'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import { useAuthStore } from '../../stores/auth'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
@@ -409,7 +409,7 @@ async function loadActiveTab() {
   try {
     if (tab === 'personal') {
       // 服务端分页 + keyword 过滤（后端对 name/content 做 LIKE），总数在 x-total-count 响应头
-      const { data, headers } = await api.get('/admin/user-commands', {
+      const { result, headers } = await apiGetWithHeaders<any[]>('/admin/user-commands', {
         params: {
           pageNum: tabStates.personal.currentPage,
           pageSize: tabStates.personal.pageSize,
@@ -418,8 +418,8 @@ async function loadActiveTab() {
       })
       if (seq !== fetchSeq) return
       const headerTotal = readTotalCount(headers)
-      serverTotal.value = Number.isFinite(headerTotal) ? headerTotal : (data || []).length
-      tabStates.personal.rows = data || []
+      serverTotal.value = Number.isFinite(headerTotal) ? headerTotal : (result.data || []).length
+      tabStates.personal.rows = result.data || []
     } else {
       const { data } = await api.get('/admin/system-commands')
       if (seq !== fetchSeq) return

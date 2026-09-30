@@ -92,12 +92,10 @@ const rules: FormRules = {
 let pollTimer: number | null = null
 let feishuState = ''
 
-localStorage.removeItem('rememberedPassword')
-
 onMounted(async () => {
   document.title = '登录 · Mao 管理后台'
   try {
-    const { data } = await api.get('/auth/features')
+    const { data } = await api.get('/auth/features', { skipErrorToast: true })
     ecpEnabled.value = Boolean(data?.ecpEnabled)
   } catch {
     ecpEnabled.value = false
@@ -136,7 +134,7 @@ async function startFeishuLogin() {
   feishuLoading.value = true
   feishuStatusText.value = '正在打开飞书授权页面…'
   try {
-    const { data } = await api.post('/auth/ecp/feishu/start', { target: 'admin' })
+    const { data } = await api.post('/auth/ecp/feishu/start', { target: 'admin' }, { skipErrorToast: true })
     feishuState = data.state
     feishuStatusText.value = '请在打开的飞书授权页面中完成登录'
     window.open(data.authUrl || data.qrCodeUrl, '_blank', 'noopener,noreferrer')
@@ -166,7 +164,7 @@ function clearPollTimer() {
 async function checkFeishuStatus() {
   if (!feishuState) return
   try {
-    const { data } = await api.get('/auth/ecp/feishu/status', { params: { state: feishuState } })
+    const { data } = await api.get('/auth/ecp/feishu/status', { params: { state: feishuState }, skipErrorToast: true })
     if (data.status === 'PENDING') {
       feishuStatusText.value = '等待飞书确认'
       return

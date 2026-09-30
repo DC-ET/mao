@@ -7,9 +7,15 @@
   --mao-border: #e0e0e0;
   --mao-accent: #0066cc;
   --mao-accent-bg: rgba(0, 102, 204, 0.08);
+  --mao-accent-ring: rgba(0, 102, 204, 0.28);
   --mao-danger: #d70015;
+  --mao-danger-bg: rgba(215, 0, 21, 0.08);
   --mao-warn: #b25000;
   --mao-success: #1a7f37;
+  /* 文件变更「重命名」标记紫；与成功/告警/危险区分 */
+  --mao-renamed: #6b46c1;
+  /* 关闭按钮等小块 hover 底色（与 desktop --aw-surface-chip 同值） */
+  --mao-chip: #d2d2d7;
   --el-color-primary: #0066cc;
   --el-color-primary-light-3: #3385d6;
   --el-color-primary-light-5: #66a3e0;
@@ -90,4 +96,19 @@ body {
   margin-top: 10px;
   border-top: 1px solid var(--mao-border);
   padding-top: 10px;
+}
+
+/* 表单内灰色小字提示：全局统一，组件不再各自 scoped 重复声明或写内联样式 */
+.form-hint {
+  font-size: 12px;
+  color: var(--mao-muted);
+  line-height: 1.6;
+  margin-top: 4px;
+}
+
+/* 跟在控件后面的行内提示（单选组/开关右侧） */
+.form-hint-inline {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--mao-muted);
 }

@@ -224,6 +224,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { Refresh } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../../api'
+import { downloadBlob } from '../../utils/download'
 import { formatDateTime, formatDateTimeColumn } from '../../utils/datetime'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
@@ -426,14 +427,8 @@ async function doExportCsv() {
       ].map(csvCell).join(','))
     }
     const blob = new Blob([`\uFEFF${lines.join('\r\n')}`], { type: 'text/csv;charset=utf-8;' })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `llm-calls-${new Date().toISOString().slice(0, 10)}.csv`
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    URL.revokeObjectURL(url)
+    downloadBlob(blob, `llm-calls-${new Date().toISOString().slice(0, 10)}.csv`)
+    ElMessage.success(`已导出 ${rows.length} 条调用记录`)
   } catch { /* 拦截器已提示失败 */ } finally {
     exporting.value = false
   }

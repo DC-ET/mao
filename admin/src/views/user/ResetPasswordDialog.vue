@@ -161,7 +161,7 @@ async function handleSubmit() {
 <style scoped>
 .user-hint {
   margin: 0 0 16px;
-  color: #606266;
+  color: var(--mao-muted);
   font-size: 14px;
 }
 

@@ -121,6 +121,7 @@ import appIcon from '../../assets/app-icon-small.png'
 import { useTheme } from '../../utils/theme'
 import { readRedirectQuery, safeRedirect } from '../../utils/login-redirect'
 import { openExternalUrl } from '../../utils/capacitor'
+import { safeRemoveItem, safeSetItem } from '../../utils/safe-storage'
 
 type LoginMode = 'password' | 'feishu'
 type FeishuProvider = 'mao' | 'ecp'
@@ -211,11 +212,11 @@ async function handleLogin() {
 
 function saveRememberedUsername() {
   if (rememberUsername.value) {
-    localStorage.setItem('rememberMe', '1')
-    localStorage.setItem('rememberedUsername', form.value.username.trim())
+    safeSetItem('rememberMe', '1')
+    safeSetItem('rememberedUsername', form.value.username.trim())
   } else {
-    localStorage.removeItem('rememberMe')
-    localStorage.removeItem('rememberedUsername')
+    safeRemoveItem('rememberMe')
+    safeRemoveItem('rememberedUsername')
   }
 }
 

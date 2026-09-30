@@ -43,7 +43,8 @@
 import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../../../api'
-import { COMPANY_SSO_KEY, defaultCompanySsoConfig, parseCompanySsoConfig, splitAllowlist, validateCompanySsoConfig } from '../companySsoConfig'
+import { COMPANY_SSO_KEY, defaultCompanySsoConfig, parseCompanySsoConfig, splitAllowlist, validateCompanySsoConfig, type CompanySsoConfig } from '../companySsoConfig'
+import { useServerSyncGuard } from '../useServerSyncGuard'
 
 const props = defineProps<{
   row?: { value: string | null; editable?: number }
@@ -57,28 +58,44 @@ const origins = ref('')
 const readError = ref('')
 const saving = ref(false)
 const disabled = computed(() => !props.ready || !props.canWrite || props.row?.editable !== 1 || !!readError.value || saving.value)
+const syncGuard = useServerSyncGuard()
 
-watch(() => props.row, (row) => {
+function snapshotOf(config: CompanySsoConfig, domainsText: string, originsText: string): string {
+  return JSON.stringify({ config, domainsText, originsText })
+}
+
+watch(() => props.row, async (row) => {
+  let config: CompanySsoConfig
   try {
-    const config = parseCompanySsoConfig(row ? row.value : undefined)
-    model.value = config
-    domains.value = config.allowedDomains.join('\n')
-    origins.value = config.allowedOrigins.join('\n')
-    readError.value = ''
+    config = parseCompanySsoConfig(row ? row.value : undefined)
   } catch (error) {
     readError.value = (error as Error).message
+    return
   }
+  const domainsText = config.allowedDomains.join('\n')
+  const originsText = config.allowedOrigins.join('\n')
+  const decision = await syncGuard.resolve(
+    snapshotOf(config, domainsText, originsText),
+    snapshotOf(model.value, domains.value, origins.value)
+  )
+  if (decision !== 'apply') return
+  model.value = config
+  domains.value = domainsText
+  origins.value = originsText
+  readError.value = ''
 }, { immediate: true, deep: true })
 
 async function save() {
   if (disabled.value) return
   let value: string
+  let validated: CompanySsoConfig
   try {
-    value = JSON.stringify(validateCompanySsoConfig({
+    validated = validateCompanySsoConfig({
       ...model.value,
       allowedDomains: splitAllowlist(domains.value),
       allowedOrigins: splitAllowlist(origins.value),
-    }))
+    })
+    value = JSON.stringify(validated)
   } catch (error) {
     ElMessage.error((error as Error).message)
     return
@@ -86,6 +103,12 @@ async function save() {
   saving.value = true
   try {
     await api.put(`/system-settings/${COMPANY_SSO_KEY}`, { value })
+    // 本地回写为已保存的规范化形态：父级 @saved 刷新回流时，守卫判定「服务端未变」静默覆盖，
+    // 不会因 textarea 原始文本与规范化形式的格式差误报冲突
+    model.value = validated
+    domains.value = validated.allowedDomains.join('\n')
+    origins.value = validated.allowedOrigins.join('\n')
+    syncGuard.markBaseline(snapshotOf(validated, domains.value, origins.value))
     ElMessage.success('已保存，新换票立即生效，不需重启')
     emit('saved')
   } catch { /* API 拦截器已提示失败，保留编辑内容供重试 */ } finally {

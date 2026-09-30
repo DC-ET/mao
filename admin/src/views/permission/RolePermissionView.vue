@@ -108,7 +108,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, onMounted, onUnmounted } from 'vue'
+import { computed, reactive, ref, onActivated, onMounted, onUnmounted } from 'vue'
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -370,6 +370,17 @@ onMounted(() => {
   window.addEventListener('beforeunload', handleBeforeUnload)
 })
 
+// keep-alive 切回时刷新：离开时的路由守卫已对未保存修改强制确认，回到这里重拉是安全的；
+// selectRole 会重置 dirty 状态
+onActivated(async () => {
+  const id = currentRole.value?.id
+  await fetchAll()
+  if (id != null) {
+    const updated = roles.value.find((r) => r.id === id)
+    if (updated) selectRole(updated)
+  }
+})
+
 onUnmounted(() => {
   window.removeEventListener('beforeunload', handleBeforeUnload)
 })
@@ -444,7 +455,7 @@ onBeforeRouteLeave(async (_to, _from) => {
 
 .permission-grid small {
   display: block;
-  color: #909399;
+  color: var(--mao-muted);
   margin-top: 2px;
 }
 

@@ -79,7 +79,7 @@
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../../api'
 
 interface SettingRow {
@@ -123,12 +123,75 @@ const testing = ref('')
 /** 用户显式点了"清空"的 secret 键：保存时提交 ''（清空语义）而非 null（不修改）。 */
 const clearedSecrets = ref(new Set<string>())
 
-function syncFromRows() {
-  for (const row of visibleRows.value) {
-    if (model[row.settingKey] === undefined) {
-      model[row.settingKey] = row.isSecret === 1 ? '' : (row.value ?? '')
-    }
+/**
+ * 每个 key 最近一次与服务端对齐的值（secret 恒为 ''）：dirty 判定基线。
+ * 刷新语义：本地未触碰的 key 跟随服务端覆盖；已触碰的 key 在服务端未变时保留编辑；
+ * 已触碰且服务端变了（他人修改/兄弟面板保存触发刷新拿到新值）→ 弹确认决定丢弃或保留。
+ */
+const serverBaseline: Record<string, string> = {}
+let syncConfirmInFlight = false
+
+function targetOf(row: SettingRow): string {
+  return row.isSecret === 1 ? '' : (row.value ?? '')
+}
+
+function applyServerValues(keys: string[]): void {
+  for (const key of keys) {
+    const row = rowMap.value[key]
+    if (!row) continue
+    const target = targetOf(row)
+    model[key] = target
+    serverBaseline[key] = target
   }
+  if (clearedSecrets.value.size > 0) {
+    const next = new Set(clearedSecrets.value)
+    for (const key of keys) next.delete(key)
+    clearedSecrets.value = next
+  }
+}
+
+async function confirmDiscardEdits(conflicts: string[]): Promise<void> {
+  if (syncConfirmInFlight) return
+  syncConfirmInFlight = true
+  try {
+    await ElMessageBox.confirm(
+      `服务端配置已被更新（可能由其他人修改），丢弃 ${conflicts.length} 个未保存的编辑并刷新？`,
+      '配置已变更',
+      { confirmButtonText: '丢弃并刷新', cancelButtonText: '保留本地编辑', type: 'warning' }
+    )
+    applyServerValues(conflicts)
+  } catch {
+    // 保留本地编辑：基线推进到新服务端值，服务端不再变化前不重复打扰
+    for (const key of conflicts) {
+      const row = rowMap.value[key]
+      if (row) serverBaseline[key] = targetOf(row)
+    }
+  } finally {
+    syncConfirmInFlight = false
+  }
+}
+
+function syncFromRows() {
+  const conflicts: string[] = []
+  for (const row of visibleRows.value) {
+    const key = row.settingKey
+    const target = targetOf(row)
+    if (!(key in serverBaseline)) {
+      // 新出现的 key：直接收编
+      model[key] = target
+      serverBaseline[key] = target
+      continue
+    }
+    const untouched = (model[key] ?? '') === serverBaseline[key] && !clearedSecrets.value.has(key)
+    if (untouched) {
+      model[key] = target
+      serverBaseline[key] = target
+      continue
+    }
+    if (serverBaseline[key] === target) continue
+    conflicts.push(key)
+  }
+  if (conflicts.length > 0) void confirmDiscardEdits(conflicts)
 }
 
 const ALL_GROUPS = computed<GroupDef[]>(() => [
@@ -406,9 +469,11 @@ async function saveGroup(group: GroupDef) {
           // ''=已清空；null=未修改保持掩码；新值=掩码
           row.value = item.value === '' ? '' : (item.value == null ? row.value : '******')
           model[item.key] = ''
+          serverBaseline[item.key] = ''
         } else {
           model[item.key] = item.value ?? ''
           row.value = item.value ?? ''
+          serverBaseline[item.key] = item.value ?? ''
         }
       }
     }

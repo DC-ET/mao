@@ -31,7 +31,7 @@ async function completeLogin() {
     return
   }
   try {
-    const { data } = await api.post('/auth/ecp/feishu/callback', { state, code })
+    const { data } = await api.post('/auth/ecp/feishu/callback', { state, code }, { skipErrorToast: true })
     authStore.token = data.accessToken
     localStorage.setItem('token', data.accessToken)
     localStorage.setItem('refreshToken', data.refreshToken)

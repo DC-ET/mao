@@ -1,7 +1,10 @@
+import { safeRemoveItem, safeSetItem } from './safe-storage'
+
 /**
  * Auth token storage.
  * Electron 环境（含 dev:electron 的 http://localhost）统一由主进程写入 userData/auth.json，
- * 避免依赖 localStorage（file:// 不持久化，dev 与 prod 加载协议不一致）。
+ * 不镜像进 localStorage（file:// 不持久化，dev 与 prod 加载协议不一致，且明文落 localStorage
+ * 会扩大 token 暴露面）；浏览器环境 localStorage 是唯一存储。
  */
 let tokenCache: string | null = null
 let refreshTokenCache: string | null = null
@@ -11,17 +14,25 @@ function useElectronAuthStore(): boolean {
     && !!window.electronAPI?.getAuthTokens
 }
 
+/** 仅浏览器环境写 localStorage；Electron 下 token 只存主进程。 */
 function mirrorToLocalStorage() {
+  if (useElectronAuthStore()) return
   if (tokenCache) {
-    localStorage.setItem('token', tokenCache)
+    safeSetItem('token', tokenCache)
   } else {
-    localStorage.removeItem('token')
+    safeRemoveItem('token')
   }
   if (refreshTokenCache) {
-    localStorage.setItem('refreshToken', refreshTokenCache)
+    safeSetItem('refreshToken', refreshTokenCache)
   } else {
-    localStorage.removeItem('refreshToken')
+    safeRemoveItem('refreshToken')
   }
+}
+
+/** 历史版本曾把 token 镜像进 localStorage，Electron 下启动时清掉残留。 */
+function removeLegacyLocalStorageTokens() {
+  safeRemoveItem('token')
+  safeRemoveItem('refreshToken')
 }
 
 export async function initAuthStorage(): Promise<void> {
@@ -29,7 +40,7 @@ export async function initAuthStorage(): Promise<void> {
     const stored = await window.electronAPI!.getAuthTokens()
     tokenCache = stored.token
     refreshTokenCache = stored.refreshToken
-    mirrorToLocalStorage()
+    removeLegacyLocalStorageTokens()
     return
   }
 
@@ -46,13 +57,14 @@ export function getRefreshToken(): string | null {
 }
 
 export async function setTokens(accessToken: string, refreshToken: string): Promise<void> {
-  tokenCache = accessToken
-  refreshTokenCache = refreshToken
-  mirrorToLocalStorage()
-
+  // 先写主进程（Electron 的权威存储），再镜像 localStorage（仅浏览器生效），
+  // 避免镜像异常导致主流程失败
   if (useElectronAuthStore()) {
     await window.electronAPI!.setAuthTokens({ token: accessToken, refreshToken })
   }
+  tokenCache = accessToken
+  refreshTokenCache = refreshToken
+  mirrorToLocalStorage()
 }
 
 export async function clearTokens(): Promise<void> {

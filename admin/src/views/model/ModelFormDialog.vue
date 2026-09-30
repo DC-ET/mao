@@ -19,8 +19,8 @@
           <el-radio value="audio">语音模型</el-radio>
           <el-radio value="image">文生图</el-radio>
         </el-radio-group>
-        <span v-if="!isEdit" style="margin-left: 8px; color: #909399; font-size: 12px;">语音模型用于 TTS 等音频合成，文生图用于图片生成</span>
-        <span v-else style="margin-left: 8px; color: #909399; font-size: 12px;">编辑时不可切换模型类型</span>
+        <span v-if="!isEdit" class="form-hint-inline">语音模型用于 TTS 等音频合成，文生图用于图片生成</span>
+        <span v-else class="form-hint-inline">编辑时不可切换模型类型</span>
       </el-form-item>
       <el-form-item label="名称" prop="name">
         <el-input v-model="form.name" placeholder="例如: GPT-4o, Claude Opus" />
@@ -46,7 +46,7 @@
           <el-radio value="codex">Codex</el-radio>
           <el-radio value="claude_code">Claude Code</el-radio>
         </el-radio-group>
-        <span style="margin-left: 8px; color: #909399; font-size: 12px;">调用该模型时模拟的客户端请求头</span>
+        <span class="form-hint-inline">调用该模型时模拟的客户端请求头</span>
       </el-form-item>
       <el-form-item label="API 协议">
         <el-select v-model="form.apiProtocol" style="width: 100%">
@@ -65,7 +65,7 @@
           <el-option label="X-High" value="xhigh" />
           <el-option label="Max" value="max" />
         </el-select>
-        <span style="margin-left: 8px; color: #909399; font-size: 12px;">控制模型 reasoning token 预算，留空使用协议默认值</span>
+        <span class="form-hint-inline">控制模型 reasoning token 预算，留空使用协议默认值</span>
       </el-form-item>
       <el-form-item label="API 地址" prop="baseUrl">
         <el-input v-model="form.baseUrl" placeholder="例如: https://api.openai.com/v1">
@@ -83,15 +83,15 @@
           :step="1024"
           style="width: 220px"
         />
-        <span style="margin-left: 8px; color: #909399; font-size: 12px;">用于上下文压缩水位展示</span>
+        <span class="form-hint-inline">用于上下文压缩水位展示</span>
       </el-form-item>
       <el-form-item v-if="isTextType" label="支持视觉">
         <el-switch v-model="form.supportsVision" />
-        <span style="margin-left: 8px; color: #909399; font-size: 12px;">开启后可在任务中发送图片</span>
+        <span class="form-hint-inline">开启后可在任务中发送图片</span>
       </el-form-item>
       <el-form-item v-if="isTextType" label="默认模型">
         <el-switch v-model="form.isDefault" />
-        <span style="margin-left: 8px; color: #909399; font-size: 12px;">新会话默认使用此模型</span>
+        <span class="form-hint-inline">新会话默认使用此模型</span>
       </el-form-item>
     </el-form>
     <template #footer>

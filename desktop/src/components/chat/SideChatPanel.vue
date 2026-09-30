@@ -714,8 +714,15 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
 
     // Upload non-image files to runtime incoming (uses parent session ID for first side send)
     let resolvedText = trimmed
+    let uploadedFileCount = 0
     if (pendingUploads && pendingUploads.length > 0 && uploadSessionId) {
-      resolvedText = await uploadPendingFiles(resolvedText, pendingUploads, uploadSessionId)
+      const uploaded = await uploadPendingFiles(resolvedText, pendingUploads, uploadSessionId)
+      resolvedText = uploaded.text
+      uploadedFileCount = uploaded.uploadedCount
+    }
+    // 非图片附件全部失败且没有图片/文本可发时同样中止，避免发出无附件的空消息
+    if ((pendingUploads?.length ?? 0) > 0 && uploadedFileCount === 0 && imageUrls.length === 0 && !resolvedText) {
+      return
     }
 
     // 边路任务正在执行中：消息入队。不改动 sending——它由 phase 维护表示执行中，

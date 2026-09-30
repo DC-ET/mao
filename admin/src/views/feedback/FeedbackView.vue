@@ -245,6 +245,8 @@ async function fetchList() {
     const { data } = await api.get('/feedback/admin/list', { params: buildParams() })
     items.value = data?.items ?? []
     total.value = data?.total ?? 0
+  } catch {
+    // 拦截器已提示失败；fetchList 被模板分页事件直接调用，必须吞掉 rejection
   } finally {
     loading.value = false
   }

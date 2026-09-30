@@ -68,6 +68,15 @@ export function removeSessionTabsFor(sessionId: string) {
   sessionTabsMap.value = new Map(sessionTabsMap.value)
 }
 
+/**
+ * 登出/换号时清空全部中心 Tab 状态：sessionId 是服务端自增数字，
+ * 换号后 ID 碰撞会复活上一账号的 Tab 条。
+ */
+export function resetCenterTabs() {
+  sessionTabsMap.value = new Map()
+  currentSessionId.value = ''
+}
+
 // 仅注册一次：激活边路任务 Tab 时清除该边路任务的未读标记（按 sideSessionId 独立已读）。
 // watch 注册在模块级 detached effectScope 中：否则它挂在首个调用组件的作用域上，
 // 组件卸载（如切到 Settings）后 watch 永久失效但标志位仍为 true，已读逻辑彻底停摆。

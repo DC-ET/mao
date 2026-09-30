@@ -1,3 +1,5 @@
+import { safeRemoveItem, safeSetItem } from './safe-storage'
+
 const STORAGE_PREFIX = 'mao:closed-side-tasks:'
 const SIDE_TASK_TITLE_PREFIX = '[边路] '
 
@@ -25,7 +27,7 @@ export function markSideTaskClosed(parentSessionId: string, sideSessionId: numbe
   if (sideSessionId <= 0) return
   const closed = getClosedSideTaskIds(parentSessionId)
   closed.add(sideSessionId)
-  localStorage.setItem(STORAGE_PREFIX + parentSessionId, JSON.stringify([...closed]))
+  safeSetItem(STORAGE_PREFIX + parentSessionId, JSON.stringify([...closed]))
 }
 
 /** 移除「用户曾关闭」记录：从搜索结果主动重新打开边路任务时调用，保证刷新后仍可恢复。 */
@@ -34,7 +36,24 @@ export function unmarkSideTaskClosed(parentSessionId: string, sideSessionId: num
   const closed = getClosedSideTaskIds(parentSessionId)
   if (!closed.has(sideSessionId)) return
   closed.delete(sideSessionId)
-  localStorage.setItem(STORAGE_PREFIX + parentSessionId, JSON.stringify([...closed]))
+  safeSetItem(STORAGE_PREFIX + parentSessionId, JSON.stringify([...closed]))
+}
+
+/**
+ * 登出/换号时清除全部关闭标记：key 不含用户维度（sessionId 是服务端自增数字），
+ * 同机换号后 ID 碰撞会误隐藏新账号的边路 Tab。
+ */
+export function clearAllClosedSideTasks(): void {
+  try {
+    const keys: string[] = []
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i)
+      if (key?.startsWith(STORAGE_PREFIX)) keys.push(key)
+    }
+    for (const key of keys) safeRemoveItem(key)
+  } catch {
+    /* localStorage 不可用时放弃清理 */
+  }
 }
 
 export interface SideTaskSummary {

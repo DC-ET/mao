@@ -325,7 +325,7 @@ export default { name: 'SessionTab' }
 }
 
 .kpi .value.warn {
-  color: #ff3b30;
+  color: var(--mao-danger);
 }
 
 .actions {
@@ -383,7 +383,7 @@ export default { name: 'SessionTab' }
 
 .fail-row .fail {
   font-weight: 600;
-  color: #ff3b30;
+  color: var(--mao-danger);
 }
 
 .fail-row .meta {

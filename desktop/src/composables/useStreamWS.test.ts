@@ -91,6 +91,29 @@ describe('useStreamWS reconnect', () => {
     sockets[2].open()
     await expect(connect()).resolves.toBeUndefined()
   })
+
+  it('心跳判死后 onclose 迟迟不触发（半开连接）时，兜底定时器强制重连', async () => {
+    const { connect, connected } = useStreamWS()
+    const first = connect()
+    sockets[0].open()
+    await first
+    expect(connected.value).toBe(true)
+
+    // 模拟半开连接：close() 后 onclose 永远不触发
+    sockets[0].close = () => {}
+    // 心跳每 5s 一次，超过 30s 静默后判死并 close()
+    await vi.advanceTimersByTimeAsync(35_000)
+    expect(connected.value).toBe(true) // onclose 未触发，尚未走重连
+
+    await vi.advanceTimersByTimeAsync(3_000) // 兜底：强制按断开处理
+    expect(connected.value).toBe(false)
+    await vi.advanceTimersByTimeAsync(1_000) // scheduleReconnect 首轮延迟
+    expect(sockets).toHaveLength(2)
+
+    sockets[1].open()
+    await expect(connect()).resolves.toBeUndefined()
+    expect(connected.value).toBe(true)
+  })
 })
 
 describe('useStreamWS user_message_saved', () => {

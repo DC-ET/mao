@@ -243,6 +243,15 @@ function handleOpen() {
   activeTab.value = 'sessions'
   sessionsPage.value = 1
   tasksPage.value = 1
+  // 抽屉复用同一组件实例：先清空上一位用户的数据，避免加载期间透出旧明细
+  sessions.value = []
+  tasks.value = []
+  commands.value = []
+  skills.value = []
+  gitCredentials.value = []
+  mcpServers.value = []
+  sessionsTotal.value = 0
+  tasksTotal.value = 0
   void loadSessions()
   void loadTasks()
   void loadCommands()

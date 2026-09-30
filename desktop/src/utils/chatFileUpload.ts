@@ -32,14 +32,20 @@ export async function uploadChatFile(file: File, sessionId: string): Promise<Upl
   }
 }
 
+export interface PendingFilesUploadResult {
+  /** 拼接了 @{absPath}@ 文件引用的消息文本 */
+  text: string
+  /** 上传成功的文件数；与入参 files.length 对比可判断全部/部分失败 */
+  uploadedCount: number
+}
+
 /**
  * 批量上传非图片文件到 runtime incoming，返回拼接了 @{absPath}@ 引用的文本。
  * @param text 原始消息文本
  * @param files 待上传的非图片文件列表
  * @param sessionId 目标会话 ID
- * @returns 拼接了文件引用的消息文本
  */
-export async function uploadPendingFiles(text: string, files: File[], sessionId: string): Promise<string> {
+export async function uploadPendingFiles(text: string, files: File[], sessionId: string): Promise<PendingFilesUploadResult> {
   const refs: string[] = []
   for (const file of files) {
     const uploaded = await uploadChatFile(file, sessionId)
@@ -49,6 +55,6 @@ export async function uploadPendingFiles(text: string, files: File[], sessionId:
       ElMessage.error(`文件 ${file.name} 上传失败`)
     }
   }
-  if (refs.length === 0) return text
-  return text ? `${text}\n${refs.join(' ')}` : refs.join(' ')
+  if (refs.length === 0) return { text, uploadedCount: 0 }
+  return { text: text ? `${text}\n${refs.join(' ')}` : refs.join(' '), uploadedCount: refs.length }
 }

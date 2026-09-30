@@ -338,8 +338,8 @@ export default {
 }
 
 .delta.up {
-  color: #c9252d;
-  background: rgba(255, 59, 48, 0.1);
+  color: var(--mao-danger);
+  background: var(--mao-danger-bg);
 }
 
 .delta.down {
@@ -460,7 +460,7 @@ export default {
 }
 
 .insights li.warn {
-  color: #c9252d;
+  color: var(--mao-danger);
 }
 
 .insights li.muted {

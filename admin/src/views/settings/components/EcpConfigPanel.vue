@@ -51,6 +51,7 @@ import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../../../api'
 import { ECP_CONFIG_KEY, defaultEcpConfig, parseEcpConfig, validateEcpConfig } from '../ecpConfig'
+import { useServerSyncGuard } from '../useServerSyncGuard'
 
 const props = defineProps<{
   row?: { value: string | null; editable?: number }
@@ -62,16 +63,22 @@ const model = ref(defaultEcpConfig())
 const readError = ref('')
 const saving = ref(false)
 const disabled = computed(() => !props.ready || !props.canWrite || props.row?.editable !== 1 || !!readError.value || saving.value)
+const syncGuard = useServerSyncGuard()
 
-watch(() => props.row?.value, (raw) => {
+watch(() => props.row?.value, async (raw) => {
   readError.value = ''
   if (raw === undefined) return
+  let parsed: ReturnType<typeof parseEcpConfig>
   try {
-    model.value = parseEcpConfig(raw)
+    parsed = parseEcpConfig(raw)
   } catch (e) {
     readError.value = e instanceof Error ? e.message : String(e)
     model.value = defaultEcpConfig()
+    return
   }
+  const decision = await syncGuard.resolve(JSON.stringify(parsed), JSON.stringify(model.value))
+  if (decision !== 'apply') return
+  model.value = parsed
 }, { immediate: true })
 
 async function save() {
@@ -79,7 +86,10 @@ async function save() {
   saving.value = true
   try {
     const payload = validateEcpConfig(model.value)
-    await api.put(`/system-settings/${ECP_CONFIG_KEY}`, { value: JSON.stringify(payload) })
+    await api.put(`/system-settings/${ECP_CONFIG_KEY}`, { value: JSON.stringify(payload) }, { skipErrorToast: true })
+    // 本地回写为已保存的规范化形态并对齐基线：父级 @saved 刷新回流不会误报冲突
+    model.value = payload
+    syncGuard.markBaseline(JSON.stringify(payload))
     ElMessage.success('ECP 配置已保存')
     emit('saved')
   } catch (e: any) {

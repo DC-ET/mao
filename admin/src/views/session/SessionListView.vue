@@ -279,12 +279,14 @@ async function fetchSessions() {
 }
 
 async function fetchOptions() {
-  const [usersRes, agentsRes] = await Promise.all([
+  // allSettled：任一接口失败只置空对应下拉（拦截器已提示），
+  // 不再连带两个下拉同时为空，也不会抛 unhandled rejection
+  const [usersRes, agentsRes] = await Promise.allSettled([
     api.get('/admin/sessions/options/users'),
     api.get('/admin/sessions/options/agents')
   ])
-  userOptions.value = usersRes.data || []
-  agentOptions.value = agentsRes.data || []
+  userOptions.value = usersRes.status === 'fulfilled' ? usersRes.value.data || [] : []
+  agentOptions.value = agentsRes.status === 'fulfilled' ? agentsRes.value.data || [] : []
 }
 
 function handleSearch() {

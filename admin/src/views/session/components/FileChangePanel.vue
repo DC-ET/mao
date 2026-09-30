@@ -184,19 +184,19 @@ function changeTypeClass(type: string): string {
 }
 
 .file-type-badge.created {
-  color: #2d8a2d;
+  color: var(--mao-success);
 }
 
 .file-type-badge.modified {
-  color: #b87a00;
+  color: var(--mao-warn);
 }
 
 .file-type-badge.deleted {
-  color: #d94141;
+  color: var(--mao-danger);
 }
 
 .file-type-badge.renamed {
-  color: #6b46c1;
+  color: var(--mao-renamed);
 }
 
 .file-path {
@@ -218,10 +218,10 @@ function changeTypeClass(type: string): string {
 }
 
 .stat-added {
-  color: #2d8a2d;
+  color: var(--mao-success);
 }
 
 .stat-deleted {
-  color: #d94141;
+  color: var(--mao-danger);
 }
 </style>

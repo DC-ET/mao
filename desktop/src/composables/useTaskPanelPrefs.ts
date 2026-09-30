@@ -3,6 +3,7 @@ import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { getToken } from '../utils/auth-storage'
 import { isEmbedGroupKey } from '../utils/cloud-project'
+import { safeRemoveItem } from '../utils/safe-storage'
 
 const LEGACY_ORDER_KEY = 'task-group-order'
 const LEGACY_ALIASES_KEY = 'task-group-aliases'
@@ -28,7 +29,7 @@ function readLegacyOrder(): string[] {
 }
 
 function clearLegacyOrder() {
-  localStorage.removeItem(LEGACY_ORDER_KEY)
+  safeRemoveItem(LEGACY_ORDER_KEY)
 }
 
 /** 未登录兜底：分组别名写入 localStorage，LOCAL 分组重命名在未登录态也可用。 */
@@ -51,7 +52,7 @@ function writeLegacyAliases(aliases: Record<string, string>) {
 }
 
 function clearLegacyAliases() {
-  localStorage.removeItem(LEGACY_ALIASES_KEY)
+  safeRemoveItem(LEGACY_ALIASES_KEY)
 }
 
 function scheduleSave() {

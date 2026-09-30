@@ -159,7 +159,7 @@
           <el-button type="primary" link @click="addExperience">+ 添加经验</el-button>
         </div>
         <div v-show="experienceView === 'text'" class="experience-text-pane">
-          <div class="experience-text-editor">
+          <div ref="experienceEditorRef" class="experience-text-editor">
             <div class="experience-text-backdrop" aria-hidden="true">
               <div
                 v-for="(line, index) in experienceBackdropLines"
@@ -273,6 +273,7 @@ const optionsLoadFailed = ref(false)
 const experienceView = ref<'table' | 'text'>('table')
 const experienceText = ref('')
 const experienceTableRef = ref()
+const experienceEditorRef = ref<HTMLElement | null>(null)
 const experienceTableKey = ref(0)
 const experienceViewOptions = [
   { label: '表格', value: 'table' },
@@ -281,7 +282,7 @@ const experienceViewOptions = [
 let experienceKeySeq = 0
 let suggestedQuestionKeySeq = 0
 let experienceSortable: Sortable | null = null
-let experienceScrollTimer: ReturnType<typeof setInterval> | null = null
+let experienceTextareaEl: HTMLTextAreaElement | null = null
 
 const experienceBackdropLines = computed(() =>
   experienceText.value.split(/\r?\n/).map((line, index) => {
@@ -293,7 +294,7 @@ const experienceBackdropLines = computed(() =>
 )
 
 function syncExperienceScroll() {
-  const editorEl = document.querySelector('.experience-text-editor') as HTMLElement | null
+  const editorEl = experienceEditorRef.value
   const textarea = editorEl?.querySelector('textarea')
   const backdrop = editorEl?.querySelector('.experience-text-backdrop') as HTMLElement | null
   if (!textarea || !backdrop) return
@@ -303,15 +304,17 @@ function syncExperienceScroll() {
 
 function startExperienceScrollSync() {
   stopExperienceScrollSync()
-  // textarea 的 scroll 事件不总是冒泡，轮询兜底保证垫层跟随
-  experienceScrollTimer = setInterval(syncExperienceScroll, 80)
+  // scroll 不冒泡，但会直接派发给元素自身：直接监听 textarea 即可，无需轮询
+  const textarea = experienceEditorRef.value?.querySelector('textarea') ?? null
+  if (!textarea) return
+  experienceTextareaEl = textarea
+  textarea.addEventListener('scroll', syncExperienceScroll, { passive: true })
+  syncExperienceScroll()
 }
 
 function stopExperienceScrollSync() {
-  if (experienceScrollTimer) {
-    clearInterval(experienceScrollTimer)
-    experienceScrollTimer = null
-  }
+  experienceTextareaEl?.removeEventListener('scroll', syncExperienceScroll)
+  experienceTextareaEl = null
 }
 
 const form = reactive({

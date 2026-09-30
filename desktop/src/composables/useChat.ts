@@ -1,5 +1,5 @@
 import { ref, computed, watch, type Ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api'
 import { useSessionStore, type SessionEnvironmentInfo } from '../stores/session'
 import { useStreamWS } from './useStreamWS'
@@ -251,6 +251,43 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     return uploadImages(files, sessionId.value)
   }
 
+  /**
+   * 发送前的上传结果校验（与 SideChatPanel 的防线同源，上移到公共路径）：
+   * 附件全部失败 → 提示并阻断；部分失败 → 弹「仍然发送 / 取消」确认；
+   * 最终文本为空且没有任何图片 → 阻断。返回 true 才可继续发送。
+   */
+  async function guardUploadsBeforeSend(params: {
+    imageCount: number
+    imageUrls: string[]
+    fileCount: number
+    uploadedFileCount: number
+    resolvedText: string
+  }): Promise<boolean> {
+    const { imageCount, imageUrls, fileCount, uploadedFileCount, resolvedText } = params
+    const total = imageCount + fileCount
+    const succeeded = imageUrls.length + uploadedFileCount
+    if (total > 0 && succeeded === 0) {
+      ElMessage.error('附件全部上传失败，已取消发送')
+      return false
+    }
+    if (succeeded < total) {
+      try {
+        await ElMessageBox.confirm(
+          `${total - succeeded} 个附件上传失败，仍要发送其余内容吗？`,
+          '部分附件上传失败',
+          { confirmButtonText: '仍然发送', cancelButtonText: '取消', type: 'warning' }
+        )
+      } catch {
+        return false
+      }
+    }
+    if (!resolvedText.trim() && imageUrls.length === 0) {
+      ElMessage.warning('消息内容为空，已取消发送')
+      return false
+    }
+    return true
+  }
+
   function resolveWorkspaceInitLabel(): string {
     if (executionMode.value === 'CLOUD' && workspaceMode.value === 'git' && gitCloneUrl.value) {
       return '正在克隆仓库...（可能需要 1-2 分钟）'
@@ -313,6 +350,12 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     try {
       // Upload images to OSS
       const imageUrls = await uploadChatImages(files || [])
+      // 图片全部失败且无待传文件：直接中止，不建会话不发文字-only 消息
+      if ((files?.length ?? 0) > 0 && imageUrls.length === 0 && (!pendingUploads || pendingUploads.length === 0)) {
+        ElMessage.error('图片全部上传失败，已取消发送')
+        sending.value = false
+        return null
+      }
 
       // Ensure WS connection is established
       await connect()
@@ -379,8 +422,22 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       const sid = sessionId.value!
       // Upload non-image files to runtime incoming now that session exists
       let resolvedText = text || ''
+      let uploadedFileCount = 0
       if (pendingUploads && pendingUploads.length > 0) {
-        resolvedText = await uploadPendingFiles(resolvedText, pendingUploads, sid)
+        const uploaded = await uploadPendingFiles(resolvedText, pendingUploads, sid)
+        resolvedText = uploaded.text
+        uploadedFileCount = uploaded.uploadedCount
+      }
+      const canSend = await guardUploadsBeforeSend({
+        imageCount: files?.length ?? 0,
+        imageUrls,
+        fileCount: pendingUploads?.length ?? 0,
+        uploadedFileCount,
+        resolvedText
+      })
+      if (!canSend) {
+        sending.value = false
+        return null
       }
       // Resolve file reference relative paths to absolute paths — before both
       // the optimistic UI insert and the WS send so they stay consistent
@@ -794,9 +851,20 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     sessionStore.clearExecutionError(sid)
     const imageUrls = files.length > 0 ? await uploadChatImages(files) : []
     let resolvedText = text
+    let uploadedFileCount = 0
     if (pendingUploads && pendingUploads.length > 0) {
-      resolvedText = await uploadPendingFiles(resolvedText, pendingUploads, sid)
+      const uploaded = await uploadPendingFiles(resolvedText, pendingUploads, sid)
+      resolvedText = uploaded.text
+      uploadedFileCount = uploaded.uploadedCount
     }
+    const canEnqueue = await guardUploadsBeforeSend({
+      imageCount: files.length,
+      imageUrls,
+      fileCount: pendingUploads?.length ?? 0,
+      uploadedFileCount,
+      resolvedText
+    })
+    if (!canEnqueue) return false
     resolvedText = resolveFileRefPaths(resolvedText, workspace.value)
     await connect()
     if (!requireCurrentSession(sid)) return false

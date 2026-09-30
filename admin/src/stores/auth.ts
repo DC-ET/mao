@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { api } from '../api'
+import { invalidateAnalytics } from '../views/analytics/composables/useScopeQuery'
 
 interface User {
   id: number
@@ -25,7 +26,8 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function login(username: string, password: string) {
-    const { data } = await api.post('/auth/admin/login', { username, password })
+    // skipErrorToast：登录页 catch 自行提示，拦截器再弹会双重提示
+    const { data } = await api.post('/auth/admin/login', { username, password }, { skipErrorToast: true })
     token.value = data.accessToken
     localStorage.setItem('token', data.accessToken)
     localStorage.setItem('refreshToken', data.refreshToken)
@@ -41,6 +43,9 @@ export const useAuthStore = defineStore('auth', () => {
       user.value = null
       localStorage.removeItem('token')
       localStorage.removeItem('refreshToken')
+      // 登出是 router.push 不刷新页面，模块级缓存（用量分析 TTL 5 分钟）不按账号隔离，
+      // 不清掉会让下一账号看到上一账号的数据
+      invalidateAnalytics()
     }
   }
 
@@ -56,6 +61,7 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = null
     localStorage.removeItem('token')
     localStorage.removeItem('refreshToken')
+    invalidateAnalytics()
   }
 
   return {

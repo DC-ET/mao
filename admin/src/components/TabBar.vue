@@ -143,7 +143,7 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 .tab-item:focus-visible {
-  box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.28);
+  box-shadow: 0 0 0 2px var(--mao-accent-ring);
 }
 
 .tab-close {
@@ -152,7 +152,7 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 .tab-close:hover {
-  background: #d2d2d7;
+  background: var(--mao-chip);
   color: var(--mao-ink);
 }
 </style>

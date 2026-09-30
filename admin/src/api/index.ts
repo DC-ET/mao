@@ -2,6 +2,15 @@ import axios, { type AxiosRequestConfig } from 'axios'
 import { ElMessage } from 'element-plus'
 import type { Result } from '@mao/contracts'
 
+declare module 'axios' {
+  /** 页面自行处理错误提示时置 true，拦截器不再自动弹 toast（避免双重提示） */
+  interface AxiosRequestConfig {
+    skipErrorToast?: boolean
+    /** 内部使用：apiGetWithHeaders 专用，拦截器改返回 { result, headers } */
+    returnHeaders?: boolean
+  }
+}
+
 export const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || '/api/v1',
   timeout: 30000,
@@ -52,14 +61,16 @@ api.interceptors.response.use(
     // 后端统一响应 Result<T>（契约来自 @mao/contracts）
     const data = response.data as Result<unknown>
     if (data.code !== 0) {
-      ElMessage.error(data.message || '请求失败')
+      if (!response.config.skipErrorToast) {
+        ElMessage.error(data.message || '请求失败')
+      }
       return Promise.reject(new Error(data.message))
     }
-    // 成功分支仍返回 Result 信封（调用方继续解构 data）。
-    // 额外挂上 headers：个人指令分页总数在 x-total-count，剥掉后页码会失效。
-    if (data && typeof data === 'object') {
-      return Object.assign(response.data, { headers: response.headers })
+    // apiGetWithHeaders 专用通道：返回 { result, headers }，不把 axios 细节塞进 Result 信封
+    if (response.config.returnHeaders) {
+      return { result: response.data, headers: response.headers }
     }
+    // 成功分支仍返回 Result 信封（调用方继续解构 data）。
     return response.data
   },
   async (error) => {
@@ -83,7 +94,7 @@ api.interceptors.response.use(
           return api.request(original)
         }
         forceLogout()
-      } else {
+      } else if (!(config as AxiosRequestConfig | undefined)?.skipErrorToast) {
         ElMessage.error(data?.message || '请求失败')
       }
     } else {
@@ -96,5 +107,20 @@ api.interceptors.response.use(
 function forceLogout() {
   localStorage.removeItem('token')
   localStorage.removeItem('refreshToken')
-  window.location.href = '/admin/login'
+  // BASE_URL 随部署环境变化（生产 /admin/，dev /），硬编码 /admin/login 在 dev 下 404
+  window.location.href = `${import.meta.env.BASE_URL}login`
+}
+
+/**
+ * 需要响应头的 GET 请求（如 x-total-count 分页总数）：
+ * 返回 { result, headers }，避免把 axios headers 塞进 Result 信封造成契约污染。
+ */
+export async function apiGetWithHeaders<T = unknown>(
+  url: string,
+  config?: AxiosRequestConfig
+): Promise<{ result: Result<T>; headers: Record<string, unknown> }> {
+  return api.get(url, { ...config, returnHeaders: true }) as unknown as Promise<{
+    result: Result<T>
+    headers: Record<string, unknown>
+  }>
 }

@@ -65,11 +65,19 @@ export const useAuthStore = defineStore('auth', () => {
     await clearTokens()
     useStreamWS().disconnect()
     useTerminalWS().disconnect()
-    // 动态引入：useTerminal 依赖 api，静态引入会与 api → auth 形成模块环
+    // 动态引入：useTerminal/useChat 依赖 api，静态引入会与 api → auth 形成模块环
     const { useTerminal } = await import('../composables/useTerminal')
     useTerminal().reset()
     useSessionStore().reset()
     useDraftStore().reset()
+    // 模块级单例同样按用户残留：中心 Tab / 待审批队列 / 边路关闭标记（key 不含用户维度，
+    // sessionId 为服务端自增数字，同机换号后 ID 碰撞会复活或误隐藏旧数据）
+    const { resetCenterTabs } = await import('../composables/useCenterTabs')
+    resetCenterTabs()
+    const { useToolApprovals } = await import('../composables/useChat')
+    useToolApprovals().clearPendingApprovals()
+    const { clearAllClosedSideTasks } = await import('../utils/side-task-tabs')
+    clearAllClosedSideTasks()
   }
 
   async function applyLogin(data: LoginResponse) {

@@ -113,6 +113,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Refresh, Download, ArrowDown, ArrowLeft } from '@element-plus/icons-vue'
 import { api } from '../../api'
+import { downloadBlob } from '../../utils/download'
 import { formatDateTime } from '../../utils/datetime'
 import { executionModeLabel, phaseLabel } from '../../utils/labels'
 import { useBreakpoint } from '../../composables/useBreakpoint'
@@ -259,9 +260,11 @@ async function exportMessages() {
   try {
     const allMessages: ChatMessage[] = []
     let beforeId: string | null = null
+    // 游标防御：后端异常重复返回同一 nextBeforeMessageId 时中断；轮次封顶避免无限循环
+    const MAX_EXPORT_ROUNDS = 200
     const pageOf = (payload: unknown): { messages?: Array<Record<string, unknown>>; hasMore?: boolean; nextBeforeMessageId?: number | string | null } =>
       (payload ?? {}) as { messages?: Array<Record<string, unknown>>; hasMore?: boolean; nextBeforeMessageId?: number | string | null }
-    for (;;) {
+    for (let round = 0; round < MAX_EXPORT_ROUNDS; round++) {
       const res = await api.get(`/admin/sessions/${id}/messages`, {
         params: { roundLimit: 50, ...(beforeId ? { beforeMessageId: beforeId } : {}) }
       })
@@ -269,7 +272,9 @@ async function exportMessages() {
       const pageMessages = mapApiMessagesToChat(page.messages || [])
       allMessages.unshift(...pageMessages)
       if (!page.hasMore || !page.nextBeforeMessageId || pageMessages.length === 0) break
-      beforeId = String(page.nextBeforeMessageId)
+      const nextCursor = String(page.nextBeforeMessageId)
+      if (nextCursor === beforeId) break
+      beforeId = nextCursor
     }
     const payload = {
       sessionId: sessionInfo.value?.id ?? id,
@@ -278,12 +283,7 @@ async function exportMessages() {
       messages: allMessages
     }
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `session-${id}-${new Date().toISOString().slice(0, 10)}.json`
-    a.click()
-    URL.revokeObjectURL(url)
+    downloadBlob(blob, `session-${id}-${new Date().toISOString().slice(0, 10)}.json`)
     ElMessage.success(`已导出 ${allMessages.length} 条消息`)
   } catch {
     /* 拦截器已提示失败 */

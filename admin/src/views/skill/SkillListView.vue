@@ -468,7 +468,7 @@ async function handleView(row: any) {
       const { data } = await api.get(`/admin/user-skills/${row.userId}/${encodeURIComponent(row.name)}`)
       currentDoc.value = { ...data, userId: row.userId, username: row.username, displayName: row.displayName }
     } else {
-      const { data } = await api.get(`/skill-docs/${row.name}`)
+      const { data } = await api.get(`/skill-docs/${encodeURIComponent(row.name)}`)
       currentDoc.value = data
     }
     detailVisible.value = true
@@ -725,7 +725,7 @@ async function handleDelete(row: any) {
     if (activeTab.value === 'personal') {
       await api.delete(`/admin/user-skills/${row.userId}/${encodeURIComponent(row.name)}`)
     } else {
-      await api.delete(`/skill-docs/${row.name}`)
+      await api.delete(`/skill-docs/${encodeURIComponent(row.name)}`)
     }
     ElMessage.success(`Skill「${row.name}」已删除`)
     await fetchActiveTab()

@@ -258,6 +258,8 @@ interface TabState {
   total: number
   currentPage: number
   pageSize: number
+  /** 是否已成功加载过：替代 models.length === 0 当「未加载」标记（空结果 Tab 不再每次切入都重拉） */
+  loaded: boolean
   filters: {
     keyword: string
     provider: string
@@ -273,6 +275,7 @@ function createTabState(): TabState {
     total: 0,
     currentPage: 1,
     pageSize: 10,
+    loaded: false,
     filters: {
       keyword: '',
       provider: '',
@@ -343,6 +346,7 @@ async function fetchModels() {
     if (seq !== fetchModelsSeq) return
     tabStates[tab].models = data?.records || []
     tabStates[tab].total = data?.total || 0
+    tabStates[tab].loaded = true
   } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
     if (seq === fetchModelsSeq) loading.value = false
   }
@@ -416,7 +420,7 @@ function handleReset() {
 function handleTabChange() {
   // 切换 tab 时按需加载该 tab 数据（首次进入时加载）
   const tab = activeTab.value
-  if (tabStates[tab].models.length === 0) {
+  if (!tabStates[tab].loaded) {
     fetchModels()
   }
 }

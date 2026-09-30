@@ -61,6 +61,20 @@ function createMarked(isDark: boolean): Marked {
 // 复制按钮走事件委托（utils/codeCopy），sanitize 保持默认严格白名单，不放行事件属性
 const SANITIZE_OPTIONS = { ADD_ATTR: ['target'] }
 
+// Marked 实例按主题复用：实例只持有配置（renderer/walkTokens），parse 状态是每次调用独立的；
+// 流式期间每个气泡每次内容变化都渲染一次，新建实例是纯浪费
+const markedCache = new Map<boolean, Marked>()
+let inlineMarked: Marked | null = null
+
+function getMarked(isDark: boolean): Marked {
+  let instance = markedCache.get(isDark)
+  if (!instance) {
+    instance = createMarked(isDark)
+    markedCache.set(isDark, instance)
+  }
+  return instance
+}
+
 export async function renderMarkdown(
   text: string,
   isDark = document.documentElement.getAttribute('data-theme') === 'dark',
@@ -68,7 +82,7 @@ export async function renderMarkdown(
   if (!text) return ''
   ensureCodeCopyDelegation()
   ensureExternalLinkDelegation()
-  const result = await createMarked(isDark).parse(text)
+  const result = await getMarked(isDark).parse(text)
   if (typeof result !== 'string') return escapeHtml(text)
   // 统一消毒：防御各 renderer 之外的残留注入面
   return DOMPurify.sanitize(result, SANITIZE_OPTIONS)
@@ -78,7 +92,8 @@ export function renderInlineMarkdown(text: string): string {
   if (!text) return ''
   ensureCodeCopyDelegation()
   ensureExternalLinkDelegation()
-  const result = new Marked({ breaks: false }).parseInline(text)
+  inlineMarked ??= new Marked({ breaks: false })
+  const result = inlineMarked.parseInline(text)
   if (typeof result !== 'string') return escapeHtml(text)
   return DOMPurify.sanitize(result, SANITIZE_OPTIONS)
 }

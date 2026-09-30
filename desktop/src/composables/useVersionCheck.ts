@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { isAndroidCapacitor } from '../utils/capacitor'
+import { safeSetItem } from '../utils/safe-storage'
 
 const STORAGE_KEY = 'app_version'
 const CHECK_INTERVAL = 60_000
@@ -65,7 +66,7 @@ function readStoredVersion(): StoredVersion | null {
 }
 
 function writeStoredVersion(info: StoredVersion) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(info))
+  safeSetItem(STORAGE_KEY, JSON.stringify(info))
 }
 
 async function checkVersion() {
@@ -355,7 +356,7 @@ export function useVersionCheck() {
 
   function ignoreAndroidUpdate() {
     if (_androidManifestVersionCode) {
-      localStorage.setItem(IGNORED_VERSION_KEY, String(_androidManifestVersionCode))
+      safeSetItem(IGNORED_VERSION_KEY, String(_androidManifestVersionCode))
     }
     appUpdateAvailable.value = false
     appUpdateStatus.value = 'not-available'

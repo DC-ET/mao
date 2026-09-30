@@ -1,5 +1,6 @@
 import { ref, watch } from 'vue'
 import { useDark, useToggle } from '@vueuse/core'
+import { safeSetItem } from './safe-storage'
 
 export type ThemeMode = 'light' | 'dark' | 'auto'
 
@@ -84,7 +85,7 @@ export function useTheme() {
 
   function setTheme(mode: ThemeMode) {
     theme.value = mode
-    localStorage.setItem('aw-theme-mode', mode)
+    safeSetItem('aw-theme-mode', mode)
     applyTheme(mode)
     ensureMediaListener()
   }

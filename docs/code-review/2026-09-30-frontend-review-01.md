@@ -336,3 +336,9 @@
 2. **第二梯队（可用性硬伤）**：#2 断线无反馈、#4 半开连接悬挂（两条建议一起修，断线横幅依赖稳定的状态机）、#5 设置面板丢编辑、#6 登录双重提示、#10 会话导出下载。
 3. **第三梯队（健壮性与一致性）**：#7 未捕获 rejection、#8 URL 编码、#9 抽屉脏数据、#14 Tab 加载标记。
 4. **第四梯队（性能与可维护性，随迭代顺带做）**：#13 虚拟滚动、#15 颜色变量收敛 + 图标按需、#16 组件拆分与类型收口。
+
+## 六、修复状态（2026-09-30，随 0.0.224 落地）
+
+- **已修复**：#1（logout/clearAuth 调用 `invalidateAnalytics()`）、#2（新增 `ConnectionBanner`，消费 `connected`+新增 `everConnected`，挂在 Layout）、#3（`guardUploadsBeforeSend` 覆盖 prepareAndSendMessage 与入队路径，SideChatPanel 防线扩展到文件附件）、#4（心跳判死后 3s 强制重连兜底，含回归测试）、#5（新增 `useServerSyncGuard` 统一三个面板语义；IntegrationConfigPanel 改为按 key 基线跟随）、#6（拦截器支持 `skipErrorToast`，登录/ECP 链路调用点已接入；`forceLogout` 改用 BASE_URL）、#7（三处补齐 catch / allSettled）、#8（系统分支补 encodeURIComponent）、#9（handleOpen 清空六类数据）、#10（新增 `utils/download.ts`，csv.ts/SessionDetailView/LlmCallView 共用；游标同值中断 + 200 轮上限）、#11（`resetCenterTabs` + 全量 `clearPendingApprovals()` + `clearAllClosedSideTasks()` 接入 `clearLocalSession`）、#12（Electron 不再镜像 localStorage 并清理历史残留；新增 `utils/safe-storage.ts` 收口写操作）、#14（TabState 增加 `loaded` 标记）、#15（颜色收敛到 `--mao-*`，新增 `--mao-danger-bg/--mao-accent-ring/--mao-renamed/--mao-chip`；全局 `.form-hint`/`.form-hint-inline`；图标全局注册收窄到 7 个）。
+- **#13 部分修复**：Marked/inline 实例按主题复用（`useMarkdown.ts`）。虚拟滚动 / 历史消息窗口裁剪 / `mao:markdown-rendered` 定向化属架构级改动，本轮未动，后续单独立项。
+- **#16 部分修复**：已完成——LlmCallView 导出补成功提示并换用 downloadBlob；定时任务启停加二次确认（改 `:model-value` 语义，确认前不翻转）；RolePermissionView 补 `onActivated` 刷新；删掉 LoginView 历史遗留 `rememberedPassword` 清理与空目录 `views/api-key/`；AgentFormDialog 改模板 ref + scroll 事件（去掉 80ms 轮询与全局 querySelector）；axios 拦截器不再往 Result 塞 headers，改 `apiGetWithHeaders()` 专用通道（SystemCommandListView 已切换）。**未做**：超大文件拆分（TaskIndexPanel/ChatInput/session store）、`(window as any).electronAPI` 30+ 处类型化收口、admin 侧 ~98 处 `any` 对齐 `@mao/contracts`——均为大面重构，建议单独迭代。
