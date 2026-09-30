@@ -485,6 +485,8 @@ export class StreamingWsHandler {
   /**
    * 提交 Agent 执行。线程池拒绝时必须回滚占位，否则该会话会被永久判定为
    * "already running"，后续所有发送都无法启动。
+   * 返回是否提交成功；失败时已自行回滚簿记并发「服务器繁忙」事件，
+   * 调用方若在此之前推进过会话相位（如 RESUMING），需据此回滚相位。
    */
   private submitExecution(
     sessionId: number,
@@ -492,12 +494,13 @@ export class StreamingWsHandler {
     executionId: string,
     run: (futureRef: { current: unknown }) => Promise<void>,
     requeueIfClaimed?: () => Promise<void>,
-  ): void {
+  ): boolean {
     const futureRef = { current: null as unknown };
     try {
       const future = this.deps.agentExecutor(() => run(futureRef));
       futureRef.current = future;
       this.runningTasks.set(sessionId, future);
+      return true;
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       console.error(`Failed to submit agent execution for session ${sessionId}: ${message}`);
@@ -512,6 +515,7 @@ export class StreamingWsHandler {
       this.deps.registry.send(userId, wsEvent('error', sessionId, {
         message: '服务器繁忙，请稍后重试', executionId,
       }));
+      return false;
     }
   }
 
@@ -1060,8 +1064,17 @@ export class StreamingWsHandler {
       this.deps.registry.clearActiveToolCalls(sessionId);
       this.deps.registry.setSessionThinking(sessionId, false);
       this.deps.askUserQuestionsRegistry.failAllForSession(sessionId);
-      this.submitExecution(sessionId, userId, executionId, (futureRef) =>
+      const submitted = this.submitExecution(sessionId, userId, executionId, (futureRef) =>
         this.runRetryExecution(session, userId, sessionId, executionId, cancelFlag, futureRef, retryTaskId));
+      if (!submitted) {
+        // 线程池拒绝：submitExecution 已回滚簿记并发「服务器繁忙」事件，
+        // 这里把相位收敛回进入时的终态（入口已校验 isTerminalPhase），
+        // 避免 phase 滞留 RESUMING 后被孤儿巡检以崩溃恢复语义自动执行。
+        try {
+          await this.deps.sessionService.updatePhase(sessionId, entryPhase);
+        } catch { /* ignore */ }
+        await this.rollbackSubagentRetry(session, retryTaskId);
+      }
     } catch (e) {
       // claim 添加后、执行提交前的异常路径必须释放占位（同 M-4），否则会话永久判定 busy。
       // submitExecution 提交被拒时已自行回滚并发事件，这里仅在实际删除到 claim 时才补发 error，避免重复。

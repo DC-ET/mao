@@ -95,17 +95,36 @@ export class WeixinMonitorService {
         const payload = JSON.parse(account.payloadJson ?? '{}') as { token: string; baseUrl: string };
         const result = await this.getUpdates(payload.baseUrl, payload.token, account.getUpdatesBuf ?? null, signal);
         consecutiveFailures = 0;
-        if (result.newBuf != null && account.id != null) {
-          await this.accountRepository.updateGetUpdatesBuf(account.id, result.newBuf);
-        }
         if (result.messages.length > 0) {
           console.info(`收到${result.messages.length}条微信消息, accountId=${accountId}`);
-          // Fire-and-forget：不阻塞 monitorLoop 轮询。消息处理在后台上并发执行，
-          // 后一条消息可在前一条 Agent 执行期间重入 handler，触发纠偏取代逻辑。
-          // 串行 await 会使 monitorLoop 阻塞在 Agent 执行上，错过后续消息的轮询窗口。
+          // 第一步：先 await 全部入队（幂等键 + payload 落库），保证「游标推进前消息必然已在表中」；
+          // 入队失败（DB 异常）直接抛出走外层重试，游标本轮不推进，ilink 会重投。
+          const queued: Array<{ messageKey: string | null; message: Record<string, unknown> }> = [];
           for (const message of result.messages) {
-            void this.inboundProcessor.processInboundMessage(accountId, message)
+            const messageKey = await this.inboundProcessor.enqueueInboundMessage(accountId, message);
+            if (messageKey != null) queued.push({ messageKey, message });
+          }
+          // 第二步：fire-and-forget 后台处理，不阻塞 monitorLoop 轮询（后一条消息可在前一条
+          // Agent 执行期间重入 handler，触发纠偏取代逻辑）；失败置 FAILED，由下方重放段兜底重投。
+          for (const item of queued) {
+            void this.inboundProcessor.processInboundMessage(accountId, item.message, item.messageKey)
               .catch((e) => console.error(`处理单条消息异常, accountId=${accountId}`, e));
+          }
+        }
+        // 重放失败/中断遗留的入站消息（FAILED 或无心跳超时的 CLAIMED），先于游标推进，
+        // 保证「上一批处理失败 + 进程重启」场景消息不丢。
+        const replay = await this.inboundProcessor.reclaimStuckMessages?.(accountId) ?? [];
+        for (const item of replay) {
+          void item.run().catch((e) => console.error(`重放单条消息异常, accountId=${accountId}`, e));
+        }
+        // 游标仅在「新消息已全部入队」且「无在途未处理消息」时推进；
+        // 否则保留旧游标让 ilink 侧重投，配合认领表幂等键去重。
+        if (result.newBuf != null && account.id != null) {
+          const inFlight = await this.inboundProcessor.hasInFlightMessages?.(accountId) ?? false;
+          if (!inFlight) {
+            await this.accountRepository.updateGetUpdatesBuf(account.id, result.newBuf);
+          } else {
+            console.debug(`存在在途微信消息，暂缓推进游标, accountId=${accountId}`);
           }
         }
       } catch (e) {

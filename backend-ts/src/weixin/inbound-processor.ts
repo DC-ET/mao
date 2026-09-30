@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { WeixinMediaService, DownloadedMedia } from './media.service.js';
 import { extensionForMime } from './media-crypto.js';
 import type { WeixinSendService } from './send.service.js';
+import { WeixinInboundMessageRepository } from './inbound-message.repository.js';
 import type {
   InboundFile,
   WeixinInboundHandler,
@@ -22,61 +23,168 @@ export class InboundProcessor {
     private readonly weixinSendService: WeixinSendService,
     private readonly weixinMediaService: WeixinMediaService,
     private readonly weixinVoiceReplyService: WeixinVoiceReplyService,
+    private readonly inboundMessages?: WeixinInboundMessageRepository,
   ) {}
 
-  async processInboundMessage(accountId: string, message: Record<string, unknown>): Promise<void> {
-    try {
-      const fromUserId = String(message.from_user_id ?? '');
-      const contextToken = message.context_token != null ? String(message.context_token) : null;
-      if (contextToken != null && contextToken !== '') {
-        await this.contextTokenRepository.saveOrUpdate(accountId, fromUserId, contextToken);
+  /**
+   * 入队一条拉取到的消息（在 monitor 循环中 await 调用）。
+   * 返回 null 表示消息已在认领表中（服务端重投，跳过）；否则返回指纹供后续处理与游标判定。
+   * 同指纹 DONE 超过去重窗口（24h）视为用户合法重发，重置行状态后照常处理。
+   */
+  async enqueueInboundMessage(accountId: string, message: Record<string, unknown>): Promise<string | null> {
+    const repo = this.inboundMessages;
+    if (repo == null) return null;
+    const messageKey = WeixinInboundMessageRepository.messageKeyOf(message);
+    const enqueued = await repo.enqueue(accountId, messageKey, JSON.stringify(message));
+    if (!enqueued) {
+      if (await repo.shouldSkipDuplicate(accountId, messageKey)) {
+        console.info(`微信消息重复（疑似服务端重投），跳过, accountId=${accountId}, key=${messageKey.slice(0, 12)}`);
+        return null;
       }
-      const body = this.extractMessageBody(message);
-      const imageResult = await this.downloadImages(message);
-      const fileResult = await this.downloadFiles(message);
-      const files = [...imageResult.files, ...fileResult.files];
-      if ((body == null || body.trim() === '') && imageResult.files.length === 0
-        && fileResult.files.length === 0 && fileResult.failedNames.length === 0) {
-        console.info(`忽略空消息（无文本无图片无文件）, accountId=${accountId}, fromUserId=${fromUserId}`);
-        return;
-      }
-      const imageDataUris: string[] = [];
-      let mediaPath: string | null = null;
-      let mediaType: string | null = null;
-      for (const media of imageResult.media) {
-        imageDataUris.push(media.dataUri);
-        if (mediaPath == null) {
-          mediaPath = media.path;
-          mediaType = media.mimeType;
-        }
-      }
-      const context: WeixinInboundMessageContext = {
-        accountId,
-        fromUserId,
-        body: body ?? '',
-        contextToken,
-        mediaPath,
-        mediaType,
-        imageDataUris,
-        imageFileNames: imageResult.fileNames,
-        files,
-        fileDownloadErrors: fileResult.failedNames,
-        rawMessage: message,
-      };
-      try {
-        const reply = await this.inboundHandler.onMessage(context);
-        if (reply == null) {
-          console.debug(`微信消息处理已取消（被后续消息接管）, accountId=${accountId}, fromUserId=${fromUserId}`);
+      // 用户合法重发相同内容：回收既有行重新进入处理
+      await repo.reclaimForResend(accountId, messageKey, JSON.stringify(message));
+    }
+    return messageKey;
+  }
+
+  /**
+   * 处理一条已入队的消息（CLAIMED → DONE/FAILED）。
+   * 处理期间定期心跳刷新 updated_at：重放器只回收「无心跳超 10 分钟」的中断消息，
+   * 正常长执行不会被误判中断而并发双执行。
+   */
+  async processInboundMessage(accountId: string, message: Record<string, unknown>, knownKey?: string | null): Promise<void> {
+    const repo = this.inboundMessages;
+    const messageKey = repo ? (knownKey ?? WeixinInboundMessageRepository.messageKeyOf(message)) : null;
+    // 未挂认领表的直接调用（或既有调用方未先入队）：自行入队，重复则跳过。
+    if (repo != null && knownKey == null) {
+      const enqueued = await repo.enqueue(accountId, messageKey!, JSON.stringify(message));
+      if (!enqueued) {
+        if (await repo.shouldSkipDuplicate(accountId, messageKey!)) {
+          console.debug(`微信消息重复，跳过, accountId=${accountId}, key=${messageKey!.slice(0, 12)}`);
           return;
         }
-        if (reply.text != null && reply.text !== '') {
-          await this.sendReply(accountId, fromUserId, contextToken, reply);
-        }
-      } catch (error) {
-        console.error(`处理微信消息失败, accountId=${accountId}, fromUserId=${fromUserId}`, error);
+        await repo.reclaimForResend(accountId, messageKey!, JSON.stringify(message));
       }
+    }
+    const stopHeartbeat = this.startHeartbeat(repo ?? null, accountId, messageKey);
+    try {
+      await this.processClaimed(accountId, message);
+      if (repo != null && messageKey != null) await repo.markDone(accountId, messageKey);
     } catch (e) {
-      console.error('处理入站消息失败', e);
+      console.error(`处理微信入站消息失败, accountId=${accountId}`, e);
+      if (repo != null && messageKey != null) await repo.markFailed(accountId, messageKey);
+    } finally {
+      stopHeartbeat();
+    }
+  }
+
+  /** 处理已在认领表中登记的消息（重放路径：行已存在，无需再次入队）。 */
+  async processReplayedMessage(accountId: string, messageKey: string, message: Record<string, unknown>): Promise<void> {
+    const stopHeartbeat = this.startHeartbeat(this.inboundMessages ?? null, accountId, messageKey);
+    try {
+      await this.processClaimed(accountId, message);
+      await this.inboundMessages!.markDone(accountId, messageKey);
+    } catch (e) {
+      console.error(`重放微信入站消息失败, accountId=${accountId}`, e);
+      await this.inboundMessages!.markFailed(accountId, messageKey);
+    } finally {
+      stopHeartbeat();
+    }
+  }
+
+  /** CLAIMED 处理期心跳：进程崩溃后心跳停止，超时被重放器回收；正常执行持续存活。 */
+  private startHeartbeat(
+    repo: WeixinInboundMessageRepository | null,
+    accountId: string,
+    messageKey: string | null,
+  ): () => void {
+    if (repo == null || messageKey == null) return () => {};
+    const beat = () => {
+      void repo.heartbeat(accountId, messageKey).catch((e) =>
+        console.warn(`微信入站心跳刷新失败, accountId=${accountId}`, e));
+    };
+    beat(); // 启动即心跳一次：避免回收/入队后至首个周期间的窗口被再次回收
+    const timer = setInterval(beat, WeixinInboundMessageRepository.HEARTBEAT_INTERVAL_MS);
+    timer.unref?.();
+    return () => clearInterval(timer);
+  }
+
+  /** 是否有在途（CLAIMED 且未超时）消息；未挂认领表时恒为 false。 */
+  async hasInFlightMessages(accountId: string): Promise<boolean> {
+    return this.inboundMessages?.hasInFlight(accountId) ?? false;
+  }
+
+  /**
+   * 取回待重放消息并返回可执行项；未挂认领表时恒为空。
+   * 每项 run() 驱动 DONE/FAILED 状态机（processReplayedMessage）。
+   */
+  async reclaimStuckMessages(accountId: string): Promise<Array<{ messageKey: string; run: () => Promise<void> }>> {
+    const repo = this.inboundMessages;
+    if (repo == null) return [];
+    const rows = await repo.reclaimStuck(accountId);
+    const out: Array<{ messageKey: string; run: () => Promise<void> }> = [];
+    for (const row of rows) {
+      let message: Record<string, unknown>;
+      try {
+        message = JSON.parse(row.payload) as Record<string, unknown>;
+      } catch (e) {
+        console.error(`微信入站重放消息 payload 损坏，标记 FAILED, accountId=${accountId}, key=${row.messageKey.slice(0, 12)}`, e);
+        await repo.markFailed(accountId, row.messageKey);
+        continue;
+      }
+      out.push({
+        messageKey: row.messageKey,
+        run: () => this.processReplayedMessage(accountId, row.messageKey, message),
+      });
+    }
+    return out;
+  }
+
+  private async processClaimed(accountId: string, message: Record<string, unknown>): Promise<void> {
+    const fromUserId = String(message.from_user_id ?? '');
+    const contextToken = message.context_token != null ? String(message.context_token) : null;
+    if (contextToken != null && contextToken !== '') {
+      await this.contextTokenRepository.saveOrUpdate(accountId, fromUserId, contextToken);
+    }
+    const body = this.extractMessageBody(message);
+    const imageResult = await this.downloadImages(message);
+    const fileResult = await this.downloadFiles(message);
+    const files = [...imageResult.files, ...fileResult.files];
+    if ((body == null || body.trim() === '') && imageResult.files.length === 0
+      && fileResult.files.length === 0 && fileResult.failedNames.length === 0) {
+      console.info(`忽略空消息（无文本无图片无文件）, accountId=${accountId}, fromUserId=${fromUserId}`);
+      return;
+    }
+    const imageDataUris: string[] = [];
+    let mediaPath: string | null = null;
+    let mediaType: string | null = null;
+    for (const media of imageResult.media) {
+      imageDataUris.push(media.dataUri);
+      if (mediaPath == null) {
+        mediaPath = media.path;
+        mediaType = media.mimeType;
+      }
+    }
+    const context: WeixinInboundMessageContext = {
+      accountId,
+      fromUserId,
+      body: body ?? '',
+      contextToken,
+      mediaPath,
+      mediaType,
+      imageDataUris,
+      imageFileNames: imageResult.fileNames,
+      files,
+      fileDownloadErrors: fileResult.failedNames,
+      rawMessage: message,
+    };
+    const reply = await this.inboundHandler.onMessage(context);
+    if (reply == null) {
+      console.debug(`微信消息处理已取消（被后续消息接管）, accountId=${accountId}, fromUserId=${fromUserId}`);
+      return;
+    }
+    if (reply.text != null && reply.text !== '') {
+      await this.sendReply(accountId, fromUserId, contextToken, reply);
     }
   }
 

@@ -209,6 +209,7 @@ import { WeixinVoiceReplyService } from './weixin/voice-reply.service.js';
 import { WeixinFileStorageService } from './weixin/file-storage.service.js';
 import { WeixinSessionService } from './weixin/session.service.js';
 import { InboundProcessor } from './weixin/inbound-processor.js';
+import { WeixinInboundMessageRepository } from './weixin/inbound-message.repository.js';
 import { AgentWeixinInboundHandler } from './weixin/agent-inbound-handler.js';
 import { createWechatToolBridges } from './weixin/wechat-tool-bridge.js';
 import { registerTaskNotificationPreferenceRoutes } from './notification/task/preference.routes.js';
@@ -1065,8 +1066,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     weixinFileStorageService: weixinFiles,
     agentExecutor: (fn) => agentExecutor.submit(fn),
   });
+  const weixinInboundMessages = new WeixinInboundMessageRepository(db);
   const inboundProcessor = new InboundProcessor(
-    weixinInboundHandler, weixinTokens, weixinSend, weixinMedia, voiceReply,
+    weixinInboundHandler, weixinTokens, weixinSend, weixinMedia, voiceReply, weixinInboundMessages,
   );
   const weixinMonitor = new WeixinMonitorService(weixinConfig, weixinAccounts, inboundProcessor);
   const qrLogin = new QrLoginService(weixinConfig, weixinAccounts, weixinMonitor);

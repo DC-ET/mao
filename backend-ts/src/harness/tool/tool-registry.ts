@@ -108,7 +108,16 @@ export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRe
       deps.shellLarkUatInjector,
     ),
     new WebSearchTool(deps.webSearch),
-    new OpenWebPageTool(deps.webPage, deps.runtimeDataResolver),
+    new OpenWebPageTool(
+      deps.webPage,
+      deps.runtimeDataResolver,
+      async (sessionId) => {
+        // LOCAL 会话的 read_file 在桌面端执行，服务端落盘路径不可达，截断全文不落盘。
+        if (sessionId == null) return false;
+        const session = await deps.sessionMapper.selectById(sessionId);
+        return session?.executionMode === 'LOCAL';
+      },
+    ),
     new GenerateImageTool(deps.imageModelLookup, deps.uploadDir, deps.getUploadBaseUrl ?? (async () => '')),
     new EditImageTool(deps.imageModelLookup, deps.pathSandbox, deps.uploadDir, deps.getUploadBaseUrl ?? (async () => '')),
     new TaskCreateTool(deps.sessionTodoMapper),

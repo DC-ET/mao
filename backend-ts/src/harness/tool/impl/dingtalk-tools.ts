@@ -1,10 +1,9 @@
 import { existsSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import http from 'node:http';
-import https from 'node:https';
 import { BaseTool } from '../tool.js';
 import { asText, errorJson, parseObject, toJson } from '../json.js';
 import { ImageFileSupport } from '../image-file-support.js';
+import { fetchBytesWithLimits } from './fetch-bytes.js';
 import type { PathSandbox } from '../../safety/path-sandbox.js';
 import type { DingtalkChannelTool } from '../dingtalk-channel-tool.js';
 import { DINGTALK_FILE_EXTENSIONS, DINGTALK_FILE_MAX_BYTES, DINGTALK_IMAGE_MAX_BYTES, fileExtension, fileMessageParam } from '../../../dingtalk/send.service.js';
@@ -53,7 +52,7 @@ export class SendDingtalkImageTool extends BaseTool implements DingtalkChannelTo
       if (!image) return errorJson('缺少必填参数: image');
       const target = await this.support.resolveSendTarget(sessionId);
       if (!target) return errorJson('当前会话不是钉钉通道会话，无法发送钉钉图片');
-      const bytes = await loadBytes(image, this.pathSandbox, workspace);
+      const bytes = await loadBytes(image, this.pathSandbox, workspace, DINGTALK_IMAGE_MAX_BYTES);
       if (bytes.length === 0) return errorJson('图片内容为空');
       if (bytes.length > DINGTALK_IMAGE_MAX_BYTES) return errorJson('图片超过 20MB 上限');
       const mime = ImageFileSupport.detectMimeFromBytes(bytes);
@@ -101,7 +100,7 @@ export class SendDingtalkFileTool extends BaseTool implements DingtalkChannelToo
       if ('error' in checked) return errorJson(checked.error);
       const target = await this.support.resolveSendTarget(sessionId);
       if (!target) return errorJson('当前会话不是钉钉通道会话，无法发送钉钉文件');
-      const bytes = await loadBytes(file, this.pathSandbox, workspace);
+      const bytes = await loadBytes(file, this.pathSandbox, workspace, DINGTALK_FILE_MAX_BYTES);
       if (bytes.length === 0) return errorJson('文件内容为空');
       if (bytes.length > DINGTALK_FILE_MAX_BYTES) return errorJson('文件超过 20MB 上限');
       if (fileExtension(filename) === '') return errorJson(`钉钉文件仅支持 ${DINGTALK_FILE_EXTENSIONS.join('、')}`);
@@ -114,25 +113,9 @@ export class SendDingtalkFileTool extends BaseTool implements DingtalkChannelToo
   }
 }
 
-async function loadBytes(src: string, sandbox: PathSandbox, workspace: string | null): Promise<Buffer> {
-  if (src.startsWith('http://') || src.startsWith('https://')) return fetchBytes(src);
+async function loadBytes(src: string, sandbox: PathSandbox, workspace: string | null, maxBytes: number): Promise<Buffer> {
+  if (src.startsWith('http://') || src.startsWith('https://')) return fetchBytesWithLimits(src, maxBytes);
   const resolved = sandbox.resolveLenient(src, workspace);
   if (!existsSync(resolved) || !statSync(resolved).isFile()) throw new Error('文件不存在：' + src);
   return readFile(resolved);
-}
-
-function fetchBytes(url: string): Promise<Buffer> {
-  return new Promise((resolvePromise, reject) => {
-    const client = url.startsWith('https://') ? https : http;
-    client.get(url, (res) => {
-      if ((res.statusCode ?? 500) >= 400) {
-        reject(new Error(`下载失败: HTTP ${res.statusCode}`));
-        res.resume();
-        return;
-      }
-      const chunks: Buffer[] = [];
-      res.on('data', (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
-      res.on('end', () => resolvePromise(Buffer.concat(chunks)));
-    }).on('error', reject);
-  });
 }

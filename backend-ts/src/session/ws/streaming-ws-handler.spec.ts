@@ -976,6 +976,42 @@ describe('StreamingWsHandler', () => {
 
       expect(manager.completeRetry).toHaveBeenCalledWith(10, 55, 'FAILED');
     });
+
+    it('rejected executor rolls phase back to entry phase instead of staying RESUMING', async () => {
+      vi.clearAllMocks();
+      executor.tasks.length = 0;
+      resetQueue();
+      // 线程池饱和：agentExecutor 同步抛拒绝错误
+      const rejectingHandler = new StreamingWsHandler({
+        registry, titleService, harnessService, sessionService, taskTerminalService, messageQueueService,
+        localToolSessionRegistry, askUserQuestionsRegistry, embedPageToolRegistry, treeSignalPublisher, approvalRegistry, activityService,
+        activityHeartbeat, sessionTodoMapper, agentLoop, shellSessionManager, skillSyncService,
+        localSkillRegistry, localAgentsMdRegistry, mcpSyncService, mcpClientManager, agentMapper,
+        llmModelMapper, jwtService,
+        agentExecutor: () => { throw new Error('Agent executor rejected: active=8 queued=50 max=8 queueCapacity=50'); },
+      } as unknown as WsHandlerDeps);
+      registry.getUserId.mockReturnValue(7);
+      sessionService.getSession.mockReset();
+      sessionService.getSession.mockResolvedValue(session('CLOUD', 'FAILED'));
+      const updatePhaseCalls: Array<[number, string]> = [];
+      sessionService.updatePhase.mockReset();
+      sessionService.updatePhase.mockImplementation(async (id: number, phase: string) => {
+        updatePhaseCalls.push([id, phase]);
+      });
+
+      await rejectingHandler.handleTextMessage(ws, JSON.stringify({ type: 'retry_execution', sessionId: 11 }));
+
+      // 相位先推 RESUMING，提交被拒后必须收敛回进入时的终态 FAILED
+      expect(updatePhaseCalls).toEqual([[11, 'RESUMING'], [11, 'FAILED']]);
+      // 已告知用户「服务器繁忙」，且不能留下执行占位
+      expect(registry.send).toHaveBeenCalledWith(7, expect.objectContaining({
+        type: 'error', sessionId: 11,
+        data: expect.objectContaining({ message: '服务器繁忙，请稍后重试' }),
+      }));
+      expect(rejectingHandler.hasExecutionClaim(11)).toBe(false);
+      expect(harnessService.executeFromEvent).not.toHaveBeenCalled();
+      sessionService.updatePhase.mockResolvedValue(undefined);
+    });
   });
 
   describe('page tool bridge', () => {

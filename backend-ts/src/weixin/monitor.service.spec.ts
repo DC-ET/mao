@@ -67,7 +67,12 @@ describe('WeixinMonitorService', () => {
       updateGetUpdatesBuf: vi.fn(async () => { calls++; }),
       disableAccount: vi.fn(),
     };
-    const inboundProcessor = { processInboundMessage: vi.fn(async () => {}) };
+    const inboundProcessor = {
+      processInboundMessage: vi.fn(async () => {}),
+      enqueueInboundMessage: vi.fn(async () => 'key-1'),
+      reclaimStuckMessages: vi.fn(async () => []),
+      hasInFlightMessages: vi.fn(async () => false),
+    };
     const http: WeixinHttpClient = {
       request: vi.fn(async () => ({
         status: 200,
@@ -105,7 +110,14 @@ describe('WeixinMonitorService', () => {
       updateGetUpdatesBuf: vi.fn(async () => { calls++; }),
       disableAccount: vi.fn(),
     };
-    const inboundProcessor = { processInboundMessage: vi.fn(async () => {}) };
+    const inboundProcessor = {
+      processInboundMessage: vi.fn(async () => {}),
+      enqueueInboundMessage: vi.fn()
+        .mockResolvedValueOnce('k1').mockResolvedValueOnce('k2').mockResolvedValueOnce('k3')
+        .mockResolvedValue(null),
+      reclaimStuckMessages: vi.fn(async () => []),
+      hasInFlightMessages: vi.fn(async () => false),
+    };
     const http: WeixinHttpClient = {
       request: vi.fn(async () => ({
         status: 200,

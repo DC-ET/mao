@@ -1,11 +1,10 @@
 import { existsSync, mkdirSync, statSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
-import http from 'node:http';
-import https from 'node:https';
 import { resolve } from 'node:path';
 import { BaseTool } from '../tool.js';
 import { asText, errorJson, parseObject, toJson } from '../json.js';
 import { ImageFileSupport } from '../image-file-support.js';
+import { fetchBytesWithLimits } from './fetch-bytes.js';
 import type { PathSandbox } from '../../safety/path-sandbox.js';
 import type { FeishuChannelTool } from '../feishu-channel-tool.js';
 import type { FeishuSendTarget } from '../../../feishu/media-sender.js';
@@ -214,7 +213,7 @@ export class SendFeishuImageTool extends BaseTool implements FeishuChannelTool {
       if (!image) return errorJson('缺少必填参数: image');
       const target = await this.support.resolveSendTarget(sessionId);
       if (!target) return errorJson('当前会话不是飞书通道会话，无法发送飞书图片');
-      const bytes = await loadBytes(image, this.pathSandbox, workspace);
+      const bytes = await loadBytes(image, this.pathSandbox, workspace, MAX_FEISHU_IMAGE_BYTES);
       if (bytes.length === 0) return errorJson('图片内容为空');
       if (bytes.length > MAX_FEISHU_IMAGE_BYTES) return errorJson('图片超过 10MB 上限');
       const mime = ImageFileSupport.detectMimeFromBytes(bytes);
@@ -261,7 +260,7 @@ export class SendFeishuFileTool extends BaseTool implements FeishuChannelTool {
       if (!file) return errorJson('缺少必填参数: file');
       const target = await this.support.resolveSendTarget(sessionId);
       if (!target) return errorJson('当前会话不是飞书通道会话，无法发送飞书文件');
-      const bytes = await loadBytes(file, this.pathSandbox, workspace);
+      const bytes = await loadBytes(file, this.pathSandbox, workspace, MAX_FEISHU_FILE_BYTES);
       if (bytes.length === 0) return errorJson('文件内容为空');
       if (bytes.length > MAX_FEISHU_FILE_BYTES) return errorJson('文件超过 30MB 上限');
       const fileName = asText(args.filename) || file.replace(/\\/g, '/').split('/').pop() || 'file';
@@ -274,26 +273,13 @@ export class SendFeishuFileTool extends BaseTool implements FeishuChannelTool {
   }
 }
 
-async function loadBytes(src: string, sandbox: PathSandbox, workspace: string | null): Promise<Buffer> {
+async function loadBytes(src: string, sandbox: PathSandbox, workspace: string | null, maxBytes: number): Promise<Buffer> {
   if (src.startsWith('http://') || src.startsWith('https://')) {
-    return fetchBytes(src);
+    return fetchBytesWithLimits(src, maxBytes);
   }
   const resolved = sandbox.resolveLenient(src, workspace);
   if (!existsSync(resolved) || !statSync(resolved).isFile()) {
     throw new Error('文件不存在：' + src);
   }
   return readFile(resolved);
-}
-
-function fetchBytes(url: string): Promise<Buffer> {
-  return new Promise((resolvePromise, reject) => {
-    const u = new URL(url);
-    const lib = u.protocol === 'https:' ? https : http;
-    lib.get(u, (res) => {
-      const chunks: Buffer[] = [];
-      res.on('data', (c) => chunks.push(c as Buffer));
-      res.on('end', () => resolvePromise(Buffer.concat(chunks)));
-      res.on('error', reject);
-    }).on('error', reject);
-  });
 }

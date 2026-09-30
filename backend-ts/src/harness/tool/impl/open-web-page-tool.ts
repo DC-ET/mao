@@ -31,12 +31,16 @@ export interface WebPageCacheLocator {
   resolveWebPageCacheDir(userId: number, sessionId: number): string;
 }
 
+/** LOCAL 执行模式探测：由 ToolDispatcher 等服务端执行入口注入；默认按 CLOUD 处理。 */
+export type WebPageExecutionModeProbe = (sessionId: number | null) => Promise<boolean>;
+
 export class OpenWebPageTool extends BaseTool {
   private readonly turndown = new TurndownService();
 
   constructor(
     private readonly webPage: WebPageConfig,
     private readonly cacheLocator: WebPageCacheLocator | null = null,
+    private readonly localModeProbe: WebPageExecutionModeProbe | null = null,
   ) { super(); }
 
   getName(): string { return 'open_web_page'; }
@@ -115,12 +119,12 @@ export class OpenWebPageTool extends BaseTool {
       let fullContentFile: string | null = null;
       let message: string | null = null;
       if (truncated) {
-        fullContentFile = this.writeFullContent(userId, sessionId, url, extracted.title, fullContent);
+        fullContentFile = await this.writeFullContent(userId, sessionId, url, extracted.title, fullContent);
         content += TRUNCATION_NOTICE;
         message = fullContentFile != null
           ? `网页正文超过 ${this.webPage.maxOutputLength} 字符，已截断。完整内容已保存到 ${fullContentFile}，`
             + '如需被截断部分，请用 read_file（可传 offset/limit 分页）或 grep_search 读取该文件，不要重新抓取。'
-          : `网页正文超过 ${this.webPage.maxOutputLength} 字符，已截断，且完整内容落盘失败，被截断部分本次不可恢复。`;
+          : `网页正文超过 ${this.webPage.maxOutputLength} 字符，已截断，且完整内容未能落盘，被截断部分本次不可恢复。`;
       }
       return toJson({
         url,
@@ -137,15 +141,27 @@ export class OpenWebPageTool extends BaseTool {
     }
   }
 
-  /** LOCAL 模式不落盘（内容在用户本机更合适）；写盘失败只告警，不阻断主流程。 */
-  private writeFullContent(
+  /**
+   * LOCAL 模式不落盘：全文落在服务端磁盘，而 LOCAL 会话的 read_file 在桌面端执行，
+   * 拿到服务端路径也永远读不到，反而把模型引进「读不到又禁止重抓」的死路；
+   * 此时返回 null 走「未能落盘」文案分支。写盘失败只告警，不阻断主流程。
+   */
+  private async writeFullContent(
     userId: number | null,
     sessionId: number | null,
     url: string,
     title: string,
     fullContent: string,
-  ): string | null {
+  ): Promise<string | null> {
     if (this.cacheLocator == null || userId == null || sessionId == null) return null;
+    if (this.localModeProbe != null) {
+      try {
+        if (await this.localModeProbe(sessionId)) return null;
+      } catch (e) {
+        harnessLog('warn', `Failed to probe execution mode for web page cache: sessionId=${sessionId}`, e);
+        return null;
+      }
+    }
     try {
       const dir = this.cacheLocator.resolveWebPageCacheDir(userId, sessionId);
       mkdirSync(dir, { recursive: true });

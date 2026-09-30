@@ -162,16 +162,18 @@ export function createDingtalkRuntime(deps: {
     }
   };
 
-  const noted = new Set<string>();
-  const textProgress = (botId: number, event: DingtalkInboundContext, sessionId: number): FeishuCardProgress => ({
-    update: async (status) => {
-      if (status !== 'RUNNING') return;
-      const key = `${sessionId}`;
-      if (noted.has(key)) return;
-      noted.add(key);
-      await sendText(botId, event, '正在处理').catch((error) => console.warn(`钉钉文本进度发送失败, sessionId=${sessionId}`, error));
-    },
-  });
+  // 文本进度「正在处理」受理回执：粒度为「每次执行一次」——textProgress 对象由
+  // createProgress 在每次执行开始时新建，局部 sent 标志保证同一次执行内只发一条。
+  const textProgress = (botId: number, event: DingtalkInboundContext, sessionId: number): FeishuCardProgress => {
+    let sent = false;
+    return {
+      update: async (status) => {
+        if (status !== 'RUNNING' || sent) return;
+        sent = true;
+        await sendText(botId, event, '正在处理').catch((error) => console.warn(`钉钉文本进度发送失败, sessionId=${sessionId}`, error));
+      },
+    };
+  };
 
   const cardProgress = (cred: { bot: DingtalkBot; secret: string }, outTrackId: string, sessionId: number, sender: string, startedAt: number): FeishuCardProgress => ({
     update: async (status, round, content, tools) => {

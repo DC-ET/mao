@@ -184,30 +184,50 @@ describe('OpenWebPageTool', () => {
       expect(json.truncated).toBe(true);
       expect(json.full_content_file).toBeUndefined();
       expect(json.content).toContain('内容已截断');
-      expect(json.message).toContain('落盘失败');
+      expect(json.message).toContain('未能落盘');
     } finally {
       page.close();
     }
   });
 
-  it('still returns truncated content when writing the spill file throws', async () => {
-    const root = useTmpDir('mao-webpage-fail-');
-    const brokenCache = {
-      resolveWebPageCacheDir: () => { throw new Error('disk on fire'); },
-    };
+  it('LOCAL execution mode never spills to server disk even with a cache locator', async () => {
+    const root = useTmpDir('mao-webpage-local-');
+    const cache = { resolveWebPageCacheDir: (uid: number, sid: number) => join(root, String(uid), String(sid), 'webPages') };
     const local = new OpenWebPageTool({
       connectTimeout: 3000, readTimeout: 3000, maxRawBytes: 2_000_000, maxOutputLength: 2_000,
       userAgent: 'mao-test',
-    }, brokenCache);
+    }, cache, async () => true); // LOCAL 模式
     const page = await bigPageServer(20_000);
     try {
       const json = JSON.parse(await local.execute(
         JSON.stringify({ url: `http://127.0.0.1:${page.port}/big` }), 42, 9, null,
       )) as { truncated?: boolean; full_content_file?: string; message?: string; content?: string };
       expect(json.truncated).toBe(true);
+      // LOCAL：不落盘、不返回 full_content_file，且不应指引模型去 read_file 服务端路径
       expect(json.full_content_file).toBeUndefined();
-      expect(json.message).toContain('落盘失败');
-      expect(json.content).toContain('内容已截断');
+      expect(json.message).toContain('未能落盘');
+      expect(json.message).not.toContain('read_file');
+      expect(existsSync(join(root, '9', '42', 'webPages'))).toBe(false);
+    } finally {
+      page.close();
+    }
+  });
+
+  it('CLOUD execution mode still spills full content with a cache locator', async () => {
+    const root = useTmpDir('mao-webpage-cloud-');
+    const cache = { resolveWebPageCacheDir: (uid: number, sid: number) => join(root, String(uid), String(sid), 'webPages') };
+    const cloud = new OpenWebPageTool({
+      connectTimeout: 3000, readTimeout: 3000, maxRawBytes: 2_000_000, maxOutputLength: 2_000,
+      userAgent: 'mao-test',
+    }, cache, async () => false); // CLOUD 模式
+    const page = await bigPageServer(20_000);
+    try {
+      const json = JSON.parse(await cloud.execute(
+        JSON.stringify({ url: `http://127.0.0.1:${page.port}/big` }), 42, 9, null,
+      )) as { truncated?: boolean; full_content_file?: string; message?: string };
+      expect(json.truncated).toBe(true);
+      expect(typeof json.full_content_file).toBe('string');
+      expect(existsSync(json.full_content_file as string)).toBe(true);
     } finally {
       page.close();
     }
