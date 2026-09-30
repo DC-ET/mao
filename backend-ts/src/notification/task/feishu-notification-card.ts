@@ -27,9 +27,9 @@ interface PhaseMeta {
 }
 
 const PHASE_META: Record<TaskNotificationPhase, PhaseMeta> = {
-  COMPLETED: { header: 'Mao Agent 任务通知', template: 'green', status: '✅ 已完成' },
-  FAILED: { header: 'Mao Agent 任务通知', template: 'red', status: '❌ 执行失败' },
-  ASK_USER: { header: 'Mao Agent 提问通知', template: 'orange', status: '❓ 等待你的回复' },
+  COMPLETED: { header: 'Mao 任务完成通知', template: 'green', status: '✅ 已完成' },
+  FAILED: { header: 'Mao 任务失败通知', template: 'red', status: '❌ 执行失败' },
+  ASK_USER: { header: 'Mao 提问通知', template: 'orange', status: '❓ 等待你的回复' },
 };
 
 /**
@@ -84,10 +84,10 @@ export function buildTaskNotificationCard(input: TaskNotificationContentInput): 
 export function buildTaskNotificationText(input: TaskNotificationContentInput): string {
   const time = formatDateTime(input.now ?? new Date());
   if (input.phase === 'ASK_USER') {
-    return `Mao Agent 提问通知\n任务：${input.title}\nAgent 向你发起了提问，正在等待回答\n请回到对话页面查看并回复\n时间：${time}`;
+    return `Mao 提问通知\n任务：${input.title}\nAgent 向你发起了提问，正在等待回答\n请回到对话页面查看并回复\n时间：${time}`;
   }
   const result = input.phase === 'COMPLETED' ? '已完成' : '执行失败';
-  let content = `Mao Agent 任务通知\n任务：${input.title}\n结果：${result}\n时间：${time}`;
+  let content = `${input.phase === 'COMPLETED' ? 'Mao 任务完成通知' : 'Mao 任务失败通知'}\n任务：${input.title}\n结果：${result}\n时间：${time}`;
   if (input.phase === 'FAILED' && hasText(input.failureReason)) {
     content += `\n原因：${input.failureReason}`;
   }

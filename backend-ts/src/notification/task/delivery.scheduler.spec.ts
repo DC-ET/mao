@@ -269,7 +269,7 @@ describe('WebhookDeliveryScheduler', () => {
     expect(message.text).not.toContain('已完成');
     // 飞书渠道发卡片：橙色头部 + 待作答提示。
     const card = JSON.stringify(message.card);
-    expect(card).toContain('Mao Agent 提问通知');
+    expect(card).toContain('Mao 提问通知');
     expect(card).toContain('orange');
     expect(card).toContain('等待你的回复');
     expect(store.updateById).toHaveBeenCalledWith(

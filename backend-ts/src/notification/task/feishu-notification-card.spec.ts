@@ -20,7 +20,7 @@ describe('buildTaskNotificationCard', () => {
     });
     expect(card.header).toEqual({
       template: 'green',
-      title: { tag: 'plain_text', content: 'Mao Agent 任务通知' },
+      title: { tag: 'plain_text', content: 'Mao 任务完成通知' },
     });
     const text = cardText(card);
     expect(text).toContain('技能指令入口迁移');
@@ -63,7 +63,7 @@ describe('buildTaskNotificationCard', () => {
     const card = buildTaskNotificationCard({ phase: 'ASK_USER', title: '精简 Termix 界面' });
     expect((card.header as { template: string }).template).toBe('orange');
     const text = cardText(card);
-    expect(text).toContain('Mao Agent 提问通知');
+    expect(text).toContain('Mao 提问通知');
     expect(text).toContain('精简 Termix 界面');
     expect(text).toContain('请到会话页面作答');
   });
@@ -74,18 +74,18 @@ describe('buildTaskNotificationText', () => {
     const completed = buildTaskNotificationText({
       phase: 'COMPLETED', title: '任务A', userMessage: '不该出现在文本里', now: new Date('2026-09-25T09:13:20+08:00'),
     });
-    expect(completed).toBe('Mao Agent 任务通知\n任务：任务A\n结果：已完成\n时间：2026-09-25 09:13:20');
+    expect(completed).toBe('Mao 任务完成通知\n任务：任务A\n结果：已完成\n时间：2026-09-25 09:13:20');
     expect(completed).not.toContain('不该出现在文本里');
 
     const failed = buildTaskNotificationText({
       phase: 'FAILED', title: '任务B', failureReason: '超时', now: new Date('2026-09-25T09:13:20+08:00'),
     });
-    expect(failed).toBe('Mao Agent 任务通知\n任务：任务B\n结果：执行失败\n时间：2026-09-25 09:13:20\n原因：超时');
+    expect(failed).toBe('Mao 任务失败通知\n任务：任务B\n结果：执行失败\n时间：2026-09-25 09:13:20\n原因：超时');
 
     const ask = buildTaskNotificationText({
       phase: 'ASK_USER', title: '任务C', now: new Date('2026-09-25T09:13:20+08:00'),
     });
-    expect(ask).toContain('Mao Agent 提问通知');
+    expect(ask).toContain('Mao 提问通知');
     expect(ask).toContain('正在等待回答');
   });
 });

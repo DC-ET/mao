@@ -1129,3 +1129,6 @@ function onGroupDragEnd() {
   dragOverIndex.value = null
 }
 </script>
+
+<!-- 拆分子组件后样式须为非 scoped，否则无法作用到子组件 DOM（见 6b76ac8c 误删样式修复） -->
+<style src="./task-index-panel.css"></style>

@@ -1283,3 +1283,7 @@ onBeforeUnmount(() => {
   editor.value?.destroy()
 })
 </script>
+
+<!-- 拆分子组件后样式须为非 scoped（:deep 已展平为普通后代选择器） -->
+<style src="./chat-input.css"></style>
+<style src="./chat-input-global.css"></style>
