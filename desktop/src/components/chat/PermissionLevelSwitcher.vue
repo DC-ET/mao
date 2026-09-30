@@ -31,15 +31,16 @@
 </template>
 
 <script setup lang="ts">
-import { ArrowDown, View, Edit, MagicStick, WarningFilled } from '@element-plus/icons-vue'
+import { ArrowDown, View, Edit, MagicStick, Avatar, WarningFilled } from '@element-plus/icons-vue'
 import type { Component } from 'vue'
 
-const levels = ['READ_ONLY', 'READ_WRITE', 'SMART', 'FULL'] as const
+const levels = ['READ_ONLY', 'READ_WRITE', 'SMART', 'PROXY', 'FULL'] as const
 
 const levelLabels: Record<string, string> = {
   READ_ONLY: '只读',
   READ_WRITE: '读写',
-  SMART: '智能审批',
+  SMART: '智能预审',
+  PROXY: '替我审批',
   FULL: '完全权限'
 }
 
@@ -52,13 +53,15 @@ const levelIcons: Record<string, Component> = {
   READ_ONLY: View,
   READ_WRITE: Edit,
   SMART: MagicStick,
+  PROXY: Avatar,
   FULL: WarningFilled
 }
 
 const levelDescriptions: Record<string, string> = {
   READ_ONLY: '搜索和读取自动执行，写入和命令需审批',
   READ_WRITE: '文件读写自动执行，命令执行需审批',
-  SMART: '文件读写自动执行，命令经 AI 判断后自动执行或审批',
+  SMART: '文件读写自动执行，命令经 AI 预判后自动执行或审批',
+  PROXY: '文件读写自动执行，命令与 MCP 由 AI 结合上下文代为审批',
   FULL: '所有操作自动执行，无需审批'
 }
 
@@ -108,6 +111,11 @@ function handleSwitch(level: string) {
 .level-badge.smart {
   background: transparent;
   color: var(--aw-warning);
+}
+
+.level-badge.proxy {
+  background: transparent;
+  color: #d97706;
 }
 
 .level-badge.full {

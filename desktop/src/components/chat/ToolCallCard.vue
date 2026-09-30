@@ -13,6 +13,9 @@
         >
           查看过程
         </button>
+        <el-tooltip v-if="approvalBadge" :content="approvalBadge.reason" placement="top">
+          <span class="approval-badge" :class="approvalBadge.kind">{{ approvalBadge.label }}</span>
+        </el-tooltip>
         <span v-if="toolCall.status === 'running'" class="status-spinner"></span>
         <el-icon v-else-if="toolCall.status === 'success'" class="status-icon success"><Select /></el-icon>
         <el-icon v-else-if="toolCall.status === 'error'" class="status-icon error"><CloseBold /></el-icon>
@@ -85,6 +88,16 @@ watch(
 )
 
 const isDelegate = computed(() => ['delegate', 'delegate_followup', 'spawn_subagent', 'subagent_followup'].includes(props.toolCall.name))
+
+/** AI 审批徽标：替我审批的 LLM 拍板 / Jev 前置决策低风险放行 */
+const approvalBadge = computed(() => {
+  const mark = props.toolCall.approvalMark
+  if (!mark) return null
+  if (mark.mode === 'jev') return { kind: 'jev', label: '低风险放行', reason: mark.reason }
+  return mark.approved
+    ? { kind: 'approved', label: 'AI 已批准', reason: mark.reason }
+    : { kind: 'denied', label: 'AI 已拒绝', reason: mark.reason }
+})
 
 const childSessionId = computed(() => {
   const result = props.toolCall.result
@@ -292,6 +305,26 @@ function toggleExpand() {
 
 .status-icon.success { color: var(--aw-success); }
 .status-icon.error { color: var(--aw-danger); }
+
+.approval-badge {
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: var(--aw-radius-xs);
+  cursor: default;
+  white-space: nowrap;
+}
+
+.approval-badge.approved,
+.approval-badge.jev {
+  color: var(--aw-success);
+  background: color-mix(in srgb, var(--aw-success) 12%, transparent);
+}
+
+.approval-badge.denied {
+  color: var(--aw-danger);
+  background: color-mix(in srgb, var(--aw-danger) 12%, transparent);
+}
 
 .expand-icon {
   color: var(--aw-ink-muted-48);

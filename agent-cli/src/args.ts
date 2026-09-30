@@ -4,7 +4,7 @@ export type OutputFormat = 'text' | 'json' | 'stream-json';
 export type IfRunning = 'wait' | 'cancel' | 'fail';
 export type OnQuestion = 'ask' | 'fail';
 export type OnApproval = 'ask' | 'fail';
-export type PermissionLevel = 'READ_ONLY' | 'READ_WRITE' | 'SMART' | 'FULL';
+export type PermissionLevel = 'READ_ONLY' | 'READ_WRITE' | 'SMART' | 'PROXY' | 'FULL';
 export type CommandName =
   | 'login'
   | 'logout'
@@ -60,7 +60,7 @@ export const FLAG_SPECS: readonly FlagSpec[] = [
 
   { name: 'resume', kind: 'optional', arg: '<sessionId>', group: '会话', common: true, desc: '恢复会话；省略 id 恢复最近更新的一个' },
   { name: 'continue', kind: 'boolean', group: '会话', common: true, desc: '恢复本地记录的「上次使用会话」' },
-  { name: 'permission-level', kind: 'value', arg: '<level>', group: '会话', desc: 'READ_ONLY|READ_WRITE|SMART|FULL，写入会话；只影响 LOCAL 审批' },
+  { name: 'permission-level', kind: 'value', arg: '<level>', group: '会话', desc: 'READ_ONLY|READ_WRITE|SMART|PROXY|FULL，写入会话；只影响 LOCAL 审批' },
   { name: 'if-running', kind: 'value', arg: '<wait|cancel|fail>', group: '会话', desc: '目标会话仍在跑时的策略，默认 wait' },
   { name: 'on-question', kind: 'value', arg: '<ask|fail>', group: '会话', desc: '遇到 ask_user_questions：TTY 默认 ask，打印/非 TTY 默认 fail' },
   { name: 'max-duration', kind: 'value', arg: '<sec>', group: '会话', desc: '自己这次执行的墙钟上限；等占用方时超时只结束本地等待，不 cancel 对方；超时以 124 退出' },
@@ -424,7 +424,7 @@ export function parseCliConfig(
     permissionLevel: parseEnum(
       'permission-level',
       optionalString(flags, 'permission-level'),
-      ['READ_ONLY', 'READ_WRITE', 'SMART', 'FULL'] as const,
+      ['READ_ONLY', 'READ_WRITE', 'SMART', 'PROXY', 'FULL'] as const,
       'READ_WRITE',
       upper,
     ),

@@ -520,6 +520,209 @@ describe('ToolDispatcher', () => {
     expect(r.status).toBe('success');
     expect(localToolExecutor.execute).toHaveBeenCalledWith(7, 'namespace_write', '{}', 'w', true, null);
   });
+
+  describe('PROXY level', () => {
+    const proxyApprover = { decide: vi.fn() };
+    const jev = { assessRisk: vi.fn() };
+    const resolver = { resolve: vi.fn(async (fallback: unknown) => fallback) };
+    const proxyDispatcher = new ToolDispatcher(
+      registry, localToolExecutor, dangerAssessor, sessionMapper, streamingWsRegistry,
+      askUserQuestionsRegistry, localToolSessionRegistry, treeSignalPublisher,
+      null, null, null,
+      proxyApprover as never, jev as never, resolver as never,
+    );
+
+    beforeEach(() => {
+      proxyApprover.decide.mockReset();
+      proxyApprover.decide.mockResolvedValue({ ok: true, approved: true, reason: '符合用户指令' });
+      jev.assessRisk.mockReset();
+      jev.assessRisk.mockResolvedValue({ ok: false, highRisk: false, probability: 0, reason: 'jev not configured' });
+      resolver.resolve.mockClear();
+    });
+
+    it('autoExecutesReadAndWriteToolsWithoutApprovalOrMark', async () => {
+      localToolExecutor.execute.mockResolvedValue('ok');
+      const r = await proxyDispatcher.dispatchInvocation({
+        callId: 'c1', toolName: 'write_file', argumentsJson: '{}',
+        executionMode: 'LOCAL', sessionId: 7, userId: 9, executionUserId: null,
+        workspace: 'w', permissionLevel: 'PROXY', modelConfig: { modelId: 'test' }, sessionTools: null,
+      });
+      expect(localToolExecutor.execute).toHaveBeenCalledWith(7, 'write_file', '{}', 'w', false, null);
+      expect(r.approvalMark ?? null).toBeNull();
+      expect(proxyApprover.decide).not.toHaveBeenCalled();
+      expect(jev.assessRisk).not.toHaveBeenCalled();
+    });
+
+    it('llmApproveExecutesWithApprovalMark', async () => {
+      localToolExecutor.execute.mockResolvedValue('executed');
+      const r = await proxyDispatcher.dispatchInvocation({
+        callId: 'c2', toolName: 'shell', argumentsJson: '{"command":"rm -rf ./dist"}',
+        executionMode: 'LOCAL', sessionId: 7, userId: 9, executionUserId: null,
+        workspace: 'w', permissionLevel: 'PROXY', modelConfig: { modelId: 'test' }, sessionTools: null,
+        contextSnapshot: '## 用户指令\n1. 清理构建产物',
+      });
+      expect(r.status).toBe('success');
+      expect(r.approvalMark).toEqual({ mode: 'llm', approved: true, reason: '符合用户指令' });
+      expect(localToolExecutor.execute).toHaveBeenCalledWith(7, 'shell', '{"command":"rm -rf ./dist"}', 'w', false, null);
+      expect(proxyApprover.decide).toHaveBeenCalledWith(
+        expect.objectContaining({
+          toolName: 'shell',
+          contextSnapshot: '## 用户指令\n1. 清理构建产物',
+        }),
+        expect.objectContaining({ modelId: 'test' }),
+      );
+    });
+
+    it('llmDenyShortCircuitsWithoutExecuting', async () => {
+      proxyApprover.decide.mockResolvedValue({ ok: true, approved: false, reason: '超出用户指令范围' });
+      const r = await proxyDispatcher.dispatchInvocation({
+        callId: 'c3', toolName: 'shell', argumentsJson: '{"command":"rm -rf ~"}',
+        executionMode: 'LOCAL', sessionId: 7, userId: 9, executionUserId: null,
+        workspace: 'w', permissionLevel: 'PROXY', modelConfig: { modelId: 'test' }, sessionTools: null,
+      });
+      expect(r.status).toBe('error');
+      expect(r.content).toContain('工具调用被 AI 审批拒绝：超出用户指令范围');
+      expect(r.approvalMark).toEqual({ mode: 'llm', approved: false, reason: '超出用户指令范围' });
+      expect(localToolExecutor.execute).not.toHaveBeenCalled();
+    });
+
+    it('jevLowRiskSkipsLlmAndMarksViaJev', async () => {
+      jev.assessRisk.mockResolvedValue({ ok: true, highRisk: false, probability: 0.03, reason: '' });
+      localToolExecutor.execute.mockResolvedValue('executed');
+      const r = await proxyDispatcher.dispatchInvocation({
+        callId: 'c4', toolName: 'shell', argumentsJson: '{"command":"ls -la"}',
+        executionMode: 'LOCAL', sessionId: 7, userId: 9, executionUserId: null,
+        workspace: 'w', permissionLevel: 'PROXY', modelConfig: { modelId: 'test' }, sessionTools: null,
+      });
+      expect(r.status).toBe('success');
+      expect(r.approvalMark).toEqual({ mode: 'jev', approved: true, reason: '前置决策判定低风险（P=0.03）' });
+      expect(proxyApprover.decide).not.toHaveBeenCalled();
+    });
+
+    it('jevHighRiskHandsOffToLlm', async () => {
+      jev.assessRisk.mockResolvedValue({ ok: true, highRisk: true, probability: 0.98, reason: '' });
+      localToolExecutor.execute.mockResolvedValue('executed');
+      await proxyDispatcher.dispatchInvocation({
+        callId: 'c5', toolName: 'shell', argumentsJson: '{"command":"rm -rf /"}',
+        executionMode: 'LOCAL', sessionId: 7, userId: 9, executionUserId: null,
+        workspace: 'w', permissionLevel: 'PROXY', modelConfig: { modelId: 'test' }, sessionTools: null,
+      });
+      expect(proxyApprover.decide).toHaveBeenCalled();
+    });
+
+    it('llmFailureFallsBackToManualApproval', async () => {
+      proxyApprover.decide.mockResolvedValue({ ok: false, approved: false, reason: 'rate limited' });
+      localToolExecutor.execute.mockResolvedValue('needs-approval');
+      const r = await proxyDispatcher.dispatchInvocation({
+        callId: 'c6', toolName: 'shell', argumentsJson: '{"command":"rm -rf ./dist"}',
+        executionMode: 'LOCAL', sessionId: 7, userId: 9, executionUserId: null,
+        workspace: 'w', permissionLevel: 'PROXY', modelConfig: { modelId: 'test' }, sessionTools: null,
+      });
+      expect(localToolExecutor.execute).toHaveBeenCalledWith(
+        7, 'shell', '{"command":"rm -rf ./dist"}', 'w', true, 'AI 审批异常（rate limited），转人工审批',
+      );
+      expect(r.approvalMark ?? null).toBeNull();
+    });
+
+    it('missingModelConfigFallsBackToManualApproval', async () => {
+      resolver.resolve.mockResolvedValueOnce(null);
+      localToolExecutor.execute.mockResolvedValue('needs-approval');
+      await proxyDispatcher.dispatchInvocation({
+        callId: 'c7', toolName: 'shell', argumentsJson: '{}',
+        executionMode: 'LOCAL', sessionId: 7, userId: 9, executionUserId: null,
+        workspace: 'w', permissionLevel: 'PROXY', modelConfig: null, sessionTools: null,
+      });
+      expect(localToolExecutor.execute).toHaveBeenCalledWith(7, 'shell', '{}', 'w', true, '无法进行 AI 审批，默认需要审批');
+      expect(proxyApprover.decide).not.toHaveBeenCalled();
+    });
+
+    it('mcpToolGoesThroughLlmApproval', async () => {
+      localToolExecutor.execute.mockResolvedValue('executed');
+      const r = await proxyDispatcher.dispatchInvocation({
+        callId: 'c8', toolName: 'mcp__filesystem__write_file', argumentsJson: '{"path":"a.txt"}',
+        executionMode: 'LOCAL', sessionId: 7, userId: 9, executionUserId: null,
+        workspace: 'w', permissionLevel: 'PROXY', modelConfig: { modelId: 'test' }, sessionTools: null,
+      });
+      expect(jev.assessRisk).toHaveBeenCalledWith(expect.objectContaining({ toolName: 'mcp__filesystem__write_file' }));
+      expect(proxyApprover.decide).toHaveBeenCalled();
+      expect(r.approvalMark).toEqual({ mode: 'llm', approved: true, reason: '符合用户指令' });
+    });
+
+    it('usesAdminConfiguredApprovalModelWhenResolverProvidesOne', async () => {
+      const adminModel = { modelId: 'admin-approval-model' };
+      resolver.resolve.mockResolvedValueOnce(adminModel);
+      localToolExecutor.execute.mockResolvedValue('executed');
+      await proxyDispatcher.dispatchInvocation({
+        callId: 'c9', toolName: 'shell', argumentsJson: '{}',
+        executionMode: 'LOCAL', sessionId: 7, userId: 9, executionUserId: null,
+        workspace: 'w', permissionLevel: 'PROXY', modelConfig: { modelId: 'session-model' }, sessionTools: null,
+      });
+      expect(proxyApprover.decide).toHaveBeenCalledWith(expect.anything(), adminModel);
+    });
+  });
+
+  describe('SMART level with Jev prefilter', () => {
+    const proxyApprover = { decide: vi.fn() };
+    const jev = { assessRisk: vi.fn() };
+    const resolver = { resolve: vi.fn(async (fallback: unknown) => fallback) };
+    const smartDispatcher = new ToolDispatcher(
+      registry, localToolExecutor, dangerAssessor, sessionMapper, streamingWsRegistry,
+      askUserQuestionsRegistry, localToolSessionRegistry, treeSignalPublisher,
+      null, null, null,
+      proxyApprover as never, jev as never, resolver as never,
+    );
+
+    beforeEach(() => {
+      jev.assessRisk.mockReset();
+      resolver.resolve.mockClear();
+    });
+
+    it('jevLowRiskSkipsDangerAssessor', async () => {
+      jev.assessRisk.mockResolvedValue({ ok: true, highRisk: false, probability: 0.02, reason: '' });
+      localToolExecutor.execute.mockResolvedValue('executed');
+      await smartDispatcher.dispatch('shell', '{"command":"ls"}', 'LOCAL', 7, 'workspace', 'SMART', { modelId: 'test' });
+      expect(assessSpy).not.toHaveBeenCalled();
+      expect(localToolExecutor.execute).toHaveBeenCalledWith(7, 'shell', '{"command":"ls"}', 'workspace', false, null);
+    });
+
+    it('jevHighRiskFallsThroughToDangerAssessor', async () => {
+      jev.assessRisk.mockResolvedValue({ ok: true, highRisk: true, probability: 0.9, reason: '' });
+      assessSpy.mockResolvedValue({ dangerous: true, reason: '危险' });
+      localToolExecutor.execute.mockResolvedValue('needs-approval');
+      await smartDispatcher.dispatch('shell', '{"command":"rm -rf /"}', 'LOCAL', 7, 'workspace', 'SMART', { modelId: 'test' });
+      expect(assessSpy).toHaveBeenCalled();
+      expect(localToolExecutor.execute).toHaveBeenCalledWith(7, 'shell', '{"command":"rm -rf /"}', 'workspace', true, '危险');
+    });
+
+    it('jevUnavailableDegradesToDangerAssessor', async () => {
+      jev.assessRisk.mockResolvedValue({ ok: false, highRisk: false, probability: 0, reason: 'jev not configured' });
+      assessSpy.mockResolvedValue({ dangerous: false, reason: null });
+      localToolExecutor.execute.mockResolvedValue('executed');
+      await smartDispatcher.dispatch('shell', '{"command":"ls"}', 'LOCAL', 7, 'workspace', 'SMART', { modelId: 'test' });
+      expect(assessSpy).toHaveBeenCalled();
+    });
+
+    it('smartModeUsesAdminConfiguredApprovalModel', async () => {
+      jev.assessRisk.mockResolvedValue({ ok: false, highRisk: false, probability: 0, reason: 'jev not configured' });
+      const adminModel = { modelId: 'admin-approval-model' };
+      resolver.resolve.mockResolvedValueOnce(adminModel);
+      assessSpy.mockResolvedValue({ dangerous: false, reason: null });
+      localToolExecutor.execute.mockResolvedValue('executed');
+      await smartDispatcher.dispatch('shell', '{"command":"ls"}', 'LOCAL', 7, 'workspace', 'SMART', { modelId: 'session-model' });
+      expect(assessSpy).toHaveBeenCalledWith('{"command":"ls"}', adminModel);
+    });
+
+    it('smartMcpStillRequiresManualApprovalWithoutPrefilter', async () => {
+      localToolExecutor.execute.mockResolvedValue('executed');
+      await smartDispatcher.dispatch(
+        'mcp__filesystem__write_file', '{}', 'LOCAL', 7, 'workspace', 'SMART', { modelId: 'test' },
+      );
+      expect(jev.assessRisk).not.toHaveBeenCalled();
+      expect(localToolExecutor.execute).toHaveBeenCalledWith(
+        7, 'mcp__filesystem__write_file', '{}', 'workspace', true, 'MCP 工具调用需要用户确认',
+      );
+    });
+  });
 });
 
 describe('ToolRegistry', () => {

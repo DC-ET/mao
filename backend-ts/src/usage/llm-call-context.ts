@@ -6,6 +6,7 @@ export const LLM_CALL_SCENES = {
   SESSION_TITLE: 'session_title',
   GIT_COMMIT_MESSAGE: 'git_commit_message',
   DANGER_ASSESS: 'danger_assess',
+  PROXY_APPROVE: 'proxy_approve',
   VOICE_SYNTHESIS: 'voice_synthesis',
   FEISHU_SUMMARIZE: 'feishu_summarize',
   CONNECTIVITY_TEST: 'connectivity_test',

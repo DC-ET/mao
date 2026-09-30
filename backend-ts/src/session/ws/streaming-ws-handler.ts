@@ -28,7 +28,7 @@ export function userMessagePayloadOf(messageContent: unknown): UserMessagePayloa
   return { content: '', images: [] };
 }
 
-const SIDE_PERMISSION_LEVELS = new Set(['READ_ONLY', 'READ_WRITE', 'SMART', 'FULL']);
+const SIDE_PERMISSION_LEVELS = new Set(['READ_ONLY', 'READ_WRITE', 'SMART', 'PROXY', 'FULL']);
 
 /** 边路创建时带上输入框里选的权限；缺省或非法值沿用父会话。 */
 function sidePermissionLevel(requested: unknown, parentLevel: string | null | undefined): string | null | undefined {

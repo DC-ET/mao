@@ -42,7 +42,7 @@ LOCAL 模式现有四级工具权限：`READ_ONLY`（只读）/ `READ_WRITE`（�
 | 前置决策阈值配置化 | 高风险判定阈值内置为常量 0.3（压低阈值偏向多交 LLM），不开放 admin 配置 |
 | Jev 调用接入 LLM 用量记账 | Jev 不走 LlmAdapter（非 chat 协议），其 usage.cost/tokens 仅以 harnessLog 记录 |
 | Jev 模型 ID 硬编码 | 模型名随配置项 `approval.jev.model` 下发（默认 `jev-latest`）——直连与 OpenRouter 的模型命名不同（`jev-latest` vs `typesafe/jev-1.13`），切换通道必须能改模型名 |
-| agent-cli 审批体系改动 | 决策全部在后端完成，agent-cli 对 PROXY 级透明（收到的 needApproval 已是最终值），其 ApprovalPolicy 体系不动 |
+| agent-cli 审批体系改动 | 决策全部在后端完成，agent-cli 对 PROXY 级透明（收到的 needApproval 已是最终值），其 ApprovalPolicy 体系不动；仅 `--permission-level` 枚举放行 PROXY 值（写入会话级别，非审批策略） |
 | CLOUD 模式任何改动 | 权限体系仅 LOCAL 生效，CLOUD 行为不变 |
 | 存量数据处理 | `permission_level` 为 VARCHAR(20)，新增枚举值 `PROXY` 无需改列；新配置行由 migration 插入，对存量环境幂等 |
 | 用户自定义审批 prompt | 审批 prompt 与 Jev 判定 criteria 均固定内置，不开放配置 |
@@ -401,7 +401,9 @@ approvalMark?: { mode: 'llm' | 'jev'; approved: boolean; reason: string } | null
 
 ### 明确不改
 
-`desktop/electron/main.cjs`、`desktop/electron/preload.cjs`、`desktop/src/composables/useStreamWS.ts`、`desktop/src/types/electron.d.ts`、`shared/contracts/src/ws.ts`、`agent-cli/` 全目录、`session.permission_level` 列定义。
+`desktop/electron/main.cjs`、`desktop/electron/preload.cjs`、`desktop/src/composables/useStreamWS.ts`、`desktop/src/types/electron.d.ts`、`shared/contracts/src/ws.ts`、`agent-cli/` 的审批策略体系（`local/approval.ts` 等）、`session.permission_level` 列定义。
+
+> 备注（实施后）：code review 第 1 轮发现三处枚举遗漏并已修复——`streaming-ws-handler.ts` 边路级别白名单、`session/permission-level.ts` session 域枚举、`agent-cli/src/args.ts` 的 `--permission-level` 枚举与帮助文案，均补入 `PROXY`。
 
 ## 7. 风险与缓解
 

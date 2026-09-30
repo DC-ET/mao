@@ -16,6 +16,10 @@ export const WEIXIN_AGENT_ID_KEY = 'weixin.agentId';
 export const WEIXIN_MODEL_ID_KEY = 'weixin.modelId';
 export const SESSION_TITLE_MODEL_ID_KEY = 'session.titleModelId';
 export const GIT_COMMIT_MESSAGE_MODEL_ID_KEY = 'git.commitMessageModelId';
+export const APPROVAL_MODEL_ID_KEY = 'approval.modelId';
+export const JEV_ENDPOINT_KEY = 'approval.jev.endpoint';
+export const JEV_MODEL_KEY = 'approval.jev.model';
+export const JEV_API_KEY_KEY = 'approval.jev.apiKey';
 
 export const LDAP_ENABLED_KEY = 'auth.ldap.enabled';
 export const LDAP_URL_KEY = 'auth.ldap.url';
@@ -535,6 +539,11 @@ export class SystemSettingService {
     return hasText(stored) ? this.decryptSecret(stored) : '';
   }
 
+  /** 读取 secret 配置并解密；未设置或解密失败返回空串。供需要明文的业务方（如 Jev 前置决策）使用。 */
+  async getSecretValue(key: string): Promise<string> {
+    return this.getSecret(key);
+  }
+
   private applyRuntimeValues(settings: SystemSetting[]): void {
     const runtimeValues: Record<string, string> = {
       'workspace.root': this.runtime.workspaceRoot,
@@ -568,7 +577,8 @@ export class SystemSettingService {
       }
       return;
     }
-    if (key === WEIXIN_MODEL_ID_KEY || key === SESSION_TITLE_MODEL_ID_KEY || key === GIT_COMMIT_MESSAGE_MODEL_ID_KEY) {
+    if (key === WEIXIN_MODEL_ID_KEY || key === SESSION_TITLE_MODEL_ID_KEY || key === GIT_COMMIT_MESSAGE_MODEL_ID_KEY
+      || key === APPROVAL_MODEL_ID_KEY) {
       if (!hasText(value)) {
         return;
       }

@@ -16,6 +16,12 @@ export interface ToolCall {
   argsStreaming: boolean
   /** 参数尚未组成完整 JSON 时保留的原始流式内容 */
   argumentsText?: string
+  /** AI 审批标记（替我审批/前置决策的拍板结果），未经 AI 审批的调用为空 */
+  approvalMark?: {
+    mode: 'llm' | 'jev'
+    approved: boolean
+    reason: string
+  }
 }
 
 export type FileChangeType = 'CREATED' | 'MODIFIED' | 'DELETED' | 'RENAMED' | 'COPIED' | string

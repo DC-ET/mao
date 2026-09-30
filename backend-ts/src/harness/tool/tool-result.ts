@@ -1,5 +1,12 @@
 export type ToolResultStatus = 'success' | 'error';
 
+/** AI 审批标记：本次调用由谁放行/拒绝。mode=llm 审批模型拍板；mode=jev 前置决策低风险放行。 */
+export interface ToolApprovalMark {
+  mode: 'llm' | 'jev';
+  approved: boolean;
+  reason: string;
+}
+
 /**
  * ToolResult：一次工具调用的结构化结果。
  * content 保持与旧字符串结果逐字节一致，供模型上下文与持久化；
@@ -11,6 +18,8 @@ export interface ToolResult {
   content: string;
   errorMessage?: string;
   durationMs?: number;
+  /** PROXY 级 AI 审批的拍板结果；未经 AI 审批的调用为空。 */
+  approvalMark?: ToolApprovalMark | null;
 }
 
 /** AgentEventListener.onToolCallResult 的 meta 透传类型，是 ToolResult 的子集。 */
@@ -18,10 +27,16 @@ export interface ToolCallResultMeta {
   status: ToolResultStatus;
   errorMessage?: string;
   durationMs?: number;
+  approvalMark?: ToolApprovalMark | null;
 }
 
 export function toolResultMeta(result: ToolResult): ToolCallResultMeta {
-  return { status: result.status, errorMessage: result.errorMessage, durationMs: result.durationMs };
+  return {
+    status: result.status,
+    errorMessage: result.errorMessage,
+    durationMs: result.durationMs,
+    approvalMark: result.approvalMark ?? undefined,
+  };
 }
 
 /**

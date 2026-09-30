@@ -1406,6 +1406,7 @@ export const useSessionStore = defineStore('session', () => {
     status?: string
     summary?: string
     preview?: { media_type?: string; mime?: string; data_uri?: string }
+    approval_mark?: { mode: 'llm' | 'jev'; approved: boolean; reason: string }
   }) {
     const sid = String(sessionId)
     const lastMsg = ensureStreamingAssistantMessage(sid)
@@ -1435,6 +1436,7 @@ export const useSessionStore = defineStore('session', () => {
     call.argsStreaming = false
     if (data.summary) call.summary = data.summary
     if (data.preview) call.preview = data.preview
+    if (data.approval_mark) call.approvalMark = data.approval_mark
     const list = sessionMessages.value.get(sid) ?? []
     sessionMessages.value.set(sid, [...list])
   }

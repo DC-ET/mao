@@ -1,6 +1,6 @@
-export type PermissionLevel = 'READ_ONLY' | 'READ_WRITE' | 'SMART' | 'FULL';
+export type PermissionLevel = 'READ_ONLY' | 'READ_WRITE' | 'SMART' | 'PROXY' | 'FULL';
 
-const VALUES: PermissionLevel[] = ['READ_ONLY', 'READ_WRITE', 'SMART', 'FULL'];
+const VALUES: PermissionLevel[] = ['READ_ONLY', 'READ_WRITE', 'SMART', 'PROXY', 'FULL'];
 
 export function fromString(value: string | null | undefined): PermissionLevel {
   if (value == null) {

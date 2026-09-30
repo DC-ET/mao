@@ -9,6 +9,9 @@ import type { SessionTreeSignalPublisher } from '../approval/session-tree-signal
 import type { AskUserQuestionsRegistry } from './ask-user-questions-registry.js';
 import { normalizeAskUserQuestionsArgs } from './ask-user-questions-normalize.js';
 import type { DangerAssessor } from './danger-assessor.js';
+import type { JevRiskAssessor, JevRiskResult } from './jev-risk-assessor.js';
+import type { ApprovalModelResolver } from './approval-model-resolver.js';
+import type { ProxyApprover } from './proxy-approver.js';
 import type { Tool } from './tool.js';
 import { callTool } from './tool.js';
 import type { ToolRegistry } from './tool-registry.js';
@@ -58,6 +61,25 @@ export class IllegalArgumentException extends Error {
   }
 }
 
+/** AI 审批拍板结果。via=llm 审批模型；via=jev 前置决策（只会是 approved=true 的低风险放行）。 */
+interface ApprovalVerdict {
+  approved: boolean;
+  reason: string;
+  via: 'llm' | 'jev';
+}
+
+interface ApprovalDecision {
+  needApproval: boolean;
+  dangerReason: string | null;
+  /** 仅 PROXY 级经 AI 拍板后非空；null/缺省表示未经过 AI 审批。 */
+  llmVerdict?: ApprovalVerdict | null;
+}
+
+interface DispatchOutcome {
+  raw: string;
+  llmVerdict: ApprovalVerdict | null;
+}
+
 export class ToolDispatcher {
   constructor(
     private readonly toolRegistry: ToolRegistry,
@@ -71,6 +93,9 @@ export class ToolDispatcher {
     private readonly backgroundTaskManager?: BackgroundTaskManager | null,
     private readonly askUserOfflineNotifier?: AskUserOfflineNotifier | null,
     private readonly feishuAsk: FeishuAskMount | null = null,
+    private readonly proxyApprover?: ProxyApprover | null,
+    private readonly jevRiskAssessor?: JevRiskAssessor | null,
+    private readonly approvalModelResolver?: ApprovalModelResolver | null,
   ) {}
 
   /**
@@ -108,13 +133,21 @@ export class ToolDispatcher {
   async dispatchInvocation(invocation: ToolInvocation): Promise<ToolResult> {
     const started = Date.now();
     try {
-      const raw = await this.dispatchFull(
+      const outcome = await this.dispatchFullOutcome(
         invocation.toolName, invocation.argumentsJson, invocation.executionMode,
         invocation.sessionId, invocation.userId, invocation.workspace,
         invocation.permissionLevel, invocation.modelConfig, invocation.sessionTools,
-        invocation.executionUserId ?? null,
+        invocation.executionUserId ?? null, invocation.contextSnapshot ?? null,
       );
-      return normalizeToolResult(invocation.callId, raw, Date.now() - started);
+      const result = normalizeToolResult(invocation.callId, outcome.raw, Date.now() - started);
+      if (outcome.llmVerdict) {
+        result.approvalMark = {
+          mode: outcome.llmVerdict.via,
+          approved: outcome.llmVerdict.approved,
+          reason: outcome.llmVerdict.reason,
+        };
+      }
+      return result;
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       return {
@@ -158,14 +191,34 @@ export class ToolDispatcher {
     sessionTools: Tool[] | null,
     executionUserId: number | null = null,
   ): Promise<string> {
+    const outcome = await this.dispatchFullOutcome(
+      toolName, argumentsJson, executionMode, sessionId, userId, workspace,
+      permissionLevel, modelConfig, sessionTools, executionUserId, null,
+    );
+    return outcome.raw;
+  }
+
+  private async dispatchFullOutcome(
+    toolName: string,
+    argumentsJson: string,
+    executionMode: string | null,
+    sessionId: number | null,
+    userId: number | null,
+    workspace: string | null,
+    permissionLevel: string | null,
+    modelConfig: LlmModelConfig | null,
+    sessionTools: Tool[] | null,
+    executionUserId: number | null = null,
+    contextSnapshot: string | null = null,
+  ): Promise<DispatchOutcome> {
     const descriptor = this.resolveDescriptor(toolName, sessionTools);
     if (toolName === ASK_USER_QUESTIONS) {
-      return this.dispatchAskUserQuestions(argumentsJson, sessionId);
+      return { raw: await this.dispatchAskUserQuestions(argumentsJson, sessionId), llmVerdict: null };
     }
     if (SERVER_ONLY_TOOLS.has(toolName) || toolName.startsWith('page_')) {
       const tool = this.toolRegistry.getTool(toolName);
       if (tool) {
-        return await callTool(tool, argumentsJson, sessionId, userId, workspace);
+        return { raw: await callTool(tool, argumentsJson, sessionId, userId, workspace), llmVerdict: null };
       }
       throw new IllegalArgumentException('Unknown tool: ' + toolName);
     }
@@ -177,14 +230,27 @@ export class ToolDispatcher {
       }
       const level = permissionLevelFromString(latest);
       const decision = await this.shouldRequireApproval(
-        descriptor, toolName, level, argumentsJson, modelConfig, sessionId, executionUserId ?? userId,
+        descriptor, toolName, level, argumentsJson, modelConfig, sessionId, executionUserId ?? userId, contextSnapshot,
       );
-      if (toolName === 'shell' && this.backgroundTaskManager && isLocalShellAsyncExec(argumentsJson)) {
-        return this.dispatchLocalShellAsync(
-          argumentsJson, sessionId, workspace, decision.needApproval, decision.dangerReason,
-        );
+      // PROXY 级 AI 审批拒绝：不下发执行，直接把拒绝理由作为工具错误返回给主模型
+      if (decision.llmVerdict && !decision.llmVerdict.approved) {
+        return {
+          raw: JSON.stringify({ error: `工具调用被 AI 审批拒绝：${decision.llmVerdict.reason}` }),
+          llmVerdict: decision.llmVerdict,
+        };
       }
-      return this.localToolExecutor.execute(sessionId, toolName, argumentsJson, workspace, decision.needApproval, decision.dangerReason);
+      if (toolName === 'shell' && this.backgroundTaskManager && isLocalShellAsyncExec(argumentsJson)) {
+        return {
+          raw: await this.dispatchLocalShellAsync(
+            argumentsJson, sessionId, workspace, decision.needApproval, decision.dangerReason,
+          ),
+          llmVerdict: decision.llmVerdict ?? null,
+        };
+      }
+      return {
+        raw: await this.localToolExecutor.execute(sessionId, toolName, argumentsJson, workspace, decision.needApproval, decision.dangerReason),
+        llmVerdict: decision.llmVerdict ?? null,
+      };
     }
 
     let tool = this.toolRegistry.getTool(toolName);
@@ -193,7 +259,7 @@ export class ToolDispatcher {
     }
     if (tool) {
       const toolUserId = toolName === 'shell' ? executionUserId ?? userId : userId;
-      return await callTool(tool, argumentsJson, sessionId, toolUserId, workspace);
+      return { raw: await callTool(tool, argumentsJson, sessionId, toolUserId, workspace), llmVerdict: null };
     }
     throw new IllegalArgumentException('Unknown tool: ' + toolName);
   }
@@ -302,7 +368,8 @@ export class ToolDispatcher {
     modelConfig: LlmModelConfig | null,
     sessionId: number | null,
     userId: number | null,
-  ): Promise<{ needApproval: boolean; dangerReason: string | null }> {
+    contextSnapshot: string | null = null,
+  ): Promise<ApprovalDecision> {
     // MCP 识别：descriptor.source 优先，mcp__ 前缀保留为 fallback（缺 descriptor 的直接实现/旧名场景）
     const isMcpTool = descriptor?.source === 'mcp' || (toolName != null && toolName.startsWith(MCP_TOOL_PREFIX));
     switch (level) {
@@ -312,8 +379,13 @@ export class ToolDispatcher {
         return { needApproval: toolName === 'shell' || isMcpTool, dangerReason: null };
       case 'SMART': {
         if (toolName !== 'shell' && !isMcpTool) return { needApproval: false, dangerReason: null };
+        // MCP 无 LLM 推理阶段，维持一律人工审批，不经过前置决策
         if (isMcpTool) return { needApproval: true, dangerReason: 'MCP 工具调用需要用户确认' };
-        if (modelConfig == null) {
+        // Jev 前置：低风险直接放行；高风险或未配置/失败（null）则继续走 DangerAssessor
+        const pre = await this.tryJevPrefilter(toolName, argumentsJson);
+        if (pre && !pre.highRisk) return { needApproval: false, dangerReason: null };
+        const approvalModel = await this.resolveApprovalModel(modelConfig);
+        if (approvalModel == null) {
           harnessLog('warn', 'SMART mode: no modelConfig available, defaulting to approval required');
           return { needApproval: true, dangerReason: '无法进行安全评估，默认需要审批' };
         }
@@ -322,12 +394,66 @@ export class ToolDispatcher {
           userId,
           sessionId,
           agentId: null,
-        }, async () => this.dangerAssessor.assess(argumentsJson, modelConfig));
+        }, async () => this.dangerAssessor.assess(argumentsJson, approvalModel));
         return { needApproval: result.dangerous, dangerReason: result.reason };
+      }
+      case 'PROXY': {
+        if (toolName !== 'shell' && !isMcpTool) return { needApproval: false, dangerReason: null };
+        // Jev 前置：低风险直接放行（带标记）；高风险或未配置/失败（null）则交由审批 LLM 带上下文拍板
+        const pre = await this.tryJevPrefilter(toolName, argumentsJson);
+        if (pre && !pre.highRisk) {
+          return {
+            needApproval: false,
+            dangerReason: null,
+            llmVerdict: { approved: true, reason: `前置决策判定低风险（P=${pre.probability.toFixed(2)}）`, via: 'jev' },
+          };
+        }
+        const approver = this.proxyApprover;
+        if (!approver) {
+          harnessLog('warn', 'PROXY mode: ProxyApprover not wired, defaulting to approval required');
+          return { needApproval: true, dangerReason: '无法进行 AI 审批，默认需要审批' };
+        }
+        const approvalModel = await this.resolveApprovalModel(modelConfig);
+        if (approvalModel == null) {
+          harnessLog('warn', 'PROXY mode: no modelConfig available, defaulting to approval required');
+          return { needApproval: true, dangerReason: '无法进行 AI 审批，默认需要审批' };
+        }
+        const verdict = await LlmCallContext.runAsync({
+          scene: LLM_CALL_SCENES.PROXY_APPROVE,
+          userId,
+          sessionId,
+          agentId: null,
+        }, async () => approver.decide({ toolName, argumentsJson, contextSnapshot }, approvalModel));
+        if (!verdict.ok) {
+          return { needApproval: true, dangerReason: `AI 审批异常（${verdict.reason}），转人工审批` };
+        }
+        return {
+          needApproval: false,
+          dangerReason: null,
+          llmVerdict: { approved: verdict.approved, reason: verdict.reason, via: 'llm' },
+        };
       }
       case 'FULL':
         return { needApproval: false, dangerReason: null };
     }
+  }
+
+  /** Jev 前置决策：仅返回成功解析的结果；未配置/调用失败/响应畸形一律返回 null（降级为直接走 LLM）。 */
+  private async tryJevPrefilter(toolName: string, argumentsJson: string): Promise<JevRiskResult | null> {
+    if (!this.jevRiskAssessor) return null;
+    try {
+      const result = await this.jevRiskAssessor.assessRisk({ toolName, argumentsJson });
+      return result.ok ? result : null;
+    } catch (e) {
+      harnessLog('warn', `Jev prefilter threw unexpectedly, degrading to LLM: ${(e as Error).message}`);
+      return null;
+    }
+  }
+
+  /** 审批模型解析：admin 配置优先；未注入 resolver 或未配置时回落 session 的 modelConfig。 */
+  private async resolveApprovalModel(fallback: LlmModelConfig | null): Promise<LlmModelConfig | null> {
+    if (!this.approvalModelResolver) return fallback;
+    return this.approvalModelResolver.resolve(fallback);
   }
 
   private isWriteOrShellTool(toolName: string): boolean {

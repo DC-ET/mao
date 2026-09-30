@@ -123,6 +123,7 @@ export class WsStreamingEventListener implements AgentEventListener {
     if (toolName) data.tool_name = toolName;
     if (preview) data.preview = preview;
     if (summary) data.summary = summary;
+    if (meta?.approvalMark) data.approval_mark = meta.approvalMark;
     this.send('tool_call_result', data);
 
     void this.recordActivity(toolName, argumentsJson, summary, isError);

@@ -145,6 +145,9 @@ import type { LlmAdapter } from './harness/llm/chat-request.js';
 import { createDefaultToolRegistry } from './harness/tool/tool-registry.js';
 import { ToolDispatcher } from './harness/tool/tool-dispatcher.js';
 import { DangerAssessor } from './harness/tool/danger-assessor.js';
+import { ProxyApprover } from './harness/tool/proxy-approver.js';
+import { JevRiskAssessor } from './harness/tool/jev-risk-assessor.js';
+import { ApprovalModelResolver } from './harness/tool/approval-model-resolver.js';
 import { AskUserQuestionsRegistry } from './harness/tool/ask-user-questions-registry.js';
 import { AgentLoop } from './harness/core/agent-loop.js';
 import { HarnessService } from './harness/core/harness-service.js';
@@ -816,6 +819,15 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     localToolSessions, approvalRegistry, treeSignalPublisher, cfg.app.harness.localToolTimeoutSeconds,
   );
   const dangerAssessor = new DangerAssessor(llmAdapter);
+  const proxyApprover = new ProxyApprover(llmAdapter);
+  const jevRiskAssessor = new JevRiskAssessor({
+    getValue: (key) => settingService.getValue(key),
+    getSecretValue: (key) => settingService.getSecretValue(key),
+  });
+  const approvalModelResolver = new ApprovalModelResolver(
+    (key) => settingService.getValue(key),
+    (id) => modelRepo.findById(id),
+  );
   const agentExecutor = createAgentExecutor(
     agentRuntimeCfg.threadPoolSize,
     agentRuntimeCfg.threadPoolMax,
@@ -991,6 +1003,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     toolRegistry, localToolExecutor, dangerAssessor, sessionMap,
     wsRegistry, askUserQuestionsRegistry, localToolSessions, treeSignalPublisher,
     backgroundTasks, deliveryService, feishuAskMount,
+    proxyApprover, jevRiskAssessor, approvalModelResolver,
   );
   const agentLoop = new AgentLoop(
     llmAdapter, promptEngine, contextManager, toolDispatcher, backgroundTasks,

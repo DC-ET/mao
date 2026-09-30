@@ -21,7 +21,8 @@ import { ToolCallContext } from '../tool/tool-call-context.js';
 import { LLM_CALL_SCENES, LlmCallContext } from '../../usage/llm-call-context.js';
 import type { ToolDispatcher } from '../tool/tool-dispatcher.js';
 import { ToolImageResultProcessor } from '../tool/tool-image-result-processor.js';
-import { toolResultMeta, type ToolResult } from '../tool/tool-result.js';
+import { toolResultMeta, type ToolApprovalMark, type ToolResult } from '../tool/tool-result.js';
+import { buildApprovalContextSnapshot } from '../tool/approval-context-snapshot.js';
 import { ToolResultSummarizer } from '../../session/util/tool-result-summarizer.js';
 import type { Tool } from '../tool/tool.js';
 import type { ShellSessionManager } from '../shell/shell-session-manager.js';
@@ -547,7 +548,7 @@ export class AgentLoop {
       const tc = pendingCalls[0];
       const result = await runOne(tc);
       const rawResult = result.content;
-      const toolSave = this.processToolResult(rawResult, tc, context);
+      const toolSave = this.processToolResult(rawResult, tc, context, result.approvalMark);
       if (cancelFlag?.get()) return;
       tc.summary = ToolResultSummarizer.summarize(
         tc.function?.name ?? '', tc.function?.arguments ?? '', toolSave.content,
@@ -566,7 +567,7 @@ export class AgentLoop {
       const tc = pendingCalls[i];
       const result = results[i];
       const rawResult = result.content;
-      const toolSave = this.processToolResult(rawResult, tc, context);
+      const toolSave = this.processToolResult(rawResult, tc, context, result.approvalMark);
       tc.summary = ToolResultSummarizer.summarize(
         tc.function?.name ?? '', tc.function?.arguments ?? '', toolSave.content,
       ) ?? undefined;
@@ -577,14 +578,21 @@ export class AgentLoop {
     }
   }
 
-  private processToolResult(rawResult: string, tc: ToolCall, context: AgentExecutionContext): ToolMessageSave {
+  private processToolResult(
+    rawResult: string, tc: ToolCall, context: AgentExecutionContext,
+    approvalMark?: ToolApprovalMark | null,
+  ): ToolMessageSave {
     const diffStripped = FileChangeDiffUtil.stripPrivateDiff(rawResult) ?? rawResult;
     const supportsVision = context.modelConfig?.supportsVision === true;
     const processed = ToolImageResultProcessor.process(diffStripped, supportsVision);
     if (processed.attachment && tc.id) {
       context.registerToolAttachment(tc.id, processed.attachment);
     }
-    return { toolCallId: tc.id!, content: processed.sanitizedContent ?? '', metadataJson: processed.metadataJson };
+    return {
+      toolCallId: tc.id!,
+      content: processed.sanitizedContent ?? '',
+      metadataJson: mergeApprovalMark(processed.metadataJson, approvalMark),
+    };
   }
 
   private async dispatchTool(tc: ToolCall, context: AgentExecutionContext): Promise<ToolResult> {
@@ -610,6 +618,9 @@ export class AgentLoop {
       permissionLevel: context.permissionLevel ?? null,
       modelConfig: context.modelConfig ?? null,
       sessionTools: context.tools ?? null,
+      // LOCAL 一律构建快照（而非仅 PROXY 时）：dispatcher 每次从 DB 重读最新级别，
+      // 用户执行中切换到 PROXY 时 context 里的级别可能是旧值
+      contextSnapshot: context.executionMode === 'LOCAL' ? buildApprovalContextSnapshot(context.messages) : null,
     });
   }
 
@@ -663,4 +674,22 @@ export class AgentLoop {
       target.function.arguments = (target.function.arguments ?? '') + delta.function.arguments;
     }
   }
+}
+
+/** 把 AI 审批标记合并进工具消息 metadata（与图片附件等既有 key 共存），供持久化与前端徽标展示。 */
+function mergeApprovalMark(metadataJson: string | null, approvalMark?: ToolApprovalMark | null): string | null {
+  if (!approvalMark) return metadataJson;
+  let root: Record<string, unknown> = {};
+  if (metadataJson != null && metadataJson.trim() !== '') {
+    try {
+      const parsed = JSON.parse(metadataJson) as unknown;
+      if (parsed != null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        root = parsed as Record<string, unknown>;
+      }
+    } catch {
+      // 既有 metadata 不是 JSON 对象时丢弃，审批标记优先保留
+    }
+  }
+  root.approvalMark = approvalMark;
+  return JSON.stringify(root);
 }

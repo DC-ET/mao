@@ -17,4 +17,6 @@ export interface ToolInvocation {
   permissionLevel: string | null;
   modelConfig: LlmModelConfig | null;
   sessionTools: Tool[] | null;
+  /** 「替我审批」的上下文快照（用户指令 + 工具调用轨迹）；仅 LOCAL 模式构建，其余为 null。 */
+  contextSnapshot?: string | null;
 }

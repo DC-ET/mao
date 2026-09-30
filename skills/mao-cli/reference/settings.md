@@ -95,6 +95,19 @@ mao settings test oss --region cn-hangzhou --access-key-id AK --access-key-secre
 
 值必须为正整数。终端使用还需 `terminal:use` 权限（默认只授管理员角色），详见 [desktop.md](desktop.md#终端)。
 
+## 审批配置（`approval.*`，0.0.223 起）
+
+管理后台「系统设置 → Agent 与模型 → 审批」，即时生效（每次工具审批决策时读取，无需重启）。
+
+| key | 默认 | 说明 |
+|-----|------|------|
+| `approval.modelId` | 空 | LOCAL 模式工具审批（智能预审/替我审批）使用的 LLM 模型；留空则使用会话模型 |
+| `approval.jev.endpoint` | `https://api.typesafe.ai/v1/systemone` | Jev 前置决策端点；OpenRouter 通道填 `https://openrouter.ai/api/alpha/decisions` |
+| `approval.jev.model` | `jev-latest` | Jev 前置决策模型名；OpenRouter 通道填 `typesafe/jev-1.13` |
+| `approval.jev.apiKey` | 空（secret） | Jev 前置决策 API Key；留空则关闭前置决策，直接由审批模型推理 |
+
+Jev 前置决策：低风险工具调用直接放行（跳过审批模型推理），高风险才交审批模型；工具名与参数会发往该第三方服务，配置 apiKey 即视为开启。前置决策异常/未配置时自动降级为直接走审批模型。
+
 ## 成功失败判断
 
 - 成功：`settings test *` 返回 `{ ok: true }`；set/batch 返回更新后的设置对象
