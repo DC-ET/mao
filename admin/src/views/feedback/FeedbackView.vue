@@ -1,20 +1,18 @@
 <template>
   <div class="feedback-view">
-    <!-- 汇总卡片 -->
-    <el-row :gutter="16" class="summary-row">
-      <el-col :xs="24" :sm="12" :md="6">
-        <el-card class="summary-card">
+    <!-- 汇总指标条：单卡片分隔陈列，避免多卡片拉宽显空 -->
+    <el-card class="summary-card">
+      <div class="summary-strip">
+        <div class="summary-item">
           <div class="summary-label">点踩总数</div>
           <div class="summary-value">{{ summary.total }}</div>
-        </el-card>
-      </el-col>
-      <el-col v-for="item in summary.byReason" :key="item.reason" :xs="24" :sm="12" :md="6">
-        <el-card class="summary-card">
+        </div>
+        <div v-for="item in summary.byReason" :key="item.reason" class="summary-item">
           <div class="summary-label">{{ item.label }}</div>
           <div class="summary-value">{{ item.count }}</div>
-        </el-card>
-      </el-col>
-    </el-row>
+        </div>
+      </div>
+    </el-card>
 
     <!-- 明细列表 -->
     <el-card>
@@ -118,6 +116,7 @@
       </div>
 
       <ResponsivePagination
+        class="pagination"
         v-model:currentPage="page"
         v-model:page-size="pageSize"
         :total="total"
@@ -285,12 +284,30 @@ onActivated(() => {
 </script>
 
 <style scoped>
-.summary-row {
+.summary-card {
   margin-bottom: 16px;
 }
 
 .summary-card :deep(.el-card__body) {
   padding: 16px 20px;
+}
+
+.summary-strip {
+  display: flex;
+  flex-wrap: wrap;
+  row-gap: 12px;
+}
+
+.summary-item {
+  flex: 1 1 140px;
+  min-width: 140px;
+  padding: 4px 20px;
+  border-left: 1px solid var(--mao-border);
+}
+
+.summary-item:first-child {
+  border-left: none;
+  padding-left: 0;
 }
 
 .summary-label {
@@ -303,6 +320,19 @@ onActivated(() => {
   font-size: 26px;
   font-weight: 600;
   color: var(--el-text-color-primary);
+}
+
+.pagination {
+  margin-top: 16px;
+  justify-content: flex-end;
+}
+
+@media (max-width: 768px) {
+  .summary-item {
+    flex-basis: 40%;
+    border-left: none;
+    padding-left: 0;
+  }
 }
 
 .card-header {
