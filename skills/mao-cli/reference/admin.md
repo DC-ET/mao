@@ -155,19 +155,16 @@ CLI：`mao llm-call list`（见 [llm-call.md](llm-call.md)）。
 
 平台级配置，例如：
 
-- **集成配置**（卡片分组，保存即时生效，密钥 AES 加密存储，LDAP/飞书登录/OSS 提供一键测试连接）：
-  - LDAP 认证、飞书 OAuth 登录（0.0.82 起由环境变量迁入）
+- **登录认证**（密钥 AES 加密存储，LDAP/飞书登录/OSS 提供一键测试连接）：
   - 公司 SSO（0.0.111）：启用开关、校验域名白名单、宿主 Origin 白名单、Access 有效期、校验超时；白名单支持换行或逗号输入，宿主 Origin 可填精确 HTTPS、`https://*.example.com`（任意层级子域、不含根域、端口严格匹配）或 `*`（所有来源）。以 `auth.companySso.config` 完整快照保存，新换票即时生效，取消 SSO 环境变量。业务系统仍用 `MaoChat.init` 的 `auth.checkUrl` 指定接口地址，详见 [SSO 配置](config.md#公司-ssoweb-embed-sdk)。
-  - 上传：存储方式（local/OSS）、访问前缀、单文件大小上限
-  - 网络工具：Tavily / TinyFish 搜索实现切换与各自 API Key（0.0.83 新增双实现）
-  - 阿里云 OSS 对象存储与 STS 临时凭证
-  - Agent 运行 / 任务通知（0.0.88 迁入；通知即时生效，线程池与 WS 超时重启生效）
-  - Harness 调参（0.0.89 迁入）：上下文压缩、LLM 超时与重试、网页抓取、Shell 会话，保存后重启后端生效
-- `weixin.agentId` / `weixin.modelId`：微信通道 Agent 与模型
-- `session.titleModelId`：会话标题生成模型
-- `git.commitMessageModelId`：Git 提交信息生成模型
+  - ECP 飞书登录、LDAP 认证、飞书 OAuth 登录（0.0.82 起由环境变量迁入）
+- **文件与存储**：上传（存储方式 local/OSS、访问前缀、单文件大小上限）、阿里云 OSS 对象存储与 STS 临时凭证
+- **Agent 与模型**：Agent 运行（0.0.88 迁入，线程池与 WS 超时重启生效）、LLM 超时与重试、上下文压缩（Harness 调参 0.0.89 迁入，保存后重启后端生效）、会话（`session.titleModelId` 标题生成模型）、代码（`git.commitMessageModelId` Git 提交信息生成模型）
+- **工具与终端**：网络工具（Tavily / TinyFish 搜索实现切换与各自 API Key，0.0.83 新增双实现）、网页抓取、Shell 会话、云端终端
+- **通知与消息**：任务通知（0.0.88 迁入，即时生效）、微信（`weixin.agentId` / `weixin.modelId` 微信通道 Agent 与模型）
+- **平台与运维**：审计（日志保留天数）、运行环境（工作区与 Skill 目录，只读展示）
 
-读写需 `settings:read` / `settings:write` 权限；页面左侧目录索引可快速跳转分组。CLI：`mao settings list|set`（见 [settings.md](settings.md)）。
+读写需 `settings:read` / `settings:write` 权限；页面左侧目录按上述分两级展示，可快速跳转分组。CLI：`mao settings list|set`（见 [settings.md](settings.md)）。
 
 ## 飞书机器人通道
 

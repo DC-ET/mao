@@ -157,7 +157,7 @@ INSERT INTO session (user_id, agent_id, title, status, phase, execution_mode, wo
  (1, 1, '分析销售数据', 'ACTIVE', 'COMPLETED', 'LOCAL', NULL, NOW(), NOW()),
  (1, 2, '修复登录bug', 'ACTIVE', 'COMPLETED', 'LOCAL', NULL, NOW(), NOW()),
  (1, 1, '生成周报', 'ACTIVE', 'RUNNING', 'LOCAL', NULL, NOW(), NOW());
-
+SQL
     MYSQL_E2E <<'SQL'
 INSERT INTO message (session_id, role, content, token_count, created_at) VALUES
  (1, 'USER', '帮我分析这份销售数据', 120, NOW()),

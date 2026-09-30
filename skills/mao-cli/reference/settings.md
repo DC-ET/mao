@@ -8,7 +8,7 @@
 
 ## 公司 SSO 配置（0.0.111 起）
 
-推荐通过管理后台「系统设置 → 集成配置 → 公司 SSO」维护。也可使用现有 `settings set`，键为 `auth.companySso.config`，value 必须是包含以下五个字段的完整 JSON 字符串：
+推荐通过管理后台「系统设置 → 登录认证 → 公司 SSO」维护。也可使用现有 `settings set`，键为 `auth.companySso.config`，value 必须是包含以下五个字段的完整 JSON 字符串：
 
 ```json
 {"enabled":false,"allowedDomains":[],"allowedOrigins":[],"accessTtlSeconds":1800,"timeoutMs":3000}
@@ -83,7 +83,7 @@ mao settings test oss --region cn-hangzhou --access-key-id AK --access-key-secre
 
 ## 云端终端配置（`terminal.*`，0.0.97 起）
 
-管理后台「系统设置 → 集成配置 → 云端终端」，均为**启动时构建，保存后需重启后端生效**。
+管理后台「系统设置 → 工具与终端 → 云端终端」，均为**启动时构建，保存后需重启后端生效**。
 
 | key | 默认 | 说明 |
 |-----|------|------|

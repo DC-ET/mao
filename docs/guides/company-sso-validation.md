@@ -33,7 +33,7 @@ cd ../admin && npm run build
 
 ## 管理后台配置迁移验证（2026-09-08）
 
-- 公司 SSO 配置迁至后台「系统设置 → 集成配置 → 公司 SSO」，V107 新增 `auth.companySso.config`，保存完整五字段 JSON；不读取或导入旧 SSO 业务环境变量。测试隔离 socket 开关仅供测试使用，保持不变。
+- 公司 SSO 配置迁至后台「系统设置 → 登录认证 → 公司 SSO」，V107 新增 `auth.companySso.config`，保存完整五字段 JSON；不读取或导入旧 SSO 业务环境变量。测试隔离 socket 开关仅供测试使用，保持不变。
 - 后端 `npm run build && npm test` 通过：171 文件、1615 项通过，12 项真实 MySQL 测试仍跳过。V107 已通过迁移加载的 mock 测试，未在真实 MySQL 执行。
 - 管理后台 `npm run build` 通过；根目录 `npm run test:admin -- admin-company-sso.spec.ts` 16 项通过，API 全部 mock，覆盖字段校验、权限、缺失/损坏值禁止保存、完整提交、失败保留输入。
 - 复用原 reviewer 完成本次迁移第 1 轮审查，无新增可触发 bug，不生成空报告。复核请求配置快照、动态启停/白名单/TTL/timeout、限流不重置、配置失败拒绝换票及不影响普通 REST。

@@ -1,6 +1,6 @@
 <template>
   <div class="system-settings">
-    <el-card>
+    <el-card class="page-card">
       <template #header>
         <div class="card-header">
           <div>
@@ -17,133 +17,147 @@
         <aside class="toc">
           <div class="toc-title">目录</div>
           <div class="toc-list">
-            <div
-              v-for="item in toc"
-              :key="item.id"
-              class="toc-item"
-              :class="{ active: activeSection === item.id }"
-              @click="scrollToSection(item.id)"
-            >
-              {{ item.label }}
-            </div>
+            <template v-for="group in tocGroups" :key="group.label">
+              <div class="toc-group-title">{{ group.label }}</div>
+              <div
+                v-for="item in group.sections"
+                :key="item.id"
+                class="toc-item"
+                :class="{ active: activeSection === item.id }"
+                @click="scrollToSection(item.id)"
+              >
+                {{ item.label }}
+              </div>
+            </template>
           </div>
         </aside>
 
         <div class="settings-content">
-          <CompanySsoConfigPanel
-            :row="companySsoRow"
-            :can-write="canWrite"
-            :ready="settingsLoaded && !loading"
-            @saved="fetchSettings"
-          />
-          <EcpConfigPanel
-            :row="ecpRow"
-            :can-write="canWrite"
-            :ready="settingsLoaded && !loading"
-            @saved="fetchSettings"
-          />
-          <IntegrationConfigPanel
-            v-if="integrationRows.length > 0"
-            :rows="integrationRows"
-            :can-write="canWrite"
-            @saved="fetchSettings"
-          />
-          <section
-            v-for="category in categories"
-            :key="category"
-            :id="`setting-cat-${category}`"
-            class="setting-section"
-          >
-            <el-card class="group-card" shadow="never">
-              <template #header>
-                <div class="group-header">
-                  <span class="group-title">{{ category }}</span>
-                  <el-button
-                    v-if="hasEditable(category)"
-                    type="primary"
-                    size="small"
-                    :loading="savingKeys.has(category)"
-                    :disabled="!canWrite"
-                    @click="saveCategory(category)"
-                  >保存</el-button>
-                </div>
+          <template v-for="group in tocGroups" :key="group.label">
+            <template v-for="section in group.sections" :key="section.id">
+              <CompanySsoConfigPanel
+                v-if="section.kind === 'company-sso'"
+                :row="companySsoRow"
+                :can-write="canWrite"
+                :ready="settingsLoaded && !loading"
+                @saved="fetchSettings"
+              />
+              <EcpConfigPanel
+                v-else-if="section.kind === 'ecp'"
+                :row="ecpRow"
+                :can-write="canWrite"
+                :ready="settingsLoaded && !loading"
+                @saved="fetchSettings"
+              />
+              <template v-else-if="section.kind === 'integration'">
+                <el-alert
+                  v-if="section.name === firstIntegrationName"
+                  type="info"
+                  :closable="false"
+                  show-icon
+                  title="集成配置保存后即时生效；Agent 运行 / Harness 调参为启动时构建，保存后需重启后端生效。加密项保存后仅显示掩码，留空表示不修改。"
+                  class="integration-tip"
+                />
+                <IntegrationConfigPanel
+                  :rows="integrationRows"
+                  :group-name="section.name"
+                  :can-write="canWrite"
+                  @saved="fetchSettings"
+                />
               </template>
-              <el-form label-position="top" class="group-form">
-                <el-form-item
-                  v-for="row in settingsByCategory[category]"
-                  :key="row.settingKey"
-                  :label="row.description || row.settingKey"
-                >
-                  <div v-if="row.editable !== 1" class="field-readonly">{{ row.value || '未设置' }}</div>
-                  <template v-else>
-                    <el-switch
-                      v-if="isBooleanSetting(row.settingKey)"
-                      :model-value="plainModel[row.settingKey] === 'true'"
-                      :disabled="!canWrite"
-                      @change="(val: string | number | boolean) => { plainModel[row.settingKey] = val === true ? 'true' : 'false' }"
-                    />
-                    <el-select
-                      v-else-if="row.settingKey === 'weixin.agentId'"
-                      v-model="plainModel[row.settingKey]"
-                      :disabled="!canWrite"
-                      clearable
-                      filterable
-                      placeholder="默认 Agent"
-                      style="width: 100%"
-                    >
-                      <el-option
-                        v-for="agent in agents"
-                        :key="agent.id"
-                        :label="agentLabel(agent)"
-                        :value="String(agent.id)"
-                        :disabled="agent.enabled === false"
-                      />
-                    </el-select>
-                    <el-select
-                      v-else-if="isModelSetting(row.settingKey)"
-                      v-model="plainModel[row.settingKey]"
-                      :disabled="!canWrite"
-                      clearable
-                      filterable
-                      placeholder="默认模型"
-                      style="width: 100%"
-                    >
-                      <el-option v-for="model in models" :key="model.id" :label="modelLabel(model)" :value="String(model.id)" />
-                    </el-select>
-                    <el-input-number
-                      v-else-if="isNumericKey(row.settingKey)"
-                      :model-value="toNumberOrNull(plainModel[row.settingKey])"
-                      :min="1"
-                      :step="1"
-                      step-strictly
-                      controls-position="right"
-                      :disabled="!canWrite"
-                      style="width: 100%"
-                      @update:model-value="(val: number | undefined) => { plainModel[row.settingKey] = val == null ? '' : String(val) }"
-                    />
-                    <el-input
-                      v-else
-                      v-model="plainModel[row.settingKey]"
-                      :type="row.isSecret === 1 ? 'password' : 'text'"
-                      :placeholder="row.isSecret === 1 && row.value ? '已设置，留空表示不修改' : ''"
-                      :disabled="!canWrite"
-                      autocomplete="new-password"
-                    >
-                      <template v-if="row.isSecret === 1 && row.value" #append>
-                        <el-button
-                          v-if="!pendingClearKeys.has(row.settingKey)"
-                          :disabled="!canWrite"
-                          @click="markSecretClear(row.settingKey)"
-                        >清除</el-button>
-                        <el-tag v-else type="danger" size="small" closable @close="unmarkSecretClear(row.settingKey)">将清除</el-tag>
-                      </template>
-                    </el-input>
-                    <div class="field-hint">{{ row.settingKey }}</div>
+              <section v-else :id="`setting-cat-${section.name}`" class="setting-section">
+                <el-card class="group-card" shadow="never">
+                  <template #header>
+                    <div class="group-header">
+                      <span class="group-title">{{ section.name }}</span>
+                      <el-button
+                        v-if="hasEditable(section.name)"
+                        type="primary"
+                        size="small"
+                        :loading="savingKeys.has(section.name)"
+                        :disabled="!canWrite"
+                        @click="saveCategory(section.name)"
+                      >保存</el-button>
+                    </div>
                   </template>
-                </el-form-item>
-              </el-form>
-            </el-card>
-          </section>
+                  <el-form label-position="top" class="group-form">
+                    <el-form-item
+                      v-for="row in settingsByCategory[section.name]"
+                      :key="row.settingKey"
+                      :label="row.description || row.settingKey"
+                    >
+                      <div v-if="row.editable !== 1" class="field-readonly">{{ row.value || '未设置' }}</div>
+                      <template v-else>
+                        <el-switch
+                          v-if="isBooleanSetting(row.settingKey)"
+                          :model-value="plainModel[row.settingKey] === 'true'"
+                          :disabled="!canWrite"
+                          @change="(val: string | number | boolean) => { plainModel[row.settingKey] = val === true ? 'true' : 'false' }"
+                        />
+                        <el-select
+                          v-else-if="row.settingKey === 'weixin.agentId'"
+                          v-model="plainModel[row.settingKey]"
+                          :disabled="!canWrite"
+                          clearable
+                          filterable
+                          placeholder="默认 Agent"
+                          style="width: 100%"
+                        >
+                          <el-option
+                            v-for="agent in agents"
+                            :key="agent.id"
+                            :label="agentLabel(agent)"
+                            :value="String(agent.id)"
+                            :disabled="agent.enabled === false"
+                          />
+                        </el-select>
+                        <el-select
+                          v-else-if="isModelSetting(row.settingKey)"
+                          v-model="plainModel[row.settingKey]"
+                          :disabled="!canWrite"
+                          clearable
+                          filterable
+                          placeholder="默认模型"
+                          style="width: 100%"
+                        >
+                          <el-option v-for="model in models" :key="model.id" :label="modelLabel(model)" :value="String(model.id)" />
+                        </el-select>
+                        <el-input-number
+                          v-else-if="isNumericKey(row.settingKey)"
+                          :model-value="toNumberOrNull(plainModel[row.settingKey])"
+                          :min="1"
+                          :step="1"
+                          step-strictly
+                          controls-position="right"
+                          :disabled="!canWrite"
+                          style="width: 100%"
+                          @update:model-value="(val: number | undefined) => { plainModel[row.settingKey] = val == null ? '' : String(val) }"
+                        />
+                        <el-input
+                          v-else
+                          v-model="plainModel[row.settingKey]"
+                          :type="row.isSecret === 1 ? 'password' : 'text'"
+                          :placeholder="row.isSecret === 1 && row.value ? '已设置，留空表示不修改' : ''"
+                          :disabled="!canWrite"
+                          autocomplete="new-password"
+                        >
+                          <template v-if="row.isSecret === 1 && row.value" #append>
+                            <el-button
+                              v-if="!pendingClearKeys.has(row.settingKey)"
+                              :disabled="!canWrite"
+                              @click="markSecretClear(row.settingKey)"
+                            >清除</el-button>
+                            <el-tag v-else type="danger" size="small" closable @close="unmarkSecretClear(row.settingKey)">将清除</el-tag>
+                          </template>
+                        </el-input>
+                        <div class="field-hint">{{ row.settingKey }}</div>
+                      </template>
+                    </el-form-item>
+                  </el-form>
+                </el-card>
+              </section>
+            </template>
+          </template>
         </div>
       </div>
     </el-card>
@@ -184,20 +198,73 @@ const INTEGRATION_KEYS = new Set([
   'terminal.maxSessionsPerTask', 'terminal.maxSessionsGlobal', 'terminal.idleTimeoutMinutes', 'terminal.maxLifetimeHours', 'terminal.outputBufferBytes',
 ])
 
-/** 集成配置目录条目：锚点 id 与 IntegrationConfigPanel 内 group-card 的 id 保持一致。 */
-const INTEGRATION_TOC = [
-  { id: 'setting-group-ldap', label: 'LDAP 认证' },
-  { id: 'setting-group-feishu', label: '飞书 OAuth 登录' },
-  { id: 'setting-group-upload', label: '上传配置' },
-  { id: 'setting-group-oss', label: 'OSS 对象存储' },
-  { id: 'setting-group-tools', label: '网络工具' },
-  { id: 'setting-group-agent', label: 'Agent 运行' },
-  { id: 'setting-group-notify', label: '任务通知' },
-  { id: 'setting-group-harness-compaction', label: '上下文压缩' },
-  { id: 'setting-group-harness-llm', label: 'LLM 超时与重试' },
-  { id: 'setting-group-harness-webpage', label: '网页抓取' },
-  { id: 'setting-group-harness-shell', label: 'Shell 会话' },
-  { id: 'setting-group-terminal', label: '云端终端' },
+/** 集成组显示名：key 为 IntegrationConfigPanel 的 group name，锚点 id 为 `setting-group-${name}`。 */
+const INTEGRATION_LABELS: Record<string, string> = {
+  ldap: 'LDAP 认证',
+  feishu: '飞书 OAuth 登录',
+  upload: '上传配置',
+  oss: 'OSS 对象存储',
+  agent: 'Agent 运行',
+  'harness-llm': 'LLM 超时与重试',
+  'harness-compaction': '上下文压缩',
+  tools: '网络工具',
+  'harness-webpage': '网页抓取',
+  'harness-shell': 'Shell 会话',
+  terminal: '云端终端',
+  notify: '任务通知',
+}
+
+/** 目录分组声明：右侧卡片渲染顺序与目录一致。integration=集成配置组，category=后端 system_setting 分类；后端新增的未声明分类兜底归入「其他」。 */
+const TOC_GROUPS: Array<{ label: string; sections: Array<{ kind: 'company-sso' | 'ecp' | 'integration' | 'category'; name: string }> }> = [
+  {
+    label: '登录认证',
+    sections: [
+      { kind: 'company-sso', name: 'company-sso' },
+      { kind: 'ecp', name: 'ecp' },
+      { kind: 'integration', name: 'ldap' },
+      { kind: 'integration', name: 'feishu' },
+    ],
+  },
+  {
+    label: '文件与存储',
+    sections: [
+      { kind: 'integration', name: 'upload' },
+      { kind: 'integration', name: 'oss' },
+    ],
+  },
+  {
+    label: 'Agent 与模型',
+    sections: [
+      { kind: 'integration', name: 'agent' },
+      { kind: 'integration', name: 'harness-llm' },
+      { kind: 'integration', name: 'harness-compaction' },
+      { kind: 'category', name: '会话' },
+      { kind: 'category', name: '代码' },
+    ],
+  },
+  {
+    label: '工具与终端',
+    sections: [
+      { kind: 'integration', name: 'tools' },
+      { kind: 'integration', name: 'harness-webpage' },
+      { kind: 'integration', name: 'harness-shell' },
+      { kind: 'integration', name: 'terminal' },
+    ],
+  },
+  {
+    label: '通知与消息',
+    sections: [
+      { kind: 'integration', name: 'notify' },
+      { kind: 'category', name: '微信' },
+    ],
+  },
+  {
+    label: '平台与运维',
+    sections: [
+      { kind: 'category', name: '审计' },
+      { kind: 'category', name: '运行环境' },
+    ],
+  },
 ]
 
 const loading = ref(false)
@@ -353,18 +420,64 @@ const settingsByCategory = computed(() => {
   return map
 })
 
-/** 目录索引：集成配置在前，普通分类在后。 */
-const toc = computed(() => {
-  const list: Array<{ id: string; label: string }> = [
-    { id: 'setting-group-company-sso', label: '公司 SSO' },
-    { id: 'setting-group-ecp', label: 'ECP 飞书登录' },
-  ]
-  if (integrationRows.value.length > 0) list.push(...INTEGRATION_TOC)
-  for (const category of categories.value) {
-    list.push({ id: `setting-cat-${category}`, label: category })
+interface TocSection {
+  id: string
+  label: string
+  kind: 'company-sso' | 'ecp' | 'integration' | 'category'
+  name: string
+}
+
+interface TocGroup {
+  label: string
+  sections: TocSection[]
+}
+
+/** 目录分组：按 TOC_GROUPS 声明过滤出实际有内容的条目（集成组依赖集成配置行存在，分类依赖后端返回该分类）。 */
+const tocGroups = computed<TocGroup[]>(() => {
+  const integrationVisible = integrationRows.value.length > 0
+  const knownCategories = new Set(categories.value)
+  const declaredCategories = new Set<string>()
+  const groups: TocGroup[] = []
+  for (const group of TOC_GROUPS) {
+    const sections: TocSection[] = []
+    for (const decl of group.sections) {
+      if (decl.kind === 'integration' && !integrationVisible) continue
+      if (decl.kind === 'category') {
+        declaredCategories.add(decl.name)
+        if (!knownCategories.has(decl.name)) continue
+      }
+      sections.push({
+        kind: decl.kind,
+        name: decl.name,
+        id: decl.kind === 'category'
+          ? `setting-cat-${decl.name}`
+          : decl.kind === 'company-sso'
+            ? 'setting-group-company-sso'
+            : decl.kind === 'ecp'
+              ? 'setting-group-ecp'
+              : `setting-group-${decl.name}`,
+        label: decl.kind === 'integration'
+          ? (INTEGRATION_LABELS[decl.name] ?? decl.name)
+          : decl.kind === 'company-sso'
+            ? '公司 SSO'
+            : decl.kind === 'ecp'
+              ? 'ECP 飞书登录'
+              : decl.name,
+      })
+    }
+    if (sections.length > 0) groups.push({ label: group.label, sections })
   }
-  return list
+  const unknown = categories.value.filter((category) => !declaredCategories.has(category))
+  if (unknown.length > 0) {
+    groups.push({ label: '其他', sections: unknown.map((name) => ({ kind: 'category' as const, name, id: `setting-cat-${name}`, label: name })) })
+  }
+  return groups
 })
+
+/** 目录平铺条目：滚动跳转与高亮用。 */
+const toc = computed(() => tocGroups.value.flatMap((group) => group.sections))
+
+const firstIntegrationName = computed(() => toc.value.find((section) => section.kind === 'integration')?.name ?? '')
 
 function scrollToSection(id: string) {
   activeSection.value = id
@@ -509,6 +622,16 @@ onActivated(() => {
   gap: 24px;
 }
 
+/* Element Plus 卡片默认 overflow: hidden / body auto，会把 sticky 目录关在卡片内使其失效；
+   本页放开这两层，让 .toc 相对真正的页面滚动容器 .layout-content 粘滞 */
+.page-card {
+  overflow: visible;
+}
+
+.page-card > :deep(.el-card__body) {
+  overflow: visible;
+}
+
 .toc {
   position: sticky;
   top: 12px;
@@ -523,6 +646,19 @@ onActivated(() => {
   color: var(--mao-muted);
   margin-bottom: 8px;
   letter-spacing: 0.5px;
+}
+
+.toc-group-title {
+  margin: 10px 0 2px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--mao-muted);
+  letter-spacing: 0.5px;
+}
+
+.toc-group-title:first-child {
+  margin-top: 0;
 }
 
 .toc-list {
@@ -567,6 +703,10 @@ onActivated(() => {
 
 .setting-section {
   scroll-margin-top: 12px;
+}
+
+.integration-tip {
+  border-radius: 8px;
 }
 
 /* 分类卡片：与 IntegrationConfigPanel 的 group-card 同款风格 */

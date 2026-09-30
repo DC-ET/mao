@@ -19,22 +19,45 @@
           @click="handleRefresh"
         ><el-icon :size="16"><Refresh /></el-icon></button>
       </div>
-      <div class="file-tree-content" v-loading="loading">
-        <div v-if="filteredTreeData.length === 0 && !loading" class="file-tree-empty">
-          <p>{{ filterText ? '无匹配文件' : '空目录' }}</p>
-        </div>
-        <div v-else class="file-tree-inner">
-          <FileTreeNode
-            v-for="node in filteredTreeData"
-            :key="node.path"
-            :node="node"
-            :depth="0"
-            @open-file="handleOpenFile"
-            @toggle-dir="handleToggleDir"
-            @retry="handleRetry"
-            @node-contextmenu="handleNodeContextmenu"
-          />
-        </div>
+      <div class="file-tree-content" v-loading="loading || searching">
+        <template v-if="isSearchMode">
+          <div v-if="searchError" class="file-tree-empty">
+            <p>{{ searchError }}</p>
+          </div>
+          <div v-else-if="searchResults != null && searchResults.length === 0" class="file-tree-empty">
+            <p>无匹配文件</p>
+          </div>
+          <div v-else class="file-tree-inner">
+            <div v-if="searchTruncated && searchResults?.length" class="search-truncated-hint">
+              匹配较多，仅显示前 {{ searchResults.length }} 条
+            </div>
+            <FileTreeNode
+              v-for="node in searchResults ?? []"
+              :key="node.path"
+              :node="node"
+              :depth="0"
+              @open-file="handleOpenFile"
+              @node-contextmenu="handleNodeContextmenu"
+            />
+          </div>
+        </template>
+        <template v-else>
+          <div v-if="treeData.length === 0 && !loading" class="file-tree-empty">
+            <p>空目录</p>
+          </div>
+          <div v-else class="file-tree-inner">
+            <FileTreeNode
+              v-for="node in treeData"
+              :key="node.path"
+              :node="node"
+              :depth="0"
+              @open-file="handleOpenFile"
+              @toggle-dir="handleToggleDir"
+              @retry="handleRetry"
+              @node-contextmenu="handleNodeContextmenu"
+            />
+          </div>
+        </template>
       </div>
     </template>
 
@@ -93,7 +116,7 @@ const emit = defineEmits<{
 const canOpenInFinder = computed(() => typeof window !== 'undefined' && !!window.electronAPI?.showItemInFolder)
 
 const providerRef = toRef(props, 'provider')
-const { treeData, loading, expandDir, refresh, loadAllDirectories } = useFileBrowser(providerRef)
+const { treeData, loading, expandDir, refresh } = useFileBrowser(providerRef)
 
 const isReady = computed(() => {
   if (props.executionMode === 'CLOUD') {
@@ -108,8 +131,6 @@ const emptyMessage = computed(() => {
   }
   return '请先选择工作区目录'
 })
-
-const filterText = ref('')
 
 const ctxMenu = reactive({
   visible: false,
@@ -174,12 +195,16 @@ async function handleDownloadFile() {
   }
   downloading.value = true
   try {
-    const result = await props.provider.downloadFile(node.path, node.name)
+    // 搜索结果节点 name 为完整相对路径，下载文件名回退为最后一段
+    const suggestedName = node.name.includes('/')
+      ? node.name.slice(node.name.lastIndexOf('/') + 1)
+      : node.name
+    const result = await props.provider.downloadFile(node.path, suggestedName)
     if (result.ok) {
       if ((isWechatBrowser() || isAndroidCapacitor()) && result.url) {
         // 微信浏览器和安卓 WebView 可能阻止 Blob 自动下载，显示可鉴权的下载链接
         downloadDialog.url = result.url
-        downloadDialog.fileName = node.name
+        downloadDialog.fileName = suggestedName
         downloadDialog.visible = true
       } else {
         ElMessage.success(`已触发下载：${node.name}`)
@@ -189,7 +214,7 @@ async function handleDownloadFile() {
       // 如果有URL，显示下载链接对话框
       if (result.url) {
         downloadDialog.url = result.url
-        downloadDialog.fileName = node.name
+        downloadDialog.fileName = suggestedName
         downloadDialog.visible = true
       }
     }
@@ -208,22 +233,26 @@ async function handleDownloadDirectory() {
   downloading.value = true
   ElMessage.info(`正在打包 ${node.name}…`)
   try {
-    const result = await props.provider.downloadDirectory(node.path, `${node.name}.zip`)
+    // 合并压缩后的目录节点 name 可能含斜杠，弹窗展示的文件名回退为最后一段
+    const baseName = node.name.includes('/')
+      ? node.name.slice(node.name.lastIndexOf('/') + 1)
+      : node.name
+    const result = await props.provider.downloadDirectory(node.path, `${baseName}.zip`)
     if (result.ok) {
       if ((isWechatBrowser() || isAndroidCapacitor()) && result.url) {
         // 微信浏览器和安卓 WebView 可能阻止 Blob 自动下载，显示可鉴权的下载链接
         downloadDialog.url = result.url
-        downloadDialog.fileName = `${node.name}.zip`
+        downloadDialog.fileName = `${baseName}.zip`
         downloadDialog.visible = true
       } else {
-        ElMessage.success(`已触发下载：${node.name}.zip`)
+        ElMessage.success(`已触发下载：${baseName}.zip`)
       }
     } else {
       ElMessage.error(result.error || '下载失败')
       // 如果有URL，显示下载链接对话框
       if (result.url) {
         downloadDialog.url = result.url
-        downloadDialog.fileName = `${node.name}.zip`
+        downloadDialog.fileName = `${baseName}.zip`
         downloadDialog.visible = true
       }
     }
@@ -232,57 +261,87 @@ async function handleDownloadDirectory() {
   }
 }
 
-let filterSeq = 0
-let filterDebounceTimer: ReturnType<typeof setTimeout> | null = null
-watch(filterText, (val) => {
-  const keyword = val.trim()
-  if (filterDebounceTimer) {
-    clearTimeout(filterDebounceTimer)
-    filterDebounceTimer = null
-  }
-  // 清空关键词：仅复位过滤视图，无需加载目录
-  if (!keyword) return
-  // 逐字符输入会触发 6 层全树并发加载（请求风暴）：
-  // 至少 2 个字符且 300ms 防抖后才执行全树加载
-  if (keyword.length < 2) return
-  filterDebounceTimer = setTimeout(async () => {
-    filterDebounceTimer = null
-    const seq = ++filterSeq
-    await loadAllDirectories(treeData.value, 0, 6)
-    if (seq !== filterSeq) return
-    filterVersion.value++
-  }, 300)
-})
+const SEARCH_DEBOUNCE_MS = 300
+const SEARCH_RESULT_LIMIT = 100
 
-const filterVersion = ref(0)
+const filterText = ref('')
+const searchResults = ref<FileNode[] | null>(null)
+const searching = ref(false)
+const searchError = ref('')
+const searchTruncated = ref(false)
+let searchSeq = 0
+let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null
 
-function filterNodes(nodes: FileNode[], keyword: string): FileNode[] {
-  const lower = keyword.toLowerCase()
-  const result: FileNode[] = []
-  for (const node of nodes) {
-    if (node.isDirectory) {
-      const filteredChildren = node.children ? filterNodes(node.children, keyword) : []
-      if (node.name.toLowerCase().includes(lower) || filteredChildren.length > 0) {
-        result.push({ ...node, children: node.children ? filteredChildren : node.children, expanded: filteredChildren.length > 0 ? true : node.expanded })
-      }
-    } else {
-      if (node.name.toLowerCase().includes(lower)) {
-        result.push(node)
-      }
-    }
+const isSearchMode = computed(() => filterText.value.trim().length > 0)
+
+function resetSearchState() {
+  searchSeq++
+  if (searchDebounceTimer) {
+    clearTimeout(searchDebounceTimer)
+    searchDebounceTimer = null
   }
-  return result
+  searchResults.value = null
+  searching.value = false
+  searchError.value = ''
+  searchTruncated.value = false
 }
 
-const filteredTreeData = computed(() => {
-  void filterVersion.value
-  const keyword = filterText.value.trim()
-  if (!keyword) return treeData.value
-  return filterNodes(treeData.value, keyword)
+watch(filterText, (val) => {
+  const keyword = val.trim()
+  if (searchDebounceTimer) {
+    clearTimeout(searchDebounceTimer)
+    searchDebounceTimer = null
+  }
+  if (!keyword) {
+    resetSearchState()
+    return
+  }
+  // 防抖后经 provider.searchFiles 一次拿全部匹配。
+  // 勿改回全树逐层加载：多仓库工作区会产生数千并发目录请求，
+  // 耗尽浏览器资源（ERR_INSUFFICIENT_RESOURCES）导致满屏网络错误。
+  searchDebounceTimer = setTimeout(async () => {
+    searchDebounceTimer = null
+    const provider = props.provider
+    if (!provider) return
+    const seq = ++searchSeq
+    searching.value = true
+    searchError.value = ''
+    try {
+      const result = await provider.searchFiles(keyword, SEARCH_RESULT_LIMIT)
+      if (seq !== searchSeq) return
+      if (result.error) {
+        searchError.value = result.error
+        searchResults.value = []
+        searchTruncated.value = false
+        return
+      }
+      searchResults.value = (result.entries ?? []).map((entry) => ({
+        // 行内展示完整相对路径，便于区分不同目录下的同名文件
+        name: entry.path,
+        path: entry.path,
+        isDirectory: false,
+        isSymlink: false,
+        size: entry.size,
+      }))
+      searchTruncated.value = !!result.truncated
+    } finally {
+      if (seq === searchSeq) searching.value = false
+    }
+  }, SEARCH_DEBOUNCE_MS)
+})
+
+watch(providerRef, () => {
+  // 切换会话/工作区：清空筛选，避免上一会话的搜索结果串台
+  filterText.value = ''
+  resetSearchState()
 })
 
 function handleOpenFile(payload: { path: string; title: string }) {
-  emit('open-file', payload)
+  // 搜索结果行展示的是完整相对路径，打开页签标题回退为文件名
+  const title = payload.title.includes('/')
+    ? payload.title.slice(payload.title.lastIndexOf('/') + 1)
+    : payload.title
+  emit('open-file', { path: payload.path, title })
 }
 
 function handleToggleDir(node: FileNode) {
@@ -301,10 +360,7 @@ function handleRefresh() {
 }
 
 onUnmounted(() => {
-  if (filterDebounceTimer) {
-    clearTimeout(filterDebounceTimer)
-    filterDebounceTimer = null
-  }
+  resetSearchState()
 })
 </script>
 
@@ -375,6 +431,13 @@ onUnmounted(() => {
   height: 100%;
   color: var(--aw-ink-muted-48);
   font-size: var(--aw-text-caption);
+}
+
+.search-truncated-hint {
+  padding: 4px 10px;
+  color: var(--aw-ink-muted-48);
+  font-size: var(--aw-text-fine);
+  white-space: nowrap;
 }
 
 .file-tree-empty p {

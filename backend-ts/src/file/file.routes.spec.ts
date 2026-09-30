@@ -49,6 +49,7 @@ describe('file routes', () => {
     const sessionService = { getSession: vi.fn(async () => session) } as unknown as SessionService;
     const workspaceBrowseService = {
       listDirectory: vi.fn(() => ({ entries: [], truncated: false })),
+      searchFiles: vi.fn(() => ({ entries: [{ name: 'a.txt', path: 'a.txt', isDirectory: false, size: 1, isSymlink: false }], truncated: false })),
       readFile: vi.fn(async () => ({ content: 'hi', total_lines: 1 })),
     } as unknown as WorkspaceBrowseService;
     const workspaceGitService = {
@@ -84,6 +85,9 @@ describe('file routes', () => {
     expect(fileListVo.data[0]?.originalName).toBe('a.txt');
     expect((await get('/v1/files/workspace-list?sessionId=1')).data.files).toHaveLength(1);
     expect((await get('/v1/files/workspace-directory?sessionId=1')).code).toBe(0);
+    expect((await get('/v1/files/workspace-search?sessionId=1&pattern=a')).code).toBe(0);
+    expect((await get('/v1/files/workspace-search?sessionId=1&pattern=a')).data.entries[0].name).toBe('a.txt');
+    expect((await get('/v1/files/workspace-search?sessionId=1')).code).not.toBe(0);
     expect((await get('/v1/files/workspace-read?sessionId=1&path=a.txt')).data.content).toBe('hi');
     expect((await get('/v1/files/workspace-git-repos?sessionId=1')).data.isRootGit).toBe(false);
     expect((await get('/v1/files/workspace-git-status?sessionId=1')).data.isGit).toBe(false);

@@ -13,6 +13,11 @@ import { ImageFileSupport } from '../harness/tool/image-file-support.js';
 import { PathSandbox, SecurityException } from '../harness/safety/path-sandbox.js';
 
 const MAX_ENTRIES = 500;
+const MAX_SEARCH_RESULTS = 100;
+const MAX_SEARCH_SCANNED_DIRS = 2000;
+const MAX_SEARCH_DEPTH = 12;
+/** 递归搜索时跳过的目录：体积大且不会是用户要找的业务文件 */
+const SEARCH_EXCLUDED_DIRS = new Set(['.git', 'node_modules']);
 const DEFAULT_READ_LIMIT = 5000;
 const MAX_READ_LIMIT = 5000;
 const MAX_CONTENT_BYTES = 512 * 1024;
@@ -28,6 +33,11 @@ export interface DirectoryEntryDTO {
 }
 
 export interface DirectoryListingDTO {
+  entries: DirectoryEntryDTO[];
+  truncated: boolean;
+}
+
+export interface WorkspaceSearchDTO {
   entries: DirectoryEntryDTO[];
   truncated: boolean;
 }
@@ -109,6 +119,79 @@ export class WorkspaceBrowseService {
       }
       return a.name.localeCompare(b.name, undefined, { sensitivity: 'accent' });
     });
+    return { entries, truncated };
+  }
+
+  /**
+   * 按文件名递归搜索工作区文件（大小写不敏感子串匹配）。
+   * 有界遍历：跳过 .git/node_modules 与符号链接，目录数/深度/结果数均有上限，
+   * 超限时返回 truncated=true，避免大工作区拖垮请求。
+   */
+  searchFiles(sessionWorkspace: string, pattern: string, limit: number | null | undefined): WorkspaceSearchDTO {
+    if (pattern == null || pattern.trim().length === 0) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '搜索关键词不能为空');
+    }
+    const lower = pattern.trim().toLowerCase();
+    const maxResults = Math.min(Math.max(limit ?? MAX_SEARCH_RESULTS, 1), MAX_SEARCH_RESULTS);
+    const rootPath = this.resolvePath('.', sessionWorkspace);
+    if (!existsSync(rootPath) || !statSync(rootPath).isDirectory()) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '工作区不存在');
+    }
+    const entries: DirectoryEntryDTO[] = [];
+    let truncated = false;
+    let scanned = 0;
+    const queue: { abs: string; rel: string; depth: number }[] = [{ abs: rootPath, rel: '', depth: 0 }];
+    while (queue.length > 0) {
+      if (entries.length >= maxResults || scanned >= MAX_SEARCH_SCANNED_DIRS) {
+        truncated = true;
+        break;
+      }
+      const cur = queue.shift()!;
+      scanned++;
+      let dirents;
+      try {
+        dirents = readdirSync(cur.abs, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const e of dirents) {
+        if (entries.length >= maxResults) {
+          truncated = true;
+          break;
+        }
+        let lst: Stats;
+        try {
+          lst = lstatSync(join(cur.abs, e.name));
+        } catch {
+          continue;
+        }
+        if (lst.isSymbolicLink()) continue;
+        if (lst.isDirectory()) {
+          if (SEARCH_EXCLUDED_DIRS.has(e.name)) continue;
+          if (cur.depth >= MAX_SEARCH_DEPTH) {
+            truncated = true;
+            continue;
+          }
+          queue.push({
+            abs: join(cur.abs, e.name),
+            rel: cur.rel ? `${cur.rel}/${e.name}` : e.name,
+            depth: cur.depth + 1,
+          });
+          continue;
+        }
+        if (!lst.isFile()) continue;
+        if (e.name.toLowerCase().includes(lower)) {
+          entries.push({
+            name: e.name,
+            path: cur.rel ? `${cur.rel}/${e.name}` : e.name,
+            isDirectory: false,
+            isSymlink: false,
+            size: lst.size,
+          });
+        }
+      }
+    }
+    entries.sort((a, b) => a.path.localeCompare(b.path, undefined, { sensitivity: 'accent' }));
     return { entries, truncated };
   }
 

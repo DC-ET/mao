@@ -1,12 +1,5 @@
 <template>
   <div class="integration-panel">
-    <el-alert
-      type="info"
-      :closable="false"
-      show-icon
-      title="集成配置保存后即时生效；Agent 运行 / Harness 调参为启动时构建，保存后需重启后端生效。加密项保存后仅显示掩码，留空表示不修改。"
-      class="integration-tip"
-    />
     <div class="group-list">
       <el-card
         v-for="group in groups"
@@ -120,14 +113,8 @@ interface GroupDef {
   testPayload?: (model: Record<string, string>) => Record<string, string>
 }
 
-const props = defineProps<{ rows: SettingRow[]; canWrite?: boolean }>()
+const props = defineProps<{ rows: SettingRow[]; canWrite?: boolean; groupName?: string }>()
 const emit = defineEmits<{ (e: 'saved'): void }>()
-
-const rowMap = computed<Record<string, SettingRow>>(() => {
-  const map: Record<string, SettingRow> = {}
-  for (const row of props.rows) map[row.settingKey] = row
-  return map
-})
 
 /** 表单编辑副本：进入时从 rows 拷贝，保存成功后回写。secret 留空 = 不修改。 */
 const model = reactive<Record<string, string>>({})
@@ -137,16 +124,14 @@ const testing = ref('')
 const clearedSecrets = ref(new Set<string>())
 
 function syncFromRows() {
-  for (const row of props.rows) {
+  for (const row of visibleRows.value) {
     if (model[row.settingKey] === undefined) {
       model[row.settingKey] = row.isSecret === 1 ? '' : (row.value ?? '')
     }
   }
 }
 
-watch(rowMap, syncFromRows, { immediate: true, deep: true })
-
-const groups = computed<GroupDef[]>(() => [
+const ALL_GROUPS = computed<GroupDef[]>(() => [
   {
     name: 'ldap',
     title: 'LDAP 认证',
@@ -333,6 +318,27 @@ const groups = computed<GroupDef[]>(() => [
   },
 ])
 
+/** 传 groupName 时只渲染/保存该组（目录分组后每处挂一个实例），否则渲染全部组。 */
+const groups = computed<GroupDef[]>(() => {
+  const all = ALL_GROUPS.value
+  return props.groupName ? all.filter((group) => group.name === props.groupName) : all
+})
+
+const visibleRows = computed<SettingRow[]>(() => {
+  if (!props.groupName) return props.rows
+  const keys = new Set(groups.value.flatMap((group) => group.keys))
+  return props.rows.filter((row) => keys.has(row.settingKey))
+})
+
+const rowMap = computed<Record<string, SettingRow>>(() => {
+  const map: Record<string, SettingRow> = {}
+  // 直接取 props.rows：ALL_GROUPS 的 secret set 标记引用 rowMap，若经 visibleRows（依赖 groups→ALL_GROUPS）会成循环依赖
+  for (const row of props.rows) map[row.settingKey] = row
+  return map
+})
+
+watch(visibleRows, syncFromRows, { immediate: true, deep: true })
+
 function pickNonEmpty(m: Record<string, string>, keys: string[], mapping: string[]): Record<string, string> {
   const out: Record<string, string> = {}
   for (let i = 0; i < keys.length; i++) {
@@ -441,10 +447,6 @@ async function runTest(group: GroupDef) {
   display: flex;
   flex-direction: column;
   gap: 16px;
-}
-
-.integration-tip {
-  border-radius: 8px;
 }
 
 .group-list {

@@ -26,6 +26,12 @@ export interface ReadFileResult {
   error?: string
 }
 
+export interface FileSearchResult {
+  entries?: DirectoryEntry[]
+  truncated?: boolean
+  error?: string
+}
+
 export interface PreviewFileResult {
   blob?: Blob
   error?: string
@@ -42,11 +48,67 @@ export interface WorkspaceFileProvider {
   readFile(relativePath: string, opts?: { offset?: number; limit?: number }): Promise<ReadFileResult>
   /** 预览 PDF：获取文件字节 Blob，交由前端 pdf.js 渲染。 */
   previewFile?(relativePath: string): Promise<PreviewFileResult>
+  /**
+   * 按文件名搜索工作区文件（大小写不敏感子串匹配，仅文件不含目录）。
+   * 一次调用返回全部匹配，避免前端逐层拉目录造成请求风暴。
+   */
+  searchFiles(pattern: string, limit?: number): Promise<FileSearchResult>
   getAbsolutePath?(relativePath: string): string
   /** 下载单个文件到浏览器（仅 CLOUD 模式实现）。 */
   downloadFile?(relativePath: string, suggestedName: string): Promise<DownloadResult>
   /** 打包下载目录（zip）到浏览器（仅 CLOUD 模式实现）。 */
   downloadDirectory?(relativePath: string, suggestedName: string): Promise<DownloadResult>
+}
+
+/** 本地搜索跳过的目录与遍历上限：IPC 遍历虽不经 HTTP，也必须设界防止大目录卡死渲染进程 */
+const LOCAL_SEARCH_EXCLUDED_DIRS = new Set(['.git', 'node_modules'])
+const LOCAL_SEARCH_MAX_DIRS = 500
+const LOCAL_SEARCH_MAX_DEPTH = 10
+
+/** 本地模式按文件名有界搜索：BFS 逐层经 Electron IPC listDirectory 遍历，符号链接不入队防止环路 */
+async function searchLocalWorkspace(
+  workspace: string,
+  pattern: string,
+  limit?: number,
+): Promise<FileSearchResult> {
+  const lower = pattern.toLowerCase()
+  const maxResults = Math.max(1, Math.min(limit ?? 50, 200))
+  const entries: DirectoryEntry[] = []
+  let truncated = false
+  let scanned = 0
+  const queue: { abs: string; rel: string; depth: number }[] = [{ abs: workspace, rel: '', depth: 0 }]
+  while (queue.length > 0) {
+    if (entries.length >= maxResults || scanned >= LOCAL_SEARCH_MAX_DIRS) {
+      truncated = true
+      break
+    }
+    const cur = queue.shift()!
+    scanned++
+    let result: DirectoryResult
+    try {
+      result = await window.electronAPI.listDirectory(cur.abs, workspace)
+    } catch {
+      continue
+    }
+    if (result.error) continue
+    for (const entry of result.entries ?? []) {
+      if (entries.length >= maxResults) {
+        truncated = true
+        break
+      }
+      if (entry.isDirectory) {
+        if (entry.isSymlink || LOCAL_SEARCH_EXCLUDED_DIRS.has(entry.name)) continue
+        if (cur.depth >= LOCAL_SEARCH_MAX_DEPTH) {
+          truncated = true
+          continue
+        }
+        queue.push({ abs: resolveWorkspaceFilePath(workspace, entry.path), rel: entry.path, depth: cur.depth + 1 })
+      } else if (entry.name.toLowerCase().includes(lower)) {
+        entries.push(entry)
+      }
+    }
+  }
+  return { entries, truncated }
 }
 
 export function createLocalProvider(workspace: string): WorkspaceFileProvider {
@@ -63,6 +125,9 @@ export function createLocalProvider(workspace: string): WorkspaceFileProvider {
         offset: opts?.offset ?? 0,
         limit: opts?.limit ?? 5000,
       })
+    },
+    searchFiles(pattern: string, limit?: number) {
+      return searchLocalWorkspace(workspace, pattern, limit)
     },
     async previewFile(relativePath: string) {
       try {
@@ -95,6 +160,9 @@ export function createCloudProvider(sessionId: string): WorkspaceFileProvider {
       },
       async readFile() {
         return { content: '', total_lines: 0, error: '会话未就绪' }
+      },
+      async searchFiles() {
+        return { error: '会话未就绪' }
       },
       async previewFile() {
         return { error: '会话未就绪' }
@@ -141,6 +209,19 @@ export function createCloudProvider(sessionId: string): WorkspaceFileProvider {
         }
       } catch (e: any) {
         return { content: '', total_lines: 0, error: e.message || '读取文件失败' }
+      }
+    },
+    async searchFiles(pattern: string, limit = 100) {
+      try {
+        const { data } = await api.get('/files/workspace-search', {
+          params: { sessionId: numericSessionId, pattern, limit },
+        })
+        return {
+          entries: data?.entries ?? [],
+          truncated: data?.truncated ?? false,
+        }
+      } catch (e: any) {
+        return { error: e.message || '搜索失败' }
       }
     },
     downloadFile(relativePath: string, suggestedName: string) {

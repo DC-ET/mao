@@ -117,6 +117,19 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
     return sendOk(reply, workspaceBrowseService.listDirectory(session.workspace!, queryOptStr(request, 'dir')));
   });
 
+  app.get('/v1/files/workspace-search', async (request, reply) => {
+    const userId = requireUserId(request);
+    const session = await requireOwnedSession(userId, requireQueryLong(request, 'sessionId'));
+    const pattern = queryOptStr(request, 'pattern');
+    if (pattern == null || pattern.trim().length === 0) {
+      throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
+    }
+    if (pattern.length > 100) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '搜索关键词过长');
+    }
+    return sendOk(reply, workspaceBrowseService.searchFiles(session.workspace!, pattern, queryOptInt(request, 'limit') ?? 100));
+  });
+
   app.get('/v1/files/workspace-read', async (request, reply) => {
     const userId = requireUserId(request);
     const session = await requireOwnedSession(userId, requireQueryLong(request, 'sessionId'));
