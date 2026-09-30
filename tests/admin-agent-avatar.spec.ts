@@ -19,7 +19,7 @@ async function setup(page: Page) {
     const path = new URL(request.url()).pathname
     let data: unknown = []
     if (path.endsWith('/auth/admin/login') || path.endsWith('/auth/login')) data = { accessToken: 'test-token', refreshToken: 'test-refresh' }
-    else if (path.endsWith('/users/me')) data = { id: 1, username: 'admin', displayName: '管理员', isAdmin: true, permissions: ['agent:read', 'agent:write'] }
+    else if (path.endsWith('/users/me')) data = { id: 1, username: 'admin', displayName: '管理员', isAdmin: true, permissions: ['analytics:read', 'agent:read', 'agent:write'] }
     else if (path.endsWith('/agents/avatar') && request.method() === 'POST') {
       uploads.push(request)
       data = { avatarUrl: '/uploads/uuid.png' }

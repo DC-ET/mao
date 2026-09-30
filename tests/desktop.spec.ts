@@ -174,6 +174,13 @@ test.describe('Desktop App - Not Logged In', () => {
       })
     })
 
+    // window.open 新开页会导航到未路由的 https://open.feishu.test（ERR_ABORTED），
+    // Playwright 下返回的 WindowProxy 不可靠导致 openExternalUrl 误判弹窗被拦截。
+    // mock 成 noopener 成功窗口（truthy，非 null），只验证进入轮询流程。
+    await page.addInitScript(() => {
+      window.open = () => ({ closed: false }) as Window
+    })
+
     await page.goto('/')
     await expect(page.locator('.login-card')).toBeVisible({ timeout: 10_000 })
     await page.getByRole('button', { name: '飞书登录' }).first().click()
@@ -236,10 +243,12 @@ test.describe('Desktop App - Not Logged In', () => {
     await expect(page.locator('.login-card')).toBeVisible({ timeout: 10_000 })
     await page.getByRole('button', { name: '飞书登录' }).first().click()
 
+    // window.open 返回 null 即弹窗被拦截：登录页提示错误并退回密码登录模式，
+    // feishu-status 面板随之卸载。这里断言拦截文案以 ElMessage 形式弹出。
     await expect.poll(() => page.evaluate(() => localStorage.getItem('opened-url')), {
       timeout: 5_000
     }).toBe('https://open.feishu.test/authorize?state=state-2')
-    await expect(page.locator('.feishu-status')).toContainText('飞书授权页面')
+    await expect(page.locator('.el-message--error').first()).toContainText('授权页面被浏览器拦截')
   })
 })
 

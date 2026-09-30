@@ -27,7 +27,7 @@ async function setup(page: Page) {
     const path = new URL(route.request().url()).pathname
     let data: unknown = []
     if (path.endsWith('/auth/admin/login') || path.endsWith('/auth/login')) data = { accessToken: 'test-token', refreshToken: 'test-refresh' }
-    else if (path.endsWith('/users/me')) data = { id: 1, username: 'admin', isAdmin: true, permissions: ['user:read', 'agent:read', 'agent:write', 'session:read'] }
+    else if (path.endsWith('/users/me')) data = { id: 1, username: 'admin', isAdmin: true, permissions: ['analytics:read', 'user:read', 'agent:read', 'agent:write', 'session:read', 'audit:read', 'scheduled-task:read'] }
     else if (path.endsWith('/admin/sessions/7/messages')) data = { messages: [
       { id: 1, role: 'user', content: '测试问题', createdAt: iso },
       { id: 2, role: 'assistant', content: '测试回复', createdAt: iso }

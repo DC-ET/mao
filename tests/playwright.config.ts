@@ -4,6 +4,8 @@ export default defineConfig({
   testDir: '.',
   timeout: 30_000,
   retries: 0,
+  // 桌面用例共享 e2e 种子库状态（如分组别名），并行 worker 会互相污染，串行执行。
+  workers: 1,
   // global-setup.ts：幂等拉起隔离后端(:9180) + admin(:5200) + desktop(:5201)。
   // 环境准备见 scripts/e2e-setup.sh。
   globalSetup: './global-setup.ts',

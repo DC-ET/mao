@@ -190,6 +190,22 @@ INSERT INTO session (user_id, agent_id, title, status, phase, execution_mode, wo
 SELECT 1, 1, '本地空间任务', 'ACTIVE', 'COMPLETED', 'LOCAL', '/home/mao-e2e/demo-project', NOW(), NOW()
 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM session WHERE workspace = '/home/mao-e2e/demo-project');
 SQL
+
+  # 分析页（用量分析/趋势图）只统计时间窗内数据；种子库复用后 created_at 会过期，
+  # 每次 setup 都把业务时间戳刷新为当前时间，保证「今日」窗口恒有数据。
+  MYSQL_E2E -e "
+    UPDATE session SET created_at = NOW(), last_activity_at = NOW();
+    UPDATE message SET created_at = NOW();
+    UPDATE llm_usage SET created_at = NOW();
+    UPDATE llm_call SET created_at = NOW();
+  "
+  # 分组重命名 E2E 断言「初始显示推导名 demo-project」：清掉历史运行留下的别名，
+  # 避免上次成功重命名的结果被下次运行误判为「分组不存在」。
+  MYSQL_E2E -e "
+    UPDATE user_task_panel_preference SET group_aliases = JSON_REMOVE(group_aliases, '$.\"LOCAL:/home/mao-e2e/demo-project\"')
+    WHERE JSON_CONTAINS_PATH(group_aliases, 'one', '$.\"LOCAL:/home/mao-e2e/demo-project\"');
+  "
+  echo "  已刷新业务时间戳并清理分组别名（分析页窗口有数据、重命名测试可重放）"
 fi
 
 echo "==> 生成 backend-ts/.env.e2e"

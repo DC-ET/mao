@@ -15,7 +15,7 @@ async function setup(page: Page) {
     if (path.endsWith('/auth/admin/login') || path.endsWith('/auth/login')) {
       data = { accessToken: 'test-token', refreshToken: 'test-refresh' }
     } else if (path.endsWith('/users/me')) {
-      data = { id: 1, username: 'admin', displayName: '管理员', isAdmin: true, permissions: ['agent:read', 'agent:write'] }
+      data = { id: 1, username: 'admin', displayName: '管理员', isAdmin: true, permissions: ['analytics:read', 'agent:read', 'agent:write'] }
     } else if (path.endsWith('/agents/2/enabled') && request.method() === 'PATCH') {
       const payload = request.postDataJSON()
       writes.push({ method: 'PATCH', path, payload })

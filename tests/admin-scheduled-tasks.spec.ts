@@ -43,7 +43,7 @@ function isOneShotCron(expression: string): boolean {
 }
 
 async function setup(page: Page, options: { permissions?: string[]; tasks?: typeof TASK[] } = {}) {
-  const permissions = options.permissions ?? ['session:read', 'scheduled-task:write']
+  const permissions = options.permissions ?? ['analytics:read', 'session:read', 'scheduled-task:read', 'scheduled-task:write']
   const tasks = options.tasks ?? [TASK]
   putBody = null
 
@@ -153,7 +153,7 @@ test.describe('管理后台定时任务', () => {
   })
 
   test('缺少 scheduled-task:write 时他人任务只读', async ({ page }) => {
-    await setup(page, { permissions: ['session:read'] })
+    await setup(page, { permissions: ['analytics:read', 'session:read', 'scheduled-task:read'] })
 
     const row = page.locator('.el-table__body-wrapper')
     await expect(row.getByRole('button', { name: '查看', exact: true })).toBeVisible()

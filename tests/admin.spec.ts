@@ -252,7 +252,8 @@ test.describe('Skills Management', () => {
     await expect(page.locator('.el-tabs__item.is-active')).toContainText('个人 Skills')
     await expect(page.getByText('目标用户')).toBeVisible()
     await expect(page.locator('.search-form').getByText('用户', { exact: true })).toBeVisible()
-    await expect(page.getByPlaceholder('全部用户')).toBeVisible()
+    // el-select 占位符渲染为 .el-select__placeholder 文本节点而非 input placeholder
+    await expect(page.locator('.search-form .el-select__placeholder', { hasText: '全部用户' })).toBeVisible()
     await expect(page.locator('.upload-text')).toContainText('拖动或点击上传到所选用户')
     await expect(page.locator('.el-table thead th')).toContainText(['用户', '名称', '描述'])
     await page.click('.skill-tabs .el-tabs__item:has-text("系统 Skills")')
@@ -286,7 +287,7 @@ test.describe('Session Management', () => {
   })
 
   test('should have filter form elements', async ({ page }) => {
-    await expect(page.locator('input[placeholder="标题/摘要"]')).toBeVisible()
+    await expect(page.locator('input[placeholder="标题/摘要/消息内容"]')).toBeVisible()
     await expect(page.locator('button:has-text("查询")')).toBeVisible()
     await expect(page.getByRole('button', { name: '重置', exact: true })).toBeVisible()
   })
@@ -324,9 +325,11 @@ test.describe('Sidebar Navigation', () => {
       .map(text => text.replace(/\s+/g, ' ').trim())
     const skillIdx = labels.findIndex(text => text.includes('Skills 管理'))
     const feishuIdx = labels.findIndex(text => text.includes('飞书机器人'))
+    const dingtalkIdx = labels.findIndex(text => text.includes('钉钉机器人'))
     const commandIdx = labels.findIndex(text => text.includes('指令管理'))
     expect(skillIdx).toBeGreaterThanOrEqual(0)
-    expect(feishuIdx).toBe(skillIdx - 1)
+    expect(feishuIdx).toBe(skillIdx - 2)
+    expect(dingtalkIdx).toBe(skillIdx - 1)
     expect(commandIdx).toBe(skillIdx + 1)
   })
 

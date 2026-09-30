@@ -21,7 +21,7 @@ async function setup(page: Page) {
     const path = new URL(request.url()).pathname
     let data: unknown = []
     if (path.endsWith('/auth/admin/login')) data = { accessToken: 't', refreshToken: 'r' }
-    else if (path.endsWith('/users/me')) data = { id: 1, username: 'admin', displayName: '管理员', isAdmin: true, permissions: ['agent:read', 'agent:write'] }
+    else if (path.endsWith('/users/me')) data = { id: 1, username: 'admin', displayName: '管理员', isAdmin: true, permissions: ['analytics:read', 'agent:read', 'agent:write'] }
     else if (/\/agents(?:\/9)?$/.test(path) && ['POST', 'PUT'].includes(request.method())) {
       const payload = request.postDataJSON()
       writes.push({ method: request.method(), path, payload })
