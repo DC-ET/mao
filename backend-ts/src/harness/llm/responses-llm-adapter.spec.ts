@@ -209,6 +209,30 @@ describe('convertMessages（请求转换）', () => {
     expect((input[2] as Record<string, unknown>).type).toBe('function_call');
   });
 
+  it('无 encrypted_content 的 reasoning 引用不回传（裸 id 会触发网关按 id 查存储 → 409）', () => {
+    const { input } = convertMessages([
+      { role: 'user', content: '查天气' },
+      { role: 'assistant', content: '', toolCalls: [{
+        id: 'call_1', type: 'function', function: { name: 'lookup', arguments: '{}' },
+        reasoning: { id: 'afbed006-c126-4add-982a-72cd18c38a1f' },
+      }] },
+      { role: 'tool', toolCallId: 'call_1', content: '晴' },
+    ]);
+    expect(input.some((item) => item.type === 'reasoning')).toBe(false);
+    expect((input[1] as Record<string, unknown>).type).toBe('function_call');
+  });
+
+  it('encrypted_content 为空串时也不回传 reasoning 项', () => {
+    const { input } = convertMessages([
+      { role: 'assistant', content: '', toolCalls: [{
+        id: 'call_1', type: 'function', function: { name: 'lookup', arguments: '{}' },
+        reasoning: { id: 'rs_1', encryptedContent: '' },
+      }] },
+      { role: 'tool', toolCallId: 'call_1', content: 'x' },
+    ]);
+    expect(input.some((item) => item.type === 'reasoning')).toBe(false);
+  });
+
   it('纯文本 assistant 轮也回传 reasoning 项（后继 assistant 消息满足网关约束）', () => {
     const { input } = convertMessages([
       { role: 'user', content: 'hi' },

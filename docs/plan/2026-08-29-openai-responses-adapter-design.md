@@ -24,7 +24,7 @@
 | assistant 文本 | `{role:'assistant', content:[{type:'output_text', text}]}` |
 | assistant `toolCalls[i]` | `{type:'function_call', id, call_id, name, arguments}`（逐个平铺；`call_id` 为主键） |
 | tool 消息 | `{type:'function_call_output', call_id, output}` |
-| assistant `toolCalls[0].reasoning` | `{type:'reasoning', id, encrypted_content, summary:[]}`（见 §三） |
+| assistant `toolCalls[0].reasoning` | `{type:'reasoning', id, encrypted_content, summary:[]}`（**仅密文非空时下发**，见 §三「无密文不回传」） |
 
 关键顺序约束（网关校验）：
 
@@ -32,7 +32,7 @@
 2. **reasoning 项后必须紧跟 assistant 消息或 function_call**：reasoning 项插入本轮 assistant 内容（文本/function_call）之前；纯 reasoning 轮（无文本无 call）补一条空格 assistant 消息。
 3. 无配对 call_id 的 tool 消息无法映射为 function_call_output，降级为 user 文本（正常历史经 message-history-normalizer 不会出现）。
 
-请求体固定字段：`store:false`（无状态多轮，Mao 自管历史）、`include:['reasoning.encrypted_content']`（仅当历史存在 reasoning 引用；与 `previous_response_id` 互斥，Mao 不使用后者；空历史时下发 `[]`）、`stream`、`temperature`、`reasoning:{effort}`（PromptEngine 对 gpt-* 前缀注入 `{effort:'high'}`，Responses 网关模型同名前缀自然命中）。
+请求体固定字段：`store:false`（无状态多轮，Mao 自管历史）、`include:['reasoning.encrypted_content']`（**常驻下发**：首轮工具调用流式期间引用尚未入历史，按条件下发会形成「拿不到密文 → 无引用可回传」的死锁；与 `previous_response_id` 互斥，Mao 不使用后者）、`stream`、`temperature`、`reasoning:{effort}`（PromptEngine 对 gpt-* 前缀注入 `{effort:'high'}`，Responses 网关模型同名前缀自然命中）。
 
 ## 三、reasoning 往返（stateless 思维链保持）
 
@@ -45,6 +45,8 @@
 - 请求侧：见 §二，reasoning 项 + assistant 文本 + function_call 按序回传。
 - **展示隔离**：适配器流式回调不下发 reasoning summary delta 的 `reasoningContent`？——下发。前端 thinking 面板展示的是 summary 摘要文本（网关不下发原文 reasoning content，summary 是官方唯一的可读输出）；`onStreamReset` 重试时上层已有清空逻辑。
 - **其他协议隔离**：`reasoning` 字段仅 Responses 适配器写入/读取；`serializeChatMessage` 的 `reasoning_content` 透传对 ChatCompletions 模型不变（DeepSeek 链路），Responses 的 blob 前缀不会被其他适配器解析，无串扰。
+- **无密文不回传（2026-10-01）**：`convertMessages` 经 `replayableReasoningRef` 过滤——只有 `encryptedContent` 非空才下发 reasoning 项，否则整项省略，退化为不含 reasoning 的无状态请求。原因：部分网关（实测 sub2api 类）不实现 `include:['reasoning.encrypted_content']`，签发的 reasoning 项是 `summary:[]`/`content:[]` 的空壳且**不带密文**；该 `id` 在网关侧是「服务端续接引用」，回传即被拿去查存储，而 `store:false` 下没有存储 → 409 `continuation_unavailable`（去掉该项即 200）。密文齐全的网关不受影响：要求「function_call 必须配对 reasoning 项」的严格网关必然实现 `include` 并下发密文。
+  捕获侧不改（仍允许 id-only 引用进入 `toolCalls[0].reasoning` / blob）：密文常在 `output_item.done` 才补全，若在 `added` 时拒建引用，一旦 function_call 的 `added` 先到（`firstToolCallEmitted` 已置位）就再无机会挂靠，反而会把严格网关的密文丢掉。
 
 ## 四、流式事件映射
 
@@ -80,6 +82,7 @@
 |---|---|
 | `previous_response_id` | 不使用（与 Mao 自管历史冲突；`include` 加密往返是 stateless 正道） |
 | reasoning signature 持久化 | Responses 无签名问题（密文自带完整性），无需 Anthropic 式 signature 设计 |
+| 无密文的 reasoning 引用 | 不回传（见 §三「无密文不回传」）。这类网关（不下发 `encrypted_content`、reasoning 项为空壳）回传裸 id 必 409 `continuation_unavailable`，省略该项可正常执行；代价是失去 thinking 上下文连续性 |
 | 内置工具（web_search/code_interpreter 等） | 不使用，仅 function 工具 |
 | 纯文本轮的 reasoning 引用 | 不挂 toolCall、不持久化引用（blob 前缀除外），网关对纯文本轮回传 reasoning 不做强校验 |
 | 多 responses 轮共享 reasoning | 每轮 reasoning 独立挂靠该轮 toolCalls；网关按 `function_call → 所在轮 reasoning` 配对 |

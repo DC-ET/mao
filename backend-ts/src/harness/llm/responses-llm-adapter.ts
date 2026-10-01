@@ -887,7 +887,7 @@ export function convertMessages(messages: ChatMessage[]): { instructions: string
       continue;
     }
     if (role === 'assistant') {
-      const reasoningRef = extractReasoningRef(msg);
+      const reasoningRef = replayableReasoningRef(extractReasoningRef(msg));
       const text = extractMessageText(msg.content);
       const toolCalls = msg.toolCalls ?? [];
       const callsToEmit = toolCalls.filter((tc) => tc.function?.name != null);
@@ -930,6 +930,23 @@ export function convertMessages(messages: ChatMessage[]): { instructions: string
     instructions: instructionsParts.length > 0 ? instructionsParts.join('\n\n') : null,
     input,
   };
+}
+
+/**
+ * 可回传的 reasoning 引用：仅当携带 encrypted_content 时才有效。
+ *
+ * store:false 下 reasoning 上下文只能靠密文无状态重建（官方语义）。网关若未实现
+ * include:['reasoning.encrypted_content']，就只会签发一个带 id 的空壳 reasoning 项；
+ * 该 id 在网关侧是「服务端续接引用」，回传时它据此查存储——store:false 下没有存储，
+ * 于是返回 409 continuation_unavailable（实测 sub2api 类网关：回传裸 id 必 409，
+ * 去掉该项即 200）。故拿不到密文时整项不下发，退化为不含 reasoning 的无状态请求。
+ *
+ * 密文齐全的网关不受影响：严格网关要求「回传 function_call 必须配对 reasoning 项」，
+ * 而这类网关必然实现 include 并下发密文。
+ */
+function replayableReasoningRef(ref: ReasoningItemRef | null): ReasoningItemRef | null {
+  if (ref == null || ref.encryptedContent == null || ref.encryptedContent === '') return null;
+  return ref;
 }
 
 function reasoningItem(ref: ReasoningItemRef): Record<string, unknown> {

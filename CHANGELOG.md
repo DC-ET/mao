@@ -15,6 +15,12 @@
 
 ---
 
+## 0.0.228 (2026-10-01)
+
+### 后端
+
+- 修复 OpenAI Responses 协议（`openai-responses`）在部分不支持 `reasoning.encrypted_content` 的网关（sub2api 类）上多轮工具调用必然失败的问题：适配器此前会把历史中「只有 `id`、没有密文」的 reasoning 项原样回传，而该 `id` 在网关侧是服务端续接引用，网关据此查存储——`store:false` 下无存储，于是整轮返回 `409 continuation_unavailable`（文案为 "continuation history is unavailable; send complete input history when store is false"，但客户端发的本就是完整历史）。现改为**仅在携带 `encrypted_content` 时才回传 reasoning 项**，无密文时整项省略，退化为不含 reasoning 的无状态请求；密文齐全的网关行为不变。同类网关的 `deepseek-v4.1-flash` 此前需改用 chat completions 协议规避，升级后可直接使用 `openai-responses`。
+
 ## 0.0.227 (2026-09-30)
 
 ### 前端（桌面 / Web / 安卓）
