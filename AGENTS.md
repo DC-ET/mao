@@ -15,7 +15,7 @@
 ## 命令
 后端：`cd backend-ts && npm run {build|test|start:dev}`（tsc / Vitest / tsx）。
 跑测试/构建等长输出命令必须先落盘再看：`npm test > /tmp/x.log 2>&1; echo exit=$?`，用 grep 提取摘要（Test Files|Tests|FAIL）。禁止 `tail -N` 截断——会丢掉覆盖率表格之前的 passed/failed 摘要，导致重跑浪费时间。
-部署：`bash scripts/deploy-{admin,desktop}.sh`（`--dry-run` 预览；rsync --delete，无需重启）。Electron 包：`cd desktop && npm run dist`（用户自行跑）。
+部署：`bash scripts/deploy-{admin,desktop}.sh`（均不接受参数，无 dry-run；admin 用 rsync --delete，无需重启）。Electron 包：`cd desktop && npm run dist`（用户自行跑）。
 安卓壳：`cd android && bash build-apk.sh`（`--dry-run` 不发布；`--version 0.0.x`）。
 mao-agent：`cd agent-cli && npm ci && npm run build && npm test`；`bash scripts/agent-cli-e2e.sh`；`npm link`。
 CI：backend-ts build+test、admin/desktop build、agent-cli build+test；不跑 Playwright。

@@ -9,20 +9,22 @@
 # 双域名合并：docs/guides/single-domain-nginx-migration.md。
 #
 # 用法：
-#   ./deploy-admin.sh [--dry-run]
+#   ./deploy-admin.sh
 #
 # 说明：部署后无需重启服务。已打开的页面点击未加载菜单会自动进入新版本。
 # =============================================================================
 set -euo pipefail
 
+if [ "$#" -gt 0 ]; then
+  echo "错误：deploy-admin.sh 不接受参数，收到：$*" >&2
+  echo "提示：历史上的 --dry-run 已移除，本脚本无预览模式，传入参数一律报错退出。" >&2
+  exit 2
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 ADMIN_DIR="$PROJECT_DIR/admin"
 LIVE_ADMIN_DIR="/opt/mao/admin"
-DRY_RUN=""
-if [ "${1:-}" = "--dry-run" ]; then
-  DRY_RUN="--dry-run"
-fi
 
 echo "==> 构建管理后台（npm run build）..."
 cd "$ADMIN_DIR"
@@ -35,6 +37,6 @@ if [ ! -d "$DIST_ASSETS" ] || [ -z "$(ls -A "$DIST_ASSETS")" ]; then
 fi
 
 echo "==> 同步到线上目录 $LIVE_ADMIN_DIR/dist ..."
-rsync -a --delete $DRY_RUN "$ADMIN_DIR/dist/" "$LIVE_ADMIN_DIR/dist/"
+rsync -a --delete "$ADMIN_DIR/dist/" "$LIVE_ADMIN_DIR/dist/"
 
 echo "部署完成：$LIVE_ADMIN_DIR/dist/（已打开的页面点击未加载菜单会自动进入新版本）"
