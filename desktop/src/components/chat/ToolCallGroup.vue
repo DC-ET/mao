@@ -1,8 +1,8 @@
 <template>
   <div class="tool-call-group">
-    <div class="group-header" @click="toggleExpand">
+    <div class="tool-group-header" @click="toggleExpand">
       <div class="group-info">
-        <el-icon class="group-icon" :size="14"><component :is="groupIcon" /></el-icon>
+        <el-icon class="tool-group-icon" :size="14"><component :is="groupIcon" /></el-icon>
         <span class="group-summary">{{ groupSummary }}</span>
       </div>
       <div class="group-status">
@@ -123,7 +123,7 @@ function toggleExpand() {
   margin-top: 2px;
 }
 
-.group-header {
+.tool-group-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -135,7 +135,7 @@ function toggleExpand() {
   transition: background 0.15s;
 }
 
-.group-header:hover {
+.tool-group-header:hover {
   background: var(--aw-canvas-parchment);
 }
 
@@ -147,7 +147,7 @@ function toggleExpand() {
   flex: 1;
 }
 
-.group-icon {
+.tool-group-icon {
   color: var(--aw-ink-muted-48);
   flex-shrink: 0;
 }

@@ -378,6 +378,8 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  /* 标题过长时优先挤压标题，按钮保持固定宽度，避免「解绑」被挤成两行 */
+  gap: 12px;
   margin-bottom: 12px;
 }
 
@@ -385,10 +387,15 @@ onUnmounted(() => {
   font-size: 16px;
   font-weight: 600;
   color: var(--aw-ink);
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .binding-actions {
   display: flex;
+  flex-shrink: 0;
   gap: 8px;
 }
 
@@ -402,6 +409,8 @@ onUnmounted(() => {
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
+  flex-shrink: 0;
+  white-space: nowrap;
   transition: opacity 0.15s;
 }
 
