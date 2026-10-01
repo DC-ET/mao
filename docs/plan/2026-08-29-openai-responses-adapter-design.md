@@ -46,6 +46,7 @@
 - **展示隔离**：适配器流式回调不下发 reasoning summary delta 的 `reasoningContent`？——下发。前端 thinking 面板展示的是 summary 摘要文本（网关不下发原文 reasoning content，summary 是官方唯一的可读输出）；`onStreamReset` 重试时上层已有清空逻辑。
 - **其他协议隔离**：`reasoning` 字段仅 Responses 适配器写入/读取；`serializeChatMessage` 的 `reasoning_content` 透传对 ChatCompletions 模型不变（DeepSeek 链路），Responses 的 blob 前缀不会被其他适配器解析，无串扰。
 - **无密文不回传（2026-10-01）**：`convertMessages` 经 `replayableReasoningRef` 过滤——只有 `encryptedContent` 非空才下发 reasoning 项，否则整项省略，退化为不含 reasoning 的无状态请求。原因：部分网关（实测 sub2api 类）不实现 `include:['reasoning.encrypted_content']`，签发的 reasoning 项是 `summary:[]`/`content:[]` 的空壳且**不带密文**；该 `id` 在网关侧是「服务端续接引用」，回传即被拿去查存储，而 `store:false` 下没有存储 → 409 `continuation_unavailable`（去掉该项即 200）。密文齐全的网关不受影响：要求「function_call 必须配对 reasoning 项」的严格网关必然实现 `include` 并下发密文。
+  边界：省略该项后该类网关仍会校验 `call_id` 是否为它签发过——非签发（含 `__idx_` 兜底键）的 call_id 会得到另一分支的 400 `The reasoning_text in the thinking mode must be passed back`；正常历史回传的是网关签发的 call_id，不受影响。
   捕获侧不改（仍允许 id-only 引用进入 `toolCalls[0].reasoning` / blob）：密文常在 `output_item.done` 才补全，若在 `added` 时拒建引用，一旦 function_call 的 `added` 先到（`firstToolCallEmitted` 已置位）就再无机会挂靠，反而会把严格网关的密文丢掉。
 
 ## 四、流式事件映射
