@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import http from 'node:http';
 import https from 'node:https';
 import { JSDOM } from 'jsdom';
@@ -217,8 +218,9 @@ function errorJson(message: string, url: string): string {
 }
 
 /**
- * 由 URL 生成稳定简短的文件名主干（host + 路径末段 + 短哈希），
- * 保证同一 URL 反复抓取覆盖同一文件，不同 URL 不互相覆盖。
+ * 由 URL 生成稳定简短的文件名主干（host + 路径末段 + URL 短哈希）：
+ * 同一 URL 反复抓取哈希一致，覆盖同一文件；不同 URL 哈希不同，不互相覆盖。
+ * 主干（host + 末段）只服务人工排查可读性，唯一性由哈希保证。
  */
 function urlSlug(url: string): string {
   let u: URL;
@@ -232,9 +234,9 @@ function urlSlug(url: string): string {
     .replace(/[^a-zA-Z0-9_-]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 60);
-  if (base !== '') return base;
-  const digest = Buffer.from(u.toString(), 'utf8');
-  return 'page-' + (digest.length > 12 ? digest.subarray(digest.length - 12).toString('hex') : digest.toString('hex'));
+  // URL 短哈希保证不同 URL 不碰撞（8 hex = 32bit，会话级抓取量下碰撞概率可忽略）
+  const hash = createHash('sha1').update(u.toString()).digest('hex').slice(0, 8);
+  return base !== '' ? `${base}-${hash}` : `page-${hash}`;
 }
 
 const MAX_REDIRECTS = 5;

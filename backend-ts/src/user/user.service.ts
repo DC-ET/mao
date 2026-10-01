@@ -12,6 +12,13 @@ const EMAIL_PATTERN = /^[\w.+-]+@[\w-]+(\.[\w-]+)+$/;
 const AVATAR_URL_PATTERN = /^(?=.{1,512}$)(https?:\/\/|\/)[^\s]+$/;
 const DEFAULT_USER_ROLE_ID = 2;
 
+/** 用户状态取值校验：0=禁用 1=启用 null=未设置，其余值会让登录/筛选语义错乱。 */
+function validateUserStatus(status: number | null | undefined): void {
+  if (status != null && status !== 0 && status !== 1) {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, '状态只能为 0（禁用）或 1（启用）');
+  }
+}
+
 export class UserService {
   constructor(
     private readonly userRepo: UserRepository,
@@ -72,7 +79,9 @@ export class UserService {
     if (email != null) {
       user.email = hasText(email) ? email.trim() : null;
     }
+    validateUserStatus(status);
     if (status != null && status === 0) {
+      // 快速失败：角色变更前先做只读守卫，避免角色已改、禁用被拒的半截更新
       await this.permissionService.assertCanDisableUser(id, currentUserId ?? 0);
     }
     if (status != null) {
@@ -87,17 +96,23 @@ export class UserService {
       // changeRolesWithAdminGuard 在同一事务内锁 ADMIN 绑定并做最后管理员检查 + 写入
       await this.permissionService.changeRolesWithAdminGuard(id, roleIds);
     }
+    if (status != null && status === 0) {
+      // 禁用写入走守卫事务：检查与 status 写入原子（消除与并发禁用互相放行的 TOCTOU），
+      // 随后从整行写中剔除 status，避免旧值覆盖守卫事务的落库结果。
+      await this.permissionService.updateUserStatusWithAdminGuard(id, currentUserId ?? 0, 0);
+      user.status = undefined;
+    }
     await this.userRepo.updateById(user);
+    // 返回值回填守卫事务写入的状态，调用方（路由 VO）拿到与 DB 一致的取值
+    if (status === 0) user.status = 0;
     return user;
   }
 
   async updateUserStatus(id: number, status: number | null | undefined, currentUserId: number): Promise<void> {
-    const user = await this.getUser(id);
-    if (status != null && status === 0) {
-      await this.permissionService.assertCanDisableUser(id, currentUserId);
-    }
-    user.status = status ?? null;
-    await this.userRepo.updateById(user);
+    validateUserStatus(status);
+    await this.getUser(id);
+    // 守卫检查与写入同一事务：并发禁用最后两名管理员时至少一个被拒（零管理员 TOCTOU）
+    await this.permissionService.updateUserStatusWithAdminGuard(id, currentUserId, status ?? null);
   }
 
   async resetPassword(id: number, newPassword: string): Promise<void> {

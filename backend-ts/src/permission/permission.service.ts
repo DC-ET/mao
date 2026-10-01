@@ -183,6 +183,47 @@ export class PermissionService {
     await this.assertNotLastAdmin(targetUserId);
   }
 
+  /**
+   * 最后管理员检查 + 用户状态写入同一事务（消除 TOCTOU）。
+   * 旧的「只读守卫事务 + 事务外单独写 status」窗口内，并发禁用最后两名管理员的两个请求
+   * 都会在守卫里看到对方仍活跃而双双通过，系统进入零管理员状态。
+   * FOR UPDATE 锁定的绑定行必须在**同一事务**内完成状态写入才能串行化并发禁用。
+   */
+  async updateUserStatusWithAdminGuard(targetUserId: number, currentUserId: number, status: number | null): Promise<void> {
+    // 仅「禁用自己」拒绝：启用/清空自身状态是合法自助操作（SSO/外部账号默认 status=null，
+    // 管理员把自己从 null 改为 1 是可达路径），且错误码语义（不能禁用自己）只覆盖禁用
+    if (targetUserId === currentUserId && status === 0) {
+      throw new BusinessException(ErrorCode.CANNOT_DISABLE_SELF);
+    }
+    const adminRole = await this.getAdminRole();
+    const targetIsAdmin = adminRole != null && (await this.userHasRole(targetUserId, adminRole.id!));
+    if (!targetIsAdmin) {
+      // 非管理员目标无最后管理员约束，直接写
+      await this.userRepo.updateFields(targetUserId, { status });
+      return;
+    }
+    if (!this.userRoleRepo.transaction || !this.userRoleRepo.findByRoleIdForUpdate || !this.userRoleRepo.updateUserStatus) {
+      // 能力降级（测试桩/旧实现）：退回「守卫 + 事务外写」的旧语义
+      await this.assertNotLastAdmin(targetUserId);
+      await this.userRepo.updateFields(targetUserId, { status });
+      return;
+    }
+    await this.userRoleRepo.transaction(async (tx) => {
+      // 能力已在上方检查；Mysql 的 transaction() 传入的 tx 具备全部方法
+      const bindings = await tx.findByRoleIdForUpdate!(adminRole!.id!);
+      let otherActive = 0;
+      for (const b of bindings) {
+        if (b.userId === targetUserId) continue;
+        const u = await this.userRepo.findById(b.userId);
+        if (u && u.status === 1) otherActive += 1;
+      }
+      if (status === 0 && otherActive === 0) {
+        throw new BusinessException(ErrorCode.CANNOT_REMOVE_LAST_ADMIN);
+      }
+      await tx.updateUserStatus!(targetUserId, status);
+    });
+  }
+
   /** 在事务内锁 ADMIN 绑定后检查目标是否为最后一名活跃管理员。 */
   private async assertNotLastAdmin(targetUserId: number): Promise<void> {
     const adminRole = await this.getAdminRole();

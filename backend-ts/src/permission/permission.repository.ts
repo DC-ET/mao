@@ -135,6 +135,14 @@ export class MysqlUserRoleRepository implements UserRoleRepository {
   async insert(row: UserRole): Promise<void> {
     await this.db.insert('user_role', { userId: row.userId, roleId: row.roleId });
   }
+
+  /**
+   * 在持有方当前连接上写用户状态。transaction() 构造的 tx 实例持有事务连接，
+   * 经它写入才能与 findByRoleIdForUpdate 的锁同事务提交（最后管理员检查 + 禁用原子化）。
+   */
+  async updateUserStatus(userId: number, status: number | null): Promise<void> {
+    await this.db.updateById('user', userId, { status });
+  }
 }
 
 export class MysqlRolePermissionRepository implements RolePermissionRepository {

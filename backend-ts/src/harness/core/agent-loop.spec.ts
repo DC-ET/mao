@@ -448,6 +448,135 @@ describe('AgentLoop', () => {
     }));
   });
 
+  it('creates tool calls from index-only deltas whose gateway never sends ids', async () => {
+    // 部分 OpenAI 兼容网关只按 index 分片、从不回传 id：mergeToolCall 必须把这类
+    // 分片当新 tool call 追加，否则整段调用被静默丢弃（连第一个都进不了 toolCalls）。
+    const ctx = context();
+    ctx.tools = [namedTool('shell'), namedTool('read_file')];
+    const l = listener();
+    const p = persistence();
+    promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
+    backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
+    stubActiveContext(5);
+    toolDispatcher.dispatchInvocation.mockResolvedValue(toolResult('{"ok":true}'));
+    let call = 0;
+    llmAdapter.stream.mockImplementation(async (_r: unknown, _c: unknown, callback: StreamCallback) => {
+      if (call++ === 0) {
+        callback.onChunk(toolChunk({ index: 0, function: { name: 'shell', arguments: '{"command":"pwd"}' } }));
+        callback.onChunk(toolChunk({ index: 1, function: { name: 'read_file', arguments: '{"path":"a.ts"}' } }));
+        callback.onComplete({ promptTokens: 3, completionTokens: 2, totalTokens: 5 });
+      } else {
+        callback.onChunk(contentChunk(null, 'done'));
+        callback.onComplete({ promptTokens: 4, completionTokens: 1, totalTokens: 5 });
+      }
+    });
+
+    await agentLoop.execute(ctx, l, p);
+
+    expect(toolDispatcher.dispatchInvocation).toHaveBeenCalledTimes(2);
+    expect(toolDispatcher.dispatchInvocation).toHaveBeenCalledWith(expect.objectContaining({
+      toolName: 'shell',
+      argumentsJson: '{"command":"pwd"}',
+    }));
+    expect(toolDispatcher.dispatchInvocation).toHaveBeenCalledWith(expect.objectContaining({
+      toolName: 'read_file',
+      argumentsJson: '{"path":"a.ts"}',
+    }));
+    // 派发时必须带上合成 id：缺 id 时 tool 消息的 toolCallId 为空，normalizeChatMessages
+    // 会把第 2 轮起的 tool 结果整体剥掉，严格网关还会因 tool_calls[].id 缺失 400
+    for (const [invocation] of vi.mocked(toolDispatcher.dispatchInvocation).mock.calls) {
+      expect(invocation.callId).toMatch(/^call-/);
+    }
+    // 助手 tool_calls 与 tool 消息必须按 id 一一配对（历史归一化与持久化的前提）
+    const assistant = ctx.messages.find((m) => m.role === 'assistant' && m.toolCalls?.length);
+    expect(assistant).toBeDefined();
+    const callIds = assistant!.toolCalls!.map((tc) => tc.id);
+    expect(callIds.every((id) => typeof id === 'string' && id !== '')).toBe(true);
+    expect(new Set(callIds).size).toBe(2);
+    expect(ctx.messages.filter((m) => m.role === 'tool').map((m) => m.toolCallId).sort())
+      .toEqual([...callIds].sort());
+    expect(vi.mocked(p.onSaveToolMessage).mock.calls.map(([toolCallId]) => toolCallId).sort())
+      .toEqual([...callIds].sort());
+    // 首片即派发开始事件（early start 也依赖 id 去重）
+    expect(vi.mocked(l.onToolCallStart).mock.calls.every(([tc]) => typeof tc.id === 'string' && tc.id !== '')).toBe(true);
+  });
+
+  it('keeps synthesized ids distinct when index-only calls repeat in later rounds', async () => {
+    // 同一 index 会在后续轮次复用：按 index 推导 id 会让 normalizeChatMessages 的配对表
+    // 跨轮错并（两轮的 tool 消息都被当成同一调用的结果），必须按调用唯一。
+    const ctx = context();
+    ctx.tools = [namedTool('shell'), namedTool('read_file')];
+    const l = listener();
+    const p = persistence();
+    promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
+    backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
+    stubActiveContext(5);
+    toolDispatcher.dispatchInvocation.mockResolvedValue(toolResult('{"ok":true}'));
+    let call = 0;
+    llmAdapter.stream.mockImplementation(async (_r: unknown, _c: unknown, callback: StreamCallback) => {
+      if (call === 0) {
+        call++;
+        callback.onChunk(toolChunk({ index: 0, function: { name: 'shell', arguments: '{"command":"pwd"}' } }));
+        callback.onComplete({ promptTokens: 3, completionTokens: 2, totalTokens: 5 });
+      } else if (call === 1) {
+        call++;
+        callback.onChunk(toolChunk({ index: 0, function: { name: 'read_file', arguments: '{"path":"a.ts"}' } }));
+        callback.onComplete({ promptTokens: 4, completionTokens: 2, totalTokens: 6 });
+      } else {
+        callback.onChunk(contentChunk(null, 'done'));
+        callback.onComplete({ promptTokens: 5, completionTokens: 1, totalTokens: 6 });
+      }
+    });
+
+    await agentLoop.execute(ctx, l, p);
+
+    expect(toolDispatcher.dispatchInvocation).toHaveBeenCalledTimes(2);
+    const [assistant1, tool1, assistant2, tool2] = ctx.messages.filter(
+      (m) => m.role === 'assistant' || m.role === 'tool',
+    );
+    const id1 = assistant1.toolCalls![0].id;
+    const id2 = assistant2.toolCalls![0].id;
+    expect(id1).toMatch(/^call-/);
+    expect(id2).toMatch(/^call-/);
+    expect(id2).not.toBe(id1);
+    expect(tool1.toolCallId).toBe(id1);
+    expect(tool2.toolCallId).toBe(id2);
+  });
+
+  it('merges a late id-bearing delta into an id-less first chunk without duplicating dispatch', async () => {
+    // 首片无 id、后续分片才带回 id 的网关：合成占位后按 index 归并，整条调用只派发一次。
+    const ctx = context();
+    ctx.tools = [namedTool('shell')];
+    const l = listener();
+    const p = persistence();
+    promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
+    backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
+    stubActiveContext(5);
+    toolDispatcher.dispatchInvocation.mockResolvedValue(toolResult('{"ok":true}'));
+    let call = 0;
+    llmAdapter.stream.mockImplementation(async (_r: unknown, _c: unknown, callback: StreamCallback) => {
+      if (call++ === 0) {
+        callback.onChunk(toolChunk({ index: 0, function: { name: 'shell', arguments: '{"command":' } }));
+        callback.onChunk(toolChunk({ index: 0, id: 'call-real', function: { arguments: '"pwd"}' } }));
+        callback.onComplete({ promptTokens: 3, completionTokens: 2, totalTokens: 5 });
+      } else {
+        callback.onChunk(contentChunk(null, 'done'));
+        callback.onComplete({ promptTokens: 4, completionTokens: 1, totalTokens: 5 });
+      }
+    });
+
+    await agentLoop.execute(ctx, l, p);
+
+    expect(toolDispatcher.dispatchInvocation).toHaveBeenCalledTimes(1);
+    expect(toolDispatcher.dispatchInvocation).toHaveBeenCalledWith(expect.objectContaining({
+      toolName: 'shell',
+      argumentsJson: '{"command":"pwd"}',
+    }));
+    const assistant = ctx.messages.find((m) => m.role === 'assistant' && m.toolCalls?.length);
+    expect(assistant!.toolCalls).toHaveLength(1);
+    expect(assistant!.toolCalls![0].id).toMatch(/^call-/);
+  });
+
   it('executeStripsImageDataUriFromPersistedToolMessage', async () => {
     const ctx = context();
     ctx.modelConfig = { supportsVision: true };

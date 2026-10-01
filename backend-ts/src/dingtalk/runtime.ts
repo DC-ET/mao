@@ -5,7 +5,7 @@ import type { FastifyInstance } from 'fastify';
 import { decryptAesGcm } from '../crypto/aes-gcm.js';
 import type { JwtService } from '../crypto/jwt.service.js';
 import type { Db } from '../db/db.js';
-import { chatFilesDirOf } from '../feishu/chat-files.js';
+import { chatFilesDirOf, resolveChatFileTarget } from '../feishu/chat-files.js';
 import { feishuSessionDetailUrl } from '../feishu/progress-card.js';
 import type { FeishuCardProgress } from '../feishu/card-progress-listener.js';
 import { countCompletedAgentRounds } from '../feishu/card-progress-listener.js';
@@ -569,7 +569,8 @@ export function createDingtalkRuntime(deps: {
           const dir = chatFilesDirOf(workspace);
           mkdirSync(dir, { recursive: true });
           const name = sanitizeName(context.fileName, `dingtalk-file-${context.messageId}`);
-          const target = resolve(dir, name);
+          // 同日同名文件防覆盖：命中时改用带 messageId 的唯一名，历史引用不被篡改
+          const target = resolveChatFileTarget(dir, name, context.messageId, index);
           await writeFile(target, downloaded.buffer);
           filePaths.push(target);
         } else {

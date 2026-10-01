@@ -48,6 +48,7 @@ import { contentParts, WsStreamingEventListener, type AgentEventListener, type W
 import type { StreamingWsRegistry, WsSocket } from './streaming-ws-registry.js';
 import { wsEvent } from './ws-event.js';
 import { isActivePhase } from '../session-vo.js';
+import type { AgentExecutionContext } from '../../harness/core/agent-execution-context.js';
 import type { EmbedPageToolRegistry } from '../../harness/embed-page-tool-registry.js';
 
 export interface WsHandlerDeps {
@@ -58,6 +59,8 @@ export interface WsHandlerDeps {
   harnessService: {
     prepareMessage(sessionId: number, content: unknown): Promise<string> | string;
     executeFromEvent(sessionId: number, eventId: string, listener: AgentEventListener, cancelFlag: { get(): boolean; set(v: boolean): void }): Promise<void>;
+    /** 以预构建上下文执行（子代理重试走 buildSubContext 裁剪后的上下文）。 */
+    executePrepared(context: AgentExecutionContext, listener: AgentEventListener): Promise<void>;
     executeSideFirstMessage(parentId: number, sideId: number, contextMode: 'fork' | 'summary' | 'none', listener: AgentEventListener, cancelFlag: { get(): boolean; set(v: boolean): void }): Promise<void>;
     forkParentMessages(parentId: number, sideId: number, forkFromMessageId?: number | null): Promise<void>;
   };
@@ -127,6 +130,8 @@ export interface WsHandlerDeps {
     cancelAllForParent(parentSessionId: number): Promise<void>;
     beginRetry(parentSessionId: number, childSessionId: number): Promise<{ ok: boolean; taskId?: number; error?: string }>;
     completeRetry(parentSessionId: number, taskId: number, status: 'COMPLETED' | 'FAILED' | 'CANCELLED'): Promise<void>;
+    /** 子代理重试专用：构建与后台执行一致的裁剪上下文（工具/技能面）。 */
+    buildRetryContext(childSessionId: number): Promise<AgentExecutionContext>;
   };
   shellSessionManager: { closeByConversation(sessionId: number): void };
   skillSyncService: {
@@ -524,11 +529,25 @@ export class StreamingWsHandler {
     cancelFlag: { get(): boolean; set(v: boolean): void }, clearTodos: boolean, futureRef: { current: unknown },
   ): Promise<void> {
     await this.withLock(this.sessionLocks, sessionId, async () => {
+      // 本执行绑定的定时任务来源：finally 按「值未易主」判定回收与回写，
+      // 避免迟到的旧执行体消费下一次执行的绑定
+      const boundScheduledTaskId = this.queueScheduledTaskIds.get(sessionId) ?? null;
       // 终态驱动消费门禁：FAILED 时不再自动消费队列下一条。默认 'FAILED' 保守兜底——
       // 任何遗漏赋值的分支都倾向「不消费」，宁可暂停也不错误消耗用户消息。
       let terminalPhase: 'COMPLETED' | 'CANCELLED' | 'FAILED' = 'FAILED';
       const listenerRef: { current: WsStreamingEventListener | null } = { current: null };
       try {
+        // 入口取消复查：取消发生在提交后、池真正开跑前的排队窗口时，不得覆盖 CANCELLED
+        // 并白做同步/MCP 连接。与 runRetryExecution 一致放在 try 内提前退出：finally 的
+        // 收敛职责（簿记按归属回收、定时任务绑定回写、autoConsumeQueue 消费队列下一条）
+        // 必须照常执行——裸 return 在 try 外会让排队消息的自动消费停滞、绑定残留被
+        // 下一次执行 stale 回写。簿记归属已由 cancelFlags 对象身份判定（可能已被
+        // handleCancel 释放并归下一次执行所有），此处进入 finally 不会误删新执行簿记。
+        if (cancelFlag.get()) {
+          await this.finishCancelledSession(sessionId, userId, executionId);
+          terminalPhase = 'CANCELLED';
+          return;
+        }
         await this.deps.sessionService.updatePhase(sessionId, 'RUNNING');
         this.deps.registry.send(userId, wsEvent('session_status', sessionId, { phase: 'RUNNING', executionId }));
         this.deps.registry.send(userId, wsEvent('session_list_update', sessionId, { phase: 'RUNNING' }));
@@ -578,19 +597,23 @@ export class StreamingWsHandler {
         this.deps.registry.setSessionThinking(sessionId, false);
         if (this.runningTasks.get(sessionId) === futureRef.current) this.runningTasks.delete(sessionId);
         if (this.runningExecutionIds.get(sessionId) === executionId) this.runningExecutionIds.delete(sessionId);
-        this.executionClaims.delete(sessionId);
-        this.cancelFlags.delete(sessionId);
-        this.pendingCancels.delete(sessionId);
-        this.deps.agentLoop.removeCancelFlag(sessionId);
-        this.deps.activityHeartbeat.clear(sessionId);
+        // 簿记按归属回收：executionClaims 无对象身份，而它与 cancelFlags 始终成对增删，
+        // 用 flag 的对象身份判定整套簿记是否仍属于本次执行。取消排队中的执行后立即重发时，
+        // 迟到的旧执行体若无条件回收，会删掉新执行的 claim/cancelFlag 并把停止标记一并清掉。
+        if (this.cancelFlags.get(sessionId) === cancelFlag) {
+          this.executionClaims.delete(sessionId);
+          this.cancelFlags.delete(sessionId);
+          this.pendingCancels.delete(sessionId);
+          this.deps.agentLoop.removeCancelFlag(sessionId);
+          this.deps.activityHeartbeat.clear(sessionId);
+        }
         // busy 入队的定时任务：队列真正执行到终态后回写 lastExecutionStatus，避免永久停在 QUEUED
-        const scheduledTaskId = this.queueScheduledTaskIds.get(sessionId);
-        if (scheduledTaskId != null) {
+        if (boundScheduledTaskId != null && this.queueScheduledTaskIds.get(sessionId) === boundScheduledTaskId) {
           this.queueScheduledTaskIds.delete(sessionId);
           try {
-            await this.deps.onScheduledTaskQueueConsumed?.(scheduledTaskId, terminalPhase);
+            await this.deps.onScheduledTaskQueueConsumed?.(boundScheduledTaskId, terminalPhase);
           } catch (e) {
-            console.warn(`Failed to write back scheduled task ${scheduledTaskId} after queue consume`, e);
+            console.warn(`Failed to write back scheduled task ${boundScheduledTaskId} after queue consume`, e);
           }
         }
         if (terminalPhase !== 'FAILED') await this.autoConsumeQueue(sessionId, userId);
@@ -946,10 +969,13 @@ export class StreamingWsHandler {
           this.deps.registry.setSessionThinking(sideSessionId, false);
           if (this.runningTasks.get(sideSessionId) === futureRef.current) this.runningTasks.delete(sideSessionId);
           if (this.runningExecutionIds.get(sideSessionId) === sideExecutionId) this.runningExecutionIds.delete(sideSessionId);
-          this.executionClaims.delete(sideSessionId);
-          this.cancelFlags.delete(sideSessionId);
-          this.deps.agentLoop.removeCancelFlag(sideSessionId);
-          this.deps.activityHeartbeat.clear(sideSessionId);
+          // 簿记按归属回收（同 runExecution finally）：flag 身份不匹配说明簿记已易主
+          if (this.cancelFlags.get(sideSessionId) === flag) {
+            this.executionClaims.delete(sideSessionId);
+            this.cancelFlags.delete(sideSessionId);
+            this.deps.agentLoop.removeCancelFlag(sideSessionId);
+            this.deps.activityHeartbeat.clear(sideSessionId);
+          }
           if (terminalPhase !== 'FAILED') await this.autoConsumeQueue(sideSessionId, userId);
         }
       });
@@ -1107,6 +1133,13 @@ export class StreamingWsHandler {
       let terminalPhase: 'COMPLETED' | 'CANCELLED' | 'FAILED' = 'FAILED';
       const listenerRef: { current: WsStreamingEventListener | null } = { current: null };
       try {
+        // 入口取消复查：取消发生在提交后、池真正开跑前的排队窗口时，不得覆盖 CANCELLED
+        // 并白做执行。finishExecution 对已终态会话是 no-op；finally 仍收敛子代理重试簿记。
+        if (cancelFlag.get()) {
+          await this.finishCancelledSession(sessionId, userId, executionId);
+          terminalPhase = 'CANCELLED';
+          return;
+        }
         await this.deps.sessionService.updatePhase(sessionId, 'RUNNING');
         this.deps.registry.send(userId, wsEvent('session_status', sessionId, { phase: 'RUNNING', executionId }));
         this.deps.registry.send(userId, wsEvent('session_list_update', sessionId, { phase: 'RUNNING' }));
@@ -1117,7 +1150,17 @@ export class StreamingWsHandler {
           sessionId, userId, executionId, await this.resolveSupportsVision(session),
         );
         listenerRef.current = listener;
-        await this.deps.harnessService.executeFromEvent(sessionId, executionId, listener, cancelFlag);
+        if (session.sessionType === 'SUBAGENT') {
+          // 子代理重试与后台执行/崩溃恢复同构：经 buildSubContext 裁剪工具/技能面。
+          // 直连标准 buildContext 会把 spawn_subagent / ask_user_questions 等重新交回子代理，
+          // 可派生无人消费的嵌套任务或把重试挂起在提问上。
+          const manager = this.deps.backgroundSubagentManager;
+          if (!manager?.buildRetryContext) throw new Error('子代理重试上下文构建能力不可用');
+          const context = await manager.buildRetryContext(sessionId);
+          await this.deps.harnessService.executePrepared(context, listener);
+        } else {
+          await this.deps.harnessService.executeFromEvent(sessionId, executionId, listener, cancelFlag);
+        }
         if (cancelFlag.get()) {
           await this.finishCancelledSession(sessionId, userId, executionId);
           terminalPhase = 'CANCELLED';
@@ -1139,11 +1182,15 @@ export class StreamingWsHandler {
         this.deps.registry.setSessionThinking(sessionId, false);
         if (this.runningTasks.get(sessionId) === futureRef.current) this.runningTasks.delete(sessionId);
         if (this.runningExecutionIds.get(sessionId) === executionId) this.runningExecutionIds.delete(sessionId);
-        this.executionClaims.delete(sessionId);
-        this.cancelFlags.delete(sessionId);
-        this.pendingCancels.delete(sessionId);
-        this.deps.agentLoop.removeCancelFlag(sessionId);
-        this.deps.activityHeartbeat.clear(sessionId);
+        // 簿记按归属回收（同 runExecution finally 的说明）：取消排队中的重试后立即重发时，
+        // 迟到的旧执行体不得删掉新执行的 claim/cancelFlag。
+        if (this.cancelFlags.get(sessionId) === cancelFlag) {
+          this.executionClaims.delete(sessionId);
+          this.cancelFlags.delete(sessionId);
+          this.pendingCancels.delete(sessionId);
+          this.deps.agentLoop.removeCancelFlag(sessionId);
+          this.deps.activityHeartbeat.clear(sessionId);
+        }
         if (retryTaskId != null && session.parentSessionId != null) {
           // 重试结束后收敛子代理 execution 记录并按需向主代理投递结果；
           // 簿记失败不影响会话终态（session.phase 已由 finishXxxSession 落库）。
@@ -1251,7 +1298,6 @@ export class StreamingWsHandler {
     try {
       this.deps.agentExecutor(async () => {
         await this.withLock(this.insertLocks, sessionId, async () => {
-        try {
           const item = await this.deps.messageQueueService.getById(queueId);
           // 仅允许插队仍处于 PENDING 的队列项：已消费/已删除（status=DELETED）不得再次执行
           if (!item || item.sessionId !== sessionId || item.status !== 'PENDING') {
@@ -1302,31 +1348,57 @@ export class StreamingWsHandler {
             try { imageList = JSON.parse(item.images) as string[]; } catch { /* ignore */ }
           }
           const messageContent: unknown = imageList.length === 0 ? content : contentParts(content, imageList);
-          const savedMessage = await this.deps.sessionService.saveMessage(sessionId, 'USER', messageContent, null, null, null, 0, null);
-          await this.deps.messageQueueService.delete(queueId);
-          await this.sendQueueUpdated(sessionId, userId);
-          this.deps.titleService.scheduleForFirstUserMessage(sessionId, savedMessage.id, messageContent);
-          const consumed: Record<string, unknown> = { messageId: String(savedMessage.id), content };
-          if (imageList.length > 0) consumed.images = imageList;
-          this.deps.registry.send(userId, wsEvent('queue_message_consumed', sessionId, consumed));
-          this.autoConsumingSessionIds.add(sessionId);
-          this.suppressAutoConsumeSend.delete(sessionId);
-          await this.handleSendMessage(userId, {
-            sessionId,
-            data: {
-              content, eventId: randomUUID(), clearTodos: false, replaceExecution: true, executionClaimHeld: true,
-              autoConsumeStartedAt: insertStartedAt,
-              images: imageList, ...(savedMessage.id != null ? { autoSavedMessageId: savedMessage.id } : {}),
-            },
-          }, false);
-        } catch {
-          this.autoConsumingSessionIds.delete(sessionId);
-          this.executionClaims.delete(sessionId);
-          // saveMessage/handleSendMessage 异常：清定时任务映射，避免陈旧 taskId 被下次无关执行误回写
-          this.queueScheduledTaskIds.delete(sessionId);
-        } finally {
-          this.suppressAutoConsumeSend.delete(sessionId);
-        }
+          // M-3 同源约束：落库/删队列行之后的失败必须补偿，否则表现为孤儿 USER 消息永不执行、
+          // 队列项静默丢失、定时任务永久 QUEUED。按已推进到的位置精确回滚
+          // （对照 autoConsumeQueue 的 compensate；handleSendMessage 自身的早退路径有
+          // requeueIfClaimed 自愈，能抛出到这里的都是它未覆盖的窗口）。
+          let savedMessageId: number | null = null;
+          let queueRowDeleted = false;
+          try {
+            const savedMessage = await this.deps.sessionService.saveMessage(sessionId, 'USER', messageContent, null, null, null, 0, null);
+            savedMessageId = savedMessage.id ?? null;
+            await this.deps.messageQueueService.delete(queueId);
+            queueRowDeleted = true;
+            await this.sendQueueUpdated(sessionId, userId);
+            this.deps.titleService.scheduleForFirstUserMessage(sessionId, savedMessage.id, messageContent);
+            const consumed: Record<string, unknown> = { messageId: String(savedMessage.id), content };
+            if (imageList.length > 0) consumed.images = imageList;
+            this.deps.registry.send(userId, wsEvent('queue_message_consumed', sessionId, consumed));
+            this.autoConsumingSessionIds.add(sessionId);
+            this.suppressAutoConsumeSend.delete(sessionId);
+            await this.handleSendMessage(userId, {
+              sessionId,
+              data: {
+                content, eventId: randomUUID(), clearTodos: false, replaceExecution: true, executionClaimHeld: true,
+                autoConsumeStartedAt: insertStartedAt,
+                images: imageList, ...(savedMessage.id != null ? { autoSavedMessageId: savedMessage.id } : {}),
+              },
+            }, false);
+          } catch (e) {
+            console.error(`Queue insert failed after claim for session ${sessionId}, compensating`, e);
+            this.autoConsumingSessionIds.delete(sessionId);
+            this.executionClaims.delete(sessionId);
+            // 清定时任务映射，避免陈旧 taskId 被下次无关执行误回写
+            this.queueScheduledTaskIds.delete(sessionId);
+            if (savedMessageId != null) {
+              try {
+                await this.deps.sessionService.deleteMessageById(sessionId, savedMessageId);
+              } catch (delErr) {
+                console.error(`Failed to delete orphan inserted message ${savedMessageId} for session ${sessionId}`, delErr);
+              }
+            }
+            // 队列行已删才回补队首（透传 scheduledTaskId）；未删则原行仍在队列，不重复入队
+            if (queueRowDeleted) {
+              try {
+                await this.deps.messageQueueService.enqueueHead(sessionId, userId, content, item.images ?? null, item.scheduledTaskId ?? null);
+                await this.sendQueueUpdated(sessionId, userId);
+              } catch (requeueErr) {
+                console.error(`Failed to re-enqueue inserted queue message ${queueId} for session ${sessionId}`, requeueErr);
+              }
+            }
+          } finally {
+            this.suppressAutoConsumeSend.delete(sessionId);
+          }
       });
       });
     } catch {

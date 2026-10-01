@@ -21,6 +21,24 @@
 
 - 修复 OpenAI Responses 协议（`openai-responses`）在部分不支持 `reasoning.encrypted_content` 的网关（sub2api 类）上多轮工具调用必然失败的问题：适配器此前会把历史中「只有 `id`、没有密文」的 reasoning 项原样回传，而该 `id` 在网关侧是服务端续接引用，网关据此查存储——`store:false` 下无存储，于是整轮返回 `409 continuation_unavailable`（文案为 "continuation history is unavailable; send complete input history when store is false"，但客户端发的本就是完整历史）。现改为**仅在携带 `encrypted_content` 时才回传 reasoning 项**，无密文时整项省略，退化为不含 reasoning 的无状态请求；密文齐全的网关行为不变。同类网关的 `deepseek-v4.1-flash` 此前需改用 chat completions 协议规避，升级后可直接使用 `openai-responses`。
 
+## 0.0.229 (2026-10-01)
+
+### 前端（桌面 / Web / 安卓）
+
+- 修复任务侧栏样式（`task-index-panel.css`）非 scoped 全局引入导致的通用类名污染：命令审批「拒绝 / 执行」按钮被压成 22px 竖条、微信 Bot 设置页「解绑」按钮文字溢出、聊天斜杠命令与 @ 文件引用下拉的空态/加载态被撑高、顶栏与文件查看器刷新按钮被注入固定尺寸。全部选择器现收敛在任务侧栏根节点作用域内，不再影响其他页面。
+
+### 后端
+
+- 修复后台子代理「重试」走 WS 路径时未做子代理工具裁剪的问题：重试经 buildRetryContext 构建与后台执行/崩溃恢复一致的裁剪上下文，不再把 `spawn_subagent`（防无人消费的嵌套任务）与 `ask_user_questions`（防长时间挂起）等被排除工具重新交回子代理。
+- 修复「最后管理员保护」检查与写入不原子的问题：并发禁用最后两名管理员时两个请求可能互相放行，系统进入零管理员状态。禁用状态写入并入 FOR UPDATE 守卫事务（`updateUserStatusWithAdminGuard`），用户状态取值收紧为 0/1/null（`updateUser` 与 `updateUserStatus` 两个入口）。
+- 修复管理员自助「启用」自己被误拒的问题：不能禁用当前登录用户的守卫只对禁用（status=0）生效，启用 / 清空自身状态是合法自助操作（SSO / 外部账号默认 status=null 时可达）。
+- 修复插队消费（insert_message）在删除队列行之后异常被静默吞掉的问题：现在会删除已落库未执行的孤儿 USER 消息、按需回补队首（透传定时任务来源），失败记录日志，与自动消费路径的补偿语义对齐。
+- 修复取消「排队中」的执行后立即重发时，旧执行体迟到开跑会覆盖 CANCELLED、并删掉新执行 claim/取消标志的问题：执行入口增加取消复查，finally 的簿记回收改为按归属判定。取消在排队窗口内到达（执行体尚未开跑）时同样收敛——排队的下一条消息照常被自动消费执行，定时任务入队的消息不会永远卡在 QUEUED。
+- 修复 `open_web_page` 截断全文落盘文件名只取 URL 路径末段的问题：同会话内同名末段的不同网页互相覆盖，模型按路径回读会拿到别的网页内容。现在文件名并入 URL 短哈希——同一 URL 重复抓取仍覆盖同一文件，不同 URL 互不覆盖。
+- 修复钉钉 / 飞书入站文件按原始文件名落盘导致同日同名文件互相覆盖的问题：命中时改用带 messageId 的唯一名，历史消息中的文件引用不再被后到的同名文件篡改。
+- 修复工具调用流式合并对「无 id、仅 index」分片整段丢失的问题：部分 OpenAI 兼容网关不回传 id 时，并行工具调用现在能正确建立与执行。
+
+
 ## 0.0.227 (2026-09-30)
 
 ### 前端（桌面 / Web / 安卓）

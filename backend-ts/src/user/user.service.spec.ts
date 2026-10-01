@@ -27,6 +27,7 @@ describe('UserService', () => {
     changeRolesWithAdminGuard: vi.fn(),
     assertCanChangeRoles: vi.fn(),
     assertCanDisableUser: vi.fn(),
+    updateUserStatusWithAdminGuard: vi.fn(),
     batchGetUserRoles: vi.fn(),
     getUserRoles: vi.fn(),
   } as unknown as PermissionService;
@@ -78,16 +79,19 @@ describe('UserService', () => {
     expect(updated.status).toBe(0);
     expect(permissionService.assertCanDisableUser).toHaveBeenCalledWith(7, 1);
     expect(permissionService.changeRolesWithAdminGuard).toHaveBeenCalledWith(7, [1, 2]);
+    // 禁用写入走守卫事务（检查与 status 写入原子），整行写不再覆盖 status
+    expect(permissionService.updateUserStatusWithAdminGuard).toHaveBeenCalledWith(7, 1, 0);
     expect(userRepo.updateById).toHaveBeenCalledWith(existing);
   });
 
-  it('updateUserStatusChecksDisableRules', async () => {
+  it('updateUserStatusDelegatesToGuardedWriteAndRejectsInvalidValues', async () => {
     const existing = user(8, 'bob', 'Bob', null, 'hash', 1);
     vi.mocked(userRepo.findById).mockResolvedValue(existing);
     await service.updateUserStatus(8, 0, 1);
-    expect(existing.status).toBe(0);
-    expect(permissionService.assertCanDisableUser).toHaveBeenCalledWith(8, 1);
-    expect(userRepo.updateById).toHaveBeenCalledWith(existing);
+    expect(permissionService.updateUserStatusWithAdminGuard).toHaveBeenCalledWith(8, 1, 0);
+    // 非法取值直接拒绝（本地登录只认 0 禁用、筛选按 0/1 分组，任意整数会语义错乱）
+    await expect(service.updateUserStatus(8, 5, 1)).rejects.toBeInstanceOf(BusinessException);
+    await expect(service.updateUserStatus(8, -1, 1)).rejects.toBeInstanceOf(BusinessException);
   });
 
   it('resetPasswordSetsLocalPasswordForExternalAndLocalUsers', async () => {

@@ -44,7 +44,7 @@ describe('StreamingWsHandler', () => {
     getEmbedSessionBinding: vi.fn(() => null),
   };
   const titleService = { scheduleForFirstUserMessage: vi.fn() };
-  const harnessService = { prepareMessage: vi.fn(), executeFromEvent: vi.fn(), executeSideFirstMessage: vi.fn(), forkParentMessages: vi.fn() };
+  const harnessService = { prepareMessage: vi.fn(), executeFromEvent: vi.fn(), executePrepared: vi.fn(), executeSideFirstMessage: vi.fn(), forkParentMessages: vi.fn() };
   const sessionService = {
     getSession: vi.fn(), saveMessage: vi.fn(), updatePhase: vi.fn(), updateField: vi.fn(),
     updateModelId: vi.fn(), getMessages: vi.fn(), editMessageAndTruncate: vi.fn(), save: vi.fn(),
@@ -55,6 +55,7 @@ describe('StreamingWsHandler', () => {
     deleteMessageById: vi.fn(async () => undefined),
   };
   const taskTerminalService = { finishExecution: vi.fn() };
+  const onScheduledTaskQueueConsumed = vi.fn(async () => undefined);
   const messageQueueService = {
     listPending: vi.fn(async () => []), enqueue: vi.fn(), dequeue: vi.fn(), getById: vi.fn(),
     delete: vi.fn(), reorder: vi.fn(), enqueueHead: vi.fn(async () => undefined),
@@ -96,6 +97,7 @@ describe('StreamingWsHandler', () => {
 
   const handler = new StreamingWsHandler({
     registry, titleService, harnessService, sessionService, taskTerminalService, messageQueueService,
+    onScheduledTaskQueueConsumed,
     localToolSessionRegistry, askUserQuestionsRegistry, embedPageToolRegistry, treeSignalPublisher, approvalRegistry, activityService,
     activityHeartbeat, sessionTodoMapper, agentLoop, shellSessionManager, skillSyncService,
     localSkillRegistry, localAgentsMdRegistry, mcpSyncService, mcpClientManager, agentMapper,
@@ -886,6 +888,8 @@ describe('StreamingWsHandler', () => {
         cancelAllForParent: vi.fn(),
         beginRetry: vi.fn(async () => ({ ok: true, taskId: 55 })),
         completeRetry: vi.fn(),
+        // 重试上下文走 buildSubContext 裁剪（BUG-2 修复）：WS 侧经 buildRetryContext + executePrepared
+        buildRetryContext: vi.fn(async (childSessionId: number) => ({ sessionId: childSessionId })),
       };
     }
 
@@ -919,7 +923,8 @@ describe('StreamingWsHandler', () => {
       await executor.runAll();
 
       expect(manager.beginRetry).toHaveBeenCalledWith(10, 11);
-      expect(harnessService.executeFromEvent).toHaveBeenCalled();
+      expect(manager.buildRetryContext).toHaveBeenCalledWith(11);
+      expect(harnessService.executePrepared).toHaveBeenCalled();
       expect(manager.completeRetry).toHaveBeenCalledWith(10, 55, 'COMPLETED');
     });
 
@@ -931,7 +936,7 @@ describe('StreamingWsHandler', () => {
       const subHandler = buildSubagentHandler(manager);
       registry.getUserId.mockReturnValue(7);
       sessionService.getSession.mockResolvedValue(subagentSession('CLOUD', 'FAILED'));
-      harnessService.executeFromEvent.mockRejectedValue(new Error('boom'));
+      harnessService.executePrepared.mockRejectedValue(new Error('boom'));
 
       await subHandler.handleTextMessage(ws, JSON.stringify({ type: 'retry_execution', sessionId: 11 }));
       await executor.runAll();
@@ -953,6 +958,7 @@ describe('StreamingWsHandler', () => {
 
       expect(manager.beginRetry).toHaveBeenCalledWith(10, 11);
       expect(harnessService.executeFromEvent).not.toHaveBeenCalled();
+      expect(harnessService.executePrepared).not.toHaveBeenCalled();
       expect(manager.completeRetry).not.toHaveBeenCalled();
       expect(registry.send).toHaveBeenCalledWith(7, expect.objectContaining({
         type: 'error', sessionId: 11,
@@ -1134,6 +1140,120 @@ describe('StreamingWsHandler', () => {
       expect(handler.hasExecutionClaim(11)).toBe(false);
       expect(taskTerminalService.finishExecution).toHaveBeenCalledWith(11, 7, 'CANCELLED', 'e-1');
       expect(agentLoop.removeCancelFlag).toHaveBeenCalledWith(11);
+    });
+
+    it('execution cancelled while queued converges at entry without clobbering the resent execution', async () => {
+      // 发送 A（排队）→ 取消（落 CANCELLED + 释放簿记）→ 立即重发 B → 池依次开跑：
+      // A 迟到开跑必须走入口取消复查收敛，不得覆盖 CANCELLED、不得删掉 B 的 claim/flag。
+      await startExecution('IDLE', 'e-1', () => new Promise<void>(() => { /* never settles */ }), false);
+
+      sessionService.getSession.mockResolvedValue(session('CLOUD', 'IDLE'));
+      await handler.handleTextMessage(ws, JSON.stringify({ type: 'cancel', sessionId: 11 }));
+      expect(taskTerminalService.finishExecution).toHaveBeenCalledWith(11, 7, 'CANCELLED', 'e-1');
+
+      // 重发 B：正常执行到完成
+      harnessService.executeFromEvent.mockResolvedValue(undefined);
+      messageQueueService.listPending.mockResolvedValue([]);
+      sessionService.getSession.mockResolvedValue(session('CLOUD', 'CANCELLED'));
+      sessionService.saveMessage.mockResolvedValue(message(100, 'USER'));
+      harnessService.prepareMessage.mockResolvedValue('e-2');
+      await handler.handleTextMessage(ws, JSON.stringify({
+        type: 'send_message', sessionId: 11, data: { content: 'again', eventId: 'e-2' },
+      }));
+      await executor.runAll();
+
+      // 恰好一次 RUNNING 相位写入（B 的）：A 迟到开跑若没有入口复查，会再写一次 RUNNING
+      const runningWrites = vi.mocked(sessionService.updatePhase).mock.calls
+        .filter(([id, phase]) => id === 11 && phase === 'RUNNING');
+      expect(runningWrites).toHaveLength(1);
+      expect(harnessService.executeFromEvent).toHaveBeenCalledTimes(1);
+      // B 收尾后自己的簿记被正常回收（A 的迟到 finally 不得提前删掉它）
+      expect(handler.hasExecutionClaim(11)).toBe(false);
+    });
+
+    it('execution cancelled while queued consumes the next queued message from its entry-converged finally', async () => {
+      // 排队窗口取消与上条同构，但队列里还有一条 busy 入队的定时任务消息：
+      // 入口复查提前退出后，finally 仍必须完成收敛职责——autoConsumeQueue 出队执行下一条
+      // 并回写定时任务终态。预修复时提前 return 在 try 之外，整段 finally 被跳过：
+      // 队列消息停滞（要等下一次执行自然结束才被消费）、绑定残留被后续执行 stale 回写。
+      // 用独立 sessionId 隔离前置用例可能残留的簿记/会话锁，保证 A 真实入池排队。
+      vi.useFakeTimers();
+      vi.clearAllMocks();
+      executor.tasks.length = 0;
+      const own = (phase: string): Session => ({
+        id: 15, userId: 7, agentId: 5, executionMode: 'CLOUD', phase,
+        permissionLevel: 'READ_ONLY', status: 'ACTIVE',
+      });
+      registry.getUserId.mockReturnValue(7);
+      sessionService.getSession.mockResolvedValue(own('IDLE'));
+      sessionService.saveMessage.mockResolvedValue(message(100, 'USER'));
+      harnessService.prepareMessage.mockResolvedValue('e-own-1');
+      harnessService.executeFromEvent.mockImplementation(() => new Promise<void>(() => { /* never settles */ }));
+      messageQueueService.listPending.mockResolvedValue([]);
+      await handler.handleTextMessage(ws, JSON.stringify({
+        type: 'send_message', sessionId: 15, data: { content: 'hi', eventId: 'e-own-1' },
+      }));
+
+      sessionService.getSession.mockResolvedValue(own('IDLE'));
+      await handler.handleTextMessage(ws, JSON.stringify({ type: 'cancel', sessionId: 15 }));
+      expect(taskTerminalService.finishExecution).toHaveBeenCalledWith(15, 7, 'CANCELLED', 'e-own-1');
+
+      // 队列里还有一条 busy 入队的定时任务消息（A 在途时用户继续入队）
+      harnessService.executeFromEvent.mockResolvedValue(undefined);
+      const queued = { id: 8, sessionId: 15, userId: 7, content: 'queued-next', sortOrder: 1, images: null, scheduledTaskId: 9 };
+      let pending = [queued];
+      messageQueueService.listPending.mockImplementation(async () => pending);
+      messageQueueService.dequeue.mockImplementation(async () => {
+        const head = pending[0] ?? null;
+        pending = [];
+        return head;
+      });
+      sessionService.getSession.mockResolvedValue(own('CANCELLED'));
+      const running = executor.runAll();
+      await vi.advanceTimersByTimeAsync(500);
+      await running;
+      vi.useRealTimers();
+
+      // A 的入口复查提前退出，但 finally 的 autoConsumeQueue 照常出队、落库并执行下一条
+      expect(messageQueueService.dequeue).toHaveBeenCalledWith(15);
+      expect(registry.send).toHaveBeenCalledWith(7, expect.objectContaining({
+        type: 'queue_message_consumed',
+        sessionId: 15,
+        data: expect.objectContaining({ content: 'queued-next' }),
+      }));
+      expect(harnessService.executeFromEvent).toHaveBeenCalled();
+      // busy 入队的定时任务绑定被消费并回写终态，不会永久停在 QUEUED 或被后续执行 stale 回写
+      expect(onScheduledTaskQueueConsumed).toHaveBeenCalledWith(9, 'CANCELLED');
+      // A 迟到开跑不得再写 RUNNING，也不得误删后续执行的簿记
+      const runningWrites = vi.mocked(sessionService.updatePhase).mock.calls
+        .filter(([id, phase]) => id === 15 && phase === 'RUNNING');
+      expect(runningWrites).toHaveLength(1);
+      expect(handler.hasExecutionClaim(15)).toBe(false);
+    });
+
+    it('insert_message compensates when a failure lands after the queue row was deleted', async () => {
+      // 插队：saveMessage 落库 → delete 队列行 → sendQueueUpdated 抛 DB 异常 →
+      // 必须删孤儿 USER 消息 + 回补队首（透传 scheduledTaskId），失败可观测不再静默。
+      vi.clearAllMocks();
+      executor.tasks.length = 0;
+      registry.getUserId.mockReturnValue(7);
+      sessionService.getSession.mockResolvedValue(session('CLOUD', 'COMPLETED'));
+      sessionService.saveMessage.mockResolvedValue(message(77, 'USER'));
+      sessionService.deleteMessageById.mockResolvedValue(undefined);
+      messageQueueService.getById.mockResolvedValue({ id: 5, sessionId: 11, status: 'PENDING', content: 'insert-me', images: null, scheduledTaskId: 9 });
+      messageQueueService.delete.mockResolvedValue(undefined);
+      messageQueueService.enqueueHead.mockResolvedValue(undefined);
+      // 第一次 listPending（删行后的 sendQueueUpdated）抛 DB 异常，补偿内重试恢复
+      messageQueueService.listPending.mockRejectedValueOnce(new Error('db down')).mockResolvedValue([]);
+
+      await handler.handleTextMessage(ws, JSON.stringify({
+        type: 'insert_message', sessionId: 11, data: { queueId: 5 },
+      }));
+      await executor.runAll();
+
+      expect(sessionService.deleteMessageById).toHaveBeenCalledWith(11, 77);
+      expect(messageQueueService.enqueueHead).toHaveBeenCalledWith(11, 7, 'insert-me', null, 9);
+      expect(handler.hasExecutionClaim(11)).toBe(false);
     });
 
     it('cancel_side_task releases the claim for the side session', async () => {

@@ -271,7 +271,7 @@ import { createFeishuAskMount } from './feishu/ask-mount.js';
 import { createFeishuPatchedProgress, type FeishuProgressHandle } from './feishu/patched-progress.js';
 import { wsEvent } from './session/ws/ws-event.js';
 import { inboundImageKeys } from './feishu/event-normalizer.js';
-import { chatFilesDirOf } from './feishu/chat-files.js';
+import { chatFilesDirOf, resolveChatFileTarget } from './feishu/chat-files.js';
 import type { FeishuInboundContext, FeishuNormalizedMessage } from './feishu/types.js';
 import { WsStreamingEventListener } from './session/ws/ws-streaming-event-listener.js';
 
@@ -1640,7 +1640,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
                 const fileName = sanitizeFeishuFileName(context.fileName, `feishu-${context.fileKey}`);
                 const dir = chatFilesDirOf(workspace);
                 mkdirSync(dir, { recursive: true });
-                const target = resolve(dir, fileName);
+                // 同日同名文件防覆盖：命中时改用带 messageId 的唯一名，历史引用不被篡改
+                const target = resolveChatFileTarget(dir, fileName, context.messageId);
                 await writeFile(target, buffer);
                 filePaths.push(target);
               }
@@ -1786,7 +1787,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     const dir = chatFilesDirOf(workspace);
     mkdirSync(dir, { recursive: true });
     const fileName = sanitizeFeishuFileName(event.fileName, `feishu-${event.fileKey}`);
-    const target = resolve(dir, fileName);
+    // 同日同名文件防覆盖：命中时改用带 messageId 的唯一名，历史引用不被篡改
+    const target = resolveChatFileTarget(dir, fileName, event.messageId);
     await writeFile(target, buffer);
     return target;
   };

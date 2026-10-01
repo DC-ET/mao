@@ -866,6 +866,27 @@ export class BackgroundSubagentManager {
     ctx.preparedRequest = null;
     return ctx;
   }
+
+  /**
+   * WS 子代理重试路径专用：按子代理会话构建与后台执行/崩溃恢复一致的裁剪上下文。
+   * 重试若直连标准 buildContext，会把 spawn_subagent / ask_user_questions 等被
+   * SUBAGENT 排除集合裁掉的工具重新交回子代理（可派生无人消费的嵌套任务或挂起在提问上）。
+   */
+  async buildRetryContext(childSessionId: number): Promise<AgentExecutionContext> {
+    const childSession = await this.deps.sessionMapper.selectById(childSessionId);
+    if (!childSession || childSession.sessionType !== 'SUBAGENT') {
+      throw new Error('会话不是子代理会话，无法构建重试上下文: ' + childSessionId);
+    }
+    const execution = await this.deps.subagentExecutionMapper.findByChildSessionId(childSessionId);
+    const agentType = execution?.agentType ?? null;
+    const definition = agentType != null
+      ? this.deps.definitionRegistry.getDefinition(normalizeAgentType(agentType))
+      : undefined;
+    if (!definition) {
+      throw new Error('子代理定义不存在，无法构建重试上下文: ' + (agentType ?? 'unknown'));
+    }
+    return this.buildSubContext(childSession, definition);
+  }
 }
 
 function isTerminal(status: string | null | undefined): boolean {

@@ -90,6 +90,12 @@ export interface UserRoleRepository {
   insert(row: UserRole): Promise<void>;
   /** 可选：在事务中执行先删后插（Mysql 实现提供）。 */
   transaction?<T>(fn: (tx: UserRoleRepository) => Promise<T>): Promise<T>;
+  /**
+   * 可选：在持有方当前连接上写用户状态（Mysql 实现提供）。
+   * 供「最后管理员检查 + 禁用写入」同事务原子化使用：transaction() 构造的
+   * tx 实例持有事务连接，经它写入才能与 FOR UPDATE 锁同事务提交。
+   */
+  updateUserStatus?(userId: number, status: number | null): Promise<void>;
 }
 
 export interface RolePermissionRepository {

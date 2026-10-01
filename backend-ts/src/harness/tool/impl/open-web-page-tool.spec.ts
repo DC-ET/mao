@@ -232,4 +232,46 @@ describe('OpenWebPageTool', () => {
       page.close();
     }
   });
+
+  it('different urls sharing the last path segment spill to different files (no overwrite)', async () => {
+    // urlSlug 必须含 URL 哈希：同会话内 /docs/intro 与 /api/intro 的截断全文
+    // 不得互相覆盖，否则模型按第一次结果的路径 read_file 会读到另一个网页的内容。
+    const root = useTmpDir('mao-webpage-collision-');
+    const cache = { resolveWebPageCacheDir: (uid: number, sid: number) => join(root, String(uid), String(sid), 'webPages') };
+    const local = new OpenWebPageTool({
+      connectTimeout: 3000, readTimeout: 3000, maxRawBytes: 2_000_000, maxOutputLength: 2_000,
+      userAgent: 'mao-test',
+    }, cache);
+    const markerA = 'DOCS-INTRO-MARKER';
+    const markerB = 'API-INTRO-MARKER';
+    const server = http.createServer((req, res) => {
+      const marker = req.url?.startsWith('/docs/intro') ? markerA : markerB;
+      const body = `<article><h1>${marker}</h1><p>${'C'.repeat(20_000)}</p></article>`;
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(`<!doctype html><html><head><title>T</title></head><body>${body}</body></html>`);
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const port = (server.address() as AddressInfo).port;
+    try {
+      const first = JSON.parse(await local.execute(
+        JSON.stringify({ url: `http://127.0.0.1:${port}/docs/intro` }), 42, 9, null,
+      )) as { truncated?: boolean; full_content_file?: string };
+      const second = JSON.parse(await local.execute(
+        JSON.stringify({ url: `http://127.0.0.1:${port}/api/intro` }), 42, 9, null,
+      )) as { truncated?: boolean; full_content_file?: string };
+      expect(first.truncated).toBe(true);
+      expect(second.truncated).toBe(true);
+      expect(first.full_content_file).not.toBe(second.full_content_file);
+      // 第一份全文未被第二份覆盖
+      expect(readFileSync(first.full_content_file as string, 'utf8')).toContain(markerA);
+      expect(readFileSync(second.full_content_file as string, 'utf8')).toContain(markerB);
+      // 同一 URL 重复抓取仍覆盖同一文件（哈希稳定）
+      const again = JSON.parse(await local.execute(
+        JSON.stringify({ url: `http://127.0.0.1:${port}/docs/intro` }), 42, 9, null,
+      )) as { full_content_file?: string };
+      expect(again.full_content_file).toBe(first.full_content_file);
+    } finally {
+      server.close();
+    }
+  });
 });

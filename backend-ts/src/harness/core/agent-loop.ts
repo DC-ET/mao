@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { ChatMessage, ChatRequest, ChatUsage, LlmAdapter, StreamCallback, StreamChunk, ToolCall } from '../llm/chat-request.js';
 import { EmptyResponseExhaustedException } from '../llm/empty-response-exhausted.js';
 import { AtomicBoolean } from '../atomic-boolean.js';
@@ -638,7 +639,17 @@ export class AgentLoop {
     let merged = this.findMergeTarget(existing, delta);
     if (merged) {
       this.applyToolCallDelta(merged, delta);
-    } else if (delta.id) {
+    } else if (delta.id || delta.index != null) {
+      // 无 id、仅 index 的分片（部分 OpenAI 兼容网关不回传 id）必须按新 tool call 追加，
+      // 否则 findMergeTarget 按 index 落空且 push 分支要求 id，整段调用被静默丢弃。
+      if (!delta.id) {
+        // 追加时即合成稳定 id：派发、toolResults 簿记、TOOL 消息配对（normalizeChatMessages
+        // 的 deferredTools）、serializeToolCall 全都要求 id 非空，缺 id 时第 2 轮起工具结果
+        // 会被整体剥掉、严格网关还会因 tool_calls[].id 缺失 400。
+        // 不能用 index 推导——同一 index 会在后续轮次复用，配对表会跨轮错并；随机 id 由本条
+        // 调用持有终身，同 index 的后续分片经 findMergeTarget 归并到同一对象。
+        delta.id = `call-${randomUUID()}`;
+      }
       existing.push(delta);
       merged = delta;
     }
@@ -652,7 +663,14 @@ export class AgentLoop {
 
   private findMergeTarget(existing: ToolCall[], delta: ToolCall): ToolCall | undefined {
     if (delta.id) {
-      return existing.find((tc) => tc.id === delta.id);
+      const byId = existing.find((tc) => tc.id === delta.id);
+      if (byId) return byId;
+      // 首片无 id 的调用已被合成 id 占位：后续分片带回真实 id 时按 index 归并，
+      // 否则同一调用会被拆成两条 tool call 重复派发
+      if (delta.index != null) {
+        return existing.find((tc) => tc.index === delta.index);
+      }
+      return undefined;
     }
     if (delta.index != null) {
       return existing.find((tc) => tc.index === delta.index) ?? existing[delta.index];

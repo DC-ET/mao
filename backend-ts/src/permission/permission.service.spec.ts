@@ -46,13 +46,18 @@ describe('PermissionService', () => {
     findByUserId: vi.fn(),
     findByUserIds: vi.fn(),
     findByRoleId: vi.fn(),
+    findByRoleIdForUpdate: vi.fn(),
     countByRoleId: vi.fn(),
     countByUserAndRole: vi.fn(),
     deleteByUserId: vi.fn(),
     insert: vi.fn(),
+    updateUserStatus: vi.fn(),
+    // 默认实现：直接以桩自身作为 tx 执行回调，保持 assignRoles 等既有路径语义
+    transaction: vi.fn(async (fn: (tx: UserRoleRepository) => Promise<unknown>) => fn(userRoleRepo)),
   } as unknown as UserRoleRepository;
   const userRepo = {
     findById: vi.fn(),
+    updateFields: vi.fn(),
   } as unknown as UserRepository;
 
   const service = new PermissionService(roleRepo, permissionRepo, rolePermissionRepo, userRoleRepo, userRepo);
@@ -119,12 +124,15 @@ describe('PermissionService', () => {
     vi.mocked(roleRepo.findByCode).mockResolvedValue(admin);
     vi.mocked(userRoleRepo.countByUserAndRole).mockResolvedValue(1);
     vi.mocked(userRoleRepo.findByRoleId).mockResolvedValue([userRole(10, 1)]);
+    // 桩具备事务能力后，assertNotLastAdmin 走 FOR UPDATE 事务路径，数据与 findByRoleId 同源
+    vi.mocked(userRoleRepo.findByRoleIdForUpdate!).mockResolvedValue([userRole(10, 1)]);
 
     await expect(service.assertCanDisableUser(10, 10)).rejects.toBeInstanceOf(BusinessException);
     await expect(service.assertCanDisableUser(10, 99)).rejects.toBeInstanceOf(BusinessException);
     await expect(service.assertCanChangeRoles(10, [2])).rejects.toBeInstanceOf(BusinessException);
 
     vi.mocked(userRoleRepo.findByRoleId).mockResolvedValue([userRole(10, 1), userRole(20, 1)]);
+    vi.mocked(userRoleRepo.findByRoleIdForUpdate!).mockResolvedValue([userRole(10, 1), userRole(20, 1)]);
     vi.mocked(userRepo.findById).mockResolvedValue({ id: 20, username: 'a', status: 1 });
     await service.assertCanDisableUser(10, 99);
     await service.assertCanChangeRoles(10, [2]);
@@ -155,5 +163,61 @@ describe('PermissionService', () => {
     vi.mocked(roleRepo.findByCode).mockResolvedValue(role(1, 'Admin', 'ADMIN'));
     vi.mocked(userRoleRepo.countByUserAndRole).mockResolvedValue(1);
     expect(await service.isAdmin(1)).toBe(true);
+  });
+
+  it('updateUserStatusWithAdminGuard writes status inside the guard transaction', async () => {
+    const admin = role(1, 'Admin', 'ADMIN');
+    vi.mocked(roleRepo.findByCode).mockResolvedValue(admin);
+    vi.mocked(userRoleRepo.countByUserAndRole).mockResolvedValue(1);
+    // FOR UPDATE 绑定里另一名管理员仍活跃 → 放行，且 status 写入发生在同一事务回调内
+    vi.mocked(userRoleRepo.findByRoleIdForUpdate!).mockResolvedValue([userRole(10, 1), userRole(20, 1)]);
+    vi.mocked(userRepo.findById).mockResolvedValue({ id: 20, username: 'a', displayName: 'A', status: 1 });
+    vi.mocked(userRoleRepo.transaction!).mockImplementation(async (fn) => fn(userRoleRepo));
+
+    await service.updateUserStatusWithAdminGuard(10, 99, 0);
+
+    expect(vi.mocked(userRoleRepo.findByRoleIdForUpdate).mock.calls[0]).toEqual([1]);
+    expect(userRoleRepo.updateUserStatus).toHaveBeenCalledWith(10, 0);
+  });
+
+  it('updateUserStatusWithAdminGuard rejects disabling the last admin before the write', async () => {
+    const admin = role(1, 'Admin', 'ADMIN');
+    vi.mocked(roleRepo.findByCode).mockResolvedValue(admin);
+    vi.mocked(userRoleRepo.countByUserAndRole).mockResolvedValue(1);
+    // 绑定里只剩目标本人 → 最后管理员保护在事务内拒绝，status 不得落库
+    vi.mocked(userRoleRepo.findByRoleIdForUpdate!).mockResolvedValue([userRole(10, 1)]);
+    vi.mocked(userRoleRepo.transaction!).mockImplementation(async (fn) => fn(userRoleRepo));
+
+    await expect(service.updateUserStatusWithAdminGuard(10, 99, 0)).rejects.toBeInstanceOf(BusinessException);
+    expect(userRoleRepo.updateUserStatus).not.toHaveBeenCalled();
+  });
+
+  it('updateUserStatusWithAdminGuard rejects self-disable and passes through non-admin targets', async () => {
+    await expect(service.updateUserStatusWithAdminGuard(10, 10, 0)).rejects.toBeInstanceOf(BusinessException);
+
+    const admin = role(1, 'Admin', 'ADMIN');
+    vi.mocked(roleRepo.findByCode).mockResolvedValue(admin);
+    // 目标不是管理员：无最后管理员约束，直接经 userRepo.updateFields 写入
+    vi.mocked(userRoleRepo.countByUserAndRole).mockResolvedValue(0);
+    await service.updateUserStatusWithAdminGuard(20, 99, 1);
+    expect(userRepo.updateFields).toHaveBeenCalledWith(20, { status: 1 });
+  });
+
+  it('updateUserStatusWithAdminGuard only rejects disabling self, not enabling or clearing own status', async () => {
+    // 自助启用/清空自身状态是合法操作（SSO/外部账号默认 status=null，登录侧允许）；
+    // 自检只覆盖禁用，错误码「不能禁用当前登录用户」的语义也仅与禁用匹配。
+    const admin = role(1, 'Admin', 'ADMIN');
+    vi.mocked(roleRepo.findByCode).mockResolvedValue(admin);
+    vi.mocked(userRoleRepo.countByUserAndRole).mockResolvedValue(0);
+
+    await service.updateUserStatusWithAdminGuard(10, 10, 1);
+    expect(userRepo.updateFields).toHaveBeenCalledWith(10, { status: 1 });
+
+    await service.updateUserStatusWithAdminGuard(10, 10, null);
+    expect(userRepo.updateFields).toHaveBeenCalledWith(10, { status: null });
+
+    // 禁用自己仍然拒绝，不会因上面放行自助写入而被绕过
+    await expect(service.updateUserStatusWithAdminGuard(10, 10, 0)).rejects.toBeInstanceOf(BusinessException);
+    expect(userRepo.updateFields).toHaveBeenCalledTimes(2);
   });
 });
