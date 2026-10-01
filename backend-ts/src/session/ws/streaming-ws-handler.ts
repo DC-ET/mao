@@ -429,7 +429,11 @@ export class StreamingWsHandler {
     if (session.executionMode === 'LOCAL') {
       this.deps.localToolSessionRegistry.setUserForSession(sessionId, userId);
       if (!(await this.deps.localToolSessionRegistry.isConnected(sessionId))) {
-        await requeueIfClaimed();
+        // 手动发送的 claim 是本方法刚自行添加的：requeueIfClaimed 只回补自动消费的
+        // 消息，对手动发送 no-op。不显式释放会让该会话后续所有发送都被
+        // session_already_running 拒绝，只能重启后端恢复。
+        if (claimAlreadyHeld) await requeueIfClaimed();
+        else this.executionClaims.delete(sessionId);
         this.deps.registry.send(userId, wsEvent('error', sessionId, { message: 'Local client is not connected. Please ensure the desktop app is running.' }));
         return;
       }

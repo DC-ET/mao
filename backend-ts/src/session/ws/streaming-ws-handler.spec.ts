@@ -355,6 +355,26 @@ describe('StreamingWsHandler', () => {
     expect(localToolSessionRegistry.setUserForSession).toHaveBeenCalledWith(12, 7);
   });
 
+  it('releases the execution claim when the local client is disconnected', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('LOCAL', 'IDLE'));
+    localToolSessionRegistry.isConnected.mockReturnValue(false);
+    await handler.handleTextMessage(ws, JSON.stringify({ type: 'send_message', sessionId: 12, data: { content: 'hello' } }));
+    // 第二次发送必须仍停在同一个 LOCAL 断连出口：若变成 session_already_running，
+    // 说明第一次早退时 claim 未释放，该会话后续发送会被永久拒绝（只能重启后端恢复）。
+    await handler.handleTextMessage(ws, JSON.stringify({ type: 'send_message', sessionId: 12, data: { content: 'hello again' } }));
+    const notConnected = {
+      type: 'error', sessionId: 12,
+      data: expect.objectContaining({ message: 'Local client is not connected. Please ensure the desktop app is running.' }),
+    };
+    expect(registry.send).toHaveBeenCalledTimes(2);
+    expect(registry.send).toHaveBeenNthCalledWith(1, 7, notConnected);
+    expect(registry.send).toHaveBeenNthCalledWith(2, 7, notConnected);
+    expect(registry.send).not.toHaveBeenCalledWith(7, expect.objectContaining({ type: 'session_already_running' }));
+    expect(sessionService.saveMessage).not.toHaveBeenCalled();
+  });
+
   it('editAndResendRejectsInvalidImagesBeforeTruncatingHistory', async () => {
     vi.clearAllMocks();
     registry.getUserId.mockReturnValue(7);
@@ -1109,6 +1129,10 @@ describe('StreamingWsHandler', () => {
     async function startExecution(phase: string, eventId: string, body: () => Promise<void>, runToCompletion = true) {
       vi.clearAllMocks();
       executor.tasks.length = 0;
+      // 前序用例的簿记残留（如 IDLE 会话 cancel 后遗留的 pendingCancels）会让本次发送在
+      // takePendingCancel 处被误判取消、claim 未提交即被删。先整体回收，保证与执行时序解耦。
+      (handler as unknown as { releaseExecutionBookkeeping: (id: number) => void })
+        .releaseExecutionBookkeeping(11);
       // 前序用例可能给 updatePhase 挂了 rejection，这里必须复位，否则 setup 阶段就失败收尾。
       sessionService.updatePhase.mockReset();
       sessionService.updatePhase.mockResolvedValue(undefined);

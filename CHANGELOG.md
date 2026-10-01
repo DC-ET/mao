@@ -15,11 +15,11 @@
 
 ---
 
-## 0.0.228 (2026-10-01)
+## 0.0.230 (2026-10-01)
 
 ### 后端
 
-- 修复 OpenAI Responses 协议（`openai-responses`）在部分不支持 `reasoning.encrypted_content` 的网关（sub2api 类）上多轮工具调用必然失败的问题：适配器此前会把历史中「只有 `id`、没有密文」的 reasoning 项原样回传，而该 `id` 在网关侧是服务端续接引用，网关据此查存储——`store:false` 下无存储，于是整轮返回 `409 continuation_unavailable`（文案为 "continuation history is unavailable; send complete input history when store is false"，但客户端发的本就是完整历史）。现改为**仅在携带 `encrypted_content` 时才回传 reasoning 项**，无密文时整项省略，退化为不含 reasoning 的无状态请求；密文齐全的网关行为不变。同类网关的 `deepseek-v4.1-flash` 此前需改用 chat completions 协议规避，升级后可直接使用 `openai-responses`。
+- 修复 LOCAL 模式会话在桌面客户端未连接时发送消息会导致该会话被永久卡死的问题：发送在「本地客户端未连接」出口早退时只回补了自动消费的消息，手动发送的会话执行占位没有被释放，此后该会话的所有发送都被「该任务仍在运行」拒绝，只能重启后端恢复。现在手动发送在该出口同样释放占位，桌面客户端重连后即可正常继续对话。
 
 ## 0.0.229 (2026-10-01)
 
@@ -38,6 +38,11 @@
 - 修复钉钉 / 飞书入站文件按原始文件名落盘导致同日同名文件互相覆盖的问题：命中时改用带 messageId 的唯一名，历史消息中的文件引用不再被后到的同名文件篡改。
 - 修复工具调用流式合并对「无 id、仅 index」分片整段丢失的问题：部分 OpenAI 兼容网关不回传 id 时，并行工具调用现在能正确建立与执行。
 
+## 0.0.228 (2026-10-01)
+
+### 后端
+
+- 修复 OpenAI Responses 协议（`openai-responses`）在部分不支持 `reasoning.encrypted_content` 的网关（sub2api 类）上多轮工具调用必然失败的问题：适配器此前会把历史中「只有 `id`、没有密文」的 reasoning 项原样回传，而该 `id` 在网关侧是服务端续接引用，网关据此查存储——`store:false` 下无存储，于是整轮返回 `409 continuation_unavailable`（文案为 "continuation history is unavailable; send complete input history when store is false"，但客户端发的本就是完整历史）。现改为**仅在携带 `encrypted_content` 时才回传 reasoning 项**，无密文时整项省略，退化为不含 reasoning 的无状态请求；密文齐全的网关行为不变。同类网关的 `deepseek-v4.1-flash` 此前需改用 chat completions 协议规避，升级后可直接使用 `openai-responses`。
 
 ## 0.0.227 (2026-09-30)
 
