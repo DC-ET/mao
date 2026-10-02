@@ -54,6 +54,16 @@ export class SessionRepository {
     );
   }
 
+  /** 用户历史会话出现过的 (project_key, workspace) 去重集合，供记忆项目下拉与抽取渠道判定。 */
+  listProjectKeyRows(userId: number): Promise<Array<{ projectKey: string; workspace: string | null }>> {
+    return this.db.query(
+      `SELECT project_key AS projectKey, MAX(workspace) AS workspace
+       FROM \`session\` WHERE user_id = ? AND ${notDeleted()} AND project_key IS NOT NULL AND project_key <> ''
+       GROUP BY project_key`,
+      [userId],
+    );
+  }
+
   async lockActiveSessionById(sessionId: number): Promise<number | null> {
     const row = await this.db.queryOne<{ id: number }>(
       `SELECT id FROM \`session\` WHERE id = ? AND ${notDeleted()} FOR UPDATE`,
@@ -417,6 +427,16 @@ export class MessageRepository {
   selectLastUserMessage(sessionId: number): Promise<Message | null> {
     return this.db.queryOne<Message>(
       `SELECT * FROM \`message\` WHERE session_id = ? AND role = 'USER' AND ${notDeleted()} ORDER BY id DESC LIMIT 1`,
+      [sessionId],
+    );
+  }
+
+  /** 最后一条 role=ASSISTANT 且正文非空的消息（记忆抽取输入，技术方案 5.6 D8）。 */
+  selectLastAssistantMessage(sessionId: number): Promise<Message | null> {
+    return this.db.queryOne<Message>(
+      `SELECT * FROM \`message\` WHERE session_id = ? AND role = 'ASSISTANT'
+         AND content IS NOT NULL AND content <> '' AND ${notDeleted()}
+       ORDER BY id DESC LIMIT 1`,
       [sessionId],
     );
   }

@@ -41,6 +41,10 @@ export const ErrorCode = {
   MESSAGE_NOT_FOUND: { code: 3030, message: '消息不存在' },
   MESSAGE_ACCESS_DENIED: { code: 3031, message: '无权操作该消息' },
   PREFERENCE_CONFLICT: { code: 3032, message: '偏好设置已在其他端被修改，请刷新后重试' },
+  MEMORY_ITEM_NOT_FOUND: { code: 3033, message: '记忆不存在' },
+  MEMORY_CONTENT_INVALID: { code: 3034, message: '记忆内容无效' },
+  MEMORY_CONTENT_DUPLICATE: { code: 3035, message: '已存在相同内容的记忆' },
+  MEMORY_LIMIT_EXCEEDED: { code: 3036, message: '生效中的记忆数量已达上限（200 条），请先清理不需要的记忆' },
 
   INTERNAL_ERROR: { code: 5001, message: '服务内部错误' },
   DATABASE_ERROR: { code: 5002, message: '数据库错误' },

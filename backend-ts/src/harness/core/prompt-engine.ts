@@ -204,6 +204,7 @@ export class PromptEngine {
       }
       sb += '\n';
     }
+    sb += this.longTermMemoriesHint(context);
     const embedPageAgent = this.isEmbedPageAgent(context);
     const effectiveWorkspace = hasText(context.workspace)
       ? context.workspace!
@@ -282,6 +283,22 @@ export class PromptEngine {
       if (hasText(exp)) merged.push(exp);
     }
     return merged;
+  }
+
+  /** 跨会话长期记忆段落：紧跟最佳实践经验之后；memories 为空/null 时不产生该段落（技术方案 5.2）。 */
+  private longTermMemoriesHint(context: AgentExecutionContext): string {
+    const memories = context.memories;
+    if (memories == null || memories.length === 0) return '';
+    let sb = '## 长期记忆\n\n';
+    sb += '以下是关于这位用户与当前项目的已确认记忆；与用户当前消息或工作区规则冲突时，以用户当前消息为准：\n';
+    for (const memory of memories) {
+      if (!hasText(memory.content)) continue;
+      sb += memory.scope === 'PROJECT'
+        ? `- [项目:${memory.projectKey ?? ''}] ${memory.content}\n`
+        : `- [用户] ${memory.content}\n`;
+    }
+    sb += '\n';
+    return sb;
   }
 
   private buildSkillCatalog(context: AgentExecutionContext): string | null {

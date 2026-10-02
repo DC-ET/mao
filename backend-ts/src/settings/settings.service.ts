@@ -17,6 +17,7 @@ export const WEIXIN_MODEL_ID_KEY = 'weixin.modelId';
 export const SESSION_TITLE_MODEL_ID_KEY = 'session.titleModelId';
 export const GIT_COMMIT_MESSAGE_MODEL_ID_KEY = 'git.commitMessageModelId';
 export const APPROVAL_MODEL_ID_KEY = 'approval.modelId';
+export const MEMORY_EXTRACTION_MODEL_ID_KEY = 'memory.extractionModelId';
 export const JEV_ENDPOINT_KEY = 'approval.jev.endpoint';
 export const JEV_MODEL_KEY = 'approval.jev.model';
 export const JEV_API_KEY_KEY = 'approval.jev.apiKey';
@@ -133,6 +134,7 @@ export class SystemSettingService {
   static readonly WEIXIN_MODEL_ID_KEY = WEIXIN_MODEL_ID_KEY;
   static readonly SESSION_TITLE_MODEL_ID_KEY = SESSION_TITLE_MODEL_ID_KEY;
   static readonly GIT_COMMIT_MESSAGE_MODEL_ID_KEY = GIT_COMMIT_MESSAGE_MODEL_ID_KEY;
+  static readonly MEMORY_EXTRACTION_MODEL_ID_KEY = MEMORY_EXTRACTION_MODEL_ID_KEY;
 
   constructor(
     private readonly settingRepo: SystemSettingRepository,
@@ -578,7 +580,7 @@ export class SystemSettingService {
       return;
     }
     if (key === WEIXIN_MODEL_ID_KEY || key === SESSION_TITLE_MODEL_ID_KEY || key === GIT_COMMIT_MESSAGE_MODEL_ID_KEY
-      || key === APPROVAL_MODEL_ID_KEY) {
+      || key === APPROVAL_MODEL_ID_KEY || key === MEMORY_EXTRACTION_MODEL_ID_KEY) {
       if (!hasText(value)) {
         return;
       }

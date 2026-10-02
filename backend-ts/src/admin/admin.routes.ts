@@ -4,6 +4,7 @@ import { sendJson } from '../common/http-error.js';
 import { ok } from '../common/result.js';
 import type { JwtService } from '../crypto/jwt.service.js';
 import type { AdminAnalyticsService } from './admin-analytics.service.js';
+import type { MemoryPageVO, MemoryScope, MemoryStatus } from '../memory/types.js';
 
 export interface AdminSessionLister {
   listSessionsForAdmin(
@@ -18,11 +19,25 @@ export interface AdminSessionLister {
   ): Promise<{ records: unknown[]; total: number; current: number; size: number; matchSnippets?: Record<number, string> }>;
 }
 
+/** 管理后台记忆审计：跨用户只读查询（no ownership check，路由侧已做 memory:read 校验）。 */
+export interface AdminMemoryAuditor {
+  listForAdmin(
+    userId: number,
+    query: { scope?: MemoryScope | null; projectKey?: string | null; status?: MemoryStatus | null; page: number; pageSize: number },
+  ): Promise<MemoryPageVO>;
+}
+
+export interface AdminUserLookup {
+  findByIds(ids: number[]): Promise<Array<{ id: number; username: string; displayName?: string | null }>>;
+}
+
 export interface AdminRouteDeps {
   jwt: JwtService;
   analytics: AdminAnalyticsService;
   sessionLister?: AdminSessionLister;
   permissionService: { hasPermission(userId: number, code: string): Promise<boolean> };
+  memoryAuditor?: AdminMemoryAuditor;
+  memoryUserLookup?: AdminUserLookup;
 }
 
 interface AnalyticsQueryRaw {
@@ -136,6 +151,46 @@ export function registerAdminRuntimeRoutes(app: FastifyInstance, deps: AdminRout
       q.keyword,
       q.status,
     );
+    sendJson(reply, 200, ok(result));
+  });
+
+  // 用户记忆只读审计（技术方案 5.4）：按 userId 查看记忆内容，仅查询、无任何写接口
+  app.get('/v1/admin/memory', async (req, reply) => {
+    await requireRequestPermission(deps.permissionService, req, 'memory:read');
+    const q = req.query as { userId?: string; page?: string; pageSize?: string; scope?: string; status?: string };
+    const userId = Number(q.userId);
+    if (!Number.isSafeInteger(userId) || userId <= 0) {
+      sendJson(reply, 200, ok({ records: [], total: 0, current: 1, size: 20 }));
+      return;
+    }
+    if (!deps.memoryAuditor) {
+      sendJson(reply, 200, ok({ records: [], total: 0, current: 1, size: 20 }));
+      return;
+    }
+    const page = Math.max(1, Math.floor(Number(q.page ?? 1)) || 1);
+    const pageSize = Math.min(100, Math.max(1, Math.floor(Number(q.pageSize ?? 20)) || 20));
+    const scope = q.scope === 'USER' || q.scope === 'PROJECT' ? q.scope : null;
+    const status = q.status === 'ACTIVE' || q.status === 'DISMISSED' ? q.status : null;
+    const result = await deps.memoryAuditor.listForAdmin(userId, {
+      scope,
+      status,
+      projectKey: null,
+      page,
+      pageSize,
+    });
+    if (deps.memoryUserLookup && result.records.length > 0) {
+      try {
+        const users = await deps.memoryUserLookup.findByIds([userId]);
+        const user = users.find((u) => u.id === userId);
+        result.records = result.records.map((item) => ({
+          ...item,
+          username: user?.username ?? null,
+          displayName: user?.displayName ?? null,
+        }));
+      } catch {
+        // 用户信息补全失败不影响审计列表返回
+      }
+    }
     sendJson(reply, 200, ok(result));
   });
 

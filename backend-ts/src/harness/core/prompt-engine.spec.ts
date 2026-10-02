@@ -365,4 +365,54 @@ describe('PromptEngine', () => {
     expect(parts[0].text).toBe(SYNTHETIC_ATTACHMENT_PROMPT);
   });
 });
+
+describe('PromptEngine long-term memories', () => {
+  function engine() {
+    return new PromptEngine(
+      { hasSkill: () => false, getAllNames: () => [], getAllDocuments: () => [] } as never,
+      { getWorkspaceRoot: () => '/ws' } as never,
+      RuntimeDataResolver.forTest('/tmp/rt', '/tmp/home'),
+      { getByUserIdAndName: async () => null } as never,
+      { getUserSkillDocuments: () => [] } as never,
+    );
+  }
+
+  function context(overrides: Partial<AgentExecutionContext> = {}): AgentExecutionContext {
+    const ctx = new AgentExecutionContext();
+    ctx.executionMode = 'CLOUD';
+    ctx.workspace = '/ws';
+    ctx.experiences = ['经验一'];
+    ctx.tools = [tool('read_file')];
+    Object.assign(ctx, overrides);
+    return ctx;
+  }
+
+  it('injectsMemorySectionAfterExperiencesWithScopeMarkersAndConflictRule', async () => {
+    const ctx = context({
+      memories: [
+        { scope: 'PROJECT', projectKey: 'mao', content: '该仓库测试用 Vitest' },
+        { scope: 'USER', projectKey: null, content: '输出报告用中文' },
+      ],
+    });
+    const request = await engine().buildRequest(ctx);
+    const system = request.messages[0].content as string;
+    expect(system).toContain('## 长期记忆');
+    expect(system).toContain('与用户当前消息或工作区规则冲突时，以用户当前消息为准');
+    expect(system).toContain('- [项目:mao] 该仓库测试用 Vitest');
+    expect(system).toContain('- [用户] 输出报告用中文');
+    const experienceIdx = system.indexOf('## 最佳实践经验');
+    const memoriesIdx = system.indexOf('## 长期记忆');
+    expect(experienceIdx).toBeGreaterThanOrEqual(0);
+    expect(memoriesIdx).toBeGreaterThan(experienceIdx);
+    expect(system.indexOf('经验一')).toBeGreaterThan(experienceIdx);
+    expect(system.indexOf('经验一')).toBeLessThan(memoriesIdx);
+  });
+
+  it('emptyOrNullMemoriesProduceNoSection', async () => {
+    const empty = await engine().buildRequest(context({ memories: [] }));
+    expect(empty.messages[0].content as string).not.toContain('## 长期记忆');
+    const none = await engine().buildRequest(context());
+    expect(none.messages[0].content as string).not.toContain('## 长期记忆');
+  });
+});
 void mkdirSync;

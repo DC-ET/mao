@@ -6,10 +6,16 @@ import { wsEvent } from './ws/ws-event.js';
 import type { SessionTreeSignalPublisher } from '../harness/approval/session-tree-signal-publisher.js';
 import type { TaskNotificationDeliveryService } from '../notification/task/delivery.service.js';
 import type { TaskNotificationDelivery } from '../notification/task/types.js';
+import type { ExtractionSessionInput } from '../memory/memory-extraction.service.js';
 import { WEIXIN_PROJECT_KEY } from '../domain/types.js';
 import { isFeishuChannelSession } from '../harness/tool/feishu-channel-tool.js';
 
 const TERMINAL = new Set(['COMPLETED', 'FAILED', 'CANCELLED']);
+
+/** 记忆抽取依赖（可选注入；接口化避免 session 域反向依赖 memory 域实现）。 */
+export interface MemoryExtractionInvoker {
+  extractForSession(input: ExtractionSessionInput): Promise<void>;
+}
 
 export class TaskTerminalService {
   constructor(
@@ -18,6 +24,10 @@ export class TaskTerminalService {
     private readonly deliveryService: TaskNotificationDeliveryService,
     private readonly treeSignalPublisher: SessionTreeSignalPublisher,
     private readonly notificationExecutor: (fn: () => void | Promise<void>) => void = (fn) => {
+      void Promise.resolve().then(fn);
+    },
+    private readonly memoryExtraction?: MemoryExtractionInvoker | null,
+    private readonly memoryExecutor: (fn: () => void | Promise<void>) => void = (fn) => {
       void Promise.resolve().then(fn);
     },
   ) {}
@@ -82,6 +92,40 @@ export class TaskTerminalService {
       // 主任务自身进入终态时也要重算并下发 treeRunning，否则前端列表里的
       // treeRunning 会停留在旧值（true），导致蓝色“执行中”圆点不转绿。
       this.treeSignalPublisher.publish(sessionId);
+    }
+
+    this.dispatchMemoryExtraction(session, phase);
+  }
+
+  /**
+   * 任务收尾自动沉淀记忆（技术方案 5.6）：仅 COMPLETED 主会话派发（FAILED/CANCELLED、
+   * SUBAGENT/SIDE_TASK 不抽取），fire-and-forget，绝不影响上方任务完成事件链；
+   * 用户开关在抽取服务内部判断。直接复用本方法已查得的 session 对象，不追加查询。
+   */
+  private dispatchMemoryExtraction(session: Session, phase: string): void {
+    if (phase !== 'COMPLETED') return;
+    if (session.sessionType === 'SUBAGENT' || session.sessionType === 'SIDE_TASK') return;
+    const extraction = this.memoryExtraction;
+    if (extraction == null) return;
+    try {
+      this.memoryExecutor(() => {
+        // 兜底 catch：抽取服务内部虽已全量吞异常，这里再保一道，确保 fire-and-forget
+        // 不会产生 unhandled rejection 或同步抛出破坏任务完成事件链
+        void Promise.resolve()
+          .then(() => extraction.extractForSession({
+            sessionId: session.id!,
+            userId: session.userId,
+            projectKey: session.projectKey ?? null,
+            workspace: session.workspace ?? null,
+            agentId: session.agentId ?? null,
+          }))
+          .catch((e) => {
+            console.warn(`[memory-extraction] dispatch failed sessionId=${session.id}: ${(e as Error).message}`);
+          });
+      });
+    } catch (e) {
+      // executor 本身（线程池饱和拒绝等）同步抛错也不能影响任务完成事件链
+      console.warn(`[memory-extraction] submit failed sessionId=${session.id}: ${(e as Error).message}`);
     }
   }
 

@@ -3,6 +3,7 @@ import { emptyUsage } from '../llm/chat-request.js';
 import type { CompactionConfig } from './compaction-config.js';
 import type { LocalSkillRef } from '../skill/skill-document.js';
 import type { SkillDocument } from '../skill/skill-document.js';
+import type { MemoryHint } from '../../memory/types.js';
 import type { Tool } from '../tool/tool.js';
 import type { ToolAttachment } from './tool-attachment.js';
 import { AtomicBoolean } from '../atomic-boolean.js';
@@ -16,6 +17,8 @@ export class AgentExecutionContext {
   projectKey?: string | null;
   systemPrompt?: string | null;
   experiences: string[] = [];
+  /** 跨会话长期记忆（查询失败降级为 null，不产生注入段落）。 */
+  memories: MemoryHint[] | null = null;
   agentName?: string | null;
   modelConfig?: LlmModelConfig | null;
   executionMode?: string | null;

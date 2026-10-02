@@ -180,7 +180,7 @@ const authStore = useAuthStore()
 /** 后端 PUT /system-settings/:key 需 settings:write，无权限时禁用全部写控件 */
 const canWrite = computed(() => authStore.hasPermission('settings:write'))
 
-const MODEL_SELECT_KEYS = new Set(['weixin.modelId', 'session.titleModelId', 'git.commitMessageModelId', 'approval.modelId'])
+const MODEL_SELECT_KEYS = new Set(['weixin.modelId', 'session.titleModelId', 'git.commitMessageModelId', 'approval.modelId', 'memory.extractionModelId'])
 const INTEGRATION_KEYS = new Set([
   'auth.ldap.enabled', 'auth.ldap.url', 'auth.ldap.baseDn', 'auth.ldap.userDn', 'auth.ldap.password', 'auth.ldap.userSearchBase',
   'auth.feishu.enabled', 'auth.feishu.appId', 'auth.feishu.appSecret', 'auth.feishu.redirectUri',
@@ -241,6 +241,7 @@ const TOC_GROUPS: Array<{ label: string; sections: Array<{ kind: 'company-sso' |
       { kind: 'category', name: '会话' },
       { kind: 'category', name: '代码' },
       { kind: 'category', name: '审批' },
+      { kind: 'category', name: '记忆' },
     ],
   },
   {

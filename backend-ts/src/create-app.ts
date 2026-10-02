@@ -103,6 +103,10 @@ import { registerSessionRoutes } from './session/session.routes.js';
 import { registerAdminSessionRoutes } from './session/admin-session.routes.js';
 import { SessionActivityHeartbeat } from './session/session-activity-heartbeat.js';
 import { TaskTerminalService } from './session/task-terminal.service.js';
+import { MemoryRepository } from './memory/memory.repository.js';
+import { MemoryService } from './memory/memory.service.js';
+import { MemoryExtractionService } from './memory/memory-extraction.service.js';
+import { registerMemoryRoutes } from './memory/memory.routes.js';
 import { EnvironmentInfoProvider } from './harness/core/environment-info-provider.js';
 import { FileEntityRepository, FileService } from './file/file.service.js';
 import { WorkspaceBrowseService } from './file/workspace-browse.service.js';
@@ -848,8 +852,30 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const deliveryService = new TaskNotificationDeliveryService(
     new DeliveryDbStore(db), notifPref, messageQueueService as never,
   );
+  const memoryRepo = new MemoryRepository(db);
+  const memoryService = new MemoryService(memoryRepo, {
+    listProjectKeyRows: (userId) => sessionRepo.listProjectKeyRows(userId),
+  });
+  const memoryExtraction = new MemoryExtractionService(
+    messageRepo,
+    memoryRepo,
+    {
+      isAutoCaptureEnabled: async (userId) => {
+        // 默认关闭（无偏好行视为关闭）：未开启的用户不做自动抽取，现有功能零影响
+        const row = await memoryRepo.findPreference(userId);
+        return row?.autoCaptureEnabled === 1;
+      },
+    },
+    { getValue: (key) => settingService.getValue(key) },
+    {
+      selectById: (id) => modelRepo.selectById(id),
+      selectDefault: () => modelRepo.selectDefault(),
+    },
+    llmAdapter,
+  );
   const taskTerminal = new TaskTerminalService(
     sessionService, wsRegistry, deliveryService, treeSignalPublisher, (fn) => agentExecutor.submit(fn),
+    memoryExtraction, (fn) => agentExecutor.submit(fn),
   );
   const visibility = new SubAgentVisibilityService({
     registry: wsRegistry,
@@ -1018,6 +1044,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     sessionSvc, compactionSvc, historyLoader, orchestrator,
     promptEngine, activeContext, compactionConfig, envInfo, db, mcpClient, mcpSync,
     { isEmbedSession: (sid: number) => embedPageToolRegistry.isEmbedSession(sid) },
+    memoryService,
   );
   holder.harness = harness;
 
@@ -2165,10 +2192,19 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     registerAnalyticsRoutes(api, { analytics: analyticsService, jwt, permissionService });
     registerStatisticsRoutes(api, { statistics: statisticsService, jwt, permissionService });
     registerFeedbackRoutes(api, { feedback: feedbackService, jwt, permissionService });
+    registerMemoryRoutes(api, { memoryService });
     const adminDeps = {
       jwt, analytics: adminAnalytics,
       sessionLister: sessionService as never,
       permissionService,
+      memoryAuditor: memoryService,
+      memoryUserLookup: {
+        findByIds: async (ids: number[]) => (await userRepo.findByIds(ids)).map((u) => ({
+          id: u.id!,
+          username: u.username,
+          displayName: u.displayName,
+        })),
+      },
     };
     registerAdminAnalyticsRoutes(api, adminDeps);
     registerAdminRuntimeRoutes(api, adminDeps);

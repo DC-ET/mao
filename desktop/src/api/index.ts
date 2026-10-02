@@ -327,3 +327,72 @@ export async function fetchDislikedMessageIds(sessionId: number): Promise<number
   const { data } = await api.get('/feedback/messages/disliked-ids', { params: { sessionId } })
   return data?.ids ?? []
 }
+
+// ─── 我的记忆（跨会话长期记忆） ───
+
+export type MemoryScope = 'USER' | 'PROJECT'
+export type MemoryStatus = 'ACTIVE' | 'DISMISSED'
+export type MemorySource = 'AUTO' | 'MANUAL'
+
+export interface MemoryItem {
+  id: number
+  scope: MemoryScope
+  projectKey: string | null
+  content: string
+  source: MemorySource
+  status: MemoryStatus
+  originSessionId: number | null
+  createdAt?: string | null
+  updatedAt?: string | null
+}
+
+export interface MemoryPage {
+  records: MemoryItem[]
+  total: number
+  current: number
+  size: number
+}
+
+export interface MemoryListParams {
+  page?: number
+  pageSize?: number
+  scope?: MemoryScope | null
+  projectKey?: string | null
+  status?: MemoryStatus | null
+}
+
+export async function listMemories(params: MemoryListParams = {}): Promise<MemoryPage> {
+  const { data } = await api.get('/memory', { params })
+  return data
+}
+
+export async function createMemory(payload: { scope: MemoryScope; content: string; projectKey?: string | null }): Promise<MemoryItem> {
+  const { data } = await api.post('/memory', payload)
+  return data
+}
+
+export async function updateMemory(
+  id: number,
+  payload: { content?: string; status?: MemoryStatus }
+): Promise<MemoryItem> {
+  const { data } = await api.patch(`/memory/${id}`, payload)
+  return data
+}
+
+export async function deleteMemory(id: number): Promise<void> {
+  await api.delete(`/memory/${id}`)
+}
+
+export async function getMemorySettings(): Promise<{ autoCaptureEnabled: boolean }> {
+  const { data } = await api.get('/memory/settings')
+  return data
+}
+
+export async function saveMemorySettings(autoCaptureEnabled: boolean): Promise<void> {
+  await api.patch('/memory/settings', { autoCaptureEnabled })
+}
+
+export async function listMemoryProjects(): Promise<string[]> {
+  const { data } = await api.get('/memory/projects')
+  return data?.projects ?? []
+}

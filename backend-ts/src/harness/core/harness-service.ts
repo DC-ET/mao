@@ -40,6 +40,7 @@ import { shanghaiYmd } from '../../common/json.js';
 import { BusinessException } from '../../common/business-exception.js';
 import { ErrorCode } from '../../common/error-code.js';
 import type { ChatRequest, ChatUsage, ToolCall } from '../llm/chat-request.js';
+import type { MemoryHint } from '../../memory/types.js';
 
 const ASK_USER_QUESTIONS = 'ask_user_questions';
 
@@ -68,6 +69,7 @@ export class HarnessService {
     private readonly mcpClientManager?: McpClientManager | null,
     private readonly mcpSyncService?: McpSyncService | null,
     private readonly embedSessionLookup?: { isEmbedSession(sessionId: number): boolean } | null,
+    private readonly memoryInjection?: { listForInjection(userId: number, projectKey: string | null, workspace: string | null): Promise<MemoryHint[]> } | null,
   ) {}
 
   prepareMessage(_sessionId: number, _userContent: unknown): string {
@@ -295,6 +297,9 @@ export class HarnessService {
     context.projectKey = session.projectKey;
     context.systemPrompt = agent.systemPrompt;
     context.experiences = await this.experienceService.listEnabledContents(agent.id!);
+    // 长期记忆注入（技术方案 5.2）：整段独立 try-catch——查询失败仅记 warn、memories 置 null，
+    // 不阻断会话启动。注意降级逻辑与技能同步的 CLOUD 分支 try-catch 无关，勿对齐那个样板。
+    context.memories = await this.loadMemories(session);
     context.agentName = agent.name;
     context.executionMode = executionMode;
     context.permissionLevel = session.permissionLevel;
@@ -444,6 +449,18 @@ export class HarnessService {
       await this.mcpClientManager.closeSession(sessionId);
     } catch (e) {
       harnessLog('warn', `Failed to close MCP clients after buildContext error for session ${sessionId}`, e);
+    }
+  }
+
+  /** 记忆查询降级：任何异常都不阻断会话启动（技术方案 5.2 第 3 点）。 */
+  private async loadMemories(session: Session): Promise<MemoryHint[] | null> {
+    const userId = session.userId;
+    if (this.memoryInjection == null || userId == null) return null;
+    try {
+      return await this.memoryInjection.listForInjection(userId, session.projectKey ?? null, session.workspace ?? null);
+    } catch (e) {
+      harnessLog('warn', `Failed to load memories for session ${session.id}: ${(e as Error).message}`);
+      return null;
     }
   }
 

@@ -71,6 +71,11 @@ const routes: RouteRecordRaw[] = [
             component: () => import('../views/settings/NotificationSettingsView.vue')
           },
           {
+            path: 'memory',
+            name: 'Memory',
+            component: () => import('../views/settings/MemoryView.vue')
+          },
+          {
             path: 'weixin-bot',
             name: 'WeixinBot',
             component: () => import('../views/settings/WeixinBotView.vue')

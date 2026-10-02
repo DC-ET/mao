@@ -90,6 +90,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '点踩反馈', keepAlive: true, permission: 'feedback:read' }
       },
       {
+        path: 'memory',
+        name: 'MemoryAudit',
+        component: () => import('../views/memory/MemoryAuditView.vue'),
+        meta: { title: '用户记忆', keepAlive: true, permission: 'memory:read' }
+      },
+      {
         path: 'scheduled-tasks',
         name: 'ScheduledTasks',
         component: () => import('../views/scheduled-tasks/index.vue'),

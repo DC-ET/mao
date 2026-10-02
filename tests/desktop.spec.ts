@@ -616,3 +616,104 @@ test.describe('Task Group Rename', () => {
       .toBeVisible({ timeout: 10_000 })
   })
 })
+
+// ─────────────────────────────────────────────────────────
+// Desktop - Memory Settings（我的记忆）
+// ─────────────────────────────────────────────────────────
+test.describe('Memory Settings', () => {
+  interface MemoryRow {
+    id: number
+    scope: 'USER' | 'PROJECT'
+    projectKey: string | null
+    content: string
+    source: 'AUTO' | 'MANUAL'
+    status: 'ACTIVE' | 'DISMISSED'
+    originSessionId: number | null
+    createdAt: string
+    updatedAt: string
+  }
+
+  function memory(id: number, content: string): MemoryRow {
+    return {
+      id,
+      scope: 'USER',
+      projectKey: null,
+      content,
+      source: 'MANUAL',
+      status: 'ACTIVE',
+      originSessionId: null,
+      createdAt: '2026-10-02 10:00:00',
+      updatedAt: '2026-10-02 10:00:00'
+    }
+  }
+
+  test('should create, list and delete user memory, and keep auto-capture toggle', async ({ page }) => {
+    let items: MemoryRow[] = [memory(1, '输出报告用中文')]
+    // 默认关闭：关闭状态下现有功能零影响，开启是用户显式动作
+    let autoCapture = false
+    let nextId = 2
+
+    await page.addInitScript(() => {
+      localStorage.setItem('token', 'test-access-token')
+    })
+    await page.route('**/api/v1/**', async route => {
+      const request = route.request()
+      const url = new URL(request.url())
+      const pathname = url.pathname
+      const method = request.method()
+      let data: unknown = null
+      if (pathname === '/api/v1/memory' && method === 'GET') {
+        data = { records: items, total: items.length, current: 1, size: 20 }
+      } else if (pathname === '/api/v1/memory' && method === 'POST') {
+        const payload = request.postDataJSON() as { content: string; scope: string }
+        const created = memory(nextId++, payload.content)
+        items = [created, ...items]
+        data = created
+      } else if (pathname === '/api/v1/memory/settings' && method === 'GET') {
+        data = { autoCaptureEnabled: autoCapture }
+      } else if (pathname === '/api/v1/memory/settings' && method === 'PATCH') {
+        autoCapture = (request.postDataJSON() as { autoCaptureEnabled: boolean }).autoCaptureEnabled
+        data = { autoCaptureEnabled: autoCapture }
+      } else if (/^\/api\/v1\/memory\/\d+$/.test(pathname) && method === 'DELETE') {
+        const id = Number(pathname.split('/').pop())
+        items = items.filter(item => item.id !== id)
+        data = null
+      } else if (pathname.endsWith('/users/me')) {
+        data = { id: 1, username: 'admin', displayName: 'Admin' }
+      } else if (pathname.endsWith('/auth/features')) {
+        data = { feishuEnabled: false }
+      }
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ code: 0, message: 'success', data })
+      })
+    })
+
+    await page.goto('/settings/memory')
+    await expect(page.locator('.page-title')).toHaveText('我的记忆')
+
+    // 列表可见
+    await expect(page.locator('.memory-card')).toHaveCount(1)
+    await expect(page.locator('.memory-card').first()).toContainText('输出报告用中文')
+
+    // 新增一条用户级记忆
+    await page.getByRole('button', { name: '新增记忆' }).click()
+    await expect(page.locator('.memory-dialog')).toBeVisible()
+    await page.locator('.memory-dialog textarea').fill('习惯使用 pnpm 管理依赖')
+    await page.locator('.memory-dialog').getByRole('button', { name: '创建' }).click()
+    await expect(page.locator('.memory-card')).toHaveCount(2)
+    await expect(page.locator('.memory-card').first()).toContainText('习惯使用 pnpm 管理依赖')
+
+    // 删除成功
+    await page.locator('.memory-card').first().getByText('删除', { exact: true }).click()
+    await page.getByText('确认删除', { exact: true }).click()
+    await expect(page.locator('.memory-card')).toHaveCount(1)
+
+    // 自动收集开关：默认关闭，切换后状态保持
+    await expect(page.locator('.memory-toolbar .el-switch:not(.is-checked)')).toBeVisible()
+    await page.locator('.memory-toolbar .el-switch').click()
+    await expect.poll(() => autoCapture).toBe(true)
+    await page.reload()
+    await expect(page.locator('.memory-toolbar .el-switch.is-checked')).toBeVisible()
+  })
+})

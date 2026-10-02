@@ -1,6 +1,6 @@
 # 技术方案：跨会话长期记忆（Memory 层）
 
-- 状态：已评审定稿（已吸收 2026-10-02 技术评审补充），待实施
+- 状态：已评审定稿（已吸收 2026-10-02 技术评审补充与 2026-10-02 第二轮评审补充：语义去重与记忆整理，见第 10 节），待实施
 - 日期：2026-10-02
 - 关联提案：`docs/proposals/2026-10-02-long-term-memory.md`（本方案为其技术细化，已吸收评审决策）
 - 本期范围：提案 P1 + P2 全量交付；P3 工具化不做（见"明确不做清单"）
@@ -37,7 +37,7 @@ Mao 的 Agent 目前"每次见面都从零开始"：
 
 注入优先级：AGENT（现状段落）→ PROJECT → USER；注入文案显式声明"与用户当前消息冲突时以当前消息为准"。
 
-## 3. 关键决策记录（已与需求方逐项确认；D11–D12 为 2026-10-02 技术评审补充拍板）
+## 3. 关键决策记录（已与需求方逐项确认；D11–D12 为 2026-10-02 技术评审补充拍板；D13–D15 为 2026-10-02 第二轮评审拍板：语义去重与记忆整理，详见第 10 节）
 
 | # | 决策点 | 结论 |
 |---|---|---|
@@ -53,12 +53,15 @@ Mao 的 Agent 目前"每次见面都从零开始"：
 | D10 | 抽取模型 | settings 域新增 `memory.extractionModelId`，留空回落系统默认模型（跟随 `session.titleModelId` 模式） |
 | D11 | 抽取短路 | 取到最后一轮 USER 消息后，规范化（trim + 连续空白折叠）不足 20 字直接跳过抽取、不调 LLM（阈值为代码常量），闲聊型短会话零成本 |
 | D12 | 编辑语义 | 编辑条目 content 不改变 status；DISMISSED → ACTIVE 恢复须显式「恢复」操作 |
+| D13 | 语义去重 | 抽取 prompt 注入存量 ACTIVE 记忆比较集（仅 AUTO 行），模型逐候选输出 `insert` / `touch` / `update` 动作：未命中插新行；命中 ACTIVE 仅刷 `updated_at` 视为再确认；命中且新表述更完整则重算哈希改写 content。MANUAL 行不进比较集、绝不被改写；DISMISSED 行作负面约束集（禁止抽取语义相近内容），引用其 id 的动作整体丢弃。精确哈希保留作廉价前置。embedding / 向量检索确认不做。详见 10.1 |
+| D14 | 溢出策略 | ACTIVE 满 200 且有新候选待插入时，从受影响组（USER 组或当前 projectKey 组）内 `updated_at` 最旧的 AUTO 行自动降级 DISMISSED（软降级、可恢复）腾名额，一次最多淘汰本次待插入数；组内无 AUTO 行则放弃插入。手工新增路径仍显式报错不变。详见 10.2 |
+| D15 | 定期合并 | ACTIVE 超阈值、本轮有新候选且过用户级冷却期时，按 (scope, projectKey) 分组调用 LLM 合并 AUTO 行（merge / keep / drop），目标压至注入窗口数倍（USER ≤30 / 项目组 ≤60）；只动 AUTO 行；产物 `source='CONSOLIDATED'`；新行插入与源行删除同事务，任一失败整体回滚。详见 10.3 |
 
 ## 4. 技术选型
 
 | 选型点 | 结论 | 理由 | 放弃的方案 |
 |---|---|---|---|
-| 记忆检索 | 规范化去重 + 条数截断（`updated_at` DESC 取 top N） | MVP 规模下精确去重够用，零新增基础设施 | 向量库 / embedding 检索（规模上来后另立提案评估） |
+| 记忆检索 | 规范化去重 + 条数截断（`updated_at` DESC 取 top N）+ 抽取时模型语义匹配（D13）+ 定期合并整理（D15） | MVP 规模下零新增基础设施；语义匹配由轻量 LLM 判定而非向量库 | 向量库 / embedding 检索（第二轮评审需求方明确不做，见第 11 节不做清单） |
 | PROJECT 绑定键 | 现有 `projectKey` | 已有字段（`AgentExecutionContext.projectKey`），注入匹配零成本；可读、用户可见；同一仓库 clone 到不同本地路径/换机器记忆仍跟随 | 规范化路径 SHA-1 前 16 位（提案原文）：换路径即失配、不可读、需额外展示名字段 |
 | 用户开关存储 | preference 域新增 `user_memory_preference` 专表 | 该域既有模式即"每个偏好一张专表"（`user_weixin_preference`、`user_task_panel_preference`） | 通用 KV 表（域内不存在该模式）；塞进 `memory_item`（概念不符） |
 | 抽取模型配置 | settings 域 `memory.extractionModelId`（V130 预置行） | 与 `session.titleModelId`（V078）、`git.commitMessageModelId` 完全同构，admin `SystemSettingsView.vue:183` 的 `MODEL_SELECT_KEYS` 加入即渲染为模型下拉 | 为抽取单独建模型路由 |
@@ -183,14 +186,14 @@ INSERT IGNORE INTO `system_setting` (`setting_key`, `value`, `category`, `descri
 **`backend-ts/src/memory/memory-extraction.service.ts` 流程**：
 
 1. 取输入（D8）：`selectLastUserMessage(sessionId)`（现有，`session.repository.ts:417`）+ 新增 `selectLastAssistantMessage(sessionId)`（同文件按同模式新增，取最后一条 role=ASSISTANT 且正文非空的消息）。任一缺失则跳过。随后做短路判断（D11）：USER 消息规范化后不足 20 字直接返回，不调 LLM。
-2. 构造抽取 prompt，系统指令要点：
+2. 构造抽取 prompt，系统指令要点（2026-10-02 第二轮补充：prompt 追加存量记忆比较集与 `insert` / `touch` / `update` 动作协议，见 D13 与 10.1）：
    - 只提取"明确的长期事实/偏好"（用户偏好、项目事实），猜测、闲聊、一次性任务细节一律不抽；
    - 为每条标注 `type`：`user`（用户个人偏好）或 `project`（关于当前项目/仓库的事实）；
    - 输出 JSON 数组 `[{"type":"user|project","content":"..."}]`，每条 ≤120 字，最多 3 条；没有值得记的输出 `[]`；
    - content 保持用户原话的语言。
 3. 模型解析（D10）：读 `settings` 域 `memory.extractionModelId`，为空回落系统默认模型（同 `session-title.service.ts:109` 的回落链）；调用经 LlmAdapter，超时 30 秒。
 4. 结果处理，任一发生则整体静默放弃并记日志计数：非法 JSON、输出为空数组（正常无事发生）、条目数 >3。单条 content 为空或规范化后 >120 字时仅丢弃该条，不影响其他条目。
-5. 落库（逐条）：
+5. 落库（逐条）（2026-10-02 第二轮补充：insert 前可能先触发溢出自动降级腾名额，见 D14 与 10.2；动作执行口径见 D13；合并整理见 D15 与 10.3）：
    - `type=project` 但当前会话无有效 projectKey（为空或机器人渠道特殊值）时，降级为 USER 级存储；
    - 计算 `dedup_hash`，按 `uk_memory_dedup` 判重：
      - 未命中 → INSERT（`source='AUTO'`，`origin_session_id=sessionId`）；并发插入撞唯一键时转为下述更新分支；
@@ -305,18 +308,140 @@ P1、P2 为两个可独立上线的里程碑，按序交付。
 | 记忆污染：错误事实被固化后反复注入 | 来源与 origin_session_id 可追溯；注入条数上限兜底；DISMISS 一步达成且永不复活（D3）；抽取 prompt 强调"只抽明确事实" |
 | projectKey 同名碰撞：同用户两个同名目录的不同项目串记忆 | 概率低；注入文案声明"与用户当前消息冲突时以当前消息为准"；规模上来后评估引入 git slug 加固 |
 | 抽取成本：每次完成任务多一次 LLM 调用 | 输入仅最后一轮（成本固定）；异步执行不阻塞；专用轻量模型配置项；超时 30 秒放弃 |
-| 去重质量：精确哈希挡不住同义改写 | 一期接受该粗糙度；条数上限 + 注入截断兜底；`updated_at` 再确认排序让高频事实稳定占据注入名额 |
+| 去重质量：精确哈希对 AUTO 抽取命中率趋近于零，同义改写各自成行 | 由 D13（抽取时模型语义匹配）+ D15（定期合并整理）承接：精确哈希保留作廉价前置；条数上限 + 注入截断兜底（见第 10 节） |
 | 隐私 | 记忆对用户全可见可删可忽略可关停；admin 仅只读且页面明示审计用途；projectKey 不含本机敏感路径片段 |
 | 与任务收件箱提案的合并冲突 | 排期错开（第 6 节约束）；收件箱为 `finishExecution` 新增的 `notifySource` 参数与本方案的抽取派发追加互不干扰 |
 | 蓝绿发布窗口双实例并存（restart.sh 9080↔9081 交替），进程内同会话互斥跨实例失效，同会话可能各抽一次 | dedup 唯一键兜底不产生重复行，最多多花一次 LLM 调用，可接受 |
 
-## 10. 明确不做清单
+## 10. 补充设计：语义去重与记忆整理（2026-10-02 第二轮评审追加）
+
+**背景——精确哈希对自动抽取近乎失效。** 5.1 的去重哈希要求规范化后逐字节相同，但 AUTO 抽取每轮的输入本就不同（每次取的是不同会话的最后一轮对话），模型对同一事实的措辞几乎必然不同（如"输出报告用中文" vs "汇报类输出使用中文"）——哈希不同，照常插入新行。实际只有手工复制粘贴能命中，**AUTO 路径命中率趋近于零**。直接后果三则：
+
+1. 同一事实的多个措辞版本各自成行、各占注入名额，"雷同记忆反复注入"只被 20 条截断兜底，并未真正解决；
+2. ACTIVE 池以每完成一个任务最多 3 条语义重复的速度膨胀，200 上限提前耗尽后 `persistCandidates` 整体放弃，系统**静默冻结、不再学习新事实**；
+3. 注入排序退化为"最近 20 次抽取"：早期确认的稳定事实滑出窗口后无回归路径——`touch` 保鲜依赖再次逐字命中，命中不了就不保鲜。
+
+**需求方决策（2026-10-02）**：embedding / 向量检索确认不做（见第 11 节不做清单第 2 条，不再是"待评估"项）；语义去重改由 **D13 抽取时模型判定** + **D15 定期合并整理** 两层承担，另以 **D14 溢出自动降级** 保证池子永不冻结。三层均不引入新基础设施，复用现有抽取调用链与 `memory.extractionModelId` 模型配置（不新增 settings 键）。
+
+### 10.1 D13：抽取时注入存量记忆（模型语义匹配）
+
+**比较集构造**（每轮抽取前，与短路判断同批查询）：
+
+| 分组 | 进比较集范围 | 用途 |
+|---|---|---|
+| USER 组 | 该用户全部 `scope='USER' AND status='ACTIVE' AND source='AUTO'` 行 | 候选 `user` 事实的匹配源 |
+| PROJECT 组 | `scope='PROJECT' AND project_key=当前会话有效键 AND status='ACTIVE' AND source='AUTO'` 行 | 候选 `project` 事实的匹配源（无有效 projectKey 的会话不构造本组） |
+| MANUAL 行 | **不进比较集** | 用户手写条目绝不被模型判定为命中、绝不被改写 |
+| DISMISSED 行 | **单独作负面约束集**（只列 content，不列 id） | 已知悉但已忽略的内容；禁止抽取语义相近的新条目 |
+
+- 规模上限：ACTIVE 总量被 D7 锁死在 200，比较集约 200 行 × ~120 字 ≈ 24K 字符，轻量模型、非流式、一次调用，输入膨胀可接受；若未来放开 200 上限，按 `updated_at` DESC 截断比较集（USER 组优先保全）。
+- 查询失败沿用 5.2 的降级精神：比较集视为空集，本轮退化为现行精确哈希路径，不阻断抽取。
+
+**抽取输出协议**（在现 `[{"type","content"}]` 之上扩展）：
+
+```json
+[
+  {"type": "user|project", "action": "insert|touch|update", "existingId": 123, "content": "..."}
+]
+```
+
+- `insert`：全新事实，无 `existingId`；
+- `touch`：命中比较集内某行，仅刷 `updated_at`（再确认），`content` 可省略；
+- `update`：命中比较集内某行且新表述比现有 content 更完整，改写该行 content 并重算 dedup_hash，`content` 必填。
+
+**动作执行与护栏**：
+
+- 每条候选的 `project` 事实降级 USER 的既有规则（5.6 第 5 点）不变；
+- `insert` 执行前仍先走精确哈希 `findByHash`（廉价前置，命中 ACTIVE → 转 touch、命中 DISMISSED → 跳过不复活，同现行）；
+- `touch` / `update` 指向的 `existingId` 必须存在于本轮的合法比较集中；引用 MANUAL 行、DISMISSED 行、他组行或不存在 id 的，**该条候选整体丢弃**（绝不退化 insert——负面约束集的意义正在于此）；
+- `update` 重算哈希撞 `uk_memory_dedup` 时按 `MEMORY_CONTENT_DUPLICATE` 处理，回退为该行 touch（不报错、不丢数据）；
+- 模型输出协议本身非法（JSON 坏、条目 >3）→ 整体放弃，同现行口径；单条 content 超 120 字 → 仅丢弃该条；action 缺失或非法 → 该条按 insert 处理（向后兼容旧协议）；touch/update 缺合法 existingId → 该条丢弃。
+
+**为什么不是让模型"合并已写"**：模型不可靠地做写入决策风险大，本设计把它限制在"判定匹配关系"层，落库动作的服务端语义（限额、降级、D3、事务）全部不变。
+
+### 10.2 D14：溢出自动降级（替代"满 200 静默放弃"）
+
+- 触发：`persistCandidates` 开头查 ACTIVE ≥ 200，且本轮确有候选要 insert。
+- 动作：从受影响组（候选为 USER 级 → USER 组；候选为 PROJECT 级 → 当前 projectKey 组）内取 `updated_at` 最旧的 **AUTO** 行置 DISMISSED（软降级，非物理删，MemoryView "已忽略"可见、可手动恢复），每插入一条腾一条，一次最多淘汰 `MEMORY_EXTRACT_MAX_ITEMS`（3）条。
+- 边界：组内 AUTO 行不足时停止淘汰，剩余候选放弃插入（MANUAL 行永不自动动，用户手写内容是最高优先级资产）；候选本身在淘汰后仍走 D13 动作协议。
+- 取舍说明：`updated_at` 旧 ≠ 不重要（只是久未被再确认）。软降级可恢复、D15 治本，二者配合。手工新增路径的 200 上限**仍显式报错不变**（`MEMORY_LIMIT_EXCEEDED`），自动降级只服务 AUTO 写入。
+
+### 10.3 D15：定期合并整理（consolidation）
+
+**目标**：把 ACTIVE 池压缩到注入窗口的数倍——USER 组 ≤30、每个 projectKey 组 ≤60（不对齐到恰好等于窗口，留缓冲避免 `touch` 引发边界轮换震荡）；合并相关事实、消除同义重复行，让注入截断几乎不发生。
+
+**触发条件**（三条同时满足才跑，挂在抽取链末尾、fire-and-forget，复用 `memoryExecutor`）：
+
+1. ACTIVE 总量 > 150，或任一受影响组行数超过其组目标值（10.3 首段）；
+2. 本轮抽取确有新候选落库（无新信息不跑，避免空转烧 token）；
+3. 该用户距上次合并超过冷却期（24 小时，进程内 Map<userId, 上次合并时间> 记录；重启失效按最长 24h 放宽，无正确性影响）。
+
+**执行**：从受影响分组各取全部 AUTO ACTIVE 行（id + content）构造合并 prompt，输出三类操作：
+
+```json
+[
+  {"op": "merge", "sourceIds": [11, 12], "content": "合并后的完整表述"},
+  {"op": "keep", "sourceIds": [7]},
+  {"op": "drop", "sourceIds": [9]}
+]
+```
+
+（`drop` 的 sourceIds 为与 keep 条目语义重复的冗余行。）
+
+- `merge` ≥2 行合一：新 content ≤120 字（`MEMORY_EXTRACT_CONTENT_MAX_LENGTH`），超长则该组 merge 操作整体放弃（宁可不并，不可截糊）；产物 `source='CONSOLIDATED'`、`origin_session_id=NULL`（来自多个会话，记 null 更诚实）；
+- `drop`：物理删除语义冗余源行（只删 AUTO 行，MANUAL 永不进删除集）；
+- 单一 session 的 SIDE_TASK / SUBAGENT 会话不进入抽取，自然也不产生待合并源（D6 不变）。
+
+**安全红线**：
+
+- 只读/只写 AUTO 行：MANUAL 行不进合并 prompt、不被改写、不被删除；DISMISSED 行不进输入（不复活）；
+- 事务：merge/drop 的插入与删除在同一事务；任一步失败整体回滚，保持现状；LLM 超时/非法输出 → 静默放弃本轮合并；
+- 合并产物 `source` 列值为 `'CONSOLIDATED'`（`source` 为 VARCHAR(16)，无需迁移；`MemorySource` 类型与前端徽标需同步扩展一类"合并"）；
+- 合并产物 content 超 120 字或协议非法时该组合并整体放弃（LLM 超时同），保持现状；
+- `drop` 为物理删除而非软降级：被丢弃的冗余源行不可恢复，属最终整理语义——事实本身已由合并产物承载。
+
+### 10.4 改动增量清单（在第 7 节 P1/P2 落地清单之外追加）
+
+| 文件 | 动作 | 内容 |
+|---|---|---|
+| `backend-ts/src/memory/types.ts` | 修改 | `MemorySource` 增 `'CONSOLIDATED'`；新增组目标 / 阈值 / 冷却常量（`MEMORY_CONSOLIDATE_USER_TARGET=30`、`MEMORY_CONSOLIDATE_PROJECT_TARGET=60`、`MEMORY_CONSOLIDATE_ACTIVE_THRESHOLD=150`、`MEMORY_CONSOLIDATE_COOLDOWN_HOURS=24`） |
+| `backend-ts/src/memory/memory-extraction.service.ts` | 修改 | 比较集构造、动作协议解析与执行（insert/touch/update + 非法引用丢弃）、溢出自动降级、consolidation 流程 |
+| `backend-ts/src/memory/memory.repository.ts` | 修改 | `listActiveForDedup(userId, scope, projectKey)`（比较集）、`listStaleAuto(userId, scope, projectKey)`（溢出淘汰源）、`insert/touch` 复用 |
+| `backend-ts/src/memory/memory.service.ts` | 不修改 | 手工路径语义不变（D14 边界） |
+| `desktop/src/views/settings/MemoryView.vue` | 修改 | 来源徽标新增"合并"（CONSOLIDATED）一类 |
+| `desktop/src/api/index.ts` | 修改 | `MemorySource` 类型同步 |
+| `skills/mao-cli/reference/memory.md` | 修改 | 补齐 D13–D15 行为说明（随实施同任务） |
+| `db/migration/` | 不新增 | 三层机制均无表结构变化；迁移号占用说明（5.1）维持：V131 收件箱、V132 资产包 |
+
+### 10.5 实施顺序与步骤
+
+按 **D13 → D14 → D15** 交付，D13/D14 随 P2 延伸同批上线，D15 独立小里程碑：
+
+1. **D13**：比较集查询与 prompt 改造 → 动作解析与执行 → spec 补齐；
+2. **D14**：溢出降级插入路径（依赖 D13 的淘汰接口）→ spec 补齐；
+3. **D15**：consolidation 触发条件（阈值/新候选/冷却）→ 合并 prompt 与事务 → spec 补齐；
+4. 每步同步 CHANGELOG 与 mao-cli 参考文档（按 AGENTS.md 同任务规则）。
+
+### 10.6 测试要点补充（追加到第 8 节）
+
+- MemoryExtractionService spec：
+  - 模型输出 `touch` → 仅该行 `updated_at` 刷新，无新行；
+  - 模型输出 `update` → content 改写且 dedup_hash 重算，哈希冲突回退 touch；
+  - 动作引用 MANUAL 行 / DISMISSED 行 / 不存在 id → 该候选整体丢弃（不插新行）；
+  - 存量仅剩 DISMISSED 同义行时，抽取到同事实的**新措辞**仍可插入：负面约束集不进比较集、模型无从引用其 id 做硬拦截，只有完全相同 content 会被 insert 前的 `findByHash` 挡住（D3 不复活）；
+  - 比较集查询抛异常 → 退化为精确哈希路径，不阻断抽取；
+  - D14：ACTIVE=200 时插入最旧 AUTO 行被降级、组内全 MANUAL 时放弃插入、软降级行可在服务端恢复；
+  - D15：阈值/新候选/冷却三条件不满足不调用合并；merge 多行成一行且源行删除同事务；产物超 120 字放弃该 merge；合并 LLM 异常整体回滚；MANUAL/DISMISSED 不进输入。
+- repository spec：`listActiveForDedup` / `listStaleAuto` 的分组与排序口径。
+- 前端：MemoryView 对 `source='CONSOLIDATED'` 渲染"合并"徽标（不新增 E2E，按枚举走）。
+
+## 11. 明确不做清单
 
 1. **`memory_save` 工具化（提案 P3）**：不做。隐式抽取已覆盖主要价值，工具化需同步动 tool-registry、tool-result-summarizer、toolDisplay 三处并补全套回归，收益边际小；待自动抽取效果验证后另立提案评估。
-2. **embedding / 向量检索**：不做，一期用规范化去重 + 条数截断。
+2. **embedding / 向量检索**：确认不做（2026-10-02 第二轮需求方决策，非待评估项）：语义去重由 D13 抽取时模型语义匹配 + D15 定期合并整理两层承担；精确哈希保留作廉价前置。
 3. **FAILED / CANCELLED 任务的教训沉淀**：不做，仅 COMPLETED。
 4. **跨用户 / 组织级记忆共享**：不做，记忆永远个人归属。
-5. **自动遗忘 / 过期衰减**：不做，仅用户手动删除与忽略。
+5. **自动遗忘 / 过期衰减**：不做，仅用户手动删除与忽略。（D14 溢出自动降级是 AUTO 行专属的有界变体，不适用于 MANUAL 行。）
 6. **按 Agent / 按会话粒度的收集开关**：不做，仅全局开关。
 7. **会话内记忆 UI**（聊天界面提示"已记住"等）：不做，入口收敛在设置页。
 8. **改 `agent_experiences`（管理员手工经验）的结构与交互**：不做，维持现状，与本方案互补。

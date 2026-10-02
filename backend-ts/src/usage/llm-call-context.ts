@@ -10,6 +10,7 @@ export const LLM_CALL_SCENES = {
   VOICE_SYNTHESIS: 'voice_synthesis',
   FEISHU_SUMMARIZE: 'feishu_summarize',
   CONNECTIVITY_TEST: 'connectivity_test',
+  MEMORY_EXTRACT: 'memory_extract',
   UNKNOWN: 'unknown',
 } as const;
 

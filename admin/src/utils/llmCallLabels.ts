@@ -7,6 +7,7 @@ export const LLM_CALL_SCENE_OPTIONS = [
   { value: 'voice_synthesis', label: '语音合成' },
   { value: 'feishu_summarize', label: '飞书摘要' },
   { value: 'connectivity_test', label: '连通性测试' },
+  { value: 'memory_extract', label: '记忆抽取' },
   { value: 'unknown', label: '未知' },
 ] as const
 

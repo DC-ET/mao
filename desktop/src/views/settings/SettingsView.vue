@@ -27,6 +27,9 @@
         <router-link to="/settings/notifications" class="settings-nav-item" active-class="active">
           消息通知
         </router-link>
+        <router-link to="/settings/memory" class="settings-nav-item" active-class="active">
+          我的记忆
+        </router-link>
         <router-link to="/settings/weixin-bot" class="settings-nav-item" active-class="active">
           微信Bot
         </router-link>
