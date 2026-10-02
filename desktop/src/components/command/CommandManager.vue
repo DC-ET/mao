@@ -40,6 +40,13 @@
                     </svg>
                   </button>
                 </el-tooltip>
+                <el-tooltip content="复制指令内容" :show-after="300" placement="top">
+                  <button class="cmd-btn" @click="copyContent(cmd)">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <rect width="14" height="14" x="8" y="8" rx="2" ry="2" /><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+                    </svg>
+                  </button>
+                </el-tooltip>
                 <el-tooltip content="删除" :show-after="300" placement="top">
                   <button class="cmd-btn cmd-btn-danger" @click="deletingId = cmd.id">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -68,6 +75,7 @@ import { ElMessage } from 'element-plus'
 import { api } from '../../api'
 import CommandEditDialog from './CommandEditDialog.vue'
 import { invalidateCommandContent } from '../../utils/commandContent'
+import { copyText as copyToClipboard } from '../../utils/clipboard'
 
 interface CommandItem {
   id: number
@@ -118,6 +126,12 @@ async function confirmDelete(cmd: CommandItem) {
   } catch {
     // Error handled by interceptor
   }
+}
+
+async function copyContent(cmd: CommandItem) {
+  const ok = await copyToClipboard(cmd.content)
+  if (ok) ElMessage.success(`指令「${cmd.name}」内容已复制`)
+  else ElMessage.error('复制失败')
 }
 </script>
 
