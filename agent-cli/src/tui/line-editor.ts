@@ -101,7 +101,8 @@ export function moveWordRight(state: EditorState): EditorState {
 
 /** 当前行的起点（多行草稿下 Home 只回到本行行首）。 */
 export function lineStart(text: string, cursor: number): number {
-  const idx = text.lastIndexOf('\n', Math.max(0, cursor - 1));
+  if (cursor <= 0) return 0;
+  const idx = text.lastIndexOf('\n', cursor - 1);
   return idx === -1 ? 0 : idx + 1;
 }
 

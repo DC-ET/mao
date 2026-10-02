@@ -540,7 +540,10 @@ export function useStreamWS() {
     const { type, sessionId: rawSid, data } = msg
     const sessionId = rawSid != null ? String(rawSid) : null
 
-    if (sessionId && STREAM_EVENT_TYPES.has(type) && isStaleExecution(sessionId, data)) {
+    // session_already_running 是对本端发送的同步拒绝回执：data.executionId 指向【占用方】，
+    // 永远不会等于本端刚登记的 active id，按 stale 过滤会吞掉拒绝帧导致发送假成功
+    // （乐观消息停在临时 ID、回调被占用方终态误 resolve）。故豁免于陈旧过滤，直达 reject。
+    if (sessionId && type !== 'session_already_running' && STREAM_EVENT_TYPES.has(type) && isStaleExecution(sessionId, data)) {
       return
     }
 

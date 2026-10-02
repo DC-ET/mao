@@ -90,10 +90,20 @@ export class GrepSearchTool extends BaseTool {
     const spawned = spawnSync(cmd[0], cmd.slice(1), {
       cwd: scope.cwd, encoding: 'utf8', timeout: 30_000, maxBuffer: 10 * 1024 * 1024,
     });
+    // rg 退出码语义：0=有匹配，1=无匹配，≥2=出错（非法正则/目标消失）；error 非空=spawn 失败
+    // 或被 timeout/maxBuffer 中途杀死。失败不能吞成「0 命中成功」——与 JS 回退分支
+    // （new RegExp 抛 SyntaxError → error JSON）对齐，否则模型会在错误前提下继续推进。
+    const rgFailed = spawned.error != null || (spawned.status != null && spawned.status >= 2);
+    if (rgFailed && !(spawned.stdout ?? '').trim()) {
+      const detail = String(spawned.stderr ?? spawned.error?.message ?? '').trim().slice(0, 300);
+      const exitInfo = spawned.status != null ? String(spawned.status) : String((spawned.error as NodeJS.ErrnoException | null)?.code ?? 'unknown');
+      throw new Error(`ripgrep 搜索失败（exit ${exitInfo}）：${detail || '无错误输出'}`);
+    }
     const matches: Record<string, unknown>[] = [];
     let totalMatches = 0;
     let charsUsed = 0;
-    let truncated = false;
+    // 进程异常终止但已产出部分 stdout（超时/maxBuffer 中途被杀）：结果不完整，必须标记 truncated
+    let truncated = rgFailed;
     for (const line of (spawned.stdout ?? '').split('\n')) {
       if (!line || !line.startsWith('{')) continue;
       let event: { type?: string; data?: { path?: { text?: string }; line_number?: number; lines?: { text?: string } } };

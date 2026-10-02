@@ -111,4 +111,20 @@ describe('TaskTools', () => {
     expect(JSON.parse(await deleteTool.execute('not-json', 11, null)).error).toBeTruthy();
     expect(JSON.parse(await listTool.execute('{}', 11, null))).toHaveProperty('todos');
   });
+
+  it('updateToolTreatsEmptyStatusAsNotProvided', async () => {
+    const updateTool = new TaskUpdateTool(mapper);
+    mapper.selectBySessionId.mockResolvedValue([todo(1, 't', 'pending')]);
+    const result = JSON.parse(await updateTool.execute(JSON.stringify({ items: [{ id: 1, status: '' }] }), 11, null));
+    expect(result.error).toBeUndefined();
+    // 空串不得写库：status='' 一旦落库，该任务会从 completed/inProgress 统计与 allDone 判定中消失
+    expect(mapper.updateFields).toHaveBeenCalledWith(1, 11, {});
+  });
+
+  it('createToolRejectsStatusOutsideWhitelist', async () => {
+    const createTool = new TaskCreateTool(mapper);
+    const result = JSON.parse(await createTool.execute(JSON.stringify({ items: [{ content: 'x', status: 'done' }] }), 11, null));
+    expect(result.error).toContain('无效的任务状态');
+    expect(mapper.insert).not.toHaveBeenCalled();
+  });
 });

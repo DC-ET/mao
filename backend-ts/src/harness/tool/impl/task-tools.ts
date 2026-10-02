@@ -59,7 +59,12 @@ export class TaskCreateTool extends BaseTool {
       let nextSort = sessionId != null ? (await this.sessionTodoMapper.selectMaxSortOrder(sessionId)) + 1 : 0;
       let count = 0;
       for (const item of items as Record<string, unknown>[]) {
-        const status = asText(item.status) ?? 'pending';
+        // 与 task_update 同一白名单口径；空串视为未提供（参数抖动防御），归一到 pending
+        const requested = asText(item.status);
+        const status = requested != null && requested !== '' ? requested : 'pending';
+        if (!['pending', 'in_progress', 'completed'].includes(status)) {
+          return errorJson(`无效的任务状态: ${status}（只能是 pending / in_progress / completed）`);
+        }
         if (status === 'in_progress' && sessionId != null) {
           await this.sessionTodoMapper.resetInProgress(sessionId);
         }
@@ -192,7 +197,9 @@ export class TaskUpdateTool extends BaseTool {
           await this.sessionTodoMapper.resetInProgressIfExists(sessionId, id);
         }
         const fields: Record<string, unknown> = {};
-        if (newStatus != null) fields.status = newStatus;
+        // 空串视为未提供：白名单条件放行的 `''` 一旦写库，该任务会从 completed/inProgress
+        // 统计与 allDone 判定中消失
+        if (newStatus != null && newStatus !== '') fields.status = newStatus;
         if (item.content != null) fields.content = asText(item.content);
         if (item.description != null) fields.description = asText(item.description);
         if (item.active_form != null) fields.activeForm = asText(item.active_form);
@@ -200,7 +207,7 @@ export class TaskUpdateTool extends BaseTool {
         if (newStatus === 'completed') {
           transitionedToCompleted = true;
           updatedSummaries.push(`已将任务 #${id} 更新为 completed`);
-        } else if (newStatus != null) {
+        } else if (newStatus != null && newStatus !== '') {
           updatedSummaries.push(`已将任务 #${id} 更新为 ${newStatus}`);
         }
       }

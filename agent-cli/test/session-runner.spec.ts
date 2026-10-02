@@ -296,6 +296,21 @@ describe('SessionRunner', () => {
     expect(runner.timedOut).toBe(true);
     expect(ws.sent.some((m) => (m as { type: string }).type === 'cancel')).toBe(true);
   });
+
+  it('waitForCurrentRun waiting for occupant does not cancel them either', async () => {
+    const { ws, runner } = await attached({
+      printMode: true,
+      maxDurationSec: 1,
+      snapshot: { type: 'session_snapshot', sessionId: 11, data: { phase: 'RUNNING', executionId: 'other-eid' } },
+    });
+    // resume 无 prompt 进入 REPL 的等待路径：本地未发起任何执行，超时只结束本地等待
+    const p = runner.waitForCurrentRun();
+    await new Promise((r) => setTimeout(r, 1100));
+    const result = await p;
+    expect(result.status).toBe('CANCELLED');
+    expect(runner.timedOut).toBe(true);
+    expect(ws.sent.some((m) => (m as { type: string }).type === 'cancel')).toBe(false);
+  });
 });
 
 /** 取自线上活跃 text 模型的真实形态：显示名带尾随空格，且同一 modelId 对应多条配置。 */

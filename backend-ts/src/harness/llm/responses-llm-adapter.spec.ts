@@ -735,3 +735,49 @@ describe('parseResponsesChatResponse / mapResponsesStatusToFinishReason', () => 
     expect(mapResponsesStatusToFinishReason('completed', true)).toBe('length');
   });
 });
+
+describe('ResponsesLlmAdapter - output_item.done（added 无 call_id 的网关形状）', () => {
+  let server: QueueServer;
+
+  afterEach(async () => {
+    if (server) await server.close();
+  });
+
+  it('done 换用规范 call_id 解析时不得重发完整参数（否则 arguments 翻倍成非法 JSON）', async () => {
+    server = new QueueServer();
+    server.enqueueSse([
+      // added：网关未下发 call_id（适配器注释明言支持的兜底形状）
+      'data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_1","name":"lookup","arguments":""}}',
+      '',
+      'data: {"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":"{\\\"q\\\":"}',
+      '',
+      'data: {"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":"\\\"bj\\\"}"}',
+      '',
+      // done：完整规范 item 携带 call_id
+      'data: {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_x","name":"lookup","arguments":"{\\\"q\\\":\\\"bj\\\"}"}}',
+      '',
+      'data: {"type":"response.completed","response":{"id":"resp_1","status":"completed","usage":{"input_tokens":5,"output_tokens":2,"total_tokens":7}}}',
+      '',
+    ].join('\n'));
+    await server.start();
+
+    const callback = new CapturingCallback();
+    await adapter().stream(request('hi'), configOf(server), callback);
+    expect(callback.error).toBeUndefined();
+
+    // 按 AgentLoop.mergeToolCall 的方式聚合（单调用按 index 归并，arguments 追加）
+    const byIndex = new Map<number, ToolCall>();
+    for (const chunk of callback.chunks) {
+      for (const tc of chunk.choices?.[0]?.delta?.toolCalls ?? []) {
+        const target = byIndex.get(tc.index) ?? { id: tc.id, type: 'function', function: { name: '', arguments: '' } };
+        if (tc.id) target.id = tc.id;
+        if (tc.function?.name && !target.function?.name) target.function!.name = tc.function.name;
+        if (tc.function?.arguments) target.function!.arguments = (target.function!.arguments ?? '') + tc.function.arguments;
+        byIndex.set(tc.index, target);
+      }
+    }
+    const args = byIndex.get(0)?.function?.arguments ?? '';
+    expect(() => JSON.parse(args)).not.toThrow();
+    expect(args).toBe('{"q":"bj"}');
+  });
+});

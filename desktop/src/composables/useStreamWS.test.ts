@@ -303,3 +303,35 @@ describe('useStreamWS side session creation', () => {
     expect(sessionStore.getSessionPhase('11')).toBe('FAILED')
   })
 })
+
+describe('useStreamWS session_already_running（拒绝帧不得被 stale 过滤吞掉）', () => {
+  it('占用方运行中本端发送被拒时，pendingCallbacks.reject 必须被调用', async () => {
+    const { connect, subscribe, setActiveExecution, pendingCallbacks } = useStreamWS()
+    const connecting = connect()
+    sockets[0].open()
+    await connecting
+    await subscribe('42')
+    // useChat.sendMessage 的真实时序：发送前登记本端新 eventId
+    setActiveExecution('42', 'evt-new-1')
+    const reject = vi.fn()
+    pendingCallbacks.set('42', { resolve: vi.fn(), reject })
+
+    // 后端 sendSessionAlreadyRunning：data.executionId 总是携带占用方的 executionId，
+    // 永远不等于本端刚登记的 active id——若按 stale 过滤会把拒绝帧吞掉，发送假成功
+    sockets[0].onmessage?.({
+      target: sockets[0],
+      data: JSON.stringify({
+        type: 'session_already_running',
+        sessionId: 42,
+        data: {
+          code: 'session_already_running',
+          message: '该任务仍在运行，请先停止当前执行后再继续',
+          executionId: 'exec-remote-1',
+        },
+      }),
+    })
+
+    expect(reject).toHaveBeenCalledTimes(1)
+    expect(reject.mock.calls[0]?.[0]).toBeInstanceOf(Error)
+  })
+})

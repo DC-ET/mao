@@ -41,4 +41,24 @@ describe('chat-files', () => {
     expect(second).toBe(join(root, '报价-1001-2.docx'));
     expect(existsSync(second)).toBe(false);
   });
+
+  it('resolveChatFileTarget keeps dodging when the derived name is itself occupied', () => {
+    const root = useTmpDir('mao-chat-files-derived-collision-');
+    mkdirSync(root, { recursive: true });
+    // 更早消息的文件名恰好形如派生名：派生名必须继续递增避让，不得覆盖消息 1001 的附件
+    writeFileSync(join(root, '报价.docx'), 'earlier');
+    writeFileSync(join(root, '报价-2002.docx'), 'message-1001');
+    const target = resolveChatFileTarget(root, '报价.docx', 2002);
+    expect(existsSync(target)).toBe(false);
+    expect(readFileSync(join(root, '报价-2002.docx'), 'utf8')).toBe('message-1001');
+  });
+
+  it('resolveChatFileTarget keeps dodging an occupied multi-file index derived name', () => {
+    const root = useTmpDir('mao-chat-files-index-collision-');
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, '报告.docx'), 'earlier');
+    writeFileSync(join(root, '报告-3001-2.docx'), 'occupied');
+    const target = resolveChatFileTarget(root, '报告.docx', 3001, 1);
+    expect(existsSync(target)).toBe(false);
+  });
 });

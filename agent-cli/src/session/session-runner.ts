@@ -205,9 +205,10 @@ export class SessionRunner {
     try {
       this.startedAt = this.now();
       this.timedOutFlag = false;
-      this.armMaxDuration();
+      // 等占用方期间不武装 --max-duration：超时只结束本地等待，不 cancel 对方
+      //（与 awaitBusyRun 的 waitOccupantWithOptionalTimeout 同一约定）
       this.emit({ type: 'session_started', sessionId: this.sessionId, executionId: this.executionId ?? undefined });
-      await this.waitUntilSettled();
+      await this.waitOccupantWithOptionalTimeout();
       return this.buildResult();
     } finally {
       this.disarmMaxDuration();

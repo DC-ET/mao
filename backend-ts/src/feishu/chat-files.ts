@@ -24,5 +24,11 @@ export function resolveChatFileTarget(dir: string, fileName: string, messageId: 
   const ext = extname(fileName);
   const stem = basename(fileName, ext);
   const indexSuffix = fileIndex > 0 ? `-${fileIndex + 1}` : '';
-  return resolve(dir, `${stem}-${messageId}${indexSuffix}${ext}`);
+  // 派生名同样可能已被占用（更早消息的文件名恰好形如派生名）：继续递增避让，
+  // 保证返回的路径必定不存在、写入不覆盖任何已有文件
+  let candidate = resolve(dir, `${stem}-${messageId}${indexSuffix}${ext}`);
+  for (let n = 2; existsSync(candidate); n++) {
+    candidate = resolve(dir, `${stem}-${messageId}${indexSuffix}-${n}${ext}`);
+  }
+  return candidate;
 }

@@ -379,7 +379,12 @@ export class ResponsesLlmAdapter implements LlmAdapter {
           if (isPlainObject(item) && item.type === 'function_call') {
             const syntheticId = resolveCallKey(str(item.call_id) ?? str(item.id), event.output_index);
             rememberCallKeyMapping(str(item.id), syntheticId);
-            if (!keysWithArgsDelta.has(syntheticId) && typeof item.arguments === 'string' && item.arguments !== '') {
+            // added 未带 call_id 时，增量参数记在 item.id 名下（此时映射登记因 itemId===callKey 被跳过）；
+            // done 换用规范 call_id 解析会得到另一个键，两个候选键都要查判重集合，否则完整参数
+            // 会在增量之后再发一遍，AgentLoop 按 index 归并追加成非法 JSON
+            const itemId = str(item.id);
+            const argsAlreadyViaDelta = keysWithArgsDelta.has(syntheticId) || (itemId != null && keysWithArgsDelta.has(itemId));
+            if (!argsAlreadyViaDelta && typeof item.arguments === 'string' && item.arguments !== '') {
               emitted = true;
               emitChunk(callback, syntheticId, {
                 toolCalls: [{

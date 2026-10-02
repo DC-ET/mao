@@ -133,4 +133,17 @@ describe('line-editor multi-line', () => {
   it('setText puts the cursor at the end', () => {
     expect(setText('abc')).toEqual({ text: 'abc', cursor: 3 });
   });
+
+  it('lineStart returns 0 at cursor 0 even when the draft starts with a newline', () => {
+    // cursor=0 位于第 0 行行首：lastIndexOf 不得把下标 0 处的换行当成"光标前的换行"
+    expect(lineStart('\nfoo', 0)).toBe(0);
+  });
+
+  it('moveHome is a no-op at cursor 0', () => {
+    expect(moveHome(at('\nfoo', 0))).toEqual({ text: '\nfoo', cursor: 0 });
+  });
+
+  it('killToStart does not duplicate the first character at cursor 0', () => {
+    expect(killToStart(at('\nfoo', 0))).toEqual({ text: '\nfoo', cursor: 0 });
+  });
 });
