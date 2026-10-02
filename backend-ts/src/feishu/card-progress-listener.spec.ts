@@ -144,6 +144,75 @@ describe('FeishuCardProgressListener', () => {
     expect(updates[updates.length - 2]).toEqual({ round: 79, tools: ['shell：执行 pwd'] });
     expect(updates[updates.length - 1]).toEqual({ round: 79, tools: [] });
   });
+
+  it('keeps the previous round content when a round emits only tool calls', async () => {
+    // Agent 把登录链接写在 content 里，再跳到下一轮 shell 轮询登录状态：纯工具轮若不兜底，
+    // 用户看不到链接，任务看起来卡住。
+    const updates: Array<{ round: number; content: string; tools: string[] }> = [];
+    const listener = new FeishuCardProgressListener({
+      update: async (_status, round, content, tools) => { updates.push({ round, content, tools }); },
+    });
+    listener.onRoundStart(1);
+    listener.onContentDelta('请先登录：https://ecp.example.com/auth/abc');
+    listener.onRoundEnd(1);
+    listener.onRoundStart(2);
+    listener.onToolCallStart({ id: 'sh', function: { name: 'shell', arguments: '{"command":"pmo login --status"}' } });
+    listener.onToolCallResult('sh', '{"exit_code":0,"output":"pending"}');
+    listener.onRoundEnd(2);
+    // 第三轮仍然只有工具调用，正文继续沿用最近一条。
+    listener.onRoundStart(3);
+    listener.onToolCallStart({ id: 'sh2', function: { name: 'shell', arguments: '{"command":"pmo login --status"}' } });
+    listener.onToolCallResult('sh2', '{"exit_code":0,"output":"pending"}');
+    listener.onRoundEnd(3);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(updates[0]).toEqual({ round: 1, content: '请先登录：https://ecp.example.com/auth/abc', tools: [] });
+    // 第 2、3 轮都是纯工具轮，正文沿用最近一条（含收尾那次的最终摘要）。
+    expect(updates.filter((u) => u.round === 2)).toEqual([
+      { round: 2, content: '请先登录：https://ecp.example.com/auth/abc', tools: ['shell：`pmo login --status`（执行中）'] },
+      { round: 2, content: '请先登录：https://ecp.example.com/auth/abc', tools: ['shell：执行 pmo login --status'] },
+    ]);
+    expect(updates[updates.length - 1]).toEqual({
+      round: 3, content: '请先登录：https://ecp.example.com/auth/abc', tools: ['shell：执行 pmo login --status'],
+    });
+  });
+
+  it('replaces the carried content once a later round emits its own', async () => {
+    const updates: string[] = [];
+    const listener = new FeishuCardProgressListener({
+      update: async (_status, _round, content) => { updates.push(content); },
+    });
+    listener.onRoundStart(1);
+    listener.onContentDelta('第一轮的说明');
+    listener.onRoundEnd(1);
+    // 纯工具轮沿用上一轮。
+    listener.onRoundStart(2);
+    listener.onToolCallStart({ id: 'sh', function: { name: 'shell', arguments: '{}' } });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(updates[updates.length - 1]).toBe('第一轮的说明');
+    // 新轮有新正文时替换兜底。
+    listener.onRoundStart(3);
+    listener.onContentDelta('第二轮的新说明');
+    listener.onToolCallStart({ id: 'sh2', function: { name: 'shell', arguments: '{}' } });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(updates[updates.length - 1]).toBe('第二轮的新说明');
+    // 再一个纯工具轮沿用新的那条，不再回到更早的。
+    listener.onRoundEnd(3);
+    listener.onRoundStart(4);
+    listener.onToolCallStart({ id: 'sh3', function: { name: 'shell', arguments: '{}' } });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(updates[updates.length - 1]).toBe('第二轮的新说明');
+  });
+
+  it('has nothing to carry when the first round emits no content', async () => {
+    const updates: Array<{ content: string; tools: string[] }> = [];
+    const listener = new FeishuCardProgressListener({
+      update: async (_status, _round, content, tools) => { updates.push({ content, tools }); },
+    });
+    listener.onRoundStart(1);
+    listener.onToolCallStart({ id: 'sh', function: { name: 'shell', arguments: '{"command":"pwd"}' } });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(updates[0]).toEqual({ content: '', tools: ['shell：`pwd`（执行中）'] });
+  });
 });
 
 describe('countCompletedAgentRounds', () => {

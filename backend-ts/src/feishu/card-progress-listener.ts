@@ -8,11 +8,19 @@ export interface FeishuCardProgress {
 
 type ToolProgress = { name: string; argumentsJson: string | null; summary: string | null };
 
-/** Collects one LLM loop round and updates a Feishu progress card at round boundaries. */
+/**
+ * Collects one LLM loop round and updates a Feishu progress card at round boundaries.
+ *
+ * 轮次只有工具调用时（如轮询登录状态），卡片回退展示上一轮最近的正文：
+ * Agent 常把登录链接写在 content 里、再用 shell 轮询状态，不兜底的话用户看不到链接，
+ * 任务看起来卡住（`carriedContent`）。
+ */
 export class FeishuCardProgressListener implements AgentEventListener {
   private round = 0;
   private readonly roundOffset: number;
   private content = '';
+  /** 上一轮收尾时留下的正文：本轮没有 assistant content 时用它撑住卡片。 */
+  private carriedContent = '';
   private readonly tools = new Map<string, ToolProgress>();
   private pending: Promise<void> = Promise.resolve();
 
@@ -43,7 +51,7 @@ export class FeishuCardProgressListener implements AgentEventListener {
     const previous = this.tools.get(toolCallId);
     this.tools.set(toolCallId, { name, argumentsJson: toolCall.function?.arguments ?? previous?.argumentsJson ?? null, summary: previous?.summary ?? null });
     // 工具触发即推送一次进度，长耗时工具执行期间用户可见"执行中"状态，而不是等结果返回。
-    this.queue('RUNNING', this.content, this.toolValues(), this.round);
+    this.queue('RUNNING', this.displayContent(), this.toolValues(), this.round);
   }
 
   onToolCallArgsDelta(toolCallId: string, argumentsJson: string): void {
@@ -53,7 +61,7 @@ export class FeishuCardProgressListener implements AgentEventListener {
     tool.argumentsJson = argumentsJson;
     // 流式参数拼完后（尤其是 shell command）立刻刷新卡片，不必等整轮 LLM 流结束。
     if (formatToolLine(tool) !== before) {
-      this.queue('RUNNING', this.content, this.toolValues(), this.round);
+      this.queue('RUNNING', this.displayContent(), this.toolValues(), this.round);
     }
   }
 
@@ -71,7 +79,9 @@ export class FeishuCardProgressListener implements AgentEventListener {
 
   onRoundEnd(round: number): void {
     this.round = this.displayRound(round);
-    this.queue('RUNNING', this.content, this.toolsList(), this.round);
+    this.queue('RUNNING', this.displayContent(), this.toolsList(), this.round);
+    // 本轮正文留给下一轮兜底（如登录链接），随后清空本轮累积。
+    if (this.content.trim() !== '') this.carriedContent = this.content;
     this.content = '';
     this.tools.clear();
   }
@@ -99,6 +109,14 @@ export class FeishuCardProgressListener implements AgentEventListener {
 
   private queue(status: 'RUNNING' | 'FAILED', content = this.content, tools = this.toolValues(), round = this.round): void {
     this.pending = this.pending.then(async () => { await this.safeUpdate(status, round, content, tools); });
+  }
+
+  /**
+   * 卡片正文：本轮有 assistant content 用本轮的，否则回退到上一轮最近一条。
+   * 空串视为没有正文（只有换行的 delta 不兜底），保证纯工具轮仍显示上轮的链接/说明。
+   */
+  private displayContent(): string {
+    return this.content.trim() === '' ? this.carriedContent : this.content;
   }
 
   private async safeUpdate(status: 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED', round: number, content: string, tools: string[]): Promise<boolean> {
