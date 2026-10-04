@@ -8,7 +8,7 @@ import { mapCompactionEvents } from '../utils/chatMessage'
 import { isAndroidCapacitor } from '../utils/capacitor'
 import { isElectronClient } from '../utils/platform'
 import { updateSideTaskTabTitleFor } from './useCenterTabs'
-import { notifyInboxSystemUpdate, primeInboxSystemNotify } from './useInboxSystemNotify'
+import { notifyInboxSystemUpdate } from './useInboxSystemNotify'
 import type { SideTaskContextMode } from '../types/file-browser'
 
 /// <reference types="vite/client" />

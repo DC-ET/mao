@@ -1,5 +1,4 @@
 import { onScopeDispose, ref } from 'vue'
-import { useRouter } from 'vue-router'
 import type { InboxItem, InboxKind, InboxPreference } from '@mao/contracts'
 import { useInboxStore } from '../stores/inbox'
 import { useSessionStore } from '../stores/session'
