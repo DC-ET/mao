@@ -168,7 +168,12 @@ describeGit('GitWriteOperationService git', () => {
     writeFileSync(join(repo, 'base.txt'), 'base\n');
     run(repo, 'git', 'add', '.');
     run(repo, 'git', 'commit', '-m', 'init');
-    run(repo, 'git', 'remote', 'add', 'origin', 'https://user:secret@example.invalid/repo.git');
+    // 远端不可达。刻意避开 `*.invalid` 域名：本机配了 HTTP(S)_PROXY 时 git 会把
+    // 这类保留域名交给代理，代理握手失败要 5-10s，超过 vitest 5s 默认超时。
+    // 用「带凭证的 http:// 指向本地关闭端口」构造同样的失败：端口拒连是毫秒级、
+    // 与代理配置无关（127.0.0.1 在 NO_PROXY 内），URL 里仍含 user:secret，
+    // 因此错误消毒断言（不得泄露 user:secret）保持原样有效。
+    run(repo, 'git', 'remote', 'add', 'origin', 'http://user:secret@127.0.0.1:1/repo.git');
 
     const status = await newService(dir, repo).refreshRemoteStatus(session(repo), null);
     expect(status.isGit).toBe(true);

@@ -408,7 +408,10 @@ describe('GitOperationService', () => {
         },
       },
     );
-    const result = await git.clone('https://example.invalid/repo.git', null, join(dir, 'r'), 1, 9);
+    // 远端不可达即可，无需真实网络：`https://` 指向本地关闭端口使 clone 毫秒级失败
+    // （`*.invalid` 域名在本机 HTTP(S)_PROXY 下要 5-10s 才失败，超过 vitest 5s 超时）。
+    // 本用例断言的是「凭证走 GIT_ASKPASS 脚本而非 URL」，与远端是否真实存在无关。
+    const result = await git.clone('https://127.0.0.1:1/repo.git', null, join(dir, 'r'), 1, 9);
     expect(result.success).toBe(false);
     expect(scripts).toHaveLength(1);
     expect(existsSync(scripts[0])).toBe(true);
@@ -421,7 +424,8 @@ describe('GitOperationService', () => {
       { getTokenMapByUser: async () => ({}) },
       { resolveGitAskpassScript: () => join(dir, 'unused.sh') },
     );
-    const result = await git.clone('https://example.invalid/repo.git', null, join(dir, 'r'), 1, 9);
+    // 同上：`https://` 指向本地关闭端口使 clone 立即失败，避开代理下 `*.invalid` 的 5-10s 握手等待。
+    const result = await git.clone('https://127.0.0.1:1/repo.git', null, join(dir, 'r'), 1, 9);
     expect(result.success).toBe(false);
     expect(result.error).toBeTruthy();
   });
