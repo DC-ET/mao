@@ -9,7 +9,7 @@
         </el-tooltip>
         <el-tooltip content="左侧面板" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
           <div class="theme-toggle" role="button" aria-label="左侧面板" :class="{ active: !leftCollapsed }" @click="toggleLeft">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <rect x="3" y="3" width="18" height="18" rx="2" /><line x1="9" y1="3" x2="9" y2="21" />
             </svg>
           </div>
@@ -17,15 +17,15 @@
       </div>
     </div>
     <div class="nav-right">
-      <InboxBell />
       <SessionSearchPopover ref="searchPopoverRef" />
       <el-tooltip content="右侧面板" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
         <div class="theme-toggle" role="button" aria-label="右侧面板" :class="{ active: !rightCollapsed }" @click="toggleRight">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
             <rect x="3" y="3" width="18" height="18" rx="2" /><line x1="15" y1="3" x2="15" y2="21" />
           </svg>
         </div>
       </el-tooltip>
+      <InboxBell />
       <el-tooltip :content="terminalAvailability.tooltip" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
         <div
           class="theme-toggle terminal-toggle"
@@ -34,8 +34,8 @@
           :class="{ active: terminalOpen, disabled: !terminalAvailability.enabled }"
           @click="toggleTerminal"
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" />
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" /><polyline points="7 11 9 9 7 7" /><line x1="11" y1="13" x2="15" y2="13" />
           </svg>
         </div>
       </el-tooltip>
