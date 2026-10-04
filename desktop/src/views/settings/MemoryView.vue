@@ -1,9 +1,9 @@
 <template>
   <div class="memory-page">
     <div class="page-header">
-      <h1 class="page-title">我的记忆</h1>
+      <h1 class="page-title">长期记忆</h1>
       <p class="page-desc">
-        跨会话的长期记忆：Agent 在后续会话中会自动参考这些信息。项目级记忆仅在对应项目的会话中生效，用户级记忆跨项目生效。
+        Agent 在后续会话中会自动参考这些跨会话信息。项目级记忆仅在对应项目的会话中生效，用户级记忆跨项目生效。
       </p>
     </div>
 
@@ -557,6 +557,10 @@ onMounted(() => {
     flex-direction: column;
     align-items: stretch;
     gap: 10px;
+  }
+
+  .create-btn {
+    align-self: flex-end;
   }
 
   .memory-filters {

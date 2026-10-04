@@ -619,7 +619,7 @@ test.describe('Task Group Rename', () => {
 })
 
 // ─────────────────────────────────────────────────────────
-// Desktop - Memory Settings（我的记忆）
+// Desktop - Memory Settings（长期记忆）
 // ─────────────────────────────────────────────────────────
 test.describe('Memory Settings', () => {
   interface MemoryRow {
@@ -691,7 +691,7 @@ test.describe('Memory Settings', () => {
     })
 
     await page.goto('/settings/memory')
-    await expect(page.locator('.page-title')).toHaveText('我的记忆')
+    await expect(page.locator('.page-title')).toHaveText('长期记忆')
 
     // 列表可见
     await expect(page.locator('.memory-card')).toHaveCount(1)

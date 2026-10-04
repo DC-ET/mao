@@ -369,7 +369,7 @@ export async function fetchDislikedMessageIds(sessionId: number): Promise<number
   return data?.ids ?? []
 }
 
-// ─── 我的记忆（跨会话长期记忆） ───
+// ─── 长期记忆（跨会话记忆） ───
 
 export type MemoryScope = 'USER' | 'PROJECT'
 export type MemoryStatus = 'ACTIVE' | 'DISMISSED'
