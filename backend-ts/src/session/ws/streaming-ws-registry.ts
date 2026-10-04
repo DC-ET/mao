@@ -63,6 +63,9 @@ const CRITICAL_EVENT_TYPES = new Set([
   'queue_updated',
   'queue_message_consumed',
   'session_already_running',
+  // 收件箱未读数：普通帧队列满时是直接丢弃，弱网/高频会话下未读数会静默停在旧值
+  // 且无主动重拉入口；事件日均为个位数到数十条，不会挤占关键通道。
+  'inbox_updated',
 ]);
 
 function isCriticalItem(item: OutboundItem): boolean {

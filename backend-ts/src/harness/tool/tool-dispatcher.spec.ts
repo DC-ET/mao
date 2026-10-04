@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AskUserQuestionsRegistry } from './ask-user-questions-registry.js';
 import { DangerAssessor } from './danger-assessor.js';
-import { ToolDispatcher, IllegalArgumentException } from './tool-dispatcher.js';
+import { ToolDispatcher, IllegalArgumentException, type InboxRecorder } from './tool-dispatcher.js';
 import { ToolRegistry } from './tool-registry.js';
 import type { Tool } from './tool.js';
 import type { LocalToolExecutor } from '../local/local-tool-executor.js';
@@ -723,6 +723,127 @@ describe('ToolDispatcher', () => {
       );
     });
   });
+
+  describe('收件箱写入（QUESTION_PENDING / 联动置已读）', () => {
+  function inboxRecorderSpy(overrides: Partial<Record<string, unknown>> = {}) {
+    return {
+      recordQuestionPending: vi.fn(async () => undefined),
+      resolvePending: vi.fn(async () => undefined),
+      ...overrides,
+    };
+  }
+
+  function buildDispatcher(recorder: ReturnType<typeof inboxRecorderSpy>) {
+    return new ToolDispatcher(
+      registry, localToolExecutor, dangerAssessor, sessionMapper, streamingWsRegistry,
+      askUserQuestionsRegistry, localToolSessionRegistry, treeSignalPublisher,
+      null, null, null, null, null, null, recorder as never,
+    );
+  }
+
+  const ARGS = '{"questions":[{"id":"q1"}]}';
+
+  function resetMocks() {
+    sessionMapper.selectById.mockReset();
+    sessionMapper.selectById.mockResolvedValue(null);
+    streamingWsRegistry.hasConnection.mockReset();
+    streamingWsRegistry.hasConnection.mockReturnValue(true);
+    streamingWsRegistry.send.mockReset();
+    askUserQuestionsRegistry.register.mockReset();
+    askUserQuestionsRegistry.register.mockReturnValue('req-inbox');
+    askUserQuestionsRegistry.waitForAnswer.mockReset();
+    localToolSessionRegistry.getUserIdForSession.mockReset();
+    localToolSessionRegistry.getUserIdForSession.mockResolvedValue(9);
+  }
+
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it('提问注册后写入 QUESTION_PENDING（不区分用户在线与否）', async () => {
+    resetMocks();
+    const recorder = inboxRecorderSpy();
+    askUserQuestionsRegistry.waitForAnswer.mockResolvedValue({ answered: true, cancelled: false, resultJson: '{"answers":[]}' });
+    await buildDispatcher(recorder).dispatch('ask_user_questions', ARGS, 'CLOUD', 7, 'workspace');
+    await settle();
+    expect(recorder.recordQuestionPending).toHaveBeenCalledWith({ userId: 9, sessionId: 7, requestId: 'req-inbox' });
+  });
+
+  it('已回答时联动置已读（三态之一）', async () => {
+    resetMocks();
+    const recorder = inboxRecorderSpy();
+    askUserQuestionsRegistry.waitForAnswer.mockResolvedValue({ answered: true, cancelled: false, resultJson: '{"answers":[]}' });
+    await buildDispatcher(recorder).dispatch('ask_user_questions', ARGS, 'CLOUD', 7, 'workspace');
+    await settle();
+    // 判定只读结构化标记 result.answered / result.cancelled，不解析 resultJson 文本
+    expect(recorder.resolvePending).toHaveBeenCalledWith(9, 'QUESTION_PENDING', 7, 'req-inbox');
+  });
+
+  it('随会话取消（cancelled:true）时同样置已读（三态之二）', async () => {
+    resetMocks();
+    const recorder = inboxRecorderSpy();
+    askUserQuestionsRegistry.waitForAnswer.mockResolvedValue({ answered: true, cancelled: true, resultJson: '{"cancelled":true}' });
+    await buildDispatcher(recorder).dispatch('ask_user_questions', ARGS, 'CLOUD', 7, 'workspace');
+    await settle();
+    expect(recorder.resolvePending).toHaveBeenCalledWith(9, 'QUESTION_PENDING', 7, 'req-inbox');
+  });
+
+  it('900s 超时（answered:false）时置已读（三态之三）', async () => {
+    resetMocks();
+    const recorder = inboxRecorderSpy();
+    askUserQuestionsRegistry.waitForAnswer.mockResolvedValue({ answered: false, cancelled: false, resultJson: '{"error":"timeout"}' });
+    await buildDispatcher(recorder).dispatch('ask_user_questions', ARGS, 'CLOUD', 7, 'workspace');
+    await settle();
+    expect(recorder.resolvePending).toHaveBeenCalledWith(9, 'QUESTION_PENDING', 7, 'req-inbox');
+  });
+
+  it('置已读键与写入键一致（同 requestId 尾段，防两侧漂移）', async () => {
+    resetMocks();
+    const recorder = inboxRecorderSpy();
+    askUserQuestionsRegistry.waitForAnswer.mockResolvedValue({ answered: true, cancelled: false, resultJson: '{"answers":[]}' });
+    await buildDispatcher(recorder).dispatch('ask_user_questions', ARGS, 'CLOUD', 7, 'workspace');
+    await settle();
+    expect(recorder.resolvePending.mock.calls[0][3]).toBe(recorder.recordQuestionPending.mock.calls[0][0].requestId);
+  });
+
+  it('飞书会话被拒：既不写提问也不置已读', async () => {
+    resetMocks();
+    const recorder = inboxRecorderSpy();
+    const feishuAsk = { hasRunningProgress: () => true, mount: vi.fn(), clearRequest: vi.fn() };
+    const feishu = new ToolDispatcher(
+      registry, localToolExecutor, dangerAssessor, sessionMapper, streamingWsRegistry,
+      askUserQuestionsRegistry, localToolSessionRegistry, treeSignalPublisher,
+      null, null, feishuAsk, null, null, null, recorder as never,
+    );
+    sessionMapper.selectById.mockResolvedValue({
+      userId: 9, projectKey: 'feishu-1-private-9', workspace: '/ws/feishu-1-private-9',
+    });
+    await feishu.dispatch('ask_user_questions', ARGS, 'CLOUD', 7, 'workspace');
+    await settle();
+    expect(recorder.recordQuestionPending).not.toHaveBeenCalled();
+    expect(recorder.resolvePending).not.toHaveBeenCalled();
+  });
+
+  it('收件箱写入失败不打断提问链路（异常全吞）', async () => {
+    resetMocks();
+    const recorder = inboxRecorderSpy({
+      recordQuestionPending: vi.fn(async () => { throw new Error('db down'); }),
+      resolvePending: vi.fn(async () => { throw new Error('db down'); }),
+    });
+    askUserQuestionsRegistry.waitForAnswer.mockResolvedValue({ answered: true, cancelled: false, resultJson: '{"answers":[]}' });
+    await expect(buildDispatcher(recorder).dispatch('ask_user_questions', ARGS, 'CLOUD', 7, 'workspace'))
+      .resolves.toBe('{"answers":[]}');
+  });
+
+  it('未注入 inboxRecorder 时行为与改造前一致（零影响）', async () => {
+    resetMocks();
+    const notWired = new ToolDispatcher(
+      registry, localToolExecutor, dangerAssessor, sessionMapper, streamingWsRegistry,
+      askUserQuestionsRegistry, localToolSessionRegistry, treeSignalPublisher,
+    );
+    askUserQuestionsRegistry.waitForAnswer.mockResolvedValue({ answered: true, cancelled: false, resultJson: '{"answers":[]}' });
+    await expect(notWired.dispatch('ask_user_questions', ARGS, 'CLOUD', 7, 'workspace'))
+      .resolves.toBe('{"answers":[]}');
+    });
+  });
 });
 
 describe('ToolRegistry', () => {
@@ -736,3 +857,4 @@ describe('ToolRegistry', () => {
     expect(registry.getToolsByNames(['missing', 'second', 'first'])).toEqual([second, first]);
   });
 });
+

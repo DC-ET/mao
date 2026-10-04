@@ -14,10 +14,24 @@ export interface BackgroundFileChangeRepo {
   insert(change: FileChange): Promise<number>;
 }
 
+/** SUBAGENT_DONE 站内通知能力（可选注入；接口化避免 harness 反向依赖 inbox 域实现）。 */
+export interface SubagentDeliveryInboxRecorder {
+  recordSubagentDone(input: {
+    parentSessionId: number;
+    childSessionId: number;
+    executionId: number;
+    status: string;
+    result: string | null;
+    agentType: string | null;
+    taskDescription: string | null;
+  }): Promise<void>;
+}
+
 export class SubagentResultDeliveryService {
   constructor(
     private readonly db: Db,
     private readonly fileChangeRepo?: BackgroundFileChangeRepo,
+    private readonly inboxRecorder?: SubagentDeliveryInboxRecorder | null,
   ) {}
 
   async inferLegacyFields(execution: SubagentExecution): Promise<SubagentExecution> {
@@ -168,7 +182,35 @@ export class SubagentResultDeliveryService {
     });
     await tx.execute('UPDATE session SET updated_at = ? WHERE id = ?', [now, parentSessionId]);
     harnessLog('info', `background_subagent_result_delivered executionId=${execution.id} parent=${parentSessionId}`);
+    this.notifyInboxSubagentDone(execution, parentSessionId);
     return 'DELIVERED';
+  }
+
+  /**
+   * SUBAGENT_DONE 站内通知：覆盖 COMPLETED / FAILED / CANCELLED 三种终态。
+   * fire-and-forget + 全吞异常：投递事务已经提交，收件箱失败不得回滚或上抛。
+   */
+  private notifyInboxSubagentDone(execution: SubagentExecution, parentSessionId: number): void {
+    const recorder = this.inboxRecorder;
+    if (recorder == null) return;
+    const childSessionId = execution.childSessionId;
+    const executionId = execution.id;
+    if (childSessionId == null || executionId == null) return;
+    const status = execution.status ?? '';
+    if (status !== 'COMPLETED' && status !== 'FAILED' && status !== 'CANCELLED') return;
+    void Promise.resolve()
+      .then(() => recorder.recordSubagentDone({
+        parentSessionId,
+        childSessionId,
+        executionId,
+        status,
+        result: execution.result ?? null,
+        agentType: execution.agentType ?? null,
+        taskDescription: execution.taskDescription ?? null,
+      }))
+      .catch((e) => {
+        harnessLog('warn', `Inbox subagent notification failed for execution ${executionId}: ${(e as Error).message}`);
+      });
   }
 
   private async copyFileChanges(

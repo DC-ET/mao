@@ -43,6 +43,12 @@ export interface AskUserOfflineNotifier {
   suppressPending(delivery: TaskNotificationDelivery | null): Promise<void>;
 }
 
+/** 站内收件箱写入能力（可选注入；接口化避免 harness 反向依赖 inbox 域实现）。 */
+export interface InboxRecorder {
+  recordQuestionPending(input: { userId: number; sessionId: number; requestId: string }): Promise<void>;
+  resolvePending(userId: number, kind: 'QUESTION_PENDING' | 'APPROVAL_PENDING', sessionId: number, tail: string): Promise<void>;
+}
+
 const ASK_USER_QUESTIONS = 'ask_user_questions';
 const MCP_TOOL_PREFIX = 'mcp__';
 const SERVER_ONLY_TOOLS = new Set([
@@ -96,7 +102,24 @@ export class ToolDispatcher {
     private readonly proxyApprover?: ProxyApprover | null,
     private readonly jevRiskAssessor?: JevRiskAssessor | null,
     private readonly approvalModelResolver?: ApprovalModelResolver | null,
+    private readonly inboxRecorder?: InboxRecorder | null,
   ) {}
+
+  /**
+   * 收件箱副作用统一入口：fire-and-forget + 全吞异常。
+   * 提问链路绝不能因为收件箱写入失败而中断（收件箱是补充通知，不是主链路）。
+   */
+  private recordInbox(fn: () => void | Promise<void>): void {
+    try {
+      void Promise.resolve()
+        .then(fn)
+        .catch((e) => {
+          harnessLog('warn', `Inbox side effect failed: ${(e as Error).message}`);
+        });
+    } catch (e) {
+      harnessLog('warn', `Inbox side effect threw synchronously: ${(e as Error).message}`);
+    }
+  }
 
   /**
    * Overloads match Java ToolDispatcher:
@@ -318,6 +341,10 @@ export class ToolDispatcher {
     const data: Record<string, unknown> = { requestId, questions };
     if (metadata) data.metadata = metadata;
     this.streamingWsRegistry.send(userId, wsEvent('ask_user_questions', sessionId, data));
+    // 站内收件箱：提问待答统一入口（不区分用户在线与否；离线 IM 提醒保持独立，两渠道并存）
+    this.recordInbox(() => this.inboxRecorder?.recordQuestionPending({
+      userId, sessionId: sessionId!, requestId,
+    }));
     let formMounted = false;
     if (feishuChannel && questions.length > 0 && this.feishuAsk!.hasRunningProgress(sessionId!)) {
       try {
@@ -357,6 +384,12 @@ export class ToolDispatcher {
       this.streamingWsRegistry.send(userId, wsEvent('ask_user_questions_cancelled', sessionId, { requestId }));
       this.treeSignalPublisher.publishForSession(sessionId!);
     }
+    // 待办生命周期联动：回答 / 取消 / 900s 超时三态统一在此收敛，
+    // 对应收件箱条目自动置已读（保留可查，不计未读徽标）。
+    // 三态判定只读 result.answered / result.cancelled 结构化标记，禁止解析 resultJson 文本。
+    this.recordInbox(() => this.inboxRecorder?.resolvePending(
+      userId, 'QUESTION_PENDING', sessionId!, requestId,
+    ));
     return result.resultJson;
   }
 

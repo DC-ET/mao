@@ -70,6 +70,21 @@ export interface BackgroundSubagentManagerDeps {
     listBySession(sessionId: number): Promise<FileChange[]>;
     insert(change: FileChange): Promise<number>;
   };
+  /** 站内收件箱写入（可选注入；接口化避免 harness 反向依赖 inbox 域实现）。 */
+  inboxRecorder?: SubagentInboxRecorder | null;
+}
+
+/** SUBAGENT_DONE 写入能力：覆盖 COMPLETED / FAILED / CANCELLED 三种子代理终态。 */
+export interface SubagentInboxRecorder {
+  recordSubagentDone(input: {
+    parentSessionId: number;
+    childSessionId: number;
+    executionId: number;
+    status: string;
+    result: string | null;
+    agentType: string | null;
+    taskDescription: string | null;
+  }): Promise<void>;
 }
 
 export class BackgroundSubagentManager {
@@ -340,6 +355,7 @@ export class BackgroundSubagentManager {
         await this.persistCompletionNotice(execution, { id: execution.childSessionId } as Session, status, resultText);
       }
       await this.deps.subagentExecutionMapper.updateById(taskId, { deliveryStatus: 'DELIVERED' });
+      this.notifyInboxSubagentDone(execution, { id: execution.childSessionId } as Session, status, resultText);
     } finally {
       this.untrackRunning(parentSessionId, taskId);
       this.runningRefsByTask.delete(taskId);
@@ -533,6 +549,43 @@ export class BackgroundSubagentManager {
     return { ok: true, taskId: execution.id, childSessionId: execution.childSessionId };
   }
 
+  /**
+   * SUBAGENT_DONE 站内通知：父会话（跳转目标）+ 子会话（标题）+ execution.id（幂等尾段）。
+   * 覆盖 COMPLETED / FAILED / CANCELLED 三种终态，标题/摘要由 service 按 status 分流。
+   *
+   * 只在结果真正投递后调用（deliveryStatus = DELIVERED 之后）；SUPPRESSED 分支
+   * 结果已被抑制，不进收件箱是正确行为。
+   *
+   * fire-and-forget + 全吞异常：子代理收敛簿记绝不能因收件箱失败而中断。
+   */
+  private notifyInboxSubagentDone(
+    execution: SubagentExecution,
+    childSession: Session,
+    status: string,
+    resultText: string,
+  ): void {
+    const recorder = this.deps.inboxRecorder;
+    if (recorder == null) return;
+    const parentSessionId = execution.parentSessionId;
+    const childSessionId = childSession.id;
+    const executionId = execution.id;
+    if (parentSessionId == null || childSessionId == null || executionId == null) return;
+    if (status !== 'COMPLETED' && status !== 'FAILED' && status !== 'CANCELLED') return;
+    void Promise.resolve()
+      .then(() => recorder.recordSubagentDone({
+        parentSessionId,
+        childSessionId,
+        executionId,
+        status,
+        result: resultText,
+        agentType: execution.agentType ?? null,
+        taskDescription: execution.taskDescription ?? null,
+      }))
+      .catch((e) => {
+        harnessLog('warn', `Inbox subagent notification failed for execution ${executionId}: ${(e as Error).message}`);
+      });
+  }
+
   private trackRunning(parentSessionId: number, executionId: number): void {
     const set = this.runningByParent.get(parentSessionId) ?? new Set<number>();
     set.add(executionId);
@@ -709,6 +762,7 @@ export class BackgroundSubagentManager {
     this.resultsByParent.set(parentId, entries);
     await this.persistCompletionNotice(execution, childSession, status, resultText);
     await this.deps.subagentExecutionMapper.updateById(execution.id, { deliveryStatus: 'DELIVERED' });
+    this.notifyInboxSubagentDone(execution, childSession, status, resultText);
   }
 
   private buildResultPayload(
@@ -842,6 +896,7 @@ export class BackgroundSubagentManager {
       if (execution.id != null) {
         await this.deps.subagentExecutionMapper.updateById(execution.id, { deliveryStatus: 'DELIVERED' });
       }
+      this.notifyInboxSubagentDone(execution, childSession, 'FAILED', message);
     } catch (e) {
       harnessLog('error', `Failed to finalize background subagent execution ${execution.id}`, e);
     }

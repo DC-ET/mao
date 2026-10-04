@@ -1,6 +1,6 @@
 import axios, { type InternalAxiosRequestConfig } from 'axios'
 import { ElMessage } from 'element-plus'
-import type { NotificationChannel, Result, TaskNotificationPreference } from '@mao/contracts'
+import type { InboxItem, InboxKind, InboxListResult, InboxPreference, InboxSource, NotificationChannel, Result, TaskNotificationPreference } from '@mao/contracts'
 import { redirectToLogin } from '../utils/login-redirect'
 import { useAuthStore } from '../stores/auth'
 import { getRefreshToken, getToken, setTokens } from '../utils/auth-storage'
@@ -308,6 +308,48 @@ export async function searchSessions(keyword: string, options?: { signal?: Abort
   return data?.items ?? []
 }
 
+// ─── 站内收件箱 ───
+
+export type { InboxItem, InboxKind, InboxListResult, InboxPreference, InboxSource }
+
+/** 收件箱列表（分页 page + size，unreadOnly 只看未读）。 */
+export async function fetchInboxList(params?: {
+  page?: number
+  size?: number
+  unreadOnly?: boolean
+}): Promise<InboxListResult> {
+  const { data } = await api.get('/inbox', { params })
+  return data
+}
+
+/** 徽标数据源：服务端 COUNT 为唯一权威，前端禁止本地累加。 */
+export async function fetchInboxUnreadCount(): Promise<{ unreadCount: number }> {
+  const { data } = await api.get('/inbox/unread-count')
+  return data
+}
+
+export async function markInboxItemRead(id: number): Promise<void> {
+  await api.post(`/inbox/${id}/read`)
+}
+
+export async function markInboxAllRead(): Promise<void> {
+  await api.post('/inbox/read-all')
+}
+
+export async function removeInboxItem(id: number): Promise<void> {
+  await api.delete(`/inbox/${id}`)
+}
+
+export async function getInboxPreference(): Promise<InboxPreference> {
+  const { data } = await api.get('/inbox/preferences')
+  return data
+}
+
+export async function saveInboxPreference(payload: InboxPreference): Promise<InboxPreference> {
+  const { data } = await api.put('/inbox/preferences', payload)
+  return data
+}
+
 // ─── 消息点踩反馈 ───
 
 export type FeedbackReason = 'WRONG_RESULT' | 'SLOW_RESPONSE' | 'NOT_SOLVED' | 'OTHER'
@@ -316,7 +358,6 @@ export type FeedbackReason = 'WRONG_RESULT' | 'SLOW_RESPONSE' | 'NOT_SOLVED' | '
 export async function dislikeMessage(messageId: number, reason: FeedbackReason): Promise<void> {
   await api.put(`/feedback/messages/${messageId}/dislike`, { reason })
 }
-
 /** 取消某条消息的点踩。 */
 export async function cancelDislikeMessage(messageId: number): Promise<void> {
   await api.delete(`/feedback/messages/${messageId}/dislike`)

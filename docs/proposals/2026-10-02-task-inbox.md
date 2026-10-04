@@ -1,7 +1,8 @@
 # 提案：任务收件箱（站内通知中心）
 
-- 状态：提案，未评审
+- 状态：已实施（P1 收件箱全链路 + P2 Electron 系统通知，P3 Web Push 不做）；0.0.235 发版
 - 日期：2026-10-02
+- 技术方案：`docs/plan/2026-10-02-task-inbox-technical-design.md`
 - 提案总览：见 `docs/proposals/README.md`
 
 ## 1. 背景与现状

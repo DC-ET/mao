@@ -13,6 +13,13 @@ export type { SsoExchangeVO } from './sso';
 export type { Result } from './result';
 export type { PageQuery, PageResult } from './pagination';
 export type { NotificationChannel, TaskNotificationPreference } from './notification';
+export type {
+  InboxKind,
+  InboxSource,
+  InboxItem,
+  InboxListResult,
+  InboxPreference,
+} from './inbox';
 export type { QuickCommandItem, QuickCommandsVO } from './command';
 export type { ToolVO } from './tool';
 export type { UserInfoVO, LoginVO } from './user';

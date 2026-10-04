@@ -17,6 +17,7 @@
       </div>
     </div>
     <div class="nav-right">
+      <InboxBell />
       <SessionSearchPopover ref="searchPopoverRef" />
       <el-tooltip content="右侧面板" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
         <div class="theme-toggle" role="button" aria-label="右侧面板" :class="{ active: !rightCollapsed }" @click="toggleRight">
@@ -105,6 +106,7 @@ import { usePanelLayout, isMobileDevice } from '../../composables/usePanelLayout
 import { useVersionCheck } from '../../composables/useVersionCheck'
 import { isElectronClient } from '../../utils/platform'
 import { goBackToWorkbench } from '../../utils/workbench-nav'
+import InboxBell from '../inbox/InboxBell.vue'
 import SessionSearchPopover from '../search/SessionSearchPopover.vue'
 
 const { theme, toggleTheme } = useTheme()

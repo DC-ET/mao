@@ -107,6 +107,10 @@ import { MemoryRepository } from './memory/memory.repository.js';
 import { MemoryService } from './memory/memory.service.js';
 import { MemoryExtractionService } from './memory/memory-extraction.service.js';
 import { registerMemoryRoutes } from './memory/memory.routes.js';
+import { InboxRepository } from './inbox/inbox.repository.js';
+import { InboxService } from './inbox/inbox.service.js';
+import { InboxCleanupScheduler, type InboxCleanupStore } from './inbox/inbox.cleanup.js';
+import { registerInboxRoutes } from './inbox/inbox.routes.js';
 import { EnvironmentInfoProvider } from './harness/core/environment-info-provider.js';
 import { FileEntityRepository, FileService } from './file/file.service.js';
 import { WorkspaceBrowseService } from './file/workspace-browse.service.js';
@@ -190,7 +194,7 @@ import { ApprovalRegistry } from './harness/approval/approval-registry.js';
 import { SessionTreeSignalPublisher } from './harness/approval/session-tree-signal-publisher.js';
 import { StreamingWsRegistry } from './session/ws/streaming-ws-registry.js';
 import { EmbedPageToolRegistry, resolveEmbedPageToolTimeoutMs } from './harness/embed-page-tool-registry.js';
-import { StreamingWsHandler } from './session/ws/streaming-ws-handler.js';
+import { StreamingWsHandler, createScheduledLiveExecution } from './session/ws/streaming-ws-handler.js';
 import { attachWebSocket } from './session/ws/attach-websocket.js';
 import { TerminalManager, TERMINAL_AUDIT_META, type TerminalAuditRecorder } from './harness/terminal/terminal-manager.js';
 import { TerminalWsHandler } from './harness/terminal/terminal-ws-handler.js';
@@ -808,10 +812,26 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     wsRegistry, resolveEmbedPageToolTimeoutMs(cfg.app.harness.embedPageToolTimeoutSeconds),
   );
   const localToolSessions = new LocalToolSessionRegistry(wsRegistry, sessionMap);
+  const inboxRepo = new InboxRepository(db);
+  const inboxService = new InboxService(
+    inboxRepo,
+    wsRegistry as never,
+    {
+      // 标题查询失败降级由 service 内部处理（子会话标题查不到时回落 taskDescription）
+      userIdOf: async (sessionId) => (await sessionService.getSession(sessionId))?.userId ?? null,
+      titleOf: async (sessionId) => (await sessionService.getSession(sessionId))?.title ?? null,
+    },
+    // LOCAL/审批路径的 userId 兜底：复用 LocalToolSessionRegistry 的内存缓存 → session 表
+    // → SUBAGENT 父会话三级回退（与 tool-dispatcher 同一路径），不新造 session 查询
+    (sessionId) => localToolSessions.getUserIdForSession(sessionId),
+  );
+  const inboxCleanupStore: InboxCleanupStore = {
+    deleteHistory: (cutoff) => inboxRepo.deleteHistory(cutoff).then(() => undefined),
+  };
   const definitionRegistry = new AgentDefinitionRegistry();
   const subagentMapper = new SubagentExecutionMapper(db);
   const subagentInvocation = new SubagentInvocationService(db);
-  const subagentResultDelivery = new SubagentResultDeliveryService(db, fileChangeRepo as never);
+  const subagentResultDelivery = new SubagentResultDeliveryService(db, fileChangeRepo as never, inboxService);
   const askUserQuestionsRegistry = new AskUserQuestionsRegistry();
   const feishuAskFormStore = new FeishuAskFormStore();
   const feishuActiveProgress = new FeishuActiveProgressRegistry();
@@ -822,6 +842,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   );
   const localToolExecutor = new LocalToolExecutor(
     localToolSessions, approvalRegistry, treeSignalPublisher, cfg.app.harness.localToolTimeoutSeconds,
+    inboxService,
   );
   const dangerAssessor = new DangerAssessor(llmAdapter);
   const proxyApprover = new ProxyApprover(llmAdapter);
@@ -876,6 +897,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const taskTerminal = new TaskTerminalService(
     sessionService, wsRegistry, deliveryService, treeSignalPublisher, (fn) => agentExecutor.submit(fn),
     memoryExtraction, (fn) => agentExecutor.submit(fn),
+    inboxService, 'MANUAL',
   );
   const visibility = new SubAgentVisibilityService({
     registry: wsRegistry,
@@ -900,6 +922,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     visibilityService: visibility,
     agentExecutor,
     fileChangeRepo: fileChangeRepo as never,
+    inboxRecorder: inboxService,
   });
 
   const scheduledService = new ScheduledTaskService(
@@ -1031,6 +1054,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     wsRegistry, askUserQuestionsRegistry, localToolSessions, treeSignalPublisher,
     backgroundTasks, deliveryService, feishuAskMount,
     proxyApprover, jevRiskAssessor, approvalModelResolver,
+    inboxService,
   );
   const agentLoop = new AgentLoop(
     llmAdapter, promptEngine, contextManager, toolDispatcher, backgroundTasks,
@@ -1144,8 +1168,10 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       await scheduledStore.updateById({ id: taskId, lastExecutionStatus: status });
     },
   } as never);
-  scheduledService.setLiveExecution((session, userId, executionId, saved, startedAt) =>
-    wsHandler.executePersistedUserPrompt(session, userId, executionId, saved, startedAt));
+  // 第 6 参 scheduledTaskId：收件箱条目据此前置「定时任务」来源徽标（方案 4.2 方案 A）。
+  // 形参表必须与 ScheduledLiveExecution 对齐：TS 允许形参更少的 lambda 赋值给形参更多的
+  // 函数类型，漏接实参不会报错，只会静默丢来源——因此用唯一工厂函数并由 spec 断言。
+  scheduledService.setLiveExecution(createScheduledLiveExecution(wsHandler));
   scheduledService.setSessionBusyCheck((sessionId) => wsHandler.hasExecutionClaim(sessionId));
 
   const feishuMessageRepository = new MysqlFeishuMessageRepository(db);
@@ -2193,6 +2219,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     registerStatisticsRoutes(api, { statistics: statisticsService, jwt, permissionService });
     registerFeedbackRoutes(api, { feedback: feedbackService, jwt, permissionService });
     registerMemoryRoutes(api, { memoryService });
+    registerInboxRoutes(api, { inboxService });
     const adminDeps = {
       jwt, analytics: adminAnalytics,
       sessionLister: sessionService as never,
@@ -2261,6 +2288,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     },
   });
   deliveryScheduler.start();
+  const inboxCleanupScheduler = new InboxCleanupScheduler(inboxCleanupStore);
+  inboxCleanupScheduler.start();
   const ecpRenewScheduler = new EcpRenewScheduler(
     ecpSessionRepo,
     () => settingService.getEcpConfig(),

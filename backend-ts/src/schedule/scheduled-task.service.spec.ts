@@ -388,10 +388,36 @@ describe('ScheduledTaskService', () => {
     });
     await ran;
     expect(live).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 11 }), 7, expect.any(String), expect.objectContaining({ id: 88 }), expect.any(Number),
+      expect.objectContaining({ id: 11 }), 7, expect.any(String), expect.objectContaining({ id: 88 }),
+      expect.any(Number), 1,
     );
     expect(harness.executeFromEvent).not.toHaveBeenCalled();
     expect(terminal.finishExecution).not.toHaveBeenCalled();
+  });
+
+  it('legacyDummyExecutionPathMarksFinishedAsScheduled（无 liveExecution 的遗留/测试路径传 SCHEDULED）', async () => {
+    // 生产走 liveExecution（由 WS 处理器传 SCHEDULED，见 streaming-ws-handler spec）；
+    // 这里锁定遗留分支：窄接口缺参会静默回落 MANUAL，必须显式断言。
+    vi.mocked(store.selectById).mockResolvedValue({
+      id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', status: 'ACTIVE', prompt: 'hello', fireCount: 0,
+    });
+    stubs.getSession.mockResolvedValue({ id: 11, phase: 'IDLE' });
+    stubs.saveMessage.mockResolvedValue({ id: 88, content: 'hello' });
+    stubs.getMessages.mockResolvedValue([{ role: 'ASSISTANT', content: 'done' }]);
+    const terminal = { finishExecution: vi.fn() };
+    let ran: Promise<void> | null = null;
+    const svc = new ScheduledTaskService(
+      store, stubs as never, { enqueue: vi.fn() }, { executeFromEvent: vi.fn(async () => undefined) },
+      terminal,
+      { sendText: vi.fn() } as never,
+      { findByUserId: vi.fn(async () => null) } as never, { findByAccountId: vi.fn(async () => []) } as never,
+      (fn) => { ran = Promise.resolve().then(fn); },
+    );
+    await svc.executeTask({ id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', prompt: 'hello', fireCount: 0 });
+    await ran;
+    expect(terminal.finishExecution).toHaveBeenCalledWith(
+      11, 7, 'COMPLETED', expect.any(String), undefined, 'SCHEDULED',
+    );
   });
 
   it('queues when session is running and fails when missing', async () => {

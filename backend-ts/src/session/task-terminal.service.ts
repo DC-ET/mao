@@ -17,6 +17,19 @@ export interface MemoryExtractionInvoker {
   extractForSession(input: ExtractionSessionInput): Promise<void>;
 }
 
+/** 收件箱记录依赖（可选注入；接口化避免 session 域反向依赖 inbox 域实现）。 */
+export interface TaskTerminalInboxRecorder {
+  recordTaskTerminal(input: {
+    userId: number;
+    sessionId: number;
+    title: string | null;
+    phase: string;
+    executionId: string | null;
+    failureReason?: string | null;
+    source?: 'MANUAL' | 'SCHEDULED';
+  }): Promise<void>;
+}
+
 export class TaskTerminalService {
   constructor(
     private readonly sessionService: SessionService,
@@ -30,6 +43,8 @@ export class TaskTerminalService {
     private readonly memoryExecutor: (fn: () => void | Promise<void>) => void = (fn) => {
       void Promise.resolve().then(fn);
     },
+    private readonly inboxRecorder?: TaskTerminalInboxRecorder | null,
+    private readonly notifySource: 'MANUAL' | 'SCHEDULED' = 'MANUAL',
   ) {}
 
   async finishExecution(
@@ -38,6 +53,7 @@ export class TaskTerminalService {
     phase: string,
     executionId: string,
     failureReason?: string | null,
+    notifySource: 'MANUAL' | 'SCHEDULED' = 'MANUAL',
   ): Promise<void> {
     if (!TERMINAL.has(phase)) {
       throw new Error(`Unsupported terminal phase: ${phase}`);
@@ -86,6 +102,8 @@ export class TaskTerminalService {
       });
     }
 
+    this.recordInbox(session, phase, executionId, failureReason ?? null, ownerId, notifySource);
+
     if (session.sessionType === 'SIDE_TASK' && session.parentSessionId != null) {
       this.treeSignalPublisher.publish(session.parentSessionId);
     } else if (session.sessionType !== 'SUBAGENT') {
@@ -95,6 +113,53 @@ export class TaskTerminalService {
     }
 
     this.dispatchMemoryExtraction(session, phase);
+  }
+
+  /**
+   * 站内收件箱写入（任务完成/失败时给在线用户一个「结果回来了」的入口）。
+   *
+   * 显式排除，与仓内双条件口径一致（不得用 parentSessionId 近似）：
+   * - SUBAGENT：完成统一由 SUBAGENT_DONE 承载，避免同一完成两条通知；
+   * - SIDE_TASK：侧任务面板未读徽标已承载（SIDE_TASK 可被提升为 parentSessionId=null
+   *   的主会话，用 parentSessionId 判定会漏判，故必须读 sessionType）；
+   * - CANCELLED：取消多由用户自己发起，无通知价值；
+   * - 微信/飞书通道会话：由机器人触发，没有「用户等着看站内」的语义；
+   * - 未知用户：notification.user_id NOT NULL。
+   *
+   * 异常全吞：收件箱是补充通知，绝不能影响任务完成事件链。
+   */
+  private recordInbox(
+    session: Session,
+    phase: string,
+    executionId: string,
+    failureReason: string | null,
+    ownerId: number | null,
+    notifySource: 'MANUAL' | 'SCHEDULED',
+  ): void {
+    const recorder = this.inboxRecorder;
+    if (recorder == null) return;
+    if (phase !== 'COMPLETED' && phase !== 'FAILED') return;
+    if (session.sessionType === 'SUBAGENT' || session.sessionType === 'SIDE_TASK') return;
+    if (session.projectKey === WEIXIN_PROJECT_KEY) return;
+    if (isFeishuChannelSession(session.projectKey, session.workspace)) return;
+    if (ownerId == null) return;
+    const sessionId = session.id;
+    if (sessionId == null) return;
+    this.notificationExecutor(() => {
+      void Promise.resolve()
+        .then(() => recorder.recordTaskTerminal({
+          userId: ownerId,
+          sessionId,
+          title: session.title ?? null,
+          phase,
+          executionId,
+          failureReason,
+          source: notifySource,
+        }))
+        .catch((e) => {
+          console.warn(`[inbox] failed to record task terminal notification: sessionId=${sessionId}, error=${(e as Error).message}`);
+        });
+    });
   }
 
   /**

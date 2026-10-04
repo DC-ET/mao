@@ -6,6 +6,20 @@ vi.mock('../utils/auth-storage', () => ({
 }))
 vi.mock('../api', () => ({
   api: { get: vi.fn().mockResolvedValue({ data: [] }) },
+  // inbox store 通过命名导出调用；这里给稳定空实现，避免 onopen 未读数重拉抛 TypeError
+  fetchInboxUnreadCount: vi.fn().mockResolvedValue({ unreadCount: 0 }),
+  fetchInboxList: vi.fn().mockResolvedValue({ records: [], total: 0, page: 1, size: 20 }),
+  markInboxItemRead: vi.fn(),
+  markInboxAllRead: vi.fn(),
+  removeInboxItem: vi.fn(),
+  getInboxPreference: vi.fn().mockResolvedValue({
+    taskCompletedEnabled: true,
+    questionPendingEnabled: true,
+    approvalPendingEnabled: true,
+    subagentDoneEnabled: false,
+    systemNotifyEnabled: true,
+  }),
+  saveInboxPreference: vi.fn(),
 }))
 
 const sockets: FakeWebSocket[] = []
@@ -301,6 +315,51 @@ describe('useStreamWS side session creation', () => {
 
     expect(events).toHaveLength(0)
     expect(sessionStore.getSessionPhase('11')).toBe('FAILED')
+  })
+})
+
+describe('useStreamWS inbox_updated', () => {
+  it('权威未读数写入 inbox store，非 Electron 不触发系统通知', async () => {
+    const { useStreamWS } = (await import('./useStreamWS')) as any
+    const { connect } = useStreamWS()
+    const pending = connect()
+    sockets[0].open()
+    await pending
+
+    const { useInboxStore } = await import('../stores/inbox')
+    const inboxStore = useInboxStore()
+    inboxStore.setUnreadCount(99)
+
+    sockets[0].onmessage?.({
+      target: sockets[0],
+      data: JSON.stringify({ type: 'inbox_updated', sessionId: null, data: { unreadCount: 3 } }),
+    })
+
+    expect(inboxStore.unreadCount).toBe(3)
+  })
+
+  it('onopen 重拉未读数（不进 focusLoaded 分支：未加载聚焦列表时也要更新）', async () => {
+    const { useStreamWS } = (await import('./useStreamWS')) as any
+    const { connect } = useStreamWS()
+    const first = connect()
+    sockets[0].open()
+    await first
+
+    const { useInboxStore } = await import('../stores/inbox')
+    const inboxStore = useInboxStore()
+    const spy = vi.spyOn(inboxStore, 'fetchUnreadCount')
+    const { useSessionStore } = await import('../stores/session')
+    // focusLoaded 保持 false：未读数重拉仍须发生
+    expect(useSessionStore().focusLoaded).toBe(false)
+
+    // 断线重连后第二次 onopen
+    sockets[0].close()
+    await vi.advanceTimersByTimeAsync(1000)
+    const second = useStreamWS().connect()
+    sockets[1].open()
+    await second
+
+    expect(spy).toHaveBeenCalled()
   })
 })
 

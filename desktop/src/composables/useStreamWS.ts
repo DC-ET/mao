@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { useSessionStore, type TaskPhase } from '../stores/session'
+import { useInboxStore } from '../stores/inbox'
 import { api } from '../api'
 import { getToken } from '../utils/auth-storage'
 import { nowDateTime } from '../utils/datetime'
@@ -7,6 +8,7 @@ import { mapCompactionEvents } from '../utils/chatMessage'
 import { isAndroidCapacitor } from '../utils/capacitor'
 import { isElectronClient } from '../utils/platform'
 import { updateSideTaskTabTitleFor } from './useCenterTabs'
+import { notifyInboxSystemUpdate, primeInboxSystemNotify } from './useInboxSystemNotify'
 import type { SideTaskContextMode } from '../types/file-browser'
 
 /// <reference types="vite/client" />
@@ -167,6 +169,7 @@ function flushPendingSkillSyncDones() {
 
 export function useStreamWS() {
   const sessionStore = useSessionStore()
+  const inboxStore = useInboxStore()
 
   // Listen for skill sync completion from main process (register once)
   if (!skillSyncListenerRegistered && isElectronClient()) {
@@ -223,6 +226,9 @@ export function useStreamWS() {
         if (sessionStore.focusLoaded) {
           void sessionStore.fetchFocusSessions(true)
         }
+        // 收件箱未读数重拉兜底（刻意不放进 focusLoaded 分支：聚焦列表未加载时徽标也要能更新）。
+        // inbox_updated 已在 CRITICAL_EVENT_TYPES，这里是双保险。
+        void inboxStore.fetchUnreadCount()
         // Start heartbeat. Any server message proves the connection is alive; allow enough
         // time for a delayed pong when the shared outbound queue is busy with stream events.
         lastServerMessageAt = Date.now()
@@ -693,6 +699,16 @@ export function useStreamWS() {
           sessionStore.updateSubagentPhase(Number(sessionId), phase)
         }
         break
+
+      case 'inbox_updated': {
+        // 服务端 COUNT 为唯一权威：只写未读数，不做本地累加。
+        // 与 session_status.unread 是两套独立概念，禁止互相覆盖（红线 #2）。
+        const unreadCount = Number(data?.unreadCount ?? 0)
+        if (Number.isFinite(unreadCount)) inboxStore.setUnreadCount(unreadCount)
+        // Electron 失焦时补一条系统通知；Web/安卓在 composable 内部空转
+        if (isElectronClient()) void notifyInboxSystemUpdate()
+        break
+      }
 
       case 'context_window':
         if (sessionId) sessionStore.setContextWindow(sessionId, data)

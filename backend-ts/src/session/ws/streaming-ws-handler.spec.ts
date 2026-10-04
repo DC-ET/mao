@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { StreamingWsHandler, type WsHandlerDeps } from './streaming-ws-handler.js';
+import { StreamingWsHandler, createScheduledLiveExecution, type WsHandlerDeps } from './streaming-ws-handler.js';
 import type { WsEvent } from './ws-event.js';
 import type { Session } from '../../domain/types.js';
 import type { WsSocket } from './streaming-ws-registry.js';
@@ -840,6 +840,96 @@ describe('StreamingWsHandler', () => {
     expect(taskTerminalService.finishExecution).toHaveBeenCalledWith(11, 7, 'COMPLETED', 'sched-1');
   });
 
+  it('executePersistedUserPromptPushesScheduledUserMessageAndStreamsWithoutSource', async () => {
+    // 兼容断言：未传 scheduledTaskId 时保持 5 参调用（MANUAL 语义）
+    vi.clearAllMocks();
+    sessionService.getSession.mockResolvedValue(session('CLOUD', 'IDLE'));
+    messageQueueService.listPending.mockResolvedValue([]);
+    harnessService.executeFromEvent.mockResolvedValue(undefined);
+    await handler.executePersistedUserPrompt(
+      session('CLOUD', 'IDLE'), 7, 'sched-plain', { id: 89, content: '手工触发' }, undefined, null,
+    );
+    expect(taskTerminalService.finishExecution).toHaveBeenCalledWith(11, 7, 'COMPLETED', 'sched-plain');
+  });
+
+  it('scheduledLiveExecutionPassesScheduledSourceToFinishExecution (收件箱来源透传)', async () => {
+    vi.clearAllMocks();
+    executor.tasks.length = 0;
+    sessionService.getSession.mockResolvedValue(session('CLOUD', 'IDLE'));
+    messageQueueService.listPending.mockResolvedValue([]);
+    harnessService.executeFromEvent.mockResolvedValue(undefined);
+    // 定时任务生产路径：liveExecution 传入 taskId → 收件箱条目必须具备「定时任务」来源。
+    // TS 窄接口无告警，缺参会静默回落 MANUAL，因此此处必须显式断言第 6 参 = 'SCHEDULED'。
+    await handler.executePersistedUserPrompt(
+      session('CLOUD', 'IDLE'), 7, 'sched-2', { id: 90, content: '定时任务' }, undefined, 42,
+    );
+    await executor.runAll();
+    expect(taskTerminalService.finishExecution).toHaveBeenCalledWith(
+      11, 7, 'COMPLETED', 'sched-2', undefined, 'SCHEDULED',
+    );
+  });
+
+  it('scheduledLiveExecutionFailureAlsoCarriesScheduledSource', async () => {
+    vi.clearAllMocks();
+    executor.tasks.length = 0;
+    sessionService.getSession.mockResolvedValue(session('CLOUD', 'IDLE'));
+    messageQueueService.listPending.mockResolvedValue([]);
+    harnessService.executeFromEvent.mockRejectedValue(new Error('boom'));
+    await handler.executePersistedUserPrompt(
+      session('CLOUD', 'IDLE'), 7, 'sched-3', { id: 91, content: '定时任务' }, undefined, 43,
+    );
+    await executor.runAll();
+    expect(taskTerminalService.finishExecution).toHaveBeenCalledWith(
+      11, 7, 'FAILED', 'sched-3', expect.any(String), 'SCHEDULED',
+    );
+  });
+
+  it('scheduledBindingIsScopedToItsOwnExecution（迟到执行体不串味）', async () => {
+    vi.clearAllMocks();
+    executor.tasks.length = 0;
+    sessionService.getSession.mockResolvedValue(session('CLOUD', 'IDLE'));
+    messageQueueService.listPending.mockResolvedValue([]);
+    harnessService.executeFromEvent.mockResolvedValue(undefined);
+    // 先跑一次手工执行（无来源），再跑一次定时任务执行：手工执行不得继承 SCHEDULED
+    await handler.executePersistedUserPrompt(
+      session('CLOUD', 'IDLE'), 7, 'manual-1', { id: 92, content: '手工' }, undefined, null,
+    );
+    await executor.runAll();
+    await handler.executePersistedUserPrompt(
+      session('CLOUD', 'IDLE'), 7, 'sched-4', { id: 93, content: '定时' }, undefined, 44,
+    );
+    await executor.runAll();
+    const calls = taskTerminalService.finishExecution.mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(calls[0][5]).toBeUndefined();
+    expect(calls[1][5]).toBe('SCHEDULED');
+  });
+
+  it('createScheduledLiveExecution 装配层透传第 6 参（create-app 的 setLiveExecution 同源）', async () => {
+    // 生产链路真正的调用点是 create-app.ts 的 setLiveExecution(lambda)；TS 允许形参更少的
+    // lambda 赋值给 ScheduledLiveExecution，漏接第 6 参编译零告警、运行期静默丢弃，
+    // 后果是所有定时任务条目都缺「定时任务」徽标。此处直接断言唯一装配工厂逐参透传。
+    vi.clearAllMocks();
+    executor.tasks.length = 0;
+    sessionService.getSession.mockResolvedValue(session('CLOUD', 'IDLE'));
+    messageQueueService.listPending.mockResolvedValue([]);
+    harnessService.executeFromEvent.mockResolvedValue(undefined);
+
+    const spy = vi.spyOn(handler, 'executePersistedUserPrompt');
+    const live = createScheduledLiveExecution(handler);
+    expect(live.length).toBe(6); // 形参表与 ScheduledLiveExecution 对齐，防止回归成漏参 lambda
+
+    await live(session('CLOUD', 'IDLE'), 7, 'sched-5', { id: 94, content: '定时任务' }, undefined, 55);
+    expect(spy).toHaveBeenCalledWith(
+      session('CLOUD', 'IDLE'), 7, 'sched-5', { id: 94, content: '定时任务' }, undefined, 55,
+    );
+
+    await executor.runAll();
+    expect(taskTerminalService.finishExecution).toHaveBeenCalledWith(
+      11, 7, 'COMPLETED', 'sched-5', undefined, 'SCHEDULED',
+    );
+  });
+
   it('localSessionFailsImmediatelyWhenClientReportsSkillSyncWithoutSyncId', async () => {
     vi.clearAllMocks();
     executor.tasks.length = 0;
@@ -1253,6 +1343,49 @@ describe('StreamingWsHandler', () => {
         .filter(([id, phase]) => id === 15 && phase === 'RUNNING');
       expect(runningWrites).toHaveLength(1);
       expect(handler.hasExecutionClaim(15)).toBe(false);
+    });
+
+    it('liveExecution cancelled in the pre-exec window settles the queued scheduled binding', async () => {
+      // BUG-7 回归：executePersistedUserPrompt 的 takePendingCancel 分支原先只清
+      // `scheduledTaskIds`（收件箱来源）就 return，漏掉 `queueScheduledTaskIds`
+      // （busy 入队回写来源）→ 定时任务 lastExecutionStatus 永久停在 QUEUED，
+      // 且残留绑定会被下一次执行 stale 回写。
+      // 现两处早退路径 + runExecution finally 共用 settleQueuedScheduledBinding。
+      vi.useFakeTimers();
+      vi.clearAllMocks();
+      executor.tasks.length = 0;
+      const own = (phase: string): Session => ({
+        id: 16, userId: 7, agentId: 5, executionMode: 'CLOUD', phase,
+        permissionLevel: 'READ_ONLY', status: 'ACTIVE',
+      });
+      registry.getUserId.mockReturnValue(7);
+      sessionService.getSession.mockResolvedValue(own('IDLE'));
+      sessionService.saveMessage.mockResolvedValue(message(101, 'USER'));
+      sessionService.updatePhase.mockResolvedValue(undefined);
+      harnessService.prepareMessage.mockResolvedValue('e-live-1');
+      harnessService.executeFromEvent.mockResolvedValue(undefined);
+      messageQueueService.listPending.mockResolvedValue([]);
+
+      // busy 入队已登记 queueScheduledTaskIds（用户会话忙时又入队了一条定时任务消息）
+      const queued = (handler as unknown as { queueScheduledTaskIds: Map<number, number> }).queueScheduledTaskIds;
+      queued.set(16, 9);
+      // 用户在提交前窗口点了停止 → pendingCancels 登记；startedAt 取同一时刻使 takePendingCancel 命中
+      const stoppedAt = Date.now();
+      (handler as unknown as { pendingCancels: Map<number, number> }).pendingCancels.set(16, stoppedAt);
+
+      await handler.executePersistedUserPrompt(
+        own('IDLE'), 7, 'e-live-1', { id: 101, content: '定时任务' }, stoppedAt, 4242,
+      );
+      await executor.runAll();
+
+      expect(taskTerminalService.finishExecution).toHaveBeenCalledWith(16, 7, 'CANCELLED', 'e-live-1');
+      // busy 簿记必须被收敛：映射清空 + 回写 CANCELLED，不得永久停在 QUEUED
+      expect(queued.has(16)).toBe(false);
+      expect(onScheduledTaskQueueConsumed).toHaveBeenCalledWith(9, 'CANCELLED');
+      // 收件箱来源簿记同样按归属清理，不残留到后续手工执行
+      const live = (handler as unknown as { scheduledTaskIds: Map<number, number> }).scheduledTaskIds;
+      expect(live.has(16)).toBe(false);
+      vi.useRealTimers();
     });
 
     it('insert_message compensates when a failure lands after the queue row was deleted', async () => {

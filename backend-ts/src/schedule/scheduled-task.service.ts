@@ -79,6 +79,8 @@ export type ScheduledLiveExecution = (
   savedMessage: Message,
   /** 本次触发开始时刻。停止标记早于它视为陈旧，不取消这次执行。 */
   startedAt?: number,
+  /** 触发本执行的定时任务 id：收件箱条目据此前置「定时任务」来源徽标。 */
+  scheduledTaskId?: number | null,
 ) => Promise<void>;
 
 /** Push the final assistant result to a Feishu channel session (no-op for non-Feishu sessions). */
@@ -119,7 +121,7 @@ const PREVIEW_MIN_COUNT = 1;
 const PREVIEW_MAX_COUNT = 10;
 
 export interface ScheduleTaskTerminalService {
-  finishExecution(sessionId: number, userId: number, phase: string, executionId: string, reason?: string): Promise<void>;
+  finishExecution(sessionId: number, userId: number, phase: string, executionId: string, reason?: string, notifySource?: 'MANUAL' | 'SCHEDULED'): Promise<void>;
 }
 
 export interface ScheduleWeixinSendService {
@@ -450,7 +452,7 @@ export class ScheduledTaskService {
                 return;
               }
               if (this.liveExecution != null) {
-                await this.liveExecution(session, userId, executionId, savedMessage, executionStartedAt);
+                await this.liveExecution(session, userId, executionId, savedMessage, executionStartedAt, task.id ?? null);
                 // liveExecution（runExecution）内部 catch 吞掉失败/取消并落终态后正常返回，
                 // 必须回读会话真实终态：FAILED/CANCELLED 时不得标 COMPLETED，
                 // 也不得把上一轮 ASSISTANT 旧回复误推给飞书/微信。
@@ -469,7 +471,11 @@ export class ScheduledTaskService {
                   onMessageEnd() {},
                   onError() {},
                 });
-                await this.taskTerminalService.finishExecution(task.sessionId!, userId, 'COMPLETED', executionId);
+                // 遗留/测试路径（无 liveExecution）：这一轮确定由定时任务触发，显式传 SCHEDULED，
+                // 否则收件箱条目会缺「定时任务」来源（窄接口缺参会静默回落 MANUAL）
+                await this.taskTerminalService.finishExecution(
+                  task.sessionId!, userId, 'COMPLETED', executionId, undefined, 'SCHEDULED',
+                );
               }
               await this.markTaskResult(task, 'COMPLETED');
               await this.sendWeixinReplyIfApplicable(task.sessionId!, userId);

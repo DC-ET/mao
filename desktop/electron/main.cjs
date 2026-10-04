@@ -12,6 +12,9 @@ const serverConfigLib = require('./serverConfig.cjs')
 
 
 app.setName('Mao')
+// Windows 系统通知的前提：appUserModelId 必须与 electron-builder 的 appId 一致（package.json）。
+// 收件箱的 Electron 系统通知（P2）依赖它才能正常弹出并被任务栏正确归组。
+app.setAppUserModelId('cn.etarch.mao.desktop')
 
 let mainWindow = null
 let currentWorkspace = ''

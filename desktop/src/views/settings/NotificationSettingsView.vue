@@ -70,20 +70,106 @@
         </button>
       </footer>
     </template>
+
+    <section class="settings-section inbox-section">
+      <div class="section-head">
+        <div>
+          <label class="field-label">站内收件箱</label>
+          <p class="field-desc">
+            顶栏铃铛的未读徽标。关闭后对应事件不再写入收件箱，不影响上面的 IM / Webhook 推送。
+          </p>
+        </div>
+        <el-switch
+          v-if="isElectronClient()"
+          v-model="inboxForm.systemNotifyEnabled"
+          :loading="inboxSaving"
+          inline-prompt
+          active-text="开"
+          inactive-text="关"
+          aria-label="Electron 系统通知"
+        />
+      </div>
+
+      <div class="inbox-kind-row">
+        <span class="inbox-kind-label">系统通知</span>
+        <span class="inbox-kind-hint">仅桌面客户端在窗口未聚焦时弹出；点击可直达关联任务</span>
+      </div>
+
+      <div class="inbox-kind-row">
+        <span class="inbox-kind-label">任务完成通知</span>
+        <el-switch
+          v-model="inboxForm.taskCompletedEnabled"
+          :loading="inboxSaving"
+          inline-prompt
+          active-text="开"
+          inactive-text="关"
+          aria-label="任务完成收件箱通知"
+        />
+      </div>
+      <div class="inbox-kind-row">
+        <span class="inbox-kind-label">提问待答通知</span>
+        <el-switch
+          v-model="inboxForm.questionPendingEnabled"
+          :loading="inboxSaving"
+          inline-prompt
+          active-text="开"
+          inactive-text="关"
+          aria-label="提问待答收件箱通知"
+        />
+      </div>
+      <div class="inbox-kind-row">
+        <span class="inbox-kind-label">审批待办通知</span>
+        <el-switch
+          v-model="inboxForm.approvalPendingEnabled"
+          :loading="inboxSaving"
+          inline-prompt
+          active-text="开"
+          inactive-text="关"
+          aria-label="审批待办收件箱通知"
+        />
+      </div>
+      <div class="inbox-kind-row">
+        <span class="inbox-kind-label">子代理完成通知</span>
+        <el-switch
+          v-model="inboxForm.subagentDoneEnabled"
+          :loading="inboxSaving"
+          inline-prompt
+          active-text="开"
+          inactive-text="关"
+          aria-label="子代理完成收件箱通知"
+        />
+      </div>
+
+      <div class="inbox-actions">
+        <button
+          class="secondary-btn"
+          type="button"
+          :disabled="inboxSaving || !inboxDirty"
+          @click="handleSaveInboxPreference"
+        >
+          <el-icon><Check /></el-icon>
+          {{ inboxSaving ? '保存中...' : '保存收件箱设置' }}
+        </button>
+      </div>
+    </section>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { Check, CircleCheck, Connection, Hide, View } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import {
   getTaskNotificationPreference,
   saveTaskNotificationPreference,
   testTaskNotification,
+  getInboxPreference as fetchInboxPreferenceApi,
+  saveInboxPreference as saveInboxPreferenceApi,
   type NotificationChannel,
-  type TaskNotificationPreference
+  type TaskNotificationPreference,
+  type InboxPreference
 } from '../../api'
+import { isElectronClient } from '../../utils/platform'
 
 const channelOptions = [
   { label: '钉钉', value: 'DINGTALK' },
@@ -129,6 +215,54 @@ const hasUsableWebhook = computed(() => {
 
 const canTest = computed(() => Boolean(form.channel && hasUsableWebhook.value))
 const canSave = computed(() => !form.enabled || Boolean(form.channel && hasUsableWebhook.value))
+
+// ─── 站内收件箱偏好（分区独立保存：不得并入受 canSave 门禁的整页保存） ───
+const inboxSaving = ref(false)
+const inboxSaved = reactive<InboxPreference>({
+  taskCompletedEnabled: true,
+  questionPendingEnabled: true,
+  approvalPendingEnabled: true,
+  subagentDoneEnabled: false,
+  systemNotifyEnabled: true
+})
+const inboxForm = reactive<InboxPreference>({ ...inboxSaved })
+const inboxDirty = computed(() => {
+  return (Object.keys(inboxForm) as Array<keyof InboxPreference>).some(
+    (key) => inboxForm[key] !== inboxSaved[key]
+  )
+})
+
+async function loadInboxPreference() {
+  try {
+    const data = await fetchInboxPreferenceApi()
+    Object.assign(inboxSaved, data)
+    Object.assign(inboxForm, data)
+  } catch {
+    // 错误 toast 由 API 拦截器统一处理；保留默认值
+  }
+}
+
+async function handleSaveInboxPreference() {
+  if (!inboxDirty.value) return
+  inboxSaving.value = true
+  try {
+    const saved = await saveInboxPreferenceApi({ ...inboxForm })
+    Object.assign(inboxSaved, saved)
+    Object.assign(inboxForm, saved)
+    ElMessage.success('收件箱设置已保存')
+  } catch {
+    // 错误 toast 由 API 拦截器统一处理
+  } finally {
+    inboxSaving.value = false
+  }
+}
+
+// 未保存的改动在离开页面前丢回去，避免下次进来看到脏表单
+watch(
+  () => inboxSaved,
+  () => Object.assign(inboxForm, inboxSaved),
+  { deep: true }
+)
 
 function validateWebhook(): boolean {
   webhookError.value = ''
@@ -212,7 +346,10 @@ async function handleSave() {
   }
 }
 
-onMounted(loadPreference)
+onMounted(() => {
+  loadPreference()
+  loadInboxPreference()
+})
 </script>
 
 <style scoped>
@@ -309,6 +446,48 @@ onMounted(loadPreference)
   justify-content: flex-end;
   gap: 10px;
   padding-top: 24px;
+}
+
+.section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.field-desc {
+  margin: 0;
+  color: var(--aw-ink-muted-48);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.inbox-kind-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--aw-divider-soft);
+}
+
+.inbox-kind-label {
+  font-size: 13px;
+  color: var(--aw-ink);
+}
+
+.inbox-kind-hint {
+  max-width: 280px;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: right;
+  color: var(--aw-ink-muted-48);
+}
+
+.inbox-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 16px;
 }
 
 .primary-btn,

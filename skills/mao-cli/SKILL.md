@@ -19,6 +19,7 @@ Mao 的**产品文档唯一正文**（可独立分发）+ **REST 操作 CLI**。
 | 管理后台怎么用 / Agent 头像与分组编辑 / 提示词版本与回滚 | [reference/admin.md](reference/admin.md) |
 | 桌面 Web 端（任务、工作区、终端、通知、微信等） | [reference/desktop.md](reference/desktop.md) |
 | 我的记忆（跨会话长期记忆的查看与维护） | [reference/memory.md](reference/memory.md) |
+| 任务收件箱（站内通知中心：未读数、五类事件、偏好开关） | [reference/inbox.md](reference/inbox.md) |
 | 飞书机器人通道（绑定 / 群聊@机器人 / 多机器人配置） | [reference/feishu-bot.md](reference/feishu-bot.md) |
 | 钉钉机器人通道（绑定 / 群聊@机器人 / 多机器人配置） | [reference/dingtalk-bot.md](reference/dingtalk-bot.md) |
 | Electron LOCAL、工具审批、打包与自动更新 | [reference/electron.md](reference/electron.md) |
@@ -117,6 +118,7 @@ mao auth login --username <用户名> --password <密码>
 | OSS / 上传配置 | [reference/oss.md](reference/oss.md) |
 | 任务面板/通知偏好 | [reference/pref.md](reference/pref.md) |
 | 跨会话长期记忆 | [reference/memory.md](reference/memory.md) |
+| 任务收件箱（站内通知） | [reference/inbox.md](reference/inbox.md) |
 | Git 凭证 | [reference/git.md](reference/git.md) |
 | 内置工具查询 | [reference/tool.md](reference/tool.md) |
 | 微信 Bot | [reference/weixin.md](reference/weixin.md) |

@@ -118,3 +118,56 @@ describe('SubagentResultDeliveryService background delivery', () => {
     expect(update!.indexOf('completed_at')).toBeLessThan(update!.indexOf('status = CASE'));
   });
 });
+
+describe('SubagentResultDeliveryService 收件箱写入（SUBAGENT_DONE / deliverBackground）', () => {
+  async function deliver(
+    recorder: { recordSubagentDone: ReturnType<typeof vi.fn> } | null,
+    row: Record<string, unknown> = { ...execution, status: 'COMPLETED', result: '子代理结论' },
+  ) {
+    const { db } = fakeDb([], row);
+    const service = new SubagentResultDeliveryService(db, undefined, recorder as never);
+    return service.deliver(9);
+  }
+
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it('deliverBackground 投递成功后写入 SUBAGENT_DONE（COMPLETED）', async () => {
+    const recorder = { recordSubagentDone: vi.fn(async () => undefined) };
+    await expect(deliver(recorder)).resolves.toBe('DELIVERED');
+    await settle();
+    expect(recorder.recordSubagentDone).toHaveBeenCalledWith(expect.objectContaining({
+      parentSessionId: 1,
+      childSessionId: 2,
+      executionId: 9,
+      status: 'COMPLETED',
+      result: '子代理结论',
+    }));
+  });
+
+  it('deliverBackground 覆盖 FAILED / CANCELLED 终态', async () => {
+    for (const status of ['FAILED', 'CANCELLED']) {
+      const recorder = { recordSubagentDone: vi.fn(async () => undefined) };
+      await expect(deliver(recorder, { ...execution, status })).resolves.toBe('DELIVERED');
+      await settle();
+      expect(recorder.recordSubagentDone).toHaveBeenCalledWith(expect.objectContaining({ status }));
+    }
+  });
+
+  it('同步 delegate 路径不写入（只挂 deliverBackground，不挂 deliver）', async () => {
+    const recorder = { recordSubagentDone: vi.fn(async () => undefined) };
+    await expect(deliver(recorder, { ...execution, invocationType: 'DELEGATE' })).resolves.toBe('DELIVERED');
+    await settle();
+    expect(recorder.recordSubagentDone).not.toHaveBeenCalled();
+  });
+
+  it('已投递过的记录二次投递 → SKIPPED 分支不重复写入（幂等）', async () => {
+    const recorder = { recordSubagentDone: vi.fn(async () => undefined) };
+    await expect(deliver(recorder, { ...execution, deliveryStatus: 'DELIVERED' })).resolves.toBe('SKIPPED');
+    await settle();
+    expect(recorder.recordSubagentDone).not.toHaveBeenCalled();
+  });
+
+  it('未注入 inboxRecorder 时行为与改造前一致（零影响）', async () => {
+    await expect(deliver(null)).resolves.toBe('DELIVERED');
+  });
+});

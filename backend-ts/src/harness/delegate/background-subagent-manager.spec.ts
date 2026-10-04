@@ -454,3 +454,204 @@ describe('BackgroundSubagentManager.buildSubContext', () => {
     expect(names).toEqual(['read_file']);
   });
 });
+
+describe('BackgroundSubagentManager 收件箱写入（SUBAGENT_DONE）', () => {
+  function buildRetryManagerWithInbox(execution: Record<string, unknown>, opts?: {
+    parent?: Record<string, unknown>;
+    status?: 'COMPLETED' | 'FAILED' | 'CANCELLED';
+  }) {
+    const child = { id: 42, sessionType: 'SUBAGENT', parentSessionId: 1, userId: 7 };
+    const parent = opts?.parent ?? { id: 1, phase: 'RUNNING', userId: 7 };
+    const updateById = vi.fn(async (_id: number, data: Record<string, unknown>) => {
+      Object.assign(execution, data);
+    });
+    const updateTerminal = vi.fn(async (_id: number, data: Record<string, unknown>) => {
+      if (execution.status !== 'RUNNING' && execution.status !== 'RECOVERING') return false;
+      Object.assign(execution, data);
+      return true;
+    });
+    const recordSubagentDone = vi.fn(async () => undefined);
+    const inboxRecorder = { recordSubagentDone };
+    const subagentExecutionMapper = {
+      findById: vi.fn(async () => execution),
+      findByChildSessionId: vi.fn(async () => execution),
+      listByParent: vi.fn(async () => [execution]),
+      updateById,
+      updateTerminal,
+    };
+    const sessionMapper = { selectById: vi.fn(async (id: number) => (id === 42 ? child : parent)) };
+    const sessionService = {
+      getMessages: vi.fn(async () => [{ role: 'ASSISTANT', content: '子代理结论' }]),
+      saveMessage: vi.fn(async () => ({ id: 901 })),
+    };
+    const manager = new BackgroundSubagentManager({
+      subagentExecutionMapper, sessionMapper, sessionService, inboxRecorder,
+    } as never);
+    return { manager, inboxRecorder, recordSubagentDone };
+  }
+
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  function execution(status: string) {
+    return {
+      id: 7, parentSessionId: 1, childSessionId: 42, agentType: 'reviewer',
+      status, invocationType: 'BACKGROUND', deliveryStatus: 'DELIVERED', taskDescription: '分析问题',
+    };
+  }
+
+  it('completeRetry DELIVERED 后写入 SUBAGENT_DONE（COMPLETED）', async () => {
+    const exec = execution('FAILED');
+    const { manager, recordSubagentDone } = buildRetryManagerWithInbox(exec);
+    await manager.beginRetry(1, 42);
+    await manager.completeRetry(1, 7, 'COMPLETED');
+    await settle();
+    expect(recordSubagentDone).toHaveBeenCalledWith(expect.objectContaining({
+      parentSessionId: 1,
+      childSessionId: 42,
+      executionId: 7,
+      status: 'COMPLETED',
+      result: '子代理结论',
+    }));
+  });
+
+  it('completeRetry 覆盖 FAILED 终态（标题/摘要按 status 分流）', async () => {
+    const exec = execution('FAILED');
+    const { manager, recordSubagentDone } = buildRetryManagerWithInbox(exec);
+    await manager.beginRetry(1, 42);
+    await manager.completeRetry(1, 7, 'FAILED');
+    await settle();
+    expect(recordSubagentDone).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'FAILED',
+      result: '后台子代理重试执行失败',
+    }));
+  });
+
+  it('completeRetry 父会话终态 → SUPPRESSED 分支不写入', async () => {
+    const exec = execution('FAILED');
+    const { manager, recordSubagentDone } = buildRetryManagerWithInbox(exec, {
+      parent: { id: 1, phase: 'COMPLETED', userId: 7 },
+    });
+    await manager.beginRetry(1, 42);
+    await manager.completeRetry(1, 7, 'COMPLETED');
+    await settle();
+    expect(exec.deliveryStatus).toBe('SUPPRESSED');
+    expect(recordSubagentDone).not.toHaveBeenCalled();
+  });
+
+  it('completeRetry 并发取消已收敛（updateTerminal 未生效）时不写入', async () => {
+    const exec = execution('CANCELLED');
+    const { manager, recordSubagentDone } = buildRetryManagerWithInbox(exec);
+    await manager.beginRetry(1, 42);
+    // 并发 cancel 已把记录收敛为 CANCELLED：updateTerminal 条件不满足
+    (manager as unknown as { deps: { subagentExecutionMapper: { updateTerminal: ReturnType<typeof vi.fn> } } })
+      .deps.subagentExecutionMapper.updateTerminal.mockResolvedValue(false);
+    await manager.completeRetry(1, 7, 'COMPLETED');
+    await settle();
+    expect(recordSubagentDone).not.toHaveBeenCalled();
+  });
+
+  it('runBackground 正常完成 → onCompleted 的 DELIVERED 后写入', async () => {
+    const exec = execution('RUNNING');
+    exec.deliveryStatus = 'PENDING';
+    const finishSubagent = vi.fn(async () => undefined);
+    const recordSubagentDone = vi.fn(async () => undefined);
+    const manager = new BackgroundSubagentManager({
+      harnessService: () => ({
+        buildContext: async () => ({ tools: [], availableSkillDocs: new Map<string, string>(), currentRound: 1 }),
+      }),
+      subagentExecutionMapper: {
+        findById: vi.fn(async () => exec),
+        updateTerminal: vi.fn(async (_id: number, data: Record<string, unknown>) => {
+          Object.assign(exec, data);
+          return true;
+        }),
+        updateById: vi.fn(async (_id: number, data: Record<string, unknown>) => { Object.assign(exec, data); }),
+      },
+      sessionMapper: { selectById: vi.fn(async () => ({ id: 1, phase: 'RUNNING', userId: 7 })) },
+      sessionService: { saveMessage: vi.fn(async () => ({ id: 1 })), getMessages: vi.fn(async () => []) },
+      agentLoop: () => ({
+        getCancelFlag: () => ({ get: () => false, set: () => undefined }),
+        registerCancelFlag: () => ({ get: () => false, set: () => undefined }),
+        removeCancelFlag: () => undefined,
+      }),
+      visibilityService: {
+        // 取消标记为 false、无 error → 正常完成路径
+        executeVisible: vi.fn(async () => {
+          exec.status = 'COMPLETED';
+          exec.result = '子代理结论';
+          return { collector: { getResult: () => '子代理结论', getThinkingContent: () => null, totalUsage: null, toolCallCount: 0, error: null }, executionId: 'e1' };
+        }),
+        finishSubagent,
+      },
+      localToolSessionRegistry: { removeSession: vi.fn() },
+      inboxRecorder: { recordSubagentDone },
+    } as never);
+
+    await (manager as unknown as {
+      runBackground: (execution: unknown, child: unknown, definition: unknown) => Promise<void>;
+    }).runBackground(exec, { id: 42, userId: 7 }, { name: 'reviewer' });
+    await settle();
+
+    expect(finishSubagent).toHaveBeenCalled();
+    expect(exec.deliveryStatus).toBe('DELIVERED');
+    expect(recordSubagentDone).toHaveBeenCalledWith(expect.objectContaining({
+      parentSessionId: 1,
+      childSessionId: 42,
+      executionId: 7,
+      status: 'COMPLETED',
+      result: '(子代理未产生文本输出)',
+    }));
+  });
+
+  it('deliveryStatus 已是 SUPPRESSED → onCompleted 早退，不写入', async () => {
+    const exec = execution('RUNNING');
+    exec.deliveryStatus = 'SUPPRESSED';
+    const recordSubagentDone = vi.fn(async () => undefined);
+    const manager = new BackgroundSubagentManager({
+      harnessService: () => ({
+        buildContext: async () => ({ tools: [], availableSkillDocs: new Map<string, string>(), currentRound: 1 }),
+      }),
+      subagentExecutionMapper: {
+        findById: vi.fn(async () => exec),
+        updateTerminal: vi.fn(async (_id: number, data: Record<string, unknown>) => {
+          Object.assign(exec, data);
+          return true;
+        }),
+        updateById: vi.fn(async (_id: number, data: Record<string, unknown>) => { Object.assign(exec, data); }),
+      },
+      sessionMapper: { selectById: vi.fn(async () => ({ id: 1, phase: 'RUNNING', userId: 7 })) },
+      sessionService: { saveMessage: vi.fn(async () => ({ id: 1 })), getMessages: vi.fn(async () => []) },
+      agentLoop: () => ({
+        getCancelFlag: () => ({ get: () => false, set: () => undefined }),
+        registerCancelFlag: () => ({ get: () => false, set: () => undefined }),
+        removeCancelFlag: () => undefined,
+      }),
+      visibilityService: {
+        executeVisible: vi.fn(async () => {
+          exec.status = 'COMPLETED';
+          return { collector: { getResult: () => '结论', getThinkingContent: () => null, totalUsage: null, toolCallCount: 0, error: null }, executionId: 'e1' };
+        }),
+        finishSubagent: vi.fn(async () => undefined),
+      },
+      localToolSessionRegistry: { removeSession: vi.fn() },
+      inboxRecorder: { recordSubagentDone },
+    } as never);
+
+    await (manager as unknown as {
+      runBackground: (execution: unknown, child: unknown, definition: unknown) => Promise<void>;
+    }).runBackground(exec, { id: 42, userId: 7 }, { name: 'reviewer' });
+    await settle();
+
+    expect(recordSubagentDone).not.toHaveBeenCalled();
+  });
+
+  it('未注入 inboxRecorder 时行为与改造前一致（零影响）', async () => {
+    const exec = execution('FAILED');
+    const { manager } = buildRetryManagerWithInbox(exec);
+    (manager as unknown as { deps: { inboxRecorder: null } }).deps.inboxRecorder = null;
+    await manager.beginRetry(1, 42);
+    await manager.completeRetry(1, 7, 'COMPLETED');
+    await settle();
+    expect(exec.deliveryStatus).toBe('DELIVERED');
+  });
+});

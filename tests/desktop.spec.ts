@@ -406,7 +406,8 @@ test.describe('Desktop Notification Settings', () => {
 
     await page.goto('/settings/notifications')
     await expect(page.getByRole('heading', { name: '消息通知' })).toBeVisible()
-    await page.locator('.el-switch').click()
+    // 开启「任务完成通知」总开关（页面 header 内唯一一个 el-switch）
+    await page.locator('.page-header .el-switch').click()
     await page.getByText('钉钉', { exact: true }).click()
 
     const webhook = 'https://oapi.dingtalk.com/robot/send?access_token=test-token'
@@ -715,5 +716,276 @@ test.describe('Memory Settings', () => {
     await expect.poll(() => autoCapture).toBe(true)
     await page.reload()
     await expect(page.locator('.memory-toolbar .el-switch.is-checked')).toBeVisible()
+  })
+})
+
+// ─────────────────────────────────────────────────────────
+// Desktop Inbox（站内收件箱）
+// 全部走页面级 mock：不连隔离后端，固定喂一份收件箱数据，避免与 e2e 种子耦合。
+// ─────────────────────────────────────────────────────────
+type InboxRecord = {
+  id: number
+  kind: string
+  title: string
+  content: string | null
+  isRead: boolean
+  readAt: string | null
+  sessionId: number | null
+  payload: Record<string, unknown> | null
+  createdAt: string
+}
+
+test.describe('Desktop Inbox', () => {
+  function record(overrides: Partial<InboxRecord>): InboxRecord {
+    return {
+      id: 1,
+      kind: 'TASK_COMPLETED',
+      title: '任务已完成：整理登录流程',
+      content: null,
+      isRead: false,
+      readAt: null,
+      sessionId: 11,
+      payload: null,
+      createdAt: new Date().toISOString(),
+      ...overrides,
+    }
+  }
+
+  async function mockInboxApi(page: Page, options: {
+    items: InboxRecord[]
+    unreadCount?: number
+    preference?: Record<string, boolean>
+    /** 模拟 Electron 桌面端（window.electronAPI 存在）：渲染仅 Electron 可见的开关。 */
+    electron?: boolean
+  }) {
+    const unreadCount = options.unreadCount ?? options.items.filter(i => !i.isRead).length
+    const preference = options.preference ?? {
+      taskCompletedEnabled: true,
+      questionPendingEnabled: true,
+      approvalPendingEnabled: true,
+      subagentDoneEnabled: false,
+      systemNotifyEnabled: true,
+    }
+    const state = { items: options.items, unreadCount }
+
+    await page.addInitScript(() => {
+      localStorage.setItem('token', 'test-access-token')
+    })
+    if (options.electron) {
+      // isElectronClient() 读 window.electronAPI；种一个最小替身即可渲染
+      // 「Electron 系统通知」开关（真实 Electron 由 preload 注入）。
+      await page.addInitScript(() => {
+        (window as any).electronAPI = { platform: 'darwin' }
+      })
+    }
+
+    await page.route('**/api/v1/**', async route => {
+      const request = route.request()
+      const url = new URL(request.url())
+      const pathname = url.pathname
+      const method = request.method()
+      let data: unknown = null
+
+      if (pathname === '/api/v1/inbox' && method === 'GET') {
+        const unreadOnly = url.searchParams.get('unreadOnly') === 'true'
+        const records = unreadOnly ? state.items.filter(item => !item.isRead) : state.items
+        data = { records, total: records.length, page: 1, size: 20 }
+      } else if (pathname === '/api/v1/inbox/unread-count' && method === 'GET') {
+        data = { unreadCount: state.unreadCount }
+      } else if (/^\/api\/v1\/inbox\/\d+\/read$/.test(pathname) && method === 'POST') {
+        const id = Number(pathname.split('/')[4])
+        state.items = state.items.map(item => (item.id === id ? { ...item, isRead: true } : item))
+        state.unreadCount = state.items.filter(item => !item.isRead).length
+        data = null
+      } else if (pathname === '/api/v1/inbox/read-all' && method === 'POST') {
+        state.items = state.items.map(item => ({ ...item, isRead: true }))
+        state.unreadCount = 0
+        data = null
+      } else if (pathname === '/api/v1/inbox/preferences' && method === 'GET') {
+        data = preference
+      } else if (pathname.endsWith('/users/me') || pathname.endsWith('/auth/features')) {
+        data = pathname.endsWith('/users/me')
+          ? { id: 1, username: 'admin', displayName: 'Admin' }
+          : { feishuEnabled: false }
+      } else if (pathname.endsWith('/sessions/11')) {
+        data = { id: '11', title: '整理登录流程', phase: 'COMPLETED' }
+      }
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ code: 0, message: 'success', data }) })
+    })
+  }
+
+  test('铃铛显示权威未读数，抽屉渲染条目', async ({ page }) => {
+    await mockInboxApi(page, {
+      items: [
+        record({
+          id: 1,
+          payload: { source: 'SCHEDULED' },
+          createdAt: new Date().toISOString(),
+        }),
+        record({
+          id: 2,
+          kind: 'SUBAGENT_DONE',
+          title: '子代理任务：抓取依赖版本',
+          content: '结论：依赖版本已确认',
+          sessionId: 12,
+          payload: { status: 'FAILED' },
+          isRead: true,
+          createdAt: new Date(Date.now() - 3600_000).toISOString(),
+        }),
+        record({ id: 3, kind: 'QUESTION_PENDING', title: '有待回答的提问', sessionId: 13 }),
+      ],
+    })
+
+    await page.goto('/')
+    await page.waitForSelector('.top-nav', { timeout: 15_000 })
+
+    // 权威未读数来自服务端 COUNT
+    const badge = page.locator('.inbox-bell .el-badge__content')
+    await expect(badge).toHaveText('2', { timeout: 10_000 })
+
+    await page.locator('.inbox-bell').click()
+    const drawer = page.locator('.el-drawer')
+    await expect(drawer).toBeVisible({ timeout: 10_000 })
+    await expect(drawer.getByText('站内收件箱').first()).toBeVisible()
+
+    // 三条条目渲染（kind 图标文案 + 标题）
+    await expect(page.locator('.inbox-item')).toHaveCount(3)
+    await expect(page.locator('.inbox-item').first()).toContainText('任务已完成：整理登录流程')
+    await expect(page.locator('.inbox-item').first()).toContainText('定时任务')
+    await expect(page.locator('.inbox-item').nth(1)).toContainText('执行失败')
+
+    // 未读红点标识
+    await expect(page.locator('.inbox-item.is-unread')).toHaveCount(2)
+  })
+
+  test('点击条目标记已读并跳转关联会话', async ({ page }) => {
+    await mockInboxApi(page, {
+      items: [record({ id: 1 })],
+      unreadCount: 1,
+    })
+
+    await page.goto('/')
+    await page.waitForSelector('.top-nav', { timeout: 15_000 })
+    await expect(page.locator('.inbox-bell .el-badge__content')).toHaveText('1', { timeout: 10_000 })
+
+    await page.locator('.inbox-bell').click()
+    await expect(page.locator('.el-drawer')).toBeVisible({ timeout: 10_000 })
+    await page.locator('.inbox-item').first().click()
+
+    // 跳转到关联会话路由
+    await expect(page).toHaveURL(/\/tasks\/11$/, { timeout: 10_000 })
+    // 重开后条目已读、徽标归零
+    await page.locator('.inbox-bell').click()
+    await expect(page.locator('.inbox-item.is-unread')).toHaveCount(0, { timeout: 10_000 })
+  })
+
+  test('全部已读后徽标归零', async ({ page }) => {
+    await mockInboxApi(page, {
+      items: [record({ id: 1 }), record({ id: 2, kind: 'TASK_FAILED', title: '任务执行失败：打包' })],
+      unreadCount: 2,
+    })
+
+    await page.goto('/')
+    await page.waitForSelector('.top-nav', { timeout: 15_000 })
+    await expect(page.locator('.inbox-bell .el-badge__content')).toHaveText('2', { timeout: 10_000 })
+
+    await page.locator('.inbox-bell').click()
+    await expect(page.locator('.el-drawer')).toBeVisible({ timeout: 10_000 })
+    await page.locator('.el-drawer').getByRole('button', { name: '全部已读' }).click()
+
+    await expect(page.locator('.inbox-item.is-unread')).toHaveCount(0, { timeout: 10_000 })
+    await expect(page.locator('.inbox-bell .el-badge__content')).toBeHidden({ timeout: 10_000 })
+  })
+
+  test('只看未读过滤与偏好开关渲染', async ({ page }) => {
+    await mockInboxApi(page, {
+      items: [
+        record({ id: 1 }),
+        record({ id: 2, kind: 'TASK_FAILED', title: '任务执行失败：打包', isRead: true, readAt: new Date().toISOString() }),
+      ],
+      unreadCount: 1,
+    })
+
+    await page.goto('/')
+    await page.waitForSelector('.top-nav', { timeout: 15_000 })
+    await page.locator('.inbox-bell').click()
+    await expect(page.locator('.inbox-item')).toHaveCount(2, { timeout: 10_000 })
+
+    // 勾选只看未读 → 仅剩 1 条
+    await page.locator('.el-drawer .el-checkbox').click()
+    await expect(page.locator('.inbox-item')).toHaveCount(1, { timeout: 10_000 })
+
+    // 设置页「站内收件箱」分区：四个 kind 开关 + 独立保存按钮
+    await page.goto('/settings/notifications')
+    await expect(page.getByRole('heading', { name: '消息通知' })).toBeVisible({ timeout: 10_000 })
+    const section = page.locator('.inbox-section')
+    await expect(section).toBeVisible()
+    // el-switch 的真实 input 是隐藏控件，用 aria-checked 断言开关状态（仓内其他用例同款写法）
+    await expect(section.getByRole('switch', { name: '任务完成收件箱通知' })).toHaveAttribute('aria-checked', 'true')
+    await expect(section.getByRole('switch', { name: '提问待答收件箱通知' })).toHaveAttribute('aria-checked', 'true')
+    await expect(section.getByRole('switch', { name: '审批待办收件箱通知' })).toHaveAttribute('aria-checked', 'true')
+    await expect(section.getByRole('switch', { name: '子代理完成收件箱通知' })).toHaveAttribute('aria-checked', 'false')
+    // 分区保存独立于整页保存（初始无改动时禁用）
+    const saveBtn = section.getByRole('button', { name: '保存收件箱设置' })
+    await expect(saveBtn).toBeDisabled()
+    // el-switch 的可见可点区域是包裹隐藏 input 的 .el-switch 容器
+    await section.locator('.el-switch:has(input[aria-label="提问待答收件箱通知"])').click()
+    await expect(saveBtn).toBeEnabled()
+  })
+
+  test('Electron 系统通知开关回填服务端值并可保存（仅 Electron 渲染）', async ({ page }) => {
+    let savedPayload: Record<string, unknown> | null = null
+    await mockInboxApi(page, {
+      items: [record({ id: 1 })],
+      unreadCount: 1,
+      preference: {
+        taskCompletedEnabled: true,
+        questionPendingEnabled: true,
+        approvalPendingEnabled: true,
+        subagentDoneEnabled: false,
+        systemNotifyEnabled: false,
+      },
+      electron: true,
+    })
+    // 后注册的路由优先命中，这里覆盖 preferences 的 PUT 以捕获保存载荷
+    await page.route('**/api/v1/inbox/preferences', async route => {
+      if (route.request().method() === 'PUT') {
+        savedPayload = route.request().postDataJSON()
+      }
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ code: 0, message: 'success', data: savedPayload ?? {
+          taskCompletedEnabled: true,
+          questionPendingEnabled: true,
+          approvalPendingEnabled: true,
+          subagentDoneEnabled: false,
+          systemNotifyEnabled: false,
+        } }),
+      })
+    })
+
+    await page.goto('/settings/notifications')
+    await expect(page.getByRole('heading', { name: '消息通知' })).toBeVisible({ timeout: 10_000 })
+    const section = page.locator('.inbox-section')
+    await expect(section).toBeVisible()
+
+    // 回填服务端 false：v-model 必须绑 systemNotifyEnabled（契约字段），
+    // 绑错会停留在 undefined 的中间态且 inboxDirty 恒 false
+    const notifySwitch = section.getByRole('switch', { name: 'Electron 系统通知' })
+    await expect(notifySwitch).toHaveAttribute('aria-checked', 'false')
+
+    const saveBtn = section.getByRole('button', { name: '保存收件箱设置' })
+    await expect(saveBtn).toBeDisabled()
+    // el-switch 的可见可点区域是包裹隐藏 input 的 .el-switch 容器
+    await section.locator('.el-switch:has(input[aria-label="Electron 系统通知"])').click()
+    await expect(notifySwitch).toHaveAttribute('aria-checked', 'true')
+    await expect(saveBtn).toBeEnabled()
+
+    await saveBtn.click()
+    await expect.poll(() => savedPayload).toMatchObject({
+      systemNotifyEnabled: true,
+      taskCompletedEnabled: true,
+      subagentDoneEnabled: false,
+    })
   })
 })
