@@ -88,7 +88,13 @@ async function handleItemClick(item: InboxItem) {
 </script>
 
 <template>
-  <el-drawer v-model="visible" title="站内收件箱" size="420px" :with-header="true">
+  <el-drawer
+    v-model="visible"
+    title="站内收件箱"
+    class="inbox-drawer"
+    size="min(420px, calc(100vw - 32px))"
+    :with-header="true"
+  >
     <div class="inbox-toolbar">
       <el-checkbox
         :model-value="inboxStore.unreadOnly"

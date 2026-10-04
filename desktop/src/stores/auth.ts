@@ -78,6 +78,8 @@ export const useAuthStore = defineStore('auth', () => {
     useToolApprovals().clearPendingApprovals()
     const { clearAllClosedSideTasks } = await import('../utils/side-task-tabs')
     clearAllClosedSideTasks()
+    const { clearAllPersistedActiveTabs } = await import('../utils/center-active-tab')
+    clearAllPersistedActiveTabs()
   }
 
   async function applyLogin(data: LoginResponse) {

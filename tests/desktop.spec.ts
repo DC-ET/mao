@@ -988,4 +988,76 @@ test.describe('Desktop Inbox', () => {
       subagentDoneEnabled: false,
     })
   })
+
+  test('顶栏图标与相邻图标垂直对齐，且不与聚焦模式铃铛重复', async ({ page }) => {
+    await mockInboxApi(page, { items: [record({ id: 1 })], unreadCount: 1 })
+
+    await page.goto('/')
+    await page.waitForSelector('.top-nav', { timeout: 15_000 })
+
+    // el-badge 是 inline-block，会带一条 body 字号 × 行高撑起的 strut 行盒，把 16px 图标
+    // 顶出点击区中心（此前铃铛比相邻图标高约 2.5px）。这里按图标中心断言严格对齐。
+    const centers = await page.evaluate(() => {
+      const centerY = (el: Element) => {
+        const r = el.getBoundingClientRect()
+        return r.top + r.height / 2
+      }
+      const bell = document.querySelector('.inbox-bell')!
+      const sibling = document.querySelector('.nav-right .search-toggle')!
+      const bellIcon = bell.querySelector('svg')!
+      const siblingIcon = sibling.querySelector('svg')!
+      return { bell: centerY(bellIcon), sibling: centerY(siblingIcon) }
+    })
+    expect(Math.abs(centers.bell - centers.sibling)).toBeLessThan(0.5)
+
+    // 图标不得再用铃铛：任务面板聚焦模式切换用的就是 Bell/BellFilled，
+    // 顶栏复用会让两个语义完全不同的功能撞成同一个图形。
+    const bellSvgCount = await page.locator('.inbox-bell .el-icon svg').count()
+    expect(bellSvgCount).toBe(1)
+    const bellIconPath = await page.locator('.inbox-bell .el-icon svg').innerHTML()
+    const bellPath = 'M512 64a64 64 0 0 1 64 64v64H448v-64a64 64 0 0 1 64-64'
+    expect(bellIconPath).not.toContain(bellPath)
+
+    // 聚焦模式图标仍是铃铛（本次改动只换顶栏，不动聚焦模式）
+    const taskPanel = page.locator('.task-index-panel')
+    if (await taskPanel.count()) {
+      await expect(taskPanel.locator('.mode-toggle-btn .el-icon svg')).toBeVisible()
+    }
+  })
+
+  test('收件箱抽屉在安卓窄屏下宽度自适应，不溢出屏幕', async ({ page }) => {
+    await mockInboxApi(page, { items: [record({ id: 1 })], unreadCount: 1 })
+
+    // 412px ≈ Pixel 系列 CSS 宽度，也是抽屉原 420px 定宽会溢出的临界尺寸
+    await page.setViewportSize({ width: 412, height: 900 })
+    await page.goto('/')
+    await page.waitForSelector('.top-nav', { timeout: 15_000 })
+
+    await page.locator('.inbox-bell').click()
+    const drawer = page.locator('.el-drawer.rtl')
+    await expect(drawer).toBeVisible({ timeout: 10_000 })
+
+    // 抽屉打开带 0.3s 位移过渡，位置在动画中会偏大；轮询到稳定值再断言
+    await expect
+      .poll(async () => {
+        const b = await drawer.boundingBox()
+        return b ? Math.round((b.x + b.width) * 10) : -1
+      }, { timeout: 5000 })
+      .toBe(4120)
+
+    const box = (await drawer.boundingBox())!
+    // 抽屉整体留在视口内（此前 fixed 420px 会以 left:-8 溢出左侧并被裁掉）
+    expect(box.x).toBeGreaterThanOrEqual(0)
+    expect(box.width).toBeLessThanOrEqual(412)
+
+    // 「只看未读」等首行工具必须可见（被裁掉时用户完全无法使用过滤）
+    await expect(drawer.getByText('只看未读')).toBeVisible()
+
+    // 抽屉内不发生横向滚动
+    const overflow = await page.evaluate(() => {
+      const body = document.querySelector('.el-drawer__body') as HTMLElement
+      return body.scrollWidth - body.clientWidth
+    })
+    expect(overflow).toBeLessThanOrEqual(0)
+  })
 })

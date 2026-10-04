@@ -26,7 +26,7 @@ onMounted(() => {
       @click="drawerVisible = true"
     >
       <el-badge :value="inboxStore.unreadCount" :max="99" :hidden="inboxStore.unreadCount === 0">
-        <el-icon :size="16"><Bell /></el-icon>
+        <el-icon :size="16"><Message /></el-icon>
       </el-badge>
     </div>
   </el-tooltip>
@@ -34,21 +34,39 @@ onMounted(() => {
 </template>
 
 <style scoped>
+/* 与顶栏 .theme-toggle 同一套度量：28px 点击区（触屏下全局扩到 44px），图标 16px 垂直居中 */
 .inbox-bell {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
-  color: var(--aw-ink-muted);
+  width: 28px;
+  height: 28px;
+  border-radius: var(--aw-radius-xs);
+  color: var(--aw-nav-text-muted);
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  flex-shrink: 0;
+  transition: color 0.15s, background 0.15s;
 }
 
 .inbox-bell:hover {
-  background: var(--aw-hover-bg);
-  color: var(--aw-ink);
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--aw-nav-text);
+}
+
+[data-theme="dark"] .inbox-bell:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/*
+ * el-badge 是 inline-block，会带一条由 body 字号 × 行高撑起的 strut 行盒（约 25px），
+ * 把 16px 图标顶到行盒上方 —— 顶栏里表现为图标比相邻图标高约 2.5px。
+ * 这里把 badge 也收成居中弹性盒，图标回到点击区正中；徽标自身绝对定位不受影响。
+ */
+.inbox-bell :deep(.el-badge) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
 }
 
 .inbox-bell :deep(.el-badge__content) {

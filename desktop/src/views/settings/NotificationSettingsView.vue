@@ -76,7 +76,7 @@
         <div>
           <label class="field-label">站内收件箱</label>
           <p class="field-desc">
-            顶栏铃铛的未读徽标。关闭后对应事件不再写入收件箱，不影响上面的 IM / Webhook 推送。
+            顶栏消息图标的未读徽标。关闭后对应事件不再写入收件箱，不影响上面的 IM / Webhook 推送。
           </p>
         </div>
         <el-switch

@@ -1,7 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { ref } from 'vue'
+import { nextTick, ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
-import { openSideTaskTabFor, removeSessionTabsFor, useCenterTabs } from './useCenterTabs'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { openSideTaskTabFor, removeSessionTabsFor, resetCenterTabs, useCenterTabs } from './useCenterTabs'
 
 vi.mock('../stores/session', () => ({
   useSessionStore: () => ({
@@ -24,6 +24,17 @@ const SESSION_ID = '42'
 function setup() {
   const sessionId = ref<string | null>(SESSION_ID)
   return useCenterTabs(sessionId)
+}
+
+function activeTabKeyFor(sessionId: string): string {
+  return 'mao:center-active-tab:' + sessionId
+}
+
+function persistedTab(key: string): string | null {
+  const raw = localStorage.getItem(key)
+  if (!raw) return null
+  const parsed = JSON.parse(raw) as { sideSessionId?: number; tabId?: string }
+  return String(parsed.sideSessionId ?? parsed.tabId ?? '')
 }
 
 describe('closeOtherTabs', () => {
@@ -164,7 +175,8 @@ describe('边路任务上下文继承方式', () => {
     expect(tabs.activeTabId.value).toBe(side?.id)
   })
 
-  it('setSideTaskFork 原子覆写继承方式与切点，不留下半更新状态', () => {    const tabs = setup()
+  it('setSideTaskFork 原子覆写继承方式与切点，不留下半更新状态', () => {
+    const tabs = setup()
     tabs.openSideTaskTab(-1, '任务', { contextMode: 'fork', fork: { messageId: '1', label: '第一轮' } })
     const placeholder = tabs.tabs.value.find(t => t.type === 'side_task' && t.sideSessionId === -1)!
 
@@ -191,3 +203,141 @@ describe('边路任务上下文继承方式', () => {
     expect(tabs.tabs.value.find(t => t.sideSessionId === 7)?.forkFrom).toBeUndefined()
   })
 })
+
+describe('激活 Tab 持久化与恢复', () => {
+  beforeEach(async () => {
+    setActivePinia(createPinia())
+    localStorage.clear()
+    resetCenterTabs()
+    removeSessionTabsFor(SESSION_ID)
+    await nextTick()
+  })
+
+  it('激活边路任务 Tab 后持久化其 id，刷新重建 Tab 时自动激活回去', async () => {
+    const key = activeTabKeyFor(SESSION_ID)
+    const tabs = setup()
+    tabs.openSideTaskTab(-1, '任务', { contextMode: 'fork' })
+    const placeholderId = tabs.tabs.value.find(t => t.sideSessionId === -1)!.id
+    // side_session_created：占位 Tab 变真实会话，tab.id 保持不变（避免组件重挂载）
+    tabs.updateSideTaskTab(placeholderId, 13, '修复登录超时')
+    tabs.activateTab(placeholderId)
+    await nextTick()
+    expect(persistedTab(key)).toBe('13')
+
+    // 模拟刷新：模块级 Tab 状态清空（不是删除会话，激活态记录要保留），
+    // 随后 loadSession 走 restoreSideTaskTabs 重建
+    resetCenterTabs()
+    const restored = setup()
+    expect(restored.activeTabId.value).toBe('chat')
+
+    restored.restoreSideTaskTabs(SESSION_ID, [{ id: 13, title: '修复登录超时' }])
+    restored.restoreActiveTab(SESSION_ID)
+
+    // 恢复出的 Tab 用规范 id side:13，而持久化锚点是 sideSessionId，仍能命中
+    expect(restored.activeTabId.value).toBe('side:13')
+  })
+
+  it('激活态回到 chat 时清掉持久化记录，恢复时不再跳 Tab', async () => {
+    const tabs = setup()
+    openSideTaskTabFor(SESSION_ID, 7, '边路任务')
+    await nextTick()
+
+    tabs.activateTab('chat')
+    await nextTick()
+    expect(persistedTab(activeTabKeyFor(SESSION_ID))).toBeNull()
+
+    resetCenterTabs()
+    removeSessionTabsFor(SESSION_ID)
+    const restored = setup()
+    restored.restoreSideTaskTabs(SESSION_ID, [{ id: 7, title: '边路任务' }])
+    restored.restoreActiveTab(SESSION_ID)
+
+    expect(restored.activeTabId.value).toBe('chat')
+  })
+
+  it('恢复目标 Tab 尚未重建出来时保持 chat，不悬空激活', async () => {
+    const tabs = setup()
+    tabs.openSideTaskTab(-1, '任务')
+    const placeholderId = tabs.tabs.value.find(t => t.sideSessionId === -1)!.id
+    tabs.updateSideTaskTab(placeholderId, 21, '整理文档')
+    tabs.activateTab(placeholderId)
+    await nextTick()
+
+    resetCenterTabs()
+    removeSessionTabsFor(SESSION_ID)
+    const restored = setup()
+    // 仅恢复到别的边路任务：21 还没重建，激活态必须留在 chat
+    restored.restoreSideTaskTabs(SESSION_ID, [{ id: 7, title: '其他任务' }])
+    restored.restoreActiveTab(SESSION_ID)
+
+    expect(restored.activeTabId.value).toBe('chat')
+  })
+
+  it('用户本次会话已手动切到别的 Tab 时，恢复不覆盖其选择', async () => {
+    setup()
+    openSideTaskTabFor(SESSION_ID, 7, '边路任务')
+    await nextTick()
+
+    // 刷新后先恢复到 side:7，用户又点了 chat
+    resetCenterTabs()
+    const restored = setup()
+    restored.restoreSideTaskTabs(SESSION_ID, [{ id: 7, title: '边路任务' }])
+    restored.restoreActiveTab(SESSION_ID)
+    expect(restored.activeTabId.value).toBe('side:7')
+
+    restored.activateTab('chat')
+    await nextTick()
+    expect(persistedTab(activeTabKeyFor(SESSION_ID))).toBeNull()
+
+    // 重复 restoreActiveTab（loadSession 重入）不应把用户踢回边路 Tab
+    restored.restoreActiveTab(SESSION_ID)
+    expect(restored.activeTabId.value).toBe('chat')
+  })
+
+  it('边路占位 Tab（未落库）不写激活态记录', async () => {
+    const tabs = setup()
+    tabs.openSideTaskTab(-1, '任务')
+    await nextTick()
+
+    expect(persistedTab(activeTabKeyFor(SESSION_ID))).toBeNull()
+
+    resetCenterTabs()
+    const restored = setup()
+    restored.restoreActiveTab(SESSION_ID)
+    expect(restored.activeTabId.value).toBe('chat')
+  })
+
+  it('删除会话时一并清掉其激活态记录', async () => {
+    setup()
+    openSideTaskTabFor(SESSION_ID, 7, '边路任务')
+    await nextTick()
+
+    removeSessionTabsFor(SESSION_ID)
+    await nextTick()
+    expect(persistedTab(activeTabKeyFor(SESSION_ID))).toBeNull()
+
+    const restored = setup()
+    restored.restoreSideTaskTabs(SESSION_ID, [{ id: 7, title: '边路任务' }])
+    restored.restoreActiveTab(SESSION_ID)
+    expect(restored.activeTabId.value).toBe('chat')
+  })
+
+  it('文件 Tab 的激活态同样被持久化，重建该 Tab 后恢复激活', async () => {
+    const tabs = setup()
+    tabs.openFileTab('/ws/a.ts', 'a.ts')
+    await nextTick()
+    expect(persistedTab(activeTabKeyFor(SESSION_ID))).toBe('file:/ws/a.ts')
+
+    resetCenterTabs()
+    const restored = setup()
+    restored.restoreActiveTab(SESSION_ID)
+    // 文件 Tab 由用户本次操作重新打开，刷新重建前恢复动作应保持 chat
+    expect(restored.activeTabId.value).toBe('chat')
+
+    restored.openFileTab('/ws/a.ts', 'a.ts')
+    await nextTick()
+    expect(restored.activeTabId.value).toBe('file:/ws/a.ts')
+  })
+})
+
+

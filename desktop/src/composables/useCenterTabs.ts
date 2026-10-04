@@ -2,6 +2,7 @@ import { ref, computed, watch, effectScope, type Ref } from 'vue'
 import type { Tab, SessionTabState, SideTaskContextMode, SideTaskForkSource } from '../types/file-browser'
 import type { FileChange } from '../types/chat'
 import { getClosedSideTaskIds, markSideTaskClosed, unmarkSideTaskClosed, normalizeSideTaskTitle, type SideTaskSummary } from '../utils/side-task-tabs'
+import { getPersistedActiveTab, persistActiveTab } from '../utils/center-active-tab'
 import { useSessionStore } from '../stores/session'
 
 /** 边路任务创建入口的预置：上下文继承方式 + 分叉来源（按轮分叉时带切点）。 */
@@ -40,8 +41,7 @@ export function openSideTaskTabFor(parentSessionId: string, sideSessionId: numbe
     state.tabs.push({ id, type: 'side_task', title: normalizeSideTaskTitle(title), sideSessionId })
     state.activeTabId = id
   }
-  // Map 内部对象变更不会自动触发 computed，需要替换 Map 引用
-  sessionTabsMap.value = new Map(sessionTabsMap.value)
+  notifyTabsChanged(sid)
 }
 
 function findSideTaskTab(state: SessionTabState, sideSessionId: number) {
@@ -62,6 +62,9 @@ export function updateSideTaskTabTitleFor(parentSessionId: string, sideSessionId
 
 /** 会话删除后清理其 Tab 状态（模块级单例 Map，供删除入口直接调用，无需组件上下文）。 */
 export function removeSessionTabsFor(sessionId: string) {
+  // 激活态记录先清：会话已不存在，恢复时无处可跳。放在 has() 判断之前，
+  // 否则「内存无 Tab 但 localStorage 有记录」的会话（如从未打开过的会话被删）会残留。
+  persistActiveTab(String(sessionId), null)
   if (!sessionTabsMap.value.has(sessionId)) return
   sessionTabsMap.value.delete(sessionId)
   // Map 内部变更不会自动触发 computed，需要替换 Map 引用
@@ -75,6 +78,51 @@ export function removeSessionTabsFor(sessionId: string) {
 export function resetCenterTabs() {
   sessionTabsMap.value = new Map()
   currentSessionId.value = ''
+}
+
+/**
+ * Tab 数据变更后的统一收尾：替换 Map 引用让 computed 重新求值，并按需落盘激活态。
+ *
+ * 落盘只保留给「激活态真的变了」的入口（activeTabId 的 setter、各类 open*、activateTab、
+ * closeTab/restoreActiveTab）。restoreSideTaskTabs / restoreSubagentTabs 只是合并 Tab
+ * 数据、不动激活态，传 syncOnly 跳过落盘——否则它们会按此刻仍是 chat 的初始态写 null，
+ * 把 restoreActiveTab 正要用的上一条记录擦掉。
+ *
+ * 注意 currentSessionId 可能尚未同步到目标会话（loadSession 中 setActiveSession 之后
+ * 紧接着同步调用 restore*），因此按「本次变更涉及的会话」写入，而非只用 currentSessionId。
+ */
+function notifyTabsChanged(changedSessionId?: string, syncOnly = false) {
+  const sid = changedSessionId || currentSessionId.value
+  if (sid && !syncOnly) {
+    const state = sessionTabsMap.value.get(sid)
+    const activeId = state?.activeTabId || 'chat'
+    const tab = state?.tabs.find(t => t.id === activeId)
+    recordActiveTabFor(sid, tab ?? CHAT_TAB)
+  }
+  // Map 内部变更不会自动触发 computed，需要替换 Map 引用
+  sessionTabsMap.value = new Map(sessionTabsMap.value)
+}
+
+/**
+ * 把激活态写入 localStorage，供刷新 / 冷启动后 restoreSideTaskTabs 重建 Tab 时还原。
+ *
+ * 边路任务的锚点用 sideSessionId 而非 tab id：真实 Tab 的 id 由创建入口决定，
+ * 本地新建走占位 id（side:-{timestamp}），updateSideTaskTab 又刻意不改 id（保持组件
+ * 不重挂载）——记 id 会在刷新后匹配不到 restoreSideTaskTabs 重建出的 side:{realId} Tab。
+ */
+function recordActiveTabFor(sid: string, tab: Tab) {
+  if (!sid) return
+  if (tab.type === 'chat' || tab.id === 'chat') {
+    persistActiveTab(sid, null)
+    return
+  }
+  // 边路占位 Tab（sideSessionId <= 0）尚未落库：记了也无处恢复，跳过
+  if (tab.type === 'side_task' && (tab.sideSessionId == null || tab.sideSessionId <= 0)) return
+  if ((tab.type === 'side_task' || tab.type === 'subagent') && tab.sideSessionId != null && tab.sideSessionId > 0) {
+    persistActiveTab(sid, { type: tab.type, sideSessionId: tab.sideSessionId })
+    return
+  }
+  persistActiveTab(sid, { type: tab.type, tabId: tab.id })
 }
 
 // 仅注册一次：激活边路任务 Tab 时清除该边路任务的未读标记（按 sideSessionId 独立已读）。
@@ -122,11 +170,6 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
       currentSessionId.value = sid
     }
   }, { immediate: true })
-
-  function notifyTabsChanged() {
-    // Map 内部对象变更不会自动触发 computed，需要替换 Map 引用
-    sessionTabsMap.value = new Map(sessionTabsMap.value)
-  }
 
   function getSessionState(): SessionTabState {
     const sid = currentSessionId.value
@@ -349,7 +392,8 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
 
     if (changed) {
       sessionTabsMap.value.set(parentSessionId, state)
-      notifyTabsChanged()
+      // 只是补齐 Tab 数据，不动激活态：不落盘（见 notifyTabsChanged 说明）
+      notifyTabsChanged(parentSessionId, true)
     }
   }
 
@@ -385,8 +429,39 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     }
     if (changed) {
       sessionTabsMap.value.set(parentSessionId, state)
-      notifyTabsChanged()
+      // 只是补齐 Tab 数据，不动激活态：不落盘（见 notifyTabsChanged 说明）
+      notifyTabsChanged(parentSessionId, true)
     }
+  }
+
+  /**
+   * 按持久化的激活态还原 Tab（页面刷新 / 冷启动后调用）。
+   *
+   * 直接用显式 parentSessionId 而非模块级 currentSessionId：调用方（TaskView.loadSession）
+   * 在 setActiveSession 之后同步调用本函数，而 currentSessionId 靠 watch 异步同步，
+   * 此刻往往还是上一个会话（或空）——依赖它会读错会话的 Tab 状态。
+   * 只在该会话当前停在 chat 时生效——避免覆盖用户本次会话内的主动切换。
+   * 边路任务 / 子代理按 sideSessionId 匹配（tab id 可能是占位 id），文件类按 id 匹配；
+   * 目标 Tab 尚未恢复出来时保持 chat。
+   */
+  function restoreActiveTab(parentSessionId: string): void {
+    const sid = String(parentSessionId || '')
+    if (!sid) return
+    const persisted = getPersistedActiveTab(sid)
+    if (!persisted) return
+    const state = sessionTabsMap.value.get(sid)
+    if (!state) return
+    if ((state.activeTabId || 'chat') !== 'chat') return
+    const target = persisted.sideSessionId != null
+      ? state.tabs.find(t => (t.type === 'side_task' || t.type === 'subagent') && t.sideSessionId === persisted.sideSessionId)
+      : persisted.tabId
+        ? state.tabs.find(t => t.id === persisted.tabId)
+        : undefined
+    if (!target) return
+    state.activeTabId = target.id
+    // 显式带 sid：currentSessionId 可能还没同步到 sid（loadSession 中 setActiveSession
+    // 之后紧接着同步调用本函数），不传会写到错误的会话 key 上。
+    notifyTabsChanged(sid)
   }
 
   function activateTab(tabId: string) {
@@ -444,6 +519,7 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     closeAllFileTabs,
     closeOtherTabs,
     activateTab,
+    restoreActiveTab,
     removeSessionTabs,
   }
 }

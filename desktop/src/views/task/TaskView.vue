@@ -203,7 +203,7 @@ function handleAddFileToChat(filePath: string) {
 
 // Center tabs
 const activeSessionIdRef = computed(() => sessionStore.activeSessionId ?? '')
-const { tabs, activeTab, activeTabId, openFileTab, openDiffTab, closeTab, closeAllFileTabs, closeOtherTabs, activateTab, openSideTaskTab, setSideTaskFork, openSubagentTab, updateSideTaskTab, restoreSideTaskTabs } = useCenterTabs(activeSessionIdRef)
+const { tabs, activeTab, activeTabId, openFileTab, openDiffTab, closeTab, closeAllFileTabs, closeOtherTabs, activateTab, openSideTaskTab, setSideTaskFork, openSubagentTab, updateSideTaskTab, restoreSideTaskTabs, restoreActiveTab } = useCenterTabs(activeSessionIdRef)
 
 // Derived state
 const sessionId = computed(() => sessionIdParam.value)
@@ -880,6 +880,8 @@ async function loadSession(sid: string) {
     sessionStore.setSideTasks(sid, items)
     if (items.length > 0) {
       restoreSideTaskTabs(sid, items.map((st) => ({ id: st.id, title: st.title || '任务' })))
+      // Tab 重建完再还原激活态：上次停在边路任务 / 子代理 Tab 时，刷新后直接回到那个 Tab
+      restoreActiveTab(sid)
     }
   } catch (e) {
     console.warn('[side-task] Failed to restore side task tabs:', e)
