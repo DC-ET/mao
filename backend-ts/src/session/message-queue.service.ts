@@ -68,13 +68,14 @@ export class MessageQueueService {
     }
   }
 
-  async reorder(queueId: number, direction: string): Promise<void> {
+  /** 将消息移动到目标下标（0 = 队首），越界下标收敛到边界，队列规模小可全量重排。 */
+  async moveToIndex(queueId: number, targetIndex: number): Promise<void> {
     for (let attempt = 0; ; attempt++) {
       try {
-        await this.reorderOnce(queueId, direction);
+        await this.moveToIndexOnce(queueId, targetIndex);
         return;
       } catch (e) {
-        // 相反方向并发操作同一对相邻行时锁序相反，可能触发 InnoDB 死锁；
+        // 并发移动/入队与全量行锁交叉时可能触发 InnoDB 死锁；
         // 死锁由 InnoDB 即时检测并回滚一侧，基于最新状态有限重试，避免 WS 层表现为静默失败。
         // 锁等待超时不重试：等待本身已耗时 innodb_lock_wait_timeout，立即重试会进一步挂起请求。
         if (attempt < 2 && isLockConflictError(e)) continue;
@@ -83,23 +84,32 @@ export class MessageQueueService {
     }
   }
 
-  private async reorderOnce(queueId: number, direction: string): Promise<void> {
-    // 事务 + FOR UPDATE 锁定 current 与 neighbor（同 enqueue 的队尾锁策略），
-    // 防止并发 reorder 读到相同快照导致交换丢失或重复 sort_order。
+  private async moveToIndexOnce(queueId: number, targetIndex: number): Promise<void> {
+    // 事务内用单条 SELECT ... FOR UPDATE 锁定会话全部 pending 行：移动会区间改写多行
+    // sort_order，仅锁两行挡不住并发 enqueue/reorder 产生重复排序值；固定排序加锁也
+    // 让并发 moveToIndex 之间不再死锁。队列长度为用户可见量级，全量锁定开销可忽略。
     await this.repo.transaction(async (tx) => {
-      const current = await tx.findByIdForUpdate(queueId);
-      if (current == null || current.status !== 'PENDING' || current.sessionId == null || current.sortOrder == null) {
+      const located = await tx.findById(queueId);
+      if (located == null || located.sessionId == null) {
         return;
       }
-      const neighbor = direction === 'up'
-        ? await tx.findNeighborUpForUpdate(current.sessionId, current.sortOrder)
-        : await tx.findNeighborDownForUpdate(current.sessionId, current.sortOrder);
-      if (neighbor != null && neighbor.sortOrder != null) {
-        const tempOrder = current.sortOrder;
-        current.sortOrder = neighbor.sortOrder;
-        neighbor.sortOrder = tempOrder;
-        await tx.updateById(current);
-        await tx.updateById(neighbor);
+      const items = await tx.listPendingForUpdate(located.sessionId);
+      const from = items.findIndex((item) => item.id === queueId);
+      // 不在 pending 集合内：已被消费或删除，静默忽略
+      if (from < 0) {
+        return;
+      }
+      const to = Math.max(0, Math.min(items.length - 1, targetIndex));
+      if (from === to) {
+        return;
+      }
+      const [moved] = items.splice(from, 1);
+      items.splice(to, 0, moved);
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].sortOrder !== i + 1) {
+          items[i].sortOrder = i + 1;
+          await tx.updateById(items[i]);
+        }
       }
     });
   }

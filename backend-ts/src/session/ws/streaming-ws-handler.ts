@@ -90,7 +90,7 @@ export interface WsHandlerDeps {
     dequeue(sessionId: number): Promise<MessageQueueItem | null>;
     getById(id: number): Promise<MessageQueueItem | null>;
     delete(id: number): Promise<void>;
-    reorder(id: number, direction: string): Promise<void>;
+    moveToIndex(id: number, targetIndex: number): Promise<void>;
   };
   /** busy 入队的定时任务在队列真正执行完成后回写 lastExecutionStatus */
   onScheduledTaskQueueConsumed?: (taskId: number, status: 'COMPLETED' | 'FAILED' | 'CANCELLED') => Promise<void> | void;
@@ -1500,11 +1500,13 @@ export class StreamingWsHandler {
     if (sessionId == null) return;
     if (!(await this.requireOwnedSession(userId, sessionId))) return;
     const data = root.data as Record<string, unknown> | undefined;
-    if (!data || data.queueId == null || typeof data.direction !== 'string') return;
+    if (!data || data.queueId == null || data.targetIndex == null) return;
+    const targetIndex = Number(data.targetIndex);
+    if (!Number.isInteger(targetIndex) || targetIndex < 0) return;
     const item = await this.deps.messageQueueService.getById(Number(data.queueId));
     if (!item || item.sessionId !== sessionId) return;
     try {
-      await this.deps.messageQueueService.reorder(Number(data.queueId), data.direction);
+      await this.deps.messageQueueService.moveToIndex(Number(data.queueId), targetIndex);
     } finally {
       // 失败（如死锁重试耗尽）也推送一次队列刷新，保证前端状态与库内收敛；
       // 推送自身失败仅记日志，避免替换 reorder 的原始异常导致归因失真

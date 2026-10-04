@@ -895,10 +895,10 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     return true
   }
 
-  async function reorderQueueMessage(queueId: string, direction: 'up' | 'down') {
+  async function reorderQueueMessage(queueId: string, targetIndex: number) {
     if (!sessionId.value) return
     await connect()
-    if (!await wsReorderQueueMessage(sessionId.value, queueId, direction)) {
+    if (!await wsReorderQueueMessage(sessionId.value, queueId, targetIndex)) {
       ElMessage.error('操作失败，网络连接不可用，请重试')
     }
   }

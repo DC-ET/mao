@@ -500,8 +500,8 @@ export function useStreamWS() {
     return sendReliable({ type: 'delete_queue_message', sessionId: Number(sessionId), data: { queueId } })
   }
 
-  async function reorderQueueMessage(sessionId: string, queueId: string, direction: string): Promise<boolean> {
-    return sendReliable({ type: 'reorder_queue_message', sessionId: Number(sessionId), data: { queueId, direction } })
+  async function reorderQueueMessage(sessionId: string, queueId: string, targetIndex: number): Promise<boolean> {
+    return sendReliable({ type: 'reorder_queue_message', sessionId: Number(sessionId), data: { queueId, targetIndex } })
   }
 
   async function sendToolApproval(sessionId: string, requestId: string, approved: boolean): Promise<boolean> {

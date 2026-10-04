@@ -57,7 +57,7 @@
       @edit="handleQueueEdit"
       @insert="insertQueueMessage"
       @delete="deleteQueueMessage"
-      @reorder="(id, dir) => reorderQueueMessage(id, dir)"
+      @reorder="reorderQueueMessage"
     />
 
     <ApprovalStack
@@ -966,9 +966,9 @@ async function deleteQueueMessage(queueId: string): Promise<boolean> {
   return true
 }
 
-async function reorderQueueMessage(queueId: string, direction: 'up' | 'down') {
+async function reorderQueueMessage(queueId: string, targetIndex: number) {
   if (!hasRealSession.value) return
-  if (!await wsReorderQueueMessage(String(realSessionId.value), queueId, direction)) {
+  if (!await wsReorderQueueMessage(String(realSessionId.value), queueId, targetIndex)) {
     ElMessage.error('操作失败，网络连接不可用，请重试')
   }
 }

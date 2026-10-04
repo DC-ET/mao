@@ -118,7 +118,7 @@
         @edit="handleQueueEdit"
         @insert="insertQueueMessage"
         @delete="deleteQueueMessage"
-        @reorder="(id, dir) => reorderQueueMessage(id, dir)"
+        @reorder="reorderQueueMessage"
       />
 
       <ApprovalStack

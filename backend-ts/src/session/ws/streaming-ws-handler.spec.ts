@@ -58,7 +58,7 @@ describe('StreamingWsHandler', () => {
   const onScheduledTaskQueueConsumed = vi.fn(async () => undefined);
   const messageQueueService = {
     listPending: vi.fn(async () => []), enqueue: vi.fn(), dequeue: vi.fn(), getById: vi.fn(),
-    delete: vi.fn(), reorder: vi.fn(), enqueueHead: vi.fn(async () => undefined),
+    delete: vi.fn(), moveToIndex: vi.fn(), enqueueHead: vi.fn(async () => undefined),
   };
   const localToolSessionRegistry = {
     setUserForSession: vi.fn(), isConnected: vi.fn(), failAllForSession: vi.fn(), failAllForUser: vi.fn(),
@@ -432,7 +432,7 @@ describe('StreamingWsHandler', () => {
     await handler.handleTextMessage(ws, JSON.stringify({ type: 'unsubscribe', sessionId: 11 }));
     await handler.handleTextMessage(ws, JSON.stringify({ type: 'enqueue_message', sessionId: 11, data: { content: 'queued', images: ['img'] } }));
     await handler.handleTextMessage(ws, JSON.stringify({ type: 'delete_queue_message', sessionId: 11, data: { queueId: 4 } }));
-    await handler.handleTextMessage(ws, JSON.stringify({ type: 'reorder_queue_message', sessionId: 11, data: { queueId: 4, direction: 'up' } }));
+    await handler.handleTextMessage(ws, JSON.stringify({ type: 'reorder_queue_message', sessionId: 11, data: { queueId: 4, targetIndex: 0 } }));
     await handler.handleTextMessage(ws, JSON.stringify({ type: 'tool_result', sessionId: 11, requestId: 'req', result: 'ok' }));
     await handler.handleTextMessage(ws, JSON.stringify({ type: 'tool_error', sessionId: 11, requestId: 'req', error: 'bad' }));
     await handler.handleTextMessage(ws, JSON.stringify({ type: 'tool_approval', sessionId: 11, requestId: 'req', approved: true }));
@@ -442,12 +442,22 @@ describe('StreamingWsHandler', () => {
     expect(registry.unsubscribe).toHaveBeenCalledWith(7, 11);
     expect(messageQueueService.enqueue).toHaveBeenCalledWith(11, 7, 'queued', '["img"]');
     expect(messageQueueService.delete).toHaveBeenCalledWith(4);
-    expect(messageQueueService.reorder).toHaveBeenCalledWith(4, 'up');
+    expect(messageQueueService.moveToIndex).toHaveBeenCalledWith(4, 0);
     expect(localToolSessionRegistry.completeToolRequest).toHaveBeenCalledWith(11, 'req', 'ok');
     expect(localToolSessionRegistry.completeToolRequestError).toHaveBeenCalledWith(11, 'req', 'bad');
     expect(approvalRegistry.unregister).toHaveBeenCalledWith(11, 'req');
     expect(treeSignalPublisher.publishForSession).toHaveBeenCalledWith(11);
     expect(askUserQuestionsRegistry.complete).toHaveBeenCalledWith(11, 'q', '{"answers":[{"id":"a"}]}');
+  });
+
+  it('reorderQueueMessageIgnoresInvalidTargetIndex', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('CLOUD', 'IDLE'));
+    for (const targetIndex of [-1, 1.5, 'x']) {
+      await handler.handleTextMessage(ws, JSON.stringify({ type: 'reorder_queue_message', sessionId: 11, data: { queueId: 4, targetIndex } }));
+    }
+    expect(messageQueueService.moveToIndex).not.toHaveBeenCalled();
   });
 
   it('subscribeSendsSnapshotForWaitingApproval', async () => {

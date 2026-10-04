@@ -110,6 +110,13 @@ export class MessageQueueRepository {
     );
   }
 
+  listPendingForUpdate(sessionId: number): Promise<MessageQueue[]> {
+    return this.db.query<MessageQueue>(
+      `SELECT * FROM message_queue WHERE session_id = ? AND status = 'PENDING' AND ${notDeleted()} ORDER BY sort_order ASC, id ASC FOR UPDATE`,
+      [sessionId],
+    );
+  }
+
   async clearPending(sessionId: number): Promise<void> {
     await this.db.execute(
       `UPDATE message_queue SET status = 'DELETED' WHERE session_id = ? AND status = 'PENDING' AND ${notDeleted()}`,

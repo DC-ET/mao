@@ -7,12 +7,31 @@
       </button>
     </div>
 
-    <div v-if="expanded || queueMessages.length <= 5" class="queue-list">
+    <VueDraggable
+      v-if="expanded || queueMessages.length <= 5"
+      v-model="queueView"
+      tag="div"
+      class="queue-list"
+      :animation="150"
+      handle=".queue-drag-handle"
+      ghost-class="queue-item-ghost"
+      :disabled="reordering"
+      @start="onDragStart"
+      @end="onDragEnd"
+    >
       <div
         v-for="(item, index) in queueView"
         :key="item.msg.id"
         class="queue-item"
+        :data-queue-id="item.msg.id"
       >
+        <span v-if="queueView.length > 1" class="queue-drag-handle" title="拖拽调整顺序" aria-hidden="true">
+          <svg width="10" height="14" viewBox="0 0 20 28" fill="currentColor">
+            <circle cx="6" cy="6" r="2.4" /><circle cx="14" cy="6" r="2.4" />
+            <circle cx="6" cy="14" r="2.4" /><circle cx="14" cy="14" r="2.4" />
+            <circle cx="6" cy="22" r="2.4" /><circle cx="14" cy="22" r="2.4" />
+          </svg>
+        </span>
         <div class="queue-item-content">
           <span class="queue-index">{{ index + 1 }}.</span>
           <span class="queue-text">
@@ -37,24 +56,6 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
           </button>
           <button
-            v-if="index > 0"
-            class="action-btn"
-            title="上移"
-            :disabled="reordering"
-            @click="handleReorder(item.msg.id, 'up')"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
-          </button>
-          <button
-            v-if="index < queueMessages.length - 1"
-            class="action-btn"
-            title="下移"
-            :disabled="reordering"
-            @click="handleReorder(item.msg.id, 'down')"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
-          </button>
-          <button
             class="action-btn insert-btn"
             :disabled="insertingQueueId !== null"
             title="立即发送"
@@ -71,7 +72,7 @@
           </button>
         </div>
       </div>
-    </div>
+    </VueDraggable>
 
     <!-- Collapsed state -->
     <div v-else class="queue-collapsed">
@@ -91,6 +92,8 @@
 <script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { ElMessageBox } from 'element-plus'
+import { VueDraggable } from 'vue-draggable-plus'
+import type { SortableEvent } from 'vue-draggable-plus'
 import { useSessionStore } from '../../stores/session'
 import type { QueueMessage } from '../../types/chat'
 import { parseQuickCommandSegments, type ParsedSegment } from '../../utils/quick-command-parser'
@@ -106,7 +109,7 @@ const emit = defineEmits<{
   edit: [msg: QueueMessage]
   insert: [queueId: string]
   delete: [queueId: string]
-  reorder: [queueId: string, direction: 'up' | 'down']
+  reorder: [queueId: string, targetIndex: number]
 }>()
 
 const sessionStore = useSessionStore()
@@ -128,7 +131,7 @@ function clearInserting() {
     insertResetTimer = null
   }
 }
-/** 排序 in-flight 防重：禁用编辑/上移/下移，列表刷新或超时后解除 */
+/** 排序 in-flight 防重：禁用编辑与拖拽，列表刷新或超时后解除 */
 const reordering = ref(false)
 let reorderResetTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -192,12 +195,36 @@ function truncateSegments(content: string): { segments: ParsedSegment[]; truncat
   return { segments: out, truncated }
 }
 
-const queueView = computed(() =>
-  queueMessages.value.map(msg => {
+/** 队列行展示模型：以本地数组承载排序，拖拽先落本地、由服务端推送 queue_updated 后对齐。 */
+interface QueueViewItem {
+  msg: QueueMessage
+  segments: ParsedSegment[]
+  truncated: boolean
+}
+
+const queueView = ref<QueueViewItem[]>([])
+watch(queueMessages, (msgs) => {
+  queueView.value = msgs.map(msg => {
     const { segments, truncated } = truncateSegments(msg.content)
     return { msg, segments, truncated }
   })
-)
+}, { immediate: true })
+
+/** 拖拽中的消息 id：onEnd 时据其在 queueView 中的新下标发 reorder，规避 DOM 下标换算 */
+const draggingQueueId = ref<string | null>(null)
+
+function onDragStart(e: SortableEvent) {
+  draggingQueueId.value = e.item?.dataset.queueId ?? null
+}
+
+function onDragEnd(e: SortableEvent) {
+  const draggedId = draggingQueueId.value ?? e.item?.dataset.queueId ?? null
+  draggingQueueId.value = null
+  if (!draggedId) return
+  const toIndex = queueView.value.findIndex(v => v.msg.id === draggedId)
+  if (toIndex < 0 || e.oldIndex === toIndex) return
+  handleReorder(draggedId, toIndex)
+}
 
 /**
  * 插入防重：成功时由队列/phase watch 复位，兜底 8s 超时复位。
@@ -215,8 +242,8 @@ function handleInsert(queueId: string) {
   emit('insert', queueId)
 }
 
-/** 排序防重：in-flight 期间禁用按钮；列表刷新即复位，兜底 2s 超时防卡死。 */
-function handleReorder(queueId: string, direction: 'up' | 'down') {
+/** 排序防重：in-flight 期间禁用拖拽；列表刷新即复位，兜底 2s 超时防卡死。 */
+function handleReorder(queueId: string, targetIndex: number) {
   if (reordering.value) return
   reordering.value = true
   if (reorderResetTimer) clearTimeout(reorderResetTimer)
@@ -224,7 +251,7 @@ function handleReorder(queueId: string, direction: 'up' | 'down') {
     reordering.value = false
     reorderResetTimer = null
   }, 2000)
-  emit('reorder', queueId, direction)
+  emit('reorder', queueId, targetIndex)
 }
 
 onBeforeUnmount(() => {
@@ -302,6 +329,30 @@ async function handleDelete(queueId: string) {
   background: var(--aw-canvas);
   border-radius: var(--aw-radius-xs);
   border: 1px solid var(--aw-hairline);
+}
+
+.queue-drag-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 22px;
+  flex-shrink: 0;
+  color: var(--aw-ink-muted-48);
+  cursor: grab;
+  touch-action: none;
+}
+
+.queue-drag-handle:hover {
+  color: var(--aw-ink);
+}
+
+.queue-drag-handle:active {
+  cursor: grabbing;
+}
+
+.queue-item-ghost {
+  opacity: 0.4;
 }
 
 .queue-item-content {
