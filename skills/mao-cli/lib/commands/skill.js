@@ -14,10 +14,15 @@ const { outputResult, outputBinarySaved } = require('../output');
 
 const HELP = `用法:
   mao skill list
-  mao skill get --name <名称>
+  mao skill get --name <名称> [--folder <绝对路径>]
   mao skill upload --dir <技能目录>
-  mao skill delete --name <名称>
+  mao skill delete --name <名称> [--folder <绝对路径>]
   mao skill sync-package --session-id <id> [--out <路径>]
+
+说明:
+  --folder  列表行级「路径」（绝对），仅查看/删除有效。同一用户存在多个
+            frontmatter 同名技能目录时，不传会返回 409 并列全部候选目录，
+            带上它才精确寻址到要操作的那一个。
 `;
 
 function collectSkillFiles(dirPath) {
@@ -80,7 +85,13 @@ async function handle(ctx) {
     }
     case 'get': {
       const name = requireString(flags, 'name', '技能名称');
-      const result = await request({ ...common, method: 'GET', path: `/user-skills/${encodeURIComponent(name)}` });
+      const folder = optionalString(flags, 'folder');
+      const result = await request({
+        ...common,
+        method: 'GET',
+        path: `/user-skills/${encodeURIComponent(name)}`,
+        query: { folder },
+      });
       outputResult(result, globals);
       return;
     }
@@ -98,10 +109,14 @@ async function handle(ctx) {
     }
     case 'delete': {
       const name = requireString(flags, 'name', '技能名称');
+      // folder：列表行级 folderPath，同一用户存在多个 frontmatter 同名技能目录时按名删除会 409，
+      // 带上它才精确落到要删的那一个
+      const folder = optionalString(flags, 'folder');
       const result = await request({
         ...common,
         method: 'DELETE',
         path: `/user-skills/${encodeURIComponent(name)}`,
+        query: { folder },
       });
       outputResult(result, globals);
       return;
