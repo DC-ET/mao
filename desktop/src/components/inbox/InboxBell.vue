@@ -26,7 +26,7 @@ onMounted(() => {
       @click="drawerVisible = true"
     >
       <el-badge :value="inboxStore.unreadCount" :max="99" :hidden="inboxStore.unreadCount === 0">
-        <el-icon :size="16"><Message /></el-icon>
+        <el-icon :size="16"><ChatLineSquare /></el-icon>
       </el-badge>
     </div>
   </el-tooltip>
