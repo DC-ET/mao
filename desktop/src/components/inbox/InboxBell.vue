@@ -69,7 +69,25 @@ onMounted(() => {
   line-height: 0;
 }
 
+/*
+ * 顶栏 28px 点击区里挂一枚 16px 图标，el-badge 默认的 18px 高 + 6px 内边距 + 1px 同色描边
+ * 会把「1」撑成 18.7×18 的横向椭圆，看上去偏大且发扁。这里按图标尺度重定义徽标度量：
+ * 16px 正圆起步（min-width 保证单个数字也是圆）、10px 字号、999px 全圆角。
+ * 定位用 translate(50%,-50%) 叠在图标右上角外侧，不压图标笔画。
+ */
 .inbox-bell :deep(.el-badge__content) {
+  --inbox-badge-size: 16px;
+  box-sizing: border-box;
   border: none;
+  min-width: var(--inbox-badge-size);
+  height: var(--inbox-badge-size);
+  padding: 0 4px;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+  border-radius: 999px;
+  top: 1px;
+  right: -4px;
+  transform: translate(50%, -50%);
 }
 </style>

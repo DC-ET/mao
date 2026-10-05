@@ -30,5 +30,11 @@ export default defineConfig({
       testMatch: 'desktop.spec.ts',
       use: { baseURL: 'http://localhost:5201' },
     },
+    {
+      // 度量契约：页面级 mock，不连隔离后端，只校验渲染几何。
+      name: 'desktop-visual',
+      testMatch: /desktop-.*\.spec\.ts$/,
+      use: { baseURL: 'http://localhost:5201' },
+    },
   ],
 })
