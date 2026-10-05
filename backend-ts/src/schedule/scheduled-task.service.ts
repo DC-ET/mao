@@ -7,6 +7,7 @@ import { mpPage, type MpPage } from '../common/json.js';
 import type { Message, Session } from '../domain/types.js';
 import { WEIXIN_PROJECT_KEY } from '../domain/types.js';
 import { isActivePhase } from '../session/session-vo.js';
+import type { TaskNotifySource } from '../session/task-terminal.service.js';
 
 export interface ScheduledTask {
   id?: number;
@@ -81,6 +82,8 @@ export type ScheduledLiveExecution = (
   startedAt?: number,
   /** 触发本执行的定时任务 id：收件箱条目据此前置「定时任务」来源徽标。 */
   scheduledTaskId?: number | null,
+  /** 触发来源（SCHEDULED=定时任务；WEBHOOK/API 由开放接口域传入），透传给收件箱徽标。 */
+  source?: 'SCHEDULED' | 'WEBHOOK' | 'API' | null,
 ) => Promise<void>;
 
 /** Push the final assistant result to a Feishu channel session (no-op for non-Feishu sessions). */
@@ -121,7 +124,7 @@ const PREVIEW_MIN_COUNT = 1;
 const PREVIEW_MAX_COUNT = 10;
 
 export interface ScheduleTaskTerminalService {
-  finishExecution(sessionId: number, userId: number, phase: string, executionId: string, reason?: string, notifySource?: 'MANUAL' | 'SCHEDULED'): Promise<void>;
+  finishExecution(sessionId: number, userId: number, phase: string, executionId: string, reason?: string, notifySource?: TaskNotifySource): Promise<void>;
 }
 
 export interface ScheduleWeixinSendService {
@@ -194,7 +197,11 @@ export function buildCronPreview(cronExpression: string, count: number = PREVIEW
 
 const sessionLocks = new Map<number, Promise<void>>();
 
-async function withSessionLock<T>(sessionId: number, fn: () => Promise<T>): Promise<T> {
+/**
+ * 会话级串行锁（导出共享：开放接口 OpenRunService 与定时任务同锁串行，
+ * 见技术方案决策 16——第三执行入口自建新锁会让 check-then-act 窗口只剩 busy 双检兜底）。
+ */
+export async function withSessionLock<T>(sessionId: number, fn: () => Promise<T>): Promise<T> {
   const prev = sessionLocks.get(sessionId) ?? Promise.resolve();
   let release!: () => void;
   const current = new Promise<void>((r) => { release = r; });

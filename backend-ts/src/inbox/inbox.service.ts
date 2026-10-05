@@ -17,6 +17,9 @@ export interface InboxSessionLookup {
 /** LOCAL 路径的 userId 兜底解析（复用 LocalToolSessionRegistry 三级回退）。 */
 export type InboxUserIdResolver = (sessionId: number) => Promise<number | null>;
 
+/** question.pending 出站订阅分发回调（openapi 域经 create-app 注入；失败由回调实现侧吞掉）。 */
+export type QuestionPendingDispatcher = (input: QuestionPendingInboxInput) => void;
+
 export interface TaskTerminalInboxInput {
   userId: number;
   sessionId: number;
@@ -74,6 +77,8 @@ export class InboxService {
     private readonly registry: InboxEventRegistry,
     private readonly sessionLookup: InboxSessionLookup,
     private readonly userIdResolver?: InboxUserIdResolver,
+    /** 出站订阅 question.pending 分发（在偏好门控之前触发：订阅独立于站内偏好开关）。 */
+    private readonly questionPendingDispatcher?: QuestionPendingDispatcher | null,
   ) {}
 
   /**
@@ -81,7 +86,7 @@ export class InboxService {
    * tail 取 executionId（TASK_* / SUBAGENT_DONE）或 requestId（QUESTION / APPROVAL）。
    * 两侧（写入与联动置已读）必须共用本函数，禁止各自拼接字符串。
    */
-  inboxDedupKey(userId: number, kind: InboxKind, sessionId: number, tail: string): string {
+  inboxDedupKey(userId: number, kind: InboxKind, sessionId: number | null, tail: string): string {
     return `${userId}:${kind}:${sessionId}:${tail}`;
   }
 
@@ -109,6 +114,14 @@ export class InboxService {
 
   /** QUESTION_PENDING：ask_user_questions 派发点写入（不区分用户在线与否）。 */
   async recordQuestionPending(input: QuestionPendingInboxInput): Promise<void> {
+    // 出站订阅分发独立于站内偏好门控（技术方案 §5.5）：订阅是机器回调，与站内未读开关无关
+    if (this.questionPendingDispatcher != null) {
+      try {
+        this.questionPendingDispatcher(input);
+      } catch (e) {
+        console.warn(`[inbox] question pending outbound dispatch failed: ${(e as Error).message}`);
+      }
+    }
     await this.record({
       userId: input.userId,
       kind: 'QUESTION_PENDING',
@@ -117,6 +130,29 @@ export class InboxService {
       sessionId: input.sessionId,
       payload: { requestId: input.requestId },
       tail: input.requestId,
+    });
+  }
+
+  /**
+   * TRIGGER_DISABLED：入站 Webhook 触发器连续失败自动停用通知（openapi 域）。
+   * 无偏好开关（始终通知——停用是运维级事件，必须让属主知道）；
+   * tail 带时间戳保证每次停用事件都可重复通知（dedup_key 唯一性）。
+   */
+  async recordTriggerDisabled(input: {
+    userId: number;
+    triggerId: number;
+    triggerName: string;
+    sessionId: number | null;
+    failures: number;
+  }): Promise<void> {
+    await this.record({
+      userId: input.userId,
+      kind: 'TRIGGER_DISABLED',
+      title: `Webhook 触发器已自动停用：${input.triggerName}`,
+      content: `连续失败 ${input.failures} 次，已自动停用；请检查外部系统签名/目标系统状态后重新启用`,
+      sessionId: input.sessionId,
+      payload: { triggerId: input.triggerId, triggerName: input.triggerName, failures: input.failures },
+      tail: `${input.triggerId}:${Date.now()}`,
     });
   }
 
@@ -251,7 +287,8 @@ export class InboxService {
     kind: InboxKind;
     title: string;
     content: string | null;
-    sessionId: number;
+    /** TRIGGER_DISABLED 等非会话绑定条目允许为空（V131 session_id NULL 可空）。 */
+    sessionId: number | null;
     payload: Record<string, unknown>;
     tail: string;
   }): Promise<void> {
@@ -288,6 +325,9 @@ export class InboxService {
         return preference.approvalPendingEnabled;
       case 'SUBAGENT_DONE':
         return preference.subagentDoneEnabled;
+      case 'TRIGGER_DISABLED':
+        // 无偏好开关：触发器自动停用是运维级事件，始终通知属主
+        return true;
       default:
         return false;
     }

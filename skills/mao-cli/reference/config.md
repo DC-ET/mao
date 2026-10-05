@@ -42,7 +42,7 @@
 | `JWT_SECRET` | 生产**是** | JWT 签名，禁止默认值 |
 | `JWT_SHELL_EXPIRATION` | 否 | CLOUD shell 临时 JWT，默认 2h |
 | `APP_GIT_CREDENTIAL_SECRET` | **是** | Git Token AES 密钥；未配置拒绝启动 |
-| `APP_NOTIFICATION_WEBHOOK_SECRET` | 建议 | 任务通知 Webhook 加密 |
+| `APP_NOTIFICATION_WEBHOOK_SECRET` | 建议 | 任务通知 Webhook 加密；同时加密开放接口（Webhook 触发器 / 出站订阅）的 secret。未配置时回退内置默认密钥，生产建议显式设置 |
 | `APP_MCP_SECRET` | MCP 时建议 | MCP 环境变量加密 |
 | `WORKSPACE_ROOT` | **是** | 工作区根 |
 | `SKILLS_DIR` / `USER_SKILLS_DIR` | **是** | 技能目录 |

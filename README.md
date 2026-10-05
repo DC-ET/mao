@@ -52,6 +52,7 @@ Mao 不是又一个 ChatGPT 套壳，也不是 Dify / n8n 那样的低代码工�
 | **工具与扩展** | Shell、文件、搜索、网页、文生图/改图、子代理委派；Skill + 全局/用户级 MCP。 |
 | **协作** | 边路任务、后台子代理（`default` / `explorer` / `worker` / `reviewer`）、定时任务、完成通知。 |
 | **任务收件箱** | 站内通知中心：任务完成 / 失败、提问待答、审批待办、子代理结果回传统一汇入顶栏铃铛，实时未读数，一键跳回会话；Electron 桌面端窗口失焦时补系统通知。 |
+| **开放接口** | API Token 远程触发 Agent 运行（`POST /api/v1/open/agents/:id/run`，异步 202，会话忙时自动排队）；入站 Webhook 触发器（HMAC-SHA256 验签，连续失败自动停用并通知）；出站事件订阅把任务完成 / 失败 / 提问待答推送到自建 HTTPS 端点（失败自动退避重试）。 |
 | **工作区** | 云端新建 / 复用 / Git HTTPS clone；文件树与 Git diff 只读浏览；CLOUD 可开服务端交互终端。 |
 | **治理** | RBAC、管理 API 审计、用量分析、调用流水；任务结果消息点踩反馈（管理后台汇总与明细）；本地账号 / LDAP / 飞书登录。 |
 | **多端** | 管理后台、Web / Electron、安卓 APP（CLOUD）、终端 `mao-agent`、REST `mao-cli`。 |
@@ -80,6 +81,7 @@ Mao 不是又一个 ChatGPT 套壳，也不是 Dify / n8n 那样的低代码工�
 - **LOCAL**：Electron 或 `mao-agent --local`；改的是你电脑上的目录，高风险操作可审批。
 - **拆活**：复杂任务用边路任务或子代理；重复劳动用定时任务，完成时钉钉 / 飞书 / 微信通知。
 - **不漏结果**：任务完成 / 失败、提问待答、审批待办、子代理回传都会进顶栏「任务收件箱」，点铃铛查看并一键跳回会话；可在「消息通知 → 站内收件箱」按类型开关。
+- **开放接口**：在「设置 → 开放接口」签发 API Token 或用入站 Webhook 触发器把外部系统（CI、客服工单、自建脚本）接入 Agent；需要把结果推回自建系统时配出站事件订阅。详见 [skills/mao-cli/reference/open-api.md](skills/mao-cli/reference/open-api.md)。
 
 完整手册见 [USER_GUIDE.md](USER_GUIDE.md)。上线检查清单见 [business_process.md](skills/mao-cli/business_process.md)。
 

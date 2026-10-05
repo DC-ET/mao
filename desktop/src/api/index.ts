@@ -437,3 +437,126 @@ export async function listMemoryProjects(): Promise<string[]> {
   const { data } = await api.get('/memory/projects')
   return data?.projects ?? []
 }
+
+// ─── 开放接口（API Token / Webhook 触发器 / 出站订阅） ───
+
+export interface ApiTokenView {
+  id: number
+  name: string
+  tokenPrefix: string
+  scopes: string[]
+  expiresAt: string | null
+  revokedAt: string | null
+  lastUsedAt: string | null
+  createdAt: string | null
+}
+
+export interface IssuedApiToken extends ApiTokenView {
+  plainToken: string
+}
+
+export interface WebhookTriggerView {
+  id: number
+  name: string
+  agentId: number
+  sessionId: number | null
+  enabled: boolean
+  url: string | null
+  pathToken?: string
+  consecutiveFailures: number
+  lastFiredAt: string | null
+  createdAt: string | null
+}
+
+export interface CreatedWebhookTrigger {
+  id: number
+  pathToken: string
+  plainSecret: string
+  url: string
+}
+
+export interface OutboundSubscriptionView {
+  id: number
+  event: string
+  targetUrl: string
+  enabled: boolean
+  createdAt: string | null
+}
+
+export interface CreatedOutboundSubscription {
+  id: number
+  event: string
+  targetUrl: string
+  plainSecret: string
+}
+
+export interface OutboundDeliveryView {
+  id: number
+  event: string
+  status: string
+  attemptCount: number
+  lastHttpStatus: number | null
+  lastError: string | null
+  createdAt: string | null
+  sentAt: string | null
+}
+
+export async function listApiTokens(): Promise<ApiTokenView[]> {
+  const { data } = await api.get('/open/tokens')
+  return data ?? []
+}
+
+export async function issueApiToken(payload: { name: string; scopes: string[] }): Promise<IssuedApiToken> {
+  const { data } = await api.post('/open/tokens', payload)
+  return data
+}
+
+export async function revokeApiToken(id: number): Promise<void> {
+  await api.delete(`/open/tokens/${id}`)
+}
+
+export async function listWebhookTriggers(): Promise<WebhookTriggerView[]> {
+  const { data } = await api.get('/open/triggers')
+  return data ?? []
+}
+
+export async function createWebhookTrigger(payload: { name: string; agentId: number; sessionId?: number | null }): Promise<CreatedWebhookTrigger> {
+  const { data } = await api.post('/open/triggers', payload)
+  return data
+}
+
+export async function updateWebhookTrigger(id: number, payload: { name?: string; agentId?: number; sessionId?: number | null; enabled?: boolean }): Promise<void> {
+  await api.put(`/open/triggers/${id}`, payload)
+}
+
+export async function deleteWebhookTrigger(id: number): Promise<void> {
+  await api.delete(`/open/triggers/${id}`)
+}
+
+export async function rotateWebhookTriggerSecret(id: number): Promise<{ plainSecret: string }> {
+  const { data } = await api.post(`/open/triggers/${id}/rotate-secret`)
+  return data
+}
+
+export async function listOutboundSubscriptions(): Promise<OutboundSubscriptionView[]> {
+  const { data } = await api.get('/open/subscriptions')
+  return data ?? []
+}
+
+export async function createOutboundSubscription(payload: { event: string; targetUrl: string }): Promise<CreatedOutboundSubscription> {
+  const { data } = await api.post('/open/subscriptions', payload)
+  return data
+}
+
+export async function setOutboundSubscriptionEnabled(id: number, enabled: boolean): Promise<void> {
+  await api.put(`/open/subscriptions/${id}`, { enabled })
+}
+
+export async function deleteOutboundSubscription(id: number): Promise<void> {
+  await api.delete(`/open/subscriptions/${id}`)
+}
+
+export async function listOutboundDeliveries(subscriptionId: number): Promise<OutboundDeliveryView[]> {
+  const { data } = await api.get(`/open/subscriptions/${subscriptionId}/deliveries`)
+  return data ?? []
+}

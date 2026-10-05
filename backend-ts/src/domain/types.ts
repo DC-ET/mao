@@ -40,6 +40,10 @@ export interface MessageQueueItem {
   sortOrder?: number | null;
   status?: string | null;
   scheduledTaskId?: number | null;
+  /** 入队来源（SCHEDULED/WEBHOOK/API，NULL=普通手工入队），消费侧据此透传收件箱徽标 */
+  sourceType?: string | null;
+  /** WEBHOOK 来源时的触发器绑定，消费终态后回写连续失败计数 */
+  openTriggerId?: number | null;
   createdAt?: string | Date | null;
 }
 

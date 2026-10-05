@@ -28,7 +28,8 @@ const KIND_META: Record<InboxKind, { label: string; icon: string }> = {
   TASK_FAILED: { label: '任务失败', icon: '✕' },
   QUESTION_PENDING: { label: '待回答提问', icon: '?' },
   APPROVAL_PENDING: { label: '待处理审批', icon: '!' },
-  SUBAGENT_DONE: { label: '子代理完成', icon: '⌘' }
+  SUBAGENT_DONE: { label: '子代理完成', icon: '⌘' },
+  TRIGGER_DISABLED: { label: '触发器停用', icon: '⚡' }
 }
 
 function kindMeta(kind: InboxKind) {
@@ -45,9 +46,16 @@ function subagentLabel(item: InboxItem): string | null {
   return null
 }
 
-/** 定时任务来源徽标（来源透传机制：payload.source）。 */
-function isScheduled(item: InboxItem): boolean {
-  return item.payload?.source === 'SCHEDULED'
+/** 来源徽标（来源透传机制：payload.source）：定时任务 / Webhook / API。 */
+const SOURCE_BADGES: Record<string, string> = {
+  SCHEDULED: '定时任务',
+  WEBHOOK: 'Webhook',
+  API: 'API'
+}
+
+function sourceBadge(item: InboxItem): string | null {
+  const source = item.payload?.source
+  return typeof source === 'string' ? SOURCE_BADGES[source] ?? null : null
 }
 
 watch(visible, async (open) => {
@@ -135,7 +143,7 @@ async function handleItemClick(item: InboxItem) {
             <div class="inbox-title">
               <span class="inbox-title-text">{{ item.title }}</span>
               <span v-if="!item.isRead" class="inbox-dot" aria-label="未读" />
-              <span v-if="isScheduled(item)" class="inbox-badge">定时任务</span>
+              <span v-if="sourceBadge(item)" class="inbox-badge">{{ sourceBadge(item) }}</span>
               <span v-if="subagentLabel(item)" class="inbox-badge">{{ subagentLabel(item) }}</span>
             </div>
             <p v-if="item.content" class="inbox-content">{{ item.content }}</p>

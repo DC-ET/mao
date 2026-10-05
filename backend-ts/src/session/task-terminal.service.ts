@@ -12,6 +12,12 @@ import { isFeishuChannelSession } from '../harness/tool/feishu-channel-tool.js';
 
 const TERMINAL = new Set(['COMPLETED', 'FAILED', 'CANCELLED']);
 
+/**
+ * 任务终态通知来源：MANUAL=手工触发（默认）、SCHEDULED=定时任务、
+ * WEBHOOK=入站 Webhook 触发器、API=开放 API Token（openapi 域）。
+ */
+export type TaskNotifySource = 'MANUAL' | 'SCHEDULED' | 'WEBHOOK' | 'API';
+
 /** 记忆抽取依赖（可选注入；接口化避免 session 域反向依赖 memory 域实现）。 */
 export interface MemoryExtractionInvoker {
   extractForSession(input: ExtractionSessionInput): Promise<void>;
@@ -26,8 +32,24 @@ export interface TaskTerminalInboxRecorder {
     phase: string;
     executionId: string | null;
     failureReason?: string | null;
-    source?: 'MANUAL' | 'SCHEDULED';
+    source?: TaskNotifySource;
   }): Promise<void>;
+}
+
+/**
+ * 出站订阅分发依赖（可选注入；接口化避免 session 域反向依赖 openapi 域实现）。
+ * 任务终态泛化为用户可配置的通用 HTTP 订阅（task.completed / task.failed）。
+ */
+export interface OutboundEventDispatcher {
+  dispatchTaskTerminal(input: {
+    userId: number;
+    sessionId: number;
+    phase: string;
+    executionId: string | null;
+    title: string | null;
+    failureReason?: string | null;
+    source?: TaskNotifySource;
+  }): void;
 }
 
 export class TaskTerminalService {
@@ -44,7 +66,8 @@ export class TaskTerminalService {
       void Promise.resolve().then(fn);
     },
     private readonly inboxRecorder?: TaskTerminalInboxRecorder | null,
-    private readonly notifySource: 'MANUAL' | 'SCHEDULED' = 'MANUAL',
+    private readonly notifySource: TaskNotifySource = 'MANUAL',
+    private readonly outboundEvents?: OutboundEventDispatcher | null,
   ) {}
 
   async finishExecution(
@@ -53,7 +76,7 @@ export class TaskTerminalService {
     phase: string,
     executionId: string,
     failureReason?: string | null,
-    notifySource: 'MANUAL' | 'SCHEDULED' = 'MANUAL',
+    notifySource: TaskNotifySource = 'MANUAL',
   ): Promise<void> {
     if (!TERMINAL.has(phase)) {
       throw new Error(`Unsupported terminal phase: ${phase}`);
@@ -103,6 +126,7 @@ export class TaskTerminalService {
     }
 
     this.recordInbox(session, phase, executionId, failureReason ?? null, ownerId, notifySource);
+    this.dispatchOutboundEvent(session, phase, executionId, failureReason ?? null, ownerId, notifySource);
 
     if (session.sessionType === 'SIDE_TASK' && session.parentSessionId != null) {
       this.treeSignalPublisher.publish(session.parentSessionId);
@@ -134,7 +158,7 @@ export class TaskTerminalService {
     executionId: string,
     failureReason: string | null,
     ownerId: number | null,
-    notifySource: 'MANUAL' | 'SCHEDULED',
+    notifySource: TaskNotifySource,
   ): void {
     const recorder = this.inboxRecorder;
     if (recorder == null) return;
@@ -160,6 +184,42 @@ export class TaskTerminalService {
           console.warn(`[inbox] failed to record task terminal notification: sessionId=${sessionId}, error=${(e as Error).message}`);
         });
     });
+  }
+
+  /**
+   * 出站订阅分发（task.completed / task.failed）：与 recordInbox 同条件口径
+   * （主会话、COMPLETED/FAILED、已知属主），fire-and-forget，绝不影响终态链。
+   * 通道会话（微信/飞书机器人触发）不排除——出站订阅是用户显式配置的机器回调，
+   * 与「站内未读」语义无关。
+   */
+  private dispatchOutboundEvent(
+    session: Session,
+    phase: string,
+    executionId: string,
+    failureReason: string | null,
+    ownerId: number | null,
+    notifySource: TaskNotifySource,
+  ): void {
+    const dispatcher = this.outboundEvents;
+    if (dispatcher == null) return;
+    if (phase !== 'COMPLETED' && phase !== 'FAILED') return;
+    if (session.sessionType === 'SUBAGENT' || session.sessionType === 'SIDE_TASK') return;
+    if (ownerId == null) return;
+    const sessionId = session.id;
+    if (sessionId == null) return;
+    try {
+      dispatcher.dispatchTaskTerminal({
+        userId: ownerId,
+        sessionId,
+        phase,
+        executionId,
+        title: session.title ?? null,
+        failureReason,
+        source: notifySource,
+      });
+    } catch (e) {
+      console.warn(`[outbound] failed to dispatch task terminal event: sessionId=${sessionId}, error=${(e as Error).message}`);
+    }
   }
 
   /**

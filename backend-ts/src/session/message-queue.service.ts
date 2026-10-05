@@ -1,4 +1,4 @@
-import type { MessageQueue } from './types.js';
+import type { MessageQueue, MessageQueueSource } from './types.js';
 import type { MessageQueueRepository } from './message-queue.repository.js';
 export class MessageQueueService {
   constructor(private readonly repo: MessageQueueRepository) {}
@@ -9,6 +9,8 @@ export class MessageQueueService {
     content: string,
     images: string | null,
     scheduledTaskId?: number | null,
+    source?: MessageQueueSource | null,
+    openTriggerId?: number | null,
   ): Promise<MessageQueue> {
     // 事务 + FOR UPDATE 锁住队尾，避免并发 enqueue 读到相同 max(sort_order) 产生重复排序值
     return this.repo.transaction(async (tx) => {
@@ -22,6 +24,9 @@ export class MessageQueueService {
         sortOrder: maxOrder + 1,
         status: 'PENDING',
         scheduledTaskId: scheduledTaskId ?? null,
+        // 未显式给 source 的定时任务入队按 SCHEDULED 落列（新写入全量盖来源，NULL 仅存量行）
+        sourceType: source ?? (scheduledTaskId != null ? 'SCHEDULED' : null),
+        openTriggerId: openTriggerId ?? null,
       };
       await tx.insert(item);
       return item;
@@ -35,6 +40,8 @@ export class MessageQueueService {
     content: string,
     images: string | null,
     scheduledTaskId?: number | null,
+    source?: MessageQueueSource | null,
+    openTriggerId?: number | null,
   ): Promise<void> {
     return this.repo.transaction(async (tx) => {
       const first = await tx.findFirstPendingForUpdate(sessionId);
@@ -47,6 +54,8 @@ export class MessageQueueService {
         sortOrder: minOrder - 1,
         status: 'PENDING',
         scheduledTaskId: scheduledTaskId ?? null,
+        sourceType: source ?? (scheduledTaskId != null ? 'SCHEDULED' : null),
+        openTriggerId: openTriggerId ?? null,
       });
     });
   }

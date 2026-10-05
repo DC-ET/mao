@@ -5,6 +5,7 @@ import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import { randomUUID } from 'node:crypto';
+import { Transform } from 'node:stream';
 import { mkdirSync, existsSync, rmSync, lstatSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { resolve, relative } from 'node:path';
@@ -287,6 +288,15 @@ import { inboundImageKeys } from './feishu/event-normalizer.js';
 import { chatFilesDirOf, resolveChatFileTarget } from './feishu/chat-files.js';
 import type { FeishuInboundContext, FeishuNormalizedMessage } from './feishu/types.js';
 import { WsStreamingEventListener } from './session/ws/ws-streaming-event-listener.js';
+import { MysqlApiTokenRepository, MysqlOutboundDeliveryRepository, MysqlOutboundSubscriptionRepository, MysqlWebhookTriggerRepository } from './openapi/openapi.repository.js';
+import { ApiTokenService } from './openapi/api-token.service.js';
+import { FixedWindowRateLimiter } from './openapi/rate-limiter.js';
+import { OpenRunService, type OpenRunDeps } from './openapi/open-run.service.js';
+import { WebhookTriggerService, type WebhookTriggerDeps } from './openapi/webhook-trigger.service.js';
+import { OutboundSubscriptionService } from './openapi/outbound-subscription.service.js';
+import { GenericHttpWebhookSender } from './openapi/generic-webhook-sender.js';
+import { OutboundDeliveryScheduler } from './openapi/outbound-delivery.scheduler.js';
+import { OPEN_HOOKS_PATH_PREFIX, registerOpenApiRoutes, type RawBodyRequest } from './openapi/open.routes.js';
 
 export interface MaoApp {
   app: FastifyInstance;
@@ -499,9 +509,34 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const auditRepo = new MysqlAuditLogRepository(db);
   const auditService = new AuditLogService(auditRepo);
 
+  // 开放接口：API Token 身份层（preHandler 的 mao_ 前缀查库降级）+ 共享限流器
+  const apiTokenRepo = new MysqlApiTokenRepository(db);
+  const apiTokenService = new ApiTokenService(apiTokenRepo);
+  const openApiRateLimiter = new FixedWindowRateLimiter();
+
+  app.addHook('preParsing', async (request, _reply, payload) => {
+    // HMAC 验签以原始字节为准（决策 15）：Fastify 默认 JSON 解析后重序列化不保证
+    // 还原发送方字节。仅对 hooks 公开路径做 tee 捕获，其余路径零开销直通。
+    if (request.method !== 'POST' || !request.url.split('?')[0].replace(/^\/api/, '').startsWith(OPEN_HOOKS_PATH_PREFIX)) {
+      return payload;
+    }
+    const chunks: Buffer[] = [];
+    const tap = new Transform({
+      transform(chunk, _encoding, callback) {
+        chunks.push(Buffer.from(chunk));
+        callback(null, chunk);
+      },
+      flush(callback) {
+        (request as RawBodyRequest).rawBody = Buffer.concat(chunks);
+        callback(null);
+      },
+    });
+    payload.pipe(tap);
+    return tap;
+  });
   app.addHook('preHandler', async (request, reply) => {
     if (request.method === 'OPTIONS' || request.url.split('?')[0] === ssoExchangePath) return;
-    const userId = authenticateRequest(request, jwt);
+    const userId = await authenticateRequest(request, jwt, (plain) => apiTokenService.resolveByToken(plain));
     if (userId != null) request.userId = userId;
     if (!isPublicPath(request.method, request.url) && userId == null) {
       sendJson(reply, 401, fail(1001, '未登录或登录已过期'));
@@ -833,6 +868,17 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     wsRegistry, resolveEmbedPageToolTimeoutMs(cfg.app.harness.embedPageToolTimeoutSeconds),
   );
   const localToolSessions = new LocalToolSessionRegistry(wsRegistry, sessionMap);
+  // 通知渠道与开放接口（触发器/订阅 secret）共用的 AES-GCM 密文工具（APP_NOTIFICATION_WEBHOOK_SECRET）
+  const notifCipher = new WebhookSecretCipher(cfg.app.taskNotification.secretKey);
+  // 开放接口出站订阅（P3）：先于 inboxService 构造，question.pending 分发经 InboxService
+  // 可选回调接入同一收口（ask_user 派发点在工具层直调 recordQuestionPending）
+  const outboundSubscriptionRepo = new MysqlOutboundSubscriptionRepository(db);
+  const outboundDeliveryRepo = new MysqlOutboundDeliveryRepository(db);
+  const outboundSubscriptionService = new OutboundSubscriptionService({
+    subscriptionRepo: outboundSubscriptionRepo,
+    deliveryRepo: outboundDeliveryRepo,
+    cipher: notifCipher,
+  });
   const inboxRepo = new InboxRepository(db);
   const inboxService = new InboxService(
     inboxRepo,
@@ -845,6 +891,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     // LOCAL/审批路径的 userId 兜底：复用 LocalToolSessionRegistry 的内存缓存 → session 表
     // → SUBAGENT 父会话三级回退（与 tool-dispatcher 同一路径），不新造 session 查询
     (sessionId) => localToolSessions.getUserIdForSession(sessionId),
+    (input) => outboundSubscriptionService.dispatchQuestionPending(input),
   );
   const inboxCleanupStore: InboxCleanupStore = {
     deleteHistory: (cutoff) => inboxRepo.deleteHistory(cutoff).then(() => undefined),
@@ -885,7 +932,6 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const scheduledStore = new ScheduledTaskDbStore(db);
   deleteScheduledTasksForSession = (sessionId) => scheduledStore.deleteBySessionId(sessionId);
 
-  const notifCipher = new WebhookSecretCipher(cfg.app.taskNotification.secretKey);
   const senderRegistry = new WebhookSenderRegistry([new DingTalkWebhookSender(), new FeishuWebhookSender()]);
   const urlValidator = new WebhookUrlValidator();
   const notifPref = new TaskNotificationPreferenceService(
@@ -919,6 +965,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     sessionService, wsRegistry, deliveryService, treeSignalPublisher, (fn) => agentExecutor.submit(fn),
     memoryExtraction, (fn) => agentExecutor.submit(fn),
     inboxService, 'MANUAL',
+    // 出站订阅分发（task.completed / task.failed 泛化为用户可配置 HTTP 回调）
+    { dispatchTaskTerminal: (input) => outboundSubscriptionService.dispatchTaskTerminal(input) },
   );
   const visibility = new SubAgentVisibilityService({
     registry: wsRegistry,
@@ -1188,12 +1236,45 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     onScheduledTaskQueueConsumed: async (taskId: number, status: 'COMPLETED' | 'FAILED' | 'CANCELLED') => {
       await scheduledStore.updateById({ id: taskId, lastExecutionStatus: status });
     },
+    // busy 入队的 Webhook 触发器消息在队列真正执行到终态后回写连续失败计数
+    //（webhookTriggerService 后构造，经 holder 晚绑定解循环依赖）
+    onOpenTriggerQueueConsumed: async (triggerId: number, status: 'COMPLETED' | 'FAILED' | 'CANCELLED') => {
+      await openTriggerSettle.current?.(triggerId, status);
+    },
   } as never);
   // 第 6 参 scheduledTaskId：收件箱条目据此前置「定时任务」来源徽标（方案 4.2 方案 A）。
   // 形参表必须与 ScheduledLiveExecution 对齐：TS 允许形参更少的 lambda 赋值给形参更多的
   // 函数类型，漏接实参不会报错，只会静默丢来源——因此用唯一工厂函数并由 spec 断言。
   scheduledService.setLiveExecution(createScheduledLiveExecution(wsHandler));
   scheduledService.setSessionBusyCheck((sessionId) => wsHandler.hasExecutionClaim(sessionId));
+
+  // 开放接口执行流（P1/P2 共用）：与 schedule 域同锁（withSessionLock）、同 busy 判定、同 live 路径
+  const openTriggerSettle: { current: ((triggerId: number, status: 'COMPLETED' | 'FAILED' | 'CANCELLED') => Promise<void>) | null } = { current: null };
+  const openRunService = new OpenRunService({
+    // SessionService 的 Session（session/types）与本域引用的 domain/types 存在 isGit
+    // 联合类型差异（同 schedule 域装配的既有情况），窄接口语义不变，此处显式断言
+    sessionService: sessionService as unknown as OpenRunDeps['sessionService'],
+    messageQueueService,
+    harnessService: { executeFromEvent: (sessionId, executionId, listener) => holder.harness!.executeFromEvent(sessionId, executionId, listener as never) },
+    taskTerminalService: taskTerminal,
+    agentLookup: { findById: (id: number) => agentRepo.findById(id) },
+    isSessionBusy: (sessionId) => wsHandler.hasExecutionClaim(sessionId),
+    liveExecution: createScheduledLiveExecution(wsHandler),
+  });
+  const webhookTriggerService = new WebhookTriggerService({
+    triggerRepo: new MysqlWebhookTriggerRepository(db),
+    sessionService: sessionService as unknown as WebhookTriggerDeps['sessionService'],
+    agentLookup: { findById: (id: number) => agentRepo.findById(id) },
+    cipher: notifCipher,
+    openRun: openRunService,
+    rateLimiter: openApiRateLimiter,
+    disableNotifier: {
+      notifyTriggerDisabled: async (input) => {
+        await inboxService.recordTriggerDisabled(input);
+      },
+    },
+  });
+  openTriggerSettle.current = (triggerId, status) => webhookTriggerService.handleQueueSettled(triggerId, status);
 
   const feishuMessageRepository = new MysqlFeishuMessageRepository(db);
   const feishuMessageService = new FeishuMessageService(
@@ -2238,6 +2319,14 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       },
     });
     registerScheduledTaskRoutes(api, { service: scheduledService, jwt, permission: permissionService });
+    registerOpenApiRoutes(api, {
+      apiPrefix,
+      openRun: openRunService,
+      apiTokenService,
+      triggerService: webhookTriggerService,
+      subscriptionService: outboundSubscriptionService,
+      rateLimiter: openApiRateLimiter,
+    });
     registerAnalyticsRoutes(api, { analytics: analyticsService, jwt, permissionService });
     registerStatisticsRoutes(api, { statistics: statisticsService, jwt, permissionService });
     registerFeedbackRoutes(api, { feedback: feedbackService, jwt, permissionService });
@@ -2311,6 +2400,37 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     },
   });
   deliveryScheduler.start();
+  // 出站订阅投递调度（P3）：对齐任务通知投递的重试模型，FAILED 终态落审计
+  const outboundDeliveryScheduler = new OutboundDeliveryScheduler({
+    deliveryRepo: outboundDeliveryRepo,
+    subscriptionRepo: outboundSubscriptionRepo,
+    cipher: notifCipher,
+    sender: new GenericHttpWebhookSender(),
+    auditRecorder: {
+      recordDeliveryFailed: async (input) => {
+        let userId: number | null = null;
+        if (input.subscriptionId != null) {
+          const subscription = await outboundSubscriptionRepo.findById(input.subscriptionId).catch(() => null);
+          userId = subscription?.userId ?? null;
+        }
+        await auditService.record({
+          action: 'EXECUTE',
+          objectType: 'outbound.subscription',
+          objectId: input.subscriptionId == null ? null : String(input.subscriptionId),
+          userId,
+          username: null,
+          method: 'POST',
+          path: `/v1/open/subscriptions/${input.subscriptionId}/deliveries`,
+          ip: null,
+          status: 502,
+          success: 0,
+          errorMessage: `出站投递终态失败 event=${input.event} url=${input.targetUrl} error=${input.error ?? ''}`,
+        }).catch(() => undefined);
+      },
+    },
+    execute: (fn) => agentExecutor.submit(fn),
+  });
+  outboundDeliveryScheduler.start();
   const inboxCleanupScheduler = new InboxCleanupScheduler(inboxCleanupStore);
   inboxCleanupScheduler.start();
   const ecpRenewScheduler = new EcpRenewScheduler(

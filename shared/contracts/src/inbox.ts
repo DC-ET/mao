@@ -9,10 +9,11 @@ export type InboxKind =
   | 'TASK_FAILED'
   | 'QUESTION_PENDING'
   | 'APPROVAL_PENDING'
-  | 'SUBAGENT_DONE';
+  | 'SUBAGENT_DONE'
+  | 'TRIGGER_DISABLED';
 
-/** 条目来源：定时任务触发 vs 用户手工触发（只用于前端「定时任务」徽标）。 */
-export type InboxSource = 'MANUAL' | 'SCHEDULED';
+/** 条目来源：用户手工触发 / 定时任务 / 入站 Webhook / 开放 API（前端来源徽标）。 */
+export type InboxSource = 'MANUAL' | 'SCHEDULED' | 'WEBHOOK' | 'API';
 
 export interface InboxItem {
   id: number;

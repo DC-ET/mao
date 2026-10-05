@@ -28,6 +28,7 @@ const llmCall = require('./commands/llm-call');
 const settings = require('./commands/settings');
 const systemCommand = require('./commands/system-command');
 const mcp = require('./commands/mcp');
+const open = require('./commands/open');
 
 const GLOBAL_HELP = `mao-cli — Mao 用户端与管理后台统一 CLI
 
@@ -56,6 +57,7 @@ const GLOBAL_HELP = `mao-cli — Mao 用户端与管理后台统一 CLI
   upload-config   上传配置
   pref            偏好（任务面板/任务通知/微信语音回复）
   scheduled-task  定时任务列表、详情、更新、删除
+  open            开放接口：API Token / 入站 Webhook 触发器 / 出站订阅 CRUD，以及以 mao_ Token 触发运行
   weixin          微信 Bot 绑定与二维码状态
   git             Git 凭证
   tool            内置工具查询
@@ -127,6 +129,7 @@ const MODULES = {
   },
   pref,
   'scheduled-task': scheduledTask,
+  open,
   weixin,
   git,
   tool,

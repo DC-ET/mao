@@ -51,6 +51,9 @@
         <router-link to="/settings/scheduled-tasks" class="settings-nav-item" active-class="active">
           定时任务
         </router-link>
+        <router-link to="/settings/open-api" class="settings-nav-item" active-class="active">
+          开放接口
+        </router-link>
       </nav>
     </aside>
     <section class="settings-content">

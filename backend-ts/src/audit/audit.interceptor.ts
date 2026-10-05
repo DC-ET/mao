@@ -12,6 +12,8 @@ const AUDITED_PREFIXES = [
   '/v1/skill-docs',
   '/v1/admin',
   '/v1/system-settings',
+  // 开放接口全量留痕：机器触发的执行/管理操作与验签失败探测信号都需要审计（技术方案 §5.4）
+  '/v1/open',
 ];
 /**
  * 只审计变更方法的前缀：这些资源的读接口仍对 session:read 开放，

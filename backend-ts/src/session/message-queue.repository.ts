@@ -43,6 +43,8 @@ export class MessageQueueRepository {
       sortOrder: item.sortOrder,
       status: item.status ?? 'PENDING',
       scheduledTaskId: item.scheduledTaskId ?? null,
+      sourceType: item.sourceType ?? null,
+      openTriggerId: item.openTriggerId ?? null,
       deleted: 0,
     });
     item.id = id;

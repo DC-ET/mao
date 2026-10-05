@@ -71,6 +71,12 @@ export interface FileChange {
   createdAt?: string | null;
 }
 
+/**
+ * message_queue.source_type 取值：SCHEDULED=定时任务 busy 入队、WEBHOOK=入站
+ * Webhook 触发器、API=开放 API Token；NULL=普通手工入队。
+ */
+export type MessageQueueSource = 'SCHEDULED' | 'WEBHOOK' | 'API';
+
 export interface MessageQueue {
   id?: number;
   sessionId: number;
@@ -81,6 +87,10 @@ export interface MessageQueue {
   status?: string | null;
   /** busy 入队的定时任务来源；队列消费完成后回写任务 lastExecutionStatus */
   scheduledTaskId?: number | null;
+  /** 入队来源（收件箱徽标透传；NULL=普通手工入队） */
+  sourceType?: MessageQueueSource | null;
+  /** WEBHOOK 来源时的触发器绑定（类比 scheduledTaskId，消费终态后回写失败计数） */
+  openTriggerId?: number | null;
   deleted?: number;
   createdAt?: string | null;
   updatedAt?: string | null;

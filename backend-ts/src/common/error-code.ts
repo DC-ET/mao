@@ -5,6 +5,7 @@ export const ErrorCode = {
   TOKEN_INVALID: { code: 1004, message: 'Token 无效' },
   LOGIN_FAILED: { code: 1005, message: '用户名或密码错误' },
   ACCOUNT_DISABLED: { code: 1006, message: '账号已被禁用' },
+  RATE_LIMITED: { code: 1007, message: '请求过于频繁，请稍后重试' },
 
   PARAM_INVALID: { code: 2001, message: '参数校验失败' },
   PARAM_MISSING: { code: 2002, message: '缺少必要参数' },
@@ -45,6 +46,9 @@ export const ErrorCode = {
   MEMORY_CONTENT_INVALID: { code: 3034, message: '记忆内容无效' },
   MEMORY_CONTENT_DUPLICATE: { code: 3035, message: '已存在相同内容的记忆' },
   MEMORY_LIMIT_EXCEEDED: { code: 3036, message: '生效中的记忆数量已达上限（200 条），请先清理不需要的记忆' },
+
+  /** 入站 Webhook 触发器：不存在/停用/验签失败统一 404 + 固定短语（技术方案决策 10，不暴露区分）。 */
+  OPEN_HOOK_NOT_FOUND: { code: 3040, message: 'not found' },
 
   INTERNAL_ERROR: { code: 5001, message: '服务内部错误' },
   DATABASE_ERROR: { code: 5002, message: '数据库错误' },

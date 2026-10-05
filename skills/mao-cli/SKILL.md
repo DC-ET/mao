@@ -20,6 +20,7 @@ Mao 的**产品文档唯一正文**（可独立分发）+ **REST 操作 CLI**。
 | 桌面 Web 端（任务、工作区、终端、通知、微信等） | [reference/desktop.md](reference/desktop.md) |
 | 长期记忆（跨会话记忆的查看与维护） | [reference/memory.md](reference/memory.md) |
 | 任务收件箱（站内通知中心：未读数、五类事件、偏好开关） | [reference/inbox.md](reference/inbox.md) |
+| 开放接口（API Token / 入站 Webhook 触发器 / 出站事件订阅） | [reference/open-api.md](reference/open-api.md) |
 | 飞书机器人通道（绑定 / 群聊@机器人 / 多机器人配置） | [reference/feishu-bot.md](reference/feishu-bot.md) |
 | 钉钉机器人通道（绑定 / 群聊@机器人 / 多机器人配置） | [reference/dingtalk-bot.md](reference/dingtalk-bot.md) |
 | Electron LOCAL、工具审批、打包与自动更新 | [reference/electron.md](reference/electron.md) |
@@ -34,6 +35,7 @@ Mao 的**产品文档唯一正文**（可独立分发）+ **REST 操作 CLI**。
 ## REST CLI 何时使用
 
 - 登录并缓存 JWT；查询/配置用户、角色、Agent、模型、Skill、会话元数据、文件诊断、定时任务、微信、MCP、审计等
+- 管理开放接口：API Token、入站 Webhook 触发器、出站事件订阅的 CRUD（见 [reference/open-api.md](reference/open-api.md)）
 - 脚本或 Agent 流程中以 JSON 消费上述 API
 
 ## REST CLI 何时不要使用

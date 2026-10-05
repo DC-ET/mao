@@ -765,7 +765,7 @@ describe('StreamingWsHandler', () => {
       submit.mockRestore();
     }
     // 回补队首的同时必须删掉已落库的 USER，否则下次消费会重复落库同一条消息
-    expect(messageQueueService.enqueueHead).toHaveBeenCalledWith(11, 7, '#{next}#', null, null);
+    expect(messageQueueService.enqueueHead).toHaveBeenCalledWith(11, 7, '#{next}#', null, null, null, null);
     expect(sessionService.deleteMessageById).toHaveBeenCalledWith(11, 100);
   });
 
@@ -789,7 +789,7 @@ describe('StreamingWsHandler', () => {
     } finally {
       registry.send.mockReset();
     }
-    expect(messageQueueService.enqueueHead).toHaveBeenCalledWith(11, 7, '#{next}#', null, null);
+    expect(messageQueueService.enqueueHead).toHaveBeenCalledWith(11, 7, '#{next}#', null, null, null, null);
     expect(sessionService.deleteMessageById).toHaveBeenCalledWith(11, 101);
   });
 
@@ -927,11 +927,11 @@ describe('StreamingWsHandler', () => {
 
     const spy = vi.spyOn(handler, 'executePersistedUserPrompt');
     const live = createScheduledLiveExecution(handler);
-    expect(live.length).toBe(6); // 形参表与 ScheduledLiveExecution 对齐，防止回归成漏参 lambda
+    expect(live.length).toBe(7); // 形参表与 ScheduledLiveExecution 对齐，防止回归成漏参 lambda
 
     await live(session('CLOUD', 'IDLE'), 7, 'sched-5', { id: 94, content: '定时任务' }, undefined, 55);
     expect(spy).toHaveBeenCalledWith(
-      session('CLOUD', 'IDLE'), 7, 'sched-5', { id: 94, content: '定时任务' }, undefined, 55,
+      session('CLOUD', 'IDLE'), 7, 'sched-5', { id: 94, content: '定时任务' }, undefined, 55, undefined,
     );
 
     await executor.runAll();
@@ -1376,9 +1376,9 @@ describe('StreamingWsHandler', () => {
       harnessService.executeFromEvent.mockResolvedValue(undefined);
       messageQueueService.listPending.mockResolvedValue([]);
 
-      // busy 入队已登记 queueScheduledTaskIds（用户会话忙时又入队了一条定时任务消息）
-      const queued = (handler as unknown as { queueScheduledTaskIds: Map<number, number> }).queueScheduledTaskIds;
-      queued.set(16, 9);
+      // busy 入队已登记 queueSettlements（用户会话忙时又入队了一条定时任务消息）
+      const queued = (handler as unknown as { queueSettlements: Map<number, { source: string; taskId: number | null; triggerId: number | null }> }).queueSettlements;
+      queued.set(16, { source: 'SCHEDULED', taskId: 9, triggerId: null });
       // 用户在提交前窗口点了停止 → pendingCancels 登记；startedAt 取同一时刻使 takePendingCancel 命中
       const stoppedAt = Date.now();
       (handler as unknown as { pendingCancels: Map<number, number> }).pendingCancels.set(16, stoppedAt);
@@ -1393,7 +1393,7 @@ describe('StreamingWsHandler', () => {
       expect(queued.has(16)).toBe(false);
       expect(onScheduledTaskQueueConsumed).toHaveBeenCalledWith(9, 'CANCELLED');
       // 收件箱来源簿记同样按归属清理，不残留到后续手工执行
-      const live = (handler as unknown as { scheduledTaskIds: Map<number, number> }).scheduledTaskIds;
+      const live = (handler as unknown as { liveSourceBindings: Map<number, { source: string }> }).liveSourceBindings;
       expect(live.has(16)).toBe(false);
       vi.useRealTimers();
     });
@@ -1419,7 +1419,7 @@ describe('StreamingWsHandler', () => {
       await executor.runAll();
 
       expect(sessionService.deleteMessageById).toHaveBeenCalledWith(11, 77);
-      expect(messageQueueService.enqueueHead).toHaveBeenCalledWith(11, 7, 'insert-me', null, 9);
+      expect(messageQueueService.enqueueHead).toHaveBeenCalledWith(11, 7, 'insert-me', null, 9, 'SCHEDULED', null);
       expect(handler.hasExecutionClaim(11)).toBe(false);
     });
 

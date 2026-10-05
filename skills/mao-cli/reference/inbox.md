@@ -2,7 +2,7 @@
 
 ## 模块职责
 
-站内通知中心（Task Inbox）：聚合「任务完成 / 任务失败、提问待答、审批待办、子代理结果回传」五类事件，顶栏消息图标显示服务端权威未读数，点击条目跳回关联会话。
+站内通知中心（Task Inbox）：聚合「任务完成 / 任务失败、提问待答、审批待办、子代理结果回传、触发器停用」六类事件，顶栏消息图标显示服务端权威未读数，点击条目跳回关联会话。
 
 ## 使用问答
 
@@ -18,6 +18,7 @@
 | `QUESTION_PENDING` | `ask_user_questions` 产生待答提问 |
 | `APPROVAL_PENDING` | LOCAL 审批请求创建 |
 | `SUBAGENT_DONE` | 后台子代理结果回传父会话（完成 / 失败 / 取消三种终态） |
+| `TRIGGER_DISABLED` | 入站 Webhook 触发器连续执行失败 5 次后被自动停用（开放接口，见 [open-api.md](open-api.md)） |
 
 不写入：取消态（CANCELLED）、子代理会话与边路任务自身的 TASK_* 终态、微信 / 飞书通道会话、结果已被抑制的子代理回传。
 
@@ -25,7 +26,7 @@
 不会消失，只是自动置为已读（保留可查、不计未读徽标）。提问被回答 / 取消 / 超时、审批被批准 / 拒绝 / 超时 / 断连都会自动置已读。
 
 **定时任务产生的条目有区别吗？**
-有。payload 带 `source: 'SCHEDULED'`，前端显示「定时任务」徽标。
+有。payload 带 `source: 'SCHEDULED'`，前端显示「定时任务」徽标；开放接口触发时 `source` 为 `API` 或 `WEBHOOK`，徽标同理。
 
 **能关掉某类通知吗？**
 能。设置页「消息通知 → 站内收件箱」里四类开关独立保存，与上方 IM / Webhook 配置互不门控。默认前三类开、子代理完成关。
@@ -75,7 +76,7 @@
 
 ### GET /api/v1/inbox/preferences
 
-返回四类 kind 开关 + 系统通知总开关：`{ taskCompletedEnabled, questionPendingEnabled, approvalPendingEnabled, subagentDoneEnabled, systemNotifyEnabled }`。无偏好行时按默认值：前三类开、子代理完成关、系统通知开。
+返回四类 kind 开关 + 系统通知总开关：`{ taskCompletedEnabled, questionPendingEnabled, approvalPendingEnabled, subagentDoneEnabled, systemNotifyEnabled }`。无偏好行时按默认值：前三类开、子代理完成关、系统通知开。`TRIGGER_DISABLED`（触发器停用）不受偏好开关控制，始终写入。
 
 ### PUT /api/v1/inbox/preferences
 

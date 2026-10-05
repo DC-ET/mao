@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Agent, ContentPart, LlmModel, LocalSkillRef, Message, MessageQueueItem, McpToolRef, Session } from '../../domain/types.js';
+import type { TaskNotifySource } from '../task-terminal.service.js';
+import type { MessageQueueSource } from '../types.js';
 import { imageUrlFromPart } from '../session-vo.js';
 
 /** user_message_saved 广播用的用户消息内容：text 提取自纯文本或 ContentPart，images 提取自图片 URL。 */
@@ -81,12 +83,12 @@ export interface WsHandlerDeps {
     updateContextTokens(sessionId: number, tokens: number): Promise<void>;
   };
   taskTerminalService: {
-    finishExecution(sessionId: number, userId: number, phase: string, executionId: string, reason?: string, notifySource?: 'MANUAL' | 'SCHEDULED'): Promise<void>;
+    finishExecution(sessionId: number, userId: number, phase: string, executionId: string, reason?: string, notifySource?: TaskNotifySource): Promise<void>;
   };
   messageQueueService: {
     listPending(sessionId: number): Promise<MessageQueueItem[]>;
-    enqueue(sessionId: number, userId: number, content: string, images: string | null, scheduledTaskId?: number | null): Promise<void>;
-    enqueueHead(sessionId: number, userId: number, content: string, images: string | null, scheduledTaskId?: number | null): Promise<void>;
+    enqueue(sessionId: number, userId: number, content: string, images: string | null, scheduledTaskId?: number | null, source?: MessageQueueSource | null, openTriggerId?: number | null): Promise<void>;
+    enqueueHead(sessionId: number, userId: number, content: string, images: string | null, scheduledTaskId?: number | null, source?: MessageQueueSource | null, openTriggerId?: number | null): Promise<void>;
     dequeue(sessionId: number): Promise<MessageQueueItem | null>;
     getById(id: number): Promise<MessageQueueItem | null>;
     delete(id: number): Promise<void>;
@@ -94,6 +96,8 @@ export interface WsHandlerDeps {
   };
   /** busy 入队的定时任务在队列真正执行完成后回写 lastExecutionStatus */
   onScheduledTaskQueueConsumed?: (taskId: number, status: 'COMPLETED' | 'FAILED' | 'CANCELLED') => Promise<void> | void;
+  /** busy 入队的 Webhook 触发器消息在队列真正执行完成后回写连续失败计数（开放接口域） */
+  onOpenTriggerQueueConsumed?: (triggerId: number, status: 'COMPLETED' | 'FAILED' | 'CANCELLED') => Promise<void> | void;
   embedPageToolRegistry: EmbedPageToolRegistry;
   localToolSessionRegistry: {
     setUserForSession(sessionId: number, userId: number): void;
@@ -170,6 +174,42 @@ function cancelFlag(): { get(): boolean; set(v: boolean): void } {
 }
 
 /**
+ * 队列消费侧的回写绑定：autoConsume / 插队消费到带来源的队列行时登记，
+ * 执行终态后由 settleQueuedBinding 按绑定分发回写；同时承载收件箱来源透传。
+ * 对象身份即归属判定依据：finally 按「值未易主」清理。
+ */
+interface QueueSettlement {
+  /** 队列行来源（收件箱徽标透传） */
+  source: QueuedSource;
+  /** 定时任务回写绑定（source=SCHEDULED 时非空） */
+  taskId: number | null;
+  /** Webhook 触发器回写绑定（source=WEBHOOK 时非空；API 行无回写目标） */
+  triggerId: number | null;
+}
+
+/** 队列行来源（收件箱徽标透传）：与 MessageQueueSource / TaskNotifySource 的非 MANUAL 子集同构。 */
+type QueuedSource = 'SCHEDULED' | 'WEBHOOK' | 'API';
+
+/** 队列行 → settlement：V133 前的存量行 source_type 为 NULL，按 scheduledTaskId 回退为 SCHEDULED。 */
+function queueSettlementOf(row: { sourceType?: string | null; scheduledTaskId?: number | null; openTriggerId?: number | null }): QueueSettlement | null {
+  const source: QueuedSource | null = row.sourceType === 'SCHEDULED' || row.sourceType === 'WEBHOOK' || row.sourceType === 'API'
+    ? row.sourceType
+    : row.scheduledTaskId != null ? 'SCHEDULED' : null;
+  if (source == null) return null;
+  return {
+    source,
+    taskId: source === 'SCHEDULED' ? (row.scheduledTaskId ?? null) : null,
+    triggerId: source === 'WEBHOOK' ? (row.openTriggerId ?? null) : null,
+  };
+}
+
+/** settlement → 入队参数三元组，回补队首时透传保源。 */
+function settlementToEnqueueArgs(settlement: QueueSettlement | null): { scheduledTaskId: number | null; source: QueuedSource | null; openTriggerId: number | null } {
+  if (settlement == null) return { scheduledTaskId: null, source: null, openTriggerId: null };
+  return { scheduledTaskId: settlement.taskId, source: settlement.source, openTriggerId: settlement.triggerId };
+}
+
+/**
  * 定时任务 → liveExecution 的装配线（唯一实现，create-app.ts 与 spec 共用）。
  *
  * 刻意抽成命名导出而不是留在 create-app.ts 的 `setLiveExecution(lambda)` 里：
@@ -185,8 +225,9 @@ export function createScheduledLiveExecution(handler: StreamingWsHandler) {
     savedMessage: Message,
     startedAt?: number,
     scheduledTaskId?: number | null,
+    source?: 'SCHEDULED' | 'WEBHOOK' | 'API' | null,
   ): Promise<void> =>
-    handler.executePersistedUserPrompt(session, userId, executionId, savedMessage, startedAt, scheduledTaskId);
+    handler.executePersistedUserPrompt(session, userId, executionId, savedMessage, startedAt, scheduledTaskId, source);
 }
 
 export class StreamingWsHandler {
@@ -203,18 +244,18 @@ export class StreamingWsHandler {
   private readonly pendingCancels = new Map<number, number>();
   private readonly insertLocks = new Map<number, Promise<void>>();
   /**
-   * autoConsume 消费到的定时任务来源：sessionId → scheduledTaskId，执行终态后回写
-   * `lastExecutionStatus`。注意：该 busy 入队路径（autoConsumeQueue → handleSendMessage）
-   * **不参与收件箱来源透传**——收件箱只读下面那张 `scheduledTaskIds`（liveExecution 路径）。
-   * 两套簿记的作用域与清理时机都不同，改动任一张前先确认另一张的消费方。
+   * autoConsume / 插队消费到的带来源队列行：sessionId → 回写绑定，执行终态后
+   * `settleQueuedBinding` 按类据分发（定时任务回写 lastExecutionStatus、Webhook
+   * 触发器回写连续失败计数）。对象身份即归属判定依据：finally 按「值未易主」清理。
+   * 收件箱来源透传也读本绑定（优先级低于 liveExecution 路径的 liveSourceBindings）。
    */
-  private readonly queueScheduledTaskIds = new Map<number, number>();
+  private readonly queueSettlements = new Map<number, QueueSettlement>();
   /**
-   * 定时任务 liveExecution 执行中的来源：sessionId → scheduledTaskId。
-   * 镜像 queueScheduledTaskIds 的模式：executePersistedUserPrompt 入口写入、
-   * runExecution finally 按归属清理。三个 finisher 据此给 finishExecution 传 SCHEDULED。
+   * liveExecution 路径的来源绑定：sessionId → { source }（对象身份作归属判定）。
+   * executePersistedUserPrompt 入口写入、runExecution finally 按归属清理。
+   * 三个 finisher 据此给 finishExecution 传 SCHEDULED / WEBHOOK / API。
    */
-  private readonly scheduledTaskIds = new Map<number, number>();
+  private readonly liveSourceBindings = new Map<number, { source: QueuedSource }>();
   private readonly mcpSyncTimeoutSeconds: number;
 
   constructor(private readonly deps: WsHandlerDeps) {
@@ -405,9 +446,10 @@ export class StreamingWsHandler {
     const requeueIfClaimed = async () => {
       if (!claimAlreadyHeld) return;
       this.executionClaims.delete(sessionId);
-      // 回补即放弃本次消费：清掉定时任务绑定，避免下次无关执行误回写陈旧任务终态
-      const scheduledTaskId = this.queueScheduledTaskIds.get(sessionId) ?? null;
-      this.queueScheduledTaskIds.delete(sessionId);
+      // 回补即放弃本次消费：清掉来源绑定，避免下次无关执行误回写陈旧任务终态/触发器计数
+      const settlement = this.queueSettlements.get(sessionId) ?? null;
+      this.queueSettlements.delete(sessionId);
+      const requeueArgs = settlementToEnqueueArgs(settlement);
       if (autoSavedMessageId != null) {
         try {
           await this.deps.sessionService.deleteMessageById(sessionId, autoSavedMessageId);
@@ -417,7 +459,8 @@ export class StreamingWsHandler {
       }
       try {
         await this.deps.messageQueueService.enqueueHead(
-          sessionId, userId, content, images.length > 0 ? JSON.stringify(images) : null, scheduledTaskId,
+          sessionId, userId, content, images.length > 0 ? JSON.stringify(images) : null,
+          requeueArgs.scheduledTaskId, requeueArgs.source, requeueArgs.openTriggerId,
         );
         await this.sendQueueUpdated(sessionId, userId);
       } catch (e) {
@@ -502,8 +545,8 @@ export class StreamingWsHandler {
     // 通过注册时返回值立即消费，避免用户点「停止」后任务照常跑完。
     const flag = this.deps.agentLoop.registerCancelFlag(sessionId);
     if (this.takePendingCancel(sessionId, sendStartedAt, flag)) {
-      // 定时任务 busy 入队消息在此窗口被取消：同步回写 CANCELLED 并清映射，避免永久 QUEUED + 误回写
-      await this.settleQueuedScheduledBinding(sessionId, 'CANCELLED');
+      // 定时任务/触发器 busy 入队消息在此窗口被取消：同步回写终态并清映射，避免永久 QUEUED + 误回写
+      await this.settleQueuedBinding(sessionId, 'CANCELLED');
       await this.finishCancelledSession(sessionId, userId, resolvedEventId ?? randomUUID());
       return;
     }
@@ -556,13 +599,14 @@ export class StreamingWsHandler {
     cancelFlag: { get(): boolean; set(v: boolean): void }, clearTodos: boolean, futureRef: { current: unknown },
   ): Promise<void> {
     await this.withLock(this.sessionLocks, sessionId, async () => {
-      // 本执行绑定的定时任务来源：finally 按「值未易主」判定回收与回写，
-      // 避免迟到的旧执行体消费下一次执行的绑定
-      const boundScheduledTaskId = this.queueScheduledTaskIds.get(sessionId) ?? null;
-      // 本次执行是否来自定时任务 liveExecution（用于收件箱 payload 的「定时任务」来源透传）。
-      // 与 queueScheduledTaskIds 同口径：入口取值，finally 按归属清理，迟到旧执行体不串味。
-      const boundLiveScheduledTaskId = this.scheduledTaskIds.get(sessionId) ?? null;
-      const scheduled = boundLiveScheduledTaskId != null;
+      // 本执行绑定的队列回写绑定（定时任务 lastExecutionStatus / Webhook 触发器失败计数）：
+      // finally 按「值未易主」判定回收与回写，避免迟到的旧执行体消费下一次执行的绑定
+      const boundSettlement = this.queueSettlements.get(sessionId) ?? null;
+      // 本次执行的收件箱来源：优先 liveExecution 绑定（定时任务直跑 / 开放接口直跑），
+      // 其次队列行来源（busy 入队的定时任务/Webhook 触发器消息被 autoConsume 消费）。
+      // 与 queueSettlements 同口径：入口取值，finally 按归属清理，迟到旧执行体不串味。
+      const boundLiveSource = this.liveSourceBindings.get(sessionId) ?? null;
+      const executionSource: TaskNotifySource | null = boundLiveSource?.source ?? boundSettlement?.source ?? null;
       // 终态驱动消费门禁：FAILED 时不再自动消费队列下一条。默认 'FAILED' 保守兜底——
       // 任何遗漏赋值的分支都倾向「不消费」，宁可暂停也不错误消耗用户消息。
       let terminalPhase: 'COMPLETED' | 'CANCELLED' | 'FAILED' = 'FAILED';
@@ -575,7 +619,7 @@ export class StreamingWsHandler {
         // 下一次执行 stale 回写。簿记归属已由 cancelFlags 对象身份判定（可能已被
         // handleCancel 释放并归下一次执行所有），此处进入 finally 不会误删新执行簿记。
         if (cancelFlag.get()) {
-          await this.finishCancelledSession(sessionId, userId, executionId, scheduled);
+          await this.finishCancelledSession(sessionId, userId, executionId, executionSource);
           terminalPhase = 'CANCELLED';
           return;
         }
@@ -588,7 +632,7 @@ export class StreamingWsHandler {
           const syncFailure = await this.syncSkillsToClient(userId, sessionId, session, agent);
           if (syncFailure) {
             const message = `技能同步失败：${syncFailure}`;
-            terminalPhase = await this.finishFailedSession(sessionId, userId, executionId, message, scheduled);
+            terminalPhase = await this.finishFailedSession(sessionId, userId, executionId, message, executionSource);
             this.deps.registry.send(userId, wsEvent('error', sessionId, { message, executionId }));
             return;
           }
@@ -608,15 +652,15 @@ export class StreamingWsHandler {
         listenerRef.current = listener;
         await this.deps.harnessService.executeFromEvent(sessionId, executionId, listener, cancelFlag);
         if (cancelFlag.get()) {
-          await this.finishCancelledSession(sessionId, userId, executionId, scheduled);
+          await this.finishCancelledSession(sessionId, userId, executionId, executionSource);
           terminalPhase = 'CANCELLED';
         } else {
-          terminalPhase = await this.finishCompletedSession(sessionId, userId, executionId, scheduled);
+          terminalPhase = await this.finishCompletedSession(sessionId, userId, executionId, executionSource);
         }
       } catch (e) {
         const message = e instanceof Error ? e.message : 'Agent 执行异常';
         this.deps.registry.send(userId, wsEvent('error', sessionId, { message, executionId }));
-        terminalPhase = await this.finishFailedSession(sessionId, userId, executionId, message, scheduled);
+        terminalPhase = await this.finishFailedSession(sessionId, userId, executionId, message, executionSource);
       } finally {
         listenerRef.current?.dispose();
         try {
@@ -638,14 +682,15 @@ export class StreamingWsHandler {
           this.deps.agentLoop.removeCancelFlag(sessionId);
           this.deps.activityHeartbeat.clear(sessionId);
         }
-        // busy 入队的定时任务：队列真正执行到终态后回写 lastExecutionStatus，避免永久停在 QUEUED
-        if (boundScheduledTaskId != null && this.queueScheduledTaskIds.get(sessionId) === boundScheduledTaskId) {
-          await this.settleQueuedScheduledBinding(sessionId, terminalPhase);
+        // busy 入队的带来源消息：队列真正执行到终态后按绑定回写（定时任务 lastExecutionStatus /
+        // Webhook 触发器连续失败计数），避免永久停在 QUEUED / 失败计数丢失
+        if (boundSettlement != null && this.queueSettlements.get(sessionId) === boundSettlement) {
+          await this.settleQueuedBinding(sessionId, terminalPhase);
         }
-        // 定时任务 liveExecution 绑定按归属清理：值未易主才删，迟到的旧执行体
+        // liveExecution 来源绑定按归属清理：值未易主才删，迟到的旧执行体
         // 不得清掉下一次执行的来源标记（否则新执行会被误标成手工触发）
-        if (boundLiveScheduledTaskId != null && this.scheduledTaskIds.get(sessionId) === boundLiveScheduledTaskId) {
-          this.scheduledTaskIds.delete(sessionId);
+        if (boundLiveSource != null && this.liveSourceBindings.get(sessionId) === boundLiveSource) {
+          this.liveSourceBindings.delete(sessionId);
         }
         if (terminalPhase !== 'FAILED') await this.autoConsumeQueue(sessionId, userId);
       }
@@ -653,12 +698,14 @@ export class StreamingWsHandler {
   }
 
   /**
-   * Run an already-persisted USER prompt on the live WS path (scheduled tasks).
+   * Run an already-persisted USER prompt on the live WS path (scheduled tasks / open triggers).
    * Does not re-submit to the agent executor — caller must already be on that pool.
    *
    * `scheduledTaskId` 由定时任务调度方传入（busy 入队路径的 liveExecution 同源）：
    * 写入调度簿记，runExecution 据此给 finishExecution 传 SCHEDULED，
    * 收件箱条目 payload 因此带上「定时任务」来源（前端据此显示徽标）。
+   * `source` 为开放接口域扩展：WEBHOOK / API 直跑时显式传入，未传而 scheduledTaskId
+   * 非空时按 SCHEDULED 处理（定时任务装配线保持 6 参调用不破坏）。
    */
   async executePersistedUserPrompt(
     session: Session,
@@ -667,6 +714,7 @@ export class StreamingWsHandler {
     savedMessage: Message,
     startedAt?: number,
     scheduledTaskId?: number | null,
+    source?: 'SCHEDULED' | 'WEBHOOK' | 'API' | null,
   ): Promise<void> {
     const sessionId = session.id!;
     this.deps.titleService.scheduleForFirstUserMessage(sessionId, savedMessage.id, savedMessage.content ?? '');
@@ -676,10 +724,12 @@ export class StreamingWsHandler {
         throw new Error('Local client is not connected. Please ensure the desktop app is running.');
       }
     }
-    // 定时任务来源绑定必须在任何早退之前登记：takePendingCancel 命中时 finishCancelledSession
-    // 也要能看到 scheduled；runExecution 的 finally 按归属清理，不会残留到手工执行。
-    if (scheduledTaskId != null) {
-      this.scheduledTaskIds.set(sessionId, scheduledTaskId);
+    // 来源绑定必须在任何早退之前登记：takePendingCancel 命中时收件箱来源也要正确；
+    // runExecution 的 finally 按归属清理，不会残留到手工执行。对象身份即归属判定。
+    const liveSource: QueuedSource | null = source ?? (scheduledTaskId != null ? 'SCHEDULED' : null);
+    const sourceBinding = liveSource != null ? { source: liveSource } : null;
+    if (sourceBinding != null) {
+      this.liveSourceBindings.set(sessionId, sourceBinding);
     }
     this.deps.registry.send(userId, wsEvent('user_message_saved', sessionId, {
       messageId: savedMessage.id,
@@ -696,12 +746,12 @@ export class StreamingWsHandler {
     // 用入口时间会把标记当成陈旧清掉，随后 runExecution 又把 CANCELLED 盖回 RUNNING。
     if (this.takePendingCancel(sessionId, startedAt ?? Date.now(), flag)) {
       await this.finishCancelledSession(sessionId, userId, executionId);
-      if (scheduledTaskId != null && this.scheduledTaskIds.get(sessionId) === scheduledTaskId) {
-        this.scheduledTaskIds.delete(sessionId);
+      if (sourceBinding != null && this.liveSourceBindings.get(sessionId) === sourceBinding) {
+        this.liveSourceBindings.delete(sessionId);
       }
       // busy 入队的簿记同样要在本早退分支收敛：漏掉会让定时任务 lastExecutionStatus
       // 永久停在 QUEUED，且残留绑定可能被下一次执行 stale 回写。
-      await this.settleQueuedScheduledBinding(sessionId, 'CANCELLED');
+      await this.settleQueuedBinding(sessionId, 'CANCELLED');
       return;
     }
     this.cancelFlags.set(sessionId, flag);
@@ -1288,8 +1338,9 @@ export class StreamingWsHandler {
   }
 
   /**
-   * busy 入队的定时任务簿记收敛（`queueScheduledTaskIds`）：
-   * 删除绑定并回写本次执行的终态，避免定时任务永久停在 `QUEUED`，
+   * busy 入队的带来源消息簿记收敛（`queueSettlements`）：
+   * 删除绑定并按绑定分发回写（定时任务 → lastExecutionStatus；Webhook 触发器 →
+   * 连续失败计数），避免任务永久停在 `QUEUED` / 触发器计数丢失，
    * 也避免陈旧绑定被下一次无关执行 stale 回写。
    *
    * 三个早退路径共用同一实现（历史上各写一份、漏改一处即为缺陷）：
@@ -1298,18 +1349,25 @@ export class StreamingWsHandler {
    * 3. `runExecution` 的 finally（队列真正执行到终态后回收，调用方先做「值未易主」归属判定）。
    *
    * 无绑定可收敛时静默返回；回写失败仅告警，不影响调用方的终态收敛。
+   * 回写目标行可能已被删除（定时任务/触发器在排队期间被用户删掉）：照
+   * `onScheduledTaskQueueConsumed` 对已删任务的容错写法，由回调实现侧静默跳过。
    */
-  private async settleQueuedScheduledBinding(
+  private async settleQueuedBinding(
     sessionId: number,
     phase: 'COMPLETED' | 'FAILED' | 'CANCELLED',
   ): Promise<void> {
-    const scheduledTaskId = this.queueScheduledTaskIds.get(sessionId) ?? null;
-    if (scheduledTaskId == null) return;
-    this.queueScheduledTaskIds.delete(sessionId);
+    const settlement = this.queueSettlements.get(sessionId) ?? null;
+    if (settlement == null) return;
+    this.queueSettlements.delete(sessionId);
     try {
-      await this.deps.onScheduledTaskQueueConsumed?.(scheduledTaskId, phase);
+      if (settlement.taskId != null) {
+        await this.deps.onScheduledTaskQueueConsumed?.(settlement.taskId, phase);
+      }
+      if (settlement.triggerId != null) {
+        await this.deps.onOpenTriggerQueueConsumed?.(settlement.triggerId, phase);
+      }
     } catch (e) {
-      console.warn(`Failed to write back scheduled task ${scheduledTaskId} after ${phase}`, e);
+      console.warn(`Failed to settle queued source binding after ${phase}`, e);
     }
   }
 
@@ -1411,9 +1469,11 @@ export class StreamingWsHandler {
           }
           const insertStartedAt = Date.now();
           this.executionClaims.add(sessionId);
-          // 插队消费带来源的定时任务消息：与 autoConsume 对齐，绑定后由 runExecution finally 回写
-          if (item.scheduledTaskId != null) {
-            this.queueScheduledTaskIds.set(sessionId, item.scheduledTaskId);
+          // 插队消费带来源的消息（定时任务/Webhook 触发器）：与 autoConsume 对齐，
+          // 绑定后由 runExecution finally 回写
+          const insertSettlement = queueSettlementOf(item);
+          if (insertSettlement != null) {
+            this.queueSettlements.set(sessionId, insertSettlement);
           }
           const content = item.content ?? '';
           let imageList: string[] = [];
@@ -1451,8 +1511,8 @@ export class StreamingWsHandler {
             console.error(`Queue insert failed after claim for session ${sessionId}, compensating`, e);
             this.autoConsumingSessionIds.delete(sessionId);
             this.executionClaims.delete(sessionId);
-            // 清定时任务映射，避免陈旧 taskId 被下次无关执行误回写
-            this.queueScheduledTaskIds.delete(sessionId);
+            // 清来源绑定，避免陈旧 taskId/triggerId 被下次无关执行误回写
+            this.queueSettlements.delete(sessionId);
             if (savedMessageId != null) {
               try {
                 await this.deps.sessionService.deleteMessageById(sessionId, savedMessageId);
@@ -1460,10 +1520,15 @@ export class StreamingWsHandler {
                 console.error(`Failed to delete orphan inserted message ${savedMessageId} for session ${sessionId}`, delErr);
               }
             }
-            // 队列行已删才回补队首（透传 scheduledTaskId）；未删则原行仍在队列，不重复入队
+            // 队列行已删才回补队首（透传来源绑定 scheduledTaskId/source/openTriggerId）；
+            // 未删则原行仍在队列，不重复入队
             if (queueRowDeleted) {
               try {
-                await this.deps.messageQueueService.enqueueHead(sessionId, userId, content, item.images ?? null, item.scheduledTaskId ?? null);
+                const requeueArgs = settlementToEnqueueArgs(insertSettlement);
+                await this.deps.messageQueueService.enqueueHead(
+                  sessionId, userId, content, item.images ?? null,
+                  requeueArgs.scheduledTaskId, requeueArgs.source, requeueArgs.openTriggerId,
+                );
                 await this.sendQueueUpdated(sessionId, userId);
               } catch (requeueErr) {
                 console.error(`Failed to re-enqueue inserted queue message ${queueId} for session ${sessionId}`, requeueErr);
@@ -1478,7 +1543,7 @@ export class StreamingWsHandler {
       this.suppressAutoConsumeSend.delete(sessionId);
       this.executionClaims.delete(sessionId);
       this.autoConsumingSessionIds.delete(sessionId);
-      this.queueScheduledTaskIds.delete(sessionId);
+      this.queueSettlements.delete(sessionId);
     }
   }
 
@@ -1563,12 +1628,14 @@ export class StreamingWsHandler {
       // M-3：dequeue 已把队列行删除，之后任一步失败都必须统一补偿——回补队首 + 删掉可能
       // 已落库的 USER 消息，否则分别表现为消息静默丢失、无执行的孤儿消息、或下次消费重复落库。
       let savedMessageId: number | null = null;
+      // 来源绑定在 dequeue 后立即登记：后续任一步失败由 compensate 统一回补（保源回补队首）
+      const headSettlement = queueSettlementOf(head);
       const compensate = async (stage: string, error: unknown): Promise<void> => {
         console.error(`Auto-consume failed after dequeue for session ${sessionId} at ${stage}, rolling back`, error);
         this.executionClaims.delete(sessionId);
         this.autoConsumingSessionIds.delete(sessionId);
-        // 回补时透传来源任务 id，并清内存映射，避免绑定丢失与陈旧回写
-        this.queueScheduledTaskIds.delete(sessionId);
+        // 回补时透传来源绑定，并清内存映射，避免绑定丢失与陈旧回写
+        this.queueSettlements.delete(sessionId);
         if (savedMessageId != null) {
           try {
             await this.deps.sessionService.deleteMessageById(sessionId, savedMessageId);
@@ -1576,17 +1643,21 @@ export class StreamingWsHandler {
             console.error(`Failed to delete orphan auto-saved message ${savedMessageId} for session ${sessionId}`, e);
           }
         }
+        const requeueArgs = settlementToEnqueueArgs(headSettlement);
         try {
-          await this.deps.messageQueueService.enqueueHead(sessionId, userId, content, head.images ?? null, head.scheduledTaskId ?? null);
+          await this.deps.messageQueueService.enqueueHead(
+            sessionId, userId, content, head.images ?? null,
+            requeueArgs.scheduledTaskId, requeueArgs.source, requeueArgs.openTriggerId,
+          );
           await this.sendQueueUpdated(sessionId, userId);
         } catch (e) {
           console.error(`Failed to re-enqueue auto-consumed message for session ${sessionId}`, e);
         }
       };
       try {
-        // 定时任务 busy 入队来源：执行终态后回写 lastExecutionStatus
-        if (head.scheduledTaskId != null) {
-          this.queueScheduledTaskIds.set(sessionId, head.scheduledTaskId);
+        // 定时任务/触发器 busy 入队来源：执行终态后按绑定回写（lastExecutionStatus / 失败计数）
+        if (headSettlement != null) {
+          this.queueSettlements.set(sessionId, headSettlement);
         }
         await this.sendQueueUpdated(sessionId, userId);
         const messageContent: unknown = imageList.length === 0 ? content : contentParts(content, imageList);
@@ -1616,8 +1687,8 @@ export class StreamingWsHandler {
       console.error(`Failed to auto-consume queue for session ${sessionId}`, e);
       this.executionClaims.delete(sessionId);
       this.autoConsumingSessionIds.delete(sessionId);
-      // 映射已设置但后续异常（如 sendQueueUpdated 抛出）时清掉，避免陈旧 taskId 被下次无关执行误回写
-      this.queueScheduledTaskIds.delete(sessionId);
+      // 映射已设置但后续异常（如 sendQueueUpdated 抛出）时清掉，避免陈旧 taskId/triggerId 被下次无关执行误回写
+      this.queueSettlements.delete(sessionId);
     }
   }
 
@@ -1854,12 +1925,12 @@ export class StreamingWsHandler {
    * 会话已被并发取消（phase=CANCELLED）时返回 'CANCELLED'，供调用方（finally 消费门禁）准确判定。
    */
   private async finishCompletedSession(
-    sessionId: number, userId: number, executionId: string, scheduled = false,
+    sessionId: number, userId: number, executionId: string, source: TaskNotifySource | null = null,
   ): Promise<'COMPLETED' | 'CANCELLED'> {
     const session = await this.deps.sessionService.getSession(sessionId);
     if (session?.phase === 'CANCELLED') return 'CANCELLED';
-    if (scheduled) {
-      await this.deps.taskTerminalService.finishExecution(sessionId, userId, 'COMPLETED', executionId, undefined, 'SCHEDULED');
+    if (source != null) {
+      await this.deps.taskTerminalService.finishExecution(sessionId, userId, 'COMPLETED', executionId, undefined, source);
     } else {
       await this.deps.taskTerminalService.finishExecution(sessionId, userId, 'COMPLETED', executionId);
     }
@@ -1871,12 +1942,12 @@ export class StreamingWsHandler {
    * 会话已被并发取消（phase=CANCELLED）时返回 'CANCELLED'（此时队列消费不受阻）。
    */
   private async finishFailedSession(
-    sessionId: number, userId: number, executionId: string, reason: string, scheduled = false,
+    sessionId: number, userId: number, executionId: string, reason: string, source: TaskNotifySource | null = null,
   ): Promise<'FAILED' | 'CANCELLED'> {
     const session = await this.deps.sessionService.getSession(sessionId);
     if (session?.phase === 'CANCELLED') return 'CANCELLED';
-    if (scheduled) {
-      await this.deps.taskTerminalService.finishExecution(sessionId, userId, 'FAILED', executionId, reason, 'SCHEDULED');
+    if (source != null) {
+      await this.deps.taskTerminalService.finishExecution(sessionId, userId, 'FAILED', executionId, reason, source);
     } else {
       await this.deps.taskTerminalService.finishExecution(sessionId, userId, 'FAILED', executionId, reason);
     }
@@ -1884,7 +1955,7 @@ export class StreamingWsHandler {
   }
 
   private async finishCancelledSession(
-    sessionId: number, userId: number, executionId: string, _scheduled = false,
+    sessionId: number, userId: number, executionId: string, _source: TaskNotifySource | null = null,
   ): Promise<'CANCELLED'> {
     const session = await this.deps.sessionService.getSession(sessionId);
     if (session && this.isTerminalPhase(session.phase)) return 'CANCELLED';
