@@ -39,6 +39,8 @@ export interface BundleSkill {
   files?: Record<string, string>;
   /** inline 读取时的非致命告警（如二进制文件跳过）。 */
   warnings?: string[];
+  /** 远端来源（预留格式位；本版导出端不填，导入端忽略未知字段天然兼容）。 */
+  sourceUrl?: string;
 }
 
 export interface BundleMcpDefinition {
@@ -99,9 +101,23 @@ export interface BundleImportReport {
   skills: BundleImportSkillEntry[];
   mcpServers: BundleImportMcpEntry[];
   warnings: string[];
+  /** URL 导入时回显来源（供确认页展示）。 */
+  sourceUrl?: string;
 }
 
 export interface BundleImportResult {
   agentId: number;
   report: BundleImportReport;
+}
+
+/** POST /v1/agent-bundle/check-updates 逐项结果。 */
+export interface BundleCheckUpdateItem {
+  agentId: number;
+  sourceUrl: string | null;
+  /** 导入时的快照 hash（比对基准）；无导入基线时为 null。 */
+  originHash: string | null;
+  remoteHash: string | null;
+  changed: boolean;
+  localEdited: boolean;
+  error?: string;
 }

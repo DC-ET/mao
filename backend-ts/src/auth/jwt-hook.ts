@@ -3,7 +3,8 @@ import type { JwtService } from '../crypto/jwt.service.js';
 import { API_TOKEN_PREFIX, type ApiTokenIdentity } from '../openapi/api-token.service.js';
 import { OPEN_API_PATH_PREFIX } from '../openapi/types.js';
 
-const PUBLIC_PREFIXES = ['/v1/auth', '/swagger-ui', '/v3/api-docs', '/ws/'];
+// /v1/agent-bundle/registry/ 为免登录只读端点：开关与 token 校验在路由内做（关闭时 404 不暴露存在性）
+const PUBLIC_PREFIXES = ['/v1/auth', '/swagger-ui', '/v3/api-docs', '/ws/', '/v1/agent-bundle/registry/'];
 
 /** 与 create-app 的 apiPrefix（`/api`）对齐：剥掉后按域内路径判断。 */
 function domainPath(rawUrl: string): string {

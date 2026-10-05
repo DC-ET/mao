@@ -172,7 +172,31 @@ interface Fixture {
   userSkillService: UserSkillService;
   mcpStore: Map<number, McpServer>;
   mcpMapper: MemoryMcpMapper;
+  originRepo: MemoryOriginRepo;
+  entrySourceLookup: MemoryEntrySourceLookup;
   service: AgentBundleService;
+}
+
+class MemoryOriginRepo {
+  rows = new Map<number, { id: number; agentId: number; sourceUrl: string; contentHash: string; importedSystemPrompt: string | null; importedBy: number }>();
+  private nextId = 1;
+
+  async findByAgentId(agentId: number) {
+    return this.rows.get(agentId) ?? null;
+  }
+  async listAll() {
+    return [...this.rows.values()];
+  }
+  async upsert(agentId: number, sourceUrl: string, contentHash: string, importedSystemPrompt: string | null, importedBy: number) {
+    this.rows.set(agentId, { id: this.nextId++, agentId, sourceUrl, contentHash, importedSystemPrompt, importedBy });
+  }
+}
+
+class MemoryEntrySourceLookup {
+  rows: Array<{ agentId: number; sourceUrl: string | null }> = [];
+  async listAll() {
+    return this.rows.map((r) => ({ ...r }));
+  }
 }
 
 function buildFixture(): Fixture {
@@ -197,11 +221,13 @@ function buildFixture(): Fixture {
     {} as never,
   );
   const mcpMapper = new MemoryMcpMapper();
+  const originRepo = new MemoryOriginRepo();
+  const entrySourceLookup = new MemoryEntrySourceLookup();
   const service = new AgentBundleService(
     agentRepo, experienceService, suggestedQuestionService, skillLoader, userSkillService,
-    mcpRuntime, mcpMapper, cipher,
+    mcpRuntime, mcpMapper, cipher, originRepo, entrySourceLookup,
   );
-  return { root, agentRepo, experienceService, suggestedQuestionService, skillLoader, userSkillService, mcpStore, mcpMapper, service };
+  return { root, agentRepo, experienceService, suggestedQuestionService, skillLoader, userSkillService, mcpStore, mcpMapper, originRepo, entrySourceLookup, service };
 }
 
 async function insertAgent(repo: MemoryAgentRepo, agent: Agent): Promise<Agent> {

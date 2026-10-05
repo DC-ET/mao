@@ -136,3 +136,57 @@ describe('UserSkillService', () => {
     },
   );
 });
+
+describe('UserSkillService.installUserSkillFiles（依赖一键补装）', () => {
+  it('内存文件安装：写盘成功且隐藏路径段被过滤', async () => {
+    const dir = useTmpDir('mao-uskill-install-');
+    const service = new UserSkillService(dir);
+    const { existsSync } = await import('node:fs');
+
+    const installed = service.installUserSkillFiles(7, 'code-review', {
+      'SKILL.md': skill('code-review', 'Review', 'Body'),
+      'refs/guide.md': 'guide content',
+      '.hidden': 'skip',
+      'refs/.secret': 'skip',
+    });
+    expect(installed).toMatchObject({ code: 0, data: 'code-review' });
+    expect(existsSync(join(dir, '7', 'code-review', 'SKILL.md'))).toBe(true);
+    expect(existsSync(join(dir, '7', 'code-review', 'refs', 'guide.md'))).toBe(true);
+    expect(existsSync(join(dir, '7', 'code-review', '.hidden'))).toBe(false);
+    expect(existsSync(join(dir, '7', 'code-review', 'refs', '.secret'))).toBe(false);
+    expect(service.listUserSkills(7).map((s) => s.name)).toEqual(['code-review']);
+  });
+
+  it('校验链：SKILL.md 缺失/结构非法/frontmatter 不一致/名称非法/路径穿越/超总量均拒绝且不落盘', async () => {
+    const dir = useTmpDir('mao-uskill-install-bad-');
+    const service = new UserSkillService(dir);
+    const { existsSync } = await import('node:fs');
+
+    expect(service.installUserSkillFiles(7, 'x', { 'refs/a.md': 'no SKILL.md' }).code).toBe(400);
+    expect(service.installUserSkillFiles(7, 'x', { 'SKILL.md': 'no frontmatter' }).code).toBe(400);
+    expect(service.installUserSkillFiles(7, 'x', { 'SKILL.md': skill('other', 'D', 'B') }).message).toContain('不一致');
+    expect(service.installUserSkillFiles(7, '../escape', { 'SKILL.md': skill('../escape', 'D', 'B') }).code).toBe(400);
+    expect(service.installUserSkillFiles(7, 'x', { 'SKILL.md': skill('x', 'D', 'B'), 'a/../../evil.md': 'x' }).code).toBe(400);
+    expect(service.installUserSkillFiles(7, 'x', { 'SKILL.md': skill('x', 'D', 'B'), '': 'empty path' }).code).toBe(400);
+
+    const big = 'a'.repeat(6 * 1024 * 1024);
+    expect(service.installUserSkillFiles(7, 'x', { 'SKILL.md': skill('x', 'D', 'B'), 'big1.md': big, 'big2.md': big }).message).toContain('上限');
+    expect(existsSync(join(dir, '7', 'x'))).toBe(false);
+  });
+
+  it('同名覆盖有备份恢复：已存在技能在写盘失败路径外正常替换（并发兜底）', async () => {
+    const dir = useTmpDir('mao-uskill-install-overwrite-');
+    const service = new UserSkillService(dir);
+    const { existsSync } = await import('node:fs');
+
+    // 正常路径下目标不存在（自检缺失是前置条件）；此处验证防御：已存在时替换后内容正确、无 staging 残留
+    mkdirSync(join(dir, '7', 'dup'), { recursive: true });
+    writeFileSync(join(dir, '7', 'dup', 'SKILL.md'), skill('dup', 'Old', 'Old'));
+    const replaced = service.installUserSkillFiles(7, 'dup', { 'SKILL.md': skill('dup', 'New', 'New') });
+    expect(replaced.code).toBe(0);
+    expect(readFileSync(join(dir, '7', 'dup', 'SKILL.md'), 'utf8')).toContain('New');
+    // 暂存 token 目录已清理（.staging/<userId>/ 空壳保留是既有上传语义）
+    const { readdirSync } = await import('node:fs');
+    expect(readdirSync(join(dir, '.staging', '7'))).toEqual([]);
+  });
+});

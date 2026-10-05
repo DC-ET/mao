@@ -1,8 +1,12 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fail } from '../common/result.js';
-import { parseSkillMdContent, validateSkillMd } from '../harness/skill/skill-md.js';
+import { isValidSkillName, parseSkillMdContent, validateSkillMd } from '../harness/skill/skill-md.js';
+import { isHiddenRelativePath, skillFilesPathError } from './read-skill-files.js';
 import { uploadFileMode } from './upload-file-mode.js';
+
+/** 内存文件安装用户技能的总量上限（UTF-8 字节），对齐 bundle inline 技能上限。 */
+const MAX_INSTALL_TOTAL_BYTES = 10 * 1024 * 1024;
 
 export interface UploadedSkillFile {
   originalFilename: string | null;
@@ -129,7 +133,61 @@ export class UserSkillService {
       const validationError = validateSkillGroup(skillName, group);
       if (validationError != null) return fail(400, validationError);
     }
+    return this.commitSkillGroups(userId, grouped);
+  }
 
+  /**
+   * 内存文件安装用户技能（共享目录依赖一键补装）：校验链对齐 bundle 导入 inline 分支
+   * （SKILL.md 校验 + frontmatter 与技能名一致 + 隐藏路径段过滤 + 路径穿越拒绝），
+   * 落盘复用 uploadUserSkill 的暂存交换机制（stage → swap → backup → 失败恢复）。
+   * 自检缺失是前置条件（调用方保证目标技能不存在），写盘侧仍保留备份恢复以兜底并发。
+   */
+  installUserSkillFiles(userId: number, skillName: string, files: Record<string, string>): SkillResult<string> {
+    // skillName 来自 DB 的 agent.skillNames（不经过 bundle 解析），用作目录名前必须校验
+    if (!isValidSkillName(skillName)) {
+      return fail(400, `Invalid skill name: ${skillName}`);
+    }
+    const skillMd = files['SKILL.md'];
+    if (skillMd == null) {
+      return fail(400, `Skill '${skillName}' is missing SKILL.md file`);
+    }
+    const mdError = validateSkillMd(skillMd, skillName);
+    if (mdError != null) return fail(400, mdError);
+    const frontName = parseSkillMdContent(skillMd)?.name?.trim();
+    if (frontName !== skillName) {
+      return fail(400, `SKILL.md frontmatter name（${frontName ?? '缺失'}）与技能名（${skillName}）不一致`);
+    }
+    const pathError = skillFilesPathError(files);
+    if (pathError != null) return fail(400, pathError);
+
+    const filtered: Record<string, string> = {};
+    let totalBytes = 0;
+    for (const [path, content] of Object.entries(files)) {
+      if (isHiddenRelativePath(path)) continue;
+      const bytes = Buffer.byteLength(content, 'utf8');
+      totalBytes += bytes;
+      if (totalBytes > MAX_INSTALL_TOTAL_BYTES) {
+        return fail(400, `技能文件总量超过 ${Math.floor(MAX_INSTALL_TOTAL_BYTES / 1024 / 1024)}MB 上限`);
+      }
+      filtered[path] = content;
+    }
+    if (filtered['SKILL.md'] == null) {
+      return fail(400, `Skill '${skillName}' is missing SKILL.md file`);
+    }
+
+    const group: UploadedSkillFile[] = Object.entries(filtered).map(([path, content]) => ({
+      originalFilename: `${skillName}/${path}`,
+      buffer: Buffer.from(content, 'utf8'),
+    }));
+    const committed = this.commitSkillGroups(userId, new Map([[skillName, group]]));
+    if (committed.code !== 0) {
+      return { code: committed.code, message: committed.message };
+    }
+    return { code: 0, message: 'success', data: skillName };
+  }
+
+  /** 暂存交换写盘（stage → swap → backup → 失败恢复），uploadUserSkill 与 installUserSkillFiles 共用。 */
+  private commitSkillGroups(userId: number, grouped: Map<string, UploadedSkillFile[]>): SkillResult<string[]> {
     const userDir = this.getUserSkillsDir(userId);
     try {
       mkdirSync(userDir, { recursive: true });
@@ -174,7 +232,7 @@ export class UserSkillService {
         rmSync(backupRoot, { recursive: true, force: true });
       }
     }
-    console.info(`User ${userId} uploaded ${importedNames.length} skills: ${importedNames}`);
+    console.info(`User ${userId} installed ${importedNames.length} skills: ${importedNames}`);
     return { code: 0, message: 'success', data: importedNames };
   }
 

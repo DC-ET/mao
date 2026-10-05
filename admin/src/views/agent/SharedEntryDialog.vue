@@ -24,6 +24,15 @@
         <el-input-number v-model="sortOrder" :min="0" :max="9999" controls-position="right" />
         <span class="sort-tip">数字越小越靠前</span>
       </el-form-item>
+      <el-form-item label="远端来源">
+        <el-input
+          v-model="sourceUrl"
+          placeholder="可选；远端实例 registry URL，配置后支持检查更新"
+          clearable
+          maxlength="1024"
+        />
+        <span class="sort-tip">形如 https://mao.example.com/api/v1/agent-bundle/registry/1</span>
+      </el-form-item>
     </el-form>
     <el-alert
       v-if="agent.enabled === false"
@@ -81,10 +90,12 @@ interface SharedAgentItem {
   agentId: number
   note: string
   sortOrder: number
+  sourceUrl?: string | null
 }
 
 const note = ref('')
 const sortOrder = ref(0)
+const sourceUrl = ref('')
 const existing = ref(false)
 const saving = ref(false)
 
@@ -97,6 +108,7 @@ onMounted(async () => {
       existing.value = true
       note.value = entry.note
       sortOrder.value = entry.sortOrder
+      sourceUrl.value = entry.sourceUrl ?? ''
     }
   } catch {
     // 拦截器已提示；保持未上架表单
@@ -112,6 +124,7 @@ async function handleSave() {
     await api.put(`/agents/${props.agent.id}/shared-entry`, {
       note: note.value,
       sortOrder: sortOrder.value,
+      sourceUrl: sourceUrl.value.trim() === '' ? null : sourceUrl.value.trim(),
     })
     ElMessage.success(existing.value ? '推荐语已更新' : '已上架到团队共享')
     emit('saved')

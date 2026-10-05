@@ -12,18 +12,38 @@
         MCP 将以<b>停用</b>状态创建，需在 MCP 管理页补齐环境变量并手动启用后才会生效。
       </el-alert>
 
-      <el-upload
-        :auto-upload="false"
-        :show-file-list="false"
-        accept=".json,application/json"
-        :on-change="handleFileChange"
-      >
-        <el-button type="primary" plain>选择 bundle JSON 文件</el-button>
-        <span v-if="fileName" class="file-name">{{ fileName }}</span>
-      </el-upload>
+      <el-tabs v-model="activeTab" class="import-tabs">
+        <el-tab-pane label="从文件导入" name="file">
+          <el-upload
+            :auto-upload="false"
+            :show-file-list="false"
+            accept=".json,application/json"
+            :on-change="handleFileChange"
+          >
+            <el-button type="primary" plain>选择 bundle JSON 文件</el-button>
+            <span v-if="fileName" class="file-name">{{ fileName }}</span>
+          </el-upload>
+        </el-tab-pane>
+        <el-tab-pane label="从 URL 导入" name="url">
+          <div class="url-row">
+            <el-input
+              v-model="bundleUrl"
+              placeholder="远端实例 registry 地址，如 https://mao.example.com/api/v1/agent-bundle/registry/1"
+              clearable
+              :disabled="imported"
+              @keyup.enter="handleUrlPrecheck"
+            />
+            <el-button type="primary" plain :loading="committing" :disabled="imported" @click="handleUrlPrecheck">拉取预检</el-button>
+          </div>
+          <div class="url-hint">远端实例需开启「系统设置 → Agent 资产 → Bundle registry」；拉取仅 http/https，超时 10 秒，上限 20MB。</div>
+        </el-tab-pane>
+      </el-tabs>
 
       <div v-if="report" v-loading="committing" class="report">
         <el-descriptions :column="2" border size="small" class="report-desc">
+          <el-descriptions-item v-if="report.sourceUrl" label="来源" span="2">
+            <span class="source-url">{{ report.sourceUrl }}</span>
+          </el-descriptions-item>
           <el-descriptions-item label="Bundle 内名称">{{ report.agentName }}</el-descriptions-item>
           <el-descriptions-item label="导入后名称">
             {{ report.finalName }}
@@ -110,26 +130,39 @@ interface BundleImportReport {
   skills: Array<{ name: string; include: 'inline' | 'reference'; action: string; detail?: string }>
   mcpServers: Array<{ name: string; serverType: string; action: string; definition: unknown }>
   warnings: string[]
+  sourceUrl?: string
 }
+
+const props = defineProps<{
+  /** 「检查更新」快捷入口预填的 registry URL。 */
+  initialUrl?: string
+}>()
 
 const emit = defineEmits<{
   close: []
   saved: []
 }>()
 
+const activeTab = ref(props.initialUrl ? 'url' : 'file')
 const fileName = ref('')
 const bundle = ref<unknown>(null)
+const bundleUrl = ref(props.initialUrl ?? '')
 const report = ref<BundleImportReport | null>(null)
 const committing = ref(false)
 const imported = ref(false)
-// 换文件时旧预检响应可能晚归：序号守卫，只展示最后一次请求的结果
+// 换文件/换 URL 时旧预检响应可能晚归：序号守卫，只展示最后一次请求的结果
 let precheckSeq = 0
+
+function resetReport() {
+  bundle.value = null
+  report.value = null
+  imported.value = false
+}
 
 async function handleFileChange(file: UploadFile) {
   const raw = file.raw
   if (raw == null) return
-  report.value = null
-  imported.value = false
+  resetReport()
   let parsedBundle: unknown
   try {
     parsedBundle = JSON.parse(await raw.text())
@@ -152,10 +185,46 @@ async function handleFileChange(file: UploadFile) {
   }
 }
 
-async function handleConfirm() {
-  if (bundle.value == null || committing.value) return
+async function handleUrlPrecheck() {
+  const url = bundleUrl.value.trim()
+  if (url === '') {
+    ElMessage.warning('请输入 registry URL')
+    return
+  }
+  resetReport()
+  const seq = ++precheckSeq
   committing.value = true
   try {
+    const { data } = await api.post<BundleImportReport>('/agent-bundle/import-from-url', { url, confirm: false })
+    if (seq !== precheckSeq) return
+    report.value = data
+  } catch {
+    // 拦截器已提示
+  } finally {
+    if (seq === precheckSeq) committing.value = false
+  }
+}
+
+async function handleConfirm() {
+  if (report.value == null || committing.value) return
+  committing.value = true
+  try {
+    // URL 导入：confirm 由服务端重新拉取并校验；文件导入：重发 bundle（服务端两段都不信任前端缓存）
+    if (report.value.sourceUrl) {
+      const { data } = await api.post<{ agentId: number; report: BundleImportReport }>(
+        '/agent-bundle/import-from-url',
+        { url: report.value.sourceUrl, confirm: true }
+      )
+      report.value = data.report
+      imported.value = true
+      ElMessage.success(`导入完成：${data.report.finalName}`)
+      emit('saved')
+      return
+    }
+    if (bundle.value == null) {
+      ElMessage.error('本地预检结果缺失，请重新选择文件')
+      return
+    }
     const { data } = await api.post<{ agentId: number; report: BundleImportReport }>(
       '/agent-bundle/import',
       { bundle: bundle.value, confirm: true }
@@ -215,11 +284,23 @@ function mcpActionType(action: string): 'success' | 'warning' | 'danger' | 'info
   margin-left: 12px;
   color: var(--el-text-color-secondary);
 }
+.url-row {
+  display: flex;
+  gap: 10px;
+}
+.url-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
 .report {
   margin-top: 16px;
 }
 .report-desc {
   margin-bottom: 12px;
+}
+.source-url {
+  word-break: break-all;
 }
 .report-collapse {
   margin-bottom: 12px;

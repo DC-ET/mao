@@ -57,6 +57,7 @@ import { AgentExperienceService } from './agent/agent-experience.service.js';
 import { AgentSuggestedQuestionService } from './agent/agent-suggested-question.service.js';
 import { AgentService } from './agent/agent.service.js';
 import { AgentBundleService } from './agent/agent-bundle.service.js';
+import { AgentImportOriginRepository } from './agent/agent-import-origin.repository.js';
 import { SharedAgentEntryRepository } from './agent/shared-agent.repository.js';
 import { SharedAgentService } from './agent/shared-agent.service.js';
 import { registerAgentAvatarRoutes } from './agent/agent-avatar.js';
@@ -127,6 +128,8 @@ import { registerFileRoutes } from './file/file.routes.js';
 import { OssStsService, createAliyunAssumeRoleClient } from './oss/oss-sts.service.js';
 import { registerOssRoutes } from './oss/oss.routes.js';
 import { registerSkillRoutes } from './skill/skill.routes.js';
+import { registerSkillBundleRoutes } from './skill/skill-bundle.routes.js';
+import { SkillBundleService } from './skill/skill-bundle.service.js';
 import { UserSkillService } from './skill/user-skill.service.js';
 import { SkillDocService } from './skill/skill-doc.service.js';
 import { SkillSyncService } from './harness/skill/skill-sync-service.js';
@@ -708,6 +711,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const skillSync = new SkillSyncService(skillLoader, pathSandbox, runtimeResolver, userSkillsDir);
   const userSkillService = new UserSkillService(userSkillsDir);
   const skillDocService = new SkillDocService(skillLoader);
+  // 资产分发闭环 P3：mao-skill-bundle v1 导出/导入
+  const skillBundleService = new SkillBundleService(skillLoader, userSkillService);
 
   const weixinConfig: WeixinBotConfig = {
     ...DEFAULT_WEIXIN_BOT_CONFIG,
@@ -750,18 +755,25 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const mcpToolsRegistry = new McpToolsRegistry();
   const mcpSync = new McpSyncService(mcpMapper, mcpServerService, mcpToolsRegistry, mcpPref);
 
-  // Agent 资产化：bundle 导出/导入（P1）+ 团队共享目录（P2）
+  // Agent 资产化：bundle 导出/导入（P1）+ 团队共享目录（P2）+ registry/URL 导入/检查更新（P2 分发闭环）
   const mcpServerLookup = new MysqlMcpServerLookup(db);
+  const agentImportOriginRepo = new AgentImportOriginRepository(db);
   const agentBundleService = new AgentBundleService(
     agentRepo, experienceService, suggestedQuestionService, skillLoader, userSkillService,
     mcpServerService, mcpMapper, mcpCipher,
+    agentImportOriginRepo, sharedAgentEntryRepo,
   );
   const sharedAgentService = new SharedAgentService(
     sharedAgentEntryRepo,
     { findById: (id) => agentRepo.findById(id) },
     skillLoader,
     userSkillService,
-    mcpServerLookup,
+    {
+      findById: (id) => mcpServerLookup.findById(id),
+      // 与 PUT /v1/mcp-servers/:id/status 同一 service 方法（fix-deps 的 will-enable 动作）
+      updateStatus: (id, status) => mcpServerService.updateStatus(id, status),
+    },
+    permissionService,
   );
 
   const openAiLlmAdapter = new OpenAiLlmAdapter({
@@ -2222,7 +2234,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       agentService, experienceService, suggestedQuestionService, userRepo, mcpServerValidator: mcpValidator,
       permissionService,
     });
-    registerAgentBundleRoutes(api, { agentBundleService, permissionService });
+    registerAgentBundleRoutes(api, { agentBundleService, permissionService, registryConfig: settingService });
     registerSharedAgentRoutes(api, { sharedAgentService, permissionService });
     registerModelRoutes(api, { modelService, permissionService });
     registerSystemSettingRoutes(api, { systemSettingService: settingService, permissionService });
@@ -2295,6 +2307,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       runtimeDataResolver: runtimeResolver,
     });
     registerOssRoutes(api, { ossStsService: ossSts });
+    registerSkillBundleRoutes(api, { skillBundleService, permissionService });
     registerSkillRoutes(api, {
       userSkillService, skillDocService, skillSyncService: skillSync,
       sessionService, agentService,

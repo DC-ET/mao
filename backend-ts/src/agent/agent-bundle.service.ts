@@ -1,10 +1,10 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { hasText } from '../common/case.js';
 import { harnessLog } from '../harness/log.js';
 import { validateSkillMd, parseSkillMdContent } from '../harness/skill/skill-md.js';
+import { isHiddenRelativePath, readSkillFolderFiles, skillFilesPathError } from '../skill/read-skill-files.js';
 import type { SkillLoader } from '../harness/skill/skill-loader.js';
 import {
   GLOBAL_USER_ID, STATUS_DISABLED, TYPE_HTTP, TYPE_STDIO, type McpServer,
@@ -19,14 +19,87 @@ import type {
 } from './types.js';
 import {
   BUNDLE_FORMAT, BUNDLE_FORMAT_VERSION, MAX_AGENT_NAME_LENGTH, MAX_INLINE_BYTES, REDACTED_PLACEHOLDER,
-  type AgentBundle, type BundleExperience, type BundleImportMcpEntry, type BundleImportReport,
+  type AgentBundle, type BundleCheckUpdateItem, type BundleExperience, type BundleImportMcpEntry, type BundleImportReport,
   type BundleImportResult, type BundleImportSkillEntry, type BundleMcpDefinition, type BundleMcpServer,
   type BundleSkill, type BundleSuggestedQuestion,
 } from './agent-bundle.types.js';
+import type { AgentImportOriginRow } from './agent-import-origin.repository.js';
 
 /** 对齐 McpServerService.validateName：名称全局唯一（跨全局与用户空间）+ 无连续下划线。 */
 const MCP_NAME_PATTERN = /^[a-z0-9_-]+$/;
 const MCP_NAME_MAX_LENGTH = 64;
+
+/** URL 拉取约束（import-from-url / check-updates 共用；见技术方案 §8）：仅 http/https + 10s 超时 + 20MB 上限 + 禁用重定向。 */
+export const BUNDLE_FETCH_TIMEOUT_MS = 10_000;
+export const BUNDLE_FETCH_MAX_BYTES = 20 * 1024 * 1024;
+/** check-updates 缺省全量时的拉取并发。 */
+export const CHECK_UPDATE_CONCURRENCY = 4;
+
+/** URL 拉取能力（import-from-url / check-updates 共用），测试可替换。 */
+export async function fetchBundleFromUrl(rawUrl: string): Promise<AgentBundle> {
+  const sourceUrl = validateSourceUrl(rawUrl);
+  let res: Response;
+  try {
+    res = await fetch(sourceUrl, { redirect: 'error', signal: AbortSignal.timeout(BUNDLE_FETCH_TIMEOUT_MS) });
+  } catch (e) {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, `拉取远端 bundle 失败：${(e as Error).message}`);
+  }
+  if (!res.ok) {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, `远端返回 HTTP ${res.status}`);
+  }
+  const lenHeader = res.headers.get('content-length');
+  if (lenHeader != null && Number(lenHeader) > BUNDLE_FETCH_MAX_BYTES) {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, `远端响应超过 ${Math.floor(BUNDLE_FETCH_MAX_BYTES / 1024 / 1024)}MB 上限`);
+  }
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  const reader = res.body?.getReader();
+  if (reader == null) {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, '远端响应无内容');
+  }
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > BUNDLE_FETCH_MAX_BYTES) {
+      await reader.cancel().catch(() => undefined);
+      throw new BusinessException(ErrorCode.PARAM_INVALID, `远端响应超过 ${Math.floor(BUNDLE_FETCH_MAX_BYTES / 1024 / 1024)}MB 上限`);
+    }
+    chunks.push(value);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  } catch {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, '远端返回的不是合法 JSON');
+  }
+  if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)
+    || (parsed as Record<string, unknown>).format !== BUNDLE_FORMAT) {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, '远端返回的不是 mao-agent-bundle JSON');
+  }
+  return parsed as AgentBundle;
+}
+
+/** 导入来源 URL 校验：http/https 且 ≤1024（对齐 source_url 列宽）。 */
+export function validateSourceUrl(raw: string): string {
+  const text = raw.trim();
+  if (text.length === 0) {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, 'URL 不能为空');
+  }
+  if (text.length > 1024) {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, 'URL 最长 1024 字符');
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(text);
+  } catch {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, 'URL 不合法');
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, 'URL 必须以 http:// 或 https:// 开头');
+  }
+  return text;
+}
 
 /** 导出链路用到的 MCP 运行时读取能力（McpServerService 已实现）。 */
 export interface BundleMcpRuntime {
@@ -39,6 +112,18 @@ export interface BundleMcpMapper {
   countByUserIdAndName(userId: number, name: string): Promise<number>;
   countByNameWhereUserIdNot(name: string, userId: number): Promise<number>;
   insert(server: McpServer): Promise<number>;
+}
+
+/** URL 导入来源落库能力（AgentImportOriginRepository 已实现）。 */
+export interface BundleOriginRepo {
+  findByAgentId(agentId: number): Promise<AgentImportOriginRow | null>;
+  listAll(): Promise<AgentImportOriginRow[]>;
+  upsert(agentId: number, sourceUrl: string, contentHash: string, importedSystemPrompt: string | null, importedBy: number): Promise<void>;
+}
+
+/** 共享条目远端来源读取能力（SharedAgentEntryRepository 已实现）。 */
+export interface BundleEntrySourceLookup {
+  listAll(): Promise<Array<{ agentId: number; sourceUrl: string | null }>>;
 }
 
 export interface ParsedBundle {
@@ -66,9 +151,47 @@ export class AgentBundleService {
     private readonly mcpServerRuntime: BundleMcpRuntime,
     private readonly mcpMapper: BundleMcpMapper,
     private readonly mcpCipher: McpSecretCipher,
+    private readonly originRepo: BundleOriginRepo,
+    private readonly entrySourceLookup: BundleEntrySourceLookup,
   ) {}
 
   // ---------------------------------------------------------------- 导出
+
+  /**
+   * registry 只读导出（URL 导入的数据源）：对 Agent 的每个用户技能生成 name@userId 显式 token
+   * 全量内联——默认 reference 导出会让 URL 导入产出缺技能的 Agent，且目标实例无属主、fix-deps 无法补齐。
+   * 同名多归属/超 inline 上限时抛错（路由映射 409），check-updates 落为该项 error。
+   */
+  async exportRegistryBundle(agentId: number): Promise<{ bundle: AgentBundle; contentHash: string }> {
+    const agent = await this.agentRepo.findById(agentId);
+    if (!agent) {
+      throw new BusinessException(ErrorCode.AGENT_NOT_FOUND);
+    }
+    if (agent.enabled === 0) {
+      // 与不存在同映射 404：不向未授权方暴露存在性差异
+      throw new BusinessException(ErrorCode.AGENT_NOT_FOUND, 'Agent 已停用');
+    }
+    const tokens = this.buildRegistryInlineTokens(agent);
+    const { bundle } = await this.exportBundle(agentId, tokens.length > 0 ? tokens.join(',') : undefined);
+    return { bundle, contentHash: computeBundleContentHash(bundle) };
+  }
+
+  private buildRegistryInlineTokens(agent: Agent): string[] {
+    const tokens: string[] = [];
+    if (agent.skillNames == null || agent.skillNames.trim() === '') return tokens;
+    const all = this.userSkillService.listAllUserSkills();
+    for (const name of parseStringArray(agent.skillNames)) {
+      if (this.skillLoader.hasSkill(name)) continue;
+      const candidates = all.filter((s) => s.name === name);
+      if (candidates.length === 0) continue; // 实例内已无该技能：导出为 reference，导入端报告 missing
+      if (candidates.length > 1) {
+        const ids = [...new Set(candidates.map((c) => c.userId))].map((id) => `userId=${id}`).join('、');
+        throw new BusinessException(ErrorCode.PARAM_INVALID, `技能「${name}」存在多个归属（${ids}），无法从 registry 导出，请先整理同名技能`);
+      }
+      tokens.push(`${name}@${candidates[0].userId}`);
+    }
+    return tokens;
+  }
 
   async exportBundle(agentId: number, inlineSkills?: string): Promise<{ bundle: AgentBundle; filename: string }> {
     const agent = await this.agentRepo.findById(agentId);
@@ -142,7 +265,7 @@ export class AgentBundleService {
           }
           ownerFolder = selectable[0].folderPath;
         }
-        const { files, warnings } = this.readUserSkillFiles(ownerFolder, name);
+        const { files, warnings } = readSkillFolderFiles(ownerFolder, name);
         for (const content of Object.values(files)) {
           inlineBytesTotal += Buffer.byteLength(content, 'utf8');
         }
@@ -217,45 +340,6 @@ export class AgentBundleService {
       ? { serverType, command: null, args: null, url: server.url ?? null, env: envRedacted }
       : { serverType, command: server.command ?? null, args: parseStringArray(server.argsJson), url: null, env: envRedacted };
     return { name: server.name ?? `mcp-${id}`, definition };
-  }
-
-  /** 读取技能目录（listAllUserSkills 返回的 folderPath）全部文本文件；隐藏文件/目录跳过（与上传写入规则对称），二进制跳过并标注。 */
-  private readUserSkillFiles(folderPath: string, skillName: string): { files: Record<string, string>; warnings: string[] } {
-    const dir = resolve(folderPath);
-    const files: Record<string, string> = {};
-    const warnings: string[] = [];
-    const walk = (current: string, relBase: string): void => {
-      let entries: string[];
-      try {
-        entries = readdirSync(current);
-      } catch (e) {
-        throw new BusinessException(ErrorCode.PARAM_INVALID, `读取用户技能目录失败（${skillName}）：${(e as Error).message}`);
-      }
-      for (const entry of entries) {
-        if (entry.startsWith('.')) continue;
-        const full = join(current, entry);
-        const relPath = relBase === '' ? entry : `${relBase}/${entry}`;
-        let stat;
-        try {
-          stat = statSync(full);
-        } catch {
-          continue;
-        }
-        if (stat.isDirectory()) {
-          walk(full, relPath);
-          continue;
-        }
-        if (!stat.isFile()) continue;
-        const buffer = readFileSync(full);
-        try {
-          files[relPath] = new TextDecoder('utf-8', { fatal: true }).decode(buffer);
-        } catch {
-          warnings.push(`binary file skipped: ${relPath}`);
-        }
-      }
-    };
-    walk(dir, '');
-    return { files, warnings };
   }
 
   // ---------------------------------------------------------------- 导入
@@ -346,6 +430,97 @@ export class AgentBundleService {
 
     harnessLog('info', `Agent bundle imported: agentId=${agentId}, name=${report.finalName}, operator=${operatorId}, skills=${parsed.skills.length}, mcp=${createdMcpIds.length}`);
     return { agentId, report };
+  }
+
+  /**
+   * URL 导入（P2）：服务端拉取远端 bundle 后完全复用 importBundle 两段式语义。
+   * confirm=true 落库成功后 upsert agent_import_origin（uk agent_id，保留最近一次）；
+   * contentHash 是后续 check-updates 的比对基准、systemPrompt 快照用于 localEdited 判定。
+   */
+  async importBundleFromUrl(rawUrl: string, confirm: boolean, operatorId: number): Promise<BundleImportReport | BundleImportResult> {
+    const sourceUrl = validateSourceUrl(rawUrl);
+    const bundle = await fetchBundleFromUrl(sourceUrl);
+    const result = await this.importBundle(bundle, confirm, operatorId);
+    if ('agentId' in result) {
+      result.report.sourceUrl = sourceUrl;
+      await this.originRepo.upsert(result.agentId, sourceUrl, computeBundleContentHash(bundle), bundle.agent.systemPrompt, operatorId);
+      return result;
+    }
+    return { ...result, sourceUrl };
+  }
+
+  /**
+   * 批量检查更新（P2）：changed 以导入时的 origin.content_hash 快照为基准（导入损耗会造成
+   * "本地重导出 vs 远端"口径的永久假 changed，禁止）；localEdited 仅覆盖 systemPrompt 漂移。
+   * 双 URL（origin.source_url 与 shared_agent_entry.source_url）不一致时条目优先（管理员显式维护）。
+   */
+  async checkUpdates(agentIds: number[] | null): Promise<BundleCheckUpdateItem[]> {
+    const entryRows = await this.entrySourceLookup.listAll();
+    const entryUrlByAgent = new Map<number, string>();
+    for (const row of entryRows) {
+      if (row.sourceUrl != null && row.sourceUrl.trim() !== '') entryUrlByAgent.set(row.agentId, row.sourceUrl.trim());
+    }
+    // value=null 表示"显式指定但无来源"：产出 error 项而非静默跳过
+    const targets = new Map<number, string | null>();
+    if (agentIds != null && agentIds.length > 0) {
+      for (const id of agentIds) {
+        const url = entryUrlByAgent.get(id) ?? (await this.originRepo.findByAgentId(id))?.sourceUrl ?? null;
+        targets.set(id, url);
+      }
+    } else {
+      for (const origin of await this.originRepo.listAll()) {
+        targets.set(origin.agentId, origin.sourceUrl);
+      }
+      // 条目 source_url 优先于 origin（管理员显式维护），同 agentId 覆盖
+      for (const [id, url] of entryUrlByAgent) {
+        targets.set(id, url);
+      }
+    }
+
+    const ids = [...targets.keys()];
+    const results: BundleCheckUpdateItem[] = new Array(ids.length);
+    let cursor = 0;
+    const worker = async (): Promise<void> => {
+      for (;;) {
+        const index = cursor++;
+        if (index >= ids.length) return;
+        results[index] = await this.checkOneUpdate(ids[index], targets.get(ids[index]) ?? null);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(CHECK_UPDATE_CONCURRENCY, ids.length) }, () => worker()));
+    return results;
+  }
+
+  private async checkOneUpdate(agentId: number, sourceUrl: string | null): Promise<BundleCheckUpdateItem> {
+    const item: BundleCheckUpdateItem = {
+      agentId, sourceUrl, originHash: null, remoteHash: null, changed: false, localEdited: false,
+    };
+    if (sourceUrl == null) {
+      item.error = '无导入来源（从未 URL 导入且共享条目未配置远端来源）';
+      return item;
+    }
+    const origin = await this.originRepo.findByAgentId(agentId).catch(() => null);
+    item.originHash = origin?.contentHash ?? null;
+    let bundle: AgentBundle;
+    try {
+      bundle = await fetchBundleFromUrl(sourceUrl);
+      item.remoteHash = computeBundleContentHash(bundle);
+    } catch (e) {
+      item.error = (e as Error).message;
+      return item;
+    }
+    if (origin == null) {
+      item.error = '该 Agent 未通过 URL 导入过，无比对基线（可在共享条目配置远端来源后重新导入建立基线）';
+      return item;
+    }
+    item.changed = item.remoteHash !== item.originHash;
+    const agent = await this.agentRepo.findById(agentId).catch(() => null);
+    if (agent == null) {
+      item.error = 'Agent 不存在（可能已被删除）';
+      return item;
+    }
+    item.localEdited = agent.systemPrompt !== origin.importedSystemPrompt;
+    return item;
   }
 
   private async createDisabledMcp(mcp: { name: string; definition: BundleMcpDefinition }): Promise<number> {
@@ -568,7 +743,7 @@ export class AgentBundleService {
             mdError = `SKILL.md frontmatter name（${frontName ?? '缺失'}）与条目名（${skill.name}）不一致`;
           }
         }
-        const pathError = mdError == null ? inlineFilesPathError(skill.files ?? {}) : null;
+        const pathError = mdError == null ? skillFilesPathError(skill.files ?? {}) : null;
         if (mdError != null || pathError != null) {
           skillEntries.push({
             name: skill.name, include: 'inline', action: 'import-failed',
@@ -659,22 +834,24 @@ function isValidBundleSkillName(name: string): boolean {
   return true;
 }
 
-/** 相对路径含隐藏段（根级 .file 或目录/.file）：与导出读取、上传写入规则对称，不属于技能内容。 */
-function isHiddenRelativePath(rawPath: string): boolean {
-  const relativePath = rawPath.replace(/\\/g, '/');
-  return relativePath.split('/').some((segment) => segment.startsWith('.') && segment !== '.');
+/**
+ * bundle 内容指纹：同一内容多次导出得到同一 hash（exportedAt 每次变化，必须剔除）。
+ * 规范化：浅拷贝删除 exportedAt → 递归排序对象键（数组保序）→ 紧凑 JSON → sha256 hex。
+ * 导出、registry、check-updates 三处共用；check-updates 以导入时的快照 hash 为比对基准（见 docs/plan/2026-10-05-asset-distribution-technical-design.md §5.6/§5.8）。
+ */
+export function computeBundleContentHash(bundle: AgentBundle): string {
+  const { exportedAt: _omit, ...rest } = bundle;
+  return createHash('sha256').update(stableStringify(rest)).digest('hex');
 }
 
-/** inline 文件相对路径合法性（与写盘工具同一规则，保证预检报告与实际一致）：拒绝穿越片段。 */
-function inlineFilesPathError(files: Record<string, string>): string | null {
-  for (const rawPath of Object.keys(files)) {
-    const relativePath = rawPath.replace(/\\/g, '/');
-    if (relativePath.length === 0) return `Invalid path: ${rawPath}`;
-    if (relativePath.split('/').some((segment) => segment === '..' || segment.length === 0)) {
-      return `Invalid path: ${relativePath}`;
-    }
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  if (value != null && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`).join(',')}}`;
   }
-  return null;
+  return JSON.stringify(value) ?? 'null';
 }
 
 /** inlineSkills 查询参数：逗号分隔 token，`name` 或 `name@userId`。 */

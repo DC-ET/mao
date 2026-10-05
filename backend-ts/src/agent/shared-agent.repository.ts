@@ -6,6 +6,7 @@ export interface SharedAgentEntryRow {
   agentId: number;
   note: string;
   sortOrder: number;
+  sourceUrl: string | null;
   createdBy: number;
   createdAt: string | null;
   updatedAt: string | null;
@@ -24,12 +25,12 @@ export class SharedAgentEntryRepository {
   }
 
   /** 重复上架即更新（upsert by agent_id）；created_by 保留首次上架人（ON DUPLICATE 不更新该列）。 */
-  async upsert(agentId: number, note: string, sortOrder: number, createdBy: number): Promise<void> {
+  async upsert(agentId: number, note: string, sortOrder: number, createdBy: number, sourceUrl: string | null = null): Promise<void> {
     await this.db.execute(
-      `INSERT INTO shared_agent_entry (agent_id, note, sort_order, created_by)
-       VALUES (?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE note = VALUES(note), sort_order = VALUES(sort_order)`,
-      [agentId, note, sortOrder, createdBy],
+      `INSERT INTO shared_agent_entry (agent_id, note, sort_order, created_by, source_url)
+       VALUES (?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE note = VALUES(note), sort_order = VALUES(sort_order), source_url = VALUES(source_url)`,
+      [agentId, note, sortOrder, createdBy, sourceUrl],
     );
   }
 

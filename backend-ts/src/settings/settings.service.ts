@@ -5,7 +5,7 @@ import { ErrorCode } from '../common/error-code.js';
 import { hasText } from '../common/case.js';
 import { decryptAesGcm, encryptAesGcmNonNull } from '../crypto/aes-gcm.js';
 import type {
-  AgentLookup, AgentRuntimeSettings, FeishuOAuthSettings, HarnessTuningSettings, LdapSettings, ModelLookup,
+  AgentLookup, AgentRuntimeSettings, BundleRegistrySettings, FeishuOAuthSettings, HarnessTuningSettings, LdapSettings, ModelLookup,
   NotificationTuningSettings, OssSettings, SettingsRuntimeConfig, SystemSetting, SystemSettingRepository,
   TavilySettings, TerminalSettings, TinyFishSettings, UploadSettings, WebSearchConfig, WebSearchProvider,
 } from './types.js';
@@ -57,6 +57,9 @@ export const WS_IDLE_TIMEOUT_MS_KEY = 'ws.idleTimeoutMs';
 export const NOTIFY_WORKER_DELAY_MS_KEY = 'notify.workerDelayMs';
 export const NOTIFY_BATCH_SIZE_KEY = 'notify.batchSize';
 export const NOTIFY_MAX_ATTEMPTS_KEY = 'notify.maxAttempts';
+
+export const BUNDLE_REGISTRY_ENABLED_KEY = 'bundle.registry.enabled';
+export const BUNDLE_REGISTRY_ACCESS_TOKEN_KEY = 'bundle.registry.accessToken';
 
 const HARNESS_COMPACTION_ENABLED_KEY = 'harness.compaction.enabled';
 const HARNESS_COMPACTION_CONTEXT_WINDOW_TOKENS_KEY = 'harness.compaction.contextWindowTokens';
@@ -149,6 +152,17 @@ export class SystemSettingService {
     this.applyRuntimeValues(settings);
     for (const setting of settings) {
       if (setting.isSecret === 1 && hasText(setting.value ?? '')) {
+        // registry token 特例：解密后掩码 + 尾 4 位（设计约定，便于管理员辨认配置的是哪个 token）；解密失败回落纯掩码
+        if (setting.settingKey === BUNDLE_REGISTRY_ACCESS_TOKEN_KEY) {
+          try {
+            const plain = this.decryptSecret(setting.value!);
+            setting.value = SECRET_MASK + plain.slice(-4);
+            continue;
+          } catch {
+            setting.value = SECRET_MASK;
+            continue;
+          }
+        }
         setting.value = SECRET_MASK;
       }
     }
@@ -302,6 +316,15 @@ export class SystemSettingService {
       connectTimeout: DEFAULT_TINYFISH_CONNECT_TIMEOUT,
       readTimeout: DEFAULT_TINYFISH_READ_TIMEOUT,
     };
+  }
+
+  /** Bundle registry 只读端点配置（资产分发闭环）：默认关闭，管理员显式开启。 */
+  async getBundleRegistryConfig(): Promise<BundleRegistrySettings> {
+    const [enabled, token] = await Promise.all([
+      this.getBool(BUNDLE_REGISTRY_ENABLED_KEY),
+      this.getSecret(BUNDLE_REGISTRY_ACCESS_TOKEN_KEY),
+    ]);
+    return { enabled, accessToken: hasText(token) ? token : null };
   }
 
   /** 全网搜索统一配置：provider 由后台「网络工具 → 搜索实现」切换，默认 tavily（向后兼容）。 */
@@ -475,6 +498,10 @@ export class SystemSettingService {
     }
     if (setting.isSecret === 1) {
       if (value == null) {
+        return null;
+      }
+      // registry token 回显为「掩码+尾4位」：原样提交视为未修改（其他 secret 键维持掩码值报错）
+      if (setting.settingKey === BUNDLE_REGISTRY_ACCESS_TOKEN_KEY && value.startsWith(SECRET_MASK)) {
         return null;
       }
       if (value === SECRET_MASK) {

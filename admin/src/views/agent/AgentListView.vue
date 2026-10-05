@@ -5,9 +5,13 @@
         <div class="card-header">
           <span>Agent 列表</span>
           <div v-if="canWrite" class="header-actions">
-            <el-button @click="importVisible = true">
+            <el-button @click="openImport()">
               <el-icon><Upload /></el-icon>
               导入
+            </el-button>
+            <el-button :loading="checkingUpdates" @click="handleCheckUpdates">
+              <el-icon><Refresh /></el-icon>
+              检查更新
             </el-button>
             <el-button type="primary" @click="handleCreate">
               <el-icon><Plus /></el-icon>
@@ -49,6 +53,9 @@
             <div class="agent-identity">
               <el-avatar :size="32" :src="resolveAgentAvatarUrl(row.avatarUrl)" shape="square">{{ row.name?.slice(0, 1) || 'A' }}</el-avatar>
               <span class="agent-name" :title="row.name">{{ row.name }}</span>
+              <el-tooltip content="远端来源有更新，可重新导入生成新副本（旧 Agent 保留）" placement="top">
+                <el-tag v-if="remoteChanged(row.id)" type="warning" size="small">远端有更新</el-tag>
+              </el-tooltip>
               <el-tag v-if="row.isDefault" type="warning" size="small">默认</el-tag>
             </div>
           </template>
@@ -117,6 +124,7 @@
           <div class="mobile-card-head">
             <el-avatar :size="32" :src="resolveAgentAvatarUrl(row.avatarUrl)" shape="square">{{ row.name?.slice(0, 1) || 'A' }}</el-avatar>
             <span class="mobile-card-title">{{ row.name }}</span>
+            <el-tag v-if="remoteChanged(row.id)" type="warning" size="small">远端有更新</el-tag>
             <el-tag v-if="row.isDefault" type="warning" size="small">默认</el-tag>
             <el-tag :type="row.enabled === false ? 'info' : 'success'" size="small">
               {{ row.enabled === false ? '停用' : '启用' }}
@@ -201,9 +209,45 @@
     />
     <AgentImportDialog
       v-if="importVisible"
+      :initial-url="importInitialUrl"
       @close="importVisible = false"
       @saved="fetchAgents"
     />
+    <el-dialog v-model="updatesVisible" title="检查更新" width="720px">
+      <el-table :data="updateItems" size="small" border v-loading="checkingUpdates">
+        <template #empty>
+          <el-empty description="点击「检查更新」拉取远端状态" :image-size="60" />
+        </template>
+        <el-table-column prop="agentId" label="ID" width="64" />
+        <el-table-column prop="sourceUrl" label="远端来源" min-width="220" show-overflow-tooltip />
+        <el-table-column label="远端变更" width="90">
+          <template #default="{ row }">
+            <el-tag :type="row.error ? 'danger' : row.changed ? 'warning' : 'success'" size="small">
+              {{ row.error ? '错误' : row.changed ? '有更新' : '无变更' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="本地已改动" width="96">
+          <template #default="{ row }">
+            <el-tag v-if="row.localEdited" type="warning" size="small">已漂移</el-tag>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="error" label="说明" min-width="160" show-overflow-tooltip />
+        <el-table-column label="操作" width="100" fixed="right">
+          <template #default="{ row }">
+            <el-button
+              v-if="row.changed && row.sourceUrl"
+              type="primary"
+              link
+              size="small"
+              @click="reimportFromUrl(row)"
+            >重新导入</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <div class="updates-tip">应用更新 = 重新走导入预检并生成新副本，旧 Agent 原样保留；标「已漂移」表示本地提示词与导入时快照不一致。</div>
+    </el-dialog>
     <SharedEntryDialog
       v-if="sharedAgent"
       :agent="sharedAgent"
@@ -216,7 +260,7 @@
 <script setup lang="ts">
 import { computed, ref, onActivated, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Upload } from '@element-plus/icons-vue'
+import { Plus, Refresh, Upload } from '@element-plus/icons-vue'
 import { api } from '../../api'
 import { resolveAgentAvatarUrl } from '../../utils/agent-avatar'
 import { formatDateTimeColumn } from '../../utils/datetime'
@@ -232,8 +276,22 @@ import SharedEntryDialog from './SharedEntryDialog.vue'
 const historyAgent = ref<{ id: number; name: string } | null>(null)
 const exportAgent = ref<{ id: number; name: string; skillNames?: string[] | null } | null>(null)
 const importVisible = ref(false)
+const importInitialUrl = ref<string | undefined>(undefined)
 const sharedAgent = ref<{ id: number; name: string; enabled?: boolean } | null>(null)
-const sharedEntries = ref<Map<number, { note: string; sortOrder: number }>>(new Map())
+const sharedEntries = ref<Map<number, { note: string; sortOrder: number; sourceUrl: string | null }>>(new Map())
+// 检查更新（agent_import_origin 基线 + shared_agent_entry.source_url）
+interface CheckUpdateItem {
+  agentId: number
+  sourceUrl: string | null
+  originHash: string | null
+  remoteHash: string | null
+  changed: boolean
+  localEdited: boolean
+  error?: string
+}
+const updatesVisible = ref(false)
+const checkingUpdates = ref(false)
+const updateItems = ref<CheckUpdateItem[]>([])
 
 const { isMobile } = useBreakpoint()
 
@@ -311,14 +369,44 @@ function handleSharedEntry(row: any) {
 async function fetchSharedEntries() {
   try {
     const { data } = await api.get('/shared-agents')
-    const map = new Map<number, { note: string; sortOrder: number }>()
+    const map = new Map<number, { note: string; sortOrder: number; sourceUrl: string | null }>()
     for (const entry of data ?? []) {
-      map.set(entry.agentId, { note: entry.note, sortOrder: entry.sortOrder })
+      map.set(entry.agentId, { note: entry.note, sortOrder: entry.sortOrder, sourceUrl: entry.sourceUrl ?? null })
     }
     sharedEntries.value = map
   } catch {
     sharedEntries.value = new Map()
   }
+}
+
+function remoteChanged(agentId: number): boolean {
+  return updateItems.value.some((item) => item.agentId === agentId && item.changed && !item.error)
+}
+
+async function handleCheckUpdates() {
+  if (checkingUpdates.value) return
+  checkingUpdates.value = true
+  updatesVisible.value = true
+  try {
+    const { data } = await api.post<CheckUpdateItem[]>('/agent-bundle/check-updates', {})
+    updateItems.value = data ?? []
+  } catch {
+    // 拦截器已提示
+  } finally {
+    checkingUpdates.value = false
+  }
+}
+
+function reimportFromUrl(row: CheckUpdateItem) {
+  if (!row.sourceUrl) return
+  importInitialUrl.value = row.sourceUrl
+  importVisible.value = true
+  updatesVisible.value = false
+}
+
+function openImport(url?: string) {
+  importInitialUrl.value = url
+  importVisible.value = true
 }
 
 async function handleUnshare(row: any) {
@@ -478,5 +566,11 @@ onActivated(() => {
 .pagination {
   margin-top: 20px;
   justify-content: flex-end;
+}
+
+.updates-tip {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
 }
 </style>

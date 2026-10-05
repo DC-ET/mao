@@ -416,3 +416,54 @@ describe('SystemSettingService', () => {
     expect(mapper.transaction).toHaveBeenCalled();
   });
 });
+
+describe('SystemSettingService bundle registry 配置', () => {
+  const mapper: SystemSettingRepository = {
+    list: vi.fn(),
+    findByKey: vi.fn(),
+    updateById: vi.fn(),
+    transaction: vi.fn(async (fn: (repo: SystemSettingRepository) => Promise<unknown>) => fn(mapper)),
+  };
+  const agentLookup: AgentLookup = { findById: vi.fn() };
+  const modelLookup: ModelLookup = { findById: vi.fn() };
+  const runtime = { workspaceRoot: '/workspace', skillsDir: '/skills' };
+
+  function registryRow(value: string | null): SystemSetting {
+    return { id: 9, settingKey: 'bundle.registry.accessToken', category: 'Agent 资产', value, editable: 1, isSecret: 1 };
+  }
+
+  it('getBundleRegistryConfig：默认关闭、token 未设置为 null；加密存储的 token 解密返回', async () => {
+    vi.mocked(mapper.findByKey).mockResolvedValue(null);
+    const svc = new SystemSettingService(mapper, agentLookup, modelLookup, { ...runtime }, 'unit-secret');
+    expect(await svc.getBundleRegistryConfig()).toEqual({ enabled: false, accessToken: null });
+
+    vi.mocked(mapper.findByKey).mockImplementation(async (key: string) => {
+      if (key === 'bundle.registry.enabled') {
+        return { id: 8, settingKey: key, category: 'Agent 资产', value: 'true', editable: 1 };
+      }
+      return registryRow(encryptAesGcmNonNull('my-registry-token', 'unit-secret'));
+    });
+    const cfg = await new SystemSettingService(mapper, agentLookup, modelLookup, { ...runtime }, 'unit-secret').getBundleRegistryConfig();
+    expect(cfg).toEqual({ enabled: true, accessToken: 'my-registry-token' });
+  });
+
+  it('掩码+尾4位回显：list 对 token 显示 ******+尾4；掩码原样提交视为未修改；其他 secret 键仍拒绝掩码', async () => {
+    const svc = new SystemSettingService(mapper, agentLookup, modelLookup, { ...runtime }, 'unit-secret');
+    vi.mocked(mapper.list).mockResolvedValue([registryRow(encryptAesGcmNonNull('my-registry-token', 'unit-secret'))]);
+    const listed = await svc.list();
+    expect(listed[0].value).toBe('******oken');
+
+    // 掩码原样提交 → 不修改（返回掩码态，不写库）
+    vi.mocked(mapper.findByKey).mockResolvedValue(registryRow('enc:ciphertext'));
+    vi.mocked(mapper.updateById).mockClear();
+    const after = await svc.update('bundle.registry.accessToken', '******oken');
+    expect(mapper.updateById).not.toHaveBeenCalled();
+    expect(after.value).toBe('******');
+
+    // 非 token 键提交掩码仍报错
+    const ldapRow = setting('auth.ldap.password', '集成配置', 1);
+    ldapRow.isSecret = 1;
+    vi.mocked(mapper.findByKey).mockResolvedValue(ldapRow);
+    await expect(svc.update('auth.ldap.password', '******')).rejects.toThrow(/掩码/);
+  });
+});

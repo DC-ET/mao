@@ -68,6 +68,13 @@ export interface TinyFishSettings {
   readTimeout: number;
 }
 
+/** Bundle registry 只读端点（资产分发闭环）：开启后本实例可作为 bundle 只读源。 */
+export interface BundleRegistrySettings {
+  enabled: boolean;
+  /** 可选访问 token；非空时拉取须携带 ?token= 或 X-Mao-Registry-Token。 */
+  accessToken: string | null;
+}
+
 export type WebSearchProvider = 'tavily' | 'tinyfish';
 
 /** 全网搜索（web_search 工具）统一配置：由后台系统设置切换 provider。 */

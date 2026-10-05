@@ -150,6 +150,7 @@
                             <el-tag v-else type="danger" size="small" closable @close="unmarkSecretClear(row.settingKey)">将清除</el-tag>
                           </template>
                         </el-input>
+                        <div v-if="row.settingKey === 'bundle.registry.accessToken' && row.value" class="field-hint">当前 token：{{ row.value }}</div>
                         <div class="field-hint">{{ row.settingKey }}</div>
                       </template>
                     </el-form-item>
@@ -236,6 +237,7 @@ const TOC_GROUPS: Array<{ label: string; sections: Array<{ kind: 'company-sso' |
     label: 'Agent 与模型',
     sections: [
       { kind: 'integration', name: 'agent' },
+      { kind: 'category', name: 'Agent 资产' },
       { kind: 'integration', name: 'harness-llm' },
       { kind: 'integration', name: 'harness-compaction' },
       { kind: 'category', name: '会话' },

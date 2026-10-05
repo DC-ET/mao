@@ -19,6 +19,13 @@
 
 ### 后端
 
+- 新增 `POST /v1/shared-agents/:agentId/fix-deps`（登录即可，安装目标为操作者本人）：用户技能复制安装走既有暂存交换机制（校验链对齐 bundle 导入），MCP 按操作者 `mcp:write` 分类（dangling / will-enable / needs-admin）。
+- 新增 bundle registry 只读端点 `GET /v1/agent-bundle/registry/:agentId`（默认关闭，系统设置显式开启；可选访问 token 非常量时间比较；关闭/停用/未授权一律 404 不暴露存在性；用户技能按 `name@userId` 全量内联；附 `X-Mao-Content-Hash` 内容指纹头；开启即意味着内网可读资产内容，全量审计）。
+- 新增 `POST /v1/agent-bundle/import-from-url`（`agent:write`）：服务端拉取远端 bundle（http/https、10s 超时、20MB 上限、禁用重定向）后完全复用文件导入两段式；落库写入导入来源（source_url + contentHash + systemPrompt 快照，V134 `agent_import_origin` 表）。
+- 新增 `POST /v1/agent-bundle/check-updates`（`agent:write`）：批量比对远端 contentHash 与导入时快照（`changed`），并按 systemPrompt 快照检测本地漂移（`localEdited`）；双来源（导入来源 / 共享条目 source_url）不一致时条目优先；应用更新 = 重新导入生成新副本，永不覆盖旧 Agent。
+- 新增 `mao-skill-bundle` v1 技能独立搬运格式：`GET /v1/skill-bundles/:name`（系统技能 `skill:read`；`?owner=` 导出用户技能）与 `POST /v1/skill-bundle/import`（`skill:write`，两段式写系统技能目录，同名不覆盖）；`skills[].sourceUrl` 为预留格式位，导入端忽略、旧 bundle 零影响。
+- 上架接口 `PUT /v1/agents/:id/shared-entry` 支持可选 `sourceUrl`（远端 registry URL，V134 加列）。
+- 同一用户存在多个 frontmatter 同名技能目录时，用户技能查看/删除按名寻址返回 409 并列全部候选目录（此前会静默命中第一个目录，删除即误删无关技能且误报成功）；查看/删除接口新增可选 `folder` 参数按目录精确寻址，桌面与管理后台按列表行的「路径」自动透传，`mao skill get/delete` 同步支持 `--folder`，依赖补装的占用指引同步改为目录级双标识并附重名告警。
 - 新增开放接口域 `backend-ts/src/openapi/` 与 V133 迁移（`api_token` / `webhook_trigger` / `outbound_subscription` / `outbound_delivery` 四表，`message_queue` 增 `source_type` / `open_trigger_id` 两列）。
 - 新增 P1 REST 触发端点：`POST /api/v1/open/agents/:agentId/run`（Bearer `mao_` 前缀 API Token 鉴权，scope `open:run`），以 202 异步语义把消息投递到指定 Agent（可选复用 `sessionId`），会话忙时自动进入待发送队列；每次请求按 Token 维度限流 60 次/分钟（超限返回 429 + `Retry-After`）。Token 仅创建时展示一次明文（sha256 存库），每人上限 20 个，默认 90 天过期。
 - 新增 P2 入站 Webhook 触发器：用户自建 Agent 可绑定 `POST /api/v1/open/hooks/:pathToken` 公开 URL，外部系统带 `X-Mao-Timestamp` + `X-Mao-Signature`（HMAC-SHA256，±300s 时间窗，原始请求体参与签名）调用即触发一次运行；触发密钥仅创建/轮换时展示一次；不存在 / 已停用 / 验签失败统一返回 404 固定短语（不泄露资源是否存在）。连续执行失败 5 次自动停用并在收件箱推送「触发器停用」通知，避免故障外部系统反复触发。
@@ -29,8 +36,26 @@
 
 ### 前端（桌面 / Web / 安卓）
 
+- 工作台「团队共享」分区支持依赖一键补装：条目缺技能 / MCP 异常时显示「修复依赖」按钮，缺失的用户技能自动安装到本人名下（同名多归属、属主已删除、名称非法逐项标注不中断），MCP 停用提示需管理员启用；完成后自检徽标实时消失，无需人工到设置页上传技能。
+- 新任务配置的智能体选择器顶部新增「团队共享」分区：展示管理员上架的 Agent（按排序置顶），卡片带推荐语与高亮标识；存在缺失依赖时显示警告角标，悬停提示缺哪些技能、哪些 MCP 停用/不存在。缺依赖的共享 Agent 仍可选中（依赖缺失只降级能力，不阻断建会话）；依赖安装/启用后角标自动消失。
 - 设置页新增「开放接口」分区（三张卡片）：API Token 管理（创建/吊销，明文令牌仅展示一次）、入站 Webhook 触发器（创建/启停/轮换密钥，展示可直接复制给外部系统的 URL）、出站订阅（按事件配置目标 URL、查看最近投递记录）。
 - 任务收件箱新增「触发器停用」类型图标；任务完成 / 失败条目新增「Webhook / API」来源徽标（原仅「定时任务」）。
+
+### 管理后台
+
+- Agent 管理页新增「导入」按钮与导入向导：选择 bundle JSON → 预检报告（导入后名称、systemPrompt 全文折叠展示、经验/推荐问题计数、技能动作表、MCP 动作表含完整定义、警告清单）→ 确认导入并刷新列表。
+- Agent 行内操作新增「导出」：导出向导列出该 Agent 全部技能，系统技能标「引用（不可内联）」，用户技能按所有者复选内联（同名多候选并列展示），确认后带 `?inlineSkills=` 下载 bundle 文件。
+- Agent 行内操作新增「上架 / 推荐语 / 下架」：上架填写推荐语（≤512 字）与排序数字，已上架行显示「推荐语」入口并可编辑或下架；列表实时显示各 Agent 的团队共享状态。
+- Agent 导入对话框新增「从 URL 导入」页签：粘贴 registry URL 拉取预检 → 确认导入，与文件导入共用预检报告。
+- Agent 列表新增「检查更新」：批量拉取远端状态，逐项展示远端变更 / 本地漂移 / 错误，有更新的条目可一键预填 URL 重新导入；列表行对有更新的条目显示「远端有更新」角标。
+- 团队共享上架对话框支持配置远端来源 URL（可选）。
+- 系统设置新增「Agent 资产」分组：Bundle registry 开关与访问 token（保存后掩码回显尾 4 位）。
+
+### 终端 CLI（mao-cli）
+
+- `mao agent` 新增 `export <id> [--inline-skills name[@userId],...] [-o <文件>]` 与 `import <文件> [--confirm]`：导出落盘 bundle JSON（缺省文件名 `mao-agent-bundle-<名称>-v1.json`）；导入缺省输出人类可读预检报告，`--confirm` 落库并显示最终名称与 agentId，均需管理员凭据。同步更新 `reference/agent.md`（含团队共享目录 REST 说明）。
+- `mao skill get/delete` 新增 `--folder <绝对路径>`：同一用户存在多个 frontmatter 同名技能目录时按名寻址会 409，带上列表行的「路径」才精确寻址。同步更新 `reference/skill.md` 与 `business_process.md`。
+- 新增格式契约文档 `docs/guides/agent-bundle-format.md`：字段定义、脱敏规则（env 全量脱敏、HTTP url 不脱敏及其理由）、版本演进策略与导入语义边界，供社区跨实例交换。
 
 ## 0.0.236 (2026-10-04)
 
@@ -2083,8 +2108,6 @@ LOCAL 模式（`--local`）安全边界加固：
 ### 后端
 
 - `.env.example` 精简：移除已迁移至管理后台的集成配置环境变量（LDAP_*、FEISHU_ENABLED/APP_ID/APP_SECRET/REDIRECT_URI、UPLOAD_STORAGE_MODE/UPLOAD_BASE_URL、TAVILY_API_KEY、OSS_* 含 OSS_STS_*），补充 `SETTINGS_SECRET` 说明与旧版升级自动导入指引；本地磁盘路径与运行参数类变量不变
-
-
 
 ### 后端
 

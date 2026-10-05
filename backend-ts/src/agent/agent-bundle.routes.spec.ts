@@ -98,6 +98,7 @@ describe('Shared agent routes 权限', () => {
     listSharedAgents: ReturnType<typeof vi.fn>;
     putEntry: ReturnType<typeof vi.fn>;
     removeEntry: ReturnType<typeof vi.fn>;
+    fixDependencies: ReturnType<typeof vi.fn>;
   };
   let app: ReturnType<typeof appWithUser>;
 
@@ -105,12 +106,13 @@ describe('Shared agent routes 权限', () => {
     permission = { hasPermission: vi.fn(async () => false) };
     const vo: SharedAgentVO = {
       agentId: 3, name: '评审员', description: null, avatarUrl: null,
-      note: '适合 PR 评审', sortOrder: 0, missingSkills: ['x'], mcpIssues: [],
+      note: '适合 PR 评审', sortOrder: 0, sourceUrl: null, missingSkills: ['x'], mcpIssues: [],
     };
     sharedAgentService = {
       listSharedAgents: vi.fn(async () => [vo]),
       putEntry: vi.fn(),
       removeEntry: vi.fn(),
+      fixDependencies: vi.fn(async () => ({ skills: [], mcpServers: [], selfCheck: vo })),
     };
     app = appWithUser(7);
     registerSharedAgentRoutes(app, { sharedAgentService: sharedAgentService as never, permissionService: permission });
@@ -139,10 +141,25 @@ describe('Shared agent routes 权限', () => {
       payload: { note: '推荐语', sortOrder: 2 },
     });
     expect(put.statusCode).toBe(200);
-    expect(sharedAgentService.putEntry).toHaveBeenCalledWith(3, '推荐语', 2, 7);
+    expect(sharedAgentService.putEntry).toHaveBeenCalledWith(3, '推荐语', 2, 7, undefined);
     const del = await app.inject({ method: 'DELETE', url: '/v1/agents/3/shared-entry' });
     expect(del.statusCode).toBe(200);
     expect(sharedAgentService.removeEntry).toHaveBeenCalledWith(3);
+  });
+
+  it('登录用户可 POST fix-deps（无需权限码，安装目标为本人）；未登录 401', async () => {
+    const res = await app.inject({ method: 'POST', url: '/v1/shared-agents/3/fix-deps' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data).toMatchObject({ selfCheck: { agentId: 3 } });
+    expect(sharedAgentService.fixDependencies).toHaveBeenCalledWith(3, 7);
+
+    const anon = appWithUser(null);
+    registerSharedAgentRoutes(anon, { sharedAgentService: sharedAgentService as never, permissionService: permission });
+    try {
+      expect((await anon.inject({ method: 'POST', url: '/v1/shared-agents/3/fix-deps' })).statusCode).toBe(401);
+    } finally {
+      await anon.close();
+    }
   });
 
   it('未登录 GET /v1/shared-agents 返回 401', async () => {

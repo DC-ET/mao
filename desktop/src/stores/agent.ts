@@ -76,6 +76,16 @@ export const useAgentStore = defineStore('agent', () => {
     return agents.value.find(a => a.id === id) || null
   }
 
+  /** 依赖补装完成后用服务端重算的自检结果替换条目（自检徽标实时消失）。 */
+  function replaceSharedAgent(vo: SharedAgent) {
+    const index = sharedAgents.value.findIndex((item) => item.agentId === vo.agentId)
+    if (index >= 0) {
+      sharedAgents.value.splice(index, 1, vo)
+    } else {
+      sharedAgents.value.push(vo)
+    }
+  }
+
   return {
     agents,
     sharedAgents,
@@ -84,6 +94,7 @@ export const useAgentStore = defineStore('agent', () => {
     error,
     fetchAgents,
     fetchAgent,
-    getAgentById
+    getAgentById,
+    replaceSharedAgent
   }
 })

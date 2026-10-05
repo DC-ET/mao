@@ -116,11 +116,35 @@ mao agent import ./reviewer.json --confirm
 
 | 操作 | 接口 | 说明 |
 |------|------|------|
-| 列表 + 依赖自检 | `GET /api/v1/shared-agents` | 按 `sortOrder asc, agentId asc` 返回条目；`missingSkills` 为当前用户缺失的技能，`mcpIssues` 形如 `context7（已停用）` |
-| 上架/更新 | `PUT /api/v1/agents/:id/shared-entry` | body `{ note, sortOrder }`，note ≤512；停用中的 Agent 报错“请先启用该 Agent”；重复上架即更新 |
+| 列表 + 依赖自检 | `GET /api/v1/shared-agents` | 按 `sortOrder asc, agentId asc` 返回条目；`missingSkills` 为当前用户缺失的技能，`mcpIssues` 形如 `context7（已停用）`；`sourceUrl` 为条目远端来源（可空） |
+| 依赖一键补装 | `POST /api/v1/shared-agents/:agentId/fix-deps` | 登录即可；缺失的用户技能自动安装到**操作者本人**名下（多归属/无属主/名称非法逐项标注），MCP 停用需操作者有 `mcp:write`（无则报 needs-admin）；响应含重算后的 `selfCheck` |
+| 上架/更新 | `PUT /api/v1/agents/:id/shared-entry` | body `{ note, sortOrder, sourceUrl? }`，note ≤512，sourceUrl 为可选 registry URL（≤1024，http/https，空串清除）；停用中的 Agent 报错“请先启用该 Agent”；重复上架即更新 |
 | 下架 | `DELETE /api/v1/agents/:id/shared-entry` | 幂等 |
 
 Agent 删除时条目级联删除；停用时条目保留、列表隐藏，重新启用即恢复展示。
+
+---
+
+## Bundle registry 与 URL 导入/检查更新（REST）
+
+跨实例分发的只读源与远端变更感知（均需先在源实例「系统设置 → Agent 资产」开启 Bundle registry，默认关闭；CLI 暂无子命令）：
+
+| 操作 | 接口 | 说明 |
+|------|------|------|
+| registry 拉取 | `GET /api/v1/agent-bundle/registry/:agentId` | 免登录（源实例开启后）；响应为 bundle JSON 本体 + `X-Mao-Content-Hash` 头；配置了 accessToken 时须带 `?token=` 或 `X-Mao-Registry-Token`；不存在/停用/未授权一律 404；同名歧义/超 inline 上限返回 409 |
+| URL 导入 | `POST /api/v1/agent-bundle/import-from-url` | `agent:write`；body `{ url, confirm? }`，服务端拉取（http/https、10s 超时、20MB 上限、禁用重定向）后完全复用文件导入两段式；confirm 落库后写入导入来源（source_url + contentHash + systemPrompt 快照） |
+| 检查更新 | `POST /api/v1/agent-bundle/check-updates` | `agent:write`；body `{ agentIds? }` 缺省=全部有来源的 Agent；逐项返回 `{ changed, localEdited, originHash, remoteHash, error? }`，changed 以导入时快照 hash 为基准，localEdited 仅覆盖 systemPrompt 漂移 |
+
+更新应用 = 对该 URL 重新走 import-from-url 两段式生成**新副本**（名称冲突自动加“副本”后缀），旧 Agent 原样保留。
+
+## 技能独立 Bundle（mao-skill-bundle v1，REST）
+
+技能的独立搬运格式（格式契约见仓库 [docs/guides/agent-bundle-format.md](../../docs/guides/agent-bundle-format.md)）：
+
+| 操作 | 接口 | 说明 |
+|------|------|------|
+| 导出 | `GET /api/v1/skill-bundles/:name` | 系统技能（无 `owner` 参数）要求 `skill:read`；`?owner=<userId>` 导出指定用户技能，本人即可、他人需 `skill:read`；响应为 bundle JSON 本体 |
+| 导入 | `POST /api/v1/skill-bundle/import` | `skill:write`；body `{ bundle, confirm? }` 两段式写入**系统技能目录**，同名 exists-skip 不覆盖 |
 
 ---
 

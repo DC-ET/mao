@@ -105,3 +105,54 @@ mao-agent-bundle 是 Mao 的 Agent 资产搬运格式：把一个调教好的 Ag
 - MCP 一律以 `DISABLED` 状态新建（全局空间，描述注明“由 bundle 导入”），同名（跨全局与用户空间）跳过且不绑定。
 - 内联技能写入目标实例系统技能目录（`validateSkillMd` 校验 + 暂存交换原子落盘），同名系统技能不覆盖。
 - 两段式导入：`confirm=false` 返回预检报告（名称冲突、技能/MCP 逐项动作、警告）；`confirm=true` 服务端**重新执行全部校验**后落库，不信任预检结果。
+
+## registry 只读端点（跨实例 URL 导入）
+
+源实例在「系统设置 → Agent 资产」开启 Bundle registry（默认关闭）后，本实例即成为 bundle 只读源：
+
+```
+GET /api/v1/agent-bundle/registry/:agentId
+```
+
+- 免登录（自托管内网场景）；配置了 accessToken 时须携带 `?token=` 请求参数或 `X-Mao-Registry-Token` 请求头（非常量时间比较）。
+- 响应为 bundle JSON 本体（非 Result 信封），附带 `X-Mao-Content-Hash` 响应头：bundle 内容指纹（sha256），剔除 `exportedAt`、对象键递归排序后计算，跨实例/跨时间可比。
+- Agent 不存在、停用、开关关闭、token 错误一律 404（不暴露存在性）；同名技能多归属或超 inline 上限导致导出失败返回 409 + `{ error, detail[] }`。
+- registry 导出对 Agent 的用户技能按 `name@userId` 显式 token 全量内联（URL 导入的完整性与 fix-deps 补装依赖这一点）。
+- 每次拉取记录访问日志（审计）。
+
+### skills[].sourceUrl（预留格式位）
+
+`skills[]` 条目允许出现可选字段 `sourceUrl`（仅 reference 条目），当前版本导出端不填、导入端忽略（逐字段读取天然兼容旧包）。字段仅为未来"按来源补装技能"预留。
+
+### contentHash 规范
+
+```
+canonicalize(bundle):
+  1. 浅拷贝，删除 exportedAt
+  2. 递归排序所有对象键（数组保序）
+  3. JSON.stringify（无空格）
+contentHash = sha256(canonicalized).hex()
+```
+
+check-updates 的比对基准是**导入时快照**（`agent_import_origin.content_hash`），而非本地重新导出的 hash——导入有损（同名 MCP 跳过、重复技能去重、超限经验跳过）时后者会产生永久假阳性。
+
+## mao-skill-bundle v1（技能独立 Bundle）
+
+技能的独立搬运格式，约束对齐 agent bundle inline 技能（纯文本、隐藏路径段丢弃、路径穿越拒绝、总量 ≤10MB）：
+
+```json
+{
+  "format": "mao-skill-bundle",
+  "formatVersion": 1,
+  "exportedAt": "2026-10-05T00:00:00Z",
+  "skill": { "name": "code-review", "description": "..." },
+  "files": { "SKILL.md": "...", "scripts/run.md": "..." },
+  "warnings": ["binary file skipped: assets/logo.bin"]
+}
+```
+
+- `SKILL.md` 必须存在且通过 `validateSkillMd`（frontmatter `name` 为 slug 且与 `skill.name` 一致，`description` 必填）。
+- **files 为纯文本**：二进制文件（可执行脚本、图片等）导出即跳过并在 `warnings` 标注——含二进制资产的技能包不完整，导入后需手工补齐。
+- 导出：`GET /api/v1/skill-bundles/:name`（系统技能需 `skill:read`；`?owner=<userId>` 导出用户技能，本人即可、他人需 `skill:read`），响应为 bundle JSON 本体 + attachment 头。
+- 导入：`POST /api/v1/skill-bundle/import`（`skill:write`，两段式 `confirm=false` 预检 → `confirm=true` 落库），写入**系统技能目录**，同名系统技能 `exists-skip` 不覆盖；`SKILL.md` 缺失/校验失败/frontmatter 不一致/路径穿越/超限以 `action=invalid` 在报告中逐项返回。
+- 导入端不识别的 `format` / `formatVersion` 报 `2001 参数校验失败`；`files` 值必须全为字符串。
