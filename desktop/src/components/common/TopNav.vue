@@ -35,11 +35,11 @@
           @click="toggleTerminal"
         >
           <!--
-            终端图形是横向矩形，原为 18×14，在 24 格 viewBox 里比同排方形图标矮一截。
-            图形本身放大到 20×17 补上高度差；盒子取 17px（而非邻居的 16px），
-            使实际墨迹落在 15×13 一档：16px 盒子会把图形重新压回偏小，18px 则明显过头。
+            终端图形是横向矩形，原为 18×14，在 24 格 viewBox 里比同排方形图标矮一截，
+            图形本身放大到 20×17 补上高度差。盒子保持与邻居一致的 16px ——
+            17px 会让墨迹涨到 15.2×13.1，明显大于同排图标。
           -->
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
             <rect x="2" y="3.5" width="20" height="17" rx="2" /><polyline points="6.5 12 9 9.8 6.5 7.6" /><line x1="11.5" y1="13.2" x2="16" y2="13.2" />
           </svg>
         </div>
