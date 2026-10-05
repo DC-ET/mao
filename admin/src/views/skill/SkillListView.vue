@@ -465,7 +465,7 @@ function isSkillAvailable(row: { filePath?: string; folderPath?: string }) {
 async function handleView(row: any) {
   try {
     if (activeTab.value === 'personal') {
-      const { data } = await api.get(`/admin/user-skills/${row.userId}/${encodeURIComponent(row.name)}`)
+      const { data } = await api.get(`/admin/user-skills/${row.userId}/${encodeURIComponent(row.name)}`, { params: { folder: row.folderPath } })
       currentDoc.value = { ...data, userId: row.userId, username: row.username, displayName: row.displayName }
     } else {
       const { data } = await api.get(`/skill-docs/${encodeURIComponent(row.name)}`)
@@ -723,7 +723,9 @@ async function uploadFiles(files: File[], target: UploadTarget, options?: { busy
 async function handleDelete(row: any) {
   try {
     if (activeTab.value === 'personal') {
-      await api.delete(`/admin/user-skills/${row.userId}/${encodeURIComponent(row.name)}`)
+      // folder 透传行级 folderPath：该用户存在多个 frontmatter 同名目录时，按名删除会歧义失败闭合，
+      // 带上本行目录才精确落到管理员要删的那一个
+      await api.delete(`/admin/user-skills/${row.userId}/${encodeURIComponent(row.name)}`, { params: { folder: row.folderPath } })
     } else {
       await api.delete(`/skill-docs/${encodeURIComponent(row.name)}`)
     }

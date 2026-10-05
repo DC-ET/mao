@@ -92,8 +92,8 @@ export class UserSkillService {
     return result.sort((a, b) => a.userId - b.userId || a.name.localeCompare(b.name));
   }
 
-  getUserSkill(userId: number, name: string): SkillResult<SkillDocDetailVO> {
-    const resolved = this.resolveUserSkillFolderByName(userId, name);
+  getUserSkill(userId: number, name: string, folderPath?: string): SkillResult<SkillDocDetailVO> {
+    const resolved = this.resolveUserSkillFolderByName(userId, name, folderPath);
     if ('code' in resolved) return resolved;
     const skillFolder = resolved.folder;
     const skillMd = join(skillFolder, 'SKILL.md');
@@ -240,8 +240,8 @@ export class UserSkillService {
     return { code: 0, message: 'success', data: importedNames };
   }
 
-  deleteUserSkill(userId: number, name: string): SkillResult<null> {
-    const resolved = this.resolveUserSkillFolderByName(userId, name);
+  deleteUserSkill(userId: number, name: string, folderPath?: string): SkillResult<null> {
+    const resolved = this.resolveUserSkillFolderByName(userId, name, folderPath);
     if ('code' in resolved) return resolved;
     const skillFolder = resolved.folder;
     if (!existsSync(skillFolder) || !statSync(skillFolder).isDirectory()) {
@@ -262,23 +262,53 @@ export class UserSkillService {
   }
 
   /**
-   * 按 frontmatter 名定位用户技能目录（列表/运行时/SkillSync/导出全链路统一的技能身份口径）。
+   * 按技能名定位用户技能目录（列表/运行时/SkillSync/导出全链路统一的技能身份口径）。
    * 上传侧不校验"目录名 == frontmatter 名"（validateSkillGroup 只校验 SKILL.md 自身合法），
    * "目录 holder、frontmatter 名 theirs"是正常上传即可达的状态；若按入参名重拼目录寻址，
    * 这类技能在列表里可见却查看/删除必然 404（数据被锁死）。这里从 listUserSkills 的
    * folderPath 解析，并按目录名回退以兼容按目录名传入的既有调用方。
+   *
+   * folderPath 入参（列表行级下发）做目录精确寻址：同一用户内目录名天然唯一，可穿透重名歧义。
+   * 不传 folderPath 时按技能名寻址，命中多个目录即 409 失败闭合——绝不做 find() 首个命中：
+   * 重名技能会因此删错对象（UI 删第二行实际删第一个目录）且误报已删除。
    */
-  private resolveUserSkillFolderByName(userId: number, name: string): SkillResult<never> | { folder: string } {
+  private resolveUserSkillFolderByName(
+    userId: number,
+    name: string,
+    folderPath?: string,
+  ): SkillResult<never> | { folder: string } {
     if (!name || name.includes('/') || name.includes('\\') || name.includes('..') || name.startsWith('.')) {
       return fail(400, `Invalid skill name: ${name}`);
     }
     const skills = this.listUserSkills(userId);
-    const found = skills.find((s) => s.name === name)
-      ?? skills.find((s) => basename(s.folderPath) === name);
-    if (found == null) {
+    if (folderPath != null && folderPath.trim() !== '') {
+      const wantFolder = resolve(folderPath.trim());
+      // 只认绝对路径全等：目录 basename 兜底会把他人用户的同目录名配进来（跨用户串删），
+      // 同一用户内目录名天然唯一，全等寻址已足够穿透重名歧义
+      const exact = skills.find((s) => s.folderPath === wantFolder);
+      if (exact == null) {
+        return fail(404, `Skill not found: ${name}`);
+      }
+      return { folder: exact.folderPath };
+    }
+    const matched = [...new Map(
+      skills
+        .filter((s) => s.name === name || basename(s.folderPath) === name)
+        .map((s) => [s.folderPath, s] as const),
+    ).values()];
+    if (matched.length === 0) {
       return fail(404, `Skill not found: ${name}`);
     }
-    return { folder: found.folderPath };
+    if (matched.length > 1) {
+      const detail = matched
+        .map((s) => `「${basename(s.folderPath)}」（展示名「${s.name}」）`)
+        .join('、');
+      return fail(
+        409,
+        `技能「${name}」在本人个人技能中指向多个目录（${matched.length} 个），拒绝歧义寻址：${detail}。请在列表中按该行「路径」删除指定目录`,
+      );
+    }
+    return { folder: matched[0].folderPath };
   }
 }
 

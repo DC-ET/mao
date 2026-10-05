@@ -96,6 +96,59 @@ describe('UserSkillService', () => {
     expect(service.deleteUserSkill(7, '../escape').code).toBe(400);
   });
 
+  it('重名技能（两个目录同一 frontmatter 名）按名寻址失败闭合 409：不误删首个，可按 folderPath 精确删', async () => {
+    const dir = useTmpDir('mao-uskill-dup-name-');
+    const service = new UserSkillService(dir);
+    const { existsSync } = await import('node:fs');
+
+    // 上传通道即可构造：validateSkillGroup 只校验 SKILL.md 自身，不查 frontmatter 名重复
+    const uploaded = service.uploadUserSkill(7, [
+      { originalFilename: 'aaa/SKILL.md', buffer: Buffer.from(skill('dup', '第一个', 'A')) },
+      { originalFilename: 'bbb/SKILL.md', buffer: Buffer.from(skill('dup', '第二个', 'B')) },
+    ]);
+    expect(uploaded.code).toBe(0);
+    const rows = service.listUserSkills(7);
+    expect(rows.map((r) => r.name)).toEqual(['dup', 'dup']);
+    expect(rows.map((r) => r.folderPath)).toEqual([join(dir, '7', 'aaa'), join(dir, '7', 'bbb')]);
+
+    // 按名查看/删除必须失败闭合：find() 首个命中会删错对象（UI 删第二行实际删第一个目录）并误报已删除
+    const detail = service.getUserSkill(7, 'dup');
+    expect(detail.code).toBe(409);
+    expect(detail.message).toContain('多个目录');
+    expect(service.deleteUserSkill(7, 'dup').code).toBe(409);
+    expect(existsSync(join(dir, '7', 'aaa'))).toBe(true);
+    expect(existsSync(join(dir, '7', 'bbb'))).toBe(true);
+
+    // 行级 folderPath 精确寻址：删用户真正点的第二行
+    expect(service.deleteUserSkill(7, 'dup', join(dir, '7', 'bbb')).code).toBe(0);
+    expect(existsSync(join(dir, '7', 'aaa'))).toBe(true);
+    expect(existsSync(join(dir, '7', 'bbb'))).toBe(false);
+
+    // 删剩一个后歧义消除，按名恢复可用
+    expect(service.getUserSkill(7, 'dup').code).toBe(0);
+    expect(service.deleteUserSkill(7, 'dup').code).toBe(0);
+    expect(existsSync(join(dir, '7', 'aaa'))).toBe(false);
+  });
+
+  it('folderPath 精确寻址不串用户、不串目录', async () => {
+    const dir = useTmpDir('mao-uskill-folder-scope-');
+    const service = new UserSkillService(dir);
+    const { existsSync } = await import('node:fs');
+    for (const [userId, folder] of [[7, 'aaa'], [8, 'aaa']] as const) {
+      mkdirSync(join(dir, String(userId), folder), { recursive: true });
+      writeFileSync(join(dir, String(userId), folder, 'SKILL.md'), skill(folder, `U${userId}`, 'Body'));
+    }
+
+    // 传入他人 folderPath：本用户目录集内寻不到 → 404，不动他人目录
+    expect(service.deleteUserSkill(7, 'aaa', join(dir, '8', 'aaa')).code).toBe(404);
+    expect(existsSync(join(dir, '8', 'aaa'))).toBe(true);
+    expect(existsSync(join(dir, '7', 'aaa'))).toBe(true);
+
+    // 传入本用户不存在的目录 → 404
+    expect(service.getUserSkill(7, 'aaa', join(dir, '7', 'ghost')).code).toBe(404);
+    expect(service.deleteUserSkill(7, 'aaa', join(dir, '7', 'ghost')).code).toBe(404);
+  });
+
   it('restoresExecutableBitsForUploadedScripts', async () => {
     const dir = useTmpDir('mao-uskill-');
     const service = new UserSkillService(dir);

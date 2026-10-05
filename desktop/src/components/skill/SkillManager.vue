@@ -342,7 +342,7 @@ async function fetchLocalSkills() {
 
 async function handleViewUploaded(skill: SkillDoc) {
   try {
-    const { data } = await api.get(`/user-skills/${skill.name}`)
+    const { data } = await api.get(`/user-skills/${skill.name}`, { params: { folder: skill.folderPath } })
     currentDoc.value = data
     detailVisible.value = true
   } catch {
@@ -383,7 +383,9 @@ async function handleViewLocal(skill: LocalSkillDoc) {
 
 async function confirmDelete(skill: SkillDoc) {
   try {
-    await api.delete(`/user-skills/${skill.name}`)
+    // folder 透传行级 folderPath：本人有多个 frontmatter 同名目录时，按名删除会歧义失败闭合，
+    // 带上本行目录才精确落到用户要删的那一个
+    await api.delete(`/user-skills/${skill.name}`, { params: { folder: skill.folderPath } })
     ElMessage.success(`技能「${skill.name}」已删除`)
     deletingName.value = null
     await fetchSkills()

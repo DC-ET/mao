@@ -222,12 +222,20 @@ export class SharedAgentService {
     // 目标目录占用检查：自检按 frontmatter 名判"缺失"，写盘按目录名落盘——上传侧不校验
     // "目录名 == frontmatter 名"，操作者已有的"目录 A、frontmatter 名 B"技能会让补装静默
     // 覆盖 A/（rename 备份在成功后即删除）。宁可报 failed 让人工整理，不覆盖既有技能
+    //
+    // 指引必须指向**可被删除寻址的标识**：用户技能查看/删除已改按 frontmatter 名寻址，
+    // 只说目录名「${name}」会 404；且本人存在多个 frontmatter 同名目录时该名本身歧义
+    // （resolveUserSkillFolderByName 失败闭合），须引导按目录「路径」删除。故按"目录名 + frontmatter 名"双写。
     const occupied = operatorSkills.find((s) => s.folderPath != null && basename(s.folderPath) === name);
     if (occupied != null) {
+      const sameFrontNameCount = operatorSkills.filter((s) => s.name === occupied.name).length;
+      const ambiguousSuffix = sameFrontNameCount > 1
+        ? `（注意：本人有 ${sameFrontNameCount} 个 frontmatter 名为「${occupied.name}」的技能目录，请按列表中该行的「路径」定位上述目录，勿删错）`
+        : '';
       return {
         name,
         action: 'failed',
-        detail: `本人已存在同名技能目录「${name}」（其 frontmatter 名为「${occupied.name}」），为避免覆盖既有技能，请先在个人技能中删除「${occupied.name}」后重试`,
+        detail: `本人已存在技能目录「${name}」（其 SKILL.md frontmatter 名为「${occupied.name}」），为避免覆盖既有技能，请在个人技能中删除该目录后重试${ambiguousSuffix}`,
       };
     }
     const candidates = allUserSkills.filter((s) => s.name === name);

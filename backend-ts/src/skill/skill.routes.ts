@@ -4,7 +4,7 @@ import { PassThrough } from 'node:stream';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { requirePermission, requireUserId, sendJson } from '../common/http-error.js';
-import { pathParam, queryOptInt } from '../common/request.js';import { fail, ok } from '../common/result.js';
+import { pathParam, queryOptInt, queryOptStr } from '../common/request.js';import { fail, ok } from '../common/result.js';
 import type { SkillSyncService } from '../harness/skill/skill-sync-service.js';
 import type { AgentLookup, UserLookup } from '../session/types.js';
 import type { SessionService } from '../session/session.service.js';
@@ -33,7 +33,7 @@ export function registerUserSkillRoutes(app: FastifyInstance, deps: Pick<SkillRo
 
   app.get('/v1/user-skills/:name', async (request, reply) => {
     const userId = requireUserId(request);
-    const result = userSkillService.getUserSkill(userId, pathParam(request, 'name'));
+    const result = userSkillService.getUserSkill(userId, pathParam(request, 'name'), queryOptStr(request, 'folder'));
     return sendJson(reply, 200, result.code === 0 ? ok(result.data) : result);
   });
 
@@ -46,7 +46,7 @@ export function registerUserSkillRoutes(app: FastifyInstance, deps: Pick<SkillRo
 
   app.delete('/v1/user-skills/:name', async (request, reply) => {
     const userId = requireUserId(request);
-    const result = userSkillService.deleteUserSkill(userId, pathParam(request, 'name'));
+    const result = userSkillService.deleteUserSkill(userId, pathParam(request, 'name'), queryOptStr(request, 'folder'));
     return sendJson(reply, 200, result.code === 0 ? ok(null) : result);
   });
 }
@@ -145,7 +145,7 @@ export function registerAdminUserSkillRoutes(
     if (!Number.isInteger(targetUserId) || targetUserId <= 0) {
       return sendJson(reply, 200, { code: 400, message: 'Invalid userId' });
     }
-    const result = userSkillService.getUserSkill(targetUserId, pathParam(request, 'name'));
+    const result = userSkillService.getUserSkill(targetUserId, pathParam(request, 'name'), queryOptStr(request, 'folder'));
     return sendJson(reply, 200, result.code === 0 ? ok(result.data) : result);
   });
 
@@ -156,7 +156,7 @@ export function registerAdminUserSkillRoutes(
     if (!Number.isInteger(targetUserId) || targetUserId <= 0) {
       return sendJson(reply, 200, { code: 400, message: 'Invalid userId' });
     }
-    const result = userSkillService.deleteUserSkill(targetUserId, pathParam(request, 'name'));
+    const result = userSkillService.deleteUserSkill(targetUserId, pathParam(request, 'name'), queryOptStr(request, 'folder'));
     return sendJson(reply, 200, result.code === 0 ? ok(null) : result);
   });
 }

@@ -301,6 +301,7 @@ body: { agentIds?: number[] }          // 缺省 = 全部有 origin 的 Agent + 
 14. **fix-deps 意味着"上架 Agent 即其引用技能对全员可装"**（§8）：属主技能内容随共享目录对登录用户开放复制，报告 detail 带属主 userId 供审计。
 15. **`BundleSkill.sourceUrl` 本版导出不填**（§5.9）：技能级来源无可靠判定，字段仅保留格式位。
 16. **用户技能寻址统一为 frontmatter 名经 folderPath 解析**（§5.2 补救可达性）：上传侧不校验"目录名 == frontmatter 名"（属既有上传语义，不收紧），"目录 holder、frontmatter 名 theirs"可达；`getUserSkill`/`deleteUserSkill` 改为先按 frontmatter 名、再按目录名回退从 `listUserSkills` 的 `folderPath` 定位，使错位技能在桌面/后台可查看、可删除——决策 13 的占用失败指引（"请先删除该技能后重试"）因此真正可执行。不在上传侧收口的原因：修复后错位技能已可正常管理，收紧会拒绝现存可用的上传形态（如版本化目录名）。
+17. **重名技能（同一用户多个目录、frontmatter 同名）寻址失败闭合，不做首命中**（§5.2）：上传侧不查重使该状态正常可达（决策 16 同源），若按 `find()` 取首个命中，按名删除会删错对象（列表删第二行实际删第一个目录）并误报成功。故 `getUserSkill`/`deleteUserSkill` 增加可选 `folderPath` 入参（列表行级下发）：传入时按绝对路径全等寻址（不用 basename 兜底，避免跨用户串删），未传时命中多个目录即 409 并列全部候选，由用户按行「路径」精确删除；四个路由透传可选 query `?folder=`，前端查看/删除按行传自身 folderPath。fix-deps 占用指引同步改为目录级双标识（目录名 + frontmatter 名）并附重名告警——只写 frontmatter 名在重名时不可寻址，只写目录名则回到决策 16 前的 404。不在上传侧加查重拒绝：会挡住历史可用的上传形态，以寻址失败闭合 + 引导整理收敛。
 
 ## 11. 验收口径
 
