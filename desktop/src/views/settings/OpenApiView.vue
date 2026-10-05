@@ -281,8 +281,10 @@ import {
   type ApiTokenView, type WebhookTriggerView, type OutboundSubscriptionView, type OutboundDeliveryView
 } from '../../api'
 
-interface AgentOption { id: number; name: string | null }
-interface SessionOption { id: string; title: string | null }
+/** GET /v1/agents 列表项（后端 Agent DTO：enabled 为 1/0 数字，使用侧列表默认不返回停用项）。 */
+interface AgentOption { id: number; name: string | null; enabled?: number | boolean | null }
+/** `/v1/sessions/search` 返回项（MessageSearchItem，id 为数字）。 */
+interface SessionOption { id: number; title?: string | null }
 
 const tokens = ref<ApiTokenView[]>([])
 const triggers = ref<WebhookTriggerView[]>([])
@@ -343,6 +345,7 @@ async function fetchAgents(): Promise<void> {
   try {
     const { data } = await api.get('/agents')
     agents.value = ((data || []) as AgentOption[]).filter((agent) => agent.enabled !== false && agent.enabled !== 0)
+    // agents 列表已按后端使用侧口径过滤停用项，本地仅兜底
   } catch {
     agents.value = []
   }
