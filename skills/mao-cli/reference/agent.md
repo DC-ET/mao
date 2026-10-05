@@ -46,10 +46,81 @@
 | 修改 | `agent update` |
 | 停用/启用 | `agent set-enabled` |
 | 删除 | `agent delete` |
+| 导出 bundle（跨实例搬运） | `agent export` |
+| 导入 bundle | `agent import` |
 | 经验列表 | `agent experience list` |
 | 新增经验 | `agent experience create` |
 | 更新经验 | `agent experience update` |
 | 删除经验 | `agent experience delete` |
+
+---
+
+## Agent Bundle 导出/导入（跨实例搬运）
+
+把 Agent（主体 + 经验 + 推荐问题 + 当前提示词 + 技能 + MCP 定义）打包为 `mao-agent-bundle` v1 JSON，用于自托管实例之间交换或离线备份。两个命令均需 `agent:write`；格式契约与脱敏规则（MCP env 值全量替换 `$MAO_REDACTED`、HTTP url 不脱敏）见仓库 [docs/guides/agent-bundle-format.md](../../docs/guides/agent-bundle-format.md)。
+
+导入为两段式：缺省 `confirm=false` 仅输出预检报告（名称冲突、技能/MCP 逐项动作、警告），`--confirm` 落库（服务端重新执行全部校验）。导入生成全新 Agent：名称冲突自动加“ 副本”后缀；MCP 以停用态创建、同名跳过且不绑定，需在管理端补齐 env 并手动启用；内联技能写入系统技能目录（同名不覆盖）。`configJson` 原样搬运；`defaultModelId` 置空、`isDefault=0`、`enabled=1`、起提示词版本 v1。团队共享目录（上架/下架/推荐语）暂无 CLI 子命令，REST 见下文“团队共享目录”。
+
+---
+
+## 命令：mao agent export
+
+### 用途
+
+导出 Agent bundle 到 JSON 文件（MCP 环境变量值全量脱敏，零密钥出包）。
+
+### 参数说明
+
+| 参数 | 必填 | 类型 | 含义 |
+|------|------|------|------|
+| `<id>` | 是 | 数字 | Agent ID（位置参数；兼容 `--id`） |
+| `--inline-skills` | 否 | 逗号分隔 | 内联导出的用户技能，格式 `name` 或 `name@userId`（同名多归属时必须带 `@userId`）；系统技能不能内联 |
+| `-o` / `--out` | 否 | 字符串 | 输出文件路径，缺省 `./mao-agent-bundle-<名称>-v1.json` |
+
+内联技能文本总量上限 10MB，超出报错（提示改用引用方式）。`--json` 时额外输出 bundle 内容。
+
+### 示例
+
+```bash
+mao agent export 3
+mao agent export 3 --inline-skills code-review@12,packer -o ./reviewer.json
+```
+
+---
+
+## 命令：mao agent import
+
+### 用途
+
+导入 bundle。缺省输出人类可读的预检报告且不落库；`--confirm` 执行导入并输出最终名称与 agentId。
+
+### 参数说明
+
+| 参数 | 必填 | 类型 | 含义 |
+|------|------|------|------|
+| `<文件>` | 是 | 字符串 | bundle JSON 文件路径（位置参数；兼容 `--file`） |
+| `--confirm` | 否 | 布尔 | 确认落库 |
+
+### 示例
+
+```bash
+mao agent import ./mao-agent-bundle-代码评审员-v1.json
+mao agent import ./reviewer.json --confirm
+```
+
+---
+
+## 团队共享目录（REST）
+
+管理员将启用中的 Agent 上架到工作台“团队共享”分区（登录即可读，写路径需 `agent:write`；CLI 暂无子命令）：
+
+| 操作 | 接口 | 说明 |
+|------|------|------|
+| 列表 + 依赖自检 | `GET /api/v1/shared-agents` | 按 `sortOrder asc, agentId asc` 返回条目；`missingSkills` 为当前用户缺失的技能，`mcpIssues` 形如 `context7（已停用）` |
+| 上架/更新 | `PUT /api/v1/agents/:id/shared-entry` | body `{ note, sortOrder }`，note ≤512；停用中的 Agent 报错“请先启用该 Agent”；重复上架即更新 |
+| 下架 | `DELETE /api/v1/agents/:id/shared-entry` | 幂等 |
+
+Agent 删除时条目级联删除；停用时条目保留、列表隐藏，重新启用即恢复展示。
 
 ---
 

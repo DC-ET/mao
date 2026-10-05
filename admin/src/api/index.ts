@@ -58,6 +58,11 @@ async function refreshAccessToken(): Promise<string | null> {
 // Response interceptor - handle errors
 api.interceptors.response.use(
   (response) => {
+    // 文件下载（如 Agent Bundle 导出）：body 是原始文件而非 Result 信封，
+    // 原样透传 response，由调用方检查 Content-Disposition / 解析错误 JSON。
+    if (response.config.responseType === 'blob') {
+      return response
+    }
     // 后端统一响应 Result<T>（契约来自 @mao/contracts）
     const data = response.data as Result<unknown>
     if (data.code !== 0) {

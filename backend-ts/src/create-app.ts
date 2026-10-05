@@ -55,8 +55,13 @@ import { MysqlAgentExperienceRepository, MysqlAgentRepository, MysqlAgentSuggest
 import { AgentExperienceService } from './agent/agent-experience.service.js';
 import { AgentSuggestedQuestionService } from './agent/agent-suggested-question.service.js';
 import { AgentService } from './agent/agent.service.js';
+import { AgentBundleService } from './agent/agent-bundle.service.js';
+import { SharedAgentEntryRepository } from './agent/shared-agent.repository.js';
+import { SharedAgentService } from './agent/shared-agent.service.js';
 import { registerAgentAvatarRoutes } from './agent/agent-avatar.js';
 import { registerAgentRoutes } from './agent/agent.routes.js';
+import { registerAgentBundleRoutes } from './agent/agent-bundle.routes.js';
+import { registerSharedAgentRoutes } from './agent/shared-agent.routes.js';
 import { McpServerValidatorImpl, MysqlMcpServerLookup } from './agent/mcp-validator.js';
 import { MysqlLlmModelRepository, MysqlSessionModelRepository } from './model/model.repository.js';
 import { OpenAiChatClient } from './model/llm-chat.client.js';
@@ -521,7 +526,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const experienceService = new AgentExperienceService(new MysqlAgentExperienceRepository(db));
   const suggestedQuestionService = new AgentSuggestedQuestionService(new MysqlAgentSuggestedQuestionRepository(db));
   const modelRepo = new MysqlLlmModelRepository(db);
-  const agentService = new AgentService(agentRepo, experienceService, suggestedQuestionService, modelRepo);
+  // 团队共享目录条目仓储先于 AgentService 构造：deleteAgent 逻辑删除时服务层级联清条目（表无外键）
+  const sharedAgentEntryRepo = new SharedAgentEntryRepository(db);
+  const agentService = new AgentService(agentRepo, experienceService, suggestedQuestionService, modelRepo, sharedAgentEntryRepo);
   const llmCallService = new LlmCallService(
     new LlmCallRepository(db),
     {
@@ -707,6 +714,20 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const mcpClient = new McpClientManager(cfg.app.mcp.clientTimeoutSeconds);
   const mcpToolsRegistry = new McpToolsRegistry();
   const mcpSync = new McpSyncService(mcpMapper, mcpServerService, mcpToolsRegistry, mcpPref);
+
+  // Agent 资产化：bundle 导出/导入（P1）+ 团队共享目录（P2）
+  const mcpServerLookup = new MysqlMcpServerLookup(db);
+  const agentBundleService = new AgentBundleService(
+    agentRepo, experienceService, suggestedQuestionService, skillLoader, userSkillService,
+    mcpServerService, mcpMapper, mcpCipher,
+  );
+  const sharedAgentService = new SharedAgentService(
+    sharedAgentEntryRepo,
+    { findById: (id) => agentRepo.findById(id) },
+    skillLoader,
+    userSkillService,
+    mcpServerLookup,
+  );
 
   const openAiLlmAdapter = new OpenAiLlmAdapter({
     rateLimitMaxRetries: harnessTuning.llm.rateLimitMaxRetries,
@@ -2085,7 +2106,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const analyticsService = new AnalyticsService(new AnalyticsDbStore(db));
   const statisticsService = new StatisticsService(new StatisticsDbStore(db));
   const adminAnalytics = new AdminAnalyticsService(statisticsService, new AdminAnalyticsDbStore(db));
-  const mcpValidator = new McpServerValidatorImpl(new MysqlMcpServerLookup(db));
+  const mcpValidator = new McpServerValidatorImpl(mcpServerLookup);
 
   await app.register(async (api) => {
     api.get('/swagger-ui.html', async (_req, reply) => reply.redirect(`${apiPrefix}/swagger-ui`));
@@ -2120,6 +2141,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       agentService, experienceService, suggestedQuestionService, userRepo, mcpServerValidator: mcpValidator,
       permissionService,
     });
+    registerAgentBundleRoutes(api, { agentBundleService, permissionService });
+    registerSharedAgentRoutes(api, { sharedAgentService, permissionService });
     registerModelRoutes(api, { modelService, permissionService });
     registerSystemSettingRoutes(api, { systemSettingService: settingService, permissionService });
     registerCommandRoutes(api, {

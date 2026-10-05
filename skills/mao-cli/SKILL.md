@@ -105,6 +105,7 @@ mao auth login --username <用户名> --password <密码>
 | 用户 CRUD | [reference/user.md](reference/user.md) |
 | 角色、权限点 | [reference/role.md](reference/role.md) |
 | Agent 与经验 | [reference/agent.md](reference/agent.md) |
+| Agent Bundle 导出/导入（跨实例搬运） | [reference/agent.md](reference/agent.md)（格式契约见仓库 [docs/guides/agent-bundle-format.md](../../docs/guides/agent-bundle-format.md)） |
 | 模型查询与管理端配置 | [reference/model.md](reference/model.md) |
 | MCP 全局/用户级配置与偏好 | [reference/mcp.md](reference/mcp.md) |
 | 当前用户会话元数据 | [reference/session.md](reference/session.md) |

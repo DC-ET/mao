@@ -1,5 +1,6 @@
 'use strict';
 
+const { readFileSync, writeFileSync } = require('node:fs');
 const {
   createCliError,
   requireString,
@@ -25,6 +26,8 @@ const HELP = `用法:
   mao agent experience create --agent-id <id> --content <内容> [--sort-order] [--enabled]
   mao agent experience update --agent-id <id> --id <经验id> [--content] [--sort-order] [--enabled]
   mao agent experience delete --agent-id <id> --id <经验id>
+  mao agent export <id> [--inline-skills name[@userId],...] [-o <文件>]      # 需 agent:write；MCP env 值全量脱敏
+  mao agent import <文件> [--confirm]                                       # 需 agent:write；缺省输出预检报告
 `;
 
 function buildAgentBody(flags, { requireCore = false } = {}) {
@@ -54,6 +57,69 @@ function buildAgentBody(flags, { requireCore = false } = {}) {
   if (isDefault !== undefined) body.isDefault = isDefault ? 1 : 0;
   if (defaultModelId !== undefined) body.defaultModelId = defaultModelId || null;
   return body;
+}
+
+function bundleFileName(agentName) {
+  const safe = String(agentName || '')
+    .replace(/[^\w.-]+/g, '-')
+    .replace(/^[-.]+|[-.]+$/g, '')
+    .slice(0, 64);
+  return `mao-agent-bundle-${safe || 'agent'}-v1.json`;
+}
+
+function positionId(positionals, flags, label) {
+  const raw = positionals[0];
+  if (raw != null && String(raw).trim() !== '') {
+    const n = Number(raw);
+    if (!Number.isSafeInteger(n) || n <= 0) {
+      throw createCliError(`${label}必须是正整数: ${raw}`);
+    }
+    return n;
+  }
+  return requireNumber(flags, 'id', label);
+}
+
+const SKILL_ACTION_LABEL = {
+  'system-exists': '系统技能已存在',
+  'will-import': '将导入',
+  'import-failed': '导入失败',
+  'exists-skip': '同名跳过（不覆盖）',
+  ok: '已就绪',
+  missing: '目标实例缺失',
+};
+
+const MCP_ACTION_LABEL = {
+  'will-create-disabled': '将创建（停用态）',
+  'skip-name-conflict': '同名跳过（不绑定）',
+  'skip-invalid': '定义无效跳过',
+};
+
+function renderImportReport(report) {
+  const lines = [];
+  const nameLine = report.nameConflict
+    ? `Agent: ${report.agentName} → 导入后: ${report.finalName}（名称冲突已加后缀）`
+    : `Agent: ${report.agentName} → 导入后: ${report.finalName}`;
+  lines.push(nameLine);
+  lines.push(`经验: ${report.experiencesCount} 条；推荐问题: ${report.suggestedQuestionsCount} 条`);
+  if (Array.isArray(report.skills) && report.skills.length > 0) {
+    lines.push('技能:');
+    for (const s of report.skills) {
+      const label = SKILL_ACTION_LABEL[s.action] ?? s.action;
+      lines.push(`  - [${s.include}] ${s.name} → ${label}${s.detail ? `（${s.detail}）` : ''}`);
+    }
+  }
+  if (Array.isArray(report.mcpServers) && report.mcpServers.length > 0) {
+    lines.push('MCP 服务器:');
+    for (const m of report.mcpServers) {
+      const label = MCP_ACTION_LABEL[m.action] ?? m.action;
+      lines.push(`  - ${m.name} [${m.serverType}] → ${label}`);
+    }
+  }
+  if (Array.isArray(report.warnings) && report.warnings.length > 0) {
+    lines.push('警告:');
+    for (const w of report.warnings) lines.push(`  - ${w}`);
+  }
+  return lines.join('\n');
 }
 
 async function handle(ctx) {
@@ -194,6 +260,60 @@ async function handle(ctx) {
       const id = requireNumber(flags, 'id', 'Agent ID');
       const result = await request({ ...common, method: 'DELETE', path: `/agents/${id}` });
       outputResult(result, globals);
+      return;
+    }
+    case 'export': {
+      const id = positionId(rest, flags, 'Agent ID');
+      const inlineSkills = optionalString(flags, 'inline-skills');
+      const out = optionalString(flags, 'out') ?? optionalString(flags, 'o');
+      const result = await request({
+        ...common,
+        method: 'GET',
+        path: `/agents/${id}/bundle`,
+        query: inlineSkills ? { inlineSkills } : undefined,
+      });
+      // bundle 响应体即格式契约本身（非 Result 信封）
+      if (!result || typeof result !== 'object' || result.format !== 'mao-agent-bundle') {
+        throw createCliError('响应不是合法的 mao-agent-bundle，请检查服务端版本');
+      }
+      const filePath = out || bundleFileName(result.agent?.name);
+      writeFileSync(filePath, JSON.stringify(result, null, 2), 'utf8');
+      if (globals.json || globals.raw) {
+        outputResult({ code: 0, message: 'ok', data: { file: filePath, bundle: result } }, globals);
+      } else {
+        process.stdout.write(`已导出到 ${filePath}\n`);
+      }
+      return;
+    }
+    case 'import': {
+      const file = rest[0] != null && String(rest[0]).trim() !== '' ? String(rest[0]) : requireString(flags, 'file', 'bundle 文件路径');
+      const confirm = optionalBoolean(flags, 'confirm') ?? false;
+      let bundle;
+      try {
+        bundle = JSON.parse(readFileSync(file, 'utf8'));
+      } catch (e) {
+        throw createCliError(`读取/解析 bundle 文件失败: ${e.message}`);
+      }
+      const result = await request({
+        ...common,
+        method: 'POST',
+        path: '/agent-bundle/import',
+        body: { bundle, confirm },
+      });
+      const data = result?.data;
+      if (confirm && data && typeof data === 'object' && 'agentId' in data) {
+        if (globals.json || globals.raw) {
+          outputResult(result, globals);
+        } else {
+          process.stdout.write(`导入完成：agentId=${data.agentId}\n${renderImportReport(data.report ?? {})}\n`);
+        }
+        return;
+      }
+      if (globals.json || globals.raw) {
+        outputResult(result, globals);
+      } else {
+        process.stdout.write(`${renderImportReport(data ?? {})}\n\n以上为预检报告，未落库。确认无误后追加 --confirm 执行导入。\n`);
+      }
       return;
     }
     default:
