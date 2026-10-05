@@ -227,7 +227,7 @@ export class SharedAgentService {
       return {
         name,
         action: 'failed',
-        detail: `本人已存在同名技能目录「${name}」（其 frontmatter 名为「${occupied.name}」），为避免覆盖既有技能，请先整理该目录后重试`,
+        detail: `本人已存在同名技能目录「${name}」（其 frontmatter 名为「${occupied.name}」），为避免覆盖既有技能，请先在个人技能中删除「${occupied.name}」后重试`,
       };
     }
     const candidates = allUserSkills.filter((s) => s.name === name);

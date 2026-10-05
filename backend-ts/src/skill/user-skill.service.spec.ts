@@ -49,6 +49,53 @@ describe('UserSkillService', () => {
     expect(existsSync(join(dir, '7', 'new'))).toBe(false);
   });
 
+  it('错位技能（目录名≠frontmatter 名）可查看/删除：按 frontmatter 名经 folderPath 寻址', async () => {
+    const dir = useTmpDir('mao-uskill-mismatch-');
+    const service = new UserSkillService(dir);
+    const { existsSync } = await import('node:fs');
+
+    // 上传通道即可构造：目录 holder、frontmatter 名 theirs（validateSkillGroup 不比对二者）
+    const uploaded = service.uploadUserSkill(7, [
+      { originalFilename: 'holder/SKILL.md', buffer: Buffer.from(skill('theirs', '错位技能', 'Body')) },
+    ]);
+    expect(uploaded.code).toBe(0);
+    expect(existsSync(join(dir, '7', 'holder'))).toBe(true);
+
+    // 列表按 frontmatter 名展示，folderPath 指向真实目录
+    const list = service.listUserSkills(7);
+    expect(list.map((s) => s.name)).toEqual(['theirs']);
+    expect(list[0].folderPath).toBe(join(dir, '7', 'holder'));
+
+    // 按列表名查看与删除都必须命中真实目录（旧实现按名字重拼目录 → 404，数据被锁死）
+    const detail = service.getUserSkill(7, 'theirs');
+    expect(detail.code).toBe(0);
+    expect(detail.data?.name).toBe('theirs');
+    expect(detail.data?.folderPath).toBe(join(dir, '7', 'holder'));
+
+    expect(service.deleteUserSkill(7, 'theirs').code).toBe(0);
+    expect(existsSync(join(dir, '7', 'holder'))).toBe(false);
+    expect(service.listUserSkills(7)).toEqual([]);
+  });
+
+  it('按目录名传入仍兼容；不存在/非法名 → 404/400', async () => {
+    const dir = useTmpDir('mao-uskill-mismatch-fallback-');
+    const service = new UserSkillService(dir);
+    const { existsSync } = await import('node:fs');
+    mkdirSync(join(dir, '7', 'holder'), { recursive: true });
+    writeFileSync(join(dir, '7', 'holder', 'SKILL.md'), skill('theirs', '错位技能', 'Body'));
+
+    // 目录名回退：既有按目录名寻址的调用方不受影响
+    expect(service.getUserSkill(7, 'holder').code).toBe(0);
+    expect(service.getUserSkill(7, 'holder').data?.name).toBe('theirs');
+    expect(service.deleteUserSkill(7, 'holder').code).toBe(0);
+    expect(existsSync(join(dir, '7', 'holder'))).toBe(false);
+
+    expect(service.getUserSkill(7, 'ghost').code).toBe(404);
+    expect(service.deleteUserSkill(7, 'ghost').code).toBe(404);
+    expect(service.getUserSkill(7, '../escape').code).toBe(400);
+    expect(service.deleteUserSkill(7, '../escape').code).toBe(400);
+  });
+
   it('restoresExecutableBitsForUploadedScripts', async () => {
     const dir = useTmpDir('mao-uskill-');
     const service = new UserSkillService(dir);

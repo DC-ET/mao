@@ -343,6 +343,13 @@ describe('SharedAgentService.fixDependencies（依赖一键补装）', () => {
     expect(readFileSync(join(userSkillsDir, String(OPERATOR), 'theirs', 'SKILL.md'), 'utf8')).toContain('wrong-name');
     expect(existsSync(join(userSkillsDir, String(OPERATOR), 'theirs', 'mine.txt'))).toBe(true);
     expect(userSkillService.listUserSkills(OPERATOR).map((s) => s.name)).toEqual(['wrong-name']);
+
+    // 失败指引必须可达：按列表名（frontmatter 名）删除错位技能后重试即成功（第 2 轮 N1 闭环）
+    expect(userSkillService.deleteUserSkill(OPERATOR, 'wrong-name').code).toBe(0);
+    expect(existsSync(join(userSkillsDir, String(OPERATOR), 'theirs'))).toBe(false);
+    const retry = await service.fixDependencies(1, OPERATOR);
+    expect(retry.skills[0]).toMatchObject({ name: 'theirs', action: 'installed' });
+    expect(retry.selfCheck.missingSkills).toEqual([]);
   });
 
   it('skillNames 含重复项时只补装一次（不输出 installed + ambiguous 矛盾报告）', async () => {

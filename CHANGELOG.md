@@ -25,7 +25,7 @@
 - 新增 `POST /v1/agent-bundle/check-updates`（`agent:write`）：批量比对远端 contentHash 与导入时快照（`changed`），并按 systemPrompt 快照检测本地漂移（`localEdited`）；双来源（导入来源 / 共享条目 source_url）不一致时条目优先；应用更新 = 重新导入生成新副本，永不覆盖旧 Agent。
 - 新增 `mao-skill-bundle` v1 技能独立搬运格式：`GET /v1/skill-bundles/:name`（系统技能 `skill:read`；`?owner=` 导出用户技能）与 `POST /v1/skill-bundle/import`（`skill:write`，两段式写系统技能目录，同名不覆盖）；`skills[].sourceUrl` 为预留格式位，导入端忽略、旧 bundle 零影响。
 - 上架接口 `PUT /v1/agents/:id/shared-entry` 支持可选 `sourceUrl`（远端 registry URL，V134 加列）。
-- 同一用户存在多个 frontmatter 同名技能目录时，用户技能查看/删除按名寻址返回 409 并列全部候选目录（此前会静默命中第一个目录，删除即误删无关技能且误报成功）；查看/删除接口新增可选 `folder` 参数按目录精确寻址，桌面与管理后台按列表行的「路径」自动透传，`mao skill get/delete` 同步支持 `--folder`，依赖补装的占用指引同步改为目录级双标识并附重名告警。
+- 同一用户存在多个 frontmatter 同名技能目录时，用户技能查看/删除按名寻址返回 409 并列全部候选目录（此前会静默命中第一个目录，删除即误删无关技能且误报成功）；查看/删除接口新增可选 `folder` 参数按目录精确寻址，桌面与管理后台按列表行的「路径」自动透传，`mao skill get/delete` 同步支持 `--folder`，依赖补装的占用指引同步改为目录级双标识并附重名告警；registry 内联 token 生成、fix-deps 补装等技能名处理同步按 Set 去重（历史重复 skillNames 不再导致 registry 导出 409 与矛盾报告）。
 - 新增开放接口域 `backend-ts/src/openapi/` 与 V133 迁移（`api_token` / `webhook_trigger` / `outbound_subscription` / `outbound_delivery` 四表，`message_queue` 增 `source_type` / `open_trigger_id` 两列）。
 - 新增 P1 REST 触发端点：`POST /api/v1/open/agents/:agentId/run`（Bearer `mao_` 前缀 API Token 鉴权，scope `open:run`），以 202 异步语义把消息投递到指定 Agent（可选复用 `sessionId`），会话忙时自动进入待发送队列；每次请求按 Token 维度限流 60 次/分钟（超限返回 429 + `Retry-After`）。Token 仅创建时展示一次明文（sha256 存库），每人上限 20 个，默认 90 天过期。
 - 新增 P2 入站 Webhook 触发器：用户自建 Agent 可绑定 `POST /api/v1/open/hooks/:pathToken` 公开 URL，外部系统带 `X-Mao-Timestamp` + `X-Mao-Signature`（HMAC-SHA256，±300s 时间窗，原始请求体参与签名）调用即触发一次运行；触发密钥仅创建/轮换时展示一次；不存在 / 已停用 / 验签失败统一返回 404 固定短语（不泄露资源是否存在）。连续执行失败 5 次自动停用并在收件箱推送「触发器停用」通知，避免故障外部系统反复触发。

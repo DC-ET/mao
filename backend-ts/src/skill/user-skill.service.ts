@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve, sep } from 'node:path';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { fail } from '../common/result.js';
 import { isValidSkillName, parseSkillMdContent, validateSkillMd } from '../harness/skill/skill-md.js';
 import { isHiddenRelativePath, skillFilesPathError } from './read-skill-files.js';
@@ -93,7 +93,7 @@ export class UserSkillService {
   }
 
   getUserSkill(userId: number, name: string): SkillResult<SkillDocDetailVO> {
-    const resolved = this.resolveUserSkillFolder(userId, name);
+    const resolved = this.resolveUserSkillFolderByName(userId, name);
     if ('code' in resolved) return resolved;
     const skillFolder = resolved.folder;
     const skillMd = join(skillFolder, 'SKILL.md');
@@ -241,7 +241,7 @@ export class UserSkillService {
   }
 
   deleteUserSkill(userId: number, name: string): SkillResult<null> {
-    const resolved = this.resolveUserSkillFolder(userId, name);
+    const resolved = this.resolveUserSkillFolderByName(userId, name);
     if ('code' in resolved) return resolved;
     const skillFolder = resolved.folder;
     if (!existsSync(skillFolder) || !statSync(skillFolder).isDirectory()) {
@@ -261,16 +261,24 @@ export class UserSkillService {
     return resolve(this.userSkillsDir, String(userId));
   }
 
-  private resolveUserSkillFolder(userId: number, name: string): SkillResult<never> | { folder: string } {
+  /**
+   * 按 frontmatter 名定位用户技能目录（列表/运行时/SkillSync/导出全链路统一的技能身份口径）。
+   * 上传侧不校验"目录名 == frontmatter 名"（validateSkillGroup 只校验 SKILL.md 自身合法），
+   * "目录 holder、frontmatter 名 theirs"是正常上传即可达的状态；若按入参名重拼目录寻址，
+   * 这类技能在列表里可见却查看/删除必然 404（数据被锁死）。这里从 listUserSkills 的
+   * folderPath 解析，并按目录名回退以兼容按目录名传入的既有调用方。
+   */
+  private resolveUserSkillFolderByName(userId: number, name: string): SkillResult<never> | { folder: string } {
     if (!name || name.includes('/') || name.includes('\\') || name.includes('..') || name.startsWith('.')) {
       return fail(400, `Invalid skill name: ${name}`);
     }
-    const userDir = this.getUserSkillsDir(userId);
-    const skillFolder = resolve(userDir, name);
-    if (skillFolder !== userDir && !skillFolder.startsWith(userDir + sep)) {
-      return fail(400, `Invalid skill name: ${name}`);
+    const skills = this.listUserSkills(userId);
+    const found = skills.find((s) => s.name === name)
+      ?? skills.find((s) => basename(s.folderPath) === name);
+    if (found == null) {
+      return fail(404, `Skill not found: ${name}`);
     }
-    return { folder: skillFolder };
+    return { folder: found.folderPath };
   }
 }
 

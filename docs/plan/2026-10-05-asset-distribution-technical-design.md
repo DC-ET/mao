@@ -300,6 +300,7 @@ body: { agentIds?: number[] }          // 缺省 = 全部有 origin 的 Agent + 
 13. **fix-deps 写盘前做目标目录占用检查**（§5.2）：自检按 frontmatter 名判"缺失"、写盘按目录名落盘，而上传侧不校验"目录名 == frontmatter 名"，操作者已有的"目录 A、frontmatter 名 B"技能会被补装静默覆盖（rename 备份成功后即删除）。占用且 frontmatter 名不一致时该条目标 failed；`installUserSkillFiles` 亦对已存在的目标目录直接拒绝（409）。
 14. **fix-deps 意味着"上架 Agent 即其引用技能对全员可装"**（§8）：属主技能内容随共享目录对登录用户开放复制，报告 detail 带属主 userId 供审计。
 15. **`BundleSkill.sourceUrl` 本版导出不填**（§5.9）：技能级来源无可靠判定，字段仅保留格式位。
+16. **用户技能寻址统一为 frontmatter 名经 folderPath 解析**（§5.2 补救可达性）：上传侧不校验"目录名 == frontmatter 名"（属既有上传语义，不收紧），"目录 holder、frontmatter 名 theirs"可达；`getUserSkill`/`deleteUserSkill` 改为先按 frontmatter 名、再按目录名回退从 `listUserSkills` 的 `folderPath` 定位，使错位技能在桌面/后台可查看、可删除——决策 13 的占用失败指引（"请先删除该技能后重试"）因此真正可执行。不在上传侧收口的原因：修复后错位技能已可正常管理，收紧会拒绝现存可用的上传形态（如版本化目录名）。
 
 ## 11. 验收口径
 
