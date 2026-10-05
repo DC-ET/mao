@@ -126,10 +126,11 @@ describe('inbox store', () => {
     expect(store.page).toBe(1)
   })
 
-  it('markRead 成功后本地条目已读且未读数递减', async () => {
+  it('markRead 成功后本地条目已读，未读数重拉权威值（不做本地递减）', async () => {
     const store = useInboxStore()
     store.applyPage(makeList([makeItem(1), makeItem(2)]), 1)
     mockMarkRead.mockResolvedValue(undefined)
+    mockFetchUnreadCount.mockResolvedValue({ unreadCount: 1 })
     store.unreadCount = 2
 
     await store.markRead(1)
@@ -137,7 +138,37 @@ describe('inbox store', () => {
     expect(mockMarkRead).toHaveBeenCalledWith(1)
     expect(store.items[0].isRead).toBe(true)
     expect(store.items[0].readAt).toBeTruthy()
+    // 服务端权威值为 1；本地不得再 -1（否则 2→0，徽标提前消失）
+    expect(mockFetchUnreadCount).toHaveBeenCalled()
     expect(store.unreadCount).toBe(1)
+  })
+
+  // 回归：服务端 markRead 后会广播权威 COUNT（WS inbox_updated）。该帧与 HTTP 响应
+  // 到达顺序不确定，本地若再递减一次，同一条变更被计两遍 → 徽标从 2 直接归零。
+  it('markRead：权威帧先于 HTTP 响应到达时也不把未读数减到 0', async () => {
+    const store = useInboxStore()
+    store.applyPage(makeList([makeItem(1), makeItem(2)]), 1)
+    store.unreadCount = 2
+    mockMarkRead.mockResolvedValue(undefined)
+    // WS 帧已把徽标刷成权威值 1（此时 HTTP 响应尚未回来）
+    store.setUnreadCount(1)
+    mockFetchUnreadCount.mockResolvedValue({ unreadCount: 1 })
+
+    await store.markRead(1)
+
+    expect(store.unreadCount).toBe(1)
+  })
+
+  it('markRead：条目不在当前页时未读数同样刷新为权威值', async () => {
+    const store = useInboxStore()
+    store.applyPage(makeList([makeItem(1)]), 1)
+    store.unreadCount = 3
+    mockMarkRead.mockResolvedValue(undefined)
+    mockFetchUnreadCount.mockResolvedValue({ unreadCount: 2 })
+
+    await store.markRead(99)
+
+    expect(store.unreadCount).toBe(2)
   })
 
   it('markRead 失败时保持未读态', async () => {
@@ -170,7 +201,7 @@ describe('inbox store', () => {
     expect(store2.unreadCount).toBe(1)
   })
 
-  it('remove 成功后本地移除条目，未读条目同步递减；失败时保留', async () => {
+  it('remove 成功后本地移除条目并重拉权威未读数；失败时保留', async () => {
     const store = useInboxStore()
     store.applyPage(makeList([makeItem(1), makeItem(2)], 2), 1)
     store.unreadCount = 2
@@ -181,7 +212,22 @@ describe('inbox store', () => {
     expect(store.unreadCount).toBe(2)
 
     mockRemove.mockResolvedValue(undefined)
+    mockFetchUnreadCount.mockResolvedValue({ unreadCount: 1 })
     await store.remove(1)
+    expect(store.items.map((i) => i.id)).toEqual([2])
+    expect(store.unreadCount).toBe(1)
+  })
+
+  // 回归：条目被移出本地列表后已无从判断它原本是否未读，只能以服务端 COUNT 为准
+  it('remove：已读条目删除后未读数仍由服务端权威值决定（不误减）', async () => {
+    const store = useInboxStore()
+    store.applyPage(makeList([makeItem(1, { isRead: true }), makeItem(2)]), 1)
+    store.unreadCount = 1
+    mockRemove.mockResolvedValue(undefined)
+    mockFetchUnreadCount.mockResolvedValue({ unreadCount: 1 })
+
+    await store.remove(1)
+
     expect(store.items.map((i) => i.id)).toEqual([2])
     expect(store.unreadCount).toBe(1)
   })

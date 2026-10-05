@@ -145,21 +145,26 @@ export const useInboxStore = defineStore('inbox', {
       await this.fetchList()
     },
 
+    /**
+     * 单条置已读：本地只更新条目自身，未读数一律重拉权威值。
+     *
+     * 不能本地 `-= 1`：服务端 markRead 后已经广播过权威 COUNT（WS `inbox_updated`），
+     * 若本地再减一次就会把同一条变更计两遍 —— 徽标会从 2 直接归零（2→1→0），
+     * 而服务端真实未读仍是 1。本地递减也覆盖不了「条目不在当前页」的情况。
+     */
     async markRead(id: number): Promise<boolean> {
-      let ok = false
       try {
         await markInboxItemRead(id)
-        ok = true
       } catch {
         return false
       }
       const item = this.items.find((i) => i.id === id)
-      if (item != null && !item.isRead) {
+      if (item != null) {
         item.isRead = true
-        item.readAt = new Date().toISOString()
-        if (this.unreadCount > 0) this.unreadCount -= 1
+        if (item.readAt == null) item.readAt = new Date().toISOString()
       }
-      return ok
+      await this.fetchUnreadCount()
+      return true
     },
 
     async markAllRead(): Promise<void> {
@@ -176,8 +181,9 @@ export const useInboxStore = defineStore('inbox', {
     },
 
     /**
-   * 删除单条：本地同步移除，未读条目同步递减未读数。
-   * 注意递减用 `> 0` 兜底（服务端权威数永不为负）。
+   * 删除单条：本地同步移除条目，未读数重拉权威值。
+   * 与 `markRead` 同理——服务端 remove 已广播权威 COUNT，本地再递减会重复计数；
+   * 且条目被删除后已无法从本地列表判断它原本是否未读，本地递减本就不可靠。
    */
   async remove(id: number): Promise<void> {
       try {
@@ -187,8 +193,8 @@ export const useInboxStore = defineStore('inbox', {
       }
       const index = this.items.findIndex((i) => i.id === id)
       if (index < 0) return
-      const [removed] = this.items.splice(index, 1)
-      if (!removed.isRead && this.unreadCount > 0) this.unreadCount -= 1
+      this.items.splice(index, 1)
+      await this.fetchUnreadCount()
     },
 
     async fetchInboxPreference(): Promise<InboxPreference> {
