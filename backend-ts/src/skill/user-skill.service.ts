@@ -140,12 +140,16 @@ export class UserSkillService {
    * 内存文件安装用户技能（共享目录依赖一键补装）：校验链对齐 bundle 导入 inline 分支
    * （SKILL.md 校验 + frontmatter 与技能名一致 + 隐藏路径段过滤 + 路径穿越拒绝），
    * 落盘复用 uploadUserSkill 的暂存交换机制（stage → swap → backup → 失败恢复）。
-   * 自检缺失是前置条件（调用方保证目标技能不存在），写盘侧仍保留备份恢复以兜底并发。
+   * 与 uploadUserSkill 的覆盖语义不同：目标目录已存在即拒绝——自检按 frontmatter 名判缺失、
+   * 写盘按目录名落盘，"目录 A、frontmatter 名 B"的技能会让补装静默覆盖 A/。
    */
   installUserSkillFiles(userId: number, skillName: string, files: Record<string, string>): SkillResult<string> {
     // skillName 来自 DB 的 agent.skillNames（不经过 bundle 解析），用作目录名前必须校验
     if (!isValidSkillName(skillName)) {
       return fail(400, `Invalid skill name: ${skillName}`);
+    }
+    if (existsSync(join(this.getUserSkillsDir(userId), skillName))) {
+      return fail(409, `同名技能目录已存在，拒绝覆盖：${skillName}`);
     }
     const skillMd = files['SKILL.md'];
     if (skillMd == null) {

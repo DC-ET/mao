@@ -447,6 +447,27 @@ describe('SystemSettingService bundle registry 配置', () => {
     expect(cfg).toEqual({ enabled: true, accessToken: 'my-registry-token' });
   });
 
+  it('token 密文解不开（SETTINGS_SECRET 轮换/实例迁移）时失败闭合：enabled=false；list 给出显式提示', async () => {
+    vi.mocked(mapper.findByKey).mockImplementation(async (key: string) => {
+      if (key === 'bundle.registry.enabled') {
+        return { id: 8, settingKey: key, category: 'Agent 资产', value: 'true', editable: 1 };
+      }
+      return registryRow('stale-ciphertext-from-old-key');
+    });
+    // 解密失败绝不能回落成"未配置 token"而整体跳过 registry token 校验（资产含完整 systemPrompt 与技能文件）
+    const cfg = await new SystemSettingService(mapper, agentLookup, modelLookup, { ...runtime }, 'unit-secret').getBundleRegistryConfig();
+    expect(cfg).toEqual({ enabled: false, accessToken: null });
+
+    // 密钥整体缺失（重启配置丢失）同样失败闭合
+    const noKey = await new SystemSettingService(mapper, agentLookup, modelLookup, { ...runtime }, '').getBundleRegistryConfig();
+    expect(noKey).toEqual({ enabled: false, accessToken: null });
+
+    // list 侧：管理员能看到显式"解不开"提示，而不是只能看到一个纯掩码、无从判断为何 registry 404
+    vi.mocked(mapper.list).mockResolvedValue([registryRow('stale-ciphertext-from-old-key')]);
+    const listed = await new SystemSettingService(mapper, agentLookup, modelLookup, { ...runtime }, 'unit-secret').list();
+    expect(listed[0].value).toContain('无法解密');
+  });
+
   it('掩码+尾4位回显：list 对 token 显示 ******+尾4；掩码原样提交视为未修改；其他 secret 键仍拒绝掩码', async () => {
     const svc = new SystemSettingService(mapper, agentLookup, modelLookup, { ...runtime }, 'unit-secret');
     vi.mocked(mapper.list).mockResolvedValue([registryRow(encryptAesGcmNonNull('my-registry-token', 'unit-secret'))]);

@@ -180,7 +180,9 @@ export class AgentBundleService {
     const tokens: string[] = [];
     if (agent.skillNames == null || agent.skillNames.trim() === '') return tokens;
     const all = this.userSkillService.listAllUserSkills();
-    for (const name of parseStringArray(agent.skillNames)) {
+    // 与 exportBundle 的 emittedSkillNames 同口径去重：skillNames 是 DB 自由文本数组，
+    // 可能含历史重复项，同一技能只生成一个 name@userId token（重复 token 会让导出侧误判"多个内联归属"而 409）
+    for (const name of [...new Set(parseStringArray(agent.skillNames))]) {
       if (this.skillLoader.hasSkill(name)) continue;
       const candidates = all.filter((s) => s.name === name);
       if (candidates.length === 0) continue; // 实例内已无该技能：导出为 reference，导入端报告 missing
@@ -452,7 +454,9 @@ export class AgentBundleService {
   /**
    * 批量检查更新（P2）：changed 以导入时的 origin.content_hash 快照为基准（导入损耗会造成
    * "本地重导出 vs 远端"口径的永久假 changed，禁止）；localEdited 仅覆盖 systemPrompt 漂移。
-   * 双 URL（origin.source_url 与 shared_agent_entry.source_url）不一致时条目优先（管理员显式维护）。
+   * 双 URL（origin.source_url 与 shared_agent_entry.source_url）不一致时条目优先（管理员显式维护），
+   * 但条目 URL 与 origin URL 不一致时基线语义错配（remoteHash 来源与 originHash 来源不同），
+   * 直接比对会恒真或恒假，此时落 error 要求重新导入建立基线而非输出 changed。
    */
   async checkUpdates(agentIds: number[] | null): Promise<BundleCheckUpdateItem[]> {
     const entryRows = await this.entrySourceLookup.listAll();
@@ -501,6 +505,12 @@ export class AgentBundleService {
     }
     const origin = await this.originRepo.findByAgentId(agentId).catch(() => null);
     item.originHash = origin?.contentHash ?? null;
+    // 条目 URL 与导入 URL 不一致时，remoteHash 与 originHash 来自两个不同远端，
+    // 语义不对应：不产出 changed（远端从未变化也恒真），而是显式阻断，引导重新导入建立基线
+    if (origin != null && origin.sourceUrl !== sourceUrl) {
+      item.error = `共享条目来源与导入来源不一致（导入：${origin.sourceUrl}；条目：${sourceUrl}），更新检查无法比对基线，请改用导入来源或重新导入`;
+      return item;
+    }
     let bundle: AgentBundle;
     try {
       bundle = await fetchBundleFromUrl(sourceUrl);
@@ -857,6 +867,9 @@ function stableStringify(value: unknown): string {
 /** inlineSkills 查询参数：逗号分隔 token，`name` 或 `name@userId`。 */
 export function parseInlineSkillTokens(raw: string | null | undefined): Array<{ name: string; userId?: number }> {
   if (raw == null || raw.trim() === '') return [];
+  // 完全相同的 token（name 与 userId 均同）去重：CLI 侧 `a@8,a@8` 与 registry
+  // 生成多余 token 都会让导出侧误判"多个内联归属"而 409，相同的归属意图不构成歧义
+  const seen = new Set<string>();
   return raw.split(',')
     .map((token) => token.trim())
     .filter((token) => token.length > 0)
@@ -868,6 +881,12 @@ export function parseInlineSkillTokens(raw: string | null | undefined): Array<{ 
         return { name: token.slice(0, at), userId };
       }
       return { name: token };
+    })
+    .filter((token) => {
+      const key = `${token.name}@${token.userId ?? ''}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
     });
 }
 

@@ -152,16 +152,15 @@ export class SystemSettingService {
     this.applyRuntimeValues(settings);
     for (const setting of settings) {
       if (setting.isSecret === 1 && hasText(setting.value ?? '')) {
-        // registry token 特例：解密后掩码 + 尾 4 位（设计约定，便于管理员辨认配置的是哪个 token）；解密失败回落纯掩码
+        // registry token 特例：解密后掩码 + 尾 4 位（设计约定，便于管理员辨认配置的是哪个 token）；
+        // 解密失败（SETTINGS_SECRET 轮换/实例迁移）时给出显式提示——否则管理员侧看不出异常，
+        // 而 registry 端点会按"解不开即未开启"失败闭合，表现为莫名 404
         if (setting.settingKey === BUNDLE_REGISTRY_ACCESS_TOKEN_KEY) {
-          try {
-            const plain = this.decryptSecret(setting.value!);
-            setting.value = SECRET_MASK + plain.slice(-4);
-            continue;
-          } catch {
-            setting.value = SECRET_MASK;
-            continue;
-          }
+          const plain = this.tryDecryptSecret(setting.value!);
+          setting.value = plain != null && hasText(plain)
+            ? SECRET_MASK + plain.slice(-4)
+            : SECRET_MASK + '（密钥已变更无法解密，请重新填写并保存）';
+          continue;
         }
         setting.value = SECRET_MASK;
       }
@@ -320,11 +319,22 @@ export class SystemSettingService {
 
   /** Bundle registry 只读端点配置（资产分发闭环）：默认关闭，管理员显式开启。 */
   async getBundleRegistryConfig(): Promise<BundleRegistrySettings> {
-    const [enabled, token] = await Promise.all([
+    const [enabled, row] = await Promise.all([
       this.getBool(BUNDLE_REGISTRY_ENABLED_KEY),
-      this.getSecret(BUNDLE_REGISTRY_ACCESS_TOKEN_KEY),
+      this.settingRepo.findByKey(BUNDLE_REGISTRY_ACCESS_TOKEN_KEY),
     ]);
-    return { enabled, accessToken: hasText(token) ? token : null };
+    const stored = row?.value ?? '';
+    if (!hasText(stored)) {
+      // 未配置 token：管理员显式开启即公开只读（无 token 门槛）
+      return { enabled, accessToken: null };
+    }
+    const plain = this.tryDecryptSecret(stored);
+    if (plain == null || !hasText(plain)) {
+      // 密文解不开（SETTINGS_SECRET 轮换 / 跨实例拷贝 DB）：安全门必须失败闭合——
+      // 绝不能回落成"未配置 token"而整体跳过校验，否则资产（含完整 systemPrompt 与技能文件）对任何可访问域名的人全量可读
+      return { enabled: false, accessToken: null };
+    }
+    return { enabled, accessToken: plain };
   }
 
   /** 全网搜索统一配置：provider 由后台「网络工具 → 搜索实现」切换，默认 tavily（向后兼容）。 */
@@ -534,6 +544,18 @@ export class SystemSettingService {
     } catch {
       console.error('SystemSetting decrypt failed, treat as unset (SETTINGS_SECRET changed?)');
       return '';
+    }
+  }
+
+  /** 解密 secret，失败/未配置密钥时返回 null（供需要区分"解不开"与"未配置"的安全门使用）。 */
+  private tryDecryptSecret(stored: string): string | null {
+    if (!hasText(this.secretKey)) {
+      return null;
+    }
+    try {
+      return decryptAesGcm(stored, this.secretKey, '配置解密失败');
+    } catch {
+      return null;
     }
   }
 

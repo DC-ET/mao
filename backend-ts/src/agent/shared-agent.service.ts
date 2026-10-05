@@ -1,5 +1,6 @@
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
+import { basename } from 'node:path';
 import type { SkillLoader } from '../harness/skill/skill-loader.js';
 import { STATUS_ENABLED } from '../harness/mcp/entity/mcp-server.js';
 import { isValidSkillName } from '../harness/skill/skill-md.js';
@@ -13,7 +14,7 @@ import type { SharedAgentEntryRepository } from './shared-agent.repository.js';
  * listAllUserSkills 用于缺失技能的属主定位；installUserSkillFiles 用于一键补装落盘。
  */
 export interface SharedAgentUserSkillLookup {
-  listUserSkills(userId: number): Promise<Array<{ name: string }>> | Array<{ name: string }>;
+  listUserSkills(userId: number): Promise<Array<{ name: string; folderPath?: string | null }>> | Array<{ name: string; folderPath?: string | null }>;
   listAllUserSkills(): Promise<Array<{ name: string; userId: number; folderPath: string }>> | Array<{ name: string; userId: number; folderPath: string }>;
   installUserSkillFiles(userId: number, skillName: string, files: Record<string, string>): SkillResult<string>;
 }
@@ -181,11 +182,18 @@ export class SharedAgentService {
 
     // 技能补装：安装目标永远是操作者本人（不是共享条目属主），作用域天然收敛到本人目录
     const skills: FixDepsSkillEntry[] = [];
-    const userSkillNames = new Set((await this.userSkillLookup.listUserSkills(operatorId)).map((s) => s.name));
-    for (const name of parseNames(agent.skillNames)) {
-      if (this.skillLoader.hasSkill(name)) continue;
-      if (name.length > 0 && userSkillNames.has(name)) continue;
-      skills.push(await this.installMissingSkill(name, operatorId));
+    const operatorSkills = await this.userSkillLookup.listUserSkills(operatorId);
+    const userSkillNames = new Set(operatorSkills.map((s) => s.name));
+    // skillNames 是 DB 自由文本数组，可能含历史重复项：同一技能只补装一次。若不去重，
+    // 第二次处理同名条目时"本人刚装上"会让候选数从 1 变 2，输出 installed + ambiguous 矛盾报告
+    const missingNames = [...new Set(parseNames(agent.skillNames))].filter(
+      (name) => !this.skillLoader.hasSkill(name) && !(name.length > 0 && userSkillNames.has(name)),
+    );
+    // listAllUserSkills 是逐用户 readdir 的全量扫描：提到循环外一次获取。
+    // 既消除 N+1 扫描，也避免"扫描结果随安装推进变化"造成的候选竞态
+    const allUserSkills = missingNames.length > 0 ? await this.userSkillLookup.listAllUserSkills() : [];
+    for (const name of missingNames) {
+      skills.push(await this.installMissingSkill(name, operatorId, operatorSkills, allUserSkills));
     }
 
     // MCP 分类：dangling 无动作；停用态按操作者 mcp:write 分类（启用影响全局，等同 MCP 管理页手动启用）
@@ -200,14 +208,29 @@ export class SharedAgentService {
     return { skills, mcpServers, selfCheck };
   }
 
-  private async installMissingSkill(name: string, operatorId: number): Promise<FixDepsSkillEntry> {
+  private async installMissingSkill(
+    name: string,
+    operatorId: number,
+    operatorSkills: Array<{ name: string; folderPath?: string | null }>,
+    allUserSkills: Array<{ name: string; userId: number; folderPath: string }>,
+  ): Promise<FixDepsSkillEntry> {
     // skillNames 现状无格式校验：空串/路径片段会进 missingSkills（computeMissingSkills 对空串判缺失），
     // 用作目录名前必须校验，非法名不进入属主定位
     if (!isValidSkillName(name)) {
       return { name, action: 'failed', detail: `技能名非法，无法安装：${name}` };
     }
-    const all = await this.userSkillLookup.listAllUserSkills();
-    const candidates = all.filter((s) => s.name === name);
+    // 目标目录占用检查：自检按 frontmatter 名判"缺失"，写盘按目录名落盘——上传侧不校验
+    // "目录名 == frontmatter 名"，操作者已有的"目录 A、frontmatter 名 B"技能会让补装静默
+    // 覆盖 A/（rename 备份在成功后即删除）。宁可报 failed 让人工整理，不覆盖既有技能
+    const occupied = operatorSkills.find((s) => s.folderPath != null && basename(s.folderPath) === name);
+    if (occupied != null) {
+      return {
+        name,
+        action: 'failed',
+        detail: `本人已存在同名技能目录「${name}」（其 frontmatter 名为「${occupied.name}」），为避免覆盖既有技能，请先整理该目录后重试`,
+      };
+    }
+    const candidates = allUserSkills.filter((s) => s.name === name);
     if (candidates.length === 0) {
       return { name, action: 'failed', detail: '实例内已不存在该技能（可能已被删除）' };
     }

@@ -174,19 +174,19 @@ describe('UserSkillService.installUserSkillFiles（依赖一键补装）', () =>
     expect(existsSync(join(dir, '7', 'x'))).toBe(false);
   });
 
-  it('同名覆盖有备份恢复：已存在技能在写盘失败路径外正常替换（并发兜底）', async () => {
-    const dir = useTmpDir('mao-uskill-install-overwrite-');
+  it('目标同名目录已存在即拒绝覆盖：不替换、不触发暂存交换', async () => {
+    const dir = useTmpDir('mao-uskill-install-reject-');
     const service = new UserSkillService(dir);
     const { existsSync } = await import('node:fs');
 
-    // 正常路径下目标不存在（自检缺失是前置条件）；此处验证防御：已存在时替换后内容正确、无 staging 残留
+    // 自检按 frontmatter 名判缺失、写盘按目录名落盘："目录 A、frontmatter 名 B"的技能
+    // 会让补装静默覆盖 A/（rename 备份成功后即删除）。此处断言写盘侧显式拒绝
     mkdirSync(join(dir, '7', 'dup'), { recursive: true });
     writeFileSync(join(dir, '7', 'dup', 'SKILL.md'), skill('dup', 'Old', 'Old'));
-    const replaced = service.installUserSkillFiles(7, 'dup', { 'SKILL.md': skill('dup', 'New', 'New') });
-    expect(replaced.code).toBe(0);
-    expect(readFileSync(join(dir, '7', 'dup', 'SKILL.md'), 'utf8')).toContain('New');
-    // 暂存 token 目录已清理（.staging/<userId>/ 空壳保留是既有上传语义）
-    const { readdirSync } = await import('node:fs');
-    expect(readdirSync(join(dir, '.staging', '7'))).toEqual([]);
+    const rejected = service.installUserSkillFiles(7, 'dup', { 'SKILL.md': skill('dup', 'New', 'New') });
+    expect(rejected.code).toBe(409);
+    expect(rejected.message).toContain('拒绝覆盖');
+    expect(readFileSync(join(dir, '7', 'dup', 'SKILL.md'), 'utf8')).toContain('Old');
+    expect(existsSync(join(dir, '.staging'))).toBe(false);
   });
 });

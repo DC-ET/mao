@@ -294,9 +294,12 @@ body: { agentIds?: number[] }          // 缺省 = 全部有 origin 的 Agent + 
 7. **registry 导出按 `name@userId` 显式 token 全量内联用户技能**（§5.7）。默认 reference 导出会让 URL 导入产出缺技能的 Agent，且目标实例无属主、fix-deps 无法补齐——URL 导入的核心价值依赖内联。
 8. **check-updates 的 changed 以 origin.content_hash（导入时快照）为基准**（§5.8），不做"本地重导出 vs 远端"比较——导入有损包（同名 MCP 跳过、重复技能去重、超限经验跳过）会产生永久性假 changed；`localEdited` 仅覆盖 systemPrompt 漂移，技能/MCP 本地改动不检测（已知边界）。
 9. **SSRF 私网黑名单默认不做**（§8）：内网实例互拉是主场景，黑名单仅作为可选配置项。
-10. **双 URL 冲突时条目 `source_url` 优先**于 origin 表（管理员显式维护优先）。
-11. **fix-deps 意味着"上架 Agent 即其引用技能对全员可装"**（§8）：属主技能内容随共享目录对登录用户开放复制，报告 detail 带属主 userId 供审计。
-12. **`BundleSkill.sourceUrl` 本版导出不填**（§5.9）：技能级来源无可靠判定，字段仅保留格式位。
+10. **双 URL 冲突时条目 `source_url` 优先**于 origin 表（管理员显式维护优先）。但优先仅解决"从哪拉"：当条目 URL 与 origin URL 不一致时，remoteHash 与 originHash 来自两个不同远端、语义不对应（远端从未变化也恒 changed=true），此时该项落 error（"来源不一致，无法比对基线，请重新导入"）且不发起拉取，而不是输出误导性 changed。
+11. **registry token 密文解不开时失败闭合**（§5.7）：`SETTINGS_SECRET` 轮换/实例迁移会导致旧密文解不开，此时按"未开启"处理（404），绝不能回落成"未配置 token"而整体跳过校验；配置页对该行显示"密钥已变更无法解密，请重新填写"提示。
+12. **技能名去重口径全链路统一**（§5.7/§5.2）：`agent.skillNames` 是 DB 自由文本数组，可能含历史重复项——registry inline token 生成、`parseInlineSkillTokens`（完全相同 token 视为冗余而非歧义）、fix-deps 补装均按 Set 去重；fix-deps 同时把 `listAllUserSkills()` 全量扫描提到循环外一次获取（消除 N+1 与"扫描结果随安装变化"的候选竞态）。
+13. **fix-deps 写盘前做目标目录占用检查**（§5.2）：自检按 frontmatter 名判"缺失"、写盘按目录名落盘，而上传侧不校验"目录名 == frontmatter 名"，操作者已有的"目录 A、frontmatter 名 B"技能会被补装静默覆盖（rename 备份成功后即删除）。占用且 frontmatter 名不一致时该条目标 failed；`installUserSkillFiles` 亦对已存在的目标目录直接拒绝（409）。
+14. **fix-deps 意味着"上架 Agent 即其引用技能对全员可装"**（§8）：属主技能内容随共享目录对登录用户开放复制，报告 detail 带属主 userId 供审计。
+15. **`BundleSkill.sourceUrl` 本版导出不填**（§5.9）：技能级来源无可靠判定，字段仅保留格式位。
 
 ## 11. 验收口径
 

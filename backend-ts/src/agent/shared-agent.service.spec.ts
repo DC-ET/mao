@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -323,6 +323,38 @@ describe('SharedAgentService.fixDependencies（依赖一键补装）', () => {
     expect(byName.get('bad/name')).toMatchObject({ action: 'failed' });
     expect(byName.get('good')).toMatchObject({ action: 'installed' });
     expect(existsSync(join(userSkillsDir, '9', 'good', 'SKILL.md'))).toBe(true);
+  });
+
+  it('操作者已有"目录同名、frontmatter 名不同"的技能 → failed 且不覆盖既有内容', async () => {
+    // 属主（userId=8）目录 holder、frontmatter 名 theirs
+    mkdirSync(join(userSkillsDir, '8', 'holder'), { recursive: true });
+    writeFileSync(join(userSkillsDir, '8', 'holder', 'SKILL.md'), validSkillMd('theirs'));
+    writeFileSync(join(userSkillsDir, '8', 'holder', 'mine.txt'), '属主自己的内容');
+    // 操作者（userId=9）已有目录 theirs，frontmatter 名却是 wrong-name（自检因此认为 theirs 缺失）
+    mkdirSync(join(userSkillsDir, String(OPERATOR), 'theirs'), { recursive: true });
+    writeFileSync(join(userSkillsDir, String(OPERATOR), 'theirs', 'SKILL.md'), validSkillMd('wrong-name'));
+    writeFileSync(join(userSkillsDir, String(OPERATOR), 'theirs', 'mine.txt'), '操作者自己的内容');
+    await shareAgent(1, { skillNames: JSON.stringify(['theirs']) });
+
+    const report = await service.fixDependencies(1, OPERATOR);
+    expect(report.skills[0]).toMatchObject({ name: 'theirs', action: 'failed' });
+    expect(report.skills[0].detail).toContain('frontmatter');
+    // 写盘按目录名会静默替换 theirs/（rename 备份成功后即删除）：必须显式失败并保留原内容
+    expect(readFileSync(join(userSkillsDir, String(OPERATOR), 'theirs', 'SKILL.md'), 'utf8')).toContain('wrong-name');
+    expect(existsSync(join(userSkillsDir, String(OPERATOR), 'theirs', 'mine.txt'))).toBe(true);
+    expect(userSkillService.listUserSkills(OPERATOR).map((s) => s.name)).toEqual(['wrong-name']);
+  });
+
+  it('skillNames 含重复项时只补装一次（不输出 installed + ambiguous 矛盾报告）', async () => {
+    mkdirSync(join(userSkillsDir, '8', 'good'), { recursive: true });
+    writeFileSync(join(userSkillsDir, '8', 'good', 'SKILL.md'), validSkillMd('good'));
+    await shareAgent(1, { skillNames: JSON.stringify(['good', 'good']) });
+
+    const report = await service.fixDependencies(1, OPERATOR);
+    // 安装后操作者本人也有该技能：不去重会让第二条候选数 1→2 得到 ambiguous 矛盾报告
+    expect(report.skills).toHaveLength(1);
+    expect(report.skills[0]).toMatchObject({ name: 'good', action: 'installed', ownerUserIds: [8] });
+    expect(report.selfCheck.missingSkills).toEqual([]);
   });
 
   it('安装内容经 SKILL.md 校验链：属主目录缺 SKILL.md 等异常 → failed', async () => {

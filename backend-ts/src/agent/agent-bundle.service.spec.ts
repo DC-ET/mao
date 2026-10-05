@@ -11,7 +11,7 @@ import { McpServerService } from '../harness/mcp/service/mcp-server.service.js';
 import { STATUS_DISABLED, TYPE_HTTP, TYPE_STDIO, type McpServer } from '../harness/mcp/entity/mcp-server.js';
 import { AgentExperienceService } from './agent-experience.service.js';
 import { AgentSuggestedQuestionService } from './agent-suggested-question.service.js';
-import { AgentBundleService } from './agent-bundle.service.js';
+import { AgentBundleService, computeBundleContentHash } from './agent-bundle.service.js';
 import { BUNDLE_FORMAT, MAX_AGENT_NAME_LENGTH, MAX_INLINE_BYTES, REDACTED_PLACEHOLDER } from './agent-bundle.types.js';
 import { UserSkillService } from '../skill/user-skill.service.js';
 import type {
@@ -395,6 +395,23 @@ describe('AgentBundleService 导出组装', () => {
 
       await expect(fx.service.exportBundle(agent.id!, 'shared-skill@12,shared-skill@13'))
         .rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code, message: expect.stringContaining('多个内联归属') });
+    } finally {
+      rmSync(fx.root, { recursive: true, force: true });
+    }
+  });
+
+  it('完全相同的重复 token 去重后正常内联（name@userId 与 userId 均相同不构成歧义）', async () => {
+    const fx = buildFixture();
+    try {
+      const md = validSkillMd('shared-skill');
+      await fx.userSkillService.uploadUserSkill(12, [{ originalFilename: 'shared-skill/SKILL.md', buffer: Buffer.from(md, 'utf8') }]);
+      const agent = await insertAgent(fx.agentRepo, { name: 'A', systemPrompt: 'p', skillNames: JSON.stringify(['shared-skill']) });
+
+      // 归属意图完全一致的重复 token 是冗余而非歧义：不能误报"多个内联归属"（CLI 侧 a@8,a@8 同样可达）
+      const once = await fx.service.exportBundle(agent.id!, 'shared-skill@12');
+      const dup = await fx.service.exportBundle(agent.id!, 'shared-skill@12,shared-skill@12');
+      expect(dup.bundle.skills[0].include).toBe('inline');
+      expect(computeBundleContentHash(dup.bundle)).toBe(computeBundleContentHash(once.bundle));
     } finally {
       rmSync(fx.root, { recursive: true, force: true });
     }

@@ -31,7 +31,7 @@
           clearable
           maxlength="1024"
         />
-        <span class="sort-tip">形如 https://mao.example.com/api/v1/agent-bundle/registry/1</span>
+        <span class="sort-tip">形如 https://mao.example.com/api/v1/agent-bundle/registry/1；须与本 Agent 的导入来源一致，否则检查更新无法比对基线</span>
       </el-form-item>
     </el-form>
     <el-alert

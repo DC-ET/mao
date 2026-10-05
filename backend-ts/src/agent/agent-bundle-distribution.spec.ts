@@ -221,6 +221,25 @@ describe('AgentBundleService.exportRegistryBundle（registry 内联策略）', (
     putAgent(fx, 3, { skillNames: JSON.stringify(['dup']) });
     await expect(fx.service.exportRegistryBundle(3)).rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
   });
+
+  it('skillNames 含历史重复项时 registry 导出正常（与文件导出去重口径一致，不误报"多个内联归属"409）', async () => {
+    mkdirSync(join(fx.root, 'skills', 'web-search'), { recursive: true });
+    writeFileSync(join(fx.root, 'skills', 'web-search', 'SKILL.md'), '---\nname: web-search\ndescription: 系统技能\n---\n正文\n');
+    await fx.userSkillService.uploadUserSkill(8, [
+      { originalFilename: 'code-review/SKILL.md', buffer: Buffer.from('---\nname: code-review\ndescription: 评审\n---\n正文\n') },
+    ]);
+    fx.skillLoader.invalidateCache();
+    putAgent(fx, 4, { skillNames: JSON.stringify(['web-search', 'code-review', 'code-review']) });
+
+    // 同一技能只生成一个 name@userId token；重复项不进入 tokensForName 的"多个内联归属"分支
+    const { bundle } = await fx.service.exportRegistryBundle(4);
+    expect(bundle.skills.map((s) => s.name)).toEqual(['web-search', 'code-review']);
+    expect(bundle.skills[1].include).toBe('inline');
+    // 与文件导出的技能集合一致；内联 vs reference 是两条路径的预期差异（registry 必须内联）
+    const fileExport = await fx.service.exportBundle(4);
+    expect(fileExport.bundle.skills.map((s) => s.name)).toEqual(['web-search', 'code-review']);
+    expect(fileExport.bundle.skills[1].include).toBe('reference');
+  });
 });
 
 describe('AgentBundleService.importBundleFromUrl / checkUpdates', () => {
@@ -287,31 +306,43 @@ describe('AgentBundleService.importBundleFromUrl / checkUpdates', () => {
     expect(items[0]).toMatchObject({ changed: false, localEdited: true });
   });
 
-  it('双 URL 取舍：条目 source_url 优先于 origin；单项失败不阻断其余项；无来源显式项报 error', async () => {
+  it('双 URL 取舍：条目 URL 一致时按条目拉取；不一致时基线错配落 error 不拉取；单项失败不阻断；无来源显式项报 error', async () => {
     let remoteBundle = validBundleJson('v1 提示词');
     const seenUrls: string[] = [];
+    let brokenUrl: string | null = null;
     vi.stubGlobal('fetch', vi.fn(async (input: unknown) => {
       seenUrls.push(String(input));
-      if (String(input).includes('broken')) return httpResponse(500, null);
+      if (brokenUrl != null && String(input) === brokenUrl) return httpResponse(500, null);
       return httpResponse(200, remoteBundle);
     }));
     const a = await fx.service.importBundleFromUrl('http://src-a.example.com/r/1', true, 7) as { agentId: number };
     const b = await fx.service.importBundleFromUrl('http://src-b.example.com/r/2', true, 7) as { agentId: number };
+    const c = await fx.service.importBundleFromUrl('http://src-c.example.com/r/3', true, 7) as { agentId: number };
 
-    // 条目 URL（管理员维护）优先于 origin
-    fx.entryRows.push({ agentId: a.agentId, sourceUrl: 'http://entry.example.com/r/1' });
-    // b 指向 broken：单项失败不阻断
-    fx.entryRows.push({ agentId: b.agentId, sourceUrl: 'http://broken.example.com/r/2' });
+    // a：条目 URL 与导入来源一致 → 按条目 URL 拉取并正常比对（changed=false）
+    fx.entryRows.push({ agentId: a.agentId, sourceUrl: 'http://src-a.example.com/r/1' });
+    // b：条目 URL 与导入来源一致但导入后远端故障 → 单项失败不阻断其余项
+    fx.entryRows.push({ agentId: b.agentId, sourceUrl: 'http://src-b.example.com/r/2' });
+    brokenUrl = 'http://src-b.example.com/r/2';
+    // c：条目 URL 与导入来源不一致 → remoteHash 与 originHash 语义不对应（远端从未变化也恒真），
+    // 落 error 且不发起拉取，而不是输出误导性的 changed=true
+    fx.entryRows.push({ agentId: c.agentId, sourceUrl: 'http://other.example.com/r/9' });
     // 无来源显式项
     putAgent(fx, 99, {});
 
     const items = await fx.service.checkUpdates(null);
     const itemA = items.find((i) => i.agentId === a.agentId)!;
     const itemB = items.find((i) => i.agentId === b.agentId)!;
-    expect(itemA.sourceUrl).toBe('http://entry.example.com/r/1');
-    expect(seenUrls).toContain('http://entry.example.com/r/1');
-    expect(itemB.error).toContain('500');
+    const itemC = items.find((i) => i.agentId === c.agentId)!;
+    expect(itemA.sourceUrl).toBe('http://src-a.example.com/r/1');
+    expect(seenUrls).toContain('http://src-a.example.com/r/1');
     expect(itemA.error).toBeUndefined();
+    expect(itemA.changed).toBe(false);
+    expect(itemB.error).toContain('500');
+    expect(itemC.sourceUrl).toBe('http://other.example.com/r/9');
+    expect(itemC.error).toContain('不一致');
+    expect(itemC.changed).toBe(false);
+    expect(seenUrls).not.toContain('http://other.example.com/r/9');
 
     const items2 = await fx.service.checkUpdates([99]);
     expect(items2).toHaveLength(1);
