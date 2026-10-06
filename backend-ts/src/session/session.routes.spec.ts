@@ -53,8 +53,9 @@ describe('session and admin routes', () => {
       searchSessionsByUserMessage: vi.fn(async () => []),
       listSessionsForDashboard: vi.fn(async () => ({ running: [], recent: [] })),
       listSideTaskSessions: vi.fn(async () => []),
+      listDescendantSideTaskSessions: vi.fn(async () => []),
+      listDescendantSideTaskSessionsByRoots: vi.fn(async () => new Map()),
       listSubagentSessionsWithSideTasks: vi.fn(async () => []),
-      listSideTasksByParentIds: vi.fn(async () => []),
       deleteSession: vi.fn(),
       promoteSideTaskToMainSession: vi.fn(async () => session({ id: 2, sessionType: 'NORMAL', parentSessionId: null })),
       togglePin: vi.fn(),
@@ -171,6 +172,33 @@ describe('session and admin routes', () => {
     expect((await json('GET', '/v1/admin/sessions/options/agents')).body.data[0].name).toBe('Agent');
     expect(sessionService.togglePin).toHaveBeenCalled();
     expect(sessionService.getFileChangeSummariesByMessageIds).not.toHaveBeenCalled();
+    await fastify.close();
+  });
+
+  it('side-tasks recursive returns flattened descendants with parentSessionId', async () => {
+    const { fastify, sessionService } = await app();
+    const deep = session({ id: 30, parentSessionId: 20, permissionLevel: 'READ_ONLY', phase: 'RUNNING' });
+    vi.mocked(sessionService.listDescendantSideTaskSessions).mockResolvedValue([deep as never]);
+    const res = await fastify.inject({ method: 'GET', url: '/v1/sessions/1/side-tasks?recursive=1' });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.data).toHaveLength(1);
+    expect(body.data[0].id).toBe(30);
+    expect(body.data[0].parentSessionId).toBe(20);
+    expect(body.data[0].permissionLevel).toBe('READ_ONLY');
+    expect(sessionService.listDescendantSideTaskSessions).toHaveBeenCalledWith(1, 7);
+    expect(sessionService.listSideTaskSessions).not.toHaveBeenCalled();
+    await fastify.close();
+  });
+
+  it('side-tasks default keeps direct children behavior', async () => {
+    const { fastify, sessionService } = await app();
+    vi.mocked(sessionService.listSideTaskSessions).mockResolvedValue([session({ id: 20, parentSessionId: 1 })] as never);
+    const res = await fastify.inject({ method: 'GET', url: '/v1/sessions/1/side-tasks' });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.data[0].id).toBe(20);
+    expect(sessionService.listDescendantSideTaskSessions).not.toHaveBeenCalled();
     await fastify.close();
   });
 

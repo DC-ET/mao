@@ -21,7 +21,7 @@ function session(overrides: Record<string, unknown> = {}) {
 interface Harness {
   terminal: TaskTerminalService;
   sessionService: Record<string, ReturnType<typeof vi.fn>>;
-  treeSignalPublisher: { publish: ReturnType<typeof vi.fn> };
+  treeSignalPublisher: { publish: ReturnType<typeof vi.fn>; publishAtRoot: ReturnType<typeof vi.fn> };
   extraction: { extractForSession: ReturnType<typeof vi.fn> };
   inbox: TaskTerminalInboxRecorder & { recordTaskTerminal: ReturnType<typeof vi.fn> };
   notificationJobs: Array<() => void | Promise<void>>;
@@ -35,7 +35,7 @@ function build(sessionOverrides: Record<string, unknown> = {}): Harness {
     updatePhase: vi.fn(async () => undefined),
     markLastMessageFinished: vi.fn(async () => undefined),
   };
-  const treeSignalPublisher = { publish: vi.fn() };
+  const treeSignalPublisher = { publish: vi.fn(), publishAtRoot: vi.fn() };
   const extraction = { extractForSession: vi.fn(async () => undefined) };
   const inbox = { recordTaskTerminal: vi.fn(async () => undefined) };
   const notificationJobs: Array<() => void | Promise<void>> = [];
@@ -103,7 +103,7 @@ describe('TaskTerminalService memory extraction dispatch', () => {
       updatePhase: vi.fn(async () => undefined),
       markLastMessageFinished: vi.fn(async () => undefined),
     };
-    const treeSignalPublisher = { publish: vi.fn() };
+    const treeSignalPublisher = { publish: vi.fn(), publishAtRoot: vi.fn() };
     const extraction = { extractForSession: vi.fn(async () => { throw new Error('extraction exploded'); }) };
     const terminal = new TaskTerminalService(
       sessionService as never as SessionService,
@@ -220,7 +220,7 @@ describe('TaskTerminalService 收件箱写入', () => {
       updatePhase: vi.fn(async () => undefined),
       markLastMessageFinished: vi.fn(async () => undefined),
     };
-    const treeSignalPublisher = { publish: vi.fn() };
+    const treeSignalPublisher = { publish: vi.fn(), publishAtRoot: vi.fn() };
     const terminal = new TaskTerminalService(
       sessionService as never as SessionService,
       { send: vi.fn(), sendWithResult: vi.fn(async () => ({} as never)) } as never,

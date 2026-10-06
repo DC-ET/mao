@@ -29,6 +29,8 @@ function makeService() {
     selectMessageSearchCandidates: vi.fn(),
     selectPage: vi.fn(async () => ({ records: [], total: 0 })),
     list: vi.fn(),
+    listDescendantSideTasks: vi.fn(async () => []),
+    listDescendantSideTasksByRoots: vi.fn(async () => new Map<number, Session[]>()),
     insert: vi.fn(async (s: Session) => { s.id = 99; return 99; }),
     lockActiveSessionById: vi.fn(),
     logicalDelete: vi.fn(),
@@ -56,7 +58,7 @@ function makeService() {
               { id: 2, sessionId: 20, role: 'ASSISTANT', content: '完成' },
             ];
           }
-          if (sql.includes('FROM `session`')) return vi.mocked(sessionRepo.list).getMockImplementation()?.('', [], '') ?? [];
+          if (sql.includes('FROM `session`')) return vi.mocked(sessionRepo.list).getMockImplementation()?.(sql, [], '') ?? [];
           if (sql.includes('message_file_change')) return [];
           if (sql.includes('session_todo')) return [];
           return [];
@@ -130,19 +132,24 @@ describe('SessionService archive', () => {
     expect(await service.restoreRunningAfterApproval(10)).toBe(false);
   });
 
-  it('listSideTasksByParentIdsQueriesValidSideTasks', async () => {
+  it('listDescendantSideTaskSessionsDelegatesToRepoWithUserId', async () => {
     const { service, sessionRepo } = makeService();
     const side: Session = { id: 20, userId: 7, parentSessionId: 10, sessionType: 'SIDE_TASK' };
-    vi.mocked(sessionRepo.list).mockResolvedValue([side]);
-    const sides = await service.listSideTasksByParentIds([10, 11]);
+    vi.mocked(sessionRepo.listDescendantSideTasks).mockResolvedValue([side]);
+    const sides = await service.listDescendantSideTaskSessions(10, 7);
     expect(sides).toHaveLength(1);
     expect(sides[0].parentSessionId).toBe(10);
+    expect(sessionRepo.listDescendantSideTasks).toHaveBeenCalledWith(10, 7);
   });
 
-  it('listSideTasksByParentIdsReturnsEmptyForNullInput', async () => {
-    const { service } = makeService();
-    expect(await service.listSideTasksByParentIds(null)).toEqual([]);
-    expect(await service.listSideTasksByParentIds([])).toEqual([]);
+  it('listDescendantSideTaskSessionsByRootsReturnsPerRootGroups', async () => {
+    const { service, sessionRepo } = makeService();
+    const side: Session = { id: 20, userId: 7, parentSessionId: 10, sessionType: 'SIDE_TASK' };
+    vi.mocked(sessionRepo.listDescendantSideTasksByRoots).mockResolvedValue(new Map([[10, [side]]]));
+    const result = await service.listDescendantSideTaskSessionsByRoots([10, 11]);
+    expect(result.get(10)).toHaveLength(1);
+    expect(result.has(11)).toBe(false);
+    expect(sessionRepo.listDescendantSideTasksByRoots).toHaveBeenCalledWith([10, 11]);
   });
 
   it('promotesSideTaskToNormalSessionAndCopiesMessages', async () => {
@@ -202,6 +209,27 @@ describe('SessionService archive', () => {
     vi.mocked(sessionRepo.list).mockResolvedValue([{ id: 30, userId: 7, parentSessionId: 20, sessionType: 'SUBAGENT' }]);
     await expect(service.promoteSideTaskToMainSession(20, 7)).rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
     expect(sessionRepo.insert).not.toHaveBeenCalled();
+  });
+
+  it('allowsSideTaskPromotionWhenOnlySideTaskChildrenExist', async () => {
+    const { service, sessionRepo } = makeService();
+    vi.mocked(sessionRepo.findById).mockResolvedValue({
+      id: 20,
+      userId: 7,
+      title: '深层边路',
+      sessionType: 'SIDE_TASK',
+      phase: 'COMPLETED',
+      executionMode: 'CLOUD',
+      workspace: '/tmp/w',
+    });
+    // 仅 SIDE_TASK 子会话：提升放行，子树 parent 不变、自然跟随新主会话。
+    // txDb.query 会把真实 SQL 透传给 list mock：SUBAGENT 校验查空、其余查询返回边路子会话
+    vi.mocked(sessionRepo.list).mockImplementation(((sql: string) => (
+      sql.includes("session_type = 'SUBAGENT'") ? [] : [{ id: 30, userId: 7, parentSessionId: 20, sessionType: 'SIDE_TASK' }]
+    )) as never);
+    const promoted = await service.promoteSideTaskToMainSession(20, 7);
+    expect(promoted.sessionType).toBe('NORMAL');
+    expect(promoted.parentSessionId).toBeNull();
   });
 
   it('rejectsDeleteWhenSessionRunning', async () => {
@@ -265,6 +293,45 @@ describe('SessionService message search', () => {
     vi.mocked(sessionRepo.selectMessageSearchCandidates).mockResolvedValue([]);
     await service.searchSessionsByUserMessage(7, '100%_\\bug');
     expect(sessionRepo.selectMessageSearchCandidates).toHaveBeenCalledWith(7, '100\\%\\_\\\\bug');
+  });
+
+  it('resolvesRootSessionIdForSideTaskCandidates', async () => {
+    const { service, sessionRepo, messageRepo } = makeService();
+    // 深层边路 30：父链 30 -> 20(边路) -> 10(主会话)，根应解析为 10
+    const deep = session(30, '深层任务', 'SIDE_TASK', null, '2026-08-07 10:30:00');
+    deep.parentSessionId = 20;
+    vi.mocked(sessionRepo.selectMessageSearchCandidates).mockResolvedValue([deep]);
+    vi.mocked(messageRepo.selectMessagesForSearch).mockResolvedValue([message(300, 30, '深层任务的关键词')]);
+    vi.mocked(sessionRepo.list).mockResolvedValue([
+      { id: 20, userId: 7, parentSessionId: 10, sessionType: 'SIDE_TASK' },
+      { id: 10, userId: 7, parentSessionId: null, sessionType: 'NORMAL' },
+    ]);
+    const items = await service.searchSessionsByUserMessage(7, '关键词');
+    expect(items).toHaveLength(1);
+    expect(items[0].id).toBe(30);
+    expect(items[0].rootSessionId).toBe(10);
+  });
+
+  it('dropsOrphanSideTaskCandidatesWithoutReachableRoot', async () => {
+    const { service, sessionRepo, messageRepo } = makeService();
+    const orphan = session(30, '孤儿任务', 'SIDE_TASK', null, '2026-08-07 10:30:00');
+    orphan.parentSessionId = 20;
+    vi.mocked(sessionRepo.selectMessageSearchCandidates).mockResolvedValue([orphan]);
+    vi.mocked(messageRepo.selectMessagesForSearch).mockResolvedValue([message(300, 30, '孤儿任务的关键词')]);
+    // 父会话 20 已删除：查不到 → 链断，无根可达，候选剔除
+    vi.mocked(sessionRepo.list).mockResolvedValue([]);
+    const items = await service.searchSessionsByUserMessage(7, '关键词');
+    expect(items).toHaveLength(0);
+  });
+
+  it('setsRootSessionIdToSelfForNormalCandidates', async () => {
+    const { service, sessionRepo, messageRepo } = makeService();
+    const main = session(1, '主会话', 'NORMAL', 9, '2026-08-07 10:30:00');
+    vi.mocked(sessionRepo.selectMessageSearchCandidates).mockResolvedValue([main]);
+    vi.mocked(messageRepo.selectMessagesForSearch).mockResolvedValue([message(100, 1, '主会话关键词')]);
+    const items = await service.searchSessionsByUserMessage(7, '关键词');
+    expect(items).toHaveLength(1);
+    expect(items[0].rootSessionId).toBe(1);
   });
 
   it('snippetContainsKeywordWhenKeywordInMiddle', () => {

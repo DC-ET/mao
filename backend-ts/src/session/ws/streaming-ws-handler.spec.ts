@@ -339,6 +339,85 @@ describe('StreamingWsHandler', () => {
     expect(harnessService.forkParentMessages).toHaveBeenCalledWith(11, 13, null);
   });
 
+  // ---- 父会话为边路任务（边路的边路，任意深度）：创建链路按父会话抽象，不做类型门槛 ----
+
+  function sideParentSession(mode: string, phase: string): Session {
+    const parent = session(mode, phase);
+    parent.sessionType = 'SIDE_TASK';
+    parent.parentSessionId = 1;
+    parent.workspace = '/tmp/parent-ws';
+    parent.permissionLevel = 'READ_WRITE';
+    return parent;
+  }
+
+  it('creates a side task under a side-task parent and inherits its fields', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    const parent = sideParentSession('CLOUD', 'COMPLETED');
+    sessionService.getSession.mockResolvedValue(parent);
+    sessionService.save.mockImplementation(async (s: Session) => { s.id = 13; });
+    sessionService.saveMessage.mockResolvedValue(message(99, 'USER'));
+
+    await handler.handleTextMessage(ws, JSON.stringify({
+      type: 'create_side_session', sessionId: 11, data: { content: 'nested side work', contextMode: 'none' },
+    }));
+    await executor.runAll();
+
+    // 创建成功：新会话仍是 SIDE_TASK，父指向来源边路会话 11，字段继承来源边路
+    const saved = sessionService.save.mock.calls[0][0] as Session;
+    expect(saved.sessionType).toBe('SIDE_TASK');
+    expect(saved.parentSessionId).toBe(11);
+    expect(saved.agentId).toBe(5);
+    expect(saved.executionMode).toBe('CLOUD');
+    expect(saved.workspace).toBe('/tmp/parent-ws');
+    expect(saved.permissionLevel).toBe('READ_WRITE');
+    // 创建事件与订阅按来源边路会话为键
+    expect(registry.send).toHaveBeenCalledWith(7, expect.objectContaining({
+      type: 'side_session_created', sessionId: 11,
+      data: expect.objectContaining({ sideSessionId: 13 }),
+    }));
+    expect(registry.subscribe).toHaveBeenCalledWith(7, 11);
+    expect(harnessService.forkParentMessages).not.toHaveBeenCalled();
+    expect(harnessService.executeSideFirstMessage).toHaveBeenCalledWith(11, 13, 'none', expect.anything(), expect.anything());
+  });
+
+  it('forks a side task under a side-task parent honoring the cut point', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(sideParentSession('CLOUD', 'COMPLETED'));
+    sessionService.save.mockImplementation(async (s: Session) => { s.id = 13; });
+    sessionService.saveMessage.mockResolvedValue(message(99, 'USER'));
+    sessionService.findOwnedMessage.mockResolvedValue({ ...message(77, 'ASSISTANT'), sessionId: 11 });
+
+    await handler.handleTextMessage(ws, JSON.stringify({
+      type: 'create_side_session', sessionId: 11,
+      data: { content: 'nested fork', contextMode: 'fork', forkFromMessageId: 77 },
+    }));
+    await executor.runAll();
+
+    // 切点校验与 fork 复制均以来源边路会话为源
+    expect(sessionService.findOwnedMessage).toHaveBeenCalledWith(11, 77);
+    expect(harnessService.forkParentMessages).toHaveBeenCalledWith(11, 13, 77);
+  });
+
+  it('rejects a side task under a side-task parent when local client is offline', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    registry.hasLocalClientConnection.mockReturnValue(false);
+    sessionService.getSession.mockResolvedValue(sideParentSession('LOCAL', 'COMPLETED'));
+
+    await handler.handleTextMessage(ws, JSON.stringify({
+      type: 'create_side_session', sessionId: 11, data: { content: 'nested local', contextMode: 'none' },
+    }));
+
+    expect(sessionService.save).not.toHaveBeenCalled();
+    expect(registry.send).toHaveBeenCalledWith(7, expect.objectContaining({
+      type: 'error',
+      sessionId: 11,
+      data: expect.objectContaining({ code: 'side_session_rejected' }),
+    }));
+  });
+
   it('sendMessageRejectsUnsupportedImagesAndDisconnectedLocalClient', async () => {
     vi.clearAllMocks();
     registry.getUserId.mockReturnValue(7);

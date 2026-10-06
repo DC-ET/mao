@@ -260,6 +260,8 @@ export interface AskUserQuestionsRegistry {
 
 export interface SessionTreeSignalPublisher {
   publish(sessionId: number): void;
+  /** 从任一节点沿父链上溯到根主会话并发布聚合信号（链断不发） */
+  publishAtRoot(fromSessionId: number): void;
 }
 
 export interface SessionGroupBucket {
@@ -301,5 +303,5 @@ export function emptyQuestionRegistry(): AskUserQuestionsRegistry {
 }
 
 export function noopTreePublisher(): SessionTreeSignalPublisher {
-  return { publish: () => undefined };
+  return { publish: () => undefined, publishAtRoot: () => undefined };
 }

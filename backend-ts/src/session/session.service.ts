@@ -356,6 +356,16 @@ export class SessionService {
     );
   }
 
+  /** 递归列出根主会话树下的全部后代边路任务（updated_at 降序平铺），归档子树隐藏、孤儿不可达。 */
+  async listDescendantSideTaskSessions(rootId: number, userId: number): Promise<Session[]> {
+    return this.sessionRepo.listDescendantSideTasks(rootId, userId);
+  }
+
+  /** 批量递归：多个根主会话各自的全部后代边路任务（enrichSessions 首刷聚合用，按根分组）。 */
+  listDescendantSideTaskSessionsByRoots(rootIds: number[]): Promise<Map<number, Session[]>> {
+    return this.sessionRepo.listDescendantSideTasksByRoots(rootIds);
+  }
+
   listSubagentSessions(parentSessionId: number, userId?: number): Promise<Session[]> {
     if (userId != null) {
       return this.sessionRepo.list(
@@ -556,13 +566,15 @@ export class SessionService {
       if (source.phase === 'RUNNING' || source.phase === 'WAITING_APPROVAL' || source.phase === 'RESUMING' || source.phase === 'CANCELLING') {
         throw new BusinessException(ErrorCode.PARAM_INVALID, '边路任务运行中，无法升级为主会话');
       }
-      const childSessions = await txSessionRepo.list(
-        `parent_session_id = ? AND status <> 'ARCHIVED'`,
+      // 仅拒绝存在子代理子会话的提升：SIDE_TASK 子树不受阻——子树的 parent_session_id
+      // 本就指向被提升会话，提升后子树在树上自然跟随新主会话，无需重挂。
+      const subagentChildren = await txSessionRepo.list(
+        `parent_session_id = ? AND session_type = 'SUBAGENT' AND status <> 'ARCHIVED'`,
         [sideSessionId],
         'LIMIT 1',
       );
-      if (childSessions.length > 0) {
-        throw new BusinessException(ErrorCode.PARAM_INVALID, '边路任务存在子会话，无法升级为主会话');
+      if (subagentChildren.length > 0) {
+        throw new BusinessException(ErrorCode.PARAM_INVALID, '边路任务存在子代理会话，无法升级为主会话');
       }
 
       const target: Session = {
@@ -681,6 +693,9 @@ export class SessionService {
       messagesBySession.set(m.sessionId, list);
     }
     const agentMap = await this.batchLoadAgents(candidates);
+    // 边路会话结果需解析根主会话（前端以根会话为缓存键与跳转目标）；
+    // 根不可达（父链上有已删除节点）的孤儿剔除——无法在树上打开。
+    const rootIdBySession = await this.resolveSearchRoots(candidates);
     const items: MessageSearchItem[] = [];
     for (const s of candidates) {
       let snippet: string | null = null;
@@ -691,12 +706,14 @@ export class SessionService {
         if (snippet != null) break;
       }
       if (snippet == null) continue;
+      if (s.sessionType === 'SIDE_TASK' && !rootIdBySession.has(s.id!)) continue;
       const agent = s.agentId != null ? agentMap.get(s.agentId) : undefined;
       items.push({
         id: s.id!,
         title: s.title,
         sessionType: s.sessionType,
         parentSessionId: s.parentSessionId,
+        rootSessionId: s.sessionType === 'SIDE_TASK' ? rootIdBySession.get(s.id!) ?? null : s.id ?? null,
         updatedAt: javaLocalDateTimeString(s.updatedAt),
         phase: s.phase != null ? s.phase : 'IDLE',
         status: s.status ?? 'ACTIVE',
@@ -705,6 +722,47 @@ export class SessionService {
       });
     }
     return items;
+  }
+
+  /**
+   * 批量解析搜索候选中边路会话所属的根主会话 id。
+   * 候选至多 20 条：先把全部父会话一次性查出建映射，再逐链上溯；
+   * 链上任何节点缺失（已删除）即视为孤儿，不为其产出根 id。
+   */
+  private async resolveSearchRoots(candidates: Session[]): Promise<Map<number, number>> {
+    const result = new Map<number, number>();
+    const sideCandidates = candidates.filter((s) => s.sessionType === 'SIDE_TASK' && s.parentSessionId != null);
+    if (sideCandidates.length === 0) return result;
+    const needed = new Set<number>();
+    for (const s of sideCandidates) needed.add(s.parentSessionId!);
+    const parentById = new Map<number, Session>();
+    for (let round = 0; round < 10 && needed.size > 0; round++) {
+      const ids = [...needed];
+      const placeholders = ids.map(() => '?').join(',');
+      const rows = await this.sessionRepo.list(`id IN (${placeholders})`, ids, '');
+      const nextNeeded = new Set<number>();
+      for (const row of rows) {
+        if (row.id == null) continue;
+        parentById.set(row.id, row);
+        if (row.parentSessionId != null && !parentById.has(row.parentSessionId)) {
+          nextNeeded.add(row.parentSessionId);
+        }
+      }
+      needed.clear();
+      for (const id of nextNeeded) needed.add(id);
+    }
+    for (const s of sideCandidates) {
+      let current = parentById.get(s.parentSessionId!);
+      let guard = 0;
+      while (current != null && current.parentSessionId != null && guard < 10) {
+        current = parentById.get(current.parentSessionId);
+        guard++;
+      }
+      if (current != null && current.parentSessionId == null && current.sessionType !== 'SIDE_TASK' && current.id != null) {
+        result.set(s.id!, current.id);
+      }
+    }
+    return result;
   }
 
   extractVisibleText(content: string | null): string | null {
@@ -791,18 +849,6 @@ export class SessionService {
       [sessionId],
     );
     return rows > 0;
-  }
-
-  listSideTasksByParentIds(parentIds: number[] | null | undefined): Promise<Session[]> {
-    if (parentIds == null || parentIds.length === 0) {
-      return Promise.resolve([]);
-    }
-    const placeholders = parentIds.map(() => '?').join(',');
-    return this.sessionRepo.list(
-      `parent_session_id IN (${placeholders}) AND session_type = 'SIDE_TASK' AND status <> 'ARCHIVED'`,
-      parentIds,
-      '',
-    );
   }
 
   async save(session: Session): Promise<void> {

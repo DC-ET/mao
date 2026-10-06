@@ -129,7 +129,8 @@ export class TaskTerminalService {
     this.dispatchOutboundEvent(session, phase, executionId, failureReason ?? null, ownerId, notifySource);
 
     if (session.sessionType === 'SIDE_TASK' && session.parentSessionId != null) {
-      this.treeSignalPublisher.publish(session.parentSessionId);
+      // 边路（含深层）终态：沿父链上溯到根主会话，在根上聚合发布唯一信号
+      this.treeSignalPublisher.publishAtRoot(sessionId);
     } else if (session.sessionType !== 'SUBAGENT') {
       // 主任务自身进入终态时也要重算并下发 treeRunning，否则前端列表里的
       // treeRunning 会停留在旧值（true），导致蓝色“执行中”圆点不转绿。

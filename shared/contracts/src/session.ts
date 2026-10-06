@@ -7,6 +7,8 @@ export interface MessageSearchItem {
   title?: string | null;
   sessionType?: string | null;
   parentSessionId?: number | null;
+  /** 边路会话所属的根主会话 id（前端以根会话为缓存键与跳转目标）；主会话即自身 id；孤儿缺省 null */
+  rootSessionId?: number | null;
   updatedAt?: string | null;
   phase?: string | null;
   status?: string | null;

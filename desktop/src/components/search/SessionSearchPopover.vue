@@ -209,21 +209,24 @@ watch(activeIndex, async () => {
 async function handleJump(item: SessionSearchItem) {
   isOpen.value = false
   if (item.sessionType === 'SIDE_TASK') {
-    const parentId = String(item.parentSessionId ?? '')
-    if (!parentId) return
+    // 缓存键与跳转目标一律用根主会话 id：深层边路任务的父是边路会话，
+    // Tab 状态与边路缓存都按主会话口径组织，用直接父会话 id 会写进死缓存并路由到错误视图。
+    // rootSessionId 缺省时回退直接父会话（旧后端 / 旧 mock：搜索候选只含父为主会话的边路，两者等价）。
+    const rootId = String(item.rootSessionId ?? item.parentSessionId ?? '')
+    if (!rootId) return
     // 边路任务状态用搜索结果真实值，不硬编码 IDLE；不传 createdAt（搜索结果只有 updatedAt，不得冒充创建时间）
-    sessionStore.addSideTask(parentId, {
+    sessionStore.addSideTask(rootId, {
       id: item.id,
       title: item.title || '任务',
       phase: (item.phase || 'IDLE') as TaskPhase,
     })
-    const target = `/tasks/${parentId}`
+    const target = `/tasks/${rootId}`
     if (route.path === target) {
-      openSideTaskTabFor(parentId, item.id, item.title || '任务')
+      openSideTaskTabFor(rootId, item.id, item.title || '任务')
     } else {
       await router.push(target)
       // 路由加载（loadSession）是否完成不影响：Tab Map 是模块级单例，按显式 parentSessionId 写入
-      openSideTaskTabFor(parentId, item.id, item.title || '任务')
+      openSideTaskTabFor(rootId, item.id, item.title || '任务')
     }
   } else {
     await router.push(`/tasks/${item.id}`)

@@ -4,7 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { requireUserId, sendOk } from '../common/http-error.js';
-import { bodyOf, collectEntityIds, idMapGet, parseEntityId, pathId, queryOptInt, queryOptStr } from '../common/request.js';
+import { bodyOf, collectEntityIds, idMapGet, parseEntityId, pathId, queryOptBool, queryOptInt, queryOptStr } from '../common/request.js';
 import { isSessionSource, type SessionSource } from './session.repository.js';
 import { javaLocalDateTimeString } from '../common/datetime.js';
 import type { PathSandbox } from '../harness/safety/path-sandbox.js';
@@ -121,13 +121,12 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     const modelMap = await batchLoadModels(sessions, agentMap);
     const vos = sessions.map((s) => toSessionVO(s, agentMap, modelMap));
     const mainIds = sessions.map((s) => s.id!).filter((id) => id != null);
-    const sides = await sessionService.listSideTasksByParentIds(mainIds);
+    // tree* 首刷口径与 WS 信号 / recursive 列表一致：聚合并发树下的全部后代边路任务。
+    // 列表 / dashboard 查询本就排除 SIDE_TASK / SUBAGENT，这里的主会话集合全部是树根。
+    const descendantsByRoot = await sessionService.listDescendantSideTaskSessionsByRoots(mainIds);
     const sidesByParent = new Map<number, Session[]>();
-    for (const st of sides) {
-      if (st.parentSessionId == null) continue;
-      const list = sidesByParent.get(st.parentSessionId) ?? [];
-      list.push(st);
-      sidesByParent.set(st.parentSessionId, list);
+    for (const [rootId, list] of descendantsByRoot) {
+      if (list.length > 0) sidesByParent.set(rootId, list);
     }
     applySessionListSignals(sessions, vos, sidesByParent, approvalRegistry, questionRegistry);
     return vos;
@@ -282,7 +281,8 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     const promoted = await sessionService.promoteSideTaskToMainSession(source.id!, userId);
     const vos = await enrichSessions([promoted]);
     if (source.parentSessionId != null) {
-      treeSignalPublisher.publish(source.parentSessionId);
+      // 提升后旧树（可能隔着多层边路）失去该子树：信号沿旧父链上溯到旧根，重算聚合口径
+      treeSignalPublisher.publishAtRoot(source.parentSessionId);
     }
     return sendOk(reply, vos[0]);
   });
@@ -334,7 +334,8 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     await sessionService.markAsRead(id);
     const s = await sessionService.getSession(id);
     if (s.sessionType === 'SIDE_TASK' && s.parentSessionId != null) {
-      treeSignalPublisher.publish(s.parentSessionId);
+      // 深层边路已读也要刷新树信号：沿父链上溯到根，唯一信号键与消费方口径一致
+      treeSignalPublisher.publishAtRoot(id);
     } else {
       treeSignalPublisher.publish(id);
     }
@@ -361,7 +362,10 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     const userId = requireUserId(request);
     const id = pathId(request);
     await requireSessionOwner(userId, id);
-    const sideTasks = await sessionService.listSideTaskSessions(id, userId);
+    // recursive=1：平铺根主会话树下的全部后代边路任务（updated_at 降序）；缺省保持直接子级口径
+    const sideTasks = queryOptBool(request, 'recursive') === true
+      ? await sessionService.listDescendantSideTaskSessions(id, userId)
+      : await sessionService.listSideTaskSessions(id, userId);
     const sideIds = sideTasks.map((s) => s.id!);
     const approvalCounts = approvalRegistry.countForSessionIds(sideIds);
     const questionCounts = questionRegistry.countPendingBySessionIds(sideIds);
@@ -369,6 +373,8 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
       id: s.id,
       title: s.title,
       modelId: s.modelId,
+      parentSessionId: s.parentSessionId,
+      permissionLevel: s.permissionLevel,
       phase: s.phase != null ? s.phase : 'IDLE',
       createdAt: javaLocalDateTimeString(s.createdAt),
       updatedAt: javaLocalDateTimeString(s.updatedAt),

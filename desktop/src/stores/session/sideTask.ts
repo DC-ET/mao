@@ -19,12 +19,15 @@ export function createSideTaskModule(ctx: {
 
   async function refreshSideTasks(parentSessionId: string) {
     try {
-      const { data } = await api.get(`/sessions/${parentSessionId}/side-tasks`)
+      // recursive=1：主会话口径平铺全部后代边路任务（含深层）；parentSessionId 用于区分直接子级与深层后代
+      const { data } = await api.get(`/sessions/${parentSessionId}/side-tasks`, { params: { recursive: 1 } })
       const items: SideTaskItem[] = Array.isArray(data)
         ? data.map((st: any) => ({
             id: st.id,
             title: st.title || '任务',
             modelId: st.modelId,
+            parentSessionId: st.parentSessionId,
+            permissionLevel: st.permissionLevel,
             phase: (st.phase || 'IDLE') as TaskPhase,
             createdAt: st.createdAt,
             updatedAt: st.updatedAt,

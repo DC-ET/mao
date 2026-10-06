@@ -51,3 +51,6 @@ deploy_local.sh
 
 # Android 签名 keystore 与凭据（严禁入 git）
 /keystore/
+
+# git worktrees（并行开发用，不入库）
+.worktrees/

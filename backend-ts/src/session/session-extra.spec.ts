@@ -315,10 +315,12 @@ describe('TaskTerminalService', () => {
     };
     const registry = { send: vi.fn(), sendWithResult: vi.fn(async () => ({ delivered: true })) };
     const delivery = { prepare: vi.fn(async () => ({ id: 9 })), resolveWebSocket: vi.fn() };
-    const tree = { publish: vi.fn() };
+    const tree = { publish: vi.fn(), publishAtRoot: vi.fn() };
     const svc = new TaskTerminalService(sessionService as never, registry as never, delivery as never, tree as never);
     await svc.finishExecution(2, 7, 'COMPLETED', 'exec-1');
-    expect(tree.publish).toHaveBeenCalledWith(1);
+    // 深层边路终态：信号沿父链上溯到根（publishAtRoot），不再按直接父键发
+    expect(tree.publishAtRoot).toHaveBeenCalledWith(2);
+    expect(tree.publish).not.toHaveBeenCalled();
   });
 
   it('does not publish tree signals for subagent completion', async () => {

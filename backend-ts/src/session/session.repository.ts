@@ -47,6 +47,69 @@ export class SessionRepository {
     );
   }
 
+  /**
+   * 递归列出 rootIds 各自主会话树下的全部后代边路任务（不含 rootIds 自身）。
+   * BFS 逐层按 parent_session_id IN 批量下钻，返回 rootId -> 后代列表（无序，由调用方排序）。
+   * 归档节点不入结果且不向其下钻（归档子树整体隐藏）；父已删除的孤儿链因断链天然不可达。
+   * depthLimit 仅防病态数据（环 / 超深链），正常树 1-3 层即收敛。
+   */
+  async listDescendantSideTasksByRoots(
+    rootIds: number[],
+    userId?: number,
+    depthLimit = 10,
+  ): Promise<Map<number, Session[]>> {
+    const byRoot = new Map<number, Session[]>();
+    if (rootIds.length === 0) return byRoot;
+    // frontier: 待下钻的节点 id -> 所属根；visited 防环（正常树不会命中）
+    let frontier = new Map<number, number>();
+    const visited = new Set<number>();
+    for (const rootId of rootIds) {
+      frontier.set(rootId, rootId);
+      visited.add(rootId);
+    }
+    for (let depth = 0; depth < depthLimit && frontier.size > 0; depth++) {
+      const ids = [...frontier.keys()];
+      const placeholders = ids.map(() => '?').join(',');
+      const userClause = userId != null ? ' AND user_id = ?' : '';
+      const children = await this.db.query<Session>(
+        `SELECT * FROM \`session\`
+         WHERE parent_session_id IN (${placeholders})
+           AND session_type = 'SIDE_TASK'
+           AND (status IS NULL OR status <> 'ARCHIVED')
+           AND ${notDeleted()}${userClause}`,
+        userId != null ? [...ids, userId] : ids,
+      );
+      const next = new Map<number, number>();
+      for (const child of children) {
+        const id = child.id;
+        const parentKey = child.parentSessionId;
+        if (id == null || parentKey == null || visited.has(id)) continue;
+        const rootId = frontier.get(parentKey);
+        if (rootId == null) continue;
+        visited.add(id);
+        const list = byRoot.get(rootId) ?? [];
+        list.push(child);
+        byRoot.set(rootId, list);
+        next.set(id, rootId);
+      }
+      frontier = next;
+    }
+    return byRoot;
+  }
+
+  /** 单根递归列出全部后代边路任务（按 updated_at 降序、id 降序平铺）。 */
+  async listDescendantSideTasks(rootId: number, userId?: number): Promise<Session[]> {
+    const byRoot = await this.listDescendantSideTasksByRoots([rootId], userId);
+    const list = byRoot.get(rootId) ?? [];
+    list.sort((a, b) => {
+      const ta = a.updatedAt ?? '';
+      const tb = b.updatedAt ?? '';
+      if (ta !== tb) return ta < tb ? 1 : -1;
+      return (b.id ?? 0) - (a.id ?? 0);
+    });
+    return list;
+  }
+
   findActiveByUserAndProjectKey(userId: number, projectKey: string): Promise<Session | null> {
     return this.db.queryOne<Session>(
       `SELECT * FROM \`session\` WHERE user_id = ? AND project_key = ? AND status = 'ACTIVE' AND ${notDeleted()} LIMIT 1`,
@@ -269,7 +332,6 @@ export class SessionRepository {
              WHERE p.id = s.parent_session_id
                AND p.user_id = s.user_id
                AND p.deleted = 0
-               AND p.session_type = 'NORMAL'
            )
          )
        ORDER BY s.updated_at DESC, s.id DESC

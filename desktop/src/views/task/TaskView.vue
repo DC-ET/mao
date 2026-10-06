@@ -430,15 +430,27 @@ function handleSideSessionCreated(e: Event) {
   if (!detail || !detail.sideSessionId) return
 
   const title = detail.title || '任务'
-  for (const tab of tabs.value) {
-    if (tab.type !== 'side_task' || (tab.sideSessionId !== undefined && tab.sideSessionId > 0)) continue
-    updateSideTaskTab(tab.id, detail.sideSessionId, title)
-    break
+  const evtParent = detail.parentSessionId != null ? String(detail.parentSessionId) : ''
+  // 占位 Tab 精确匹配：按预置来源会话对齐事件键（边路来源创建时事件键是边路会话 id）。
+  // 无预置来源的旧占位只认当前主会话的事件，防止已切到别的主会话时错配占位。
+  const placeholder = tabs.value.find((t) => {
+    if (t.type !== 'side_task') return false
+    if (t.sideSessionId != null && t.sideSessionId > 0) return false
+    if (t.sourceSessionId != null) return evtParent !== '' && String(t.sourceSessionId) === evtParent
+    return evtParent === String(activeSessionIdRef.value || '')
+  })
+  if (placeholder) {
+    updateSideTaskTab(placeholder.id, detail.sideSessionId, title)
   }
 
-  const parentId = String(detail.parentSessionId || activeSessionIdRef.value || '')
-  if (parentId) {
-    sessionStore.addSideTask(parentId, {
+  // 回写边路缓存一律用主会话缓存键（递归平铺口径）：事件键在边路来源创建时是
+  // 边路会话 id，直接写入会落进主会话口径永远读不到的死缓存槽。
+  // 仅当事件属于当前主会话的树（来源即主会话，或占位在本视图匹配成功）时才回写，
+  // 其余情况（创建期间已切走）交给树信号触发的 refreshSideTasks 收敛。
+  const mainKey = String(activeSessionIdRef.value || '')
+  const belongsToCurrentTree = evtParent === mainKey || placeholder != null
+  if (mainKey && belongsToCurrentTree) {
+    sessionStore.addSideTask(mainKey, {
       id: detail.sideSessionId,
       title: title || detail.title || '任务',
       phase: 'RUNNING',
@@ -864,22 +876,27 @@ async function loadSession(sid: string) {
 
   // Restore open side task tabs (excluding user-closed ones)
   try {
-    const res = await api.get(`/sessions/${sid}/side-tasks`)
+    // recursive=1：检查器平铺主会话全部后代边路任务；Tab 恢复过滤回直接子级口径
+    const res = await api.get(`/sessions/${sid}/side-tasks`, { params: { recursive: 1 } })
     if (gen !== loadGeneration) return
     const sideTasksData = res?.data
     const items = Array.isArray(sideTasksData)
-      ? sideTasksData.map((st: { id: number; title: string; modelId?: number; phase?: string; createdAt?: string; unread?: boolean }) => ({
+      ? sideTasksData.map((st: { id: number; title: string; modelId?: number; parentSessionId?: number; permissionLevel?: string; phase?: string; createdAt?: string; unread?: boolean }) => ({
           id: st.id,
           title: st.title || '任务',
           modelId: st.modelId,
+          parentSessionId: st.parentSessionId,
+          permissionLevel: st.permissionLevel,
           phase: (st.phase || 'IDLE') as TaskPhase,
           createdAt: st.createdAt,
           unread: st.unread,
         }))
       : []
     sessionStore.setSideTasks(sid, items)
-    if (items.length > 0) {
-      restoreSideTaskTabs(sid, items.map((st) => ({ id: st.id, title: st.title || '任务' })))
+    // Tab 恢复维持直接子级口径：深层任务的 Tab 刷新后不自动重建，从检查器列表重新打开
+    const directChildren = items.filter((st) => String(st.parentSessionId ?? sid) === String(sid))
+    if (directChildren.length > 0) {
+      restoreSideTaskTabs(sid, directChildren.map((st) => ({ id: st.id, title: st.title || '任务' })))
       // Tab 重建完再还原激活态：上次停在边路任务 / 子代理 Tab 时，刷新后直接回到那个 Tab
       restoreActiveTab(sid)
     }
@@ -958,10 +975,25 @@ function handleNewSideTask(
   contextMode: SideTaskContextMode = 'none',
   fork?: { messageId: string; label: string },
 ) {
-  const opts: SideTaskEntryOptions = { contextMode, ...(fork ? { fork } : {}) }
+  // 来源会话决策：边路任务 Tab 内发起 → 来源是该边路会话（新边路的父会话）；
+  // 占位 Tab（会话未建）→ 沿用占位预置的来源；chat / 文件 / Diff / 子代理 Tab → 主会话视角（缺省）。
+  const activeTabValue = activeTab.value
+  let sourceSessionId: number | undefined
+  if (activeTabValue?.type === 'side_task') {
+    if (activeTabValue.sideSessionId != null && activeTabValue.sideSessionId > 0) {
+      sourceSessionId = activeTabValue.sideSessionId
+    } else if (activeTabValue.sourceSessionId != null && activeTabValue.sourceSessionId > 0) {
+      sourceSessionId = activeTabValue.sourceSessionId
+    }
+  }
+  const opts: SideTaskEntryOptions = {
+    contextMode,
+    ...(fork ? { fork } : {}),
+    ...(sourceSessionId != null ? { sourceSessionId } : {}),
+  }
   const placeholder = tabs.value.find(t => t.type === 'side_task' && (t.sideSessionId == null || t.sideSessionId <= 0))
   if (placeholder) {
-    // 复用已存在的占位 Tab：整体覆写预置，避免上一次入口的 fork 残留到普通新建
+    // 复用已存在的占位 Tab：整体覆写预置（含来源会话），避免上一次入口的 fork / 来源残留到本次新建
     setSideTaskFork(placeholder.id, opts)
     activateTab(placeholder.id)
     return

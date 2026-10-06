@@ -5,10 +5,14 @@ import { getClosedSideTaskIds, markSideTaskClosed, unmarkSideTaskClosed, normali
 import { getPersistedActiveTab, persistActiveTab } from '../utils/center-active-tab'
 import { useSessionStore } from '../stores/session'
 
-/** 边路任务创建入口的预置：上下文继承方式 + 分叉来源（按轮分叉时带切点）。 */
+/**
+ * 边路任务创建入口的预置：上下文继承方式 + 分叉来源（按轮分叉时带切点）+ 来源会话。
+ * sourceSessionId 缺省 = 主会话；从边路任务发起时为该边路会话 id（新边路的父会话）。
+ */
 export interface SideTaskEntryOptions {
   contextMode?: SideTaskContextMode
   fork?: SideTaskForkSource
+  sourceSessionId?: number
 }
 
 // Module-level singleton state
@@ -269,6 +273,7 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
         // 复用已存在的占位 Tab：整体覆写预置，避免半更新状态
         existing.contextMode = opts.contextMode ?? 'none'
         existing.forkFrom = opts.fork ?? undefined
+        existing.sourceSessionId = opts.sourceSessionId
       }
       state.activeTabId = existing.id
       notifyTabsChanged()
@@ -277,7 +282,9 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     const id = 'side:' + sideSessionId
     const newTab: Tab = {
       id, type: 'side_task', title: normalizeSideTaskTitle(title), sideSessionId,
-      contextMode: opts.contextMode ?? 'none', ...(opts.fork ? { forkFrom: opts.fork } : {}),
+      contextMode: opts.contextMode ?? 'none',
+      ...(opts.fork ? { forkFrom: opts.fork } : {}),
+      ...(opts.sourceSessionId != null ? { sourceSessionId: opts.sourceSessionId } : {}),
     }
     state.tabs.push(newTab)
     state.activeTabId = id
@@ -285,8 +292,9 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
   }
 
   /**
-   * 原子覆写边路任务 Tab 的分叉预置（contextMode + 切点）。fork 传 null 表示清除切点。
-   * 两者描述同一件事，一次写完，避免出现「contextMode 是 fork 但没有切点」的半更新状态。
+   * 原子覆写边路任务 Tab 的分叉预置（contextMode + 切点 + 来源会话）。fork 传 null 表示清除切点。
+   * 三者描述同一次创建入口，一次写完，避免出现「contextMode 是 fork 但没有切点」
+   * 或「上次来源残留到本次新建」的半更新状态。
    */
   function setSideTaskFork(tabId: string, opts: SideTaskEntryOptions) {
     const state = getSessionState()
@@ -294,6 +302,7 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     if (!tab || tab.type !== 'side_task') return
     tab.contextMode = opts.contextMode ?? 'none'
     tab.forkFrom = opts.fork ?? undefined
+    tab.sourceSessionId = opts.sourceSessionId
     notifyTabsChanged()
   }
 
@@ -335,6 +344,8 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
       // Don't change tab.id — keep the component mounted
       if (sideSessionId > 0) {
         tab.sideSessionId = sideSessionId
+        // 来源会话预置随创建完成作废（与 contextMode 用完即弃一致）
+        tab.sourceSessionId = undefined
       }
       tab.title = normalizeSideTaskTitle(title)
       notifyTabsChanged()

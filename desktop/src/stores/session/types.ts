@@ -89,6 +89,10 @@ export interface SideTaskItem {
   id: number
   title: string
   modelId?: number
+  /** 直接父会话 id（recursive 平铺列表里区分直接子级与深层后代：父 id = 主会话 id 即直接子级） */
+  parentSessionId?: number
+  /** 权限级别（占位态从来源边路会话取缺省用） */
+  permissionLevel?: string
   phase: TaskPhase
   createdAt?: string
   updatedAt?: string

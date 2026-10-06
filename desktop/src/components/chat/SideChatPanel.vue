@@ -21,7 +21,9 @@
         :session-id="hasRealSession ? String(realSessionId) : ''"
         :compaction-events="compactionEvents"
         :dislike-enabled="hasRealSession"
+        :fork-enabled="true"
         @add-to-command="(content: string) => commandEditDialogRef?.open({ content })"
+        @fork="openSideTask?.('fork', $event)"
       />
 
       <div v-if="sideCompacting" class="compaction-hint" role="status">
@@ -68,6 +70,12 @@
 
     <!-- 输入区 -->
     <div class="input-area">
+      <div class="side-task-entry">
+        <button type="button" class="side-task-btn" @click="openSideTask?.()">
+          + 边路任务
+        </button>
+      </div>
+
       <ExecutionErrorBanner
         :message="executionError"
         :can-retry="!sending && hasRealSession"
@@ -77,8 +85,8 @@
       <div v-if="!hasRealSession && displayMessages.length === 0" class="inherit-bar">
         <el-radio-group v-model="contextMode" size="small">
           <el-radio value="none">不继承</el-radio>
-          <el-radio value="summary">主会话摘要</el-radio>
-          <el-radio value="fork">Fork 主会话</el-radio>
+          <el-radio value="summary">{{ sourceLabelText }}摘要</el-radio>
+          <el-radio value="fork">Fork {{ sourceLabelText }}</el-radio>
         </el-radio-group>
       </div>
 
@@ -153,6 +161,8 @@ const props = defineProps<{
   forkFromMessageId?: string
   /** 分叉来源标签（该轮用户消息摘录 + 时间），仅用于 Tab hover，不参与发送 */
   forkFromLabel?: string
+  /** 本次创建的来源会话 id：从边路任务发起时为该边路会话；缺省 = 主会话 */
+  sourceSessionId?: number
 }>()
 
 const sessionStore = useSessionStore()
@@ -166,7 +176,55 @@ const commandEditDialogRef = ref<InstanceType<typeof CommandEditDialog>>()
 const parentExecutionMode = inject<Ref<string>>('executionMode', ref('CLOUD'))
 const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI
 
+/** 创建入口（每轮 fork 按钮 / + 边路任务），与主会话 ChatPanel 同源于 TaskView provide */
+const openSideTask = inject<
+  ((contextMode?: SideTaskContextMode, fork?: { messageId: string; label: string }) => void) | undefined
+>('openSideTask', undefined)
+
 const parentSession = computed(() => sessionStore.activeSession)
+
+/** 来源会话：边路任务发起时为该边路会话，缺省回落主会话。创建边路会话时作为父会话上报后端。 */
+const sourceSession = computed(() => {
+  if (props.sourceSessionId != null && props.sourceSessionId > 0) return String(props.sourceSessionId)
+  return sessionStore.activeSessionId ?? ''
+})
+
+/** 继承单选文案：来源为边路任务 → 「来源会话」，缺省 → 「主会话」 */
+const sourceLabelText = computed(() =>
+  props.sourceSessionId != null && props.sourceSessionId > 0 ? '来源会话' : '主会话'
+)
+
+// 来源为边路会话时补拉其 modelId / permissionLevel 作占位缺省：
+// 边路任务这两项可改（PATCH），与主会话可能不一致，缺省必须跟随来源会话
+// 而非主会话——否则 fork 出的新任务会静默拿到主会话的模型 / 权限。
+const sourceSessionMeta = ref<{ modelId?: number; permissionLevel?: string } | null>(null)
+const fetchedSourceMetaId = ref<number | null>(null)
+
+async function fetchSourceSessionMeta(sourceId: number) {
+  if (fetchedSourceMetaId.value === sourceId) return
+  fetchedSourceMetaId.value = sourceId
+  try {
+    const { data } = await api.get(`/sessions/${sourceId}`)
+    if (data) {
+      sourceSessionMeta.value = { modelId: data.modelId, permissionLevel: data.permissionLevel }
+    }
+  } catch {
+    // 补拉失败回退主会话口径，不阻塞创建
+    sourceSessionMeta.value = null
+    fetchedSourceMetaId.value = null
+  }
+}
+
+watch(
+  () => props.sourceSessionId,
+  (id) => {
+    // 仅占位态需要来源缺省；hasRealSession 此时尚未初始化，按 props.sideSessionId 判定
+    if ((props.sideSessionId == null || props.sideSessionId <= 0) && id != null && id > 0) {
+      void fetchSourceSessionMeta(id)
+    }
+  },
+  { immediate: true },
+)
 
 const parentWorkspace = computed(() => parentSession.value?.workspace || '')
 const parentProjectKey = computed(() => parentSession.value?.projectKey)
@@ -222,6 +280,9 @@ function inheritedPermissionLevel(): string {
     const side = sessionStore.sessions.find(item => String(item.id) === String(realSessionId.value))
     if (side?.permissionLevel) return side.permissionLevel
   }
+  // 占位态缺省链：来源会话（边路发起，可能改过权限）> 主会话（现状回退）
+  const sourceLevel = sourceSessionMeta.value?.permissionLevel
+  if (sourceLevel) return sourceLevel
   return parentSession.value?.permissionLevel || 'READ_ONLY'
 }
 
@@ -250,7 +311,8 @@ const currentModelId = computed(() => {
   if (hasRealSession.value) {
     return sideModelId.value ?? parentSession.value?.modelId
   }
-  return selectedModelId.value ?? parentSession.value?.modelId
+  // 占位态缺省链：用户已选 > 来源会话（边路发起，可能改过模型）> 主会话（现状回退）
+  return selectedModelId.value ?? sourceSessionMeta.value?.modelId ?? parentSession.value?.modelId
 })
 
 // 可用模型列表（判断当前模型的视觉能力；占位会话 / PATCH 未完成时无法依赖会话缓存）
@@ -705,7 +767,7 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
 
     const uploadSessionId = hasRealSession.value
       ? String(realSessionId.value)
-      : (sessionStore.activeSessionId ?? null)
+      : (sourceSession.value || null)
     const imageUrls = files.length > 0 ? await uploadImages(files, uploadSessionId) : []
     // If user attached images but all uploads failed, do not send a text-only message by mistake.
     if (files.length > 0 && imageUrls.length === 0) {
@@ -761,12 +823,13 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
     let disposeSendListeners: (() => void) | null = null
     try {
       if (isFirstSideSend) {
-        // 首次发送：先校验父会话存在，再插乐观消息，避免校验失败后留下幽灵消息
-        const parentSessionId = sessionStore.activeSessionId
+        // 首次发送：先校验来源会话存在，再插乐观消息，避免校验失败后留下幽灵消息。
+        // 来源会话 = 边路发起时的边路会话，缺省主会话；WS 事件键即来源会话 id。
+        const parentSessionId = sourceSession.value
         if (!parentSessionId) {
           waitingForSave.value = false
           releaseBusy()
-          ElMessage.warning('主会话不存在，无法创建边路任务')
+          ElMessage.warning('来源会话不存在，无法创建边路任务')
           return
         }
 
@@ -1023,6 +1086,30 @@ async function handleQueueEdit(msg: QueueMessage) {
 .input-area {
   flex-shrink: 0;
   margin-bottom: 10px;
+}
+
+/* 与主会话 ChatPanel 的边路任务入口同款（窗口右下角） */
+.side-task-entry {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+
+.side-task-btn {
+  border: 1px solid var(--aw-divider-soft);
+  background: var(--aw-canvas-parchment);
+  color: var(--aw-ink-muted-48);
+  font-size: var(--aw-text-caption);
+  padding: 4px 12px;
+  border-radius: var(--aw-radius-xs);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.side-task-btn:hover {
+  background: var(--aw-divider-soft);
+  color: var(--aw-ink);
+  border-color: var(--aw-hairline);
 }
 
 .side-chat-loading {
