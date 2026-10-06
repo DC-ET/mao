@@ -69,6 +69,9 @@ describe('MessageRepository', () => {
     expect(await repo.listBySession(1)).toEqual([{ id: 3 }]);
     expect(await repo.selectMessagesAfterId(1, 2)).toEqual([{ id: 3 }]);
     expect(await repo.selectValidBoundaryMessage(1, 3)).toEqual({ id: 3, content: 'hi' });
+    await repo.selectThroughMessage(1, null);
+    await repo.selectThroughMessage(1, 3);
+    expect(db.query.mock.calls.some(([sql]: [string]) => sql.includes('id <= ?'))).toBe(true);
     db.queryOne.mockResolvedValueOnce({ mx: 9 });
     expect(await repo.selectMaxMessageId(1)).toBe(9);
     db.queryOne.mockResolvedValueOnce(null);

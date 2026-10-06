@@ -7,13 +7,33 @@
         <el-icon :size="32" class="is-loading"><Loading /></el-icon>
       </div>
 
-      <!-- 首条消息提示 -->
-      <div v-else-if="!hasRealSession && displayMessages.length === 0 && !sending" class="side-chat-empty">
-        <el-icon :size="48" class="empty-icon"><Opportunity /></el-icon>
-        <p>边路任务：独立的对话通道，不影响主任务上下文</p>
+      <!-- Fork 预览加载中 -->
+      <div v-else-if="forkPreviewLoading && displayMessages.length === 0" class="side-chat-loading">
+        <el-icon :size="32" class="is-loading"><Loading /></el-icon>
       </div>
 
-      <!-- 消息列表（轮次折叠，与主聊天一致） -->
+      <!-- 首条消息提示 -->
+      <div v-else-if="!hasRealSession && displayMessages.length === 0 && !sending" class="side-chat-empty">
+        <template v-if="forkPreviewSelected">
+          <el-icon :size="48" class="empty-icon"><Connection /></el-icon>
+          <p>Fork 预览：下面是新任务创建时会被一同写入的历史消息</p>
+          <p class="side-chat-empty-hint">仅为预览，发出首条消息后才会真正保存</p>
+        </template>
+        <template v-else>
+          <el-icon :size="48" class="empty-icon"><Opportunity /></el-icon>
+          <p>边路任务：独立的对话通道，不影响主任务上下文</p>
+        </template>
+      </div>
+
+      <!-- Fork 预览提示条：明确接下来这几条会随新任务落库，避免误以为已经在跑 -->
+      <div v-if="forkPreviewSelected" class="fork-preview-banner" role="status">
+        <el-icon :size="14"><Connection /></el-icon>
+        <span>Fork 预览：以下历史消息将在你发出首条消息时一并写入这条新任务</span>
+      </div>
+
+      <!-- 消息列表（轮次折叠，与主聊天一致）。
+           fork 预览态走本地 ref（不写 sessionStore）：真实会话还没创建，缓存会在会话
+           转正 / Tab 复用 / 卸载清理上与后端 fork 回来的消息抢镜。 -->
       <ChatRoundList
         v-if="displayMessages.length > 0"
         :messages="displayMessages"
@@ -82,7 +102,9 @@
         @retry="handleRetryExecution"
       />
 
-      <div v-if="!hasRealSession && displayMessages.length === 0" class="inherit-bar">
+      <!-- 继承方式单选：会话创建前可选。fork 预览态也必须保留——预览消息来自来源会话，
+           用户看完要能改回不继承 / 摘要，否则一旦选中 Fork 就失去了选择权。 -->
+      <div v-if="!hasRealSession && (displayMessages.length === 0 || forkPreviewSelected)" class="inherit-bar">
         <el-radio-group v-model="contextMode" size="small">
           <el-radio value="none">不继承</el-radio>
           <el-radio value="summary">{{ sourceLabelText }}摘要</el-radio>
@@ -119,7 +141,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onUnmounted, onActivated, inject, type Ref } from 'vue'
-import { Opportunity, Loading } from '@element-plus/icons-vue'
+import { Opportunity, Loading, Connection } from '@element-plus/icons-vue'
 import { useSessionStore } from '../../stores/session'
 import { useDraftStore } from '../../stores/draft'
 import { useStreamWS } from '../../composables/useStreamWS'
@@ -134,6 +156,7 @@ import { normalizeMessageRole } from '../../types/chat'
 import type { QuestionAnswer } from '../../types/chat'
 import { useToolApprovals } from '../../composables/useChat'
 import { loadDislikedIds } from '../../composables/useMessageFeedback'
+import { useForkPreview } from '../../composables/useForkPreview'
 import { uploadImages } from '../../utils/imageUpload'
 import { uploadPendingFiles } from '../../utils/chatFileUpload'
 import type { SideTaskContextMode } from '../../types/file-browser'
@@ -264,6 +287,31 @@ watch([() => props.contextMode, () => props.forkFromMessageId], ([mode, messageI
   forkFromMessageId.value = parseCutPoint(messageId)
 })
 
+// --- Fork 预览：把「发出后会复制过来的历史」先画出来，不落任何会话缓存 ---
+const forkPreview = useForkPreview({
+  sourceSessionId: computed(() => sourceSession.value || null),
+  contextMode,
+  forkFromMessageId,
+  hasRealSession,
+})
+/**
+ * 占位态是否展示 fork 预览。
+ * `sending` 也要排除：首条消息发出后乐观气泡与流式占位都写在 sessionStore 的占位缓存里，
+ * 若继续显示预览，用户会看不到自己刚发出去的那条消息和正在生成的回复。
+ * 发送被拒时 sending 复位、乐观消息回滚，自然回到预览。
+ */
+const forkPreviewSelected = computed(() =>
+  !hasRealSession.value && contextMode.value === 'fork' && !sending.value
+)
+/** 预览请求在途：仅在预览还没有任何消息时展示 loading，避免与消息列表抖动 */
+const forkPreviewLoading = computed(() => forkPreviewSelected.value && forkPreview.loading.value)
+/** 预览是否真正有数据：切换模式 / 会话转正后立刻回到真实数据源 */
+const forkPreviewActive = computed(() => forkPreviewSelected.value && forkPreview.messages.value.length > 0)
+/** 向上翻页加载更早的历史轮次（滚到顶部触发，与真实会话聊天一致） */
+async function loadOlderForkPreview(): Promise<boolean> {
+  return forkPreview.loadOlder()
+}
+
 const sending = ref(false)
 /** 发送互斥：仅防双击/双 Enter 重入。与 sending（忙碌/loading）分离——执行中 sending 由 phase 置位，不能拿来拦入队。 */
 const sendInFlight = ref(false)
@@ -351,15 +399,24 @@ const currentModelSupportsVision = computed<boolean | undefined>(() => {
   return undefined
 })
 
+/**
+ * 消息区数据源：
+ *  - 真实会话：会话自己的消息缓存（流式 + REST 回填都在里面）；
+ *  - 占位 + Fork 预览：preview.messages（本地 ref，不发请求落库）；
+ *  - 占位 + 其他模式：占位 Tab 的乐观消息（发送前为空，发送后的流式气泡走这里）。
+ */
 const displayMessages = computed(() => {
   if (hasRealSession.value) {
     return sessionStore.getMessages(String(realSessionId.value))
   }
+  if (forkPreviewSelected.value) return forkPreview.messages.value
   return sessionStore.getMessages(placeholderCacheKey.value)
 })
 
 const compactionEvents = computed(() => {
-  if (!hasRealSession.value) return []
+  if (!hasRealSession.value) {
+    return forkPreviewSelected.value ? forkPreview.compactionEvents.value : []
+  }
   return sessionStore.getCompactionEvents(String(realSessionId.value))
 })
 
@@ -450,6 +507,9 @@ watch(
     lastScrollTop = -1
     lastScrollHeight = -1
     if (newId > 0 && realSessionId.value <= 0) {
+      // 会话已转正：预览使命结束，丢弃在途请求与残留消息，
+      // 真实数据改由下方 fetchMessages 从 REST 拉回来后填。
+      forkPreview.clear()
       const tempMsgs = sessionStore.getMessages(placeholderCacheKey.value)
       if (tempMsgs.length > 0) {
         sessionStore.setMessages(String(newId), [...tempMsgs])
@@ -517,16 +577,20 @@ async function fetchMessages() {
 }
 
 const sideMessageHasMore = computed(() => {
+  if (forkPreviewActive.value) return forkPreview.hasMore.value
   if (!hasRealSession.value) return false
   return sessionStore.getMessageHasMore(String(realSessionId.value))
 })
 
 const sideMessageLoadingOlder = computed(() => {
+  if (forkPreviewActive.value) return forkPreview.loadingOlder.value
   if (!hasRealSession.value) return false
   return sessionStore.getMessageLoadingOlder(String(realSessionId.value))
 })
 
+/** 滚到顶部加载更早历史：真实会话走会话分页，Fork 预览走预览分页（同一套 roundLimit 口径） */
 async function loadOlderMessages(): Promise<boolean> {
+  if (forkPreviewActive.value) return loadOlderForkPreview()
   if (!hasRealSession.value) return false
   const sid = String(realSessionId.value)
   const hasMore = sessionStore.getMessageHasMore(sid)
@@ -1141,6 +1205,26 @@ async function handleQueueEdit(msg: QueueMessage) {
 .side-chat-empty p {
   font-size: 14px;
   margin: 0;
+}
+
+.side-chat-empty-hint {
+  font-size: var(--aw-text-caption);
+  color: var(--aw-ink-muted-48);
+  opacity: 0.8;
+}
+
+/* Fork 预览提示条：与压缩提示同款轻量样式，说明下面这批消息的来源与生效时机 */
+.fork-preview-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding: 6px 12px;
+  font-size: var(--aw-text-caption);
+  color: var(--aw-ink-muted-48);
+  background: var(--aw-canvas-parchment);
+  border: 1px solid var(--aw-divider-soft);
+  border-radius: var(--aw-radius-xs);
 }
 
 .inherit-bar {

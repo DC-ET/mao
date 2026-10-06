@@ -40,6 +40,9 @@ function makeService() {
     logicalDeleteById: vi.fn(),
     selectUserStarts: vi.fn(async () => []),
     selectRange: vi.fn(async () => []),
+    selectThroughMessage: vi.fn(async () => []),
+    selectUserStartsThrough: vi.fn(async () => []),
+    selectRangeThrough: vi.fn(async () => []),
     selectMessagesForSearch: vi.fn(async () => []),
     selectFirstMatchingMessages: vi.fn(async () => []),
     selectLastUserMessage: vi.fn(async () => null),
@@ -216,6 +219,41 @@ describe('SessionService extra', () => {
     await service.getFileChangesBySession(11);
     await service.getFileChangesByMessageIds(11, [1]);
     await service.getFileChangesByMessageIds(11, []);
+
+    // fork 预览：切点为空时与 /messages 同路（起点查询不复用含边界版本）
+    messageRepo.selectUserStarts.mockResolvedValue([
+      { id: 3, role: 'USER' }, { id: 2, role: 'USER' }, { id: 1, role: 'USER' },
+    ]);
+    messageRepo.selectRange.mockResolvedValue([{ id: 2, role: 'USER', content: 'q1' }]);
+    const full = await service.getForkPreview(11, null, 2);
+    expect(messageRepo.selectUserStarts).toHaveBeenLastCalledWith(11, null, 3);
+    expect(messageRepo.selectRange).toHaveBeenLastCalledWith(11, 2, null);
+    expect(full.hasMore).toBe(true);
+    expect(full.nextBeforeMessageId).toBe(2);
+    expect(messageRepo.selectUserStartsThrough).not.toHaveBeenCalled();
+    expect(messageRepo.selectRangeThrough).not.toHaveBeenCalled();
+
+    // 带切点：起点查询改用含边界版本，否则来源那一轮整轮丢失
+    messageRepo.selectUserStartsThrough.mockResolvedValue([{ id: 3, role: 'USER' }]);
+    messageRepo.selectRangeThrough.mockResolvedValue([
+      { id: 1, role: 'USER', content: 'q1' },
+      { id: 2, role: 'ASSISTANT', content: 'a1' },
+      { id: 3, role: 'USER', content: 'q2' },
+      { id: 4, role: 'ASSISTANT', content: 'a2' },
+    ]);
+    const cut = await service.getForkPreview(11, 4, 5);
+    expect(messageRepo.selectUserStartsThrough).toHaveBeenCalledWith(11, 4, null, 6);
+    expect(messageRepo.selectRangeThrough).toHaveBeenCalledWith(11, 3, 4);
+    expect(cut.messages).toHaveLength(4);
+    expect(cut.hasMore).toBe(false);
+
+    // 向上翻页：上界取「翻页游标」与「切点」的较小值，不能越过切点把更晚的内容带进来
+    messageRepo.selectUserStartsThrough.mockResolvedValue([{ id: 9, role: 'USER' }]);
+    messageRepo.selectRangeThrough.mockResolvedValue([{ id: 8, role: 'USER', content: 'q0' }]);
+    const older = await service.getForkPreview(11, 4, 5, 99);
+    expect(messageRepo.selectUserStartsThrough).toHaveBeenCalledWith(11, 4, 99, 6);
+    expect(messageRepo.selectRangeThrough).toHaveBeenCalledWith(11, 9, 4);
+    expect(older.nextBeforeMessageId).toBe(8);
 
     messageRepo.listBySession.mockResolvedValue([
       { id: 1, role: 'USER', content: 'q' },

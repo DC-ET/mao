@@ -404,6 +404,51 @@ export class MessageRepository {
     );
   }
 
+  /**
+   * 取会话内截止到指定消息的全部内容（fork 预览口径：切点即被点击那一轮的助手最终回复 id，
+   * 含边界）。不传 cutMessageId 时等价于 listBySession。
+   */
+  selectThroughMessage(sessionId: number, cutMessageId: number | null): Promise<Message[]> {
+    if (cutMessageId == null) return this.listBySession(sessionId);
+    return this.db.query<Message>(
+      `SELECT * FROM \`message\` WHERE session_id = ? AND ${notDeleted()} AND id <= ? ORDER BY created_at ASC, id ASC`,
+      [sessionId, cutMessageId],
+    );
+  }
+
+  /**
+   * 轮次分页的「用户消息起点」，上界含切点。
+   * 与 selectUserStarts 的区别只在边界：切点是那一轮的助手最终回复，该轮的用户消息 id 必然
+   * 小于它；用 selectUserStarts 的排他边界（beforeId）会把那一整轮漏掉，预览就看不见来源轮次。
+   * beforeMessageId 用于向上翻页，与 selectUserStarts 同义。
+   */
+  selectUserStartsThrough(
+    sessionId: number,
+    cutMessageId: number,
+    beforeMessageId: number | null,
+    limit: number,
+  ): Promise<Message[]> {
+    if (beforeMessageId != null) {
+      return this.db.query<Message>(
+        `SELECT * FROM \`message\` WHERE session_id = ? AND ${notDeleted()} AND role = 'USER'
+          AND id <= ? AND id < ? ORDER BY id DESC LIMIT ?`,
+        [sessionId, cutMessageId, beforeMessageId, limit],
+      );
+    }
+    return this.db.query<Message>(
+      `SELECT * FROM \`message\` WHERE session_id = ? AND ${notDeleted()} AND role = 'USER' AND id <= ? ORDER BY id DESC LIMIT ?`,
+      [sessionId, cutMessageId, limit],
+    );
+  }
+
+  /** selectRange 的含切点上界版本：`id >= startId AND id <= cutMessageId`。 */
+  selectRangeThrough(sessionId: number, startId: number, cutMessageId: number): Promise<Message[]> {
+    return this.db.query<Message>(
+      `SELECT * FROM \`message\` WHERE session_id = ? AND ${notDeleted()} AND id >= ? AND id <= ? ORDER BY created_at ASC, id ASC`,
+      [sessionId, startId, cutMessageId],
+    );
+  }
+
   selectValidBoundaryMessage(sessionId: number, messageId: number): Promise<Message | null> {
     return this.db.queryOne<Message>(
       `SELECT * FROM \`message\` WHERE id = ? AND session_id = ? AND ${notDeleted()}`,

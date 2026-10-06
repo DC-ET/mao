@@ -436,6 +436,34 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     return sendOk(reply, vo);
   });
 
+  // Fork 预览：边路任务发出前预演「这条边路会话会看到哪些历史消息」。
+  // 轮次分页口径与 GET /messages 完全一致（roundLimit / hasMore / nextBeforeMessageId），
+  // 只把上界换成切点（forkFromMessageId = 被点击那一轮的助手最终回复；不传 = 全量分叉）。
+  // 只读，不落任何状态。
+  app.get('/v1/sessions/:id/fork-preview', async (request, reply) => {
+    const userId = requireUserId(request);
+    const id = pathId(request);
+    await requireSessionOwner(userId, id);
+    const roundLimit = queryOptInt(request, 'roundLimit') ?? 5;
+    const cutMessageId = queryOptInt(request, 'forkFromMessageId') ?? null;
+    if (cutMessageId != null && cutMessageId <= 0) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID);
+    }
+    if (cutMessageId != null && (await sessionService.findOwnedMessage(id, cutMessageId)) == null) {
+      throw new BusinessException(ErrorCode.MESSAGE_NOT_FOUND);
+    }
+    const page = await sessionService.getForkPreview(id, cutMessageId, roundLimit, queryOptInt(request, 'beforeMessageId') ?? null);
+    const changesByMsg = await sessionService.getFileChangesByMessageIds(id, page.messages.map((m) => m.id!));
+    return sendOk(reply, {
+      messages: toMessageVOList(page.messages, changesByMsg),
+      hasMore: page.hasMore,
+      nextBeforeMessageId: page.nextBeforeMessageId,
+      compactionEvents: (await deps.sessionCompactionEventService.listBySessionId(id))
+        .filter((ev) => cutMessageId == null || ev.boundaryMsgId == null || ev.boundaryMsgId <= cutMessageId)
+        .map(toCompactionEventVO),
+    });
+  });
+
   app.patch('/v1/sessions/:sessionId/messages/:messageId', async (request, reply) => {
     const userId = requireUserId(request);
     const sessionId = pathId(request, 'sessionId');

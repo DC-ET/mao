@@ -71,6 +71,8 @@ describe('session and admin routes', () => {
       getMessagesByRounds: vi.fn(async () => ({ messages: [], hasMore: false, nextBeforeMessageId: null })),
       getFileChangesByMessageIds: vi.fn(async () => new Map()),
       getFileChangeSummariesByMessageIds: vi.fn(async () => new Map()),
+      findOwnedMessage: vi.fn(async () => null),
+      getForkPreview: vi.fn(async () => ({ messages: [], hasMore: false, nextBeforeMessageId: null })),
       editMessageAndTruncate: vi.fn(async () => ({ id: 2, sessionId: 1, role: 'USER', content: 'edited' })),
       listSessionsForAdmin: vi.fn(async () => ({ records: [session()], total: 1, current: 1, size: 20 })),
     } as unknown as SessionService;
@@ -93,6 +95,7 @@ describe('session and admin routes', () => {
     mkdirSync(join(root, '7', 'projects', 'demo'), { recursive: true });
     writeFileSync(join(root, '7', 'projects', 'demo', '.git'), '');
     const pathSandbox = { getWorkspaceRoot: () => root } as PathSandbox;
+    const compactionEventService = { listBySessionId: vi.fn(async () => []) } as unknown as SessionCompactionEventService;
     registerSessionRoutes(fastify, {
       sessionService,
       agentLookup,
@@ -107,7 +110,7 @@ describe('session and admin routes', () => {
       messageQueueService: { listPending: vi.fn(async () => []) } as unknown as MessageQueueService,
       pathSandbox,
       subagentExecutionRepo: { findByChildSessionIds: vi.fn(async () => []) } as unknown as SubagentExecutionRepository,
-      sessionCompactionEventService: { listBySessionId: vi.fn(async () => []) } as unknown as SessionCompactionEventService,
+      sessionCompactionEventService: compactionEventService,
     });
     registerAdminSessionRoutes(fastify, {
       sessionService,
@@ -128,7 +131,7 @@ describe('session and admin routes', () => {
       })),
     } as unknown as OssStsService;
     registerOssRoutes(fastify, { ossStsService });
-    return { fastify, sessionService, ossStsService };
+    return { fastify, sessionService, ossStsService, compactionEvents: compactionEventService };
   }
 
   it('covers session rest endpoints', async () => {
@@ -188,6 +191,79 @@ describe('session and admin routes', () => {
     expect(body.data[0].permissionLevel).toBe('READ_ONLY');
     expect(sessionService.listDescendantSideTaskSessions).toHaveBeenCalledWith(1, 7);
     expect(sessionService.listSideTaskSessions).not.toHaveBeenCalled();
+    await fastify.close();
+  });
+
+  it('fork-preview returns cut-scoped messages and a page cursor', async () => {
+    const { fastify, sessionService } = await app();
+    vi.mocked(sessionService.findOwnedMessage).mockResolvedValue({ id: 5, sessionId: 1, role: 'ASSISTANT', content: 'done' } as never);
+    vi.mocked(sessionService.getForkPreview).mockResolvedValue({
+      messages: [
+        { id: 1, sessionId: 1, role: 'USER', content: 'q', createdAt: '2026-08-13 10:00:00' },
+        { id: 5, sessionId: 1, role: 'ASSISTANT', content: 'done', createdAt: '2026-08-13 10:01:00' },
+      ],
+      hasMore: true,
+      nextBeforeMessageId: 1,
+    });
+    const res = await fastify.inject({ method: 'GET', url: '/v1/sessions/1/fork-preview?forkFromMessageId=5' });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(sessionService.getForkPreview).toHaveBeenCalledWith(1, 5, 5, null);
+    expect(body.data.messages).toHaveLength(2);
+    expect(body.data.messages[1].content).toBe('done');
+    expect(body.data.hasMore).toBe(true);
+    expect(body.data.nextBeforeMessageId).toBe(1);
+    expect(body.data.compactionEvents).toEqual([]);
+    await fastify.close();
+  });
+
+  it('fork-preview without cut point previews the whole history', async () => {
+    const { fastify, sessionService } = await app();
+    const res = await fastify.inject({ method: 'GET', url: '/v1/sessions/1/fork-preview' });
+    expect(res.statusCode).toBe(200);
+    expect(sessionService.getForkPreview).toHaveBeenCalledWith(1, null, 5, null);
+    expect(sessionService.findOwnedMessage).not.toHaveBeenCalled();
+    expect(JSON.parse(res.body).data.messages).toEqual([]);
+    await fastify.close();
+  });
+
+  it('fork-preview forwards the paging cursor when loading older rounds', async () => {
+    const { fastify, sessionService } = await app();
+    vi.mocked(sessionService.findOwnedMessage).mockResolvedValue({ id: 5, sessionId: 1, role: 'ASSISTANT', content: 'x' } as never);
+    const res = await fastify.inject({
+      method: 'GET',
+      url: '/v1/sessions/1/fork-preview?forkFromMessageId=5&beforeMessageId=42',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(sessionService.getForkPreview).toHaveBeenCalledWith(1, 5, 5, 42);
+    await fastify.close();
+  });
+
+  it('fork-preview drops compaction markers past the cut point', async () => {
+    const { fastify, sessionService, compactionEvents } = await app();
+    vi.mocked(sessionService.findOwnedMessage).mockResolvedValue({ id: 5, sessionId: 1, role: 'ASSISTANT', content: 'x' } as never);
+    // 两条标记：boundary=1 落在切点内（落库侧会复制，预览要保留）；boundary=99 落在切点外（不复制，预览要挡掉）
+    vi.mocked(compactionEvents.listBySessionId).mockResolvedValue([
+      { id: 1, sessionId: 1, triggerMode: 'AUTO', prevBoundaryMsgId: 0, boundaryMsgId: 1, compactedMessageCount: 1 },
+      { id: 2, sessionId: 1, triggerMode: 'AUTO', prevBoundaryMsgId: 1, boundaryMsgId: 99, compactedMessageCount: 1 },
+    ] as never);
+    const res = await fastify.inject({ method: 'GET', url: '/v1/sessions/1/fork-preview?forkFromMessageId=5' });
+    expect(res.statusCode).toBe(200);
+    const events = JSON.parse(res.body).data.compactionEvents;
+    expect(events).toHaveLength(1);
+    expect(events[0].boundaryMsgId).toBe(1);
+    await fastify.close();
+  });
+
+  it('fork-preview rejects a foreign or missing cut point before loading history', async () => {
+    const { fastify, sessionService } = await app();
+    vi.mocked(sessionService.findOwnedMessage).mockResolvedValue(null as never);
+    const res = await fastify.inject({ method: 'GET', url: '/v1/sessions/1/fork-preview?forkFromMessageId=99' });
+    expect(JSON.parse(res.body).code).toBe(3030);
+    expect(sessionService.getForkPreview).not.toHaveBeenCalled();
+    const invalid = await fastify.inject({ method: 'GET', url: '/v1/sessions/1/fork-preview?forkFromMessageId=0' });
+    expect(JSON.parse(invalid.body).code).toBe(2001);
+    expect(sessionService.getForkPreview).not.toHaveBeenCalled();
     await fastify.close();
   });
 

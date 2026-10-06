@@ -933,6 +933,40 @@ export class SessionService {
     return this.messageRepo.selectValidBoundaryMessage(sessionId, messageId);
   }
 
+  /**
+   * Fork 预览：边路任务创建前预演「发出首条消息后这条边路会话会看到的原始历史」。
+   *
+   * 走与 `/sessions/:id/messages` 完全相同的轮次分页口径（默认最近 N 轮、hasMore 翻页），
+   * 只把上界从「最新一条」换成切点：切点是被点击那一轮的助手最终回复，轮次分页的起点查询
+   * 必须含该轮的用户消息（`id <= 切点`），否则来源轮次整轮消失，预览与真实结果不符。
+   * 无切点 = 全量分叉，与带 forkFromMessageId 的真实创建一一对应。
+   */
+  async getForkPreview(
+    sessionId: number,
+    cutMessageId: number | null,
+    roundLimit: number,
+    beforeMessageId: number | null = null,
+  ): Promise<MessagePage> {
+    const limit = Math.max(1, Math.min(roundLimit, 50));
+    const userStarts = cutMessageId == null
+      ? await this.messageRepo.selectUserStarts(sessionId, beforeMessageId, limit + 1)
+      : await this.messageRepo.selectUserStartsThrough(sessionId, cutMessageId, beforeMessageId, limit + 1);
+    if (userStarts.length === 0) {
+      return { messages: [], hasMore: false, nextBeforeMessageId: null };
+    }
+    const hasMore = userStarts.length > limit;
+    const pageStarts = hasMore ? userStarts.slice(0, limit) : userStarts;
+    const startId = pageStarts[pageStarts.length - 1].id!;
+    // 翻页时上界是「下一页起点之前」，与 /messages 的 beforeId 语义一致；带切点时仍不得越过切点
+    const upperBound = Math.min(beforeMessageId ?? Number.MAX_SAFE_INTEGER, cutMessageId ?? Number.MAX_SAFE_INTEGER);
+    const raw = upperBound >= Number.MAX_SAFE_INTEGER
+      ? await this.messageRepo.selectRange(sessionId, startId, null)
+      : await this.messageRepo.selectRangeThrough(sessionId, startId, upperBound);
+    const messages = (MessageHistoryNormalizer.normalizeEntities(raw, parseToolCallsJson) ?? raw) as Message[];
+    const nextBeforeMessageId = messages.length === 0 ? null : messages[0].id ?? null;
+    return { messages, hasMore, nextBeforeMessageId };
+  }
+
   async getMessagesByRounds(sessionId: number, roundLimit: number, beforeMessageId: number | null): Promise<MessagePage> {
     const limit = Math.max(1, Math.min(roundLimit, 50));
     let beforeMessage: Message | null = null;

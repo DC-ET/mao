@@ -532,6 +532,44 @@ test.describe('Task Group Rename', () => {
     await page.waitForSelector('.task-layout, .task-index-panel', { timeout: 15_000 })
   }
 
+  // 别名落库是前端 300ms 防抖，测试一结束页面就关，写不写得全看时序。
+  // 残留会让下一轮首条断言（要求显示推导名 demo-project）必失败，因此每条用例后主动清 key。
+  const TASK_PANEL_PREF_URL = 'http://localhost:9180/api/v1/user-preferences/task-panel'
+  /** 本组两个用例会写上的分组别名 key：演示分组、系统桶「未设置」。 */
+  const MUTATED_GROUP_KEYS = ['LOCAL:/home/mao-e2e/demo-project', 'LOCAL:未设置']
+
+  /** 直连隔离后端清掉本组用例写过的别名；groupOrder / collapsedGroups 原样保留，不误伤别处状态。 */
+  async function clearGroupAliases(page: Page) {
+    const token = await page.evaluate(() => localStorage.getItem('token'))
+    if (!token) return
+    const headers = { Authorization: `Bearer ${token}` }
+    // 每次重新 GET：页面在途的防抖写可能把别名又写回来，不能复用旧快照。
+    const clearOnce = async () => {
+      const current = await (await page.request.get(TASK_PANEL_PREF_URL, { headers })).json()
+      const data = current?.data ?? {}
+      const aliases: Record<string, string> = { ...(data.groupAliases ?? {}) }
+      for (const key of MUTATED_GROUP_KEYS) delete aliases[key]
+      // 不传 expectedVersion：service 以当前行为基线做读-改-写，避免与页面在途写撞版本号
+      await page.request.put(TASK_PANEL_PREF_URL, {
+        headers,
+        data: {
+          groupOrder: data.groupOrder ?? [],
+          collapsedGroups: data.collapsedGroups ?? [],
+          groupAliases: aliases,
+        },
+      })
+    }
+
+    await clearOnce()
+    // 页面可能还有一笔 300ms 防抖写在途：等它落定后确认一次，被写回就再清
+    await page.waitForTimeout(600)
+    const settled = await (await page.request.get(TASK_PANEL_PREF_URL, { headers })).json()
+    if (MUTATED_GROUP_KEYS.some(key => settled?.data?.groupAliases?.[key] != null)) await clearOnce()
+  }
+
+  // afterEach 挂在 describe 内：只清理本组用例的写操作，不影响其他 33 条用例
+  test.afterEach(async ({ page }) => { await clearGroupAliases(page) })
+
   test('should rename group via context menu and persist after reload', async ({ page }) => {
     await loginDesktop(page)
     await page.goto('/')
