@@ -1,6 +1,6 @@
 # 提案：多 Agent 协作 —— 任务 DAG 与队友信箱
 
-- 状态：提案，未评审
+- 状态：**已否决**（2026-10-05 复审：明确不做，不再提案）。本文仅存档，勿再评审。
 - 日期：2026-10-05
 - 提案总览：见 `docs/proposals/README.md`
 - 出处：`docs/research/agent-improvement-recommendations.md` P3（s07 任务 DAG / s09 Agent Teams / s12 Worktree），本文为收窄后的落地方案
