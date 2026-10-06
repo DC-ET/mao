@@ -383,7 +383,7 @@ export class CrashRecoveryRunner {
         harnessLog('info', `Session ${sessionId}: filled ${deleted} missing tool output(s)`);
       }
       await this.sessionService.updatePhase(sessionId, 'RESUMING');
-      this.notifyClient(userId, sessionId, 'RUNNING');
+      this.notifyClient(userId, sessionId, 'RUNNING', executionId);
       const cancelFlag = this.agentLoop.registerCancelFlag(sessionId);
       const { WsStreamingEventListener } = await import('../../session/ws/ws-streaming-event-listener.js');
       const listener = new WsStreamingEventListener({
@@ -401,7 +401,7 @@ export class CrashRecoveryRunner {
       }
       harnessLog('info', `Session ${sessionId}: starting recovery execution`);
       await this.sessionService.updatePhase(sessionId, 'RUNNING');
-      this.notifyClient(userId, sessionId, 'RUNNING');
+      this.notifyClient(userId, sessionId, 'RUNNING', executionId);
       const executionListener = extra == null ? listener as never : CompositeAgentEventListener.of(listener, extra);
       await this.harnessService.execute(sessionId, null, executionListener as never, cancelFlag);
       if (cancelFlag.get()) {
@@ -446,11 +446,14 @@ export class CrashRecoveryRunner {
     }
   }
 
-  private notifyClient(userId: number | null, sessionId: number, phase: string): void {
+  private notifyClient(userId: number | null, sessionId: number, phase: string, executionId?: string): void {
     if (userId == null) return;
     try {
       const isTerminal = phase === 'COMPLETED' || phase === 'FAILED' || phase === 'CANCELLED';
-      const statusData = isTerminal ? { phase, unread: true } : { phase };
+      const statusData: Record<string, unknown> = isTerminal ? { phase, unread: true } : { phase };
+      // RUNNING 必须带上本次恢复执行的新 executionId：前端据此把陈旧的 activeExecutionId
+      // 换掉，否则恢复执行的流式帧会被 isStaleExecution 当陈旧帧全部丢弃（进度卡住）。
+      if (!isTerminal && executionId != null && executionId !== '') statusData.executionId = executionId;
       this.registry.send(userId, wsEvent('session_status', sessionId, statusData));
       this.registry.send(userId, wsEvent('session_list_update', sessionId, { phase }));
     } catch { /* client may not be connected */ }

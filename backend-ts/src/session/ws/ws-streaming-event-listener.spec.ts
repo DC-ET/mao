@@ -9,6 +9,7 @@ function makeListener() {
     completeActiveToolCall: vi.fn(),
     clearActiveToolCalls: vi.fn(),
     isSessionThinking: vi.fn(() => false), setSessionThinking: vi.fn(),
+    setSessionExecution: vi.fn(),
   };
   const activityService = { record: vi.fn(async () => ({ id: 42 })) };
   const activityHeartbeat = { touch: vi.fn() };
@@ -47,6 +48,11 @@ describe('WsStreamingEventListener', () => {
     expect(registry.setSessionThinking).toHaveBeenCalledWith(11, true);
     listener.onThinkingEnd();
     expect(registry.setSessionThinking).toHaveBeenLastCalledWith(11, false);
+  });
+
+  it('registers the current session execution id on construction for reconnect snapshots', () => {
+    const { registry } = makeListener();
+    expect(registry.setSessionExecution).toHaveBeenCalledWith(11, 'exec-1');
   });
 
   it('forwards stream events with executionId', () => {

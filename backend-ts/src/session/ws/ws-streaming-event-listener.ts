@@ -72,7 +72,11 @@ export class WsStreamingEventListener implements AgentEventListener {
     private readonly userId: number,
     private readonly executionId: string,
     private readonly supportsVision: boolean,
-  ) {}
+  ) {
+    // 登记会话当前在途执行：崩溃恢复 / 通道入站等执行不经 WS handler 提交，
+    // 订阅快照只能从这里取到新 executionId，前端据此重绑后才不会把恢复执行的流式帧当陈旧帧丢弃。
+    this.deps.registry.setSessionExecution?.(this.sessionId, this.executionId);
+  }
 
   /** 释放定时器；执行结束/流重置时调用，未 flush 的尾部 delta 会随之一并发出。 */
   dispose(): void {

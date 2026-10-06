@@ -394,3 +394,51 @@ describe('useStreamWS session_already_running（拒绝帧不得被 stale 过滤�
     expect(reject.mock.calls[0]?.[0]).toBeInstanceOf(Error)
   })
 })
+
+describe('useStreamWS 崩溃恢复 executionId 重绑（恢复帧不得被 stale 过滤吞掉）', () => {
+  const frame = (type: string, data: Record<string, unknown>) =>
+    sockets[0].onmessage?.({
+      target: sockets[0],
+      data: JSON.stringify({ type, sessionId: 42, data }),
+    })
+
+  it('session_snapshot 带恢复执行的新 executionId 后，流式帧正常进入 store', async () => {
+    const { connect, setActiveExecution } = useStreamWS()
+    const store = useSessionStore()
+    const connecting = connect()
+    sockets[0].open()
+    await connecting
+    // 后端重启前：前端登记的是旧执行的 executionId
+    setActiveExecution('42', 'exec-before-restart')
+    const shown = () => store.getMessages('42').map((m) => String(m.content)).join('')
+
+    // 崩溃恢复换了新 executionId：重绑前到达的帧仍按陈旧帧丢弃
+    frame('content_delta', { delta: '[恢复前帧]', executionId: 'exec-recovered' })
+    expect(shown()).not.toContain('[恢复前帧]')
+
+    // 重连 subscribe 的校准快照带上新 executionId → 重绑
+    frame('session_snapshot', { phase: 'RUNNING', executionId: 'exec-recovered' })
+
+    // 重绑后恢复执行的流式帧不再被丢弃
+    frame('content_delta', { delta: '[恢复执行增量]', executionId: 'exec-recovered' })
+    expect(shown()).toContain('[恢复执行增量]')
+
+    // 旧执行的迟到帧仍按陈旧帧丢弃
+    frame('content_delta', { delta: '[旧执行迟到帧]', executionId: 'exec-before-restart' })
+    expect(shown()).not.toContain('[旧执行迟到帧]')
+  })
+
+  it('恢复启动晚于重连时，session_status RUNNING 带新 executionId 同样完成重绑', async () => {
+    const { connect, setActiveExecution } = useStreamWS()
+    const store = useSessionStore()
+    const connecting = connect()
+    sockets[0].open()
+    await connecting
+    setActiveExecution('42', 'exec-before-restart')
+
+    frame('session_status', { phase: 'RUNNING', executionId: 'exec-recovered' })
+    frame('content_delta', { delta: '[恢复执行增量2]', executionId: 'exec-recovered' })
+
+    expect(store.getMessages('42').map((m) => String(m.content)).join('')).toContain('[恢复执行增量2]')
+  })
+})

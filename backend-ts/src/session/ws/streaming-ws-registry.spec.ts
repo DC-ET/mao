@@ -35,6 +35,16 @@ describe('StreamingWsRegistry', () => {
     expect(result.successCount).toBe(1);
   });
 
+  it('tracks the current session execution id until cleared', () => {
+    expect(registry.getSessionExecution(10)).toBeUndefined();
+    registry.setSessionExecution(10, 'exec-1');
+    expect(registry.getSessionExecution(10)).toBe('exec-1');
+    registry.setSessionExecution(10, 'exec-2');
+    expect(registry.getSessionExecution(10)).toBe('exec-2');
+    registry.clearSessionExecution(10);
+    expect(registry.getSessionExecution(10)).toBeUndefined();
+  });
+
   it('snapshots active tool calls until completion', () => {
     registry.trackActiveToolCall(10, 'exec-1', 'call-1', 'shell', '{"command":"npm test"}');
     registry.updateActiveToolCallArguments(10, 'call-1', '{"command":"npm run test"}');

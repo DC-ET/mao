@@ -95,6 +95,8 @@ export class TaskTerminalService {
       await this.sessionService.updateRuntimeStatus(sessionId, null);
     }
     await this.sessionService.updatePhase(sessionId, phase);
+    // 在途执行登记随终态清除，避免订阅快照回放已结束执行的 executionId。
+    this.registry.clearSessionExecution?.(sessionId);
     await this.sessionService.markLastMessageFinished(sessionId);
     const session = await this.sessionService.getSession(sessionId);
     const ownerId = userId ?? session.userId;

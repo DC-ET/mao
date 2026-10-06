@@ -129,6 +129,8 @@ export interface WsHandlerDeps {
     registerCancelFlag(sessionId: number): { get(): boolean; set(v: boolean): void };
     removeCancelFlag(sessionId: number): void;
     requestCancel(sessionId: number): void;
+    /** 查询本实例在途执行的取消标志（含崩溃恢复/通道入站注册的），用于区分「执行未提交」与「执行在 handler 簿记外运行」。 */
+    getCancelFlag?(sessionId: number): { get(): boolean; set(v: boolean): void } | undefined;
   };
   backgroundSubagentManager?: {
     cancelAllForParent(parentSessionId: number): Promise<void>;
@@ -378,7 +380,7 @@ export class StreamingWsHandler {
     }
     // 订阅既是流式事件通道，也是客户端断线后的状态校准点。即使任务已结束，
     // 也必须回传终态，避免完成事件恰好在断线期间丢失后界面永久停在“执行中”。
-    const executionId = this.runningExecutionIds.get(sessionId);
+    const executionId = this.currentExecutionId(sessionId);
     this.deps.registry.send(userId, wsEvent('session_snapshot', sessionId, {
       phase: s.phase === 'RESUMING' ? 'RUNNING' : s.phase,
       // 会话执行中可能正处于模型思考阶段：随快照带回，前端刷新/重连后才能恢复「思考中」
@@ -907,7 +909,7 @@ export class StreamingWsHandler {
     const resultJson = JSON.stringify({ answers });
     const completed = this.deps.askUserQuestionsRegistry.complete(sessionId, requestId, resultJson);
     if (completed) {
-      const executionId = this.runningExecutionIds.get(sessionId);
+      const executionId = this.currentExecutionId(sessionId);
       this.deps.registry.send(userId, wsEvent('ask_user_questions_cancelled', sessionId, { requestId }));
       this.deps.registry.send(userId, wsEvent('session_status', sessionId, {
         phase: 'RUNNING',
@@ -1094,7 +1096,7 @@ export class StreamingWsHandler {
     const sideSessionId = this.getLong(root, 'sideSessionId');
     if (sideSessionId == null) return;
     if (!(await this.requireOwnedSession(userId, sideSessionId))) return;
-    const executionId = this.runningExecutionIds.get(sideSessionId) ?? '';
+    const executionId = this.currentExecutionId(sideSessionId) ?? '';
     this.abortRunningExecution(sideSessionId, userId);
     await this.finishCancelledSession(sideSessionId, userId, executionId);
     // 与 handleCancel 一致：DB 终态之外必须回收内存簿记，否则边路会话的「继续」按钮
@@ -1378,27 +1380,29 @@ export class StreamingWsHandler {
     if (!session) return;
     // 用户点击停止：立刻取消该会话等待中的页面操作，不让工具挂到超时。
     this.deps.embedPageToolRegistry.failSession(sessionId, '用户已停止任务，页面操作已取消');
-    if (!this.cancelFlags.has(sessionId)) {
+    if (!this.cancelFlags.has(sessionId) && this.deps.agentLoop.getCancelFlag?.(sessionId) == null) {
       // 执行尚未提交（send 的模型校验/LOCAL 检查/saveMessage await 期间，或 autoConsume 的 500ms 延迟窗口）：
       // cancel flag 尚未注册，直接 set(true) 会空转。记录待取消标记（注册标志时按时间判定消费），
       // 同时落 CANCELLED 终态，保证 DB 状态收敛。
       // claim 已持有但 flag 未注册的窗口同样适用：否则 send 从 await 恢复后会照常提交执行，
       // 并把此处写入的 CANCELLED 覆盖回 RUNNING，用户的取消被静默丢弃。
+      // 注意：崩溃恢复 / 通道入站的执行不在本 handler 簿记里，但 flag 已注册在 agentLoop 上，
+      // 必须走下面的 abort 路径真正中止执行，不能落进 pendingCancels（无人消费，执行照跑）。
       this.pendingCancels.set(sessionId, Date.now());
-      this.deps.registry.send(userId, wsEvent('cancelled', sessionId, { pending: true, executionId: this.runningExecutionIds.get(sessionId) ?? '' }));
+      this.deps.registry.send(userId, wsEvent('cancelled', sessionId, { pending: true, executionId: this.currentExecutionId(sessionId) ?? '' }));
       // 仅在确有在途执行时落终态：IDLE 既不在活跃集合也不在终态集合，
       // finishExecution 会放行 IDLE→CANCELLED，把从未运行过的会话标成「已取消」。
       const inFlight = this.executionClaims.has(sessionId)
         || this.runningTasks.has(sessionId)
         || this.isSessionActive(session.phase);
       if (inFlight) {
-        await this.finishCancelledSession(sessionId, userId, this.runningExecutionIds.get(sessionId) ?? randomUUID());
+        await this.finishCancelledSession(sessionId, userId, this.currentExecutionId(sessionId) ?? randomUUID());
       }
       // 注意：此处不能回收簿记。pendingCancels 正是用来让「尚未注册取消标志」的在途提交
       // 在恢复后自行收敛的（见 takePendingCancel），提前删掉会让取消被静默丢弃。
       return;
     }
-    const executionId = this.runningExecutionIds.get(sessionId) ?? '';
+    const executionId = this.currentExecutionId(sessionId) ?? '';
     this.abortRunningExecution(sessionId, userId);
     await this.finishCancelledSession(sessionId, userId, executionId);
     // 取消标志已注册，执行体理论上会靠自己的 finally 回收簿记；但它可能因 LLM 流卡死
@@ -1901,13 +1905,24 @@ export class StreamingWsHandler {
     return isActivePhase(phase);
   }
 
+  /**
+   * 会话当前在途执行的 executionId。
+   * runningExecutionIds 只登记本 handler 提交的执行；崩溃恢复 / 通道入站的执行登记在
+   * registry（WsStreamingEventListener 构造时写入）。所有对外帧都必须取到恢复执行的新
+   * executionId，否则重连客户端无法把陈旧的 activeExecutionId 换掉，恢复执行的流式帧
+   * 会被前端 isStaleExecution 当陈旧帧全部丢弃（表现为进度永久卡住）。
+   */
+  private currentExecutionId(sessionId: number): string | undefined {
+    return this.runningExecutionIds.get(sessionId) ?? this.deps.registry.getSessionExecution?.(sessionId);
+  }
+
   private isTerminalPhase(phase: string | null | undefined): boolean {
     return phase === 'COMPLETED' || phase === 'FAILED' || phase === 'CANCELLED';
   }
 
   private sendSessionAlreadyRunning(userId: number, sessionId: number): void {
     const data: Record<string, unknown> = { code: 'session_already_running', message: '该任务仍在运行，请先停止当前执行后再继续' };
-    const executionId = this.runningExecutionIds.get(sessionId);
+    const executionId = this.currentExecutionId(sessionId);
     if (executionId) data.executionId = executionId;
     this.deps.registry.send(userId, wsEvent('session_already_running', sessionId, data));
   }

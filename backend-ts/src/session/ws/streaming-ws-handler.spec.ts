@@ -39,6 +39,7 @@ describe('StreamingWsHandler', () => {
     register: vi.fn(), unregister: vi.fn(), hasLocalClientConnection: vi.fn(),
     sendToLocalClients: vi.fn(), getActiveToolCalls: vi.fn(() => []), clearActiveToolCalls: vi.fn(),
     isSessionThinking: vi.fn(() => false), setSessionThinking: vi.fn(),
+    getSessionExecution: vi.fn(() => undefined), setSessionExecution: vi.fn(), clearSessionExecution: vi.fn(),
     getClientType: vi.fn(() => 'browser'), bindEmbedSession: vi.fn(), unbindEmbedSession: vi.fn(),
     getEmbedSessionsForConnection: vi.fn(() => []), getEmbedSessionConnection: vi.fn(() => null),
     getEmbedSessionBinding: vi.fn(() => null),
@@ -79,6 +80,7 @@ describe('StreamingWsHandler', () => {
   const agentLoop = {
     registerCancelFlag: vi.fn(() => { let v = false; return { get: () => v, set: (n: boolean) => { v = n; } }; }),
     removeCancelFlag: vi.fn(), requestCancel: vi.fn(),
+    getCancelFlag: vi.fn(() => undefined),
   };
   const shellSessionManager = { closeByConversation: vi.fn() };
   const skillSyncService = { syncToSession: vi.fn(), getRemovedSkillNames: vi.fn(() => []) };
@@ -178,6 +180,37 @@ describe('StreamingWsHandler', () => {
     expect(registry.send).toHaveBeenCalledWith(7, expect.objectContaining({
       type: 'session_snapshot', sessionId: 11, data: { phase: 'COMPLETED' },
     }));
+  });
+
+  it('subscribe snapshot carries the recovered execution id registered on the registry', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('CLOUD', 'RUNNING'));
+    // 崩溃恢复的执行不经 WS handler 提交，只登记在 registry（listener 构造时写入）
+    registry.getSessionExecution.mockReturnValueOnce('exec-recovered');
+
+    await handler.handleTextMessage(ws, JSON.stringify({ type: 'subscribe', sessionId: 11 }));
+
+    expect(registry.send).toHaveBeenCalledWith(7, expect.objectContaining({
+      type: 'session_snapshot', sessionId: 11,
+      data: expect.objectContaining({ phase: 'RUNNING', executionId: 'exec-recovered' }),
+    }));
+  });
+
+  it('cancel aborts a recovered execution whose cancel flag lives on agentLoop instead of handler bookkeeping', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('CLOUD', 'RUNNING'));
+    registry.getSessionExecution.mockReturnValueOnce('exec-recovered');
+    const flag = { get: () => false, set: vi.fn() };
+    agentLoop.getCancelFlag.mockReturnValueOnce(flag);
+
+    await handler.handleTextMessage(ws, JSON.stringify({ type: 'cancel', sessionId: 11 }));
+
+    // 恢复执行不在 handler.cancelFlags 簿记里，但 flag 已注册在 agentLoop：必须真正中止执行，
+    // 不能落进 pendingCancels（无人消费，执行照跑）。
+    expect(agentLoop.requestCancel).toHaveBeenCalledWith(11);
+    expect(taskTerminalService.finishExecution).toHaveBeenCalledWith(11, 7, 'CANCELLED', 'exec-recovered');
   });
 
   it('sendMessageRejectsDuplicateWhileSessionIsRunningWithoutPersistingOrSubmitting', async () => {
