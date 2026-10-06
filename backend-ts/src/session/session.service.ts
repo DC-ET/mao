@@ -665,6 +665,10 @@ export class SessionService {
       await tx.execute('DELETE FROM session_compaction WHERE session_id = ?', [sideSessionId]);
       await tx.execute('DELETE FROM session_compaction_event WHERE session_id = ?', [sideSessionId]);
       await txMessageRepo.logicalDeleteBySession(sideSessionId);
+      // 提升是「插入新主会话 + 逻辑删除旧边路会话」：直接子会话的 parent 仍指向旧 id，
+      // 不重挂则整棵边路子树在新旧两棵树上都不可达（BFS / 树信号 / 搜索全部失联）。
+      // 子代理子会话已被前置校验拒绝，这里命中的只会是边路子树。
+      await txSessionRepo.reparentChildrenTo(sideSessionId, targetId);
       await txSessionRepo.logicalDelete(sideSessionId);
       return target;
     });

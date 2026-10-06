@@ -270,8 +270,11 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
 
   app.delete('/v1/sessions/:id', async (request, reply) => {
     const userId = requireUserId(request);
-    await requireSessionOwner(userId, pathId(request));
-    await sessionService.deleteSession(pathId(request));
+    const target = await requireSessionOwner(userId, pathId(request));
+    await sessionService.deleteSession(target.id!);
+    // 删除中间层边路任务会让后代成为孤儿（从树上不可达，其后续终态信号也会断链）：
+    // 沿删除前的父链向根补发一次树信号，驱动前端刷新列表、按递归口径重算聚合（孤儿天然剔除）
+    treeSignalPublisher.publishAtRoot(target.parentSessionId ?? target.id!);
     return sendOk(reply);
   });
 

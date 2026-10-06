@@ -271,6 +271,14 @@ export class SessionRepository {
     await this.db.execute(`UPDATE \`session\` SET deleted = 1 WHERE id = ? AND ${notDeleted()}`, [id]);
   }
 
+  /** 把 oldParentId 的全部未删除子会话重挂到 newParentId 名下（提升边路任务时子树跟随新主会话用）。 */
+  async reparentChildrenTo(oldParentId: number, newParentId: number): Promise<void> {
+    await this.db.execute(
+      `UPDATE \`session\` SET parent_session_id = ? WHERE parent_session_id = ? AND ${notDeleted()}`,
+      [newParentId, oldParentId],
+    );
+  }
+
   list(whereSql: string, params: unknown[], orderSql: string): Promise<Session[]> {
     return this.db.query<Session>(
       `SELECT * FROM \`session\` WHERE ${whereSql} AND ${notDeleted()} ${orderSql}`,

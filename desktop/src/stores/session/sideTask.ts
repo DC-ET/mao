@@ -165,6 +165,14 @@ export function createSideTaskModule(ctx: {
     return sideTaskCache.value.get(String(parentSessionId)) ?? []
   }
 
+  /** 按边路任务 id 反查其所属缓存键（根主会话 id 字符串）：递归平铺口径下事件只带直接父 id 时用。 */
+  function findSideTaskRootKey(sideSessionId: number): string | null {
+    for (const [parentSessionId, list] of sideTaskCache.value) {
+      if (list.some(t => t.id === sideSessionId)) return parentSessionId
+    }
+    return null
+  }
+
   function reset() {
     sideTaskCache.value = new Map()
   }
@@ -182,6 +190,7 @@ export function createSideTaskModule(ctx: {
     reconcileSideTaskPendingCounts,
     removeSideTask,
     getSideTasks,
+    findSideTaskRootKey,
     reset,
   }
 }

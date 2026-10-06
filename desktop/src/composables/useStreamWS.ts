@@ -613,9 +613,12 @@ export function useStreamWS() {
         if (sessionId && typeof data?.title === 'string') {
           sessionStore.updateSession(sessionId, { title: data.title })
           if (data.sessionType === 'SIDE_TASK' && data.parentSessionId != null) {
-            const parentSessionId = String(data.parentSessionId)
-            sessionStore.updateSideTaskTitle(parentSessionId, Number(sessionId), data.title)
-            updateSideTaskTabTitleFor(parentSessionId, Number(sessionId), data.title)
+            // 深层边路任务的事件只带直接父会话 id，而递归缓存 / Tab 状态都以根主会话 id 为键：
+            // 按任务 id 反查所属根键，查不到（缓存未加载）回退直接父 id，兼容仅一级边路的旧数据
+            const sid = Number(sessionId)
+            const rootKey = sessionStore.findSideTaskRootKey(sid) ?? String(data.parentSessionId)
+            sessionStore.updateSideTaskTitle(rootKey, sid, data.title)
+            updateSideTaskTabTitleFor(rootKey, sid, data.title)
           }
         }
         break

@@ -218,9 +218,15 @@ async function fetchSourceSessionMeta(sourceId: number) {
 watch(
   () => props.sourceSessionId,
   (id) => {
-    // 仅占位态需要来源缺省；hasRealSession 此时尚未初始化，按 props.sideSessionId 判定
-    if ((props.sideSessionId == null || props.sideSessionId <= 0) && id != null && id > 0) {
+    // 已转正的真实会话不再消费入口预置
+    if (props.sideSessionId != null && props.sideSessionId > 0) return
+    if (id != null && id > 0) {
       void fetchSourceSessionMeta(id)
+    } else {
+      // 来源回退主会话（占位复用）：必须清除上一个边路来源补拉的缺省，
+      // 否则新任务会静默继承无关边路会话的模型 / 权限（发送时显式传值、后端传值优先）
+      sourceSessionMeta.value = null
+      fetchedSourceMetaId.value = null
     }
   },
   { immediate: true },

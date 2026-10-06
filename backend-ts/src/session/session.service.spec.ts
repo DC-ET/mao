@@ -19,6 +19,36 @@ function message(id: number, sessionId: number, content: string | null): Message
 }
 
 function makeService() {
+  const txDb = {
+    insert: vi.fn(async (table: string, data: Record<string, unknown>) => {
+      if (table === 'session') return 99;
+      if (table === 'message') {
+        data.id = ++txMessageId;
+        return data.id;
+      }
+      return 299;
+    }),
+    queryOne: vi.fn(async (sql: string) => {
+      if (sql.includes('FROM `session`')) {
+        return vi.mocked(sessionRepo.findById).getMockImplementation()?.(20) ?? null;
+      }
+      return null;
+    }),
+    query: vi.fn(async (sql: string) => {
+      if (sql.includes('FROM `message`')) {
+        return [
+          { id: 1, sessionId: 20, role: 'USER', content: '检查一下' },
+          { id: 2, sessionId: 20, role: 'ASSISTANT', content: '完成' },
+        ];
+      }
+      if (sql.includes('FROM `session`')) return vi.mocked(sessionRepo.list).getMockImplementation()?.(sql, [], '') ?? [];
+      if (sql.includes('message_file_change')) return [];
+      if (sql.includes('session_todo')) return [];
+      return [];
+    }),
+    execute: vi.fn(async () => ({ affectedRows: 1 })),
+  };
+  let txMessageId = 199;
   const sessionRepo = {
     findById: vi.fn(),
     updateById: vi.fn(),
@@ -35,36 +65,7 @@ function makeService() {
     lockActiveSessionById: vi.fn(),
     logicalDelete: vi.fn(),
     transaction: vi.fn(async (fn: (db: unknown) => Promise<unknown>) => {
-      let messageId = 199;
-      const txDb = {
-        insert: vi.fn(async (table: string, data: Record<string, unknown>) => {
-          if (table === 'session') return 99;
-          if (table === 'message') {
-            data.id = messageId;
-            return messageId++;
-          }
-          return 299;
-        }),
-        queryOne: vi.fn(async (sql: string) => {
-          if (sql.includes('FROM `session`')) {
-            return vi.mocked(sessionRepo.findById).getMockImplementation()?.(20) ?? null;
-          }
-          return null;
-        }),
-        query: vi.fn(async (sql: string) => {
-          if (sql.includes('FROM `message`')) {
-            return [
-              { id: 1, sessionId: 20, role: 'USER', content: '检查一下' },
-              { id: 2, sessionId: 20, role: 'ASSISTANT', content: '完成' },
-            ];
-          }
-          if (sql.includes('FROM `session`')) return vi.mocked(sessionRepo.list).getMockImplementation()?.(sql, [], '') ?? [];
-          if (sql.includes('message_file_change')) return [];
-          if (sql.includes('session_todo')) return [];
-          return [];
-        }),
-        execute: vi.fn(async () => ({ affectedRows: 1 })),
-      };
+      txMessageId = 199;
       return fn(txDb);
     }),
   } as unknown as SessionRepository;
@@ -101,7 +102,7 @@ function makeService() {
     sessionCompactionService,
     sessionCompactionEventService,
   );
-  return { service, sessionRepo, messageRepo, fileChangeRepo, agentLookup };
+  return { service, sessionRepo, messageRepo, fileChangeRepo, agentLookup, txDb };
 }
 
 describe('SessionService archive', () => {
@@ -212,7 +213,7 @@ describe('SessionService archive', () => {
   });
 
   it('allowsSideTaskPromotionWhenOnlySideTaskChildrenExist', async () => {
-    const { service, sessionRepo } = makeService();
+    const { service, sessionRepo, txDb } = makeService();
     vi.mocked(sessionRepo.findById).mockResolvedValue({
       id: 20,
       userId: 7,
@@ -230,6 +231,11 @@ describe('SessionService archive', () => {
     const promoted = await service.promoteSideTaskToMainSession(20, 7);
     expect(promoted.sessionType).toBe('NORMAL');
     expect(promoted.parentSessionId).toBeNull();
+    // 子树跟随：直接子会话必须重挂到新主会话 id（99），否则整棵子树在新旧两棵树上都不可达
+    expect(txDb.execute).toHaveBeenCalledWith(
+      expect.stringContaining('parent_session_id = ?'),
+      [99, 20],
+    );
   });
 
   it('rejectsDeleteWhenSessionRunning', async () => {

@@ -592,7 +592,7 @@ async function handleDeleteSideTask(sideSessionId: number) {
   // 同样固定父会话 ID，避免删除返回时已切换主会话导致用错 ID 移除缓存
   const parentSessionId = activeSessionIdRef.value || ''
   try {
-    await ElMessageBox.confirm('删除后该边路任务的会话记录将一并删除，且不可恢复。确认删除？', '删除边路任务', {
+    await ElMessageBox.confirm('删除后该边路任务的会话记录将删除且不可恢复；其下层边路任务将从树中移除显示（数据保留）。确认删除？', '删除边路任务', {
       confirmButtonText: '删除',
       cancelButtonText: '取消',
       type: 'warning'
@@ -616,6 +616,10 @@ async function handleDeleteSideTask(sideSessionId: number) {
     draftStore.clearDraftAndMark(tab.id)
   }
   sessionStore.removeSideTask(parentSessionId, sideSessionId)
+  // 递归口径下被删任务的深层后代成为孤儿（仍残留在平铺缓存里），按服务端为准整体刷新剔除
+  if (parentSessionId) {
+    void sessionStore.refreshSideTasks(parentSessionId)
+  }
 }
 
 async function handlePromoteSideTask(sideSessionId: number) {
@@ -639,6 +643,10 @@ async function handlePromoteSideTask(sideSessionId: number) {
       draftStore.clearDraftAndMark(tab.id)
     }
     sessionStore.removeSideTask(parentSessionId, sideSessionId)
+    // 提升后其边路子树跟随新主会话、从旧树消失：按服务端为准刷新旧根的平铺列表剔除子树
+    if (parentSessionId) {
+      void sessionStore.refreshSideTasks(parentSessionId)
+    }
     if (data?.id != null) {
       await router.push(`/tasks/${data.id}`)
     }
