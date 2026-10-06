@@ -205,11 +205,13 @@ async function fetchSourceSessionMeta(sourceId: number) {
   fetchedSourceMetaId.value = sourceId
   try {
     const { data } = await api.get(`/sessions/${sourceId}`)
+    // 补拉返回前来源可能已被覆写/清除（占位复用的竞态窗口）：迟到响应不得覆盖最新选择
+    if (fetchedSourceMetaId.value !== sourceId) return
     if (data) {
       sourceSessionMeta.value = { modelId: data.modelId, permissionLevel: data.permissionLevel }
     }
   } catch {
-    // 补拉失败回退主会话口径，不阻塞创建
+    if (fetchedSourceMetaId.value !== sourceId) return
     sourceSessionMeta.value = null
     fetchedSourceMetaId.value = null
   }
