@@ -843,6 +843,31 @@ export function useStreamWS() {
         break
       }
 
+      case 'assistant_message_saved': {
+        // 后台子代理完成通知：消息由服务端直接落库（不经本端发送链路），
+        // 若不实时插入，用户盯屏期间看不到卡片，只有刷新后 REST 历史才补出来。
+        // messageId 为空（极端失败）时不插入：无 id 的气泡会在下次 fetchMessages 时变成
+        // 无法去重的重复条目；此时靠会话终态的重拉兜底。
+        if (sessionId && data?.messageId != null) {
+          const noticeId = String(data.messageId)
+          const metadata = parseNoticeMetadata(data.metadata)
+          // 仅处理带后台子代理标记的通知；其他来源的助手消息不在这里插入
+          if (metadata?.backgroundSubagentCompletion != null
+            && !sessionStore.getMessages(sessionId).some(m => String(m.id) === noticeId)) {
+            // 插在流式气泡之前：通知到达时主线往往还在流式输出，append 到尾部会让
+            // 下一个 delta 新建空气泡，把同一轮回复劈成两段。
+            sessionStore.insertPersistedAssistantMessage(sessionId, {
+              id: noticeId,
+              role: 'assistant',
+              content: typeof data.content === 'string' ? data.content : '',
+              createdAt: nowDateTime(),
+              metadata
+            })
+          }
+        }
+        break
+      }
+
       case 'session_snapshot':
         // Subscribe also reconciles a terminal state missed while the socket was disconnected.
         if (sessionId && data?.phase) {
@@ -1107,6 +1132,25 @@ export function useStreamWS() {
         }
         break
       }
+    }
+  }
+
+  /**
+   * 完成通知事件的 metadata：服务端下发的是 JSON 字符串（与 REST 消息行一致），
+   * 解析成对象才匹配 MessageBubble 的 backgroundSubagentCompletion 判定。
+   * 解析失败或形状不符时返回 null，调用方据此跳过插入。
+   */
+  function parseNoticeMetadata(raw: unknown): Record<string, unknown> | null {
+    if (raw == null) return null
+    if (typeof raw === 'object' && !Array.isArray(raw)) return raw as Record<string, unknown>
+    if (typeof raw !== 'string') return null
+    try {
+      const parsed = JSON.parse(raw)
+      return typeof parsed === 'object' && parsed != null && !Array.isArray(parsed)
+        ? parsed as Record<string, unknown>
+        : null
+    } catch {
+      return null
     }
   }
 

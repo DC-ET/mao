@@ -1004,6 +1004,14 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     agentExecutor,
     fileChangeRepo: fileChangeRepo as never,
     inboxRecorder: inboxService,
+    completionNoticeBroadcaster: {
+      broadcastCompletionNotice: (userId, event) => {
+        if (userId == null) return;
+        // 关键帧通道：完成通知丢失后客户端要等下次 REST 重拉才补上，用户盯屏时完全看不到卡片。
+        // 事件量极小（一次终态一帧），进关键队列不会挤占普通增量帧。
+        wsRegistry.send(userId, wsEvent('assistant_message_saved', event.sessionId, event.data));
+      },
+    },
   });
 
   const scheduledService = new ScheduledTaskService(

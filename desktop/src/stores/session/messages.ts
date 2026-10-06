@@ -225,6 +225,33 @@ export function createMessageRuntimeModule(ctx: {
     sessionMessages.value.set(sid, [...list, msg])
   }
 
+  /**
+   * 插入非流式的助手消息（后台子代理完成通知等由服务端直接落库的消息）。
+   *
+   * 与 addAssistantMessage 的区别：若尾部正是本轮正在流式输出的 tracked 气泡，
+   * 新消息必须插到它【之前】。否则 append 到尾部后，下一个 content_delta 会让
+   * ensureStreamingAssistantMessage 认不出尾部是自己的气泡而新建一个空占位，
+   * 把同一轮回复劈成「历史一段 + 新起一段」，时间线与回合分组都会错乱。
+   *
+   * 这正是后台子代理在主会话执行中完成时的真实时序：通知插入时主线还在流式输出。
+   */
+  function insertPersistedAssistantMessage(sessionId: string, msg: ChatMessage) {
+    const sid = String(sessionId)
+    const list = sessionMessages.value.get(sid) ?? []
+    const liveId = streamingAssistantMessageIds.get(sid)
+    const streamTailIndex = list.length - 1
+    const hasStreamTail = liveId != null
+      && streamTailIndex >= 0
+      && String(list[streamTailIndex].id) === liveId
+    if (hasStreamTail) {
+      const next = [...list]
+      next.splice(streamTailIndex, 0, msg)
+      sessionMessages.value.set(sid, next)
+      return
+    }
+    sessionMessages.value.set(sid, [...list, msg])
+  }
+
   function ensureStreamingAssistantMessage(sessionId: string): ChatMessage {
     const sid = String(sessionId)
     const list = sessionMessages.value.get(sid) ?? []
@@ -845,6 +872,7 @@ export function createMessageRuntimeModule(ctx: {
     clearMessagePageState,
     addUserMessage,
     addAssistantMessage,
+    insertPersistedAssistantMessage,
     ensureStreamingAssistantMessage,
     getMessages,
     removeTrailingEmptyAssistant,

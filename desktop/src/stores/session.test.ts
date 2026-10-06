@@ -587,6 +587,44 @@ describe('session store 实体/投影模型', () => {
     // 注入的 50 与本页 3/4 都在列表里，但下一页 offset 仍按服务端返回条数推进
     expect(store.standardSessionIds).toEqual(expect.arrayContaining(['1', '2', '50', '3', '4']))
   })
+
+  // 后台子代理在主会话执行中完成：通知由服务端直接落库并经 assistant_message_saved 实时下发。
+  // 若 append 到流式气泡之后，下一个 content_delta 会让 ensureStreamingAssistantMessage
+  // 认不出尾部气泡而新建空气泡，把同一轮回复劈成两段（用户刷新前只看到前一段）。
+  it('insertPersistedAssistantMessage 把落库通知插在流式气泡之前，后续 delta 不新建空气泡', () => {
+    const store = useSessionStore()
+    store.addUserMessage('1', { id: 'u1', role: 'user', content: '调研取消逻辑', createdAt: '2026-10-06 15:00:00' })
+    const streaming = store.ensureStreamingAssistantMessage('1')
+    store.appendDelta('1', '主线输出')
+
+    store.insertPersistedAssistantMessage('1', {
+      id: '901',
+      role: 'assistant',
+      content: '后台子代理（explorer）已完成 · 点击查看详情',
+      createdAt: '2026-10-06 15:01:00',
+    })
+
+    store.appendDelta('1', '，后续')
+
+    const msgs = store.getMessages('1')
+    expect(msgs.map(m => m.id)).toEqual(['u1', '901', streaming.id])
+    // 同一轮回复仍在同一条 tracked 气泡里追加，没有被拆成两段
+    const liveBubbles = msgs.filter(m => m.id === streaming.id)
+    expect(liveBubbles).toHaveLength(1)
+    expect(liveBubbles[0].content).toBe('主线输出，后续')
+  })
+
+  it('insertPersistedAssistantMessage 无流式气泡时按普通追加', () => {
+    const store = useSessionStore()
+    store.addUserMessage('1', { id: 'u1', role: 'user', content: 'hi', createdAt: '2026-10-06 15:00:00' })
+    store.insertPersistedAssistantMessage('1', {
+      id: '902',
+      role: 'assistant',
+      content: '通知',
+      createdAt: '2026-10-06 15:01:00',
+    })
+    expect(store.getMessages('1').map(m => m.id)).toEqual(['u1', '902'])
+  })
 })
 
 describe('session store 边路任务待处理计数同步', () => {

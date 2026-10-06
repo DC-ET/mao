@@ -655,3 +655,77 @@ describe('BackgroundSubagentManager 收件箱写入（SUBAGENT_DONE）', () => {
     expect(exec.deliveryStatus).toBe('DELIVERED');
   });
 });
+
+describe('BackgroundSubagentManager 完成通知广播（assistant_message_saved）', () => {
+  function buildBroadcastManager(exec: Record<string, unknown>, parentPhase = 'RUNNING') {
+    const broadcastCompletionNotice = vi.fn();
+    const saveMessage = vi.fn(async () => ({ id: 901 }));
+    const child = { id: 42, sessionType: 'SUBAGENT', parentSessionId: 1, userId: 7 };
+    const parent = { id: 1, phase: parentPhase, userId: 7 };
+    const sessionService = {
+      getMessages: vi.fn(async () => [{ role: 'ASSISTANT', content: '子代理结论' }]),
+      saveMessage,
+    };
+    const subagentExecutionMapper = {
+      findById: vi.fn(async () => exec),
+      findByChildSessionId: vi.fn(async () => exec),
+      listByParent: vi.fn(async () => [exec]),
+      updateById: vi.fn(async (_id: number, data: Record<string, unknown>) => { Object.assign(exec, data); }),
+      updateTerminal: vi.fn(async (_id: number, data: Record<string, unknown>) => {
+        if (exec.status !== 'RUNNING' && exec.status !== 'RECOVERING') return false;
+        Object.assign(exec, data);
+        return true;
+      }),
+    };
+    const sessionMapper = { selectById: vi.fn(async (id: number) => (id === 42 ? child : parent)) };
+    const manager = new BackgroundSubagentManager({
+      subagentExecutionMapper, sessionMapper, sessionService,
+      completionNoticeBroadcaster: { broadcastCompletionNotice },
+    } as never);
+    return { manager, broadcastCompletionNotice, saveMessage };
+  }
+
+  function execution(status: string) {
+    return {
+      id: 7, parentSessionId: 1, childSessionId: 42, agentType: 'reviewer',
+      status, invocationType: 'BACKGROUND', deliveryStatus: 'DELIVERED',
+    };
+  }
+
+  it('completeRetry DELIVERED 后广播 assistant_message_saved（含 messageId 与 metadata）', async () => {
+    const exec = execution('FAILED');
+    const { manager, broadcastCompletionNotice, saveMessage } = buildBroadcastManager(exec);
+    await manager.beginRetry(1, 42);
+    await manager.completeRetry(1, 7, 'COMPLETED');
+
+    expect(saveMessage).toHaveBeenCalled();
+    expect(broadcastCompletionNotice).toHaveBeenCalledTimes(1);
+    const [userId, event] = broadcastCompletionNotice.mock.calls[0] as [number, { sessionId: number; data: Record<string, unknown> }];
+    expect(userId).toBe(7);
+    expect(event.sessionId).toBe(1);
+    expect(event.data.messageId).toBe(901);
+    expect(String(event.data.content)).toContain('后台子代理（reviewer）已完成');
+    expect(String(event.data.metadata)).toContain('backgroundSubagentCompletion');
+    expect(event.data.status).toBe('COMPLETED');
+  });
+
+  it('结果被抑制（父会话终态）时不落库也不广播', async () => {
+    const exec = execution('FAILED');
+    const { manager, broadcastCompletionNotice, saveMessage } = buildBroadcastManager(exec, 'COMPLETED');
+    await manager.beginRetry(1, 42);
+    await manager.completeRetry(1, 7, 'COMPLETED');
+
+    expect(exec.deliveryStatus).toBe('SUPPRESSED');
+    expect(saveMessage).not.toHaveBeenCalled();
+    expect(broadcastCompletionNotice).not.toHaveBeenCalled();
+  });
+
+  it('广播抛异常不影响收敛簿记（不向上抛、execution 仍为 DELIVERED）', async () => {
+    const exec = execution('FAILED');
+    const { manager, broadcastCompletionNotice } = buildBroadcastManager(exec);
+    broadcastCompletionNotice.mockImplementation(() => { throw new Error('ws closed'); });
+    await manager.beginRetry(1, 42);
+    await expect(manager.completeRetry(1, 7, 'COMPLETED')).resolves.toBeUndefined();
+    expect(exec.deliveryStatus).toBe('DELIVERED');
+  });
+});
