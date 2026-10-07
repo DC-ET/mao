@@ -8,6 +8,7 @@ import type { SessionService } from './session.service.js';
 import type { ActivityService } from './activity.service.js';
 import type { MessageQueueService } from './message-queue.service.js';
 import type { SessionCompactionEventService } from './session-compaction-event.service.js';
+import type { SessionCompactionService } from './session-compaction.service.js';
 import type { SessionTodoRepository, SubagentExecutionRepository } from './activity.repository.js';
 import type { AgentLookup, LlmModelLookup, UserLookup } from './types.js';
 import type { PathSandbox } from '../harness/safety/path-sandbox.js';
@@ -67,6 +68,7 @@ describe('session and admin routes', () => {
       updateSummary: vi.fn(),
       updateProjectKey: vi.fn(),
       updatePermissionLevel: vi.fn(),
+      updateMemoryInjectionDisabled: vi.fn(),
       updateModelId: vi.fn(),
       getMessagesByRounds: vi.fn(async () => ({ messages: [], hasMore: false, nextBeforeMessageId: null })),
       getFileChangesByMessageIds: vi.fn(async () => new Map()),
@@ -96,6 +98,7 @@ describe('session and admin routes', () => {
     writeFileSync(join(root, '7', 'projects', 'demo', '.git'), '');
     const pathSandbox = { getWorkspaceRoot: () => root } as PathSandbox;
     const compactionEventService = { listBySessionId: vi.fn(async () => []) } as unknown as SessionCompactionEventService;
+    const compactionRecordService = { findBySessionId: vi.fn(async () => null) };
     registerSessionRoutes(fastify, {
       sessionService,
       agentLookup,
@@ -111,6 +114,7 @@ describe('session and admin routes', () => {
       pathSandbox,
       subagentExecutionRepo: { findByChildSessionIds: vi.fn(async () => []) } as unknown as SubagentExecutionRepository,
       sessionCompactionEventService: compactionEventService,
+      sessionCompactionService: compactionRecordService as unknown as SessionCompactionService,
     });
     registerAdminSessionRoutes(fastify, {
       sessionService,
@@ -131,7 +135,7 @@ describe('session and admin routes', () => {
       })),
     } as unknown as OssStsService;
     registerOssRoutes(fastify, { ossStsService });
-    return { fastify, sessionService, ossStsService, compactionEvents: compactionEventService };
+    return { fastify, sessionService, ossStsService, compactionEvents: compactionEventService, compactionRecordService };
   }
 
   it('covers session rest endpoints', async () => {
@@ -175,6 +179,61 @@ describe('session and admin routes', () => {
     expect((await json('GET', '/v1/admin/sessions/options/agents')).body.data[0].name).toBe('Agent');
     expect(sessionService.togglePin).toHaveBeenCalled();
     expect(sessionService.getFileChangeSummariesByMessageIds).not.toHaveBeenCalled();
+    await fastify.close();
+  });
+
+  it('GET /sessions/:id/compaction 返回摘要现值，无记录时 data 为 null', async () => {
+    const { fastify, compactionRecordService } = await app();
+
+    // 无压缩记录：data 缺省（框架 Result.ok 对 null 省略 data 键），不算错
+    const none = await fastify.inject({ method: 'GET', url: '/v1/sessions/1/compaction' });
+    expect(none.statusCode).toBe(200);
+    const noneBody = JSON.parse(none.body);
+    expect(noneBody.code).toBe(0);
+    expect(noneBody.data ?? null).toBeNull();
+
+    // 有记录：透传 summaryText / lastCompactedMsgId / compactCount / compactModel / updatedAt
+    // updatedAt 用 MySQL dateStrings 的 'yyyy-MM-dd HH:mm:ss' 字符串形态，格式化结果与时区无关。
+    (compactionRecordService.findBySessionId as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        summaryText: '这是上下文摘要',
+        lastCompactedMsgId: 42,
+        compactCount: 3,
+        compactModel: 'gpt-test',
+        updatedAt: '2026-10-06 12:00:00',
+      });
+    const got = JSON.parse((await fastify.inject({ method: 'GET', url: '/v1/sessions/1/compaction' })).body);
+    expect(got.data).toEqual({
+      summaryText: '这是上下文摘要',
+      lastCompactedMsgId: 42,
+      compactCount: 3,
+      compactModel: 'gpt-test',
+      updatedAt: '2026-10-06T12:00',
+    });
+
+    // 属主校验：越权会话拒绝（requireSessionOwner 抛 FORBIDDEN）
+    const { fastify: f2, sessionService: svc2 } = await app();
+    (svc2.getSession as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 1, userId: 999, agentId: 9 });
+    const denied = await f2.inject({ method: 'GET', url: '/v1/sessions/1/compaction' });
+    expect(denied.statusCode).not.toBe(200);
+    expect(JSON.parse(denied.body).code).not.toBe(0);
+
+    await fastify.close();
+    await f2.close();
+  });
+
+  it('PATCH /sessions/:id 切换 memoryInjectionDisabled（含 false）并回显到 VO', async () => {
+    const { fastify, sessionService } = await app();
+    vi.mocked(sessionService.getSession).mockResolvedValue(session({ memoryInjectionDisabled: 1 }) as never);
+    const on = await fastify.inject({ method: 'PATCH', url: '/v1/sessions/1', payload: { memoryInjectionDisabled: true } });
+    expect(on.statusCode).toBe(200);
+    expect(JSON.parse(on.body).data.memoryInjectionDisabled).toBe(true);
+    expect(sessionService.updateMemoryInjectionDisabled).toHaveBeenCalledWith(1, true);
+
+    // false 也必须触发写入（关闭开关），不能因为 `!= null` 短路被当成缺省跳过。
+    const off = await fastify.inject({ method: 'PATCH', url: '/v1/sessions/1', payload: { memoryInjectionDisabled: false } });
+    expect(off.statusCode).toBe(200);
+    expect(sessionService.updateMemoryInjectionDisabled).toHaveBeenCalledWith(1, false);
     await fastify.close();
   });
 

@@ -27,6 +27,14 @@
       >
         Git
       </button>
+      <button
+        v-if="showContextTab"
+        class="inspector-tab"
+        :class="{ active: inspectorActiveTab === 'context' }"
+        @click="inspectorActiveTab = 'context'"
+      >
+        上下文
+      </button>
     </div>
 
     <div v-show="inspectorActiveTab === 'workspace'" class="inspector-tab-content">
@@ -228,12 +236,98 @@
       />
     </div>
 
+    <div v-if="showContextTab && inspectorActiveTab === 'context'" class="inspector-tab-content context-tab">
+      <div class="ctx-block">
+        <div class="ctx-block-title">上下文水位</div>
+        <div v-if="waterLevelPct != null" class="ctx-water">
+          <div class="ctx-bar"><div class="ctx-bar-fill" :style="{ width: waterLevelPct + '%' }"></div></div>
+          <span class="ctx-water-text">
+            约 {{ waterLevelPct }}% · {{ (contextWindow?.estimated ?? 0).toLocaleString() }} /
+            {{ effectiveWindowTokens != null ? effectiveWindowTokens.toLocaleString() : '?' }} tokens
+          </span>
+        </div>
+        <div v-else class="ctx-empty">暂无水位数据</div>
+      </div>
+
+      <div class="ctx-block">
+        <div class="ctx-block-title">
+          <span>上下文构成</span>
+          <el-tooltip
+            content="各节 token 为字节估算口径；分节合计仅含系统提示 + 消息 + 交接摘要，不含工具定义，故与上方含工具定义的水位存在口径差"
+            placement="top"
+          >
+            <span class="ctx-help">?</span>
+          </el-tooltip>
+        </div>
+        <div v-if="sectionStats.length" class="ctx-sections">
+          <div v-for="sec in sectionStats" :key="sec.key" class="ctx-section-row">
+            <div class="ctx-section-head">
+              <span class="ctx-section-label">{{ sec.label }}</span>
+              <span class="ctx-section-tokens">
+                {{ sec.tokens.toLocaleString() }} tokens<span v-if="sec.count != null"> · {{ sec.count }}</span>
+              </span>
+            </div>
+            <div class="ctx-bar"><div class="ctx-bar-fill" :style="{ width: (tokensPct(sec.tokens) ?? 0) + '%' }"></div></div>
+          </div>
+        </div>
+        <div v-else class="ctx-empty">本次会话尚无构成数据（发起一次任务后可见）</div>
+      </div>
+
+      <div class="ctx-block">
+        <div class="ctx-block-title ctx-row">
+          <span>本会话注入记忆</span>
+          <el-switch
+            :model-value="!memoryInjectionDisabled"
+            :loading="memoryToggleBusy"
+            size="small"
+            @update:model-value="toggleMemoryInjection(!Boolean($event))"
+          />
+        </div>
+        <div class="ctx-hint">开关改动将于下次任务开始时生效</div>
+        <div v-if="memoryIds.length" class="ctx-memory-chips">
+          <button
+            v-for="id in memoryIds"
+            :key="id"
+            class="ctx-chip"
+            :title="memorySnippet(id)"
+            @click="gotoMemorySettings"
+          >{{ memorySnippet(id) }}</button>
+        </div>
+        <div v-else-if="memoryInjectionDisabled" class="ctx-empty">已关闭本会话记忆注入</div>
+        <div v-else class="ctx-empty">本次未注入长期记忆</div>
+      </div>
+
+      <div class="ctx-block">
+        <div class="ctx-block-title">手动整理上下文</div>
+        <button class="ctx-compact-btn" :disabled="isCompacting || compactSubmitting" @click="handleCompactNow">
+          {{ isCompacting ? '正在整理上下文…' : '立即整理上下文' }}
+        </button>
+        <div v-if="isRunning" class="ctx-hint">任务运行中，将在本轮工具结束后执行</div>
+        <button class="ctx-summary-toggle" @click="toggleSummaryPanel">
+          {{ summaryPanelOpen ? '收起上次摘要' : '查看上次摘要' }}
+        </button>
+        <div v-if="summaryPanelOpen" class="ctx-summary-panel">
+          <div v-if="summaryLoading" class="ctx-empty">加载中…</div>
+          <template v-else-if="compactionSummary">
+            <div class="ctx-summary-meta">
+              <span v-if="compactionSummary.compactCount != null">已整理 {{ compactionSummary.compactCount }} 次</span>
+              <span v-if="compactionSummary.compactModel">{{ compactionSummary.compactModel }}</span>
+              <span v-if="compactionSummary.updatedAt">{{ compactionSummary.updatedAt }}</span>
+            </div>
+            <pre class="ctx-summary-text">{{ compactionSummary.summaryText || '（无摘要正文）' }}</pre>
+          </template>
+          <div v-else class="ctx-empty">暂无压缩摘要记录</div>
+        </div>
+      </div>
+    </div>
+
     </template>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
 import { FolderOpened, DocumentCopy, User, Share } from '@element-plus/icons-vue'
 import { ElMessage, ElTooltip } from 'element-plus'
 import TodoChecklist from './TodoChecklist.vue'
@@ -249,6 +343,9 @@ import type { WorkspaceGitProvider } from '../../composables/workspace-git-provi
 import { useGitStatus } from '../../composables/useGitStatus'
 import { useGitRepos } from '../../composables/useGitRepos'
 import { useModelContext } from '../../composables/useModelContext'
+import { useStreamWS } from '../../composables/useStreamWS'
+import { listMemories, getSessionCompaction, setSessionMemoryInjectionDisabled } from '../../api'
+import type { SessionCompactionSummary } from '../../api'
 import type { GitChangedFile } from '../../types/git'
 import { cloudWorkspaceIndicator } from '../../utils/cloud-project'
 import { copyText } from '../../utils/clipboard'
@@ -302,7 +399,7 @@ const currentModelId = computed(() => {
 // Get model's max context window tokens
 const { maxTokens } = useModelContext(currentModelId)
 
-const inspectorActiveTab = ref<'workspace' | 'filetree' | 'git'>('workspace')
+const inspectorActiveTab = ref<'workspace' | 'filetree' | 'git' | 'context'>('workspace')
 const showFileTreeTab = computed(() => {
   if (props.executionMode === 'CLOUD') {
     return !!props.sessionId
@@ -370,7 +467,10 @@ const showGitTab = computed(() => {
   return gitLoading.value
 })
 
-const showTabBar = computed(() => showFileTreeTab.value || showGitTab.value)
+// 上下文页签：任何有会话 id 的可检视对象都展示（水位/构成/记忆/手动治理随该会话）
+const showContextTab = computed(() => !!props.sessionId && props.viewType !== 'subagent')
+
+const showTabBar = computed(() => showFileTreeTab.value || showGitTab.value || showContextTab.value)
 
 const gitSummaryVisible = computed(() => {
   if (!props.gitProvider) return false
@@ -427,11 +527,155 @@ function handleRepoClick(path: string) {
   }
 }
 
+// ===== 上下文透视页签（技术方案 5.2 / 5.3 / 5.5） =====
+const router = useRouter()
+const streamWS = useStreamWS()
+
+const contextManifest = computed(() => props.contextWindow?.manifest ?? null)
+const sectionStats = computed(() => contextManifest.value?.sections ?? [])
+const memoryIds = computed(() => contextManifest.value?.memoryIds ?? [])
+
+// 占比分母优先取 manifest 生效窗口，回退模型窗口 / contextWindow.maxTokens
+const effectiveWindowTokens = computed<number | null>(() =>
+  contextManifest.value?.estimatedWindowTokens
+  ?? maxTokens.value
+  ?? props.contextWindow?.maxTokens
+  ?? null,
+)
+function tokensPct(tokens: number): number | null {
+  const w = effectiveWindowTokens.value
+  if (!w || w <= 0) return null
+  return Math.min(100, Math.round((tokens / w) * 100))
+}
+const waterLevelPct = computed(() => tokensPct(props.contextWindow?.estimated ?? 0))
+
+// 记忆条目 snippet：manifest 仅带 id，按 id 调列表接口本地匹配 content（技术方案 5.3）
+const memorySnippetById = ref<Map<number, string>>(new Map())
+const memoriesLoading = ref(false)
+async function loadMemorySnippets() {
+  const ids = memoryIds.value.slice()
+  const sid = props.sessionId
+  if (!ids.length || memoriesLoading.value) return
+  memoriesLoading.value = true
+  try {
+    const page = await listMemories({ pageSize: 200 })
+    if (String(props.sessionId) !== String(sid)) return
+    const wanted = new Set(ids)
+    const map = new Map<number, string>()
+    for (const item of page.records ?? []) {
+      if (wanted.has(item.id)) map.set(item.id, item.content)
+    }
+    memorySnippetById.value = map
+  } catch {
+    // snippet 拉取失败不影响 chip 展示，chip 回退显示 id
+  } finally {
+    if (String(props.sessionId) === String(sid)) memoriesLoading.value = false
+  }
+}
+function memorySnippet(id: number): string {
+  const text = memorySnippetById.value.get(id)
+  if (!text) return `记忆 #${id}`
+  return text.length > 24 ? text.slice(0, 24) + '…' : text
+}
+function gotoMemorySettings() {
+  router.push('/settings/memory')
+}
+
+// 记忆注入开关：读会话 VO 的 memoryInjectionDisabled（下一次执行生效，故只做本地即时回显 + PATCH）
+const currentSession = computed(() =>
+  props.sessionId ? sessionStore.sessions.find(s => String(s.id) === String(props.sessionId)) : undefined,
+)
+const memoryInjectionDisabled = computed(() => currentSession.value?.memoryInjectionDisabled ?? false)
+const memoryToggleBusy = ref(false)
+async function toggleMemoryInjection(disabled: boolean) {
+  const sid = props.sessionId
+  if (!sid || memoryToggleBusy.value) return
+  memoryToggleBusy.value = true
+  try {
+    await setSessionMemoryInjectionDisabled(sid, disabled)
+    sessionStore.updateSession(sid, { memoryInjectionDisabled: disabled })
+  } catch (e) {
+    ElMessage.error((e as Error)?.message || '切换记忆注入失败')
+  } finally {
+    memoryToggleBusy.value = false
+  }
+}
+
+// 手动整理上下文
+const isRunning = computed(() =>
+  ['RUNNING', 'RESUMING', 'WAITING_APPROVAL', 'CANCELLING'].includes(props.phase),
+)
+const isCompacting = computed(() => (props.sessionId ? sessionStore.isSessionCompacting(props.sessionId) : false))
+const compactSubmitting = ref(false)
+async function handleCompactNow() {
+  const sid = props.sessionId
+  if (!sid || compactSubmitting.value || isCompacting.value) return
+  compactSubmitting.value = true
+  try {
+    await streamWS.compactNow(sid)
+  } catch {
+    ElMessage.error('发送整理请求失败')
+  } finally {
+    // 去抖防连点（服务端 signal 幂等，重复点击不叠加）；终态由 compaction_start/end 事件驱动
+    setTimeout(() => { compactSubmitting.value = false }, 800)
+  }
+}
+
+// 上次压缩摘要：折叠面板懒加载
+const summaryPanelOpen = ref(false)
+const summaryLoaded = ref(false)
+const summaryLoading = ref(false)
+const compactionSummary = ref<SessionCompactionSummary | null>(null)
+async function loadCompactionSummary() {
+  const sid = props.sessionId
+  if (!sid) return
+  summaryLoading.value = true
+  try {
+    const summary = await getSessionCompaction(sid)
+    if (String(props.sessionId) !== String(sid)) return
+    compactionSummary.value = summary
+  } catch {
+    if (String(props.sessionId) !== String(sid)) return
+    ElMessage.error('读取压缩摘要失败')
+    compactionSummary.value = null
+  } finally {
+    if (String(props.sessionId) === String(sid)) {
+      summaryLoading.value = false
+      summaryLoaded.value = true
+    }
+  }
+}
+function toggleSummaryPanel() {
+  summaryPanelOpen.value = !summaryPanelOpen.value
+  if (summaryPanelOpen.value && !summaryLoaded.value && !summaryLoading.value) void loadCompactionSummary()
+}
+
+// 切换会话先于 snippet 补拉：清空上一会话缓存后，下面的 watch 才能看到空 map 并重拉。
+watch(() => props.sessionId, () => {
+  summaryPanelOpen.value = false
+  summaryLoaded.value = false
+  summaryLoading.value = false
+  compactionSummary.value = null
+  memoriesLoading.value = false
+  memorySnippetById.value = new Map()
+})
+
+// 进入上下文页签、切换会话或记忆 id 变化时按需补拉 snippet。
+// 以 id 列表而不是条数为源：新旧会话条数相同也要重拉。
+watch([inspectorActiveTab, () => props.sessionId, () => memoryIds.value.join(',')], () => {
+  if (inspectorActiveTab.value === 'context' && memoryIds.value.length > 0 && memorySnippetById.value.size === 0) {
+    void loadMemorySnippets()
+  }
+})
+
 watch([showFileTreeTab, showGitTab], () => {
   if (inspectorActiveTab.value === 'filetree' && !showFileTreeTab.value) {
     inspectorActiveTab.value = 'workspace'
   }
   if (inspectorActiveTab.value === 'git' && !showGitTab.value) {
+    inspectorActiveTab.value = 'workspace'
+  }
+  if (inspectorActiveTab.value === 'context' && !showContextTab.value) {
     inspectorActiveTab.value = 'workspace'
   }
 })
@@ -1191,5 +1435,174 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
 [data-theme="dark"] .context-badge {
   color: var(--aw-ink-muted-48);
   background: rgba(255, 255, 255, 0.06);
+}
+
+/* ===== 上下文透视页签 ===== */
+.context-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.ctx-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ctx-block-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--aw-ink, #1f2937);
+}
+.ctx-block-title.ctx-row {
+  justify-content: space-between;
+}
+.ctx-help {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--aw-ink-muted-48, #9ca3af);
+  background: color-mix(in srgb, var(--aw-ink-muted-48, #9ca3af) 16%, transparent);
+  cursor: help;
+}
+.ctx-hint {
+  font-size: 12px;
+  color: var(--aw-ink-muted-48, #6b7280);
+}
+.ctx-empty {
+  font-size: 12px;
+  color: var(--aw-ink-muted-48, #9ca3af);
+}
+.ctx-water {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ctx-water-text {
+  font-size: 12px;
+  color: var(--aw-ink-muted-48, #6b7280);
+}
+.ctx-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--aw-ink-muted-48, #9ca3af) 18%, transparent);
+  overflow: hidden;
+}
+.ctx-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--aw-primary, #2563eb);
+  transition: width 0.2s ease;
+}
+.ctx-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ctx-section-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ctx-section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+}
+.ctx-section-label {
+  color: var(--aw-ink, #1f2937);
+}
+.ctx-section-tokens {
+  color: var(--aw-ink-muted-48, #6b7280);
+  white-space: nowrap;
+}
+.ctx-memory-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.ctx-chip {
+  max-width: 100%;
+  padding: 3px 8px;
+  font-size: 12px;
+  border: 1px solid var(--aw-border, #e5e7eb);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--aw-ink, #1f2937);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ctx-chip:hover {
+  border-color: var(--aw-primary, #2563eb);
+  color: var(--aw-primary, #2563eb);
+}
+.ctx-compact-btn {
+  align-self: flex-start;
+  padding: 6px 14px;
+  font-size: 13px;
+  border: none;
+  border-radius: 6px;
+  background: var(--aw-primary, #2563eb);
+  color: #fff;
+  cursor: pointer;
+}
+.ctx-compact-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.ctx-summary-toggle {
+  align-self: flex-start;
+  padding: 4px 0;
+  font-size: 12px;
+  border: none;
+  background: transparent;
+  color: var(--aw-primary, #2563eb);
+  cursor: pointer;
+}
+.ctx-summary-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--aw-border, #e5e7eb);
+  border-radius: 8px;
+}
+.ctx-summary-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--aw-ink-muted-48, #6b7280);
+}
+.ctx-summary-text {
+  margin: 0;
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--aw-ink, #1f2937);
+}
+
+[data-theme="dark"] .ctx-block-title {
+  color: var(--aw-ink, #e5e7eb);
+}
+[data-theme="dark"] .ctx-section-label {
+  color: var(--aw-ink, #e5e7eb);
+}
+[data-theme="dark"] .ctx-summary-text {
+  color: var(--aw-ink, #e5e7eb);
 }
 </style>

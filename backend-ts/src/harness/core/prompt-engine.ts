@@ -12,6 +12,9 @@ import { harnessLog } from '../log.js';
 import type { AgentExecutionContext } from './agent-execution-context.js';
 import { MessageHistoryNormalizer } from './message-history-normalizer.js';
 import { ToolMediaInjector } from './tool-media-injector.js';
+import { TokenEstimator } from './token-estimator.js';
+import { buildHandoffUserContent } from './compaction-service.js';
+import type { ContextManifest, ContextSectionStat } from './context-manifest.js';
 
 const TASK_TOOL_NAMES = new Set(['task_create', 'task_update', 'task_list', 'task_delete']);
 const WEIXIN_MEDIA_TOOL_NAMES = new Set(['send_wechat_image', 'send_wechat_file']);
@@ -89,6 +92,14 @@ const AGENTS_MD_TRUNCATED_HINT = '\n> 当前仅展示前200行规则，读取AGE
 
 const WEEKDAYS = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
 
+/** 系统提示的一个逻辑分节：text 参与逐字节拼接，key/label/count 供 manifest 展示。 */
+interface PromptSection {
+  key: string;
+  label: string;
+  text: string;
+  count?: number;
+}
+
 export class PromptEngine {
   constructor(
     private readonly skillLoader: SkillLoader,
@@ -97,11 +108,15 @@ export class PromptEngine {
     private readonly userCommandService: UserCommandService,
     private readonly skillSyncService: SkillSyncService,
     private readonly toolMediaInjector = new ToolMediaInjector(),
+    private readonly tokenEstimator = new TokenEstimator(),
   ) {}
 
   async buildRequest(context: AgentExecutionContext): Promise<ChatRequest> {
+    // 系统提示分节构建：join 后逐字节等于重构前 buildSystemPrompt 的输出（决策 1 硬不变量），
+    // 同一批 sections 直接喂给 manifest，保证「所见即所发」。
+    const sections = this.buildSystemPromptSections(context);
     const messages: ChatMessage[] = [];
-    messages.push({ role: 'system', content: this.buildSystemPrompt(context) });
+    messages.push({ role: 'system', content: sections.map((s) => s.text).join('') });
     const history = context.messages;
     // M-13：浅拷贝一份消息数组供标记展开，展开结果只作用于本次请求的副本，
     // 不写回 context.messages——否则命令内容嵌套其它 #{...}# 时多轮 buildRequest 会逐层展开，
@@ -133,6 +148,9 @@ export class PromptEngine {
     if (context.sessionId != null) {
       request.promptCacheKey = `mao-session-${context.sessionId}`;
     }
+    // manifest 只读最终请求对象（normalized = quick command 展开 / 媒体注入 / 归一化之后），
+    // 禁止用组装前的 context.messages 口径（决策 1、§8 漂移对策）。
+    context.contextManifest = this.buildContextManifest(context, sections, normalized);
     return request;
   }
 
@@ -192,61 +210,143 @@ export class PromptEngine {
   }
 
   private buildSystemPrompt(context: AgentExecutionContext): string {
-    let sb = '';
+    return this.buildSystemPromptSections(context).map((s) => s.text).join('');
+  }
+
+  /**
+   * 逐节构建系统提示（技术方案 5.2）。收集-拼接分离：各节 text 依原顺序 join 后与重构前
+   * buildSystemPrompt 输出逐字节一致（空节不产生 text，跳过与追加空串等价）。
+   * key/label/count 仅用于 manifest 展示，不参与拼接。
+   */
+  private buildSystemPromptSections(context: AgentExecutionContext): PromptSection[] {
+    const sections: PromptSection[] = [];
     if (hasText(context.systemPrompt)) {
-      sb += context.systemPrompt + '\n\n';
+      sections.push({ key: 'system-prompt', label: 'Agent 人格', text: context.systemPrompt! + '\n\n' });
     }
     const experiences = this.resolveExperiences(context);
     if (experiences.length > 0) {
-      sb += '## 最佳实践经验\n\n';
+      let text = '## 最佳实践经验\n\n';
+      let count = 0;
       for (const exp of experiences) {
-        if (hasText(exp)) sb += `- ${exp}\n`;
+        if (hasText(exp)) { text += `- ${exp}\n`; count++; }
       }
-      sb += '\n';
+      text += '\n';
+      sections.push({ key: 'experiences', label: '最佳实践经验', text, count });
     }
-    sb += this.longTermMemoriesHint(context);
+    const memoriesText = this.longTermMemoriesHint(context);
+    if (memoriesText.length > 0) {
+      const memoryCount = (context.memories ?? []).filter((m) => hasText(m.content)).length;
+      sections.push({ key: 'memories', label: '长期记忆', text: memoriesText, count: memoryCount });
+    }
     const embedPageAgent = this.isEmbedPageAgent(context);
     const effectiveWorkspace = hasText(context.workspace)
       ? context.workspace!
       : this.pathSandbox.getWorkspaceRoot();
     if (embedPageAgent) {
-      sb += this.embedEnvironmentHint();
+      sections.push({ key: 'environment', label: '运行环境', text: this.embedEnvironmentHint() });
     } else {
-      sb += '## 工作环境\n\n';
-      sb += `你当前的工作目录是：\`${effectiveWorkspace}\`\n`;
-      sb += '所有相对文件路径都会基于该目录解析。\n';
-      sb += `- 是否为 git 仓库：${formatBoolean(context.isGit)}\n`;
-      sb += `- 平台：${formatValue(context.platform)}\n`;
-      sb += `- Shell：${formatValue(context.shellPath)}\n`;
-      sb += `- 操作系统版本：${formatValue(context.osVersion)}\n`;
-      sb += this.executionEnvironmentHint(context, effectiveWorkspace);
+      let text = '## 工作环境\n\n';
+      text += `你当前的工作目录是：\`${effectiveWorkspace}\`\n`;
+      text += '所有相对文件路径都会基于该目录解析。\n';
+      text += `- 是否为 git 仓库：${formatBoolean(context.isGit)}\n`;
+      text += `- 平台：${formatValue(context.platform)}\n`;
+      text += `- Shell：${formatValue(context.shellPath)}\n`;
+      text += `- 操作系统版本：${formatValue(context.osVersion)}\n`;
+      text += this.executionEnvironmentHint(context, effectiveWorkspace);
+      sections.push({ key: 'environment', label: '工作环境', text });
     }
-    sb += this.currentDateHint(context, !embedPageAgent);
+    const currentDateText = this.currentDateHint(context, !embedPageAgent);
+    if (currentDateText.length > 0) {
+      sections.push({ key: 'current-date', label: '当前日期', text: currentDateText });
+    }
     if (!embedPageAgent) {
-      sb += TOOL_USAGE_GUIDANCE + '\n';
-      sb += this.incomingFileHint(context, effectiveWorkspace);
+      sections.push({ key: 'tools-usage', label: '工具指引', text: TOOL_USAGE_GUIDANCE + '\n' });
+      const incomingText = this.incomingFileHint(context, effectiveWorkspace);
+      if (incomingText.length > 0) {
+        sections.push({ key: 'incoming-file', label: '用户上传文件', text: incomingText });
+      }
     }
     const skillNames = context.availableSkillNames;
     if (skillNames && skillNames.length > 0) {
       const catalog = this.buildSkillCatalog(context);
       if (hasText(catalog)) {
-        sb += '## 可用技能\n\n';
-        sb += '以下技能可用。每个技能都是一份知识文档，用于指导你在特定场景下高效使用工具。\n';
-        sb += '技能副本位于会话运行时目录（不在用户项目目录内）。\n';
-        sb += '如需阅读某个技能的完整内容，请使用 `read_file` 工具读取下方列出的文件路径。\n\n';
-        sb += catalog + '\n\n';
+        let text = '## 可用技能\n\n';
+        text += '以下技能可用。每个技能都是一份知识文档，用于指导你在特定场景下高效使用工具。\n';
+        text += '技能副本位于会话运行时目录（不在用户项目目录内）。\n';
+        text += '如需阅读某个技能的完整内容，请使用 `read_file` 工具读取下方列出的文件路径。\n\n';
+        text += catalog + '\n\n';
+        sections.push({ key: 'skills', label: '可用技能', text, count: skillNames.length });
       }
     }
-    sb += this.toolBehaviorHints(context);
-    sb += this.subagentToolHints(context);
-    sb += this.weixinMediaToolHints(context);
+    const taskText = this.toolBehaviorHints(context);
+    if (taskText.length > 0) {
+      sections.push({ key: 'task-mgmt', label: '任务管理', text: taskText });
+    }
+    const subagentText = this.subagentToolHints(context);
+    if (subagentText.length > 0) {
+      sections.push({ key: 'subagent', label: '子代理', text: subagentText });
+    }
+    const weixinText = this.weixinMediaToolHints(context);
+    if (weixinText.length > 0) {
+      sections.push({ key: 'weixin-media', label: '微信媒体', text: weixinText });
+    }
     if (embedPageAgent) {
-      sb += EMBED_PAGE_AGENT_HINTS;
+      sections.push({ key: 'embed', label: '嵌入页面', text: EMBED_PAGE_AGENT_HINTS });
     }
     if (!embedPageAgent) {
-      sb += this.workspaceRules(context, effectiveWorkspace);
+      const rulesText = this.workspaceRules(context, effectiveWorkspace);
+      if (rulesText.length > 0) {
+        sections.push({ key: 'workspace-rules', label: '工作区规则', text: rulesText });
+      }
     }
-    return sb;
+    return sections;
+  }
+
+  /**
+   * 组装上下文构成清单（技术方案 5.2）：系统提示各节 + messages（最终请求，扣除 system）+ handoff。
+   * memoryIds 取本次注入记忆的 id（开关关闭 / 无记忆时为空数组）。
+   */
+  private buildContextManifest(
+    context: AgentExecutionContext,
+    sections: PromptSection[],
+    finalMessages: ChatMessage[],
+  ): ContextManifest {
+    const stats: ContextSectionStat[] = [];
+    for (const s of sections) {
+      if (s.text.length === 0) continue;
+      const stat: ContextSectionStat = { key: s.key, label: s.label, tokens: this.tokenEstimator.countTokens(s.text) };
+      if (s.count != null) stat.count = s.count;
+      stats.push(stat);
+    }
+    const nonSystem = finalMessages.filter((m) => m.role !== 'system');
+    if (nonSystem.length > 0) {
+      stats.push({
+        key: 'messages',
+        label: '会话消息',
+        tokens: this.tokenEstimator.estimateMessages(nonSystem),
+        count: nonSystem.length,
+      });
+    }
+    const summary = context.sessionSummary;
+    if (summary != null && summary.trim() !== '') {
+      const handoffTokens = this.tokenEstimator.estimateMessages([
+        { role: 'user', content: buildHandoffUserContent(summary) },
+      ]);
+      stats.push({ key: 'handoff', label: '交接摘要', tokens: handoffTokens });
+    }
+    const memoryIds = (context.memories ?? [])
+      .map((m) => m.id)
+      .filter((id): id is number => id != null);
+    return { sections: stats, memoryIds, estimatedWindowTokens: this.resolveWindowTokens(context) };
+  }
+
+  /** 生效窗口：模型 contextWindowTokens 优先，缺失回退压缩配置默认窗口，均无则 null。 */
+  private resolveWindowTokens(context: AgentExecutionContext): number | null {
+    const modelWindow = context.modelConfig?.contextWindowTokens;
+    if (modelWindow != null && modelWindow > 0) return modelWindow;
+    const cfg = context.compactionConfig;
+    if (cfg != null && cfg.contextWindowTokens > 0) return cfg.contextWindowTokens;
+    return null;
   }
 
   /** 嵌入会话才会暴露 page_*；用工具列表判定通道，避免再灌编程助手工作流。 */

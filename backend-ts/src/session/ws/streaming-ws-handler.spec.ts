@@ -4,6 +4,7 @@ import type { WsEvent } from './ws-event.js';
 import type { Session } from '../../domain/types.js';
 import type { WsSocket } from './streaming-ws-registry.js';
 import { StreamingWsRegistry, WS_OPEN } from './streaming-ws-registry.js';
+import { CompactionSignalBus } from '../../harness/core/compaction-signal-bus.js';
 
 class CapturingExecutor {
   readonly tasks: Array<() => void | Promise<void>> = [];
@@ -45,7 +46,7 @@ describe('StreamingWsHandler', () => {
     getEmbedSessionBinding: vi.fn(() => null),
   };
   const titleService = { scheduleForFirstUserMessage: vi.fn() };
-  const harnessService = { prepareMessage: vi.fn(), executeFromEvent: vi.fn(), executePrepared: vi.fn(), executeSideFirstMessage: vi.fn(), forkParentMessages: vi.fn() };
+  const harnessService = { prepareMessage: vi.fn(), executeFromEvent: vi.fn(), executePrepared: vi.fn(), executeSideFirstMessage: vi.fn(), forkParentMessages: vi.fn(), requestCompaction: vi.fn(async () => true) };
   const sessionService = {
     getSession: vi.fn(), saveMessage: vi.fn(), updatePhase: vi.fn(), updateField: vi.fn(),
     updateModelId: vi.fn(), getMessages: vi.fn(), editMessageAndTruncate: vi.fn(), save: vi.fn(),
@@ -91,6 +92,7 @@ describe('StreamingWsHandler', () => {
     clearSession: vi.fn(), resolveServerIdByName: vi.fn(), recordReport: vi.fn(),
   };
   const mcpClientManager = { closeSession: vi.fn() };
+  const compactionSignalBus = new CompactionSignalBus();
   const agentMapper = { selectById: vi.fn(async () => ({ id: 5, name: 'Coder' })) };
   const llmModelMapper = { selectById: vi.fn(), selectDefault: vi.fn() };
   const authMetadata = { userId: 7, expiresAt: Date.now() + 60_000 };
@@ -104,6 +106,7 @@ describe('StreamingWsHandler', () => {
     activityHeartbeat, sessionTodoMapper, agentLoop, shellSessionManager, skillSyncService,
     localSkillRegistry, localAgentsMdRegistry, mcpSyncService, mcpClientManager, agentMapper,
     llmModelMapper, jwtService, agentExecutor: (fn) => executor.submit(fn), mcpSyncTimeoutSeconds: 60,
+    compactionSignalBus,
   } as unknown as WsHandlerDeps);
 
   it('sendMessagePersistsUserMessageAndRunsCloudExecution', async () => {
@@ -1606,6 +1609,112 @@ describe('StreamingWsHandler', () => {
       }));
       expect(sessionService.saveMessage).toHaveBeenCalled();
       expect(sessionService.updatePhase).toHaveBeenCalledWith(11, 'RUNNING');
+    });
+  });
+
+  describe('compact_now (手动整理上下文)', () => {
+    it('空闲路径：先占 claim 再动作、全程持有、合成 listener 下发、finally 释放且不置位信号', async () => {
+      vi.clearAllMocks();
+      executor.tasks.length = 0;
+      (handler as unknown as { releaseExecutionBookkeeping: (id: number) => void }).releaseExecutionBookkeeping(11);
+      registry.getUserId.mockReturnValue(7);
+      sessionService.getSession.mockResolvedValue(session('CLOUD', 'IDLE'));
+      compactionSignalBus.clear(11);
+
+      let claimDuringCompaction = false;
+      let listenerSeen: unknown = null;
+      harnessService.requestCompaction.mockImplementation(async (_sid: number, listener: unknown) => {
+        claimDuringCompaction = handler.hasExecutionClaim(11);
+        listenerSeen = listener;
+        return true;
+      });
+
+      await handler.handleTextMessage(ws, JSON.stringify({ type: 'compact_now', sessionId: 11 }));
+
+      expect(harnessService.requestCompaction).toHaveBeenCalledTimes(1);
+      // 判定与占坑之间无 await：压缩期间会话始终 busy，send_message 会被拒绝
+      expect(claimDuringCompaction).toBe(true);
+      // 空闲路径必须合成 listener，否则压缩全程 UI 失明
+      expect(listenerSeen).not.toBeNull();
+      expect(registry.send).toHaveBeenCalledWith(7, expect.objectContaining({
+        type: 'compaction_result', sessionId: 11,
+        data: expect.objectContaining({ compacted: true }),
+      }));
+      // finally 释放 claim，会话恢复可发送
+      expect(handler.hasExecutionClaim(11)).toBe(false);
+      // 空闲路径不应置位信号（那是运行中路径）
+      expect(compactionSignalBus.has(11)).toBe(false);
+    });
+
+    it('空闲路径失败：requestCompaction 抛错时经压缩通道回传 compaction_result{failed}，不发通用 error（避免误标会话 FAILED）', async () => {
+      vi.clearAllMocks();
+      executor.tasks.length = 0;
+      (handler as unknown as { releaseExecutionBookkeeping: (id: number) => void }).releaseExecutionBookkeeping(11);
+      registry.getUserId.mockReturnValue(7);
+      sessionService.getSession.mockResolvedValue(session('CLOUD', 'IDLE'));
+      compactionSignalBus.clear(11);
+
+      harnessService.requestCompaction.mockRejectedValue(new Error('模型整理失败'));
+
+      await handler.handleTextMessage(ws, JSON.stringify({ type: 'compact_now', sessionId: 11 }));
+
+      // 失败回执走压缩通道：compaction_result{compacted:false, failed:true, message}
+      expect(registry.send).toHaveBeenCalledWith(7, expect.objectContaining({
+        type: 'compaction_result', sessionId: 11,
+        data: expect.objectContaining({ compacted: false, failed: true, message: '模型整理失败' }),
+      }));
+      // 关键回归：绝不发通用 error 事件（error 会把整条空闲会话标成执行 FAILED）
+      const errorSends = vi.mocked(registry.send).mock.calls.filter((c) => (c[1] as WsEvent).type === 'error');
+      expect(errorSends).toHaveLength(0);
+      // finally 仍释放 claim
+      expect(handler.hasExecutionClaim(11)).toBe(false);
+    });
+
+    it('越权会话拒绝：非属主不触发压缩', async () => {      vi.clearAllMocks();
+      executor.tasks.length = 0;
+      (handler as unknown as { releaseExecutionBookkeeping: (id: number) => void }).releaseExecutionBookkeeping(11);
+      registry.getUserId.mockReturnValue(7);
+      sessionService.getSession.mockResolvedValue({ ...session('CLOUD', 'IDLE'), userId: 999 });
+      harnessService.requestCompaction.mockClear();
+
+      await handler.handleTextMessage(ws, JSON.stringify({ type: 'compact_now', sessionId: 11 }));
+
+      expect(harnessService.requestCompaction).not.toHaveBeenCalled();
+      expect(registry.send).toHaveBeenCalledWith(7, expect.objectContaining({ type: 'error', sessionId: 11 }));
+    });
+
+    it('运行中路径：置位信号交 loop 消费，不直接压缩，回执已排队；重复点击幂等', async () => {
+      vi.clearAllMocks();
+      executor.tasks.length = 0;
+      (handler as unknown as { releaseExecutionBookkeeping: (id: number) => void }).releaseExecutionBookkeeping(11);
+      sessionService.updatePhase.mockReset();
+      sessionService.updatePhase.mockResolvedValue(undefined);
+      registry.getUserId.mockReturnValue(7);
+      sessionService.getSession.mockResolvedValue(session('CLOUD', 'IDLE'));
+      sessionService.saveMessage.mockResolvedValue(message(99, 'USER'));
+      harnessService.prepareMessage.mockResolvedValue('e-1');
+      harnessService.executeFromEvent.mockImplementation(() => new Promise<void>(() => { /* 挂起不 settle */ }));
+      messageQueueService.listPending.mockResolvedValue([]);
+      compactionSignalBus.clear(11);
+
+      // 发送进入执行中且挂起 → claim 被持有（不 runAll，执行体走不到 finally）
+      await handler.handleTextMessage(ws, JSON.stringify({
+        type: 'send_message', sessionId: 11, data: { content: 'hi', eventId: 'e-1' },
+      }));
+      expect(handler.hasExecutionClaim(11)).toBe(true);
+
+      harnessService.requestCompaction.mockClear();
+      sessionService.getSession.mockResolvedValue(session('CLOUD', 'RUNNING'));
+      // 连点两次验证幂等（Set 语义，信号不叠加）
+      await handler.handleTextMessage(ws, JSON.stringify({ type: 'compact_now', sessionId: 11 }));
+      await handler.handleTextMessage(ws, JSON.stringify({ type: 'compact_now', sessionId: 11 }));
+
+      expect(harnessService.requestCompaction).not.toHaveBeenCalled();
+      expect(compactionSignalBus.has(11)).toBe(true);   // 由 loop 下一工具轮边界消费
+      expect(registry.send).toHaveBeenCalledWith(7, expect.objectContaining({ type: 'compaction_queued', sessionId: 11 }));
+
+      (handler as unknown as { releaseExecutionBookkeeping: (id: number) => void }).releaseExecutionBookkeeping(11);
+      compactionSignalBus.clear(11);
     });
   });
 });

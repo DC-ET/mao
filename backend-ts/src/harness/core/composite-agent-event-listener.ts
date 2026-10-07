@@ -1,6 +1,7 @@
 import type { ChatRequest, ChatUsage, ToolCall } from '../llm/chat-request.js';
 import type { ToolCallResultMeta } from '../tool/tool-result.js';
 import type { AgentEventListener } from './agent-event-listener.js';
+import type { ContextManifest } from './context-manifest.js';
 import { harnessLog } from '../log.js';
 
 type ListenerAction = (l: AgentEventListener) => void;
@@ -38,8 +39,8 @@ export class CompositeAgentEventListener implements AgentEventListener {
   onError(t: unknown): void {
     this.forEach('onError', (l) => l.onError(t));
   }
-  onContextWindow(estimatedTokens: number, actualTokens: number): void {
-    this.forEach('onContextWindow', (l) => l.onContextWindow?.(estimatedTokens, actualTokens));
+  onContextWindow(estimatedTokens: number, actualTokens: number, manifest?: ContextManifest | null): void {
+    this.forEach('onContextWindow', (l) => l.onContextWindow?.(estimatedTokens, actualTokens, manifest));
   }
   onCompactionStart(type: string, messageCount: number, estimatedTokens: number): void {
     this.forEach('onCompactionStart', (l) => l.onCompactionStart?.(type, messageCount, estimatedTokens));

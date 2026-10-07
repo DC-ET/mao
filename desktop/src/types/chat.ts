@@ -22,6 +22,8 @@ export interface ToolCall {
     approved: boolean
     reason: string
   }
+  /** 后端在工具实现内已截断输出（结果 JSON 顶层 truncated===true），历史回放与实时事件均落到此标志 */
+  resultTruncated?: boolean
 }
 
 export type FileChangeType = 'CREATED' | 'MODIFIED' | 'DELETED' | 'RENAMED' | 'COPIED' | string
@@ -73,10 +75,26 @@ export interface TodoItem {
   status: 'pending' | 'in_progress' | 'completed'
 }
 
+/** 上下文构成清单的单节统计（技术方案 5.2），tokens 为字节估算口径。 */
+export interface ContextSectionStat {
+  key: string
+  label: string
+  tokens: number
+  count?: number
+}
+
+export interface ContextManifest {
+  sections: ContextSectionStat[]
+  memoryIds: number[]
+  estimatedWindowTokens: number | null
+}
+
 export interface ContextWindowInfo {
   estimated: number
   actual: number
   maxTokens?: number  // 模型最大窗口限制
+  /** 与 buildRequest 同源产出的上下文构成清单；旧事件无此字段时为 undefined */
+  manifest?: ContextManifest | null
 }
 
 export interface CompactionEvent {

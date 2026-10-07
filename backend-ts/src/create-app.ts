@@ -173,6 +173,7 @@ import { ContextManager } from './harness/core/context-manager.js';
 import { CompactionService } from './harness/core/compaction-service.js';
 import { CompactionArchiveService } from './harness/core/compaction-archive.service.js';
 import { SessionCompactionOrchestrator } from './harness/core/session-compaction-orchestrator.js';
+import { CompactionSignalBus } from './harness/core/compaction-signal-bus.js';
 import { SessionHistoryLoader } from './harness/core/session-history-loader.js';
 import { TokenEstimator } from './harness/core/token-estimator.js';
 import { ActiveContextCalculator } from './harness/core/active-context-calculator.js';
@@ -1145,10 +1146,13 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     proxyApprover, jevRiskAssessor, approvalModelResolver,
     inboxService,
   );
+  // 手动压缩信号总线：AgentLoop（工具轮边界消费）与 StreamingWsHandler（运行中置位）共享同一实例。
+  const compactionSignalBus = new CompactionSignalBus();
   const agentLoop = new AgentLoop(
     llmAdapter, promptEngine, contextManager, toolDispatcher, backgroundTasks,
     shellManager, activityHeartbeat, sessionSvc, orchestrator, activeContext, mcpClient,
     () => backgroundSubagentManager,
+    compactionSignalBus,
   );
   holder.loop = agentLoop;
   const harness = new HarnessService(
@@ -1237,6 +1241,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     activityHeartbeat,
     sessionTodoMapper: todoMapper,
     agentLoop,
+    compactionSignalBus,
     backgroundSubagentManager,
     shellSessionManager: shellManager,
     skillSyncService: skillSync,
@@ -2278,6 +2283,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       pathSandbox,
       subagentExecutionRepo,
       sessionCompactionEventService,
+      sessionCompactionService,
       approvalRegistry,
       askUserQuestionsRegistry,
       treeSignalPublisher,

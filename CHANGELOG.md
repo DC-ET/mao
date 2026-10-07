@@ -15,6 +15,27 @@
 
 ---
 
+## 0.0.239 (2026-10-07)
+
+### 前端（桌面 / Web / 安卓）
+
+- 检查器新增「上下文」页签（仅主会话 / 边路任务；子代理会话不显示）：把"这一轮模型到底看到了什么"透明化，只读、不改发送内容。逐节展示系统提示各节、对话消息、交接（压缩）摘要的估算 token 与占窗口比例；token 为字节估算口径、与顶部含工具定义的水位有差，条形区有 tooltip 说明；尚未产生本轮请求（冷启动）时暂无构成明细。
+- 「本会话注入记忆」：列出本轮注入的长期记忆条目 chip，点击跳「设置 → 长期记忆」定位管理；节头有「本会话注入」开关（默认开），关闭后**下一次任务开始起**不再注入长期记忆、构成里也不再有记忆节（运行中的会话本轮不回灌，开关旁提示"将于下次任务开始时生效"）。切换所检查的会话后按新会话重新拉取 chip 文案，条数相同也会更新，不会停在上一会话的「记忆 #id」。
+- 「立即整理上下文」手动压缩：会话空闲时立即压缩（越过自动阈值）；运行中点击则排队、在本轮工具结束后执行并提示"将在本轮工具结束后执行"；若本轮之后模型直接以纯文本结束、不再调用工具，也会在本轮退出前执行，不会只提示已排队却不整理。压缩进行中发消息提示会话忙、结束后恢复。手动压缩生成的消息区分隔线标注"手动整理上下文"；自动整理关闭（`harness.compaction.enabled=false`）时手动按钮仍可用。
+- 「查看上次摘要」折叠面板按需读取本会话最近一次压缩摘要全文，附压缩次数 / 压缩模型 / 更新时间；无压缩历史显示空态。切换会话后丢弃上一会话尚未返回的摘要，新会话打开面板时重新读取，不会显示上一会话的摘要。
+- 工具结果被后端截断时（如 `read_file` 大文件、`grep_search` / `glob_search` / `open_web_page` / `shell_session` 命中截断），对应工具卡片显示「输出已截断」徽标——表示展示的是后端截断后的内容，与卡片本地"展开完整输出"（前端字符折叠）并存、含义不同；纯文本（非结构化）工具输出不带此徽标。
+
+### 后端
+
+- Context Manifest：`buildRequest` 构建请求时同源产出上下文构成清单（系统提示逐节 tokens + 以最终请求口径统计的 messages 节 + 由 `sessionSummary` 驱动的 handoff 摘要节 + 本次注入记忆 id 列表 + 生效窗口 tokens），随既有 ws `context_window` 事件帧推送（不新增事件类型；序列化 ≤ 8KB，超限裁剪 memoryIds），保证"所见即所发"。`buildSystemPrompt` 改为分节收集后 join，逐字节等于重构前输出（等价性快照单测锚定，覆盖普通 / embed / 微信 / LOCAL / CLOUD 各通道与记忆、经验、AGENTS.md 分支）。
+- 手动压缩：新增 ws 入站 `compact_now`（属主校验）。空闲路径先占 `executionClaim` 再压缩（判定与占坑之间无 await，压缩期间 `send_message` 被既有 `session_already_running` 语义拒绝），`requestCompaction` 以 `force` 旁路阈值判定 + `skipAutoCompact` 避免双重压缩，合成 listener 下发 compaction_start/end/marker 与水位刷新（否则全程 UI 失明），成功路径回收云 MCP 连接；运行中路径经 `CompactionSignalBus` 置信号 + ws 回执"已排队"，在下一工具轮边界（置于 `midLoopAllowed` 门槛之外，使 `enabled=false` 不禁止手动）消费执行、重建 `preparedRequest`；若之后不再有工具轮（模型以纯文本结束），退出循环前同样消费，避免已回执「已排队」的整理被静默丢弃。信号双向清理（执行启动丢弃陈旧信号、finally 清理）防下一次执行意外压缩。`orchestrator.compact` 增显式 `triggerMode` 参数，手动留痕 `trigger_mode='manual'` 落 `session_compaction_event`，既有 `request_start` / `mid_loop` 调用点同步补参不回归。
+- 新增 `GET /v1/sessions/:id/compaction`（登录用户，属主校验，只读）：返回 `{ summaryText, lastCompactedMsgId, compactCount, compactModel, updatedAt } | null`（无压缩记录 data 为 null，不算错）；摘要沿用站内脱敏视角，不做二次脱敏。
+- 会话级记忆注入开关：`session` 增 `memory_injection_disabled` 列（V135 迁移，TINYINT 默认 0）；`UpdateSessionRequest` + PATCH handler + `sessionService.updateMemoryInjectionDisabled`（`updateFields`）全链路；`HarnessService.loadMemories` 读到标志为 1 时短路返回 null（`context.memories=null`，长期记忆节自然不渲染），生效口径为"下一次执行"、运行中不回灌；`SessionVO.memoryInjectionDisabled` 透出。
+- `MemoryHint` 增 `id`（`memory.service.ts listForInjection` 透传，bullet 文本与注入行为零变化），供上下文页签记忆条目与设置页一一对应。
+- `read_file` 截断分支结果补顶层 `truncated: true` 字段（与 grep/glob/open_web_page/shell_session 口径对齐，输出 schema 同步）；`AgentLoop.processToolResult` 落库前嗅探结果 JSON 顶层 `truncated===true`，写消息 metadata（`resultTruncated`，与 approvalMark 同走合并通道、互不覆盖）并经执行层 meta 通道带回，`ws tool_call_result` payload 增 `result_truncated`（实时事件走 meta、历史回放走 metadata 双通道各管一半）。
+
+---
+
 ## 0.0.238 (2026-10-06)
 
 ### 前端（桌面 / Web / 安卓）

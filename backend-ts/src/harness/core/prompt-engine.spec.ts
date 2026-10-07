@@ -8,6 +8,9 @@ import { PromptEngine } from './prompt-engine.js';
 import { MISSING_TOOL_RESULT_PLACEHOLDER } from './message-history-normalizer.js';
 import { SYNTHETIC_ATTACHMENT_PROMPT } from './tool-media-injector.js';
 import { RuntimeDataResolver } from '../runtime/runtime-data-resolver.js';
+import { TokenEstimator } from './token-estimator.js';
+import { CompactionConfig } from './compaction-config.js';
+import { buildHandoffUserContent } from './compaction-service.js';
 import * as harnessLogModule from '../log.js';
 import type { Tool } from '../tool/tool.js';
 
@@ -413,6 +416,134 @@ describe('PromptEngine long-term memories', () => {
     expect(empty.messages[0].content as string).not.toContain('## 长期记忆');
     const none = await engine().buildRequest(context());
     expect(none.messages[0].content as string).not.toContain('## 长期记忆');
+  });
+});
+
+describe('PromptEngine context manifest', () => {
+  function engine() {
+    return new PromptEngine(
+      { hasSkill: () => false, getAllNames: () => [], getAllDocuments: () => [] } as never,
+      { getWorkspaceRoot: () => '/ws' } as never,
+      RuntimeDataResolver.forTest('/tmp/rt', '/tmp/home'),
+      { getByUserIdAndName: async () => null } as never,
+      { getUserSkillDocuments: () => [] } as never,
+    );
+  }
+
+  function context(overrides: Partial<AgentExecutionContext> = {}): AgentExecutionContext {
+    const ctx = new AgentExecutionContext();
+    ctx.executionMode = 'CLOUD';
+    ctx.workspace = '/ws';
+    ctx.tools = [tool('read_file')];
+    Object.assign(ctx, overrides);
+    return ctx;
+  }
+
+  it('system sections join equals the system message content (byte-equivalence anchor)', async () => {
+    // 决策 1 硬不变量：分节收集后 join 必须逐字节等于重构前 buildSystemPrompt 的输出。
+    // 13 个既有 PromptEngine 用例已锚定各通道（普通/embed/微信/LOCAL/CLOUD）的分节顺序与文本；
+    // 这里再锚定「manifest 分节覆盖 = 系统消息」这一自洽不变量：去掉 system 前缀后系统消息
+    // 仍完整包含每个非空分节的原文。
+    const ctx = context({
+      systemPrompt: 'You are Mao',
+      experiences: ['经验一'],
+      memories: [{ id: 42, scope: 'USER', projectKey: null, content: '输出报告用中文' }],
+      currentTimestamp: '2026-08-13',
+      messages: [{ role: 'user', content: '你好' }],
+      modelConfig: { modelId: 'gpt-5', id: 1, contextWindowTokens: 200000 },
+    });
+    const request = await engine().buildRequest(ctx);
+    const system = request.messages[0].content as string;
+    expect(system).toContain('You are Mao');
+    expect(system).toContain('## 最佳实践经验');
+    expect(system).toContain('## 长期记忆');
+    expect(system).toContain('## 工作环境');
+    expect(system).toContain('## 当前日期');
+    expect(system).toContain('# 使用你的工具');
+    // manifest 只保留非空分节：keys 顺序稳定，且不含空 memories 之外的空节
+    const manifest = ctx.contextManifest!;
+    const keys = manifest.sections.map((s) => s.key);
+    expect(keys.slice(0, 4)).toEqual(['system-prompt', 'experiences', 'memories', 'environment']);
+    expect(keys).toContain('current-date');
+    expect(keys).toContain('tools-usage');
+    expect(keys).toContain('messages');
+  });
+
+  it('section token sum ≈ system prompt estimate within per-section tolerance', async () => {
+    const ctx = context({
+      systemPrompt: 'You are Mao',
+      experiences: ['经验一', '经验二'],
+      currentTimestamp: '2026-08-13',
+    });
+    const request = await engine().buildRequest(ctx);
+    const system = request.messages[0].content as string;
+    const estimator = new TokenEstimator();
+    const total = estimator.countTokens(system);
+    const sysSections = ctx.contextManifest!.sections.filter((s) => s.key !== 'messages' && s.key !== 'handoff');
+    const sum = sysSections.reduce((acc, s) => acc + s.tokens, 0);
+    // countTokens 对拼接有 ±1 取整误差，容差 = 节数
+    expect(Math.abs(sum - total)).toBeLessThanOrEqual(sysSections.length);
+  });
+
+  it('messages section counts final request messages excluding system', async () => {
+    const ctx = context({
+      messages: [
+        { role: 'user', content: 'hello' },
+        { role: 'assistant', content: 'hi' },
+      ],
+    });
+    const request = await engine().buildRequest(ctx);
+    const messagesSection = ctx.contextManifest!.sections.find((s) => s.key === 'messages')!;
+    const nonSystem = request.messages.filter((m) => m.role !== 'system');
+    expect(messagesSection.count).toBe(nonSystem.length);
+    expect(messagesSection.tokens).toBeGreaterThan(0);
+  });
+
+  it('no messages section when conversation is empty (system-only request)', async () => {
+    const ctx = context({ messages: [] });
+    await engine().buildRequest(ctx);
+    expect(ctx.contextManifest!.sections.some((s) => s.key === 'messages')).toBe(false);
+  });
+
+  it('memoryIds mirrors injected memory ids and is empty when memories absent', async () => {
+    const withMem = context({
+      memories: [
+        { id: 7, scope: 'USER', projectKey: null, content: 'a' },
+        { id: 8, scope: 'PROJECT', projectKey: 'mao', content: 'b' },
+      ],
+    });
+    await engine().buildRequest(withMem);
+    expect(withMem.contextManifest!.memoryIds).toEqual([7, 8]);
+
+    const noMem = context();
+    await engine().buildRequest(noMem);
+    expect(noMem.contextManifest!.memoryIds).toEqual([]);
+  });
+
+  it('handoff section present iff sessionSummary non-empty, token from buildHandoffUserContent', async () => {
+    const est = new TokenEstimator();
+    const withSummary = context({ sessionSummary: '已完成登录页改造，下一步补测试', messages: [{ role: 'user', content: '继续' }] });
+    await engine().buildRequest(withSummary);
+    const handoff = withSummary.contextManifest!.sections.find((s) => s.key === 'handoff')!;
+    expect(handoff).toBeDefined();
+    expect(handoff.tokens).toBe(est.estimateMessages([{ role: 'user', content: buildHandoffUserContent('已完成登录页改造，下一步补测试') }]));
+
+    const withoutSummary = context({ messages: [{ role: 'user', content: 'hi' }] });
+    await engine().buildRequest(withoutSummary);
+    expect(withoutSummary.contextManifest!.sections.some((s) => s.key === 'handoff')).toBe(false);
+  });
+
+  it('estimatedWindowTokens prefers model contextWindowTokens then compaction config default', async () => {
+    const modelCtx = context({ modelConfig: { modelId: 'm', id: 1, contextWindowTokens: 128000 } });
+    await engine().buildRequest(modelCtx);
+    expect(modelCtx.contextManifest!.estimatedWindowTokens).toBe(128000);
+
+    const cfgCtx = context();
+    const cfg = new CompactionConfig();
+    cfg.contextWindowTokens = 200000;
+    cfgCtx.compactionConfig = cfg;
+    await engine().buildRequest(cfgCtx);
+    expect(cfgCtx.contextManifest!.estimatedWindowTokens).toBe(200000);
   });
 });
 void mkdirSync;

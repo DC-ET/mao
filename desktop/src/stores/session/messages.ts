@@ -397,6 +397,7 @@ export function createMessageRuntimeModule(ctx: {
     summary?: string
     preview?: { media_type?: string; mime?: string; data_uri?: string }
     approval_mark?: { mode: 'llm' | 'jev'; approved: boolean; reason: string }
+    result_truncated?: boolean
   }) {
     const sid = String(sessionId)
     const lastMsg = ensureStreamingAssistantMessage(sid)
@@ -427,6 +428,7 @@ export function createMessageRuntimeModule(ctx: {
     if (data.summary) call.summary = data.summary
     if (data.preview) call.preview = data.preview
     if (data.approval_mark) call.approvalMark = data.approval_mark
+    if (data.result_truncated) call.resultTruncated = true
     const list = sessionMessages.value.get(sid) ?? []
     sessionMessages.value.set(sid, [...list])
   }

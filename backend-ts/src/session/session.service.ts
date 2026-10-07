@@ -1147,6 +1147,11 @@ export class SessionService {
     await this.sessionRepo.updateFields(sessionId, { permissionLevel });
   }
 
+  async updateMemoryInjectionDisabled(sessionId: number, disabled: boolean): Promise<void> {
+    await this.getSession(sessionId);
+    await this.sessionRepo.updateFields(sessionId, { memoryInjectionDisabled: disabled ? 1 : 0 });
+  }
+
   async updateModelId(sessionId: number, modelId: number): Promise<void> {
     await this.getSession(sessionId);
     await this.sessionRepo.updateFields(sessionId, { modelId });

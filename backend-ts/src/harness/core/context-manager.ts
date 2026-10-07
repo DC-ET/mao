@@ -30,10 +30,11 @@ export class ContextManager {
     listener: AgentEventListener | null,
     cancelFlag: { get(): boolean } | null,
     activeTokensHint?: number | null,
+    force = false,
   ): Promise<SessionCompactionResult | null> {
     return this.compactionService.compactSession(
       sessionId, expectedOldBoundary, messages, snapshotMessageIds,
-      normalRequest, modelConfig, config, listener, cancelFlag, activeTokensHint,
+      normalRequest, modelConfig, config, listener, cancelFlag, activeTokensHint, force,
     );
   }
 

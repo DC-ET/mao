@@ -16,6 +16,9 @@
         <el-tooltip v-if="approvalBadge" :content="approvalBadge.reason" placement="top">
           <span class="approval-badge" :class="approvalBadge.kind">{{ approvalBadge.label }}</span>
         </el-tooltip>
+        <el-tooltip v-if="toolCall.resultTruncated" content="后端已截断工具输出（超出工具自身的输出上限），此处展示的是截断后的内容" placement="top">
+          <span class="truncated-badge">输出已截断</span>
+        </el-tooltip>
         <span v-if="toolCall.status === 'running'" class="status-spinner"></span>
         <el-icon v-else-if="toolCall.status === 'success'" class="status-icon success"><Select /></el-icon>
         <el-icon v-else-if="toolCall.status === 'error'" class="status-icon error"><CloseBold /></el-icon>
@@ -324,6 +327,17 @@ function toggleExpand() {
 .approval-badge.denied {
   color: var(--aw-danger);
   background: color-mix(in srgb, var(--aw-danger) 12%, transparent);
+}
+
+.truncated-badge {
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: var(--aw-radius-xs);
+  cursor: default;
+  white-space: nowrap;
+  color: var(--aw-warning, #b45309);
+  background: color-mix(in srgb, var(--aw-warning, #b45309) 12%, transparent);
 }
 
 .expand-icon {

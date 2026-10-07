@@ -65,6 +65,8 @@ export interface WsHandlerDeps {
     executePrepared(context: AgentExecutionContext, listener: AgentEventListener): Promise<void>;
     executeSideFirstMessage(parentId: number, sideId: number, contextMode: 'fork' | 'summary' | 'none', listener: AgentEventListener, cancelFlag: { get(): boolean; set(v: boolean): void }): Promise<void>;
     forkParentMessages(parentId: number, sideId: number, forkFromMessageId?: number | null): Promise<void>;
+    /** 空闲手动压缩（技术方案 5.4）：调用方已持有 executionClaims，force 越阈值/越 enabled 门，triggerMode='manual'。 */
+    requestCompaction(sessionId: number, listener: AgentEventListener | null): Promise<boolean>;
   };
   sessionService: {
     getSession(id: number): Promise<Session | null>;
@@ -132,6 +134,8 @@ export interface WsHandlerDeps {
     /** 查询本实例在途执行的取消标志（含崩溃恢复/通道入站注册的），用于区分「执行未提交」与「执行在 handler 簿记外运行」。 */
     getCancelFlag?(sessionId: number): { get(): boolean; set(v: boolean): void } | undefined;
   };
+  /** 手动压缩信号总线（技术方案 5.4）：运行中路径由 handler 置位、由 AgentLoop 在工具轮边界消费；与 AgentLoop 注入的是同一实例。 */
+  compactionSignalBus?: { signal(sessionId: number): void; has(sessionId: number): boolean; consume(sessionId: number): boolean; clear(sessionId: number): void };
   backgroundSubagentManager?: {
     cancelAllForParent(parentSessionId: number): Promise<void>;
     beginRetry(parentSessionId: number, childSessionId: number): Promise<{ ok: boolean; taskId?: number; error?: string }>;
@@ -351,6 +355,7 @@ export class StreamingWsHandler {
       case 'create_side_session': await this.handleCreateSideSession(userId, root); break;
       case 'cancel_side_task': await this.handleCancelSideTask(userId, root); break;
       case 'retry_execution': await this.handleRetryExecution(userId, root); break;
+      case 'compact_now': await this.handleCompactNow(userId, root); break;
       case 'ping': this.deps.registry.send(userId, wsEvent('pong', null, {})); break;
       default: break;
     }
@@ -1409,6 +1414,64 @@ export class StreamingWsHandler {
     // 永远走不到 finally。若不在此主动回收，claim/future 会永久残留，该会话后续的发送与
     // 重试全被 session_already_running 拒绝（只能重启服务恢复）。
     this.releaseExecutionBookkeeping(sessionId, { future: this.runningTasks.get(sessionId) });
+  }
+
+  /**
+   * 手动整理上下文（技术方案 5.4 / 决策 11）。运行中：置位信号交 loop 在下一工具轮边界消费，
+   * ws 回执「已排队」；空闲：先占 claim 再动作（与占坑之间无 await，Node 单线程同拍完成），全程
+   * 持有直至 finally 释放——压缩期间 send_message 被 session_already_running 拒绝，消除竞态。
+   * 空闲路径须合成一个执行级 listener，否则压缩全程 UI 失明（无 compaction_start/end、水位不刷新）。
+   * 已知限制：压缩为单次 LLM 短任务，无取消通道。
+   */
+  private async handleCompactNow(userId: number, root: Record<string, unknown>): Promise<void> {
+    const sessionId = this.getLong(root, 'sessionId');
+    if (sessionId == null) return;
+    if (!(await this.requireOwnedSession(userId, sessionId))) return;
+
+    // 运行中路径：已有 claim/在途执行 → 排队信号，交由 AgentLoop 工具轮边界消费。
+    if (this.hasExecutionClaim(sessionId)) {
+      if (!this.deps.compactionSignalBus) {
+        // 手动整理的失败必须走压缩通道（compaction_result），不能用通用 error——
+        // error 语义是"执行失败"，前端据此把整条会话标 FAILED。整理上下文失败只是维护动作失败。
+        this.deps.registry.send(userId, wsEvent('compaction_result', sessionId, {
+          compacted: false, failed: true, message: '手动整理上下文当前不可用，请稍后重试',
+        }));
+        return;
+      }
+      // signal 幂等（Set 语义）：重复点击不会叠加多次压缩。
+      this.deps.compactionSignalBus.signal(sessionId);
+      this.deps.registry.send(userId, wsEvent('compaction_queued', sessionId, {
+        queued: true, message: '已排队，将在本轮工具结束后整理上下文',
+      }));
+      return;
+    }
+
+    // 空闲路径：与占坑之间不留 await，claim 全程持有。
+    this.executionClaims.add(sessionId);
+    const executionId = `manual_compact_${Date.now()}`;
+    let listener: WsStreamingEventListener | null = null;
+    try {
+      listener = new WsStreamingEventListener(
+        {
+          registry: this.deps.registry, activityService: this.deps.activityService,
+          activityHeartbeat: this.deps.activityHeartbeat, sessionTodoMapper: this.deps.sessionTodoMapper,
+          sessionService: this.deps.sessionService,
+        },
+        sessionId, userId, executionId, false,
+      );
+      const compacted = await this.deps.harnessService.requestCompaction(sessionId, listener);
+      this.deps.registry.send(userId, wsEvent('compaction_result', sessionId, { compacted, executionId }));
+    } catch (e) {
+      const message = e instanceof Error ? e.message : '手动整理上下文失败';
+      // 同 signalBus 缺失分支：失败经压缩通道回传，不用通用 error，避免把维护动作失败误标整条会话 FAILED。
+      this.deps.registry.send(userId, wsEvent('compaction_result', sessionId, {
+        compacted: false, failed: true, message, executionId,
+      }));
+    } finally {
+      listener?.dispose();
+      // 仅回收本次自行占的 claim；runningTasks/cancelFlags/registry 在途簿记未触碰，勿用 releaseExecutionBookkeeping。
+      this.executionClaims.delete(sessionId);
+    }
   }
 
   private async handleEnqueueMessage(userId: number, root: Record<string, unknown>): Promise<void> {

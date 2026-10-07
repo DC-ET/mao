@@ -262,6 +262,7 @@ export class HarnessService {
 
   async buildContext(
     sessionId: number, listener?: AgentEventListener | null, cancelFlag?: AtomicBoolean | null,
+    skipAutoCompact = false,
   ): Promise<AgentExecutionContext> {
     const session = await this.sessionMapper.selectById(sessionId);
     if (session == null) throw new BusinessException(ErrorCode.SESSION_NOT_FOUND);
@@ -410,7 +411,7 @@ export class HarnessService {
         + '。相关 MCP 工具不可用，请勿调用；如需恢复请检查服务器配置后新开会话。');
     }
 
-    if (effectiveConfig.enabled && history.persistedMessages.length > 0) {
+    if (!skipAutoCompact && effectiveConfig.enabled && history.persistedMessages.length > 0) {
       const normalRequest = await this.buildNormalRequest(context);
       // 触发值以锚点记录的真实 prompt usage 为下限，避免内部估算器低估导致压缩永不触发
       const activeTokensHint = Math.max(
@@ -421,7 +422,7 @@ export class HarnessService {
       );
       try {
         await this.sessionCompactionOrchestrator.compact(
-          sessionId, context, normalRequest, listener ?? null, effectiveConfig, false, cancelFlag ?? null, activeTokensHint);
+          sessionId, context, normalRequest, listener ?? null, effectiveConfig, false, cancelFlag ?? null, activeTokensHint, 'request_start');
         context.preparedRequest = await this.buildNormalRequest(context);
       } catch (e) {
         if (e instanceof CompactionContextOverflowException
@@ -452,10 +453,40 @@ export class HarnessService {
     }
   }
 
+  /**
+   * 空闲手动压缩（技术方案 5.4 决策 11）。调用方（handleCompactNow）已全程持有 executionClaims，
+   * 发送被 session_already_running 拒绝，故此处无需再抢锁。skipAutoCompact=true 避免「自动一次+手动一次」
+   * 双重压缩；force=true 越过阈值与 enabled 门（自动关闭≠禁止人工动作）；triggerMode='manual' 留痕。
+   * 已知限制：压缩为单次 LLM 短任务，无取消通道。无论成功失败都回收 buildContext 连上的云 MCP，避免泄漏。
+   */
+  async requestCompaction(
+    sessionId: number, listener: AgentEventListener | null,
+  ): Promise<boolean> {
+    try {
+      const context = await this.buildContext(sessionId, listener, null, true);
+      const preparedRequest = context.preparedRequest ?? await this.buildNormalRequest(context);
+      const config = context.compactionConfig ?? this.compactionConfig;
+      const activeTokensHint = Math.max(
+        context.lastPromptTokens,
+        this.activeContextCalculator.activeFromMessageSuffix(
+          context.lastPromptTokens, context.contextAnchorMsgId,
+          context.messages, context.messagesCoveredByAnchor, preparedRequest),
+      );
+      return await this.sessionCompactionOrchestrator.compact(
+        sessionId, context, preparedRequest, listener, config,
+        false, null, activeTokensHint, 'manual', true);
+    } finally {
+      await this.closeBoundCloudMcp(sessionId);
+    }
+  }
+
   /** 记忆查询降级：任何异常都不阻断会话启动（技术方案 5.2 第 3 点）。 */
   private async loadMemories(session: Session): Promise<MemoryHint[] | null> {
     const userId = session.userId;
     if (this.memoryInjection == null || userId == null) return null;
+    // 单会话关闭长期记忆注入（技术方案 5.1）：为真直接短路，memories=null → longTermMemoriesHint 自然不渲染。
+    // 生效时机=下一次执行（本方法在 buildContext 一次性装载），运行中会话改开关不影响本轮，不做请求级回读。
+    if (boolish(session.memoryInjectionDisabled) === true) return null;
     try {
       return await this.memoryInjection.listForInjection(userId, session.projectKey ?? null, session.workspace ?? null);
     } catch (e) {

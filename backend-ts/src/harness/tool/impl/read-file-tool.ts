@@ -41,6 +41,7 @@ export class ReadFileTool extends BaseTool {
       properties: {
         content: { type: 'string' },
         total_lines: { type: 'integer' },
+        truncated: { type: 'boolean' },
       },
     };
   }
@@ -71,6 +72,7 @@ export class ReadFileTool extends BaseTool {
       let content = allLines.slice(from, to).join('\n');
       if (content.length > MAX_OUTPUT_LENGTH) {
         content = content.slice(0, MAX_OUTPUT_LENGTH) + '\n... [output truncated]';
+        return toJson({ content, total_lines: totalLines, truncated: true });
       }
       return toJson({ content, total_lines: totalLines });
     } catch (e) {

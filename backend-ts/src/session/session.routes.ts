@@ -12,6 +12,7 @@ import type { SessionService } from './session.service.js';
 import type { ActivityService } from './activity.service.js';
 import type { MessageQueueService } from './message-queue.service.js';
 import type { SessionCompactionEventService } from './session-compaction-event.service.js';
+import type { SessionCompactionService } from './session-compaction.service.js';
 import type { SessionTodoRepository, SubagentExecutionRepository } from './activity.repository.js';
 import type {
   AgentLookup,
@@ -46,6 +47,7 @@ export interface SessionRouteDeps {
   pathSandbox: PathSandbox;
   subagentExecutionRepo: SubagentExecutionRepository;
   sessionCompactionEventService: SessionCompactionEventService;
+  sessionCompactionService: SessionCompactionService;
   approvalRegistry?: ApprovalRegistry;
   askUserQuestionsRegistry?: AskUserQuestionsRegistry;
   treeSignalPublisher?: SessionTreeSignalPublisher;
@@ -74,6 +76,7 @@ interface UpdateSessionRequest {
   summary?: string | null;
   projectKey?: string | null;
   permissionLevel?: string | null;
+  memoryInjectionDisabled?: boolean | null;
   modelId?: number | null;
 }
 
@@ -354,6 +357,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     if (body.summary != null) await sessionService.updateSummary(id, body.summary);
     if (body.projectKey != null) await sessionService.updateProjectKey(id, body.projectKey);
     if (body.permissionLevel != null) await sessionService.updatePermissionLevel(id, body.permissionLevel);
+    if (body.memoryInjectionDisabled != null) await sessionService.updateMemoryInjectionDisabled(id, body.memoryInjectionDisabled);
     const modelId = parseEntityId(body.modelId);
     if (modelId != null) await sessionService.updateModelId(id, modelId);
     const updated = await sessionService.getSession(id);
@@ -434,6 +438,23 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
       vo.compactionEvents = (await deps.sessionCompactionEventService.listBySessionId(id)).map(toCompactionEventVO);
     }
     return sendOk(reply, vo);
+  });
+
+  // 压缩摘要读取端点（技术方案 5.5）：只读 session_compaction 现值，不回填、不触发校验删除。
+  // 无压缩记录时 data 为 null（不算错）。摘要继承站内脱敏视角（含 $MAO_REDACTED 即原样返回，不二次脱敏）。
+  app.get('/v1/sessions/:id/compaction', async (request, reply) => {
+    const userId = requireUserId(request);
+    const id = pathId(request);
+    await requireSessionOwner(userId, id);
+    const record = await deps.sessionCompactionService.findBySessionId(id);
+    if (record == null) return sendOk(reply, null);
+    return sendOk(reply, {
+      summaryText: record.summaryText ?? null,
+      lastCompactedMsgId: record.lastCompactedMsgId ?? null,
+      compactCount: record.compactCount ?? null,
+      compactModel: record.compactModel ?? null,
+      updatedAt: javaLocalDateTimeString(record.updatedAt),
+    });
   });
 
   // Fork 预览：边路任务发出前预演「这条边路会话会看到哪些历史消息」。

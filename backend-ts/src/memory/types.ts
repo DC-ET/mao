@@ -30,6 +30,8 @@ export interface UserMemoryPreferenceRow {
 
 /** 注入系统提示词的记忆提示（harness 域引用，memory 域产出）。 */
 export interface MemoryHint {
+  /** 记忆条目 id：供上下文透视 manifest 收集本次注入了哪些条目（技术方案 5.2 决策 3）。 */
+  id?: number;
   scope: MemoryScope;
   projectKey: string | null;
   content: string;

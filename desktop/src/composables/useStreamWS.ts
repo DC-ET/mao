@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { ElMessage } from 'element-plus'
 import { useSessionStore, type TaskPhase } from '../stores/session'
 import { useInboxStore } from '../stores/inbox'
 import { api } from '../api'
@@ -76,6 +77,14 @@ export function clearActiveExecution(sessionId: string) {
 }
 
 function isStaleExecution(sessionId: string, data: any): boolean {
+  // 空闲手动压缩（compact_now 空闲路径）由后端合成 listener 以 sentinel executionId
+  // `manual_compact_*` 下发 compaction_start/end/marker 与 context_window。这是会话跑完任务后
+  // （已进 suppressedStreamSessions）、且无 RUNNING 帧登记的新型过程事件；不豁免则整批被陈旧帧门
+  // 吞掉，违反「过程实时可见 / 水位下降 / 分隔线 / isCompacting 点亮」验收。该前缀只可能由手动压缩
+  // 产生（真实执行是 UUID/数字 id），绝不会是被取消执行的迟到残留，故按 id 无条件放行即可。
+  if (typeof data?.executionId === 'string' && data.executionId.startsWith('manual_compact_')) {
+    return false
+  }
   if (suppressedStreamSessions.has(sessionId)) {
     return true
   }
@@ -480,6 +489,11 @@ export function useStreamWS() {
     return sendReliable({ type: 'retry_execution', sessionId: Number(sessionId), data: {} })
   }
 
+  /** 手动整理上下文（技术方案 5.4）：空闲立即执行、运行中在下个工具轮边界执行，二者都由服务端回执事件驱动 UI。 */
+  async function compactNow(sessionId: string): Promise<boolean> {
+    return sendReliable({ type: 'compact_now', sessionId: Number(sessionId) })
+  }
+
   async function sendAskUserQuestionsResult(sessionId: string, requestId: string, answers: any[]): Promise<boolean> {
     return sendReliable({
       type: 'ask_user_questions_result',
@@ -730,6 +744,19 @@ export function useStreamWS() {
           const events = mapCompactionEvents([data as Record<string, unknown>])
           if (events[0]) sessionStore.addCompactionEvent(sessionId, events[0])
         }
+        break
+
+      case 'compaction_queued':
+        // 运行中手动压缩：本工具轮边界才执行，先回执排队态。后续 compaction_start/end/marker 由 loop 真实 listener 下发。
+        ElMessage.info(data?.message ?? '已排队，将在本轮工具结束后整理上下文')
+        break
+
+      case 'compaction_result':
+        // 空闲手动压缩的最终回执；compaction_start/end/marker 已驱动分隔线与水位，这里补一条结果提示。
+        // 失败回执走压缩通道（compacted=false + failed=true），只提示、绝不影响会话执行状态。
+        if (data?.failed) ElMessage.error(data?.message ?? '整理上下文失败，请稍后重试')
+        else if (data?.compacted === false) ElMessage.info('当前上下文已足够精简，无需整理')
+        else ElMessage.success('已整理上下文')
         break
 
       case 'thinking_start':
@@ -1184,6 +1211,7 @@ export function useStreamWS() {
     sendEditMessage,
     cancel,
     retryExecution,
+    compactNow,
     sendAskUserQuestionsResult,
     enqueueMessage,
     insertMessage,

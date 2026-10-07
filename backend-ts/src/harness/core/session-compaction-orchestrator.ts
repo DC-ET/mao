@@ -40,6 +40,8 @@ export class SessionCompactionOrchestrator {
     compactCurrentTurn: boolean,
     cancelFlag: { get(): boolean } | null,
     activeTokensHint?: number | null,
+    triggerMode: 'request_start' | 'mid_loop' | 'manual' = compactCurrentTurn ? 'mid_loop' : 'request_start',
+    force = false,
   ): Promise<boolean> {
     const record = await this.sessionCompactionService.loadValidated(sessionId);
     const boundary = this.sessionCompactionService.boundaryOf(record);
@@ -54,7 +56,7 @@ export class SessionCompactionOrchestrator {
       agentId: context.agentId ?? null,
     }, async () => this.contextManager.compactSession(
       sessionId, boundary, history.persistedMessages, history.snapshotMessageIds,
-      normalRequest, context.modelConfig!, config, listener, cancelFlag, activeTokensHint ?? null));
+      normalRequest, context.modelConfig!, config, listener, cancelFlag, activeTokensHint ?? null, force));
     if (result == null) return false;
 
     let compactionEnded = false;
@@ -101,7 +103,6 @@ export class SessionCompactionOrchestrator {
         return false;
       }
       const savedTokens = Math.max(0, result.beforeRequestTokens - afterRequestTokens);
-      const triggerMode = compactCurrentTurn ? 'mid_loop' : 'request_start';
       const event = await this.sessionCompactionEventService.record(
         sessionId, triggerMode, result.expectedOldBoundary, result.newLastCompactedMessageId,
         result.compactedCount, result.promptTokens, result.cachedTokens,
@@ -130,6 +131,6 @@ export class SessionCompactionOrchestrator {
     context.contextAnchorMsgId = 0;
     context.messagesCoveredByAnchor = -1;
     await this.sessionService.updateContextTokens(sessionId, requestTokens);
-    listener?.onContextWindow?.(requestTokens, 0);
+    listener?.onContextWindow?.(requestTokens, 0, context.contextManifest);
   }
 }

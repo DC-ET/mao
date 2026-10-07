@@ -1,6 +1,6 @@
 # 提案：上下文透视与手动治理 —— 打开"模型到底看到了什么"的黑盒
 
-- 状态：已转入实施（2026-10-06；技术方案见 [docs/plan/2026-10-06-context-inspector-technical-design.md](../plan/2026-10-06-context-inspector-technical-design.md)）
+- 状态：已实施（2026-10-07，P1 上下文透视 / P2 手动压缩 / P3 记忆注入开关与截断徽标全部落地；技术方案见 [docs/plan/2026-10-06-context-inspector-technical-design.md](../plan/2026-10-06-context-inspector-technical-design.md)，发版见 CHANGELOG 0.0.239）
 - 日期：2026-10-06
 - 提案总览：见 `docs/proposals/README.md`
 

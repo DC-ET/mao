@@ -12,6 +12,7 @@ export interface Session {
   executionMode?: string | null;
   workspace?: string | null;
   permissionLevel?: string | null;
+  memoryInjectionDisabled?: number | null;
   modelId?: number | null;
   isGit?: boolean | number | null;
   platform?: string | null;

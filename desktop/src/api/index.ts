@@ -424,6 +424,26 @@ export async function deleteMemory(id: number): Promise<void> {
   await api.delete(`/memory/${id}`)
 }
 
+/** 会话最近一次压缩摘要的现值（技术方案 5.5）。 */
+export interface SessionCompactionSummary {
+  summaryText: string | null
+  lastCompactedMsgId: number | null
+  compactCount: number | null
+  compactModel: string | null
+  updatedAt: string | null
+}
+
+/** 读取会话压缩摘要现值；无压缩记录时后端 data 缺省，返回 null。 */
+export async function getSessionCompaction(sessionId: number | string): Promise<SessionCompactionSummary | null> {
+  const { data } = await api.get(`/sessions/${sessionId}/compaction`)
+  return (data ?? null) as SessionCompactionSummary | null
+}
+
+/** 切换单会话长期记忆注入开关（技术方案 5.1，下一次执行生效）。 */
+export async function setSessionMemoryInjectionDisabled(sessionId: number | string, disabled: boolean): Promise<void> {
+  await api.patch(`/sessions/${sessionId}`, { memoryInjectionDisabled: disabled })
+}
+
 export async function getMemorySettings(): Promise<{ autoCaptureEnabled: boolean }> {
   const { data } = await api.get('/memory/settings')
   return data

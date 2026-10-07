@@ -125,6 +125,15 @@ describe('SessionService extra', () => {
     expect(sessionRepo.logicalDelete).toHaveBeenCalled();
   });
 
+  it('updateMemoryInjectionDisabledWritesNumericFlag', async () => {
+    const { service, sessionRepo } = makeService();
+    vi.mocked(sessionRepo.findById).mockResolvedValue({ id: 11, userId: 7 } as never);
+    await service.updateMemoryInjectionDisabled(11, true);
+    expect(sessionRepo.updateFields).toHaveBeenCalledWith(11, { memoryInjectionDisabled: 1 });
+    await service.updateMemoryInjectionDisabled(11, false);
+    expect(sessionRepo.updateFields).toHaveBeenCalledWith(11, { memoryInjectionDisabled: 0 });
+  });
+
   it('createSessionCloudPrefersExplicitCloudProjectKeyForFeishuPrivate', async () => {
     const { service } = makeService();
     const feishuPrivate = await service.createSession(

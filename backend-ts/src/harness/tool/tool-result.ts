@@ -28,6 +28,8 @@ export interface ToolCallResultMeta {
   errorMessage?: string;
   durationMs?: number;
   approvalMark?: ToolApprovalMark | null;
+  /** 后端在工具实现内已截断输出（结果 JSON 顶层 `truncated===true`）；实时事件走此通道。 */
+  resultTruncated?: boolean;
 }
 
 export function toolResultMeta(result: ToolResult): ToolCallResultMeta {

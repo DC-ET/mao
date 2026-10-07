@@ -20,6 +20,7 @@ const props = defineProps<{
 const triggerLabel = computed(() => {
   if (props.event.triggerMode === 'mid_loop') return '执行中整理上下文'
   if (props.event.triggerMode === 'request_start') return '回复前整理上下文'
+  if (props.event.triggerMode === 'manual') return '手动整理上下文'
   return '已整理上下文'
 })
 
