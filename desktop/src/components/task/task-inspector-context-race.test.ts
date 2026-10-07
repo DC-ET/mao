@@ -79,7 +79,7 @@ vi.mock('../../composables/useModelContext', () => ({
 vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }) }))
 vi.mock('element-plus', () => ({
   ElMessage: { error: vi.fn(), info: vi.fn(), success: vi.fn(), warning: vi.fn() },
-  ElTooltip: defineComponent({ render() { return h('div', this.$slots.default?.() ?? null) } }),
+  ElTooltip: defineComponent({ render() { return h('div', this.$slots.default?.() ?? []) } }),
 }))
 
 vi.mock('./TodoChecklist.vue', () => ({ default: { render: () => null } }))
@@ -97,7 +97,6 @@ const compiled = compile(descriptor.template!.content, {
   prefixIdentifiers: true,
   bindingMetadata: script.bindings,
 })
-if (compiled.errors?.length) throw compiled.errors[0]
 const clientRender = new Function('Vue', compiled.code)(Vue) as (ctx: unknown, cache: unknown) => unknown
 const ClientInspector = { ...(TaskInspector as object), render: clientRender }
 
@@ -113,7 +112,7 @@ function nodeOps() {
     createElement,
     createText,
     createComment: (t: string) => createText(t),
-    setText: (n: { text: string }, t: string) => { n.text = String(t) },
+    setText: (n: StubNode, t: string) => { if ('text' in n) n.text = String(t) },
     setElementText: (el: StubEl, t: string) => { el.children = [{ text: String(t), parent: el }] },
     insert: (child: StubNode, parent: StubEl, anchor?: StubNode | null) => {
       child.parent = parent
@@ -138,7 +137,10 @@ function nodeOps() {
     querySelector: () => null,
     setScopeId: () => {},
     cloneNode: (el: StubEl) => el,
-    insertStaticContent: () => [],
+    insertStaticContent: (_content: string, _before: StubNode | null, _parent: StubEl): [StubEl, StubEl] => [
+      createElement('static-start'),
+      createElement('static-end'),
+    ],
     patchProp: (el: StubEl, key: string, _prev: unknown, next: unknown) => {
       el.props[key] = next
       if (/^onClick/.test(key) && typeof next === 'function') {

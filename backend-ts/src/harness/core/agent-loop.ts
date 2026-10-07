@@ -525,7 +525,7 @@ export class AgentLoop {
     context: AgentExecutionContext,
     listener: AgentEventListener,
     persistenceCallback: MessagePersistenceCallback | null | undefined,
-    cancelFlag: { get(): boolean } | null,
+    cancelFlag: AtomicBoolean | null,
   ): Promise<boolean> {
     const loopConfig = context.compactionConfig;
     if (!(this.compactionSignalBus && context.sessionId != null
