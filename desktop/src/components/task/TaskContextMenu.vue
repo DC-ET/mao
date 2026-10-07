@@ -7,11 +7,15 @@
       @click.stop
     >
       <template v-if="contextMenu.zone === 'archived'">
+        <div class="context-menu-item" @click="menuShare">分享…</div>
+        <div class="context-menu-item" @click="menuExportMarkdown">导出 Markdown</div>
         <div class="context-menu-item" @click="menuUnarchive">恢复</div>
         <div class="context-menu-item" @click="menuEditTitle">编辑标题</div>
         <div class="context-menu-item danger" @click="menuDelete">删除</div>
       </template>
       <template v-else>
+        <div class="context-menu-item" @click="menuShare">分享…</div>
+        <div class="context-menu-item" @click="menuExportMarkdown">导出 Markdown</div>
         <div class="context-menu-item" @click="menuEditTitle">编辑标题</div>
         <div class="context-menu-item" @click="menuArchive">归档</div>
         <div class="context-menu-item danger" @click="menuDelete">删除</div>
@@ -52,6 +56,8 @@ defineProps<{
   menuUnarchive: () => void
   menuEditTitle: () => void
   menuDelete: () => void
+  menuShare: () => void
+  menuExportMarkdown: () => void
   menuRenameGroup: () => void
   menuResetGroup: () => void
   hasGroupAlias: (key: string) => boolean

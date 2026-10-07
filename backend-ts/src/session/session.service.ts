@@ -967,8 +967,15 @@ export class SessionService {
     return { messages, hasMore, nextBeforeMessageId };
   }
 
-  async getMessagesByRounds(sessionId: number, roundLimit: number, beforeMessageId: number | null): Promise<MessagePage> {
+  async getMessagesByRounds(
+    sessionId: number,
+    roundLimit: number,
+    beforeMessageId: number | null,
+    options?: { maxMessageId?: number | null; excludeSourceSessionId?: number | null },
+  ): Promise<MessagePage> {
     const limit = Math.max(1, Math.min(roundLimit, 50));
+    const maxMessageId = options?.maxMessageId ?? null;
+    const excludeSourceSessionId = options?.excludeSourceSessionId ?? null;
     let beforeMessage: Message | null = null;
     if (beforeMessageId != null) {
       beforeMessage = await this.messageRepo.findById(beforeMessageId);
@@ -976,14 +983,23 @@ export class SessionService {
         throw new BusinessException(ErrorCode.PARAM_INVALID);
       }
     }
-    const userStarts = await this.messageRepo.selectUserStarts(sessionId, beforeMessage?.id ?? null, limit + 1);
+    const beforeId = beforeMessage?.id ?? null;
+    const userStarts = excludeSourceSessionId == null
+      ? (maxMessageId == null
+        ? await this.messageRepo.selectUserStarts(sessionId, beforeId, limit + 1)
+        : await this.messageRepo.selectUserStarts(sessionId, beforeId, limit + 1, maxMessageId))
+      : await this.messageRepo.selectUserStarts(sessionId, beforeId, limit + 1, maxMessageId, excludeSourceSessionId);
     if (userStarts.length === 0) {
       return { messages: [], hasMore: false, nextBeforeMessageId: null };
     }
     const hasMore = userStarts.length > limit;
     const pageStarts = hasMore ? userStarts.slice(0, limit) : userStarts;
     const startId = pageStarts[pageStarts.length - 1].id!;
-    const raw = await this.messageRepo.selectRange(sessionId, startId, beforeMessage?.id ?? null);
+    const raw = excludeSourceSessionId == null
+      ? (maxMessageId == null
+        ? await this.messageRepo.selectRange(sessionId, startId, beforeId)
+        : await this.messageRepo.selectRange(sessionId, startId, beforeId, maxMessageId))
+      : await this.messageRepo.selectRange(sessionId, startId, beforeId, maxMessageId, excludeSourceSessionId);
     const messages = (MessageHistoryNormalizer.normalizeEntities(raw, parseToolCallsJson) ?? raw) as Message[];
     const nextBeforeMessageId = messages.length === 0 ? null : messages[0].id ?? null;
     return { messages, hasMore, nextBeforeMessageId };
@@ -998,6 +1014,10 @@ export class SessionService {
       return new Map();
     }
     return groupFileChanges(await this.fileChangeRepo.listByMessageIds(sessionId, messageIds));
+  }
+
+  async listFileChangeSummaries(sessionId: number, excludeSourceSessionId?: number | null): Promise<FileChange[]> {
+    return this.fileChangeRepo.listSummaryBySession(sessionId, excludeSourceSessionId);
   }
 
   async getFileChangeSummariesByMessageIds(sessionId: number, messageIds: number[] | null): Promise<Map<number, FileChange[]>> {

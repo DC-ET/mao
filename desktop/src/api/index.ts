@@ -580,3 +580,34 @@ export async function listOutboundDeliveries(subscriptionId: number): Promise<Ou
   const { data } = await api.get(`/open/subscriptions/${subscriptionId}/deliveries`)
   return data ?? []
 }
+
+export interface SessionShareInfo {
+  token: string
+  messageWatermark: number
+  viewCount: number
+  createdAt?: string | null
+  expiresAt?: string | null
+  lastViewedAt?: string | null
+}
+
+export async function getSessionShare(sessionId: string): Promise<SessionShareInfo | null> {
+  const { data } = await api.get(`/sessions/${sessionId}/share`)
+  return data ?? null
+}
+
+export async function createSessionShare(
+  sessionId: string,
+  payload: { publicLink?: boolean; expiresInDays?: number } = {},
+): Promise<SessionShareInfo> {
+  const { data } = await api.post(`/sessions/${sessionId}/share`, payload)
+  return data
+}
+
+export async function refreshSessionShare(sessionId: string): Promise<SessionShareInfo> {
+  const { data } = await api.put(`/sessions/${sessionId}/share`)
+  return data
+}
+
+export async function revokeSessionShare(sessionId: string): Promise<void> {
+  await api.delete(`/sessions/${sessionId}/share`)
+}

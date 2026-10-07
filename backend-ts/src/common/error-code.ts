@@ -49,6 +49,10 @@ export const ErrorCode = {
 
   /** 入站 Webhook 触发器：不存在/停用/验签失败统一 404 + 固定短语（技术方案决策 10，不暴露区分）。 */
   OPEN_HOOK_NOT_FOUND: { code: 3040, message: 'not found' },
+  /** 分享链接：不存在/撤销/过期/会话已删/属主停用统一此码，响应不可区分。 */
+  SHARE_NOT_FOUND: { code: 3041, message: '链接不存在或已撤销' },
+  /** Markdown 导出体超过 5MB。HTTP 413，见 handleError。 */
+  EXPORT_TOO_LARGE: { code: 3042, message: '导出内容过大，请改用分享链接' },
 
   INTERNAL_ERROR: { code: 5001, message: '服务内部错误' },
   DATABASE_ERROR: { code: 5002, message: '数据库错误' },

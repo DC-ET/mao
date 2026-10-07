@@ -6,7 +6,7 @@
       </div>
       <div class="tool-status">
         <button
-          v-if="isDelegate && childSessionId"
+          v-if="isDelegate && childSessionId && !hideProcess"
           class="view-subagent-btn"
           title="查看子代理过程"
           @click.stop="openSubagentProcess"
@@ -76,7 +76,12 @@ import { useSessionStore } from '../../stores/session'
 import { copyText as copyToClipboard } from '../../utils/clipboard'
 import { getToolDisplayName, getToolInputPreview } from '../../utils/toolDisplay'
 
-const props = defineProps<{ toolCall: ToolCall }>()
+const props = withDefaults(defineProps<{
+  toolCall: ToolCall
+  hideProcess?: boolean
+}>(), {
+  hideProcess: false
+})
 
 const sessionStore = useSessionStore()
 const openSubagent = inject<(payload: { childSessionId: number; title?: string }) => void>('openSubagent', () => {})

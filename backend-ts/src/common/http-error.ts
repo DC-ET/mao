@@ -67,6 +67,10 @@ export async function requireAnyRequestPermission(
 
 export function handleError(err: unknown, _req: FastifyRequest, reply: FastifyReply): void {
   if (err instanceof BusinessException) {
+    if (err.code === ErrorCode.EXPORT_TOO_LARGE.code) {
+      sendJson(reply, 413, fail(err.code, err.message));
+      return;
+    }
     const http = err.code === 1001 || err.code === 401 ? 401
       : err.code === 1002 || err.code === 403 ? 403
         : 200;

@@ -241,6 +241,7 @@ const TOC_GROUPS: Array<{ label: string; sections: Array<{ kind: 'company-sso' |
       { kind: 'integration', name: 'harness-llm' },
       { kind: 'integration', name: 'harness-compaction' },
       { kind: 'category', name: '会话' },
+      { kind: 'category', name: '分享' },
       { kind: 'category', name: '代码' },
       { kind: 'category', name: '审批' },
       { kind: 'category', name: '记忆' },

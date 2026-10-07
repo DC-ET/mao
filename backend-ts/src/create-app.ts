@@ -107,6 +107,10 @@ import { SessionActivityRepository, SessionTodoRepository, SubagentExecutionRepo
 import { MessageQueueService } from './session/message-queue.service.js';
 import { MessageQueueRepository } from './session/message-queue.repository.js';
 import { registerSessionRoutes } from './session/session.routes.js';
+import { registerSessionShareRoutes } from './session/session-share.routes.js';
+import { MysqlSessionShareRepository } from './session/session-share.repository.js';
+import { SessionShareService } from './session/session-share.service.js';
+import { SessionExportService } from './session/session-export.service.js';
 import { registerAdminSessionRoutes } from './session/admin-session.routes.js';
 import { SessionActivityHeartbeat } from './session/session-activity-heartbeat.js';
 import { TaskTerminalService } from './session/task-terminal.service.js';
@@ -2287,6 +2291,30 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       approvalRegistry,
       askUserQuestionsRegistry,
       treeSignalPublisher,
+    });
+    const sessionShareService = new SessionShareService(
+      new MysqlSessionShareRepository(db),
+      sessionService,
+      userRepo,
+      {
+        findById: (id: number) => agentRepo.findById(id),
+        findByIds: (ids: number[]) => agentRepo.findByIds(ids),
+        requireDefaultAgent: () => agentService.requireDefaultAgent(),
+        listOptions: async () => (await agentRepo.selectList(null, true)).map((a) => ({ id: a.id!, name: a.name })),
+      } as never,
+      auditService,
+      () => settingService.shareTokenLinksEnabled(),
+    );
+    registerSessionShareRoutes(api, {
+      sessionService,
+      shareService: sessionShareService,
+      exportService: new SessionExportService(sessionService, {
+        findById: (id: number) => agentRepo.findById(id),
+        findByIds: (ids: number[]) => agentRepo.findByIds(ids),
+        requireDefaultAgent: () => agentService.requireDefaultAgent(),
+        listOptions: async () => (await agentRepo.selectList(null, true)).map((a) => ({ id: a.id!, name: a.name })),
+      } as never),
+      tokenLinksEnabled: () => settingService.shareTokenLinksEnabled(),
     });
     registerAdminSessionRoutes(api, {
       sessionService,

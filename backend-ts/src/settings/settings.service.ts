@@ -58,6 +58,8 @@ export const NOTIFY_WORKER_DELAY_MS_KEY = 'notify.workerDelayMs';
 export const NOTIFY_BATCH_SIZE_KEY = 'notify.batchSize';
 export const NOTIFY_MAX_ATTEMPTS_KEY = 'notify.maxAttempts';
 
+export const SHARE_TOKEN_LINKS_ENABLED_KEY = 'share.tokenLinksEnabled';
+
 export const BUNDLE_REGISTRY_ENABLED_KEY = 'bundle.registry.enabled';
 export const BUNDLE_REGISTRY_ACCESS_TOKEN_KEY = 'bundle.registry.accessToken';
 
@@ -315,6 +317,11 @@ export class SystemSettingService {
       connectTimeout: DEFAULT_TINYFISH_CONNECT_TIMEOUT,
       readTimeout: DEFAULT_TINYFISH_READ_TIMEOUT,
     };
+  }
+
+  /** 匿名分享链接（P3）：默认关闭。未配置或非 true/1 一律视为关闭。 */
+  async shareTokenLinksEnabled(): Promise<boolean> {
+    return this.getBool(SHARE_TOKEN_LINKS_ENABLED_KEY);
   }
 
   /** Bundle registry 只读端点配置（资产分发闭环）：默认关闭，管理员显式开启。 */

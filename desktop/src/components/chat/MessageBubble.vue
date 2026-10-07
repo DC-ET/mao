@@ -97,6 +97,7 @@
           <ToolCallGroup
             v-else-if="seg.type === 'tool-group' && seg.toolCalls"
             :tool-calls="seg.toolCalls"
+            :hide-process="hideSubagentProcess"
           />
         </template>
         <FileChangePanel
@@ -114,7 +115,7 @@
           body-class="assistant-text markdown-body"
         />
         <div v-if="visibleToolCalls.length > 0" class="tool-calls">
-          <ToolCallGroup :tool-calls="visibleToolCalls" />
+          <ToolCallGroup :tool-calls="visibleToolCalls" :hide-process="hideSubagentProcess" />
         </div>
         <FileChangePanel
           v-if="!hideFileChanges && message.fileChanges && message.fileChanges.length > 0"
@@ -280,6 +281,8 @@ const props = withDefaults(defineProps<{
   dislikeEnabled?: boolean
   /** 是否显示「Fork 到边路任务」按钮（仅主聊天传入 true） */
   forkEnabled?: boolean
+  /** 只读分享页隐藏 delegate「查看过程」（无会话上下文，点击无效果） */
+  hideSubagentProcess?: boolean
 }>(), {
   showCopy: true,
   isLast: false,
@@ -289,7 +292,8 @@ const props = withDefaults(defineProps<{
   hideFileChanges: false,
   sessionId: '',
   dislikeEnabled: false,
-  forkEnabled: false
+  forkEnabled: false,
+  hideSubagentProcess: false
 })
 
 const emit = defineEmits<{

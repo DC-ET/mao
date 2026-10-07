@@ -18,6 +18,7 @@
         v-for="tc in toolCalls"
         :key="tc.id"
         :tool-call="tc"
+        :hide-process="hideProcess"
       />
     </div>
   </div>
@@ -49,7 +50,12 @@ import type { ToolCall } from '../../composables/useChat'
 import { getToolDisplayName } from '../../utils/toolDisplay'
 import ToolCallCard from './ToolCallCard.vue'
 
-const props = defineProps<{ toolCalls: ToolCall[] }>()
+const props = withDefaults(defineProps<{
+  toolCalls: ToolCall[]
+  hideProcess?: boolean
+}>(), {
+  hideProcess: false
+})
 
 const isExpanded = ref(false)
 
