@@ -3,7 +3,8 @@
   width: var(--aw-session-panel-width);
   flex-shrink: 0;
   background: var(--aw-canvas-parchment);
-  backdrop-filter: saturate(180%) blur(20px);
+  /* 勿加 backdrop-filter / transform / filter：这些属性会创建 fixed 定位包含块，
+     使挂在本面板内的弹窗（如分享会话）以面板左上角为基准定位，并被 overflow:hidden 裁掉。 */
   border-right: 1px solid var(--aw-divider-soft);
   display: flex;
   flex-direction: column;

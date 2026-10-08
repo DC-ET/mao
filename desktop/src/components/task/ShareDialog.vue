@@ -2,7 +2,9 @@
   <el-dialog
     :model-value="modelValue"
     title="分享会话"
-    width="480px"
+    width="min(480px, calc(100vw - 32px))"
+    class="share-dialog"
+    append-to-body
     @update:model-value="emit('update:modelValue', $event)"
     @open="load"
   >
@@ -140,6 +142,12 @@ async function copy() {
 </script>
 
 <style>
+/* overlay/dialog 挂在 body 下（scoped 不生效）；--el-box-shadow 被全局置空，这里补一层阴影 */
+.share-dialog.el-dialog {
+  border-radius: var(--aw-radius-md, 12px);
+  box-shadow: var(--aw-shadow-product, 0 16px 48px rgba(0, 0, 0, 0.18));
+}
+
 .share-hint {
   margin: 0 0 12px;
   font-size: 13px;

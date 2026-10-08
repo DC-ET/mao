@@ -27,14 +27,6 @@
       >
         Git
       </button>
-      <button
-        v-if="showContextTab"
-        class="inspector-tab"
-        :class="{ active: inspectorActiveTab === 'context' }"
-        @click="inspectorActiveTab = 'context'"
-      >
-        上下文
-      </button>
     </div>
 
     <div v-show="inspectorActiveTab === 'workspace'" class="inspector-tab-content">
@@ -65,14 +57,14 @@
             {{ phaseLabel }}
           </span>
           <el-tooltip
-            v-if="contextDisplay"
-            :content="contextTooltip"
+            v-if="showContextDrawer"
+            :content="contextDisplay ? contextTooltip : '查看上下文详情'"
             placement="top"
             :show-after="300"
           >
-            <span class="context-badge">
-              上下文 {{ contextDisplay }}
-            </span>
+            <button type="button" class="context-badge" @click="openContextDrawer">
+              {{ contextDisplay ? `上下文 ${contextDisplay}` : '上下文' }}
+            </button>
           </el-tooltip>
         </div>
       </div>
@@ -236,92 +228,115 @@
       />
     </div>
 
-    <div v-if="showContextTab && inspectorActiveTab === 'context'" class="inspector-tab-content context-tab">
-      <div class="ctx-block">
-        <div class="ctx-block-title">上下文水位</div>
-        <div v-if="waterLevelPct != null" class="ctx-water">
-          <div class="ctx-bar"><div class="ctx-bar-fill" :style="{ width: waterLevelPct + '%' }"></div></div>
-          <span class="ctx-water-text">
-            约 {{ waterLevelPct }}% · {{ (contextWindow?.estimated ?? 0).toLocaleString() }} /
-            {{ effectiveWindowTokens != null ? effectiveWindowTokens.toLocaleString() : '?' }} tokens
-          </span>
-        </div>
-        <div v-else class="ctx-empty">暂无水位数据</div>
-      </div>
+    </template>
 
-      <div class="ctx-block">
-        <div class="ctx-block-title">
-          <span>上下文构成</span>
-          <el-tooltip
-            content="各节 token 为字节估算口径；分节合计仅含系统提示 + 消息 + 交接摘要，不含工具定义，故与上方含工具定义的水位存在口径差"
-            placement="top"
-          >
-            <span class="ctx-help">?</span>
-          </el-tooltip>
-        </div>
-        <div v-if="sectionStats.length" class="ctx-sections">
-          <div v-for="sec in sectionStats" :key="sec.key" class="ctx-section-row">
-            <div class="ctx-section-head">
-              <span class="ctx-section-label">{{ sec.label }}</span>
-              <span class="ctx-section-tokens">
-                {{ sec.tokens.toLocaleString() }} tokens<span v-if="sec.count != null"> · {{ sec.count }}</span>
-              </span>
-            </div>
-            <div class="ctx-bar"><div class="ctx-bar-fill" :style="{ width: (tokensPct(sec.tokens) ?? 0) + '%' }"></div></div>
+    <el-drawer
+      v-model="contextDrawerOpen"
+      class="context-drawer"
+      title="上下文详情"
+      size="min(420px, calc(100vw - 32px))"
+      :with-header="true"
+    >
+      <div class="context-drawer-body">
+        <div class="ctx-block ctx-capacity">
+          <div class="ctx-capacity-head">
+            <span class="ctx-block-title">上下文容量</span>
+            <el-tooltip
+              content="以本轮真实发送内容估算（取水位估算与实际 prompt 的较大值）；分节合计不含工具定义，故与容量存在口径差"
+              placement="top"
+              :show-after="300"
+            >
+              <span v-if="capacitySummary" class="ctx-capacity-value">{{ capacitySummary }}</span>
+            </el-tooltip>
+          </div>
+          <div v-if="waterLevelPct != null" class="ctx-track">
+            <div
+              class="ctx-track-fill"
+              :class="`is-${waterTone}`"
+              :style="{ width: waterLevelPct + '%' }"
+            ></div>
+          </div>
+          <div v-else class="ctx-empty">暂无水位数据</div>
+          <div v-if="waterLevelPct != null" class="ctx-capacity-foot">
+            估算口径 · 压缩后重新计算
           </div>
         </div>
-        <div v-else class="ctx-empty">本次会话尚无构成数据（发起一次任务后可见）</div>
-      </div>
 
-      <div class="ctx-block">
-        <div class="ctx-block-title ctx-row">
-          <span>本会话注入记忆</span>
-          <el-switch
-            :model-value="!memoryInjectionDisabled"
-            :loading="memoryToggleBusy"
-            size="small"
-            @update:model-value="toggleMemoryInjection(!Boolean($event))"
-          />
-        </div>
-        <div class="ctx-hint">开关改动将于下次任务开始时生效</div>
-        <div v-if="memoryIds.length" class="ctx-memory-chips">
-          <button
-            v-for="id in memoryIds"
-            :key="id"
-            class="ctx-chip"
-            :title="memorySnippet(id)"
-            @click="gotoMemorySettings"
-          >{{ memorySnippet(id) }}</button>
-        </div>
-        <div v-else-if="memoryInjectionDisabled" class="ctx-empty">已关闭本会话记忆注入</div>
-        <div v-else class="ctx-empty">本次未注入长期记忆</div>
-      </div>
-
-      <div class="ctx-block">
-        <div class="ctx-block-title">手动整理上下文</div>
-        <button class="ctx-compact-btn" :disabled="isCompacting || compactSubmitting" @click="handleCompactNow">
-          {{ isCompacting ? '正在整理上下文…' : '立即整理上下文' }}
-        </button>
-        <div v-if="isRunning" class="ctx-hint">任务运行中，将在本轮工具结束后执行</div>
-        <button class="ctx-summary-toggle" @click="toggleSummaryPanel">
-          {{ summaryPanelOpen ? '收起上次摘要' : '查看上次摘要' }}
-        </button>
-        <div v-if="summaryPanelOpen" class="ctx-summary-panel">
-          <div v-if="summaryLoading" class="ctx-empty">加载中…</div>
-          <template v-else-if="compactionSummary">
-            <div class="ctx-summary-meta">
-              <span v-if="compactionSummary.compactCount != null">已整理 {{ compactionSummary.compactCount }} 次</span>
-              <span v-if="compactionSummary.compactModel">{{ compactionSummary.compactModel }}</span>
-              <span v-if="compactionSummary.updatedAt">{{ compactionSummary.updatedAt }}</span>
+        <div class="ctx-block">
+          <div class="ctx-block-title ctx-row">
+            <span>上下文构成</span>
+            <el-tooltip
+              content="各节 token 为字节估算口径；分节合计仅含系统提示 + 消息 + 交接摘要，不含工具定义，故与上方含工具定义的水位存在口径差"
+              placement="top"
+            >
+              <span class="ctx-help">?</span>
+            </el-tooltip>
+          </div>
+          <div v-if="sectionRows.length" class="ctx-sections">
+            <div v-for="row in sectionRows" :key="row.key" class="ctx-section-row">
+              <span class="ctx-dot" :class="`ctx-dot-${row.rank}`"></span>
+              <span class="ctx-section-label">
+                {{ row.label }}<span v-if="row.count != null" class="ctx-section-count">· {{ row.count }}</span>
+              </span>
+              <span class="ctx-section-value">
+                <span class="ctx-section-pct">{{ row.pct != null ? `${row.pct}%` : '--' }}</span>
+                <span class="ctx-section-tokens" :title="`${row.tokens.toLocaleString()} tokens`">
+                  {{ formatTokenCompact(row.tokens) }}
+                </span>
+              </span>
             </div>
-            <pre class="ctx-summary-text">{{ compactionSummary.summaryText || '（无摘要正文）' }}</pre>
-          </template>
-          <div v-else class="ctx-empty">暂无压缩摘要记录</div>
+          </div>
+          <div v-else class="ctx-empty">本次会话尚无构成数据（发起一次任务后可见）</div>
+        </div>
+
+        <div class="ctx-block">
+          <div class="ctx-block-title ctx-row">
+            <span>本会话注入记忆</span>
+            <el-switch
+              :model-value="!memoryInjectionDisabled"
+              :loading="memoryToggleBusy"
+              size="small"
+              @update:model-value="toggleMemoryInjection(!Boolean($event))"
+            />
+          </div>
+          <div class="ctx-hint">开关改动将于下次任务开始时生效</div>
+          <div v-if="memoryIds.length" class="ctx-memory-chips">
+            <button
+              v-for="id in memoryIds"
+              :key="id"
+              class="ctx-chip"
+              :title="memorySnippet(id)"
+              @click="gotoMemorySettings"
+            >{{ memorySnippet(id) }}</button>
+          </div>
+          <div v-else-if="memoryInjectionDisabled" class="ctx-empty">已关闭本会话记忆注入</div>
+          <div v-else class="ctx-empty">本次未注入长期记忆</div>
+        </div>
+
+        <div class="ctx-block">
+          <div class="ctx-block-title">手动整理上下文</div>
+          <button class="ctx-compact-btn" :disabled="isCompacting || compactSubmitting" @click="handleCompactNow">
+            {{ isCompacting ? '正在整理上下文…' : '立即整理上下文' }}
+          </button>
+          <div v-if="isRunning" class="ctx-hint">任务运行中，将在本轮工具结束后执行</div>
+          <button class="ctx-summary-toggle" @click="toggleSummaryPanel">
+            {{ summaryPanelOpen ? '收起上次摘要' : '查看上次摘要' }}
+          </button>
+          <div v-if="summaryPanelOpen" class="ctx-summary-panel">
+            <div v-if="summaryLoading" class="ctx-empty">加载中…</div>
+            <template v-else-if="compactionSummary">
+              <div class="ctx-summary-meta">
+                <span v-if="compactionSummary.compactCount != null">已整理 {{ compactionSummary.compactCount }} 次</span>
+                <span v-if="compactionSummary.compactModel">{{ compactionSummary.compactModel }}</span>
+                <span v-if="compactionSummary.updatedAt">{{ compactionSummary.updatedAt }}</span>
+              </div>
+              <pre class="ctx-summary-text">{{ compactionSummary.summaryText || '（无摘要正文）' }}</pre>
+            </template>
+            <div v-else class="ctx-empty">暂无压缩摘要记录</div>
+          </div>
         </div>
       </div>
-    </div>
-
-    </template>
+    </el-drawer>
   </div>
 </template>
 
@@ -399,7 +414,8 @@ const currentModelId = computed(() => {
 // Get model's max context window tokens
 const { maxTokens } = useModelContext(currentModelId)
 
-const inspectorActiveTab = ref<'workspace' | 'filetree' | 'git' | 'context'>('workspace')
+const inspectorActiveTab = ref<'workspace' | 'filetree' | 'git'>('workspace')
+const contextDrawerOpen = ref(false)
 const showFileTreeTab = computed(() => {
   if (props.executionMode === 'CLOUD') {
     return !!props.sessionId
@@ -467,10 +483,10 @@ const showGitTab = computed(() => {
   return gitLoading.value
 })
 
-// 上下文页签：任何有会话 id 的可检视对象都展示（水位/构成/记忆/手动治理随该会话）
-const showContextTab = computed(() => !!props.sessionId && props.viewType !== 'subagent')
+// 上下文详情抽屉：任何有会话 id 的可检视对象都能打开（水位/构成/记忆/手动治理随该会话）
+const showContextDrawer = computed(() => !!props.sessionId && props.viewType !== 'subagent')
 
-const showTabBar = computed(() => showFileTreeTab.value || showGitTab.value || showContextTab.value)
+const showTabBar = computed(() => showFileTreeTab.value || showGitTab.value)
 
 const gitSummaryVisible = computed(() => {
   if (!props.gitProvider) return false
@@ -527,9 +543,13 @@ function handleRepoClick(path: string) {
   }
 }
 
-// ===== 上下文透视页签（技术方案 5.2 / 5.3 / 5.5） =====
+// ===== 上下文透视抽屉（技术方案 5.2 / 5.3 / 5.5） =====
 const router = useRouter()
 const streamWS = useStreamWS()
+
+function openContextDrawer() {
+  contextDrawerOpen.value = true
+}
 
 const contextManifest = computed(() => props.contextWindow?.manifest ?? null)
 const sectionStats = computed(() => contextManifest.value?.sections ?? [])
@@ -548,6 +568,48 @@ function tokensPct(tokens: number): number | null {
   return Math.min(100, Math.round((tokens / w) * 100))
 }
 const waterLevelPct = computed(() => tokensPct(props.contextWindow?.estimated ?? 0))
+
+// 水位色调：<60% 常规，60–85% 提示，>85% 告警（与截图的三段式语义一致）
+const waterTone = computed(() => {
+  const pct = waterLevelPct.value
+  if (pct == null) return 'calm'
+  if (pct >= 85) return 'alert'
+  if (pct >= 60) return 'warn'
+  return 'calm'
+})
+
+// 容量摘要：20.2万/26万（79%）口径，取分段着色时的两种数字的折中：估算/窗口 + 百分比
+const capacitySummary = computed(() => {
+  const pct = waterLevelPct.value
+  const used = contextTokens.value
+  const window = effectiveWindowTokens.value
+  if (pct == null || window == null) return ''
+  return `${formatTokenCompact(used)}/${formatTokenCompact(window)}（${pct}%）`
+})
+
+// 构成行：按占比倒序（占比高的更靠前），并给出色阶档位，方便一眼看到主要占用
+type SectionRow = {
+  key: string
+  label: string
+  tokens: number
+  count?: number
+  pct: number | null
+  /** 色阶档位：0/1/2 取主色三档，3 取弱化色 */
+  rank: number
+}
+const sectionRows = computed<SectionRow[]>(() => {
+  const rows = sectionStats.value.map((sec, i) => ({
+    key: sec.key,
+    label: sec.label,
+    tokens: sec.tokens,
+    count: sec.count,
+    pct: tokensPct(sec.tokens),
+    rank: i,
+  }))
+  rows.sort((a, b) => (b.pct ?? -1) - (a.pct ?? -1))
+  rows.forEach((row, i) => { row.rank = i })
+  return rows
+})
 
 // 记忆条目 snippet：manifest 仅带 id，按 id 调列表接口本地匹配 content（技术方案 5.3）
 const memorySnippetById = ref<Map<number, string>>(new Map())
@@ -660,10 +722,10 @@ watch(() => props.sessionId, () => {
   memorySnippetById.value = new Map()
 })
 
-// 进入上下文页签、切换会话或记忆 id 变化时按需补拉 snippet。
+// 打开抽屉、切换会话或记忆 id 变化时按需补拉 snippet。
 // 以 id 列表而不是条数为源：新旧会话条数相同也要重拉。
-watch([inspectorActiveTab, () => props.sessionId, () => memoryIds.value.join(',')], () => {
-  if (inspectorActiveTab.value === 'context' && memoryIds.value.length > 0 && memorySnippetById.value.size === 0) {
+watch([contextDrawerOpen, () => props.sessionId, () => memoryIds.value.join(',')], () => {
+  if (contextDrawerOpen.value && memoryIds.value.length > 0 && memorySnippetById.value.size === 0) {
     void loadMemorySnippets()
   }
 })
@@ -675,9 +737,11 @@ watch([showFileTreeTab, showGitTab], () => {
   if (inspectorActiveTab.value === 'git' && !showGitTab.value) {
     inspectorActiveTab.value = 'workspace'
   }
-  if (inspectorActiveTab.value === 'context' && !showContextTab.value) {
-    inspectorActiveTab.value = 'workspace'
-  }
+})
+
+// 切换会话后关闭抽屉：内容属于被切换走的会话，继续开着会让治理动作打到错误会话上
+watch(() => props.sessionId, () => {
+  contextDrawerOpen.value = false
 })
 
 watch(inspectorActiveTab, (tab) => {
@@ -1396,6 +1460,14 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   border-radius: var(--aw-radius-md);
   color: var(--aw-ink-muted-48);
   background: rgba(0, 0, 0, 0.04);
+  border: none;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+
+.context-badge:hover {
+  color: var(--aw-primary);
+  background: var(--aw-primary-hover);
 }
 
 .inspector-tab-content::-webkit-scrollbar {
@@ -1437,12 +1509,18 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   background: rgba(255, 255, 255, 0.06);
 }
 
-/* ===== 上下文透视页签 ===== */
-.context-tab {
+[data-theme="dark"] .context-badge:hover {
+  color: var(--aw-primary);
+  background: var(--aw-primary-hover);
+}
+
+/* ===== 上下文透视抽屉 ===== */
+.context-drawer-body {
   display: flex;
   flex-direction: column;
   gap: 18px;
 }
+
 .ctx-block {
   display: flex;
   flex-direction: column;
@@ -1480,50 +1558,100 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   font-size: 12px;
   color: var(--aw-ink-muted-48, #9ca3af);
 }
-.ctx-water {
+/* --- 容量条：上方一行数值 + 一条粗轨道（三段式色调） --- */
+.ctx-capacity-head {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
 }
-.ctx-water-text {
+.ctx-capacity-value {
+  font-family: var(--aw-font-mono);
   font-size: 12px;
-  color: var(--aw-ink-muted-48, #6b7280);
+  color: var(--aw-ink-muted-64, #5c5c5c);
+  cursor: help;
+  border-bottom: 1px dashed color-mix(in srgb, var(--aw-ink-muted-48, #86868b) 50%, transparent);
+  padding-bottom: 1px;
 }
-.ctx-bar {
-  height: 6px;
-  border-radius: 3px;
-  background: color-mix(in srgb, var(--aw-ink-muted-48, #9ca3af) 18%, transparent);
+.ctx-track {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--aw-surface-hover, #f5f5f7);
   overflow: hidden;
 }
-.ctx-bar-fill {
+.ctx-track-fill {
   height: 100%;
-  border-radius: 3px;
-  background: var(--aw-primary, #2563eb);
-  transition: width 0.2s ease;
+  border-radius: 4px;
+  transition: width 0.25s ease, background 0.25s ease;
 }
+.ctx-track-fill.is-calm {
+  background: var(--aw-primary, #0066cc);
+}
+.ctx-track-fill.is-warn {
+  background: var(--aw-warning, #ff9f0a);
+}
+.ctx-track-fill.is-alert {
+  background: var(--aw-danger, #ff3b30);
+}
+.ctx-capacity-foot {
+  font-size: 11px;
+  color: var(--aw-ink-muted-40, #999);
+  line-height: 1.5;
+}
+/* --- 构成：圆点 + 标签 + 占比/token，紧凑行 --- */
 .ctx-sections {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
 }
 .ctx-section-row {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.ctx-section-head {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: 8px 1fr auto;
   align-items: baseline;
   gap: 8px;
-  font-size: 12px;
+  padding: 3px 0;
+  font-size: 13px;
 }
+.ctx-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  align-self: center;
+  background: var(--aw-primary, #0066cc);
+}
+.ctx-dot-0 { background: var(--aw-primary, #0066cc); }
+.ctx-dot-1 { background: color-mix(in srgb, var(--aw-primary, #0066cc) 68%, transparent); }
+.ctx-dot-2 { background: color-mix(in srgb, var(--aw-primary, #0066cc) 40%, transparent); }
+.ctx-dot-3,
+.ctx-dot-4,
+.ctx-dot-5 { background: var(--aw-ink-muted-40, #999); }
 .ctx-section-label {
-  color: var(--aw-ink, #1f2937);
+  color: var(--aw-ink, #1d1d1f);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ctx-section-count {
+  margin-left: 2px;
+  font-size: 11px;
+  color: var(--aw-ink-muted-48, #86868b);
+}
+.ctx-section-value {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  white-space: nowrap;
+}
+.ctx-section-pct {
+  min-width: 42px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--aw-ink, #1d1d1f);
 }
 .ctx-section-tokens {
-  color: var(--aw-ink-muted-48, #6b7280);
-  white-space: nowrap;
+  font-size: 11px;
+  color: var(--aw-ink-muted-48, #86868b);
+  font-variant-numeric: tabular-nums;
 }
 .ctx-memory-chips {
   display: flex;
@@ -1598,6 +1726,9 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
 
 [data-theme="dark"] .ctx-block-title {
   color: var(--aw-ink, #e5e7eb);
+}
+[data-theme="dark"] .ctx-capacity-value {
+  color: var(--aw-ink-muted-64, #a1a1a6);
 }
 [data-theme="dark"] .ctx-section-label {
   color: var(--aw-ink, #e5e7eb);
