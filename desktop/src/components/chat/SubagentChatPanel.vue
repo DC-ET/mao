@@ -404,6 +404,11 @@ onUnmounted(() => {
   overflow-y: auto;
   padding: 12px 16px 24px;
   min-height: 0;
+  scrollbar-width: none;
+}
+
+.messages::-webkit-scrollbar {
+  display: none;
 }
 
 .subagent-empty {

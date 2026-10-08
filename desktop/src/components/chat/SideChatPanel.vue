@@ -1153,6 +1153,11 @@ async function handleQueueEdit(msg: QueueMessage) {
   overflow-y: auto;
   padding-top: 16px;
   margin-bottom: 10px;
+  scrollbar-width: none;
+}
+
+.messages::-webkit-scrollbar {
+  display: none;
 }
 
 .input-area {
