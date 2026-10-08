@@ -242,6 +242,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, onActivated, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { CircleCheckFilled, CircleCloseFilled, Picture } from '@element-plus/icons-vue'
 import { api } from '../../api'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import { useAuthStore } from '../../stores/auth'
