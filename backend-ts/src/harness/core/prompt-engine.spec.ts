@@ -472,6 +472,26 @@ describe('PromptEngine context manifest', () => {
     expect(system).toContain('# 使用你的工具');
   });
 
+  it('folds upload-file guidance into 系统提示词 instead of a standalone section', async () => {
+    const withUpload = context({
+      userId: 7,
+      sessionId: 9,
+      systemPrompt: 'You are Mao',
+      currentTimestamp: '2026-08-13',
+    });
+    const withoutUpload = context({
+      systemPrompt: 'You are Mao',
+      currentTimestamp: '2026-08-13',
+    });
+    const request = await engine().buildRequest(withUpload);
+    await engine().buildRequest(withoutUpload);
+    expect(request.messages[0].content as string).toContain('## 用户上传的文件');
+    expect(withUpload.contextManifest!.sections.some((s) => s.key === 'incoming-file')).toBe(false);
+    const withTokens = withUpload.contextManifest!.sections.find((s) => s.key === 'system-prompt')!.tokens;
+    const withoutTokens = withoutUpload.contextManifest!.sections.find((s) => s.key === 'system-prompt')!.tokens;
+    expect(withTokens).toBeGreaterThan(withoutTokens);
+  });
+
   it('构成合计 ≈ 上下文容量口径（聚合后显式带上「系统工具」节）', async () => {
     // 用户可见闭环：顶部「上下文容量」= estimateRequestTokens(messages + tools)，
     // 构成分节合计必须与它同口径，否则数字永远对不上（此前差一整个工具定义段）。
@@ -506,7 +526,7 @@ describe('PromptEngine context manifest', () => {
     const total = estimator.countTokens(system);
     // 只看属于 system 消息的分节：聚合后的「系统提示词」+ 各注入型节
     // （注入型分节不导出常量，这里按 key 白名单穷举，避免为测试扩大模块导出面）
-    const injected = ['experiences', 'memories', 'skills', 'incoming-file', 'workspace-rules'];
+    const injected = ['experiences', 'memories', 'skills', 'workspace-rules'];
     const sysSections = ctx.contextManifest!.sections.filter(
       (s) => s.key === 'system-prompt' || injected.includes(s.key),
     );
