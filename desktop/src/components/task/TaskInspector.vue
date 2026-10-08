@@ -587,7 +587,7 @@ const capacitySummary = computed(() => {
   return `${formatTokenCompact(used)}/${formatTokenCompact(window)}（${pct}%）`
 })
 
-// 构成行：按占比倒序（占比高的更靠前），并给出色阶档位，方便一眼看到主要占用
+// 构成行：按 token 从大到小。占比是四舍五入后的整数，同为 0% / 1% 时不能用来排序。
 type SectionRow = {
   key: string
   label: string
@@ -606,7 +606,7 @@ const sectionRows = computed<SectionRow[]>(() => {
     pct: tokensPct(sec.tokens),
     rank: i,
   }))
-  rows.sort((a, b) => (b.pct ?? -1) - (a.pct ?? -1))
+  rows.sort((a, b) => b.tokens - a.tokens)
   rows.forEach((row, i) => { row.rank = i })
   return rows
 })
