@@ -316,6 +316,6 @@ mao session promote-side-task --id 15 --json
 
 桌面任务列表（含归档区与边路任务）右键提供入口，CLI 不包装这两项。
 
-- **只读分享**：属主 `POST /v1/sessions/:id/share` 生成链接（重复调用返回同一条未撤销链接）。`GET /v1/share/:token` 供已登录用户按创建时的消息水位只读查看；此后新消息不出现，属主 `PUT` 刷新水位后才纳入（水位可因编辑重发截断而回落）。撤回、删除的消息从分享中消失；编辑重发后该条以新内容呈现，其后消息消失。`DELETE` 撤销后链接立即失效。响应不含 thinking。创建、首页访问、撤销写入审计 `objectType=session.share`。
+- **只读分享**：属主 `POST /v1/sessions/:id/share` 生成链接（重复调用返回同一条未撤销链接）。`GET /v1/share/:token` 供已登录用户按创建时的消息水位只读查看；此后新消息不出现，属主 `PUT` 刷新水位后才纳入（水位可因编辑重发截断而回落）。撤回、删除的消息从分享中消失；编辑重发后该条以新内容呈现，其后消息消失。只读页与客户端历史轮次一致：执行过程默认折叠，复制按钮不出现在中间步骤、只留在该轮最终回复；底部文件变更按路径合并（同一文件一行，增删行数合计）。`DELETE` 撤销后链接立即失效。响应不含 thinking。创建、首页访问、撤销写入审计 `objectType=session.share`。
 - **Markdown 导出**：属主 `GET /v1/sessions/:id/export/markdown` 下载 `.md`（任务目标、最终结论、关键步骤、文件变更）。边路任务只含自身消息。正文超过 5MB 时返回 413，改用分享链接。
 - **匿名链接（默认关闭）**：管理后台「分享」开关 `share.tokenLinksEnabled`。开启后创建时可带 `publicLink` 与 `expiresInDays`，免登录访问 `GET /v1/share/public/:token`；关闭或过期统一 404。

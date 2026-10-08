@@ -6,6 +6,7 @@
       :session-id="sessionId"
       :dislike-enabled="dislikeEnabled"
       :show-time="true"
+      :show-copy="showUserCopy"
       :can-edit="canEditMessage?.(round.userMessage) ?? false"
       :is-editing="editingMessageId === round.userMessage.id"
       @edit="$emit('edit', round.userMessage)"
@@ -37,7 +38,9 @@
               :dislike-enabled="dislikeEnabled"
               :show-time="false"
               :show-copy="false"
+              :hide-thinking="hideThinking"
               :hide-file-changes="true"
+              :hide-subagent-process="hideSubagentProcess"
             />
             <CompactionMarker
               v-for="ev in markersAfter(step.id)"
@@ -65,6 +68,7 @@
         @fork="handleFork"
         :hide-thinking="true"
         :hide-file-changes="true"
+        :hide-subagent-process="hideSubagentProcess"
       />
       <CompactionMarker
         v-for="ev in markersAfter(round.finalReply?.id)"
@@ -73,7 +77,7 @@
       />
 
       <FileChangePanel
-        v-if="round.fileChanges.length > 0"
+        v-if="showFileChangePanel && round.fileChanges.length > 0"
         :changes="round.fileChanges"
         mode="history"
       />
@@ -88,7 +92,9 @@
         :fork-enabled="forkEnabled"
         @fork="handleFork"
         :show-time="true"
+        :hide-thinking="hideThinking"
         :hide-file-changes="true"
+        :hide-subagent-process="hideSubagentProcess"
       />
       <CompactionMarker
         v-for="ev in markersAfter(round.finalReply?.id)"
@@ -96,7 +102,7 @@
         :event="ev"
       />
       <FileChangePanel
-        v-if="round.fileChanges.length > 0"
+        v-if="showFileChangePanel && round.fileChanges.length > 0"
         :changes="round.fileChanges"
         mode="history"
       />
@@ -110,6 +116,7 @@
       :session-id="sessionId"
       :dislike-enabled="dislikeEnabled"
       :show-time="true"
+      :show-copy="showUserCopy"
       :can-edit="canEditMessage?.(activeRound.userMessage) ?? false"
       :is-editing="editingMessageId === activeRound.userMessage.id"
       @edit="$emit('edit', activeRound.userMessage)"
@@ -129,7 +136,9 @@
         :dislike-enabled="dislikeEnabled"
         :show-time="false"
         :show-copy="false"
+        :hide-thinking="hideThinking"
         :hide-file-changes="true"
+        :hide-subagent-process="hideSubagentProcess"
         :is-last="msg === activeRoundMsgs[activeRoundMsgs.length - 1]"
       />
       <CompactionMarker
@@ -149,7 +158,9 @@
         :session-id="sessionId"
         :dislike-enabled="dislikeEnabled"
         :show-time="msg.role === 'user' || (msg.role === 'assistant' && idx < messages.length - 1)"
-        :show-copy="msg.role === 'user'"
+        :show-copy="showUserCopy && msg.role === 'user'"
+        :hide-thinking="hideThinking"
+        :hide-subagent-process="hideSubagentProcess"
         :is-last="idx === messages.length - 1"
         :can-edit="canEditMessage?.(msg) ?? false"
         :is-editing="editingMessageId === msg.id"
@@ -178,7 +189,7 @@ import MessageBubble from './MessageBubble.vue'
 import FileChangePanel from './FileChangePanel.vue'
 import CompactionMarker from './CompactionMarker.vue'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   messages: ChatMessage[]
   sending: boolean
   editingMessageId?: string | null
@@ -190,7 +201,19 @@ const props = defineProps<{
   dislikeEnabled?: boolean
   /** 是否显示「Fork 到边路任务」按钮（仅主聊天 true） */
   forkEnabled?: boolean
-}>()
+  /** 只读分享页：折叠后的步骤也不展示思考，且无子代理过程入口 */
+  hideThinking?: boolean
+  hideSubagentProcess?: boolean
+  /** 主聊天在每轮末尾展示文件变更；分享页改为页面底部的汇总列表 */
+  showFileChangePanel?: boolean
+  /** 分享页只在最终回复上保留复制按钮 */
+  showUserCopy?: boolean
+}>(), {
+  hideThinking: false,
+  hideSubagentProcess: false,
+  showFileChangePanel: true,
+  showUserCopy: true,
+})
 
 const emit = defineEmits<{
   edit: [msg: ChatMessage]

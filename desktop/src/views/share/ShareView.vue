@@ -8,17 +8,16 @@
         <p>{{ payload.session.agentName || 'Agent' }} · 来自 {{ payload.session.ownerName }} 的只读分享</p>
       </header>
       <main class="share-main">
-        <MessageBubble
-          v-for="message in messages"
-          :key="message.id"
-          :message="message"
-          :can-edit="false"
-          :fork-enabled="false"
-          :dislike-enabled="false"
-          :hide-thinking="true"
-          :hide-file-changes="true"
-          :hide-subagent-process="true"
+        <ChatRoundList
+          :messages="messages"
+          :sending="false"
           session-id=""
+          :dislike-enabled="false"
+          :fork-enabled="false"
+          :hide-thinking="true"
+          :hide-subagent-process="true"
+          :show-file-change-panel="false"
+          :show-user-copy="false"
         />
         <button v-if="hasMore" type="button" class="share-more" :disabled="loadingMore" @click="loadMore">
           {{ loadingMore ? '加载中…' : '加载更多' }}
@@ -27,7 +26,7 @@
           <h2>文件变更</h2>
           <p v-if="fileChanges.length === 0" class="share-empty">无文件变更</p>
           <ul v-else>
-            <li v-for="(change, index) in fileChanges" :key="index">
+            <li v-for="change in fileChanges" :key="change.path">
               <span class="share-path">{{ change.path }}</span>
               <span>{{ change.type }}</span>
               <span>+{{ change.linesAdded }} -{{ change.linesDeleted }}</span>
@@ -42,11 +41,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import MessageBubble from '../../components/chat/MessageBubble.vue'
+import ChatRoundList from '../../components/chat/ChatRoundList.vue'
 import { mapMessagesWithFileChanges } from '../../utils/chatMessage'
+import { mergeFileChangesByPath } from '../../utils/mergeFileChanges'
 import { apiBaseUrl } from '../../utils/sessionShare'
 import { getToken } from '../../utils/auth-storage'
-import type { ChatMessage, FileChange } from '../../types/chat'
+import type { ChatMessage } from '../../types/chat'
 
 interface SharePayload {
   session: {
@@ -76,13 +76,9 @@ const loadingMore = ref(false)
 const isPublic = computed(() => route.name === 'PublicShare')
 const token = computed(() => String(route.params.token || ''))
 
-const fileChanges = computed<FileChange[]>(() => {
-  const list: FileChange[] = []
-  for (const message of messages.value) {
-    if (message.fileChanges) list.push(...message.fileChanges)
-  }
-  return list
-})
+const fileChanges = computed(() => mergeFileChangesByPath(
+  messages.value.flatMap(message => message.fileChanges ?? [])
+))
 
 onMounted(() => {
   void load(null, false)
