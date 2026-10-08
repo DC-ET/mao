@@ -4,8 +4,8 @@ import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { bodyOf, queryOptBool, queryOptInt, queryOptStr } from '../common/request.js';
 import type { ApprovalRuleService } from './approval-rule.service.js';
-import type { ApprovalRuleScope } from './types.js';
-import { APPROVAL_RULE_SCOPES } from './types.js';
+import type { ApprovalRuleScope, ApprovalRuleType } from './types.js';
+import { APPROVAL_RULE_SCOPES, APPROVAL_RULE_TYPES } from './types.js';
 
 interface CreateApprovalRuleRequest {
   ruleType?: string;
@@ -46,8 +46,12 @@ export function registerApprovalRuleRoutes(
     const scope: ApprovalRuleScope | null = (APPROVAL_RULE_SCOPES as readonly string[]).includes(scopeRaw) ? scopeRaw as ApprovalRuleScope : 'USER';
     const includeSession = queryOptBool(request, 'includeSession') === true;
     const sessionId = queryOptInt(request, 'sessionId') ?? null;
+    // 类型筛选：与 scope 一样只认白名单值，越界值视为不过滤（设置页类型 tab 走此参数，服务端分页口径才能与 tab 一致）
+    const ruleTypeRaw = queryOptStr(request, 'ruleType');
+    const ruleType: ApprovalRuleType | null = ruleTypeRaw != null && (APPROVAL_RULE_TYPES as readonly string[]).includes(ruleTypeRaw) ? ruleTypeRaw as ApprovalRuleType : null;
     const result = await approvalRuleService.listUserRules(userId, {
       scope,
+      ruleType,
       includeSession,
       sessionId,
       page: queryOptInt(request, 'page') ?? 1,

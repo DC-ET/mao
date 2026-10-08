@@ -234,14 +234,15 @@ export class ApprovalRuleService implements ApprovalRuleFacade {
 
   async listUserRules(
     userId: number,
-    options: { scope?: ApprovalRuleScope | null; includeSession?: boolean; sessionId?: number | null; page?: number; pageSize?: number },
+    options: { scope?: ApprovalRuleScope | null; ruleType?: ApprovalRuleType | null; includeSession?: boolean; sessionId?: number | null; page?: number; pageSize?: number },
   ): Promise<{ records: ApprovalRuleVo[]; total: number }> {
     const scope = options.scope ?? 'USER';
+    const ruleType = options.ruleType ?? null;
     const page = Math.max(1, Math.floor(options.page ?? 1));
     const pageSize = Math.min(100, Math.max(1, Math.floor(options.pageSize ?? 20)));
     const [rows, total] = await Promise.all([
-      this.repo.listByUser(userId, scope, pageSize, (page - 1) * pageSize),
-      this.repo.countByUser(userId, scope),
+      this.repo.listByUser(userId, scope, ruleType, pageSize, (page - 1) * pageSize),
+      this.repo.countByUser(userId, scope, ruleType),
     ]);
     let records = rows.map((row) => this.toVo(row));
     // 可选：附带当前会话的 SESSION 规则（仅查看；SESSION 规则不经此路由管理）
@@ -249,8 +250,17 @@ export class ApprovalRuleService implements ApprovalRuleFacade {
       const sessionRows = await this.repo.listEnabledForMatch(userId, options.sessionId);
       records = [
         ...records,
-        ...sessionRows.filter((row) => row.scope === 'SESSION').map((row) => this.toVo(row)),
+        ...sessionRows.filter((row) => row.scope === 'SESSION' && (ruleType == null || row.ruleType === ruleType)).map((row) => this.toVo(row)),
       ];
+      // 附带的会话规则不在分页口径内：total 与列表都以合并去重后的结果为准，
+      // 否则 scope=SESSION + includeSession 会同一规则重复出现、total 也与 records 矛盾
+      const seen = new Set<number>();
+      records = records.filter((record) => {
+        if (seen.has(record.id)) return false;
+        seen.add(record.id);
+        return true;
+      });
+      return { records, total: records.length };
     }
     return { records, total };
   }

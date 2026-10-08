@@ -263,4 +263,36 @@ describe('ApprovalRuleService', () => {
     expect(withoutSession.records).toEqual([]);
     expect(repo.listEnabledForMatch).toHaveBeenCalledTimes(1);
   });
+
+  it('listUserRulesTotalCoversMergedRecordsWhenAppendingSessionRules', async () => {
+    // includeSession=1 时附带的会话规则不在分页口径内：total 与列表都以合并去重后的结果为准
+    repo.listByUser.mockResolvedValue([row({ id: 1, scope: 'USER', hitCount: 9 })]);
+    repo.countByUser.mockResolvedValue(1);
+    repo.listEnabledForMatch.mockResolvedValue([
+      row({ id: 5, scope: 'SESSION', sessionId: 7, ruleValue: 'git push' }),
+      row({ id: 6, scope: 'SESSION', sessionId: 7, ruleValue: 'npm run' }),
+    ]);
+    const page = await service.listUserRules(9, { includeSession: true, sessionId: 7 });
+    expect(page.records.map((r) => r.id)).toEqual([1, 5, 6]);
+    expect(page.total).toBe(3);
+
+    // scope=SESSION + includeSession：主分页已含 5，追加列表再出现 5/6 —— 按 id 去重、total 与 records 一致
+    repo.listByUser.mockResolvedValue([row({ id: 5, scope: 'SESSION', sessionId: 7, ruleValue: 'git push' })]);
+    const dup = await service.listUserRules(9, { scope: 'SESSION', includeSession: true, sessionId: 7 });
+    expect(dup.records.map((r) => r.id)).toEqual([5, 6]);
+    expect(dup.total).toBe(2);
+  });
+
+  it('listUserRulesFiltersSessionRulesByRuleTypeWhenAppended', async () => {
+    repo.listByUser.mockResolvedValue([]);
+    repo.listEnabledForMatch.mockResolvedValue([
+      row({ id: 5, scope: 'SESSION', sessionId: 7, ruleType: 'MCP_TOOL', ruleValue: 'mcp__s__t' }),
+      row({ id: 6, scope: 'SESSION', sessionId: 7, ruleType: 'SHELL_PREFIX', ruleValue: 'npm run' }),
+    ]);
+    const filtered = await service.listUserRules(9, { includeSession: true, sessionId: 7, ruleType: 'MCP_TOOL' });
+    expect(filtered.records.map((r) => r.id)).toEqual([5]);
+    expect(filtered.total).toBe(1);
+    const unfiltered = await service.listUserRules(9, { includeSession: true, sessionId: 7 });
+    expect(unfiltered.records.map((r) => r.id)).toEqual([5, 6]);
+  });
 });

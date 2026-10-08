@@ -49,30 +49,38 @@ export class ApprovalRuleRepository {
     );
   }
 
-  listByUser(userId: number, scope: ApprovalRuleScope | null, limit: number, offset: number): Promise<ApprovalRuleRow[]> {
+  listByUser(userId: number, scope: ApprovalRuleScope | null, ruleType: ApprovalRuleType | null, limit: number, offset: number): Promise<ApprovalRuleRow[]> {
     const params: unknown[] = [userId];
-    let scopeClause = '';
+    let filterClause = '';
     if (scope != null) {
-      scopeClause = ' AND scope = ?';
+      filterClause += ' AND scope = ?';
       params.push(scope);
+    }
+    if (ruleType != null) {
+      filterClause += ' AND rule_type = ?';
+      params.push(ruleType);
     }
     params.push(limit, offset);
     return this.db.query<ApprovalRuleRow>(
       // 按命中次数降序：设置页暴露「养大了的规则」（§8 风险对策）
-      `SELECT * FROM \`approval_rule\` WHERE user_id = ?${scopeClause} ORDER BY hit_count DESC, id DESC LIMIT ? OFFSET ?`,
+      `SELECT * FROM \`approval_rule\` WHERE user_id = ?${filterClause} ORDER BY hit_count DESC, id DESC LIMIT ? OFFSET ?`,
       params,
     );
   }
 
-  async countByUser(userId: number, scope: ApprovalRuleScope | null): Promise<number> {
+  async countByUser(userId: number, scope: ApprovalRuleScope | null, ruleType: ApprovalRuleType | null): Promise<number> {
     const params: unknown[] = [userId];
-    let scopeClause = '';
+    let filterClause = '';
     if (scope != null) {
-      scopeClause = ' AND scope = ?';
+      filterClause += ' AND scope = ?';
       params.push(scope);
     }
+    if (ruleType != null) {
+      filterClause += ' AND rule_type = ?';
+      params.push(ruleType);
+    }
     const row = await this.db.queryOne<{ total: number }>(
-      `SELECT COUNT(*) AS total FROM \`approval_rule\` WHERE user_id = ?${scopeClause}`,
+      `SELECT COUNT(*) AS total FROM \`approval_rule\` WHERE user_id = ?${filterClause}`,
       params,
     );
     return row?.total ?? 0;

@@ -463,6 +463,8 @@ export interface ApprovalRulePage {
 export async function listApprovalRules(params: {
   page?: number
   pageSize?: number
+  /** 类型筛选（服务端过滤，保证 tab 翻页口径一致）；空 = 全部 */
+  ruleType?: ApprovalRuleType | null
 } = {}): Promise<ApprovalRulePage> {
   const { data } = await api.get('/approval-rules', { params })
   return data

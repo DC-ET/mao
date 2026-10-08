@@ -43,6 +43,13 @@ describe('normalizeShellCommand', () => {
   it('returnsEmptyForEnvOnlyCommand', () => {
     expect(normalizeShellCommand('FOO=bar')).toBe('');
   });
+
+  it('stripsEnvPrefixOnlyAtTheLeadingPosition', () => {
+    // 仅剥离首部连续 env 赋值：中间段的 FOO=bar 属于命令本身，必须保留
+    // （桌面端设置页预览走 desktop/src/utils/approvalRulePreview.ts，与这里同一口径）
+    expect(normalizeShellCommand('npm run FOO=bar build')).toBe('npm run FOO=bar build');
+    expect(normalizeShellCommand('FOO=1 npm run FOO=2 build')).toBe('npm run FOO=2 build');
+  });
 });
 
 describe('buildShellPrefixValue', () => {

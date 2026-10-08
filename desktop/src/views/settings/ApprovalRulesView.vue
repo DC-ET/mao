@@ -122,6 +122,7 @@ import {
   type ApprovalRule,
   type ApprovalRuleType
 } from '../../api'
+import { previewRuleValue } from '../../utils/approvalRulePreview'
 
 const loading = ref(false)
 const items = ref<ApprovalRule[]>([])
@@ -154,15 +155,7 @@ const valuePlaceholder = computed(() => {
   return '例如：git push origin main（保存为 git push）'
 })
 
-const normalizedPreview = computed(() => {
-  const raw = form.value.ruleValue.trim()
-  if (raw === '') return ''
-  if (form.value.ruleType === 'MCP_TOOL') return raw
-  // 与服务端一致的前两 token 预览（剥 env 前缀、空白折叠）
-  const tokens = raw.split(/\s+/).filter(t => t !== '' && !/^[A-Za-z_][A-Za-z0-9_-]*=/.test(t))
-  if (tokens.length === 0) return ''
-  return form.value.ruleType === 'SHELL_PREFIX' ? tokens.slice(0, 2).join(' ') : tokens.join(' ')
-})
+const normalizedPreview = computed(() => previewRuleValue(form.value.ruleType, form.value.ruleValue))
 
 const canSubmit = computed(() => form.value.ruleValue.trim().length > 0 && normalizedPreview.value !== '')
 
@@ -182,9 +175,13 @@ function formatTime(value?: string | null) {
 async function fetchList() {
   loading.value = true
   try {
-    const result = await listApprovalRules({ page: page.value, pageSize: pageSize.value })
-    const records = result.records ?? []
-    items.value = typeFilter.value === '' ? records : records.filter(r => r.ruleType === typeFilter.value)
+    // 类型 tab 走服务端过滤：分页/total/空态都以当前类型为准，不受「只看了当前一页」影响
+    const result = await listApprovalRules({
+      page: page.value,
+      pageSize: pageSize.value,
+      ruleType: typeFilter.value === '' ? null : typeFilter.value
+    })
+    items.value = result.records ?? []
     total.value = result.total ?? 0
   } catch {
     // 错误提示由拦截器统一处理
@@ -231,9 +228,10 @@ async function handleSubmit() {
       await updateApprovalRule(editingId.value, { ruleValue: form.value.ruleValue.trim() })
       ElMessage.success('规则已更新')
     } else {
-      // 重复值提示去重（表无唯一键，服务端允许同值多行）
+      // 重复值提示去重（表无唯一键，服务端允许同值多行）；跨页拉取同类型规则，不受当前 tab/页码影响
       const raw = normalizedPreview.value
-      if (items.value.some(r => r.ruleType === form.value.ruleType && r.ruleValue === raw)) {
+      const existing = await listApprovalRules({ page: 1, pageSize: 100, ruleType: form.value.ruleType })
+      if ((existing.records ?? []).some(r => r.ruleValue === raw)) {
         ElMessage.warning('已存在相同模式的规则')
         submitting.value = false
         return
