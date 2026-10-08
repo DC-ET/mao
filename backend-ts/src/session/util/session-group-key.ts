@@ -39,12 +39,20 @@ export function isDingtalkGroupKey(key: string): boolean {
   return key.startsWith(DINGTALK_PRIVATE_GROUP_PREFIX) || key.startsWith(DINGTALK_GROUP_PREFIX);
 }
 
+/** `agent_id = NULL` 在 SQL 里永不成立；空 Agent 必须写成 IS NULL（与 EMBED:null 同一口径）。 */
+function privateAgentFilter(rawAgentId: string): { clause: string; params: unknown[] } {
+  if (rawAgentId === 'null') {
+    return { clause: 'agent_id IS NULL', params: [] };
+  }
+  return { clause: 'agent_id = ?', params: [Number(rawAgentId)] };
+}
+
 export function applyDingtalkFilter(groupKey: string): GroupFilterSql {
   if (groupKey.startsWith(DINGTALK_PRIVATE_GROUP_PREFIX)) {
-    const agentId = groupKey.slice(DINGTALK_PRIVATE_GROUP_PREFIX.length);
+    const agent = privateAgentFilter(groupKey.slice(DINGTALK_PRIVATE_GROUP_PREFIX.length));
     return {
-      clauses: ['execution_mode = ?', 'agent_id = ?', 'project_key LIKE ?'],
-      params: ['CLOUD', agentId === 'null' ? null : Number(agentId), 'dingtalk-%-private-%'],
+      clauses: ['execution_mode = ?', agent.clause, 'project_key LIKE ?'],
+      params: ['CLOUD', ...agent.params, 'dingtalk-%-private-%'],
     };
   }
   if (groupKey.startsWith(DINGTALK_GROUP_PREFIX)) {
@@ -58,10 +66,10 @@ export function applyDingtalkFilter(groupKey: string): GroupFilterSql {
 
 export function applyFeishuFilter(groupKey: string): GroupFilterSql {
   if (groupKey.startsWith(FEISHU_PRIVATE_GROUP_PREFIX)) {
-    const agentId = groupKey.slice(FEISHU_PRIVATE_GROUP_PREFIX.length);
+    const agent = privateAgentFilter(groupKey.slice(FEISHU_PRIVATE_GROUP_PREFIX.length));
     return {
-      clauses: ['execution_mode = ?', 'agent_id = ?', 'project_key LIKE ?'],
-      params: ['CLOUD', agentId === 'null' ? null : Number(agentId), 'feishu-%-private-%'],
+      clauses: ['execution_mode = ?', agent.clause, 'project_key LIKE ?'],
+      params: ['CLOUD', ...agent.params, 'feishu-%-private-%'],
     };
   }
   if (groupKey.startsWith(FEISHU_GROUP_PREFIX)) {

@@ -16,7 +16,7 @@
 
 - **API Token**：`mao_` 前缀 + 48 位随机字符，sha256 落库；明文只在创建响应里出现一次。scope 首期仅 `open:run`，只能在 `/v1/open/**` 端点使用（调用其它 REST 接口一律 401）。每人最多 20 个未吊销 Token，默认 90 天过期，吊销即时生效。
 - **Webhook 触发器**：`pathToken` 决定公开 URL，`secret` 用于 HMAC-SHA256 签名（创建 / 轮换时只展示一次）。时间戳容忍 ±300 秒，签名基于原始请求体原文。不存在 / 已停用 / 验签失败统一返回 404 + `{code:3040,message:"not found"}`，不探测资源是否存在。连续 5 次执行失败自动停用，并在收件箱推送「触发器停用」。
-- **run 端点**：恒返回 202 异步语义（`sessionId` / `messageId` / `queued`）；目标会话忙时消息自动进入待发送队列（`queued=true`）。限流：每 Token 60 次/分钟，超限 429 + `Retry-After`。
+- **run 端点**：恒返回 202 异步语义（`sessionId` / `messageId` / `queued`）；目标会话忙时消息自动进入待发送队列（`queued=true`）。指定 `sessionId` 时，会话必须属于路径上的同一个 Agent，不一致返回参数错误，不会改用会话里的另一个 Agent 执行。触发器绑定会话同样要求与触发器的 Agent 一致。限流：每 Token 60 次/分钟，超限 429 + `Retry-After`。
 - **出站订阅**：目标 URL 必须 HTTPS（禁止 userinfo 与 hash 片段）；请求带 `X-Mao-Event` / `X-Mao-Timestamp` / `X-Mao-Signature`；失败按 1 / 5 / 25 分钟退避重试，3 次后置 FAILED 保留记录，不无限重投。`GET /v1/open/subscriptions/:id/deliveries` 可查最近投递。
 
 ## 明确不包含

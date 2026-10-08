@@ -125,7 +125,7 @@ export class CompactionService {
       throw new CompactionContextOverflowException(compactionRequestTokens, effectiveWindow);
     }
 
-    listener?.onCompactionStart?.('session', messages.length, normalRequestTokens);
+    listener?.onCompactionStart?.('session', messages.length, measuredTokens);
     harnessLog('info', `Session handoff compaction triggered: sessionId=${sessionId}, messages=${messages.length}`);
 
     try {
@@ -143,7 +143,7 @@ export class CompactionService {
         listener?.onCompactionEnd?.('session', 0, 0, Date.now() - started);
         return null;
       }
-      const result = this.buildSafeResult(expectedOldBoundary, messages, snapshotMessageIds, handoff, normalRequestTokens, started);
+      const result = this.buildSafeResult(expectedOldBoundary, messages, snapshotMessageIds, handoff, measuredTokens, started);
       if (result == null) {
         harnessLog('warn', `Session handoff compaction rejected non-physical-prefix snapshot: sessionId=${sessionId}`);
         listener?.onCompactionEnd?.('session', 0, 0, Date.now() - started);

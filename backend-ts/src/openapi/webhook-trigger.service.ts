@@ -86,7 +86,7 @@ export class WebhookTriggerService {
     if (agent.enabled === 0) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '该 Agent 已停用，无法绑定触发器');
     }
-    await this.assertBindableSession(userId, input.sessionId ?? null);
+    await this.assertBindableSession(userId, input.sessionId ?? null, input.agentId);
     const count = await this.deps.triggerRepo.countByUser(userId);
     if (count >= MAX_TRIGGERS_PER_USER) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, `每用户最多 ${MAX_TRIGGERS_PER_USER} 个触发器，请先删除不用的触发器`);
@@ -127,6 +127,7 @@ export class WebhookTriggerService {
     patch: { name?: string | null; agentId?: number | null; sessionId?: number | null; enabled?: boolean | null },
   ): Promise<void> {
     await this.requireOwned(userId, id);
+    const current = await this.deps.triggerRepo.findById(id);
     const fields: Record<string, unknown> = {};
     if (patch.name != null) {
       const name = patch.name.trim();
@@ -145,8 +146,12 @@ export class WebhookTriggerService {
       }
       fields.agentId = patch.agentId;
     }
+    if (patch.agentId != null || patch.sessionId !== undefined) {
+      const nextAgentId = patch.agentId != null ? patch.agentId : (current?.agentId ?? null);
+      const nextSessionId = patch.sessionId !== undefined ? patch.sessionId : (current?.sessionId ?? null);
+      await this.assertBindableSession(userId, nextSessionId, nextAgentId);
+    }
     if (patch.sessionId !== undefined) {
-      await this.assertBindableSession(userId, patch.sessionId);
       fields.sessionId = patch.sessionId;
     }
     if (patch.enabled != null) {
@@ -262,7 +267,7 @@ export class WebhookTriggerService {
     }
   }
 
-  private async assertBindableSession(userId: number, sessionId: number | null): Promise<void> {
+  private async assertBindableSession(userId: number, sessionId: number | null, agentId: number | null): Promise<void> {
     if (sessionId == null) return;
     const session = await this.deps.sessionService.getSession(sessionId);
     if (session == null || session.userId !== userId) {
@@ -273,6 +278,9 @@ export class WebhookTriggerService {
     }
     if (session.executionMode === 'LOCAL') {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '触发器仅支持绑定云端执行会话');
+    }
+    if (agentId != null && session.agentId !== agentId) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '只能绑定该 Agent 自己的会话');
     }
   }
 }

@@ -110,6 +110,9 @@ export class OpenRunService {
         // 决策 13：LOCAL 依赖桌面在线，机器触发场景失败只会累积触发器自动停用计数
         throw new BusinessException(ErrorCode.PARAM_INVALID, '开放触发仅支持云端执行会话');
       }
+      if (loaded.agentId !== input.agentId) {
+        throw new BusinessException(ErrorCode.PARAM_INVALID, '只能触发该会话所属的 Agent');
+      }
       session = loaded;
     } else {
       // 显式 CLOUD（不依赖 createSession 默认值）；权限档位/工作区留空走默认
@@ -125,6 +128,9 @@ export class OpenRunService {
       const latest = await this.deps.sessionService.getSession(sessionId);
       if (latest == null) {
         throw new BusinessException(ErrorCode.SESSION_NOT_FOUND);
+      }
+      if (latest.agentId !== input.agentId) {
+        throw new BusinessException(ErrorCode.PARAM_INVALID, '只能触发该会话所属的 Agent');
       }
       const busy = this.deps.isSessionBusy(sessionId) || isActivePhase(latest.phase);
       if (busy) {

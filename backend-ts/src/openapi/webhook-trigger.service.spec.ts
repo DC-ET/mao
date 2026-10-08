@@ -51,7 +51,7 @@ function makeHarness(row: WebhookTrigger | null = triggerRow()): Harness {
     deleteById: vi.fn(async () => true),
     recordOutcome: vi.fn(async () => ({ consecutiveFailures: 0, disabled: false })),
   };
-  const getSession = vi.fn(async (id: number) => ({ id, userId: 7, executionMode: 'CLOUD', sessionType: 'NORMAL' }) as Session);
+  const getSession = vi.fn(async (id: number) => ({ id, userId: 7, agentId: 5, executionMode: 'CLOUD', sessionType: 'NORMAL' }) as Session);
   const openRunRun = vi.fn(async () => ({ sessionId: 11, messageId: 1, queued: false, terminalPhase: 'COMPLETED' as const }));
   const rateAllow = vi.fn(() => ({ allowed: true, retryAfterSeconds: 0 }));
   const notify = vi.fn(async () => undefined);
@@ -254,6 +254,11 @@ describe('WebhookTriggerService（P2）', () => {
     const localSession = makeHarness();
     localSession.sessionGetSession.mockResolvedValue({ id: 11, userId: 7, executionMode: 'LOCAL', sessionType: 'NORMAL' });
     await expect(localSession.service.create(7, { name: '本地', agentId: 5, sessionId: 11 })).rejects.toMatchObject({ code: 2001 });
+
+    const otherAgent = makeHarness();
+    otherAgent.sessionGetSession.mockResolvedValue({ id: 11, userId: 7, agentId: 1, executionMode: 'CLOUD', sessionType: 'NORMAL' });
+    await expect(otherAgent.service.create(7, { name: '错 Agent', agentId: 5, sessionId: 11 })).rejects.toMatchObject({ code: 2001 });
+    expect(otherAgent.repo.insert).not.toHaveBeenCalled();
   });
 
   it('他人触发器不可改删（按不存在处理）', async () => {

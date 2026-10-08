@@ -126,7 +126,7 @@ export const useInboxStore = defineStore('inbox', {
       this.loadingMore = true
       try {
         const result = await fetchInboxList({ page: next, size: this.size, unreadOnly: this.unreadOnly })
-        this.applyPage(result, next)
+        this.applyPage(result, next, true)
       } catch {
         // toast 已由拦截器处理
       } finally {
@@ -134,8 +134,8 @@ export const useInboxStore = defineStore('inbox', {
       }
     },
 
-    applyPage(result: InboxListResult, page: number): void {
-      this.items = result.records
+    applyPage(result: InboxListResult, page: number, append = false): void {
+      this.items = append ? [...this.items, ...result.records] : result.records
       this.page = page
       this.size = result.size
       this.total = result.total

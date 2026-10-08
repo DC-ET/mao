@@ -67,6 +67,15 @@ describe('OpenRunService（P1/P2 共用执行流）', () => {
     await expect(h.service.run({ userId: 7, agentId: 5, message: 'a'.repeat(32001), source: 'API' })).rejects.toMatchObject({ code: 2001 });
   });
 
+  it('指定会话的 Agent 与请求 Agent 不一致时拒绝，且不执行', async () => {
+    const h = makeHarness();
+    h.sessionService.getSession.mockResolvedValue(session({ agentId: 1 }));
+    await expect(h.service.run({ userId: 7, agentId: 2, message: 'go', sessionId: 11, source: 'API' }))
+      .rejects.toMatchObject({ code: 2001 });
+    expect(h.liveExecution).not.toHaveBeenCalled();
+    expect(h.sessionService.updatePhase).not.toHaveBeenCalled();
+  });
+
   it('指定会话：归属不匹配按不存在拒绝；SUBAGENT / LOCAL 会话拒绝', async () => {
     const h = makeHarness();
     h.sessionService.getSession.mockResolvedValue(session({ userId: 8 }));

@@ -40,6 +40,25 @@ describe('DingtalkCardActionService', () => {
     expect(decision?.after).toBeUndefined();
   });
 
+  it('does not start or interrupt when jumpToFront fails on a stale QUEUED snapshot', async () => {
+    const interruptAndDrain = vi.fn();
+    const { service: actions } = service({
+      interruptAndDrain,
+      queuePort: {
+        findByOutTrackId: async () => row(),
+        findById: async () => row(),
+        jumpToFront: async () => false,
+        cancel: async () => 'CANCELLED',
+      },
+    });
+    const decision = await actions.decide({
+      outTrackId: 'track-q', userId: 'staff-a', content: { cardPrivateData: { actionIds: ['run'], params: {} } },
+    });
+    expect(JSON.stringify(decision?.response)).toContain('已开始或已失效');
+    expect(decision?.after).toBeUndefined();
+    expect(interruptAndDrain).not.toHaveBeenCalled();
+  });
+
   it('jumps a queued message to the front and cancels only that queued item', async () => {
     const interruptAndDrain = vi.fn();
     const jumpToFront = vi.fn(async () => true);

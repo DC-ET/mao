@@ -109,7 +109,7 @@ describe('inbox store', () => {
     await store.loadMore()
     expect(mockFetchList).toHaveBeenLastCalledWith({ page: 2, size: 20, unreadOnly: false })
     expect(store.page).toBe(2)
-    expect(store.items.map((i) => i.id)).toEqual([3])
+    expect(store.items.map((i) => i.id)).toEqual([1, 2, 3])
 
     store.hasMore = false
     await store.loadMore()

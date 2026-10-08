@@ -1323,9 +1323,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       },
       noticeQueueBlocked: (block: BudgetBlock, notifyUserId: number | null) => budgetService.noticeQueueBlocked(block, notifyUserId),
     },
-    // busy 入队的定时任务在队列真正执行到终态后回写 lastExecutionStatus
+    // busy 入队的定时任务在队列真正执行到终态后回写。CANCELLED 会把一次性任务从完结状态放开。
     onScheduledTaskQueueConsumed: async (taskId: number, status: 'COMPLETED' | 'FAILED' | 'CANCELLED') => {
-      await scheduledStore.updateById({ id: taskId, lastExecutionStatus: status });
+      await scheduledService.settleQueuedExecution(taskId, status);
     },
     // busy 入队的 Webhook 触发器消息在队列真正执行到终态后回写连续失败计数
     //（webhookTriggerService 后构造，经 holder 晚绑定解循环依赖）

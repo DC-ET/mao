@@ -8,6 +8,23 @@ describe('session group key', () => {
     expect(ofMode('CLOUD', null)).toBe(CLOUD_TEMP);
   });
 
+  it('空 Agent 的飞书/钉钉私聊分组用 IS NULL，避免 agent_id = NULL 匹配不到', () => {
+    expect(of({ agentId: null, projectKey: 'feishu-1-private-2', executionMode: 'CLOUD' })).toBe('FEISHU_PRIVATE:null');
+    expect(of({ agentId: null, projectKey: 'dingtalk-1-private-8', executionMode: 'CLOUD' })).toBe('DINGTALK_PRIVATE:null');
+    expect(applyFilter('FEISHU_PRIVATE:null')).toEqual({
+      clauses: ['execution_mode = ?', 'agent_id IS NULL', 'project_key LIKE ?'],
+      params: ['CLOUD', 'feishu-%-private-%'],
+    });
+    expect(applyFilter('DINGTALK_PRIVATE:null')).toEqual({
+      clauses: ['execution_mode = ?', 'agent_id IS NULL', 'project_key LIKE ?'],
+      params: ['CLOUD', 'dingtalk-%-private-%'],
+    });
+    expect(applyFilter('FEISHU_PRIVATE:7')).toEqual({
+      clauses: ['execution_mode = ?', 'agent_id = ?', 'project_key LIKE ?'],
+      params: ['CLOUD', 7, 'feishu-%-private-%'],
+    });
+  });
+
   it('uses Agent name for Feishu private groups and Agent plus chat name for groups', () => {
     expect(of({ agentId: 7, projectKey: 'feishu-1-private-2', executionMode: 'CLOUD' })).toBe('FEISHU_PRIVATE:7');
     expect(formatLabel('FEISHU_PRIVATE:7', 'Coder')).toBe('Coder');

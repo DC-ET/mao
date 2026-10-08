@@ -92,6 +92,7 @@ describe('CompactionService', () => {
     streamHandoff('交接正文', usage(50, null, 20));
     const result = await service.compactSession(7, 0, persisted(), [1, 2, 3], normalRequest(), model, config(), null, null, 900);
     expect(result).not.toBeNull();
+    expect(result!.beforeRequestTokens).toBe(900);
     expect(llmAdapter.stream).toHaveBeenCalledOnce();
   });
 

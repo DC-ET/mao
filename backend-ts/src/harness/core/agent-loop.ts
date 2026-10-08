@@ -698,6 +698,13 @@ export class AgentLoop {
   ): ToolCall | null {
     let merged = this.findMergeTarget(existing, delta);
     if (merged) {
+      // 首片无 id 时已合成 call-uuid。后续分片带回真实 id 后必须写回，
+      // 否则只带 id、不带 index 的参数分片对不上，命令会被截断并拆成第二条调用。
+      if (delta.id && merged.id !== delta.id) {
+        const previousId = merged.id;
+        merged.id = delta.id;
+        if (previousId && emittedEarlyStarts.has(previousId)) emittedEarlyStarts.add(delta.id);
+      }
       this.applyToolCallDelta(merged, delta);
     } else if (delta.id || delta.index != null) {
       // 无 id、仅 index 的分片（部分 OpenAI 兼容网关不回传 id）必须按新 tool call 追加，

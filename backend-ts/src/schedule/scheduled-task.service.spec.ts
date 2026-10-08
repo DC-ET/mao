@@ -832,6 +832,40 @@ describe('ScheduledTaskService 预算 BLOCK 闸门（§5.7）', () => {
       expect(liveExecution, sessionType).toHaveBeenCalled();
     }
   });
+
+  it('一次性任务排队被取消后恢复未完结和下次触发时间', async () => {
+    const row: Record<string, unknown> = {
+      id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', status: 'ACTIVE',
+      once: 1, finished: 1, finishedAt: '2026-10-08 09:00:00', nextFireTime: null, lastExecutionStatus: 'QUEUED',
+    };
+    const store: ScheduledTaskStore = {
+      insert: vi.fn(),
+      updateById: vi.fn(async (patch) => { Object.assign(row, patch); }),
+      deleteById: vi.fn(),
+      selectById: vi.fn(async () => ({ ...row })),
+      listByUser: vi.fn(async () => []),
+      listAll: vi.fn(async () => ({ records: [], total: 0 })),
+      listDue: vi.fn(async () => []),
+    };
+    const service = new ScheduledTaskService(
+      store, {} as never, { enqueue: vi.fn() } as never, { executeFromEvent: vi.fn() } as never,
+      { finishExecution: vi.fn() } as never, { sendText: vi.fn() } as never,
+      { findByUserId: vi.fn() } as never, { findByAccountId: vi.fn() } as never,
+    );
+    await service.settleQueuedExecution(1, 'CANCELLED');
+    expect(row.finished).toBe(0);
+    expect(row.finishedAt).toBeNull();
+    expect(row.lastExecutionStatus).toBe('CANCELLED');
+    expect(row.nextFireTime).toEqual(expect.any(String));
+
+    row.finished = 1;
+    row.nextFireTime = null;
+    row.lastExecutionStatus = 'QUEUED';
+    await service.settleQueuedExecution(1, 'COMPLETED');
+    expect(row.finished).toBe(1);
+    expect(row.nextFireTime).toBeNull();
+    expect(row.lastExecutionStatus).toBe('COMPLETED');
+  });
 });
 
 function stubStore() {

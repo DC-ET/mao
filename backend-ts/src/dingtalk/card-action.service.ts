@@ -57,7 +57,8 @@ export class DingtalkCardActionService {
       return { response: cardCallbackResponse(queueCardParams({ status: 'cancelled', preview, queueId: row.id, senderUserid: row.senderUserid })) };
     }
     const jumped = await this.options.queuePort.jumpToFront(row.id);
-    if (!jumped && row.status !== 'QUEUED') return { response: cardCallbackResponse(null, '该排队消息已开始或已失效') };
+    // 以插队结果为准。查找时的 QUEUED 快照可能已经过期，不能在 jump 失败后仍宣告 started 并打断会话。
+    if (!jumped) return { response: cardCallbackResponse(null, '该排队消息已开始或已失效') };
     return {
       response: cardCallbackResponse(queueCardParams({ status: 'started', preview, queueId: row.id, senderUserid: row.senderUserid })),
       after: async () => { this.options.interruptAndDrain(row.sessionId); },

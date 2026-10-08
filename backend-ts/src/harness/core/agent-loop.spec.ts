@@ -636,7 +636,41 @@ describe('AgentLoop', () => {
     }));
     const assistant = ctx.messages.find((m) => m.role === 'assistant' && m.toolCalls?.length);
     expect(assistant!.toolCalls).toHaveLength(1);
-    expect(assistant!.toolCalls![0].id).toMatch(/^call-/);
+    expect(assistant!.toolCalls![0].id).toBe('call-real');
+  });
+
+  it('appends a later id-only arguments chunk onto the same tool call', async () => {
+    const ctx = context();
+    ctx.tools = [namedTool('shell')];
+    const l = listener();
+    const p = persistence();
+    promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
+    backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
+    stubActiveContext(5);
+    toolDispatcher.dispatchInvocation.mockResolvedValue(toolResult('{"ok":true}'));
+    let call = 0;
+    llmAdapter.stream.mockImplementation(async (_r: unknown, _c: unknown, callback: StreamCallback) => {
+      if (call++ === 0) {
+        callback.onChunk(toolChunk({ index: 0, function: { name: 'shell', arguments: '{"command":' } }));
+        callback.onChunk(toolChunk({ index: 0, id: 'call-real', function: { arguments: '"pw' } }));
+        callback.onChunk(toolChunk({ id: 'call-real', function: { arguments: 'd"}' } }));
+        callback.onComplete({ promptTokens: 3, completionTokens: 2, totalTokens: 5 });
+      } else {
+        callback.onChunk(contentChunk(null, 'done'));
+        callback.onComplete({ promptTokens: 4, completionTokens: 1, totalTokens: 5 });
+      }
+    });
+
+    await agentLoop.execute(ctx, l, p);
+
+    expect(toolDispatcher.dispatchInvocation).toHaveBeenCalledTimes(1);
+    expect(toolDispatcher.dispatchInvocation).toHaveBeenCalledWith(expect.objectContaining({
+      toolName: 'shell',
+      argumentsJson: '{"command":"pwd"}',
+    }));
+    const assistant = ctx.messages.find((m) => m.role === 'assistant' && m.toolCalls?.length);
+    expect(assistant!.toolCalls).toHaveLength(1);
+    expect(assistant!.toolCalls![0].id).toBe('call-real');
   });
 
   it('executeStripsImageDataUriFromPersistedToolMessage', async () => {

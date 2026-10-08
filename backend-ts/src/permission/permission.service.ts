@@ -11,6 +11,11 @@ import type {
   UserRoleRepository,
 } from '../user/types.js';
 
+/** 与登录一致：仅 status===0 停用。SSO/外部账号默认 status=null，仍可登录，必须计入活跃管理员。 */
+export function isActiveAccount(status: number | null | undefined): boolean {
+  return status !== 0;
+}
+
 export class PermissionService {
   constructor(
     private readonly roleRepo: RoleRepository,
@@ -126,7 +131,7 @@ export class PermissionService {
           for (const b of bindings) {
             if (b.userId === userId) continue;
             const u = await this.userRepo.findById(b.userId);
-            if (u && u.status === 1) otherActive += 1;
+            if (u && isActiveAccount(u.status)) otherActive += 1;
           }
           if (otherActive === 0) {
             throw new BusinessException(ErrorCode.CANNOT_REMOVE_LAST_ADMIN);
@@ -215,7 +220,7 @@ export class PermissionService {
       for (const b of bindings) {
         if (b.userId === targetUserId) continue;
         const u = await this.userRepo.findById(b.userId);
-        if (u && u.status === 1) otherActive += 1;
+        if (u && isActiveAccount(u.status)) otherActive += 1;
       }
       if (status === 0 && otherActive === 0) {
         throw new BusinessException(ErrorCode.CANNOT_REMOVE_LAST_ADMIN);
@@ -243,7 +248,7 @@ export class PermissionService {
       for (const b of bindings) {
         if (b.userId === targetUserId) continue;
         const u = await this.userRepo.findById(b.userId);
-        if (u && u.status === 1) otherActive += 1;
+        if (u && isActiveAccount(u.status)) otherActive += 1;
       }
       if (otherActive === 0) {
         throw new BusinessException(ErrorCode.CANNOT_REMOVE_LAST_ADMIN);
@@ -279,7 +284,7 @@ export class PermissionService {
         continue;
       }
       const user = await this.userRepo.findById(b.userId);
-      if (user && user.status === 1) {
+      if (user && isActiveAccount(user.status)) {
         count += 1;
       }
     }

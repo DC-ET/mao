@@ -138,6 +138,15 @@ describe('PermissionService', () => {
     await service.assertCanChangeRoles(10, [2]);
   });
 
+  it('status=null 的其他管理员仍算活跃，允许降级 status=1 的管理员', async () => {
+    const admin = role(1, 'Admin', 'ADMIN');
+    vi.mocked(roleRepo.findByCode).mockResolvedValue(admin);
+    vi.mocked(userRoleRepo.countByUserAndRole).mockResolvedValue(1);
+    vi.mocked(userRoleRepo.findByRoleId).mockResolvedValue([userRole(10, 1), userRole(20, 1)]);
+    vi.mocked(userRepo.findById).mockImplementation(async (id: number) => ({ id, username: 'a', status: id === 20 ? null : 1 }));
+    await expect(service.assertCanChangeRoles(10, [2])).resolves.toBeUndefined();
+  });
+
   it('permissionChecksReturnFalseForMissingBindingsAndTrueForMatchingCode', async () => {
     vi.mocked(userRoleRepo.findByUserId).mockResolvedValue([]);
     expect(await service.hasPermission(1, 'user:read')).toBe(false);

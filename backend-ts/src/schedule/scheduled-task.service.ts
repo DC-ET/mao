@@ -627,6 +627,23 @@ export class ScheduledTaskService {
     }
   }
 
+  /**
+   * busy 入队的定时任务在队列终态回写。
+   * 一次性任务入队时已标 finished，排队消息被取消说明这一次没有跑完，
+   * 不能占掉唯一一次配额；完成或失败仍保持完结。
+   */
+  async settleQueuedExecution(taskId: number, status: 'COMPLETED' | 'FAILED' | 'CANCELLED'): Promise<void> {
+    const task = await this.store.selectById(taskId);
+    if (task == null) return;
+    const patch: Partial<ScheduledTask> & { id: number } = { id: taskId, lastExecutionStatus: status };
+    if (status === 'CANCELLED' && task.once === 1 && task.finished === 1 && task.status === 'ACTIVE') {
+      patch.finished = 0;
+      patch.finishedAt = null;
+      patch.nextFireTime = task.cronExpression ? this.calculateNextFireTime(task.cronExpression) : null;
+    }
+    await this.store.updateById(patch);
+  }
+
   private async markTaskResult(task: ScheduledTask, status: string): Promise<void> {
     task.lastExecutionStatus = status;
     // 增量写：避免用可能过期的 task 对象整行回写（同 executeTask 开头，见 M-5 注释）
