@@ -17,18 +17,27 @@
         <aside class="toc">
           <div class="toc-title">目录</div>
           <div class="toc-list">
-            <template v-for="group in tocGroups" :key="group.label">
-              <div class="toc-group-title">{{ group.label }}</div>
+            <div v-for="group in tocGroups" :key="group.label" class="toc-group">
               <div
-                v-for="item in group.sections"
-                :key="item.id"
-                class="toc-item"
-                :class="{ active: activeSection === item.id }"
-                @click="scrollToSection(item.id)"
+                class="toc-group-header"
+                :class="{ expanded: expandedGroup === group.label }"
+                @click="toggleGroup(group.label)"
               >
-                {{ item.label }}
+                <el-icon class="toc-chevron"><ArrowRight /></el-icon>
+                <span>{{ group.label }}</span>
               </div>
-            </template>
+              <div v-if="expandedGroup === group.label" class="toc-group-items">
+                <div
+                  v-for="item in group.sections"
+                  :key="item.id"
+                  class="toc-item"
+                  :class="{ active: activeSection === item.id }"
+                  @click="scrollToSection(item.id)"
+                >
+                  {{ item.label }}
+                </div>
+              </div>
+            </div>
           </div>
         </aside>
 
@@ -174,9 +183,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, nextTick, onBeforeUnmount, onActivated, onMounted } from 'vue'
+import { computed, reactive, ref, watch, nextTick, onBeforeUnmount, onActivated, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh } from '@element-plus/icons-vue'
+import { Refresh, ArrowRight } from '@element-plus/icons-vue'
 import { api } from '../../api'
 import { useAuthStore } from '../../stores/auth'
 import IntegrationConfigPanel from './components/IntegrationConfigPanel.vue'
@@ -242,16 +251,18 @@ const TOC_GROUPS: Array<{ label: string; sections: Array<{ kind: 'company-sso' |
     ],
   },
   {
-    label: 'Agent 与模型',
+    label: 'Agent 引擎',
     sections: [
       { kind: 'integration', name: 'agent' },
-      { kind: 'category', name: 'Agent 资产' },
       { kind: 'integration', name: 'harness-llm' },
       { kind: 'integration', name: 'harness-compaction' },
+    ],
+  },
+  {
+    label: '模型任务',
+    sections: [
       { kind: 'category', name: '会话' },
-      { kind: 'category', name: '分享' },
       { kind: 'category', name: '代码' },
-      { kind: 'category', name: '审批' },
       { kind: 'category', name: '记忆' },
     ],
   },
@@ -262,6 +273,7 @@ const TOC_GROUPS: Array<{ label: string; sections: Array<{ kind: 'company-sso' |
       { kind: 'integration', name: 'harness-webpage' },
       { kind: 'integration', name: 'harness-shell' },
       { kind: 'integration', name: 'terminal' },
+      { kind: 'category', name: '审批' },
     ],
   },
   {
@@ -274,6 +286,8 @@ const TOC_GROUPS: Array<{ label: string; sections: Array<{ kind: 'company-sso' |
   {
     label: '平台与运维',
     sections: [
+      { kind: 'category', name: 'Agent 资产' },
+      { kind: 'category', name: '分享' },
       { kind: 'category', name: '审计' },
       { kind: 'category', name: '运行环境' },
     ],
@@ -524,6 +538,48 @@ const toc = computed(() => tocGroups.value.flatMap((group) => group.sections))
 
 const firstIntegrationName = computed(() => toc.value.find((section) => section.kind === 'integration')?.name ?? '')
 
+/** 手风琴：当前展开的分组 label。默认仅显示分组标题，滚动时自动跟随当前所在分组展开。 */
+const expandedGroup = ref('')
+
+function toggleGroup(label: string) {
+  expandedGroup.value = expandedGroup.value === label ? '' : label
+}
+
+/** 横盘高亮所在分组后自动展开该组（组内条目随之显示，高亮项滚入目录可视区）。 */
+watch(
+  () => tocGroups.value.find((group) => group.sections.some((section) => section.id === activeSection.value))?.label ?? '',
+  (label) => {
+    if (label !== '' && expandedGroup.value !== label) {
+      expandedGroup.value = label
+      ensureActiveItemVisible()
+    }
+  }
+)
+
+/** 目录内滚动：把高亮条目/展开后的组滚入 .toc 的可滚动视口（只动目录，不牵连页面）。 */
+function ensureActiveItemVisible() {
+  nextTick(() => {
+    const tocEl = document.querySelector('.toc')
+    const itemEl = document.querySelector('.toc-item.active') ?? document.querySelector('.toc-group-header.expanded')
+    if (!tocEl || !itemEl) return
+    const box = tocEl.getBoundingClientRect()
+    const item = itemEl.getBoundingClientRect()
+    if (item.top < box.top) tocEl.scrollTop += item.top - box.top - 4
+    else if (item.bottom > box.bottom) tocEl.scrollTop += item.bottom - box.bottom + 4
+  })
+}
+
+/** 初始无滚动高亮时默认展开第一组，避免进来只见标题；用户手动收起后不强行恢复。 */
+watch(
+  () => tocGroups.value.length,
+  (count) => {
+    if (count > 0 && expandedGroup.value === '' && activeSection.value === '') {
+      expandedGroup.value = tocGroups.value[0]!.label
+    }
+  },
+  { immediate: true }
+)
+
 function scrollToSection(id: string) {
   activeSection.value = id
   const el = document.getElementById(id)
@@ -693,34 +749,65 @@ onActivated(() => {
   letter-spacing: 0.5px;
 }
 
-.toc-group-title {
-  margin: 10px 0 2px;
-  padding: 0 8px;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--mao-muted);
-  letter-spacing: 0.5px;
-}
-
-.toc-group-title:first-child {
-  margin-top: 0;
-}
-
+/* 手风琴目录：默认只显示分组标题行，展开的组内条目挂在分组自己的导轨线上，边界清晰 */
 .toc-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+}
+
+.toc-group + .toc-group {
+  margin-top: 4px;
+  border-top: 1px solid var(--mao-border);
+  padding-top: 4px;
+}
+
+.toc-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--mao-ink);
+  cursor: pointer;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: background 0.15s;
+}
+
+.toc-group-header:hover {
+  background: var(--mao-accent-bg);
+}
+
+.toc-chevron {
+  font-size: 10px;
+  color: var(--mao-muted);
+  flex-shrink: 0;
+  transition: transform 0.15s;
+}
+
+.toc-group-header.expanded .toc-chevron {
+  transform: rotate(90deg);
+}
+
+.toc-group-items {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 2px 0 2px 13px;
+  padding-left: 8px;
   border-left: 1px solid var(--mao-border);
-  padding-left: 12px;
 }
 
 .toc-item {
-  padding: 6px 8px;
+  padding: 4px 8px;
   border-radius: 6px;
-  font-size: 13px;
+  font-size: 12px;
   color: var(--mao-muted);
   cursor: pointer;
-  line-height: 1.4;
+  line-height: 1.5;
   transition: color 0.15s, background 0.15s;
   white-space: nowrap;
   overflow: hidden;
@@ -812,9 +899,27 @@ onActivated(() => {
   .toc-list {
     flex-direction: row;
     flex-wrap: wrap;
-    border-left: none;
-    padding-left: 0;
     gap: 6px;
+  }
+
+  /* 分组容器不占布局，让标题行与展开的条目在 chip 流里自然换行 */
+  .toc-group {
+    display: contents;
+  }
+
+  .toc-group + .toc-group {
+    margin-top: 0;
+    border-top: none;
+    padding-top: 0;
+  }
+
+  .toc-group-items {
+    flex-direction: row;
+    flex-wrap: wrap;
+    margin: 0 0 0 8px;
+    padding-left: 0;
+    border-left: none;
+    gap: 4px;
   }
 }
 </style>
