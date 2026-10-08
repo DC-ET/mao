@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { normalizeFeishuEvent } from './event-normalizer.js';
 import { FeishuInboundProcessor } from './inbound-processor.js';
 import type { FeishuInboundHandler, FeishuInboundContext, FeishuNormalizedMessage, FeishuReply } from './types.js';
 
@@ -473,5 +474,247 @@ describe('FeishuInboundProcessor', () => {
     await vi.waitFor(() => expect(messageService.updateGroupMessageContent)
       .toHaveBeenCalledWith(202, '状态：处理完成 · 任务已完成'));
     expect(resolveMessageText).toHaveBeenCalledWith('1', 'om_card_up');
+  });
+
+  it('expands a private merge_forward before onMessage and keeps the English text when expansion fails', async () => {
+    const excerpt = '【合并转发，共 1 条】\n[2026-10-08 09:12] 张三：大家好';
+    const steps: string[] = [];
+    const expandMergeForward = vi.fn(async () => {
+      steps.push('expand');
+      return excerpt;
+    });
+    const onMessage = vi.fn(async () => {
+      steps.push('onMessage');
+      return { text: 'r' };
+    });
+    const processor = new FeishuInboundProcessor(makeHandler(onMessage), {
+      messageService,
+      authorizeSender: async () => {
+        steps.push('auth');
+        return true;
+      },
+      expandMergeForward,
+      resolveMergeWorkspace: async () => '/ws/private-7',
+    });
+    await processor.process('1', makeEvent({
+      chatType: 'p2p', messageType: 'merge_forward', text: 'Merged and Forwarded Message',
+    }));
+    expect(steps).toEqual(['auth', 'expand', 'onMessage']);
+    expect(expandMergeForward).toHaveBeenCalledWith('1', 'om_1', '/ws/private-7');
+    expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({ text: excerpt }));
+
+    const failed = vi.fn(async (ctx: FeishuInboundContext) => ({ text: ctx.text }));
+    const failing = new FeishuInboundProcessor(makeHandler(failed), {
+      messageService,
+      authorizeSender: async () => true,
+      expandMergeForward: async () => null,
+    });
+    await failing.process('1', makeEvent({
+      chatType: 'p2p', messageId: 'om_fail', messageType: 'merge_forward', text: 'Merged and Forwarded Message',
+    }));
+    expect(failed).toHaveBeenCalledWith(expect.objectContaining({ text: 'Merged and Forwarded Message' }));
+  });
+
+  it('does not expand a private merge_forward for an unbound sender', async () => {
+    messageService.claimInboundMessage.mockResolvedValueOnce(true);
+    const expandMergeForward = vi.fn(async () => '【合并转发，共 1 条】');
+    const onMessage = vi.fn(async () => ({ text: 'r' }));
+    const processor = new FeishuInboundProcessor(makeHandler(onMessage), {
+      messageService,
+      authorizeSender: async () => false,
+      expandMergeForward,
+      sendReply: async () => undefined,
+      sendUnauthorizedCard: async () => true,
+    });
+    await processor.process('1', makeEvent({
+      chatType: 'p2p', messageType: 'merge_forward', text: 'Merged and Forwarded Message',
+    }));
+    expect(expandMergeForward).not.toHaveBeenCalled();
+    expect(onMessage).not.toHaveBeenCalled();
+  });
+
+  it('awaits group mention expansion, rewrites the log, then delivers the excerpt', async () => {
+    messageService.claimInboundMessage.mockResolvedValueOnce(true);
+    messageService.recordGroupMessage.mockResolvedValueOnce(301);
+    messageService.updateGroupMessageContent.mockClear();
+    messageService.markGroupMessageEnriched.mockClear();
+    const excerpt = '【合并转发，共 1 条】\n[2026-10-08 09:12] 张三：大家好';
+    let release!: (value: string) => void;
+    const gate = new Promise<string>((resolve) => { release = resolve; });
+    const expandMergeForward = vi.fn(() => gate);
+    const onMessage = vi.fn(async (ctx: FeishuInboundContext) => ({ text: ctx.text }));
+    const processor = new FeishuInboundProcessor(makeHandler(onMessage), {
+      messageService,
+      authorizeSender: async () => true,
+      expandMergeForward,
+      resolveMergeWorkspace: () => '/ws/oc_group',
+    });
+    const pending = processor.process('1', makeEvent({
+      messageId: 'om_merge',
+      messageType: 'merge_forward',
+      text: 'Merged and Forwarded Message',
+      isBotMentioned: true,
+    }));
+    await vi.waitFor(() => expect(expandMergeForward).toHaveBeenCalledWith('1', 'om_merge', '/ws/oc_group'));
+    expect(onMessage).not.toHaveBeenCalled();
+    expect(messageService.updateGroupMessageContent).not.toHaveBeenCalled();
+    expect(messageService.recordGroupMessage).toHaveBeenCalledWith('1',
+      expect.objectContaining({ text: 'Merged and Forwarded Message' }), true, { enrichPending: true });
+    release(excerpt);
+    await pending;
+    expect(messageService.updateGroupMessageContent).toHaveBeenCalledWith(301, excerpt);
+    expect(messageService.markGroupMessageEnriched).toHaveBeenCalledWith(301);
+    expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({ text: excerpt }));
+  });
+
+  it('clears enrich_pending when a mentioned merge_forward fails to expand', async () => {
+    messageService.claimInboundMessage.mockResolvedValueOnce(true);
+    messageService.recordGroupMessage.mockResolvedValueOnce(302);
+    messageService.updateGroupMessageContent.mockClear();
+    messageService.markGroupMessageEnriched.mockClear();
+    const onMessage = vi.fn(async (ctx: FeishuInboundContext) => ({ text: ctx.text }));
+    const processor = new FeishuInboundProcessor(makeHandler(onMessage), {
+      messageService,
+      authorizeSender: async () => true,
+      expandMergeForward: async () => { throw new Error('boom'); },
+    });
+    await processor.process('1', makeEvent({
+      messageType: 'merge_forward', text: 'Merged and Forwarded Message', isBotMentioned: true,
+    }));
+    expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({ text: 'Merged and Forwarded Message' }));
+    expect(messageService.updateGroupMessageContent).not.toHaveBeenCalled();
+    expect(messageService.markGroupMessageEnriched).toHaveBeenCalledWith(302);
+  });
+
+  it('does not expand a mentioned merge_forward from an unbound sender, but still clears enrich_pending', async () => {
+    messageService.claimInboundMessage.mockResolvedValueOnce(true);
+    messageService.recordGroupMessage.mockResolvedValueOnce(303);
+    messageService.markGroupMessageEnriched.mockClear();
+    const expandMergeForward = vi.fn(async () => '【合并转发，共 1 条】');
+    const processor = new FeishuInboundProcessor(makeHandler(), {
+      messageService,
+      authorizeSender: async () => false,
+      expandMergeForward,
+      sendReply: async () => undefined,
+    });
+    await processor.process('1', makeEvent({
+      messageType: 'merge_forward', text: 'Merged and Forwarded Message', isBotMentioned: true,
+    }));
+    expect(expandMergeForward).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(messageService.markGroupMessageEnriched).toHaveBeenCalledWith(303));
+  });
+
+  it('enriches an unmentioned group merge_forward asynchronously and clears the flag on failure', async () => {
+    messageService.claimInboundMessage.mockResolvedValueOnce(true);
+    messageService.recordGroupMessage.mockResolvedValueOnce(304);
+    messageService.updateGroupMessageContent.mockClear();
+    messageService.markGroupMessageEnriched.mockClear();
+    const excerpt = '【合并转发，共 2 条】\n[2026-10-08 09:12] 张三：甲';
+    const expandMergeForward = vi.fn(async () => excerpt);
+    const onMessage = vi.fn(async () => ({ text: 'r' }));
+    const processor = new FeishuInboundProcessor(makeHandler(onMessage), {
+      messageService,
+      expandMergeForward,
+      resolveMergeWorkspace: async () => '/ws/oc_group',
+    });
+    await processor.process('1', makeEvent({
+      messageId: 'om_bg',
+      messageType: 'merge_forward',
+      text: 'Merged and Forwarded Message',
+      isBotMentioned: false,
+    }));
+    expect(onMessage).not.toHaveBeenCalled();
+    expect(messageService.recordGroupMessage).toHaveBeenCalledWith('1',
+      expect.objectContaining({ text: 'Merged and Forwarded Message' }), false, { enrichPending: true });
+    await vi.waitFor(() => expect(messageService.updateGroupMessageContent).toHaveBeenCalledWith(304, excerpt));
+    expect(messageService.markGroupMessageEnriched).toHaveBeenCalledWith(304);
+    expect(expandMergeForward).toHaveBeenCalledWith('1', 'om_bg', '/ws/oc_group');
+
+    messageService.claimInboundMessage.mockResolvedValueOnce(true);
+    messageService.recordGroupMessage.mockResolvedValueOnce(305);
+    messageService.updateGroupMessageContent.mockClear();
+    messageService.markGroupMessageEnriched.mockClear();
+    const failing = new FeishuInboundProcessor(makeHandler(), {
+      messageService,
+      expandMergeForward: async () => null,
+    });
+    await failing.process('1', makeEvent({
+      messageId: 'om_bg_fail',
+      messageType: 'merge_forward',
+      text: 'Merged and Forwarded Message',
+      isBotMentioned: false,
+    }));
+    await vi.waitFor(() => expect(messageService.markGroupMessageEnriched).toHaveBeenCalledWith(305));
+    expect(messageService.updateGroupMessageContent).not.toHaveBeenCalled();
+  });
+
+  it('expands a thread merge_forward without an explicit mention when the thread session already exists', async () => {
+    messageService.claimInboundMessage.mockResolvedValueOnce(true);
+    messageService.recordGroupMessage.mockResolvedValueOnce(306);
+    const excerpt = '【合并转发，共 1 条】\n[2026-10-08 09:12] 张三：话题里';
+    const expandMergeForward = vi.fn(async () => excerpt);
+    const onMessage = vi.fn(async (ctx: FeishuInboundContext) => ({ text: ctx.text }));
+    const processor = new FeishuInboundProcessor(makeHandler(onMessage), {
+      messageService,
+      authorizeSender: async () => true,
+      resolveThreadSession: async () => ({ sessionId: 9 }),
+      expandMergeForward,
+    });
+    await processor.process('1', makeEvent({
+      messageType: 'merge_forward',
+      text: 'Merged and Forwarded Message',
+      threadId: 'omt_1',
+      isBotMentioned: false,
+    }));
+    expect(expandMergeForward).toHaveBeenCalledOnce();
+    expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({ text: excerpt }));
+  });
+
+  it('clears enrich_pending when authorizeSender throws after a mentioned merge_forward is logged', async () => {
+    messageService.claimInboundMessage.mockResolvedValueOnce(true);
+    messageService.recordGroupMessage.mockResolvedValueOnce(401);
+    messageService.markGroupMessageEnriched.mockClear();
+    const expandMergeForward = vi.fn(async () => '【合并转发，共 1 条】');
+    const processor = new FeishuInboundProcessor(makeHandler(), {
+      messageService,
+      authorizeSender: async () => { throw new Error('db down'); },
+      expandMergeForward,
+    });
+    await expect(processor.process('1', makeEvent({
+      messageType: 'merge_forward',
+      text: 'Merged and Forwarded Message',
+      isBotMentioned: true,
+    }))).rejects.toThrow('db down');
+    expect(messageService.recordGroupMessage).toHaveBeenCalledWith('1',
+      expect.objectContaining({ text: 'Merged and Forwarded Message' }), true, { enrichPending: true });
+    expect(messageService.markGroupMessageEnriched).toHaveBeenCalledWith(401);
+    expect(expandMergeForward).not.toHaveBeenCalled();
+    expect(messageService.releaseInboundMessage).toHaveBeenCalledWith('1', 'om_1');
+  });
+
+  it('replaces post at-mentions on a normal inbound post', async () => {
+    messageService.claimInboundMessage.mockResolvedValueOnce(true);
+    const event = normalizeFeishuEvent({
+      header: { app_id: 'cli_mybot' },
+      event: {
+        sender: { sender_id: { open_id: 'ou_user', union_id: 'on_user' }, sender_type: 'user' },
+        message: {
+          message_id: 'om_post_at', chat_id: 'oc_p2p', chat_type: 'p2p', message_type: 'post',
+          content: JSON.stringify({ content: [[
+            { tag: 'at', user_id: '@_user_1', user_name: '李四' },
+            { tag: 'text', text: ' 大家好' },
+          ]] }),
+          mentions: [{ key: '@_user_1', id: { open_id: 'ou_ls' }, name: '李四' }],
+        },
+      },
+    });
+    const onMessage = vi.fn(async (ctx: FeishuInboundContext) => ({ text: ctx.text }));
+    const processor = new FeishuInboundProcessor(makeHandler(onMessage), {
+      messageService,
+      authorizeSender: async () => true,
+    });
+    await processor.process('1', event!);
+    expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({ text: '@李四 大家好' }));
+    expect(onMessage.mock.calls[0][0].text).not.toContain('@_user_');
   });
 });

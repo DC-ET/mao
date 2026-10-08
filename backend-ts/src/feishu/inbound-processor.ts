@@ -26,6 +26,13 @@ export interface FeishuInboundProcessorOptions {
   resolveThreadSession?: (accountId: string, event: FeishuNormalizedMessage) => Promise<{ sessionId: number } | null>;
   /** interactive 卡片入站占位升级：事件 content 被飞书降级时按 messageId 拉详情补真实文本；null/抛错保留占位。 */
   resolveMessageText?: (accountId: string, messageId: string) => Promise<string | null>;
+  /**
+   * 展开合并转发。返回 null 或空串表示失败，调用方保留固定英文。
+   * workspace 为会话工作区；定位失败时传 null，只做字数截断。
+   */
+  expandMergeForward?: (accountId: string, messageId: string, workspace: string | null) => Promise<string | null>;
+  /** 合并转发落盘用的会话工作区。群聊按 chatId，私聊按 private-{userId}；失败返回 null。 */
+  resolveMergeWorkspace?: (accountId: string, event: FeishuNormalizedMessage) => Promise<string | null> | string | null;
 }
 
 export class FeishuInboundProcessor {
@@ -66,9 +73,10 @@ export class FeishuInboundProcessor {
           await this.sendUnauthorizedGuide(accountId, named);
         } else if (this.handler.authorizeDirectMessage(accountId, named.senderUnionId ?? named.senderId!, named.text)) {
           const resolvedUserId = await this.options.resolveUserId?.(accountId, named);
-          const quotedContext = await this.resolveQuoted(accountId, named);
-          const reply = await this.handler.onMessage({ ...named, accountId, maoUserId: resolvedUserId ?? undefined, quotedContext });
-          if (reply?.text) await this.sendReply(accountId, named, reply);
+          const expanded = await this.expandMergeForwardText(accountId, named);
+          const quotedContext = await this.resolveQuoted(accountId, expanded);
+          const reply = await this.handler.onMessage({ ...expanded, accountId, maoUserId: resolvedUserId ?? undefined, quotedContext });
+          if (reply?.text) await this.sendReply(accountId, expanded, reply);
         }
         completed = true;
         return;
@@ -86,11 +94,12 @@ export class FeishuInboundProcessor {
         if (threadSession != null) mentioned = true;
       }
       // 群消息立即按到达顺序落日志（占位文本），慢操作（姓名解析/图片预下载）后置为异步富化。
-      // 需要富化的媒体/卡片行落 enrich_pending=1：水位线不得越过未富化行，
-      // 否则图片下载期间后续 @ 触发会推进水位线，回填后的内容永远进不了 Agent 会话。
+      // 需要富化的媒体/卡片/合并转发行落 enrich_pending=1：水位线不得越过未富化行，
+      // 否则下载或展开期间后续 @ 触发会推进水位线，回填后的内容永远进不了 Agent 会话。
       const needsEnrich = inboundImageKeys(normalized).length > 0
         || isInboundFileMessage(normalized)
-        || normalized.messageType === 'interactive';
+        || normalized.messageType === 'interactive'
+        || normalized.messageType === 'merge_forward';
       const logId = await this.runInChatOrder(accountId, normalized.chatId,
         () => messageService.recordGroupMessage(accountId, { ...normalized, accountId }, mentioned, { enrichPending: needsEnrich }));
       if (!mentioned) {
@@ -98,38 +107,54 @@ export class FeishuInboundProcessor {
         completed = true;
         return;
       }
-      const named = await this.resolveSenderName(normalized, accountId);
-      void this.enrichGroupMessage(accountId, logId, named);
-      if (this.options.authorizeSender != null && !(await this.options.authorizeSender(accountId, named))) {
-        await this.sendUnauthorizedGuide(accountId, named);
-        completed = true;
-        return;
-      }
-      const resolvedUserId = await this.options.resolveUserId?.(accountId, named);
-      // 纯文件：只下载并交给 handler 落库，不拼群上下文、不触发任务（飞书文件与文字分两条消息）。
-      if (isInboundFileMessage(named)) {
+      const mergeForward = normalized.messageType === 'merge_forward';
+      try {
+        let named = await this.resolveSenderName(normalized, accountId);
+        // 未绑定用户不拉子消息。会触发的合并转发必须在 onMessage 之前展开，用户消息用摘录。
+        if (!mergeForward) void this.enrichGroupMessage(accountId, logId, named);
+        if (this.options.authorizeSender != null && !(await this.options.authorizeSender(accountId, named))) {
+          if (mergeForward) void this.enrichGroupMessage(accountId, logId, named, { skipMergeForward: true });
+          await this.sendUnauthorizedGuide(accountId, named);
+          completed = true;
+          return;
+        }
+        if (mergeForward) named = await this.persistExpandedMergeForward(accountId, logId, named);
+        const resolvedUserId = await this.options.resolveUserId?.(accountId, named);
+        // 纯文件：只下载并交给 handler 落库，不拼群上下文、不触发任务（飞书文件与文字分两条消息）。
+        if (isInboundFileMessage(named)) {
+          const quotedContext = await this.resolveQuoted(accountId, named);
+          const fileContext: FeishuInboundContext = {
+            ...named, accountId, messageId, maoUserId: resolvedUserId ?? undefined,
+            senderLabel: this.options.senderLabel?.(named) ?? defaultSenderLabel(named),
+            quotedContext,
+          };
+          await this.runInChatOrder(accountId, named.chatId, () => this.handler.onMessage(fileContext));
+          completed = true;
+          return;
+        }
+        // 同群内上下文读取排在更早消息的入库之后（runInChatOrder 保序），保证图片等先到消息已可见。
+        const group = await this.runInChatOrder(accountId, named.chatId,
+          () => messageService.buildGroupContext(accountId, { ...named, accountId, messageId, maoUserId: resolvedUserId ?? undefined }));
         const quotedContext = await this.resolveQuoted(accountId, named);
-        const fileContext: FeishuInboundContext = {
-          ...named, accountId, messageId, maoUserId: resolvedUserId ?? undefined,
+        const context: FeishuInboundContext = {
+          ...named, accountId, messageId, maoUserId: resolvedUserId ?? undefined, groupContext: group.prompt,
           senderLabel: this.options.senderLabel?.(named) ?? defaultSenderLabel(named),
           quotedContext,
         };
-        await this.runInChatOrder(accountId, named.chatId, () => this.handler.onMessage(fileContext));
+        const reply = await this.handler.onMessage(context);
+        if (reply?.text) await this.sendReply(accountId, named, reply);
         completed = true;
-        return;
+      } catch (error) {
+        // 授权或后续步骤抛错时，合并转发还没进 enrich 的 finally，必须在这里放行水位线。
+        if (mergeForward) {
+          try {
+            await messageService.markGroupMessageEnriched(logId);
+          } catch (markError) {
+            console.warn(`飞书群消息富化完成标记失败, logId=${logId}: ${markError instanceof Error ? markError.message : String(markError)}`);
+          }
+        }
+        throw error;
       }
-      // 同群内上下文读取排在更早消息的入库之后（runInChatOrder 保序），保证图片等先到消息已可见。
-      const group = await this.runInChatOrder(accountId, named.chatId,
-        () => messageService.buildGroupContext(accountId, { ...named, accountId, messageId, maoUserId: resolvedUserId ?? undefined }));
-      const quotedContext = await this.resolveQuoted(accountId, named);
-      const context: FeishuInboundContext = {
-        ...named, accountId, messageId, maoUserId: resolvedUserId ?? undefined, groupContext: group.prompt,
-        senderLabel: this.options.senderLabel?.(named) ?? defaultSenderLabel(named),
-        quotedContext,
-      };
-      const reply = await this.handler.onMessage(context);
-      if (reply?.text) await this.sendReply(accountId, named, reply);
-      completed = true;
     } finally {
       if (messageService != null) {
         if (completed) await messageService.completeInboundMessage(accountId, messageId);
@@ -162,8 +187,11 @@ export class FeishuInboundProcessor {
 
   /** 群消息后台富化（不阻塞入库与触发时序）：补齐发送人显示名；图片/文件消息入站预下载，
    * 成功则将日志行占位文本升级为携带 @{路径}@ 引用（Agent 免工具直接读取），失败保留懒加载占位符；
-   * interactive 卡片事件 content 被飞书降级时，按 messageId 拉详情补真实文本。 */
-  private async enrichGroupMessage(accountId: string, logId: number, event: FeishuNormalizedMessage): Promise<void> {
+   * interactive 卡片事件 content 被飞书降级时，按 messageId 拉详情补真实文本；
+   * 未触发的合并转发在此异步展开，回写摘录。触发路径不走这里，避免先清水位线再展开。 */
+  private async enrichGroupMessage(
+    accountId: string, logId: number, event: FeishuNormalizedMessage, options?: { skipMergeForward?: boolean },
+  ): Promise<void> {
     const messageService = this.options.messageService;
     try {
       if (messageService == null || event.chatType !== 'group') return;
@@ -174,6 +202,7 @@ export class FeishuInboundProcessor {
       await this.prewarmGroupImage(accountId, logId, event);
       await this.prewarmGroupFile(accountId, logId, event);
       await this.prewarmGroupCardText(accountId, logId, event);
+      if (options?.skipMergeForward !== true) await this.prewarmMergeForward(accountId, logId, event);
     } catch (error) {
       console.warn(`飞书群消息后台富化失败, messageId=${event.messageId}: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
@@ -217,6 +246,59 @@ export class FeishuInboundProcessor {
     } catch (error) {
       console.warn(`飞书群文件预下载失败, messageId=${event.messageId}: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+
+  /** 合并转发替换正文。失败、空结果或未配置展开函数时保持原文本。 */
+  private async expandMergeForwardText(accountId: string, event: FeishuNormalizedMessage): Promise<FeishuNormalizedMessage> {
+    if (event.messageType !== 'merge_forward' || event.messageId == null || this.options.expandMergeForward == null) return event;
+    try {
+      const workspace = this.options.resolveMergeWorkspace != null
+        ? await this.options.resolveMergeWorkspace(accountId, event)
+        : null;
+      const excerpt = await this.options.expandMergeForward(accountId, event.messageId, workspace);
+      if (excerpt == null || excerpt.trim() === '') return event;
+      return { ...event, text: excerpt };
+    } catch (error) {
+      console.warn(`展开飞书合并转发失败, messageId=${event.messageId}: ${error instanceof Error ? error.message : String(error)}`);
+      return event;
+    }
+  }
+
+  /** 会触发的群合并转发：展开后回写日志并放行水位线，返回带摘录的事件。失败也要清 enrich_pending。 */
+  private async persistExpandedMergeForward(
+    accountId: string, logId: number, event: FeishuNormalizedMessage,
+  ): Promise<FeishuNormalizedMessage> {
+    const messageService = this.options.messageService;
+    let next = event;
+    try {
+      if (event.senderName != null && event.senderName.trim() !== '') {
+        await messageService?.updateGroupMessageSenderName(logId, event.senderName);
+      }
+    } catch (error) {
+      console.warn(`回填飞书发送人姓名失败, messageId=${event.messageId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    try {
+      next = await this.expandMergeForwardText(accountId, event);
+      if (next.text !== event.text) await messageService?.updateGroupMessageContent(logId, next.text);
+    } catch (error) {
+      console.warn(`展开飞书合并转发失败, messageId=${event.messageId}: ${error instanceof Error ? error.message : String(error)}`);
+      next = event;
+    } finally {
+      try {
+        await messageService?.markGroupMessageEnriched(logId);
+      } catch (error) {
+        console.warn(`飞书群消息富化完成标记失败, logId=${logId}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    return next;
+  }
+
+  /** 未触发的群合并转发：异步展开成功则回写摘录。水位线由 enrichGroupMessage 的 finally 放行。 */
+  private async prewarmMergeForward(accountId: string, logId: number, event: FeishuNormalizedMessage): Promise<void> {
+    if (event.messageType !== 'merge_forward') return;
+    const expanded = await this.expandMergeForwardText(accountId, event);
+    if (expanded.text === event.text) return;
+    await this.options.messageService?.updateGroupMessageContent(logId, expanded.text);
   }
 
   /** interactive 卡片预升级：事件 content 被飞书降级为占位时，按 messageId 拉详情补真实文本。
