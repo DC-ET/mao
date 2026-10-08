@@ -13,112 +13,118 @@
       label-width="100px"
       label-position="right"
     >
-      <el-form-item label="模型类型" prop="modelType">
-        <el-radio-group v-model="form.modelType" :disabled="isEdit">
-          <el-radio value="text">文本模型</el-radio>
-          <el-radio value="audio">语音模型</el-radio>
-          <el-radio value="image">文生图</el-radio>
-        </el-radio-group>
-        <span v-if="!isEdit" class="form-hint-inline">语音模型用于 TTS 等音频合成，文生图用于图片生成</span>
-        <span v-else class="form-hint-inline">编辑时不可切换模型类型</span>
-      </el-form-item>
-      <el-form-item label="名称" prop="name">
-        <el-input v-model="form.name" placeholder="例如: GPT-4o, Claude Opus" />
-      </el-form-item>
-      <el-form-item label="供应商" prop="provider">
-        <el-select
-          v-model="form.provider"
-          filterable
-          allow-create
-          default-first-option
-          placeholder="选择或输入供应商，例如: OpenAI, Anthropic"
-          style="width: 100%"
-        >
-          <el-option v-for="provider in providerOptions" :key="provider" :label="provider" :value="provider" />
-        </el-select>
-      </el-form-item>
-      <el-form-item label="模型标识" prop="modelId">
-        <el-input v-model="form.modelId" placeholder="例如: gpt-4o, mimo-v2.5-tts" />
-      </el-form-item>
-      <el-form-item label="客户端标识">
-        <el-radio-group v-model="form.clientImpersonation">
-          <el-radio value="none">None</el-radio>
-          <el-radio value="codex">Codex</el-radio>
-          <el-radio value="claude_code">Claude Code</el-radio>
-        </el-radio-group>
-        <span class="form-hint-inline">调用该模型时模拟的客户端请求头</span>
-      </el-form-item>
-      <el-form-item label="API 协议">
-        <el-select v-model="form.apiProtocol" style="width: 100%">
-          <el-option label="OpenAI 兼容（ChatCompletions）" value="openai-compatible" />
-          <el-option label="Anthropic（Messages）" value="anthropic" />
-          <el-option label="OpenAI（Responses）" value="openai-responses" />
-        </el-select>
-      </el-form-item>
-      <el-form-item v-if="supportsEffort" label="推理力度">
-        <el-select v-model="form.effort" style="width: 100%">
-          <el-option label="默认（high）" value="" />
-          <el-option label="None" value="none" />
-          <el-option label="Low" value="low" />
-          <el-option label="Medium" value="medium" />
-          <el-option label="High" value="high" />
-          <el-option label="X-High" value="xhigh" />
-          <el-option label="Max" value="max" />
-        </el-select>
-        <span class="form-hint-inline">控制模型 reasoning token 预算，留空使用协议默认值</span>
-      </el-form-item>
-      <el-form-item label="API 地址" prop="baseUrl">
-        <el-input v-model="form.baseUrl" placeholder="例如: https://api.openai.com/v1">
-          <template #append><span style="font-family: monospace;">{{ apiProtocolSuffix }}</span></template>
-        </el-input>
-      </el-form-item>
-      <el-form-item label="API Key" prop="apiKey">
-        <el-input v-model="form.apiKey" type="password" show-password :placeholder="isEdit ? '已回填当前 Key，可查看或修改；留空则不修改' : '请输入 API Key'" />
-      </el-form-item>
-      <el-form-item v-if="isTextType" label="输入价格">
-        <el-input-number
-          v-model="form.priceInput"
-          :min="0"
-          :max="PRICE_MAX"
-          :step="0.01"
-          :precision="6"
-          :controls="false"
-          placeholder="留空则不计成本"
-          style="width: 220px"
-        />
-        <span class="form-hint-inline">每百万输入 Token 价格（成本单位；仅影响后续调用，不追溯历史）</span>
-      </el-form-item>
-      <el-form-item v-if="isTextType" label="输出价格">
-        <el-input-number
-          v-model="form.priceOutput"
-          :min="0"
-          :max="PRICE_MAX"
-          :step="0.01"
-          :precision="6"
-          :controls="false"
-          placeholder="留空则不计成本"
-          style="width: 220px"
-        />
-        <span class="form-hint-inline">每百万输出 Token 价格（成本单位；缓存命中按 5 折计价）</span>
-      </el-form-item>
-      <el-form-item v-if="isTextType" label="上下文窗口">
-        <el-input-number
-          v-model="form.contextWindowTokens"
-          :min="1024"
-          :max="2000000"
-          :step="1024"
-          style="width: 220px"
-        />
-        <span class="form-hint-inline">用于上下文压缩水位展示</span>
-      </el-form-item>
-      <el-form-item v-if="isTextType" label="支持视觉">
-        <el-switch v-model="form.supportsVision" />
-        <span class="form-hint-inline">开启后可在任务中发送图片</span>
-      </el-form-item>
-      <el-form-item v-if="isTextType" label="默认模型">
-        <el-switch v-model="form.isDefault" />
-        <span class="form-hint-inline">新会话默认使用此模型</span>
-      </el-form-item>
+      <el-tabs v-model="activeTab" class="model-form-tabs">
+        <el-tab-pane label="基本信息" name="basic">
+          <el-form-item label="模型类型" prop="modelType">
+            <el-radio-group v-model="form.modelType" :disabled="isEdit">
+              <el-radio value="text">文本模型</el-radio>
+              <el-radio value="audio">语音模型</el-radio>
+              <el-radio value="image">文生图</el-radio>
+            </el-radio-group>
+            <span v-if="!isEdit" class="form-hint-inline">语音模型用于 TTS 等音频合成，文生图用于图片生成</span>
+            <span v-else class="form-hint-inline">编辑时不可切换模型类型</span>
+          </el-form-item>
+          <el-form-item label="名称" prop="name">
+            <el-input v-model="form.name" placeholder="例如: GPT-4o, Claude Opus" />
+          </el-form-item>
+          <el-form-item label="供应商" prop="provider">
+            <el-select
+              v-model="form.provider"
+              filterable
+              allow-create
+              default-first-option
+              placeholder="选择或输入供应商，例如: OpenAI, Anthropic"
+              style="width: 100%"
+            >
+              <el-option v-for="provider in providerOptions" :key="provider" :label="provider" :value="provider" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="模型标识" prop="modelId">
+            <el-input v-model="form.modelId" placeholder="例如: gpt-4o, mimo-v2.5-tts" />
+          </el-form-item>
+          <el-form-item v-if="isTextType" label="上下文窗口">
+            <el-input-number
+              v-model="form.contextWindowTokens"
+              :min="1024"
+              :max="2000000"
+              :step="1024"
+              style="width: 220px"
+            />
+            <span class="form-hint-inline">用于上下文压缩水位展示</span>
+          </el-form-item>
+          <el-form-item v-if="isTextType" label="支持视觉">
+            <el-switch v-model="form.supportsVision" />
+            <span class="form-hint-inline">开启后可在任务中发送图片</span>
+          </el-form-item>
+          <el-form-item v-if="isTextType" label="默认模型">
+            <el-switch v-model="form.isDefault" />
+            <span class="form-hint-inline">新会话默认使用此模型</span>
+          </el-form-item>
+        </el-tab-pane>
+        <el-tab-pane label="接入配置" name="access">
+          <el-form-item label="客户端标识">
+            <el-radio-group v-model="form.clientImpersonation">
+              <el-radio value="none">None</el-radio>
+              <el-radio value="codex">Codex</el-radio>
+              <el-radio value="claude_code">Claude Code</el-radio>
+            </el-radio-group>
+            <span class="form-hint-inline">调用该模型时模拟的客户端请求头</span>
+          </el-form-item>
+          <el-form-item label="API 协议">
+            <el-select v-model="form.apiProtocol" style="width: 100%">
+              <el-option label="OpenAI 兼容（ChatCompletions）" value="openai-compatible" />
+              <el-option label="Anthropic（Messages）" value="anthropic" />
+              <el-option label="OpenAI（Responses）" value="openai-responses" />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-if="supportsEffort" label="推理力度">
+            <el-select v-model="form.effort" style="width: 100%">
+              <el-option label="默认（high）" value="" />
+              <el-option label="None" value="none" />
+              <el-option label="Low" value="low" />
+              <el-option label="Medium" value="medium" />
+              <el-option label="High" value="high" />
+              <el-option label="X-High" value="xhigh" />
+              <el-option label="Max" value="max" />
+            </el-select>
+            <span class="form-hint-inline">控制模型 reasoning token 预算，留空使用协议默认值</span>
+          </el-form-item>
+          <el-form-item label="API 地址" prop="baseUrl">
+            <el-input v-model="form.baseUrl" placeholder="例如: https://api.openai.com/v1">
+              <template #append><span class="api-suffix">{{ apiProtocolSuffix }}</span></template>
+            </el-input>
+          </el-form-item>
+          <el-form-item label="API Key" prop="apiKey">
+            <el-input v-model="form.apiKey" type="password" show-password :placeholder="isEdit ? '已回填当前 Key，可查看或修改；留空则不修改' : '请输入 API Key'" />
+          </el-form-item>
+          <el-form-item v-if="isTextType" label="输入价格">
+            <el-input-number
+              v-model="form.priceInput"
+              :min="0"
+              :max="PRICE_MAX"
+              :step="0.01"
+              :precision="6"
+              :controls="false"
+              placeholder="留空则不计成本"
+              style="width: 220px"
+            />
+            <span class="form-hint-inline">每百万输入 Token 价格（成本单位；仅影响后续调用，不追溯历史）</span>
+          </el-form-item>
+          <el-form-item v-if="isTextType" label="输出价格">
+            <el-input-number
+              v-model="form.priceOutput"
+              :min="0"
+              :max="PRICE_MAX"
+              :step="0.01"
+              :precision="6"
+              :controls="false"
+              placeholder="留空则不计成本"
+              style="width: 220px"
+            />
+            <span class="form-hint-inline">每百万输出 Token 价格（成本单位；缓存命中按 5 折计价）</span>
+          </el-form-item>
+        </el-tab-pane>
+      </el-tabs>
     </el-form>
     <template #footer>
       <el-button @click="$emit('update:visible', false)">取消</el-button>
@@ -180,6 +186,15 @@ const apiProtocolSuffix = computed(() => {
 const submitting = ref(false)
 const formRef = ref<FormInstance>()
 const providerOptions = ref<string[]>([])
+const activeTab = ref<'basic' | 'access'>('basic')
+
+const FIELD_TAB: Record<string, 'basic' | 'access'> = {
+  modelType: 'basic',
+  name: 'basic',
+  modelId: 'basic',
+  baseUrl: 'access',
+  apiKey: 'access'
+}
 
 async function loadProviderOptions() {
   try {
@@ -243,6 +258,7 @@ function resetForm() {
 
 watch(() => props.visible, (val) => {
   if (!val) return
+  activeTab.value = 'basic'
   if (props.modelData) {
     Object.assign(form, {
       modelType: props.modelData.modelType || 'text',
@@ -271,11 +287,16 @@ watch(() => props.visible, (val) => {
 }, { immediate: true })
 
 async function handleSubmit() {
-  const valid = await formRef.value?.validate().catch(() => false)
+  const valid = await formRef.value?.validate().catch((fields: Record<string, unknown>) => {
+    const first = Object.keys(fields ?? {})[0]
+    if (first && FIELD_TAB[first]) activeTab.value = FIELD_TAB[first]
+    return false
+  })
   if (!valid) return
 
   // 防御：掩码串不应被当作新密钥提交
   if (isMaskedApiKey(form.apiKey)) {
+    activeTab.value = 'access'
     ElMessage.error('API Key 含掩码字符，请重新填写完整密钥')
     return
   }
@@ -310,3 +331,12 @@ async function handleSubmit() {
   }
 }
 </script>
+
+<style scoped>
+.model-form-tabs :deep(.el-tabs__header) {
+  margin-bottom: 18px;
+}
+.api-suffix {
+  font-family: monospace;
+}
+</style>
