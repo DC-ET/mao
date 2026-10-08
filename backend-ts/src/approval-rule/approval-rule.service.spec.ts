@@ -295,4 +295,38 @@ describe('ApprovalRuleService', () => {
     const unfiltered = await service.listUserRules(9, { includeSession: true, sessionId: 7 });
     expect(unfiltered.records.map((r) => r.id)).toEqual([5, 6]);
   });
+
+  it('listUserRulesAppendsSessionRulesOnEveryPageSoTheyRepeatAcrossPagination', async () => {
+    // 附加的会话规则排在分页之外：第 1 页 = 满页 USER 规则 + 会话规则（records 可超过 pageSize），
+    // 第 2 页 = 剩余 USER 规则 + 同样两条会话规则再次追加，total 也随页变化。
+    // 当前无客户端传 includeSession（桌面设置页只传 page/pageSize/ruleType），属潜在 API 契约瑕疵。
+    const userRules: ApprovalRuleRow[] = [];
+    for (let i = 1; i <= 22; i++) userRules.push(row({ id: i, ruleValue: `cmd${i}`, hitCount: 100 - i }));
+    const sessionRules = [
+      row({ id: 101, scope: 'SESSION', sessionId: 7, ruleValue: 'git push' }),
+      row({ id: 102, scope: 'SESSION', sessionId: 7, ruleValue: 'npm run' }),
+    ];
+    repo.listByUser.mockImplementation(async (_uid: number, _scope: unknown, _rt: unknown, limit: number, offset: number) =>
+      userRules.slice(offset, offset + limit));
+    repo.countByUser.mockResolvedValue(userRules.length);
+    repo.listEnabledForMatch.mockResolvedValue([...userRules, ...sessionRules]);
+
+    const p1 = await service.listUserRules(9, { includeSession: true, sessionId: 7, page: 1, pageSize: 20 });
+    expect(p1.records.map((r) => r.id)).toEqual([...userRules.slice(0, 20).map((r) => r.id), 101, 102]);
+    expect(p1.records.length).toBe(22);
+    expect(p1.total).toBe(22);
+
+    const p2 = await service.listUserRules(9, { includeSession: true, sessionId: 7, page: 2, pageSize: 20 });
+    // 会话规则在第 2 页再次出现（跨页重复），total 也变成 4
+    expect(p2.records.map((r) => r.id)).toEqual([21, 22, 101, 102]);
+    expect(p2.total).toBe(4);
+  });
+
+  it('createUserRuleTruncatesMcpToolNameTo200Chars', async () => {
+    // 后端 MCP_TOOL 归一化：trim + slice(0, 200)，且必须 mcp__ 开头
+    repo.findById.mockResolvedValue(row({ id: 7, ruleType: 'MCP_TOOL', ruleValue: 'mcp__' + 'a'.repeat(195) }));
+    const vo = await service.createUserRule(9, { ruleType: 'MCP_TOOL', ruleValue: 'mcp__' + 'a'.repeat(300) });
+    expect(vo.ruleValue.length).toBe(200);
+    expect(repo.insert).toHaveBeenCalledWith({ userId: 9, scope: 'USER', sessionId: null, ruleType: 'MCP_TOOL', ruleValue: 'mcp__' + 'a'.repeat(195) });
+  });
 });

@@ -115,3 +115,59 @@ return { records, total };
 | `backend-ts/src/approval-rule/approval-rule-normalize.spec.ts` | `stripsEnvPrefixOnlyAtTheLeadingPosition` | BUG-3 |
 
 未改动任何实现代码。
+
+---
+
+# 复审记录（2026-10-08，针对修复提交 `85a3d658`）
+
+- **复审基线**：HEAD = `85a3d658 fix(approval): 修复 code review 第1轮发现的3个问题`；相对 main 的全量功能 diff 为 `git diff main...HEAD`（本轮功能代码 = `0c87173b` + `85a3d658`）。
+- **复审方式**：① 逐项核验 3 个修复的正确性与完整性；② 对「修复是否引入新问题」的 4 个关注点（ruleType 白名单口径 / includeSession 去重与 total 自洽 / desktop `ruleType=null` 时 axios 是否发空值 / previewRuleValue 与后端归一化的边界一致性）编写针对性验证；③ 相对基线对全功能代码做一轮快速复查。
+- **测试运行**（均先落盘再 grep 摘要，未再改动任何实现代码，仅新增/调整复审验证测试）：
+  - `cd backend-ts && npx vitest run src/approval-rule src/harness/approval` → **5 files passed / 66 tests passed**（exit 0）。
+  - `cd desktop && npx vitest run src/utils/approvalRulePreview.test.ts` → **1 file / 8 tests passed**（exit 0）。
+  - 全量回归（改动定稿后已跑）：backend `npm test` → **253 files / 2856 tests passed**；desktop `npx vitest run` → **25 files / 294 passed**；`npx vue-tsc --noEmit` exit 0；admin `npm run build` exit 0；backend `npm run build` exit 0。
+
+## 一、三个修复的逐项结论
+
+### BUG-1 修复（ruleType 服务端过滤）：正确且完整
+
+- **白名单口径**：`approval-rule.routes.ts` 用 `APPROVAL_RULE_TYPES.includes(ruleTypeRaw)` 校验，白名单外（含空串、小写 `shell_prefix`）一律回落 `null` = 不过滤——实测 `?ruleType=BOGUS`、`?ruleType=`、`?ruleType=shell_prefix` 均返回全部类型（total=25、第 1 页 20 条），合法 `MCP_TOOL` 则 total=5、records 全为 MCP。该宽容语义与原有 `scope` 参数一致，也与 admin 页（`ApprovalRuleView.vue:146` 非空才带 `type`、后端 admin 侧同为白名单取值）口径一致；两端查询参数名不同（桌面 `ruleType` / admin `type`）是既有约定，非本次引入。
+- **链路完整性**：`service.listUserRules` 透传 `ruleType`，`repository.listByUser`/`countByUser` 由同一 `filterClause`（`scope` + `rule_type` 双 AND）约束——分页的 limit/offset 与 total 同时建立在过滤后口径上，不再出现「列表被过滤、total 是全集、分页页数虚高」；追加的 SESSION 规则同样按 `row.ruleType === ruleType` 过滤。
+- **桌面端**：`fetchList` 改为服务端筛选（`ruleType: typeFilter.value === '' ? null : typeFilter.value`），不再本地 `records.filter`；`total` 即过滤后总数，类型 tab 的空态与分页器口径一致。创建查重改为跨页拉取同类型规则（`listApprovalRules({ page: 1, pageSize: 100, ruleType: form.ruleType })`，与服务端 pageSize 上限 100 一致），查重口径与被过滤后的列表口径统一。
+- **axios 空值关注点**：axios 默认参数序列化器丢弃 `null`/`undefined`，实测 `ruleType: null` 时请求 URI 为 `approval-rules?page=1&pageSize=20`，**不会发出空字符串**。
+- **验证测试**：routes.spec `listIsPagedServerSideAndFiltersRuleType`（已改为断言修复后行为）；service.spec `listUserRulesFiltersSessionRulesByRuleTypeWhenAppended`。
+
+### BUG-2 修复（includeSession 的 total/去重）：正确，语义已自洽
+
+- 修复后 `total = 合并去重后 records.length`，records 与 total 永远一致；`scope=SESSION` 叠加 `includeSession` 时按 `record.id`（主键）去重——比报告建议的 `(session_id, rule_type, rule_value)` 元组更强，且不会误删表允许的多行同值规则。
+- 组合实测：不开 includeSession → 原分页口径；开 includeSession 但缺 sessionId → 不追加；`scope=SESSION + includeSession` → `[5,6]`、total 2；再叠加 ruleType → 只留 MCP 的 5。
+- **遗留观察（非 bug，无当前调用方）**：`includeSession=true` 时 SESSION 规则会在**每一页**重复追加，翻页时 total 也随页变化（第 1 页 22 条/total 22；第 2 页 `[21,22,101,102]`/total 4）。桌面端只传 page/pageSize/ruleType（不开 includeSession），admin 端也不使用该参数，故无实际影响；若未来启用，建议改为「仅第 1 页追加」或独立字段。
+- **验证测试**：service.spec `listUserRulesTotalCoversMergedRecordsWhenAppendingSessionRules`、`listUserRulesAppendsSessionRulesOnEveryPageSoTheyRepeatAcrossPagination`（后者把上述遗留行为固化为回归，防将来误用）。
+
+### BUG-3 修复（previewRuleValue 归一化口径）：正确，边界一致性核对通过
+
+- 逻辑抽到 `desktop/src/utils/approvalRulePreview.ts`，只剥首部连续 env 赋值（`stripLeadingEnvTokens`），空白折叠、单 token、tab 分隔均与后端 `normalizeShellCommand`/`buildShellPrefixValue` 一致；以 14 组输入（env 前缀、中段赋值、多空白、tab、单 token、超长）与后端函数逐条比对，12 组完全一致。
+- 2 组不一致均**超出输入上限、不可达**：① 输入 ≥513 字符时后端截断到 512 而预览不截——前端 `el-input maxlength="512"` + show-word-limit 已阻断该输入；② MCP 预览不做 200 截断而后端 `MCP_TOOL_NAME_MAX_LENGTH` 会截——需 ≥201 字符的工具名才可观察，且保存 toast 展示的是服务端返回值，不影响实际放行口径。均记录为观察，不计 bug。
+- **验证测试**：approvalRulePreview.test.ts（新增 MCP 200 截断边界、SHELL_PREFIX 单 token 与多空白口径、512 截断不可达三条，连同原有用例共 8 passed）。
+
+## 二、整体快速复查结论
+
+相对基线（`0c87173b` + `85a3d658`）对 backend-ts / admin / desktop / electron 的功能代码做了一轮快速复查，**未发现第 1 轮遗漏的新的功能性 bug**。重点复核项（hint 注册/恰好一次消费/两处 unregister 配对、denylist 双重拦截、SESSION>USER 与 EXACT>PREFIX 优先级、跨页查重、preload 第 8 参/第 3 参透传、V135 迁移幂等、管理员权限）均与第 1 轮「已验证无问题」的结论一致。
+
+## 三、观察项（均不计 bug）
+
+| 观察 | 说明 |
+| --- | --- |
+| includeSession 跨页重复追加 | 见 BUG-2 遗留观察；当前无调用方使用该参数 |
+| preview 512 / 200 截断边界 | 见 BUG-3；均被输入上限或工具名长度阻断，实际不可达 |
+| admin `size` 未按 100 截断 | 沿用既有 admin 端点约定（第 1 轮观察-2 维持不变） |
+
+## 四、本轮新增验证测试
+
+| 文件 | 用例 | 对应 |
+| --- | --- | --- |
+| `backend-ts/src/approval-rule/approval-rule.routes.spec.ts` | `listIsPagedServerSideAndFiltersRuleType`（改为断言修复后行为） | BUG-1 |
+| `backend-ts/src/approval-rule/approval-rule.service.spec.ts` | `listUserRulesFiltersSessionRulesByRuleTypeWhenAppended`、`listUserRulesAppendsSessionRulesOnEveryPageSoTheyRepeatAcrossPagination`、`createUserRuleTruncatesMcpToolNameTo200Chars` | BUG-1 / BUG-2 / MCP 截断边界 |
+| `desktop/src/utils/approvalRulePreview.test.ts` | MCP 200 截断边界、SHELL_PREFIX 单 token 与多空白口径、512 截断不可达 | BUG-3 边界 |
+
+**复审结论：3 个修复均正确且完整，修复未引入新的功能性 bug，也未发现第 1 轮遗漏的新 bug；复审通过（附 3 条观察）。**
