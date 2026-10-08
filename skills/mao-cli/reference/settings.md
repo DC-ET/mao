@@ -23,7 +23,7 @@
 | 列出设置 | `settings list` |
 | 更新某项 | `settings set` |
 | 批量保存 | `settings batch` |
-| 测试集成配置连通性 | `settings test ldap\|feishu\|oss` |
+| 测试集成配置连通性 | `settings test ldap\|feishu\|oss\|jev` |
 
 ## 命令：settings list
 
@@ -73,12 +73,14 @@ mao settings batch --items '[{"key":"weixin.agentId","value":"1"},{"key":"sessio
 | `ldap` | `--url` `--base-dn` `--user-dn` `--password` `--user-search-base` | LDAP 连接测试 |
 | `feishu` | `--app-id` `--app-secret` | 飞书 OAuth 凭证测试 |
 | `oss` | `--region` `--access-key-id` `--access-key-secret` `--bucket` `--sts-region-id` `--sts-endpoint` `--sts-access-key-id` `--sts-access-key-secret` `--sts-role-arn` | OSS 凭证与 STS 试签 |
+| `jev` | `--endpoint` `--model` `--api-key` | Jev 前置决策端点与 API Key：发一次只读探测，校验 Key 与决策协议响应 |
 
-`POST /system-settings/test/{ldap|feishu|oss}`
+`POST /system-settings/test/{ldap|feishu|oss|jev}`
 
 ```bash
 mao settings test ldap
 mao settings test oss --region cn-hangzhou --access-key-id AK --access-key-secret SK
+mao settings test jev --endpoint https://api.typesafe.ai/v1/systemone --model jev-latest --api-key sk-...
 ```
 
 ## 云端终端配置（`terminal.*`，0.0.97 起）
@@ -107,6 +109,8 @@ mao settings test oss --region cn-hangzhou --access-key-id AK --access-key-secre
 | `approval.jev.apiKey` | 空（secret） | Jev 前置决策 API Key；留空则关闭前置决策，直接由审批模型推理 |
 
 Jev 前置决策：低风险工具调用直接放行（跳过审批模型推理），高风险才交审批模型；工具名与参数会发往该第三方服务，配置 apiKey 即视为开启。前置决策异常/未配置时自动降级为直接走审批模型。
+
+管理后台「审批」卡片提供「测试连接」：用当前表单（可未保存）向端点发一次只读探测，校验 API Key 与决策协议响应。留空的端点 / 模型名 / API Key 回落已存配置。等价命令：`mao settings test jev`。
 
 ## 成功失败判断
 

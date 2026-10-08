@@ -16,6 +16,7 @@ function help() {
   mao settings test oss [--region] [--access-key-id] [--access-key-secret] [--bucket]
                          [--sts-region-id] [--sts-endpoint] [--sts-access-key-id]
                          [--sts-access-key-secret] [--sts-role-arn]
+  mao settings test jev [--endpoint] [--model] [--api-key]
 
 说明:
   需 settings:read / settings:write 权限。test 系列留空参数回落已存配置，可测未保存的修改。
@@ -65,7 +66,7 @@ async function run(ctx, subcommand, _rest, flags) {
     case 'test': {
       const target = _rest[0];
       if (!target || hasFlag(flags, 'help')) {
-        process.stdout.write('用法: mao settings test <ldap|feishu|oss> [选项...]\n');
+        process.stdout.write('用法: mao settings test <ldap|feishu|oss|jev> [选项...]\n');
         return;
       }
       if (target === 'ldap') {
@@ -102,7 +103,16 @@ async function run(ctx, subcommand, _rest, flags) {
         emitResult(result, { raw: ctx.raw });
         return;
       }
-      printError(`未知 settings test 目标: ${target}（支持 ldap|feishu|oss）`);
+      if (target === 'jev') {
+        const result = await post(ctx, '/system-settings/test/jev', pickDefined({
+          endpoint: getString(flags, 'endpoint'),
+          model: getString(flags, 'model'),
+          apiKey: getString(flags, 'api-key'),
+        }));
+        emitResult(result, { raw: ctx.raw });
+        return;
+      }
+      printError(`未知 settings test 目标: ${target}（支持 ldap|feishu|oss|jev）`);
       process.exit(1);
     }
     default:

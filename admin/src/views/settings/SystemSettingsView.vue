@@ -70,14 +70,22 @@
                   <template #header>
                     <div class="group-header">
                       <span class="group-title">{{ section.name }}</span>
-                      <el-button
-                        v-if="hasEditable(section.name)"
-                        type="primary"
-                        size="small"
-                        :loading="savingKeys.has(section.name)"
-                        :disabled="!canWrite"
-                        @click="saveCategory(section.name)"
-                      >保存</el-button>
+                      <div v-if="hasEditable(section.name)" class="group-actions">
+                        <el-button
+                          v-if="section.name === '审批'"
+                          size="small"
+                          :loading="testingJev"
+                          :disabled="!canWrite"
+                          @click="testJevConnection"
+                        >测试连接</el-button>
+                        <el-button
+                          type="primary"
+                          size="small"
+                          :loading="savingKeys.has(section.name)"
+                          :disabled="!canWrite"
+                          @click="saveCategory(section.name)"
+                        >保存</el-button>
+                      </div>
                     </div>
                   </template>
                   <el-form label-position="top" class="group-form">
@@ -284,6 +292,7 @@ const activeSection = ref('')
 /** 分类卡片表单编辑副本：进入/刷新时从 rows 拷贝，保存成功后回写。secret 留空 = 不修改。 */
 const plainModel = reactive<Record<string, string>>({})
 const savingKeys = ref(new Set<string>())
+const testingJev = ref(false)
 /** 待清除的 secret key 集合：保存时提交空串（后端 isSecret=1 空串=显式清空），从已设置 secret 的输入框旁触发 */
 const pendingClearKeys = ref(new Set<string>())
 
@@ -387,6 +396,37 @@ async function saveCategory(category: string) {
     const next = new Set(savingKeys.value)
     next.delete(category)
     savingKeys.value = next
+  }
+}
+
+/** 用当前表单（未保存也可）探测 Jev 端点与 API Key。secret 留空则回落已存 Key。 */
+async function testJevConnection() {
+  if (!canWrite.value || testingJev.value) return
+  const endpoint = (plainModel['approval.jev.endpoint'] ?? '').trim()
+  const model = (plainModel['approval.jev.model'] ?? '').trim()
+  const apiKey = (plainModel['approval.jev.apiKey'] ?? '').trim()
+  if (endpoint && !/^https?:\/\//i.test(endpoint)) {
+    ElMessage.error('Jev 端点需以 http:// 或 https:// 开头')
+    return
+  }
+  if (pendingClearKeys.value.has('approval.jev.apiKey') && !apiKey) {
+    ElMessage.error('API Key 已标记清除，请先填写新 Key 或取消清除后再测试')
+    return
+  }
+  const payload: Record<string, string> = {}
+  if (endpoint) payload.endpoint = endpoint
+  if (model) payload.model = model
+  if (apiKey) payload.apiKey = apiKey
+  testingJev.value = true
+  try {
+    const { data } = await api.post('/system-settings/test/jev', payload)
+    if (data?.ok) {
+      ElMessage.success(data.model ? `连接成功（${data.model}）` : '连接成功')
+    } else {
+      ElMessage.warning(data?.message || '连接失败')
+    }
+  } catch { /* 拦截器已提示失败 */ } finally {
+    testingJev.value = false
   }
 }
 
@@ -723,6 +763,11 @@ onActivated(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+
+.group-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .group-title {

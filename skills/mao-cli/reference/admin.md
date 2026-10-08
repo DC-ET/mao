@@ -159,7 +159,7 @@ CLI：`mao llm-call list`（见 [llm-call.md](llm-call.md)）。
   - 公司 SSO（0.0.111）：启用开关、校验域名白名单、宿主 Origin 白名单、Access 有效期、校验超时；白名单支持换行或逗号输入，宿主 Origin 可填精确 HTTPS、`https://*.example.com`（任意层级子域、不含根域、端口严格匹配）或 `*`（所有来源）。以 `auth.companySso.config` 完整快照保存，新换票即时生效，取消 SSO 环境变量。业务系统仍用 `MaoChat.init` 的 `auth.checkUrl` 指定接口地址，详见 [SSO 配置](config.md#公司-ssoweb-embed-sdk)。
   - ECP 飞书登录、LDAP 认证、飞书 OAuth 登录（0.0.82 起由环境变量迁入）
 - **文件与存储**：上传（存储方式 local/OSS、访问前缀、单文件大小上限）、阿里云 OSS 对象存储与 STS 临时凭证
-- **Agent 与模型**：Agent 运行（0.0.88 迁入，线程池与 WS 超时重启生效）、LLM 超时与重试、上下文压缩（Harness 调参 0.0.89 迁入，保存后重启后端生效）、会话（`session.titleModelId` 标题生成模型）、代码（`git.commitMessageModelId` Git 提交信息生成模型）
+- **Agent 与模型**：Agent 运行（0.0.88 迁入，线程池与 WS 超时重启生效）、LLM 超时与重试、上下文压缩（Harness 调参 0.0.89 迁入，保存后重启后端生效）、会话（`session.titleModelId` 标题生成模型）、代码（`git.commitMessageModelId` Git 提交信息生成模型）、审批（审批模型与 Jev 前置决策；「测试连接」用当前表单探测 Jev 端点与 API Key，可未保存）
 - **工具与终端**：网络工具（Tavily / TinyFish 搜索实现切换与各自 API Key，0.0.83 新增双实现）、网页抓取、Shell 会话、云端终端
 - **通知与消息**：任务通知（0.0.88 迁入，即时生效）、微信（`weixin.agentId` / `weixin.modelId` 微信通道 Agent 与模型）
 - **平台与运维**：审计（日志保留天数）、运行环境（工作区与 Skill 目录，只读展示）
