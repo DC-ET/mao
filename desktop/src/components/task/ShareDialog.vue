@@ -115,7 +115,12 @@ async function refresh() {
 
 async function revoke() {
   try {
-    await ElMessageBox.confirm('撤销后原链接立即失效，确定撤销？', '撤销分享', { type: 'warning' })
+    await ElMessageBox.confirm('撤销后原链接立即失效，确定撤销？', '撤销分享', {
+      type: 'warning',
+      // 全局 --el-font-size-base 是 17px，MessageBox 正文和按钮都取它，
+      // 会比本弹窗 13px 文案和紧凑按钮大一圈
+      customClass: 'share-revoke-message-box',
+    })
   } catch {
     return
   }
@@ -202,5 +207,64 @@ async function copy() {
 }
 .share-days input {
   width: 72px;
+}
+
+/* MessageBox 挂在 body 下。字号对齐分享弹窗正文，按钮对齐 .share-btn */
+.share-revoke-message-box.el-message-box {
+  --el-messagebox-font-size: 15px;
+  --el-messagebox-content-font-size: 13px;
+  --el-font-size-base: 13px;
+  width: min(380px, calc(100vw - 32px));
+  padding: 14px 16px 12px;
+  border-radius: var(--aw-radius-md, 12px);
+  box-shadow: var(--aw-shadow-product, 0 16px 48px rgba(0, 0, 0, 0.18));
+}
+
+.share-revoke-message-box .el-message-box__header {
+  padding-bottom: 8px;
+}
+
+.share-revoke-message-box .el-message-box__title {
+  font-size: 15px;
+  line-height: 1.4;
+  font-weight: 600;
+}
+
+.share-revoke-message-box .el-message-box__headerbtn {
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  font-size: 14px;
+}
+
+.share-revoke-message-box .el-message-box__content {
+  font-size: 13px;
+}
+
+.share-revoke-message-box .el-message-box__status {
+  font-size: 18px;
+}
+
+.share-revoke-message-box .el-message-box__message p {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.share-revoke-message-box .el-message-box__btns {
+  padding-top: 12px;
+}
+
+.share-revoke-message-box .el-message-box__btns .el-button {
+  height: auto;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: normal;
+  border-radius: 8px;
+}
+
+.share-revoke-message-box .el-message-box__btns .el-button + .el-button {
+  margin-left: 8px;
 }
 </style>
