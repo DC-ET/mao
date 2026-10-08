@@ -291,13 +291,15 @@
 
         <div class="ctx-block">
           <div class="ctx-block-title">手动整理上下文</div>
-          <button class="ctx-compact-btn" :disabled="isCompacting || compactSubmitting" @click="handleCompactNow">
-            {{ isCompacting ? '正在整理上下文…' : '立即整理上下文' }}
-          </button>
+          <div class="ctx-actions">
+            <button class="ctx-action ctx-compact-btn" :disabled="isCompacting || compactSubmitting" @click="handleCompactNow">
+              {{ isCompacting ? '正在整理…' : '立即整理' }}
+            </button>
+            <button class="ctx-action ctx-summary-toggle" :class="{ 'is-open': summaryPanelOpen }" @click="toggleSummaryPanel">
+              {{ summaryPanelOpen ? '收起摘要' : '上次摘要' }}
+            </button>
+          </div>
           <div v-if="isRunning" class="ctx-hint">任务运行中，将在本轮工具结束后执行</div>
-          <button class="ctx-summary-toggle" @click="toggleSummaryPanel">
-            {{ summaryPanelOpen ? '收起上次摘要' : '查看上次摘要' }}
-          </button>
           <div v-if="summaryPanelOpen" class="ctx-summary-panel">
             <div v-if="summaryLoading" class="ctx-empty">加载中…</div>
             <template v-else-if="compactionSummary">
@@ -1565,28 +1567,40 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   color: var(--aw-ink-muted-48, #86868b);
   font-variant-numeric: tabular-nums;
 }
-.ctx-compact-btn {
-  align-self: flex-start;
-  padding: 6px 14px;
-  font-size: 13px;
-  border: none;
-  border-radius: 6px;
-  background: var(--aw-primary, #2563eb);
-  color: #fff;
+.ctx-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.ctx-action {
+  height: 32px;
+  padding: 0 8px;
+  border-radius: 8px;
+  border: 1px solid var(--aw-divider-soft, #e6e6e8);
+  background: transparent;
+  color: var(--aw-ink, #1d1d1f);
+  font-size: 12px;
+  line-height: 1;
   cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.ctx-action:hover:not(:disabled) {
+  background: var(--aw-surface-hover, #f5f5f7);
+}
+.ctx-compact-btn {
+  color: var(--aw-primary, #0066cc);
+  border-color: color-mix(in srgb, var(--aw-primary, #0066cc) 32%, var(--aw-divider-soft, #e6e6e8));
+}
+.ctx-compact-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--aw-primary, #0066cc) 8%, transparent);
 }
 .ctx-compact-btn:disabled {
-  opacity: 0.6;
+  opacity: 0.5;
   cursor: not-allowed;
 }
-.ctx-summary-toggle {
-  align-self: flex-start;
-  padding: 4px 0;
-  font-size: 12px;
-  border: none;
-  background: transparent;
-  color: var(--aw-primary, #2563eb);
-  cursor: pointer;
+.ctx-summary-toggle.is-open {
+  background: var(--aw-surface-hover, #f5f5f7);
+  border-color: color-mix(in srgb, var(--aw-ink, #1d1d1f) 18%, transparent);
 }
 .ctx-summary-panel {
   display: flex;

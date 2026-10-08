@@ -229,7 +229,7 @@ function mountInspector(initialMemoryIds: number[]) {
   return {
     sid, memoryIds,
     clickContextBadge: () => clickWhere(el => subtreeText(el).includes('上下文'), 'context badge'),
-    clickSummaryToggle: () => clickWhere(el => String(el.props.class ?? '') === 'ctx-summary-toggle', 'summary toggle'),
+    clickSummaryToggle: () => clickWhere(el => String(el.props.class ?? '').includes('ctx-summary-toggle'), 'summary toggle'),
     pageText: () => subtreeText(root),
   }
 }
