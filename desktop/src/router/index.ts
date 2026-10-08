@@ -87,6 +87,11 @@ const routes: RouteRecordRaw[] = [
             component: () => import('../views/settings/MemoryView.vue')
           },
           {
+            path: 'approval-rules',
+            name: 'ApprovalRules',
+            component: () => import('../views/settings/ApprovalRulesView.vue')
+          },
+          {
             path: 'weixin-bot',
             name: 'WeixinBot',
             component: () => import('../views/settings/WeixinBotView.vue')

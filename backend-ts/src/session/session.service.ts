@@ -62,6 +62,8 @@ export class SessionService {
     private readonly closeSessionTerminals?: (sessionId: number) => void,
     /** 会话删除后清理绑定资源（如定时任务）。失败只记日志，不回滚已删除的会话。 */
     private readonly onSessionDeleted?: (sessionId: number) => Promise<void> | void,
+    /** 会话删除时物理删其会话级审批放行规则（V135 级联）。 */
+    private readonly deleteSessionApprovalRules?: (sessionId: number) => Promise<void>,
   ) {}
 
   async createSession(
@@ -499,6 +501,15 @@ export class SessionService {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '会话运行中，无法删除');
     }
     await this.sessionRepo.lockActiveSessionById(id);
+    if (this.deleteSessionApprovalRules) {
+      // 会话级审批规则物理删（V135）：WAITING_APPROVAL 拒删守卫保证无挂起审批，
+      // 规则删除失败不阻断会话删除（残留行不参与匹配——会话已删、sessionId 不复用）
+      try {
+        await this.deleteSessionApprovalRules(id);
+      } catch (e) {
+        console.error(`Failed to delete approval rules for session ${id}`, e);
+      }
+    }
     await this.sessionCompactionService.deleteBySessionId(id);
     await this.sessionCompactionEventService.deleteBySessionId(id);
     await this.messageRepo.logicalDeleteBySession(id);

@@ -458,6 +458,56 @@ export async function listMemoryProjects(): Promise<string[]> {
   return data?.projects ?? []
 }
 
+// ─── 审批放行规则（LOCAL 工具审批 allowlist） ───
+
+export type ApprovalRuleType = 'SHELL_PREFIX' | 'SHELL_EXACT' | 'MCP_TOOL'
+
+export interface ApprovalRule {
+  id: number
+  scope: 'SESSION' | 'USER'
+  sessionId: number | null
+  ruleType: ApprovalRuleType
+  ruleValue: string
+  hitCount: number
+  lastHitAt: string | null
+  enabled: boolean
+  createdAt?: string | null
+  updatedAt?: string | null
+}
+
+export interface ApprovalRulePage {
+  records: ApprovalRule[]
+  total: number
+}
+
+export async function listApprovalRules(params: {
+  page?: number
+  pageSize?: number
+  /** 类型筛选（服务端过滤，保证 tab 翻页口径一致）；空 = 全部 */
+  ruleType?: ApprovalRuleType | null
+} = {}): Promise<ApprovalRulePage> {
+  const { data } = await api.get('/approval-rules', { params })
+  return data
+}
+
+/** 创建用户级规则；服务端归一化（SHELL_PREFIX 取前两 token）并在响应中返回归一化后的值 */
+export async function createApprovalRule(payload: { ruleType: ApprovalRuleType; ruleValue: string }): Promise<ApprovalRule> {
+  const { data } = await api.post('/approval-rules', payload)
+  return data
+}
+
+export async function updateApprovalRule(
+  id: number,
+  payload: { enabled?: boolean; ruleValue?: string }
+): Promise<ApprovalRule> {
+  const { data } = await api.patch(`/approval-rules/${id}`, payload)
+  return data
+}
+
+export async function deleteApprovalRule(id: number): Promise<void> {
+  await api.delete(`/approval-rules/${id}`)
+}
+
 // ─── 开放接口（API Token / Webhook 触发器 / 出站订阅） ───
 
 export interface ApiTokenView {

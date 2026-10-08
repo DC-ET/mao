@@ -115,4 +115,48 @@ describe('ApprovalRegistry', () => {
     expect(sessionService.enterWaitingApproval).not.toHaveBeenCalled();
     expect(sessionService.restoreRunningAfterApproval).not.toHaveBeenCalled();
   });
+
+  it('hintRoundTripsThroughTakeHintExactlyOnce', async () => {
+    const sessionService = {
+      enterWaitingApproval: vi.fn().mockResolvedValue(true),
+      restoreRunningAfterApproval: vi.fn().mockResolvedValue(true),
+    } as unknown as SessionService;
+    const sessionMapper = { selectById: vi.fn().mockResolvedValue(session(10)) } as unknown as SessionMapper;
+    const ws = { send: vi.fn() } as unknown as StreamingWsRegistry;
+    const reg = registry(sessionService, sessionMapper, ws);
+    const hint = { ruleType: 'SHELL_PREFIX' as const, ruleValue: 'npm run', label: '本会话总是允许以 npm run 开头的命令' };
+    await reg.register(10, 'r1', hint);
+    expect(reg.takeHint(10, 'r1')).toEqual(hint);
+    // 恰好一次消费：取走即删，重发帧拿不到
+    expect(reg.takeHint(10, 'r1')).toBeNull();
+  });
+
+  it('hintIsClearedOnUnregisterAndIsolatedPerRequest', async () => {
+    const sessionService = {
+      enterWaitingApproval: vi.fn().mockResolvedValue(true),
+      restoreRunningAfterApproval: vi.fn().mockResolvedValue(true),
+    } as unknown as SessionService;
+    const sessionMapper = { selectById: vi.fn().mockResolvedValue(session(10)) } as unknown as SessionMapper;
+    const ws = { send: vi.fn() } as unknown as StreamingWsRegistry;
+    const reg = registry(sessionService, sessionMapper, ws);
+    await reg.register(10, 'r1', { ruleType: 'MCP_TOOL', ruleValue: 'mcp__a__b', label: 'x' });
+    await reg.register(10, 'r2', { ruleType: 'SHELL_PREFIX', ruleValue: 'git push', label: 'y' });
+    // 同会话多张 pending 卡各自 hint 互不串
+    expect(reg.takeHint(10, 'r2')?.ruleValue).toBe('git push');
+    await reg.unregister(10, 'r1');
+    expect(reg.takeHint(10, 'r1')).toBeNull();
+  });
+
+  it('takeHintReturnsNullWithoutHint', async () => {
+    const sessionService = {
+      enterWaitingApproval: vi.fn(),
+      restoreRunningAfterApproval: vi.fn(),
+    } as unknown as SessionService;
+    const sessionMapper = { selectById: vi.fn() } as unknown as SessionMapper;
+    const ws = { send: vi.fn() } as unknown as StreamingWsRegistry;
+    const reg = registry(sessionService, sessionMapper, ws);
+    await reg.register(10, 'r1');
+    expect(reg.takeHint(10, 'r1')).toBeNull();
+    expect(reg.takeHint(10, 'missing')).toBeNull();
+  });
 });

@@ -192,6 +192,29 @@ describe('LocalToolExecutor', () => {
       .resolves.toBe('{"ok":true}');
     expect(approvalRegistry.register).toHaveBeenCalledWith(7, 'req-inbox');
   });
+
+  it('approvalHint 随 sendToolRequest 与 registry.register 透传（V135）', async () => {
+    vi.clearAllMocks();
+    const reg = {
+      isConnected: vi.fn().mockResolvedValue(true),
+      sendToolRequest: vi.fn().mockResolvedValue({ requestId: 'req-hint', future: Promise.resolve('{"ok":true}') }),
+    } as unknown as LocalToolSessionRegistry;
+    const hint = { ruleType: 'SHELL_PREFIX' as const, ruleValue: 'npm run', label: '本会话总是允许以 npm run 开头的命令' };
+    await executor(null, reg).execute(7, 'shell', '{"command":"npm run build"}', 'workspace', true, null, hint);
+    expect(reg.sendToolRequest).toHaveBeenCalledWith(7, 'shell', '{"command":"npm run build"}', 'workspace', true, null, hint);
+    expect(approvalRegistry.register).toHaveBeenCalledWith(7, 'req-hint', hint);
+  });
+
+  it('无 approvalHint 时保持旧签名（6 参 register / 6 参 sendToolRequest）', async () => {
+    vi.clearAllMocks();
+    const reg = {
+      isConnected: vi.fn().mockResolvedValue(true),
+      sendToolRequest: vi.fn().mockResolvedValue({ requestId: 'req-nohint', future: Promise.resolve('{"ok":true}') }),
+    } as unknown as LocalToolSessionRegistry;
+    await executor(null, reg).execute(7, 'shell', '{}', 'workspace', true, 'reason');
+    expect(reg.sendToolRequest).toHaveBeenCalledWith(7, 'shell', '{}', 'workspace', true, 'reason');
+    expect(approvalRegistry.register).toHaveBeenCalledWith(7, 'req-nohint');
+  });
 });
 
 });

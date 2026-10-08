@@ -92,4 +92,22 @@ describe('LocalToolSessionRegistry', () => {
     registry.completeToolRequestError(3, 'missing', 'err');
     registry.failAllForSession(3);
   });
+
+  it('toolExecutePayloadCarriesApprovalHintOnlyWhenPresent', async () => {
+    const wsRegistry = {
+      hasLocalClientConnection: vi.fn().mockReturnValue(true),
+      sendToLocalClients: vi.fn(),
+    } as unknown as StreamingWsRegistry & Record<string, ReturnType<typeof vi.fn>>;
+    const registry = new LocalToolSessionRegistry(wsRegistry, { selectById: vi.fn() } as unknown as SessionMapper);
+    registry.setUserForSession(10, 7);
+
+    const hint = { ruleType: 'SHELL_PREFIX' as const, ruleValue: 'npm run', label: '本会话总是允许以 npm run 开头的命令' };
+    await registry.sendToolRequest(10, 'shell', '{"command":"npm run build"}', null, true, null, hint);
+    const withHint = wsRegistry.sendToLocalClients.mock.calls[0][1] as { data: Record<string, unknown> };
+    expect(withHint.data.approvalHint).toEqual(hint);
+
+    await registry.sendToolRequest(10, 'shell', '{}', null, true, null);
+    const withoutHint = wsRegistry.sendToLocalClients.mock.calls[1][1] as { data: Record<string, unknown> };
+    expect('approvalHint' in withoutHint.data).toBe(false);
+  });
 });

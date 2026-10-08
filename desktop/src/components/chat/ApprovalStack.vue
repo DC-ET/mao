@@ -28,6 +28,10 @@
           <div v-if="item.dangerReason" class="danger-reason">
             {{ item.dangerReason }}
           </div>
+          <div v-if="item.approvalHint" class="hint-line" :title="item.approvalHint.label">
+            <span class="hint-text">记住模式</span>
+            <span class="hint-value">{{ item.approvalHint.ruleValue }}</span>
+          </div>
           <div class="card-actions">
             <button
               v-if="item.description.length > threshold"
@@ -41,12 +45,19 @@
             <button
               class="action-btn reject"
               :disabled="handledIds.has(item.requestId)"
-              @click="confirm(item.requestId, false)"
+              @click="confirm(item.requestId, false, false)"
             >拒绝</button>
+            <button
+              v-if="item.approvalHint"
+              class="action-btn always-allow"
+              :disabled="handledIds.has(item.requestId)"
+              :title="item.approvalHint.label"
+              @click="confirm(item.requestId, true, true)"
+            >总是允许</button>
             <button
               class="action-btn approve"
               :disabled="handledIds.has(item.requestId)"
-              @click="confirm(item.requestId, true)"
+              @click="confirm(item.requestId, true, false)"
             >执行</button>
           </div>
         </template>
@@ -61,11 +72,20 @@ import { ElMessage } from 'element-plus'
 import { WarningFilled } from '@element-plus/icons-vue'
 import { copyText as copyToClipboard } from '../../utils/clipboard'
 
+export interface ApprovalHint {
+  ruleType: 'SHELL_PREFIX' | 'SHELL_EXACT' | 'MCP_TOOL'
+  /** 归一化后的模式值全文（副标题展示，用户看清将要记住的确切模式） */
+  ruleValue: string
+  label: string
+}
+
 export interface ApprovalItem {
   requestId: string
   toolName: string
   description: string
   dangerReason?: string
+  /** 服务端生成的「总是允许」hint；缺省 = 不可规则化（denylist 命中等），只有两按钮 */
+  approvalHint?: ApprovalHint
 }
 
 const threshold = 120
@@ -81,7 +101,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  confirm: [requestId: string, approved: boolean]
+  confirm: [requestId: string, approved: boolean, alwaysAllow: boolean]
 }>()
 
 // 点击后立即标记已处理并禁用按钮：审批卡片保留到服务端响应前，防止重复提交
@@ -106,10 +126,10 @@ watch(() => props.items.map((item) => item.requestId), (ids) => {
   if (changed) handledIds.value = next
 })
 
-function confirm(requestId: string, approved: boolean) {
+function confirm(requestId: string, approved: boolean, alwaysAllow: boolean) {
   if (handledIds.value.has(requestId)) return
   handledIds.value = new Set([...handledIds.value, requestId])
-  emit('confirm', requestId, approved)
+  emit('confirm', requestId, approved, alwaysAllow)
 }
 
 const expandedSet = ref(new Set<string>())
@@ -252,6 +272,35 @@ async function copyText(text: string) {
   word-break: break-word;
 }
 
+.hint-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  border-radius: var(--aw-radius-xs);
+  border: 1px solid color-mix(in srgb, var(--aw-success) 30%, var(--aw-hairline));
+  background: color-mix(in srgb, var(--aw-success) 7%, var(--aw-canvas));
+  min-width: 0;
+}
+
+.hint-value {
+  font-family: var(--aw-font-mono);
+  font-size: var(--aw-text-fine);
+  font-weight: 600;
+  color: var(--aw-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 1;
+}
+
+.hint-text {
+  font-size: var(--aw-text-fine);
+  color: var(--aw-ink-muted);
+  flex-shrink: 0;
+}
+
 .card-actions {
   display: flex;
   align-items: center;
@@ -314,5 +363,15 @@ async function copyText(text: string) {
 
 .action-btn.approve:hover {
   background: color-mix(in srgb, var(--aw-primary) 12%, transparent);
+}
+
+.action-btn.always-allow {
+  border-color: var(--aw-success);
+  color: var(--aw-success);
+  background: color-mix(in srgb, var(--aw-success) 6%, transparent);
+}
+
+.action-btn.always-allow:hover {
+  background: color-mix(in srgb, var(--aw-success) 14%, transparent);
 }
 </style>

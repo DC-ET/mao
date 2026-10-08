@@ -46,6 +46,8 @@ export const ErrorCode = {
   MEMORY_CONTENT_INVALID: { code: 3034, message: '记忆内容无效' },
   MEMORY_CONTENT_DUPLICATE: { code: 3035, message: '已存在相同内容的记忆' },
   MEMORY_LIMIT_EXCEEDED: { code: 3036, message: '生效中的记忆数量已达上限（200 条），请先清理不需要的记忆' },
+  APPROVAL_RULE_NOT_FOUND: { code: 3037, message: '审批规则不存在' },
+  APPROVAL_RULE_VALUE_INVALID: { code: 3038, message: '审批规则值无效' },
 
   /** 入站 Webhook 触发器：不存在/停用/验签失败统一 404 + 固定短语（技术方案决策 10，不暴露区分）。 */
   OPEN_HOOK_NOT_FOUND: { code: 3040, message: 'not found' },

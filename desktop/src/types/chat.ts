@@ -16,11 +16,13 @@ export interface ToolCall {
   argsStreaming: boolean
   /** 参数尚未组成完整 JSON 时保留的原始流式内容 */
   argumentsText?: string
-  /** AI 审批标记（替我审批/前置决策的拍板结果），未经 AI 审批的调用为空 */
+  /** 审批放行标记（替我审批 / 前置决策 / 规则放行），未经审批放行的调用为空 */
   approvalMark?: {
-    mode: 'llm' | 'jev'
+    mode: 'llm' | 'jev' | 'rule'
     approved: boolean
     reason: string
+    /** mode=rule 时命中的放行规则 id */
+    ruleId?: number
   }
   /** 后端在工具实现内已截断输出（结果 JSON 顶层 truncated===true），历史回放与实时事件均落到此标志 */
   resultTruncated?: boolean
