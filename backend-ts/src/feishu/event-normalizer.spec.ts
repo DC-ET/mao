@@ -171,6 +171,56 @@ describe('normalizeFeishuEvent', () => {
     expect(event!.text).toBe('@Eter我是谁? @张三 看看');
   });
 
+  it('replaces @_user_10 before @_user_1 so the longer placeholder keeps its own name', () => {
+    const event = normalizeFeishuEvent({
+      header: { app_id: 'cli_mybot' },
+      event: {
+        sender: { sender_id: { open_id: 'ou_user', union_id: 'on_user' } },
+        message: {
+          message_id: 'om_mention_10', chat_id: 'oc_group', chat_type: 'group', message_type: 'text',
+          content: '{"text":"@_user_1 @_user_10 @_user_2"}',
+          mentions: [
+            { key: '@_user_1', id: { open_id: 'ou_1' }, name: '甲' },
+            { key: '@_user_10', id: { open_id: 'ou_10' }, name: '癸' },
+            { key: '@_user_2', id: { open_id: 'ou_2' }, name: '乙' },
+          ],
+        },
+      },
+    });
+    expect(event!.text).toBe('@甲 @癸 @乙');
+  });
+
+  it('replaces a mention when the following digits are not another mention key', () => {
+    const onlyShort = normalizeFeishuEvent({
+      header: { app_id: 'cli_mybot' },
+      event: {
+        sender: { sender_id: { open_id: 'ou_user', union_id: 'on_user' } },
+        message: {
+          message_id: 'om_m3', chat_id: 'oc_group', chat_type: 'group', message_type: 'text',
+          content: '{"text":"@_user_13月报表"}',
+          mentions: [{ key: '@_user_1', id: { open_id: 'ou_1' }, name: '甲' }],
+        },
+      },
+    });
+    expect(onlyShort!.text).toBe('@甲3月报表');
+
+    const longest = normalizeFeishuEvent({
+      header: { app_id: 'cli_mybot' },
+      event: {
+        sender: { sender_id: { open_id: 'ou_user', union_id: 'on_user' } },
+        message: {
+          message_id: 'om_m101', chat_id: 'oc_group', chat_type: 'group', message_type: 'text',
+          content: '{"text":"@_user_101号文件"}',
+          mentions: [
+            { key: '@_user_1', id: { open_id: 'ou_1' }, name: '甲' },
+            { key: '@_user_10', id: { open_id: 'ou_10' }, name: '癸' },
+          ],
+        },
+      },
+    });
+    expect(longest!.text).toBe('@癸1号文件');
+  });
+
   it('keeps text unchanged when mentions carry no usable name', () => {
     const event = normalizeFeishuEvent({
       header: { app_id: 'cli_mybot' },

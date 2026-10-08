@@ -1,5 +1,5 @@
 import type { FeishuChatType, FeishuEventHeader, FeishuNormalizedMessage } from './types.js';
-import { FEISHU_CARD_UPGRADE_FALLBACK } from './message-detail.js';
+import { describeMessageText, FEISHU_CARD_UPGRADE_FALLBACK } from './message-detail.js';
 
 export function normalizeFeishuEvent(input: unknown, botOpenId?: string): FeishuNormalizedMessage | null {
   const root = asRecord(input);
@@ -38,32 +38,38 @@ export function normalizeFeishuEvent(input: unknown, botOpenId?: string): Feishu
     if (appId == null) return item.key != null && item.key.startsWith('cli_');
     return false;
   }) || (isStrictTrue(message.is_at_me ?? event.is_at_me) && mentions.length > 0);
-  const messageType = firstString(message.message_type, event.message_type) ?? 'text';
-  const media = extractMedia(messageType, content);
-  return {
-    eventId: firstString(header?.eventId, root.event_id, event.event_id) ?? null,
-    messageId: firstString(message.message_id, event.message_id) ?? null,
-    parentId: firstString(message.parent_id, event.parent_id) ?? null,
-    rootId: firstString(message.root_id, event.root_id) ?? null,
-    threadId: firstString(message.thread_id, event.thread_id) ?? null,
-    chatId: firstString(message.chat_id, event.chat_id) ?? null,
-    chatType,
-    senderId: senderId ?? null,
-    senderUnionId: senderUnionId ?? null,
-    senderType: firstString(sender.sender_type, event.sender_type) ?? null,
-    messageType,
-    imageKey: media.imageKey ?? null,
-    imageKeys: media.imageKeys,
-    fileKey: media.fileKey ?? null,
-    fileName: media.fileName ?? null,
-    // 文本中的 @提及 是 @_user_N 占位符，需用 mentions 的姓名还原，否则 Agent 不知道 @ 的是谁。
-    text: replaceMentionKeys(extractText(content, message.text ?? event.text), mentionItems),
-    mentions,
-    isBotMentioned,
-    content,
-    rawEvent: input,
-    header,
-  };
+    const messageType = firstString(message.message_type, event.message_type) ?? 'text';
+    const media = extractMedia(messageType, content);
+    const messageId = firstString(message.message_id, event.message_id) ?? null;
+    // post 没有顶层 text。先抽出富文本（at 上有姓名则已是 @姓名），再用 mentions 补没有姓名的占位符。
+    let text = replaceMentionKeys(extractText(content, message.text ?? event.text), mentionItems);
+    if (text.trim() === '' && messageType === 'post' && content != null && typeof content === 'object' && !Array.isArray(content)) {
+      text = replaceMentionKeys(describeMessageText('post', content as Record<string, unknown>, messageId ?? '未知'), mentionItems).trim();
+    }
+    return {
+      eventId: firstString(header?.eventId, root.event_id, event.event_id) ?? null,
+      messageId,
+      parentId: firstString(message.parent_id, event.parent_id) ?? null,
+      rootId: firstString(message.root_id, event.root_id) ?? null,
+      threadId: firstString(message.thread_id, event.thread_id) ?? null,
+      chatId: firstString(message.chat_id, event.chat_id) ?? null,
+      chatType,
+      senderId: senderId ?? null,
+      senderUnionId: senderUnionId ?? null,
+      senderType: firstString(sender.sender_type, event.sender_type) ?? null,
+      messageType,
+      imageKey: media.imageKey ?? null,
+      imageKeys: media.imageKeys,
+      fileKey: media.fileKey ?? null,
+      fileName: media.fileName ?? null,
+      // 文本中的 @提及 是 @_user_N 占位符，需用 mentions 的姓名还原，否则 Agent 不知道 @ 的是谁。
+      text,
+      mentions,
+      isBotMentioned,
+      content,
+      rawEvent: input,
+      header,
+    };
 }
 
 function normalizeHeader(value: unknown): FeishuEventHeader | undefined {
@@ -113,15 +119,52 @@ function extractMentionItems(value: unknown): MentionItem[] {
   });
 }
 
-/** 将文本中的 @_user_N 占位符替换为 @姓名（含 @机器人），还原真实提及对象。 */
-function replaceMentionKeys(text: string, mentionItems: MentionItem[]): string {
+/** 将文本中的 @_user_N 占位符替换为 @姓名（含 @机器人），还原真实提及对象。入站与合并转发摘录共用。 */
+export function replaceMentionKeys(text: string, mentionItems: Array<{ key?: string | null; name?: string | null }>): string {
   if (text === '' || mentionItems.length === 0) return text;
+  const items = mentionItems.filter((item): item is { key: string; name: string } =>
+    item.key != null && item.key !== '' && item.name != null && item.name !== '');
+  if (items.length === 0) return text;
+  const known = new Set(items.map((item) => item.key));
+  // 先换更长的 key。短 key 只有在当前位置正好是另一个已知更长 key 的前缀时才跳过，
+  // 后面仅仅是正文里的数字（如 @_user_13月报表）仍然要替换。
+  const sorted = [...items].sort((a, b) => b.key.length - a.key.length);
   let replaced = text;
-  for (const item of mentionItems) {
-    if (item.key == null || item.key === '' || item.name == null || item.name === '') continue;
-    replaced = replaced.split(item.key).join(`@${item.name}`);
+  for (const item of sorted) {
+    replaced = replaceOneMention(replaced, item.key, item.name, known);
   }
   return replaced;
+}
+
+function replaceOneMention(text: string, key: string, name: string, known: Set<string>): string {
+  let cursor = 0;
+  let next = '';
+  while (cursor < text.length) {
+    const index = text.indexOf(key, cursor);
+    if (index < 0) {
+      next += text.slice(cursor);
+      break;
+    }
+    next += text.slice(cursor, index);
+    const after = index + key.length;
+    if (isPrefixOfLongerMention(text, index, key, known)) {
+      next += key;
+      cursor = after;
+      continue;
+    }
+    next += `@${name}`;
+    // at 与后文之间的零宽分隔只在成功替换时去掉，避免 @_user_1 和「0点」粘成更长的 key。
+    cursor = after + (text.charCodeAt(after) === 0x200b ? 1 : 0);
+  }
+  return next;
+}
+
+function isPrefixOfLongerMention(text: string, index: number, key: string, known: Set<string>): boolean {
+  let end = index + key.length;
+  while (end < text.length && text.charCodeAt(end) >= 48 && text.charCodeAt(end) <= 57) end += 1;
+  if (end === index + key.length) return false;
+  const longer = text.slice(index, end);
+  return longer !== key && known.has(longer);
 }
 
 function extractMedia(messageType: string, content: unknown): { imageKey?: string; imageKeys?: string[]; fileKey?: string; fileName?: string } {

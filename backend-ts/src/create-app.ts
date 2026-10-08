@@ -286,6 +286,8 @@ import { FeishuCardActionService } from './feishu/card-action.service.js';
 import { persistFeishuCancelIfIdle } from './feishu/cancel-running.js';
 import { readFeishuDocMarkdown } from './feishu/doc-reader.js';
 import { fetchFeishuMessageDetail } from './feishu/message-detail.js';
+import { expandFeishuMergeForward, resolveFeishuQuotedText } from './feishu/merge-forward.js';
+import { batchResolveFeishuUserNames } from './feishu/sender-names.js';
 import { feishuSendTargetOf, sendFeishuFile, sendFeishuImage } from './feishu/media-sender.js';
 import { FeishuCardProgressListener, countCompletedAgentRounds, type FeishuCardProgress } from './feishu/card-progress-listener.js';
 import { createDingtalkRuntime } from './dingtalk/runtime.js';
@@ -1934,6 +1936,46 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     if (name != null && name !== '') feishuSenderNames.set(key, Promise.resolve(name));
     return name;
   };
+  const resolveFeishuUserNames = async (accountId: string, openIds: string[]): Promise<Map<string, string>> => {
+    const client = await getFeishuClient(Number(accountId));
+    if (client == null || openIds.length === 0) return new Map();
+    return batchResolveFeishuUserNames(
+      (req) => client.contact.v3.user.basicBatch(req),
+      openIds,
+      {
+        get: (openId) => feishuSenderNames.get(`${accountId}:${openId}`),
+        set: (openId, name) => { feishuSenderNames.set(`${accountId}:${openId}`, Promise.resolve(name)); },
+      },
+    );
+  };
+  const resolveMergeWorkspace = async (accountId: string, event: FeishuNormalizedMessage): Promise<string | null> => {
+    try {
+      if (event.chatType === 'group') {
+        if (event.chatId == null || event.chatId === '') return null;
+        return resolveFeishuChatWorkspace(cfg.app.harness.workspaceRoot, accountId, event.chatId);
+      }
+      const unionId = event.senderUnionId ?? event.senderId;
+      const userId = unionId == null ? null : await feishuBinding.findUserIdByUnionId(unionId);
+      if (userId == null) return null;
+      return resolveFeishuChatWorkspace(cfg.app.harness.workspaceRoot, String(accountId), `private-${userId}`);
+    } catch (error) {
+      console.warn(`定位合并转发工作区失败, accountId=${accountId}: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }
+  };
+  const expandMergeForward = async (accountId: string, messageId: string, workspace: string | null): Promise<string | null> => {
+    try {
+      const client = await getFeishuClient(Number(accountId));
+      if (client == null) return null;
+      return await expandFeishuMergeForward(client, messageId, {
+        workspace,
+        resolveUserNames: (openIds) => resolveFeishuUserNames(accountId, openIds),
+      });
+    } catch (error) {
+      console.warn(`展开飞书合并转发失败, messageId=${messageId}, code=unknown: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }
+  };
   // 群图片入站即下载（非懒加载）：落到群工作区，占位文本携带 @{路径}@ 引用，Agent 免工具直接读取；
   // 失败返回 null 由调用方保留 msg 占位符，仍可通过 feishu_download_file 懒加载兜底。
   const IMAGE_EXT_BY_CONTENT_TYPE: Record<string, string> = {
@@ -2006,19 +2048,29 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         return buildQuotedInjection(raw, { parentMessageId: event.parentId!, workspace: await resolveQuotedWorkspace(accountId, event) });
       };
       // 群消息日志优先：免 API 调用，发送人姓名与占位符格式也和上下文一致。
+      // 合并转发日志若仍是固定英文，或私聊没有日志，则展开后再注入。
       const fromLog = event.chatId != null
         ? await feishuMessageRepository.findGroupMessageByMessageId(String(accountId), event.chatId, event.parentId)
         : null;
-      if (fromLog != null) {
-        return persist(`[${formatGroupTime(fromLog.createdAt)}] ${fromLog.senderName}：${fromLog.content ?? ''}`);
-      }
-      // 日志未命中（引用机器人消息、超出日志窗口或私聊）：通过消息详情 API 兜底。
-      const client = await getFeishuClient(Number(accountId));
-      if (client == null) return null;
-      const detail = await fetchFeishuMessageDetail(client, event.parentId);
-      if (detail == null) return null;
-      return persist(detail.text);
+      return resolveFeishuQuotedText({
+        log: fromLog == null ? null : {
+          msgType: fromLog.msgType,
+          content: fromLog.content,
+          line: `[${formatGroupTime(fromLog.createdAt)}] ${fromLog.senderName}：${fromLog.content ?? ''}`,
+        },
+        fetchDetail: async () => {
+          const client = await getFeishuClient(Number(accountId));
+          if (client == null) return null;
+          const detail = await fetchFeishuMessageDetail(client, event.parentId!);
+          return detail == null ? null : { msgType: detail.msgType, text: detail.text };
+        },
+        expand: (workspace) => expandMergeForward(accountId, event.parentId!, workspace),
+        resolveWorkspace: () => resolveQuotedWorkspace(accountId, event),
+        persist,
+      });
     },
+    expandMergeForward,
+    resolveMergeWorkspace,
     resolveMessageText: async (accountId, messageId) => {
       const client = await getFeishuClient(Number(accountId));
       if (client == null) return null;
