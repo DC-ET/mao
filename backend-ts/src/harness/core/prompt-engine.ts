@@ -100,7 +100,7 @@ function isBenignCommandName(name: string): boolean {
 const INJECTED_SECTION_KEYS = new Set([
   'experiences',      // 最佳实践经验（命中经验库）
   'memories',         // 长期记忆（可治理：会话开关 / 设置页）
-  'skills',           // 可用技能目录（可治理：启用哪些技能）
+  'skills',           // 技能（构成标签；提示词标题仍是「可用技能」）
   'workspace-rules',  // 工作区规则（AGENTS.md，可治理）
 ]);
 const AGENTS_MD_TRUNCATED_HINT = '\n> 当前仅展示前200行规则，读取AGENTS.md文件以了解更多规则。\n';
@@ -290,7 +290,7 @@ export class PromptEngine {
         text += '技能副本位于会话运行时目录（不在用户项目目录内）。\n';
         text += '如需阅读某个技能的完整内容，请使用 `read_file` 工具读取下方列出的文件路径。\n\n';
         text += catalog + '\n\n';
-        sections.push({ key: 'skills', label: '可用技能', text, count: skillNames.length });
+        sections.push({ key: 'skills', label: '技能', text, count: skillNames.length });
       }
     }
     const taskText = this.toolBehaviorHints(context);

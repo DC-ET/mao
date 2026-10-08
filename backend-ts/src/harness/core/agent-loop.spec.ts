@@ -35,6 +35,7 @@ describe('AgentLoop', () => {
     getMaxMessageId: vi.fn(),
     getSession: vi.fn(),
     updateContextAnchor: vi.fn(),
+    updateContextTokens: vi.fn(async () => undefined),
   } as unknown as SessionService & {
     loadContextAnchor: ReturnType<typeof vi.fn>;
     getMaxMessageId: ReturnType<typeof vi.fn>;

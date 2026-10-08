@@ -1,4 +1,5 @@
 import { javaLocalDateTimeString } from '../common/datetime.js';
+import type { ContextManifest } from '../harness/core/context-manifest.js';
 import { idMapGet } from '../common/request.js';
 import type {
   ApprovalRegistry,
@@ -41,6 +42,8 @@ export interface SessionVO {
   steps?: unknown;
   projectKey?: string | null;
   contextTokens?: number | null;
+  /** 最近一次请求的构成快照；旧会话或超限丢弃时缺省。 */
+  contextManifest?: ContextManifest | null;
   running?: boolean;
   unread?: boolean;
   permissionLevel?: string | null;
@@ -132,6 +135,22 @@ export function visiblePhase(phase: string | null | undefined): string {
   return phase === 'RESUMING' ? 'RUNNING' : phase ?? 'IDLE';
 }
 
+/** 落库快照损坏时当没有构成，不让整份会话 VO 失败。 */
+export function parseContextManifest(raw: string | null | undefined): ContextManifest | null {
+  if (raw == null || raw.trim() === '') return null;
+  try {
+    const parsed = JSON.parse(raw) as ContextManifest;
+    if (parsed == null || !Array.isArray(parsed.sections)) return null;
+    return {
+      sections: parsed.sections,
+      memoryIds: Array.isArray(parsed.memoryIds) ? parsed.memoryIds : [],
+      estimatedWindowTokens: typeof parsed.estimatedWindowTokens === 'number' ? parsed.estimatedWindowTokens : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function toSessionVO(
   session: Session,
   agentMap: Map<number, { name: string; defaultModelId?: number | null }>,
@@ -158,6 +177,7 @@ export function toSessionVO(
     elapsedMs: session.elapsedMs != null ? session.elapsedMs : 0,
     projectKey: session.projectKey,
     contextTokens: session.contextTokens,
+    contextManifest: parseContextManifest(session.contextManifestJson),
     permissionLevel: session.permissionLevel,
     memoryInjectionDisabled: session.memoryInjectionDisabled === 1,
     running: session.phase === 'RUNNING' || session.phase === 'RESUMING' || session.phase === 'WAITING_APPROVAL',

@@ -16,6 +16,7 @@ import type { SessionCompactionOrchestrator } from './session-compaction-orchest
 import { CompactionStateReloadException } from './session-compaction-orchestrator.js';
 import type { CompactionSignalBus } from './compaction-signal-bus.js';
 import type { SessionActivityHeartbeat, SessionService } from '../deps.js';
+import { contextManifestJson } from './context-manifest.js';
 import { BusinessException } from '../../common/business-exception.js';
 import { ErrorCode } from '../../common/error-code.js';
 import { FileChangeDiffUtil } from '../tool/file-change-diff-util.js';
@@ -233,6 +234,7 @@ export class AgentLoop {
           ? await this.sessionService.getMaxMessageId(context.sessionId) : 0;
         const messagesCoveredThisRound = context.messages.length;
         const estimatedTokens = this.computeActiveTokens(context, request);
+        this.persistContextSnapshot(context, estimatedTokens);
         listener.onContextWindow?.(estimatedTokens, context.lastPromptTokens > 0 ? context.lastPromptTokens : 0, context.contextManifest);
 
         const currentRound = round;
@@ -300,6 +302,7 @@ export class AgentLoop {
                   if (context.sessionId != null && anchorMsgId > 0) {
                     afterStream.push(this.sessionService.updateContextAnchor(context.sessionId, promptTokens, anchorMsgId));
                   }
+                  this.persistContextSnapshot(context, promptTokens);
                   listener.onContextWindow?.(promptTokens, promptTokens, context.contextManifest);
                 }
                 if (toolCalls.length > 0) {
@@ -483,6 +486,7 @@ export class AgentLoop {
           try {
             const nextRequest = await this.promptEngine.buildRequest(context);
             const nextRequestTokens = this.computeActiveTokens(context, nextRequest);
+            this.persistContextSnapshot(context, nextRequestTokens);
             listener.onContextWindow?.(nextRequestTokens, context.lastPromptTokens > 0 ? context.lastPromptTokens : 0, context.contextManifest);
             const effectiveContextWindow = CompactionConfig.resolveEffectiveContextWindow(context.modelConfig, loopConfig);
             if (nextRequestTokens >= effectiveContextWindow * loopConfig.triggerRatio) {
@@ -516,6 +520,14 @@ export class AgentLoop {
     }
   }
 
+  /** 没有 WS listener 的执行（定时任务兜底等）也要把构成快照留下。listener 再写一次是同一份 JSON。 */
+  private persistContextSnapshot(context: AgentExecutionContext, tokens: number): void {
+    if (context.sessionId == null) return;
+    void this.sessionService.updateContextTokens(
+      context.sessionId, tokens, contextManifestJson(context.contextManifest),
+    ).catch(() => {});
+  }
+
   /**
    * 消费运行中的手动压缩信号。工具轮边界与纯文本收尾共用。
    * 前提与空闲路径对齐（持久化回调 + 会话 id + 配置对象）；不满足时不消费，留给 finally 清理。
@@ -536,6 +548,7 @@ export class AgentLoop {
     try {
       const manualRequest = await this.promptEngine.buildRequest(context);
       const manualTokens = this.computeActiveTokens(context, manualRequest);
+      this.persistContextSnapshot(context, manualTokens);
       listener.onContextWindow?.(manualTokens, context.lastPromptTokens > 0 ? context.lastPromptTokens : 0, context.contextManifest);
       await this.sessionCompactionOrchestrator.compact(
         context.sessionId, context, manualRequest, listener, loopConfig, true, cancelFlag,

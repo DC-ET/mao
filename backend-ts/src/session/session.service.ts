@@ -1188,8 +1188,11 @@ export class SessionService {
     await this.sessionRepo.updateFields(sessionId, { modelId });
   }
 
-  async updateContextTokens(sessionId: number, contextTokens: number): Promise<void> {
-    await this.sessionRepo.updateFields(sessionId, { contextTokens });
+  async updateContextTokens(sessionId: number, contextTokens: number, manifestJson?: string | null): Promise<void> {
+    const fields: Record<string, unknown> = { contextTokens };
+    // 未传第三参时不碰快照列：锚点更新只改水位，压缩编排在 listener 落快照之前先写数字。
+    if (manifestJson !== undefined) fields.contextManifestJson = manifestJson;
+    await this.sessionRepo.updateFields(sessionId, fields);
   }
 
   async updateRuntimeStatus(sessionId: number, runtimeStatus: unknown | null): Promise<void> {

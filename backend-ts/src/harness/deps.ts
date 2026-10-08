@@ -148,7 +148,7 @@ export interface SessionService {
   loadContextAnchor(sessionId: number): Promise<ContextAnchor>;
   updateContextAnchor(sessionId: number, promptTokens: number, anchorMsgId: number): Promise<void>;
   clearContextAnchor(sessionId: number): Promise<void>;
-  updateContextTokens(sessionId: number, tokens: number): Promise<void>;
+  updateContextTokens(sessionId: number, tokens: number, manifestJson?: string | null): Promise<void>;
   updatePhase(sessionId: number, phase: string): Promise<void>;
   saveMessage(
     sessionId: number,

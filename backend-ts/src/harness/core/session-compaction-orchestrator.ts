@@ -8,6 +8,7 @@ import type { ContextManager } from './context-manager.js';
 import type { PromptEngine } from './prompt-engine.js';
 import type { SessionHistoryLoader } from './session-history-loader.js';
 import type { SessionCompactionEventService, SessionCompactionService, SessionService } from '../deps.js';
+import { contextManifestJson } from './context-manifest.js';
 import { harnessLog } from '../log.js';
 import { LLM_CALL_SCENES, LlmCallContext } from '../../usage/llm-call-context.js';
 
@@ -142,7 +143,7 @@ export class SessionCompactionOrchestrator {
     context.lastPromptTokens = 0;
     context.contextAnchorMsgId = 0;
     context.messagesCoveredByAnchor = -1;
-    await this.sessionService.updateContextTokens(sessionId, requestTokens);
+    await this.sessionService.updateContextTokens(sessionId, requestTokens, contextManifestJson(context.contextManifest));
     listener?.onContextWindow?.(requestTokens, 0, context.contextManifest);
   }
 }

@@ -5,12 +5,14 @@ import { cloudGroupKey } from '../../utils/cloud-project'
 import { sortByFocusPriority, sessionToFocusCandidate } from '../../utils/focusSort'
 import { normalizeId, normalizeSession, persistLastSession, LAST_SESSION_KEY, ACTIVE_PHASES, DEFAULT_GROUP_PREVIEW, DEFAULT_GROUP_PAGE_SIZE } from './types'
 import type { Session, SessionEnvironmentInfo, SessionGroupMeta, CloudProject, TaskPhase } from './types'
+import { persistedContextWindow } from './context-window'
+import type { ContextWindowInfo } from '../../types/chat'
 
 /** 会话列表领域：实体缓存、标准/归档/聚焦投影、分组元数据、归档/删除/重命名。 */
 export function createSessionListModule(ctx: {
   sessionPendingApprovals: () => { value: Map<string, number> }
   sessionPendingQuestions: () => { value: Map<string, any[]> }
-  sessionContextWindow: () => { value: Map<string, { estimated: number; actual: number }> }
+  sessionContextWindow: () => { value: Map<string, ContextWindowInfo> }
   ctxSessionPhases: () => { value: Map<string, TaskPhase> }
   viewingSideTaskId: { value: number | null }
   purgeSessionRuntime: (sid: string) => void
@@ -21,6 +23,15 @@ export function createSessionListModule(ctx: {
   setExecutionError: (sessionId: string, message: string) => void
 }) {
   const { sessionPendingApprovals: getSessionPendingApprovals, sessionPendingQuestions: getSessionPendingQuestions, sessionContextWindow: getSessionContextWindow, ctxSessionPhases: getCtxSessionPhases, viewingSideTaskId, purgeSessionRuntime, reconcileSideTaskPendingCounts, setCompacting, clearLlmRetry, setLlmRetry, setExecutionError } = ctx
+
+  /** 只在还没有实时水位时写入。进行中的 context_window 不被列表快照盖掉。 */
+  function rememberPersistedContext(session: { id?: string | number; contextTokens?: number | null; contextManifest?: Session['contextManifest'] }) {
+    const info = persistedContextWindow(session.contextTokens, session.contextManifest)
+    if (!info || session.id == null) return
+    const sid = String(session.id)
+    if (getSessionContextWindow().value.has(sid)) return
+    getSessionContextWindow().value.set(sid, info)
+  }
 
   /**
    * 会话实体缓存（唯一真相源）。所有字段变更只进这里。
@@ -143,12 +154,7 @@ export function createSessionListModule(ctx: {
 
       for (const id of ids) {
         const s = sessionEntities.value.get(id)
-        if (s && s.contextTokens && s.contextTokens > 0) {
-          const sid = String(s.id)
-          if (!getSessionContextWindow().value.has(sid)) {
-            getSessionContextWindow().value.set(sid, { estimated: s.contextTokens, actual: 0 })
-          }
-        }
+        if (s) rememberPersistedContext(s)
       }
     } finally {
       if (seq === fetchSessionsSeq) loading.value = false
@@ -184,6 +190,7 @@ export function createSessionListModule(ctx: {
       for (const s of appended) {
         upsertSessionEntity(s)
         applyRuntimeStatus(s)
+        rememberPersistedContext(s)
         appendedIds.push(String(s.id))
       }
       if (appendedIds.length > 0) {
@@ -358,6 +365,7 @@ export function createSessionListModule(ctx: {
         for (const normalized of sessions) {
           upsertSessionEntity(normalized)
           applyRuntimeStatus(normalized)
+          rememberPersistedContext(normalized)
           ids.push(String(normalized.id))
         }
       }
@@ -383,6 +391,7 @@ export function createSessionListModule(ctx: {
       for (const s of items) {
         upsertSessionEntity(s)
         applyRuntimeStatus(s)
+        rememberPersistedContext(s)
         ids.push(String(s.id))
       }
       focusSessionIds.value = ids
@@ -400,12 +409,7 @@ export function createSessionListModule(ctx: {
         const normalized = normalizeSession({ ...data, unread: local?.unread ?? data.unread })
         updateSession(id, normalized)
         applyRuntimeStatus(normalized)
-        if (data.contextTokens && data.contextTokens > 0) {
-          const sid = normalizeId(data.id)
-          if (!getSessionContextWindow().value.has(sid)) {
-            getSessionContextWindow().value.set(sid, { estimated: data.contextTokens, actual: 0 })
-          }
-        }
+        rememberPersistedContext(normalized)
       }
       return data
     } catch {

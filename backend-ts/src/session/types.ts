@@ -26,6 +26,8 @@ export interface Session {
   projectKey?: string | null;
   lastActivityAt?: string | null;
   contextTokens?: number | null;
+  /** 最近一次请求的上下文构成快照 JSON，与 context_window 推送同源。 */
+  contextManifestJson?: string | null;
   lastPromptTokens?: number | null;
   contextAnchorMsgId?: number | null;
   unread?: number | null;

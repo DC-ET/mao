@@ -7,7 +7,7 @@ import { FileChangeDiffUtil } from '../../harness/tool/file-change-diff-util.js'
 import { ToolImageResultProcessor } from '../../harness/tool/tool-image-result-processor.js';
 import type { ToolCallResultMeta } from '../../harness/tool/tool-result.js';
 import type { ContextManifest } from '../../harness/core/context-manifest.js';
-import { CONTEXT_MANIFEST_MAX_BYTES } from '../../harness/core/context-manifest.js';
+import { contextManifestJson } from '../../harness/core/context-manifest.js';
 import { wsEvent } from './ws-event.js';
 
 export interface AgentEventListener {
@@ -57,7 +57,7 @@ export interface WsListenerDeps {
   activityHeartbeat: { touch(sessionId: number): void };
   sessionTodoMapper: { selectBySessionId(sessionId: number): Promise<SessionTodo[]> };
   sessionService: {
-    updateContextTokens(sessionId: number, tokens: number): Promise<void>;
+    updateContextTokens(sessionId: number, tokens: number, manifestJson?: string | null): Promise<void>;
     updateRuntimeStatus?(sessionId: number, runtimeStatus: unknown | null): Promise<void>;
   };
 }
@@ -163,10 +163,11 @@ export class WsStreamingEventListener implements AgentEventListener {
 
   onContextWindow(estimatedTokens: number, actualTokens: number, manifest?: ContextManifest | null): void {
     const data: Record<string, unknown> = { estimated: estimatedTokens, actual: actualTokens };
-    const trimmed = trimManifest(manifest ?? null);
-    if (trimmed != null) data.manifest = trimmed;
+    const manifestJson = contextManifestJson(manifest);
+    if (manifestJson != null) data.manifest = JSON.parse(manifestJson);
     this.send('context_window', data);
-    void this.deps.sessionService.updateContextTokens(this.sessionId, estimatedTokens).catch(() => {});
+    // 与推送同一份快照落库。null 表示本轮没有可展示的构成，清空旧快照，避免刷新后对不上水位。
+    void this.deps.sessionService.updateContextTokens(this.sessionId, estimatedTokens, manifestJson).catch(() => {});
   }
   onCompactionStart(type: string, messageCount: number, estimatedTokens: number): void {
     const data = { type, messageCount, estimatedTokens };
@@ -299,28 +300,6 @@ export class WsStreamingEventListener implements AgentEventListener {
       }
     } catch { /* ignore */ }
   }
-}
-
-/**
- * manifest 推送体积护栏（技术方案 §7）：序列化超过 8KB 时逐步裁剪 memoryIds（分节统计固定 ≤15
- * 条不会超限），仍超限则整体丢弃 manifest（水位字段照常下发）。null 透传为 null。
- */
-function trimManifest(manifest: ContextManifest | null): ContextManifest | null {
-  if (manifest == null) return null;
-  const fits = (m: ContextManifest): boolean => {
-    try {
-      return Buffer.byteLength(JSON.stringify(m), 'utf8') <= CONTEXT_MANIFEST_MAX_BYTES;
-    } catch {
-      return false;
-    }
-  };
-  let candidate: ContextManifest = { ...manifest, memoryIds: [...manifest.memoryIds] };
-  if (fits(candidate)) return candidate;
-  while (candidate.memoryIds.length > 0) {
-    candidate = { ...candidate, memoryIds: candidate.memoryIds.slice(0, Math.floor(candidate.memoryIds.length / 2)) };
-    if (fits(candidate)) return candidate;
-  }
-  return null;
 }
 
 /**

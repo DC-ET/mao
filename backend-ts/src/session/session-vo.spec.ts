@@ -1,43 +1,32 @@
 import { describe, expect, it } from 'vitest';
-import { toMessageVO, toStoredContentJson } from './session-vo.js';
+import { parseContextManifest, toSessionVO } from './session-vo.js';
 
-describe('toMessageVO multimodal images', () => {
-  it('extracts images from Java image_url shape', () => {
-    const vo = toMessageVO({
-      id: 1,
-      role: 'USER',
-      content: JSON.stringify([
-        { type: 'text', text: '这是啥' },
-        { type: 'image_url', image_url: { url: 'https://cdn.example/a.png' } },
-      ]),
+describe('parseContextManifest', () => {
+  it('parses a stored snapshot and drops broken json', () => {
+    const raw = JSON.stringify({
+      sections: [{ key: 'messages', label: '会话消息', tokens: 4000, count: 11 }],
+      memoryIds: [3],
+      estimatedWindowTokens: 256000,
     });
-    expect(vo.content).toBe('这是啥');
-    expect(vo.images).toEqual(['https://cdn.example/a.png']);
+    expect(parseContextManifest(raw)?.sections[0]?.key).toBe('messages');
+    expect(parseContextManifest('not-json')).toBeNull();
+    expect(parseContextManifest(null)).toBeNull();
+    expect(parseContextManifest('{"sections":"nope"}')).toBeNull();
   });
 
-  it('extracts images from camelCase imageUrl leftover', () => {
-    const vo = toMessageVO({
-      id: 2,
-      role: 'USER',
-      content: JSON.stringify([
-        { type: 'text', text: '这是啥' },
-        { type: 'image_url', imageUrl: { url: 'https://cdn.example/b.png' } },
-      ]),
-    });
-    expect(vo.content).toBe('这是啥');
-    expect(vo.images).toEqual(['https://cdn.example/b.png']);
-  });
-});
+  it('toSessionVO exposes the snapshot and omits it when absent', () => {
+    const withManifest = toSessionVO({
+      userId: 1,
+      contextTokens: 21000,
+      contextManifestJson: JSON.stringify({
+        sections: [{ key: 'system-prompt', label: '系统提示词', tokens: 3000 }],
+        memoryIds: [],
+        estimatedWindowTokens: 256000,
+      }),
+    }, new Map(), new Map());
+    expect(withManifest.contextManifest?.sections).toHaveLength(1);
 
-describe('toStoredContentJson', () => {
-  it('rewrites imageUrl to image_url before persist', () => {
-    const json = toStoredContentJson([
-      { type: 'text', text: 'hi' },
-      { type: 'image_url', imageUrl: { url: 'https://cdn.example/c.png' } },
-    ]);
-    expect(JSON.parse(json)).toEqual([
-      { type: 'text', text: 'hi' },
-      { type: 'image_url', image_url: { url: 'https://cdn.example/c.png' } },
-    ]);
+    const without = toSessionVO({ userId: 1, contextTokens: 21000 }, new Map(), new Map());
+    expect(without.contextManifest).toBeNull();
   });
 });

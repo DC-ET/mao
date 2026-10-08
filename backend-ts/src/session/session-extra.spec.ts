@@ -105,6 +105,11 @@ describe('SessionService extra', () => {
     await service.updatePermissionLevel(11, 'READ_WRITE');
     await service.updateModelId(11, 3);
     await service.updateContextTokens(11, 100);
+    expect(sessionRepo.updateFields).toHaveBeenCalledWith(11, { contextTokens: 100 });
+    await service.updateContextTokens(11, 80, '{"sections":[]}');
+    expect(sessionRepo.updateFields).toHaveBeenCalledWith(11, { contextTokens: 80, contextManifestJson: '{"sections":[]}' });
+    await service.updateContextTokens(11, 70, null);
+    expect(sessionRepo.updateFields).toHaveBeenCalledWith(11, { contextTokens: 70, contextManifestJson: null });
     await service.updateContextAnchor(11, 1, 2);
     expect(sessionRepo.updateFields).toHaveBeenCalledWith(11, expect.objectContaining({ lastPromptTokens: 1, contextAnchorMsgId: 2 }));
     const anchor = await service.loadContextAnchor(11);

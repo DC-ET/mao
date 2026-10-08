@@ -100,7 +100,7 @@ describe('WsStreamingEventListener', () => {
   });
 
   it('context_window payload carries manifest when provided', () => {
-    const { listener, registry } = makeListener();
+    const { listener, registry, sessionService } = makeListener();
     const manifest = {
       sections: [{ key: 'system-prompt', label: 'Agent 人格', tokens: 100 }],
       memoryIds: [1, 2, 3],
@@ -113,19 +113,21 @@ describe('WsStreamingEventListener', () => {
     expect(event?.data?.estimated).toBe(1000);
     expect(event?.data?.actual).toBe(900);
     expect(event?.data?.manifest).toEqual(manifest);
+    expect(sessionService.updateContextTokens).toHaveBeenCalledWith(11, 1000, JSON.stringify(manifest));
   });
 
   it('context_window payload omits manifest field when null', () => {
-    const { listener, registry } = makeListener();
+    const { listener, registry, sessionService } = makeListener();
     listener.onContextWindow(50, 40);
     const event = vi.mocked(registry.send).mock.calls
       .map((c) => c[1] as { type: string; data?: Record<string, unknown> })
       .find((e) => e.type === 'context_window');
     expect('manifest' in (event?.data ?? {})).toBe(false);
+    expect(sessionService.updateContextTokens).toHaveBeenCalledWith(11, 50, null);
   });
 
   it('context_window trims memoryIds when manifest exceeds size cap', () => {
-    const { listener, registry } = makeListener();
+    const { listener, registry, sessionService } = makeListener();
     // 构造一个远超 8KB 的 manifest：sections 里塞一段巨大 label，memoryIds 也填满
     const huge = 'x'.repeat(9000);
     const manifest = {
@@ -140,6 +142,7 @@ describe('WsStreamingEventListener', () => {
     // sections 本身无法裁剪 → 整体丢弃 manifest（水位字段仍在），避免超大帧
     expect(event?.data?.estimated).toBe(10);
     expect('manifest' in (event?.data ?? {})).toBe(false);
+    expect(sessionService.updateContextTokens).toHaveBeenCalledWith(11, 10, null);
   });
 
   it('sends tool_call_start only once per id and keeps latest arguments', () => {

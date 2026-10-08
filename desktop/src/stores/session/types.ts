@@ -51,6 +51,8 @@ export interface Session {
   shell?: string
   osVersion?: string
   contextTokens?: number
+  /** 最近一次请求的构成快照，刷新后随会话详情带回 */
+  contextManifest?: import('../../types/chat').ContextManifest | null
   running: boolean
   permissionLevel?: string
   /** 单会话长期记忆注入关闭标志（后端 VO 布尔；true=已关闭注入） */

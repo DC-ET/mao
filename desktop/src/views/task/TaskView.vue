@@ -66,6 +66,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAgentStore } from '../../stores/agent'
 import { useSessionStore, type TaskPhase, type SubagentItem } from '../../stores/session'
+import { persistedContextWindow } from '../../stores/session/context-window'
 import { useDraftStore } from '../../stores/draft'
 import { usePanelLayout } from '../../composables/usePanelLayout'
 import { useCenterTabs } from '../../composables/useCenterTabs'
@@ -336,8 +337,9 @@ function ensureInspectorMeta(sid: string, viewType: 'side_task' | 'subagent', pa
       // 补拉上下文占用：context_window 事件仅在该会话执行期间经 WS 推送，
       // 页面刷新或会话已停止后 store 缓存缺失，会回退显示主会话上下文。
       // 仅当无实时缓存时写入，避免覆盖执行中的实时值。
-      if (meta?.contextTokens && meta.contextTokens > 0 && !sessionStore.getContextWindow(sid)) {
-        sessionStore.setContextWindow(sid, { estimated: meta.contextTokens, actual: 0 })
+      const persisted = persistedContextWindow(meta?.contextTokens, meta?.contextManifest)
+      if (persisted && !sessionStore.getContextWindow(sid)) {
+        sessionStore.setContextWindow(sid, persisted)
       }
       const num = Number(sid)
       if (viewType === 'side_task') {
