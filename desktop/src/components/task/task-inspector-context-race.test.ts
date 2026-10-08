@@ -312,6 +312,9 @@ describe('TaskInspector 上下文入口：徽标开抽屉，无顶层页签（0.
     expect(memoryCallCount.value).toBe(1)
     expect(m.pageText()).toContain('上下文容量')
     expect(m.pageText()).toContain('手动整理上下文')
+    // 容量保持模型水位 max(estimated=100, actual=50)，不改成构成原始估算 1234。
+    expect(m.pageText()).toContain('100/200k（0%）')
+    expect(m.pageText()).not.toContain('1.2k')
   })
 
   it('切换会话后抽屉自动关闭，必须重新点击徽标才会再展示', async () => {

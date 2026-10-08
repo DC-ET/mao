@@ -242,11 +242,11 @@
           <div class="ctx-capacity-head">
             <span class="ctx-block-title">上下文容量</span>
             <el-tooltip
-              content="本轮真实发送内容的估算总量（消息 + 工具定义），与下方构成合计同口径；压缩后会重新计算"
+              content="本轮实际占用的上下文，优先用模型返回的输入 token。下方构成按这个总数分摊，合计与这里一致。压缩后会重新计算"
               placement="top"
               :show-after="300"
             >
-              <span v-if="capacitySummary" class="ctx-capacity-value">{{ capacitySummary }}</span>
+              <span v-if="capacitySummary" class="ctx-capacity-value" :title="`${contextTokens.toLocaleString()} tokens`">{{ capacitySummary }}</span>
             </el-tooltip>
           </div>
           <div v-if="waterLevelPct != null" class="ctx-track">
@@ -266,7 +266,7 @@
           <div class="ctx-block-title ctx-row">
             <span>上下文构成</span>
             <el-tooltip
-              content="各节 token 为字节估算口径；分节合计与上方容量同口径（均含系统工具），差异仅来自 system 消息固定开销"
+              content="各节按字节估算的比例，分摊到上方的实际容量，所以合计相等。交接摘要已包含在会话消息中，单独列出但不重复计入"
               placement="top"
             >
               <span class="ctx-help">?</span>
@@ -365,6 +365,7 @@ import type { GitChangedFile } from '../../types/git'
 import { cloudWorkspaceIndicator } from '../../utils/cloud-project'
 import { copyText } from '../../utils/clipboard'
 import { useSessionStore } from '../../stores/session'
+import { scaleSectionsToCapacity } from '../../stores/session/context-window'
 
 const props = defineProps<{
   todos?: TodoItem[]
@@ -567,7 +568,7 @@ function tokensPct(tokens: number): number | null {
   if (!w || w <= 0) return null
   return Math.min(100, Math.round((tokens / w) * 100))
 }
-const waterLevelPct = computed(() => tokensPct(props.contextWindow?.estimated ?? 0))
+const waterLevelPct = computed(() => tokensPct(contextTokens.value))
 
 // 水位色调：<60% 常规，60–85% 提示，>85% 告警（与截图的三段式语义一致）
 const waterTone = computed(() => {
@@ -598,7 +599,8 @@ type SectionRow = {
   rank: number
 }
 const sectionRows = computed<SectionRow[]>(() => {
-  const rows = sectionStats.value.map((sec, i) => ({
+  const scaled = scaleSectionsToCapacity(sectionStats.value, contextTokens.value)
+  const rows = scaled.map((sec, i) => ({
     key: sec.key,
     label: sec.label,
     tokens: sec.tokens,
@@ -884,8 +886,8 @@ function formatTokenCompact(value: number): string {
 
 const contextTokens = computed(() => {
   if (!props.contextWindow) return 0
-  // estimated = 服务端活跃上下文（锚点+增量）；actual = 最近一次真实 prompt_tokens
-  // 取较大值，避免增量阶段被偏小的 stale actual 压住占比
+  // estimated = 服务端活跃上下文（锚点 + 模型 prompt token）；actual = 最近一次真实 prompt_tokens。
+  // 取较大值，避免增量阶段被偏小的 stale actual 压住占比。构成明细向这个数分摊，不反过来改容量。
   const estimated = props.contextWindow.estimated || 0
   const actual = props.contextWindow.actual || 0
   const tokens = Math.max(estimated, actual)

@@ -777,6 +777,39 @@ describe('AgentLoop', () => {
     expect(sessionCompactionOrchestrator.compact.mock.calls[0][5]).toBe(true);
   });
 
+  it('context capacity stays on model usage when the manifest estimate is smaller', async () => {
+    const ctx = contextWithMidLoopConfig(100, 0.5);
+    const manifest = {
+      sections: [
+        { key: 'messages', label: '会话消息', tokens: 64000 },
+        { key: 'tool-definitions', label: '系统工具', tokens: 8800 },
+        { key: 'handoff', label: '交接摘要', tokens: 5000 },
+      ],
+      memoryIds: [],
+      estimatedWindowTokens: 256000,
+    };
+    promptEngine.buildRequest.mockImplementation(async (c: AgentExecutionContext) => {
+      c.contextManifest = manifest;
+      return { messages: [], stream: true };
+    });
+    stubActiveContext(80);
+    backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
+    toolDispatcher.dispatchInvocation.mockResolvedValue(toolResult('{"ok":true}'));
+    sessionCompactionOrchestrator.compact.mockResolvedValue(true);
+    const l = listener();
+    stubToolThenDone();
+
+    await agentLoop.execute(ctx, l, persistence());
+
+    // 容量是模型/锚点占用，不能改成偏小的构成合计。构成对齐放在展示层分摊。
+    expect(sessionCompactionOrchestrator.compact.mock.calls[0][7]).toBe(80);
+    const published = l.onContextWindow.mock.calls.map((call) => call[0] as number);
+    expect(published.length).toBeGreaterThan(0);
+    expect(published.every((tokens) => tokens !== 72800)).toBe(true);
+    expect(l.onContextWindow.mock.calls.at(-1)![0]).toBe(4);
+    expect(sessionService.updateContextTokens).not.toHaveBeenCalledWith(11, 72800, expect.anything());
+  });
+
   it('midLoopCompactionSkippedWithoutPersistenceCallback', async () => {
     const ctx = contextWithMidLoopConfig(100, 0.5);
     const l = listener();

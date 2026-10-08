@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { persistedContextWindow } from './context-window'
+import { persistedContextWindow, scaleSectionsToCapacity } from './context-window'
 
 describe('persistedContextWindow', () => {
   it('restores capacity and composition together', () => {
@@ -21,6 +21,19 @@ describe('persistedContextWindow', () => {
       actual: 0,
     })
     expect(persistedContextWindow(21000, null)).toEqual({ estimated: 21000, actual: 0 })
+  })
+
+  it('apportions section estimates onto the real capacity and skips handoff', () => {
+    const scaled = scaleSectionsToCapacity([
+      { key: 'messages', label: '会话消息', tokens: 64000 },
+      { key: 'tool-definitions', label: '系统工具', tokens: 8800 },
+      { key: 'handoff', label: '交接摘要', tokens: 5000 },
+    ], 87000)
+    const additive = scaled.filter((section) => section.key !== 'handoff')
+    expect(additive.reduce((acc, section) => acc + section.tokens, 0)).toBe(87000)
+    expect(scaled.find((section) => section.key === 'messages')!.tokens).toBeGreaterThan(64000)
+    expect(scaled.find((section) => section.key === 'handoff')!.tokens).toBeGreaterThan(5000)
+    expect(scaleSectionsToCapacity([{ key: 'messages', tokens: 100 }], 0)).toEqual([{ key: 'messages', tokens: 100 }])
   })
 
   it('returns null when there is no token count', () => {
