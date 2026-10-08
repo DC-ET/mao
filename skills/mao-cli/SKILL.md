@@ -19,7 +19,9 @@ Mao 的**产品文档唯一正文**（可独立分发）+ **REST 操作 CLI**。
 | 管理后台怎么用 / Agent 头像与分组编辑 / 提示词版本与回滚 | [reference/admin.md](reference/admin.md) |
 | 桌面 Web 端（任务、工作区、终端、通知、微信等） | [reference/desktop.md](reference/desktop.md) |
 | 长期记忆（跨会话记忆的查看与维护） | [reference/memory.md](reference/memory.md) |
-| 任务收件箱（站内通知中心：未读数、五类事件、偏好开关） | [reference/inbox.md](reference/inbox.md) |
+| 任务收件箱（站内通知中心：未读数、七类事件、偏好开关） | [reference/inbox.md](reference/inbox.md) |
+| 模型价格与用量成本核算（每百万 token 价格、llm_call 成本、分析看钱） | [reference/model.md](reference/model.md)、[reference/analytics.md](reference/analytics.md) |
+| 用量预算（全局 / 用户 / Agent 月度预算，超额提醒或拦截） | [reference/budget.md](reference/budget.md) |
 | 开放接口（API Token / 入站 Webhook 触发器 / 出站事件订阅） | [reference/open-api.md](reference/open-api.md) |
 | 飞书机器人通道（绑定 / 群聊@机器人 / 多机器人配置） | [reference/feishu-bot.md](reference/feishu-bot.md) |
 | 钉钉机器人通道（绑定 / 群聊@机器人 / 多机器人配置） | [reference/dingtalk-bot.md](reference/dingtalk-bot.md) |
@@ -34,8 +36,9 @@ Mao 的**产品文档唯一正文**（可独立分发）+ **REST 操作 CLI**。
 
 ## REST CLI 何时使用
 
-- 登录并缓存 JWT；查询/配置用户、角色、Agent、模型、Skill、会话元数据、文件诊断、定时任务、微信、MCP、审计等
+- 登录并缓存 JWT；查询/配置用户、角色、Agent、模型（含价格）、Skill、会话元数据、文件诊断、定时任务、微信、MCP、审计等
 - 管理开放接口：API Token、入站 Webhook 触发器、出站事件订阅的 CRUD（见 [reference/open-api.md](reference/open-api.md)）
+- 管理用量预算：全局 / 用户 / Agent 月度预算，金额或 token 口径，超额提醒或拦截（见 [reference/budget.md](reference/budget.md)）
 - 脚本或 Agent 流程中以 JSON 消费上述 API
 
 ## REST CLI 何时不要使用
@@ -48,6 +51,7 @@ Mao 的**产品文档唯一正文**（可独立分发）+ **REST 操作 CLI**。
 
 - 对话消息发送、消息队列写操作、WebSocket 流式会话
 - `/v1/statistics/*` 用量统计（管理后台 UI 可用）
+- 开放 API / Webhook 直接触发运行（`open` 已覆盖 mao_ Token 触发，预算判定同样作用于这两类来源，见 [budget.md](reference/budget.md)）
 - Agent 头像上传与设置（管理后台 UI / REST 可用，见 [reference/agent.md](reference/agent.md)）
 - Agent 系统提示词版本列表与回滚（管理后台 UI / REST 可用，见 [reference/agent.md](reference/agent.md)）
 - 会话 `search` / `messages` 全文检索（管理端 UI 可用）
@@ -98,6 +102,7 @@ mao auth login --username <用户名> --password <密码>
 5. 先 `agent list` + `model list-active`，再 `session create`
 6. `mao-admin session` / `skill` 自动映射到 `admin-session` / `skill-docs`
 7. 跨模块流程 → [business_process.md](business_process.md)
+8. 问"这个月谁花了多少钱 / 要不要给某用户或 Agent 装费用闸门" → 先 `model get` 看价格有没有配，再 `analytics` 看成本、`budget` 设上限（见 [budget.md](reference/budget.md)、[analytics.md](reference/analytics.md)）
 
 ## REST 模块文档索引
 
@@ -131,3 +136,4 @@ mao auth login --username <用户名> --password <密码>
 | 消息点踩反馈 | [reference/feedback.md](reference/feedback.md) |
 | 审计日志 | [reference/audit.md](reference/audit.md) |
 | 系统设置 | [reference/settings.md](reference/settings.md) |
+| 用量预算（全局 / 用户 / Agent 月度预算，超额提醒或拦截） | [reference/budget.md](reference/budget.md) |

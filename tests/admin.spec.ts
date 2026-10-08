@@ -69,8 +69,10 @@ test.describe('Analytics Homepage', () => {
     await expect(page.locator('.page-toolbar .period-text')).toBeVisible({ timeout: 10_000 })
     const metrics = page.locator('.metric-strip .metric')
     await expect(metrics.first()).toBeVisible({ timeout: 10_000 })
-    await expect(metrics).toHaveCount(4)
+    // 0.0.242 起总览新增「成本」指标卡（口径 llm_call 成本快照，单位与模型价格一致）
+    await expect(metrics).toHaveCount(5)
     await expect(page.locator('.metric.primary .label')).toHaveText('Token 消耗')
+    await expect(page.locator('.metric', { hasText: '成本' })).toBeVisible()
   })
 
   test('should show auto-refresh control default off', async ({ page }) => {

@@ -133,7 +133,7 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import BaseChart from '../../../components/BaseChart.vue'
 import { CHART_PALETTE } from '../../../utils/echarts'
-import { formatCompact, formatTokens, sparklineOption } from '../chart-options'
+import { formatCompact, formatCost, formatTokens, sparklineOption } from '../chart-options'
 import { delta, deltaClass, deltaText } from '../composables/metrics'
 import type { OverviewPayload, PeriodTotals, PreviousTotals } from '../types'
 
@@ -152,6 +152,7 @@ const EMPTY: PeriodTotals = {
   backgroundTokens: 0,
   totalTokens: 0,
   backgroundCalls: 0,
+  totalCost: 0,
   activeUsers: 0,
   completedSessions: 0,
   failedSessions: 0
@@ -165,6 +166,7 @@ const sparkValues = computed(() => (props.payload?.spark || []).map((p) => p.tot
 const previousLabel = computed(() => props.previousText || '上一周期')
 
 const tokenDelta = computed(() => delta(totals.value.totalTokens, previous.value.totalTokens))
+const costDelta = computed(() => delta(totals.value.totalCost, previous.value.totalCost))
 
 const secondaryMetrics = computed(() => [
   {
@@ -187,6 +189,13 @@ const secondaryMetrics = computed(() => [
     delta: delta(totals.value.activeUsers, previous.value.activeUsers),
     sub: '窗口内有会话或消息',
     path: '/analytics?tab=users'
+  },
+  {
+    label: '成本',
+    display: formatCost(totals.value.totalCost),
+    delta: costDelta.value,
+    sub: '单位与模型价格填写一致（llm_call 口径）',
+    path: '/budgets'
   }
 ])
 
@@ -237,6 +246,7 @@ const liveWindow = computed<LiveItem[]>(() => {
 const composeRows = computed(() => [
   { label: '对话 Token', valueText: formatTokens(totals.value.chatTokens), fail: false },
   { label: '后台 Token', valueText: formatTokens(totals.value.backgroundTokens), fail: false },
+  { label: '成本合计', valueText: formatCost(totals.value.totalCost), fail: false },
   { label: '完成会话', valueText: formatNumber(totals.value.completedSessions), fail: false },
   { label: '失败会话', valueText: formatNumber(totals.value.failedSessions), fail: true }
 ])
@@ -276,7 +286,7 @@ export default {
 
 .metric-strip {
   display: grid;
-  grid-template-columns: minmax(220px, 1.4fr) repeat(3, minmax(140px, 1fr));
+  grid-template-columns: minmax(220px, 1.4fr) repeat(4, minmax(140px, 1fr));
   gap: 8px;
   min-height: 120px;
 }

@@ -16,13 +16,14 @@ export interface NotificationRow {
   createdAt: string;
 }
 
-/** 收件箱偏好行（无行时按列默认值：前三类开、子代理关）。 */
+/** 收件箱偏好行（无行时按列默认值：前三类开、子代理关、预算提醒开）。 */
 export interface UserInboxPreferenceRow {
   userId: number;
   taskCompletedEnabled: number;
   questionPendingEnabled: number;
   approvalPendingEnabled: number;
   subagentDoneEnabled: number;
+  budgetWarnEnabled?: number | null;
   systemNotifyEnabled: number;
 }
 
@@ -153,6 +154,7 @@ export class InboxRepository {
               question_pending_enabled AS questionPendingEnabled,
               approval_pending_enabled AS approvalPendingEnabled,
               subagent_done_enabled AS subagentDoneEnabled,
+              budget_warn_enabled AS budgetWarnEnabled,
               system_notify_enabled AS systemNotifyEnabled
        FROM user_inbox_preference WHERE user_id = ?`,
       [userId],
@@ -165,18 +167,20 @@ export class InboxRepository {
     questionPendingEnabled: boolean;
     approvalPendingEnabled: boolean;
     subagentDoneEnabled: boolean;
+    budgetWarnEnabled: boolean;
     systemNotifyEnabled: boolean;
   }): Promise<void> {
     await this.db.execute(
       `INSERT INTO user_inbox_preference
          (user_id, task_completed_enabled, question_pending_enabled, approval_pending_enabled,
-          subagent_done_enabled, system_notify_enabled)
-       VALUES (?, ?, ?, ?, ?, ?)
+          subagent_done_enabled, budget_warn_enabled, system_notify_enabled)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          task_completed_enabled = VALUES(task_completed_enabled),
          question_pending_enabled = VALUES(question_pending_enabled),
          approval_pending_enabled = VALUES(approval_pending_enabled),
          subagent_done_enabled = VALUES(subagent_done_enabled),
+         budget_warn_enabled = VALUES(budget_warn_enabled),
          system_notify_enabled = VALUES(system_notify_enabled)`,
       [
         userId,
@@ -184,6 +188,7 @@ export class InboxRepository {
         flags.questionPendingEnabled ? 1 : 0,
         flags.approvalPendingEnabled ? 1 : 0,
         flags.subagentDoneEnabled ? 1 : 0,
+        flags.budgetWarnEnabled ? 1 : 0,
         flags.systemNotifyEnabled ? 1 : 0,
       ],
     );

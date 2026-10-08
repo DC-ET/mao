@@ -1,6 +1,7 @@
 import type { ChatRequest, ChatUsage, LlmModelConfig } from './llm/chat-request.js';
 import type { Db } from '../db/db.js';
 import type { ClientImpersonation } from '@mao/contracts';
+import { parsePriceColumn } from '../usage/cost-micros.js';
 
 export interface Session {
   id?: number;
@@ -66,6 +67,9 @@ export interface LlmModel {
   modelId?: string | null;
   clientImpersonation?: string | null;
   contextWindowTokens?: number | null;
+  /** 每百万 token 价格（成本单位）。DECIMAL 列经 mysql2 读出为 string，计价前 parsePriceColumn 归一。 */
+  priceInput?: string | number | null;
+  priceOutput?: string | number | null;
   supportsVision?: number | boolean | null;
   isDefault?: number | boolean | null;
   status?: number | null;
@@ -294,6 +298,10 @@ export function llmModelToConfig(model: LlmModel): LlmModelConfig {
     contextWindowTokens: model.contextWindowTokens ?? undefined,
     supportsVision: model.supportsVision === 1 || model.supportsVision === true,
     clientImpersonation: toClientImpersonation(model.clientImpersonation),
+    // 价格随模型解析链下发（成本快照主路径，决策 8）；NULL 价归一为 undefined，
+    // 落库侧对 undefined 走兜底缓存再解析同一行，结果一致（NULL → 成本 NULL）。
+    priceInput: parsePriceColumn(model.priceInput) ?? undefined,
+    priceOutput: parsePriceColumn(model.priceOutput) ?? undefined,
   };
 }
 

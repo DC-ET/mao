@@ -75,6 +75,32 @@
       <el-form-item label="API Key" prop="apiKey">
         <el-input v-model="form.apiKey" type="password" show-password :placeholder="isEdit ? '已回填当前 Key，可查看或修改；留空则不修改' : '请输入 API Key'" />
       </el-form-item>
+      <el-form-item v-if="isTextType" label="输入价格">
+        <el-input-number
+          v-model="form.priceInput"
+          :min="0"
+          :max="PRICE_MAX"
+          :step="0.01"
+          :precision="6"
+          :controls="false"
+          placeholder="留空则不计成本"
+          style="width: 220px"
+        />
+        <span class="form-hint-inline">每百万输入 Token 价格（成本单位；仅影响后续调用，不追溯历史）</span>
+      </el-form-item>
+      <el-form-item v-if="isTextType" label="输出价格">
+        <el-input-number
+          v-model="form.priceOutput"
+          :min="0"
+          :max="PRICE_MAX"
+          :step="0.01"
+          :precision="6"
+          :controls="false"
+          placeholder="留空则不计成本"
+          style="width: 220px"
+        />
+        <span class="form-hint-inline">每百万输出 Token 价格（成本单位；缓存命中按 5 折计价）</span>
+      </el-form-item>
       <el-form-item v-if="isTextType" label="上下文窗口">
         <el-input-number
           v-model="form.contextWindowTokens"
@@ -109,6 +135,10 @@ import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { api } from '../../api'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
+
+/** 价格上限与后端 price_input / price_output 的 DECIMAL(12,6) 值域对齐：el-input-number 的 max
+ *  会把超范围输入钳到该值本身，若取 1000000 恰好钳到唯一一个不可存的值而使保存失败。 */
+const PRICE_MAX = 999999.999999
 
 const props = withDefaults(defineProps<{
   visible: boolean
@@ -174,6 +204,8 @@ const form = reactive({
   baseUrl: '',
   apiKey: '',
   contextWindowTokens: 256000,
+  priceInput: undefined as number | undefined | null,
+  priceOutput: undefined as number | undefined | null,
   supportsVision: false,
   isDefault: false
 })
@@ -202,6 +234,8 @@ function resetForm() {
     baseUrl: '',
     apiKey: '',
     contextWindowTokens: 256000,
+    priceInput: null,
+    priceOutput: null,
     supportsVision: false,
     isDefault: false
   })
@@ -224,6 +258,8 @@ watch(() => props.visible, (val) => {
       // 掩码写成新密钥导致模型调用全部鉴权失败。编辑时留空 = 不修改，由后端保留原值。
       apiKey: isMaskedApiKey(props.modelData.apiKey) ? '' : props.modelData.apiKey || '',
       contextWindowTokens: props.modelData.contextWindowTokens || 256000,
+      priceInput: props.modelData.priceInput ?? null,
+      priceOutput: props.modelData.priceOutput ?? null,
       supportsVision: !!props.modelData.supportsVision,
       isDefault: !!props.modelData.isDefault
     })
@@ -247,10 +283,12 @@ async function handleSubmit() {
   submitting.value = true
   try {
     const payload: any = { ...form, supportsVision: form.supportsVision ? 1 : 0, isDefault: form.isDefault ? 1 : 0 }
-    // 语音/文生图模型不参与默认模型与上下文压缩，强制归零
+    // 语音/文生图模型不参与默认模型与上下文压缩，强制归零；价格同样不参与成本核算
     if (form.modelType !== 'text') {
       payload.supportsVision = 0
       payload.isDefault = 0
+      payload.priceInput = null
+      payload.priceOutput = null
     }
     // In edit mode, omit apiKey when left blank so the existing key is preserved.
     if (isEdit.value && !form.apiKey) {

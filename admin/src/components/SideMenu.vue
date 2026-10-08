@@ -58,7 +58,8 @@ import {
   ChatLineRound,
   Tickets,
   Flag,
-  Collection
+  Collection,
+  Wallet
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
 import { pickHomePath } from '../utils/home'
@@ -121,6 +122,7 @@ const menuGroups: MenuGroup[] = [
     items: [
       { index: '/sessions', label: '会话管理', icon: ChatDotRound, permission: 'session:read' },
       { index: '/scheduled-tasks', label: '定时任务', icon: Timer, permission: 'scheduled-task:read' },
+      { index: '/budgets', label: '用量预算', icon: Wallet, permission: 'budget:read' },
       { index: '/llm-calls', label: '调用流水', icon: Tickets, permission: 'llm-call:read' },
       { index: '/feedback', label: '点踩反馈', icon: Flag, permission: 'feedback:read' },
       { index: '/memory', label: '用户记忆', icon: Collection, permission: 'memory:read' }

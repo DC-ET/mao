@@ -123,6 +123,9 @@
         <el-table-column label="出 Token" width="100" align="right">
           <template #default="{ row }">{{ formatNumber(row.completionTokens || 0) }}</template>
         </el-table-column>
+        <el-table-column label="成本" width="100" align="right" class-name="hide-on-mobile">
+          <template #default="{ row }">{{ formatCostCell(row.costMicros) }}</template>
+        </el-table-column>
         <el-table-column label="缓存" width="140" align="right" class-name="hide-on-mobile cache-col">
           <template #default="{ row }">
             <span class="cache-cell">{{ formatCacheHit(row) }}</span>
@@ -166,6 +169,7 @@
           <div class="call-card-row"><span class="call-card-label">用户</span><span>{{ row.displayName || row.username || row.userId || '-' }}</span></div>
           <div class="call-card-row"><span class="call-card-label">模型</span><span>{{ row.modelName || '-' }}</span></div>
           <div class="call-card-row"><span class="call-card-label">Token</span><span>{{ formatNumber(row.promptTokens || 0) }} / {{ formatNumber(row.completionTokens || 0) }}</span></div>
+          <div class="call-card-row"><span class="call-card-label">成本</span><span>{{ formatCostCell(row.costMicros) }}</span></div>
           <div class="call-card-row"><span class="call-card-label">缓存</span><span>{{ formatCacheHit(row) }}</span></div>
           <div class="call-card-row"><span class="call-card-label">耗时</span><span>首字 {{ formatMs(row.firstTokenMs) }} / 总 {{ formatMs(row.durationMs) }}</span></div>
           <div class="call-card-row"><span class="call-card-label">重试</span><span>{{ row.retryCount ?? 0 }}</span></div>
@@ -208,6 +212,7 @@
         <el-descriptions-item label="重试">{{ currentRecord.retryCount ?? 0 }}</el-descriptions-item>
         <el-descriptions-item label="入 Token">{{ formatNumber(currentRecord.promptTokens || 0) }}</el-descriptions-item>
         <el-descriptions-item label="出 Token">{{ formatNumber(currentRecord.completionTokens || 0) }}</el-descriptions-item>
+        <el-descriptions-item label="成本">{{ formatCostCell(currentRecord.costMicros) }}</el-descriptions-item>
         <el-descriptions-item label="缓存 Token">{{ formatCacheHit(currentRecord) }}</el-descriptions-item>
         <el-descriptions-item label="合计 Token">{{ formatNumber(currentRecord.totalTokens || 0) }}</el-descriptions-item>
         <el-descriptions-item label="首字耗时">{{ formatMs(currentRecord.firstTokenMs) }}</el-descriptions-item>
@@ -230,7 +235,7 @@ import { useBreakpoint } from '../../composables/useBreakpoint'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
 import FilterPanel from '../../components/FilterPanel.vue'
-import { LLM_CALL_SCENE_OPTIONS, llmCallSceneLabel, formatMs } from '../../utils/llmCallLabels'
+import { LLM_CALL_SCENE_OPTIONS, llmCallSceneLabel, formatMs, formatCost } from '../../utils/llmCallLabels'
 
 const route = useRoute()
 const router = useRouter()
@@ -279,6 +284,12 @@ function applyQueryFilters() {
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat('zh-CN').format(value)
+}
+
+/** 成本单元格：cost_micros 微单位 → 成本单位（与模型价格填写口径一致）；NULL（未配价）显示 -。 */
+function formatCostCell(costMicros?: number | null): string {
+  if (costMicros == null) return '-'
+  return formatCost(costMicros / 1000000)
 }
 
 function formatCacheHit(row: { cachedTokens?: number | null; promptTokens?: number | null }) {
@@ -409,7 +420,7 @@ async function doExportCsv() {
       rows.push(...records)
       pageNum += 1
     }
-    const header = ['时间', '用户', '模型', '输入 Token', '输出 Token', '耗时(ms)', '缓存 Token', '状态', '错误信息', '会话 ID', 'Agent ID']
+    const header = ['时间', '用户', '模型', '输入 Token', '输出 Token', '成本', '耗时(ms)', '缓存 Token', '状态', '错误信息', '会话 ID', 'Agent ID']
     const lines = [header.map(csvCell).join(',')]
     for (const row of rows) {
       lines.push([
@@ -418,6 +429,7 @@ async function doExportCsv() {
         row.modelName || row.providerModelId || '',
         row.promptTokens || 0,
         row.completionTokens || 0,
+        row.costMicros == null ? '' : (row.costMicros / 1000000).toFixed(6),
         row.durationMs ?? '',
         row.cachedTokens || 0,
         row.success === 1 ? '成功' : '失败',

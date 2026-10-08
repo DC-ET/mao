@@ -108,6 +108,86 @@ describe('ModelService', () => {
     expect(created.clientImpersonation).toBe('codex');
   });
 
+  it('createModelPricesNormalizeToCostColumns', async () => {
+    const priced = await service.createModel('n', 'p', 'https://x', 'k', 'm', 0, 0, null, 'text', null, null, null, 2.5, 8);
+    expect(priced.priceInput).toBe(2.5);
+    expect(priced.priceOutput).toBe(8);
+
+    // 未提供（undefined）→ null：不计成本
+    const unpriced = await service.createModel('n', 'p', 'https://x', 'k', 'm', 0, 0, null, 'text', null, null, null, undefined, undefined);
+    expect(unpriced.priceInput).toBeNull();
+    expect(unpriced.priceOutput).toBeNull();
+
+    await expect(
+      service.createModel('n', 'p', 'https://x', 'k', 'm', 0, 0, null, 'text', null, null, null, -1, 8),
+    ).rejects.toThrow(/priceInput 必须是非负数字/);
+    await expect(
+      service.createModel('n', 'p', 'https://x', 'k', 'm', 0, 0, null, 'text', null, null, null, 2, '8' as never),
+    ).rejects.toThrow(/priceOutput 必须是非负数字/);
+
+    // 与 updateModel 同一套 DECIMAL(12,6) 校验，create 路径同样拦得住（不落到 insert）
+    await expect(
+      service.createModel('n', 'p', 'https://x', 'k', 'm', 0, 0, null, 'text', null, null, null, 1000000, null),
+    ).rejects.toThrow(/priceInput 不能超过 999999\.999999/);
+    await expect(
+      service.createModel('n', 'p', 'https://x', 'k', 'm', 0, 0, null, 'text', null, null, null, 0.0000004, null),
+    ).rejects.toThrow(/priceInput 最多保留 6 位小数/);
+    expect(modelRepo.insert).not.toHaveBeenCalledWith(
+      expect.objectContaining({ priceInput: 1000000 }),
+    );
+  });
+
+  it('updateModelPricesDistinguishOmittedFromExplicitNull', async () => {
+    const existing = model(7, 'old', 0, 1);
+    existing.priceInput = 2;
+    existing.priceOutput = 8;
+    vi.mocked(modelRepo.findById).mockResolvedValue(existing);
+
+    // 未提供 → 保留原价（字段缺省走 undefined）
+    await service.updateModel(7, null, null, null, null, null, null, null, null, null, null, null, null, undefined, undefined);
+    expect(existing.priceInput).toBe(2);
+    expect(existing.priceOutput).toBe(8);
+
+    // 显式 null → 清空（前端清空输入框即此语义）
+    await service.updateModel(7, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+    expect(existing.priceInput).toBeNull();
+    expect(existing.priceOutput).toBeNull();
+    expect(modelRepo.updateById).toHaveBeenCalledWith(existing);
+
+    // 非法值拒绝
+    existing.priceInput = 1;
+    await expect(
+      service.updateModel(7, null, null, null, null, null, null, null, null, null, null, null, null, -0.5, null),
+    ).rejects.toThrow(/priceInput 必须是非负数字/);
+  });
+
+  // 回归：price_input / price_output 是 DECIMAL(12,6)。不校验值域时，上限外的价格会一路
+  // 走到 MySQL 触发 1264（严格模式下 insert/update 失败）让接口 500；小数位超过 6 位则被
+  // 数据库静默四舍五入，0.0000004 落库成 0，一个计费模型就此变成"免费模型"。
+  it('updateModelPricesRejectValuesOutsideDecimal126Range', async () => {
+    const existing = model(7, 'old', 0, 1);
+    vi.mocked(modelRepo.findById).mockResolvedValue(existing);
+    const call = (priceInput: number | null, priceOutput: number | null = null) =>
+      service.updateModel(7, null, null, null, null, null, null, null, null, null, null, null, null, priceInput, priceOutput);
+
+    // 值域上界：DECIMAL(12,6) 整数位 6 位，最大 999999.999999
+    await expect(call(1000000)).rejects.toThrow(/不能超过 999999\.999999/);
+    await expect(call(1e12)).rejects.toThrow(/不能超过 999999\.999999/);
+    await expect(call(null, 1000000)).rejects.toThrow(/priceOutput 不能超过/);
+
+    // 精度：四舍五入后值会变的输入一律拒绝，绝不替用户取整
+    await expect(call(0.0000004)).rejects.toThrow(/priceInput 最多保留 6 位小数/);
+    await expect(call(null, 2.3456789)).rejects.toThrow(/priceOutput 最多保留 6 位小数/);
+
+    expect(modelRepo.updateById).not.toHaveBeenCalled();
+
+    // 边界内放行：0（免费模型）与上限本身都合法，且原值落库不抖动
+    await expect(call(999999.999999, 0)).resolves.toBe(existing);
+    expect(existing.priceInput).toBe(999999.999999);
+    expect(existing.priceOutput).toBe(0);
+    expect(modelRepo.updateById).toHaveBeenCalledWith(existing);
+  });
+
   it('updateModelValidatesClientImpersonationAndKeepsExistingWhenOmitted', async () => {
     const existing = model(7, 'old', 0, 1);
     existing.clientImpersonation = 'claude_code';

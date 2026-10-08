@@ -29,7 +29,8 @@ const KIND_META: Record<InboxKind, { label: string; icon: string }> = {
   QUESTION_PENDING: { label: '待回答提问', icon: '?' },
   APPROVAL_PENDING: { label: '待处理审批', icon: '!' },
   SUBAGENT_DONE: { label: '子代理完成', icon: '⌘' },
-  TRIGGER_DISABLED: { label: '触发器停用', icon: '⚡' }
+  TRIGGER_DISABLED: { label: '触发器停用', icon: '⚡' },
+  BUDGET_WARN: { label: '预算提醒', icon: '¥' }
 }
 
 function kindMeta(kind: InboxKind) {

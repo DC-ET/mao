@@ -19,12 +19,28 @@ const HELP = `用法:
   mao model list [--page] [--size] [--keyword] [--provider] [--status] [--supports-vision] [--is-default]
   mao model get --id <id>
   mao model providers
-  mao model create --name --provider --base-url --api-key --model-id [--context-window-tokens] [--supports-vision 0|1] [--is-default 0|1]
-  mao model update --id [--name] [--provider] [--base-url] [--api-key] [--model-id] [--context-window-tokens] [--supports-vision] [--is-default]
+  mao model create --name --provider --base-url --api-key --model-id [--context-window-tokens] [--supports-vision 0|1] [--is-default 0|1] [--price-input <n>] [--price-output <n>]
+  mao model update --id [--name] [--provider] [--base-url] [--api-key] [--model-id] [--context-window-tokens] [--supports-vision] [--is-default] [--price-input <n>] [--price-output <n>]
   mao model delete --id
   mao model set-status --id --status
   mao model test --id
 `;
+
+/** 价格为每百万 token 成本单位；非负、最多 6 位小数且不超过 999999.999999（与列定义 DECIMAL(12,6) 一致）。 */
+function modelPrice(flags, name, label) {
+  const value = getNumber(flags, name);
+  if (value === undefined) return undefined;
+  if (!Number.isFinite(value) || value < 0) {
+    throw createCliError(`参数 --${name} 必须是非负数字`);
+  }
+  if (value > 999999.999999) {
+    throw createCliError(`参数 --${name} 不能超过 999999.999999`);
+  }
+  if (Number(value.toFixed(6)) !== value) {
+    throw createCliError(`参数 --${name} 最多保留 6 位小数（超出会被四舍五入）`);
+  }
+  return value;
+}
 
 function modelBody(flags, { requireAll = false } = {}) {
   if (requireAll) {
@@ -37,6 +53,8 @@ function modelBody(flags, { requireAll = false } = {}) {
       contextWindowTokens: getNumber(flags, 'context-window-tokens'),
       supportsVision: getBool01(flags, 'supports-vision'),
       isDefault: getBool01(flags, 'is-default'),
+      priceInput: modelPrice(flags, 'price-input', '输入价格'),
+      priceOutput: modelPrice(flags, 'price-output', '输出价格'),
     });
   }
   return pickDefined({
@@ -48,6 +66,8 @@ function modelBody(flags, { requireAll = false } = {}) {
     contextWindowTokens: getNumber(flags, 'context-window-tokens'),
     supportsVision: getBool01(flags, 'supports-vision'),
     isDefault: getBool01(flags, 'is-default'),
+    priceInput: modelPrice(flags, 'price-input', '输入价格'),
+    priceOutput: modelPrice(flags, 'price-output', '输出价格'),
   });
 }
 

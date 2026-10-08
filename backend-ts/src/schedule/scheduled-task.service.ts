@@ -246,10 +246,16 @@ export class ScheduledTaskService {
     private readonly agentExecutor: (fn: () => void | Promise<void>) => void = (fn) => { void Promise.resolve().then(fn); },
     private liveExecution: ScheduledLiveExecution | null = null,
     private isSessionBusy: ((sessionId: number) => boolean) | null = null,
+    /** 用量预算 BLOCK 闸门（技术方案 §5.7，可选注入）：直跑分支 updatePhase 前检查。 */
+    private budgetCheck: ((target: { userId: number | null; agentId: number | null }) => Promise<{ message: string } | null>) | null = null,
   ) {}
 
   setLiveExecution(liveExecution: ScheduledLiveExecution | null): void {
     this.liveExecution = liveExecution;
+  }
+
+  setBudgetCheck(budgetCheck: ((target: { userId: number | null; agentId: number | null }) => Promise<{ message: string } | null>) | null): void {
+    this.budgetCheck = budgetCheck;
   }
 
   setFeishuResultPusher(pusher: ScheduledFeishuResultPusher | null): void {
@@ -445,6 +451,20 @@ export class ScheduledTaskService {
                 task.fireCount = patch.fireCount;
                 await this.store.updateById(patch);
                 return;
+              }
+              // 预算 BLOCK 检查（技术方案 §5.7）：直跑分支 busy 入队判定之后、updatePhase('RUNNING')
+              // 与 USER 消息落库之前——此处被拒无孤儿数据需回滚。本轮执行标记 FAILED（走早退
+              // FAILED 记录路径）；busy 入队分支不检查，排队消息由 autoConsumeQueue 消费时再查；
+              // 子代理/边路跟随父会话准入结论，不单独检查。
+              if (this.budgetCheck != null
+                && session.sessionType !== 'SUBAGENT'
+                && session.sessionType !== 'SIDE_TASK') {
+                const blocked = await this.budgetCheck({ userId: session.userId ?? null, agentId: session.agentId ?? null });
+                if (blocked != null) {
+                  countThisRun = true;
+                  await this.markTaskResult(task, 'FAILED');
+                  return;
+                }
               }
               const executionStartedAt = Date.now();
               await this.sessionService.updatePhase(task.sessionId!, 'RUNNING');

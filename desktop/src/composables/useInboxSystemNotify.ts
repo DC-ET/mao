@@ -37,6 +37,8 @@ export function isInboxKindEnabled(kind: InboxKind, preference: InboxPreference)
       return preference.approvalPendingEnabled
     case 'SUBAGENT_DONE':
       return preference.subagentDoneEnabled
+    case 'BUDGET_WARN':
+      return preference.budgetWarnEnabled
     default:
       return false
   }

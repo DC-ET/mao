@@ -57,6 +57,16 @@
         </template>
         <BaseChart :option="qualityTrendChartOption" :empty="!hasQuality" :height="260" />
       </el-card>
+
+      <el-card class="block">
+        <template #header>
+          <div class="card-header">
+            <span class="chart-title">成本</span>
+            <span class="card-hint">单位与模型价格填写一致（llm_call 口径）</span>
+          </div>
+        </template>
+        <BaseChart :option="costTrendChartOption" :empty="!hasCost" :height="260" />
+      </el-card>
     </div>
 
     <el-card v-if="qualitySummary" class="block">
@@ -83,6 +93,10 @@
           <span class="label">缓存命中率</span>
           <span class="value">{{ rateText(qualitySummary.cacheHitRate) }}</span>
         </div>
+        <div class="q-item">
+          <span class="label">成本合计</span>
+          <span class="value">{{ formatCost(qualitySummary.cost) }}</span>
+        </div>
       </div>
     </el-card>
   </div>
@@ -93,7 +107,9 @@ import { computed } from 'vue'
 import BaseChart from '../../../components/BaseChart.vue'
 import { CHART_PALETTE } from '../../../utils/echarts'
 import {
+  costTrendOption,
   formatNumber,
+  formatCost,
   isHourlyTrendDate,
   seriesTrendOption,
   tokenTrendOption,
@@ -135,6 +151,8 @@ const messageTrendOption = computed(() =>
   seriesTrendOption(trends.value, [{ key: 'messages', name: '消息', color: CHART_PALETTE[1] }])
 )
 const tokenTrendChartOption = computed(() => tokenTrendOption(trends.value))
+const hasCost = computed(() => trends.value.some((t) => (t.cost || 0) > 0))
+const costTrendChartOption = computed(() => costTrendOption(trends.value))
 
 const callTrendChartOption = computed(() => {
   const dates = trends.value.map((t) => t.date)

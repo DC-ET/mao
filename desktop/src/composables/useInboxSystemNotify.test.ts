@@ -96,6 +96,7 @@ const allOn: InboxPreference = {
   questionPendingEnabled: true,
   approvalPendingEnabled: true,
   subagentDoneEnabled: true,
+  budgetWarnEnabled: true,
   systemNotifyEnabled: true,
 }
 

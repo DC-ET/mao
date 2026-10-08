@@ -1,4 +1,5 @@
 import type { LlmChatClient, LlmChatRequest, LlmChatResponse, LlmModelConfig } from '../model/types.js';
+import { snapshotCostMicros } from './cost-micros.js';
 import type { LlmCallService } from './llm-call.service.js';
 
 function errorMessage(err: unknown): string {
@@ -32,6 +33,7 @@ export class RecordingLlmChatClient implements LlmChatClient {
         errorMessage: error,
         durationMs: Date.now() - started,
         retryCount: 0,
+        costMicros: snapshotCostMicros(config, null),
       });
     }
   }

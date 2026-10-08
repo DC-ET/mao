@@ -135,6 +135,9 @@
             <strong>{{ formatNumber(row.totalTokens || 0) }}</strong>
           </template>
         </el-table-column>
+        <el-table-column label="成本" width="110" align="right" class-name="hide-on-mobile">
+          <template #default="{ row }">{{ formatCost(row.cost) }}</template>
+        </el-table-column>
         <el-table-column label="缓存命中" width="100" align="right" class-name="hide-on-mobile">
           <template #default="{ row }">{{ rateText(row.cacheHitRate) }}</template>
         </el-table-column>
@@ -166,7 +169,7 @@ import { useRouter } from 'vue-router'
 import BaseChart from '../../../components/BaseChart.vue'
 import { CHART_PALETTE } from '../../../utils/echarts'
 import { llmCallSceneLabel, formatMs } from '../../../utils/llmCallLabels'
-import { donutOption, formatNumber, formatTokens, topWithOthers, type RankItem } from '../chart-options'
+import { donutOption, formatCost, formatNumber, formatTokens, topWithOthers, type RankItem } from '../chart-options'
 import { exportCsv } from '../utils/csv'
 import { percent } from '../composables/metrics'
 import type { ModelsPayload } from '../types'
@@ -247,7 +250,7 @@ function sceneLabel(scene: string): string {
 function exportRows() {
   exportCsv(
     `analytics-models-${new Date().toISOString().slice(0, 10)}.csv`,
-    ['模型', '供应商', '会话', '调用', '成功率', '对话 Token', '调用 Token', 'Token 合计', '缓存命中', '首 token 均值(ms)', '耗时均值(ms)'],
+    ['模型', '供应商', '会话', '调用', '成功率', '对话 Token', '调用 Token', 'Token 合计', '成本', '缓存命中', '首 token 均值(ms)', '耗时均值(ms)'],
     modelStats.value.map((row) => [
       row.modelName || '未命名',
       row.provider ?? '',
@@ -257,6 +260,7 @@ function exportRows() {
       row.chatTokens || 0,
       row.callTokens || 0,
       row.totalTokens || 0,
+      row.cost ?? '',
       row.cacheHitRate == null ? '' : `${row.cacheHitRate}%`,
       row.avgFirstTokenMs == null ? '' : Math.round(Number(row.avgFirstTokenMs)),
       row.avgDurationMs == null ? '' : Math.round(Number(row.avgDurationMs))

@@ -22,6 +22,8 @@ export interface PeriodTotals {
   backgroundTokens: number
   totalTokens: number
   backgroundCalls: number
+  /** 窗口成本合计（成本单位 = 模型价格填写口径；唯一口径 llm_call） */
+  totalCost: number
   activeUsers: number
   completedSessions: number
   failedSessions: number
@@ -42,6 +44,8 @@ export interface TrendPoint {
   callTokens?: number
   promptTokens?: number
   cachedTokens?: number
+  /** 当日 llm_call 成本（成本单位） */
+  cost?: number
   callSuccessRate?: number | null
   cacheHitRate?: number | null
 }
@@ -95,6 +99,8 @@ export interface CallQualitySummary {
   promptTokens: number
   cachedTokens: number
   callTokens: number
+  /** 窗口成本合计（成本单位，llm_call 口径） */
+  cost: number
   successRate?: number | null
   retryRatio?: number | null
   cacheHitRate?: number | null
@@ -137,6 +143,8 @@ export interface ModelStatRow {
   callTokens?: number
   promptTokens?: number
   cachedTokens?: number
+  /** 窗口内成本合计（成本单位，llm_call 口径） */
+  cost?: number
   cacheHitRate?: number | null
   avgFirstTokenMs?: number | null
   avgDurationMs?: number | null
@@ -146,7 +154,7 @@ export interface ModelStatRow {
 export interface ModelsPayload {
   period: AnalyticsPeriodMeta
   modelStats: ModelStatRow[]
-  periodTotals: { totalTokens: number }
+  periodTotals: { totalTokens: number; totalCost: number }
   previousTotals: PreviousTotals
   sceneStats?: NamedCallStat[]
   protocolStats?: NamedCallStat[]
@@ -167,6 +175,8 @@ export interface UserActivityRow {
   callCount?: number
   callFailCount?: number
   callTokens?: number
+  /** 窗口内成本合计（成本单位，llm_call 口径） */
+  cost?: number
 }
 
 export interface UsersPayload {
@@ -187,6 +197,8 @@ export interface AgentStatRow {
   callCount?: number
   callFailCount?: number
   callTokens?: number
+  /** 窗口内成本合计（成本单位，llm_call 口径） */
+  cost?: number
   callSuccessRate?: number | null
 }
 

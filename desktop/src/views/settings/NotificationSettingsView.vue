@@ -139,6 +139,17 @@
           aria-label="子代理完成收件箱通知"
         />
       </div>
+      <div class="inbox-kind-row">
+        <span class="inbox-kind-label">预算提醒通知</span>
+        <el-switch
+          v-model="inboxForm.budgetWarnEnabled"
+          :loading="inboxSaving"
+          inline-prompt
+          active-text="开"
+          inactive-text="关"
+          aria-label="预算提醒收件箱通知"
+        />
+      </div>
 
       <div class="inbox-actions">
         <button
@@ -223,6 +234,7 @@ const inboxSaved = reactive<InboxPreference>({
   questionPendingEnabled: true,
   approvalPendingEnabled: true,
   subagentDoneEnabled: false,
+  budgetWarnEnabled: true,
   systemNotifyEnabled: true
 })
 const inboxForm = reactive<InboxPreference>({ ...inboxSaved })

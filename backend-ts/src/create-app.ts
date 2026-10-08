@@ -165,6 +165,10 @@ import { DangerAssessor } from './harness/tool/danger-assessor.js';
 import { ProxyApprover } from './harness/tool/proxy-approver.js';
 import { JevRiskAssessor } from './harness/tool/jev-risk-assessor.js';
 import { ApprovalModelResolver } from './harness/tool/approval-model-resolver.js';
+import { CompactionModelResolver } from './harness/tool/compaction-model-resolver.js';
+import { BudgetRepository, BudgetSpendStore } from './budget/budget.repository.js';
+import { BudgetService, type BudgetBlock } from './budget/budget.service.js';
+import { registerBudgetRoutes } from './budget/budget.routes.js';
 import { AskUserQuestionsRegistry } from './harness/tool/ask-user-questions-registry.js';
 import { AgentLoop } from './harness/core/agent-loop.js';
 import { HarnessService } from './harness/core/harness-service.js';
@@ -203,7 +207,7 @@ import { ApprovalRegistry } from './harness/approval/approval-registry.js';
 import { SessionTreeSignalPublisher } from './harness/approval/session-tree-signal-publisher.js';
 import { StreamingWsRegistry } from './session/ws/streaming-ws-registry.js';
 import { EmbedPageToolRegistry, resolveEmbedPageToolTimeoutMs } from './harness/embed-page-tool-registry.js';
-import { StreamingWsHandler, createScheduledLiveExecution } from './session/ws/streaming-ws-handler.js';
+import { StreamingWsHandler, createScheduledLiveExecution, budgetBlockMessage } from './session/ws/streaming-ws-handler.js';
 import { attachWebSocket } from './session/ws/attach-websocket.js';
 import { TerminalManager, TERMINAL_AUDIT_META, type TerminalAuditRecorder } from './harness/terminal/terminal-manager.js';
 import { TerminalWsHandler } from './harness/terminal/terminal-ws-handler.js';
@@ -581,6 +585,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         return agent?.name ?? null;
       },
     },
+    // 兜底价格缓存（60s TTL）：价格未随 LlmModelConfig 下发的调用路径按 modelId 回查模型行
+    (id) => modelRepo.findById(id),
   );
   const modelChatClient = new RecordingLlmChatClient(
     new OpenAiChatClient({ timeoutMs: harnessTuning.llm.callTimeoutSeconds * 1000 }),
@@ -823,9 +829,14 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   compactionConfig.loopMidwayCompact = harnessTuning.compaction.loopMidwayCompact;
   const historyLoader = new SessionHistoryLoader(sessionSvc, contextManager, compactionArchiveService);
   const activeContext = new ActiveContextCalculator(tokenEstimator);
+  const compactionModelResolver = new CompactionModelResolver(
+    (key) => settingService.getValue(key),
+    (id) => modelRepo.findById(id),
+  );
   const orchestrator = new SessionCompactionOrchestrator(
     compactionSvc, sessionCompactionEventService, historyLoader,
     contextManager, sessionSvc, activeContext, promptEngine, compactionArchiveService,
+    compactionModelResolver,
   );
   const backgroundTasks = new BackgroundTaskManager();
   const shellManager = new ShellSessionManager(
@@ -934,6 +945,23 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     (key) => settingService.getValue(key),
     (id) => modelRepo.findById(id),
   );
+  // 用量预算服务（技术方案 §5.5-5.9）：消耗查询 + admission BLOCK + WARN 结算 + CRUD。
+  // usage_budget 无外键：USER/AGENT 目标删除后预算行仍在（检查跳过、列表展示"已删除"）。
+  const budgetService = new BudgetService(
+    new BudgetRepository(db),
+    new BudgetSpendStore(db),
+    {
+      findUser: async (id) => {
+        const user = await userRepo.findById(id);
+        return user ? { id: user.id!, name: user.username } : null;
+      },
+      findAgent: async (id) => {
+        const agent = await agentRepo.findById(id);
+        return agent ? { id: agent.id!, name: agent.name } : null;
+      },
+    },
+    inboxService,
+  );
   const agentExecutor = createAgentExecutor(
     agentRuntimeCfg.threadPoolSize,
     agentRuntimeCfg.threadPoolMax,
@@ -979,6 +1007,10 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     inboxService, 'MANUAL',
     // 出站订阅分发（task.completed / task.failed 泛化为用户可配置 HTTP 回调）
     { dispatchTaskTerminal: (input) => outboundSubscriptionService.dispatchTaskTerminal(input) },
+    // 预算 WARN 结算（§5.8）：任务终态后比对 WARN 行，越线写 BUDGET_WARN 收件箱（fire-and-forget）
+    {
+      settleWarn: (target, notifyUserId) => budgetService.settleWarn(target, notifyUserId),
+    },
   );
   const visibility = new SubAgentVisibilityService({
     registry: wsRegistry,
@@ -1244,6 +1276,20 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     jwtService: jwt,
     agentExecutor: (fn: () => Promise<void>) => agentExecutor.submit(fn),
     mcpSyncTimeoutSeconds: cfg.app.mcp.syncTimeoutSeconds,
+    // 预算 BLOCK 闸门（§5.7）：WS 侧必须显式 error 事件（外层 catch 只 console.error）
+    budgetGate: {
+      checkAdmission: async (target: { userId: number | null; agentId: number | null }) => {
+        const block = await budgetService.checkAdmission(target);
+        return block == null ? null : {
+          budgetId: block.budgetId,
+          scope: block.scope,
+          spend: block.spend,
+          limitValue: block.limitValue,
+          limitType: block.limitType,
+        };
+      },
+      noticeQueueBlocked: (block: BudgetBlock, notifyUserId: number | null) => budgetService.noticeQueueBlocked(block, notifyUserId),
+    },
     // busy 入队的定时任务在队列真正执行到终态后回写 lastExecutionStatus
     onScheduledTaskQueueConsumed: async (taskId: number, status: 'COMPLETED' | 'FAILED' | 'CANCELLED') => {
       await scheduledStore.updateById({ id: taskId, lastExecutionStatus: status });
@@ -1259,6 +1305,11 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   // 函数类型，漏接实参不会报错，只会静默丢来源——因此用唯一工厂函数并由 spec 断言。
   scheduledService.setLiveExecution(createScheduledLiveExecution(wsHandler));
   scheduledService.setSessionBusyCheck((sessionId) => wsHandler.hasExecutionClaim(sessionId));
+  // 定时任务准入预算检查（§5.7）：直跑分支 updatePhase 之前，命中本轮标记 FAILED
+  scheduledService.setBudgetCheck(async (target) => {
+    const block = await budgetService.checkAdmission(target);
+    return block == null ? null : { message: budgetBlockMessage(block) };
+  });
 
   // 开放接口执行流（P1/P2 共用）：与 schedule 域同锁（withSessionLock）、同 busy 判定、同 live 路径
   const openTriggerSettle: { current: ((triggerId: number, status: 'COMPLETED' | 'FAILED' | 'CANCELLED') => Promise<void>) | null } = { current: null };
@@ -1271,6 +1322,11 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     taskTerminalService: taskTerminal,
     agentLookup: { findById: (id: number) => agentRepo.findById(id) },
     isSessionBusy: (sessionId) => wsHandler.hasExecutionClaim(sessionId),
+    // 开放 API/Webhook 准入预算检查（§5.7）：withSessionLock 之前抛 BUDGET_EXCEEDED 信封
+    budgetCheck: async (target) => {
+      const block = await budgetService.checkAdmission(target);
+      return block == null ? null : { message: budgetBlockMessage(block) };
+    },
     liveExecution: createScheduledLiveExecution(wsHandler),
   });
   const webhookTriggerService = new WebhookTriggerService({
@@ -2345,6 +2401,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     registerFeedbackRoutes(api, { feedback: feedbackService, jwt, permissionService });
     registerMemoryRoutes(api, { memoryService });
     registerInboxRoutes(api, { inboxService });
+    registerBudgetRoutes(api, { budgetService, permissionService });
     const adminDeps = {
       jwt, analytics: adminAnalytics,
       sessionLister: sessionService as never,

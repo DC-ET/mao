@@ -26,9 +26,10 @@ interface Harness {
   finishExecution: ReturnType<typeof vi.fn>;
   liveExecution: ReturnType<typeof vi.fn>;
   isSessionBusy: ReturnType<typeof vi.fn>;
+  budgetCheck: ReturnType<typeof vi.fn>;
 }
 
-function makeHarness(options: { agentEnabled?: number | null; agentFound?: boolean } = {}): Harness {
+function makeHarness(options: { agentEnabled?: number | null; agentFound?: boolean; budgetCheck?: () => Promise<{ message: string } | null> } = {}): Harness {
   const sessionService = {
     getSession: vi.fn(async () => session()),
     updatePhase: vi.fn(async () => undefined),
@@ -38,6 +39,7 @@ function makeHarness(options: { agentEnabled?: number | null; agentFound?: boole
   const enqueue = vi.fn(async () => undefined);
   const finishExecution = vi.fn(async () => undefined);
   const liveExecution = vi.fn(async () => undefined);
+  const budgetCheck = vi.fn(options.budgetCheck ?? (async () => null));
   const deps: OpenRunDeps = {
     sessionService: sessionService as unknown as OpenRunDeps['sessionService'],
     messageQueueService: { enqueue },
@@ -46,8 +48,9 @@ function makeHarness(options: { agentEnabled?: number | null; agentFound?: boole
     agentLookup: { findById: vi.fn(async () => (options.agentFound === false ? null : { id: 5, name: 'A', enabled: options.agentEnabled ?? 1 })) },
     isSessionBusy: vi.fn(() => false),
     liveExecution,
+    budgetCheck,
   };
-  return { service: new OpenRunService(deps), sessionService, enqueue, finishExecution, liveExecution, isSessionBusy: deps.isSessionBusy as unknown as Harness['isSessionBusy'] };
+  return { service: new OpenRunService(deps), sessionService, enqueue, finishExecution, liveExecution, isSessionBusy: deps.isSessionBusy as unknown as Harness['isSessionBusy'], budgetCheck };
 }
 
 describe('OpenRunService（P1/P2 共用执行流）', () => {
@@ -121,5 +124,31 @@ describe('OpenRunService（P1/P2 共用执行流）', () => {
     h.sessionService.saveMessage.mockRejectedValue(new Error('db down'));
     await expect(h.service.run({ userId: 7, agentId: 5, message: 'go', sessionId: 11, source: 'API' })).rejects.toThrow('db down');
     expect(h.sessionService.updatePhase).toHaveBeenLastCalledWith(11, 'IDLE');
+  });
+
+  it('预算 BLOCK：抛 BUDGET_EXCEEDED（3041）且不建会话、不落消息（§5.7）', async () => {
+    const h = makeHarness({ budgetCheck: async () => ({ message: '本月全局预算已超限：当期消耗 12 / 上限 10（成本 口径）' }) });
+    await expect(h.service.run({ userId: 7, agentId: 5, message: 'go', source: 'API' }))
+      .rejects.toMatchObject({ code: 3041 });
+    // 检查点在 createSession / withSessionLock 之前：拒绝不留孤儿空会话
+    expect(h.sessionService.createSession).not.toHaveBeenCalled();
+    expect(h.sessionService.saveMessage).not.toHaveBeenCalled();
+    expect(h.liveExecution).not.toHaveBeenCalled();
+    expect(h.budgetCheck).toHaveBeenCalledWith({ userId: 7, agentId: 5 });
+  });
+
+  it('预算 BLOCK：指定会话路径同样在建会话前拒绝', async () => {
+    const h = makeHarness({ budgetCheck: async () => ({ message: 'blocked' }) });
+    await expect(h.service.run({ userId: 7, agentId: 5, message: 'go', sessionId: 11, source: 'WEBHOOK', triggerId: 3 }))
+      .rejects.toMatchObject({ code: 3041 });
+    expect(h.sessionService.getSession).not.toHaveBeenCalled();
+    expect(h.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('预算未命中 → 正常放行（budgetCheck 返回 null）', async () => {
+    const h = makeHarness();
+    const result = await h.service.run({ userId: 7, agentId: 5, message: 'go', sessionId: 11, source: 'API' });
+    expect(result.terminalPhase).toBe('COMPLETED');
+    expect(h.budgetCheck).toHaveBeenCalledTimes(1);
   });
 });

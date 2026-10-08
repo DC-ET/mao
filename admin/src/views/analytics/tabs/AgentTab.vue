@@ -49,6 +49,9 @@
         <el-table-column label="调用" width="80" align="right">
           <template #default="{ row }">{{ formatNumber(row.callCount || 0) }}</template>
         </el-table-column>
+        <el-table-column label="成本" width="100" align="right" class-name="hide-on-mobile">
+          <template #default="{ row }">{{ formatCost(row.cost) }}</template>
+        </el-table-column>
         <el-table-column label="成功率" width="90" align="right">
           <template #default="{ row }">
             {{ row.callSuccessRate == null ? '-' : `${row.callSuccessRate}%` }}
@@ -74,7 +77,7 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import BaseChart from '../../../components/BaseChart.vue'
 import { CHART_PALETTE } from '../../../utils/echarts'
-import { formatNumber, formatTokens, rankBarOption, type RankItem } from '../chart-options'
+import { formatCost, formatNumber, formatTokens, rankBarOption, type RankItem } from '../chart-options'
 import { exportCsv } from '../utils/csv'
 import type { AgentsPayload } from '../types'
 
@@ -98,13 +101,14 @@ function go(path: string) {
 function exportRows() {
   exportCsv(
     `analytics-agents-${new Date().toISOString().slice(0, 10)}.csv`,
-    ['Agent', '会话', '消息', 'Token', '调用', '成功率', '消息/会话'],
+    ['Agent', '会话', '消息', 'Token', '调用', '成本', '成功率', '消息/会话'],
     agentStats.value.map((row) => [
       row.agentName || '未知',
       row.sessionCount,
       row.messageCount,
       row.totalTokens,
       row.callCount ?? 0,
+      row.cost ?? '',
       row.callSuccessRate == null ? '' : `${row.callSuccessRate}%`,
       row.sessionCount ? (row.messageCount / row.sessionCount).toFixed(1) : ''
     ])

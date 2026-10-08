@@ -8,6 +8,7 @@ import type {
   StreamCallback,
   StreamChunk,
 } from '../harness/llm/chat-request.js';
+import { snapshotCostMicros } from './cost-micros.js';
 import type { LlmCallService } from './llm-call.service.js';
 
 function hasStreamOutput(chunk: StreamChunk): boolean {
@@ -69,6 +70,7 @@ export class RecordingLlmAdapter implements LlmAdapter {
         errorMessage: error,
         durationMs: Date.now() - started,
         retryCount,
+        costMicros: snapshotCostMicros(config, usage),
       });
     }
   }
@@ -123,6 +125,7 @@ export class RecordingLlmAdapter implements LlmAdapter {
         firstTokenMs,
         durationMs: Date.now() - started,
         retryCount,
+        costMicros: snapshotCostMicros(config, usage),
       });
     }
   }

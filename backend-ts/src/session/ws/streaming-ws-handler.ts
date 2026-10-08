@@ -166,6 +166,33 @@ export interface WsHandlerDeps {
   jwtService: JwtService;
   agentExecutor: (fn: () => void | Promise<void>) => unknown;
   mcpSyncTimeoutSeconds?: number;
+  /**
+   * 用量预算 BLOCK 闸门（技术方案 §5.7，可选注入：budget 域未装配时为 undefined，不做检查）。
+   * WS 外层 dispatch catch 只 console.error，抛 BusinessException 前端无感知——
+   * 命中 BLOCK 必须显式 registry.send error 事件并早退，不得依赖异常冒泡。
+   */
+  budgetGate?: {
+    /** 命中返回 BLOCK 行信息（scope/当期消耗/上限）；未命中或目标为子代理/边路返回 null。 */
+    checkAdmission(target: { userId: number | null; agentId: number | null }): Promise<BudgetBlockInfo | null>;
+    /** 队列消费 BLOCK 后的收件箱提醒（同周期同预算恰好一次，实现侧幂等）。 */
+    noticeQueueBlocked(block: BudgetBlockInfo, notifyUserId: number | null): Promise<void>;
+  };
+}
+
+/** 预算 BLOCK 命中信息（结构化对齐 budget.service 的 BudgetBlock，附 budgetId 供收件箱去重）。 */
+export interface BudgetBlockInfo {
+  budgetId: number;
+  scope: string;
+  /** 当期消耗（COST → 成本单位；TOKENS → token 数） */
+  spend: number;
+  limitValue: number;
+  limitType: 'COST' | 'TOKENS';
+}
+
+/** BLOCK 错误事件文案：message 携带 scope/当期消耗/上限（技术方案 §5.7）。 */
+export function budgetBlockMessage(block: BudgetBlockInfo): string {
+  const scopeLabel = block.scope === 'GLOBAL' ? '全局' : block.scope === 'USER' ? '用户' : 'Agent';
+  return `本月${scopeLabel}预算已超限：当期消耗 ${block.spend.toLocaleString('zh-CN')} / 上限 ${block.limitValue.toLocaleString('zh-CN')}（${block.limitType === 'COST' ? '成本' : 'Token'} 口径），新任务已被拒绝。请调整预算或联系管理员`;
 }
 
 function cancelFlag(): { get(): boolean; set(v: boolean): void } {
@@ -467,6 +494,19 @@ export class StreamingWsHandler {
         console.error(`Failed to re-enqueue auto-consumed message for session ${sessionId}`, e);
       }
     };
+    // 预算 BLOCK 检查（技术方案 §5.7）：requireOwnedSession 之后、busy 入队/占位判定之前。
+    // 子代理/边路跟随父会话准入结论，不单独检查。消息此刻尚未落库、尚未入队。
+    // 命中时必须先走 requeueIfClaimed（自动消费路径回补队首+删孤儿消息），再发显式 error。
+    if (this.isBudgetCheckable(session.sessionType)) {
+      const budgetBlock = this.deps.budgetGate
+        ? await this.deps.budgetGate.checkAdmission({ userId: session.userId ?? null, agentId: session.agentId ?? null })
+        : null;
+      if (budgetBlock) {
+        if (claimAlreadyHeld) await requeueIfClaimed();
+        this.deps.registry.send(userId, wsEvent('error', sessionId, { message: budgetBlockMessage(budgetBlock) }));
+        return;
+      }
+    }
     if (!replacingExecution && !isAutoConsume && this.isSessionActive(session.phase)) {
       this.sendSessionAlreadyRunning(userId, sessionId);
       return;
@@ -804,6 +844,18 @@ export class StreamingWsHandler {
     }
     const editStartedAt = Date.now();
     this.executionClaims.add(sessionId);
+    // 预算 BLOCK 检查（技术方案 §5.7）：占位之后、editMessageAndTruncate 之前——
+    // 早退并释放已持占位，消息不落库、不入队、原消息不被截断。
+    if (this.isBudgetCheckable(session.sessionType)) {
+      const budgetBlock = this.deps.budgetGate
+        ? await this.deps.budgetGate.checkAdmission({ userId: session.userId ?? null, agentId: session.agentId ?? null })
+        : null;
+      if (budgetBlock) {
+        this.executionClaims.delete(sessionId);
+        this.deps.registry.send(userId, wsEvent('error', sessionId, { message: budgetBlockMessage(budgetBlock) }));
+        return;
+      }
+    }
     if (session.executionMode === 'LOCAL') {
       this.deps.localToolSessionRegistry.setUserForSession(sessionId, userId);
       if (!(await this.deps.localToolSessionRegistry.isConnected(sessionId))) {
@@ -1629,8 +1681,7 @@ export class StreamingWsHandler {
       // 已落库的 USER 消息，否则分别表现为消息静默丢失、无执行的孤儿消息、或下次消费重复落库。
       let savedMessageId: number | null = null;
       // 来源绑定在 dequeue 后立即登记：后续任一步失败由 compensate 统一回补（保源回补队首）
-      const headSettlement = queueSettlementOf(head);
-      const compensate = async (stage: string, error: unknown): Promise<void> => {
+      const headSettlement = queueSettlementOf(head);      const compensate = async (stage: string, error: unknown): Promise<void> => {
         console.error(`Auto-consume failed after dequeue for session ${sessionId} at ${stage}, rolling back`, error);
         this.executionClaims.delete(sessionId);
         this.autoConsumingSessionIds.delete(sessionId);
@@ -1655,6 +1706,23 @@ export class StreamingWsHandler {
         }
       };
       try {
+        // 预算 BLOCK 检查（技术方案 §5.7）：dequeue 取出队头之后、来源绑定登记/落库之前。
+        // 命中：显式 error + 收件箱提醒一次（去重），随后复用 compensate 链路释放占位并
+        // 原位回补（语义 = 留在队列）；不得抛 BusinessException 依赖外层 catch。
+        if (this.deps.budgetGate != null) {
+          const session = await this.deps.sessionService.getSession(sessionId);
+          if (session != null && this.isBudgetCheckable(session.sessionType)) {
+            const budgetBlock = await this.deps.budgetGate.checkAdmission({ userId: session.userId ?? null, agentId: session.agentId ?? null });
+            if (budgetBlock) {
+              await this.deps.budgetGate.noticeQueueBlocked(budgetBlock, session.userId ?? null).catch((e) => {
+                console.warn(`Failed to record budget queue-blocked notice for session ${sessionId}: ${(e as Error).message}`);
+              });
+              await compensate('budget_blocked', new Error(budgetBlockMessage(budgetBlock)));
+              this.deps.registry.send(userId, wsEvent('error', sessionId, { message: budgetBlockMessage(budgetBlock) }));
+              return;
+            }
+          }
+        }
         // 定时任务/触发器 busy 入队来源：执行终态后按绑定回写（lastExecutionStatus / 失败计数）
         if (headSettlement != null) {
           this.queueSettlements.set(sessionId, headSettlement);
@@ -1690,6 +1758,11 @@ export class StreamingWsHandler {
       // 映射已设置但后续异常（如 sendQueueUpdated 抛出）时清掉，避免陈旧 taskId/triggerId 被下次无关执行误回写
       this.queueSettlements.delete(sessionId);
     }
+  }
+
+  /** 预算准入只查主会话：子代理/边路跟随父会话准入结论，不单独检查（技术方案 §5.7）。 */
+  private isBudgetCheckable(sessionType: string | null | undefined): boolean {
+    return sessionType !== 'SUBAGENT' && sessionType !== 'SIDE_TASK';
   }
 
   private async handleSkillSyncDone(userId: number, root: Record<string, unknown>): Promise<void> {

@@ -17,6 +17,8 @@ export interface LlmCallRow {
   completionTokens?: number | null;
   cachedTokens?: number | null;
   totalTokens?: number | null;
+  /** 成本快照（成本单位×1e6 整数）；价格未配置的历史/新行为 NULL。 */
+  costMicros?: number | null;
   success?: number | null;
   errorMessage?: string | null;
   firstTokenMs?: number | null;
@@ -56,6 +58,7 @@ export class LlmCallRepository {
       completionTokens: row.completionTokens ?? 0,
       cachedTokens: row.cachedTokens ?? 0,
       totalTokens: row.totalTokens ?? 0,
+      costMicros: row.costMicros ?? null,
       success: row.success ?? 0,
       errorMessage: row.errorMessage ?? null,
       firstTokenMs: row.firstTokenMs ?? null,

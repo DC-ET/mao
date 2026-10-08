@@ -18,6 +18,10 @@ export interface ModelVO {
   modelType?: string | null;
   clientImpersonation?: ClientImpersonation;
   contextWindowTokens?: number | null;
+  /** 每百万输入 token 价格（成本单位；null=不计成本）。仅影响后续调用的成本快照，不追溯历史。 */
+  priceInput?: number | null;
+  /** 每百万输出 token 价格（成本单位；null=不计成本）。仅影响后续调用的成本快照，不追溯历史。 */
+  priceOutput?: number | null;
   supportsVision?: boolean;
   isDefault?: boolean;
   status?: number | null;

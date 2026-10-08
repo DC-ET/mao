@@ -102,6 +102,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '定时任务', keepAlive: true, permission: 'scheduled-task:read' }
       },
       {
+        path: 'budgets',
+        name: 'Budgets',
+        component: () => import('../views/budget/BudgetView.vue'),
+        meta: { title: '用量预算', keepAlive: true, permission: 'budget:read' }
+      },
+      {
         path: 'system-commands',
         name: 'SystemCommands',
         component: () => import('../views/system-commands/SystemCommandListView.vue'),

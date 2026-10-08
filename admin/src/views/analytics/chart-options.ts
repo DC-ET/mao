@@ -14,6 +14,8 @@ export interface TrendPoint {
   callTokens?: number
   promptTokens?: number
   cachedTokens?: number
+  /** 当期 llm_call 成本（成本单位） */
+  cost?: number
   callSuccessRate?: number | null
   cacheHitRate?: number | null
 }
@@ -47,6 +49,15 @@ export function formatCompact(value: number): string {
 }
 
 /** Token 紧凑单位按业界惯例：K=千、M=百万、B=十亿。 */
+/** 成本展示：与模型价格填写单位一致，最多保留 3 位小数（小金额不丢精度）。 */
+export function formatCost(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '-'
+  const abs = Math.abs(value)
+  if (abs >= 10000) return value.toLocaleString('zh-CN', { maximumFractionDigits: 0 })
+  if (abs >= 1000) return value.toLocaleString('zh-CN', { maximumFractionDigits: 1 })
+  return value.toLocaleString('zh-CN', { maximumFractionDigits: 3 })
+}
+
 export function formatTokens(value: number): string {
   const abs = Math.abs(value)
   if (abs >= 1e9) return `${trimZero(value / 1e9)}B`
@@ -214,6 +225,35 @@ export function tokenTrendOption(trends: TrendPoint[]): ChartOption {
         barMaxWidth: 26,
         itemStyle: { borderRadius: [3, 3, 0, 0] },
         data: trends.map((t) => t.backgroundTokens)
+      }
+    ]
+  }
+}
+
+/** 成本趋势线（唯一口径 llm_call；单位与模型价格填写一致）。 */
+export function costTrendOption(trends: TrendPoint[]): ChartOption {
+  const dates = trends.map((t) => t.date)
+  const hourly = dates.some(isHourlyTrendDate)
+  const zoom = trendDataZoom(trends.length, hourly)
+  return {
+    color: [CHART_PALETTE[4]],
+    tooltip: {
+      trigger: 'axis' as const,
+      axisPointer: { type: 'line' as const }
+    },
+    legend: { top: 0, left: 'center' as const },
+    grid: { ...baseGrid, bottom: zoom ? 28 : 4 },
+    dataZoom: zoom,
+    xAxis: { ...categoryAxis(dates), boundaryGap: false },
+    yAxis: valueAxis('成本', formatCost),
+    series: [
+      {
+        name: '成本',
+        type: 'line',
+        smooth: true,
+        showSymbol: false,
+        data: trends.map((t) => t.cost ?? 0),
+        areaStyle: { opacity: 0.12 }
       }
     ]
   }

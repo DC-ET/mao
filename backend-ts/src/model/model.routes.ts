@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { ClientImpersonation } from '@mao/contracts';
 import { requirePermission, requireUserId, sendOk } from '../common/http-error.js';
 import { bodyOf, pathId, queryInt, queryOptInt, queryOptStr } from '../common/request.js';
+import { parsePriceColumn } from '../usage/cost-micros.js';
 import type { ModelService } from './model.service.js';
 import type { LlmModel, ModelVO } from './types.js';
 
@@ -21,6 +22,8 @@ interface CreateModelRequest {
   modelType?: string;
   clientImpersonation?: string;
   contextWindowTokens?: number;
+  priceInput?: number | null;
+  priceOutput?: number | null;
   supportsVision?: number;
   isDefault?: number;
 }
@@ -102,6 +105,8 @@ export function registerModelRoutes(app: FastifyInstance, deps: ModelRouteDeps):
       body.clientImpersonation,
       body.apiProtocol,
       body.effort,
+      body.priceInput,
+      body.priceOutput,
     );
     return sendOk(reply, toVO(model, true));
   });
@@ -123,6 +128,8 @@ export function registerModelRoutes(app: FastifyInstance, deps: ModelRouteDeps):
       body.clientImpersonation,
       body.apiProtocol,
       body.effort,
+      body.priceInput,
+      body.priceOutput,
     );
     return sendOk(reply, toVO(model, true));
   });
@@ -165,6 +172,8 @@ function toVO(entity: LlmModel, revealApiKey: boolean): ModelVO {
     modelType: entity.modelType,
     clientImpersonation: normalizeVoClientImpersonation(entity.clientImpersonation),
     contextWindowTokens: entity.contextWindowTokens,
+    priceInput: parsePriceColumn(entity.priceInput),
+    priceOutput: parsePriceColumn(entity.priceOutput),
     supportsVision: entity.supportsVision != null && entity.supportsVision === 1,
     isDefault: entity.isDefault != null && entity.isDefault === 1,
     status: entity.status,

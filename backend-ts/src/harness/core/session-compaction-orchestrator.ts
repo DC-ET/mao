@@ -1,4 +1,4 @@
-import type { ChatRequest } from '../llm/chat-request.js';
+import type { ChatRequest, LlmModelConfig } from '../llm/chat-request.js';
 import type { AgentEventListener } from './agent-event-listener.js';
 import type { AgentExecutionContext } from './agent-execution-context.js';
 import type { CompactionArchiveService } from './compaction-archive.service.js';
@@ -19,6 +19,11 @@ export class CompactionStateReloadException extends Error {
   }
 }
 
+/** 压缩模型独立配置解析（技术方案 §5.10，可选注入；结构化接口避免依赖具体实现）。 */
+export interface CompactionModelResolverLike {
+  resolve(fallback: LlmModelConfig | null | undefined): Promise<LlmModelConfig | null | undefined>;
+}
+
 export class SessionCompactionOrchestrator {
   constructor(
     private readonly sessionCompactionService: SessionCompactionService,
@@ -29,6 +34,7 @@ export class SessionCompactionOrchestrator {
     private readonly activeContextCalculator: ActiveContextCalculator,
     private readonly promptEngine: PromptEngine,
     private readonly compactionArchiveService: CompactionArchiveService,
+    private readonly compactionModelResolver?: CompactionModelResolverLike | null,
   ) {}
 
   async compact(
@@ -47,6 +53,12 @@ export class SessionCompactionOrchestrator {
     const history = await this.sessionHistoryLoader.loadHistoryAfterBoundary(sessionId, boundary);
     if (history.persistedMessages.length === 0) return false;
 
+    // 压缩模型独立配置（§5.10）：compaction.modelId 解析成功用独立模型，失效回退会话主模型；
+    // 解析结果同时用于 LLM 调用与落账 model_id，scene=compaction 的成本归属保持一致。
+    const compactionModelConfig = this.compactionModelResolver != null
+      ? await this.compactionModelResolver.resolve(context.modelConfig)
+      : context.modelConfig;
+
     const result = await LlmCallContext.runAsync({
       scene: LLM_CALL_SCENES.COMPACTION,
       userId: context.executionUserId ?? context.userId ?? null,
@@ -54,7 +66,7 @@ export class SessionCompactionOrchestrator {
       agentId: context.agentId ?? null,
     }, async () => this.contextManager.compactSession(
       sessionId, boundary, history.persistedMessages, history.snapshotMessageIds,
-      normalRequest, context.modelConfig!, config, listener, cancelFlag, activeTokensHint ?? null));
+      normalRequest, compactionModelConfig!, config, listener, cancelFlag, activeTokensHint ?? null));
     if (result == null) return false;
 
     let compactionEnded = false;
@@ -64,7 +76,7 @@ export class SessionCompactionOrchestrator {
         sessionId, record, result.expectedOldBoundary, result.newLastCompactedMessageId,
         result.boundaryContentSnapshot, result.summaryText,
         result.promptTokens, result.completionTokens,
-        context.modelConfig?.modelId ?? null);
+        compactionModelConfig?.modelId ?? null);
       if (!persisted) {
         harnessLog('info', `Session compaction CAS conflict: sessionId=${sessionId}`);
       }
@@ -106,7 +118,7 @@ export class SessionCompactionOrchestrator {
         sessionId, triggerMode, result.expectedOldBoundary, result.newLastCompactedMessageId,
         result.compactedCount, result.promptTokens, result.cachedTokens,
         result.completionTokens, result.summaryTokens, savedTokens,
-        result.durationMs, context.modelConfig?.modelId ?? null);
+        result.durationMs, compactionModelConfig?.modelId ?? null);
       listener?.onCompactionEnd?.('session', result.summaryTokens, savedTokens, result.durationMs);
       compactionEnded = true;
       listener?.onCompactionPersisted?.(

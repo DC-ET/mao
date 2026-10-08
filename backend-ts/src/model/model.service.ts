@@ -52,6 +52,35 @@ function normalizeApiProtocol(value: string | null | undefined): string | null {
 
 const EFFORT_VALUES = ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 
+/** 价格列 DECIMAL(12,6)：整数位 6 位、小数位 6 位。超上限直接写库会触发 MySQL 1264 让接口 500；
+ *  小数位超过 6 位则被静默四舍五入（0.0000004 → 0.000000，一个"拿钱买"的模型变成免费模型），
+ *  两者都必须在应用层显式拦截，不能依赖数据库行为。 */
+const PRICE_MAX = 999999.999999;
+const PRICE_DECIMALS = 6;
+
+/** 价格校验：null 表示不计成本；填写的值必须是非负有限数且完整落在 DECIMAL(12,6) 值域内。 */
+function normalizePrice(value: number | null | undefined, field: string): number | null {
+  if (value == null) return null;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, `${field} 必须是非负数字`);
+  }
+  if (value > PRICE_MAX) {
+    throw new BusinessException(
+      ErrorCode.PARAM_INVALID,
+      `${field} 不能超过 ${PRICE_MAX}（每百万 token 价格，成本单位）`,
+    );
+  }
+  // 与「小数位会被截断」语义对齐：四舍五入后值变了就说明用户填了存不下的精度，
+  // 直接拒绝而非替用户取整——静默取整会让 0 价与亚微价格无法区分。
+  if (Number(value.toFixed(PRICE_DECIMALS)) !== value) {
+    throw new BusinessException(
+      ErrorCode.PARAM_INVALID,
+      `${field} 最多保留 ${PRICE_DECIMALS} 位小数`,
+    );
+  }
+  return value;
+}
+
 /** 校验并归一 reasoning effort：空串表示使用协议默认值；null/undefined 表示未提供。 */
 function normalizeEffort(value: string | null | undefined): string | null {
   if (value == null) return null;
@@ -141,6 +170,8 @@ export class ModelService {
     clientImpersonation: string | null | undefined,
     apiProtocol: string | null | undefined,
     effort: string | null | undefined,
+    priceInput: number | null | undefined,
+    priceOutput: number | null | undefined,
   ): Promise<LlmModel> {
     if (isDefault != null && isDefault === 1) {
       await this.modelRepo.clearDefaultFlag();
@@ -158,6 +189,8 @@ export class ModelService {
       supportsVision: supportsVision != null ? supportsVision : 0,
       isDefault: isDefault != null ? isDefault : 0,
       contextWindowTokens,
+      priceInput: normalizePrice(priceInput, 'priceInput'),
+      priceOutput: normalizePrice(priceOutput, 'priceOutput'),
       status: 1,
     };
     await this.modelRepo.insert(model);
@@ -178,6 +211,8 @@ export class ModelService {
     clientImpersonation: string | null | undefined,
     apiProtocol: string | null | undefined,
     effort: string | null | undefined,
+    priceInput: number | null | undefined,
+    priceOutput: number | null | undefined,
   ): Promise<LlmModel> {
     const model = await this.getModel(id);
     if (name != null) model.name = name;
@@ -194,6 +229,10 @@ export class ModelService {
     if (impersonation != null) model.clientImpersonation = impersonation;
     if (supportsVision != null) model.supportsVision = supportsVision;
     if (contextWindowTokens != null) model.contextWindowTokens = contextWindowTokens;
+    // 价格字段显式区分「未提供」（undefined=保留）与「提供为 null」（清空=不计成本）：
+    // 前端编辑表单总是回传两个价格字段，清空输入框即显式置 null。
+    if (priceInput !== undefined) model.priceInput = normalizePrice(priceInput, 'priceInput');
+    if (priceOutput !== undefined) model.priceOutput = normalizePrice(priceOutput, 'priceOutput');
     if (isDefault != null) {
       if (isDefault === 1) {
         await this.modelRepo.clearDefaultFlag();

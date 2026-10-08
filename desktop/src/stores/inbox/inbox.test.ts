@@ -52,6 +52,7 @@ describe('inbox store', () => {
       questionPendingEnabled: true,
       approvalPendingEnabled: true,
       subagentDoneEnabled: false,
+      budgetWarnEnabled: true,
       systemNotifyEnabled: true,
     } satisfies InboxPreference)
   })
@@ -245,6 +246,21 @@ describe('inbox store', () => {
     expect(store.visibleItems.map((i) => i.id)).toEqual([1, 3])
   })
 
+  // 回归：KNOWN_INBOX_KINDS 曾漏掉 BUDGET_WARN，预算越限提醒在收件箱里被静默过滤；
+  // 契约新增 kind 时这里会同步失败，提醒补齐白名单。
+  it('kind 白名单覆盖契约全部枚举（含 BUDGET_WARN / TRIGGER_DISABLED）', () => {
+    const store = useInboxStore()
+    store.applyPage(
+      makeList([
+        makeItem(1, { kind: 'BUDGET_WARN' as any }),
+        makeItem(2, { kind: 'TRIGGER_DISABLED' as any }),
+        makeItem(3, { kind: 'NOT_A_KIND' as any }),
+      ]),
+      1,
+    )
+    expect(store.visibleItems.map((i) => i.id)).toEqual([1, 2])
+  })
+
   it('偏好读写：保存后以服务端返回值为准', async () => {
     const store = useInboxStore()
     mockSavePreference.mockResolvedValue({
@@ -252,6 +268,7 @@ describe('inbox store', () => {
       questionPendingEnabled: true,
       approvalPendingEnabled: true,
       subagentDoneEnabled: true,
+      budgetWarnEnabled: true,
       systemNotifyEnabled: true,
     } satisfies InboxPreference)
 

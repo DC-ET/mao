@@ -30,12 +30,12 @@
 | 提案 | 文档 | 一句话 | 规模 |
 |---|---|---|---|
 | 任务检查点与工作区回滚 | [2026-10-06-task-checkpoint-rollback.md](2026-10-06-task-checkpoint-rollback.md)（已否决，存档） | 轮次边界自动快照工作区+消息水位，Agent 改错文件可一键退回 | — |
-| 用量成本核算与预算管控 | [2026-10-06-usage-cost-budget.md](2026-10-06-usage-cost-budget.md)（已转入实施，技术方案见 [docs/plan/2026-10-06-usage-cost-budget-technical-design.md](../plan/2026-10-06-usage-cost-budget-technical-design.md)） | 模型价格→成本落账，用户/Agent 月度预算软提醒硬拦截；开放 API/Webhook 时代给费用装闸门 | 中 |
+| 用量成本核算与预算管控 | [2026-10-06-usage-cost-budget.md](2026-10-06-usage-cost-budget.md)（已实施，技术方案见 [docs/plan/2026-10-06-usage-cost-budget-technical-design.md](../plan/2026-10-06-usage-cost-budget-technical-design.md)，0.0.242 发版） | 模型价格→成本落账，用户/Agent 月度预算软提醒硬拦截；开放 API/Webhook 时代给费用装闸门 | 中 |
 | 工具审批规则 | [2026-10-06-approval-rules.md](2026-10-06-approval-rules.md)（已转入实施，技术方案见 [docs/plan/2026-10-06-approval-rules-technical-design.md](../plan/2026-10-06-approval-rules-technical-design.md)） | 审批弹窗第三选项"本会话总是允许"+用户级 allowlist，在逐次审批与 FULL 档之间给中间态 | 中 |
 | 上下文透视与手动治理 | [2026-10-06-context-inspector.md](2026-10-06-context-inspector.md)（已转入实施，技术方案见 [docs/plan/2026-10-06-context-inspector-technical-design.md](../plan/2026-10-06-context-inspector-technical-design.md)） | 检查器展示模型实际收到的上下文构成（分节/记忆条目/压缩摘要），支持手动压缩与单会话记忆开关 | 中 |
 | 会话分享与导出 | [2026-10-06-session-share-export.md](2026-10-06-session-share-export.md)（已转入实施，技术方案见 [docs/plan/2026-10-06-session-share-export-technical-design.md](../plan/2026-10-06-session-share-export-technical-design.md)） | 只读快照链接（水位冻结）+ Markdown 导出，让任务结果走出会话列表 | 中 |
 
-排期注意：预算 WARN 结算挂在 `task-terminal.service.ts` 的 `finishExecution`（记忆/收件箱曾动过的相位收敛点），与在途同类改动错开实施；上下文透视动 prompt-engine / agent-loop / compaction 链路，审批规则动 tool-dispatcher 判门，两者与分享（session 域 + desktop）互不冲突。迁移号 V135 起按实施顺序顺延。
+排期注意：预算 WARN 结算挂在 `task-terminal.service.ts` 的 `finishExecution`（记忆/收件箱曾动过的相位收敛点），与在途同类改动错开实施；上下文透视动 prompt-engine / agent-loop / compaction 链路，审批规则动 tool-dispatcher 判门，两者与分享（session 域 + desktop）互不冲突。迁移编号按实施时实际空闲号顺延（本批最终为 V138 / V139）。
 
 ## 已评估、明确不做
 

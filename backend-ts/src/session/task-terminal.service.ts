@@ -36,6 +36,11 @@ export interface TaskTerminalInboxRecorder {
   }): Promise<void>;
 }
 
+/** 预算 WARN 结算依赖（技术方案 §5.8，可选注入；接口化避免 session 域反向依赖 budget 域实现）。 */
+export interface TaskTerminalBudgetWarner {
+  settleWarn(target: { userId: number | null; agentId: number | null }, notifyUserId: number | null): Promise<void>;
+}
+
 /**
  * 出站订阅分发依赖（可选注入；接口化避免 session 域反向依赖 openapi 域实现）。
  * 任务终态泛化为用户可配置的通用 HTTP 订阅（task.completed / task.failed）。
@@ -68,6 +73,7 @@ export class TaskTerminalService {
     private readonly inboxRecorder?: TaskTerminalInboxRecorder | null,
     private readonly notifySource: TaskNotifySource = 'MANUAL',
     private readonly outboundEvents?: OutboundEventDispatcher | null,
+    private readonly budgetWarner?: TaskTerminalBudgetWarner | null,
   ) {}
 
   async finishExecution(
@@ -127,6 +133,7 @@ export class TaskTerminalService {
 
     this.recordInbox(session, phase, executionId, failureReason ?? null, ownerId, notifySource);
     this.dispatchOutboundEvent(session, phase, executionId, failureReason ?? null, ownerId, notifySource);
+    this.settleBudgetWarn(session, phase, ownerId);
 
     if (session.sessionType === 'SIDE_TASK' && session.parentSessionId != null) {
       // 边路（含深层）终态：沿父链上溯到根主会话，在根上聚合发布唯一信号
@@ -170,21 +177,59 @@ export class TaskTerminalService {
     if (ownerId == null) return;
     const sessionId = session.id;
     if (sessionId == null) return;
-    this.notificationExecutor(() => {
-      void Promise.resolve()
-        .then(() => recorder.recordTaskTerminal({
-          userId: ownerId,
-          sessionId,
-          title: session.title ?? null,
-          phase,
-          executionId,
-          failureReason,
-          source: notifySource,
-        }))
-        .catch((e) => {
-          console.warn(`[inbox] failed to record task terminal notification: sessionId=${sessionId}, error=${(e as Error).message}`);
-        });
-    });
+    try {
+      this.notificationExecutor(() => {
+        void Promise.resolve()
+          .then(() => recorder.recordTaskTerminal({
+            userId: ownerId,
+            sessionId,
+            title: session.title ?? null,
+            phase,
+            executionId,
+            failureReason,
+            source: notifySource,
+          }))
+          .catch((e) => {
+            console.warn(`[inbox] failed to record task terminal notification: sessionId=${sessionId}, error=${(e as Error).message}`);
+          });
+      });
+    } catch (e) {
+      // 与 dispatchMemoryExtraction 同口径：executor 同步抛错（agentExecutor 队列饱和
+      // 抛 AgentExecutorRejectedError）不得穿出 finishExecution——那会落在终态相位
+      // 落库之后，上层把已完成任务改判 FAILED 并污染连败计数与队列回写。
+      console.warn(`[inbox] failed to submit task terminal notification: sessionId=${sessionId}, error=${(e as Error).message}`);
+    }
+  }
+
+  /**
+   * 预算 WARN 结算（技术方案 §5.8）：任务终态后比对 enabled 的 WARN 预算行，越线写
+   * BUDGET_WARN 收件箱（InboxService 内按 budgetId+周期幂等）。与 recordInbox 同口径排除
+   * SUBAGENT / SIDE_TASK / CANCELLED（CANCELLED 在 finishExecution 入口已被 TERMINAL 前置放行，
+   * 这里按 phase 过滤）；通道会话不排除——USER 预算把群聊代执行消耗计入本人，越线仍须提醒。
+   * fire-and-forget：任何异常都不影响任务终态事件链。
+   */
+  private settleBudgetWarn(session: Session, phase: string, ownerId: number | null): void {
+    const warner = this.budgetWarner;
+    if (warner == null) return;
+    if (phase !== 'COMPLETED' && phase !== 'FAILED') return;
+    if (session.sessionType === 'SUBAGENT' || session.sessionType === 'SIDE_TASK') return;
+    if (ownerId == null) return;
+    try {
+      this.notificationExecutor(() => {
+        void Promise.resolve()
+          .then(() => warner.settleWarn(
+            { userId: session.userId ?? null, agentId: session.agentId ?? null },
+            ownerId,
+          ))
+          .catch((e) => {
+            console.warn(`[budget] failed to settle warn on task terminal: sessionId=${session.id}, error=${(e as Error).message}`);
+          });
+      });
+    } catch (e) {
+      // executor 同步抛错（线程池饱和拒绝等）不得穿出 finishExecution：终态相位在此之前
+      // 已落库，这里抛出会让上层把已完成任务改判 FAILED 并错写队列回写与连败计数。
+      console.warn(`[budget] budget warn submit failed sessionId=${session.id}: ${(e as Error).message}`);
+    }
   }
 
   /**

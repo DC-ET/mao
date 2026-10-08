@@ -79,13 +79,15 @@ function makeUniqueKeyDb() {
         return { affectedRows: affected };
       }
       if (/^INSERT INTO user_inbox_preference/.test(sql)) {
+        // 列序（V139）：user_id, task, question, approval, subagent, budget_warn, system_notify
         const row: UserInboxPreferenceRow = {
           userId: params[0] as number,
           taskCompletedEnabled: params[1] as number,
           questionPendingEnabled: params[2] as number,
           approvalPendingEnabled: params[3] as number,
           subagentDoneEnabled: params[4] as number,
-          systemNotifyEnabled: params[5] as number,
+          budgetWarnEnabled: params[5] as number,
+          systemNotifyEnabled: params[6] as number,
         };
         prefs.set(row.userId, row);
         return { affectedRows: 1 };
@@ -287,6 +289,7 @@ describe('InboxRepository 偏好', () => {
       approvalPendingEnabled: true,
       subagentDoneEnabled: true,
       systemNotifyEnabled: false,
+      budgetWarnEnabled: true,
     });
     await expect(repo.findPreference(7)).resolves.toMatchObject({
       taskCompletedEnabled: 1,
@@ -294,6 +297,7 @@ describe('InboxRepository 偏好', () => {
       approvalPendingEnabled: 1,
       subagentDoneEnabled: 1,
       systemNotifyEnabled: 0,
+      budgetWarnEnabled: 1,
     });
     await repo.savePreference(7, {
       taskCompletedEnabled: false,
@@ -301,6 +305,7 @@ describe('InboxRepository 偏好', () => {
       approvalPendingEnabled: false,
       subagentDoneEnabled: false,
       systemNotifyEnabled: true,
+      budgetWarnEnabled: false,
     });
     expect(prefs.size).toBe(1);
     await expect(repo.findPreference(7)).resolves.toMatchObject({
@@ -309,6 +314,7 @@ describe('InboxRepository 偏好', () => {
       approvalPendingEnabled: 0,
       subagentDoneEnabled: 0,
       systemNotifyEnabled: 1,
+      budgetWarnEnabled: 0,
     });
   });
 });

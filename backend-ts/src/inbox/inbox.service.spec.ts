@@ -122,6 +122,68 @@ describe('InboxService 偏好门控', () => {
   });
 });
 
+describe('InboxService BUDGET_WARN（§5.8）', () => {
+  it('越线提醒：kind/title/content/payload/dedupKey（userId:kind:null:budgetId:period）', async () => {
+    const h = makeHarness();
+    await h.service.recordBudgetWarn({
+      userId: 7, budgetId: 9, scope: 'GLOBAL', spend: 12.5, limitValue: 10, limitType: 'COST', period: '2026-03',
+    });
+    expect(h.inserted).toHaveLength(1);
+    expect(h.inserted[0].kind).toBe('BUDGET_WARN');
+    expect(h.inserted[0].title).toBe('预算提醒：本月全局预算已越线');
+    expect(h.inserted[0].content).toContain('12.5');
+    expect(h.inserted[0].content).toContain('10');
+    expect(h.inserted[0].sessionId).toBeNull();
+    expect(h.inserted[0].dedupKey).toBe('7:BUDGET_WARN:null:9:2026-03');
+    expect(JSON.parse(h.inserted[0].payloadJson!)).toEqual({
+      budgetId: 9, scope: 'GLOBAL', spend: 12.5, limitValue: 10, limitType: 'COST',
+    });
+    expect(h.events).toHaveLength(1); // 广播未读数刷新
+  });
+
+  it('同周期同预算只落一行；跨周期重置', async () => {
+    const h = makeHarness();
+    const warn = { userId: 7, budgetId: 9, scope: 'USER' as const, spend: 1, limitValue: 1, limitType: 'COST' as const };
+    await h.service.recordBudgetWarn({ ...warn, period: '2026-03' });
+    await h.service.recordBudgetWarn({ ...warn, period: '2026-03' });
+    expect(h.inserted).toHaveLength(1);
+    await h.service.recordBudgetWarn({ ...warn, period: '2026-04' });
+    expect(h.inserted).toHaveLength(2);
+    expect(h.inserted[1].dedupKey).toBe('7:BUDGET_WARN:null:9:2026-04');
+  });
+
+  it('不同预算各自成条（budgetId 参与去重）', async () => {
+    const h = makeHarness();
+    await h.service.recordBudgetWarn({ userId: 7, budgetId: 9, scope: 'GLOBAL', spend: 1, limitValue: 1, limitType: 'COST', period: '2026-03' });
+    await h.service.recordBudgetWarn({ userId: 7, budgetId: 10, scope: 'GLOBAL', spend: 1, limitValue: 1, limitType: 'COST', period: '2026-03' });
+    expect(h.inserted).toHaveLength(2);
+  });
+
+  it('偏好关闭 budgetWarnEnabled → 不写不广播', async () => {
+    const h = makeHarness({
+      preference: {
+        userId: 7,
+        taskCompletedEnabled: 1,
+        questionPendingEnabled: 1,
+        approvalPendingEnabled: 1,
+        subagentDoneEnabled: 1,
+        systemNotifyEnabled: 1,
+        budgetWarnEnabled: 0,
+      },
+    });
+    await h.service.recordBudgetWarn({ userId: 7, budgetId: 9, scope: 'GLOBAL', spend: 1, limitValue: 1, limitType: 'COST', period: '2026-03' });
+    expect(h.inserted).toHaveLength(0);
+    expect(h.events).toHaveLength(0);
+  });
+
+  it('预算行已删除后同 id 再次提醒仍按 dedup 幂等（不重复打扰）', async () => {
+    const h = makeHarness();
+    await h.service.recordBudgetWarn({ userId: 7, budgetId: 12, scope: 'AGENT', spend: 3, limitValue: 2, limitType: 'TOKENS', period: '2026-05' });
+    await h.service.recordBudgetWarn({ userId: 7, budgetId: 12, scope: 'AGENT', spend: 4, limitValue: 2, limitType: 'TOKENS', period: '2026-05' });
+    expect(h.inserted).toHaveLength(1);
+  });
+});
+
 describe('InboxService 终态过滤', () => {
   it('CANCELLED 不写入（取消多由用户自己发起）', async () => {
     const h = makeHarness();
@@ -202,7 +264,7 @@ describe('InboxService 列表与偏好读写', () => {
     expect(result).toEqual({ records: [], total: 0, page: 2, size: 10 });
   });
 
-  it('getPreferences 无行时返回列默认值（前三类开、子代理关）', async () => {
+  it('getPreferences 无行时返回列默认值（前三类开、子代理关、预算提醒开）', async () => {
     const h = makeHarness();
     await expect(h.service.getPreferences(7)).resolves.toEqual({
       taskCompletedEnabled: true,
@@ -210,6 +272,7 @@ describe('InboxService 列表与偏好读写', () => {
       approvalPendingEnabled: true,
       subagentDoneEnabled: false,
       systemNotifyEnabled: true,
+      budgetWarnEnabled: true,
     });
   });
 

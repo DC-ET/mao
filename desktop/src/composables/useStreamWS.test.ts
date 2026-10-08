@@ -17,6 +17,7 @@ vi.mock('../api', () => ({
     questionPendingEnabled: true,
     approvalPendingEnabled: true,
     subagentDoneEnabled: false,
+    budgetWarnEnabled: true,
     systemNotifyEnabled: true,
   }),
   saveInboxPreference: vi.fn(),

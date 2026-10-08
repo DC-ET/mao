@@ -125,7 +125,7 @@ for f in "$MIGRATION_DIR"/V*.sql; do
   desc="$(echo "$name" | sed -E 's/^V[0-9.]+__//; s/\.sql$//' | tr '_' ' ')"
   RANK=$((RANK + 1))
   if [[ "$(applied "$ver")" != "0" ]]; then
-    echo "  跳过 $name（已应用）"
+    echo "  跳过 ${name}（已应用）"
     continue
   fi
   start=$(date +%s%N)

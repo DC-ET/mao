@@ -12,6 +12,7 @@ export const INBOX_KINDS: readonly InboxKind[] = [
   'APPROVAL_PENDING',
   'SUBAGENT_DONE',
   'TRIGGER_DISABLED',
+  'BUDGET_WARN',
 ];
 
 /** 未知 kind 一律拒绝（不写库、不广播）。 */

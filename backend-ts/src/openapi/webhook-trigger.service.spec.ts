@@ -5,6 +5,8 @@ import {
   TRIGGER_RATE_LIMIT_BOUND, TRIGGER_RATE_LIMIT_UNBOUND,
 } from './webhook-trigger.service.js';
 import { hmacSignature } from './hmac.js';
+import { BusinessException } from '../common/business-exception.js';
+import { ErrorCode } from '../common/error-code.js';
 import type { FixedWindowRateLimiter } from './rate-limiter.js';
 import type { MysqlWebhookTriggerRepository } from './openapi.repository.js';
 import type { WebhookTrigger } from './types.js';
@@ -158,6 +160,31 @@ describe('WebhookTriggerService（P2）', () => {
       // recordOutcome 调用在异步链首帧同步发生，handleFire 返回时必然已入队
       expect(h.repo.recordOutcome).toHaveBeenCalledWith(1, phase, TRIGGER_DISABLE_AFTER_FAILURES, expect.any(String));
     }
+  });
+
+  it('预算 BLOCK（决策 6）：run 抛 BUDGET_EXCEEDED 时计入 FAILED 连败并原样上抛', async () => {
+    const h = makeHarness();
+    h.repo.recordOutcome.mockResolvedValue({ consecutiveFailures: 3, disabled: false });
+    h.openRunRun.mockRejectedValue(new BusinessException(ErrorCode.BUDGET_EXCEEDED, '本月全局预算已超限'));
+    await expect(h.service.handleFire('a'.repeat(32), signedHeaders(body), body))
+      .rejects.toMatchObject({ code: 3041 });
+    // 超限未启动任务，但必须计入连败护栏：否则触发器会以 4xx 信封无限重试刷量
+    expect(h.repo.recordOutcome).toHaveBeenCalledWith(1, 'FAILED', TRIGGER_DISABLE_AFTER_FAILURES, expect.any(String));
+  });
+
+  it('预算 BLOCK 且 recordOutcome 失败：异常不掩盖原始 3041', async () => {
+    const h = makeHarness();
+    h.openRunRun.mockRejectedValue(new BusinessException(ErrorCode.BUDGET_EXCEEDED, 'blocked'));
+    h.repo.recordOutcome.mockRejectedValue(new Error('db down'));
+    await expect(h.service.handleFire('a'.repeat(32), signedHeaders(body), body))
+      .rejects.toMatchObject({ code: 3041 });
+  });
+
+  it('非预算异常：不入连败、原样上抛（原有语义不变）', async () => {
+    const h = makeHarness();
+    h.openRunRun.mockRejectedValue(new Error('boom'));
+    await expect(h.service.handleFire('a'.repeat(32), signedHeaders(body), body)).rejects.toThrow('boom');
+    expect(h.repo.recordOutcome).not.toHaveBeenCalled();
   });
 
   it('排队路径（queued=true）不就地回写：终态交给队列消费侧，防同一次执行重复计数', async () => {

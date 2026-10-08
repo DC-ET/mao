@@ -32,6 +32,11 @@ export interface OpenRunDeps {
   };
   /** WS handler 在途执行判定（hasExecutionClaim），与 schedule 域同源注入。 */
   isSessionBusy: (sessionId: number) => boolean;
+  /**
+   * 用量预算 BLOCK 闸门（技术方案 §5.7，可选注入）：withSessionLock 之前检查，
+   * 命中抛 BusinessException(BUDGET_EXCEEDED) → Result 信封 code≠0。
+   */
+  budgetCheck?: (target: { userId: number; agentId: number }) => Promise<{ message: string } | null>;
   /** 注入的 live WS 执行路径（createScheduledLiveExecution）；null 时走 no-op listener 兜底。 */
   liveExecution: ((session: Session, userId: number, executionId: string, savedMessage: Message, startedAt?: number, scheduledTaskId?: number | null, source?: 'SCHEDULED' | 'WEBHOOK' | 'API' | null) => Promise<void>) | null;
 }
@@ -82,6 +87,13 @@ export class OpenRunService {
     }
     if (agent.enabled === 0) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '该 Agent 已停用，无法触发');
+    }
+    // 预算 BLOCK 在会话创建/复用与 withSessionLock 之前：拒绝时不留下孤儿空会话（技术方案 §5.7）
+    if (this.deps.budgetCheck != null) {
+      const blocked = await this.deps.budgetCheck({ userId: input.userId, agentId: input.agentId });
+      if (blocked != null) {
+        throw new BusinessException(ErrorCode.BUDGET_EXCEEDED, blocked.message);
+      }
     }
 
     let session: Session;

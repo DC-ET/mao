@@ -70,6 +70,8 @@ export interface LlmCallModelRow {
   completionTokens: number;
   cachedTokens: number;
   callTokens: number;
+  /** 窗口内成本合计（成本单位 = 模型价格填写口径；SUM(cost_micros)/1e6） */
+  cost: number;
   firstTokenMsSum: number;
   firstTokenMsCount: number;
   durationMsSum: number;
@@ -82,6 +84,7 @@ export interface LlmCallDailyRow {
   promptTokens: number;
   cachedTokens: number;
   callTokens: number;
+  cost: number;
 }
 
 export interface LlmCallNamedRow {
@@ -96,6 +99,7 @@ export interface LlmCallDimRow {
   callCount: number;
   failCount: number;
   callTokens: number;
+  cost: number;
 }
 
 export interface LlmCallQualitySummary {
@@ -106,6 +110,7 @@ export interface LlmCallQualitySummary {
   promptTokens: number;
   cachedTokens: number;
   callTokens: number;
+  cost: number;
 }
 
 export interface LlmCallFilterOpts {
@@ -335,7 +340,8 @@ export class AdminAnalyticsDbStore implements AdminAnalyticsStore {
               COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0) AS failCount,
               COALESCE(SUM(prompt_tokens), 0) AS promptTokens,
               COALESCE(SUM(cached_tokens), 0) AS cachedTokens,
-              COALESCE(SUM(total_tokens), 0) AS callTokens
+              COALESCE(SUM(total_tokens), 0) AS callTokens,
+              COALESCE(SUM(cost_micros), 0) / 1000000 AS cost
        FROM llm_call
        WHERE ${sql}
        GROUP BY ${bucket}`,
@@ -355,6 +361,7 @@ export class AdminAnalyticsDbStore implements AdminAnalyticsStore {
               COALESCE(SUM(completion_tokens), 0) AS completionTokens,
               COALESCE(SUM(cached_tokens), 0) AS cachedTokens,
               COALESCE(SUM(total_tokens), 0) AS callTokens,
+              COALESCE(SUM(cost_micros), 0) / 1000000 AS cost,
               COALESCE(SUM(CASE WHEN first_token_ms IS NOT NULL THEN first_token_ms ELSE 0 END), 0) AS firstTokenMsSum,
               COALESCE(SUM(CASE WHEN first_token_ms IS NOT NULL THEN 1 ELSE 0 END), 0) AS firstTokenMsCount,
               COALESCE(SUM(duration_ms), 0) AS durationMsSum
@@ -399,7 +406,8 @@ export class AdminAnalyticsDbStore implements AdminAnalyticsStore {
       `SELECT user_id AS id,
               COUNT(*) AS callCount,
               COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0) AS failCount,
-              COALESCE(SUM(total_tokens), 0) AS callTokens
+              COALESCE(SUM(total_tokens), 0) AS callTokens,
+              COALESCE(SUM(cost_micros), 0) / 1000000 AS cost
        FROM llm_call
        WHERE ${sql} AND user_id IS NOT NULL
        GROUP BY user_id`,
@@ -413,7 +421,8 @@ export class AdminAnalyticsDbStore implements AdminAnalyticsStore {
       `SELECT agent_id AS id,
               COUNT(*) AS callCount,
               COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0) AS failCount,
-              COALESCE(SUM(total_tokens), 0) AS callTokens
+              COALESCE(SUM(total_tokens), 0) AS callTokens,
+              COALESCE(SUM(cost_micros), 0) / 1000000 AS cost
        FROM llm_call
        WHERE ${sql} AND agent_id IS NOT NULL
        GROUP BY agent_id`,
@@ -431,6 +440,7 @@ export class AdminAnalyticsDbStore implements AdminAnalyticsStore {
       promptTokens: number;
       cachedTokens: number;
       callTokens: number;
+      cost: number;
     }>(
       `SELECT COUNT(*) AS callCount,
               COALESCE(SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END), 0) AS successCount,
@@ -438,7 +448,8 @@ export class AdminAnalyticsDbStore implements AdminAnalyticsStore {
               COALESCE(SUM(CASE WHEN retry_count > 0 THEN 1 ELSE 0 END), 0) AS retryCallCount,
               COALESCE(SUM(prompt_tokens), 0) AS promptTokens,
               COALESCE(SUM(cached_tokens), 0) AS cachedTokens,
-              COALESCE(SUM(total_tokens), 0) AS callTokens
+              COALESCE(SUM(total_tokens), 0) AS callTokens,
+              COALESCE(SUM(cost_micros), 0) / 1000000 AS cost
        FROM llm_call
        WHERE ${sql}`,
       params,
@@ -451,6 +462,7 @@ export class AdminAnalyticsDbStore implements AdminAnalyticsStore {
       promptTokens: toNumber(row?.promptTokens),
       cachedTokens: toNumber(row?.cachedTokens),
       callTokens: toNumber(row?.callTokens),
+      cost: toNumber(row?.cost),
     };
   }
 
@@ -726,6 +738,7 @@ export class AdminAnalyticsService {
       modelStats,
       periodTotals: {
         totalTokens: modelStats.reduce((sum, row) => sum + toNumber((row as { totalTokens?: unknown }).totalTokens), 0),
+        totalCost: modelStats.reduce((sum, row) => sum + toNumber((row as { cost?: unknown }).cost), 0),
       },
       previousTotals,
       sceneStats: namedCountRows(sceneRows),
@@ -935,6 +948,8 @@ export class AdminAnalyticsService {
     const callTokens = bucketMap(callRows, (r) => r.day, (r) => r.callTokens, granularity);
     const promptTokens = bucketMap(callRows, (r) => r.day, (r) => r.promptTokens, granularity);
     const cachedTokens = bucketMap(callRows, (r) => r.day, (r) => r.cachedTokens, granularity);
+    // 成本唯一口径 = llm_call（决策 13）；chat/background 的 message/llm_usage 无成本列，不参与
+    const callCost = bucketMap(callRows, (r) => r.day, (r) => r.cost, granularity);
 
     const rows: Array<Record<string, unknown>> = [];
     for (const date of buildTrendBucketKeys(range, granularity)) {
@@ -958,6 +973,7 @@ export class AdminAnalyticsService {
         callTokens: callTok,
         promptTokens: prompt,
         cachedTokens: cached,
+        cost: callCost.get(date) ?? 0,
         callSuccessRate: calls > 0 ? Math.round(((calls - fails) / calls) * 1000) / 10 : null,
         cacheHitRate: prompt > 0 ? Math.round((cached / prompt) * 1000) / 10 : null,
       });
@@ -987,6 +1003,8 @@ export class AdminAnalyticsService {
       callCount: quality.callCount,
       callFailCount: quality.failCount,
       callTokens: quality.callTokens,
+      // 与 sumTrends 的 totalCost 同键名：admin 环比读 previousTotals.totalCost
+      totalCost: quality.cost,
     };
   }
 
@@ -1009,6 +1027,7 @@ export class AdminAnalyticsService {
     const callCounts = idMap(callRows, (r) => r.callCount);
     const failCounts = idMap(callRows, (r) => r.failCount);
     const callTokens = idMap(callRows, (r) => r.callTokens);
+    const callCosts = idMap(callRows, (r) => r.cost);
     const rows: Array<Record<string, unknown>> = [];
     for (const agentId of unionKeys(sessionCounts, messageCounts, callCounts, failCounts, callTokens)) {
       const calls = callCounts.get(agentId) ?? 0;
@@ -1022,6 +1041,7 @@ export class AdminAnalyticsService {
         callCount: calls,
         callFailCount: fails,
         callTokens: callTokens.get(agentId) ?? 0,
+        cost: callCosts.get(agentId) ?? 0,
         callSuccessRate: calls > 0 ? Math.round(((calls - fails) / calls) * 1000) / 10 : null,
       });
     }
@@ -1047,6 +1067,7 @@ export class AdminAnalyticsService {
     const callCounts = idMap(callRows, (r) => r.callCount);
     const failCounts = idMap(callRows, (r) => r.failCount);
     const callTokens = idMap(callRows, (r) => r.callTokens);
+    const callCosts = idMap(callRows, (r) => r.cost);
     const rows: Array<Record<string, unknown>> = [];
     for (const user of users) {
       const uid = user.id!;
@@ -1068,6 +1089,7 @@ export class AdminAnalyticsService {
         callCount: calls,
         callFailCount: fails,
         callTokens: callTokens.get(uid) ?? 0,
+        cost: callCosts.get(uid) ?? 0,
       });
     }
     rows.sort(byNumberDesc('messageCount', 'totalTokens'));
@@ -1155,6 +1177,7 @@ export class AdminAnalyticsService {
       const callCount = toNumber(call?.callCount);
       const callFailCount = toNumber(call?.failCount);
       const callTokens = toNumber(call?.callTokens);
+      const callCost = toNumber(call?.cost);
       const promptTokens = toNumber(call?.promptTokens);
       const cachedTokens = toNumber(call?.cachedTokens);
       // 窗口内完全未被调用的模型不返回，避免明细表被大量全零行淹没
@@ -1165,7 +1188,8 @@ export class AdminAnalyticsService {
         background === 0 &&
         usageCalls === 0 &&
         callCount === 0 &&
-        callTokens === 0
+        callTokens === 0 &&
+        callCost === 0
       ) {
         continue;
       }
@@ -1192,6 +1216,7 @@ export class AdminAnalyticsService {
         callFailCount,
         callSuccessRate: callCount > 0 ? Math.round(((callCount - callFailCount) / callCount) * 1000) / 10 : null,
         callTokens,
+        cost: callCost,
         promptTokens,
         cachedTokens,
         cacheHitRate: promptTokens > 0 ? Math.round((cachedTokens / promptTokens) * 1000) / 10 : null,
@@ -1214,6 +1239,7 @@ function qualitySummaryFields(quality: LlmCallQualitySummary): Record<string, nu
     promptTokens: quality.promptTokens,
     cachedTokens: quality.cachedTokens,
     callTokens: quality.callTokens,
+    cost: quality.cost,
     successRate: quality.callCount > 0 ? Math.round((quality.successCount / quality.callCount) * 1000) / 10 : null,
     retryRatio: quality.callCount > 0 ? Math.round((quality.retryCallCount / quality.callCount) * 1000) / 10 : null,
     cacheHitRate:
@@ -1399,7 +1425,7 @@ function idMap<T extends { id: number }>(rows: T[], value: (row: T) => unknown):
 }
 
 function sumTrends(trends: Array<Record<string, unknown>>): Record<string, number> {
-  const totals = { sessions: 0, messages: 0, chatTokens: 0, backgroundTokens: 0, totalTokens: 0, backgroundCalls: 0 };
+  const totals = { sessions: 0, messages: 0, chatTokens: 0, backgroundTokens: 0, totalTokens: 0, backgroundCalls: 0, totalCost: 0 };
   for (const row of trends) {
     totals.sessions += toNumber(row.sessions);
     totals.messages += toNumber(row.messages);
@@ -1407,6 +1433,7 @@ function sumTrends(trends: Array<Record<string, unknown>>): Record<string, numbe
     totals.backgroundTokens += toNumber(row.backgroundTokens);
     totals.totalTokens += toNumber(row.totalTokens);
     totals.backgroundCalls += toNumber(row.backgroundCalls);
+    totals.totalCost += toNumber(row.cost);
   }
   return totals;
 }

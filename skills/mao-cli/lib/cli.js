@@ -29,6 +29,7 @@ const settings = require('./commands/settings');
 const systemCommand = require('./commands/system-command');
 const mcp = require('./commands/mcp');
 const open = require('./commands/open');
+const budget = require('./commands/budget');
 
 const GLOBAL_HELP = `mao-cli — Mao 用户端与管理后台统一 CLI
 
@@ -75,6 +76,7 @@ const GLOBAL_HELP = `mao-cli — Mao 用户端与管理后台统一 CLI
   audit           审计日志
   settings        系统设置
   system-command  指令管理：系统指令 CRUD、跨用户个人指令，以及提升为系统指令（管理员）
+  budget          用量预算：全局 / 用户 / Agent 月度预算的增改删查
 
 环境变量:
   MAO_BASE_URL         私有化请设为自己的站点，如 https://mao.example.com
@@ -150,6 +152,7 @@ const MODULES = {
   settings,
   'system-command': systemCommand,
   mcp,
+  budget,
 };
 
 const ADMIN_COMPAT = {

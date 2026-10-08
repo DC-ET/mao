@@ -142,6 +142,10 @@ export interface LlmModelConfig {
   contextWindowTokens?: number;
   supportsVision?: boolean;
   clientImpersonation?: ClientImpersonation;
+  /** 每百万输入 token 价格（成本单位）。随模型解析链下发用于成本快照；缺失时落库侧走兜底价格缓存。 */
+  priceInput?: number | null;
+  /** 每百万输出 token 价格（成本单位）。语义同 priceInput。 */
+  priceOutput?: number | null;
 }
 
 export interface LlmRetryConfig {

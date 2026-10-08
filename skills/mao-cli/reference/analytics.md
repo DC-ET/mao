@@ -34,8 +34,9 @@
 - 除 `overview` 中的实时运行态外，所有数字均为**窗口内新增**，不是全表累计
 - 环比窗口是紧邻的上一个等长窗口（如 days=7 时为前 7 天；昨日的环比为前日）
 - Token 分两类：`chatTokens` 来自 `message.token_count`（对话消耗），`backgroundTokens` 来自 `llm_usage`（后台调用，如会话标题、Git 提交信息生成），`totalTokens` 为两者之和；管理后台 UI 紧凑展示用 K/M/B（千/百万/十亿）
+- 成本口径（0.0.242 起）：所有 `cost` / `totalCost` 字段均为**成本单位**（与模型价格填写口径一致），后端为 `COALESCE(SUM(llm_call.cost_micros),0)/1e6`。模型未配价格、或价格缺一个方向时该次调用成本为 NULL、不计入合计（不按 0 计），因此「没配价格的模型」在成本口径下等于没有开销，不等于免费。`connectivity_test` 等 scene 默认排除（`excludeConnectivity=true`）。子代理与边路任务会话的成本同样计入所属用户 / Agent
 - 会话结局：窗口内**创建**的会话按 phase 分布；`livePhases` / `overview.runningSessions` 等为实时快照，不与窗口分布混算
-- 环比色约定：红=上升、绿=下降（纯方向口径，不区分指标好坏）
+- 环比色约定：红=上升、绿=下降（纯方向口径，不区分指标的好坏）
 
 ## 接口路径
 
@@ -62,7 +63,7 @@
 | 字段 | 说明 |
 |------|------|
 | `overview` | 全局累计概览 + `runningSessions` / `waitingSessions` / `failedSessions` / `cancelledSessions`（**实时快照**） |
-| `periodTotals` | 窗口内合计：`sessions` / `messages` / `chatTokens` / `backgroundTokens` / `totalTokens` / `backgroundCalls` / `activeUsers` / `completedSessions` / `failedSessions` |
+| `periodTotals` | 窗口内合计：`sessions` / `messages` / `chatTokens` / `backgroundTokens` / `totalTokens` / `backgroundCalls` / `activeUsers` / `completedSessions` / `failedSessions` / `totalCost` |
 | `previousTotals` | 上一等长窗口同口径 |
 | `spark[]` | Token 日走势：`date` / `totalTokens` |
 | `phaseDistribution[]` | 窗口内创建会话的阶段分布（固定 7 阶段，无数据为 0） |
@@ -73,15 +74,15 @@
 | 字段 | 说明 |
 |------|------|
 | `granularity` | `day` 或 `hour`。`date` 在 day 下为 `YYYY-MM-DD`，在 hour 下为 `YYYY-MM-DD HH:00` |
-| `trends[]` | 按粒度补零：`date` / `sessions` / `messages` / `chatTokens` / `backgroundTokens` / `totalTokens` / `backgroundCalls` |
+| `trends[]` | 按粒度补零：`date` / `sessions` / `messages` / `chatTokens` / `backgroundTokens` / `totalTokens` / `backgroundCalls` / `cost` |
 | `periodTotals` / `previousTotals` | 同 overview 口径 |
 
 ### models
 
 | 字段 | 说明 |
 |------|------|
-| `modelStats[]` | `modelId` / `modelName` / `provider` / `status` / `isDefault` / `sessionCount` / `messageCount` / `chatTokens` / `backgroundTokens` / `totalTokens`（含 llm_call 调用 Token）/ `backgroundCalls` / `contextWindowTokens`，以及质量列：`callCount` / `callFailCount` / `callSuccessRate` / `callTokens` / `promptTokens` / `cachedTokens` / `cacheHitRate` / `avgFirstTokenMs` / `avgDurationMs` / `retryCallCount`。按 Token 合计降序；窗口内完全未被调用的模型不返回 |
-| `periodTotals` | `{ totalTokens }`（模型明细合计） |
+| `modelStats[]` | `modelId` / `modelName` / `provider` / `status` / `isDefault` / `sessionCount` / `messageCount` / `chatTokens` / `backgroundTokens` / `totalTokens`（含 llm_call 调用 Token）/ `backgroundCalls` / `contextWindowTokens`，以及质量列：`callCount` / `callFailCount` / `callSuccessRate` / `callTokens` / `promptTokens` / `cachedTokens` / `cacheHitRate` / `avgFirstTokenMs` / `avgDurationMs` / `retryCallCount`，以及成本列 `cost`（成本单位）。按 Token 合计降序；窗口内完全未被调用的模型不返回 |
+| `periodTotals` | `{ totalTokens, totalCost }`（模型明细合计） |
 | `sceneStats[]` | `{ key, callCount, failCount, callTokens }`，默认全部模型；可传 `modelId` 按模型过滤 |
 | `protocolStats[]` | 同上，按 `llm_call.protocol` 分组 |
 | `excludeConnectivity` | 是否排除了 `connectivity_test`（默认 true） |
@@ -92,14 +93,14 @@
 
 | 字段 | 说明 |
 |------|------|
-| `userActivity[]` | `userId` / `username` / `displayName` / `sessionCount` / `messageCount` / `totalTokens` / `lastLoginAt` / `callCount` / `callFailCount` / `callTokens`，剔除零活跃用户，按消息数降序 |
+| `userActivity[]` | `userId` / `username` / `displayName` / `sessionCount` / `messageCount` / `totalTokens` / `lastLoginAt` / `callCount` / `callFailCount` / `callTokens` / `cost`，剔除零活跃用户，按消息数降序 |
 | `periodTotals` | `{ activeUsers }` |
 
 ### agents
 
 | 字段 | 说明 |
 |------|------|
-| `agentStats[]` | `agentId` / `agentName` / `sessionCount` / `messageCount` / `totalTokens` / `callCount` / `callFailCount` / `callTokens` / `callSuccessRate` |
+| `agentStats[]` | `agentId` / `agentName` / `sessionCount` / `messageCount` / `totalTokens` / `callCount` / `callFailCount` / `callTokens` / `callSuccessRate` / `cost` |
 
 ### sessions
 

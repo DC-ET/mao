@@ -51,12 +51,13 @@ export interface SubagentDoneInboxInput {
 /** 收件箱事件：只带权威未读数，条目内容由渲染端拉列表后 diff 得出。 */
 export const INBOX_UPDATED_EVENT = 'inbox_updated';
 
-/** 偏好列默认值口径：前三类开、子代理关（防并行子代理刷屏）。 */
+/** 偏好列默认值口径：前三类开、子代理关（防并行子代理刷屏）、预算提醒开。 */
 const DEFAULT_PREFERENCE: InboxPreference = {
   taskCompletedEnabled: true,
   questionPendingEnabled: true,
   approvalPendingEnabled: true,
   subagentDoneEnabled: false,
+  budgetWarnEnabled: true,
   systemNotifyEnabled: true,
 };
 
@@ -153,6 +154,41 @@ export class InboxService {
       sessionId: input.sessionId,
       payload: { triggerId: input.triggerId, triggerName: input.triggerName, failures: input.failures },
       tail: `${input.triggerId}:${Date.now()}`,
+    });
+  }
+
+  /**
+   * BUDGET_WARN（技术方案 §5.8）：预算越线提醒。WARN 结算与队列 BLOCK 留队提醒共用本入口。
+   * tail = `{budgetId}:{period}`，同周期同预算恰好提醒一次（insertIgnore 幂等，跨周期重置）。
+   * period（yyyy-MM）由调用方（BudgetService）按服务器本地时区计算传入。
+   */
+  async recordBudgetWarn(input: {
+    userId: number;
+    budgetId: number;
+    scope: string;
+    /** 当期消耗（COST → 成本单位；TOKENS → token 数） */
+    spend: number;
+    limitValue: number;
+    limitType: 'COST' | 'TOKENS';
+    /** 周期标签 yyyy-MM（去重维度之一） */
+    period: string;
+  }): Promise<void> {
+    const scopeLabel = input.scope === 'GLOBAL' ? '全局' : input.scope === 'USER' ? '用户' : 'Agent';
+    const unit = input.limitType === 'COST' ? '成本' : 'Token';
+    await this.record({
+      userId: input.userId,
+      kind: 'BUDGET_WARN',
+      title: `预算提醒：本月${scopeLabel}预算已越线`,
+      content: `当期消耗 ${input.spend.toLocaleString('zh-CN')} / 上限 ${input.limitValue.toLocaleString('zh-CN')}（${unit} 口径），超出后新任务可能被拒绝`,
+      sessionId: null,
+      payload: {
+        budgetId: input.budgetId,
+        scope: input.scope,
+        spend: input.spend,
+        limitValue: input.limitValue,
+        limitType: input.limitType,
+      },
+      tail: `${input.budgetId}:${input.period}`,
     });
   }
 
@@ -272,6 +308,7 @@ export class InboxService {
       questionPendingEnabled: Number(row.questionPendingEnabled) === 1,
       approvalPendingEnabled: Number(row.approvalPendingEnabled) === 1,
       subagentDoneEnabled: Number(row.subagentDoneEnabled) === 1,
+      budgetWarnEnabled: Number(row.budgetWarnEnabled ?? 1) === 1,
       systemNotifyEnabled: Number(row.systemNotifyEnabled ?? 1) === 1,
     };
   }
@@ -325,6 +362,8 @@ export class InboxService {
         return preference.approvalPendingEnabled;
       case 'SUBAGENT_DONE':
         return preference.subagentDoneEnabled;
+      case 'BUDGET_WARN':
+        return preference.budgetWarnEnabled;
       case 'TRIGGER_DISABLED':
         // 无偏好开关：触发器自动停用是运维级事件，始终通知属主
         return true;

@@ -6,7 +6,7 @@ import type { WebhookSecretCipher } from '../notification/task/webhook-secret-ci
 import type { FixedWindowRateLimiter } from './rate-limiter.js';
 import type { MysqlWebhookTriggerRepository } from './openapi.repository.js';
 import { generatePathToken, generateWebhookSecret, verifyHmacSignature } from './hmac.js';
-import type { OpenRunService } from './open-run.service.js';
+import type { OpenRunResult, OpenRunService } from './open-run.service.js';
 
 /** 连续失败自动停用阈值（技术方案决策 8）。 */
 export const TRIGGER_DISABLE_AFTER_FAILURES = 5;
@@ -186,14 +186,25 @@ export class WebhookTriggerService {
     if (!decision.allowed) {
       return { ok: false, reason: 'rate_limited', retryAfterSeconds: decision.retryAfterSeconds };
     }
-    const result = await this.deps.openRun.run({
-      userId: trigger.userId,
-      agentId: trigger.agentId ?? 0,
-      sessionId: trigger.sessionId ?? null,
-      source: 'WEBHOOK',
-      triggerId: trigger.id ?? null,
-      message: this.wrapPayload(trigger.name ?? '', rawBody),
-    });
+    let result: OpenRunResult;
+    try {
+      result = await this.deps.openRun.run({
+        userId: trigger.userId,
+        agentId: trigger.agentId ?? 0,
+        sessionId: trigger.sessionId ?? null,
+        source: 'WEBHOOK',
+        triggerId: trigger.id ?? null,
+        message: this.wrapPayload(trigger.name ?? '', rawBody),
+      });
+    } catch (e) {
+      // 预算 BLOCK（决策 6）：任务未启动，无终态可投递；但计入连败与自动停用护栏正向联动，
+      // 否则超限触发器会以 4xx 信封无限重试刷量。其余异常原样上抛。
+      if (e instanceof BusinessException && e.code === ErrorCode.BUDGET_EXCEEDED.code && trigger.id != null) {
+        await this.recordOutcome(trigger.id, 'FAILED').catch((err) =>
+          console.warn(`[openapi] failed to record budget-blocked outcome, triggerId=${trigger.id}: ${(err as Error).message}`));
+      }
+      throw e;
+    }
     // 直跑路径（未排队）：执行已在本请求内收敛，终态由 openRun 回读，就地做同源计数
     // （技术方案 §5.4）。排队路径的终态晚于本请求，由 WS 消费侧 handleQueueSettled 回写，
     // 两条路径按 queued 互斥分流，不会对同一次执行重复计数。

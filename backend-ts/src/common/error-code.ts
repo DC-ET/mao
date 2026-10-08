@@ -50,6 +50,9 @@ export const ErrorCode = {
   /** 入站 Webhook 触发器：不存在/停用/验签失败统一 404 + 固定短语（技术方案决策 10，不暴露区分）。 */
   OPEN_HOOK_NOT_FOUND: { code: 3040, message: 'not found' },
 
+  /** 用量预算 BLOCK 超线：message 动态携带 scope/当期消耗/上限（技术方案 §5.7）。 */
+  BUDGET_EXCEEDED: { code: 3041, message: '用量预算已超限' },
+
   INTERNAL_ERROR: { code: 5001, message: '服务内部错误' },
   DATABASE_ERROR: { code: 5002, message: '数据库错误' },
   FILE_UPLOAD_ERROR: { code: 5004, message: '文件上传失败' },

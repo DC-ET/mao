@@ -706,3 +706,141 @@ describe('ScheduledTaskService', () => {
     expect(service.previewCron('0 0 9 * * *', Number.NaN).nextFireTimes).toHaveLength(3);
   });
 });
+
+describe('ScheduledTaskService 预算 BLOCK 闸门（§5.7）', () => {
+  function build(budgetCheck: ((target: { userId: number | null; agentId: number | null }) => Promise<{ message: string } | null>) | null) {
+    const store = {
+      ...stubStore(),
+      selectById: vi.fn(async () => ({
+        id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', status: 'ACTIVE', fireCount: 0, prompt: 'hello', once: 0,
+      })),
+    };
+    const stubs2 = {
+      getSession: vi.fn(async () => ({ id: 11, phase: 'IDLE', sessionType: 'NORMAL', userId: 7, agentId: 5 })),
+      updatePhase: vi.fn(),
+      saveMessage: vi.fn(async () => ({ id: 88, content: 'hello' })),
+      getMessages: vi.fn(async () => []),
+    };
+    const queue = { enqueue: vi.fn() };
+    const harness = { executeFromEvent: vi.fn(async () => undefined) };
+    const terminal = { finishExecution: vi.fn(async () => undefined) };
+    const liveExecution = vi.fn(async () => undefined);
+    let ran: Promise<void> | null = null;
+    const service = new ScheduledTaskService(
+      store as never, stubs2 as never, queue as never, harness as never, terminal as never,
+      { sendText: vi.fn(async () => true) } as never, { findByUserId: vi.fn() } as never, { findByAccountId: vi.fn() } as never,
+      (fn) => { ran = Promise.resolve().then(fn); },
+      liveExecution as never,
+      null,
+      budgetCheck,
+    );
+    return { service, store, stubs2, queue, harness, terminal, liveExecution, run: () => ran };
+  }
+
+  const TASK = { id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', prompt: 'hello', fireCount: 0 };
+
+  it('BLOCK 命中：直跑分支不执行、不落消息、本轮标记 FAILED', async () => {
+    const h = build(async () => ({ message: '本月全局预算已超限：当期消耗 12 / 上限 10（成本 口径）' }));
+    await h.service.executeTask(TASK as never);
+    await h.run();
+    expect(h.stubs2.updatePhase).not.toHaveBeenCalledWith(11, 'RUNNING');
+    expect(h.stubs2.saveMessage).not.toHaveBeenCalled();
+    expect(h.liveExecution).not.toHaveBeenCalled();
+    expect(h.harness.executeFromEvent).not.toHaveBeenCalled();
+    // 本轮执行按 FAILED 收尾（lastExecutionStatus 可见），档期照常推进
+    expect(h.store.updateById).toHaveBeenCalledWith(expect.objectContaining({ id: 1, lastExecutionStatus: 'FAILED' }));
+  });
+
+  it('检查点传入会话归属（userId/agentId 可为 null）', async () => {
+    const budgetCheck = vi.fn(async () => null);
+    const h = build(budgetCheck as never);
+    await h.service.executeTask(TASK as never);
+    await h.run();
+    expect(budgetCheck).toHaveBeenCalledWith({ userId: 7, agentId: 5 });
+    expect(h.liveExecution).toHaveBeenCalled();
+  });
+
+  it('未命中：正常执行', async () => {
+    const h = build(async () => null);
+    await h.service.executeTask(TASK as never);
+    await h.run();
+    expect(h.stubs2.updatePhase).toHaveBeenCalledWith(11, 'RUNNING');
+    expect(h.stubs2.saveMessage).toHaveBeenCalled();
+    expect(h.liveExecution).toHaveBeenCalledTimes(1);
+  });
+
+  it('busy 入队分支不检查预算（排队消息由队列消费侧再查）', async () => {
+    const budgetCheck = vi.fn(async () => ({ message: 'blocked' }));
+    const store = {
+      ...stubStore(),
+      selectById: vi.fn(async () => ({
+        id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', status: 'ACTIVE', fireCount: 0, prompt: 'hello', once: 0,
+      })),
+    };
+    const stubs2 = {
+      getSession: vi.fn(async () => ({ id: 11, phase: 'RUNNING', sessionType: 'NORMAL', userId: 7, agentId: 5 })),
+      updatePhase: vi.fn(),
+      saveMessage: vi.fn(),
+      getMessages: vi.fn(async () => []),
+    };
+    const queue = { enqueue: vi.fn(async () => undefined) };
+    let ran: Promise<void> | null = null;
+    const service = new ScheduledTaskService(
+      store as never, stubs2 as never, queue as never, { executeFromEvent: vi.fn() } as never,
+      { finishExecution: vi.fn() } as never, { sendText: vi.fn() } as never,
+      { findByUserId: vi.fn() } as never, { findByAccountId: vi.fn() } as never,
+      (fn) => { ran = Promise.resolve().then(fn); },
+      vi.fn(async () => undefined) as never,
+      null,
+      budgetCheck as never,
+    );
+    await service.executeTask(TASK as never);
+    await ran;
+    expect(queue.enqueue).toHaveBeenCalled();
+    expect(budgetCheck).not.toHaveBeenCalled();
+  });
+
+  it('子代理/边路会话不单独检查（跟随父会话准入结论）', async () => {
+    for (const sessionType of ['SUBAGENT', 'SIDE_TASK']) {
+      const budgetCheck = vi.fn(async () => ({ message: 'blocked' }));
+      const store = {
+        ...stubStore(),
+        selectById: vi.fn(async () => ({
+          id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', status: 'ACTIVE', fireCount: 0, prompt: 'hello', once: 0,
+        })),
+      };
+      const stubs2 = {
+        getSession: vi.fn(async () => ({ id: 11, phase: 'IDLE', sessionType, userId: 7, agentId: 5 })),
+        updatePhase: vi.fn(),
+        saveMessage: vi.fn(async () => ({ id: 88 })),
+        getMessages: vi.fn(async () => []),
+      };
+      const liveExecution = vi.fn(async () => undefined);
+      let ran: Promise<void> | null = null;
+      const service = new ScheduledTaskService(
+        store as never, stubs2 as never, { enqueue: vi.fn() } as never, { executeFromEvent: vi.fn() } as never,
+        { finishExecution: vi.fn() } as never, { sendText: vi.fn() } as never,
+        { findByUserId: vi.fn() } as never, { findByAccountId: vi.fn() } as never,
+        (fn) => { ran = Promise.resolve().then(fn); },
+        liveExecution as never,
+        null,
+        budgetCheck as never,
+      );
+      await service.executeTask(TASK as never);
+      await ran;
+      expect(budgetCheck, sessionType).not.toHaveBeenCalled();
+      expect(liveExecution, sessionType).toHaveBeenCalled();
+    }
+  });
+});
+
+function stubStore() {
+  return {
+    insert: vi.fn(async (t) => { t.id = 1; return 1; }),
+    updateById: vi.fn(),
+    deleteById: vi.fn(),
+    listByUser: vi.fn(async () => []),
+    listAll: vi.fn(async () => ({ records: [], total: 0 })),
+    listDue: vi.fn(async () => []),
+  };
+}

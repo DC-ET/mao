@@ -276,7 +276,8 @@ describe('AdminAnalyticsService', () => {
       avgFirstTokenMs: 500,
       avgDurationMs: 5000,
     });
-    expect(result.periodTotals).toEqual({ totalTokens: 490 });
+    // store 桩未返回 cost 行 → 成本合计 0
+    expect(result.periodTotals).toEqual({ totalTokens: 490, totalCost: 0 });
     expect(result.sceneStats[0]).toMatchObject({ key: 'agent', callTokens: 800 });
     expect(result.protocolStats[0]).toMatchObject({ key: 'openai-compatible', callCount: 10 });
     expect(result.userTokenTop).toEqual([
@@ -556,5 +557,111 @@ describe('AdminAnalyticsDbStore', () => {
     expect(await store.countSessions(range)).toBe(5);
     expect(await store.sumMessages(range)).toEqual({ count: 4, tokens: 40 });
     expect(await store.sumUsageTokens(range)).toBe(40);
+  });
+});
+
+describe('AdminAnalyticsService 成本聚合（§5.2 / 决策 13：成本唯一口径 = llm_call）', () => {
+  /** 成本口径 store：只保留成本相关行，其余沿用最小桩。 */
+  function buildCostStore(overrides: Record<string, unknown> = {}) {
+    const base = buildStore();
+    return {
+      ...base,
+      selectDailyLlmCallStats: vi.fn(async () => [
+        { day: today, callCount: 10, failCount: 1, promptTokens: 1000, cachedTokens: 200, callTokens: 1500, cost: 3.2 },
+      ]),
+      selectLlmCallStatsByModel: vi.fn(async () => [
+        {
+          id: 3, callCount: 8, successCount: 7, failCount: 1, retryCallCount: 2,
+          promptTokens: 800, completionTokens: 200, cachedTokens: 100, callTokens: 1000,
+          cost: 2.5, firstTokenMsSum: 4000, firstTokenMsCount: 8, durationMsSum: 40000,
+        },
+      ]),
+      selectLlmCallStatsByUser: vi.fn(async () => [{ id: 1, callCount: 9, failCount: 1, callTokens: 1200, cost: 1.75 }]),
+      selectLlmCallStatsByAgent: vi.fn(async () => [{ id: 9, callCount: 8, failCount: 1, callTokens: 1000, cost: 2 }]),
+      selectLlmCallQualitySummary: vi.fn(async () => ({
+        callCount: 10, successCount: 9, failCount: 1, retryCallCount: 2,
+        promptTokens: 1000, cachedTokens: 200, callTokens: 1500, cost: 4.5,
+      })),
+      ...overrides,
+    };
+  }
+
+  it('summary：趋势点带 cost，periodTotals.totalCost 为窗口合计', async () => {
+    const service = new AdminAnalyticsService({ getOverview: vi.fn(async () => ({})) } as never, buildCostStore() as never);
+    const result = (await service.summary(7)) as Record<string, any>;
+    expect(result.trends.at(-1)).toMatchObject({ date: today, cost: 3.2 });
+    expect(result.periodTotals).toMatchObject({ totalCost: 3.2 });
+    expect(result.previousTotals).toMatchObject({ totalCost: 4.5 });
+  });
+
+  it('trendsScope：periodTotals.totalCost 与 callQuality.cost 同口径', async () => {
+    const service = new AdminAnalyticsService({ getOverview: vi.fn(async () => ({})) } as never, buildCostStore() as never);
+    const result = (await service.trendsScope(7)) as Record<string, any>;
+    expect(result.periodTotals).toMatchObject({ totalCost: 3.2 });
+    expect(result.callQuality).toMatchObject({ callCount: 10, cost: 4.5 });
+    expect(result.trends.at(-1)).toMatchObject({ cost: 3.2 });
+  });
+
+  it('modelsScope：模型行带 cost，periodTotals.totalCost 与模型行一致', async () => {
+    const service = new AdminAnalyticsService({ getOverview: vi.fn(async () => ({})) } as never, buildCostStore() as never);
+    const result = (await service.modelsScope(7)) as Record<string, any>;
+    expect(result.modelStats[0]).toMatchObject({ modelId: 3, cost: 2.5 });
+    expect(result.periodTotals).toEqual({ totalTokens: expect.any(Number), totalCost: 2.5 });
+  });
+
+  it('usersScope / agentsScope：维度行带 cost', async () => {
+    const service = new AdminAnalyticsService({ getOverview: vi.fn(async () => ({})) } as never, buildCostStore() as never);
+    const users = (await service.usersScope(7)) as Record<string, any>;
+    const agents = (await service.agentsScope(7)) as Record<string, any>;
+    expect(users.userActivity[0]).toMatchObject({ username: 'ada', cost: 1.75 });
+    expect(agents.agentStats[0]).toMatchObject({ agentId: 9, cost: 2 });
+  });
+
+  it('成本缺列（NULL 行）时归一为 0，不产出 NaN', async () => {
+    const service = new AdminAnalyticsService({ getOverview: vi.fn(async () => ({})) } as never, buildCostStore({
+      selectDailyLlmCallStats: vi.fn(async () => [
+        { day: today, callCount: 1, failCount: 0, promptTokens: 10, cachedTokens: 0, callTokens: 10, cost: null },
+      ]),
+      selectLlmCallQualitySummary: vi.fn(async () => ({
+        callCount: 1, successCount: 1, failCount: 0, retryCallCount: 0,
+        promptTokens: 10, cachedTokens: 0, callTokens: 10, cost: null,
+      })),
+    }) as never);
+    const result = (await service.trendsScope(7)) as Record<string, any>;
+    expect(result.trends.at(-1).cost).toBe(0);
+    expect(result.periodTotals.totalCost).toBe(0);
+    // 汇总行 cost=NULL → 前端展示 null 而非 NaN
+    expect(result.callQuality.cost).toBeNull();
+  });
+
+  it('DECIMAL 字符串成本按数值累加（mysql2 读出形态）', async () => {
+    const service = new AdminAnalyticsService({ getOverview: vi.fn(async () => ({})) } as never, buildCostStore({
+      selectLlmCallStatsByModel: vi.fn(async () => [
+        {
+          id: 3, callCount: 8, successCount: 7, failCount: 1, retryCallCount: 2,
+          promptTokens: 800, completionTokens: 200, cachedTokens: 100, callTokens: 1000,
+          cost: '2.500000', firstTokenMsSum: 4000, firstTokenMsCount: 8, durationMsSum: 40000,
+        },
+      ]),
+    }) as never);
+    const result = (await service.modelsScope(7)) as Record<string, any>;
+    expect(result.modelStats[0].cost).toBe(2.5);
+    expect(result.periodTotals.totalCost).toBe(2.5);
+  });
+
+  it('聚合 SQL 以 COALESCE(SUM(cost_micros),0)/1e6 落成本口径', async () => {
+    const db = { query: vi.fn(async () => []), queryOne: vi.fn(async () => ({ c: 0 })) };
+    const store = new AdminAnalyticsDbStore(db as never);
+    await store.selectDailyLlmCallStats(range);
+    await store.selectLlmCallStatsByModel(range);
+    await store.selectLlmCallStatsByUser(range);
+    await store.selectLlmCallStatsByAgent(range);
+    await store.selectLlmCallQualitySummary(range); // 汇总走 queryOne
+    const sqls = [
+      ...db.query.mock.calls.map((c) => (c as unknown[])[0] as string),
+      ...db.queryOne.mock.calls.map((c) => (c as unknown[])[0] as string),
+    ].join('\n');
+    const costHits = (sqls.match(/COALESCE\(SUM\(cost_micros\), 0\) \/ 1000000 AS cost/g) ?? []).length;
+    expect(costHits).toBe(5);
   });
 });

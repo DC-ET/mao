@@ -14,6 +14,9 @@ export interface LlmModel {
   modelType?: string | null;
   clientImpersonation?: string | null;
   contextWindowTokens?: number | null;
+  /** 每百万 token 价格（成本单位）。DECIMAL 列经 mysql2 读出为 string，计价前经 parsePriceColumn 归一。 */
+  priceInput?: string | number | null;
+  priceOutput?: string | number | null;
   status?: number | null;
   supportsVision?: number | null;
   isDefault?: number | null;
@@ -94,6 +97,9 @@ export interface LlmModelConfig {
   modelId: string;
   clientImpersonation?: ClientImpersonation;
   supportsVision?: boolean;
+  /** 每百万 token 价格（成本单位）；缺失时 LlmCallService 走兜底价格缓存（技术方案 §5.3）。 */
+  priceInput?: number | null;
+  priceOutput?: number | null;
 }
 
 export interface LlmChatClient {

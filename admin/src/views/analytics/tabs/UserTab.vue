@@ -67,6 +67,9 @@
         <el-table-column label="失败调用" width="90" align="right" class-name="hide-on-mobile">
           <template #default="{ row }">{{ formatNumber(row.callFailCount || 0) }}</template>
         </el-table-column>
+        <el-table-column label="成本" width="100" align="right" class-name="hide-on-mobile">
+          <template #default="{ row }">{{ formatCost(row.cost) }}</template>
+        </el-table-column>
         <el-table-column label="最后登录" width="170" class-name="hide-on-mobile">
           <template #default="{ row }">{{ formatDateTime(row.lastLoginAt) }}</template>
         </el-table-column>
@@ -85,7 +88,7 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import BaseChart from '../../../components/BaseChart.vue'
 import { CHART_PALETTE } from '../../../utils/echarts'
-import { formatNumber, formatTokens, rankBarOption, type RankItem } from '../chart-options'
+import { formatCost, formatNumber, formatTokens, rankBarOption, type RankItem } from '../chart-options'
 import { exportCsv } from '../utils/csv'
 import { formatDateTime } from '../../../utils/datetime'
 import type { UsersPayload } from '../types'
@@ -124,7 +127,7 @@ function go(path: string) {
 function exportRows() {
   exportCsv(
     `analytics-users-${new Date().toISOString().slice(0, 10)}.csv`,
-    ['用户', '账号', '会话', '消息', 'Token', '调用', '失败调用', '最后登录'],
+    ['用户', '账号', '会话', '消息', 'Token', '调用', '失败调用', '成本', '最后登录'],
     userRows.value.map((row) => [
       row.displayName || row.username || '未知',
       row.username,
@@ -133,6 +136,7 @@ function exportRows() {
       row.totalTokens,
       row.callCount ?? 0,
       row.callFailCount ?? 0,
+      row.cost ?? '',
       row.lastLoginAt ? formatDateTime(row.lastLoginAt) : ''
     ])
   )
