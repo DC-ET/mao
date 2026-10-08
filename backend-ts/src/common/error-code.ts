@@ -53,7 +53,7 @@ export const ErrorCode = {
   OPEN_HOOK_NOT_FOUND: { code: 3040, message: 'not found' },
   /** 分享链接：不存在/撤销/过期/会话已删/属主停用统一此码，响应不可区分。 */
   SHARE_NOT_FOUND: { code: 3041, message: '链接不存在或已撤销' },
-  /** Markdown 导出体超过 5MB。HTTP 413，见 handleError。 */
+  /** 会话导出体超过 5MB。HTTP 413，见 handleError。 */
   EXPORT_TOO_LARGE: { code: 3042, message: '导出内容过大，请改用分享链接' },
 
   /** 用量预算 BLOCK 超线：message 动态携带 scope/当期消耗/上限（技术方案 §5.7）。 */

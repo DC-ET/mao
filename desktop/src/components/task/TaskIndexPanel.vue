@@ -162,7 +162,7 @@
       :menu-edit-title="menuEditTitle"
       :menu-delete="menuDelete"
       :menu-share="menuShare"
-      :menu-export-markdown="menuExportMarkdown"
+      :menu-export-jsonl="menuExportJsonl"
       :menu-rename-group="menuRenameGroup"
       :menu-reset-group="menuResetGroup"
       :has-group-alias="hasGroupAlias"
@@ -190,7 +190,7 @@ import TaskFocusList from './TaskFocusList.vue'
 import TaskArchivedSection from './TaskArchivedSection.vue'
 import TaskContextMenu from './TaskContextMenu.vue'
 import ShareDialog from './ShareDialog.vue'
-import { downloadSessionMarkdown } from '../../utils/sessionShare'
+import { downloadSessionJsonl } from '../../utils/sessionShare'
 import { shouldDismissContextMenuForScroll } from '../../utils/contextMenuDismiss'
 
 const props = defineProps<{
@@ -379,10 +379,10 @@ function menuShare() {
   shareVisible.value = true
 }
 
-function menuExportMarkdown() {
+function menuExportJsonl() {
   const id = contextMenu.sessionId
   closeContextMenu()
-  if (id) void downloadSessionMarkdown(id)
+  if (id) void downloadSessionJsonl(id)
 }
 
 function hasGroupAlias(key: string): boolean {

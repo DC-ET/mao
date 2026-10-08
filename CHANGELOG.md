@@ -23,6 +23,7 @@
 ## 0.0.246 (2026-10-08)
 ### 前端（桌面 / Web / 安卓）
 
+- 会话与边路任务右键「导出 Markdown」改为「导出 JSONL」：首行是导出元信息（会话标题、Agent、导出时间、消息数、文件变更汇总），其后每行一条原始消息，字段与会话压缩归档的 `compaction-NNN.jsonl` 完全一致（含 `toolCalls` / `metadata` / `tokenCount` / `modelId` 等），不再有四节摘要模板造成的细节丢失；内联图片 base64 仍替换为占位符。文件名后缀改为 `.jsonl`。
 - 「上下文详情」不再单列「用户上传文件」。这段是云端会话里关于上传目录与 `@{绝对路径}@` 的固定说明，不代表实际上传的文件，现计入「系统提示词」。
 - 刷新页面后「上下文构成」仍显示上一次任务的分节。此前只把水位数字记在会话上，构成只活在当次推送里，刷新后抽屉会显示「尚无构成数据」。
 - 上下文构成里的「可用技能」改称「技能」。
@@ -31,6 +32,7 @@
 
 ### 后端
 
+- 会话导出改为 JSONL：`GET /v1/sessions/:id/export/jsonl`（原 `/export/markdown`），首行为 `session_export` 元信息头，其后每行一条消息，行结构与压缩归档 `compaction-NNN.jsonl` 共用 `session/message-jsonl.ts` 序列化，两处格式不会再各自漂移；消息按 `messageId` 附 `fileChanges` 摘要。`thinkingContent` 不导出，内联图片 base64 替换为占位符。步骤 500 条截断与四节模板随之取消；超过 5MB 仍返回 413。
 - Context Manifest 把上传文件说明并入「系统提示词」：`incoming-file` 不再作为独立构成节，提示正文仍注入系统提示，实际文件引用仍在「会话消息」。
 - 会话保存最近一次上下文构成快照（V140 `context_manifest_json`），与 `context_window` 推送同一份 JSON。刷新后会话列表和详情把这份快照带回，不按当前消息重算。没有构成的旧会话仍只显示水位。
 

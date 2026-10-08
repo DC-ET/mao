@@ -62,7 +62,7 @@
         @click.stop
       >
         <div class="context-menu-item" @click="menuShare">分享…</div>
-        <div class="context-menu-item" @click="menuExportMarkdown">导出 Markdown</div>
+        <div class="context-menu-item" @click="menuExportJsonl">导出 JSONL</div>
         <div
           class="context-menu-item"
           :class="{ disabled: !selectedTask || !canPromote(selectedTask) }"
@@ -83,7 +83,7 @@ import type { SideTaskItem, TaskPhase } from '../../stores/session'
 import { sideTaskToFocusCandidate, sortByFocusPriority } from '../../utils/focusSort'
 import { useRelativeTime, formatRelativeTime } from '../../composables/useRelativeTime'
 import ShareDialog from './ShareDialog.vue'
-import { downloadSessionMarkdown } from '../../utils/sessionShare'
+import { downloadSessionJsonl } from '../../utils/sessionShare'
 import { shouldDismissContextMenuForScroll } from '../../utils/contextMenuDismiss'
 
 const props = defineProps<{
@@ -250,10 +250,10 @@ function menuShare() {
   shareVisible.value = true
 }
 
-function menuExportMarkdown() {
+function menuExportJsonl() {
   const task = selectedTask.value
   closeContextMenu()
-  if (task) void downloadSessionMarkdown(String(task.id))
+  if (task) void downloadSessionJsonl(String(task.id))
 }
 
 function startEdit(task: SideTaskItem) {

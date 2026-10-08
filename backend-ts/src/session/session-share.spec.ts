@@ -8,7 +8,7 @@ import type { AuditLog } from '../audit/types.js';
 import type { SessionShareRow, SessionShareStore } from './session-share.repository.js';
 import { MysqlSessionShareRepository } from './session-share.repository.js';
 import type { Message, MessagePage } from './types.js';
-import { SessionExportService, fallbackToolInputPreview, sanitizeExportFileName } from './session-export.service.js';
+import { SessionExportService, sanitizeExportFileName } from './session-export.service.js';
 import { SessionShareService } from './session-share.service.js';
 import { registerSessionShareRoutes } from './session-share.routes.js';
 import type { Session } from './types.js';
@@ -347,7 +347,10 @@ describe('session share routes', () => {
       getSession: vi.fn(async (id: number) => session({ id, userId: 7 })),
     };
     const exportService = {
-      render: vi.fn(async () => ({ filename: '排查登录-20261007.md', markdown: '# 排查登录\n' })),
+      render: vi.fn(async () => ({
+        filename: '排查登录-20261007.jsonl',
+        jsonl: `${JSON.stringify({ type: 'session_export', messageCount: 1 })}\n${JSON.stringify({ id: 8, role: 'USER', content: '结论' })}\n`,
+      })),
     };
     await registerSessionShareRoutes(fastify, {
       sessionService: sessionService as never,
@@ -421,15 +424,17 @@ describe('session share routes', () => {
   it('导出超限返回 413，成功时带附件头', async () => {
     const { fastify, exportService } = await app(7);
     exportService.render.mockRejectedValueOnce(new BusinessException(ErrorCode.EXPORT_TOO_LARGE));
-    const tooBig = await fastify.inject({ method: 'GET', url: '/v1/sessions/11/export/markdown' });
+    const tooBig = await fastify.inject({ method: 'GET', url: '/v1/sessions/11/export/jsonl' });
     expect(tooBig.statusCode).toBe(413);
     expect(tooBig.json().code).toBe(ErrorCode.EXPORT_TOO_LARGE.code);
 
-    const ok = await fastify.inject({ method: 'GET', url: '/v1/sessions/11/export/markdown' });
+    const ok = await fastify.inject({ method: 'GET', url: '/v1/sessions/11/export/jsonl' });
     expect(ok.statusCode).toBe(200);
-    expect(ok.headers['content-type']).toContain('text/markdown');
+    expect(ok.headers['content-type']).toContain('application/x-ndjson');
     expect(String(ok.headers['content-disposition'])).toContain('filename*=UTF-8');
-    expect(ok.body).toContain('# 排查登录');
+    const lines = ok.body.trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(lines[0].type).toBe('session_export');
+    expect(lines[1]).toMatchObject({ role: 'USER', content: '结论' });
   });
 
   it('分享行锁定 SQL 使用 FOR UPDATE', async () => {
@@ -447,99 +452,148 @@ describe('session share routes', () => {
   });
 });
 
-describe('session markdown export', () => {
-  it('模板四节、复用 summary、空摘要回退、thinking 与图片不出现、步骤截断', async () => {
-    const longCommand = 'x'.repeat(80);
-    const calls = [
+describe('session jsonl export', () => {
+  function parseLines(jsonl: string): Record<string, unknown>[] {
+    return jsonl.trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>);
+  }
+
+  it('首行元信息头 + 每行原始消息，字段与压缩归档一致，thinking 与图片不出现', async () => {
+    const toolCalls = JSON.stringify([
       { name: 'shell', summary: '已有摘要', input: { command: 'ignored' } },
-      { name: 'shell', input: { command: longCommand } },
+      { name: 'shell', input: { command: 'x'.repeat(80) } },
       { name: 'search', input: { query: 'login error' } },
-    ];
-    const extra = Array.from({ length: 499 }, (_, index) => ({ name: 'shell', summary: `步骤${index}` }));
+    ]);
     const sessionService = {
       getMessagesByRounds: vi.fn()
         .mockResolvedValueOnce({
+          // selectRange 按 id 升序返回，逐页 unshift 后整体仍是时间正序
           messages: [
-            { id: 2, role: 'ASSISTANT', content: '最终结论正文', thinkingContent: 'SECRET_THINKING', toolCalls: JSON.stringify([...calls, ...extra]) },
-            { id: 1, role: 'USER', content: JSON.stringify([{ type: 'text', text: '请修登录' }, { type: 'image_url', image_url: { url: 'http://img/a.png' } }]) },
+            {
+              id: 1,
+              sessionId: 11,
+              role: 'USER',
+              content: JSON.stringify([{ type: 'text', text: '请修登录' }, { type: 'image_url', image_url: { url: 'http://img/a.png' } }]),
+            },
+            { id: 2, sessionId: 11, role: 'ASSISTANT', content: '最终结论正文', thinkingContent: 'SECRET_THINKING', toolCalls },
           ],
           hasMore: true,
           nextBeforeMessageId: 1,
         })
         .mockResolvedValueOnce({
-          messages: [{ id: 1, role: 'USER', content: '更早的一句' }],
+          messages: [{ id: 0, sessionId: 11, role: 'USER', content: '更早的一句' }],
           hasMore: false,
           nextBeforeMessageId: null,
         }),
       listFileChangeSummaries: vi.fn(async () => [
-        { filePath: 'a.ts', changeType: 'CREATED', linesAdded: 3, linesDeleted: 0 },
-        { filePath: 'a.ts', changeType: 'MODIFIED', linesAdded: 1, linesDeleted: 2 },
+        { messageId: 2, filePath: 'a.ts', changeType: 'CREATED', linesAdded: 3, linesDeleted: 0 },
+        { messageId: 2, filePath: 'a.ts', changeType: 'MODIFIED', linesAdded: 1, linesDeleted: 2 },
       ]),
     };
     const exporter = new SessionExportService(sessionService as never, {
       findById: async () => ({ id: 3, name: '排查员' }),
     } as never, 1024 * 1024);
     const result = await exporter.render(session(), new Date('2026-10-07T01:02:03Z'));
-    expect(result.markdown).toContain('# 排查登录');
-    expect(result.markdown).toContain('元信息：Agent 排查员');
-    expect(result.markdown).toContain('消息轮数 2');
-    expect(result.markdown).toContain('## 任务目标');
-    expect(result.markdown).toContain('更早的一句');
-    expect(result.markdown).toContain('## 最终结论');
-    expect(result.markdown).toContain('最终结论正文');
-    expect(result.markdown).toContain('## 关键步骤');
-    expect(result.markdown).toContain('- 已有摘要');
-    expect(result.markdown).toContain(`- ${'x'.repeat(60)}...`);
-    expect(result.markdown).toContain('- login error');
+    const [header, ...lines] = parseLines(result.jsonl);
+    expect(header).toMatchObject({
+      type: 'session_export',
+      schemaVersion: 1,
+      exportedAt: '2026-10-07 09:02:03',
+      messageCount: 3,
+      userRoundCount: 2,
+    });
+    expect(header.session).toMatchObject({ id: 11, title: '排查登录', sessionType: 'NORMAL', agentName: '排查员' });
+    expect(header.fileChanges).toEqual([{ path: 'a.ts', type: 'MODIFIED', linesAdded: 4, linesDeleted: 2 }]);
+    // 行字段与 compaction-NNN.jsonl 完全一致，且不含 thinkingContent
+    expect(lines[0]).toEqual({
+      id: 0,
+      role: 'USER',
+      content: '更早的一句',
+      toolCallId: null,
+      toolCalls: null,
+      metadata: null,
+      tokenCount: null,
+      modelId: null,
+      createdAt: null,
+    });
+    // 多模态 content 原样保留（压缩归档同口径），不做 text 抽取
+    const multimodal = JSON.stringify([
+      { type: 'text', text: '请修登录' },
+      { type: 'image_url', image_url: { url: 'http://img/a.png' } },
+    ]);
+    expect(lines[1]).toMatchObject({ id: 1, role: 'USER', content: multimodal });
+    expect(lines[2]).toMatchObject({ id: 2, role: 'ASSISTANT', content: '最终结论正文' });
+    expect(JSON.stringify(lines[2])).not.toContain('SECRET_THINKING');
+    // fileChanges summary 挂在对应消息上，按 messageId 关联；同文件多条变更逐条保留
+    expect(lines[2].fileChanges).toEqual([
+      { path: 'a.ts', type: 'CREATED', linesAdded: 3, linesDeleted: 0 },
+      { path: 'a.ts', type: 'MODIFIED', linesAdded: 1, linesDeleted: 2 },
+    ]);
+    expect(lines[1].fileChanges).toBeUndefined();
+    expect(result.filename.endsWith('.jsonl')).toBe(true);
+  });
+
+  it('持久化的 function 风格 tool_calls 与 markdown 预览 fallback 不再参与渲染', async () => {
+    // 行直接透传 toolCalls 原文，summary / 极简预览之类文本加工全部取消
     const persisted = JSON.stringify([
       { id: 'c1', function: { name: 'shell', arguments: JSON.stringify({ command: 'npm test' }) } },
       { id: 'c2', function: { name: 'read_file', arguments: JSON.stringify({ path: 'src/a.ts' }) } },
-      { id: 'c3', function: { name: 'web_search', arguments: JSON.stringify({ query: 'login error' }) } },
     ]);
-    const persistedService = {
+    const sessionService = {
       getMessagesByRounds: vi.fn(async () => ({
-        messages: [{ id: 3, role: 'ASSISTANT', content: 'done', toolCalls: persisted }],
+        messages: [{ id: 3, sessionId: 11, role: 'ASSISTANT', content: 'done', toolCalls: persisted }],
         hasMore: false,
         nextBeforeMessageId: null,
       })),
       listFileChangeSummaries: vi.fn(async () => []),
     };
-    const persistedExport = await new SessionExportService(
-      persistedService as never,
-      { findById: async () => null } as never,
-    ).render(session());
-    expect(persistedExport.markdown).toContain('- npm test');
-    expect(persistedExport.markdown).toContain('- src/a.ts');
-    expect(persistedExport.markdown).toContain('- login error');
-    expect(result.markdown).toContain('仅展示前 500 条');
-    expect(result.markdown).toContain('## 文件变更');
-    expect(result.markdown).toContain('- a.ts MODIFIED +4 -2');
-    expect(result.markdown).not.toContain('SECRET_THINKING');
-    expect(result.markdown).not.toContain('http://img/a.png');
-    expect(result.filename.endsWith('.md')).toBe(true);
+    const result = await new SessionExportService(sessionService as never, { findById: async () => null } as never)
+      .render(session());
+    const [, line] = parseLines(result.jsonl);
+    expect(line.toolCalls).toBe(persisted);
+  });
+
+  it('内联图片 base64 替换为占位符，原图路径留在 metadata.attachments', async () => {
+    const sessionService = {
+      getMessagesByRounds: vi.fn(async () => ({
+        messages: [{
+          id: 5,
+          sessionId: 11,
+          role: 'TOOL',
+          content: '截图 data:image/png;base64,QUJD',
+          metadata: JSON.stringify({ attachments: [{ mime: 'image/png', path: 'out/a.png', data_uri: 'data:image/png;base64,QUJD' }] }),
+        }],
+        hasMore: false,
+        nextBeforeMessageId: null,
+      })),
+      listFileChangeSummaries: vi.fn(async () => []),
+    };
+    const result = await new SessionExportService(sessionService as never, { findById: async () => null } as never)
+      .render(session());
+    const [, line] = parseLines(result.jsonl);
+    expect(line.content).toBe('截图 [image data URI omitted: image/png]');
+    const meta = JSON.parse(line.metadata as string) as { attachments: Array<Record<string, string>> };
+    expect(meta.attachments[0]).toMatchObject({ mime: 'image/png', path: 'out/a.png' });
+    expect(meta.attachments[0].data_uri).toBe('[image data URI omitted: image/png]');
   });
 
   it('文件名按码点截断，emoji 标题不切出孤立代理项', () => {
     // 79 个 ASCII + 1 个 emoji = 80 码点但占 81 个 UTF-16 码元，
     // 旧实现 slice(0,80) 在此切出孤立高代理项，encodeURIComponent 抛 URIError → 端点 500。
     // 按码点计算时这 80 点应完整保留。
-    const straddle = sanitizeExportFileName('A'.repeat(79) + '😀', new Date('2026-10-07T00:00:00Z'));
-    expect(straddle).toBe(`${'A'.repeat(79)}😀-20261007.md`);
+    const straddle = sanitizeExportFileName('A'.repeat(79) + '\u{1F600}', new Date('2026-10-07T00:00:00Z'));
+    expect(straddle).toBe(`${'A'.repeat(79)}\u{1F600}-20261007.jsonl`);
     expect(() => encodeURIComponent(straddle)).not.toThrow();
     // 码点数超过上限时整体丢掉超出的字符，而不是留下半个代理对
-    const over = sanitizeExportFileName('B'.repeat(80) + '😀', new Date('2026-10-07T00:00:00Z'));
-    expect(over).toBe(`${'B'.repeat(80)}-20261007.md`);
+    const over = sanitizeExportFileName('B'.repeat(80) + '\u{1F600}', new Date('2026-10-07T00:00:00Z'));
+    expect(over).toBe(`${'B'.repeat(80)}-20261007.jsonl`);
     expect(() => encodeURIComponent(over)).not.toThrow();
   });
 
   it('文件名去掉路径分隔符与控制字符，超限抛出 EXPORT_TOO_LARGE', async () => {
-    expect(sanitizeExportFileName('a/b\\c\u0000d', new Date('2026-10-07T00:00:00Z'))).toMatch(/^a_b_cd-\d{8}\.md$/);
-    expect(fallbackToolInputPreview({ command: 'ls' })).toBe('ls');
-    expect(fallbackToolInputPreview({ path: 'src/a.ts' })).toBe('src/a.ts');
-    expect(fallbackToolInputPreview({ query: 'q' })).toBe('q');
+    expect(sanitizeExportFileName('a/b\\c\u0000d', new Date('2026-10-07T00:00:00Z'))).toMatch(/^a_b_cd-\d{8}\.jsonl$/);
     const sessionService = {
       getMessagesByRounds: vi.fn(async () => ({
-        messages: [{ id: 1, role: 'USER', content: 'y'.repeat(80) }],
+        messages: [{ id: 1, sessionId: 11, role: 'USER', content: 'y'.repeat(80) }],
         hasMore: false,
         nextBeforeMessageId: null,
       })),
@@ -549,14 +603,14 @@ describe('session markdown export', () => {
     await expect(exporter.render(session())).rejects.toMatchObject({ code: ErrorCode.EXPORT_TOO_LARGE.code });
   });
 
-  it('边路导出不含父会话副本，任务目标是边路自己的问题', async () => {
+  it('边路导出不含父会话副本，只挂边路自己的消息与文件变更', async () => {
     const sessionService = {
       getMessagesByRounds: vi.fn(async () => ({
         messages: [
-          { id: 1, role: 'USER', content: '父会话里的密钥 sk-parent-secret', sourceSessionId: 99 },
-          { id: 2, role: 'ASSISTANT', content: '父会话回答', sourceSessionId: 99 },
-          { id: 3, role: 'USER', content: '边路自己的问题', sourceSessionId: null },
-          { id: 4, role: 'ASSISTANT', content: '边路自己的回答', sourceSessionId: null },
+          { id: 1, sessionId: 11, role: 'USER', content: '父会话里的密钥 sk-parent-secret', sourceSessionId: 99 },
+          { id: 2, sessionId: 11, role: 'ASSISTANT', content: '父会话回答', sourceSessionId: 99 },
+          { id: 3, sessionId: 11, role: 'USER', content: '边路自己的问题', sourceSessionId: null },
+          { id: 4, sessionId: 11, role: 'ASSISTANT', content: '边路自己的回答', sourceSessionId: null },
         ],
         hasMore: false,
         nextBeforeMessageId: null,
@@ -568,12 +622,11 @@ describe('session markdown export', () => {
     };
     const result = await new SessionExportService(sessionService as never, { findById: async () => null } as never)
       .render(session({ sessionType: 'SIDE_TASK', parentSessionId: 99 }));
-    expect(result.markdown).toContain('边路自己的问题');
-    expect(result.markdown).toContain('边路自己的回答');
-    expect(result.markdown).toContain('side-own.ts');
-    expect(result.markdown).not.toContain('sk-parent-secret');
-    expect(result.markdown).not.toContain('父会话回答');
-    expect(result.markdown).not.toContain('parent-secret.ts');
+    const [header, ...lines] = parseLines(result.jsonl);
+    expect(header.session).toMatchObject({ sessionType: 'SIDE_TASK', parentSessionId: 99 });
+    expect(lines.map((line) => line.content)).toEqual(['边路自己的问题', '边路自己的回答']);
+    expect(JSON.stringify(result.jsonl)).not.toContain('sk-parent-secret');
+    expect(lines[1].fileChanges).toEqual([{ path: 'side-own.ts', type: 'MODIFIED', linesAdded: 2, linesDeleted: 1 }]);
     expect(sessionService.getMessagesByRounds).toHaveBeenCalledWith(11, 50, null, { excludeSourceSessionId: 99 });
   });
 });

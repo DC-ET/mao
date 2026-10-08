@@ -60,11 +60,11 @@ export function registerSessionShareRoutes(app: FastifyInstance, deps: SessionSh
     return sendOk(reply);
   });
 
-  app.get('/v1/sessions/:id/export/markdown', async (request, reply) => {
+  app.get('/v1/sessions/:id/export/jsonl', async (request, reply) => {
     const userId = requireUserId(request);
     const session = await requireSessionOwner(userId, pathId(request));
     const result = await exportService.render(session);
-    return sendMarkdown(reply, result.filename, result.markdown);
+    return sendJsonl(reply, result.filename, result.jsonl);
   });
 
   app.get('/v1/share/:token', async (request, reply) => {
@@ -114,9 +114,9 @@ function pathToken(request: { params: unknown }): string {
   return token.toLowerCase();
 }
 
-function sendMarkdown(reply: FastifyReply, filename: string, markdown: string): FastifyReply {
+function sendJsonl(reply: FastifyReply, filename: string, jsonl: string): FastifyReply {
   return reply
-    .header('Content-Type', 'text/markdown; charset=utf-8')
+    .header('Content-Type', 'application/x-ndjson; charset=utf-8')
     .header('Content-Disposition', contentDisposition('attachment', filename))
-    .send(markdown);
+    .send(jsonl);
 }

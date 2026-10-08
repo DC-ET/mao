@@ -14,9 +14,9 @@ export function sharePageUrl(token: string, isPublic: boolean): string {
   return `${window.location.origin}${path}`
 }
 
-export async function downloadSessionMarkdown(sessionId: string): Promise<void> {
+export async function downloadSessionJsonl(sessionId: string): Promise<void> {
   const token = getToken()
-  const resp = await fetch(`${apiBaseUrl()}/sessions/${sessionId}/export/markdown`, {
+  const resp = await fetch(`${apiBaseUrl()}/sessions/${sessionId}/export/jsonl`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   })
   const type = resp.headers.get('content-type') || ''
@@ -32,7 +32,7 @@ export async function downloadSessionMarkdown(sessionId: string): Promise<void> 
     return
   }
   const blob = await resp.blob()
-  const fileName = filenameFromDisposition(resp.headers.get('Content-Disposition')) || 'session.md'
+  const fileName = filenameFromDisposition(resp.headers.get('Content-Disposition')) || 'session.jsonl'
   const objectUrl = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = objectUrl

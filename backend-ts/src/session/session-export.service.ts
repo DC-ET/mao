@@ -4,45 +4,21 @@ import { javaLocalDateTimeString } from '../common/datetime.js';
 import { formatDateTime, shanghaiYmd } from '../common/json.js';
 import type { AgentLookup, FileChange, Message, Session } from './types.js';
 import type { SessionService } from './session.service.js';
-import { toMessageVO } from './session-vo.js';
+import { renderMessageJsonl } from './message-jsonl.js';
 
 export const EXPORT_MAX_BYTES = 5 * 1024 * 1024;
-const STEP_LIMIT = 500;
 
 export interface SessionExportResult {
   filename: string;
-  markdown: string;
+  jsonl: string;
 }
 
 /**
- * summary 为空时的极简预览：对齐前端 getToolInputPreview 的 command / path / query 首参，≤ 60 字符。
+ * 会话导出为 JSONL：首行是 export 元信息头，其后每行一条原始消息，
+ * 行结构与压缩归档 `compaction-NNN.jsonl` 完全一致（见 message-jsonl.ts 与
+ * `CompactionArchiveService.buildArchiveHint`），便于同一套脚本消费。
+ * thinkingContent 不导出；内联图片 base64 替换为占位符（原图路径在 metadata.attachments）。
  */
-export function fallbackToolInputPreview(input: Record<string, unknown> | null | undefined): string {
-  if (!input) return '';
-  const command = input.command;
-  if (typeof command === 'string' && command.length > 0) return clip60(command);
-  const path = input.path ?? input.file_path;
-  if (typeof path === 'string' && path.length > 0) return clip60(path);
-  const query = input.query;
-  if (typeof query === 'string' && query.length > 0) return clip60(query);
-  return '';
-}
-
-export function sanitizeExportFileName(title: string | null | undefined, now = new Date()): string {
-  const raw = (title ?? '').replace(/[\\/]/g, '_').replace(/[\u0000-\u001f\u007f]/g, '').trim();
-  const base = clipCodePoints(raw.length > 0 ? raw : '会话', TITLE_MAX_CODE_POINTS);
-  const day = shanghaiYmd(now).replace(/-/g, '');
-  return `${base}-${day}.md`;
-}
-
-/** astral 字符（emoji 等）占两个 UTF-16 码元，按码元 slice 会留下孤立代理项。 */
-const TITLE_MAX_CODE_POINTS = 80;
-
-function clipCodePoints(text: string, max: number): string {
-  const points = [...text];
-  return points.length <= max ? text : points.slice(0, max).join('');
-}
-
 export class SessionExportService {
   constructor(
     private readonly sessionService: SessionService,
@@ -58,11 +34,11 @@ export class SessionExportService {
       messages,
     );
     const agent = session.agentId != null ? await this.agents.findById(session.agentId) : null;
-    const markdown = renderMarkdown(session, agent?.name ?? null, messages, changes, now);
-    if (Buffer.byteLength(markdown, 'utf8') > this.maxBytes) {
+    const jsonl = renderJsonl(session, agent?.name ?? null, messages, changes, now);
+    if (Buffer.byteLength(jsonl, 'utf8') > this.maxBytes) {
       throw new BusinessException(ErrorCode.EXPORT_TOO_LARGE);
     }
-    return { filename: sanitizeExportFileName(session.title, now), markdown };
+    return { filename: sanitizeExportFileName(session.title, now), jsonl };
   }
 
   private async loadAllMessages(sessionId: number, excludeSourceSessionId: number | null): Promise<Message[]> {
@@ -80,77 +56,48 @@ export class SessionExportService {
   }
 }
 
-function renderMarkdown(
+function renderJsonl(
   session: Session,
   agentName: string | null,
   messages: Message[],
   changes: FileChange[],
   now: Date,
 ): string {
-  const visible = messages.map((message) => ({ message, text: visibleText(message) }));
-  const rounds = visible.filter((item) => item.message.role === 'USER').length;
-  const goal = visible.find((item) => item.message.role === 'USER')?.text ?? '';
-  let conclusion = '';
-  for (let i = visible.length - 1; i >= 0; i--) {
-    if (visible[i].message.role === 'ASSISTANT' && visible[i].text.trim().length > 0) {
-      conclusion = visible[i].text;
-      break;
-    }
+  const header = {
+    type: 'session_export',
+    schemaVersion: 1,
+    session: {
+      id: session.id,
+      title: session.title ?? null,
+      sessionType: session.sessionType ?? null,
+      parentSessionId: session.parentSessionId ?? null,
+      agentName: agentName ?? null,
+      executionMode: session.executionMode ?? null,
+      workspace: session.workspace ?? null,
+      createdAt: javaLocalDateTimeString(session.createdAt) ?? null,
+    },
+    exportedAt: formatDateTime(now),
+    messageCount: messages.length,
+    userRoundCount: messages.filter((message) => message.role === 'USER').length,
+    fileChanges: aggregateChanges(changes),
+  };
+  const body = renderMessageJsonl(messages, groupChangesByMessage(changes));
+  return `${JSON.stringify(header)}\n${body}`;
+}
+
+function groupChangesByMessage(changes: FileChange[]): Map<number, FileChange[]> {
+  const map = new Map<number, FileChange[]>();
+  for (const change of changes) {
+    const messageId = Number(change.messageId);
+    if (!Number.isFinite(messageId)) continue;
+    const list = map.get(messageId);
+    if (list) list.push(change);
+    else map.set(messageId, [change]);
   }
-  const steps = collectSteps(messages);
-  const files = aggregateChanges(changes);
-  const lines = [
-    `# ${session.title?.trim() || '未命名会话'}`,
-    '',
-    `元信息：Agent ${agentName ?? '—'} / 创建时间 ${javaLocalDateTimeString(session.createdAt) ?? '—'} / 导出时间 ${formatDateTime(now)} / 消息轮数 ${rounds}`,
-    '',
-    '## 任务目标',
-    '',
-    goal.trim().length > 0 ? goal : '（无）',
-    '',
-    '## 最终结论',
-    '',
-    conclusion.trim().length > 0 ? conclusion : '（无）',
-    '',
-    '## 关键步骤',
-    '',
-    ...renderSteps(steps),
-    '',
-    '## 文件变更',
-    '',
-    ...renderFiles(files),
-    '',
-  ];
-  return lines.join('\n');
+  return map;
 }
 
-function visibleText(message: Message): string {
-  return toMessageVO(message).content ?? '';
-}
-
-function collectSteps(messages: Message[]): string[] {
-  const steps: string[] = [];
-  for (const message of messages) {
-    for (const call of parseToolCalls(message.toolCalls)) {
-      const summary = typeof call.summary === 'string' ? call.summary.trim() : '';
-      const preview = summary.length > 0 ? summary : fallbackToolInputPreview(callInput(call));
-      if (preview.length === 0) continue;
-      steps.push(preview);
-    }
-  }
-  return steps;
-}
-
-function renderSteps(steps: string[]): string[] {
-  if (steps.length === 0) return ['（无）'];
-  const shown = steps.slice(0, STEP_LIMIT).map((step) => `- ${step}`);
-  if (steps.length > STEP_LIMIT) {
-    shown.push(`- （已截断，仅展示前 ${STEP_LIMIT} 条，共 ${steps.length} 条）`);
-  }
-  return shown;
-}
-
-function aggregateChanges(changes: FileChange[]): Array<{ path: string; type: string; added: number; deleted: number }> {
+function aggregateChanges(changes: FileChange[]): Array<Record<string, unknown>> {
   const map = new Map<string, { path: string; type: string; added: number; deleted: number }>();
   for (const change of changes) {
     const path = change.filePath ?? '';
@@ -161,50 +108,27 @@ function aggregateChanges(changes: FileChange[]): Array<{ path: string; type: st
     current.deleted += Number(change.linesDeleted ?? 0);
     map.set(path, current);
   }
-  return [...map.values()];
+  return [...map.values()].map((item) => ({
+    path: item.path,
+    type: item.type,
+    linesAdded: item.added,
+    linesDeleted: item.deleted,
+  }));
 }
 
-function renderFiles(files: Array<{ path: string; type: string; added: number; deleted: number }>): string[] {
-  if (files.length === 0) return ['（无）'];
-  return files.map((file) => `- ${file.path} ${file.type} +${file.added} -${file.deleted}`);
+export function sanitizeExportFileName(title: string | null | undefined, now = new Date()): string {
+  const raw = (title ?? '').replace(/[\\/]/g, '_').replace(/[\u0000-\u001f\u007f]/g, '').trim();
+  const base = clipCodePoints(raw.length > 0 ? raw : '会话', TITLE_MAX_CODE_POINTS);
+  const day = shanghaiYmd(now).replace(/-/g, '');
+  return `${base}-${day}.jsonl`;
 }
 
-function parseToolCalls(raw: unknown): Array<Record<string, unknown>> {
-  let value = raw;
-  if (typeof raw === 'string') {
-    if (raw.trim().length === 0) return [];
-    try {
-      value = JSON.parse(raw) as unknown;
-    } catch {
-      return [];
-    }
-  }
-  if (!Array.isArray(value)) return [];
-  return value.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object' && !Array.isArray(item));
-}
+/** astral 字符（emoji 等）占两个 UTF-16 码元，按码元 slice 会留下孤立代理项。 */
+const TITLE_MAX_CODE_POINTS = 80;
 
-function callInput(call: Record<string, unknown>): Record<string, unknown> | null {
-  const direct = asRecord(call.input) ?? asRecord(call.arguments);
-  if (direct) return direct;
-  const fn = asRecord(call.function);
-  if (!fn) return null;
-  const parsed = asRecord(fn.arguments);
-  if (parsed) return parsed;
-  if (typeof fn.arguments !== 'string' || fn.arguments.trim().length === 0) return null;
-  try {
-    return asRecord(JSON.parse(fn.arguments) as unknown);
-  } catch {
-    return null;
-  }
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
-  return null;
-}
-
-function clip60(text: string): string {
-  return text.length > 60 ? `${text.slice(0, 60)}...` : text;
+function clipCodePoints(text: string, max: number): string {
+  const points = [...text];
+  return points.length <= max ? text : points.slice(0, max).join('');
 }
 
 function sideTaskParentId(session: Session): number | null {

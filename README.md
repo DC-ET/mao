@@ -50,7 +50,7 @@ Mao 不是又一个 ChatGPT 套壳，也不是 Dify / n8n 那样的低代码工�
 | **CLOUD / LOCAL** | 云端在服务器执行；本地经 Electron 或 `mao-agent --local` 在本机执行，支持只读 / 读写 / 智能预审 / 替我审批 / 完全权限五档。 |
 | **多 Agent** | 角色提示词、Skill、MCP、经验、推荐问题；提示词可版本化与回滚。可在管理后台停用，停用后使用侧列表不再展示。支持 Agent Bundle 一键导出/导入（跨实例搬运，MCP 密钥自动脱敏）与团队共享目录（管理员推荐 + 使用侧依赖自检）。 |
 | **工具与扩展** | Shell、文件、搜索、网页、文生图/改图、子代理委派；Skill + 全局/用户级 MCP。 |
-| **协作** | 边路任务、后台子代理（`default` / `explorer` / `worker` / `reviewer`）、定时任务、完成通知、会话只读分享与 Markdown 导出。 |
+| **协作** | 边路任务、后台子代理（`default` / `explorer` / `worker` / `reviewer`）、定时任务、完成通知、会话只读分享与 JSONL 导出。 |
 | **任务收件箱** | 站内通知中心：任务完成 / 失败、提问待答、审批待办、子代理结果回传统一汇入顶栏铃铛，实时未读数，一键跳回会话；Electron 桌面端窗口失焦时补系统通知。 |
 | **开放接口** | API Token 远程触发 Agent 运行（`POST /api/v1/open/agents/:id/run`，异步 202，会话忙时自动排队）；入站 Webhook 触发器（HMAC-SHA256 验签，连续失败自动停用并通知）；出站事件订阅把任务完成 / 失败 / 提问待答推送到自建 HTTPS 端点（失败自动退避重试）。 |
 | **工作区** | 云端新建 / 复用 / Git HTTPS clone；文件树与 Git diff 只读浏览；CLOUD 可开服务端交互终端。 |
