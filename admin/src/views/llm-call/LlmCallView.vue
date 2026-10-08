@@ -114,7 +114,7 @@
             <el-tag size="small">{{ llmCallSceneLabel(row.scene) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="模型" width="180" show-overflow-tooltip>
+        <el-table-column label="模型" min-width="180" show-overflow-tooltip>
           <template #default="{ row }">{{ row.modelName || row.providerModelId || '-' }}</template>
         </el-table-column>
         <el-table-column label="入 Token" width="100" align="right">
