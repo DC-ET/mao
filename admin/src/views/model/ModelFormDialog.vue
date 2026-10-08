@@ -108,7 +108,33 @@
               placeholder="留空则不计成本"
               style="width: 220px"
             />
-            <span class="form-hint-inline">每百万输入 Token 价格（成本单位；仅影响后续调用，不追溯历史）</span>
+            <span class="form-hint-inline">每百万非缓存输入 Token 价格（成本单位；仅影响后续调用，不追溯历史）</span>
+          </el-form-item>
+          <el-form-item v-if="isTextType" label="缓存读价格">
+            <el-input-number
+              v-model="form.priceCacheRead"
+              :min="0"
+              :max="PRICE_MAX"
+              :step="0.01"
+              :precision="6"
+              :controls="false"
+              placeholder="留空则不计成本"
+              style="width: 220px"
+            />
+            <span class="form-hint-inline">每百万缓存命中输入 Token 价格（Anthropic cache_read / OpenAI cached_tokens）</span>
+          </el-form-item>
+          <el-form-item v-if="isTextType" label="缓存写价格">
+            <el-input-number
+              v-model="form.priceCacheWrite"
+              :min="0"
+              :max="PRICE_MAX"
+              :step="0.01"
+              :precision="6"
+              :controls="false"
+              placeholder="留空则不计成本"
+              style="width: 220px"
+            />
+            <span class="form-hint-inline">每百万缓存写入 Token 价格（Anthropic cache_creation；OpenAI 系无此概念可留空）</span>
           </el-form-item>
           <el-form-item v-if="isTextType" label="输出价格">
             <el-input-number
@@ -121,7 +147,7 @@
               placeholder="留空则不计成本"
               style="width: 220px"
             />
-            <span class="form-hint-inline">每百万输出 Token 价格（成本单位；缓存命中按 5 折计价）</span>
+            <span class="form-hint-inline">每百万输出 Token 价格（成本单位；缓存读写按上方单价分别计价）</span>
           </el-form-item>
         </el-tab-pane>
       </el-tabs>
@@ -220,6 +246,8 @@ const form = reactive({
   apiKey: '',
   contextWindowTokens: 256000,
   priceInput: undefined as number | undefined | null,
+  priceCacheRead: undefined as number | undefined | null,
+  priceCacheWrite: undefined as number | undefined | null,
   priceOutput: undefined as number | undefined | null,
   supportsVision: false,
   isDefault: false
@@ -250,6 +278,8 @@ function resetForm() {
     apiKey: '',
     contextWindowTokens: 256000,
     priceInput: null,
+    priceCacheRead: null,
+    priceCacheWrite: null,
     priceOutput: null,
     supportsVision: false,
     isDefault: false
@@ -275,6 +305,8 @@ watch(() => props.visible, (val) => {
       apiKey: isMaskedApiKey(props.modelData.apiKey) ? '' : props.modelData.apiKey || '',
       contextWindowTokens: props.modelData.contextWindowTokens || 256000,
       priceInput: props.modelData.priceInput ?? null,
+      priceCacheRead: props.modelData.priceCacheRead ?? null,
+      priceCacheWrite: props.modelData.priceCacheWrite ?? null,
       priceOutput: props.modelData.priceOutput ?? null,
       supportsVision: !!props.modelData.supportsVision,
       isDefault: !!props.modelData.isDefault
@@ -309,6 +341,8 @@ async function handleSubmit() {
       payload.supportsVision = 0
       payload.isDefault = 0
       payload.priceInput = null
+      payload.priceCacheRead = null
+      payload.priceCacheWrite = null
       payload.priceOutput = null
     }
     // In edit mode, omit apiKey when left blank so the existing key is preserved.

@@ -925,20 +925,28 @@ function extractUsageFields(raw: unknown): AnthropicUsageFields | null {
 }
 
 /** Anthropic 口径 → 统一 ChatUsage：总输入 = input + cache_creation + cache_read（与官方语义一致，
- *  OpenAI 口径的 prompt_tokens 本就是全量输入，cachedTokens 是其子集）。 */
+ *  OpenAI 口径的 prompt_tokens 本就是全量输入，cachedTokens 是其子集）。
+ *  details 同时带回缓存读与缓存写两项分项，供成本分项计价（技术方案 §5.2 / §5.3）。 */
 function finalizeUsage(
   inputTokens: number | null,
   outputTokens: number | null,
   cacheRead: number | null,
   cacheCreation: number | null,
-): { promptTokens: number; completionTokens: number; totalTokens: number; promptTokensDetails?: { cachedTokens: number | null } } {
+): { promptTokens: number; completionTokens: number; totalTokens: number; promptTokensDetails?: { cachedTokens: number | null; cacheCreationTokens?: number | null } } {
   const promptTokens = (inputTokens ?? 0) + (cacheCreation ?? 0) + (cacheRead ?? 0);
   const completionTokens = outputTokens ?? 0;
   return {
     promptTokens,
     completionTokens,
     totalTokens: promptTokens + completionTokens,
-    ...(cacheRead != null ? { promptTokensDetails: { cachedTokens: cacheRead } } : {}),
+    ...(cacheRead != null || cacheCreation != null
+      ? {
+        promptTokensDetails: {
+          cachedTokens: cacheRead ?? 0,
+          ...(cacheCreation != null ? { cacheCreationTokens: cacheCreation } : {}),
+        },
+      }
+      : {}),
   };
 }
 

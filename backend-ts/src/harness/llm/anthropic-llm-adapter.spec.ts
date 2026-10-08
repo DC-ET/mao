@@ -363,7 +363,7 @@ describe('AnthropicLlmAdapter - stream', () => {
       promptTokens: 38,
       completionTokens: 7,
       totalTokens: 45,
-      promptTokensDetails: { cachedTokens: 10 },
+      promptTokensDetails: { cachedTokens: 10, cacheCreationTokens: 3 },
     });
   });
 
@@ -397,6 +397,18 @@ describe('AnthropicLlmAdapter - stream', () => {
     expect(response.usage?.completionTokens).toBe(4);
     expect(response.usage?.totalTokens).toBe(59);
     expect(response.usage?.promptTokensDetails?.cachedTokens).toBe(30);
+    // 缓存写单独一项（供成本分项计价，技术方案 §5.2）
+    expect(response.usage?.promptTokensDetails?.cacheCreationTokens).toBe(5);
+  });
+
+  it('usage 只有缓存写、无缓存读时 details 带回 cachedTokens=0 与 cacheCreationTokens', async () => {
+    server = new QueueServer();
+    server.enqueueJson('{"id":"m","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":10,"cache_creation_input_tokens":7,"output_tokens":2}}');
+    await server.start();
+
+    const response = await adapter().chat(request('hi'), configOf(server));
+    expect(response.usage?.promptTokens).toBe(17);
+    expect(response.usage?.promptTokensDetails).toEqual({ cachedTokens: 0, cacheCreationTokens: 7 });
   });
 
   it('thinking_delta 映射为 reasoningContent', async () => {

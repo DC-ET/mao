@@ -171,6 +171,8 @@ export class ModelService {
     apiProtocol: string | null | undefined,
     effort: string | null | undefined,
     priceInput: number | null | undefined,
+    priceCacheRead: number | null | undefined,
+    priceCacheWrite: number | null | undefined,
     priceOutput: number | null | undefined,
   ): Promise<LlmModel> {
     if (isDefault != null && isDefault === 1) {
@@ -190,6 +192,8 @@ export class ModelService {
       isDefault: isDefault != null ? isDefault : 0,
       contextWindowTokens,
       priceInput: normalizePrice(priceInput, 'priceInput'),
+      priceCacheRead: normalizePrice(priceCacheRead, 'priceCacheRead'),
+      priceCacheWrite: normalizePrice(priceCacheWrite, 'priceCacheWrite'),
       priceOutput: normalizePrice(priceOutput, 'priceOutput'),
       status: 1,
     };
@@ -212,6 +216,8 @@ export class ModelService {
     apiProtocol: string | null | undefined,
     effort: string | null | undefined,
     priceInput: number | null | undefined,
+    priceCacheRead: number | null | undefined,
+    priceCacheWrite: number | null | undefined,
     priceOutput: number | null | undefined,
   ): Promise<LlmModel> {
     const model = await this.getModel(id);
@@ -230,8 +236,10 @@ export class ModelService {
     if (supportsVision != null) model.supportsVision = supportsVision;
     if (contextWindowTokens != null) model.contextWindowTokens = contextWindowTokens;
     // 价格字段显式区分「未提供」（undefined=保留）与「提供为 null」（清空=不计成本）：
-    // 前端编辑表单总是回传两个价格字段，清空输入框即显式置 null。
+    // 前端编辑表单总是回传全部价格字段，清空输入框即显式置 null。
     if (priceInput !== undefined) model.priceInput = normalizePrice(priceInput, 'priceInput');
+    if (priceCacheRead !== undefined) model.priceCacheRead = normalizePrice(priceCacheRead, 'priceCacheRead');
+    if (priceCacheWrite !== undefined) model.priceCacheWrite = normalizePrice(priceCacheWrite, 'priceCacheWrite');
     if (priceOutput !== undefined) model.priceOutput = normalizePrice(priceOutput, 'priceOutput');
     if (isDefault != null) {
       if (isDefault === 1) {

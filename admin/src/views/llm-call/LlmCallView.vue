@@ -131,6 +131,9 @@
             <span class="cache-cell">{{ formatCacheHit(row) }}</span>
           </template>
         </el-table-column>
+        <el-table-column label="缓存写" width="100" align="right" class-name="hide-on-mobile">
+          <template #default="{ row }">{{ formatCacheWriteCell(row.cacheCreationTokens) }}</template>
+        </el-table-column>
         <el-table-column label="流式" width="70" align="center">
           <template #default="{ row }">{{ row.stream === 1 ? '是' : '否' }}</template>
         </el-table-column>
@@ -171,6 +174,7 @@
           <div class="call-card-row"><span class="call-card-label">Token</span><span>{{ formatNumber(row.promptTokens || 0) }} / {{ formatNumber(row.completionTokens || 0) }}</span></div>
           <div class="call-card-row"><span class="call-card-label">成本</span><span>{{ formatCostCell(row.costMicros) }}</span></div>
           <div class="call-card-row"><span class="call-card-label">缓存</span><span>{{ formatCacheHit(row) }}</span></div>
+          <div class="call-card-row"><span class="call-card-label">缓存写</span><span>{{ formatCacheWriteCell(row.cacheCreationTokens) }}</span></div>
           <div class="call-card-row"><span class="call-card-label">耗时</span><span>首字 {{ formatMs(row.firstTokenMs) }} / 总 {{ formatMs(row.durationMs) }}</span></div>
           <div class="call-card-row"><span class="call-card-label">重试</span><span>{{ row.retryCount ?? 0 }}</span></div>
           <div v-if="row.errorMessage" class="call-card-row"><span class="call-card-label">错误</span><span class="call-card-error">{{ row.errorMessage }}</span></div>
@@ -214,6 +218,7 @@
         <el-descriptions-item label="出 Token">{{ formatNumber(currentRecord.completionTokens || 0) }}</el-descriptions-item>
         <el-descriptions-item label="成本">{{ formatCostCell(currentRecord.costMicros) }}</el-descriptions-item>
         <el-descriptions-item label="缓存 Token">{{ formatCacheHit(currentRecord) }}</el-descriptions-item>
+        <el-descriptions-item label="缓存写 Token">{{ formatCacheWriteCell(currentRecord.cacheCreationTokens) }}</el-descriptions-item>
         <el-descriptions-item label="合计 Token">{{ formatNumber(currentRecord.totalTokens || 0) }}</el-descriptions-item>
         <el-descriptions-item label="首字耗时">{{ formatMs(currentRecord.firstTokenMs) }}</el-descriptions-item>
         <el-descriptions-item label="总耗时">{{ formatMs(currentRecord.durationMs) }}</el-descriptions-item>
@@ -299,6 +304,13 @@ function formatCacheHit(row: { cachedTokens?: number | null; promptTokens?: numb
   const num = formatNumber(cached)
   if (prompt <= 0) return num
   return `${num} (${Math.round((cached / prompt) * 100)}%)`
+}
+
+/** 缓存写 token 单元格：0（OpenAI 系协议 / 未产生缓存写）显示 -，避免满屏 0 噪声。 */
+function formatCacheWriteCell(cacheCreationTokens?: number | null): string {
+  const value = cacheCreationTokens || 0
+  if (value <= 0) return '-'
+  return formatNumber(value)
 }
 
 function parseFilterId(raw: unknown): number | null {
@@ -420,7 +432,7 @@ async function doExportCsv() {
       rows.push(...records)
       pageNum += 1
     }
-    const header = ['时间', '用户', '模型', '输入 Token', '输出 Token', '成本', '耗时(ms)', '缓存 Token', '状态', '错误信息', '会话 ID', 'Agent ID']
+    const header = ['时间', '用户', '模型', '输入 Token', '输出 Token', '成本', '耗时(ms)', '缓存 Token', '缓存写 Token', '状态', '错误信息', '会话 ID', 'Agent ID']
     const lines = [header.map(csvCell).join(',')]
     for (const row of rows) {
       lines.push([
@@ -432,6 +444,7 @@ async function doExportCsv() {
         row.costMicros == null ? '' : (row.costMicros / 1000000).toFixed(6),
         row.durationMs ?? '',
         row.cachedTokens || 0,
+        row.cacheCreationTokens || 0,
         row.success === 1 ? '成功' : '失败',
         row.errorMessage || '',
         row.sessionId ?? '',

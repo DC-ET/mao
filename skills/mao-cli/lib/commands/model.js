@@ -19,8 +19,8 @@ const HELP = `用法:
   mao model list [--page] [--size] [--keyword] [--provider] [--status] [--supports-vision] [--is-default]
   mao model get --id <id>
   mao model providers
-  mao model create --name --provider --base-url --api-key --model-id [--context-window-tokens] [--supports-vision 0|1] [--is-default 0|1] [--price-input <n>] [--price-output <n>]
-  mao model update --id [--name] [--provider] [--base-url] [--api-key] [--model-id] [--context-window-tokens] [--supports-vision] [--is-default] [--price-input <n>] [--price-output <n>]
+  mao model create --name --provider --base-url --api-key --model-id [--context-window-tokens] [--supports-vision 0|1] [--is-default 0|1] [--price-input <n>] [--price-cache-read <n>] [--price-cache-write <n>] [--price-output <n>]
+  mao model update --id [--name] [--provider] [--base-url] [--api-key] [--model-id] [--context-window-tokens] [--supports-vision] [--is-default] [--price-input <n>] [--price-cache-read <n>] [--price-cache-write <n>] [--price-output <n>]
   mao model delete --id
   mao model set-status --id --status
   mao model test --id
@@ -54,6 +54,8 @@ function modelBody(flags, { requireAll = false } = {}) {
       supportsVision: getBool01(flags, 'supports-vision'),
       isDefault: getBool01(flags, 'is-default'),
       priceInput: modelPrice(flags, 'price-input', '输入价格'),
+      priceCacheRead: modelPrice(flags, 'price-cache-read', '缓存读价格'),
+      priceCacheWrite: modelPrice(flags, 'price-cache-write', '缓存写价格'),
       priceOutput: modelPrice(flags, 'price-output', '输出价格'),
     });
   }
@@ -67,6 +69,8 @@ function modelBody(flags, { requireAll = false } = {}) {
     supportsVision: getBool01(flags, 'supports-vision'),
     isDefault: getBool01(flags, 'is-default'),
     priceInput: modelPrice(flags, 'price-input', '输入价格'),
+    priceCacheRead: modelPrice(flags, 'price-cache-read', '缓存读价格'),
+    priceCacheWrite: modelPrice(flags, 'price-cache-write', '缓存写价格'),
     priceOutput: modelPrice(flags, 'price-output', '输出价格'),
   });
 }

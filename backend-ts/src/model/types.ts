@@ -14,8 +14,13 @@ export interface LlmModel {
   modelType?: string | null;
   clientImpersonation?: string | null;
   contextWindowTokens?: number | null;
-  /** 每百万 token 价格（成本单位）。DECIMAL 列经 mysql2 读出为 string，计价前经 parsePriceColumn 归一。 */
+  /** 每百万「非缓存」输入 token 价格（成本单位）。DECIMAL 列经 mysql2 读出为 string，计价前经 parsePriceColumn 归一。 */
   priceInput?: string | number | null;
+  /** 每百万缓存命中输入 token 价格（成本单位）。语义同 priceInput。 */
+  priceCacheRead?: string | number | null;
+  /** 每百万缓存写入输入 token 价格（成本单位）。语义同 priceInput。 */
+  priceCacheWrite?: string | number | null;
+  /** 每百万输出 token 价格（成本单位）。语义同 priceInput。 */
   priceOutput?: string | number | null;
   status?: number | null;
   supportsVision?: number | null;

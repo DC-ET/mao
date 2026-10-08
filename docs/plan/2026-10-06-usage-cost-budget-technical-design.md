@@ -1,6 +1,6 @@
 # 用量成本核算与预算管控技术方案：模型价格 → 成本落账 → 预算闸门
 
-- 状态：技术方案，待实施（2026-10-06 评审修订：BLOCK 通道与入口覆盖见 §5.7、成本口径见 §5.4、种子 SQL 见 §5.5，修正决策补录 §10.11-13）
+- 状态：P1/P2/P3 已实施（0.0.243 / 0.0.249 发版）；**2026-10-08 修订：价格由两项扩为四项（缓存读 / 缓存写 / 非缓存输入 / 输出），见 §5.1 V141 与 §10 决策 14-16，待实施**（原始评审修订：BLOCK 通道与入口覆盖见 §5.7、成本口径见 §5.4、种子 SQL 见 §5.5，修正决策补录 §10.11-13）
 - 日期：2026-10-06
 - 提案来源：[docs/proposals/2026-10-06-usage-cost-budget.md](../proposals/2026-10-06-usage-cost-budget.md)
 
@@ -14,7 +14,7 @@
 
 ### 2.1 目标（全部要做）
 
-1. 模型价格可配（输入 / 输出 per 1M tokens），`llm_call` 落成本快照，用量分析各 scope 与调用流水可看钱。
+1. 模型价格可配（**非缓存输入 / 缓存读 / 缓存写 / 输出** 四项 per 1M tokens），`llm_call` 落成本快照与 token 分项，用量分析各 scope 与调用流水可看钱。
 2. 预算管控：GLOBAL / USER / AGENT 三种 scope 的月度预算（金额或 token），WARN 超线进收件箱提醒、BLOCK 超线拒绝**新**任务，两档独立配置。
 3. `compaction.modelId` 独立配置，缺省回退会话主模型。
 
@@ -31,7 +31,7 @@
 
 | 层 | 内容 |
 |---|---|
-| backend-ts | V135（`llm_model` 价格列 + `llm_call.cost_micros` + agent 维度索引）、V136（`usage_budget` 表 + `budget:*` 权限码 + `compaction.modelId` 种子）；成本快照计算（RecordingLlmAdapter 落库链）；`AdminAnalyticsService` 各 scope 增加成本聚合；`BudgetService` + 任务入口检查（WS 手动发送与编辑重发、WS 队列消费、open run、定时任务，见 §5.7）；WARN 经 InboxService 新 kind `BUDGET_WARN`；`CompactionModelResolver` |
+| backend-ts | V135（已上线）、V141（`llm_model` 补 `price_cache_read` / `price_cache_write`、`llm_call` 补 `cache_creation_tokens`）；四项价格快照计算（RecordingLlmAdapter 落库链）；`AdminAnalyticsService` 各 scope 成本聚合；`BudgetService` + 任务入口检查（WS 手动发送与编辑重发、WS 队列消费、open run、定时任务，见 §5.7）；WARN 经 InboxService 新 kind `BUDGET_WARN`；`CompactionModelResolver` |
 | admin | 用量分析 6 Tab 成本列 / 成本趋势线；llm-call 明细加成本列 + CSV 导出列；模型表单加价格字段（ModelFormDialog）；预算管理新页 BudgetView + 路由 + 菜单 |
 | desktop | 无改动（BLOCK 的 WS 错误沿用现有发送失败 toast 通道；WARN 走收件箱，InboxDrawer 的 KIND_META 加一项） |
 | 文档 | CHANGELOG 发版条目；skills/mao-cli admin 章节补价格与预算说明 |
@@ -39,17 +39,21 @@
 ### 3.2 不做什么（与"做"同等明确）
 
 - 不新增 Playwright 用例（全部 Vitest）。
-- 不动 `LlmCallRow` 既有列语义，只增量加 `cost_micros`。
+- 不动 `LlmCallRow` 既有列语义，只增量加 `cost_micros` / `cache_creation_tokens`（`cached_tokens` 语义不变，仍 = 缓存读）。
+- 不做缓存价的"按供应商自动拉取"（不接各家 pricing 接口，价格由管理员填写，可参考 Claude Code / OpenAI 官方价目）。
+- 不做缓存写 TTL 分级计价（Anthropic 5m / 1h 两档合一为单一 `price_cache_write`）。
 - 不做预算的按小时 / 日粒度（period 仅 MONTHLY，列上留扩展位）。
 - 不做成本告警的 IM 通道推送（飞书 / 钉钉任务通知不覆盖预算事件，只进站内收件箱）。
 
 ## 4. 技术选型
 
-零新增依赖。成本以 **`cost_micros BIGINT`**（成本单位 × 10⁶ 的整数）落库，避免浮点累加误差；价格列 `DECIMAL(12,6)`。价格快照随模型解析链下发（模型行本就要在 `buildContext` 解析），落库侧不新增查询；兜底走 `LlmCallService.record` 内 60s TTL 的模型价格缓存。
+零新增依赖。成本以 **`cost_micros BIGINT`**（成本单位 × 10⁶ 的整数）落库，避免浮点累加误差；四项价格列 `DECIMAL(12,6)`。价格快照随模型解析链下发（模型行本就要在 `buildContext` 解析），落库侧不新增查询；兜底走 `LlmCallService.record` 内 60s TTL 的模型价格缓存。缓存写 token 从 `ChatUsage.promptTokensDetails.cacheCreationTokens` 取（本次新增字段），不新增数据库查询。
 
 ## 5. 详细设计
 
-### 5.1 V135 迁移
+### 5.1 价格列演进：V135（已上线）+ V141（四项定价修订）
+
+**V135（0.0.243 已实施，保留不动）**：
 
 ```sql
 ALTER TABLE `llm_model`
@@ -61,27 +65,62 @@ ALTER TABLE `llm_call`
     ADD INDEX `idx_llm_call_agent_created` (`agent_id`, `created_at`);
 ```
 
+**V141（本次修订）**——`llm_model` 补两项缓存价，`llm_call` 补缓存写入 token 列：
+
+```sql
+ALTER TABLE `llm_model`
+    ADD COLUMN `price_cache_read`  DECIMAL(12,6) NULL COMMENT '每百万缓存命中输入 token 价格（成本单位；NULL=该类型不计）',
+    ADD COLUMN `price_cache_write` DECIMAL(12,6) NULL COMMENT '每百万缓存写入输入 token 价格（成本单位；NULL=该类型不计）';
+
+ALTER TABLE `llm_call`
+    ADD COLUMN `cache_creation_tokens` BIGINT NOT NULL DEFAULT 0 COMMENT '缓存写入 token 数（Anthropic cache_creation_input_tokens）；其他协议为 0';
+```
+
+- `price_input` **语义收紧为「非缓存输入价」**（原为「全量输入价 + 缓存固定 5 折规则」）。数值不动，只是不再由系统拍折率。
+- 迁移同时**推导现有模型的缓存价**，使升级后对既有配置零口径漂移（推导依据见 §10 决策 14）：
+
+```sql
+UPDATE `llm_model`
+   SET `price_cache_read`  = ROUND(`price_input` * 0.5, 6),
+       `price_cache_write` = `price_input`
+ WHERE `price_input` IS NOT NULL;
+```
+
 - `idx_llm_call_agent_created`：预算按 AGENT scope 查当期消耗必需（现有索引只覆盖 user/session/model/scene）。
-- 历史数据不回填（改价快照原则，见 §10 决策 1；`cost_micros` 对旧行保持 NULL）。
+- 历史 `llm_call` 数据不回填（写时快照原则，见 §10 决策 1；`cost_micros` 对旧行保持 NULL）。`cache_creation_tokens` 取 `DEFAULT 0` 而非 NULL，与 `cached_tokens` 等既有 token 列的非空约定一致。
 
 ### 5.2 成本口径（计价公式）
 
-设 `pi = price_input`、`po = price_output`（per 1M tokens）：
+设四项价格：`pi = price_input`（非缓存输入）、`pr = price_cache_read`（缓存读）、`pw = price_cache_write`（缓存写）、`po = price_output`（输出），均为 per 1M tokens。
+
+**token 分类口径**：`prompt_tokens = 非缓存输入 + 缓存读 + 缓存写`。三项按供应商的不同语义恢复：
+
+| 协议 | 缓存读 | 缓存写 | 非缓存输入 |
+|---|---|---|---|
+| OpenAI ChatCompletions | `prompt_tokens_details.cached_tokens`（`prompt_tokens` 的子集） | 无此概念 → 0 | `prompt_tokens − cached_tokens` |
+| OpenAI Responses | `input_tokens_details.cached_tokens` | 无此概念 → 0 | `input_tokens − cached_tokens` |
+| Anthropic Messages | `cache_read_input_tokens` | `cache_creation_input_tokens` | `input_tokens`（其 prompt_tokens 已是三项之和，见 `finalizeUsage`） |
+| 其他/缺失 details | 0 | 0 | `prompt_tokens` |
 
 ```
-prompt_billable = max(0, prompt_tokens − cached_tokens × 0.5)   -- 缓存命中按 5 折计价；下限钳制防异常供应商（cached > prompt）产生负成本污染 SUM
-cost = (prompt_billable × pi + completion_tokens × po) / 1,000,000
+non_cached  = max(0, 非缓存输入)                          -- 钳制防异常供应商（cached > prompt）产生负成本
+cost        = (non_cached × pi + cache_read × pr + cache_write × pw + completion × po) / 1,000,000
 cost_micros = round(cost × 1,000,000)
 ```
 
-- 前提假设（文档明示）：`cached_tokens ⊆ prompt_tokens`（OpenAI / Anthropic 主流口径）。若某供应商口径不符，价格按"含缓存折算价"填写。
-- 价格列 DECIMAL 经 mysql2 读出为 string，计价前 parseFloat；`cost_micros = round(tokens × price)` 整数域最大约 2×10¹⁵（< 2⁵³），JS Number 精度安全，以大数单测锚定。
-- **任一价格为 NULL → `cost_micros = NULL`**（本地模型 / 未填价模型不计成本），聚合 SUM 自动忽略 NULL 行。
+- **`cost_micros` 落库时必须附带 token 分项**：`cached_tokens`（= 缓存读，与既有列语义一致）+ 新增 `cache_creation_tokens`（= 缓存写）。只存合计会让改价后无法复算、也让明细页看不出钱花在缓存写还是普通输入上。
+- **NULL 语义逐项生效**（决策 15）：四项价格各自独立，某类 token 非 0 而对应价格为 NULL → 整行 `cost_micros = NULL`（该次调用成本口径不完整，宁可整行不计也不要低估）。反之某类 token 为 0 时，其价格即使是 NULL 也不影响成本计算（本地模型只填输入/输出两项即可）。
+- 价格列 DECIMAL 经 mysql2 读出为 string，计价前 parseFloat；`cost_micros` 整数域最大约 2×10¹⁵（< 2⁵³），JS Number 精度安全，以大数单测锚定。
 - 失败调用（success=0）若产生了 token（上游计费）照常计价；totalTokens=0 的失败行成本为 0。
+- 原来「缓存固定 5 折」的口径删除：折率由 `pr` 显式表达，可为 0（免费缓存读）、可为 OpenAI 的 50%、也可为 Anthropic 的 10%。
 
 ### 5.3 成本快照写入链
 
-- **主路径**：模型解析链（`HarnessService.buildContext` → 模型解析，及各辅助场景的模型读取）把 `priceInput/priceOutput` 随 `LlmModelConfig` 下发；`RecordingLlmAdapter`（`recording-llm-adapter.ts`）在 `finally` 落库时按配置快照计算 `costMicros` 传入 `LlmCallService.record`。改价只影响后续调用。
+- **主路径**：模型解析链（`HarnessService.buildContext` → 模型解析，及各辅助场景的模型读取）把 `priceInput/priceOutput/priceCacheRead/priceCacheWrite` 随 `LlmModelConfig` 下发；`RecordingLlmAdapter`（`recording-llm-adapter.ts`）在 `finally` 落库时按配置快照计算 `costMicros` 传入 `LlmCallService.record`。改价只影响后续调用。
+- **token 分项来源**：`ChatUsage` 现有 `promptTokensDetails.cachedTokens` 已覆盖缓存读；缓存写需在 `PromptTokensDetails` 增补 `cacheCreationTokens`（`chat-request.ts`），并在三个适配器填充：
+  - `anthropic-llm-adapter.ts`：`finalizeUsage` 已收到 `cacheCreation`，当前丢弃——改为写入 details（该文件 `finalizeUsage` 是唯一把 Anthropic cache_creation 吐回统一 usage 的位置）。
+  - `openai-llm-adapter.ts` / `responses-llm-adapter.ts`：OpenAI 系无缓存写概念，恒 0（不写字段）。
+  - `json.ts` 的 `parseUsage` 透传 details 时保持字段不变即可。
 - **覆盖面**：AgentLoop 与 LLM 调用全部在云端（desktop/Electron 无直连 LLM 代码；LOCAL 仅指工具执行经 LocalToolExecutor WS 委托桌面），成本落账与预算天然覆盖 CLOUD + LOCAL 全部会话。
 - **类型改动面**：`LlmCallService.record` 入参类型 `LlmCallModelConfig`（`llm-call.service.ts`）与 `LlmModelConfig` 是两个独立接口，价格字段需两边同步新增（结构化类型兼容传参，主/兜底双路径一致性由单测锚定）。
 - **兜底路径**：`LlmModelConfig` 无价格字段时（旧调用路径遗漏），`LlmCallService.record` 按 `modelId` 查 `ModelRepository`（60s TTL 内存缓存，含"模型不存在"负缓存），仍取不到 → NULL。
@@ -94,7 +133,7 @@ cost_micros = round(cost × 1,000,000)
 - 趋势/总览注意既有口径注释：`llm_call` 与 chat+background 为包含关系（不可叠加，见该文件 1187 行注释），成本挂在 llm_call 侧聚合，scope 相加时不得重复累计。
 - 沿用 `excludeConnectivity` 口径：connectivity_test 场景不计入成本聚合（连通性测试是管理员动作，且高频低成本会污染趋势）。
 - admin `types.ts` 对应 Row 接口加字段；`ModelTab/UserTab/AgentTab` 的 el-table 加"成本"列，OverviewTab 加总额卡片；所有成本展示统一注明单位口径（"与模型价格填写单位一致"）。
-- `LlmCallView.vue` 明细表加"成本"列；CSV header 插入 `成本`（紧跟"输出 Token"后），导出值 = `cost_micros/1e6` 保留 6 位小数，NULL 输出空串。
+- `LlmCallView.vue` 明细表加"成本"列；在「缓存」列旁加"缓存写"列（`cacheCreationTokens`，0 显示 `-`，与「缓存」的命中率文案区分）；移动端卡片同步一行；详情弹窗加「缓存写 Token」。CSV header 插入 `成本`（紧跟"输出 Token"后），导出值 = `cost_micros/1e6` 保留 6 位小数，NULL 输出空串。
 - 顺手修正：`admin/src/utils/llmCallLabels.ts` 补缺失的 `proxy_approve` 场景标签。
 
 ### 5.5 V136 迁移与预算模型
@@ -157,7 +196,7 @@ INSERT IGNORE INTO `system_setting` (`setting_key`, `value`, `category`, `descri
 - 后端路由（`budget:read`/`budget:write`）：`GET /v1/admin/budgets`（列表 + 当期消耗/占比）、`POST /v1/admin/budgets`、`PUT /v1/admin/budgets/:id`、`DELETE /v1/admin/budgets/:id`（软删 enabled=0 或物理删，物理删即可——无历史引用）。
 - admin 新视图 `views/budget/BudgetView.vue`：预算行表格（scope/目标名/类型/上限/动作/当期消耗进度条/启停）+ 新增对话框（scope 联动目标选择器：USER 用 `/v1/admin/users` 搜索、AGENT 用 `/v1/agents`）；路由 `meta.permission: 'budget:read'` + SideMenu 菜单项（admin 现无"治理"分组，按 SideMenu 现有分组结构新建一级分组或挂现有分组，实施时定）。写操作按钮用 `hasPermission('budget:write')` 门控（参照 SystemSettingsView 的读写分工）。
 - 容错：`usage_budget` 无外键，USER/AGENT 目标被删后预算行仍在——检查时目标 `findById` 为空则跳过该行，列表展示"已删除"。
-- 模型价格编辑：`ModelFormDialog.vue` 加两个数字输入（per 1M，可空）；`ModelVO`/`CreateModelRequest`/`model.service.ts` 的 `createModel/updateModel` 与 `model.repository.ts` insert/update 字段 map 同步加列。
+- 模型价格编辑：`ModelFormDialog.vue` 加四项数字输入（per 1M，可空，仅文本模型显示，0.0.249 起在「接入配置」Tab）；`ModelVO`/`CreateModelRequest`/`model.service.ts` 的 `createModel/updateModel` 与 `model.repository.ts` insert/update 字段 map 同步加列；mao-cli 补 `--price-cache-read` / `--price-cache-write`。
 
 ### 5.10 P3：压缩模型独立配置
 
@@ -168,9 +207,9 @@ INSERT IGNORE INTO `system_setting` (`setting_key`, `value`, `category`, `descri
 
 ### P1：成本落账（backend + admin）
 
-1. V135；`LlmModelConfig` 价格下发 + `RecordingLlmAdapter` 快照计算 + `LlmCallService.record` 兜底缓存；单测计价公式（含缓存 5 折 / NULL 价格 / 失败调用）。
+1. V141（价格列扩展 + `cache_creation_tokens`）；`LlmModelConfig` 四项价格下发 + `RecordingLlmAdapter` 快照计算 + `LlmCallService.record` 兜底缓存；单测计价公式（含缓存读/写分项、NULL 价格、失败调用）。
 2. `AdminAnalyticsService` 各 scope 成本聚合 + admin types/Tab/CSV/明细列；`llmCallLabels.ts` 补 `proxy_approve`。
-3. `ModelFormDialog` 价格字段 + CRUD 链路。
+3. `ModelFormDialog` 四项价格字段 + CRUD 链路 + mao-cli 两个新 flag。
 
 ### P2：预算管控（backend + admin + desktop 一行）
 
@@ -184,8 +223,15 @@ INSERT IGNORE INTO `system_setting` (`setting_key`, `value`, `category`, `descri
 
 ## 7. 测试方案（全部 Vitest）
 
-- 计价：`prompt=1000, cached=400, completion=200, pi=2, po=8` → `cost_micros = round((1000−200)×2 + 200×8) = 3200`；任一价格 NULL → NULL；totalTokens=0 失败行 → 0；cached > prompt 异常行钳制后成本不为负；大数精度（tokens × price ≈ 2×10¹⁵）无浮点漂移。
+- 计价（四档矩阵）：
+  - `non_cached=600, cache_read=400, cache_write=0, completion=200, pi=2, pr=1, pw=2, po=8` → `1200 + 400 + 1600 = 3200`；
+  - OpenAI 口径转换：`prompt=1000, cached=400, completion=200, pi=2, pr=1, po=8` → non_cached=600 → `1200 + 400 + 1600 = 3200`；
+  - Anthropic 口径转换：`input=600, cache_read=400, cache_creation=200, completion=200, pi=2, pr=1, pw=2, po=8` → `1200 + 400 + 400 + 1600 = 3600`；
+  - 只看已有 token 无分项时（旧数据兼容）：cached=400 全计缓存读、cache_write=0 → 与上一条同公式。
+  - 逐项 NULL 语义：`cache_read=400` 且 `pr=null` → NULL；但 `cache_write=0` 且 `pw=null` → 正常计（该类型未产生不要求配价）；四项全填但 token 全 0 → 0。
+  - `cached > prompt` 异常行钳制后成本不为负；大数精度（tokens × price ≈ 2×10¹⁵）无浮点漂移。
 - 快照：改价后新调用用新价、历史 `cost_micros` 不变；模型软删后兜底 → NULL；`LlmModelConfig` 缺价格字段走兜底缓存（TTL 内仅查一次）。
+- 适配器口径：Anthropic `cache_creation_input_tokens` → `promptTokensDetails.cacheCreationTokens` 且不重复计入 `cachedTokens`；OpenAI 系无该字段时 cost 公式不退化（cache_write=0 分支）。
 - 聚合：`AdminAnalyticsService` 成本列与手工 SUM 一致；connectivity_test 被排除；CSV 含成本列且 NULL → 空串。
 - 预算：GLOBAL/USER/AGENT 三 scope 命中矩阵；BLOCK 入口矩阵（WS 手动发送/编辑重发收到显式 error 事件且消息未落库未入队、autoConsumeQueue 释放占位并原位回补不重复、open run 信封 code、定时任务 FAILED 且不落 USER 消息 phase 不进 RUNNING）；**运行中任务不被打断**（BLOCK 后在途执行正常终态）；排队消息 BLOCK 留队 + 收件箱去重一次；WARN 同周期同预算仅一条收件箱（跨周期重置）；enabled=0 立即失效；子代理不重复检查。
 - 权限：`budget:read/write` 越权 403；USER 角色不可见 BudgetView。
@@ -194,28 +240,33 @@ INSERT IGNORE INTO `system_setting` (`setting_key`, `value`, `category`, `descri
 ## 8. 风险与对策
 
 - **写时快照的口径迁移成本**：一旦上线，历史成本不可随价格修正重算。对策：文档明示；管理后台价格编辑处提示"仅影响后续调用"。
-- **cached ⊆ prompt 假设不成立的供应商**：按"含缓存折算价"填写价格（文档写明换算方法），不改公式。
+- **四项价格填不全导致成本静默变 NULL**：管理员只习惯填输入/输出两项，遇到带缓存写的调用即整行不计成本。对策：①模型表单对已产生缓存写 token 的场景给出配价引导（保存时若 `price_cache_write` 为空且协议为 `anthropic`，给一次性 warning 级别的 ElMessage，不阻断保存）；②`cost_micros` 为 NULL 的明细行在用量分析里可见（不是消失），漏配价会被察觉。
+- **部分供应商不返回 `cache_creation_input_tokens`**（即便是 Anthropic 兼容网关）：此时 `cache_creation_tokens = 0`，成本少计缓存写部分。对策：文档标注为已知口径边界；不引入估算逻辑（估出来的钱比没有更难排查）。
 - **BLOCK 误伤**：BLOCK 与 WARN 是独立行，管理员可只配 WARN；open run 的错误 message 携带 scope/消耗/上限便于调用方自诊；GLOBAL BLOCK 提供管理员"停用预算行"的紧急出口（就是删行/停用，无额外豁免机制）。
 - **admission SUM 性能**：GLOBAL scope 全表月度聚合最重。对策：索引范围扫描 + 观察项（>100ms 引入 TTL 缓存，见 §5.6）。
 - **Webhook 连败停用联动**：预算 BLOCK 计 FAILED 会加速触发器自动停用——这是期望行为（止损优先），文档标注；被误停的触发器重新 enable 时连败计数清零（现有语义）。
 
 ## 9. 落地清单
 
-- [ ] V135 / V136 迁移
-- [ ] 价格下发 + 成本快照写入（主路径 + 兜底缓存）
-- [ ] 用量分析 6 Tab / 明细 / CSV 成本列 + `llmCallLabels.ts` 修正
-- [ ] 模型表单价格字段（DTO/VO/repository/表单）
-- [ ] `BudgetService` + 四类入口 BLOCK（WS 手动发送/编辑重发、WS 队列消费、open run、定时任务）+ `BUDGET_EXCEEDED` 错误码
-- [ ] `BUDGET_WARN` 收件箱 kind（`@mao/contracts` InboxKind + 后端 `isInboxKind` 白名单 + 偏好默认开 + InboxDrawer KIND_META）
-- [ ] admin BudgetView + `budget:*` 权限码
-- [ ] `CompactionModelResolver` + orchestrator 接线
+- [x] V135 / V136 迁移（0.0.243 已上线）
+- [x] 价格下发 + 成本快照写入（主路径 + 兜底缓存）
+- [x] 用量分析 6 Tab / 明细 / CSV 成本列 + `llmCallLabels.ts` 修正
+- [ ] **V141 四项价格迁移**（`price_cache_read` / `price_cache_write` + `cache_creation_tokens` + 既有价格推导）
+- [ ] 四项价格下发 + 计价公式改为逐项相加（`cost-micros.ts` / `recording-llm-adapter.ts` / `llm-call.service.ts`）
+- [ ] Anthropic 适配器补 `cacheCreationTokens`（`finalizeUsage` → `PromptTokensDetails`）
+- [ ] 模型表单四项价格字段（`ModelFormDialog` + contracts `ModelVO` + `model.service.ts` + `model.repository.ts` + `model.routes.ts` + mao-cli flag）
+- [ ] `llm_call` 明细补「缓存写」列（`LlmCallView` 表格/卡片/详情/CSV）
+- [x] `BudgetService` + 四类入口 BLOCK（WS 手动发送/编辑重发、WS 队列消费、open run、定时任务）+ `BUDGET_EXCEEDED` 错误码
+- [x] `BUDGET_WARN` 收件箱 kind（`@mao/contracts` InboxKind + 后端 `isInboxKind` 白名单 + 偏好默认开 + InboxDrawer KIND_META）
+- [x] admin BudgetView + `budget:*` 权限码
+- [x] `CompactionModelResolver` + orchestrator 接线
 - [ ] CHANGELOG 发版条目 + skills/mao-cli 同步 + proposals 状态更新
 
 ## 10. 决策记录（相对提案的修正与确认）
 
 1. **写时快照定价**：`cost_micros` 在调用完成时按当刻价格计算落库；历史不回填、改价不追溯。读时计算无法重现历史价（模型价格行可变），快照是唯一自洽口径。
 2. **`cost_micros BIGINT` 整数存储**：微单位避免 DECIMAL 聚合的浮点误差，SUM 与比较全整数；展示层除以 1e6。
-3. **缓存 5 折是口径而非精确值**：各供应商缓存折扣不同（OpenAI 50%、Anthropic 90% 等），统一 5 折简化模型，精确需求走"折算价填写"（文档给方法）。
+3. ~~缓存 5 折是口径而非精确值~~ **（2026-10-08 修订，被决策 14 取代）**：统一 5 折掩盖了真实价差——Anthropic 缓存读为输入价 10%、缓存写为 125%，OpenAI 缓存读 50%、无缓存写概念。拍系数必然一边高估一边低估。
 4. **预算检查只在任务准入点**（WS 发送 / open run / 定时任务），不做运行中打断与轮级熔断：mid-run 熔断会留下半完成的文件操作，治理收益低于破坏性成本；子代理跟随父会话准入。
 5. **排队消息 BLOCK 留队不丢弃**：用户可能正在调预算；配合一次性收件箱提醒避免静默积压。
 6. **Open API/Webhook 的 BLOCK 计入触发失败**：与连败自动停用护栏正向联动，是 runaway 场景的止损闭环；不产生出站事件（任务未启动，无 task.failed 终态可投递）——HTTP 错误信封 + 触发器停用通知（TRIGGER_DISABLED 收件箱）承担反馈。
@@ -226,6 +277,9 @@ INSERT IGNORE INTO `system_setting` (`setting_key`, `value`, `category`, `descri
 11. **WS BLOCK 走显式 error 事件、不依赖异常冒泡**（评审修正）：dispatch 外层 catch 只 console.error，抛 BusinessException 前端无感知；`edit_and_resend` 是不经过 `handleSendMessage` 的独立执行入口，必须一并接线——WS 侧入口实为"手动发送/编辑重发 + 队列消费"两类。
 12. **定时任务检查点在直跑分支 `updatePhase` 之前**（评审修正）：原"`liveExecution` 调用前"位置 USER 消息已落库、phase 已 RUNNING，被拒需回滚孤儿数据；busy 入队分支不检查，与"排队消息消费时再查"的既有语义一致。
 13. **成本唯一口径 = `llm_call`**（评审澄清）：页面既有 token 列来自 message 表 / V073 `llm_usage`，与成本列来源不同，UI 不承诺 `成本 = token × 单价` 的直觉换算；趋势聚合注意 llm_call 与 chat+background 的包含关系，scope 相加不重复累计。
+14. **价格拆成四项、缓存折率显式化**（2026-10-08 用户需求修订，取代决策 3）：`price_cache_read` / `price_cache_write` 独立成列，`price_input` 语义收紧为「非缓存输入价」，公式改为逐项相加。理由：Anthropic 缓存读约为输入价 10%、缓存写约 125%，OpenAI 缓存读 50%、无缓存写——任何统一折率都会同时高估和低估。代价是表单多两项，换取账目与发票可对齐（管理员照抄官方价目表即可）。
+15. **NULL 语义逐项生效且要求"该类 token 非 0 就必须配价"**（配套决策 14）：只填输入/输出两项时，只要本次调用没有缓存读写 token，成本照常计算；一旦产生缓存写 token 而 `price_cache_write` 为空，整行成本记 NULL 而非按 0 计入——低估账目比没有账目更危险（会直接骗过预算闸门）。
+16. **迁移期价格推导保证口径连续**（配套决策 14）：V141 把既有 `price_cache_read` 推导为 `price_input × 0.5`、`price_cache_write` 推导为 `price_input`，使升级前后同一份 usage 算出的成本完全一致（逐项展开等价于原 5 折公式）。只影响迁移那一刻，之后由管理员自行调整。
 
 ## 11. 验收口径
 
@@ -234,3 +288,5 @@ INSERT IGNORE INTO `system_setting` (`setting_key`, `value`, `category`, `descri
 3. 配 WARN 行：越线后收件箱恰好一条"预算提醒"，同月重复触发不重复提醒。
 4. `compaction.modelId` 配置低价模型后，长会话压缩的 llm_call（scene=compaction）落到该模型，压缩功能行为无回归。
 5. 全量 `cd backend-ts && npm test` 通过，新增 spec 覆盖 §7 全部用例。
+6. 模型表单填缓存写价格后，Anthropic 模型一次带 `cache_creation_input_tokens` 的调用 → 明细页「缓存写」非 0 且成本含该项；OpenAI 模型同结构调用缓存写列仍为 0、成本不受影响。
+7. 升级迁移后既有已填价模型的行为连续：同一份 usage 在 V138 与 V141 口径下算出的 `cost_micros` 一致（因 `pr = pi*0.5`、`pw = pi`，逐项展开正好等于原 `(prompt − 0.5*cached)*pi`）。

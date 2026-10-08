@@ -12,6 +12,8 @@ export interface LlmCallModelConfig {
   modelId?: string;
   /** 成本快照主路径：价格随模型解析链下发。缺失（undefined）时走兜底价格缓存（技术方案 §5.3）。 */
   priceInput?: number | null;
+  priceCacheRead?: number | null;
+  priceCacheWrite?: number | null;
   priceOutput?: number | null;
 }
 
@@ -34,8 +36,13 @@ export interface LlmCallListItem extends LlmCallRow {
   agentName?: string | null;
 }
 
-/** 模型价格兜底查询：返回模型行价格（原始 DECIMAL 值）；模型不存在/已删返回 null。 */
-export type ModelPriceLookup = (id: number) => Promise<{ priceInput?: unknown; priceOutput?: unknown } | null>;
+/** 模型价格兜底查询：返回模型行四项价格（原始 DECIMAL 值）；模型不存在/已删返回 null。 */
+export type ModelPriceLookup = (id: number) => Promise<{
+  priceInput?: unknown;
+  priceCacheRead?: unknown;
+  priceCacheWrite?: unknown;
+  priceOutput?: unknown;
+} | null>;
 
 interface CacheEntry {
   price: CostPrice | null;
@@ -59,9 +66,10 @@ export class LlmCallService {
     const ctx = LlmCallContext.get();
     const usage = input.usage;
     const cached = usage?.promptTokensDetails?.cachedTokens ?? 0;
+    const cacheCreation = usage?.promptTokensDetails?.cacheCreationTokens ?? 0;
     let costMicros = input.costMicros;
     if (costMicros === undefined) {
-      costMicros = await this.resolveCostMicros(input, usage, cached);
+      costMicros = await this.resolveCostMicros(input, usage, cached, cacheCreation);
     }
     try {
       await this.repo.insert({
@@ -79,6 +87,7 @@ export class LlmCallService {
         promptTokens: usage?.promptTokens ?? 0,
         completionTokens: usage?.completionTokens ?? 0,
         cachedTokens: cached ?? 0,
+        cacheCreationTokens: cacheCreation ?? 0,
         totalTokens: usage?.totalTokens ?? 0,
         costMicros: costMicros ?? null,
         success: input.success ? 1 : 0,
@@ -100,12 +109,14 @@ export class LlmCallService {
     input: LlmCallRecordInput,
     usage: ChatUsage | null | undefined,
     cachedTokens: number,
+    cacheCreationTokens: number,
   ): Promise<number | null> {
     const price = await this.lookupPrice(input.modelConfig.id);
     if (price == null) return null;
     return computeCostMicros(price, {
       promptTokens: usage?.promptTokens ?? 0,
       cachedTokens,
+      cacheCreationTokens,
       completionTokens: usage?.completionTokens ?? 0,
     });
   }
@@ -121,7 +132,12 @@ export class LlmCallService {
     try {
       const row = await this.modelPriceLookup(modelId);
       if (row != null) {
-        price = { priceInput: parsePriceColumn(row.priceInput), priceOutput: parsePriceColumn(row.priceOutput) };
+        price = {
+          priceInput: parsePriceColumn(row.priceInput),
+          priceCacheRead: parsePriceColumn(row.priceCacheRead),
+          priceCacheWrite: parsePriceColumn(row.priceCacheWrite),
+          priceOutput: parsePriceColumn(row.priceOutput),
+        };
       }
     } catch (e) {
       console.warn(`[llm-call] model price lookup failed for model ${modelId}: ${(e as Error).message}`);

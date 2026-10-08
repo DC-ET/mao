@@ -23,6 +23,8 @@ interface CreateModelRequest {
   clientImpersonation?: string;
   contextWindowTokens?: number;
   priceInput?: number | null;
+  priceCacheRead?: number | null;
+  priceCacheWrite?: number | null;
   priceOutput?: number | null;
   supportsVision?: number;
   isDefault?: number;
@@ -106,6 +108,8 @@ export function registerModelRoutes(app: FastifyInstance, deps: ModelRouteDeps):
       body.apiProtocol,
       body.effort,
       body.priceInput,
+      body.priceCacheRead,
+      body.priceCacheWrite,
       body.priceOutput,
     );
     return sendOk(reply, toVO(model, true));
@@ -129,6 +133,8 @@ export function registerModelRoutes(app: FastifyInstance, deps: ModelRouteDeps):
       body.apiProtocol,
       body.effort,
       body.priceInput,
+      body.priceCacheRead,
+      body.priceCacheWrite,
       body.priceOutput,
     );
     return sendOk(reply, toVO(model, true));
@@ -173,6 +179,8 @@ function toVO(entity: LlmModel, revealApiKey: boolean): ModelVO {
     clientImpersonation: normalizeVoClientImpersonation(entity.clientImpersonation),
     contextWindowTokens: entity.contextWindowTokens,
     priceInput: parsePriceColumn(entity.priceInput),
+    priceCacheRead: parsePriceColumn(entity.priceCacheRead),
+    priceCacheWrite: parsePriceColumn(entity.priceCacheWrite),
     priceOutput: parsePriceColumn(entity.priceOutput),
     supportsVision: entity.supportsVision != null && entity.supportsVision === 1,
     isDefault: entity.isDefault != null && entity.isDefault === 1,

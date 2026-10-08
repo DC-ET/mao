@@ -81,7 +81,10 @@ export interface ChatRequest {
 }
 
 export interface PromptTokensDetails {
+  /** 缓存命中的输入 token 数（OpenAI prompt_tokens_details.cached_tokens / Anthropic cache_read_input_tokens）。 */
   cachedTokens?: number | null;
+  /** 缓存写入的输入 token 数（Anthropic cache_creation_input_tokens）。OpenAI 系协议无此概念，恒 0。 */
+  cacheCreationTokens?: number | null;
 }
 
 export interface ChatUsage {
@@ -142,8 +145,12 @@ export interface LlmModelConfig {
   contextWindowTokens?: number;
   supportsVision?: boolean;
   clientImpersonation?: ClientImpersonation;
-  /** 每百万输入 token 价格（成本单位）。随模型解析链下发用于成本快照；缺失时落库侧走兜底价格缓存。 */
+  /** 每百万「非缓存」输入 token 价格（成本单位）。随模型解析链下发用于成本快照；缺失时落库侧走兜底价格缓存。 */
   priceInput?: number | null;
+  /** 每百万缓存命中输入 token 价格（成本单位）。语义同 priceInput。 */
+  priceCacheRead?: number | null;
+  /** 每百万缓存写入输入 token 价格（成本单位；Anthropic cache_creation，OpenAI 系恒 0）。语义同 priceInput。 */
+  priceCacheWrite?: number | null;
   /** 每百万输出 token 价格（成本单位）。语义同 priceInput。 */
   priceOutput?: number | null;
 }

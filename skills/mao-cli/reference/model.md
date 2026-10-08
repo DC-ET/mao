@@ -147,13 +147,16 @@ mao model list --provider openai --status 1
 | `--context-window-tokens` | 否 | 整数 | 上下文窗口 token 数 | `contextWindowTokens` |
 | `--supports-vision` | 否 | `0`/`1` | 是否支持视觉 | `supportsVision` |
 | `--is-default` | 否 | `0`/`1` | 是否默认模型 | `isDefault` |
-| `--price-input` | 否 | 数字 | 每百万**输入** token 价格（成本单位）；留空表示不计成本 | `priceInput` |
-| `--price-output` | 否 | 数字 | 每百万**输出** token 价格（成本单位）；留空表示不计成本 | `priceOutput` |
+| `--price-input` | 否 | 数字 | 每百万**非缓存输入** token 价格（成本单位）；留空表示该类不计成本 | `priceInput` |
+| `--price-cache-read` | 否 | 数字 | 每百万**缓存命中**输入 token 价格（OpenAI `cached_tokens` / Anthropic `cache_read_input_tokens`）；留空表示该类不计成本 | `priceCacheRead` |
+| `--price-cache-write` | 否 | 数字 | 每百万**缓存写入** token 价格（Anthropic `cache_creation_input_tokens`，OpenAI 系无此概念）；留空表示该类不计成本 | `priceCacheWrite` |
+| `--price-output` | 否 | 数字 | 每百万**输出** token 价格（成本单位）；留空表示该类不计成本 | `priceOutput` |
 
-价格规则（0.0.243 起）：
+价格规则（`price_input` / `price_output` 自 0.0.243、缓存两档自 0.0.250 起）：
 
 - 单位是「成本单位/百万 token」，与用量分析页展示的成本同一口径；落库为 `DECIMAL(12,6)`，上限 999999.999999、最多 6 位小数。
-- **留空（不传）= 不计成本**，该模型的调用不产生成本；填 `0` 表示免费模型（成本按 0 计，与"不计"在分析页呈现不同）。
+- **留空（不传）= 该类 token 不计成本**，该模型的调用不产生成本；填 `0` 表示免费模型（成本按 0 计，与"不计"在分析页呈现不同）。
+- 四类 token 分别计价：非缓存输入、缓存读、缓存写、输出。某类 token 实际产生了但对应价格留空，该次调用成本整行留空（不计入聚合），避免低估；只填输入/输出即可覆盖无缓存的调用。可直接照抄官方价目表，不必自行折算折扣。
 - 价格在每次 LLM 调用**写入时快照**，之后改价只影响新调用，历史调用成本不回填。
 - 本 CLI 只能设置价格、不能清空已设价格；清空请用管理后台模型编辑弹窗（清空输入框即显式置空）。
 
@@ -171,6 +174,8 @@ mao model create \
   --supports-vision 1 \
   --is-default 0 \
   --price-input 2.5 \
+  --price-cache-read 0.25 \
+  --price-cache-write 3.12 \
   --price-output 10
 ```
 
@@ -195,7 +200,9 @@ mao model create \
 | `--context-window-tokens` | 否 | 整数 | 上下文窗口 | `contextWindowTokens` |
 | `--supports-vision` | 否 | `0`/`1` | 视觉 | `supportsVision` |
 | `--is-default` | 否 | `0`/`1` | 默认 | `isDefault` |
-| `--price-input` | 否 | 数字 | 每百万输入 token 价格（成本单位） | `priceInput` |
+| `--price-input` | 否 | 数字 | 每百万非缓存输入 token 价格（成本单位） | `priceInput` |
+| `--price-cache-read` | 否 | 数字 | 每百万缓存命中输入 token 价格（成本单位） | `priceCacheRead` |
+| `--price-cache-write` | 否 | 数字 | 每百万缓存写入 token 价格（成本单位） | `priceCacheWrite` |
 | `--price-output` | 否 | 数字 | 每百万输出 token 价格（成本单位） | `priceOutput` |
 
 价格口径与限制同 `create`（见上文「价格规则」）。

@@ -18,9 +18,13 @@ export interface ModelVO {
   modelType?: string | null;
   clientImpersonation?: ClientImpersonation;
   contextWindowTokens?: number | null;
-  /** 每百万输入 token 价格（成本单位；null=不计成本）。仅影响后续调用的成本快照，不追溯历史。 */
+  /** 每百万「非缓存」输入 token 价格（成本单位；null=该类不计成本）。仅影响后续调用的成本快照，不追溯历史。 */
   priceInput?: number | null;
-  /** 每百万输出 token 价格（成本单位；null=不计成本）。仅影响后续调用的成本快照，不追溯历史。 */
+  /** 每百万缓存命中输入 token 价格（成本单位；null=该类不计成本）。语义同 priceInput。 */
+  priceCacheRead?: number | null;
+  /** 每百万缓存写入输入 token 价格（成本单位；Anthropic cache_creation；OpenAI 系无此概念）。语义同 priceInput。 */
+  priceCacheWrite?: number | null;
+  /** 每百万输出 token 价格（成本单位；null=该类不计成本）。语义同 priceInput。 */
   priceOutput?: number | null;
   supportsVision?: boolean;
   isDefault?: boolean;

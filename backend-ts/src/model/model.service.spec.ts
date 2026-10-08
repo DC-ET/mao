@@ -87,8 +87,7 @@ describe('ModelService', () => {
       null,
       1,
       128000,
-      'text',
-    );
+      'text', undefined, undefined, undefined, undefined, undefined, undefined, undefined);
     expect(created.name).toBe('  Name  ');
     expect(created.supportsVision).toBe(0);
     expect(created.isDefault).toBe(1);
@@ -101,36 +100,36 @@ describe('ModelService', () => {
 
   it('createModelRejectsInvalidClientImpersonationAndAcceptsValidValues', async () => {
     await expect(
-      service.createModel('n', 'p', 'https://x', 'k', 'm', null, 0, null, 'text', 'openai'),
+      service.createModel('n', 'p', 'https://x', 'k', 'm', null, 0, null, 'text', 'openai', undefined, undefined, undefined, undefined, undefined, undefined),
     ).rejects.toThrow(/clientImpersonation 只能是/);
 
-    const created = await service.createModel('n', 'p', 'https://x', 'k', 'm', null, 0, null, 'text', 'codex');
+    const created = await service.createModel('n', 'p', 'https://x', 'k', 'm', null, 0, null, 'text', 'codex', undefined, undefined, undefined, undefined, undefined, undefined);
     expect(created.clientImpersonation).toBe('codex');
   });
 
   it('createModelPricesNormalizeToCostColumns', async () => {
-    const priced = await service.createModel('n', 'p', 'https://x', 'k', 'm', 0, 0, null, 'text', null, null, null, 2.5, 8);
+    const priced = await service.createModel('n', 'p', 'https://x', 'k', 'm', 0, 0, null, 'text', null, null, null, 2.5, null, null, 8);
     expect(priced.priceInput).toBe(2.5);
     expect(priced.priceOutput).toBe(8);
 
     // 未提供（undefined）→ null：不计成本
-    const unpriced = await service.createModel('n', 'p', 'https://x', 'k', 'm', 0, 0, null, 'text', null, null, null, undefined, undefined);
+    const unpriced = await service.createModel('n', 'p', 'https://x', 'k', 'm', 0, 0, null, 'text', null, null, null, undefined, undefined, undefined, undefined);
     expect(unpriced.priceInput).toBeNull();
     expect(unpriced.priceOutput).toBeNull();
 
     await expect(
-      service.createModel('n', 'p', 'https://x', 'k', 'm', 0, 0, null, 'text', null, null, null, -1, 8),
+      service.createModel('n', 'p', 'https://x', 'k', 'm', 0, 0, null, 'text', null, null, null, -1, null, null, 8),
     ).rejects.toThrow(/priceInput 必须是非负数字/);
     await expect(
-      service.createModel('n', 'p', 'https://x', 'k', 'm', 0, 0, null, 'text', null, null, null, 2, '8' as never),
+      service.createModel('n', 'p', 'https://x', 'k', 'm', 0, 0, null, 'text', null, null, null, 2, null, null, '8' as never),
     ).rejects.toThrow(/priceOutput 必须是非负数字/);
 
     // 与 updateModel 同一套 DECIMAL(12,6) 校验，create 路径同样拦得住（不落到 insert）
     await expect(
-      service.createModel('n', 'p', 'https://x', 'k', 'm', 0, 0, null, 'text', null, null, null, 1000000, null),
+      service.createModel('n', 'p', 'https://x', 'k', 'm', 0, 0, null, 'text', null, null, null, 1000000, null, null, null),
     ).rejects.toThrow(/priceInput 不能超过 999999\.999999/);
     await expect(
-      service.createModel('n', 'p', 'https://x', 'k', 'm', 0, 0, null, 'text', null, null, null, 0.0000004, null),
+      service.createModel('n', 'p', 'https://x', 'k', 'm', 0, 0, null, 'text', null, null, null, 0.0000004, null, null, null),
     ).rejects.toThrow(/priceInput 最多保留 6 位小数/);
     expect(modelRepo.insert).not.toHaveBeenCalledWith(
       expect.objectContaining({ priceInput: 1000000 }),
@@ -144,12 +143,12 @@ describe('ModelService', () => {
     vi.mocked(modelRepo.findById).mockResolvedValue(existing);
 
     // 未提供 → 保留原价（字段缺省走 undefined）
-    await service.updateModel(7, null, null, null, null, null, null, null, null, null, null, null, null, undefined, undefined);
+    await service.updateModel(7, null, null, null, null, null, null, null, null, null, null, null, null, undefined, undefined, undefined, undefined);
     expect(existing.priceInput).toBe(2);
     expect(existing.priceOutput).toBe(8);
 
     // 显式 null → 清空（前端清空输入框即此语义）
-    await service.updateModel(7, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+    await service.updateModel(7, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
     expect(existing.priceInput).toBeNull();
     expect(existing.priceOutput).toBeNull();
     expect(modelRepo.updateById).toHaveBeenCalledWith(existing);
@@ -157,7 +156,7 @@ describe('ModelService', () => {
     // 非法值拒绝
     existing.priceInput = 1;
     await expect(
-      service.updateModel(7, null, null, null, null, null, null, null, null, null, null, null, null, -0.5, null),
+      service.updateModel(7, null, null, null, null, null, null, null, null, null, null, null, null, -0.5, null, null, null),
     ).rejects.toThrow(/priceInput 必须是非负数字/);
   });
 
@@ -168,7 +167,9 @@ describe('ModelService', () => {
     const existing = model(7, 'old', 0, 1);
     vi.mocked(modelRepo.findById).mockResolvedValue(existing);
     const call = (priceInput: number | null, priceOutput: number | null = null) =>
-      service.updateModel(7, null, null, null, null, null, null, null, null, null, null, null, null, priceInput, priceOutput);
+      service.updateModel(7, null, null, null, null, null, null, null, null, null, null, null, null, priceInput, undefined, undefined, priceOutput);
+    const call2 = (priceInput: number | null, priceCacheRead: number | null, priceCacheWrite: number | null, priceOutput: number | null = null) =>
+      service.updateModel(7, null, null, null, null, null, null, null, null, null, null, null, null, priceInput, priceCacheRead, priceCacheWrite, priceOutput);
 
     // 值域上界：DECIMAL(12,6) 整数位 6 位，最大 999999.999999
     await expect(call(1000000)).rejects.toThrow(/不能超过 999999\.999999/);
@@ -178,6 +179,12 @@ describe('ModelService', () => {
     // 精度：四舍五入后值会变的输入一律拒绝，绝不替用户取整
     await expect(call(0.0000004)).rejects.toThrow(/priceInput 最多保留 6 位小数/);
     await expect(call(null, 2.3456789)).rejects.toThrow(/priceOutput 最多保留 6 位小数/);
+
+    // 缓存两档（priceCacheRead / priceCacheWrite）走同一套值域与精度校验
+    await expect(call2(null, 1000000, null)).rejects.toThrow(/priceCacheRead 不能超过/);
+    await expect(call2(null, 0.0000004, null)).rejects.toThrow(/priceCacheRead 最多保留 6 位小数/);
+    await expect(call2(null, null, 1000000)).rejects.toThrow(/priceCacheWrite 不能超过/);
+    await expect(call2(null, null, 0.0000004)).rejects.toThrow(/priceCacheWrite 最多保留 6 位小数/);
 
     expect(modelRepo.updateById).not.toHaveBeenCalled();
 
@@ -194,16 +201,16 @@ describe('ModelService', () => {
     vi.mocked(modelRepo.findById).mockResolvedValue(existing);
 
     await expect(
-      service.updateModel(7, null, null, null, null, null, null, null, null, null, 'bogus'),
+      service.updateModel(7, null, null, null, null, null, null, null, null, null, 'bogus', undefined, undefined, undefined, undefined, undefined, undefined),
     ).rejects.toThrow(/clientImpersonation 只能是/);
 
     // 不传（undefined/null）表示不修改，保留原值
-    await service.updateModel(7, null, null, null, null, null, null, null, null, null, null);
+    await service.updateModel(7, null, null, null, null, null, null, null, null, null, null, undefined, undefined, undefined, undefined, undefined, undefined);
     expect(existing.clientImpersonation).toBe('claude_code');
     expect(modelRepo.updateById).toHaveBeenCalledWith(existing);
 
     // 显式改为 none 生效
-    await service.updateModel(7, null, null, null, null, null, null, null, null, null, 'none');
+    await service.updateModel(7, null, null, null, null, null, null, null, null, null, 'none', undefined, undefined, undefined, undefined, undefined, undefined);
     expect(existing.clientImpersonation).toBe('none');
   });
 
@@ -221,8 +228,7 @@ describe('ModelService', () => {
       1,
       1,
       256000,
-      null,
-    );
+      null, undefined, undefined, undefined, undefined, undefined, undefined, undefined);
     expect(updated.name).toBe('new');
     expect(updated.provider).toBe('openai');
     expect(updated.baseUrl).toBe('https://new');
@@ -305,10 +311,10 @@ describe('ModelService', () => {
     expect((await service.findFirstActiveAudioModel())?.id).toBe(2);
     expect((await service.getDefaultModel())?.id).toBe(1);
     expect((await service.getModel(1)).name).toBe('a');
-    const created = await service.createModel('n', 'openai', 'https://x', 'k', 'm', 1, 1, 8000, 'text');
+    const created = await service.createModel('n', 'openai', 'https://x', 'k', 'm', 1, 1, 8000, 'text', undefined, undefined, undefined, undefined, undefined, undefined, undefined);
     expect(created.status).toBe(1);
     expect(modelRepo.clearDefaultFlag).toHaveBeenCalled();
-    await service.updateModel(1, 'n2', 'p', 'https://y', 'k2', 'm2', 0, 0, 4000, 'text');
+    await service.updateModel(1, 'n2', 'p', 'https://y', 'k2', 'm2', 0, 0, 4000, 'text', undefined, undefined, undefined, undefined, undefined, undefined, undefined);
     expect(modelRepo.updateById).toHaveBeenCalled();
   });
 
@@ -328,20 +334,20 @@ describe('ModelService', () => {
 
   it('createModelNormalizesApiProtocolAndRejectsInvalidValue', async () => {
     await expect(
-      service.createModel('n', 'p', 'https://x', 'k', 'm', null, 0, null, 'text', null, 'bogus'),
+      service.createModel('n', 'p', 'https://x', 'k', 'm', null, 0, null, 'text', null, 'bogus', undefined, undefined, undefined, undefined, undefined),
     ).rejects.toThrow(/apiProtocol 只能是/);
 
     // openai-responses 已实现，可正常保存
-    const responsesModel = await service.createModel('n', 'p', 'https://x', 'k', 'm', null, 0, null, 'text', null, 'openai-responses');
+    const responsesModel = await service.createModel('n', 'p', 'https://x', 'k', 'm', null, 0, null, 'text', null, 'openai-responses', undefined, undefined, undefined, undefined, undefined);
     expect(responsesModel.apiProtocol).toBe('openai-responses');
 
-    const normalized = await service.createModel('n', 'p', 'https://x', 'k', 'm', null, 0, null, 'text', null, 'openai-compatible');
+    const normalized = await service.createModel('n', 'p', 'https://x', 'k', 'm', null, 0, null, 'text', null, 'openai-compatible', undefined, undefined, undefined, undefined, undefined);
     expect(normalized.apiProtocol).toBe('');
 
-    const anthropic = await service.createModel('n', 'p', 'https://x', 'k', 'm', null, 0, null, 'text', null, 'anthropic');
+    const anthropic = await service.createModel('n', 'p', 'https://x', 'k', 'm', null, 0, null, 'text', null, 'anthropic', undefined, undefined, undefined, undefined, undefined);
     expect(anthropic.apiProtocol).toBe('anthropic');
 
-    const omitted = await service.createModel('n', 'p', 'https://x', 'k', 'm', null, 0, null, 'text');
+    const omitted = await service.createModel('n', 'p', 'https://x', 'k', 'm', null, 0, null, 'text', undefined, undefined, undefined, undefined, undefined, undefined, undefined);
     expect(omitted.apiProtocol).toBe('');
   });
 
@@ -351,31 +357,31 @@ describe('ModelService', () => {
     vi.mocked(modelRepo.findById).mockResolvedValue(existing);
 
     await expect(
-      service.updateModel(11, null, null, null, null, null, null, null, null, null, null, 'bogus'),
+      service.updateModel(11, null, null, null, null, null, null, null, null, null, null, 'bogus', undefined, undefined, undefined, undefined, undefined),
     ).rejects.toThrow(/apiProtocol 只能是/);
 
     // 不传（undefined/null）表示不修改，保留原值
-    await service.updateModel(11, null, null, null, null, null, null, null, null, null, null, null);
+    await service.updateModel(11, null, null, null, null, null, null, null, null, null, null, null, undefined, undefined, undefined, undefined, undefined);
     expect(existing.apiProtocol).toBe('anthropic');
 
     // 显式传 openai-compatible 归一为空串并生效
-    await service.updateModel(11, null, null, null, null, null, null, null, null, null, null, 'openai-compatible');
+    await service.updateModel(11, null, null, null, null, null, null, null, null, null, null, 'openai-compatible', undefined, undefined, undefined, undefined, undefined);
     expect(existing.apiProtocol).toBe('');
     expect(modelRepo.updateById).toHaveBeenCalledWith(existing);
   });
 
   it('createModelValidatesEffortAndNormalizesBlankToEmptyString', async () => {
     await expect(
-      service.createModel('n', 'p', 'https://x', 'k', 'm', null, 0, null, 'text', null, 'openai-responses', 'bogus'),
+      service.createModel('n', 'p', 'https://x', 'k', 'm', null, 0, null, 'text', null, 'openai-responses', 'bogus', undefined, undefined, undefined, undefined),
     ).rejects.toThrow(/effort 只能是/);
 
-    const withEffort = await service.createModel('n', 'p', 'https://x', 'k', 'm', null, 0, null, 'text', null, 'openai-responses', 'xhigh');
+    const withEffort = await service.createModel('n', 'p', 'https://x', 'k', 'm', null, 0, null, 'text', null, 'openai-responses', 'xhigh', undefined, undefined, undefined, undefined);
     expect(withEffort.effort).toBe('xhigh');
 
-    const blank = await service.createModel('n', 'p', 'https://x', 'k', 'm', null, 0, null, 'text', null, 'openai-responses', '  ');
+    const blank = await service.createModel('n', 'p', 'https://x', 'k', 'm', null, 0, null, 'text', null, 'openai-responses', '  ', undefined, undefined, undefined, undefined);
     expect(blank.effort).toBe('');
 
-    const omitted = await service.createModel('n', 'p', 'https://x', 'k', 'm', null, 0, null, 'text', null, 'openai-responses');
+    const omitted = await service.createModel('n', 'p', 'https://x', 'k', 'm', null, 0, null, 'text', null, 'openai-responses', undefined, undefined, undefined, undefined, undefined);
     expect(omitted.effort).toBe('');
   });
 
@@ -385,15 +391,15 @@ describe('ModelService', () => {
     vi.mocked(modelRepo.findById).mockResolvedValue(existing);
 
     await expect(
-      service.updateModel(13, null, null, null, null, null, null, null, null, null, null, null, 'ultra'),
+      service.updateModel(13, null, null, null, null, null, null, null, null, null, null, null, 'ultra', undefined, undefined, undefined, undefined),
     ).rejects.toThrow(/effort 只能是/);
 
     // 不传表示不修改
-    await service.updateModel(13, null, null, null, null, null, null, null, null, null, null, null, null);
+    await service.updateModel(13, null, null, null, null, null, null, null, null, null, null, null, null, undefined, undefined, undefined, undefined);
     expect(existing.effort).toBe('low');
 
     // 显式传空串表示回到协议默认
-    await service.updateModel(13, null, null, null, null, null, null, null, null, null, null, null, 'high');
+    await service.updateModel(13, null, null, null, null, null, null, null, null, null, null, null, 'high', undefined, undefined, undefined, undefined);
     expect(existing.effort).toBe('high');
     expect(modelRepo.updateById).toHaveBeenCalledWith(existing);
   });

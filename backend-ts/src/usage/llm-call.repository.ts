@@ -16,6 +16,8 @@ export interface LlmCallRow {
   promptTokens?: number | null;
   completionTokens?: number | null;
   cachedTokens?: number | null;
+  /** 缓存写入 token 数（Anthropic cache_creation_input_tokens）；其他协议为 0。 */
+  cacheCreationTokens?: number | null;
   totalTokens?: number | null;
   /** 成本快照（成本单位×1e6 整数）；价格未配置的历史/新行为 NULL。 */
   costMicros?: number | null;
@@ -57,6 +59,7 @@ export class LlmCallRepository {
       promptTokens: row.promptTokens ?? 0,
       completionTokens: row.completionTokens ?? 0,
       cachedTokens: row.cachedTokens ?? 0,
+      cacheCreationTokens: row.cacheCreationTokens ?? 0,
       totalTokens: row.totalTokens ?? 0,
       costMicros: row.costMicros ?? null,
       success: row.success ?? 0,

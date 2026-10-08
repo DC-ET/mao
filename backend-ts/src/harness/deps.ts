@@ -68,8 +68,10 @@ export interface LlmModel {
   modelId?: string | null;
   clientImpersonation?: string | null;
   contextWindowTokens?: number | null;
-  /** 每百万 token 价格（成本单位）。DECIMAL 列经 mysql2 读出为 string，计价前 parsePriceColumn 归一。 */
+  /** 每百万「非缓存」输入 token 价格（成本单位）。DECIMAL 列经 mysql2 读出为 string，计价前 parsePriceColumn 归一。 */
   priceInput?: string | number | null;
+  priceCacheRead?: string | number | null;
+  priceCacheWrite?: string | number | null;
   priceOutput?: string | number | null;
   supportsVision?: number | boolean | null;
   isDefault?: number | boolean | null;
@@ -302,6 +304,8 @@ export function llmModelToConfig(model: LlmModel): LlmModelConfig {
     // 价格随模型解析链下发（成本快照主路径，决策 8）；NULL 价归一为 undefined，
     // 落库侧对 undefined 走兜底缓存再解析同一行，结果一致（NULL → 成本 NULL）。
     priceInput: parsePriceColumn(model.priceInput) ?? undefined,
+    priceCacheRead: parsePriceColumn(model.priceCacheRead) ?? undefined,
+    priceCacheWrite: parsePriceColumn(model.priceCacheWrite) ?? undefined,
     priceOutput: parsePriceColumn(model.priceOutput) ?? undefined,
   };
 }
