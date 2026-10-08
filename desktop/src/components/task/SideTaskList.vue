@@ -1,5 +1,5 @@
 <template>
-  <div class="side-task-list">
+  <div ref="listEl" class="side-task-list">
     <div v-if="!tasks || tasks.length === 0" class="side-task-empty">
       暂无边路任务
     </div>
@@ -84,6 +84,7 @@ import { sideTaskToFocusCandidate, sortByFocusPriority } from '../../utils/focus
 import { useRelativeTime, formatRelativeTime } from '../../composables/useRelativeTime'
 import ShareDialog from './ShareDialog.vue'
 import { downloadSessionMarkdown } from '../../utils/sessionShare'
+import { shouldDismissContextMenuForScroll } from '../../utils/contextMenuDismiss'
 
 const props = defineProps<{
   tasks?: SideTaskItem[]
@@ -91,6 +92,8 @@ const props = defineProps<{
 }>()
 
 useRelativeTime()
+
+const listEl = ref<HTMLElement | null>(null)
 
 const emit = defineEmits<{
   'open-side-task': [payload: { sideSessionId: number; title: string }]
@@ -316,16 +319,22 @@ function promote(task: SideTaskItem) {
   emit('promote-side-task', task.id)
 }
 
+/** 边路列表自身（或其父级）滚动、以及窗口尺寸变化时关闭。对话区贴底滚动不关。 */
+function onViewportChange(e: Event) {
+  if (e.type === 'scroll' && !shouldDismissContextMenuForScroll(e.target, listEl.value)) return
+  closeContextMenu()
+}
+
 onMounted(() => {
   window.addEventListener('click', closeContextMenu)
-  window.addEventListener('resize', closeContextMenu)
-  window.addEventListener('scroll', closeContextMenu, true)
+  window.addEventListener('resize', onViewportChange)
+  window.addEventListener('scroll', onViewportChange, true)
 })
 
 onUnmounted(() => {
   window.removeEventListener('click', closeContextMenu)
-  window.removeEventListener('resize', closeContextMenu)
-  window.removeEventListener('scroll', closeContextMenu, true)
+  window.removeEventListener('resize', onViewportChange)
+  window.removeEventListener('scroll', onViewportChange, true)
   clearLongPress()
 })
 </script>

@@ -1,5 +1,5 @@
 <template>
-  <div class="center-tab-bar">
+  <div ref="barEl" class="center-tab-bar">
     <div
       v-for="tab in tabs"
       :key="tab.id"
@@ -54,6 +54,7 @@
 import { reactive, ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { ChatDotRound, Document, DocumentCopy, Close } from '@element-plus/icons-vue'
 import type { Tab } from '../../types/file-browser'
+import { shouldDismissContextMenuForScroll } from '../../utils/contextMenuDismiss'
 
 defineProps<{
   tabs: Tab[]
@@ -74,6 +75,7 @@ const contextMenu = reactive({
   tabId: null as string | null,
 })
 
+const barEl = ref<HTMLElement | null>(null)
 const menuRef = ref<HTMLDivElement>()
 const adjustedX = ref(0)
 const adjustedY = ref(0)
@@ -111,13 +113,19 @@ function hideContextMenu() {
   contextMenu.visible = false
 }
 
+/** Tab 栏自身滚动时关闭。对话区随 Agent 执行贴底滚动不关。 */
+function onWindowScroll(e: Event) {
+  if (!shouldDismissContextMenuForScroll(e.target, barEl.value)) return
+  hideContextMenu()
+}
+
 onMounted(() => {
   document.addEventListener('click', hideContextMenu)
-  window.addEventListener('scroll', hideContextMenu, true)
+  window.addEventListener('scroll', onWindowScroll, true)
 })
 onUnmounted(() => {
   document.removeEventListener('click', hideContextMenu)
-  window.removeEventListener('scroll', hideContextMenu, true)
+  window.removeEventListener('scroll', onWindowScroll, true)
 })
 </script>
 

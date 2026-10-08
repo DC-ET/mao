@@ -191,6 +191,7 @@ import TaskArchivedSection from './TaskArchivedSection.vue'
 import TaskContextMenu from './TaskContextMenu.vue'
 import ShareDialog from './ShareDialog.vue'
 import { downloadSessionMarkdown } from '../../utils/sessionShare'
+import { shouldDismissContextMenuForScroll } from '../../utils/contextMenuDismiss'
 
 const props = defineProps<{
   collapsed: boolean
@@ -624,8 +625,12 @@ function onGlobalKeydown(e: KeyboardEvent) {
     if (groupContextMenu.visible) closeGroupContextMenu()
   }
 }
-/** 滚动时关闭右键菜单：菜单是 fixed 定位不随内容滚动，残留在旧位置会误点中无关会话 */
-function onGlobalScroll() {
+/**
+ * 任务栏滚动或窗口尺寸变化时关闭右键菜单：菜单是 fixed 定位，残留在旧位置会误点中无关会话。
+ * 对话区随 Agent 执行贴底滚动也会经 window capture 冒上来，锚点没动，不能关掉菜单。
+ */
+function onGlobalScroll(e: Event) {
+  if (e.type === 'scroll' && !shouldDismissContextMenuForScroll(e.target, panelEl.value)) return
   if (contextMenu.visible) closeContextMenu()
   if (groupContextMenu.visible) closeGroupContextMenu()
 }
