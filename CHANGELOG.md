@@ -15,6 +15,28 @@
 
 ---
 
+## 0.0.239 (2026-10-07)
+
+### 前端（桌面 / Web / 安卓）
+
+- LOCAL 工具审批卡片新增第三个选项「总是允许」：审批卡片副标题展示将要记住的确切命令模式（如 `npm run`），点击后当次照常执行，并在服务端创建本会话级放行规则；同会话内后续命中该模式的调用静默放行，工具卡片显示「规则放行」徽标，不再逐次弹卡。含受保护命令（rm、sudo、git push --force 等 denylist 命令）的命令不出现第三按钮、已建规则也不放行。READ_ONLY / FULL 档不受规则影响（前者审批是边界本身，后者无审批）。
+- 设置页新增「审批规则」管理页（`/settings/approval-rules`）：用户级持久规则清单（命令前缀 / 完整命令 / MCP 工具三类），按命中次数排序，展示命中次数（= 省掉的审批次数）与最近命中时间，支持启停、编辑、删除与手动新增（服务端归一化并在响应中返回归一化后的规则值，前缀规则自动截取前两个词）。
+
+### 后端
+
+- 新增 `approval_rule` 表（V135）与审批规则域：`ApprovalRuleService` 承担模式归一化（env 前缀剥离、空白折叠、前两 token 前缀）、denylist 校验（内置种子 + `approval.rule.denyTokens` 系统设置可扩展，admin「审批」分组可编辑）、规则匹配（会话级优先于用户级，同级内全等优先于词边界前缀）与命中计数。
+- 判门接入：`READ_WRITE` / `SMART` / `PROXY` 档的 shell 与 MCP 调用在原审批判定之前先查规则，命中即静默放行并短路 Jev 前置 / DangerAssessor / ProxyApprover（省掉审批用 LLM 调用），落 `metadata.approvalMark = { mode: 'rule' }`（复用既有徽标管线）；未命中则原五档判定链行为不变。READ_ONLY / FULL 档零规则查询。
+- `tool_execute` 帧增量下发 `approvalHint`（服务端生成，客户端不可注入 pattern）；`tool_approval` 帧增量消费 `alwaysAllow` 布尔位：后端按 requestId 从审批注册表取回服务端存储的 hint，按 `(session_id, rule_type, rule_value)` 查重后创建会话级规则（断线重发幂等）；deny 帧与 hint 缺失（超时/重启）时静默忽略。
+- 新增 `/v1/approval-rules` 用户级 CRUD（本人数据，规则管理动作写审计日志）；新增 `/v1/admin/approval-rules` 只读清单（新权限码 `approval-rule:read`，仅系统管理员，含用户名 / 会话标题 / 命中统计 enrich，支持 user / type / enabled 筛选）。会话删除级联物理删其会话级规则，用户级规则跨会话持续生效。
+
+### 管理后台
+
+- 「安全」分组新增「审批规则」只读清单页：全用户规则（用户 / 范围 / 所属会话 / 类型 / 规则值 / 命中统计 / 状态），支持按用户、类型、启停筛选，无操作列。
+
+### 桌面 Electron
+
+- 审批透传链扩展：preload `toolExecute` 增第 8 参 `approvalHint`、`respondToolApproval` 增第 3 参 `alwaysAllow`，主进程把 hint 透传到 shell / MCP 审批卡片。旧版 Electron 壳（7 参 / 2 参签名）收不到 hint、传不出 alwaysAllow → 卡片退化为两按钮、只执行不建规则，方向安全（不会误放行）。
+
 ## 0.0.238 (2026-10-06)
 
 ### 前端（桌面 / Web / 安卓）

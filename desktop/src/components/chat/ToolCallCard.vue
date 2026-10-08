@@ -89,11 +89,12 @@ watch(
 
 const isDelegate = computed(() => ['delegate', 'delegate_followup', 'spawn_subagent', 'subagent_followup'].includes(props.toolCall.name))
 
-/** AI 审批徽标：替我审批的 LLM 拍板 / Jev 前置决策低风险放行 */
+/** 审批放行徽标：替我审批的 LLM 拍板 / Jev 前置决策低风险放行 / 规则静默放行（V135） */
 const approvalBadge = computed(() => {
   const mark = props.toolCall.approvalMark
   if (!mark) return null
   if (mark.mode === 'jev') return { kind: 'jev', label: '低风险放行', reason: mark.reason }
+  if (mark.mode === 'rule') return { kind: 'rule', label: '规则放行', reason: mark.reason }
   return mark.approved
     ? { kind: 'approved', label: 'AI 已批准', reason: mark.reason }
     : { kind: 'denied', label: 'AI 已拒绝', reason: mark.reason }
@@ -316,7 +317,8 @@ function toggleExpand() {
 }
 
 .approval-badge.approved,
-.approval-badge.jev {
+.approval-badge.jev,
+.approval-badge.rule {
   color: var(--aw-success);
   background: color-mix(in srgb, var(--aw-success) 12%, transparent);
 }

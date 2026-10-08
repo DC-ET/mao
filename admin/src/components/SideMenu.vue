@@ -58,7 +58,8 @@ import {
   ChatLineRound,
   Tickets,
   Flag,
-  Collection
+  Collection,
+  Key
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
 import { pickHomePath } from '../utils/home'
@@ -132,6 +133,7 @@ const menuGroups: MenuGroup[] = [
     items: [
       { index: '/users', label: '用户管理', icon: User, permission: 'user:read' },
       { index: '/roles', label: '角色权限', icon: Lock, permission: 'role:read' },
+      { index: '/approval-rules', label: '审批规则', icon: Key, permission: 'approval-rule:read' },
       { index: '/audit-logs', label: '审计日志', icon: DocumentChecked, permission: 'audit:read' }
     ]
   },

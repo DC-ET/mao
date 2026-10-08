@@ -46,17 +46,22 @@ export function extractToolPreviewFromMetadata(metadata: unknown): ToolCall['pre
   }
 }
 
-/** 从 TOOL 消息 metadata 提取 AI 审批标记（替我审批/前置决策的拍板结果） */
+/** 从 TOOL 消息 metadata 提取审批放行标记（替我审批 / 前置决策 / 规则放行） */
 export function extractApprovalMarkFromMetadata(metadata: unknown): ToolCall['approvalMark'] | undefined {
   if (metadata == null) return undefined
   try {
     const root = typeof metadata === 'string' ? JSON.parse(metadata) : metadata
     const mark = (root as { approvalMark?: unknown })?.approvalMark
     if (mark == null || typeof mark !== 'object') return undefined
-    const node = mark as { mode?: unknown; approved?: unknown; reason?: unknown }
-    if (node.mode !== 'llm' && node.mode !== 'jev') return undefined
+    const node = mark as { mode?: unknown; approved?: unknown; reason?: unknown; ruleId?: unknown }
+    if (node.mode !== 'llm' && node.mode !== 'jev' && node.mode !== 'rule') return undefined
     if (typeof node.approved !== 'boolean') return undefined
-    return { mode: node.mode, approved: node.approved, reason: typeof node.reason === 'string' ? node.reason : '' }
+    return {
+      mode: node.mode,
+      approved: node.approved,
+      reason: typeof node.reason === 'string' ? node.reason : '',
+      ...(node.mode === 'rule' && typeof node.ruleId === 'number' ? { ruleId: node.ruleId } : {})
+    }
   } catch {
     return undefined
   }

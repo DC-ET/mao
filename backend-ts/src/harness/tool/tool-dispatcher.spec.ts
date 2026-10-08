@@ -858,3 +858,117 @@ describe('ToolRegistry', () => {
   });
 });
 
+describe('ToolDispatcher 审批规则短路（V135）', () => {
+  const shellTool = mockTool('shell');
+  const mcpTool = mockTool('mcp__fs__read');
+  const writeTool = mockTool('write_file');
+  const rulesRegistry = new ToolRegistry([shellTool, mcpTool, writeTool]);
+  const rulesExecutor = { execute: vi.fn().mockResolvedValue('local-ok') } as unknown as LocalToolExecutor & { execute: ReturnType<typeof vi.fn> };
+  const rulesDangerAssessor = new DangerAssessor({ chat: vi.fn(), stream: vi.fn() } as unknown as LlmAdapter);
+  const rulesAssessSpy = vi.spyOn(rulesDangerAssessor, 'assess');
+  const rulesSessionMapper = { selectById: vi.fn() } as unknown as SessionMapper & { selectById: ReturnType<typeof vi.fn> };
+  const rulesWsRegistry = { hasConnection: vi.fn(), send: vi.fn() } as unknown as StreamingWsRegistry;
+  const rulesAskRegistry = { register: vi.fn(), waitForAnswer: vi.fn() } as unknown as AskUserQuestionsRegistry;
+  const rulesSessions = { getUserIdForSession: vi.fn(), isConnected: vi.fn().mockResolvedValue(false) } as unknown as LocalToolSessionRegistry;
+  const rulesTreePublisher = { publishForSession: vi.fn() } as unknown as SessionTreeSignalPublisher;
+
+  const match = vi.fn();
+  const buildHint = vi.fn();
+  const recordHit = vi.fn();
+  const ruleFacade = { match, buildHint, recordHit };
+
+  function rulesDispatcher(): ToolDispatcher {
+    return new ToolDispatcher(
+      rulesRegistry, rulesExecutor, rulesDangerAssessor, rulesSessionMapper, rulesWsRegistry,
+      rulesAskRegistry, rulesSessions, rulesTreePublisher,
+      null, null, null, null, null, null, null, ruleFacade,
+    );
+  }
+
+  beforeEach(() => {
+    match.mockReset().mockResolvedValue(null);
+    buildHint.mockReset().mockResolvedValue(null);
+    recordHit.mockReset();
+    rulesAssessSpy.mockClear();
+    rulesExecutor.execute.mockClear();
+    rulesSessionMapper.selectById.mockReset().mockResolvedValue({ permissionLevel: 'SMART' });
+  });
+
+  it('ruleHitShortCircuitsApprovalAndMarksToolResult', async () => {
+    match.mockResolvedValue({ ruleId: 12, ruleValue: 'npm run' });
+    const result = await rulesDispatcher().dispatchInvocation({
+      callId: 'c1', toolName: 'shell', argumentsJson: '{"command":"npm run test"}',
+      executionMode: 'LOCAL', sessionId: 7, userId: 9, workspace: 'ws',
+      permissionLevel: 'SMART', modelConfig: null, sessionTools: null,
+    } as never);
+    // 静默放行：直接执行且无需审批
+    expect(rulesExecutor.execute).toHaveBeenCalledWith(7, 'shell', '{"command":"npm run test"}', 'ws', false, null);
+    expect(recordHit).toHaveBeenCalledWith(12);
+    // 短路收益：Jev 前置与 DangerAssessor 不再运行（无 danger_assess 的 llm_call）
+    expect(rulesAssessSpy).not.toHaveBeenCalled();
+    // rule 徽标直通（不经 llmVerdict 推导）
+    expect(result.approvalMark).toEqual({ mode: 'rule', approved: true, reason: '规则放行：npm run', ruleId: 12 });
+  });
+
+  it('ruleMatchingSkippedForReadOnlyAndFullLevels', async () => {
+    for (const level of ['READ_ONLY', 'FULL']) {
+      rulesSessionMapper.selectById.mockResolvedValue({ permissionLevel: level });
+      await rulesDispatcher().dispatch('shell', '{"command":"npm run test"}', 'LOCAL', 7, 9, 'workspace', level, null);
+      expect(match).not.toHaveBeenCalled();
+      expect(rulesExecutor.execute).toHaveBeenCalled();
+      rulesExecutor.execute.mockClear();
+    }
+  });
+
+  it('ruleMatchingSkipsWhenTriggerUserUnknown', async () => {
+    await rulesDispatcher().dispatch('shell', '{"command":"npm run test"}', 'LOCAL', 7, 'workspace', 'SMART', null);
+    expect(match).not.toHaveBeenCalled();
+    expect(rulesExecutor.execute).toHaveBeenCalled();
+  });
+
+  it('ruleMatchingSkipsNonRuleableTools', async () => {
+    // READ_WRITE/SMART/PROXY 下 write_file 本来就不审批：不查规则、不计数、无徽标
+    await rulesDispatcher().dispatch('write_file', '{"path":"x"}', 'LOCAL', 7, 9, 'workspace', 'READ_WRITE', null);
+    expect(match).not.toHaveBeenCalled();
+    expect(rulesExecutor.execute).toHaveBeenCalledWith(7, 'write_file', '{"path":"x"}', 'workspace', false, null);
+  });
+
+  it('ruleMissFallsBackToNormalChainWithApprovalHint', async () => {
+    buildHint.mockResolvedValue({ ruleType: 'SHELL_PREFIX', ruleValue: 'npm run', label: '本会话总是允许以 npm run 开头的命令' });
+    await rulesDispatcher().dispatch('shell', '{"command":"npm run build"}', 'LOCAL', 7, 9, 'workspace', 'SMART', null);
+    expect(match).toHaveBeenCalledTimes(1);
+    expect(buildHint).toHaveBeenCalledWith('shell', '{"command":"npm run build"}');
+    expect(rulesExecutor.execute).toHaveBeenCalledWith(
+      7, 'shell', '{"command":"npm run build"}', 'workspace', true, '无法进行安全评估，默认需要审批',
+      { ruleType: 'SHELL_PREFIX', ruleValue: 'npm run', label: '本会话总是允许以 npm run 开头的命令' },
+    );
+  });
+
+  it('noHintForReadOnlyEvenWhenApprovalNeeded', async () => {
+    // READ_ONLY 下 shell 规则免疫：弹卡但不给 hint（第三按钮在该档无意义）
+    rulesSessionMapper.selectById.mockResolvedValue({ permissionLevel: 'READ_ONLY' });
+    await rulesDispatcher().dispatch('shell', '{"command":"npm run build"}', 'LOCAL', 7, 9, 'workspace', 'READ_ONLY', null);
+    expect(match).not.toHaveBeenCalled();
+    expect(buildHint).not.toHaveBeenCalled();
+    expect(rulesExecutor.execute).toHaveBeenCalledWith(
+      7, 'shell', '{"command":"npm run build"}', 'workspace', true, null,
+    );
+  });
+
+  it('ruleHitSkipsApprovalOnShellAsyncPath', async () => {
+    match.mockResolvedValue({ ruleId: 3, ruleValue: 'npm run' });
+    const bgDispatcher = new ToolDispatcher(
+      rulesRegistry, rulesExecutor, rulesDangerAssessor, rulesSessionMapper, rulesWsRegistry,
+      rulesAskRegistry, rulesSessions, rulesTreePublisher,
+      new BackgroundTaskManager(), null, null, null, null, null, null, ruleFacade,
+    );
+    const result = await bgDispatcher.dispatch(
+      'shell', '{"command":"npm run test","async":true,"action":"exec"}', 'LOCAL', 7, 9, 'workspace', 'SMART', null,
+    );
+    expect(match).toHaveBeenCalledTimes(1);
+    expect(recordHit).toHaveBeenCalledWith(3);
+    // isConnected=false → async 路径立即返回连接错误 JSON（规则命中即放行、不弹审批）
+    expect(JSON.parse(result)).toHaveProperty('error');
+  });
+});
+

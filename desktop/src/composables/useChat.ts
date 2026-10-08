@@ -23,6 +23,7 @@ import { uploadPendingFiles } from '../utils/chatFileUpload'
 import { generateUUID } from '../utils/uuid'
 import { validateHttpsGitUrl } from '../utils/cloud-project'
 import { nowDateTime } from '../utils/datetime'
+import type { ApprovalHint } from '../components/chat/ApprovalStack.vue'
 
 export interface ApprovalItem {
   requestId: string
@@ -30,6 +31,8 @@ export interface ApprovalItem {
   description: string
   sessionId?: string
   dangerReason?: string
+  /** 服务端生成的「总是允许」hint；缺省 = 不可规则化，卡片只有两按钮 */
+  approvalHint?: ApprovalHint
 }
 
 // Module-level shared approval queue — ChatPanel + SideChatPanel both consume this.
@@ -41,11 +44,18 @@ function ensureApprovalListener() {
   if (typeof window === 'undefined' || !(window as any).electronAPI || approvalListenerSetup) return
   approvalListenerSetup = true
 
-  ;(window as any).electronAPI.onToolApprovalRequest((data: { requestId: string; toolName: string; description: string; sessionId?: number; dangerReason?: string }) => {
+  ;(window as any).electronAPI.onToolApprovalRequest((data: { requestId: string; toolName: string; description: string; sessionId?: number; dangerReason?: string; approvalHint?: ApprovalHint }) => {
     const sessionStore = useSessionStore()
     const sid = data.sessionId != null ? String(data.sessionId) : undefined
     if (!pendingApprovals.value.some(a => a.requestId === data.requestId)) {
-      pendingApprovals.value.push({ requestId: data.requestId, toolName: data.toolName, description: data.description, sessionId: sid, dangerReason: data.dangerReason })
+      pendingApprovals.value.push({
+        requestId: data.requestId,
+        toolName: data.toolName,
+        description: data.description,
+        sessionId: sid,
+        dangerReason: data.dangerReason,
+        approvalHint: data.approvalHint
+      })
       if (sid) sessionStore.incrementPendingApproval(sid)
     }
   })
@@ -64,17 +74,18 @@ export function useToolApprovals() {
   const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI
   ensureApprovalListener()
 
-  async function confirmApproval(requestId: string, approved: boolean) {
+  async function confirmApproval(requestId: string, approved: boolean, alwaysAllow = false) {
     const index = pendingApprovals.value.findIndex(a => a.requestId === requestId)
     const item = index >= 0 ? pendingApprovals.value[index] : undefined
     if (item?.sessionId) sessionStore.decrementPendingApproval(item.sessionId)
     pendingApprovals.value = pendingApprovals.value.filter(a => a.requestId !== requestId)
     if (requestId && isElectron) {
-      await (window as any).electronAPI.respondToolApproval(requestId, approved)
+      await (window as any).electronAPI.respondToolApproval(requestId, approved, alwaysAllow)
     }
     if (item?.sessionId) {
       const { sendToolApproval } = useStreamWS()
-      const sent = await sendToolApproval(item.sessionId, requestId, approved)
+      // alwaysAllow 只在 approved 时有意义；deny 永远不带该标记
+      const sent = await sendToolApproval(item.sessionId, requestId, approved, approved && alwaysAllow)
       if (!sent) {
         // 发送失败（断线/重连超时）时必须把审批项放回原位：服务端仍停在
         // WAITING_APPROVAL 等回包，静默移除会让用户失去重试入口、任务像卡死。

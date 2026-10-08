@@ -1576,3 +1576,123 @@ describe('StreamingWsHandler', () => {
     });
   });
 });
+
+describe('StreamingWsHandler tool_approval.alwaysAllow（V135）', () => {
+  const executor = new CapturingExecutor();
+  const registry = {
+    isConnectionAuthorized: vi.fn(() => true), sendToConnection: vi.fn(),
+    closeConnection: vi.fn((socket: WsSocket, reason: string) => socket.close(1003, reason)),
+    getUserId: vi.fn(), send: vi.fn(), subscribe: vi.fn(), unsubscribe: vi.fn(),
+    register: vi.fn(), unregister: vi.fn(), hasLocalClientConnection: vi.fn(),
+    sendToLocalClients: vi.fn(), getActiveToolCalls: vi.fn(() => []), clearActiveToolCalls: vi.fn(),
+    isSessionThinking: vi.fn(() => false), setSessionThinking: vi.fn(),
+    getClientType: vi.fn(() => 'browser'), bindEmbedSession: vi.fn(), unbindEmbedSession: vi.fn(),
+    getEmbedSessionsForConnection: vi.fn(() => []), getEmbedSessionConnection: vi.fn(() => null),
+    getEmbedSessionBinding: vi.fn(() => null),
+  };
+  const titleService = { scheduleForFirstUserMessage: vi.fn() };
+  const harnessService = { prepareMessage: vi.fn(), executeFromEvent: vi.fn(), executePrepared: vi.fn(), executeSideFirstMessage: vi.fn(), forkParentMessages: vi.fn() };
+  const sessionService = {
+    getSession: vi.fn(), saveMessage: vi.fn(), updatePhase: vi.fn(), updateField: vi.fn(),
+    updateModelId: vi.fn(), getMessages: vi.fn(), editMessageAndTruncate: vi.fn(), save: vi.fn(),
+    findOwnedMessage: vi.fn(async () => null), listSubagentSessions: vi.fn(async () => []),
+    cleanupIncompleteTail: vi.fn(async () => 0), updateContextTokens: vi.fn(),
+    getLastUserMessage: vi.fn(async () => null), deleteMessageById: vi.fn(async () => undefined),
+  };
+  const taskTerminalService = { finishExecution: vi.fn() };
+  const messageQueueService = {
+    listPending: vi.fn(async () => []), enqueue: vi.fn(), dequeue: vi.fn(), getById: vi.fn(),
+    delete: vi.fn(), moveToIndex: vi.fn(), enqueueHead: vi.fn(async () => undefined),
+  };
+  const localToolSessionRegistry = {
+    setUserForSession: vi.fn(), isConnected: vi.fn(), failAllForSession: vi.fn(), failAllForUser: vi.fn(),
+    completeToolRequest: vi.fn(), completeToolRequestError: vi.fn(),
+  };
+  const embedPageToolRegistry = { request: vi.fn(), complete: vi.fn(), failSession: vi.fn(), isEmbedSession: vi.fn(() => false) };
+  const askUserQuestionsRegistry = { failAllForSession: vi.fn(), getPendingForSession: vi.fn(() => []), complete: vi.fn() };
+  const treeSignalPublisher = { publishIfSideTask: vi.fn(), publishForSession: vi.fn() };
+  const approvalRegistry = { unregister: vi.fn(), takeHint: vi.fn() };
+  const takeHint = approvalRegistry.takeHint;
+  const activityService = { record: vi.fn() };
+  const activityHeartbeat = { touch: vi.fn(), clear: vi.fn() };
+  const sessionTodoMapper = { deleteBySessionId: vi.fn(), selectBySessionId: vi.fn(async () => []) };
+  const agentLoop = {
+    registerCancelFlag: vi.fn(() => { let v = false; return { get: () => v, set: (n: boolean) => { v = n; } }; }),
+    removeCancelFlag: vi.fn(), requestCancel: vi.fn(),
+  };
+  const shellSessionManager = { closeByConversation: vi.fn() };
+  const skillSyncService = { syncToSession: vi.fn(), getRemovedSkillNames: vi.fn(() => []) };
+  const localSkillRegistry = { report: vi.fn(), clear: vi.fn() };
+  const localAgentsMdRegistry = { report: vi.fn(), clear: vi.fn() };
+  const mcpSyncService = { loadAgentServers: vi.fn(async () => []), buildSyncPayload: vi.fn(() => ({})), clearSession: vi.fn(), resolveServerIdByName: vi.fn(), recordReport: vi.fn() };
+  const mcpClientManager = { closeSession: vi.fn() };
+  const agentMapper = { selectById: vi.fn(async () => ({ id: 5, name: 'Coder' })) };
+  const llmModelMapper = { selectById: vi.fn(), selectDefault: vi.fn() };
+  const jwtService = { getAccessTokenMetadata: vi.fn() };
+  const ws: WsSocket = { id: 'ws-rule', readyState: WS_OPEN, send: vi.fn(), close: vi.fn() };
+
+  const createSessionRuleFromAlwaysAllow = vi.fn(async () => undefined);
+
+  function buildHandler() {
+    return new StreamingWsHandler({
+      registry, titleService, harnessService, sessionService, taskTerminalService, messageQueueService,
+      localToolSessionRegistry, askUserQuestionsRegistry, embedPageToolRegistry, treeSignalPublisher, approvalRegistry,
+      approvalRuleService: { createSessionRuleFromAlwaysAllow },
+      activityService, activityHeartbeat, sessionTodoMapper, agentLoop, shellSessionManager, skillSyncService,
+      localSkillRegistry, localAgentsMdRegistry, mcpSyncService, mcpClientManager, agentMapper,
+      llmModelMapper, jwtService, agentExecutor: (fn) => executor.submit(fn),
+    } as unknown as WsHandlerDeps);
+  }
+
+  it('approvedAlwaysAllowConsumesHintAndCreatesSessionRule', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('LOCAL', 'WAITING_APPROVAL'));
+    const hint = { ruleType: 'SHELL_PREFIX' as const, ruleValue: 'npm run', label: '本会话总是允许以 npm run 开头的命令' };
+    takeHint.mockReturnValue(hint);
+    await buildHandler().handleTextMessage(ws, JSON.stringify({
+      type: 'tool_approval', sessionId: 11, requestId: 'req-1', approved: true, alwaysAllow: true,
+    }));
+    expect(takeHint).toHaveBeenCalledWith(11, 'req-1');
+    expect(createSessionRuleFromAlwaysAllow).toHaveBeenCalledWith(7, 11, hint);
+    expect(approvalRegistry.unregister).toHaveBeenCalledWith(11, 'req-1');
+  });
+
+  it('denyFrameNeverCreatesRuleEvenWithAlwaysAllow', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('LOCAL', 'WAITING_APPROVAL'));
+    takeHint.mockReturnValue({ ruleType: 'SHELL_PREFIX', ruleValue: 'npm run', label: 'x' });
+    await buildHandler().handleTextMessage(ws, JSON.stringify({
+      type: 'tool_approval', sessionId: 11, requestId: 'req-2', approved: false, alwaysAllow: true,
+    }));
+    expect(takeHint).not.toHaveBeenCalled();
+    expect(createSessionRuleFromAlwaysAllow).not.toHaveBeenCalled();
+    expect(approvalRegistry.unregister).toHaveBeenCalledWith(11, 'req-2');
+  });
+
+  it('missingHintOrMissingRuleServiceFallsBackToPlainExecution', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('LOCAL', 'WAITING_APPROVAL'));
+    // hint 不在缓存（超时/重启/重发已消费）→ 忽略 alwaysAllow 只执行
+    takeHint.mockReturnValue(null);
+    await buildHandler().handleTextMessage(ws, JSON.stringify({
+      type: 'tool_approval', sessionId: 11, requestId: 'req-3', approved: true, alwaysAllow: true,
+    }));
+    expect(createSessionRuleFromAlwaysAllow).not.toHaveBeenCalled();
+    expect(approvalRegistry.unregister).toHaveBeenCalledWith(11, 'req-3');
+  });
+
+  it('ruleCreationFailureDoesNotBlockUnregister', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('LOCAL', 'WAITING_APPROVAL'));
+    takeHint.mockReturnValue({ ruleType: 'SHELL_PREFIX', ruleValue: 'npm run', label: 'x' });
+    createSessionRuleFromAlwaysAllow.mockRejectedValueOnce(new Error('db down'));
+    await buildHandler().handleTextMessage(ws, JSON.stringify({
+      type: 'tool_approval', sessionId: 11, requestId: 'req-4', approved: true, alwaysAllow: true,
+    }));
+    expect(approvalRegistry.unregister).toHaveBeenCalledWith(11, 'req-4');
+  });
+});

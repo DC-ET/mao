@@ -52,6 +52,7 @@ import { wsEvent } from './ws-event.js';
 import { isActivePhase } from '../session-vo.js';
 import type { AgentExecutionContext } from '../../harness/core/agent-execution-context.js';
 import type { EmbedPageToolRegistry } from '../../harness/embed-page-tool-registry.js';
+import type { ApprovalHint } from '../../harness/approval/approval-hint.js';
 
 export interface WsHandlerDeps {
   registry: StreamingWsRegistry;
@@ -118,7 +119,13 @@ export interface WsHandlerDeps {
   };
   approvalRegistry: {
     unregister(sessionId: number | null, requestId: string | null): void | Promise<void>;
+    /** alwaysAllow 消费服务端 hint（恰好一次）；缺省场景（旧测试桩）返回 null 即可。 */
+    takeHint?(sessionId: number, requestId: string): ApprovalHint | null;
   };
+  /** 审批规则域（V135）：未注入时 alwaysAllow 静默忽略（不建规则、不影响执行）。 */
+  approvalRuleService?: {
+    createSessionRuleFromAlwaysAllow(userId: number, sessionId: number, hint: ApprovalHint): Promise<void>;
+  } | null;
   activityService: WsListenerDeps['activityService'];
   activityHeartbeat: { touch(sessionId: number): void; clear(sessionId: number): void };
   sessionTodoMapper: {
@@ -863,6 +870,18 @@ export class StreamingWsHandler {
     const requestId = typeof root.requestId === 'string' ? root.requestId : null;
     if (sessionId == null || requestId == null) return;
     if (!(await this.requireOwnedSession(userId, sessionId))) return;
+    // 「总是允许」（V135）：客户端只回传布尔位，pattern 由服务端按 requestId 取回自己生成的 hint。
+    // deny 帧（approved=false）永不落规则；hint 不在缓存（超时/重启/同帧重发已消费）→ 静默忽略只执行。
+    if (root.alwaysAllow === true && root.approved === true) {
+      const hint = this.deps.approvalRegistry.takeHint?.(sessionId, requestId) ?? null;
+      if (hint && this.deps.approvalRuleService) {
+        try {
+          await this.deps.approvalRuleService.createSessionRuleFromAlwaysAllow(userId, sessionId, hint);
+        } catch (e) {
+          console.error(`Failed to create approval rule from always-allow (sessionId=${sessionId})`, e);
+        }
+      }
+    }
     await Promise.resolve(this.deps.approvalRegistry.unregister(sessionId, requestId));
     await Promise.resolve(this.deps.treeSignalPublisher.publishForSession(sessionId));
   }

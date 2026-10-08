@@ -659,7 +659,7 @@ async function checkForAppUpdate() {
   return updateCheckPromise
 }
 
-function requestToolApproval(toolName, description, sessionId, dangerReason, backendRequestId) {
+function requestToolApproval(toolName, description, sessionId, dangerReason, backendRequestId, approvalHint) {
   return new Promise((resolve) => {
     const requestId = backendRequestId || `approval_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
 
@@ -670,14 +670,16 @@ function requestToolApproval(toolName, description, sessionId, dangerReason, bac
 
     const payload = { requestId, toolName, description, sessionId }
     if (dangerReason) payload.dangerReason = dangerReason
+    // 「总是允许」hint（V135）：服务端随 tool_execute 下发的模式提示，透传给渲染层审批卡片
+    if (approvalHint) payload.approvalHint = approvalHint
     sendToRenderer('tool-approval-request', payload)
   })
 }
 
 /** Persist shell reuse / write_stdin must re-check approval — first approve must not unlock later commands. */
-async function ensureShellApproval(needApproval, description, sessionId, dangerReason, backendRequestId) {
+async function ensureShellApproval(needApproval, description, sessionId, dangerReason, backendRequestId, approvalHint) {
   if (!needApproval) return true
-  return requestToolApproval('shell', description, sessionId, dangerReason, backendRequestId)
+  return requestToolApproval('shell', description, sessionId, dangerReason, backendRequestId, approvalHint)
 }
 
 ipcMain.handle('tool-approval-response', (event, { requestId, approved }) => {
@@ -686,6 +688,7 @@ ipcMain.handle('tool-approval-response', (event, { requestId, approved }) => {
     pendingApprovals.delete(requestId)
     resolve(!!approved)
   }
+  // alwaysAllow 由渲染层直接走 WS tool_approval 帧回服务端，主进程无需处理
 })
 
 // ========== Multi-server baseUrl config ==========
@@ -1950,10 +1953,10 @@ ipcMain.handle('mcp-close', async (event, { sessionId }) => {
 
 // ========== Tool execution via Streaming WS ==========
 
-async function executeToolByName(toolName, parsedArgs, sessionId, workspace, needApproval, dangerReason, requestId) {
+async function executeToolByName(toolName, parsedArgs, sessionId, workspace, needApproval, dangerReason, requestId, approvalHint) {
   switch (toolName) {
     case 'shell':
-      return await handleShellFromWebSocket(parsedArgs, sessionId, workspace, needApproval, dangerReason, requestId)
+      return await handleShellFromWebSocket(parsedArgs, sessionId, workspace, needApproval, dangerReason, requestId, approvalHint)
     case 'read_file':
       return await handleLocalReadFile(parsedArgs, workspace, sessionId)
     case 'write_file':
@@ -1967,18 +1970,18 @@ async function executeToolByName(toolName, parsedArgs, sessionId, workspace, nee
     default: {
       const mcp = parseMcpToolName(toolName)
       if (mcp) {
-        return await handleMcpToolFromWebSocket(mcp, parsedArgs, sessionId, needApproval, dangerReason, requestId)
+        return await handleMcpToolFromWebSocket(mcp, parsedArgs, sessionId, needApproval, dangerReason, requestId, approvalHint)
       }
       return { error: `Unknown tool: ${toolName}` }
     }
   }
 }
 
-async function handleMcpToolFromWebSocket(mcp, parsedArgs, sessionId, needApproval, dangerReason, requestId) {
+async function handleMcpToolFromWebSocket(mcp, parsedArgs, sessionId, needApproval, dangerReason, requestId, approvalHint) {
   // 与 shell/write_file 等一致：needApproval 时先征求用户审批再执行
   if (needApproval) {
     const description = `调用 MCP 工具 ${mcp.serverName}.${mcp.toolName}`
-    const approved = await requestToolApproval(`mcp:${mcp.serverName}`, description, sessionId, dangerReason, requestId)
+    const approved = await requestToolApproval(`mcp:${mcp.serverName}`, description, sessionId, dangerReason, requestId, approvalHint)
     if (!approved) {
       return { error: 'User denied MCP tool execution.' }
     }
@@ -1992,7 +1995,7 @@ async function handleMcpToolFromWebSocket(mcp, parsedArgs, sessionId, needApprov
   }
 }
 
-ipcMain.handle('tool-execute', async (event, { toolName, args, requestId, workspace, sessionId, needApproval, dangerReason }) => {
+ipcMain.handle('tool-execute', async (event, { toolName, args, requestId, workspace, sessionId, needApproval, dangerReason, approvalHint }) => {
   // Use the workspace from this specific tool call, falling back to currentWorkspace
   const effectiveWorkspace = workspace || currentWorkspace
   console.log('[tool-execute] received workspace:', workspace, ', effectiveWorkspace:', effectiveWorkspace, ', currentWorkspace before:', currentWorkspace, ', needApproval:', needApproval, ', dangerReason:', dangerReason)
@@ -2009,7 +2012,7 @@ ipcMain.handle('tool-execute', async (event, { toolName, args, requestId, worksp
   }
 
   try {
-    const result = await executeToolByName(toolName, parsedArgs, sessionId, effectiveWorkspace, !!needApproval, dangerReason, requestId)
+    const result = await executeToolByName(toolName, parsedArgs, sessionId, effectiveWorkspace, !!needApproval, dangerReason, requestId, approvalHint)
     return { requestId, result: JSON.stringify(result), error: null }
   } catch (e) {
     console.error(`Tool ${toolName} execution failed:`, e)
@@ -2017,12 +2020,12 @@ ipcMain.handle('tool-execute', async (event, { toolName, args, requestId, worksp
   }
 })
 
-async function handleShellFromWebSocket(args, sessionId, workspace, needApproval, dangerReason, requestId) {
+async function handleShellFromWebSocket(args, sessionId, workspace, needApproval, dangerReason, requestId, approvalHint) {
   return localShell.handle(args, {
     conversationId: sessionId,
     workspace,
     needApproval,
-    approve: (description) => ensureShellApproval(needApproval, description, sessionId, dangerReason, requestId),
+    approve: (description) => ensureShellApproval(needApproval, description, sessionId, dangerReason, requestId, approvalHint),
   })
 }
 

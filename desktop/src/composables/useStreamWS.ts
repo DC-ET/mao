@@ -504,12 +504,14 @@ export function useStreamWS() {
     return sendReliable({ type: 'reorder_queue_message', sessionId: Number(sessionId), data: { queueId, targetIndex } })
   }
 
-  async function sendToolApproval(sessionId: string, requestId: string, approved: boolean): Promise<boolean> {
+  async function sendToolApproval(sessionId: string, requestId: string, approved: boolean, alwaysAllow = false): Promise<boolean> {
     return sendReliable({
       type: 'tool_approval',
       sessionId: Number(sessionId),
       requestId,
-      approved
+      approved,
+      // 「总是允许」（V135）：仅布尔位，pattern 由服务端按 requestId 取回自己生成的 hint
+      ...(alwaysAllow ? { alwaysAllow: true } : {})
     })
   }
 
@@ -1004,10 +1006,10 @@ export function useStreamWS() {
 
       case 'tool_execute': {
         if (!sessionId || !data) break
-        const { requestId, toolName, arguments: toolArgs, workspace, needApproval, dangerReason } = data
+        const { requestId, toolName, arguments: toolArgs, workspace, needApproval, dangerReason, approvalHint } = data
         if (typeof window !== 'undefined' && (window as any).electronAPI?.toolExecute) {
           ;(window as any).electronAPI
-            .toolExecute(toolName, toolArgs, requestId, workspace, Number(sessionId), !!needApproval, dangerReason || null)
+            .toolExecute(toolName, toolArgs, requestId, workspace, Number(sessionId), !!needApproval, dangerReason || null, approvalHint || null)
             .then(async (response: { requestId: string; result: string | null; error: string | null }) => {
               if (response.error) {
                 await sendReliable({

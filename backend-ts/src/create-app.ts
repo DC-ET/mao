@@ -114,6 +114,10 @@ import { MemoryRepository } from './memory/memory.repository.js';
 import { MemoryService } from './memory/memory.service.js';
 import { MemoryExtractionService } from './memory/memory-extraction.service.js';
 import { registerMemoryRoutes } from './memory/memory.routes.js';
+import { ApprovalRuleRepository } from './approval-rule/approval-rule.repository.js';
+import { ApprovalRuleService } from './approval-rule/approval-rule.service.js';
+import { registerApprovalRuleRoutes, type ApprovalRuleAuditInput } from './approval-rule/approval-rule.routes.js';
+import { registerApprovalRuleAdminRoutes } from './approval-rule/approval-rule.admin.routes.js';
 import { InboxRepository } from './inbox/inbox.repository.js';
 import { InboxService } from './inbox/inbox.service.js';
 import { InboxCleanupScheduler, type InboxCleanupStore } from './inbox/inbox.cleanup.js';
@@ -657,6 +661,13 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   // TerminalManager / 定时任务存储都在后面才构造，会话删除回调延迟解引用
   let terminalManagerRef: TerminalManager | null = null;
   let deleteScheduledTasksForSession: ((sessionId: number) => Promise<void>) | null = null;
+  // 审批放行规则（V135）：repo/service 早于 sessionService 与 toolDispatcher 构造（双向依赖）
+  const approvalRuleRepo = new ApprovalRuleRepository(db);
+  const approvalRuleService = new ApprovalRuleService(
+    approvalRuleRepo,
+    { getValue: (key) => settingService.getValue(key) },
+    { getUserId: async (sessionId) => (await sessionRepo.findById(sessionId))?.userId ?? null },
+  );
   const sessionService = new SessionService(
     sessionRepo, messageRepo, fileChangeRepo,
     {
@@ -669,6 +680,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     runtimeSessionCleanup(runtimeRoot),
     (sessionId) => { terminalManagerRef?.closeBySession(sessionId); },
     (sessionId) => deleteScheduledTasksForSession?.(sessionId),
+    (sessionId) => approvalRuleRepo.deleteBySessionId(sessionId),
   );
   const sessionSvc = sessionService as never;
   const sessionMap = sessionRepo as never;
@@ -1136,6 +1148,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     backgroundTasks, deliveryService, feishuAskMount,
     proxyApprover, jevRiskAssessor, approvalModelResolver,
     inboxService,
+    approvalRuleService,
   );
   const agentLoop = new AgentLoop(
     llmAdapter, promptEngine, contextManager, toolDispatcher, backgroundTasks,
@@ -1225,6 +1238,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     askUserQuestionsRegistry,
     treeSignalPublisher,
     approvalRegistry,
+    approvalRuleService,
     activityService,
     activityHeartbeat,
     sessionTodoMapper: todoMapper,
@@ -2344,6 +2358,27 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     registerStatisticsRoutes(api, { statistics: statisticsService, jwt, permissionService });
     registerFeedbackRoutes(api, { feedback: feedbackService, jwt, permissionService });
     registerMemoryRoutes(api, { memoryService });
+    registerApprovalRuleRoutes(api, {
+      approvalRuleService,
+      audit: (input: ApprovalRuleAuditInput) => {
+        // 规则管理动作走 service 级审计（规则放行本身不写 audit_log，见技术方案决策 7）
+        void auditService.record({
+          action: input.action,
+          objectType: 'approval.rule',
+          objectId: String(input.objectId),
+          method: input.request.method,
+          path: input.request.url,
+          userId: (input.request as { userId?: number }).userId ?? null,
+          username: null,
+          ip: input.request.ip ?? null,
+          status: 200,
+          success: 1,
+          errorMessage: null,
+          queryString: input.detail,
+        }).catch((e) => console.error('Failed to record approval rule audit log', e));
+      },
+    });
+    registerApprovalRuleAdminRoutes(api, { approvalRuleService, permissionService });
     registerInboxRoutes(api, { inboxService });
     const adminDeps = {
       jwt, analytics: adminAnalytics,
