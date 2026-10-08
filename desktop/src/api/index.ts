@@ -439,11 +439,6 @@ export async function getSessionCompaction(sessionId: number | string): Promise<
   return (data ?? null) as SessionCompactionSummary | null
 }
 
-/** 切换单会话长期记忆注入开关（技术方案 5.1，下一次执行生效）。 */
-export async function setSessionMemoryInjectionDisabled(sessionId: number | string, disabled: boolean): Promise<void> {
-  await api.patch(`/sessions/${sessionId}`, { memoryInjectionDisabled: disabled })
-}
-
 export async function getMemorySettings(): Promise<{ autoCaptureEnabled: boolean }> {
   const { data } = await api.get('/memory/settings')
   return data

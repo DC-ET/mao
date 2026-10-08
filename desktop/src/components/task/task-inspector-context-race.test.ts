@@ -279,39 +279,21 @@ describe('TaskInspector 上下文详情抽屉：会话切换清理/竞态（roun
     })
   })
 
-  it('BUG-B：新旧会话记忆条数相同时，切会话应重新拉取 snippet，chip 不停留在「记忆 #id」', async () => {
-    const m = mountInspector([1, 2])
-    m.clickContextBadge()
-    await flush()
-    expect(memoryCallCount.value).toBe(1)
-    memoryDeferreds[0]!.resolve({ records: [{ id: 1, content: '记忆一' }, { id: 2, content: '记忆二' }] })
-    await flush()
-    expect(m.pageText()).toContain('记忆一')
-
-    m.memoryIds.value = [3, 4]
-    m.sid.value = '22'
-    await flush()
-
-    // 抽屉已随切会话收起，重新点开才会去拉新会话的 snippet
-    m.clickContextBadge()
-    await flush()
-
-    expect(memoryCallCount.value, `条数相同也必须重拉 snippet；当前回退文案=${m.pageText().includes('记忆 #3')}`).toBe(2)
-  })
 })
 
 describe('TaskInspector 上下文入口：徽标开抽屉，无顶层页签（0.0.244）', () => {
-  it('未点击时不拉取 snippet，也不渲染抽屉内容；点击后才懒加载', async () => {
+  it('未点击时不渲染抽屉内容；点击后才展示容量，且没有记忆注入开关', async () => {
     const m = mountInspector([1, 2])
     await flush()
-    expect(memoryCallCount.value).toBe(0)
     expect(m.pageText()).not.toContain('上下文容量')
 
     m.clickContextBadge()
     await flush()
-    expect(memoryCallCount.value).toBe(1)
+    expect(memoryCallCount.value).toBe(0)
     expect(m.pageText()).toContain('上下文容量')
     expect(m.pageText()).toContain('手动整理上下文')
+    expect(m.pageText()).not.toContain('本会话注入记忆')
+    expect(m.pageText()).not.toContain('本次未注入长期记忆')
     // 容量保持模型水位 max(estimated=100, actual=50)，不改成构成原始估算 1234。
     expect(m.pageText()).toContain('100/200k（0%）')
     expect(m.pageText()).not.toContain('1.2k')

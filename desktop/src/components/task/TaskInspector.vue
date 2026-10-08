@@ -290,30 +290,6 @@
         </div>
 
         <div class="ctx-block">
-          <div class="ctx-block-title ctx-row">
-            <span>本会话注入记忆</span>
-            <el-switch
-              :model-value="!memoryInjectionDisabled"
-              :loading="memoryToggleBusy"
-              size="small"
-              @update:model-value="toggleMemoryInjection(!Boolean($event))"
-            />
-          </div>
-          <div class="ctx-hint">开关改动将于下次任务开始时生效</div>
-          <div v-if="memoryIds.length" class="ctx-memory-chips">
-            <button
-              v-for="id in memoryIds"
-              :key="id"
-              class="ctx-chip"
-              :title="memorySnippet(id)"
-              @click="gotoMemorySettings"
-            >{{ memorySnippet(id) }}</button>
-          </div>
-          <div v-else-if="memoryInjectionDisabled" class="ctx-empty">已关闭本会话记忆注入</div>
-          <div v-else class="ctx-empty">本次未注入长期记忆</div>
-        </div>
-
-        <div class="ctx-block">
           <div class="ctx-block-title">手动整理上下文</div>
           <button class="ctx-compact-btn" :disabled="isCompacting || compactSubmitting" @click="handleCompactNow">
             {{ isCompacting ? '正在整理上下文…' : '立即整理上下文' }}
@@ -342,7 +318,6 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
-import { useRouter } from 'vue-router'
 import { FolderOpened, DocumentCopy, User, Share } from '@element-plus/icons-vue'
 import { ElMessage, ElTooltip } from 'element-plus'
 import TodoChecklist from './TodoChecklist.vue'
@@ -359,7 +334,7 @@ import { useGitStatus } from '../../composables/useGitStatus'
 import { useGitRepos } from '../../composables/useGitRepos'
 import { useModelContext } from '../../composables/useModelContext'
 import { useStreamWS } from '../../composables/useStreamWS'
-import { listMemories, getSessionCompaction, setSessionMemoryInjectionDisabled } from '../../api'
+import { getSessionCompaction } from '../../api'
 import type { SessionCompactionSummary } from '../../api'
 import type { GitChangedFile } from '../../types/git'
 import { cloudWorkspaceIndicator } from '../../utils/cloud-project'
@@ -545,7 +520,6 @@ function handleRepoClick(path: string) {
 }
 
 // ===== 上下文透视抽屉（技术方案 5.2 / 5.3 / 5.5） =====
-const router = useRouter()
 const streamWS = useStreamWS()
 
 function openContextDrawer() {
@@ -554,7 +528,6 @@ function openContextDrawer() {
 
 const contextManifest = computed(() => props.contextWindow?.manifest ?? null)
 const sectionStats = computed(() => contextManifest.value?.sections ?? [])
-const memoryIds = computed(() => contextManifest.value?.memoryIds ?? [])
 
 // 占比分母优先取 manifest 生效窗口，回退模型窗口 / contextWindow.maxTokens
 const effectiveWindowTokens = computed<number | null>(() =>
@@ -613,58 +586,6 @@ const sectionRows = computed<SectionRow[]>(() => {
   return rows
 })
 
-// 记忆条目 snippet：manifest 仅带 id，按 id 调列表接口本地匹配 content（技术方案 5.3）
-const memorySnippetById = ref<Map<number, string>>(new Map())
-const memoriesLoading = ref(false)
-async function loadMemorySnippets() {
-  const ids = memoryIds.value.slice()
-  const sid = props.sessionId
-  if (!ids.length || memoriesLoading.value) return
-  memoriesLoading.value = true
-  try {
-    const page = await listMemories({ pageSize: 200 })
-    if (String(props.sessionId) !== String(sid)) return
-    const wanted = new Set(ids)
-    const map = new Map<number, string>()
-    for (const item of page.records ?? []) {
-      if (wanted.has(item.id)) map.set(item.id, item.content)
-    }
-    memorySnippetById.value = map
-  } catch {
-    // snippet 拉取失败不影响 chip 展示，chip 回退显示 id
-  } finally {
-    if (String(props.sessionId) === String(sid)) memoriesLoading.value = false
-  }
-}
-function memorySnippet(id: number): string {
-  const text = memorySnippetById.value.get(id)
-  if (!text) return `记忆 #${id}`
-  return text.length > 24 ? text.slice(0, 24) + '…' : text
-}
-function gotoMemorySettings() {
-  router.push('/settings/memory')
-}
-
-// 记忆注入开关：读会话 VO 的 memoryInjectionDisabled（下一次执行生效，故只做本地即时回显 + PATCH）
-const currentSession = computed(() =>
-  props.sessionId ? sessionStore.sessions.find(s => String(s.id) === String(props.sessionId)) : undefined,
-)
-const memoryInjectionDisabled = computed(() => currentSession.value?.memoryInjectionDisabled ?? false)
-const memoryToggleBusy = ref(false)
-async function toggleMemoryInjection(disabled: boolean) {
-  const sid = props.sessionId
-  if (!sid || memoryToggleBusy.value) return
-  memoryToggleBusy.value = true
-  try {
-    await setSessionMemoryInjectionDisabled(sid, disabled)
-    sessionStore.updateSession(sid, { memoryInjectionDisabled: disabled })
-  } catch (e) {
-    ElMessage.error((e as Error)?.message || '切换记忆注入失败')
-  } finally {
-    memoryToggleBusy.value = false
-  }
-}
-
 // 手动整理上下文
 const isRunning = computed(() =>
   ['RUNNING', 'RESUMING', 'WAITING_APPROVAL', 'CANCELLING'].includes(props.phase),
@@ -714,22 +635,11 @@ function toggleSummaryPanel() {
   if (summaryPanelOpen.value && !summaryLoaded.value && !summaryLoading.value) void loadCompactionSummary()
 }
 
-// 切换会话先于 snippet 补拉：清空上一会话缓存后，下面的 watch 才能看到空 map 并重拉。
 watch(() => props.sessionId, () => {
   summaryPanelOpen.value = false
   summaryLoaded.value = false
   summaryLoading.value = false
   compactionSummary.value = null
-  memoriesLoading.value = false
-  memorySnippetById.value = new Map()
-})
-
-// 打开抽屉、切换会话或记忆 id 变化时按需补拉 snippet。
-// 以 id 列表而不是条数为源：新旧会话条数相同也要重拉。
-watch([contextDrawerOpen, () => props.sessionId, () => memoryIds.value.join(',')], () => {
-  if (contextDrawerOpen.value && memoryIds.value.length > 0 && memorySnippetById.value.size === 0) {
-    void loadMemorySnippets()
-  }
 })
 
 watch([showFileTreeTab, showGitTab], () => {
@@ -1654,28 +1564,6 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   font-size: 11px;
   color: var(--aw-ink-muted-48, #86868b);
   font-variant-numeric: tabular-nums;
-}
-.ctx-memory-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.ctx-chip {
-  max-width: 100%;
-  padding: 3px 8px;
-  font-size: 12px;
-  border: 1px solid var(--aw-border, #e5e7eb);
-  border-radius: 12px;
-  background: transparent;
-  color: var(--aw-ink, #1f2937);
-  cursor: pointer;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.ctx-chip:hover {
-  border-color: var(--aw-primary, #2563eb);
-  color: var(--aw-primary, #2563eb);
 }
 .ctx-compact-btn {
   align-self: flex-start;
