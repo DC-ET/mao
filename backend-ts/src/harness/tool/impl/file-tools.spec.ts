@@ -70,6 +70,18 @@ describe('ReadFileTool', () => {
     const tool = new ReadFileTool(new PathSandbox(dir));
     const result = JSON.parse(await tool.execute(JSON.stringify({ path: 'large.txt' })));
     expect(result.content).toContain('[output truncated]');
+    // 技术方案 5.6：截断时补结构化顶层字段，供 loop 嗅探落截断徽标（与 grep/glob 口径对齐）。
+    expect(result.truncated).toBe(true);
+  });
+
+  it('doesNotSetTruncatedFlagWhenOutputFits', async () => {
+    const dir = tmp();
+    writeFileSync(join(dir, 'small.txt'), 'line-1\nline-2');
+    const tool = new ReadFileTool(new PathSandbox(dir));
+    const result = JSON.parse(await tool.execute(JSON.stringify({ path: 'small.txt' })));
+    expect(result.content).not.toContain('[output truncated]');
+    // 未截断不得出现 truncated 字段（避免前端把 undefined 误当截断）。
+    expect('truncated' in result).toBe(false);
   });
 
   it('readsPngImageWithDataUri', async () => {

@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { ElMessage } from 'element-plus'
 import { useSessionStore, type TaskPhase } from '../stores/session'
 import { useInboxStore } from '../stores/inbox'
 import { api } from '../api'
@@ -76,6 +77,14 @@ export function clearActiveExecution(sessionId: string) {
 }
 
 function isStaleExecution(sessionId: string, data: any): boolean {
+  // 空闲手动压缩（compact_now 空闲路径）由后端合成 listener 以 sentinel executionId
+  // `manual_compact_*` 下发 compaction_start/end/marker 与 context_window。这是会话跑完任务后
+  // （已进 suppressedStreamSessions）、且无 RUNNING 帧登记的新型过程事件；不豁免则整批被陈旧帧门
+  // 吞掉，违反「过程实时可见 / 水位下降 / 分隔线 / isCompacting 点亮」验收。该前缀只可能由手动压缩
+  // 产生（真实执行是 UUID/数字 id），绝不会是被取消执行的迟到残留，故按 id 无条件放行即可。
+  if (typeof data?.executionId === 'string' && data.executionId.startsWith('manual_compact_')) {
+    return false
+  }
   if (suppressedStreamSessions.has(sessionId)) {
     return true
   }
@@ -480,6 +489,11 @@ export function useStreamWS() {
     return sendReliable({ type: 'retry_execution', sessionId: Number(sessionId), data: {} })
   }
 
+  /** 手动整理上下文（技术方案 5.4）：空闲立即执行、运行中在下个工具轮边界执行，二者都由服务端回执事件驱动 UI。 */
+  async function compactNow(sessionId: string): Promise<boolean> {
+    return sendReliable({ type: 'compact_now', sessionId: Number(sessionId) })
+  }
+
   async function sendAskUserQuestionsResult(sessionId: string, requestId: string, answers: any[]): Promise<boolean> {
     return sendReliable({
       type: 'ask_user_questions_result',
@@ -504,12 +518,14 @@ export function useStreamWS() {
     return sendReliable({ type: 'reorder_queue_message', sessionId: Number(sessionId), data: { queueId, targetIndex } })
   }
 
-  async function sendToolApproval(sessionId: string, requestId: string, approved: boolean): Promise<boolean> {
+  async function sendToolApproval(sessionId: string, requestId: string, approved: boolean, alwaysAllow = false): Promise<boolean> {
     return sendReliable({
       type: 'tool_approval',
       sessionId: Number(sessionId),
       requestId,
-      approved
+      approved,
+      // 「总是允许」（V135）：仅布尔位，pattern 由服务端按 requestId 取回自己生成的 hint
+      ...(alwaysAllow ? { alwaysAllow: true } : {})
     })
   }
 
@@ -732,6 +748,19 @@ export function useStreamWS() {
         }
         break
 
+      case 'compaction_queued':
+        // 运行中手动压缩：本工具轮边界才执行，先回执排队态。后续 compaction_start/end/marker 由 loop 真实 listener 下发。
+        ElMessage.info(data?.message ?? '已排队，将在本轮工具结束后整理上下文')
+        break
+
+      case 'compaction_result':
+        // 空闲手动压缩的最终回执；compaction_start/end/marker 已驱动分隔线与水位，这里补一条结果提示。
+        // 失败回执走压缩通道（compacted=false + failed=true），只提示、绝不影响会话执行状态。
+        if (data?.failed) ElMessage.error(data?.message ?? '整理上下文失败，请稍后重试')
+        else if (data?.compacted === false) ElMessage.info('当前上下文已足够精简，无需整理')
+        else ElMessage.success('已整理上下文')
+        break
+
       case 'thinking_start':
         if (sessionId) {
           sessionStore.setStreaming(sessionId, false)
@@ -838,6 +867,31 @@ export function useStreamWS() {
               images
             })
             sessionStore.ensureStreamingAssistantMessage(sid)
+          }
+        }
+        break
+      }
+
+      case 'assistant_message_saved': {
+        // 后台子代理完成通知：消息由服务端直接落库（不经本端发送链路），
+        // 若不实时插入，用户盯屏期间看不到卡片，只有刷新后 REST 历史才补出来。
+        // messageId 为空（极端失败）时不插入：无 id 的气泡会在下次 fetchMessages 时变成
+        // 无法去重的重复条目；此时靠会话终态的重拉兜底。
+        if (sessionId && data?.messageId != null) {
+          const noticeId = String(data.messageId)
+          const metadata = parseNoticeMetadata(data.metadata)
+          // 仅处理带后台子代理标记的通知；其他来源的助手消息不在这里插入
+          if (metadata?.backgroundSubagentCompletion != null
+            && !sessionStore.getMessages(sessionId).some(m => String(m.id) === noticeId)) {
+            // 插在流式气泡之前：通知到达时主线往往还在流式输出，append 到尾部会让
+            // 下一个 delta 新建空气泡，把同一轮回复劈成两段。
+            sessionStore.insertPersistedAssistantMessage(sessionId, {
+              id: noticeId,
+              role: 'assistant',
+              content: typeof data.content === 'string' ? data.content : '',
+              createdAt: nowDateTime(),
+              metadata
+            })
           }
         }
         break
@@ -1004,10 +1058,10 @@ export function useStreamWS() {
 
       case 'tool_execute': {
         if (!sessionId || !data) break
-        const { requestId, toolName, arguments: toolArgs, workspace, needApproval, dangerReason } = data
+        const { requestId, toolName, arguments: toolArgs, workspace, needApproval, dangerReason, approvalHint } = data
         if (typeof window !== 'undefined' && (window as any).electronAPI?.toolExecute) {
           ;(window as any).electronAPI
-            .toolExecute(toolName, toolArgs, requestId, workspace, Number(sessionId), !!needApproval, dangerReason || null)
+            .toolExecute(toolName, toolArgs, requestId, workspace, Number(sessionId), !!needApproval, dangerReason || null, approvalHint || null)
             .then(async (response: { requestId: string; result: string | null; error: string | null }) => {
               if (response.error) {
                 await sendReliable({
@@ -1110,6 +1164,25 @@ export function useStreamWS() {
     }
   }
 
+  /**
+   * 完成通知事件的 metadata：服务端下发的是 JSON 字符串（与 REST 消息行一致），
+   * 解析成对象才匹配 MessageBubble 的 backgroundSubagentCompletion 判定。
+   * 解析失败或形状不符时返回 null，调用方据此跳过插入。
+   */
+  function parseNoticeMetadata(raw: unknown): Record<string, unknown> | null {
+    if (raw == null) return null
+    if (typeof raw === 'object' && !Array.isArray(raw)) return raw as Record<string, unknown>
+    if (typeof raw !== 'string') return null
+    try {
+      const parsed = JSON.parse(raw)
+      return typeof parsed === 'object' && parsed != null && !Array.isArray(parsed)
+        ? parsed as Record<string, unknown>
+        : null
+    } catch {
+      return null
+    }
+  }
+
   // 消息保存确认的回调注册函数
   function onMessageSaved(callback: MessageSavedCallback): string {
     const callbackId = `callback_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`
@@ -1140,6 +1213,7 @@ export function useStreamWS() {
     sendEditMessage,
     cancel,
     retryExecution,
+    compactNow,
     sendAskUserQuestionsResult,
     enqueueMessage,
     insertMessage,

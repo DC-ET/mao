@@ -107,6 +107,10 @@ import { SessionActivityRepository, SessionTodoRepository, SubagentExecutionRepo
 import { MessageQueueService } from './session/message-queue.service.js';
 import { MessageQueueRepository } from './session/message-queue.repository.js';
 import { registerSessionRoutes } from './session/session.routes.js';
+import { registerSessionShareRoutes } from './session/session-share.routes.js';
+import { MysqlSessionShareRepository } from './session/session-share.repository.js';
+import { SessionShareService } from './session/session-share.service.js';
+import { SessionExportService } from './session/session-export.service.js';
 import { registerAdminSessionRoutes } from './session/admin-session.routes.js';
 import { SessionActivityHeartbeat } from './session/session-activity-heartbeat.js';
 import { TaskTerminalService } from './session/task-terminal.service.js';
@@ -114,6 +118,10 @@ import { MemoryRepository } from './memory/memory.repository.js';
 import { MemoryService } from './memory/memory.service.js';
 import { MemoryExtractionService } from './memory/memory-extraction.service.js';
 import { registerMemoryRoutes } from './memory/memory.routes.js';
+import { ApprovalRuleRepository } from './approval-rule/approval-rule.repository.js';
+import { ApprovalRuleService } from './approval-rule/approval-rule.service.js';
+import { registerApprovalRuleRoutes, type ApprovalRuleAuditInput } from './approval-rule/approval-rule.routes.js';
+import { registerApprovalRuleAdminRoutes } from './approval-rule/approval-rule.admin.routes.js';
 import { InboxRepository } from './inbox/inbox.repository.js';
 import { InboxService } from './inbox/inbox.service.js';
 import { InboxCleanupScheduler, type InboxCleanupStore } from './inbox/inbox.cleanup.js';
@@ -177,6 +185,7 @@ import { ContextManager } from './harness/core/context-manager.js';
 import { CompactionService } from './harness/core/compaction-service.js';
 import { CompactionArchiveService } from './harness/core/compaction-archive.service.js';
 import { SessionCompactionOrchestrator } from './harness/core/session-compaction-orchestrator.js';
+import { CompactionSignalBus } from './harness/core/compaction-signal-bus.js';
 import { SessionHistoryLoader } from './harness/core/session-history-loader.js';
 import { TokenEstimator } from './harness/core/token-estimator.js';
 import { ActiveContextCalculator } from './harness/core/active-context-calculator.js';
@@ -281,6 +290,8 @@ import { FeishuCardActionService } from './feishu/card-action.service.js';
 import { persistFeishuCancelIfIdle } from './feishu/cancel-running.js';
 import { readFeishuDocMarkdown } from './feishu/doc-reader.js';
 import { fetchFeishuMessageDetail } from './feishu/message-detail.js';
+import { expandFeishuMergeForward, resolveFeishuQuotedText } from './feishu/merge-forward.js';
+import { batchResolveFeishuUserNames } from './feishu/sender-names.js';
 import { feishuSendTargetOf, sendFeishuFile, sendFeishuImage } from './feishu/media-sender.js';
 import { FeishuCardProgressListener, countCompletedAgentRounds, type FeishuCardProgress } from './feishu/card-progress-listener.js';
 import { createDingtalkRuntime } from './dingtalk/runtime.js';
@@ -663,6 +674,13 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   // TerminalManager / 定时任务存储都在后面才构造，会话删除回调延迟解引用
   let terminalManagerRef: TerminalManager | null = null;
   let deleteScheduledTasksForSession: ((sessionId: number) => Promise<void>) | null = null;
+  // 审批放行规则（V135）：repo/service 早于 sessionService 与 toolDispatcher 构造（双向依赖）
+  const approvalRuleRepo = new ApprovalRuleRepository(db);
+  const approvalRuleService = new ApprovalRuleService(
+    approvalRuleRepo,
+    { getValue: (key) => settingService.getValue(key) },
+    { getUserId: async (sessionId) => (await sessionRepo.findById(sessionId))?.userId ?? null },
+  );
   const sessionService = new SessionService(
     sessionRepo, messageRepo, fileChangeRepo,
     {
@@ -675,6 +693,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     runtimeSessionCleanup(runtimeRoot),
     (sessionId) => { terminalManagerRef?.closeBySession(sessionId); },
     (sessionId) => deleteScheduledTasksForSession?.(sessionId),
+    (sessionId) => approvalRuleRepo.deleteBySessionId(sessionId),
   );
   const sessionSvc = sessionService as never;
   const sessionMap = sessionRepo as never;
@@ -1036,6 +1055,14 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     agentExecutor,
     fileChangeRepo: fileChangeRepo as never,
     inboxRecorder: inboxService,
+    completionNoticeBroadcaster: {
+      broadcastCompletionNotice: (userId, event) => {
+        if (userId == null) return;
+        // 关键帧通道：完成通知丢失后客户端要等下次 REST 重拉才补上，用户盯屏时完全看不到卡片。
+        // 事件量极小（一次终态一帧），进关键队列不会挤占普通增量帧。
+        wsRegistry.send(userId, wsEvent('assistant_message_saved', event.sessionId, event.data));
+      },
+    },
   });
 
   const scheduledService = new ScheduledTaskService(
@@ -1168,11 +1195,15 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     backgroundTasks, deliveryService, feishuAskMount,
     proxyApprover, jevRiskAssessor, approvalModelResolver,
     inboxService,
+    approvalRuleService,
   );
+  // 手动压缩信号总线：AgentLoop（工具轮边界消费）与 StreamingWsHandler（运行中置位）共享同一实例。
+  const compactionSignalBus = new CompactionSignalBus();
   const agentLoop = new AgentLoop(
     llmAdapter, promptEngine, contextManager, toolDispatcher, backgroundTasks,
     shellManager, activityHeartbeat, sessionSvc, orchestrator, activeContext, mcpClient,
     () => backgroundSubagentManager,
+    compactionSignalBus,
   );
   holder.loop = agentLoop;
   const harness = new HarnessService(
@@ -1257,10 +1288,12 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     askUserQuestionsRegistry,
     treeSignalPublisher,
     approvalRegistry,
+    approvalRuleService,
     activityService,
     activityHeartbeat,
     sessionTodoMapper: todoMapper,
     agentLoop,
+    compactionSignalBus,
     backgroundSubagentManager,
     shellSessionManager: shellManager,
     skillSyncService: skillSync,
@@ -1959,6 +1992,46 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     if (name != null && name !== '') feishuSenderNames.set(key, Promise.resolve(name));
     return name;
   };
+  const resolveFeishuUserNames = async (accountId: string, openIds: string[]): Promise<Map<string, string>> => {
+    const client = await getFeishuClient(Number(accountId));
+    if (client == null || openIds.length === 0) return new Map();
+    return batchResolveFeishuUserNames(
+      (req) => client.contact.v3.user.basicBatch(req),
+      openIds,
+      {
+        get: (openId) => feishuSenderNames.get(`${accountId}:${openId}`),
+        set: (openId, name) => { feishuSenderNames.set(`${accountId}:${openId}`, Promise.resolve(name)); },
+      },
+    );
+  };
+  const resolveMergeWorkspace = async (accountId: string, event: FeishuNormalizedMessage): Promise<string | null> => {
+    try {
+      if (event.chatType === 'group') {
+        if (event.chatId == null || event.chatId === '') return null;
+        return resolveFeishuChatWorkspace(cfg.app.harness.workspaceRoot, accountId, event.chatId);
+      }
+      const unionId = event.senderUnionId ?? event.senderId;
+      const userId = unionId == null ? null : await feishuBinding.findUserIdByUnionId(unionId);
+      if (userId == null) return null;
+      return resolveFeishuChatWorkspace(cfg.app.harness.workspaceRoot, String(accountId), `private-${userId}`);
+    } catch (error) {
+      console.warn(`定位合并转发工作区失败, accountId=${accountId}: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }
+  };
+  const expandMergeForward = async (accountId: string, messageId: string, workspace: string | null): Promise<string | null> => {
+    try {
+      const client = await getFeishuClient(Number(accountId));
+      if (client == null) return null;
+      return await expandFeishuMergeForward(client, messageId, {
+        workspace,
+        resolveUserNames: (openIds) => resolveFeishuUserNames(accountId, openIds),
+      });
+    } catch (error) {
+      console.warn(`展开飞书合并转发失败, messageId=${messageId}, code=unknown: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }
+  };
   // 群图片入站即下载（非懒加载）：落到群工作区，占位文本携带 @{路径}@ 引用，Agent 免工具直接读取；
   // 失败返回 null 由调用方保留 msg 占位符，仍可通过 feishu_download_file 懒加载兜底。
   const IMAGE_EXT_BY_CONTENT_TYPE: Record<string, string> = {
@@ -2031,19 +2104,29 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         return buildQuotedInjection(raw, { parentMessageId: event.parentId!, workspace: await resolveQuotedWorkspace(accountId, event) });
       };
       // 群消息日志优先：免 API 调用，发送人姓名与占位符格式也和上下文一致。
+      // 合并转发日志若仍是固定英文，或私聊没有日志，则展开后再注入。
       const fromLog = event.chatId != null
         ? await feishuMessageRepository.findGroupMessageByMessageId(String(accountId), event.chatId, event.parentId)
         : null;
-      if (fromLog != null) {
-        return persist(`[${formatGroupTime(fromLog.createdAt)}] ${fromLog.senderName}：${fromLog.content ?? ''}`);
-      }
-      // 日志未命中（引用机器人消息、超出日志窗口或私聊）：通过消息详情 API 兜底。
-      const client = await getFeishuClient(Number(accountId));
-      if (client == null) return null;
-      const detail = await fetchFeishuMessageDetail(client, event.parentId);
-      if (detail == null) return null;
-      return persist(detail.text);
+      return resolveFeishuQuotedText({
+        log: fromLog == null ? null : {
+          msgType: fromLog.msgType,
+          content: fromLog.content,
+          line: `[${formatGroupTime(fromLog.createdAt)}] ${fromLog.senderName}：${fromLog.content ?? ''}`,
+        },
+        fetchDetail: async () => {
+          const client = await getFeishuClient(Number(accountId));
+          if (client == null) return null;
+          const detail = await fetchFeishuMessageDetail(client, event.parentId!);
+          return detail == null ? null : { msgType: detail.msgType, text: detail.text };
+        },
+        expand: (workspace) => expandMergeForward(accountId, event.parentId!, workspace),
+        resolveWorkspace: () => resolveQuotedWorkspace(accountId, event),
+        persist,
+      });
     },
+    expandMergeForward,
+    resolveMergeWorkspace,
     resolveMessageText: async (accountId, messageId) => {
       const client = await getFeishuClient(Number(accountId));
       if (client == null) return null;
@@ -2326,9 +2409,34 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       pathSandbox,
       subagentExecutionRepo,
       sessionCompactionEventService,
+      sessionCompactionService,
       approvalRegistry,
       askUserQuestionsRegistry,
       treeSignalPublisher,
+    });
+    const sessionShareService = new SessionShareService(
+      new MysqlSessionShareRepository(db),
+      sessionService,
+      userRepo,
+      {
+        findById: (id: number) => agentRepo.findById(id),
+        findByIds: (ids: number[]) => agentRepo.findByIds(ids),
+        requireDefaultAgent: () => agentService.requireDefaultAgent(),
+        listOptions: async () => (await agentRepo.selectList(null, true)).map((a) => ({ id: a.id!, name: a.name })),
+      } as never,
+      auditService,
+      () => settingService.shareTokenLinksEnabled(),
+    );
+    registerSessionShareRoutes(api, {
+      sessionService,
+      shareService: sessionShareService,
+      exportService: new SessionExportService(sessionService, {
+        findById: (id: number) => agentRepo.findById(id),
+        findByIds: (ids: number[]) => agentRepo.findByIds(ids),
+        requireDefaultAgent: () => agentService.requireDefaultAgent(),
+        listOptions: async () => (await agentRepo.selectList(null, true)).map((a) => ({ id: a.id!, name: a.name })),
+      } as never),
+      tokenLinksEnabled: () => settingService.shareTokenLinksEnabled(),
     });
     registerAdminSessionRoutes(api, {
       sessionService,
@@ -2400,6 +2508,27 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     registerStatisticsRoutes(api, { statistics: statisticsService, jwt, permissionService });
     registerFeedbackRoutes(api, { feedback: feedbackService, jwt, permissionService });
     registerMemoryRoutes(api, { memoryService });
+    registerApprovalRuleRoutes(api, {
+      approvalRuleService,
+      audit: (input: ApprovalRuleAuditInput) => {
+        // 规则管理动作走 service 级审计（规则放行本身不写 audit_log，见技术方案决策 7）
+        void auditService.record({
+          action: input.action,
+          objectType: 'approval.rule',
+          objectId: String(input.objectId),
+          method: input.request.method,
+          path: input.request.url,
+          userId: (input.request as { userId?: number }).userId ?? null,
+          username: null,
+          ip: input.request.ip ?? null,
+          status: 200,
+          success: 1,
+          errorMessage: null,
+          queryString: input.detail,
+        }).catch((e) => console.error('Failed to record approval rule audit log', e));
+      },
+    });
+    registerApprovalRuleAdminRoutes(api, { approvalRuleService, permissionService });
     registerInboxRoutes(api, { inboxService });
     registerBudgetRoutes(api, { budgetService, permissionService });
     const adminDeps = {

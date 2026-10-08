@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatMessage, ToolCall } from '../types/chat'
-import { discardAbortedStreamTail } from './chatMessage'
+import { discardAbortedStreamTail, mapApiMessagesToChat, extractResultTruncatedFromMetadata } from './chatMessage'
 
 function tool(id: string, status: ToolCall['status']): ToolCall {
   return { id, name: 'shell', status, isExpanded: false, argsStreaming: false }
@@ -87,5 +87,35 @@ describe('discardAbortedStreamTail', () => {
       { type: 'tool', callId: 't2' },
     ])
     expect(m.content).toBe('查一下')
+  })
+})
+
+describe('backend truncation in history', () => {
+  it('extractResultTruncatedFromMetadata reads top-level flag from string/object metadata', () => {
+    expect(extractResultTruncatedFromMetadata('{"resultTruncated":true}')).toBe(true)
+    expect(extractResultTruncatedFromMetadata({ resultTruncated: true })).toBe(true)
+    expect(extractResultTruncatedFromMetadata('{"resultTruncated":false}')).toBe(false)
+    expect(extractResultTruncatedFromMetadata('{"approvalMark":{"mode":"llm"}}')).toBe(false)
+    expect(extractResultTruncatedFromMetadata('not json')).toBe(false)
+    expect(extractResultTruncatedFromMetadata(null)).toBe(false)
+  })
+
+  it('mapApiMessagesToChat marks the matching tool call as truncated', () => {
+    const chat = mapApiMessagesToChat([
+      { role: 'assistant', content: '', toolCalls: [{ id: 'tc1', function: { name: 'read_file', arguments: '{}' } }] },
+      { role: 'tool', toolCallId: 'tc1', content: 'big output…', metadata: '{"resultTruncated":true}' },
+    ])
+    const call = chat.find(c => c.role === 'assistant')?.toolCalls?.find(t => t.id === 'tc1')
+    expect(call?.resultTruncated).toBe(true)
+  })
+
+  it('mapApiMessagesToChat leaves non-truncated tool calls unset', () => {
+    const chat = mapApiMessagesToChat([
+      { role: 'assistant', content: '', toolCalls: [{ id: 'tc2', function: { name: 'read_file', arguments: '{}' } }] },
+      { role: 'tool', toolCallId: 'tc2', content: 'ok', metadata: '{"approvalMark":{"mode":"llm","approved":true,"reason":"x"}}' },
+    ])
+    const call = chat.find(c => c.role === 'assistant')?.toolCalls?.find(t => t.id === 'tc2')
+    expect(call?.resultTruncated).toBeUndefined()
+    expect(call?.approvalMark).toEqual({ mode: 'llm', approved: true, reason: 'x' })
   })
 })

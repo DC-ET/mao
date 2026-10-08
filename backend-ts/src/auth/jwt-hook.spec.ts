@@ -30,6 +30,8 @@ describe('开放接口身份层（mao_ 前缀分流）', () => {
   } as never as Parameters<typeof authenticateRequest>[0]);
 
   it('hook 公开路径：POST /v1/open/hooks/* 免 JWT 门槛', () => {
+    expect(isPublicPath('GET', '/api/v1/share/public/abc')).toBe(true);
+    expect(isPublicPath('GET', '/api/v1/share/abc')).toBe(false);
     expect(isPublicPath('POST', '/api/v1/open/hooks/abc')).toBe(true);
     expect(isPublicPath('GET', '/api/v1/open/hooks/abc')).toBe(false);
     expect(isPublicPath('POST', '/api/v1/open/tokens')).toBe(false);

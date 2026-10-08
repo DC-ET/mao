@@ -317,7 +317,7 @@ function requireQueryLong(request: FastifyRequest, name: string): number {
   return n;
 }
 
-function contentDisposition(kind: 'attachment' | 'inline', fileName: string): string {
+export function contentDisposition(kind: 'attachment' | 'inline', fileName: string): string {
   const fallback = fileName.replace(/[^\x20-\x7E]/g, '_').replace(/"/g, '\\"');
   const encoded = encodeURIComponent(fileName);
   return `${kind}; filename="${fallback}"; filename*=UTF-8''${encoded}`;

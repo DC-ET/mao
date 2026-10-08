@@ -53,6 +53,7 @@ function makeRunner(
     registerCancelFlag: vi.fn().mockReturnValue({ get: () => options.cancelled === true, set: () => undefined }),
     removeCancelFlag: vi.fn(),
   };
+  const registry = { send: vi.fn() };
   const onExecutionFinished = vi.fn().mockResolvedValue(undefined) as (
     sessionId: number, userId: number, phase: 'COMPLETED' | 'FAILED' | 'CANCELLED',
   ) => Promise<void>;
@@ -62,7 +63,7 @@ function makeRunner(
     taskTerminalService as never,
     harnessService as never,
     agentLoop as never,
-    { send: vi.fn() } as never,
+    registry as never,
     {} as never,
     { clear: vi.fn() } as never,
     { selectBySessionId: vi.fn().mockResolvedValue([]) } as never,
@@ -73,7 +74,7 @@ function makeRunner(
     undefined,
     extra,
   );
-  return { runner, taskTerminalService, harnessService, pending, onExecutionFinished, sessionService };
+  return { runner, registry, taskTerminalService, harnessService, pending, onExecutionFinished, sessionService };
 }
 
 describe('CrashRecoveryRunner.createExtraListeners', () => {
@@ -173,6 +174,23 @@ describe('CrashRecoveryRunner.createExtraListeners', () => {
     await runner.run();
     await Promise.all(pending);
     expect(onExecutionFinished).toHaveBeenCalledWith(7, 42, 'COMPLETED');
+  });
+
+  it('runningNotificationsCarryTheNewExecutionIdSoReconnectClientsCanRebind', async () => {
+    const { runner, registry, taskTerminalService, pending } = makeRunner();
+    await runner.run();
+    await Promise.all(pending);
+    const runningEvents = vi.mocked(registry.send).mock.calls
+      .map((c) => c[1] as { type: string; data?: Record<string, unknown> })
+      .filter((e) => e.type === 'session_status' && e.data?.phase === 'RUNNING');
+    expect(runningEvents.length).toBeGreaterThan(0);
+    // 恢复执行换了新 executionId，RUNNING 通知必须带上它：前端据此重绑 activeExecutionId，
+    // 否则恢复执行的流式帧会被 isStaleExecution 当陈旧帧全部丢弃（进度永久卡住）。
+    const executionId = String(runningEvents[0]!.data!.executionId ?? '');
+    expect(executionId).not.toBe('');
+    for (const e of runningEvents) expect(e.data?.executionId).toBe(executionId);
+    // 与终态收敛使用的是同一个 executionId
+    expect(taskTerminalService.finishExecution).toHaveBeenCalledWith(7, 42, 'COMPLETED', executionId);
   });
 });
 

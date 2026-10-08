@@ -1,5 +1,6 @@
 import type { ChatRequest, ChatUsage, ToolCall } from '../llm/chat-request.js';
 import type { ToolCallResultMeta } from '../tool/tool-result.js';
+import type { ContextManifest } from './context-manifest.js';
 
 export interface AgentEventListener {
   onContentDelta(delta: string): void;
@@ -9,7 +10,7 @@ export interface AgentEventListener {
   onRoundStart?(round: number): void;
   onRoundEnd?(round: number): void;
   onError(t: unknown): void;
-  onContextWindow?(estimatedTokens: number, actualTokens: number): void;
+  onContextWindow?(estimatedTokens: number, actualTokens: number, manifest?: ContextManifest | null): void;
   onCompactionStart?(type: string, messageCount: number, estimatedTokens: number): void;
   onCompactionEnd?(type: string, summaryTokens: number, savedTokens: number, durationMs: number): void;
   onCompactionPersisted?(

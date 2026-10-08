@@ -72,6 +72,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '审计日志', keepAlive: true, permission: 'audit:read' }
       },
       {
+        path: 'approval-rules',
+        name: 'ApprovalRules',
+        component: () => import('../views/approval/ApprovalRuleView.vue'),
+        meta: { title: '审批规则', keepAlive: true, permission: 'approval-rule:read' }
+      },
+      {
         path: 'analytics',
         name: 'Analytics',
         component: () => import('../views/analytics/AnalyticsView.vue'),

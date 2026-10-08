@@ -8,6 +8,7 @@ import type { SessionService } from './session.service.js';
 import type { ActivityService } from './activity.service.js';
 import type { MessageQueueService } from './message-queue.service.js';
 import type { SessionCompactionEventService } from './session-compaction-event.service.js';
+import type { SessionCompactionService } from './session-compaction.service.js';
 import type { SessionTodoRepository, SubagentExecutionRepository } from './activity.repository.js';
 import type { AgentLookup, LlmModelLookup, UserLookup } from './types.js';
 import type { PathSandbox } from '../harness/safety/path-sandbox.js';
@@ -67,10 +68,13 @@ describe('session and admin routes', () => {
       updateSummary: vi.fn(),
       updateProjectKey: vi.fn(),
       updatePermissionLevel: vi.fn(),
+      updateMemoryInjectionDisabled: vi.fn(),
       updateModelId: vi.fn(),
       getMessagesByRounds: vi.fn(async () => ({ messages: [], hasMore: false, nextBeforeMessageId: null })),
       getFileChangesByMessageIds: vi.fn(async () => new Map()),
       getFileChangeSummariesByMessageIds: vi.fn(async () => new Map()),
+      findOwnedMessage: vi.fn(async () => null),
+      getForkPreview: vi.fn(async () => ({ messages: [], hasMore: false, nextBeforeMessageId: null })),
       editMessageAndTruncate: vi.fn(async () => ({ id: 2, sessionId: 1, role: 'USER', content: 'edited' })),
       listSessionsForAdmin: vi.fn(async () => ({ records: [session()], total: 1, current: 1, size: 20 })),
     } as unknown as SessionService;
@@ -93,6 +97,8 @@ describe('session and admin routes', () => {
     mkdirSync(join(root, '7', 'projects', 'demo'), { recursive: true });
     writeFileSync(join(root, '7', 'projects', 'demo', '.git'), '');
     const pathSandbox = { getWorkspaceRoot: () => root } as PathSandbox;
+    const compactionEventService = { listBySessionId: vi.fn(async () => []) } as unknown as SessionCompactionEventService;
+    const compactionRecordService = { findBySessionId: vi.fn(async () => null) };
     registerSessionRoutes(fastify, {
       sessionService,
       agentLookup,
@@ -107,7 +113,8 @@ describe('session and admin routes', () => {
       messageQueueService: { listPending: vi.fn(async () => []) } as unknown as MessageQueueService,
       pathSandbox,
       subagentExecutionRepo: { findByChildSessionIds: vi.fn(async () => []) } as unknown as SubagentExecutionRepository,
-      sessionCompactionEventService: { listBySessionId: vi.fn(async () => []) } as unknown as SessionCompactionEventService,
+      sessionCompactionEventService: compactionEventService,
+      sessionCompactionService: compactionRecordService as unknown as SessionCompactionService,
     });
     registerAdminSessionRoutes(fastify, {
       sessionService,
@@ -128,7 +135,7 @@ describe('session and admin routes', () => {
       })),
     } as unknown as OssStsService;
     registerOssRoutes(fastify, { ossStsService });
-    return { fastify, sessionService, ossStsService };
+    return { fastify, sessionService, ossStsService, compactionEvents: compactionEventService, compactionRecordService };
   }
 
   it('covers session rest endpoints', async () => {
@@ -175,6 +182,61 @@ describe('session and admin routes', () => {
     await fastify.close();
   });
 
+  it('GET /sessions/:id/compaction 返回摘要现值，无记录时 data 为 null', async () => {
+    const { fastify, compactionRecordService } = await app();
+
+    // 无压缩记录：data 缺省（框架 Result.ok 对 null 省略 data 键），不算错
+    const none = await fastify.inject({ method: 'GET', url: '/v1/sessions/1/compaction' });
+    expect(none.statusCode).toBe(200);
+    const noneBody = JSON.parse(none.body);
+    expect(noneBody.code).toBe(0);
+    expect(noneBody.data ?? null).toBeNull();
+
+    // 有记录：透传 summaryText / lastCompactedMsgId / compactCount / compactModel / updatedAt
+    // updatedAt 用 MySQL dateStrings 的 'yyyy-MM-dd HH:mm:ss' 字符串形态，格式化结果与时区无关。
+    (compactionRecordService.findBySessionId as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        summaryText: '这是上下文摘要',
+        lastCompactedMsgId: 42,
+        compactCount: 3,
+        compactModel: 'gpt-test',
+        updatedAt: '2026-10-06 12:00:00',
+      });
+    const got = JSON.parse((await fastify.inject({ method: 'GET', url: '/v1/sessions/1/compaction' })).body);
+    expect(got.data).toEqual({
+      summaryText: '这是上下文摘要',
+      lastCompactedMsgId: 42,
+      compactCount: 3,
+      compactModel: 'gpt-test',
+      updatedAt: '2026-10-06T12:00',
+    });
+
+    // 属主校验：越权会话拒绝（requireSessionOwner 抛 FORBIDDEN）
+    const { fastify: f2, sessionService: svc2 } = await app();
+    (svc2.getSession as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 1, userId: 999, agentId: 9 });
+    const denied = await f2.inject({ method: 'GET', url: '/v1/sessions/1/compaction' });
+    expect(denied.statusCode).not.toBe(200);
+    expect(JSON.parse(denied.body).code).not.toBe(0);
+
+    await fastify.close();
+    await f2.close();
+  });
+
+  it('PATCH /sessions/:id 切换 memoryInjectionDisabled（含 false）并回显到 VO', async () => {
+    const { fastify, sessionService } = await app();
+    vi.mocked(sessionService.getSession).mockResolvedValue(session({ memoryInjectionDisabled: 1 }) as never);
+    const on = await fastify.inject({ method: 'PATCH', url: '/v1/sessions/1', payload: { memoryInjectionDisabled: true } });
+    expect(on.statusCode).toBe(200);
+    expect(JSON.parse(on.body).data.memoryInjectionDisabled).toBe(true);
+    expect(sessionService.updateMemoryInjectionDisabled).toHaveBeenCalledWith(1, true);
+
+    // false 也必须触发写入（关闭开关），不能因为 `!= null` 短路被当成缺省跳过。
+    const off = await fastify.inject({ method: 'PATCH', url: '/v1/sessions/1', payload: { memoryInjectionDisabled: false } });
+    expect(off.statusCode).toBe(200);
+    expect(sessionService.updateMemoryInjectionDisabled).toHaveBeenCalledWith(1, false);
+    await fastify.close();
+  });
+
   it('side-tasks recursive returns flattened descendants with parentSessionId', async () => {
     const { fastify, sessionService } = await app();
     const deep = session({ id: 30, parentSessionId: 20, permissionLevel: 'READ_ONLY', phase: 'RUNNING' });
@@ -188,6 +250,79 @@ describe('session and admin routes', () => {
     expect(body.data[0].permissionLevel).toBe('READ_ONLY');
     expect(sessionService.listDescendantSideTaskSessions).toHaveBeenCalledWith(1, 7);
     expect(sessionService.listSideTaskSessions).not.toHaveBeenCalled();
+    await fastify.close();
+  });
+
+  it('fork-preview returns cut-scoped messages and a page cursor', async () => {
+    const { fastify, sessionService } = await app();
+    vi.mocked(sessionService.findOwnedMessage).mockResolvedValue({ id: 5, sessionId: 1, role: 'ASSISTANT', content: 'done' } as never);
+    vi.mocked(sessionService.getForkPreview).mockResolvedValue({
+      messages: [
+        { id: 1, sessionId: 1, role: 'USER', content: 'q', createdAt: '2026-08-13 10:00:00' },
+        { id: 5, sessionId: 1, role: 'ASSISTANT', content: 'done', createdAt: '2026-08-13 10:01:00' },
+      ],
+      hasMore: true,
+      nextBeforeMessageId: 1,
+    });
+    const res = await fastify.inject({ method: 'GET', url: '/v1/sessions/1/fork-preview?forkFromMessageId=5' });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(sessionService.getForkPreview).toHaveBeenCalledWith(1, 5, 5, null);
+    expect(body.data.messages).toHaveLength(2);
+    expect(body.data.messages[1].content).toBe('done');
+    expect(body.data.hasMore).toBe(true);
+    expect(body.data.nextBeforeMessageId).toBe(1);
+    expect(body.data.compactionEvents).toEqual([]);
+    await fastify.close();
+  });
+
+  it('fork-preview without cut point previews the whole history', async () => {
+    const { fastify, sessionService } = await app();
+    const res = await fastify.inject({ method: 'GET', url: '/v1/sessions/1/fork-preview' });
+    expect(res.statusCode).toBe(200);
+    expect(sessionService.getForkPreview).toHaveBeenCalledWith(1, null, 5, null);
+    expect(sessionService.findOwnedMessage).not.toHaveBeenCalled();
+    expect(JSON.parse(res.body).data.messages).toEqual([]);
+    await fastify.close();
+  });
+
+  it('fork-preview forwards the paging cursor when loading older rounds', async () => {
+    const { fastify, sessionService } = await app();
+    vi.mocked(sessionService.findOwnedMessage).mockResolvedValue({ id: 5, sessionId: 1, role: 'ASSISTANT', content: 'x' } as never);
+    const res = await fastify.inject({
+      method: 'GET',
+      url: '/v1/sessions/1/fork-preview?forkFromMessageId=5&beforeMessageId=42',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(sessionService.getForkPreview).toHaveBeenCalledWith(1, 5, 5, 42);
+    await fastify.close();
+  });
+
+  it('fork-preview drops compaction markers past the cut point', async () => {
+    const { fastify, sessionService, compactionEvents } = await app();
+    vi.mocked(sessionService.findOwnedMessage).mockResolvedValue({ id: 5, sessionId: 1, role: 'ASSISTANT', content: 'x' } as never);
+    // 两条标记：boundary=1 落在切点内（落库侧会复制，预览要保留）；boundary=99 落在切点外（不复制，预览要挡掉）
+    vi.mocked(compactionEvents.listBySessionId).mockResolvedValue([
+      { id: 1, sessionId: 1, triggerMode: 'AUTO', prevBoundaryMsgId: 0, boundaryMsgId: 1, compactedMessageCount: 1 },
+      { id: 2, sessionId: 1, triggerMode: 'AUTO', prevBoundaryMsgId: 1, boundaryMsgId: 99, compactedMessageCount: 1 },
+    ] as never);
+    const res = await fastify.inject({ method: 'GET', url: '/v1/sessions/1/fork-preview?forkFromMessageId=5' });
+    expect(res.statusCode).toBe(200);
+    const events = JSON.parse(res.body).data.compactionEvents;
+    expect(events).toHaveLength(1);
+    expect(events[0].boundaryMsgId).toBe(1);
+    await fastify.close();
+  });
+
+  it('fork-preview rejects a foreign or missing cut point before loading history', async () => {
+    const { fastify, sessionService } = await app();
+    vi.mocked(sessionService.findOwnedMessage).mockResolvedValue(null as never);
+    const res = await fastify.inject({ method: 'GET', url: '/v1/sessions/1/fork-preview?forkFromMessageId=99' });
+    expect(JSON.parse(res.body).code).toBe(3030);
+    expect(sessionService.getForkPreview).not.toHaveBeenCalled();
+    const invalid = await fastify.inject({ method: 'GET', url: '/v1/sessions/1/fork-preview?forkFromMessageId=0' });
+    expect(JSON.parse(invalid.body).code).toBe(2001);
+    expect(sessionService.getForkPreview).not.toHaveBeenCalled();
     await fastify.close();
   });
 

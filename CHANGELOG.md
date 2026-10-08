@@ -15,8 +15,7 @@
 
 ---
 
-## 0.0.242 (2026-10-08)
-
+## 0.0.243 (2026-10-08)
 ### 前端（桌面 / Web / 安卓）
 
 - 新增「预算提醒」收件箱类型：预算超额时写入站内信并以「预算提醒 / ¥」徽标展示，预算越限被拒绝入队时同口径提示；通知设置新增「预算提醒通知」开关（默认开），可单独控制是否推送系统通知。预算越限与触发器停用两类条目的渲染此前因 kind 白名单缺失而被静默过滤，本次一并补齐。
@@ -40,6 +39,79 @@
 
 ---
 
+## 0.0.242 (2026-10-08)
+
+### 后端
+
+- 飞书合并转发在交给 Agent 之前展开为聊天摘录（时间、发送人、正文）。私聊和会触发的群消息同步展开；群里未触发的先落占位，异步展开后回写群日志，之后的【群内最近消息】和引用读到摘录。嵌套最多 3 层，单次最多 100 条；超过 4000 字时全文写入会话工作区 `quoted/merge-forward-{messageId}.txt`。展开失败仍保留「Merged and Forwarded Message」，不阻断入站。
+
+## 0.0.241 (2026-10-08)
+
+### 前端（桌面 / Web / 安卓）
+- LOCAL 工具审批卡片新增第三个选项「总是允许」：审批卡片副标题展示将要记住的确切命令模式（如 `npm run`），点击后当次照常执行，并在服务端创建本会话级放行规则；同会话内后续命中该模式的调用静默放行，工具卡片显示「规则放行」徽标，不再逐次弹卡。含受保护命令（rm、sudo、git push --force 等 denylist 命令）的命令不出现第三按钮、已建规则也不放行。READ_ONLY / FULL 档不受规则影响（前者审批是边界本身，后者无审批）。
+- 设置页新增「审批规则」管理页（`/settings/approval-rules`）：用户级持久规则清单（命令前缀 / 完整命令 / MCP 工具三类），按命中次数排序，展示命中次数（= 省掉的审批次数）与最近命中时间，支持启停、编辑、删除与手动新增（服务端归一化并在响应中返回归一化后的规则值，前缀规则自动截取前两个词）。
+
+### 后端
+
+- 新增 `approval_rule` 表（V137）与审批规则域：`ApprovalRuleService` 承担模式归一化（env 前缀剥离、空白折叠、前两 token 前缀）、denylist 校验（内置种子 + `approval.rule.denyTokens` 系统设置可扩展，admin「审批」分组可编辑）、规则匹配（会话级优先于用户级，同级内全等优先于词边界前缀）与命中计数。
+- 判门接入：`READ_WRITE` / `SMART` / `PROXY` 档的 shell 与 MCP 调用在原审批判定之前先查规则，命中即静默放行并短路 Jev 前置 / DangerAssessor / ProxyApprover（省掉审批用 LLM 调用），落 `metadata.approvalMark = { mode: 'rule' }`（复用既有徽标管线）；未命中则原五档判定链行为不变。READ_ONLY / FULL 档零规则查询。
+- `tool_execute` 帧增量下发 `approvalHint`（服务端生成，客户端不可注入 pattern）；`tool_approval` 帧增量消费 `alwaysAllow` 布尔位：后端按 requestId 从审批注册表取回服务端存储的 hint，按 `(session_id, rule_type, rule_value)` 查重后创建会话级规则（断线重发幂等）；deny 帧与 hint 缺失（超时/重启）时静默忽略。
+- 新增 `/v1/approval-rules` 用户级 CRUD（本人数据，规则管理动作写审计日志）；新增 `/v1/admin/approval-rules` 只读清单（新权限码 `approval-rule:read`，仅系统管理员，含用户名 / 会话标题 / 命中统计 enrich，支持 user / type / enabled 筛选）。会话删除级联物理删其会话级规则，用户级规则跨会话持续生效。
+
+### 管理后台
+
+- 「安全」分组新增「审批规则」只读清单页：全用户规则（用户 / 范围 / 所属会话 / 类型 / 规则值 / 命中统计 / 状态），支持按用户、类型、启停筛选，无操作列。
+- 修复模型配置列表名称旁的「视觉」与「启用/停用」图标空白：图标改为按需引入后，`Picture`、`CircleCheckFilled`、`CircleCloseFilled` 未在页面局部导入，外层图标容器只剩空占位。协议品牌图标不受影响。
+
+### 桌面 Electron
+
+- 审批透传链扩展：preload `toolExecute` 增第 8 参 `approvalHint`、`respondToolApproval` 增第 3 参 `alwaysAllow`，主进程把 hint 透传到 shell / MCP 审批卡片。旧版 Electron 壳（7 参 / 2 参签名）收不到 hint、传不出 alwaysAllow → 卡片退化为两按钮、只执行不建规则，方向安全（不会误放行）。
+
+## 0.0.240 (2026-10-08)
+
+### 后端
+
+- 新增 `POST /v1/system-settings/test/jev`（需 `settings:write`）：用表单或已存的端点、模型名、API Key 向 Jev 决策接口发一次只读探测，校验 Key 是否有效、响应是否符合决策协议。留空项回落已存配置；端点或模型名为空时使用默认值。
+
+### 管理后台
+
+- 系统设置「审批」增加「测试连接」，可在保存前验证 Jev 端点与 API Key。成功时提示实际返回的模型名。
+- 系统设置左侧目录重做：19+ 项平铺改为两级分组手风琴，共 7 组——登录认证（公司 SSO、ECP 飞书登录、LDAP 认证、飞书 OAuth 登录）、文件与存储（上传配置、OSS 对象存储）、Agent 引擎（Agent 运行、LLM 超时与重试、上下文压缩）、模型任务（会话、代码、记忆）、工具与终端（网络工具、网页抓取、Shell 会话、云端终端、审批）、通知与消息（任务通知、微信）、平台与运维（Agent 资产、分享、审计、运行环境）；后端新增未声明分类自动归入「其他」。目录默认只显示分组标题行，点击分组或滚动到该组内容时自动展开并跟随高亮，滚动右侧配置时目录固定不随页面滚走；右侧卡片顺序同步按分组排列，配置项名称、保存逻辑与锚点 id 不变。
+
+### 终端 CLI（mao-cli）
+
+- `mao settings test jev` 支持可选 `--endpoint`、`--model`、`--api-key`。
+
+## 0.0.239 (2026-10-07)
+
+### 前端（桌面 / Web / 安卓）
+
+- 检查器新增「上下文」页签（仅主会话 / 边路任务；子代理会话不显示）：把"这一轮模型到底看到了什么"透明化，只读、不改发送内容。逐节展示系统提示各节、对话消息、交接（压缩）摘要的估算 token 与占窗口比例；token 为字节估算口径、与顶部含工具定义的水位有差，条形区有 tooltip 说明；尚未产生本轮请求（冷启动）时暂无构成明细。
+- 「本会话注入记忆」：列出本轮注入的长期记忆条目 chip，点击跳「设置 → 长期记忆」定位管理；节头有「本会话注入」开关（默认开），关闭后**下一次任务开始起**不再注入长期记忆、构成里也不再有记忆节（运行中的会话本轮不回灌，开关旁提示"将于下次任务开始时生效"）。切换所检查的会话后按新会话重新拉取 chip 文案，条数相同也会更新，不会停在上一会话的「记忆 #id」。
+- 「立即整理上下文」手动压缩：会话空闲时立即压缩（越过自动阈值）；运行中点击则排队、在本轮工具结束后执行并提示"将在本轮工具结束后执行"；若本轮之后模型直接以纯文本结束、不再调用工具，也会在本轮退出前执行，不会只提示已排队却不整理。压缩进行中发消息提示会话忙、结束后恢复。手动压缩生成的消息区分隔线标注"手动整理上下文"；自动整理关闭（`harness.compaction.enabled=false`）时手动按钮仍可用。
+- 「查看上次摘要」折叠面板按需读取本会话最近一次压缩摘要全文，附压缩次数 / 压缩模型 / 更新时间；无压缩历史显示空态。切换会话后丢弃上一会话尚未返回的摘要，新会话打开面板时重新读取，不会显示上一会话的摘要。
+- 工具结果被后端截断时（如 `read_file` 大文件、`grep_search` / `glob_search` / `open_web_page` / `shell_session` 命中截断），对应工具卡片显示「输出已截断」徽标——表示展示的是后端截断后的内容，与卡片本地"展开完整输出"（前端字符折叠）并存、含义不同；纯文本（非结构化）工具输出不带此徽标。
+- 会话（含边路任务、归档任务）右键可「分享…」与「导出 Markdown」。分享对话框展示只读链接、访问次数，可复制、刷新快照、撤销（二次确认），并说明弱冻结语义：新消息需刷新才出现，撤回/删除同步消失，编辑重发以新内容呈现并隐藏其后消息。分享表单在每次打开时复位，切换会话不会残留上一个会话的「匿名链接」勾选与有效天数；生成失败（如开关未开启）时给出明确提示。
+- 新增只读页 `/share/:token`（需登录，未登录回跳）。复用消息气泡渲染，隐藏编辑、分叉、点踩、思考过程与子代理「查看过程」；文件变更只展示路径与行数。匿名链接页 `/share/public/:token` 免登录，开关关闭或过期时显示失效占位。
+- 边路任务右键菜单在贴右 / 贴底唤出时不再被视口裁切。
+
+### 后端
+
+- Context Manifest：`buildRequest` 构建请求时同源产出上下文构成清单（系统提示逐节 tokens + 以最终请求口径统计的 messages 节 + 由 `sessionSummary` 驱动的 handoff 摘要节 + 本次注入记忆 id 列表 + 生效窗口 tokens），随既有 ws `context_window` 事件帧推送（不新增事件类型；序列化 ≤ 8KB，超限裁剪 memoryIds），保证"所见即所发"。`buildSystemPrompt` 改为分节收集后 join，逐字节等于重构前输出（等价性快照单测锚定，覆盖普通 / embed / 微信 / LOCAL / CLOUD 各通道与记忆、经验、AGENTS.md 分支）。
+- 手动压缩：新增 ws 入站 `compact_now`（属主校验）。空闲路径先占 `executionClaim` 再压缩（判定与占坑之间无 await，压缩期间 `send_message` 被既有 `session_already_running` 语义拒绝），`requestCompaction` 以 `force` 旁路阈值判定 + `skipAutoCompact` 避免双重压缩，合成 listener 下发 compaction_start/end/marker 与水位刷新（否则全程 UI 失明），成功路径回收云 MCP 连接；运行中路径经 `CompactionSignalBus` 置信号 + ws 回执"已排队"，在下一工具轮边界（置于 `midLoopAllowed` 门槛之外，使 `enabled=false` 不禁止手动）消费执行、重建 `preparedRequest`；若之后不再有工具轮（模型以纯文本结束），退出循环前同样消费，避免已回执「已排队」的整理被静默丢弃。信号双向清理（执行启动丢弃陈旧信号、finally 清理）防下一次执行意外压缩。`orchestrator.compact` 增显式 `triggerMode` 参数，手动留痕 `trigger_mode='manual'` 落 `session_compaction_event`，既有 `request_start` / `mid_loop` 调用点同步补参不回归。
+- 新增 `GET /v1/sessions/:id/compaction`（登录用户，属主校验，只读）：返回 `{ summaryText, lastCompactedMsgId, compactCount, compactModel, updatedAt } | null`（无压缩记录 data 为 null，不算错）；摘要沿用站内脱敏视角，不做二次脱敏。
+- 会话级记忆注入开关：`session` 增 `memory_injection_disabled` 列（V135 迁移，TINYINT 默认 0）；`UpdateSessionRequest` + PATCH handler + `sessionService.updateMemoryInjectionDisabled`（`updateFields`）全链路；`HarnessService.loadMemories` 读到标志为 1 时短路返回 null（`context.memories=null`，长期记忆节自然不渲染），生效口径为"下一次执行"、运行中不回灌；`SessionVO.memoryInjectionDisabled` 透出。
+- `MemoryHint` 增 `id`（`memory.service.ts listForInjection` 透传，bullet 文本与注入行为零变化），供上下文页签记忆条目与设置页一一对应。
+- `read_file` 截断分支结果补顶层 `truncated: true` 字段（与 grep/glob/open_web_page/shell_session 口径对齐，输出 schema 同步）；`AgentLoop.processToolResult` 落库前嗅探结果 JSON 顶层 `truncated===true`，写消息 metadata（`resultTruncated`，与 approvalMark 同走合并通道、互不覆盖）并经执行层 meta 通道带回，`ws tool_call_result` payload 增 `result_truncated`（实时事件走 meta、历史回放走 metadata 双通道各管一半）。
+
+- 新增会话只读分享：`session_share` 表（V136）与属主端点 `POST/GET/PUT/DELETE /v1/sessions/:id/share`（一会话一活跃链接，创建幂等，刷新水位可回落，撤销立即失效）。`GET /v1/share/:token` 按水位截断返回消息（服务端去掉 thinking），仅首页计入访问并记审计。
+- 属主可 `GET /v1/sessions/:id/export/markdown` 下载含任务目标、最终结论、关键步骤、文件变更的 Markdown；步骤超过 500 条截断，正文超过 5MB 返回 413。文件名按 Unicode 码点截断，含 emoji 的会话标题导出不再 500。
+- 管理后台「分享」开关 `share.tokenLinksEnabled`（默认关闭）。开启后可生成带过期时间的匿名链接 `GET /v1/share/public/:token`（免登录，关闭、失效与服务内部故障均统一 404）。
+---
+
+### 管理后台
+
+- 系统设置目录增加「分享」分组，用于开关匿名分享链接。
 ## 0.0.238 (2026-10-06)
 
 ### 前端（桌面 / Web / 安卓）
@@ -47,6 +119,7 @@
 - 边路任务支持从边路会话 fork（任意深度）：边路任务窗口（含深层）具备与主会话完全一致的入口——每轮助手回复的「Fork 到边路任务」按钮（支持按轮切点）、窗口右下角「+ 边路任务」、占位 Tab 的上下文继承单选。从边路任务发起时新边路任务的父会话即该边路会话，「边路的边路」可继续再分叉、不做层级限制；占位继承单选文案按来源动态化（来源为边路时显示「来源会话摘要 / Fork 来源会话」），模型与权限级别的缺省值跟随来源边路会话（来源改过这两项时不再回落主会话）。
 - 右侧检查器「边路任务」列表平铺展示主会话全部后代边路任务（含深层，不树形缩进），打开 / 重命名 / 删除 / 提升对深层任务全部生效，深层任务状态变化实时刷新；任务列表页主会话卡片的执行中 / 未读徽标统计口径同步调整为计入全部深层后代（刷新首刷与实时推送一致）。搜索命中深层边路会话时，点击结果跳转到其根主会话并打开该边路 Tab（此前深层任务不可搜索）。深层边路任务的 Tab 刷新后不自动重建（维持直接子级口径），从检查器列表重新打开。
 - 边路任务提升为主会话放宽限制：名下仅有边路任务子会话时允许提升，子树自然挂到新主会话名下；存在子代理子会话时仍拒绝。
+- 边路任务新建页支持 Fork 预览：选中「Fork 主会话 / Fork 来源会话」时，占位 Tab 的消息区立即按同一口径画出发出首条消息后这条边路会话会得到的历史消息（含按轮分叉的切点），不用先发消息再看结果。预览走与真实 fork 完全一致的轮次分页（默认最近 5 轮、滚到顶部继续往上翻），消息区顶部有提示条说明「仅为预览」。预览只存在本地、不写任何会话缓存——会话转正 / 切回其他继承方式 / Tab 卸载时立即清空，真实消息改由发送成功后从 REST 拉取，两侧不会双份上屏。按轮分叉的切点变化会重新拉取，在途的旧响应不会覆盖新切点。
 
 ### 后端
 
@@ -55,6 +128,14 @@
 - 消息搜索候选放宽：边路会话不再要求父会话为主会话（父未删除即可），深层边路任务可被搜索；搜索结果新增 `rootSessionId`（根主会话 id），根不可达的孤儿候选剔除。
 - 边路任务提升校验放宽：仅存在子代理（SUBAGENT）子会话时拒绝提升，SIDE_TASK 子树放行（子树零改动跟随新主会话）。
 - WS 创建边路会话链路对「父会话为边路」补齐回归测试（fork 全量 / 按轮切点 / 字段继承 / LOCAL 在线检查）；创建 / fork 逻辑零改动（本就按父会话抽象）。
+- 新增 `GET /v1/sessions/:id/fork-preview`（登录用户，仅本人会话，只读）：边路任务发出前预演「这条边路会话会得到哪些历史消息」。参数 `forkFromMessageId`（切点 = 被点击那一轮的助手最终回复，不传 = 全量）与 `roundLimit` / `beforeMessageId`，返回与 `GET /sessions/:id/messages` 完全相同的 VO 形状（`messages` / `hasMore` / `nextBeforeMessageId` / `compactionEvents`），前端可直接复用同一套轮次折叠渲染与翻页逻辑。内部复刻 fork 落库口径：带切点时「用户消息起点」与「取数范围」两个查询都改用含该切点上界的版本，否则按轮分叉的来源轮次整轮查不到、预览会比真实结果少一轮；向上翻页的上界取「翻页游标」与「切点」的较小值，不会越过切点把更晚的会话内容泄进预览；切点落在压缩边界之后才回传该标记（与落库侧「边界不映射则整体不复制压缩状态」一致）。切点不属于本会话 / 非法时返回 `MESSAGE_NOT_FOUND` / `PARAM_INVALID`，不会退化成全量预览。
+- 修复后端重启、任务自动恢复续跑后，前端进度永久卡住（转圈/步骤不再推进）的问题：崩溃恢复与通道入站的执行会换新 executionId，但 `session_status RUNNING` 与订阅回执 `session_snapshot` 都不带它，前端陈旧帧过滤把恢复执行的全部流式帧当作旧执行帧静默丢弃。现执行启动即把当前 executionId 登记到 WS registry（终态清除），RUNNING 通知与订阅快照均带上新 executionId，前端重绑后进度正常推进；重连早于/晚于恢复启动两种时序均覆盖，边路任务与通道会话同样生效。
+- 修复恢复续跑中的任务「停止」按钮失效：恢复执行的取消标志注册在 AgentLoop 而非 WS handler 簿记，`cancel` 误入 pendingCancels 分支并未真正中止执行（DB 已标「已取消」但任务照跑）。现识别 AgentLoop 上的在途取消标志并走中止路径，停止对恢复执行、通道入站执行同样生效。
+- 后台子代理完成通知落库后新增 `assistant_message_saved` WS 广播（带 messageId / content / metadata / status），并列入关键帧通道（弱网下不因增量帧队列满而丢弃）。此前通知只写库不推帧，前端只有在发送、会话终态或切会话触发 REST 重拉时才看得到，盯屏期间完全无感知。
+
+### 前端（桌面 / Web / 安卓）
+
+- 修复后台子代理完成通知「只有刷新页面后才出现」的问题：子代理结束时服务端只往父会话写了一条消息，没有任何实时帧，而消息列表只在发送 / 会话终态 / 切会话时才重拉历史，因此一直盯着会话看永远看不到「后台子代理已完成 · 点击查看详情」卡片，刷新后才从 REST 历史里补出来。现消费新的 `assistant_message_saved` 帧实时插入该气泡（metadata 解析按消息行同口径，同 messageId 去重，metadata 损坏或无 id 时安全跳过），卡片即时出现且刷新后不重复。
 
 ---
 

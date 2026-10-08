@@ -1,10 +1,15 @@
 export type ToolResultStatus = 'success' | 'error';
 
-/** AI 审批标记：本次调用由谁放行/拒绝。mode=llm 审批模型拍板；mode=jev 前置决策低风险放行。 */
+/**
+ * AI 审批标记：本次调用由谁放行/拒绝。
+ * mode=llm 审批模型拍板；mode=jev 前置决策低风险放行；mode=rule 审批规则静默放行（V135）。
+ */
 export interface ToolApprovalMark {
-  mode: 'llm' | 'jev';
+  mode: 'llm' | 'jev' | 'rule';
   approved: boolean;
   reason: string;
+  /** mode=rule 时命中的放行规则 id（与设置页/admin 清单核对）。 */
+  ruleId?: number;
 }
 
 /**
@@ -28,6 +33,8 @@ export interface ToolCallResultMeta {
   errorMessage?: string;
   durationMs?: number;
   approvalMark?: ToolApprovalMark | null;
+  /** 后端在工具实现内已截断输出（结果 JSON 顶层 `truncated===true`）；实时事件走此通道。 */
+  resultTruncated?: boolean;
 }
 
 export function toolResultMeta(result: ToolResult): ToolCallResultMeta {

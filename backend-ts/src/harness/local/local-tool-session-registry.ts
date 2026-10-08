@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import type { SessionMapper, StreamingWsRegistry } from '../deps.js';
+import type { Session, SessionMapper, StreamingWsRegistry } from '../deps.js';
 import { wsEvent } from '../deps.js';
 import { harnessLog } from '../log.js';
+import type { ApprovalHint } from '../approval/approval-hint.js';
 
 export interface PendingLocalToolRequest {
   requestId: string | null;
@@ -73,6 +74,7 @@ export class LocalToolSessionRegistry {
     workspace: string | null | undefined,
     needApproval: boolean,
     dangerReason: string | null,
+    approvalHint: ApprovalHint | null = null,
   ): Promise<PendingLocalToolRequest> {
     const userId = await this.resolveUserId(sessionId);
     if (userId == null || !this.streamingWsRegistry.hasLocalClientConnection(userId)) {
@@ -101,6 +103,8 @@ export class LocalToolSessionRegistry {
       needApproval,
     };
     if (dangerReason != null) payload.dangerReason = dangerReason;
+    // 「总是允许」hint（V135）：仅增量字段，旧壳忽略未知字段不受影响
+    if (approvalHint != null) payload.approvalHint = approvalHint;
     this.streamingWsRegistry.sendToLocalClients(userId, wsEvent('tool_execute', sessionId, payload));
     return { requestId, future, resolve };
   }

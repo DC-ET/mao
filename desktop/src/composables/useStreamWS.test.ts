@@ -395,3 +395,137 @@ describe('useStreamWS session_already_running（拒绝帧不得被 stale 过滤�
     expect(reject.mock.calls[0]?.[0]).toBeInstanceOf(Error)
   })
 })
+
+describe('useStreamWS 崩溃恢复 executionId 重绑（恢复帧不得被 stale 过滤吞掉）', () => {
+  const frame = (type: string, data: Record<string, unknown>) =>
+    sockets[0].onmessage?.({
+      target: sockets[0],
+      data: JSON.stringify({ type, sessionId: 42, data }),
+    })
+
+  it('session_snapshot 带恢复执行的新 executionId 后，流式帧正常进入 store', async () => {
+    const { connect, setActiveExecution } = useStreamWS()
+    const store = useSessionStore()
+    const connecting = connect()
+    sockets[0].open()
+    await connecting
+    // 后端重启前：前端登记的是旧执行的 executionId
+    setActiveExecution('42', 'exec-before-restart')
+    const shown = () => store.getMessages('42').map((m) => String(m.content)).join('')
+
+    // 崩溃恢复换了新 executionId：重绑前到达的帧仍按陈旧帧丢弃
+    frame('content_delta', { delta: '[恢复前帧]', executionId: 'exec-recovered' })
+    expect(shown()).not.toContain('[恢复前帧]')
+
+    // 重连 subscribe 的校准快照带上新 executionId → 重绑
+    frame('session_snapshot', { phase: 'RUNNING', executionId: 'exec-recovered' })
+
+    // 重绑后恢复执行的流式帧不再被丢弃
+    frame('content_delta', { delta: '[恢复执行增量]', executionId: 'exec-recovered' })
+    expect(shown()).toContain('[恢复执行增量]')
+
+    // 旧执行的迟到帧仍按陈旧帧丢弃
+    frame('content_delta', { delta: '[旧执行迟到帧]', executionId: 'exec-before-restart' })
+    expect(shown()).not.toContain('[旧执行迟到帧]')
+  })
+
+  it('恢复启动晚于重连时，session_status RUNNING 带新 executionId 同样完成重绑', async () => {
+    const { connect, setActiveExecution } = useStreamWS()
+    const store = useSessionStore()
+    const connecting = connect()
+    sockets[0].open()
+    await connecting
+    setActiveExecution('42', 'exec-before-restart')
+
+    frame('session_status', { phase: 'RUNNING', executionId: 'exec-recovered' })
+    frame('content_delta', { delta: '[恢复执行增量2]', executionId: 'exec-recovered' })
+
+    expect(store.getMessages('42').map((m) => String(m.content)).join('')).toContain('[恢复执行增量2]')
+  })
+})
+
+describe('useStreamWS 后台子代理完成通知（assistant_message_saved）', () => {
+  const noticeFrame = (data: Record<string, unknown>) =>
+    sockets[0].onmessage?.({
+      target: sockets[0],
+      data: JSON.stringify({ type: 'assistant_message_saved', sessionId: 9, data }),
+    })
+
+  const notice = {
+    messageId: 901,
+    content: '后台子代理（explorer）已完成：结论',
+    metadata: JSON.stringify({
+      backgroundSubagentCompletion: { childSessionId: 42, executionId: 7, status: 'COMPLETED', agentType: 'explorer' },
+    }),
+    childSessionId: 42,
+    executionId: 7,
+    status: 'COMPLETED',
+    agentType: 'explorer',
+  }
+
+  it('完成通知实时插入消息列表（无需刷新即可看到卡片）', async () => {
+    const { connect, subscribe } = useStreamWS()
+    const pending = connect()
+    sockets[0].open()
+    await pending
+    await subscribe('9')
+
+    const store = useSessionStore()
+    store.setMessages('9', [])
+    noticeFrame(notice)
+
+    const msgs = store.getMessages('9')
+    expect(msgs).toHaveLength(1)
+    expect(msgs[0].id).toBe('901')
+    expect(msgs[0].content).toContain('后台子代理（explorer）已完成')
+    // metadata 必须解析成对象，MessageBubble 的 backgroundSubagentCompletion 判定才成立
+    expect(msgs[0].metadata?.backgroundSubagentCompletion).toMatchObject({
+      childSessionId: 42,
+      executionId: 7,
+      status: 'COMPLETED',
+    })
+  })
+
+  it('同一条通知重复到达不产生重复气泡（刷新后 REST 历史已在缓存时去重）', async () => {
+    const { connect, subscribe } = useStreamWS()
+    const pending = connect()
+    sockets[0].open()
+    await pending
+    await subscribe('9')
+
+    const store = useSessionStore()
+    store.setMessages('9', [])
+    noticeFrame(notice)
+    noticeFrame(notice)
+
+    expect(store.getMessages('9').filter(m => m.id === '901')).toHaveLength(1)
+  })
+
+  it('缺少 messageId 或无后台子代理标记的事件不插入', async () => {
+    const { connect, subscribe } = useStreamWS()
+    const pending = connect()
+    sockets[0].open()
+    await pending
+    await subscribe('9')
+
+    const store = useSessionStore()
+    store.setMessages('9', [])
+    noticeFrame({ content: '无 id 的通知' })
+    noticeFrame({ messageId: 902, content: '普通助手消息', metadata: JSON.stringify({ other: true }) })
+
+    expect(store.getMessages('9')).toHaveLength(0)
+  })
+
+  it('metadata 损坏（非法 JSON）时安全跳过，不抛异常', async () => {
+    const { connect, subscribe } = useStreamWS()
+    const pending = connect()
+    sockets[0].open()
+    await pending
+    await subscribe('9')
+
+    const store = useSessionStore()
+    store.setMessages('9', [])
+    expect(() => noticeFrame({ ...notice, metadata: '{not-json' })).not.toThrow()
+    expect(store.getMessages('9')).toHaveLength(0)
+  })
+})

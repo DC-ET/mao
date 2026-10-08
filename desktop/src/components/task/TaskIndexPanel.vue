@@ -161,10 +161,14 @@
       :menu-unarchive="menuUnarchive"
       :menu-edit-title="menuEditTitle"
       :menu-delete="menuDelete"
+      :menu-share="menuShare"
+      :menu-export-markdown="menuExportMarkdown"
       :menu-rename-group="menuRenameGroup"
       :menu-reset-group="menuResetGroup"
       :has-group-alias="hasGroupAlias"
     />
+
+    <ShareDialog v-model="shareVisible" :session-id="shareSessionId" />
   </div>
 </template>
 
@@ -185,6 +189,8 @@ import TaskSessionGroupList from './TaskSessionGroupList.vue'
 import TaskFocusList from './TaskFocusList.vue'
 import TaskArchivedSection from './TaskArchivedSection.vue'
 import TaskContextMenu from './TaskContextMenu.vue'
+import ShareDialog from './ShareDialog.vue'
+import { downloadSessionMarkdown } from '../../utils/sessionShare'
 
 const props = defineProps<{
   collapsed: boolean
@@ -312,8 +318,8 @@ function toggleArchive() {
 }
 
 function openContextMenu(e: MouseEvent, session: Session, zone: 'standard' | 'archived') {
-  const menuWidth = 140
-  const menuHeight = 120
+  const menuWidth = 160
+  const menuHeight = 200
   const x = Math.min(e.clientX, window.innerWidth - menuWidth - 8)
   const y = Math.min(e.clientY, window.innerHeight - menuHeight - 8)
   // 互斥：会话菜单打开时关闭分组菜单，避免两个浮层叠加
@@ -359,6 +365,23 @@ function menuDelete() {
     return
   }
   confirmingDeleteId.value = id
+}
+
+const shareVisible = ref(false)
+const shareSessionId = ref('')
+
+function menuShare() {
+  const id = contextMenu.sessionId
+  closeContextMenu()
+  if (!id) return
+  shareSessionId.value = id
+  shareVisible.value = true
+}
+
+function menuExportMarkdown() {
+  const id = contextMenu.sessionId
+  closeContextMenu()
+  if (id) void downloadSessionMarkdown(id)
 }
 
 function hasGroupAlias(key: string): boolean {

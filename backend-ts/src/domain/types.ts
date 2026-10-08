@@ -7,6 +7,7 @@ export interface Session {
   executionMode?: string | null;
   workspace?: string | null;
   permissionLevel?: string | null;
+  memoryInjectionDisabled?: number | null;
   phase?: string | null;
   status?: string | null;
   sessionType?: string | null;

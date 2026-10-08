@@ -66,6 +66,9 @@ const CRITICAL_EVENT_TYPES = new Set([
   // 收件箱未读数：普通帧队列满时是直接丢弃，弱网/高频会话下未读数会静默停在旧值
   // 且无主动重拉入口；事件日均为个位数到数十条，不会挤占关键通道。
   'inbox_updated',
+  // 后台子代理完成通知：丢失后客户端只能等下次 REST 重拉（刷新/切会话）才补上卡片，
+  // 用户盯屏期间完全看不到通知。事件量与 inbox_updated 同量级。
+  'assistant_message_saved',
 ]);
 
 function isCriticalItem(item: OutboundItem): boolean {
@@ -90,6 +93,8 @@ export class StreamingWsRegistry {
   private readonly activeToolCalls = new Map<number, Map<string, Record<string, unknown>>>();
   /** 当前处于思考阶段（thinking_start ~ thinking_end）的会话，重连快照恢复用。 */
   private readonly thinkingSessions = new Set<number>();
+  /** 会话当前在途执行的 executionId：订阅快照据此把新 executionId 告知重连客户端（含崩溃恢复、通道入站等不经 WS handler 提交的执行）。 */
+  private readonly sessionExecutions = new Map<number, string>();
   /** agent sessionId → 绑定的 embed 连接（页面执行端）。每个会话只绑定一个页面连接。 */
   private readonly embedSessionBindings = new Map<number, WsSocket>();
   /** embed 连接 → 该连接绑定的 agent sessionId 集合（断线清理用）。 */
@@ -282,6 +287,21 @@ export class StreamingWsRegistry {
   setSessionThinking(sessionId: number, thinking: boolean): void {
     if (thinking) this.thinkingSessions.add(sessionId);
     else this.thinkingSessions.delete(sessionId);
+  }
+
+  /** 执行启动时登记当前 executionId（WsStreamingEventListener 构造时调用）。 */
+  setSessionExecution(sessionId: number, executionId: string): void {
+    if (executionId === '') return;
+    this.sessionExecutions.set(sessionId, executionId);
+  }
+
+  getSessionExecution(sessionId: number): string | undefined {
+    return this.sessionExecutions.get(sessionId);
+  }
+
+  /** 执行终态时清除，避免订阅快照回放已结束执行的 executionId。 */
+  clearSessionExecution(sessionId: number): void {
+    this.sessionExecutions.delete(sessionId);
   }
 
   send(userId: number, event: WsEvent): void {

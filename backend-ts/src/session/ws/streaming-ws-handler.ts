@@ -52,6 +52,7 @@ import { wsEvent } from './ws-event.js';
 import { isActivePhase } from '../session-vo.js';
 import type { AgentExecutionContext } from '../../harness/core/agent-execution-context.js';
 import type { EmbedPageToolRegistry } from '../../harness/embed-page-tool-registry.js';
+import type { ApprovalHint } from '../../harness/approval/approval-hint.js';
 
 export interface WsHandlerDeps {
   registry: StreamingWsRegistry;
@@ -65,6 +66,8 @@ export interface WsHandlerDeps {
     executePrepared(context: AgentExecutionContext, listener: AgentEventListener): Promise<void>;
     executeSideFirstMessage(parentId: number, sideId: number, contextMode: 'fork' | 'summary' | 'none', listener: AgentEventListener, cancelFlag: { get(): boolean; set(v: boolean): void }): Promise<void>;
     forkParentMessages(parentId: number, sideId: number, forkFromMessageId?: number | null): Promise<void>;
+    /** 空闲手动压缩（技术方案 5.4）：调用方已持有 executionClaims，force 越阈值/越 enabled 门，triggerMode='manual'。 */
+    requestCompaction(sessionId: number, listener: AgentEventListener | null): Promise<boolean>;
   };
   sessionService: {
     getSession(id: number): Promise<Session | null>;
@@ -118,7 +121,13 @@ export interface WsHandlerDeps {
   };
   approvalRegistry: {
     unregister(sessionId: number | null, requestId: string | null): void | Promise<void>;
+    /** alwaysAllow 消费服务端 hint（恰好一次）；缺省场景（旧测试桩）返回 null 即可。 */
+    takeHint?(sessionId: number, requestId: string): ApprovalHint | null;
   };
+  /** 审批规则域（V135）：未注入时 alwaysAllow 静默忽略（不建规则、不影响执行）。 */
+  approvalRuleService?: {
+    createSessionRuleFromAlwaysAllow(userId: number, sessionId: number, hint: ApprovalHint): Promise<void>;
+  } | null;
   activityService: WsListenerDeps['activityService'];
   activityHeartbeat: { touch(sessionId: number): void; clear(sessionId: number): void };
   sessionTodoMapper: {
@@ -129,7 +138,11 @@ export interface WsHandlerDeps {
     registerCancelFlag(sessionId: number): { get(): boolean; set(v: boolean): void };
     removeCancelFlag(sessionId: number): void;
     requestCancel(sessionId: number): void;
+    /** 查询本实例在途执行的取消标志（含崩溃恢复/通道入站注册的），用于区分「执行未提交」与「执行在 handler 簿记外运行」。 */
+    getCancelFlag?(sessionId: number): { get(): boolean; set(v: boolean): void } | undefined;
   };
+  /** 手动压缩信号总线（技术方案 5.4）：运行中路径由 handler 置位、由 AgentLoop 在工具轮边界消费；与 AgentLoop 注入的是同一实例。 */
+  compactionSignalBus?: { signal(sessionId: number): void; has(sessionId: number): boolean; consume(sessionId: number): boolean; clear(sessionId: number): void };
   backgroundSubagentManager?: {
     cancelAllForParent(parentSessionId: number): Promise<void>;
     beginRetry(parentSessionId: number, childSessionId: number): Promise<{ ok: boolean; taskId?: number; error?: string }>;
@@ -376,6 +389,7 @@ export class StreamingWsHandler {
       case 'create_side_session': await this.handleCreateSideSession(userId, root); break;
       case 'cancel_side_task': await this.handleCancelSideTask(userId, root); break;
       case 'retry_execution': await this.handleRetryExecution(userId, root); break;
+      case 'compact_now': await this.handleCompactNow(userId, root); break;
       case 'ping': this.deps.registry.send(userId, wsEvent('pong', null, {})); break;
       default: break;
     }
@@ -405,7 +419,7 @@ export class StreamingWsHandler {
     }
     // 订阅既是流式事件通道，也是客户端断线后的状态校准点。即使任务已结束，
     // 也必须回传终态，避免完成事件恰好在断线期间丢失后界面永久停在“执行中”。
-    const executionId = this.runningExecutionIds.get(sessionId);
+    const executionId = this.currentExecutionId(sessionId);
     this.deps.registry.send(userId, wsEvent('session_snapshot', sessionId, {
       phase: s.phase === 'RESUMING' ? 'RUNNING' : s.phase,
       // 会话执行中可能正处于模型思考阶段：随快照带回，前端刷新/重连后才能恢复「思考中」
@@ -915,6 +929,18 @@ export class StreamingWsHandler {
     const requestId = typeof root.requestId === 'string' ? root.requestId : null;
     if (sessionId == null || requestId == null) return;
     if (!(await this.requireOwnedSession(userId, sessionId))) return;
+    // 「总是允许」（V135）：客户端只回传布尔位，pattern 由服务端按 requestId 取回自己生成的 hint。
+    // deny 帧（approved=false）永不落规则；hint 不在缓存（超时/重启/同帧重发已消费）→ 静默忽略只执行。
+    if (root.alwaysAllow === true && root.approved === true) {
+      const hint = this.deps.approvalRegistry.takeHint?.(sessionId, requestId) ?? null;
+      if (hint && this.deps.approvalRuleService) {
+        try {
+          await this.deps.approvalRuleService.createSessionRuleFromAlwaysAllow(userId, sessionId, hint);
+        } catch (e) {
+          console.error(`Failed to create approval rule from always-allow (sessionId=${sessionId})`, e);
+        }
+      }
+    }
     await Promise.resolve(this.deps.approvalRegistry.unregister(sessionId, requestId));
     await Promise.resolve(this.deps.treeSignalPublisher.publishForSession(sessionId));
   }
@@ -959,7 +985,7 @@ export class StreamingWsHandler {
     const resultJson = JSON.stringify({ answers });
     const completed = this.deps.askUserQuestionsRegistry.complete(sessionId, requestId, resultJson);
     if (completed) {
-      const executionId = this.runningExecutionIds.get(sessionId);
+      const executionId = this.currentExecutionId(sessionId);
       this.deps.registry.send(userId, wsEvent('ask_user_questions_cancelled', sessionId, { requestId }));
       this.deps.registry.send(userId, wsEvent('session_status', sessionId, {
         phase: 'RUNNING',
@@ -1146,7 +1172,7 @@ export class StreamingWsHandler {
     const sideSessionId = this.getLong(root, 'sideSessionId');
     if (sideSessionId == null) return;
     if (!(await this.requireOwnedSession(userId, sideSessionId))) return;
-    const executionId = this.runningExecutionIds.get(sideSessionId) ?? '';
+    const executionId = this.currentExecutionId(sideSessionId) ?? '';
     this.abortRunningExecution(sideSessionId, userId);
     await this.finishCancelledSession(sideSessionId, userId, executionId);
     // 与 handleCancel 一致：DB 终态之外必须回收内存簿记，否则边路会话的「继续」按钮
@@ -1430,33 +1456,93 @@ export class StreamingWsHandler {
     if (!session) return;
     // 用户点击停止：立刻取消该会话等待中的页面操作，不让工具挂到超时。
     this.deps.embedPageToolRegistry.failSession(sessionId, '用户已停止任务，页面操作已取消');
-    if (!this.cancelFlags.has(sessionId)) {
+    if (!this.cancelFlags.has(sessionId) && this.deps.agentLoop.getCancelFlag?.(sessionId) == null) {
       // 执行尚未提交（send 的模型校验/LOCAL 检查/saveMessage await 期间，或 autoConsume 的 500ms 延迟窗口）：
       // cancel flag 尚未注册，直接 set(true) 会空转。记录待取消标记（注册标志时按时间判定消费），
       // 同时落 CANCELLED 终态，保证 DB 状态收敛。
       // claim 已持有但 flag 未注册的窗口同样适用：否则 send 从 await 恢复后会照常提交执行，
       // 并把此处写入的 CANCELLED 覆盖回 RUNNING，用户的取消被静默丢弃。
+      // 注意：崩溃恢复 / 通道入站的执行不在本 handler 簿记里，但 flag 已注册在 agentLoop 上，
+      // 必须走下面的 abort 路径真正中止执行，不能落进 pendingCancels（无人消费，执行照跑）。
       this.pendingCancels.set(sessionId, Date.now());
-      this.deps.registry.send(userId, wsEvent('cancelled', sessionId, { pending: true, executionId: this.runningExecutionIds.get(sessionId) ?? '' }));
+      this.deps.registry.send(userId, wsEvent('cancelled', sessionId, { pending: true, executionId: this.currentExecutionId(sessionId) ?? '' }));
       // 仅在确有在途执行时落终态：IDLE 既不在活跃集合也不在终态集合，
       // finishExecution 会放行 IDLE→CANCELLED，把从未运行过的会话标成「已取消」。
       const inFlight = this.executionClaims.has(sessionId)
         || this.runningTasks.has(sessionId)
         || this.isSessionActive(session.phase);
       if (inFlight) {
-        await this.finishCancelledSession(sessionId, userId, this.runningExecutionIds.get(sessionId) ?? randomUUID());
+        await this.finishCancelledSession(sessionId, userId, this.currentExecutionId(sessionId) ?? randomUUID());
       }
       // 注意：此处不能回收簿记。pendingCancels 正是用来让「尚未注册取消标志」的在途提交
       // 在恢复后自行收敛的（见 takePendingCancel），提前删掉会让取消被静默丢弃。
       return;
     }
-    const executionId = this.runningExecutionIds.get(sessionId) ?? '';
+    const executionId = this.currentExecutionId(sessionId) ?? '';
     this.abortRunningExecution(sessionId, userId);
     await this.finishCancelledSession(sessionId, userId, executionId);
     // 取消标志已注册，执行体理论上会靠自己的 finally 回收簿记；但它可能因 LLM 流卡死
     // 永远走不到 finally。若不在此主动回收，claim/future 会永久残留，该会话后续的发送与
     // 重试全被 session_already_running 拒绝（只能重启服务恢复）。
     this.releaseExecutionBookkeeping(sessionId, { future: this.runningTasks.get(sessionId) });
+  }
+
+  /**
+   * 手动整理上下文（技术方案 5.4 / 决策 11）。运行中：置位信号交 loop 在下一工具轮边界消费，
+   * ws 回执「已排队」；空闲：先占 claim 再动作（与占坑之间无 await，Node 单线程同拍完成），全程
+   * 持有直至 finally 释放——压缩期间 send_message 被 session_already_running 拒绝，消除竞态。
+   * 空闲路径须合成一个执行级 listener，否则压缩全程 UI 失明（无 compaction_start/end、水位不刷新）。
+   * 已知限制：压缩为单次 LLM 短任务，无取消通道。
+   */
+  private async handleCompactNow(userId: number, root: Record<string, unknown>): Promise<void> {
+    const sessionId = this.getLong(root, 'sessionId');
+    if (sessionId == null) return;
+    if (!(await this.requireOwnedSession(userId, sessionId))) return;
+
+    // 运行中路径：已有 claim/在途执行 → 排队信号，交由 AgentLoop 工具轮边界消费。
+    if (this.hasExecutionClaim(sessionId)) {
+      if (!this.deps.compactionSignalBus) {
+        // 手动整理的失败必须走压缩通道（compaction_result），不能用通用 error——
+        // error 语义是"执行失败"，前端据此把整条会话标 FAILED。整理上下文失败只是维护动作失败。
+        this.deps.registry.send(userId, wsEvent('compaction_result', sessionId, {
+          compacted: false, failed: true, message: '手动整理上下文当前不可用，请稍后重试',
+        }));
+        return;
+      }
+      // signal 幂等（Set 语义）：重复点击不会叠加多次压缩。
+      this.deps.compactionSignalBus.signal(sessionId);
+      this.deps.registry.send(userId, wsEvent('compaction_queued', sessionId, {
+        queued: true, message: '已排队，将在本轮工具结束后整理上下文',
+      }));
+      return;
+    }
+
+    // 空闲路径：与占坑之间不留 await，claim 全程持有。
+    this.executionClaims.add(sessionId);
+    const executionId = `manual_compact_${Date.now()}`;
+    let listener: WsStreamingEventListener | null = null;
+    try {
+      listener = new WsStreamingEventListener(
+        {
+          registry: this.deps.registry, activityService: this.deps.activityService,
+          activityHeartbeat: this.deps.activityHeartbeat, sessionTodoMapper: this.deps.sessionTodoMapper,
+          sessionService: this.deps.sessionService,
+        },
+        sessionId, userId, executionId, false,
+      );
+      const compacted = await this.deps.harnessService.requestCompaction(sessionId, listener);
+      this.deps.registry.send(userId, wsEvent('compaction_result', sessionId, { compacted, executionId }));
+    } catch (e) {
+      const message = e instanceof Error ? e.message : '手动整理上下文失败';
+      // 同 signalBus 缺失分支：失败经压缩通道回传，不用通用 error，避免把维护动作失败误标整条会话 FAILED。
+      this.deps.registry.send(userId, wsEvent('compaction_result', sessionId, {
+        compacted: false, failed: true, message, executionId,
+      }));
+    } finally {
+      listener?.dispose();
+      // 仅回收本次自行占的 claim；runningTasks/cancelFlags/registry 在途簿记未触碰，勿用 releaseExecutionBookkeeping。
+      this.executionClaims.delete(sessionId);
+    }
   }
 
   private async handleEnqueueMessage(userId: number, root: Record<string, unknown>): Promise<void> {
@@ -1974,13 +2060,24 @@ export class StreamingWsHandler {
     return isActivePhase(phase);
   }
 
+  /**
+   * 会话当前在途执行的 executionId。
+   * runningExecutionIds 只登记本 handler 提交的执行；崩溃恢复 / 通道入站的执行登记在
+   * registry（WsStreamingEventListener 构造时写入）。所有对外帧都必须取到恢复执行的新
+   * executionId，否则重连客户端无法把陈旧的 activeExecutionId 换掉，恢复执行的流式帧
+   * 会被前端 isStaleExecution 当陈旧帧全部丢弃（表现为进度永久卡住）。
+   */
+  private currentExecutionId(sessionId: number): string | undefined {
+    return this.runningExecutionIds.get(sessionId) ?? this.deps.registry.getSessionExecution?.(sessionId);
+  }
+
   private isTerminalPhase(phase: string | null | undefined): boolean {
     return phase === 'COMPLETED' || phase === 'FAILED' || phase === 'CANCELLED';
   }
 
   private sendSessionAlreadyRunning(userId: number, sessionId: number): void {
     const data: Record<string, unknown> = { code: 'session_already_running', message: '该任务仍在运行，请先停止当前执行后再继续' };
-    const executionId = this.runningExecutionIds.get(sessionId);
+    const executionId = this.currentExecutionId(sessionId);
     if (executionId) data.executionId = executionId;
     this.deps.registry.send(userId, wsEvent('session_already_running', sessionId, data));
   }

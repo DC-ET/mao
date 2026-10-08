@@ -6,6 +6,17 @@ import { readRedirectQuery } from '../utils/login-redirect'
 
 const routes: RouteRecordRaw[] = [
   {
+    path: '/share/public/:token',
+    name: 'PublicShare',
+    component: () => import('../views/share/ShareView.vue'),
+    meta: { public: true }
+  },
+  {
+    path: '/share/:token',
+    name: 'Share',
+    component: () => import('../views/share/ShareView.vue')
+  },
+  {
     path: '/login',
     name: 'Login',
     component: () => import('../views/auth/LoginView.vue'),
@@ -74,6 +85,11 @@ const routes: RouteRecordRaw[] = [
             path: 'memory',
             name: 'Memory',
             component: () => import('../views/settings/MemoryView.vue')
+          },
+          {
+            path: 'approval-rules',
+            name: 'ApprovalRules',
+            component: () => import('../views/settings/ApprovalRulesView.vue')
           },
           {
             path: 'weixin-bot',

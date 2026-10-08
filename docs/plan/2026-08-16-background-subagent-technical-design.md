@@ -313,7 +313,7 @@ backgroundSubagentManager.consumeResults(sessionId)
 
 - 后台子代理创建：复用 `subagent_session_created`（含 `childSessionId`、`agentType`、`task`），前端据此打开只读子代理 Tab。
 - 后台子代理状态：复用 `session_status`（`phase`），前端子代理 Tab 显示运行/完成/失败/取消。
-- 完成卡片：父会话消息带 `metadata.backgroundSubagentCompletion`，前端渲染为「后台子代理完成」卡片，点击打开对应子代理 Tab。
+- 完成卡片：父会话消息带 `metadata.backgroundSubagentCompletion`，前端渲染为「后台子代理完成」卡片，点击打开对应子代理 Tab。完成通知落库后由 `assistant_message_saved` 帧（`messageId` / `content` / `metadata` / `status`）实时推给该用户全部连接，前端据此即时插入卡片并可按 `messageId` 与 REST 历史去重；不推帧时用户盯屏期间看不到卡片，只有刷新后才补出来。
 - `WAITING_SUBAGENTS` 相位：后端在 `session_status` / 会话列表 / 详情响应中映射为 `RUNNING`（保持「运行中」可观测），并可选地在主会话输入区/状态区显示「等待后台子代理」的轻提示（不做复杂状态页）。
 
 ---

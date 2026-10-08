@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentLoop } from './agent-loop.js';
 import { AgentExecutionContext } from './agent-execution-context.js';
 import { CompactionConfig } from './compaction-config.js';
+import { CompactionSignalBus } from './compaction-signal-bus.js';
 import { AtomicBoolean } from '../atomic-boolean.js';
 import type { AgentEventListener } from './agent-event-listener.js';
 import type { PromptEngine } from './prompt-engine.js';
@@ -266,6 +267,67 @@ describe('AgentLoop', () => {
     }));
     expect(l.onToolCallResult).toHaveBeenCalledWith('call-1', expect.any(String), expect.objectContaining({ status: 'success' }));
     expect(ctx.messages.map((m) => m.role)).toEqual(expect.arrayContaining(['assistant', 'tool', 'assistant']));
+  });
+
+  it('sniffsBackendTruncationIntoBothMetadataAndLiveMeta', async () => {
+    // 技术方案 5.6：结果 JSON 顶层 truncated===true → 落库 metadataJson（历史回放）+ meta 通道（实时事件）双写。
+    const ctx = context();
+    const l = listener();
+    const p = persistence();
+    promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
+    backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
+    stubActiveContext(5);
+    toolDispatcher.dispatchInvocation.mockResolvedValue(
+      { ...toolResult('{"content":"xxxxx","truncated":true}'), approvalMark: { mode: 'llm', approved: true, reason: '符合用户指令' } },
+    );
+    let call = 0;
+    llmAdapter.stream.mockImplementation(async (_r: unknown, _c: unknown, callback: StreamCallback) => {
+      if (call++ === 0) {
+        callback.onChunk(toolChunk({ id: 'call-1', function: { name: 'read_file', arguments: '{"path":"a"}' } }));
+        callback.onComplete({ promptTokens: 3, completionTokens: 2, totalTokens: 5 });
+      } else {
+        callback.onChunk(contentChunk(null, 'done'));
+        callback.onComplete({ promptTokens: 4, completionTokens: 1, totalTokens: 5 });
+      }
+    });
+
+    await agentLoop.execute(ctx, l, p);
+
+    expect(l.onToolCallResult).toHaveBeenCalledWith(
+      'call-1', expect.any(String), expect.objectContaining({ status: 'success', resultTruncated: true }),
+    );
+    const saved = p.onSaveToolMessage.mock.calls[0];
+    expect(saved[0]).toBe('call-1');
+    const meta = JSON.parse(saved[2] as string);
+    // 与 approvalMark 共存、互不覆盖。
+    expect(meta.resultTruncated).toBe(true);
+    expect(meta.approvalMark).toEqual({ mode: 'llm', approved: true, reason: '符合用户指令' });
+  });
+
+  it('doesNotMarkTruncationForNonJsonOrFlaglessResults', async () => {
+    const ctx = context();
+    const l = listener();
+    const p = persistence();
+    promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
+    backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
+    stubActiveContext(5);
+    toolDispatcher.dispatchInvocation.mockResolvedValue(toolResult('plain text, not json'));
+    let call = 0;
+    llmAdapter.stream.mockImplementation(async (_r: unknown, _c: unknown, callback: StreamCallback) => {
+      if (call++ === 0) {
+        callback.onChunk(toolChunk({ id: 'call-2', function: { name: 'read_file', arguments: '{"path":"a"}' } }));
+        callback.onComplete({ promptTokens: 3, completionTokens: 2, totalTokens: 5 });
+      } else {
+        callback.onChunk(contentChunk(null, 'done'));
+        callback.onComplete({ promptTokens: 4, completionTokens: 1, totalTokens: 5 });
+      }
+    });
+
+    await agentLoop.execute(ctx, l, p);
+
+    const [, , meta] = (l.onToolCallResult.mock.calls[0] ?? []) as [string, string, Record<string, unknown> | undefined];
+    expect(meta?.resultTruncated ?? undefined).toBeUndefined();
+    expect(p.onSaveToolMessage.mock.calls[0][2]).toBeNull();
   });
 
   it('merges repeated tool-call chunks that carry the same id instead of starting each chunk', async () => {
@@ -789,5 +851,145 @@ describe('AgentLoop', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  // —— 手动压缩 loop 边界消费（技术方案 5.4 / 决策 6、11）——
+  function loopWithBus(bus: CompactionSignalBus): AgentLoop {
+    return new AgentLoop(
+      llmAdapter, promptEngine, contextManager, toolDispatcher, backgroundTaskManager,
+      shellSessionManager, activityHeartbeat, sessionService, sessionCompactionOrchestrator,
+      activeContextCalculator, mcpClientManager, null, bus,
+    );
+  }
+
+  it('手动信号在工具轮边界执行压缩，即使自动整理 enabled=false（决策 6：关闭自动≠禁止手动）', async () => {
+    const bus = new CompactionSignalBus();
+    const loop = loopWithBus(bus);
+    const ctx = context();
+    // enabled=false + loopMidwayCompact=false：自动路径全程关闭，手动仍必须运行。
+    const cfg = new CompactionConfig();
+    cfg.enabled = false;
+    cfg.loopMidwayCompact = false;
+    cfg.contextWindowTokens = 100;
+    cfg.triggerRatio = 0.9;
+    ctx.compactionConfig = cfg;
+    const l = listener();
+    const p = persistence();
+    promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
+    // 低于阈值：自动 mid_loop 不会触发，唯一能解释 compact 被调的就是手动信号消费。
+    stubActiveContext(5);
+    backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
+    toolDispatcher.dispatchInvocation.mockImplementation(async () => {
+      bus.signal(11); // 模拟执行中 handleCompactNow 置位（运行中路径）
+      return toolResult('{"ok":true}');
+    });
+    sessionCompactionOrchestrator.compact.mockResolvedValue(true);
+    stubToolThenDone();
+
+    await loop.execute(ctx, l, p);
+
+    const manualCall = vi.mocked(sessionCompactionOrchestrator.compact).mock.calls
+      .find((args) => args[8] === 'manual');
+    expect(manualCall).toBeDefined();
+    expect(manualCall![0]).toBe(11);
+    expect(manualCall![5]).toBe(true);   // compactCurrentTurn=true（loop 边界）
+    expect(manualCall![8]).toBe('manual');
+    expect(manualCall![9]).toBe(true);   // force=true
+  });
+
+  it('纯文本收尾轮期间置位的手动信号在退出前执行压缩，不被 finally 静默丢弃', async () => {
+    const bus = new CompactionSignalBus();
+    const loop = loopWithBus(bus);
+    const ctx = context();
+    const cfg = new CompactionConfig();
+    cfg.enabled = false;
+    cfg.loopMidwayCompact = false;
+    cfg.contextWindowTokens = 100;
+    cfg.triggerRatio = 0.9;
+    ctx.compactionConfig = cfg;
+    const l = listener();
+    const p = persistence();
+    promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
+    stubActiveContext(5);
+    backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
+    toolDispatcher.dispatchInvocation.mockResolvedValue(toolResult('{"ok":true}'));
+    sessionCompactionOrchestrator.compact.mockResolvedValue(true);
+    let call = 0;
+    llmAdapter.stream.mockImplementation(async (_r: unknown, _c: unknown, callback: StreamCallback) => {
+      if (call++ === 0) {
+        callback.onChunk(toolChunk({
+          id: 'call-1',
+          function: { name: 'read_file', arguments: '{"path":"a"}' },
+        }));
+        callback.onComplete({ promptTokens: 3, completionTokens: 2, totalTokens: 5 });
+        return;
+      }
+      // 最后一轮工具已经结束，模型正在以纯文本收尾；此时用户点击「立即整理」。
+      bus.signal(11);
+      callback.onChunk(contentChunk(null, 'done'));
+      callback.onComplete({ promptTokens: 4, completionTokens: 1, totalTokens: 5 });
+    });
+
+    await loop.execute(ctx, l, p);
+
+    const manualCall = vi.mocked(sessionCompactionOrchestrator.compact).mock.calls
+      .find((args) => args[8] === 'manual');
+    expect(manualCall).toBeDefined();
+    expect(manualCall![0]).toBe(11);
+    expect(manualCall![8]).toBe('manual');
+    expect(manualCall![9]).toBe(true);
+    expect(l.onError).not.toHaveBeenCalled();
+    expect(bus.has(11)).toBe(false);
+  });
+
+  it('执行启动丢弃陈旧信号：上一轮残留的置位不在本轮触发压缩', async () => {
+    const bus = new CompactionSignalBus();
+    const loop = loopWithBus(bus);
+    const ctx = context();
+    const cfg = new CompactionConfig();
+    cfg.enabled = true;
+    cfg.loopMidwayCompact = true;
+    cfg.contextWindowTokens = 100;
+    cfg.triggerRatio = 0.9;
+    ctx.compactionConfig = cfg;
+    const l = listener();
+    const p = persistence();
+    promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
+    stubActiveContext(5);
+    backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
+    toolDispatcher.dispatchInvocation.mockResolvedValue(toolResult('{"ok":true}'));
+    stubToolThenDone();
+
+    bus.signal(11); // 陈旧信号：execute() 启动时应 clear 掉
+    await loop.execute(ctx, l, p);
+
+    // 既无手动（信号被启动清理丢弃），也未达阈值（自动也不触发）
+    expect(sessionCompactionOrchestrator.compact).not.toHaveBeenCalled();
+    expect(bus.has(11)).toBe(false);
+  });
+
+  it('finally 随执行收尾清理信号：本轮未消费的置位不残留给下次执行', async () => {
+    const bus = new CompactionSignalBus();
+    const loop = loopWithBus(bus);
+    const ctx = context();
+    const cfg = new CompactionConfig();
+    cfg.enabled = false; // 关闭自动：手动块前提 persistenceCallback!=null 不满足时 consume 被短路，信号留到 finally
+    ctx.compactionConfig = cfg;
+    const l = listener();
+    promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
+    stubActiveContext(5);
+    backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
+    toolDispatcher.dispatchInvocation.mockImplementation(async () => {
+      bus.signal(11);
+      return toolResult('{"ok":true}');
+    });
+    stubToolThenDone();
+
+    // persistence 为 null：手动块 guard 短路，consume 不被调用 → 信号本轮未被消费
+    await loop.execute(ctx, l, null);
+
+    expect(sessionCompactionOrchestrator.compact).not.toHaveBeenCalled();
+    // finally 必须清掉未消费信号，否则下次执行首个工具轮边界会误压缩
+    expect(bus.has(11)).toBe(false);
   });
 });

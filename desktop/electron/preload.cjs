@@ -55,8 +55,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   showItemInFolder: (fullPath) => ipcRenderer.invoke('show-item-in-folder', fullPath),
 
   // Tool execution via Streaming WS (called by renderer when server sends tool_execute)
-  toolExecute: (toolName, args, requestId, workspace, sessionId, needApproval, dangerReason) =>
-    ipcRenderer.invoke('tool-execute', { toolName, args, requestId, workspace, sessionId, needApproval, dangerReason }),
+  // approvalHint（V135）为第 8 参：服务端生成的「总是允许」模式提示，透传给审批卡片；旧调用缺省 null
+  toolExecute: (toolName, args, requestId, workspace, sessionId, needApproval, dangerReason, approvalHint) =>
+    ipcRenderer.invoke('tool-execute', { toolName, args, requestId, workspace, sessionId, needApproval, dangerReason, approvalHint: approvalHint ?? null }),
 
   // Local tool execution - direct IPC (for renderer-initiated calls)
   localReadFile: (args) => ipcRenderer.invoke('local-read-file', args),
@@ -84,8 +85,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   removeToolApprovalDismissListener: () => {
     ipcRenderer.removeAllListeners('tool-approval-dismiss')
   },
-  respondToolApproval: (requestId, approved) =>
-    ipcRenderer.invoke('tool-approval-response', { requestId, approved }),
+  // alwaysAllow（V135）为第 3 参：仅布尔位，规则 pattern 由服务端自行取回，客户端不可注入
+  respondToolApproval: (requestId, approved, alwaysAllow) =>
+    ipcRenderer.invoke('tool-approval-response', { requestId, approved, alwaysAllow: alwaysAllow === true }),
 
   // Skill sync — renderer triggers, main process downloads & extracts zip
   skillSync: (sessionId, syncUrl, token, workspace, apiBase) =>

@@ -53,6 +53,8 @@ export interface Session {
   contextTokens?: number
   running: boolean
   permissionLevel?: string
+  /** 单会话长期记忆注入关闭标志（后端 VO 布尔；true=已关闭注入） */
+  memoryInjectionDisabled?: boolean
   unread?: boolean
   // Model fields
   modelId?: number

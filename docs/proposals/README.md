@@ -30,7 +30,7 @@
 | 提案 | 文档 | 一句话 | 规模 |
 |---|---|---|---|
 | 任务检查点与工作区回滚 | [2026-10-06-task-checkpoint-rollback.md](2026-10-06-task-checkpoint-rollback.md)（已否决，存档） | 轮次边界自动快照工作区+消息水位，Agent 改错文件可一键退回 | — |
-| 用量成本核算与预算管控 | [2026-10-06-usage-cost-budget.md](2026-10-06-usage-cost-budget.md)（已实施，技术方案见 [docs/plan/2026-10-06-usage-cost-budget-technical-design.md](../plan/2026-10-06-usage-cost-budget-technical-design.md)，0.0.242 发版） | 模型价格→成本落账，用户/Agent 月度预算软提醒硬拦截；开放 API/Webhook 时代给费用装闸门 | 中 |
+| 用量成本核算与预算管控 | [2026-10-06-usage-cost-budget.md](2026-10-06-usage-cost-budget.md)（已实施，技术方案见 [docs/plan/2026-10-06-usage-cost-budget-technical-design.md](../plan/2026-10-06-usage-cost-budget-technical-design.md)，0.0.243 发版） | 模型价格→成本落账，用户/Agent 月度预算软提醒硬拦截；开放 API/Webhook 时代给费用装闸门 | 中 |
 | 工具审批规则 | [2026-10-06-approval-rules.md](2026-10-06-approval-rules.md)（已转入实施，技术方案见 [docs/plan/2026-10-06-approval-rules-technical-design.md](../plan/2026-10-06-approval-rules-technical-design.md)） | 审批弹窗第三选项"本会话总是允许"+用户级 allowlist，在逐次审批与 FULL 档之间给中间态 | 中 |
 | 上下文透视与手动治理 | [2026-10-06-context-inspector.md](2026-10-06-context-inspector.md)（已转入实施，技术方案见 [docs/plan/2026-10-06-context-inspector-technical-design.md](../plan/2026-10-06-context-inspector-technical-design.md)） | 检查器展示模型实际收到的上下文构成（分节/记忆条目/压缩摘要），支持手动压缩与单会话记忆开关 | 中 |
 | 会话分享与导出 | [2026-10-06-session-share-export.md](2026-10-06-session-share-export.md)（已转入实施，技术方案见 [docs/plan/2026-10-06-session-share-export-technical-design.md](../plan/2026-10-06-session-share-export-technical-design.md)） | 只读快照链接（水位冻结）+ Markdown 导出，让任务结果走出会话列表 | 中 |

@@ -6,6 +6,8 @@ import { ToolResultSummarizer } from '../util/tool-result-summarizer.js';
 import { FileChangeDiffUtil } from '../../harness/tool/file-change-diff-util.js';
 import { ToolImageResultProcessor } from '../../harness/tool/tool-image-result-processor.js';
 import type { ToolCallResultMeta } from '../../harness/tool/tool-result.js';
+import type { ContextManifest } from '../../harness/core/context-manifest.js';
+import { CONTEXT_MANIFEST_MAX_BYTES } from '../../harness/core/context-manifest.js';
 import { wsEvent } from './ws-event.js';
 
 export interface AgentEventListener {
@@ -14,7 +16,7 @@ export interface AgentEventListener {
   onToolCallResult(toolCallId: string, result: string, meta?: ToolCallResultMeta): void;
   onMessageEnd(usage: ChatUsage): void;
   onError(t: unknown): void;
-  onContextWindow?(estimatedTokens: number, actualTokens: number): void;
+  onContextWindow?(estimatedTokens: number, actualTokens: number, manifest?: ContextManifest | null): void;
   onCompactionStart?(type: string, messageCount: number, estimatedTokens: number): void;
   onCompactionEnd?(type: string, summaryTokens: number, savedTokens: number, durationMs: number): void;
   onCompactionPersisted?(eventId: number, triggerMode: string, prevBoundaryMsgId: number, boundaryMsgId: number, compactedMessageCount: number, summaryTokens: number, savedTokens: number, durationMs: number): void;
@@ -72,7 +74,11 @@ export class WsStreamingEventListener implements AgentEventListener {
     private readonly userId: number,
     private readonly executionId: string,
     private readonly supportsVision: boolean,
-  ) {}
+  ) {
+    // 登记会话当前在途执行：崩溃恢复 / 通道入站等执行不经 WS handler 提交，
+    // 订阅快照只能从这里取到新 executionId，前端据此重绑后才不会把恢复执行的流式帧当陈旧帧丢弃。
+    this.deps.registry.setSessionExecution?.(this.sessionId, this.executionId);
+  }
 
   /** 释放定时器；执行结束/流重置时调用，未 flush 的尾部 delta 会随之一并发出。 */
   dispose(): void {
@@ -124,6 +130,7 @@ export class WsStreamingEventListener implements AgentEventListener {
     if (preview) data.preview = preview;
     if (summary) data.summary = summary;
     if (meta?.approvalMark) data.approval_mark = meta.approvalMark;
+    if (meta?.resultTruncated === true) data.result_truncated = true;
     this.send('tool_call_result', data);
 
     void this.recordActivity(toolName, argumentsJson, summary, isError);
@@ -154,8 +161,11 @@ export class WsStreamingEventListener implements AgentEventListener {
     this.persistRuntimeStatus(null);
   }
 
-  onContextWindow(estimatedTokens: number, actualTokens: number): void {
-    this.send('context_window', { estimated: estimatedTokens, actual: actualTokens });
+  onContextWindow(estimatedTokens: number, actualTokens: number, manifest?: ContextManifest | null): void {
+    const data: Record<string, unknown> = { estimated: estimatedTokens, actual: actualTokens };
+    const trimmed = trimManifest(manifest ?? null);
+    if (trimmed != null) data.manifest = trimmed;
+    this.send('context_window', data);
     void this.deps.sessionService.updateContextTokens(this.sessionId, estimatedTokens).catch(() => {});
   }
   onCompactionStart(type: string, messageCount: number, estimatedTokens: number): void {
@@ -292,11 +302,32 @@ export class WsStreamingEventListener implements AgentEventListener {
 }
 
 /**
+ * manifest 推送体积护栏（技术方案 §7）：序列化超过 8KB 时逐步裁剪 memoryIds（分节统计固定 ≤15
+ * 条不会超限），仍超限则整体丢弃 manifest（水位字段照常下发）。null 透传为 null。
+ */
+function trimManifest(manifest: ContextManifest | null): ContextManifest | null {
+  if (manifest == null) return null;
+  const fits = (m: ContextManifest): boolean => {
+    try {
+      return Buffer.byteLength(JSON.stringify(m), 'utf8') <= CONTEXT_MANIFEST_MAX_BYTES;
+    } catch {
+      return false;
+    }
+  };
+  let candidate: ContextManifest = { ...manifest, memoryIds: [...manifest.memoryIds] };
+  if (fits(candidate)) return candidate;
+  while (candidate.memoryIds.length > 0) {
+    candidate = { ...candidate, memoryIds: candidate.memoryIds.slice(0, Math.floor(candidate.memoryIds.length / 2)) };
+    if (fits(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
  * Fallback 错误启发式：meta 缺失（旧路径/防御）时才使用，勿新增消费方。
  * 执行层的权威判定在 normalizeToolResult（harness/tool/tool-result.ts）。
  */
-function isErrorResult(result: string | null): boolean {
-  if (result == null) return false;
+function isErrorResult(result: string | null): boolean {  if (result == null) return false;
   try {
     const node = JSON.parse(result) as Record<string, unknown>;
     if ('error' in node) return true;

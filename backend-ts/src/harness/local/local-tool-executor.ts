@@ -2,6 +2,7 @@ import { harnessLog } from '../log.js';
 import type { ApprovalRegistry } from '../approval/approval-registry.js';
 import type { SessionTreeSignalPublisher } from '../approval/session-tree-signal-publisher.js';
 import type { LocalToolSessionRegistry } from './local-tool-session-registry.js';
+import type { ApprovalHint } from '../approval/approval-hint.js';
 
 /** 站内收件箱写入能力（可选注入；接口化避免 harness 反向依赖 inbox 域实现）。 */
 export interface ApprovalInboxRecorder {
@@ -26,6 +27,7 @@ export class LocalToolExecutor {
     workspace: string | null | undefined,
     needApproval: boolean,
     dangerReason: string | null,
+    approvalHint: ApprovalHint | null = null,
   ): Promise<string> {
     if (!(await this.sessionRegistry.isConnected(sessionId))) {
       harnessLog('warn', `No local client connected for session ${sessionId}`);
@@ -35,10 +37,17 @@ export class LocalToolExecutor {
     let approvalRegistered = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      pending = await this.sessionRegistry.sendToolRequest(sessionId, toolName, argumentsJson, workspace, needApproval, dangerReason);
+      pending = await this.sessionRegistry.sendToolRequest(
+        sessionId, toolName, argumentsJson, workspace, needApproval, dangerReason,
+        ...(approvalHint ? [approvalHint] : []),
+      );
       if (needApproval && pending.requestId != null && sessionId != null) {
         approvalRegistered = true;
-        await Promise.resolve(this.approvalRegistry.register(sessionId, pending.requestId));
+        // hint 随签存入 registry（V135）：alwaysAllow 回包时按 requestId 取回服务端自己生成的 hint；
+        // 本 finally 与 handleToolApproval 双 unregister 都会清 hint，保证恰好一次消费
+        await Promise.resolve(this.approvalRegistry.register(
+          sessionId, pending.requestId, ...(approvalHint ? [approvalHint] : []),
+        ));
         await Promise.resolve(this.treeSignalPublisher.publishForSession(sessionId));
         // 站内收件箱：审批待办（userId 由 InboxService 内部按 session 兜底解析，
         // LocalToolExecutor 无 userId 上下文）

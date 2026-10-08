@@ -6,7 +6,7 @@
       </div>
       <div class="tool-status">
         <button
-          v-if="isDelegate && childSessionId"
+          v-if="isDelegate && childSessionId && !hideProcess"
           class="view-subagent-btn"
           title="查看子代理过程"
           @click.stop="openSubagentProcess"
@@ -15,6 +15,9 @@
         </button>
         <el-tooltip v-if="approvalBadge" :content="approvalBadge.reason" placement="top">
           <span class="approval-badge" :class="approvalBadge.kind">{{ approvalBadge.label }}</span>
+        </el-tooltip>
+        <el-tooltip v-if="toolCall.resultTruncated" content="后端已截断工具输出（超出工具自身的输出上限），此处展示的是截断后的内容" placement="top">
+          <span class="truncated-badge">输出已截断</span>
         </el-tooltip>
         <span v-if="toolCall.status === 'running'" class="status-spinner"></span>
         <el-icon v-else-if="toolCall.status === 'success'" class="status-icon success"><Select /></el-icon>
@@ -73,7 +76,12 @@ import { useSessionStore } from '../../stores/session'
 import { copyText as copyToClipboard } from '../../utils/clipboard'
 import { getToolDisplayName, getToolInputPreview } from '../../utils/toolDisplay'
 
-const props = defineProps<{ toolCall: ToolCall }>()
+const props = withDefaults(defineProps<{
+  toolCall: ToolCall
+  hideProcess?: boolean
+}>(), {
+  hideProcess: false
+})
 
 const sessionStore = useSessionStore()
 const openSubagent = inject<(payload: { childSessionId: number; title?: string }) => void>('openSubagent', () => {})
@@ -89,11 +97,12 @@ watch(
 
 const isDelegate = computed(() => ['delegate', 'delegate_followup', 'spawn_subagent', 'subagent_followup'].includes(props.toolCall.name))
 
-/** AI 审批徽标：替我审批的 LLM 拍板 / Jev 前置决策低风险放行 */
+/** 审批放行徽标：替我审批的 LLM 拍板 / Jev 前置决策低风险放行 / 规则静默放行（V135） */
 const approvalBadge = computed(() => {
   const mark = props.toolCall.approvalMark
   if (!mark) return null
   if (mark.mode === 'jev') return { kind: 'jev', label: '低风险放行', reason: mark.reason }
+  if (mark.mode === 'rule') return { kind: 'rule', label: '规则放行', reason: mark.reason }
   return mark.approved
     ? { kind: 'approved', label: 'AI 已批准', reason: mark.reason }
     : { kind: 'denied', label: 'AI 已拒绝', reason: mark.reason }
@@ -316,7 +325,8 @@ function toggleExpand() {
 }
 
 .approval-badge.approved,
-.approval-badge.jev {
+.approval-badge.jev,
+.approval-badge.rule {
   color: var(--aw-success);
   background: color-mix(in srgb, var(--aw-success) 12%, transparent);
 }
@@ -324,6 +334,17 @@ function toggleExpand() {
 .approval-badge.denied {
   color: var(--aw-danger);
   background: color-mix(in srgb, var(--aw-danger) 12%, transparent);
+}
+
+.truncated-badge {
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: var(--aw-radius-xs);
+  cursor: default;
+  white-space: nowrap;
+  color: var(--aw-warning, #b45309);
+  background: color-mix(in srgb, var(--aw-warning, #b45309) 12%, transparent);
 }
 
 .expand-icon {

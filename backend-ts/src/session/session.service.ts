@@ -62,6 +62,8 @@ export class SessionService {
     private readonly closeSessionTerminals?: (sessionId: number) => void,
     /** 会话删除后清理绑定资源（如定时任务）。失败只记日志，不回滚已删除的会话。 */
     private readonly onSessionDeleted?: (sessionId: number) => Promise<void> | void,
+    /** 会话删除时物理删其会话级审批放行规则（V135 级联）。 */
+    private readonly deleteSessionApprovalRules?: (sessionId: number) => Promise<void>,
   ) {}
 
   async createSession(
@@ -499,6 +501,15 @@ export class SessionService {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '会话运行中，无法删除');
     }
     await this.sessionRepo.lockActiveSessionById(id);
+    if (this.deleteSessionApprovalRules) {
+      // 会话级审批规则物理删（V135）：WAITING_APPROVAL 拒删守卫保证无挂起审批，
+      // 规则删除失败不阻断会话删除（残留行不参与匹配——会话已删、sessionId 不复用）
+      try {
+        await this.deleteSessionApprovalRules(id);
+      } catch (e) {
+        console.error(`Failed to delete approval rules for session ${id}`, e);
+      }
+    }
     await this.sessionCompactionService.deleteBySessionId(id);
     await this.sessionCompactionEventService.deleteBySessionId(id);
     await this.messageRepo.logicalDeleteBySession(id);
@@ -933,8 +944,49 @@ export class SessionService {
     return this.messageRepo.selectValidBoundaryMessage(sessionId, messageId);
   }
 
-  async getMessagesByRounds(sessionId: number, roundLimit: number, beforeMessageId: number | null): Promise<MessagePage> {
+  /**
+   * Fork 预览：边路任务创建前预演「发出首条消息后这条边路会话会看到的原始历史」。
+   *
+   * 走与 `/sessions/:id/messages` 完全相同的轮次分页口径（默认最近 N 轮、hasMore 翻页），
+   * 只把上界从「最新一条」换成切点：切点是被点击那一轮的助手最终回复，轮次分页的起点查询
+   * 必须含该轮的用户消息（`id <= 切点`），否则来源轮次整轮消失，预览与真实结果不符。
+   * 无切点 = 全量分叉，与带 forkFromMessageId 的真实创建一一对应。
+   */
+  async getForkPreview(
+    sessionId: number,
+    cutMessageId: number | null,
+    roundLimit: number,
+    beforeMessageId: number | null = null,
+  ): Promise<MessagePage> {
     const limit = Math.max(1, Math.min(roundLimit, 50));
+    const userStarts = cutMessageId == null
+      ? await this.messageRepo.selectUserStarts(sessionId, beforeMessageId, limit + 1)
+      : await this.messageRepo.selectUserStartsThrough(sessionId, cutMessageId, beforeMessageId, limit + 1);
+    if (userStarts.length === 0) {
+      return { messages: [], hasMore: false, nextBeforeMessageId: null };
+    }
+    const hasMore = userStarts.length > limit;
+    const pageStarts = hasMore ? userStarts.slice(0, limit) : userStarts;
+    const startId = pageStarts[pageStarts.length - 1].id!;
+    // 翻页时上界是「下一页起点之前」，与 /messages 的 beforeId 语义一致；带切点时仍不得越过切点
+    const upperBound = Math.min(beforeMessageId ?? Number.MAX_SAFE_INTEGER, cutMessageId ?? Number.MAX_SAFE_INTEGER);
+    const raw = upperBound >= Number.MAX_SAFE_INTEGER
+      ? await this.messageRepo.selectRange(sessionId, startId, null)
+      : await this.messageRepo.selectRangeThrough(sessionId, startId, upperBound);
+    const messages = (MessageHistoryNormalizer.normalizeEntities(raw, parseToolCallsJson) ?? raw) as Message[];
+    const nextBeforeMessageId = messages.length === 0 ? null : messages[0].id ?? null;
+    return { messages, hasMore, nextBeforeMessageId };
+  }
+
+  async getMessagesByRounds(
+    sessionId: number,
+    roundLimit: number,
+    beforeMessageId: number | null,
+    options?: { maxMessageId?: number | null; excludeSourceSessionId?: number | null },
+  ): Promise<MessagePage> {
+    const limit = Math.max(1, Math.min(roundLimit, 50));
+    const maxMessageId = options?.maxMessageId ?? null;
+    const excludeSourceSessionId = options?.excludeSourceSessionId ?? null;
     let beforeMessage: Message | null = null;
     if (beforeMessageId != null) {
       beforeMessage = await this.messageRepo.findById(beforeMessageId);
@@ -942,14 +994,23 @@ export class SessionService {
         throw new BusinessException(ErrorCode.PARAM_INVALID);
       }
     }
-    const userStarts = await this.messageRepo.selectUserStarts(sessionId, beforeMessage?.id ?? null, limit + 1);
+    const beforeId = beforeMessage?.id ?? null;
+    const userStarts = excludeSourceSessionId == null
+      ? (maxMessageId == null
+        ? await this.messageRepo.selectUserStarts(sessionId, beforeId, limit + 1)
+        : await this.messageRepo.selectUserStarts(sessionId, beforeId, limit + 1, maxMessageId))
+      : await this.messageRepo.selectUserStarts(sessionId, beforeId, limit + 1, maxMessageId, excludeSourceSessionId);
     if (userStarts.length === 0) {
       return { messages: [], hasMore: false, nextBeforeMessageId: null };
     }
     const hasMore = userStarts.length > limit;
     const pageStarts = hasMore ? userStarts.slice(0, limit) : userStarts;
     const startId = pageStarts[pageStarts.length - 1].id!;
-    const raw = await this.messageRepo.selectRange(sessionId, startId, beforeMessage?.id ?? null);
+    const raw = excludeSourceSessionId == null
+      ? (maxMessageId == null
+        ? await this.messageRepo.selectRange(sessionId, startId, beforeId)
+        : await this.messageRepo.selectRange(sessionId, startId, beforeId, maxMessageId))
+      : await this.messageRepo.selectRange(sessionId, startId, beforeId, maxMessageId, excludeSourceSessionId);
     const messages = (MessageHistoryNormalizer.normalizeEntities(raw, parseToolCallsJson) ?? raw) as Message[];
     const nextBeforeMessageId = messages.length === 0 ? null : messages[0].id ?? null;
     return { messages, hasMore, nextBeforeMessageId };
@@ -964,6 +1025,10 @@ export class SessionService {
       return new Map();
     }
     return groupFileChanges(await this.fileChangeRepo.listByMessageIds(sessionId, messageIds));
+  }
+
+  async listFileChangeSummaries(sessionId: number, excludeSourceSessionId?: number | null): Promise<FileChange[]> {
+    return this.fileChangeRepo.listSummaryBySession(sessionId, excludeSourceSessionId);
   }
 
   async getFileChangeSummariesByMessageIds(sessionId: number, messageIds: number[] | null): Promise<Map<number, FileChange[]>> {
@@ -1111,6 +1176,11 @@ export class SessionService {
     permissionFromString(permissionLevel);
     await this.getSession(sessionId);
     await this.sessionRepo.updateFields(sessionId, { permissionLevel });
+  }
+
+  async updateMemoryInjectionDisabled(sessionId: number, disabled: boolean): Promise<void> {
+    await this.getSession(sessionId);
+    await this.sessionRepo.updateFields(sessionId, { memoryInjectionDisabled: disabled ? 1 : 0 });
   }
 
   async updateModelId(sessionId: number, modelId: number): Promise<void> {

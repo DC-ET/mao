@@ -72,6 +72,8 @@ export interface BackgroundSubagentManagerDeps {
   };
   /** 站内收件箱写入（可选注入；接口化避免 harness 反向依赖 inbox 域实现）。 */
   inboxRecorder?: SubagentInboxRecorder | null;
+  /** 完成通知落库后的实时广播（可选注入）：WS registry 只保留窄接口，harness 不反向依赖 ws 域实现。 */
+  completionNoticeBroadcaster?: BackgroundCompletionNoticeBroadcaster | null;
 }
 
 /** SUBAGENT_DONE 写入能力：覆盖 COMPLETED / FAILED / CANCELLED 三种子代理终态。 */
@@ -85,6 +87,18 @@ export interface SubagentInboxRecorder {
     agentType: string | null;
     taskDescription: string | null;
   }): Promise<void>;
+}
+
+/**
+ * 完成通知的实时广播能力（窄接口：只依赖 userId + payload）。
+ * 用接口而非直接依赖 StreamingWsRegistry，避免 harness 反向依赖 session/ws 域。
+ */
+export interface BackgroundCompletionNoticeBroadcaster {
+  /** 广播给该用户全部在线连接；userId 为空时静默跳过。sessionId 为目标父会话。 */
+  broadcastCompletionNotice(
+    userId: number | null | undefined,
+    event: { sessionId: number; data: Record<string, unknown> },
+  ): void;
 }
 
 export class BackgroundSubagentManager {
@@ -818,6 +832,36 @@ export class BackgroundSubagentManager {
     );
     if (saved.id != null) {
       await this.copyFileChanges(childSession.id!, saved.id, parentId, execution.executionStartMessageId ?? null);
+    }
+    this.broadcastCompletionNotice(await this.deps.sessionMapper.selectById(parentId), {
+      messageId: saved.id ?? null,
+      content,
+      metadata,
+      childSessionId: childSession.id ?? null,
+      executionId: execution.id ?? null,
+      status,
+      agentType: execution.agentType ?? null,
+    });
+  }
+
+  /**
+   * 完成通知落库后的实时广播。
+   * 前端消息列表只在发送 / 终态 / 切会话时才重拉历史，后台子代理完成通知不走这些路径；
+   * 不广播的话，用户盯着会话看也永远看不到卡片，只有刷新后从 REST 历史里才出现。
+   * 广播失败不影响簿记（fire-and-forget + 吞异常）。
+   */
+  private broadcastCompletionNotice(parentSession: Session | null, payload: Record<string, unknown>): void {
+    const broadcaster = this.deps.completionNoticeBroadcaster;
+    if (broadcaster == null || parentSession == null) return;
+    try {
+      const parentSessionId = parentSession.id;
+      if (parentSessionId == null) return;
+      broadcaster.broadcastCompletionNotice(parentSession.userId, {
+        sessionId: parentSessionId,
+        data: payload,
+      });
+    } catch (e) {
+      harnessLog('warn', `Failed to broadcast background subagent completion notice: ${(e as Error).message}`);
     }
   }
 

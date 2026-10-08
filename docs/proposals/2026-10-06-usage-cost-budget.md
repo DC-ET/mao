@@ -1,6 +1,6 @@
 # 提案：用量成本核算与预算管控 —— 给用量分析加上"钱"与"闸门"
 
-- 状态：已实施（2026-10-08，0.0.242 发版；技术方案见 [docs/plan/2026-10-06-usage-cost-budget-technical-design.md](../plan/2026-10-06-usage-cost-budget-technical-design.md)）
+- 状态：已实施（2026-10-08，0.0.243 发版；技术方案见 [docs/plan/2026-10-06-usage-cost-budget-technical-design.md](../plan/2026-10-06-usage-cost-budget-technical-design.md)）
 - 日期：2026-10-06
 - 提案总览：见 `docs/proposals/README.md`
 

@@ -46,9 +46,15 @@ export const ErrorCode = {
   MEMORY_CONTENT_INVALID: { code: 3034, message: '记忆内容无效' },
   MEMORY_CONTENT_DUPLICATE: { code: 3035, message: '已存在相同内容的记忆' },
   MEMORY_LIMIT_EXCEEDED: { code: 3036, message: '生效中的记忆数量已达上限（200 条），请先清理不需要的记忆' },
+  APPROVAL_RULE_NOT_FOUND: { code: 3037, message: '审批规则不存在' },
+  APPROVAL_RULE_VALUE_INVALID: { code: 3038, message: '审批规则值无效' },
 
   /** 入站 Webhook 触发器：不存在/停用/验签失败统一 404 + 固定短语（技术方案决策 10，不暴露区分）。 */
   OPEN_HOOK_NOT_FOUND: { code: 3040, message: 'not found' },
+  /** 分享链接：不存在/撤销/过期/会话已删/属主停用统一此码，响应不可区分。 */
+  SHARE_NOT_FOUND: { code: 3041, message: '链接不存在或已撤销' },
+  /** Markdown 导出体超过 5MB。HTTP 413，见 handleError。 */
+  EXPORT_TOO_LARGE: { code: 3042, message: '导出内容过大，请改用分享链接' },
 
   /** 用量预算 BLOCK 超线：message 动态携带 scope/当期消耗/上限（技术方案 §5.7）。 */
   BUDGET_EXCEEDED: { code: 3041, message: '用量预算已超限' },

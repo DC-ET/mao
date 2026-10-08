@@ -9,6 +9,7 @@ function makeListener() {
     completeActiveToolCall: vi.fn(),
     clearActiveToolCalls: vi.fn(),
     isSessionThinking: vi.fn(() => false), setSessionThinking: vi.fn(),
+    setSessionExecution: vi.fn(),
   };
   const activityService = { record: vi.fn(async () => ({ id: 42 })) };
   const activityHeartbeat = { touch: vi.fn() };
@@ -32,6 +33,26 @@ describe('WsStreamingEventListener', () => {
     expect(event?.data?.status).toBe('success');
   });
 
+  it('forwards result_truncated flag from meta to tool_call_result payload', () => {
+    const { listener, registry } = makeListener();
+    listener.onToolCallStart({ id: 'tc-tr', function: { name: 'read_file', arguments: '{}' } } as never);
+    listener.onToolCallResult('tc-tr', JSON.stringify({ content: 'x', truncated: true }), { status: 'success', resultTruncated: true });
+    const event = vi.mocked(registry.send).mock.calls
+      .map((c) => c[1] as { type: string; data?: Record<string, unknown> })
+      .find((e) => e.type === 'tool_call_result');
+    expect(event?.data?.result_truncated).toBe(true);
+  });
+
+  it('omits result_truncated when meta has no truncation', () => {
+    const { listener, registry } = makeListener();
+    listener.onToolCallStart({ id: 'tc-nt', function: { name: 'read_file', arguments: '{}' } } as never);
+    listener.onToolCallResult('tc-nt', JSON.stringify({ ok: true }), { status: 'success' });
+    const event = vi.mocked(registry.send).mock.calls
+      .map((c) => c[1] as { type: string; data?: Record<string, unknown> })
+      .find((e) => e.type === 'tool_call_result');
+    expect('result_truncated' in (event?.data ?? {})).toBe(false);
+  });
+
   it('uses meta error status even when content looks successful', () => {
     const { listener, registry } = makeListener();
     listener.onToolCallStart({ id: 'tc-err', function: { name: 'read_file', arguments: '{}' } } as never);
@@ -47,6 +68,11 @@ describe('WsStreamingEventListener', () => {
     expect(registry.setSessionThinking).toHaveBeenCalledWith(11, true);
     listener.onThinkingEnd();
     expect(registry.setSessionThinking).toHaveBeenLastCalledWith(11, false);
+  });
+
+  it('registers the current session execution id on construction for reconnect snapshots', () => {
+    const { registry } = makeListener();
+    expect(registry.setSessionExecution).toHaveBeenCalledWith(11, 'exec-1');
   });
 
   it('forwards stream events with executionId', () => {
@@ -71,6 +97,49 @@ describe('WsStreamingEventListener', () => {
       'content_delta', 'thinking_start', 'thinking_end', 'llm_waiting', 'llm_retry',
       'tool_call_args_delta', 'compaction_start', 'compaction_marker', 'context_window', 'message_end', 'error',
     ]));
+  });
+
+  it('context_window payload carries manifest when provided', () => {
+    const { listener, registry } = makeListener();
+    const manifest = {
+      sections: [{ key: 'system-prompt', label: 'Agent 人格', tokens: 100 }],
+      memoryIds: [1, 2, 3],
+      estimatedWindowTokens: 200000,
+    };
+    listener.onContextWindow(1000, 900, manifest as never);
+    const event = vi.mocked(registry.send).mock.calls
+      .map((c) => c[1] as { type: string; data?: Record<string, unknown> })
+      .find((e) => e.type === 'context_window');
+    expect(event?.data?.estimated).toBe(1000);
+    expect(event?.data?.actual).toBe(900);
+    expect(event?.data?.manifest).toEqual(manifest);
+  });
+
+  it('context_window payload omits manifest field when null', () => {
+    const { listener, registry } = makeListener();
+    listener.onContextWindow(50, 40);
+    const event = vi.mocked(registry.send).mock.calls
+      .map((c) => c[1] as { type: string; data?: Record<string, unknown> })
+      .find((e) => e.type === 'context_window');
+    expect('manifest' in (event?.data ?? {})).toBe(false);
+  });
+
+  it('context_window trims memoryIds when manifest exceeds size cap', () => {
+    const { listener, registry } = makeListener();
+    // 构造一个远超 8KB 的 manifest：sections 里塞一段巨大 label，memoryIds 也填满
+    const huge = 'x'.repeat(9000);
+    const manifest = {
+      sections: [{ key: 'k', label: huge, tokens: 1 }, { key: 'messages', label: '会话消息', tokens: 2 }],
+      memoryIds: Array.from({ length: 100 }, (_, i) => i + 1),
+      estimatedWindowTokens: 200000,
+    };
+    listener.onContextWindow(10, 10, manifest as never);
+    const event = vi.mocked(registry.send).mock.calls
+      .map((c) => c[1] as { type: string; data?: Record<string, unknown> })
+      .find((e) => e.type === 'context_window');
+    // sections 本身无法裁剪 → 整体丢弃 manifest（水位字段仍在），避免超大帧
+    expect(event?.data?.estimated).toBe(10);
+    expect('manifest' in (event?.data ?? {})).toBe(false);
   });
 
   it('sends tool_call_start only once per id and keeps latest arguments', () => {

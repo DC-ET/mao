@@ -46,19 +46,35 @@ export function extractToolPreviewFromMetadata(metadata: unknown): ToolCall['pre
   }
 }
 
-/** 从 TOOL 消息 metadata 提取 AI 审批标记（替我审批/前置决策的拍板结果） */
+/** 从 TOOL 消息 metadata 提取审批放行标记（替我审批 / 前置决策 / 规则放行） */
 export function extractApprovalMarkFromMetadata(metadata: unknown): ToolCall['approvalMark'] | undefined {
   if (metadata == null) return undefined
   try {
     const root = typeof metadata === 'string' ? JSON.parse(metadata) : metadata
     const mark = (root as { approvalMark?: unknown })?.approvalMark
     if (mark == null || typeof mark !== 'object') return undefined
-    const node = mark as { mode?: unknown; approved?: unknown; reason?: unknown }
-    if (node.mode !== 'llm' && node.mode !== 'jev') return undefined
+    const node = mark as { mode?: unknown; approved?: unknown; reason?: unknown; ruleId?: unknown }
+    if (node.mode !== 'llm' && node.mode !== 'jev' && node.mode !== 'rule') return undefined
     if (typeof node.approved !== 'boolean') return undefined
-    return { mode: node.mode, approved: node.approved, reason: typeof node.reason === 'string' ? node.reason : '' }
+    return {
+      mode: node.mode,
+      approved: node.approved,
+      reason: typeof node.reason === 'string' ? node.reason : '',
+      ...(node.mode === 'rule' && typeof node.ruleId === 'number' ? { ruleId: node.ruleId } : {})
+    }
   } catch {
     return undefined
+  }
+}
+
+/** 从 TOOL 消息 metadata 提取后端截断标识（技术方案 5.6：结果 JSON 顶层 truncated 落库为 resultTruncated）。 */
+export function extractResultTruncatedFromMetadata(metadata: unknown): boolean {
+  if (metadata == null) return false
+  try {
+    const root = typeof metadata === 'string' ? JSON.parse(metadata) : metadata
+    return (root as { resultTruncated?: unknown })?.resultTruncated === true
+  } catch {
+    return false
   }
 }
 
@@ -276,7 +292,7 @@ export function mapCompactionEvents(raw: Array<Record<string, unknown>> | undefi
 export function mapApiMessagesToChat(raw: Array<Record<string, unknown>>): ChatMessage[] {
   const result: ChatMessage[] = []
   /** 第一轮未匹配的 TOOL 消息，留到第二轮处理 */
-  const pendingToolResults: Array<{ toolCallId: string; content: string; preview?: ToolCall['preview']; approvalMark?: ToolCall['approvalMark'] }> = []
+  const pendingToolResults: Array<{ toolCallId: string; content: string; preview?: ToolCall['preview']; approvalMark?: ToolCall['approvalMark']; resultTruncated?: boolean }> = []
 
   for (const m of raw) {
     const roleRaw = String(m.role ?? 'assistant').toLowerCase()
@@ -286,6 +302,7 @@ export function mapApiMessagesToChat(raw: Array<Record<string, unknown>>): ChatM
       const content = String(m.content ?? '')
       const preview = extractToolPreviewFromMetadata(m.metadata)
       const approvalMark = extractApprovalMarkFromMetadata(m.metadata)
+      const resultTruncated = extractResultTruncatedFromMetadata(m.metadata)
       let matched = false
       for (let j = result.length - 1; j >= 0; j--) {
         const prev = result[j]
@@ -296,12 +313,13 @@ export function mapApiMessagesToChat(raw: Array<Record<string, unknown>>): ChatM
           call.status = inferToolStatus(content)
           if (preview) call.preview = preview
           if (approvalMark) call.approvalMark = approvalMark
+          if (resultTruncated) call.resultTruncated = true
           matched = true
           break
         }
       }
       if (!matched) {
-        pendingToolResults.push({ toolCallId, content, preview, approvalMark })
+        pendingToolResults.push({ toolCallId, content, preview, approvalMark, resultTruncated })
       }
       continue
     }
@@ -358,7 +376,7 @@ export function mapApiMessagesToChat(raw: Array<Record<string, unknown>>): ChatM
 
   // 第二轮：匹配第一轮因顺序问题未关联的 TOOL 消息
   if (pendingToolResults.length > 0) {
-    for (const { toolCallId, content, preview, approvalMark } of pendingToolResults) {
+    for (const { toolCallId, content, preview, approvalMark, resultTruncated } of pendingToolResults) {
       for (const msg of result) {
         if (msg.role !== 'assistant' || !msg.toolCalls?.length) continue
         const call = msg.toolCalls.find(c => c.id === toolCallId)
@@ -367,6 +385,7 @@ export function mapApiMessagesToChat(raw: Array<Record<string, unknown>>): ChatM
           call.status = inferToolStatus(content)
           if (preview) call.preview = preview
           if (approvalMark) call.approvalMark = approvalMark
+          if (resultTruncated) call.resultTruncated = true
           break
         }
       }

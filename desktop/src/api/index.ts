@@ -424,6 +424,26 @@ export async function deleteMemory(id: number): Promise<void> {
   await api.delete(`/memory/${id}`)
 }
 
+/** 会话最近一次压缩摘要的现值（技术方案 5.5）。 */
+export interface SessionCompactionSummary {
+  summaryText: string | null
+  lastCompactedMsgId: number | null
+  compactCount: number | null
+  compactModel: string | null
+  updatedAt: string | null
+}
+
+/** 读取会话压缩摘要现值；无压缩记录时后端 data 缺省，返回 null。 */
+export async function getSessionCompaction(sessionId: number | string): Promise<SessionCompactionSummary | null> {
+  const { data } = await api.get(`/sessions/${sessionId}/compaction`)
+  return (data ?? null) as SessionCompactionSummary | null
+}
+
+/** 切换单会话长期记忆注入开关（技术方案 5.1，下一次执行生效）。 */
+export async function setSessionMemoryInjectionDisabled(sessionId: number | string, disabled: boolean): Promise<void> {
+  await api.patch(`/sessions/${sessionId}`, { memoryInjectionDisabled: disabled })
+}
+
 export async function getMemorySettings(): Promise<{ autoCaptureEnabled: boolean }> {
   const { data } = await api.get('/memory/settings')
   return data
@@ -436,6 +456,56 @@ export async function saveMemorySettings(autoCaptureEnabled: boolean): Promise<v
 export async function listMemoryProjects(): Promise<string[]> {
   const { data } = await api.get('/memory/projects')
   return data?.projects ?? []
+}
+
+// ─── 审批放行规则（LOCAL 工具审批 allowlist） ───
+
+export type ApprovalRuleType = 'SHELL_PREFIX' | 'SHELL_EXACT' | 'MCP_TOOL'
+
+export interface ApprovalRule {
+  id: number
+  scope: 'SESSION' | 'USER'
+  sessionId: number | null
+  ruleType: ApprovalRuleType
+  ruleValue: string
+  hitCount: number
+  lastHitAt: string | null
+  enabled: boolean
+  createdAt?: string | null
+  updatedAt?: string | null
+}
+
+export interface ApprovalRulePage {
+  records: ApprovalRule[]
+  total: number
+}
+
+export async function listApprovalRules(params: {
+  page?: number
+  pageSize?: number
+  /** 类型筛选（服务端过滤，保证 tab 翻页口径一致）；空 = 全部 */
+  ruleType?: ApprovalRuleType | null
+} = {}): Promise<ApprovalRulePage> {
+  const { data } = await api.get('/approval-rules', { params })
+  return data
+}
+
+/** 创建用户级规则；服务端归一化（SHELL_PREFIX 取前两 token）并在响应中返回归一化后的值 */
+export async function createApprovalRule(payload: { ruleType: ApprovalRuleType; ruleValue: string }): Promise<ApprovalRule> {
+  const { data } = await api.post('/approval-rules', payload)
+  return data
+}
+
+export async function updateApprovalRule(
+  id: number,
+  payload: { enabled?: boolean; ruleValue?: string }
+): Promise<ApprovalRule> {
+  const { data } = await api.patch(`/approval-rules/${id}`, payload)
+  return data
+}
+
+export async function deleteApprovalRule(id: number): Promise<void> {
+  await api.delete(`/approval-rules/${id}`)
 }
 
 // ─── 开放接口（API Token / Webhook 触发器 / 出站订阅） ───
@@ -559,4 +629,35 @@ export async function deleteOutboundSubscription(id: number): Promise<void> {
 export async function listOutboundDeliveries(subscriptionId: number): Promise<OutboundDeliveryView[]> {
   const { data } = await api.get(`/open/subscriptions/${subscriptionId}/deliveries`)
   return data ?? []
+}
+
+export interface SessionShareInfo {
+  token: string
+  messageWatermark: number
+  viewCount: number
+  createdAt?: string | null
+  expiresAt?: string | null
+  lastViewedAt?: string | null
+}
+
+export async function getSessionShare(sessionId: string): Promise<SessionShareInfo | null> {
+  const { data } = await api.get(`/sessions/${sessionId}/share`)
+  return data ?? null
+}
+
+export async function createSessionShare(
+  sessionId: string,
+  payload: { publicLink?: boolean; expiresInDays?: number } = {},
+): Promise<SessionShareInfo> {
+  const { data } = await api.post(`/sessions/${sessionId}/share`, payload)
+  return data
+}
+
+export async function refreshSessionShare(sessionId: string): Promise<SessionShareInfo> {
+  const { data } = await api.put(`/sessions/${sessionId}/share`)
+  return data
+}
+
+export async function revokeSessionShare(sessionId: string): Promise<void> {
+  await api.delete(`/sessions/${sessionId}/share`)
 }

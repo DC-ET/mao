@@ -58,6 +58,17 @@ describe('fetchFeishuMessageDetail 卡片文本提取', () => {
     expect(detail?.text).toContain('来自监控平台');
   });
 
+  it('keeps post at placeholders so mention names can be restored', async () => {
+    const post = {
+      content: [[
+        { tag: 'at', user_id: '@_user_1', user_name: '李四' },
+        { tag: 'text', text: ' 大家好' },
+      ]],
+    };
+    const detail = await fetchDetail({ msg_type: 'post', body: { content: JSON.stringify(post) } });
+    expect(detail?.text).toBe('@李四 大家好');
+  });
+
   it('extracts post rich text with image placeholders instead of dropping media', async () => {
     const post = {
       title: '',
@@ -82,6 +93,16 @@ describe('fetchFeishuMessageDetail 卡片文本提取', () => {
       body: { content: JSON.stringify({ text: '请升级至最新版本客户端，以查看内容' }) },
     });
     expect(detail?.text).toBe('[卡片消息]');
+  });
+
+  it('reads image_key only from items[0] when later items exist', async () => {
+    const detail = await fetchFeishuMessageDetail(makeClient([
+      { message_id: 'om_img', msg_type: 'image', body: { content: JSON.stringify({ image_key: 'img_first' }) } },
+      { message_id: 'om_child', msg_type: 'image', body: { content: JSON.stringify({ image_key: 'img_child' }) } },
+    ]), 'om_img');
+    expect(detail?.messageId).toBe('om_img');
+    expect(detail?.fileKey).toBe('img_first');
+    expect(detail?.text).toBe('[图片 msg=om_img]');
   });
 
   it('extracts sticker placeholder with message id and file_key', async () => {

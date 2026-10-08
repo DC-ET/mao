@@ -30,6 +30,9 @@
         <router-link to="/settings/memory" class="settings-nav-item" active-class="active">
           长期记忆
         </router-link>
+        <router-link to="/settings/approval-rules" class="settings-nav-item" active-class="active">
+          审批规则
+        </router-link>
         <router-link to="/settings/weixin-bot" class="settings-nav-item" active-class="active">
           微信Bot
         </router-link>

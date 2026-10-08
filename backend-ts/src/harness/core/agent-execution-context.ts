@@ -6,6 +6,7 @@ import type { SkillDocument } from '../skill/skill-document.js';
 import type { MemoryHint } from '../../memory/types.js';
 import type { Tool } from '../tool/tool.js';
 import type { ToolAttachment } from './tool-attachment.js';
+import type { ContextManifest } from './context-manifest.js';
 import { AtomicBoolean } from '../atomic-boolean.js';
 
 export class AgentExecutionContext {
@@ -41,6 +42,8 @@ export class AgentExecutionContext {
   messagesCoveredByAnchor = -1;
   compactionConfig?: CompactionConfig | null;
   preparedRequest?: ChatRequest | null;
+  /** 最近一次 buildRequest 同源产出的上下文构成清单（技术方案 5.2），随 onContextWindow 推送。 */
+  contextManifest?: ContextManifest | null;
   pendingToolCalls?: ToolCall[] | null;
   totalUsage: ChatUsage = emptyUsage();
   currentRound = 0;

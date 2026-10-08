@@ -17,13 +17,14 @@ import { callTool } from './tool.js';
 import type { ToolRegistry } from './tool-registry.js';
 import type { ToolDescriptor } from './tool-descriptor.js';
 import type { ToolInvocation } from './tool-invocation.js';
-import type { ToolResult } from './tool-result.js';
+import type { ToolResult, ToolApprovalMark } from './tool-result.js';
 import { normalizeToolResult } from './tool-result.js';
 import { permissionLevelFromString, type PermissionLevel } from './permission-level.js';
 import type { BackgroundTaskManager } from '../core/background-task-manager.js';
 import { parseObject } from './json.js';
 import type { TaskNotificationDelivery } from '../../notification/task/types.js';
 import { LLM_CALL_SCENES, LlmCallContext } from '../../usage/llm-call-context.js';
+import type { ApprovalHint, ApprovalRuleFacade, ApprovalRuleMatchHit } from '../approval/approval-hint.js';
 
 /**
  * 飞书进度卡上的提问表单。
@@ -84,6 +85,11 @@ interface ApprovalDecision {
 interface DispatchOutcome {
   raw: string;
   llmVerdict: ApprovalVerdict | null;
+  /**
+   * 规则放行的直通标记（V135）：命中规则即短路，不经 llmVerdict 推导。
+   * 非 null 时 dispatchInvocation 直接把它落 ToolResult.approvalMark。
+   */
+  approvalMark?: ToolApprovalMark | null;
 }
 
 export class ToolDispatcher {
@@ -103,6 +109,8 @@ export class ToolDispatcher {
     private readonly jevRiskAssessor?: JevRiskAssessor | null,
     private readonly approvalModelResolver?: ApprovalModelResolver | null,
     private readonly inboxRecorder?: InboxRecorder | null,
+    /** 审批规则域（V135）：可选注入，未注入时行为与旧版完全一致（零规则查询）。 */
+    private readonly approvalRules?: ApprovalRuleFacade | null,
   ) {}
 
   /**
@@ -163,7 +171,10 @@ export class ToolDispatcher {
         invocation.executionUserId ?? null, invocation.contextSnapshot ?? null,
       );
       const result = normalizeToolResult(invocation.callId, outcome.raw, Date.now() - started);
-      if (outcome.llmVerdict) {
+      if (outcome.approvalMark) {
+        // 规则放行直通位（V135）：不经 llmVerdict 推导
+        result.approvalMark = outcome.approvalMark;
+      } else if (outcome.llmVerdict) {
         result.approvalMark = {
           mode: outcome.llmVerdict.via,
           approved: outcome.llmVerdict.approved,
@@ -252,6 +263,40 @@ export class ToolDispatcher {
         if (session?.permissionLevel) latest = session.permissionLevel;
       }
       const level = permissionLevelFromString(latest);
+      const isMcpTool = descriptor?.source === 'mcp' || toolName.startsWith(MCP_TOOL_PREFIX);
+      const rules = this.approvalRules;
+      const triggerUserId = executionUserId ?? userId;
+      // 规则准入（V135 决策 11）：仅对「本来需要审批」的调用查规则——
+      // READ_ONLY 的写/shell/MCP 审批是边界本身，规则免疫；FULL 无审批可放行（零查询零行为差异）；
+      // READ_WRITE/SMART/PROXY 下仅 shell/MCP 会弹卡，write_file/edit_file 不查不计数不打标；
+      // 触发人未知（userId=null，规则按用户隔离）同样不查。
+      const ruleEligible = rules != null && triggerUserId != null
+        && level !== 'READ_ONLY' && level !== 'FULL'
+        && (toolName === 'shell' || isMcpTool);
+      if (rules && ruleEligible) {
+        const hit = await rules.match({
+          userId: triggerUserId, sessionId, toolName, argumentsJson,
+        });
+        if (hit) {
+          // 命中即短路：静默放行 + 计数 + rule 徽标；Jev 前置/DangerAssessor/ProxyApprover 均不运行
+          rules.recordHit(hit.ruleId);
+          const approvalMark: ToolApprovalMark = {
+            mode: 'rule', approved: true, reason: `规则放行：${hit.ruleValue}`, ruleId: hit.ruleId,
+          };
+          if (toolName === 'shell' && this.backgroundTaskManager && isLocalShellAsyncExec(argumentsJson)) {
+            return {
+              raw: await this.dispatchLocalShellAsync(argumentsJson, sessionId, workspace, false, null, null),
+              llmVerdict: null,
+              approvalMark,
+            };
+          }
+          return {
+            raw: await this.localToolExecutor.execute(sessionId, toolName, argumentsJson, workspace, false, null),
+            llmVerdict: null,
+            approvalMark,
+          };
+        }
+      }
       const decision = await this.shouldRequireApproval(
         descriptor, toolName, level, argumentsJson, modelConfig, sessionId, executionUserId ?? userId, contextSnapshot,
       );
@@ -262,16 +307,24 @@ export class ToolDispatcher {
           llmVerdict: decision.llmVerdict,
         };
       }
+      // 需审批且可规则化 → 生成「总是允许」hint 随 tool_execute 下发（denylist 命中 → null，卡片两按钮不变）
+      const approvalHint = rules && decision.needApproval && ruleEligible
+        ? await rules.buildHint(toolName, argumentsJson)
+        : null;
       if (toolName === 'shell' && this.backgroundTaskManager && isLocalShellAsyncExec(argumentsJson)) {
         return {
           raw: await this.dispatchLocalShellAsync(
-            argumentsJson, sessionId, workspace, decision.needApproval, decision.dangerReason,
+            argumentsJson, sessionId, workspace, decision.needApproval, decision.dangerReason, approvalHint,
           ),
           llmVerdict: decision.llmVerdict ?? null,
         };
       }
       return {
-        raw: await this.localToolExecutor.execute(sessionId, toolName, argumentsJson, workspace, decision.needApproval, decision.dangerReason),
+        // 无 hint 时保持 6 参调用形态（旧行为字节级不变，审批 spec 的精确参数断言不受影响）
+        raw: await this.localToolExecutor.execute(
+          sessionId, toolName, argumentsJson, workspace, decision.needApproval, decision.dangerReason,
+          ...(approvalHint ? [approvalHint] : []),
+        ),
         llmVerdict: decision.llmVerdict ?? null,
       };
     }
@@ -503,6 +556,7 @@ export class ToolDispatcher {
     workspace: string | null,
     needApproval: boolean,
     dangerReason: string | null,
+    approvalHint: ApprovalHint | null = null,
   ): Promise<string> {
     if (!(await this.localToolSessionRegistry.isConnected(sessionId))) {
       return JSON.stringify({
@@ -511,6 +565,7 @@ export class ToolDispatcher {
     }
     const startResult = await this.localToolExecutor.execute(
       sessionId, 'shell', argumentsJson, workspace, needApproval, dangerReason,
+      ...(approvalHint ? [approvalHint] : []),
     );
     const parsed = parseObject(startResult);
     if (!parsed || parsed.error || parsed.async !== true || typeof parsed.session_id !== 'string' || parsed.session_id.trim() === '') {

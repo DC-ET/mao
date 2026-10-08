@@ -44,6 +44,7 @@ export interface SessionVO {
   running?: boolean;
   unread?: boolean;
   permissionLevel?: string | null;
+  memoryInjectionDisabled?: boolean;
   modelId?: number;
   modelName?: string;
   modelSupportsVision?: boolean;
@@ -158,6 +159,7 @@ export function toSessionVO(
     projectKey: session.projectKey,
     contextTokens: session.contextTokens,
     permissionLevel: session.permissionLevel,
+    memoryInjectionDisabled: session.memoryInjectionDisabled === 1,
     running: session.phase === 'RUNNING' || session.phase === 'RESUMING' || session.phase === 'WAITING_APPROVAL',
     unread: session.unread === 1,
   };

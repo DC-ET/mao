@@ -79,6 +79,17 @@ const DEEP_SEARCH_RESULT = {
   ],
 }
 
+// fork 预览：边路占位 Tab 选中 Fork 时按同口径预演将复制过来的历史（切点/轮次分页）
+const FORK_PREVIEW_OF_1 = {
+  messages: [
+    { id: 11, sessionId: 1, role: 'USER', content: '第一轮提问', createdAt: '2026-10-06 09:00:00' },
+    { id: 12, sessionId: 1, role: 'ASSISTANT', content: '第一轮回答', createdAt: '2026-10-06 09:01:00' },
+  ],
+  hasMore: false,
+  nextBeforeMessageId: null,
+  compactionEvents: [],
+}
+
 async function mockLoggedInDesktopApi(page: Page) {
   await page.addInitScript(() => {
     localStorage.setItem('token', 'test-access-token')
@@ -99,6 +110,8 @@ async function mockLoggedInDesktopApi(page: Page) {
       data = SIDE_TASKS_RECURSIVE
     } else if (/\/sessions\/\d+\/side-tasks$/.test(p)) {
       data = []
+    } else if (/\/sessions\/\d+\/fork-preview$/.test(p)) {
+      data = p.startsWith('/api/v1/sessions/1/') ? FORK_PREVIEW_OF_1 : { messages: [], hasMore: false, nextBeforeMessageId: null, compactionEvents: [] }
     } else if (/\/sessions\/\d+\/messages$/.test(p)) {
       data = p.endsWith('/sessions/30/messages') ? MESSAGES_OF_SIDE_30 : { messages: [], hasMore: false, nextBeforeMessageId: null }
     } else if (/\/sessions\/\d+\/queue$/.test(p)) {
@@ -154,6 +167,31 @@ test.describe('Desktop - side fork (任意深度)', () => {
     await expect(page.locator('.inherit-bar')).toContainText('来源会话摘要')
     await expect(page.locator('.inherit-bar')).toContainText('Fork 来源会话')
     await expect(page.locator('.inherit-bar')).not.toContainText('主会话摘要')
+  })
+
+  test('选中 Fork 时占位 Tab 预览将复制过来的历史消息', async ({ page }) => {
+    await mockLoggedInDesktopApi(page)
+    await page.goto('/tasks/1')
+    await page.locator('.side-task-btn').first().click()
+    await expect(page.locator('.inherit-bar')).toBeVisible({ timeout: 8_000 })
+
+    // 未选中 Fork 时不发预览请求，也没有预览提示条
+    await expect(page.locator('.fork-preview-banner')).toHaveCount(0)
+
+    await page.locator('.inherit-bar').getByText('Fork 主会话').click()
+    // 预览提示条 + 来源主会话的历史消息直接上屏（轮次折叠渲染）
+    await expect(page.locator('.fork-preview-banner')).toBeVisible({ timeout: 8_000 })
+    await expect(page.locator('.fork-preview-banner')).toContainText('Fork 预览')
+    await expect(page.locator('.message-bubble.user').filter({ hasText: '第一轮提问' })).toBeVisible()
+    await expect(page.locator('.message-bubble.assistant').filter({ hasText: '第一轮回答' })).toBeVisible()
+
+    // 渲染与真实 fork 会话一致：每轮助手回复仍带 fork 按钮（可从预览直接换个切点再分叉）
+    await expect(page.locator('.side-chat-panel .fork-btn')).toHaveCount(1)
+
+    // 切回不继承：预览请求与提示条一起消失
+    await page.locator('.inherit-bar').getByText('不继承').click()
+    await expect(page.locator('.fork-preview-banner')).toHaveCount(0)
+    await expect(page.locator('.message-bubble.user').filter({ hasText: '第一轮提问' })).toHaveCount(0)
   })
 
   test('搜索命中深层边路会话时跳转其根主会话', async ({ page }) => {

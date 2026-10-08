@@ -221,13 +221,13 @@ export class MemoryService {
     const hints: MemoryHint[] = [];
     const userRows = await this.memoryRepo.listActiveUser(userId, MEMORY_INJECT_USER_LIMIT);
     for (const row of userRows) {
-      if (hasText(row.content)) hints.push({ scope: 'USER', projectKey: null, content: row.content! });
+      if (hasText(row.content)) hints.push({ id: row.id, scope: 'USER', projectKey: null, content: row.content! });
     }
     const effectiveKey = hasText(projectKey) && !isRobotChannelProjectKey(projectKey, workspace) ? projectKey! : null;
     if (effectiveKey != null) {
       const projectRows = await this.memoryRepo.listActiveProject(userId, effectiveKey, MEMORY_INJECT_PROJECT_LIMIT);
       for (const row of projectRows) {
-        if (hasText(row.content)) hints.push({ scope: 'PROJECT', projectKey: effectiveKey, content: row.content! });
+        if (hasText(row.content)) hints.push({ id: row.id, scope: 'PROJECT', projectKey: effectiveKey, content: row.content! });
       }
     }
     return hints;

@@ -85,6 +85,15 @@ function collectText(node: unknown): string {
     if (record.tag === 'img') return ' [图片] ';
     if (record.tag === 'media') return ' [视频] ';
     if (record.tag === 'emotion') return ' ';
+    // 有 user_name 时直接写 @姓名。这样普通入站和引用不用再靠 mentions 二次替换，
+    // 也不会把 @_user_1 和后文「0点」粘成 @_user_10。没有姓名时才留占位符，并加零宽分隔。
+    if (record.tag === 'at') {
+      const userName = typeof record.user_name === 'string' ? record.user_name.trim() : '';
+      if (userName !== '') return `@${userName}`;
+      const userId = typeof record.user_id === 'string' ? record.user_id : '';
+      if (userId.startsWith('@_user_')) return `${userId}\u200b`;
+      return '';
+    }
     const own = typeof record.text === 'string' ? record.text : '';
     return own + collectText(record.content);
   }

@@ -61,6 +61,8 @@
         :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
         @click.stop
       >
+        <div class="context-menu-item" @click="menuShare">分享…</div>
+        <div class="context-menu-item" @click="menuExportMarkdown">导出 Markdown</div>
         <div
           class="context-menu-item"
           :class="{ disabled: !selectedTask || !canPromote(selectedTask) }"
@@ -70,6 +72,7 @@
         <div class="context-menu-item danger" @click="menuDelete">删除</div>
       </div>
     </Teleport>
+    <ShareDialog v-model="shareVisible" :session-id="shareSessionId" />
   </div>
 </template>
 
@@ -79,6 +82,8 @@ import { Check, Close } from '@element-plus/icons-vue'
 import type { SideTaskItem, TaskPhase } from '../../stores/session'
 import { sideTaskToFocusCandidate, sortByFocusPriority } from '../../utils/focusSort'
 import { useRelativeTime, formatRelativeTime } from '../../composables/useRelativeTime'
+import ShareDialog from './ShareDialog.vue'
+import { downloadSessionMarkdown } from '../../utils/sessionShare'
 
 const props = defineProps<{
   tasks?: SideTaskItem[]
@@ -114,6 +119,9 @@ const contextMenu = reactive({
   y: 0,
   taskId: null as number | null,
 })
+
+const shareVisible = ref(false)
+const shareSessionId = ref('')
 
 const selectedTask = computed(() =>
   sortedTasks.value.find(task => task.id === contextMenu.taskId) ?? null
@@ -152,8 +160,9 @@ function handleClick(task: SideTaskItem) {
 
 function openContextMenu(e: { clientX: number; clientY: number }, task: SideTaskItem) {
   if (editingId.value === task.id || confirmingDeleteId.value === task.id) return
-  const menuWidth = 150
-  const menuHeight = 112
+  // 5 项菜单实测约 156 × 168 px（--aw-text-caption 14px / item padding 7px 10px / 容器 6px），哨兵留余量
+  const menuWidth = 160
+  const menuHeight = 200
   const x = Math.min(e.clientX, window.innerWidth - menuWidth - 8)
   const y = Math.min(e.clientY, window.innerHeight - menuHeight - 8)
   contextMenu.taskId = task.id
@@ -228,6 +237,20 @@ function menuDelete() {
   const task = selectedTask.value
   closeContextMenu()
   if (task) startDelete(task)
+}
+
+function menuShare() {
+  const task = selectedTask.value
+  closeContextMenu()
+  if (!task) return
+  shareSessionId.value = String(task.id)
+  shareVisible.value = true
+}
+
+function menuExportMarkdown() {
+  const task = selectedTask.value
+  closeContextMenu()
+  if (task) void downloadSessionMarkdown(String(task.id))
 }
 
 function startEdit(task: SideTaskItem) {

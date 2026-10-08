@@ -2,10 +2,10 @@ import type { FastifyInstance } from 'fastify';
 import { requirePermission, requireUserId, sendOk } from '../common/http-error.js';
 import { hasText } from '../common/case.js';
 import { bodyOf, pathParam, queryOptStr } from '../common/request.js';
-import type { SystemSettingService } from './settings.service.js';
+import { JEV_API_KEY_KEY, JEV_ENDPOINT_KEY, JEV_MODEL_KEY, type SystemSettingService } from './settings.service.js';
 import { defaultFeishuHttp } from '../auth/feishu-auth.service.js';
 import {
-  defaultLdapClientFactory, mergeWithDefaults, testFeishuCredentials, testLdapConnection, testOssCredentials,
+  defaultJevHttp, defaultLdapClientFactory, mergeWithDefaults, testFeishuCredentials, testJevConnection, testLdapConnection, testOssCredentials,
 } from './settings-test.service.js';
 
 export interface SystemSettingRouteDeps {
@@ -100,5 +100,24 @@ export function registerSystemSettingRoutes(app: FastifyInstance, deps: SystemSe
       return createAliyunAssumeRoleClient(sts);
     });
     return sendOk(reply, { ok: true });
+  });
+
+  app.post('/v1/system-settings/test/jev', async (request, reply) => {
+    const userId = requireUserId(request);
+    await requirePermission(permissionService, userId, 'settings:write');
+    // 表单留空回落已存值，可在保存前验证未落库的端点 / 模型名 / API Key
+    const overrides = bodyOf<Partial<{ endpoint: string; model: string; apiKey: string }>>(request);
+    const stored = {
+      endpoint: (await systemSettingService.getValue(JEV_ENDPOINT_KEY)) ?? '',
+      model: (await systemSettingService.getValue(JEV_MODEL_KEY)) ?? '',
+      apiKey: await systemSettingService.getSecretValue(JEV_API_KEY_KEY),
+    };
+    const merged = mergeWithDefaults({
+      endpoint: overrides.endpoint,
+      model: overrides.model,
+      apiKey: overrides.apiKey,
+    }, stored);
+    const result = await testJevConnection(merged, defaultJevHttp());
+    return sendOk(reply, { ok: true, model: result.model, probability: result.probability });
   });
 }

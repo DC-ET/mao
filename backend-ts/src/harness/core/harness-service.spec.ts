@@ -265,6 +265,8 @@ function makeHarness(overrides: Record<string, unknown> = {}) {
     deps.db as never,
     deps.mcpClientManager as never,
     deps.skillSync as never,
+    deps.embedSessionLookup ?? null,
+    deps.memoryInjection ?? null,
   );
   return { service, ...deps };
 }
@@ -411,6 +413,33 @@ describe('HarnessService.buildContext and execute', () => {
     expect(skillSync.connectForCloud.mock.calls[0][3]).toBe(cancelled);
   });
 
+  it('buildContextSkipsMemoryInjectionWhenSessionDisabled', async () => {
+    // 技术方案 5.1：memory_injection_disabled=1 时短路，memories=null，且不查询记忆库。
+    const listForInjection = vi.fn(async () => [{ content: 'should not appear' }]);
+    const { service } = makeHarness({
+      memoryInjection: { listForInjection },
+      sessionMapper: {
+        selectById: vi.fn(async () => ({
+          id: 10, userId: 7, agentId: 2, executionMode: 'CLOUD',
+          projectKey: 'proj', workspace: '/ws', permissionLevel: 'READ_WRITE',
+          modelId: 3, memoryInjectionDisabled: 1,
+        })),
+      },
+    });
+    const ctx = await service.buildContext(10);
+    expect(ctx.memories).toBeNull();
+    expect(listForInjection).not.toHaveBeenCalled();
+  });
+
+  it('buildContextLoadsMemoryInjectionWhenEnabled', async () => {
+    const memories = [{ content: '长期记忆' }];
+    const listForInjection = vi.fn(async () => memories);
+    const { service } = makeHarness({ memoryInjection: { listForInjection } });
+    const ctx = await service.buildContext(10);
+    expect(ctx.memories).toBe(memories);
+    expect(listForInjection).toHaveBeenCalledWith(7, 'proj', '/ws');
+  });
+
   it('executeFromEventRunsLoopAndPersistsAssistantAndToolMessages', async () => {
     const { service, agentLoop, sessionService, fileChangeMapper } = makeHarness();
     const listener = { onContentDelta: vi.fn() };
@@ -454,6 +483,40 @@ describe('HarnessService.buildContext and execute', () => {
     expect(await service.resolveModel(3)).toEqual(model());
     expect(await service.resolveModel(null)).toEqual(model());
     expect(llmModelMapper.selectDefault).toHaveBeenCalled();
+  });
+});
+
+describe('HarnessService.requestCompaction', () => {
+  it('空闲手动压缩：跳过自动压缩、force 越过阈值与 enabled 门、triggerMode=manual、收尾回收云 MCP', async () => {
+    const orchestrator = { compact: vi.fn(async () => true) };
+    const activeContext = { activeFromMessageSuffix: vi.fn(() => 5000) };
+    const mcpClientManager = { closeSession: vi.fn(async () => undefined) };
+    const { service } = makeHarness({ orchestrator, activeContext, mcpClientManager });
+
+    const result = await service.requestCompaction(10, null);
+
+    // 仅一次压缩：buildContext 的自动块被 skipAutoCompact 跳过，只有手动这一次。
+    expect(orchestrator.compact).toHaveBeenCalledTimes(1);
+    const args = orchestrator.compact.mock.calls[0] as unknown as unknown[];
+    expect(args[0]).toBe(10);                 // sessionId
+    expect(args[5]).toBe(false);              // compactCurrentTurn=false（空闲路径）
+    expect(args[8]).toBe('manual');           // triggerMode
+    expect(args[9]).toBe(true);               // force
+    // activeTokensHint 取 lastPromptTokens(11) 与估算(5000) 的较大值
+    expect(args[7]).toBe(5000);
+    expect(result).toBe(true);
+    // 成功路径同样回收云 MCP，避免连接泄漏
+    expect(mcpClientManager.closeSession).toHaveBeenCalledWith(10);
+  });
+
+  it('requestCompaction 失败时也回收云 MCP 并向上传播异常', async () => {
+    const orchestrator = { compact: vi.fn(async () => { throw new Error('LLM compaction failed'); }) };
+    const activeContext = { activeFromMessageSuffix: vi.fn(() => 100) };
+    const mcpClientManager = { closeSession: vi.fn(async () => undefined) };
+    const { service } = makeHarness({ orchestrator, activeContext, mcpClientManager });
+
+    await expect(service.requestCompaction(10, null)).rejects.toThrow('LLM compaction failed');
+    expect(mcpClientManager.closeSession).toHaveBeenCalledWith(10);
   });
 });
 

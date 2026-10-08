@@ -14,6 +14,7 @@ import type { ContextManager } from './context-manager.js';
 import type { PromptEngine } from './prompt-engine.js';
 import type { SessionCompactionOrchestrator } from './session-compaction-orchestrator.js';
 import { CompactionStateReloadException } from './session-compaction-orchestrator.js';
+import type { CompactionSignalBus } from './compaction-signal-bus.js';
 import type { SessionActivityHeartbeat, SessionService } from '../deps.js';
 import { BusinessException } from '../../common/business-exception.js';
 import { ErrorCode } from '../../common/error-code.js';
@@ -52,6 +53,8 @@ export interface ToolMessageSave {
   toolCallId: string;
   content: string;
   metadataJson: string | null;
+  /** 后端截断事实（结果 JSON 顶层 truncated===true）：历史回放走 metadataJson，实时事件走此布尔并入 meta。 */
+  resultTruncated?: boolean;
 }
 
 export class AgentLoop {
@@ -70,6 +73,7 @@ export class AgentLoop {
     private readonly activeContextCalculator: ActiveContextCalculator,
     private readonly mcpClientManager: McpClientManager,
     private readonly backgroundSubagentManager?: (() => BackgroundSubagentManager | null | undefined) | null,
+    private readonly compactionSignalBus?: CompactionSignalBus | null,
   ) {}
 
   registerCancelFlag(sessionId: number): AtomicBoolean {
@@ -157,6 +161,9 @@ export class AgentLoop {
     const heartbeatSessionId = context.sessionId;
     // 长工具调用期间轮级 touch 不会触发，这里挂独立心跳，避免执行中被误判为孤儿会话。
     this.activityHeartbeat.start(heartbeatSessionId);
+    // 双向清理（技术方案 5.4）：丢弃上一轮执行结束前未被消费的陈旧手动信号，
+    // 否则下一次执行首个工具轮边界会发生一次用户未请求的压缩。
+    if (heartbeatSessionId != null) this.compactionSignalBus?.clear(heartbeatSessionId);
     try {
       let pendingSave: string | null = null;
       let pendingThinking: string | null = null;
@@ -226,7 +233,7 @@ export class AgentLoop {
           ? await this.sessionService.getMaxMessageId(context.sessionId) : 0;
         const messagesCoveredThisRound = context.messages.length;
         const estimatedTokens = this.computeActiveTokens(context, request);
-        listener.onContextWindow?.(estimatedTokens, context.lastPromptTokens > 0 ? context.lastPromptTokens : 0);
+        listener.onContextWindow?.(estimatedTokens, context.lastPromptTokens > 0 ? context.lastPromptTokens : 0, context.contextManifest);
 
         const currentRound = round;
         let emptyResponseEncountered = false;
@@ -293,7 +300,7 @@ export class AgentLoop {
                   if (context.sessionId != null && anchorMsgId > 0) {
                     afterStream.push(this.sessionService.updateContextAnchor(context.sessionId, promptTokens, anchorMsgId));
                   }
-                  listener.onContextWindow?.(promptTokens, promptTokens);
+                  listener.onContextWindow?.(promptTokens, promptTokens, context.contextManifest);
                 }
                 if (toolCalls.length > 0) {
                   for (const tc of toolCalls) {
@@ -405,6 +412,11 @@ export class AgentLoop {
             continue;
           }
           closeRound();
+          // 纯文本收尾不再有下一工具轮。已回执「已排队」的手动整理必须在退出前消费，
+          // 否则 finally 清信号会让这次整理既不发生、也没有失败回执。
+          if (await this.consumeManualCompaction(context, listener, persistenceCallback, cancelFlag ?? null)) {
+            abortRound();
+          }
           break;
         }
 
@@ -456,6 +468,12 @@ export class AgentLoop {
         context.clearPendingToolCalls();
         closeRound();
 
+        // 手动压缩信号消费（技术方案 5.4 / 决策 12）：必须置于 midLoopAllowed 门外——
+        // enabled=false 只关「自动整理」，不得连带禁用用户显式的手动压缩。
+        if (await this.consumeManualCompaction(context, listener, persistenceCallback, cancelFlag ?? null)) {
+          abortRound();
+          break;
+        }
         const loopConfig = context.compactionConfig;
         const midLoopAllowed = loopConfig != null
           && loopConfig.enabled && loopConfig.loopMidwayCompact
@@ -465,11 +483,11 @@ export class AgentLoop {
           try {
             const nextRequest = await this.promptEngine.buildRequest(context);
             const nextRequestTokens = this.computeActiveTokens(context, nextRequest);
-            listener.onContextWindow?.(nextRequestTokens, context.lastPromptTokens > 0 ? context.lastPromptTokens : 0);
+            listener.onContextWindow?.(nextRequestTokens, context.lastPromptTokens > 0 ? context.lastPromptTokens : 0, context.contextManifest);
             const effectiveContextWindow = CompactionConfig.resolveEffectiveContextWindow(context.modelConfig, loopConfig);
             if (nextRequestTokens >= effectiveContextWindow * loopConfig.triggerRatio) {
               await this.sessionCompactionOrchestrator.compact(
-                context.sessionId!, context, nextRequest, listener, loopConfig, true, cancelFlag ?? null, nextRequestTokens);
+                context.sessionId!, context, nextRequest, listener, loopConfig, true, cancelFlag ?? null, nextRequestTokens, 'mid_loop');
               context.preparedRequest = await this.promptEngine.buildRequest(context);
             }
           } catch (e) {
@@ -490,10 +508,48 @@ export class AgentLoop {
       this.activityHeartbeat.stop(heartbeatSessionId);
       if (sessionId != null) {
         this.cancelFlags.delete(sessionId);
+        this.compactionSignalBus?.clear(sessionId);
         this.shellSessionManager.closeByConversation(sessionId);
         this.mcpClientManager.closeSession(sessionId);
         this.backgroundSubagentManager?.()?.clearResults(sessionId);
       }
+    }
+  }
+
+  /**
+   * 消费运行中的手动压缩信号。工具轮边界与纯文本收尾共用。
+   * 前提与空闲路径对齐（持久化回调 + 会话 id + 配置对象）；不满足时不消费，留给 finally 清理。
+   * @returns 压缩被用户取消时为 true，调用方应中止循环。
+   */
+  private async consumeManualCompaction(
+    context: AgentExecutionContext,
+    listener: AgentEventListener,
+    persistenceCallback: MessagePersistenceCallback | null | undefined,
+    cancelFlag: AtomicBoolean | null,
+  ): Promise<boolean> {
+    const loopConfig = context.compactionConfig;
+    if (!(this.compactionSignalBus && context.sessionId != null
+      && persistenceCallback != null && loopConfig
+      && this.compactionSignalBus.consume(context.sessionId))) {
+      return false;
+    }
+    try {
+      const manualRequest = await this.promptEngine.buildRequest(context);
+      const manualTokens = this.computeActiveTokens(context, manualRequest);
+      listener.onContextWindow?.(manualTokens, context.lastPromptTokens > 0 ? context.lastPromptTokens : 0, context.contextManifest);
+      await this.sessionCompactionOrchestrator.compact(
+        context.sessionId, context, manualRequest, listener, loopConfig, true, cancelFlag,
+        manualTokens, 'manual', true);
+      context.preparedRequest = await this.promptEngine.buildRequest(context);
+      return false;
+    } catch (e) {
+      if (e instanceof CompactionContextOverflowException || e instanceof CompactionStateReloadException) throw e;
+      if (e instanceof CompactionCancelledException) {
+        cancelFlag?.set(true);
+        return true;
+      }
+      harnessLog('warn', 'Manual compaction at loop boundary failed, continuing with the next request', e);
+      return false;
     }
   }
 
@@ -556,7 +612,7 @@ export class AgentLoop {
       ) ?? undefined;
       if (tc.id) toolResults[tc.id] = rawResult;
       context.addToolResult(tc.id!, toolSave.content);
-      listener.onToolCallResult(tc.id!, rawResult, toolResultMeta(result));
+      listener.onToolCallResult(tc.id!, rawResult, { ...toolResultMeta(result), resultTruncated: toolSave.resultTruncated });
       pendingToolSaves.push(toolSave);
       return;
     }
@@ -574,7 +630,7 @@ export class AgentLoop {
       ) ?? undefined;
       if (tc.id) toolResults[tc.id] = rawResult;
       context.addToolResult(tc.id!, toolSave.content);
-      listener.onToolCallResult(tc.id!, rawResult, toolResultMeta(result));
+      listener.onToolCallResult(tc.id!, rawResult, { ...toolResultMeta(result), resultTruncated: toolSave.resultTruncated });
       pendingToolSaves.push(toolSave);
     }
   }
@@ -589,10 +645,14 @@ export class AgentLoop {
     if (processed.attachment && tc.id) {
       context.registerToolAttachment(tc.id, processed.attachment);
     }
+    // 技术方案 5.6：嗅探结果 JSON 顶层 truncated===true（grep/glob/read_file 等口径统一），
+    // 命中即落 metadataJson（历史回放）并带回布尔（实时事件走 meta 通道）。非 JSON 静默跳过。
+    const resultTruncated = sniffResultTruncated(rawResult);
     return {
       toolCallId: tc.id!,
       content: processed.sanitizedContent ?? '',
-      metadataJson: mergeApprovalMark(processed.metadataJson, approvalMark),
+      metadataJson: mergeResultTruncated(mergeApprovalMark(processed.metadataJson, approvalMark), resultTruncated),
+      resultTruncated: resultTruncated || undefined,
     };
   }
 
@@ -709,5 +769,34 @@ function mergeApprovalMark(metadataJson: string | null, approvalMark?: ToolAppro
     }
   }
   root.approvalMark = approvalMark;
+  return JSON.stringify(root);
+}
+
+/** 结果 JSON 可 parse 且顶层 `truncated === true` 判为后端截断；非 JSON / 缺字段返回 false。 */
+function sniffResultTruncated(rawResult: string): boolean {
+  try {
+    const parsed = JSON.parse(rawResult) as unknown;
+    return parsed != null && typeof parsed === 'object' && !Array.isArray(parsed)
+      && (parsed as Record<string, unknown>).truncated === true;
+  } catch {
+    return false;
+  }
+}
+
+/** 把截断标识并入工具消息 metadata（与 approvalMark / 图片附件等既有 key 共存），供历史回放展示徽标。 */
+function mergeResultTruncated(metadataJson: string | null, truncated: boolean): string | null {
+  if (!truncated) return metadataJson;
+  let root: Record<string, unknown> = {};
+  if (metadataJson != null && metadataJson.trim() !== '') {
+    try {
+      const parsed = JSON.parse(metadataJson) as unknown;
+      if (parsed != null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        root = parsed as Record<string, unknown>;
+      }
+    } catch {
+      // 既有 metadata 非 JSON 对象时丢弃，截断标识优先保留
+    }
+  }
+  root.resultTruncated = true;
   return JSON.stringify(root);
 }
