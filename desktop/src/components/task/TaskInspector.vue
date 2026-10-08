@@ -242,7 +242,7 @@
           <div class="ctx-capacity-head">
             <span class="ctx-block-title">上下文容量</span>
             <el-tooltip
-              content="以本轮真实发送内容估算（取水位估算与实际 prompt 的较大值）；分节合计不含工具定义，故与容量存在口径差"
+              content="本轮真实发送内容的估算总量（消息 + 工具定义），与下方构成合计同口径；压缩后会重新计算"
               placement="top"
               :show-after="300"
             >
@@ -258,7 +258,7 @@
           </div>
           <div v-else class="ctx-empty">暂无水位数据</div>
           <div v-if="waterLevelPct != null" class="ctx-capacity-foot">
-            估算口径 · 压缩后重新计算
+            估算口径 · 与上方容量同口径合计
           </div>
         </div>
 
@@ -266,7 +266,7 @@
           <div class="ctx-block-title ctx-row">
             <span>上下文构成</span>
             <el-tooltip
-              content="各节 token 为字节估算口径；分节合计仅含系统提示 + 消息 + 交接摘要，不含工具定义，故与上方含工具定义的水位存在口径差"
+              content="各节 token 为字节估算口径；分节合计与上方容量同口径（均含系统工具），差异仅来自 system 消息固定开销"
               placement="top"
             >
               <span class="ctx-help">?</span>
