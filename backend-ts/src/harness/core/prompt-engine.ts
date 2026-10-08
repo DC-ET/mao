@@ -85,9 +85,24 @@ function isBenignTemplatePlaceholderName(name: string): boolean {
 
 /** 文档在描述 marker 语法本身时写的占位（如 `` `#{...}#` ``），不是真实命令名。 */
 const BENIGN_COMMAND_PLACEHOLDERS = new Set(['...', 'xxx', 'name', 'skill_name', 'command_name']);
+
 function isBenignCommandName(name: string): boolean {
   return BENIGN_COMMAND_PLACEHOLDERS.has(name);
 }
+
+/**
+ * 上下文构成里保持独立条目的「注入型」分节（技术方案 5.2 / 0.0.245 聚合口径）。
+ * 其余系统提示分节（Agent 人格 / 工作环境 / 当前日期 / 工具指引 / 任务管理 / 子代理 /
+ * 微信媒体 / 嵌入页面）都是固有文案，逐节展示对判断占用没有增量价值，聚合为「系统提示词」。
+ * 这里的每一项都带用户或会话注入的动态内容，且多数有 count 语义，值得单独看。
+ */
+const INJECTED_SECTION_KEYS = new Set([
+  'experiences',      // 最佳实践经验（命中经验库）
+  'memories',         // 长期记忆（可治理：会话开关 / 设置页）
+  'skills',           // 可用技能目录（可治理：启用哪些技能）
+  'incoming-file',    // 用户上传文件（本次上传）
+  'workspace-rules',  // 工作区规则（AGENTS.md，可治理）
+]);
 const AGENTS_MD_TRUNCATED_HINT = '\n> 当前仅展示前200行规则，读取AGENTS.md文件以了解更多规则。\n';
 
 const WEEKDAYS = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
@@ -150,7 +165,7 @@ export class PromptEngine {
     }
     // manifest 只读最终请求对象（normalized = quick command 展开 / 媒体注入 / 归一化之后），
     // 禁止用组装前的 context.messages 口径（决策 1、§8 漂移对策）。
-    context.contextManifest = this.buildContextManifest(context, sections, normalized);
+    context.contextManifest = this.buildContextManifest(context, sections, normalized, request);
     return request;
   }
 
@@ -303,20 +318,48 @@ export class PromptEngine {
   }
 
   /**
-   * 组装上下文构成清单（技术方案 5.2）：系统提示各节 + messages（最终请求，扣除 system）+ handoff。
+   * 组装上下文构成清单（技术方案 5.2）：系统提示词 + 用户输入增量 + 工具定义 + messages + handoff。
+   * 展示口径与顶部「上下文容量」对齐：容量 = estimateRequestTokens(messages + tools)，
+   * 因此构成必须显式带上「系统工具」节，否则分节合计永远小于水位，用户看到数字对不上。
+   *
+   * 分节聚合策略（0.0.245）：系统提示逐节太细（Agent 人格 / 工作环境 / 当前日期 / 工具指引 /
+   * 任务管理 / 子代理…十几行），对判断「上下文被什么占满」没有增量价值，故凡属系统提示固有
+   * 文案的分节合并为单节「系统提示词」；用户或会话注入的增量内容（长期记忆、最佳实践经验、
+   * 技能目录、用户上传文件、工作区规则）保持独立——它们才是用户可治理的部分。
    * memoryIds 取本次注入记忆的 id（开关关闭 / 无记忆时为空数组）。
    */
   private buildContextManifest(
     context: AgentExecutionContext,
     sections: PromptSection[],
     finalMessages: ChatMessage[],
+    request: ChatRequest,
   ): ContextManifest {
     const stats: ContextSectionStat[] = [];
+    // 系统提示固有分节 → 聚合为「系统提示词」；注入型分节保留独立条目
+    const mergedSystemText: string[] = [];
     for (const s of sections) {
       if (s.text.length === 0) continue;
-      const stat: ContextSectionStat = { key: s.key, label: s.label, tokens: this.tokenEstimator.countTokens(s.text) };
-      if (s.count != null) stat.count = s.count;
-      stats.push(stat);
+      if (INJECTED_SECTION_KEYS.has(s.key)) {
+        const stat: ContextSectionStat = { key: s.key, label: s.label, tokens: this.tokenEstimator.countTokens(s.text) };
+        if (s.count != null) stat.count = s.count;
+        stats.push(stat);
+        continue;
+      }
+      mergedSystemText.push(s.text);
+    }
+    const systemPromptTokens = mergedSystemText.reduce((acc, text) => acc + this.tokenEstimator.countTokens(text), 0)
+    if (mergedSystemText.length > 0) {
+      stats.push({ key: 'system-prompt', label: '系统提示词', tokens: systemPromptTokens });
+    }
+    // 工具定义：容量口径含 tools（estimateRequestTokens），构成侧必须同口径列出
+    const tools = request.tools ?? [];
+    if (tools.length > 0) {
+      stats.push({
+        key: 'tool-definitions',
+        label: '系统工具',
+        tokens: this.tokenEstimator.estimateToolDefinitions(tools),
+        count: tools.length,
+      });
     }
     const nonSystem = finalMessages.filter((m) => m.role !== 'system');
     if (nonSystem.length > 0) {
@@ -329,6 +372,8 @@ export class PromptEngine {
     }
     const summary = context.sessionSummary;
     if (summary != null && summary.trim() !== '') {
+      // 交接摘要是 messages[0] 的 user 消息，已计入 messages 节；此处仅作独立提示行，
+      // token 仍按同一文本估算（与 messages 口径重叠是有意的：摘要值得单独看见）。
       const handoffTokens = this.tokenEstimator.estimateMessages([
         { role: 'user', content: buildHandoffUserContent(summary) },
       ]);

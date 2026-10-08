@@ -460,13 +460,38 @@ describe('PromptEngine context manifest', () => {
     expect(system).toContain('## 工作环境');
     expect(system).toContain('## 当前日期');
     expect(system).toContain('# 使用你的工具');
-    // manifest 只保留非空分节：keys 顺序稳定，且不含空 memories 之外的空节
+    // manifest 只保留非空分节：注入型分节独立、固有系统提示聚合为单节（0.0.245）
     const manifest = ctx.contextManifest!;
     const keys = manifest.sections.map((s) => s.key);
-    expect(keys.slice(0, 4)).toEqual(['system-prompt', 'experiences', 'memories', 'environment']);
-    expect(keys).toContain('current-date');
-    expect(keys).toContain('tools-usage');
-    expect(keys).toContain('messages');
+    expect(keys).toEqual(['experiences', 'memories', 'system-prompt', 'tool-definitions', 'messages']);
+    // 聚合后的「系统提示词」必须覆盖被合并掉的各节原文
+    const merged = manifest.sections.find((s) => s.key === 'system-prompt')!;
+    expect(merged.label).toBe('系统提示词');
+    expect(system).toContain('## 工作环境');
+    expect(system).toContain('## 当前日期');
+    expect(system).toContain('# 使用你的工具');
+  });
+
+  it('构成合计 ≈ 上下文容量口径（聚合后显式带上「系统工具」节）', async () => {
+    // 用户可见闭环：顶部「上下文容量」= estimateRequestTokens(messages + tools)，
+    // 构成分节合计必须与它同口径，否则数字永远对不上（此前差一整个工具定义段）。
+    const ctx = context({
+      systemPrompt: 'You are Mao',
+      currentTimestamp: '2026-08-13',
+      messages: [{ role: 'user', content: '你好' }],
+    });
+    const request = await engine().buildRequest(ctx);
+    const manifest = ctx.contextManifest!;
+    const toolsSection = manifest.sections.find((s) => s.key === 'tool-definitions');
+    expect(toolsSection).toBeDefined();
+    expect(toolsSection!.label).toBe('系统工具');
+    expect(toolsSection!.count).toBe(1);
+
+    const est = new TokenEstimator();
+    const sum = manifest.sections.reduce((acc, s) => acc + s.tokens, 0);
+    // handoff 与 messages 口径重叠，仅在无摘要时严格相等
+    const water = est.estimateRequestTokens(request);
+    expect(Math.abs(sum - water)).toBeLessThanOrEqual(4);
   });
 
   it('section token sum ≈ system prompt estimate within per-section tolerance', async () => {
@@ -479,7 +504,12 @@ describe('PromptEngine context manifest', () => {
     const system = request.messages[0].content as string;
     const estimator = new TokenEstimator();
     const total = estimator.countTokens(system);
-    const sysSections = ctx.contextManifest!.sections.filter((s) => s.key !== 'messages' && s.key !== 'handoff');
+    // 只看属于 system 消息的分节：聚合后的「系统提示词」+ 各注入型节
+    // （注入型分节不导出常量，这里按 key 白名单穷举，避免为测试扩大模块导出面）
+    const injected = ['experiences', 'memories', 'skills', 'incoming-file', 'workspace-rules'];
+    const sysSections = ctx.contextManifest!.sections.filter(
+      (s) => s.key === 'system-prompt' || injected.includes(s.key),
+    );
     const sum = sysSections.reduce((acc, s) => acc + s.tokens, 0);
     // countTokens 对拼接有 ±1 取整误差，容差 = 节数
     expect(Math.abs(sum - total)).toBeLessThanOrEqual(sysSections.length);
