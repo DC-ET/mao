@@ -66,6 +66,9 @@ export class SessionService {
     private readonly deleteSessionApprovalRules?: (sessionId: number) => Promise<void>,
   ) {}
 
+  /** 同一会话的 context token / manifest 写入按调用顺序串行，避免并发 UPDATE 把旧快照写回去。 */
+  private readonly contextTokenWrites = new Map<number, Promise<void>>();
+
   async createSession(
     userId: number,
     agentId: number | null | undefined,
@@ -1189,10 +1192,22 @@ export class SessionService {
   }
 
   async updateContextTokens(sessionId: number, contextTokens: number, manifestJson?: string | null): Promise<void> {
-    const fields: Record<string, unknown> = { contextTokens };
-    // 未传第三参时不碰快照列：锚点更新只改水位，压缩编排在 listener 落快照之前先写数字。
-    if (manifestJson !== undefined) fields.contextManifestJson = manifestJson;
-    await this.sessionRepo.updateFields(sessionId, fields);
+    const prev = this.contextTokenWrites.get(sessionId) ?? Promise.resolve();
+    const run = prev.catch(() => undefined).then(async () => {
+      const fields: Record<string, unknown> = { contextTokens };
+      // 未传第三参时不碰快照列：锚点更新只改水位，压缩编排在 listener 落快照之前先写数字。
+      if (manifestJson !== undefined) fields.contextManifestJson = manifestJson;
+      await this.sessionRepo.updateFields(sessionId, fields);
+    });
+    const tracked = run.then(() => undefined, () => undefined);
+    this.contextTokenWrites.set(sessionId, tracked);
+    try {
+      await run;
+    } finally {
+      if (this.contextTokenWrites.get(sessionId) === tracked) {
+        this.contextTokenWrites.delete(sessionId);
+      }
+    }
   }
 
   async updateRuntimeStatus(sessionId: number, runtimeStatus: unknown | null): Promise<void> {

@@ -177,9 +177,26 @@ export interface StreamCallback {
   onChunk(chunk: StreamChunk): void;
   onComplete(usage: ChatUsage): void;
   onError(t: unknown): void;
+  /**
+   * 流未正常结束、但上游已经带回 usage 时调用。不表示本轮成功完成，监听器不得把它当成 onComplete。
+   * 记账方据此给失败调用计价（技术方案 §5.2）。
+   */
+  onUsage?(usage: ChatUsage): void;
   onStreamReset?(): void;
   onWaiting?(phase: string, elapsedSeconds: number): void;
   onRetry?(reason: string, statusCode: number | null, attempt: number, maxRetries: number, delaySeconds: number): void;
+}
+
+/** 把已观察到的 usage 交给记账方。复制一份，避免随后改写同一个对象。 */
+export function notifyPartialUsage(callback: StreamCallback, usage: ChatUsage): void {
+  callback.onUsage?.({
+    promptTokens: usage.promptTokens,
+    completionTokens: usage.completionTokens,
+    totalTokens: usage.totalTokens,
+    ...(usage.promptTokensDetails != null
+      ? { promptTokensDetails: { ...usage.promptTokensDetails } }
+      : {}),
+  });
 }
 
 export type ChatCallback = Pick<StreamCallback, 'onWaiting' | 'onRetry'>;

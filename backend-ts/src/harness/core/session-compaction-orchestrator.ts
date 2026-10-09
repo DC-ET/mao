@@ -69,7 +69,8 @@ export class SessionCompactionOrchestrator {
       agentId: context.agentId ?? null,
     }, async () => this.contextManager.compactSession(
       sessionId, boundary, history.persistedMessages, history.snapshotMessageIds,
-      normalRequest, compactionModelConfig!, config, listener, cancelFlag, activeTokensHint ?? null, force));
+      normalRequest, compactionModelConfig!, config, listener, cancelFlag, activeTokensHint ?? null, force,
+      context.modelConfig));
     if (result == null) return false;
 
     let compactionEnded = false;

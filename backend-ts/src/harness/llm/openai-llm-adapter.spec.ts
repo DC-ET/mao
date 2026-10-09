@@ -129,6 +129,7 @@ class CapturingCallback implements StreamCallback {
   onChunk(chunk: StreamChunk): void { this.chunks.push(chunk); }
   onStreamReset(): void { this.streamResetCount++; this.chunks = []; }
   onComplete(usage: ChatUsage): void { this.usage = usage; }
+  onUsage(usage: ChatUsage): void { this.usage = usage; }
   onError(t: unknown): void { this.error = t; }
   onWaiting(phase: string): void { this.waitingPhases.push(phase); }
   onRetry(reason: string, statusCode: number | null): void {
@@ -755,5 +756,22 @@ describe('OpenAiLlmAdapter', () => {
     expect(callback.streamResetCount).toBe(1);
     expect(callback.chunks).toHaveLength(1);
     expect(callback.chunks[0].choices?.[0]?.delta?.content).toBe('clean');
+  });
+
+  it('中断前已经到达的 usage 仍通过 onUsage 暴露', async () => {
+    server = new QueueServer();
+    server.enqueueSse(
+      'data: {"id":"c","choices":[{"index":0,"delta":{"content":"ok"}}]}\n\n'
+      + 'data: {"id":"c","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":1000,"completion_tokens":200,"total_tokens":1200,"prompt_tokens_details":{"cached_tokens":400}}}\n\n',
+    );
+    await server.start();
+    const callback = new CapturingCallback();
+    await adapter(0, 0).stream(request('hi'), configOf(server), callback);
+    expect(callback.error).toBeDefined();
+    expect(callback.usage).toMatchObject({
+      promptTokens: 1000,
+      completionTokens: 200,
+      promptTokensDetails: { cachedTokens: 400 },
+    });
   });
 });

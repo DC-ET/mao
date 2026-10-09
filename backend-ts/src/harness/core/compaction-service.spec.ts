@@ -96,6 +96,43 @@ describe('CompactionService', () => {
     expect(llmAdapter.stream).toHaveBeenCalledOnce();
   });
 
+  it('triggerUsesSessionWindowWhenCompactionModelWindowIsLarger', async () => {
+    tokenEstimator.estimateRequestTokens.mockReturnValue(100);
+    streamHandoff('交接正文', usage(1, null, 1));
+    const cfg = config();
+    cfg.contextWindowTokens = 32000;
+    const compactionModel = { modelId: 'huge', contextWindowTokens: 1_000_000 };
+    const result = await service.compactSession(
+      7, 0, persisted(), [1, 2, 3], normalRequest(), compactionModel, cfg, null, null, 30000,
+    );
+    expect(result).not.toBeNull();
+    expect(llmAdapter.stream).toHaveBeenCalledOnce();
+  });
+
+  it('smallCompactionModelDoesNotLowerTheTriggerThreshold', async () => {
+    tokenEstimator.estimateRequestTokens.mockReturnValue(100);
+    const cfg = config();
+    cfg.contextWindowTokens = 200000;
+    const compactionModel = { modelId: 'small', contextWindowTokens: 8000 };
+    const result = await service.compactSession(
+      7, 0, persisted(), [1, 2, 3], normalRequest(), compactionModel, cfg, null, null, 40000,
+    );
+    expect(result).toBeNull();
+    expect(llmAdapter.stream).not.toHaveBeenCalled();
+  });
+
+  it('overflowGuardUsesTheCompactionModelWindow', async () => {
+    tokenEstimator.estimateRequestTokens.mockReturnValueOnce(100).mockReturnValueOnce(9000);
+    const cfg = config();
+    cfg.contextWindowTokens = 200000;
+    const sessionModel = { modelId: 'session', contextWindowTokens: 200000 };
+    const compactionModel = { modelId: 'small', contextWindowTokens: 8000 };
+    await expect(service.compactSession(
+      7, 0, persisted(), [1, 2, 3], normalRequest(), compactionModel, cfg, null, null, 180000, false, sessionModel,
+    )).rejects.toThrow(/8000 tokens/);
+    expect(llmAdapter.stream).not.toHaveBeenCalled();
+  });
+
   it('hintBelowThresholdStillSkipsAndLogs', async () => {
     tokenEstimator.estimateRequestTokens.mockReturnValue(100);
     const result = await service.compactSession(7, 0, persisted(), [1, 2, 3], normalRequest(), model, config(), null, null, 500);

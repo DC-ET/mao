@@ -1567,6 +1567,9 @@ export class StreamingWsHandler {
     try {
       this.deps.agentExecutor(async () => {
         await this.withLock(this.insertLocks, sessionId, async () => {
+          // 早退（已消费、取消超时、会话仍占用、窗口期停止、二次校验失败）也必须摘掉抑制标记，
+          // 否则 autoConsumeQueue 会一直把这个会话的队列当成「插队进行中」而永远不消费。
+          try {
           const item = await this.deps.messageQueueService.getById(queueId);
           // 仅允许插队仍处于 PENDING 的队列项：已消费/已删除（status=DELETED）不得再次执行
           if (!item || item.sessionId !== sessionId || item.status !== 'PENDING') {
@@ -1672,10 +1675,11 @@ export class StreamingWsHandler {
                 console.error(`Failed to re-enqueue inserted queue message ${queueId} for session ${sessionId}`, requeueErr);
               }
             }
+          }
           } finally {
             this.suppressAutoConsumeSend.delete(sessionId);
           }
-      });
+        });
       });
     } catch {
       this.suppressAutoConsumeSend.delete(sessionId);

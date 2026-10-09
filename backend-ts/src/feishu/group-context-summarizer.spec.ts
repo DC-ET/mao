@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { GroupContextSummarizer } from './group-context-summarizer.js';
+import { feishuSummarizerModelConfig, GroupContextSummarizer } from './group-context-summarizer.js';
 
 function makeResponse(text: unknown) {
   return { choices: [{ message: { content: text } }] };
@@ -11,6 +11,19 @@ const MODEL_CONFIG = { baseUrl: 'https://llm.example.com', apiKey: 'sk', modelId
 function makeSummarizer(chat: ReturnType<typeof vi.fn>, resolveModelConfig: (sessionId: number) => Promise<typeof MODEL_CONFIG | null>) {
   return new GroupContextSummarizer(() => ({ chat }) as never, resolveModelConfig);
 }
+
+describe('feishuSummarizerModelConfig', () => {
+  it('keeps the model id so summarize calls can be priced', () => {
+    const config = feishuSummarizerModelConfig({
+      id: 3, name: 'gpt', provider: 'openai', modelId: 'gpt-4o',
+      baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-x', apiProtocol: '',
+      clientImpersonation: 'none',
+    });
+    expect(config.id).toBe(3);
+    expect(config.modelId).toBe('gpt-4o');
+    expect(config.provider).toBe('openai');
+  });
+});
 
 describe('GroupContextSummarizer', () => {
   it('summarizes via the session model config and trims the output', async () => {

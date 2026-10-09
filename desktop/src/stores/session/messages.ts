@@ -662,7 +662,14 @@ export function createMessageRuntimeModule(ctx: {
   // --- Queue message actions ---
 
   function setQueueMessages(sessionId: string, queue: QueueMessage[]) {
-    sessionQueueMessages.value.set(String(sessionId), queue)
+    // REST 返回数字 id，WS queue_updated 返回字符串。拖拽用 dataset（永远是字符串）做严格相等，
+    // 数字 id 会匹配失败并静默不发 reorder。灌入时统一成字符串。
+    const normalized = (queue ?? []).map((item) => ({
+      ...item,
+      id: item.id == null ? '' : String(item.id),
+      sessionId: item.sessionId == null ? String(sessionId) : String(item.sessionId),
+    }))
+    sessionQueueMessages.value.set(String(sessionId), normalized)
   }
 
   function getQueueMessages(sessionId: string): QueueMessage[] {

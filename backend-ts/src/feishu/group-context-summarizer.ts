@@ -1,4 +1,5 @@
-import type { LlmChatClient, LlmChatRequest, LlmModelConfig } from '../model/types.js';
+import type { ClientImpersonation } from '@mao/contracts';
+import type { LlmChatClient, LlmChatRequest, LlmModel, LlmModelConfig } from '../model/types.js';
 import { LLM_CALL_SCENES, LlmCallContext } from '../usage/llm-call-context.js';
 
 const SYSTEM_PROMPT = `你是群聊记录摘要助手。把群聊记录压缩为一份简明摘要，供 AI 助手在后续对话中了解此前的讨论背景。
@@ -8,6 +9,22 @@ const SYSTEM_PROMPT = `你是群聊记录摘要助手。把群聊记录压缩为
 - 按主题分点陈述，每点一行，使用与记录一致的语言（默认简体中文）；
 - 总长度不超过 300 字；
 - 只输出摘要正文，不要标题、前缀、结尾说明或解释。`;
+
+/**
+ * 飞书群聊溢出摘要用的模型配置。必须带上模型 id，否则调用流水的 model_id 为空，
+ * 兜底价格查询被跳过，成本无法归属到真实模型。
+ */
+export function feishuSummarizerModelConfig(model: LlmModel): LlmModelConfig {
+  return {
+    id: model.id,
+    baseUrl: model.baseUrl,
+    apiKey: model.apiKey,
+    modelId: model.modelId,
+    provider: model.provider ?? undefined,
+    apiProtocol: model.apiProtocol ?? undefined,
+    clientImpersonation: (model.clientImpersonation ?? 'none') as ClientImpersonation,
+  };
+}
 
 /** 按 config.apiProtocol 选择协议客户端的路由函数签名（与 ModelService 的路由策略一致）。 */
 type ChatClientResolver = (config: LlmModelConfig) => LlmChatClient;

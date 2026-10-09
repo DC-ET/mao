@@ -20,7 +20,7 @@ import type {
   StreamChunk,
   ToolCall,
 } from './chat-request.js';
-import { DEFAULT_LLM_RETRY } from './chat-request.js';
+import { DEFAULT_LLM_RETRY, notifyPartialUsage } from './chat-request.js';
 import { EmptyResponseExhaustedException } from './empty-response-exhausted.js';
 import { applyClientImpersonationHeaders } from './client-impersonation-headers.js';
 
@@ -249,6 +249,7 @@ export class ResponsesLlmAdapter implements LlmAdapter {
     cancelFlag?: { get(): boolean } | null,
   ): Promise<void> {
     const usage: ChatUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    let usageObserved = false;
     let emitted = false;
     let done = false;
     let buffer = '';
@@ -417,7 +418,10 @@ export class ResponsesLlmAdapter implements LlmAdapter {
           const response = event.response;
           if (isPlainObject(response)) {
             const u = parseResponsesUsage(response.usage);
-            if (u != null) usageObjAssign(usage, u);
+            if (u != null) {
+              usageObserved = true;
+              usageObjAssign(usage, u);
+            }
             if (isPlainObject(response.incomplete_details)) {
               if (response.incomplete_details.reason === 'max_output_tokens') finishReason = 'length';
             }
@@ -430,7 +434,10 @@ export class ResponsesLlmAdapter implements LlmAdapter {
           const response = event.response;
           if (isPlainObject(response)) {
             const u = parseResponsesUsage(response.usage);
-            if (u != null) usageObjAssign(usage, u);
+            if (u != null) {
+              usageObserved = true;
+              usageObjAssign(usage, u);
+            }
             finishReason = mapResponsesStatusToFinishReason(str(response.status), responseIncomplete);
           }
           return;
@@ -496,6 +503,7 @@ export class ResponsesLlmAdapter implements LlmAdapter {
       }
       callback.onComplete(usage);
     } catch (e) {
+      if (usageObserved) notifyPartialUsage(callback, usage);
       if (idleTimedOut) throw idleTimedOut;
       if (e instanceof EmptyResponseExhaustedException) throw e;
       if (e instanceof StreamErrorEventException) throw e;

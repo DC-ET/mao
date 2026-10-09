@@ -946,6 +946,28 @@ describe('StreamingWsHandler', () => {
     await handler.handleTextMessage(ws, 'not-json');
   });
 
+  it('releases auto-consume suppression when insert bails on a consumed queue item', async () => {
+    vi.clearAllMocks();
+    executor.tasks.length = 0;
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('CLOUD', 'IDLE'));
+    messageQueueService.getById.mockResolvedValue({
+      id: 8, sessionId: 11, userId: 7, content: 'stale', images: null, status: 'DELETED',
+    });
+    await handler.handleTextMessage(ws, JSON.stringify({ type: 'insert_message', sessionId: 11, data: { queueId: 8 } }));
+    await executor.runAll();
+    const suppress = (handler as unknown as { suppressAutoConsumeSend: Set<number> }).suppressAutoConsumeSend;
+    expect(suppress.has(11)).toBe(false);
+    messageQueueService.listPending.mockResolvedValue([
+      { id: 9, sessionId: 11, userId: 7, content: 'next', sortOrder: 1, images: null },
+    ]);
+    messageQueueService.dequeue.mockResolvedValue({
+      id: 9, sessionId: 11, userId: 7, content: 'next', sortOrder: 1, images: null,
+    });
+    await handler.autoConsumeQueue(11, 7);
+    expect(messageQueueService.dequeue).toHaveBeenCalledWith(11);
+  });
+
   it('executePersistedUserPromptPushesScheduledUserMessageAndStreams', async () => {
     vi.clearAllMocks();
     sessionService.getSession.mockResolvedValue(session('CLOUD', 'IDLE'));

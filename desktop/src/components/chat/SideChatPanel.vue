@@ -535,13 +535,16 @@ watch(
 
 async function loadSideSessionMeta() {
   if (!hasRealSession.value) return
+  const sid = realSessionId.value
   try {
-    const { data } = await api.get(`/sessions/${realSessionId.value}`)
+    const { data } = await api.get(`/sessions/${sid}`)
+    // 同一 Tab 可能在请求返回前被指派给另一个边路会话。迟到响应不得把来源会话的 phase 写进去。
+    if (realSessionId.value !== sid) return
     if (data?.modelId != null) {
       sideModelId.value = sideModelId.value ?? data.modelId
     }
     if (data?.phase) {
-      sessionStore.updateSessionPhase(String(realSessionId.value), data.phase)
+      sessionStore.updateSessionPhase(String(sid), data.phase)
       sending.value = ACTIVE_PHASES.has(data.phase)
     }
   } catch {
