@@ -1,3 +1,4 @@
+import { basename } from 'node:path';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { isValidSkillName, parseSkillMdContent, validateSkillMd } from '../harness/skill/skill-md.js';
@@ -51,7 +52,15 @@ export class SkillBundleService {
       folderPath = this.skillLoader.getSkillFolder(name);
     } else {
       const skills = await this.userSkillLookup.listUserSkills(ownerUserId);
-      folderPath = skills.find((s) => s.name === name)?.folderPath ?? null;
+      const matches = skills.filter((s) => s.name === name);
+      if (matches.length > 1) {
+        const detail = matches.map((s) => `「${basename(s.folderPath)}」`).join('、');
+        throw new BusinessException(
+          ErrorCode.PARAM_INVALID,
+          `技能「${name}」在多个目录中重名，拒绝导出：${detail}`,
+        );
+      }
+      folderPath = matches[0]?.folderPath ?? null;
     }
     if (folderPath == null) {
       throw new BusinessException(ErrorCode.SKILL_NOT_FOUND);

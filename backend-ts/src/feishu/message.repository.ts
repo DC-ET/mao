@@ -56,6 +56,8 @@ export interface FeishuMessageRepository {
   listGroupMessages(appId: string, chatId: string, limit: number, maxMinutes?: number, threadId?: string | null): Promise<FeishuGroupMessage[]>;
   /** 追溯注入窗口之前被丢弃的未注入普通消息（id > watermark 且 id < beforeId，不限时间），供溢出摘要。 */
   listOverflowGroupMessages(appId: string, chatId: string, watermark: number, beforeId: number, limit: number, threadId?: string | null): Promise<FeishuGroupMessage[]>;
+  /** 水位线之后最旧的未富化行。窗口外的占位行也算，水位线不得越过它。没有则 null。 */
+  findOldestPendingGroupMessageId(appId: string, chatId: string, afterId: number, threadId?: string | null): Promise<number | null>;
   /** 推进群聊上下文增量注入水位线（只前进不后退；仅非话题）。 */
   updateGroupContextWatermark(appId: string, chatId: string, logId: number): Promise<void>;
   /** 推进话题上下文增量注入水位线（只前进不后退）。 */
@@ -206,9 +208,19 @@ export class MysqlFeishuMessageRepository implements FeishuMessageRepository {
     const params = threadId != null ? [appId, chatId, watermark, beforeId, threadId] : [appId, chatId, watermark, beforeId];
     return this.db.query<FeishuGroupMessage>(
       `SELECT * FROM feishu_group_message_log WHERE app_id = ? AND chat_id = ?
-       AND id > ? AND id < ? AND is_mention = 0${threadFilter}
+       AND id > ? AND id < ? AND is_mention = 0 AND enrich_pending = 0${threadFilter}
        ORDER BY created_at DESC, id DESC LIMIT ${safeLimit}`, params,
     ).then((rows) => rows.reverse());
+  }
+
+  findOldestPendingGroupMessageId(appId: string, chatId: string, afterId: number, threadId: string | null = null): Promise<number | null> {
+    const threadFilter = threadId != null ? ' AND thread_id = ?' : ' AND thread_id IS NULL';
+    const params = threadId != null ? [appId, chatId, afterId, threadId] : [appId, chatId, afterId];
+    return this.db.queryOne<{ minId: number | null }>(
+      `SELECT MIN(id) AS minId FROM feishu_group_message_log
+       WHERE app_id = ? AND chat_id = ? AND enrich_pending = 1 AND id > ?${threadFilter}`,
+      params,
+    ).then((row) => (row?.minId == null ? null : Number(row.minId)));
   }
 
   async updateGroupContextWatermark(appId: string, chatId: string, logId: number): Promise<void> {

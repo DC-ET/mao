@@ -323,7 +323,8 @@ app.get('/v1/sessions/:id/trace', async (request, reply) => {
 
 ## 7. 风险与开放问题
 
-- **秒级时钟**：`created_at` 是秒，且是结束时刻。工具挂轮以 `tool_call_id` 为准；只有历史行才退到「未挂到轮」。墙钟误差约 1 秒，慢阈值 60 秒不受影响。不引入毫秒列，除非以后单独做迁移提案。
+- **秒级时钟**（V142 已解决）：`message` / `llm_call` 的 `created_at` 与 `message.updated_at` 已提升为 `DATETIME(3)`，列默认值同步 `CURRENT_TIMESTAMP(3)`，存量数据不回填。同一秒内的多条模型调用现在可区分先后，工具组挂轮不再依赖「同秒也认」的兜底；`session_activity.created_at` 仍是秒级（工具结束时刻），它的归属仍以 `tool_call_id` 为准，秒级相等时留 `unplacedTools`。
+- **同秒落库**：`llm_call.created_at`（调用结束）与 `message.created_at`（消息落库）同为秒级，流收尾与 `afterStream` 落库在同一个程序块先后执行，几乎总落在同一秒。挂轮候选判定因此是「不晚于」（`<=`）而非「严格早于」，否则工具组几乎永远挂不上。同秒仍有多条未占用候选（空响应重试等）时不猜，留 `unplacedTools`。
 - **编辑重发的旧调用还在**：它们被收进「编辑前」，而不是混进当前段，也不是丢掉。多次编辑无法再细分，这是零 DDL 的上限。
 - **工具阶段取消看起来像成功的空工具轮**：只认 `Cancelled by user`。不把「有 llm_call 无助手消息」判成中断。
 - **异步活动插入**：可能晚于下一条用户消息。有 `tool_call_id` 时按消息 id 纠正，不按 `created_at` 改挂。

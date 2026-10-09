@@ -90,6 +90,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '调用流水', keepAlive: true, permission: 'llm-call:read' }
       },
       {
+        path: 'openapi-calls',
+        name: 'OpenApiCalls',
+        component: () => import('../views/openapi/OpenApiCallView.vue'),
+        meta: { title: '开放调用', keepAlive: true, permission: 'openapi:read' }
+      },
+      {
         path: 'feedback',
         name: 'Feedback',
         component: () => import('../views/feedback/FeedbackView.vue'),

@@ -35,6 +35,8 @@
 | 配 / 启停 / 删出站订阅 | `open subscription create` / `set-enabled` / `delete` |
 | 查看投递记录 | `open subscription deliveries` |
 | 以 API Token 触发运行 | `open run` |
+| 查看入站调用流水 | `open calls list` / `open calls get` |
+| 开关完整请求记录 / 重新启用 Token | `open token log-full-body` / `open token re-enable` |
 
 ---
 
@@ -149,12 +151,27 @@ mao open run --agent-id 12 --message "跑一遍 nightly 巡检" --api-token mao_
 
 `queued=true` 表示目标会话忙，消息已进待发送队列。
 
+## 调用流水
+
+每次 API Token 触发和 Webhook 触发都会留下一条流水，包括参数错误、鉴权失败、限流和预算拒绝。桌面端 Token / 触发器卡片上的「调用记录」看自己的；管理后台「开放调用」看全量、统计和导出。
+
+- 默认只记消息长度和字段名，不记正文。`mao open token log-full-body --id <id> --enabled true` 才记录完整请求体（敏感字段名会被打码），操作留审计。
+- 排队中的调用在执行结束后回写成功、失败或取消。长时间没有终态、而且队列里也已经没有这条消息的，统计里算「结果未知」。
+- Token 一小时内连续失败达到阈值（默认 10，系统设置可关）会自动停用，之后调用返回 403。属主用 `mao open token re-enable --id <id>` 恢复。限流和取消不计入次数。
+- 管理端「重发」只对 API 调用开放，用量记在 Token 属主头上。没开完整记录时需要手工粘贴 message。Webhook 不能从服务端重发。
+
+```bash
+mao open calls list --token-id 3
+mao open calls get --id 100
+```
+
 ## 排障
 
 | 现象 | 原因与处理 |
 |------|-----------|
 | `run` 返回 403「该端点仅接受 API Token」 | 用了 JWT 调 run；run 只认 `mao_` Token |
 | `run` 返回 401 | Token 过期 / 已吊销，或 Token 用在了 `/v1/open` 之外的端点 |
+| `run` 返回 403「Token 已因连续失败被自动停用」 | 一小时内失败达到阈值；属主 `open token re-enable` 后恢复 |
 | hook 返回 404 + `not found` | 触发器不存在、已停用、或签名 / 时间戳不通过（统一措辞，不区分） |
 | hook 返回 429 | 该触发器限流；读 `Retry-After` 后重试 |
 | 收件箱出现「触发器停用」 | 连续 5 次执行失败，已自动停用；排除外部系统问题后重新启用 |

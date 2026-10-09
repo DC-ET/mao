@@ -441,6 +441,29 @@ export class MessageRepository {
     );
   }
 
+  /**
+   * 页内助手声明了工具调用、但对应 TOOL 行的 id 落在页外（补写占位追加到当时的末尾）时，
+   * 按 tool_call_id 把这些行取回来，交给归一化贴回助手后面。maxMessageId 用于分享水位 / 分叉切点。
+   */
+  selectToolMessagesByCallIds(
+    sessionId: number,
+    toolCallIds: string[],
+    maxMessageId?: number | null,
+    excludeSourceSessionId?: number | null,
+  ): Promise<Message[]> {
+    if (toolCallIds.length === 0) return Promise.resolve([]);
+    const placeholders = toolCallIds.map(() => '?').join(', ');
+    const cap = maxMessageId == null ? '' : ' AND id <= ?';
+    const capParams = maxMessageId == null ? [] : [maxMessageId];
+    const src = sourceExcludeSql(excludeSourceSessionId);
+    return this.db.query<Message>(
+      `SELECT * FROM \`message\` WHERE session_id = ? AND ${notDeleted()} AND role = 'TOOL'
+        AND tool_call_id IN (${placeholders})${cap}${src.sql}
+       ORDER BY id ASC`,
+      [sessionId, ...toolCallIds, ...capParams, ...src.params],
+    );
+  }
+
   /** selectRange 的含切点上界版本：`id >= startId AND id <= cutMessageId`。 */
   selectRangeThrough(sessionId: number, startId: number, cutMessageId: number): Promise<Message[]> {
     return this.db.query<Message>(

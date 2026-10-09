@@ -33,7 +33,7 @@
           <span>tokens</span>
         </label>
         <el-tooltip
-          content="并行执行的工具耗时互相重叠，逐项相加会大于墙钟；墙钟取最早的开始到最晚的结束。同轮工具按秒级 created_at 归轮，同一秒发起的多个工具不猜轮，单独列为「未挂到轮」。"
+          content="并行执行的工具耗时互相重叠，逐项相加会大于墙钟；墙钟取最早的开始到最晚的结束。工具按 tool_call_id 归轮；缺 id 的历史行按 created_at 归轮，时间戳完全相同时不猜轮，单独列为「未挂到轮」。"
           placement="bottom"
           :show-after="300"
         >

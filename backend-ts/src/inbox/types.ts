@@ -14,6 +14,8 @@ export const INBOX_KINDS: readonly InboxKind[] = [
   'TRIGGER_DISABLED',
   'BUDGET_WARN',
   'SCHEDULED_TASK_PAUSED',
+  'TOKEN_DISABLED',
+  'OPEN_API_CALL_FAILED',
 ];
 
 /** 未知 kind 一律拒绝（不写库、不广播）。 */

@@ -51,6 +51,18 @@ export function nowSql(): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
+/**
+ * 毫秒精度的当前时间，写给 DATETIME(3) 列用（message / llm_call）。
+ *
+ * 不要用它替换 nowSql()：其余表（session / memory_item / subagent_execution 等）仍是
+ * 秒级列，写毫秒会被 MySQL 静默截断，白丢精度。现在只有 message.updated_at 需要它——
+ * created_at 两列都由服务端 CURRENT_TIMESTAMP(3) 生成，应用不传值。
+ */
+export function nowSqlMs(): string {
+  const d = new Date();
+  return `${nowSql()}.${String(d.getMilliseconds()).padStart(3, '0')}`;
+}
+
 function pad(n: number): string {
   return String(n).padStart(2, '0');
 }

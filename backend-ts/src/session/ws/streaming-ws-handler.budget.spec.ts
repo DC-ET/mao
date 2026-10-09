@@ -229,7 +229,7 @@ describe('StreamingWsHandler 预算 BLOCK 闸门（§5.7）', () => {
     expect(h.noticeQueueBlocked).toHaveBeenCalledTimes(1);
     expect(h.noticeQueueBlocked).toHaveBeenCalledWith(BLOCK, 7);
     // 补偿链路：回补队首 + 推 queue_updated（无孤儿消息需删）
-    expect(h.messageQueueService.enqueueHead).toHaveBeenCalledWith(11, 7, '#{next}#', null, null, null, null);
+    expect(h.messageQueueService.enqueueHead).toHaveBeenCalledWith(11, 7, '#{next}#', null, null, null, null, null);
     expect(h.sessionService.deleteMessageById).not.toHaveBeenCalled();
     expect(h.sessionService.saveMessage).not.toHaveBeenCalled();
     const errors = errorEvents(h.registry);
@@ -250,7 +250,7 @@ describe('StreamingWsHandler 预算 BLOCK 闸门（§5.7）', () => {
       return head;
     });
     await h.handler.autoConsumeQueue(11, 7);
-    expect(h.messageQueueService.enqueueHead).toHaveBeenCalledWith(11, 7, '#{next}#', null, 55, 'SCHEDULED', null);
+    expect(h.messageQueueService.enqueueHead).toHaveBeenCalledWith(11, 7, '#{next}#', null, 55, 'SCHEDULED', null, null);
     expect(h.noticeQueueBlocked).toHaveBeenCalledWith(BLOCK, 7);
   });
 

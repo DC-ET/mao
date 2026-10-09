@@ -97,6 +97,7 @@ const allOn: InboxPreference = {
   approvalPendingEnabled: true,
   subagentDoneEnabled: true,
   budgetWarnEnabled: true,
+  openApiCallFailedEnabled: false,
   systemNotifyEnabled: true,
 }
 

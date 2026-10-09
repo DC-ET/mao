@@ -31,7 +31,9 @@ const KIND_META: Record<InboxKind, { label: string; icon: string }> = {
   SUBAGENT_DONE: { label: '子代理完成', icon: '⌘' },
   TRIGGER_DISABLED: { label: '触发器停用', icon: '⚡' },
   SCHEDULED_TASK_PAUSED: { label: '任务已暂停', icon: '⏸' },
-  BUDGET_WARN: { label: '预算提醒', icon: '¥' }
+  BUDGET_WARN: { label: '预算提醒', icon: '¥' },
+  TOKEN_DISABLED: { label: 'Token 停用', icon: '⛔' },
+  OPEN_API_CALL_FAILED: { label: '开放调用失败', icon: '!' }
 }
 
 function kindMeta(kind: InboxKind) {

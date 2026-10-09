@@ -125,6 +125,7 @@ const menuGroups: MenuGroup[] = [
       { index: '/scheduled-tasks', label: '定时任务', icon: Timer, permission: 'scheduled-task:read' },
       { index: '/budgets', label: '用量预算', icon: Wallet, permission: 'budget:read' },
       { index: '/llm-calls', label: '调用流水', icon: Tickets, permission: 'llm-call:read' },
+      { index: '/openapi-calls', label: '开放调用', icon: Tickets, permission: 'openapi:read' },
       { index: '/feedback', label: '点踩反馈', icon: Flag, permission: 'feedback:read' },
       { index: '/memory', label: '用户记忆', icon: Collection, permission: 'memory:read' }
     ]

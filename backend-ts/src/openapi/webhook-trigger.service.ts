@@ -7,6 +7,7 @@ import type { FixedWindowRateLimiter } from './rate-limiter.js';
 import type { MysqlWebhookTriggerRepository } from './openapi.repository.js';
 import { generatePathToken, generateWebhookSecret, verifyHmacSignature } from './hmac.js';
 import type { OpenRunResult, OpenRunService } from './open-run.service.js';
+import type { OpenApiCallLogService } from './open-api-call-log.service.js';
 
 /** 连续失败自动停用阈值（技术方案决策 8）。 */
 export const TRIGGER_DISABLE_AFTER_FAILURES = 5;
@@ -43,6 +44,7 @@ export interface WebhookTriggerDeps {
   openRun: OpenRunService;
   rateLimiter: FixedWindowRateLimiter;
   disableNotifier?: TriggerDisableNotifier | null;
+  callLog?: OpenApiCallLogService | null;
 }
 
 export interface CreateTriggerInput {
@@ -179,18 +181,58 @@ export class WebhookTriggerService {
    * （决策 10）；查无触发器时对 dummy secret 做等时 HMAC 比较。
    * 验签通过后回填 request.userId 由路由层完成（审计归因）。
    */
-  async handleFire(pathToken: string, headers: HookFireHeaders, rawBody: string): Promise<HookFireOutcome> {
+  async handleFire(pathToken: string, headers: HookFireHeaders, rawBody: string, sourceIp?: string | null): Promise<HookFireOutcome> {
     const trigger = await this.deps.triggerRepo.findByPathToken(pathToken);
     const secret = trigger?.secretCipher != null ? await this.deps.cipher.decrypt(trigger.secretCipher) : DUMMY_TRIGGER_SECRET;
     const signatureValid = verifyHmacSignature(secret, headers.timestamp, headers.signature, rawBody);
     if (trigger == null || !signatureValid || Number(trigger.enabled) !== 1 || trigger.userId == null) {
+      const known = trigger != null && trigger.userId != null && trigger.id != null;
+      if (known) {
+        const limit = trigger.sessionId != null ? TRIGGER_RATE_LIMIT_BOUND : TRIGGER_RATE_LIMIT_UNBOUND;
+        const decision = this.deps.rateLimiter.allow(`trigger:${trigger.id}`, limit);
+        // 对外仍是统一 404，但写流水不得超过该触发器自己的限流档，避免错误签名把流水刷爆。
+        if (!decision.allowed) return { ok: false, reason: 'not_found' };
+      }
+      await this.deps.callLog?.recordDirect({
+        source: 'WEBHOOK',
+        triggerId: known ? trigger.id ?? null : null,
+        userId: known ? trigger.userId ?? null : null,
+        agentId: known ? trigger.agentId ?? null : null,
+        sourceIp: sourceIp ?? null,
+        body: rawBody,
+        httpStatus: 404,
+        errorCode: 'OPEN_HOOK_NOT_FOUND',
+        errorSummary: 'not found',
+        suppressByIp: trigger == null,
+      });
       return { ok: false, reason: 'not_found' };
     }
     const limit = trigger.sessionId != null ? TRIGGER_RATE_LIMIT_BOUND : TRIGGER_RATE_LIMIT_UNBOUND;
     const decision = this.deps.rateLimiter.allow(`trigger:${trigger.id}`, limit);
     if (!decision.allowed) {
+      await this.deps.callLog?.recordDirect({
+        source: 'WEBHOOK',
+        triggerId: trigger.id ?? null,
+        userId: trigger.userId,
+        agentId: trigger.agentId ?? null,
+        sessionId: trigger.sessionId ?? null,
+        sourceIp: sourceIp ?? null,
+        body: rawBody,
+        httpStatus: 429,
+        errorCode: 'RATE_LIMITED',
+        errorSummary: '请求过于频繁',
+      });
       return { ok: false, reason: 'rate_limited', retryAfterSeconds: decision.retryAfterSeconds };
     }
+    const begun = await this.deps.callLog?.begin({
+      source: 'WEBHOOK',
+      triggerId: trigger.id ?? null,
+      userId: trigger.userId,
+      agentId: trigger.agentId ?? null,
+      sessionId: trigger.sessionId ?? null,
+      sourceIp: sourceIp ?? null,
+      body: rawBody,
+    }) ?? null;
     let result: OpenRunResult;
     try {
       result = await this.deps.openRun.run({
@@ -199,9 +241,11 @@ export class WebhookTriggerService {
         sessionId: trigger.sessionId ?? null,
         source: 'WEBHOOK',
         triggerId: trigger.id ?? null,
+        callLogId: begun?.id ?? null,
         message: this.wrapPayload(trigger.name ?? '', rawBody),
       });
     } catch (e) {
+      await this.deps.callLog?.markRejected(begun?.id ?? null, begun?.startedAt ?? Date.now(), e);
       // 预算 BLOCK（决策 6）：任务未启动，无终态可投递；但计入连败与自动停用护栏正向联动，
       // 否则超限触发器会以 4xx 信封无限重试刷量。其余异常原样上抛。
       if (e instanceof BusinessException && e.code === ErrorCode.BUDGET_EXCEEDED.code && trigger.id != null) {
@@ -210,6 +254,7 @@ export class WebhookTriggerService {
       }
       throw e;
     }
+    await this.deps.callLog?.markAccepted(begun?.id ?? null, begun?.startedAt ?? Date.now(), result);
     // 直跑路径（未排队）：执行已在本请求内收敛，终态由 openRun 回读，就地做同源计数
     // （技术方案 §5.4）。排队路径的终态晚于本请求，由 WS 消费侧 handleQueueSettled 回写，
     // 两条路径按 queued 互斥分流，不会对同一次执行重复计数。

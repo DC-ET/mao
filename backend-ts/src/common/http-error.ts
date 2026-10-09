@@ -71,6 +71,10 @@ export function handleError(err: unknown, _req: FastifyRequest, reply: FastifyRe
       sendJson(reply, 413, fail(err.code, err.message));
       return;
     }
+    if (err.code === ErrorCode.TOKEN_AUTO_DISABLED.code) {
+      sendJson(reply, 403, fail(err.code, err.message));
+      return;
+    }
     const http = err.code === 1001 || err.code === 401 ? 401
       : err.code === 1002 || err.code === 403 ? 403
         : 200;

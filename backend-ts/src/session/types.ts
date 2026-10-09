@@ -94,6 +94,8 @@ export interface MessageQueue {
   sourceType?: MessageQueueSource | null;
   /** WEBHOOK 来源时的触发器绑定（类比 scheduledTaskId，消费终态后回写失败计数） */
   openTriggerId?: number | null;
+  /** API/WEBHOOK 入队时的调用流水绑定，消费终态后回写 open_api_call_log */
+  openCallLogId?: number | null;
   deleted?: number;
   createdAt?: string | null;
   updatedAt?: string | null;

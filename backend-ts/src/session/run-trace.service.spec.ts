@@ -278,6 +278,239 @@ describe('RunTraceService', () => {
     expect(run.totals.toolSuccess).toBe(1);
   });
 
+  it('resolves same-second tool rounds by millisecond precision (V142 DATETIME(3))', async () => {
+    // V142 之后 llm_call / message 的 created_at 都是 DATETIME(3)。同一秒内的两条
+    // agent 调用现在带毫秒可区分：工具组挂到毫秒上不晚于助手消息的那一条，
+    // 不再因为「同秒多候选」而整体留 unplacedTools。
+    const service = makeService({
+      messages: [
+        user(1, '2026-10-09 10:00:00.000', '连跑'),
+        assistant(2, '2026-10-09 10:00:08.450', [{ id: 'tc1', name: 'shell', args: '{"command":"ls"}' }]),
+        toolMessage(3, '2026-10-09 10:00:08.500', 'tc1', '{"ok":true}'),
+        assistant(4, '2026-10-09 10:00:08.900', [{ id: 'tc2', name: 'shell', args: '{"command":"pwd"}' }]),
+        toolMessage(5, '2026-10-09 10:00:08.950', 'tc2', '{"ok":true}'),
+      ],
+      calls: [
+        call(1, { createdAt: '2026-10-09 10:00:08.200' }),
+        call(2, { createdAt: '2026-10-09 10:00:08.700' }),
+      ],
+      activities: [
+        activity(1, { detailJson: JSON.stringify({ toolCallId: 'tc1' }), createdAt: '2026-10-09 10:00:08.500' }),
+        activity(2, { detailJson: JSON.stringify({ toolCallId: 'tc2' }), createdAt: '2026-10-09 10:00:08.950' }),
+      ],
+      events: [],
+    });
+    const page = await service.buildTrace(1, QUERY);
+    const rounds = page.runs[0].segments[0].rounds;
+    expect(rounds).toHaveLength(2);
+    // 毫秒可区分后两条工具组各归其轮，无未挂到轮
+    expect(rounds[0].tools.map((t) => t.toolCallId)).toEqual(['tc1']);
+    expect(rounds[1].tools.map((t) => t.toolCallId)).toEqual(['tc2']);
+    expect(page.runs[0].segments[0].unplacedTools).toHaveLength(0);
+    expect(page.runs[0].totals.toolSuccess).toBe(2);
+  });
+
+  it('still refuses to guess when millisecond timestamps are exactly equal', async () => {
+    // 极端情形：毫秒也完全相同（时钟回拨 / 同批重试）时依然不猜，保守口径不变。
+    const service = makeService({
+      messages: [
+        user(1, '2026-10-09 10:00:00.000', '跑'),
+        assistant(2, '2026-10-09 10:00:08.500', [{ id: 'tc1', name: 'shell', args: '{"command":"ls"}' }]),
+        toolMessage(3, '2026-10-09 10:00:08.600', 'tc1', '{"ok":true}'),
+      ],
+      calls: [
+        call(1, { createdAt: '2026-10-09 10:00:08.500' }),
+        call(2, { createdAt: '2026-10-09 10:00:08.500' }),
+      ],
+      activities: [activity(1, { detailJson: JSON.stringify({ toolCallId: 'tc1' }) })],
+      events: [],
+    });
+    const page = await service.buildTrace(1, QUERY);
+    const run = page.runs[0];
+    expect(run.segments[0].rounds).toHaveLength(2);
+    expect(run.segments[0].rounds.flatMap((r) => r.tools)).toHaveLength(0);
+    expect(run.segments[0].unplacedTools.map((t) => t.toolCallId)).toEqual(['tc1']);
+    // 未挂到轮仍计入成败
+    expect(run.totals.toolSuccess).toBe(1);
+  });
+
+  it('mixes millisecond new rows with legacy second-precision rows', async () => {
+    // 升级后同一会话里新旧行并存：历史行（秒）补 .000，新行带真实毫秒，
+    // 字典序比较继续成立，历史工具组仍按秒级候选挂上。
+    const service = makeService({
+      messages: [
+        user(1, '2026-10-09 10:00:00', '混跑'),
+        // 升级前写入的助手消息：秒级
+        assistant(2, '2026-10-09 10:00:08', [{ id: 'tc1', name: 'shell', args: '{"command":"ls"}' }]),
+        toolMessage(3, '2026-10-09 10:00:08', 'tc1', '{"ok":true}'),
+        // 升级后写入的助手消息：毫秒
+        assistant(4, '2026-10-09 10:00:20.300', [{ id: 'tc2', name: 'shell', args: '{"command":"pwd"}' }]),
+        toolMessage(5, '2026-10-09 10:00:20.400', 'tc2', '{"ok":true}'),
+      ],
+      calls: [
+        call(1, { createdAt: '2026-10-09 10:00:08' }),
+        call(2, { createdAt: '2026-10-09 10:00:20.100' }),
+      ],
+      activities: [
+        activity(1, { detailJson: JSON.stringify({ toolCallId: 'tc1' }), createdAt: '2026-10-09 10:00:08' }),
+        activity(2, { detailJson: JSON.stringify({ toolCallId: 'tc2' }), createdAt: '2026-10-09 10:00:20.400' }),
+      ],
+      events: [],
+    });
+    const page = await service.buildTrace(1, QUERY);
+    const rounds = page.runs[0].segments[0].rounds;
+    expect(rounds).toHaveLength(2);
+    expect(rounds[0].tools.map((t) => t.toolCallId)).toEqual(['tc1']);
+    expect(rounds[1].tools.map((t) => t.toolCallId)).toEqual(['tc2']);
+    expect(page.runs[0].segments[0].unplacedTools).toHaveLength(0);
+  });
+
+  it('splits the before_edit boundary with millisecond precision', async () => {
+    // updated_at 也是 DATETIME(3)：编辑与重发落在同一秒时，毫秒切点能把重发的调用
+    // 正确留在「当前」段，不会因为秒级相等被误划进「编辑前」。
+    const service = makeService({
+      messages: [
+        user(1, '2026-10-09 10:00:00.000', '改需求', '2026-10-09 10:00:30.400'),
+        assistant(2, '2026-10-09 10:00:30.600', [{ id: 'tc1', name: 'shell', args: '{"command":"ls"}' }]),
+        toolMessage(3, '2026-10-09 10:00:30.700', 'tc1', '{"ok":true}'),
+      ],
+      calls: [
+        // 编辑前的调用：毫秒早于 updated_at
+        call(1, { createdAt: '2026-10-09 10:00:30.100' }),
+        // 重发后的调用：同一秒但毫秒晚于 updated_at → 必须留在 current
+        call(2, { createdAt: '2026-10-09 10:00:30.500' }),
+      ],
+      activities: [activity(1, { detailJson: JSON.stringify({ toolCallId: 'tc1' }), createdAt: '2026-10-09 10:00:30.700' })],
+      events: [],
+    });
+    const page = await service.buildTrace(1, QUERY);
+    const run = page.runs[0];
+    expect(run.segments).toHaveLength(2);
+    expect(run.segments[0].kind).toBe('before_edit');
+    expect(run.segments[0].rounds.map((r) => r.createdAt)).toEqual(['2026-10-09 10:00:30.100']);
+    expect(run.segments[1].kind).toBe('current');
+    expect(run.segments[1].rounds.map((r) => r.createdAt)).toEqual(['2026-10-09 10:00:30.500']);
+    // 对得上现存消息的工具永远归当前段
+    expect(run.segments[1].rounds[0].tools.map((t) => t.toolCallId)).toEqual(['tc1']);
+    expect(run.segments[1].unplacedTools).toHaveLength(0);
+  });
+
+  it('computes wall clock from millisecond timestamps without second-level rounding', async () => {
+    const service = makeService({
+      messages: [user(1, '2026-10-09 10:00:00.000', '跑')],
+      calls: [
+        call(1, { createdAt: '2026-10-09 10:00:02.250', durationMs: 2000 }),
+        call(2, { id: 2, createdAt: '2026-10-09 10:00:08.750', durationMs: 1000 }),
+      ],
+      activities: [],
+      events: [],
+    });
+    const page = await service.buildTrace(1, QUERY);
+    // 最早起点 10:00:00.250，最晚结束 10:00:08.750 → 8500ms
+    expect(page.runs[0].totals.wallClockMs).toBe(8500);
+  });
+
+  it('places a tool group by the only same-second call', async () => {
+    const service = makeService({
+      messages: [
+        user(1, '2026-10-09 10:00:00', '看一下'),
+        assistant(2, '2026-10-09 10:00:08', [{ id: 'tc1', name: 'read_file', args: '{"path":"a.ts"}' }]),
+        toolMessage(3, '2026-10-09 10:00:08', 'tc1', '{"content":"a"}'),
+      ],
+      calls: [call(1, { createdAt: '2026-10-09 10:00:08', durationMs: 6000 })],
+      activities: [activity(1, { type: 'READ', target: 'a.ts', detailJson: JSON.stringify({ toolCallId: 'tc1' }), createdAt: '2026-10-09 10:00:08' })],
+      events: [],
+    });
+    const page = await service.buildTrace(1, QUERY);
+    const run = page.runs[0];
+    expect(run.segments[0].rounds).toHaveLength(1);
+    expect(run.segments[0].rounds[0].tools.map((t) => t.toolCallId)).toEqual(['tc1']);
+    expect(run.segments[0].unplacedTools).toHaveLength(0);
+    expect(run.totals.toolSuccess).toBe(1);
+  });
+
+  it('does not attach a tool group to a call from a later second', async () => {
+    // 放宽只到同秒：晚于助手消息落库时刻的调用不是这轮的输出，必须排除
+    const service = makeService({
+      messages: [
+        user(1, '2026-10-09 10:00:00', '跑'),
+        assistant(2, '2026-10-09 10:00:08', [{ id: 'tc1', name: 'shell', args: '{"command":"ls"}' }]),
+        toolMessage(3, '2026-10-09 10:00:09', 'tc1', '{"ok":true}'),
+      ],
+      calls: [
+        call(1, { createdAt: '2026-10-09 10:00:05' }),
+        // 下一条用户消息后的新 run 调用：不能反过来挂到本 run 的工具组上
+        call(2, { createdAt: '2026-10-09 10:00:09' }),
+      ],
+      activities: [activity(1, { detailJson: JSON.stringify({ toolCallId: 'tc1' }) })],
+      events: [],
+    });
+    const page = await service.buildTrace(1, QUERY);
+    const run = page.runs[0];
+    expect(run.segments[0].rounds[0].tools.map((t) => t.toolCallId)).toEqual(['tc1']);
+    // 同秒有两条候选（10:00:08 的调用与 10:00:09 的不算同秒，这里只验晚于的不入选）
+    expect(run.segments[0].unplacedTools).toHaveLength(0);
+  });
+
+  it('keeps claiming rounds in order across same-second tool rounds', async () => {
+    // 两条同秒 agent 调用：每条助手消息都看到「同秒有两条未占用候选」→ 歧义不猜。
+    // 这正是保守口径要的结果：宁可留 unplacedTools，也不把 tc1/tc2 猜错到另一条轮上。
+    const service = makeService({
+      messages: [
+        user(1, '2026-10-09 10:00:00', '连跑'),
+        assistant(2, '2026-10-09 10:00:08', [{ id: 'tc1', name: 'shell', args: '{"command":"ls"}' }]),
+        toolMessage(3, '2026-10-09 10:00:08', 'tc1', '{"ok":true}'),
+        assistant(4, '2026-10-09 10:00:08', [{ id: 'tc2', name: 'shell', args: '{"command":"pwd"}' }]),
+        toolMessage(5, '2026-10-09 10:00:08', 'tc2', '{"ok":true}'),
+      ],
+      calls: [
+        call(1, { createdAt: '2026-10-09 10:00:08' }),
+        call(2, { createdAt: '2026-10-09 10:00:08' }),
+      ],
+      activities: [
+        activity(1, { detailJson: JSON.stringify({ toolCallId: 'tc1' }) }),
+        activity(2, { detailJson: JSON.stringify({ toolCallId: 'tc2' }) }),
+      ],
+      events: [],
+    });
+    const page = await service.buildTrace(1, QUERY);
+    const rounds = page.runs[0].segments[0].rounds;
+    expect(rounds).toHaveLength(2);
+    // 同秒多候选 → 两条轮都不挂工具，工具组整体留 unplacedTools，成败照常计数
+    expect(rounds.flatMap((r) => r.tools)).toHaveLength(0);
+    expect(page.runs[0].segments[0].unplacedTools.map((t) => t.toolCallId)).toEqual(['tc1', 'tc2']);
+    expect(page.runs[0].totals.toolSuccess).toBe(2);
+  });
+
+  it('claims distinct rounds in order when each second has a single candidate', async () => {
+    // 对照上一条：两条调用错开秒级时，每条助手消息同秒只有一条候选，
+    // 各自挂到对应轮上，且后一条不得重复占用前一条已被领走的调用。
+    const service = makeService({
+      messages: [
+        user(1, '2026-10-09 10:00:00', '连跑'),
+        assistant(2, '2026-10-09 10:00:08', [{ id: 'tc1', name: 'shell', args: '{"command":"ls"}' }]),
+        toolMessage(3, '2026-10-09 10:00:09', 'tc1', '{"ok":true}'),
+        assistant(4, '2026-10-09 10:00:14', [{ id: 'tc2', name: 'shell', args: '{"command":"pwd"}' }]),
+        toolMessage(5, '2026-10-09 10:00:15', 'tc2', '{"ok":true}'),
+      ],
+      calls: [
+        call(1, { createdAt: '2026-10-09 10:00:08' }),
+        call(2, { createdAt: '2026-10-09 10:00:14' }),
+      ],
+      activities: [
+        activity(1, { detailJson: JSON.stringify({ toolCallId: 'tc1' }), createdAt: '2026-10-09 10:00:09' }),
+        activity(2, { detailJson: JSON.stringify({ toolCallId: 'tc2' }), createdAt: '2026-10-09 10:00:15' }),
+      ],
+      events: [],
+    });
+    const page = await service.buildTrace(1, QUERY);
+    const rounds = page.runs[0].segments[0].rounds;
+    expect(rounds).toHaveLength(2);
+    expect(rounds[0].tools.map((t) => t.toolCallId)).toEqual(['tc1']);
+    expect(rounds[1].tools.map((t) => t.toolCallId)).toEqual(['tc2']);
+    expect(page.runs[0].segments[0].unplacedTools).toHaveLength(0);
+  });
+
   it('marks Cancelled by user rounds as interrupted and not failed', async () => {
     const service = makeService({
       messages: [user(1, '2026-10-09 10:00:00', '跑')],

@@ -29,6 +29,11 @@ export interface ApiToken {
   expiresAt?: string | null;
   revokedAt?: string | null;
   lastUsedAt?: string | null;
+  autoDisabledAt?: string | null;
+  autoDisableReason?: string | null;
+  failureCount?: number | null;
+  failureWindowStartedAt?: string | null;
+  logFullBody?: number | null;
   createdAt?: string | null;
   updatedAt?: string | null;
 }
@@ -95,6 +100,9 @@ export interface ApiTokenView {
   expiresAt: string | null;
   revokedAt: string | null;
   lastUsedAt: string | null;
+  autoDisabledAt: string | null;
+  autoDisableReason: string | null;
+  logFullBody: boolean;
   createdAt: string | null;
 }
 

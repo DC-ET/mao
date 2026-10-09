@@ -273,6 +273,7 @@ describe('InboxService 列表与偏好读写', () => {
       subagentDoneEnabled: false,
       systemNotifyEnabled: true,
       budgetWarnEnabled: true,
+      openApiCallFailedEnabled: false,
     });
   });
 
@@ -296,6 +297,8 @@ describe('InboxService 列表与偏好读写', () => {
       questionPendingEnabled: false,
       approvalPendingEnabled: true,
       subagentDoneEnabled: true,
+      budgetWarnEnabled: true,
+      openApiCallFailedEnabled: false,
       systemNotifyEnabled: false,
     });
     expect(saved.subagentDoneEnabled).toBe(true);
@@ -304,6 +307,8 @@ describe('InboxService 列表与偏好读写', () => {
       questionPendingEnabled: false,
       approvalPendingEnabled: true,
       subagentDoneEnabled: true,
+      budgetWarnEnabled: true,
+      openApiCallFailedEnabled: false,
       systemNotifyEnabled: false,
     });
   });
