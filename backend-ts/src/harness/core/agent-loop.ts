@@ -243,6 +243,8 @@ export class AgentLoop {
         const emptyRetryInfo = { attempt: 0, maxRetries: 10 };
         const thinkingActive = { v: false };
         const emittedEarlyStarts = new Set<string>();
+        // 首片无 id 时合成的占位 id。真实 id 到达前不下发 start / args，避免注册表留下永不完成的孤儿调用。
+        const provisionalToolCallIds = new Set<string>();
         // thinking_start 惰性发送：仅当模型真正输出首个推理增量时才标记思考开始。
         // 之前在每轮 LLM 调用前无条件发送，模型不输出推理内容时（纯工具调用轮很常见），
         // thinking 状态会横跨整轮，导致前端把上一轮已完成的思考块重新点亮为“思考中”。
@@ -274,8 +276,8 @@ export class AgentLoop {
               }
               if (delta.toolCalls) {
                 for (const tc of delta.toolCalls) {
-                  const merged = this.mergeToolCall(toolCalls, tc, listener, emittedEarlyStarts);
-                  if (merged?.id && merged.function) {
+                  const merged = this.mergeToolCall(toolCalls, tc, listener, emittedEarlyStarts, provisionalToolCallIds);
+                  if (merged?.id && merged.function && !provisionalToolCallIds.has(merged.id)) {
                     listener.onToolCallArgsDelta?.(merged.id, merged.function.arguments ?? '');
                   }
                 }
@@ -357,6 +359,7 @@ export class AgentLoop {
               thinkingBuilder.length = 0;
               toolCalls.length = 0;
               emittedEarlyStarts.clear();
+              provisionalToolCallIds.clear();
               listener.onLlmStreamReset?.();
             },
             onWaiting: (phase, elapsed) => listener.onLlmWaiting?.(phase, elapsed),
@@ -708,6 +711,7 @@ export class AgentLoop {
     delta: ToolCall,
     listener: AgentEventListener,
     emittedEarlyStarts: Set<string>,
+    provisionalIds: Set<string>,
   ): ToolCall | null {
     let merged = this.findMergeTarget(existing, delta);
     if (merged) {
@@ -716,7 +720,11 @@ export class AgentLoop {
       if (delta.id && merged.id !== delta.id) {
         const previousId = merged.id;
         merged.id = delta.id;
-        if (previousId && emittedEarlyStarts.has(previousId)) emittedEarlyStarts.add(delta.id);
+        if (previousId) {
+          provisionalIds.delete(previousId);
+          // 占位 id 若已下发过 start，把「已下发」记到真实 id 上，避免 onComplete 再开一张卡。
+          if (emittedEarlyStarts.delete(previousId)) emittedEarlyStarts.add(delta.id);
+        }
       }
       this.applyToolCallDelta(merged, delta);
     } else if (delta.id || delta.index != null) {
@@ -728,13 +736,15 @@ export class AgentLoop {
         // 会被整体剥掉、严格网关还会因 tool_calls[].id 缺失 400。
         // 不能用 index 推导——同一 index 会在后续轮次复用，配对表会跨轮错并；随机 id 由本条
         // 调用持有终身，同 index 的后续分片经 findMergeTarget 归并到同一对象。
+        // 真实 id 到达前记为 provisional：不下发 start，避免合成 id 在注册表里变成孤儿。
         delta.id = `call-${randomUUID()}`;
+        provisionalIds.add(delta.id);
       }
       existing.push(delta);
       merged = delta;
     }
-    // JS Set.add() returns the Set (always truthy); Java HashSet.add returns boolean.
-    if (merged?.id && merged.function?.name && !emittedEarlyStarts.has(merged.id)) {
+    // 占位 id 等到真实 id 写回（或流结束由 onComplete 用最终 id 下发）再通知监听器。
+    if (merged?.id && merged.function?.name && !provisionalIds.has(merged.id) && !emittedEarlyStarts.has(merged.id)) {
       emittedEarlyStarts.add(merged.id);
       listener.onToolCallStart(merged);
     }

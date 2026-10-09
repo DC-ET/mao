@@ -94,6 +94,8 @@ export class CompactionService {
     cancelFlag: { get(): boolean } | null,
     activeTokensHint?: number | null,
     force = false,
+    /** 会话主模型。触发阈值用它的窗口；缺省时用 config 兜底窗口，不用压缩模型窗口。 */
+    sessionModelConfig?: LlmModelConfig | null,
   ): Promise<SessionCompactionResult | null> {
     // 决策 6：enabled=false 只关「自动整理」，不禁止人工动作。force（手动压缩）旁路 enabled 门，
     // 但缺消息 / 缺请求仍无从压缩，照常短路。
@@ -106,11 +108,14 @@ export class CompactionService {
     // 内部估算器（utf8 字节/4）对中文与工具调用普遍显著低估，
     // 单独依赖它会在真实用量已超阈值时静默跳过压缩。
     const normalRequestTokens = this.tokenEstimator.estimateRequestTokens(normalRequest);
-    const effectiveWindow = CompactionConfig.resolveEffectiveContextWindow(modelConfig, config);
+    // 触发阈值跟会话主模型走（与 agent-loop mid-loop 门同一口径），防止会话请求撑爆会话模型。
+    // 压缩模型窗口只用于下面的溢出保护，防止摘要请求撑爆压缩模型。两者不能混用。
+    const triggerWindow = CompactionConfig.resolveEffectiveContextWindow(sessionModelConfig, config);
+    const overflowWindow = CompactionConfig.resolveEffectiveContextWindow(modelConfig, config);
     const measuredTokens = activeTokensHint != null && activeTokensHint > normalRequestTokens
       ? activeTokensHint
       : normalRequestTokens;
-    const triggerThreshold = Math.floor(effectiveWindow * config.triggerRatio);
+    const triggerThreshold = Math.floor(triggerWindow * config.triggerRatio);
     // force 旁路阈值判定：手动压缩即便未达阈值也强制执行（技术方案 5.4 / 决策 5）
     if (!force && measuredTokens < triggerThreshold) {
       harnessLog('info', `Session handoff compaction skipped below threshold: sessionId=${sessionId}`
@@ -121,8 +126,8 @@ export class CompactionService {
     const started = Date.now();
     const compactionRequest = this.deriveRequest(normalRequest, this.buildHandoffInstruction(config.maxSummaryTokens));
     const compactionRequestTokens = this.tokenEstimator.estimateRequestTokens(compactionRequest);
-    if (compactionRequestTokens >= effectiveWindow) {
-      throw new CompactionContextOverflowException(compactionRequestTokens, effectiveWindow);
+    if (compactionRequestTokens >= overflowWindow) {
+      throw new CompactionContextOverflowException(compactionRequestTokens, overflowWindow);
     }
 
     listener?.onCompactionStart?.('session', messages.length, measuredTokens);
@@ -133,8 +138,8 @@ export class CompactionService {
       if (handoff == null) {
         const retryRequest = this.deriveRequest(compactionRequest, this.correctionInstruction());
         const retryTokens = this.tokenEstimator.estimateRequestTokens(retryRequest);
-        if (retryTokens >= effectiveWindow) {
-          throw new CompactionContextOverflowException(retryTokens, effectiveWindow);
+        if (retryTokens >= overflowWindow) {
+          throw new CompactionContextOverflowException(retryTokens, overflowWindow);
         }
         handoff = await this.invokeAndValidate(retryRequest, modelConfig, cancelFlag, listener);
       }

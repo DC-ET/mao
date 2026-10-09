@@ -18,7 +18,7 @@ import type {
   StreamCallback,
   ToolCall,
 } from './chat-request.js';
-import { DEFAULT_LLM_RETRY } from './chat-request.js';
+import { DEFAULT_LLM_RETRY, notifyPartialUsage } from './chat-request.js';
 import { EmptyResponseExhaustedException } from './empty-response-exhausted.js';
 import { applyClientImpersonationHeaders } from './client-impersonation-headers.js';
 
@@ -261,12 +261,24 @@ export class AnthropicLlmAdapter implements LlmAdapter {
     let outputTokens: number | null = null;
     let cacheReadTokens: number | null = null;
     let cacheCreationTokens: number | null = null;
+    let usageObserved = false;
 
     const applyUsageFields = (fields: AnthropicUsageFields): void => {
       if (fields.inputTokens != null) inputTokens = fields.inputTokens;
       if (fields.outputTokens != null) outputTokens = fields.outputTokens;
       if (fields.cacheRead != null) cacheReadTokens = fields.cacheRead;
       if (fields.cacheCreation != null) cacheCreationTokens = fields.cacheCreation;
+      usageObserved = true;
+    };
+
+    const publishPartialUsage = (): void => {
+      if (!usageObserved) return;
+      const finalized = finalizeUsage(inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens);
+      usage.promptTokens = finalized.promptTokens;
+      usage.completionTokens = finalized.completionTokens;
+      usage.totalTokens = finalized.totalTokens;
+      if (finalized.promptTokensDetails != null) usage.promptTokensDetails = finalized.promptTokensDetails;
+      notifyPartialUsage(callback, usage);
     };
 
     let emitted = false;
@@ -419,6 +431,7 @@ export class AnthropicLlmAdapter implements LlmAdapter {
       if (finalized.promptTokensDetails != null) usage.promptTokensDetails = finalized.promptTokensDetails;
       callback.onComplete(usage);
     } catch (e) {
+      publishPartialUsage();
       if (idleTimedOut) throw idleTimedOut;
       if (e instanceof EmptyResponseExhaustedException) throw e;
       if (e instanceof StreamErrorEventException) throw e;

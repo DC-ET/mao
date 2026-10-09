@@ -268,8 +268,7 @@ import { FeishuMonitorService } from './feishu/monitor.service.js';
 import { MysqlFeishuMessageRepository } from './feishu/message.repository.js';
 import { FeishuMessageService, botSenderLabel, formatGroupTime, isBotSender, senderName } from './feishu/message.service.js';
 import { buildQuotedInjection } from './feishu/quoted-injection.js';
-import { GroupContextSummarizer } from './feishu/group-context-summarizer.js';
-import type { ClientImpersonation } from '@mao/contracts';
+import { feishuSummarizerModelConfig, GroupContextSummarizer } from './feishu/group-context-summarizer.js';
 import { FeishuInboundProcessor } from './feishu/inbound-processor.js';
 import { MysqlFeishuPendingBindingRepository } from './feishu/pending-binding.repository.js';
 import {
@@ -1426,12 +1425,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         ? await modelService.getModel(session.modelId).catch(() => null)
         : await modelService.getDefaultModel();
       if (model == null || model.baseUrl === '' || model.modelId === '') return null;
-      return {
-        baseUrl: model.baseUrl, apiKey: model.apiKey, modelId: model.modelId,
-        provider: model.provider ?? undefined,
-        apiProtocol: model.apiProtocol ?? undefined,
-        clientImpersonation: (model.clientImpersonation ?? 'none') as ClientImpersonation,
-      };
+      return feishuSummarizerModelConfig(model);
     }),
     cfg.feishu.bot.groupContext.overflowItems,
   );

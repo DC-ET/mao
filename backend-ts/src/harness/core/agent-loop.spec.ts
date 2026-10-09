@@ -628,6 +628,9 @@ describe('AgentLoop', () => {
       }
     });
 
+    const announced: string[] = [];
+    l.onToolCallStart.mockImplementation((tc: { id?: string }) => { announced.push(tc.id ?? ''); });
+
     await agentLoop.execute(ctx, l, p);
 
     expect(toolDispatcher.dispatchInvocation).toHaveBeenCalledTimes(1);
@@ -638,6 +641,11 @@ describe('AgentLoop', () => {
     const assistant = ctx.messages.find((m) => m.role === 'assistant' && m.toolCalls?.length);
     expect(assistant!.toolCalls).toHaveLength(1);
     expect(assistant!.toolCalls![0].id).toBe('call-real');
+    // 合成占位 id 不能下发：注册表会留下永不完成的调用。完成时的参数刷新仍是同一个真实 id。
+    expect(announced.length).toBeGreaterThan(0);
+    expect(announced.every((id) => id === 'call-real')).toBe(true);
+    expect(vi.mocked(l.onToolCallArgsDelta).mock.calls.every(([id]) => id === 'call-real')).toBe(true);
+    expect(l.onToolCallResult).toHaveBeenCalledWith('call-real', expect.any(String), expect.anything());
   });
 
   it('appends a later id-only arguments chunk onto the same tool call', async () => {

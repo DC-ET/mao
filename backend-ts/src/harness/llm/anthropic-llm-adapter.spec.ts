@@ -94,6 +94,7 @@ class CapturingCallback implements StreamCallback {
   onChunk(chunk: StreamChunk): void { this.chunks.push(chunk); }
   onStreamReset(): void { this.streamResetCount++; this.chunks = []; }
   onComplete(usage: ChatUsage): void { this.usage = usage; }
+  onUsage(usage: ChatUsage): void { this.usage = usage; }
   onError(t: unknown): void { this.error = t; }
   onWaiting(phase: string): void { this.waitingPhases.push(phase); }
   onRetry(reason: string, statusCode: number | null): void {
@@ -482,6 +483,25 @@ describe('AnthropicLlmAdapter - stream', () => {
     await adapter(0, 0).stream(request('hi'), configOf(server), callback);
     expect(callback.error).toBeDefined();
     expect((callback.error as Error).message).toContain('模型流式响应已中断');
+    expect(callback.usage?.promptTokens).toBe(5);
+  });
+
+  it('中断前已经到达的 message_delta usage 仍通过 onUsage 暴露', async () => {
+    server = new QueueServer();
+    server.enqueueSse(
+      'data: {"type":"message_start","message":{"id":"m","usage":{"input_tokens":600,"cache_creation_input_tokens":200,"cache_read_input_tokens":400,"output_tokens":1}}}\n\n'
+      + 'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}\n\n'
+      + 'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":600,"cache_creation_input_tokens":200,"cache_read_input_tokens":400,"output_tokens":200}}\n\n',
+    );
+    await server.start();
+    const callback = new CapturingCallback();
+    await adapter(0, 0).stream(request('hi'), configOf(server), callback);
+    expect(callback.error).toBeDefined();
+    expect(callback.usage).toMatchObject({
+      promptTokens: 1200,
+      completionTokens: 200,
+      promptTokensDetails: { cachedTokens: 400, cacheCreationTokens: 200 },
+    });
   });
 
   it('error 事件（中途限流）触发 onStreamReset 并重试', async () => {

@@ -41,6 +41,32 @@ describe('RecordingLlmAdapter', () => {
     expect(record.mock.calls[0][0]).toMatchObject({ success: false, errorMessage: 'boom' });
   });
 
+  it('keeps usage that arrived before a stream error', async () => {
+    const partial: ChatUsage = {
+      promptTokens: 1200, completionTokens: 200, totalTokens: 1400,
+      promptTokensDetails: { cachedTokens: 400, cacheCreationTokens: 200 },
+    };
+    const delegate: LlmAdapter = {
+      chat: vi.fn(),
+      stream: vi.fn(async (_req, _cfg, callback: StreamCallback) => {
+        callback.onUsage?.(partial);
+        callback.onError(new Error('模型流式响应已中断，自动重试已耗尽'));
+      }),
+    };
+    const record = vi.fn(async () => {});
+    const adapter = new RecordingLlmAdapter(delegate, { record } as unknown as LlmCallService);
+    await adapter.stream({ messages: [] }, {
+      id: 1, modelId: 'm', baseUrl: 'http://x', apiKey: 'k',
+      priceInput: 2, priceCacheRead: 1, priceCacheWrite: 2, priceOutput: 8,
+    }, { onChunk: () => {}, onComplete: () => {}, onError: () => {} });
+    expect(record).toHaveBeenCalledOnce();
+    expect(record.mock.calls[0][0]).toMatchObject({
+      success: false,
+      usage: partial,
+      costMicros: 3600,
+    });
+  });
+
   it('records stream first token timing', async () => {
     const delegate: LlmAdapter = {
       chat: vi.fn(),

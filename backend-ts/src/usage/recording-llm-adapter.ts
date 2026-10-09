@@ -94,6 +94,10 @@ export class RecordingLlmAdapter implements LlmAdapter {
         }
         callback.onChunk(chunk);
       },
+      onUsage: (u) => {
+        usage = u;
+        callback.onUsage?.(u);
+      },
       onComplete: (u) => {
         usage = u;
         callback.onComplete(u);

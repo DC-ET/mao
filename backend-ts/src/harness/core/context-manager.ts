@@ -31,10 +31,11 @@ export class ContextManager {
     cancelFlag: { get(): boolean } | null,
     activeTokensHint?: number | null,
     force = false,
+    sessionModelConfig?: LlmModelConfig | null,
   ): Promise<SessionCompactionResult | null> {
     return this.compactionService.compactSession(
       sessionId, expectedOldBoundary, messages, snapshotMessageIds,
-      normalRequest, modelConfig, config, listener, cancelFlag, activeTokensHint, force,
+      normalRequest, modelConfig, config, listener, cancelFlag, activeTokensHint, force, sessionModelConfig,
     );
   }
 

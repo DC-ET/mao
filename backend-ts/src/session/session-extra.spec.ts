@@ -110,6 +110,30 @@ describe('SessionService extra', () => {
     expect(sessionRepo.updateFields).toHaveBeenCalledWith(11, { contextTokens: 80, contextManifestJson: '{"sections":[]}' });
     await service.updateContextTokens(11, 70, null);
     expect(sessionRepo.updateFields).toHaveBeenCalledWith(11, { contextTokens: 70, contextManifestJson: null });
+
+    vi.mocked(sessionRepo.updateFields).mockClear();
+    let releaseFirst: () => void = () => {};
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let writes = 0;
+    vi.mocked(sessionRepo.updateFields).mockImplementation(async () => {
+      writes += 1;
+      if (writes === 1) await firstGate;
+    });
+    const older = service.updateContextTokens(11, 42, '{"sections":[{"key":"old"}]}');
+    const newer = service.updateContextTokens(11, 4, '{"sections":[{"key":"new"}]}');
+    for (let i = 0; i < 5 && vi.mocked(sessionRepo.updateFields).mock.calls.length < 1; i++) {
+      await Promise.resolve();
+    }
+    expect(sessionRepo.updateFields).toHaveBeenCalledTimes(1);
+    releaseFirst();
+    await older;
+    await newer;
+    expect(sessionRepo.updateFields).toHaveBeenNthCalledWith(1, 11, {
+      contextTokens: 42, contextManifestJson: '{"sections":[{"key":"old"}]}',
+    });
+    expect(sessionRepo.updateFields).toHaveBeenNthCalledWith(2, 11, {
+      contextTokens: 4, contextManifestJson: '{"sections":[{"key":"new"}]}',
+    });
     await service.updateContextAnchor(11, 1, 2);
     expect(sessionRepo.updateFields).toHaveBeenCalledWith(11, expect.objectContaining({ lastPromptTokens: 1, contextAnchorMsgId: 2 }));
     const anchor = await service.loadContextAnchor(11);

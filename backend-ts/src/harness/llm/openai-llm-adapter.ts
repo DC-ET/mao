@@ -18,7 +18,7 @@ import type {
   StreamCallback,
   StreamChunk,
 } from './chat-request.js';
-import { DEFAULT_LLM_RETRY } from './chat-request.js';
+import { DEFAULT_LLM_RETRY, notifyPartialUsage } from './chat-request.js';
 import { EmptyResponseExhaustedException } from './empty-response-exhausted.js';
 import { parseChatResponse, parseStreamChunk, parseStreamErrorEvent, parseUsageFromSse, serializeChatRequest } from './json.js';
 import { applyClientImpersonationHeaders } from './client-impersonation-headers.js';
@@ -258,6 +258,7 @@ export class OpenAiLlmAdapter implements LlmAdapter {
     cancelFlag?: { get(): boolean } | null,
   ): Promise<void> {
     const usage: ChatUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    let usageObserved = false;
     let emitted = false;
     let done = false;
     let buffer = '';
@@ -314,6 +315,7 @@ export class OpenAiLlmAdapter implements LlmAdapter {
         if (hasAccumulatedOutput(streamChunk)) emitted = true;
         const u = parseUsageFromSse(parsed);
         if (u) {
+          usageObserved = true;
           usage.promptTokens = u.promptTokens;
           usage.completionTokens = u.completionTokens;
           usage.totalTokens = u.totalTokens;
@@ -361,6 +363,7 @@ export class OpenAiLlmAdapter implements LlmAdapter {
       }
       callback.onComplete(usage);
     } catch (e) {
+      if (usageObserved) notifyPartialUsage(callback, usage);
       if (idleTimedOut) throw idleTimedOut;
       if (e instanceof EmptyResponseExhaustedException) throw e;
       if (e instanceof StreamErrorEventException) throw e;

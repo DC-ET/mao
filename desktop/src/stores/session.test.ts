@@ -753,4 +753,14 @@ describe('session store 边路任务待处理计数同步', () => {
     expect(store.getSideTasks('1')[0].pendingQuestionCount).toBe(0)
     expect(store.getSideTasks('1')[0].pendingApprovalCount).toBe(0)
   })
+
+  it('REST 返回的数字队列 id 灌入后变成字符串', () => {
+    const store = useSessionStore()
+    store.setQueueMessages('11', [
+      { id: 4, sessionId: 11, content: 'm4', sortOrder: 1 },
+    ] as never)
+    expect(store.getQueueMessages('11')).toEqual([
+      { id: '4', sessionId: '11', content: 'm4', sortOrder: 1 },
+    ])
+  })
 })
