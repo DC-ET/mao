@@ -513,7 +513,9 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     const userId = requireUserId(request);
     const id = pathId(request);
     await requireSessionOwner(userId, id);
-    const limit = Math.min(queryOptInt(request, 'limit') ?? 5, 50);
+    // limit 上下界都钳：0/负值会让 service 把「本页被裁空」误判成「会话没有用户消息」，
+    // 整会话调用倒进未归属且 hasMore=false，分页语义断裂
+    const limit = clamp(queryOptInt(request, 'limit') ?? 5, 1, 50);
     const slowMs = clamp(queryOptInt(request, 'slowMs') ?? 60_000, 1_000, 3_600_000);
     const expensiveTokens = clamp(queryOptInt(request, 'expensiveTokens') ?? 50_000, 1_000, 10_000_000);
     return sendOk(reply, await deps.runTraceService.buildTrace(id, {

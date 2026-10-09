@@ -247,6 +247,14 @@ describe('session and admin routes', () => {
       expensiveTokens: 50_000,
     });
 
+    // limit 下限也要钳：0 / 负值会让 service 把「本页被裁空」误判成「会话没有用户消息」，
+    // 整会话调用倒进未归属且 hasMore=false
+    for (const bad of ['0', '-5']) {
+      vi.mocked(runTraceService.buildTrace).mockClear();
+      await fastify.inject({ method: 'GET', url: `/v1/sessions/1/trace?limit=${bad}` });
+      expect(vi.mocked(runTraceService.buildTrace).mock.calls[0][1]).toMatchObject({ limit: 1 });
+    }
+
     // 越权会话拒绝（requireSessionOwner 抛 FORBIDDEN）
     const { fastify: f2, sessionService: svc2 } = await app();
     (svc2.getSession as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 1, userId: 999, agentId: 9 });

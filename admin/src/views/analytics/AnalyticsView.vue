@@ -302,7 +302,7 @@ function currentQuery() {
   if (activeTab.value === 'run-trace') {
     // 只统计对话轮：标题生成 / 连通性测试会占据「最慢轮」
     query.scene = 'agent'
-    query.runTraceScope = runTraceDimension.value
+    query.scope = runTraceDimension.value
   }
   return query
 }

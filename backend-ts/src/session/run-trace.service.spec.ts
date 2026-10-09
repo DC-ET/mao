@@ -320,6 +320,24 @@ describe('RunTraceService', () => {
     expect(page.runs[0].segments[0].kind).toBe('current');
   });
 
+  it('keeps a cancelled run in the current segment when the anchor USER message was never edited', async () => {
+    // 取消命中工具阶段时助手消息未落库，最后一条就是锚点 USER 消息；
+    // markLastMessageFinished 跳过 USER（updated_at 仅编辑时填充），锚点时间戳不变，
+    // 这一轮必须留在「当前」段，不能被误判成编辑重发。
+    const service = makeService({
+      messages: [user(1, '2026-10-09 10:00:00', '跑个长命令')],
+      calls: [call(1, { createdAt: '2026-10-09 10:00:30', durationMs: 5000 })],
+      activities: [],
+      events: [],
+    });
+    const page = await service.buildTrace(1, QUERY);
+    const run = page.runs[0];
+    expect(run.segments).toHaveLength(1);
+    expect(run.segments[0].kind).toBe('current');
+    expect(run.segments[0].rounds).toHaveLength(1);
+    expect(run.segments[0].rounds[0].createdAt).toBe('2026-10-09 10:00:30');
+  });
+
   it('attaches compaction marker by boundary_msg_id only', async () => {
     const service = makeService({
       messages: [

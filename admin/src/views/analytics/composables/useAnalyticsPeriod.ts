@@ -43,7 +43,7 @@ export function buildAnalyticsQuery(period: PeriodValue, limit?: number): Analyt
 }
 
 /** 缓存键含周期，换周期自然 miss；force 由调用方先 invalidate。
- * scene / runTraceScope 也进键：运行轨迹榜换口径或换维度必须重新拉取。 */
+ * scene / scope 也进键：运行轨迹榜换口径或换维度必须重新拉取。 */
 export function periodKey(scope: string, query: AnalyticsQuery): string {
-  return `${scope}|${query.days}|${query.endOffset}|${query.limit ?? ''}|${query.modelId ?? ''}|${query.excludeConnectivity ?? ''}|${query.granularity ?? ''}|${query.scene ?? ''}|${query.runTraceScope ?? ''}`
+  return `${scope}|${query.days}|${query.endOffset}|${query.limit ?? ''}|${query.modelId ?? ''}|${query.excludeConnectivity ?? ''}|${query.granularity ?? ''}|${query.scene ?? ''}|${query.scope ?? ''}`
 }

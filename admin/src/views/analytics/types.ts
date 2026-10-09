@@ -285,6 +285,6 @@ export interface AnalyticsQuery {
   granularity?: 'hour' | 'day'
   /** 运行轨迹榜单的 llm_call scene 口径 */
   scene?: string
-  /** 运行轨迹榜单的排行维度 */
-  runTraceScope?: RunTraceDimension
+  /** 运行轨迹榜单的排行维度（与后端 /admin/analytics/run-trace 的 scope 参数同名） */
+  scope?: RunTraceDimension
 }

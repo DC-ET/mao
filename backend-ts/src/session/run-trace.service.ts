@@ -25,7 +25,7 @@ import type {
 export interface RunTraceQuery {
   /** 翻页锚点：只取 id 小于它的 run；null = 第一页（最新） */
   beforeRunId: number | null;
-  /** 每页 run 数（已钳制，上限 50） */
+  /** 每页 run 数（路由已钳到 1–50，服务端不再判断合法性） */
   limit: number;
   slowMs: number;
   expensiveTokens: number;

@@ -306,6 +306,31 @@ describe('SessionService extra', () => {
   });
 });
 
+describe('SessionService.markLastMessageFinished', () => {
+  it('刷新助手 / 工具消息的 updated_at，但跳过 USER 消息', async () => {
+    const { service, messageRepo } = makeService();
+
+    // 取消命中工具阶段 / 首轮失败时助手消息未落库，最后一条正是 USER：
+    // 终态刷新不能写它，否则运行轨迹把该 run 误判成编辑重发（V029：updated_at 仅编辑时填充）
+    messageRepo.selectLast.mockResolvedValue({ id: 7, sessionId: 11, role: 'USER', createdAt: '2026-10-09 10:00:00' });
+    await service.markLastMessageFinished(11);
+    expect(messageRepo.updateById).not.toHaveBeenCalled();
+
+    // 助手消息照旧刷新：消息轮次要拿它当「任务结束时刻」
+    messageRepo.selectLast.mockResolvedValue({ id: 8, sessionId: 11, role: 'ASSISTANT', createdAt: '2026-10-09 10:00:00' });
+    await service.markLastMessageFinished(11);
+    expect(messageRepo.updateById).toHaveBeenCalledTimes(1);
+    const written = vi.mocked(messageRepo.updateById).mock.calls[0][0] as { id: number; updatedAt?: string | null };
+    expect(written.id).toBe(8);
+    expect(written.updatedAt).not.toBeNull();
+
+    // 没有消息时不动
+    messageRepo.selectLast.mockResolvedValue(null);
+    await service.markLastMessageFinished(11);
+    expect(messageRepo.updateById).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('SessionActivityHeartbeat', () => {
   it('throttles touches and clears', async () => {
     const sessionService = { touchLastActivity: vi.fn(async () => undefined) };
