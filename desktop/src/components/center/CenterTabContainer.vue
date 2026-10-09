@@ -30,7 +30,7 @@
       />
       <RunTracePanel
         v-else-if="activeTab?.type === 'trace'"
-        :key="activeTabId"
+        :key="`trace-${props.sessionId}`"
         :session-id="props.sessionId"
       />
     </KeepAlive>

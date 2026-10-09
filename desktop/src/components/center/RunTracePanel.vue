@@ -342,6 +342,13 @@ onMounted(() => {
   void loadFirstPage()
 })
 
+// 兜底：轨迹 Tab 每会话同 id（'trace'），若实例被跨会话复用（key 不含会话维度），
+// 只触发 props 变化而不重挂载，此时必须自己重拉，否则显示的是上一个会话的轨迹
+watch(() => props.sessionId, () => {
+  loadedPages.value = 1
+  void loadFirstPage()
+})
+
 // 执行终止后重拉：run 的 llm_call / 活动都是结束时才落库，临时行丢掉后以 REST 为准
 watch(
   () => sessionStore.getSessionPhase(props.sessionId),
