@@ -343,3 +343,19 @@ ss -tlnp | grep 9080
 ## 部署后检查
 
 按 [business_process.md](business_process.md) 管理员上线清单验证。常见问题见 [troubleshooting.md](troubleshooting.md)。
+
+## 全文检索索引（V146）
+
+首次包含 V146 的后端发版会在启动迁移里给 `message.content` 建 ngram 全文索引。MySQL 建这个索引时会挡住整表写入（读不受影响），而且新进程要等索引建完才开始监听端口。
+
+发版前在生产库执行：
+
+```sql
+SHOW VARIABLES LIKE 'ngram_token_size';
+SELECT COUNT(*) AS rows, SUM(LENGTH(content))/1024/1024 AS content_mb
+FROM message WHERE deleted = 0;
+```
+
+`ngram_token_size` 必须是 2。耗时大约按 30MB 正文一分钟估算，数据目录空闲空间不小于 `message` 表的 `data_length`。把 `MAO_BLUE_GREEN_HEALTH_RETRIES` 设成大于预估秒数（间隔 1 秒），再跑 `bash scripts/restart-backend.sh`。健康检查默认只等 60 秒，超时会杀掉正在建索引的新进程，索引会回滚，重跑会再来一次，不会跳过。
+
+只有日志出现 `Flyway migrated V146__message_content_fulltext.sql` 才算迁移完成。切流后抽查一次两字以上的中文搜索，以及一次点开助手回复后的定位。若全文查询异常，设 `SEARCH_FULLTEXT_ENABLED=false` 后重启，查询退回模糊匹配，不要删索引。

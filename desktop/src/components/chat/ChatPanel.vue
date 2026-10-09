@@ -63,8 +63,12 @@
 
     <!-- 会话态 / 加载态：底部 Composer -->
     <template v-else>
-      <div class="messages" ref="messagesContainer" :aria-busy="historyLoading"
+        <div class="messages" ref="messagesContainer" :aria-busy="historyLoading"
         @touchstart.passive="handleTouchStart" @touchmove.passive="handleTouchMove">
+        <div v-if="historyAnchored" class="history-anchor-bar">
+          <span>正在查看较早的消息</span>
+          <button type="button" class="history-anchor-back" @click="backToLatest">回到最新</button>
+        </div>
         <div v-if="historyLoading" class="history-loading"
           :class="{ 'empty-state': messages.length === 0 }" role="status" aria-live="polite">
           <el-icon :size="messages.length === 0 ? 28 : 16" class="is-loading" aria-hidden="true"><Loading /></el-icon>
@@ -194,11 +198,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, inject, watch, nextTick, onActivated, onMounted, onUnmounted, type Ref } from 'vue'
+import { ref, computed, inject, provide, watch, nextTick, onActivated, onMounted, onUnmounted, type Ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ChatDotRound, Loading } from '@element-plus/icons-vue'
 import { useChat, normalizeMessageRole, type ChatMessage } from '../../composables/useChat'
 import { useChatScroll } from '../../composables/useChatScroll'
+import { LOCATE_FLASH_KEY, useMessageLocate } from '../../composables/useMessageLocate'
 import { useAgentStore } from '../../stores/agent'
 import { useSessionStore, type TaskPhase } from '../../stores/session'
 import { useDraftStore } from '../../stores/draft'
@@ -282,6 +287,7 @@ const {
   stopExecution,
   retryExecution,
   loadOlderMessages,
+  fetchMessages,
   newSession,
   restoreSession,
   confirmApproval,
@@ -355,12 +361,28 @@ watch(pendingApprovals, () => syncToTaskView(), { deep: true })
 // Session restore — ChatPanel watches sessionStore.activeSessionId
 const messagesContainer = ref<HTMLElement>()
 const {
-  userScrolledUp, scrollToBottom, beginRestore, completeRestore,
+  userScrolledUp, scrollToBottom, scrollToMessage, beginRestore, completeRestore,
   handleMarkdownRendered, handleWheel, handleTouchStart, handleTouchMove, handleScroll, cancelRestore, resetScrollBaseline, dispose: disposeScroll,
 } = useChatScroll(messagesContainer, {
   loadOlder: loadOlderMessages,
   canLoadOlder: () => sessionStore.activeMessageHasMore && !sessionStore.activeMessageLoadingOlder,
 })
+const { flashId } = useMessageLocate({
+  sessionId: () => sessionId.value,
+  container: messagesContainer,
+})
+provide(LOCATE_FLASH_KEY, flashId)
+
+const historyAnchored = computed(() => sessionId.value != null && sessionStore.isHistoryAnchored(sessionId.value))
+
+async function backToLatest() {
+  const sid = sessionId.value
+  if (!sid) return
+  await fetchMessages({ sessionId: sid, forceLatest: true })
+  scrollToMessage('')
+  scrollToBottom()
+}
+
 let restoreGeneration = 0
 
 function restoreForActiveSession(newSid: string | null) {
@@ -825,6 +847,28 @@ function handleNewTaskAgentChange(id: string | null) {
 </script>
 
 <style scoped>
+.history-anchor-bar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--aw-surface-hover, rgba(0, 0, 0, 0.04));
+  color: var(--aw-ink-muted-80, #555);
+  font-size: 13px;
+}
+.history-anchor-back {
+  border: 0;
+  background: transparent;
+  color: var(--aw-accent, #409eff);
+  cursor: pointer;
+  font: inherit;
+}
 .chat-panel {
   display: flex;
   flex-direction: column;

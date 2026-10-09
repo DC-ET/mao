@@ -179,10 +179,11 @@
 </template>
 
 <script setup lang="ts">
-import { toRef } from 'vue'
+import { inject, toRef, watch, ref as vueRef } from 'vue'
 import { ArrowDown } from '@element-plus/icons-vue'
 import type { ChatMessage, CompactionEvent } from '../../types/chat'
-import { resolveForkCutPoint, useMessageRounds, type MessageRound } from '../../composables/useMessageRounds'
+import { resolveForkCutPoint, useMessageRounds, expandRoundContainingMessage, type MessageRound } from '../../composables/useMessageRounds'
+import { LOCATE_FLASH_KEY } from '../../composables/useMessageLocate'
 import { formatDateTime } from '../../utils/datetime'
 import { stripInternalMarkers } from '../../utils/internalMarkers'
 import MessageBubble from './MessageBubble.vue'
@@ -235,6 +236,12 @@ const {
   activeRoundMsgs,
   toggleRound,
 } = useMessageRounds(messagesRef, sendingRef)
+
+const locateFlashId = inject(LOCATE_FLASH_KEY, vueRef<string | null>(null))
+watch(locateFlashId, (id) => {
+  if (!id) return
+  expandRoundContainingMessage(messageRounds.value, roundsExpanded.value, id)
+}, { flush: 'pre' })
 
 function markersAfter(messageId?: string | number | null): CompactionEvent[] {
   if (messageId == null) return []

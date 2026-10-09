@@ -27,26 +27,45 @@ async function mockDesktopApiFallback(page: Page) {
 const SEARCH_RESULTS = {
   items: [
     {
-      id: 11,
+      sessionId: 11,
       title: '修复登录 Bug',
       sessionType: 'NORMAL',
-      parentSessionId: null,
+      rootSessionId: 11,
       updatedAt: '2026-08-07T10:30',
       phase: 'COMPLETED',
+      status: 'ACTIVE',
       agentName: '默认 Agent',
-      snippet: '……帮我看看登录页面为什么报 500 错误……'
+      hitCount: 1,
+      hits: [{
+        messageId: 1100,
+        role: 'USER',
+        snippet: '……帮我看看登录页面为什么报 500 错误……',
+        createdAt: '2026-08-07T10:30'
+      }]
     },
     {
-      id: 22,
+      sessionId: 22,
       title: '边路整理文档',
       sessionType: 'SIDE_TASK',
       parentSessionId: 3,
+      rootSessionId: 3,
       updatedAt: '2026-08-07T09:00',
       phase: 'RUNNING',
+      status: 'ACTIVE',
       agentName: '默认 Agent',
-      snippet: '……把登录流程整理成文档……'
+      hitCount: 1,
+      hits: [{
+        messageId: 2200,
+        role: 'ASSISTANT',
+        snippet: '……把登录流程整理成文档……',
+        createdAt: '2026-08-07T09:00'
+      }]
     }
-  ]
+  ],
+  total: 2,
+  page: 1,
+  size: 20,
+  path: 'FULLTEXT'
 }
 
 /** 已登录 + 全量 API mock：/sessions/search 返回固定结果，/sessions/{id} 系列返回空对象兜底。 */
@@ -444,7 +463,8 @@ test.describe('Session Search', () => {
     await expect(page.locator('.snippet-hit').first()).toContainText('登录')
 
     await page.locator('.search-result-item').first().click()
-    await expect(page).toHaveURL(/\/tasks\/11$/, { timeout: 8_000 })
+    await expect(page).toHaveURL(/\/tasks\/11(\?|$)/, { timeout: 8_000 })
+    await expect(page).toHaveURL(/locateMessageId=1100/)
   })
 
   test('should jump to parent session and open side task tab', async ({ page }) => {
@@ -458,7 +478,7 @@ test.describe('Session Search', () => {
 
     // 第二个结果为边路会话（parentSessionId=3）→ 跳父会话并打开边路 Tab
     await page.locator('.search-result-item').nth(1).click()
-    await expect(page).toHaveURL(/\/tasks\/3$/, { timeout: 8_000 })
+    await expect(page).toHaveURL(/\/tasks\/3(\?|$)/, { timeout: 8_000 })
     await expect(page.locator('.center-tab-bar .tab-item').filter({ hasText: '边路整理文档' }))
       .toBeVisible({ timeout: 8_000 })
   })

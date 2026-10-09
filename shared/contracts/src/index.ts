@@ -27,7 +27,7 @@ export type { ModelVO, ModelPageResult, ModelListFilter, ClientImpersonation } f
 export type { ExperienceVO, SuggestedQuestionVO, AgentVO, AgentAvatarUploadVO } from './agent';
 export type { WeixinPreferenceVO, TaskPanelPreferenceState } from './preference';
 export type { AuditLog, AuditListFilter } from './audit';
-export type { MessageSearchItem } from './session';
+export type { MessageSearchGroup, MessageSearchHit, MessageSearchResult } from './session';
 export type {
   WsClientType,
   WsAuthFrame,

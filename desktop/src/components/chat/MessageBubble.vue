@@ -1,5 +1,8 @@
 <template>
-  <div :class="['message-bubble', role, { 'tool-only': isToolOnly }]">
+  <div
+    :id="messageDomId"
+    :class="['message-bubble', role, { 'tool-only': isToolOnly, 'message-locate-flash': flashing }]"
+  >
     <div class="message-content">
       <div v-if="showTime" class="message-time-top">
         <span class="message-time">{{ formatDateTime(message.createdAt) }}</span>
@@ -248,6 +251,7 @@ import { formatDateTime } from '../../utils/datetime'
 import { copyText } from '../../utils/clipboard'
 import { isActiveSessionPhase } from '../../utils/sessionPhase'
 import { useSessionStore } from '../../stores/session'
+import { LOCATE_FLASH_KEY } from '../../composables/useMessageLocate'
 import {
   FEEDBACK_REASON_OPTIONS,
   isDislikeEligible,
@@ -337,6 +341,13 @@ function onEditKeydown(event: KeyboardEvent, action: 'confirm' | 'escape') {
 }
 
 const sessionStore = useSessionStore()
+const locateFlashId = inject(LOCATE_FLASH_KEY, ref<string | null>(null))
+const messageDomId = computed(() => {
+  const id = props.message.id
+  if (id == null || id === '') return undefined
+  return `msg-${id}`
+})
+const flashing = computed(() => locateFlashId.value != null && String(props.message.id) === locateFlashId.value)
 const role = computed(() => normalizeMessageRole(props.message.role))
 
 const backgroundCompletion = computed<BackgroundCompletionMeta | null>(() =>
@@ -598,6 +609,13 @@ async function copyMessage() {
 </script>
 
 <style scoped>
+.message-locate-flash {
+  animation: message-locate-flash 2s ease;
+}
+@keyframes message-locate-flash {
+  0%, 40% { background: rgba(255, 193, 7, 0.45); }
+  100% { background: transparent; }
+}
 .message-bubble {
   display: flex;
   gap: 12px;

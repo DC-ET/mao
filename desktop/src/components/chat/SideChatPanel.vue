@@ -2,6 +2,10 @@
   <div class="side-chat-panel">
     <!-- 消息列表 -->
     <div class="messages" ref="messagesContainer">
+      <div v-if="sideHistoryAnchored" class="history-anchor-bar">
+        <span>正在查看较早的消息</span>
+        <button type="button" class="history-anchor-back" @click="backToLatestSide">回到最新</button>
+      </div>
       <!-- 创建会话中 loading -->
       <div v-if="!hasRealSession && sending && displayMessages.length === 0" class="side-chat-loading">
         <el-icon :size="32" class="is-loading"><Loading /></el-icon>
@@ -140,7 +144,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted, onUnmounted, onActivated, inject, type Ref } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted, onActivated, inject, provide, type Ref } from 'vue'
 import { Opportunity, Loading, Connection } from '@element-plus/icons-vue'
 import { useSessionStore } from '../../stores/session'
 import { useDraftStore } from '../../stores/draft'
@@ -157,6 +161,7 @@ import type { QuestionAnswer } from '../../types/chat'
 import { useToolApprovals } from '../../composables/useChat'
 import { loadDislikedIds } from '../../composables/useMessageFeedback'
 import { useForkPreview } from '../../composables/useForkPreview'
+import { LOCATE_FLASH_KEY, useMessageLocate } from '../../composables/useMessageLocate'
 import { uploadImages } from '../../utils/imageUpload'
 import { uploadPendingFiles } from '../../utils/chatFileUpload'
 import type { SideTaskContextMode } from '../../types/file-browser'
@@ -267,6 +272,17 @@ const parentCloudProjectKey = computed(() => {
 // Real session ID: start with props if positive, otherwise 0
 const realSessionId = ref(props.sideSessionId > 0 ? props.sideSessionId : 0)
 const hasRealSession = computed(() => realSessionId.value > 0)
+const { flashId: locateFlashId } = useMessageLocate({
+  sessionId: () => hasRealSession.value ? String(realSessionId.value) : null,
+  container: messagesContainer,
+})
+provide(LOCATE_FLASH_KEY, locateFlashId)
+const sideHistoryAnchored = computed(() => hasRealSession.value && sessionStore.isHistoryAnchored(String(realSessionId.value)))
+async function backToLatestSide() {
+  if (!hasRealSession.value) return
+  sessionStore.setHistoryAnchored(String(realSessionId.value), false)
+  await fetchMessages()
+}
 
 // Stable cache key for placeholder tabs — tabId does not change when sideSessionId is assigned
 const placeholderCacheKey = computed(() => props.tabId)
@@ -555,9 +571,12 @@ async function loadSideSessionMeta() {
 async function fetchMessages() {
   if (!hasRealSession.value) return
   const sid = String(realSessionId.value)
+  if (sessionStore.isHistoryAnchored(sid)) return
+  const anchorEpoch = sessionStore.historyAnchorEpochOf(sid)
   sessionStore.clearMessagePageState(sid)
   try {
     const { data } = await api.get(`/sessions/${sid}/messages`, { params: { roundLimit: 5 } })
+    if (sessionStore.historyAnchorEpochOf(sid) !== anchorEpoch) return
     const raw: Array<Record<string, unknown>> = data?.messages || []
     const { messages, allChanges } = mapMessagesWithFileChanges(raw)
     if (messages.length > 0) {
@@ -973,6 +992,10 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
         }
       } else {
         const sid = String(realSessionId.value)
+        if (sessionStore.isHistoryAnchored(sid)) {
+          sessionStore.setHistoryAnchored(sid, false)
+          await fetchMessages()
+        }
 
         const optimisticUserId = 'side_user_' + Date.now()
         sessionStore.addUserMessage(sid, {
@@ -1142,6 +1165,28 @@ async function handleQueueEdit(msg: QueueMessage) {
 </script>
 
 <style scoped>
+.history-anchor-bar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--aw-surface-hover, rgba(0, 0, 0, 0.04));
+  color: var(--aw-ink-muted-80, #555);
+  font-size: 13px;
+}
+.history-anchor-back {
+  border: 0;
+  background: transparent;
+  color: var(--aw-accent, #409eff);
+  cursor: pointer;
+  font: inherit;
+}
 .side-chat-panel {
   display: flex;
   flex-direction: column;

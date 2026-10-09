@@ -171,3 +171,19 @@ export function resolveForkCutPoint(rounds: MessageRound[], messageId: string): 
     || candidate.displaySteps.some(step => step.id === messageId))
   return round?.finalReply?.id ?? null
 }
+
+/** 命中落在折叠步骤里时展开那一轮，否则气泡不在 DOM 中，无法滚动和高亮。 */
+export function expandRoundContainingMessage(
+  rounds: MessageRound[],
+  expanded: Record<string, boolean>,
+  messageId: string,
+): boolean {
+  for (const round of rounds) {
+    const inSteps = round.collapsedSteps.some((step) => String(step.id) === messageId)
+      || round.displaySteps.some((step) => String(step.id) === messageId)
+    if (!inSteps) continue
+    expanded[round.userMessage.id] = true
+    return true
+  }
+  return false
+}

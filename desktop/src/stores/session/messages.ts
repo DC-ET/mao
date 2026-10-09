@@ -34,6 +34,9 @@ export function createMessageRuntimeModule(ctx: {
   const sessionMessageHasMore = ref<Map<string, boolean>>(new Map())
   const sessionMessageLoadingOlder = ref<Map<string, boolean>>(new Map())
   const sessionMessageNextBeforeId = ref<Map<string, string | null>>(new Map())
+  /** 搜索定位到历史窗口时为 true：这段时间不把实时流式消息接到窗口尾部。 */
+  const historyAnchored = ref<Set<string>>(new Set())
+  const historyAnchorEpoch = ref<Map<string, number>>(new Map())
   // Phase cache for sessions not in the main list (e.g. side tasks)
   const sessionPhases = ref<Map<string, TaskPhase>>(new Map())
 
@@ -211,8 +214,32 @@ export function createMessageRuntimeModule(ctx: {
     sessionMessageNextBeforeId.value.delete(sid)
   }
 
+  function isHistoryAnchored(sessionId: string): boolean {
+    return historyAnchored.value.has(String(sessionId))
+  }
+
+  function historyAnchorEpochOf(sessionId: string): number {
+    return historyAnchorEpoch.value.get(String(sessionId)) ?? 0
+  }
+
+  function setHistoryAnchored(sessionId: string, anchored: boolean) {
+    const sid = String(sessionId)
+    if (historyAnchored.value.has(sid) === anchored) return
+    const next = new Set(historyAnchored.value)
+    if (anchored) {
+      next.add(sid)
+      const epochs = new Map(historyAnchorEpoch.value)
+      epochs.set(sid, (epochs.get(sid) ?? 0) + 1)
+      historyAnchorEpoch.value = epochs
+    } else {
+      next.delete(sid)
+    }
+    historyAnchored.value = next
+  }
+
   function addUserMessage(sessionId: string, msg: ChatMessage) {
     const sid = String(sessionId)
+    if (isHistoryAnchored(sid)) return
     const list = sessionMessages.value.get(sid) ?? []
     const msgId = String(msg.id)
     if (list.some(m => String(m.id) === msgId)) return
@@ -221,6 +248,7 @@ export function createMessageRuntimeModule(ctx: {
 
   function addAssistantMessage(sessionId: string, msg: ChatMessage) {
     const sid = String(sessionId)
+    if (isHistoryAnchored(sid)) return
     const list = sessionMessages.value.get(sid) ?? []
     sessionMessages.value.set(sid, [...list, msg])
   }
@@ -237,6 +265,7 @@ export function createMessageRuntimeModule(ctx: {
    */
   function insertPersistedAssistantMessage(sessionId: string, msg: ChatMessage) {
     const sid = String(sessionId)
+    if (isHistoryAnchored(sid)) return
     const list = sessionMessages.value.get(sid) ?? []
     const liveId = streamingAssistantMessageIds.get(sid)
     const streamTailIndex = list.length - 1
@@ -254,6 +283,16 @@ export function createMessageRuntimeModule(ctx: {
 
   function ensureStreamingAssistantMessage(sessionId: string): ChatMessage {
     const sid = String(sessionId)
+    if (isHistoryAnchored(sid)) {
+      return {
+        id: `anchored_${sid}`,
+        role: 'assistant',
+        content: '',
+        createdAt: nowDateTime(),
+        toolCalls: [],
+        segments: [],
+      }
+    }
     const list = sessionMessages.value.get(sid) ?? []
     const lastMsg = list[list.length - 1]
     if (lastMsg?.role === 'assistant' && streamingAssistantMessageIds.get(sid) === String(lastMsg.id)) {
@@ -326,6 +365,7 @@ export function createMessageRuntimeModule(ctx: {
 
   function appendDelta(sessionId: string, delta: string) {
     const sid = String(sessionId)
+    if (isHistoryAnchored(sid)) return
     sessionStreaming.value.set(sid, true)
     const lastMsg = ensureStreamingAssistantMessage(sid)
     appendTextDelta(lastMsg, delta)
@@ -334,6 +374,7 @@ export function createMessageRuntimeModule(ctx: {
 
   function appendThinkingDelta(sessionId: string, delta: string) {
     const sid = String(sessionId)
+    if (isHistoryAnchored(sid)) return
     const lastMsg = ensureStreamingAssistantMessage(sid)
     appendThinkingDeltaUtil(lastMsg, delta)
     notifyMessagesUpdate(sid)
@@ -355,6 +396,7 @@ export function createMessageRuntimeModule(ctx: {
   const filteredToolCallIds = new Set<string>()
 
   function appendToolCallStart(sessionId: string, data: { tool_call_id: string; tool_name: string; arguments?: string }) {
+    if (isHistoryAnchored(sessionId)) return
     if (TASK_TOOL_NAMES.has(data.tool_name)) {
       filteredToolCallIds.add(data.tool_call_id)
       // 跳过 task 工具，但在末尾 text 段追加换行，保证后续文本不与前文粘连
@@ -399,6 +441,7 @@ export function createMessageRuntimeModule(ctx: {
     approval_mark?: { mode: 'llm' | 'jev'; approved: boolean; reason: string }
     result_truncated?: boolean
   }) {
+    if (isHistoryAnchored(sessionId)) return
     const sid = String(sessionId)
     const lastMsg = ensureStreamingAssistantMessage(sid)
     if (!lastMsg.toolCalls) lastMsg.toolCalls = []
@@ -434,6 +477,7 @@ export function createMessageRuntimeModule(ctx: {
   }
 
   function updateToolCallArgs(sessionId: string, data: { tool_call_id: string; arguments: string }) {
+    if (isHistoryAnchored(sessionId)) return
     const sid = String(sessionId)
     const lastMsg = ensureStreamingAssistantMessage(sid)
     if (!lastMsg.toolCalls) lastMsg.toolCalls = []
@@ -532,6 +576,7 @@ export function createMessageRuntimeModule(ctx: {
    */
   function appendMessage(sessionId: string, msg: ChatMessage) {
     const sid = String(sessionId)
+    if (isHistoryAnchored(sid)) return
     const list = sessionMessages.value.get(sid) ?? []
     sessionMessages.value.set(sid, [...list, msg])
   }
@@ -806,6 +851,11 @@ export function createMessageRuntimeModule(ctx: {
     sessionExecutionErrors.value.delete(sid)
     sessionPhases.value.delete(sid)
     streamingAssistantMessageIds.delete(sid)
+    if (historyAnchored.value.has(sid)) {
+      const next = new Set(historyAnchored.value)
+      next.delete(sid)
+      historyAnchored.value = next
+    }
   }
 
   function reset() {
@@ -826,6 +876,8 @@ export function createMessageRuntimeModule(ctx: {
     sessionMessageHasMore.value = new Map()
     sessionMessageLoadingOlder.value = new Map()
     sessionMessageNextBeforeId.value = new Map()
+    historyAnchored.value = new Set()
+    historyAnchorEpoch.value = new Map()
     sessionPhases.value = new Map()
     streamingAssistantMessageIds.clear()
     filteredToolCallIds.clear()
@@ -874,6 +926,9 @@ export function createMessageRuntimeModule(ctx: {
     applyFetchedMessages,
     prependMessages,
     setMessagePageState,
+    setHistoryAnchored,
+    isHistoryAnchored,
+    historyAnchorEpochOf,
     setLoadingOlderMessages,
     getMessageHasMore,
     getMessageLoadingOlder,

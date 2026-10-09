@@ -57,6 +57,9 @@ function makeService() {
     pageSessionsByFilter: vi.fn(),
     count: vi.fn(async () => 0),
     selectMessageSearchCandidates: vi.fn(),
+    selectMatchingSessions: vi.fn(async () => []),
+    countMatchingSessions: vi.fn(async () => 0),
+    selectByIds: vi.fn(async () => []),
     selectPage: vi.fn(async () => ({ records: [], total: 0 })),
     list: vi.fn(),
     listDescendantSideTasks: vi.fn(async () => []),
@@ -71,6 +74,12 @@ function makeService() {
   } as unknown as SessionRepository;
   const messageRepo = {
     selectMessagesForSearch: vi.fn(),
+    selectHitMessages: vi.fn(async () => []),
+    selectRoundStartForMessage: vi.fn(async () => null),
+    selectNextUserMessageId: vi.fn(async () => null),
+    hasMessageBefore: vi.fn(async () => false),
+    selectUserStarts: vi.fn(async () => []),
+    selectRange: vi.fn(async () => []),
     selectFirstMatchingMessages: vi.fn(async () => []),
     listBySession: vi.fn(async () => []),
     insert: vi.fn(async (m: Message) => { m.id = 199; return 199; }),
@@ -261,203 +270,313 @@ describe('SessionService archive', () => {
 });
 
 describe('SessionService message search', () => {
+  function hit(messageId: number, sessionId: number, content: string | null, role = 'USER') {
+    return { messageId, sessionId, role, content, createdAt: '2026-08-07 10:00:00', score: 1 };
+  }
+
+  function prime(
+    sessionRepo: { selectMatchingSessions: ReturnType<typeof vi.fn>; countMatchingSessions: ReturnType<typeof vi.fn>; selectByIds: ReturnType<typeof vi.fn> },
+    messageRepo: { selectHitMessages: ReturnType<typeof vi.fn> },
+    sessions: ReturnType<typeof session>[],
+    hits: ReturnType<typeof hit>[],
+    total = sessions.length,
+  ) {
+    vi.mocked(sessionRepo.selectMatchingSessions).mockResolvedValue(
+      sessions.map((s) => ({ sessionId: s.id!, hitCount: Math.max(1, hits.filter((h) => h.sessionId === s.id).length), maxScore: 1 })),
+    );
+    vi.mocked(sessionRepo.countMatchingSessions).mockResolvedValue(total);
+    vi.mocked(sessionRepo.selectByIds).mockImplementation(async (ids: number[]) => {
+      const byId = new Map(sessions.filter((s) => s.id != null).map((s) => [s.id!, s]));
+      return ids.map((id) => byId.get(id)).filter((s): s is ReturnType<typeof session> => s != null).reverse();
+    });
+    vi.mocked(messageRepo.selectHitMessages).mockResolvedValue(hits);
+  }
+
   it('returnsHitSessionWithSnippetAndAgentName', async () => {
     const { service, sessionRepo, messageRepo, agentLookup } = makeService();
     const s = session(1, '修复登录 Bug', 'NORMAL', 9, '2026-08-07 10:30:00');
-    vi.mocked(sessionRepo.selectMessageSearchCandidates).mockResolvedValue([s]);
-    vi.mocked(messageRepo.selectMessagesForSearch).mockResolvedValue([message(100, 1, '帮我看看登录页面为什么报 500 错误')]);
+    prime(sessionRepo, messageRepo, [s], [hit(100, 1, '帮我看看登录页面为什么报 500 错误')]);
     vi.mocked(agentLookup.findByIds).mockResolvedValue([{ id: 9, name: '默认 Agent' }]);
-    const items = await service.searchSessionsByUserMessage(7, '登录');
-    expect(items).toHaveLength(1);
-    expect(items[0].id).toBe(1);
-    expect(items[0].title).toBe('修复登录 Bug');
-    expect(items[0].sessionType).toBe('NORMAL');
-    expect(items[0].phase).toBe('COMPLETED');
-    expect(items[0].agentName).toBe('默认 Agent');
-    expect(items[0].snippet).toContain('登录');
-    expect(items[0].updatedAt).toBe('2026-08-07T10:30');
+    const result = await service.searchMessages(7, '登录');
+    expect(result.path).toBe('FULLTEXT');
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].sessionId).toBe(1);
+    expect(result.items[0].title).toBe('修复登录 Bug');
+    expect(result.items[0].agentName).toBe('默认 Agent');
+    expect(result.items[0].hits[0].snippet).toContain('登录');
+    expect(result.items[0].hits[0].messageId).toBe(100);
+    expect(result.items[0].updatedAt).toBe('2026-08-07T10:30');
+    expect(sessionRepo.selectMatchingSessions).toHaveBeenCalledWith(expect.objectContaining({
+      mode: 'FULLTEXT',
+      userId: 7,
+      match: '"登录"',
+    }));
+  });
+
+  it('quotesMultiWordAndOperators', async () => {
+    const { service, sessionRepo, messageRepo } = makeService();
+    prime(sessionRepo, messageRepo, [], []);
+    await service.searchMessages(7, '部署脚本 回滚');
+    expect(sessionRepo.selectMatchingSessions).toHaveBeenCalledWith(expect.objectContaining({ match: '"部署脚本" "回滚"' }));
+    await service.searchMessages(7, '+部署 -测试');
+    expect(sessionRepo.selectMatchingSessions).toHaveBeenLastCalledWith(expect.objectContaining({ match: '+"部署" -"测试"' }));
+    await service.searchMessages(7, '数据库');
+    expect(sessionRepo.selectMatchingSessions).toHaveBeenLastCalledWith(expect.objectContaining({ match: '"数据库"' }));
+  });
+
+  it('usesLikeForShortKeywordAndKeepsFilters', async () => {
+    const { service, sessionRepo, messageRepo } = makeService();
+    prime(sessionRepo, messageRepo, [], []);
+    await service.searchMessages(7, '登', {
+      agentId: 9,
+      dateFrom: '2026-10-01',
+      dateTo: '2026-10-09',
+      sessionType: 'NORMAL',
+      page: 2,
+      size: 10,
+    });
+    expect(sessionRepo.selectMatchingSessions).toHaveBeenCalledWith(expect.objectContaining({
+      mode: 'LIKE',
+      userId: 7,
+      match: '登',
+      agentId: 9,
+      createdFrom: '2026-10-01 00:00:00',
+      createdToExclusive: '2026-10-10 00:00:00',
+      sessionType: 'NORMAL',
+      limit: 10,
+      offset: 10,
+    }));
+  });
+
+  it('passesDateWindowIntoDisplayedHits', async () => {
+    const { service, sessionRepo, messageRepo } = makeService();
+    const s = session(1, '当天', 'NORMAL', null, '2026-10-01 10:00:00');
+    prime(sessionRepo, messageRepo, [s], [hit(8, 1, '登录问题')]);
+    await service.searchMessages(7, '登录', { dateFrom: '2026-10-01', dateTo: '2026-10-01' });
+    expect(messageRepo.selectHitMessages).toHaveBeenCalledWith(
+      [1],
+      'FULLTEXT',
+      '"登录"',
+      '2026-10-01 00:00:00',
+      '2026-10-02 00:00:00',
+    );
+  });
+
+  it('degradesFulltextErrorsToLikeWithSameFilters', async () => {
+    const { service, sessionRepo, messageRepo } = makeService();
+    vi.mocked(sessionRepo.selectMatchingSessions)
+      .mockRejectedValueOnce(new Error('FTS query exceeds result cache limit'))
+      .mockResolvedValueOnce([]);
+    vi.mocked(sessionRepo.countMatchingSessions).mockResolvedValue(0);
+    const result = await service.searchMessages(7, '登录', { agentId: 3 });
+    expect(result.path).toBe('LIKE');
+    expect(sessionRepo.selectMatchingSessions).toHaveBeenLastCalledWith(expect.objectContaining({
+      mode: 'LIKE',
+      match: '登录',
+      agentId: 3,
+    }));
+    expect(messageRepo.selectHitMessages).not.toHaveBeenCalled();
   });
 
   it('returnsEmptyWhenNoCandidates', async () => {
-    const { service, sessionRepo } = makeService();
-    vi.mocked(sessionRepo.selectMessageSearchCandidates).mockResolvedValue([]);
-    expect(await service.searchSessionsByUserMessage(7, '不存在')).toEqual([]);
+    const { service, sessionRepo, messageRepo } = makeService();
+    prime(sessionRepo, messageRepo, [], []);
+    const result = await service.searchMessages(7, '不存在');
+    expect(result.items).toEqual([]);
+    expect(result.total).toBe(0);
   });
 
   it('throwsWhenKeywordBlank', async () => {
     const { service } = makeService();
-    await expect(service.searchSessionsByUserMessage(7, '   ')).rejects.toMatchObject({ code: ErrorCode.PARAM_MISSING.code });
+    await expect(service.searchMessages(7, '   ')).rejects.toMatchObject({ code: ErrorCode.PARAM_MISSING.code });
   });
 
   it('throwsWhenKeywordTooLong', async () => {
     const { service } = makeService();
-    await expect(service.searchSessionsByUserMessage(7, 'a'.repeat(101))).rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
+    await expect(service.searchMessages(7, 'a'.repeat(101))).rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
   });
 
-  it('escapesLikeWildcardsBeforeQuery', async () => {
-    const { service, sessionRepo } = makeService();
-    vi.mocked(sessionRepo.selectMessageSearchCandidates).mockResolvedValue([]);
-    await service.searchSessionsByUserMessage(7, '100%_\\bug');
-    expect(sessionRepo.selectMessageSearchCandidates).toHaveBeenCalledWith(7, '100\\%\\_\\\\bug');
+  it('escapesLikeWildcardsOnShortKeyword', async () => {
+    const { service, sessionRepo, messageRepo } = makeService();
+    prime(sessionRepo, messageRepo, [], []);
+    await service.searchMessages(7, '%');
+    expect(sessionRepo.selectMatchingSessions).toHaveBeenCalledWith(expect.objectContaining({ mode: 'LIKE', match: '\\%' }));
+  });
+
+  it('passesParentExistsAndRoleThroughFilterObject', async () => {
+    const { service, sessionRepo, messageRepo } = makeService();
+    prime(sessionRepo, messageRepo, [], []);
+    await service.searchMessages(7, 'OK');
+    const filter = vi.mocked(sessionRepo.selectMatchingSessions).mock.calls[0][0];
+    expect(filter.mode).toBe('FULLTEXT');
+    expect(filter.userId).toBe(7);
+    expect(filter.match).toBe('"OK"');
+  });
+
+  it('keepsStage1OrderWhenSessionReloadIsReversed', async () => {
+    const { service, sessionRepo, messageRepo } = makeService();
+    const newer = session(10, '较新', 'NORMAL', null, '2026-08-07 12:00:00');
+    const older = session(11, '较旧', 'NORMAL', null, '2026-08-01 09:00:00');
+    prime(sessionRepo, messageRepo, [newer, older], [
+      hit(1, 10, '新的登录问题'),
+      hit(2, 11, '旧的登录问题'),
+    ]);
+    const result = await service.searchMessages(7, '登录');
+    expect(result.items.map((item) => item.sessionId)).toEqual([10, 11]);
   });
 
   it('resolvesRootSessionIdForSideTaskCandidates', async () => {
     const { service, sessionRepo, messageRepo } = makeService();
-    // 深层边路 30：父链 30 -> 20(边路) -> 10(主会话)，根应解析为 10
     const deep = session(30, '深层任务', 'SIDE_TASK', null, '2026-08-07 10:30:00');
     deep.parentSessionId = 20;
-    vi.mocked(sessionRepo.selectMessageSearchCandidates).mockResolvedValue([deep]);
-    vi.mocked(messageRepo.selectMessagesForSearch).mockResolvedValue([message(300, 30, '深层任务的关键词')]);
+    prime(sessionRepo, messageRepo, [deep], [hit(300, 30, '深层任务的关键词')]);
     vi.mocked(sessionRepo.list).mockResolvedValue([
       { id: 20, userId: 7, parentSessionId: 10, sessionType: 'SIDE_TASK' },
       { id: 10, userId: 7, parentSessionId: null, sessionType: 'NORMAL' },
     ]);
-    const items = await service.searchSessionsByUserMessage(7, '关键词');
-    expect(items).toHaveLength(1);
-    expect(items[0].id).toBe(30);
-    expect(items[0].rootSessionId).toBe(10);
+    const result = await service.searchMessages(7, '关键词');
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].sessionId).toBe(30);
+    expect(result.items[0].rootSessionId).toBe(10);
   });
 
   it('dropsOrphanSideTaskCandidatesWithoutReachableRoot', async () => {
     const { service, sessionRepo, messageRepo } = makeService();
     const orphan = session(30, '孤儿任务', 'SIDE_TASK', null, '2026-08-07 10:30:00');
     orphan.parentSessionId = 20;
-    vi.mocked(sessionRepo.selectMessageSearchCandidates).mockResolvedValue([orphan]);
-    vi.mocked(messageRepo.selectMessagesForSearch).mockResolvedValue([message(300, 30, '孤儿任务的关键词')]);
-    // 父会话 20 已删除：查不到 → 链断，无根可达，候选剔除
+    prime(sessionRepo, messageRepo, [orphan], [hit(300, 30, '孤儿任务的关键词')]);
     vi.mocked(sessionRepo.list).mockResolvedValue([]);
-    const items = await service.searchSessionsByUserMessage(7, '关键词');
-    expect(items).toHaveLength(0);
+    const result = await service.searchMessages(7, '关键词');
+    expect(result.items).toHaveLength(0);
   });
 
   it('setsRootSessionIdToSelfForNormalCandidates', async () => {
     const { service, sessionRepo, messageRepo } = makeService();
     const main = session(1, '主会话', 'NORMAL', 9, '2026-08-07 10:30:00');
-    vi.mocked(sessionRepo.selectMessageSearchCandidates).mockResolvedValue([main]);
-    vi.mocked(messageRepo.selectMessagesForSearch).mockResolvedValue([message(100, 1, '主会话关键词')]);
-    const items = await service.searchSessionsByUserMessage(7, '关键词');
-    expect(items).toHaveLength(1);
-    expect(items[0].rootSessionId).toBe(1);
+    prime(sessionRepo, messageRepo, [main], [hit(100, 1, '主会话关键词')]);
+    const result = await service.searchMessages(7, '关键词');
+    expect(result.items[0].rootSessionId).toBe(1);
   });
 
   it('snippetContainsKeywordWhenKeywordInMiddle', () => {
-    const text = `${'a'.repeat(60)}登录页面${'b'.repeat(60)}`;
+    const text = `${'a'.repeat(100)}登录页面${'b'.repeat(100)}`;
     const snippet = buildSnippet(text, '登录页面');
     expect(snippet).toContain('登录页面');
     expect(snippet!.startsWith('…')).toBe(true);
     expect(snippet!.endsWith('…')).toBe(true);
-    expect(snippet!.length).toBeLessThanOrEqual(82);
+    expect(snippet!.length).toBeLessThanOrEqual(200);
   });
 
   it('rejectsMultimodalFalseHit', async () => {
     const { service, sessionRepo, messageRepo } = makeService();
     const jsonContent = '[{"type":"text","text":"帮我看看这个图片"},{"type":"image_url","url":"http://x/login.png"}]';
-    vi.mocked(sessionRepo.selectMessageSearchCandidates).mockResolvedValue([session(2, '图片会话', 'NORMAL', null, '2026-08-07 10:00:00')]);
-    vi.mocked(messageRepo.selectMessagesForSearch).mockResolvedValue([message(200, 2, jsonContent)]);
-    expect(await service.searchSessionsByUserMessage(7, 'image_url')).toEqual([]);
+    prime(sessionRepo, messageRepo, [session(2, '图片会话', 'NORMAL', null, '2026-08-07 10:00:00')], [hit(200, 2, jsonContent)]);
+    const result = await service.searchMessages(7, 'image_url');
+    expect(result.items).toEqual([]);
   });
 
   it('acceptsMultimodalTextPart', async () => {
     const { service, sessionRepo, messageRepo } = makeService();
     const jsonContent = '[{"type":"text","text":"登录页面报错了"},{"type":"image_url","url":"http://x/a.png"}]';
-    vi.mocked(sessionRepo.selectMessageSearchCandidates).mockResolvedValue([session(3, '带图会话', 'NORMAL', null, '2026-08-07 10:00:00')]);
-    vi.mocked(messageRepo.selectMessagesForSearch).mockResolvedValue([message(300, 3, jsonContent)]);
-    const items = await service.searchSessionsByUserMessage(7, '登录');
-    expect(items).toHaveLength(1);
-    expect(items[0].snippet).toContain('登录页面报错了');
-    expect(items[0].snippet).not.toContain('image_url');
+    prime(sessionRepo, messageRepo, [session(3, '带图会话', 'NORMAL', null, '2026-08-07 10:00:00')], [hit(300, 3, jsonContent)]);
+    const result = await service.searchMessages(7, '登录');
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].hits[0].snippet).toContain('登录页面报错了');
+    expect(result.items[0].hits[0].snippet).not.toContain('image_url');
   });
 
-  it('skipsFalseHitSessionAndKeepsTextHitSession', async () => {
+  it('dropsFalseHitAndKeepsVisibleCount', async () => {
     const { service, sessionRepo, messageRepo } = makeService();
-    vi.mocked(sessionRepo.selectMessageSearchCandidates).mockResolvedValue([
-      session(4, '仅图片', 'NORMAL', null, '2026-08-07 10:00:00'),
-      session(5, '文本命中', 'NORMAL', null, '2026-08-07 10:00:00'),
+    prime(sessionRepo, messageRepo, [session(14, '先图后文', 'NORMAL', null, '2026-08-07 10:00:00')], [
+      hit(1, 14, '[{"type":"image_url","url":"http://x/登录.png"}]'),
+      hit(2, 14, '后续提到了登录页面'),
     ]);
-    vi.mocked(messageRepo.selectMessagesForSearch).mockResolvedValue([
-      message(401, 4, '[{"type":"image_url","url":"http://x/登录.png"}]'),
-      message(501, 5, '这里提到登录页面'),
-    ]);
-    const items = await service.searchSessionsByUserMessage(7, '登录');
-    expect(items).toHaveLength(1);
-    expect(items[0].id).toBe(5);
+    vi.mocked(sessionRepo.selectMatchingSessions).mockResolvedValue([{ sessionId: 14, hitCount: 3, maxScore: 1 }]);
+    const result = await service.searchMessages(7, '登录');
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].hits).toHaveLength(1);
+    expect(result.items[0].hitCount).toBe(1);
+    expect(result.items[0].hits[0].snippet).toContain('登录');
   });
 
-  it('usesFirstHitMessageForSnippet', async () => {
+  it('keepsSqlHitCountWhenEverySampleHasSnippet', async () => {
     const { service, sessionRepo, messageRepo } = makeService();
-    vi.mocked(sessionRepo.selectMessageSearchCandidates).mockResolvedValue([session(6, '多条命中', 'NORMAL', null, '2026-08-07 10:00:00')]);
-    vi.mocked(messageRepo.selectMessagesForSearch).mockResolvedValue([
-      message(1, 6, '开头 abc登录'),
-      message(2, 6, 'xyz登录123'),
+    const s = session(6, '多条命中', 'NORMAL', null, '2026-08-07 10:00:00');
+    prime(sessionRepo, messageRepo, [s], [
+      hit(1, 6, '开头 abc登录'),
+      hit(2, 6, 'xyz登录123'),
     ]);
-    const items = await service.searchSessionsByUserMessage(7, '登录');
-    expect(items[0].snippet).toContain('开头');
-  });
-
-  it('caseInsensitiveMatchConsistentWithCollation', () => {
-    expect(buildSnippet('Login failed for user', 'login')).not.toBeNull();
-    expect(buildSnippet('登录 Login 页面', 'login')).not.toBeNull();
-    expect(buildSnippet('没有这个单词', 'Login')).toBeNull();
-  });
-
-  it('keywordNotInTextReturnsNullSnippet', () => {
-    expect(buildSnippet('完全无关的内容', '关键词')).toBeNull();
-  });
-
-  it('extractVisibleTextHandlesPlainAndMultimodal', () => {
-    const { service } = makeService();
-    expect(service.extractVisibleText('纯文本消息')).toBe('纯文本消息');
-    expect(service.extractVisibleText('[{"type":"text","text":"文本A"},{"type":"image_url","url":"u"}]')).toBe('文本A');
-    expect(service.extractVisibleText(null)).toBeNull();
-    expect(service.extractVisibleText('[broken')).toBe('[broken');
-    expect(service.extractVisibleText('["登录","500"]')).toBe('["登录","500"]');
-    expect(service.extractVisibleText('[1,2,3]')).toBe('[1,2,3]');
-    expect(service.extractVisibleText('[1,{"type":"text","text":"abc"}]')).toBe('[1,{"type":"text","text":"abc"}]');
-    expect(service.extractVisibleText('[]')).toBe('[]');
-  });
-
-  it('skipsMultimodalFalseHitInsideSameSessionAndUsesLaterTextHit', async () => {
-    const { service, sessionRepo, messageRepo } = makeService();
-    vi.mocked(sessionRepo.selectMessageSearchCandidates).mockResolvedValue([session(14, '先图后文', 'NORMAL', null, '2026-08-07 10:00:00')]);
-    vi.mocked(messageRepo.selectMessagesForSearch).mockResolvedValue([
-      message(1, 14, '[{"type":"image_url","url":"http://x/登录.png"}]'),
-      message(2, 14, '后续提到了登录页面'),
-    ]);
-    const items = await service.searchSessionsByUserMessage(7, '登录');
-    expect(items).toHaveLength(1);
-    expect(items[0].id).toBe(14);
-    expect(items[0].snippet).toContain('登录');
-    expect(items[0].snippet).not.toContain('image_url');
+    vi.mocked(sessionRepo.selectMatchingSessions).mockResolvedValue([{ sessionId: 6, hitCount: 8, maxScore: 2 }]);
+    const result = await service.searchMessages(7, '登录');
+    expect(result.items[0].hitCount).toBe(8);
+    expect(result.items[0].hits[0].snippet).toContain('开头');
+    expect(result.items[0].hits).toHaveLength(2);
   });
 
   it('plainJsonArrayMessageMatchesAsText', async () => {
     const { service, sessionRepo, messageRepo } = makeService();
-    vi.mocked(sessionRepo.selectMessageSearchCandidates).mockResolvedValue([session(13, '数组文本', 'NORMAL', null, '2026-08-07 10:00:00')]);
-    vi.mocked(messageRepo.selectMessagesForSearch).mockResolvedValue([message(1, 13, '["登录","500"]')]);
-    const items = await service.searchSessionsByUserMessage(7, '登录');
-    expect(items).toHaveLength(1);
-    expect(items[0].snippet).toContain('登录');
-  });
-
-  it('updatedAtSortComesFromCandidateOrder', async () => {
-    const { service, sessionRepo, messageRepo } = makeService();
-    vi.mocked(sessionRepo.selectMessageSearchCandidates).mockResolvedValue([
-      session(10, '较新', 'NORMAL', null, '2026-08-07 12:00:00'),
-      session(11, '较旧', 'NORMAL', null, '2026-08-01 09:00:00'),
-    ]);
-    vi.mocked(messageRepo.selectMessagesForSearch).mockResolvedValue([
-      message(1, 10, '新的登录问题'),
-      message(2, 11, '旧的登录问题'),
-    ]);
-    const items = await service.searchSessionsByUserMessage(7, '登录');
-    expect(items.map((i) => i.id)).toEqual([10, 11]);
+    prime(sessionRepo, messageRepo, [session(13, '数组文本', 'NORMAL', null, '2026-08-07 10:00:00')], [hit(1, 13, '["登录","500"]')]);
+    const result = await service.searchMessages(7, '登录');
+    expect(result.items[0].hits[0].snippet).toContain('登录');
   });
 
   it('emptyGroupingSurvivesNullContentMessages', async () => {
     const { service, sessionRepo, messageRepo } = makeService();
-    vi.mocked(sessionRepo.selectMessageSearchCandidates).mockResolvedValue([session(12, '空内容', 'NORMAL', null, '2026-08-07 10:00:00')]);
-    vi.mocked(messageRepo.selectMessagesForSearch).mockResolvedValue([message(1, 12, null)]);
-    expect(await service.searchSessionsByUserMessage(7, '关键词')).toEqual([]);
+    prime(sessionRepo, messageRepo, [session(12, '空内容', 'NORMAL', null, '2026-08-07 10:00:00')], [hit(1, 12, null)]);
+    const result = await service.searchMessages(7, '关键词');
+    expect(result.items).toEqual([]);
+  });
+
+  it('aroundAssistantHitUsesNextUserAsUpperBound', async () => {
+    const { service, messageRepo } = makeService();
+    vi.mocked(messageRepo.findById).mockImplementation(async (id: number) => {
+      if (id === 100) return { id: 100, sessionId: 11, role: 'ASSISTANT', content: '修复方案' };
+      if (id === 110) return { id: 110, sessionId: 11, role: 'USER', content: '下一轮' };
+      return null;
+    });
+    vi.mocked(messageRepo.selectRoundStartForMessage).mockResolvedValue(90);
+    vi.mocked(messageRepo.selectNextUserMessageId).mockResolvedValue(110);
+    vi.mocked(messageRepo.selectUserStarts).mockResolvedValue([{ id: 90, sessionId: 11, role: 'USER' }]);
+    vi.mocked(messageRepo.selectRange).mockResolvedValue([
+      { id: 90, sessionId: 11, role: 'USER', content: '问题' },
+      { id: 100, sessionId: 11, role: 'ASSISTANT', content: '修复方案' },
+    ]);
+    const page = await service.getMessagesByRounds(11, 5, null, { aroundMessageId: 100 });
+    expect(messageRepo.selectUserStarts).toHaveBeenCalledWith(11, 110, 6);
+    expect(page.messages.map((m) => m.id)).toEqual([90, 100]);
+    expect(page.hasNewer).toBe(true);
+  });
+
+  it('aroundLastRoundHasNoNewer', async () => {
+    const { service, messageRepo } = makeService();
+    vi.mocked(messageRepo.findById).mockResolvedValue({ id: 100, sessionId: 11, role: 'ASSISTANT', content: '末尾' });
+    vi.mocked(messageRepo.selectRoundStartForMessage).mockResolvedValue(90);
+    vi.mocked(messageRepo.selectNextUserMessageId).mockResolvedValue(null);
+    vi.mocked(messageRepo.selectUserStarts).mockResolvedValue([{ id: 90, sessionId: 11, role: 'USER' }]);
+    vi.mocked(messageRepo.selectRange).mockResolvedValue([
+      { id: 90, sessionId: 11, role: 'USER', content: '问' },
+      { id: 100, sessionId: 11, role: 'ASSISTANT', content: '末尾' },
+    ]);
+    const page = await service.getMessagesByRounds(11, 5, null, { aroundMessageId: 100 });
+    expect(messageRepo.selectUserStarts).toHaveBeenCalledWith(11, null, 6);
+    expect(page.hasNewer).toBe(false);
+    expect(page.messages.some((m) => m.id === 100)).toBe(true);
+  });
+
+  it('aroundRejectsMessageFromAnotherSession', async () => {
+    const { service, messageRepo } = makeService();
+    vi.mocked(messageRepo.findById).mockResolvedValue({ id: 100, sessionId: 99, role: 'ASSISTANT', content: 'x' });
+    await expect(service.getMessagesByRounds(11, 5, null, { aroundMessageId: 100 })).rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
+    expect(messageRepo.selectUserStarts).not.toHaveBeenCalled();
+  });
+
+  it('withoutAroundDoesNotReportHasNewer', async () => {
+    const { service, messageRepo } = makeService();
+    vi.mocked(messageRepo.selectUserStarts).mockResolvedValue([{ id: 5, sessionId: 11, role: 'USER' }]);
+    vi.mocked(messageRepo.selectRange).mockResolvedValue([{ id: 5, sessionId: 11, role: 'USER', content: 'x' }]);
+    const page = await service.getMessagesByRounds(11, 5, null);
+    expect(page.hasNewer).toBeUndefined();
+    expect(messageRepo.selectRoundStartForMessage).not.toHaveBeenCalled();
   });
 });
 

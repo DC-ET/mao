@@ -66,17 +66,28 @@ const MESSAGES_OF_SIDE_30 = {
 const DEEP_SEARCH_RESULT = {
   items: [
     {
-      id: 30,
+      sessionId: 30,
       title: '深层边路',
       sessionType: 'SIDE_TASK',
       parentSessionId: 20,
       rootSessionId: 1,
       updatedAt: '2026-10-06T09:40',
       phase: 'RUNNING',
+      status: 'ACTIVE',
       agentName: 'Coder',
-      snippet: '……深层任务关键词……',
+      hitCount: 1,
+      hits: [{
+        messageId: 3001,
+        role: 'ASSISTANT',
+        snippet: '……深层任务关键词……',
+        createdAt: '2026-10-06T09:40',
+      }],
     },
   ],
+  total: 1,
+  page: 1,
+  size: 20,
+  path: 'FULLTEXT',
 }
 
 // fork 预览：边路占位 Tab 选中 Fork 时按同口径预演将复制过来的历史（切点/轮次分页）
@@ -204,7 +215,7 @@ test.describe('Desktop - side fork (任意深度)', () => {
     await expect(page.locator('.search-result-item')).toHaveCount(1)
     await page.locator('.search-result-item').first().click()
     // 跳根主会话 1（若误用 parentSessionId 会落到 /tasks/20）
-    await expect(page).toHaveURL(/\/tasks\/1$/, { timeout: 8_000 })
+    await expect(page).toHaveURL(/\/tasks\/1(\?|$)/, { timeout: 8_000 })
     await expect(page.locator('.center-tab-bar .tab-item').filter({ hasText: '深层边路' }))
       .toBeVisible({ timeout: 8_000 })
   })
