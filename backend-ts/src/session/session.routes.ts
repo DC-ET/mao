@@ -13,6 +13,7 @@ import type { ActivityService } from './activity.service.js';
 import type { MessageQueueService } from './message-queue.service.js';
 import type { SessionCompactionEventService } from './session-compaction-event.service.js';
 import type { SessionCompactionService } from './session-compaction.service.js';
+import type { RunTraceService } from './run-trace.service.js';
 import type { SessionTodoRepository, SubagentExecutionRepository } from './activity.repository.js';
 import type {
   AgentLookup,
@@ -48,6 +49,7 @@ export interface SessionRouteDeps {
   subagentExecutionRepo: SubagentExecutionRepository;
   sessionCompactionEventService: SessionCompactionEventService;
   sessionCompactionService: SessionCompactionService;
+  runTraceService: RunTraceService;
   approvalRegistry?: ApprovalRegistry;
   askUserQuestionsRegistry?: AskUserQuestionsRegistry;
   treeSignalPublisher?: SessionTreeSignalPublisher;
@@ -505,6 +507,23 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     return sendOk(reply, activities.map(toActivityVO));
   });
 
+  // run 轨迹（技术方案 2026-10-09-run-trace）：读时聚合，回答「这一轮到底发生了什么」。
+  // run = 一条现存用户消息到下一条更新的用户消息；慢 / 贵阈值是展示参数，由 query 钳制后传入。
+  app.get('/v1/sessions/:id/trace', async (request, reply) => {
+    const userId = requireUserId(request);
+    const id = pathId(request);
+    await requireSessionOwner(userId, id);
+    const limit = Math.min(queryOptInt(request, 'limit') ?? 5, 50);
+    const slowMs = clamp(queryOptInt(request, 'slowMs') ?? 60_000, 1_000, 3_600_000);
+    const expensiveTokens = clamp(queryOptInt(request, 'expensiveTokens') ?? 50_000, 1_000, 10_000_000);
+    return sendOk(reply, await deps.runTraceService.buildTrace(id, {
+      beforeRunId: queryOptInt(request, 'beforeRunId') ?? null,
+      limit,
+      slowMs,
+      expensiveTokens,
+    }));
+  });
+
   app.get('/v1/sessions/:id/todos', async (request, reply) => {
     const userId = requireUserId(request);
     const id = pathId(request);
@@ -544,4 +563,10 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     const queue = await deps.messageQueueService.listPending(id);
     return sendOk(reply, queue.map(toQueueMessageVO));
   });
+}
+
+/** 轨迹阈值钳制：非法 query 回落默认区间，避免越界值把整个会话都标成慢 / 贵。 */
+function clamp(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, Math.floor(value)));
 }

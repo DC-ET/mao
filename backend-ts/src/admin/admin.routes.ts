@@ -117,6 +117,16 @@ export function registerAdminAnalyticsRoutes(app: FastifyInstance, deps: AdminRo
     const { days, endOffset, excludeConnectivity } = parseAnalyticsQuery(req.query as AnalyticsQueryRaw);
     sendJson(reply, 200, ok(await deps.analytics.sessionsScope(days, endOffset, { excludeConnectivity })));
   });
+
+  // 运行轨迹聚合：最慢轮 / 最贵轮（按 scope 维度）+ 工具失败率（按活动 type）
+  app.get('/v1/admin/analytics/run-trace', async (req, reply) => {
+    await requireRequestPermission(deps.permissionService, req, 'analytics:read');
+    const { days, endOffset, limit } = parseAnalyticsQuery(req.query as AnalyticsQueryRaw);
+    const q = req.query as { scene?: string; scope?: string };
+    const scene = typeof q.scene === 'string' && q.scene.trim() !== '' ? q.scene.trim() : 'agent';
+    const scope = q.scope === 'user' ? 'user' : 'agent';
+    sendJson(reply, 200, ok(await deps.analytics.runTraceScope(days, endOffset, { scene, scope, limit })));
+  });
 }
 
 export function registerAdminRuntimeRoutes(app: FastifyInstance, deps: AdminRouteDeps): void {

@@ -356,4 +356,50 @@ describe('WsStreamingEventListener', () => {
     listener.onToolCallResult('tc', JSON.stringify({ ok: true }));
     await new Promise((r) => setTimeout(r, 20));
   });
+
+  it('persists tool duration and detail_json and forwards duration_ms on activity event', async () => {
+    const { listener, registry, activityService } = makeListener();
+    listener.onToolCallStart({ id: 'tc-dur', function: { name: 'shell', arguments: '{"command":"ls"}' } } as never);
+    listener.onToolCallResult('tc-dur', JSON.stringify({ ok: true }), {
+      status: 'success', durationMs: 1234,
+      approvalMark: { mode: 'rule', approved: true, ruleId: 7 },
+    });
+    await vi.waitFor(() => expect(activityService.record).toHaveBeenCalled());
+    expect(activityService.record).toHaveBeenCalledWith(
+      11, 'RUN', 'ls', '执行 ls (exit -1)',
+      JSON.stringify({ toolCallId: 'tc-dur', approvalMark: { mode: 'rule', approved: true, ruleId: 7 } }),
+      'SUCCESS', 1234,
+    );
+    const activity = vi.mocked(registry.send).mock.calls
+      .map((c) => c[1] as { type: string; data?: Record<string, unknown> })
+      .find((e) => e.type === 'activity');
+    expect(activity?.data?.duration_ms).toBe(1234);
+    expect(activity?.data?.executionId).toBe('exec-1');
+  });
+
+  it('records null duration and omits approvalMark when meta lacks them', async () => {
+    const { listener, activityService } = makeListener();
+    listener.onToolCallStart({ id: 'tc-null', function: { name: 'read_file', arguments: '{"path":"a.ts"}' } } as never);
+    listener.onToolCallResult('tc-null', JSON.stringify({ ok: true }), { status: 'success' });
+    await vi.waitFor(() => expect(activityService.record).toHaveBeenCalled());
+    expect(activityService.record).toHaveBeenCalledWith(
+      11, 'READ', 'a.ts', expect.any(String),
+      JSON.stringify({ toolCallId: 'tc-null' }), 'SUCCESS', null,
+    );
+  });
+
+  it('sends paired round_start / round_end events with round number and executionId', () => {
+    const { listener, registry } = makeListener();
+    listener.onRoundStart?.(1);
+    listener.onRoundEnd?.(1);
+    listener.onRoundStart?.(2);
+    const roundEvents = vi.mocked(registry.send).mock.calls
+      .map((c) => c[1] as { type: string; data?: Record<string, unknown> })
+      .filter((e) => e.type === 'round_start' || e.type === 'round_end');
+    expect(roundEvents).toEqual([
+      { type: 'round_start', sessionId: 11, data: { round: 1, executionId: 'exec-1' } },
+      { type: 'round_end', sessionId: 11, data: { round: 1, executionId: 'exec-1' } },
+      { type: 'round_start', sessionId: 11, data: { round: 2, executionId: 'exec-1' } },
+    ]);
+  });
 });

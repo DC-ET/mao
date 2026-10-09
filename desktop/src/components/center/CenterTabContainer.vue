@@ -28,6 +28,11 @@
         :key="activeTabId"
         :child-session-id="activeTab.sideSessionId"
       />
+      <RunTracePanel
+        v-else-if="activeTab?.type === 'trace'"
+        :key="activeTabId"
+        :session-id="props.sessionId"
+      />
     </KeepAlive>
   </div>
 </template>
@@ -39,6 +44,7 @@ import FileViewer from './FileViewer.vue'
 import FileDiffViewer from './FileDiffViewer.vue'
 import SideChatPanel from '../chat/SideChatPanel.vue'
 import SubagentChatPanel from '../chat/SubagentChatPanel.vue'
+import RunTracePanel from './RunTracePanel.vue'
 import type { Tab } from '../../types/file-browser'
 import type { WorkspaceFileProvider } from '../../composables/workspace-file-provider'
 

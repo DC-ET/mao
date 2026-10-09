@@ -25,6 +25,18 @@ export class SessionActivityRepository {
       [sessionId, limit],
     );
   }
+
+  /**
+   * run 轨迹用：会话全部活动行（id 升序）。
+   * 归属以 tool_call_id 配现存消息为准，异步插入可能晚于下一条用户消息，
+   * 因此不能按 created_at 窗口裁剪；行数随会话规模增长，P1 接受整表拉取。
+   */
+  selectBySessionAll(sessionId: number): Promise<SessionActivity[]> {
+    return this.db.query<SessionActivity>(
+      `SELECT * FROM session_activity WHERE session_id = ? ORDER BY id ASC`,
+      [sessionId],
+    );
+  }
 }
 
 export class SessionTodoRepository {

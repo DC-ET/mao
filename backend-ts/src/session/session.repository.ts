@@ -500,6 +500,18 @@ export class MessageRepository {
     );
   }
 
+  /**
+   * 会话全部现存用户消息的时钟戳（run 轨迹用）：一条查询供翻页外的全局判定复用——
+   * run 时间窗上界（下一条更新的用户消息 created_at）、编辑重发的「编辑前」切点、
+   * 以及第一页的「未归属」边界，都不按页各查一遍。
+   */
+  selectUserStamps(sessionId: number): Promise<Array<Pick<Message, 'id' | 'createdAt' | 'updatedAt'>>> {
+    return this.db.query<Pick<Message, 'id' | 'createdAt' | 'updatedAt'>>(
+      `SELECT id, created_at, updated_at FROM \`message\` WHERE session_id = ? AND ${notDeleted()} AND role = 'USER' ORDER BY id ASC`,
+      [sessionId],
+    );
+  }
+
   selectRange(
     sessionId: number,
     startId: number,

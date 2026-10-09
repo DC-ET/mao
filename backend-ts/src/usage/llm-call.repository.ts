@@ -121,4 +121,27 @@ export class LlmCallRepository {
     );
     return { records, total: Number(totalRow?.c ?? 0) };
   }
+
+  /**
+   * run 轨迹的会话时间窗查询（走 idx_llm_call_session_created）。
+   * created_at 是调用结束时刻（秒）。上界开放（endAtExclusive = null）时取到最新一条；
+   * 下界开放（startAt = null）时从最早一条取（会话无用户消息时的未归属查询）。
+   * 同秒内按 id 升序，保证空响应重试的连续多行顺序稳定。
+   */
+  selectBySessionWindow(sessionId: number, startAt: string | null, endAtExclusive: string | null): Promise<LlmCallRow[]> {
+    const conditions = ['session_id = ?'];
+    const params: unknown[] = [sessionId];
+    if (startAt != null) {
+      conditions.push('created_at >= ?');
+      params.push(startAt);
+    }
+    if (endAtExclusive != null) {
+      conditions.push('created_at < ?');
+      params.push(endAtExclusive);
+    }
+    return this.db.query<LlmCallRow>(
+      `SELECT * FROM llm_call WHERE ${conditions.join(' AND ')} ORDER BY created_at ASC, id ASC`,
+      params,
+    );
+  }
 }

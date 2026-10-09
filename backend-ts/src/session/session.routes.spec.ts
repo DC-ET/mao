@@ -9,6 +9,7 @@ import type { ActivityService } from './activity.service.js';
 import type { MessageQueueService } from './message-queue.service.js';
 import type { SessionCompactionEventService } from './session-compaction-event.service.js';
 import type { SessionCompactionService } from './session-compaction.service.js';
+import type { RunTraceService } from './run-trace.service.js';
 import type { SessionTodoRepository, SubagentExecutionRepository } from './activity.repository.js';
 import type { AgentLookup, LlmModelLookup, UserLookup } from './types.js';
 import type { PathSandbox } from '../harness/safety/path-sandbox.js';
@@ -99,6 +100,7 @@ describe('session and admin routes', () => {
     const pathSandbox = { getWorkspaceRoot: () => root } as PathSandbox;
     const compactionEventService = { listBySessionId: vi.fn(async () => []) } as unknown as SessionCompactionEventService;
     const compactionRecordService = { findBySessionId: vi.fn(async () => null) };
+    const runTraceService = { buildTrace: vi.fn(async () => ({ runs: [], hasMore: false, unattributed: null })) };
     registerSessionRoutes(fastify, {
       sessionService,
       agentLookup,
@@ -115,6 +117,7 @@ describe('session and admin routes', () => {
       subagentExecutionRepo: { findByChildSessionIds: vi.fn(async () => []) } as unknown as SubagentExecutionRepository,
       sessionCompactionEventService: compactionEventService,
       sessionCompactionService: compactionRecordService as unknown as SessionCompactionService,
+      runTraceService: runTraceService as unknown as RunTraceService,
     });
     registerAdminSessionRoutes(fastify, {
       sessionService,
@@ -135,7 +138,7 @@ describe('session and admin routes', () => {
       })),
     } as unknown as OssStsService;
     registerOssRoutes(fastify, { ossStsService });
-    return { fastify, sessionService, ossStsService, compactionEvents: compactionEventService, compactionRecordService };
+    return { fastify, sessionService, ossStsService, compactionEvents: compactionEventService, compactionRecordService, runTraceService };
   }
 
   it('covers session rest endpoints', async () => {
@@ -215,6 +218,39 @@ describe('session and admin routes', () => {
     const { fastify: f2, sessionService: svc2 } = await app();
     (svc2.getSession as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 1, userId: 999, agentId: 9 });
     const denied = await f2.inject({ method: 'GET', url: '/v1/sessions/1/compaction' });
+    expect(denied.statusCode).not.toBe(200);
+    expect(JSON.parse(denied.body).code).not.toBe(0);
+
+    await fastify.close();
+    await f2.close();
+  });
+
+  it('GET /sessions/:id/trace 透传分页锚点并钳制慢 / 贵阈值', async () => {
+    const { fastify, runTraceService } = await app();
+    const res = await fastify.inject({ method: 'GET', url: '/v1/sessions/1/trace?beforeRunId=9&limit=50&slowMs=10&expensiveTokens=99999999' });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).code).toBe(0);
+    expect(runTraceService.buildTrace).toHaveBeenCalledWith(1, {
+      beforeRunId: 9,
+      limit: 50,
+      slowMs: 1_000,
+      expensiveTokens: 10_000_000,
+    });
+
+    // 缺省值：limit=5、slowMs=60s、expensiveTokens=50k
+    vi.mocked(runTraceService.buildTrace).mockClear();
+    await fastify.inject({ method: 'GET', url: '/v1/sessions/1/trace' });
+    expect(runTraceService.buildTrace).toHaveBeenCalledWith(1, {
+      beforeRunId: null,
+      limit: 5,
+      slowMs: 60_000,
+      expensiveTokens: 50_000,
+    });
+
+    // 越权会话拒绝（requireSessionOwner 抛 FORBIDDEN）
+    const { fastify: f2, sessionService: svc2 } = await app();
+    (svc2.getSession as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 1, userId: 999, agentId: 9 });
+    const denied = await f2.inject({ method: 'GET', url: '/v1/sessions/1/trace' });
     expect(denied.statusCode).not.toBe(200);
     expect(JSON.parse(denied.body).code).not.toBe(0);
 

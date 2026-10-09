@@ -665,3 +665,130 @@ describe('AdminAnalyticsService 成本聚合（§5.2 / 决策 13：成本唯一�
     expect(costHits).toBe(5);
   });
 });
+
+describe('AdminAnalyticsService runTraceScope', () => {
+  /** service 自己按今天解析窗口（不是文件顶部的固定 range），断言前先算出来。 */
+  const traceRange = {
+    days: 7,
+    startYmd: addDaysYmd(today, -6),
+    endYmd: today,
+    startAt: `${addDaysYmd(today, -6)} 00:00:00`,
+    endAtExclusive: `${addDaysYmd(today, 1)} 00:00:00`,
+  };
+
+  function buildRunTraceStore(overrides: Record<string, unknown> = {}) {
+    return {
+      selectRunTraceSlowestRounds: vi.fn(async () => [
+        {
+          scopeKey: 9, sessionId: 42, modelName: 'gpt', createdAt: '2026-01-05 10:00:00',
+          durationMs: 90000, totalTokens: 12000, costMicros: 500000, callCount: 8,
+        },
+        {
+          scopeKey: 3, sessionId: 41, modelName: 'claude', createdAt: '2026-01-06 11:00:00',
+          durationMs: 30000, totalTokens: 9000, costMicros: null, callCount: 4,
+        },
+      ]),
+      selectRunTraceMostExpensiveRounds: vi.fn(async () => [
+        {
+          scopeKey: 3, sessionId: 41, modelName: 'claude', createdAt: '2026-01-06 11:00:00',
+          durationMs: 30000, totalTokens: 9000, costMicros: 900000, callCount: 4,
+        },
+      ]),
+      selectRunTraceToolFailureRates: vi.fn(async () => [
+        { toolType: 'RUN', errorCount: 1, totalCount: 2 },
+        { toolType: 'READ', errorCount: 5, totalCount: 20 },
+        { toolType: 'EDIT', errorCount: 0, totalCount: 9 },
+      ]),
+      listAgents: vi.fn(async () => [
+        { id: 9, name: 'Coder' },
+        { id: 3, name: 'Reviewer' },
+      ]),
+      listUsers: vi.fn(async () => [
+        { id: 1, username: 'ada', displayName: 'Ada' },
+      ]),
+      ...overrides,
+    };
+  }
+
+  it('默认 scene=agent / scope=agent：榜单补维度名，失败率按比例排序', async () => {
+    const store = buildRunTraceStore();
+    const service = new AdminAnalyticsService({ getOverview: vi.fn(async () => ({})) } as never, store as never);
+
+    const result = (await service.runTraceScope(7)) as Record<string, any>;
+
+    expect(result.scene).toBe('agent');
+    expect(result.scope).toBe('agent');
+    expect(result.slowestRounds[0]).toMatchObject({ scopeKey: 9, scopeName: 'Coder', durationMs: 90000, callCount: 8 });
+    expect(result.slowestRounds[1]).toMatchObject({ scopeKey: 3, scopeName: 'Reviewer', costMicros: null });
+    expect(result.mostExpensiveRounds[0]).toMatchObject({ scopeKey: 3, scopeName: 'Reviewer', costMicros: 900000 });
+    // READ 5/20=25% 排在 RUN 1/2=50% 之后；0 失败的 EDIT 也保留（分母>0）
+    expect(result.toolFailureRates.map((r: any) => r.toolType)).toEqual(['RUN', 'READ', 'EDIT']);
+    expect(result.toolFailureRates[0].failRate).toBe(50);
+    expect(result.toolFailureRates[1].failRate).toBe(25);
+    // 查询参数透传：scene / 维度 / limit
+    expect(store.selectRunTraceSlowestRounds).toHaveBeenCalledWith(traceRange, 'agent', 'agent', 20);
+  });
+
+  it('scope=user 走用户维度并用 displayName 命名', async () => {
+    const store = buildRunTraceStore({
+      selectRunTraceSlowestRounds: vi.fn(async () => [
+        {
+          scopeKey: 1, sessionId: 7, modelName: 'gpt', createdAt: '2026-01-05 10:00:00',
+          durationMs: 12000, totalTokens: 3000, costMicros: null, callCount: 2,
+        },
+      ]),
+      selectRunTraceMostExpensiveRounds: vi.fn(async () => []),
+    });
+    const service = new AdminAnalyticsService({ getOverview: vi.fn(async () => ({})) } as never, store as never);
+
+    const result = (await service.runTraceScope(7, 0, { scope: 'user', scene: 'compaction' })) as Record<string, any>;
+
+    expect(result.scope).toBe('user');
+    expect(result.scene).toBe('compaction');
+    expect(result.slowestRounds[0]).toMatchObject({ scopeKey: 1, scopeName: 'Ada' });
+    expect(store.selectRunTraceSlowestRounds).toHaveBeenCalledWith(traceRange, 'compaction', 'user', 20);
+    expect(store.selectRunTraceMostExpensiveRounds).toHaveBeenCalledWith(traceRange, 'compaction', 'user', 20);
+  });
+
+  it('未关联维度的行给占位名，limit 截断榜单', async () => {
+    const store = buildRunTraceStore({
+      selectRunTraceSlowestRounds: vi.fn(async () => [
+        {
+          scopeKey: 999, sessionId: null, modelName: null, createdAt: null,
+          durationMs: 1000, totalTokens: 0, costMicros: null, callCount: 1,
+        },
+      ]),
+      selectRunTraceMostExpensiveRounds: vi.fn(async () => []),
+      selectRunTraceToolFailureRates: vi.fn(async () => [
+        { toolType: 'RUN', errorCount: 1, totalCount: 2 },
+        { toolType: 'READ', errorCount: 1, totalCount: 2 },
+      ]),
+    });
+    const service = new AdminAnalyticsService({ getOverview: vi.fn(async () => ({})) } as never, store as never);
+
+    const result = (await service.runTraceScope(7, 0, { limit: 1 })) as Record<string, any>;
+
+    expect(result.slowestRounds[0].scopeName).toBe('未关联 Agent');
+    expect(result.toolFailureRates).toHaveLength(1);
+    expect(store.selectRunTraceSlowestRounds).toHaveBeenCalledWith(traceRange, 'agent', 'agent', 1);
+  });
+
+  it('聚合 SQL：轮榜按维度分区取代表调用，贵榜额外要求 cost_micros IS NOT NULL', async () => {
+    const db = { query: vi.fn(async () => []), queryOne: vi.fn(async () => ({ c: 0 })) };
+    const store = new AdminAnalyticsDbStore(db as never);
+    await store.selectRunTraceSlowestRounds(range, 'agent', 'agent', 20);
+    await store.selectRunTraceMostExpensiveRounds(range, 'agent', 'user', 20);
+    await store.selectRunTraceToolFailureRates(range);
+    const sqls = (db.query.mock.calls as unknown[][]).map((c) => c[0] as string);
+    expect(sqls[0]).toContain('ROW_NUMBER() OVER (PARTITION BY c.agent_id ORDER BY c.duration_ms DESC');
+    expect(sqls[0]).toContain('c.scene = ?');
+    expect(sqls[0]).not.toContain('c.cost_micros IS NOT NULL');
+    expect(sqls[1]).toContain('ROW_NUMBER() OVER (PARTITION BY c.user_id ORDER BY c.cost_micros DESC');
+    expect(sqls[1]).toContain('AND c.cost_micros IS NOT NULL');
+    expect(sqls[2]).toContain('GROUP BY type');
+    expect(sqls[2]).toContain("status = 'ERROR'");
+    // 轮榜传窗口与 scene；工具失败率只传窗口
+    expect((db.query.mock.calls[0] as unknown[])[1]).toEqual([range.startAt, range.endAtExclusive, 'agent', 20]);
+    expect((db.query.mock.calls[2] as unknown[])[1]).toEqual([range.startAt, range.endAtExclusive]);
+  });
+});

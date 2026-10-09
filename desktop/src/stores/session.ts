@@ -4,6 +4,7 @@ import { createSessionListModule } from './session/list'
 import { createMessageRuntimeModule } from './session/messages'
 import { createSideTaskModule } from './session/sideTask'
 import { createSubagentModule } from './session/subagent'
+import { createTraceModule } from './session/trace'
 
 export * from './session/types'
 
@@ -17,6 +18,7 @@ export const useSessionStore = defineStore('session', () => {
 
   const sideTask = createSideTaskModule({ viewingSideTaskId })
   const subagent = createSubagentModule()
+  const trace = createTraceModule()
 
   const list = createSessionListModule({
     sessionPendingApprovals: () => messageRuntime.sessionPendingApprovals,
@@ -42,6 +44,7 @@ export const useSessionStore = defineStore('session', () => {
     messageRuntime.reset()
     sideTask.reset()
     subagent.reset()
+    trace.reset()
     viewingSideTaskId.value = null
   }
 
@@ -54,6 +57,8 @@ export const useSessionStore = defineStore('session', () => {
     ...sideTask,
     // subagent domain
     ...subagent,
+    // run trace domain
+    ...trace,
     // shared
     viewingSideTaskId,
     setViewingSideTask,

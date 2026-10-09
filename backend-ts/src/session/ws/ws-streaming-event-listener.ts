@@ -15,6 +15,8 @@ export interface AgentEventListener {
   onToolCallStart(toolCall: ToolCall): void;
   onToolCallResult(toolCallId: string, result: string, meta?: ToolCallResultMeta): void;
   onMessageEnd(usage: ChatUsage): void;
+  onRoundStart?(round: number): void;
+  onRoundEnd?(round: number): void;
   onError(t: unknown): void;
   onContextWindow?(estimatedTokens: number, actualTokens: number, manifest?: ContextManifest | null): void;
   onCompactionStart?(type: string, messageCount: number, estimatedTokens: number): void;
@@ -52,7 +54,15 @@ interface PendingDelta {
 export interface WsListenerDeps {
   registry: StreamingWsRegistry;
   activityService: {
-    record(sessionId: number, type: string, target: string | null, summary: string | null, extra: null, status: string, extra2: null): Promise<{ id: number }>;
+    record(
+      sessionId: number,
+      type: string,
+      target: string | null,
+      summary: string | null,
+      detailJson: string | null,
+      status: string,
+      durationMs: number | null,
+    ): Promise<{ id: number }>;
   };
   activityHeartbeat: { touch(sessionId: number): void };
   sessionTodoMapper: { selectBySessionId(sessionId: number): Promise<SessionTodo[]> };
@@ -133,7 +143,7 @@ export class WsStreamingEventListener implements AgentEventListener {
     if (meta?.resultTruncated === true) data.result_truncated = true;
     this.send('tool_call_result', data);
 
-    void this.recordActivity(toolName, argumentsJson, summary, isError);
+    void this.recordActivity(toolName, argumentsJson, summary, isError, toolCallId, meta);
     if (toolName && TASK_TOOLS.has(toolName)) {
       void this.pushTodos();
     }
@@ -152,6 +162,16 @@ export class WsStreamingEventListener implements AgentEventListener {
       total_tokens: usage.totalTokens,
     });
     this.persistRuntimeStatus(null);
+  }
+
+  // 轮边界只下发、不落库：round 是本次执行从 1 计的内存序号（崩溃恢复会重新从 1 计），
+  // 仅供桌面渲染「当前执行第几轮」的临时行；持久序号以 REST 轨迹的 seq 为准。
+  onRoundStart(round: number): void {
+    this.send('round_start', { round });
+  }
+
+  onRoundEnd(round: number): void {
+    this.send('round_end', { round });
   }
 
   onError(t: unknown): void {
@@ -265,14 +285,33 @@ export class WsStreamingEventListener implements AgentEventListener {
     void this.deps.sessionService.updateRuntimeStatus?.(this.sessionId, runtimeStatus).catch(() => {});
   }
 
-  private async recordActivity(toolName: string | null, argumentsJson: string | null, summary: string | null, isError: boolean): Promise<void> {
+  private async recordActivity(
+    toolName: string | null,
+    argumentsJson: string | null,
+    summary: string | null,
+    isError: boolean,
+    toolCallId: string,
+    meta?: ToolCallResultMeta,
+  ): Promise<void> {
     try {
       const activityType = mapToolToType(toolName);
       const target = extractActivityTarget(toolName, argumentsJson);
       const activitySummary = summary ?? toolName;
       const status = isError ? 'ERROR' : 'SUCCESS';
-      const activity = await this.deps.activityService.record(this.sessionId, activityType, target, activitySummary, null, status, null);
-      this.send('activity', { id: activity.id, type: activityType, target, summary: activitySummary, status });
+      // detail_json 冗余 toolCallId 与审批标记：轨迹按 tool_call_id 归属，消息 metadataJson 缺失时兜底
+      const detail = JSON.stringify({
+        toolCallId,
+        ...(meta?.approvalMark ? { approvalMark: meta.approvalMark } : {}),
+      });
+      // 耗时以执行层 ToolResult.durationMs 为权威（本地计量，LOCAL 委托工具随 meta 回传）
+      const durationMs = meta?.durationMs ?? null;
+      const activity = await this.deps.activityService.record(
+        this.sessionId, activityType, target, activitySummary, detail, status, durationMs,
+      );
+      this.send('activity', {
+        id: activity.id, type: activityType, target, summary: activitySummary, status,
+        duration_ms: durationMs,
+      });
     } catch { /* ignore */ }
   }
   private async pushTodos(): Promise<void> {

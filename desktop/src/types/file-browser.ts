@@ -22,7 +22,7 @@ export interface SideTaskForkSource {
 
 export interface Tab {
   id: string            // 'chat' for chat tab, relative path for file tabs
-  type: 'chat' | 'file' | 'diff' | 'side_task' | 'subagent'
+  type: 'chat' | 'file' | 'diff' | 'side_task' | 'subagent' | 'trace'
   title: string
   filePath?: string     // relative path within workspace
   fileChange?: FileChange

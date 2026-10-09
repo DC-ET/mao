@@ -175,13 +175,18 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     }
   }, { immediate: true })
 
-  function getSessionState(): SessionTabState {
-    const sid = currentSessionId.value
-    if (!sid) return { tabs: [], activeTabId: 'chat' }
-    let state = sessionTabsMap.value.get(sid)
+  /**
+   * 取会话的 Tab 状态。sid 缺省用 currentSessionId；
+   * 显式传 sid 给「调用方已知目标会话、但 currentSessionId 可能尚未同步」的还原入口用
+   * （loadSession 里 setActiveSession 之后同步调用 restore*，watch 还没跑）。
+   */
+  function getSessionState(sid?: string): SessionTabState {
+    const key = sid ?? currentSessionId.value
+    if (!key) return { tabs: [], activeTabId: 'chat' }
+    let state = sessionTabsMap.value.get(key)
     if (!state) {
       state = { tabs: [], activeTabId: 'chat' }
-      sessionTabsMap.value.set(sid, state)
+      sessionTabsMap.value.set(key, state)
     }
     return state
   }
@@ -304,6 +309,24 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     tab.forkFrom = opts.fork ?? undefined
     tab.sourceSessionId = opts.sourceSessionId
     notifyTabsChanged()
+  }
+
+  /**
+   * 打开轨迹 Tab（run 轨迹透视）。每会话单例（id = 'trace'），已存在则直接激活。
+   * sid 缺省用当前会话；刷新还原入口传显式 sid（currentSessionId 可能尚未同步）。
+   * 刷新还原依赖它：持久化类型是 trace 时，restoreActiveTab 只按 id 在已有 tabs 里找，
+   * 不先建出来就永远留在主会话。
+   */
+  function openTraceTab(sid?: string) {
+    const state = getSessionState(sid)
+    const existing = state.tabs.find(t => t.type === 'trace')
+    if (existing) {
+      state.activeTabId = existing.id
+    } else {
+      state.tabs.push({ id: 'trace', type: 'trace', title: '轨迹' })
+      state.activeTabId = 'trace'
+    }
+    notifyTabsChanged(sid)
   }
 
   /**
@@ -481,6 +504,21 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     notifyTabsChanged()
   }
 
+  /**
+   * 轨迹 tab 的刷新还原（loadSession 里调用，与边路任务还原相互独立）。
+   *
+   * restoreActiveTab 只在已有 state.tabs 里按 id 找，不会把轨迹 tab 建出来——
+   * 不先 openTraceTab() 的话，上次停在轨迹 tab 的用户刷新后只会回到主会话。
+   * 持久化类型不是 trace 时不插手，避免覆盖用户本次会话内的主动切换。
+   */
+  function restoreTraceTab(parentSessionId: string): void {
+    const sid = String(parentSessionId || '')
+    if (!sid) return
+    if (getPersistedActiveTab(sid)?.type !== 'trace') return
+    openTraceTab(sid)
+    restoreActiveTab(sid)
+  }
+
   /** 仅关闭文件类标签（file / diff），保留边路任务 / 子代理等非文件标签。 */
   function closeAllFileTabs() {
     const state = getSessionState()
@@ -523,9 +561,11 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     openSideTaskTab,
     setSideTaskFork,
     openSubagentTab,
+    openTraceTab,
     updateSideTaskTab,
     restoreSideTaskTabs,
     restoreSubagentTabs,
+    restoreTraceTab,
     closeTab,
     closeAllFileTabs,
     closeOtherTabs,
