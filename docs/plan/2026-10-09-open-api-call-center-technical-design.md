@@ -68,7 +68,7 @@ open.routes.ts run handler ─────────────────�
 Webhook 路径：handleFire 内同构（[写入点 C]），404/429 拒绝也落行
 ```
 
-## 5. 数据库设计（V142，当前最大版本 V141）
+## 5. 数据库设计（V145。V142 已被毫秒时间戳占用，V143/V144 为定时任务可靠性）
 
 ```sql
 -- 开放接口入站调用流水（docs/plan/2026-10-09-open-api-call-center-technical-design.md §5）
@@ -326,14 +326,14 @@ WHERE id = ? AND outcome IN ('pending', 'queued')
 
 ## 8. 权限与错误码
 
-- 新权限 `openapi:read` / `openapi:replay`（V142 种子，默认授 role_id=1；菜单对无权限角色隐藏，对齐 V121 借码教训）。
+- 新权限 `openapi:read` / `openapi:replay`（V145 种子，默认授 role_id=1；菜单对无权限角色隐藏，对齐 V121 借码教训）。
 - 新错误码 `TOKEN_AUTO_DISABLED: { code: 3043, message: 'Token 已因连续失败被自动停用，请手动重新启用' }`；`handleError` 增加 3043→403 映射（现有逻辑只映射 1001/1002/401/403，其余业务码走 200 信封）。
 
 ## 9. 分阶段实施
 
 | 阶段 | 内容 | 规模 |
 |---|---|---|
-| P1 | V142 迁移（流水表 + api_token/message_queue/preference 列 + 权限 + 配置种子）；三个埋点写入点 + 逻辑状态映射 + per-IP 抑制；脱敏摘要 + full-body 开关与端点；直跑/排队终态回写（settlement 扩容）；用户侧列表/详情 API + desktop 调用记录弹窗；清理调度；settings getter | 中 |
+| P1 | V145 迁移（流水表 + api_token/message_queue/preference 列 + 权限 + 配置种子）；三个埋点写入点 + 逻辑状态映射 + per-IP 抑制；脱敏摘要 + full-body 开关与端点；直跑/排队终态回写（settlement 扩容）；用户侧列表/详情 API + desktop 调用记录弹窗；清理调度；settings getter | 中 |
 | P2 | admin 独立页（流水 + 统计 + 导出 + 详情）；重放端点与 UI；复制 cURL | 中 |
 | P3 | Token 失败计数 + 自动停用 + 403 判别（error-code/http-error/jwt-hook）+ 恢复端点；TOKEN_DISABLED 与 OPEN_API_CALL_FAILED 通知 + 聚合器 + 偏好开关 + 通知设置 UI | 小 |
 
