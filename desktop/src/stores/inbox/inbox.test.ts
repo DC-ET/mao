@@ -254,11 +254,12 @@ describe('inbox store', () => {
       makeList([
         makeItem(1, { kind: 'BUDGET_WARN' as any }),
         makeItem(2, { kind: 'TRIGGER_DISABLED' as any }),
-        makeItem(3, { kind: 'NOT_A_KIND' as any }),
+        makeItem(3, { kind: 'SCHEDULED_TASK_PAUSED' as any }),
+        makeItem(4, { kind: 'NOT_A_KIND' as any }),
       ]),
       1,
     )
-    expect(store.visibleItems.map((i) => i.id)).toEqual([1, 2])
+    expect(store.visibleItems.map((i) => i.id)).toEqual([1, 2, 3])
   })
 
   it('偏好读写：保存后以服务端返回值为准', async () => {

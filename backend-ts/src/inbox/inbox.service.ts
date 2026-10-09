@@ -158,6 +158,28 @@ export class InboxService {
   }
 
   /**
+   * SCHEDULED_TASK_PAUSED：定时任务连续失败自动暂停。
+   * 无偏好开关；tail 带时间戳，同任务多次暂停各通知一次。
+   */
+  async recordScheduledTaskPaused(input: {
+    userId: number;
+    taskId: number;
+    taskName: string;
+    sessionId: number | null;
+    failures: number;
+  }): Promise<void> {
+    await this.record({
+      userId: input.userId,
+      kind: 'SCHEDULED_TASK_PAUSED',
+      title: `定时任务已自动暂停：${input.taskName}`,
+      content: `连续失败 ${input.failures} 次，已自动暂停；请检查模型/Agent 配置后手动启用`,
+      sessionId: input.sessionId,
+      payload: { taskId: input.taskId, taskName: input.taskName, failures: input.failures },
+      tail: `${input.taskId}:${Date.now()}`,
+    });
+  }
+
+  /**
    * BUDGET_WARN（技术方案 §5.8）：预算越线提醒。WARN 结算与队列 BLOCK 留队提醒共用本入口。
    * tail = `{budgetId}:{period}`，同周期同预算恰好提醒一次（insertIgnore 幂等，跨周期重置）。
    * period（yyyy-MM）由调用方（BudgetService）按服务器本地时区计算传入。
@@ -366,6 +388,8 @@ export class InboxService {
         return preference.budgetWarnEnabled;
       case 'TRIGGER_DISABLED':
         // 无偏好开关：触发器自动停用是运维级事件，始终通知属主
+        return true;
+      case 'SCHEDULED_TASK_PAUSED':
         return true;
       default:
         return false;

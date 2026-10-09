@@ -53,6 +53,30 @@
               </span>
               <span class="fire-count"> (已触发 {{ task.fireCount }} 次)</span>
             </div>
+            <div v-if="policyHint(task)" class="task-policy">{{ policyHint(task) }}</div>
+            <div v-if="task.status === 'PAUSED' && (task.consecutiveFailures ?? 0) > 0" class="task-policy">
+              连续失败 {{ task.consecutiveFailures }} 次
+            </div>
+            <button type="button" class="runs-toggle" @click="toggleRuns(task.id)">
+              {{ openRuns[task.id] ? '收起最近运行' : '最近运行' }}
+            </button>
+            <div v-if="openRuns[task.id]" class="runs">
+              <div v-if="runsLoading[task.id]" class="runs-empty">加载中…</div>
+              <div v-else-if="!(runsByTask[task.id] || []).length" class="runs-empty">还没有运行记录</div>
+              <button
+                v-for="run in runsByTask[task.id] || []"
+                :key="run.id"
+                type="button"
+                class="run-row"
+                @click="openRunSession(run.sessionId)"
+              >
+                <span>{{ formatNextFire(run.fireTime) }}</span>
+                <span>{{ runBadge(run) }}</span>
+                <span v-if="run.attempt > 1">第 {{ run.attempt }} 次尝试</span>
+                <span>{{ formatDuration(run.durationMs) }}</span>
+                <span>{{ formatCost(run.costMicros) }}</span>
+              </button>
+            </div>
           </div>
           <div class="task-actions">
             <el-switch
@@ -75,13 +99,37 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { useScheduledTasks } from '../composables/useScheduledTasks'
+import { useSessionStore } from '../stores/session'
 
-const { tasks, activeTasks, finishedTasks, loading, togglingIds, fetchTasks, toggleStatus, deleteTask, formatNextFire, formatFinishedAt, statusLabel } = useScheduledTasks()
+const {
+  tasks, activeTasks, finishedTasks, loading, togglingIds, fetchTasks, toggleStatus, deleteTask,
+  formatNextFire, formatFinishedAt, statusLabel, runsByTask, runsLoading, fetchRuns, policyHint, runBadge, formatDuration, formatCost
+} = useScheduledTasks()
 
 const activeTab = ref<'active' | 'finished'>('active')
 const currentTasks = computed(() => activeTab.value === 'active' ? activeTasks.value : finishedTasks.value)
+const openRuns = reactive<Record<number, boolean>>({})
+const router = useRouter()
+const sessionStore = useSessionStore()
+
+async function toggleRuns(taskId: number) {
+  openRuns[taskId] = !openRuns[taskId]
+  if (openRuns[taskId]) await fetchRuns(taskId)
+}
+
+async function openRunSession(sessionId: number) {
+  const session = await sessionStore.fetchSession(String(sessionId))
+  if (!session) {
+    ElMessage.warning('关联会话已不存在，可能已被删除')
+    return
+  }
+  sessionStore.setActiveSession(String(sessionId))
+  await router.push(`/tasks/${sessionId}`)
+}
 
 onMounted(fetchTasks)
 </script>
@@ -194,6 +242,53 @@ onMounted(fetchTasks)
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+.task-policy {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--aw-ink-muted);
+}
+
+.runs-toggle {
+  margin-top: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--aw-ink-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.runs {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.runs-empty {
+  font-size: 12px;
+  color: var(--aw-ink-muted);
+}
+
+.run-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  padding: 4px 0;
+  font-size: 12px;
+  color: var(--aw-ink);
+  cursor: pointer;
+}
+
+.run-row:hover {
+  background: var(--aw-surface-sunken, rgba(0, 0, 0, 0.03));
 }
 
 .cron {

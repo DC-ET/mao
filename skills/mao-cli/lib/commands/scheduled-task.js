@@ -15,7 +15,8 @@ const HELP = `用法:
   mao scheduled-task list
   mao scheduled-task list-all [--page-num] [--page-size] [--keyword] [--user-id] [--agent-id] [--status ACTIVE|PAUSED] [--finished true|false]
   mao scheduled-task get --id <id>
-  mao scheduled-task update --id <id> [--name] [--prompt] [--cron-expression] [--status ACTIVE|PAUSED]
+  mao scheduled-task update --id <id> [--name] [--prompt] [--cron-expression] [--status ACTIVE|PAUSED] [--retry-max 0-5] [--retry-interval-minutes 1-60] [--missed-policy RUN_ONCE|SKIP]
+  mao scheduled-task runs --id <id> [--limit 1-50]
   mao scheduled-task delete --id <id>
 
 说明:
@@ -102,10 +103,46 @@ async function handle(ctx) {
         }
         body.status = normalized;
       }
+      const retryMax = optionalNumber(flags, 'retry-max');
+      const retryInterval = optionalNumber(flags, 'retry-interval-minutes');
+      const missedPolicy = optionalString(flags, 'missed-policy');
+      if (retryMax !== undefined) {
+        if (!Number.isInteger(retryMax) || retryMax < 0 || retryMax > 5) {
+          throw createCliError('--retry-max 必须是 0 到 5 的整数');
+        }
+        body.retryMax = retryMax;
+      }
+      if (retryInterval !== undefined) {
+        if (!Number.isInteger(retryInterval) || retryInterval < 1 || retryInterval > 60) {
+          throw createCliError('--retry-interval-minutes 必须是 1 到 60 的整数');
+        }
+        body.retryIntervalMinutes = retryInterval;
+      }
+      if (missedPolicy !== undefined) {
+        const policy = missedPolicy.toUpperCase();
+        if (policy !== 'RUN_ONCE' && policy !== 'SKIP') {
+          throw createCliError('--missed-policy 必须是 RUN_ONCE 或 SKIP');
+        }
+        body.missedPolicy = policy;
+      }
       if (Object.keys(body).length === 0) {
         throw createCliError('请至少提供一个更新字段');
       }
       const result = await request({ ...common, method: 'PUT', path: `/scheduled-tasks/${id}`, body });
+      outputResult(result, globals);
+      return;
+    }
+    case 'runs': {
+      const id = requireNumber(flags, 'id', '定时任务 ID');
+      const limit = optionalNumber(flags, 'limit');
+      const query = {};
+      if (limit !== undefined) {
+        if (!Number.isInteger(limit) || limit < 1 || limit > 50) {
+          throw createCliError('--limit 必须是 1 到 50 的整数');
+        }
+        query.limit = String(limit);
+      }
+      const result = await request({ ...common, method: 'GET', path: `/scheduled-tasks/${id}/runs`, query });
       outputResult(result, globals);
       return;
     }

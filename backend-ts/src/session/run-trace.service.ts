@@ -1,5 +1,6 @@
 import type { MessageRepository } from './session.repository.js';
 import type { LlmCallRepository, LlmCallRow } from '../usage/llm-call.repository.js';
+import { sumCostMicros, wallClockMs } from './run-window.js';
 import type { SessionActivityRepository } from './activity.repository.js';
 import type { SessionCompactionEventRepository } from './session-compaction.repository.js';
 import type { Message, SessionActivity, SessionCompactionEvent } from './types.js';
@@ -58,12 +59,6 @@ interface RunInput {
   upperCreatedAt: string | null;
   messages: Message[];
   calls: LlmCallRow[];
-}
-
-/** 墙钟采样点：结束时刻 + 本地计量的耗时。 */
-interface ClockPoint {
-  createdAt: string | null;
-  durationMs: number | null;
 }
 
 const AGENT_SCENE = 'agent';
@@ -285,17 +280,14 @@ export class RunTraceService {
     let completionTokens = 0;
     let cachedTokens = 0;
     let cacheCreationTokens = 0;
-    let costMicros = 0;
-    // 窗口内没有任何调用时同样没有账可算；任一行未配价则合计为 null
-    let costUnknown = calls.length === 0;
     for (const call of calls) {
       promptTokens += call.promptTokens ?? 0;
       completionTokens += call.completionTokens ?? 0;
       cachedTokens += call.cachedTokens ?? 0;
       cacheCreationTokens += call.cacheCreationTokens ?? 0;
-      if (call.costMicros == null) costUnknown = true;
-      else costMicros += call.costMicros;
     }
+    // 窗口内没有任何调用时同样没有账可算；任一行未配价则合计为 null
+    const costMicros = sumCostMicros(calls);
 
     // 工具成败只数挂上了轮或 unplacedTools 里、且状态明确的活动；null duration 不影响计数
     let toolSuccess = 0;
@@ -318,7 +310,7 @@ export class RunTraceService {
           ...calls.map((c) => ({ createdAt: c.createdAt ?? null, durationMs: c.durationMs ?? null })),
           ...runActivities.map((a) => ({ createdAt: a.createdAt ?? null, durationMs: a.durationMs ?? null })),
         ]),
-        costMicros: costUnknown ? null : costMicros,
+        costMicros,
         promptTokens,
         completionTokens,
         cachedTokens,
@@ -563,27 +555,6 @@ function previewOf(content: string | null | undefined, max = 80): string {
   }
   text = text.replace(/\s+/g, ' ').trim();
   return text.length > max ? `${text.slice(0, max)}…` : text;
-}
-
-/** 秒级误差可接受（阈值 60s 不受影响）；没有 duration 的点不参与。 */
-function wallClockMs(points: ClockPoint[]): number {
-  let minStart: number | null = null;
-  let maxEnd: number | null = null;
-  for (const point of points) {
-    if (point.createdAt == null) continue;
-    const end = toEpochMs(point.createdAt);
-    if (end == null) continue;
-    const start = end - Math.max(0, point.durationMs ?? 0);
-    if (minStart == null || start < minStart) minStart = start;
-    if (maxEnd == null || end > maxEnd) maxEnd = end;
-  }
-  if (minStart == null || maxEnd == null) return 0;
-  return Math.max(0, maxEnd - minStart);
-}
-
-function toEpochMs(value: string): number | null {
-  const parsed = Date.parse(value.replace(' ', 'T'));
-  return Number.isNaN(parsed) ? null : parsed;
 }
 
 /** 下一个更大的现存用户消息 id（排他上界）；没有则 null（上界开放）。 */

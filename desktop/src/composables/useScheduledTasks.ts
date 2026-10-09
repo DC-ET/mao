@@ -16,8 +16,25 @@ export interface ScheduledTask {
   fireCount: number
   finished: boolean
   finishedAt: string | null
+  consecutiveFailures?: number
+  retryMax?: number
+  retryIntervalMinutes?: number
+  missedPolicy?: string | null
   createdAt: string
   updatedAt?: string
+}
+
+export interface ScheduledTaskRun {
+  id: number
+  taskId: number
+  fireTime: string
+  attempt: number
+  status: string
+  sessionId: number
+  durationMs: number | null
+  costMicros: number | null
+  errorSummary: string | null
+  nextRetryAt: string | null
 }
 
 const tasks = ref<ScheduledTask[]>([])
@@ -61,6 +78,21 @@ export function useScheduledTasks() {
     }
   }
 
+  const runsByTask = ref<Record<number, ScheduledTaskRun[]>>({})
+  const runsLoading = ref<Record<number, boolean>>({})
+
+  async function fetchRuns(taskId: number) {
+    runsLoading.value = { ...runsLoading.value, [taskId]: true }
+    try {
+      const { data } = await api.get(`/scheduled-tasks/${taskId}/runs`, { params: { limit: 20 } })
+      runsByTask.value = { ...runsByTask.value, [taskId]: Array.isArray(data) ? data : [] }
+    } catch {
+      runsByTask.value = { ...runsByTask.value, [taskId]: [] }
+    } finally {
+      runsLoading.value = { ...runsLoading.value, [taskId]: false }
+    }
+  }
+
   async function deleteTask(id: number) {
     try {
       await api.delete(`/scheduled-tasks/${id}`)
@@ -83,6 +115,44 @@ export function useScheduledTasks() {
     } catch {
       return time
     }
+  }
+
+  function policyHint(task: ScheduledTask): string | null {
+    const parts: string[] = []
+    const retryMax = task.retryMax ?? 2
+    const interval = task.retryIntervalMinutes ?? 5
+    const missed = task.missedPolicy ?? 'RUN_ONCE'
+    if (retryMax !== 2) parts.push(retryMax === 0 ? '失败不重试' : `重试 ${retryMax} 次`)
+    if (interval !== 5) parts.push(`间隔 ${interval} 分`)
+    if (missed !== 'RUN_ONCE') parts.push('错过不补')
+    return parts.length > 0 ? parts.join(' · ') : null
+  }
+
+  function runBadge(run: ScheduledTaskRun): string {
+    if (run.status === 'RUNNING' && run.attempt > 1) return '重试中'
+    if (run.status === 'FAILED' && run.nextRetryAt && Date.parse(run.nextRetryAt.replace(' ', 'T')) > Date.now()) return '待重试'
+    switch (run.status) {
+      case 'COMPLETED': return '成功'
+      case 'FAILED': return '失败'
+      case 'CANCELLED': return '取消'
+      case 'MISSED': return '错过'
+      case 'QUEUED': return '排队'
+      case 'RUNNING': return '运行中'
+      default: return run.status
+    }
+  }
+
+  function formatDuration(ms: number | null): string {
+    if (ms == null) return '—'
+    if (ms < 1000) return `${ms} 毫秒`
+    const seconds = Math.round(ms / 1000)
+    if (seconds < 60) return `${seconds} 秒`
+    return `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`
+  }
+
+  function formatCost(costMicros: number | null): string {
+    if (costMicros == null) return '—'
+    return (costMicros / 1_000_000).toLocaleString('zh-CN', { maximumFractionDigits: 4 })
   }
 
   function statusLabel(status: string): string {
@@ -121,6 +191,13 @@ export function useScheduledTasks() {
     deleteTask,
     formatNextFire,
     formatFinishedAt,
-    statusLabel
+    statusLabel,
+    runsByTask,
+    runsLoading,
+    fetchRuns,
+    policyHint,
+    runBadge,
+    formatDuration,
+    formatCost
   }
 }

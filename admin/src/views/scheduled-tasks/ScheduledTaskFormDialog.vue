@@ -58,6 +58,22 @@
         </div>
       </el-form-item>
 
+      <el-form-item label="失败重试">
+        <el-input-number v-model="form.retryMax" :min="0" :max="5" :step="1" />
+        <span class="switch-hint">次（不含首次，0 表示不重试）</span>
+      </el-form-item>
+      <el-form-item label="重试间隔">
+        <el-input-number v-model="form.retryIntervalMinutes" :min="1" :max="60" :step="1" />
+        <span class="switch-hint">分钟，固定间隔</span>
+      </el-form-item>
+      <el-form-item label="错过补偿">
+        <el-radio-group v-model="form.missedPolicy">
+          <el-radio value="RUN_ONCE">补最近一次</el-radio>
+          <el-radio value="SKIP">只记录不补</el-radio>
+        </el-radio-group>
+        <div class="form-hint">停机期间错过的触发点都会留下记录。补最近一次是默认行为；只记录不补适合过期报告没有意义的任务。</div>
+      </el-form-item>
+
       <el-form-item label="任务提示词" required>
         <el-input
           v-model="form.prompt"
@@ -103,7 +119,10 @@ const form = reactive({
   name: '',
   cronExpression: '',
   prompt: '',
-  once: false
+  once: false,
+  retryMax: 2,
+  retryIntervalMinutes: 5,
+  missedPolicy: 'RUN_ONCE'
 })
 
 const submitting = ref(false)
@@ -147,6 +166,9 @@ function resetForm() {
   form.cronExpression = task.cronExpression ?? ''
   form.prompt = task.prompt ?? ''
   form.once = task.once === 1
+  form.retryMax = task.retryMax ?? 2
+  form.retryIntervalMinutes = task.retryIntervalMinutes ?? 5
+  form.missedPolicy = task.missedPolicy === 'SKIP' ? 'SKIP' : 'RUN_ONCE'
   initialCron.value = form.cronExpression.trim()
   onceTouched.value = false
   preview.value = null
@@ -201,7 +223,10 @@ async function handleSubmit() {
       name: form.name.trim(),
       prompt: form.prompt.trim(),
       cronExpression: form.cronExpression.trim(),
-      once: form.once
+      once: form.once,
+      retryMax: form.retryMax,
+      retryIntervalMinutes: form.retryIntervalMinutes,
+      missedPolicy: form.missedPolicy
     })
     const next = data?.nextFireTime
     ElMessage.success(next ? `已保存，下次触发 ${next}` : '已保存')

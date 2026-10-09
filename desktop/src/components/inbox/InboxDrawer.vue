@@ -30,6 +30,7 @@ const KIND_META: Record<InboxKind, { label: string; icon: string }> = {
   APPROVAL_PENDING: { label: '待处理审批', icon: '!' },
   SUBAGENT_DONE: { label: '子代理完成', icon: '⌘' },
   TRIGGER_DISABLED: { label: '触发器停用', icon: '⚡' },
+  SCHEDULED_TASK_PAUSED: { label: '任务已暂停', icon: '⏸' },
   BUDGET_WARN: { label: '预算提醒', icon: '¥' }
 }
 

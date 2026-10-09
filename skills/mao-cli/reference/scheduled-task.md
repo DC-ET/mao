@@ -102,14 +102,38 @@ mao scheduled-task get --id 3 --json
 | `--prompt` | 否 | 字符串 | 定时触发时发送给 Agent 的提示词 |
 | `--cron-expression` | 否 | 字符串 | Spring cron 表达式 |
 | `--status` | 否 | 字符串 | `ACTIVE` 或 `PAUSED` |
+| `--retry-max` | 否 | 数字 | 失败后再试几次（不含首次），0–5，默认 2 |
+| `--retry-interval-minutes` | 否 | 数字 | 固定重试间隔（分钟），1–60，默认 5 |
+| `--missed-policy` | 否 | 字符串 | `RUN_ONCE` 补最近一次错过，`SKIP` 只记录不补 |
 
-至少提供一个更新字段。
+至少提供一个更新字段。从暂停改回 `ACTIVE` 会把连续失败次数清零；暂停或删除会取消还没开始的重试。
 
 ### 示例
 
 ```bash
 mao scheduled-task update --id 3 --status PAUSED
 mao scheduled-task update --id 3 --cron-expression '0 0 9 * * *'
+```
+
+---
+
+## 命令：mao scheduled-task runs
+
+### 用途
+
+查看某个定时任务最近的运行记录（触发时间、状态、第几次尝试、耗时、成本、错误摘要）。默认 20 条，最多 50 条。
+
+### 参数说明
+
+| 参数 | 必填 | 类型 | 含义 |
+|------|------|------|------|
+| `--id` | 是 | 数字 | 定时任务 ID |
+| `--limit` | 否 | 数字 | 1–50，默认 20 |
+
+### 示例
+
+```bash
+mao scheduled-task runs --id 3 --limit 10 --json
 ```
 
 ---

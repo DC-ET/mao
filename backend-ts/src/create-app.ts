@@ -126,6 +126,7 @@ import { registerApprovalRuleAdminRoutes } from './approval-rule/approval-rule.a
 import { InboxRepository } from './inbox/inbox.repository.js';
 import { InboxService } from './inbox/inbox.service.js';
 import { InboxCleanupScheduler, type InboxCleanupStore } from './inbox/inbox.cleanup.js';
+import { ScheduledTaskRunCleanupScheduler } from './schedule/run-cleanup.js';
 import { registerInboxRoutes } from './inbox/inbox.routes.js';
 import { EnvironmentInfoProvider } from './harness/core/environment-info-provider.js';
 import { FileEntityRepository, FileService } from './file/file.service.js';
@@ -194,7 +195,8 @@ import { BackgroundTaskManager } from './harness/core/background-task-manager.js
 import { CompactionConfig } from './harness/core/compaction-config.js';
 import { CrashRecoveryRunner } from './harness/core/crash-recovery-runner.js';
 import { DeployDrainWatcher } from './harness/core/deploy-drain-watcher.js';
-import { deployDrainSec, isDrainingInstance, readDeployLock } from './harness/core/deploy-lock.js';
+import { deployDrainSec, isDrainingInstance, readActiveBackendPort, readDeployLock } from './harness/core/deploy-lock.js';
+import { sumCostMicros, wallClockMs } from './session/run-window.js';
 import { createAgentExecutor } from './harness/core/agent-executor.js';
 import { LocalAgentsMdRegistry } from './harness/core/local-agents-md-registry.js';
 import { RuntimeDataResolver } from './harness/runtime/runtime-data-resolver.js';
@@ -704,9 +706,10 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const subagentExecutionRepo = new SubagentExecutionRepository(db);
   const activityHeartbeat = new SessionActivityHeartbeat(sessionService);
   // run 轨迹读模型：零新表，读时聚合消息 / llm_call / session_activity / 压缩事件
+  const llmCallRepo = new LlmCallRepository(db);
   const runTraceService = new RunTraceService(
     messageRepo,
-    new LlmCallRepository(db),
+    llmCallRepo,
     new SessionActivityRepository(db),
     new SessionCompactionEventRepository(db),
   );
@@ -1085,6 +1088,22 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     weixinTokens as never,
     (fn) => agentExecutor.submit(fn),
   );
+  scheduledService.setFailureNotifier((input) => inboxService.recordScheduledTaskPaused(input));
+  scheduledService.setRunWindowLoader(async (sessionId, messageId) => {
+    const stamps = await messageRepo.selectUserStamps(sessionId);
+    const anchor = stamps.find((stamp) => stamp.id === messageId);
+    if (anchor?.createdAt == null) return { costMicros: null, wallClockMs: 0 };
+    const upperId = stamps
+      .map((stamp) => stamp.id)
+      .filter((id): id is number => id != null && id > messageId)
+      .sort((a, b) => a - b)[0];
+    const upper = upperId == null ? null : (stamps.find((stamp) => stamp.id === upperId)?.createdAt ?? null);
+    const calls = await llmCallRepo.selectBySessionWindow(sessionId, anchor.createdAt, upper);
+    return {
+      costMicros: sumCostMicros(calls),
+      wallClockMs: wallClockMs(calls.map((call) => ({ createdAt: call.createdAt ?? null, durationMs: call.durationMs ?? null }))),
+    };
+  });
 
   const dingtalkMediaHolder: { current: DingtalkMediaSendSupport | null } = { current: null };
   const toolRegistry = createDefaultToolRegistry({
@@ -2581,7 +2600,13 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     });
   }, { prefix: apiPrefix });
 
-  const scheduler = new ScheduledTaskScheduler(scheduledStore, scheduledService);
+  const scheduler = new ScheduledTaskScheduler(scheduledStore, scheduledService, () => {
+    const active = readActiveBackendPort(cfg.app.harness.runtimeDir);
+    if (active != null) return active === cfg.server.port;
+    const lock = readDeployLock(cfg.app.harness.runtimeDir);
+    if (lock != null && lock.oldPort === cfg.server.port) return false;
+    return true;
+  });
   scheduler.start();
   const deliveryScheduler = new WebhookDeliveryScheduler(
     new DeliverySchedulerDbStore(db),
@@ -2635,6 +2660,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   outboundDeliveryScheduler.start();
   const inboxCleanupScheduler = new InboxCleanupScheduler(inboxCleanupStore);
   inboxCleanupScheduler.start();
+  const scheduledRunCleanup = new ScheduledTaskRunCleanupScheduler(scheduledStore);
+  scheduledRunCleanup.start();
   const ecpRenewScheduler = new EcpRenewScheduler(
     ecpSessionRepo,
     () => settingService.getEcpConfig(),
@@ -2682,6 +2709,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     cfg.app.harness.runtimeDir,
     agentExecutor,
     async (sessionId, userId, phase) => {
+      await scheduledService.reconcileRunsForSession(sessionId, phase).catch((error) => {
+        console.warn(`定时任务运行记录在崩溃恢复后收敛失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+      });
       // 崩溃恢复续跑以 FAILED 结束：上一个任务实际未执行完成，不自动消费下一条消息。
       // 主队列与飞书队列均受此门禁约束；COMPLETED / CANCELLED 照常接力消费。
       if (phase !== 'FAILED') {

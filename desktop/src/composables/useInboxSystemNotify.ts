@@ -39,6 +39,8 @@ export function isInboxKindEnabled(kind: InboxKind, preference: InboxPreference)
       return preference.subagentDoneEnabled
     case 'BUDGET_WARN':
       return preference.budgetWarnEnabled
+    case 'SCHEDULED_TASK_PAUSED':
+      return true
     default:
       return false
   }
