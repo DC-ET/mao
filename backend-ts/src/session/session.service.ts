@@ -1147,7 +1147,10 @@ export class SessionService {
 
   async markLastMessageFinished(sessionId: number): Promise<void> {
     const last = await this.messageRepo.selectLast(sessionId);
-    if (last != null) {
+    // USER 消息的 updated_at 只表示「用户编辑过」（V029 列注释）：取消命中工具阶段、
+    // 空响应耗尽、首轮失败时助手消息未落库，最后一条正是 USER，终态刷新不能写它，
+    // 否则运行轨迹读模型会把这类 run 误判成编辑重发，伪造「编辑前」段。
+    if (last != null && last.role !== 'USER') {
       last.updatedAt = nowSql();
       await this.messageRepo.updateById(last);
     }

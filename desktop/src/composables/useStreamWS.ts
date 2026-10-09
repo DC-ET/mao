@@ -102,7 +102,8 @@ const STREAM_EVENT_TYPES = new Set([
   'content_delta', 'tool_call_start', 'tool_call_args_delta', 'tool_call_result',
   'thinking_start', 'thinking_end', 'thinking_delta', 'message_end',
   'file_change', 'activity', 'compaction_start', 'compaction_end', 'compaction_marker',
-  'context_window', 'llm_waiting', 'llm_stream_reset', 'llm_retry', 'session_already_running', 'error'
+  'context_window', 'llm_waiting', 'llm_stream_reset', 'llm_retry', 'session_already_running', 'error',
+  'round_start', 'round_end'
 ])
 
 function refreshQueue(sessionId: string) {
@@ -588,6 +589,10 @@ export function useStreamWS() {
           sessionStore.setStreaming(sessionId, false)
           sessionStore.appendToolCallStart(sessionId, data)
           sessionStore.clearLlmRetry(sessionId)
+          // 轨迹 tab 的进行中计时：duration_ms 要等工具结束才有，起表由客户端时钟负责
+          if (typeof data?.executionId === 'string') {
+            sessionStore.applyLiveToolStart(sessionId, data.executionId, data.tool_call_id, data.tool_name)
+          }
         }
         break
 
@@ -597,6 +602,22 @@ export function useStreamWS() {
 
       case 'tool_call_result':
         if (sessionId) sessionStore.updateToolCallResult(sessionId, data)
+        if (sessionId && typeof data?.executionId === 'string') {
+          sessionStore.applyLiveToolEnd(sessionId, data.executionId, data.tool_call_id)
+        }
+        break
+
+      case 'round_start':
+        // 只驱动轨迹 tab 的「本次执行第几轮」临时行；持久序号以 REST 的 seq 为准
+        if (sessionId && typeof data?.executionId === 'string') {
+          sessionStore.applyLiveRoundStart(sessionId, data.executionId, Number(data.round))
+        }
+        break
+
+      case 'round_end':
+        if (sessionId && typeof data?.executionId === 'string') {
+          sessionStore.applyLiveRoundEnd(sessionId, data.executionId, Number(data.round))
+        }
         break
 
       case 'activity':
@@ -691,6 +712,8 @@ export function useStreamWS() {
             sessionStore.setCompacting(sessionId, false)
             sessionStore.clearLlmRetry(sessionId)
             sessionStore.clearAskQuestions(sessionId)
+            // 轨迹 tab：执行终止后丢掉临时轮 / 工具计时行，完成态以 REST 为准（面板自行重拉）
+            sessionStore.clearLiveState(sessionId)
             if (phase === 'CANCELLED' || phase === 'COMPLETED' || phase === 'FAILED') {
               clearActiveExecution(sessionId)
             }

@@ -66,6 +66,14 @@
               {{ contextDisplay ? `上下文 ${contextDisplay}` : '上下文' }}
             </button>
           </el-tooltip>
+          <el-tooltip
+            v-if="showTraceEntry"
+            content="查看任务运行轨迹"
+            placement="top"
+            :show-after="300"
+          >
+            <button type="button" class="context-badge" @click="$emit('open-trace')">轨迹</button>
+          </el-tooltip>
         </div>
       </div>
 
@@ -373,6 +381,7 @@ const emit = defineEmits<{
   'add-file-to-chat': [filePath: string]
   'open-side-task': [payload: { sideSessionId: number; title: string }]
   'open-subagent': [payload: { childSessionId: number; title: string }]
+  'open-trace': []
   'edit-title': [payload: { sideSessionId: number; title: string }]
   'delete-side-task': [sideSessionId: number]
   'promote-side-task': [sideSessionId: number]
@@ -463,6 +472,9 @@ const showGitTab = computed(() => {
 
 // 上下文详情抽屉：任何有会话 id 的可检视对象都能打开（水位/构成/记忆/手动治理随该会话）
 const showContextDrawer = computed(() => !!props.sessionId && props.viewType !== 'subagent')
+
+// 轨迹 tab 挂在主会话的中心 Tab 上（数据是主会话的 run），只在主会话视图露出入口
+const showTraceEntry = computed(() => props.viewType === 'chat' && !!props.sessionId)
 
 const showTabBar = computed(() => showFileTreeTab.value || showGitTab.value)
 

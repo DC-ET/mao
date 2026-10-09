@@ -16,6 +16,7 @@
 | `analytics users` | 用户 Tab | 用户活跃排行/明细，支持 `--limit` |
 | `analytics agents` | Agent Tab | Agent 排行，支持 `--limit` |
 | `analytics sessions` | 会话 Tab | phase 分布 + 会话类型/执行模式 + 实时运行态 |
+| `analytics run-trace` | 运行轨迹 Tab | 最慢的轮 / 最贵的轮 / 工具失败率三个榜；`--scene` 选场景（默认 agent），`--scope` 选排行维度（agent\|user，默认 agent） |
 | `analytics summary` | （旧）一页聚合 | 管理后台已切换分维度接口；CLI 仍保留全量汇总 |
 
 ## 公共参数
@@ -37,6 +38,7 @@
 - 成本口径（0.0.243 起）：所有 `cost` / `totalCost` 字段均为**成本单位**（与模型价格填写口径一致），后端为 `COALESCE(SUM(llm_call.cost_micros),0)/1e6`。模型未配价格、或价格缺一个方向时该次调用成本为 NULL、不计入合计（不按 0 计），因此「没配价格的模型」在成本口径下等于没有开销，不等于免费。`connectivity_test` 等 scene 默认排除（`excludeConnectivity=true`）。子代理与边路任务会话的成本同样计入所属用户 / Agent
 - 会话结局：窗口内**创建**的会话按 phase 分布；`livePhases` / `overview.runningSessions` 等为实时快照，不与窗口分布混算
 - 环比色约定：红=上升、绿=下降（纯方向口径，不区分指标的好坏）
+- 运行轨迹三个榜（`run-trace`）同为窗口内新增；前两个榜默认只统计 `scene=agent` 的轮（Agent 主循环），工具失败率全局按类型聚合、按比例排序（分母不同，直接比次数会让小样本工具霸榜）
 
 ## 接口路径
 
@@ -48,6 +50,7 @@
 | `analytics users` | `GET /admin/analytics/users` |
 | `analytics agents` | `GET /admin/analytics/agents` |
 | `analytics sessions` | `GET /admin/analytics/sessions` |
+| `analytics run-trace` | `GET /admin/analytics/run-trace` |
 | `analytics summary` | `GET /admin/analytics/summary` |
 
 ## 返回结构（公共）
@@ -121,6 +124,22 @@
 | `trends[]` 额外字段 | `callCount` / `callFailCount` / `callTokens` / `promptTokens` / `cachedTokens` / `callSuccessRate` / `cacheHitRate` |
 | `callQuality` | 窗口合计的质量摘要，同 sessions 口径（不含延迟分位） |
 
+### run-trace
+
+运行轨迹三个榜，直接聚合 `llm_call` 与 `session_activity`，不返回单次调用列表。可选查询参数：`scene`（默认 `agent`，只统计 Agent 主循环的轮，排除边路/后台调用）、`scope`（`agent` 或 `user`，前两个榜的排行维度，默认 `agent`）。
+
+| 字段 | 说明 |
+|------|------|
+| `scene` / `scope` | 本次统计使用的场景与维度 |
+| `slowestRounds[]` | 最慢的轮：每个 Agent / 用户取其窗口内最慢的一轮，按该轮 `durationMs` 降序取前 N 个实体 |
+| `mostExpensiveRounds[]` | 最贵的轮：口径同上，按 `costMicros` 降序，只统计有成本的轮 |
+| `toolFailureRates[]` | 工具失败率：`toolType` / `totalCount` / `errorCount` / `failRate`（百分数，保留一位小数），按 `failRate` 降序；全局按工具类型聚合，不区分 scene / 维度 |
+| `period` | 同公共 `period` 口径 |
+
+两排行内每行字段：`scopeKey`（Agent / 用户 ID）、`scopeName`、`sessionId`（可跳会话）、`modelName`、`createdAt`（该轮结束时间）、`durationMs`、`totalTokens`、`costMicros`（NULL 表示未配价格）、`callCount`（该实体窗口内轮数）。
+
+未关联 Agent / 用户的轮在榜上显示占位名「未关联 Agent」/「未关联用户」，仍可点进对应会话。
+
 ### summary（旧）
 
 一页返回 overview + periodTotals + trends + phaseDistribution + agentStats + userActivity + modelStats。管理后台已改走分维度接口；字段与上表对应项一致（不含 Phase 2 质量列）。
@@ -141,7 +160,9 @@ mao analytics models --days 7 --raw   # 质量列与 sceneStats
 mao analytics users --days 7 --limit 50 --raw
 mao analytics agents --days 7 --raw
 mao analytics sessions --days 1 --end-offset 1 --raw
+mao analytics run-trace --days 7 --raw
+mao analytics run-trace --days 7 --scope user --raw
 mao analytics summary --days 7 --raw
 ```
 
-排查建议：只关心趋势时用 `--raw` 配合 `jq '.data.trends'`；核对环比用 `jq '{now:.data.periodTotals, prev:.data.previousTotals}'`；总览洞察用 `jq '.data.insights'`；模型慢/贵/易失败用 `jq '.data.modelStats[] | {modelName,totalTokens,callSuccessRate,avgDurationMs,cacheHitRate}'`。
+排查建议：只关心趋势时用 `--raw` 配合 `jq '.data.trends'`；核对环比用 `jq '{now:.data.periodTotals, prev:.data.previousTotals}'`；总览洞察用 `jq '.data.insights'`；模型慢/贵/易失败用 `jq '.data.modelStats[] | {modelName,totalTokens,callSuccessRate,avgDurationMs,cacheHitRate}'`；运行轨迹三个榜用 `jq '.data.slowestRounds, .data.mostExpensiveRounds, .data.toolFailureRates'`。

@@ -52,6 +52,7 @@
       @add-file-to-chat="handleAddFileToChat"
       @open-side-task="handleOpenSideTask"
       @open-subagent="handleOpenSubagent"
+      @open-trace="openTraceTab()"
       @edit-title="handleEditSideTaskTitle"
       @delete-side-task="handleDeleteSideTask"
       @promote-side-task="handlePromoteSideTask"
@@ -204,7 +205,7 @@ function handleAddFileToChat(filePath: string) {
 
 // Center tabs
 const activeSessionIdRef = computed(() => sessionStore.activeSessionId ?? '')
-const { tabs, activeTab, activeTabId, openFileTab, openDiffTab, closeTab, closeAllFileTabs, closeOtherTabs, activateTab, openSideTaskTab, setSideTaskFork, openSubagentTab, updateSideTaskTab, restoreSideTaskTabs, restoreActiveTab } = useCenterTabs(activeSessionIdRef)
+const { tabs, activeTab, activeTabId, openFileTab, openDiffTab, closeTab, closeAllFileTabs, closeOtherTabs, activateTab, openSideTaskTab, setSideTaskFork, openSubagentTab, openTraceTab, updateSideTaskTab, restoreSideTaskTabs, restoreTraceTab, restoreActiveTab } = useCenterTabs(activeSessionIdRef)
 
 // Derived state
 const sessionId = computed(() => sessionIdParam.value)
@@ -942,6 +943,11 @@ async function loadSession(sid: string) {
     console.warn('[subagent] Failed to load subagent list:', e)
     sessionStore.setSubagents(sid, [])
   }
+
+  // 还原轨迹 tab（上次停在轨迹 tab 时刷新后直接回去）。与边路任务还原相互独立：
+  // 没有边路任务的会话同样可能停在轨迹 tab。
+  if (gen !== loadGeneration) return
+  restoreTraceTab(sid)
 
   if (gen === loadGeneration) {
     initialLoading.value = false

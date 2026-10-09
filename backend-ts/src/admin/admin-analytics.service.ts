@@ -113,6 +113,29 @@ export interface LlmCallQualitySummary {
   cost: number;
 }
 
+/** 运行轨迹聚合的排行维度：按 Agent 或按用户（技术方案 §5.4）。 */
+export type RunTraceDimension = 'agent' | 'user';
+
+/** 最慢 / 最贵轮的原始行（每个维度取一圈代表调用）。 */
+export interface RunTraceRoundRow {
+  scopeKey: number;
+  sessionId: number | null;
+  modelName: string | null;
+  createdAt: string | null;
+  durationMs: number;
+  totalTokens: number;
+  costMicros: number | null;
+  /** 该维度在窗口内的调用总数，供界面标注样本量 */
+  callCount: number;
+}
+
+/** 工具失败率原始行：按活动 type 分组，状态沿用活动表现有口径。 */
+export interface RunTraceToolFailureRow {
+  toolType: string;
+  errorCount: number;
+  totalCount: number;
+}
+
 export interface LlmCallFilterOpts {
   excludeConnectivity?: boolean;
   modelId?: number | null;
@@ -156,6 +179,19 @@ export interface AdminAnalyticsStore {
   countSessions(range: AnalyticsRange): Promise<number>;
   sumMessages(range: AnalyticsRange): Promise<{ count: number; tokens: number }>;
   sumUsageTokens(range: AnalyticsRange): Promise<number>;
+  selectRunTraceSlowestRounds(
+    range: AnalyticsRange,
+    scene: string,
+    dimension: RunTraceDimension,
+    limit: number,
+  ): Promise<RunTraceRoundRow[]>;
+  selectRunTraceMostExpensiveRounds(
+    range: AnalyticsRange,
+    scene: string,
+    dimension: RunTraceDimension,
+    limit: number,
+  ): Promise<RunTraceRoundRow[]>;
+  selectRunTraceToolFailureRates(range: AnalyticsRange): Promise<RunTraceToolFailureRow[]>;
   listAgents(): Promise<Agent[]>;
   listUsers(): Promise<UserRow[]>;
   listModelsOrderByCreatedDesc(): Promise<LlmModel[]>;
@@ -535,6 +571,75 @@ export class AdminAnalyticsDbStore implements AdminAnalyticsStore {
     return Number(row?.tokens ?? 0);
   }
 
+  /**
+   * 每个维度的「最慢一圈」：窗口函数按维度分区取 duration_ms 最大的一圈。
+   * 不按 RunTraceService 读模型：这里只做管理视角排行，维度内取代表调用即可。
+   * 未关联维度（agent_id / user_id 为 NULL）的调用不进榜，与其它按维度统计保持一致。
+   */
+  private runTraceRoundQuery(
+    range: AnalyticsRange,
+    scene: string,
+    dimension: RunTraceDimension,
+    limit: number,
+    orderColumn: 'duration_ms' | 'cost_micros',
+  ): Promise<RunTraceRoundRow[]> {
+    const dimColumn = dimension === 'agent' ? 'agent_id' : 'user_id';
+    return this.db.query<RunTraceRoundRow>(
+      `SELECT scopeKey, sessionId, modelName, createdAt, durationMs, totalTokens, costMicros, callCount
+       FROM (
+         SELECT c.${dimColumn} AS scopeKey,
+                c.session_id AS sessionId,
+                c.model_name AS modelName,
+                c.created_at AS createdAt,
+                c.duration_ms AS durationMs,
+                c.total_tokens AS totalTokens,
+                c.cost_micros AS costMicros,
+                COUNT(*) OVER (PARTITION BY c.${dimColumn}) AS callCount,
+                ROW_NUMBER() OVER (PARTITION BY c.${dimColumn} ORDER BY c.${orderColumn} DESC, c.id DESC) AS rn
+         FROM llm_call c
+         WHERE c.created_at >= ? AND c.created_at < ?
+           AND c.scene = ? AND c.${dimColumn} IS NOT NULL
+           AND c.duration_ms IS NOT NULL
+           ${orderColumn === 'cost_micros' ? 'AND c.cost_micros IS NOT NULL' : ''}
+       ) t
+       WHERE rn = 1
+       ORDER BY ${orderColumn === 'cost_micros' ? 'costMicros' : 'durationMs'} DESC
+       LIMIT ?`,
+      [range.startAt, range.endAtExclusive, scene, limit],
+    );
+  }
+
+  selectRunTraceSlowestRounds(
+    range: AnalyticsRange,
+    scene: string,
+    dimension: RunTraceDimension,
+    limit: number,
+  ): Promise<RunTraceRoundRow[]> {
+    return this.runTraceRoundQuery(range, scene, dimension, limit, 'duration_ms');
+  }
+
+  selectRunTraceMostExpensiveRounds(
+    range: AnalyticsRange,
+    scene: string,
+    dimension: RunTraceDimension,
+    limit: number,
+  ): Promise<RunTraceRoundRow[]> {
+    return this.runTraceRoundQuery(range, scene, dimension, limit, 'cost_micros');
+  }
+
+  /** 工具失败率原始行：按 type 分组，排序与截断由 service 按失败率做（分母不同不能直接比次数）。 */
+  selectRunTraceToolFailureRates(range: AnalyticsRange): Promise<RunTraceToolFailureRow[]> {
+    return this.db.query<RunTraceToolFailureRow>(
+      `SELECT type AS toolType,
+              COUNT(*) AS totalCount,
+              COALESCE(SUM(CASE WHEN status = 'ERROR' THEN 1 ELSE 0 END), 0) AS errorCount
+       FROM session_activity
+       WHERE created_at >= ? AND created_at < ?
+       GROUP BY type`,
+      [range.startAt, range.endAtExclusive],
+    );
+  }
+
   listAgents(): Promise<Agent[]> {
     return this.db.query(`SELECT * FROM agent WHERE ${notDeleted()}`);
   }
@@ -798,9 +903,75 @@ export class AdminAnalyticsService {
     };
   }
 
-  /** 会话：窗口 phase 分布 + 结构 + 实时运行态 + llm_call 质量面板。 */
-  async sessionsScope(
+  /**
+   * 运行轨迹聚合（技术方案 §5.4）：最慢轮 / 最贵轮按维度各取一圈，工具失败率按活动 type 分组。
+   * scene 默认 agent：不默认的话，标题生成与连通性测试会占据「最慢轮」。
+   * 直接聚合 llm_call 与 session_activity，不经 RunTraceService（这里是管理视角，不是任务视角）。
+   */
+  async runTraceScope(
     days: number,
+    endOffset = 0,
+    opts?: { scene?: string; scope?: RunTraceDimension; limit?: number },
+  ): Promise<Record<string, unknown>> {
+    const { range, previous } = this.resolveWindows(days, endOffset);
+    const scene = opts?.scene != null && opts.scene.trim() !== '' ? opts.scene.trim() : 'agent';
+    const dimension: RunTraceDimension = opts?.scope === 'user' ? 'user' : 'agent';
+    const limit = clampLimit(opts?.limit ?? RANK_LIMIT);
+    const [slowRows, expensiveRows, toolRows, agents, users] = await Promise.all([
+      this.store.selectRunTraceSlowestRounds(range, scene, dimension, limit),
+      this.store.selectRunTraceMostExpensiveRounds(range, scene, dimension, limit),
+      this.store.selectRunTraceToolFailureRates(range),
+      dimension === 'agent' ? this.store.listAgents() : Promise.resolve([] as Agent[]),
+      dimension === 'user' ? this.store.listUsers() : Promise.resolve([] as UserRow[]),
+    ]);
+    const names = new Map<number, string>();
+    for (const agent of agents) {
+      if (agent.id != null) names.set(Number(agent.id), agent.name ?? '未知');
+    }
+    for (const user of users) {
+      if (user.id != null) names.set(Number(user.id), user.displayName || user.username || `用户 ${user.id}`);
+    }
+    const toRound = (row: RunTraceRoundRow): Record<string, unknown> => {
+      const scopeKey = toNumber(row.scopeKey);
+      return {
+        scopeKey,
+        scopeName: names.get(scopeKey) ?? (dimension === 'agent' ? '未关联 Agent' : '未关联用户'),
+        sessionId: row.sessionId == null ? null : toNumber(row.sessionId),
+        modelName: row.modelName ?? null,
+        createdAt: row.createdAt ?? null,
+        durationMs: toNumber(row.durationMs),
+        totalTokens: toNumber(row.totalTokens),
+        costMicros: row.costMicros == null ? null : toNumber(row.costMicros),
+        callCount: toNumber(row.callCount),
+      };
+    };
+    // 失败率按比例排：分母不同，直接比次数会让小样本工具霸榜
+    const toolFailureRates = toolRows
+      .map((row) => {
+        const totalCount = toNumber(row.totalCount);
+        const errorCount = toNumber(row.errorCount);
+        return {
+          toolType: String(row.toolType),
+          errorCount,
+          totalCount,
+          failRate: totalCount > 0 ? Math.round((errorCount / totalCount) * 1000) / 10 : 0,
+        };
+      })
+      .filter((row) => row.totalCount > 0)
+      .sort((a, b) => b.failRate - a.failRate || b.errorCount - a.errorCount || a.toolType.localeCompare(b.toolType))
+      .slice(0, limit);
+    return {
+      period: this.periodMeta(range, previous),
+      scene,
+      scope: dimension,
+      slowestRounds: slowRows.map(toRound),
+      mostExpensiveRounds: expensiveRows.map(toRound),
+      toolFailureRates,
+    };
+  }
+
+  /** 会话：窗口 phase 分布 + 结构 + 实时运行态 + llm_call 质量面板。 */
+  async sessionsScope(    days: number,
     endOffset = 0,
     opts?: { excludeConnectivity?: boolean },
   ): Promise<Record<string, unknown>> {

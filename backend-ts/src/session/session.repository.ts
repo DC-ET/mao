@@ -500,6 +500,31 @@ export class MessageRepository {
     );
   }
 
+  /**
+   * 会话全部现存用户消息的时钟戳（run 轨迹用）：一条查询供翻页外的全局判定复用——
+   * run 时间窗上界（下一条更新的用户消息 created_at）、编辑重发的「编辑前」切点、
+   * 以及第一页的「未归属」边界，都不按页各查一遍。
+   */
+  selectUserStamps(sessionId: number): Promise<Array<Pick<Message, 'id' | 'createdAt' | 'updatedAt'>>> {
+    return this.db.query<Pick<Message, 'id' | 'createdAt' | 'updatedAt'>>(
+      `SELECT id, created_at, updated_at FROM \`message\` WHERE session_id = ? AND ${notDeleted()} AND role = 'USER' ORDER BY id ASC`,
+      [sessionId],
+    );
+  }
+
+  /**
+   * 全会话现存助手消息声明的工具调用（run 轨迹用）：工具活动是异步落库的，created_at
+   * 可能晚到下一条用户消息之后，落进下一个 run 的时间窗。归属要以 tool_call_id 对准的
+   * 消息为准，本页对不上时靠它判断该活动归属的 run 是否在本页，不能按时间窗改挂。
+   */
+  selectAssistantToolCalls(sessionId: number): Promise<Array<Pick<Message, 'id' | 'toolCalls'>>> {
+    return this.db.query<Pick<Message, 'id' | 'toolCalls'>>(
+      `SELECT id, tool_calls AS toolCalls FROM \`message\`
+       WHERE session_id = ? AND ${notDeleted()} AND role = 'ASSISTANT' AND tool_calls IS NOT NULL ORDER BY id ASC`,
+      [sessionId],
+    );
+  }
+
   selectRange(
     sessionId: number,
     startId: number,

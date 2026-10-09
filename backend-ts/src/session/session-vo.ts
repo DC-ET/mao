@@ -438,6 +438,111 @@ export function toActivityVO(activity: SessionActivity) {
   };
 }
 
+/* ------------------------------------------------------------------ *
+ * run 轨迹读模型 VO（技术方案 2026-10-09-run-trace §5.2）
+ * 只呈现事实：轮级 / 旁路调用 / 工具 / 标记均为已落库数据的聚合，不做质量判断。
+ * ------------------------------------------------------------------ */
+
+export interface RunTracePageVO {
+  /** 本页 run，新到旧 */
+  runs: RunTraceVO[];
+  hasMore: boolean;
+  /** 仅第一页返回；没有则 null。会话级「未归属」不塞进 run 列表 */
+  unattributed: UnattributedGroupVO | null;
+}
+
+export interface UnattributedGroupVO {
+  count: number;
+  startedAt: string | null;
+  endedAt: string | null;
+  /** 这里的「轮」只是未归属的 llm_call，seq 在组内从 1 */
+  rounds: TraceRoundVO[];
+  tools: TraceToolVO[];
+}
+
+export interface RunTraceVO {
+  /** 锚点用户消息 id */
+  runId: number;
+  userMessagePreview: string;
+  startedAt: string | null;
+  /** 未编辑过时只有一个 current */
+  segments: TraceSegmentVO[];
+  sideCalls: TraceSideCallVO[];
+  subagentLinks: Array<{ sessionId: number; title: string | null }>;
+  /** kind: 'compaction'；'interrupted' 已在轮上，标记列表只放 compaction */
+  markers: TraceMarkerVO[];
+  totals: {
+    wallClockMs: number;
+    costMicros: number | null;
+    promptTokens: number;
+    completionTokens: number;
+    cachedTokens: number;
+    cacheCreationTokens: number;
+    toolSuccess: number;
+    toolError: number;
+  };
+}
+
+export interface TraceSegmentVO {
+  kind: 'before_edit' | 'current';
+  rounds: TraceRoundVO[];
+  unplacedTools: TraceToolVO[];
+}
+
+export interface TraceRoundVO {
+  seq: number;
+  modelName: string | null;
+  /** run 内恒为 'agent'；未归属组不做轮 / 旁路之分，携带 llm_call 原始 scene */
+  scene: string;
+  /** llm_call.created_at：调用结束时刻，导出 CSV 的「时间」列 */
+  createdAt: string | null;
+  durationMs: number;
+  firstTokenMs: number | null;
+  retryCount: number;
+  success: boolean;
+  /** error_message 含 Cancelled by user */
+  interrupted: boolean;
+  errorMessage: string | null;
+  promptTokens: number;
+  completionTokens: number;
+  cachedTokens: number;
+  cacheCreationTokens: number;
+  costMicros: number | null;
+  slow: boolean;
+  expensive: boolean;
+  tools: TraceToolVO[];
+}
+
+export interface TraceSideCallVO {
+  scene: string;
+  modelName: string | null;
+  /** llm_call.created_at：调用结束时刻，导出 CSV 的「时间」列 */
+  createdAt: string | null;
+  durationMs: number;
+  promptTokens: number;
+  completionTokens: number;
+  cachedTokens: number;
+  cacheCreationTokens: number;
+  costMicros: number | null;
+  success: boolean;
+}
+
+export interface TraceToolVO {
+  toolCallId: string | null;
+  name: string;
+  target: string | null;
+  status: string;
+  /** 历史行与未回填行为 null，UI 显示「—」 */
+  durationMs: number | null;
+  approvalMark: string | null;
+}
+
+export interface TraceMarkerVO {
+  kind: 'compaction';
+  atMessageId: number;
+  detail: string;
+}
+
 export function toTodoVO(todo: SessionTodo) {
   return {
     id: todo.id,

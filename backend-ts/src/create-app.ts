@@ -103,6 +103,7 @@ import { GitOperationService } from './session/git-operation.service.js';
 import { SessionService } from './session/session.service.js';
 import { SessionTitleService } from './session/session-title.service.js';
 import { ActivityService } from './session/activity.service.js';
+import { RunTraceService } from './session/run-trace.service.js';
 import { SessionActivityRepository, SessionTodoRepository, SubagentExecutionRepository } from './session/activity.repository.js';
 import { MessageQueueService } from './session/message-queue.service.js';
 import { MessageQueueRepository } from './session/message-queue.repository.js';
@@ -702,6 +703,13 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const messageQueueService = new MessageQueueService(new MessageQueueRepository(db));
   const subagentExecutionRepo = new SubagentExecutionRepository(db);
   const activityHeartbeat = new SessionActivityHeartbeat(sessionService);
+  // run 轨迹读模型：零新表，读时聚合消息 / llm_call / session_activity / 压缩事件
+  const runTraceService = new RunTraceService(
+    messageRepo,
+    new LlmCallRepository(db),
+    new SessionActivityRepository(db),
+    new SessionCompactionEventRepository(db),
+  );
 
   const fileRepo = new FileEntityRepository(db);
   const fileService = new FileService(fileRepo, uploadDir, async () => (await settingService.getUploadConfig()).maxSizeMb);
@@ -2404,6 +2412,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       subagentExecutionRepo,
       sessionCompactionEventService,
       sessionCompactionService,
+      runTraceService,
       approvalRegistry,
       askUserQuestionsRegistry,
       treeSignalPublisher,
