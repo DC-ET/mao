@@ -157,7 +157,7 @@ describe('StreamingWsHandler source 透传（开放接口）', () => {
     await h.handler.autoConsumeQueue(11, 7);
     await new Promise((r) => setTimeout(r, 560));
     await h.executor.runAll();
-    expect(h.messageQueueService.enqueueHead).toHaveBeenCalledWith(11, 7, 'hook retry', null, null, 'WEBHOOK', 9);
+    expect(h.messageQueueService.enqueueHead).toHaveBeenCalledWith(11, 7, 'hook retry', null, null, 'WEBHOOK', 9, null);
     expect(h.onOpenTriggerQueueConsumed).not.toHaveBeenCalled();
   });
 });

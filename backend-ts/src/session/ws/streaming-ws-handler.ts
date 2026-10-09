@@ -3,6 +3,7 @@ import type { Agent, ContentPart, LlmModel, LocalSkillRef, Message, MessageQueue
 import type { TaskNotifySource } from '../task-terminal.service.js';
 import type { MessageQueueSource } from '../types.js';
 import { imageUrlFromPart } from '../session-vo.js';
+import { queueWaitMsOf } from '../../openapi/open-api-call-log.logic.js';
 
 /** user_message_saved 广播用的用户消息内容：text 提取自纯文本或 ContentPart，images 提取自图片 URL。 */
 export interface UserMessagePayload {
@@ -90,8 +91,8 @@ export interface WsHandlerDeps {
   };
   messageQueueService: {
     listPending(sessionId: number): Promise<MessageQueueItem[]>;
-    enqueue(sessionId: number, userId: number, content: string, images: string | null, scheduledTaskId?: number | null, source?: MessageQueueSource | null, openTriggerId?: number | null): Promise<void>;
-    enqueueHead(sessionId: number, userId: number, content: string, images: string | null, scheduledTaskId?: number | null, source?: MessageQueueSource | null, openTriggerId?: number | null): Promise<void>;
+    enqueue(sessionId: number, userId: number, content: string, images: string | null, scheduledTaskId?: number | null, source?: MessageQueueSource | null, openTriggerId?: number | null, openCallLogId?: number | null): Promise<void>;
+    enqueueHead(sessionId: number, userId: number, content: string, images: string | null, scheduledTaskId?: number | null, source?: MessageQueueSource | null, openTriggerId?: number | null, openCallLogId?: number | null): Promise<void>;
     dequeue(sessionId: number): Promise<MessageQueueItem | null>;
     getById(id: number): Promise<MessageQueueItem | null>;
     delete(id: number): Promise<void>;
@@ -101,6 +102,8 @@ export interface WsHandlerDeps {
   onScheduledTaskQueueConsumed?: (taskId: number, status: 'COMPLETED' | 'FAILED' | 'CANCELLED') => Promise<void> | void;
   /** busy 入队的 Webhook 触发器消息在队列真正执行完成后回写连续失败计数（开放接口域） */
   onOpenTriggerQueueConsumed?: (triggerId: number, status: 'COMPLETED' | 'FAILED' | 'CANCELLED') => Promise<void> | void;
+  /** API/WEBHOOK 入队流水的终态回写。messageId 拿不到时为 null。 */
+  onOpenApiCallQueueSettled?: (callLogId: number, phase: 'COMPLETED' | 'FAILED' | 'CANCELLED', queueWaitMs: number | null, messageId: number | null) => Promise<void> | void;
   embedPageToolRegistry: EmbedPageToolRegistry;
   localToolSessionRegistry: {
     setUserForSession(sessionId: number, userId: number): void;
@@ -223,30 +226,40 @@ interface QueueSettlement {
   source: QueuedSource;
   /** 定时任务回写绑定（source=SCHEDULED 时非空） */
   taskId: number | null;
-  /** Webhook 触发器回写绑定（source=WEBHOOK 时非空；API 行无回写目标） */
+  /** Webhook 触发器回写绑定（source=WEBHOOK 时非空） */
   triggerId: number | null;
+  /** 入站调用流水绑定（API/WEBHOOK 入队时非空） */
+  callLogId: number | null;
+  /** 入队到开始消费的毫秒数；时间戳解析失败为 null */
+  queueWaitMs: number | null;
+  /** 消费时落库的用户消息；补偿删消息后清空 */
+  messageId: number | null;
 }
 
 /** 队列行来源（收件箱徽标透传）：与 MessageQueueSource / TaskNotifySource 的非 MANUAL 子集同构。 */
 type QueuedSource = 'SCHEDULED' | 'WEBHOOK' | 'API';
 
 /** 队列行 → settlement：V133 前的存量行 source_type 为 NULL，按 scheduledTaskId 回退为 SCHEDULED。 */
-function queueSettlementOf(row: { sourceType?: string | null; scheduledTaskId?: number | null; openTriggerId?: number | null }): QueueSettlement | null {
+function queueSettlementOf(row: { sourceType?: string | null; scheduledTaskId?: number | null; openTriggerId?: number | null; openCallLogId?: number | null; createdAt?: string | Date | null }): QueueSettlement | null {
   const source: QueuedSource | null = row.sourceType === 'SCHEDULED' || row.sourceType === 'WEBHOOK' || row.sourceType === 'API'
     ? row.sourceType
     : row.scheduledTaskId != null ? 'SCHEDULED' : null;
-  if (source == null) return null;
+  if (source == null && row.openCallLogId == null) return null;
+  const resolved: QueuedSource = source ?? 'API';
   return {
-    source,
-    taskId: source === 'SCHEDULED' ? (row.scheduledTaskId ?? null) : null,
-    triggerId: source === 'WEBHOOK' ? (row.openTriggerId ?? null) : null,
+    source: resolved,
+    taskId: resolved === 'SCHEDULED' ? (row.scheduledTaskId ?? null) : null,
+    triggerId: resolved === 'WEBHOOK' ? (row.openTriggerId ?? null) : null,
+    callLogId: row.openCallLogId ?? null,
+    queueWaitMs: queueWaitMsOf(row.createdAt),
+    messageId: null,
   };
 }
 
-/** settlement → 入队参数三元组，回补队首时透传保源。 */
-function settlementToEnqueueArgs(settlement: QueueSettlement | null): { scheduledTaskId: number | null; source: QueuedSource | null; openTriggerId: number | null } {
-  if (settlement == null) return { scheduledTaskId: null, source: null, openTriggerId: null };
-  return { scheduledTaskId: settlement.taskId, source: settlement.source, openTriggerId: settlement.triggerId };
+/** settlement → 入队参数，回补队首时透传保源。 */
+function settlementToEnqueueArgs(settlement: QueueSettlement | null): { scheduledTaskId: number | null; source: QueuedSource | null; openTriggerId: number | null; openCallLogId: number | null } {
+  if (settlement == null) return { scheduledTaskId: null, source: null, openTriggerId: null, openCallLogId: null };
+  return { scheduledTaskId: settlement.taskId, source: settlement.source, openTriggerId: settlement.triggerId, openCallLogId: settlement.callLogId };
 }
 
 /**
@@ -497,11 +510,12 @@ export class StreamingWsHandler {
         } catch (e) {
           console.error(`Failed to delete orphan auto-saved message ${autoSavedMessageId} for session ${sessionId}`, e);
         }
+        if (settlement != null) settlement.messageId = null;
       }
       try {
         await this.deps.messageQueueService.enqueueHead(
           sessionId, userId, content, images.length > 0 ? JSON.stringify(images) : null,
-          requeueArgs.scheduledTaskId, requeueArgs.source, requeueArgs.openTriggerId,
+          requeueArgs.scheduledTaskId, requeueArgs.source, requeueArgs.openTriggerId, requeueArgs.openCallLogId,
         );
         await this.sendQueueUpdated(sessionId, userId);
       } catch (e) {
@@ -1444,9 +1458,28 @@ export class StreamingWsHandler {
       if (settlement.triggerId != null) {
         await this.deps.onOpenTriggerQueueConsumed?.(settlement.triggerId, phase);
       }
+      if (settlement.callLogId != null) {
+        await this.deps.onOpenApiCallQueueSettled?.(settlement.callLogId, phase, settlement.queueWaitMs, settlement.messageId);
+      }
     } catch (e) {
       console.warn(`Failed to settle queued source binding after ${phase}`, e);
     }
+  }
+
+  /**
+   * 替换会话上的队列回写绑定。插队会覆盖正在执行的那一份；覆盖前先把旧流水标成 cancelled，
+   * 否则旧执行体因对象身份对不上而永远不会 settle。
+   */
+  private async adoptQueueSettlement(sessionId: number, next: QueueSettlement): Promise<void> {
+    const previous = this.queueSettlements.get(sessionId);
+    if (previous != null && previous !== next && previous.callLogId != null) {
+      try {
+        await this.deps.onOpenApiCallQueueSettled?.(previous.callLogId, 'CANCELLED', previous.queueWaitMs, previous.messageId);
+      } catch (e) {
+        console.warn(`Failed to cancel replaced open call log ${previous.callLogId}`, e);
+      }
+    }
+    this.queueSettlements.set(sessionId, next);
   }
 
   private async handleCancel(userId: number, root: Record<string, unknown>): Promise<void> {
@@ -1614,7 +1647,7 @@ export class StreamingWsHandler {
           // 绑定后由 runExecution finally 回写
           const insertSettlement = queueSettlementOf(item);
           if (insertSettlement != null) {
-            this.queueSettlements.set(sessionId, insertSettlement);
+            await this.adoptQueueSettlement(sessionId, insertSettlement);
           }
           const content = item.content ?? '';
           let imageList: string[] = [];
@@ -1631,6 +1664,7 @@ export class StreamingWsHandler {
           try {
             const savedMessage = await this.deps.sessionService.saveMessage(sessionId, 'USER', messageContent, null, null, null, 0, null);
             savedMessageId = savedMessage.id ?? null;
+            if (insertSettlement != null) insertSettlement.messageId = savedMessage.id ?? null;
             await this.deps.messageQueueService.delete(queueId);
             queueRowDeleted = true;
             await this.sendQueueUpdated(sessionId, userId);
@@ -1660,6 +1694,7 @@ export class StreamingWsHandler {
               } catch (delErr) {
                 console.error(`Failed to delete orphan inserted message ${savedMessageId} for session ${sessionId}`, delErr);
               }
+              if (insertSettlement != null) insertSettlement.messageId = null;
             }
             // 队列行已删才回补队首（透传来源绑定 scheduledTaskId/source/openTriggerId）；
             // 未删则原行仍在队列，不重复入队
@@ -1668,7 +1703,7 @@ export class StreamingWsHandler {
                 const requeueArgs = settlementToEnqueueArgs(insertSettlement);
                 await this.deps.messageQueueService.enqueueHead(
                   sessionId, userId, content, item.images ?? null,
-                  requeueArgs.scheduledTaskId, requeueArgs.source, requeueArgs.openTriggerId,
+                  requeueArgs.scheduledTaskId, requeueArgs.source, requeueArgs.openTriggerId, requeueArgs.openCallLogId,
                 );
                 await this.sendQueueUpdated(sessionId, userId);
               } catch (requeueErr) {
@@ -1698,7 +1733,15 @@ export class StreamingWsHandler {
     const queueId = Number(data.queueId);
     const item = await this.deps.messageQueueService.getById(queueId);
     if (!item || item.sessionId !== sessionId) return;
+    const pending = item.status == null || item.status === 'PENDING';
     await this.deps.messageQueueService.delete(queueId);
+    if (pending && item.openCallLogId != null) {
+      try {
+        await this.deps.onOpenApiCallQueueSettled?.(item.openCallLogId, 'CANCELLED', null, null);
+      } catch (e) {
+        console.warn(`Failed to cancel open call log ${item.openCallLogId} after queue delete`, e);
+      }
+    }
     await this.sendQueueUpdated(sessionId, userId);
   }
 
@@ -1783,12 +1826,13 @@ export class StreamingWsHandler {
           } catch (e) {
             console.error(`Failed to delete orphan auto-saved message ${savedMessageId} for session ${sessionId}`, e);
           }
+          if (headSettlement != null) headSettlement.messageId = null;
         }
         const requeueArgs = settlementToEnqueueArgs(headSettlement);
         try {
           await this.deps.messageQueueService.enqueueHead(
             sessionId, userId, content, head.images ?? null,
-            requeueArgs.scheduledTaskId, requeueArgs.source, requeueArgs.openTriggerId,
+            requeueArgs.scheduledTaskId, requeueArgs.source, requeueArgs.openTriggerId, requeueArgs.openCallLogId,
           );
           await this.sendQueueUpdated(sessionId, userId);
         } catch (e) {
@@ -1815,12 +1859,13 @@ export class StreamingWsHandler {
         }
         // 定时任务/触发器 busy 入队来源：执行终态后按绑定回写（lastExecutionStatus / 失败计数）
         if (headSettlement != null) {
-          this.queueSettlements.set(sessionId, headSettlement);
+          await this.adoptQueueSettlement(sessionId, headSettlement);
         }
         await this.sendQueueUpdated(sessionId, userId);
         const messageContent: unknown = imageList.length === 0 ? content : contentParts(content, imageList);
         const savedMessage = await this.deps.sessionService.saveMessage(sessionId, 'USER', messageContent, null, null, null, 0, null);
         savedMessageId = savedMessage.id ?? null;
+        if (headSettlement != null) headSettlement.messageId = savedMessage.id ?? null;
         this.deps.titleService.scheduleForFirstUserMessage(sessionId, savedMessage.id, messageContent);
         const consumed: Record<string, unknown> = { messageId: String(savedMessage.id), content };
         if (imageList.length > 0) consumed.images = imageList;

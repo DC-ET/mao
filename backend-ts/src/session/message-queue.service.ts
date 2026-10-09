@@ -11,6 +11,7 @@ export class MessageQueueService {
     scheduledTaskId?: number | null,
     source?: MessageQueueSource | null,
     openTriggerId?: number | null,
+    openCallLogId?: number | null,
   ): Promise<MessageQueue> {
     // 事务 + FOR UPDATE 锁住队尾，避免并发 enqueue 读到相同 max(sort_order) 产生重复排序值
     return this.repo.transaction(async (tx) => {
@@ -27,6 +28,7 @@ export class MessageQueueService {
         // 未显式给 source 的定时任务入队按 SCHEDULED 落列（新写入全量盖来源，NULL 仅存量行）
         sourceType: source ?? (scheduledTaskId != null ? 'SCHEDULED' : null),
         openTriggerId: openTriggerId ?? null,
+        openCallLogId: openCallLogId ?? null,
       };
       await tx.insert(item);
       return item;
@@ -42,6 +44,7 @@ export class MessageQueueService {
     scheduledTaskId?: number | null,
     source?: MessageQueueSource | null,
     openTriggerId?: number | null,
+    openCallLogId?: number | null,
   ): Promise<void> {
     return this.repo.transaction(async (tx) => {
       const first = await tx.findFirstPendingForUpdate(sessionId);
@@ -56,6 +59,7 @@ export class MessageQueueService {
         scheduledTaskId: scheduledTaskId ?? null,
         sourceType: source ?? (scheduledTaskId != null ? 'SCHEDULED' : null),
         openTriggerId: openTriggerId ?? null,
+        openCallLogId: openCallLogId ?? null,
       });
     });
   }

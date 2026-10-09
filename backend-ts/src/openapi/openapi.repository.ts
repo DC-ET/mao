@@ -1,3 +1,4 @@
+export type { ApiToken, OutboundDelivery, OutboundSubscription, WebhookTrigger } from './types.js';
 import type { Db } from '../db/db.js';
 import { formatDateTime } from '../common/json.js';
 import type { ApiToken, OutboundDelivery, OutboundSubscription, WebhookTrigger } from './types.js';
@@ -63,6 +64,58 @@ export class MysqlApiTokenRepository {
     } catch (e) {
       console.warn(`[openapi] failed to touch token last_used_at, id=${id}: ${(e as Error).message}`);
     }
+  }
+
+  async setLogFullBody(id: number, userId: number, enabled: boolean): Promise<boolean> {
+    const result = await this.db.execute(
+      'UPDATE api_token SET log_full_body = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL',
+      [enabled ? 1 : 0, id, userId],
+    );
+    return result.affectedRows === 1;
+  }
+
+  async clearAutoDisable(id: number, userId: number): Promise<boolean> {
+    const result = await this.db.execute(
+      `UPDATE api_token
+       SET auto_disabled_at = NULL, auto_disable_reason = NULL, failure_count = 0, failure_window_started_at = NULL
+       WHERE id = ? AND user_id = ? AND revoked_at IS NULL`,
+      [id, userId],
+    );
+    return result.affectedRows === 1;
+  }
+
+  async resetFailures(id: number): Promise<void> {
+    await this.db.execute(
+      'UPDATE api_token SET failure_count = 0, failure_window_started_at = NULL WHERE id = ?',
+      [id],
+    );
+  }
+
+  /**
+   * 单条条件更新累加失败次数。窗口空或超过 1 小时则从 1 重新计。
+   * 已停用或已吊销的行影响 0 行，返回 null。
+   */
+  async bumpFailure(id: number, now: string): Promise<number | null> {
+    const result = await this.db.execute(
+      `UPDATE api_token
+       SET failure_count = IF(failure_window_started_at IS NULL OR failure_window_started_at < DATE_SUB(?, INTERVAL 1 HOUR), 1, failure_count + 1),
+           failure_window_started_at = IF(failure_window_started_at IS NULL OR failure_window_started_at < DATE_SUB(?, INTERVAL 1 HOUR), ?, failure_window_started_at)
+       WHERE id = ? AND auto_disabled_at IS NULL AND revoked_at IS NULL`,
+      [now, now, now, id],
+    );
+    if (result.affectedRows !== 1) return null;
+    const row = await this.findById(id);
+    return row?.failureCount == null ? null : Number(row.failureCount);
+  }
+
+  async casAutoDisable(id: number, now: string, reason: string): Promise<boolean> {
+    const result = await this.db.execute(
+      `UPDATE api_token
+       SET auto_disabled_at = ?, auto_disable_reason = ?
+       WHERE id = ? AND auto_disabled_at IS NULL AND revoked_at IS NULL`,
+      [now, reason, id],
+    );
+    return result.affectedRows === 1;
   }
 }
 

@@ -39,6 +39,11 @@ export function isInboxKindEnabled(kind: InboxKind, preference: InboxPreference)
       return preference.subagentDoneEnabled
     case 'BUDGET_WARN':
       return preference.budgetWarnEnabled
+    case 'TRIGGER_DISABLED':
+    case 'TOKEN_DISABLED':
+      return true
+    case 'OPEN_API_CALL_FAILED':
+      return preference.openApiCallFailedEnabled
     default:
       return false
   }

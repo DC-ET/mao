@@ -3,7 +3,7 @@ import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { formatDateTime } from '../common/json.js';
 import type { MysqlApiTokenRepository } from './openapi.repository.js';
-import { normalizeScopes, OPENAPI_SCOPES, type ApiTokenView, type OpenApiScope } from './types.js';
+import { normalizeScopes, OPENAPI_SCOPES, type ApiTokenView, type OpenApiScope, type ApiToken } from './types.js';
 
 export type { OpenApiScope };
 
@@ -45,13 +45,30 @@ export interface ApiTokenIdentity {
   tokenId: number;
 }
 
+export type TokenResolveResult =
+  | { ok: true; userId: number; scopes: OpenApiScope[]; tokenId: number }
+  | { ok: false; reason: 'not_found'; tokenPrefix: string }
+  | { ok: false; reason: 'revoked' | 'expired' | 'auto_disabled'; tokenPrefix: string; tokenId: number; userId: number };
+
+export interface TokenOutcomePolicy {
+  enabled(): Promise<boolean>;
+  threshold(): Promise<number>;
+  notifyDisabled(input: { userId: number; tokenId: number; tokenName: string; failures: number; threshold: number }): Promise<void>;
+}
+
 /** scope 校验助手：run 端点只认显式持有 open:run 的 API Token 身份。 */
 export function hasScope(scopes: string[] | null | undefined, scope: OpenApiScope): boolean {
   return scopes != null && normalizeScopes(scopes).includes(scope);
 }
 
 export class ApiTokenService {
+  private outcomePolicy: TokenOutcomePolicy | null = null;
+
   constructor(private readonly repo: MysqlApiTokenRepository) {}
+
+  setOutcomePolicy(policy: TokenOutcomePolicy): void {
+    this.outcomePolicy = policy;
+  }
 
   async issue(userId: number, name: string, scopes: string[]): Promise<IssuedToken> {
     const trimmedName = name?.trim() ?? '';
@@ -87,23 +104,41 @@ export class ApiTokenService {
         expiresAt,
         revokedAt: null,
         lastUsedAt: null,
+        autoDisabledAt: null,
+        autoDisableReason: null,
+        logFullBody: false,
         createdAt: formatDateTime(new Date()),
       },
     };
   }
 
   /**
-   * 鉴权层降级解析：sha256 后按唯一键查行，未吊销且未过期才放行。
-   * 解析成功刷 last_used_at（fire-and-forget）；失败路径零额外写。
+   * 鉴权层降级解析。失败区分查无 / 吊销 / 过期 / 自动停用，供调用流水落不同的行。
+   * 只有放行才刷 last_used_at。
    */
-  async resolveByToken(plainToken: string): Promise<ApiTokenIdentity | null> {
+  async resolveByToken(plainToken: string, opts?: { onReject?: (result: Extract<TokenResolveResult, { ok: false }>) => void }): Promise<TokenResolveResult> {
+    const presentedPrefix = plainToken.slice(0, TOKEN_PREFIX_LENGTH);
     const row = await this.repo.findByHash(sha256Hex(plainToken));
-    if (row?.id == null || row.userId == null) return null;
-    if (row.revokedAt != null) return null;
-    if (row.expiresAt != null && row.expiresAt <= formatDateTime(new Date())) return null;
+    const reject = (result: Extract<TokenResolveResult, { ok: false }>): TokenResolveResult => {
+      opts?.onReject?.(result);
+      return result;
+    };
+    if (row?.id == null || row.userId == null) {
+      return reject({ ok: false, reason: 'not_found', tokenPrefix: presentedPrefix });
+    }
+    const tokenPrefix = (row.tokenPrefix ?? presentedPrefix).slice(0, TOKEN_PREFIX_LENGTH);
+    if (row.revokedAt != null) {
+      return reject({ ok: false, reason: 'revoked', tokenPrefix, tokenId: row.id, userId: row.userId });
+    }
+    if (row.expiresAt != null && row.expiresAt <= formatDateTime(new Date())) {
+      return reject({ ok: false, reason: 'expired', tokenPrefix, tokenId: row.id, userId: row.userId });
+    }
+    if (row.autoDisabledAt != null) {
+      return reject({ ok: false, reason: 'auto_disabled', tokenPrefix, tokenId: row.id, userId: row.userId });
+    }
     void this.repo.touchLastUsed(row.id);
     const scopes = normalizeScopes(this.safeParseScopes(row.scopes));
-    return { userId: row.userId, scopes, tokenId: row.id };
+    return { ok: true, userId: row.userId, scopes, tokenId: row.id };
   }
 
   async list(userId: number): Promise<ApiTokenView[]> {
@@ -116,6 +151,9 @@ export class ApiTokenService {
       expiresAt: row.expiresAt ?? null,
       revokedAt: row.revokedAt ?? null,
       lastUsedAt: row.lastUsedAt ?? null,
+      autoDisabledAt: row.autoDisabledAt ?? null,
+      autoDisableReason: row.autoDisableReason ?? null,
+      logFullBody: Number(row.logFullBody) === 1,
       createdAt: row.createdAt ?? null,
     }));
   }
@@ -124,6 +162,54 @@ export class ApiTokenService {
     const revoked = await this.repo.revoke(id, userId);
     if (!revoked) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, 'Token 不存在或已吊销');
+    }
+  }
+
+  async setLogFullBody(userId: number, id: number, enabled: boolean): Promise<void> {
+    const updated = await this.repo.setLogFullBody(id, userId, enabled);
+    if (!updated) throw new BusinessException(ErrorCode.PARAM_INVALID, 'Token 不存在或已吊销');
+  }
+
+  async reEnable(userId: number, id: number): Promise<void> {
+    const updated = await this.repo.clearAutoDisable(id, userId);
+    if (!updated) throw new BusinessException(ErrorCode.PARAM_INVALID, 'Token 不存在或已吊销');
+  }
+
+  findById(id: number): Promise<ApiToken | null> {
+    return this.repo.findById(id);
+  }
+
+  /**
+   * 连续失败自动停用。completed 清零；failed/rejected 在 1 小时窗口内累加；
+   * cancelled 不动。总开关关闭时完全不计数。调用方负责排除 429、重放与鉴权层拒绝。
+   */
+  async recordTokenOutcome(tokenId: number, outcome: 'completed' | 'failed' | 'rejected' | 'cancelled'): Promise<void> {
+    if (this.outcomePolicy == null) return;
+    if (!(await this.outcomePolicy.enabled())) return;
+    if (outcome === 'cancelled') return;
+    if (outcome === 'completed') {
+      await this.repo.resetFailures(tokenId);
+      return;
+    }
+    const now = formatDateTime(new Date());
+    const count = await this.repo.bumpFailure(tokenId, now);
+    if (count == null) return;
+    const threshold = await this.outcomePolicy.threshold();
+    if (count < threshold) return;
+    const disabled = await this.repo.casAutoDisable(tokenId, now, `连续失败 ${count} 次（阈值 ${threshold}/小时）`);
+    if (!disabled) return;
+    const token = await this.repo.findById(tokenId);
+    if (token?.userId == null) return;
+    try {
+      await this.outcomePolicy.notifyDisabled({
+        userId: token.userId,
+        tokenId,
+        tokenName: token.name ?? '',
+        failures: count,
+        threshold,
+      });
+    } catch (e) {
+      console.warn(`[openapi] failed to notify token disabled, tokenId=${tokenId}: ${(e as Error).message}`);
     }
   }
 

@@ -55,6 +55,8 @@ export const ErrorCode = {
   SHARE_NOT_FOUND: { code: 3041, message: '链接不存在或已撤销' },
   /** 会话导出体超过 5MB。HTTP 413，见 handleError。 */
   EXPORT_TOO_LARGE: { code: 3042, message: '导出内容过大，请改用分享链接' },
+  /** API Token 连续失败自动停用。HTTP 403，见 handleError。 */
+  TOKEN_AUTO_DISABLED: { code: 3043, message: 'Token 已因连续失败被自动停用，请手动重新启用' },
 
   /** 用量预算 BLOCK 超线：message 动态携带 scope/当期消耗/上限（技术方案 §5.7）。 */
   BUDGET_EXCEEDED: { code: 3041, message: '用量预算已超限' },

@@ -880,7 +880,7 @@ describe('StreamingWsHandler', () => {
       submit.mockRestore();
     }
     // 回补队首的同时必须删掉已落库的 USER，否则下次消费会重复落库同一条消息
-    expect(messageQueueService.enqueueHead).toHaveBeenCalledWith(11, 7, '#{next}#', null, null, null, null);
+    expect(messageQueueService.enqueueHead).toHaveBeenCalledWith(11, 7, '#{next}#', null, null, null, null, null);
     expect(sessionService.deleteMessageById).toHaveBeenCalledWith(11, 100);
   });
 
@@ -904,7 +904,7 @@ describe('StreamingWsHandler', () => {
     } finally {
       registry.send.mockReset();
     }
-    expect(messageQueueService.enqueueHead).toHaveBeenCalledWith(11, 7, '#{next}#', null, null, null, null);
+    expect(messageQueueService.enqueueHead).toHaveBeenCalledWith(11, 7, '#{next}#', null, null, null, null, null);
     expect(sessionService.deleteMessageById).toHaveBeenCalledWith(11, 101);
   });
 
@@ -1556,7 +1556,7 @@ describe('StreamingWsHandler', () => {
       await executor.runAll();
 
       expect(sessionService.deleteMessageById).toHaveBeenCalledWith(11, 77);
-      expect(messageQueueService.enqueueHead).toHaveBeenCalledWith(11, 7, 'insert-me', null, 9, 'SCHEDULED', null);
+      expect(messageQueueService.enqueueHead).toHaveBeenCalledWith(11, 7, 'insert-me', null, 9, 'SCHEDULED', null, null);
       expect(handler.hasExecutionClaim(11)).toBe(false);
     });
 

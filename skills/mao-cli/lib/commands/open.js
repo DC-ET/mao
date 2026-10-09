@@ -16,6 +16,10 @@ const HELP = `用法:
   mao open token list
   mao open token create --name <名称> [--scope open:run]        # scope 逗号分隔，首期仅 open:run；明文只显示一次
   mao open token delete --id <id>
+  mao open token log-full-body --id <id> --enabled true|false
+  mao open token re-enable --id <id>
+  mao open calls list [--token-id <id>] [--trigger-id <id>] [--page <n>] [--size <n>]
+  mao open calls get --id <id>
   mao open trigger list
   mao open trigger create --name <名称> --agent-id <id> [--session-id <id>]   # secret 只显示一次
   mao open trigger update --id <id> [--name] [--agent-id] [--session-id] [--enabled true|false]
@@ -33,6 +37,8 @@ const HELP = `用法:
   API Token 仅在 /v1/open/** 生效，不能调用其它 REST 接口。
   token/trigger/subscription 的 create 与 rotate-secret 返回的明文（token/secret）只出现一次，请当场保存。
   run 需 --api-token 传 mao_ 前缀 API Token；会话忙时自动排队（响应 queued=true，202 异步语义）。
+  calls 查看本人 Token/触发器的入站调用流水。完整记录默认关闭，开启后请求体会进流水并留审计。
+  连续失败达到阈值的 Token 会自动停用，恢复用 token re-enable。管理端重放与统计不在本 CLI。
 `;
 
 const EVENTS = new Set(['task.completed', 'task.failed', 'question.pending']);
@@ -76,6 +82,18 @@ async function tokenGroup(ctx) {
     case 'delete': {
       const id = requireNumber(flags, 'id', '令牌 ID');
       outputResult(await request({ ...common, method: 'DELETE', path: `/open/tokens/${id}` }), globals);
+      return;
+    }
+    case 'log-full-body': {
+      const id = requireNumber(flags, 'id', '令牌 ID');
+      const enabled = optionalBoolean(flags, 'enabled');
+      if (enabled == null) throw createCliError('--enabled 必须为 true 或 false');
+      outputResult(await request({ ...common, method: 'PUT', path: `/open/tokens/${id}/log-full-body`, body: { enabled } }), globals);
+      return;
+    }
+    case 're-enable': {
+      const id = requireNumber(flags, 'id', '令牌 ID');
+      outputResult(await request({ ...common, method: 'POST', path: `/open/tokens/${id}/re-enable` }), globals);
       return;
     }
     default:
@@ -187,6 +205,33 @@ async function subscriptionGroup(ctx) {
   }
 }
 
+async function callsGroup(ctx) {
+  const { action, flags, globals, common } = ctx;
+  switch (action) {
+    case 'list': {
+      const query = new URLSearchParams();
+      const tokenId = optionalNumber(flags, 'token-id');
+      const triggerId = optionalNumber(flags, 'trigger-id');
+      const page = optionalNumber(flags, 'page');
+      const size = optionalNumber(flags, 'size');
+      if (tokenId != null) query.set('tokenId', String(tokenId));
+      if (triggerId != null) query.set('triggerId', String(triggerId));
+      if (page != null) query.set('page', String(page));
+      if (size != null) query.set('size', String(size));
+      const qs = query.toString();
+      outputResult(await request({ ...common, method: 'GET', path: `/open/calls${qs ? `?${qs}` : ''}` }), globals);
+      return;
+    }
+    case 'get': {
+      const id = requireNumber(flags, 'id', '流水 ID');
+      outputResult(await request({ ...common, method: 'GET', path: `/open/calls/${id}` }), globals);
+      return;
+    }
+    default:
+      process.stdout.write(HELP);
+  }
+}
+
 /** run：唯一以 API Token（mao_）调用的子命令，Bearer 头直传，不进 JWT 缓存。 */
 async function runAction({ flags, globals }) {
   const apiToken = requireString(flags, 'api-token', 'API Token（mao_ 前缀）');
@@ -239,6 +284,9 @@ async function handle(ctx) {
       return;
     case 'subscription':
       await subscriptionGroup(groupCtx);
+      return;
+    case 'calls':
+      await callsGroup(groupCtx);
       return;
     default:
       process.stdout.write(HELP);

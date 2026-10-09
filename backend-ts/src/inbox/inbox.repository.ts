@@ -24,6 +24,7 @@ export interface UserInboxPreferenceRow {
   approvalPendingEnabled: number;
   subagentDoneEnabled: number;
   budgetWarnEnabled?: number | null;
+  openApiCallFailedEnabled?: number | null;
   systemNotifyEnabled: number;
 }
 
@@ -155,6 +156,7 @@ export class InboxRepository {
               approval_pending_enabled AS approvalPendingEnabled,
               subagent_done_enabled AS subagentDoneEnabled,
               budget_warn_enabled AS budgetWarnEnabled,
+              open_api_call_failed_enabled AS openApiCallFailedEnabled,
               system_notify_enabled AS systemNotifyEnabled
        FROM user_inbox_preference WHERE user_id = ?`,
       [userId],
@@ -168,20 +170,22 @@ export class InboxRepository {
     approvalPendingEnabled: boolean;
     subagentDoneEnabled: boolean;
     budgetWarnEnabled: boolean;
+    openApiCallFailedEnabled: boolean;
     systemNotifyEnabled: boolean;
   }): Promise<void> {
     await this.db.execute(
       `INSERT INTO user_inbox_preference
          (user_id, task_completed_enabled, question_pending_enabled, approval_pending_enabled,
-          subagent_done_enabled, budget_warn_enabled, system_notify_enabled)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+          subagent_done_enabled, budget_warn_enabled, system_notify_enabled, open_api_call_failed_enabled)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          task_completed_enabled = VALUES(task_completed_enabled),
          question_pending_enabled = VALUES(question_pending_enabled),
          approval_pending_enabled = VALUES(approval_pending_enabled),
          subagent_done_enabled = VALUES(subagent_done_enabled),
          budget_warn_enabled = VALUES(budget_warn_enabled),
-         system_notify_enabled = VALUES(system_notify_enabled)`,
+         system_notify_enabled = VALUES(system_notify_enabled),
+         open_api_call_failed_enabled = VALUES(open_api_call_failed_enabled)`,
       [
         userId,
         flags.taskCompletedEnabled ? 1 : 0,
@@ -190,6 +194,7 @@ export class InboxRepository {
         flags.subagentDoneEnabled ? 1 : 0,
         flags.budgetWarnEnabled ? 1 : 0,
         flags.systemNotifyEnabled ? 1 : 0,
+        flags.openApiCallFailedEnabled ? 1 : 0,
       ],
     );
   }
