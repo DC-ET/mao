@@ -58,6 +58,7 @@ const DEFAULT_PREFERENCE: InboxPreference = {
   approvalPendingEnabled: true,
   subagentDoneEnabled: false,
   budgetWarnEnabled: true,
+  openApiCallFailedEnabled: false,
   systemNotifyEnabled: true,
 };
 
@@ -154,6 +155,52 @@ export class InboxService {
       sessionId: input.sessionId,
       payload: { triggerId: input.triggerId, triggerName: input.triggerName, failures: input.failures },
       tail: `${input.triggerId}:${Date.now()}`,
+    });
+  }
+
+  /**
+   * TOKEN_DISABLED：API Token 连续失败自动停用。无偏好开关，始终通知属主。
+   * tail 带时间戳，同一次 CAS 成功只调一次，重复停用仍可再通知。
+   */
+  async recordTokenDisabled(input: {
+    userId: number;
+    tokenId: number;
+    tokenName: string;
+    failures: number;
+    threshold: number;
+  }): Promise<void> {
+    await this.record({
+      userId: input.userId,
+      kind: 'TOKEN_DISABLED',
+      title: `API Token 已自动停用：${input.tokenName}`,
+      content: `1 小时内失败 ${input.failures} 次（阈值 ${input.threshold}），已自动停用；请检查调用方后手动重新启用`,
+      sessionId: null,
+      payload: { tokenId: input.tokenId, tokenName: input.tokenName, failures: input.failures, threshold: input.threshold },
+      tail: `${input.tokenId}:${Date.now()}`,
+    });
+  }
+
+  /**
+   * OPEN_API_CALL_FAILED：按 Token + 错误码 + 10 分钟桶聚合后的一条。
+   * 偏好在写入时检查（flush 时调用），关闭则不落库。
+   */
+  async recordOpenApiCallFailed(input: {
+    userId: number;
+    tokenId: number;
+    tokenName: string;
+    errorCode: string;
+    count: number;
+    summary: string;
+    bucket: number;
+  }): Promise<void> {
+    await this.record({
+      userId: input.userId,
+      kind: 'OPEN_API_CALL_FAILED',
+      title: `开放接口调用失败：${input.tokenName || 'Token'}`,
+      content: `最近 10 分钟 ${input.errorCode} 共 ${input.count} 次。${input.summary}`.slice(0, 500),
+      sessionId: null,
+      payload: { tokenId: input.tokenId, errorCode: input.errorCode, count: input.count, bucket: input.bucket },
+      tail: `${input.tokenId}:${input.errorCode}:${input.bucket}`,
     });
   }
 
@@ -309,6 +356,7 @@ export class InboxService {
       approvalPendingEnabled: Number(row.approvalPendingEnabled) === 1,
       subagentDoneEnabled: Number(row.subagentDoneEnabled) === 1,
       budgetWarnEnabled: Number(row.budgetWarnEnabled ?? 1) === 1,
+      openApiCallFailedEnabled: Number(row.openApiCallFailedEnabled ?? 0) === 1,
       systemNotifyEnabled: Number(row.systemNotifyEnabled ?? 1) === 1,
     };
   }
@@ -367,6 +415,10 @@ export class InboxService {
       case 'TRIGGER_DISABLED':
         // 无偏好开关：触发器自动停用是运维级事件，始终通知属主
         return true;
+      case 'TOKEN_DISABLED':
+        return true;
+      case 'OPEN_API_CALL_FAILED':
+        return preference.openApiCallFailedEnabled;
       default:
         return false;
     }

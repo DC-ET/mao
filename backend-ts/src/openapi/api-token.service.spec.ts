@@ -43,12 +43,14 @@ describe('ApiTokenService（P1）', () => {
     const service = new ApiTokenService(repo);
     const issued = await service.issue(7, 'CI', ['open:run']);
     const identity = await service.resolveByToken(issued.plainToken);
-    expect(identity).not.toBeNull();
-    expect(identity!.userId).toBe(7);
-    expect(identity!.scopes).toEqual(['open:run']);
-    expect(identity!.tokenId).toBe(issued.id);
+    expect(identity.ok).toBe(true);
+    if (!identity.ok) return;
+    expect(identity.userId).toBe(7);
+    expect(identity.scopes).toEqual(['open:run']);
+    expect(identity.tokenId).toBe(issued.id);
     expect(repo.touchLastUsed).toHaveBeenCalledWith(issued.id);
-    expect(await service.resolveByToken('mao_totally_unknown')).toBeNull();
+    const missing = await service.resolveByToken('mao_totally_unknown');
+    expect(missing).toMatchObject({ ok: false, reason: 'not_found', tokenPrefix: 'mao_totally_' });
   });
 
   it('吊销后即时失效（resolve 返回 null）；重复吊销报错', async () => {
@@ -56,7 +58,7 @@ describe('ApiTokenService（P1）', () => {
     const service = new ApiTokenService(repo);
     const issued = await service.issue(7, 'CI', ['open:run']);
     await service.revoke(7, issued.id);
-    expect(await service.resolveByToken(issued.plainToken)).toBeNull();
+    await expect(service.resolveByToken(issued.plainToken)).resolves.toMatchObject({ ok: false, reason: 'revoked', tokenId: issued.id, userId: 7 });
     await expect(service.revoke(7, issued.id)).rejects.toMatchObject({ code: 2001 });
   });
 
@@ -66,7 +68,7 @@ describe('ApiTokenService（P1）', () => {
     const issued = await service.issue(7, 'CI', ['open:run']);
     const stored = repo.rows.get(issued.id)!;
     stored.expiresAt = '2000-01-01 00:00:00';
-    expect(await service.resolveByToken(issued.plainToken)).toBeNull();
+    await expect(service.resolveByToken(issued.plainToken)).resolves.toMatchObject({ ok: false, reason: 'expired', tokenId: issued.id });
   });
 
   it('scope 清洗：非法 scope 被剔除，签发无有效 scope 拒绝', async () => {

@@ -116,7 +116,7 @@ describe('OpenRunService（P1/P2 共用执行流）', () => {
     h.isSessionBusy.mockReturnValue(true);
     const result = await h.service.run({ userId: 7, agentId: 5, message: 'go', sessionId: 11, source: 'WEBHOOK', triggerId: 3 });
     expect(result).toEqual({ sessionId: 11, messageId: null, queued: true, terminalPhase: 'COMPLETED' });
-    expect(h.enqueue).toHaveBeenCalledWith(11, 7, 'go', null, null, 'WEBHOOK', 3);
+    expect(h.enqueue).toHaveBeenCalledWith(11, 7, 'go', null, null, 'WEBHOOK', 3, null);
     expect(h.sessionService.updatePhase).not.toHaveBeenCalled();
     expect(h.liveExecution).not.toHaveBeenCalled();
   });

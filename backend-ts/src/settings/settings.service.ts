@@ -615,6 +615,23 @@ export class SystemSettingService {
     }
   }
 
+  async getOpenApiCallLogRetentionDays(): Promise<number> {
+    const raw = await this.getOpt('openapi.callLogRetentionDays');
+    const n = raw == null ? NaN : Number(raw);
+    return Number.isInteger(n) && n > 0 ? n : 90;
+  }
+
+  async isOpenApiTokenAutoDisableEnabled(): Promise<boolean> {
+    const raw = await this.getText('openapi.tokenAutoDisable.enabled', 'true');
+    return raw === 'true' || raw === '1';
+  }
+
+  async getOpenApiTokenAutoDisableThreshold(): Promise<number> {
+    const raw = await this.getOpt('openapi.tokenAutoDisableThreshold');
+    const n = raw == null ? NaN : Number(raw);
+    return Number.isInteger(n) && n > 0 ? n : 10;
+  }
+
   private async validateValue(key: string, value: string | null | undefined): Promise<void> {
     if (key === WEIXIN_AGENT_ID_KEY) {
       if (!hasText(value)) {
@@ -658,7 +675,8 @@ export class SystemSettingService {
     if (key.endsWith('Days') || key.endsWith('Size') || key.endsWith('SizeMb')
       || key === OSS_STS_EXPIRE_KEY || key.endsWith('TimeoutMs') || key.endsWith('DelayMs')
       || key === NOTIFY_BATCH_SIZE_KEY || key === NOTIFY_MAX_ATTEMPTS_KEY
-      || key === AGENT_THREAD_POOL_SIZE_KEY || key === AGENT_THREAD_POOL_MAX_KEY || key === AGENT_THREAD_POOL_QUEUE_KEY) {
+      || key === AGENT_THREAD_POOL_SIZE_KEY || key === AGENT_THREAD_POOL_MAX_KEY || key === AGENT_THREAD_POOL_QUEUE_KEY
+      || key === 'openapi.tokenAutoDisableThreshold') {
       const number = Number(value);
       if (!Number.isInteger(number) || number <= 0) {
         throw new BusinessException(ErrorCode.PARAM_INVALID, '配置值必须为正整数');

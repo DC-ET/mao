@@ -139,7 +139,7 @@
           aria-label="子代理完成收件箱通知"
         />
       </div>
-      <div class="inbox-kind-row">
+        <div class="inbox-kind-row">
         <span class="inbox-kind-label">预算提醒通知</span>
         <el-switch
           v-model="inboxForm.budgetWarnEnabled"
@@ -148,6 +148,17 @@
           active-text="开"
           inactive-text="关"
           aria-label="预算提醒收件箱通知"
+        />
+      </div>
+      <div class="inbox-kind-row">
+        <span class="inbox-kind-label">开放调用失败通知</span>
+        <el-switch
+          v-model="inboxForm.openApiCallFailedEnabled"
+          :loading="inboxSaving"
+          inline-prompt
+          active-text="开"
+          inactive-text="关"
+          aria-label="开放调用失败收件箱通知"
         />
       </div>
 
@@ -235,6 +246,7 @@ const inboxSaved = reactive<InboxPreference>({
   approvalPendingEnabled: true,
   subagentDoneEnabled: false,
   budgetWarnEnabled: true,
+  openApiCallFailedEnabled: false,
   systemNotifyEnabled: true
 })
 const inboxForm = reactive<InboxPreference>({ ...inboxSaved })

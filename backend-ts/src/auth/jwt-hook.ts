@@ -1,6 +1,6 @@
 import type { FastifyRequest } from 'fastify';
 import type { JwtService } from '../crypto/jwt.service.js';
-import { API_TOKEN_PREFIX, type ApiTokenIdentity } from '../openapi/api-token.service.js';
+import { API_TOKEN_PREFIX, type TokenResolveResult } from '../openapi/api-token.service.js';
 import { OPEN_API_PATH_PREFIX } from '../openapi/types.js';
 
 // /v1/agent-bundle/registry/ 为免登录只读端点：开关与 token 校验在路由内做（关闭时 404 不暴露存在性）
@@ -31,6 +31,11 @@ export function isPublicPath(method: string, rawUrl: string): boolean {
   return false;
 }
 
+/** 自动停用 Token 只拦住需要登录的路径。公开 Webhook 自己验签，请求头里的停用 Token 不能挡在前面。 */
+export function autoDisabledTokenBlocksRequest(method: string, rawUrl: string): boolean {
+  return !isPublicPath(method, rawUrl);
+}
+
 export function resolveToken(request: FastifyRequest): string | null {
   const header = request.headers.authorization;
   if (typeof header === 'string' && header.startsWith('Bearer ')) {
@@ -44,7 +49,15 @@ export function resolveToken(request: FastifyRequest): string | null {
 }
 
 /** API Token 解析回调（create-app 注入；auth 域不反向依赖 openapi 域实现）。 */
-export type ApiTokenResolver = (plainToken: string) => Promise<ApiTokenIdentity | null>;
+export type ApiTokenResolver = (plainToken: string) => Promise<TokenResolveResult>;
+
+export interface AuthenticationOutcome {
+  userId: number | null;
+  /** 命中自动停用：preHandler 回 403，而不是 401。 */
+  tokenAutoDisabled: boolean;
+  /** resolveByToken 已拒绝并触发 onReject，preHandler 不要再落一行。 */
+  resolverRejected: boolean;
+}
 
 /** API Token 鉴权成功的请求：挂 scope 列表与 token id 供授权层/限流校验。 */
 export interface ApiTokenAuthedRequest extends FastifyRequest {
@@ -71,24 +84,35 @@ export async function authenticateRequest(
   request: FastifyRequest,
   jwt: JwtService,
   apiTokenResolver?: ApiTokenResolver | null,
-): Promise<number | null> {
+): Promise<AuthenticationOutcome> {
+  const anonymous = (patch: Partial<AuthenticationOutcome> = {}): AuthenticationOutcome => ({
+    userId: null,
+    tokenAutoDisabled: false,
+    resolverRejected: false,
+    ...patch,
+  });
   const header = bearerToken(request);
   if (header != null && header.startsWith(API_TOKEN_PREFIX)) {
-    if (apiTokenResolver == null || !isOpenApiPath(request.url)) return null;
+    if (apiTokenResolver == null || !isOpenApiPath(request.url)) return anonymous();
     const identity = await apiTokenResolver(header);
-    if (identity == null) return null;
+    if (!identity.ok) {
+      return anonymous({
+        tokenAutoDisabled: identity.reason === 'auto_disabled',
+        resolverRejected: true,
+      });
+    }
     (request as ApiTokenAuthedRequest).apiTokenScopes = identity.scopes;
     (request as ApiTokenAuthedRequest).apiTokenId = identity.tokenId;
-    return identity.userId;
+    return { userId: identity.userId, tokenAutoDisabled: false, resolverRejected: false };
   }
   const query = request.query as Record<string, string | undefined>;
   // query 通道对 mao_ 前缀关闭：防止 token 进 URL/访问日志
   if (query?.token?.startsWith(API_TOKEN_PREFIX)) {
-    return null;
+    return anonymous();
   }
   const token = header ?? query?.token ?? null;
   if (!token || !jwt.validateAccessToken(token)) {
-    return null;
+    return anonymous();
   }
-  return jwt.getUserIdFromToken(token);
+  return { userId: jwt.getUserIdFromToken(token), tokenAutoDisabled: false, resolverRejected: false };
 }

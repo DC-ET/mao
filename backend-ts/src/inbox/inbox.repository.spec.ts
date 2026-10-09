@@ -88,6 +88,7 @@ function makeUniqueKeyDb() {
           subagentDoneEnabled: params[4] as number,
           budgetWarnEnabled: params[5] as number,
           systemNotifyEnabled: params[6] as number,
+          openApiCallFailedEnabled: params[7] as number,
         };
         prefs.set(row.userId, row);
         return { affectedRows: 1 };
@@ -290,6 +291,7 @@ describe('InboxRepository 偏好', () => {
       subagentDoneEnabled: true,
       systemNotifyEnabled: false,
       budgetWarnEnabled: true,
+      openApiCallFailedEnabled: false,
     });
     await expect(repo.findPreference(7)).resolves.toMatchObject({
       taskCompletedEnabled: 1,
@@ -306,6 +308,7 @@ describe('InboxRepository 偏好', () => {
       subagentDoneEnabled: false,
       systemNotifyEnabled: true,
       budgetWarnEnabled: false,
+      openApiCallFailedEnabled: true,
     });
     expect(prefs.size).toBe(1);
     await expect(repo.findPreference(7)).resolves.toMatchObject({

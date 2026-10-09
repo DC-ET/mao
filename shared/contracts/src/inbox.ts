@@ -11,7 +11,9 @@ export type InboxKind =
   | 'APPROVAL_PENDING'
   | 'SUBAGENT_DONE'
   | 'TRIGGER_DISABLED'
-  | 'BUDGET_WARN';
+  | 'BUDGET_WARN'
+  | 'TOKEN_DISABLED'
+  | 'OPEN_API_CALL_FAILED';
 
 /** 条目来源：用户手工触发 / 定时任务 / 入站 Webhook / 开放 API（前端来源徽标）。 */
 export type InboxSource = 'MANUAL' | 'SCHEDULED' | 'WEBHOOK' | 'API';
@@ -42,6 +44,8 @@ export interface InboxPreference {
   subagentDoneEnabled: boolean;
   /** 预算提醒（BUDGET_WARN，V139；默认开——成本越线是运维级提醒）。 */
   budgetWarnEnabled: boolean;
+  /** 开放接口单次失败聚合通知（OPEN_API_CALL_FAILED，V142；默认关）。 */
+  openApiCallFailedEnabled: boolean;
   /** P2：Electron 系统通知总开关（仅桌面端窗口未聚焦时弹出；Web/安卓忽略此开关）。 */
   systemNotifyEnabled: boolean;
 }

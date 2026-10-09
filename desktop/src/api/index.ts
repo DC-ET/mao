@@ -513,6 +513,9 @@ export interface ApiTokenView {
   expiresAt: string | null
   revokedAt: string | null
   lastUsedAt: string | null
+  autoDisabledAt: string | null
+  autoDisableReason: string | null
+  logFullBody: boolean
   createdAt: string | null
 }
 
@@ -578,6 +581,55 @@ export async function issueApiToken(payload: { name: string; scopes: string[] })
 
 export async function revokeApiToken(id: number): Promise<void> {
   await api.delete(`/open/tokens/${id}`)
+}
+
+export async function setTokenLogFullBody(id: number, enabled: boolean): Promise<void> {
+  await api.put(`/open/tokens/${id}/log-full-body`, { enabled })
+}
+
+export async function reEnableToken(id: number): Promise<void> {
+  await api.post(`/open/tokens/${id}/re-enable`)
+}
+
+export interface OpenApiCallView {
+  id: number
+  tokenId: number | null
+  triggerId: number | null
+  agentId: number | null
+  userId: number | null
+  sessionId: number | null
+  source: string
+  sourceIp: string | null
+  httpStatus: number | null
+  outcome: string
+  errorCode: string | null
+  errorSummary: string | null
+  durationMs: number | null
+  executionMs: number | null
+  queueWaitMs: number | null
+  createdAt: string | null
+  requestSummaryJson?: string | null
+  requestFullJson?: string | null
+}
+
+export interface OpenApiCallPage {
+  records: OpenApiCallView[]
+  total: number
+}
+
+export async function listOpenApiCalls(params: {
+  tokenId?: number
+  triggerId?: number
+  page?: number
+  size?: number
+}): Promise<OpenApiCallPage> {
+  const { data } = await api.get('/open/calls', { params })
+  return data ?? { records: [], total: 0 }
+}
+
+export async function getOpenApiCall(id: number): Promise<OpenApiCallView> {
+  const { data } = await api.get(`/open/calls/${id}`)
+  return data
 }
 
 export async function listWebhookTriggers(): Promise<WebhookTriggerView[]> {

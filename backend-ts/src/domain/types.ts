@@ -45,6 +45,8 @@ export interface MessageQueueItem {
   sourceType?: string | null;
   /** WEBHOOK 来源时的触发器绑定，消费终态后回写连续失败计数 */
   openTriggerId?: number | null;
+  /** API/WEBHOOK 入队时的调用流水绑定 */
+  openCallLogId?: number | null;
   createdAt?: string | Date | null;
 }
 

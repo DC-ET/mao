@@ -13,6 +13,8 @@ export const INBOX_KINDS: readonly InboxKind[] = [
   'SUBAGENT_DONE',
   'TRIGGER_DISABLED',
   'BUDGET_WARN',
+  'TOKEN_DISABLED',
+  'OPEN_API_CALL_FAILED',
 ];
 
 /** 未知 kind 一律拒绝（不写库、不广播）。 */
