@@ -323,7 +323,7 @@ function unmarkSecretClear(key: string) {
 }
 
 /** 数值类配置键：渲染为数字输入。 */
-const NUMERIC_KEYS = new Set(['audit.retentionDays', 'agent.threadPoolSize', 'agent.threadPoolMax', 'agent.threadPoolQueue', 'ws.idleTimeoutMs', 'notify.workerDelayMs', 'notify.batchSize', 'notify.maxAttempts', 'file.maxSizeMb'])
+const NUMERIC_KEYS = new Set(['audit.retentionDays', 'agent.threadPoolSize', 'agent.threadPoolMax', 'agent.threadPoolQueue', 'ws.idleTimeoutMs', 'notify.workerDelayMs', 'notify.batchSize', 'notify.maxAttempts', 'file.maxSizeMb', 'openapi.callLogRetentionDays', 'openapi.tokenAutoDisableThreshold'])
 
 function isNumericKey(key: string): boolean {
   return NUMERIC_KEYS.has(key)

@@ -22,7 +22,7 @@ vi.mock('../api', () => ({
   removeInboxItem: vi.fn(),
   getInboxPreference: vi.fn().mockResolvedValue({
     taskCompletedEnabled: true, questionPendingEnabled: true, approvalPendingEnabled: true,
-    subagentDoneEnabled: false, systemNotifyEnabled: true,
+    subagentDoneEnabled: false, openApiCallFailedEnabled: false, systemNotifyEnabled: true,
   }),
   saveInboxPreference: vi.fn(),
 }))

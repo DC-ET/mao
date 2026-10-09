@@ -4,7 +4,7 @@ import { api } from '../api'
 import { getToken } from '../utils/auth-storage'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:9080/api/v1'
-const SKIP_BUSINESS_CODES = [3043, 3044]
+const SKIP_BUSINESS_CODES = [3044, 3045]
 const OVERWRITE_OPS = new Set(['write', 'copy', 'upload'])
 
 export interface UploadItem {
@@ -73,17 +73,17 @@ async function withPrompts<T>(op: string, run: (flags: Flags) => Promise<T>, fla
     return await run(flags)
   } catch (e) {
     const err = asError(e)
-    if (err.code === 3043 && !flags.force) {
+    if (err.code === 3044 && !flags.force) {
       const forced = await confirmForce(err.message)
       if (!forced) throw err
       return withPrompts(op, run, { ...flags, force: true })
     }
-    if (err.code === 3044 && OVERWRITE_OPS.has(op) && !flags.overwrite) {
+    if (err.code === 3045 && OVERWRITE_OPS.has(op) && !flags.overwrite) {
       const overwrite = await confirmOverwrite()
       if (!overwrite) throw err
       return withPrompts(op, run, { ...flags, overwrite: true })
     }
-    if (err.code === 3044 || (err.code !== 3043 && !err.toastShown)) {
+    if (err.code === 3045 || (err.code !== 3044 && !err.toastShown)) {
       ElMessage.error(err.message || '操作失败')
     }
     throw err

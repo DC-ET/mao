@@ -8,6 +8,7 @@ import { hmacSignature } from './hmac.js';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import type { FixedWindowRateLimiter } from './rate-limiter.js';
+import { FixedWindowRateLimiter as RateLimiter } from './rate-limiter.js';
 import type { MysqlWebhookTriggerRepository } from './openapi.repository.js';
 import type { WebhookTrigger } from './types.js';
 import type { Session } from '../domain/types.js';
@@ -266,5 +267,28 @@ describe('WebhookTriggerService（P2）', () => {
     await expect(h.service.update(7, 1, { name: 'x' })).rejects.toMatchObject({ code: 2001 });
     await expect(h.service.delete(7, 1)).rejects.toMatchObject({ code: 2001 });
     await expect(h.service.rotateSecret(7, 1)).rejects.toMatchObject({ code: 2001 });
+  });
+
+  it('已知触发器的错误签名写流水不超过该触发器的限流档', async () => {
+    const cipher = new WebhookSecretCipher();
+    const row = triggerRow();
+    const recordDirect = vi.fn(async () => undefined);
+    const service = new WebhookTriggerService({
+      triggerRepo: {
+        findByPathToken: vi.fn(async () => ({ ...row, secretCipher: cipher.encrypt('row-secret') })),
+      } as never,
+      sessionService: { getSession: vi.fn() },
+      agentLookup: { findById: vi.fn() },
+      cipher,
+      openRun: { run: vi.fn() } as never,
+      rateLimiter: new RateLimiter(),
+      callLog: { recordDirect } as never,
+    });
+    const headers = { timestamp: String(Math.floor(Date.now() / 1000)), signature: 'sha256=bad' };
+    for (let i = 0; i < 25; i += 1) {
+      expect(await service.handleFire('a'.repeat(32), headers, body)).toEqual({ ok: false, reason: 'not_found' });
+    }
+    expect(recordDirect.mock.calls.length).toBeLessThanOrEqual(TRIGGER_RATE_LIMIT_UNBOUND);
+    expect(recordDirect.mock.calls.length).toBe(TRIGGER_RATE_LIMIT_UNBOUND);
   });
 });

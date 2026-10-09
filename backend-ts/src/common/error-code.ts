@@ -55,10 +55,12 @@ export const ErrorCode = {
   SHARE_NOT_FOUND: { code: 3041, message: '链接不存在或已撤销' },
   /** 会话导出体超过 5MB。HTTP 413，见 handleError。 */
   EXPORT_TOO_LARGE: { code: 3042, message: '导出内容过大，请改用分享链接' },
+  /** API Token 连续失败自动停用。HTTP 403，见 handleError。 */
+  TOKEN_AUTO_DISABLED: { code: 3043, message: 'Token 已因连续失败被自动停用，请手动重新启用' },
   /** 用户文件操作碰到 Agent 正在写同一路径（或祖先/子孙）。HTTP 200，message 带冲突路径。 */
-  WORKSPACE_WRITE_CONFLICT: { code: 3043, message: '文件正在被 Agent 写入' },
+  WORKSPACE_WRITE_CONFLICT: { code: 3044, message: '文件正在被 Agent 写入' },
   /** 写目标已存在且本次不允许覆盖。HTTP 200。 */
-  WORKSPACE_TARGET_EXISTS: { code: 3044, message: '目标已存在' },
+  WORKSPACE_TARGET_EXISTS: { code: 3045, message: '目标已存在' },
 
   /** 用量预算 BLOCK 超线：message 动态携带 scope/当期消耗/上限（技术方案 §5.7）。 */
   BUDGET_EXCEEDED: { code: 3041, message: '用量预算已超限' },

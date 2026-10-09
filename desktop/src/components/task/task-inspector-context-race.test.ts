@@ -1,7 +1,8 @@
 // Node 环境的 Vue 插件只给 SFC 生成 ssrRender。这里用 compiler-dom 补一份客户端
 // render，再用无 DOM 渲染器点按钮、读文本。
 // 覆盖：摘要懒加载的迟到响应不得跨会话回填；记忆条数相同的会话切换仍要重拉 snippet；
-// 上下文入口从检查器页签改为任务信息区的徽标 + 详情抽屉（抽屉随之懒加载、切会话自动收起）。
+// 上下文入口从检查器页签改为任务信息区的徽标 + 详情抽屉（抽屉随之懒加载、切会话自动收起）；
+// 运行轨迹入口改为点任务状态徽标（不再有独立「轨迹」按钮，且只在主会话视图可点）。
 import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import * as Vue from 'vue'
@@ -179,7 +180,10 @@ function subtreeText(el: StubEl): string {
   return acc.join('')
 }
 
-function mountInspector(initialMemoryIds: number[]) {
+function mountInspector(
+  initialMemoryIds: number[],
+  opts: { viewType?: 'chat' | 'side_task' | 'subagent'; phase?: string } = {},
+) {
   const sid = ref('11')
   const memoryIds = ref<number[]>(initialMemoryIds)
   const contextWindow = computed(() => ({
@@ -190,11 +194,14 @@ function mountInspector(initialMemoryIds: number[]) {
       estimatedWindowTokens: 200000,
     },
   }))
+  const traceOpens = { value: 0 }
   const Host = defineComponent({
     render: () => h(ClientInspector as never, {
-      title: 'T', phase: 'COMPLETED', panelCollapsed: false, fileProvider: null,
+      title: 'T', phase: opts.phase ?? 'COMPLETED', panelCollapsed: false, fileProvider: null,
       sessionId: sid.value, contextWindow: contextWindow.value,
       executionMode: 'CLOUD', workspace: '/ws', gitProvider: null,
+      viewType: opts.viewType,
+      onOpenTrace: () => { traceOpens.value++ },
     } as never),
   })
   const ops = nodeOps()
@@ -227,9 +234,11 @@ function mountInspector(initialMemoryIds: number[]) {
     return arr[arr.length - 1]!()
   }
   return {
-    sid, memoryIds,
+    sid, memoryIds, traceOpens,
     clickContextBadge: () => clickWhere(el => subtreeText(el).includes('上下文'), 'context badge'),
+    clickStatusBadge: (label = '已完成') => clickWhere(el => subtreeText(el).includes(label), 'status badge'),
     clickSummaryToggle: () => clickWhere(el => String(el.props.class ?? '').includes('ctx-summary-toggle'), 'summary toggle'),
+    buttonTexts: () => findAll(el => el.tag === 'button').map(el => subtreeText(el)),
     pageText: () => subtreeText(root),
   }
 }
@@ -312,5 +321,46 @@ describe('TaskInspector 上下文入口：徽标开抽屉，无顶层页签（0.
     m.clickContextBadge()
     await flush()
     expect(m.pageText()).toContain('上下文容量')
+  })
+})
+
+describe('TaskInspector 运行轨迹入口：点任务状态徽标（0.0.252）', () => {
+  it('主会话视图：状态徽标即入口，点击 emit open-trace，且不再有独立「轨迹」按钮', async () => {
+    const m = mountInspector([], { viewType: 'chat' })
+    await flush()
+
+    expect(m.buttonTexts().some(t => t.includes('已完成'))).toBe(true)
+    expect(m.buttonTexts().map(t => t.trim())).not.toContain('轨迹')
+
+    m.clickStatusBadge()
+    await flush()
+    expect(m.traceOpens.value).toBe(1)
+  })
+
+  it('边路任务 / 子代理视图：状态徽标只是文本，不露轨迹入口', async () => {
+    for (const viewType of ['side_task', 'subagent'] as const) {
+      const m = mountInspector([], { viewType })
+      await flush()
+      expect(m.pageText()).toContain('已完成')
+      expect(m.buttonTexts().some(t => t.includes('已完成'))).toBe(false)
+    }
+  })
+
+  it('取消 / 恢复等状态也有徽标可点，取消后仍进得去轨迹', async () => {
+    for (const [phase, label] of [['CANCELLED', '已取消'], ['RESUMING', '恢复中'], ['CANCELLING', '取消中']] as const) {
+      const m = mountInspector([], { viewType: 'chat', phase })
+      await flush()
+      expect(m.buttonTexts().some(t => t.includes(label))).toBe(true)
+      m.clickStatusBadge(label)
+      await flush()
+      expect(m.traceOpens.value).toBe(1)
+    }
+  })
+
+  it('IDLE（尚无 run）不渲染徽标，也就没有入口', async () => {
+    const m = mountInspector([], { viewType: 'chat', phase: 'IDLE' })
+    await flush()
+    // .phase-badge.idle 被 CSS 隐藏，label 为空字符串：没有可点的状态文本
+    expect(m.pageText()).not.toMatch(/执行中|恢复中|待审批|取消中|已完成|失败|已取消/)
   })
 })

@@ -1,4 +1,5 @@
 import { nextTick, ref, type Ref } from 'vue'
+import { scrollElementToMessage } from '../components/search/search-highlight'
 
 /** 判定「用户上滑」时离底部的像素阈值（含一点容差，避免亚像素抖动） */
 const NEAR_BOTTOM = 80
@@ -162,12 +163,24 @@ export function useChatScroll(container: Ref<HTMLElement | undefined>, options: 
     lastScrollHeight = -1
   }
 
+  function scrollToMessage(messageId: string) {
+    const current = generation
+    void nextTick(() => {
+      if (disposed || current !== generation) return
+      programmatic = true
+      scrollElementToMessage(container.value, messageId)
+      requestAnimationFrame(() => {
+        if (current === generation) programmatic = false
+      })
+    })
+  }
+
   function dispose() {
     disposed = true
     cancelRestore()
   }
 
-  return { userScrolledUp, scrollToBottom, beginRestore, completeRestore,
+  return { userScrolledUp, scrollToBottom, scrollToMessage, beginRestore, completeRestore,
     handleMarkdownRendered, handleWheel, handleTouchStart, handleTouchMove, handleScroll,
     cancelRestore, resetScrollBaseline, dispose }
 }

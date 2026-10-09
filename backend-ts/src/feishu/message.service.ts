@@ -259,8 +259,16 @@ export class FeishuMessageService {
       if (message.isMention || message.messageId === context.messageId) continue;
       filtered.push(message);
     }
+    // 窗口外的未富化行循环看不见。水位线若直接跳到窗口最大 id，回填后的摘录永远进不了上下文。
+    const oldestPending = await this.repository.findOldestPendingGroupMessageId(accountId, context.chatId!, watermark, threadId);
+    if (oldestPending != null) {
+      for (let i = filtered.length - 1; i >= 0; i--) {
+        if ((filtered[i].id ?? 0) >= oldestPending) filtered.splice(i, 1);
+      }
+      if (maxLogId >= oldestPending) maxLogId = oldestPending - 1;
+    }
     // 被窗口淘汰（超出条数上限或时间窗）且从未注入过的更早消息：摘要后一次性注入，避免上下文断层。
-    const overflowSection = await this.buildOverflowSummary(accountId, context, conversation, messages, threadId, watermark);
+    const overflowSection = await this.buildOverflowSummary(accountId, context, conversation, messages, threadId, watermark, oldestPending);
     const lines = filtered.map((message) => `[${formatGroupTime(message.createdAt)}] ${message.senderName}：${message.content ?? ''}`);
     const prompt = [...(overflowSection != null ? [overflowSection] : []), ...lines].join('\n');
     if (maxLogId > watermark) {
@@ -293,11 +301,13 @@ export class FeishuMessageService {
   private async buildOverflowSummary(
     accountId: string, context: FeishuInboundContext,
     conversation: FeishuConversation, recentMessages: FeishuGroupMessage[],
-    threadId: string | null = null, watermark = 0,
+    threadId: string | null = null, watermark = 0, pendingCap: number | null = null,
   ): Promise<string | null> {
     if (this.summarizer == null || recentMessages.length === 0) return null;
     const chatId = context.chatId!;
-    const beforeId = Math.min(...recentMessages.map((message) => message.id ?? 0));
+    const windowMinId = Math.min(...recentMessages.map((message) => message.id ?? 0));
+    // 未富化行之前的消息才进溢出摘要。把占位行之后的内容先摘要掉，缓存水位会盖过它，展开结果再也补不进来。
+    const beforeId = pendingCap != null ? Math.min(windowMinId, pendingCap) : windowMinId;
     const overflow = await this.repository.listOverflowGroupMessages(accountId, chatId, watermark, beforeId, this.overflowWindow, threadId);
     if (overflow.length === 0) return null;
     const maxOverflowId = Math.max(...overflow.map((message) => message.id ?? 0));

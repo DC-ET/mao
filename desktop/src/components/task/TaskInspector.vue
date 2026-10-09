@@ -52,7 +52,23 @@
           </div>
         </div>
         <div class="task-status-row">
-          <span class="phase-badge" :class="phaseClass">
+          <el-tooltip
+            v-if="showTraceEntry"
+            content="查看任务运行轨迹"
+            placement="top"
+            :show-after="300"
+          >
+            <button
+              type="button"
+              class="phase-badge phase-badge-action"
+              :class="phaseClass"
+              @click="$emit('open-trace')"
+            >
+              <span v-if="phase === 'RUNNING'" class="phase-spinner"></span>
+              {{ phaseLabel }}
+            </button>
+          </el-tooltip>
+          <span v-else class="phase-badge" :class="phaseClass">
             <span v-if="phase === 'RUNNING'" class="phase-spinner"></span>
             {{ phaseLabel }}
           </span>
@@ -65,14 +81,6 @@
             <button type="button" class="context-badge" @click="openContextDrawer">
               {{ contextDisplay ? `上下文 ${contextDisplay}` : '上下文' }}
             </button>
-          </el-tooltip>
-          <el-tooltip
-            v-if="showTraceEntry"
-            content="查看任务运行轨迹"
-            placement="top"
-            :show-after="300"
-          >
-            <button type="button" class="context-badge" @click="$emit('open-trace')">轨迹</button>
           </el-tooltip>
         </div>
       </div>
@@ -477,7 +485,8 @@ const showGitTab = computed(() => {
 // 上下文详情抽屉：任何有会话 id 的可检视对象都能打开（水位/构成/记忆/手动治理随该会话）
 const showContextDrawer = computed(() => !!props.sessionId && props.viewType !== 'subagent')
 
-// 轨迹 tab 挂在主会话的中心 Tab 上（数据是主会话的 run），只在主会话视图露出入口
+// 轨迹 tab 挂在主会话的中心 Tab 上（数据是主会话的 run），入口是任务状态徽标，
+// 只在主会话视图可点：徽标本身就是「执行中 / 已完成 / 失败」这些 run 状态的照面处。
 const showTraceEntry = computed(() => props.viewType === 'chat' && !!props.sessionId)
 
 const showTabBar = computed(() => showFileTreeTab.value || showGitTab.value)
@@ -770,9 +779,12 @@ function cancelEdit() {
 const phaseLabel = computed(() => {
   switch (props.phase) {
     case 'RUNNING': return '执行中'
+    case 'RESUMING': return '恢复中'
     case 'WAITING_APPROVAL': return '待审批'
+    case 'CANCELLING': return '取消中'
     case 'COMPLETED': return '已完成'
     case 'FAILED': return '失败'
+    case 'CANCELLED': return '已取消'
     default: return ''
   }
 })
@@ -780,9 +792,12 @@ const phaseLabel = computed(() => {
 const phaseClass = computed(() => {
   switch (props.phase) {
     case 'RUNNING': return 'running'
+    case 'RESUMING': return 'running'
     case 'WAITING_APPROVAL': return 'waiting'
+    case 'CANCELLING': return 'waiting'
     case 'COMPLETED': return 'completed'
     case 'FAILED': return 'failed'
+    case 'CANCELLED': return 'cancelled'
     default: return 'idle'
   }
 })
@@ -1338,9 +1353,21 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   align-items: center;
   gap: 6px;
   font-size: var(--aw-text-caption);
+  font-family: inherit;
   padding: 3px 10px;
+  border: none;
   border-radius: var(--aw-radius-md);
   letter-spacing: -0.224px;
+}
+
+/* 主会话视图里徽标是「运行轨迹」的入口（button），其余视图只是状态文本 */
+.phase-badge-action {
+  cursor: pointer;
+  transition: filter 0.15s;
+}
+
+.phase-badge-action:hover {
+  filter: brightness(0.95);
 }
 
 .phase-badge.running {
@@ -1361,6 +1388,11 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
 .phase-badge.failed {
   color: var(--aw-danger);
   background: rgba(255, 59, 48, 0.08);
+}
+
+.phase-badge.cancelled {
+  color: var(--aw-ink-muted-48);
+  background: rgba(0, 0, 0, 0.04);
 }
 
 .phase-badge.idle {
@@ -1432,6 +1464,14 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
 [data-theme="dark"] .workspace-copy-btn:hover {
   background: rgba(255, 255, 255, 0.06);
   color: var(--aw-primary);
+}
+
+[data-theme="dark"] .phase-badge-action:hover {
+  filter: brightness(1.15);
+}
+
+[data-theme="dark"] .phase-badge.cancelled {
+  background: rgba(255, 255, 255, 0.06);
 }
 
 [data-theme="dark"] .context-badge {

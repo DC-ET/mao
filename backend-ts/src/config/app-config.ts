@@ -99,6 +99,9 @@ export interface AppConfig {
       clientTimeoutSeconds: number;
       syncTimeoutSeconds: number;
     };
+    search: {
+      fulltextEnabled: boolean;
+    };
   };
   weixin: {
     bot: {
@@ -212,6 +215,9 @@ const DEFAULTS: AppConfig = {
       secretKey: 'mao-mcp-default-secret-change-me',
       clientTimeoutSeconds: 120,
       syncTimeoutSeconds: 60,
+    },
+    search: {
+      fulltextEnabled: true,
     },
   },
   weixin: {
@@ -350,6 +356,8 @@ function coerceTypes(cfg: AppConfig): AppConfig {
   cfg.app.harness.cleanup.shellOutputMaxAgeDays = n(process.env.MAO_CLEANUP_SHELL_MAX_AGE_DAYS ?? cfg.app.harness.cleanup.shellOutputMaxAgeDays, 7);
   cfg.app.harness.cleanup.cleanupSkills = b(process.env.MAO_CLEANUP_SKILLS ?? cfg.app.harness.cleanup.cleanupSkills, true);
   cfg.spring.flyway.enabled = b(process.env.FLYWAY_ENABLED ?? cfg.spring.flyway.enabled, true);
+  cfg.app.search = cfg.app.search ?? { fulltextEnabled: true };
+  cfg.app.search.fulltextEnabled = b(process.env.SEARCH_FULLTEXT_ENABLED ?? cfg.app.search.fulltextEnabled, true);
   cfg.dingtalk.enabled = b(process.env.DINGTALK_BOT_ENABLED ?? cfg.dingtalk.enabled, false);
   cfg.dingtalk.reconcileIntervalMs = n(process.env.DINGTALK_BOT_RECONCILE_INTERVAL_MS ?? cfg.dingtalk.reconcileIntervalMs, 5000);
   cfg.dingtalk.reconnectBaseMs = n(process.env.DINGTALK_BOT_RECONNECT_BASE_MS ?? cfg.dingtalk.reconnectBaseMs, 1000);

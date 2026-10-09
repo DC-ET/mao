@@ -10,6 +10,7 @@ import type { ApiTokenService } from './api-token.service.js';
 import type { OpenRunService } from './open-run.service.js';
 import type { WebhookTriggerService } from './webhook-trigger.service.js';
 import type { OutboundSubscriptionService } from './outbound-subscription.service.js';
+import type { OpenApiCallLogService } from './open-api-call-log.service.js';
 
 /** 公开 hook 路径前缀（isPublicPath 与 preParsing rawBody 捕获共用同一前缀常量）。 */
 export const OPEN_HOOKS_PATH_PREFIX = '/v1/open/hooks/';
@@ -29,6 +30,7 @@ export interface OpenApiRouteDeps {
   triggerService: WebhookTriggerService;
   subscriptionService: OutboundSubscriptionService;
   rateLimiter: FixedWindowRateLimiter;
+  callLog?: OpenApiCallLogService | null;
 }
 
 function hookUrlOf(request: FastifyRequest, apiPrefix: string, pathToken: string): string {
@@ -57,36 +59,65 @@ function requirePositiveId(raw: string): number {
   return id;
 }
 
+function positiveIntOrNull(raw: unknown): number | null {
+  if (typeof raw === 'number' && Number.isInteger(raw) && raw > 0) return raw;
+  if (typeof raw === 'string' && raw !== '') {
+    const id = Number(raw);
+    if (Number.isInteger(id) && id > 0) return id;
+  }
+  return null;
+}
+
 export function registerOpenApiRoutes(app: FastifyInstance, deps: OpenApiRouteDeps): void {
   // ── P1：REST 触发端点（API Token 专属，scope: open:run）──────────────────
   app.post('/v1/open/agents/:agentId/run', async (req, reply) => {
-    requireTokenScope(req, 'open:run');
-    const tokenId = requireTokenIdentity(req);
-    const decision = deps.rateLimiter.allow(`token:${tokenId}`, TOKEN_RATE_LIMIT_PER_MINUTE);
-    if (!decision.allowed) {
-      tokenRateLimited(reply, decision.retryAfterSeconds);
-      return;
-    }
-    const agentId = requirePositiveId((req.params as { agentId: string }).agentId);
+    const tokenId = (req as ApiTokenAuthedRequest).apiTokenId ?? null;
     const body = (req.body ?? {}) as { message?: unknown; sessionId?: unknown };
-    if (typeof body.message !== 'string') {
-      throw new BusinessException(ErrorCode.PARAM_INVALID, 'message 必须为字符串');
-    }
-    let sessionId: number | null = null;
-    if (body.sessionId != null) {
-      sessionId = Number(body.sessionId);
-      if (!Number.isInteger(sessionId) || sessionId <= 0) {
+    const sessionId = positiveIntOrNull(body.sessionId);
+    const agentId = positiveIntOrNull((req.params as { agentId: string }).agentId);
+    const begun = await deps.callLog?.begin({
+      source: 'API',
+      tokenId,
+      userId: req.userId ?? null,
+      agentId,
+      sessionId,
+      sourceIp: req.ip,
+      body,
+    }) ?? null;
+    try {
+      requireTokenScope(req, 'open:run');
+      requireTokenIdentity(req);
+      const decision = deps.rateLimiter.allow(`token:${tokenId}`, TOKEN_RATE_LIMIT_PER_MINUTE);
+      if (!decision.allowed) {
+        await deps.callLog?.markRejected(begun?.id ?? null, begun?.startedAt ?? Date.now(), {
+          httpStatus: 429,
+          errorCode: 'RATE_LIMITED',
+          errorSummary: '请求过于频繁',
+        });
+        tokenRateLimited(reply, decision.retryAfterSeconds);
+        return;
+      }
+      if (agentId == null) throw new BusinessException(ErrorCode.PARAM_INVALID, '路径参数 id 必须为正整数');
+      if (typeof body.message !== 'string') {
+        throw new BusinessException(ErrorCode.PARAM_INVALID, 'message 必须为字符串');
+      }
+      if (body.sessionId != null && sessionId == null) {
         throw new BusinessException(ErrorCode.PARAM_INVALID, 'sessionId 必须为正整数');
       }
+      const result = await deps.openRun.run({
+        userId: req.userId!,
+        agentId,
+        message: body.message,
+        sessionId,
+        source: 'API',
+        callLogId: begun?.id ?? null,
+      });
+      await deps.callLog?.markAccepted(begun?.id ?? null, begun?.startedAt ?? Date.now(), result);
+      sendJson(reply, 202, ok({ sessionId: result.sessionId, messageId: result.messageId, queued: result.queued }));
+    } catch (e) {
+      await deps.callLog?.markRejected(begun?.id ?? null, begun?.startedAt ?? Date.now(), e);
+      throw e;
     }
-    const result = await deps.openRun.run({
-      userId: req.userId!,
-      agentId,
-      message: body.message,
-      sessionId,
-      source: 'API',
-    });
-    sendJson(reply, 202, ok({ sessionId: result.sessionId, messageId: result.messageId, queued: result.queued }));
   });
 
   // ── P2：入站 Webhook 触发器（公开路径，处理器内自验签）────────────────────
@@ -97,7 +128,7 @@ export function registerOpenApiRoutes(app: FastifyInstance, deps: OpenApiRouteDe
     const outcome = await deps.triggerService.handleFire(pathToken, {
       timestamp: headerValue(req.headers['x-mao-timestamp']),
       signature: headerValue(req.headers['x-mao-signature']),
-    }, rawBody);
+    }, rawBody, req.ip);
     if (!outcome.ok) {
       if (outcome.reason === 'rate_limited') {
         tokenRateLimited(reply, outcome.retryAfterSeconds);
@@ -133,6 +164,24 @@ export function registerOpenApiRoutes(app: FastifyInstance, deps: OpenApiRouteDe
     const userId = requireJwtIdentity(req);
     const id = requirePositiveId((req.params as { id: string }).id);
     await deps.apiTokenService.revoke(userId, id);
+    sendJson(reply, 200, ok(null));
+  });
+
+  app.put('/v1/open/tokens/:id/log-full-body', async (req, reply) => {
+    const userId = requireJwtIdentity(req);
+    const id = requirePositiveId((req.params as { id: string }).id);
+    const body = (req.body ?? {}) as { enabled?: unknown };
+    if (typeof body.enabled !== 'boolean') {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, 'enabled 必须为布尔值');
+    }
+    await deps.apiTokenService.setLogFullBody(userId, id, body.enabled);
+    sendJson(reply, 200, ok(null));
+  });
+
+  app.post('/v1/open/tokens/:id/re-enable', async (req, reply) => {
+    const userId = requireJwtIdentity(req);
+    const id = requirePositiveId((req.params as { id: string }).id);
+    await deps.apiTokenService.reEnable(userId, id);
     sendJson(reply, 200, ok(null));
   });
 

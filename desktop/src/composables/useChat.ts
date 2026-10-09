@@ -188,12 +188,16 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
   const activities = computed(() => sessionStore.activeActivities)
   const contextWindow = computed(() => sessionStore.activeContextWindow)
 
-  async function fetchMessages(options?: { preserveLiveStream?: boolean; sessionId?: string }) {
+  async function fetchMessages(options?: { preserveLiveStream?: boolean; sessionId?: string; forceLatest?: boolean }) {
     const sid = options?.sessionId ?? sessionId.value
     if (!sid) return
+    if (sessionStore.isHistoryAnchored(sid) && !options?.forceLatest) return
+    if (options?.forceLatest) sessionStore.setHistoryAnchored(sid, false)
+    const anchorEpoch = sessionStore.historyAnchorEpochOf(sid)
     sessionStore.clearMessagePageState(sid)
     try {
       const { data } = await api.get(`/sessions/${sid}/messages`, { params: { roundLimit: 5 } })
+      if (sessionStore.historyAnchorEpochOf(sid) !== anchorEpoch) return
       const raw: Array<Record<string, unknown>> = data?.messages || []
       const { messages, allChanges } = mapMessagesWithFileChanges(raw)
       // 正在流式输出的 tracked 气泡由 applyFetchedMessages 保留在尾部。
@@ -466,6 +470,11 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       // Clear previous turn's todos / execution error banner
       sessionStore.clearTodos(sid)
       sessionStore.clearExecutionError(sid)
+
+      if (sessionStore.isHistoryAnchored(sid)) {
+        sessionStore.setHistoryAnchored(sid, false)
+        await fetchMessages({ sessionId: sid, forceLatest: true })
+      }
 
       // Add user message to store
       sessionStore.addUserMessage(sid, {

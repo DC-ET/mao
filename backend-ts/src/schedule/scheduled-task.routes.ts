@@ -89,9 +89,41 @@ export function registerScheduledTaskRoutes(app: FastifyInstance, deps: Schedule
   app.put('/v1/scheduled-tasks/:id', async (req, reply) => {
     const userId = requireUserId(req, deps.jwt);
     const id = Number((req.params as { id: string }).id);
-    const body = (req.body ?? {}) as { name?: string; prompt?: string; cronExpression?: string; status?: string; once?: boolean };
+    const body = (req.body ?? {}) as {
+      name?: string;
+      prompt?: string;
+      cronExpression?: string;
+      status?: string;
+      once?: boolean;
+      retryMax?: number;
+      retryIntervalMinutes?: number;
+      missedPolicy?: string;
+    };
     const allowNonOwner = await hasPermission(userId, WRITE_PERMISSION);
-    sendJson(reply, 200, ok(await deps.service.updateTask(id, userId, body.name, body.prompt, body.cronExpression, body.status, body.once, { allowNonOwner })));
+    sendJson(reply, 200, ok(await deps.service.updateTask(id, userId, body.name, body.prompt, body.cronExpression, body.status, body.once, {
+      allowNonOwner,
+      retryMax: body.retryMax,
+      retryIntervalMinutes: body.retryIntervalMinutes,
+      missedPolicy: body.missedPolicy,
+    })));
+  });
+
+  app.get('/v1/scheduled-tasks/:id/runs', async (req, reply) => {
+    const userId = requireUserId(req, deps.jwt);
+    const id = Number((req.params as { id: string }).id);
+    const task = await deps.service.getById(id);
+    if (task == null) {
+      sendJson(reply, 200, failCode(ErrorCode.SCHEDULED_TASK_NOT_FOUND));
+      return;
+    }
+    if (task.userId !== userId && !(await hasPermission(userId, READ_PERMISSION))) {
+      sendJson(reply, 200, failCode(ErrorCode.SCHEDULED_TASK_ACCESS_DENIED));
+      return;
+    }
+    const rawLimit = queryInt(req, 'limit', 20);
+    sendJson(reply, 200, ok(await deps.service.listRuns(id, userId, rawLimit, {
+      allowNonOwner: task.userId !== userId,
+    })));
   });
 
   app.delete('/v1/scheduled-tasks/:id', async (req, reply) => {

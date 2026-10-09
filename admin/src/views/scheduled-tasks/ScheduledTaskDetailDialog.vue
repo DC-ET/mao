@@ -38,12 +38,35 @@
         </el-tag>
         <span v-else class="text-muted">-</span>
       </el-descriptions-item>
+      <el-descriptions-item label="连续失败">{{ task.consecutiveFailures ?? 0 }}</el-descriptions-item>
       <el-descriptions-item label="触发次数">{{ task.fireCount }}</el-descriptions-item>
       <el-descriptions-item label="上次触发">{{ formatDateTime(task.lastFireTime) }}</el-descriptions-item>
       <el-descriptions-item label="下次触发">{{ formatDateTime(task.nextFireTime) }}</el-descriptions-item>
       <el-descriptions-item label="创建时间">{{ formatDateTime(task.createdAt) }}</el-descriptions-item>
       <el-descriptions-item label="更新时间">{{ formatDateTime(task.updatedAt) }}</el-descriptions-item>
     </el-descriptions>
+
+    <div class="prompt-section">
+      <div class="prompt-head">
+        <span class="prompt-title">运行历史</span>
+      </div>
+      <div v-if="runsLoading" class="prompt-hint">加载中…</div>
+      <div v-else-if="runs.length === 0" class="prompt-hint">还没有运行记录</div>
+      <el-table v-else :data="runs" size="small">
+        <el-table-column prop="fireTime" label="触发时间" min-width="150" />
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">{{ runStatusLabel(row.status) }}</template>
+        </el-table-column>
+        <el-table-column prop="attempt" label="尝试" width="70" />
+        <el-table-column label="耗时" width="90">
+          <template #default="{ row }">{{ row.durationMs == null ? '—' : `${row.durationMs} 毫秒` }}</template>
+        </el-table-column>
+        <el-table-column label="成本" width="90">
+          <template #default="{ row }">{{ row.costMicros == null ? '—' : (row.costMicros / 1_000_000).toLocaleString('zh-CN', { maximumFractionDigits: 4 }) }}</template>
+        </el-table-column>
+        <el-table-column prop="errorSummary" label="错误摘要" min-width="160" show-overflow-tooltip />
+      </el-table>
+    </div>
 
     <div class="prompt-section">
       <div class="prompt-head">
@@ -64,12 +87,17 @@
 </template>
 
 <script setup lang="ts">
+import { ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { api } from '../../api'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
 import { formatDateTime } from '../../utils/datetime'
 import { execStatusLabel, execStatusTagType } from './task-display'
-import type { ScheduledTaskRow } from './types'
+import type { ScheduledTaskRow, ScheduledTaskRunRow } from './types'
+
+const runs = ref<ScheduledTaskRunRow[]>([])
+const runsLoading = ref(false)
 
 const props = defineProps<{
   modelValue: boolean
@@ -85,6 +113,38 @@ const emit = defineEmits<{
 }>()
 
 const router = useRouter()
+
+watch(() => [props.modelValue, props.task?.id] as const, ([visible, taskId]) => {
+  if (!visible || taskId == null) {
+    runs.value = []
+    return
+  }
+  void loadRuns(taskId)
+}, { immediate: true })
+
+async function loadRuns(taskId: number) {
+  runsLoading.value = true
+  try {
+    const { data } = await api.get(`/scheduled-tasks/${taskId}/runs`, { params: { limit: 20 } })
+    runs.value = Array.isArray(data) ? data : []
+  } catch {
+    runs.value = []
+  } finally {
+    runsLoading.value = false
+  }
+}
+
+function runStatusLabel(status: string): string {
+  switch (status) {
+    case 'COMPLETED': return '成功'
+    case 'FAILED': return '失败'
+    case 'CANCELLED': return '取消'
+    case 'MISSED': return '错过'
+    case 'QUEUED': return '排队'
+    case 'RUNNING': return '运行中'
+    default: return status
+  }
+}
 
 function goSession(sessionId: number) {
   router.push(`/sessions/${sessionId}`)

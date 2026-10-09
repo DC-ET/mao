@@ -20,7 +20,10 @@ const KNOWN_INBOX_KINDS = new Set<string>([
   'APPROVAL_PENDING',
   'SUBAGENT_DONE',
   'BUDGET_WARN',
-  'TRIGGER_DISABLED'
+  'TRIGGER_DISABLED',
+  'SCHEDULED_TASK_PAUSED',
+  'TOKEN_DISABLED',
+  'OPEN_API_CALL_FAILED'
 ])
 
 /**
@@ -56,6 +59,7 @@ export const useInboxStore = defineStore('inbox', {
       // 与后端 DEFAULT_PREFERENCE 列默认值一致：缺字段会让系统通知偏好落到
       // undefined，前端/后端两处口径必须同时维护（契约共享字段）
       budgetWarnEnabled: true,
+      openApiCallFailedEnabled: false,
       systemNotifyEnabled: true
     }
   }),

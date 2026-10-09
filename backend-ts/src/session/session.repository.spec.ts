@@ -103,6 +103,11 @@ describe('MessageRepository', () => {
     await repo.selectMessagesForSearch([1, 2], 'k');
     expect(await repo.selectFirstMatchingMessages([], 'k')).toEqual([]);
     await repo.selectFirstMatchingMessages([1, 2], 'k');
+    await repo.selectHitMessages([1], 'LIKE', '登录', '2026-10-01 00:00:00', '2026-10-02 00:00:00');
+    const hitSql = String(db.query.mock.calls.at(-1)?.[0]);
+    expect(hitSql).toContain('created_at >=');
+    expect(hitSql).toContain('created_at <');
+    expect(db.query.mock.calls.at(-1)?.[1]).toEqual([1, '登录', '2026-10-01 00:00:00', '2026-10-02 00:00:00']);
   });
 });
 

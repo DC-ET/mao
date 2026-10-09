@@ -203,8 +203,21 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
   app.get('/v1/sessions/search', async (request, reply) => {
     const userId = requireUserId(request);
     const keyword = queryOptStr(request, 'keyword') ?? '';
-    const items = await sessionService.searchSessionsByUserMessage(userId, keyword);
-    return sendOk(reply, { items });
+    const agentId = queryOptInt(request, 'agentId');
+    const dateFrom = queryOptStr(request, 'dateFrom');
+    const dateTo = queryOptStr(request, 'dateTo');
+    const sessionType = queryOptStr(request, 'sessionType');
+    const page = queryOptInt(request, 'page');
+    const size = queryOptInt(request, 'size');
+    const result = await sessionService.searchMessages(userId, keyword, {
+      agentId,
+      dateFrom,
+      dateTo,
+      sessionType,
+      page,
+      size,
+    });
+    return sendOk(reply, result);
   });
 
   app.get('/v1/sessions/dashboard', async (request, reply) => {
@@ -424,19 +437,24 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     await requireSessionOwner(userId, id);
     const roundLimit = queryOptInt(request, 'roundLimit') ?? 5;
     const beforeMessageId = queryOptInt(request, 'beforeMessageId') ?? null;
-    const page = await sessionService.getMessagesByRounds(id, roundLimit, beforeMessageId);
+    const aroundMessageId = queryOptInt(request, 'aroundMessageId') ?? null;
+    const page = await sessionService.getMessagesByRounds(id, roundLimit, beforeMessageId, { aroundMessageId });
     const changesByMsg = await sessionService.getFileChangesByMessageIds(id, page.messages.map((m) => m.id!));
     const vo: {
       messages: ReturnType<typeof toMessageVOList>;
       hasMore: boolean;
       nextBeforeMessageId: number | null;
+      hasNewer?: boolean;
       compactionEvents?: ReturnType<typeof toCompactionEventVO>[];
     } = {
       messages: toMessageVOList(page.messages, changesByMsg),
       hasMore: page.hasMore,
       nextBeforeMessageId: page.nextBeforeMessageId,
     };
-    if (beforeMessageId == null) {
+    if (aroundMessageId != null) {
+      vo.hasNewer = page.hasNewer === true;
+    }
+    if (beforeMessageId == null && aroundMessageId == null) {
       vo.compactionEvents = (await deps.sessionCompactionEventService.listBySessionId(id)).map(toCompactionEventVO);
     }
     return sendOk(reply, vo);

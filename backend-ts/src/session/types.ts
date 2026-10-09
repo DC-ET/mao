@@ -1,5 +1,5 @@
-import type { MessageSearchItem } from '@mao/contracts';
-export type { MessageSearchItem };
+import type { MessageSearchGroup, MessageSearchHit, MessageSearchResult } from '@mao/contracts';
+export type { MessageSearchGroup, MessageSearchHit, MessageSearchResult };
 
 export interface Session {
   id?: number;
@@ -94,6 +94,8 @@ export interface MessageQueue {
   sourceType?: MessageQueueSource | null;
   /** WEBHOOK 来源时的触发器绑定（类比 scheduledTaskId，消费终态后回写失败计数） */
   openTriggerId?: number | null;
+  /** API/WEBHOOK 入队时的调用流水绑定，消费终态后回写 open_api_call_log */
+  openCallLogId?: number | null;
   deleted?: number;
   createdAt?: string | null;
   updatedAt?: string | null;
@@ -287,6 +289,8 @@ export interface MessagePage {
   messages: Message[];
   hasMore: boolean;
   nextBeforeMessageId: number | null;
+  /** 仅 aroundMessageId 定位窗口返回：命中轮之后是否还有更新的消息 */
+  hasNewer?: boolean;
 }
 
 export interface ContextAnchor {

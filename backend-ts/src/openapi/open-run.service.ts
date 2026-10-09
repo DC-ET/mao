@@ -19,7 +19,7 @@ export interface OpenRunDeps {
     createSession(userId: number, agentId: number, title: string | null | undefined, executionMode: string | null | undefined): Promise<Session>;
   };
   messageQueueService: {
-    enqueue(sessionId: number, userId: number, content: string, images: string | null, scheduledTaskId?: number | null, source?: MessageQueueSource | null, openTriggerId?: number | null): Promise<unknown>;
+    enqueue(sessionId: number, userId: number, content: string, images: string | null, scheduledTaskId?: number | null, source?: MessageQueueSource | null, openTriggerId?: number | null, openCallLogId?: number | null): Promise<unknown>;
   };
   harnessService: {
     executeFromEvent(sessionId: number, executionId: string, listener: unknown): Promise<void>;
@@ -50,6 +50,8 @@ export interface OpenRunInput {
   source: Extract<TaskNotifySource, 'API' | 'WEBHOOK'>;
   /** WEBHOOK 来源时的触发器绑定（busy 入队后由消费侧回写失败计数）。 */
   triggerId?: number | null;
+  /** 入站调用流水 id，busy 入队后由消费侧回写终态。 */
+  callLogId?: number | null;
 }
 
 export interface OpenRunResult {
@@ -135,7 +137,7 @@ export class OpenRunService {
       const busy = this.deps.isSessionBusy(sessionId) || isActivePhase(latest.phase);
       if (busy) {
         // 忙则排队：落 source_type + open_trigger_id 两列（类比 scheduledTaskId 回写绑定）
-        await this.deps.messageQueueService.enqueue(sessionId, input.userId, message, null, null, input.source, input.triggerId ?? null);
+        await this.deps.messageQueueService.enqueue(sessionId, input.userId, message, null, null, input.source, input.triggerId ?? null, input.callLogId ?? null);
         return { sessionId, messageId: null, queued: true, terminalPhase: 'COMPLETED' as const };
       }
 

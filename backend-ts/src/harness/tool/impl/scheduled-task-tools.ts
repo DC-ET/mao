@@ -22,6 +22,9 @@ export class CreateScheduledTaskTool extends BaseTool {
         prompt: { type: 'string', description: '触发时执行的任务本体：只描述要做的具体工作与输出要求，不要包含执行频率或调度措辞（频率由 cron_expression 控制）；也不要在其中要求创建/修改定时任务或做结束后的轮询检查。' },
         cron_expression: { type: 'string', description: 'Spring cron 表达式（6位：秒 分 时 日 月 周），控制执行频率。' },
         once: { type: 'boolean', description: '是否一次性任务（执行一次后自动完结）。固定某月某日的提醒类任务应传 true；不传时按 cron 形态自动判定。' },
+        retry_max: { type: 'integer', description: '失败后最多再试几次（不含首次）。0 表示不重试，默认 2，最大 5。' },
+        retry_interval_minutes: { type: 'integer', description: '失败重试的固定间隔（分钟）。默认 5，范围 1-60。' },
+        missed_policy: { type: 'string', enum: ['RUN_ONCE', 'SKIP'], description: '服务停机错过触发点时：RUN_ONCE 补最近一次（默认），SKIP 只记录不补。' },
       },
       required: ['name', 'prompt', 'cron_expression'],
     };
@@ -63,6 +66,13 @@ export class CreateScheduledTaskTool extends BaseTool {
 - 应包含明确的输出要求
 - 好的示例："查询昨日 GMV 总额。使用 bigdata-cli 技能（按其 SKILL.md 流程）查询官方 GMV 指标，报告统计日期、GMV 总额、币种、口径摘要；无法确认口径时说明阻塞原因，不编造金额。"
 - 差的示例："每天执行一次，向当前飞书用户报告前一天的 GMV 总额"（"每天"属于 cron；"向当前飞书用户报告"在定时触发上下文中含义不明，结果会自动推送回创建会话的渠道）
+
+### 失败重试与错过补偿
+- 默认失败后再试 2 次、间隔 5 分钟；错过的触发点默认补最近一次，更早的只记为错过
+- 日报、巡检这类"迟到总比没有好"保持默认即可
+- 用户明确说"过了点就不要补"时传 missed_policy=SKIP
+- 用户明确说不要重试时传 retry_max=0
+- 预算不足、会话已删除不会重试；连续失败 3 个触发点会自动暂停并通知
 `;
   }
 
@@ -73,6 +83,8 @@ export class CreateScheduledTaskTool extends BaseTool {
       const prompt = asText(args.prompt);
       const cronExpression = asText(args.cron_expression);
       const once = typeof args.once === 'boolean' ? args.once : undefined;
+      const reliability = reliabilityFromArgs(args);
+      const hasReliability = Object.keys(reliability).length > 0;
       let agentId: number | null = null;
       let resolvedUserId = userId;
       if (sessionId != null) {
@@ -84,7 +96,9 @@ export class CreateScheduledTaskTool extends BaseTool {
       }
       if (agentId == null) return errorJson('无法获取当前 Agent 信息，请确保在有效会话中创建定时任务');
       if (resolvedUserId == null) return errorJson('无法获取当前用户信息');
-      const task = await this.scheduledTaskService.createTask(resolvedUserId, agentId, sessionId!, name!, prompt!, cronExpression!, once);
+      const task = hasReliability
+        ? await this.scheduledTaskService.createTask(resolvedUserId, agentId, sessionId!, name!, prompt!, cronExpression!, once, reliability)
+        : await this.scheduledTaskService.createTask(resolvedUserId, agentId, sessionId!, name!, prompt!, cronExpression!, once);
       return toJson({
         success: true,
         task_id: task.id,
@@ -137,6 +151,9 @@ export class UpdateScheduledTaskTool extends BaseTool {
         cron_expression: { type: 'string' },
         status: { type: 'string' },
         once: { type: 'boolean', description: '是否一次性任务（执行一次后自动完结）。' },
+        retry_max: { type: 'integer', description: '失败后最多再试几次（不含首次）。0 表示不重试，默认 2，最大 5。' },
+        retry_interval_minutes: { type: 'integer', description: '失败重试的固定间隔（分钟）。默认 5，范围 1-60。' },
+        missed_policy: { type: 'string', enum: ['RUN_ONCE', 'SKIP'], description: 'RUN_ONCE 补最近一次错过的触发（默认）；SKIP 只记录不补。' },
       },
       required: ['task_id'],
     };
@@ -149,9 +166,15 @@ export class UpdateScheduledTaskTool extends BaseTool {
       const taskId = Number(args.task_id);
       if (!Number.isFinite(taskId)) return errorJson('缺少必填参数: task_id');
       if (userId == null) return errorJson('无法获取当前用户信息');
-      const task = await this.scheduledTaskService.updateTask(
-        taskId, userId, asText(args.name), asText(args.prompt), asText(args.cron_expression), asText(args.status),
-        typeof args.once === 'boolean' ? args.once : null);
+      const reliability = reliabilityFromArgs(args);
+      const once = typeof args.once === 'boolean' ? args.once : null;
+      const task = Object.keys(reliability).length > 0
+        ? await this.scheduledTaskService.updateTask(
+          taskId, userId, asText(args.name), asText(args.prompt), asText(args.cron_expression), asText(args.status),
+          once, reliability)
+        : await this.scheduledTaskService.updateTask(
+          taskId, userId, asText(args.name), asText(args.prompt), asText(args.cron_expression), asText(args.status),
+          once);
       return toJson({ success: true, task });
     } catch (e) {
       return errorJson((e as Error).message);
@@ -184,4 +207,22 @@ export class DeleteScheduledTaskTool extends BaseTool {
       return errorJson((e as Error).message);
     }
   }
+}
+
+function reliabilityFromArgs(args: Record<string, unknown>): { retryMax?: number; retryIntervalMinutes?: number; missedPolicy?: string } {
+  const out: { retryMax?: number; retryIntervalMinutes?: number; missedPolicy?: string } = {};
+  if (args.retry_max != null && args.retry_max !== '') {
+    const value = Number(args.retry_max);
+    if (!Number.isInteger(value)) throw new Error('retry_max 必须为整数');
+    out.retryMax = value;
+  }
+  if (args.retry_interval_minutes != null && args.retry_interval_minutes !== '') {
+    const value = Number(args.retry_interval_minutes);
+    if (!Number.isInteger(value)) throw new Error('retry_interval_minutes 必须为整数');
+    out.retryIntervalMinutes = value;
+  }
+  if (args.missed_policy != null && String(args.missed_policy).trim() !== '') {
+    out.missedPolicy = String(args.missed_policy).trim();
+  }
+  return out;
 }

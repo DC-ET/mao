@@ -53,6 +53,7 @@ describe('inbox store', () => {
       approvalPendingEnabled: true,
       subagentDoneEnabled: false,
       budgetWarnEnabled: true,
+      openApiCallFailedEnabled: false,
       systemNotifyEnabled: true,
     } satisfies InboxPreference)
   })
@@ -254,11 +255,14 @@ describe('inbox store', () => {
       makeList([
         makeItem(1, { kind: 'BUDGET_WARN' as any }),
         makeItem(2, { kind: 'TRIGGER_DISABLED' as any }),
-        makeItem(3, { kind: 'NOT_A_KIND' as any }),
+        makeItem(3, { kind: 'SCHEDULED_TASK_PAUSED' as any }),
+        makeItem(4, { kind: 'TOKEN_DISABLED' as any }),
+        makeItem(5, { kind: 'OPEN_API_CALL_FAILED' as any }),
+        makeItem(6, { kind: 'NOT_A_KIND' as any }),
       ]),
       1,
     )
-    expect(store.visibleItems.map((i) => i.id)).toEqual([1, 2])
+    expect(store.visibleItems.map((i) => i.id)).toEqual([1, 2, 3, 4, 5])
   })
 
   it('偏好读写：保存后以服务端返回值为准', async () => {
@@ -269,6 +273,7 @@ describe('inbox store', () => {
       approvalPendingEnabled: true,
       subagentDoneEnabled: true,
       budgetWarnEnabled: true,
+      openApiCallFailedEnabled: false,
       systemNotifyEnabled: true,
     } satisfies InboxPreference)
 

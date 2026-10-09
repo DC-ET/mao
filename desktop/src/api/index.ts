@@ -4,7 +4,7 @@ import type { InboxItem, InboxKind, InboxListResult, InboxPreference, InboxSourc
 import { redirectToLogin } from '../utils/login-redirect'
 import { useAuthStore } from '../stores/auth'
 import { getRefreshToken, getToken, setTokens } from '../utils/auth-storage'
-import type { SessionSearchItem } from '../types/chat'
+import type { MessageSearchResult } from '../types/chat'
 
 /** 强制下线：动态引入 router（避免模块加载期创建路由，破坏 Node 环境单测）。 */
 async function forceRelogin(): Promise<void> {
@@ -301,14 +301,31 @@ export async function testMyMcpServer(id: number): Promise<McpToolItem[]> {
 
 // ─── 会话消息搜索 ───
 
-/** 按用户消息内容搜索会话（主会话 + 边路会话），最多返回 20 条。 */
-export async function searchSessions(keyword: string, options?: { signal?: AbortSignal }): Promise<SessionSearchItem[]> {
+export interface SessionSearchParams {
+  agentId?: number | null
+  dateFrom?: string | null
+  dateTo?: string | null
+  sessionType?: 'NORMAL' | 'SIDE_TASK' | null
+  page?: number
+  size?: number
+  signal?: AbortSignal
+}
+
+/** 按用户与助手消息搜索会话，结果按会话分组。 */
+export async function searchSessions(keyword: string, options?: SessionSearchParams): Promise<MessageSearchResult> {
+  const params: Record<string, unknown> = { keyword }
+  if (options?.agentId != null) params.agentId = options.agentId
+  if (options?.dateFrom) params.dateFrom = options.dateFrom
+  if (options?.dateTo) params.dateTo = options.dateTo
+  if (options?.sessionType) params.sessionType = options.sessionType
+  if (options?.page != null) params.page = options.page
+  if (options?.size != null) params.size = options.size
   const { data } = await api.get('/sessions/search', {
-    params: { keyword },
+    params,
     signal: options?.signal,
     skipErrorToast: true
   } as any)
-  return data?.items ?? []
+  return data ?? { items: [], total: 0, page: 1, size: 20, path: 'LIKE' }
 }
 
 // ─── 站内收件箱 ───
@@ -516,6 +533,9 @@ export interface ApiTokenView {
   expiresAt: string | null
   revokedAt: string | null
   lastUsedAt: string | null
+  autoDisabledAt: string | null
+  autoDisableReason: string | null
+  logFullBody: boolean
   createdAt: string | null
 }
 
@@ -581,6 +601,55 @@ export async function issueApiToken(payload: { name: string; scopes: string[] })
 
 export async function revokeApiToken(id: number): Promise<void> {
   await api.delete(`/open/tokens/${id}`)
+}
+
+export async function setTokenLogFullBody(id: number, enabled: boolean): Promise<void> {
+  await api.put(`/open/tokens/${id}/log-full-body`, { enabled })
+}
+
+export async function reEnableToken(id: number): Promise<void> {
+  await api.post(`/open/tokens/${id}/re-enable`)
+}
+
+export interface OpenApiCallView {
+  id: number
+  tokenId: number | null
+  triggerId: number | null
+  agentId: number | null
+  userId: number | null
+  sessionId: number | null
+  source: string
+  sourceIp: string | null
+  httpStatus: number | null
+  outcome: string
+  errorCode: string | null
+  errorSummary: string | null
+  durationMs: number | null
+  executionMs: number | null
+  queueWaitMs: number | null
+  createdAt: string | null
+  requestSummaryJson?: string | null
+  requestFullJson?: string | null
+}
+
+export interface OpenApiCallPage {
+  records: OpenApiCallView[]
+  total: number
+}
+
+export async function listOpenApiCalls(params: {
+  tokenId?: number
+  triggerId?: number
+  page?: number
+  size?: number
+}): Promise<OpenApiCallPage> {
+  const { data } = await api.get('/open/calls', { params })
+  return data ?? { records: [], total: 0 }
+}
+
+export async function getOpenApiCall(id: number): Promise<OpenApiCallView> {
+  const { data } = await api.get(`/open/calls/${id}`)
+  return data
 }
 
 export async function listWebhookTriggers(): Promise<WebhookTriggerView[]> {

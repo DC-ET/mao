@@ -10,6 +10,7 @@ import { mkdirSync, existsSync, rmSync, lstatSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { resolve, relative } from 'node:path';
 import { fail } from './common/result.js';
+import { ErrorCode } from './common/error-code.js';
 import { fastifyLoggerOptions, redactCredentialQuery } from './common/structured-logger.js';
 import { sendJson, handleError } from './common/http-error.js';
 import { loadConfig, type AppConfig } from './config/app-config.js';
@@ -19,7 +20,7 @@ import { createPool, Db } from './db/db.js';
 import { runFlywayIfEnabled } from './db/flyway.js';
 import { JwtService } from './crypto/jwt.service.js';
 import { hashPassword, matchesPassword } from './crypto/password.js';
-import { authenticateRequest, isPublicPath } from './auth/jwt-hook.js';
+import { authenticateRequest, autoDisabledTokenBlocksRequest, isPublicPath } from './auth/jwt-hook.js';
 import { AuthService } from './auth/auth.service.js';
 import { LdapAuthService } from './auth/ldap-auth.service.js';
 import { FeishuAuthService } from './auth/feishu-auth.service.js';
@@ -126,6 +127,7 @@ import { registerApprovalRuleAdminRoutes } from './approval-rule/approval-rule.a
 import { InboxRepository } from './inbox/inbox.repository.js';
 import { InboxService } from './inbox/inbox.service.js';
 import { InboxCleanupScheduler, type InboxCleanupStore } from './inbox/inbox.cleanup.js';
+import { ScheduledTaskRunCleanupScheduler } from './schedule/run-cleanup.js';
 import { registerInboxRoutes } from './inbox/inbox.routes.js';
 import { EnvironmentInfoProvider } from './harness/core/environment-info-provider.js';
 import { FileEntityRepository, FileService } from './file/file.service.js';
@@ -195,7 +197,8 @@ import { BackgroundTaskManager } from './harness/core/background-task-manager.js
 import { CompactionConfig } from './harness/core/compaction-config.js';
 import { CrashRecoveryRunner } from './harness/core/crash-recovery-runner.js';
 import { DeployDrainWatcher } from './harness/core/deploy-drain-watcher.js';
-import { deployDrainSec, isDrainingInstance, readDeployLock } from './harness/core/deploy-lock.js';
+import { deployDrainSec, isDrainingInstance, readActiveBackendPort, readDeployLock } from './harness/core/deploy-lock.js';
+import { sumCostMicros, wallClockMs } from './session/run-window.js';
 import { createAgentExecutor } from './harness/core/agent-executor.js';
 import { LocalAgentsMdRegistry } from './harness/core/local-agents-md-registry.js';
 import { RuntimeDataResolver } from './harness/runtime/runtime-data-resolver.js';
@@ -316,6 +319,10 @@ import { OutboundSubscriptionService } from './openapi/outbound-subscription.ser
 import { GenericHttpWebhookSender } from './openapi/generic-webhook-sender.js';
 import { OutboundDeliveryScheduler } from './openapi/outbound-delivery.scheduler.js';
 import { OPEN_HOOKS_PATH_PREFIX, registerOpenApiRoutes, type RawBodyRequest } from './openapi/open.routes.js';
+import { OpenApiCallLogRepository } from './openapi/open-api-call-log.repository.js';
+import { OpenApiCallLogService } from './openapi/open-api-call-log.service.js';
+import { OpenApiCallLogCleanup } from './openapi/open-api-call-log.cleanup.js';
+import { registerOpenApiCallLogRoutes } from './openapi/open-api-call-log.routes.js';
 
 export interface MaoApp {
   app: FastifyInstance;
@@ -532,6 +539,21 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const apiTokenRepo = new MysqlApiTokenRepository(db);
   const apiTokenService = new ApiTokenService(apiTokenRepo);
   const openApiRateLimiter = new FixedWindowRateLimiter();
+  const openCallLogHolder: { current: OpenApiCallLogService | null } = { current: null };
+
+  const isOpenAgentRun = (request: { method: string; url: string }): boolean => {
+    if (request.method !== 'POST') return false;
+    const path = request.url.split('?')[0].replace(/^\/api/, '') || '/';
+    return /^\/v1\/open\/agents\/[^/]+\/run$/.test(path);
+  };
+  const presentedMaoPrefix = (request: { headers: { authorization?: string | string[] }; query: unknown }): string => {
+    const header = request.headers.authorization;
+    const bearer = typeof header === 'string' && header.startsWith('Bearer ') ? header.slice(7) : null;
+    if (bearer != null && bearer.startsWith('mao_')) return bearer.slice(0, 12);
+    const queryToken = (request.query as { token?: unknown } | null)?.token;
+    if (typeof queryToken === 'string' && queryToken.startsWith('mao_')) return queryToken.slice(0, 12);
+    return '';
+  };
 
   app.addHook('preParsing', async (request, _reply, payload) => {
     // HMAC 验签以原始字节为准（决策 15）：Fastify 默认 JSON 解析后重序列化不保证
@@ -555,10 +577,34 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   });
   app.addHook('preHandler', async (request, reply) => {
     if (request.method === 'OPTIONS' || request.url.split('?')[0] === ssoExchangePath) return;
-    const userId = await authenticateRequest(request, jwt, (plain) => apiTokenService.resolveByToken(plain));
-    if (userId != null) request.userId = userId;
-    if (!isPublicPath(request.method, request.url) && userId == null) {
+    const auth = await authenticateRequest(request, jwt, (plain) => apiTokenService.resolveByToken(plain, {
+      onReject: (rejected) => {
+        if (!isOpenAgentRun(request)) return;
+        void openCallLogHolder.current?.recordAuthReject({
+          reason: rejected.reason,
+          tokenPrefix: rejected.tokenPrefix,
+          tokenId: 'tokenId' in rejected ? rejected.tokenId : undefined,
+          userId: 'userId' in rejected ? rejected.userId : undefined,
+          sourceIp: request.ip,
+        });
+      },
+    }));
+    if (auth.userId != null) request.userId = auth.userId;
+    // 公开路径（含入站 Webhook）自验签，不能被请求头里已停用的 API Token 提前 403。
+    if (auth.tokenAutoDisabled && autoDisabledTokenBlocksRequest(request.method, request.url)) {
+      sendJson(reply, 403, fail(ErrorCode.TOKEN_AUTO_DISABLED.code, ErrorCode.TOKEN_AUTO_DISABLED.message));
+      return;
+    }
+    if (!isPublicPath(request.method, request.url) && auth.userId == null) {
+      if (isOpenAgentRun(request) && !auth.resolverRejected) {
+        void openCallLogHolder.current?.recordAuthReject({
+          reason: 'not_found',
+          tokenPrefix: presentedMaoPrefix(request),
+          sourceIp: request.ip,
+        });
+      }
       sendJson(reply, 401, fail(1001, '未登录或登录已过期'));
+      return;
     }
   });
   app.setErrorHandler(handleError);
@@ -705,9 +751,10 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const subagentExecutionRepo = new SubagentExecutionRepository(db);
   const activityHeartbeat = new SessionActivityHeartbeat(sessionService);
   // run 轨迹读模型：零新表，读时聚合消息 / llm_call / session_activity / 压缩事件
+  const llmCallRepo = new LlmCallRepository(db);
   const runTraceService = new RunTraceService(
     messageRepo,
-    new LlmCallRepository(db),
+    llmCallRepo,
     new SessionActivityRepository(db),
     new SessionCompactionEventRepository(db),
   );
@@ -1086,6 +1133,22 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     weixinTokens as never,
     (fn) => agentExecutor.submit(fn),
   );
+  scheduledService.setFailureNotifier((input) => inboxService.recordScheduledTaskPaused(input));
+  scheduledService.setRunWindowLoader(async (sessionId, messageId) => {
+    const stamps = await messageRepo.selectUserStamps(sessionId);
+    const anchor = stamps.find((stamp) => stamp.id === messageId);
+    if (anchor?.createdAt == null) return { costMicros: null, wallClockMs: 0 };
+    const upperId = stamps
+      .map((stamp) => stamp.id)
+      .filter((id): id is number => id != null && id > messageId)
+      .sort((a, b) => a - b)[0];
+    const upper = upperId == null ? null : (stamps.find((stamp) => stamp.id === upperId)?.createdAt ?? null);
+    const calls = await llmCallRepo.selectBySessionWindow(sessionId, anchor.createdAt, upper);
+    return {
+      costMicros: sumCostMicros(calls),
+      wallClockMs: wallClockMs(calls.map((call) => ({ createdAt: call.createdAt ?? null, durationMs: call.durationMs ?? null }))),
+    };
+  });
 
   const dingtalkMediaHolder: { current: DingtalkMediaSendSupport | null } = { current: null };
   const toolRegistry = createDefaultToolRegistry({
@@ -1340,6 +1403,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     onOpenTriggerQueueConsumed: async (triggerId: number, status: 'COMPLETED' | 'FAILED' | 'CANCELLED') => {
       await openTriggerSettle.current?.(triggerId, status);
     },
+    onOpenApiCallQueueSettled: async (callLogId: number, phase: 'COMPLETED' | 'FAILED' | 'CANCELLED', queueWaitMs: number | null, messageId: number | null) => {
+      await openCallSettle.current?.(callLogId, phase, queueWaitMs, messageId);
+    },
   } as never);
   // 第 6 参 scheduledTaskId：收件箱条目据此前置「定时任务」来源徽标（方案 4.2 方案 A）。
   // 形参表必须与 ScheduledLiveExecution 对齐：TS 允许形参更少的 lambda 赋值给形参更多的
@@ -1354,6 +1420,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
 
   // 开放接口执行流（P1/P2 共用）：与 schedule 域同锁（withSessionLock）、同 busy 判定、同 live 路径
   const openTriggerSettle: { current: ((triggerId: number, status: 'COMPLETED' | 'FAILED' | 'CANCELLED') => Promise<void>) | null } = { current: null };
+  const openCallSettle: { current: ((callLogId: number, phase: 'COMPLETED' | 'FAILED' | 'CANCELLED', queueWaitMs: number | null, messageId: number | null) => Promise<void>) | null } = { current: null };
   const openRunService = new OpenRunService({
     // SessionService 的 Session（session/types）与本域引用的 domain/types 存在 isGit
     // 联合类型差异（同 schedule 域装配的既有情况），窄接口语义不变，此处显式断言
@@ -1370,6 +1437,23 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     },
     liveExecution: createScheduledLiveExecution(wsHandler),
   });
+  const callLogService = new OpenApiCallLogService({
+    repo: new OpenApiCallLogRepository(db),
+    tokens: apiTokenService,
+    inbox: inboxService,
+    openRun: openRunService,
+  });
+  openCallLogHolder.current = callLogService;
+  openCallSettle.current = (callLogId, phase, queueWaitMs, messageId) => callLogService.settleQueued(callLogId, phase, queueWaitMs, messageId);
+  apiTokenService.setOutcomePolicy({
+    enabled: () => settingService.isOpenApiTokenAutoDisableEnabled(),
+    threshold: () => settingService.getOpenApiTokenAutoDisableThreshold(),
+    notifyDisabled: (input) => inboxService.recordTokenDisabled(input),
+  });
+  const callLogCleanup = new OpenApiCallLogCleanup(
+    new OpenApiCallLogRepository(db),
+    () => settingService.getOpenApiCallLogRetentionDays(),
+  );
   const webhookTriggerService = new WebhookTriggerService({
     triggerRepo: new MysqlWebhookTriggerRepository(db),
     sessionService: sessionService as unknown as WebhookTriggerDeps['sessionService'],
@@ -1382,6 +1466,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         await inboxService.recordTriggerDisabled(input);
       },
     },
+    callLog: callLogService,
   });
   openTriggerSettle.current = (triggerId, status) => webhookTriggerService.handleQueueSettled(triggerId, status);
 
@@ -2509,7 +2594,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       triggerService: webhookTriggerService,
       subscriptionService: outboundSubscriptionService,
       rateLimiter: openApiRateLimiter,
+      callLog: callLogService,
     });
+    registerOpenApiCallLogRoutes(api, { callLog: callLogService, permissionService });
     registerAnalyticsRoutes(api, { analytics: analyticsService, jwt, permissionService });
     registerStatisticsRoutes(api, { statistics: statisticsService, jwt, permissionService });
     registerFeedbackRoutes(api, { feedback: feedbackService, jwt, permissionService });
@@ -2584,7 +2671,13 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     });
   }, { prefix: apiPrefix });
 
-  const scheduler = new ScheduledTaskScheduler(scheduledStore, scheduledService);
+  const scheduler = new ScheduledTaskScheduler(scheduledStore, scheduledService, () => {
+    const active = readActiveBackendPort(cfg.app.harness.runtimeDir);
+    if (active != null) return active === cfg.server.port;
+    const lock = readDeployLock(cfg.app.harness.runtimeDir);
+    if (lock != null && lock.oldPort === cfg.server.port) return false;
+    return true;
+  });
   scheduler.start();
   const deliveryScheduler = new WebhookDeliveryScheduler(
     new DeliverySchedulerDbStore(db),
@@ -2638,6 +2731,10 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   outboundDeliveryScheduler.start();
   const inboxCleanupScheduler = new InboxCleanupScheduler(inboxCleanupStore);
   inboxCleanupScheduler.start();
+  const scheduledRunCleanup = new ScheduledTaskRunCleanupScheduler(scheduledStore);
+  scheduledRunCleanup.start();
+  callLogService.start();
+  callLogCleanup.start();
   const ecpRenewScheduler = new EcpRenewScheduler(
     ecpSessionRepo,
     () => settingService.getEcpConfig(),
@@ -2685,6 +2782,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     cfg.app.harness.runtimeDir,
     agentExecutor,
     async (sessionId, userId, phase) => {
+      await scheduledService.reconcileRunsForSession(sessionId, phase).catch((error) => {
+        console.warn(`定时任务运行记录在崩溃恢复后收敛失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+      });
       // 崩溃恢复续跑以 FAILED 结束：上一个任务实际未执行完成，不自动消费下一条消息。
       // 主队列与飞书队列均受此门禁约束；COMPLETED / CANCELLED 照常接力消费。
       if (phase !== 'FAILED') {
@@ -2799,6 +2899,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       await settleInFlightExecutions(isDrainingForDeploy() ? drainGraceMs() : 0);
       scheduler.stop();
       deliveryScheduler.stop();
+      callLogService.stop();
+      callLogCleanup.stop();
       ecpRenewScheduler.stop();
       shellManager.stopCleanup();
       terminalManager.stopCleanup();

@@ -21,9 +21,9 @@ describe('SSO exchange application boundary', () => {
     await app.register(cors, { delegator: async (req: FastifyRequest) => corsForRequest(req, path, settings) });
     app.addHook('preHandler', async (request, reply) => {
       if (request.method === 'OPTIONS' || request.url.split('?')[0] === path) return;
-      const id = await authenticateRequest(request, jwt);
-      if (id != null) request.userId = id;
-      if (!isPublicPath(request.method, request.url) && id == null) return reply.code(401).send({ code: 1001 });
+      const auth = await authenticateRequest(request, jwt);
+      if (auth.userId != null) request.userId = auth.userId;
+      if (!isPublicPath(request.method, request.url) && auth.userId == null) return reply.code(401).send({ code: 1001 });
     });
     await app.register(async (api) => {
       registerCompanySsoRoutes(api, { exchange }, settings, audit);

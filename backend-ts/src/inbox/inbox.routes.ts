@@ -16,6 +16,7 @@ interface SavePreferenceRequest {
   approvalPendingEnabled?: unknown;
   subagentDoneEnabled?: unknown;
   budgetWarnEnabled?: unknown;
+  openApiCallFailedEnabled?: unknown;
   systemNotifyEnabled?: unknown;
 }
 
@@ -98,6 +99,7 @@ export function registerInboxRoutes(app: FastifyInstance, deps: InboxRouteDeps):
       approvalPendingEnabled: readFlag(body.approvalPendingEnabled, current.approvalPendingEnabled),
       subagentDoneEnabled: readFlag(body.subagentDoneEnabled, current.subagentDoneEnabled),
       budgetWarnEnabled: readFlag(body.budgetWarnEnabled, current.budgetWarnEnabled),
+      openApiCallFailedEnabled: readFlag(body.openApiCallFailedEnabled, current.openApiCallFailedEnabled),
       systemNotifyEnabled: readFlag(body.systemNotifyEnabled, current.systemNotifyEnabled),
     };
     return sendOk(reply, await inboxService.savePreferences(userId, next));

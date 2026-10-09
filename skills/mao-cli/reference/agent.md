@@ -143,7 +143,7 @@ Agent 删除时条目级联删除；停用时条目保留、列表隐藏，重�
 
 | 操作 | 接口 | 说明 |
 |------|------|------|
-| 导出 | `GET /api/v1/skill-bundles/:name` | 系统技能（无 `owner` 参数）要求 `skill:read`；`?owner=<userId>` 导出指定用户技能，本人即可、他人需 `skill:read`；响应为 bundle JSON 本体 |
+| 导出 | `GET /api/v1/skill-bundles/:name` | 系统技能（无 `owner` 参数）要求 `skill:read`；`?owner=<userId>` 导出指定用户技能，本人即可、他人需 `skill:read`；响应为 bundle JSON 本体。同一用户多个目录 frontmatter 同名时拒绝导出并列出目录，不静默取第一个 |
 | 导入 | `POST /api/v1/skill-bundle/import` | `skill:write`；body `{ bundle, confirm? }` 两段式写入**系统技能目录**，同名 exists-skip 不覆盖 |
 
 ---

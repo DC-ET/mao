@@ -29,6 +29,9 @@
               <span v-else-if="isExpired(token.expiresAt)" class="badge badge-danger">已过期</span>
             </div>
             <div class="item-actions">
+              <el-tooltip content="调用记录" :show-after="300">
+                <button class="action-btn" @click="showCalls({ tokenId: token.id, title: token.name })"><el-icon :size="14"><Tickets /></el-icon></button>
+              </el-tooltip>
               <button
                 v-if="!token.revokedAt"
                 class="action-btn action-btn-danger"
@@ -39,6 +42,23 @@
               </button>
             </div>
           </div>
+          <div v-if="token.autoDisabledAt" class="item-row">
+            <span class="badge badge-danger">已自动停用</span>
+            <button
+              v-if="!token.revokedAt"
+              class="action-btn"
+              :title="confirmingReenableId === token.id ? '确认重新启用' : '重新启用'"
+              @click="confirmReenable(token)"
+            >{{ confirmingReenableId === token.id ? '确认重新启用' : '重新启用' }}</button>
+          </div>
+          <div v-if="!token.revokedAt" class="full-body-row">
+            <span>完整记录</span>
+            <el-switch
+              :model-value="token.logFullBody"
+              @change="(val: string | number | boolean) => toggleFullBody(token, val === true)"
+            />
+          </div>
+          <p v-if="token.logFullBody" class="full-body-warn">完整记录已开启。该 Token 的请求体会写入调用流水，可能含敏感信息，开关操作留审计。</p>
           <div class="item-meta">
             <span class="mono">{{ token.tokenPrefix }}…</span>
             <span>scope：{{ token.scopes.join('、') }}</span>
@@ -72,6 +92,9 @@
               <span v-if="trigger.consecutiveFailures > 0" class="badge badge-warn">连续失败 {{ trigger.consecutiveFailures }}</span>
             </div>
             <div class="item-actions">
+              <el-tooltip content="调用记录" :show-after="300">
+                <button class="action-btn" @click="showCalls({ triggerId: trigger.id, title: trigger.name })"><el-icon :size="14"><Tickets /></el-icon></button>
+              </el-tooltip>
               <el-tooltip content="轮换 Secret" :show-after="300">
                 <button class="action-btn" @click="rotateTrigger(trigger)"><el-icon :size="14"><RefreshRight /></el-icon></button>
               </el-tooltip>
@@ -265,25 +288,51 @@
         </div>
       </div>
     </el-dialog>
+
+    <el-dialog v-model="callsDialogVisible" :title="callsDialogTitle" width="640px" class="open-api-dialog" append-to-body>
+      <div v-if="callsLoading" class="empty-state">加载中...</div>
+      <div v-else-if="calls.length === 0" class="empty-state">暂无调用记录</div>
+      <div v-else class="item-list">
+        <div v-for="row in calls" :key="row.id" class="item-card">
+          <div class="item-row">
+            <div class="item-title">
+              <span class="badge" :class="outcomeBadge(row.outcome)">{{ outcomeLabel(row.outcome) }}</span>
+              <span v-if="row.httpStatus != null">HTTP {{ row.httpStatus }}</span>
+              <span>{{ formatMs(row.executionMs ?? row.durationMs) }}</span>
+            </div>
+            <button v-if="row.sessionId != null" class="action-btn" @click="openSession(row.sessionId)">查看会话</button>
+          </div>
+          <div class="item-meta">
+            <span>{{ row.createdAt ? formatTime(row.createdAt) : '' }}</span>
+            <span v-if="row.errorSummary">{{ row.errorSummary }}</span>
+          </div>
+        </div>
+      </div>
+      <p v-if="callsTotal > calls.length" class="full-body-warn">仅显示最近 {{ calls.length }} 条，共 {{ callsTotal }} 条。更多记录请到管理后台查看。</p>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { Plus, Delete, RefreshRight, VideoPause, VideoPlay, Clock, CopyDocument } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { Plus, Delete, RefreshRight, VideoPause, VideoPlay, Clock, CopyDocument, Tickets } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { useRouter } from 'vue-router'
 import {
   api, searchSessions,
-  listApiTokens, issueApiToken, revokeApiToken,
+  listApiTokens, issueApiToken, revokeApiToken, setTokenLogFullBody, reEnableToken,
   listWebhookTriggers, createWebhookTrigger, updateWebhookTrigger, deleteWebhookTrigger, rotateWebhookTriggerSecret,
   listOutboundSubscriptions, createOutboundSubscription, setOutboundSubscriptionEnabled, deleteOutboundSubscription,
-  listOutboundDeliveries,
-  type ApiTokenView, type WebhookTriggerView, type OutboundSubscriptionView, type OutboundDeliveryView
+  listOutboundDeliveries, listOpenApiCalls,
+  type ApiTokenView, type WebhookTriggerView, type OutboundSubscriptionView, type OutboundDeliveryView, type OpenApiCallView
 } from '../../api'
+import { formatMs } from '../../utils/llmCallLabels'
+
+const router = useRouter()
 
 /** GET /v1/agents 列表项（后端 Agent DTO：enabled 为 1/0 数字，使用侧列表默认不返回停用项）。 */
 interface AgentOption { id: number; name: string | null; enabled?: number | boolean | null }
-/** `/v1/sessions/search` 返回项（MessageSearchItem，id 为数字）。 */
+/** `/v1/sessions/search` 分组结果里用来选会话。 */
 interface SessionOption { id: number; title?: string | null }
 
 const tokens = ref<ApiTokenView[]>([])
@@ -317,6 +366,12 @@ const secretDialogSecret = ref('')
 const secretDialogToken = ref('')
 
 const confirmingRevokeId = ref<number | null>(null)
+const confirmingReenableId = ref<number | null>(null)
+const callsDialogVisible = ref(false)
+const callsDialogTitle = ref('调用记录')
+const callsLoading = ref(false)
+const calls = ref<OpenApiCallView[]>([])
+const callsTotal = ref(0)
 
 const canIssueToken = computed(() => tokenForm.value.name.trim().length > 0 && tokenForm.value.scopes.length > 0)
 const canCreateTrigger = computed(() => triggerForm.value.name.trim().length > 0 && triggerForm.value.agentId != null)
@@ -354,7 +409,8 @@ async function fetchAgents(): Promise<void> {
 async function searchSessionOptions(keyword: string): Promise<void> {
   sessionSearching.value = true
   try {
-    sessionOptions.value = await searchSessions(keyword)
+    const result = await searchSessions(keyword)
+    sessionOptions.value = (result.items ?? []).map((item) => ({ id: item.sessionId, title: item.title }))
   } catch {
     sessionOptions.value = []
   } finally {
@@ -435,6 +491,80 @@ async function confirmRevoke(token: ApiTokenView): Promise<void> {
   } catch {
     // handled by interceptor
   }
+}
+
+async function toggleFullBody(token: ApiTokenView, enabled: boolean): Promise<void> {
+  if (enabled === token.logFullBody) return
+  if (enabled) {
+    try {
+      await ElMessageBox.confirm(
+        '将记录该 Token 调用的完整请求体，含可能的敏感信息，操作留审计。',
+        '开启完整记录',
+        { type: 'warning', confirmButtonText: '开启', cancelButtonText: '取消' },
+      )
+    } catch {
+      return
+    }
+  }
+  try {
+    await setTokenLogFullBody(token.id, enabled)
+    ElMessage.success(enabled ? '已开启完整记录' : '已关闭完整记录')
+    await fetchTokens()
+  } catch {
+    // handled by interceptor
+  }
+}
+
+async function confirmReenable(token: ApiTokenView): Promise<void> {
+  if (confirmingReenableId.value !== token.id) {
+    confirmingReenableId.value = token.id
+    setTimeout(() => {
+      if (confirmingReenableId.value === token.id) confirmingReenableId.value = null
+    }, 3000)
+    return
+  }
+  confirmingReenableId.value = null
+  try {
+    await reEnableToken(token.id)
+    ElMessage.success('Token 已重新启用')
+    await fetchTokens()
+  } catch {
+    // handled by interceptor
+  }
+}
+
+async function showCalls(target: { tokenId?: number; triggerId?: number; title: string }): Promise<void> {
+  callsDialogTitle.value = `${target.title} 的调用记录`
+  callsDialogVisible.value = true
+  callsLoading.value = true
+  calls.value = []
+  try {
+    const page = await listOpenApiCalls({ tokenId: target.tokenId, triggerId: target.triggerId, page: 1, size: 50 })
+    calls.value = page.records
+    callsTotal.value = page.total
+  } catch {
+    callsTotal.value = 0
+  } finally {
+    callsLoading.value = false
+  }
+}
+
+function openSession(sessionId: number): void {
+  callsDialogVisible.value = false
+  void router.push(`/tasks/${sessionId}`)
+}
+
+function outcomeBadge(outcome: string): string {
+  if (outcome === 'completed') return 'badge-ok'
+  if (outcome === 'queued' || outcome === 'pending') return 'badge-warn'
+  return 'badge-danger'
+}
+
+function outcomeLabel(outcome: string): string {
+  const labels: Record<string, string> = {
+    pending: '处理中', queued: '排队中', rejected: '已拒绝', completed: '成功', failed: '失败', cancelled: '已取消',
+  }
+  return labels[outcome] ?? outcome
 }
 
 // ── 触发器 ──
@@ -755,6 +885,23 @@ onMounted(() => {
 .badge-danger {
   background: rgba(239, 68, 68, 0.12);
   color: #dc2626;
+}
+
+.full-body-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.full-body-warn {
+  margin: 6px 0 0;
+  padding: 6px 8px;
+  border-radius: var(--aw-radius-xs);
+  background: rgba(245, 158, 11, 0.16);
+  color: #b45309;
+  font-size: 12px;
 }
 
 .dialog-btn {

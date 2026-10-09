@@ -2,7 +2,24 @@ import { mkdirSync, existsSync, rmSync, readdirSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
-import { javaLocalDateTimeString, nowSql } from '../common/datetime.js';
+import { javaLocalDateTimeString, nowSql, nowSqlMs } from '../common/datetime.js';
+import { loadConfig } from '../config/app-config.js';
+import {
+  SEARCH_KEYWORD_MAX_LENGTH,
+  SEARCH_OFFSET_CAP,
+  buildSnippet,
+  escapeLike,
+  indexOfIgnoreCase,
+  isFulltextDegradeError,
+  isSearchFulltextEnabled,
+  normalizeSearchListParams,
+  prepareMessageSearch,
+  type PreparedSearch,
+  type SearchListParams,
+} from './message-search.js';
+import type { MessageSearchHitRow, MessageSearchSqlFilter } from './session.repository.js';
+
+export { buildSnippet, indexOfIgnoreCase };
 import { collectEntityIds, parseEntityId } from '../common/request.js';
 import type { EnvironmentInfoProvider } from '../harness/core/environment-info.js';
 import { MessageHistoryNormalizer, MISSING_TOOL_RESULT_PLACEHOLDER } from '../harness/core/message-history-normalizer.js';
@@ -22,7 +39,9 @@ import type {
   FileChange,
   Message,
   MessagePage,
-  MessageSearchItem,
+  MessageSearchGroup,
+  MessageSearchHit,
+  MessageSearchResult,
   Session,
   SessionGroupBucket,
   SessionGroupPage,
@@ -35,9 +54,6 @@ import { toStoredContentJson } from './session-vo.js';
 import { WEIXIN_PROJECT_KEY } from '../domain/types.js';
 
 const SEARCH_RESULT_LIMIT = 20;
-const SEARCH_KEYWORD_MAX_LENGTH = 100;
-const SNIPPET_CONTEXT_CHARS = 25;
-const SNIPPET_MAX_LENGTH = 80;
 /** 写入会话工作区的 runtime 临时目录/文件前缀，会话删除时一并清理。 */
 const RUNTIME_WORKSPACE_PREFIX = 'mao-runtime-';
 
@@ -688,7 +704,18 @@ export class SessionService {
     });
   }
 
-  async searchSessionsByUserMessage(userId: number, keyword: string | null | undefined): Promise<MessageSearchItem[]> {
+  async searchMessages(
+    userId: number,
+    keyword: string | null | undefined,
+    raw: {
+      agentId?: number | null;
+      dateFrom?: string | null;
+      dateTo?: string | null;
+      sessionType?: string | null;
+      page?: number | null;
+      size?: number | null;
+    } = {},
+  ): Promise<MessageSearchResult> {
     if (keyword == null || keyword.trim().length === 0) {
       throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少搜索关键词');
     }
@@ -696,55 +723,124 @@ export class SessionService {
     if (trimmed.length > SEARCH_KEYWORD_MAX_LENGTH) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, `搜索关键词不能超过 ${SEARCH_KEYWORD_MAX_LENGTH} 个字符`);
     }
-    const escaped = escapeLike(trimmed);
-    const candidates = await this.sessionRepo.selectMessageSearchCandidates(userId, escaped);
-    if (candidates.length === 0) {
-      return [];
+    const list = normalizeSearchListParams(raw);
+    if ((list.page - 1) * list.size > SEARCH_OFFSET_CAP) {
+      const prepared = this.prepareSearch(trimmed);
+      return { items: [], total: 0, page: list.page, size: list.size, path: prepared.path };
     }
-    const sessionIds = candidates.map((s) => s.id!);
-    const hitMessages = await this.messageRepo.selectMessagesForSearch(sessionIds, escaped);
-    const messagesBySession = new Map<number, Message[]>();
-    for (const m of hitMessages) {
-      if (m.content == null) continue;
-      const list = messagesBySession.get(m.sessionId) ?? [];
-      list.push(m);
-      messagesBySession.set(m.sessionId, list);
-    }
-    const agentMap = await this.batchLoadAgents(candidates);
-    // 边路会话结果需解析根主会话（前端以根会话为缓存键与跳转目标）；
-    // 根不可达（父链上有已删除节点）的孤儿剔除——无法在树上打开。
-    const rootIdBySession = await this.resolveSearchRoots(candidates);
-    const items: MessageSearchItem[] = [];
-    for (const s of candidates) {
-      let snippet: string | null = null;
-      for (const m of messagesBySession.get(s.id!) ?? []) {
-        const text = this.extractVisibleText(m.content ?? null);
-        if (text == null || text.length === 0) continue;
-        snippet = buildSnippet(text, trimmed);
-        if (snippet != null) break;
+    const enabled = this.searchFulltextEnabled();
+    let prepared = prepareMessageSearch(trimmed, enabled);
+    if (prepared.path === 'FULLTEXT') {
+      try {
+        return await this.executeMessageSearch(userId, trimmed, prepared, list);
+      } catch (err) {
+        if (!isFulltextDegradeError(err)) throw err;
+        console.warn(`Fulltext search degraded to LIKE: ${(err as Error).message}`);
+        prepared = prepareMessageSearch(trimmed, false);
       }
-      if (snippet == null) continue;
-      if (s.sessionType === 'SIDE_TASK' && !rootIdBySession.has(s.id!)) continue;
-      const agent = s.agentId != null ? agentMap.get(s.agentId) : undefined;
+    }
+    return this.executeMessageSearch(userId, trimmed, prepared, list);
+  }
+
+  private searchFulltextEnabled(): boolean {
+    if (process.env.SEARCH_FULLTEXT_ENABLED != null && process.env.SEARCH_FULLTEXT_ENABLED !== '') {
+      return isSearchFulltextEnabled();
+    }
+    return loadConfig().app.search?.fulltextEnabled !== false;
+  }
+
+  private prepareSearch(keyword: string): PreparedSearch {
+    return prepareMessageSearch(keyword, this.searchFulltextEnabled());
+  }
+
+  private async executeMessageSearch(
+    userId: number,
+    keyword: string,
+    prepared: PreparedSearch,
+    list: SearchListParams,
+  ): Promise<MessageSearchResult> {
+    const filter: MessageSearchSqlFilter = {
+      mode: prepared.path,
+      userId,
+      match: prepared.match,
+      agentId: list.agentId,
+      createdFrom: list.createdFrom,
+      createdToExclusive: list.createdToExclusive,
+      sessionType: list.sessionType,
+      limit: list.size,
+      offset: (list.page - 1) * list.size,
+    };
+    const [aggs, total] = await Promise.all([
+      this.sessionRepo.selectMatchingSessions(filter),
+      this.sessionRepo.countMatchingSessions(filter),
+    ]);
+    const empty: MessageSearchResult = { items: [], total, page: list.page, size: list.size, path: prepared.path };
+    if (aggs.length === 0) return empty;
+    const ids = aggs.map((row) => row.sessionId);
+    const loaded = await this.sessionRepo.selectByIds(ids);
+    const byId = new Map(loaded.filter((s) => s.id != null).map((s) => [s.id!, s]));
+    const ordered: Session[] = [];
+    for (const id of ids) {
+      const session = byId.get(id);
+      if (session != null) ordered.push(session);
+    }
+    const rawHits = await this.messageRepo.selectHitMessages(
+      ids,
+      prepared.path,
+      prepared.match,
+      list.createdFrom,
+      list.createdToExclusive,
+    );
+    const hitsBySession = new Map<number, MessageSearchHitRow[]>();
+    for (const hit of rawHits) {
+      const listHits = hitsBySession.get(hit.sessionId) ?? [];
+      listHits.push(hit);
+      hitsBySession.set(hit.sessionId, listHits);
+    }
+    const rootIdBySession = await this.resolveSearchRoots(ordered);
+    const agentMap = await this.batchLoadAgents(ordered);
+    const aggById = new Map(aggs.map((row) => [row.sessionId, row]));
+    const items: MessageSearchGroup[] = [];
+    for (const session of ordered) {
+      if (session.sessionType === 'SIDE_TASK' && !rootIdBySession.has(session.id!)) continue;
+      const raw = hitsBySession.get(session.id!) ?? [];
+      const hits: MessageSearchHit[] = [];
+      for (const hit of raw) {
+        const text = this.extractVisibleText(hit.content ?? null);
+        const snippet = buildSnippet(text, keyword, prepared.snippetTerms);
+        if (snippet == null) continue;
+        hits.push({
+          messageId: hit.messageId,
+          role: hit.role,
+          snippet,
+          createdAt: javaLocalDateTimeString(hit.createdAt),
+        });
+      }
+      if (hits.length === 0) continue;
+      const sqlCount = aggById.get(session.id!)?.hitCount ?? hits.length;
+      const hitCount = hits.length < raw.length ? hits.length : Math.max(sqlCount, hits.length);
+      const agent = session.agentId != null ? agentMap.get(session.agentId) : undefined;
       items.push({
-        id: s.id!,
-        title: s.title,
-        sessionType: s.sessionType,
-        parentSessionId: s.parentSessionId,
-        rootSessionId: s.sessionType === 'SIDE_TASK' ? rootIdBySession.get(s.id!) ?? null : s.id ?? null,
-        updatedAt: javaLocalDateTimeString(s.updatedAt),
-        phase: s.phase != null ? s.phase : 'IDLE',
-        status: s.status ?? 'ACTIVE',
+        sessionId: session.id!,
+        title: session.title,
+        sessionType: session.sessionType,
+        parentSessionId: session.parentSessionId,
+        rootSessionId: session.sessionType === 'SIDE_TASK' ? rootIdBySession.get(session.id!) ?? null : session.id ?? null,
+        updatedAt: javaLocalDateTimeString(session.updatedAt),
+        phase: session.phase != null ? session.phase : 'IDLE',
+        status: session.status ?? 'ACTIVE',
+        agentId: session.agentId ?? null,
         agentName: agent?.name ?? null,
-        snippet,
+        hitCount,
+        hits,
       });
     }
-    return items;
+    return { items, total, page: list.page, size: list.size, path: prepared.path };
   }
 
   /**
    * 批量解析搜索候选中边路会话所属的根主会话 id。
-   * 候选至多 20 条：先把全部父会话一次性查出建映射，再逐链上溯；
+   * 先把全部父会话一次性查出建映射，再逐链上溯；
    * 链上任何节点缺失（已删除）即视为孤儿，不为其产出根 id。
    */
   private async resolveSearchRoots(candidates: Session[]): Promise<Map<number, number>> {
@@ -971,12 +1067,19 @@ export class SessionService {
     const hasMore = userStarts.length > limit;
     const pageStarts = hasMore ? userStarts.slice(0, limit) : userStarts;
     const startId = pageStarts[pageStarts.length - 1].id!;
-    // 翻页时上界是「下一页起点之前」，与 /messages 的 beforeId 语义一致；带切点时仍不得越过切点
-    const upperBound = Math.min(beforeMessageId ?? Number.MAX_SAFE_INTEGER, cutMessageId ?? Number.MAX_SAFE_INTEGER);
-    const raw = upperBound >= Number.MAX_SAFE_INTEGER
-      ? await this.messageRepo.selectRange(sessionId, startId, null)
-      : await this.messageRepo.selectRangeThrough(sessionId, startId, upperBound);
-    const messages = (MessageHistoryNormalizer.normalizeEntities(raw, parseToolCallsJson) ?? raw) as Message[];
+    // 翻页游标是上一页最旧一条的 id，上界必须排他，否则这条会再返回一次。
+    // 切点仍含边界：它是被点击那一轮的助手最终回复，预览要带上它。游标不小于切点时以上界为切点。
+    const pagingExclusive = beforeMessageId != null && (cutMessageId == null || beforeMessageId <= cutMessageId);
+    const raw = pagingExclusive
+      ? await this.messageRepo.selectRange(sessionId, startId, beforeMessageId)
+      : cutMessageId != null
+        ? await this.messageRepo.selectRangeThrough(sessionId, startId, cutMessageId)
+        : await this.messageRepo.selectRange(sessionId, startId, null);
+    const supplemented = await this.includeMissingToolResults(sessionId, raw, {
+      maxMessageId: cutMessageId,
+      excludeSourceSessionId: null,
+    });
+    const messages = (MessageHistoryNormalizer.normalizeEntities(supplemented, parseToolCallsJson) ?? supplemented) as Message[];
     const nextBeforeMessageId = messages.length === 0 ? null : messages[0].id ?? null;
     return { messages, hasMore, nextBeforeMessageId };
   }
@@ -985,8 +1088,11 @@ export class SessionService {
     sessionId: number,
     roundLimit: number,
     beforeMessageId: number | null,
-    options?: { maxMessageId?: number | null; excludeSourceSessionId?: number | null },
+    options?: { maxMessageId?: number | null; excludeSourceSessionId?: number | null; aroundMessageId?: number | null },
   ): Promise<MessagePage> {
+    if (options?.aroundMessageId != null) {
+      return this.loadMessagesAround(sessionId, roundLimit, options.aroundMessageId, options);
+    }
     const limit = Math.max(1, Math.min(roundLimit, 50));
     const maxMessageId = options?.maxMessageId ?? null;
     const excludeSourceSessionId = options?.excludeSourceSessionId ?? null;
@@ -1014,9 +1120,88 @@ export class SessionService {
         ? await this.messageRepo.selectRange(sessionId, startId, beforeId)
         : await this.messageRepo.selectRange(sessionId, startId, beforeId, maxMessageId))
       : await this.messageRepo.selectRange(sessionId, startId, beforeId, maxMessageId, excludeSourceSessionId);
-    const messages = (MessageHistoryNormalizer.normalizeEntities(raw, parseToolCallsJson) ?? raw) as Message[];
+    const supplemented = await this.includeMissingToolResults(sessionId, raw, {
+      maxMessageId,
+      excludeSourceSessionId,
+    });
+    const messages = (MessageHistoryNormalizer.normalizeEntities(supplemented, parseToolCallsJson) ?? supplemented) as Message[];
     const nextBeforeMessageId = messages.length === 0 ? null : messages[0].id ?? null;
     return { messages, hasMore, nextBeforeMessageId };
+  }
+
+  /**
+   * 本页助手声明了工具、但 TOOL 行不在本页 id 区间（补写占位的 id 大于后续 USER）时补回来。
+   * 归一化会把它贴到助手后面；另一页里没有对应助手的 TOOL 仍会被丢掉，避免两页各出现一次。
+   */
+  private async includeMissingToolResults(
+    sessionId: number,
+    raw: Message[],
+    options: { maxMessageId?: number | null; excludeSourceSessionId?: number | null },
+  ): Promise<Message[]> {
+    const present = new Set<string>();
+    for (const message of raw) {
+      if (message.role === 'TOOL' && message.toolCallId) present.add(message.toolCallId);
+    }
+    const missing: string[] = [];
+    for (const message of raw) {
+      if (message.role !== 'ASSISTANT' || message.toolCalls == null || message.toolCalls.length === 0) continue;
+      for (const id of extractToolCallIds(message.toolCalls)) {
+        if (!present.has(id) && !missing.includes(id)) missing.push(id);
+      }
+    }
+    if (missing.length === 0) return raw;
+    const extra = await this.messageRepo.selectToolMessagesByCallIds(
+      sessionId, missing, options.maxMessageId ?? null, options.excludeSourceSessionId ?? null,
+    );
+    if (extra.length === 0) return raw;
+    const seen = new Set(raw.map((message) => message.id));
+    const merged = raw.slice();
+    for (const row of extra) {
+      if (row.id != null && seen.has(row.id)) continue;
+      merged.push(row);
+    }
+    return merged;
+  }
+
+  private async loadMessagesAround(
+    sessionId: number,
+    roundLimit: number,
+    aroundMessageId: number,
+    options?: { maxMessageId?: number | null; excludeSourceSessionId?: number | null },
+  ): Promise<MessagePage> {
+    const hit = await this.messageRepo.findById(aroundMessageId);
+    if (hit == null || hit.sessionId !== sessionId) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID);
+    }
+    const roundStart = await this.messageRepo.selectRoundStartForMessage(sessionId, aroundMessageId);
+    if (roundStart == null) {
+      const nextUserId = await this.messageRepo.selectNextUserMessageId(sessionId, aroundMessageId);
+      const maxMessageId = options?.maxMessageId ?? null;
+      const excludeSourceSessionId = options?.excludeSourceSessionId ?? null;
+      const raw = excludeSourceSessionId == null
+        ? (maxMessageId == null
+          ? await this.messageRepo.selectRange(sessionId, aroundMessageId, nextUserId)
+          : await this.messageRepo.selectRange(sessionId, aroundMessageId, nextUserId, maxMessageId))
+        : await this.messageRepo.selectRange(sessionId, aroundMessageId, nextUserId, maxMessageId, excludeSourceSessionId);
+      const supplemented = await this.includeMissingToolResults(sessionId, raw, {
+        maxMessageId,
+        excludeSourceSessionId,
+      });
+      const messages = (MessageHistoryNormalizer.normalizeEntities(supplemented, parseToolCallsJson) ?? supplemented) as Message[];
+      const earlier = await this.messageRepo.hasMessageBefore(sessionId, aroundMessageId);
+      return {
+        messages,
+        hasMore: earlier,
+        nextBeforeMessageId: messages.length === 0 ? aroundMessageId : messages[0].id ?? aroundMessageId,
+        hasNewer: nextUserId != null,
+      };
+    }
+    const nextUserId = await this.messageRepo.selectNextUserMessageId(sessionId, roundStart);
+    const page = await this.getMessagesByRounds(sessionId, roundLimit, nextUserId, {
+      maxMessageId: options?.maxMessageId,
+      excludeSourceSessionId: options?.excludeSourceSessionId,
+    });
+    return { ...page, hasNewer: nextUserId != null };
   }
 
   async getFileChangesBySession(sessionId: number): Promise<Map<number, FileChange[]>> {
@@ -1102,7 +1287,9 @@ export class SessionService {
       throw new BusinessException(ErrorCode.MESSAGE_ALREADY_COMPACTED);
     }
     message.content = buildEditContent(newContent, images);
-    message.updatedAt = nowSql();
+    // 毫秒精度：updated_at 是「编辑前」段的切点，与 created_at 同为 DATETIME(3)。
+    // 秒级下编辑与随后的重发常落在同一秒，切点会把重发的调用误划进「编辑前」。
+    message.updatedAt = nowSqlMs();
     await this.messageRepo.updateById(message);
     await this.messageRepo.logicalDeleteAfter(message.sessionId, messageId);
     console.info(`Edited message ${messageId} in session ${message.sessionId}, truncated subsequent messages`);
@@ -1151,7 +1338,9 @@ export class SessionService {
     // 空响应耗尽、首轮失败时助手消息未落库，最后一条正是 USER，终态刷新不能写它，
     // 否则运行轨迹读模型会把这类 run 误判成编辑重发，伪造「编辑前」段。
     if (last != null && last.role !== 'USER') {
-      last.updatedAt = nowSql();
+      // 毫秒精度：与 message.created_at 同为 DATETIME(3)。秒级下「执行结束刷
+      // updated_at」会与 created_at 同秒，让 RunTraceService 误判成编辑重发。
+      last.updatedAt = nowSqlMs();
       await this.messageRepo.updateById(last);
     }
   }
@@ -1298,29 +1487,6 @@ export class SessionService {
     }
     return null;
   }
-}
-
-export function buildSnippet(text: string | null, keyword: string | null): string | null {
-  if (text == null || keyword == null || keyword.length === 0) return null;
-  const idx = indexOfIgnoreCase(text, keyword);
-  if (idx < 0) return null;
-  const kwLen = keyword.length;
-  let ctx = SNIPPET_CONTEXT_CHARS;
-  if (kwLen + ctx * 2 > SNIPPET_MAX_LENGTH) {
-    ctx = Math.max(0, Math.floor((SNIPPET_MAX_LENGTH - kwLen) / 2));
-  }
-  const start = Math.max(0, idx - ctx);
-  const end = Math.min(text.length, idx + kwLen + ctx);
-  const body = text.slice(start, end);
-  return (start > 0 ? '…' : '') + body + (end < text.length ? '…' : '');
-}
-
-export function indexOfIgnoreCase(text: string, keyword: string): number {
-  return text.toLowerCase().indexOf(keyword.toLowerCase());
-}
-
-function escapeLike(keyword: string): string {
-  return keyword.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
 }
 
 function groupFileChanges(changes: FileChange[]): Map<number, FileChange[]> {
