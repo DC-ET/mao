@@ -95,6 +95,13 @@ function makeService(fixture: Fixture) {
         .map((m) => ({ id: m.id, createdAt: m.createdAt ?? null, updatedAt: m.updatedAt ?? null }))
         .sort((a, b) => a.id - b.id),
     ),
+    // 全会话助手消息声明的 tool_call_id（迟到活动跨页归属判定用）
+    selectAssistantToolCalls: vi.fn(async () =>
+      fixture.messages
+        .filter((m) => m.role === 'ASSISTANT' && m.toolCalls != null)
+        .map((m) => ({ id: m.id, toolCalls: m.toolCalls }))
+        .sort((a, b) => a.id - b.id),
+    ),
   } as unknown as MessageRepository;
   const llmCallRepo = {
     selectBySessionWindow: vi.fn(async (_sid: number, startAt: string | null, endAt: string | null) => {
@@ -111,7 +118,6 @@ function makeService(fixture: Fixture) {
   } as unknown as SessionCompactionEventRepository;
   return new RunTraceService(messageRepo, llmCallRepo, activityRepo, compactionEventRepo);
 }
-
 const QUERY = { beforeRunId: null, limit: 5, slowMs: 60_000, expensiveTokens: 50_000 };
 
 describe('RunTraceService', () => {
@@ -178,6 +184,41 @@ describe('RunTraceService', () => {
     const second = page.runs[0];
     expect(second.segments[0].rounds[0].tools.map((t) => t.toolCallId)).toEqual(['tc2']);
     expect(second.segments[0].unplacedTools).toHaveLength(0);
+  });
+
+  it('keeps a late-inserted activity out of the page whose time window it lands in', async () => {
+    // tc1 归属的 run 在第二页，但活动异步晚插入，created_at 落进第一页新 run 的时间窗。
+    // 归属以 tool_call_id 对准的消息为准：第一页不按时间窗改挂（否则同一行活动两页各出现
+    // 一次、toolSuccess/toolError 跨页重复计数），第二页才按消息正确归属。
+    const service = makeService({
+      messages: [
+        user(1, '2026-10-09 10:00:00', '第一轮'),
+        assistant(2, '2026-10-09 10:00:05', [{ id: 'tc1', name: 'shell', args: '{"command":"ls"}' }]),
+        toolMessage(3, '2026-10-09 10:00:06', 'tc1', '{"ok":true}'),
+        user(5, '2026-10-09 10:05:00', '第二轮'),
+        assistant(6, '2026-10-09 10:05:05', []),
+      ],
+      calls: [
+        call(1, { createdAt: '2026-10-09 10:00:04' }),
+        call(2, { id: 2, createdAt: '2026-10-09 10:05:06' }),
+      ],
+      activities: [
+        activity(1, { detailJson: JSON.stringify({ toolCallId: 'tc1' }), createdAt: '2026-10-09 10:05:07' }),
+      ],
+      events: [],
+    });
+    const page1 = await service.buildTrace(1, { ...QUERY, limit: 1 });
+    expect(page1.runs.map((r) => r.runId)).toEqual([5]);
+    // 第一页的 run 不出现 tc1，也不把它计入成败
+    expect(page1.runs[0].segments.flatMap((s) => s.rounds.flatMap((r) => r.tools))).toHaveLength(0);
+    expect(page1.runs[0].segments.flatMap((s) => s.unplacedTools)).toHaveLength(0);
+    expect(page1.runs[0].totals.toolSuccess + page1.runs[0].totals.toolError).toBe(0);
+
+    // 翻到归属页：按消息归到第一轮
+    const page2 = await service.buildTrace(1, { ...QUERY, limit: 1, beforeRunId: 5 });
+    expect(page2.runs.map((r) => r.runId)).toEqual([1]);
+    expect(page2.runs[0].segments[0].rounds[0].tools.map((t) => t.toolCallId)).toEqual(['tc1']);
+    expect(page2.runs[0].totals.toolSuccess).toBe(1);
   });
 
   it('leaves tool groups in unplacedTools when same-second candidates are ambiguous', async () => {

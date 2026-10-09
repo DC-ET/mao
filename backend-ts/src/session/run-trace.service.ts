@@ -135,10 +135,12 @@ export class RunTraceService {
     });
 
     // 活动归属：有 tool_call_id 且对得上本页现存消息 → 按消息归（即使 created_at 落在窗外）；
-    // 否则按时间窗放进某个 run；再否则第一页且早于首条用户消息 → 未归属
+    // 对得上全会话消息但声明消息不在本页 → 归属另一个 run，本页不出现；
+    // 其余按时间窗放进某个 run；再否则第一页且早于首条用户消息 → 未归属
     const activityByCallId = new Map<string, SessionActivity>();
     const activitiesByRun: SessionActivity[][] = runInputs.map(() => []);
     const unattributedActivities: SessionActivity[] = [];
+    let sessionDeclaredCallIds: Set<string> | null = null;
     for (const activity of activities) {
       const toolCallId = parseDetailToolCallId(activity.detailJson);
       if (toolCallId != null) {
@@ -148,6 +150,11 @@ export class RunTraceService {
           activitiesByRun[decl.runIndex].push(activity);
           continue;
         }
+        // 迟到插入：created_at 已落进别的 run 时间窗，但 tool_call_id 对准的助手消息
+        // 属于另一个 run。按时间窗兜底会让它在本页和归属页各出现一次、成败重复计数，
+        // 因此本页直接不出现（翻到那一页时按消息正确归属）。
+        sessionDeclaredCallIds ??= await this.sessionDeclaredCallIds(sessionId);
+        if (sessionDeclaredCallIds.has(toolCallId)) continue;
       }
       const runIndex = findRunIndexByTime(runInputs, activity.createdAt ?? null);
       if (runIndex >= 0) {
@@ -171,6 +178,16 @@ export class RunTraceService {
       : null;
 
     return { runs, hasMore, unattributed };
+  }
+
+  /** 全会话现存助手消息声明的 tool_call_id：迟到活动据此判断归属 run 是否在本页（一次查询，惰性）。 */
+  private async sessionDeclaredCallIds(sessionId: number): Promise<Set<string>> {
+    const rows = await this.messageRepo.selectAssistantToolCalls(sessionId);
+    const ids = new Set<string>();
+    for (const row of rows) {
+      for (const call of parseToolCalls(row.toolCalls)) ids.add(call.id);
+    }
+    return ids;
   }
 
   private buildRun(
@@ -419,7 +436,8 @@ function collectSubagentLinks(messages: Message[], toolMessageByCallId: Map<stri
   return links;
 }
 
-function parseToolCalls(raw: string): DeclaredToolCall[] {
+function parseToolCalls(raw: string | null | undefined): DeclaredToolCall[] {
+  if (raw == null || raw.trim() === '') return [];
   try {
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];

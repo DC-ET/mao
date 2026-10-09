@@ -512,6 +512,19 @@ export class MessageRepository {
     );
   }
 
+  /**
+   * 全会话现存助手消息声明的工具调用（run 轨迹用）：工具活动是异步落库的，created_at
+   * 可能晚到下一条用户消息之后，落进下一个 run 的时间窗。归属要以 tool_call_id 对准的
+   * 消息为准，本页对不上时靠它判断该活动归属的 run 是否在本页，不能按时间窗改挂。
+   */
+  selectAssistantToolCalls(sessionId: number): Promise<Array<Pick<Message, 'id' | 'toolCalls'>>> {
+    return this.db.query<Pick<Message, 'id' | 'toolCalls'>>(
+      `SELECT id, tool_calls AS toolCalls FROM \`message\`
+       WHERE session_id = ? AND ${notDeleted()} AND role = 'ASSISTANT' AND tool_calls IS NOT NULL ORDER BY id ASC`,
+      [sessionId],
+    );
+  }
+
   selectRange(
     sessionId: number,
     startId: number,
