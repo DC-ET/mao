@@ -21,6 +21,11 @@ import type {
  * 归属口径（D3）：有 tool_call_id 就按消息归；没有则按时间窗放进某个 run 的「未挂到轮」，
  * 或第一页的会话级「未归属」，不对秒级 created_at 猜轮。墙钟按「结束时刻 − duration」
  * 估算起点（D5）；慢 / 贵阈值由路由钳制后传入，服务端只比较。
+ *
+ * 秒级时钟下的挂轮放宽：llm_call.created_at 是调用结束时刻、message.created_at 是消息
+ * 落库时刻，同为秒级 DATETIME。流收尾与 afterStream 落库在同一程序块先后执行，几乎总
+ * 落在同一秒，因此候选判定用「不晚于」（<=）而非「严格早于」。同秒仍有多条未占用候选
+ * （空响应重试）时不猜，留 unplacedTools。
  */
 export interface RunTraceQuery {
   /** 翻页锚点：只取 id 小于它的 run；null = 第一页（最新） */
@@ -235,13 +240,18 @@ export class RunTraceService {
         if (activity?.id != null) groupedActivityIds.add(activity.id);
         tools.push(toToolVO(call, toolMessageByCallId.get(call.id), activity));
       }
-      // 挂轮：当前段内 created_at 严格早于该助手消息、且尚未被占用的最后一条 agent 调用。
+      // 挂轮：当前段内 created_at 不晚于该助手消息、且尚未被占用的最后一条 agent 调用。
       // 候选池限定当前段——对得上现存消息的工具永远归当前段（编辑前的助手消息已被截断）。
+      //
+      // 为何允许同秒（<=）：llm_call.created_at 是调用结束时刻、message.created_at 是
+      // 消息落库时刻。流式响应收尾与 afterStream 的落库在同一个程序块里先后执行，几乎
+      // 总落在同一秒。V142 已把这两列提升为 DATETIME(3)，毫秒正常可区分先后；但历史行
+      // 仍是秒级（MySQL 补 .000），「同秒也认」作为兼容存量行的兜底保留，不能删。
       const candidates = currentRoundEntries.filter((entry) =>
-        entry.call.id != null && !claimedCallIds.has(entry.call.id) && isBefore(entry.call.createdAt, message.createdAt),
+        entry.call.id != null && !claimedCallIds.has(entry.call.id) && notAfter(entry.call.createdAt, message.createdAt),
       );
       const last = candidates.length > 0 ? candidates[candidates.length - 1] : null;
-      // 同一秒里有多条未占用候选 → 无法判定先后，不猜
+      // 时间戳完全相同（历史秒级行的同秒，或时钟回拨）→ 无法判定先后，不猜
       const ambiguous = last != null && candidates.some((entry) => entry !== last && eqTs(entry.call.createdAt, last.call.createdAt));
       if (last == null || ambiguous) {
         currentUnplaced.push(...tools);
@@ -610,6 +620,12 @@ function findRunIndexByTime(runInputs: RunInput[], createdAt: string | null): nu
 function isBefore(a: string | null | undefined, b: string | null | undefined): boolean {
   if (a == null || b == null) return false;
   return a < b;
+}
+
+/** 同秒也认：工具组挂轮的候选判定用。任一侧缺失（时钟不可比）时保守返回 false。 */
+function notAfter(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (a == null || b == null) return false;
+  return a <= b;
 }
 
 function isAfter(a: string | null | undefined, b: string | null | undefined): boolean {

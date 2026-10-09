@@ -2,7 +2,7 @@ import { mkdirSync, existsSync, rmSync, readdirSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
-import { javaLocalDateTimeString, nowSql } from '../common/datetime.js';
+import { javaLocalDateTimeString, nowSql, nowSqlMs } from '../common/datetime.js';
 import { collectEntityIds, parseEntityId } from '../common/request.js';
 import type { EnvironmentInfoProvider } from '../harness/core/environment-info.js';
 import { MessageHistoryNormalizer, MISSING_TOOL_RESULT_PLACEHOLDER } from '../harness/core/message-history-normalizer.js';
@@ -1102,7 +1102,9 @@ export class SessionService {
       throw new BusinessException(ErrorCode.MESSAGE_ALREADY_COMPACTED);
     }
     message.content = buildEditContent(newContent, images);
-    message.updatedAt = nowSql();
+    // 毫秒精度：updated_at 是「编辑前」段的切点，与 created_at 同为 DATETIME(3)。
+    // 秒级下编辑与随后的重发常落在同一秒，切点会把重发的调用误划进「编辑前」。
+    message.updatedAt = nowSqlMs();
     await this.messageRepo.updateById(message);
     await this.messageRepo.logicalDeleteAfter(message.sessionId, messageId);
     console.info(`Edited message ${messageId} in session ${message.sessionId}, truncated subsequent messages`);
@@ -1151,7 +1153,9 @@ export class SessionService {
     // 空响应耗尽、首轮失败时助手消息未落库，最后一条正是 USER，终态刷新不能写它，
     // 否则运行轨迹读模型会把这类 run 误判成编辑重发，伪造「编辑前」段。
     if (last != null && last.role !== 'USER') {
-      last.updatedAt = nowSql();
+      // 毫秒精度：与 message.created_at 同为 DATETIME(3)。秒级下「执行结束刷
+      // updated_at」会与 created_at 同秒，让 RunTraceService 误判成编辑重发。
+      last.updatedAt = nowSqlMs();
       await this.messageRepo.updateById(last);
     }
   }
