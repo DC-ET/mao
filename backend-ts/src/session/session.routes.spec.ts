@@ -52,7 +52,7 @@ describe('session and admin routes', () => {
       listSessionsByGroup: vi.fn(),
       listSessionsByFilter: vi.fn(async () => ({ items: [session({ source: 'embed' })], total: 1, offset: 0, limit: 20, hasMore: false })),
       markSessionSource: vi.fn(async () => session({ source: 'embed' })),
-      searchSessionsByUserMessage: vi.fn(async () => []),
+      searchMessages: vi.fn(async () => ({ items: [], total: 0, page: 1, size: 20, path: 'LIKE' })),
       listSessionsForDashboard: vi.fn(async () => ({ running: [], recent: [] })),
       listSideTaskSessions: vi.fn(async () => []),
       listDescendantSideTaskSessions: vi.fn(async () => []),

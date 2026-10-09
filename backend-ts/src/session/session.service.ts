@@ -3,6 +3,23 @@ import { resolve } from 'node:path';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { javaLocalDateTimeString, nowSql, nowSqlMs } from '../common/datetime.js';
+import { loadConfig } from '../config/app-config.js';
+import {
+  SEARCH_KEYWORD_MAX_LENGTH,
+  SEARCH_OFFSET_CAP,
+  buildSnippet,
+  escapeLike,
+  indexOfIgnoreCase,
+  isFulltextDegradeError,
+  isSearchFulltextEnabled,
+  normalizeSearchListParams,
+  prepareMessageSearch,
+  type PreparedSearch,
+  type SearchListParams,
+} from './message-search.js';
+import type { MessageSearchHitRow, MessageSearchSqlFilter } from './session.repository.js';
+
+export { buildSnippet, indexOfIgnoreCase };
 import { collectEntityIds, parseEntityId } from '../common/request.js';
 import type { EnvironmentInfoProvider } from '../harness/core/environment-info.js';
 import { MessageHistoryNormalizer, MISSING_TOOL_RESULT_PLACEHOLDER } from '../harness/core/message-history-normalizer.js';
@@ -22,7 +39,9 @@ import type {
   FileChange,
   Message,
   MessagePage,
-  MessageSearchItem,
+  MessageSearchGroup,
+  MessageSearchHit,
+  MessageSearchResult,
   Session,
   SessionGroupBucket,
   SessionGroupPage,
@@ -35,9 +54,6 @@ import { toStoredContentJson } from './session-vo.js';
 import { WEIXIN_PROJECT_KEY } from '../domain/types.js';
 
 const SEARCH_RESULT_LIMIT = 20;
-const SEARCH_KEYWORD_MAX_LENGTH = 100;
-const SNIPPET_CONTEXT_CHARS = 25;
-const SNIPPET_MAX_LENGTH = 80;
 /** 写入会话工作区的 runtime 临时目录/文件前缀，会话删除时一并清理。 */
 const RUNTIME_WORKSPACE_PREFIX = 'mao-runtime-';
 
@@ -688,7 +704,18 @@ export class SessionService {
     });
   }
 
-  async searchSessionsByUserMessage(userId: number, keyword: string | null | undefined): Promise<MessageSearchItem[]> {
+  async searchMessages(
+    userId: number,
+    keyword: string | null | undefined,
+    raw: {
+      agentId?: number | null;
+      dateFrom?: string | null;
+      dateTo?: string | null;
+      sessionType?: string | null;
+      page?: number | null;
+      size?: number | null;
+    } = {},
+  ): Promise<MessageSearchResult> {
     if (keyword == null || keyword.trim().length === 0) {
       throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少搜索关键词');
     }
@@ -696,55 +723,124 @@ export class SessionService {
     if (trimmed.length > SEARCH_KEYWORD_MAX_LENGTH) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, `搜索关键词不能超过 ${SEARCH_KEYWORD_MAX_LENGTH} 个字符`);
     }
-    const escaped = escapeLike(trimmed);
-    const candidates = await this.sessionRepo.selectMessageSearchCandidates(userId, escaped);
-    if (candidates.length === 0) {
-      return [];
+    const list = normalizeSearchListParams(raw);
+    if ((list.page - 1) * list.size > SEARCH_OFFSET_CAP) {
+      const prepared = this.prepareSearch(trimmed);
+      return { items: [], total: 0, page: list.page, size: list.size, path: prepared.path };
     }
-    const sessionIds = candidates.map((s) => s.id!);
-    const hitMessages = await this.messageRepo.selectMessagesForSearch(sessionIds, escaped);
-    const messagesBySession = new Map<number, Message[]>();
-    for (const m of hitMessages) {
-      if (m.content == null) continue;
-      const list = messagesBySession.get(m.sessionId) ?? [];
-      list.push(m);
-      messagesBySession.set(m.sessionId, list);
-    }
-    const agentMap = await this.batchLoadAgents(candidates);
-    // 边路会话结果需解析根主会话（前端以根会话为缓存键与跳转目标）；
-    // 根不可达（父链上有已删除节点）的孤儿剔除——无法在树上打开。
-    const rootIdBySession = await this.resolveSearchRoots(candidates);
-    const items: MessageSearchItem[] = [];
-    for (const s of candidates) {
-      let snippet: string | null = null;
-      for (const m of messagesBySession.get(s.id!) ?? []) {
-        const text = this.extractVisibleText(m.content ?? null);
-        if (text == null || text.length === 0) continue;
-        snippet = buildSnippet(text, trimmed);
-        if (snippet != null) break;
+    const enabled = this.searchFulltextEnabled();
+    let prepared = prepareMessageSearch(trimmed, enabled);
+    if (prepared.path === 'FULLTEXT') {
+      try {
+        return await this.executeMessageSearch(userId, trimmed, prepared, list);
+      } catch (err) {
+        if (!isFulltextDegradeError(err)) throw err;
+        console.warn(`Fulltext search degraded to LIKE: ${(err as Error).message}`);
+        prepared = prepareMessageSearch(trimmed, false);
       }
-      if (snippet == null) continue;
-      if (s.sessionType === 'SIDE_TASK' && !rootIdBySession.has(s.id!)) continue;
-      const agent = s.agentId != null ? agentMap.get(s.agentId) : undefined;
+    }
+    return this.executeMessageSearch(userId, trimmed, prepared, list);
+  }
+
+  private searchFulltextEnabled(): boolean {
+    if (process.env.SEARCH_FULLTEXT_ENABLED != null && process.env.SEARCH_FULLTEXT_ENABLED !== '') {
+      return isSearchFulltextEnabled();
+    }
+    return loadConfig().app.search?.fulltextEnabled !== false;
+  }
+
+  private prepareSearch(keyword: string): PreparedSearch {
+    return prepareMessageSearch(keyword, this.searchFulltextEnabled());
+  }
+
+  private async executeMessageSearch(
+    userId: number,
+    keyword: string,
+    prepared: PreparedSearch,
+    list: SearchListParams,
+  ): Promise<MessageSearchResult> {
+    const filter: MessageSearchSqlFilter = {
+      mode: prepared.path,
+      userId,
+      match: prepared.match,
+      agentId: list.agentId,
+      createdFrom: list.createdFrom,
+      createdToExclusive: list.createdToExclusive,
+      sessionType: list.sessionType,
+      limit: list.size,
+      offset: (list.page - 1) * list.size,
+    };
+    const [aggs, total] = await Promise.all([
+      this.sessionRepo.selectMatchingSessions(filter),
+      this.sessionRepo.countMatchingSessions(filter),
+    ]);
+    const empty: MessageSearchResult = { items: [], total, page: list.page, size: list.size, path: prepared.path };
+    if (aggs.length === 0) return empty;
+    const ids = aggs.map((row) => row.sessionId);
+    const loaded = await this.sessionRepo.selectByIds(ids);
+    const byId = new Map(loaded.filter((s) => s.id != null).map((s) => [s.id!, s]));
+    const ordered: Session[] = [];
+    for (const id of ids) {
+      const session = byId.get(id);
+      if (session != null) ordered.push(session);
+    }
+    const rawHits = await this.messageRepo.selectHitMessages(
+      ids,
+      prepared.path,
+      prepared.match,
+      list.createdFrom,
+      list.createdToExclusive,
+    );
+    const hitsBySession = new Map<number, MessageSearchHitRow[]>();
+    for (const hit of rawHits) {
+      const listHits = hitsBySession.get(hit.sessionId) ?? [];
+      listHits.push(hit);
+      hitsBySession.set(hit.sessionId, listHits);
+    }
+    const rootIdBySession = await this.resolveSearchRoots(ordered);
+    const agentMap = await this.batchLoadAgents(ordered);
+    const aggById = new Map(aggs.map((row) => [row.sessionId, row]));
+    const items: MessageSearchGroup[] = [];
+    for (const session of ordered) {
+      if (session.sessionType === 'SIDE_TASK' && !rootIdBySession.has(session.id!)) continue;
+      const raw = hitsBySession.get(session.id!) ?? [];
+      const hits: MessageSearchHit[] = [];
+      for (const hit of raw) {
+        const text = this.extractVisibleText(hit.content ?? null);
+        const snippet = buildSnippet(text, keyword, prepared.snippetTerms);
+        if (snippet == null) continue;
+        hits.push({
+          messageId: hit.messageId,
+          role: hit.role,
+          snippet,
+          createdAt: javaLocalDateTimeString(hit.createdAt),
+        });
+      }
+      if (hits.length === 0) continue;
+      const sqlCount = aggById.get(session.id!)?.hitCount ?? hits.length;
+      const hitCount = hits.length < raw.length ? hits.length : Math.max(sqlCount, hits.length);
+      const agent = session.agentId != null ? agentMap.get(session.agentId) : undefined;
       items.push({
-        id: s.id!,
-        title: s.title,
-        sessionType: s.sessionType,
-        parentSessionId: s.parentSessionId,
-        rootSessionId: s.sessionType === 'SIDE_TASK' ? rootIdBySession.get(s.id!) ?? null : s.id ?? null,
-        updatedAt: javaLocalDateTimeString(s.updatedAt),
-        phase: s.phase != null ? s.phase : 'IDLE',
-        status: s.status ?? 'ACTIVE',
+        sessionId: session.id!,
+        title: session.title,
+        sessionType: session.sessionType,
+        parentSessionId: session.parentSessionId,
+        rootSessionId: session.sessionType === 'SIDE_TASK' ? rootIdBySession.get(session.id!) ?? null : session.id ?? null,
+        updatedAt: javaLocalDateTimeString(session.updatedAt),
+        phase: session.phase != null ? session.phase : 'IDLE',
+        status: session.status ?? 'ACTIVE',
+        agentId: session.agentId ?? null,
         agentName: agent?.name ?? null,
-        snippet,
+        hitCount,
+        hits,
       });
     }
-    return items;
+    return { items, total, page: list.page, size: list.size, path: prepared.path };
   }
 
   /**
    * 批量解析搜索候选中边路会话所属的根主会话 id。
-   * 候选至多 20 条：先把全部父会话一次性查出建映射，再逐链上溯；
+   * 先把全部父会话一次性查出建映射，再逐链上溯；
    * 链上任何节点缺失（已删除）即视为孤儿，不为其产出根 id。
    */
   private async resolveSearchRoots(candidates: Session[]): Promise<Map<number, number>> {
@@ -985,8 +1081,11 @@ export class SessionService {
     sessionId: number,
     roundLimit: number,
     beforeMessageId: number | null,
-    options?: { maxMessageId?: number | null; excludeSourceSessionId?: number | null },
+    options?: { maxMessageId?: number | null; excludeSourceSessionId?: number | null; aroundMessageId?: number | null },
   ): Promise<MessagePage> {
+    if (options?.aroundMessageId != null) {
+      return this.loadMessagesAround(sessionId, roundLimit, options.aroundMessageId, options);
+    }
     const limit = Math.max(1, Math.min(roundLimit, 50));
     const maxMessageId = options?.maxMessageId ?? null;
     const excludeSourceSessionId = options?.excludeSourceSessionId ?? null;
@@ -1017,6 +1116,43 @@ export class SessionService {
     const messages = (MessageHistoryNormalizer.normalizeEntities(raw, parseToolCallsJson) ?? raw) as Message[];
     const nextBeforeMessageId = messages.length === 0 ? null : messages[0].id ?? null;
     return { messages, hasMore, nextBeforeMessageId };
+  }
+
+  private async loadMessagesAround(
+    sessionId: number,
+    roundLimit: number,
+    aroundMessageId: number,
+    options?: { maxMessageId?: number | null; excludeSourceSessionId?: number | null },
+  ): Promise<MessagePage> {
+    const hit = await this.messageRepo.findById(aroundMessageId);
+    if (hit == null || hit.sessionId !== sessionId) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID);
+    }
+    const roundStart = await this.messageRepo.selectRoundStartForMessage(sessionId, aroundMessageId);
+    if (roundStart == null) {
+      const nextUserId = await this.messageRepo.selectNextUserMessageId(sessionId, aroundMessageId);
+      const maxMessageId = options?.maxMessageId ?? null;
+      const excludeSourceSessionId = options?.excludeSourceSessionId ?? null;
+      const raw = excludeSourceSessionId == null
+        ? (maxMessageId == null
+          ? await this.messageRepo.selectRange(sessionId, aroundMessageId, nextUserId)
+          : await this.messageRepo.selectRange(sessionId, aroundMessageId, nextUserId, maxMessageId))
+        : await this.messageRepo.selectRange(sessionId, aroundMessageId, nextUserId, maxMessageId, excludeSourceSessionId);
+      const messages = (MessageHistoryNormalizer.normalizeEntities(raw, parseToolCallsJson) ?? raw) as Message[];
+      const earlier = await this.messageRepo.hasMessageBefore(sessionId, aroundMessageId);
+      return {
+        messages,
+        hasMore: earlier,
+        nextBeforeMessageId: messages.length === 0 ? aroundMessageId : messages[0].id ?? aroundMessageId,
+        hasNewer: nextUserId != null,
+      };
+    }
+    const nextUserId = await this.messageRepo.selectNextUserMessageId(sessionId, roundStart);
+    const page = await this.getMessagesByRounds(sessionId, roundLimit, nextUserId, {
+      maxMessageId: options?.maxMessageId,
+      excludeSourceSessionId: options?.excludeSourceSessionId,
+    });
+    return { ...page, hasNewer: nextUserId != null };
   }
 
   async getFileChangesBySession(sessionId: number): Promise<Map<number, FileChange[]>> {
@@ -1302,29 +1438,6 @@ export class SessionService {
     }
     return null;
   }
-}
-
-export function buildSnippet(text: string | null, keyword: string | null): string | null {
-  if (text == null || keyword == null || keyword.length === 0) return null;
-  const idx = indexOfIgnoreCase(text, keyword);
-  if (idx < 0) return null;
-  const kwLen = keyword.length;
-  let ctx = SNIPPET_CONTEXT_CHARS;
-  if (kwLen + ctx * 2 > SNIPPET_MAX_LENGTH) {
-    ctx = Math.max(0, Math.floor((SNIPPET_MAX_LENGTH - kwLen) / 2));
-  }
-  const start = Math.max(0, idx - ctx);
-  const end = Math.min(text.length, idx + kwLen + ctx);
-  const body = text.slice(start, end);
-  return (start > 0 ? '…' : '') + body + (end < text.length ? '…' : '');
-}
-
-export function indexOfIgnoreCase(text: string, keyword: string): number {
-  return text.toLowerCase().indexOf(keyword.toLowerCase());
-}
-
-function escapeLike(keyword: string): string {
-  return keyword.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
 }
 
 function groupFileChanges(changes: FileChange[]): Map<number, FileChange[]> {

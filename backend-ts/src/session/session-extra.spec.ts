@@ -24,6 +24,9 @@ function makeService() {
     listSideTasks: vi.fn(async () => []),
     lockActiveSessionById: vi.fn(async () => 11),
     selectMessageSearchCandidates: vi.fn(async () => []),
+    selectMatchingSessions: vi.fn(async () => [{ sessionId: 11, hitCount: 1, maxScore: 1 }]),
+    countMatchingSessions: vi.fn(async () => 1),
+    selectByIds: vi.fn(async () => [{ id: 11, title: 't', sessionType: 'NORMAL', agentId: 9, updatedAt: '2026-01-01 00:00:00' }]),
     markPhaseIfIn: vi.fn(async () => 1),
   };
   const messageRepo = {
@@ -44,6 +47,7 @@ function makeService() {
     selectUserStartsThrough: vi.fn(async () => []),
     selectRangeThrough: vi.fn(async () => []),
     selectMessagesForSearch: vi.fn(async () => []),
+    selectHitMessages: vi.fn(async () => [{ messageId: 1, sessionId: 11, role: 'USER', content: 'hello world keyword', createdAt: null, score: 1 }]),
     selectFirstMatchingMessages: vi.fn(async () => []),
     selectLastUserMessage: vi.fn(async () => null),
   };
@@ -235,12 +239,9 @@ describe('SessionService extra', () => {
     await service.listSessionsForAdmin(1, 10, 7, 9, 'CLOUD', 'RUNNING,IDLE', 'kw', 'ACTIVE');
     await service.listSessionsForAdmin(1, 10, null, null, null, 'IDLE', null, null);
 
-    sessionRepo.selectMessageSearchCandidates.mockResolvedValue([{ id: 11, title: 't', sessionType: 'NORMAL', agentId: 9, updatedAt: '2026-01-01 00:00:00' }]);
-    messageRepo.selectMessagesForSearch.mockResolvedValue([{ id: 1, sessionId: 11, content: 'hello world keyword' }]);
-    agentLookup.findByIds.mockResolvedValue([{ id: 9, name: 'A' }]);
-    const hits = await service.searchSessionsByUserMessage(7, 'keyword');
-    expect(hits[0].snippet).toBeTruthy();
-    await expect(service.searchSessionsByUserMessage(7, '')).rejects.toBeInstanceOf(BusinessException);
+    const hits = await service.searchMessages(7, 'keyword');
+    expect(hits.items[0].hits[0].snippet).toBeTruthy();
+    await expect(service.searchMessages(7, '')).rejects.toBeInstanceOf(BusinessException);
     expect(service.extractVisibleText(null)).toBeNull();
     expect(service.extractVisibleText('plain')).toBe('plain');
     expect(service.extractVisibleText(JSON.stringify([{ type: 'text', text: 'hi' }, { type: 'image_url' }]))).toBe('hi');

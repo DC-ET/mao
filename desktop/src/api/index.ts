@@ -4,7 +4,7 @@ import type { InboxItem, InboxKind, InboxListResult, InboxPreference, InboxSourc
 import { redirectToLogin } from '../utils/login-redirect'
 import { useAuthStore } from '../stores/auth'
 import { getRefreshToken, getToken, setTokens } from '../utils/auth-storage'
-import type { SessionSearchItem } from '../types/chat'
+import type { MessageSearchResult } from '../types/chat'
 
 /** 强制下线：动态引入 router（避免模块加载期创建路由，破坏 Node 环境单测）。 */
 async function forceRelogin(): Promise<void> {
@@ -298,14 +298,31 @@ export async function testMyMcpServer(id: number): Promise<McpToolItem[]> {
 
 // ─── 会话消息搜索 ───
 
-/** 按用户消息内容搜索会话（主会话 + 边路会话），最多返回 20 条。 */
-export async function searchSessions(keyword: string, options?: { signal?: AbortSignal }): Promise<SessionSearchItem[]> {
+export interface SessionSearchParams {
+  agentId?: number | null
+  dateFrom?: string | null
+  dateTo?: string | null
+  sessionType?: 'NORMAL' | 'SIDE_TASK' | null
+  page?: number
+  size?: number
+  signal?: AbortSignal
+}
+
+/** 按用户与助手消息搜索会话，结果按会话分组。 */
+export async function searchSessions(keyword: string, options?: SessionSearchParams): Promise<MessageSearchResult> {
+  const params: Record<string, unknown> = { keyword }
+  if (options?.agentId != null) params.agentId = options.agentId
+  if (options?.dateFrom) params.dateFrom = options.dateFrom
+  if (options?.dateTo) params.dateTo = options.dateTo
+  if (options?.sessionType) params.sessionType = options.sessionType
+  if (options?.page != null) params.page = options.page
+  if (options?.size != null) params.size = options.size
   const { data } = await api.get('/sessions/search', {
-    params: { keyword },
+    params,
     signal: options?.signal,
     skipErrorToast: true
   } as any)
-  return data?.items ?? []
+  return data ?? { items: [], total: 0, page: 1, size: 20, path: 'LIKE' }
 }
 
 // ─── 站内收件箱 ───

@@ -1,5 +1,5 @@
 import type { Db } from '../db/db.js';
-import { notDeleted } from '../db/db.js';
+import { fulltextStopwordTableName, notDeleted } from '../db/db.js';
 import { toSnakeRow } from '../common/case.js';
 import { nowSql } from '../common/datetime.js';
 import type { FileChange, Message, Session, SessionGroupPage } from './types.js';
@@ -9,6 +9,86 @@ export type SessionSource = (typeof SESSION_SOURCE_VALUES)[number];
 
 export const isSessionSource = (value: unknown): value is SessionSource =>
   typeof value === 'string' && (SESSION_SOURCE_VALUES as readonly string[]).includes(value);
+
+export interface MessageSearchSqlFilter {
+  mode: 'FULLTEXT' | 'LIKE';
+  userId: number;
+  match: string;
+  agentId: number | null;
+  createdFrom: string | null;
+  createdToExclusive: string | null;
+  sessionType: 'NORMAL' | 'SIDE_TASK' | null;
+  limit: number;
+  offset: number;
+}
+
+export interface MessageSearchSessionRow {
+  sessionId: number;
+  hitCount: number;
+  maxScore: number;
+}
+
+export interface MessageSearchHitRow {
+  sessionId: number;
+  messageId: number;
+  role: string;
+  content: string | null;
+  createdAt: string | null;
+  score: number;
+}
+
+function searchWhere(filter: MessageSearchSqlFilter): { where: string; params: unknown[] } {
+  const params: unknown[] = [];
+  const clauses = [
+    'm.deleted = 0',
+    `m.role IN ('USER', 'ASSISTANT')`,
+    's.user_id = ?',
+    's.deleted = 0',
+    `s.session_type IN ('NORMAL', 'SIDE_TASK')`,
+    `(s.session_type = 'NORMAL' OR EXISTS (
+      SELECT 1 FROM session p
+      WHERE p.id = s.parent_session_id AND p.user_id = s.user_id AND p.deleted = 0
+    ))`,
+  ];
+  params.push(filter.userId);
+  if (filter.mode === 'FULLTEXT') {
+    clauses.push('MATCH(m.content) AGAINST (? IN BOOLEAN MODE)');
+    params.push(filter.match);
+  } else {
+    clauses.push(`m.content LIKE CONCAT('%', ?, '%') ESCAPE '\\\\'`);
+    params.push(filter.match);
+  }
+  if (filter.agentId != null) {
+    clauses.push('s.agent_id = ?');
+    params.push(filter.agentId);
+  }
+  if (filter.createdFrom != null) {
+    clauses.push('m.created_at >= ?');
+    params.push(filter.createdFrom);
+  }
+  if (filter.createdToExclusive != null) {
+    clauses.push('m.created_at < ?');
+    params.push(filter.createdToExclusive);
+  }
+  if (filter.sessionType != null) {
+    clauses.push('s.session_type = ?');
+    params.push(filter.sessionType);
+  }
+  return { where: clauses.join(' AND '), params };
+}
+
+function runSearchQuery<T>(db: Db, mode: 'FULLTEXT' | 'LIKE', sql: string, params: unknown[]): Promise<T[]> {
+  const table = fulltextStopwordTableName();
+  if (mode === 'FULLTEXT' && table != null && typeof db.queryAfterSession === 'function') {
+    return db.queryAfterSession<T>('SET SESSION innodb_ft_user_stopword_table = ?', [table], sql, params);
+  }
+  return db.query<T>(sql, params);
+}
+
+function num(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
 
 export interface SessionListFilter {
   userId: number;
@@ -347,6 +427,60 @@ export class SessionRepository {
       [userId, escapedKeyword],
     );
   }
+
+  selectByIds(ids: number[]): Promise<Session[]> {
+    if (ids.length === 0) return Promise.resolve([]);
+    const placeholders = ids.map(() => '?').join(',');
+    return this.db.query<Session>(
+      `SELECT * FROM \`session\` WHERE id IN (${placeholders}) AND ${notDeleted()}`,
+      ids,
+    );
+  }
+
+  async selectMatchingSessions(filter: MessageSearchSqlFilter): Promise<MessageSearchSessionRow[]> {
+    const { where, params } = searchWhere(filter);
+    const scoreSql = filter.mode === 'FULLTEXT'
+      ? 'MAX(MATCH(m.content) AGAINST (? IN BOOLEAN MODE))'
+      : '0';
+    const scoreParams = filter.mode === 'FULLTEXT' ? [filter.match] : [];
+    const order = filter.mode === 'FULLTEXT'
+      ? 'ORDER BY maxScore DESC, MAX(s.updated_at) DESC, m.session_id DESC'
+      : 'ORDER BY MAX(s.updated_at) DESC, m.session_id DESC';
+    const rows = await runSearchQuery<MessageSearchSessionRow>(
+      this.db,
+      filter.mode,
+      `SELECT m.session_id AS sessionId, COUNT(*) AS hitCount, ${scoreSql} AS maxScore
+       FROM message m
+       JOIN session s ON s.id = m.session_id
+       WHERE ${where}
+       GROUP BY m.session_id
+       ${order}
+       LIMIT ? OFFSET ?`,
+      [...scoreParams, ...params, filter.limit, filter.offset],
+    );
+    return rows.map((row) => ({
+      sessionId: num(row.sessionId),
+      hitCount: num(row.hitCount),
+      maxScore: num(row.maxScore),
+    }));
+  }
+
+  async countMatchingSessions(filter: MessageSearchSqlFilter): Promise<number> {
+    const { where, params } = searchWhere(filter);
+    const rows = await runSearchQuery<{ cnt: number }>(
+      this.db,
+      filter.mode,
+      `SELECT COUNT(*) AS cnt FROM (
+         SELECT m.session_id
+         FROM message m
+         JOIN session s ON s.id = m.session_id
+         WHERE ${where}
+         GROUP BY m.session_id
+       ) t`,
+      params,
+    );
+    return num(rows[0]?.cnt);
+  }
 }
 
 export class MessageRepository {
@@ -650,6 +784,108 @@ export class MessageRepository {
       [...sessionIds, escapedKeyword],
     );
   }
+
+  async selectRoundStartForMessage(sessionId: number, messageId: number): Promise<number | null> {
+    const row = await this.db.queryOne<{ id: number | null }>(
+      `SELECT MAX(id) AS id FROM \`message\`
+       WHERE session_id = ? AND role = 'USER' AND ${notDeleted()} AND id <= ?`,
+      [sessionId, messageId],
+    );
+    return row?.id == null ? null : num(row.id);
+  }
+
+  async selectNextUserMessageId(sessionId: number, afterId: number): Promise<number | null> {
+    const row = await this.db.queryOne<{ id: number | null }>(
+      `SELECT MIN(id) AS id FROM \`message\`
+       WHERE session_id = ? AND role = 'USER' AND ${notDeleted()} AND id > ?`,
+      [sessionId, afterId],
+    );
+    return row?.id == null ? null : num(row.id);
+  }
+
+  async hasMessageBefore(sessionId: number, messageId: number): Promise<boolean> {
+    const row = await this.db.queryOne<{ id: number }>(
+      `SELECT id FROM \`message\` WHERE session_id = ? AND ${notDeleted()} AND id < ? LIMIT 1`,
+      [sessionId, messageId],
+    );
+    return row != null;
+  }
+
+  async selectHitMessages(
+    sessionIds: number[],
+    mode: 'FULLTEXT' | 'LIKE',
+    match: string,
+    createdFrom: string | null = null,
+    createdToExclusive: string | null = null,
+  ): Promise<MessageSearchHitRow[]> {
+    if (sessionIds.length === 0) return [];
+    const placeholders = sessionIds.map(() => '?').join(',');
+    const dateSql: string[] = [];
+    const dateParams: unknown[] = [];
+    if (createdFrom != null) {
+      dateSql.push('AND m.created_at >= ?');
+      dateParams.push(createdFrom);
+    }
+    if (createdToExclusive != null) {
+      dateSql.push('AND m.created_at < ?');
+      dateParams.push(createdToExclusive);
+    }
+    const dateClause = dateSql.length > 0 ? `\n             ${dateSql.join('\n             ')}` : '';
+    if (mode === 'FULLTEXT') {
+      const rows = await runSearchQuery<MessageSearchHitRow>(
+        this.db,
+        mode,
+        `SELECT sessionId, messageId, role, content, createdAt, score FROM (
+           SELECT m.session_id AS sessionId, m.id AS messageId, m.role AS role,
+                  m.content AS content, m.created_at AS createdAt,
+                  MATCH(m.content) AGAINST (? IN BOOLEAN MODE) AS score,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY m.session_id
+                    ORDER BY MATCH(m.content) AGAINST (? IN BOOLEAN MODE) DESC, m.id DESC
+                  ) AS rn
+           FROM message m
+           WHERE m.deleted = 0
+             AND m.role IN ('USER', 'ASSISTANT')
+             AND m.session_id IN (${placeholders})
+             AND MATCH(m.content) AGAINST (? IN BOOLEAN MODE)${dateClause}
+         ) t
+         WHERE t.rn <= 5
+         ORDER BY t.sessionId, t.score DESC, t.messageId DESC`,
+        [match, match, ...sessionIds, match, ...dateParams],
+      );
+      return rows.map(normalizeHitRow);
+    }
+    const rows = await runSearchQuery<MessageSearchHitRow>(
+      this.db,
+      mode,
+      `SELECT sessionId, messageId, role, content, createdAt, score FROM (
+         SELECT m.session_id AS sessionId, m.id AS messageId, m.role AS role,
+                m.content AS content, m.created_at AS createdAt,
+                0 AS score,
+                ROW_NUMBER() OVER (PARTITION BY m.session_id ORDER BY m.id DESC) AS rn
+         FROM message m
+         WHERE m.deleted = 0
+           AND m.role IN ('USER', 'ASSISTANT')
+           AND m.session_id IN (${placeholders})
+           AND m.content LIKE CONCAT('%', ?, '%') ESCAPE '\\\\'${dateClause}
+       ) t
+       WHERE t.rn <= 5
+       ORDER BY t.sessionId, t.messageId DESC`,
+      [...sessionIds, match, ...dateParams],
+    );
+    return rows.map(normalizeHitRow);
+  }
+}
+
+function normalizeHitRow(row: MessageSearchHitRow): MessageSearchHitRow {
+  return {
+    sessionId: num(row.sessionId),
+    messageId: num(row.messageId),
+    role: row.role,
+    content: row.content,
+    createdAt: row.createdAt ?? null,
+    score: num(row.score),
+  };
 }
 
 export class FileChangeRepository {

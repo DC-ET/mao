@@ -2,7 +2,7 @@
 
 - 日期：2026-10-09
 - 提案：`docs/proposals/2026-10-09-global-message-search.md`
-- 状态：评审通过，可实施（2026-10-09 评审已把缺口补进正文，本轮不开发）
+- 状态：已实施（2026-10-09）
 
 ## 1. 共识决策记录
 
@@ -12,7 +12,7 @@
 |---|---|---|
 | 1 | 生产 MySQL 版本 | **确认 8.0+**，ngram FULLTEXT 方案成立 |
 | 2 | P1 搜索范围 | **USER + ASSISTANT 消息正文**（⚠️ 提问未答，按建议默认采纳，**待确认**）；thinking_content 独立成列不纳入；TOOL 原文留 P3 开关灰度 |
-| 3 | 索引构建方式 | **标准启动迁移**：V142 直接 `ALTER TABLE ADD FULLTEXT`，随发版重启时构建 |
+| 3 | 索引构建方式 | **标准启动迁移**：V146 直接 `ALTER TABLE ADD FULLTEXT`，随发版重启时构建 |
 | 4 | 多词语义 | **默认 OR**（空白分开的词项之间为 OR），支持 `+必须 -排除 "短语"`。每个词项先收成短语再交给 ngram（见 §5.2）。短于 `ngram_token_size` 的词项回退 LIKE |
 | 5 | 结果呈现 | **按会话分组折叠**（多命中折叠为"N 条命中"可展开）+ 点击**定位到消息并高亮约 2 秒** |
 | 6 | 筛选交互 | **筛选行**（Agent / 时间范围 / 会话类型）；Ctrl/Cmd+K 快捷键**已存在**（TopNav.vue:219），仅补"打开时聚焦输入框" |
@@ -35,7 +35,7 @@
 - 布尔查询必须把每个词项收成短语，否则一个三字以上的中文词会被 ngram 拆成大数据 OR。
 - `aroundMessageId` 的上界是**下一轮用户消息**，不是轮次起点 +1；否则助手回复（主需求）不在返回窗口里。
 - 定位后的列表不是「最新一页」。不能走现有的尾部合并，要能回到最新，并且两个面板不能抢同一个 query。
-- 健康检查默认 60 秒会在建索引过程中杀掉新进程，DDL 回滚，重跑也不会跳过 V142。必须先把等待时间加到长过预估构建时间。
+- 健康检查默认 60 秒会在建索引过程中杀掉新进程，DDL 回滚，重跑也不会跳过 V146。必须先把等待时间加到长过预估构建时间。
 
 ## 2. 现状基线（代码事实）
 
@@ -53,7 +53,7 @@
 | 消息定位能力 | `useChatScroll.ts` / `ChatRoundList.vue` | **不存在** scrollToMessage；消息无 DOM 锚点；列表无虚拟化（可安全加锚点） |
 | 消息分页 | `session.routes.ts:421-441` + `getMessagesByRounds`（`session.service.ts:984-1020`） | 游标式轮次分页 `roundLimit/beforeMessageId` |
 | 管理端搜索 | `listSessions` 关键词分支（`session.service.ts:452-486`）+ `selectFirstMatchingMessages`（`repository.ts:631-649`） | 另一条链路，**本方案不改动** |
-| 迁移编号 | `backend-ts/db/migration/` 最大 V141 | 本次为 **V142** |
+| 迁移编号 | `backend-ts/db/migration/` 最大 V141 | 本次为 **V146** |
 | Flyway | `create-app.ts:419` 启动时同步执行，失败抛错阻断启动（`flyway.ts:288`）；连接 `multipleStatements: true` | — |
 | 消息表 | V001:162-175 | content MEDIUMTEXT；role VARCHAR(20)（USER/ASSISTANT/SYSTEM/TOOL）；无 user_id（归属走 session.user_id）；已有索引 idx_session / idx_created / idx_message_session_deleted_id |
 | Agent 列表 | `GET /v1/agents`（`agent.routes.ts:75`） | 筛选器下拉直接复用，无需新接口 |
@@ -82,15 +82,15 @@
 │  → 锚点滚动高亮 2s；有更新消息时「回到最新」                  │
 └────────────────────────────────────────────────────────────┘
 
-MySQL: message 表 FULLTEXT INDEX ft_message_content (content) WITH PARSER ngram  (V142)
+MySQL: message 表 FULLTEXT INDEX ft_message_content (content) WITH PARSER ngram  (V146)
 ```
 
-## 4. 数据库迁移（V142）
+## 4. 数据库迁移（V146）
 
-**文件**：`backend-ts/db/migration/V142__message_content_fulltext.sql`
+**文件**：`backend-ts/db/migration/V146__message_content_fulltext.sql`
 
 ```sql
--- V142: 消息正文全文索引（ngram 中文分词），支撑全局消息检索。
+-- V146: 消息正文全文索引（ngram 中文分词），支撑全局消息检索。
 -- 注意：MySQL 8 FULLTEXT 创建不支持 LOCK=NONE，最低 LOCK=SHARED（阻塞写、不阻塞读），
 -- 且需重建表添加隐藏 FTS_DOC_ID 列。启动时执行期间的写入阻塞影响见部署文档。
 -- 空停用词表必须在同一连接、ALTER 之前设到会话上，索引内容按这个表固化。
@@ -108,7 +108,7 @@ ALTER TABLE `message`
 
 要点：
 
-- **ngram_token_size 用默认 2**。ngram 解析器忽略 `innodb_ft_min_token_size` / `innodb_ft_max_token_size`，token 长度只由 `ngram_token_size` 决定。两字英文（`OK`、`go`）会被索引；短于 2 的词项不会。发版前在生产执行 `SHOW VARIABLES LIKE 'ngram_token_size'`，不是 2 就先改启动参数并重启，再发 V142。该变量改完必须重建索引，不能在索引建成后再改。
+- **ngram_token_size 用默认 2**。ngram 解析器忽略 `innodb_ft_min_token_size` / `innodb_ft_max_token_size`，token 长度只由 `ngram_token_size` 决定。两字英文（`OK`、`go`）会被索引；短于 2 的词项不会。发版前在生产执行 `SHOW VARIABLES LIKE 'ngram_token_size'`，不是 2 就先改启动参数并重启，再发 V146。该变量改完必须重建索引，不能在索引建成后再改。
 - **停用词表用空表。** 默认停用词里有一批长度正好为 2 的英文词（`to` / `is` / `in` / `of` / `or` / `at` / `be` / `as` / `it` / `on` / `by` 等）。ngram 会把英文词切成连续双字母，这些双字母一旦是停用词就不进索引，短语检索会缺 token。`history`、`database` 这类词会漏。中文双字不受影响。空表要在建索引的那条连接上设好；应用连接池每次取出连接后执行同一句 `SET SESSION innodb_ft_user_stopword_table`（库名用当前 database），查询期和索引期才能一致。不改 `my.cnf` 的全局停用词，避免碰到实例上以后别的全文索引。`SET SESSION ... = @mao_ft_sw` 若在 8.0 上报错，改成字面量 `'库名/message_ft_stopword'`。
 - 索引对全表所有行生效（含 TOOL/SYSTEM，以及 `deleted=1` 的行）——**这是 MySQL FULLTEXT 的固有行为，无法只索引部分行**。逻辑删除不会把 token 移出索引，`WHERE deleted=0` 在命中之后过滤。索引体积含已删行，可接受。"只搜近 N 个月"只能查询侧过滤、不降低构建成本，故不采用。角色过滤发生在查询 WHERE 条件。
 - 历史行由建索引时一次构建，新写入行 InnoDB 自动维护。
@@ -324,13 +324,13 @@ export interface MessageSearchResult {
 
 ### 8.1 发版序列与写入阻塞窗口（重要）
 
-蓝绿部署（`scripts/lib/blue-green.sh` `bg_deploy`）先启动**新实例**、旧实例继续服务，新实例在 `create-app.ts:419` 同步跑 Flyway。V142 的 `LOCK=SHARED` 会**阻塞全表写入**，影响面：
+蓝绿部署（`scripts/lib/blue-green.sh` `bg_deploy`）先启动**新实例**、旧实例继续服务，新实例在 `create-app.ts:419` 同步跑 Flyway。V146 的 `LOCK=SHARED` 会**阻塞全表写入**，影响面：
 
-1. 新实例启动 → 执行 V142 构建（期间 message 表写阻塞）；
+1. 新实例启动 → 执行 V146 构建（期间 message 表写阻塞）；
 2. **旧实例仍在服务**，其消息写入同样被阻塞——用户端表现为发消息/流式落库卡住（读取不受影响）；
 3. 构建完成后新实例 listen → 健康检查通过 → nginx 切换 → 旧实例 drain。
 
-因此：**首次含 V142 的发版必须安排低峰窗口**。构建耗时按本地实测线性外推（377MB ≈ 12 分钟）；生产数据量未知，发版前在生产库做两件只读检查：
+因此：**首次含 V146 的发版必须安排低峰窗口**。构建耗时按本地实测线性外推（377MB ≈ 12 分钟）；生产数据量未知，发版前在生产库做两件只读检查：
 
 ```sql
 SHOW VARIABLES LIKE 'ngram_token_size';
@@ -347,18 +347,18 @@ Flyway 在 `listen` 之前同步执行（`create-app.ts`）。健康检查要等
 
 1. 新进程卡在 `ALTER TABLE`，端口还没开；
 2. 健康检查失败，`bg_stop_port` 杀掉新进程；
-3. 连接断开，MySQL 中止这条 DDL 并回滚。`flyway_schema_history` 的成功行是在 SQL 返回之后才插入的（`flyway.ts`），进程在这之前被杀，**不会**留下 V142 记录，索引也不会留下；
+3. 连接断开，MySQL 中止这条 DDL 并回滚。`flyway_schema_history` 的成功行是在 SQL 返回之后才插入的（`flyway.ts`），进程在这之前被杀，**不会**留下 V146 记录，索引也不会留下；
 4. 立刻重跑会再次从 ALTER 开始，再次在 60 秒被杀。写锁每次只持有到进程死亡，但发版永远完不成。
 
 所以不是「失败后重跑就会跳过」。发版前先把等待拉到长过预估构建时间，例如内容 400MB、按 30MB/分钟约 15 分钟，则 `MAO_BLUE_GREEN_HEALTH_RETRIES` 至少 15×60 再加几分钟余量（间隔仍是 1 秒）。mysql2 这条连接没有语句超时，进程活着，DDL 就可以跑完。
 
-只有日志已经打出 `Flyway migrated V142__message_content_fulltext.sql` 之后，迁移才算完成。若这行已经出现、随后却在别的原因上健康检查失败，那时重跑才会跳过 V142。
+只有日志已经打出 `Flyway migrated V146__message_content_fulltext.sql` 之后，迁移才算完成。若这行已经出现、随后却在别的原因上健康检查失败，那时重跑才会跳过 V146。
 
 运维 Runbook（写入 DEPLOY.md）：
 
 1. 低峰前先做 §8.1 的两项只读检查，设好 `MAO_BLUE_GREEN_HEALTH_RETRIES`，确认数据目录空间；
 2. 执行 `bash scripts/restart-backend.sh`；
-3. 看到 `Flyway migrated V142__message_content_fulltext.sql`，然后健康检查通过、nginx 切流；
+3. 看到 `Flyway migrated V146__message_content_fulltext.sql`，然后健康检查通过、nginx 切流；
 4. 切流后抽查：两字中文（应变短语命中，而不是拆开 OR）、一个三字以上的词、一次助手消息跳转并出现「回到最新」（若该条不在最新几轮）。
 
 ### 8.3 功能开关
@@ -382,7 +382,7 @@ Flyway 在 `listen` 之前同步执行（`create-app.ts`）。健康检查要等
 
 ## 10. 分阶段
 
-- **本次（合并 P1+P2）**：V142（含空停用词表）+ FULLTEXT/LIKE 双路径 + 短语布尔串 + 筛选分页 + 响应结构升级 + 面板改版 + 定位跳转（含回到最新）+ 单测/E2E。
+- **本次（合并 P1+P2）**：V146（含空停用词表）+ FULLTEXT/LIKE 双路径 + 短语布尔串 + 筛选分页 + 响应结构升级 + 面板改版 + 定位跳转（含回到最新）+ 单测/E2E。
 - **P3（后续，另立小议题）**：
   1. TOOL 消息原文纳入范围（查询侧加 role 过滤 + 开关灰度，索引无需变动）——价值高（报错栈/命令输出）但噪声与排序权重要评估；
   2. snippet 相关度调优（词项权重、位置加权）；
@@ -391,7 +391,7 @@ Flyway 在 `listen` 之前同步执行（`create-app.ts`）。健康检查要等
 
 ## 11. 文档同步清单（随任务完成）
 
-- `CHANGELOG.md`：新增版本小节（后端：全文检索双路径/筛选分页/响应结构/aroundMessageId；前端：面板改版/分组折叠/定位高亮；附部署注意：V142 构建窗口）。
+- `CHANGELOG.md`：新增版本小节（后端：全文检索双路径/筛选分页/响应结构/aroundMessageId；前端：面板改版/分组折叠/定位高亮；附部署注意：V146 构建窗口）。
 - `README.md` / `DEPLOY.md`：搜索能力描述 + §8.2 Runbook。
 - `skills/mao-cli/`：产品知识库同步搜索能力说明。
 
@@ -399,7 +399,7 @@ Flyway 在 `listen` 之前同步执行（`create-app.ts`）。健康检查要等
 
 **后端**
 
-- `backend-ts/db/migration/V142__message_content_fulltext.sql`（新增，含空停用词表）
+- `backend-ts/db/migration/V146__message_content_fulltext.sql`（新增，含空停用词表）
 - `backend-ts/src/db/db.ts`：连接取出后 `SET SESSION innodb_ft_user_stopword_table`
 - `backend-ts/src/session/session.repository.ts`：新增 `selectMatchingSessions`、`selectHitMessages`、`selectRoundStartForMessage`、下一轮 USER id；LIKE 阶段 1 同步筛选与分页，不再用写死的 `LIMIT 20`
 - `backend-ts/src/session/session.service.ts`：新增 `searchMessages`（路径判定 / 短语布尔串 / 分页编排 / snippet）；`getMessagesByRounds` 增 `aroundMessageId` 与 `hasNewer`

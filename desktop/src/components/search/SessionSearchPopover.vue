@@ -18,7 +18,7 @@
         <div class="search-header">
           <div>
             <h2>搜索会话</h2>
-            <p>搜索你在主会话和边路任务中发送过的消息</p>
+            <p>搜索你在主会话和边路任务里说过的话，以及 Agent 的回复</p>
           </div>
           <button class="search-close" type="button" aria-label="关闭搜索" @click="isOpen = false">
             <el-icon :size="18"><Close /></el-icon>
@@ -31,7 +31,7 @@
           v-model="keyword"
           class="search-input"
           size="large"
-          placeholder="输入关键词搜索会话消息…"
+          placeholder="输入关键词，多个词用空格分开"
           clearable
           :maxlength="100"
           @input="onKeywordInput"
@@ -39,9 +39,30 @@
         >
           <template #prefix><el-icon :size="18"><Search /></el-icon></template>
         </el-input>
+        <div class="search-filters">
+          <el-select v-model="agentId" class="search-filter" clearable placeholder="全部 Agent" @change="onFilterChange">
+            <el-option v-for="agent in agents" :key="agent.id" :label="agent.name || '未命名'" :value="agent.id" />
+          </el-select>
+          <el-date-picker
+            v-model="dateRange"
+            class="search-filter search-filter-date"
+            type="daterange"
+            value-format="YYYY-MM-DD"
+            range-separator="至"
+            start-placeholder="开始日期"
+            end-placeholder="结束日期"
+            @change="onFilterChange"
+          />
+          <div class="search-type" role="tablist">
+            <button type="button" :class="{ on: sessionType === '' }" @click="setSessionType('')">全部</button>
+            <button type="button" :class="{ on: sessionType === 'NORMAL' }" @click="setSessionType('NORMAL')">主会话</button>
+            <button type="button" :class="{ on: sessionType === 'SIDE_TASK' }" @click="setSessionType('SIDE_TASK')">边路</button>
+          </div>
+        </div>
+        <p class="search-hint">+必须 -排除，引号表示短语。过短的词按原文模糊匹配。</p>
         <template v-if="status !== 'idle'">
           <div class="search-summary">
-            <span>{{ status === 'loading' ? '搜索中…' : status === 'results' ? `找到 ${results.length} 个相关会话` : '搜索结果' }}</span>
+            <span>{{ status === 'loading' ? '搜索中…' : status === 'results' ? `找到 ${total} 个相关会话` : '搜索结果' }}</span>
             <span class="search-shortcuts"><kbd>↑</kbd><kbd>↓</kbd> 选择 <kbd>Enter</kbd> 打开 <kbd>Esc</kbd> 关闭</span>
           </div>
           <div class="search-body">
@@ -49,26 +70,42 @@
           <div v-else-if="status === 'error'" class="search-tip">搜索失败，请重试</div>
           <div v-else-if="status === 'empty'" class="search-tip">未找到相关会话</div>
           <ul v-else ref="resultsRef" class="search-results">
-            <li
-              v-for="(item, idx) in results"
-              :key="item.id"
-              class="search-result-item"
-              :class="{ active: idx === activeIndex }"
-              @mouseenter="activeIndex = idx"
-              @click="handleJump(item)"
-            >
-              <div class="result-line1">
-                <span class="result-title">{{ item.title || '未命名会话' }}</span>
-                <el-tag v-if="item.status === 'ARCHIVED'" size="small" type="info" class="result-tag">已归档</el-tag>
-                <el-tag v-if="item.sessionType === 'SIDE_TASK'" size="small" type="warning" class="result-tag">边路</el-tag>
-                <span class="result-time">{{ formatRelativeTime(item.updatedAt) }}</span>
-              </div>
-              <div v-if="item.snippet" class="result-snippet">
-                <template v-for="(part, i) in highlightParts(item.snippet, keyword)" :key="i">
-                  <mark v-if="part.hit" class="snippet-hit">{{ part.text }}</mark>
-                  <span v-else>{{ part.text }}</span>
-                </template>
-              </div>
+            <li v-for="group in results" :key="group.sessionId" class="search-group">
+              <button type="button" class="search-group-head" @click="toggleGroup(group.sessionId)">
+                <span class="result-title">{{ group.title || '未命名会话' }}</span>
+                <el-tag v-if="group.status === 'ARCHIVED'" size="small" type="info" class="result-tag">已归档</el-tag>
+                <el-tag v-if="group.sessionType === 'SIDE_TASK'" size="small" type="warning" class="result-tag">边路</el-tag>
+                <span v-if="group.agentName" class="result-agent">{{ group.agentName }}</span>
+                <span class="result-time">{{ formatRelativeTime(group.updatedAt) }}</span>
+                <span class="result-count">{{ group.hitCount }} 条命中</span>
+              </button>
+              <button
+                v-for="row in visibleHits(group)"
+                :key="row.hit.messageId"
+                type="button"
+                class="search-result-item"
+                :class="{ active: row.flatIndex === activeIndex }"
+                @mouseenter="activeIndex = row.flatIndex"
+                @click="handleJump(group, row.hit)"
+              >
+                <div class="result-snippet">
+                  <template v-for="(part, i) in highlightParts(row.hit.snippet, keyword)" :key="i">
+                    <mark v-if="part.hit" class="snippet-hit">{{ part.text }}</mark>
+                    <span v-else>{{ part.text }}</span>
+                  </template>
+                </div>
+              </button>
+              <button
+                v-if="group.hits.length > 2"
+                type="button"
+                class="search-expand"
+                @click="toggleGroup(group.sessionId)"
+              >
+                {{ expanded.has(group.sessionId) ? '收起' : '展开' }}
+              </button>
+            </li>
+            <li v-if="results.length < total" class="search-more">
+              <button type="button" @click="loadMore">加载更多</button>
             </li>
           </ul>
           </div>
@@ -78,13 +115,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, onUnmounted, watch } from 'vue'
+import { ref, computed, nextTick, onUnmounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { Close, Search } from '@element-plus/icons-vue'
-import { searchSessions } from '../../api'
-import type { SessionSearchItem } from '../../types/chat'
+import { api, searchSessions } from '../../api'
+import type { MessageSearchGroup, MessageSearchHit } from '../../types/chat'
 import { useSessionStore, type TaskPhase } from '../../stores/session'
 import { openSideTaskTabFor } from '../../composables/useCenterTabs'
+import { highlightParts } from './search-highlight'
 
 const sessionStore = useSessionStore()
 const router = useRouter()
@@ -93,8 +131,15 @@ const route = useRoute()
 const inputRef = ref()
 const resultsRef = ref<HTMLUListElement>()
 const keyword = ref('')
-const results = ref<SessionSearchItem[]>([])
+const results = ref<MessageSearchGroup[]>([])
+const total = ref(0)
+const page = ref(1)
 const activeIndex = ref(0)
+const agentId = ref<number | null>(null)
+const dateRange = ref<[string, string] | null>(null)
+const sessionType = ref<'' | 'NORMAL' | 'SIDE_TASK'>('')
+const agents = ref<Array<{ id: number; name: string | null }>>([])
+const expanded = ref(new Set<number>())
 type SearchStatus = 'idle' | 'loading' | 'empty' | 'error' | 'results'
 const status = ref<SearchStatus>('idle')
 const isOpen = ref(false)
@@ -103,7 +148,34 @@ let requestSeq = 0
 let abortController: AbortController | null = null
 let debounceTimer: number | null = null
 
-/** 使所有在途请求与防抖定时器失效（关闭、清空、卸载时调用）。 */
+interface VisibleHit {
+  hit: MessageSearchHit
+  flatIndex: number
+}
+
+const flatHits = computed(() => {
+  const rows: Array<{ group: MessageSearchGroup; hit: MessageSearchHit }> = []
+  for (const group of results.value) {
+    const hits = expanded.value.has(group.sessionId) ? group.hits : group.hits.slice(0, 2)
+    for (const hit of hits) rows.push({ group, hit })
+  }
+  return rows
+})
+
+function visibleHits(group: MessageSearchGroup): VisibleHit[] {
+  return flatHits.value
+    .map((row, index) => ({ ...row, flatIndex: index }))
+    .filter((row) => row.group.sessionId === group.sessionId)
+    .map((row) => ({ hit: row.hit, flatIndex: row.flatIndex }))
+}
+
+function toggleGroup(sessionId: number) {
+  const next = new Set(expanded.value)
+  if (next.has(sessionId)) next.delete(sessionId)
+  else next.add(sessionId)
+  expanded.value = next
+}
+
 function invalidatePending() {
   requestSeq++
   abortController?.abort()
@@ -118,57 +190,101 @@ function openSearch() {
   isOpen.value = true
 }
 
+async function loadAgents() {
+  if (agents.value.length > 0) return
+  try {
+    const { data } = await api.get('/agents')
+    agents.value = ((data || []) as Array<{ id: number; name: string | null; enabled?: number | boolean | null }>)
+      .filter((agent) => agent.enabled !== false && agent.enabled !== 0)
+  } catch {
+    agents.value = []
+  }
+}
+
 function onOpened() {
   nextTick(() => inputRef.value?.focus())
+  void loadAgents()
 }
 
 function onClosed() {
-  // 关闭后清空，保证下次打开从空态开始；在途请求返回也不会重新显示结果
   invalidatePending()
   keyword.value = ''
   results.value = []
+  total.value = 0
+  page.value = 1
   activeIndex.value = 0
+  expanded.value = new Set()
   status.value = 'idle'
 }
 
 function onKeywordInput() {
+  page.value = 1
+  scheduleSearch(false)
+}
+
+function onFilterChange() {
+  page.value = 1
+  scheduleSearch(false)
+}
+
+function setSessionType(value: '' | 'NORMAL' | 'SIDE_TASK') {
+  sessionType.value = value
+  onFilterChange()
+}
+
+function scheduleSearch(append: boolean) {
   if (debounceTimer != null) clearTimeout(debounceTimer)
   const kw = keyword.value.trim()
   if (!kw) {
     invalidatePending()
     results.value = []
+    total.value = 0
     activeIndex.value = 0
     status.value = 'idle'
     return
   }
-  // 使旧关键词的在途请求立即失效（不影响防抖 timer）：否则旧响应会在本次防抖窗口内
-  // 落地并把 status 覆盖回 'results'，绕过 Enter 守卫跳到与当前输入无关的旧会话
   requestSeq++
   abortController?.abort()
   abortController = null
-  // 防抖窗口期内先清空旧结果并置 loading：旧关键词的结果不再可被 Enter/键盘导航选中
-  results.value = []
-  activeIndex.value = 0
-  status.value = 'loading'
-  debounceTimer = window.setTimeout(() => { runSearch(kw) }, 300)
+  if (!append) {
+    results.value = []
+    activeIndex.value = 0
+    status.value = 'loading'
+  }
+  debounceTimer = window.setTimeout(() => { void runSearch(kw, append) }, 300)
 }
 
-async function runSearch(kw: string) {
+function loadMore() {
+  page.value += 1
+  void runSearch(keyword.value.trim(), true)
+}
+
+async function runSearch(kw: string, append: boolean) {
   const seq = ++requestSeq
   abortController?.abort()
   const controller = new AbortController()
   abortController = controller
-  // 清空旧结果与选中索引：避免在途/加载期间 Enter 或键盘导航落到上一次搜索的旧结果
-  results.value = []
-  activeIndex.value = 0
-  status.value = 'loading'
-  try {
-    const items = await searchSessions(kw, { signal: controller.signal })
-    if (seq !== requestSeq) return
-    results.value = items
+  if (!append) {
+    results.value = []
     activeIndex.value = 0
-    status.value = items.length > 0 ? 'results' : 'empty'
-  } catch (e) {
+    status.value = 'loading'
+  }
+  try {
+    const result = await searchSessions(kw, {
+      signal: controller.signal,
+      agentId: agentId.value,
+      dateFrom: dateRange.value?.[0] ?? null,
+      dateTo: dateRange.value?.[1] ?? null,
+      sessionType: sessionType.value || null,
+      page: page.value,
+      size: 20,
+    })
+    if (seq !== requestSeq) return
+    results.value = append ? results.value.concat(result.items ?? []) : (result.items ?? [])
+    total.value = result.total ?? results.value.length
+    if (!append) activeIndex.value = 0
+    status.value = results.value.length > 0 ? 'results' : 'empty'
+  } catch {
     if (seq !== requestSeq) return
     if (controller.signal.aborted) return
     status.value = 'error'
@@ -176,7 +292,7 @@ async function runSearch(kw: string) {
 }
 
 function onPanelKeydown(e: KeyboardEvent) {
-  const len = results.value.length
+  const len = flatHits.value.length
   if (e.key === 'ArrowDown') {
     if (len > 0) {
       e.preventDefault()
@@ -188,12 +304,11 @@ function onPanelKeydown(e: KeyboardEvent) {
       activeIndex.value = (activeIndex.value - 1 + len) % len
     }
   } else if (e.key === 'Enter') {
-    // 仅结果态可跳转：加载中/防抖窗口期/空态下 Enter 不落旧结果
     if (status.value !== 'results') return
-    const item = results.value[activeIndex.value]
-    if (item) {
+    const row = flatHits.value[activeIndex.value]
+    if (row) {
       e.preventDefault()
-      void handleJump(item)
+      void handleJump(row.group, row.hit)
     }
   } else if (e.key === 'Escape') {
     isOpen.value = false
@@ -206,30 +321,30 @@ watch(activeIndex, async () => {
   active?.scrollIntoView({ block: 'nearest' })
 })
 
-async function handleJump(item: SessionSearchItem) {
+async function handleJump(group: MessageSearchGroup, hit: MessageSearchHit) {
   isOpen.value = false
-  if (item.sessionType === 'SIDE_TASK') {
-    // 缓存键与跳转目标一律用根主会话 id：深层边路任务的父是边路会话，
-    // Tab 状态与边路缓存都按主会话口径组织，用直接父会话 id 会写进死缓存并路由到错误视图。
-    // rootSessionId 缺省时回退直接父会话（旧后端 / 旧 mock：搜索候选只含父为主会话的边路，两者等价）。
-    const rootId = String(item.rootSessionId ?? item.parentSessionId ?? '')
+  const locateQuery = {
+    locateMessageId: String(hit.messageId),
+    locateSessionId: String(group.sessionId),
+  }
+  if (group.sessionType === 'SIDE_TASK') {
+    const rootId = String(group.rootSessionId ?? group.parentSessionId ?? '')
     if (!rootId) return
-    // 边路任务状态用搜索结果真实值，不硬编码 IDLE；不传 createdAt（搜索结果只有 updatedAt，不得冒充创建时间）
     sessionStore.addSideTask(rootId, {
-      id: item.id,
-      title: item.title || '任务',
-      phase: (item.phase || 'IDLE') as TaskPhase,
+      id: group.sessionId,
+      title: group.title || '任务',
+      phase: (group.phase || 'IDLE') as TaskPhase,
     })
     const target = `/tasks/${rootId}`
     if (route.path === target) {
-      openSideTaskTabFor(rootId, item.id, item.title || '任务')
+      openSideTaskTabFor(rootId, group.sessionId, group.title || '任务')
+      await router.replace({ path: target, query: { ...route.query, ...locateQuery } })
     } else {
-      await router.push(target)
-      // 路由加载（loadSession）是否完成不影响：Tab Map 是模块级单例，按显式 parentSessionId 写入
-      openSideTaskTabFor(rootId, item.id, item.title || '任务')
+      await router.push({ path: target, query: locateQuery })
+      openSideTaskTabFor(rootId, group.sessionId, group.title || '任务')
     }
   } else {
-    await router.push(`/tasks/${item.id}`)
+    await router.push({ path: `/tasks/${group.sessionId}`, query: locateQuery })
   }
 }
 
@@ -248,28 +363,6 @@ function formatRelativeTime(value?: string | null): string {
   const months = Math.floor(days / 30)
   if (months < 12) return `${months}个月前`
   return `${Math.floor(months / 12)}年前`
-}
-
-/** 大小写不敏感区间高亮：生成「普通段 / 命中段」数组，模板以插值 + <mark> 渲染，不使用 v-html。 */
-function highlightParts(text: string, kw: string): Array<{ text: string; hit: boolean }> {
-  const trimmed = kw.trim()
-  if (!trimmed || !text) return [{ text: text || '', hit: false }]
-  const lowerText = text.toLowerCase()
-  const lowerKw = trimmed.toLowerCase()
-  const parts: Array<{ text: string; hit: boolean }> = []
-  let pos = 0
-  for (;;) {
-    const idx = lowerText.indexOf(lowerKw, pos)
-    if (idx === -1) {
-      if (pos < text.length) parts.push({ text: text.slice(pos), hit: false })
-      break
-    }
-    if (idx > pos) parts.push({ text: text.slice(pos, idx), hit: false })
-    parts.push({ text: text.slice(idx, idx + trimmed.length), hit: true })
-    pos = idx + trimmed.length
-    if (pos >= text.length) break
-  }
-  return parts
 }
 
 function toggle() {
@@ -448,6 +541,87 @@ defineExpose({ toggle, open: openSearch })
   list-style: none;
   margin: 0;
   padding: 8px;
+}
+
+.session-search-dialog .search-hint {
+  margin: 6px 0 0;
+  color: var(--aw-ink-muted-48);
+  font-size: 12px;
+}
+
+.session-search-dialog .search-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.session-search-dialog .search-filter {
+  width: 160px;
+}
+
+.session-search-dialog .search-filter-date {
+  width: 240px;
+}
+
+.session-search-dialog .search-type {
+  display: inline-flex;
+  border: 1px solid var(--aw-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.session-search-dialog .search-type button {
+  border: 0;
+  background: transparent;
+  padding: 6px 10px;
+  cursor: pointer;
+  color: var(--aw-ink-muted-80);
+  font: inherit;
+  font-size: 12px;
+}
+
+.session-search-dialog .search-type button.on {
+  background: var(--aw-surface-hover);
+  color: var(--aw-ink);
+}
+
+.session-search-dialog .search-group-head,
+.session-search-dialog .search-expand,
+.session-search-dialog .search-more button,
+.session-search-dialog .search-result-item {
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  font: inherit;
+}
+
+.session-search-dialog .search-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px 0;
+  cursor: pointer;
+}
+
+.session-search-dialog .result-agent,
+.session-search-dialog .result-count {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--aw-ink-muted-48);
+}
+
+.session-search-dialog .search-expand,
+.session-search-dialog .search-more {
+  padding: 0 14px 8px;
+}
+
+.session-search-dialog .search-expand,
+.session-search-dialog .search-more button {
+  color: var(--aw-accent, #409eff);
+  cursor: pointer;
+  font-size: 12px;
 }
 
 .session-search-dialog .search-result-item {

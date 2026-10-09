@@ -283,7 +283,7 @@ import {
 
 /** GET /v1/agents 列表项（后端 Agent DTO：enabled 为 1/0 数字，使用侧列表默认不返回停用项）。 */
 interface AgentOption { id: number; name: string | null; enabled?: number | boolean | null }
-/** `/v1/sessions/search` 返回项（MessageSearchItem，id 为数字）。 */
+/** `/v1/sessions/search` 分组结果里用来选会话。 */
 interface SessionOption { id: number; title?: string | null }
 
 const tokens = ref<ApiTokenView[]>([])
@@ -354,7 +354,8 @@ async function fetchAgents(): Promise<void> {
 async function searchSessionOptions(keyword: string): Promise<void> {
   sessionSearching.value = true
   try {
-    sessionOptions.value = await searchSessions(keyword)
+    const result = await searchSessions(keyword)
+    sessionOptions.value = (result.items ?? []).map((item) => ({ id: item.sessionId, title: item.title }))
   } catch {
     sessionOptions.value = []
   } finally {
