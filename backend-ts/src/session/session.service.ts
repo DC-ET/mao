@@ -971,12 +971,19 @@ export class SessionService {
     const hasMore = userStarts.length > limit;
     const pageStarts = hasMore ? userStarts.slice(0, limit) : userStarts;
     const startId = pageStarts[pageStarts.length - 1].id!;
-    // 翻页时上界是「下一页起点之前」，与 /messages 的 beforeId 语义一致；带切点时仍不得越过切点
-    const upperBound = Math.min(beforeMessageId ?? Number.MAX_SAFE_INTEGER, cutMessageId ?? Number.MAX_SAFE_INTEGER);
-    const raw = upperBound >= Number.MAX_SAFE_INTEGER
-      ? await this.messageRepo.selectRange(sessionId, startId, null)
-      : await this.messageRepo.selectRangeThrough(sessionId, startId, upperBound);
-    const messages = (MessageHistoryNormalizer.normalizeEntities(raw, parseToolCallsJson) ?? raw) as Message[];
+    // 翻页游标是上一页最旧一条的 id，上界必须排他，否则这条会再返回一次。
+    // 切点仍含边界：它是被点击那一轮的助手最终回复，预览要带上它。游标不小于切点时以上界为切点。
+    const pagingExclusive = beforeMessageId != null && (cutMessageId == null || beforeMessageId <= cutMessageId);
+    const raw = pagingExclusive
+      ? await this.messageRepo.selectRange(sessionId, startId, beforeMessageId)
+      : cutMessageId != null
+        ? await this.messageRepo.selectRangeThrough(sessionId, startId, cutMessageId)
+        : await this.messageRepo.selectRange(sessionId, startId, null);
+    const supplemented = await this.includeMissingToolResults(sessionId, raw, {
+      maxMessageId: cutMessageId,
+      excludeSourceSessionId: null,
+    });
+    const messages = (MessageHistoryNormalizer.normalizeEntities(supplemented, parseToolCallsJson) ?? supplemented) as Message[];
     const nextBeforeMessageId = messages.length === 0 ? null : messages[0].id ?? null;
     return { messages, hasMore, nextBeforeMessageId };
   }
@@ -1014,9 +1021,47 @@ export class SessionService {
         ? await this.messageRepo.selectRange(sessionId, startId, beforeId)
         : await this.messageRepo.selectRange(sessionId, startId, beforeId, maxMessageId))
       : await this.messageRepo.selectRange(sessionId, startId, beforeId, maxMessageId, excludeSourceSessionId);
-    const messages = (MessageHistoryNormalizer.normalizeEntities(raw, parseToolCallsJson) ?? raw) as Message[];
+    const supplemented = await this.includeMissingToolResults(sessionId, raw, {
+      maxMessageId,
+      excludeSourceSessionId,
+    });
+    const messages = (MessageHistoryNormalizer.normalizeEntities(supplemented, parseToolCallsJson) ?? supplemented) as Message[];
     const nextBeforeMessageId = messages.length === 0 ? null : messages[0].id ?? null;
     return { messages, hasMore, nextBeforeMessageId };
+  }
+
+  /**
+   * 本页助手声明了工具、但 TOOL 行不在本页 id 区间（补写占位的 id 大于后续 USER）时补回来。
+   * 归一化会把它贴到助手后面；另一页里没有对应助手的 TOOL 仍会被丢掉，避免两页各出现一次。
+   */
+  private async includeMissingToolResults(
+    sessionId: number,
+    raw: Message[],
+    options: { maxMessageId?: number | null; excludeSourceSessionId?: number | null },
+  ): Promise<Message[]> {
+    const present = new Set<string>();
+    for (const message of raw) {
+      if (message.role === 'TOOL' && message.toolCallId) present.add(message.toolCallId);
+    }
+    const missing: string[] = [];
+    for (const message of raw) {
+      if (message.role !== 'ASSISTANT' || message.toolCalls == null || message.toolCalls.length === 0) continue;
+      for (const id of extractToolCallIds(message.toolCalls)) {
+        if (!present.has(id) && !missing.includes(id)) missing.push(id);
+      }
+    }
+    if (missing.length === 0) return raw;
+    const extra = await this.messageRepo.selectToolMessagesByCallIds(
+      sessionId, missing, options.maxMessageId ?? null, options.excludeSourceSessionId ?? null,
+    );
+    if (extra.length === 0) return raw;
+    const seen = new Set(raw.map((message) => message.id));
+    const merged = raw.slice();
+    for (const row of extra) {
+      if (row.id != null && seen.has(row.id)) continue;
+      merged.push(row);
+    }
+    return merged;
   }
 
   async getFileChangesBySession(sessionId: number): Promise<Map<number, FileChange[]>> {

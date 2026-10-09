@@ -9,7 +9,9 @@ import { AgentExecutionContext } from './agent-execution-context.js';
 import { PersistedChatMessage } from './persisted-chat-message.js';
 import type { ContextManager } from './context-manager.js';
 import type { SessionService } from '../deps.js';
-import type { ChatMessage } from '../llm/chat-request.js';
+import type { ChatMessage, ChatRequest, LlmAdapter, StreamCallback } from '../llm/chat-request.js';
+import { CompactionConfig } from './compaction-config.js';
+import { CompactionService } from './compaction-service.js';
 
 describe('ActiveContextCalculator', () => {
   const calculator = new ActiveContextCalculator(new TokenEstimator());
@@ -159,6 +161,51 @@ describe('SessionHistoryLoader', () => {
     expect(snapshot.snapshotMessageIds).toEqual([5]);
     expect(snapshot.persistedMessages).toHaveLength(1);
     expect(snapshot.persistedMessages[0].chatMessage.role).toBe('user');
+  });
+
+  it('loadHistoryAfterBoundaryDropsOrphanToolFromSnapshotAndPersisted', async () => {
+    const sessionService = {
+      getMessagesAfterId: vi.fn().mockResolvedValue([
+        { id: 1, role: 'USER', content: '帮我改一下登录' },
+        {
+          id: 2, role: 'ASSISTANT', content: '',
+          toolCalls: JSON.stringify([{ id: 'c1', type: 'function', function: { name: 'shell', arguments: '{}' } }]),
+        },
+        { id: 3, role: 'TOOL', toolCallId: 'c1', content: 'ok' },
+        { id: 4, role: 'TOOL', toolCallId: 'ghost', content: '残留输出' },
+        { id: 5, role: 'USER', content: '继续' },
+      ]),
+    } as unknown as SessionService;
+    const loader = new SessionHistoryLoader(sessionService, {} as ContextManager, archiveService);
+    const snapshot = await loader.loadHistoryAfterBoundary(7, 0);
+    expect(snapshot.snapshotMessageIds).toEqual([1, 2, 3, 5]);
+    expect(snapshot.persistedMessages.map((message) => message.messageId)).toEqual([1, 2, 3, 5]);
+
+    const llmAdapter = {
+      stream: vi.fn(async (_request: ChatRequest, _model: unknown, callback: StreamCallback) => {
+        callback.onChunk?.({ choices: [{ delta: { content: '<handoff>交接正文</handoff>' } }] });
+        callback.onComplete?.({ promptTokens: 100, completionTokens: 10, totalTokens: 110 });
+      }),
+    } as unknown as LlmAdapter;
+    const tokenEstimator = {
+      estimateRequestTokens: vi.fn(() => 800),
+      estimateMessages: vi.fn(() => 30),
+    };
+    const config = new CompactionConfig();
+    config.enabled = true;
+    config.contextWindowTokens = 1000;
+    config.triggerRatio = 0.8;
+    config.maxSummaryTokens = 321;
+    const request: ChatRequest = {
+      messages: [{ role: 'user', content: '继续' }],
+      stream: true,
+    };
+    const result = await new CompactionService(llmAdapter, tokenEstimator as never).compactSession(
+      7, 0, snapshot.persistedMessages, snapshot.snapshotMessageIds, request,
+      { modelId: 'gpt-test', contextWindowTokens: 1000 }, config, null, null, 800,
+    );
+    expect(result).not.toBeNull();
+    expect(result!.newLastCompactedMessageId).toBe(5);
   });
 
   it('loadHistoryRestoresReasoningContentForAssistantMessages', async () => {

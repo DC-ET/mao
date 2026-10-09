@@ -24,8 +24,10 @@ export class SessionHistoryLoader {
 
   async loadHistoryAfterBoundary(sessionId: number, boundary: number): Promise<HistorySnapshot> {
     const rawMessages = await this.sessionService.getMessagesAfterId(sessionId, boundary);
-    const snapshotMessageIds = rawMessages.map((m) => m.id!);
+    // 快照 id 必须与持久化消息同源。孤儿 TOOL 会被归一化丢掉；若仍把原始 id 放进快照，
+    // isCompletePhysicalPrefix 会因缺 id 永远拒绝压缩，边界推不过这条孤儿。
     const normalized = MessageHistoryNormalizer.normalizeEntities(rawMessages, parseToolCallsJson) ?? rawMessages;
+    const snapshotMessageIds = normalized.map((m) => m.id!);
     const persistedMessages = normalized.map((message) => new PersistedChatMessage(
       message.id!,
       message.content ?? '',

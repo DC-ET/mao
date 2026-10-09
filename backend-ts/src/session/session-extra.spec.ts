@@ -43,6 +43,7 @@ function makeService() {
     selectThroughMessage: vi.fn(async () => []),
     selectUserStartsThrough: vi.fn(async () => []),
     selectRangeThrough: vi.fn(async () => []),
+    selectToolMessagesByCallIds: vi.fn(async () => []),
     selectMessagesForSearch: vi.fn(async () => []),
     selectFirstMatchingMessages: vi.fn(async () => []),
     selectLastUserMessage: vi.fn(async () => null),
@@ -301,6 +302,23 @@ describe('SessionService extra', () => {
     expect(messageRepo.selectRangeThrough).toHaveBeenCalledWith(11, 9, 4);
     expect(older.nextBeforeMessageId).toBe(8);
 
+    // 翻页游标小于切点（或无切点）时上界排他，不把上一页首条再带回
+    messageRepo.selectRangeThrough.mockClear();
+    messageRepo.selectUserStarts.mockResolvedValue([{ id: 1, role: 'USER' }]);
+    messageRepo.selectRange.mockResolvedValue([
+      { id: 1, role: 'USER', content: 'q0' },
+      { id: 2, role: 'ASSISTANT', content: 'a0' },
+    ]);
+    const paged = await service.getForkPreview(11, null, 5, 3);
+    expect(messageRepo.selectRange).toHaveBeenLastCalledWith(11, 1, 3);
+    expect(messageRepo.selectRangeThrough).not.toHaveBeenCalled();
+    expect(paged.messages.map((message) => message.id)).toEqual([1, 2]);
+
+    messageRepo.selectUserStartsThrough.mockResolvedValue([{ id: 1, role: 'USER' }]);
+    await service.getForkPreview(11, 10, 5, 3);
+    expect(messageRepo.selectUserStartsThrough).toHaveBeenLastCalledWith(11, 10, 3, 6);
+    expect(messageRepo.selectRange).toHaveBeenLastCalledWith(11, 1, 3);
+
     messageRepo.listBySession.mockResolvedValue([
       { id: 1, role: 'USER', content: 'q' },
       { id: 2, role: 'ASSISTANT', content: 'a', toolCalls: JSON.stringify([{ id: 'tc1' }, { id: 'tc2' }]) },
@@ -479,6 +497,27 @@ describe('TaskTerminalService', () => {
     expect(registry.sendWithResult).toHaveBeenCalledWith(7, expect.objectContaining({
       data: expect.objectContaining({ unread: false }),
     }));
+  });
+
+  it('getMessagesByRounds pulls a tool result whose id sits past the page', async () => {
+    const { service, messageRepo } = makeService();
+    messageRepo.findById.mockResolvedValue({ id: 3, sessionId: 11, role: 'USER' });
+    messageRepo.selectUserStarts.mockResolvedValue([{ id: 1, role: 'USER' }]);
+    messageRepo.selectRange.mockResolvedValue([
+      { id: 1, sessionId: 11, role: 'USER', content: 'q1' },
+      {
+        id: 2, sessionId: 11, role: 'ASSISTANT', content: 'a1',
+        toolCalls: JSON.stringify([{ id: 'c2', name: 'shell' }]),
+      },
+    ]);
+    messageRepo.selectToolMessagesByCallIds.mockResolvedValue([
+      { id: 13, sessionId: 11, role: 'TOOL', content: '[系统] 该工具调用没有对应输出', toolCallId: 'c2' },
+    ]);
+
+    const page = await service.getMessagesByRounds(11, 5, 3);
+    expect(messageRepo.selectToolMessagesByCallIds).toHaveBeenCalledWith(11, ['c2'], null, null);
+    expect(page.messages.map((message) => message.id)).toEqual([1, 2, 13]);
+    expect(page.messages[2].toolCallId).toBe('c2');
   });
 
   it('non-weixin channel terminal push keeps unread=true', async () => {

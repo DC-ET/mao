@@ -28,6 +28,7 @@ describe('FeishuMessageService', () => {
       findThreadSession: vi.fn(async () => null),
       listGroupMessages: vi.fn(async () => []),
       listOverflowGroupMessages: vi.fn(async () => []),
+      findOldestPendingGroupMessageId: vi.fn(async () => null),
       addGroupMember: vi.fn(),
       recordP2pMessage: vi.fn(async () => undefined),
       findP2pMessageSession: vi.fn(async () => null),
@@ -416,6 +417,36 @@ describe('FeishuMessageService', () => {
     expect(group.prompt).not.toContain('[图片 msg=om_img]');
     expect(group.prompt).not.toContain('后续文字');
     expect(repository.updateGroupContextWatermark).not.toHaveBeenCalled();
+  });
+
+  it('窗口外仍在富化的行也会挡住水位线，展开后的摘录还能进上下文', async () => {
+    const pendingId = vi.fn<[], Promise<number | null>>()
+      .mockResolvedValueOnce(1)
+      .mockResolvedValueOnce(null);
+    const overflow = vi.fn(async () => [] as Array<Record<string, unknown>>);
+    const repository = makeRepo({
+      findGroupConversation: vi.fn(async () => ({ id: 1, appId: '1', chatId: 'oc_group', sessionId: 9, ownerUserId: 3, lastContextLogId: 0 })),
+      listGroupMessages: vi.fn(async () => [
+        { id: 4, appId: '1', chatId: 'oc_group', senderOpenId: 'ou_a', senderName: '张三', isMention: false, messageId: 'om_4', content: '闲聊', enrichPending: 0, createdAt: '2026-10-08 10:00:00' },
+      ]),
+      findOldestPendingGroupMessageId: pendingId,
+      listOverflowGroupMessages: overflow,
+    });
+    const summarizer = { summarize: vi.fn(async (record: string) => record) };
+    const service = new FeishuMessageService(repository as never, { create: vi.fn() } as never, 20, 120, summarizer as never, 100);
+
+    const blocked = await service.buildGroupContext('1', makeContext({ messageId: 'om_trigger' }));
+    expect(blocked.prompt).not.toContain('闲聊');
+    expect(repository.updateGroupContextWatermark).not.toHaveBeenCalled();
+    // 溢出上界收到未富化行，占位英文不会被当成更早历史摘要掉。
+    expect(overflow).toHaveBeenCalledWith('1', 'oc_group', 0, 1, 100, null);
+
+    overflow.mockResolvedValueOnce([
+      { id: 1, appId: '1', chatId: 'oc_group', senderOpenId: 'ou_a', senderName: '张三', isMention: false, messageId: 'om_mf', content: '【合并转发】告警已处理', enrichPending: 0, createdAt: '2026-10-08 09:12:00' },
+    ]);
+    const later = await service.buildGroupContext('1', makeContext({ messageId: 'om_trigger_b' }));
+    expect(later.prompt).toContain('告警已处理');
+    expect(repository.updateGroupContextWatermark).toHaveBeenCalledWith('1', 'oc_group', 4);
   });
 
   it('话题上下文水位线与群级水位线分离', async () => {

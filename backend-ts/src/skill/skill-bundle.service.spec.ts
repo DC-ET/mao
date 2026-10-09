@@ -57,6 +57,20 @@ describe('SkillBundleService（mao-skill-bundle v1）', () => {
     expect(skillLoader.hasSkill('code-review')).toBe(true);
   });
 
+  it('同一用户多个 frontmatter 同名目录时导出失败闭合，不静默取第一个', async () => {
+    const md = (body: string) => `---\nname: dup\ndescription: 重名技能\n---\n${body}\n`;
+    mkdirSync(join(userSkillsDir, '7', 'aaa'), { recursive: true });
+    writeFileSync(join(userSkillsDir, '7', 'aaa', 'SKILL.md'), md('AAA 正文'));
+    mkdirSync(join(userSkillsDir, '7', 'bbb'), { recursive: true });
+    writeFileSync(join(userSkillsDir, '7', 'bbb', 'SKILL.md'), md('BBB 正文'));
+
+    const error = await service.exportSkillBundle('dup', 7).catch((e) => e as BusinessException);
+    expect(error).toBeInstanceOf(BusinessException);
+    expect(error.code).toBe(ErrorCode.PARAM_INVALID.code);
+    expect(String(error.message)).toContain('aaa');
+    expect(String(error.message)).toContain('bbb');
+  });
+
   it('导出：系统技能走 getSkillFolder；不存在的技能报 SKILL_NOT_FOUND', async () => {
     mkdirSync(join(skillsDir, 'web-search'), { recursive: true });
     writeFileSync(join(skillsDir, 'web-search', 'SKILL.md'), skillMd('web-search', '搜索'));
