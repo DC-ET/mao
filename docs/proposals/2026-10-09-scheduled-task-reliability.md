@@ -1,6 +1,6 @@
 # 提案：定时任务可靠性（重试 / 错过补偿 / 运行历史）—— 自动化骨干不能"设了忘"
 
-- 状态：待评审
+- 状态：已确认（决策记录 11 条于 2026-10-09 逐条确认），技术方案见 `docs/plan/2026-10-09-scheduled-task-reliability-technical-design.md`
 - 日期：2026-10-09
 - 提案总览：见 `docs/proposals/README.md`
 

@@ -52,12 +52,12 @@
 | 提案 | 文档 | 一句话 | 规模 |
 |---|---|---|---|
 | 模型容灾与故障转移 | [2026-10-09-model-fallback-health.md](2026-10-09-model-fallback-health.md)（已否决，存档） | 主模型重试耗尽/额度耗尽/供应商故障时按备用链自动切换并熔断冷却，任务不中断；转移全程留痕 | — |
-| 定时任务可靠性 | [2026-10-09-scheduled-task-reliability.md](2026-10-09-scheduled-task-reliability.md)（待评审） | 失败重试、停机错过补偿、按任务运行历史、连续失败自动暂停并通知——无人值守自动化的信任基础 | 小~中 |
-| 工作区文件直管 | [2026-10-09-workspace-file-manager.md](2026-10-09-workspace-file-manager.md)（待评审） | 文件树从只读浏览升级为文件管理器：上传/新建/重命名/删除（回收站）/移动，沙箱与 Agent 写锁协同 | 中 |
+| 定时任务可靠性 | [2026-10-09-scheduled-task-reliability.md](2026-10-09-scheduled-task-reliability.md)（已确认，技术方案见 [docs/plan/2026-10-09-scheduled-task-reliability-technical-design.md](../plan/2026-10-09-scheduled-task-reliability-technical-design.md)，决策记录 11 条于 2026-10-09 逐条确认） | 失败重试、停机错过补偿、按任务运行历史、连续失败自动暂停并通知——无人值守自动化的信任基础 | 小~中 |
+| 工作区文件直管 | [2026-10-09-workspace-file-manager.md](2026-10-09-workspace-file-manager.md)（已出技术方案，见 [docs/plan/2026-10-09-workspace-file-manager-technical-design.md](../plan/2026-10-09-workspace-file-manager-technical-design.md)） | 文件树从只读浏览升级为文件管理器：上传/新建/重命名/删除（物理删除+强确认，不做回收站）/移动/复制，沙箱与 Agent 写锁协同 | 中 |
 | 跨会话全文检索 | [2026-10-09-global-message-search.md](2026-10-09-global-message-search.md)（待评审） | MySQL 8 ngram 全文索引覆盖 USER+ASSISTANT 消息，替代 LIKE 全表扫与只搜用户消息的现状，结果可筛选可跳转定位 | 中 |
 | 开放接口调用中心 | [2026-10-09-open-api-call-center.md](2026-10-09-open-api-call-center.md)（待评审） | 入站 API Token/Webhook 调用流水（含拒绝路径）、统计面板、失败告警与请求重放，补上开放接口三件套里缺失的可观测 | 小~中 |
 
-排期注意：定时任务可靠性与模型容灾都碰执行收敛点附近，与历史上记忆/收件箱/预算动过的 `task-terminal.service.ts` 收敛点相邻，实施时错开；全文检索的 V142 迁移与另两份提案的新表（若都过）注意编号顺延；开放接口调用中心 P3 的 Token 自动停用与既有 Webhook 触发器自动停用模式对齐，可合并一次交互评审。
+排期注意：定时任务可靠性与模型容灾都碰执行收敛点附近，与历史上记忆/收件箱/预算动过的 `task-terminal.service.ts` 收敛点相邻，实施时错开；全文检索的 V142 迁移与另两份提案的新表（若都过）注意编号顺延（工作区文件直管零迁移，不占编号）；开放接口调用中心 P3 的 Token 自动停用与既有 Webhook 触发器自动停用模式对齐，可合并一次交互评审。
 
 ## 已评估、明确不做
 

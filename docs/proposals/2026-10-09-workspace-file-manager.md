@@ -1,6 +1,6 @@
 # 提案：工作区文件直管（Workspace File Manager）—— 不只让 Agent 碰文件，人也能管
 
-- 状态：待评审
+- 状态：已出技术方案（2026-10-09 评审共识：不做回收站、删除为物理删除 + 强确认、零数据库迁移；技术方案见 [docs/plan/2026-10-09-workspace-file-manager-technical-design.md](../plan/2026-10-09-workspace-file-manager-technical-design.md)）。实施以技术方案为准。
 - 日期：2026-10-09
 - 提案总览：见 `docs/proposals/README.md`
 
