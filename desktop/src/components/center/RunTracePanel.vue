@@ -113,10 +113,11 @@
                 </span>
               </div>
               <div v-if="round.errorMessage" class="round-error">{{ round.errorMessage }}</div>
-              <div v-for="tool in round.tools" :key="tool.toolCallId ?? tool.name" class="tool-row">
+              <div v-for="tool in round.tools" :key="toolKey(tool)" class="tool-row">
                 <span class="tool-status" :class="tool.status === 'ERROR' ? 'tool-error' : 'tool-ok'">
                   {{ tool.status === 'ERROR' ? '✕' : '✓' }}
                 </span>
+                <span v-if="tool.actor === 'user'" class="tool-actor" title="用户手动操作">用户</span>
                 <span class="tool-name">{{ toolDisplayName(tool.name) }}</span>
                 <span v-if="tool.target" class="tool-target" :title="tool.target">{{ tool.target }}</span>
                 <span v-if="tool.approvalMark" class="tool-approval">{{ tool.approvalMark }}</span>
@@ -125,10 +126,11 @@
             </div>
             <div v-if="segment.unplacedTools.length > 0" class="unplaced-tools">
               <div class="unplaced-label">未挂到轮</div>
-              <div v-for="tool in segment.unplacedTools" :key="tool.toolCallId ?? tool.name" class="tool-row">
+              <div v-for="tool in segment.unplacedTools" :key="toolKey(tool)" class="tool-row">
                 <span class="tool-status" :class="tool.status === 'ERROR' ? 'tool-error' : 'tool-ok'">
                   {{ tool.status === 'ERROR' ? '✕' : '✓' }}
                 </span>
+                <span v-if="tool.actor === 'user'" class="tool-actor" title="用户手动操作">用户</span>
                 <span class="tool-name">{{ toolDisplayName(tool.name) }}</span>
                 <span v-if="tool.target" class="tool-target" :title="tool.target">{{ tool.target }}</span>
                 <span v-if="tool.approvalMark" class="tool-approval">{{ tool.approvalMark }}</span>
@@ -198,10 +200,11 @@
             </div>
             <div v-if="round.errorMessage" class="round-error">{{ round.errorMessage }}</div>
           </div>
-          <div v-for="tool in unattributed.tools" :key="tool.toolCallId ?? tool.name" class="tool-row">
+          <div v-for="tool in unattributed.tools" :key="toolKey(tool)" class="tool-row">
             <span class="tool-status" :class="tool.status === 'ERROR' ? 'tool-error' : 'tool-ok'">
               {{ tool.status === 'ERROR' ? '✕' : '✓' }}
             </span>
+            <span v-if="tool.actor === 'user'" class="tool-actor" title="用户手动操作">用户</span>
             <span class="tool-name">{{ toolDisplayName(tool.name) }}</span>
             <span v-if="tool.target" class="tool-target" :title="tool.target">{{ tool.target }}</span>
             <span class="tool-duration">{{ tool.durationMs == null ? '—' : formatMs(tool.durationMs) }}</span>
@@ -227,7 +230,7 @@ import { useSessionStore } from '../../stores/session'
 import { getToolDisplayName } from '../../utils/toolDisplay'
 import { llmCallSceneLabel } from '../../utils/llmCallLabels'
 import { downloadTraceCsv, downloadTraceJson } from '../../utils/trace-export'
-import type { RunTrace, RunTracePage, TraceRound, TraceSideCall, UnattributedGroup } from '../../types/trace'
+import type { RunTrace, RunTracePage, TraceRound, TraceSideCall, TraceTool, UnattributedGroup } from '../../types/trace'
 
 const props = defineProps<{
   sessionId: string
@@ -425,6 +428,10 @@ function tokenTotalOfSide(side: TraceSideCall): number {
 
 function toolDisplayName(name: string): string {
   return getToolDisplayName(name)
+}
+
+function toolKey(tool: TraceTool): string {
+  return `${tool.toolCallId ?? ''}|${tool.target ?? ''}|${tool.name}`
 }
 
 interface RunBadge { label: string; tone: 'neutral' | 'danger' | 'warn' | 'info' }
@@ -848,6 +855,12 @@ async function exportCsv() {
 
 .tool-name {
   flex-shrink: 0;
+}
+
+.tool-actor {
+  flex-shrink: 0;
+  font-size: var(--aw-text-micro);
+  color: var(--aw-primary);
 }
 
 .tool-target {

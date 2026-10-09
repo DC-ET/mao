@@ -3,6 +3,7 @@ import type { Tab, SessionTabState, SideTaskContextMode, SideTaskForkSource } fr
 import type { FileChange } from '../types/chat'
 import { getClosedSideTaskIds, markSideTaskClosed, unmarkSideTaskClosed, normalizeSideTaskTitle, type SideTaskSummary } from '../utils/side-task-tabs'
 import { getPersistedActiveTab, persistActiveTab } from '../utils/center-active-tab'
+import { retargetTabPath, type WorkspacePathChange } from '../utils/workspace-tab-paths'
 import { useSessionStore } from '../stores/session'
 
 /**
@@ -375,6 +376,38 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     }
   }
 
+  function applyWorkspacePathChange(change: WorkspacePathChange) {
+    const state = getSessionState()
+    const closing: string[] = []
+    for (const tab of state.tabs) {
+      if ((tab.type !== 'file' && tab.type !== 'diff') || !tab.filePath) continue
+      const next = retargetTabPath(tab.filePath, change)
+      if (next.action === 'keep') continue
+      if (next.action === 'close') {
+        closing.push(tab.id)
+        continue
+      }
+      const oldId = tab.id
+      const fileName = next.path.split('/').pop() || next.path
+      const prefix = oldId.startsWith('git-diff:') ? 'git-diff:' : oldId.startsWith('diff:') ? 'diff:' : 'file:'
+      tab.filePath = next.path
+      tab.id = prefix + next.path
+      if (tab.type === 'file') {
+        tab.title = fileName
+        tab.version = (tab.version ?? 0) + 1
+      } else {
+        tab.title = prefix === 'git-diff:' ? `${fileName} (Git)` : `${fileName} (变更)`
+        if (tab.fileChange) tab.fileChange = { ...tab.fileChange, path: next.path }
+      }
+      if (state.activeTabId === oldId) state.activeTabId = tab.id
+    }
+    if (closing.length === 0) {
+      notifyTabsChanged()
+      return
+    }
+    for (const id of closing) closeTab(id)
+  }
+
   function closeTab(tabId: string) {
     if (tabId === 'chat') return // can't close chat tab
     const state = getSessionState()
@@ -567,6 +600,7 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     restoreSubagentTabs,
     restoreTraceTab,
     closeTab,
+    applyWorkspacePathChange,
     closeAllFileTabs,
     closeOtherTabs,
     activateTab,

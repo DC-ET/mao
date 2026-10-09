@@ -655,4 +655,30 @@ describe('RunTraceService', () => {
     expect(page.runs[0].userMessagePreview).toHaveLength(81);
     expect(page.runs[0].userMessagePreview.endsWith('…')).toBe(true);
   });
+
+  it('places a user file write in unplaced tools with actor=user', async () => {
+    const service = makeService({
+      messages: [user(1, '2026-10-09 10:00:00', '整理一下')],
+      calls: [call(1, { createdAt: '2026-10-09 10:00:02' })],
+      activities: [
+        activity(1, {
+          type: 'file_user_write',
+          target: 'a.txt',
+          summary: '用户删除',
+          detailJson: JSON.stringify({ actor: 'user', op: 'delete' }),
+          createdAt: '2026-10-09 10:00:03',
+        }),
+        activity(2, { detailJson: JSON.stringify({ toolCallId: 'missing' }), createdAt: '2026-10-09 10:00:04' }),
+      ],
+      events: [],
+    });
+    const page = await service.buildTrace(1, QUERY);
+    const unplaced = page.runs[0].segments[0].unplacedTools;
+    const userRow = unplaced.find((tool) => tool.name === '用户删除');
+    expect(userRow?.actor).toBe('user');
+    expect(userRow?.target).toBe('a.txt');
+    expect(page.runs[0].segments[0].rounds.flatMap((round) => round.tools).some((tool) => tool.actor === 'user')).toBe(false);
+    const gitLike = unplaced.find((tool) => tool.name !== '用户删除');
+    expect(gitLike?.actor ?? null).toBeNull();
+  });
 });

@@ -50,6 +50,7 @@
       @rename="handleRename"
       @open-file="handleOpenFile"
       @add-file-to-chat="handleAddFileToChat"
+      @paths-changed="applyWorkspacePathChange"
       @open-side-task="handleOpenSideTask"
       @open-subagent="handleOpenSubagent"
       @open-trace="openTraceTab()"
@@ -205,7 +206,7 @@ function handleAddFileToChat(filePath: string) {
 
 // Center tabs
 const activeSessionIdRef = computed(() => sessionStore.activeSessionId ?? '')
-const { tabs, activeTab, activeTabId, openFileTab, openDiffTab, closeTab, closeAllFileTabs, closeOtherTabs, activateTab, openSideTaskTab, setSideTaskFork, openSubagentTab, openTraceTab, updateSideTaskTab, restoreSideTaskTabs, restoreTraceTab, restoreActiveTab } = useCenterTabs(activeSessionIdRef)
+const { tabs, activeTab, activeTabId, openFileTab, openDiffTab, closeTab, closeAllFileTabs, closeOtherTabs, activateTab, openSideTaskTab, setSideTaskFork, openSubagentTab, openTraceTab, updateSideTaskTab, restoreSideTaskTabs, restoreTraceTab, restoreActiveTab, applyWorkspacePathChange } = useCenterTabs(activeSessionIdRef)
 
 // Derived state
 const sessionId = computed(() => sessionIdParam.value)

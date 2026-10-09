@@ -10,6 +10,7 @@ import type { GitCommitMessageService } from './git-commit-message.service.js';
 import type { GitWriteOperationService } from './git-write-operation.service.js';
 import type { SessionService } from '../session/session.service.js';
 import type { PathSandbox } from '../harness/safety/path-sandbox.js';
+import type { WorkspaceWriteService } from './workspace-write.service.js';
 import { RuntimeDataResolver } from '../harness/runtime/runtime-data-resolver.js';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -75,6 +76,9 @@ describe('file routes', () => {
     registerFileRoutes(app, {
       fileService, sessionService, workspaceBrowseService, workspaceGitService,
       gitCommitMessageService, gitWriteOperationService, pathSandbox, getUploadBaseUrl: async () => '',
+      workspaceWriteService: {
+        mkdir: vi.fn(), write: vi.fn(), rename: vi.fn(), move: vi.fn(), delete: vi.fn(), copy: vi.fn(), upload: vi.fn(),
+      } as unknown as WorkspaceWriteService,
       runtimeDataResolver,
     });
     const get = async (url: string) => JSON.parse((await app.inject({ method: 'GET', url })).body);
@@ -145,6 +149,61 @@ describe('file routes', () => {
     const ownerDelete = await app.inject({ method: 'DELETE', url: '/v1/files/1' });
     expect(JSON.parse(ownerDelete.body).code).toBe(0);
 
+    await app.close();
+  });
+
+  it('rejects local sessions and workspace upload traversal', async () => {
+    const { mkdirSync: mk, writeFileSync: wf } = await import('node:fs');
+    const { join: jn } = await import('node:path');
+    const { PathSandbox: Sandbox } = await import('../harness/safety/path-sandbox.js');
+    const { WorkspaceWriteService: WriteService } = await import('./workspace-write.service.js');
+    const app = Fastify();
+    app.setErrorHandler(handleError);
+    await app.register(multipart);
+    app.addHook('preHandler', (req, _r, done) => {
+      req.userId = 7;
+      done();
+    });
+    const root = useTmpDir('mao-route-write-');
+    const workspace = jn(root, 'ws');
+    mk(workspace, { recursive: true });
+    wf(jn(workspace, 'keep.txt'), 'keep');
+    const sessions = new Map<number, { id: number; userId: number; workspace: string; executionMode: string }>([
+      [1, { id: 1, userId: 7, workspace, executionMode: 'CLOUD' }],
+      [2, { id: 2, userId: 7, workspace, executionMode: 'LOCAL' }],
+    ]);
+    const sessionService = { getSession: vi.fn(async (id: number) => sessions.get(id)) } as unknown as SessionService;
+    const recorded: unknown[] = [];
+    const write = new WriteService(new Sandbox(root), { record: vi.fn(async (...args: unknown[]) => { recorded.push(args); return {}; }) } as never);
+    registerFileRoutes(app, {
+      fileService: {} as FileService,
+      sessionService,
+      workspaceBrowseService: {} as WorkspaceBrowseService,
+      workspaceGitService: {} as WorkspaceGitService,
+      gitCommitMessageService: {} as GitCommitMessageService,
+      gitWriteOperationService: {} as GitWriteOperationService,
+      workspaceWriteService: write,
+      pathSandbox: new Sandbox(root),
+      runtimeDataResolver: new RuntimeDataResolver(useTmpDir('mao-route-rt-'), jn(root, 'home')),
+    });
+    const local = await app.inject({ method: 'POST', url: '/v1/files/workspace-mkdir', payload: { sessionId: 2, path: 'a' } });
+    expect(JSON.parse(local.body).message).toContain('本地模式不支持');
+    const escaped = await app.inject({
+      method: 'POST',
+      url: '/v1/files/workspace-upload',
+      payload: (() => {
+        const form = new FormData();
+        form.append('sessionId', '1');
+        form.append('dir', '.');
+        form.append('relativePath', '../keep.txt');
+        form.append('file', new Blob([Buffer.from('pwn')], { type: 'text/plain' }), 'keep.txt');
+        return form;
+      })(),
+    });
+    expect(JSON.parse(escaped.body).code).toBe(2001);
+    const { readFileSync: rf } = await import('node:fs');
+    expect(rf(jn(workspace, 'keep.txt'), 'utf8')).toBe('keep');
+    expect(recorded).toHaveLength(0);
     await app.close();
   });
 });

@@ -176,8 +176,10 @@
         :workspace="workspace || ''"
         :execution-mode="executionMode"
         :provider="fileProvider"
+        :session-id="sessionId"
         @open-file="handleOpenFile"
         @add-file-to-chat="$emit('add-file-to-chat', $event)"
+        @paths-changed="$emit('paths-changed', $event)"
       />
     </div>
 
@@ -348,6 +350,7 @@ import { getSessionCompaction } from '../../api'
 import type { SessionCompactionSummary } from '../../api'
 import type { GitChangedFile } from '../../types/git'
 import { cloudWorkspaceIndicator } from '../../utils/cloud-project'
+import type { WorkspacePathChange } from '../../utils/workspace-tab-paths'
 import { copyText } from '../../utils/clipboard'
 import { useSessionStore } from '../../stores/session'
 import { scaleSectionsToCapacity } from '../../stores/session/context-window'
@@ -379,6 +382,7 @@ const emit = defineEmits<{
   rename: [title: string]
   'open-file': [payload: { path: string; title: string }]
   'add-file-to-chat': [filePath: string]
+  'paths-changed': [change: WorkspacePathChange]
   'open-side-task': [payload: { sideSessionId: number; title: string }]
   'open-subagent': [payload: { childSessionId: number; title: string }]
   'open-trace': []

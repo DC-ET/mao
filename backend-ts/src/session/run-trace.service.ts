@@ -386,6 +386,7 @@ function toToolVO(call: DeclaredToolCall, toolMessage: Message | undefined, acti
     durationMs: activity?.durationMs ?? null,
     // 审批标记：先读工具消息 metadataJson，没有再用活动 detail_json
     approvalMark: approvalMarkLabel(parseMetadataMark(toolMessage?.metadata)) ?? approvalMarkLabel(parseDetailMark(activity?.detailJson)),
+    actor: parseActor(activity?.detailJson),
   };
 }
 
@@ -398,7 +399,13 @@ function activityToToolVO(activity: SessionActivity): TraceToolVO {
     status: activity.status ?? 'SUCCESS',
     durationMs: activity.durationMs ?? null,
     approvalMark: approvalMarkLabel(parseDetailMark(activity.detailJson)),
+    actor: parseActor(activity.detailJson),
   };
+}
+
+function parseActor(detailJson: string | null | undefined): 'user' | 'agent' | null {
+  const actor = parseJsonObject(detailJson)?.actor;
+  return actor === 'user' || actor === 'agent' ? actor : null;
 }
 
 function buildUnattributed(calls: LlmCallRow[], activities: SessionActivity[], query: RunTraceQuery): UnattributedGroupVO | null {

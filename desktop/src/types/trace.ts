@@ -84,6 +84,8 @@ export interface TraceTool {
   /** 历史行与未回填行为 null，UI 显示「—」 */
   durationMs: number | null
   approvalMark: string | null
+  /** 用户手动文件操作才是 user；历史行与工具活动缺省 */
+  actor?: 'user' | 'agent' | null
 }
 
 export interface TraceMarker {

@@ -134,6 +134,7 @@ import { WorkspaceGitService } from './file/workspace-git.service.js';
 import { GitWriteOperationService } from './file/git-write-operation.service.js';
 import { GitCommitMessageService } from './file/git-commit-message.service.js';
 import { registerFileRoutes } from './file/file.routes.js';
+import { WorkspaceWriteService } from './file/workspace-write.service.js';
 import { OssStsService, createAliyunAssumeRoleClient } from './oss/oss-sts.service.js';
 import { registerOssRoutes } from './oss/oss.routes.js';
 import { registerSkillRoutes } from './skill/skill.routes.js';
@@ -2467,10 +2468,12 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       permissionService,
       userLookup: { findById: (id: number) => userRepo.findById(id) as Promise<{ username: string } | null> },
     });
+    const workspaceWrite = new WorkspaceWriteService(pathSandbox, activityService);
     registerFileRoutes(api, {
       fileService, sessionService, workspaceBrowseService: workspaceBrowse,
       workspaceGitService: workspaceGit, gitCommitMessageService: gitCommitMsg,
-      gitWriteOperationService: gitWrite, pathSandbox, getUploadBaseUrl: async () => (await settingService.getUploadConfig()).baseUrl,
+      gitWriteOperationService: gitWrite, workspaceWriteService: workspaceWrite, pathSandbox,
+      getUploadBaseUrl: async () => (await settingService.getUploadConfig()).baseUrl,
       runtimeDataResolver: runtimeResolver,
     });
     registerOssRoutes(api, { ossStsService: ossSts });

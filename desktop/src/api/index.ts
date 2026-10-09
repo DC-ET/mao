@@ -64,10 +64,13 @@ api.interceptors.response.use(
   (response) => {
     const { data } = response
     if (data.code !== 0) {
-      ElMessage.error(data.message || '请求失败')
+      const skipCodes = (response.config as InternalAxiosRequestConfig & { skipBusinessCodes?: number[] }).skipBusinessCodes
       const err = new Error(data.message || '请求失败') as Error & { toastShown?: boolean; code?: number }
-      err.toastShown = true
       err.code = data.code
+      if (!skipCodes?.includes(data.code)) {
+        ElMessage.error(data.message || '请求失败')
+        err.toastShown = true
+      }
       return Promise.reject(err)
     }
     return data

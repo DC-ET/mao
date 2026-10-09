@@ -7,11 +7,28 @@
       :style="{ left: adjustedX + 'px', top: adjustedY + 'px' }"
       @click="hide"
     >
-      <div class="context-menu-item" @click="$emit('copy-absolute')">
+      <template v-if="canWrite && showNodeItems">
+        <div class="context-menu-item" @click="$emit('create-file')"><span>新建文件</span></div>
+        <div class="context-menu-item" @click="$emit('create-dir')"><span>新建文件夹</span></div>
+        <div class="context-menu-item" @click="$emit('rename')"><span>重命名</span></div>
+        <div class="context-menu-item" @click="$emit('remove')"><span>删除</span></div>
+        <div class="context-menu-item" @click="$emit('cut')"><span>剪切</span></div>
+        <div class="context-menu-item" @click="$emit('copy')"><span>复制</span></div>
+        <div v-if="canPaste" class="context-menu-item" @click="$emit('paste')"><span>粘贴</span></div>
+        <div v-if="isDirectory" class="context-menu-item" @click="$emit('upload')"><span>上传到此处</span></div>
+        <div class="context-menu-divider"></div>
+      </template>
+      <template v-else-if="canWrite">
+        <div class="context-menu-item" @click="$emit('create-file')"><span>新建文件</span></div>
+        <div class="context-menu-item" @click="$emit('create-dir')"><span>新建文件夹</span></div>
+        <div v-if="canPaste" class="context-menu-item" @click="$emit('paste')"><span>粘贴</span></div>
+        <div class="context-menu-item" @click="$emit('upload')"><span>上传到此处</span></div>
+      </template>
+      <div v-if="showNodeItems" class="context-menu-item" @click="$emit('copy-absolute')">
         <el-icon><DocumentCopy /></el-icon>
         <span>复制绝对路径</span>
       </div>
-      <div class="context-menu-item" @click="$emit('copy-relative')">
+      <div v-if="showNodeItems" class="context-menu-item" @click="$emit('copy-relative')">
         <el-icon><DocumentCopy /></el-icon>
         <span>复制相对路径</span>
       </div>
@@ -20,17 +37,17 @@
         <el-icon><FolderOpened /></el-icon>
         <span>在 Finder 中打开</span>
       </div>
-      <div class="context-menu-divider"></div>
-      <div class="context-menu-item" @click="$emit('add-to-chat')">
+      <div v-if="showNodeItems" class="context-menu-divider"></div>
+      <div v-if="showNodeItems" class="context-menu-item" @click="$emit('add-to-chat')">
         <el-icon><ChatDotRound /></el-icon>
         <span>添加到聊天</span>
       </div>
-      <div v-if="showDownloadActions" class="context-menu-divider"></div>
-      <div v-if="showDownloadActions && !isDirectory" class="context-menu-item" @click="$emit('download-file')">
+      <div v-if="showNodeItems && showDownloadActions" class="context-menu-divider"></div>
+      <div v-if="showNodeItems && showDownloadActions && !isDirectory" class="context-menu-item" @click="$emit('download-file')">
         <el-icon><Download /></el-icon>
         <span>下载此文件</span>
       </div>
-      <div v-else-if="showDownloadActions && isDirectory" class="context-menu-item" @click="$emit('download-directory')">
+      <div v-else-if="showNodeItems && showDownloadActions && isDirectory" class="context-menu-item" @click="$emit('download-directory')">
         <el-icon><Download /></el-icon>
         <span>下载此目录</span>
       </div>
@@ -39,7 +56,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { computed, ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { DocumentCopy, FolderOpened, ChatDotRound, Download } from '@element-plus/icons-vue'
 
 const props = defineProps<{
@@ -50,6 +67,9 @@ const props = defineProps<{
   showDownloadActions?: boolean
   isDirectory?: boolean
   showOpenInFinder?: boolean
+  canWrite?: boolean
+  canPaste?: boolean
+  hasNode?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -59,8 +79,18 @@ const emit = defineEmits<{
   'add-to-chat': []
   'download-file': []
   'download-directory': []
+  'create-file': []
+  'create-dir': []
+  rename: []
+  remove: []
+  cut: []
+  copy: []
+  paste: []
+  upload: []
   hide: []
 }>()
+
+const showNodeItems = computed(() => props.hasNode !== false)
 
 const menuRef = ref<HTMLDivElement>()
 const adjustedX = ref(props.x)

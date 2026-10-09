@@ -19,6 +19,7 @@ import type { WorkspaceBrowseService } from './workspace-browse.service.js';
 import type { WorkspaceGitService } from './workspace-git.service.js';
 import type { GitCommitMessageService } from './git-commit-message.service.js';
 import type { GitWriteOperationService, LocalGitActivity } from './git-write-operation.service.js';
+import type { WorkspaceWriteService } from './workspace-write.service.js';
 
 export interface FileRouteDeps {
   fileService: FileService;
@@ -27,6 +28,7 @@ export interface FileRouteDeps {
   workspaceGitService: WorkspaceGitService;
   gitCommitMessageService: GitCommitMessageService;
   gitWriteOperationService: GitWriteOperationService;
+  workspaceWriteService: WorkspaceWriteService;
   pathSandbox: PathSandbox;
   getUploadBaseUrl?: () => Promise<string | null>;
   runtimeDataResolver?: RuntimeDataResolver;
@@ -35,8 +37,15 @@ export interface FileRouteDeps {
 export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): void {
   const {
     fileService, sessionService, workspaceBrowseService, workspaceGitService,
-    gitCommitMessageService, gitWriteOperationService, pathSandbox,
+    gitCommitMessageService, gitWriteOperationService, workspaceWriteService, pathSandbox,
   } = deps;
+
+  function requireCloudWorkspace(session: Session): string {
+    if (session.executionMode === 'LOCAL') {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '本地模式不支持服务端文件管理');
+    }
+    return session.workspace!;
+  }
 
   async function requireOwnedSession(userId: number, sessionId: number): Promise<Session> {
     const session = await sessionService.getSession(sessionId);
@@ -243,6 +252,74 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
     return sendOk(reply);
   });
 
+  app.post('/v1/files/workspace-mkdir', async (request, reply) => {
+    const userId = requireUserId(request);
+    const body = bodyOf<{ sessionId?: number; path?: string; force?: boolean }>(request);
+    const session = await requireOwnedSession(userId, body.sessionId!);
+    const data = await workspaceWriteService.mkdir(session.id!, requireCloudWorkspace(session), body.path ?? '', { force: body.force });
+    return sendOk(reply, data);
+  });
+
+  app.post('/v1/files/workspace-write', async (request, reply) => {
+    const userId = requireUserId(request);
+    const body = bodyOf<{ sessionId?: number; path?: string; content?: string; overwrite?: boolean; force?: boolean }>(request);
+    const session = await requireOwnedSession(userId, body.sessionId!);
+    const data = await workspaceWriteService.write(
+      session.id!, requireCloudWorkspace(session), body.path ?? '', body.content, { overwrite: body.overwrite, force: body.force },
+    );
+    return sendOk(reply, data);
+  });
+
+  app.post('/v1/files/workspace-rename', async (request, reply) => {
+    const userId = requireUserId(request);
+    const body = bodyOf<{ sessionId?: number; path?: string; newName?: string; force?: boolean }>(request);
+    const session = await requireOwnedSession(userId, body.sessionId!);
+    const data = await workspaceWriteService.rename(
+      session.id!, requireCloudWorkspace(session), body.path ?? '', body.newName ?? '', { force: body.force },
+    );
+    return sendOk(reply, data);
+  });
+
+  app.post('/v1/files/workspace-move', async (request, reply) => {
+    const userId = requireUserId(request);
+    const body = bodyOf<{ sessionId?: number; from?: string; to?: string; force?: boolean }>(request);
+    const session = await requireOwnedSession(userId, body.sessionId!);
+    const data = await workspaceWriteService.move(
+      session.id!, requireCloudWorkspace(session), body.from ?? '', body.to ?? '', { force: body.force },
+    );
+    return sendOk(reply, data);
+  });
+
+  app.delete('/v1/files/workspace-delete', async (request, reply) => {
+    const userId = requireUserId(request);
+    const session = await requireOwnedSession(userId, requireQueryLong(request, 'sessionId'));
+    const path = queryOptStr(request, 'path');
+    if (path == null) throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
+    const force = queryOptStr(request, 'force') === 'true';
+    const data = await workspaceWriteService.delete(session.id!, requireCloudWorkspace(session), path, { force });
+    return sendOk(reply, data);
+  });
+
+  app.post('/v1/files/workspace-copy', async (request, reply) => {
+    const userId = requireUserId(request);
+    const body = bodyOf<{ sessionId?: number; from?: string; to?: string; overwrite?: boolean; force?: boolean }>(request);
+    const session = await requireOwnedSession(userId, body.sessionId!);
+    const data = await workspaceWriteService.copy(
+      session.id!, requireCloudWorkspace(session), body.from ?? '', body.to ?? '', { overwrite: body.overwrite, force: body.force },
+    );
+    return sendOk(reply, data);
+  });
+
+  app.post('/v1/files/workspace-upload', async (request, reply) => {
+    const userId = requireUserId(request);
+    const upload = await readWorkspaceUpload(request);
+    const session = await requireOwnedSession(userId, upload.sessionId);
+    const data = await workspaceWriteService.upload(
+      session.id!, requireCloudWorkspace(session), upload.dir, upload.files, { overwrite: upload.overwrite, force: upload.force },
+    );
+    return sendOk(reply, data);
+  });
+
   app.get('/v1/files/project-list', async (request, reply) => {
     const userId = requireUserId(request);
     const projectKey = queryOptStr(request, 'projectKey');
@@ -336,6 +413,49 @@ function sendFile(
     .type(contentType)
     .header('Content-Length', String(size));
   return reply.send(createReadStream(filePath));
+}
+
+async function readWorkspaceUpload(request: FastifyRequest): Promise<{
+  sessionId: number;
+  dir: string;
+  overwrite: boolean;
+  force: boolean;
+  files: { relativePath: string; bytes: Buffer }[];
+}> {
+  const parts = request.parts();
+  let sessionId: number | null = null;
+  let dir = '.';
+  let overwrite = false;
+  let force = false;
+  const relativePaths: string[] = [];
+  const files: { relativePath: string; bytes: Buffer }[] = [];
+  for await (const part of parts) {
+    if (part.type === 'file') {
+      const bytes = await part.toBuffer();
+      if (part.fieldname !== 'file') continue;
+      const relativePath = relativePaths.length > files.length ? relativePaths[files.length] : part.filename;
+      files.push({ relativePath, bytes });
+    } else if (part.fieldname === 'sessionId' && part.value != null && String(part.value).length > 0) {
+      const n = Number(part.value);
+      sessionId = Number.isFinite(n) ? n : null;
+    } else if (part.fieldname === 'dir' && part.value != null) {
+      const text = String(part.value);
+      dir = text.length > 0 ? text : '.';
+    } else if (part.fieldname === 'relativePath' && part.value != null) {
+      relativePaths.push(String(part.value));
+    } else if (part.fieldname === 'overwrite') {
+      overwrite = String(part.value) === 'true';
+    } else if (part.fieldname === 'force') {
+      force = String(part.value) === 'true';
+    }
+  }
+  if (sessionId == null) {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, '缺少必要参数: sessionId');
+  }
+  if (files.length === 0) {
+    throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
+  }
+  return { sessionId, dir, overwrite, force, files };
 }
 
 async function readUpload(request: FastifyRequest): Promise<{
