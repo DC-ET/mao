@@ -84,9 +84,10 @@ function makeService(fixture: Fixture) {
         .slice(0, limit);
       return rows;
     }),
+    // 与 SQL 同口径过滤 deleted：软删消息不进 run，编辑重发被截断的旧消息同理
     selectRange: vi.fn(async (_sid: number, startId: number, beforeId: number | null) => {
       return fixture.messages
-        .filter((m) => m.id >= startId && (beforeId == null || m.id < beforeId))
+        .filter((m) => m.deleted !== 1 && m.id >= startId && (beforeId == null || m.id < beforeId))
         .sort((a, b) => a.id - b.id);
     }),
     selectUserStamps: vi.fn(async () =>
@@ -95,10 +96,11 @@ function makeService(fixture: Fixture) {
         .map((m) => ({ id: m.id, createdAt: m.createdAt ?? null, updatedAt: m.updatedAt ?? null }))
         .sort((a, b) => a.id - b.id),
     ),
-    // 全会话助手消息声明的 tool_call_id（迟到活动跨页归属判定用）
+    // 全会话助手消息声明的 tool_call_id（迟到活动跨页归属判定用）。
+    // 与 SQL 同口径过滤 deleted：软删的声明消息不在索引里，编辑截断的旧工具才走时间窗兜底
     selectAssistantToolCalls: vi.fn(async () =>
       fixture.messages
-        .filter((m) => m.role === 'ASSISTANT' && m.toolCalls != null)
+        .filter((m) => m.role === 'ASSISTANT' && m.toolCalls != null && m.deleted !== 1)
         .map((m) => ({ id: m.id, toolCalls: m.toolCalls }))
         .sort((a, b) => a.id - b.id),
     ),
@@ -219,6 +221,36 @@ describe('RunTraceService', () => {
     expect(page2.runs.map((r) => r.runId)).toEqual([1]);
     expect(page2.runs[0].segments[0].rounds[0].tools.map((t) => t.toolCallId)).toEqual(['tc1']);
     expect(page2.runs[0].totals.toolSuccess).toBe(1);
+  });
+
+  it('still routes activities of soft-deleted declaring messages through the time window', async () => {
+    // 编辑重发后旧助手消息被逻辑删除：tool_call_id 在全会话索引里不存在，跨页守卫不生效，
+    // 活动仍按 created_at < updated_at 进 before_edit.unplacedTools（编辑前的历史工具）。
+    const service = makeService({
+      messages: [
+        user(1, '2026-10-09 10:00:00', '改需求', '2026-10-09 10:02:00'),
+        { ...assistant(2, '2026-10-09 10:00:05', [{ id: 'old-tc', name: 'shell', args: '{"command":"ls"}' }]), deleted: 1 },
+        assistant(7, '2026-10-09 10:02:05', [{ id: 'tc2', name: 'shell', args: '{"command":"pwd"}' }]),
+        toolMessage(8, '2026-10-09 10:02:06', 'tc2', '{"ok":true}'),
+      ],
+      calls: [
+        call(1, { createdAt: '2026-10-09 10:00:02' }),
+        call(2, { id: 2, createdAt: '2026-10-09 10:02:04' }),
+      ],
+      activities: [
+        activity(1, { detailJson: JSON.stringify({ toolCallId: 'old-tc' }), createdAt: '2026-10-09 10:00:30', summary: '执行旧命令', type: 'RUN' }),
+        activity(2, { detailJson: JSON.stringify({ toolCallId: 'tc2' }), createdAt: '2026-10-09 10:02:06' }),
+      ],
+      events: [],
+    });
+    const page = await service.buildTrace(1, QUERY);
+    expect(page.runs.map((r) => r.runId)).toEqual([1]);
+    const segments = page.runs[0].segments;
+    expect(segments.map((s) => s.kind)).toEqual(['before_edit', 'current']);
+    // 声明消息已软删 → 不进全会话索引 → 不被跨页守卫拦掉，按编辑切点归 before_edit
+    expect(segments[0].unplacedTools.map((t) => t.toolCallId)).toEqual(['old-tc']);
+    // 现存的 tc2 仍按消息归到当前段的轮上
+    expect(segments[1].rounds[0].tools.map((t) => t.toolCallId)).toEqual(['tc2']);
   });
 
   it('leaves tool groups in unplacedTools when same-second candidates are ambiguous', async () => {
