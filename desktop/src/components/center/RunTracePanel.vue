@@ -46,6 +46,22 @@
     </div>
 
     <div class="trace-scroll">
+      <!-- L0 会话总览：先回答「整体怎么样」，再下钻到单个 run -->
+      <div v-if="runs.length > 0" class="trace-overview">
+        <div class="overview-line">
+          <span class="overview-count">最近 {{ runs.length }} 次任务</span>
+          <span class="overview-ok">{{ traceSummary.ok }} 成功</span>
+          <span v-if="traceSummary.error > 0" class="overview-error">{{ traceSummary.error }} 失败</span>
+          <span v-if="traceSummary.interrupted > 0" class="overview-interrupted">{{ traceSummary.interrupted }} 中断</span>
+        </div>
+        <div class="overview-metrics">
+          <span>总耗时 {{ formatMs(traceSummary.wallClockMs) }}</span>
+          <span>{{ formatTokens(traceSummary.tokens) }} tokens</span>
+          <span v-if="traceSummary.costMicros != null">总成本 {{ formatCost(traceSummary.costMicros) }}</span>
+          <span v-if="toolRate != null">工具成功率 {{ toolRate }}%</span>
+        </div>
+      </div>
+
       <!-- 执行中的临时态：REST 要等工具 / 轮结束才有行，这里用 tool_call_start 本地走表 -->
       <div v-if="liveRound || liveTools.length > 0" class="live-card">
         <div class="live-head">
@@ -74,19 +90,44 @@
             <ArrowRight v-if="!isExpanded(run.runId)" />
             <ArrowDown v-else />
           </el-icon>
+          <span v-if="formatClock(run.startedAt)" class="run-clock" :title="run.startedAt ?? ''">{{ formatClock(run.startedAt) }}</span>
+          <span class="run-status" :class="`status-${runStatus(run)}`" :title="RUN_STATUS_META[runStatus(run)].label">
+            <el-icon :size="13">
+              <CircleCheck v-if="runStatus(run) === 'ok'" />
+              <CircleClose v-else-if="runStatus(run) === 'error'" />
+              <WarningFilled v-else />
+            </el-icon>
+          </span>
           <span class="run-preview" :title="run.userMessagePreview">{{ run.userMessagePreview || '(空消息)' }}</span>
           <span class="run-metrics">
-            <span>墙钟 {{ formatMs(run.totals.wallClockMs) }}</span>
+            <span>耗时 {{ formatMs(run.totals.wallClockMs) }}</span>
             <span>{{ formatTokens(tokenTotal(run)) }} tokens</span>
-            <span v-if="run.totals.costMicros != null">成本 {{ formatCost(run.totals.costMicros) }}</span>
-            <span :class="{ 'tool-error': run.totals.toolError > 0 }">
-              工具 {{ run.totals.toolSuccess }}/{{ run.totals.toolError }}
-            </span>
           </span>
           <span class="run-badges">
-            <span v-for="badge in runBadges(run)" :key="badge.label" class="run-badge" :class="`badge-${badge.tone}`">
-              {{ badge.label }}
-            </span>
+            <template v-if="badgesOf(run).length > 0">
+              <template v-if="isBadgeOverflowOpen(run.runId)">
+                <span v-for="badge in badgesOf(run)" :key="badge.label" class="run-badge" :class="`badge-${badge.tone}`">{{ badge.label }}</span>
+                <span
+                  class="badge-more"
+                  role="button"
+                  tabindex="0"
+                  title="收起关注点"
+                  @click.stop="toggleBadgeOverflow(run.runId)"
+                  @keydown.enter.prevent.stop="toggleBadgeOverflow(run.runId)"
+                  @keydown.space.prevent.stop="toggleBadgeOverflow(run.runId)"
+                >收起</span>
+              </template>
+              <span
+                v-else
+                class="badge-more"
+                role="button"
+                tabindex="0"
+                :title="`关注点：${badgesOf(run).map((b) => b.label).join('、')}`"
+                @click.stop="toggleBadgeOverflow(run.runId)"
+                @keydown.enter.prevent.stop="toggleBadgeOverflow(run.runId)"
+                @keydown.space.prevent.stop="toggleBadgeOverflow(run.runId)"
+              >+{{ badgesOf(run).length }}</span>
+            </template>
           </span>
         </button>
 
@@ -224,12 +265,13 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { ArrowDown, ArrowRight, InfoFilled, TrendCharts } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowRight, CircleCheck, CircleClose, InfoFilled, TrendCharts, WarningFilled } from '@element-plus/icons-vue'
 import { api } from '../../api'
 import { useSessionStore } from '../../stores/session'
 import { getToolDisplayName } from '../../utils/toolDisplay'
 import { llmCallSceneLabel } from '../../utils/llmCallLabels'
 import { downloadTraceCsv, downloadTraceJson } from '../../utils/trace-export'
+import { formatClock, formatTokens, RUN_STATUS_META, runAttentionBadges, runStatus, summarizeRuns, toolSuccessRate } from '../../utils/trace-display'
 import type { RunTrace, RunTracePage, TraceRound, TraceSideCall, TraceTool, UnattributedGroup } from '../../types/trace'
 
 const props = defineProps<{
@@ -249,7 +291,13 @@ const hasMore = computed(() => sessionStore.getTraceHasMore(props.sessionId))
 const unattributed = computed(() => sessionStore.getTraceUnattributed(props.sessionId))
 const loading = computed(() => sessionStore.isTraceLoading(props.sessionId))
 
+/** L0 会话总览：先回答「整体怎么样」，再下钻到单个 run */
+const traceSummary = computed(() => summarizeRuns(runs.value))
+const toolRate = computed(() => toolSuccessRate(traceSummary.value))
+
 const expandedRuns = ref<Set<number>>(new Set())
+/** 关注点徽标默认收拢成 +N，点开展开（runId → 是否展开） */
+const badgeOverflow = ref<Set<number>>(new Set())
 const unattributedExpanded = ref(false)
 const exporting = ref(false)
 /** 已加载的页数：执行结束后按同样页数重拉，避免把用户翻出来的历史页丢掉 */
@@ -403,11 +451,6 @@ function formatMs(ms: number | null | undefined): string {
   return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`
 }
 
-function formatTokens(tokens: number): string {
-  if (tokens >= 10_000) return `${(tokens / 1000).toFixed(1)}k`
-  return tokens.toLocaleString('zh-CN')
-}
-
 function formatCost(costMicros: number): string {
   const value = costMicros / 1_000_000
   return value.toLocaleString('zh-CN', { maximumFractionDigits: 3 })
@@ -434,21 +477,6 @@ function toolKey(tool: TraceTool): string {
   return `${tool.toolCallId ?? ''}|${tool.target ?? ''}|${tool.name}`
 }
 
-interface RunBadge { label: string; tone: 'neutral' | 'danger' | 'warn' | 'info' }
-
-function runBadges(run: RunTrace): RunBadge[] {
-  const rounds = run.segments.flatMap((s) => s.rounds)
-  const badges: RunBadge[] = []
-  if (run.markers.length > 0) badges.push({ label: '压缩', tone: 'neutral' })
-  if (rounds.some((r) => !r.success && !r.interrupted)) badges.push({ label: '失败', tone: 'danger' })
-  if (rounds.some((r) => r.interrupted)) badges.push({ label: '中断', tone: 'warn' })
-  if (rounds.some((r) => r.retryCount > 0)) badges.push({ label: '重试', tone: 'warn' })
-  if (rounds.some((r) => r.slow)) badges.push({ label: '慢', tone: 'info' })
-  if (rounds.some((r) => r.expensive)) badges.push({ label: '贵', tone: 'info' })
-  if (run.segments.some((s) => s.kind === 'before_edit')) badges.push({ label: '编辑前', tone: 'neutral' })
-  return badges
-}
-
 /** 摘要条按最高严重度描边：失败红，重试与中断黄，慢与贵中性色。 */
 function runSeverity(run: RunTrace): 'error' | 'warn' | 'info' | 'none' {
   const rounds = run.segments.flatMap((s) => s.rounds)
@@ -467,6 +495,22 @@ function toggleRun(runId: number) {
   if (next.has(runId)) next.delete(runId)
   else next.add(runId)
   expandedRuns.value = next
+}
+
+function badgesOf(run: RunTrace) {
+  return runAttentionBadges(run)
+}
+
+function isBadgeOverflowOpen(runId: number): boolean {
+  return badgeOverflow.value.has(runId)
+}
+
+/** +N 收拢徽标的展开 / 收起：只翻关注点，不连带展开整个 run。 */
+function toggleBadgeOverflow(runId: number) {
+  const next = new Set(badgeOverflow.value)
+  if (next.has(runId)) next.delete(runId)
+  else next.add(runId)
+  badgeOverflow.value = next
 }
 
 // ===== 导出 =====
@@ -669,6 +713,49 @@ async function exportCsv() {
   color: var(--aw-ink);
 }
 
+/* ===== L0 会话总览 ===== */
+.trace-overview {
+  border: 1px solid var(--aw-divider-soft);
+  border-radius: var(--aw-radius-sm);
+  background: var(--aw-surface);
+  padding: var(--aw-space-xxs) var(--aw-space-xs);
+  margin-bottom: var(--aw-space-xxs);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.overview-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: var(--aw-text-fine);
+  color: var(--aw-ink-muted-64);
+}
+
+.overview-count {
+  font-weight: 600;
+  color: var(--aw-ink);
+}
+
+.overview-error {
+  color: var(--aw-danger);
+}
+
+.overview-interrupted {
+  color: var(--aw-status-waiting);
+}
+
+.overview-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--aw-space-xxs);
+  font-family: var(--aw-font-mono);
+  font-size: var(--aw-text-micro);
+  color: var(--aw-ink-muted-48);
+}
+
 /* ===== run 摘要条 ===== */
 .run-card {
   border: 1px solid var(--aw-divider-soft);
@@ -765,6 +852,50 @@ async function exportCsv() {
 .badge-info {
   color: var(--aw-diff-info);
   background: var(--aw-diff-info-bg);
+}
+
+/* 时间锚点与结果状态：正常 run 只剩灰时间 + 绿勾，异常才被看见 */
+.run-clock {
+  flex-shrink: 0;
+  font-family: var(--aw-font-mono);
+  font-size: var(--aw-text-micro);
+  color: var(--aw-ink-muted-48);
+}
+
+.run-status {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+}
+
+.run-status.status-ok {
+  color: var(--aw-success);
+}
+
+.run-status.status-error {
+  color: var(--aw-danger);
+}
+
+.run-status.status-interrupted {
+  color: var(--aw-status-waiting);
+}
+
+/* 关注点徽标收拢成 +N：点开展开，不连带展开整个 run */
+.badge-more {
+  font-size: var(--aw-text-micro);
+  padding: 1px 5px;
+  border-radius: var(--aw-radius-xs);
+  line-height: 1.4;
+  white-space: nowrap;
+  color: var(--aw-ink-muted-64);
+  background: rgba(0, 0, 0, 0.05);
+  cursor: pointer;
+  user-select: none;
+}
+
+.badge-more:hover {
+  color: var(--aw-primary);
+  background: var(--aw-primary-hover);
 }
 
 /* ===== 展开明细 ===== */
@@ -991,6 +1122,10 @@ async function exportCsv() {
 }
 
 [data-theme="dark"] .badge-neutral {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="dark"] .badge-more {
   background: rgba(255, 255, 255, 0.08);
 }
 

@@ -67,6 +67,9 @@ vi.mock('@element-plus/icons-vue', () => ({
   ArrowRight: { render: () => null },
   InfoFilled: { render: () => null },
   TrendCharts: { render: () => null },
+  CircleCheck: { render: () => null },
+  CircleClose: { render: () => null },
+  WarningFilled: { render: () => null },
 }))
 
 vi.mock('../../utils/toolDisplay', () => ({ getToolDisplayName: (n: string) => n }))
