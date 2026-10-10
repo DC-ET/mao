@@ -15,12 +15,18 @@
     <template #header>
       <div class="drawer-header">
         <span class="drawer-title">我的用量</span>
+        <!--
+          刷新按钮是 drawer-header 的直接子元素而非塞进 drawer-actions：周期控件 6 项
+          约 292px，加上「统计周期」标签与刷新按钮接近 400px，360px 一排放不下会被 flex
+          挤到第三行，把头部撑到 130px 高、下方空出一大块。拆开后桌面端仍是同一行
+          （标题居左、刷新与周期居右），移动端刷新自动落到标题行右侧，周期控件独占一行。
+        -->
+        <el-tooltip content="刷新" :show-after="100" placement="bottom">
+          <el-button text :icon="Refresh" :loading="refreshing" aria-label="刷新" @click="handleRefresh" />
+        </el-tooltip>
         <div class="drawer-actions">
           <span class="period-label">统计周期</span>
           <el-segmented v-model="range" :options="PERIOD_OPTIONS" size="small" />
-          <el-tooltip content="刷新" :show-after="100" placement="bottom">
-            <el-button text :icon="Refresh" :loading="refreshing" aria-label="刷新" @click="handleRefresh" />
-          </el-tooltip>
         </div>
       </div>
     </template>
@@ -106,11 +112,10 @@ async function handleRefresh() {
 
 <style scoped>
 /*
-  el-drawer__header 的样式是 `& > :first-child { flex: 1 }`：插槽内容会占满头部全宽，
-  把默认关闭按钮挤出屏幕（移动端实测按钮被推到 left=407，视口只有 393 宽，完全看不见）。
-  这里让插槽内容不抢占关闭按钮的位置：桌面端用 margin-right 留位，移动端改用
-  padding-right + 关闭按钮绝对定位，周期控件因此能拿满整行宽度（6 项约 292px，
-  360px 一放得下，不必横向滚动）。
+  只放本项目自己的元素。EP 内部结构（.el-drawer__header / __close-btn）的覆盖必须放全局
+  style.css：class="usage-drawer" 是通过 fallthrough attrs 传到 el-drawer 内部的
+  .el-drawer 元素上的，scoped 的 data-v-* 属性不会跟着 attrs 走，所以带
+  [data-v-x] 的选择器匹配不到那些节点（实测 matches=false，规则静默失效）。
 */
 .drawer-header {
   display: flex;
@@ -118,9 +123,7 @@ async function handleRefresh() {
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
-  flex: 0 1 auto;
   min-width: 0;
-  margin-right: 36px;
 }
 
 .drawer-title {
@@ -148,29 +151,36 @@ async function handleRefresh() {
   margin-bottom: 14px;
 }
 
-/* 移动端：头部纵向堆叠，周期控件单独占满一行，避免挤出屏幕 */
+/* 移动端：头部改为「标题 + 刷新」一行、「统计周期 + 分段控件」一行 */
 @media (max-width: 768px) {
-  .usage-drawer :deep(.el-drawer__header) {
-    position: relative;
-    padding-right: 40px;
-  }
-
-  /* 关闭按钮脱离文档流固定在右上角，不再与内容争宽度 */
-  .usage-drawer :deep(.el-drawer__close-btn) {
-    position: absolute;
-    top: 20px;
-    right: 12px;
-    z-index: 1;
-  }
-
   .drawer-header {
-    margin-right: 0;
     width: 100%;
+    align-items: flex-start;
+    row-gap: 8px;
+  }
+
+  /* 刷新按钮从周期行挪到标题行右侧，与周期控件不再争宽度 */
+  .drawer-header > .el-tooltip {
+    order: -1;
+    margin-left: auto;
   }
 
   .drawer-actions {
     flex: 1 1 100%;
     gap: 6px;
+    flex-wrap: nowrap;
+    min-width: 0;
+  }
+
+  /* 周期控件保持内容宽度（6 项约 292px）不被压缩：压缩后 EP 会把项内文字截成
+     「近 ...」的省略号（393px 实测）。空间不够时由「统计周期」标签让位。 */
+  .drawer-actions :deep(.el-segmented) {
+    flex: 0 0 auto;
+  }
+
+  /* 窄屏隐藏「统计周期」文字标签：分段控件本身就说明了用途，省下的 53px 让 6 项完整显示 */
+  .period-label {
+    display: none;
   }
 }
 </style>

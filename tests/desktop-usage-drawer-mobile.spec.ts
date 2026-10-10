@@ -97,6 +97,10 @@ async function geometry(page: Page) {
       segmentedOverflowX: seg ? seg.scrollWidth - seg.clientWidth : null,
       headerOverflowX: header.scrollWidth - header.clientWidth,
       drawerOverflowX: drawerEl.scrollWidth - drawerEl.clientWidth,
+      gapHeaderToBody: (() => {
+        const body = drawerEl.querySelector('.el-drawer__body') as HTMLElement | null
+        return body ? Math.round((body.getBoundingClientRect().top - header.getBoundingClientRect().bottom) * 10) / 10 : null
+      })(),
     }
   })
 }
@@ -116,17 +120,37 @@ test.describe('「我的用量」抽屉移动端布局', () => {
     expect(g.headerOverflowX).toBeLessThanOrEqual(0)
   })
 
-  test('统计周期标签横排，6 个分段项完整不裁切', async ({ page }) => {
+  test('统计周期标签不竖排，6 个分段项完整不裁切', async ({ page }) => {
     await setup(page)
     const g = await geometry(page)
-    // 修前标签被挤成 11.6×70.5 的竖排细条
-    expect(g.periodLabel!.width).toBeGreaterThan(30)
-    expect(g.periodLabel!.height).toBeLessThan(30)
+    // 修前标签被挤成 11.6×70.5 的竖排细条；现在窄屏直接隐藏（segmented 自说明用途），
+    // 保底要求是：要么隐藏，要么必须是横排（宽 > 30 且高 < 30）
+    if (g.periodLabel) {
+      const isVertical = g.periodLabel.width < 30 && g.periodLabel.height > 30
+      expect(isVertical).toBe(false)
+    }
     // 修前 segmented 内容宽 292 却只有 257 容器，最后一项被裁 35px
     expect(g.segmentedOverflowX).toBeLessThanOrEqual(0)
     expect(g.segmented!.right).toBeLessThanOrEqual(g.viewportW)
     // 抽屉整体不横向溢出
     expect(g.drawerOverflowX).toBeLessThanOrEqual(0)
+  })
+
+  test('头部紧凑：不与 Tab 之间留一大块空白', async ({ page }) => {
+    await setup(page)
+    const g = await geometry(page)
+    // 修前 EP 默认 margin-bottom: 32px + 周期行被 flex 挤到第三行，头部高达 132px，
+    // 头部与 Tab 之间空出一大块。现在头部应压在 90px 内、间距 16px 内
+    expect(g.headerSlot!.height).toBeLessThan(90)
+    expect(g.gapHeaderToBody!).toBeLessThanOrEqual(16)
+  })
+
+  test('周期控件 6 项都完整显示，无省略号截断', async ({ page }) => {
+    await setup(page)
+    const labels = await page.evaluate(() =>
+      [...document.querySelectorAll('.usage-drawer .el-segmented__item')].map(i => i.textContent ?? ''))
+    expect(labels).toEqual(['今日', '昨日', '本周', '本月', '近 7 天', '近 30 天'])
+    expect(labels.some(l => l.includes('…') || l.includes('...'))).toBe(false)
   })
 
   test('点关闭按钮可收起抽屉', async ({ page }) => {

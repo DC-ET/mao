@@ -150,6 +150,47 @@
   }
 }
 
+/*
+ * 「我的用量」抽屉头部（el-drawer 内部结构，故放全局样式）。
+ * class="usage-drawer" 是经 fallthrough attrs 传到 .el-drawer 上的，scoped 的
+ * data-v-* 属性不会跟着 attrs 走，组件内写 .usage-drawer :deep(.el-drawer__header)
+ * 会因带 [data-v-x] 而匹配不到，规则静默失效（实测 matches=false）。
+ *
+ * 两处覆盖：
+ * ① EP 的 .el-drawer__header 有 `& > :first-child { flex: 1 }`，插槽内容会占满头部全宽，
+ *    把默认关闭按钮挤出屏幕（393px 视口实测按钮 left=407）。给插槽内容留出右侧空间。
+ * ② 默认 margin-bottom: 32px 在抽屉高度紧张时是一大块空白，收紧到 12px。
+ */
+@media (max-width: 768px) {
+  .usage-drawer .el-drawer__header {
+    position: relative;
+    margin-bottom: 12px;
+    padding-right: 40px;
+    align-items: flex-start;
+  }
+
+  /* 关闭按钮脱离文档流固定在右上角，不再与插槽内容争宽度 */
+  .usage-drawer .el-drawer__close-btn {
+    position: absolute;
+    top: 20px;
+    right: 12px;
+    z-index: 1;
+  }
+}
+
+/* 桌面端同样要防关闭按钮被挤出：插槽内容留出右侧 36px 给按钮 */
+.usage-drawer .el-drawer__header > :first-child {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-right: 36px;
+}
+
+@media (max-width: 768px) {
+  .usage-drawer .el-drawer__header > :first-child {
+    margin-right: 0;
+  }
+}
+
 /* Capacitor 安卓：立即隐藏 HTML splash，避免与原生 SplashScreen 叠出残留图标。 */
 html.android-capacitor #splash {
   display: none !important;
