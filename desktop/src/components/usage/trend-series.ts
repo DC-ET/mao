@@ -8,6 +8,8 @@ export interface TrendSeries {
   costs: number[]
   calls: number[]
   fails: number[]
+  /** 缓存命中率趋势（%）：桶内 promptTokens 为 0（无调用）时置 null，折线断开不画到 0 */
+  hitRates: Array<number | null>
   totalTokens: number
   totalCost: number
   totalCalls: number
@@ -31,6 +33,7 @@ export function buildTrendSeries(buckets: UsageTrendBucket[], granularity: 'day'
     costs: [],
     calls: [],
     fails: [],
+    hitRates: [],
     totalTokens: 0,
     totalCost: 0,
     totalCalls: 0,
@@ -43,6 +46,7 @@ export function buildTrendSeries(buckets: UsageTrendBucket[], granularity: 'day'
     series.costs.push(b.cost);
     series.calls.push(b.callCount);
     series.fails.push(b.failCount);
+    series.hitRates.push(hitRate(b));
     series.totalTokens += b.totalTokens;
     series.totalCost += b.cost;
     series.totalCalls += b.callCount;
@@ -50,4 +54,10 @@ export function buildTrendSeries(buckets: UsageTrendBucket[], granularity: 'day'
   }
   series.tokenUnit = pickTokenUnit(peak);
   return series;
+}
+
+/** 桶内缓存命中率（保留 1 位小数）：无入 Token 的桶返回 null，折线断开。 */
+function hitRate(b: UsageTrendBucket): number | null {
+  if (b.promptTokens <= 0) return null
+  return Math.round((b.cachedTokens / b.promptTokens) * 1000) / 10
 }

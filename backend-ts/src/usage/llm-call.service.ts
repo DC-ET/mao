@@ -173,12 +173,13 @@ function ymdDiffDays(from: string, to: string): number {
   return Math.round((Date.UTC(y2, m2 - 1, d2) - Date.UTC(y1, m1 - 1, d1)) / 86_400_000);
 }
 
-const ZERO_TREND_BUCKET = { callCount: 0, failCount: 0, totalTokens: 0, cost: 0 } as const;
+const ZERO_TREND_BUCKET = { callCount: 0, failCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0 } as const;
 
 /** 聚合行按桶键回填到完整序列：缺失桶补零，前端无需再做日期运算（也无浏览器时区错位风险）。 */
 function fillTrendBuckets(rows: LlmCallTrendRow[], keys: string[]): LlmCallTrendRow[] {
   const byKey = new Map(rows.map((r) => [r.bucket, r]));
-  return keys.map((key) => byKey.get(key) ?? { bucket: key, ...ZERO_TREND_BUCKET });
+  // 有数据的行也过一遍零值基准，保证每桶字段齐全（趋势图按固定字段读）
+  return keys.map((key) => ({ ...ZERO_TREND_BUCKET, ...byKey.get(key), bucket: key }));
 }
 
 export class LlmCallService {

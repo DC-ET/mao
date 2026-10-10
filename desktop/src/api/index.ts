@@ -795,6 +795,9 @@ export interface UsageTrendBucket {
   bucket: string
   callCount: number
   failCount: number
+  /** 入 Token / 其中命中缓存的 Token，供缓存命中率趋势按桶计算 */
+  promptTokens: number
+  cachedTokens: number
   totalTokens: number
   cost: number
 }

@@ -93,6 +93,8 @@ export interface LlmCallTrendRow {
   bucket: string;
   callCount: number;
   failCount: number;
+  promptTokens: number;
+  cachedTokens: number;
   totalTokens: number;
   cost: number;
 }
@@ -354,6 +356,8 @@ export class LlmCallRepository {
       `SELECT ${bucket} AS bucket,
               COUNT(*) AS callCount,
               COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0) AS failCount,
+              COALESCE(SUM(prompt_tokens), 0) AS promptTokens,
+              COALESCE(SUM(cached_tokens), 0) AS cachedTokens,
               COALESCE(SUM(total_tokens), 0) AS totalTokens,
               COALESCE(SUM(cost_micros), 0) / 1000000 AS cost
        FROM llm_call
@@ -366,6 +370,8 @@ export class LlmCallRepository {
       bucket: String(r.bucket ?? ''),
       callCount: toNumber(r.callCount),
       failCount: toNumber(r.failCount),
+      promptTokens: toNumber(r.promptTokens),
+      cachedTokens: toNumber(r.cachedTokens),
       totalTokens: toNumber(r.totalTokens),
       cost: toNumber(r.cost),
     }));

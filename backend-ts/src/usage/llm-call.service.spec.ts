@@ -353,19 +353,19 @@ describe('LlmCallService 用户端用量汇总（/v1/llm-calls/me/summary|trends
       aggregateByModel: vi.fn(),
       aggregateByScene: vi.fn(),
       aggregateTrend: vi.fn(async () => [
-        { bucket: '2026-10-09', callCount: 3, failCount: 1, totalTokens: 300, cost: 0.5 },
+        { bucket: '2026-10-09', callCount: 3, failCount: 1, promptTokens: 200, cachedTokens: 80, totalTokens: 300, cost: 0.5 },
       ]),
     };
     const service = new LlmCallService(repo as never);
     const day = await service.trendsForUser(7, 'last7');
     expect(day.buckets).toEqual([
-      { bucket: '2026-10-04', callCount: 0, failCount: 0, totalTokens: 0, cost: 0 },
-      { bucket: '2026-10-05', callCount: 0, failCount: 0, totalTokens: 0, cost: 0 },
-      { bucket: '2026-10-06', callCount: 0, failCount: 0, totalTokens: 0, cost: 0 },
-      { bucket: '2026-10-07', callCount: 0, failCount: 0, totalTokens: 0, cost: 0 },
-      { bucket: '2026-10-08', callCount: 0, failCount: 0, totalTokens: 0, cost: 0 },
-      { bucket: '2026-10-09', callCount: 3, failCount: 1, totalTokens: 300, cost: 0.5 },
-      { bucket: '2026-10-10', callCount: 0, failCount: 0, totalTokens: 0, cost: 0 },
+      { bucket: '2026-10-04', callCount: 0, failCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0 },
+      { bucket: '2026-10-05', callCount: 0, failCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0 },
+      { bucket: '2026-10-06', callCount: 0, failCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0 },
+      { bucket: '2026-10-07', callCount: 0, failCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0 },
+      { bucket: '2026-10-08', callCount: 0, failCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0 },
+      { bucket: '2026-10-09', callCount: 3, failCount: 1, promptTokens: 200, cachedTokens: 80, totalTokens: 300, cost: 0.5 },
+      { bucket: '2026-10-10', callCount: 0, failCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0 },
     ]);
     vi.useRealTimers();
   });

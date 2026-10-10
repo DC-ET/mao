@@ -90,13 +90,15 @@ describe('LlmCallRepository 用户维度聚合', () => {
     expect(params).toEqual([7, '2026-10-04 00:00:00', '2026-10-10 23:59:59']);
   });
 
-  it('aggregateTrend：day 用 DATE()，hour 用 DATE_FORMAT 整点，均按桶升序', async () => {
-    const dayDb = build([{ bucket: '2026-10-10', callCount: '2', failCount: '0', totalTokens: '20', cost: '0.1' }]);
+  it('aggregateTrend：day 用 DATE()，hour 用 DATE_FORMAT 整点，均按桶升序；带 prompt/cached token', async () => {
+    const dayDb = build([{ bucket: '2026-10-10', callCount: '2', failCount: '0', promptTokens: '900', cachedTokens: '300', totalTokens: '20', cost: '0.1' }]);
     const dayRows = await dayDb.repo.aggregateTrend(7, WINDOW, 'day');
-    expect(dayRows).toEqual([{ bucket: '2026-10-10', callCount: 2, failCount: 0, totalTokens: 20, cost: 0.1 }]);
+    expect(dayRows).toEqual([{ bucket: '2026-10-10', callCount: 2, failCount: 0, promptTokens: 900, cachedTokens: 300, totalTokens: 20, cost: 0.1 }]);
     const [daySql] = dayDb.query.mock.calls[0] as [string, unknown[]];
     expect(daySql).toContain('DATE(created_at)');
     expect(daySql).not.toContain('DATE_FORMAT');
+    expect(daySql).toContain('SUM(prompt_tokens)');
+    expect(daySql).toContain('SUM(cached_tokens)');
 
     const hourDb = build([]);
     await hourDb.repo.aggregateTrend(7, WINDOW, 'hour');
