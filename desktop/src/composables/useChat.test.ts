@@ -108,8 +108,8 @@ describe('restoreSession', () => {
 
     expect(store.getTodos('A')).toEqual([{ id: 1, content: 'A todo' }])
     expect(store.getTodos('B')).toEqual([{ id: 2, content: 'B todo' }])
-    expect(store.getQueueMessages('A')).toEqual([{ id: 'qa' }])
-    expect(store.getQueueMessages('B')).toEqual([{ id: 'qb' }])
+    expect(store.getQueueMessages('A')).toEqual([{ id: 'qa', sessionId: 'A' }])
+    expect(store.getQueueMessages('B')).toEqual([{ id: 'qb', sessionId: 'B' }])
   })
 
   it('历史上拉合并目标会话自身的文件变更，不混入当前会话', async () => {

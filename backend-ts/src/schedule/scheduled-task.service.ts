@@ -1007,7 +1007,8 @@ export class ScheduledTaskService {
   async compensateMissed(processStartedAt: Date): Promise<void> {
     if (this.store.listMissedTasks == null || this.store.casNextFire == null) return;
     const tasks = await this.store.listMissedTasks(formatDateTime(processStartedAt));
-    const now = new Date();
+    // 补偿窗口截止在进程启动时刻。改用墙钟会把启动之后才到期的点记成错过。
+    const now = processStartedAt;
     for (const task of tasks) {
       if (task.id == null || task.cronExpression == null || task.nextFireTime == null || task.sessionId == null) continue;
       let cron: Cron;
