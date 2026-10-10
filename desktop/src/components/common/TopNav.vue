@@ -26,6 +26,7 @@
       </el-tooltip>
       <SessionSearchPopover ref="searchPopoverRef" />
       <InboxBell />
+      <UsageBell />
       <el-tooltip :content="terminalAvailability.tooltip" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
         <div
           class="theme-toggle terminal-toggle"
@@ -113,6 +114,7 @@ import { isElectronClient } from '../../utils/platform'
 import { goBackToWorkbench } from '../../utils/workbench-nav'
 import InboxBell from '../inbox/InboxBell.vue'
 import SessionSearchPopover from '../search/SessionSearchPopover.vue'
+import UsageBell from '../usage/UsageBell.vue'
 
 const { theme, toggleTheme } = useTheme()
 

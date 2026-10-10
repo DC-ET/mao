@@ -736,3 +736,97 @@ export async function refreshSessionShare(sessionId: string): Promise<SessionSha
 export async function revokeSessionShare(sessionId: string): Promise<void> {
   await api.delete(`/sessions/${sessionId}/share`)
 }
+
+// ─── 我的用量（顶栏抽屉：总览 / 趋势 / 明细） ───
+
+export interface UsageTotals {
+  callCount: number
+  successCount: number
+  failCount: number
+  promptTokens: number
+  completionTokens: number
+  cachedTokens: number
+  totalTokens: number
+  /** 成本合计（成本单位 = 模型价格填写口径）；未配价的调用不计入，展示时按「—」处理 */
+  cost: number
+}
+
+export interface UsageModelRow {
+  modelId: number | null
+  modelName: string | null
+  callCount: number
+  failCount: number
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+  cost: number
+}
+
+export interface UsageSceneRow {
+  scene: string
+  callCount: number
+  failCount: number
+  totalTokens: number
+}
+
+export interface MyUsageSummary {
+  days: number
+  totals: UsageTotals
+  byModel: UsageModelRow[]
+  byScene: UsageSceneRow[]
+}
+
+export interface UsageTrendBucket {
+  /** day 粒度为 YYYY-MM-DD，hour 粒度为 YYYY-MM-DD HH:00 */
+  bucket: string
+  callCount: number
+  failCount: number
+  totalTokens: number
+  cost: number
+}
+
+export interface MyUsageTrends {
+  days: number
+  granularity: 'day' | 'hour'
+  buckets: UsageTrendBucket[]
+}
+
+export interface MyLlmCallRecord {
+  id: number
+  createdAt: string | null
+  scene: string | null
+  modelName: string | null
+  providerModelId: string | null
+  promptTokens: number | null
+  completionTokens: number | null
+  cachedTokens: number | null
+  totalTokens: number | null
+  firstTokenMs: number | null
+  durationMs: number | null
+  success: number | null
+  sessionId: number | null
+}
+
+/** 我的用量总览：近 N 天（默认 30，钳制 1..365）总账 + 按模型 + 按场景。 */
+export async function fetchMyUsageSummary(days: number): Promise<MyUsageSummary> {
+  const { data } = await api.get('/llm-calls/me/summary', { params: { days } })
+  return data
+}
+
+/** 我的用量趋势：近 N 天按天/小时分桶（后端只返回有数据的桶，缺失桶由前端补零）。 */
+export async function fetchMyUsageTrends(days: number, granularity: 'day' | 'hour' = 'day'): Promise<MyUsageTrends> {
+  const { data } = await api.get('/llm-calls/me/trends', { params: { days, granularity } })
+  return data
+}
+
+/** 我的调用明细（分页；场景 / 模型 / 成败筛选，后端 /v1/llm-calls/me 均已支持）。 */
+export async function fetchMyLlmCalls(params: {
+  page?: number
+  size?: number
+  scene?: string
+  modelId?: number
+  success?: boolean
+}): Promise<{ records: MyLlmCallRecord[]; total: number; page: number; size: number }> {
+  const { data } = await api.get('/llm-calls/me', { params })
+  return data
+}

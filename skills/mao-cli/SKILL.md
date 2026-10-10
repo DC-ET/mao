@@ -17,7 +17,7 @@ Mao 的**产品文档唯一正文**（可独立分发）+ **REST 操作 CLI**。
 | 双域名合并为单域名 / 改 Nginx | 仓库 [docs/guides/single-domain-nginx-migration.md](../../docs/guides/single-domain-nginx-migration.md) |
 | 环境变量、数据目录、默认账号、认证方式 | [reference/config.md](reference/config.md) |
 | 管理后台怎么用 / Agent 头像与分组编辑 / 提示词版本与回滚 | [reference/admin.md](reference/admin.md) |
-| 桌面 Web 端（任务、工作区、终端、通知、微信等） | [reference/desktop.md](reference/desktop.md) |
+| 桌面 Web 端（任务、工作区、终端、通知、微信、我的用量抽屉等） | [reference/desktop.md](reference/desktop.md) |
 | 长期记忆（跨会话记忆的查看与维护） | [reference/memory.md](reference/memory.md) |
 | 任务收件箱（站内通知中心：未读数、七类事件、偏好开关） | [reference/inbox.md](reference/inbox.md) |
 | 模型价格与用量成本核算（每百万 token 价格、llm_call 成本、分析看钱） | [reference/model.md](reference/model.md)、[reference/analytics.md](reference/analytics.md) |

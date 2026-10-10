@@ -180,3 +180,114 @@ describe('LlmCallService 成本记取（§5.2 / §5.3）', () => {
     expect(repo.insert).toHaveBeenCalledWith(expect.objectContaining({ cacheCreationTokens: 0 }));
   });
 });
+
+describe('LlmCallService 用户端用量汇总（/v1/llm-calls/me/summary|trends）', () => {
+  const EMPTY_TOTALS = {
+    callCount: 0,
+    successCount: 0,
+    failCount: 0,
+    promptTokens: 0,
+    completionTokens: 0,
+    cachedTokens: 0,
+    totalTokens: 0,
+    cost: 0,
+  };
+
+  function build() {
+    const repo = {
+      aggregateSummary: vi.fn(async () => ({ ...EMPTY_TOTALS })),
+      aggregateByModel: vi.fn(async () => []),
+      aggregateByScene: vi.fn(async () => []),
+      aggregateTrend: vi.fn(async () => []),
+    };
+    const service = new LlmCallService(repo as never);
+    return { service, repo };
+  }
+
+  /** 冻结到上海时区 2026-10-10 12:00，窗口断言不随真实日期漂移。 */
+  function freeze(date: Date) {
+    vi.useFakeTimers();
+    vi.setSystemTime(date);
+  }
+
+  it('summaryForUser：默认 30 天闭区间窗口，三个聚合均带 userId', async () => {
+    freeze(new Date('2026-10-10T12:00:00+08:00'));
+    const { service, repo } = build();
+    const result = await service.summaryForUser(7);
+    expect(result.days).toBe(30);
+    for (const mock of [repo.aggregateSummary, repo.aggregateByModel, repo.aggregateByScene]) {
+      expect(mock).toHaveBeenCalledWith(7, expect.objectContaining({
+        startAt: '2026-09-11 00:00:00',
+        endAt: '2026-10-10 23:59:59',
+      }));
+    }
+    vi.useRealTimers();
+  });
+
+  it('summaryForUser：days 非法/越界钳制（缺省 30、下限 1、上限 365）', async () => {
+    freeze(new Date('2026-10-10T12:00:00+08:00'));
+    const { service, repo } = build();
+    await service.summaryForUser(7, undefined);
+    expect(repo.aggregateSummary).toHaveBeenCalledWith(7, expect.objectContaining({ startAt: '2026-09-11 00:00:00' }));
+    await service.summaryForUser(7, Number.NaN);
+    expect(repo.aggregateSummary).toHaveBeenLastCalledWith(7, expect.objectContaining({ startAt: '2026-09-11 00:00:00' }));
+    await service.summaryForUser(7, 0);
+    expect(repo.aggregateSummary).toHaveBeenLastCalledWith(7, expect.objectContaining({ startAt: '2026-10-10 00:00:00' }));
+    await service.summaryForUser(7, 9999);
+    expect(repo.aggregateSummary).toHaveBeenLastCalledWith(7, expect.objectContaining({ startAt: '2025-10-11 00:00:00' }));
+    vi.useRealTimers();
+  });
+
+  it('trendsForUser：窗口一致，granularity 透传且默认 day', async () => {
+    freeze(new Date('2026-10-10T12:00:00+08:00'));
+    const { service, repo } = build();
+    const day = await service.trendsForUser(7, 7);
+    expect(day.days).toBe(7);
+    expect(day.granularity).toBe('day');
+    // 无数据时补齐 7 个连续零桶（10-04..10-10），前端拿到的序列无缺口
+    expect(day.buckets.map((b) => b.bucket)).toEqual([
+      '2026-10-04', '2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08', '2026-10-09', '2026-10-10',
+    ]);
+    expect(day.buckets.every((b) => b.callCount === 0 && b.totalTokens === 0 && b.cost === 0)).toBe(true);
+    expect(repo.aggregateTrend).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ startAt: '2026-10-04 00:00:00', endAt: '2026-10-10 23:59:59' }),
+      'day',
+    );
+    await service.trendsForUser(7, 7, 'hour');
+    expect(repo.aggregateTrend).toHaveBeenLastCalledWith(7, expect.anything(), 'hour');
+    vi.useRealTimers();
+  });
+
+  it('trendsForUser：hour 粒度补零到当前整点，不出现未来桶', async () => {
+    freeze(new Date('2026-10-10T12:00:00+08:00'));
+    const { service } = build();
+    const hour = await service.trendsForUser(7, 1, 'hour');
+    expect(hour.granularity).toBe('hour');
+    // 窗口=今天：00:00..12:00 共 13 个整点桶
+    expect(hour.buckets).toHaveLength(13);
+    expect(hour.buckets[0].bucket).toBe('2026-10-10 00:00');
+    expect(hour.buckets[12].bucket).toBe('2026-10-10 12:00');
+    vi.useRealTimers();
+  });
+
+  it('trendsForUser：有数据的桶原样保留，其余补零', async () => {
+    freeze(new Date('2026-10-10T12:00:00+08:00'));
+    const repo = {
+      aggregateSummary: vi.fn(),
+      aggregateByModel: vi.fn(),
+      aggregateByScene: vi.fn(),
+      aggregateTrend: vi.fn(async () => [
+        { bucket: '2026-10-09', callCount: 3, failCount: 1, totalTokens: 300, cost: 0.5 },
+      ]),
+    };
+    const service = new LlmCallService(repo as never);
+    const day = await service.trendsForUser(7, 3);
+    expect(day.buckets).toEqual([
+      { bucket: '2026-10-08', callCount: 0, failCount: 0, totalTokens: 0, cost: 0 },
+      { bucket: '2026-10-09', callCount: 3, failCount: 1, totalTokens: 300, cost: 0.5 },
+      { bucket: '2026-10-10', callCount: 0, failCount: 0, totalTokens: 0, cost: 0 },
+    ]);
+    vi.useRealTimers();
+  });
+});

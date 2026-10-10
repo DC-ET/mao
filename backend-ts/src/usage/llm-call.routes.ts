@@ -3,6 +3,7 @@ import { requireRequestPermission, requireUserId, sendOk } from '../common/http-
 import { queryInt, queryOptBool, queryOptInt, queryOptStr } from '../common/request.js';
 import type { PermissionService } from '../permission/permission.service.js';
 import type { LlmCallService } from './llm-call.service.js';
+import type { TrendGranularity } from './llm-call.repository.js';
 
 export interface LlmCallRouteDeps {
   llmCallService: LlmCallService;
@@ -14,6 +15,11 @@ function parseDateRange(startDate?: string, endDate?: string): { startAt?: strin
     startAt: startDate ? `${startDate} 00:00:00` : undefined,
     endAt: endDate ? `${endDate} 23:59:59` : undefined,
   };
+}
+
+/** 趋势粒度白名单：非 'hour' 一律回落 'day'（与管理后台 trends 同口径）。 */
+function parseGranularity(value?: string): TrendGranularity {
+  return value === 'hour' ? 'hour' : 'day';
 }
 
 export function registerLlmCallRoutes(app: FastifyInstance, deps: LlmCallRouteDeps): void {
@@ -53,5 +59,20 @@ export function registerLlmCallRoutes(app: FastifyInstance, deps: LlmCallRouteDe
       endAt: range.endAt,
     });
     return sendOk(reply, result);
+  });
+
+  // 当前用户自己的用量总览（总账 + 按模型 + 按场景）。仅需登录，不加权限码。
+  app.get('/v1/llm-calls/me/summary', async (request, reply) => {
+    const userId = requireUserId(request);
+    const days = queryOptInt(request, 'days');
+    return sendOk(reply, await deps.llmCallService.summaryForUser(userId, days));
+  });
+
+  // 当前用户自己的用量趋势（按天/小时分桶）。仅需登录，不加权限码。
+  app.get('/v1/llm-calls/me/trends', async (request, reply) => {
+    const userId = requireUserId(request);
+    const days = queryOptInt(request, 'days');
+    const granularity = parseGranularity(queryOptStr(request, 'granularity'));
+    return sendOk(reply, await deps.llmCallService.trendsForUser(userId, days, granularity));
   });
 }

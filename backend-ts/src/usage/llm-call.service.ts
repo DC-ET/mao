@@ -1,7 +1,18 @@
 import type { ChatUsage } from '../harness/llm/chat-request.js';
+import { addDaysYmd, formatDateTime, shanghaiYmd } from '../common/json.js';
 import { LlmCallContext } from './llm-call-context.js';
 import { computeCostMicros, parsePriceColumn, type CostPrice } from './cost-micros.js';
-import type { LlmCallListFilter, LlmCallRepository, LlmCallRow } from './llm-call.repository.js';
+import type {
+  LlmCallAggFilter,
+  LlmCallListFilter,
+  LlmCallModelAggRow,
+  LlmCallRepository,
+  LlmCallRow,
+  LlmCallSceneAggRow,
+  LlmCallSummaryRow,
+  LlmCallTrendRow,
+  TrendGranularity,
+} from './llm-call.repository.js';
 
 export interface LlmCallModelConfig {
   id?: number;
@@ -44,12 +55,89 @@ export type ModelPriceLookup = (id: number) => Promise<{
   priceOutput?: unknown;
 } | null>;
 
+/** 用户端用量总览：窗口总账 + 按模型 + 按场景（一次请求给全，前端三个区块同周期展示）。 */
+export interface MyUsageSummary {
+  days: number;
+  totals: LlmCallSummaryRow;
+  byModel: LlmCallModelAggRow[];
+  byScene: LlmCallSceneAggRow[];
+}
+
+/** 用户端用量趋势：按天/小时分桶的连续序列（后端补零，无缺口）。 */
+export interface MyUsageTrends {
+  days: number;
+  granularity: TrendGranularity;
+  buckets: LlmCallTrendRow[];
+}
+
 interface CacheEntry {
   price: CostPrice | null;
   expiresAt: number;
 }
 
 const PRICE_CACHE_TTL_MS = 60_000;
+
+/** 用户端汇总默认窗口（天）与上限钳制。 */
+const SUMMARY_DAYS_DEFAULT = 30;
+const SUMMARY_DAYS_MAX = 365;
+
+/** days 入参钳制：非法/缺省回落默认值，超过上限截断，避免超长窗口拖垮聚合。 */
+function clampSummaryDays(days: number | undefined): number {
+  if (days == null || !Number.isFinite(days)) return SUMMARY_DAYS_DEFAULT;
+  return Math.min(Math.max(Math.trunc(days), 1), SUMMARY_DAYS_MAX);
+}
+
+/** 近 N 天闭区间窗口（含今天，时区口径同管理后台：Asia/Shanghai 日历日）。 */
+function summaryWindow(days: number): LlmCallAggFilter & { startYmd: string; endYmd: string } {
+  const today = shanghaiYmd();
+  const startYmd = addDaysYmd(today, -(days - 1));
+  return {
+    startAt: `${startYmd} 00:00:00`,
+    endAt: `${today} 23:59:59`,
+    startYmd,
+    endYmd: today,
+  };
+}
+
+function addHoursKey(key: string, hours: number): string {
+  const [date, time] = key.split(' ');
+  const [y, m, d] = date.split('-').map(Number);
+  const hh = Number(time.slice(0, 2));
+  const dt = new Date(Date.UTC(y, m - 1, d, hh + hours));
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${dt.getUTCFullYear()}-${pad(dt.getUTCMonth() + 1)}-${pad(dt.getUTCDate())} ${pad(dt.getUTCHours())}:00`;
+}
+
+/**
+ * 趋势桶键序列（口径同管理后台 admin-analytics）：day 为 startYmd..endYmd 连续日历日；
+ * hour 为整点键且不超过当前小时（今天未发生的整点不出现在图上）。
+ */
+function buildTrendKeys(startYmd: string, endYmd: string, days: number, granularity: TrendGranularity): string[] {
+  if (granularity !== 'hour') {
+    const keys: string[] = [];
+    for (let i = 0; i < days; i++) keys.push(addDaysYmd(startYmd, i));
+    return keys;
+  }
+  const keys: string[] = [];
+  const endExclusive = `${addDaysYmd(endYmd, 1)} 00:00`;
+  const nowKey = `${formatDateTime(new Date()).slice(0, 13)}:00`;
+  const capAtNow = endYmd >= shanghaiYmd();
+  let cursor = `${startYmd} 00:00`;
+  for (let i = 0; i < days * 24 && cursor < endExclusive; i++) {
+    if (capAtNow && cursor > nowKey) break;
+    keys.push(cursor);
+    cursor = addHoursKey(cursor, 1);
+  }
+  return keys.length > 0 ? keys : [`${startYmd} 00:00`];
+}
+
+const ZERO_TREND_BUCKET = { callCount: 0, failCount: 0, totalTokens: 0, cost: 0 } as const;
+
+/** 聚合行按桶键回填到完整序列：缺失桶补零，前端无需再做日期运算（也无浏览器时区错位风险）。 */
+function fillTrendBuckets(rows: LlmCallTrendRow[], keys: string[]): LlmCallTrendRow[] {
+  const byKey = new Map(rows.map((r) => [r.bucket, r]));
+  return keys.map((key) => byKey.get(key) ?? { bucket: key, ...ZERO_TREND_BUCKET });
+}
 
 export class LlmCallService {
   /** 60s TTL 内存缓存（含"模型不存在"负缓存）：覆盖价格未随配置下发的兜底路径。 */
@@ -164,6 +252,27 @@ export class LlmCallService {
     filter: Omit<LlmCallListFilter, 'userId'>,
   ): Promise<{ records: LlmCallListItem[]; total: number; page: number; size: number }> {
     return this.listForAdmin(page, size, { ...filter, userId });
+  }
+
+  /** 当前用户近 N 天用量总览（总账 + 按模型 + 按场景，一次返回）。 */
+  async summaryForUser(userId: number, days?: number): Promise<MyUsageSummary> {
+    const clamped = clampSummaryDays(days);
+    const window = summaryWindow(clamped);
+    const [totals, byModel, byScene] = await Promise.all([
+      this.repo.aggregateSummary(userId, window),
+      this.repo.aggregateByModel(userId, window),
+      this.repo.aggregateByScene(userId, window),
+    ]);
+    return { days: clamped, totals, byModel, byScene };
+  }
+
+  /** 当前用户近 N 天用量趋势（按天/小时分桶；后端补零，序列连续无缺口）。 */
+  async trendsForUser(userId: number, days?: number, granularity: TrendGranularity = 'day'): Promise<MyUsageTrends> {
+    const clamped = clampSummaryDays(days);
+    const window = summaryWindow(clamped);
+    const rows = await this.repo.aggregateTrend(userId, window, granularity);
+    const keys = buildTrendKeys(window.startYmd, window.endYmd, clamped, granularity);
+    return { days: clamped, granularity, buckets: fillTrendBuckets(rows, keys) };
   }
 
   private async enrichRecords(records: LlmCallRow[]): Promise<LlmCallListItem[]> {

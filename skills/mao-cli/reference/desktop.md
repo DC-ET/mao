@@ -176,9 +176,19 @@ CLI：`mao weixin ...`（见 [weixin.md](weixin.md)）。
 
 上传个人 Skill 覆盖同名系统 Skill。「设置」中还可管理 Git 凭证、任务面板偏好等。
 
-## 使用记录
+## 使用记录与我的用量
 
-「设置 → 使用记录」查看当前账号的 LLM 调用明细：场景、模型、入/出 Token、耗时与成败；可按场景筛选，会话 ID 可跳转任务。CLI：`mao llm-call me`（见 [llm-call.md](llm-call.md)）。
+「设置 → 使用记录」查看当前账号的 LLM 调用明细：场景、模型、入/出 Token、耗时与成败；可按场景、模型、结果筛选，会话 ID 可跳转任务。CLI：`mao llm-call me`（见 [llm-call.md](llm-call.md)）。
+
+顶栏「我的用量」图标（收件箱右侧）打开用量抽屉，三个 Tab：
+
+| Tab | 内容 |
+|-----|------|
+| 总览 | 调用次数、总 Token、估算成本、成功率、缓存命中率五张卡片 + 按模型、按场景两张汇总表 |
+| 趋势 | 每日 Token 柱状图 + 成本折线（双轴），可切换近 7/30/90 天 |
+| 明细 | 分页表格（筛选同设置页），底部跳「设置 → 使用记录」看完整列表 |
+
+窗口默认近 30 天。成本按模型价格填写口径估算，未配置价格的调用不计入（总览卡片下方有脚注）。数据仅限当前登录用户自己的调用，无需额外权限。对应接口：`GET /v1/llm-calls/me/summary`、`GET /v1/llm-calls/me/trends`（详见 [llm-call.md](llm-call.md)）。
 
 REST 非对话操作统一用 `mao` CLI（本 Skill），见 [SKILL.md](../SKILL.md)。
 

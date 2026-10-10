@@ -6,68 +6,9 @@
     </div>
 
     <el-card class="usage-card">
-      <el-form :inline="true" size="small" class="search-form">
-        <el-form-item label="场景">
-          <el-select v-model="filters.scene" clearable placeholder="全部" style="width: 120px" @change="handleSearch">
-            <el-option v-for="opt in LLM_CALL_SCENE_OPTIONS" :key="opt.value" :label="opt.label" :value="opt.value" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="结果">
-          <el-select v-model="filters.success" clearable placeholder="全部" style="width: 100px" @change="handleSearch">
-            <el-option label="成功" :value="true" />
-            <el-option label="失败" :value="false" />
-          </el-select>
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" size="small" @click="handleSearch">查询</el-button>
-          <el-button size="small" @click="handleReset">重置</el-button>
-        </el-form-item>
-      </el-form>
+      <UsageFilterBar v-model="filters" @search="handleSearch" />
 
-      <el-table :data="records" v-loading="loading" stripe size="small">
-        <template #empty>
-          <el-empty description="暂无调用记录" :image-size="48" />
-        </template>
-        <el-table-column label="时间" width="140">
-          <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
-        </el-table-column>
-        <el-table-column label="场景" width="72">
-          <template #default="{ row }">{{ llmCallSceneLabel(row.scene) }}</template>
-        </el-table-column>
-        <el-table-column label="模型" min-width="100" show-overflow-tooltip>
-          <template #default="{ row }">{{ row.modelName || row.providerModelId || '-' }}</template>
-        </el-table-column>
-        <el-table-column label="入 Token" width="88" align="right">
-          <template #default="{ row }">{{ formatNumber(row.promptTokens || 0) }}</template>
-        </el-table-column>
-        <el-table-column label="缓存" width="118" align="right">
-          <template #default="{ row }">{{ formatCacheHit(row) }}</template>
-        </el-table-column>
-        <el-table-column label="出 Token" width="88" align="right">
-          <template #default="{ row }">{{ formatNumber(row.completionTokens || 0) }}</template>
-        </el-table-column>
-        <el-table-column label="首字" width="72" align="right">
-          <template #default="{ row }">{{ formatMs(row.firstTokenMs) }}</template>
-        </el-table-column>
-        <el-table-column label="耗时" width="72" align="right">
-          <template #default="{ row }">{{ formatMs(row.durationMs) }}</template>
-        </el-table-column>
-        <el-table-column label="结果" width="64">
-          <template #default="{ row }">
-            <el-tag size="small" :type="row.success === 1 ? 'success' : 'danger'">
-              {{ row.success === 1 ? '成功' : '失败' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="会话" width="64">
-          <template #default="{ row }">
-            <el-button v-if="row.sessionId" type="primary" link size="small" @click="goSession(row.sessionId)">
-              #{{ row.sessionId }}
-            </el-button>
-            <span v-else>-</span>
-          </template>
-        </el-table-column>
-      </el-table>
+      <UsageRecordTable :records="records" :loading="loading" @go-session="goSession" />
 
       <div class="pagination-wrap">
         <el-pagination
@@ -88,46 +29,31 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { api } from '../../api'
-import { formatDateTime } from '../../utils/datetime'
-import { LLM_CALL_SCENE_OPTIONS, llmCallSceneLabel, formatMs } from '../../utils/llmCallLabels'
+import { fetchMyLlmCalls, type MyLlmCallRecord } from '../../api'
+import UsageFilterBar from '../../components/usage/UsageFilterBar.vue'
+import UsageRecordTable from '../../components/usage/UsageRecordTable.vue'
+import { EMPTY_USAGE_FILTERS, type UsageFilters } from '../../components/usage/types'
 
 const router = useRouter()
 const loading = ref(false)
-const records = ref<any[]>([])
+const records = ref<MyLlmCallRecord[]>([])
 const total = ref(0)
 const currentPage = ref(1)
 const pageSize = ref(20)
-const filters = reactive({
-  scene: '',
-  success: undefined as boolean | undefined,
-})
-
-function formatNumber(value: number) {
-  return new Intl.NumberFormat('zh-CN').format(value)
-}
-
-function formatCacheHit(row: { cachedTokens?: number | null; promptTokens?: number | null }) {
-  const cached = row.cachedTokens || 0
-  const prompt = row.promptTokens || 0
-  if (cached <= 0) return '0'
-  const num = formatNumber(cached)
-  if (prompt <= 0) return num
-  return `${num} (${Math.round((cached / prompt) * 100)}%)`
-}
+const filters = reactive<UsageFilters>({ ...EMPTY_USAGE_FILTERS })
 
 let fetchSeq = 0
 async function fetchRecords() {
   const seq = ++fetchSeq
   loading.value = true
   try {
-    const params: Record<string, unknown> = {
+    const data = await fetchMyLlmCalls({
       page: currentPage.value,
       size: pageSize.value,
-    }
-    if (filters.scene) params.scene = filters.scene
-    if (filters.success !== undefined) params.success = filters.success
-    const { data } = await api.get('/llm-calls/me', { params })
+      scene: filters.scene || undefined,
+      modelId: filters.modelId,
+      success: filters.success,
+    })
     if (seq !== fetchSeq) return
     records.value = data?.records || []
     total.value = data?.total || 0
@@ -139,12 +65,6 @@ async function fetchRecords() {
 function handleSearch() {
   currentPage.value = 1
   fetchRecords()
-}
-
-function handleReset() {
-  filters.scene = ''
-  filters.success = undefined
-  handleSearch()
 }
 
 function handleSizeChange() {
@@ -183,10 +103,6 @@ onMounted(fetchRecords)
 
 .usage-card {
   border: 1px solid var(--aw-divider-soft);
-}
-
-.search-form {
-  margin-bottom: 16px;
 }
 
 .pagination-wrap {
