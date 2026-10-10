@@ -193,16 +193,40 @@ describe('LlmCallService 用户端用量汇总（/v1/llm-calls/me/summary|trends
     cost: 0,
   };
 
-  function build() {
+  function build(agentLookup?: { findName: (id: number) => Promise<string | null> }) {
     const repo = {
       aggregateSummary: vi.fn(async () => ({ ...EMPTY_TOTALS })),
       aggregateByModel: vi.fn(async () => []),
       aggregateByScene: vi.fn(async () => []),
+      aggregateByAgent: vi.fn(async () => []),
       aggregateTrend: vi.fn(async () => []),
     };
-    const service = new LlmCallService(repo as never);
+    const service = new LlmCallService(repo as never, undefined, agentLookup);
     return { service, repo };
   }
+
+  it('summaryForUser：byAgent 一起拉取并经 agentLookup 补名字', async () => {
+    freeze(new Date('2026-10-10T12:00:00+08:00'));
+    const findName = vi.fn(async (id: number) => (id === 9 ? '小助手' : null));
+    const { service, repo } = build({ findName });
+    (repo.aggregateByAgent as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { agentId: 9, agentName: null, callCount: 40, failCount: 2, totalTokens: 400, cost: 1.25 },
+      { agentId: 11, agentName: null, callCount: 5, failCount: 0, totalTokens: 50, cost: 0 },
+      { agentId: null, agentName: null, callCount: 14, failCount: 0, totalTokens: 30, cost: 0 },
+    ]);
+    const result = await service.summaryForUser(7, 'today');
+    expect(repo.aggregateByAgent).toHaveBeenCalledWith(7, expect.objectContaining({ startAt: '2026-10-10 00:00:00' }));
+    expect(result.byAgent).toEqual([
+      { agentId: 9, agentName: '小助手', callCount: 40, failCount: 2, totalTokens: 400, cost: 1.25 },
+      // Agent 已删/查不到名字 → null，前端兜底展示；无归属调用（agent_id NULL）不查名字
+      { agentId: 11, agentName: null, callCount: 5, failCount: 0, totalTokens: 50, cost: 0 },
+      { agentId: null, agentName: null, callCount: 14, failCount: 0, totalTokens: 30, cost: 0 },
+    ]);
+    expect(findName).toHaveBeenCalledTimes(2);
+    expect(findName).toHaveBeenCalledWith(9);
+    expect(findName).toHaveBeenCalledWith(11);
+    vi.useRealTimers();
+  });
 
   /** 冻结到上海时区 2026-10-10 12:00，窗口断言不随真实日期漂移。 */
   function freeze(date: Date) {
@@ -210,12 +234,12 @@ describe('LlmCallService 用户端用量汇总（/v1/llm-calls/me/summary|trends
     vi.setSystemTime(date);
   }
 
-  it('summaryForUser：默认 last30 闭区间窗口，三个聚合均带 userId', async () => {
+  it('summaryForUser：默认 last30 闭区间窗口，四个聚合均带 userId', async () => {
     freeze(new Date('2026-10-10T12:00:00+08:00'));
     const { service, repo } = build();
     const result = await service.summaryForUser(7);
     expect(result.range).toBe('last30');
-    for (const mock of [repo.aggregateSummary, repo.aggregateByModel, repo.aggregateByScene]) {
+    for (const mock of [repo.aggregateSummary, repo.aggregateByModel, repo.aggregateByScene, repo.aggregateByAgent]) {
       expect(mock).toHaveBeenCalledWith(7, expect.objectContaining({
         startAt: '2026-09-11 00:00:00',
         endAt: '2026-10-10 23:59:59',

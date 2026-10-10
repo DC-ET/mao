@@ -79,6 +79,16 @@ export interface LlmCallSceneAggRow {
   totalTokens: number;
 }
 
+/** 按 Agent 汇总（agent_id 为 NULL 的调用——压缩/标题等无归属场景——保留为 id=null 一组）。 */
+export interface LlmCallAgentAggRow {
+  agentId: number | null;
+  agentName: string | null;
+  callCount: number;
+  failCount: number;
+  totalTokens: number;
+  cost: number;
+}
+
 export interface LlmCallTrendRow {
   bucket: string;
   callCount: number;
@@ -304,6 +314,31 @@ export class LlmCallRepository {
       callCount: toNumber(r.callCount),
       failCount: toNumber(r.failCount),
       totalTokens: toNumber(r.totalTokens),
+    }));
+  }
+
+  /** 按 Agent 汇总（agent_id 为 NULL 的调用保留为 id=null 一组，按 token 降序）。 */
+  async aggregateByAgent(userId: number, filter: LlmCallAggFilter): Promise<LlmCallAgentAggRow[]> {
+    const { sql, params } = this.aggWhere(filter);
+    const rows = await this.db.query<Record<string, unknown>>(
+      `SELECT agent_id AS agentId,
+              COUNT(*) AS callCount,
+              COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0) AS failCount,
+              COALESCE(SUM(total_tokens), 0) AS totalTokens,
+              COALESCE(SUM(cost_micros), 0) / 1000000 AS cost
+       FROM llm_call
+       WHERE user_id = ? AND ${sql}
+       GROUP BY agent_id
+       ORDER BY totalTokens DESC`,
+      [userId, ...params],
+    );
+    return rows.map((r) => ({
+      agentId: r.agentId == null ? null : toNumber(r.agentId),
+      agentName: null,
+      callCount: toNumber(r.callCount),
+      failCount: toNumber(r.failCount),
+      totalTokens: toNumber(r.totalTokens),
+      cost: toNumber(r.cost),
     }));
   }
 

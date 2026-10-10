@@ -769,6 +769,16 @@ export interface UsageSceneRow {
   totalTokens: number
 }
 
+export interface UsageAgentRow {
+  /** agentId 为 null = 无归属调用（压缩/标题等系统场景）；agentName 查不到时也为 null */
+  agentId: number | null
+  agentName: string | null
+  callCount: number
+  failCount: number
+  totalTokens: number
+  cost: number
+}
+
 /** 统计周期：今日 / 昨日 / 本周 / 本月 + 近 7 / 30 天滚动窗口（后端 Asia/Shanghai 日历口径）。 */
 export type UsageRange = 'today' | 'yesterday' | 'week' | 'month' | 'last7' | 'last30'
 
@@ -777,6 +787,7 @@ export interface MyUsageSummary {
   totals: UsageTotals
   byModel: UsageModelRow[]
   byScene: UsageSceneRow[]
+  byAgent: UsageAgentRow[]
 }
 
 export interface UsageTrendBucket {

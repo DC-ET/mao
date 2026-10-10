@@ -56,7 +56,7 @@
 
 单条记录主要字段：`createdAt`、`userId`、`sessionId`、`agentId`、`modelName`、`provider`、`scene`、`stream`、`promptTokens`、`completionTokens`、`cachedTokens`、`totalTokens`、`firstTokenMs`、`durationMs`、`success`、`errorMessage`，以及 `costMicros`（单次调用成本快照，**微单位** = 成本单位×1e6；模型未配价格或只配一个方向时为 `null`，`0` 表示该模型被配成免费）。价格在调用写入时快照，之后改价不影响历史行；管理后台「调用流水」页与 CSV 导出里的「成本」列为成本单位（`costMicros/1e6`）。流被上游截断或用户取消时，若用量已经返回，失败行仍按这些 token 计价。飞书群聊溢出摘要（`feishu_summarize`）记在会话所用模型上。
 
-`summary` 返回 `{ range, totals: { callCount, successCount, failCount, promptTokens, completionTokens, cachedTokens, totalTokens, cost }, byModel[], byScene[] }`；`trends` 返回 `{ range, granularity, buckets: [{ bucket, callCount, failCount, totalTokens, cost }] }`。
+`summary` 返回 `{ range, totals: { callCount, successCount, failCount, promptTokens, completionTokens, cachedTokens, totalTokens, cost }, byModel[], byScene[], byAgent[] }`；`byAgent[]` 行为 `{ agentId, agentName, callCount, failCount, totalTokens, cost }`（`agentId`/`agentName` 为 null 分别表示无归属调用与已删 Agent）；`trends` 返回 `{ range, granularity, buckets: [{ bucket, callCount, failCount, totalTokens, cost }] }`。
 
 ## 示例
 

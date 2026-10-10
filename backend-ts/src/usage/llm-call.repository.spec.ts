@@ -76,6 +76,20 @@ describe('LlmCallRepository 用户维度聚合', () => {
     expect(params[0]).toBe(7);
   });
 
+  it('aggregateByAgent：GROUP BY agent_id 且 userId 注入；agent_id 为 NULL 保留 null、名字留空待 service 补', async () => {
+    const { repo, query } = build([
+      { agentId: 9, callCount: '40', failCount: '2', totalTokens: '400', cost: '1.25' },
+      { agentId: null, callCount: '14', failCount: '0', totalTokens: '30', cost: null },
+    ]);
+    const rows = await repo.aggregateByAgent(7, WINDOW);
+    expect(rows[0]).toEqual({ agentId: 9, agentName: null, callCount: 40, failCount: 2, totalTokens: 400, cost: 1.25 });
+    expect(rows[1]).toEqual({ agentId: null, agentName: null, callCount: 14, failCount: 0, totalTokens: 30, cost: 0 });
+    const [sql, params] = query.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain('GROUP BY agent_id');
+    expect(sql).toContain('ORDER BY totalTokens DESC');
+    expect(params).toEqual([7, '2026-10-04 00:00:00', '2026-10-10 23:59:59']);
+  });
+
   it('aggregateTrend：day 用 DATE()，hour 用 DATE_FORMAT 整点，均按桶升序', async () => {
     const dayDb = build([{ bucket: '2026-10-10', callCount: '2', failCount: '0', totalTokens: '20', cost: '0.1' }]);
     const dayRows = await dayDb.repo.aggregateTrend(7, WINDOW, 'day');

@@ -3,7 +3,7 @@
  * 新增图表类型时在此处补 use()，不要在业务组件里直接 import 'echarts'。
  */
 import * as echarts from 'echarts/core'
-import { BarChart, LineChart } from 'echarts/charts'
+import { BarChart, LineChart, PieChart } from 'echarts/charts'
 import {
   GridComponent,
   LegendComponent,
@@ -12,7 +12,7 @@ import {
 import { LabelLayout } from 'echarts/features'
 import { CanvasRenderer } from 'echarts/renderers'
 import type { ComposeOption } from 'echarts/core'
-import type { BarSeriesOption, LineSeriesOption } from 'echarts/charts'
+import type { BarSeriesOption, LineSeriesOption, PieSeriesOption } from 'echarts/charts'
 import type {
   GridComponentOption,
   LegendComponentOption,
@@ -22,6 +22,7 @@ import type {
 echarts.use([
   BarChart,
   LineChart,
+  PieChart,
   GridComponent,
   TooltipComponent,
   LegendComponent,
@@ -32,6 +33,7 @@ echarts.use([
 export type ChartOption = ComposeOption<
   | BarSeriesOption
   | LineSeriesOption
+  | PieSeriesOption
   | GridComponentOption
   | TooltipComponentOption
   | LegendComponentOption
