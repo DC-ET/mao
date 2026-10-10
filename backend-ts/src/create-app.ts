@@ -245,6 +245,7 @@ import { WeixinFileStorageService } from './weixin/file-storage.service.js';
 import { WeixinSessionService } from './weixin/session.service.js';
 import { InboundProcessor } from './weixin/inbound-processor.js';
 import { WeixinInboundMessageRepository } from './weixin/inbound-message.repository.js';
+import { WeixinWebhookFallbackService } from './weixin/webhook-fallback.service.js';
 import { AgentWeixinInboundHandler } from './weixin/agent-inbound-handler.js';
 import { createWechatToolBridges } from './weixin/wechat-tool-bridge.js';
 import { registerTaskNotificationPreferenceRoutes } from './notification/task/preference.routes.js';
@@ -1053,6 +1054,10 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const notifPref = new TaskNotificationPreferenceService(
     new PreferenceDbStore(db), notifCipher, urlValidator, senderRegistry,
   );
+  // 微信下行失败时的 webhook 降级推送：复用 notifPref 的 findEnabled，不重复读配置。
+  const weixinWebhookFallback = new WeixinWebhookFallbackService(
+    notifPref, notifCipher, senderRegistry,
+  );
   const deliveryService = new TaskNotificationDeliveryService(
     new DeliveryDbStore(db), notifPref, messageQueueService as never,
   );
@@ -1144,6 +1149,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   scheduledService.setWeixinWindowNotifier(async (input) => {
     await inboxService.recordWeixinWindowClosed(input);
   });
+  scheduledService.setWeixinWebhookFallback(weixinWebhookFallback);
   scheduledService.setRunWindowLoader(async (sessionId, messageId) => {
     const stamps = await messageRepo.selectUserStamps(sessionId);
     const anchor = stamps.find((stamp) => stamp.id === messageId);
@@ -1345,6 +1351,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const weixinInboundMessages = new WeixinInboundMessageRepository(db);
   const inboundProcessor = new InboundProcessor(
     weixinInboundHandler, weixinTokens, weixinSend, weixinMedia, voiceReply, weixinInboundMessages,
+    weixinWebhookFallback, weixinAccounts,
   );
   const weixinMonitor = new WeixinMonitorService(weixinConfig, weixinAccounts, inboundProcessor);
   const qrLogin = new QrLoginService(weixinConfig, weixinAccounts, weixinMonitor);

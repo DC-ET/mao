@@ -320,6 +320,8 @@ export class ScheduledTaskService {
   private weixinWindowNotifier: ((input: { userId: number; sessionId: number; title: string; body: string }) => Promise<void>) | null = null;
   /** 微信入站仓库：用于主动发送前的 24 小时窗口预检（可选注入）。 */
   private weixinInboundRepository: ScheduleWeixinInboundRepo | null = null;
+  /** 微信回复下行失败时的 webhook 降级推送（可选注入）。 */
+  private weixinWebhookFallback: { sendFallback(userId: number | null | undefined, replyText: string): Promise<boolean> } | null = null;
   constructor(
     private readonly store: ScheduledTaskStore,
     private readonly sessionService: ScheduleSessionService,
@@ -368,6 +370,11 @@ export class ScheduledTaskService {
   /** 注入微信入站仓库以启用 24 小时窗口预检；不注入则跳过预检（保持旧行为）。 */
   setWeixinInboundRepository(repo: ScheduleWeixinInboundRepo | null): void {
     this.weixinInboundRepository = repo;
+  }
+
+  /** 注入微信回复下行失败时的 webhook 降级推送器。 */
+  setWeixinWebhookFallback(fallback: { sendFallback(userId: number | null | undefined, replyText: string): Promise<boolean> } | null): void {
+    this.weixinWebhookFallback = fallback;
   }
 
   async createTask(
@@ -914,6 +921,8 @@ export class ScheduledTaskService {
   }
 
   private async sendWeixinReplyIfApplicable(sessionId: number, userId: number): Promise<void> {
+    // reply 提升到 try 外：catch 里也要把它降级推到 webhook。
+    let reply: string | null = null;
     try {
       const session = await this.sessionService.getSession(sessionId);
       if (session == null || session.projectKey !== WEIXIN_PROJECT_KEY) {
@@ -924,7 +933,6 @@ export class ScheduledTaskService {
         return;
       }
       const messages = await this.sessionService.getMessages(sessionId);
-      let reply: string | null = null;
       for (let i = messages.length - 1; i >= 0; i--) {
         if (messages[i].role === 'ASSISTANT') {
           reply = messages[i].content ?? null;
@@ -950,9 +958,26 @@ export class ScheduledTaskService {
         await this.notifyWeixinWindowClosed(sessionId, userId);
         return;
       }
-      await this.weixinSendService.sendText(account.accountId, wxUserId, reply);
+      const sent = await this.weixinSendService.sendText(account.accountId, wxUserId, reply);
+      if (!sent) {
+        console.warn(`定时任务微信回复发送失败, sessionId=${sessionId}, accountId=${account.accountId}`);
+        await this.pushWeixinWebhookFallback(userId, reply);
+      }
     } catch (e) {
       console.error('Error sending WeChat reply for scheduled task', e);
+      // 微信下行异常时同样按用户配置降级推送到钉钉/飞书。
+      await this.pushWeixinWebhookFallback(userId, reply);
+    }
+  }
+
+  /** 定时任务微信回复失败后的 webhook 降级推送：未注入降级器时静默跳过。 */
+  private async pushWeixinWebhookFallback(userId: number, replyText: string | null): Promise<void> {
+    const fallback = this.weixinWebhookFallback;
+    if (fallback == null || replyText == null || replyText.trim() === '') return;
+    try {
+      await fallback.sendFallback(userId, replyText);
+    } catch (e) {
+      console.warn(`定时任务微信回复 webhook 降级推送异常, userId=${userId}`, e);
     }
   }
 
@@ -1004,10 +1029,14 @@ export class ScheduledTaskService {
     }
   }
 
+  /**
+   * 停机期间错过的触发点补历史记录。`processStartedAt` 既是「已错过」的判定上界，
+   * 也是遍历的上界：只认进程启动前落下的点，启动后该交给定时器正常跑，不能提前吃掉。
+   */
   async compensateMissed(processStartedAt: Date): Promise<void> {
     if (this.store.listMissedTasks == null || this.store.casNextFire == null) return;
     const tasks = await this.store.listMissedTasks(formatDateTime(processStartedAt));
-    const now = new Date();
+    const now = processStartedAt;
     for (const task of tasks) {
       if (task.id == null || task.cronExpression == null || task.nextFireTime == null || task.sessionId == null) continue;
       let cron: Cron;

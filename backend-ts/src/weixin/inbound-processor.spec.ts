@@ -175,4 +175,70 @@ describe('InboundProcessor', () => {
     expect(sendText).toHaveBeenCalledOnce();
     expect(sendText).toHaveBeenCalledWith('acc-1', 'wx-user-1', '这是回答');
   });
+
+  it('微信与降级提示都失败_把回复原文推送到用户配置的 webhook', async () => {
+    inboundHandler.onMessage.mockResolvedValue({ text: '完整回答内容' });
+    // 微信侧全挂：原始回复与降级提示都发不出去（24h 窗口过期时的真实表现）
+    const sendText = vi.fn(async (_a: string, _b: string, _t: string) => false);
+    const sendFallback = vi.fn(async () => true);
+    const accountRepository = { findByAccountId: vi.fn(async () => ({ userId: 42 })) };
+    const failingProcessor = new InboundProcessor(
+      inboundHandler as unknown as WeixinInboundHandler,
+      { saveOrUpdate: vi.fn() } as unknown as ContextTokenRepository,
+      { sendText } as unknown as WeixinSendService,
+      weixinMediaService as unknown as WeixinMediaService,
+      { sendVoiceReply: vi.fn(async () => false) } as unknown as WeixinVoiceReplyService,
+      undefined,
+      { sendFallback } as never,
+      accountRepository as never,
+    );
+    const message = baseMessage();
+    (message.item_list as unknown[]).push({ type: 1, text_item: { text: '在吗' } });
+    await failingProcessor.processInboundMessage('acc-1', message);
+    expect(sendText).toHaveBeenCalledTimes(2);
+    expect(sendFallback).toHaveBeenCalledWith(42, '完整回答内容');
+  });
+
+  it('降级提示送达_不再推 webhook（避免用户收到重复内容）', async () => {
+    inboundHandler.onMessage.mockResolvedValue({ text: '完整回答内容' });
+    // 第一次（原始回复）失败，第二次（降级提示）成功
+    const sendText = vi.fn(async (_a: string, _b: string, _t: string) => sendText.mock.calls.length === 1 ? false : true);
+    const sendFallback = vi.fn(async () => true);
+    const processorWithFallback = new InboundProcessor(
+      inboundHandler as unknown as WeixinInboundHandler,
+      { saveOrUpdate: vi.fn() } as unknown as ContextTokenRepository,
+      { sendText } as unknown as WeixinSendService,
+      weixinMediaService as unknown as WeixinMediaService,
+      { sendVoiceReply: vi.fn(async () => false) } as unknown as WeixinVoiceReplyService,
+      undefined,
+      { sendFallback } as never,
+      { findByAccountId: vi.fn(async () => ({ userId: 42 })) } as never,
+    );
+    const message = baseMessage();
+    (message.item_list as unknown[]).push({ type: 1, text_item: { text: '在吗' } });
+    await processorWithFallback.processInboundMessage('acc-1', message);
+    expect(sendText).toHaveBeenCalledTimes(2);
+    expect(sendFallback).not.toHaveBeenCalled();
+  });
+
+  it('缺少 contextToken 时降级提示失败也走 webhook', async () => {
+    inboundHandler.onMessage.mockResolvedValue({ text: '无 token 的回答' });
+    const sendText = vi.fn(async (_a: string, _b: string, _t: string) => false);
+    const sendFallback = vi.fn(async () => true);
+    const noTokenProcessor = new InboundProcessor(
+      inboundHandler as unknown as WeixinInboundHandler,
+      { saveOrUpdate: vi.fn() } as unknown as ContextTokenRepository,
+      { sendText } as unknown as WeixinSendService,
+      weixinMediaService as unknown as WeixinMediaService,
+      { sendVoiceReply: vi.fn(async () => false) } as unknown as WeixinVoiceReplyService,
+      undefined,
+      { sendFallback } as never,
+      { findByAccountId: vi.fn(async () => ({ userId: 7 })) } as never,
+    );
+    const message = baseMessage();
+    delete message.context_token;
+    (message.item_list as unknown[]).push({ type: 1, text_item: { text: '在吗' } });
+    await noTokenProcessor.processInboundMessage('acc-1', message);
+    expect(sendFallback).toHaveBeenCalledWith(7, '无 token 的回答');
+  });
 });
