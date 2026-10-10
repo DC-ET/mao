@@ -1134,6 +1134,14 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     (fn) => agentExecutor.submit(fn),
   );
   scheduledService.setFailureNotifier((input) => inboxService.recordScheduledTaskPaused(input));
+  // 24 小时窗口预检 + 窗口已关时的站内通知：定时任务在用户长时间未说话后触发时
+  // context_token 必然已过期，不打 ilink 只收件箱指路（inbound repo 在下方创建，故后置注入）
+  scheduledService.setWeixinInboundRepository({
+    findLatestInboundAt: (accountId) => weixinInboundMessages.findLatestInboundAt(accountId),
+  });
+  scheduledService.setWeixinWindowNotifier(async (input) => {
+    await inboxService.recordWeixinWindowClosed(input);
+  });
   scheduledService.setRunWindowLoader(async (sessionId, messageId) => {
     const stamps = await messageRepo.selectUserStamps(sessionId);
     const anchor = stamps.find((stamp) => stamp.id === messageId);

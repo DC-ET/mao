@@ -14,7 +14,8 @@ export type InboxKind =
   | 'BUDGET_WARN'
   | 'SCHEDULED_TASK_PAUSED'
   | 'TOKEN_DISABLED'
-  | 'OPEN_API_CALL_FAILED';
+  | 'OPEN_API_CALL_FAILED'
+  | 'WEIXIN_REPLY_WINDOW_CLOSED';
 
 /** 条目来源：用户手工触发 / 定时任务 / 入站 Webhook / 开放 API（前端来源徽标）。 */
 export type InboxSource = 'MANUAL' | 'SCHEDULED' | 'WEBHOOK' | 'API';

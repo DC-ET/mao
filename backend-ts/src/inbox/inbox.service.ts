@@ -181,6 +181,27 @@ export class InboxService {
   }
 
   /**
+   * WEIXIN_REPLY_WINDOW_CLOSED：定时任务回复因超过微信 24 小时主动发送窗口而无法推送。
+   * 无偏好开关；tail 带时间戳，同一会话多次超窗各通知一次。
+   */
+  async recordWeixinWindowClosed(input: {
+    userId: number;
+    sessionId: number;
+    title: string;
+    body: string;
+  }): Promise<void> {
+    await this.record({
+      userId: input.userId,
+      kind: 'WEIXIN_REPLY_WINDOW_CLOSED',
+      title: input.title,
+      content: input.body,
+      sessionId: input.sessionId,
+      payload: { sessionId: input.sessionId },
+      tail: `${input.sessionId}:${Date.now()}`,
+    });
+  }
+
+  /**
    * TOKEN_DISABLED：API Token 连续失败自动停用。无偏好开关，始终通知属主。
    * tail 带时间戳，同一次 CAS 成功只调一次，重复停用仍可再通知。
    */
@@ -443,6 +464,9 @@ export class InboxService {
         return true;
       case 'OPEN_API_CALL_FAILED':
         return preference.openApiCallFailedEnabled;
+      case 'WEIXIN_REPLY_WINDOW_CLOSED':
+        // 无偏好开关：微信 24 小时窗口已关导致回复送达失败，属运维级事件，始终通知属主
+        return true;
       default:
         return false;
     }

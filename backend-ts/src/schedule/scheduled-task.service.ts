@@ -186,6 +186,12 @@ const PREVIEW_DEFAULT_COUNT = 3;
 const PREVIEW_MIN_COUNT = 1;
 const PREVIEW_MAX_COUNT = 10;
 
+/**
+ * 微信主动发送窗口：`context_token` 仅在用户最近一条入站消息后的 24 小时内有效，
+ * 超过后 ilink 一律返回 `ret=-2`。定时任务等「用户长时间未说话后触发」的场景必然落在窗口外。
+ */
+const WEIXIN_ACTIVE_SEND_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 export interface ScheduleTaskTerminalService {
   finishExecution(sessionId: number, userId: number, phase: string, executionId: string, reason?: string, notifySource?: TaskNotifySource): Promise<void>;
 }
@@ -200,6 +206,15 @@ export interface ScheduleWeixinAccountRepo {
 
 export interface ScheduleWeixinTokenRepo {
   findByAccountId(accountId: string): Promise<Array<{ wxUserId: string }>>;
+}
+
+/**
+ * 微信 24 小时主动发送窗口预检：定时任务在用户长时间未说话后触发时，
+ * `context_token` 必然已过期，直接打 ilink 只会拿到 `ret=-2`。
+ * 预检查该账号最近入站时间，超窗则不打 ilink，让调用方改走站内通知。
+ */
+export interface ScheduleWeixinInboundRepo {
+  findLatestInboundAt(accountId: string): Promise<Date | null>;
 }
 
 /** 任务名称校验：与 scheduled_task.name VARCHAR(200) NOT NULL 对齐。 */
@@ -301,6 +316,10 @@ export class ScheduledTaskService {
   private feishuResultPusher: ScheduledFeishuResultPusher | null = null;
   private runWindowLoader: ((sessionId: number, messageId: number) => Promise<{ costMicros: number | null; wallClockMs: number }>) | null = null;
   private failureNotifier: ((input: { userId: number; taskId: number; taskName: string; sessionId: number | null; failures: number }) => Promise<void>) | null = null;
+  /** 微信 24 小时窗口已关时的站内通知回调（可选注入）。 */
+  private weixinWindowNotifier: ((input: { userId: number; sessionId: number; title: string; body: string }) => Promise<void>) | null = null;
+  /** 微信入站仓库：用于主动发送前的 24 小时窗口预检（可选注入）。 */
+  private weixinInboundRepository: ScheduleWeixinInboundRepo | null = null;
   constructor(
     private readonly store: ScheduledTaskStore,
     private readonly sessionService: ScheduleSessionService,
@@ -339,6 +358,16 @@ export class ScheduledTaskService {
 
   setFailureNotifier(notifier: ((input: { userId: number; taskId: number; taskName: string; sessionId: number | null; failures: number }) => Promise<void>) | null): void {
     this.failureNotifier = notifier;
+  }
+
+  /** 注入微信 24 小时窗口已关时的站内通知回调。 */
+  setWeixinWindowNotifier(notifier: ((input: { userId: number; sessionId: number; title: string; body: string }) => Promise<void>) | null): void {
+    this.weixinWindowNotifier = notifier;
+  }
+
+  /** 注入微信入站仓库以启用 24 小时窗口预检；不注入则跳过预检（保持旧行为）。 */
+  setWeixinInboundRepository(repo: ScheduleWeixinInboundRepo | null): void {
+    this.weixinInboundRepository = repo;
   }
 
   async createTask(
@@ -913,9 +942,43 @@ export class ScheduledTaskService {
       if (!wxUserId) {
         return;
       }
+      // 24 小时窗口预检：定时任务多在用户长时间未说话后触发，context_token 早已过期，
+      // 此时打 ilink 只会拿到 ret=-2（线上 10-05/10-06/10-09 三次失败均属此类）。
+      // 超窗则不打 ilink，转站内通知指路，用户下次说话时即可在微信收到后续回复。
+      if (!(await this.isWeixinInboundWindowOpen(account.accountId))) {
+        console.warn(`定时任务微信回复跳过：超过24小时主动发送窗口, accountId=${account.accountId}, sessionId=${sessionId}`);
+        await this.notifyWeixinWindowClosed(sessionId, userId);
+        return;
+      }
       await this.weixinSendService.sendText(account.accountId, wxUserId, reply);
     } catch (e) {
       console.error('Error sending WeChat reply for scheduled task', e);
+    }
+  }
+
+  /**
+   * 微信 24 小时主动发送窗口是否仍打开。
+   * 未注入入站仓库（如单元测试）时无法判定，按「打开」放行，保持既有行为。
+   */
+  private async isWeixinInboundWindowOpen(accountId: string): Promise<boolean> {
+    const latest = await this.weixinInboundRepository?.findLatestInboundAt(accountId);
+    if (latest == null) return true;
+    return Date.now() - latest.getTime() < WEIXIN_ACTIVE_SEND_WINDOW_MS;
+  }
+
+  /** 窗口已关时把提示落站内收件箱，避免「Agent 跑完了但用户哪里都看不到」。 */
+  private async notifyWeixinWindowClosed(sessionId: number, userId: number): Promise<void> {
+    const notifier = this.weixinWindowNotifier;
+    if (notifier == null) return;
+    try {
+      await notifier({
+        userId,
+        sessionId,
+        title: '微信回复发送失败',
+        body: '定时任务的回复已生成，但超过 24 小时主动发送窗口，无法从微信推送给您。请在电脑端打开 Mao 查看完整内容。',
+      });
+    } catch (e) {
+      console.error('Error notifying weixin 24h window closed', e);
     }
   }
 

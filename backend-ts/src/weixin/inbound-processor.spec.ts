@@ -123,4 +123,56 @@ describe('InboundProcessor', () => {
     await processor.processInboundMessage('acc-1', message);
     expect(inboundHandler.onMessage).toHaveBeenCalled();
   });
+
+  it('replySendFails_sendsFallbackNoticeSoUserIsNotLeftSilent', async () => {
+    inboundHandler.onMessage.mockResolvedValue({ text: '这是回答' });
+    const sendText = vi.fn(async (_a: string, _b: string, _t: string) => false);
+    const failingProcessor = new InboundProcessor(
+      inboundHandler as unknown as WeixinInboundHandler,
+      { saveOrUpdate: vi.fn() } as unknown as ContextTokenRepository,
+      { sendText } as unknown as WeixinSendService,
+      weixinMediaService as unknown as WeixinMediaService,
+      { sendVoiceReply: vi.fn(async () => false) } as unknown as WeixinVoiceReplyService,
+    );
+    const message = baseMessage();
+    (message.item_list as unknown[]).push({ type: 1, text_item: { text: '在吗' } });
+    await failingProcessor.processInboundMessage('acc-1', message);
+    // 第一次是原始回复，第二次是降级提示：用户侧至少收到一条可感知消息
+    expect(sendText).toHaveBeenCalledTimes(2);
+    expect(String(sendText.mock.calls[1]?.[2])).toContain('发送失败');
+  });
+
+  it('replySendFails_doesNotSendVoiceReply', async () => {
+    inboundHandler.onMessage.mockResolvedValue({ text: '这是回答' });
+    const sendText = vi.fn(async (_a: string, _b: string, _t: string) => false);
+    const sendVoiceReply = vi.fn(async () => false);
+    const failingProcessor = new InboundProcessor(
+      inboundHandler as unknown as WeixinInboundHandler,
+      { saveOrUpdate: vi.fn() } as unknown as ContextTokenRepository,
+      { sendText } as unknown as WeixinSendService,
+      weixinMediaService as unknown as WeixinMediaService,
+      { sendVoiceReply } as unknown as WeixinVoiceReplyService,
+    );
+    const message = baseMessage();
+    (message.item_list as unknown[]).push({ type: 1, text_item: { text: '在吗' } });
+    await failingProcessor.processInboundMessage('acc-1', message);
+    expect(sendVoiceReply).not.toHaveBeenCalled();
+  });
+
+  it('replySendSucceeds_noFallbackNotice', async () => {
+    inboundHandler.onMessage.mockResolvedValue({ text: '这是回答' });
+    const sendText = vi.fn(async (_a: string, _b: string, _t: string) => true);
+    const okProcessor = new InboundProcessor(
+      inboundHandler as unknown as WeixinInboundHandler,
+      { saveOrUpdate: vi.fn() } as unknown as ContextTokenRepository,
+      { sendText } as unknown as WeixinSendService,
+      weixinMediaService as unknown as WeixinMediaService,
+      { sendVoiceReply: vi.fn(async () => false) } as unknown as WeixinVoiceReplyService,
+    );
+    const message = baseMessage();
+    (message.item_list as unknown[]).push({ type: 1, text_item: { text: '在吗' } });
+    await okProcessor.processInboundMessage('acc-1', message);
+    expect(sendText).toHaveBeenCalledOnce();
+    expect(sendText).toHaveBeenCalledWith('acc-1', 'wx-user-1', '这是回答');
+  });
 });

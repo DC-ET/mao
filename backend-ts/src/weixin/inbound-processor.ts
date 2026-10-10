@@ -283,6 +283,7 @@ export class InboundProcessor {
     try {
       if (contextToken == null || contextToken === '') {
         console.warn(`无法发送回复: 缺少context_token, accountId=${accountId}, toUserId=${toUserId}`);
+        await this.sendFallbackNotice(accountId, toUserId);
         return;
       }
       const success = await this.weixinSendService.sendText(accountId, toUserId, reply.text!);
@@ -295,9 +296,29 @@ export class InboundProcessor {
             console.debug(`微信语音回复未发送（开关关闭或链路失败）, accountId=${accountId}, toUserId=${toUserId}`);
           }
         });
+        return;
       }
+      // 发送失败时不能静默：用户侧没有任何提示会以为 Agent 卡死。
+      // 原始回复已入库，桌面端/网页端可见，这里只发一条短降级说明指路。
+      await this.sendFallbackNotice(accountId, toUserId);
     } catch (e) {
       console.error('发送回复消息失败', e);
+    }
+  }
+
+  /** 下行失败时给用户一条可感知的短说明，避免「Agent 跑完了但微信上什么都没收到」。 */
+  private async sendFallbackNotice(accountId: string, toUserId: string): Promise<void> {
+    try {
+      const sent = await this.weixinSendService.sendText(
+        accountId,
+        toUserId,
+        '回复发送失败了，但回答已经生成。请在电脑端打开 Mao 查看完整内容。',
+      );
+      if (!sent) {
+        console.warn(`微信下行降级提示也发送失败, accountId=${accountId}, toUserId=${toUserId}`);
+      }
+    } catch (e) {
+      console.error('发送微信下行降级提示失败', e);
     }
   }
 }

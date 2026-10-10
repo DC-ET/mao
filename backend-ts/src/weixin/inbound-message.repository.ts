@@ -95,6 +95,23 @@ export class WeixinInboundMessageRepository {
   }
 
   /**
+   * 该账号最近一次入站时间，无记录返回 null。
+   * ilink 的 `context_token` 只在用户最近一条入站消息后的 24 小时内有效，
+   * 主动发送（如定时任务）前必须先查这里，超窗发送必然被拒。
+   */
+  async findLatestInboundAt(accountId: string): Promise<Date | null> {
+    const row = await this.db.queryOne<{ createdAt: Date | string }>(
+      `SELECT created_at FROM weixin_inbound_message
+       WHERE account_id = ? ORDER BY id DESC LIMIT 1`,
+      [accountId],
+    );
+    if (row == null) return null;
+    return row.createdAt instanceof Date
+      ? row.createdAt
+      : new Date(String(row.createdAt).replace(' ', 'T') + 'Z');
+  }
+
+  /**
    * 幂等键占用检查：指纹命中且（未 DONE 或 DONE 未满去重窗口）视为同一消息的
    * 服务端重投，跳过处理；DONE 超过窗口视为用户合法重发相同内容，放行处理。
    */

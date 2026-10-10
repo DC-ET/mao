@@ -866,6 +866,81 @@ describe('ScheduledTaskService 预算 BLOCK 闸门（§5.7）', () => {
     expect(row.nextFireTime).toBeNull();
     expect(row.lastExecutionStatus).toBe('COMPLETED');
   });
+
+  it('微信回复：超过24小时主动发送窗口时不打 ilink，改发站内通知', async () => {
+    // selectById 返回 ACTIVE：锁内重读最新任务状态，null 会让整轮直接 return
+    const store: ScheduledTaskStore = {
+      insert: vi.fn(async (t) => { t.id = 1; return 1; }),
+      updateById: vi.fn(),
+      deleteById: vi.fn(),
+      selectById: vi.fn(async () => ({
+        id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', status: 'ACTIVE', name: 'daily', prompt: 'hello', fireCount: 0,
+      })),
+      listByUser: vi.fn(async () => []),
+      listAll: vi.fn(async () => ({ records: [], total: 0 })),
+      listDue: vi.fn(async () => []),
+    } as never;
+    const stubs = {
+      getSession: vi.fn(async () => ({ id: 11, phase: 'IDLE', projectKey: 'weixin-bot' })),
+      updatePhase: vi.fn(),
+      saveMessage: vi.fn(async () => ({ id: 88, content: 'x' })),
+      getMessages: vi.fn(async () => [{ role: 'ASSISTANT', content: 'done' }]),
+    };
+    const send = { sendText: vi.fn(async () => true) };
+    const notified: Array<Record<string, unknown>> = [];
+    let ran: Promise<void> | null = null;
+    const svc = new ScheduledTaskService(
+      store, stubs as never, { enqueue: vi.fn() }, { executeFromEvent: vi.fn(async () => undefined) },
+      { finishExecution: vi.fn() }, send as never,
+      { findByUserId: vi.fn(async () => ({ accountId: 'acc' })) } as never,
+      { findByAccountId: vi.fn(async () => [{ wxUserId: 'wx1' }]) } as never,
+      (fn) => { ran = Promise.resolve().then(fn); },
+    );
+    // 最近一次入站在 70 小时前：超过 24 小时窗口
+    svc.setWeixinInboundRepository({ findLatestInboundAt: vi.fn(async () => new Date(Date.now() - 70 * 60 * 60 * 1000)) } as never);
+    svc.setWeixinWindowNotifier(async (input) => { notified.push(input as unknown as Record<string, unknown>); });
+    await svc.executeTask({ id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', prompt: 'hello', fireCount: 0 } as never);
+    await ran;
+    expect(send.sendText).not.toHaveBeenCalled();
+    expect(notified).toHaveLength(1);
+    expect(notified[0].body).toContain('24 小时');
+  });
+
+  it('微信回复：窗口内正常发送且不发窗口通知', async () => {
+    const stubs = {
+      getSession: vi.fn(async () => ({ id: 11, phase: 'IDLE', projectKey: 'weixin-bot' })),
+      updatePhase: vi.fn(),
+      saveMessage: vi.fn(async () => ({ id: 88, content: 'x' })),
+      getMessages: vi.fn(async () => [{ role: 'ASSISTANT', content: 'done' }]),
+    };
+    const store: ScheduledTaskStore = {
+      insert: vi.fn(async (t) => { t.id = 1; return 1; }),
+      updateById: vi.fn(),
+      deleteById: vi.fn(),
+      selectById: vi.fn(async () => ({
+        id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', status: 'ACTIVE', name: 'daily', prompt: 'hello', fireCount: 0,
+      })),
+      listByUser: vi.fn(async () => []),
+      listAll: vi.fn(async () => ({ records: [], total: 0 })),
+      listDue: vi.fn(async () => []),
+    } as never;
+    const send = { sendText: vi.fn(async () => true) };
+    const notified: Array<Record<string, unknown>> = [];
+    let ran: Promise<void> | null = null;
+    const svc = new ScheduledTaskService(
+      store, stubs as never, { enqueue: vi.fn() }, { executeFromEvent: vi.fn(async () => undefined) },
+      { finishExecution: vi.fn() }, send as never,
+      { findByUserId: vi.fn(async () => ({ accountId: 'acc' })) } as never,
+      { findByAccountId: vi.fn(async () => [{ wxUserId: 'wx1' }]) } as never,
+      (fn) => { ran = Promise.resolve().then(fn); },
+    );
+    svc.setWeixinInboundRepository({ findLatestInboundAt: vi.fn(async () => new Date(Date.now() - 60 * 60 * 1000)) } as never);
+    svc.setWeixinWindowNotifier(async (input) => { notified.push(input as unknown as Record<string, unknown>); });
+    await svc.executeTask({ id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', prompt: 'hello', fireCount: 0 } as never);
+    await ran;
+    expect(send.sendText).toHaveBeenCalledWith('acc', 'wx1', 'done');
+    expect(notified).toHaveLength(0);
+  });
 });
 
 function stubStore() {
@@ -873,6 +948,7 @@ function stubStore() {
     insert: vi.fn(async (t) => { t.id = 1; return 1; }),
     updateById: vi.fn(),
     deleteById: vi.fn(),
+    selectById: vi.fn(async () => null),
     listByUser: vi.fn(async () => []),
     listAll: vi.fn(async () => ({ records: [], total: 0 })),
     listDue: vi.fn(async () => []),
