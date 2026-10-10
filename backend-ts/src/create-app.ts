@@ -2124,6 +2124,11 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       return await expandFeishuMergeForward(client, messageId, {
         workspace,
         resolveUserNames: (openIds) => resolveFeishuUserNames(accountId, openIds),
+        // 转发内图片预下载（与直接入站一致的 @{路径}@ 引用），失败/超上限时保留 msg 占位符走懒加载。
+        downloadImage: async (childMessageId, imageKey, index) => {
+          if (workspace == null || workspace === '') return null;
+          return downloadFeishuImageTo(accountId, workspace, childMessageId, imageKey, index);
+        },
       });
     } catch (error) {
       console.warn(`展开飞书合并转发失败, messageId=${messageId}, code=unknown: ${error instanceof Error ? error.message : String(error)}`);
@@ -2156,17 +2161,21 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   };
   const downloadFeishuGroupImage = async (accountId: string, event: FeishuNormalizedMessage, imageKey: string, index = 0): Promise<string | null> => {
     if (event.chatType !== 'group' || event.chatId == null || event.messageId == null) return null;
+    const workspace = resolveFeishuChatWorkspace(cfg.app.harness.workspaceRoot, accountId, event.chatId);
+    return downloadFeishuImageTo(accountId, workspace, event.messageId, imageKey, index);
+  };
+  // 合并转发里的图片预下载：工作区由展开入口解析（群/私聊都可能），消息 ID 取转发内的子消息。
+  const downloadFeishuImageTo = async (accountId: string, workspace: string, messageId: string, imageKey: string, index = 0): Promise<string | null> => {
     const client = await getFeishuClient(Number(accountId));
     if (client == null) return null;
-    const workspace = resolveFeishuChatWorkspace(cfg.app.harness.workspaceRoot, accountId, event.chatId);
     const maxBytes = Math.max(1, cfg.feishu.bot.file.maxInboundFileMb) * 1024 * 1024;
-    const { buffer, contentType } = await downloadFeishuMediaBuffer(client, event.messageId, imageKey, 'image', maxBytes);
+    const { buffer, contentType } = await downloadFeishuMediaBuffer(client, messageId, imageKey, 'image', maxBytes);
     if (buffer.length === 0) return null;
     const dir = chatFilesDirOf(workspace);
     mkdirSync(dir, { recursive: true });
     const ext = IMAGE_EXT_BY_CONTENT_TYPE[contentType] ?? '.jpg';
     // 同一 post 消息可能含多图：首图沿用原命名，其余追加序号防覆盖。
-    const target = resolve(dir, index > 0 ? `feishu-image-${event.messageId}-${index + 1}${ext}` : `feishu-image-${event.messageId}${ext}`);
+    const target = resolve(dir, index > 0 ? `feishu-image-${messageId}-${index + 1}${ext}` : `feishu-image-${messageId}${ext}`);
     await writeFile(target, buffer);
     return target;
   };

@@ -66,6 +66,27 @@ const namesOf = (table: Record<string, string>) => async (ids: string[]) => {
   return map;
 };
 
+/** 预下载桩：默认每张图返回可预测路径，返回 null 模拟下载失败，可抛错模拟网络异常。 */
+function downloader(resolve: (imageKey: string) => string | null = (key) => `/ws/chat-files/${key}.png`) {
+  const calls: Array<[string, string, number]> = [];
+  const downloadImage = vi.fn(async (messageId: string, imageKey: string, index: number) => {
+    calls.push([messageId, imageKey, index]);
+    return resolve(imageKey);
+  });
+  return { downloadImage, calls };
+}
+
+function imageItem(id: string, upper: string, imageKey: string, time: string, senderId = 'ou_a'): Item {
+  return {
+    message_id: id,
+    upper_message_id: upper,
+    msg_type: 'image',
+    create_time: time,
+    sender: user(senderId),
+    body: { content: JSON.stringify({ image_key: imageKey }) },
+  };
+}
+
 describe('expandFeishuMergeForward', () => {
   it('renders shell children in create_time order and keeps child message ids on media placeholders', async () => {
     const root = 'om_root';
@@ -380,7 +401,7 @@ describe('expandFeishuMergeForward', () => {
     expect(resolveUserNames.mock.calls[0][0]).toEqual(['ou_missing']);
   });
 
-  it('keeps an embedded post image as plain text and drops the card upgrade fallback', async () => {
+  it('keeps an embedded post image as plain text plus a lazy-load handle, and drops the card upgrade fallback', async () => {
     const root = 'om_rich';
     const { client } = clientFor({
       [root]: [
@@ -405,9 +426,201 @@ describe('expandFeishuMergeForward', () => {
       resolveUserNames: namesOf({ ou_a: '张三' }),
     });
     expect(text).toContain('张三：看这个 [图片]');
-    expect(text).not.toContain('msg=om_post');
+    // 没有下载回调时保留 msg 句柄：Agent 仍可经 feishu_download_file 懒加载拿到图。
+    expect(text).toContain('[图片 msg=om_post]');
     expect(text).toContain('真实告警');
     expect(text).not.toContain('请升级至最新版本客户端');
+  });
+
+  it('appends @{path}@ references for images embedded in a post child and keeps its text', async () => {
+    const root = 'om_post_img';
+    const { client } = clientFor({
+      [root]: [
+        shell(root),
+        {
+          message_id: 'om_post', upper_message_id: root, msg_type: 'post',
+          create_time: SHANGHAI('2026-10-08T01:05:00.000Z'), sender: user('ou_a'),
+          body: { content: JSON.stringify({ content: [[
+            { tag: 'text', text: '看这个' },
+            { tag: 'img', image_key: 'img_x' },
+            { tag: 'img', image_key: 'img_y' },
+          ]] }) },
+        },
+      ],
+    });
+    const { downloadImage, calls } = downloader();
+    const text = await expandFeishuMergeForward(client, root, {
+      workspace: null,
+      resolveUserNames: namesOf({ ou_a: '张三' }),
+      downloadImage,
+    });
+    // 正文里的 [图片] 位置标记保留（与直接入站一致），引用按出现顺序附在正文后。
+    expect(text).toBe([
+      '【合并转发，共 1 条】',
+      '[2026-10-08 09:05] 张三：看这个 [图片]  [图片]',
+      '@{/ws/chat-files/img_x.png}@',
+      '@{/ws/chat-files/img_y.png}@',
+    ].join('\n'));
+    expect(calls).toEqual([['om_post', 'img_x', 0], ['om_post', 'img_y', 1]]);
+  });
+
+  it('replaces a standalone image child placeholder with its downloaded path', async () => {
+    const root = 'om_img_only';
+    const { client } = clientFor({
+      [root]: [shell(root), imageItem('om_img', root, 'img_x', SHANGHAI('2026-10-08T01:12:00.000Z'))],
+    });
+    const { downloadImage, calls } = downloader();
+    const text = await expandFeishuMergeForward(client, root, {
+      workspace: null,
+      resolveUserNames: namesOf({ ou_a: '张三' }),
+      downloadImage,
+    });
+    expect(text).toBe([
+      '【合并转发，共 1 条】',
+      '[2026-10-08 09:12] 张三：[图片已保存: @{/ws/chat-files/img_x.png}@]',
+    ].join('\n'));
+    expect(calls).toEqual([['om_img', 'img_x', 0]]);
+  });
+
+  it('keeps msg handles for lazy download when pre-download fails, throws or is capped', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const root = 'om_img_fail';
+      const { client } = clientFor({
+        [root]: [
+          shell(root),
+          imageItem('om_img', root, 'img_gone', SHANGHAI('2026-10-08T01:12:00.000Z')),
+          {
+            message_id: 'om_post', upper_message_id: root, msg_type: 'post',
+            create_time: SHANGHAI('2026-10-08T01:13:00.000Z'), sender: user('ou_b'),
+            body: { content: JSON.stringify({ content: [[{ tag: 'text', text: '图在里面' }, { tag: 'img', image_key: 'img_broken' }]] }) },
+          },
+        ],
+      });
+      const { downloadImage, calls } = downloader((key) => {
+        if (key === 'img_gone') return null;
+        throw new Error('resource expired');
+      });
+      const text = await expandFeishuMergeForward(client, root, {
+        workspace: null,
+        resolveUserNames: namesOf({ ou_a: '张三', ou_b: '李四' }),
+        downloadImage,
+      });
+      expect(calls).toEqual([['om_img', 'img_gone', 0], ['om_post', 'img_broken', 0]]);
+      expect(text).toContain('张三：[图片 msg=om_img]');
+      expect(text).toContain('李四：图在里面 [图片]');
+      expect(text).toContain('[图片 msg=om_post]');
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('messageId=om_post'));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('caps pre-downloads at maxImages and leaves the rest as msg handles', async () => {
+    const root = 'om_cap';
+    const items: Item[] = [shell(root)];
+    for (let index = 0; index < 4; index += 1) {
+      items.push(imageItem(`om_img${index}`, root, `img_${index}`, String(1_700_000_000_000 + index)));
+    }
+    const { client } = clientFor({ [root]: items });
+    const { downloadImage, calls } = downloader();
+    const text = await expandFeishuMergeForward(client, root, {
+      workspace: null,
+      resolveUserNames: namesOf({ ou_a: '张三' }),
+      downloadImage,
+      maxImages: 2,
+    });
+    expect(calls).toEqual([['om_img0', 'img_0', 0], ['om_img1', 'img_1', 0]]);
+    expect(text).toContain('张三：[图片已保存: @{/ws/chat-files/img_0.png}@]');
+    expect(text).toContain('张三：[图片已保存: @{/ws/chat-files/img_1.png}@]');
+    expect(text).toContain('张三：[图片 msg=om_img2]');
+    expect(text).toContain('张三：[图片 msg=om_img3]');
+  });
+
+  it('caps pre-downloads at 9 images by default', async () => {
+    const root = 'om_cap_default';
+    const items: Item[] = [shell(root)];
+    for (let index = 0; index < 12; index += 1) {
+      items.push(imageItem(`om_img${index}`, root, `img_${index}`, String(1_700_000_000_000 + index)));
+    }
+    const { client } = clientFor({ [root]: items });
+    const { downloadImage, calls } = downloader();
+    const text = await expandFeishuMergeForward(client, root, {
+      workspace: null,
+      resolveUserNames: namesOf({ ou_a: '张三' }),
+      downloadImage,
+    });
+    expect(calls).toHaveLength(9);
+    expect(text).toContain('张三：[图片已保存: @{/ws/chat-files/img_8.png}@]');
+    expect(text).toContain('张三：[图片 msg=om_img9]');
+  });
+
+  it('downloads a repeated image only once when it appears in several children', async () => {
+    const root = 'om_dup';
+    const { client } = clientFor({
+      [root]: [
+        shell(root),
+        imageItem('om_a', root, 'img_x', SHANGHAI('2026-10-08T01:12:00.000Z')),
+        imageItem('om_b', root, 'img_x', SHANGHAI('2026-10-08T01:13:00.000Z'), 'ou_b'),
+      ],
+    });
+    const { downloadImage, calls } = downloader();
+    const text = await expandFeishuMergeForward(client, root, {
+      workspace: null,
+      resolveUserNames: namesOf({ ou_a: '张三', ou_b: '李四' }),
+      downloadImage,
+    });
+    expect(calls).toEqual([['om_a', 'img_x', 0]]);
+    expect(text!.match(/图片已保存/g)).toHaveLength(2);
+  });
+
+  it('pre-downloads images inside a nested merge_forward', async () => {
+    const { client } = clientFor({
+      om_1: [
+        shell('om_1'),
+        {
+          message_id: 'om_2', upper_message_id: 'om_1', msg_type: 'merge_forward',
+          create_time: SHANGHAI('2026-10-08T01:21:00.000Z'), sender: user('ou_a'),
+          body: { content: JSON.stringify({ text: 'Merged and Forwarded Message' }) },
+        },
+      ],
+      om_2: [shell('om_2'), imageItem('om_img', 'om_2', 'img_x', SHANGHAI('2026-10-07T10:00:00.000Z'), 'ou_d')],
+    });
+    const { downloadImage, calls } = downloader();
+    const text = await expandFeishuMergeForward(client, 'om_1', {
+      workspace: null,
+      resolveUserNames: namesOf({ ou_a: '张三', ou_d: '赵六' }),
+      downloadImage,
+    });
+    expect(calls).toEqual([['om_img', 'img_x', 0]]);
+    expect(text).toContain('  [2026-10-07 18:00] 赵六：[图片已保存: @{/ws/chat-files/img_x.png}@]');
+  });
+
+  it('downloads images concurrently so one slow image does not serialize the rest', async () => {
+    const root = 'om_slow';
+    const items: Item[] = [shell(root)];
+    for (let index = 0; index < 4; index += 1) {
+      items.push(imageItem(`om_img${index}`, root, `img_${index}`, String(1_700_000_000_000 + index)));
+    }
+    const { client } = clientFor({ [root]: items });
+    let release = (): void => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const started: string[] = [];
+    const downloadImage = vi.fn(async (_messageId: string, imageKey: string) => {
+      started.push(imageKey);
+      if (imageKey === 'img_0') await gate;
+      return `/ws/chat-files/${imageKey}.png`;
+    });
+    const expanding = expandFeishuMergeForward(client, root, {
+      workspace: null,
+      resolveUserNames: namesOf({ ou_a: '张三' }),
+      downloadImage,
+    });
+    await vi.waitFor(() => expect(started).toEqual(['img_0', 'img_1', 'img_2']));
+    release();
+    const text = await expanding;
+    expect(started).toEqual(['img_0', 'img_1', 'img_2', 'img_3']);
+    expect(text).toContain('张三：[图片已保存: @{/ws/chat-files/img_3.png}@]');
   });
 
   it('stops after 100 rendered messages and says how many remain', async () => {

@@ -1,5 +1,5 @@
 import type { FeishuChatType, FeishuEventHeader, FeishuNormalizedMessage } from './types.js';
-import { describeMessageText, FEISHU_CARD_UPGRADE_FALLBACK } from './message-detail.js';
+import { collectPostImageKeys, describeMessageText, FEISHU_CARD_UPGRADE_FALLBACK } from './message-detail.js';
 
 export function normalizeFeishuEvent(input: unknown, botOpenId?: string): FeishuNormalizedMessage | null {
   const root = asRecord(input);
@@ -179,14 +179,6 @@ function extractMedia(messageType: string, content: unknown): { imageKey?: strin
   // sticker（表情包）媒体键同为 file_key（实测 v3_ 前缀）；落库供下载工具识别消息类型。
   if (messageType === 'sticker') return { fileKey: firstString(record.file_key) };
   return {};
-}
-
-function collectPostImageKeys(node: unknown): string[] {
-  if (Array.isArray(node)) return node.flatMap(collectPostImageKeys);
-  if (node == null || typeof node !== 'object') return [];
-  const record = node as Record<string, unknown>;
-  if (record.tag === 'img' && typeof record.image_key === 'string' && record.image_key !== '') return [record.image_key];
-  return Object.values(record).flatMap(collectPostImageKeys);
 }
 
 /** 入站消息待下载图片 key 列表：独立图片消息取 image_key；post 富文本取全部内嵌 img（图片+文字场景）。 */

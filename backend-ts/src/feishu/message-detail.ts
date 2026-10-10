@@ -43,13 +43,25 @@ export async function fetchFeishuMessageDetail(client: Lark.Client, messageId: s
   try { content = raw.body?.content ? JSON.parse(raw.body.content) as Record<string, unknown> : {}; } catch { content = {}; }
   // sticker（表情包）消息的媒体键也是 file_key（实测 v3_ 前缀），仅 image 用 image_key。
   const mediaKey = msgType === 'image' ? 'image_key' : 'file_key';
+  let fileKey = typeof content[mediaKey] === 'string' ? content[mediaKey] as string : null;
+  let effectiveMsgType = msgType;
+  // 图文消息（post 内嵌 img）没有顶层媒体键：取第一张 image_key 并把 msgType 归一为 image，
+  // 让按消息 ID 懒加载的下载接口拿对 type；text 仍按原 post 类型提取，引用/回复不丢正文。
+  // 多图完整集合由入站预下载与合并转发展开负责，这里只兜底第一张。
+  if (fileKey == null && msgType === 'post') {
+    const imageKeys = collectPostImageKeys(content.content);
+    if (imageKeys.length > 0) {
+      fileKey = imageKeys[0];
+      effectiveMsgType = 'image';
+    }
+  }
   return {
     messageId: raw.message_id,
     parentId: raw.parent_id ?? null,
     chatId: raw.chat_id ?? null,
-    msgType,
+    msgType: effectiveMsgType,
     text: describeMessageText(msgType, content, raw.message_id),
-    fileKey: typeof content[mediaKey] === 'string' ? content[mediaKey] as string : null,
+    fileKey,
     fileName: typeof content.file_name === 'string' ? content.file_name as string : null,
     senderId: raw.sender?.id ?? null,
     createTime: raw.create_time ?? null,
@@ -98,6 +110,15 @@ function collectText(node: unknown): string {
     return own + collectText(record.content);
   }
   return '';
+}
+
+/** 富文本（post）内容里的图片键：递归收集 img 元素的 image_key。入站预下载与合并转发展开共用同一套收集。 */
+export function collectPostImageKeys(node: unknown): string[] {
+  if (Array.isArray(node)) return node.flatMap(collectPostImageKeys);
+  if (node == null || typeof node !== 'object') return [];
+  const record = node as Record<string, unknown>;
+  if (record.tag === 'img' && typeof record.image_key === 'string' && record.image_key !== '') return [record.image_key];
+  return Object.values(record).flatMap(collectPostImageKeys);
 }
 
 /** 飞书对无法透出原始卡片 JSON 时返回的降级文案（receive 事件 / 详情接口均可能出现）。 */

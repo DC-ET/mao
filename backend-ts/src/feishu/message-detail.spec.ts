@@ -77,8 +77,29 @@ describe('fetchFeishuMessageDetail 卡片文本提取', () => {
       ],
     };
     const detail = await fetchDetail({ msg_type: 'post', body: { content: JSON.stringify(post) } });
-    expect(detail?.msgType).toBe('post');
     expect(detail?.text).toBe('这个图片的内容是什么? [图片]');
+  });
+
+  it('surfaces the first embedded post image key as an image so lazy download can fetch it', async () => {
+    const post = {
+      title: '',
+      content: [
+        [{ tag: 'text', text: '这个图片的内容是什么?' }, { tag: 'img', image_key: 'img_v3_abc' }],
+        [{ tag: 'img', image_key: 'img_v3_second' }],
+      ],
+    };
+    const detail = await fetchDetail({ msg_type: 'post', body: { content: JSON.stringify(post) } });
+    expect(detail?.msgType).toBe('image');
+    expect(detail?.fileKey).toBe('img_v3_abc');
+    expect(detail?.text).toContain('这个图片的内容是什么?');
+    expect(detail?.text?.match(/\[图片\]/g)).toHaveLength(2);
+  });
+
+  it('keeps a post without images as post', async () => {
+    const post = { title: '', content: [[{ tag: 'text', text: '纯文字' }]] };
+    const detail = await fetchDetail({ msg_type: 'post', body: { content: JSON.stringify(post) } });
+    expect(detail?.msgType).toBe('post');
+    expect(detail?.fileKey).toBeNull();
   });
 
   it('falls back to placeholder when card has no text elements', async () => {

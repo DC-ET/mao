@@ -2,7 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type * as Lark from '@larksuiteoapi/node-sdk';
 import { replaceMentionKeys } from './event-normalizer.js';
-import { describeMessageText } from './message-detail.js';
+import { collectPostImageKeys, describeMessageText } from './message-detail.js';
 import { botSenderLabel } from './message.service.js';
 
 /** 飞书合并转发外壳的固定英文。只用于识别「日志里还没展开」，不拿它做入站分支。 */
@@ -11,6 +11,10 @@ export const FEISHU_MERGE_FORWARD_TEXT = 'Merged and Forwarded Message';
 const MAX_DEPTH = 3;
 const MAX_MESSAGES = 100;
 const INLINE_LIMIT = 4000;
+/** 单个合并转发最多预下载的图片数：超出部分保留 msg 占位符由 Agent 按需懒加载，兼顾信息完整与展开耗时。 */
+const MAX_IMAGES = 9;
+/** 图片预下载并发：展开可能在触发前同步执行（见 inbound-processor 的待富化补齐），不能逐张串行拖慢触发。 */
+const IMAGE_CONCURRENCY = 3;
 
 export function isUnexpandedMergeForwardText(content: string | null | undefined): boolean {
   return (content ?? '').trim() === FEISHU_MERGE_FORWARD_TEXT;
@@ -21,6 +25,10 @@ export interface ExpandMergeForwardOptions {
   workspace: string | null;
   /** 批量把 open_id 解析成姓名。失败或缺失时摘录退回 open_id，不让整包失败。 */
   resolveUserNames?: (openIds: string[]) => Promise<Map<string, string>>;
+  /** 预下载转发内嵌图片到工作区，返回本地路径。缺失或失败时保留 msg 占位符走懒加载兜底。 */
+  downloadImage?: (messageId: string, imageKey: string, index: number) => Promise<string | null>;
+  /** 预下载图片数上限，默认 MAX_IMAGES。 */
+  maxImages?: number;
 }
 
 interface RawItem {
@@ -54,6 +62,13 @@ interface LoadResult {
   skipped: number;
 }
 
+interface ImageRef {
+  messageId: string;
+  imageKey: string;
+  /** 同一消息内的第几张图：仅用于多图 post 的落盘命名。 */
+  index: number;
+}
+
 /**
  * 展开一条合并转发。成功返回摘录（超长时已截断并可能带全文路径）；
  * 拉不到子消息、无权限或网络失败返回 null，调用方保留固定英文。
@@ -67,7 +82,8 @@ export async function expandFeishuMergeForward(
   const loaded = await loadChildren(client, messageId, 1, seen, { left: MAX_MESSAGES });
   if (loaded == null) return null;
   const names = await lookupNames(messageId, loaded.nodes, options.resolveUserNames);
-  const lines = renderNodes(loaded.nodes, loaded.total, '', names);
+  const images = await preloadImages(loaded.nodes, options);
+  const lines = renderNodes(loaded.nodes, loaded.total, '', names, images);
   if (loaded.skipped > 0) lines.push(`其余 ${loaded.skipped} 条未展开`);
   return spill(messageId, options.workspace, lines.join('\n'));
 }
@@ -195,7 +211,7 @@ function toNode(item: RawItem): ForwardNode {
   };
 }
 
-function renderNodes(nodes: ForwardNode[], total: number, indent: string, names: Map<string, string>): string[] {
+function renderNodes(nodes: ForwardNode[], total: number, indent: string, names: Map<string, string>, images: Map<string, string>): string[] {
   const lines = [`${indent}【合并转发，共 ${total} 条】`];
   for (const node of nodes) {
     const prefix = `${indent}[${formatFeishuMessageTime(node.createTime)}] ${displayName(node, names)}：`;
@@ -217,13 +233,77 @@ function renderNodes(nodes: ForwardNode[], total: number, indent: string, names:
         continue;
       }
       lines.push(prefix);
-      if (node.nested != null) lines.push(...renderNodes(node.nested, node.nestedTotal, `${indent}  `, names));
+      if (node.nested != null) lines.push(...renderNodes(node.nested, node.nestedTotal, `${indent}  `, names, images));
       continue;
     }
     const body = replaceMentionKeys(describeMessageText(node.msgType, node.content, node.messageId), node.mentions);
-    lines.push(`${prefix}${body}`);
+    lines.push(`${prefix}${renderNodeBody(node, body, images)}`);
   }
   return lines;
+}
+
+/** 节点内嵌图片键：独立图片消息取顶层 image_key；post 富文本递归取 img 元素（按出现顺序去重）。 */
+function nodeImageKeys(node: ForwardNode): string[] {
+  if (node.msgType === 'image') {
+    const key = typeof node.content.image_key === 'string' ? node.content.image_key : '';
+    return key === '' ? [] : [key];
+  }
+  if (node.msgType === 'post') return [...new Set(collectPostImageKeys(node.content))];
+  return [];
+}
+
+/**
+ * 图片节点正文。已预下载的按直接入站惯例给出 @{路径}@ 引用，Agent 免工具直接读取；
+ * 未下载（超上限或下载失败）的保留 msg 句柄，仍可经 feishu_download_file 懒加载兜底。
+ * 独立图片消息整体替换占位文本；post 富文本保留正文里的 [图片] 位置标记，引用按序附在正文后。
+ */
+function renderNodeBody(node: ForwardNode, body: string, images: Map<string, string>): string {
+  const keys = nodeImageKeys(node);
+  if (keys.length === 0) return body;
+  if (node.msgType === 'image') {
+    const path = images.get(keys[0]);
+    return path != null ? `[图片已保存: @{${path}}@]` : body;
+  }
+  const refs = keys.map((key) => {
+    const path = images.get(key);
+    return path != null ? `@{${path}}@` : `[图片 msg=${node.messageId}]`;
+  });
+  return `${body}\n${refs.join('\n')}`;
+}
+
+async function preloadImages(nodes: ForwardNode[], options: ExpandMergeForwardOptions): Promise<Map<string, string>> {
+  const images = new Map<string, string>();
+  const download = options.downloadImage;
+  if (download == null) return images;
+  const refs = collectImageRefs(nodes, [], new Set<string>());
+  const limit = Math.max(0, options.maxImages ?? MAX_IMAGES);
+  for (let start = 0; start < refs.length && start < limit; start += IMAGE_CONCURRENCY) {
+    const chunk = refs.slice(start, Math.min(start + IMAGE_CONCURRENCY, limit));
+    await Promise.all(chunk.map(async (ref) => {
+      try {
+        const path = await download(ref.messageId, ref.imageKey, ref.index);
+        if (path != null && path !== '') images.set(ref.imageKey, path);
+      } catch (error) {
+        console.warn(`下载合并转发图片失败, messageId=${ref.messageId}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }));
+  }
+  return images;
+}
+
+function collectImageRefs(nodes: ForwardNode[], out: ImageRef[], seen: Set<string>): ImageRef[] {
+  for (const node of nodes) {
+    if (!node.deleted) {
+      // 同一张图被转发多次时只下载一次：image_key 全局唯一，按它去重。
+      nodeImageKeys(node).forEach((imageKey, index) => {
+        if (seen.has(imageKey)) return;
+        seen.add(imageKey);
+        out.push({ messageId: node.messageId, imageKey, index });
+      });
+    }
+    if (node.nested != null) collectImageRefs(node.nested, out, seen);
+  }
+  return out;
 }
 
 function displayName(node: ForwardNode, names: Map<string, string>): string {

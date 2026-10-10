@@ -111,6 +111,23 @@ describe('FeishuDownloadFileTool', () => {
     expect(parsed.path).toBe(join(chatFilesDirOf(workspace), 'robot-file.pdf'));
   });
 
+  it('downloads an image resolved through the detail API as an image (post child lazy load)', async () => {
+    // 合并转发里图文子消息只留 msg 句柄时：详情接口把 msgType 归一为 image，这里按图片类型取资源。
+    const download = vi.fn(async () => ({ buffer: Buffer.from('png'), contentType: 'image/png' }));
+    const tool = new FeishuDownloadFileTool(
+      { resolveBotAppId: vi.fn(async () => 'cli_bot') },
+      { findMediaByMessageId: vi.fn(async () => null) },
+      { download },
+      100 * 1024 * 1024,
+      { fetchMessageDetail: vi.fn(async () => ({ fileKey: 'img_v3_abc', fileName: null, msgType: 'image' })) },
+    );
+    const result = await tool.execute(JSON.stringify({ message_id: 'om_post_child' }), 9, 1, workspace);
+    const parsed = JSON.parse(result);
+    expect(parsed.success).toBe(true);
+    expect(download).toHaveBeenCalledWith('cli_bot', 'om_post_child', 'img_v3_abc', 'image', 100 * 1024 * 1024);
+    expect(parsed.path.endsWith('.png')).toBe(true);
+  });
+
   it('rejects messages without a downloadable file', async () => {
     const result = await makeTool({ media: { appId: '1', fileKey: null, fileName: null, msgType: 'text' } })
       .execute(JSON.stringify({ message_id: 'om_text' }), 9, 1, workspace);
