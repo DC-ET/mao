@@ -79,10 +79,22 @@ export interface LlmCallSceneAggRow {
   totalTokens: number;
 }
 
+/** 按 Agent 汇总（agent_id 为 NULL 的调用——压缩/标题等无归属场景——保留为 id=null 一组）。 */
+export interface LlmCallAgentAggRow {
+  agentId: number | null;
+  agentName: string | null;
+  callCount: number;
+  failCount: number;
+  totalTokens: number;
+  cost: number;
+}
+
 export interface LlmCallTrendRow {
   bucket: string;
   callCount: number;
   failCount: number;
+  promptTokens: number;
+  cachedTokens: number;
   totalTokens: number;
   cost: number;
 }
@@ -307,6 +319,31 @@ export class LlmCallRepository {
     }));
   }
 
+  /** 按 Agent 汇总（agent_id 为 NULL 的调用保留为 id=null 一组，按 token 降序）。 */
+  async aggregateByAgent(userId: number, filter: LlmCallAggFilter): Promise<LlmCallAgentAggRow[]> {
+    const { sql, params } = this.aggWhere(filter);
+    const rows = await this.db.query<Record<string, unknown>>(
+      `SELECT agent_id AS agentId,
+              COUNT(*) AS callCount,
+              COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0) AS failCount,
+              COALESCE(SUM(total_tokens), 0) AS totalTokens,
+              COALESCE(SUM(cost_micros), 0) / 1000000 AS cost
+       FROM llm_call
+       WHERE user_id = ? AND ${sql}
+       GROUP BY agent_id
+       ORDER BY totalTokens DESC`,
+      [userId, ...params],
+    );
+    return rows.map((r) => ({
+      agentId: r.agentId == null ? null : toNumber(r.agentId),
+      agentName: null,
+      callCount: toNumber(r.callCount),
+      failCount: toNumber(r.failCount),
+      totalTokens: toNumber(r.totalTokens),
+      cost: toNumber(r.cost),
+    }));
+  }
+
   /** 按天/小时分桶的趋势序列（只有有数据的桶；缺失日期由前端按序列补零）。 */
   async aggregateTrend(
     userId: number,
@@ -319,6 +356,8 @@ export class LlmCallRepository {
       `SELECT ${bucket} AS bucket,
               COUNT(*) AS callCount,
               COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0) AS failCount,
+              COALESCE(SUM(prompt_tokens), 0) AS promptTokens,
+              COALESCE(SUM(cached_tokens), 0) AS cachedTokens,
               COALESCE(SUM(total_tokens), 0) AS totalTokens,
               COALESCE(SUM(cost_micros), 0) / 1000000 AS cost
        FROM llm_call
@@ -331,6 +370,8 @@ export class LlmCallRepository {
       bucket: String(r.bucket ?? ''),
       callCount: toNumber(r.callCount),
       failCount: toNumber(r.failCount),
+      promptTokens: toNumber(r.promptTokens),
+      cachedTokens: toNumber(r.cachedTokens),
       totalTokens: toNumber(r.totalTokens),
       cost: toNumber(r.cost),
     }));

@@ -4,6 +4,7 @@ import { LlmCallContext } from './llm-call-context.js';
 import { computeCostMicros, parsePriceColumn, type CostPrice } from './cost-micros.js';
 import type {
   LlmCallAggFilter,
+  LlmCallAgentAggRow,
   LlmCallListFilter,
   LlmCallModelAggRow,
   LlmCallRepository,
@@ -68,12 +69,13 @@ export function parseUsageRange(value: string | undefined): UsageRange {
   return USAGE_RANGES.includes(value as UsageRange) ? (value as UsageRange) : USAGE_RANGE_DEFAULT;
 }
 
-/** 用户端用量总览：窗口总账 + 按模型 + 按场景（一次请求给全，前端三个区块同周期展示）。 */
+/** 用户端用量总览：窗口总账 + 按模型 + 按场景 + 按 Agent（一次请求给全，前端同周期展示）。 */
 export interface MyUsageSummary {
   range: UsageRange;
   totals: LlmCallSummaryRow;
   byModel: LlmCallModelAggRow[];
   byScene: LlmCallSceneAggRow[];
+  byAgent: LlmCallAgentAggRow[];
 }
 
 /** 用户端用量趋势：按天/小时分桶的连续序列（后端补零，无缺口）。 */
@@ -171,12 +173,13 @@ function ymdDiffDays(from: string, to: string): number {
   return Math.round((Date.UTC(y2, m2 - 1, d2) - Date.UTC(y1, m1 - 1, d1)) / 86_400_000);
 }
 
-const ZERO_TREND_BUCKET = { callCount: 0, failCount: 0, totalTokens: 0, cost: 0 } as const;
+const ZERO_TREND_BUCKET = { callCount: 0, failCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0 } as const;
 
 /** 聚合行按桶键回填到完整序列：缺失桶补零，前端无需再做日期运算（也无浏览器时区错位风险）。 */
 function fillTrendBuckets(rows: LlmCallTrendRow[], keys: string[]): LlmCallTrendRow[] {
   const byKey = new Map(rows.map((r) => [r.bucket, r]));
-  return keys.map((key) => byKey.get(key) ?? { bucket: key, ...ZERO_TREND_BUCKET });
+  // 有数据的行也过一遍零值基准，保证每桶字段齐全（趋势图按固定字段读）
+  return keys.map((key) => ({ ...ZERO_TREND_BUCKET, ...byKey.get(key), bucket: key }));
 }
 
 export class LlmCallService {
@@ -294,16 +297,33 @@ export class LlmCallService {
     return this.listForAdmin(page, size, { ...filter, userId });
   }
 
-  /** 当前用户指定周期用量总览（总账 + 按模型 + 按场景，一次返回）。 */
+  /** 当前用户指定周期用量总览（总账 + 按模型 + 按场景 + 按 Agent，一次返回）。 */
   async summaryForUser(userId: number, range?: UsageRange): Promise<MyUsageSummary> {
     const resolved = parseUsageRange(range);
     const window = rangeWindow(resolved);
-    const [totals, byModel, byScene] = await Promise.all([
+    const [totals, byModel, byScene, byAgent] = await Promise.all([
       this.repo.aggregateSummary(userId, window),
       this.repo.aggregateByModel(userId, window),
       this.repo.aggregateByScene(userId, window),
+      this.repo.aggregateByAgent(userId, window),
     ]);
-    return { range: resolved, totals, byModel, byScene };
+    return { range: resolved, totals, byModel, byScene, byAgent: await this.resolveAgentNames(byAgent) };
+  }
+
+  /** 按 Agent 汇总补名字：agent_id 为 null（压缩/标题等无归属调用）或已删 Agent 时名字为 null，前端兜底展示。 */
+  private async resolveAgentNames(rows: LlmCallAgentAggRow[]): Promise<LlmCallAgentAggRow[]> {
+    const ids = [...new Set(rows.map((r) => r.agentId).filter((id): id is number => id != null))];
+    if (ids.length === 0 || !this.agentLookup) return rows;
+    const names = await Promise.all(ids.map(async (id) => {
+      try {
+        return [id, await this.agentLookup!.findName(id)] as const;
+      } catch (e) {
+        console.warn(`[llm-call] agent name lookup failed for agent ${id}: ${(e as Error).message}`);
+        return [id, null] as const;
+      }
+    }));
+    const nameMap = new Map(names);
+    return rows.map((row) => ({ ...row, agentName: nameMap.get(row.agentId ?? -1) ?? null }));
   }
 
   /** 当前用户指定周期用量趋势（按天/小时分桶；后端补零，序列连续无缺口）。 */

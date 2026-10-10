@@ -11,58 +11,22 @@
         </div>
       </div>
 
-      <div class="block">
-        <div class="block-title">按模型</div>
-        <el-table :data="modelRows" size="small" stripe>
-          <template #empty>
-            <el-empty description="暂无调用记录" :image-size="40" />
-          </template>
-          <el-table-column label="模型" min-width="120" show-overflow-tooltip>
-            <template #default="{ row }">{{ row.modelName || '未知模型' }}</template>
-          </el-table-column>
-          <el-table-column label="调用" width="72" align="right">
-            <template #default="{ row }">{{ formatNumber(row.callCount) }}</template>
-          </el-table-column>
-          <el-table-column label="失败" width="72" align="right">
-            <template #default="{ row }">{{ formatNumber(row.failCount) }}</template>
-          </el-table-column>
-          <el-table-column label="入 Token" width="92" align="right">
-            <template #default="{ row }">{{ formatToken(row.promptTokens) }}</template>
-          </el-table-column>
-          <el-table-column label="出 Token" width="92" align="right">
-            <template #default="{ row }">{{ formatToken(row.completionTokens) }}</template>
-          </el-table-column>
-          <el-table-column label="总 Token" width="96" align="right">
-            <template #default="{ row }">{{ formatToken(row.totalTokens) }}</template>
-          </el-table-column>
-          <el-table-column label="成本" width="88" align="right">
-            <template #default="{ row }">{{ formatCost(row.cost) }}</template>
-          </el-table-column>
-        </el-table>
+      <div class="pie-grid">
+        <div class="block">
+          <div class="block-title">按模型</div>
+          <UsagePieChart :slices="modelSlices" />
+        </div>
+        <div class="block">
+          <div class="block-title">按场景</div>
+          <UsagePieChart :slices="sceneSlices" />
+        </div>
+        <div class="block">
+          <div class="block-title">按 Agent</div>
+          <UsagePieChart :slices="agentSlices" />
+        </div>
       </div>
 
-      <div class="block">
-        <div class="block-title">按场景</div>
-        <el-table :data="sceneRows" size="small" stripe>
-          <template #empty>
-            <el-empty description="暂无调用记录" :image-size="40" />
-          </template>
-          <el-table-column label="场景" min-width="120">
-            <template #default="{ row }">{{ llmCallSceneLabel(row.scene) }}</template>
-          </el-table-column>
-          <el-table-column label="调用" width="88" align="right">
-            <template #default="{ row }">{{ formatNumber(row.callCount) }}</template>
-          </el-table-column>
-          <el-table-column label="失败" width="88" align="right">
-            <template #default="{ row }">{{ formatNumber(row.failCount) }}</template>
-          </el-table-column>
-          <el-table-column label="总 Token" width="110" align="right">
-            <template #default="{ row }">{{ formatToken(row.totalTokens) }}</template>
-          </el-table-column>
-        </el-table>
-      </div>
-
-      <p class="cost-note">成本按模型价格填写口径估算；未配置价格的调用不计入成本。</p>
+      <p class="cost-note">饼图按调用次数占比，悬浮可看该维度的调用数、Token 与成本。成本按模型价格填写口径估算，未配置价格的调用不计入成本。</p>
     </template>
   </div>
 </template>
@@ -72,15 +36,37 @@ import { computed } from 'vue'
 import type { MyUsageSummary } from '../../api'
 import { formatCost, formatNumber, formatPercent, formatToken } from '../../utils/usageFormat'
 import { llmCallSceneLabel } from '../../utils/llmCallLabels'
+import { buildPieSlices } from './pie-series'
+import UsagePieChart from './UsagePieChart.vue'
 
 const props = defineProps<{
   summary: MyUsageSummary | null
   loading: boolean
 }>()
 
-const modelRows = computed(() => props.summary?.byModel ?? [])
-const sceneRows = computed(() => props.summary?.byScene ?? [])
 const isEmpty = computed(() => (props.summary?.totals.callCount ?? 0) === 0)
+
+/** 三个维度共用一套饼图：按调用次数占比，尾部合并「其他」，悬浮看 Token/成本明细。 */
+const modelSlices = computed(() => buildPieSlices((props.summary?.byModel ?? []).map((r) => ({
+  name: r.modelName || '未知模型',
+  callCount: r.callCount,
+  totalTokens: r.totalTokens,
+  cost: r.cost,
+}))))
+
+const sceneSlices = computed(() => buildPieSlices((props.summary?.byScene ?? []).map((r) => ({
+  name: llmCallSceneLabel(r.scene),
+  callCount: r.callCount,
+  totalTokens: r.totalTokens,
+}))))
+
+const agentSlices = computed(() => buildPieSlices((props.summary?.byAgent ?? []).map((r) => ({
+  // 无归属调用（压缩/标题等系统场景）agentId 为 null；Agent 已删查不到名字时兜底用 ID
+  name: r.agentName || (r.agentId != null ? `Agent #${r.agentId}` : '无 Agent'),
+  callCount: r.callCount,
+  totalTokens: r.totalTokens,
+  cost: r.cost,
+}))))
 
 const cards = computed(() => {
   const t = props.summary?.totals
@@ -147,8 +133,15 @@ const cards = computed(() => {
   color: var(--aw-ink-muted);
 }
 
-.block {
+.pie-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 18px;
   margin-bottom: 18px;
+}
+
+.block {
+  min-width: 0;
 }
 
 .block-title {
