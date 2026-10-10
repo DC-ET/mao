@@ -48,13 +48,18 @@ const chartOption = computed<ChartOption>(() => {
       // 片数上限 9，窄屏放不下时翻页，不挤压饼图；占比写进图例，细片的百分比也有处可看
       type: 'scroll',
       bottom: 0,
+      // 窄屏下图例项之间容易糊成一团：项间距放宽，文字与色块之间也留出距离
+      itemGap: 14,
+      itemWidth: 14,
+      itemHeight: 8,
       textStyle: { color: textColor, fontSize: 11 },
       pageIconColor: textColor,
       pageIconInactiveColor: 'rgba(134,134,139,0.4)',
       pageTextStyle: { color: textColor },
+      // 名称与占比之间用全角空格分隔：半角空格在 11px 下几乎看不出，中文名与数字会贴在一起
       formatter: (name: string) => {
         const i = props.slices.findIndex((s) => s.name === name)
-        return i < 0 ? name : `${name} ${formatPercentValue(percents.value[i] ?? 0)}`
+        return i < 0 ? name : `${name}　${formatPercentValue(percents.value[i] ?? 0)}`
       },
     },
     series: [

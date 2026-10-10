@@ -1,6 +1,6 @@
 <template>
   <div class="usage-detail">
-    <UsageFilterBar v-model="filters" @search="fetchRecords" />
+    <UsageFilterBar v-model="filters" @search="handleSearch" />
 
     <UsageRecordTable :records="records" :loading="loading" @go-session="goSession" />
 
@@ -9,16 +9,12 @@
         v-model:current-page="currentPage"
         v-model:page-size="pageSize"
         :total="total"
-        :page-sizes="[10, 20, 50]"
+        :page-sizes="[10, 20, 50, 100]"
         size="small"
-        layout="total, prev, pager, next"
+        layout="total, sizes, prev, pager, next"
         @current-change="fetchRecords"
         @size-change="handleSizeChange"
       />
-    </div>
-
-    <div class="detail-footer">
-      <router-link to="/settings/usage" @click="emit('close')">查看完整使用记录</router-link>
     </div>
   </div>
 </template>
@@ -73,6 +69,12 @@ function handleSizeChange() {
   fetchRecords()
 }
 
+/** 筛选栏「改条件即查」：回到第 1 页再拉，避免停在越界页看到空列表。 */
+function handleSearch() {
+  currentPage.value = 1
+  fetchRecords()
+}
+
 function goSession(sessionId: number) {
   emit('close')
   router.push(`/tasks/${sessionId}`)
@@ -87,20 +89,5 @@ watch(() => props.refreshKey, fetchRecords)
   display: flex;
   justify-content: flex-end;
   margin-top: 12px;
-}
-
-.detail-footer {
-  margin-top: 10px;
-  text-align: right;
-  font-size: 12px;
-}
-
-.detail-footer a {
-  color: var(--el-color-primary);
-  text-decoration: none;
-}
-
-.detail-footer a:hover {
-  text-decoration: underline;
 }
 </style>

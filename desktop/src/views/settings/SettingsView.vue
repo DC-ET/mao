@@ -18,9 +18,6 @@
         >
           服务器
         </router-link>
-        <router-link to="/settings/usage" class="settings-nav-item" active-class="active">
-          使用记录
-        </router-link>
         <router-link to="/settings/git-credentials" class="settings-nav-item" active-class="active">
           Git 凭证
         </router-link>

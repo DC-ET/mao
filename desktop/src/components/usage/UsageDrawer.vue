@@ -105,32 +105,72 @@ async function handleRefresh() {
 </script>
 
 <style scoped>
+/*
+  el-drawer__header 的样式是 `& > :first-child { flex: 1 }`：插槽内容会占满头部全宽，
+  把默认关闭按钮挤出屏幕（移动端实测按钮被推到 left=407，视口只有 393 宽，完全看不见）。
+  这里让插槽内容不抢占关闭按钮的位置：桌面端用 margin-right 留位，移动端改用
+  padding-right + 关闭按钮绝对定位，周期控件因此能拿满整行宽度（6 项约 292px，
+  360px 一放得下，不必横向滚动）。
+*/
 .drawer-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-right: 36px;
 }
 
 .drawer-title {
   font-size: 15px;
   font-weight: 600;
   color: var(--aw-ink);
+  white-space: nowrap;
 }
 
 .drawer-actions {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
 }
 
 .period-label {
   font-size: 12px;
   color: var(--aw-ink-muted);
+  white-space: nowrap;
 }
 
 .usage-tabs :deep(.el-tabs__header) {
   margin-bottom: 14px;
+}
+
+/* 移动端：头部纵向堆叠，周期控件单独占满一行，避免挤出屏幕 */
+@media (max-width: 768px) {
+  .usage-drawer :deep(.el-drawer__header) {
+    position: relative;
+    padding-right: 40px;
+  }
+
+  /* 关闭按钮脱离文档流固定在右上角，不再与内容争宽度 */
+  .usage-drawer :deep(.el-drawer__close-btn) {
+    position: absolute;
+    top: 20px;
+    right: 12px;
+    z-index: 1;
+  }
+
+  .drawer-header {
+    margin-right: 0;
+    width: 100%;
+  }
+
+  .drawer-actions {
+    flex: 1 1 100%;
+    gap: 6px;
+  }
 }
 </style>
