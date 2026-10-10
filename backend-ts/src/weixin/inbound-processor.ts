@@ -11,6 +11,7 @@ import type {
   WeixinReply,
 } from './types.js';
 import type { WeixinVoiceReplyService } from './voice-reply.service.js';
+import type { WeixinWebhookFallbackService } from './webhook-fallback.service.js';
 
 const ITEM_TYPE_TEXT = 1;
 const ITEM_TYPE_IMAGE = 2;
@@ -24,6 +25,10 @@ export class InboundProcessor {
     private readonly weixinMediaService: WeixinMediaService,
     private readonly weixinVoiceReplyService: WeixinVoiceReplyService,
     private readonly inboundMessages?: WeixinInboundMessageRepository,
+    /** webhook 降级推送（可选）：微信下行失败时把回复送到用户配置的钉钉/飞书。 */
+    private readonly webhookFallback?: WeixinWebhookFallbackService,
+    /** 账号仓库（可选）：降级推送前用 accountId 反查归属 userId。 */
+    private readonly accountRepository?: { findByAccountId(accountId: string): Promise<{ userId?: number | null } | null> },
   ) {}
 
   /**
@@ -283,7 +288,11 @@ export class InboundProcessor {
     try {
       if (contextToken == null || contextToken === '') {
         console.warn(`无法发送回复: 缺少context_token, accountId=${accountId}, toUserId=${toUserId}`);
-        await this.sendFallbackNotice(accountId, toUserId);
+        // 缺 token 时连降级提示也发不出去，直接走 webhook 兜底。
+        const noticeSent = await this.sendFallbackNotice(accountId, toUserId);
+        if (!noticeSent) {
+          await this.pushWebhookFallback(accountId, reply.text ?? '');
+        }
         return;
       }
       const success = await this.weixinSendService.sendText(accountId, toUserId, reply.text!);
@@ -299,15 +308,19 @@ export class InboundProcessor {
         return;
       }
       // 发送失败时不能静默：用户侧没有任何提示会以为 Agent 卡死。
-      // 原始回复已入库，桌面端/网页端可见，这里只发一条短降级说明指路。
-      await this.sendFallbackNotice(accountId, toUserId);
+      // 依次尝试两条降级路径：先在微信内发短说明指路；微信本身不可达（24h 窗口过期时
+      // 连这条也发不出去）时，把回复原文推送到用户配置的钉钉/飞书 webhook。
+      const noticeSent = await this.sendFallbackNotice(accountId, toUserId);
+      if (!noticeSent) {
+        await this.pushWebhookFallback(accountId, text ?? '');
+      }
     } catch (e) {
       console.error('发送回复消息失败', e);
     }
   }
 
-  /** 下行失败时给用户一条可感知的短说明，避免「Agent 跑完了但微信上什么都没收到」。 */
-  private async sendFallbackNotice(accountId: string, toUserId: string): Promise<void> {
+  /** 下行失败时给用户一条可感知的短说明，避免「Agent 跑完了但微信上什么都没收到」。返回是否送达。 */
+  private async sendFallbackNotice(accountId: string, toUserId: string): Promise<boolean> {
     try {
       const sent = await this.weixinSendService.sendText(
         accountId,
@@ -317,8 +330,25 @@ export class InboundProcessor {
       if (!sent) {
         console.warn(`微信下行降级提示也发送失败, accountId=${accountId}, toUserId=${toUserId}`);
       }
+      return sent;
     } catch (e) {
       console.error('发送微信下行降级提示失败', e);
+      return false;
+    }
+  }
+
+  /**
+   * 微信侧完全不可达时，把回复原文降级推送到用户配置的通知 webhook。
+   * 未注入降级器、账号查不到归属用户、用户未配置通知时静默跳过。
+   */
+  private async pushWebhookFallback(accountId: string, replyText: string): Promise<void> {
+    const fallback = this.webhookFallback;
+    if (fallback == null) return;
+    try {
+      const account = await this.accountRepository?.findByAccountId(accountId);
+      await fallback.sendFallback(account?.userId, replyText);
+    } catch (e) {
+      console.warn(`微信回复 webhook 降级推送异常, accountId=${accountId}`, e);
     }
   }
 }

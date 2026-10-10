@@ -941,6 +941,40 @@ describe('ScheduledTaskService 预算 BLOCK 闸门（§5.7）', () => {
     expect(send.sendText).toHaveBeenCalledWith('acc', 'wx1', 'done');
     expect(notified).toHaveLength(0);
   });
+
+  it('微信回复：发送失败时降级推送到 webhook', async () => {
+    const stubs = {
+      getSession: vi.fn(async () => ({ id: 11, phase: 'IDLE', projectKey: 'weixin-bot' })),
+      updatePhase: vi.fn(),
+      saveMessage: vi.fn(async () => ({ id: 88, content: 'x' })),
+      getMessages: vi.fn(async () => [{ role: 'ASSISTANT', content: '定时任务回答' }]),
+    };
+    const store: ScheduledTaskStore = {
+      insert: vi.fn(async (t) => { t.id = 1; return 1; }),
+      updateById: vi.fn(),
+      deleteById: vi.fn(),
+      selectById: vi.fn(async () => ({
+        id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', status: 'ACTIVE', name: 'daily', prompt: 'hello', fireCount: 0,
+      })),
+      listByUser: vi.fn(async () => []),
+      listAll: vi.fn(async () => ({ records: [], total: 0 })),
+      listDue: vi.fn(async () => []),
+    } as never;
+    const send = { sendText: vi.fn(async () => false) };
+    const sendFallback = vi.fn(async () => true);
+    let ran: Promise<void> | null = null;
+    const svc = new ScheduledTaskService(
+      store, stubs as never, { enqueue: vi.fn() }, { executeFromEvent: vi.fn(async () => undefined) },
+      { finishExecution: vi.fn() }, send as never,
+      { findByUserId: vi.fn(async () => ({ accountId: 'acc' })) } as never,
+      { findByAccountId: vi.fn(async () => [{ wxUserId: 'wx1' }]) } as never,
+      (fn) => { ran = Promise.resolve().then(fn); },
+    );
+    svc.setWeixinWebhookFallback({ sendFallback } as never);
+    await svc.executeTask({ id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', prompt: 'hello', fireCount: 0 } as never);
+    await ran;
+    expect(sendFallback).toHaveBeenCalledWith(7, '定时任务回答');
+  });
 });
 
 function stubStore() {
