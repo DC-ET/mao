@@ -3,7 +3,7 @@
     <BaseChart :option="chartOption" :empty="!hasData" :height="300" />
     <div v-if="hasData" class="trend-summary">
       <span>窗口调用 {{ formatNumber(series.totalCalls) }} 次</span>
-      <span>Token {{ formatNumber(series.totalTokens) }}</span>
+      <span>Token {{ formatToken(series.totalTokens) }}</span>
       <span>成本 {{ formatCost(series.totalCost) }}</span>
     </div>
   </div>
@@ -13,13 +13,13 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useTheme } from '../../utils/theme'
 import { CHART_PALETTE, type ChartOption } from '../../utils/echarts'
-import { fetchMyUsageTrends, type UsageTrendBucket } from '../../api'
-import { formatCost, formatNumber } from '../../utils/usageFormat'
+import { fetchMyUsageTrends, type UsageRange, type UsageTrendBucket } from '../../api'
+import { formatCost, formatNumber, formatToken, formatTokenWithUnit } from '../../utils/usageFormat'
 import { buildTrendSeries } from './trend-series'
 import BaseChart from '../common/BaseChart.vue'
 
 const props = defineProps<{
-  days: number
+  range: UsageRange
   /** 抽屉「刷新」按钮令牌：变化即重拉，不 remount（保留图表实例） */
   refreshKey?: number
 }>()
@@ -28,12 +28,17 @@ const { isDark } = useTheme()
 const buckets = ref<UsageTrendBucket[]>([])
 const loading = ref(false)
 
+/** 单日周期（今日/昨日）按小时分桶，多日周期按天；后端据此补零。 */
+const granularity = computed<'day' | 'hour'>(() =>
+  props.range === 'today' || props.range === 'yesterday' ? 'hour' : 'day',
+)
+
 let fetchSeq = 0
 async function fetchTrends() {
   const seq = ++fetchSeq
   loading.value = true
   try {
-    const data = await fetchMyUsageTrends(props.days)
+    const data = await fetchMyUsageTrends(props.range, granularity.value)
     if (seq !== fetchSeq) return
     buckets.value = data?.buckets || []
   } catch { /* handled */ } finally {
@@ -42,10 +47,10 @@ async function fetchTrends() {
 }
 
 onMounted(fetchTrends)
-watch(() => props.days, fetchTrends)
+watch(() => props.range, fetchTrends)
 watch(() => props.refreshKey, fetchTrends)
 
-const series = computed(() => buildTrendSeries(buckets.value))
+const series = computed(() => buildTrendSeries(buckets.value, granularity.value))
 const hasData = computed(() => series.value.totalCalls > 0)
 
 /** 主题随 isDark 重算：坐标文字/网格线/tooltip 底色两套配色，避免暗色下糊成一团。 */
@@ -95,7 +100,8 @@ const chartOption = computed<ChartOption>(() => {
         type: 'value',
         name: 'Token',
         nameTextStyle: { color: axisColor },
-        axisLabel: { color: axisColor, fontSize: 11, formatter: (v: number) => formatNumber(v) },
+        // 整轴统一单位（按窗口峰值选 K/M/B/T），读数形如 50M / 100M / 1B
+        axisLabel: { color: axisColor, fontSize: 11, formatter: (v: number) => formatTokenWithUnit(v, series.value.tokenUnit) },
         splitLine: { lineStyle: { color: splitLine } },
       },
       {

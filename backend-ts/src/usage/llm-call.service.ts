@@ -55,9 +55,22 @@ export type ModelPriceLookup = (id: number) => Promise<{
   priceOutput?: unknown;
 } | null>;
 
+/** 用户端统计周期：今日 / 昨日 / 本周 / 本月 + 近 7 / 30 天滚动窗口（均为 Asia/Shanghai 日历口径）。 */
+export type UsageRange = 'today' | 'yesterday' | 'week' | 'month' | 'last7' | 'last30';
+
+const USAGE_RANGES: UsageRange[] = ['today', 'yesterday', 'week', 'month', 'last7', 'last30'];
+
+/** 用户端汇总默认周期。 */
+const USAGE_RANGE_DEFAULT: UsageRange = 'last30';
+
+/** range 入参白名单校验：非法/缺省回落默认周期（路由已解析，这里兜底防直接调用）。 */
+export function parseUsageRange(value: string | undefined): UsageRange {
+  return USAGE_RANGES.includes(value as UsageRange) ? (value as UsageRange) : USAGE_RANGE_DEFAULT;
+}
+
 /** 用户端用量总览：窗口总账 + 按模型 + 按场景（一次请求给全，前端三个区块同周期展示）。 */
 export interface MyUsageSummary {
-  days: number;
+  range: UsageRange;
   totals: LlmCallSummaryRow;
   byModel: LlmCallModelAggRow[];
   byScene: LlmCallSceneAggRow[];
@@ -65,7 +78,7 @@ export interface MyUsageSummary {
 
 /** 用户端用量趋势：按天/小时分桶的连续序列（后端补零，无缺口）。 */
 export interface MyUsageTrends {
-  days: number;
+  range: UsageRange;
   granularity: TrendGranularity;
   buckets: LlmCallTrendRow[];
 }
@@ -77,25 +90,43 @@ interface CacheEntry {
 
 const PRICE_CACHE_TTL_MS = 60_000;
 
-/** 用户端汇总默认窗口（天）与上限钳制。 */
-const SUMMARY_DAYS_DEFAULT = 30;
-const SUMMARY_DAYS_MAX = 365;
-
-/** days 入参钳制：非法/缺省回落默认值，超过上限截断，避免超长窗口拖垮聚合。 */
-function clampSummaryDays(days: number | undefined): number {
-  if (days == null || !Number.isFinite(days)) return SUMMARY_DAYS_DEFAULT;
-  return Math.min(Math.max(Math.trunc(days), 1), SUMMARY_DAYS_MAX);
+/** 本周一（周一为一周起点）。 */
+function weekStartYmd(today: string): string {
+  const [y, m, d] = today.split('-').map(Number);
+  const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  return addDaysYmd(today, dow === 0 ? -6 : 1 - dow);
 }
 
-/** 近 N 天闭区间窗口（含今天，时区口径同管理后台：Asia/Shanghai 日历日）。 */
-function summaryWindow(days: number): LlmCallAggFilter & { startYmd: string; endYmd: string } {
+/** 周期 → 闭区间窗口（含首尾全天，时区口径同管理后台：Asia/Shanghai 日历日）。 */
+function rangeWindow(range: UsageRange): LlmCallAggFilter & { startYmd: string; endYmd: string } {
   const today = shanghaiYmd();
-  const startYmd = addDaysYmd(today, -(days - 1));
+  let startYmd: string;
+  let endYmd = today;
+  switch (range) {
+    case 'today':
+      startYmd = today;
+      break;
+    case 'yesterday':
+      startYmd = endYmd = addDaysYmd(today, -1);
+      break;
+    case 'week':
+      startYmd = weekStartYmd(today);
+      break;
+    case 'month':
+      startYmd = `${today.slice(0, 7)}-01`;
+      break;
+    case 'last7':
+      startYmd = addDaysYmd(today, -6);
+      break;
+    default:
+      startYmd = addDaysYmd(today, -29);
+      break;
+  }
   return {
     startAt: `${startYmd} 00:00:00`,
-    endAt: `${today} 23:59:59`,
+    endAt: `${endYmd} 23:59:59`,
     startYmd,
-    endYmd: today,
+    endYmd,
   };
 }
 
@@ -110,12 +141,14 @@ function addHoursKey(key: string, hours: number): string {
 
 /**
  * 趋势桶键序列（口径同管理后台 admin-analytics）：day 为 startYmd..endYmd 连续日历日；
- * hour 为整点键且不超过当前小时（今天未发生的整点不出现在图上）。
+ * hour 为整点键——窗口含今天时不超过当前整点（今天未发生的整点不出现在图上），
+ * 窗口已结束（如昨日）则补满全天。
  */
-function buildTrendKeys(startYmd: string, endYmd: string, days: number, granularity: TrendGranularity): string[] {
+function buildTrendKeys(startYmd: string, endYmd: string, granularity: TrendGranularity): string[] {
+  const dayCount = ymdDiffDays(startYmd, endYmd) + 1;
   if (granularity !== 'hour') {
     const keys: string[] = [];
-    for (let i = 0; i < days; i++) keys.push(addDaysYmd(startYmd, i));
+    for (let i = 0; i < dayCount; i++) keys.push(addDaysYmd(startYmd, i));
     return keys;
   }
   const keys: string[] = [];
@@ -123,12 +156,19 @@ function buildTrendKeys(startYmd: string, endYmd: string, days: number, granular
   const nowKey = `${formatDateTime(new Date()).slice(0, 13)}:00`;
   const capAtNow = endYmd >= shanghaiYmd();
   let cursor = `${startYmd} 00:00`;
-  for (let i = 0; i < days * 24 && cursor < endExclusive; i++) {
+  for (let i = 0; i < dayCount * 24 && cursor < endExclusive; i++) {
     if (capAtNow && cursor > nowKey) break;
     keys.push(cursor);
     cursor = addHoursKey(cursor, 1);
   }
   return keys.length > 0 ? keys : [`${startYmd} 00:00`];
+}
+
+/** 两个 YYYY-MM-DD 之间的日历天数差（to - from）。 */
+function ymdDiffDays(from: string, to: string): number {
+  const [y1, m1, d1] = from.split('-').map(Number);
+  const [y2, m2, d2] = to.split('-').map(Number);
+  return Math.round((Date.UTC(y2, m2 - 1, d2) - Date.UTC(y1, m1 - 1, d1)) / 86_400_000);
 }
 
 const ZERO_TREND_BUCKET = { callCount: 0, failCount: 0, totalTokens: 0, cost: 0 } as const;
@@ -254,25 +294,25 @@ export class LlmCallService {
     return this.listForAdmin(page, size, { ...filter, userId });
   }
 
-  /** 当前用户近 N 天用量总览（总账 + 按模型 + 按场景，一次返回）。 */
-  async summaryForUser(userId: number, days?: number): Promise<MyUsageSummary> {
-    const clamped = clampSummaryDays(days);
-    const window = summaryWindow(clamped);
+  /** 当前用户指定周期用量总览（总账 + 按模型 + 按场景，一次返回）。 */
+  async summaryForUser(userId: number, range?: UsageRange): Promise<MyUsageSummary> {
+    const resolved = parseUsageRange(range);
+    const window = rangeWindow(resolved);
     const [totals, byModel, byScene] = await Promise.all([
       this.repo.aggregateSummary(userId, window),
       this.repo.aggregateByModel(userId, window),
       this.repo.aggregateByScene(userId, window),
     ]);
-    return { days: clamped, totals, byModel, byScene };
+    return { range: resolved, totals, byModel, byScene };
   }
 
-  /** 当前用户近 N 天用量趋势（按天/小时分桶；后端补零，序列连续无缺口）。 */
-  async trendsForUser(userId: number, days?: number, granularity: TrendGranularity = 'day'): Promise<MyUsageTrends> {
-    const clamped = clampSummaryDays(days);
-    const window = summaryWindow(clamped);
+  /** 当前用户指定周期用量趋势（按天/小时分桶；后端补零，序列连续无缺口）。 */
+  async trendsForUser(userId: number, range?: UsageRange, granularity: TrendGranularity = 'day'): Promise<MyUsageTrends> {
+    const resolved = parseUsageRange(range);
+    const window = rangeWindow(resolved);
     const rows = await this.repo.aggregateTrend(userId, window, granularity);
-    const keys = buildTrendKeys(window.startYmd, window.endYmd, clamped, granularity);
-    return { days: clamped, granularity, buckets: fillTrendBuckets(rows, keys) };
+    const keys = buildTrendKeys(window.startYmd, window.endYmd, granularity);
+    return { range: resolved, granularity, buckets: fillTrendBuckets(rows, keys) };
   }
 
   private async enrichRecords(records: LlmCallRow[]): Promise<LlmCallListItem[]> {

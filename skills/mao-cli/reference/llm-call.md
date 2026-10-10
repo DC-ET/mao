@@ -38,14 +38,14 @@
 
 | 接口 | 用途 |
 |------|------|
-| `GET /llm-calls/me/summary?days=30` | 窗口总账（调用数/成败/token 四项/成本）+ 按模型 + 按场景 |
-| `GET /llm-calls/me/trends?days=30&granularity=day` | 趋势序列（按天/小时分桶） |
+| `GET /llm-calls/me/summary?range=last30` | 窗口总账（调用数/成败/token 四项/成本）+ 按模型 + 按场景 |
+| `GET /llm-calls/me/trends?range=last30&granularity=day` | 趋势序列（按天/小时分桶） |
 
-- `days`：窗口天数，默认 30，钳制 1..365（今天计入，时区口径 Asia/Shanghai 日历日）。
-- `granularity`：`day`（默认）或 `hour`；`hour` 桶不超过当前整点。
-- 趋势由后端补零：返回的 `buckets[]` 是连续完整序列，无数据日为 0，前端不做日期运算。
+- `range`：统计周期，取值 `today` / `yesterday` / `week` / `month` / `last7` / `last30`，参数缺失时回落 `last30`（客户端抽屉默认传 `today`）；均为 Asia/Shanghai 日历口径（本周按周一起算，本月从 1 号起算至今天）。
+- `granularity`：`day`（默认）或 `hour`；客户端对今日/昨日自动传 `hour`。`hour` 桶在窗口含今天时不超过当前整点，窗口已结束（如昨日）则补满全天 24 个整点。
+- 趋势由后端补零：返回的 `buckets[]` 是连续完整序列，无数据时段为 0，前端不做日期运算。
 - 成本口径：`SUM(cost_micros)/1e6`，未配价的调用不计入（总账 cost 可能为 0）。
-- CLI 暂无子命令封装这两个接口（由客户端「我的用量」抽屉直接消费）；需要脚本化时用 curl 带 JWT 调 `GET {base}/api/v1/llm-calls/me/summary?days=30`。
+- CLI 暂无子命令封装这两个接口（由客户端「我的用量」抽屉直接消费）；需要脚本化时用 curl 带 JWT 调 `GET {base}/api/v1/llm-calls/me/summary?range=today`。
 
 ## 返回字段
 
@@ -56,7 +56,7 @@
 
 单条记录主要字段：`createdAt`、`userId`、`sessionId`、`agentId`、`modelName`、`provider`、`scene`、`stream`、`promptTokens`、`completionTokens`、`cachedTokens`、`totalTokens`、`firstTokenMs`、`durationMs`、`success`、`errorMessage`，以及 `costMicros`（单次调用成本快照，**微单位** = 成本单位×1e6；模型未配价格或只配一个方向时为 `null`，`0` 表示该模型被配成免费）。价格在调用写入时快照，之后改价不影响历史行；管理后台「调用流水」页与 CSV 导出里的「成本」列为成本单位（`costMicros/1e6`）。流被上游截断或用户取消时，若用量已经返回，失败行仍按这些 token 计价。飞书群聊溢出摘要（`feishu_summarize`）记在会话所用模型上。
 
-`summary` 返回 `{ days, totals: { callCount, successCount, failCount, promptTokens, completionTokens, cachedTokens, totalTokens, cost }, byModel[], byScene[] }`；`trends` 返回 `{ days, granularity, buckets: [{ bucket, callCount, failCount, totalTokens, cost }] }`。
+`summary` 返回 `{ range, totals: { callCount, successCount, failCount, promptTokens, completionTokens, cachedTokens, totalTokens, cost }, byModel[], byScene[] }`；`trends` 返回 `{ range, granularity, buckets: [{ bucket, callCount, failCount, totalTokens, cost }] }`。
 
 ## 示例
 

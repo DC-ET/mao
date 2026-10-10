@@ -13,13 +13,13 @@
       <template #default="{ row }">{{ row.modelName || row.providerModelId || '-' }}</template>
     </el-table-column>
     <el-table-column label="入 Token" width="88" align="right">
-      <template #default="{ row }">{{ formatNumber(row.promptTokens || 0) }}</template>
+      <template #default="{ row }">{{ formatToken(row.promptTokens || 0) }}</template>
     </el-table-column>
     <el-table-column label="缓存" width="118" align="right">
       <template #default="{ row }">{{ formatCacheHit(row) }}</template>
     </el-table-column>
     <el-table-column label="出 Token" width="88" align="right">
-      <template #default="{ row }">{{ formatNumber(row.completionTokens || 0) }}</template>
+      <template #default="{ row }">{{ formatToken(row.completionTokens || 0) }}</template>
     </el-table-column>
     <el-table-column label="首字" width="72" align="right">
       <template #default="{ row }">{{ formatMs(row.firstTokenMs) }}</template>
@@ -48,7 +48,7 @@
 <script setup lang="ts">
 import type { MyLlmCallRecord } from '../../api'
 import { formatDateTime } from '../../utils/datetime'
-import { formatCacheHit, formatNumber } from '../../utils/usageFormat'
+import { formatCacheHit, formatToken } from '../../utils/usageFormat'
 import { formatMs, llmCallSceneLabel } from '../../utils/llmCallLabels'
 
 defineProps<{

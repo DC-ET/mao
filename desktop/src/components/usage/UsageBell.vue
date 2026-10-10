@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { TrendCharts } from '@element-plus/icons-vue'
+import { Odometer } from '@element-plus/icons-vue'
 import { ref } from 'vue'
 import { isMobileDevice } from '../../composables/usePanelLayout'
 import UsageDrawer from './UsageDrawer.vue'
@@ -15,7 +15,7 @@ const drawerVisible = ref(false)
       aria-label="我的用量"
       @click="drawerVisible = true"
     >
-      <el-icon :size="16"><TrendCharts /></el-icon>
+      <el-icon :size="16"><Odometer /></el-icon>
     </div>
   </el-tooltip>
   <UsageDrawer v-model="drawerVisible" />

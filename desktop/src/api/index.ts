@@ -769,8 +769,11 @@ export interface UsageSceneRow {
   totalTokens: number
 }
 
+/** 统计周期：今日 / 昨日 / 本周 / 本月 + 近 7 / 30 天滚动窗口（后端 Asia/Shanghai 日历口径）。 */
+export type UsageRange = 'today' | 'yesterday' | 'week' | 'month' | 'last7' | 'last30'
+
 export interface MyUsageSummary {
-  days: number
+  range: UsageRange
   totals: UsageTotals
   byModel: UsageModelRow[]
   byScene: UsageSceneRow[]
@@ -786,7 +789,7 @@ export interface UsageTrendBucket {
 }
 
 export interface MyUsageTrends {
-  days: number
+  range: UsageRange
   granularity: 'day' | 'hour'
   buckets: UsageTrendBucket[]
 }
@@ -807,15 +810,15 @@ export interface MyLlmCallRecord {
   sessionId: number | null
 }
 
-/** 我的用量总览：近 N 天（默认 30，钳制 1..365）总账 + 按模型 + 按场景。 */
-export async function fetchMyUsageSummary(days: number): Promise<MyUsageSummary> {
-  const { data } = await api.get('/llm-calls/me/summary', { params: { days } })
+/** 我的用量总览：指定周期（缺省由后端回落 last30）总账 + 按模型 + 按场景。 */
+export async function fetchMyUsageSummary(range: UsageRange): Promise<MyUsageSummary> {
+  const { data } = await api.get('/llm-calls/me/summary', { params: { range } })
   return data
 }
 
-/** 我的用量趋势：近 N 天按天/小时分桶（后端只返回有数据的桶，缺失桶由前端补零）。 */
-export async function fetchMyUsageTrends(days: number, granularity: 'day' | 'hour' = 'day'): Promise<MyUsageTrends> {
-  const { data } = await api.get('/llm-calls/me/trends', { params: { days, granularity } })
+/** 我的用量趋势：指定周期按天/小时分桶（后端补零，序列连续无缺口）。 */
+export async function fetchMyUsageTrends(range: UsageRange, granularity: 'day' | 'hour' = 'day'): Promise<MyUsageTrends> {
+  const { data } = await api.get('/llm-calls/me/trends', { params: { range, granularity } })
   return data
 }
 

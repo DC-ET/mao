@@ -7,9 +7,10 @@ function bucket(partial: Partial<UsageTrendBucket>): UsageTrendBucket {
 }
 
 describe('trend-series', () => {
-  it('trendBucketLabel：day 桶截到 MM-DD，hour 桶保留整点', () => {
+  it('trendBucketLabel：day 桶截到 MM-DD，hour 桶只保留时:分', () => {
     expect(trendBucketLabel('2026-10-10')).toBe('10-10')
-    expect(trendBucketLabel('2026-10-10 12:00')).toBe('10-10 12:00')
+    expect(trendBucketLabel('2026-10-10', 'day')).toBe('10-10')
+    expect(trendBucketLabel('2026-10-10 12:00', 'hour')).toBe('12:00')
   })
 
   it('buildTrendSeries：按桶序产出标签与三个指标序列，并累计窗口合计', () => {
@@ -39,5 +40,17 @@ describe('trend-series', () => {
     const empty = buildTrendSeries([])
     expect(empty.labels).toEqual([])
     expect(empty.totalTokens).toBe(0)
+  })
+
+  it('buildTrendSeries：hour 粒度标签走 HH:00，tokenUnit 按窗口峰值选取', () => {
+    const series = buildTrendSeries([
+      bucket({ bucket: '2026-10-10 00:00', totalTokens: 25_000_000 }),
+      bucket({ bucket: '2026-10-10 01:00', totalTokens: 0 }),
+    ], 'hour')
+    expect(series.labels).toEqual(['00:00', '01:00'])
+    expect(series.tokenUnit?.label).toBe('M')
+
+    const small = buildTrendSeries([bucket({ bucket: '2026-10-10', totalTokens: 800 })])
+    expect(small.tokenUnit).toBeNull()
   })
 })

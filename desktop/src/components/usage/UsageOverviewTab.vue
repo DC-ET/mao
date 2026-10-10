@@ -27,13 +27,13 @@
             <template #default="{ row }">{{ formatNumber(row.failCount) }}</template>
           </el-table-column>
           <el-table-column label="入 Token" width="92" align="right">
-            <template #default="{ row }">{{ formatNumber(row.promptTokens) }}</template>
+            <template #default="{ row }">{{ formatToken(row.promptTokens) }}</template>
           </el-table-column>
           <el-table-column label="出 Token" width="92" align="right">
-            <template #default="{ row }">{{ formatNumber(row.completionTokens) }}</template>
+            <template #default="{ row }">{{ formatToken(row.completionTokens) }}</template>
           </el-table-column>
           <el-table-column label="总 Token" width="96" align="right">
-            <template #default="{ row }">{{ formatNumber(row.totalTokens) }}</template>
+            <template #default="{ row }">{{ formatToken(row.totalTokens) }}</template>
           </el-table-column>
           <el-table-column label="成本" width="88" align="right">
             <template #default="{ row }">{{ formatCost(row.cost) }}</template>
@@ -57,7 +57,7 @@
             <template #default="{ row }">{{ formatNumber(row.failCount) }}</template>
           </el-table-column>
           <el-table-column label="总 Token" width="110" align="right">
-            <template #default="{ row }">{{ formatNumber(row.totalTokens) }}</template>
+            <template #default="{ row }">{{ formatToken(row.totalTokens) }}</template>
           </el-table-column>
         </el-table>
       </div>
@@ -70,7 +70,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { MyUsageSummary } from '../../api'
-import { formatCompact, formatCost, formatNumber, formatPercent } from '../../utils/usageFormat'
+import { formatCost, formatNumber, formatPercent, formatToken } from '../../utils/usageFormat'
 import { llmCallSceneLabel } from '../../utils/llmCallLabels'
 
 const props = defineProps<{
@@ -92,8 +92,8 @@ const cards = computed(() => {
     },
     {
       label: '总 Token',
-      value: formatCompact(t?.totalTokens ?? 0),
-      hint: t ? `入 ${formatCompact(t.promptTokens)} / 出 ${formatCompact(t.completionTokens)}` : '',
+      value: formatToken(t?.totalTokens ?? 0),
+      hint: t ? `入 ${formatToken(t.promptTokens)} / 出 ${formatToken(t.completionTokens)}` : '',
     },
     {
       label: '估算成本',
@@ -108,7 +108,7 @@ const cards = computed(() => {
     {
       label: '缓存命中率',
       value: formatPercent(t?.cachedTokens ?? 0, t?.promptTokens ?? 0),
-      hint: t ? `命中 ${formatCompact(t.cachedTokens)}` : '',
+      hint: t ? `命中 ${formatToken(t.cachedTokens)}` : '',
     },
   ]
 })

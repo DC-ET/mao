@@ -15,12 +15,44 @@ export function formatCost(value: number | null | undefined): string {
   return value.toLocaleString('zh-CN', { maximumFractionDigits: 3 })
 }
 
-/** 计数紧凑单位：万/亿，避免统计卡片与坐标轴被长数字撑开（口径同管理后台）。 */
-export function formatCompact(value: number): string {
+/** Token 紧凑单位表（1000 进制，从大到小）。 */
+const TOKEN_UNITS: Array<{ divisor: number; label: string }> = [
+  { divisor: 1e12, label: 'T' },
+  { divisor: 1e9, label: 'B' },
+  { divisor: 1e6, label: 'M' },
+  { divisor: 1e3, label: 'K' },
+]
+
+export interface TokenUnit {
+  divisor: number
+  label: string
+}
+
+/** 数值适配的紧凑单位；小于 1000 返回 null（原样展示整数）。 */
+export function pickTokenUnit(value: number): TokenUnit | null {
   const abs = Math.abs(value)
-  if (abs >= 1e8) return `${trimZero(value / 1e8)} 亿`
-  if (abs >= 1e4) return `${trimZero(value / 1e4)} 万`
-  return String(value)
+  for (let i = 0; i < TOKEN_UNITS.length; i++) {
+    if (abs >= TOKEN_UNITS[i].divisor) {
+      // 贴近上级单位上限时进位（999.95K → 1M），读数不出现 1000K 这种跨档数字
+      if (i > 0 && abs / TOKEN_UNITS[i].divisor >= 999.95) return TOKEN_UNITS[i - 1]
+      return TOKEN_UNITS[i]
+    }
+  }
+  return null
+}
+
+/** token 紧凑展示：667577705 → 667.6M；小于 1000 原样；null/非法值按 0。 */
+export function formatToken(value: number | null | undefined): string {
+  const v = value ?? 0
+  if (!Number.isFinite(v)) return '0'
+  return formatTokenWithUnit(v, pickTokenUnit(v))
+}
+
+/** 按指定单位折算（趋势纵轴整轴统一单位用）；无单位时原样取整。 */
+export function formatTokenWithUnit(value: number, unit: TokenUnit | null): string {
+  if (!unit) return String(Math.round(value))
+  if (value === 0) return '0'
+  return `${trimZero(value / unit.divisor)}${unit.label}`
 }
 
 /** 缓存命中：命中数（占入 token 百分比）；无命中或无入 token 时只显示数字。 */
@@ -28,7 +60,7 @@ export function formatCacheHit(row: { cachedTokens?: number | null; promptTokens
   const cached = row.cachedTokens || 0
   const prompt = row.promptTokens || 0
   if (cached <= 0) return '0'
-  const num = formatNumber(cached)
+  const num = formatToken(cached)
   if (prompt <= 0) return num
   return `${num} (${Math.round((cached / prompt) * 100)}%)`
 }
