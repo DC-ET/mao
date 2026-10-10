@@ -41,7 +41,8 @@
 | `GET /llm-calls/me/summary?range=last30` | 窗口总账（调用数/成败/token 四项/成本）+ 按模型 + 按场景 + 按 Agent |
 | `GET /llm-calls/me/trends?range=last30&granularity=day` | 趋势序列（按天/小时分桶） |
 
-- `range`：统计周期，取值 `today` / `yesterday` / `week` / `month` / `last7` / `last30`，参数缺失时回落 `last30`（客户端抽屉默认传 `today`）；均为 Asia/Shanghai 日历口径（本周按周一起算，本月从 1 号起算至今天）。
+- `range`：统计周期，取值 `today` / `yesterday` / `week` / `lastWeek` / `month` / `lastMonth` / `last7` / `last30` / `custom`，参数缺失时回落 `last30`（客户端抽屉默认传 `today`）；均为 Asia/Shanghai 日历口径（本周按周一起算，本月从 1 号起算至今天）。`lastWeek` 为上一个完整自然周（周一至周日），`lastMonth` 为上一个完整自然月。
+- `startDate` / `endDate`：自定义周期（`range=custom`）的起止日，格式 `YYYY-MM-DD`，闭区间含首尾全天；两个参数只在 `range=custom` 时读取，其他周期传了也忽略。缺失、格式非法或起晚于止时回落 `last30`。
 - `granularity`：`day`（默认）或 `hour`；客户端对今日/昨日自动传 `hour`。`hour` 桶在窗口含今天时不超过当前整点，窗口已结束（如昨日）则补满全天 24 个整点。
 - 趋势由后端补零：返回的 `buckets[]` 是连续完整序列，无数据时段为 0，前端不做日期运算。每桶字段 `{ bucket, callCount, failCount, promptTokens, cachedTokens, totalTokens, cost }`，`promptTokens`/`cachedTokens` 支撑前端算每个时间点的缓存命中率。
 - 成本口径：`SUM(cost_micros)/1e6`，未配价的调用不计入（总账 cost 可能为 0）。

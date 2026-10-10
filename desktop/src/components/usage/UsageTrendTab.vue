@@ -29,7 +29,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useTheme } from '../../utils/theme'
 import { type ChartOption } from '../../utils/echarts'
-import { fetchMyUsageTrends, type UsageRange, type UsageTrendBucket } from '../../api'
+import { fetchMyUsageTrends, type UsageRange, type UsageDateRange, type UsageTrendBucket } from '../../api'
 import { formatCost, formatNumber, formatToken, formatTokenWithUnit } from '../../utils/usageFormat'
 import { buildTrendSeries } from './trend-series'
 import { buildTrendLineOption, TREND_COLORS } from './trend-options'
@@ -37,6 +37,8 @@ import BaseChart from '../common/BaseChart.vue'
 
 const props = defineProps<{
   range: UsageRange
+  /** 自定义周期起止日（range=custom 时随请求下发，后端按日历日补零） */
+  dateRange?: UsageDateRange
   /** 抽屉「刷新」按钮令牌：变化即重拉，不 remount（保留图表实例） */
   refreshKey?: number
 }>()
@@ -56,7 +58,7 @@ async function fetchTrends() {
   const seq = ++fetchSeq
   loading.value = true
   try {
-    const data = await fetchMyUsageTrends(props.range, granularity.value)
+    const data = await fetchMyUsageTrends(props.range, granularity.value, props.dateRange)
     if (seq !== fetchSeq) return
     buckets.value = data?.buckets || []
   } catch { /* handled */ } finally {
@@ -66,6 +68,8 @@ async function fetchTrends() {
 
 onMounted(fetchTrends)
 watch(() => props.range, fetchTrends)
+// 自定义周期的起止日变化要重拉：周期本身仍是 'custom'，只有 dateRange 变了
+watch(() => props.dateRange, fetchTrends, { deep: true })
 watch(() => props.refreshKey, fetchTrends)
 
 const series = computed(() => buildTrendSeries(buckets.value, granularity.value))

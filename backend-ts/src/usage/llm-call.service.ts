@@ -56,10 +56,30 @@ export type ModelPriceLookup = (id: number) => Promise<{
   priceOutput?: unknown;
 } | null>;
 
-/** 用户端统计周期：今日 / 昨日 / 本周 / 本月 + 近 7 / 30 天滚动窗口（均为 Asia/Shanghai 日历口径）。 */
-export type UsageRange = 'today' | 'yesterday' | 'week' | 'month' | 'last7' | 'last30';
+/**
+ * 用户端统计周期：今日 / 昨日 / 本周 / 上周 / 本月 / 上月 + 近 7 / 30 天滚动窗口
+ * + custom（自定义起止日期，见 UsageDateRange。均为 Asia/Shanghai 日历口径）。
+ */
+export type UsageRange =
+  | 'today'
+  | 'yesterday'
+  | 'week'
+  | 'lastWeek'
+  | 'month'
+  | 'lastMonth'
+  | 'last7'
+  | 'last30'
+  | 'custom';
 
-const USAGE_RANGES: UsageRange[] = ['today', 'yesterday', 'week', 'month', 'last7', 'last30'];
+const USAGE_RANGES: UsageRange[] = [
+  'today', 'yesterday', 'week', 'lastWeek', 'month', 'lastMonth', 'last7', 'last30', 'custom',
+];
+
+/** 自定义周期入参：闭区间日历日（YYYY-MM-DD），两端均可缺省。 */
+export interface UsageDateRange {
+  startDate?: string;
+  endDate?: string;
+}
 
 /** 用户端汇总默认周期。 */
 const USAGE_RANGE_DEFAULT: UsageRange = 'last30';
@@ -99,8 +119,16 @@ function weekStartYmd(today: string): string {
   return addDaysYmd(today, dow === 0 ? -6 : 1 - dow);
 }
 
-/** 周期 → 闭区间窗口（含首尾全天，时区口径同管理后台：Asia/Shanghai 日历日）。 */
-function rangeWindow(range: UsageRange): LlmCallAggFilter & { startYmd: string; endYmd: string } {
+/** 上周一（周一为一周起点，与本周一同理）。 */
+function lastWeekStartYmd(today: string): string {
+  return addDaysYmd(weekStartYmd(today), -7);
+}
+
+/**
+ * 周期 → 闭区间窗口（含首尾全天，时区口径同管理后台：Asia/Shanghai 日历日）。
+ * custom 走 dateRange：缺省的边界由该函数兜底（前端两个日期都必填，这里防直接调用）。
+ */
+function rangeWindow(range: UsageRange, dateRange?: UsageDateRange): LlmCallAggFilter & { startYmd: string; endYmd: string } {
   const today = shanghaiYmd();
   let startYmd: string;
   let endYmd = today;
@@ -114,11 +142,28 @@ function rangeWindow(range: UsageRange): LlmCallAggFilter & { startYmd: string; 
     case 'week':
       startYmd = weekStartYmd(today);
       break;
+    case 'lastWeek':
+      startYmd = lastWeekStartYmd(today);
+      endYmd = addDaysYmd(startYmd, 6);
+      break;
     case 'month':
       startYmd = `${today.slice(0, 7)}-01`;
       break;
+    case 'lastMonth': {
+      // 上月：本月初（2026-10-01）退一天是上月末（09-30），再退回一个月取该月 1 号
+      const [y, m] = today.split('-').map(Number);
+      const prevYear = m === 1 ? y - 1 : y;
+      const prevMonth = m === 1 ? 12 : m - 1;
+      startYmd = `${prevYear}-${String(prevMonth).padStart(2, '0')}-01`;
+      endYmd = addDaysYmd(`${today.slice(0, 7)}-01`, -1);
+      break;
+    }
     case 'last7':
       startYmd = addDaysYmd(today, -6);
+      break;
+    case 'custom':
+      startYmd = dateRange?.startDate ?? addDaysYmd(today, -29);
+      endYmd = dateRange?.endDate ?? today;
       break;
     default:
       startYmd = addDaysYmd(today, -29);
@@ -298,9 +343,9 @@ export class LlmCallService {
   }
 
   /** 当前用户指定周期用量总览（总账 + 按模型 + 按场景 + 按 Agent，一次返回）。 */
-  async summaryForUser(userId: number, range?: UsageRange): Promise<MyUsageSummary> {
+  async summaryForUser(userId: number, range?: UsageRange, dateRange?: UsageDateRange): Promise<MyUsageSummary> {
     const resolved = parseUsageRange(range);
-    const window = rangeWindow(resolved);
+    const window = rangeWindow(resolved, dateRange);
     const [totals, byModel, byScene, byAgent] = await Promise.all([
       this.repo.aggregateSummary(userId, window),
       this.repo.aggregateByModel(userId, window),
@@ -327,9 +372,14 @@ export class LlmCallService {
   }
 
   /** 当前用户指定周期用量趋势（按天/小时分桶；后端补零，序列连续无缺口）。 */
-  async trendsForUser(userId: number, range?: UsageRange, granularity: TrendGranularity = 'day'): Promise<MyUsageTrends> {
+  async trendsForUser(
+    userId: number,
+    range?: UsageRange,
+    granularity: TrendGranularity = 'day',
+    dateRange?: UsageDateRange,
+  ): Promise<MyUsageTrends> {
     const resolved = parseUsageRange(range);
-    const window = rangeWindow(resolved);
+    const window = rangeWindow(resolved, dateRange);
     const rows = await this.repo.aggregateTrend(userId, window, granularity);
     const keys = buildTrendKeys(window.startYmd, window.endYmd, granularity);
     return { range: resolved, granularity, buckets: fillTrendBuckets(rows, keys) };

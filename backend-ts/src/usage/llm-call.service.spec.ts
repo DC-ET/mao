@@ -288,6 +288,58 @@ describe('LlmCallService 用户端用量汇总（/v1/llm-calls/me/summary|trends
     vi.useRealTimers();
   });
 
+  it('summaryForUser：上周/上月窗口（2026-10-10 为周六，本周一 10-05，故上周 09-28..10-04，上月 09-01..09-30）', async () => {
+    freeze(new Date('2026-10-10T12:00:00+08:00'));
+    const { service, repo } = build();
+    await service.summaryForUser(7, 'lastWeek');
+    expect(repo.aggregateSummary).toHaveBeenLastCalledWith(7, expect.objectContaining({
+      startAt: '2026-09-28 00:00:00',
+      endAt: '2026-10-04 23:59:59',
+    }));
+    await service.summaryForUser(7, 'lastMonth');
+    expect(repo.aggregateSummary).toHaveBeenLastCalledWith(7, expect.objectContaining({
+      startAt: '2026-09-01 00:00:00',
+      endAt: '2026-09-30 23:59:59',
+    }));
+    vi.useRealTimers();
+  });
+
+  it('summaryForUser：custom 用调用方给的起止日，缺 boundary 回落 last30 口径', async () => {
+    freeze(new Date('2026-10-10T12:00:00+08:00'));
+    const { service, repo } = build();
+    await service.summaryForUser(7, 'custom', { startDate: '2026-08-01', endDate: '2026-08-15' });
+    expect(repo.aggregateSummary).toHaveBeenLastCalledWith(7, expect.objectContaining({
+      startAt: '2026-08-01 00:00:00',
+      endAt: '2026-08-15 23:59:59',
+    }));
+    // 日期缺省（前端两个日期都必填，这里兜底防直接调用）：等同 last30
+    await service.summaryForUser(7, 'custom');
+    expect(repo.aggregateSummary).toHaveBeenLastCalledWith(7, expect.objectContaining({
+      startAt: '2026-09-11 00:00:00',
+      endAt: '2026-10-10 23:59:59',
+    }));
+    vi.useRealTimers();
+  });
+
+  it('trendsForUser：custom 窗口按日历日补零（上周 7 天、上月 30 天、自定义 5 天）', async () => {
+    freeze(new Date('2026-10-10T12:00:00+08:00'));
+    const { service } = build();
+    const week = await service.trendsForUser(7, 'lastWeek');
+    expect(week.buckets.map((b) => b.bucket)).toEqual([
+      '2026-09-28', '2026-09-29', '2026-09-30', '2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04',
+    ]);
+    const month = await service.trendsForUser(7, 'lastMonth');
+    expect(month.buckets).toHaveLength(30);
+    expect(month.buckets[0].bucket).toBe('2026-09-01');
+    expect(month.buckets[29].bucket).toBe('2026-09-30');
+    const custom = await service.trendsForUser(7, 'custom', 'day', { startDate: '2026-09-08', endDate: '2026-09-12' });
+    expect(custom.range).toBe('custom');
+    expect(custom.buckets.map((b) => b.bucket)).toEqual([
+      '2026-09-08', '2026-09-09', '2026-09-10', '2026-09-11', '2026-09-12',
+    ]);
+    vi.useRealTimers();
+  });
+
   it('trendsForUser：窗口一致，granularity 透传且默认 day', async () => {
     freeze(new Date('2026-10-10T12:00:00+08:00'));
     const { service, repo } = build();

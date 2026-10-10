@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { requireRequestPermission, requireUserId, sendOk } from '../common/http-error.js';
 import { queryInt, queryOptBool, queryOptInt, queryOptStr } from '../common/request.js';
 import type { PermissionService } from '../permission/permission.service.js';
-import { parseUsageRange, type LlmCallService } from './llm-call.service.js';
+import { parseUsageRange, type LlmCallService, type UsageDateRange } from './llm-call.service.js';
 import type { TrendGranularity } from './llm-call.repository.js';
 
 export interface LlmCallRouteDeps {
@@ -20,6 +20,18 @@ function parseDateRange(startDate?: string, endDate?: string): { startAt?: strin
 /** 趋势粒度白名单：非 'hour' 一律回落 'day'（与管理后台 trends 同口径）。 */
 function parseGranularity(value?: string): TrendGranularity {
   return value === 'hour' ? 'hour' : 'day';
+}
+
+/**
+ * 自定义周期（range=custom）的起止日期：必须两端都是合法 YYYY-MM-DD 且 start ≤ end，
+ * 否则整体回落默认周期 last30（非法入参不该让窗口变成「不限」或负数长度）。
+ * 非 custom 周期忽略这两个参数。
+ */
+function parseUsageDateRange(range: string | undefined, startDate?: string, endDate?: string): UsageDateRange | undefined {
+  if (range !== 'custom') return undefined;
+  const valid = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v);
+  if (!startDate || !endDate || !valid(startDate) || !valid(endDate)) return undefined;
+  return startDate <= endDate ? { startDate, endDate } : { startDate: endDate, endDate: startDate };
 }
 
 export function registerLlmCallRoutes(app: FastifyInstance, deps: LlmCallRouteDeps): void {
@@ -64,15 +76,21 @@ export function registerLlmCallRoutes(app: FastifyInstance, deps: LlmCallRouteDe
   // 当前用户自己的用量总览（总账 + 按模型 + 按场景）。仅需登录，不加权限码。
   app.get('/v1/llm-calls/me/summary', async (request, reply) => {
     const userId = requireUserId(request);
-    const range = parseUsageRange(queryOptStr(request, 'range'));
-    return sendOk(reply, await deps.llmCallService.summaryForUser(userId, range));
+    const range = queryOptStr(request, 'range');
+    const startDate = queryOptStr(request, 'startDate');
+    const endDate = queryOptStr(request, 'endDate');
+    const dateRange = parseUsageDateRange(range, startDate, endDate);
+    return sendOk(reply, await deps.llmCallService.summaryForUser(userId, parseUsageRange(range), dateRange));
   });
 
   // 当前用户自己的用量趋势（按天/小时分桶）。仅需登录，不加权限码。
   app.get('/v1/llm-calls/me/trends', async (request, reply) => {
     const userId = requireUserId(request);
-    const range = parseUsageRange(queryOptStr(request, 'range'));
+    const range = queryOptStr(request, 'range');
+    const startDate = queryOptStr(request, 'startDate');
+    const endDate = queryOptStr(request, 'endDate');
+    const dateRange = parseUsageDateRange(range, startDate, endDate);
     const granularity = parseGranularity(queryOptStr(request, 'granularity'));
-    return sendOk(reply, await deps.llmCallService.trendsForUser(userId, range, granularity));
+    return sendOk(reply, await deps.llmCallService.trendsForUser(userId, parseUsageRange(range), granularity, dateRange));
   });
 }

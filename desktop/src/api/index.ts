@@ -779,8 +779,23 @@ export interface UsageAgentRow {
   cost: number
 }
 
-/** 统计周期：今日 / 昨日 / 本周 / 本月 + 近 7 / 30 天滚动窗口（后端 Asia/Shanghai 日历口径）。 */
-export type UsageRange = 'today' | 'yesterday' | 'week' | 'month' | 'last7' | 'last30'
+/** 统计周期：日历周期在前，滚动窗口在后，自定义区间收尾（今日/昨日时趋势图自动按小时分桶）。 */
+export type UsageRange =
+  | 'today'
+  | 'yesterday'
+  | 'week'
+  | 'lastWeek'
+  | 'month'
+  | 'lastMonth'
+  | 'last7'
+  | 'last30'
+  | 'custom'
+
+/** 自定义周期（range=custom）的起止日期，闭区间日历日 YYYY-MM-DD，两端都由用户选定。 */
+export interface UsageDateRange {
+  startDate: string
+  endDate: string
+}
 
 export interface MyUsageSummary {
   range: UsageRange
@@ -825,14 +840,21 @@ export interface MyLlmCallRecord {
 }
 
 /** 我的用量总览：指定周期（缺省由后端回落 last30）总账 + 按模型 + 按场景。 */
-export async function fetchMyUsageSummary(range: UsageRange): Promise<MyUsageSummary> {
-  const { data } = await api.get('/llm-calls/me/summary', { params: { range } })
+export async function fetchMyUsageSummary(
+  range: UsageRange,
+  dateRange?: UsageDateRange,
+): Promise<MyUsageSummary> {
+  const { data } = await api.get('/llm-calls/me/summary', { params: { range, ...dateRange } })
   return data
 }
 
 /** 我的用量趋势：指定周期按天/小时分桶（后端补零，序列连续无缺口）。 */
-export async function fetchMyUsageTrends(range: UsageRange, granularity: 'day' | 'hour' = 'day'): Promise<MyUsageTrends> {
-  const { data } = await api.get('/llm-calls/me/trends', { params: { range, granularity } })
+export async function fetchMyUsageTrends(
+  range: UsageRange,
+  granularity: 'day' | 'hour' = 'day',
+  dateRange?: UsageDateRange,
+): Promise<MyUsageTrends> {
+  const { data } = await api.get('/llm-calls/me/trends', { params: { range, granularity, ...dateRange } })
   return data
 }
 
