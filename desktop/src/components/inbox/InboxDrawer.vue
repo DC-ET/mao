@@ -70,7 +70,11 @@ watch(visible, async (open) => {
   await inboxStore.fetchList()
 })
 
+// 偏好是系统通知的过滤依据（仅 Electron 消费），随组件挂载加载：顶栏不再挂铃铛，
+// 这份兜底加载由抽屉承担，避免 store 里的 preference 停留在初值、
+// 与设置页保存的结果脱节（关掉的类型会被误弹成系统通知）。
 onMounted(() => {
+  void inboxStore.fetchInboxPreference()
   if (props.modelValue) void inboxStore.fetchList()
 })
 
@@ -102,7 +106,7 @@ async function handleItemClick(item: InboxItem) {
 
 <template>
   <!--
-    必须 teleport 到 body：同 UsageDrawer，抽屉由顶栏 InboxBell 渲染，
+    必须 teleport 到 body：同 UsageDrawer，抽屉由顶栏头像菜单的「站内收件箱」渲染，
     .top-nav 的 drag 区会吞掉伸进去的点击（420px 宽的抽屉左侧尤甚）。
   -->
   <el-drawer

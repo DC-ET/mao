@@ -25,8 +25,18 @@
         </div>
       </el-tooltip>
       <SessionSearchPopover ref="searchPopoverRef" />
-      <InboxBell />
       <UsageBell />
+      <el-tooltip content="我的指令" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
+        <div
+          class="theme-toggle commands-toggle"
+          role="button"
+          aria-label="我的指令"
+          :class="{ active: commandsDrawerVisible }"
+          @click="commandsDrawerVisible = true"
+        >
+          <el-icon :size="16"><Reading /></el-icon>
+        </div>
+      </el-tooltip>
       <el-tooltip :content="terminalAvailability.tooltip" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
         <div
           class="theme-toggle terminal-toggle"
@@ -57,25 +67,6 @@
           <span v-if="showUpdateIndicator" class="update-dot" />
         </div>
       </el-tooltip>
-      <el-tooltip :content="themeTooltip" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
-        <div class="theme-toggle" @click="toggleTheme" role="button" :aria-label="themeTooltip">
-          <el-icon :size="16">
-            <Sunrise v-if="theme === 'auto'" />
-            <Moon v-else-if="theme === 'light'" />
-            <Sunny v-else />
-          </el-icon>
-        </div>
-      </el-tooltip>
-      <el-tooltip content="设置" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
-        <router-link
-          to="/settings"
-          class="theme-toggle settings-toggle"
-          :class="{ active: isSettingsRoute }"
-          aria-label="设置"
-        >
-          <el-icon :size="16"><Setting /></el-icon>
-        </router-link>
-      </el-tooltip>
       <template v-if="authStore.user">
         <el-dropdown @command="handleCommand" trigger="click">
           <div class="nav-user" role="button" aria-label="用户菜单">
@@ -85,6 +76,18 @@
           </div>
           <template #dropdown>
             <el-dropdown-menu class="nav-dropdown">
+              <el-dropdown-item command="commands">
+                <el-icon><Reading /></el-icon>
+                我的指令
+              </el-dropdown-item>
+              <el-dropdown-item command="inbox">
+                <el-icon><ChatLineSquare /></el-icon>
+                站内收件箱
+              </el-dropdown-item>
+              <el-dropdown-item command="settings">
+                <el-icon><Setting /></el-icon>
+                设置
+              </el-dropdown-item>
               <el-dropdown-item command="profile">
                 <el-icon><User /></el-icon>
                 个人信息
@@ -98,36 +101,33 @@
         </el-dropdown>
       </template>
     </div>
+    <CommandManagerDrawer v-model="commandsDrawerVisible" />
+    <InboxDrawer v-model="inboxDrawerVisible" />
   </nav>
 </template><script setup lang="ts">
-import { ArrowLeft, Sunrise, Moon, Refresh, Setting, Sunny, SwitchButton, User } from '@element-plus/icons-vue'
+import { ArrowLeft, ChatLineSquare, Reading, Refresh, Setting, SwitchButton, User } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../../stores/auth'
 import { useSessionStore } from '../../stores/session'
-import { useTheme } from '../../utils/theme'
 import { useTerminal } from '../../composables/useTerminal'
 import { usePanelLayout, isMobileDevice } from '../../composables/usePanelLayout'
 import { useVersionCheck } from '../../composables/useVersionCheck'
 import { isElectronClient } from '../../utils/platform'
 import { goBackToWorkbench } from '../../utils/workbench-nav'
-import InboxBell from '../inbox/InboxBell.vue'
 import SessionSearchPopover from '../search/SessionSearchPopover.vue'
 import UsageBell from '../usage/UsageBell.vue'
-
-const { theme, toggleTheme } = useTheme()
+import CommandManagerDrawer from '../command/CommandManagerDrawer.vue'
+import InboxDrawer from '../inbox/InboxDrawer.vue'
 
 // macOS 红绿灯按钮需要为标题栏预留空间；Web/Win/Linux 无此需求
 const isMacPlatform = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform || '')
 
 const searchPopoverRef = ref()
+const commandsDrawerVisible = ref(false)
+const inboxDrawerVisible = ref(false)
 
-const themeTooltip = computed(() => {
-  if (theme.value === 'auto') return '跟随系统（点击切换浅色）'
-  if (theme.value === 'light') return '浅色（点击切换深色）'
-  return '深色（点击跟随系统）'
-})
 const sessionStore = useSessionStore()
 const authStore = useAuthStore()
 const { isOpen: terminalOpen, togglePanel } = useTerminal()
@@ -337,7 +337,13 @@ async function handleUpdateClick() {
 }
 
 async function handleCommand(command: string) {
-  if (command === 'profile') {
+  if (command === 'commands') {
+    commandsDrawerVisible.value = true
+  } else if (command === 'inbox') {
+    inboxDrawerVisible.value = true
+  } else if (command === 'settings') {
+    router.push('/settings/profile')
+  } else if (command === 'profile') {
     router.push('/settings/profile')
   } else if (command === 'logout') {
     await authStore.logout()
@@ -505,7 +511,7 @@ async function handleCommand(command: string) {
   background: rgba(0, 0, 0, 0.06);
 }
 
-a.settings-toggle {
+.commands-toggle {
   text-decoration: none;
   color: var(--aw-nav-text-muted);
 }

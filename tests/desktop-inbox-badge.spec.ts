@@ -2,13 +2,15 @@ import { test, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
 
 /**
- * 顶栏收件箱徽标的度量契约。
+ * 顶栏站内信入口的契约。
  *
- * el-badge 默认度量（18px 高 + 6px 内边距 + 1px 同色描边）会把单个数字撑成
- * 18.7×18 的横向椭圆。这里锁住按图标尺度重定义后的几何：数字 1 必须精确正圆，
- * 且整体不宽于两位数以外的夸张拉伸。
+ * 历史背景：站内信曾是顶栏铃铛图标 + el-badge 未读红点。按需求改造后，
+ * 入口收敛到头像菜单（「站内收件箱」），且**取消未读红点提示**——
+ * 未读数只在抽屉内以条目未读标识体现，顶栏与菜单项都不再渲染徽标。
+ * 这里锁住这两条：入口不在顶栏、任何位置都没有徽标。
  */
-function record(overrides: Record<string, unknown> = {}) {
+
+function record() {
   return {
     id: 1,
     kind: 'TASK_COMPLETED',
@@ -19,7 +21,6 @@ function record(overrides: Record<string, unknown> = {}) {
     sessionId: null,
     payload: null,
     createdAt: new Date().toISOString(),
-    ...overrides
   }
 }
 
@@ -39,30 +40,26 @@ async function setup(page: Page, unreadCount: number) {
   })
   await page.goto('/')
   await page.waitForSelector('.top-nav', { timeout: 15_000 })
-  await expect(page.locator('.inbox-bell .el-badge__content')).toBeVisible({ timeout: 10_000 })
 }
 
-test.describe('顶栏收件箱徽标度量', () => {
-  test('单个数字是正圆且不超 16px', async ({ page }) => {
+test.describe('站内信入口契约', () => {
+  test('顶栏不再有站内信图标，入口只在头像菜单', async ({ page }) => {
     await setup(page, 1)
-    const badge = page.locator('.inbox-bell .el-badge__content')
-    await expect(badge).toHaveText('1', { timeout: 10_000 })
-
-    const box = await badge.boundingBox()
-    expect(box).not.toBeNull()
-    const ratio = box!.width / box!.height
-    expect(box!.height).toBeCloseTo(16, 1)
-    // 修前是 18.69/18 = 1.038（横向椭圆），修后应收敛到 1
-    expect(Math.abs(ratio - 1)).toBeLessThan(0.02)
+    // 旧顶栏铃铛（.inbox-bell）已彻底移除
+    await expect(page.locator('.inbox-bell')).toHaveCount(0)
+    await page.getByRole('button', { name: '用户菜单' }).click()
+    await expect(page.getByRole('menuitem', { name: '站内收件箱' })).toBeVisible()
   })
 
-  test('两位数仍紧凑，不横向拉伸', async ({ page }) => {
-    await setup(page, 12)
-    const badge = page.locator('.inbox-bell .el-badge__content')
-    await expect(badge).toHaveText('12', { timeout: 10_000 })
-    const box = await badge.boundingBox()
-    expect(box!.height).toBeCloseTo(16, 1)
-    // 修前 25.36px，padding 收窄后应明显更小
-    expect(box!.width).toBeLessThan(21)
+  test('有未读时顶栏与菜单项都不再渲染红点徽标', async ({ page }) => {
+    await setup(page, 3)
+    // 顶栏整排图标里没有任何 el-badge 内容
+    await expect(page.locator('.top-nav .el-badge__content')).toHaveCount(0)
+    await page.getByRole('button', { name: '用户菜单' }).click()
+    await expect(page.locator('.nav-dropdown .el-badge__content')).toHaveCount(0)
+    // 未读标识只在抽屉内的条目上体现
+    await page.getByRole('menuitem', { name: '站内收件箱' }).click()
+    await expect(page.locator('.inbox-drawer')).toBeVisible({ timeout: 10_000 })
+    await expect(page.locator('.inbox-item.is-unread')).toHaveCount(1, { timeout: 10_000 })
   })
 })

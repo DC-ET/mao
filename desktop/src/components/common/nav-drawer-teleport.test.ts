@@ -1,5 +1,5 @@
-// 顶栏渲染的两个抽屉必须 teleport 到 body。
-// 背景：el-drawer 默认 appendToBody=false，抽屉就地渲染在 UsageBell / InboxBell 里，
+// 顶栏渲染的抽屉必须 teleport 到 body。
+// 背景：el-drawer 默认 appendToBody=false，抽屉就地渲染在 UsageBell / InboxDrawer / CommandManagerDrawer 里，
 // 而 .top-nav 带 -webkit-app-region: drag（Electron 窗口拖拽区），只有 .nav-right
 // 自身盒子是 no-drag。留在原处时，宽于 .nav-right 的抽屉头部会伸进拖拽区，落在那里
 // 的点击被系统吞掉——「我的用量」的统计周期最左侧几项（今日/昨日）曾因此点不动
@@ -55,5 +55,9 @@ describe('顶栏抽屉的 teleport', () => {
 
   it('站内收件箱抽屉 teleport 到 body，左侧工具区不被顶栏拖拽区吞点击', () => {
     expect(hasTruthyProp(drawerOf('../inbox/InboxDrawer.vue'), 'append-to-body')).toBe(true)
+  })
+
+  it('「我的指令」抽屉 teleport 到 body，列表操作不被顶栏拖拽区吞点击', () => {
+    expect(hasTruthyProp(drawerOf('../command/CommandManagerDrawer.vue'), 'append-to-body')).toBe(true)
   })
 })

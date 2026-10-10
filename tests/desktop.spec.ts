@@ -288,8 +288,12 @@ test.describe('Desktop App - Logged In', () => {
     await mockLoggedInDesktopApi(page)
     await page.goto('/')
     await page.waitForSelector('.top-nav', { timeout: 15_000 })
-    // Theme toggle buttons
+    // 顶栏右侧的动作图标（面板开关 / 搜索 / 用量 / 我的指令 / 终端 / 刷新）
     await expect(page.locator('.theme-toggle').first()).toBeVisible()
+    // 站内信、主题色切换、设置三个图标已从头像菜单与设置页收敛
+    await expect(page.locator('.inbox-bell')).toHaveCount(0)
+    await expect(page.locator('.settings-toggle')).toHaveCount(0)
+    await expect(page.locator('.nav-right .commands-toggle')).toBeVisible()
   })
 
   test('should show task layout with panels', async ({ page }) => {
@@ -376,6 +380,37 @@ test.describe('Desktop Theme', () => {
       el.classList.contains('dark')
     )
     expect(hasDark).toBe(prefersDark)
+  })
+
+  test('设置页可切换主题色并立即生效（顶栏切换入口已移除）', async ({ page }) => {
+    await mockLoggedInDesktopApi(page)
+    await page.goto('/settings/profile')
+    await expect(page.getByRole('heading', { name: '个人信息' })).toBeVisible({ timeout: 15_000 })
+
+    // 主题色控件在设置页内，顶栏不再有切换图标
+    await expect(page.locator('.nav-right .commands-toggle')).toBeVisible()
+    const themeCard = page.locator('.theme-card')
+    await expect(themeCard).toBeVisible()
+    await expect(themeCard.getByRole('radio', { name: '深色' })).toBeVisible()
+
+    // el-radio-button 的可点区域是包裹隐藏 input 的 .el-radio-button 容器
+    const pickTheme = (label: string) =>
+      themeCard.locator(`.el-radio-button:has(input[value="${label}"])`).click()
+
+    await pickTheme('dark')
+    await expect(page.locator('html')).toHaveClass(/dark/)
+    expect(await page.evaluate(() => localStorage.getItem('aw-theme-mode'))).toBe('dark')
+
+    await pickTheme('light')
+    await expect(page.locator('html')).not.toHaveClass(/dark/)
+    expect(await page.evaluate(() => localStorage.getItem('aw-theme-mode'))).toBe('light')
+
+    await pickTheme('auto')
+    expect(await page.evaluate(() => localStorage.getItem('aw-theme-mode'))).toBe('auto')
+    const prefersDark = await page.evaluate(() =>
+      window.matchMedia('(prefers-color-scheme: dark)').matches
+    )
+    expect(await page.locator('html').evaluate(el => el.classList.contains('dark'))).toBe(prefersDark)
   })
 })
 
@@ -507,33 +542,53 @@ test.describe('Session Search', () => {
 // Desktop - Settings entry
 // ─────────────────────────────────────────────────────────
 test.describe('Desktop - Settings entry', () => {
-  test('should show settings gear on top nav and open settings page', async ({ page }) => {
+  test('should open settings page directly by url', async ({ page }) => {
     await mockLoggedInDesktopApi(page)
     await page.goto('/settings/profile')
-    await expect(page.locator('.settings-toggle')).toBeVisible({ timeout: 15_000 })
-    await expect(page.locator('.settings-toggle')).toHaveClass(/active/)
-    await expect(page.locator('.settings-layout')).toBeVisible()
+    await expect(page.locator('.settings-layout')).toBeVisible({ timeout: 15_000 })
     await expect(page.locator('.settings-title')).toHaveText('设置')
     await expect(page.getByRole('heading', { name: '个人信息' })).toBeVisible()
   })
 
-  test('should open settings when clicking top nav gear from workbench', async ({ page }) => {
+  test('should open settings from avatar menu', async ({ page }) => {
     await mockLoggedInDesktopApi(page)
     await page.goto('/')
     await expect(page.getByRole('heading', { name: '今天想完成什么？' })).toBeVisible({ timeout: 15_000 })
-    await page.locator('.settings-toggle').click()
+    // 顶栏不再有齿轮图标，设置入口收敛到头像菜单
+    await expect(page.locator('.settings-toggle')).toHaveCount(0)
+    await page.getByRole('button', { name: '用户菜单' }).click()
+    await page.getByRole('menuitem', { name: '设置' }).click()
     await expect(page.locator('.settings-layout')).toBeVisible({ timeout: 10_000 })
     await expect(page.locator('.settings-title')).toHaveText('设置')
   })
 
-  test('should keep profile and logout in avatar menu without settings', async ({ page }) => {
+  test('avatar menu should carry commands, inbox, settings, profile and logout', async ({ page }) => {
     await mockLoggedInDesktopApi(page)
     await page.goto('/')
     await page.waitForSelector('.top-nav', { timeout: 15_000 })
     await page.getByRole('button', { name: '用户菜单' }).click()
+    await expect(page.getByRole('menuitem', { name: '我的指令' })).toBeVisible()
+    await expect(page.getByRole('menuitem', { name: '站内收件箱' })).toBeVisible()
+    await expect(page.getByRole('menuitem', { name: '设置' })).toBeVisible()
     await expect(page.getByRole('menuitem', { name: '个人信息' })).toBeVisible()
     await expect(page.getByRole('menuitem', { name: '退出登录' })).toBeVisible()
-    await expect(page.getByRole('menuitem', { name: '设置' })).toHaveCount(0)
+  })
+
+  test('inbox entry in avatar menu should open drawer without unread badge', async ({ page }) => {
+    await mockLoggedInDesktopApi(page)
+    // 页面级 mock：未读数 1，抽屉应能打开，且头像菜单项不带任何红点徽标
+    await page.route('**/api/v1/inbox/unread-count', async route => {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ code: 0, message: 'success', data: { unreadCount: 1 } }) })
+    })
+    await page.goto('/')
+    await page.waitForSelector('.top-nav', { timeout: 15_000 })
+    await page.getByRole('button', { name: '用户菜单' }).click()
+    // 红点提示已取消：菜单项与顶栏都不再有徽标
+    await expect(page.locator('.nav-dropdown .el-badge__content')).toHaveCount(0)
+    await expect(page.locator('.top-nav .el-badge__content')).toHaveCount(0)
+    await page.getByRole('menuitem', { name: '站内收件箱' }).click()
+    await expect(page.locator('.inbox-drawer')).toBeVisible({ timeout: 10_000 })
+    await expect(page.getByText('站内收件箱').first()).toBeVisible()
   })
 })
 
@@ -872,7 +927,7 @@ test.describe('Desktop Inbox', () => {
     })
   }
 
-  test('铃铛显示权威未读数，抽屉渲染条目', async ({ page }) => {
+  test('头像菜单打开收件箱，抽屉渲染条目', async ({ page }) => {
     await mockInboxApi(page, {
       items: [
         record({
@@ -897,12 +952,12 @@ test.describe('Desktop Inbox', () => {
     await page.goto('/')
     await page.waitForSelector('.top-nav', { timeout: 15_000 })
 
-    // 权威未读数来自服务端 COUNT
-    const badge = page.locator('.inbox-bell .el-badge__content')
-    await expect(badge).toHaveText('2', { timeout: 10_000 })
+    // 未读红点提示已取消：顶栏与菜单项都不再渲染徽标
+    await expect(page.locator('.top-nav .el-badge__content')).toHaveCount(0)
 
-    await page.locator('.inbox-bell').click()
-    const drawer = page.locator('.el-drawer')
+    await page.getByRole('button', { name: '用户菜单' }).click()
+    await page.getByRole('menuitem', { name: '站内收件箱' }).click()
+    const drawer = page.locator('.inbox-drawer')
     await expect(drawer).toBeVisible({ timeout: 10_000 })
     await expect(drawer.getByText('站内收件箱').first()).toBeVisible()
 
@@ -916,6 +971,13 @@ test.describe('Desktop Inbox', () => {
     await expect(page.locator('.inbox-item.is-unread')).toHaveCount(2)
   })
 
+  /** 从头像菜单打开站内收件箱抽屉（顶栏铃铛入口已移除）。 */
+  async function openInboxDrawer(page: Page) {
+    await page.getByRole('button', { name: '用户菜单' }).click()
+    await page.getByRole('menuitem', { name: '站内收件箱' }).click()
+    await expect(page.locator('.inbox-drawer')).toBeVisible({ timeout: 10_000 })
+  }
+
   test('点击条目标记已读并跳转关联会话', async ({ page }) => {
     await mockInboxApi(page, {
       items: [record({ id: 1 })],
@@ -924,20 +986,18 @@ test.describe('Desktop Inbox', () => {
 
     await page.goto('/')
     await page.waitForSelector('.top-nav', { timeout: 15_000 })
-    await expect(page.locator('.inbox-bell .el-badge__content')).toHaveText('1', { timeout: 10_000 })
 
-    await page.locator('.inbox-bell').click()
-    await expect(page.locator('.el-drawer')).toBeVisible({ timeout: 10_000 })
+    await openInboxDrawer(page)
     await page.locator('.inbox-item').first().click()
 
     // 跳转到关联会话路由
     await expect(page).toHaveURL(/\/tasks\/11$/, { timeout: 10_000 })
-    // 重开后条目已读、徽标归零
-    await page.locator('.inbox-bell').click()
+    // 重开后条目已读
+    await openInboxDrawer(page)
     await expect(page.locator('.inbox-item.is-unread')).toHaveCount(0, { timeout: 10_000 })
   })
 
-  test('全部已读后徽标归零', async ({ page }) => {
+  test('全部已读后条目不再有未读标识', async ({ page }) => {
     await mockInboxApi(page, {
       items: [record({ id: 1 }), record({ id: 2, kind: 'TASK_FAILED', title: '任务执行失败：打包' })],
       unreadCount: 2,
@@ -945,14 +1005,11 @@ test.describe('Desktop Inbox', () => {
 
     await page.goto('/')
     await page.waitForSelector('.top-nav', { timeout: 15_000 })
-    await expect(page.locator('.inbox-bell .el-badge__content')).toHaveText('2', { timeout: 10_000 })
 
-    await page.locator('.inbox-bell').click()
-    await expect(page.locator('.el-drawer')).toBeVisible({ timeout: 10_000 })
-    await page.locator('.el-drawer').getByRole('button', { name: '全部已读' }).click()
+    await openInboxDrawer(page)
+    await page.locator('.inbox-drawer').getByRole('button', { name: '全部已读' }).click()
 
     await expect(page.locator('.inbox-item.is-unread')).toHaveCount(0, { timeout: 10_000 })
-    await expect(page.locator('.inbox-bell .el-badge__content')).toBeHidden({ timeout: 10_000 })
   })
 
   test('只看未读过滤与偏好开关渲染', async ({ page }) => {
@@ -966,11 +1023,11 @@ test.describe('Desktop Inbox', () => {
 
     await page.goto('/')
     await page.waitForSelector('.top-nav', { timeout: 15_000 })
-    await page.locator('.inbox-bell').click()
+    await openInboxDrawer(page)
     await expect(page.locator('.inbox-item')).toHaveCount(2, { timeout: 10_000 })
 
     // 勾选只看未读 → 仅剩 1 条
-    await page.locator('.el-drawer .el-checkbox').click()
+    await page.locator('.inbox-drawer .el-checkbox').click()
     await expect(page.locator('.inbox-item')).toHaveCount(1, { timeout: 10_000 })
 
     // 设置页「站内收件箱」分区：四个 kind 开关 + 独立保存按钮
@@ -1047,40 +1104,63 @@ test.describe('Desktop Inbox', () => {
     })
   })
 
-  test('顶栏图标与相邻图标垂直对齐，且不与聚焦模式铃铛重复', async ({ page }) => {
+  test('顶栏「我的指令」图标与相邻图标垂直对齐，且不与聚焦模式铃铛重复', async ({ page }) => {
     await mockInboxApi(page, { items: [record({ id: 1 })], unreadCount: 1 })
 
     await page.goto('/')
     await page.waitForSelector('.top-nav', { timeout: 15_000 })
 
-    // el-badge 是 inline-block，会带一条 body 字号 × 行高撑起的 strut 行盒，把 16px 图标
-    // 顶出点击区中心（此前铃铛比相邻图标高约 2.5px）。这里按图标中心断言严格对齐。
+    // 顶栏一排图标统一按 28px 点击区 + 16px 图标垂直居中的度量渲染，
+    // 这里按图标中心断言「我的指令」与相邻搜索图标严格对齐。
     const centers = await page.evaluate(() => {
       const centerY = (el: Element) => {
         const r = el.getBoundingClientRect()
         return r.top + r.height / 2
       }
-      const bell = document.querySelector('.inbox-bell')!
+      const toggle = document.querySelector('.nav-right .commands-toggle')!
       const sibling = document.querySelector('.nav-right .search-toggle')!
-      const bellIcon = bell.querySelector('svg')!
+      const toggleIcon = toggle.querySelector('svg')!
       const siblingIcon = sibling.querySelector('svg')!
-      return { bell: centerY(bellIcon), sibling: centerY(siblingIcon) }
+      return { toggle: centerY(toggleIcon), sibling: centerY(siblingIcon) }
     })
-    expect(Math.abs(centers.bell - centers.sibling)).toBeLessThan(0.5)
+    expect(Math.abs(centers.toggle - centers.sibling)).toBeLessThan(0.5)
 
-    // 图标不得再用铃铛：任务面板聚焦模式切换用的就是 Bell/BellFilled，
-    // 顶栏复用会让两个语义完全不同的功能撞成同一个图形。
-    const bellSvgCount = await page.locator('.inbox-bell .el-icon svg').count()
-    expect(bellSvgCount).toBe(1)
-    const bellIconPath = await page.locator('.inbox-bell .el-icon svg').innerHTML()
+    // 图标不得用铃铛：任务面板聚焦模式切换用的就是 Bell/BellFilled，
+    // 复用会让两个语义完全不同的功能撞成同一个图形。
+    const toggleIconPath = await page.locator('.nav-right .commands-toggle .el-icon svg').innerHTML()
     const bellPath = 'M512 64a64 64 0 0 1 64 64v64H448v-64a64 64 0 0 1 64-64'
-    expect(bellIconPath).not.toContain(bellPath)
+    expect(toggleIconPath).not.toContain(bellPath)
 
     // 聚焦模式图标仍是铃铛（本次改动只换顶栏，不动聚焦模式）
     const taskPanel = page.locator('.task-index-panel')
     if (await taskPanel.count()) {
       await expect(taskPanel.locator('.mode-toggle-btn .el-icon svg')).toBeVisible()
     }
+  })
+
+  test('「我的指令」图标打开抽屉，展示指令管理内容', async ({ page }) => {
+    await mockLoggedInDesktopApi(page)
+    await page.route('**/api/v1/user-commands', async route => {
+      const method = route.request().method()
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ code: 0, message: 'success', data: method === 'GET' ? [] : null })
+      })
+    })
+    await page.route('**/api/v1/user-commands/system', async route => {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ code: 0, message: 'success', data: [] }) })
+    })
+
+    await page.goto('/')
+    await page.waitForSelector('.top-nav', { timeout: 15_000 })
+
+    await page.locator('.nav-right .commands-toggle').click()
+    const drawer = page.locator('.command-manager-drawer')
+    await expect(drawer).toBeVisible({ timeout: 10_000 })
+    // 抽屉内复用设置页「我的指令」页的同一组件：双 Tab + 新建入口
+    await expect(drawer.getByText('我的指令', { exact: true }).first()).toBeVisible()
+    await expect(drawer.getByRole('tab', { name: '系统指令' })).toBeVisible()
+    await expect(drawer.getByRole('button', { name: '新建指令' })).toBeVisible()
   })
 
   test('收件箱抽屉在安卓窄屏下宽度自适应，不溢出屏幕', async ({ page }) => {
@@ -1091,8 +1171,9 @@ test.describe('Desktop Inbox', () => {
     await page.goto('/')
     await page.waitForSelector('.top-nav', { timeout: 15_000 })
 
-    await page.locator('.inbox-bell').click()
-    const drawer = page.locator('.el-drawer.rtl')
+    await page.getByRole('button', { name: '用户菜单' }).click()
+    await page.getByRole('menuitem', { name: '站内收件箱' }).click()
+    const drawer = page.locator('.inbox-drawer')
     await expect(drawer).toBeVisible({ timeout: 10_000 })
 
     // 抽屉打开带 0.3s 位移过渡，位置在动画中会偏大；轮询到稳定值再断言

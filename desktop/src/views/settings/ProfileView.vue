@@ -5,6 +5,21 @@
       <p class="page-desc">管理你的头像与个人资料，头像会展示在顶栏。</p>
     </div>
 
+    <!-- 主题色偏好：与个人资料同页，作为「这台设备上只看我自己的展示偏好」的收口 -->
+    <div class="profile-card theme-card">
+      <div class="theme-row">
+        <div>
+          <div class="theme-label">主题色</div>
+          <div class="theme-hint">跟随系统会随操作系统的浅色 / 深色设置自动切换。</div>
+        </div>
+        <el-radio-group v-model="themeMode" class="theme-radio-group" @change="handleThemeChange">
+          <el-radio-button value="light">浅色</el-radio-button>
+          <el-radio-button value="dark">深色</el-radio-button>
+          <el-radio-button value="auto">跟随系统</el-radio-button>
+        </el-radio-group>
+      </div>
+    </div>
+
     <div class="profile-card">
       <!-- 头像区 -->
       <div class="avatar-section">
@@ -73,10 +88,19 @@ import { User } from '@element-plus/icons-vue'
 import { api } from '../../api'
 import { useAuthStore } from '../../stores/auth'
 import { uploadImages } from '../../utils/imageUpload'
+import { useTheme, type ThemeMode } from '../../utils/theme'
 
 const MAX_SIZE = 5 * 1024 * 1024
 
 const authStore = useAuthStore()
+const { theme, setTheme } = useTheme()
+
+/** 主题模式：与 theme.ts 的单例 ref 同源，写入 localStorage 后立即生效 */
+const themeMode = ref<ThemeMode>(theme.value)
+
+function handleThemeChange(value: ThemeMode) {
+  setTheme(value)
+}
 
 const form = reactive({
   displayName: authStore.user?.displayName ?? '',
@@ -256,6 +280,37 @@ onBeforeUnmount(() => {
   border: 1px solid var(--aw-divider-soft);
   border-radius: var(--aw-radius-md);
   padding: 24px;
+}
+
+.theme-card {
+  margin-bottom: 20px;
+}
+
+.theme-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.theme-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--aw-ink);
+  margin-bottom: 4px;
+}
+
+.theme-hint {
+  font-size: 12px;
+  color: var(--aw-ink-muted);
+}
+
+@media (max-width: 640px) {
+  .theme-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }
 
 .avatar-section {
