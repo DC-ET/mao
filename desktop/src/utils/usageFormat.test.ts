@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatCacheHit, formatCompact, formatCost, formatNumber, formatPercent } from './usageFormat'
+import { formatCacheHit, formatCost, formatNumber, formatPercent, formatToken, formatTokenWithUnit, pickTokenUnit } from './usageFormat'
 
 describe('usageFormat', () => {
   it('formatNumber：千分位；null/undefined 归零', () => {
@@ -19,11 +19,34 @@ describe('usageFormat', () => {
     expect(formatCost(Number.NaN)).toBe('-')
   })
 
-  it('formatCompact：万/亿紧凑单位，不丢整数精度', () => {
-    expect(formatCompact(999)).toBe('999')
-    expect(formatCompact(12345)).toBe('1.2 万')
-    expect(formatCompact(123456789)).toBe('1.2 亿')
-    expect(formatCompact(10000)).toBe('1 万')
+  it('formatToken：小于 1000 原样，千位以上按 K/M/B/T 折算', () => {
+    expect(formatToken(0)).toBe('0')
+    expect(formatToken(999)).toBe('999')
+    expect(formatToken(1000)).toBe('1K')
+    expect(formatToken(1500)).toBe('1.5K')
+    expect(formatToken(12345)).toBe('12.3K')
+    expect(formatToken(667577705)).toBe('667.6M')
+    expect(formatToken(1e9)).toBe('1B')
+    expect(formatToken(2.5e12)).toBe('2.5T')
+    expect(formatToken(null)).toBe('0')
+    expect(formatToken(undefined)).toBe('0')
+    expect(formatToken(Number.NaN)).toBe('0')
+  })
+
+  it('formatToken：贴近上级单位上限时进位，不出现 1000K 读数', () => {
+    expect(formatToken(999999)).toBe('1M')
+    expect(formatToken(999949)).toBe('999.9K')
+  })
+
+  it('pickTokenUnit/formatTokenWithUnit：纵轴按统一单位读数', () => {
+    const unit = pickTokenUnit(250000000)
+    expect(unit?.label).toBe('M')
+    expect(pickTokenUnit(800)).toBeNull()
+    expect(formatTokenWithUnit(0, unit)).toBe('0')
+    expect(formatTokenWithUnit(50000000, unit)).toBe('50M')
+    expect(formatTokenWithUnit(100000000, unit)).toBe('100M')
+    expect(formatTokenWithUnit(250000000, unit)).toBe('250M')
+    expect(formatTokenWithUnit(800, null)).toBe('800')
   })
 
   it('formatCacheHit：命中数 + 占入 token 百分比；无命中/无入 token 只显示数字', () => {
@@ -31,6 +54,8 @@ describe('usageFormat', () => {
     expect(formatCacheHit({ cachedTokens: 400, promptTokens: 0 })).toBe('400')
     expect(formatCacheHit({ cachedTokens: 0, promptTokens: 1000 })).toBe('0')
     expect(formatCacheHit({})).toBe('0')
+    // 命中数同样按 K/M 折算
+    expect(formatCacheHit({ cachedTokens: 1500000, promptTokens: 2500000 })).toBe('1.5M (60%)')
   })
 
   it('formatPercent：分母为 0 返回 -，不显示 0% 误导', () => {

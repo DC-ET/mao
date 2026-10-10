@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { requireRequestPermission, requireUserId, sendOk } from '../common/http-error.js';
 import { queryInt, queryOptBool, queryOptInt, queryOptStr } from '../common/request.js';
 import type { PermissionService } from '../permission/permission.service.js';
-import type { LlmCallService } from './llm-call.service.js';
+import { parseUsageRange, type LlmCallService } from './llm-call.service.js';
 import type { TrendGranularity } from './llm-call.repository.js';
 
 export interface LlmCallRouteDeps {
@@ -64,15 +64,15 @@ export function registerLlmCallRoutes(app: FastifyInstance, deps: LlmCallRouteDe
   // 当前用户自己的用量总览（总账 + 按模型 + 按场景）。仅需登录，不加权限码。
   app.get('/v1/llm-calls/me/summary', async (request, reply) => {
     const userId = requireUserId(request);
-    const days = queryOptInt(request, 'days');
-    return sendOk(reply, await deps.llmCallService.summaryForUser(userId, days));
+    const range = parseUsageRange(queryOptStr(request, 'range'));
+    return sendOk(reply, await deps.llmCallService.summaryForUser(userId, range));
   });
 
   // 当前用户自己的用量趋势（按天/小时分桶）。仅需登录，不加权限码。
   app.get('/v1/llm-calls/me/trends', async (request, reply) => {
     const userId = requireUserId(request);
-    const days = queryOptInt(request, 'days');
+    const range = parseUsageRange(queryOptStr(request, 'range'));
     const granularity = parseGranularity(queryOptStr(request, 'granularity'));
-    return sendOk(reply, await deps.llmCallService.trendsForUser(userId, days, granularity));
+    return sendOk(reply, await deps.llmCallService.trendsForUser(userId, range, granularity));
   });
 }

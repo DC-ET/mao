@@ -10,7 +10,7 @@
         <span class="drawer-title">我的用量</span>
         <div class="drawer-actions">
           <span class="period-label">统计周期</span>
-          <el-segmented v-model="days" :options="PERIOD_OPTIONS" size="small" />
+          <el-segmented v-model="range" :options="PERIOD_OPTIONS" size="small" />
           <el-tooltip content="刷新" :show-after="100" placement="bottom">
             <el-button text :icon="Refresh" :loading="refreshing" aria-label="刷新" @click="handleRefresh" />
           </el-tooltip>
@@ -23,7 +23,7 @@
         <UsageOverviewTab :summary="summary" :loading="summaryLoading" />
       </el-tab-pane>
       <el-tab-pane label="趋势" name="trend">
-        <UsageTrendTab :days="days" :refresh-key="refreshKey" />
+        <UsageTrendTab :range="range" :refresh-key="refreshKey" />
       </el-tab-pane>
       <el-tab-pane label="明细" name="detail">
         <UsageDetailTab :refresh-key="refreshKey" @close="visible = false" />
@@ -35,7 +35,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
-import { fetchMyUsageSummary, type MyUsageSummary } from '../../api'
+import { fetchMyUsageSummary, type MyUsageSummary, type UsageRange } from '../../api'
 import UsageOverviewTab from './UsageOverviewTab.vue'
 import UsageTrendTab from './UsageTrendTab.vue'
 import UsageDetailTab from './UsageDetailTab.vue'
@@ -48,15 +48,19 @@ const visible = computed({
   set: (value: boolean) => emit('update:modelValue', value),
 })
 
-const PERIOD_OPTIONS = [
-  { label: '近 7 天', value: 7 },
-  { label: '近 30 天', value: 30 },
-  { label: '近 90 天', value: 90 },
+/** 统计周期：日历周期在前，滚动窗口在后（今日/昨日时趋势图自动按小时分桶）。 */
+const PERIOD_OPTIONS: Array<{ label: string; value: UsageRange }> = [
+  { label: '今日', value: 'today' },
+  { label: '昨日', value: 'yesterday' },
+  { label: '本周', value: 'week' },
+  { label: '本月', value: 'month' },
+  { label: '近 7 天', value: 'last7' },
+  { label: '近 30 天', value: 'last30' },
 ]
 
 type UsageTab = 'overview' | 'trend' | 'detail'
 
-const days = ref(30)
+const range = ref<UsageRange>('today')
 const activeTab = ref<UsageTab>('overview')
 const summary = ref<MyUsageSummary | null>(null)
 const summaryLoading = ref(false)
@@ -69,7 +73,7 @@ async function fetchSummary() {
   const seq = ++fetchSeq
   summaryLoading.value = true
   try {
-    const data = await fetchMyUsageSummary(days.value)
+    const data = await fetchMyUsageSummary(range.value)
     if (seq !== fetchSeq) return
     summary.value = data
   } catch { /* handled */ } finally {
@@ -78,7 +82,7 @@ async function fetchSummary() {
 }
 
 /** 总览数据只在抽屉打开且停留在总览 Tab 时拉取；切周期立即重拉。 */
-watch([visible, activeTab, days], ([open, tab]) => {
+watch([visible, activeTab, range], ([open, tab]) => {
   if (open && tab === 'overview') void fetchSummary()
 })
 

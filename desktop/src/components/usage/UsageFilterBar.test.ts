@@ -43,8 +43,8 @@ const compiled = compile(descriptor.template!.content, {
 })
 const clientRender = new Function('Vue', compiled.code)(Vue) as (ctx: unknown, cache: unknown) => unknown
 
-const ElForm = { render() { return h('form', this.$slots.default?.()) } }
-const ElFormItem = { render() { return h('div', this.$slots.default?.()) } }
+const ElForm = defineComponent({ render() { return h('form', this.$slots.default?.() ?? []) } })
+const ElFormItem = defineComponent({ render() { return h('div', this.$slots.default?.() ?? []) } })
 /** v-for 选项被包在 Fragment 里（type 为 symbol），注释 vnode 同类；递归展平后只留带 props 的选项。 */
 function collectOptionVnodes(nodes: unknown[]): Array<{ props: Record<string, unknown> }> {
   const out: Array<{ props: Record<string, unknown> }> = []
@@ -60,7 +60,7 @@ function collectOptionVnodes(nodes: unknown[]): Array<{ props: Record<string, un
   return out
 }
 
-const ElSelect = {
+const ElSelect = defineComponent({
   props: { modelValue: { type: [String, Number, Boolean], default: undefined } },
   render() {
     const options = collectOptionVnodes(this.$slots.default?.() ?? [])
@@ -77,9 +77,9 @@ const ElSelect = {
       }, String(opt.props.label)),
     ))
   },
-}
+})
 const ElOption = { props: ['value', 'label'], render() { return h('option') } }
-const ElButton = {
+const ElButton = defineComponent({
   props: { type: String, size: String, text: Boolean },
   render() {
     const attrs = this.$attrs as Record<string, unknown>
@@ -88,9 +88,9 @@ const ElButton = {
       onClick: () => {
         if (typeof attrs.onClick === 'function') (attrs.onClick as () => void)()
       },
-    }, this.$slots.default?.())
+    }, this.$slots.default?.() ?? [])
   },
-}
+})
 
 interface StubEl { tag: string; children: StubNode[]; parent: StubEl | null; props: Record<string, unknown> }
 type StubNode = StubEl | { text: string; parent: StubEl | null }
