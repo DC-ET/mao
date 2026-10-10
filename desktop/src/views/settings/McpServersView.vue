@@ -601,10 +601,6 @@ async function handleTest(server: MyMcpServer) {
   padding-bottom: 12px;
 }
 
-:deep(.mcp-server-dialog .el-dialog__footer .el-button) {
-  font-size: 14px;
-}
-
 .test-content {
   min-height: 60px;
 }

@@ -55,7 +55,6 @@
             type="primary"
             native-type="submit"
             :loading="passwordLoading"
-            size="large"
             class="login-btn"
           >
             登录
@@ -69,7 +68,6 @@
             <el-button
               v-if="authStore.features.feishuEnabled"
               class="feishu-entry"
-              size="large"
               plain
               :loading="feishuLoading && activeFeishuProvider === 'mao'"
               @click="startFeishuLogin('mao')"
@@ -79,7 +77,6 @@
             <el-button
               v-if="authStore.features.ecpEnabled"
               class="feishu-entry"
-              size="large"
               plain
               :loading="feishuLoading && activeFeishuProvider === 'ecp'"
               @click="startFeishuLogin('ecp')"
@@ -94,7 +91,6 @@
         <el-icon class="feishu-icon" :size="48"><Connection /></el-icon>
         <p class="feishu-status">{{ feishuStatusText }}</p>
         <el-button
-          size="large"
           type="primary"
           :loading="feishuLoading"
           @click="startFeishuLogin(activeFeishuProvider)"
@@ -498,8 +494,12 @@ onBeforeUnmount(() => {
   width: 100%;
 }
 
-.login-btn {
+/* 登录页 CTA 保持醒目的大按钮：自设度量，优先级高于全站 small 统一规则 */
+.login-btn,
+.feishu-entry,
+.feishu-panel .el-button[type="primary"] {
   width: 100%;
+  margin: 0;
   border-radius: var(--aw-radius-pill) !important;
   font-size: var(--aw-text-body);
   font-weight: 400;
@@ -510,12 +510,6 @@ onBeforeUnmount(() => {
 .login-btn:active,
 .feishu-entry:active {
   transform: scale(0.95);
-}
-
-.feishu-entry {
-  width: 100%;
-  margin: 0;
-  border-radius: var(--aw-radius-pill) !important;
 }
 
 .feishu-panel {
@@ -536,12 +530,6 @@ onBeforeUnmount(() => {
   font-size: var(--aw-text-caption);
   line-height: 22px;
   text-align: center;
-}
-
-.feishu-panel .el-button[type="primary"],
-.feishu-panel > .el-button:not(.password-entry) {
-  width: 100%;
-  border-radius: var(--aw-radius-pill) !important;
 }
 
 .password-entry {

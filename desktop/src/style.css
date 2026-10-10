@@ -432,6 +432,29 @@ a:hover {
   font-family: var(--aw-font-text);
 }
 
+/*
+ * Element Plus 按钮统一为 small（24px 高、5px 11px 内边距、12px 字）。
+ * App 控件密度以 small 为准，但模板里 23 个按钮没写 size、取默认 32px，和写了 size="small"
+ * 的按钮大小不一；逐个补 size 治标不治本——ElMessageBox、日期面板、popconfirm 等 EP 内部
+ * 渲染的按钮不在模板里，仍是默认尺寸。这里按 EP small 的度量统一定义 .el-button，
+ * size="large" 的度量一并被覆盖。is-link 按钮 EP 自带更高优先级（auto 高度）不受影响；
+ * 登录页 CTA 是自设 height:auto 的样式，优先级也更高。输入框前/后缀里的按钮要跟输入框
+ * 齐高，单独还原。
+ */
+.el-button {
+  height: 24px;
+  padding: 5px 11px;
+  font-size: 12px;
+  border-radius: calc(var(--el-border-radius-base) - 1px);
+}
+
+/* 输入框前/后缀内的按钮跟随输入框高度，不参与统一 small */
+.el-input-group__prepend .el-button,
+.el-input-group__append .el-button {
+  height: var(--el-component-size, 32px);
+  padding: 8px 15px;
+}
+
 /* Element Plus Dark Mode */
 [data-theme="dark"] {
   --el-bg-color: #141416;
