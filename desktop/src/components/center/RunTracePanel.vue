@@ -104,30 +104,7 @@
             <span>{{ formatTokens(tokenTotal(run)) }} tokens</span>
           </span>
           <span class="run-badges">
-            <template v-if="badgesOf(run).length > 0">
-              <template v-if="isBadgeOverflowOpen(run.runId)">
-                <span v-for="badge in badgesOf(run)" :key="badge.label" class="run-badge" :class="`badge-${badge.tone}`">{{ badge.label }}</span>
-                <span
-                  class="badge-more"
-                  role="button"
-                  tabindex="0"
-                  title="收起关注点"
-                  @click.stop="toggleBadgeOverflow(run.runId)"
-                  @keydown.enter.prevent.stop="toggleBadgeOverflow(run.runId)"
-                  @keydown.space.prevent.stop="toggleBadgeOverflow(run.runId)"
-                >收起</span>
-              </template>
-              <span
-                v-else
-                class="badge-more"
-                role="button"
-                tabindex="0"
-                :title="`关注点：${badgesOf(run).map((b) => b.label).join('、')}`"
-                @click.stop="toggleBadgeOverflow(run.runId)"
-                @keydown.enter.prevent.stop="toggleBadgeOverflow(run.runId)"
-                @keydown.space.prevent.stop="toggleBadgeOverflow(run.runId)"
-              >+{{ badgesOf(run).length }}</span>
-            </template>
+            <span v-for="badge in runAttentionBadges(run)" :key="badge.label" class="run-badge" :class="`badge-${badge.tone}`">{{ badge.label }}</span>
           </span>
         </button>
 
@@ -143,12 +120,12 @@
                   <span>{{ formatMs(round.durationMs) }}</span>
                   <span>{{ formatTokens(tokenTotalOfRound(round)) }} tokens</span>
                   <span v-if="round.firstTokenMs != null">首字 {{ formatMs(round.firstTokenMs) }}</span>
-                  <span v-if="round.retryCount > 0">重试 {{ round.retryCount }}</span>
                   <span v-if="round.costMicros != null">成本 {{ formatCost(round.costMicros) }}</span>
                 </span>
                 <span class="round-badges">
                   <span v-if="round.interrupted" class="run-badge badge-warn">中断</span>
                   <span v-else-if="!round.success" class="run-badge badge-danger">失败</span>
+                  <span v-if="round.retryCount > 0" class="run-badge badge-warn">重试 {{ round.retryCount }}</span>
                   <span v-if="round.slow" class="run-badge badge-info">慢</span>
                   <span v-if="round.expensive" class="run-badge badge-info">贵</span>
                 </span>
@@ -237,6 +214,7 @@
               <span class="round-badges">
                 <span v-if="round.interrupted" class="run-badge badge-warn">中断</span>
                 <span v-else-if="!round.success" class="run-badge badge-danger">失败</span>
+                <span v-if="round.retryCount > 0" class="run-badge badge-warn">重试 {{ round.retryCount }}</span>
               </span>
             </div>
             <div v-if="round.errorMessage" class="round-error">{{ round.errorMessage }}</div>
@@ -296,8 +274,6 @@ const traceSummary = computed(() => summarizeRuns(runs.value))
 const toolRate = computed(() => toolSuccessRate(traceSummary.value))
 
 const expandedRuns = ref<Set<number>>(new Set())
-/** 关注点徽标默认收拢成 +N，点开展开（runId → 是否展开） */
-const badgeOverflow = ref<Set<number>>(new Set())
 const unattributedExpanded = ref(false)
 const exporting = ref(false)
 /** 已加载的页数：执行结束后按同样页数重拉，避免把用户翻出来的历史页丢掉 */
@@ -497,22 +473,6 @@ function toggleRun(runId: number) {
   expandedRuns.value = next
 }
 
-function badgesOf(run: RunTrace) {
-  return runAttentionBadges(run)
-}
-
-function isBadgeOverflowOpen(runId: number): boolean {
-  return badgeOverflow.value.has(runId)
-}
-
-/** +N 收拢徽标的展开 / 收起：只翻关注点，不连带展开整个 run。 */
-function toggleBadgeOverflow(runId: number) {
-  const next = new Set(badgeOverflow.value)
-  if (next.has(runId)) next.delete(runId)
-  else next.add(runId)
-  badgeOverflow.value = next
-}
-
 // ===== 导出 =====
 async function fetchAllPages(): Promise<{ runs: RunTrace[]; unattributed: UnattributedGroup | null }> {
   const collected: RunTrace[] = []
@@ -626,7 +586,8 @@ async function exportCsv() {
 .trace-btn {
   font-size: var(--aw-text-fine);
   font-family: var(--aw-font-text);
-  padding: 3px 9px;
+  height: var(--aw-btn-height);
+  padding: var(--aw-btn-padding);
   border-radius: var(--aw-radius-xs);
   border: 1px solid var(--aw-hairline);
   background: var(--aw-surface);
@@ -880,24 +841,6 @@ async function exportCsv() {
   color: var(--aw-status-waiting);
 }
 
-/* 关注点徽标收拢成 +N：点开展开，不连带展开整个 run */
-.badge-more {
-  font-size: var(--aw-text-micro);
-  padding: 1px 5px;
-  border-radius: var(--aw-radius-xs);
-  line-height: 1.4;
-  white-space: nowrap;
-  color: var(--aw-ink-muted-64);
-  background: rgba(0, 0, 0, 0.05);
-  cursor: pointer;
-  user-select: none;
-}
-
-.badge-more:hover {
-  color: var(--aw-primary);
-  background: var(--aw-primary-hover);
-}
-
 /* ===== 展开明细 ===== */
 .run-detail {
   border-top: 1px solid var(--aw-divider-soft);
@@ -1122,10 +1065,6 @@ async function exportCsv() {
 }
 
 [data-theme="dark"] .badge-neutral {
-  background: rgba(255, 255, 255, 0.08);
-}
-
-[data-theme="dark"] .badge-more {
   background: rgba(255, 255, 255, 0.08);
 }
 
