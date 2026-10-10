@@ -246,7 +246,7 @@
           </template>
         </el-input>
       </div>
-      <div class="secret-field">
+      <div v-if="secretDialogSecret" class="secret-field">
         <div class="secret-label">Secret</div>
         <el-input :model-value="secretDialogSecret" readonly>
           <template #append>
