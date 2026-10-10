@@ -574,8 +574,8 @@ a.settings-toggle {
 :global(.app-update-message-box .el-message-box__headerbtn) {
   top: 14px;
   right: 14px;
-  width: 24px;
-  height: 24px;
+  width: var(--aw-btn-height);
+  height: var(--aw-btn-height);
   font-size: 16px;
 }
 

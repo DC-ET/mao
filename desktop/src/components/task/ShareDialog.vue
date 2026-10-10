@@ -184,7 +184,9 @@ async function copy() {
   border: 1px solid var(--aw-hairline, #e0e0e0);
   background: var(--aw-canvas, #fff);
   border-radius: 8px;
-  padding: 6px 12px;
+  height: var(--aw-btn-height);
+  padding: var(--aw-btn-padding);
+  font-size: var(--aw-text-fine);
   cursor: pointer;
   color: var(--aw-ink, #1d1d1f);
 }
@@ -230,8 +232,8 @@ async function copy() {
 .share-revoke-message-box .el-message-box__headerbtn {
   top: 8px;
   right: 8px;
-  width: 28px;
-  height: 28px;
+  width: var(--aw-btn-height);
+  height: var(--aw-btn-height);
   font-size: 14px;
 }
 
@@ -250,15 +252,6 @@ async function copy() {
 
 .share-revoke-message-box .el-message-box__btns {
   padding-top: 12px;
-}
-
-.share-revoke-message-box .el-message-box__btns .el-button {
-  height: auto;
-  padding: 6px 12px;
-  font-size: 13px;
-  font-weight: 400;
-  line-height: normal;
-  border-radius: 8px;
 }
 
 .share-revoke-message-box .el-message-box__btns .el-button + .el-button {

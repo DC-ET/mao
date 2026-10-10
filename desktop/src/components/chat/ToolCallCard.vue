@@ -285,11 +285,12 @@ function toggleExpand() {
 }
 
 .view-subagent-btn {
+  height: var(--aw-btn-height);
   border: 1px solid var(--aw-hairline);
   background: transparent;
   color: var(--aw-primary);
-  font-size: 11px;
-  padding: 1px 8px;
+  font-size: var(--aw-text-fine);
+  padding: var(--aw-btn-padding);
   border-radius: var(--aw-radius-sm);
   cursor: pointer;
   line-height: 1.4;
@@ -373,14 +374,15 @@ function toggleExpand() {
 }
 
 .copy-btn {
+  width: var(--aw-btn-height);
+  height: var(--aw-btn-height);
+  padding: 0;
   position: absolute;
   top: 6px;
   right: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
   border: none;
   border-radius: var(--aw-radius-sm);
   background: var(--aw-surface-glass);

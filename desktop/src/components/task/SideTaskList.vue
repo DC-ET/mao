@@ -470,8 +470,8 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: var(--aw-btn-height);
+  height: var(--aw-btn-height);
   border: none;
   background: var(--aw-canvas-parchment);
   border-radius: var(--aw-radius-xs);

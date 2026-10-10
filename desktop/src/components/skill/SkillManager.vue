@@ -741,13 +741,13 @@ function formatBytes(bytes: number): string {
 }
 
 .upload-all-btn {
-  height: 28px;
-  padding: 0 12px;
+  height: var(--aw-btn-height);
+  padding: var(--aw-btn-padding);
   border: 1px solid var(--aw-primary);
   border-radius: var(--aw-radius-xs);
   background: var(--aw-primary);
   color: #fff;
-  font-size: 12px;
+  font-size: var(--aw-text-fine);
   cursor: pointer;
   transition: opacity 0.15s;
 }
@@ -829,11 +829,12 @@ function formatBytes(bytes: number): string {
 }
 
 .skill-btn {
+  width: var(--aw-btn-height);
+  height: var(--aw-btn-height);
+  padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
   border: none;
   background: transparent;
   border-radius: var(--aw-radius-xs);
@@ -856,13 +857,13 @@ function formatBytes(bytes: number): string {
 }
 
 .skill-upload-btn {
-  height: 24px;
-  padding: 0 10px;
+  height: var(--aw-btn-height);
+  padding: var(--aw-btn-padding);
   border: 1px solid var(--aw-primary);
   border-radius: var(--aw-radius-xs);
   background: transparent;
   color: var(--aw-primary);
-  font-size: 12px;
+  font-size: var(--aw-text-fine);
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
 }
@@ -962,12 +963,13 @@ function formatBytes(bytes: number): string {
 }
 
 .skill-body :deep(.code-copy-btn) {
+  height: var(--aw-btn-height);
   border: none;
   background: transparent;
   color: var(--aw-ink-muted);
-  font-size: 11px;
+  font-size: var(--aw-text-fine);
   cursor: pointer;
-  padding: 2px 6px;
+  padding: var(--aw-btn-padding);
   border-radius: var(--aw-radius-xs);
 }
 

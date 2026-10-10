@@ -812,10 +812,11 @@ async function copyMessage() {
 }
 
 .markdown-body :deep(.code-copy-btn) {
+  height: var(--aw-btn-height);
   background: none;
   border: 1px solid var(--aw-hairline);
   color: var(--aw-ink-muted-48);
-  padding: 2px 8px;
+  padding: var(--aw-btn-padding);
   border-radius: var(--aw-radius-xs);
   cursor: pointer;
   font-size: var(--aw-text-fine);
@@ -960,10 +961,11 @@ async function copyMessage() {
 }
 
 .copy-btn {
+  height: var(--aw-btn-height);
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  padding: 2px 6px;
+  padding: var(--aw-btn-padding);
   border: none;
   background: transparent;
   color: var(--aw-ink-muted-48);
@@ -984,11 +986,12 @@ async function copyMessage() {
 }
 
 .dislike-btn {
+  height: var(--aw-btn-height);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 3px;
-  padding: 2px 6px;
+  padding: var(--aw-btn-padding);
   border: none;
   background: transparent;
   color: var(--aw-ink-muted-48);
@@ -1024,10 +1027,12 @@ async function copyMessage() {
 }
 
 .fork-btn {
+  width: var(--aw-btn-height);
+  height: var(--aw-btn-height);
+  padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 2px 6px;
   border: none;
   background: transparent;
   color: var(--aw-ink-muted-48);
@@ -1088,7 +1093,8 @@ async function copyMessage() {
 }
 
 .dislike-cancel-btn {
-  padding: 5px 10px;
+  height: var(--aw-btn-height);
+  padding: var(--aw-btn-padding);
   border: 1px solid var(--aw-hairline);
   border-radius: var(--aw-radius-xs);
   background: transparent;
@@ -1198,10 +1204,11 @@ async function copyMessage() {
 
 .edit-confirm-btn,
 .edit-cancel-btn {
+  height: var(--aw-btn-height);
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 4px 12px;
+  padding: var(--aw-btn-padding);
   border: none;
   border-radius: var(--aw-radius-xs);
   font-size: var(--aw-text-fine);
@@ -1235,10 +1242,12 @@ async function copyMessage() {
 }
 
 .edit-btn {
+  width: var(--aw-btn-height);
+  height: var(--aw-btn-height);
+  padding: 0;
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  padding: 2px 6px;
   border: none;
   background: transparent;
   color: var(--aw-ink-muted-48);
@@ -1254,10 +1263,12 @@ async function copyMessage() {
 }
 
 .add-command-btn {
+  width: var(--aw-btn-height);
+  height: var(--aw-btn-height);
+  padding: 0;
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  padding: 2px 6px;
   border: none;
   background: transparent;
   color: var(--aw-ink-muted-48);

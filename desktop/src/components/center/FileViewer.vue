@@ -344,12 +344,13 @@ onUnmounted(() => {
 }
 
 .retry-btn {
-  font-size: var(--aw-text-caption);
+  height: var(--aw-btn-height);
+  font-size: var(--aw-text-fine);
   color: var(--aw-primary);
   background: none;
   border: 1px solid var(--aw-primary);
   border-radius: var(--aw-radius-xs);
-  padding: 4px 16px;
+  padding: var(--aw-btn-padding);
   cursor: pointer;
 }
 
@@ -402,11 +403,16 @@ onUnmounted(() => {
   top: 8px;
   left: 8px;
   z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--aw-btn-height);
+  height: var(--aw-btn-height);
+  padding: 0;
   background: var(--aw-surface);
   border: 1px solid var(--aw-divider-soft);
   border-radius: var(--aw-radius-xs);
   cursor: pointer;
-  padding: 3px 6px;
   color: var(--aw-ink-muted-48);
   transition: all 0.15s;
   backdrop-filter: blur(8px);
@@ -422,8 +428,9 @@ onUnmounted(() => {
 }
 
 .mode-btn {
-  padding: 3px 10px;
-  font-size: var(--aw-text-caption);
+  height: var(--aw-btn-height);
+  padding: var(--aw-btn-padding);
+  font-size: var(--aw-text-fine);
   color: var(--aw-ink-muted-48);
   background: var(--aw-surface);
   border: 1px solid var(--aw-divider-soft);
@@ -515,10 +522,11 @@ onUnmounted(() => {
 }
 
 .markdown-body :deep(.code-copy-btn) {
+  height: var(--aw-btn-height);
   background: none;
   border: 1px solid var(--aw-hairline);
   color: var(--aw-ink-muted-48);
-  padding: 2px 8px;
+  padding: var(--aw-btn-padding);
   border-radius: var(--aw-radius-xs);
   cursor: pointer;
   font-size: var(--aw-text-fine);

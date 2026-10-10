@@ -427,8 +427,8 @@ function buildGitTree(files: GitChangedFile[]): GitTreeNode[] {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: var(--aw-btn-height);
+  height: var(--aw-btn-height);
   border: none;
   border-radius: var(--aw-radius-xs);
   background: transparent;

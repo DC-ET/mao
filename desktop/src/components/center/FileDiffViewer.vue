@@ -301,13 +301,14 @@ onBeforeUnmount(disposeAll)
 }
 
 .open-file-btn {
+  height: var(--aw-btn-height);
   border: 1px solid var(--aw-primary);
   border-radius: var(--aw-radius-xs);
   background: transparent;
   color: var(--aw-primary);
   cursor: pointer;
-  font-size: var(--aw-text-caption);
-  padding: 4px 14px;
+  font-size: var(--aw-text-fine);
+  padding: var(--aw-btn-padding);
 }
 
 .open-file-btn:hover {
@@ -324,8 +325,9 @@ onBeforeUnmount(disposeAll)
 }
 
 .mode-btn {
-  padding: 3px 10px;
-  font-size: var(--aw-text-caption);
+  height: var(--aw-btn-height);
+  padding: var(--aw-btn-padding);
+  font-size: var(--aw-text-fine);
   color: var(--aw-ink-muted-48);
   background: var(--aw-surface);
   border: 1px solid var(--aw-divider-soft);
@@ -421,10 +423,11 @@ onBeforeUnmount(disposeAll)
 }
 
 .markdown-body :deep(.code-copy-btn) {
+  height: var(--aw-btn-height);
   background: none;
   border: 1px solid var(--aw-hairline);
   color: var(--aw-ink-muted-48);
-  padding: 2px 8px;
+  padding: var(--aw-btn-padding);
   border-radius: var(--aw-radius-xs);
   cursor: pointer;
   font-size: var(--aw-text-fine);

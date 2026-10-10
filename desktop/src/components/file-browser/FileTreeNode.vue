@@ -313,7 +313,8 @@ function onDrop(event: DragEvent) {
   background: none;
   border: 1px solid var(--aw-primary);
   border-radius: var(--aw-radius-xs);
-  padding: 1px 8px;
+  height: var(--aw-btn-height);
+  padding: var(--aw-btn-padding);
   cursor: pointer;
   flex-shrink: 0;
 }

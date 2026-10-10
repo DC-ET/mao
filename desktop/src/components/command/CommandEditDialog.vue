@@ -133,10 +133,11 @@ defineExpose({ open, openEdit })
 
 <style scoped>
 .dialog-btn {
-  padding: 6px 16px;
+  height: var(--aw-btn-height);
+  padding: var(--aw-btn-padding);
   border: none;
   border-radius: var(--aw-radius-xs);
-  font-size: 13px;
+  font-size: var(--aw-text-fine);
   font-weight: 500;
   cursor: pointer;
   transition: all 0.15s;

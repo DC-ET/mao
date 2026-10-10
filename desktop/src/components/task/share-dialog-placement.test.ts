@@ -18,11 +18,16 @@ describe('ShareDialog 弹窗定位回归', () => {
     expect(dialogOpenTag).not.toMatch(/width="480px"/)
   })
 
-  it('撤销确认不沿用全局 17px，按钮与分享弹窗同档', () => {
+  it('撤销确认的按钮与分享弹窗同档，统一走全局 small 度量', () => {
     expect(dialogSrc).toContain("customClass: 'share-revoke-message-box'")
     const css = dialogSrc.slice(dialogSrc.indexOf('.share-revoke-message-box'))
     expect(css).toContain('font-size: 13px')
-    expect(css).toMatch(/\.el-message-box__btns \.el-button \{[\s\S]*?padding: 6px 12px/)
+    // 消息框按钮不再单独写度量，由全局 .el-button（small）接管
+    expect(css).not.toMatch(/\.el-message-box__btns \.el-button \{[\s\S]*?(height|padding|font-size)\s*:/)
+    // 与分享弹窗自身的按钮共用同一套度量令牌
+    expect(dialogSrc).toMatch(/\.share-btn \{[\s\S]*?height: var\(--aw-btn-height\)/)
+    expect(dialogSrc).toMatch(/\.share-btn \{[\s\S]*?padding: var\(--aw-btn-padding\)/)
+    expect(dialogSrc).toMatch(/\.share-btn \{[\s\S]*?font-size: var\(--aw-text-fine\)/)
   })
 
   it('侧边栏不创建 fixed 定位包含块', () => {

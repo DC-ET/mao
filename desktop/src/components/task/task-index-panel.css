@@ -41,8 +41,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: var(--aw-btn-height);
+  height: var(--aw-btn-height);
   border: none;
   background: transparent;
   border-radius: var(--aw-radius-xs);
@@ -167,19 +167,14 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  width: var(--aw-btn-height);
+  height: var(--aw-btn-height);
   border: none;
   background: var(--aw-canvas-parchment);
   border-radius: var(--aw-radius-xs);
   color: var(--aw-ink-muted-48);
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
-}
-
-.task-index-panel .group-add-btn--terminal {
-  width: 24px;
-  height: 24px;
 }
 
 .task-index-panel .group-add-btn:hover {
@@ -403,8 +398,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: var(--aw-btn-height);
+  height: var(--aw-btn-height);
   border: none;
   background: var(--aw-canvas-parchment);
   border-radius: var(--aw-radius-xs);
@@ -773,8 +768,9 @@
   background: var(--aw-surface);
   color: var(--aw-ink);
   border-radius: var(--aw-radius-xs);
-  padding: 4px 14px;
-  font-size: var(--aw-text-caption);
+  height: var(--aw-btn-height);
+  padding: var(--aw-btn-padding);
+  font-size: var(--aw-text-fine);
   cursor: pointer;
 }
 

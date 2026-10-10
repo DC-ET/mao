@@ -784,12 +784,13 @@ onMounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 6px 14px;
+  height: var(--aw-btn-height);
+  padding: var(--aw-btn-padding);
   border: none;
   border-radius: var(--aw-radius-xs);
   background: var(--aw-primary);
   color: #fff;
-  font-size: 13px;
+  font-size: var(--aw-text-fine);
   font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
@@ -862,8 +863,8 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: var(--aw-btn-height);
+  height: var(--aw-btn-height);
   border: none;
   background: transparent;
   border-radius: var(--aw-radius-xs);
@@ -921,10 +922,11 @@ onMounted(() => {
 }
 
 .dialog-btn {
-  padding: 6px 16px;
+  height: var(--aw-btn-height);
+  padding: var(--aw-btn-padding);
   border: none;
   border-radius: var(--aw-radius-xs);
-  font-size: 13px;
+  font-size: var(--aw-text-fine);
   font-weight: 500;
   cursor: pointer;
 }

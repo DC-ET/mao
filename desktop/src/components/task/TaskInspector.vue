@@ -1329,11 +1329,12 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
 }
 
 .workspace-copy-btn {
+  width: var(--aw-btn-height);
+  height: var(--aw-btn-height);
+  padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
   border: none;
   background: transparent;
   border-radius: var(--aw-radius-xs);
@@ -1635,13 +1636,13 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   gap: 8px;
 }
 .ctx-action {
-  height: 32px;
-  padding: 0 8px;
+  height: var(--aw-btn-height);
+  padding: var(--aw-btn-padding);
   border-radius: 8px;
   border: 1px solid var(--aw-divider-soft, #e6e6e8);
   background: transparent;
   color: var(--aw-ink, #1d1d1f);
-  font-size: 12px;
+  font-size: var(--aw-text-fine);
   line-height: 1;
   cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;

@@ -326,8 +326,8 @@ async function copyText(text: string) {
 }
 
 .action-btn {
-  height: 28px;
-  padding: 0 14px;
+  height: var(--aw-btn-height);
+  padding: var(--aw-btn-padding);
   border-radius: var(--aw-radius-pill);
   border: 1px solid var(--aw-hairline);
   background: var(--aw-canvas);

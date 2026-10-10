@@ -1135,11 +1135,12 @@ function handleNewTaskAgentChange(id: string | null) {
 }
 
 .side-task-btn {
+  height: var(--aw-btn-height);
   border: 1px solid var(--aw-divider-soft);
   background: var(--aw-canvas-parchment);
   color: var(--aw-ink-muted-48);
-  font-size: var(--aw-text-caption);
-  padding: 4px 12px;
+  font-size: var(--aw-text-fine);
+  padding: var(--aw-btn-padding);
   border-radius: var(--aw-radius-xs);
   cursor: pointer;
   transition: background 0.15s, color 0.15s, border-color 0.15s;

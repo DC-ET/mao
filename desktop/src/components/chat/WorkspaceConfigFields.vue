@@ -140,8 +140,8 @@ async function selectWorkspace() {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 30px;
-  padding: 0 12px;
+  height: var(--aw-btn-height);
+  padding: var(--aw-btn-padding);
   border-radius: var(--aw-radius-pill);
   border: 1px solid var(--aw-hairline);
   background: var(--aw-canvas);

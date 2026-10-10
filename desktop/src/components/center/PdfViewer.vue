@@ -407,8 +407,9 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 4px 8px;
-  font-size: var(--aw-text-caption);
+  height: var(--aw-btn-height);
+  padding: var(--aw-btn-padding);
+  font-size: var(--aw-text-fine);
   color: var(--aw-ink-muted-48);
   background: none;
   border: 1px solid var(--aw-divider-soft);
@@ -428,7 +429,7 @@ onUnmounted(() => {
 }
 
 .tool-btn.text {
-  padding: 4px 10px;
+  padding: var(--aw-btn-padding);
 }
 
 .tool-btn.download {
@@ -500,12 +501,13 @@ onUnmounted(() => {
 }
 
 .retry-btn {
-  font-size: var(--aw-text-caption);
+  font-size: var(--aw-text-fine);
   color: var(--aw-primary);
   background: none;
   border: 1px solid var(--aw-primary);
   border-radius: var(--aw-radius-xs);
-  padding: 4px 16px;
+  height: var(--aw-btn-height);
+  padding: var(--aw-btn-padding);
   cursor: pointer;
 }
 

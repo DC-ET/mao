@@ -133,6 +133,10 @@
   --aw-terminal-bg: #f5f5f7;
   --aw-terminal-header-bg: #f5f5f7;
   --aw-terminal-header-height: 36px;
+
+  /* 按钮统一度量（small）：EP 的 .el-button 与项目自定义按钮（.create-btn / .dialog-btn 等）共用 */
+  --aw-btn-height: 24px;
+  --aw-btn-padding: 5px 11px;
 }
 
 /* ============================================
@@ -442,9 +446,9 @@ a:hover {
  * 齐高，单独还原。
  */
 .el-button {
-  height: 24px;
-  padding: 5px 11px;
-  font-size: 12px;
+  height: var(--aw-btn-height);
+  padding: var(--aw-btn-padding);
+  font-size: var(--aw-text-fine);
   border-radius: calc(var(--el-border-radius-base) - 1px);
 }
 

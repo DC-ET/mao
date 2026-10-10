@@ -543,12 +543,12 @@ function handleSubmit() {
 
 .action-btn {
   width: 100%;
-  height: 28px;
+  height: var(--aw-btn-height);
   padding: 0;
   border-radius: var(--aw-radius-pill);
   border: 1px solid var(--aw-hairline);
   background: var(--aw-canvas);
-  font-size: 12px;
+  font-size: var(--aw-text-fine);
   font-weight: 500;
   cursor: pointer;
   transition: all 0.15s;

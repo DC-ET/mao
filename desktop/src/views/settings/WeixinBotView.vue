@@ -400,13 +400,14 @@ onUnmounted(() => {
 }
 
 .action-btn {
+  height: var(--aw-btn-height);
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 6px 12px;
+  padding: var(--aw-btn-padding);
   border: none;
   border-radius: var(--aw-radius-xs);
-  font-size: 13px;
+  font-size: var(--aw-text-fine);
   font-weight: 500;
   cursor: pointer;
   flex-shrink: 0;
@@ -461,15 +462,16 @@ onUnmounted(() => {
 }
 
 .bind-btn {
+  height: var(--aw-btn-height);
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 10px 20px;
+  padding: var(--aw-btn-padding);
   border: none;
   border-radius: var(--aw-radius-xs);
   background: var(--aw-primary);
   color: #fff;
-  font-size: 14px;
+  font-size: var(--aw-text-fine);
   font-weight: 500;
   cursor: pointer;
   transition: opacity 0.15s;
@@ -495,13 +497,14 @@ onUnmounted(() => {
 }
 
 .retry-btn {
+  height: var(--aw-btn-height);
   margin-top: 12px;
-  padding: 6px 16px;
+  padding: var(--aw-btn-padding);
   border: 1px solid var(--aw-primary);
   border-radius: var(--aw-radius-xs);
   background: transparent;
   color: var(--aw-primary);
-  font-size: 13px;
+  font-size: var(--aw-text-fine);
   cursor: pointer;
   transition: background 0.15s;
 }
@@ -533,10 +536,11 @@ onUnmounted(() => {
 }
 
 .dialog-btn {
-  padding: 6px 16px;
+  height: var(--aw-btn-height);
+  padding: var(--aw-btn-padding);
   border: none;
   border-radius: var(--aw-radius-xs);
-  font-size: 13px;
+  font-size: var(--aw-text-fine);
   font-weight: 500;
   cursor: pointer;
 }

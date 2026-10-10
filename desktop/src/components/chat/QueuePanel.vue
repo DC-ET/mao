@@ -395,19 +395,19 @@ async function handleDelete(queueId: string) {
 }
 
 .action-btn {
+  width: var(--aw-btn-height);
+  height: var(--aw-btn-height);
+  padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
   border-radius: var(--aw-radius-xs);
   border: none;
   background: transparent;
   color: var(--aw-ink-muted-80);
   cursor: pointer;
   transition: all 0.15s;
-  padding: 0;
-  font-size: 11px;
+  font-size: var(--aw-text-fine);
 }
 
 .action-btn:hover:not(:disabled) {
@@ -421,8 +421,9 @@ async function handleDelete(queueId: string) {
 }
 
 .insert-btn {
+  height: var(--aw-btn-height);
   width: auto;
-  padding: 0 8px;
+  padding: var(--aw-btn-padding);
   font-size: var(--aw-text-fine);
   color: var(--aw-primary);
   white-space: nowrap;

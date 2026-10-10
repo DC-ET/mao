@@ -520,11 +520,12 @@ onUnmounted(() => {
 }
 
 .terminal-search-btn {
+  width: var(--aw-btn-height);
+  height: var(--aw-btn-height);
+  padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
   border: none;
   border-radius: 4px;
   background: transparent;
@@ -560,13 +561,13 @@ onUnmounted(() => {
 }
 
 .terminal-takeover-btn {
-  height: 22px;
-  padding: 0 10px;
+  height: var(--aw-btn-height);
+  padding: var(--aw-btn-padding);
   border: 1px solid var(--aw-primary);
   border-radius: 4px;
   background: transparent;
   color: var(--aw-primary);
-  font-size: 12px;
+  font-size: var(--aw-text-fine);
   cursor: pointer;
 }
 
@@ -608,13 +609,13 @@ onUnmounted(() => {
 .terminal-keybar-btn {
   flex-shrink: 0;
   min-width: 40px;
-  height: 32px;
-  padding: 0 10px;
+  height: var(--aw-btn-height);
+  padding: var(--aw-btn-padding);
   border: 1px solid var(--aw-divider-soft);
   border-radius: 6px;
   background: var(--aw-canvas);
   color: var(--aw-ink);
-  font-size: 12px;
+  font-size: var(--aw-text-fine);
   cursor: pointer;
 }
 

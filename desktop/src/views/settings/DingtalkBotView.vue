@@ -178,13 +178,13 @@ onUnmounted(clearPollTimer)
 .binding-title { color: var(--aw-ink); font-size: 16px; font-weight: 600; margin-bottom: 5px; }
 .status-badge { color: var(--aw-primary); font-size: 12px; }
 .binding-actions { display: flex; gap: 10px; }
-.bind-btn, .dialog-btn, .open-link-btn, .unbind-btn { border-radius: var(--aw-radius-xs); font-size: 13px; font-weight: 500; cursor: pointer; }
-.bind-btn { border: 0; padding: 6px 12px; background: var(--aw-primary); color: #fff; }
-.unbind-btn { border: 1px solid var(--aw-danger); padding: 6px 12px; background: transparent; color: var(--aw-danger); }
+.bind-btn, .dialog-btn, .open-link-btn, .unbind-btn { border-radius: var(--aw-radius-xs); font-weight: 500; cursor: pointer; }
+.bind-btn { border: 0; height: var(--aw-btn-height); padding: var(--aw-btn-padding); background: var(--aw-primary); color: #fff; font-size: var(--aw-text-fine); }
+.unbind-btn { border: 1px solid var(--aw-danger); height: var(--aw-btn-height); padding: var(--aw-btn-padding); background: transparent; color: var(--aw-danger); font-size: var(--aw-text-fine); }
 .bind-btn:disabled, .unbind-btn:disabled, .open-link-btn:disabled { opacity: .55; cursor: not-allowed; }
 .dialog-content { padding: 8px 4px; text-align: center; }
 .dialog-title { color: var(--aw-ink); font-size: 15px; font-weight: 600; margin: 0 0 8px; }
 .dialog-desc, .status-text { color: var(--aw-ink-muted); font-size: 13px; }
-.open-link-btn { border: 1px solid var(--aw-primary); padding: 7px 14px; background: transparent; color: var(--aw-primary); }
-.dialog-btn { border: 1px solid var(--aw-hairline); padding: 7px 14px; background: transparent; color: var(--aw-ink-muted); }
+.open-link-btn { border: 1px solid var(--aw-primary); height: var(--aw-btn-height); padding: var(--aw-btn-padding); background: transparent; color: var(--aw-primary); font-size: var(--aw-text-fine); }
+.dialog-btn { border: 1px solid var(--aw-hairline); height: var(--aw-btn-height); padding: var(--aw-btn-padding); background: transparent; color: var(--aw-ink-muted); font-size: var(--aw-text-fine); }
 </style>

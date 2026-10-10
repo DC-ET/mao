@@ -162,12 +162,13 @@ async function copyContent(cmd: CommandItem) {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 6px 14px;
+  height: var(--aw-btn-height);
+  padding: var(--aw-btn-padding);
   border: none;
   border-radius: var(--aw-radius-xs);
   background: var(--aw-primary);
   color: #fff;
-  font-size: 13px;
+  font-size: var(--aw-text-fine);
   font-weight: 500;
   cursor: pointer;
   transition: opacity 0.15s;
@@ -225,8 +226,8 @@ async function copyContent(cmd: CommandItem) {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: var(--aw-btn-height);
+  height: var(--aw-btn-height);
   border: none;
   background: transparent;
   border-radius: var(--aw-radius-xs);

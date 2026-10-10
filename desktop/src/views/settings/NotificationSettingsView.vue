@@ -434,12 +434,12 @@ onMounted(() => {
 }
 
 .input-icon-btn {
+  width: var(--aw-btn-height);
+  height: var(--aw-btn-height);
+  padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  padding: 0;
   border: 0;
   background: transparent;
   color: var(--aw-ink-muted-48);
@@ -516,14 +516,15 @@ onMounted(() => {
 
 .primary-btn,
 .secondary-btn {
+  height: var(--aw-btn-height);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
   min-height: 34px;
-  padding: 7px 14px;
+  padding: var(--aw-btn-padding);
   border-radius: var(--aw-radius-xs);
-  font-size: 13px;
+  font-size: var(--aw-text-fine);
   font-weight: 500;
   cursor: pointer;
 }
