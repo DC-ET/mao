@@ -29,6 +29,13 @@
               <span v-else-if="isExpired(token.expiresAt)" class="badge badge-danger">已过期</span>
             </div>
             <div class="item-actions">
+              <el-tooltip
+                v-if="!token.revokedAt"
+                :content="token.canCopy ? '复制 Token' : '该 Token 签发于旧版本，未留存加密明文，无法再次复制；请吊销后重新签发'"
+                :show-after="300"
+              >
+                <button class="action-btn" :disabled="!token.canCopy" @click="copyToken(token)"><el-icon :size="14"><CopyDocument /></el-icon></button>
+              </el-tooltip>
               <el-tooltip content="调用记录" :show-after="300">
                 <button class="action-btn" @click="showCalls({ tokenId: token.id, title: token.name })"><el-icon :size="14"><Tickets /></el-icon></button>
               </el-tooltip>
@@ -320,7 +327,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import {
   api, searchSessions,
-  listApiTokens, issueApiToken, revokeApiToken, setTokenLogFullBody, reEnableToken,
+  listApiTokens, issueApiToken, revealApiToken, revokeApiToken, setTokenLogFullBody, reEnableToken,
   listWebhookTriggers, createWebhookTrigger, updateWebhookTrigger, deleteWebhookTrigger, rotateWebhookTriggerSecret,
   listOutboundSubscriptions, createOutboundSubscription, setOutboundSubscriptionEnabled, deleteOutboundSubscription,
   listOutboundDeliveries, listOpenApiCalls,
@@ -396,6 +403,15 @@ async function copyText(value: string): Promise<void> {
   }
 }
 
+/** 复制完整明文 Token：服务端解密后写入剪贴板，不经过任何中间展示 */
+async function copyToken(token: ApiTokenView): Promise<void> {
+  try {
+    await copyText(await revealApiToken(token.id))
+  } catch {
+    // handled by interceptor
+  }
+}
+
 async function fetchAgents(): Promise<void> {
   try {
     const { data } = await api.get('/agents')
@@ -462,7 +478,7 @@ async function submitToken(): Promise<void> {
     const issued = await issueApiToken({ name: tokenForm.value.name.trim(), scopes: tokenForm.value.scopes })
     tokenDialogVisible.value = false
     secretDialogTitle.value = 'Token 已签发'
-    secretDialogWarning.value = '请立即保存以下明文 Token，关闭后无法再次查看；泄露请立即吊销。'
+    secretDialogWarning.value = 'Token 已加密留存，可随时通过列表中的「复制 Token」按钮再次获取；泄露请立即吊销。'
     secretDialogUrl.value = ''
     secretDialogSecret.value = ''
     secretDialogToken.value = issued.plainToken
@@ -948,11 +964,6 @@ onMounted(() => {
 </style>
 
 <style>
-.open-api-dialog {
-  --el-font-size-base: 13px;
-  --el-font-size-small: 12px;
-}
-
 .open-api-dialog .el-dialog__title {
   font-size: 15px;
   font-weight: 600;

@@ -14,7 +14,8 @@ const { outputResult } = require('../output');
 
 const HELP = `用法:
   mao open token list
-  mao open token create --name <名称> [--scope open:run]        # scope 逗号分隔，首期仅 open:run；明文只显示一次
+  mao open token create --name <名称> [--scope open:run]        # scope 逗号分隔，首期仅 open:run
+  mao open token reveal --id <id>                               # 再次打印明文 Token（加密留存，随时可取）
   mao open token delete --id <id>
   mao open token log-full-body --id <id> --enabled true|false
   mao open token re-enable --id <id>
@@ -35,7 +36,7 @@ const HELP = `用法:
 说明:
   管理子命令（token/trigger/subscription）走登录会话 JWT，只能管理本人资源；
   API Token 仅在 /v1/open/** 生效，不能调用其它 REST 接口。
-  token/trigger/subscription 的 create 与 rotate-secret 返回的明文（token/secret）只出现一次，请当场保存。
+  API Token 明文加密留存，token reveal --id 可随时再次打印；触发器/订阅 secret 仍只在 create 与 rotate-secret 时出现一次，请当场保存。
   run 需 --api-token 传 mao_ 前缀 API Token；会话忙时自动排队（响应 queued=true，202 异步语义）。
   calls 查看本人 Token/触发器的入站调用流水。完整记录默认关闭，开启后请求体会进流水并留审计。
   连续失败达到阈值的 Token 会自动停用，恢复用 token re-enable。管理端重放与统计不在本 CLI。
@@ -82,6 +83,11 @@ async function tokenGroup(ctx) {
     case 'delete': {
       const id = requireNumber(flags, 'id', '令牌 ID');
       outputResult(await request({ ...common, method: 'DELETE', path: `/open/tokens/${id}` }), globals);
+      return;
+    }
+    case 'reveal': {
+      const id = requireNumber(flags, 'id', '令牌 ID');
+      outputResult(await request({ ...common, method: 'GET', path: `/open/tokens/${id}/plain` }), globals);
       return;
     }
     case 'log-full-body': {

@@ -244,11 +244,6 @@ onMounted(() => {
   gap: 10px;
 }
 
-/* EP 默认按钮字号取 --el-font-size-base（全局 17px），比本页 13px 标签大一圈 */
-.server-actions :deep(.el-button) {
-  font-size: 13px;
-}
-
 .server-msg {
   margin-top: 12px;
   font-size: 13px;

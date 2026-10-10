@@ -117,8 +117,6 @@ async function revoke() {
   try {
     await ElMessageBox.confirm('撤销后原链接立即失效，确定撤销？', '撤销分享', {
       type: 'warning',
-      // 全局 --el-font-size-base 是 17px，MessageBox 正文和按钮都取它，
-      // 会比本弹窗 13px 文案和紧凑按钮大一圈
       customClass: 'share-revoke-message-box',
     })
   } catch {
@@ -213,7 +211,6 @@ async function copy() {
 .share-revoke-message-box.el-message-box {
   --el-messagebox-font-size: 15px;
   --el-messagebox-content-font-size: 13px;
-  --el-font-size-base: 13px;
   width: min(380px, calc(100vw - 32px));
   padding: 14px 16px 12px;
   border-radius: var(--aw-radius-md, 12px);

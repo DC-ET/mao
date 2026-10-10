@@ -385,8 +385,15 @@ a:hover {
   --el-border-radius-base: var(--aw-radius-sm);
   --el-border-radius-small: var(--aw-radius-xs);
   --el-border-radius-round: var(--aw-radius-pill);
-  --el-font-size-base: 17px;
-  --el-font-size-small: 14px;
+  /*
+   * EP 控件字号基准。EP 有 49 条规则直接取 --el-font-size-base（按钮、输入框、下拉项、
+   * el-form 及表单标签、checkbox/radio、MessageBox 正文等），历史上误设为 17px（对齐
+   * --aw-text-body），导致这些控件比 App 控件区 13px 的文案大一圈，只能靠各处局部覆盖补救。
+   * 本项目 EP 只用于表单/弹窗/控件，统一按 13px；small/extra-small 取 App 的 12px。
+   * EP 的 size="small" 按钮是写死的 12px，不随此变量变。
+   */
+  --el-font-size-base: 13px;
+  --el-font-size-small: 12px;
   --el-font-size-extra-small: 12px;
   --el-fill-color: var(--aw-canvas-parchment);
   --el-fill-color-light: var(--aw-canvas-parchment);
@@ -397,16 +404,14 @@ a:hover {
 }
 
 /*
- * Element Plus 下拉列表（el-select）选项文字统一为 App 小号正文：
- * --el-font-size-base 被全局改成 17px，而 EP 下拉项默认取它，会比输入框大一圈、显得粗壮。
- * 选中项沿用「模型选择」列表的表达：常规字重 + 深色文字 + 淡蓝底（保留 EP 的 ✓）。
- * 用 .el-select-dropdown 前缀抬高优先级（盖过 EP 默认），同时低于各组件自带的
- * popper 定制（如仓库选择器的等宽 12px、输入区紧凑下拉），组件样式仍可覆盖。
+ * Element Plus 下拉列表（el-select）选项文字。字号已由 --el-font-size-base（13px）统一，
+ * 这里只定字体、字重和选中项颜色：选中项沿用「模型选择」列表的表达——常规字重 + 深色文字 +
+ * 淡蓝底（保留 EP 的 ✓）。用 .el-select-dropdown 前缀抬高优先级（盖过 EP 默认），同时低于
+ * 各组件自带的 popper 定制（如仓库选择器的等宽 12px、输入区紧凑下拉），组件样式仍可覆盖。
  */
 .el-select-dropdown .el-select-dropdown__item,
 .el-select-dropdown .el-select-dropdown__item.is-selected {
   font-family: var(--aw-font-text);
-  font-size: var(--aw-text-caption);
   font-weight: 400;
   color: var(--aw-body);
 }
@@ -416,12 +421,8 @@ a:hover {
 }
 
 /*
- * Element Plus 输入框 / 多行输入 / 日期区间统一为设置页小号正文（13px）：
- * .el-input / .el-textarea / .el-range-input 的 font-size 取 --el-font-size-base（17px），
- * 占位符与输入文字因此比页面 13px 标签、12px 提示大一圈（如消息通知「留空则保留已配置地址」、
- * 会话搜索「开始日期 / 结束日期」）。.el-range-separator 是 EP 写死的 14px，不随该变量走，不在其列。
- * 这里按元素单类选择器声明 13px，与 ProfileView / McpServersView / GitCredentialsView
- * 的输入框字号一致；组件级 2 类以上选择器（如工作区胶囊输入、设置弹窗）仍可覆盖。
+ * Element Plus 输入框 / 多行输入 / 日期区间的字体。字号已由 --el-font-size-base（13px）统一，
+ * 这里只指定字体，让输入文字与 App 正文一致。
  */
 .el-input,
 .el-textarea,
@@ -429,7 +430,6 @@ a:hover {
 .el-input__inner,
 .el-textarea__inner {
   font-family: var(--aw-font-text);
-  font-size: 13px;
 }
 
 /* Element Plus Dark Mode */

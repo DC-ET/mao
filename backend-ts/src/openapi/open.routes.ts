@@ -156,8 +156,14 @@ export function registerOpenApiRoutes(app: FastifyInstance, deps: OpenApiRouteDe
       throw new BusinessException(ErrorCode.PARAM_INVALID, 'name 与 scopes 必填');
     }
     const issued = await deps.apiTokenService.issue(userId, body.name, body.scopes as string[]);
-    // 明文只显示一次
+    // 明文本次返回；另加密落库，属主可随时经下方 plain 端点再次获取
     sendJson(reply, 200, ok(issued));
+  });
+
+  app.get('/v1/open/tokens/:id/plain', async (req, reply) => {
+    const userId = requireJwtIdentity(req);
+    const id = requirePositiveId((req.params as { id: string }).id);
+    sendJson(reply, 200, ok(await deps.apiTokenService.reveal(userId, id)));
   });
 
   app.delete('/v1/open/tokens/:id', async (req, reply) => {

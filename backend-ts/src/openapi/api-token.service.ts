@@ -3,6 +3,7 @@ import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { formatDateTime } from '../common/json.js';
 import type { MysqlApiTokenRepository } from './openapi.repository.js';
+import type { ApiTokenCipher } from './api-token-cipher.js';
 import { normalizeScopes, OPENAPI_SCOPES, type ApiTokenView, type OpenApiScope, type ApiToken } from './types.js';
 
 export type { OpenApiScope };
@@ -34,7 +35,7 @@ export function sha256Hex(value: string): string {
 
 export interface IssuedToken {
   id: number;
-  /** 明文仅此一次返回（落库只存 sha256）。 */
+  /** 明文本次返回，另以 AES-GCM 密文落库，属主可随时经 reveal 再次获取 */
   plainToken: string;
   view: ApiTokenView;
 }
@@ -64,7 +65,8 @@ export function hasScope(scopes: string[] | null | undefined, scope: OpenApiScop
 export class ApiTokenService {
   private outcomePolicy: TokenOutcomePolicy | null = null;
 
-  constructor(private readonly repo: MysqlApiTokenRepository) {}
+  /** cipher 为 null（未装配密钥）时不明文留存，canCopy=false、reveal 拒绝。 */
+  constructor(private readonly repo: MysqlApiTokenRepository, private readonly cipher: ApiTokenCipher | null = null) {}
 
   setOutcomePolicy(policy: TokenOutcomePolicy): void {
     this.outcomePolicy = policy;
@@ -90,6 +92,7 @@ export class ApiTokenService {
       name: trimmedName,
       tokenPrefix: plainToken.slice(0, TOKEN_PREFIX_LENGTH),
       tokenHash: sha256Hex(plainToken),
+      tokenCipher: this.cipher?.encrypt(plainToken) ?? null,
       scopes: JSON.stringify(validScopes),
       expiresAt,
     });
@@ -100,6 +103,7 @@ export class ApiTokenService {
         id,
         name: trimmedName,
         tokenPrefix: plainToken.slice(0, TOKEN_PREFIX_LENGTH),
+        canCopy: this.cipher != null,
         scopes: validScopes,
         expiresAt,
         revokedAt: null,
@@ -147,6 +151,7 @@ export class ApiTokenService {
       id: row.id!,
       name: row.name ?? '',
       tokenPrefix: row.tokenPrefix ?? '',
+      canCopy: row.tokenCipher != null,
       scopes: normalizeScopes(this.safeParseScopes(row.scopes)),
       expiresAt: row.expiresAt ?? null,
       revokedAt: row.revokedAt ?? null,
@@ -156,6 +161,24 @@ export class ApiTokenService {
       logFullBody: Number(row.logFullBody) === 1,
       createdAt: row.createdAt ?? null,
     }));
+  }
+
+  /**
+   * 属主再次获取明文 Token（解密 token_cipher）。仅认本人资源；旧版签发（无密文）或密钥缺失时拒绝。
+   * 吊销状态不拦截：属主对自己的行可见即可取回，取回的 Token 能否鉴权由 resolveByToken 决定。
+   */
+  async reveal(userId: number, id: number): Promise<{ plainToken: string }> {
+    const row = await this.repo.findById(id);
+    if (row?.id == null || row.userId !== userId) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, 'Token 不存在');
+    }
+    if (row.tokenCipher == null) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '该 Token 签发于旧版本，未留存加密明文，无法再次获取；请吊销后重新签发');
+    }
+    if (this.cipher == null) {
+      throw new BusinessException(ErrorCode.INTERNAL_ERROR, 'Token 解密密钥未配置');
+    }
+    return { plainToken: this.cipher.decrypt(row.tokenCipher) };
   }
 
   async revoke(userId: number, id: number): Promise<void> {

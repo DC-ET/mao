@@ -312,6 +312,7 @@ import type { FeishuInboundContext, FeishuNormalizedMessage } from './feishu/typ
 import { WsStreamingEventListener } from './session/ws/ws-streaming-event-listener.js';
 import { MysqlApiTokenRepository, MysqlOutboundDeliveryRepository, MysqlOutboundSubscriptionRepository, MysqlWebhookTriggerRepository } from './openapi/openapi.repository.js';
 import { ApiTokenService } from './openapi/api-token.service.js';
+import { ApiTokenCipher } from './openapi/api-token-cipher.js';
 import { FixedWindowRateLimiter } from './openapi/rate-limiter.js';
 import { OpenRunService, type OpenRunDeps } from './openapi/open-run.service.js';
 import { WebhookTriggerService, type WebhookTriggerDeps } from './openapi/webhook-trigger.service.js';
@@ -537,7 +538,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
 
   // 开放接口：API Token 身份层（preHandler 的 mao_ 前缀查库降级）+ 共享限流器
   const apiTokenRepo = new MysqlApiTokenRepository(db);
-  const apiTokenService = new ApiTokenService(apiTokenRepo);
+  const apiTokenCipher = new ApiTokenCipher(cfg.app.openapi.tokenSecretKey);
+  const apiTokenService = new ApiTokenService(apiTokenRepo, apiTokenCipher);
   const openApiRateLimiter = new FixedWindowRateLimiter();
   const openCallLogHolder: { current: OpenApiCallLogService | null } = { current: null };
 

@@ -25,6 +25,8 @@ export interface ApiToken {
   name?: string;
   tokenPrefix?: string | null;
   tokenHash?: string | null;
+  /** AES-GCM 加密的明文 Token（V147）；NULL = 旧版签发或密钥缺失，无法再次复制 */
+  tokenCipher?: string | null;
   scopes?: string | null;
   expiresAt?: string | null;
   revokedAt?: string | null;
@@ -91,11 +93,13 @@ export interface OutboundDelivery {
   sentAt?: string | null;
 }
 
-/** 管理列表响应形态（secret/哈希不出域）。 */
+/** 管理列表响应形态（哈希/密文不出域，仅告知能否再次复制）。 */
 export interface ApiTokenView {
   id: number;
   name: string;
   tokenPrefix: string;
+  /** true = 留有加密明文，可随时重新复制；false = 旧版签发（V147 前） */
+  canCopy: boolean;
   scopes: OpenApiScope[];
   expiresAt: string | null;
   revokedAt: string | null;

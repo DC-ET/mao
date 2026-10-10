@@ -515,11 +515,6 @@ onMounted(() => {
 </style>
 
 <style>
-.rules-dialog {
-  --el-font-size-base: 13px;
-  --el-font-size-small: 12px;
-}
-
 .rules-dialog .el-dialog__title {
   font-size: 15px;
   font-weight: 600;

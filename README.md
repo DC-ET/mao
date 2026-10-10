@@ -81,7 +81,7 @@ Mao 不是又一个 ChatGPT 套壳，也不是 Dify / n8n 那样的低代码工�
 - **LOCAL**：Electron 或 `mao-agent --local`；改的是你电脑上的目录，高风险操作可审批。
 - **拆活**：复杂任务用边路任务或子代理；重复劳动用定时任务，完成时钉钉 / 飞书 / 微信通知。
 - **不漏结果**：任务完成 / 失败、提问待答、审批待办、子代理回传都会进顶栏「任务收件箱」，点铃铛查看并一键跳回会话；可在「消息通知 → 站内收件箱」按类型开关。
-- **开放接口**：在「设置 → 开放接口」签发 API Token 或用入站 Webhook 触发器把外部系统（CI、客服工单、自建脚本）接入 Agent；需要把结果推回自建系统时配出站事件订阅。详见 [skills/mao-cli/reference/open-api.md](skills/mao-cli/reference/open-api.md)。
+- **开放接口**：在「设置 → 开放接口」签发 API Token 或用入站 Webhook 触发器把外部系统（CI、客服工单、自建脚本）接入 Agent；Token 明文加密留存，可随时用列表里的「复制 Token」再次获取；需要把结果推回自建系统时配出站事件订阅。详见 [skills/mao-cli/reference/open-api.md](skills/mao-cli/reference/open-api.md)。
 
 完整手册见 [USER_GUIDE.md](USER_GUIDE.md)。上线检查清单见 [business_process.md](skills/mao-cli/business_process.md)。
 

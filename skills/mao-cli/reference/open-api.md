@@ -14,7 +14,7 @@
 
 鉴权与边界要点：
 
-- **API Token**：`mao_` 前缀 + 48 位随机字符，sha256 落库；明文只在创建响应里出现一次。scope 首期仅 `open:run`，只能在 `/v1/open/**` 端点使用（调用其它 REST 接口一律 401）。每人最多 20 个未吊销 Token，默认 90 天过期，吊销即时生效。
+- **API Token**：`mao_` 前缀 + 48 位随机字符，sha256 落库；明文另以 AES-GCM 密文加密留存（密钥 `APP_OPENAPI_TOKEN_SECRET`，未配置回退内置默认密钥），属主可随时用 `open token reveal` 或桌面端「复制 Token」再次获取，不再限于创建时一次。2026-10-10 之前签发、未留密文的旧 Token 无法再取回明文，需吊销重签。scope 首期仅 `open:run`，只能在 `/v1/open/**` 端点使用（调用其它 REST 接口一律 401）。每人最多 20 个未吊销 Token，默认 90 天过期，吊销即时生效。轮换加密密钥后旧 Token 不能再复制明文（sha256 鉴权不受影响）。
 - **Webhook 触发器**：`pathToken` 决定公开 URL，`secret` 用于 HMAC-SHA256 签名（创建 / 轮换时只展示一次）。时间戳容忍 ±300 秒，签名基于原始请求体原文。不存在 / 已停用 / 验签失败统一返回 404 + `{code:3040,message:"not found"}`，不探测资源是否存在。连续 5 次执行失败自动停用，并在收件箱推送「触发器停用」。
 - **run 端点**：恒返回 202 异步语义（`sessionId` / `messageId` / `queued`）；目标会话忙时消息自动进入待发送队列（`queued=true`）。指定 `sessionId` 时，会话必须属于路径上的同一个 Agent，不一致返回参数错误，不会改用会话里的另一个 Agent 执行。触发器绑定会话同样要求与触发器的 Agent 一致。限流：每 Token 60 次/分钟，超限 429 + `Retry-After`。
 - **出站订阅**：目标 URL 必须 HTTPS（禁止 userinfo 与 hash 片段）；请求带 `X-Mao-Event` / `X-Mao-Timestamp` / `X-Mao-Signature`；失败按 1 / 5 / 25 分钟退避重试，3 次后置 FAILED 保留记录，不无限重投。`GET /v1/open/subscriptions/:id/deliveries` 可查最近投递。
@@ -29,7 +29,7 @@
 
 | 场景 | 命令 |
 |------|------|
-| 签发 / 查看 / 吊销 Token | `open token create` / `list` / `delete` |
+| 签发 / 查看 / 再次复制 / 吊销 Token | `open token create` / `list` / `reveal` / `delete` |
 | 建 / 改 / 删 / 启停触发器 | `open trigger create` / `update` / `delete` / `update --enabled` |
 | 轮换触发器密钥 | `open trigger rotate-secret` |
 | 配 / 启停 / 删出站订阅 | `open subscription create` / `set-enabled` / `delete` |
@@ -44,7 +44,7 @@
 
 ### 用途
 
-签发 API Token。**明文只在响应里出现一次**，复制保存；丢失只能吊销重签。
+签发 API Token。明文在响应里返回一次，同时加密留存，之后可随时用 `open token reveal` 再次获取。
 
 ### 参数说明
 
@@ -60,6 +60,26 @@ mao open token create --name "ci-trigger" --scope open:run
 ```
 
 响应 `data.token`（或 `--json` 下的字段）即 `mao_...` 明文，`tokenPrefix` 为前 12 位。
+
+## 命令：mao open token reveal
+
+### 用途
+
+再次打印指定 API Token 的明文（服务端解密加密留存的密文）。用于创建时没保存好、或需要把同一个 Token 配到新系统的场景；吊销后取回的 Token 也无法再鉴权。
+
+### 参数说明
+
+| 参数 | 必填 | 说明 |
+|------|------|------|
+| `--id` | 是 | 令牌 ID（`open token list` 可见） |
+
+### 示例
+
+```bash
+mao open token reveal --id 3
+```
+
+输出 `data.plainToken`。改动生效（V147 迁移）前签发的旧 Token 未留密文，会返回参数错误，需吊销重签。
 
 ## 命令：mao open trigger create
 
@@ -171,6 +191,7 @@ mao open calls get --id 100
 |------|-----------|
 | `run` 返回 403「该端点仅接受 API Token」 | 用了 JWT 调 run；run 只认 `mao_` Token |
 | `run` 返回 401 | Token 过期 / 已吊销，或 Token 用在了 `/v1/open` 之外的端点 |
+| `token reveal` 报「该 Token 签发于旧版本」 | 2026-10-10 之前签发的 Token 未留存加密明文，无法再取回；吊销后重新签发 |
 | `run` 返回 403「Token 已因连续失败被自动停用」 | 一小时内失败达到阈值；属主 `open token re-enable` 后恢复 |
 | hook 返回 404 + `not found` | 触发器不存在、已停用、或签名 / 时间戳不通过（统一措辞，不区分） |
 | hook 返回 429 | 该触发器限流；读 `Retry-After` 后重试 |

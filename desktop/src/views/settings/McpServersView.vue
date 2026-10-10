@@ -595,23 +595,10 @@ async function handleTest(server: MyMcpServer) {
 
 :deep(.mcp-server-dialog) {
   --el-dialog-title-font-size: 16px;
-  --el-font-size-base: 13px;
 }
 
 :deep(.mcp-server-dialog .el-dialog__header) {
   padding-bottom: 12px;
-}
-
-:deep(.mcp-server-dialog .el-form-item__label),
-:deep(.mcp-server-dialog .el-radio),
-:deep(.mcp-server-dialog .el-input__inner),
-:deep(.mcp-server-dialog .el-textarea__inner),
-:deep(.mcp-server-dialog .el-button) {
-  font-size: 13px;
-}
-
-:deep(.mcp-server-dialog .el-input__wrapper) {
-  font-size: 13px;
 }
 
 :deep(.mcp-server-dialog .el-dialog__footer .el-button) {

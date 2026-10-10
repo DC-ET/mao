@@ -529,6 +529,8 @@ export interface ApiTokenView {
   id: number
   name: string
   tokenPrefix: string
+  /** 留有加密明文，可随时重新复制；旧版（V147 前）签发的 Token 为 false */
+  canCopy: boolean
   scopes: string[]
   expiresAt: string | null
   revokedAt: string | null
@@ -597,6 +599,12 @@ export async function listApiTokens(): Promise<ApiTokenView[]> {
 export async function issueApiToken(payload: { name: string; scopes: string[] }): Promise<IssuedApiToken> {
   const { data } = await api.post('/open/tokens', payload)
   return data
+}
+
+/** 再次获取明文 Token（服务端解密 token_cipher）；旧版签发的 Token 会报错 */
+export async function revealApiToken(id: number): Promise<string> {
+  const { data } = await api.get(`/open/tokens/${id}/plain`)
+  return data.plainToken
 }
 
 export async function revokeApiToken(id: number): Promise<void> {

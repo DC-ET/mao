@@ -576,11 +576,6 @@ onMounted(() => {
 </style>
 
 <style>
-.memory-dialog {
-  --el-font-size-base: 13px;
-  --el-font-size-small: 12px;
-}
-
 .memory-dialog .el-dialog__title {
   font-size: 15px;
   font-weight: 600;

@@ -17,6 +17,7 @@ export class MysqlApiTokenRepository {
       name: token.name,
       tokenPrefix: token.tokenPrefix,
       tokenHash: token.tokenHash,
+      tokenCipher: token.tokenCipher ?? null,
       scopes: token.scopes ?? '[]',
       expiresAt: token.expiresAt ?? null,
     });

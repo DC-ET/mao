@@ -293,14 +293,6 @@ onBeforeUnmount(() => {
   line-height: 20px;
 }
 
-.profile-form :deep(.el-input__inner) {
-  font-size: 13px;
-}
-
-.profile-card :deep(.el-button) {
-  font-size: 13px;
-}
-
 .profile-card :deep(.el-tag) {
   font-size: 12px;
 }

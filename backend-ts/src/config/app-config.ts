@@ -99,6 +99,9 @@ export interface AppConfig {
       clientTimeoutSeconds: number;
       syncTimeoutSeconds: number;
     };
+    openapi: {
+      tokenSecretKey: string;
+    };
     search: {
       fulltextEnabled: boolean;
     };
@@ -215,6 +218,9 @@ const DEFAULTS: AppConfig = {
       secretKey: 'mao-mcp-default-secret-change-me',
       clientTimeoutSeconds: 120,
       syncTimeoutSeconds: 60,
+    },
+    openapi: {
+      tokenSecretKey: 'mao-openapi-token-default-key-v1-20261010',
     },
     search: {
       fulltextEnabled: true,
@@ -420,6 +426,9 @@ export function loadConfig(): AppConfig {
   }
   if (process.env.APP_MCP_SECRET) {
     cfg.app.mcp.secretKey = process.env.APP_MCP_SECRET;
+  }
+  if (process.env.APP_OPENAPI_TOKEN_SECRET) {
+    cfg.app.openapi.tokenSecretKey = process.env.APP_OPENAPI_TOKEN_SECRET;
   }
   if (process.env.APP_FEISHU_BOT_SECRET) {
     cfg.feishu.bot.appSecretKey = process.env.APP_FEISHU_BOT_SECRET;
