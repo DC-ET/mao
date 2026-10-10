@@ -53,7 +53,7 @@
       @paths-changed="applyWorkspacePathChange"
       @open-side-task="handleOpenSideTask"
       @open-subagent="handleOpenSubagent"
-      @open-trace="openTraceTab()"
+      @open-trace="handleOpenTrace"
       @edit-title="handleEditSideTaskTitle"
       @delete-side-task="handleDeleteSideTask"
       @promote-side-task="handlePromoteSideTask"
@@ -246,7 +246,9 @@ const inspectorViewType = computed<'chat' | 'side_task' | 'subagent'>(() => {
 
 const inspectorSessionId = computed(() => {
   if (inspectorViewType.value === 'chat') return sessionIdForTabs.value
-  return String(activeTab.value.sideSessionId ?? '')
+  // 占位边路 Tab（sideSessionId <= 0）尚未落库：返回空串，别让 '0' 冒充会话 id
+  const sid = activeTab.value.sideSessionId
+  return sid != null && sid > 0 ? String(sid) : ''
 })
 
 const sessionTitle = computed(() => {
@@ -567,6 +569,21 @@ function handleOpenSideTask(payload: { sideSessionId: number; title: string }) {
 
 function handleOpenSubagent(payload: { childSessionId: number; title: string }) {
   openSubagentTab(payload.childSessionId, payload.title)
+}
+
+/**
+ * 打开轨迹 Tab：主会话用单例 'trace'，边路 / 子代理会话按 'trace:{sid}' 另开一个，
+ * 标题带来源任务名，避免 Tab 条上两个「轨迹」分不清。stateKeySid 显式传主会话 id，
+ * 不依赖 currentSessionId 的 watch 同步时机。
+ */
+function handleOpenTrace(traceSessionId?: string) {
+  const key = sessionIdForTabs.value
+  if (!key) return
+  const traceSid = traceSessionId || key
+  openTraceTab(traceSid, {
+    stateKeySid: key,
+    title: traceSid === key ? undefined : `轨迹 · ${inspectorTitle.value}`,
+  })
 }
 
 provide('openSubagent', (payload: { childSessionId: number; title?: string }) => {

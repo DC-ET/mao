@@ -313,21 +313,28 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
   }
 
   /**
-   * 打开轨迹 Tab（run 轨迹透视）。每会话单例（id = 'trace'），已存在则直接激活。
-   * sid 缺省用当前会话；刷新还原入口传显式 sid（currentSessionId 可能尚未同步）。
+   * 打开轨迹 Tab（run 轨迹透视）。
+   * traceSessionId 缺省或等于主会话时用单例 id 'trace'（主会话自身的 run）；
+   * 边路 / 子代理会话用 'trace:{sid}'，同一中心 Tab 条里可与主轨迹并存，标题带来源任务名。
+   * opts.stateKeySid 显式传主会话 id（currentSessionId 可能尚未同步的还原入口用）；
+   * opts.title 仅新建时生效，复用已存在的 Tab 不改标题。
    * 刷新还原依赖它：持久化类型是 trace 时，restoreActiveTab 只按 id 在已有 tabs 里找，
    * 不先建出来就永远留在主会话。
    */
-  function openTraceTab(sid?: string) {
-    const state = getSessionState(sid)
-    const existing = state.tabs.find(t => t.type === 'trace')
+  function openTraceTab(traceSessionId?: string, opts?: { stateKeySid?: string; title?: string }) {
+    const key = opts?.stateKeySid ?? currentSessionId.value
+    const state = getSessionState(key)
+    const target = traceSessionId || key
+    const id = target === key ? 'trace' : 'trace:' + target
+    const existing = state.tabs.find(t => t.type === 'trace' && t.id === id)
     if (existing) {
+      existing.traceSessionId = target
       state.activeTabId = existing.id
     } else {
-      state.tabs.push({ id: 'trace', type: 'trace', title: '轨迹' })
-      state.activeTabId = 'trace'
+      state.tabs.push({ id, type: 'trace', title: opts?.title || '轨迹', traceSessionId: target })
+      state.activeTabId = id
     }
-    notifyTabsChanged(sid)
+    notifyTabsChanged(key)
   }
 
   /**
@@ -543,12 +550,16 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
    * restoreActiveTab 只在已有 state.tabs 里按 id 找，不会把轨迹 tab 建出来——
    * 不先 openTraceTab() 的话，上次停在轨迹 tab 的用户刷新后只会回到主会话。
    * 持久化类型不是 trace 时不插手，避免覆盖用户本次会话内的主动切换。
+   * 边路 / 子代理轨迹 Tab 刷新后不重建（与文件类 Tab 一致：只有 side_task / subagent
+   * 会重建）：子会话可能已被删除或被用户关闭，重建出来只会得到一个报错的轨迹视图。
    */
   function restoreTraceTab(parentSessionId: string): void {
     const sid = String(parentSessionId || '')
     if (!sid) return
-    if (getPersistedActiveTab(sid)?.type !== 'trace') return
-    openTraceTab(sid)
+    const persisted = getPersistedActiveTab(sid)
+    if (persisted?.type !== 'trace') return
+    if (persisted.tabId && persisted.tabId !== 'trace') return
+    openTraceTab(sid, { stateKeySid: sid })
     restoreActiveTab(sid)
   }
 

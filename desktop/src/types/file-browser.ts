@@ -29,6 +29,8 @@ export interface Tab {
   version?: number      // increment on each re-open to force remount
   /** 边路任务 / 子代理子会话 ID（type === 'side_task' | 'subagent'） */
   sideSessionId?: number
+  /** 轨迹 Tab 展示的会话 ID（type === 'trace'）：主会话自身，或某个边路 / 子代理会话 */
+  traceSessionId?: string
   /** 创建入口预置的上下文继承方式（占位 Tab 有意义：SideChatPanel 首条消息发出前展示并生效） */
   contextMode?: SideTaskContextMode
   /** 分叉来源（占位 Tab 有意义：首条消息发出时随 create_side_session 一起上报，之后不再变化） */

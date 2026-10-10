@@ -345,8 +345,8 @@ onMounted(() => {
   void loadFirstPage()
 })
 
-// 兜底：轨迹 Tab 每会话同 id（'trace'），若实例被跨会话复用（key 不含会话维度），
-// 只触发 props 变化而不重挂载，此时必须自己重拉，否则显示的是上一个会话的轨迹
+// 兜底：正常情况下 key（trace-{会话 id}）变化会重挂载并重拉；万一实例被复用、
+// 只触发 props 变化，必须自己重拉，否则显示的是上一个会话的轨迹
 watch(() => props.sessionId, () => {
   loadedPages.value = 1
   void loadFirstPage()

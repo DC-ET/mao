@@ -340,4 +340,80 @@ describe('激活 Tab 持久化与恢复', () => {
   })
 })
 
+describe('轨迹 Tab：主会话与边路 / 子代理会话', () => {
+  beforeEach(async () => {
+    setActivePinia(createPinia())
+    localStorage.clear()
+    resetCenterTabs()
+    removeSessionTabsFor(SESSION_ID)
+    await nextTick()
+  })
+
+  it('主会话轨迹用单例 id trace，重复打开只激活不新建', async () => {
+    const tabs = setup()
+    tabs.openTraceTab()
+    await nextTick()
+
+    expect(tabs.activeTabId.value).toBe('trace')
+    const main = tabs.tabs.value.find(t => t.type === 'trace')
+    expect(main?.id).toBe('trace')
+    expect(main?.traceSessionId).toBe(SESSION_ID)
+    expect(persistedTab(activeTabKeyFor(SESSION_ID))).toBe('trace')
+
+    tabs.openTraceTab()
+    expect(tabs.tabs.value.filter(t => t.type === 'trace').length).toBe(1)
+    expect(tabs.activeTabId.value).toBe('trace')
+  })
+
+  it('边路 / 子代理会话轨迹按 trace:{sid} 另开，与主轨迹并存', async () => {
+    const tabs = setup()
+    tabs.openTraceTab()
+    tabs.openTraceTab('7', { stateKeySid: SESSION_ID, title: '轨迹 · 提交代码并部署' })
+    await nextTick()
+
+    const traces = tabs.tabs.value.filter(t => t.type === 'trace')
+    expect(traces.map(t => t.id)).toEqual(['trace', 'trace:7'])
+    expect(traces[1].traceSessionId).toBe('7')
+    expect(traces[1].title).toBe('轨迹 · 提交代码并部署')
+    expect(tabs.activeTabId.value).toBe('trace:7')
+    expect(persistedTab(activeTabKeyFor(SESSION_ID))).toBe('trace:7')
+
+    // 再次打开同一边路会话的轨迹：复用已有 Tab，不重复建
+    tabs.openTraceTab('7', { stateKeySid: SESSION_ID })
+    expect(tabs.tabs.value.filter(t => t.type === 'trace').length).toBe(2)
+    expect(tabs.activeTabId.value).toBe('trace:7')
+
+    // 点回主会话徽标：激活主轨迹单例，边路轨迹 Tab 不受影响
+    tabs.openTraceTab(SESSION_ID, { stateKeySid: SESSION_ID })
+    expect(tabs.activeTabId.value).toBe('trace')
+  })
+
+  it('刷新还原：停在主轨迹 Tab 时重建并激活', async () => {
+    const tabs = setup()
+    tabs.openTraceTab()
+    await nextTick()
+
+    resetCenterTabs()
+    const restored = setup()
+    restored.restoreTraceTab(SESSION_ID)
+
+    expect(restored.activeTabId.value).toBe('trace')
+    expect(restored.tabs.value.find(t => t.type === 'trace')?.traceSessionId).toBe(SESSION_ID)
+  })
+
+  it('刷新还原：边路轨迹 Tab 不重建（子会话可能已删 / 已被关闭），留在 chat', async () => {
+    const tabs = setup()
+    tabs.openTraceTab('7', { stateKeySid: SESSION_ID })
+    await nextTick()
+    expect(persistedTab(activeTabKeyFor(SESSION_ID))).toBe('trace:7')
+
+    resetCenterTabs()
+    const restored = setup()
+    restored.restoreTraceTab(SESSION_ID)
+
+    expect(restored.tabs.value.some(t => t.type === 'trace')).toBe(false)
+    expect(restored.activeTabId.value).toBe('chat')
+  })
+})
+
 

@@ -62,7 +62,7 @@
               type="button"
               class="phase-badge phase-badge-action"
               :class="phaseClass"
-              @click="$emit('open-trace')"
+              @click="openTrace"
             >
               <span v-if="phase === 'RUNNING'" class="phase-spinner"></span>
               {{ phaseLabel }}
@@ -393,7 +393,7 @@ const emit = defineEmits<{
   'paths-changed': [change: WorkspacePathChange]
   'open-side-task': [payload: { sideSessionId: number; title: string }]
   'open-subagent': [payload: { childSessionId: number; title: string }]
-  'open-trace': []
+  'open-trace': [sessionId: string]
   'edit-title': [payload: { sideSessionId: number; title: string }]
   'delete-side-task': [sideSessionId: number]
   'promote-side-task': [sideSessionId: number]
@@ -485,9 +485,15 @@ const showGitTab = computed(() => {
 // 上下文详情抽屉：任何有会话 id 的可检视对象都能打开（水位/构成/记忆/手动治理随该会话）
 const showContextDrawer = computed(() => !!props.sessionId && props.viewType !== 'subagent')
 
-// 轨迹 tab 挂在主会话的中心 Tab 上（数据是主会话的 run），入口是任务状态徽标，
-// 只在主会话视图可点：徽标本身就是「执行中 / 已完成 / 失败」这些 run 状态的照面处。
-const showTraceEntry = computed(() => props.viewType === 'chat' && !!props.sessionId)
+// 轨迹入口：任何有会话 id 的可检视对象都能打开——徽标本身就是「执行中 / 已完成 / 失败」
+// 这些 run 状态的照面处。主会话用单例 Tab id 'trace'，边路 / 子代理按 'trace:{sid}' 并存，
+// 见 useCenterTabs.openTraceTab。占位边路 Tab（尚无真实会话 id）不露入口。
+const showTraceEntry = computed(() => !!props.sessionId)
+
+/** 徽标点击：带上当前展示会话的 id（showTraceEntry 已保证非空，这里再收窄一次类型） */
+function openTrace() {
+  if (props.sessionId) emit('open-trace', props.sessionId)
+}
 
 const showTabBar = computed(() => showFileTreeTab.value || showGitTab.value)
 
@@ -1360,7 +1366,7 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   letter-spacing: -0.224px;
 }
 
-/* 主会话视图里徽标是「运行轨迹」的入口（button），其余视图只是状态文本 */
+/* 徽标是「运行轨迹」的入口（button）：主会话 / 边路 / 子代理视图均可点 */
 .phase-badge-action {
   cursor: pointer;
   transition: filter 0.15s;

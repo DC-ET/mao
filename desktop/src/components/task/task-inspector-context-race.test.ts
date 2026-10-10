@@ -2,7 +2,8 @@
 // render，再用无 DOM 渲染器点按钮、读文本。
 // 覆盖：摘要懒加载的迟到响应不得跨会话回填；记忆条数相同的会话切换仍要重拉 snippet；
 // 上下文入口从检查器页签改为任务信息区的徽标 + 详情抽屉（抽屉随之懒加载、切会话自动收起）；
-// 运行轨迹入口改为点任务状态徽标（不再有独立「轨迹」按钮，且只在主会话视图可点）。
+// 运行轨迹入口改为点任务状态徽标（不再有独立「轨迹」按钮；主会话 / 边路 / 子代理视图均可点，
+// 各自打开对应会话的轨迹）。
 import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import * as Vue from 'vue'
@@ -194,14 +195,14 @@ function mountInspector(
       estimatedWindowTokens: 200000,
     },
   }))
-  const traceOpens = { value: 0 }
+  const traceOpens = { value: 0, sid: '' as string }
   const Host = defineComponent({
     render: () => h(ClientInspector as never, {
       title: 'T', phase: opts.phase ?? 'COMPLETED', panelCollapsed: false, fileProvider: null,
       sessionId: sid.value, contextWindow: contextWindow.value,
       executionMode: 'CLOUD', workspace: '/ws', gitProvider: null,
       viewType: opts.viewType,
-      onOpenTrace: () => { traceOpens.value++ },
+      onOpenTrace: (emittedSid: string) => { traceOpens.value++; traceOpens.sid = emittedSid },
     } as never),
   })
   const ops = nodeOps()
@@ -335,15 +336,29 @@ describe('TaskInspector 运行轨迹入口：点任务状态徽标（0.0.252）'
     m.clickStatusBadge()
     await flush()
     expect(m.traceOpens.value).toBe(1)
+    expect(m.traceOpens.sid).toBe('11')
   })
 
-  it('边路任务 / 子代理视图：状态徽标只是文本，不露轨迹入口', async () => {
+  it('边路任务 / 子代理视图：徽标同样可点，emit 各自的会话 id', async () => {
     for (const viewType of ['side_task', 'subagent'] as const) {
       const m = mountInspector([], { viewType })
       await flush()
-      expect(m.pageText()).toContain('已完成')
-      expect(m.buttonTexts().some(t => t.includes('已完成'))).toBe(false)
+      expect(m.buttonTexts().some(t => t.includes('已完成'))).toBe(true)
+
+      m.clickStatusBadge()
+      await flush()
+      expect(m.traceOpens.value).toBe(1)
+      expect(m.traceOpens.sid).toBe('11')
     }
+  })
+
+  it('没有会话 id（占位边路 Tab）时不露入口', async () => {
+    const m = mountInspector([], { viewType: 'side_task' })
+    m.sid.value = ''
+    await flush()
+
+    expect(m.pageText()).toContain('已完成')
+    expect(m.buttonTexts().some(t => t.includes('已完成'))).toBe(false)
   })
 
   it('取消 / 恢复等状态也有徽标可点，取消后仍进得去轨迹', async () => {
