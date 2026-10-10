@@ -101,11 +101,16 @@ async function handleItemClick(item: InboxItem) {
 </script>
 
 <template>
+  <!--
+    必须 teleport 到 body：同 UsageDrawer，抽屉由顶栏 InboxBell 渲染，
+    .top-nav 的 drag 区会吞掉伸进去的点击（420px 宽的抽屉左侧尤甚）。
+  -->
   <el-drawer
     v-model="visible"
     title="站内收件箱"
     class="inbox-drawer"
     size="min(420px, calc(100vw - 32px))"
+    append-to-body
     :with-header="true"
   >
     <div class="inbox-toolbar">

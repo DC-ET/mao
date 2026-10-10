@@ -1,8 +1,15 @@
 <template>
+  <!--
+    必须 teleport 到 body：抽屉由顶栏 UsageBell 渲染，而 .top-nav 带
+    -webkit-app-region: drag（Electron 窗口拖拽区），仅 .nav-right 自身
+    盒子是 no-drag。留在原处时抽屉头部会伸进拖拽区，落在里面的点击被系统
+    吞掉——统计周期最左侧几项（如今日/昨日）就点不动。
+  -->
   <el-drawer
     v-model="visible"
     class="usage-drawer"
     size="min(760px, calc(100vw - 32px))"
+    append-to-body
     :with-header="true"
   >
     <template #header>
