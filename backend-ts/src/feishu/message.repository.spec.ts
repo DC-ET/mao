@@ -47,3 +47,34 @@ describe('MysqlFeishuMessageRepository thread mapping', () => {
     expect(await repo.findThreadRootMessageId(7)).toBeNull();
   });
 });
+
+describe('MysqlFeishuMessageRepository pending enrichment rows', () => {
+  it('lists group-scope pending rows ordered by id with the default limit', async () => {
+    const { repo, query } = setup([{ id: 3, message_id: 'om_a', msg_type: 'merge_forward' }]);
+    const rows = await repo.listPendingGroupMessages('1', 'oc_group');
+    expect(rows).toEqual([{ id: 3, messageId: 'om_a', msgType: 'merge_forward' }]);
+    expect(query).toHaveBeenCalledWith(
+      `SELECT id, message_id, msg_type FROM feishu_group_message_log
+       WHERE app_id = ? AND chat_id = ? AND enrich_pending = 1 AND thread_id IS NULL
+       ORDER BY id ASC LIMIT 10`,
+      ['1', 'oc_group', 10],
+    );
+  });
+
+  it('filters by thread and clamps the limit for topic scope', async () => {
+    const { repo, query } = setup([]);
+    await repo.listPendingGroupMessages('1', 'oc_group', 'omt_1', 500);
+    expect(query).toHaveBeenCalledWith(
+      `SELECT id, message_id, msg_type FROM feishu_group_message_log
+       WHERE app_id = ? AND chat_id = ? AND enrich_pending = 1 AND thread_id = ?
+       ORDER BY id ASC LIMIT 50`,
+      ['1', 'oc_group', 'omt_1', 50],
+    );
+  });
+
+  it('does not query with a non-positive limit', async () => {
+    const { repo, query } = setup([]);
+    await repo.listPendingGroupMessages('1', 'oc_group', null, 0);
+    expect(query).toHaveBeenCalledWith(expect.stringContaining('LIMIT 1'), ['1', 'oc_group', 1]);
+  });
+});

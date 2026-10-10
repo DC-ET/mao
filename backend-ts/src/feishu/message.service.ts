@@ -235,6 +235,11 @@ export class FeishuMessageService {
     await this.repository.markGroupMessageEnriched(logId);
   }
 
+  /** 触发前同步补齐用：本群/话题仍待富化（enrich_pending=1）的行快照，按 id 升序。 */
+  listPendingGroupMessages(accountId: string, chatId: string, threadId?: string | null, limit?: number): Promise<Array<{ id: number; messageId: string; msgType: string }>> {
+    return this.repository.listPendingGroupMessages(accountId, chatId, threadId, limit);
+  }
+
   async buildGroupContext(accountId: string, context: FeishuInboundContext): Promise<FeishuGroupContext> {
     const conversation = await this.getOrCreateGroup(accountId, context);
     const threadId = context.threadId ?? null;

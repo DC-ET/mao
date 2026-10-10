@@ -25,10 +25,72 @@ const messageService = {
   completeInboundMessage: vi.fn(async () => undefined),
   recordGroupMessage: vi.fn(async () => 1),
   buildGroupContext: vi.fn(async () => ({ conversation: {} as never, messages: [], prompt: 'group context' })),
+  listPendingGroupMessages: vi.fn(async () => []),
   updateGroupMessageContent: vi.fn(async () => undefined),
   updateGroupMessageSenderName: vi.fn(async () => undefined),
   markGroupMessageEnriched: vi.fn(async () => undefined),
 };
+
+/** 群消息日志行快照：enrich_pending 语义与真实表一致，供 pending 富化竞态用例使用。 */
+interface LogRow {
+  id: number;
+  messageId: string;
+  msgType: string;
+  content: string;
+  enrichPending: number;
+  isMention: boolean;
+}
+
+/** 带内存日志的 messageService 假件：record/listPending/buildContext 都按 enrich_pending 语义联动，
+ *  buildGroupContext 复刻真实实现的「遇未富化行即停、@ 消息不注入」，用于验证触发前的补齐时序。 */
+function makeLogService(): { svc: Record<string, unknown>; rows: Map<number, LogRow>; calls: string[] } {
+  const rows = new Map<number, LogRow>();
+  const calls: string[] = [];
+  let nextId = 0;
+  const svc = {
+    claimInboundMessage: vi.fn(async () => true),
+    releaseInboundMessage: vi.fn(async () => undefined),
+    completeInboundMessage: vi.fn(async () => undefined),
+    recordGroupMessage: vi.fn(async (_accountId: string, event: FeishuNormalizedMessage, isMention: boolean, options?: { enrichPending?: boolean }) => {
+      nextId += 1;
+      rows.set(nextId, {
+        id: nextId, messageId: event.messageId!, msgType: event.messageType, content: event.text,
+        enrichPending: options?.enrichPending ? 1 : 0, isMention,
+      });
+      calls.push(`record:${event.messageId}`);
+      return nextId;
+    }),
+    listPendingGroupMessages: vi.fn(async () => [...rows.values()]
+      .filter((row) => row.enrichPending === 1)
+      .sort((a, b) => a.id - b.id)
+      .map((row) => ({ id: row.id, messageId: row.messageId, msgType: row.msgType }))),
+    buildGroupContext: vi.fn(async () => {
+      calls.push('context');
+      const lines: string[] = [];
+      for (const row of [...rows.values()].sort((a, b) => a.id - b.id)) {
+        if (row.enrichPending === 1) break;
+        if (row.isMention) continue;
+        lines.push(`${row.messageId}:${row.content}`);
+      }
+      return { conversation: {} as never, messages: [], prompt: lines.join('\n') };
+    }),
+    updateGroupMessageContent: vi.fn(async (id: number, content: string) => {
+      const row = rows.get(id);
+      if (row != null) {
+        row.content = content;
+        row.enrichPending = 0;
+      }
+      calls.push(`update:${id}`);
+    }),
+    updateGroupMessageSenderName: vi.fn(async () => undefined),
+    markGroupMessageEnriched: vi.fn(async (id: number) => {
+      const row = rows.get(id);
+      if (row != null) row.enrichPending = 0;
+      calls.push(`mark:${id}`);
+    }),
+  };
+  return { svc, rows, calls };
+}
 
 describe('FeishuInboundProcessor', () => {
   it('drops messages without sender or message id', async () => {
@@ -311,6 +373,8 @@ describe('FeishuInboundProcessor', () => {
         calls.push('context');
         return { conversation: {} as never, messages: [], prompt: 'ctx' };
       }),
+      // 本用例只验证入库保序，不验证富化竞态（见下方 flush 用例）。
+      listPendingGroupMessages: vi.fn(async () => []),
       updateGroupMessageContent: vi.fn(async () => undefined),
       updateGroupMessageSenderName: vi.fn(async () => undefined),
     };
@@ -646,6 +710,146 @@ describe('FeishuInboundProcessor', () => {
     }));
     await vi.waitFor(() => expect(messageService.markGroupMessageEnriched).toHaveBeenCalledWith(305));
     expect(messageService.updateGroupMessageContent).not.toHaveBeenCalled();
+  });
+
+  it('flushes a pending group merge_forward before building context when a trigger arrives mid-enrichment', async () => {
+    // 回归（线上事故）：用户先合并转发聊天记录、马上 @ 机器人。旧逻辑在触发读上下文时，
+    // buildGroupContext 会在 enrich_pending 行处截断，本轮 prompt 完全拿不到转发摘录——
+    // 而用户往往不会有下一轮触发来补，Agent 只能回复「看不到转发的内容」。
+    const excerpt = '【合并转发，共 2 条】\n[2026-10-10 10:30] 张三：自动生成的限流具体是哪…';
+    let releaseExpand!: (value: string) => void;
+    const expandGate = new Promise<string>((resolve) => { releaseExpand = resolve; });
+    const expandMergeForward = vi.fn(() => expandGate);
+    const { svc, calls } = makeLogService();
+    const onMessage = vi.fn(async (ctx: FeishuInboundContext) => ({ text: ctx.groupContext ?? '' }));
+    const processor = new FeishuInboundProcessor(makeHandler(onMessage), {
+      messageService: svc as never,
+      authorizeSender: async () => true,
+      expandMergeForward,
+      resolveMergeWorkspace: async () => '/ws/oc_group',
+    });
+    // 合并转发先到：落 pending 行，后台富化启动后被展开接口挡住。
+    await processor.process('1', makeEvent({
+      messageId: 'om_merge', messageType: 'merge_forward', text: 'Merged and Forwarded Message', isBotMentioned: false,
+    }));
+    await vi.waitFor(() => expect(expandMergeForward).toHaveBeenCalledOnce());
+    // 用户马上 @ 机器人：触发必须等富化完成再读上下文。
+    const triggerDone = processor.process('1', makeEvent({
+      messageId: 'om_ment', text: '@bot 你帮我看下这个问题是否存在', isBotMentioned: true,
+    }));
+    await vi.waitFor(() => expect(svc.listPendingGroupMessages).toHaveBeenCalled());
+    expect(svc.buildGroupContext).not.toHaveBeenCalled();
+    expect(onMessage).not.toHaveBeenCalled();
+    releaseExpand(excerpt);
+    await triggerDone;
+    // 展开只发生一次：flush 等待在飞行任务，不重复调展开接口。
+    expect(expandMergeForward).toHaveBeenCalledOnce();
+    // 富化回写先于读上下文，本轮 prompt 带上了转发摘录。
+    expect(calls.indexOf('context')).toBeGreaterThan(calls.findIndex((call) => call.startsWith('update:')));
+    expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
+      groupContext: expect.stringContaining(excerpt),
+    }));
+  });
+
+  it('expands a stuck pending merge_forward row when no enrichment is in flight', async () => {
+    // 后台富化从未启动（进程重启遗留等）时，行会一直挂在 enrich_pending 上，
+    // 旧逻辑同样在这行截断；现在触发前就地展开，内容本轮即可见。
+    const excerpt = '【合并转发，共 1 条】\n[2026-10-10 10:30] 张三：重启前转发的记录';
+    const { svc, rows, calls } = makeLogService();
+    rows.set(7, {
+      id: 7, messageId: 'om_stuck', msgType: 'merge_forward',
+      content: 'Merged and Forwarded Message', enrichPending: 1, isMention: false,
+    });
+    const expandMergeForward = vi.fn(async () => excerpt);
+    const onMessage = vi.fn(async (ctx: FeishuInboundContext) => ({ text: ctx.groupContext ?? '' }));
+    const processor = new FeishuInboundProcessor(makeHandler(onMessage), {
+      messageService: svc as never,
+      authorizeSender: async () => true,
+      expandMergeForward,
+      resolveMergeWorkspace: async () => '/ws/oc_group',
+    });
+    await processor.process('1', makeEvent({ messageId: 'om_ment', text: '@bot 继续', isBotMentioned: true }));
+    expect(expandMergeForward).toHaveBeenCalledWith('1', 'om_stuck', '/ws/oc_group');
+    expect(svc.updateGroupMessageContent).toHaveBeenCalledWith(7, excerpt);
+    expect(svc.markGroupMessageEnriched).toHaveBeenCalledWith(7);
+    expect(calls.indexOf('context')).toBeGreaterThan(calls.indexOf('update:7'));
+    expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
+      groupContext: expect.stringContaining(excerpt),
+    }));
+  });
+
+  it('leaves a pending image row without in-flight enrichment to the lazy placeholder path', async () => {
+    // 图片/文件/卡片的富化输入（imageKey/fileKey/事件 content）不在日志行里，无在飞行任务时
+    // 不能重建：维持占位由 Agent 经 feishu_download_file 懒加载兜底，也不提前清 enrich_pending。
+    const { svc, rows } = makeLogService();
+    rows.set(8, {
+      id: 8, messageId: 'om_img', msgType: 'image', content: '[图片 msg=om_img]', enrichPending: 1, isMention: false,
+    });
+    const downloadGroupImage = vi.fn(async () => '/ws/img.png');
+    const onMessage = vi.fn(async () => ({ text: 'r' }));
+    const processor = new FeishuInboundProcessor(makeHandler(onMessage), {
+      messageService: svc as never,
+      authorizeSender: async () => true,
+      downloadGroupImage,
+    });
+    await processor.process('1', makeEvent({ messageId: 'om_ment', text: '@bot 看图', isBotMentioned: true }));
+    expect(downloadGroupImage).not.toHaveBeenCalled();
+    expect(svc.markGroupMessageEnriched).not.toHaveBeenCalledWith(8);
+    expect(rows.get(8)!.enrichPending).toBe(1);
+  });
+
+  it('waits for an in-flight image enrichment before building context', async () => {
+    // 同一竞态的图片变体：图片先到、后台下载中，@ 触发读到上下文前先等下载完成，
+    // 占位行才不会把后续内容截断在 prompt 之外。
+    let releaseDownload!: () => void;
+    const downloadGate = new Promise<void>((resolve) => { releaseDownload = resolve; });
+    const { svc, calls } = makeLogService();
+    const onMessage = vi.fn(async (ctx: FeishuInboundContext) => ({ text: ctx.groupContext ?? '' }));
+    const processor = new FeishuInboundProcessor(makeHandler(onMessage), {
+      messageService: svc as never,
+      authorizeSender: async () => true,
+      downloadGroupImage: async () => {
+        await downloadGate;
+        return '/ws/feishu-image-om_img.png';
+      },
+    });
+    await processor.process('1', makeEvent({
+      messageId: 'om_img', messageType: 'image', imageKey: 'k', text: '', isBotMentioned: false,
+    }));
+    const triggerDone = processor.process('1', makeEvent({ messageId: 'om_ment', text: '@bot 看图', isBotMentioned: true }));
+    await vi.waitFor(() => expect(svc.listPendingGroupMessages).toHaveBeenCalled());
+    expect(svc.buildGroupContext).not.toHaveBeenCalled();
+    releaseDownload();
+    await triggerDone;
+    expect(svc.updateGroupMessageContent).toHaveBeenCalledWith(1, '[图片已保存: @{/ws/feishu-image-om_img.png}@]');
+    expect(calls.indexOf('context')).toBeGreaterThan(calls.indexOf('update:1'));
+    expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
+      groupContext: expect.stringContaining('@{/ws/feishu-image-om_img.png}@'),
+    }));
+  });
+
+  it('keeps the trigger unblocked when a stuck merge_forward fails to expand during flush', async () => {
+    // 补齐失败不能拖死触发：保留占位文本、放行水位线，行为与后台富化失败一致。
+    const { svc, rows } = makeLogService();
+    rows.set(9, {
+      id: 9, messageId: 'om_stuck_fail', msgType: 'merge_forward',
+      content: 'Merged and Forwarded Message', enrichPending: 1, isMention: false,
+    });
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const onMessage = vi.fn(async () => ({ text: 'r' }));
+      const processor = new FeishuInboundProcessor(makeHandler(onMessage), {
+        messageService: svc as never,
+        authorizeSender: async () => true,
+        expandMergeForward: async () => null,
+      });
+      await processor.process('1', makeEvent({ messageId: 'om_ment', text: '@bot 继续', isBotMentioned: true }));
+      expect(onMessage).toHaveBeenCalledOnce();
+      expect(svc.updateGroupMessageContent).not.toHaveBeenCalled();
+      expect(svc.markGroupMessageEnriched).toHaveBeenCalledWith(9);
+    } finally {
+      consoleWarn.mockRestore();
+    }
   });
 
   it('expands a thread merge_forward without an explicit mention when the thread session already exists', async () => {

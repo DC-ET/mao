@@ -58,6 +58,8 @@ export interface FeishuMessageRepository {
   listOverflowGroupMessages(appId: string, chatId: string, watermark: number, beforeId: number, limit: number, threadId?: string | null): Promise<FeishuGroupMessage[]>;
   /** 水位线之后最旧的未富化行。窗口外的占位行也算，水位线不得越过它。没有则 null。 */
   findOldestPendingGroupMessageId(appId: string, chatId: string, afterId: number, threadId?: string | null): Promise<number | null>;
+  /** 触发前同步补齐用：本群/话题范围内仍标记待富化（enrich_pending=1）的行快照，按 id 升序。 */
+  listPendingGroupMessages(appId: string, chatId: string, threadId?: string | null, limit?: number): Promise<Array<{ id: number; messageId: string; msgType: string }>>;
   /** 推进群聊上下文增量注入水位线（只前进不后退；仅非话题）。 */
   updateGroupContextWatermark(appId: string, chatId: string, logId: number): Promise<void>;
   /** 推进话题上下文增量注入水位线（只前进不后退）。 */
@@ -221,6 +223,18 @@ export class MysqlFeishuMessageRepository implements FeishuMessageRepository {
        WHERE app_id = ? AND chat_id = ? AND enrich_pending = 1 AND id > ?${threadFilter}`,
       params,
     ).then((row) => (row?.minId == null ? null : Number(row.minId)));
+  }
+
+  listPendingGroupMessages(appId: string, chatId: string, threadId: string | null = null, limit = 10): Promise<Array<{ id: number; messageId: string; msgType: string }>> {
+    const safeLimit = Math.max(1, Math.min(50, Math.floor(limit)));
+    const threadFilter = threadId != null ? ' AND thread_id = ?' : ' AND thread_id IS NULL';
+    const params = threadId != null ? [appId, chatId, threadId, safeLimit] : [appId, chatId, safeLimit];
+    // 只取快照字段：合并转发行仅凭 messageId 即可重建富化输入，其余类型靠在飞行任务等待。
+    return this.db.query<{ id: number; messageId: string; msgType: string }>(
+      `SELECT id, message_id, msg_type FROM feishu_group_message_log
+       WHERE app_id = ? AND chat_id = ? AND enrich_pending = 1${threadFilter}
+       ORDER BY id ASC LIMIT ${safeLimit}`, params,
+    );
   }
 
   async updateGroupContextWatermark(appId: string, chatId: string, logId: number): Promise<void> {

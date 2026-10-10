@@ -4,6 +4,9 @@ import type { FeishuMessageService } from './message.service.js';
 import { botSenderLabel, isBotSender } from './message.service.js';
 import { describeMessageText, FEISHU_CARD_UPGRADE_FALLBACK } from './message-detail.js';
 
+/** 触发前同步补齐的待富化行上限：正常只有刚到达的一两条，上限只是防御僵死行拖慢触发。 */
+const PENDING_FLUSH_LIMIT = 10;
+
 export interface FeishuInboundProcessorOptions {
   messageService?: FeishuMessageService;
   isBotMentioned?: (event: FeishuNormalizedMessage) => boolean;
@@ -42,6 +45,9 @@ export class FeishuInboundProcessor {
    * 防止并发入站处理乱序（图片尚未入库、水位线已被触发推进，导致该消息永远进不了上下文）。 */
   private readonly chatOrderQueues = new Map<string, Promise<unknown>>();
 
+  /** 后台富化在飞行登记（logId → 富化 Promise）：触发路径据此等待而非重复展开。 */
+  private readonly enrichments = new Map<number, Promise<void>>();
+
   private runInChatOrder<T>(accountId: string, chatId: string | null, fn: () => Promise<T>): Promise<T> {
     const key = `${accountId}:${chatId ?? ''}`;
     const previous = this.chatOrderQueues.get(key) ?? Promise.resolve();
@@ -53,6 +59,14 @@ export class FeishuInboundProcessor {
       release();
       if (this.chatOrderQueues.get(key) === queued) this.chatOrderQueues.delete(key);
     });
+  }
+
+  /** 登记后台富化在飞行任务；完成（无论成败）后摘登记，供 flushPendingEnrichments 判断能否直接等待。 */
+  private trackEnrichment(logId: number, enrichment: Promise<void>): void {
+    this.enrichments.set(logId, enrichment);
+    void enrichment.finally(() => {
+      if (this.enrichments.get(logId) === enrichment) this.enrichments.delete(logId);
+    }).catch(() => undefined);
   }
 
   async process(accountId: string, event: FeishuNormalizedMessage, skipClaim = false): Promise<void> {
@@ -103,7 +117,7 @@ export class FeishuInboundProcessor {
       const logId = await this.runInChatOrder(accountId, normalized.chatId,
         () => messageService.recordGroupMessage(accountId, { ...normalized, accountId }, mentioned, { enrichPending: needsEnrich }));
       if (!mentioned) {
-        void this.enrichGroupMessage(accountId, logId, normalized);
+        this.trackEnrichment(logId, this.enrichGroupMessage(accountId, logId, normalized));
         completed = true;
         return;
       }
@@ -111,9 +125,9 @@ export class FeishuInboundProcessor {
       try {
         let named = await this.resolveSenderName(normalized, accountId);
         // 未绑定用户不拉子消息。会触发的合并转发必须在 onMessage 之前展开，用户消息用摘录。
-        if (!mergeForward) void this.enrichGroupMessage(accountId, logId, named);
+        if (!mergeForward) this.trackEnrichment(logId, this.enrichGroupMessage(accountId, logId, named));
         if (this.options.authorizeSender != null && !(await this.options.authorizeSender(accountId, named))) {
-          if (mergeForward) void this.enrichGroupMessage(accountId, logId, named, { skipMergeForward: true });
+          if (mergeForward) this.trackEnrichment(logId, this.enrichGroupMessage(accountId, logId, named, { skipMergeForward: true }));
           await this.sendUnauthorizedGuide(accountId, named);
           completed = true;
           return;
@@ -133,6 +147,10 @@ export class FeishuInboundProcessor {
           return;
         }
         // 同群内上下文读取排在更早消息的入库之后（runInChatOrder 保序），保证图片等先到消息已可见。
+        // 读之前先同步补齐待富化行：后台富化与触发读取存在竞态——用户「先转发记录、马上 @ 机器人」时，
+        // buildGroupContext 会在 enrich_pending 行处截断，本轮 prompt 完全拿不到转发摘录，
+        // 而用户往往不会有下一轮触发来补（水位线未推进，内容只会原样留在日志行里）。
+        await this.flushPendingEnrichments(accountId, named);
         const group = await this.runInChatOrder(accountId, named.chatId,
           () => messageService.buildGroupContext(accountId, { ...named, accountId, messageId, maoUserId: resolvedUserId ?? undefined }));
         const quotedContext = await this.resolveQuoted(accountId, named);
@@ -215,6 +233,52 @@ export class FeishuInboundProcessor {
     }
   }
 
+  /** 触发前同步补齐范围内待富化行：合并转发行就地展开，其余类型等待已在飞行的后台富化。
+   *  只在读取群上下文前调用；查询失败不阻塞触发（维持原有占位行为）。 */
+  private async flushPendingEnrichments(accountId: string, event: FeishuNormalizedMessage): Promise<void> {
+    const messageService = this.options.messageService;
+    if (messageService == null || event.chatType !== 'group' || event.chatId == null || event.chatId === '') return;
+    let pending: Array<{ id: number; messageId: string; msgType: string }>;
+    try {
+      pending = await messageService.listPendingGroupMessages(accountId, event.chatId, event.threadId ?? null, PENDING_FLUSH_LIMIT);
+    } catch (error) {
+      console.warn(`查询飞书待富化群消息失败, chatId=${event.chatId}: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
+    for (const row of pending) {
+      await this.flushPendingRow(accountId, event, row);
+    }
+  }
+
+  private async flushPendingRow(accountId: string, event: FeishuNormalizedMessage, row: { id: number; messageId: string; msgType: string }): Promise<void> {
+    const messageService = this.options.messageService;
+    // 后台富化正在跑（并发入站的常态）：等它完成即可，不重复调展开/下载接口，
+    // 也不能提前清 enrich_pending——水位线先越过该行后，后台回填的内容反而永远进不了上下文。
+    const inFlight = this.enrichments.get(row.id);
+    if (inFlight != null) {
+      await inFlight;
+      return;
+    }
+    // 只有合并转发行能仅凭 messageId 重建富化输入；图片/文件/卡片的富化输入（imageKey/fileKey/事件
+    // content）不在日志行里，无在飞行任务时维持占位，由 Agent 经 feishu_download_file 懒加载兜底。
+    if (row.msgType !== 'merge_forward') return;
+    try {
+      const excerpt = await this.mergeForwardExcerpt(accountId, event, row.messageId);
+      if (excerpt != null && excerpt.trim() !== '') {
+        await messageService?.updateGroupMessageContent(row.id, excerpt);
+      }
+    } catch (error) {
+      console.warn(`触发前展开飞书合并转发失败, messageId=${row.messageId}: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      // 与后台富化一致：无论成败都放行水位线，失败时保留占位文本，不永久卡住后续消息。
+      try {
+        await messageService?.markGroupMessageEnriched(row.id);
+      } catch (error) {
+        console.warn(`飞书群消息富化完成标记失败, logId=${row.id}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  }
+
   /** 群图片预下载：成功回填日志行内容为本地路径引用；失败保留 msg 占位符走 feishu_download_file 懒加载兜底。
    *  独立图片消息整体替换占位文本；post 富文本（图片+文字）在原文后追加图片引用，保留文字内容。 */
   private async prewarmGroupImage(accountId: string, logId: number, event: FeishuNormalizedMessage): Promise<void> {
@@ -248,20 +312,26 @@ export class FeishuInboundProcessor {
     }
   }
 
-  /** 合并转发替换正文。失败、空结果或未配置展开函数时保持原文本。 */
-  private async expandMergeForwardText(accountId: string, event: FeishuNormalizedMessage): Promise<FeishuNormalizedMessage> {
-    if (event.messageType !== 'merge_forward' || event.messageId == null || this.options.expandMergeForward == null) return event;
+  /** 展开一条合并转发并返回摘录；未配置展开函数、调用失败或结果为空时返回 null（调用方保留固定英文）。 */
+  private async mergeForwardExcerpt(accountId: string, event: FeishuNormalizedMessage, messageId: string): Promise<string | null> {
+    if (this.options.expandMergeForward == null) return null;
     try {
       const workspace = this.options.resolveMergeWorkspace != null
         ? await this.options.resolveMergeWorkspace(accountId, event)
         : null;
-      const excerpt = await this.options.expandMergeForward(accountId, event.messageId, workspace);
-      if (excerpt == null || excerpt.trim() === '') return event;
-      return { ...event, text: excerpt };
+      return await this.options.expandMergeForward(accountId, messageId, workspace);
     } catch (error) {
-      console.warn(`展开飞书合并转发失败, messageId=${event.messageId}: ${error instanceof Error ? error.message : String(error)}`);
-      return event;
+      console.warn(`展开飞书合并转发失败, messageId=${messageId}: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
     }
+  }
+
+  /** 合并转发替换正文。失败、空结果或未配置展开函数时保持原文本。 */
+  private async expandMergeForwardText(accountId: string, event: FeishuNormalizedMessage): Promise<FeishuNormalizedMessage> {
+    if (event.messageType !== 'merge_forward' || event.messageId == null) return event;
+    const excerpt = await this.mergeForwardExcerpt(accountId, event, event.messageId);
+    if (excerpt == null || excerpt.trim() === '') return event;
+    return { ...event, text: excerpt };
   }
 
   /** 会触发的群合并转发：展开后回写日志并放行水位线，返回带摘录的事件。失败也要清 enrich_pending。 */
