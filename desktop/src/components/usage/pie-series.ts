@@ -23,6 +23,19 @@ export const PIE_OTHER_LABEL = '其他'
 export const PIE_SLICE_LIMIT = 8
 
 /**
+ * 环上贴百分比标签的占比下限：细条贴字会互相压叠，低于该占比只进图例与 tooltip。
+ * 注意标签隐藏时引出线也要一并关掉，否则 echarts 仍会画出指向空处的折线。
+ */
+export const PIE_LABEL_MIN_PERCENT = 8
+
+/** 各切片占比（%），与 slices 等长；调用数全为 0 时全为 0。 */
+export function pieSlicePercents(slices: PieSlice[]): number[] {
+  const total = slices.reduce((sum, s) => sum + s.value, 0)
+  if (total <= 0) return slices.map(() => 0)
+  return slices.map((s) => (s.value / total) * 100)
+}
+
+/**
  * 汇总行 → 饼图切片：按调用次数降序取前 limit 个，其余合并为「其他」。
  * 调用数为 0 的行不进饼图；全无数据时返回空数组（图表走空态）。
  */

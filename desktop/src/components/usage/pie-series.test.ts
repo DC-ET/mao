@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildPieSlices, PIE_OTHER_LABEL } from './pie-series'
+import { buildPieSlices, PIE_LABEL_MIN_PERCENT, PIE_OTHER_LABEL, pieSlicePercents } from './pie-series'
 
 describe('pie-series', () => {
   it('空数据返回空数组，图表走空态', () => {
@@ -51,5 +51,22 @@ describe('pie-series', () => {
       { name: 'B', callCount: 0, totalTokens: 0 },
     ])
     expect(slices.map((s) => s.name)).toEqual(['A'])
+  })
+
+  it('pieSlicePercents：按调用数占比，与切片等长；全零时为 0', () => {
+    const slices = buildPieSlices([
+      { name: 'A', callCount: 34, totalTokens: 340 },
+      { name: 'B', callCount: 28, totalTokens: 280 },
+      { name: 'C', callCount: 1, totalTokens: 10 },
+    ])
+    const percents = pieSlicePercents(slices)
+    expect(percents).toHaveLength(3)
+    expect(percents[0]).toBeCloseTo(53.97, 2)
+    expect(percents[1]).toBeCloseTo(44.44, 2)
+    expect(percents[2]).toBeCloseTo(1.59, 2)
+    // 只有前两片够门槛，会在环上贴百分比；细片只进图例与 tooltip
+    expect(percents.filter((p) => p >= PIE_LABEL_MIN_PERCENT)).toHaveLength(2)
+
+    expect(pieSlicePercents([])).toEqual([])
   })
 })

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatCacheHit, formatCost, formatNumber, formatPercent, formatToken, formatTokenWithUnit, pickTokenUnit } from './usageFormat'
+import { formatCacheHit, formatCost, formatNumber, formatPercent, formatPercentValue, formatToken, formatTokenWithUnit, pickTokenUnit } from './usageFormat'
 
 describe('usageFormat', () => {
   it('formatNumber：千分位；null/undefined 归零', () => {
@@ -62,5 +62,15 @@ describe('usageFormat', () => {
     expect(formatPercent(1, 4)).toBe('25%')
     expect(formatPercent(0, 0)).toBe('-')
     expect(formatPercent(3, 0)).toBe('-')
+  })
+
+  it('formatPercentValue：细片占比不四舍五入成 0%，也不拖长小数', () => {
+    expect(formatPercentValue(0.4)).toBe('<1%')
+    expect(formatPercentValue(1.4)).toBe('1.4%')
+    expect(formatPercentValue(9.94)).toBe('9.9%')
+    expect(formatPercentValue(9.96)).toBe('10%')
+    expect(formatPercentValue(34.2)).toBe('34%')
+    expect(formatPercentValue(0)).toBe('0%')
+    expect(formatPercentValue(Number.NaN)).toBe('0%')
   })
 })

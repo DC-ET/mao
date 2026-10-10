@@ -71,6 +71,18 @@ export function formatPercent(part: number, total: number): string {
   return `${Math.round((part / total) * 100)}%`
 }
 
+/**
+ * 占比展示（饼图图例 / 标签 / tooltip 用）：小于 1% 显示「<1%」，小于 10% 保留 1 位小数，
+ * 其余取整——细片的 0.4% 不会被四舍五入成 0%，也不拖着 4 位小数。
+ */
+export function formatPercentValue(percent: number): string {
+  if (!Number.isFinite(percent) || percent <= 0) return '0%'
+  if (percent < 1) return '<1%'
+  // 贴近 10% 时进位（9.96 → 10%），读数不出现 10.0% 这种跨档数字
+  if (percent < 9.95) return `${percent.toFixed(1)}%`
+  return `${Math.round(percent)}%`
+}
+
 function trimZero(value: number): string {
   return value.toFixed(1).replace(/\.0$/, '')
 }
