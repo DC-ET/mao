@@ -78,5 +78,5 @@ export function registerDingtalkBindingRoutes(app: FastifyInstance, deps: Dingta
 
 function redirectSettings(reply: FastifyReply, origin: string | null, query: string): FastifyReply {
   if (origin == null) return reply.code(400).type('text/plain').send(query);
-  return reply.redirect(`${origin}/settings/dingtalk-bot?${query}`);
+  return reply.redirect(`${origin}/settings/channel-bindings?tab=dingtalk&${query}`);
 }

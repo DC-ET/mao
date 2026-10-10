@@ -1,11 +1,8 @@
 <template>
-  <div class="dingtalk-bot-page">
-    <div class="page-header">
-      <h1 class="page-title">钉钉机器人绑定</h1>
-      <p class="page-desc">
-        完成钉钉账号授权后，即可在钉钉里私聊机器人，或在群里 @ 机器人。绑定把当前 Mao 用户和钉钉 userid 连起来，绑定一次对所有机器人通用。钉钉身份不会创建新的 Mao 账号。
-      </p>
-    </div>
+  <div class="dingtalk-bot-panel">
+    <p class="panel-desc">
+      完成钉钉账号授权后，即可在钉钉里私聊机器人，或在群里 @ 机器人。绑定把当前 Mao 用户和钉钉 userid 连起来，绑定一次对所有机器人通用。钉钉身份不会创建新的 Mao 账号。
+    </p>
 
     <div class="binding-card" :class="{ 'is-bound': authorized }">
       <div class="binding-header">
@@ -168,10 +165,9 @@ onUnmounted(clearPollTimer)
 </script>
 
 <style scoped>
-.dingtalk-bot-page { max-width: 640px; }
-.page-header { margin-bottom: 24px; }
-.page-title { font-size: 20px; font-weight: 600; color: var(--aw-ink); margin: 0 0 8px; }
-.page-desc, .binding-desc { font-size: 13px; color: var(--aw-ink-muted); line-height: 1.5; margin: 0; }
+.dingtalk-bot-panel { max-width: 640px; }
+.panel-desc { font-size: 13px; color: var(--aw-ink-muted); line-height: 1.5; margin: 0 0 16px; }
+.binding-desc { font-size: 13px; color: var(--aw-ink-muted); line-height: 1.5; margin: 0; }
 .binding-card { background: var(--aw-surface); border: 1px solid var(--aw-divider-soft); border-radius: 8px; padding: 18px; }
 .binding-card.is-bound { border-color: var(--aw-primary); }
 .binding-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; }

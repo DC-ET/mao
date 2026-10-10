@@ -1,14 +1,11 @@
 <template>
-  <div class="feishu-bot-page">
-    <div class="page-header">
-      <h1 class="page-title">飞书机器人绑定</h1>
-      <p class="page-desc">
-        完成飞书账号授权后，即可在飞书内与机器人对话。绑定以飞书 union_id 为身份锚，绑定一次对所有机器人通用。
-      </p>
-      <p v-if="ecpEnabled" class="page-desc ecp-hint">
-        管理员已开启 ECP 飞书登录：仅绑定飞书账号还不能在飞书里触发任务，还需要用同一邮箱完成一次 ECP 飞书登录（写入有效凭证后，CLOUD Agent 才能调用内部工具）。凭证过期后再次发消息会收到登录引导。
-      </p>
-    </div>
+  <div class="feishu-bot-panel">
+    <p class="panel-desc">
+      完成飞书账号授权后，即可在飞书内与机器人对话。绑定以飞书 union_id 为身份锚，绑定一次对所有机器人通用。
+    </p>
+    <p v-if="ecpEnabled" class="panel-desc ecp-hint">
+      管理员已开启 ECP 飞书登录：仅绑定飞书账号还不能在飞书里触发任务，还需要用同一邮箱完成一次 ECP 飞书登录（写入有效凭证后，CLOUD Agent 才能调用内部工具）。凭证过期后再次发消息会收到登录引导。
+    </p>
 
     <div class="binding-card" :class="{ 'is-bound': authorized }">
       <div class="binding-header">
@@ -214,11 +211,10 @@ onUnmounted(clearPollTimer)
 </script>
 
 <style scoped>
-.feishu-bot-page { max-width: 640px; }
-.page-header { margin-bottom: 24px; }
-.page-title { font-size: 20px; font-weight: 600; color: var(--aw-ink); margin: 0 0 8px; }
-.page-desc, .binding-desc { font-size: 13px; color: var(--aw-ink-muted); line-height: 1.5; margin: 0; }
-.ecp-hint { margin-top: 8px; }
+.feishu-bot-panel { max-width: 640px; }
+.panel-desc { font-size: 13px; color: var(--aw-ink-muted); line-height: 1.5; margin: 0 0 12px; }
+.ecp-hint { margin-top: 0; }
+.binding-desc { font-size: 13px; color: var(--aw-ink-muted); line-height: 1.5; margin: 0; }
 .binding-card { background: var(--aw-surface); border: 1px solid var(--aw-divider-soft); border-radius: 8px; padding: 18px; }
 .binding-card.is-bound { border-color: var(--aw-primary); }
 .binding-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; }

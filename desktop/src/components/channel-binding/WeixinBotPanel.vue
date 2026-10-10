@@ -1,11 +1,8 @@
 <template>
-  <div class="weixin-bot-page">
-    <div class="page-header">
-      <h1 class="page-title">微信Bot绑定</h1>
-      <p class="page-desc">
-        绑定微信Bot后，您可以通过微信与AI Agent进行对话，无需打开桌面客户端。
-      </p>
-    </div>
+  <div class="weixin-bot-panel">
+    <p class="panel-desc">
+      扫码绑定微信Bot后，您可以通过微信与AI Agent进行对话，无需打开桌面客户端。
+    </p>
 
     <div v-if="loading" class="empty-state">加载中...</div>
     <div v-else-if="bindingStatus.bound" class="binding-info">
@@ -338,25 +335,11 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.weixin-bot-page {
-  max-width: 640px;
-}
-
-.page-header {
-  margin-bottom: 24px;
-}
-
-.page-title {
-  font-size: 20px;
-  font-weight: 600;
-  color: var(--aw-ink);
-  margin: 0 0 8px;
-}
-
-.page-desc {
+.weixin-bot-panel { max-width: 640px; }
+.panel-desc {
   font-size: 13px;
   color: var(--aw-ink-muted);
-  margin: 0;
+  margin: 0 0 16px;
   line-height: 1.5;
 }
 

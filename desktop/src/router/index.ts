@@ -87,19 +87,9 @@ const routes: RouteRecordRaw[] = [
             component: () => import('../views/settings/ApprovalRulesView.vue')
           },
           {
-            path: 'weixin-bot',
-            name: 'WeixinBot',
-            component: () => import('../views/settings/WeixinBotView.vue')
-          },
-          {
-            path: 'feishu-bot',
-            name: 'FeishuBot',
-            component: () => import('../views/settings/FeishuBotView.vue')
-          },
-          {
-            path: 'dingtalk-bot',
-            name: 'DingtalkBot',
-            component: () => import('../views/settings/DingtalkBotView.vue')
+            path: 'channel-bindings',
+            name: 'ChannelBindings',
+            component: () => import('../views/settings/ChannelBindingsView.vue')
           },
           {
             path: 'mcp-servers',

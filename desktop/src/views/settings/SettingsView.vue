@@ -30,14 +30,8 @@
         <router-link to="/settings/approval-rules" class="settings-nav-item" active-class="active">
           审批规则
         </router-link>
-        <router-link to="/settings/weixin-bot" class="settings-nav-item" active-class="active">
-          微信Bot
-        </router-link>
-        <router-link to="/settings/feishu-bot" class="settings-nav-item" active-class="active">
-          飞书机器人
-        </router-link>
-        <router-link to="/settings/dingtalk-bot" class="settings-nav-item" active-class="active">
-          钉钉Bot
+        <router-link to="/settings/channel-bindings" class="settings-nav-item" active-class="active">
+          渠道绑定
         </router-link>
         <router-link to="/settings/mcp-servers" class="settings-nav-item" active-class="active">
           MCP 服务器
