@@ -121,7 +121,7 @@ describe('MysqlLlmModelRepository', () => {
     await repo.listProviders();
     await repo.listActiveText();
     await repo.findFirstActiveByType('text');
-    await repo.countActiveExcept(1);
+    await repo.countActiveTextExcept(1);
     const model = { name: 'm', provider: 'openai', modelId: 'g' };
     await repo.insert(model as never);
     await repo.updateById({ id: 1, ...model } as never);

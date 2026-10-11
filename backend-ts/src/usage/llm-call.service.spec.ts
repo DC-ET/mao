@@ -234,7 +234,7 @@ describe('LlmCallService 用户端用量汇总（/v1/llm-calls/me/summary|trends
     vi.setSystemTime(date);
   }
 
-  it('summaryForUser：默认 last30 闭区间窗口，四个聚合均带 userId', async () => {
+  it('summaryForUser：默认 last30 半开窗口，四个聚合均带 userId', async () => {
     freeze(new Date('2026-10-10T12:00:00+08:00'));
     const { service, repo } = build();
     const result = await service.summaryForUser(7);
@@ -242,7 +242,7 @@ describe('LlmCallService 用户端用量汇总（/v1/llm-calls/me/summary|trends
     for (const mock of [repo.aggregateSummary, repo.aggregateByModel, repo.aggregateByScene, repo.aggregateByAgent]) {
       expect(mock).toHaveBeenCalledWith(7, expect.objectContaining({
         startAt: '2026-09-11 00:00:00',
-        endAt: '2026-10-10 23:59:59',
+        endAtExclusive: '2026-10-11 00:00:00',
       }));
     }
     vi.useRealTimers();
@@ -254,27 +254,27 @@ describe('LlmCallService 用户端用量汇总（/v1/llm-calls/me/summary|trends
     await service.summaryForUser(7, 'today');
     expect(repo.aggregateSummary).toHaveBeenLastCalledWith(7, expect.objectContaining({
       startAt: '2026-10-10 00:00:00',
-      endAt: '2026-10-10 23:59:59',
+      endAtExclusive: '2026-10-11 00:00:00',
     }));
     await service.summaryForUser(7, 'yesterday');
     expect(repo.aggregateSummary).toHaveBeenLastCalledWith(7, expect.objectContaining({
       startAt: '2026-10-09 00:00:00',
-      endAt: '2026-10-09 23:59:59',
+      endAtExclusive: '2026-10-10 00:00:00',
     }));
     await service.summaryForUser(7, 'week');
     expect(repo.aggregateSummary).toHaveBeenLastCalledWith(7, expect.objectContaining({
       startAt: '2026-10-05 00:00:00',
-      endAt: '2026-10-10 23:59:59',
+      endAtExclusive: '2026-10-11 00:00:00',
     }));
     await service.summaryForUser(7, 'month');
     expect(repo.aggregateSummary).toHaveBeenLastCalledWith(7, expect.objectContaining({
       startAt: '2026-10-01 00:00:00',
-      endAt: '2026-10-10 23:59:59',
+      endAtExclusive: '2026-10-11 00:00:00',
     }));
     await service.summaryForUser(7, 'last7');
     expect(repo.aggregateSummary).toHaveBeenLastCalledWith(7, expect.objectContaining({
       startAt: '2026-10-04 00:00:00',
-      endAt: '2026-10-10 23:59:59',
+      endAtExclusive: '2026-10-11 00:00:00',
     }));
     vi.useRealTimers();
   });
@@ -294,12 +294,12 @@ describe('LlmCallService 用户端用量汇总（/v1/llm-calls/me/summary|trends
     await service.summaryForUser(7, 'lastWeek');
     expect(repo.aggregateSummary).toHaveBeenLastCalledWith(7, expect.objectContaining({
       startAt: '2026-09-28 00:00:00',
-      endAt: '2026-10-04 23:59:59',
+      endAtExclusive: '2026-10-05 00:00:00',
     }));
     await service.summaryForUser(7, 'lastMonth');
     expect(repo.aggregateSummary).toHaveBeenLastCalledWith(7, expect.objectContaining({
       startAt: '2026-09-01 00:00:00',
-      endAt: '2026-09-30 23:59:59',
+      endAtExclusive: '2026-10-01 00:00:00',
     }));
     vi.useRealTimers();
   });
@@ -310,13 +310,13 @@ describe('LlmCallService 用户端用量汇总（/v1/llm-calls/me/summary|trends
     await service.summaryForUser(7, 'custom', { startDate: '2026-08-01', endDate: '2026-08-15' });
     expect(repo.aggregateSummary).toHaveBeenLastCalledWith(7, expect.objectContaining({
       startAt: '2026-08-01 00:00:00',
-      endAt: '2026-08-15 23:59:59',
+      endAtExclusive: '2026-08-16 00:00:00',
     }));
     // 日期缺省（前端两个日期都必填，这里兜底防直接调用）：等同 last30
     await service.summaryForUser(7, 'custom');
     expect(repo.aggregateSummary).toHaveBeenLastCalledWith(7, expect.objectContaining({
       startAt: '2026-09-11 00:00:00',
-      endAt: '2026-10-10 23:59:59',
+      endAtExclusive: '2026-10-11 00:00:00',
     }));
     vi.useRealTimers();
   });
@@ -353,7 +353,7 @@ describe('LlmCallService 用户端用量汇总（/v1/llm-calls/me/summary|trends
     expect(day.buckets.every((b) => b.callCount === 0 && b.totalTokens === 0 && b.cost === 0)).toBe(true);
     expect(repo.aggregateTrend).toHaveBeenCalledWith(
       7,
-      expect.objectContaining({ startAt: '2026-10-04 00:00:00', endAt: '2026-10-10 23:59:59' }),
+      expect.objectContaining({ startAt: '2026-10-04 00:00:00', endAtExclusive: '2026-10-11 00:00:00' }),
       'day',
     );
     await service.trendsForUser(7, 'last7', 'hour');

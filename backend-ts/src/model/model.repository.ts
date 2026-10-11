@@ -158,9 +158,10 @@ export class MysqlLlmModelRepository implements LlmModelRepository {
     await this.db.execute(`UPDATE llm_model SET is_default = 0 WHERE is_default = 1 AND ${notDeleted()}`);
   }
 
-  async countActiveExcept(id: number): Promise<number> {
+  /** 除 id 外启用中的 text 模型数：停用默认模型前的「还有没有别的默认可用」守位。 */
+  async countActiveTextExcept(id: number): Promise<number> {
     const row = await this.db.queryOne<{ cnt: number }>(
-      `SELECT COUNT(*) AS cnt FROM llm_model WHERE status = 1 AND id <> ? AND ${notDeleted()}`,
+      `SELECT COUNT(*) AS cnt FROM llm_model WHERE status = 1 AND model_type = 'text' AND id <> ? AND ${notDeleted()}`,
       [id],
     );
     return Number(row?.cnt ?? 0);

@@ -268,12 +268,16 @@ export class ModelService {
     }
     const model = await this.getModel(id);
     if (status === 0 && model.isDefault != null && model.isDefault === 1) {
-      const activeCount = await this.modelRepo.countActiveExcept(model.id!);
+      // 只数「同样能当默认」的启用中 text 模型——findDefault() 带 model_type = 'text'，
+      // 拿 audio/image 计数会让守卫在"还有别的默认可用"时误判为唯一而拒绝停用。
+      const activeCount = await this.modelRepo.countActiveTextExcept(model.id!);
       if (activeCount === 0) {
         throw new BusinessException(ErrorCode.PARAM_INVALID.code, '不能停用唯一启用的模型，请先启用其他模型');
       }
-      model.isDefault = 0;
-      await this.modelRepo.clearDefaultFlag();
+      // 停用不动 is_default：默认指定是独立语义，取消只能走显式的 updateModel(isDefault = 0)。
+      // 这里顺手清零会让 deleteModel 的守卫被绕过，且 findDefault()（要求 status = 1）
+      // 随后返回 null → reassignModelId(id, null) 把所有 session.model_id 置 NULL，
+      // 会话再跑时抛 MODEL_NOT_FOUND。
     }
     model.status = status;
     await this.modelRepo.updateById(model);

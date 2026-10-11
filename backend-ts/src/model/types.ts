@@ -59,7 +59,8 @@ export interface LlmModelRepository {
   updateById(model: LlmModel): Promise<void>;
   deleteById(id: number): Promise<void>;
   clearDefaultFlag(): Promise<void>;
-  countActiveExcept(id: number): Promise<number>;
+  /** 除 id 外启用中的 text 模型数（与 findDefault 的 model_type = 'text' 口径一致）。 */
+  countActiveTextExcept(id: number): Promise<number>;
 }
 
 export interface SessionModelRepository {

@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { requireRequestPermission, requireUserId, sendOk } from '../common/http-error.js';
+import { addDaysYmd } from '../common/json.js';
 import { queryInt, queryOptBool, queryOptInt, queryOptStr } from '../common/request.js';
 import type { PermissionService } from '../permission/permission.service.js';
 import { parseUsageRange, type LlmCallService, type UsageDateRange } from './llm-call.service.js';
@@ -10,10 +11,15 @@ export interface LlmCallRouteDeps {
   permissionService: PermissionService;
 }
 
-function parseDateRange(startDate?: string, endDate?: string): { startAt?: string; endAt?: string } {
+/**
+ * 自定义起止日期 → 半开窗口 [startAt, endAtExclusive)。
+ * 上界取次日 00:00:00：created_at 是 DATETIME(3)，字典序上 '...59.000' > '...59'，
+ * 用 23:59:59 闭区间会漏掉结束日最后一秒的全部毫秒行。口径同 admin-analytics。
+ */
+function parseDateRange(startDate?: string, endDate?: string): { startAt?: string; endAtExclusive?: string } {
   return {
     startAt: startDate ? `${startDate} 00:00:00` : undefined,
-    endAt: endDate ? `${endDate} 23:59:59` : undefined,
+    endAtExclusive: endDate ? `${addDaysYmd(endDate, 1)} 00:00:00` : undefined,
   };
 }
 
@@ -50,7 +56,7 @@ export function registerLlmCallRoutes(app: FastifyInstance, deps: LlmCallRouteDe
       scene: queryOptStr(request, 'scene'),
       success: queryOptBool(request, 'success'),
       startAt: range.startAt,
-      endAt: range.endAt,
+      endAtExclusive: range.endAtExclusive,
     });
     return sendOk(reply, result);
   });
@@ -68,7 +74,7 @@ export function registerLlmCallRoutes(app: FastifyInstance, deps: LlmCallRouteDe
       scene: queryOptStr(request, 'scene'),
       success: queryOptBool(request, 'success'),
       startAt: range.startAt,
-      endAt: range.endAt,
+      endAtExclusive: range.endAtExclusive,
     });
     return sendOk(reply, result);
   });

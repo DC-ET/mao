@@ -4,8 +4,13 @@ import type { Agent, Message, Session, UserRow } from '../domain/types.js';
 import { addDaysYmd, shanghaiYmd } from '../common/json.js';
 
 export interface AnalyticsStore {
-  countSessionsBetween(start: string, end: string): Promise<number>;
-  countMessagesBetween(start: string, end: string): Promise<number>;
+  /**
+   * 统计 [startAt, endAtExclusive) 半开区间的条数。
+   * 上界必须是排他值（次日 00:00:00）：created_at 已是 DATETIME(3)，
+   * 用 `<= 当日 23:59:59` 会按字典序漏掉当日最后一秒的全部毫秒行。
+   */
+  countSessionsBetween(startAt: string, endAtExclusive: string): Promise<number>;
+  countMessagesBetween(startAt: string, endAtExclusive: string): Promise<number>;
   selectTokenStatsGroupByAgent(): Promise<Array<{ agentId: number; totalTokens: number; messageCount: number }>>;
   listAgents(): Promise<Agent[]>;
   getAgent(id: number): Promise<Agent | null>;
@@ -20,12 +25,13 @@ export interface AnalyticsStore {
 export class AnalyticsDbStore implements AnalyticsStore {
   constructor(private readonly db: Db) {}
 
-  countSessionsBetween(start: string, end: string): Promise<number> {
-    return this.count('session', 'created_at >= ? AND created_at <= ? AND deleted = 0', [start, end]);
+  /** [startAt, endAtExclusive) 半开区间；created_at 是 DATETIME(3)，见接口注释。 */
+  countSessionsBetween(startAt: string, endAtExclusive: string): Promise<number> {
+    return this.count('session', 'created_at >= ? AND created_at < ? AND deleted = 0', [startAt, endAtExclusive]);
   }
 
-  countMessagesBetween(start: string, end: string): Promise<number> {
-    return this.count('message', 'created_at >= ? AND created_at <= ? AND deleted = 0', [start, end]);
+  countMessagesBetween(startAt: string, endAtExclusive: string): Promise<number> {
+    return this.count('message', 'created_at >= ? AND created_at < ? AND deleted = 0', [startAt, endAtExclusive]);
   }
 
   async selectTokenStatsGroupByAgent(): Promise<Array<{ agentId: number; totalTokens: number; messageCount: number }>> {
@@ -87,10 +93,12 @@ export class AnalyticsService {
     const today = shanghaiYmd();
     for (let i = days - 1; i >= 0; i--) {
       const date = addDaysYmd(today, -i);
+      // 半开区间 [当日 00:00:00, 次日 00:00:00)：created_at 是 DATETIME(3)，
+      // 用 23:59:59 闭区间会按字典序漏掉当日最后一秒（23:59:59.001 ~ .999）的全部行。
       const dayStart = `${date} 00:00:00`;
-      const dayEnd = `${date} 23:59:59`;
-      const sessions = await this.store.countSessionsBetween(dayStart, dayEnd);
-      const messages = await this.store.countMessagesBetween(dayStart, dayEnd);
+      const dayEndExclusive = `${addDaysYmd(date, 1)} 00:00:00`;
+      const sessions = await this.store.countSessionsBetween(dayStart, dayEndExclusive);
+      const messages = await this.store.countMessagesBetween(dayStart, dayEndExclusive);
       trends.push({ date, sessions, messages });
     }
     return { trends };
