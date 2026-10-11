@@ -928,11 +928,16 @@ export interface SignalWatcherInput {
   agentId: number
   url: string
   method: string
-  headers: Record<string, string> | null
-  body: string | null
+  /**
+   * 请求头整体下发；省略该键 = 服务端保留原值（`undefined`），
+   * 显式 `null` / `{}` = 清空。前端按「未填任何请求头就不下发」的语义省略。
+   */
+  headers?: Record<string, string> | null
+  /** 同 headers：省略 = 保留原值，`null` = 清空（POST 下不可为空）。 */
+  body?: string | null
   intervalMinutes: number
   compareMode: SignalCompareMode
-  jsonPath: string | null
+  jsonPath?: string | null
   promptTemplate: string
 }
 

@@ -247,25 +247,20 @@ import {
   type SignalCompareMode,
   type SignalWatcherStatus
 } from '../../api'
+import {
+  DISABLE_AFTER_FAILURES,
+  MAX_WATCHERS,
+  buildWatcherPayload,
+  headerPairsFromView,
+  type HeaderPair
+} from './signal-watcher-form'
 
 const router = useRouter()
-
-/** 单用户哨兵数量上限（与后端 MAX_WATCHERS_PER_USER 对齐）。 */
-const MAX_WATCHERS = 20
-/** 连续失败自动停用阈值（与后端 WATCHER_DISABLE_AFTER_FAILURES 对齐）。 */
-const DISABLE_AFTER_FAILURES = 5
 
 interface AgentOption {
   id: number
   name: string
   enabled?: number | boolean
-}
-
-interface HeaderPair {
-  key: string
-  value: string
-  /** 编辑态下服务端已打码的敏感值：改值才算修改，留空保持原值。 */
-  masked: boolean
 }
 
 const watchers = ref<SignalWatcherView[]>([])
@@ -277,6 +272,8 @@ const confirmDeleteId = ref<number | null>(null)
 const dialogVisible = ref(false)
 const editing = ref(false)
 const editingId = ref<number | null>(null)
+/** 编辑态下该哨兵当前已保存的请求头（用于「删光行 = 显式清空」的判定）。 */
+const originalHeaders = ref<Record<string, string> | null>(null)
 const submitting = ref(false)
 
 const form = reactive({
@@ -375,6 +372,7 @@ function openCreateDialog(): void {
   resetForm()
   editing.value = false
   editingId.value = null
+  originalHeaders.value = null
   dialogVisible.value = true
   if (agents.value.length === 0) void fetchAgents()
 }
@@ -383,6 +381,7 @@ function openEditDialog(watcher: SignalWatcherView): void {
   resetForm()
   editing.value = true
   editingId.value = watcher.id
+  originalHeaders.value = watcher.headers
   form.name = watcher.name
   form.agentId = watcher.agentId
   form.url = watcher.url
@@ -392,18 +391,9 @@ function openEditDialog(watcher: SignalWatcherView): void {
   form.compareMode = watcher.compareMode
   form.jsonPath = watcher.jsonPath ?? ''
   form.promptTemplate = watcher.promptTemplate
-  form.headers = Object.entries(watcher.headers).map(([key, value]) => ({
-    key,
-    value: isMaskedValue(value) ? '' : value,
-    masked: isMaskedValue(value)
-  }))
+  form.headers = headerPairsFromView(watcher.headers)
   dialogVisible.value = true
   if (agents.value.length === 0) void fetchAgents()
-}
-
-/** 服务端打码值判定（与后端 SECRET_MASK 一致）。 */
-function isMaskedValue(value: string): boolean {
-  return value === '******'
 }
 
 function closeDialog(): void {
@@ -418,23 +408,10 @@ function removeHeaderRow(index: number): void {
   form.headers.splice(index, 1)
 }
 
-/** 键值对 → 请求头对象：空键跳过；掩码行只有填了新值才生效。
- *  编辑态下一个新值都没填时返回 undefined（不下发该字段，服务端保留原值）。 */
-function collectHeaders(): Record<string, string> | undefined {
-  const headers: Record<string, string> = {}
-  for (const pair of form.headers) {
-    const key = pair.key.trim()
-    if (key === '') continue
-    if (pair.masked && pair.value.trim() === '') continue
-    headers[key] = pair.value
-  }
-  return Object.keys(headers).length > 0 ? headers : undefined
-}
-
 const canSubmit = computed(() => {
   if (form.name.trim() === '' || form.agentId == null) return false
   if (form.url.trim() === '') return false
-  if (form.method === 'POST' && !editing && form.body.trim() === '') return false
+  if (form.method === 'POST' && !editing.value && form.body.trim() === '') return false
   if (form.compareMode === 'JSON_FIELD' && form.jsonPath.trim() === '') return false
   if (form.promptTemplate.trim() === '') return false
   return true
@@ -446,22 +423,7 @@ async function submitForm(): Promise<void> {
   try {
     // 编辑态：未修改的敏感字段（请求体 / 提取路径）不下发，服务端按「留空不修改」保留原值；
     // 新建态照常下发（undefined 由服务端 normalizeInput 的必填校验拦住）。
-    const body = form.method !== 'POST'
-      ? undefined
-      : (!editing || form.body !== '') ? form.body : undefined
-    const jsonPath = form.compareMode === 'JSON_FIELD' ? form.jsonPath.trim() : undefined
-    const payload = {
-      name: form.name.trim(),
-      agentId: form.agentId!,
-      url: form.url.trim(),
-      method: form.method,
-      headers: collectHeaders(),
-      ...(body !== undefined ? { body } : {}),
-      ...(jsonPath !== undefined ? { jsonPath } : {}),
-      intervalMinutes: form.intervalMinutes,
-      compareMode: form.compareMode,
-      promptTemplate: form.promptTemplate.trim()
-    }
+    const payload = buildWatcherPayload(form, editing.value, originalHeaders.value ?? undefined)
     if (editing && editingId.value != null) {
       await updateSignalWatcher(editingId.value, payload)
       ElMessage.success('哨兵已更新')

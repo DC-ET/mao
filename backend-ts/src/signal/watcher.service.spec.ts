@@ -658,6 +658,19 @@ describe('WatcherService.update 敏感字段保留语义（BUG-2/3/4/SUG-3 回�
     expect(stored.lastChangedAt).toBe('2026-10-11 10:00:00');
   });
 
+  it('敏感键改名后仍回传掩码：报错而不是把 ****** 当凭据落库', async () => {
+    // 前端会把留空的敏感行以 '******' 下发；库内没有同名键（用户改了键名）时，
+    // 若回退成字面量落库，之后每次探针都会真的发出 `X-Api-Key: ******`。
+    const cipher = makeCipher();
+    const h = harness({
+      watcher: watcher({ headersJson: cipher.encrypt(JSON.stringify({ Authorization: 'Bearer SECRET' })) }),
+    });
+    await expect(h.service.update(7, 1, { headers: { 'X-Api-Key': '******' } }))
+      .rejects.toThrow('请求头 X-Api-Key 需要填写新的值');
+    // 落库值保持不变：仍是库内原值，没有写入 '******' 字面量
+    expect(JSON.parse(cipher.decrypt(h.watchers.get(1)!.headersJson!))).toEqual({ Authorization: 'Bearer SECRET' });
+  });
+
   it('请求头值真的变化时仍然重置基线（防止归一化过度放宽）', async () => {
     const cipher = makeCipher();
     const h = harness({
