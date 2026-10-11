@@ -33,7 +33,8 @@ const KIND_META: Record<InboxKind, { label: string; icon: string }> = {
   SCHEDULED_TASK_PAUSED: { label: '任务已暂停', icon: '⏸' },
   BUDGET_WARN: { label: '预算提醒', icon: '¥' },
   TOKEN_DISABLED: { label: 'Token 停用', icon: '⛔' },
-  OPEN_API_CALL_FAILED: { label: '开放调用失败', icon: '!' }
+  OPEN_API_CALL_FAILED: { label: '开放调用失败', icon: '!' },
+  WEIXIN_REPLY_WINDOW_CLOSED: { label: '微信回复窗口已关闭', icon: '⏱' }
 }
 
 function kindMeta(kind: InboxKind) {
