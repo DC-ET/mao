@@ -42,6 +42,8 @@ export function isInboxKindEnabled(kind: InboxKind, preference: InboxPreference)
     case 'SCHEDULED_TASK_PAUSED':
     case 'TRIGGER_DISABLED':
     case 'TOKEN_DISABLED':
+    case 'WEIXIN_REPLY_WINDOW_CLOSED':
+      // 无偏好开关：与后端 isKindEnabled 一致，窗口已关导致回复送达失败时始终通知
       return true
     case 'OPEN_API_CALL_FAILED':
       return preference.openApiCallFailedEnabled

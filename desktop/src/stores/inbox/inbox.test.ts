@@ -258,11 +258,12 @@ describe('inbox store', () => {
         makeItem(3, { kind: 'SCHEDULED_TASK_PAUSED' as any }),
         makeItem(4, { kind: 'TOKEN_DISABLED' as any }),
         makeItem(5, { kind: 'OPEN_API_CALL_FAILED' as any }),
-        makeItem(6, { kind: 'NOT_A_KIND' as any }),
+        makeItem(6, { kind: 'WEIXIN_REPLY_WINDOW_CLOSED' as any }),
+        makeItem(7, { kind: 'NOT_A_KIND' as any }),
       ]),
       1,
     )
-    expect(store.visibleItems.map((i) => i.id)).toEqual([1, 2, 3, 4, 5])
+    expect(store.visibleItems.map((i) => i.id)).toEqual([1, 2, 3, 4, 5, 6])
   })
 
   it('偏好读写：保存后以服务端返回值为准', async () => {

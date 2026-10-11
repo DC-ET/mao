@@ -172,6 +172,7 @@ describe('useInboxSystemNotify', () => {
     expect(isInboxKindEnabled('APPROVAL_PENDING', allOn)).toBe(true)
     expect(isInboxKindEnabled('SUBAGENT_DONE', { ...allOn, subagentDoneEnabled: false })).toBe(false)
     expect(isInboxKindEnabled('SUBAGENT_DONE', allOn)).toBe(true)
+    expect(isInboxKindEnabled('WEIXIN_REPLY_WINDOW_CLOSED', allOn)).toBe(true)
     // 未知 kind 一律不弹
     expect(isInboxKindEnabled('MYSTERY' as any, allOn)).toBe(false)
   })
