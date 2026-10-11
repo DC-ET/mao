@@ -86,7 +86,16 @@
         </template>
         <el-table-column type="selection" width="46" :selectable="isRowSelectable" />
         <el-table-column prop="id" label="ID" width="80" />
-        <el-table-column prop="username" label="用户名" width="120" />
+        <el-table-column prop="username" label="用户名" width="140" class-name="user-name-col">
+          <template #default="{ row }">
+            <div class="user-identity">
+              <el-avatar :size="28" :src="resolveAvatarUrl(row.avatarUrl)">
+                {{ (row.displayName || row.username)?.slice(0, 1) || 'U' }}
+              </el-avatar>
+              <span class="user-name" :title="row.username">{{ row.username }}</span>
+            </div>
+          </template>
+        </el-table-column>
         <el-table-column prop="displayName" label="显示名称" width="120" />
         <el-table-column prop="email" label="邮箱" min-width="180" show-overflow-tooltip />
         <el-table-column label="角色" min-width="140">
@@ -149,7 +158,12 @@
       <div v-else class="mobile-card-list">
         <el-card v-for="row in users" :key="row.id" class="user-card" shadow="hover">
           <div class="user-card-head">
-            <span class="user-card-name">{{ row.displayName || row.username }}</span>
+            <div class="user-identity">
+              <el-avatar :size="28" :src="resolveAvatarUrl(row.avatarUrl)">
+                {{ (row.displayName || row.username)?.slice(0, 1) || 'U' }}
+              </el-avatar>
+              <span class="user-card-name">{{ row.displayName || row.username }}</span>
+            </div>
             <el-tag :type="row.status === 1 ? 'success' : 'danger'" size="small">
               {{ row.status === 1 ? '启用' : '禁用' }}
             </el-tag>
@@ -253,6 +267,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
+import { resolveAvatarUrl } from '../../utils/avatar'
 import { formatDateTimeColumn } from '../../utils/datetime'
 import { useAuthStore } from '../../stores/auth'
 import { useBreakpoint } from '../../composables/useBreakpoint'
@@ -539,6 +554,30 @@ onActivated(() => {
   margin-right: 4px;
 }
 
+.user-identity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.user-identity .el-avatar {
+  flex-shrink: 0;
+}
+
+.user-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
+:deep(.user-name-col .cell) {
+  overflow-wrap: normal;
+  word-break: keep-all;
+}
+
 .text-muted {
   color: var(--mao-muted);
 }
@@ -569,6 +608,9 @@ onActivated(() => {
   font-size: 15px;
   font-weight: 600;
   color: var(--mao-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .user-card-row {

@@ -9,6 +9,11 @@
   >
     <div v-if="user" class="user-detail">
       <el-descriptions :column="3" size="small" border class="user-summary">
+        <el-descriptions-item label="头像">
+          <el-avatar :size="40" :src="resolveAvatarUrl(user.avatarUrl)">
+            {{ (user.displayName || user.username)?.slice(0, 1) || 'U' }}
+          </el-avatar>
+        </el-descriptions-item>
         <el-descriptions-item label="用户名">{{ user.username }}</el-descriptions-item>
         <el-descriptions-item label="显示名称">{{ user.displayName || '-' }}</el-descriptions-item>
         <el-descriptions-item label="邮箱">{{ user.email || '-' }}</el-descriptions-item>
@@ -166,6 +171,7 @@ import { ref, reactive, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
+import { resolveAvatarUrl } from '../../utils/avatar'
 import { formatDateTime, formatDateTimeColumn } from '../../utils/datetime'
 // 复用全站统一的阶段文案（含 IDLE / WAITING_APPROVAL），勿在本页自造映射
 import { phaseLabel } from '../../utils/labels'
@@ -176,6 +182,7 @@ interface UserRow {
   username: string
   displayName?: string | null
   email?: string | null
+  avatarUrl?: string | null
   status?: number
   roleNames?: string[]
   lastLoginAt?: string | null
