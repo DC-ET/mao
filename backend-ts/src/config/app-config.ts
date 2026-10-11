@@ -102,6 +102,9 @@ export interface AppConfig {
     openapi: {
       tokenSecretKey: string;
     };
+    signal: {
+      secretKey: string;
+    };
     search: {
       fulltextEnabled: boolean;
     };
@@ -221,6 +224,9 @@ const DEFAULTS: AppConfig = {
     },
     openapi: {
       tokenSecretKey: 'mao-openapi-token-default-key-v1-20261010',
+    },
+    signal: {
+      secretKey: 'mao-signal-secret-default-key-v1-20261011',
     },
     search: {
       fulltextEnabled: true,
@@ -429,6 +435,9 @@ export function loadConfig(): AppConfig {
   }
   if (process.env.APP_OPENAPI_TOKEN_SECRET) {
     cfg.app.openapi.tokenSecretKey = process.env.APP_OPENAPI_TOKEN_SECRET;
+  }
+  if (process.env.APP_SIGNAL_SECRET) {
+    cfg.app.signal.secretKey = process.env.APP_SIGNAL_SECRET;
   }
   if (process.env.APP_FEISHU_BOT_SECRET) {
     cfg.feishu.bot.appSecretKey = process.env.APP_FEISHU_BOT_SECRET;

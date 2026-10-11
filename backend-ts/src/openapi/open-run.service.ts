@@ -38,7 +38,7 @@ export interface OpenRunDeps {
    */
   budgetCheck?: (target: { userId: number; agentId: number }) => Promise<{ message: string } | null>;
   /** 注入的 live WS 执行路径（createScheduledLiveExecution）；null 时走 no-op listener 兜底。 */
-  liveExecution: ((session: Session, userId: number, executionId: string, savedMessage: Message, startedAt?: number, scheduledTaskId?: number | null, source?: 'SCHEDULED' | 'WEBHOOK' | 'API' | null) => Promise<void>) | null;
+  liveExecution: ((session: Session, userId: number, executionId: string, savedMessage: Message, startedAt?: number, scheduledTaskId?: number | null, source?: 'SCHEDULED' | 'WEBHOOK' | 'API' | 'SIGNAL' | null) => Promise<void>) | null;
 }
 
 export interface OpenRunInput {
@@ -47,7 +47,7 @@ export interface OpenRunInput {
   message: string;
   /** 给定则复用该会话（归属/主会话/云端校验），否则每次新建会话。 */
   sessionId?: number | null;
-  source: Extract<TaskNotifySource, 'API' | 'WEBHOOK'>;
+  source: Extract<TaskNotifySource, 'API' | 'WEBHOOK' | 'SIGNAL'>;
   /** WEBHOOK 来源时的触发器绑定（busy 入队后由消费侧回写失败计数）。 */
   triggerId?: number | null;
   /** 入站调用流水 id，busy 入队后由消费侧回写终态。 */

@@ -387,8 +387,9 @@ if (process.env.APP_SIGNAL_SECRET) { cfg.app.signal.secretKey = process.env.APP_
    - last_value_hash 为空 → 写 last_value_hash + last_checked_at，changed=0，不触发（基线）
    - 与新哈希相同 → changed=0，consecutive_failures 清零
    - 不同 → changed=1：
-       · 近 1 小时触发次数 ≥ 4 → 不触发，check.warning='TRIGGER_RATE_LIMITED'，不计失败（决策 7）
-       · 否则渲染 prompt → openRunService.run({ userId, agentId, message, source:'SIGNAL' })
+       · 打 warning 标记：近 1 小时触发次数 ≥ 4 → check.warning='TRIGGER_RATE_LIMITED'（决策 7：
+         仅标记可见性，不阻断、不计失败、不停用）
+       · 渲染 prompt → openRunService.run({ userId, agentId, message, source:'SIGNAL' })
            - 抛错（预算 BLOCK / Agent 停用 / 会话创建失败）→ recordFailure（预算 BLOCK 计入连败，
              与 webhook-trigger.service.ts:251 同口径，防超限哨兵无限重试刷量）
            - 成功 → 回写 check.triggered_session_id、last_value_hash、last_changed_at、失败清零

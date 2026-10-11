@@ -112,6 +112,11 @@ const routes: RouteRecordRaw[] = [
             component: () => import('../views/settings/OpenApiView.vue')
           },
           {
+            path: 'signal-watchers',
+            name: 'SignalWatchers',
+            component: () => import('../views/settings/SignalWatchersView.vue')
+          },
+          {
             path: 'scheduled-tasks',
             name: 'ScheduledTasks',
             component: () => import('../components/ScheduledTaskPanel.vue')

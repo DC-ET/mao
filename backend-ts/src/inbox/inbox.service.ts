@@ -159,6 +159,28 @@ export class InboxService {
   }
 
   /**
+   * WATCHER_DISABLED：信号哨兵连续失败自动停用通知（signal 域）。
+   * 无偏好开关（始终通知——停用是运维级事件，必须让属主知道）；
+   * tail 带时间戳保证每次停用事件都可重复通知（dedup_key 唯一性）。
+   */
+  async recordWatcherDisabled(input: {
+    userId: number;
+    watcherId: number;
+    watcherName: string;
+    failures: number;
+  }): Promise<void> {
+    await this.record({
+      userId: input.userId,
+      kind: 'WATCHER_DISABLED',
+      title: `信号哨兵已自动停用：${input.watcherName}`,
+      content: `连续失败 ${input.failures} 次，已自动停用；请检查目标地址可达性后重新启用`,
+      sessionId: null,
+      payload: { watcherId: input.watcherId, watcherName: input.watcherName, failures: input.failures },
+      tail: `${input.watcherId}:${Date.now()}`,
+    });
+  }
+
+  /**
    * SCHEDULED_TASK_PAUSED：定时任务连续失败自动暂停。
    * 无偏好开关；tail 带时间戳，同任务多次暂停各通知一次。
    */
@@ -457,6 +479,9 @@ export class InboxService {
         return preference.budgetWarnEnabled;
       case 'TRIGGER_DISABLED':
         // 无偏好开关：触发器自动停用是运维级事件，始终通知属主
+        return true;
+      case 'WATCHER_DISABLED':
+        // 无偏好开关：哨兵连续失败自动停用是运维级事件，始终通知属主
         return true;
       case 'SCHEDULED_TASK_PAUSED':
         return true;

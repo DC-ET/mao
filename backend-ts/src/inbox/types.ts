@@ -17,6 +17,7 @@ export const INBOX_KINDS: readonly InboxKind[] = [
   'TOKEN_DISABLED',
   'OPEN_API_CALL_FAILED',
   'WEIXIN_REPLY_WINDOW_CLOSED',
+  'WATCHER_DISABLED',
 ];
 
 /** 未知 kind 一律拒绝（不写库、不广播）。 */

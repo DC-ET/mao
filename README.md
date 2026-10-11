@@ -53,6 +53,7 @@ Mao 不是又一个 ChatGPT 套壳，也不是 Dify / n8n 那样的低代码工�
 | **协作** | 边路任务、后台子代理（`default` / `explorer` / `worker` / `reviewer`）、定时任务、完成通知、会话只读分享与 JSONL 导出。 |
 | **任务收件箱** | 站内通知中心：任务完成 / 失败、提问待答、审批待办、子代理结果回传统一汇入顶栏铃铛，实时未读数，一键跳回会话；Electron 桌面端窗口失焦时补系统通知。 |
 | **开放接口** | API Token 远程触发 Agent 运行（`POST /api/v1/open/agents/:id/run`，异步 202，会话忙时自动排队）；入站 Webhook 触发器（HMAC-SHA256 验签，连续失败自动停用并通知）；出站事件订阅把任务完成 / 失败 / 提问待答推送到自建 HTTPS 端点（失败自动退避重试）。 |
+| **信号哨兵** | 按固定间隔探测外部 HTTP(S) 接口，判定值（内容哈希 / JSON 字段 / 状态码）变化时自动开一次 Agent 会话；连续失败自动停用并通知，探测地址禁私网。 |
 | **工作区** | 云端新建 / 复用 / Git HTTPS clone；文件树与 Git diff 只读浏览；CLOUD 可开服务端交互终端。 |
 | **治理** | RBAC、管理 API 审计、[用量分析](skills/mao-cli/reference/analytics.md)（含成本口径）、[调用流水](skills/mao-cli/reference/llm-call.md)、[月度用量预算](skills/mao-cli/reference/budget.md)（全局 / 用户 / Agent，超额提醒或拦截，开放接口一并生效）；任务结果消息点踩反馈（管理后台汇总与明细）；本地账号 / LDAP / 飞书登录。 |
 | **多端** | 管理后台、Web / Electron、安卓 APP（CLOUD）、终端 `mao-agent`、REST `mao-cli`。 |
@@ -82,6 +83,7 @@ Mao 不是又一个 ChatGPT 套壳，也不是 Dify / n8n 那样的低代码工�
 - **拆活**：复杂任务用边路任务或子代理；重复劳动用定时任务，完成时钉钉 / 飞书 / 微信通知。
 - **不漏结果**：任务完成 / 失败、提问待答、审批待办、子代理回传都会进顶栏「任务收件箱」，点铃铛查看并一键跳回会话；可在「消息通知 → 站内收件箱」按类型开关。
 - **开放接口**：在「设置 → 开放接口」签发 API Token 或用入站 Webhook 触发器把外部系统（CI、客服工单、自建脚本）接入 Agent；Token 明文加密留存，可随时用列表里的「复制 Token」再次获取；需要把结果推回自建系统时配出站事件订阅。详见 [skills/mao-cli/reference/open-api.md](skills/mao-cli/reference/open-api.md)。
+- **信号哨兵**：在「设置 → 信号哨兵」盯一个外部接口（汇率、库存、发布状态、接口健康度），按间隔自动探测，判定值变化时自动开一次 Agent 会话处理；可暂停、可立即测试探针，失败自动退避、连续失败自动停用并站内提醒。详见 [skills/mao-cli/reference/signal-watcher.md](skills/mao-cli/reference/signal-watcher.md)。
 
 完整手册见 [USER_GUIDE.md](USER_GUIDE.md)。上线检查清单见 [business_process.md](skills/mao-cli/business_process.md)。
 

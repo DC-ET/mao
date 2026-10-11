@@ -76,9 +76,10 @@ export interface FileChange {
 
 /**
  * message_queue.source_type 取值：SCHEDULED=定时任务 busy 入队、WEBHOOK=入站
- * Webhook 触发器、API=开放 API Token；NULL=普通手工入队。
+ * Webhook 触发器、API=开放 API Token、SIGNAL=信号哨兵变化触发（signal 域）；
+ * NULL=普通手工入队。
  */
-export type MessageQueueSource = 'SCHEDULED' | 'WEBHOOK' | 'API';
+export type MessageQueueSource = 'SCHEDULED' | 'WEBHOOK' | 'API' | 'SIGNAL';
 
 export interface MessageQueue {
   id?: number;

@@ -869,3 +869,108 @@ export async function fetchMyLlmCalls(params: {
   const { data } = await api.get('/llm-calls/me', { params })
   return data
 }
+
+// ── 信号哨兵（/v1/signal-watchers）─────────────────────────────────────────
+
+export type SignalCompareMode = 'HASH' | 'JSON_FIELD' | 'STATUS_CODE'
+export type SignalWatcherStatus = 'ACTIVE' | 'PAUSED' | 'DISABLED'
+
+export interface SignalWatcherView {
+  id: number
+  name: string
+  agentId: number
+  url: string
+  method: string
+  /** 请求头；敏感值已打码为 ••••（服务端 mask）。 */
+  headers: Record<string, string>
+  hasBody: boolean
+  bodyLength: number
+  intervalMinutes: number
+  compareMode: SignalCompareMode
+  jsonPath: string | null
+  promptTemplate: string
+  status: SignalWatcherStatus
+  lastValueHash: string | null
+  lastCheckedAt: string | null
+  lastChangedAt: string | null
+  consecutiveFailures: number
+  createdAt: string | null
+}
+
+export interface SignalWatcherCheckView {
+  id: number
+  checkedAt: string | null
+  httpStatus: number | null
+  valueHash: string | null
+  changed: number
+  triggeredSessionId: number | null
+  error: string | null
+  durationMs: number | null
+  warning: string | null
+}
+
+export interface SignalWatcherCheckPage {
+  rows: SignalWatcherCheckView[]
+  total: number
+}
+
+export interface SignalWatcherTestResult {
+  httpStatus: number | null
+  durationMs: number
+  valueHash: string | null
+  parseOk: boolean
+  sample: string
+  error: string | null
+}
+
+export interface SignalWatcherInput {
+  name: string
+  agentId: number
+  url: string
+  method: string
+  headers: Record<string, string> | null
+  body: string | null
+  intervalMinutes: number
+  compareMode: SignalCompareMode
+  jsonPath: string | null
+  promptTemplate: string
+}
+
+export async function listSignalWatchers(): Promise<SignalWatcherView[]> {
+  const { data } = await api.get('/signal-watchers')
+  return data ?? []
+}
+
+export async function createSignalWatcher(payload: SignalWatcherInput): Promise<SignalWatcherView> {
+  const { data } = await api.post('/signal-watchers', payload)
+  return data
+}
+
+export async function updateSignalWatcher(id: number, payload: Partial<SignalWatcherInput>): Promise<SignalWatcherView> {
+  const { data } = await api.put(`/signal-watchers/${id}`, payload)
+  return data
+}
+
+export async function deleteSignalWatcher(id: number): Promise<void> {
+  await api.delete(`/signal-watchers/${id}`)
+}
+
+/** 启停：status 仅支持 ACTIVE/PAUSED（DISABLED 为系统终态，需重新启用）。 */
+export async function setSignalWatcherStatus(id: number, status: 'ACTIVE' | 'PAUSED'): Promise<SignalWatcherView> {
+  const { data } = await api.post(`/signal-watchers/${id}/status`, { status })
+  return data
+}
+
+export async function listSignalWatcherChecks(
+  id: number,
+  params: { page?: number; size?: number } = {},
+): Promise<SignalWatcherCheckPage> {
+  const { data } = await api.get(`/signal-watchers/${id}/checks`, { params })
+  return data ?? { rows: [], total: 0 }
+}
+
+/** 立即执行一次探针：不触发、不写库，用于保存前验证 URL/判定模式可用。 */
+export async function testSignalWatcher(id: number): Promise<SignalWatcherTestResult> {
+  const { data } = await api.post(`/signal-watchers/${id}/test`)
+  return data
+}

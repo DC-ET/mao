@@ -60,7 +60,8 @@ import {
   Flag,
   Collection,
   Wallet,
-  Key
+  Key,
+  Aim
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
 import { pickHomePath } from '../utils/home'
@@ -126,6 +127,7 @@ const menuGroups: MenuGroup[] = [
       { index: '/budgets', label: '用量预算', icon: Wallet, permission: 'budget:read' },
       { index: '/llm-calls', label: '调用流水', icon: Tickets, permission: 'llm-call:read' },
       { index: '/openapi-calls', label: '开放调用', icon: Tickets, permission: 'openapi:read' },
+      { index: '/signal-watchers', label: '信号哨兵', icon: Aim, permission: 'signal:read' },
       { index: '/feedback', label: '点踩反馈', icon: Flag, permission: 'feedback:read' },
       { index: '/memory', label: '用户记忆', icon: Collection, permission: 'memory:read' }
     ]

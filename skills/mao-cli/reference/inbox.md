@@ -19,6 +19,7 @@
 | `APPROVAL_PENDING` | LOCAL 审批请求创建 |
 | `SUBAGENT_DONE` | 后台子代理结果回传父会话（完成 / 失败 / 取消三种终态） |
 | `TRIGGER_DISABLED` | 入站 Webhook 触发器连续执行失败 5 次后被自动停用（开放接口，见 [open-api.md](open-api.md)） |
+| `WATCHER_DISABLED` | 信号哨兵连续探测失败 5 次后被自动停用（信号哨兵，见 [signal-watcher.md](signal-watcher.md)） |
 | `BUDGET_WARN` | 用量预算当期已越上限：WARN 行在任务终态结算时发现越线，或排队消息被 BLOCK 拦下时给属主的一次性告知（预算，见 [budget.md](budget.md)） |
 
 不写入：取消态（CANCELLED）、子代理会话与边路任务自身的 TASK_* 终态、微信 / 飞书通道会话、结果已被抑制的子代理回传。
@@ -79,7 +80,7 @@
 
 ### GET /api/v1/inbox/preferences
 
-返回五类 kind 开关 + 系统通知总开关：`{ taskCompletedEnabled, questionPendingEnabled, approvalPendingEnabled, subagentDoneEnabled, budgetWarnEnabled, systemNotifyEnabled }`。无偏好行时按默认值：前四类开（含预算提醒）、子代理完成关、系统通知开。`TRIGGER_DISABLED`（触发器停用）不受偏好开关控制，始终写入。
+返回五类 kind 开关 + 系统通知总开关：`{ taskCompletedEnabled, questionPendingEnabled, approvalPendingEnabled, subagentDoneEnabled, budgetWarnEnabled, systemNotifyEnabled }`。无偏好行时按默认值：前四类开（含预算提醒）、子代理完成关、系统通知开。`TRIGGER_DISABLED`（触发器停用）与 `WATCHER_DISABLED`（哨兵停用）不受偏好开关控制，始终写入。
 
 ### PUT /api/v1/inbox/preferences
 
