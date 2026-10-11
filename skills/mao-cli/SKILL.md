@@ -23,6 +23,8 @@ Mao 的**产品文档唯一正文**（可独立分发）+ **REST 操作 CLI**。
 | 模型价格与用量成本核算（每百万 token 价格、llm_call 成本、分析看钱） | [reference/model.md](reference/model.md)、[reference/analytics.md](reference/analytics.md) |
 | 用量预算（全局 / 用户 / Agent 月度预算，超额提醒或拦截） | [reference/budget.md](reference/budget.md) |
 | 开放接口（API Token / 入站 Webhook 触发器 / 出站事件订阅） | [reference/open-api.md](reference/open-api.md) |
+| 信号哨兵 | [reference/signal-watcher.md](reference/signal-watcher.md) |
+| 信号哨兵（定时探测外部接口，变化触发 Agent） | [reference/signal-watcher.md](reference/signal-watcher.md) |
 | 飞书机器人通道（绑定 / 群聊@机器人 / 多机器人配置） | [reference/feishu-bot.md](reference/feishu-bot.md) |
 | 钉钉机器人通道（绑定 / 群聊@机器人 / 多机器人配置） | [reference/dingtalk-bot.md](reference/dingtalk-bot.md) |
 | Electron LOCAL、工具审批、打包与自动更新 | [reference/electron.md](reference/electron.md) |
@@ -38,6 +40,7 @@ Mao 的**产品文档唯一正文**（可独立分发）+ **REST 操作 CLI**。
 
 - 登录并缓存 JWT；查询/配置用户、角色、Agent、模型（含价格）、Skill、会话元数据、文件诊断、定时任务、微信、MCP、审计等
 - 管理开放接口：API Token、入站 Webhook 触发器、出站事件订阅的 CRUD（见 [reference/open-api.md](reference/open-api.md)）
+- 管理信号哨兵：定时探测外部接口、变化触发 Agent 的 CRUD 与轮询记录（见 [reference/signal-watcher.md](reference/signal-watcher.md)）
 - 管理用量预算：全局 / 用户 / Agent 月度预算，金额或 token 口径，超额提醒或拦截（见 [reference/budget.md](reference/budget.md)）
 - 脚本或 Agent 流程中以 JSON 消费上述 API
 
@@ -133,6 +136,7 @@ mao auth login --username <用户名> --password <密码>
 | 运行监控 | [reference/runtime.md](reference/runtime.md) |
 | 分析汇总 / 分维度（含运行轨迹三个榜） | [reference/analytics.md](reference/analytics.md) |
 | LLM 调用流水 | [reference/llm-call.md](reference/llm-call.md) |
+| 信号哨兵 | [reference/signal-watcher.md](reference/signal-watcher.md) |
 | 消息点踩反馈 | [reference/feedback.md](reference/feedback.md) |
 | 审计日志 | [reference/audit.md](reference/audit.md) |
 | 系统设置 | [reference/settings.md](reference/settings.md) |

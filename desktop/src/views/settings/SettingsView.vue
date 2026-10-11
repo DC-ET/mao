@@ -48,6 +48,9 @@
         <router-link to="/settings/open-api" class="settings-nav-item" active-class="active">
           开放接口
         </router-link>
+        <router-link to="/settings/signal-watchers" class="settings-nav-item" active-class="active">
+          信号哨兵
+        </router-link>
       </nav>
     </aside>
     <section class="settings-content">

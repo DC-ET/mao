@@ -41,6 +41,7 @@ export function isInboxKindEnabled(kind: InboxKind, preference: InboxPreference)
       return preference.budgetWarnEnabled
     case 'SCHEDULED_TASK_PAUSED':
     case 'TRIGGER_DISABLED':
+    case 'WATCHER_DISABLED':
     case 'TOKEN_DISABLED':
       return true
     case 'OPEN_API_CALL_FAILED':

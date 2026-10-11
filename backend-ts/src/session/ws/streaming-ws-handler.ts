@@ -237,11 +237,12 @@ interface QueueSettlement {
 }
 
 /** 队列行来源（收件箱徽标透传）：与 MessageQueueSource / TaskNotifySource 的非 MANUAL 子集同构。 */
-type QueuedSource = 'SCHEDULED' | 'WEBHOOK' | 'API';
+type QueuedSource = 'SCHEDULED' | 'WEBHOOK' | 'API' | 'SIGNAL';
 
 /** 队列行 → settlement：V133 前的存量行 source_type 为 NULL，按 scheduledTaskId 回退为 SCHEDULED。 */
 function queueSettlementOf(row: { sourceType?: string | null; scheduledTaskId?: number | null; openTriggerId?: number | null; openCallLogId?: number | null; createdAt?: string | Date | null }): QueueSettlement | null {
   const source: QueuedSource | null = row.sourceType === 'SCHEDULED' || row.sourceType === 'WEBHOOK' || row.sourceType === 'API'
+    || row.sourceType === 'SIGNAL'
     ? row.sourceType
     : row.scheduledTaskId != null ? 'SCHEDULED' : null;
   if (source == null && row.openCallLogId == null) return null;
@@ -278,7 +279,7 @@ export function createScheduledLiveExecution(handler: StreamingWsHandler) {
     savedMessage: Message,
     startedAt?: number,
     scheduledTaskId?: number | null,
-    source?: 'SCHEDULED' | 'WEBHOOK' | 'API' | null,
+    source?: 'SCHEDULED' | 'WEBHOOK' | 'API' | 'SIGNAL' | null,
   ): Promise<void> =>
     handler.executePersistedUserPrompt(session, userId, executionId, savedMessage, startedAt, scheduledTaskId, source);
 }
@@ -782,7 +783,7 @@ export class StreamingWsHandler {
     savedMessage: Message,
     startedAt?: number,
     scheduledTaskId?: number | null,
-    source?: 'SCHEDULED' | 'WEBHOOK' | 'API' | null,
+    source?: 'SCHEDULED' | 'WEBHOOK' | 'API' | 'SIGNAL' | null,
   ): Promise<void> {
     const sessionId = session.id!;
     this.deps.titleService.scheduleForFirstUserMessage(sessionId, savedMessage.id, savedMessage.content ?? '');

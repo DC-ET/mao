@@ -34,6 +34,7 @@ const KIND_META: Record<InboxKind, { label: string; icon: string }> = {
   BUDGET_WARN: { label: '预算提醒', icon: '¥' },
   TOKEN_DISABLED: { label: 'Token 停用', icon: '⛔' },
   OPEN_API_CALL_FAILED: { label: '开放调用失败', icon: '!' },
+  WATCHER_DISABLED: { label: '哨兵已停用', icon: '🛰' },
   WEIXIN_REPLY_WINDOW_CLOSED: { label: '微信回复未送达', icon: '⏱' }
 }
 

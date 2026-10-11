@@ -19,6 +19,8 @@ export const GIT_COMMIT_MESSAGE_MODEL_ID_KEY = 'git.commitMessageModelId';
 export const FEEDBACK_DRAFT_MODEL_ID_KEY = 'feedback.draftModelId';
 export const APPROVAL_MODEL_ID_KEY = 'approval.modelId';
 export const MEMORY_EXTRACTION_MODEL_ID_KEY = 'memory.extractionModelId';
+/** 哨兵轮询记录保留天数（V148，默认 90）。 */
+export const SIGNAL_CHECK_RETENTION_DAYS_KEY = 'signal.checkRetentionDays';
 export const COMPACTION_MODEL_ID_KEY = 'compaction.modelId';
 export const JEV_ENDPOINT_KEY = 'approval.jev.endpoint';
 export const JEV_MODEL_KEY = 'approval.jev.model';
@@ -619,6 +621,13 @@ export class SystemSettingService {
 
   async getOpenApiCallLogRetentionDays(): Promise<number> {
     const raw = await this.getOpt('openapi.callLogRetentionDays');
+    const n = raw == null ? NaN : Number(raw);
+    return Number.isInteger(n) && n > 0 ? n : 90;
+  }
+
+  /** 哨兵轮询记录保留天数（signal.checkRetentionDays，V148；默认 90）。 */
+  async getSignalCheckRetentionDays(): Promise<number> {
+    const raw = await this.getOpt('signal.checkRetentionDays');
     const n = raw == null ? NaN : Number(raw);
     return Number.isInteger(n) && n > 0 ? n : 90;
   }

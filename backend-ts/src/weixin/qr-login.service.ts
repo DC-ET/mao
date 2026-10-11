@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
+import { isPrivateOrReservedHostname } from '../common/ssrf.js';
 import type { WeixinAccountRepository } from './account.repository.js';
 import type { WeixinMonitorService } from './monitor.service.js';
 import type { QrcodeResponse, QrcodeStatusResponse, WeixinBotConfig, WeixinChannelAccount } from './types.js';
@@ -159,7 +160,10 @@ export class QrLoginService {
   }
 }
 
-/** 校验微信回调 baseUrl：仅允许 https + 公网域名，拒绝私网/环回/链路本地（盲 SSRF 防护）。 */
+/**
+ * 校验微信回调 baseUrl：仅允许 https + 公网域名，拒绝私网/环回/链路本地（盲 SSRF 防护）。
+ * 主机名判定复用 `common/ssrf.ts` 的单一实现（信号哨兵探针校验同口径）。
+ */
 export function validateCallbackBaseUrl(baseUrl: string): void {
   if (baseUrl == null || baseUrl.trim() === '') {
     throw new BusinessException(ErrorCode.PARAM_INVALID, 'baseUrl 不能为空');
@@ -177,27 +181,6 @@ export function validateCallbackBaseUrl(baseUrl: string): void {
   if (isPrivateOrReservedHostname(hostname)) {
     throw new BusinessException(ErrorCode.PARAM_INVALID, 'baseUrl 不允许指向私网/环回/链路本地地址');
   }
-}
-
-function isPrivateOrReservedHostname(hostname: string): boolean {
-  if (hostname === 'localhost' || hostname.endsWith('.localhost')) return true;
-  // IPv4 / IPv6 字面量
-  const v4 = /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname);
-  if (v4) {
-    const parts = hostname.split('.').map(Number);
-    const [a, b] = parts;
-    const ip = ((parts[0]! << 24) | (parts[1]! << 16) | (parts[2]! << 8) | parts[3]!) >>> 0;
-    if (a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)) return true; // 私网
-    if (a === 127) return true; // 环回
-    if (a === 169 && b === 254) return true; // 链路本地
-    if (ip >= 0x0A000000 && ip <= 0x0AFFFFFF) return true;
-    if (ip <= 0x00FFFFFF || ip >= 0xFFFFFFFF - 0xFF) return true; // 0.x 与 255.x
-    if (a >= 224) return true; // 组播/保留
-    return false;
-  }
-  if (hostname.includes(':')) return true; // IPv6：保守拒绝字面量
-  if (hostname.endsWith('.local') || hostname.endsWith('.internal')) return true;
-  return false;
 }
 
 function isTimeoutError(e: unknown): boolean {

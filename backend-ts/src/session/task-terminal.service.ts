@@ -14,9 +14,9 @@ const TERMINAL = new Set(['COMPLETED', 'FAILED', 'CANCELLED']);
 
 /**
  * 任务终态通知来源：MANUAL=手工触发（默认）、SCHEDULED=定时任务、
- * WEBHOOK=入站 Webhook 触发器、API=开放 API Token（openapi 域）。
+ * WEBHOOK=入站 Webhook 触发器、API=开放 API Token、SIGNAL=信号哨兵探针变化触发（signal 域）。
  */
-export type TaskNotifySource = 'MANUAL' | 'SCHEDULED' | 'WEBHOOK' | 'API';
+export type TaskNotifySource = 'MANUAL' | 'SCHEDULED' | 'WEBHOOK' | 'API' | 'SIGNAL';
 
 /** 记忆抽取依赖（可选注入；接口化避免 session 域反向依赖 memory 域实现）。 */
 export interface MemoryExtractionInvoker {

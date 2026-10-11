@@ -326,6 +326,13 @@ import { OpenApiCallLogRepository } from './openapi/open-api-call-log.repository
 import { OpenApiCallLogService } from './openapi/open-api-call-log.service.js';
 import { OpenApiCallLogCleanup } from './openapi/open-api-call-log.cleanup.js';
 import { registerOpenApiCallLogRoutes } from './openapi/open-api-call-log.routes.js';
+import { SignalSecretCipher } from './signal/signal-cipher.js';
+import { MysqlSignalCheckRepository, MysqlSignalWatcherRepository } from './signal/signal.repository.js';
+import { WatcherService } from './signal/watcher.service.js';
+import { WatcherScheduler } from './signal/watcher-scheduler.js';
+import { SignalCheckCleanup } from './signal/signal-check-cleanup.js';
+import { registerSignalWatcherRoutes } from './signal/watcher.routes.js';
+import { registerSignalAdminRoutes } from './signal/signal-admin.routes.js';
 
 export interface MaoApp {
   app: FastifyInstance;
@@ -1501,6 +1508,33 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   });
   openTriggerSettle.current = (triggerId, status) => webhookTriggerService.handleQueueSettled(triggerId, status);
 
+  // 信号哨兵：探针执行 + 判定触发 + 失败退避自动停用（V148）
+  const signalCipher = new SignalSecretCipher(cfg.app.signal.secretKey);
+  const signalWatcherRepo = new MysqlSignalWatcherRepository(db);
+  const signalCheckRepo = new MysqlSignalCheckRepository(db);
+  const watcherService = new WatcherService({
+    watcherRepo: signalWatcherRepo,
+    checkRepo: signalCheckRepo,
+    cipher: signalCipher,
+    openRun: openRunService,
+    disableNotifier: {
+      notifyWatcherDisabled: async (input) => {
+        await inboxService.recordWatcherDisabled(input);
+      },
+    },
+  });
+  const watcherScheduler = new WatcherScheduler({
+    watcherRepo: signalWatcherRepo,
+    runCheck: (id) => watcherService.runCheck(id),
+    execute: (fn) => agentExecutor.submit(fn),
+  });
+  watcherScheduler.start();
+  const signalCheckCleanup = new SignalCheckCleanup(
+    signalCheckRepo,
+    () => settingService.getSignalCheckRetentionDays(),
+  );
+  signalCheckCleanup.start();
+
   const feishuMessageRepository = new MysqlFeishuMessageRepository(db);
   const feishuMessageService = new FeishuMessageService(
     feishuMessageRepository,
@@ -2637,6 +2671,18 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       callLog: callLogService,
     });
     registerOpenApiCallLogRoutes(api, { callLog: callLogService, permissionService });
+    registerSignalWatcherRoutes(api, { service: watcherService });
+    registerSignalAdminRoutes(api, {
+      watcherRepo: signalWatcherRepo,
+      permissionService,
+      userLookup: {
+        findByIds: async (ids: number[]) => (await userRepo.findByIds(ids)).map((u) => ({
+          id: u.id,
+          username: u.username,
+          displayName: u.displayName,
+        })),
+      },
+    });
     registerAnalyticsRoutes(api, { analytics: analyticsService, jwt, permissionService });
     registerStatisticsRoutes(api, { statistics: statisticsService, jwt, permissionService });
     registerFeedbackRoutes(api, { feedback: feedbackService, experienceDraft, jwt, permissionService });
@@ -2941,6 +2987,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       deliveryScheduler.stop();
       callLogService.stop();
       callLogCleanup.stop();
+      watcherScheduler.stop();
+      signalCheckCleanup.stop();
       ecpRenewScheduler.stop();
       shellManager.stopCleanup();
       terminalManager.stopCleanup();

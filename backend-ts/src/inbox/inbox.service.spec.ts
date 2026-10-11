@@ -86,6 +86,23 @@ describe('InboxService 偏好门控', () => {
     expect(h.inserted).toHaveLength(0);
   });
 
+  it('WATCHER_DISABLED 无偏好开关：即使所有偏好列都关也必须写库（BUG-1 回归）', async () => {
+    const h = makeHarness({
+      preference: {
+        userId: 7,
+        taskCompletedEnabled: 0,
+        questionPendingEnabled: 0,
+        approvalPendingEnabled: 0,
+        subagentDoneEnabled: 0,
+        systemNotifyEnabled: 0,
+      },
+    });
+    await h.service.recordWatcherDisabled({ userId: 7, watcherId: 3, watcherName: '汇率哨兵', failures: 5 });
+    expect(h.inserted).toHaveLength(1);
+    expect(h.inserted[0]!.kind).toBe('WATCHER_DISABLED');
+    expect(h.events).toHaveLength(1);
+  });
+
   it('开启后 SUBAGENT_DONE 写入且 payload 带 status/childSessionId/executionId', async () => {
     const h = makeHarness({
       preference: {

@@ -16,6 +16,7 @@
 | 开放接口（API Token / 入站 Webhook 触发器 / 出站订阅） | [skills/mao-cli/reference/open-api.md](skills/mao-cli/reference/open-api.md)；入站 hook 走公网可达的 `/api/v1/open/hooks/*`（Nginx 已放开 `/api/`），触发器与订阅 secret 由 `APP_NOTIFICATION_WEBHOOK_SECRET` 加密（未配置时回退与任务通知 Webhook 相同的内置默认密钥，仍建议显式设置）；API Token 明文由 `APP_OPENAPI_TOKEN_SECRET` 加密留存以支持再次复制（未配置回退内置默认密钥；轮换该密钥后旧 Token 不能再复制明文，sha256 鉴权不受影响）；V133 / V147 迁移随 TS 启动自动执行 |
 | 用量成本核算与预算管控 | [skills/mao-cli/reference/budget.md](skills/mao-cli/reference/budget.md)、[模型价格](skills/mao-cli/reference/model.md)；V138 / V139 迁移随 TS 启动自动执行，无新环境变量。模型价格在管理后台「模型管理」填（每百万 token 成本单位），历史调用成本不回填；预算在「用量预算」页按全局 / 用户 / Agent 建月度上限，BLOCK 命中会拒绝新任务发起，开放 API / Webhook 一并生效 |
 | 全局消息全文检索 | [部署说明](skills/mao-cli/reference/deploy.md#全文检索索引v146)；V146 随启动建 ngram 索引，低峰发版并先加长 `MAO_BLUE_GREEN_HEALTH_RETRIES`。应急 `SEARCH_FULLTEXT_ENABLED=false` |
+| 信号哨兵（定时探测外部接口，变化触发 Agent） | [skills/mao-cli/reference/signal-watcher.md](skills/mao-cli/reference/signal-watcher.md)；用户在桌面「设置 → 信号哨兵」自助管理，管理后台 `signal:read` 权限提供只读清单；哨兵请求头 / 请求体由 `APP_SIGNAL_SECRET` 加密（未配置时回退内置默认密钥，仍建议显式设置；轮换该密钥后已存哨兵需重新填写请求头与请求体）；V148 迁移随 TS 启动自动执行，无额外 Nginx 配置（探测由后端主动出站） |
 
 **维护者注意**：服务器上真实部署目录为 `/opt/mao`（与云端 Agent 会话工作区路径不同）。`git pull`、构建、`restart.sh` 应在 `/opt/mao` 执行。
 

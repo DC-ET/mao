@@ -96,6 +96,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '开放调用', keepAlive: true, permission: 'openapi:read' }
       },
       {
+        path: 'signal-watchers',
+        name: 'SignalWatchers',
+        component: () => import('../views/signal/SignalWatcherListView.vue'),
+        meta: { title: '信号哨兵', keepAlive: true, permission: 'signal:read' }
+      },
+      {
         path: 'feedback',
         name: 'Feedback',
         component: () => import('../views/feedback/FeedbackView.vue'),
