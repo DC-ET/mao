@@ -117,53 +117,19 @@ export class RunTraceService {
       return { anchor, upperId, upperCreatedAt, messages, calls };
     }));
 
-    // 消息索引：tool_call_id -> 声明它的助手消息（只索引本页 run 的现存消息）
-    const declByCallId = new Map<string, ToolDecl>();
-    const toolMessageByCallId = new Map<string, Message>();
-    runInputs.forEach((input, runIndex) => {
-      for (const message of input.messages) {
-        if (message.role === 'ASSISTANT' && message.toolCalls != null) {
-          for (const call of parseToolCalls(message.toolCalls)) {
-            if (!declByCallId.has(call.id)) declByCallId.set(call.id, { runIndex, message, call });
-          }
-        } else if (message.role === 'TOOL' && message.toolCallId != null) {
-          if (!toolMessageByCallId.has(message.toolCallId)) {
-            toolMessageByCallId.set(message.toolCallId, message);
-          }
-        }
-      }
-    });
+    // 消息索引：tool_call_id -> 声明它的助手消息 / 工具消息（只索引本页 run 的现存消息）
+    const { declByCallId, toolMessageByCallId } = indexRunMessages(runInputs);
 
     // 活动归属：有 tool_call_id 且对得上本页现存消息 → 按消息归（即使 created_at 落在窗外）；
     // 对得上全会话消息但声明消息不在本页 → 归属另一个 run，本页不出现；
     // 其余按时间窗放进某个 run；再否则第一页且早于首条用户消息 → 未归属
-    const activityByCallId = new Map<string, SessionActivity>();
-    const activitiesByRun: SessionActivity[][] = runInputs.map(() => []);
-    const unattributedActivities: SessionActivity[] = [];
-    let sessionDeclaredCallIds: Set<string> | null = null;
-    for (const activity of activities) {
-      const toolCallId = parseDetailToolCallId(activity.detailJson);
-      if (toolCallId != null) {
-        const decl = declByCallId.get(toolCallId);
-        if (decl != null) {
-          activityByCallId.set(toolCallId, activity);
-          activitiesByRun[decl.runIndex].push(activity);
-          continue;
-        }
-        // 迟到插入：created_at 已落进别的 run 时间窗，但 tool_call_id 对准的助手消息
-        // 属于另一个 run。按时间窗兜底会让它在本页和归属页各出现一次、成败重复计数，
-        // 因此本页直接不出现（翻到那一页时按消息正确归属）。
-        sessionDeclaredCallIds ??= await this.sessionDeclaredCallIds(sessionId);
-        if (sessionDeclaredCallIds.has(toolCallId)) continue;
-      }
-      const runIndex = findRunIndexByTime(runInputs, activity.createdAt ?? null);
-      if (runIndex >= 0) {
-        activitiesByRun[runIndex].push(activity);
-      } else if (query.beforeRunId == null && isBefore(activity.createdAt, firstUserCreatedAt)) {
-        unattributedActivities.push(activity);
-      }
-      // 其余情况属于其他页的 run，本页不出现
-    }
+    const { activitiesByRun, activityByCallId, unattributedActivities } = await this.attributeActivities(
+      sessionId,
+      activities,
+      runInputs,
+      declByCallId,
+      { firstPage: query.beforeRunId == null, firstUserCreatedAt },
+    );
 
     const runs = runInputs.map((input, runIndex) =>
       this.buildRun(input, activitiesByRun[runIndex], compactionEvents, toolMessageByCallId, activityByCallId, query),
@@ -188,6 +154,102 @@ export class RunTraceService {
       for (const call of parseToolCalls(row.toolCalls)) ids.add(call.id);
     }
     return ids;
+  }
+
+  /**
+   * 活动归属（buildTrace 与 locateRunByMessageId 共用同一套口径，避免两处漂移）：
+   * 有 tool_call_id 且对得上本组现存消息 → 按消息归（即使 created_at 落在窗外）；
+   * 对得上全会话消息但声明消息不在本组 → 归属另一个 run，本组不出现；
+   * 其余按时间窗放进某个 run；再否则 firstPage 且早于首条用户消息 → 未归属。
+   */
+  private async attributeActivities(
+    sessionId: number,
+    activities: SessionActivity[],
+    runInputs: RunInput[],
+    declByCallId: Map<string, ToolDecl>,
+    options: { firstPage: boolean; firstUserCreatedAt: string | null },
+  ): Promise<{
+    activitiesByRun: SessionActivity[][];
+    activityByCallId: Map<string, SessionActivity>;
+    unattributedActivities: SessionActivity[];
+  }> {
+    const activityByCallId = new Map<string, SessionActivity>();
+    const activitiesByRun: SessionActivity[][] = runInputs.map(() => []);
+    const unattributedActivities: SessionActivity[] = [];
+    let sessionDeclaredCallIds: Set<string> | null = null;
+    for (const activity of activities) {
+      const toolCallId = parseDetailToolCallId(activity.detailJson);
+      if (toolCallId != null) {
+        const decl = declByCallId.get(toolCallId);
+        if (decl != null) {
+          activityByCallId.set(toolCallId, activity);
+          activitiesByRun[decl.runIndex].push(activity);
+          continue;
+        }
+        // 迟到插入：created_at 已落进别的 run 时间窗，但 tool_call_id 对准的助手消息
+        // 属于另一个 run。按时间窗兜底会让它在两组各出现一次、成败重复计数，
+        // 因此直接不出现（定位到归属 run 时才按消息正确归属）。
+        sessionDeclaredCallIds ??= await this.sessionDeclaredCallIds(sessionId);
+        if (sessionDeclaredCallIds.has(toolCallId)) continue;
+      }
+      const runIndex = findRunIndexByTime(runInputs, activity.createdAt ?? null);
+      if (runIndex >= 0) {
+        activitiesByRun[runIndex].push(activity);
+      } else if (options.firstPage && isBefore(activity.createdAt, options.firstUserCreatedAt)) {
+        unattributedActivities.push(activity);
+      }
+      // 其余情况属于别的 run，本组不出现
+    }
+    return { activitiesByRun, activityByCallId, unattributedActivities };
+  }
+
+  /**
+   * 按消息 ID 精确定位它所属的那一个 run（技术方案 2026-10-11-feedback-experience-loop §5.3）。
+   *
+   * 与 buildTrace 的区别只在取哪个 run：翻页接口按 beforeRunId 取最新 N 个 run，
+   * 时隔多日点踩时出事轮次早已翻出视野；此处用全会话用户消息锚点二分定位。
+   * 归属口径（挂轮、未挂到轮、迟到活动、编辑切点）完全复用 buildRun，不新造语义。
+   *
+   * 返回 null 的三种情形：messageId 不属于本会话、早于首条用户消息（纯系统消息）、
+   * 或就是用户消息自身之外没有对应 run（如软删后不存在）。
+   */
+  async locateRunByMessageId(sessionId: number, messageId: number): Promise<RunTraceVO | null> {
+    if (!Number.isSafeInteger(messageId) || messageId <= 0) return null;
+    // 与 buildTrace 同源取锚点与时钟戳：一条查询拿到全部现存用户消息
+    const userStamps = await this.messageRepo.selectUserStamps(sessionId);
+    const stampById = new Map<number, UserStamp>();
+    for (const stamp of userStamps) {
+      if (stamp.id != null) stampById.set(stamp.id, { id: stamp.id, createdAt: stamp.createdAt ?? null, updatedAt: stamp.updatedAt ?? null });
+    }
+    const ascendingIds = [...stampById.keys()].sort((a, b) => a - b);
+    const anchorId = anchorIdFor(ascendingIds, messageId);
+    if (anchorId == null) return null;
+    const upperId = nextIdAbove(ascendingIds, anchorId);
+    const anchorStamp = stampById.get(anchorId);
+    const upperCreatedAt = upperId != null ? stampById.get(upperId)?.createdAt ?? null : null;
+
+    const [anchor, messages, calls] = await Promise.all([
+      this.messageRepo.findById(anchorId),
+      this.messageRepo.selectRange(sessionId, anchorId, upperId),
+      this.llmCallRepo.selectBySessionWindow(sessionId, anchorStamp?.createdAt ?? null, upperCreatedAt),
+    ]);
+    // 锚点被并发软删 / 查不到：没有可归属的 run
+    if (anchor == null || anchor.role !== 'USER') return null;
+
+    const runInputs: RunInput[] = [{ anchor, upperId, upperCreatedAt, messages, calls }];
+    const { declByCallId, toolMessageByCallId } = indexRunMessages(runInputs);
+    const { activitiesByRun, activityByCallId } = await this.attributeActivities(
+      sessionId,
+      await this.activityRepo.selectBySessionAll(sessionId),
+      runInputs,
+      declByCallId,
+      // 定位只针对已存在的 run，没有「第一页未归属」可言：早于首条用户消息的活动一律丢弃
+      { firstPage: false, firstUserCreatedAt: null },
+    );
+    const compactionEvents = await this.compactionEventRepo.selectBySessionId(sessionId);
+    // 慢 / 贵阈值在原料序列化里不消费，取 buildTrace 的同一组默认值保证口径一致
+    const query: RunTraceQuery = { beforeRunId: null, limit: 1, slowMs: 60_000, expensiveTokens: 50_000 };
+    return this.buildRun(runInputs[0], activitiesByRun[0], compactionEvents, toolMessageByCallId, activityByCallId, query);
   }
 
   private buildRun(
@@ -580,6 +642,45 @@ function nextIdAbove(ascendingIds: number[], id: number): number | null {
     if (candidate > id) return candidate;
   }
   return null;
+}
+
+/**
+ * 消息所属 run 的锚点：满足 `anchor.id <= messageId < 下一个锚点` 的那个用户消息 id。
+ * messageId 早于首条用户消息（纯系统消息）或 id 非法时返回 null。
+ */
+function anchorIdFor(ascendingIds: number[], messageId: number): number | null {
+  let found: number | null = null;
+  for (const candidate of ascendingIds) {
+    if (candidate <= messageId) found = candidate;
+    if (candidate > messageId) break;
+  }
+  return found;
+}
+
+/**
+ * 消息索引（buildTrace 与 locateRunByMessageId 共用）：tool_call_id -> 声明它的助手消息
+ * 与 tool_call_id -> 工具消息。只索引本组现存的 run 消息；同 id 多条时取第一条（先到先得）。
+ */
+function indexRunMessages(runInputs: RunInput[]): {
+  declByCallId: Map<string, ToolDecl>;
+  toolMessageByCallId: Map<string, Message>;
+} {
+  const declByCallId = new Map<string, ToolDecl>();
+  const toolMessageByCallId = new Map<string, Message>();
+  runInputs.forEach((input, runIndex) => {
+    for (const message of input.messages) {
+      if (message.role === 'ASSISTANT' && message.toolCalls != null) {
+        for (const call of parseToolCalls(message.toolCalls)) {
+          if (!declByCallId.has(call.id)) declByCallId.set(call.id, { runIndex, message, call });
+        }
+      } else if (message.role === 'TOOL' && message.toolCallId != null) {
+        if (!toolMessageByCallId.has(message.toolCallId)) {
+          toolMessageByCallId.set(message.toolCallId, message);
+        }
+      }
+    }
+  });
+  return { declByCallId, toolMessageByCallId };
 }
 
 /** run 窗口按 [anchor.created_at, 上界) 半开；窗口互不相交，最多命中一个。 */

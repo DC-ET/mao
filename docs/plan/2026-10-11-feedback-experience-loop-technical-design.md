@@ -301,7 +301,8 @@ async locateRunByMessageId(sessionId: number, messageId: number): Promise<RunTra
 - [ ] `usage/llm-call-context.ts` + `usage/llm-usage.service.ts`：新 scene 常量
 - [ ] `settings/settings.service.ts`：`feedback.draftModelId` 常量与分类
 - [ ] `create-app.ts`：装配 `ExperienceDraftService`、事务内仓储、路由 deps
-- [ ] `common/error-code.ts`：新增 `FEEDBACK_ALREADY_HANDLED`（HTTP 409）
+- [ ] `common/error-code.ts`：新增 `FEEDBACK_ALREADY_HANDLED`（HTTP 200 + `Result.code=3046`）
+  > 实现口径校正：`common/http-error.ts` 的 `handleError` 对非 401/403 业务异常统一返回 HTTP 200 + `Result<T>` code，因此该错误实际以 HTTP 200 + code=3046 返回，前端按 `code !== 0` 提示。方案早期草稿写的「HTTP 409」不成立。
 
 ### 7.2 管理后台 admin
 

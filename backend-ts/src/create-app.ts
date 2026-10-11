@@ -156,6 +156,7 @@ import { registerStatisticsRoutes } from './statistics/statistics.routes.js';
 import { FEISHU_DISLIKE_SOURCE, FeedbackRepository } from './feedback/feedback.repository.js';
 import { FeedbackDbLookup, FeedbackService } from './feedback/feedback.service.js';
 import { registerFeedbackRoutes } from './feedback/feedback.routes.js';
+import { ExperienceDraftService } from './feedback/experience-draft.service.js';
 import { AdminAnalyticsDbStore, AdminAnalyticsService } from './admin/admin-analytics.service.js';
 import { registerAdminAnalyticsRoutes, registerAdminRuntimeRoutes } from './admin/admin.routes.js';
 import { McpSecretCipher } from './harness/mcp/crypto/mcp-secret-cipher.js';
@@ -699,6 +700,15 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   pathSandbox.addAllowedRoot(runtimeRoot);
   const sessionRepo = new SessionRepository(db);
   const messageRepo = new MessageRepository(db);
+  // run 轨迹读模型：零新表，读时聚合消息 / llm_call / session_activity / 压缩事件。
+  // 先于 FeedbackService 构造：转经验向导靠它精确定位点踩消息所在 run。
+  const llmCallRepo = new LlmCallRepository(db);
+  const runTraceService = new RunTraceService(
+    messageRepo,
+    llmCallRepo,
+    new SessionActivityRepository(db),
+    new SessionCompactionEventRepository(db),
+  );
   const feedbackRepository = new FeedbackRepository(db);
   const feedbackMessageLookup = new FeedbackDbLookup(db);
   const feedbackService = new FeedbackService(
@@ -712,6 +722,10 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       const session = await sessionRepo.findById(sessionId);
       return session?.agentId ?? null;
     },
+    // 事务内写经验与回写反馈状态必须同事务（db.transaction 把连接包成新 Db 传回调）
+    db,
+    runTraceService,
+    async (agentId) => (await agentRepo.findById(agentId)) != null,
   );  const fileChangeRepo = new FileChangeRepository(db);
   const compactionRepo = new SessionCompactionRepository(db);
   const sessionCompactionService = new SessionCompactionService(compactionRepo, messageRepo, sessionRepo);
@@ -753,14 +767,6 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const messageQueueService = new MessageQueueService(new MessageQueueRepository(db));
   const subagentExecutionRepo = new SubagentExecutionRepository(db);
   const activityHeartbeat = new SessionActivityHeartbeat(sessionService);
-  // run 轨迹读模型：零新表，读时聚合消息 / llm_call / session_activity / 压缩事件
-  const llmCallRepo = new LlmCallRepository(db);
-  const runTraceService = new RunTraceService(
-    messageRepo,
-    llmCallRepo,
-    new SessionActivityRepository(db),
-    new SessionCompactionEventRepository(db),
-  );
 
   const fileRepo = new FileEntityRepository(db);
   const fileService = new FileService(fileRepo, uploadDir, async () => (await settingService.getUploadConfig()).maxSizeMb);
@@ -1318,6 +1324,14 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   );
 
   const usageService = new LlmUsageService(new LlmUsageRepository(db));
+  // 经验起草（转经验向导）：与 git 提交信息同款非流式链路（按 apiProtocol 路由的客户端 + 模型解析 + 用量落库）
+  const experienceDraft = new ExperienceDraftService(
+    routeChatClient as never,
+    harness as never,
+    usageService,
+    { getValue: (key: string) => settingService.getValue(key) },
+    { countByAgentId: async (agentId) => (await experienceService.listByAgentId(agentId)).length },
+  );
   const gitCommitMsg = new GitCommitMessageService(llmAdapter as never, harness as never, usageService, { getValue: (key: string) => settingService.getValue(key) });
   const gitWrite = new GitWriteOperationService(
     workspaceGit, gitCommitMsg, gitLookup, runtimeResolver, activityService,
@@ -2625,7 +2639,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     registerOpenApiCallLogRoutes(api, { callLog: callLogService, permissionService });
     registerAnalyticsRoutes(api, { analytics: analyticsService, jwt, permissionService });
     registerStatisticsRoutes(api, { statistics: statisticsService, jwt, permissionService });
-    registerFeedbackRoutes(api, { feedback: feedbackService, jwt, permissionService });
+    registerFeedbackRoutes(api, { feedback: feedbackService, experienceDraft, jwt, permissionService });
     registerMemoryRoutes(api, { memoryService });
     registerApprovalRuleRoutes(api, {
       approvalRuleService,

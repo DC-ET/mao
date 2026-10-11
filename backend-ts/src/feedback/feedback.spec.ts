@@ -16,6 +16,18 @@ function makeRepo(): FeedbackRepository {
       { reason: 'OTHER', count: 1 },
     ]),
     sumByDay: vi.fn(async () => [{ date: '2026-09-27', count: 4 }]),
+    countPending: vi.fn(async () => 5),
+    countPendingGroupBy: vi.fn(async () => [
+      { agentId: 2, agentName: 'Coder', reason: 'WRONG_RESULT', count: 3 },
+      { agentId: 2, agentName: 'Coder', reason: 'NO_REASON', count: 1 },
+      { agentId: null, agentName: null, reason: 'OTHER', count: 1 },
+    ]),
+    casMarkConverted: vi.fn(async () => 1),
+    markDismissed: vi.fn(async () => 1),
+    bindExperience: vi.fn(async () => undefined),
+    listByIds: vi.fn(async () => [
+      { id: 1, status: 'PENDING', agentId: 2, messageId: 11, sessionId: 5, reason: 'WRONG_RESULT' },
+    ]),
     listDetails: vi.fn(async () => [
       {
         id: 1,
@@ -28,6 +40,12 @@ function makeRepo(): FeedbackRepository {
         agentName: 'Coder',
         reason: 'WRONG_RESULT',
         source: 'desktop',
+        status: 'PENDING',
+        handledBy: null,
+        handledByName: null,
+        handledAt: null,
+        experienceId: null,
+        sameGroupCount: 3,
         contentPreview: 'hello ${skill}$ world',
         createdAt: '2026-09-27T00:00:00.000Z',
       },
@@ -39,6 +57,7 @@ function makeLookup(ownership: Parameters<FeedbackMessageLookup['findAssistantMe
   return {
     findAssistantMessageOwner: vi.fn(async () => ownership),
     findLatestAssistantMessageId: vi.fn(async () => 11),
+    findMessageContent: vi.fn(async () => '我已经改好了'),
   };
 }
 
@@ -251,5 +270,47 @@ describe('buildPreview', () => {
     const preview = buildPreview(long);
     expect(preview).toHaveLength(101);
     expect(preview.endsWith('…')).toBe(true);
+  });
+});
+
+describe('FeedbackService 待处理视角', () => {
+  it('getSummary 附带 pendingCount 与 pendingMatrix，矩阵原因带中文标签', async () => {
+    const repo = makeRepo();
+    const service = new FeedbackService(repo, makeLookup(OWNERSHIP), async () => 9);
+    const summary = await service.getSummary();
+    expect(summary.pendingCount).toBe(5);
+    expect(summary.pendingMatrix).toEqual([
+      { agentId: 2, agentName: 'Coder', reason: 'WRONG_RESULT', reasonLabel: '结果错误', count: 3 },
+      { agentId: 2, agentName: 'Coder', reason: 'NO_REASON', reasonLabel: '未选择原因（飞书）', count: 1 },
+      { agentId: null, agentName: null, reason: 'OTHER', reasonLabel: '其他', count: 1 },
+    ]);
+    // 待处理口径不带日期筛选：与明细 status=PENDING 的筛选结果一致
+    expect(repo.countPending).toHaveBeenCalledTimes(1);
+  });
+
+  it('listDetails 透传 status / agentId 筛选并校验取值', async () => {
+    const repo = makeRepo();
+    const service = new FeedbackService(repo, makeLookup(OWNERSHIP), async () => 9);
+    await service.listDetails({ status: 'PENDING', agentId: 2, page: 1, pageSize: 20 });
+    expect(repo.countTotal).toHaveBeenCalledWith(expect.objectContaining({ status: 'PENDING', agentId: 2 }));
+    expect(repo.listDetails).toHaveBeenCalledWith(expect.objectContaining({ status: 'PENDING', agentId: 2, offset: 0, limit: 20 }));
+    // agentId 允许为 null（筛选「无 Agent」的飞书点踩）
+    await service.listDetails({ agentId: null, page: 1, pageSize: 20 });
+    expect(repo.listDetails).toHaveBeenLastCalledWith(expect.objectContaining({ agentId: null }));
+    await expect(service.listDetails({ status: 'HACK', page: 1, pageSize: 20 }))
+      .rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
+  });
+
+  it('listDetails 行带状态、处理人、经验 id 与同类聚集数', async () => {
+    const repo = makeRepo();
+    const service = new FeedbackService(repo, makeLookup(OWNERSHIP), async () => 9);
+    const page = await service.listDetails({ status: 'PENDING', page: 1, pageSize: 20 });
+    expect(page.items[0]).toMatchObject({
+      status: 'PENDING',
+      handledBy: null,
+      handledByName: null,
+      experienceId: null,
+      sameGroupCount: 3,
+    });
   });
 });

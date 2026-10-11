@@ -61,6 +61,8 @@ export const ErrorCode = {
   WORKSPACE_WRITE_CONFLICT: { code: 3044, message: '文件正在被 Agent 写入' },
   /** 写目标已存在且本次不允许覆盖。HTTP 200。 */
   WORKSPACE_TARGET_EXISTS: { code: 3045, message: '目标已存在' },
+  /** 点踩反馈已被其他管理员处理（并发 convert/dismiss，CAS 影响行数不符）。HTTP 409。 */
+  FEEDBACK_ALREADY_HANDLED: { code: 3046, message: '该反馈已被处理，请刷新后重试' },
 
   /** 用量预算 BLOCK 超线：message 动态携带 scope/当期消耗/上限（技术方案 §5.7）。 */
   BUDGET_EXCEEDED: { code: 3041, message: '用量预算已超限' },

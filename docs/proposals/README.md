@@ -65,7 +65,7 @@
 
 | 提案 | 文档 | 一句话 | 规模 |
 |---|---|---|---|
-| 负反馈闭环 | [2026-10-11-feedback-experience-loop.md](2026-10-11-feedback-experience-loop.md)（已确认，技术方案见 [docs/plan/2026-10-11-feedback-experience-loop-technical-design.md](../plan/2026-10-11-feedback-experience-loop-technical-design.md)，决策记录 16 条于 2026-10-11 逐条确认） | 点踩数据今天只进报表不改行为；单条 / 聚集反馈经 LLM 起草 + 人工确认流入既有 `agent_experiences` 管道，把"踩过的坑"变成 Agent 的能力 | 小~中 |
+| 负反馈闭环 | [2026-10-11-feedback-experience-loop.md](2026-10-11-feedback-experience-loop.md)（**已实施**，技术方案见 [docs/plan/2026-10-11-feedback-experience-loop-technical-design.md](../plan/2026-10-11-feedback-experience-loop-technical-design.md)，决策记录 16 条于 2026-10-11 逐条确认；落地为 V148/V149 迁移 + 管理后台转经验向导与忽略闭环，CHANGELOG 0.0.276） | 点踩数据今天只进报表不改行为；单条 / 聚集反馈经 LLM 起草 + 人工确认流入既有 `agent_experiences` 管道，把"踩过的坑"变成 Agent 的能力 | 小~中 |
 | 渠道人工接管 | [2026-10-11-human-handoff.md](2026-10-11-human-handoff.md)（已否决，存档） | Agent 答不动时经工具或卡片按钮把会话切给真人（新相位 `WAITING_HUMAN` + 收件箱新 kind），接管人从桌面端回答并经渠道回发，补上 IM 客服 / 运维场景缺失的"人进来"出口 | — |
 | 信号哨兵 | [2026-10-11-signal-watcher.md](2026-10-11-signal-watcher.md)（已确认，技术方案见 [docs/plan/2026-10-11-signal-watcher-technical-design.md](../plan/2026-10-11-signal-watcher-technical-design.md)，决策记录 15 条于 2026-10-11 逐条确认） | HTTP 探针轮询外部信号（内容哈希 / JSON 字段比对），**只在变化时**触发 Agent 运行，替代"每分钟 cron 硬扫让模型自己判断有没有变"的烧钱模式 | 中 |
 | 技能蒸馏 | [2026-10-11-skill-distillation.md](2026-10-11-skill-distillation.md)（已否决，存档） | 从会话轨迹（既有 RunTraceService）+ 结论 + 文件变更起草 `SKILL.md`，人预览 / 编辑 / 试跑后落用户技能目录——把"那次跑通了"变成"下次直接用" | — |

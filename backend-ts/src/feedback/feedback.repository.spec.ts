@@ -136,6 +136,101 @@ describe('FeedbackRepository SQL 构造', () => {
     const rows = await repo.listDetails({ offset: 0, limit: 10 });
     expect(rows[0]).toMatchObject({ source: 'feishu', reason: 'NO_REASON', contentPreview: 'hello' });
   });
+
+  it('listDetailsSelectsStatusColumnsAndSameGroupCountSubquery', async () => {
+    const { repo, captured } = makeCaptureDb();
+    await repo.listDetails({ status: 'PENDING', agentId: 2, offset: 0, limit: 10 });
+    const { sql, params } = captured[0];
+    expect(sql).toContain('f.status');
+    expect(sql).toContain('f.handled_by');
+    expect(sql).toContain('f.handled_at');
+    expect(sql).toContain('f.experience_id');
+    expect(sql).toContain('hu.username AS handled_by_name');
+    expect(sql).toContain('LEFT JOIN user hu ON hu.id = f.handled_by');
+    // 聚集口径：同 agent_id + reason + PENDING，用 <=> 兼容 agent_id 为 NULL 的飞书点踩
+    expect(sql).toContain('g.agent_id <=> f.agent_id');
+    expect(sql).toContain("g.status = 'PENDING'");
+    expect(params).toEqual(['PENDING', 2, 10, 0]);
+  });
+
+  // agentId 三态：undefined 不筛、null 筛 agent_id IS NULL（飞书点踩无 Agent）、具体 id 等值。
+  // 曾经 null 与 undefined 生成同一条无 agent 条件的 SQL，「筛无 Agent」静默变成全表查询
+  it('buildDetailWhereDistinguishesNullFromUndefinedAgentId', async () => {
+    const { repo, captured } = makeCaptureDb();
+    await repo.listDetails({ agentId: null, offset: 0, limit: 10 });
+    expect(captured[0].sql).toContain('f.agent_id IS NULL');
+    expect(captured[0].params).toEqual([10, 0]);
+
+    await repo.countTotal({ agentId: null });
+    expect(captured[1].sql).toContain('f.agent_id IS NULL');
+    expect(captured[1].params).toEqual([]);
+
+    // undefined 仍然不追加任何 agent 条件（不筛选）
+    await repo.listDetails({ offset: 0, limit: 10 });
+    expect(captured[2].sql).not.toContain('agent_id IS NULL');
+    expect(captured[2].sql).not.toContain('f.agent_id = ?');
+    expect(captured[2].params).toEqual([10, 0]);
+  });
+
+  it('listDetailsMapsStatusColumnsWithFallbacks', async () => {    const { repo } = makeCaptureDb();
+    const rows = await repo.listDetails({ offset: 0, limit: 10 });
+    // 老行缺 status / 新列时按 PENDING 兜底，handledAt 为 Date 时转 ISO
+    expect(rows[0]).toMatchObject({
+      status: 'PENDING',
+      handledBy: null,
+      handledByName: null,
+      handledAt: null,
+      experienceId: null,
+      sameGroupCount: 0,
+    });
+  });
+
+  it('countPendingCountsOnlyPendingRows', async () => {
+    const { repo, captured } = makeCaptureDb();
+    await expect(repo.countPending()).resolves.toBe(5);
+    expect(captured[0].sql).toContain("WHERE f.status = 'PENDING'");
+    expect(captured[0].sql).toContain('COUNT(*) AS c');
+  });
+
+  it('countPendingGroupByGroupsByAgentAndReason', async () => {
+    const { repo, captured } = makeCaptureDb();
+    await repo.countPendingGroupBy();
+    const { sql } = captured[0];
+    expect(sql).toContain('GROUP BY f.agent_id, a.name, f.reason');
+    expect(sql).toContain("WHERE f.status = 'PENDING'");
+    // 快照口径：按 f.agent_id 分组，不 JOIN session 取实时 Agent
+    expect(sql).not.toContain('JOIN session');
+  });
+
+  it('casMarkConvertedOnlyTouchesPendingRows', async () => {
+    const { repo, captured } = makeCaptureDb();
+    await expect(repo.casMarkConverted([1, 2], 9)).resolves.toBe(1);
+    const { sql, params } = captured[0];
+    expect(sql).toContain("SET status = ?, handled_by = ?, handled_at = NOW(3)");
+    expect(sql).toContain("AND status = 'PENDING'");
+    expect(params).toEqual(['CONVERTED', 9, 1, 2]);
+  });
+
+  it('markDismissedUsesSameCasShape', async () => {
+    const { repo, captured } = makeCaptureDb();
+    await expect(repo.markDismissed([3], 9)).resolves.toBe(1);
+    expect(captured[0].params).toEqual(['DISMISSED', 9, 3]);
+  });
+
+  it('bindExperienceWritesExperienceIdAndOperator', async () => {
+    const { repo, captured } = makeCaptureDb();
+    await repo.bindExperience([1, 2], 100, 9);
+    const { sql, params } = captured[0];
+    expect(sql).toContain('SET experience_id = ?, handled_by = ?');
+    expect(params).toEqual([100, 9, 1, 2]);
+  });
+
+  it('listByIdsReturnsStatusAndSnapshotAgent', async () => {
+    const { repo, captured } = makeCaptureDb();
+    await repo.listByIds([1, 2]);
+    const { sql } = captured[0];
+    expect(sql).toContain('SELECT id, status, agent_id, message_id, session_id, reason FROM message_feedback');
+  });
 });
 
 /**
