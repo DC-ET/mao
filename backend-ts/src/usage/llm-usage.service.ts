@@ -55,6 +55,7 @@ export class LlmUsageRepository {
 
 export class LlmUsageService {
   static readonly SCENE_GIT_COMMIT_MESSAGE = 'git_commit_message';
+  static readonly SCENE_FEEDBACK_EXPERIENCE_DRAFT = 'feedback_experience_draft';
 
   constructor(private readonly repo: LlmUsageRepository) {}
 

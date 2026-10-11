@@ -2,6 +2,25 @@ import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import type { AgentExperience, AgentExperienceRepository, ExperienceInput } from './types.js';
 
+/**
+ * 经验正文规范化与校验（共享纯函数）。
+ *
+ * 供两处复用：AgentExperienceService 的既有 CRUD / 全量同步，以及
+ * 负反馈闭环转经验时在 db.transaction 内直接写轻量仓储的路径
+ * （技术方案 2026-10-11-feedback-experience-loop §5.2）。
+ * 两处必须同口径，避免复制漂移。
+ */
+export function normalizeExperienceContent(content: string | null | undefined): string {
+  if (content == null) {
+    throw new BusinessException(ErrorCode.AGENT_EXPERIENCE_CONTENT_INVALID);
+  }
+  const trimmed = content.trim();
+  if (trimmed.length === 0 || trimmed.length > AgentExperienceService.MAX_CONTENT_LENGTH) {
+    throw new BusinessException(ErrorCode.AGENT_EXPERIENCE_CONTENT_INVALID);
+  }
+  return trimmed;
+}
+
 export class AgentExperienceService {
   static readonly MAX_CONTENT_LENGTH = 300;
 
@@ -113,14 +132,7 @@ export class AgentExperienceService {
   }
 
   normalizeAndValidateContent(content: string | null | undefined): string {
-    if (content == null) {
-      throw new BusinessException(ErrorCode.AGENT_EXPERIENCE_CONTENT_INVALID);
-    }
-    const trimmed = content.trim();
-    if (trimmed.length === 0 || trimmed.length > AgentExperienceService.MAX_CONTENT_LENGTH) {
-      throw new BusinessException(ErrorCode.AGENT_EXPERIENCE_CONTENT_INVALID);
-    }
-    return trimmed;
+    return normalizeExperienceContent(content);
   }
 }
 
