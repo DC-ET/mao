@@ -31,9 +31,14 @@ describe('collectHeaders', () => {
     expect(collectHeaders([pair('', '')])).toBeUndefined()
   })
 
-  it('掩码行留空表示不改动，跳过该键', () => {
-    expect(collectHeaders([pair('Authorization', '', true)])).toBeUndefined()
+  it('掩码行留空：下发 SECRET_MASK 占位（服务端据此还原库内原值，不丢请求头）', () => {
+    expect(collectHeaders([pair('Authorization', '', true)])).toEqual({ Authorization: '******' })
     expect(collectHeaders([pair('Authorization', 'sk-new', true)])).toEqual({ Authorization: 'sk-new' })
+  })
+
+  it('掩码行留空 + 新增其他请求头：掩码键仍在，不会因新增而被删掉', () => {
+    expect(collectHeaders([pair('Authorization', '', true), pair('X-Trace', '1')]))
+      .toEqual({ Authorization: '******', 'X-Trace': '1' })
   })
 
   it('键名按输入原样保留（trim 仅用于判空）', () => {
@@ -61,8 +66,28 @@ describe('buildWatcherPayload', () => {
     expect(payload.body).toBe('{"a":1}')
   })
 
-  it('编辑态未填请求头：不下发该键（axios 会丢掉 undefined，服务端保留原值）', () => {
+  it('编辑态只新增一个请求头：留空的掩码键也要下发占位，服务端才还原原值', () => {
     const payload = buildWatcherPayload(form({ headers: [pair('Authorization', '', true)] }), true)
+    expect(payload.headers).toEqual({ Authorization: '******' })
+  })
+
+  it('编辑态未填任何请求头：不下发该键（axios 会丢掉 undefined，服务端保留原值）', () => {
+    const payload = buildWatcherPayload(form({ headers: [] }), true)
+    expect(payload).not.toHaveProperty('headers')
+  })
+
+  it('编辑态把行删光：下发 null 显式清空（服务端支持，否则用户无法撤掉已保存请求头）', () => {
+    const payload = buildWatcherPayload(form({ headers: [] }), true, { Authorization: 'sk' })
+    expect(payload.headers).toBeNull()
+  })
+
+  it('新建态无请求头：不下发该键（必填校验由服务端 normalizeInput 拦）', () => {
+    const payload = buildWatcherPayload(form({ headers: [] }), false, undefined)
+    expect(payload).not.toHaveProperty('headers')
+  })
+
+  it('编辑态原本就没有请求头：删空不下发 null（无实质变化）', () => {
+    const payload = buildWatcherPayload(form({ headers: [] }), true, {})
     expect(payload).not.toHaveProperty('headers')
   })
 

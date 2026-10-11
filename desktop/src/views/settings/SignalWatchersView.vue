@@ -272,6 +272,8 @@ const confirmDeleteId = ref<number | null>(null)
 const dialogVisible = ref(false)
 const editing = ref(false)
 const editingId = ref<number | null>(null)
+/** 编辑态下该哨兵当前已保存的请求头（用于「删光行 = 显式清空」的判定）。 */
+const originalHeaders = ref<Record<string, string> | null>(null)
 const submitting = ref(false)
 
 const form = reactive({
@@ -370,6 +372,7 @@ function openCreateDialog(): void {
   resetForm()
   editing.value = false
   editingId.value = null
+  originalHeaders.value = null
   dialogVisible.value = true
   if (agents.value.length === 0) void fetchAgents()
 }
@@ -378,6 +381,7 @@ function openEditDialog(watcher: SignalWatcherView): void {
   resetForm()
   editing.value = true
   editingId.value = watcher.id
+  originalHeaders.value = watcher.headers
   form.name = watcher.name
   form.agentId = watcher.agentId
   form.url = watcher.url
@@ -407,7 +411,7 @@ function removeHeaderRow(index: number): void {
 const canSubmit = computed(() => {
   if (form.name.trim() === '' || form.agentId == null) return false
   if (form.url.trim() === '') return false
-  if (form.method === 'POST' && !editing && form.body.trim() === '') return false
+  if (form.method === 'POST' && !editing.value && form.body.trim() === '') return false
   if (form.compareMode === 'JSON_FIELD' && form.jsonPath.trim() === '') return false
   if (form.promptTemplate.trim() === '') return false
   return true
@@ -419,7 +423,7 @@ async function submitForm(): Promise<void> {
   try {
     // 编辑态：未修改的敏感字段（请求体 / 提取路径）不下发，服务端按「留空不修改」保留原值；
     // 新建态照常下发（undefined 由服务端 normalizeInput 的必填校验拦住）。
-    const payload = buildWatcherPayload(form, editing.value)
+    const payload = buildWatcherPayload(form, editing.value, originalHeaders.value ?? undefined)
     if (editing && editingId.value != null) {
       await updateSignalWatcher(editingId.value, payload)
       ElMessage.success('哨兵已更新')

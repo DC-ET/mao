@@ -565,13 +565,24 @@ export class WatcherService {
    * 敏感请求头「留空不修改」语义的服务端承接：入参里值等于掩码的敏感键，
    * 用库内解密后的原值替换；非敏感键或非掩码值原样保留。
    * 键名按小写归一匹配——HTTP 头大小写不敏感，而 JS 对象键是精确匹配。
+   *
+   * 库内找不到对应键（用户把敏感键改名后留空）时抛错：否则 '******' 会字面量落库，
+   * 之后每次探针都真的发出 `X-Api-Key: ******`，既连不上目标服务又白耗失败次数。
    */
   private restoreMaskedHeaders(input: Record<string, string> | null, stored: Record<string, string>): Record<string, string> | null {
     if (input == null) return null;
     const lowered = new Map(Object.entries(stored).map(([key, value]) => [key.toLowerCase(), value]));
     const result: Record<string, string> = {};
     for (const [key, value] of Object.entries(input)) {
-      result[key] = value === SECRET_MASK && isSensitiveProbeHeader(key) ? (lowered.get(key.toLowerCase()) ?? value) : value;
+      if (value !== SECRET_MASK || !isSensitiveProbeHeader(key)) {
+        result[key] = value;
+        continue;
+      }
+      const restored = lowered.get(key.toLowerCase());
+      if (restored == null) {
+        throw new BusinessException(ErrorCode.PARAM_INVALID, `请求头 ${key} 需要填写新的值`);
+      }
+      result[key] = restored;
     }
     return result;
   }
