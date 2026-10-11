@@ -59,6 +59,24 @@
 
 排期注意：定时任务可靠性与模型容灾都碰执行收敛点附近，与历史上记忆/收件箱/预算动过的 `task-terminal.service.ts` 收敛点相邻，实施时错开；全文检索的 V142 迁移与另两份提案的新表（若都过）注意编号顺延（工作区文件直管零迁移，不占编号）；开放接口调用中心 P3 的 Token 自动停用与既有 Webhook 触发器自动停用模式对齐，可合并一次交互评审。
 
+## 第六批（2026-10-11，待评审）
+
+背景：前五批落定后（轨迹 / 定时任务可靠性 / 全文检索 / 文件直管 / 开放接口调用中心 / 成本预算 / 审批规则 / 上下文透视 / 资产分发等均已实施），基于代码现状摸底产出的五个方向，共同主题是"**让系统自己长起来**"：踩过的坑变成能力（负反馈闭环）、外部变化自己敲门（信号哨兵）、一次成功复用一辈子（技能蒸馏）、环境起点不用每次裸奔（工作区模板）。提案均严格避开已否决方向（RAG / Evals / 多 Agent DAG / 计划门 / 出网边界 / 备份恢复 / 数据保留 / 模型容灾 / 检查点回滚），且都建立在已实施设施之上（经验表、轨迹服务、staged 技能写入、出站投递），不新增大规模基础设施。本批评审结果（2026-10-11）：**技能蒸馏、工作区环境模板、渠道人工接管不做**（见下方台账），负反馈闭环与信号哨兵已确认转入实施。
+
+| 提案 | 文档 | 一句话 | 规模 |
+|---|---|---|---|
+| 负反馈闭环 | [2026-10-11-feedback-experience-loop.md](2026-10-11-feedback-experience-loop.md)（已确认，技术方案见 [docs/plan/2026-10-11-feedback-experience-loop-technical-design.md](../plan/2026-10-11-feedback-experience-loop-technical-design.md)，决策记录 16 条于 2026-10-11 逐条确认） | 点踩数据今天只进报表不改行为；单条 / 聚集反馈经 LLM 起草 + 人工确认流入既有 `agent_experiences` 管道，把"踩过的坑"变成 Agent 的能力 | 小~中 |
+| 渠道人工接管 | [2026-10-11-human-handoff.md](2026-10-11-human-handoff.md)（已否决，存档） | Agent 答不动时经工具或卡片按钮把会话切给真人（新相位 `WAITING_HUMAN` + 收件箱新 kind），接管人从桌面端回答并经渠道回发，补上 IM 客服 / 运维场景缺失的"人进来"出口 | — |
+| 信号哨兵 | [2026-10-11-signal-watcher.md](2026-10-11-signal-watcher.md)（已确认，技术方案见 [docs/plan/2026-10-11-signal-watcher-technical-design.md](../plan/2026-10-11-signal-watcher-technical-design.md)，决策记录 15 条于 2026-10-11 逐条确认） | HTTP 探针轮询外部信号（内容哈希 / JSON 字段比对），**只在变化时**触发 Agent 运行，替代"每分钟 cron 硬扫让模型自己判断有没有变"的烧钱模式 | 中 |
+| 技能蒸馏 | [2026-10-11-skill-distillation.md](2026-10-11-skill-distillation.md)（已否决，存档） | 从会话轨迹（既有 RunTraceService）+ 结论 + 文件变更起草 `SKILL.md`，人预览 / 编辑 / 试跑后落用户技能目录——把"那次跑通了"变成"下次直接用" | — |
+
+排期注意：
+
+1. **迁移编号**：本批剩余两个提案共需 2 个新迁移（feedback 状态列、signal 两表），当前最新为 V147，按实施顺序顺延 V148+。
+2. **LLM 起草模式参照**：负反馈闭环的 `scene=feedback_experience_draft` 与 git 提交信息（`git_commit_message`）同为"轨迹摘要 → LLM 起草 → 人确认"，prompt 契约 / 敏感文件过滤 / 纠错重试可参照后者实现，不新建共享抽象（仅一处使用）。
+3. **收件箱新 kind**：信号哨兵需加 `WATCHER_DISABLED`，须同步 `backend-ts/src/inbox/types.ts` 白名单、`@mao/contracts` 的 `InboxKind` 联合类型、桌面抽屉图标与通知偏好。
+4. **桌面端工作量**：哨兵管理页为桌面端新界面，实施时注意与 `settings` 页既有改动的冲突。
+
 ## 已评估、明确不做
 
 以下各项已复审定案，**不再重启、不再提案**（存档文档已标否决，勿再评审）：
@@ -71,6 +89,9 @@
 - **实例备份与一键恢复**：2026-10-09 评审：不做。存档：[2026-10-09-backup-restore.md](2026-10-09-backup-restore.md)。
 - **数据保留策略与个人数据可携带**：2026-10-09 评审：不做。存档：[2026-10-09-data-retention-portability.md](2026-10-09-data-retention-portability.md)。
 - **模型容灾与故障转移**：2026-10-09 评审：不做。存档：[2026-10-09-model-fallback-health.md](2026-10-09-model-fallback-health.md)。
+- **技能蒸馏（会话轨迹 → 技能）**：2026-10-11 评审：不做。存档：[2026-10-11-skill-distillation.md](2026-10-11-skill-distillation.md)。
+- **CLOUD 工作区环境模板与快照**：2026-10-11 评审：不做（重复装环境的问题真实存在，但模板资产带来磁盘配额、敏感文件进 TEAM 共享、符号链接逃逸三重新增风险面，收益/风险比不划算；建会话时装依赖的需求可先用"Git clone + 初始化命令"的既有链路人工满足）。存档：[2026-10-11-workspace-template.md](2026-10-11-workspace-template.md)。
+- **渠道会话人工接管（Human Handoff）**：2026-10-11 评审：不做。存档：[2026-10-11-human-handoff.md](2026-10-11-human-handoff.md)。
 
 ## 已排除的方向（与产品定位或约束冲突）
 
