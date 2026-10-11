@@ -125,7 +125,9 @@ function lastWeekStartYmd(today: string): string {
 }
 
 /**
- * 周期 → 闭区间窗口（含首尾全天，时区口径同管理后台：Asia/Shanghai 日历日）。
+ * 周期 → 半开窗口 [startAt, endAtExclusive)（含首尾全天，时区口径同管理后台：Asia/Shanghai 日历日）。
+ * 上界是 endYmd 的次日 00:00:00：created_at 是 DATETIME(3)，字典序上
+ * '...59.000' > '...59'，用结束日 23:59:59 会漏掉最后一秒的全部毫秒行。
  * custom 走 dateRange：缺省的边界由该函数兜底（前端两个日期都必填，这里防直接调用）。
  */
 function rangeWindow(range: UsageRange, dateRange?: UsageDateRange): LlmCallAggFilter & { startYmd: string; endYmd: string } {
@@ -171,7 +173,7 @@ function rangeWindow(range: UsageRange, dateRange?: UsageDateRange): LlmCallAggF
   }
   return {
     startAt: `${startYmd} 00:00:00`,
-    endAt: `${endYmd} 23:59:59`,
+    endAtExclusive: `${addDaysYmd(endYmd, 1)} 00:00:00`,
     startYmd,
     endYmd,
   };

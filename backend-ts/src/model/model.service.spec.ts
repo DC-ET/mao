@@ -36,7 +36,7 @@ describe('ModelService', () => {
     updateById: vi.fn(),
     deleteById: vi.fn(),
     clearDefaultFlag: vi.fn(),
-    countActiveExcept: vi.fn(),
+    countActiveTextExcept: vi.fn(),
   };
   const sessionRepo: SessionModelRepository = {
     reassignModelId: vi.fn(),
@@ -256,15 +256,19 @@ describe('ModelService', () => {
   it('updateStatusValidatesValueAndProtectsOnlyActiveDefault', async () => {
     const defaultModel = model(3, 'default', 1, 1);
     vi.mocked(modelRepo.findById).mockResolvedValue(defaultModel);
-    vi.mocked(modelRepo.countActiveExcept).mockResolvedValue(0);
+    vi.mocked(modelRepo.countActiveTextExcept).mockResolvedValue(0);
 
     await expect(service.updateStatus(3, 2)).rejects.toBeInstanceOf(BusinessException);
     await expect(service.updateStatus(3, 0)).rejects.toBeInstanceOf(BusinessException);
 
-    vi.mocked(modelRepo.countActiveExcept).mockResolvedValue(1);
+    // 停用只写 status：默认指定是独立语义，取消默认只能走显式 updateModel(isDefault = 0)。
+    // 这里顺手清零会绕过 deleteModel 守卫，并让 findDefault()（要求 status = 1）返回 null，
+    // 进而把所有 session.model_id 置 NULL。
+    vi.mocked(modelRepo.countActiveTextExcept).mockResolvedValue(1);
     await service.updateStatus(3, 0);
     expect(defaultModel.status).toBe(0);
-    expect(defaultModel.isDefault).toBe(0);
+    expect(defaultModel.isDefault).toBe(1);
+    expect(modelRepo.clearDefaultFlag).not.toHaveBeenCalled();
     expect(modelRepo.updateById).toHaveBeenCalledWith(defaultModel);
   });
 

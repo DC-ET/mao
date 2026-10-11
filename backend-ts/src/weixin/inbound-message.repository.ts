@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { Db } from '../db/db.js';
+import { parseShanghaiDateTime } from '../auth/auth.service.js';
 
 export interface WeixinInboundRecord {
   id?: number;
@@ -98,6 +99,10 @@ export class WeixinInboundMessageRepository {
    * 该账号最近一次入站时间，无记录返回 null。
    * ilink 的 `context_token` 只在用户最近一条入站消息后的 24 小时内有效，
    * 主动发送（如定时任务）前必须先查这里，超窗发送必然被拒。
+   *
+   * db 连接固定 `timezone: '+08:00'` 且 `dateStrings: true`，拿到的字符串本就是
+   * 上海墙钟。必须按 +08:00 解析：强加 'Z' 会整体前移 8 小时，把 20 小时前的入站
+   * 算成 12 小时，24h 主动发送窗口被误判为仍打开（超窗发送必被拒）。
    */
   async findLatestInboundAt(accountId: string): Promise<Date | null> {
     const row = await this.db.queryOne<{ createdAt: Date | string }>(
@@ -106,14 +111,18 @@ export class WeixinInboundMessageRepository {
       [accountId],
     );
     if (row == null) return null;
-    return row.createdAt instanceof Date
-      ? row.createdAt
-      : new Date(String(row.createdAt).replace(' ', 'T') + 'Z');
+    if (row.createdAt instanceof Date) return row.createdAt;
+    const ts = parseShanghaiDateTime(String(row.createdAt));
+    return Number.isNaN(ts) ? null : new Date(ts);
   }
 
   /**
    * 幂等键占用检查：指纹命中且（未 DONE 或 DONE 未满去重窗口）视为同一消息的
    * 服务端重投，跳过处理；DONE 超过窗口视为用户合法重发相同内容，放行处理。
+   *
+   * updated_at 同为上海墙钟字符串，解析口径见 findLatestInboundAt 注释：
+   * 按 UTC 解析会让 30 小时前的 DONE 行只剩 22 小时，用户合法重发被误判为
+   * 服务端重投而跳过。
    */
   async shouldSkipDuplicate(accountId: string, messageKey: string): Promise<boolean> {
     const row = await this.db.queryOne<{ status: string; updatedAt: Date | string }>(
@@ -123,8 +132,12 @@ export class WeixinInboundMessageRepository {
     );
     if (row == null) return false;
     if (row.status !== 'DONE') return true;
-    const updatedAt = row.updatedAt instanceof Date ? row.updatedAt : new Date(String(row.updatedAt).replace(' ', 'T') + 'Z');
-    return Date.now() - updatedAt.getTime() < WeixinInboundMessageRepository.DONE_DEDUP_WINDOW_MS;
+    if (row.updatedAt instanceof Date) {
+      return Date.now() - row.updatedAt.getTime() < WeixinInboundMessageRepository.DONE_DEDUP_WINDOW_MS;
+    }
+    const ts = parseShanghaiDateTime(String(row.updatedAt));
+    if (Number.isNaN(ts)) return true;
+    return Date.now() - ts < WeixinInboundMessageRepository.DONE_DEDUP_WINDOW_MS;
   }
 
   /** 合法重发相同内容（DONE 超窗口）时把既有行重新置回 CLAIMED，进入处理。 */

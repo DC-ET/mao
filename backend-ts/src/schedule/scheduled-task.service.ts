@@ -414,6 +414,14 @@ export class ScheduledTaskService {
       }
       task.status = status;
     }
+    // 待重试的一次性任务不得重开档期：这条不变量对**所有**保存路径生效——带 cron 原样保存、
+    // 只改 status 从 PAUSED 重新启用、agent 工具只回传 status 都算。判据必须提到分支外面：
+    // 只看 cronExpression 分支的守门会被 reactivate 绕开（重试到期前 listDue 与
+    // listDueRetries 同时命中同一任务，而 claimRun 按 (task_id, fire_time) 查重
+    // 挡不住两个不同 fire_time 的入口，一次性任务被重复执行）。
+    // 显式把 once 改成 0 时不拦：task.once 已被置 0，重试成功后仍需要下一档。
+    const pendingOnceRetry = task.once === 1 && task.id != null
+      && (await this.store.hasPendingRetry?.(task.id)) === true;
     if (cronExpression != null) {
       this.parseCron(cronExpression);
       const sameSchedule = normalizeSpringCron(cronExpression) === normalizeSpringCron(task.cronExpression ?? '');
@@ -423,9 +431,7 @@ export class ScheduledTaskService {
       if (once == null && !sameSchedule) task.once = isOneShotCron(cronExpression) ? 1 : 0;
       // 管理端保存会原样带上当前 cron。仍是一次性且还在等重试时，下一档必须保持为空。
       // 关掉一次性之后要按循环任务重算下一档，否则重试成功后没有档期。
-      const pendingOnceRetry = sameSchedule && task.once === 1 && task.id != null
-        && (await this.store.hasPendingRetry?.(task.id)) === true;
-      if (!pendingOnceRetry) {
+      if (!(sameSchedule && pendingOnceRetry)) {
         const next = this.calculateNextFireTime(cronExpression);
         task.nextFireTime = next;
         if (next != null) {
@@ -436,7 +442,10 @@ export class ScheduledTaskService {
     }
     // 已完结任务的 nextFireTime 为空。只改名称/提示词不得把它拉起来；
     // 显式改 once，或把状态设回 ACTIVE，才按当前 cron 重新排期。
-    const reactivate = cronExpression == null && task.status === 'ACTIVE' && task.nextFireTime == null
+    // pendingOnceRetry 时同样不排：重试入口（listDueRetries）才是这一档的唯一驱动，
+    // 否则重试到期前会被 listDue 提前命中，与重试入口重复执行同一任务。
+    const reactivate = cronExpression == null && !pendingOnceRetry
+      && task.status === 'ACTIVE' && task.nextFireTime == null
       && (once != null || status === 'ACTIVE');
     if (reactivate) {
       const next = this.calculateNextFireTime(task.cronExpression!);

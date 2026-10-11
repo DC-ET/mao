@@ -37,13 +37,14 @@ export interface LlmCallListFilter {
   scene?: string | null;
   success?: boolean | null;
   startAt?: string | null;
-  endAt?: string | null;
+  /** 排他上界（次日 00:00:00），不是结束日 23:59:59；见 LlmCallAggFilter 注释。 */
+  endAtExclusive?: string | null;
 }
 
-/** 聚合窗口：闭区间 [startAt, endAt]，两端均可缺省（缺省=不限）。 */
+/** 聚合窗口：半开区间 [startAt, endAtExclusive)，两端均可缺省（缺省=不限）。 */
 export interface LlmCallAggFilter {
   startAt?: string | null;
-  endAt?: string | null;
+  endAtExclusive?: string | null;
 }
 
 /** 趋势横轴：day 为日历日，hour 为整点（口径同管理后台 admin-analytics）。 */
@@ -114,7 +115,7 @@ function trendBucketExpr(granularity: TrendGranularity): string {
 export class LlmCallRepository {
   constructor(private readonly db: Db) {}
 
-  /** 聚合 WHERE：窗口 + 场景 + 成败（userId 由各聚合方法强制注入，不走这里）。 */
+  /** 聚合 WHERE：半开窗口 + 场景 + 成败（userId 由各聚合方法强制注入，不走这里）。 */
   private aggWhere(filter: LlmCallAggFilter & { scene?: string | null; success?: boolean | null }): { sql: string; params: unknown[] } {
     const clauses: string[] = [];
     const params: unknown[] = [];
@@ -122,9 +123,9 @@ export class LlmCallRepository {
       clauses.push('created_at >= ?');
       params.push(filter.startAt);
     }
-    if (filter.endAt != null) {
-      clauses.push('created_at <= ?');
-      params.push(filter.endAt);
+    if (filter.endAtExclusive != null) {
+      clauses.push('created_at < ?');
+      params.push(filter.endAtExclusive);
     }
     if (filter.scene != null && filter.scene.trim() !== '') {
       clauses.push('scene = ?');
@@ -199,9 +200,9 @@ export class LlmCallRepository {
       where.push('created_at >= ?');
       params.push(filter.startAt);
     }
-    if (filter.endAt != null) {
-      where.push('created_at <= ?');
-      params.push(filter.endAt);
+    if (filter.endAtExclusive != null) {
+      where.push('created_at < ?');
+      params.push(filter.endAtExclusive);
     }
     const whereSql = where.join(' AND ');
     const offset = Math.max(0, (page - 1) * size);

@@ -9,7 +9,7 @@ describe('LlmCallRepository 用户维度聚合', () => {
     return { repo, query, queryOne };
   }
 
-  const WINDOW = { startAt: '2026-10-04 00:00:00', endAt: '2026-10-10 23:59:59' };
+  const WINDOW = { startAt: '2026-10-04 00:00:00', endAtExclusive: '2026-10-11 00:00:00' };
 
   it('aggregateSummary：user_id = ? 在最前，窗口参数随后；字符串数值转 number', async () => {
     const { repo, queryOne } = build([], {
@@ -35,7 +35,7 @@ describe('LlmCallRepository 用户维度聚合', () => {
     });
     const [sql, params] = queryOne.mock.calls[0] as [string, unknown[]];
     expect(sql).toContain('WHERE user_id = ? AND');
-    expect(params).toEqual([7, '2026-10-04 00:00:00', '2026-10-10 23:59:59']);
+    expect(params).toEqual([7, '2026-10-04 00:00:00', '2026-10-11 00:00:00']);
   });
 
   it('aggregateSummary：空窗口/空结果归零，不发 NULL', async () => {
@@ -64,7 +64,7 @@ describe('LlmCallRepository 用户维度聚合', () => {
     const [sql, params] = query.mock.calls[0] as [string, unknown[]];
     expect(sql).toContain('GROUP BY model_id');
     expect(sql).toContain('ORDER BY totalTokens DESC');
-    expect(params).toEqual([7, '2026-10-04 00:00:00', '2026-10-10 23:59:59']);
+    expect(params).toEqual([7, '2026-10-04 00:00:00', '2026-10-11 00:00:00']);
   });
 
   it('aggregateByScene：scene 空归 unknown 分组', async () => {
@@ -87,7 +87,7 @@ describe('LlmCallRepository 用户维度聚合', () => {
     const [sql, params] = query.mock.calls[0] as [string, unknown[]];
     expect(sql).toContain('GROUP BY agent_id');
     expect(sql).toContain('ORDER BY totalTokens DESC');
-    expect(params).toEqual([7, '2026-10-04 00:00:00', '2026-10-10 23:59:59']);
+    expect(params).toEqual([7, '2026-10-04 00:00:00', '2026-10-11 00:00:00']);
   });
 
   it('aggregateTrend：day 用 DATE()，hour 用 DATE_FORMAT 整点，均按桶升序；带 prompt/cached token', async () => {
