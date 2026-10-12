@@ -84,7 +84,11 @@ export class McpSyncService {
   ): Promise<CloudConnectResult> {
     const tools: McpToolRef[] = [];
     const warnings: string[] = [];
-    const succeeded = new Set<string>();
+    // 成功集合按 server 主键记录：mcp_server.name 无唯一约束（后台允许重名），
+    // 按名字匹配会把「同名但挂了的那一个」误判为成功，导致它的工具本轮直接消失、
+    // 也没有不可用 notice——tools 抖动正是本方案要消除的东西。
+    const succeeded = new Set<number>();
+    const succeededByName = new Set<string>();
     for (const server of servers) {
       // 取消（用户点停止）必须打断连接：buildContext 阶段没有任何别的取消出口，
       // 否则执行体到不了 finally，WS handler 的执行簿记永久残留。
@@ -96,7 +100,8 @@ export class McpSyncService {
         const env = this.mcpServerService.decryptEnv(server);
         const listed = await clientManager.connectAndListTools(sessionId, server, env, cancelFlag);
         tools.push(...listed);
-        succeeded.add(server.name ?? '');
+        if (server.id != null) succeeded.add(server.id);
+        if (server.name != null) succeededByName.add(server.name);
       } catch (e) {
         warnings.push(`${server.name}: ${(e as Error).message}`);
         harnessLog('warn', `MCP connect failed for ${server.name}: ${(e as Error).message}`);
@@ -104,18 +109,20 @@ export class McpSyncService {
     }
     // 本轮成功的 server 重新排序入库；失败的 server 沿用上次快照中的工具，使 tools 数组稳定。
     // 快照只保留本轮 servers 列表里的 server：配置中已移除的 server 不再被带回。
+    // 合并后必须整体排序：只把「本轮成功」与「快照补回」各自排序再拼接，会在有 server
+    // 失败时产出与全成功轮不同的字节序列——那正是本轮方案要消除的 miss。
     const previous = this.toolsRegistry.getCloudSnapshot(sessionId);
-    const configured = new Set(servers.map((s) => s.name ?? ''));
-    const snapshot = [
-      ...sortMcpToolRefs(tools),
-      ...sortMcpToolRefs(previous.filter((ref) => !succeeded.has(ref.serverName) && configured.has(ref.serverName))),
-    ];
+    const configured = new Set(servers.filter((s) => s.id != null).map((s) => s.id!));
+    // 旧快照的 ref.serverId 与本轮 server.id 对应；serverId 缺失（0）时退化为按名字比较，
+    // 保证只有单 server 的老数据不会整块被当成 stale 丢掉。
+    const staleRefs = previous.filter((ref) => {
+      if (succeeded.has(ref.serverId)) return false;
+      if (ref.serverId === 0) return !succeededByName.has(ref.serverName);
+      return configured.has(ref.serverId);
+    });
+    const snapshot = sortMcpToolRefs([...tools, ...staleRefs]);
     this.toolsRegistry.reportCloudSnapshot(sessionId, snapshot);
-    const staleServers = [...new Set(
-      previous
-        .filter((ref) => !succeeded.has(ref.serverName) && configured.has(ref.serverName))
-        .map((ref) => ref.serverName),
-    )];
+    const staleServers = [...new Set(staleRefs.map((ref) => ref.serverName))];
     for (const serverName of staleServers) {
       warnings.push(`${serverName} 当前不可用，相关工具调用可能失败`);
     }

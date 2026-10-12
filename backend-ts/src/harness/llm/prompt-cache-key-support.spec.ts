@@ -36,6 +36,27 @@ describe('prompt-cache-key-support', () => {
     expect(isSupported(c, 'prompt_cache_key')).toBe(true);
   });
 
+  it('baseUrl 与 modelId 均缺失时按模型主键 id 隔离', () => {
+    // 两个网关地址与模型名都空、只有主键不同的配置（同一网关同一模型的重复登记行）
+    // 必须互相隔离：否则一个被降级会把另一个的缓存字段也一起毙掉。
+    resetPromptCacheSupportForTest();
+    const a = { baseUrl: undefined, modelId: undefined, id: 1, apiKey: 'k' } as LlmModelConfig;
+    const b = { baseUrl: undefined, modelId: undefined, id: 2, apiKey: 'k' } as LlmModelConfig;
+    const sameAgain = { baseUrl: undefined, modelId: undefined, id: 1, apiKey: 'k' } as LlmModelConfig;
+    markUnsupported(a, 'prompt_cache_key', 'unknown field prompt_cache_key');
+    expect(isSupported(a, 'prompt_cache_key')).toBe(false);
+    expect(isSupported(sameAgain, 'prompt_cache_key')).toBe(false);
+    expect(isSupported(b, 'prompt_cache_key')).toBe(true);
+  });
+
+  it('baseUrl/modelId 为空串时与 undefined 视作同一空值，不因空串另立一键', () => {
+    resetPromptCacheSupportForTest();
+    const blank = { baseUrl: '', modelId: '', id: 3, apiKey: 'k' } as LlmModelConfig;
+    const missing = { baseUrl: undefined, modelId: undefined, id: 3, apiKey: 'k' } as LlmModelConfig;
+    markUnsupported(blank, 'cache_control', 'unknown field cache_control');
+    expect(isSupported(missing, 'cache_control')).toBe(false);
+  });
+
   it.each([
     ['400 且点名 prompt_cache_key', 400, '{"error":{"message":"unknown field: prompt_cache_key"}}', 'prompt_cache_key', true],
     ['400 且 unknown + cache', 400, '{"error":{"message":"unrecognized cache field"}}', 'prompt_cache_key', true],

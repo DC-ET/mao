@@ -223,5 +223,68 @@ describe('McpSyncService', () => {
       const onlyGithub = await service.connectForCloud(36, [github as never], clientManager, null);
       expect(onlyGithub.tools.map((t) => t.serverName)).toEqual(['github', 'github']);
     });
+
+    it('sameNameServersAreMatchedByIdSoOneFailureStillWarnsAndRestores', async () => {
+      // mcp_server.name 无唯一约束：同名两个 server（一个可用一个挂了）时，
+      // 按名字判成功会把挂掉的那个误判为可用——它的工具直接消失且无 notice。
+      // 按主键判成功后，失败者的工具从快照补回，并出现「当前不可用」notice。
+      const githubOk = { id: 2, name: 'github', serverType: TYPE_HTTP, url: 'https://mcp.example.com/github-ok', status: STATUS_ENABLED };
+      const githubDown = { id: 4, name: 'github', serverType: TYPE_HTTP, url: 'https://mcp.example.com/github-down', status: STATUS_ENABLED };
+      connectAndListTools.mockImplementation(async (_sid: number, server: { id?: number }) => {
+        if (server.id === 2) return githubTools;
+        throw new Error('connect refused');
+      });
+      const result = await service.connectForCloud(37, [githubOk as never, githubDown as never], clientManager, null);
+      // 成功者的工具原样出现，失败者的工具由快照补回（本会话尚无快照，故本轮只出现成功者）
+      expect(result.tools.map((t) => t.fullToolName)).toEqual(['mcp__github__read', 'mcp__github__write']);
+      expect(result.warnings).toEqual(['github: connect refused']);
+
+      // 下一轮失败者恢复成功：它的工具重新来自连接结果，notice 消失
+      connectAndListTools.mockImplementation(async (_sid: number, server: { id?: number }) => (
+        server.id === 4 ? githubTools : githubTools
+      ));
+      const recovered = await service.connectForCloud(37, [githubOk as never, githubDown as never], clientManager, null);
+      expect(recovered.warnings).toEqual([]);
+    });
+
+    it('sameNameServerFailureFallsBackToSnapshotByServerId', async () => {
+      // 同名 server 场景的快照回归：失败者（id=4）必须从快照按 serverId 补回自己的工具，
+      // 而不是被「同名已成功」直接吞掉。
+      const githubOk = { id: 2, name: 'github', serverType: TYPE_HTTP, url: 'https://mcp.example.com/github-ok', status: STATUS_ENABLED };
+      const githubDown = { id: 4, name: 'github', serverType: TYPE_HTTP, url: 'https://mcp.example.com/github-down', status: STATUS_ENABLED };
+      const okTools = [{ serverId: 2, serverName: 'github', toolName: 'read', description: '', inputSchema: {}, fullToolName: 'mcp__github__read' }];
+      const downTools = [{ serverId: 4, serverName: 'github', toolName: 'deploy', description: '', inputSchema: {}, fullToolName: 'mcp__github__deploy' }];
+      connectAndListTools.mockImplementation(async (_sid: number, server: { id?: number }) => (
+        server.id === 2 ? okTools : downTools
+      ));
+      await service.connectForCloud(38, [githubOk as never, githubDown as never], clientManager, null);
+
+      connectAndListTools.mockImplementation(async (_sid: number, server: { id?: number }) => {
+        if (server.id === 2) return okTools;
+        throw new Error('connect refused');
+      });
+      const result = await service.connectForCloud(38, [githubOk as never, githubDown as never], clientManager, null);
+      expect(result.tools.map((t) => t.fullToolName)).toEqual(['mcp__github__deploy', 'mcp__github__read']);
+      expect(result.warnings).toContain('github 当前不可用，相关工具调用可能失败');
+    });
+
+    it('partialFailureRoundStaysByteIdenticalToFullSuccessRound', async () => {
+      // 快照拼接必须整体排序（成功集 + 补回集一起排）。若两段各自排序后拼接，
+      // 有 server 失败的轮次会产出与全成功轮不同的字节序列——抖动依旧造成 miss。
+      const github = { id: 2, name: 'github', serverType: TYPE_HTTP, url: 'https://mcp.example.com/github', status: STATUS_ENABLED };
+      const baidu = { id: 3, name: 'baidu_map', serverType: TYPE_HTTP, url: 'https://mcp.example.com/baidu', status: STATUS_ENABLED };
+      connectAndListTools.mockImplementation(async (_sid: number, server: { name?: string }) => (
+        server.name === 'github' ? githubTools : baiduTools
+      ));
+      const full = await service.connectForCloud(39, [github as never, baidu as never], clientManager, null);
+
+      // 第二轮 github 失败：工具集必须与全成功轮逐字节一致（baidu 在前、github 两个在后）
+      connectAndListTools.mockImplementation(async (_sid: number, server: { name?: string }) => {
+        if (server.name === 'github') throw new Error('connect refused');
+        return baiduTools;
+      });
+      const degraded = await service.connectForCloud(39, [github as never, baidu as never], clientManager, null);
+      expect(JSON.stringify(degraded.tools)).toBe(JSON.stringify(full.tools));
+    });
   });
 });

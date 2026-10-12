@@ -363,6 +363,18 @@ describe('SystemSettingService', () => {
     await expect(service().update('harness.llm.anthropicAutoCache', 'yes')).rejects.toThrow(/true 或 false/);
   });
 
+  it('getHarnessTuningConfigReadsMixedCaseBoolValues', async () => {
+    // update 校验对开关值大小写不敏感（'True' 能写入），读取侧必须同口径解析，
+    // 否则写进去的值会被回落成默认值，表现为「保存了但不生效」。
+    vi.mocked(mapper.findByKey).mockImplementation(async (key: string) => (
+      key === 'harness.llm.anthropicAutoCache'
+        ? { id: 1, settingKey: key, value: 'False', category: '运行参数', editable: 1 }
+        : null
+    ));
+    const cfg = await service().getHarnessTuningConfig();
+    expect(cfg.llm.anthropicAutoCache).toBe(false);
+  });
+
   it('updateRejectsInvalidHarnessTuningValues', async () => {
     vi.mocked(mapper.findByKey).mockResolvedValue(setting('harness.compaction.contextWindowTokens', '运行参数', 1));
     await expect(service().update('harness.compaction.contextWindowTokens', '0')).rejects.toThrow(/正整数/);

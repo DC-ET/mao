@@ -19,10 +19,20 @@ import type { LlmModelConfig } from './chat-request.js';
 /** 受降级机制保护的请求体字段（Anthropic 顶层字段与 chat-completions 顶层字段各一个）。 */
 export type PromptCacheFeature = 'prompt_cache_key' | 'cache_control';
 
-type UnsupportedKey = `${string}|${string}`;
+type UnsupportedKey = `${string}|${string}|${string}`;
 
 function supportKey(config: LlmModelConfig): UnsupportedKey {
-  return `${config.baseUrl ?? ''}|${config.modelId ?? ''}`;
+  // baseUrl / modelId / id 均可选（NULL 列产出 undefined）：用显式占位符区分「空」与「有值」。
+  // 空串与缺失视为同一「空」——同一网关的同一模型不会因为一列存 NULL、一列存 ''
+  // 而被拆成两个键，导致降级登记只覆盖其中一半。
+  // 不掺 id 会让「两个维度同时为空」的配置碰撞成同一键——一个被降级后另一个也不再发送
+  // 缓存字段；带上模型主键后即便 baseUrl/modelId 缺失也能按行隔离。
+  const norm = (value: string | number | undefined): string => {
+    if (value == null) return '<none>';
+    const text = String(value);
+    return text.trim() === '' ? '<none>' : text;
+  };
+  return `${norm(config.baseUrl)}|${norm(config.modelId)}|${norm(config.id)}`;
 }
 
 /** 进程内降级登记表：key=(baseUrl|modelId)，value=该模型已确认不支持的字段集合。 */

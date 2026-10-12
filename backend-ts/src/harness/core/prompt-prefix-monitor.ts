@@ -20,7 +20,7 @@ export interface PrefixSnapshot {
   systemSections: Record<string, string>;
   /** 工具定义数组的 sha256（JSON.stringify 口径，跨轮要求字节一致）。 */
   toolsHash: string;
-  /** 消息条数，仅用于日志上下文。 */
+  /** 消息条数，仅用于日志上下文。口径由调用方决定（PromptEngine 传入排除 system 的历史条数）。 */
   messageCount: number;
   at: number;
 }
@@ -59,7 +59,7 @@ function touch(sessionId: number, snapshot: PrefixSnapshot): void {
  * 登记一次 buildRequest 的前缀指纹，与同会话上一次比对并打点。
  * @param sections 系统提示分节（key + text，来自 PromptEngine 的同一份 sections，所见即所发）
  * @param tools 最终请求携带的工具定义
- * @param messageCount 消息条数，仅日志上下文
+ * @param messageCount 消息条数，仅日志上下文（口径由调用方决定）
  */
 export function observePrefix(
   sessionId: number,

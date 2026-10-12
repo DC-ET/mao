@@ -92,11 +92,14 @@ export class HarnessService {
     try {
       await this.agentLoop.execute(context, listener, persistenceCallback);
     } finally {
-      // CLOUD MCP 快照是会话内「上一次成功连接」的记忆，执行结束即失去意义；
-      // 不清理会让下一次执行（尤其 MCP 配置已变）沿用陈旧工具集。
-      this.mcpSyncService?.clearSession(sessionId);
+      this.clearCloudMcpSnapshot(sessionId);
       if (cancelFlag != null) this.agentLoop.removeCancelFlag(sessionId);
     }
+  }
+
+  /** CLOUD MCP 快照是会话内「上一次成功连接」的记忆，执行结束即失去意义。 */
+  private clearCloudMcpSnapshot(sessionId: number): void {
+    this.mcpSyncService?.clearSession(sessionId);
   }
 
   createPersistenceCallback(targetSessionId: number, context: AgentExecutionContext): MessagePersistenceCallback {
@@ -263,7 +266,11 @@ export class HarnessService {
 
   async executePrepared(context: AgentExecutionContext, listener: AgentEventListener): Promise<void> {
     const persistence = this.createPersistenceCallback(context.sessionId!, context);
-    await this.agentLoop.execute(context, listener, persistence);
+    try {
+      await this.agentLoop.execute(context, listener, persistence);
+    } finally {
+      this.clearCloudMcpSnapshot(context.sessionId!);
+    }
   }
 
   async buildContext(
@@ -635,8 +642,12 @@ export class HarnessService {
     }
     // contextMode === 'none': 跳过任何上下文注入
     const persistenceCallback = this.createPersistenceCallback(sideSessionId, context);
-    await this.agentLoop.execute(context, listener, persistenceCallback);
-    if (cancelFlag != null) this.agentLoop.removeCancelFlag(sideSessionId);
+    try {
+      await this.agentLoop.execute(context, listener, persistenceCallback);
+    } finally {
+      this.clearCloudMcpSnapshot(sideSessionId);
+      if (cancelFlag != null) this.agentLoop.removeCancelFlag(sideSessionId);
+    }
   }
 
   /**

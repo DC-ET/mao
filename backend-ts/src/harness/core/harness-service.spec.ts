@@ -487,6 +487,64 @@ describe('HarnessService.buildContext and execute', () => {
   });
 });
 
+describe('HarnessService CLOUD MCP 快照清理', () => {
+  // 三个执行出口（execute / executePrepared / executeSideFirstMessage）都必须在结束时
+  // 清理会话快照：快照是「上一次成功连接」的记忆，残留会让下一次执行沿用陈旧工具集。
+  it('executeClearsCloudMcpSnapshotOnSuccess', async () => {
+    const { service, skillSync } = makeHarness();
+    await service.execute(10, 'hi', { onContentDelta: vi.fn() } as never);
+    expect(skillSync.clearSession).toHaveBeenCalledWith(10);
+  });
+
+  it('executeClearsCloudMcpSnapshotEvenWhenLoopThrows', async () => {
+    const agentLoop = {
+      execute: vi.fn(async () => { throw new Error('loop boom'); }),
+      removeCancelFlag: vi.fn(),
+    };
+    const { service, skillSync } = makeHarness({ agentLoop });
+    await expect(service.execute(10, 'hi', { onContentDelta: vi.fn() } as never)).rejects.toThrow('loop boom');
+    expect(skillSync.clearSession).toHaveBeenCalledWith(10);
+  });
+
+  it('executePreparedClearsCloudMcpSnapshot', async () => {
+    const { service, skillSync } = makeHarness();
+    const context = new AgentExecutionContext();
+    context.sessionId = 42;
+    await service.executePrepared(context, { onContentDelta: vi.fn() } as never);
+    expect(skillSync.clearSession).toHaveBeenCalledWith(42);
+  });
+
+  it('executePreparedClearsCloudMcpSnapshotEvenWhenLoopThrows', async () => {
+    const agentLoop = {
+      execute: vi.fn(async () => { throw new Error('loop boom'); }),
+      removeCancelFlag: vi.fn(),
+    };
+    const { service, skillSync } = makeHarness({ agentLoop });
+    const context = new AgentExecutionContext();
+    context.sessionId = 43;
+    await expect(service.executePrepared(context, { onContentDelta: vi.fn() } as never)).rejects.toThrow('loop boom');
+    expect(skillSync.clearSession).toHaveBeenCalledWith(43);
+  });
+
+  it('executeSideFirstMessageClearsCloudMcpSnapshot', async () => {
+    const { service, skillSync } = makeHarness();
+    await service.executeSideFirstMessage(1, 10, 'none', { onContentDelta: vi.fn() } as never);
+    expect(skillSync.clearSession).toHaveBeenCalledWith(10);
+  });
+
+  it('executeSideFirstMessageClearsCloudMcpSnapshotEvenWhenLoopThrows', async () => {
+    const agentLoop = {
+      execute: vi.fn(async () => { throw new Error('loop boom'); }),
+      removeCancelFlag: vi.fn(),
+    };
+    const { service, skillSync } = makeHarness({ agentLoop });
+    await expect(
+      service.executeSideFirstMessage(1, 10, 'none', { onContentDelta: vi.fn() } as never),
+    ).rejects.toThrow('loop boom');
+    expect(skillSync.clearSession).toHaveBeenCalledWith(10);
+  });
+});
+
 describe('HarnessService.requestCompaction', () => {
   it('空闲手动压缩：跳过自动压缩、force 越过阈值与 enabled 门、triggerMode=manual、收尾回收云 MCP', async () => {
     const orchestrator = { compact: vi.fn(async () => true) };

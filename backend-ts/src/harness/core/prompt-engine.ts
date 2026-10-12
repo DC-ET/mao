@@ -179,8 +179,10 @@ export class PromptEngine {
     context.contextManifest = this.buildContextManifest(context, sections, normalized, request);
     // 前缀指纹观测（技术方案 2026-10-12 §4.3）：此处 sections 与 request.tools 都在手，
     // 且是「所见即所发」口径；与上一次比对，变化时 warn 点名是哪几节变了。
+    // messages 口径排除 system（normalized[0] 恒为 system 消息），只数历史轮次。
     if (context.sessionId != null) {
-      observePrefix(context.sessionId, sections, request.tools, normalized.length);
+      const historyMessageCount = Math.max(0, normalized.length - 1);
+      observePrefix(context.sessionId, sections, request.tools, historyMessageCount);
     }
     return request;
   }

@@ -754,7 +754,11 @@ function parsePositiveInt(value: string | null | undefined): number | null {
 
 function optBool(raw: string | null, fallback: boolean): boolean {
   if (raw == null) return fallback;
-  return raw === 'true' || raw === '1';
+  // 与 validateValue 的开关校验口径一致（大小写不敏感），避免 'True' 能写入却被回落成默认值
+  const normalized = raw.toLowerCase();
+  if (normalized === 'true' || normalized === '1') return true;
+  if (normalized === 'false' || normalized === '0' || normalized === '') return false;
+  return fallback;
 }
 
 function optPositiveInt(raw: string | null, fallback: number): number {
