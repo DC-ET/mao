@@ -340,6 +340,55 @@ describe('激活 Tab 持久化与恢复', () => {
   })
 })
 
+describe('新建态（无会话）中心 Tab', () => {
+  beforeEach(async () => {
+    setActivePinia(createPinia())
+    localStorage.clear()
+    resetCenterTabs()
+    await nextTick()
+  })
+
+  // 新建态右侧文件树提前可见后，从树里打开文件走的是 openFileTab。
+  // 无 sessionId 时若退回一次性状态对象，写入即丢失、中央区没有任何反应。
+  it('无 sessionId 时 openFileTab 落到稳定状态，中央区出现文件页签', async () => {
+    const tabs = useCenterTabs(ref<string | null>(''))
+    await nextTick()
+
+    tabs.openFileTab('/ws/a.ts', 'a.ts')
+    await nextTick()
+
+    expect(tabs.tabs.value.some(t => t.type === 'file' && t.filePath === '/ws/a.ts')).toBe(true)
+    expect(tabs.activeTabId.value).toBe('file:/ws/a.ts')
+  })
+
+  it('新建态不写激活态持久化记录，不污染刷新后的会话还原', async () => {
+    const tabs = useCenterTabs(ref<string | null>(''))
+    await nextTick()
+
+    tabs.openFileTab('/ws/a.ts', 'a.ts')
+    await nextTick()
+
+    const persistedKeys = Array.from(store.keys()).filter(k => k.startsWith('mao:center-active-tab:'))
+    expect(persistedKeys).toEqual([])
+  })
+
+  it('会话落地后占位状态让位给真实会话，不把新建态的文件页签带进会话', async () => {
+    const sessionId = ref<string | null>('')
+    const tabs = useCenterTabs(sessionId)
+    await nextTick()
+    tabs.openFileTab('/ws/a.ts', 'a.ts')
+    await nextTick()
+    expect(tabs.tabs.value.some(t => t.type === 'file')).toBe(true)
+
+    // 首发建会话后 activeSessionId 落地：中心区回到该会话的 chat
+    sessionId.value = SESSION_ID
+    await nextTick()
+
+    expect(tabs.tabs.value.some(t => t.type === 'file')).toBe(false)
+    expect(tabs.activeTabId.value).toBe('chat')
+  })
+})
+
 describe('轨迹 Tab：主会话与边路 / 子代理会话', () => {
   beforeEach(async () => {
     setActivePinia(createPinia())

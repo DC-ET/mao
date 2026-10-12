@@ -193,14 +193,15 @@ const showFileTreeTab = computed(() => {
 - `show-download-actions` 从 `executionMode === 'CLOUD'` 改为 computed `canDownload = props.executionMode === 'CLOUD' && !!props.provider?.downloadFile`；无会话态隐藏下载项，替代 L553 的 warning 兜底（兜底代码保留）。
 - 「复制绝对路径」增加显隐条件：`!!props.provider?.getAbsolutePath || !!props.workspace`。无会话 CLOUD 两者皆空时隐藏（此时复制出来的必然是相对路径，与「复制相对路径」重复且名不副实）；LOCAL 新建态有 workspace、真实 CLOUD 会话有 workspace（服务端路径），均保持显示。
 
-### 5.5 无会话下的两条关键链路（零改动验证）
+### 5.5 无会话下的两条关键链路
 
 - **添加到聊天**：`handleAddToChat` → `emit('add-file-to-chat', path)` → `TaskView.handleAddFileToChat`（L194–205）取 `activeTabId`（新建态为 `'chat'`）→ `chatInputHandles['chat']`（ChatPanel 的 ChatInput 默认 `registerKey: 'chat'`，`ChatInput.vue` L210）→ `insertFileReference` 插 `@{path}@`。发送时 `getPlainText` 序列化（L1184–1186）进消息体；后端建会话落 `workspace = projectPath`（`session.service.ts` L213），`FILE_REF_PATTERN` 按会话工作区还原路径——与文件树展示的是同一目录，引用必然可达。
-- **打开文件**：`open-file` → `openFileTab(path, title)`（`useCenterTabs.ts` L217）→ 中央 Tab `FileViewer(filePath, provider)`；project provider 的 `readFile/previewFile` 供数（`FileViewer.vue` L223/L183）。
+- **打开文件**：`open-file` → `openFileTab(path, title)`（`useCenterTabs.ts` L217）→ 中央 Tab `FileViewer(filePath, provider)`；project provider 的 `readFile/previewFile` 供数（`FileViewer.vue` L223/L183）。新建态无 sessionId，`getSessionState` 对空 key 回落固定占位键 `__new_task__` 承载 Tab 状态（原实现返回一次性对象，`openFileTab` 的写入被静默丢弃、中央区无任何反应）；占位状态不写 localStorage，会话落地后 `currentSessionId` 切到真实 id 即让位。
 
 ### 5.6 边界与降级
 
 - **项目目录不存在**（新项目名 / 留空临时区）：directory/search 返空 → 「空目录」空态；读文件报错由 FileViewer 承接。临时区（cloudProjectKey 为空）根本不显示 Tab（`projectKey` 为空串）。
+- **通道会话带入的 projectKey**（飞书群 `oc_*` / 钉钉 / 微信 `weixin-bot`）：`cloudProjectKeyForNewTask` 只排除「独立 CLOUD 会话」（projectKey=会话 id），通道 key 会带进新建态。此时「文件」Tab 放行且目录不存在、恒显「空目录」——这是有意的：新建态带该 key 发送时后端 `initializeCloudWorkspace` 会建出 `<root>/<uid>/projects/<key>` 并作为会话工作区（`session.service.ts` L216–222），空树是该未来工作区的真实预览；若改为隐藏 Tab，反而会出现「发送前没有、发送后才出现」的不一致。
 - **非法 projectKey**（手改 URL/状态）：`normalizeAndValidate` 400 → provider 返回 error 节点，树显示错误行，不白屏。
 - **越权**：slug 钳制在请求者用户根内，他人项目表现为「不存在」。
 - **目录 500 条 / 搜索 100 条上限**：`WorkspaceBrowseService` 现有边界，沿用不放大。

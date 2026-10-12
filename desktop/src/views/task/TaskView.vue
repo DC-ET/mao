@@ -790,6 +790,7 @@ async function enterNewTaskMode(defaults?: NewTaskDefaults | null) {
   const generation = ++newTaskModeGeneration
   // Apply known defaults synchronously BEFORE any await so the input model selector
   // does not briefly show a stale newTaskModelId from a previous draft/session.
+  const earlyMode = defaults?.executionMode ? normalizeNewTaskMode(defaults.executionMode) : newTaskMode.value
   if (defaults?.modelId) {
     newTaskModelId.value = defaults.modelId
   }
@@ -797,10 +798,13 @@ async function enterNewTaskMode(defaults?: NewTaskDefaults | null) {
     newTaskAgentId.value = String(defaults.agentId)
   }
   if (defaults?.executionMode) {
-    const earlyMode = normalizeNewTaskMode(defaults.executionMode)
     newTaskMode.value = earlyMode
     executionMode.value = earlyMode
   }
+  // 工作区/项目选择一并同步复位：isNewTaskMode 随路由立即转真，若等 await 之后再写，
+  // 窗口内回写 watch 会用上一个新建态草稿的残留值建文件 provider，闪一下旧文件树
+  newTaskWorkspace.value = earlyMode === 'LOCAL' ? (defaults?.workspace || '') : ''
+  newTaskCloudProjectKey.value = earlyMode === 'CLOUD' ? (defaults?.cloudProjectKey || '') : ''
   if (defaults?.permissionLevel) {
     permissionLevel.value = defaults.permissionLevel
   }

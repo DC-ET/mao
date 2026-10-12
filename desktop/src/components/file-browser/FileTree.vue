@@ -76,7 +76,7 @@
             @dragover.prevent="onBlankDragOver"
             @drop.prevent="onBlankDrop"
           >
-            <p v-if="createPath !== ''">空目录</p>
+            <p v-if="!canWrite || createPath !== ''">空目录</p>
             <input
               v-else
               ref="rootCreateInput"
@@ -94,7 +94,7 @@
             @dragover.prevent="onBlankDragOver"
             @drop.prevent="onBlankDrop"
           >
-            <div v-if="createPath === ''" class="node-row root-create">
+            <div v-if="createPath === '' && canWrite" class="node-row root-create">
               <input
                 ref="rootCreateInput"
                 class="node-name-input"

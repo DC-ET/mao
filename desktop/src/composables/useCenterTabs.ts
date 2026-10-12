@@ -23,6 +23,14 @@ const currentSessionId = ref('')
 const CHAT_TAB: Tab = { id: 'chat', type: 'chat', title: '主会话' }
 
 /**
+ * 新建态（会话未创建）Tab 状态的占位 key。
+ * 新建态没有 sessionId，但右侧文件树打开的文件页签等中心 Tab 仍需可寻址的状态载体：
+ * 若对空 key 返回一次性对象，openFileTab 的写入随即丢失，中央区没有任何反应。
+ * 占位状态只在本进程生命周期内有效，会话落地后 currentSessionId 切到真实 id 即让位。
+ */
+const NEW_TASK_TABS_KEY = '__new_task__'
+
+/**
  * 模块级边路任务 Tab 打开函数（供顶部搜索等脱离 TaskView 上下文的入口使用）。
  * 始终按显式 parentSessionId 操作模块级单例 Map，不依赖 currentSessionId——
  * 因此不受 router.push 异步加载会话的影响；restoreSideTaskTabs 只会合并数据、不重置已激活 Tab。
@@ -116,7 +124,8 @@ function notifyTabsChanged(changedSessionId?: string, syncOnly = false) {
  * 不重挂载）——记 id 会在刷新后匹配不到 restoreSideTaskTabs 重建出的 side:{realId} Tab。
  */
 function recordActiveTabFor(sid: string, tab: Tab) {
-  if (!sid) return
+  // 占位键不对应真实会话：不写 localStorage，避免刷新后按会话 id 还原时读到无关记录
+  if (!sid || sid === NEW_TASK_TABS_KEY) return
   if (tab.type === 'chat' || tab.id === 'chat') {
     persistActiveTab(sid, null)
     return
@@ -180,10 +189,10 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
    * 取会话的 Tab 状态。sid 缺省用 currentSessionId；
    * 显式传 sid 给「调用方已知目标会话、但 currentSessionId 可能尚未同步」的还原入口用
    * （loadSession 里 setActiveSession 之后同步调用 restore*，watch 还没跑）。
+   * 两者皆空（新建态）回落占位键，保证 openFileTab 等写入落到稳定状态上。
    */
   function getSessionState(sid?: string): SessionTabState {
-    const key = sid ?? currentSessionId.value
-    if (!key) return { tabs: [], activeTabId: 'chat' }
+    const key = sid ?? (currentSessionId.value || NEW_TASK_TABS_KEY)
     let state = sessionTabsMap.value.get(key)
     if (!state) {
       state = { tabs: [], activeTabId: 'chat' }
