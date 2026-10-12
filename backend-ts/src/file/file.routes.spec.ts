@@ -49,9 +49,10 @@ describe('file routes', () => {
     } as unknown as FileService;
     const sessionService = { getSession: vi.fn(async () => session) } as unknown as SessionService;
     const workspaceBrowseService = {
-      listDirectory: vi.fn(() => ({ entries: [], truncated: false })),
+      listDirectory: vi.fn(() => ({ entries: [{ name: 'a.txt', path: 'a.txt', isDirectory: false, size: 1, isSymlink: false }], truncated: false })),
       searchFiles: vi.fn(() => ({ entries: [{ name: 'a.txt', path: 'a.txt', isDirectory: false, size: 1, isSymlink: false }], truncated: false })),
       readFile: vi.fn(async () => ({ content: 'hi', total_lines: 1 })),
+      readPdfFile: vi.fn(() => ({ path: join(root, 'preview.pdf'), fileName: 'preview.pdf', size: 4 })),
     } as unknown as WorkspaceBrowseService;
     const workspaceGitService = {
       listRepos: vi.fn(async () => ({ isRootGit: false, repos: [] })),
@@ -70,6 +71,7 @@ describe('file routes', () => {
     } as unknown as GitCommitMessageService;
     const root = useTmpDir('mao-files-');
     mkdirSync(join(root, '7', 'projects', 'demo'), { recursive: true });
+    writeFileSync(join(root, 'preview.pdf'), '%PDF');
     const runtimeDir = useTmpDir('mao-runtime-');
     const pathSandbox = { getWorkspaceRoot: () => root } as PathSandbox;
     const runtimeDataResolver = new RuntimeDataResolver(runtimeDir, join(root, 'home'));
@@ -103,6 +105,30 @@ describe('file routes', () => {
     expect((await post('/v1/files/git-commit-message', { sessionId: 1, changes: { files: [], diffBytes: 0 } })).data.title).toBe('feat: x');
     expect((await post('/v1/files/workspace-git-activity', { sessionId: 1, result: { operation: 'commit', success: true } })).code).toBe(0);
     expect((await get('/v1/files/project-list?projectKey=demo')).data.files).toHaveLength(1);
+
+    // project 只读端点族（新建态无会话浏览）：happy path
+    expect((await get('/v1/files/project-directory?projectKey=demo')).code).toBe(0);
+    expect((await get('/v1/files/project-directory?projectKey=demo')).data.entries[0].name).toBe('a.txt');
+    expect((await get('/v1/files/project-read?projectKey=demo&path=a.txt')).data.content).toBe('hi');
+    expect((await get('/v1/files/project-search?projectKey=demo&pattern=a')).data.entries[0].name).toBe('a.txt');
+    const previewRes = await app.inject({ method: 'GET', url: '/v1/files/project-preview?projectKey=demo&path=preview.pdf' });
+    expect(previewRes.statusCode).toBe(200);
+
+    // project 只读端点族：参数与越权防护
+    expect((await get('/v1/files/project-directory')).code).not.toBe(0);
+    expect((await get('/v1/files/project-directory?projectKey=..')).code).not.toBe(0);
+    expect((await get('/v1/files/project-directory?projectKey=projects')).code).not.toBe(0);
+    expect((await get('/v1/files/project-search?projectKey=demo')).code).not.toBe(0);
+    expect((await get('/v1/files/project-read?projectKey=demo')).code).not.toBe(0);
+    expect((await get('/v1/files/project-preview?projectKey=demo')).code).not.toBe(0);
+    // 项目目录不存在（新项目名）：空列表而非错误
+    expect((await get('/v1/files/project-directory?projectKey=ghost')).data.entries).toEqual([]);
+    expect((await get('/v1/files/project-search?projectKey=ghost&pattern=a')).data.entries).toEqual([]);
+    // 跨用户不泄漏：demo 位于用户 7 根下，用户 8 看到的是「不存在」
+    const foreign = await app.inject({
+      method: 'GET', url: '/v1/files/project-directory?projectKey=demo', headers: { 'x-test-user': '8' },
+    });
+    expect(JSON.parse(foreign.body).data.entries).toEqual([]);
     expect((await app.inject({ method: 'GET', url: '/v1/files/99/download' })).statusCode).toBe(404);
     expect((await app.inject({ method: 'DELETE', url: '/v1/files/99' })).statusCode).toBe(200);
 
