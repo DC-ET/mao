@@ -222,9 +222,13 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
 async function resolveMcpServerIds(
   validator: McpServerValidator,
   mcpServerIds: number[] | null | undefined,
-): Promise<number[] | null> {
-  if (mcpServerIds == null || mcpServerIds.length === 0) {
-    return null;
+): Promise<number[] | null | undefined> {
+  if (mcpServerIds == null) {
+    return mcpServerIds;
+  }
+  // 空数组是“清空关联”，不能塌缩成 null：更新语义里 null/undefined 表示不改动。
+  if (mcpServerIds.length === 0) {
+    return [];
   }
   return validator.validateForAgent(mcpServerIds);
 }
