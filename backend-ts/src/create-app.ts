@@ -1968,8 +1968,16 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         // 仅替换默认标题，不覆盖用户/LLM 已改过的名字。
         if (session.title != null && session.title !== '飞书Bot会话') return false;
         await sessionRepo.updateFields(sessionId, { title });
+        // 与桌面端命名一致：推 WS 让已打开该会话的客户端实时更新标题。
+        wsRegistry.send(session.userId!, wsEvent('session_title_updated', sessionId, {
+          title,
+          parentSessionId: session.parentSessionId ?? null,
+          sessionType: session.sessionType ?? 'NORMAL',
+        }));
         return true;
       },
+      isAwaitingFirstMessageTitle: async (sessionId) =>
+        (await feishuMessageService.findSessionChannel(sessionId))?.awaitingFirstMessageTitle === 1,
     },
     threadSessionControl: {
       findSession: async (accountId, context) => {
@@ -1984,6 +1992,11 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         // 不调用 ensureFeishuSessionTitle：话题会话标题由首条消息命名机制处理（awaitingFirstMessageTitle）。
         return { sessionId: result.sessionId, rootMessageId: result.rootMessageId, workspace: result.workspace ?? null, executionUserId: triggerUserId ?? null };
       },
+    },
+    // 新会话（`---` 私聊新会话 / 话题群首条消息）标题改为 LLM 生成短标题，
+    // 复用桌面端的标题模型配置（session.titleModelId）、30s 超时与本地启发式降级。
+    titleGenerator: {
+      generate: (sessionId, text) => sessionTitleService.generateExternalTitle(sessionId, text),
     },
     onReply: async (context, text, sessionId) => {
       const messageId = await sendFeishuText(Number(context.accountId), context, text);

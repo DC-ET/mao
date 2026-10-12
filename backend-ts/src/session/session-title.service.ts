@@ -105,6 +105,27 @@ export class SessionTitleService {
     }
   }
 
+  /**
+   * 为外部通道（飞书新会话）生成短标题文本：复用标题模型解析、LLM 调用与本地降级，
+   * 不落库也不推事件——是否应用由调用方按待命名标志与默认标题判定。
+   */
+  async generateExternalTitle(sessionId: number, text: string): Promise<string | null> {
+    const session = await this.sessionRepo.findById(sessionId);
+    if (session == null) return null;
+    const preprocessed = await this.preprocess(text, session.userId);
+    if (preprocessed === '') return null;
+    const model = await this.resolveTitleModel();
+    if (model != null) {
+      try {
+        const title = cleanModelTitle(await this.invoke(preprocessed, model, session));
+        if (title != null) return title;
+      } catch (error) {
+        console.warn(`[session-title] external generate failed sessionId=${sessionId}: ${errorMessage(error)}`);
+      }
+    }
+    return TitleGenerator.generate(preprocessed);
+  }
+
   private async resolveTitleModel(): Promise<LlmModel | null> {
     const configured = await this.settingLookup.getValue(SESSION_TITLE_MODEL_ID_KEY);
     if (hasText(configured)) {

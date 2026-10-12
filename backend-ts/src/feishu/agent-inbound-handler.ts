@@ -46,6 +46,8 @@ export interface FeishuP2pSessionControl {
   recordMessageMapping(accountId: string, messageId: string | null | undefined, sessionId: number, direction: 'IN' | 'OUT'): Promise<void>;
   /** 新会话首条消息命名（持久化待命名标志驱动，非新会话/已命名时为 no-op）。 */
   finalizeNewSessionTitle?(sessionId: number, title: string): Promise<boolean>;
+  /** 查询会话是否待命名（持久化标志）；命名前的廉价门禁，已命名会话不再触发 LLM。 */
+  isAwaitingFirstMessageTitle?(sessionId: number): Promise<boolean>;
 }
 
 /** 话题会话控制端口：话题→会话映射查询/创建。 */
@@ -56,6 +58,11 @@ export interface FeishuThreadSessionControl {
   getOrCreateSession(accountId: string, context: FeishuInboundContext): Promise<{ sessionId: number; rootMessageId: string; workspace?: string | null; executionUserId?: number | null } | null>;
 }
 
+/** 新会话标题生成端口：LLM 生成短标题，失败由实现方降级本地启发式；null=无法生成（放弃本次命名）。 */
+export interface FeishuTitleGenerator {
+  generate(sessionId: number, text: string): Promise<string | null>;
+}
+
 /** `---` 新建会话指令：trim 后为 3 个及以上半角连字符或全角破折号的宽松变体集合。 */
 export function isNewSessionCommand(text: string | null | undefined): boolean {
   return /^[-—]{3,}$/u.test((text ?? '').trim());
@@ -64,7 +71,6 @@ export function isNewSessionCommand(text: string | null | undefined): boolean {
 const NEW_SESSION_CONFIRM_TEXT = '已开启新会话，后续消息将在新的上下文中处理。';
 const SWITCH_SESSION_CONFIRM_TEXT = '已切换到该消息所在的会话，后续消息将以该会话上下文为准。';
 const NEW_SESSION_FAILED_TEXT = '开启新会话失败，请稍后再试。';
-const NEW_SESSION_TITLE_MAX_CHARS = 20;
 
 type FeishuContentPart =
   | { type: 'text'; text: string }
@@ -162,6 +168,8 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     p2pSessionControl?: FeishuP2pSessionControl;
     /** 话题会话控制（未配置时话题消息走现有群逻辑）。 */
     threadSessionControl?: FeishuThreadSessionControl;
+    /** 新会话标题生成（未配置时跳过 LLM 命名，保留默认标题）。 */
+    titleGenerator?: FeishuTitleGenerator;
     /** 文本回复发送：成功返回飞书 message_id（供出站映射），失败返回 null（内部可抛错，由 reply 统一容错）。 */
     onReply?: (context: FeishuInboundContext, text: string, sessionId?: number) => Promise<string | null>;
   }) {}
@@ -404,22 +412,34 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     // 3) 正常路径：指针会话（可能已被上面切换）→ 记录入站映射 → 新会话首条消息命名。
     const session = await this.options.sessionService.getOrCreateSession(accountId, context);
     await control.recordMessageMapping(accountId, context.messageId, session.id, 'IN');
-    await this.renameNewP2pSessionIfNeeded(session.id, context);
+    this.scheduleNewSessionTitle(session.id, context);
     return { intercepted: false, ...(confirm != null ? { confirm } : {}), session };
   }
 
-  /** 新会话首条消息命名：取消息文本前 20 字（由持久化待命名标志驱动，非新会话为 no-op）。 */
-  private async renameNewP2pSessionIfNeeded(sessionId: number, context: FeishuInboundContext): Promise<void> {
-    const finalize = this.options.p2pSessionControl?.finalizeNewSessionTitle;
-    if (finalize == null) return;
+  /**
+   * 新会话首条消息命名：LLM 生成短标题（失败由生成方降级本地启发式），经持久化待命名标志应用。
+   * 异步执行、不阻塞 Agent：标题在首条消息执行期间更新，进度卡片不依赖标题。
+   * 待命名标志门禁保证仅新建会话触发，已命名会话的后续消息不再打 LLM。
+   */
+  private scheduleNewSessionTitle(sessionId: number, context: FeishuInboundContext): void {
+    const control = this.options.p2pSessionControl;
+    const finalize = control?.finalizeNewSessionTitle;
+    if (control == null || finalize == null) return;
     const text = context.text?.trim() ?? '';
     if (text === '') return;
-    const title = text.length > NEW_SESSION_TITLE_MAX_CHARS ? text.slice(0, NEW_SESSION_TITLE_MAX_CHARS) : text;
-    try {
-      await finalize(sessionId, title);
-    } catch (error) {
-      console.warn(`飞书新会话命名失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
-    }
+    void (async () => {
+      try {
+        if (control.isAwaitingFirstMessageTitle != null
+          && !(await control.isAwaitingFirstMessageTitle(sessionId))) return;
+        const title = await this.options.titleGenerator?.generate(sessionId, text);
+        if (title == null || title === '') return;
+        if (await finalize(sessionId, title)) {
+          console.info(`飞书新会话命名, sessionId=${sessionId}, title=${title}`);
+        }
+      } catch (error) {
+        console.warn(`飞书新会话命名失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    })();
   }
 
   /** 群聊入站：话题分支 + 现有逻辑。话题消息优先路由到话题会话；映射未命中降级走现有群逻辑。 */
@@ -430,8 +450,8 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
         const threadSession = await this.options.threadSessionControl.getOrCreateSession(context.accountId, context);
         if (threadSession != null) {
           const session = { id: threadSession.sessionId, workspace: threadSession.workspace ?? null, executionUserId: threadSession.executionUserId ?? context.maoUserId ?? null };
-          // 首条消息命名：新建话题会话标记了 awaitingFirstMessageTitle，此处用消息前 20 字重命名。
-          await this.renameNewP2pSessionIfNeeded(session.id, context);
+          // 首条消息命名：新建话题会话标记了 awaitingFirstMessageTitle，此处异步生成 LLM 短标题重命名。
+          this.scheduleNewSessionTitle(session.id, context);
           return this.executeWithSession(session, context);
         }
         // 映射未命中且非话题根消息（上线前话题的回复）→ 降级走现有群逻辑。

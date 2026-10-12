@@ -179,7 +179,7 @@ export class FeishuMessageService {
         appId: accountId, chatId: context.chatId!, threadId: context.threadId!,
         rootMessageId, sessionId: session.sessionId,
       });
-      // 话题会话标记待命名（复用 p2p 的持久化标志，首条消息前 20 字命名）。
+      // 话题会话标记待命名（复用 p2p 的持久化标志，首条消息 LLM 生成短标题命名）。
       try {
         await this.repository.upsertSessionChannel(session.sessionId, accountId, context.chatId!, 'group', true);
       } catch (error) {

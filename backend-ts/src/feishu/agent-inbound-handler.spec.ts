@@ -1109,6 +1109,7 @@ function makeP2pControl(overrides: Record<string, unknown> = {}) {
     findSessionByMessageId: vi.fn(async () => null),
     recordMessageMapping: vi.fn(async () => undefined),
     finalizeNewSessionTitle: vi.fn(async () => true),
+    isAwaitingFirstMessageTitle: vi.fn(async () => true),
     ...overrides,
   };
 }
@@ -1313,24 +1314,72 @@ describe('AgentFeishuInboundHandler p2p multi-session', () => {
     expect(control.recordMessageMapping).toHaveBeenCalledWith('1', 'om_reply', 7, 'OUT');
   });
 
-  it('renames a freshly created session from its first following message', async () => {
+  it('renames a freshly created session with an LLM-generated title', async () => {
     const sessionService = makeSessionService({ getOrCreateSession: vi.fn(async () => ({ id: 8, executionUserId: 42 })) });
     const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
     const control = makeP2pControl();
+    const titleGenerator = { generate: vi.fn(async () => '需求文档任务拆解') };
     const handler = new AgentFeishuInboundHandler({
       sessionService,
       harnessService: harness as never,
       listenerFactory: async () => listener,
       p2pSessionControl: control as never,
+      titleGenerator,
     });
     // `---` 新建 → 下一条消息进入新会话并触发命名（持久化标志驱动，handler 每条消息都尝试）。
     await handler.onMessage(makeP2pContext({ text: '---', messageId: 'om_new' }));
     const longText = '帮我把这份需求文档整理成一份可以直接给开发看的任务拆解清单，越细越好';
     await handler.onMessage(makeP2pContext({ text: longText, messageId: 'om_first' }));
-    expect(control.finalizeNewSessionTitle).toHaveBeenCalledWith(8, longText.slice(0, 20));
+    // 命名异步执行（不阻塞 Agent），等待 fire-and-forget 收尾。
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    // 原文整体交给标题生成器，不再由 handler 截断。
+    expect(titleGenerator.generate).toHaveBeenCalledWith(8, longText);
+    expect(control.finalizeNewSessionTitle).toHaveBeenCalledWith(8, '需求文档任务拆解');
     // 空文本消息不触发命名。
     await handler.onMessage(makeP2pContext({ text: '', messageId: 'om_empty', messageType: 'image' }));
     expect(control.finalizeNewSessionTitle).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips title generation when the session is not awaiting a name', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const control = makeP2pControl({ isAwaitingFirstMessageTitle: vi.fn(async () => false) });
+    const titleGenerator = { generate: vi.fn(async () => '不该生成的标题') };
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      listenerFactory: async () => listener,
+      p2pSessionControl: control as never,
+      titleGenerator,
+    });
+    // 已命名会话的后续消息：门禁命中即返回，不再打 LLM。
+    await handler.onMessage(makeP2pContext({ text: '继续这个任务' }));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(titleGenerator.generate).not.toHaveBeenCalled();
+    expect(control.finalizeNewSessionTitle).not.toHaveBeenCalled();
+  });
+
+  it('does not finalize when title generation yields nothing or fails', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const generators: Array<(sessionId: number, text: string) => Promise<string | null>> = [
+      async () => null,
+      async () => { throw new Error('llm down'); },
+    ];
+    for (const generate of generators) {
+      const control = makeP2pControl();
+      const handler = new AgentFeishuInboundHandler({
+        sessionService,
+        harnessService: harness as never,
+        listenerFactory: async () => listener,
+        p2pSessionControl: control as never,
+        titleGenerator: { generate },
+      });
+      await handler.onMessage(makeP2pContext({ text: '帮我看下这个报错' }));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      // 生成失败不落默认/截断标题：待命名标志保留，下一条消息可重试。
+      expect(control.finalizeNewSessionTitle).not.toHaveBeenCalled();
+    }
   });
 
   it('treats --- in group chat as ordinary text (no session switch)', async () => {
@@ -1443,6 +1492,30 @@ describe('AgentFeishuInboundHandler p2p multi-session', () => {
     });
     await handler.onMessage(makeContext({ threadId: 'omt_abc', messageId: 'om_reply', parentId: 'om_root', rootId: 'om_root' }));
     expect(harness.execute).toHaveBeenCalledWith(10, 'e', expect.anything(), expect.anything(), 42);
+  });
+
+  it('names a new thread session with an LLM-generated title', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const threadControl = {
+      findSession: vi.fn(async () => null),
+      getOrCreateSession: vi.fn(async () => ({ sessionId: 10, rootMessageId: 'om_root', workspace: '/ws/thread', executionUserId: 42 })),
+    };
+    const control = makeP2pControl();
+    const titleGenerator = { generate: vi.fn(async () => '排查线上报错') };
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      listenerFactory: async () => listener,
+      threadSessionControl: threadControl as never,
+      p2pSessionControl: control as never,
+      titleGenerator,
+    });
+    await handler.onMessage(makeContext({ threadId: 'omt_abc', messageId: 'om_root', parentId: null, text: '帮我看下线上这个报错' }));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(titleGenerator.generate).toHaveBeenCalledWith(10, '帮我看下线上这个报错');
+    expect(control.finalizeNewSessionTitle).toHaveBeenCalledWith(10, '排查线上报错');
   });
 
   it('ingests a thread file without executing', async () => {

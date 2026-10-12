@@ -194,4 +194,41 @@ describe('SessionTitleService', () => {
       data: expect.objectContaining({ parentSessionId: 11, sessionType: 'SIDE_TASK' }),
     }));
   });
+
+  it('generates an external channel title as text only, without persisting or pushing', async () => {
+    const ctx = makeService();
+    const title = await ctx.service.generateExternalTitle(11, '帮我把这份需求文档整理成任务拆解清单');
+    expect(title).toBe('排查登录接口超时');
+    expect(ctx.llm.chat).toHaveBeenCalledWith(expect.objectContaining({
+      messages: [
+        expect.objectContaining({ role: 'system' }),
+        { role: 'user', content: '帮我把这份需求文档整理成任务拆解清单' },
+      ],
+      tools: [], stream: false, temperature: 0.2,
+    }), expect.objectContaining({ id: 9 }), expect.anything());
+    // 落库与 WS 推送由调用方（飞书 finalizeNewSessionTitle）按待命名标志决定。
+    expect(ctx.sessionRepo.updateTitleIfPlaceholder).not.toHaveBeenCalled();
+    expect(ctx.registry.send).not.toHaveBeenCalled();
+  });
+
+  it('returns null for an external title when the session is gone or the text preprocesses to empty', async () => {
+    const missing = makeService({ sessionRepo: { findById: vi.fn(async () => null) } });
+    expect(await missing.service.generateExternalTitle(11, 'hello')).toBeNull();
+    expect(missing.llm.chat).not.toHaveBeenCalled();
+
+    const blank = makeService();
+    expect(await blank.service.generateExternalTitle(11, '${a}$ ${b}$')).toBeNull();
+    expect(blank.llm.chat).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the local heuristic for external titles when the model is unavailable or fails', async () => {
+    const noModel = makeService();
+    noModel.models.selectDefault.mockResolvedValue(null);
+    expect(await noModel.service.generateExternalTitle(11, '  整理需求文档  ')).toBe('整理需求文档');
+    expect(noModel.llm.chat).not.toHaveBeenCalled();
+
+    const failed = makeService();
+    failed.llm.chat.mockRejectedValue(new Error('timeout'));
+    expect(await failed.service.generateExternalTitle(11, '整理需求文档')).toBe('整理需求文档');
+  });
 });
