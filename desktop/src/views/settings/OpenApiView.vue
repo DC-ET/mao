@@ -7,6 +7,27 @@
       </p>
     </div>
 
+    <!-- ── 接口文档 ───────────────────────────────────────────── -->
+    <section class="card">
+      <div class="card-header">
+        <div>
+          <h2 class="card-title">接口文档</h2>
+          <p class="card-desc">开放接口的完整调用说明：鉴权方式、端点与字段、签名算法、错误码与排障，可直接交给外部系统接入。</p>
+        </div>
+      </div>
+      <div class="doc-actions">
+        <button class="create-btn" @click="docDialogVisible = true">
+          <el-icon><Reading /></el-icon> 查阅文档
+        </button>
+        <button class="ghost-btn" @click="downloadDoc">
+          <el-icon :size="14"><Download /></el-icon> 下载 Markdown
+        </button>
+        <button class="ghost-btn" @click="copyDoc">
+          <el-icon :size="14"><CopyDocument /></el-icon> 复制 Markdown
+        </button>
+      </div>
+    </section>
+
     <!-- ── API Token ─────────────────────────────────────────────── -->
     <section class="card">
       <div class="card-header">
@@ -317,12 +338,26 @@
       </div>
       <p v-if="callsTotal > calls.length" class="full-body-warn">仅显示最近 {{ calls.length }} 条，共 {{ callsTotal }} 条。更多记录请到管理后台查看。</p>
     </el-dialog>
+
+    <!-- 接口文档 -->
+    <el-dialog v-model="docDialogVisible" title="开放接口文档" width="760px" class="open-api-dialog" append-to-body>
+      <div class="doc-body">
+        <MarkdownContent :content="openApiDocMarkdown" body-class="markdown-body doc-markdown" />
+      </div>
+      <template #footer>
+        <div class="doc-dialog-footer">
+          <button class="dialog-btn dialog-btn-cancel" @click="downloadDoc"><el-icon :size="14"><Download /></el-icon> 下载 Markdown</button>
+          <button class="dialog-btn dialog-btn-cancel" @click="copyDoc"><el-icon :size="14"><CopyDocument /></el-icon> 复制 Markdown</button>
+          <button class="dialog-btn dialog-btn-confirm" @click="docDialogVisible = false">关闭</button>
+        </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { Plus, Delete, RefreshRight, VideoPause, VideoPlay, Clock, CopyDocument, Tickets } from '@element-plus/icons-vue'
+import { Plus, Delete, RefreshRight, VideoPause, VideoPlay, Clock, CopyDocument, Tickets, Reading, Download } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import {
@@ -333,6 +368,9 @@ import {
   listOutboundDeliveries, listOpenApiCalls,
   type ApiTokenView, type WebhookTriggerView, type OutboundSubscriptionView, type OutboundDeliveryView, type OpenApiCallView
 } from '../../api'
+import { copyText as copyToClipboard } from '../../utils/clipboard'
+import MarkdownContent from '../../components/common/MarkdownContent.vue'
+import openApiDocMarkdown from './open-api-doc.md?raw'
 import { formatMs } from '../../utils/llmCallLabels'
 
 const router = useRouter()
@@ -379,6 +417,7 @@ const callsDialogTitle = ref('调用记录')
 const callsLoading = ref(false)
 const calls = ref<OpenApiCallView[]>([])
 const callsTotal = ref(0)
+const docDialogVisible = ref(false)
 
 const canIssueToken = computed(() => tokenForm.value.name.trim().length > 0 && tokenForm.value.scopes.length > 0)
 const canCreateTrigger = computed(() => triggerForm.value.name.trim().length > 0 && triggerForm.value.agentId != null)
@@ -394,13 +433,33 @@ function isExpired(expiresAt: string | null): boolean {
   return new Date(expiresAt.replace(' ', 'T')).getTime() < Date.now()
 }
 
+/** 统一复制入口：navigator.clipboard 不可用（http 访问等）时回退 execCommand */
 async function copyText(value: string): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(value)
-    ElMessage.success('已复制')
-  } catch {
-    ElMessage.warning('复制失败，请手动选择复制')
-  }
+  const ok = await copyToClipboard(value)
+  if (ok) ElMessage.success('已复制')
+  else ElMessage.warning('复制失败，请手动选择复制')
+}
+
+// ── 接口文档 ──
+const OPEN_API_DOC_FILE_NAME = 'mao-open-api.md'
+
+function downloadDoc(): void {
+  const blob = new Blob([openApiDocMarkdown], { type: 'text/markdown;charset=utf-8' })
+  const objectUrl = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = objectUrl
+  a.download = OPEN_API_DOC_FILE_NAME
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(objectUrl)
+  ElMessage.success('已开始下载')
+}
+
+async function copyDoc(): Promise<void> {
+  const ok = await copyToClipboard(openApiDocMarkdown)
+  if (ok) ElMessage.success('Markdown 已复制')
+  else ElMessage.warning('复制失败，请手动选择复制')
 }
 
 /** 复制完整明文 Token：服务端解密后写入剪贴板，不经过任何中间展示 */
@@ -962,6 +1021,163 @@ onMounted(() => {
   font-size: 12px;
   color: var(--aw-ink-muted);
   margin-bottom: 4px;
+}
+
+.doc-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ghost-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: var(--aw-btn-height);
+  padding: var(--aw-btn-padding);
+  border: 1px solid var(--aw-hairline);
+  border-radius: var(--aw-radius-xs);
+  background: transparent;
+  color: var(--aw-ink-muted);
+  font-size: var(--aw-text-fine);
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ghost-btn:hover {
+  color: var(--aw-ink);
+  background: var(--aw-surface-hover);
+}
+
+.doc-body {
+  max-height: 62vh;
+  overflow-y: auto;
+}
+
+.doc-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* MarkdownContent 的 v-html 内容不带 scoped 属性，代码块样式需在此自带一份 */
+.doc-markdown :deep(h1) {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--aw-ink);
+  margin: 0 0 12px;
+}
+
+.doc-markdown :deep(h2) {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--aw-ink);
+  margin: 20px 0 8px;
+}
+
+.doc-markdown :deep(h3) {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--aw-ink);
+  margin: 16px 0 6px;
+}
+
+.doc-markdown :deep(p) {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--aw-ink);
+  margin: 6px 0;
+}
+
+.doc-markdown :deep(ul),
+.doc-markdown :deep(ol) {
+  padding-left: 20px;
+  margin: 6px 0;
+}
+
+.doc-markdown :deep(li) {
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.doc-markdown :deep(table) {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 8px 0;
+  font-size: 12px;
+}
+
+.doc-markdown :deep(th),
+.doc-markdown :deep(td) {
+  border: 1px solid var(--aw-divider-soft);
+  padding: 5px 8px;
+  text-align: left;
+  line-height: 1.6;
+}
+
+.doc-markdown :deep(th) {
+  background: var(--aw-surface-hover);
+  font-weight: 600;
+}
+
+.doc-markdown :deep(code) {
+  font-family: var(--aw-font-mono, monospace);
+  font-size: 12px;
+  background: var(--aw-surface-hover);
+  border-radius: 3px;
+  padding: 1px 4px;
+}
+
+.doc-markdown :deep(.code-block) {
+  margin: 8px 0;
+  border: 1px solid var(--aw-divider-soft);
+  border-radius: var(--aw-radius-sm);
+  overflow: hidden;
+}
+
+.doc-markdown :deep(.code-block-header) {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 12px;
+  background: var(--aw-surface-code-header);
+  font-size: var(--aw-text-fine);
+}
+
+.doc-markdown :deep(.code-lang) {
+  color: var(--aw-ink-muted-48);
+  font-family: var(--aw-font-mono);
+  text-transform: uppercase;
+}
+
+.doc-markdown :deep(.code-copy-btn) {
+  height: var(--aw-btn-height);
+  background: none;
+  border: 1px solid var(--aw-hairline);
+  color: var(--aw-ink-muted-48);
+  padding: var(--aw-btn-padding);
+  border-radius: var(--aw-radius-xs);
+  cursor: pointer;
+  font-size: var(--aw-text-fine);
+}
+
+.doc-markdown :deep(.code-copy-btn:hover) {
+  color: var(--aw-ink);
+  border-color: var(--aw-ink-muted-48);
+}
+
+.doc-markdown :deep(blockquote) {
+  margin: 8px 0;
+  padding: 4px 12px;
+  border-left: 3px solid var(--aw-hairline);
+  color: var(--aw-ink-muted);
+}
+
+.doc-markdown :deep(hr) {
+  border: none;
+  border-top: 1px solid var(--aw-divider-soft);
+  margin: 16px 0;
 }
 </style>
 

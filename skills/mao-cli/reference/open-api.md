@@ -10,7 +10,7 @@
 | 入站（P2） | 外部系统（CI、工单、自建脚本）以 HMAC 验签方式 POST 触发 | `POST /v1/open/hooks/:pathToken` |
 | 出站（P3） | 任务完成 / 失败、提问待答事件推送到自建 HTTPS 端点 | `task.completed` / `task.failed` / `question.pending` |
 
-管理面（Token / 触发器 / 订阅 CRUD）在桌面端「设置 → 开放接口」与 `mao open` 命令行均可操作；所有管理接口只接受登录会话（JWT），且只能管理本人资源。
+管理面（Token / 触发器 / 订阅 CRUD）在桌面端「设置 → 开放接口」与 `mao open` 命令行均可操作；所有管理接口只接受登录会话（JWT），且只能管理本人资源。该页面顶部有「接口文档」卡片：可弹窗查阅完整调用说明（鉴权、端点与字段、签名算法、错误码、排障），也可下载或复制 Markdown（`mao-open-api.md`，随桌面端版本内置，不对外暴露 Swagger）。
 
 鉴权与边界要点：
 
@@ -198,4 +198,4 @@ mao open calls get --id 100
 | 收件箱出现「触发器停用」 | 连续 5 次执行失败，已自动停用；排除外部系统问题后重新启用 |
 | 订阅一直重试 | 目标 URL 非 2xx；用 `open subscription deliveries --id <id>` 看 `lastHttpStatus` / `lastError` |
 
-相关文档：桌面端「设置 → 开放接口」页面；设计细节见仓库 `docs/plan/2026-10-05-open-api-webhook-technical-design.md`。
+相关文档：桌面端「设置 → 开放接口」页面（含内嵌「接口文档」卡片的查阅 / 下载 / 复制）；设计细节见仓库 `docs/plan/2026-10-05-open-api-webhook-technical-design.md`。

@@ -382,9 +382,21 @@ h1, h2, h3, h4, h5, h6 {
   color: var(--aw-ink);
 }
 
+/*
+ * 自定义按钮统一垂直居中。裸 <button> 不声明 display 时，Chromium 只在行盒放得下
+ * 内容区时才居中：本项目按钮高 24px、上下 padding 各 5px（--aw-btn-height /
+ * --aw-btn-padding），内容区只剩 14px，而文案继承 body 的 line-height 1.47，
+ * 12px 字的行盒约 17.6px 放不下——行盒遂从内容区顶部起排并向下溢出，文字整体
+ * 偏低约 2.5px（曾影响解绑/绑定/取消/保存等一大批按钮）。EP 的 .el-button 自带
+ * inline-flex 居中，不受此规则影响；自定义按钮此前靠各 class 手写
+ * display:inline-flex 补齐（.create-btn 等），漏写的就歪，在此统一收口。
+ * 不设 gap：EP 按钮靠 [class*=el-icon]+span 的 margin-left 撑图标间距，叠加会变宽。
+ */
 button {
   font-family: var(--aw-font-text);
   transition: transform 0.1s;
+  display: inline-flex;
+  align-items: center;
 }
 
 button:active {
