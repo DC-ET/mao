@@ -166,19 +166,37 @@ describe('DigestRepository 偏好读写', () => {
     expect(call.params).toEqual([7, 1, '08:15', 0]);
   });
 
-  it('markProcessed：单调 guard，coveredDate 既做值又做比较界', async () => {
+  it('markProcessed：懒建行 upsert + 单调 guard，coveredDate 既做值又做比较界', async () => {
     const h = capture();
     await h.repo.markProcessed(7, '2026-10-11');
-    const call = sqlOf(h.calls, 'UPDATE user_digest_preference SET last_digest_date');
-    expect(call.sql).toContain('last_digest_date IS NULL OR last_digest_date < ?');
-    expect(call.params).toEqual(['2026-10-11', 7, '2026-10-11']);
+    const call = sqlOf(h.calls, 'INSERT INTO user_digest_preference');
+    expect(call.sql).toContain('ON DUPLICATE KEY UPDATE');
+    // 单调：仅当库里为空或更早才推进，否则保持原值（防并发 tick 覆盖回旧日期）
+    expect(call.sql).toContain('IF(last_digest_date IS NULL OR last_digest_date < VALUES(last_digest_date)');
+    // 只写 user_id + last_digest_date：其余列走 DDL 默认（enabled=1 / 09:30 / 1），不动已有偏好
+    expect(call.params).toEqual([7, '2026-10-11']);
   });
 
-  it('listEnabledUsers：只取开启总开关的行', async () => {
-    const h = capture([{ match: /FROM user_digest_preference/, rows: [{ userId: 7, enabled: 1, pushTime: '09:30', outboundEnabled: 1, lastDigestDate: null }] }]);
+  it('listEnabledUsers：LEFT JOIN 全部未删除用户，无行按默认偏好且默认开', async () => {
+    const h = capture([{
+      match: /FROM user u LEFT JOIN user_digest_preference/,
+      rows: [
+        // 无偏好行：五列全 null → 默认开 + 09:30 + 同步出站
+        { userId: 7, enabled: null, pushTime: null, outboundEnabled: null, lastDigestDate: null },
+        // 显式关掉：即使有行也不进调度
+        { userId: 8, enabled: 0, pushTime: '08:00', outboundEnabled: 1, lastDigestDate: '2026-10-10' },
+        // 正常开启行：值原样带回
+        { userId: 9, enabled: 1, pushTime: '07:15', outboundEnabled: 0, lastDigestDate: '2026-10-11' },
+      ],
+    }]);
     const rows = await h.repo.listEnabledUsers();
-    expect(sqlOf(h.calls, 'FROM user_digest_preference').sql).toContain('WHERE enabled = 1');
-    expect(rows).toHaveLength(1);
+    const call = sqlOf(h.calls, 'FROM user u LEFT JOIN user_digest_preference');
+    expect(call.sql).toContain('u.deleted = 0');
+    // 无行用户必须出现（决策 11 默认开落地的关键），关掉的必须被排除
+    expect(rows).toEqual([
+      { userId: 7, enabled: 1, pushTime: '09:30', outboundEnabled: 1, lastDigestDate: null },
+      { userId: 9, enabled: 1, pushTime: '07:15', outboundEnabled: 0, lastDigestDate: '2026-10-11' },
+    ]);
   });
 });
 

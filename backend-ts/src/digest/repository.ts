@@ -1,5 +1,6 @@
 import type { Db } from '../db/db.js';
-import type { DigestPreference, DigestPreferenceRow } from './types.js';
+import { notDeleted } from '../db/db.js';
+import { DEFAULT_DIGEST_PREFERENCE, type DigestPreference, type DigestPreferenceRow } from './types.js';
 
 /**
  * 每日运营摘要仓储（技术方案 §5.2）：六板块聚合查询 + 偏好 CRUD。
@@ -23,13 +24,36 @@ export class DigestRepository {
     );
   }
 
-  /** 调度入口：所有开启总开关的用户（last_digest_date 判定在调度器内做）。 */
-  listEnabledUsers(): Promise<DigestPreferenceRow[]> {
-    return this.db.query<DigestPreferenceRow>(
-      `SELECT user_id AS userId, enabled, push_time AS pushTime, outbound_enabled AS outboundEnabled,
-              last_digest_date AS lastDigestDate
-       FROM user_digest_preference WHERE enabled = 1`,
+  /**
+   * 调度入口：全部未删除用户 LEFT JOIN 偏好行，无行按默认偏好生效（决策 11「默认开」）。
+   *
+   * 为什么不能只 `WHERE enabled = 1`：偏好行只有用户 PATCH 后才存在，无行用户
+   * （新注册 / 升级后从未改过设置）会被永久排除在调度外——UI 却显示默认已开启。
+   * 读时默认对齐收件箱 `isKindEnabled` 的无行开口子；enabled 过滤在映射后做。
+   */
+  async listEnabledUsers(): Promise<DigestPreferenceRow[]> {
+    const rows = await this.db.query<{
+      userId: number;
+      enabled: number | null;
+      pushTime: string | null;
+      outboundEnabled: number | null;
+      lastDigestDate: string | null;
+    }>(
+      `SELECT u.id AS userId, p.enabled, p.push_time AS pushTime, p.outbound_enabled AS outboundEnabled,
+              p.last_digest_date AS lastDigestDate
+       FROM user u LEFT JOIN user_digest_preference p ON p.user_id = u.id
+       WHERE u.${notDeleted('u')}`,
     );
+    return rows
+      .map((row) => ({
+        userId: Number(row.userId),
+        // 列默认值与 DEFAULT_DIGEST_PREFERENCE 一致：无行 = 默认开 + 09:30 + 同步出站
+        enabled: row.enabled ?? 1,
+        pushTime: row.pushTime ?? DEFAULT_DIGEST_PREFERENCE.pushTime,
+        outboundEnabled: row.outboundEnabled ?? 1,
+        lastDigestDate: row.lastDigestDate,
+      }))
+      .filter((row) => row.enabled === 1);
   }
 
   /** 懒建行 + last-write-wins（对齐 user_inbox_preference 无乐观锁）；不动 last_digest_date。 */
@@ -52,13 +76,20 @@ export class DigestRepository {
 
   /**
    * 标记 coveredDate 已处理（安静日也写——避免每分钟重复聚合）。
-   * 单调不回退：仅当库里为空或更早日期才写，防止试发/并发 tick 把新状态覆盖回旧值。
+   *
+   * 懒建行 + 单调不回退：无偏好行的用户（默认开口子）首次处理时藉此落一行默认值，
+   * 否则 UPDATE 影响 0 行、该用户每分钟都会被重新聚合。有行时只推进日期，
+   * 其余列（enabled / push_time / outbound_enabled）保持不动；仅当库里为空或
+   * 更早日期才写，防止试发/并发 tick 把新状态覆盖回旧值。
    */
   async markProcessed(userId: number, coveredDate: string): Promise<void> {
     await this.db.execute(
-      `UPDATE user_digest_preference SET last_digest_date = ?
-       WHERE user_id = ? AND (last_digest_date IS NULL OR last_digest_date < ?)`,
-      [coveredDate, userId, coveredDate],
+      `INSERT INTO user_digest_preference (user_id, last_digest_date)
+       VALUES (?, ?)
+       ON DUPLICATE KEY UPDATE
+         last_digest_date = IF(last_digest_date IS NULL OR last_digest_date < VALUES(last_digest_date),
+                               VALUES(last_digest_date), last_digest_date)`,
+      [userId, coveredDate],
     );
   }
 

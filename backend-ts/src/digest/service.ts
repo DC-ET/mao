@@ -226,17 +226,32 @@ export function digestTitle(coveredDate: string): string {
   return `昨日运营摘要（${coveredDate.slice(5)}）`;
 }
 
-/** 收件箱浓缩一行：只有有数据的板块；成本按成本单位（micros/1e6）展示。 */
+/**
+ * 收件箱浓缩一行：只有有数据的板块；成本按成本单位（micros/1e6）展示。
+ *
+ * 每个板块的门控必须与 `aggregate` 的「板块非空」判定对称：板块非空就至少要产出
+ * 一个片段，否则唯一事实恰好落在门控外时（如昨天只有哨兵被停用、零触发），
+ * 整行会是空串——条目投递了但列表层没有任何摘要文字。
+ */
 export function renderDigestLine(data: DigestData): string {
   const parts: string[] = [];
   if (data.tasks != null) {
-    parts.push(`完成 ${data.tasks.completed}`);
+    if (data.tasks.completed > 0) parts.push(`完成 ${data.tasks.completed}`);
     if (data.tasks.failed > 0) parts.push(`失败 ${data.tasks.failed}`);
   }
-  if (data.scheduled != null) parts.push(`定时任务 ${data.scheduled.total} 次`);
-  if (data.watchers != null && data.watchers.triggered > 0) parts.push(`哨兵触发 ${data.watchers.triggered}`);
+  if (data.scheduled != null) {
+    if (data.scheduled.total > 0) parts.push(`定时任务 ${data.scheduled.total} 次`);
+    else if (data.scheduled.paused.length > 0) parts.push(`定时任务暂停 ${data.scheduled.paused.length} 个`);
+  }
+  if (data.watchers != null) {
+    if (data.watchers.triggered > 0) parts.push(`哨兵触发 ${data.watchers.triggered}`);
+    else if (data.watchers.disabled.length > 0) parts.push(`哨兵停用 ${data.watchers.disabled.length} 个`);
+  }
   if (data.approvals != null) parts.push(`审批挂起 ${data.approvals.pending}`);
-  if (data.cost != null) parts.push(`成本 ${formatCostMicros(data.cost.totalMicros)}`);
+  if (data.cost != null) {
+    if (data.cost.totalMicros > 0) parts.push(`成本 ${formatCostMicros(data.cost.totalMicros)}`);
+    else if (data.cost.unpricedCalls > 0) parts.push(`未配价 ${data.cost.unpricedCalls} 次`);
+  }
   if (data.openApi != null) parts.push(`开放接口 ${data.openApi.total} 次`);
   return parts.join(' · ');
 }

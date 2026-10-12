@@ -205,6 +205,27 @@ describe('DigestService.processUser', () => {
     expect(outbound.dispatchDigest).not.toHaveBeenCalled();
   });
 
+  it('唯一事实是哨兵停用：非安静日照常投递，且收件箱 content 非空（回归空行 bug）', async () => {
+    const repo = busyRepo({
+      countTaskTerminal: vi.fn(async () => ({ completed: 0, failed: 0 })),
+      listFailedTasks: vi.fn(async () => []),
+      countScheduledRuns: vi.fn(async () => ({ total: 0, completed: 0, failed: 0 })),
+      listPausedTasks: vi.fn(async () => []),
+      countWatcherTriggers: vi.fn(async () => 0),
+      listDisabledWatchers: vi.fn(async () => [{ watcherId: 5, name: '汇率哨兵' }]),
+      sumCostByAgent: vi.fn(async () => []),
+      countOpenApiCalls: vi.fn(async () => ({ total: 0, rejected: 0 })),
+      findPreference: vi.fn(async () => prefRow()),
+    });
+    const { service, inbox } = makeService(repo);
+    const result = await service.processUser(1);
+    expect(result.sent).toBe(true);
+    // 浓缩一行是收件箱条目的 content：为空则列表层只剩标题，运维信号被隐藏
+    expect(result.line).toBe('哨兵停用 1 个');
+    const entry = (inbox.writeDigestEntry as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][0] as { content: string | null };
+    expect(entry.content).toBe('哨兵停用 1 个');
+  });
+
   it('试发（force）：跳过 enabled 门控、不写 last_digest_date', async () => {
     const repo = busyRepo({ findPreference: vi.fn(async () => prefRow({ enabled: 0 })) });
     const { service, inbox } = makeService(repo);
@@ -318,6 +339,34 @@ describe('渲染', () => {
       approvals: null, cost: null, openApi: null,
     };
     expect(renderDigestLine(empty)).toBe('');
+  });
+
+  it('renderDigestLine：每个非空板块都产出片段（回归：disabled-only 哨兵导致整行为空）', () => {
+    // 昨天唯一事实是哨兵被自动停用：watchers 非空（非安静日会投递），浓缩行必须非空
+    const disabledOnly: DigestData = {
+      coveredDate: YESTERDAY, tasks: null, scheduled: null,
+      watchers: { triggered: 0, disabled: [{ watcherId: 5, name: '汇率' }] },
+      approvals: null, cost: null, openApi: null,
+    };
+    expect(renderDigestLine(disabledOnly)).toBe('哨兵停用 1 个');
+  });
+
+  it('renderDigestLine：零值不产生噪声片段（完成 0 / 定时 0 次 / 成本 0）', () => {
+    expect(renderDigestLine({
+      coveredDate: YESTERDAY,
+      tasks: { completed: 0, failed: 2, failedTop: [] },
+      scheduled: null, watchers: null, approvals: null, cost: null, openApi: null,
+    })).toBe('失败 2');
+    expect(renderDigestLine({
+      coveredDate: YESTERDAY, tasks: null,
+      scheduled: { total: 0, completed: 0, failed: 0, paused: [{ taskId: 7, name: '日报' }] },
+      watchers: null, approvals: null, cost: null, openApi: null,
+    })).toBe('定时任务暂停 1 个');
+    // 窗口内有调用但全部未配价：合计 0 不能说「成本 0」，改报未配价次数
+    expect(renderDigestLine({
+      coveredDate: YESTERDAY, tasks: null, scheduled: null, watchers: null, approvals: null,
+      cost: { totalMicros: 0, unpricedCalls: 5, top: [] }, openApi: null,
+    })).toBe('未配价 5 次');
   });
 
   it('renderDigestMarkdown：六板块小节 + 未配价附注', () => {

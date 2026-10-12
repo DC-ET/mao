@@ -16,7 +16,7 @@ export interface DigestSchedulerDeps {
  * 每日摘要调度器（技术方案 §5.4）：每分钟 tick，逐用户判定后处理。
  *
  * 判定三条件（全部满足才处理）：
- * 1. 总开关已开（listEnabledUsers 的 WHERE 保证）；
+ * 1. 总开关已开（listEnabledUsers 已保证：无偏好行按默认「开」，显式关的用户被排除）；
  * 2. `last_digest_date !== 昨天`——昨天还没处理过（防重；
  *    注意语义是“被汇总日期”而非发送日期：改推送时间当天不补发，次日正常）；
  * 3. 当前上海时刻 ≥ 用户推送时间（HH:MM 字符串字典序即时间序）。
