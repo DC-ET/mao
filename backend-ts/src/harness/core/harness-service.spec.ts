@@ -168,6 +168,7 @@ function makeHarness(overrides: Record<string, unknown> = {}) {
     loadAgentServers: vi.fn(async () => []),
     getLocalSessionTools: vi.fn(() => []),
     connectForCloud: vi.fn(async () => ({ tools: [], warnings: [] })),
+    clearSession: vi.fn(),
   };
   const localSkills = { get: vi.fn(() => []) };
   const localAgentsMd = { get: vi.fn(() => null) };

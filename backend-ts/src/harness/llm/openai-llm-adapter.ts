@@ -22,6 +22,7 @@ import { DEFAULT_LLM_RETRY, notifyPartialUsage } from './chat-request.js';
 import { EmptyResponseExhaustedException } from './empty-response-exhausted.js';
 import { parseChatResponse, parseStreamChunk, parseStreamErrorEvent, parseUsageFromSse, serializeChatRequest } from './json.js';
 import { applyClientImpersonationHeaders } from './client-impersonation-headers.js';
+import { isSupported, markUnsupported, shouldDegrade } from './prompt-cache-key-support.js';
 
 const IMAGE_PLACEHOLDER = '「此处用户上传了图片」';
 
@@ -76,7 +77,7 @@ export class OpenAiLlmAdapter implements LlmAdapter {
     cancelFlag?: { get(): boolean } | null,
     callback?: ChatCallback | null,
   ): Promise<ChatResponse> {
-    const payload = await this.buildRequestBody(request, config, false);
+    let payload = await this.buildRequestBody(request, config, false);
     const totalStarted = process.hrtime.bigint();
     for (let attempt = 1; ; attempt++) {
       if (this.isCancelled(cancelFlag)) throw this.cancelledException();
@@ -100,6 +101,12 @@ export class OpenAiLlmAdapter implements LlmAdapter {
         }
         if (awaited.status < 200 || awaited.status >= 300) {
           const detail = await this.readErrorBody(awaited.body);
+          // 400 且错误体点名 prompt_cache_key：去掉字段重试（不消耗限流重试额度）
+          const degraded = await this.degradePromptCacheKeyOn400(payload, awaited.status, detail, config);
+          if (degraded != null) {
+            payload = degraded;
+            continue;
+          }
           this.logRequestError(payload, config, `LLM API returned ${awaited.status}: ${detail}`);
           throw new Error(`LLM API returned ${awaited.status}: ${detail}`);
         }
@@ -140,7 +147,7 @@ export class OpenAiLlmAdapter implements LlmAdapter {
     callback: StreamCallback,
     cancelFlag?: { get(): boolean } | null,
   ): Promise<void> {
-    const payload = await this.buildRequestBody(request, config, true);
+    let payload = await this.buildRequestBody(request, config, true);
     const totalStarted = process.hrtime.bigint();
     for (let attempt = 1; ; attempt++) {
       if (this.isCancelled(cancelFlag)) {
@@ -187,6 +194,12 @@ export class OpenAiLlmAdapter implements LlmAdapter {
         }
         if (awaited.status < 200 || awaited.status >= 300) {
           const detail = await this.readErrorBody(awaited.body);
+          // 400 且错误体点名 prompt_cache_key：去掉字段重试（不消耗限流重试额度）
+          const degraded = await this.degradePromptCacheKeyOn400(payload, awaited.status, detail, config);
+          if (degraded != null) {
+            payload = degraded;
+            continue;
+          }
           this.logRequestError(payload, config, `LLM API returned ${awaited.status}: ${detail}`);
           callback.onError(new Error(`LLM API returned ${awaited.status}: ${detail}`));
           return;
@@ -476,8 +489,27 @@ export class OpenAiLlmAdapter implements LlmAdapter {
         await this.convertImageUrlsToBase64(msg);
       }
     }
-    const body = serializeChatRequest({ ...request, messages: messages ?? undefined }, config.modelId ?? '', stream);
+    // 降级过的模型不再携带 prompt_cache_key：网关 400 拒绝过一次后，继续发只是每次多花一个失败请求
+    const body = serializeChatRequest(
+      { ...request, messages: messages ?? undefined }, config.modelId ?? '', stream,
+      isSupported(config, 'prompt_cache_key'),
+    );
     return JSON.stringify(body);
+  }
+
+  /** 非 2xx（含 400）分支共用：错误体说明「不认 prompt_cache_key」时登记降级并重试一次去掉该字段的请求。 */
+  private async degradePromptCacheKeyOn400(
+    payload: string,
+    status: number,
+    detail: string,
+    config: LlmModelConfig,
+  ): Promise<string | null> {
+    if (!shouldDegrade(status, detail, 'prompt_cache_key')) return null;
+    if (!isSupported(config, 'prompt_cache_key')) return null;
+    markUnsupported(config, 'prompt_cache_key', detail);
+    const stripped = stripPromptCacheKey(payload);
+    harnessLog('info', `retrying without prompt_cache_key model=${config.modelId}`);
+    return stripped;
   }
 
   private replaceImagesWithPlaceholder(messages: ChatMessage[]): void {
@@ -733,6 +765,17 @@ export class OpenAiLlmAdapter implements LlmAdapter {
       body.on('end', () => finish(undefined, Buffer.concat(chunks).toString('utf8')));
       body.on('error', (err) => finish(err));
     });
+  }
+}
+
+/** 从已序列化的 chat-completions 请求体里删除顶层 prompt_cache_key，其余字段逐字节保留。 */
+function stripPromptCacheKey(payload: string): string {
+  try {
+    const body = JSON.parse(payload) as Record<string, unknown>;
+    delete body.prompt_cache_key;
+    return JSON.stringify(body);
+  } catch {
+    return payload;
   }
 }
 

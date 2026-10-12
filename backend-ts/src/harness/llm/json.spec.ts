@@ -120,4 +120,22 @@ describe('serializeChatRequest', () => {
     const assistant = (body.messages as Record<string, unknown>[])[0];
     expect(assistant).not.toHaveProperty('reasoning_content');
   });
+
+  it('passes promptCacheKey through as prompt_cache_key', () => {
+    const request: ChatRequest = {
+      messages: [{ role: 'user', content: 'hi' }],
+      promptCacheKey: 'mao-session-42',
+    };
+    expect(serializeChatRequest(request, 'gpt-test', true)).toMatchObject({ prompt_cache_key: 'mao-session-42' });
+  });
+
+  it('omits prompt_cache_key for blank keys and when explicitly suppressed', () => {
+    const request: ChatRequest = {
+      messages: [{ role: 'user', content: 'hi' }],
+      promptCacheKey: '',
+    };
+    expect(serializeChatRequest(request, 'gpt-test', true)).not.toHaveProperty('prompt_cache_key');
+    expect(serializeChatRequest({ messages: [], promptCacheKey: 'mao-session-1' }, 'gpt-test', true, false))
+      .not.toHaveProperty('prompt_cache_key');
+  });
 });

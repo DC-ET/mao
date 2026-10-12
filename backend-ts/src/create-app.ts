@@ -893,6 +893,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     callTimeoutSeconds: harnessTuning.llm.callTimeoutSeconds,
     httpCallTimeoutSeconds: harnessTuning.llm.httpCallTimeoutSeconds,
     streamIdleTimeoutSeconds: harnessTuning.llm.streamIdleTimeoutSeconds,
+  }, {
+    autoCacheEnabled: harnessTuning.llm.anthropicAutoCache,
+    cacheTtl: harnessTuning.llm.anthropicCacheTtl,
   });
   const responsesLlmAdapter = new ResponsesLlmAdapter({
     rateLimitMaxRetries: harnessTuning.llm.rateLimitMaxRetries,

@@ -292,4 +292,16 @@ describe('MemoryService.listForInjection', () => {
     expect(await svc.listForInjection(7, 'oc_abc', '/opt/mao-data/workspace/feishu-chat/3/oc_abc')).toHaveLength(2);
     expect(r.listActiveProject).not.toHaveBeenCalled();
   });
+
+  it('injectionOrderFollowsRepositoryIdAscendingNotRowArrivalOrder', async () => {
+    // 仓储层已把输出稳定为 id ASC；service 必须按该顺序原样注入，
+    // 这样「某条记忆被 touch 导致行序变化」不会改变注入顺序与整块文本。
+    const r = repo();
+    const touched = userRows(3).map((row) => ({ ...row, content: `${row.content} (touched)` }));
+    (r.listActiveUser as ReturnType<typeof vi.fn>).mockResolvedValueOnce(touched);
+    const svc = new MemoryService(r, { listProjectKeyRows: async () => [] });
+    const hints = await svc.listForInjection(7, null, null);
+    expect(hints.map((h) => h.id)).toEqual([1, 2, 3]);
+    expect(hints.map((h) => h.content)).toEqual(touched.map((row) => row.content));
+  });
 });

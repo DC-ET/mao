@@ -137,4 +137,91 @@ describe('McpSyncService', () => {
       expect(result.warnings).toEqual(['github: connect refused']);
     });
   });
+
+  describe('connectForCloud session snapshot (prefix cache stability)', () => {
+    const githubTools = [
+      { serverId: 2, serverName: 'github', toolName: 'read', description: '', inputSchema: {}, fullToolName: 'mcp__github__read' },
+      { serverId: 2, serverName: 'github', toolName: 'write', description: '', inputSchema: {}, fullToolName: 'mcp__github__write' },
+    ];
+    const baiduTools = [
+      { serverId: 3, serverName: 'baidu_map', toolName: 'geocode', description: '', inputSchema: {}, fullToolName: 'mcp__baidu_map__geocode' },
+    ];
+    let connectAndListTools: ReturnType<typeof vi.fn>;
+    let clientManager: McpClientManager;
+    const decryptEnv = vi.fn(() => ({ TOKEN: 'x' }));
+
+    beforeEach(() => {
+      connectAndListTools = vi.fn();
+      clientManager = { connectAndListTools } as unknown as McpClientManager;
+      decryptEnv.mockClear();
+      decryptEnv.mockReturnValue({ TOKEN: 'x' });
+      (service as unknown as { mcpServerService: unknown }).mcpServerService = { decryptEnv };
+    });
+
+    it('secondRoundKeepsStaleServerToolsByteIdenticalAndWarns', async () => {
+      // 首轮全部成功 → 快照登记；第二轮 github 连接失败 → 沿用快照中 github 的工具，
+      // tools 数组逐字节不变，且出现「当前不可用」notice（模型可见）。
+      const github = { id: 2, name: 'github', serverType: TYPE_HTTP, url: 'https://mcp.example.com/github', status: STATUS_ENABLED };
+      const baidu = { id: 3, name: 'baidu_map', serverType: TYPE_HTTP, url: 'https://mcp.example.com/baidu', status: STATUS_ENABLED };
+      connectAndListTools.mockImplementation(async (_sid: number, server: { name?: string }) => (
+        server.name === 'github' ? githubTools : baiduTools
+      ));
+      const first = await service.connectForCloud(31, [github as never, baidu as never], clientManager, null);
+      expect(first.warnings).toEqual([]);
+
+      connectAndListTools.mockImplementation(async (_sid: number, server: { name?: string }) => {
+        if (server.name === 'github') throw new Error('connect refused');
+        return baiduTools;
+      });
+      const second = await service.connectForCloud(31, [github as never, baidu as never], clientManager, null);
+      expect(JSON.stringify(second.tools)).toBe(JSON.stringify(first.tools));
+      expect(second.warnings).toEqual(['github: connect refused', 'github 当前不可用，相关工具调用可能失败']);
+    });
+
+    it('firstRoundFailureKeepsCurrentBehaviorWithoutStaleTools', async () => {
+      // 无快照（会话首轮）且连接失败 → 该 server 的工具本轮不出现（维持现状）
+      const github = { id: 2, name: 'github', serverType: TYPE_HTTP, url: 'https://mcp.example.com/github', status: STATUS_ENABLED };
+      connectAndListTools.mockRejectedValue(new Error('connect refused'));
+      const result = await service.connectForCloud(32, [github as never], clientManager, null);
+      expect(result.tools).toEqual([]);
+      expect(result.warnings).toEqual(['github: connect refused']);
+    });
+
+    it('snapshotSortsByServerAndToolNameSoArrivalOrderDoesNotMatter', async () => {
+      const github = { id: 2, name: 'github', serverType: TYPE_HTTP, url: 'https://mcp.example.com/github', status: STATUS_ENABLED };
+      const baidu = { id: 3, name: 'baidu_map', serverType: TYPE_HTTP, url: 'https://mcp.example.com/baidu', status: STATUS_ENABLED };
+      connectAndListTools.mockImplementation(async (_sid: number, server: { name?: string }) => (
+        server.name === 'github' ? githubTools : baiduTools
+      ));
+      const forward = await service.connectForCloud(33, [github as never, baidu as never], clientManager, null);
+      const backward = await service.connectForCloud(34, [baidu as never, github as never], clientManager, null);
+      expect(JSON.stringify(forward.tools)).toBe(JSON.stringify(backward.tools));
+    });
+
+    it('clearSessionDropsCloudSnapshotSoNextSessionReconnects', async () => {
+      const github = { id: 2, name: 'github', serverType: TYPE_HTTP, url: 'https://mcp.example.com/github', status: STATUS_ENABLED };
+      connectAndListTools.mockResolvedValue(githubTools);
+      await service.connectForCloud(35, [github as never], clientManager, null);
+      expect(service.getCloudSnapshot(35)).toHaveLength(2);
+      service.clearSession(35);
+      expect(service.getCloudSnapshot(35)).toEqual([]);
+      // 清理后连接失败：不再沿用旧快照
+      connectAndListTools.mockRejectedValue(new Error('connect refused'));
+      const result = await service.connectForCloud(35, [github as never], clientManager, null);
+      expect(result.tools).toEqual([]);
+    });
+
+    it('removedServerToolsDisappearOnceItStopsSucceeding', async () => {
+      // 快照只增不减的边界：某 server 从配置里移除后，它不再出现在 servers 列表，
+      // 也不该继续被快照带回来——快照以本轮 servers 的成功集合为准。
+      const github = { id: 2, name: 'github', serverType: TYPE_HTTP, url: 'https://mcp.example.com/github', status: STATUS_ENABLED };
+      const baidu = { id: 3, name: 'baidu_map', serverType: TYPE_HTTP, url: 'https://mcp.example.com/baidu', status: STATUS_ENABLED };
+      connectAndListTools.mockImplementation(async (_sid: number, server: { name?: string }) => (
+        server.name === 'github' ? githubTools : baiduTools
+      ));
+      await service.connectForCloud(36, [github as never, baidu as never], clientManager, null);
+      const onlyGithub = await service.connectForCloud(36, [github as never], clientManager, null);
+      expect(onlyGithub.tools.map((t) => t.serverName)).toEqual(['github', 'github']);
+    });
+  });
 });

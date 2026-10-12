@@ -21,6 +21,7 @@ import type {
 import { DEFAULT_LLM_RETRY, notifyPartialUsage } from './chat-request.js';
 import { EmptyResponseExhaustedException } from './empty-response-exhausted.js';
 import { applyClientImpersonationHeaders } from './client-impersonation-headers.js';
+import { isSupported, markUnsupported, shouldDegrade } from './prompt-cache-key-support.js';
 
 const IMAGE_PLACEHOLDER = '「此处用户上传了图片」';
 
@@ -69,8 +70,27 @@ interface HttpResult {
   req: http.ClientRequest;
 }
 
+/** Anthropic 顶层自动缓存断点参数（system_setting 注入，启动时装配）。 */
+export interface AnthropicCacheOptions {
+  /** false 时请求体不带 cache_control（与改造前逐字节一致，保证可回退）。 */
+  autoCacheEnabled?: boolean;
+  /** 5m=官方默认；1h 适合长会话（人工审批 / 长工具执行间隔经常超过 5 分钟）。 */
+  cacheTtl?: string;
+}
+
 export class AnthropicLlmAdapter implements LlmAdapter {
-  constructor(private readonly retry: LlmRetryConfig = DEFAULT_LLM_RETRY) {}
+  /** 顶层自动缓存断点开关（默认启用，可用 system_setting 全局关闭）。 */
+  private readonly autoCacheEnabled: boolean;
+  /** 缓存 TTL：5m（官方默认）或 1h（长会话更划算：读价仍 0.1×）。 */
+  private readonly cacheTtl: '5m' | '1h';
+
+  constructor(
+    private readonly retry: LlmRetryConfig = DEFAULT_LLM_RETRY,
+    options: AnthropicCacheOptions = {},
+  ) {
+    this.autoCacheEnabled = options.autoCacheEnabled !== false;
+    this.cacheTtl = options.cacheTtl === '1h' ? '1h' : '5m';
+  }
 
   async chat(
     request: ChatRequest,
@@ -78,7 +98,7 @@ export class AnthropicLlmAdapter implements LlmAdapter {
     cancelFlag?: { get(): boolean } | null,
     callback?: ChatCallback | null,
   ): Promise<ChatResponse> {
-    const payload = await this.buildRequestBody(request, config, false);
+    let payload = await this.buildRequestBody(request, config, false);
     const totalStarted = process.hrtime.bigint();
     for (let attempt = 1; ; attempt++) {
       if (this.isCancelled(cancelFlag)) throw this.cancelledException();
@@ -102,6 +122,12 @@ export class AnthropicLlmAdapter implements LlmAdapter {
         }
         if (awaited.status < 200 || awaited.status >= 300) {
           const detail = await this.readErrorBody(awaited.body);
+          // 400 且错误体点名 cache_control：去掉该字段重试（与 prompt_cache_key 共用降级器）
+          const degraded = await this.degradeCacheControlOn400(payload, awaited.status, detail, config);
+          if (degraded != null) {
+            payload = degraded;
+            continue;
+          }
           this.logRequestError(payload, config, `LLM API returned ${awaited.status}: ${detail}`);
           throw new Error(`LLM API returned ${awaited.status}: ${detail}`);
         }
@@ -134,7 +160,7 @@ export class AnthropicLlmAdapter implements LlmAdapter {
     callback: StreamCallback,
     cancelFlag?: { get(): boolean } | null,
   ): Promise<void> {
-    const payload = await this.buildRequestBody(request, config, true);
+    let payload = await this.buildRequestBody(request, config, true);
     const totalStarted = process.hrtime.bigint();
     for (let attempt = 1; ; attempt++) {
       if (this.isCancelled(cancelFlag)) {
@@ -181,6 +207,12 @@ export class AnthropicLlmAdapter implements LlmAdapter {
         }
         if (awaited.status < 200 || awaited.status >= 300) {
           const detail = await this.readErrorBody(awaited.body);
+          // 400 且错误体点名 cache_control：去掉该字段重试（与 prompt_cache_key 共用降级器）
+          const degraded = await this.degradeCacheControlOn400(payload, awaited.status, detail, config);
+          if (degraded != null) {
+            payload = degraded;
+            continue;
+          }
           this.logRequestError(payload, config, `LLM API returned ${awaited.status}: ${detail}`);
           callback.onError(new Error(`LLM API returned ${awaited.status}: ${detail}`));
           return;
@@ -562,7 +594,27 @@ export class AnthropicLlmAdapter implements LlmAdapter {
         .filter((t): t is { name: string; description: string; input_schema: Record<string, unknown> } => t != null);
       if (tools.length > 0) body.tools = tools;
     }
+    // 顶层自动缓存断点：断点固定「最后一个可缓存块」并随对话增长自动前移，正是多轮 agent loop
+    // 的目标形态；不认该字段的网关退化为现状（无缓存），不会更差，且 400 时由降级器兜底关闭。
+    if (this.autoCacheEnabled && isSupported(config, 'cache_control')) {
+      body.cache_control = this.cacheTtl === '1h' ? { type: 'ephemeral', ttl: '1h' } : { type: 'ephemeral' };
+    }
     return JSON.stringify(body);
+  }
+
+  /** 非 2xx（含 400）分支共用：错误体说明「不认 cache_control」时登记降级并重试一次去掉该字段的请求。 */
+  private async degradeCacheControlOn400(
+    payload: string,
+    status: number,
+    detail: string,
+    config: LlmModelConfig,
+  ): Promise<string | null> {
+    if (!this.autoCacheEnabled) return null;
+    if (!shouldDegrade(status, detail, 'cache_control')) return null;
+    if (!isSupported(config, 'cache_control')) return null;
+    markUnsupported(config, 'cache_control', detail);
+    harnessLog('info', `retrying without cache_control model=${config.modelId}`);
+    return stripCacheControl(payload);
   }
 
   /** 请求异常告警日志：带上完整请求体（base64 图片等敏感数据脱敏），错误在适配器只会走到一个出口，无需去重。 */
@@ -757,10 +809,20 @@ export class AnthropicLlmAdapter implements LlmAdapter {
   }
 }
 
+/** 从已序列化的 Messages 请求体里删除顶层 cache_control，其余字段逐字节保留。 */
+function stripCacheControl(payload: string): string {
+  try {
+    const body = JSON.parse(payload) as Record<string, unknown>;
+    delete body.cache_control;
+    return JSON.stringify(body);
+  } catch {
+    return payload;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 消息转换：OpenAI 形状（Mao 统一类型）→ Anthropic Messages 形状
 // ---------------------------------------------------------------------------
-
 interface AnthropicContentBlock {
   type: string;
   text?: string;

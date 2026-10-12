@@ -15,6 +15,7 @@ import { ToolMediaInjector } from './tool-media-injector.js';
 import { TokenEstimator } from './token-estimator.js';
 import { buildHandoffUserContent } from './compaction-service.js';
 import type { ContextManifest, ContextSectionStat } from './context-manifest.js';
+import { observePrefix } from './prompt-prefix-monitor.js';
 
 const TASK_TOOL_NAMES = new Set(['task_create', 'task_update', 'task_list', 'task_delete']);
 const WEIXIN_MEDIA_TOOL_NAMES = new Set(['send_wechat_image', 'send_wechat_file']);
@@ -176,6 +177,11 @@ export class PromptEngine {
     // manifest 只读最终请求对象（normalized = quick command 展开 / 媒体注入 / 归一化之后），
     // 禁止用组装前的 context.messages 口径（决策 1、§8 漂移对策）。
     context.contextManifest = this.buildContextManifest(context, sections, normalized, request);
+    // 前缀指纹观测（技术方案 2026-10-12 §4.3）：此处 sections 与 request.tools 都在手，
+    // 且是「所见即所发」口径；与上一次比对，变化时 warn 点名是哪几节变了。
+    if (context.sessionId != null) {
+      observePrefix(context.sessionId, sections, request.tools, normalized.length);
+    }
     return request;
   }
 

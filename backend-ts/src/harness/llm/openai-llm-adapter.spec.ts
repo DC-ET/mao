@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { OpenAiLlmAdapter } from './openai-llm-adapter.js';
 import type { ChatRequest, ChatUsage, LlmModelConfig, LlmRetryConfig, StreamCallback, StreamChunk } from './chat-request.js';
 import { DEFAULT_LLM_RETRY } from './chat-request.js';
+import { resetPromptCacheSupportForTest } from './prompt-cache-key-support.js';
 
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
 const JPEG_MAGIC = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0, 0, 0, 0, 0]);
@@ -756,6 +757,85 @@ describe('OpenAiLlmAdapter', () => {
     expect(callback.streamResetCount).toBe(1);
     expect(callback.chunks).toHaveLength(1);
     expect(callback.chunks[0].choices?.[0]?.delta?.content).toBe('clean');
+  });
+
+  it('streamSendsPromptCacheKeyWhenRequestCarriesOne', async () => {
+    server = new QueueServer();
+    server.enqueueSse('data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n');
+    await server.start();
+    const callback = new CapturingCallback();
+    await adapter(0, 0).stream(
+      { messages: [{ role: 'user', content: 'hello' }], promptCacheKey: 'mao-session-42' },
+      configOf(server), callback, { get: () => false },
+    );
+    expect(callback.error).toBeUndefined();
+    expect(server.bodies[0]).toContain('"prompt_cache_key":"mao-session-42"');
+  });
+
+  it('chatRetriesWithoutPromptCacheKeyAfterGatewayRejectsItWith400', async () => {
+    // 网关不认 prompt_cache_key：首个请求 400 点名该字段，去掉字段后第二次必须成功。
+    // 且 400 不消耗限流重试额度（rateLimitMaxRetries=0 也应完成降级重试）。
+    resetPromptCacheSupportForTest();
+    server = new QueueServer();
+    server.enqueueJson('{"error":{"message":"unknown field: prompt_cache_key"}}', 400);
+    server.enqueueJson('{"id":"ok-no-key","choices":[]}');
+    await server.start();
+    const response = await adapter(0, 0).chat(
+      { messages: [{ role: 'user', content: 'hello' }], promptCacheKey: 'mao-session-42' },
+      configOf(server),
+    );
+    expect(response.id).toBe('ok-no-key');
+    expect(server.requestCount).toBe(2);
+    expect(server.bodies[0]).toContain('"prompt_cache_key":"mao-session-42"');
+    expect(server.bodies[1]).not.toContain('prompt_cache_key');
+  });
+
+  it('streamRetriesWithoutPromptCacheKeyAfterGatewayRejectsItWith400', async () => {
+    resetPromptCacheSupportForTest();
+    server = new QueueServer();
+    server.enqueueJson('{"error":{"message":"unknown field: prompt_cache_key"}}', 400);
+    server.enqueueSse('data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n');
+    await server.start();
+    const callback = new CapturingCallback();
+    await adapter(0, 0).stream(
+      { messages: [{ role: 'user', content: 'hello' }], promptCacheKey: 'mao-session-42' },
+      configOf(server), callback, { get: () => false },
+    );
+    expect(callback.error).toBeUndefined();
+    expect(server.requestCount).toBe(2);
+    expect(server.bodies[1]).not.toContain('prompt_cache_key');
+  });
+
+  it('degradedModelOmitsPromptCacheKeyOnLaterRequestsAndKeysStayIsolated', async () => {
+    // 同一模型降级后不再发该字段；换 modelId / baseUrl 仍是新键，重新试发。
+    resetPromptCacheSupportForTest();
+    server = new QueueServer();
+    server.enqueueJson('{"error":{"message":"unknown field: prompt_cache_key"}}', 400);
+    server.enqueueJson('{"id":"ok-no-key","choices":[]}');
+    server.enqueueJson('{"id":"ok-again-no-key","choices":[]}');
+    server.enqueueJson('{"id":"ok-other-model","choices":[]}');
+    await server.start();
+    const a = adapter(0, 0);
+    const req = { messages: [{ role: 'user', content: 'hello' }], promptCacheKey: 'mao-session-42' };
+    await a.chat(req, configOf(server));
+    await a.chat(req, configOf(server));
+    expect(server.bodies[1]).not.toContain('prompt_cache_key');
+    expect(server.bodies[2]).not.toContain('prompt_cache_key');
+    // 另一模型 ID：未降级，仍携带 key
+    await a.chat(req, configOf(server, { modelId: 'gpt-other' }));
+    expect(server.bodies[3]).toContain('"prompt_cache_key":"mao-session-42"');
+  });
+
+  it('doesNotDegradeOn400ForUnrelatedSchemaErrors', async () => {
+    resetPromptCacheSupportForTest();
+    server = new QueueServer();
+    server.enqueueJson('{"error":{"message":"invalid schema for tools"}}', 400);
+    await server.start();
+    await expect(adapter(0, 0).chat(
+      { messages: [{ role: 'user', content: 'hello' }], promptCacheKey: 'mao-session-42' },
+      configOf(server),
+    )).rejects.toThrow(/LLM API returned 400/);
+    expect(server.requestCount).toBe(1);
   });
 
   it('中断前已经到达的 usage 仍通过 onUsage 暴露', async () => {

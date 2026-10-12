@@ -12,6 +12,8 @@ import { TokenEstimator } from './token-estimator.js';
 import { CompactionConfig } from './compaction-config.js';
 import { buildHandoffUserContent } from './compaction-service.js';
 import * as harnessLogModule from '../log.js';
+import { resetPrefixMonitorForTest } from './prompt-prefix-monitor.js';
+import { serializeChatRequest } from '../llm/json.js';
 import type { Tool } from '../tool/tool.js';
 
 function tool(name: string): Tool {
@@ -623,6 +625,96 @@ describe('PromptEngine context manifest', () => {
     });
     const request = await engine().buildRequest(ctx);
     expect(request.messages[0].content as string).not.toContain('## 引用规范');
+  });
+});
+
+// —— 前缀稳定性守卫（技术方案 2026-10-12 §4.6）——
+// 「请求前缀逐字节稳定」是前缀缓存的硬不变量：system 单条 + tools 原样，本轮内容只追加到尾部。
+// 任何人把易变内容塞进 system、或让工具顺序抖动，这些测试立刻失败，失败信息点名变化项。
+describe('PromptEngine prefix stability guards', () => {
+  function engine() {
+    return new PromptEngine(
+      { hasSkill: () => false, getAllNames: () => [], getAllDocuments: () => [] } as never,
+      { getWorkspaceRoot: () => '/ws' } as never,
+      RuntimeDataResolver.forTest('/tmp/rt', '/tmp/home'),
+      { getByUserIdAndName: async () => null } as never,
+      { getUserSkillDocuments: () => [] } as never,
+    );
+  }
+
+  function context(overrides: Partial<AgentExecutionContext> = {}): AgentExecutionContext {
+    const ctx = new AgentExecutionContext();
+    ctx.executionMode = 'CLOUD';
+    ctx.workspace = '/ws';
+    ctx.sessionId = 77;
+    ctx.tools = [tool('read_file'), tool('shell')];
+    Object.assign(ctx, overrides);
+    return ctx;
+  }
+
+  it('sameContextBuildsByteIdenticalRequest', async () => {
+    const ctx = context({
+      systemPrompt: 'You are Mao',
+      memories: [{ id: 1, scope: 'USER', projectKey: null, content: '记忆一' }],
+      messages: [{ role: 'user', content: '第一轮' }],
+    });
+    const first = await engine().buildRequest(ctx);
+    const second = await engine().buildRequest(ctx);
+    expect(JSON.stringify(second.messages)).toBe(JSON.stringify(first.messages));
+    expect(JSON.stringify(second.tools)).toBe(JSON.stringify(first.tools));
+  });
+
+  it('appendingUserMessageKeepsPreviousPrefix', async () => {
+    const ctx = context({
+      systemPrompt: 'You are Mao',
+      messages: [{ role: 'user', content: '第一轮' }],
+    });
+    const before = await engine().buildRequest(ctx);
+    ctx.messages.push({ role: 'user', content: '第二轮' });
+    const after = await engine().buildRequest(ctx);
+    const prefix = after.messages.slice(0, before.messages.length);
+    expect(JSON.stringify(prefix)).toBe(JSON.stringify(before.messages));
+    expect(JSON.stringify(after.tools)).toBe(JSON.stringify(before.tools));
+    expect(after.messages.length).toBe(before.messages.length + 1);
+  });
+
+  it('prefixMonitorReportsChangedSection', async () => {
+    resetPrefixMonitorForTest();
+    const logSpy = vi.spyOn(harnessLogModule, 'harnessLog').mockImplementation(() => undefined);
+    try {
+      const ctx = context({
+        memories: [{ id: 1, scope: 'USER', projectKey: null, content: '记忆一' }],
+        messages: [{ role: 'user', content: '第一轮' }],
+      });
+      const engineInstance = engine();
+      await engineInstance.buildRequest(ctx);
+      logSpy.mockClear();
+      // 相同输入再 build 一次：不产生告警
+      await engineInstance.buildRequest(ctx);
+      expect(logSpy).not.toHaveBeenCalledWith('warn', expect.stringContaining('prefix changed'));
+
+      // 只改 memories：告警必须点名 memories，而不是把整串 diff 甩给读者
+      ctx.memories = [{ id: 1, scope: 'USER', projectKey: null, content: '记忆一（已更新）' }];
+      await engineInstance.buildRequest(ctx);
+      expect(logSpy).toHaveBeenCalledWith('warn', expect.stringContaining('changedSections=[memories]'));
+    } finally {
+      logSpy.mockRestore();
+      resetPrefixMonitorForTest();
+    }
+  });
+
+  it('serializedBodyDoesNotContainInternalFields', async () => {
+    const ctx = context({
+      systemPrompt: 'You are Mao',
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+    const request = await engine().buildRequest(ctx);
+    const body = serializeChatRequest(request, 'gpt-test', true);
+    const serialized = JSON.stringify(body);
+    // 内部执行摘要 summary 不属于 Chat Completions 协议；promptCacheKey 走 prompt_cache_key 顶层键
+    expect(serialized).not.toContain('"summary"');
+    expect(serialized).not.toContain('promptCacheKey');
+    expect(body).toHaveProperty('prompt_cache_key', 'mao-session-77');
   });
 });
 void mkdirSync;
