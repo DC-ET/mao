@@ -51,6 +51,7 @@ import type {
 import { SessionGroupKey } from './util/session-group-key.js';
 import { GitUrlParser } from './util/git-url-parser.js';
 import { toStoredContentJson } from './session-vo.js';
+import { stripCitationMarkers } from './util/citation-markers.js';
 import { WEIXIN_PROJECT_KEY } from '../domain/types.js';
 
 const SEARCH_RESULT_LIMIT = 20;
@@ -495,9 +496,7 @@ export class SessionService {
     const hits = await this.messageRepo.selectFirstMatchingMessages(sessionIds, escapeLike(keyword));
     const matchSnippets: Record<number, string> = {};
     for (const hit of hits) {
-      const text = this.extractVisibleText(hit.content ?? null);
-      if (text == null || text.length === 0) continue;
-      const snippet = buildSnippet(text, keyword);
+      const snippet = this.searchSnippet(hit.content ?? null, keyword);
       if (snippet != null) matchSnippets[hit.sessionId] = snippet;
     }
     return matchSnippets;
@@ -806,8 +805,7 @@ export class SessionService {
       const raw = hitsBySession.get(session.id!) ?? [];
       const hits: MessageSearchHit[] = [];
       for (const hit of raw) {
-        const text = this.extractVisibleText(hit.content ?? null);
-        const snippet = buildSnippet(text, keyword, prepared.snippetTerms);
+        const snippet = this.searchSnippet(hit.content ?? null, keyword, prepared.snippetTerms);
         if (snippet == null) continue;
         hits.push({
           messageId: hit.messageId,
@@ -877,6 +875,26 @@ export class SessionService {
       }
     }
     return result;
+  }
+
+  /**
+   * 搜索片段用的正文：可见文本再剥掉引用标记。`[^n^]` 是桌面渲染层约定，来源区不在
+   * 纯文本片段（桌面搜索浮层 / admin 会话列表）的语境里，原样露出像没渲染干净的模板变量。
+   */
+  private snippetSourceText(content: string | null): string | null {
+    const text = this.extractVisibleText(content);
+    return text == null ? null : stripCitationMarkers(text);
+  }
+
+  /**
+   * 搜索片段：优先用剥掉引用标记的正文建；建不出来时（典型是关键词本身含 `[^n^]`
+   * 字面量，剥标文本里找不到词）回退用未剥标的可见文本建。否则整条命中会被丢弃，
+   * 而 total 仍按 SQL 计数，桌面会出现「找到 N 个相关会话」却列不出东西。
+   */
+  private searchSnippet(content: string | null, keyword: string | null, extraTerms?: string[]): string | null {
+    const snippet = buildSnippet(this.snippetSourceText(content), keyword, extraTerms);
+    if (snippet != null) return snippet;
+    return buildSnippet(this.extractVisibleText(content), keyword, extraTerms);
   }
 
   extractVisibleText(content: string | null): string | null {
@@ -1031,6 +1049,25 @@ export class SessionService {
   async getMessages(sessionId: number): Promise<Message[]> {
     const messages = await this.messageRepo.listBySession(sessionId);
     return (MessageHistoryNormalizer.normalizeEntities(messages, parseToolCallsJson) ?? messages) as Message[];
+  }
+
+  /**
+   * 原始消息列表（不做 MessageHistoryNormalizer 归一化）。回复引用溯源的 registry
+   * 构建需要按 tool_call_id 精确匹配 TOOL 消息与 ASSISTANT 的 tool_calls，归一化
+   * 会改写 / 合并消息行，破坏匹配口径（技术方案 2026-10-12 §5.2）。
+   */
+  getRawMessages(sessionId: number): Promise<Message[]> {
+    return this.messageRepo.listBySession(sessionId);
+  }
+
+  /** 只更新消息的 metadata 列（引用溯源 citations 挂载；全字段 updateById 会误清 content）。 */
+  updateMessageMetadata(messageId: number, metadata: string | null): Promise<void> {
+    return this.messageRepo.updateMetadata(messageId, metadata);
+  }
+
+  /** 最后一条 role=ASSISTANT 且正文非空的消息（引用溯源 citations 的挂载行；记忆抽取同源口径）。 */
+  findLastAssistantMessage(sessionId: number): Promise<Message | null> {
+    return this.messageRepo.selectLastAssistantMessage(sessionId);
   }
 
   getMessagesAfterId(sessionId: number, afterMessageId: number | null): Promise<Message[]> {

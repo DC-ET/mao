@@ -37,6 +37,16 @@ const TOOL_USAGE_GUIDANCE = `# 使用你的工具
  - 你可以在单个响应中调用多个工具。如果你打算调用多个工具并且它们之间没有依赖关系，请并行执行所有独立的工具调用。尽可能最大化并行工具调用的使用以提高效率。但是，如果某些工具调用依赖于先前的调用来获取依赖值，请不要并行调用这些工具，而是按顺序调用它们。例如，如果一个操作必须在另一个操作开始之前完成，请按顺序运行这些操作。
 `;
 
+/**
+ * 引用规范（回复引用溯源，技术方案 2026-10-12 §5.4）：模型用 `[^n^]` 标记外部信息来源。
+ * 固有文案（不随会话变化），聚合进 manifest 的「系统提示词」单节，不进 INJECTED_SECTION_KEYS。
+ * 编号权在系统：n 由后端按本轮 URL 白名单（registry）顺序校验，对不上的标记会被剥掉。
+ */
+const CITATION_CONTRACT = `## 引用规范
+
+当你使用 web_search 或 open_web_page 获取外部信息并在回复中引用时，必须在被支撑的句末插入 [^n^] 标记：n 从 1 开始，按该来源在本轮中首次被引用的顺序编号，对应工具结果返回来源的顺序。没有来源支撑的说法不得添加标记；只引用本轮工具获取的来源，不得引用更早轮次或对话历史中的来源；不得编造或改写来源地址。
+`;
+
 /** Embed 网页浮窗通道基座：与具体业务角色无关，有 page_* 工具时注入。 */
 const EMBED_PAGE_AGENT_HINTS = `## 页面上下文与可见范围
 
@@ -276,6 +286,7 @@ export class PromptEngine {
     }
     if (!embedPageAgent) {
       sections.push({ key: 'tools-usage', label: '工具指引', text: TOOL_USAGE_GUIDANCE + '\n' });
+      sections.push({ key: 'citation-contract', label: '引用规范', text: CITATION_CONTRACT });
       const incomingText = this.incomingFileHint(context, effectiveWorkspace);
       if (incomingText.length > 0) {
         sections.push({ key: 'incoming-file', label: '用户上传文件', text: incomingText });

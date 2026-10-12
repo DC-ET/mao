@@ -53,6 +53,17 @@ export interface FileAttachment {
   originalName?: string
 }
 
+/**
+ * 引用来源条目（回复引用溯源，技术方案 2026-10-12）：来自最终 ASSISTANT 消息的
+ * metadata.citations。n 为后端 URL 白名单（registry）序号，数组按 n 升序；
+ * 上标与来源区的展示序号 = 数组下标 +1（见 utils/citationMarkers.ts buildCiteMap）。
+ */
+export interface Citation {
+  n: number
+  url: string
+  title: string
+}
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant' | 'system'

@@ -2,6 +2,7 @@
   <div
     :id="messageDomId"
     :class="['message-bubble', role, { 'tool-only': isToolOnly, 'message-locate-flash': flashing }]"
+    @click="onCitationSupClick"
   >
     <div class="message-content">
       <div v-if="showTime" class="message-time-top">
@@ -95,6 +96,7 @@
           <MarkdownContent
             v-else-if="seg.type === 'text'"
             :content="seg.content"
+            :cite-map="citeMap"
             body-class="assistant-text markdown-body"
           />
           <ToolCallGroup
@@ -103,11 +105,6 @@
             :hide-process="hideSubagentProcess"
           />
         </template>
-        <FileChangePanel
-          v-if="!hideFileChanges && message.fileChanges && message.fileChanges.length > 0"
-          :changes="message.fileChanges"
-          mode="history"
-        />
       </template>
 
       <!-- assistant 回退：无 segments 时 -->
@@ -115,17 +112,40 @@
         <MarkdownContent
           v-if="message.content && !isBackgroundNotice"
           :content="message.content"
+          :cite-map="citeMap"
           body-class="assistant-text markdown-body"
         />
         <div v-if="visibleToolCalls.length > 0" class="tool-calls">
           <ToolCallGroup :tool-calls="visibleToolCalls" :hide-process="hideSubagentProcess" />
         </div>
-        <FileChangePanel
-          v-if="!hideFileChanges && message.fileChanges && message.fileChanges.length > 0"
-          :changes="message.fileChanges"
-          mode="history"
-        />
       </template>
+
+      <!-- 引用来源区（回复引用溯源）：正文之后、文件变更之前；≥4 条默认折叠 -->
+      <div v-if="showCitations" class="message-citations">
+        <button class="cite-toggle" @click="citationsExpanded = !(citationsExpanded ?? citationsAutoExpanded)">
+          <span class="cite-toggle-label">来源 {{ citations.length }}</span>
+          <span class="cite-toggle-icon">{{ (citationsExpanded ?? citationsAutoExpanded) ? '收起' : '展开' }}</span>
+        </button>
+        <ol v-show="citationsExpanded ?? citationsAutoExpanded" class="cite-list">
+          <li
+            v-for="(c, idx) in citations"
+            :key="c.n"
+            class="cite-item"
+            :data-cite-item="idx + 1"
+            @click="openCitation(c)"
+          >
+            <span class="cite-index">[{{ idx + 1 }}]</span>
+            <span class="cite-title">{{ citationDisplayTitle(c) }}</span>
+            <span v-if="citationDomain(c)" class="cite-domain">{{ citationDomain(c) }}</span>
+          </li>
+        </ol>
+      </div>
+
+      <FileChangePanel
+        v-if="!hideFileChanges && message.fileChanges && message.fileChanges.length > 0"
+        :changes="message.fileChanges"
+        mode="history"
+      />
 
       <div v-if="message.files && message.files.length > 0" class="file-attachments">
         <el-tag v-for="file in message.files" :key="file.id" size="small" type="info" class="file-tag">
@@ -246,7 +266,10 @@ import {
   type MessageSegment,
   type ToolCall
 } from '../../composables/useChat'
-import { buildSegmentsFromContentAndTools } from '../../utils/chatMessage'
+import { buildSegmentsFromContentAndTools, extractCitationsFromMetadata } from '../../utils/chatMessage'
+import { buildCiteMap, stripCitationMarkers } from '../../utils/citationMarkers'
+import { openExternalUrl } from '../../utils/capacitor'
+import type { Citation } from '../../types/chat'
 import { formatDateTime } from '../../utils/datetime'
 import { copyText } from '../../utils/clipboard'
 import { isActiveSessionPhase } from '../../utils/sessionPhase'
@@ -435,6 +458,66 @@ const isToolOnly = computed(() =>
   !props.message.content?.trim()
 )
 
+// ─── 回复引用溯源（技术方案 2026-10-12）───
+
+/** 本消息的引用来源（后端已做 URL 白名单校验；无 citations 的历史消息返回空数组） */
+const citations = computed<Citation[]>(() => extractCitationsFromMetadata(props.message.metadata))
+
+/** registry 序号 n → 展示序号 k（citations 已按 n 升序）；传给 markdown 渲染层转上标 */
+const citeMap = computed<Record<number, number> | undefined>(() =>
+  citations.value.length > 0 ? buildCiteMap(citations.value) : undefined
+)
+
+/** 后台子代理完成通知不渲染来源区（其正文不走主会话时间线，citations 也无展示语境） */
+const showCitations = computed(() =>
+  role.value === 'assistant' && citations.value.length > 0 && !isBackgroundNotice.value
+)
+
+/** ≥4 条默认折叠；null = 未手动操作，跟随自动态（metadata 异步到达也能正确） */
+const citationsAutoExpanded = computed(() => citations.value.length < 4)
+const citationsExpanded = ref<boolean | null>(null)
+
+/** 来源条目标题：缺失时回落域名 + 路径 */
+function citationDisplayTitle(c: Citation): string {
+  if (c.title.trim() !== '') return c.title
+  try {
+    const u = new URL(c.url)
+    return u.hostname + (u.pathname === '/' ? '' : u.pathname)
+  } catch {
+    return c.url
+  }
+}
+
+function citationDomain(c: Citation): string {
+  try {
+    return new URL(c.url).hostname
+  } catch {
+    return ''
+  }
+}
+
+/** 外跳系统浏览器：安卓 Capacitor 壳的 WebView 不支持多窗口，裸 window.open 点击无响应 */
+function openCitation(c: Citation): void {
+  void openExternalUrl(c.url)
+}
+
+/** 上标点击（事件委托）：滚动到本消息来源区对应条目并高亮，与消息定位闪烁同范式 */
+let citeFlashTimer: ReturnType<typeof setTimeout> | null = null
+function onCitationSupClick(event: MouseEvent): void {
+  const target = event.target as HTMLElement | null
+  const sup = target?.closest('.cite-ref') as HTMLElement | null
+  if (sup == null) return
+  const k = sup.getAttribute('data-cite')
+  if (k == null) return
+  const root = sup.closest('.message-bubble')
+  const item = root?.querySelector(`[data-cite-item="${k}"]`) as HTMLElement | null
+  if (item == null) return
+  item.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  item.classList.add('cite-item-flash')
+  if (citeFlashTimer) clearTimeout(citeFlashTimer)
+  citeFlashTimer = setTimeout(() => { item.classList.remove('cite-item-flash') }, 1600)
+}
+
 const timelineSegments = computed((): MessageSegment[] => {
   if (role.value !== 'assistant') return []
   // 后台子代理通知的正文不走主会话时间线，由 bg-subagent-detail 单独负责折叠展示
@@ -598,7 +681,8 @@ async function handleCancelDislike() {
 }
 
 async function copyMessage() {
-  const text = stripInternalMarkers(props.message.content ?? '').trim()
+  // 引用标记同样是渲染层约定（来源区不在剪贴板语境里），复制时一并剥掉
+  const text = stripCitationMarkers(stripInternalMarkers(props.message.content ?? '')).trim()
   if (!text) return
   const ok = await copyText(text)
   if (!ok) return
@@ -915,6 +999,120 @@ async function copyMessage() {
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 6px;
+}
+
+/* ─── 回复引用溯源（技术方案 2026-10-12）─── */
+
+.message-citations {
+  margin-top: 6px;
+  border: 1px solid var(--aw-hairline);
+  border-radius: var(--aw-radius-sm);
+  background: var(--aw-canvas-parchment);
+  overflow: hidden;
+}
+
+.cite-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 10px;
+  border: none;
+  background: none;
+  color: var(--aw-ink-muted-80);
+  font-size: var(--aw-text-fine);
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.cite-toggle:hover {
+  color: var(--aw-ink);
+}
+
+.cite-toggle-label {
+  font-weight: 500;
+}
+
+.cite-toggle-icon {
+  color: var(--aw-primary);
+}
+
+.cite-list {
+  margin: 0;
+  padding: 2px 10px 8px 10px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cite-item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 6px;
+  border-radius: var(--aw-radius-xs);
+  font-size: var(--aw-text-fine);
+  line-height: 1.6;
+  color: var(--aw-ink-muted-80);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.cite-item:hover {
+  background: color-mix(in srgb, var(--aw-primary) 8%, transparent);
+  color: var(--aw-ink);
+}
+
+.cite-index {
+  font-family: var(--aw-font-mono);
+  color: var(--aw-primary);
+  flex-shrink: 0;
+}
+
+.cite-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cite-domain {
+  flex-shrink: 0;
+  color: var(--aw-ink-muted-48);
+  font-size: var(--aw-text-fine);
+}
+
+.cite-item-flash {
+  animation: cite-item-flash 1.6s ease;
+}
+
+@keyframes cite-item-flash {
+  0%, 40% { background: rgba(255, 193, 7, 0.35); }
+  100% { background: transparent; }
+}
+
+.markdown-body :deep(.cite-ref) {
+  display: inline-block;
+  min-width: 14px;
+  margin: 0 1px;
+  padding: 0 3px;
+  border-radius: var(--aw-radius-xs);
+  background: color-mix(in srgb, var(--aw-primary) 12%, transparent);
+  color: var(--aw-primary);
+  font-size: 10px;
+  line-height: 1.5;
+  text-align: center;
+  cursor: pointer;
+  vertical-align: super;
+  font-family: var(--aw-font-mono);
+  transition: background 0.15s;
+}
+
+.markdown-body :deep(.cite-ref:hover) {
+  background: color-mix(in srgb, var(--aw-primary) 25%, transparent);
 }
 
 .message-bubble.user .file-attachments {

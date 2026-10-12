@@ -7,6 +7,7 @@ import { mpPage, type MpPage } from '../common/json.js';
 import type { Message, Session } from '../domain/types.js';
 import { WEIXIN_PROJECT_KEY } from '../domain/types.js';
 import { isActivePhase } from '../session/session-vo.js';
+import { channelAssistantReply } from '../session/util/citation-markers.js';
 import type { TaskNotifySource } from '../session/task-terminal.service.js';
 import { collectMissedPoints } from './scheduled-task-missed.js';
 
@@ -942,12 +943,8 @@ export class ScheduledTaskService {
         return;
       }
       const messages = await this.sessionService.getMessages(sessionId);
-      for (let i = messages.length - 1; i >= 0; i--) {
-        if (messages[i].role === 'ASSISTANT') {
-          reply = messages[i].content ?? null;
-          break;
-        }
-      }
+      // 渠道不渲染来源区，[^n^] 标记原样推送会像没渲染干净的模板变量（与微信入口同口径）
+      reply = channelAssistantReply(messages, '抱歉，暂时无法生成回复。');
       if (!reply || reply.trim() === '') {
         return;
       }
@@ -1022,13 +1019,8 @@ export class ScheduledTaskService {
     if (pusher == null) return;
     try {
       const messages = await this.sessionService.getMessages(sessionId);
-      let reply: string | null = null;
-      for (let i = messages.length - 1; i >= 0; i--) {
-        if (messages[i].role === 'ASSISTANT') {
-          reply = messages[i].content ?? null;
-          break;
-        }
-      }
+      // 渠道卡片不渲染来源区，[^n^] 标记原样推送会像没渲染干净的模板变量
+      const reply = channelAssistantReply(messages, '抱歉，暂时无法生成回复。');
       if (!reply || reply.trim() === '') {
         return;
       }

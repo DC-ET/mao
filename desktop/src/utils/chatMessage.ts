@@ -1,6 +1,7 @@
 import {
   normalizeMessageRole,
   type ChatMessage,
+  type Citation,
   type CompactionEvent,
   type FileChange,
   type MessageSegment,
@@ -75,6 +76,35 @@ export function extractResultTruncatedFromMetadata(metadata: unknown): boolean {
     return (root as { resultTruncated?: unknown })?.resultTruncated === true
   } catch {
     return false
+  }
+}
+
+/**
+ * 从 ASSISTANT 消息 metadata 提取引用来源（回复引用溯源，技术方案 2026-10-12）。
+ * 后端已做白名单校验，这里仍逐条校验形态：n 为正整数、url 仅 http/https、
+ * title 为字符串（缺失回落空串，前端展示时回落域名 + 路径）；非法条目跳过。
+ */
+export function extractCitationsFromMetadata(metadata: unknown): Citation[] {
+  if (metadata == null) return []
+  try {
+    const root = typeof metadata === 'string' ? JSON.parse(metadata) : metadata
+    const raw = (root as { citations?: unknown })?.citations
+    if (!Array.isArray(raw)) return []
+    const out: Citation[] = []
+    for (const item of raw) {
+      if (item == null || typeof item !== 'object') continue
+      const node = item as { n?: unknown; url?: unknown; title?: unknown }
+      if (typeof node.n !== 'number' || !Number.isInteger(node.n) || node.n < 1) continue
+      if (typeof node.url !== 'string' || !/^https?:\/\//i.test(node.url)) continue
+      out.push({ n: node.n, url: node.url, title: typeof node.title === 'string' ? node.title : '' })
+    }
+    // 后端按 n 升序写入，这里防御性重排 + 去重，保证展示序号稳定
+    const seen = new Set<number>()
+    return out
+      .sort((a, b) => a.n - b.n)
+      .filter((c) => (seen.has(c.n) ? false : (seen.add(c.n), true)))
+  } catch {
+    return []
   }
 }
 

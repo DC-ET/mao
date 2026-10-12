@@ -42,6 +42,15 @@ export interface TaskTerminalBudgetWarner {
 }
 
 /**
+ * 回复引用溯源依赖（技术方案 2026-10-12，可选注入；接口化避免 session 域反向依赖具体实现）。
+ * 任务完成时从本轮联网工具结果构建 URL 白名单并校验回复里的 [^n^] 标记。
+ * 注意：必须在终态 WS 事件之前 await 完成（见 finishExecution 内的调用点注释）。
+ */
+export interface CitationRegistryInvoker {
+  buildForSession(sessionId: number): Promise<void>;
+}
+
+/**
  * 出站订阅分发依赖（可选注入；接口化避免 session 域反向依赖 openapi 域实现）。
  * 任务终态泛化为用户可配置的通用 HTTP 订阅（task.completed / task.failed）。
  */
@@ -74,6 +83,7 @@ export class TaskTerminalService {
     private readonly notifySource: TaskNotifySource = 'MANUAL',
     private readonly outboundEvents?: OutboundEventDispatcher | null,
     private readonly budgetWarner?: TaskTerminalBudgetWarner | null,
+    private readonly citationRegistry?: CitationRegistryInvoker | null,
   ) {}
 
   async finishExecution(
@@ -106,6 +116,15 @@ export class TaskTerminalService {
     await this.sessionService.markLastMessageFinished(sessionId);
     const session = await this.sessionService.getSession(sessionId);
     const ownerId = userId ?? session.userId;
+
+    // 引用溯源（技术方案 2026-10-12 §5.3）：citations 必须在下方终态 WS 事件之前
+    // 落库。桌面端收到 session_status(COMPLETED) 即全量重拉消息，晚于事件的 UPDATE
+    // 会与重拉竞态——DB 拥塞时前端先落地，来源区/上标首屏静默缺失，而 session_status
+    // 只发一次、不会自愈，用户只能手动刷新。改为内联 await：仅 COMPLETED（FAILED /
+    // CANCELLED 没有最终回复行可挂），纯 DB 计算无 LLM 调用，代价是几次索引查询；
+    // 不筛 sessionType——主会话 / 边路 / 子代理各自独立构建、天然隔离。异常全吞，
+    // 不影响任务完成事件链。
+    await this.buildCitations(session, phase);
 
     // 微信/飞书通道会话由机器人等外部触发，终态不计未读，与 updatePhase 的 DB 写入保持一致
     const statusData: Record<string, unknown> = {
@@ -147,6 +166,23 @@ export class TaskTerminalService {
     }
 
     this.dispatchMemoryExtraction(session, phase);
+  }
+
+  /**
+   * 回复引用溯源（技术方案 2026-10-12 §5.3）：仅 COMPLETED 构建，内联 await 于
+   * finishExecution 的终态 WS 事件之前（时序要求见调用点注释）。异常全吞——
+   * citations 缺失只表现为「这轮没有来源区」，绝不能影响任务完成事件链。
+   */
+  private async buildCitations(session: Session, phase: string): Promise<void> {
+    if (phase !== 'COMPLETED') return;
+    const builder = this.citationRegistry;
+    const sessionId = session.id;
+    if (builder == null || sessionId == null) return;
+    try {
+      await builder.buildForSession(sessionId);
+    } catch (e) {
+      console.warn(`[citations] failed to build registry: sessionId=${sessionId}, error=${(e as Error).message}`);
+    }
   }
 
   /**

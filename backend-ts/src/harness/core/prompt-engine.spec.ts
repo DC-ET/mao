@@ -595,5 +595,34 @@ describe('PromptEngine context manifest', () => {
     await engine().buildRequest(cfgCtx);
     expect(cfgCtx.contextManifest!.estimatedWindowTokens).toBe(200000);
   });
+
+  it('注入引用规范分节：系统消息含契约原文，manifest 聚合进「系统提示词」单节（keys 不变）', async () => {
+    const ctx = context({
+      systemPrompt: 'You are Mao',
+      currentTimestamp: '2026-08-13',
+      messages: [{ role: 'user', content: '你好' }],
+    });
+    const request = await engine().buildRequest(ctx);
+    const system = request.messages[0].content as string;
+    expect(system).toContain('## 引用规范');
+    expect(system).toContain('[^n^]');
+    // 固有文案：不进 INJECTED_SECTION_KEYS，manifest 分节 key 列表与聚合口径不变
+    //（本 describe 的 context 不带 experiences/memories，故 keys 为 system-prompt + tool-definitions + messages）
+    expect(ctx.contextManifest!.sections.map((s) => s.key))
+      .toEqual(['system-prompt', 'tool-definitions', 'messages']);
+    const merged = ctx.contextManifest!.sections.find((s) => s.key === 'system-prompt')!;
+    expect(merged.label).toBe('系统提示词');
+  });
+
+  it('embed 页面 Agent 不注入引用规范（无联网工具面）', async () => {
+    const ctx = context({
+      systemPrompt: 'You are Mao',
+      currentTimestamp: '2026-08-13',
+      messages: [{ role: 'user', content: '你好' }],
+      tools: [tool('page_inspect')],
+    });
+    const request = await engine().buildRequest(ctx);
+    expect(request.messages[0].content as string).not.toContain('## 引用规范');
+  });
 });
 void mkdirSync;

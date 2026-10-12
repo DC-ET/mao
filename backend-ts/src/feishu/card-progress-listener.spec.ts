@@ -203,6 +203,28 @@ describe('FeishuCardProgressListener', () => {
     expect(updates[updates.length - 1]).toBe('第二轮的新说明');
   });
 
+  it('strips citation markers from streamed card content (channels render no source area)', async () => {
+    const updates: Array<{ content: string; tools: string[] }> = [];
+    const listener = new FeishuCardProgressListener({
+      update: async (_status, _round, content, tools) => { updates.push({ content, tools }); },
+    });
+    listener.onRoundStart(1);
+    listener.onContentDelta('截止时间是 11 月 30 日[^1^]，详见通知[^2^]。');
+    listener.onToolCallStart({ id: 't1', function: { name: 'web_search', arguments: '{}' } });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(updates[updates.length - 1].content).toBe('截止时间是 11 月 30 日，详见通知。');
+  });
+
+  it('strips citation markers from the terminal complete() payload too', async () => {
+    // 终态卡片与流式卡片同口径：正常路径入参已剥过，这里兜住崩溃恢复等其他调用方
+    const updates: Array<{ content: string; tools: string[] }> = [];
+    const listener = new FeishuCardProgressListener({
+      update: async (_status, _round, content, tools) => { updates.push({ content, tools }); },
+    });
+    await listener.complete('截止时间是 11 月 30 日[^1^]，详见通知[^2^]。');
+    expect(updates[updates.length - 1].content).toBe('截止时间是 11 月 30 日，详见通知。');
+  });
+
   it('has nothing to carry when the first round emits no content', async () => {
     const updates: Array<{ content: string; tools: string[] }> = [];
     const listener = new FeishuCardProgressListener({

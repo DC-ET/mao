@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatMessage, ToolCall } from '../types/chat'
-import { discardAbortedStreamTail, mapApiMessagesToChat, extractResultTruncatedFromMetadata } from './chatMessage'
+import { discardAbortedStreamTail, mapApiMessagesToChat, extractCitationsFromMetadata, extractResultTruncatedFromMetadata } from './chatMessage'
 
 function tool(id: string, status: ToolCall['status']): ToolCall {
   return { id, name: 'shell', status, isExpanded: false, argsStreaming: false }
@@ -117,5 +117,53 @@ describe('backend truncation in history', () => {
     const call = chat.find(c => c.role === 'assistant')?.toolCalls?.find(t => t.id === 'tc2')
     expect(call?.resultTruncated).toBeUndefined()
     expect(call?.approvalMark).toEqual({ mode: 'llm', approved: true, reason: 'x' })
+  })
+})
+
+describe('extractCitationsFromMetadata', () => {
+  const meta = (citations: unknown) => JSON.stringify({ citations })
+
+  it('解析 citations 数组并按 n 升序', () => {
+    const out = extractCitationsFromMetadata(meta([
+      { n: 3, url: 'https://c.example.com', title: 'C' },
+      { n: 1, url: 'https://a.example.com', title: 'A' },
+    ]))
+    expect(out).toEqual([
+      { n: 1, url: 'https://a.example.com', title: 'A' },
+      { n: 3, url: 'https://c.example.com', title: 'C' },
+    ])
+  })
+
+  it('去重（同 n 只留首条）', () => {
+    const out = extractCitationsFromMetadata(meta([
+      { n: 1, url: 'https://a.example.com', title: 'A' },
+      { n: 1, url: 'https://dup.example.com', title: 'D' },
+    ]))
+    expect(out).toHaveLength(1)
+    expect(out[0].url).toBe('https://a.example.com')
+  })
+
+  it('非法条目跳过：n 非正整数 / url 非 http(s) / 非对象', () => {
+    const out = extractCitationsFromMetadata(meta([
+      { n: 0, url: 'https://a.example.com' },
+      { n: 1.5, url: 'https://a.example.com' },
+      { n: 2, url: 'javascript:alert(1)' },
+      { n: 3, url: 'https://ok.example.com', title: 42 },
+      'not-an-object',
+      null,
+    ]))
+    expect(out).toEqual([{ n: 3, url: 'https://ok.example.com', title: '' }])
+  })
+
+  it('metadata 为 null / 空串 / 非法 JSON / 无 citations 键时返回空数组', () => {
+    expect(extractCitationsFromMetadata(null)).toEqual([])
+    expect(extractCitationsFromMetadata('')).toEqual([])
+    expect(extractCitationsFromMetadata('{bad')).toEqual([])
+    expect(extractCitationsFromMetadata(JSON.stringify({ resultTruncated: true }))).toEqual([])
+  })
+
+  it('metadata 已是对象（非 string）时同样解析', () => {
+    const out = extractCitationsFromMetadata({ citations: [{ n: 1, url: 'https://a.example.com', title: 'A' }] })
+    expect(out).toEqual([{ n: 1, url: 'https://a.example.com', title: 'A' }])
   })
 })

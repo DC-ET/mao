@@ -1,5 +1,6 @@
 import type { ContentPart, Message, Session } from '../domain/types.js';
 import { isActivePhase } from '../session/session-vo.js';
+import { channelAssistantReply } from '../session/util/citation-markers.js';
 import type { StreamingWsRegistry } from '../session/ws/streaming-ws-registry.js';
 import { userMessagePayloadOf } from '../session/ws/streaming-ws-handler.js';
 import { wsEvent } from '../session/ws/ws-event.js';
@@ -498,10 +499,7 @@ export class AgentWeixinInboundHandler implements WeixinInboundHandler {
   }
 
   private getLatestAssistantReply(messages: Message[] | null | undefined): string {
-    if (messages == null) return '抱歉，暂时无法生成回复。';
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].role === 'ASSISTANT') return messages[i].content ?? '';
-    }
-    return '抱歉，暂时无法生成回复。';
+    // 渠道不发桌面来源区，[^n^] 标记原样露出会像没渲染干净的模板变量，统一剥掉
+    return channelAssistantReply(messages, '抱歉，暂时无法生成回复。');
   }
 }

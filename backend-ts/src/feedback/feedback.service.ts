@@ -5,6 +5,7 @@ import { normalizeExperienceContent } from '../agent/agent-experience.service.js
 import type { AgentExperienceRepository } from '../agent/types.js';
 import { MysqlAgentExperienceRepository } from '../agent/agent.repository.js';
 import type { RunTraceService } from '../session/run-trace.service.js';
+import { stripCitationMarkers } from '../session/util/citation-markers.js';
 import { truncateStoredText, DRAFT_LIMITS, serializeRunTrace, type DraftMaterial } from './experience-draft.service.js';
 import {
   FEEDBACK_REASONS, FEEDBACK_STATUSES, FEISHU_DISLIKE_REASON,
@@ -376,10 +377,10 @@ export class FeedbackService {
     return materials;
   }
 
-  /** 被点踩回复正文：多模态分片只取文本部分，超长截断。 */
+  /** 被点踩回复正文：多模态分片只取文本部分，剥掉引用标记（[^n^] 只是渲染层约定，喂给 LLM 会被复述进经验），超长截断。 */
   private async loadAssistantText(messageId: number): Promise<string> {
     const message = await this.messageLookup.findMessageContent(messageId);
-    return truncateStoredText(message, DRAFT_LIMITS.MAX_ASSISTANT_TEXT_CHARS);
+    return truncateStoredText(stripCitationMarkers(message ?? ''), DRAFT_LIMITS.MAX_ASSISTANT_TEXT_CHARS);
   }
 
   private async requireOwnedAssistantMessage(userId: number, messageId: number): Promise<MessageOwnership> {

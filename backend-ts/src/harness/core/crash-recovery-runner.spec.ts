@@ -130,6 +130,20 @@ describe('CrashRecoveryRunner.createExtraListeners', () => {
     expect(complete).toHaveBeenCalledWith('任务已完成。');
   });
 
+  it('successfulRecoveryStripsCitationMarkersBeforeNotifyingExtraComplete', async () => {
+    // 渠道卡片不渲染来源区，[^n^] 原样露出会像没渲染干净的模板变量
+    const complete = vi.fn().mockResolvedValue(true);
+    const extra: RecoveryExtraListener = { onContentDelta: () => {}, onError: () => {}, complete };
+    const { runner, pending, sessionService } = makeRunner(async () => extra);
+    sessionService.getMessages.mockResolvedValue([
+      { role: 'USER', content: '截止时间是几号' },
+      { role: 'ASSISTANT', content: '截止时间是 11 月 30 日[^1^]，详见通知[^2^]。' },
+    ]);
+    await runner.run();
+    await Promise.all(pending);
+    expect(complete).toHaveBeenCalledWith('截止时间是 11 月 30 日，详见通知。');
+  });
+
   it('executionFailureNotifiesExtraFailAndMarksFailed', async () => {
     const fail = vi.fn().mockResolvedValue(true);
     const onError = vi.fn();

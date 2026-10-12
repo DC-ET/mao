@@ -46,7 +46,7 @@ export class OpenWebPageTool extends BaseTool {
 
   getName(): string { return 'open_web_page'; }
   getDescription(): string {
-    return '打开指定 URL 对应的网页，提取正文内容并以 Markdown 格式返回。帮助 Agent 获取外部网页的详细内容。';
+    return '打开指定 URL 对应的网页，提取正文内容并以 Markdown 格式返回。帮助 Agent 获取外部网页的详细内容。引用本工具结果时使用 [^n^] 标记（编号规则见系统提示词引用规范）。';
   }
   getToolPrompt(): string | null {
     return `## open_web_page 工具使用指南

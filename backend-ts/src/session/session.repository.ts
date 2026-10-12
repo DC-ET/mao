@@ -756,6 +756,11 @@ export class MessageRepository {
     );
   }
 
+  /** 只更新 metadata 列（回复引用溯源挂 citations 用；不能走 updateById(message)——它会按全字段覆写）。 */
+  updateMetadata(messageId: number, metadata: string | null): Promise<void> {
+    return this.db.updateById('message', messageId, { metadata });
+  }
+
   async deleteFromId(sessionId: number, fromId: number): Promise<void> {
     await this.db.execute(
       `UPDATE \`message\` SET deleted = 1 WHERE session_id = ? AND id >= ? AND ${notDeleted()}`,

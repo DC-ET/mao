@@ -313,6 +313,30 @@ describe('SessionService message search', () => {
     }));
   });
 
+  it('messageSearchSnippetsStripCitationMarkers', async () => {
+    const { service, sessionRepo, messageRepo, agentLookup } = makeService();
+    const s = session(1, '申报答疑', 'NORMAL', 9, '2026-08-07 10:30:00');
+    prime(sessionRepo, messageRepo, [s], [hit(100, 1, '截止时间是 11 月 30 日[^1^]，详见通知')]);
+    vi.mocked(agentLookup.findByIds).mockResolvedValue([{ id: 9, name: '默认 Agent' }]);
+    const result = await service.searchMessages(7, '截止时间');
+    expect(result.items[0].hits[0].snippet).toContain('截止时间是 11 月 30 日');
+    expect(result.items[0].hits[0].snippet).not.toContain('[^1^]');
+  });
+
+  it('messageSearchKeepsHitWhenKeywordIsCitationMarkerItself', async () => {
+    // 关键词本身是 `[^n^]` 字面量时，剥标文本里找不到词，片段要回退用未剥标正文建；
+    // 否则整条命中连同会话被丢掉，而 total 仍按 SQL 计数，桌面显示「找到 1 个相关会话」却列不出东西。
+    const { service, sessionRepo, messageRepo, agentLookup } = makeService();
+    const s = session(1, '申报答疑', 'NORMAL', 9, '2026-08-07 10:30:00');
+    prime(sessionRepo, messageRepo, [s], [hit(100, 1, '截止时间是 11 月 30 日[^1^]，详见通知')]);
+    vi.mocked(agentLookup.findByIds).mockResolvedValue([{ id: 9, name: '默认 Agent' }]);
+    const result = await service.searchMessages(7, '[^1^]');
+    expect(result.total).toBe(1);
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].hits).toHaveLength(1);
+    expect(result.items[0].hits[0].snippet).toContain('[^1^]');
+  });
+
   it('quotesMultiWordAndOperators', async () => {
     const { service, sessionRepo, messageRepo } = makeService();
     prime(sessionRepo, messageRepo, [], []);
@@ -641,6 +665,35 @@ describe('SessionService embed source', () => {
     expect(call[3]).toEqual(['%登录页面%', '%登录页面%', '%登录页面%', 'ACTIVE']);
     expect(result.matchSnippets[31]).toContain('登录页面');
     expect(result.matchSnippets[31]).toContain('500');
+  });
+
+  it('admin list match snippets strip citation markers', async () => {
+    const { service, sessionRepo, messageRepo } = makeService();
+    vi.mocked(sessionRepo.selectPage).mockResolvedValue({
+      records: [session(31, '排障会话', 'NORMAL', 9, '2026-08-07 10:00:00')],
+      total: 1,
+    });
+    vi.mocked(messageRepo.selectFirstMatchingMessages).mockResolvedValue([
+      { sessionId: 31, content: '截止时间是 11 月 30 日[^1^]，详见通知' },
+    ]);
+
+    const result = await service.listSessionsForAdmin(1, 10, null, null, null, null, '截止时间', null);
+    expect(result.matchSnippets[31]).toContain('截止时间是 11 月 30 日');
+    expect(result.matchSnippets[31]).not.toContain('[^1^]');
+  });
+
+  it('admin list match snippet falls back when keyword is citation marker itself', async () => {
+    const { service, sessionRepo, messageRepo } = makeService();
+    vi.mocked(sessionRepo.selectPage).mockResolvedValue({
+      records: [session(31, '排障会话', 'NORMAL', 9, '2026-08-07 10:00:00')],
+      total: 1,
+    });
+    vi.mocked(messageRepo.selectFirstMatchingMessages).mockResolvedValue([
+      { sessionId: 31, content: '截止时间是 11 月 30 日[^1^]，详见通知' },
+    ]);
+
+    const result = await service.listSessionsForAdmin(1, 10, null, null, null, null, '[^1^]', null);
+    expect(result.matchSnippets[31]).toContain('[^1^]');
   });
 
   it('admin list without keyword skips message snippet load', async () => {

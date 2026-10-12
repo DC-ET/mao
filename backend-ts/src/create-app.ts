@@ -102,6 +102,8 @@ import { SessionCompactionService } from './session/session-compaction.service.j
 import { SessionCompactionEventService } from './session/session-compaction-event.service.js';
 import { GitOperationService } from './session/git-operation.service.js';
 import { SessionService } from './session/session.service.js';
+import { MessageCitationService } from './session/message-citations.js';
+import { channelAssistantReply } from './session/util/citation-markers.js';
 import { SessionTitleService } from './session/session-title.service.js';
 import { ActivityService } from './session/activity.service.js';
 import { RunTraceService } from './session/run-trace.service.js';
@@ -1099,6 +1101,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     },
     llmAdapter,
   );
+  const messageCitationService = new MessageCitationService(sessionService);
   const taskTerminal = new TaskTerminalService(
     sessionService, wsRegistry, deliveryService, treeSignalPublisher, (fn) => agentExecutor.submit(fn),
     memoryExtraction, (fn) => agentExecutor.submit(fn),
@@ -1109,6 +1112,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     {
       settleWarn: (target, notifyUserId) => budgetService.settleWarn(target, notifyUserId),
     },
+    // 回复引用溯源（技术方案 2026-10-12）：任务完成时构建 URL 白名单并校验 [^n^] 标记（终态事件前内联 await）
+    messageCitationService,
   );
   const visibility = new SubAgentVisibilityService({
     registry: wsRegistry,
@@ -1919,10 +1924,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       getPhase: async (sessionId) => (await sessionService.getSession(sessionId))?.phase ?? null,
       getLatestAssistantReply: async (sessionId) => {
         const messages = await sessionService.getMessages(sessionId);
-        for (let i = messages.length - 1; i >= 0; i--) {
-          if (messages[i].role === 'ASSISTANT') return messages[i].content ?? '';
-        }
-        return '抱歉，暂时无法生成回复。';
+        // 渠道不发桌面来源区，[^n^] 标记原样露出会像没渲染干净的模板变量，统一剥掉
+        return channelAssistantReply(messages, '抱歉，暂时无法生成回复。');
       },
       getMessages: async (sessionId) => sessionService.getMessages(sessionId),
     },

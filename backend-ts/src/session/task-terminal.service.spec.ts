@@ -26,6 +26,7 @@ interface Harness {
   inbox: TaskTerminalInboxRecorder & { recordTaskTerminal: ReturnType<typeof vi.fn> };
   notificationJobs: Array<() => void | Promise<void>>;
   memoryJobs: Array<() => void | Promise<void>>;
+  citationRegistry: { buildForSession: ReturnType<typeof vi.fn> };
 }
 
 function build(sessionOverrides: Record<string, unknown> = {}): Harness {
@@ -40,6 +41,7 @@ function build(sessionOverrides: Record<string, unknown> = {}): Harness {
   const inbox = { recordTaskTerminal: vi.fn(async () => undefined) };
   const notificationJobs: Array<() => void | Promise<void>> = [];
   const memoryJobs: Array<() => void | Promise<void>> = [];
+  const citationRegistry = { buildForSession: vi.fn(async () => undefined) };
   const terminal = new TaskTerminalService(
     sessionService as never as SessionService,
     { send: vi.fn(), sendWithResult: vi.fn(async () => ({} as never)) } as never,
@@ -50,8 +52,11 @@ function build(sessionOverrides: Record<string, unknown> = {}): Harness {
     (fn) => { memoryJobs.push(fn); },
     inbox,
     'MANUAL',
+    undefined,
+    undefined,
+    citationRegistry,
   );
-  return { terminal, sessionService, treeSignalPublisher, extraction, inbox, notificationJobs, memoryJobs };
+  return { terminal, sessionService, treeSignalPublisher, extraction, inbox, notificationJobs, memoryJobs, citationRegistry };
 }
 
 /** 收件箱副作用是 fire-and-forget：把排队的 job 跑完并让微任务队列排空。 */
@@ -347,5 +352,108 @@ describe('TaskTerminalService 预算 WARN 结算（§5.8）', () => {
     expect(submitCalls).toBe(withInbox ? 2 : 1);
     expect(inbox.recordTaskTerminal).not.toHaveBeenCalled();
     expect(warner.settleWarn).not.toHaveBeenCalled();
+  });
+});
+
+describe('TaskTerminalService citation registry build', () => {
+  it('COMPLETED 主会话构建一次，携带 sessionId', async () => {
+    const h = build();
+    await h.terminal.finishExecution(11, 7, 'COMPLETED', 'exec-1');
+    expect(h.citationRegistry.buildForSession).toHaveBeenCalledTimes(1);
+    expect(h.citationRegistry.buildForSession).toHaveBeenCalledWith(11);
+  });
+
+  it('FAILED / CANCELLED 不构建', async () => {
+    for (const phase of ['FAILED', 'CANCELLED']) {
+      const h = build();
+      await h.terminal.finishExecution(11, 7, phase, 'exec-1', phase === 'FAILED' ? 'boom' : undefined);
+      h.notificationJobs.forEach((job) => { void job(); });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(h.citationRegistry.buildForSession).not.toHaveBeenCalled();
+    }
+  });
+
+  it('边路 / 子代理会话同样构建（各自独立构建、天然隔离）', async () => {
+    for (const sessionType of ['SIDE_TASK', 'SUBAGENT']) {
+      const h = build({ sessionType });
+      await h.terminal.finishExecution(11, 7, 'COMPLETED', 'exec-1');
+      expect(h.citationRegistry.buildForSession).toHaveBeenCalledWith(11);
+    }
+  });
+
+  it('buildForSession 异步失败被吞掉，不影响 finishExecution 返回', async () => {
+    const h = build();
+    h.citationRegistry.buildForSession.mockRejectedValueOnce(new Error('db down'));
+    await expect(h.terminal.finishExecution(11, 7, 'COMPLETED', 'exec-1')).resolves.toBeUndefined();
+    expect(h.citationRegistry.buildForSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('buildForSession 同步抛错被吞掉，不影响 finishExecution 返回', async () => {
+    const sessionService = {
+      getSession: vi.fn(async () => session()),
+      updateRuntimeStatus: vi.fn(async () => undefined),
+      updatePhase: vi.fn(async () => undefined),
+      markLastMessageFinished: vi.fn(async () => undefined),
+    };
+    const citationRegistry = { buildForSession: vi.fn(() => { throw new Error('boom'); }) };
+    const terminal = new TaskTerminalService(
+      sessionService as never as SessionService,
+      { send: vi.fn(), sendWithResult: vi.fn(async () => ({} as never)) } as never,
+      { prepare: vi.fn(async () => null) } as never,
+      { publish: vi.fn(), publishAtRoot: vi.fn() } as never,
+      () => {},
+      { extractForSession: vi.fn(async () => undefined) },
+      (fn) => { void Promise.resolve().then(fn); },
+      null,
+      'MANUAL',
+      null,
+      null,
+      citationRegistry,
+    );
+    await expect(terminal.finishExecution(11, 7, 'COMPLETED', 'exec-1')).resolves.toBeUndefined();
+    expect(citationRegistry.buildForSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('citations 落库早于 session_status 终态事件（桌面首屏重拉不再竞态）', async () => {
+    // 桌面端收到 session_status(COMPLETED) 即全量重拉消息；若 citations 的 UPDATE
+    // 晚于该事件，首屏会静默丢来源区且不会自愈。构建必须在事件之前完成。
+    const order: string[] = [];
+    const sessionService = {
+      getSession: vi.fn(async () => session()),
+      updateRuntimeStatus: vi.fn(async () => undefined),
+      updatePhase: vi.fn(async () => undefined),
+      markLastMessageFinished: vi.fn(async () => undefined),
+    };
+    const citationRegistry = {
+      buildForSession: vi.fn(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        order.push('citation:build');
+      }),
+    };
+    const terminal = new TaskTerminalService(
+      sessionService as never as SessionService,
+      {
+        send: (_ownerId: number, event: { type: string }) => { order.push(`ws:${event.type}`); },
+        sendWithResult: async (_ownerId: number, event: { type: string }) => {
+          order.push(`ws:${event.type}`);
+          return {} as never;
+        },
+      } as never,
+      { prepare: vi.fn(async () => null) } as never,
+      { publish: vi.fn(), publishAtRoot: vi.fn() } as never,
+      () => {},
+      { extractForSession: vi.fn(async () => undefined) },
+      (fn) => { void Promise.resolve().then(fn); },
+      null,
+      'MANUAL',
+      null,
+      null,
+      citationRegistry,
+    );
+    await terminal.finishExecution(11, 7, 'COMPLETED', 'exec-1');
+    expect(order).toContain('citation:build');
+    expect(order).toContain('ws:session_status');
+    // citations 写库严格早于终态事件发出
+    expect(order.indexOf('citation:build')).toBeLessThan(order.indexOf('ws:session_status'));
   });
 });

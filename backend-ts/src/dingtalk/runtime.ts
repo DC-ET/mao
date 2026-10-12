@@ -18,6 +18,7 @@ import type { DingtalkMediaSendSupport, DingtalkSendTarget } from '../harness/to
 import { isDingtalkChannelSession } from '../harness/tool/dingtalk-channel-tool.js';
 import type { SessionService } from '../session/session.service.js';
 import { toStoredContentJson } from '../session/session-vo.js';
+import { channelAssistantReply } from '../session/util/citation-markers.js';
 import { WsStreamingEventListener } from '../session/ws/ws-streaming-event-listener.js';
 import { registerDingtalkBotRoutes } from './admin.routes.js';
 import { AgentDingtalkInboundHandler } from './agent-inbound-handler.js';
@@ -237,10 +238,8 @@ export function createDingtalkRuntime(deps: {
       getPhase: async (sessionId) => (await deps.sessionService.getSession(sessionId))?.phase ?? null,
       getLatestAssistantReply: async (sessionId) => {
         const rows = await deps.sessionService.getMessages(sessionId);
-        for (let i = rows.length - 1; i >= 0; i--) {
-          if (rows[i].role === 'ASSISTANT') return rows[i].content ?? '';
-        }
-        return '抱歉，暂时无法生成回复。';
+        // 渠道不发桌面来源区，[^n^] 标记原样露出会像没渲染干净的模板变量，统一剥掉
+        return channelAssistantReply(rows, '抱歉，暂时无法生成回复。');
       },
       getMessages: (sessionId) => deps.sessionService.getMessages(sessionId),
     },

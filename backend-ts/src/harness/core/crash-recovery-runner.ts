@@ -21,6 +21,7 @@ import {
   readDeployLock,
   shouldDeferAllRecoveryDuringDeploy,
 } from './deploy-lock.js';
+import { stripCitationMarkers } from '../../session/util/citation-markers.js';
 
 export interface RecoveryExtraListener extends AgentEventListener {
   /** 恢复续跑被取消时的终态通知（如飞书进度卡片 PATCH「已取消」）。 */
@@ -465,7 +466,11 @@ export class CrashRecoveryRunner {
       const message = messages[i];
       if (message.role !== 'ASSISTANT') continue;
       const text = this.sessionService.extractVisibleText?.(message.content ?? null) ?? message.content;
-      if (text != null && text.trim() !== '') return text;
+      if (text != null && text.trim() !== '') {
+        // 渠道卡片不渲染来源区，[^n^] 标记原样露出会像没渲染干净的模板变量（与正常终态的
+        // getLatestAssistantReply 同口径）
+        return stripCitationMarkers(text);
+      }
     }
     return '任务已完成。';
   }

@@ -10,6 +10,8 @@ import { useTheme } from '../../utils/theme'
 const props = withDefaults(defineProps<{
   content: string
   bodyClass?: string
+  /** 引用标记映射（回复引用溯源）：registry 序号 n → 展示序号 k。缺省时 [^n^] 按纯文本剥掉 */
+  citeMap?: Record<number, number>
 }>(), {
   bodyClass: 'markdown-body',
 })
@@ -21,10 +23,10 @@ const html = ref('')
 let renderGen = 0
 
 watch(
-  [() => props.content, isDark],
-  async ([content]) => {
+  [() => props.content, isDark, () => props.citeMap],
+  async ([content, , citeMap]) => {
     const gen = ++renderGen
-    const next = content ? await renderMarkdown(content, isDark.value) : ''
+    const next = content ? await renderMarkdown(content, isDark.value, citeMap) : ''
     if (gen !== renderGen) return
     html.value = next
     // renderMarkdown 为异步渲染（含代码块高亮），渲染完成后内容高度才最终确定。

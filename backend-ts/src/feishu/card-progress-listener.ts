@@ -1,6 +1,7 @@
 import type { AgentEventListener } from '../harness/core/agent-event-listener.js';
 import type { ChatUsage, ToolCall } from '../harness/llm/chat-request.js';
 import { ToolResultSummarizer } from '../session/util/tool-result-summarizer.js';
+import { stripCitationMarkers } from '../session/util/citation-markers.js';
 
 export interface FeishuCardProgress {
   update(status: 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED', round: number, content: string, tools: string[]): Promise<void>;
@@ -93,7 +94,9 @@ export class FeishuCardProgressListener implements AgentEventListener {
 
   async complete(finalContent: string): Promise<boolean> {
     await this.flush();
-    return this.updateTerminal('COMPLETED', this.round, trimCardText(finalContent), []);
+    // 渠道卡片不渲染来源区，终态正文同样剥掉 [^n^]（与 displayContent 同口径）：
+    // 正常路径的入参已由 getLatestAssistantReply 剥过，这里兜住崩溃恢复等其他调用方
+    return this.updateTerminal('COMPLETED', this.round, trimCardText(stripCitationMarkers(finalContent)), []);
   }
 
   async cancel(interrupted = false): Promise<boolean> {
@@ -114,9 +117,11 @@ export class FeishuCardProgressListener implements AgentEventListener {
   /**
    * 卡片正文：本轮有 assistant content 用本轮的，否则回退到上一轮最近一条。
    * 空串视为没有正文（只有换行的 delta 不兜底），保证纯工具轮仍显示上轮的链接/说明。
+   * 渠道卡片不渲染来源区，[^n^] 标记在此统一剥掉（与最终文本出口同口径）。
    */
   private displayContent(): string {
-    return this.content.trim() === '' ? this.carriedContent : this.content;
+    const raw = this.content.trim() === '' ? this.carriedContent : this.content;
+    return stripCitationMarkers(raw);
   }
 
   private async safeUpdate(status: 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED', round: number, content: string, tools: string[]): Promise<boolean> {

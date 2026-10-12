@@ -3,6 +3,7 @@ import hljs from 'highlight.js'
 import DOMPurify from 'dompurify'
 import 'highlight.js/styles/github-dark.css'
 import { ensureCodeCopyDelegation } from '../../../utils/codeCopy'
+import { stripCitationMarkers } from '../../../utils/citationMarkers'
 
 function escapeHtml(text: string): string {
   return text
@@ -60,20 +61,22 @@ const marked = new Marked({
 
 export function renderMarkdown(text: string): string {
   if (!text) return ''
-  const cached = cache.get(text)
+  // 引用标记是桌面渲染层约定（admin 不渲染来源区），先剥掉再解析，避免露出 [^n^] 原文字样
+  const source = stripCitationMarkers(text)
+  const cached = cache.get(source)
   if (cached != null) return cached
   ensureCodeCopyDelegation()
-  const result = marked.parse(text)
+  const result = marked.parse(source)
   const html = typeof result === 'string'
     ? DOMPurify.sanitize(result, { ADD_ATTR: ['target'] })
-    : escapeHtml(text)
+    : escapeHtml(source)
   // 复制按钮走事件委托（utils/codeCopy），sanitize 保持默认严格白名单，不放行事件属性
-  if (text.length <= 20_000) {
+  if (source.length <= 20_000) {
     if (cache.size >= CACHE_LIMIT) {
       const oldest = cache.keys().next().value
       if (oldest != null) cache.delete(oldest)
     }
-    cache.set(text, html)
+    cache.set(source, html)
   }
   return html
 }
