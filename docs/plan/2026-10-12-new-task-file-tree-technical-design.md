@@ -196,7 +196,7 @@ const showFileTreeTab = computed(() => {
 ### 5.5 无会话下的两条关键链路
 
 - **添加到聊天**：`handleAddToChat` → `emit('add-file-to-chat', path)` → `TaskView.handleAddFileToChat`（L194–205）取 `activeTabId`（新建态为 `'chat'`）→ `chatInputHandles['chat']`（ChatPanel 的 ChatInput 默认 `registerKey: 'chat'`，`ChatInput.vue` L210）→ `insertFileReference` 插 `@{path}@`。发送时 `getPlainText` 序列化（L1184–1186）进消息体；后端建会话落 `workspace = projectPath`（`session.service.ts` L213），`FILE_REF_PATTERN` 按会话工作区还原路径——与文件树展示的是同一目录，引用必然可达。
-- **打开文件**：`open-file` → `openFileTab(path, title)`（`useCenterTabs.ts` L217）→ 中央 Tab `FileViewer(filePath, provider)`；project provider 的 `readFile/previewFile` 供数（`FileViewer.vue` L223/L183）。新建态无 sessionId，`getSessionState` 对空 key 回落固定占位键 `__new_task__` 承载 Tab 状态（原实现返回一次性对象，`openFileTab` 的写入被静默丢弃、中央区无任何反应）；占位状态不写 localStorage，会话落地后 `currentSessionId` 切到真实 id 即让位。
+- **打开文件**：`open-file` → `openFileTab(path, title)`（`useCenterTabs.ts` L217）→ 中央 Tab `FileViewer(filePath, provider)`；project provider 的 `readFile/previewFile` 供数（`FileViewer.vue` L223/L183）。新建态无 sessionId，`getSessionState` 对空 key（含显式空串）回落固定占位键 `__new_task__` 承载 Tab 状态（原实现返回一次性对象，`openFileTab` 的写入被静默丢弃、中央区无任何反应）。占位状态只在本进程生命周期内有效、不写 localStorage；`TaskView` 进入新建态或切换工作区选择时调 `resetNewTaskTabs()` 作废——否则占位条目会在「新建态 → 会话 → 新建态」之间原样复用，重进新建态时复活上次的文件页签并保持激活，把新建态唯一的居中 Composer 顶掉。
 
 ### 5.6 边界与降级
 

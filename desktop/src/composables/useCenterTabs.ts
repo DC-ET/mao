@@ -94,6 +94,20 @@ export function resetCenterTabs() {
 }
 
 /**
+ * 作废新建态（占位键）的 Tab 状态。
+ * 占位条目写在模块级单例里、没有会话 id 可依，只增不删会在「新建态 → 会话 → 新建态」
+ * 之间原样复用：重进新建态时复活上次新建态的文件页签并保持激活，中央区停在陈旧
+ * FileViewer、把新建态唯一的居中 Composer 顶掉；换了工作区时还会用新 provider 读旧路径。
+ * 由 TaskView 在进入新建态 / 新建态切换工作区选择时调用。
+ */
+export function resetNewTaskTabs() {
+  if (!sessionTabsMap.value.has(NEW_TASK_TABS_KEY)) return
+  sessionTabsMap.value.delete(NEW_TASK_TABS_KEY)
+  // Map 内部变更不会自动触发 computed，需要替换 Map 引用
+  sessionTabsMap.value = new Map(sessionTabsMap.value)
+}
+
+/**
  * Tab 数据变更后的统一收尾：替换 Map 引用让 computed 重新求值，并按需落盘激活态。
  *
  * 落盘只保留给「激活态真的变了」的入口（activeTabId 的 setter、各类 open*、activateTab、
@@ -190,9 +204,11 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
    * 显式传 sid 给「调用方已知目标会话、但 currentSessionId 可能尚未同步」的还原入口用
    * （loadSession 里 setActiveSession 之后同步调用 restore*，watch 还没跑）。
    * 两者皆空（新建态）回落占位键，保证 openFileTab 等写入落到稳定状态上。
+   * 用 || 而非 ??：显式传空串（openTraceTab 的 stateKeySid 链）同样要兜底，
+   * 否则写入又落回一次性对象被丢弃。
    */
   function getSessionState(sid?: string): SessionTabState {
-    const key = sid ?? (currentSessionId.value || NEW_TASK_TABS_KEY)
+    const key = sid || currentSessionId.value || NEW_TASK_TABS_KEY
     let state = sessionTabsMap.value.get(key)
     if (!state) {
       state = { tabs: [], activeTabId: 'chat' }

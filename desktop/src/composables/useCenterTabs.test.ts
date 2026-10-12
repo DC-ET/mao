@@ -1,7 +1,7 @@
 import { nextTick, ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { openSideTaskTabFor, removeSessionTabsFor, resetCenterTabs, useCenterTabs } from './useCenterTabs'
+import { openSideTaskTabFor, removeSessionTabsFor, resetCenterTabs, resetNewTaskTabs, useCenterTabs } from './useCenterTabs'
 
 vi.mock('../stores/session', () => ({
   useSessionStore: () => ({
@@ -386,6 +386,44 @@ describe('新建态（无会话）中心 Tab', () => {
 
     expect(tabs.tabs.value.some(t => t.type === 'file')).toBe(false)
     expect(tabs.activeTabId.value).toBe('chat')
+  })
+
+  it('resetNewTaskTabs 作废占位状态：新建态开文件 → 会话落地 → 再进新建态回到干净工作台', async () => {
+    const sessionId = ref<string | null>('')
+    const tabs = useCenterTabs(sessionId)
+    await nextTick()
+    tabs.openFileTab('/ws/a.ts', 'a.ts')
+    await nextTick()
+    expect(tabs.activeTabId.value).toBe('file:/ws/a.ts')
+
+    sessionId.value = SESSION_ID
+    await nextTick()
+    sessionId.value = ''
+    await nextTick()
+    // TaskView 进入新建态 / 切换工作区选择时作废上次的占位状态：不清会复活陈旧
+    // 文件页签并保持激活，中央区停在 FileViewer、把新建态唯一的居中 Composer 顶掉
+    resetNewTaskTabs()
+    await nextTick()
+
+    expect(tabs.tabs.value.some(t => t.type === 'file')).toBe(false)
+    expect(tabs.activeTabId.value).toBe('chat')
+
+    // 作废后状态载体仍可用：重新打开文件正常落位
+    tabs.openFileTab('/ws/b.ts', 'b.ts')
+    await nextTick()
+    expect(tabs.activeTabId.value).toBe('file:/ws/b.ts')
+  })
+
+  it('显式传空串 sid 也回落占位键：新建态 openTraceTab 不再写丢', async () => {
+    const tabs = useCenterTabs(ref<string | null>(''))
+    await nextTick()
+
+    // openTraceTab 内部 key 取 currentSessionId（新建态为 ''），显式空串同样要兜底
+    tabs.openTraceTab()
+    await nextTick()
+
+    expect(tabs.tabs.value.some(t => t.type === 'trace')).toBe(true)
+    expect(tabs.activeTabId.value).toBe('trace')
   })
 })
 

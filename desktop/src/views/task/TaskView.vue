@@ -71,7 +71,7 @@ import { useSessionStore, type TaskPhase, type SubagentItem } from '../../stores
 import { persistedContextWindow } from '../../stores/session/context-window'
 import { useDraftStore } from '../../stores/draft'
 import { usePanelLayout } from '../../composables/usePanelLayout'
-import { useCenterTabs } from '../../composables/useCenterTabs'
+import { resetNewTaskTabs, useCenterTabs } from '../../composables/useCenterTabs'
 import { useWorkspaceFileProvider } from '../../composables/workspace-file-provider'
 import { useWorkspaceGitProvider } from '../../composables/workspace-git-provider'
 import { useTaskPanelPrefs } from '../../composables/useTaskPanelPrefs'
@@ -160,6 +160,10 @@ watch(
   [isNewTaskMode, newTaskMode, newTaskWorkspace, newTaskCloudProjectKey],
   () => {
     if (!isNewTaskMode.value) return
+    // 作废上次新建态的 Tab 状态：占位键无会话 id 可依，不清会在「新建态 → 会话 →
+    // 新建态」之间复活陈旧文件页签并保持激活，把居中 Composer 顶掉；切换工作区
+    // 选择时同样要作废，否则会用新 provider 读旧工作区的路径
+    resetNewTaskTabs()
     executionMode.value = newTaskMode.value
     workspace.value = newTaskMode.value === 'LOCAL' ? newTaskWorkspace.value : ''
     projectKey.value = newTaskMode.value === 'CLOUD' ? newTaskCloudProjectKey.value : ''
@@ -805,6 +809,8 @@ async function enterNewTaskMode(defaults?: NewTaskDefaults | null) {
   // 窗口内回写 watch 会用上一个新建态草稿的残留值建文件 provider，闪一下旧文件树
   newTaskWorkspace.value = earlyMode === 'LOCAL' ? (defaults?.workspace || '') : ''
   newTaskCloudProjectKey.value = earlyMode === 'CLOUD' ? (defaults?.cloudProjectKey || '') : ''
+  // 进入新建态一律从干净工作台开始：作废上次新建态遗留的中心 Tab（见 resetNewTaskTabs）
+  resetNewTaskTabs()
   if (defaults?.permissionLevel) {
     permissionLevel.value = defaults.permissionLevel
   }
