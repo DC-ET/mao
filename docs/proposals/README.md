@@ -77,6 +77,22 @@
 3. **收件箱新 kind**：信号哨兵需加 `WATCHER_DISABLED`，须同步 `backend-ts/src/inbox/types.ts` 白名单、`@mao/contracts` 的 `InboxKind` 联合类型、桌面抽屉图标与通知偏好。
 4. **桌面端工作量**：哨兵管理页为桌面端新界面，实施时注意与 `settings` 页既有改动的冲突。
 
+## 第七批（2026-10-12，待评审）
+
+背景：前六批落定后，自动化设施（定时任务 / 哨兵 / 开放接口）与治理设施（轨迹 / 预算 / 审批 / 反馈闭环）均已就位，基于代码现状摸底（联网工具结果里的 URL 出口即丢、模型选择器一次只能选一个、出站订阅只有事件粒度没有日报粒度）产出的三个方向，共同主题是"**从敢用到可信、可择优、可总览**"：答案可验证（引用）、模型可对照（选型）、运营可总览（日报）。提案均避开已否决方向（RAG / Evals / 多 Agent DAG / 容灾 / 技能蒸馏等），且全部建立在既有设施之上（消息渲染 / message_feedback / 出站订阅 / 收件箱 / 偏好），不新增大规模基础设施。本批评审结果（2026-10-12）：**模型对照台不做**（见下方台账），**引用溯源已确认**（技术方案见 [docs/plan/2026-10-12-answer-citations-technical-design.md](../plan/2026-10-12-answer-citations-technical-design.md)，决策记录 9 条于 2026-10-12 逐条确认；实施时零迁移，citations 走 message.metadata），**每日运营摘要已确认**（技术方案见 [docs/plan/2026-10-12-daily-digest-technical-design.md](../plan/2026-10-12-daily-digest-technical-design.md)，决策记录 11 条于 2026-10-12 逐条确认；投递渠道定为收件箱 + 出站订阅，IM 明确不做，v1 一次交付）。
+
+| 提案 | 文档 | 一句话 | 规模 |
+|---|---|---|---|
+| 回复引用溯源 | [2026-10-12-answer-citations.md](2026-10-12-answer-citations.md)（已确认，技术方案见 [docs/plan/2026-10-12-answer-citations-technical-design.md](../plan/2026-10-12-answer-citations-technical-design.md)） | 模型用 `[^n^]` 标记外部信息来源，后端按本轮工具结果 URL 白名单校验（伪造 URL 一律剥标），三端渲染可点击来源区——让每句话可验证 | 中 |
+| 模型对照台 | [2026-10-12-model-compare.md](2026-10-12-model-compare.md)（已否决，存档） | 一次提问广播 2~4 个模型并排作答，人工择优固化进上下文，点踩 / 用量 / 轨迹全链路复用——换模型不用再复制原话重问 | — |
+| 每日运营摘要 | [2026-10-12-daily-digest.md](2026-10-12-daily-digest.md)（已确认，技术方案见 [docs/plan/2026-10-12-daily-digest-technical-design.md](../plan/2026-10-12-daily-digest-technical-design.md)，决策记录 11 条于 2026-10-12 逐条确认） | 按天汇总任务成败 / 定时任务 / 哨兵触发 / 审批待办 / 成本 Top，经收件箱（新 kind）与出站订阅（新事件）送达——"没有消息就是坏消息"的健康信号 | 小~中 |
+
+排期注意：
+
+1. **迁移编号**：Digest 需 V150（`user_digest_preference` 偏好表；事实表零新增）；引用溯源改走 metadata 后零迁移。当前最新 V149。
+2. **三处同改清单**：Digest 新增收件箱 kind `DAILY_DIGEST`，按规范同改 `backend-ts/src/inbox/types.ts` 白名单、`@mao/contracts` 的 `InboxKind` 联合、桌面抽屉图标与通知偏好。
+3. **相邻收敛点**：引用溯源（已确认）的 registry 构建挂在 `task-terminal.service.ts` 的 `TASK_COMPLETED` 相位收敛点（历史上记忆 / 收件箱 / 预算动过的同一位置），与在途同类改动错开；Digest 若做，其调度器与 `InboxCleanupScheduler` / `OutboundDeliveryScheduler` 同范式，不动收敛点。
+
 ## 已评估、明确不做
 
 以下各项已复审定案，**不再重启、不再提案**（存档文档已标否决，勿再评审）：
@@ -92,6 +108,7 @@
 - **技能蒸馏（会话轨迹 → 技能）**：2026-10-11 评审：不做。存档：[2026-10-11-skill-distillation.md](2026-10-11-skill-distillation.md)。
 - **CLOUD 工作区环境模板与快照**：2026-10-11 评审：不做（重复装环境的问题真实存在，但模板资产带来磁盘配额、敏感文件进 TEAM 共享、符号链接逃逸三重新增风险面，收益/风险比不划算；建会话时装依赖的需求可先用"Git clone + 初始化命令"的既有链路人工满足）。存档：[2026-10-11-workspace-template.md](2026-10-11-workspace-template.md)。
 - **渠道会话人工接管（Human Handoff）**：2026-10-11 评审：不做。存档：[2026-10-11-human-handoff.md](2026-10-11-human-handoff.md)。
+- **模型对照台（一次提问多模型并排作答）**：2026-10-12 评审：不做。存档：[2026-10-12-model-compare.md](2026-10-12-model-compare.md)。
 
 ## 已排除的方向（与产品定位或约束冲突）
 
