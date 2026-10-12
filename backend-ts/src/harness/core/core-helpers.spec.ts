@@ -338,7 +338,7 @@ describe('SessionHistoryLoader', () => {
       prependSessionSummary: vi.fn((_s: string | null, increment: ChatMessage[]) => [...increment]),
     } as unknown as ContextManager;
     const sessionService = {
-      getPreviousUserStamp: vi.fn().mockResolvedValue({ id: 4, createdAt: '' }),
+      getPreviousUserStamp: vi.fn().mockResolvedValue({ id: 4, createdAt: '2026-10-1' }),
     } as unknown as SessionService;
     const loader = new SessionHistoryLoader(sessionService, contextManager, archiveService);
     const context = new AgentExecutionContext();
@@ -350,7 +350,19 @@ describe('SessionHistoryLoader', () => {
       persistedMessages: [PersistedChatMessage.from(9, { role: 'user', content: 'hi', senderYmd: '2026-10-13' })],
     });
 
+    // 长度不足 10 的脏值不能当作日期参与比较，回落 null
     expect(context.previousUserYmdBefore).toBeNull();
+
+    // created_at 为空串（旧数据）同样回落
+    sessionService.getPreviousUserStamp.mockResolvedValue({ id: 4, createdAt: '' });
+    const emptyContext = new AgentExecutionContext();
+    emptyContext.sessionId = 42;
+    await loader.applyHistory(emptyContext, null, {
+      snapshotMessageIds: [9],
+      normalizedEntities: [{ id: 9, role: 'USER', content: 'hi', createdAt: '2026-10-13 08:00:00' }],
+      persistedMessages: [PersistedChatMessage.from(9, { role: 'user', content: 'hi', senderYmd: '2026-10-13' })],
+    });
+    expect(emptyContext.previousUserYmdBefore).toBeNull();
   });
 
   it('回注的窗口外用户消息排在尾部，previousUserYmdBefore 保持 null（边界行为固化）', async () => {
