@@ -333,6 +333,10 @@ import { WatcherScheduler } from './signal/watcher-scheduler.js';
 import { SignalCheckCleanup } from './signal/signal-check-cleanup.js';
 import { registerSignalWatcherRoutes } from './signal/watcher.routes.js';
 import { registerSignalAdminRoutes } from './signal/signal-admin.routes.js';
+import { DigestRepository } from './digest/repository.js';
+import { DigestService } from './digest/service.js';
+import { DigestScheduler } from './digest/scheduler.js';
+import { registerDigestRoutes } from './digest/routes.js';
 
 export interface MaoApp {
   app: FastifyInstance;
@@ -1535,6 +1539,24 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   );
   signalCheckCleanup.start();
 
+  // 每日运营摘要：六板块聚合（V150 偏好表 + 既有表零事实新增）+ 收件箱/出站双路投递
+  const digestRepo = new DigestRepository(db);
+  const digestService = new DigestService({
+    repo: digestRepo,
+    inbox: {
+      writeDigestEntry: (input) => inboxService.writeDigestEntry(input),
+      hasDigestEntry: (userId, dedupTail) => inboxService.hasDigestEntry(userId, dedupTail),
+    },
+    outbound: {
+      dispatchDigest: (input) => outboundSubscriptionService.dispatchDigest(input),
+    },
+  });
+  const digestScheduler = new DigestScheduler({
+    listEnabledUsers: () => digestRepo.listEnabledUsers(),
+    processUser: (userId) => digestService.processUser(userId),
+  });
+  digestScheduler.start();
+
   const feishuMessageRepository = new MysqlFeishuMessageRepository(db);
   const feishuMessageService = new FeishuMessageService(
     feishuMessageRepository,
@@ -2709,6 +2731,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     });
     registerApprovalRuleAdminRoutes(api, { approvalRuleService, permissionService });
     registerInboxRoutes(api, { inboxService });
+    registerDigestRoutes(api, { service: digestService });
     registerBudgetRoutes(api, { budgetService, permissionService });
     const adminDeps = {
       jwt, analytics: adminAnalytics,

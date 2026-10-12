@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import type { InboxItem, InboxKind } from '@mao/contracts'
@@ -7,6 +7,7 @@ import { useInboxStore } from '../../stores/inbox'
 import { useSessionStore } from '../../stores/session'
 import { formatRelativeTime, useRelativeTime } from '../../composables/useRelativeTime'
 import { primeInboxSystemNotify } from '../../composables/useInboxSystemNotify'
+import DigestDetailDialog from './DigestDetailDialog.vue'
 
 const props = defineProps<{ modelValue: boolean }>()
 const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>()
@@ -35,7 +36,8 @@ const KIND_META: Record<InboxKind, { label: string; icon: string }> = {
   TOKEN_DISABLED: { label: 'Token 停用', icon: '⛔' },
   OPEN_API_CALL_FAILED: { label: '开放调用失败', icon: '!' },
   WATCHER_DISABLED: { label: '哨兵已停用', icon: '🛰' },
-  WEIXIN_REPLY_WINDOW_CLOSED: { label: '微信回复未送达', icon: '⏱' }
+  WEIXIN_REPLY_WINDOW_CLOSED: { label: '微信回复未送达', icon: '⏱' },
+  DAILY_DIGEST: { label: '每日摘要', icon: '📅' }
 }
 
 function kindMeta(kind: InboxKind) {
@@ -89,19 +91,52 @@ watch(
 
 async function handleItemClick(item: InboxItem) {
   if (!item.isRead) await inboxStore.markRead(item.id)
+  // 每日摘要是汇总型条目（无关联会话）：点开详情对话框，不走 session_id 跳转
+  if (item.kind === 'DAILY_DIGEST') {
+    digestItem.value = item
+    return
+  }
   if (item.sessionId == null) {
     ElMessage.warning('该通知没有关联会话')
     return
   }
+  await openSession(item.sessionId)
+}
+
+/** 打开关联会话：会话被删（软删除）时降级提示并保留条目，不白屏。 */
+async function openSession(sessionId: number) {
   visible.value = false
-  const session = await sessionStore.fetchSession(String(item.sessionId))
+  const session = await sessionStore.fetchSession(String(sessionId))
   if (!session) {
-    // 会话被删除（软删除、列表不再展示）时降级为提示并保留条目，不白屏
     ElMessage.warning('关联会话已不存在，可能已被删除')
     return
   }
-  sessionStore.setActiveSession(String(item.sessionId))
-  await router.push(`/tasks/${item.sessionId}`)
+  sessionStore.setActiveSession(String(sessionId))
+  await router.push(`/tasks/${sessionId}`)
+}
+
+/** 摘要详情对话框：行内跳转统一先关抽屉再动作。 */
+const digestItem = ref<InboxItem | null>(null)
+const digestDialogVisible = computed({
+  get: () => digestItem.value != null,
+  set: (value: boolean) => {
+    if (!value) digestItem.value = null
+  }
+})
+
+function handleDigestJumpSession(sessionId: number) {
+  void openSession(sessionId)
+}
+
+function handleDigestJumpRoute(path: string) {
+  visible.value = false
+  void router.push(path)
+}
+
+function handleDigestOpenUsage() {
+  visible.value = false
+  // 用量抽屉挂在顶栏 UsageBell 上（本地态），跨组件打开走 window 事件
+  window.dispatchEvent(new CustomEvent('open_usage_drawer'))
 }
 </script>
 
@@ -183,6 +218,15 @@ async function handleItemClick(item: InboxItem) {
         <span v-else class="inbox-end">没有更多了</span>
       </div>
     </template>
+
+    <!-- 摘要详情：drawer 之上再叠一层 dialog（两者都 append-to-body，层级由 element-plus 保证） -->
+    <DigestDetailDialog
+      v-model="digestDialogVisible"
+      :item="digestItem"
+      @jump-session="handleDigestJumpSession"
+      @jump-route="handleDigestJumpRoute"
+      @open-usage="handleDigestOpenUsage"
+    />
   </el-drawer>
 </template>
 
@@ -257,6 +301,11 @@ async function handleItemClick(item: InboxItem) {
 .kind-subagent_done {
   background: rgba(144, 147, 153, 0.16);
   color: var(--aw-ink-muted);
+}
+
+.kind-daily_digest {
+  background: rgba(103, 194, 58, 0.14);
+  color: #529b2e;
 }
 
 .inbox-body {

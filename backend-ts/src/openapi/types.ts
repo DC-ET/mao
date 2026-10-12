@@ -58,8 +58,8 @@ export interface WebhookTrigger {
   updatedAt?: string | null;
 }
 
-/** 出站事件（技术方案 §5.5）：任务完成/失败 + 提问待答。 */
-export const OUTBOUND_EVENTS = ['task.completed', 'task.failed', 'question.pending'] as const;
+/** 出站事件（技术方案 §5.5）：任务完成/失败 + 提问待答 + 每日运营摘要。 */
+export const OUTBOUND_EVENTS = ['task.completed', 'task.failed', 'question.pending', 'digest.daily'] as const;
 export type OutboundEvent = (typeof OUTBOUND_EVENTS)[number];
 
 export function isOutboundEvent(value: unknown): value is OutboundEvent {

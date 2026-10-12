@@ -1,10 +1,18 @@
 <script setup lang="ts">
 import { Odometer } from '@element-plus/icons-vue'
-import { ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { isMobileDevice } from '../../composables/usePanelLayout'
 import UsageDrawer from './UsageDrawer.vue'
 
 const drawerVisible = ref(false)
+
+/** 摘要详情对话框等跨组件入口：dispatch window 事件 'open_usage_drawer' 打开用量抽屉。 */
+function handleOpenUsageDrawer() {
+  drawerVisible.value = true
+}
+
+onMounted(() => window.addEventListener('open_usage_drawer', handleOpenUsageDrawer))
+onUnmounted(() => window.removeEventListener('open_usage_drawer', handleOpenUsageDrawer))
 </script>
 
 <template>

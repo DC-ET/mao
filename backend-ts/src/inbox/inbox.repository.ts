@@ -66,6 +66,34 @@ export class InboxRepository {
     );
   }
 
+  /**
+   * 同日覆盖写入（每日摘要试发专用）：dedup_key 冲突时刷新内容并把已读打回未读。
+   * 与 insertIgnore 的分野：insertIgnore 服务“重试/重投不得刷新”，本方法服务
+   * “同一被汇总日期重复试发应覆盖旧条目且重新提醒”（技术方案 §5.5）。
+   */
+  async insertOrUpdateByDedupKey(row: {
+    userId: number;
+    kind: InboxKind;
+    title: string;
+    content: string | null;
+    sessionId: number | null;
+    payloadJson: string | null;
+    dedupKey: string;
+  }): Promise<void> {
+    await this.db.execute(
+      `INSERT INTO notification (user_id, kind, title, content, session_id, payload_json, dedup_key)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         title = VALUES(title),
+         content = VALUES(content),
+         payload_json = VALUES(payload_json),
+         is_read = 0,
+         read_at = NULL,
+         updated_at = CURRENT_TIMESTAMP`,
+      [row.userId, row.kind, row.title, row.content, row.sessionId, row.payloadJson, row.dedupKey],
+    );
+  }
+
   async list(filter: InboxListFilter): Promise<{ rows: NotificationRow[]; total: number }> {
     const where = filter.unreadOnly === true
       ? 'WHERE user_id = ? AND is_read = 0'

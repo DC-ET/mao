@@ -27,6 +27,7 @@ const ALL_INBOX_KINDS: InboxKind[] = [
   'OPEN_API_CALL_FAILED',
   'WEIXIN_REPLY_WINDOW_CLOSED',
   'WATCHER_DISABLED',
+  'DAILY_DIGEST'
 ]
 
 function makeItem(id: number, kind: InboxKind): InboxItem {
@@ -60,6 +61,12 @@ describe('BUG-2 回归：收件箱 kind 白名单与后端契约漂移', () => {
     const store = useInboxStore()
     store.applyPage(makeList([makeItem(1, 'WEIXIN_REPLY_WINDOW_CLOSED' as InboxKind)]), 1)
     console.log('C2 visibleItems =', JSON.stringify(store.visibleItems.map((i) => i.id)), '（应为 [1]）')
+    expect(store.visibleItems.map((i) => i.id)).toEqual([1])
+  })
+
+  it('C2b DAILY_DIGEST 条目必须在收件箱列表可见（漏白名单 → 摘要静默丢失）', () => {
+    const store = useInboxStore()
+    store.applyPage(makeList([makeItem(1, 'DAILY_DIGEST')]), 1)
     expect(store.visibleItems.map((i) => i.id)).toEqual([1])
   })
 

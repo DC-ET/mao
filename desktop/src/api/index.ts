@@ -370,6 +370,52 @@ export async function saveInboxPreference(payload: InboxPreference): Promise<Inb
   return data
 }
 
+// ─── 每日运营摘要 ───
+
+/** 「上一份摘要」三态：待生成 / 已发送 / 无事件未发送。 */
+export type YesterdayDigestStatus = 'PENDING' | 'SENT' | 'QUIET'
+
+export interface DigestPreferenceView {
+  enabled: boolean
+  /** HH:MM（Asia/Shanghai 口径）。 */
+  pushTime: string
+  outboundEnabled: boolean
+  lastDigestDate: string | null
+  yesterdayStatus: YesterdayDigestStatus
+  /** 状态对应的被汇总日期（昨天）。 */
+  yesterdayCoveredDate: string
+}
+
+export interface DigestSendNowResult {
+  sent: boolean
+  /** DISABLED=总开关关闭；QUIET=安静日无数据。 */
+  reason?: 'DISABLED' | 'QUIET'
+  /** 收件箱浓缩一行（sent=true 时返回）。 */
+  line?: string
+  coveredDate: string
+}
+
+export async function getDigestPreferences(): Promise<DigestPreferenceView> {
+  const { data } = await api.get('/digest/preferences')
+  return data
+}
+
+/** 增量保存：只传要改的字段，未传字段服务端保持原值。 */
+export async function saveDigestPreferences(payload: {
+  enabled?: boolean
+  pushTime?: string
+  outboundEnabled?: boolean
+}): Promise<Omit<DigestPreferenceView, 'yesterdayStatus' | 'yesterdayCoveredDate'>> {
+  const { data } = await api.patch('/digest/preferences', payload)
+  return data
+}
+
+/** 试发昨日摘要（不推进 last_digest_date，可重复调用）。 */
+export async function sendDigestNow(): Promise<DigestSendNowResult> {
+  const { data } = await api.post('/digest/send-now')
+  return data
+}
+
 // ─── 消息点踩反馈 ───
 
 export type { FeedbackReason } from '@mao/contracts'

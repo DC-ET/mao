@@ -3,7 +3,7 @@
  * kind 枚举封闭：表注释与 WS 关键帧之外不新增；未知 kind 一律忽略并 warn。
  */
 
-/** 收件箱条目类型（封闭集合，对应 V131/V139 表注释）。 */
+/** 收件箱条目类型（封闭集合，对应 V131/V139/V150 表注释）。 */
 export type InboxKind =
   | 'TASK_COMPLETED'
   | 'TASK_FAILED'
@@ -16,7 +16,8 @@ export type InboxKind =
   | 'TOKEN_DISABLED'
   | 'OPEN_API_CALL_FAILED'
   | 'WEIXIN_REPLY_WINDOW_CLOSED'
-  | 'WATCHER_DISABLED';
+  | 'WATCHER_DISABLED'
+  | 'DAILY_DIGEST';
 
 /** 条目来源：用户手工触发 / 定时任务 / 入站 Webhook / 开放 API / 信号哨兵（前端来源徽标）。 */
 export type InboxSource = 'MANUAL' | 'SCHEDULED' | 'WEBHOOK' | 'API' | 'SIGNAL';
