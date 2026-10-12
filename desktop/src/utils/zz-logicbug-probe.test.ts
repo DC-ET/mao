@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { LLM_CALL_SCENE_OPTIONS, llmCallSceneLabel } from './llmCallLabels'
 
@@ -10,8 +12,7 @@ import { LLM_CALL_SCENE_OPTIONS, llmCallSceneLabel } from './llmCallLabels'
  *
  * 根治手段：场景联合类型收口到 `@mao/contracts` 的 `LlmCallScene`，两端汉化表用
  * `Record<LlmCallScene, string>` 声明——漏一项 `vue-tsc` 直接报错，不再靠运行时发现。
- * 本文件因此不再需要读源码做正则比对（比对副本本身也会过期，见 BUG-2 的
- * BACKEND_INBOX_KINDS 副本漏 WATCHER_DISABLED），改为守住汉化质量与选项派生。
+ * 本文件守住汉化质量、选项派生与两端文案一致；键集合的漂移由编译期穷尽拦住。
  */
 
 /** 契约全量场景：与 shared/contracts/src/usage.ts 的联合成员一一对应。 */
@@ -29,6 +30,18 @@ const CONTRACT_SCENES = [
   'memory_extract',
   'unknown',
 ] as const
+
+/** 从汉化表源码里解析 `Record<LlmCallScene, string> = { ... }` 的键值对。 */
+function parseSceneLabels(src: string): Map<string, string> {
+  const start = src.indexOf('Record<LlmCallScene, string> = {')
+  const end = src.indexOf('}', start)
+  if (start < 0 || end < 0) throw new Error('找不到 SCENE_LABELS 声明块')
+  const labels = new Map<string, string>()
+  for (const m of src.slice(start, end).matchAll(/^\s*([a-z_]+):\s*'([^']*)',?\s*$/gm)) {
+    labels.set(m[1], m[2])
+  }
+  return labels
+}
 
 describe('BUG-6 回归：场景汉化与筛选选项', () => {
   it('J1 proxy_approve 必须显示中文标签而不是英文枚举', () => {
@@ -56,16 +69,22 @@ describe('BUG-6 回归：场景汉化与筛选选项', () => {
     }
   })
 
-  it('J5 与 admin 版保持一致（两端同源字段不应分叉）', async () => {
-    // admin 的汉化表同样以 LlmCallScene 为键类型；直接 import 运行时值比对，
-    // 不再读源码正则——副本比对副本会一起过期。
-    const adminLabels = await import('../../../admin/src/utils/llmCallLabels')
-    expect(adminLabels.llmCallSceneLabel('feedback_experience_draft')).toBe('负反馈转经验')
-    expect(adminLabels.LLM_CALL_SCENE_OPTIONS.map((o) => o.value).sort())
-      .toEqual(LLM_CALL_SCENE_OPTIONS.map((o) => o.value).sort())
+  it('J5 与 admin 版保持一致（两端同源字段不应分叉）', () => {
+    // 不能直接 import admin 的模块：vite 变换会为 vite root 之外的文件解析 tsconfig
+    // 链（admin/tsconfig.app.json extends @vue/tsconfig），desktop 的 CI job 只装
+    // desktop 依赖，oxc 找不到 extends 目标会以 "Tsconfig not found" 硬失败——
+    // 本地装过 admin 依赖时反而能跑过，问题只会在 CI 暴露。因此退回归源码比对：
+    // 读的是 admin 真实文件而非手抄副本，SCENE_LABELS 块键值结构稳定，漏项或文案
+    // 漂移都会让下面的断言失败。
+    const adminLabels = parseSceneLabels(
+      readFileSync(resolve(process.cwd(), '../admin/src/utils/llmCallLabels.ts'), 'utf8'),
+    )
+    // 键集合与契约一一对应（admin 端漏加场景时这里先炸，vue-tsc 随后也会报）
+    expect([...adminLabels.keys()].sort()).toEqual([...CONTRACT_SCENES].sort())
+    expect(adminLabels.get('feedback_experience_draft')).toBe('负反馈转经验')
     // 两端文案逐项相同（同源字段，用户在两处看到同一场景应得到同一说法）
     for (const scene of CONTRACT_SCENES) {
-      expect(adminLabels.llmCallSceneLabel(scene), `场景 ${scene} 两端文案不一致`)
+      expect(adminLabels.get(scene), `场景 ${scene} 两端文案不一致`)
         .toBe(llmCallSceneLabel(scene))
     }
   })
