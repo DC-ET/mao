@@ -234,6 +234,20 @@ describe('McpSyncService', () => {
       expect(service.getLocalSessionTools(42)).toHaveLength(2);
     });
 
+    it('cloudSnapshotIsBoundedBySessionCountSoLongRunningProcessesDoNotLeak', async () => {
+      // 快照只在会话删除时清理，需有容量上限兜底（round3 S-1）：短期会话
+      // （定时任务 / Webhook / 子代理）大量跑过 CLOUD MCP 且从不删除时不能无限增长。
+      const github = { id: 2, name: 'github', serverType: TYPE_HTTP, url: 'https://mcp.example.com/github', status: STATUS_ENABLED };
+      connectAndListTools.mockResolvedValue(githubTools);
+      for (let i = 0; i < 600; i++) {
+        await service.connectForCloud(1000 + i, [github as never], clientManager, null);
+      }
+      expect(service.getCloudSnapshot(1000)).toEqual([]);
+      expect(service.getCloudSnapshot(1599)).toHaveLength(2);
+      // 上限内的最近会话仍在
+      expect(service.getCloudSnapshot(1088)).toHaveLength(2);
+    });
+
     it('failedRoundAfterSuccessfulRoundReusesSnapshotAcrossExecutions', async () => {
       // B-1 回归：同一 sessionId 的两次「执行」（每次执行结束都不清快照），
       // 第二轮某 server 失败时 tools 必须与第一轮逐字节一致，并出不可用 notice。

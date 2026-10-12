@@ -10,6 +10,8 @@ export class McpToolsRegistry {
   private readonly sessionTools = new Map<number, McpToolRef[]>();
   /** CLOUD 维度快照：会话内最近一次成功连接得到的工具集（按 (serverName, toolName) 排序）。 */
   private readonly cloudSnapshot = new Map<number, McpToolRef[]>();
+  /** 会话删除才清快照，故需上限防止长跑进程泄漏（与 prompt-prefix-monitor 同策略）。 */
+  private static readonly MAX_SNAPSHOT_SESSIONS = 512;
 
   report(sessionId: number | null | undefined, tools: McpToolRef[] | null | undefined): void {
     if (sessionId == null) return;
@@ -35,7 +37,15 @@ export class McpToolsRegistry {
   reportCloudSnapshot(sessionId: number | null | undefined, tools: McpToolRef[] | null | undefined): void {
     if (sessionId == null) return;
     if (!tools || tools.length === 0) return;
+    // 重新 set 把该键移到插入序末尾，超出上限时淘汰最旧的一个（LRU 简易实现）。
+    // 被淘汰会话下次连接时按「首轮无快照」处理（等同该会话首次执行），不产生错误结论。
+    this.cloudSnapshot.delete(sessionId);
     this.cloudSnapshot.set(sessionId, [...tools]);
+    while (this.cloudSnapshot.size > McpToolsRegistry.MAX_SNAPSHOT_SESSIONS) {
+      const oldest = this.cloudSnapshot.keys().next();
+      if (oldest.done) break;
+      this.cloudSnapshot.delete(oldest.value);
+    }
     harnessLog('info', `McpToolsRegistry: recorded CLOUD snapshot of ${tools.length} MCP tools for session ${sessionId}`);
   }
 
