@@ -751,6 +751,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   // TerminalManager / 定时任务存储都在后面才构造，会话删除回调延迟解引用
   let terminalManagerRef: TerminalManager | null = null;
   let deleteScheduledTasksForSession: ((sessionId: number) => Promise<void>) | null = null;
+  // MCP 同步服务同样晚于 sessionService 构造，会话删除回调延迟解引用
+  let mcpSyncRef: McpSyncService | null = null;
   // 审批放行规则（V135）：repo/service 早于 sessionService 与 toolDispatcher 构造（双向依赖）
   const approvalRuleRepo = new ApprovalRuleRepository(db);
   const approvalRuleService = new ApprovalRuleService(
@@ -769,7 +771,12 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     pathSandbox, envInfo, commandService, gitOps, sessionCompactionService, sessionCompactionEventService, todoRepo,
     runtimeSessionCleanup(runtimeRoot),
     (sessionId) => { terminalManagerRef?.closeBySession(sessionId); },
-    (sessionId) => deleteScheduledTasksForSession?.(sessionId),
+    // 会话删除后清理绑定资源：定时任务 + CLOUD MCP 快照（技术方案 §4.5 第 3 点，
+    // 快照存活期是会话级，只在会话删除路径回收）。mcpSync 晚于本 service 构造，故延迟解引用。
+    async (sessionId) => {
+      await deleteScheduledTasksForSession?.(sessionId);
+      mcpSyncRef?.clearCloudSnapshot(sessionId);
+    },
     (sessionId) => approvalRuleRepo.deleteBySessionId(sessionId),
   );
   const sessionSvc = sessionService as never;
@@ -856,6 +863,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const mcpClient = new McpClientManager(cfg.app.mcp.clientTimeoutSeconds);
   const mcpToolsRegistry = new McpToolsRegistry();
   const mcpSync = new McpSyncService(mcpMapper, mcpServerService, mcpToolsRegistry, mcpPref);
+  // 会话删除路径要回收 CLOUD MCP 快照，而 mcpSync 晚于 sessionService 构造：先用引用占位。
+  mcpSyncRef = mcpSync;
 
   // Agent 资产化：bundle 导出/导入（P1）+ 团队共享目录（P2）+ registry/URL 导入/检查更新（P2 分发闭环）
   const mcpServerLookup = new MysqlMcpServerLookup(db);

@@ -49,4 +49,23 @@ export class McpToolsRegistry {
     this.sessionTools.delete(sessionId);
     this.cloudSnapshot.delete(sessionId);
   }
+
+  /**
+   * 只清 CLOUD 快照（不动桌面上报的 LOCAL 工具）。
+   *
+   * CLOUD 快照的存活期是「会话级」而非「执行级」：技术方案 §4.5 要求同一会话内
+   * 某 server 连接失败时沿用上次成功连接的工具集，而 connectForCloud 每次执行
+   * 只在 buildContext 调用一次——若在每次执行结束时清快照，下一轮必然取不到，
+   * 「沿用」语义在主路径上直接落空。因此清理只发生在会话删除 / 会话工具重同步路径。
+   */
+  clearCloudSnapshot(sessionId: number | null | undefined): void {
+    if (sessionId == null) return;
+    this.cloudSnapshot.delete(sessionId);
+  }
+
+  /** 只清桌面上报的 LOCAL 工具，保留 CLOUD 快照（存活期见 clearCloudSnapshot）。 */
+  clearLocalSession(sessionId: number | null | undefined): void {
+    if (sessionId == null) return;
+    this.sessionTools.delete(sessionId);
+  }
 }

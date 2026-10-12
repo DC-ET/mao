@@ -211,6 +211,50 @@ describe('McpSyncService', () => {
       expect(result.tools).toEqual([]);
     });
 
+    it('clearLocalSessionKeepsCloudSnapshotForCrossExecutionReuse', async () => {
+      // 会话级存活期：执行结束只回收桌面上报的 LOCAL 工具，CLOUD 快照必须留下，
+      // 否则下一轮 connectForCloud 取不到快照，「失败沿用上次成功工具集」落空。
+      const github = { id: 2, name: 'github', serverType: TYPE_HTTP, url: 'https://mcp.example.com/github', status: STATUS_ENABLED };
+      connectAndListTools.mockResolvedValue(githubTools);
+      await service.connectForCloud(41, [github as never], clientManager, null);
+      service.recordReport(41, githubTools as never);
+      service.clearLocalSession(41);
+      expect(service.getCloudSnapshot(41)).toHaveLength(2);
+      expect(service.getLocalSessionTools(41)).toEqual([]);
+    });
+
+    it('clearCloudSnapshotDropsSnapshotButKeepsLocalSessionTools', async () => {
+      // 会话删除路径两个维度一起清；单独的 clearCloudSnapshot 只清 CLOUD 快照。
+      const github = { id: 2, name: 'github', serverType: TYPE_HTTP, url: 'https://mcp.example.com/github', status: STATUS_ENABLED };
+      connectAndListTools.mockResolvedValue(githubTools);
+      await service.connectForCloud(42, [github as never], clientManager, null);
+      service.recordReport(42, githubTools as never);
+      service.clearCloudSnapshot(42);
+      expect(service.getCloudSnapshot(42)).toEqual([]);
+      expect(service.getLocalSessionTools(42)).toHaveLength(2);
+    });
+
+    it('failedRoundAfterSuccessfulRoundReusesSnapshotAcrossExecutions', async () => {
+      // B-1 回归：同一 sessionId 的两次「执行」（每次执行结束都不清快照），
+      // 第二轮某 server 失败时 tools 必须与第一轮逐字节一致，并出不可用 notice。
+      const github = { id: 2, name: 'github', serverType: TYPE_HTTP, url: 'https://mcp.example.com/github', status: STATUS_ENABLED };
+      const baidu = { id: 3, name: 'baidu_map', serverType: TYPE_HTTP, url: 'https://mcp.example.com/baidu', status: STATUS_ENABLED };
+      connectAndListTools.mockImplementation(async (_sid: number, server: { name?: string }) => (
+        server.name === 'github' ? githubTools : baiduTools
+      ));
+      const first = await service.connectForCloud(43, [github as never, baidu as never], clientManager, null);
+      // 模拟执行结束：只回收 LOCAL 工具，快照按方案 §4.5 保留
+      service.clearLocalSession(43);
+
+      connectAndListTools.mockImplementation(async (_sid: number, server: { name?: string }) => {
+        if (server.name === 'github') throw new Error('connect refused');
+        return baiduTools;
+      });
+      const second = await service.connectForCloud(43, [github as never, baidu as never], clientManager, null);
+      expect(JSON.stringify(second.tools)).toBe(JSON.stringify(first.tools));
+      expect(second.warnings).toContain('github 当前不可用，相关工具调用可能失败');
+    });
+
     it('removedServerToolsDisappearOnceItStopsSucceeding', async () => {
       // 快照只增不减的边界：某 server 从配置里移除后，它不再出现在 servers 列表，
       // 也不该继续被快照带回来——快照以本轮 servers 的成功集合为准。

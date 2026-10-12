@@ -170,6 +170,7 @@ export interface WsHandlerDeps {
     loadAgentServers(agent: Agent, userId: number): Promise<Array<{ name: string }>>;
     buildSyncPayload(servers: Array<{ name: string }>): Record<string, unknown>;
     clearSession(sessionId: number): void;
+    clearLocalSession(sessionId: number): void;
     resolveServerIdByName(name: string): number | null;
     recordReport(sessionId: number, tools: McpToolRef[]): void;
   };
@@ -2000,11 +2001,11 @@ export class StreamingWsHandler {
     try {
       const servers = await this.deps.mcpSyncService.loadAgentServers(agent, userId);
       if (servers.length === 0) {
-        this.deps.mcpSyncService.clearSession(sessionId);
+        this.deps.mcpSyncService.clearLocalSession(sessionId);
         return;
       }
       if (!this.deps.registry.hasLocalClientConnection(userId)) {
-        this.deps.mcpSyncService.clearSession(sessionId);
+        this.deps.mcpSyncService.clearLocalSession(sessionId);
         return;
       }
       const payload = this.deps.mcpSyncService.buildSyncPayload(servers);
@@ -2019,7 +2020,7 @@ export class StreamingWsHandler {
         new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), this.mcpSyncTimeoutSeconds * 1000)),
       ]);
     } catch {
-      this.deps.mcpSyncService.clearSession(sessionId);
+      this.deps.mcpSyncService.clearLocalSession(sessionId);
     } finally {
       this.pendingMcpSyncs.delete(sessionId);
     }
@@ -2031,7 +2032,10 @@ export class StreamingWsHandler {
     this.deps.askUserQuestionsRegistry.failAllForSession(sessionId);
     this.deps.localSkillRegistry.clear(sessionId);
     this.deps.localAgentsMdRegistry.clear(sessionId);
-    this.deps.mcpSyncService.clearSession(sessionId);
+    // CLOUD MCP 快照是会话级记忆：连接每次执行结束都会断（mcpClientManager），
+    // 但快照必须跨执行存活，否则同一会话下一轮某 server 连接失败时无法沿用上次
+    // 成功的工具集（技术方案 §4.5）。快照只在会话删除路径回收。
+    this.deps.mcpSyncService.clearLocalSession(sessionId);
     this.deps.mcpClientManager.closeSession(sessionId);
   }
 

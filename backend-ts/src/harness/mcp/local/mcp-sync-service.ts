@@ -161,6 +161,23 @@ export class McpSyncService {
     this.toolsRegistry.clear(sessionId);
   }
 
+  /** 只清桌面上报的 LOCAL 会话工具，保留 CLOUD 快照（见 clearCloudSnapshot 的存活期说明）。 */
+  clearLocalSession(sessionId: number): void {
+    this.toolsRegistry.clearLocalSession(sessionId);
+  }
+
+  /**
+   * 只清 CLOUD 会话快照，不动桌面上报的 LOCAL 工具（技术方案 §4.5 第 3 点）。
+   *
+   * 快照存活期是会话级：connectForCloud 每次执行只在 buildContext 调用一次，
+   * 「某 server 连接失败沿用上次成功工具集」必须跨执行才成立。若在每次执行结束
+   * 清理，下一轮的 getCloudSnapshot 恒为空，staleRefs 恒空——沿用语义在主路径上
+   * 落空，tools 数组仍会因连接抖动变化。清理点：会话删除 / 会话 MCP 重新同步。
+   */
+  clearCloudSnapshot(sessionId: number): void {
+    this.toolsRegistry.clearCloudSnapshot(sessionId);
+  }
+
   private parseArgs(argsJson: string | null | undefined): string[] {
     if (!argsJson || argsJson.trim() === '') return [];
     try {

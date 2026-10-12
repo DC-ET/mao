@@ -169,6 +169,8 @@ function makeHarness(overrides: Record<string, unknown> = {}) {
     getLocalSessionTools: vi.fn(() => []),
     connectForCloud: vi.fn(async () => ({ tools: [], warnings: [] })),
     clearSession: vi.fn(),
+    clearLocalSession: vi.fn(),
+    clearCloudSnapshot: vi.fn(),
   };
   const localSkills = { get: vi.fn(() => []) };
   const localAgentsMd = { get: vi.fn(() => null) };
@@ -487,61 +489,43 @@ describe('HarnessService.buildContext and execute', () => {
   });
 });
 
-describe('HarnessService CLOUD MCP 快照清理', () => {
-  // 三个执行出口（execute / executePrepared / executeSideFirstMessage）都必须在结束时
-  // 清理会话快照：快照是「上一次成功连接」的记忆，残留会让下一次执行沿用陈旧工具集。
-  it('executeClearsCloudMcpSnapshotOnSuccess', async () => {
+describe('HarnessService CLOUD MCP 快照存活期', () => {
+  // CLOUD 快照的存活期是「会话级」而非「执行级」（技术方案 §4.5 第 3 点）：
+  // connectForCloud 每次执行只在 buildContext 调用一次，「某 server 连接失败时
+  // 沿用上次成功的工具集」必须跨执行才成立。若在每次执行结束清快照，下一轮
+  // getCloudSnapshot 恒为空，沿用语义在主路径上落空、tools 数组仍随连接抖动变化。
+  // 因此三个执行出口都不得清理快照；清理只在会话删除路径（SessionService.onSessionDeleted）发生。
+  it('executeKeepsCloudMcpSnapshotSoNextRoundCanReuseIt', async () => {
     const { service, skillSync } = makeHarness();
     await service.execute(10, 'hi', { onContentDelta: vi.fn() } as never);
-    expect(skillSync.clearSession).toHaveBeenCalledWith(10);
+    expect(skillSync.clearSession).not.toHaveBeenCalled();
+    expect(skillSync.clearCloudSnapshot).not.toHaveBeenCalled();
   });
 
-  it('executeClearsCloudMcpSnapshotEvenWhenLoopThrows', async () => {
+  it('executeKeepsCloudMcpSnapshotEvenWhenLoopThrows', async () => {
     const agentLoop = {
       execute: vi.fn(async () => { throw new Error('loop boom'); }),
       removeCancelFlag: vi.fn(),
     };
     const { service, skillSync } = makeHarness({ agentLoop });
     await expect(service.execute(10, 'hi', { onContentDelta: vi.fn() } as never)).rejects.toThrow('loop boom');
-    expect(skillSync.clearSession).toHaveBeenCalledWith(10);
+    expect(skillSync.clearSession).not.toHaveBeenCalled();
   });
 
-  it('executePreparedClearsCloudMcpSnapshot', async () => {
+  it('executePreparedKeepsCloudMcpSnapshot', async () => {
     const { service, skillSync } = makeHarness();
     const context = new AgentExecutionContext();
     context.sessionId = 42;
     await service.executePrepared(context, { onContentDelta: vi.fn() } as never);
-    expect(skillSync.clearSession).toHaveBeenCalledWith(42);
+    expect(skillSync.clearSession).not.toHaveBeenCalled();
+    expect(skillSync.clearCloudSnapshot).not.toHaveBeenCalled();
   });
 
-  it('executePreparedClearsCloudMcpSnapshotEvenWhenLoopThrows', async () => {
-    const agentLoop = {
-      execute: vi.fn(async () => { throw new Error('loop boom'); }),
-      removeCancelFlag: vi.fn(),
-    };
-    const { service, skillSync } = makeHarness({ agentLoop });
-    const context = new AgentExecutionContext();
-    context.sessionId = 43;
-    await expect(service.executePrepared(context, { onContentDelta: vi.fn() } as never)).rejects.toThrow('loop boom');
-    expect(skillSync.clearSession).toHaveBeenCalledWith(43);
-  });
-
-  it('executeSideFirstMessageClearsCloudMcpSnapshot', async () => {
+  it('executeSideFirstMessageKeepsCloudMcpSnapshot', async () => {
     const { service, skillSync } = makeHarness();
     await service.executeSideFirstMessage(1, 10, 'none', { onContentDelta: vi.fn() } as never);
-    expect(skillSync.clearSession).toHaveBeenCalledWith(10);
-  });
-
-  it('executeSideFirstMessageClearsCloudMcpSnapshotEvenWhenLoopThrows', async () => {
-    const agentLoop = {
-      execute: vi.fn(async () => { throw new Error('loop boom'); }),
-      removeCancelFlag: vi.fn(),
-    };
-    const { service, skillSync } = makeHarness({ agentLoop });
-    await expect(
-      service.executeSideFirstMessage(1, 10, 'none', { onContentDelta: vi.fn() } as never),
-    ).rejects.toThrow('loop boom');
-    expect(skillSync.clearSession).toHaveBeenCalledWith(10);
+    expect(skillSync.clearSession).not.toHaveBeenCalled();
+    expect(skillSync.clearCloudSnapshot).not.toHaveBeenCalled();
   });
 });
 
