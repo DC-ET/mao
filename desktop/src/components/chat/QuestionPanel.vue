@@ -437,6 +437,8 @@ function handleSubmit() {
   background: var(--aw-canvas);
   cursor: pointer;
   text-align: left;
+  /* 多行选项按钮按设计从顶部左对齐起排，压过全局 button 的居中 */
+  justify-content: flex-start;
   transition: all 0.15s;
 }
 

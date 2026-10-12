@@ -187,6 +187,8 @@ async function selectWorkspace() {
   font-size: var(--aw-text-fine);
   cursor: pointer;
   text-align: left;
+  /* 全宽目录行按设计左对齐（图标 + 路径从左侧起排），压过全局 button 的居中 */
+  justify-content: flex-start;
 }
 
 .local-dir-btn span {

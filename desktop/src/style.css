@@ -391,12 +391,20 @@ h1, h2, h3, h4, h5, h6 {
  * inline-flex 居中，不受此规则影响；自定义按钮此前靠各 class 手写
  * display:inline-flex 补齐（.create-btn 等），漏写的就歪，在此统一收口。
  * 不设 gap：EP 按钮靠 [class*=el-icon]+span 的 margin-left 撑图标间距，叠加会变宽。
+ *
+ * justify-content: center 不能省：flex 容器里文字是匿名 flex 项，按 justify-content
+ * 排布，浏览器 UA 给 button 的 text-align:center 在 flex 布局下失效，而默认值
+ * flex-start 会让被拉宽的按钮（grid/flex 拉伸、width:100% 等）文案贴左边缘。
+ * 声明居中即恢复原生 button 的默认表现；EP 按钮自带同名声明（类选择器优先），
+ * 不受影响。按设计要左对齐的宽按钮（如目录选择行）需在自己 class 里显式写回
+ * justify-content: flex-start。
  */
 button {
   font-family: var(--aw-font-text);
   transition: transform 0.1s;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
 }
 
 button:active {
