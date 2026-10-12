@@ -89,8 +89,11 @@ export class HarnessService {
     const context = await this.buildContext(sessionId, listener, cancelFlag);
     if (executionUserId != null) context.executionUserId = executionUserId;
     const persistenceCallback = this.createPersistenceCallback(sessionId, context);
-    await this.agentLoop.execute(context, listener, persistenceCallback);
-    if (cancelFlag != null) this.agentLoop.removeCancelFlag(sessionId);
+    try {
+      await this.agentLoop.execute(context, listener, persistenceCallback);
+    } finally {
+      if (cancelFlag != null) this.agentLoop.removeCancelFlag(sessionId);
+    }
   }
 
   createPersistenceCallback(targetSessionId: number, context: AgentExecutionContext): MessagePersistenceCallback {
@@ -410,8 +413,10 @@ export class HarnessService {
     context.availableSkillDocs = skillDocMap;
 
     if (mcpWarnings.length > 0) {
+      // CLOUD 快照语义下「连接失败但沿用上次快照工具」也会走到这里：
+      // notice 同时告知模型该 server 当前不可用（调用可能失败），与缓存优先的取舍对应。
       context.addSystemMessage('⚠ ' + mcpWarnings.join('；')
-        + '。相关 MCP 工具不可用，请勿调用；如需恢复请检查服务器配置后新开会话。');
+        + '。相关 MCP 工具不可用或调用可能失败，请勿调用；如需恢复请检查服务器配置后新开会话。');
     }
 
     if (!skipAutoCompact && effectiveConfig.enabled && history.persistedMessages.length > 0) {

@@ -78,6 +78,8 @@ const HARNESS_LLM_RATE_LIMIT_MAX_RETRY_DELAY_SECONDS_KEY = 'harness.llm.rateLimi
 const HARNESS_LLM_CALL_TIMEOUT_SECONDS_KEY = 'harness.llm.callTimeoutSeconds';
 const HARNESS_LLM_HTTP_CALL_TIMEOUT_SECONDS_KEY = 'harness.llm.httpCallTimeoutSeconds';
 const HARNESS_LLM_STREAM_IDLE_TIMEOUT_SECONDS_KEY = 'harness.llm.streamIdleTimeoutSeconds';
+const HARNESS_LLM_ANTHROPIC_AUTO_CACHE_KEY = 'harness.llm.anthropicAutoCache';
+const HARNESS_LLM_ANTHROPIC_CACHE_TTL_KEY = 'harness.llm.anthropicCacheTtl';
 const HARNESS_WEB_PAGE_CONNECT_TIMEOUT_KEY = 'harness.webPage.connectTimeout';
 const HARNESS_WEB_PAGE_READ_TIMEOUT_KEY = 'harness.webPage.readTimeout';
 const HARNESS_WEB_PAGE_MAX_RAW_BYTES_KEY = 'harness.webPage.maxRawBytes';
@@ -97,7 +99,7 @@ const HARNESS_INT_KEYS = new Set([
   HARNESS_SHELL_MAX_SESSIONS_KEY, HARNESS_SHELL_IDLE_TIMEOUT_MINUTES_KEY,
   HARNESS_SHELL_MAX_LIFETIME_HOURS_KEY,
 ]);
-const HARNESS_BOOL_KEYS = new Set([HARNESS_COMPACTION_ENABLED_KEY, HARNESS_COMPACTION_LOOP_MIDWAY_KEY]);
+const HARNESS_BOOL_KEYS = new Set([HARNESS_COMPACTION_ENABLED_KEY, HARNESS_COMPACTION_LOOP_MIDWAY_KEY, HARNESS_LLM_ANTHROPIC_AUTO_CACHE_KEY]);
 
 const TERMINAL_MAX_SESSIONS_PER_TASK_KEY = 'terminal.maxSessionsPerTask';
 const TERMINAL_MAX_SESSIONS_GLOBAL_KEY = 'terminal.maxSessionsGlobal';
@@ -396,6 +398,7 @@ export class SystemSettingService {
       compactionEnabledRaw, contextWindowRaw, triggerRatioRaw, maxSummaryRaw, loopMidwayRaw,
       rateLimitMaxRetriesRaw, rateLimitRetryDelayRaw, rateLimitMaxRetryDelayRaw,
       callTimeoutRaw, httpCallTimeoutRaw, streamIdleTimeoutRaw,
+      anthropicAutoCacheRaw, anthropicCacheTtlRaw,
       webPageConnectRaw, webPageReadRaw, webPageMaxRawBytesRaw, webPageMaxOutputRaw, webPageUserAgentRaw,
       shellMaxSessionsRaw, shellIdleTimeoutRaw, shellMaxLifetimeRaw,
     ] = await Promise.all([
@@ -410,6 +413,8 @@ export class SystemSettingService {
       this.getOpt(HARNESS_LLM_CALL_TIMEOUT_SECONDS_KEY),
       this.getOpt(HARNESS_LLM_HTTP_CALL_TIMEOUT_SECONDS_KEY),
       this.getOpt(HARNESS_LLM_STREAM_IDLE_TIMEOUT_SECONDS_KEY),
+      this.getOpt(HARNESS_LLM_ANTHROPIC_AUTO_CACHE_KEY),
+      this.getOpt(HARNESS_LLM_ANTHROPIC_CACHE_TTL_KEY),
       this.getOpt(HARNESS_WEB_PAGE_CONNECT_TIMEOUT_KEY),
       this.getOpt(HARNESS_WEB_PAGE_READ_TIMEOUT_KEY),
       this.getOpt(HARNESS_WEB_PAGE_MAX_RAW_BYTES_KEY),
@@ -434,6 +439,8 @@ export class SystemSettingService {
         callTimeoutSeconds: optPositiveInt(callTimeoutRaw, 120),
         httpCallTimeoutSeconds: optPositiveInt(httpCallTimeoutRaw, 180),
         streamIdleTimeoutSeconds: optPositiveInt(streamIdleTimeoutRaw, 300),
+        anthropicAutoCache: optBool(anthropicAutoCacheRaw, true),
+        anthropicCacheTtl: anthropicCacheTtlRaw === '1h' ? '1h' : '5m',
       },
       webPage: {
         connectTimeout: optPositiveInt(webPageConnectRaw, 10000),
@@ -708,6 +715,9 @@ export class SystemSettingService {
     if (HARNESS_BOOL_KEYS.has(key) && !(value!.toLowerCase() === 'true' || value!.toLowerCase() === 'false')) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '开关值必须为 true 或 false');
     }
+    if (key === HARNESS_LLM_ANTHROPIC_CACHE_TTL_KEY && value !== '5m' && value !== '1h') {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '缓存 TTL 仅支持 5m 或 1h');
+    }
     if (key === UPLOAD_STORAGE_MODE_KEY && value !== 'local' && value !== 'oss') {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '上传存储模式仅支持 local 或 oss');
     }
@@ -744,7 +754,11 @@ function parsePositiveInt(value: string | null | undefined): number | null {
 
 function optBool(raw: string | null, fallback: boolean): boolean {
   if (raw == null) return fallback;
-  return raw === 'true' || raw === '1';
+  // 与 validateValue 的开关校验口径一致（大小写不敏感），避免 'True' 能写入却被回落成默认值
+  const normalized = raw.toLowerCase();
+  if (normalized === 'true' || normalized === '1') return true;
+  if (normalized === 'false' || normalized === '0' || normalized === '') return false;
+  return fallback;
 }
 
 function optPositiveInt(raw: string | null, fallback: number): number {

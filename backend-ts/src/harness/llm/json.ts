@@ -76,7 +76,7 @@ function shouldEchoReasoningContent(modelId: string): boolean {
   return id.includes('deepseek') || id.startsWith('ds-');
 }
 
-export function serializeChatRequest(request: ChatRequest, modelId: string, stream: boolean): Record<string, unknown> {
+export function serializeChatRequest(request: ChatRequest, modelId: string, stream: boolean, sendPromptCacheKey = true): Record<string, unknown> {
   const echoReasoningContent = shouldEchoReasoningContent(modelId);
   const body: Record<string, unknown> = {
     model: modelId,
@@ -101,6 +101,11 @@ export function serializeChatRequest(request: ChatRequest, modelId: string, stre
   if (request.thinking != null) body.thinking = request.thinking;
   if (request.enableThinking != null) body.enable_thinking = request.enableThinking;
   if (request.audio != null && Object.keys(request.audio).length > 0) body.audio = request.audio;
+  // 会话级前缀缓存路由键（与 Responses 侧同一来源 mao-session-{sessionId}）：多上游网关下
+  // 缺失该键时命中率靠概率；不认该字段的网关会 400，由 openai-llm-adapter 的降级器兜底。
+  if (request.promptCacheKey != null && request.promptCacheKey !== '' && sendPromptCacheKey) {
+    body.prompt_cache_key = request.promptCacheKey;
+  }
   return body;
 }
 

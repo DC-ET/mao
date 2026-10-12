@@ -303,7 +303,7 @@ describe('SystemSettingService', () => {
     const cfg = await service().getHarnessTuningConfig();
     expect(cfg).toEqual({
       compaction: { enabled: true, contextWindowTokens: 256000, triggerRatio: 0.8, maxSummaryTokens: 12000, loopMidwayCompact: true },
-      llm: { rateLimitMaxRetries: 10, rateLimitRetryDelaySeconds: 2, rateLimitMaxRetryDelaySeconds: 30, callTimeoutSeconds: 120, httpCallTimeoutSeconds: 180, streamIdleTimeoutSeconds: 300 },
+      llm: { rateLimitMaxRetries: 10, rateLimitRetryDelaySeconds: 2, rateLimitMaxRetryDelaySeconds: 30, callTimeoutSeconds: 120, httpCallTimeoutSeconds: 180, streamIdleTimeoutSeconds: 300, anthropicAutoCache: true, anthropicCacheTtl: '5m' },
       webPage: { connectTimeout: 10000, readTimeout: 30000, maxRawBytes: 1048576, maxOutputLength: 50000, userAgent: 'Mozilla/5.0 (compatible; AgentWorkbench/1.0)' },
       shell: { maxSessionsPerConversation: 30, sessionIdleTimeoutMinutes: 30, sessionMaxLifetimeHours: 2 },
     });
@@ -329,6 +329,50 @@ describe('SystemSettingService', () => {
     expect(cfg.llm.callTimeoutSeconds).toBe(60);
     expect(cfg.webPage.userAgent).toBe('TestUA/2.0');
     expect(cfg.shell.maxSessionsPerConversation).toBe(8);
+  });
+
+  it('getHarnessTuningConfigReadsAnthropicCacheSettings', async () => {
+    const rows: Record<string, string> = {
+      'harness.llm.anthropicAutoCache': 'false',
+      'harness.llm.anthropicCacheTtl': '1h',
+    };
+    vi.mocked(mapper.findByKey).mockImplementation(async (key: string) => {
+      if (rows[key] != null) return { id: 1, settingKey: key, value: rows[key], category: '运行参数', editable: 1 };
+      return null;
+    });
+    const cfg = await service().getHarnessTuningConfig();
+    expect(cfg.llm.anthropicAutoCache).toBe(false);
+    expect(cfg.llm.anthropicCacheTtl).toBe('1h');
+  });
+
+  it('getHarnessTuningConfigFallsBackForInvalidAnthropicCacheTtl', async () => {
+    vi.mocked(mapper.findByKey).mockImplementation(async (key: string) => (
+      key === 'harness.llm.anthropicCacheTtl'
+        ? { id: 1, settingKey: key, value: '2h', category: '运行参数', editable: 1 }
+        : null
+    ));
+    const cfg = await service().getHarnessTuningConfig();
+    expect(cfg.llm.anthropicCacheTtl).toBe('5m');
+    expect(cfg.llm.anthropicAutoCache).toBe(true);
+  });
+
+  it('updateRejectsInvalidAnthropicCacheValues', async () => {
+    vi.mocked(mapper.findByKey).mockResolvedValue(setting('harness.llm.anthropicCacheTtl', '运行参数', 1));
+    await expect(service().update('harness.llm.anthropicCacheTtl', '2h')).rejects.toThrow(/5m 或 1h/);
+    vi.mocked(mapper.findByKey).mockResolvedValue(setting('harness.llm.anthropicAutoCache', '运行参数', 1));
+    await expect(service().update('harness.llm.anthropicAutoCache', 'yes')).rejects.toThrow(/true 或 false/);
+  });
+
+  it('getHarnessTuningConfigReadsMixedCaseBoolValues', async () => {
+    // update 校验对开关值大小写不敏感（'True' 能写入），读取侧必须同口径解析，
+    // 否则写进去的值会被回落成默认值，表现为「保存了但不生效」。
+    vi.mocked(mapper.findByKey).mockImplementation(async (key: string) => (
+      key === 'harness.llm.anthropicAutoCache'
+        ? { id: 1, settingKey: key, value: 'False', category: '运行参数', editable: 1 }
+        : null
+    ));
+    const cfg = await service().getHarnessTuningConfig();
+    expect(cfg.llm.anthropicAutoCache).toBe(false);
   });
 
   it('updateRejectsInvalidHarnessTuningValues', async () => {

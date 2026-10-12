@@ -132,6 +132,10 @@ export interface HarnessTuningSettings {
     callTimeoutSeconds: number;
     httpCallTimeoutSeconds: number;
     streamIdleTimeoutSeconds: number;
+    /** Anthropic 协议顶层自动缓存断点开关（默认启用）。 */
+    anthropicAutoCache: boolean;
+    /** Anthropic 缓存 TTL：5m（默认）或 1h。 */
+    anthropicCacheTtl: '5m' | '1h';
   };
   webPage: {
     connectTimeout: number;

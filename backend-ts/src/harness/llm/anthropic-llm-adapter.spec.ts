@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { AnthropicLlmAdapter, convertMessages } from './anthropic-llm-adapter.js';
 import type { ChatRequest, ChatUsage, LlmModelConfig, LlmRetryConfig, StreamCallback, StreamChunk } from './chat-request.js';
 import { DEFAULT_LLM_RETRY } from './chat-request.js';
+import { resetPromptCacheSupportForTest } from './prompt-cache-key-support.js';
 
 class QueueServer {
   requestCount = 0;
@@ -116,6 +117,19 @@ function adapter(maxRetries = 2, retryDelaySeconds = 0): AnthropicLlmAdapter {
   return new AnthropicLlmAdapter(retry);
 }
 
+function adapterWithCache(maxRetries = 2, options: Parameters<typeof AnthropicLlmAdapter.prototype.constructor>[1] = {}): AnthropicLlmAdapter {
+  const retry: LlmRetryConfig = {
+    ...DEFAULT_LLM_RETRY,
+    rateLimitMaxRetries: maxRetries,
+    rateLimitRetryDelaySeconds: 0,
+    rateLimitMaxRetryDelaySeconds: 1,
+    callTimeoutSeconds: 5,
+    streamIdleTimeoutSeconds: 5,
+    httpCallTimeoutSeconds: 5,
+  };
+  return new AnthropicLlmAdapter(retry, options);
+}
+
 function request(content: string): ChatRequest {
   return {
     temperature: 0.2,
@@ -177,6 +191,98 @@ describe('AnthropicLlmAdapter - chat (non-stream)', () => {
     const messages = body.messages as Array<{ role: string }>;
     expect(messages).toHaveLength(1);
     expect(messages[0].role).toBe('user');
+  });
+
+  it('sendsTopLevelCacheControlEphemeralByDefault', async () => {
+    resetPromptCacheSupportForTest();
+    server = new QueueServer();
+    server.enqueueJson('{"id":"m","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}');
+    await server.start();
+    await adapter().chat(request('hi'), configOf(server));
+    const body = JSON.parse(server.bodies[0]) as Record<string, unknown>;
+    expect(body.cache_control).toEqual({ type: 'ephemeral' });
+    // 其余字段不受影响
+    expect(body.model).toBe('claude-test');
+    expect(body.system).toBeUndefined();
+  });
+
+  it('omitsCacheControlWhenAutoCacheDisabledForByteIdenticalRollback', async () => {
+    resetPromptCacheSupportForTest();
+    server = new QueueServer();
+    server.enqueueJson('{"id":"m","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}');
+    await server.start();
+    await adapterWithCache(2, { autoCacheEnabled: false }).chat(request('hi'), configOf(server));
+    expect(server.bodies[0]).not.toContain('cache_control');
+  });
+
+  it('sendsOneHourTtlWhenConfigured', async () => {
+    resetPromptCacheSupportForTest();
+    server = new QueueServer();
+    server.enqueueJson('{"id":"m","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}');
+    await server.start();
+    await adapterWithCache(2, { cacheTtl: '1h' }).chat(request('hi'), configOf(server));
+    const body = JSON.parse(server.bodies[0]) as Record<string, unknown>;
+    expect(body.cache_control).toEqual({ type: 'ephemeral', ttl: '1h' });
+  });
+
+  it('fallsBackToDefaultTtlForUnsupportedValue', async () => {
+    resetPromptCacheSupportForTest();
+    server = new QueueServer();
+    server.enqueueJson('{"id":"m","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}');
+    await server.start();
+    await adapterWithCache(2, { cacheTtl: '2h' }).chat(request('hi'), configOf(server));
+    const body = JSON.parse(server.bodies[0]) as Record<string, unknown>;
+    expect(body.cache_control).toEqual({ type: 'ephemeral' });
+  });
+
+  it('chatRetriesWithoutCacheControlAfterGatewayRejectsItWith400', async () => {
+    resetPromptCacheSupportForTest();
+    server = new QueueServer();
+    server.enqueueJson('{"error":{"message":"unknown field: cache_control"}}', 400);
+    server.enqueueJson('{"id":"ok-no-cache","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}');
+    await server.start();
+    const response = await adapter().chat(request('hi'), configOf(server));
+    expect(response.id).toBe('ok-no-cache');
+    expect(server.requestCount).toBe(2);
+    expect(JSON.parse(server.bodies[0])).toMatchObject({ cache_control: { type: 'ephemeral' } });
+    expect(server.bodies[1]).not.toContain('cache_control');
+  });
+
+  it('streamRetriesWithoutCacheControlAfterGatewayRejectsItWith400', async () => {
+    resetPromptCacheSupportForTest();
+    server = new QueueServer();
+    server.enqueueJson('{"error":{"message":"unknown field: cache_control"}}', 400);
+    server.enqueueSse('data: {"type":"message_start","message":{"usage":{"input_tokens":1,"output_tokens":1}}}\n\n'
+      + 'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}\n\n'
+      + 'data: {"type":"message_stop"}\n\n');
+    await server.start();
+    const callback = new CapturingCallback();
+    await adapter().stream(request('hi'), configOf(server), callback, { get: () => false });
+    expect(callback.error).toBeUndefined();
+    expect(server.requestCount).toBe(2);
+    expect(server.bodies[1]).not.toContain('cache_control');
+  });
+
+  it('degradedModelOmitsCacheControlOnLaterRequests', async () => {
+    resetPromptCacheSupportForTest();
+    server = new QueueServer();
+    server.enqueueJson('{"error":{"message":"unknown field: cache_control"}}', 400);
+    server.enqueueJson('{"id":"ok-no-cache","content":[],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}');
+    server.enqueueJson('{"id":"ok-again","content":[],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}');
+    await server.start();
+    await adapter().chat(request('hi'), configOf(server));
+    await adapter().chat(request('hi'), configOf(server));
+    expect(server.bodies[1]).not.toContain('cache_control');
+    expect(server.bodies[2]).not.toContain('cache_control');
+  });
+
+  it('doesNotDegradeOn400ForUnrelatedErrors', async () => {
+    resetPromptCacheSupportForTest();
+    server = new QueueServer();
+    server.enqueueJson('{"error":{"message":"invalid request"}}', 400);
+    await server.start();
+    await expect(adapter().chat(request('hi'), configOf(server))).rejects.toThrow(/LLM API returned 400/);
+    expect(server.requestCount).toBe(1);
   });
 
   it('多段 system 合并到顶层 system 参数', async () => {

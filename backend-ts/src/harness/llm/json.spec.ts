@@ -135,4 +135,22 @@ describe('serializeChatRequest', () => {
     // 原对象不被序列化过程改写
     expect(request.messages![1].senderYmd).toBe('2026-10-13');
   });
+
+  it('passes promptCacheKey through as prompt_cache_key', () => {
+    const request: ChatRequest = {
+      messages: [{ role: 'user', content: 'hi' }],
+      promptCacheKey: 'mao-session-42',
+    };
+    expect(serializeChatRequest(request, 'gpt-test', true)).toMatchObject({ prompt_cache_key: 'mao-session-42' });
+  });
+
+  it('omits prompt_cache_key for blank keys and when explicitly suppressed', () => {
+    const request: ChatRequest = {
+      messages: [{ role: 'user', content: 'hi' }],
+      promptCacheKey: '',
+    };
+    expect(serializeChatRequest(request, 'gpt-test', true)).not.toHaveProperty('prompt_cache_key');
+    expect(serializeChatRequest({ messages: [], promptCacheKey: 'mao-session-1' }, 'gpt-test', true, false))
+      .not.toHaveProperty('prompt_cache_key');
+  });
 });

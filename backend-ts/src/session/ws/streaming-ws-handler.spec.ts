@@ -89,7 +89,7 @@ describe('StreamingWsHandler', () => {
   const localAgentsMdRegistry = { report: vi.fn(), clear: vi.fn() };
   const mcpSyncService = {
     loadAgentServers: vi.fn(async () => []), buildSyncPayload: vi.fn(() => ({})),
-    clearSession: vi.fn(), resolveServerIdByName: vi.fn(), recordReport: vi.fn(),
+    clearSession: vi.fn(), clearLocalSession: vi.fn(), resolveServerIdByName: vi.fn(), recordReport: vi.fn(),
   };
   const mcpClientManager = { closeSession: vi.fn() };
   const compactionSignalBus = new CompactionSignalBus();
@@ -136,6 +136,10 @@ describe('StreamingWsHandler', () => {
     expect(taskTerminalService.finishExecution).toHaveBeenCalledWith(11, 7, 'COMPLETED', 'event-1');
     expect(activityHeartbeat.clear).toHaveBeenCalledWith(11);
     expect(agentLoop.removeCancelFlag).toHaveBeenCalledWith(11);
+    // CLOUD MCP 快照是会话级记忆（技术方案 §4.5）：执行结束只回收桌面上报的 LOCAL 工具，
+    // 不能清快照——否则同一会话下一轮某 server 连接失败时无法沿用上次成功的工具集。
+    expect(mcpSyncService.clearLocalSession).toHaveBeenCalledWith(11);
+    expect(mcpSyncService.clearSession).not.toHaveBeenCalled();
   });
 
   it('finishes an accepted CLOUD task after its SSO connection expires', async () => {

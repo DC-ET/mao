@@ -79,6 +79,22 @@ describe('MemoryRepository', () => {
     expect(projectParams).toEqual([7, 'mao', 12]);
   });
 
+  it('injectionQueriesTruncateByRecencyThenOutputInIdOrderForStablePrefix', async () => {
+    // 选择口径不变（内层仍按 updated_at DESC, id DESC 截断），仅输出顺序稳定为 id ASC：
+    // 任一条记忆被 touch 不再重排整块，system 前缀缓存不被打掉。
+    const db = mockDb(null, [{ id: 1 }]);
+    const repo = new MemoryRepository(db as never);
+    await repo.listActiveUser(7, 8);
+    const [userSql] = (db.query as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(userSql).toContain('ORDER BY updated_at DESC, id DESC LIMIT ?');
+    expect(userSql).toContain('ORDER BY t.id ASC');
+
+    await repo.listActiveProject(7, 'mao', 12);
+    const [projectSql] = (db.query as ReturnType<typeof vi.fn>).mock.calls[1];
+    expect(projectSql).toContain('ORDER BY updated_at DESC, id DESC LIMIT ?');
+    expect(projectSql).toContain('ORDER BY t.id ASC');
+  });
+
   it('preferenceRoundtripDefaultsRowShape', async () => {
     const db = mockDb({ user_id: 7, auto_capture_enabled: 0 });
     const repo = new MemoryRepository(db as never);

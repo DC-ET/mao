@@ -168,6 +168,9 @@ function makeHarness(overrides: Record<string, unknown> = {}) {
     loadAgentServers: vi.fn(async () => []),
     getLocalSessionTools: vi.fn(() => []),
     connectForCloud: vi.fn(async () => ({ tools: [], warnings: [] })),
+    clearSession: vi.fn(),
+    clearLocalSession: vi.fn(),
+    clearCloudSnapshot: vi.fn(),
   };
   const localSkills = { get: vi.fn(() => []) };
   const localAgentsMd = { get: vi.fn(() => null) };
@@ -518,6 +521,46 @@ describe('HarnessService.buildContext and execute', () => {
     expect(await service.resolveModel(3)).toEqual(model());
     expect(await service.resolveModel(null)).toEqual(model());
     expect(llmModelMapper.selectDefault).toHaveBeenCalled();
+  });
+});
+
+describe('HarnessService CLOUD MCP 快照存活期', () => {
+  // CLOUD 快照的存活期是「会话级」而非「执行级」（技术方案 §4.5 第 3 点）：
+  // connectForCloud 每次执行只在 buildContext 调用一次，「某 server 连接失败时
+  // 沿用上次成功的工具集」必须跨执行才成立。若在每次执行结束清快照，下一轮
+  // getCloudSnapshot 恒为空，沿用语义在主路径上落空、tools 数组仍随连接抖动变化。
+  // 因此三个执行出口都不得清理快照；清理只在会话删除路径（SessionService.onSessionDeleted）发生。
+  it('executeKeepsCloudMcpSnapshotSoNextRoundCanReuseIt', async () => {
+    const { service, skillSync } = makeHarness();
+    await service.execute(10, 'hi', { onContentDelta: vi.fn() } as never);
+    expect(skillSync.clearSession).not.toHaveBeenCalled();
+    expect(skillSync.clearCloudSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('executeKeepsCloudMcpSnapshotEvenWhenLoopThrows', async () => {
+    const agentLoop = {
+      execute: vi.fn(async () => { throw new Error('loop boom'); }),
+      removeCancelFlag: vi.fn(),
+    };
+    const { service, skillSync } = makeHarness({ agentLoop });
+    await expect(service.execute(10, 'hi', { onContentDelta: vi.fn() } as never)).rejects.toThrow('loop boom');
+    expect(skillSync.clearSession).not.toHaveBeenCalled();
+  });
+
+  it('executePreparedKeepsCloudMcpSnapshot', async () => {
+    const { service, skillSync } = makeHarness();
+    const context = new AgentExecutionContext();
+    context.sessionId = 42;
+    await service.executePrepared(context, { onContentDelta: vi.fn() } as never);
+    expect(skillSync.clearSession).not.toHaveBeenCalled();
+    expect(skillSync.clearCloudSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('executeSideFirstMessageKeepsCloudMcpSnapshot', async () => {
+    const { service, skillSync } = makeHarness();
+    await service.executeSideFirstMessage(1, 10, 'none', { onContentDelta: vi.fn() } as never);
+    expect(skillSync.clearSession).not.toHaveBeenCalled();
+    expect(skillSync.clearCloudSnapshot).not.toHaveBeenCalled();
   });
 });
 

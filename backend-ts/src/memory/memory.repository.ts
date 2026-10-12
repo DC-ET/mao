@@ -86,20 +86,31 @@ export class MemoryRepository {
     await this.db.execute('DELETE FROM `memory_item` WHERE id = ?', [id]);
   }
 
-  /** 注入查询：USER 级 ACTIVE 按 updated_at DESC 截断（D7 上限 8 条）。 */
+  /**
+   * 注入查询：USER 级 ACTIVE 按 updated_at DESC 截断（D7 上限 8 条）。
+   * 内层先按「最新」截断出名额，外层再按 id ASC 输出：选择口径完全不变（仍取最新 N 条），
+   * 但注入顺序稳定——否则任一条记忆被 touch（用户编辑 / 别的会话结束触发抽取）都会重排
+   * 整个记忆块，打掉 system 之后的一切前缀缓存（技术方案 2026-10-12 §4.4）。
+   */
   listActiveUser(userId: number, limit: number): Promise<MemoryItemRow[]> {
     return this.db.query<MemoryItemRow>(
-      `SELECT * FROM \`memory_item\` WHERE user_id = ? AND scope = 'USER' AND status = 'ACTIVE'
-       ORDER BY updated_at DESC, id DESC LIMIT ?`,
+      `SELECT * FROM (
+         SELECT * FROM \`memory_item\`
+          WHERE user_id = ? AND scope = 'USER' AND status = 'ACTIVE'
+          ORDER BY updated_at DESC, id DESC LIMIT ?
+       ) t ORDER BY t.id ASC`,
       [userId, limit],
     );
   }
 
-  /** 注入查询：PROJECT 级 ACTIVE 按 (userId, projectKey) 定位，同序截断（D7 上限 12 条）。 */
+  /** 注入查询：PROJECT 级 ACTIVE 按 (userId, projectKey) 定位，同序截断（D7 上限 12 条）；输出顺序同 USER 段稳定为 id ASC。 */
   listActiveProject(userId: number, projectKey: string, limit: number): Promise<MemoryItemRow[]> {
     return this.db.query<MemoryItemRow>(
-      `SELECT * FROM \`memory_item\` WHERE user_id = ? AND scope = 'PROJECT' AND project_key = ? AND status = 'ACTIVE'
-       ORDER BY updated_at DESC, id DESC LIMIT ?`,
+      `SELECT * FROM (
+         SELECT * FROM \`memory_item\`
+          WHERE user_id = ? AND scope = 'PROJECT' AND project_key = ? AND status = 'ACTIVE'
+          ORDER BY updated_at DESC, id DESC LIMIT ?
+       ) t ORDER BY t.id ASC`,
       [userId, projectKey, limit],
     );
   }
