@@ -17,6 +17,7 @@ function fullPayload(): Record<string, unknown> {
       cost: {
         totalMicros: 3_420_000,
         unpricedCalls: 1,
+        calls: 6,
         top: [{ agentId: 1, name: '助手A', micros: 3_420_000 }],
       },
       openApi: { total: 12, rejected: 3 },
@@ -35,6 +36,7 @@ describe('parseDigestData', () => {
       failedTop: [{ sessionId: 10, title: '任务甲', reason: '模型超时' }],
     })
     expect(data!.cost!.totalMicros).toBe(3_420_000)
+    expect(data!.cost!.calls).toBe(6)
     expect(data!.openApi).toEqual({ total: 12, rejected: 3 })
   })
 
@@ -70,6 +72,18 @@ describe('parseDigestData', () => {
     ])
     expect(data!.cost!.totalMicros).toBe(0)
     expect(data!.cost!.top).toEqual([{ agentId: null, name: '', micros: 0 }])
+  })
+
+  it('cost.calls：正常解析；旧条目缺失时回落 0（对话框不显示免费提示）', () => {
+    const withCalls = parseDigestData({
+      digest: { coveredDate: '2026-10-11', cost: { totalMicros: 0, unpricedCalls: 0, calls: 3, top: [] } },
+    })
+    expect(withCalls!.cost).toEqual({ totalMicros: 0, unpricedCalls: 0, calls: 3, top: [] })
+    // 修复前写入的条目没有 calls 字段：回落 0 而不是 undefined
+    const legacy = parseDigestData({
+      digest: { coveredDate: '2026-10-11', cost: { totalMicros: 0, unpricedCalls: 0, top: [] } },
+    })
+    expect(legacy!.cost!.calls).toBe(0)
   })
 
   it('数组字段给非数组时按空数组处理', () => {

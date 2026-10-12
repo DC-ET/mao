@@ -59,6 +59,8 @@ export interface DigestApprovals {
 export interface DigestCost {
   totalMicros: number
   unpricedCalls: number
+  /** 窗口内调用总数（含 0 价与未配价）；全 0 价时靠它展示「免费调用 N 次」。 */
+  calls: number
   top: DigestCostAgent[]
 }
 
@@ -164,6 +166,8 @@ function parseCost(value: unknown): DigestCost | null {
   return {
     totalMicros: numOr0(o.totalMicros),
     unpricedCalls: numOr0(o.unpricedCalls),
+    // 旧条目（修复前写入）没有 calls：回落 0，对话框据此不显示免费提示
+    calls: numOr0(o.calls),
     top: arr(o.top).map((raw) => {
       const item = obj(raw) ?? {}
       return {

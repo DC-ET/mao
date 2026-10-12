@@ -64,6 +64,12 @@ export interface DigestCost {
   totalMicros: number;
   /** 窗口内未配价格（cost_micros IS NULL）的调用数，单列附注不进合计。 */
   unpricedCalls: number;
+  /**
+   * 窗口内调用总数（含 0 价与未配价）。
+   * 0 价调用（免费模型）不计合计、因非 NULL 也不算未配价，只有这个字段能让它可见——
+   * 否则「昨天只用免费模型」会成为投递了却没有任何摘要文字的板块。
+   */
+  calls: number;
   /** 按 Agent 聚合的成本 Top3。 */
   top: DigestCostAgent[];
 }

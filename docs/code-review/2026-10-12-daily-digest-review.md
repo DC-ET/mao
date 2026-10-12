@@ -1,69 +1,107 @@
 # 每日运营摘要（Daily Digest）代码审查报告
 
-- 日期：2026-10-12
-- 工作区：`/Users/yangjiayi/AiProjects/mao/.worktrees/daily-digest`（分支 `feat/daily-digest`）
-- 审查对象：`git diff 2e85554d c60657fc`（commit `c60657fc`，父 `2e85554d`）
-- 对照基准：`docs/plan/2026-10-12-daily-digest-technical-design.md`
-- 基线：后端全量 294 文件 / 3645 用例绿（未改动任何被审查功能代码与既有 spec；仅新增审查探针）
-
-## 结论摘要
-
-- 确认 **1 个功能逻辑 bug**（已用失败探针证明）：`renderDigestLine` 在「哨兵板块仅有停用、无触发」时浓缩一行为空。
-- **1 个待确认观察**（未用失败单测证明，需产品决策）：决策 11「默认开」对从未改过设置的用户不生效（无偏好行 → 永不调度）。
+> 本文件保留两轮审查记录。第 1 轮见文末「附：第 1 轮记录」。第 2 轮结论在下方。
 
 ---
 
-## Bug 1（中）：哨兵 disabled-only 时收件箱浓缩一行为空
+# 第 2 轮复审（2026-10-12）
 
-- **位置**：`backend-ts/src/digest/service.ts:237`
-- **问题描述**：`renderDigestLine` 对 watchers 板块的渲染门控是 `data.watchers.triggered > 0`：
+- 审查对象：`git diff 2e85554d a903dde7`（含初版 `c60657fc` + 修复 `a903dde7`）
+- 复审焦点：Bug 1（浓缩行空串）与观察 1（默认开不生效）两处修复是否正确、完整、有无新问题；顺带复查全量。
+- 基线：后端全量 294 文件 / 3648 用例绿（未改动任何被审查功能代码与既有 spec；仅新增第 2 轮探针）。
+
+## 结论摘要
+
+| 项 | 结论 |
+|---|---|
+| Bug 1 修复（`renderDigestLine`） | **基本正确，但不完整**：tasks / scheduled / watchers / approvals / openApi 五板块已与 `aggregate` 非空判定对称；**cost 板块仍不对称**，残留同类空串缺陷 → 新 Bug 2。 |
+| 观察 1 修复（`listEnabledUsers` LEFT JOIN + `markProcessed` upsert） | **正确**：默认开落地、显式关排除、删除用户排除、TS filter 与旧 SQL WHERE 等价、懒建行列默认值正确、单调不回退保持。 |
+| 新发现 | **Bug 2（中低）**：成本板块全 0 价（免费模型）时浓缩一行为空（已用失败探针证明）。 |
+
+---
+
+## Bug 2（中低）：成本板块全 0 价（免费模型）时收件箱浓缩一行为空——Bug 1 修复的残留
+
+- **位置**：`backend-ts/src/digest/service.ts:251-254`（`renderDigestLine` 的 cost 分支）
+- **问题描述**：Bug 1 的修复把 tasks/scheduled/watchers 的门控改得与 `aggregate` 对称，但 cost 分支仍是：
   ```ts
-  if (data.watchers != null && data.watchers.triggered > 0) parts.push(`哨兵触发 ${data.watchers.triggered}`);
+  if (data.cost != null) {
+    if (data.cost.totalMicros > 0) parts.push(`成本 ${formatCostMicros(data.cost.totalMicros)}`);
+    else if (data.cost.unpricedCalls > 0) parts.push(`未配价 ${data.cost.unpricedCalls} 次`);
+  }
   ```
-  但 `aggregate` 判定 watchers 板块非空的条件是 `triggered > 0 || disabled.length > 0`（`service.ts:100`）。两处门控不对称：当昨天唯一的运营事实是「哨兵被连续失败自动停用」（`WATCHER_DISABLED`，`triggered=0`、`disabled` 非空）时，watchers 板块非 null（摘要非安静日、正常投递），但浓缩一行**不输出任何哨兵片段**。若此时其余五板块全空，整行 `parts` 为空 → `renderDigestLine` 返回空串。
-- **影响面**：
-  - 收件箱条目 `content` 为空串（`processUser` 里 `content: clip(line, CONTENT_MAX)` → `''`），列表层 `<p v-if="item.content">` 不渲染，用户只看到标题、看不到任何摘要文字，必须点开详情对话框才能发现「哨兵已停用」。
-  - 试发（send-now）返回的 `line` 为空串，桌面 toast 回退到通用文案「昨日摘要已写入收件箱」，丢失浓缩统计。
-  - 出站 `text`（`renderDigestMarkdown`，`service.ts:258-260`）**不受影响**——它对 `watchers != null` always 渲染「触发 0 次」+「已自动停用：xxx」。故缺陷仅限收件箱一行的呈现。
-- **触发场景**：用户的一个信号哨兵因目标不可达连续失败被自动停用（产生 `WATCHER_DISABLED` 通知），且该窗口内无任何 `changed=1` 触发；同时昨天没有任务成败、定时任务执行、审批挂起、成本、开放接口调用。这是最该被日报提醒的运维信号之一，却在列表层被完全隐藏。
+  而 `aggregate` 判定 cost 板块非空的条件是 `costCalls > 0`（`costCalls` = 所有 agent 分组 `calls` 之和，**含 micros=0 的调用**）。二者不对称：
+  - 一次 0 价调用：`computeCostMicros`（`usage/cost-micros.ts:81`）对免费模型（价格配 0）返回 `Math.round(0) = 0`；`llm-call.service.ts:270` 的 `costMicros ?? null` 保留 `0`（不转 NULL）。故该行 `cost_micros = 0`。
+  - `sumCostByAgent` 该行 `micros = 0`（非 null）；`aggregate` 的 `pricedRows = filter(micros != null && micros > 0)` 把它排除 → 不计入 `totalMicros`；又因非 NULL → 不计入 `unpricedCalls`。
+  - 结果：`costCalls > 0`（板块非空、会投递），但 `totalMicros = 0` 且 `unpricedCalls = 0` → cost 分支两个 `if` 都不命中 → 无片段。若 cost 是昨天唯一非空板块，整行 `renderDigestLine` 返回空串。
+- **逐板块对称性核对**（aggregate 非空条件 vs renderDigestLine 产出片段条件）：
+
+  | 板块 | aggregate 非空 | renderDigestLine 产片段 | 对称？ |
+  |---|---|---|---|
+  | tasks | completed>0 ∨ failed>0 | completed>0 ∨ failed>0 | ✅ |
+  | scheduled | total>0 ∨ paused>0 | total>0 ∨ (total=0∧paused>0) | ✅ |
+  | watchers | triggered>0 ∨ disabled>0 | triggered>0 ∨ (triggered=0∧disabled>0) | ✅ |
+  | approvals | pending>0 | pending>0 | ✅ |
+  | **cost** | **costCalls>0（含 0 价）** | **totalMicros>0 ∨ unpricedCalls>0** | **❌（0 价调用落入两者之外）** |
+  | openApi | total>0 | total>0 | ✅ |
+
+- **触发场景**：用户昨天只对「免费/0 价模型」（管理员把价格配成 0）发起了 LLM 调用，没有任何任务成败、定时任务、哨兵、审批、开放接口活动。摘要非安静日照常投递，但收件箱条目 `content` 为空串、试发 toast 回退通用文案——「有调用但零成本」这一事实在列表层被隐藏。（若当天还有任一正价调用，`totalMicros>0`，会显示「成本 X」，不触发；故需全部调用都 0 价，场景比 Bug 1 更窄。）
 - **探针测试**：`backend-ts/src/digest/zz-review-probe.spec.ts`（2 个用例均失败）
   - 失败输出摘要：
     ```
     AssertionError: expected '' not to be '' // Object.is equality
     ```
-    两个断言（`renderDigestLine(...)` 与 `processUser` 写入条目的 `content`）均得到空串 `''`，与「应含哨兵信息」的期望相悖。
-- **建议修复方向**（不动手）：让浓缩行对「有数据的板块」都产出片段，与 `aggregate` 的非空判定对齐。例如在 `renderDigestLine` 中，当 `data.watchers != null` 时除 `哨兵触发 ${triggered}`（triggered>0 时）外，追加 `哨兵停用 ${data.watchers.disabled.length}`（disabled 非空时）。修复后应为本场景补一条既有 spec 断言（一行非空且含哨兵信息），并保留现有 `triggered>0` 用例。
+    其中 `aggregate` 用例先断言 `data.cost` 等于 `{ totalMicros: 0, unpricedCalls: 0, top: [] }` 且 `isEmpty=false`（证实板块确实非空、会投递），再断言写入条目 `content` 非空——实际为空串。
+- **建议修复方向**（不动手）：让 cost 分支与 `costCalls > 0` 对称——当 `cost != null` 但 `totalMicros=0 && unpricedCalls=0` 时也产出片段，例如 `else parts.push('成本 0')` 或 `调用 ${calls} 次（0 价）`（需在 `DigestCost` 带上调用数或在分支内用 `top.length`/另行字段）。修复后应补一条既有 spec 断言「全 0 价 → content 非空」。彻底方案是给 `DigestCost` 增加 `calls` 字段，使「有调用」可直接渲染，不再依赖 totalMicros/unpriced 反推。
 
 ---
 
-## 观察 1（待产品确认，非失败单测证明）：决策 11「默认开」对无偏好行用户不生效
+## 两处修复的复核结论（ reviewer 关注点逐条 ）
 
-- **位置**：`backend-ts/src/digest/repository.ts:27-33`（`listEnabledUsers` 仅 `WHERE enabled=1`）、`backend-ts/src/digest/service.ts:195`（`upsertPreference` 唯一写入口，仅 PATCH 触发）、`backend-ts/db/migration/V150__user_digest_preference.sql`（无回填）。
-- **问题描述**：调度器只遍历 `user_digest_preference` 中 `enabled=1` 的行；而该行**只有用户显式 PATCH 设置后才会被 `upsertPreference` 创建**。既没有 V150 回填，也没有注册/上线时的 bootstrap 建行。因此：
-  - 新注册用户、升级后的存量用户只要从未打开并改动过摘要设置，就没有偏好行 → 永远不进调度 → 永远收不到日报。
-  - 但桌面设置页 GET 回落默认值（`enabled=true`），UI 显示功能「已开启」——默认开是假象。
-- **与既有模式的分歧**：决策 11 明确「对齐收件箱多数 kind 默认开的模式」。收件箱的通知是**事件驱动 + `isKindEnabled` 读时默认**（无行也默认开，见 `inbox.service.ts:503`），所以新用户无偏好行也能收到通知；而摘要是**调度驱动 + 靠行存在**，「读时默认」在调度入口不适用。二者模式不同，导致默认开落空。
-- **证据**（静态，非失败单测）：`grep` 确认除 `service.savePreferences`→`upsertPreference`（仅 PATCH）外无任何 `INSERT INTO user_digest_preference`；V150 仅建表无回填；无注册/bootstrap 钩子建行。此缺陷是「缺失建行/回填」而非被审查代码里的逻辑错误，故难以用单测「跑失败」证明，需产品决策。
-- **建议修复方向**（不动手，二选一或组合）：
-  1. 加 bootstrap/回填：为所有存量用户与每个新注册用户插入一条默认（`enabled=1, push_time='09:30', outbound_enabled=1`）的 `user_digest_preference` 行；
-  2. 或改调度入口为「遍历所有用户 + 读时默认 enabled」，对齐收件箱 `isKindEnabled` 的默认开口子。
+### 观察 1 修复：正确
+- **LEFT JOIN 语义**：`FROM user u LEFT JOIN user_digest_preference p ON p.user_id = u.id WHERE u.deleted = 0`（`repository.ts`）。`user_digest_preference` 以 `user_id` 为主键，LEFT JOIN 每用户恰好一行（命中或全 NULL）。`notDeleted('u')` → `u.deleted = 0`（`db.ts:122`），`user` 表确有 `deleted` 列（V052），`u.id` 为主键（V001）。`FROM user u` 不加反引号与既有代码一致（`feedback.repository.ts:147`、`statistics.service.ts:96`）。✅
+- **映射默认值**：`enabled: row.enabled ?? 1`、`pushTime: row.pushTime ?? DEFAULT.pushTime`、`outboundEnabled: row.outboundEnabled ?? 1`。`??` 只在 null/undefined 时回落，故显式 `enabled=0` 保持 0（不被误抬成 1）。列 DDL 默认（enabled=1 / '09:30' / 1）与 `DEFAULT_DIGEST_PREFERENCE` 一致。✅
+- **TS filter 与旧 SQL WHERE 等价性**：旧 `WHERE enabled = 1` = 「有行且 enabled=1」；新 = 「有行且 enabled=1」∪「无行（默认 1）」−「有行且 enabled=0」。正确补上了无行默认开用户，且保留显式开关语义。✅
+- **TINYINT 类型**：`row.enabled === 1` 未做 `Number()` 强转，但 mysql2 配置 `bigNumberStrings:false` 且 TINYINT 默认以 JS number 返回；既有代码亦依赖 `agent.enabled === 0` 不做强转（`open-run.service.ts:90` 等），无 string/number 回归。✅
+- **`markProcessed` upsert**：`INSERT (user_id, last_digest_date) ... ON DUPLICATE KEY UPDATE last_digest_date = IF(原为 NULL 或更早, 新值, 原值)`。无行用户首次处理落一行（其余列走 DDL 默认 = 默认开/09:30/1），避免每分钟重复聚合；有行用户只推进日期、单调不回退；不触碰 enabled/push_time/outbound_enabled。试发（force）不调 markProcessed，故不会给显式关停用户误建行。✅
+- **规模提示（非 bug）**：LEFT JOIN 现返回全部未删除用户（而非仅有偏好行者），每分钟全量载入。在设计声明的「百人」量级可接受；若用户量级上升到很大，需评估（如只查「无行用户 ∪ 有待处理行用户」）。此为设计取舍，不计 bug。
+
+### Bug 1 修复：tasks/scheduled/watchers 正确，cost 残留（见 Bug 2）
+- tasks：`completed>0` 才出「完成 N」、`failed>0` 才出「失败 N」，与 `completed===0 && failed===0 → null` 对称；修复了旧的「完成 0」噪声。✅
+- scheduled：`total>0` 出「定时任务 N 次」，否则 `paused>0` 出「定时任务暂停 N 个」，与 `total===0 && paused空 → null` 对称。✅
+- watchers：`triggered>0` 出「哨兵触发 N」，否则 `disabled>0` 出「哨兵停用 N 个」，与 Bug 1 场景对称（原探针两场景已转正为 service.spec 回归）。✅
+- cost：**未完全对称**，残留 Bug 2（见上）。❌
 
 ---
 
-## 审查探针文件清单
+## 审查探针文件清单（第 2 轮）
 
-- `backend-ts/src/digest/zz-review-probe.spec.ts`（证明 Bug 1；修复后可删）
+- `backend-ts/src/digest/zz-review-probe.spec.ts`（证明 Bug 2；修复后可删）
 
-## 已覆盖且未发现问题的审查面
+## 第 2 轮复查覆盖面
 
-- 窗口半开区间 `[start, end)` 与 Asia/Shanghai 昨天口径（`service.ts` 的 `aggregate`、`common/json.ts` 的 `addDaysYmd`/`shanghaiYmd`/`formatDateTime`，含跨月/跨年推算）。
-- 六板块聚合 SQL：归属 JOIN、`GROUP BY`、字段映射（TASK_COMPLETED/FAILED、COMPLETED/FAILED、rejected）、mysql2 字符串强转、审批挂起无窗口、成本 NULL 行剔除合计仅计 unpriced、Top3 与 micros=0 不进 Top、agent 名回填与「未关联 Agent」回落。
-- 调度器：`hm < pushTime` 字符串比较、`last_digest_date === 昨天` 防重、停机跨天补发、单用户异常隔离、`stopped` 语义。
-- 试发（force）：跳过 enabled 门控与推送时间、不写 `last_digest_date`、安静日返回 QUIET、同日覆盖（`insertOrUpdateByDedupKey` 打回未读）。
-- `markProcessed` 单调不回退；`getPreferencesView` 三态（PENDING/SENT/QUIET）。
-- 出站 `dispatchDigest`：双格式 payload、fire-and-forget 不抛、结构对齐 `dispatchTaskTerminal`、无订阅静默跳过。
-- 路由：登录态、`pushTime` 非法值（`25:00`/`9:5`/空/非字符串）走 `PARAM_INVALID`（HTTP 200 + code≠0）、增量合并不落库、send-now 不推进标记。
-- 暂停/停兵标题前缀剥离标记与真实写入点一致（`定时任务已自动暂停：` / `信号哨兵已自动停用：`）。
-- 桌面：`digest-payload.ts` 防御性解析（已测）、`KNOWN_INBOX_KINDS` 含 `DAILY_DIGEST`（已测）、`InboxDrawer` 点击分支（摘要开对话框、其余走 `session_id`、均先标记已读）、`DigestDetailDialog` 六板块渲染与行内跳转、`NotificationSettingsView` 增量 PATCH/回滚/无订阅禁用/三态状态行、`UsageBell` 跨组件打开用量抽屉。
+- 两处修复的 diff 全量（`repository.ts` / `service.ts` / `scheduler.ts` 注释 / 两个 spec）。
+- `renderDigestLine` 六板块与 `aggregate` 非空规则的逐板块对称性（见表）。
+- `listEnabledUsers` LEFT JOIN / notDeleted / user 表结构与保留字 / TINYINT 读型 / filter 等价性。
+- `markProcessed` upsert 列默认值路径、单调性、与 force 的交互。
+- `cost_micros=0` 的可达性（`computeCostMicros` 返回 0、`llm-call.service.ts:270` 保留 0）。
+- 既有 digest 4 个 spec 复跑（54 用例绿），确认修复未破坏基线。
+- 第 1 轮已覆盖面（窗口/时区、六板块聚合 SQL、调度器、试发、出站双格式、路由校验、桌面）本次改动未触及，仅复查与修复相关部分，未发现新问题。
 
-> 说明：桌面 `.vue` 组件无单测基建（vitest 为 node 环境、仅 `*.test.ts`、无 `@vue/test-utils`），故桌面仅能审查纯逻辑（`digest-payload.ts`/store/api），组件交互以上述通读为准。
+---
+---
+
+# 附：第 1 轮记录（2026-10-12，审查 `git diff 2e85554d c60657fc`）
+
+> 以下两问题已在 `a903dde7` 修复（Bug 1 修复见上「cost 残留」说明；观察 1 已修复确认无误）。保留备查。
+
+## Bug 1（中，已修复）：哨兵 disabled-only 时收件箱浓缩一行为空
+- 位置：`backend-ts/src/digest/service.ts`（原 `renderDigestLine` 对 watchers 门控 `triggered > 0`，与 `aggregate` 的 `triggered>0 || disabled>0` 不对称）。
+- 场景：昨天唯一事实是哨兵被连续失败自动停用（`WATCHER_DISABLED`，triggered=0、disabled 非空）→ 摘要投递但浓缩行空串，运维信号在列表层被隐藏。
+- 修复：`a903dde7` 增加 `else if (disabled.length>0) 哨兵停用 N 个`；已转正为 service.spec 三条回归。
+- 现状：该分支已对称；但同类残留见第 2 轮 Bug 2（cost）。
+
+## 观察 1（已修复确认无误）：决策 11「默认开」对无偏好行用户不生效
+- 位置：`repository.ts` 的 `listEnabledUsers`（原 `WHERE enabled=1`）+ V150 无回填。
+- 场景：从未改过摘要设置的新/存量用户无偏好行 → 永不进调度 → 永远收不到日报，尽管 UI 显示默认已开启。
+- 修复：`a903dde7` 改 LEFT JOIN 全部未删除用户 + 无行套默认 + 映射后 filter；`markProcessed` 改 upsert 懒建行。已确认正确（见上「观察 1 修复：正确」）。

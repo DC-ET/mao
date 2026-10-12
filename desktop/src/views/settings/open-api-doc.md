@@ -143,7 +143,7 @@ print(urllib.request.urlopen(req).read())
     "scheduled": null,
     "watchers": null,
     "approvals": null,
-    "cost": { "totalMicros": 3420000, "unpricedCalls": 0, "top": [] },
+    "cost": { "totalMicros": 3420000, "unpricedCalls": 0, "calls": 5, "top": [] },
     "openApi": null
   },
   "text": "# 昨日运营摘要（2026-10-11）\n...",

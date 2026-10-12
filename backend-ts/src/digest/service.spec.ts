@@ -106,6 +106,7 @@ describe('DigestService.aggregate', () => {
     expect(data.cost).toEqual({
       totalMicros: 4_420_000,
       unpricedCalls: 2,
+      calls: 8,
       top: [
         { agentId: 1, name: '助手A', micros: 3_420_000 },
         { agentId: 2, name: '助手B', micros: 1_000_000 },
@@ -147,6 +148,22 @@ describe('DigestService.aggregate', () => {
     const { service } = makeService(repo);
     const data = await service.aggregate(1, YESTERDAY);
     expect(data.cost?.top[0]).toEqual({ agentId: 99, name: '未关联 Agent', micros: 100_000 });
+  });
+
+  it('全 0 价调用（免费模型）：板块非空，合计 0、未配价 0、calls 保留调用数', async () => {
+    // 回归（第 2 轮审查 Bug 2）：micros=0 非 NULL，不进 pricedRows 也不算 unpriced，
+    // 只有 calls 字段能让「昨天只用免费模型」这件事在摘要里可见。
+    const repo = emptyRepo({
+      sumCostByAgent: vi.fn(async () => [
+        { agentId: 1, micros: 0, calls: 3, unpriced: 0 },
+        { agentId: 2, micros: 0, calls: 2, unpriced: 0 },
+      ]),
+      findAgentNames: vi.fn(async () => new Map()),
+    });
+    const { service } = makeService(repo);
+    const data = await service.aggregate(1, YESTERDAY);
+    expect(data.cost).toEqual({ totalMicros: 0, unpricedCalls: 0, calls: 5, top: [] });
+    expect(service.isEmpty(data)).toBe(false);
   });
 
   it('审批挂起不限窗口：无任何事件但有挂起时 approvals 非空', async () => {
@@ -224,6 +241,30 @@ describe('DigestService.processUser', () => {
     expect(result.line).toBe('哨兵停用 1 个');
     const entry = (inbox.writeDigestEntry as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][0] as { content: string | null };
     expect(entry.content).toBe('哨兵停用 1 个');
+  });
+
+  it('唯一事实是全 0 价调用（免费模型）：非安静日照常投递，content 非空（回归空行 bug）', async () => {
+    const repo = busyRepo({
+      countTaskTerminal: vi.fn(async () => ({ completed: 0, failed: 0 })),
+      listFailedTasks: vi.fn(async () => []),
+      countScheduledRuns: vi.fn(async () => ({ total: 0, completed: 0, failed: 0 })),
+      listPausedTasks: vi.fn(async () => []),
+      countWatcherTriggers: vi.fn(async () => 0),
+      listDisabledWatchers: vi.fn(async () => []),
+      countPendingApprovals: vi.fn(async () => 0),
+      listPendingApprovals: vi.fn(async () => []),
+      // 免费模型：micros=0（非 NULL）→ 合计 0、未配价 0，只有 calls>0
+      sumCostByAgent: vi.fn(async () => [{ agentId: 1, micros: 0, calls: 3, unpriced: 0 }]),
+      findAgentNames: vi.fn(async () => new Map([[1, '免费模型']])),
+      countOpenApiCalls: vi.fn(async () => ({ total: 0, rejected: 0 })),
+      findPreference: vi.fn(async () => prefRow()),
+    });
+    const { service, inbox } = makeService(repo);
+    const result = await service.processUser(1);
+    expect(result.sent).toBe(true);
+    expect(result.line).toBe('免费调用 3 次');
+    const entry = (inbox.writeDigestEntry as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][0] as { content: string | null };
+    expect(entry.content).toBe('免费调用 3 次');
   });
 
   it('试发（force）：跳过 enabled 门控、不写 last_digest_date', async () => {
@@ -325,7 +366,7 @@ describe('渲染', () => {
     scheduled: { total: 3, completed: 2, failed: 1, paused: [{ taskId: 2, name: '日报' }] },
     watchers: { triggered: 4, disabled: [{ watcherId: 3, name: '汇率哨兵' }] },
     approvals: { pending: 2, items: [{ sessionId: 4, title: '有待处理的审批' }] },
-    cost: { totalMicros: 3_420_000, unpricedCalls: 1, top: [{ agentId: 1, name: '助手A', micros: 3_420_000 }] },
+    cost: { totalMicros: 3_420_000, unpricedCalls: 1, calls: 6, top: [{ agentId: 1, name: '助手A', micros: 3_420_000 }] },
     openApi: { total: 12, rejected: 3 },
   };
 
@@ -365,8 +406,16 @@ describe('渲染', () => {
     // 窗口内有调用但全部未配价：合计 0 不能说「成本 0」，改报未配价次数
     expect(renderDigestLine({
       coveredDate: YESTERDAY, tasks: null, scheduled: null, watchers: null, approvals: null,
-      cost: { totalMicros: 0, unpricedCalls: 5, top: [] }, openApi: null,
+      cost: { totalMicros: 0, unpricedCalls: 5, calls: 5, top: [] }, openApi: null,
     })).toBe('未配价 5 次');
+  });
+
+  it('renderDigestLine：全 0 价调用（免费模型）产出免费片段（回归：cost 门控不对称空行）', () => {
+    // 昨天只用了免费模型：合计 0、未配价 0，唯一能让这次调用可见的只有 calls
+    expect(renderDigestLine({
+      coveredDate: YESTERDAY, tasks: null, scheduled: null, watchers: null, approvals: null,
+      cost: { totalMicros: 0, unpricedCalls: 0, calls: 3, top: [] }, openApi: null,
+    })).toBe('免费调用 3 次');
   });
 
   it('renderDigestMarkdown：六板块小节 + 未配价附注', () => {
@@ -379,6 +428,7 @@ describe('渲染', () => {
     expect(md).toContain('已自动停用：汇率哨兵');
     expect(md).toContain('## 审批待办');
     expect(md).toContain('## 成本');
+    expect(md).toContain('- 共 6 次调用');
     expect(md).toContain('另有 1 次调用未配价格，未计入合计');
     expect(md).toContain('## 开放接口');
     expect(md).toContain('其中拒绝 3 次');

@@ -149,6 +149,9 @@ function openUsage() {
         <p v-if="data.cost.unpricedCalls > 0" class="digest-note">
           另有 {{ data.cost.unpricedCalls }} 次调用未配价格，未计入合计
         </p>
+        <p v-if="data.cost.totalMicros === 0 && data.cost.unpricedCalls === 0 && data.cost.calls > 0" class="digest-note">
+          全部 {{ data.cost.calls }} 次调用均为免费模型（0 价），未产生成本
+        </p>
         <el-button text type="primary" size="small" @click="openUsage">查看我的用量</el-button>
       </section>
 

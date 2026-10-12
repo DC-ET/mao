@@ -114,6 +114,7 @@ export class DigestService {
         : {
             totalMicros: pricedRows.reduce((sum, row) => sum + (row.micros ?? 0), 0),
             unpricedCalls: costUnpriced,
+            calls: costCalls,
             top: pricedRows.slice(0, COST_TOP).map((row) => ({
               agentId: row.agentId,
               name: (row.agentId != null ? agentNames.get(row.agentId) : null) ?? '未关联 Agent',
@@ -230,8 +231,10 @@ export function digestTitle(coveredDate: string): string {
  * 收件箱浓缩一行：只有有数据的板块；成本按成本单位（micros/1e6）展示。
  *
  * 每个板块的门控必须与 `aggregate` 的「板块非空」判定对称：板块非空就至少要产出
- * 一个片段，否则唯一事实恰好落在门控外时（如昨天只有哨兵被停用、零触发），
- * 整行会是空串——条目投递了但列表层没有任何摘要文字。
+ * 一个片段，否则唯一事实恰好落在门控外时（如昨天只有哨兵被停用、零触发，或昨天
+ * 只用了免费模型），整行会是空串——条目投递了但列表层没有任何摘要文字。
+ * 成本板块的调用分三路：已配价（进合计）/ 未配价（cost_micros IS NULL）/ 0 价
+ * （免费模型，两不沾），前两路各有片段，第三路靠 `calls` 兜底。
  */
 export function renderDigestLine(data: DigestData): string {
   const parts: string[] = [];
@@ -251,6 +254,8 @@ export function renderDigestLine(data: DigestData): string {
   if (data.cost != null) {
     if (data.cost.totalMicros > 0) parts.push(`成本 ${formatCostMicros(data.cost.totalMicros)}`);
     else if (data.cost.unpricedCalls > 0) parts.push(`未配价 ${data.cost.unpricedCalls} 次`);
+    // 走到这里 = 有调用但合计 0 且无未配价 → 全部 0 价（免费模型），靠 calls 兜底产出片段
+    else parts.push(`免费调用 ${data.cost.calls} 次`);
   }
   if (data.openApi != null) parts.push(`开放接口 ${data.openApi.total} 次`);
   return parts.join(' · ');
@@ -279,7 +284,9 @@ export function renderDigestMarkdown(data: DigestData): string {
     for (const item of data.approvals.items) lines.push(`- ${item.title}`);
   }
   if (data.cost != null) {
-    lines.push('', '## 成本', `- 合计 ${formatCostMicros(data.cost.totalMicros)}（成本单位）`);
+    lines.push('', '## 成本',
+      `- 合计 ${formatCostMicros(data.cost.totalMicros)}（成本单位）`,
+      `- 共 ${data.cost.calls} 次调用`);
     for (const item of data.cost.top) lines.push(`- ${item.name}：${formatCostMicros(item.micros)}`);
     if (data.cost.unpricedCalls > 0) {
       lines.push(`- 另有 ${data.cost.unpricedCalls} 次调用未配价格，未计入合计`);

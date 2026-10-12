@@ -29,7 +29,7 @@ function busyData(): DigestData {
     scheduled: null,
     watchers: null,
     approvals: null,
-    cost: { totalMicros: 3_420_000, unpricedCalls: 0, top: [] },
+    cost: { totalMicros: 3_420_000, unpricedCalls: 0, calls: 4, top: [] },
     openApi: null,
   };
 }
