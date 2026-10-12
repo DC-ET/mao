@@ -191,7 +191,10 @@ describe('DigestRepository 偏好读写', () => {
     }]);
     const rows = await h.repo.listEnabledUsers();
     const call = sqlOf(h.calls, 'FROM user u LEFT JOIN user_digest_preference');
-    expect(call.sql).toContain('u.deleted = 0');
+    // 别名只允许出现一次：WHERE u.${notDeleted('u')} 会展开成 u.u.deleted（MySQL Unknown column），
+    // 而 toContain('u.deleted = 0') 是子串匹配、会被 u.u.deleted 蒙混过关，故按整段条件断言。
+    expect(call.sql).toContain('WHERE u.deleted = 0');
+    expect(call.sql).not.toContain('u.u.');
     // 无行用户必须出现（决策 11 默认开落地的关键），关掉的必须被排除
     expect(rows).toEqual([
       { userId: 7, enabled: 1, pushTime: '09:30', outboundEnabled: 1, lastDigestDate: null },

@@ -42,7 +42,7 @@ export class DigestRepository {
       `SELECT u.id AS userId, p.enabled, p.push_time AS pushTime, p.outbound_enabled AS outboundEnabled,
               p.last_digest_date AS lastDigestDate
        FROM user u LEFT JOIN user_digest_preference p ON p.user_id = u.id
-       WHERE u.${notDeleted('u')}`,
+       WHERE ${notDeleted('u')}`,
     );
     return rows
       .map((row) => ({
