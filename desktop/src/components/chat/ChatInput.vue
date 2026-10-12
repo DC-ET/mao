@@ -337,7 +337,7 @@ const dynamicPlaceholder = computed(() => {
   if (props.initializingWorkspace) {
     return props.initializingWorkspaceLabel || '正在初始化工作区...'
   }
-  if (props.loading) return 'Agent 执行中，发送的消息将进入队列...'
+  if (props.loading) return '正在运行，消息将进入队列...'
   if (props.isNewTask) {
     // 居中态：工作区配置在 chip 内完成，placeholder 不再重复项目名/路径引导
     if (props.layout === 'centered') {
