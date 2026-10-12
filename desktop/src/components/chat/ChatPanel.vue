@@ -98,11 +98,13 @@
           :compaction-events="sessionStore.activeCompactionEvents"
           :dislike-enabled="true"
           :fork-enabled="true"
+          :share-enabled="!!sessionId"
           @edit="startEdit"
           @cancel-edit="cancelEdit"
           @confirm-edit="confirmEdit"
           @add-to-command="(content: string) => commandEditDialogRef?.open({ content })"
           @fork="openSideTask?.('fork', $event)"
+          @share="openShareDialog"
         />
 
         <div v-if="showTypingIndicator" class="typing-indicator">
@@ -194,6 +196,7 @@
     </template>
 
     <CommandEditDialog ref="commandEditDialogRef" />
+    <ShareDialog v-model="shareVisible" :session-id="shareSessionId" />
   </div>
 </template>
 
@@ -217,6 +220,7 @@ import ChatInput from './ChatInput.vue'
 import QueuePanel from './QueuePanel.vue'
 import ApprovalStack from './ApprovalStack.vue'
 import CommandEditDialog from '../command/CommandEditDialog.vue'
+import ShareDialog from '../task/ShareDialog.vue'
 import QuestionPanel from './QuestionPanel.vue'
 import ExecutionErrorBanner from './ExecutionErrorBanner.vue'
 import StarterPrompts from './StarterPrompts.vue'
@@ -297,6 +301,17 @@ const {
   deleteQueueMessage,
   reorderQueueMessage
 } = useChat(agentId, executionMode, newTaskModelId, permissionLevel)
+
+/** 分享会话弹窗（与任务列表右键「分享…」共用 ShareDialog）：只分享当前会话 */
+const shareVisible = ref(false)
+const shareSessionId = ref('')
+
+function openShareDialog() {
+  const id = sessionId.value
+  if (!id) return
+  shareSessionId.value = id
+  shareVisible.value = true
+}
 
 function handleSubmitQuestion(requestId: string, answers: QuestionAnswer[], done: (ok: boolean) => void) {
   submitQuestionAnswer(requestId, answers).then(done, () => done(false))

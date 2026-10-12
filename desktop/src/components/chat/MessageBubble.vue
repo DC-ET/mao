@@ -238,6 +238,9 @@
             />
           </svg>
         </button>
+        <button v-if="showShare" class="share-btn-icon" @click="$emit('share')" title="分享会话">
+          <el-icon :size="12"><Share /></el-icon>
+        </button>
       </div>
     </div>
   </div>
@@ -252,7 +255,7 @@ import {
 
 <script setup lang="ts">
 import { computed, ref, watch, nextTick, inject, onMounted, onUnmounted } from 'vue'
-import { Document, CopyDocument, Edit, Check, Close, Plus } from '@element-plus/icons-vue'
+import { Document, CopyDocument, Edit, Check, Close, Plus, Share } from '@element-plus/icons-vue'
 import MarkdownContent from '../common/MarkdownContent.vue'
 import ToolCallGroup from './ToolCallGroup.vue'
 import ThinkingBlock from './ThinkingBlock.vue'
@@ -308,6 +311,8 @@ const props = withDefaults(defineProps<{
   dislikeEnabled?: boolean
   /** 是否显示「Fork 到边路任务」按钮（仅主聊天传入 true） */
   forkEnabled?: boolean
+  /** 是否显示「分享会话」入口（仅已有真实会话的主聊天/边路会话传入 true） */
+  shareEnabled?: boolean
   /** 只读分享页隐藏 delegate「查看过程」（无会话上下文，点击无效果） */
   hideSubagentProcess?: boolean
 }>(), {
@@ -320,6 +325,7 @@ const props = withDefaults(defineProps<{
   sessionId: '',
   dislikeEnabled: false,
   forkEnabled: false,
+  shareEnabled: false,
   hideSubagentProcess: false
 })
 
@@ -330,6 +336,8 @@ const emit = defineEmits<{
   addToCommand: [content: string]
   /** 分叉到边路任务，payload 是被点击这一轮的助手最终回复 id（即切点） */
   fork: [messageId: string]
+  /** 打开「分享会话」弹窗（与任务列表右键分享同一弹窗） */
+  share: []
 }>()
 
 // Edit mode state
@@ -641,6 +649,9 @@ const dislikeSubmitting = computed(() => isDislikeSubmitting(props.message.id))
 
 /** Fork 入口只对助手回复有意义：把主会话历史复制到新的边路任务 */
 const showFork = computed(() => props.forkEnabled && role.value === 'assistant')
+
+/** 分享会话入口：同样是助手回复（会话级能力，与消息本身无关） */
+const showShare = computed(() => props.shareEnabled && role.value === 'assistant')
 
 const dislikePopoverVisible = ref(false)
 const selectedReason = ref<FeedbackReason | null>(null)
@@ -1477,6 +1488,27 @@ async function copyMessage() {
 }
 
 .add-command-btn:hover {
+  color: var(--aw-primary);
+  background: color-mix(in srgb, var(--aw-ink) 5%, transparent);
+}
+
+/* 分享会话：与 fork-btn 同形同度量（24px 见方圆钮，悬停主色） */
+.share-btn-icon {
+  width: var(--aw-btn-height);
+  height: var(--aw-btn-height);
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--aw-ink-muted-48);
+  cursor: pointer;
+  border-radius: var(--aw-radius-xs);
+  transition: color 0.15s, background 0.15s;
+}
+
+.share-btn-icon:hover {
   color: var(--aw-primary);
   background: color-mix(in srgb, var(--aw-ink) 5%, transparent);
 }

@@ -46,8 +46,10 @@
         :compaction-events="compactionEvents"
         :dislike-enabled="hasRealSession"
         :fork-enabled="true"
+        :share-enabled="hasRealSession"
         @add-to-command="(content: string) => commandEditDialogRef?.open({ content })"
         @fork="openSideTask?.('fork', $event)"
+        @share="openShareDialog"
       />
 
       <div v-if="sideCompacting" class="compaction-hint" role="status">
@@ -140,6 +142,7 @@
     </div>
 
     <CommandEditDialog ref="commandEditDialogRef" />
+    <ShareDialog v-model="shareVisible" :session-id="shareSessionId" />
   </div>
 </template>
 
@@ -172,6 +175,7 @@ import QueuePanel from './QueuePanel.vue'
 import ApprovalStack from './ApprovalStack.vue'
 import ExecutionErrorBanner from './ExecutionErrorBanner.vue'
 import CommandEditDialog from '../command/CommandEditDialog.vue'
+import ShareDialog from '../task/ShareDialog.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchImagesAsFiles } from '../../utils/file'
 import type { QueueMessage } from '../../types/chat'
@@ -272,6 +276,16 @@ const parentCloudProjectKey = computed(() => {
 // Real session ID: start with props if positive, otherwise 0
 const realSessionId = ref(props.sideSessionId > 0 ? props.sideSessionId : 0)
 const hasRealSession = computed(() => realSessionId.value > 0)
+
+/** 分享会话弹窗（与任务列表右键「分享…」共用 ShareDialog）：只分享当前边路会话 */
+const shareVisible = ref(false)
+const shareSessionId = ref('')
+
+function openShareDialog() {
+  if (!hasRealSession.value) return
+  shareSessionId.value = String(realSessionId.value)
+  shareVisible.value = true
+}
 const { flashId: locateFlashId } = useMessageLocate({
   sessionId: () => hasRealSession.value ? String(realSessionId.value) : null,
   container: messagesContainer,

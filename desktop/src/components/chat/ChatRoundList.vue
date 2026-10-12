@@ -65,7 +65,9 @@
         :session-id="sessionId"
         :dislike-enabled="dislikeEnabled"
         :fork-enabled="forkEnabled"
+        :share-enabled="shareEnabled"
         @fork="handleFork"
+        @share="$emit('share')"
         :hide-thinking="true"
         :hide-file-changes="true"
         :hide-subagent-process="hideSubagentProcess"
@@ -91,7 +93,9 @@
         :session-id="sessionId"
         :dislike-enabled="dislikeEnabled"
         :fork-enabled="forkEnabled"
+        :share-enabled="shareEnabled"
         @fork="handleFork"
+        @share="$emit('share')"
         :show-time="true"
         :hide-thinking="hideThinking"
         :hide-file-changes="true"
@@ -203,6 +207,8 @@ const props = withDefaults(defineProps<{
   dislikeEnabled?: boolean
   /** 是否显示「Fork 到边路任务」按钮（仅主聊天 true） */
   forkEnabled?: boolean
+  /** 是否显示「分享会话」入口（仅主聊天 true） */
+  shareEnabled?: boolean
   /** 只读分享页：折叠后的步骤也不展示思考，且无子代理过程入口 */
   hideThinking?: boolean
   hideSubagentProcess?: boolean
@@ -224,6 +230,8 @@ const emit = defineEmits<{
   addToCommand: [content: string]
   /** 分叉到边路任务：messageId 是被点击那一轮的助手最终回复 id，label 是该轮来源摘录 */
   fork: [payload: { messageId: string; label: string }]
+  /** 打开「分享会话」弹窗 */
+  share: []
 }>()
 
 const messagesRef = toRef(props, 'messages')
