@@ -135,7 +135,8 @@
       :x="ctxMenu.x"
       :y="ctxMenu.y"
       :show-local-actions="executionMode !== 'CLOUD'"
-      :show-download-actions="executionMode === 'CLOUD'"
+      :show-download-actions="canDownload"
+      :show-copy-absolute="canCopyAbsolute"
       :is-directory="ctxMenu.node?.isDirectory ?? false"
       :show-open-in-finder="executionMode !== 'CLOUD' && canOpenInFinder"
       :can-write="canWrite"
@@ -214,6 +215,10 @@ const numericSessionId = computed(() => {
   return Number.isFinite(n) ? n : 0
 })
 const canWrite = computed(() => props.executionMode === 'CLOUD' && numericSessionId.value > 0)
+/** 下载依赖 provider 的 download 能力：新建态 project provider 不实现，隐藏菜单项而非点完才 warning */
+const canDownload = computed(() => props.executionMode === 'CLOUD' && !!props.provider?.downloadFile)
+/** 复制绝对路径需要能拼出绝对路径（provider.getAbsolutePath 或本地 workspace）；都没有时复制出来必然是相对路径，隐藏免混 */
+const canCopyAbsolute = computed(() => !!props.provider?.getAbsolutePath || !!props.workspace)
 const clipboard = useFileClipboard()
 const selectedPaths = ref<string[]>([])
 const dropPath = ref('')

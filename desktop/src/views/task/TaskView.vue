@@ -151,6 +151,22 @@ provide('newTaskCloudProjects', newTaskCloudProjects)
 provide('initialLoading', initialLoading)
 provide('currentPhase', currentPhase)
 
+/**
+ * 新建态（会话未创建）：选择器里的工作区/项目/模式是右侧边栏与文件 provider 的事实源。
+ * TaskView 的 workspace/executionMode/projectKey 在新建态跟随 newTask* 三兄弟，
+ * 真实会话的这三个值由 loadSession / enterNewTaskMode / syncChatState 拥有，互不越写。
+ */
+watch(
+  [isNewTaskMode, newTaskMode, newTaskWorkspace, newTaskCloudProjectKey],
+  () => {
+    if (!isNewTaskMode.value) return
+    executionMode.value = newTaskMode.value
+    workspace.value = newTaskMode.value === 'LOCAL' ? newTaskWorkspace.value : ''
+    projectKey.value = newTaskMode.value === 'CLOUD' ? newTaskCloudProjectKey.value : ''
+  },
+  { immediate: true },
+)
+
 function syncChatState(state: {
   workspace?: string
   agentName?: string
@@ -159,7 +175,9 @@ function syncChatState(state: {
   sending?: boolean
   pendingApprovals?: any[]
 }) {
-  if (state.workspace !== undefined) workspace.value = state.workspace
+  // 新建态 workspace 由上方 newTask* 回写 watch 拥有：ChatPanel 上报的是 useChat 的
+  // 占位空串（首发前不赋值），不守卫会把用户刚选的工作区擦掉
+  if (state.workspace !== undefined && !isNewTaskMode.value) workspace.value = state.workspace
   if (state.agentName !== undefined) agentName.value = state.agentName
   if (state.todos !== undefined) chatTodos.value = state.todos
   if (state.contextWindow !== undefined) chatContextWindow.value = state.contextWindow
@@ -422,7 +440,7 @@ watch(inspectorSessionId, (sid) => {
   void ensureInspectorTodos(sid)
 }, { immediate: true })
 
-const fileProvider = useWorkspaceFileProvider(executionMode, workspace, activeSessionIdRef)
+const fileProvider = useWorkspaceFileProvider(executionMode, workspace, activeSessionIdRef, projectKey)
 const gitProvider = useWorkspaceGitProvider(executionMode, workspace, activeSessionIdRef)
 provide('fileProvider', fileProvider)
 

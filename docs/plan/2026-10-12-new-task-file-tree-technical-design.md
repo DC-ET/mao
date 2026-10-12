@@ -1,6 +1,6 @@
 # 新建会话预显工作区文件树技术方案（LOCAL + CLOUD 双模式）
 
-- 状态：待实施（2026-10-12 需求共识；本轮目标为方案文档，不动代码）
+- 状态：已实施（2026-10-12 落地，分支 feat/new-task-file-tree）
 - 日期：2026-10-12
 - 能力底座：[2026-10-12-file-manager-tab-technical-design.md](2026-10-12-file-manager-tab-technical-design.md)（中央 Tab 文件管理器，共享同一 `WorkspaceFileProvider` 抽象）、[2026-10-09-workspace-file-manager-technical-design.md](2026-10-09-workspace-file-manager-technical-design.md)（CLOUD 工作区读写端点族）。本方案主体是侧边栏「文件」Tab 的**提前显形**与 CLOUD 无会话读链路，与上述两份不冲突：管理器 Tab 入口仍要求真实会话（`canWrite` 口径不变），本方案只把「只读浏览 + 添加到聊天」提前到新建态。
 

@@ -24,7 +24,7 @@
         <div v-if="canPaste" class="context-menu-item" @click="$emit('paste')"><span>粘贴</span></div>
         <div class="context-menu-item" @click="$emit('upload')"><span>上传到此处</span></div>
       </template>
-      <div v-if="showNodeItems" class="context-menu-item" @click="$emit('copy-absolute')">
+      <div v-if="showNodeItems && showCopyAbsolute" class="context-menu-item" @click="$emit('copy-absolute')">
         <el-icon><DocumentCopy /></el-icon>
         <span>复制绝对路径</span>
       </div>
@@ -65,6 +65,7 @@ const props = defineProps<{
   y: number
   showLocalActions?: boolean
   showDownloadActions?: boolean
+  showCopyAbsolute?: boolean
   isDirectory?: boolean
   showOpenInFinder?: boolean
   canWrite?: boolean

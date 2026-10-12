@@ -252,6 +252,81 @@ export function createCloudProvider(sessionId: string): WorkspaceFileProvider {
   }
 }
 
+/**
+ * 新建态（会话未创建）CLOUD 项目 provider：按 projectKey 走后端 project 只读端点族。
+ * 不实现 getAbsolutePath / downloadFile / downloadDirectory——写与下载都依附于会话，无会话不可用。
+ */
+export function createProjectProvider(projectKey: string): WorkspaceFileProvider {
+  return {
+    async listDirectory(relativeDir: string) {
+      try {
+        const { data } = await api.get('/files/project-directory', {
+          params: { projectKey, dir: relativeDir || undefined },
+        })
+        return {
+          entries: data?.entries ?? [],
+          truncated: data?.truncated ?? false,
+        }
+      } catch (e: any) {
+        return { error: e.message || '读取目录失败' }
+      }
+    },
+    async readFile(relativePath: string, opts?: { offset?: number; limit?: number }) {
+      try {
+        const { data } = await api.get('/files/project-read', {
+          params: {
+            projectKey,
+            path: relativePath,
+            offset: opts?.offset ?? 0,
+            limit: opts?.limit ?? 5000,
+          },
+        })
+        return {
+          content: data?.content ?? '',
+          total_lines: data?.total_lines ?? 0,
+          media_type: data?.media_type,
+          mime: data?.mime,
+          data_uri: data?.data_uri,
+        }
+      } catch (e: any) {
+        return { content: '', total_lines: 0, error: e.message || '读取文件失败' }
+      }
+    },
+    async searchFiles(pattern: string, limit = 100) {
+      try {
+        const { data } = await api.get('/files/project-search', {
+          params: { projectKey, pattern, limit },
+        })
+        return {
+          entries: data?.entries ?? [],
+          truncated: data?.truncated ?? false,
+        }
+      } catch (e: any) {
+        return { error: e.message || '搜索失败' }
+      }
+    },
+    async previewFile(relativePath: string) {
+      try {
+        const token = getToken()
+        const url = `${API_BASE}/files/project-preview?projectKey=${encodeURIComponent(projectKey)}&path=${encodeURIComponent(relativePath)}`
+        const resp = await fetch(url, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        })
+        if (!resp.ok) {
+          return { error: await extractDownloadError(resp) }
+        }
+        const blob = await resp.blob()
+        if (!blob || blob.size === 0) {
+          return { error: 'PDF 内容为空' }
+        }
+        return { blob }
+      } catch (e: any) {
+        return { error: e?.message || 'PDF 预览失败' }
+      }
+    },
+  }
+}
+
 /** 将 data URI（base64）解码为 Blob。 */
 function dataUriToBlob(dataUri: string, mime: string): Blob {
   const base64 = dataUri.slice(dataUri.indexOf(',') + 1)
@@ -342,10 +417,18 @@ export function useWorkspaceFileProvider(
   executionMode: Ref<string>,
   workspace: Ref<string>,
   sessionId: Ref<string | null>,
+  projectKey: Ref<string>,
 ) {
   return computed<WorkspaceFileProvider | null>(() => {
-    if (executionMode.value === 'CLOUD' && sessionId.value) {
-      return createCloudProvider(sessionId.value)
+    if (executionMode.value === 'CLOUD') {
+      // 真实会话优先；新建态（无会话）回落已选云端项目的只读 provider
+      if (sessionId.value) {
+        return createCloudProvider(sessionId.value)
+      }
+      if (projectKey.value) {
+        return createProjectProvider(projectKey.value)
+      }
+      return null
     }
     if (workspace.value) {
       return createLocalProvider(workspace.value)
