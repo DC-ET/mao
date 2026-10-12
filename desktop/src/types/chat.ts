@@ -78,6 +78,11 @@ export interface ChatMessage {
   durationMs?: number
   fileChanges?: FileChange[]
   metadata?: Record<string, unknown>
+  /**
+   * 流式输出被中止（服务端不落库被中止的轮次）：终态 REST 重拉时这条气泡是
+   * 已流出内容的唯一副本，applyFetchedMessages 据此保留它而不是按 REST 覆盖丢弃。
+   */
+  interrupted?: boolean
 }
 
 export interface TodoItem {

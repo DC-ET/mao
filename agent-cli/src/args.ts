@@ -117,7 +117,8 @@ export interface CliConfig {
   command: CommandName;
   prompt: string;
   print: boolean;
-  outputFormat: OutputFormat;
+  /** 未显式下发（且无环境变量）时为 undefined，让项目/用户配置与内置默认按优先级生效。 */
+  outputFormat?: OutputFormat;
   resumeSessionId?: number | 'latest';
   continueLast: boolean;
   agent?: string;
@@ -126,7 +127,8 @@ export interface CliConfig {
   cloudProject?: string;
   gitClone?: string;
   gitBranch?: string;
-  permissionLevel: PermissionLevel;
+  /** 同 outputFormat：未显式下发时必须留空，否则 resolveConfig 的优先级链永远命中 CLI 默认。 */
+  permissionLevel?: PermissionLevel;
   thinking: boolean;
   ifRunning: IfRunning;
   onQuestion: OnQuestion;
@@ -364,13 +366,17 @@ export function parseCliConfig(
   const autoPrint = !stdoutIsTty || (!stdinIsTty && !prompt && command === 'chat');
   if (autoPrint && command === 'chat') print = true;
 
-  const outputFormat = parseEnum(
-    'output-format',
-    optionalString(flags, 'output-format') ?? process.env.MAO_AGENT_OUTPUT_FORMAT ?? undefined,
-    ['text', 'json', 'stream-json'] as const,
-    'text',
-    lower,
-  );
+  // 未显式下发（flag / 环境变量都没有）时必须留空：parseEnum 的 fallback 会让
+  // resolveConfig 的 `cli.x || project.x || user.x` 链永远命中 CLI 默认，
+  // 用户/项目配置里的这两项永久失效（--help 声明的优先级被破坏）。
+  const outputFormatRaw = optionalString(flags, 'output-format') ?? process.env.MAO_AGENT_OUTPUT_FORMAT;
+  const outputFormat = outputFormatRaw != null
+    ? parseEnum('output-format', outputFormatRaw, ['text', 'json', 'stream-json'] as const, 'text', lower)
+    : undefined;
+  const permissionLevelRaw = optionalString(flags, 'permission-level');
+  const permissionLevel = permissionLevelRaw != null
+    ? parseEnum('permission-level', permissionLevelRaw, ['READ_ONLY', 'READ_WRITE', 'SMART', 'PROXY', 'FULL'] as const, 'READ_WRITE', upper)
+    : undefined;
 
   let resumeSessionId = parseResume(flags);
   if (command === 'resume') {
@@ -421,13 +427,7 @@ export function parseCliConfig(
     cloudProject: optionalString(flags, 'cloud-project'),
     gitClone: optionalString(flags, 'git-clone'),
     gitBranch: optionalString(flags, 'git-branch'),
-    permissionLevel: parseEnum(
-      'permission-level',
-      optionalString(flags, 'permission-level'),
-      ['READ_ONLY', 'READ_WRITE', 'SMART', 'PROXY', 'FULL'] as const,
-      'READ_WRITE',
-      upper,
-    ),
+    permissionLevel,
     thinking: hasFlag(flags, 'thinking'),
     ifRunning: parseEnum('if-running', optionalString(flags, 'if-running'), ['wait', 'cancel', 'fail'] as const, 'wait', lower),
     onQuestion,

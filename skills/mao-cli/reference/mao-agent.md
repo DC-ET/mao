@@ -76,7 +76,7 @@ mao-agent -p "检查本次 PR 是否有明显的安全问题" \
 - `--local` 与 `--git-clone` / `--cloud-project` 互斥（后两者是 CLOUD 服务端工作区的能力）
 - LOCAL 专属选项（`--yolo`、`--approve-rule`、`--on-approval`、`--strict-danger-check`、`--i-know-what-im-doing`、`-f/--force`）在非 `--local` 下使用会直接报错
 - 打印模式（`-p`）+ 非 TTY + 显式 `--on-approval=ask` 会报错：非 TTY 无法弹审批，请改 `fail` 或提供 TTY
-- `--permission-level` 缺省为 `READ_WRITE`，会写入会话并覆盖服务端默认值（服务端默认 `READ_ONLY`）；只影响 LOCAL 审批
+- `--permission-level` 不传时取配置文件里的 `permissionLevel`（项目级 > 用户级），再无则缺省 `READ_WRITE`；会写入会话并覆盖服务端默认值（服务端默认 `READ_ONLY`）；只影响 LOCAL 审批。`--output-format` 同理（另支持 `MAO_AGENT_OUTPUT_FORMAT` 环境变量，缺省 `text`）
 
 ## 模型解析
 
@@ -202,7 +202,7 @@ emoji / CJK 按整字符删除；粘贴多行文本原样进入草稿。
 | 路径 | 内容 |
 |------|------|
 | `~/.mao/auth.json` | JWT（与 `mao` CLI 共用，0600） |
-| `~/.mao/agent-cli/config.json` | 用户配置：baseUrl、默认 Agent/模型、界面偏好、`trustedWorkspaces`（0600） |
+| `~/.mao/agent-cli/config.json` | 用户配置：baseUrl、默认 Agent/模型、`permissionLevel`、`outputFormat`、界面偏好、`trustedWorkspaces`（0600） |
 | `~/.mao/agent-cli/history` | 输入历史，最近 200 条（0600） |
 | `~/.mao/agent-cli/runtime/` | 每会话运行期文件（仅在工具结果超 900KB 时落盘，0600），保留最近 20 个会话、7 天 |
 | `<项目>/.mao/agent.json` | 项目级配置，向上找到 git 根为止 |

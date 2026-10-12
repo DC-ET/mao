@@ -2,6 +2,7 @@ import type { AgentVO, CreateSessionRequest, SafeModelVO, SessionVO } from '../r
 import type { RestClient } from '../rest/rest-client';
 import type { WsClient } from '../ws/ws-client';
 import type { AskAnswer, AskQuestion, TodoItem, WsEvent } from '../ws/event-types';
+import { TERMINAL_PHASES } from '../ws/event-types';
 import { acceptEvent, isRunningPhase, isTerminalStatus } from '../ws/event-filter';
 import { randomUUID } from '../util/uuid';
 import { CliError, EXIT } from '../util/exit-codes';
@@ -384,6 +385,14 @@ export class SessionRunner {
       if (eid && !this.executionId && isRunningPhase(phase)) {
         this.executionId = eid;
         this.seenRunning = true;
+      }
+      // 断线期间错过结果事件时，服务端只会补发终态快照（streaming-ws-handler
+      // 「即使任务已结束也必须回传终态」的设计）。终态快照必须与 session_status
+      // 一样结算本轮等待，否则打印模式永久挂起、REPL 该轮永远显示「执行中」。
+      // executionId 缺省或对不上当前执行时说明不是本轮的终态，不提前结算。
+      if (TERMINAL_PHASES.has(phase) && (eid == null || this.executionId == null || eid === this.executionId)) {
+        this.terminal = { phase };
+        this.flushWaiters();
       }
       const snaps = this.snapshotWaiters.splice(0);
       for (const w of snaps) w();

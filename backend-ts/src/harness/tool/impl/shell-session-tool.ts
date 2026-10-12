@@ -182,7 +182,17 @@ export class ShellSessionTool extends BaseTool {
       await this.injectMaoToken(session, userId);
       // 复用已有会话时 getOrCreate 不会改变 cwd，必须显式 cd
       if (workdirArg && workdir) {
-        await this.executeWithMarker(session, 'cd ' + shellSingleQuote(workdir), WORKDIR_TIMEOUT_MS);
+        const cd = await this.executeWithMarker(session, 'cd ' + shellSingleQuote(workdir), WORKDIR_TIMEOUT_MS);
+        if (!cd.completed) {
+          // cd 超时：会话里残留未结束的协议命令、状态未知，关闭回收，
+          // 避免残留 pending 被后续命令覆盖后把 cd 输出写进别人的 output_file
+          this.closeOwned(session);
+          return errorJson(`工作目录切换超时：${workdir}`);
+        }
+        if (cd.exitCode != null && cd.exitCode != 0) {
+          // cd 失败（目录不存在等）：命令绝不能仍在错误目录里静默执行
+          return errorJson(`工作目录切换失败：${workdir}${cd.output.trim() ? '：' + cd.output.trim() : ''}`);
+        }
       }
       const marker = this.newMarker();
       if (isAsync) {
@@ -239,7 +249,12 @@ export class ShellSessionTool extends BaseTool {
    * bash 已退出时 keep_session 也无法复用，必须回收。
    */
   private settleSession(session: ShellSession, result: OutputResult, keepSession: boolean): void {
-    if (!session.isAlive() || (result.completed && !keepSession)) this.sessionManager.close(session.sessionId);
+    if (!session.isAlive() || (result.completed && !keepSession)) this.closeOwned(session);
+  }
+
+  /** 关闭调用方自己持有/刚创建的会话：按会话自身归属关闭，绝不应关掉他人的 shell。 */
+  private closeOwned(session: ShellSession): void {
+    this.sessionManager.close(session.sessionId, { conversationId: session.conversationId });
   }
 
   private formatResult(
@@ -276,7 +291,7 @@ export class ShellSessionTool extends BaseTool {
     }
     const waitFor = this.parseWaitFor(args);
     if (typeof waitFor === 'string') return errorJson(waitFor);
-    const session = this.sessionManager.getSession(shellId);
+    const session = this.sessionManager.getSession(shellId, { conversationId: conversationId ?? 0 });
     if (!session) return errorJson('会话不存在或已关闭：' + shellId);
     const pending = session.pendingCommand;
     if (pending?.taskId != null) {
@@ -342,7 +357,7 @@ export class ShellSessionTool extends BaseTool {
     const shellId = asText(args.session_id);
     if (!shellId) return errorJson("await_async 必须提供 session_id 或 task_id");
     // 进程可能刚因 exit 退出，仍要读出最后输出，不能把死会话当成「不存在」
-    const session = this.sessionManager.getSession(shellId, { allowDead: true });
+    const session = this.sessionManager.getSession(shellId, { allowDead: true, conversationId: conversationId ?? 0 });
     if (!session) return errorJson('会话不存在或已关闭：' + shellId);
     const pending = session.pendingCommand;
     if (!pending) return errorJson('该会话没有未结束的命令：' + shellId);
@@ -446,10 +461,14 @@ export class ShellSessionTool extends BaseTool {
     return MARKER_PREFIX + randomUUID().replace(/-/g, '').slice(0, 12) + MARKER_SUFFIX;
   }
 
-  private handleClose(args: Record<string, unknown>, _conversationId: number | null): string {
+  private handleClose(args: Record<string, unknown>, conversationId: number | null): string {
     const shellId = asText(args.session_id);
     if (!shellId) return errorJson('close 必须提供 session_id');
-    this.sessionManager.close(shellId);
+    // 归属不一致（持他人 id）或会话已不在时按「不存在」处理：既避免越权关闭，
+    // 也不泄露会话是否存在，与 write_stdin / await_async 口径一致
+    const owned = this.sessionManager.getSession(shellId, { allowDead: true, conversationId: conversationId ?? 0 });
+    if (!owned) return errorJson('会话不存在或已关闭：' + shellId);
+    this.sessionManager.close(shellId, { conversationId: conversationId ?? 0 });
     return toJson({ success: true, session_id: shellId });
   }
 

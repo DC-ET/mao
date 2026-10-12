@@ -420,9 +420,10 @@ export class AgentLoop {
           closeRound();
           // 纯文本收尾不再有下一工具轮。已回执「已排队」的手动整理必须在退出前消费，
           // 否则 finally 清信号会让这次整理既不发生、也没有失败回执。
-          if (await this.consumeManualCompaction(context, listener, persistenceCallback, cancelFlag ?? null)) {
-            abortRound();
-          }
+          // 压缩被取消时不能 abortRound：本轮已 closeRound，onComplete 已 addUsage、
+          // assistant 消息已落库，取消的只是附带压缩动作；回滚用量会让 onMessageEnd
+          // 把「零增量」报给客户端，与 DB 里持久化的 tokenCount 不一致。
+          await this.consumeManualCompaction(context, listener, persistenceCallback, cancelFlag ?? null);
           break;
         }
 
@@ -476,8 +477,9 @@ export class AgentLoop {
 
         // 手动压缩信号消费（技术方案 5.4 / 决策 12）：必须置于 midLoopAllowed 门外——
         // enabled=false 只关「自动整理」，不得连带禁用用户显式的手动压缩。
+        // 与纯文本收尾同理：工具轮消息与用量已落库，压缩被取消只是附带动作失败，
+        // 不能 abortRound 回滚已持久化的轮次用量。
         if (await this.consumeManualCompaction(context, listener, persistenceCallback, cancelFlag ?? null)) {
-          abortRound();
           break;
         }
         const loopConfig = context.compactionConfig;
@@ -500,8 +502,8 @@ export class AgentLoop {
           } catch (e) {
             if (e instanceof CompactionContextOverflowException || e instanceof CompactionStateReloadException) throw e;
             if (e instanceof CompactionCancelledException) {
+              // 本轮已 closeRound 且消息/用量已落库，取消的只是压缩动作，不回滚用量
               cancelFlag?.set(true);
-              abortRound();
               break;
             }
             harnessLog('warn', 'Mid-loop compaction failed, continuing with the original next request', e);

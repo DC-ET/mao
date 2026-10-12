@@ -6,6 +6,16 @@ import type { TaskPhase } from './types'
 import type { LlmRetryInfo } from './types'
 
 /**
+ * 被中止轮次的助手气泡：服务端从不落库流中途取消的文本，这条气泡是已流出内容的
+ * 唯一副本（有内容或有已终结的工具调用才算；空气泡没有保留价值）。
+ */
+function isInterruptedAssistant(message: ChatMessage): boolean {
+  return message.role === 'assistant'
+    && message.interrupted === true
+    && (message.content !== '' || (message.toolCalls?.length ?? 0) > 0)
+}
+
+/**
  * 会话运行态缓存：消息、todo、活动、上下文窗口、压缩、流式、审批、队列、文件变更、待回答、执行错误。
  * 按领域拆出，由 session store 主文件组装并导出。
  */
@@ -106,10 +116,22 @@ export function createMessageRuntimeModule(ctx: {
 
   // --- Message cache actions ---
 
+  /** ensureStreamingAssistantMessage 生成的本地流式占位气泡 id（占位 key → 真实 sid 迁移时据此重新注册）。 */
+  const STREAMING_PLACEHOLDER_ID = /^msg_\d+_assistant$/
+
   function setMessages(sessionId: string, messages: ChatMessage[]) {
     const sid = String(sessionId)
-    streamingAssistantMessageIds.delete(sid)
     sessionMessages.value.set(sid, messages)
+    // 边路任务首发时占位 key（tabId）下挂着流式占位气泡；side_session_created 后用
+    // setMessages(newId, [...tempMsgs]) + clearMessages(placeholderKey) 整体迁移，两个 action
+    // 都会删注册。末条是本地流式占位气泡时把注册改记到新 key，否则首个 content_delta
+    // 认不出尾部气泡会新建一个，同一轮回复被劈成「空白气泡 + 新气泡」。中断气泡已终结，不重新注册。
+    const last = messages[messages.length - 1]
+    if (last && last.role === 'assistant' && !last.interrupted && STREAMING_PLACEHOLDER_ID.test(String(last.id))) {
+      streamingAssistantMessageIds.set(sid, String(last.id))
+    } else {
+      streamingAssistantMessageIds.delete(sid)
+    }
   }
 
   /**
@@ -153,9 +175,10 @@ export function createMessageRuntimeModule(ctx: {
           && JSON.stringify(fetched.images ?? []) === JSON.stringify(m.images ?? []))))
       : []
     const tail: ChatMessage[] = []
+    let lastFetchedIndex = -1
     for (let i = local.length - 1; i >= 0; i--) {
       const message = local[i]
-      if (fetchedIds.has(String(message.id))) break
+      if (fetchedIds.has(String(message.id))) { lastFetchedIndex = i; break }
       const isStreamingAssistant = message.role === 'assistant'
         && streamingAssistantMessageIds.get(sid) === String(message.id)
       const isReplacedOptimisticUser = message.role === 'user'
@@ -163,12 +186,28 @@ export function createMessageRuntimeModule(ctx: {
         && newlyFetchedUsers.some(fetched => fetched.content === message.content
           && JSON.stringify(fetched.images ?? []) === JSON.stringify(message.images ?? []))
       if (!isReplacedOptimisticUser
-        && (message.role !== 'assistant' || (options?.preserveStreamingAssistant && isStreamingAssistant))) {
+        && (message.role !== 'assistant' || (options?.preserveStreamingAssistant && isStreamingAssistant) || isInterruptedAssistant(message))) {
         tail.unshift(message)
       }
     }
+    // 被中止轮次服务端不落库，带中断标记的助手气泡是已流出内容的唯一副本。尾部规则只覆盖
+    // 「最后一条已落库消息」之后的范围；落在两条已落库消息之间的中断气泡（下一轮完成后再
+    // 重拉就会出现）会被 REST 覆盖范围吞掉，按原相对位置插回：插到它之后第一条已落库
+    // 消息的 REST 版本之前。升序处理，同锚点的多条保持原有先后。
+    const fetched = [...messages]
+    for (let i = Math.max(firstFetchedIndex, 0); i < lastFetchedIndex; i++) {
+      const message = local[i]
+      if (fetchedIds.has(String(message.id)) || !isInterruptedAssistant(message)) continue
+      let anchor = -1
+      for (let j = i + 1; j < local.length; j++) {
+        if (!fetchedIds.has(String(local[j].id))) continue
+        anchor = fetched.findIndex(m => String(m.id) === String(local[j].id))
+        break
+      }
+      fetched.splice(anchor < 0 ? fetched.length : anchor, 0, message)
+    }
     const prevStreamingId = streamingAssistantMessageIds.get(sid)
-    const merged = [...earlier, ...messages, ...tail]
+    const merged = [...earlier, ...fetched, ...tail]
     sessionMessages.value.set(sid, merged.length > 0 ? merged : messages)
     if (prevStreamingId && tail.some(m => String(m.id) === prevStreamingId)) {
       streamingAssistantMessageIds.set(sid, prevStreamingId)
@@ -504,6 +543,11 @@ export function createMessageRuntimeModule(ctx: {
           call.result = call.result || reason
         }
       }
+    }
+    if (msg) {
+      // 被中止的轮次服务端不落库：打上中断标记，终态 REST 重拉时保留这条唯一副本
+      //（见 applyFetchedMessages 尾部规则），否则已流出的部分回复会被静默丢弃
+      msg.interrupted = true
       sessionMessages.value.set(sid, [...list])
     }
     streamingAssistantMessageIds.delete(sid)

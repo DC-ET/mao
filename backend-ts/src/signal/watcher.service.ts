@@ -164,14 +164,15 @@ export class WatcherService {
       promptTemplate: input.promptTemplate ?? existing.promptTemplate,
     };
     const normalized = this.normalizeInput(merged);
-    // 基线重置判定用「本次实际生效的值」而非原始入参：掩码被替换成库内原值后，
-    // 请求头与库里内容一致，不应判定为「判定字段变化」而清掉基线。
-    // 两侧都做键名小写归一（HTTP 头大小写不敏感），且只在入参真的下发了 headers 时才覆盖。
-    const effective: Partial<WatcherInput> = input.headers === undefined
-      ? input
-      : { ...input, headers: canonicalHeaders(headers) };
+    // 基线重置判定用「本次实际生效的值」而非原始入参：normalizeInput 会把
+    // method/compareMode 转大写、jsonPath 去首尾空白、url 规范化（主机转小写），
+    // 落库值与库内一致、存储内容零变化，拿原始入参（'get' / ' data.price '）与库内
+    // 归一化值比较会误判「判定字段变化」而清掉基线，把两次编辑之间目标发生的真实
+    // 变化静默吞掉。headers 口径与入参对齐（键名小写归一 + 排序），且只在入参真的
+    // 下发了 headers 时才覆盖。
+    const effectiveHeaders = input.headers === undefined ? undefined : canonicalHeaders(headers);
     const resetBaseline = AFFECTS_BASELINE.some((field) => {
-      const next = effective[field];
+      const next = field === 'headers' ? effectiveHeaders : normalized[field];
       return next !== undefined && JSON.stringify(next) !== JSON.stringify(existingRaw(existing, field, this));
     });
     const patch: Partial<SignalWatcher> = {
@@ -343,9 +344,9 @@ export class WatcherService {
         jsonPath: watcher.jsonPath,
       });
     } catch (e) {
-      // JSON 解析 / 路径提取失败：check 行已落，改为失败口径
+      // JSON 解析 / 路径提取失败：check 行已落，改为失败口径（复用该行，不重复插行）
       await this.markCheckError(checkId, e);
-      await this.recordFailure(watcher, e, result.httpStatus, result.durationMs);
+      await this.recordFailure(watcher, e, result.httpStatus, result.durationMs, checkId);
       return;
     }
 
@@ -433,17 +434,19 @@ export class WatcherService {
 
   /**
    * 记录一次失败：写 check 行（若尚无）+ 累加失败计数与退避 + 达阈值自动停用并通知。
-   * `existingCheckId` 为 null 时新建一行（探针本身失败的场景）。
+   * `existingCheckId` 非 null 时复用该行（取值计算失败：runCheck 已落盘并标记 error），
+   * 为 null 时新建一行（探针本身失败的场景）。
    */
   private async recordFailure(
     watcher: SignalWatcher,
     error: unknown,
     httpStatus: number | null = null,
     durationMs: number | null = null,
+    existingCheckId: number | null = null,
   ): Promise<void> {
     if (watcher.id == null) return;
     const message = errorMessage(error);
-    const checkId = await this.deps.checkRepo.insert({
+    const checkId = existingCheckId ?? await this.deps.checkRepo.insert({
       watcherId: watcher.id,
       httpStatus,
       valueHash: null,

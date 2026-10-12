@@ -12,14 +12,14 @@ export class MysqlUserCommandRepository implements UserCommandRepository {
 
   listByUserId(userId: number): Promise<UserCommand[]> {
     return this.db.query<UserCommand>(
-      `SELECT * FROM user_command WHERE user_id = ? AND ${notDeleted()} ORDER BY created_at DESC`,
+      `SELECT * FROM user_command WHERE user_id = ? AND ${notDeleted()} ORDER BY created_at DESC, id DESC`,
       [userId],
     );
   }
 
   listPersonalAll(): Promise<UserCommand[]> {
     return this.db.query<UserCommand>(
-      `SELECT * FROM user_command WHERE user_id > 0 AND ${notDeleted()} ORDER BY created_at DESC`,
+      `SELECT * FROM user_command WHERE user_id > 0 AND ${notDeleted()} ORDER BY created_at DESC, id DESC`,
     );
   }
 
@@ -42,7 +42,7 @@ export class MysqlUserCommandRepository implements UserCommandRepository {
   listPersonalFiltered(keyword?: string, userId?: number): Promise<UserCommand[]> {
     const { whereSql, params } = this.buildPersonalWhere(keyword, userId);
     return this.db.query<UserCommand>(
-      `SELECT * FROM user_command WHERE ${whereSql} ORDER BY created_at DESC`,
+      `SELECT * FROM user_command WHERE ${whereSql} ORDER BY created_at DESC, id DESC`,
       params,
     );
   }
@@ -51,7 +51,7 @@ export class MysqlUserCommandRepository implements UserCommandRepository {
     const { whereSql, params } = this.buildPersonalWhere(keyword, userId);
     const totalRow = await this.db.queryOne<{ c: number }>(`SELECT COUNT(*) AS c FROM user_command WHERE ${whereSql}`, params);
     const records = await this.db.query<UserCommand>(
-      `SELECT * FROM user_command WHERE ${whereSql} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+      `SELECT * FROM user_command WHERE ${whereSql} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
       [...params, pageSize, (pageNum - 1) * pageSize],
     );
     return { records, total: Number(totalRow?.c ?? 0) };

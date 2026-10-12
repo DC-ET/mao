@@ -525,10 +525,17 @@ export class ShellSessionManager {
     if (shellSessionId && this.sessions.has(shellSessionId)) {
       const existing = this.sessions.get(shellSessionId)!;
       if (existing.isAlive()) {
-        existing.touch();
-        return existing;
+        if (existing.conversationId === conversationId) {
+          existing.touch();
+          return existing;
+        }
+        // 会话 id 会经工具结果暴露给模型、再经模型输出暴露给用户，不属不可猜测凭证：
+        // 持他人 id 命中复用分支即可以对方的 cwd / HOME / Git Token 环境执行命令。
+        // 归属不一致时拒绝复用，落到下方新建分支（换新 id，不动他人会话）。
+        harnessLog('warn', `Shell session ${shellSessionId} belongs to conversation ${existing.conversationId}; refusing reuse for conversation ${conversationId}`);
+      } else {
+        this.removeSession(shellSessionId);
       }
-      this.removeSession(shellSessionId);
     }
     const convSessions = this.conversationSessions.get(conversationId)
       ?? new Set<string>();
@@ -536,8 +543,9 @@ export class ShellSessionManager {
     if (convSessions.size >= this.maxSessionsPerConversation) {
       throw new Error(`Maximum number of shell sessions (${this.maxSessionsPerConversation}) reached for conversation ${conversationId}. Close existing sessions first.`);
     }
-    if (!shellSessionId) {
-      // 毫秒时间戳在并行工具调用下会同毫秒撞车，追加随机段保证唯一
+    // 毫秒时间戳在并行工具调用下会同毫秒撞车，追加随机段保证唯一；
+    // 请求的 id 被他人存活会话占用时（归属不一致）同样换新 id
+    if (!shellSessionId || this.sessions.has(shellSessionId)) {
       shellSessionId = `sh-${conversationId}-${Date.now()}-${randomUUID().replace(/-/g, '').slice(0, 8)}`;
     }
     const session = this.createSession(shellSessionId, conversationId, userId, workspace, domainTokenMap);
@@ -547,15 +555,24 @@ export class ShellSessionManager {
     return session;
   }
 
-  getSession(sessionId: string, opts?: { allowDead?: boolean }): ShellSession | null {
+  /**
+   * 按 id 取会话。传 conversationId 时校验归属：模型可能从其他会话的工具结果里
+   * 拿到（或猜到）session_id，不校验即可读写他人的 shell。
+   */
+  getSession(sessionId: string, opts?: { allowDead?: boolean; conversationId?: number | null }): ShellSession | null {
     const session = this.sessions.get(sessionId);
     if (!session) return null;
+    if (opts?.conversationId != null && session.conversationId !== opts.conversationId) return null;
     if (!session.isAlive()) return opts?.allowDead ? session : null;
     session.touch();
     return session;
   }
 
-  close(sessionId: string): void {
+  /** 关闭会话；传 conversationId 时校验归属，避免关掉他人的 shell。 */
+  close(sessionId: string, opts?: { conversationId?: number | null }): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    if (opts?.conversationId != null && session.conversationId !== opts.conversationId) return;
     this.removeSession(sessionId);
   }
 

@@ -9,6 +9,7 @@ describe('ShellSessionTool', () => {
   };
   const session = {
     sessionId: 'sh-1',
+    conversationId: 11,
     writeStdin: vi.fn(),
     incrementCommandCount: vi.fn(),
     touch: vi.fn(),
@@ -57,6 +58,16 @@ describe('ShellSessionTool', () => {
     expect(stdin.session_id).toBe('sh-1');
     const unknown = JSON.parse(await tool.execute(JSON.stringify({ action: 'nope' }), 11, null, null));
     expect(unknown.error).toContain('未知动作');
+  });
+
+  it('passes the conversation id on every session lookup so foreign ids cannot be used', async () => {
+    sessionManager.getSession.mockClear();
+    sessionManager.close.mockClear();
+    await tool.execute(JSON.stringify({ action: 'write_stdin', session_id: 'sh-1', input: 'y' }), 11, null, null);
+    expect(sessionManager.getSession).toHaveBeenCalledWith('sh-1', { conversationId: 11 });
+    const closed = JSON.parse(await tool.execute(JSON.stringify({ action: 'close', session_id: 'sh-1' }), 11, null, null));
+    expect(closed.success).toBe(true);
+    expect(sessionManager.close).toHaveBeenCalledWith('sh-1', { conversationId: 11 });
   });
 
   it('submits async exec and reports missing command', async () => {
@@ -111,6 +122,7 @@ describe('ShellSessionTool marker and environment handling', () => {
   function harness(readResult: Partial<{ output: string; truncated: boolean; completed: boolean; exitCode: number | null; matched: string | null }> = {}) {
     const shellSession = {
       sessionId: 'sh-1',
+      conversationId: 11,
       writeStdin: vi.fn(),
       incrementCommandCount: vi.fn(),
       touch: vi.fn(),
@@ -166,6 +178,7 @@ describe('ShellSessionTool marker and environment handling', () => {
     let alive = true;
     const shellSession = {
       sessionId: 'sh-1',
+      conversationId: 11,
       writeStdin: vi.fn(),
       incrementCommandCount: vi.fn(),
       touch: vi.fn(),
@@ -204,7 +217,7 @@ describe('ShellSessionTool marker and environment handling', () => {
     ));
     // 返回文案说「会话已关闭」，就必须真的回收，否则死会话继续占用会话数配额
     expect(result.message).toContain('会话已关闭');
-    expect(sessionManager.close).toHaveBeenCalledWith('sh-1');
+    expect(sessionManager.close).toHaveBeenCalledWith('sh-1', { conversationId: 11 });
   });
 
   it('reports the real exit code and falls back to -1 when the marker never arrives', async () => {
@@ -235,6 +248,7 @@ describe('ShellSessionTool marker and environment handling', () => {
     const ecpInjector = { injectForUser: vi.fn(async () => 'ecp-tok"en') };
     const shellSession = {
       sessionId: 'sh-1',
+      conversationId: 11,
       writeStdin: vi.fn(),
       incrementCommandCount: vi.fn(),
       touch: vi.fn(),
@@ -378,7 +392,7 @@ describe('ShellSessionTool marker and environment handling', () => {
     expect(resumed.output).toContain('finally');
     // 续读用的是原命令的 marker，否则会读到别的命令的输出
     expect(outputManager.readUntilMarker.mock.calls[1][1]).toBe(pendingMarker);
-    expect(sessionManager.close).toHaveBeenCalledWith('sh-1');
+    expect(sessionManager.close).toHaveBeenCalledWith('sh-1', { conversationId: 11 });
   });
 
   it('refuses a new exec while the session still has an unfinished command', async () => {
@@ -449,7 +463,7 @@ describe('ShellSessionTool marker and environment handling', () => {
     expect(resumed.exit_code).toBe(0);
     expect(resumed.matched).toBe('record=SUCCESS');
     expect(resumed.message).toContain('已退出');
-    expect(sessionManager.close).toHaveBeenCalledWith('sh-1');
+    expect(sessionManager.close).toHaveBeenCalledWith('sh-1', { conversationId: 11 });
     expect(outputManager.readUntilMarker.mock.calls.at(-1)?.[3]).toBeNull();
   });
 });

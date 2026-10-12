@@ -141,7 +141,8 @@ export class MysqlUserRepository implements UserRepository {
     const total = Number(countRow?.cnt ?? 0);
     const offset = (page - 1) * size;
     const records = await this.db.query<User>(
-      `SELECT *, ${EXTERNAL_PROVIDER_COLUMN} FROM \`user\` WHERE ${whereSql} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+      // created_at 秒级精度：并列行补唯一 tiebreaker，保证深翻页不重复/丢行
+      `SELECT *, ${EXTERNAL_PROVIDER_COLUMN} FROM \`user\` WHERE ${whereSql} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
       [...params, size, offset],
     );
     return { records, total };

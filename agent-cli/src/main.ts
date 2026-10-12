@@ -80,6 +80,10 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     asciiOnly: cfg.asciiOnly,
     queuedInput: cfg.queuedInput,
   });
+  // 未显式下发时 cfg 里这两项为 undefined：回写解析后的值（项目/用户配置或内置默认），
+  // 下游读 cfg.outputFormat / cfg.permissionLevel 的行为与修复前一致
+  cfg.outputFormat = resolved.outputFormat;
+  cfg.permissionLevel = resolved.permissionLevel;
   if (!cfg.baseUrl) cfg.baseUrl = resolved.baseUrl;
   const baseUrl = normalizeBaseUrl(cfg.baseUrl || resolved.baseUrl || DEFAULT_BASE_URL);
   resolved.baseUrl = baseUrl;

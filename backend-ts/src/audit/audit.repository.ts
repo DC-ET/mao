@@ -64,7 +64,9 @@ export class MysqlAuditLogRepository implements AuditLogRepository {
     const current = Math.max(page, 1);
     const offset = (current - 1) * size;
     const records = await this.db.query<AuditLog>(
-      `SELECT * FROM audit_log ${whereSql} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+      // created_at 是秒级 DATETIME：同一秒多行时 ORDER BY created_at DESC 不是全序，
+      // MySQL 对并列行返回顺序不保证稳定，深翻页会重复/丢行。补唯一 tiebreaker。
+      `SELECT * FROM audit_log ${whereSql} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
       [...params, size, offset],
     );
     return { records, total };

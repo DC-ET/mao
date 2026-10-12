@@ -771,3 +771,79 @@ describe('WatcherService.runCheck 触发前状态复读（BUG-7 回归）', () =
     expect(h.openRun.run).toHaveBeenCalledTimes(1);
   });
 });
+
+// ── review 探针：2026-10-12 逻辑 BUG 验证（非产品用例，修复后应转正或删除） ──
+
+describe('review: JSON 取值失败只能落一行 check', () => {
+  it('JSON 解析失败：一次轮询只插一行 check（当前实现为两行）', async () => {
+    const h = harness({
+      watcher: watcher({ compareMode: 'JSON_FIELD', jsonPath: 'v', lastValueHash: sha256('1'), lastValueSnippet: '1' }),
+      probe: () => probeResult({ body: 'not-json', bodyBytes: Buffer.from('not-json', 'utf8') }),
+    });
+    await h.service.runCheck(1);
+    expect(h.checks).toHaveLength(1);
+    expect(h.checks[0]!.error).toContain('JSON');
+    expect(h.checks[0]!.valueHash).toBeNull();
+    expect(h.checks[0]!.httpStatus).toBe(200);
+    expect((await h.service.listChecks(7, 1, 20)).rows).toHaveLength(1);
+  });
+
+  it('jsonPath 取不到值：一次轮询只插一行 check', async () => {
+    const h = harness({
+      watcher: watcher({ compareMode: 'JSON_FIELD', jsonPath: 'missing.field', lastValueHash: sha256('1') }),
+      probe: () => probeResult({ body: '{"v":1}', bodyBytes: Buffer.from('{"v":1}', 'utf8') }),
+    });
+    await h.service.runCheck(1);
+    expect(h.checks).toHaveLength(1);
+    expect(h.checks[0]!.error).toContain('路径段 missing 不存在');
+  });
+
+  it('对照组：探针本身失败仍只落一行 check', async () => {
+    const h = harness({
+      watcher: watcher({ compareMode: 'JSON_FIELD', jsonPath: 'v' }),
+      probe: () => probeResult({ ok: false, httpStatus: 500, body: '', bodyBytes: Buffer.from('', 'utf8'), error: 'boom' }),
+    });
+    await h.service.runCheck(1);
+    expect(h.checks).toHaveLength(1);
+  });
+});
+
+describe('review: 归一化后无变化的编辑不得清基线', () => {
+  it('小写 method 回传不重置基线', async () => {
+    const h = harness({
+      watcher: watcher({ method: 'GET', lastValueHash: 'abc', lastValueSnippet: 'OLD', lastChangedAt: '2026-10-11 10:00:00' }),
+    });
+    await h.service.update(7, 1, { method: 'get' });
+    const row = h.watchers.get(1)!;
+    expect(row.method).toBe('GET');
+    expect(row.lastValueHash).toBe('abc');
+    expect(row.lastValueSnippet).toBe('OLD');
+    expect(row.lastChangedAt).toBe('2026-10-11 10:00:00');
+  });
+
+  it('小写 compareMode 回传不重置基线', async () => {
+    const h = harness({ watcher: watcher({ compareMode: 'HASH', lastValueHash: 'abc' }) });
+    await h.service.update(7, 1, { compareMode: 'hash' });
+    expect(h.watchers.get(1)!.lastValueHash).toBe('abc');
+  });
+
+  it('jsonPath 仅首尾空白差异不重置基线', async () => {
+    const h = harness({ watcher: watcher({ compareMode: 'JSON_FIELD', jsonPath: 'data.price', lastValueHash: 'abc' }) });
+    await h.service.update(7, 1, { jsonPath: ' data.price ' });
+    expect(h.watchers.get(1)!.jsonPath).toBe('data.price');
+    expect(h.watchers.get(1)!.lastValueHash).toBe('abc');
+  });
+
+  it('URL 仅主机大小写差异不重置基线', async () => {
+    const h = harness({ watcher: watcher({ url: 'https://example.com/api', lastValueHash: 'abc' }) });
+    await h.service.update(7, 1, { url: 'https://Example.com/api' });
+    expect(h.watchers.get(1)!.url).toBe('https://example.com/api');
+    expect(h.watchers.get(1)!.lastValueHash).toBe('abc');
+  });
+
+  it('对照组：判定字段真实变化仍重置基线', async () => {
+    const h = harness({ watcher: watcher({ url: 'https://example.com/api', lastValueHash: 'abc' }) });
+    await h.service.update(7, 1, { url: 'https://example.org/api' });
+    expect(h.watchers.get(1)!.lastValueHash).toBeNull();
+  });
+});
