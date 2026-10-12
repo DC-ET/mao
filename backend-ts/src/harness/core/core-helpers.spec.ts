@@ -309,6 +309,84 @@ describe('SessionHistoryLoader', () => {
 
     expect(context.previousUserYmdBefore).toBeNull();
   });
+
+  it('applyHistoryDegradesToNullWhenPreviousUserStampQueryFails', async () => {
+    const contextManager = {
+      prependSessionSummary: vi.fn((_s: string | null, increment: ChatMessage[]) => [...increment]),
+    } as unknown as ContextManager;
+    // DB 抖动不能打挂 buildContext 与压缩重载：降级为 null，只锚定不提示
+    const sessionService = {
+      getPreviousUserStamp: vi.fn().mockRejectedValue(new Error('db down')),
+    } as unknown as SessionService;
+    const loader = new SessionHistoryLoader(sessionService, contextManager, archiveService);
+    const context = new AgentExecutionContext();
+    context.sessionId = 42;
+
+    await loader.applyHistory(context, null, {
+      snapshotMessageIds: [9],
+      normalizedEntities: [{ id: 9, role: 'USER', content: 'hi', createdAt: '2026-10-13 08:00:00' }],
+      persistedMessages: [PersistedChatMessage.from(9, { role: 'user', content: 'hi', senderYmd: '2026-10-13' })],
+    });
+
+    expect(context.previousUserYmdBefore).toBeNull();
+    expect(context.messages).toHaveLength(1);
+    expect(context.messages[0].content).toBe('hi');
+  });
+
+  it('applyHistoryIgnoresUnparseablePreviousUserStamp', async () => {
+    const contextManager = {
+      prependSessionSummary: vi.fn((_s: string | null, increment: ChatMessage[]) => [...increment]),
+    } as unknown as ContextManager;
+    const sessionService = {
+      getPreviousUserStamp: vi.fn().mockResolvedValue({ id: 4, createdAt: '' }),
+    } as unknown as SessionService;
+    const loader = new SessionHistoryLoader(sessionService, contextManager, archiveService);
+    const context = new AgentExecutionContext();
+    context.sessionId = 42;
+
+    await loader.applyHistory(context, null, {
+      snapshotMessageIds: [9],
+      normalizedEntities: [{ id: 9, role: 'USER', content: 'hi', createdAt: '2026-10-13 08:00:00' }],
+      persistedMessages: [PersistedChatMessage.from(9, { role: 'user', content: 'hi', senderYmd: '2026-10-13' })],
+    });
+
+    expect(context.previousUserYmdBefore).toBeNull();
+  });
+
+  it('回注的窗口外用户消息排在尾部，previousUserYmdBefore 保持 null（边界行为固化）', async () => {
+    // 窗口内无真实用户消息时，resolveLatestUserMessage 会把窗口外的最后一条用户消息回注到
+    // context.messages 尾部。该消息带 senderYmd，但 previousUserYmdBefore 只参照窗口内消息，
+    // 故为 null；跨天比较回落 sessionBaseYmd。此处固化当前行为，避免后续误改。
+    const contextManager = {
+      prependSessionSummary: vi.fn((_s: string | null, inc: ChatMessage[], _h?: string | null, latest?: ChatMessage | null) => [
+        ...inc,
+        ...(latest ? [latest] : []),
+      ]),
+    } as unknown as ContextManager;
+    const sessionService = {
+      getLastUserMessage: vi.fn().mockResolvedValue({ id: 2, role: 'USER', content: '旧问题', createdAt: '2026-10-11 10:00:00' }),
+      getPreviousUserStamp: vi.fn().mockResolvedValue(null),
+    } as unknown as SessionService;
+    const loader = new SessionHistoryLoader(sessionService, contextManager, archiveService);
+    const context = new AgentExecutionContext();
+    context.sessionId = 42;
+
+    await loader.applyHistory(context, '压缩摘要', {
+      snapshotMessageIds: [11, 13],
+      normalizedEntities: [
+        { id: 11, role: 'ASSISTANT', content: 'a', createdAt: '2026-10-13 08:00:05' },
+        { id: 13, role: 'ASSISTANT', content: 'b', createdAt: '2026-10-14 09:00:05' },
+      ],
+      persistedMessages: [
+        PersistedChatMessage.from(11, { role: 'assistant', content: 'a', senderYmd: '2026-10-13' }),
+        PersistedChatMessage.from(13, { role: 'assistant', content: 'b', senderYmd: '2026-10-14' }),
+      ],
+    });
+
+    expect(context.messages.map((m) => m.role)).toEqual(['assistant', 'assistant', 'user']);
+    expect(context.messages[2].senderYmd).toBe('2026-10-11');
+    expect(context.previousUserYmdBefore).toBeNull();
+  });
 });
 
 describe('ToolMediaInjector', () => {

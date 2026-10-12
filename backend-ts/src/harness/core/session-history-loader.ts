@@ -80,6 +80,8 @@ export class SessionHistoryLoader {
    * 窗口内第一条用户消息之前最近的一条现存用户消息日期（技术方案 2026-10-12 §5.2）。
    * 取 normalizedEntities 里第一条 USER 的 id：normalizeChatMessages 可能丢弃孤儿 TOOL，
    * 但 USER 的 id 顺序不变，用它做上界最稳妥。
+   * 查询失败只降级为 null（回落 sessionBaseYmd 比较）：这是提示增强，不能因 DB 抖动
+   * 打挂 buildContext 与压缩重载（与 harness-service.resolveSessionBaseYmd 同构容错）。
    */
   private async resolvePreviousUserYmdBefore(
     context: AgentExecutionContext,
@@ -88,8 +90,16 @@ export class SessionHistoryLoader {
     if (context.sessionId == null || this.sessionService.getPreviousUserStamp == null) return null;
     const firstUser = history.normalizedEntities.find((m) => m.role?.toUpperCase() === 'USER' && m.id != null);
     if (firstUser?.id == null) return null;
-    const previous = await this.sessionService.getPreviousUserStamp(context.sessionId, firstUser.id);
-    return previous?.createdAt ? String(previous.createdAt).slice(0, 10) : null;
+    let previous: Pick<Message, 'id' | 'createdAt'> | null = null;
+    try {
+      previous = await this.sessionService.getPreviousUserStamp(context.sessionId, firstUser.id);
+    } catch (e) {
+      harnessLog('warn',
+        `Failed to resolve previous user stamp for session ${context.sessionId}: ${(e as Error).message}`);
+      return null;
+    }
+    const ymd = previous?.createdAt ? String(previous.createdAt).slice(0, 10) : '';
+    return ymd.length === 10 ? ymd : null;
   }
 
   toChatMessage(message: Message): ChatMessage {

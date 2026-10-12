@@ -1,4 +1,4 @@
-import type { ChatMessage } from '../llm/chat-request.js';
+import type { ChatMessage, ContentPart } from '../llm/chat-request.js';
 
 /**
  * 跨天提示标签（技术方案 2026-10-12 §5.3）：某条用户消息的日期与上一条用户消息不同时，
@@ -43,7 +43,7 @@ export function applyDateChangeNotices(
     // 数组 content（多模态）：头部新增 text part，原 image part 顺序不变。禁止原地 unshift
     // ——浅拷贝副本的 content 数组与 context.messages 共享引用，原地改会污染上下文。
     messages[i] = Array.isArray(msg.content)
-      ? { ...msg, content: [{ type: 'text', text: tag }, ...(msg.content as unknown[])] as unknown }
+      ? { ...msg, content: [{ type: 'text', text: tag }, ...(msg.content as ContentPart[])] }
       : { ...msg, content: `${tag}\n\n${stringifyContent(msg.content)}` };
   }
 }

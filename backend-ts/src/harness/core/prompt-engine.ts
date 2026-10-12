@@ -11,7 +11,7 @@ import type { UserCommandService } from '../deps.js';
 import { harnessLog } from '../log.js';
 import type { AgentExecutionContext } from './agent-execution-context.js';
 import { MessageHistoryNormalizer } from './message-history-normalizer.js';
-import { applyDateChangeNotices } from './session-date-notice.js';
+import { applyDateChangeNotices, formatChineseWeekday } from './session-date-notice.js';
 import { ToolMediaInjector } from './tool-media-injector.js';
 import { TokenEstimator } from './token-estimator.js';
 import { buildHandoffUserContent } from './compaction-service.js';
@@ -115,8 +115,6 @@ const INJECTED_SECTION_KEYS = new Set([
   'workspace-rules',  // 工作区规则（AGENTS.md，可治理）
 ]);
 const AGENTS_MD_TRUNCATED_HINT = '\n> 当前仅展示前200行规则，读取AGENTS.md文件以了解更多规则。\n';
-
-const WEEKDAYS = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
 
 /** 系统提示的一个逻辑分节：text 参与逐字节拼接，key/label/count 供 manifest 展示。 */
 interface PromptSection {
@@ -628,19 +626,6 @@ export class PromptEngine {
     }
     if (truncated) ruleContent += AGENTS_MD_TRUNCATED_HINT;
     return '## 工作区规则\n\n' + ruleContent + '\n';
-  }
-}
-
-function formatChineseWeekday(isoDate: string | null | undefined): string | null {
-  if (!hasText(isoDate)) return null;
-  try {
-    const [y, m, d] = isoDate!.split('-').map(Number);
-    if (!y || !m || !d) return null;
-    const date = new Date(Date.UTC(y, m - 1, d));
-    return WEEKDAYS[date.getUTCDay()];
-  } catch {
-    harnessLog('warn', `Failed to parse current date for weekday: ${isoDate}`);
-    return null;
   }
 }
 
