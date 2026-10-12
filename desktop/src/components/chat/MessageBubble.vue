@@ -239,7 +239,7 @@
           </svg>
         </button>
         <button v-if="showShare" class="share-btn-icon" @click="$emit('share')" title="分享会话">
-          <el-icon :size="12"><Share /></el-icon>
+          <el-icon :size="12"><Link /></el-icon>
         </button>
       </div>
     </div>
@@ -255,7 +255,7 @@ import {
 
 <script setup lang="ts">
 import { computed, ref, watch, nextTick, inject, onMounted, onUnmounted } from 'vue'
-import { Document, CopyDocument, Edit, Check, Close, Plus, Share } from '@element-plus/icons-vue'
+import { Document, CopyDocument, Edit, Check, Close, Plus, Link } from '@element-plus/icons-vue'
 import MarkdownContent from '../common/MarkdownContent.vue'
 import ToolCallGroup from './ToolCallGroup.vue'
 import ThinkingBlock from './ThinkingBlock.vue'
@@ -1492,7 +1492,8 @@ async function copyMessage() {
   background: color-mix(in srgb, var(--aw-ink) 5%, transparent);
 }
 
-/* 分享会话：与 fork-btn 同形同度量（24px 见方圆钮，悬停主色） */
+/* 分享会话：与 fork-btn 同形同度量（24px 见方圆钮，悬停主色）。图标用 Link 链条，
+   不用 element-plus 的 Share——后者同样是「三点 + 连线」，和 fork 拓扑撞车难以分辨。 */
 .share-btn-icon {
   width: var(--aw-btn-height);
   height: var(--aw-btn-height);
