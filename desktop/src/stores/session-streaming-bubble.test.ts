@@ -13,7 +13,7 @@ vi.mock('../api', () => ({
 }))
 
 /**
- * 逻辑 BUG 验证（review 探针，非产品用例）：
+ * 逻辑回归用例（round2 审查修复后转正）：
  * 1. 边路任务首发：占位 key → 真实 sid 迁移用 setMessages + clearMessages 整体搬运，
  *    两个 action 都会删掉 streamingAssistantMessageIds 注册，导致首个 content_delta
  *    重新建一个 assistant 气泡——同一轮流式回复被劈成「空白气泡 + 新气泡」。
@@ -21,7 +21,7 @@ vi.mock('../api', () => ({
  *    （不传 preserveLiveStream）把未落库的部分回复气泡整体丢弃，内容永久丢失。
  */
 
-describe('review: 桌面消息 store 流式气泡生命周期', () => {
+describe('桌面消息 store 流式气泡生命周期', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
   })

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { parseCliConfig } from '../src/args';
 
 /**
- * 逻辑 BUG 验证（review 探针，非产品用例）：
+ * 逻辑回归用例（round2 审查修复后转正）：
  * parseCliConfig 对未显式下发的 permissionLevel / outputFormat 也填入默认值，
  * 导致 resolveConfig 的 `cli.x || project.x || user.x` 优先级链永远命中 CLI 默认，
  * 用户/项目配置文件里的这两项永久失效（--help 声明的优先级被破坏）。
@@ -10,7 +10,7 @@ import { parseCliConfig } from '../src/args';
 
 const tty = { stdoutIsTty: true, stdinIsTty: true };
 
-describe('review: 未下发的枚举参数必须留空以让配置文件生效', () => {
+describe('未下发的枚举参数必须留空以让配置文件生效', () => {
   it('不传 --permission-level 时 parseCliConfig 不应塞入 READ_WRITE 默认值', () => {
     const cfg = parseCliConfig([], tty);
     expect(cfg.permissionLevel).toBeUndefined();

@@ -3,7 +3,7 @@ import { MysqlAuditLogRepository } from './audit.repository.js';
 import type { AuditLog } from './types.js';
 
 /**
- * 逻辑 BUG 验证（review 探针，非产品用例）：
+ * 逻辑回归用例（round2 审查修复后转正）：
  * audit_log.created_at 是秒级 DATETIME（V048），同一秒并发写多行时
  * ORDER BY created_at DESC 不是全序，MySQL 对并列行返回顺序不保证稳定，
  * 深翻页会出现重复行/丢行（审计留痕在分页列表里静默丢失）。
@@ -22,7 +22,7 @@ function mockDb(rows: AuditLog[], total = rows.length) {
 const row = (id: number, createdAt = '2026-10-12 10:00:00'): AuditLog =>
   ({ id, userId: 1, username: 'admin', action: 'UPDATE', objectType: 'model', objectId: '1', method: 'PUT', path: '/api/v1/models/1', queryString: null, ip: '127.0.0.1', status: 200, success: 1, errorMessage: null, createdAt }) as AuditLog;
 
-describe('review: audit 分页排序键必须唯一', () => {
+describe('audit 分页排序键必须唯一', () => {
   it('selectPage 的 ORDER BY 必须带唯一 tiebreaker（当前只有 created_at DESC）', async () => {
     const rows = Array.from({ length: 25 }, (_, i) => row(i + 1));
     const db = mockDb(rows);

@@ -7,7 +7,7 @@ import type { SessionVO } from '../src/rest/types';
 import type { WsEvent } from '../src/ws/event-types';
 
 /**
- * 逻辑 BUG 验证（review 探针，非产品用例）：
+ * 逻辑回归用例（round2 审查修复后转正）：
  * 断线重连后服务端回传的终态 session_snapshot 不能结束本轮等待，
  * 打印模式进程永久挂起。预期：快照 phase 为终态时应与 session_status 一样 settle。
  */
@@ -82,7 +82,7 @@ function hangGuard<T>(p: Promise<T>, ms = 500): Promise<T> {
   ]);
 }
 
-describe('review: 终态 session_snapshot 必须结算本轮等待', () => {
+describe('终态 session_snapshot 必须结算本轮等待', () => {
   it('重连后收到的 COMPLETED 快照结束本轮（不挂起）', async () => {
     const { ws, runner } = await attached();
     const p = runner.runPrompt('x');

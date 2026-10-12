@@ -774,7 +774,7 @@ describe('WatcherService.runCheck 触发前状态复读（BUG-7 回归）', () =
 
 // ── review 探针：2026-10-12 逻辑 BUG 验证（非产品用例，修复后应转正或删除） ──
 
-describe('review: JSON 取值失败只能落一行 check', () => {
+describe('JSON 取值失败只能落一行 check', () => {
   it('JSON 解析失败：一次轮询只插一行 check（当前实现为两行）', async () => {
     const h = harness({
       watcher: watcher({ compareMode: 'JSON_FIELD', jsonPath: 'v', lastValueHash: sha256('1'), lastValueSnippet: '1' }),
@@ -808,7 +808,7 @@ describe('review: JSON 取值失败只能落一行 check', () => {
   });
 });
 
-describe('review: 归一化后无变化的编辑不得清基线', () => {
+describe('归一化后无变化的编辑不得清基线', () => {
   it('小写 method 回传不重置基线', async () => {
     const h = harness({
       watcher: watcher({ method: 'GET', lastValueHash: 'abc', lastValueSnippet: 'OLD', lastChangedAt: '2026-10-11 10:00:00' }),

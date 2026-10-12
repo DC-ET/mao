@@ -18,13 +18,13 @@ import type { McpClientManager } from '../mcp/mcp-client-manager.js';
 import type { Tool } from '../tool/tool.js';
 
 /**
- * 逻辑 BUG 验证（review 探针，非产品用例）：
+ * 逻辑回归用例（round2 审查修复后转正）：
  * 纯文本轮正常收尾（消息已落库、用量已 addUsage）后，手动压缩被取消时
  * abortRound() 把本轮已完成的用量一并回滚，与会话用量统计（DB tokenCount）不一致。
  * 预期：取消的是压缩这个附带动作，不应丢弃本轮回答已产生的用量。
  */
 
-describe('review: 手动压缩被取消不得丢弃已完成轮次的用量', () => {
+describe('手动压缩被取消不得丢弃已完成轮次的用量', () => {
   const llmAdapter = { stream: vi.fn(), chat: vi.fn() } as unknown as LlmAdapter & { stream: ReturnType<typeof vi.fn> };
   const promptEngine = { buildRequest: vi.fn() } as unknown as PromptEngine & { buildRequest: ReturnType<typeof vi.fn> };
   const contextManager = {} as ContextManager;

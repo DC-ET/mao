@@ -2,13 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ShellSessionTool } from './shell-session-tool.js';
 
 /**
- * 逻辑 BUG 验证（review 探针，非产品用例）：
+ * 逻辑回归用例（round2 审查修复后转正）：
  * handleExec 里 workdir 的 cd 通过 executeWithMarker 发出后，返回值被完全丢弃。
  * cd 失败（目录不存在/超时）时命令仍在原 workspace 静默执行，
  * 工具描述承诺的「传 workdir 会自动 cd」被破坏且无任何失败信号。
  */
 
-describe('review: workdir 的 cd 失败必须上报而不是静默执行', () => {
+describe('workdir 的 cd 失败必须上报而不是静默执行', () => {
   const pathSandbox = {
     resolve: vi.fn((_p: string, ws: string | null) => ws ?? '/tmp'),
     resolveLenient: vi.fn((p: string, ws: string | null) => (p.startsWith('/') ? p : `${ws ?? '/tmp'}/${p}`)),

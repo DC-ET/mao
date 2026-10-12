@@ -7,7 +7,7 @@ import { RuntimeDataResolver } from '../runtime/runtime-data-resolver.js';
 import { ShellSessionManager } from './shell-session-manager.js';
 
 /**
- * 逻辑 BUG 验证（review 探针，非产品用例）：
+ * 逻辑回归用例（round2 审查修复后转正）：
  * getOrCreate 复用分支不校验 conversationId，会话 B 持会话 A 的 session_id
  * 即可拿到 A 的 shell（A 的 cwd / HOME / Git Token 环境），越权执行命令。
  * 预期：复用必须属于同一 conversation，否则拒绝或为调用方新建。
@@ -21,7 +21,7 @@ function makeManager(dir: string): ShellSessionManager {
   );
 }
 
-describe('review: shell session 复用必须校验会话归属', () => {
+describe('shell session 复用必须校验会话归属', () => {
   it('跨 conversation 携带他人 session_id 不得复用该会话的 shell', async () => {
     const dir = useTmpDir('mao-shell-review-');
     mkdirSync(join(dir, 'runtime'), { recursive: true });

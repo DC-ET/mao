@@ -1,7 +1,7 @@
 # 2026-10-12 核心功能逻辑 BUG 审查（round 2）
 
 > 审查方式：通读 backend-ts / desktop / admin / agent-cli / shared 五端源码，对每个候选 BUG 先在当前代码完整推演触发路径，再补写可运行的测试用例验证「真实存在」。
-> 所有验证用例均为「按正确语义断言、当前实现下失败」的探针（命名 `zz-review-*` 或追加在现有 spec 的 `review:` describe 中），修复后应转正为产品回归用例。
+> 所有验证用例均为「按正确语义断言、当前实现下失败」的探针（独立 spec 文件或追加在现有 spec 的 describe 中），修复后已转正为产品回归用例。
 > 本文档只收录**有失败用例佐证**的逻辑 BUG，共 10 个；未经测试验证的推测统一放入文末「其他观察」，不计入正式结论。
 > **更新（2026-10-12）**：10 个 BUG 已全部修复，探针用例全部转正为回归用例并通过，修复记录见「修复记录」节，回归结果见「回归验证」节。
 
@@ -26,18 +26,18 @@
 
 | # | 严重度 | 位置 | 问题一句话 | 验证用例 |
 |---|---|---|---|---|
-| BUG-1 | P1 | agent-cli `session/session-runner.ts:379-391` | 断线重连后终态 `session_snapshot` 无法结束本轮等待，打印模式永久挂起 | `agent-cli/test/zz-review-snapshot-terminal.spec.ts` |
-| BUG-2 | P1 | backend-ts `harness/shell/shell-session-manager.ts:525-532` | shell session 复用不校验 conversationId，可跨会话操作他人 shell | `backend-ts/src/harness/shell/zz-review-shell-ownership.spec.ts` |
-| BUG-3 | P1 | backend-ts `harness/tool/impl/shell-session-tool.ts:185` | workdir 的 `cd` 失败被完全丢弃，命令在错误目录静默执行 | `backend-ts/src/harness/tool/impl/zz-review-shell-workdir.spec.ts` |
-| BUG-4 | P1 | backend-ts `signal/watcher.service.ts:317-350,446` | JSON 取值失败时一次轮询落两行 check，失败记录重复计数 | `backend-ts/src/signal/watcher.service.spec.ts`（追加 `review: JSON 取值失败只能落一行 check`） |
-| BUG-5 | P1 | backend-ts `signal/watcher.service.ts:170-176` | 基线重置判定用原始入参而非归一化后的值，语义未变的编辑误清基线、吞掉真实变化 | `backend-ts/src/signal/watcher.service.spec.ts`（追加 `review: 归一化后无变化的编辑不得清基线`） |
-| BUG-6 | P2 | backend-ts `harness/core/agent-loop.ts:423-425` | 手动压缩被取消时 `abortRound()` 把已完成并落库的轮次用量一并丢弃 | `backend-ts/src/harness/core/zz-review-manual-compaction-usage.spec.ts` |
-| BUG-7 | P2 | desktop `components/chat/SideChatPanel.vue:529-533` + `stores/session/messages.ts` | 边路任务首发迁移丢掉流式气泡注册，重复空白 assistant 气泡、步骤数虚增 | `desktop/src/stores/session.review-bugs.test.ts` |
-| BUG-8 | P2 | desktop `composables/useChat.ts:833` + `stores/session/messages.ts:156-177` | 文本流式中点「停止」，已流出的部分回复整体消失（服务端不落库，唯一副本被删） | `desktop/src/stores/session.review-bugs.test.ts` |
-| BUG-9 | P2 | agent-cli `args.ts:367-373,424-430` + `config/config-store.ts:137-138` | CLI 默认值挤掉用户/项目配置，`permissionLevel`/`outputFormat` 永久失效 | `agent-cli/test/zz-review-config-defaults.spec.ts` |
-| BUG-10 | P3 | backend-ts `audit/audit.repository.ts:67` | 审计分页 `ORDER BY created_at DESC` 缺唯一排序键，深翻页重复/丢行 | `backend-ts/src/audit/zz-review-audit-pagination.spec.ts` |
+| BUG-1 | P1 | agent-cli `session/session-runner.ts:379-391` | 断线重连后终态 `session_snapshot` 无法结束本轮等待，打印模式永久挂起 | `agent-cli/test/snapshot-terminal.spec.ts` |
+| BUG-2 | P1 | backend-ts `harness/shell/shell-session-manager.ts:525-532` | shell session 复用不校验 conversationId，可跨会话操作他人 shell | `backend-ts/src/harness/shell/shell-ownership.spec.ts` |
+| BUG-3 | P1 | backend-ts `harness/tool/impl/shell-session-tool.ts:185` | workdir 的 `cd` 失败被完全丢弃，命令在错误目录静默执行 | `backend-ts/src/harness/tool/impl/shell-workdir.spec.ts` |
+| BUG-4 | P1 | backend-ts `signal/watcher.service.ts:317-350,446` | JSON 取值失败时一次轮询落两行 check，失败记录重复计数 | `backend-ts/src/signal/watcher.service.spec.ts`（追加 `JSON 取值失败只能落一行 check`） |
+| BUG-5 | P1 | backend-ts `signal/watcher.service.ts:170-176` | 基线重置判定用原始入参而非归一化后的值，语义未变的编辑误清基线、吞掉真实变化 | `backend-ts/src/signal/watcher.service.spec.ts`（追加 `归一化后无变化的编辑不得清基线`） |
+| BUG-6 | P2 | backend-ts `harness/core/agent-loop.ts:423-425` | 手动压缩被取消时 `abortRound()` 把已完成并落库的轮次用量一并丢弃 | `backend-ts/src/harness/core/agent-loop-compaction-usage.spec.ts` |
+| BUG-7 | P2 | desktop `components/chat/SideChatPanel.vue:529-533` + `stores/session/messages.ts` | 边路任务首发迁移丢掉流式气泡注册，重复空白 assistant 气泡、步骤数虚增 | `desktop/src/stores/session-streaming-bubble.test.ts` |
+| BUG-8 | P2 | desktop `composables/useChat.ts:833` + `stores/session/messages.ts:156-177` | 文本流式中点「停止」，已流出的部分回复整体消失（服务端不落库，唯一副本被删） | `desktop/src/stores/session-streaming-bubble.test.ts` |
+| BUG-9 | P2 | agent-cli `args.ts:367-373,424-430` + `config/config-store.ts:137-138` | CLI 默认值挤掉用户/项目配置，`permissionLevel`/`outputFormat` 永久失效 | `agent-cli/test/config-defaults.spec.ts` |
+| BUG-10 | P3 | backend-ts `audit/audit.repository.ts:67` | 审计分页 `ORDER BY created_at DESC` 缺唯一排序键，深翻页重复/丢行 | `backend-ts/src/audit/audit.repository.spec.ts` |
 
-运行方式：`cd backend-ts && npx vitest run <上述 spec 路径>`；`cd agent-cli && npx vitest run test/<spec>`；`cd desktop && npx vitest run src/stores/session.review-bugs.test.ts`。这些用例最初按预期失败（即 BUG 复现），修复后已全部转正为回归用例并通过（见文末「回归验证」）。
+运行方式：`cd backend-ts && npx vitest run <上述 spec 路径>`；`cd agent-cli && npx vitest run test/<spec>`；`cd desktop && npx vitest run src/stores/session-streaming-bubble.test.ts`。这些用例最初按预期失败（即 BUG 复现），修复后已全部转正为回归用例并通过（见文末「回归验证」）。
 
 ---
 
@@ -67,7 +67,7 @@ if (evt.type === 'session_snapshot') {
 
 **对照**：desktop 对终态快照的处理是正确的（`desktop/src/composables/useStreamWS.ts:923-951`，终态分支与 `session_status` 一致地 setStreaming(false)/clearActiveExecution），注释亦写明「Subscribe also reconciles a terminal state missed while the socket was disconnected」。CLI 是漏修的一侧。
 
-**验证用例**（`agent-cli/test/zz-review-snapshot-terminal.spec.ts`，复用 `test/session-runner.spec.ts` 的 FakeWs 夹具）：不发 `session_status`，只发重连后服务端校准用的终态快照，`Promise.race` 加 500ms 看门狗：
+**验证用例**（`agent-cli/test/snapshot-terminal.spec.ts`，复用 `test/session-runner.spec.ts` 的 FakeWs 夹具）：不发 `session_status`，只发重连后服务端校准用的终态快照，`Promise.race` 加 500ms 看门狗：
 
 ```ts
 ws.emit({ type: 'session_snapshot', sessionId: 11, data: { phase: 'COMPLETED', executionId: send.data.eventId } });
@@ -99,7 +99,7 @@ if (shellSessionId && this.sessions.has(shellSessionId)) {
 
 **触发场景**：会话 A（conversationId=1）`keep_session=true` 执行命令得到 `session_id`；会话 B（可能是另一用户的会话）的模型拿到该 id 后调用 `shell(action=exec, command="rm -rf build", session_id=...)` → 命中复用分支，命令以会话 A 的 cwd、HOME、GIT_TOKEN/MAO_TOKEN 环境执行，`refreshUserEnvironment` 还会把用户 B 的 token 写进 A 的 shell。
 
-**验证用例**（`backend-ts/src/harness/shell/zz-review-shell-ownership.spec.ts`，真实 `ShellSessionManager` + `PathSandbox` + 临时目录）：
+**验证用例**（`backend-ts/src/harness/shell/shell-ownership.spec.ts`，真实 `ShellSessionManager` + `PathSandbox` + 临时目录）：
 
 ```ts
 const a = manager.getOrCreate(1, 'sh-1-aaa', 1, join(dir, 'ws-a'), { 'github.com': 'token-a' });
@@ -131,7 +131,7 @@ if (workdirArg && workdir) {
 
 **触发场景**：模型调用 `shell(action=exec, command="cat build.gradle", workdir="/repo/sub")` 而 `/repo/sub` 不存在（或 5s 内没 cd 完）。工具描述明确承诺「传 workdir 时工具会自动 cd，无需在 command 里再写 cd」——承诺被静默破坏，相对路径在另一个目录解析，`cat`/`rm -rf`/`./gradlew` 会作用到错误文件上，而模型/用户看不到任何失败信号。超时分支同理，且残留的 pendingCommand 会被后续 `writeCommand` 覆盖，cd 输出被写进本次命令的 output_file。
 
-**验证用例**（`backend-ts/src/harness/tool/impl/zz-review-shell-workdir.spec.ts`，mock `OutputManager.readUntilMarker` 第 1 次返回 cd 失败、第 2 次返回命令输出）：
+**验证用例**（`backend-ts/src/harness/tool/impl/shell-workdir.spec.ts`，mock `OutputManager.readUntilMarker` 第 1 次返回 cd 失败、第 2 次返回命令输出）：
 
 ```ts
 const result = JSON.parse(await tool.execute(
@@ -226,7 +226,7 @@ break;
 
 **根因**：`abortRound` 的契约（`:189-193` 注释）是「丢弃**本轮未完成**用量（消息已 rollback，不应记为正常完成）」。但这条路径上：`onComplete` 已 `context.addUsage(usage)`（`:291`）、`afterStream` 里的 `onSaveAssistantMessage` 已被 await（`:319`）、tokenCount 已写入 message 表——消息没有 rollback、轮次已正常收尾、用量已入库。取消的是「压缩」这个附带动作，却把「本轮回答」的计量一并回滚，随后 `listener.onMessageEnd(context.totalUsage)`（`:512`）把「零增量」报给客户端，会话用量统计少记一轮、与 DB 里已持久化的 tokenCount 不一致。
 
-**验证用例**（`backend-ts/src/harness/core/zz-review-manual-compaction-usage.spec.ts`，真实 `CompactionSignalBus` + stub 装配）：在 LLM stream 回调中置位手动压缩信号（模拟用户输出期间点击「压缩」），`orchestrator.compact` 以 `CompactionCancelledException` 拒绝：
+**验证用例**（`backend-ts/src/harness/core/agent-loop-compaction-usage.spec.ts`，真实 `CompactionSignalBus` + stub 装配）：在 LLM stream 回调中置位手动压缩信号（模拟用户输出期间点击「压缩」），`orchestrator.compact` 以 `CompactionCancelledException` 拒绝：
 
 ```ts
 llmAdapter.stream.mockImplementation(async (_r, _c, callback) => {
@@ -253,7 +253,7 @@ expect(ctx.totalUsage.totalTokens).toBe(1280);   // 当前为 0 → 失败（exp
 
 **触发场景**：主会话点「新建边路任务」选非 fork 模式，输入消息发送 → 流式气泡上方多出一个空白 assistant 气泡，该轮折叠头显示「已执行 N+1 个步骤」（`useMessageRounds` 把两个 assistant 气泡都计为一个步骤），终态 REST 重拉后才消失。
 
-**验证用例**（`desktop/src/stores/session.review-bugs.test.ts`，store 级复刻迁移时序）：
+**验证用例**（`desktop/src/stores/session-streaming-bubble.test.ts`，store 级复刻迁移时序）：
 
 ```ts
 store.addUserMessage('tab-7', { id: 'side_user_1', role: 'user', content: '帮我审查', createdAt: '...' });
@@ -277,7 +277,7 @@ expect(store.getMessages('42').map(m => m.role)).toEqual(['user', 'assistant']);
 
 **根因**：后端被中止的轮次**从不落库**文本（`backend-ts/src/harness/core/agent-loop.ts:386-390`：流中途取消时 `onComplete` 不触发，assistant 消息落库只发生在 onComplete 与工具轮后）。桌面停止时 `finishInterruptedStreamingMessage` 特意保留气泡（`tool-spinner-stuck.test.ts:70` 场景 D 正是断言中断态可见——意图就是让用户看到中断现场），但删掉了流式注册；随后终态重拉以无 preserve 模式合并，把这条未注册的尾部 assistant 气泡丢弃，而服务端又没落过库——**唯一副本被删，内容永久丢失**，刷新页面依然没有。自相矛盾之处：若停止发生在**工具执行中**，`onComplete` 已落库，部分文本能从 REST 拿回来、不丢；同一种用户操作（中止一轮）两种结果。
 
-**验证用例**（`desktop/src/stores/session.review-bugs.test.ts`）：
+**验证用例**（`desktop/src/stores/session-streaming-bubble.test.ts`）：
 
 ```ts
 store.ensureStreamingAssistantMessage('9');
@@ -301,7 +301,7 @@ expect(store.getMessages('9').map(m => m.role)).toEqual(['user', 'assistant']); 
 
 **触发场景**：`~/.mao/agent-cli/config.json` 写 `{"permissionLevel": "FULL"}`，运行 `mao-agent --local -p "ls"`（不传 `--permission-level`）→ 实际建会话用 READ_WRITE，LOCAL 审批按 READ_WRITE 放行/询问；`outputFormat: "json"` 同理被忽略。
 
-**验证用例**（`agent-cli/test/zz-review-config-defaults.spec.ts`）：
+**验证用例**（`agent-cli/test/config-defaults.spec.ts`）：
 
 ```ts
 const cfg = parseCliConfig([], tty);
@@ -327,7 +327,7 @@ SELECT * FROM audit_log ${whereSql} ORDER BY created_at DESC LIMIT ? OFFSET ?
 
 **同一根因的其他命中点**（建议一并修）：`user/user.repository.ts:144`、`session/session.service.ts:483`（`listSessionsForAdmin`）、`command/command.repository.ts:54`（`listPersonalPaged`，另 15/22/45 三处同款）。对照：`session.repository.ts:379`（`ORDER BY updated_at DESC, id DESC`）、`llm-call.repository.ts:214`（`ORDER BY id DESC`）都带唯一 tiebreaker，说明这是遗漏而非约定。
 
-**验证用例**（`backend-ts/src/audit/zz-review-audit-pagination.spec.ts`，Db stub 捕获 SQL）：
+**验证用例**（`backend-ts/src/audit/audit.repository.spec.ts`，Db stub 捕获 SQL）：
 
 ```ts
 await repo.selectPage(1, 20, {});
@@ -345,16 +345,16 @@ expect(sql).toMatch(/ORDER BY created_at DESC, id DESC/);   // 当前 SQL 无 id
 
 | # | 修复方式 | 探针转正 |
 |---|---|---|
-| BUG-1 | `session/session-runner.ts` 快照分支：`TERMINAL_PHASES.has(phase)` 且 executionId 匹配（或任一方为 null）时置 `terminal` 并 `flushWaiters()` | `zz-review-snapshot-terminal.spec.ts` 4 例全过 |
-| BUG-2 | `shell-session-manager.ts` `getOrCreate` 归属不一致时不复用（为调用方新建会话、他人 shell 原样不动）；`getSession`/`close` 增加可选 `conversationId` 归属参数，工具层 `exec/write_stdin/await_async/close` 全链路传入 | `zz-review-shell-ownership.spec.ts` 全过（跨会话新建、他人会话不受影响） |
-| BUG-3 | `shell-session-tool.ts` `handleExec` 接收 `executeWithMarker` 返回值：`cd` 超时或 `exitCode != 0` 即返回错误 JSON 并关掉自有会话，不再放行命令 | `zz-review-shell-workdir.spec.ts` 全过（失败目录不再静默执行） |
+| BUG-1 | `session/session-runner.ts` 快照分支：`TERMINAL_PHASES.has(phase)` 且 executionId 匹配（或任一方为 null）时置 `terminal` 并 `flushWaiters()` | `snapshot-terminal.spec.ts` 4 例全过 |
+| BUG-2 | `shell-session-manager.ts` `getOrCreate` 归属不一致时不复用（为调用方新建会话、他人 shell 原样不动）；`getSession`/`close` 增加可选 `conversationId` 归属参数，工具层 `exec/write_stdin/await_async/close` 全链路传入 | `shell-ownership.spec.ts` 全过（跨会话新建、他人会话不受影响） |
+| BUG-3 | `shell-session-tool.ts` `handleExec` 接收 `executeWithMarker` 返回值：`cd` 超时或 `exitCode != 0` 即返回错误 JSON 并关掉自有会话，不再放行命令 | `shell-workdir.spec.ts` 全过（失败目录不再静默执行） |
 | BUG-4 | `watcher.service.ts` `recordFailure` 增加可选 `existingCheckId`，取值失败路径改为 `markError` 复用已落的那行 | `watcher.service.spec.ts` 追加 3 例全过（该文件共 149 例） |
 | BUG-5 | `resetBaseline` 改用 `normalizeInput` 归一化后的值（headers 仍走 `canonicalHeaders`）与库内归一化值比较 | `watcher.service.spec.ts` 追加 5 例全过 |
-| BUG-6 | `agent-loop.ts` 三处 `consumeManualCompaction` 取消分支去掉 `abortRound()`（轮次已 closeRound、消息已落库，用量保留）；`abortRound` 仍只服务真正的取消路径 | `zz-review-manual-compaction-usage.spec.ts` 全过 |
-| BUG-7 | `stores/session/messages.ts` `setMessages` 识别占位 id（`msg_*_assistant`）的末条 assistant，把流式注册从占位 key 改注册到真实 sid，首个 `content_delta` 复用原气泡 | `session.review-bugs.test.ts` 3 例全过 |
-| BUG-8 | `finishInterruptedStreamingMessage` 给气泡打 `interrupted` 标记；`applyFetchedMessages` 对「有内容的中断气泡」在尾部与中段均保留，不被无 preserve 的 REST 合并丢弃；`ChatMessage` 新增 `interrupted?: boolean` | `session.review-bugs.test.ts` 同文件中断用例全过，正常完成仍按 REST 覆盖 |
-| BUG-9 | `args.ts` `parseCliConfig` 对未显式下发的 `permissionLevel`/`outputFormat` 返回 `undefined`；`main.ts` 回填 `resolveConfig` 结果，恢复「cli > env > 项目 > 用户 > 默认」优先级 | `zz-review-config-defaults.spec.ts` 8 例全过（含既有缺省值断言同步更新） |
-| BUG-10 | audit / user / session / command 五处分页与列表排序补 `, id DESC` 唯一 tiebreaker | `zz-review-audit-pagination.spec.ts` 全过 |
+| BUG-6 | `agent-loop.ts` 三处 `consumeManualCompaction` 取消分支去掉 `abortRound()`（轮次已 closeRound、消息已落库，用量保留）；`abortRound` 仍只服务真正的取消路径 | `agent-loop-compaction-usage.spec.ts` 全过 |
+| BUG-7 | `stores/session/messages.ts` `setMessages` 识别占位 id（`msg_*_assistant`）的末条 assistant，把流式注册从占位 key 改注册到真实 sid，首个 `content_delta` 复用原气泡 | `session-streaming-bubble.test.ts` 3 例全过 |
+| BUG-8 | `finishInterruptedStreamingMessage` 给气泡打 `interrupted` 标记；`applyFetchedMessages` 对「有内容的中断气泡」在尾部与中段均保留，不被无 preserve 的 REST 合并丢弃；`ChatMessage` 新增 `interrupted?: boolean` | `session-streaming-bubble.test.ts` 同文件中断用例全过，正常完成仍按 REST 覆盖 |
+| BUG-9 | `args.ts` `parseCliConfig` 对未显式下发的 `permissionLevel`/`outputFormat` 返回 `undefined`；`main.ts` 回填 `resolveConfig` 结果，恢复「cli > env > 项目 > 用户 > 默认」优先级 | `config-defaults.spec.ts` 8 例全过（含既有缺省值断言同步更新） |
+| BUG-10 | audit / user / session / command 五处分页与列表排序补 `, id DESC` 唯一 tiebreaker | `audit.repository.spec.ts` 全过 |
 
 配套回归：`shell-session-tool.spec.ts` 既有 close 断言同步改为带 `conversationId`，并新增「每次会话查询都带归属 id」用例；`agent-loop` 相关既有用例不受影响。
 
@@ -372,22 +372,22 @@ expect(sql).toMatch(/ORDER BY created_at DESC, id DESC/);   // 当前 SQL 无 id
 | desktop `npm run build` | 通过 | `vue-tsc -b && vite build` |
 
 - agent-cli 那个既有失败 `test/repl-slash.spec.ts > handleSlash /copy > falls back to printing the reply when no clipboard command exists` 与本审查无关：本机存在 `/usr/bin/pbcopy`，「无剪贴板命令时回退打印」分支不会进入，属环境依赖的既有现象（单独跑该文件同样失败）。
-- 探针文件统一以 `zz-review-` 前缀命名（或追加在现有 spec 的 `review:` describe 中），现已全部转正为产品回归用例，保留原名继续承担回归职责。
+- 探针用例已全部转正为产品回归用例，独立 spec 按各目录既有命名惯例改名（不再带 `zz-review-` 前缀），继续承担回归职责。
 
 ## 测试文件清单（修复后均为回归用例）
 
 | BUG | 测试文件 |
 |---|---|
-| BUG-1 | `agent-cli/test/zz-review-snapshot-terminal.spec.ts` |
-| BUG-2 | `backend-ts/src/harness/shell/zz-review-shell-ownership.spec.ts` |
-| BUG-3 | `backend-ts/src/harness/tool/impl/zz-review-shell-workdir.spec.ts` |
+| BUG-1 | `agent-cli/test/snapshot-terminal.spec.ts` |
+| BUG-2 | `backend-ts/src/harness/shell/shell-ownership.spec.ts` |
+| BUG-3 | `backend-ts/src/harness/tool/impl/shell-workdir.spec.ts` |
 | BUG-4 | `backend-ts/src/signal/watcher.service.spec.ts`（追加 3 个用例） |
 | BUG-5 | `backend-ts/src/signal/watcher.service.spec.ts`（追加 5 个用例） |
-| BUG-6 | `backend-ts/src/harness/core/zz-review-manual-compaction-usage.spec.ts` |
-| BUG-7 | `desktop/src/stores/session.review-bugs.test.ts` |
-| BUG-8 | `desktop/src/stores/session.review-bugs.test.ts` |
-| BUG-9 | `agent-cli/test/zz-review-config-defaults.spec.ts` |
-| BUG-10 | `backend-ts/src/audit/zz-review-audit-pagination.spec.ts` |
+| BUG-6 | `backend-ts/src/harness/core/agent-loop-compaction-usage.spec.ts` |
+| BUG-7 | `desktop/src/stores/session-streaming-bubble.test.ts` |
+| BUG-8 | `desktop/src/stores/session-streaming-bubble.test.ts` |
+| BUG-9 | `agent-cli/test/config-defaults.spec.ts` |
+| BUG-10 | `backend-ts/src/audit/audit.repository.spec.ts` |
 
 ## 其他观察（未经测试验证，不计入正式结论）
 
