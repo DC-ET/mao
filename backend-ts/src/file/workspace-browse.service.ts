@@ -30,6 +30,8 @@ export interface DirectoryEntryDTO {
   isDirectory: boolean;
   size: number;
   isSymlink: boolean;
+  /** 修改时间（epoch ms），供前端按时间排序；搜索接口不返回 */
+  mtimeMs?: number;
 }
 
 export interface DirectoryListingDTO {
@@ -102,12 +104,14 @@ export class WorkspaceBrowseService {
         isSymlink: false,
         isDirectory: false,
         size: 0,
+        mtimeMs: 0,
       };
       try {
         const lst = lstatSync(child);
         entry.isSymlink = lst.isSymbolicLink();
         entry.isDirectory = lst.isDirectory() && !entry.isSymlink;
         entry.size = lst.size;
+        entry.mtimeMs = lst.mtimeMs;
       } catch {
         entry.size = 0;
       }

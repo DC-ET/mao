@@ -54,7 +54,7 @@ Mao 不是又一个 ChatGPT 套壳，也不是 Dify / n8n 那样的低代码工�
 | **任务收件箱** | 站内通知中心：任务完成 / 失败、提问待答、审批待办、子代理结果回传统一汇入顶栏铃铛，实时未读数，一键跳回会话；Electron 桌面端窗口失焦时补系统通知。 |
 | **开放接口** | API Token 远程触发 Agent 运行（`POST /api/v1/open/agents/:id/run`，异步 202，会话忙时自动排队）；入站 Webhook 触发器（HMAC-SHA256 验签，连续失败自动停用并通知）；出站事件订阅把任务完成 / 失败 / 提问待答推送到自建 HTTPS 端点（失败自动退避重试）。 |
 | **信号哨兵** | 按固定间隔探测外部 HTTP(S) 接口，判定值（内容哈希 / JSON 字段 / 状态码）变化时自动开一次 Agent 会话；连续失败自动停用并通知，探测地址禁私网。 |
-| **工作区** | 云端新建 / 复用 / Git HTTPS clone；文件树与 Git diff 只读浏览；CLOUD 可开服务端交互终端。 |
+| **工作区** | 云端新建 / 复用 / Git HTTPS clone；文件树与 Git diff 浏览，CLOUD 可直接管理工作区文件（文件树增删改传，或「文件管理」页签整幅操作）；CLOUD 可开服务端交互终端。 |
 | **治理** | RBAC、管理 API 审计、[用量分析](skills/mao-cli/reference/analytics.md)（含成本口径）、[调用流水](skills/mao-cli/reference/llm-call.md)、[月度用量预算](skills/mao-cli/reference/budget.md)（全局 / 用户 / Agent，超额提醒或拦截，开放接口一并生效）；任务结果消息点踩反馈（管理后台汇总与明细）；本地账号 / LDAP / 飞书登录。 |
 | **多端** | 管理后台、Web / Electron、安卓 APP（CLOUD）、终端 `mao-agent`、REST `mao-cli`。 |
 | **通道** | 飞书机器人、钉钉机器人、微信 Bot、页面 Embed SDK（可操作宿主页面）。 |

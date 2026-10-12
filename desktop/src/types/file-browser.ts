@@ -6,9 +6,17 @@ export interface FileNode {
   isDirectory: boolean
   isSymlink?: boolean
   size?: number
+  mtime?: number        // epoch ms；目录列表提供（本地 IPC 恒有，CLOUD 由后端 mtimeMs 提供），搜索接口不返回
   children?: FileNode[]
   expanded?: boolean
   error?: string
+}
+
+/** 文件管理器的本地偏好：视图模式与排序，跨会话/刷新保留 */
+export interface FileManagerPrefs {
+  viewMode: 'grid' | 'list'
+  sortBy: 'name' | 'size' | 'mtime'
+  sortOrder: 'asc' | 'desc'
 }
 
 /** 边路任务创建时的上下文继承方式：不继承 / 主会话摘要 / Fork 主会话（复制主会话历史消息） */
@@ -22,7 +30,7 @@ export interface SideTaskForkSource {
 
 export interface Tab {
   id: string            // 'chat' for chat tab, relative path for file tabs
-  type: 'chat' | 'file' | 'diff' | 'side_task' | 'subagent' | 'trace'
+  type: 'chat' | 'file' | 'diff' | 'side_task' | 'subagent' | 'trace' | 'file_manager'
   title: string
   filePath?: string     // relative path within workspace
   fileChange?: FileChange

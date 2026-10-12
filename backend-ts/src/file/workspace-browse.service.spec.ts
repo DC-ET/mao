@@ -73,3 +73,45 @@ describe('WorkspaceBrowseService.searchFiles', () => {
     expect(() => service.searchFiles(ws, '   ', 100)).toThrow();
   });
 });
+
+describe('WorkspaceBrowseService.listDirectory', () => {
+  let cleanup: (() => void) | null = null;
+
+  function createService(): { service: WorkspaceBrowseService; ws: string } {
+    const root = mkdtempSync(join(tmpdir(), 'mao-browse-list-'));
+    cleanup = () => rmSync(root, { recursive: true, force: true });
+    const ws = join(root, 'ws');
+    mkdirSync(ws, { recursive: true });
+    return { service: new WorkspaceBrowseService(new PathSandbox(root)), ws };
+  }
+
+  afterEach(() => {
+    cleanup?.();
+    cleanup = null;
+  });
+
+  it('returnsMtimeMsForEntries', () => {
+    const { service, ws } = createService();
+    writeFileSync(join(ws, 'a.txt'), 'x');
+    mkdirSync(join(ws, 'sub'));
+
+    const result = service.listDirectory(ws, '');
+    const file = result.entries.find((e) => e.name === 'a.txt');
+    const dir = result.entries.find((e) => e.name === 'sub');
+    expect(file?.mtimeMs).toBeGreaterThan(0);
+    expect(dir?.mtimeMs).toBeGreaterThan(0);
+    expect(file?.size).toBe(1);
+    expect(dir?.isDirectory).toBe(true);
+  });
+
+  it('keepsSymlinkFlagAndSortsDirectoriesFirst', () => {
+    const { service, ws } = createService();
+    writeFileSync(join(ws, 'a.txt'), 'x');
+    mkdirSync(join(ws, 'zdir'));
+    symlinkSync(join(ws, 'a.txt'), join(ws, 'link.txt'));
+    const result = service.listDirectory(ws, '');
+    expect(result.entries.map((e) => e.name)).toEqual(['zdir', 'a.txt', 'link.txt']);
+    expect(result.entries.find((e) => e.name === 'link.txt')?.isSymlink).toBe(true);
+    expect(result.entries.find((e) => e.name === 'zdir')?.isSymlink).toBe(false);
+  });
+});
