@@ -22,21 +22,29 @@ interface Harness {
 /**
  * 内存 fake：只实现「同 dedup_key 唯一」这一条真实约束（与 uk_notification_dedup 一致），
  * 其余按最简语义返回。偏好行可预置。
+ * insertOrUpdateByDedupKey  additionally 实现「同日覆盖」语义（替换内容并打回未读）。
  */
 function makeHarness(options: {
   preference?: UserInboxPreferenceRow | null;
   unread?: Map<number, number>;
 } = {}) {
   const inserted: Recorded[] = [];
-  const seen = new Set<string>();
+  const byDedupKey = new Map<string, Recorded>();
   const unreadByUser = options.unread ?? new Map<number, number>();
   const events: Array<{ type: string; sessionId: number | null; data: unknown }> = [];
   const repo = {
     insertIgnore: vi.fn(async (row: Recorded) => {
-      if (seen.has(row.dedupKey)) return;
-      seen.add(row.dedupKey);
+      if (byDedupKey.has(row.dedupKey)) return;
+      byDedupKey.set(row.dedupKey, row);
       inserted.push(row);
     }),
+    insertOrUpdateByDedupKey: vi.fn(async (row: Recorded) => {
+      byDedupKey.set(row.dedupKey, { ...row });
+      const index = inserted.findIndex((r) => r.dedupKey === row.dedupKey);
+      if (index >= 0) inserted[index] = { ...row };
+      else inserted.push({ ...row });
+    }),
+    findByDedupKey: vi.fn(async (userId: number, dedupKey: string) => byDedupKey.get(dedupKey) ?? null),
     countUnread: vi.fn(async (userId: number) => unreadByUser.get(userId) ?? 0),
     markReadByDedupKey: vi.fn(async () => true),
     markRead: vi.fn(async () => true),
@@ -328,5 +336,64 @@ describe('InboxService 列表与偏好读写', () => {
       openApiCallFailedEnabled: false,
       systemNotifyEnabled: false,
     });
+  });
+});
+
+describe('InboxService 每日摘要条目（DAILY_DIGEST）', () => {
+  const entry = {
+    userId: 7,
+    title: '昨日运营摘要（10-11）',
+    content: '完成 5 · 成本 3.42',
+    payload: { coveredDate: '2026-10-11', digest: { tasks: { completed: 5 } } },
+    dedupTail: '2026-10-11',
+  };
+
+  it('writeDigestEntry：走 upsert（非 insertIgnore），dedup_key 按 kind+coveredDate 拼装，广播未读', async () => {
+    const h = makeHarness();
+    await h.service.writeDigestEntry(entry);
+    expect(h.repo.insertOrUpdateByDedupKey).toHaveBeenCalledTimes(1);
+    expect(h.repo.insertIgnore).not.toHaveBeenCalled();
+    expect(h.inserted).toHaveLength(1);
+    expect(h.inserted[0]).toMatchObject({
+      userId: 7,
+      kind: 'DAILY_DIGEST',
+      title: entry.title,
+      content: entry.content,
+      sessionId: null,
+      dedupKey: '7:DAILY_DIGEST:null:2026-10-11',
+    });
+    expect(JSON.parse(h.inserted[0].payloadJson!)).toEqual(entry.payload);
+    expect(h.events.some((e) => e.type === INBOX_UPDATED_EVENT)).toBe(true);
+  });
+
+  it('writeDigestEntry：同日重复写入覆盖旧条目（不新增行）', async () => {
+    const h = makeHarness();
+    await h.service.writeDigestEntry(entry);
+    await h.service.writeDigestEntry({ ...entry, content: '完成 6 · 成本 4.2' });
+    expect(h.inserted).toHaveLength(1);
+    expect(h.inserted[0].content).toBe('完成 6 · 成本 4.2');
+  });
+
+  it('writeDigestEntry：不受收件箱 kind 偏好门控（总开关在 digest 域判定）', async () => {
+    const h = makeHarness({
+      preference: {
+        userId: 7,
+        taskCompletedEnabled: 0,
+        questionPendingEnabled: 0,
+        approvalPendingEnabled: 0,
+        subagentDoneEnabled: 0,
+        systemNotifyEnabled: 0,
+      },
+    });
+    await h.service.writeDigestEntry(entry);
+    expect(h.inserted).toHaveLength(1);
+  });
+
+  it('hasDigestEntry：有条目 true / 无条目 false', async () => {
+    const h = makeHarness();
+    expect(await h.service.hasDigestEntry(7, '2026-10-11')).toBe(false);
+    await h.service.writeDigestEntry(entry);
+    expect(await h.service.hasDigestEntry(7, '2026-10-11')).toBe(true);
+    expect(await h.service.hasDigestEntry(7, '2026-10-10')).toBe(false);
   });
 });

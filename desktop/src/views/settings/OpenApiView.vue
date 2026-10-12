@@ -249,6 +249,7 @@
             <el-option label="任务完成（task.completed）" value="task.completed" />
             <el-option label="任务失败（task.failed）" value="task.failed" />
             <el-option label="提问待答（question.pending）" value="question.pending" />
+            <el-option label="每日运营摘要（digest.daily）" value="digest.daily" />
           </el-select>
         </el-form-item>
         <el-form-item label="回调地址（仅支持 https）">

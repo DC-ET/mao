@@ -8,7 +8,7 @@
 |------|------|------|
 | 入站（P1） | 外部系统带 API Token 远程触发一次 Agent 运行 | `POST /v1/open/agents/:agentId/run` |
 | 入站（P2） | 外部系统（CI、工单、自建脚本）以 HMAC 验签方式 POST 触发 | `POST /v1/open/hooks/:pathToken` |
-| 出站（P3） | 任务完成 / 失败、提问待答事件推送到自建 HTTPS 端点 | `task.completed` / `task.failed` / `question.pending` |
+| 出站（P3） | 任务完成 / 失败、提问待答、每日运营摘要事件推送到自建 HTTPS 端点 | `task.completed` / `task.failed` / `question.pending` / `digest.daily` |
 
 管理面（Token / 触发器 / 订阅 CRUD）在桌面端「设置 → 开放接口」与 `mao open` 命令行均可操作；所有管理接口只接受登录会话（JWT），且只能管理本人资源。该页面顶部有「接口文档」卡片：可弹窗查阅完整调用说明（鉴权、端点与字段、签名算法、错误码、排障），也可下载或复制 Markdown（`mao-open-api.md`，随桌面端版本内置，不对外暴露 Swagger）。
 
@@ -137,7 +137,7 @@ print(urllib.request.urlopen(req).read())
 
 | 参数 | 必填 | 说明 |
 |------|------|------|
-| `--event` | 是 | `task.completed` / `task.failed` / `question.pending` |
+| `--event` | 是 | `task.completed` / `task.failed` / `question.pending` / `digest.daily` |
 | `--target-url` | 是 | HTTPS 地址；禁止 URL 内嵌 userinfo（`https://user:pass@host`）与 `#hash` |
 
 ### 示例
@@ -147,6 +147,8 @@ mao open subscription create --event task.failed --target-url https://ops.exampl
 ```
 
 回调请求头：`X-Mao-Event`、`X-Mao-Timestamp`、`X-Mao-Signature`（对实际发送字节签名，算法同触发器）。2xx 视为成功；429 与 5xx 会重试。
+
+`digest.daily`（每日运营摘要）payload 为 `{ event, coveredDate, digest, text, sentAt }`：`digest` 是六板块结构化数据（tasks / scheduled / watchers / approvals / cost / openApi，空板块为 null），`text` 是 Markdown 全文，任选其一渲染。
 
 ## 命令：mao open run
 

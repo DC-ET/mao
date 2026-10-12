@@ -131,6 +131,28 @@ print(urllib.request.urlopen(req).read())
 }
 ```
 
+`digest.daily`（每日运营摘要）请求体：
+
+```json
+{
+  "event": "digest.daily",
+  "coveredDate": "2026-10-11",
+  "digest": {
+    "coveredDate": "2026-10-11",
+    "tasks": { "completed": 3, "failed": 1, "failedTop": [] },
+    "scheduled": null,
+    "watchers": null,
+    "approvals": null,
+    "cost": { "totalMicros": 3420000, "unpricedCalls": 0, "calls": 5, "top": [] },
+    "openApi": null
+  },
+  "text": "# 昨日运营摘要（2026-10-11）\n...",
+  "sentAt": "2026-10-12 09:30:00"
+}
+```
+
+`digest` 为六板块结构化数据（tasks / scheduled / watchers / approvals / cost / openApi，无数据的板块为 null），`text` 为 Markdown 全文，任选其一渲染。
+
 投递语义：返回 2xx 视为成功；429 与 5xx 按 1 / 5 / 25 分钟退避重试，3 次后置为失败并保留记录，不会无限重投。最近投递记录可在订阅卡片上查看。
 
 ## 四、错误码

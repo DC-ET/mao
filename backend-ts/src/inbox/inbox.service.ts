@@ -361,6 +361,44 @@ export class InboxService {
   }
 
   /**
+   * DAILY_DIGEST：每日运营摘要条目（digest 域经此端口写入）。
+   * 与 recordXxx 系列的分野：
+   * - 走 insertOrUpdateByDedupKey（同日试发覆盖旧条目并打回未读），不是 insertIgnore；
+   * - 不经 isKindEnabled 偏好门控——总开关是 user_digest_preference.enabled，
+   *   由 DigestService 在调用前判定（技术方案 §5.5）。
+   * 结构上满足 digest 域的 DigestInboxPort（writeDigestEntry/hasDigestEntry）。
+   */
+  async writeDigestEntry(input: {
+    userId: number;
+    title: string;
+    content: string | null;
+    payload: Record<string, unknown>;
+    /** dedup_key 尾段：被汇总日期（yyyy-MM-dd）。 */
+    dedupTail: string;
+  }): Promise<void> {
+    if (input.userId == null) return;
+    await this.repo.insertOrUpdateByDedupKey({
+      userId: input.userId,
+      kind: 'DAILY_DIGEST',
+      title: clip(input.title, TITLE_MAX) ?? '',
+      content: input.content == null ? null : clip(input.content, CONTENT_MAX),
+      sessionId: null,
+      payloadJson: JSON.stringify(input.payload),
+      dedupKey: this.inboxDedupKey(input.userId, 'DAILY_DIGEST', null, input.dedupTail),
+    });
+    await this.broadcastUnreadCount(input.userId);
+  }
+
+  /** 某被汇总日期的摘要条目是否已存在（设置页「上一份摘要」三态判定）。 */
+  async hasDigestEntry(userId: number, dedupTail: string): Promise<boolean> {
+    const row = await this.repo.findByDedupKey(
+      userId,
+      this.inboxDedupKey(userId, 'DAILY_DIGEST', null, dedupTail),
+    );
+    return row != null;
+  }
+
+  /**
    * 待办联动置已读：提问被回答/取消/超时、审批被批准/拒绝/超时/断连后，
    * 对应条目自动置为已读（保留可查，不计未读徽标）。
    * 直接拼完整 dedup_key 等值匹配；幂等（第二次影响 0 行）。
@@ -491,6 +529,11 @@ export class InboxService {
         return preference.openApiCallFailedEnabled;
       case 'WEIXIN_REPLY_WINDOW_CLOSED':
         // 无偏好开关：微信 24 小时窗口已关导致回复送达失败，属运维级事件，始终通知属主
+        return true;
+      case 'DAILY_DIGEST':
+        // 无收件箱 kind 偏好开关：总开关是 user_digest_preference.enabled，
+        // 由 DigestService 在写入前判定（摘要走 writeDigestEntry 不经本门控，
+        // 此分支仅防未来误走 record() 时被 default 静默丢弃）。
         return true;
       default:
         return false;

@@ -165,6 +165,29 @@ export class OutboundSubscriptionService {
     });
   }
 
+  /**
+   * 每日运营摘要分发（digest 域调用）：按天聚合的一次性投递。
+   * payload 双格式——digest 为结构化六板块数据（订阅方自行渲染），text 为 Markdown 全文。
+   * fire-and-forget，绝不能抛（对齐 dispatchTaskTerminal）。
+   */
+  dispatchDigest(input: {
+    userId: number;
+    coveredDate: string;
+    /** 结构化摘要数据，入 payload 前整体 JSON 序列化；用 object 而非 Record 以避免调用方（digest 域接口类型）需要索引签名 */
+    digest: object;
+    text: string;
+  }): void {
+    void this.enqueueDeliveries(input.userId, 'digest.daily', {
+      event: 'digest.daily',
+      coveredDate: input.coveredDate,
+      digest: input.digest,
+      text: input.text,
+      sentAt: formatDateTime(new Date()),
+    }).catch((e) => {
+      console.warn(`[outbound] failed to enqueue digest deliveries, userId=${input.userId}: ${(e as Error).message}`);
+    });
+  }
+
   private async enqueueDeliveries(userId: number, event: OutboundEvent, payload: Record<string, unknown>): Promise<void> {
     const subscriptions = await this.deps.subscriptionRepo.listEnabledByEvent(userId, event);
     if (subscriptions.length === 0) return;

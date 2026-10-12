@@ -174,6 +174,68 @@
         </button>
       </div>
     </section>
+
+    <section class="settings-section">
+      <div class="section-head">
+        <div>
+          <label class="field-label">每日运营摘要</label>
+          <p class="field-desc">
+            每天在设定时间汇总昨天的任务成败、定时任务、哨兵触发、审批挂起与 Token
+            成本，写入站内收件箱；配置了出站订阅时同步推送。
+          </p>
+        </div>
+        <el-switch
+          v-model="digestForm.enabled"
+          :loading="digestSaving"
+          :disabled="digestLoading"
+          inline-prompt
+          active-text="开"
+          inactive-text="关"
+          aria-label="每日运营摘要总开关"
+          @change="handleDigestEnabledChange"
+        />
+      </div>
+
+      <template v-if="digestForm.enabled">
+        <div class="inbox-kind-row">
+          <span class="inbox-kind-label">推送时间</span>
+          <el-time-picker
+            v-model="digestForm.pushTime"
+            class="digest-time-picker"
+            format="HH:mm"
+            value-format="HH:mm"
+            placeholder="09:30"
+            :disabled="digestSaving || digestLoading"
+            @change="handleDigestPushTimeChange"
+          />
+        </div>
+        <div class="inbox-kind-row">
+          <span class="inbox-kind-label">同时推送到出站订阅</span>
+          <el-checkbox
+            v-model="digestForm.outboundEnabled"
+            :disabled="!hasOutboundSubscriptions || digestSaving || digestLoading"
+            @change="handleDigestOutboundChange"
+          />
+        </div>
+        <p v-if="!hasOutboundSubscriptions" class="field-desc digest-sub-hint">
+          尚未配置出站订阅，摘要只会写入站内收件箱。请先在
+          <router-link to="/settings/open-api" class="digest-link">开放接口</router-link>
+          添加事件订阅后开启同步推送。
+        </p>
+        <p class="digest-status">{{ digestStatusText }}</p>
+        <div class="inbox-actions">
+          <button
+            class="secondary-btn"
+            type="button"
+            :disabled="digestSending || digestLoading"
+            @click="handleDigestSendNow"
+          >
+            <el-icon><Connection /></el-icon>
+            {{ digestSending ? '发送中...' : '立即发送昨日摘要' }}
+          </button>
+        </div>
+      </template>
+    </section>
   </div>
 </template>
 
@@ -187,9 +249,14 @@ import {
   testTaskNotification,
   getInboxPreference as fetchInboxPreferenceApi,
   saveInboxPreference as saveInboxPreferenceApi,
+  getDigestPreferences,
+  saveDigestPreferences,
+  sendDigestNow,
+  listOutboundSubscriptions,
   type NotificationChannel,
   type TaskNotificationPreference,
-  type InboxPreference
+  type InboxPreference,
+  type YesterdayDigestStatus
 } from '../../api'
 import { isElectronClient } from '../../utils/platform'
 
@@ -288,6 +355,116 @@ watch(
   { deep: true }
 )
 
+// ─── 每日运营摘要（分区独立：每个控件变更即 PATCH，无整卡保存按钮） ───
+const digestLoading = ref(true)
+const digestSaving = ref(false)
+const digestSending = ref(false)
+const hasOutboundSubscriptions = ref(false)
+const digestSaved = reactive({
+  enabled: true,
+  pushTime: '09:30',
+  outboundEnabled: true
+})
+const digestForm = reactive({ ...digestSaved })
+const digestStatus = reactive<{ status: YesterdayDigestStatus; coveredDate: string }>({
+  status: 'PENDING',
+  coveredDate: ''
+})
+
+const digestStatusText = computed(() => {
+  const short = digestStatus.coveredDate ? digestStatus.coveredDate.slice(5) : '--'
+  switch (digestStatus.status) {
+    case 'SENT':
+      return `上一份摘要（${short}）：已发送`
+    case 'QUIET':
+      return `上一份摘要（${short}）：无事件未发送`
+    default:
+      return `上一份摘要（${short}）：待生成（今日 ${digestForm.pushTime} 推送）`
+  }
+})
+
+async function loadDigestPreference() {
+  digestLoading.value = true
+  try {
+    const pref = await getDigestPreferences()
+    Object.assign(digestSaved, {
+      enabled: pref.enabled,
+      pushTime: pref.pushTime,
+      outboundEnabled: pref.outboundEnabled
+    })
+    Object.assign(digestForm, digestSaved)
+    digestStatus.status = pref.yesterdayStatus
+    digestStatus.coveredDate = pref.yesterdayCoveredDate
+  } catch {
+    // 错误 toast 由 API 拦截器统一处理；保留默认值
+  } finally {
+    digestLoading.value = false
+  }
+  // 出站订阅列表单独加载：它只决定勾选框可用性，失败不应拖垮偏好加载
+  try {
+    const subscriptions = await listOutboundSubscriptions()
+    hasOutboundSubscriptions.value = subscriptions.length > 0
+  } catch {
+    // 错误 toast 由 API 拦截器统一处理；按「无订阅」降级（勾选框禁用）
+  }
+}
+
+async function patchDigest(patch: { enabled?: boolean; pushTime?: string; outboundEnabled?: boolean }) {
+  digestSaving.value = true
+  try {
+    const saved = await saveDigestPreferences(patch)
+    Object.assign(digestSaved, {
+      enabled: saved.enabled,
+      pushTime: saved.pushTime,
+      outboundEnabled: saved.outboundEnabled
+    })
+    Object.assign(digestForm, digestSaved)
+    ElMessage.success('摘要设置已保存')
+  } catch {
+    // 保存失败回滚到已保存值：el-switch / el-checkbox 的 v-model 已先行改动表单
+    Object.assign(digestForm, digestSaved)
+    // 错误 toast 由 API 拦截器统一处理
+  } finally {
+    digestSaving.value = false
+  }
+}
+
+function handleDigestEnabledChange(value: string | number | boolean) {
+  void patchDigest({ enabled: value === true })
+}
+
+async function handleDigestPushTimeChange(value: string | null) {
+  // 清空选择器时 value 为 null：不视为合法输入，恢复上次保存值并提示
+  if (typeof value !== 'string' || value === '') {
+    digestForm.pushTime = digestSaved.pushTime
+    ElMessage.warning('推送时间不能为空，已恢复上次保存的值')
+    return
+  }
+  await patchDigest({ pushTime: value })
+}
+
+function handleDigestOutboundChange(value: string | number | boolean) {
+  void patchDigest({ outboundEnabled: value === true })
+}
+
+async function handleDigestSendNow() {
+  digestSending.value = true
+  try {
+    const result = await sendDigestNow()
+    if (result.sent) {
+      ElMessage.success(result.line ? `已写入收件箱：${result.line}` : '昨日摘要已写入收件箱')
+    } else if (result.reason === 'QUIET') {
+      ElMessage.info('昨日无事件，未生成摘要')
+    } else {
+      ElMessage.warning('总开关已关闭，未生成摘要')
+    }
+  } catch {
+    // 错误 toast 由 API 拦截器统一处理
+  } finally {
+    digestSending.value = false
+  }
+}
+
 function validateWebhook(): boolean {
   webhookError.value = ''
   const value = form.webhookUrl.trim()
@@ -373,6 +550,7 @@ async function handleSave() {
 onMounted(() => {
   loadPreference()
   loadInboxPreference()
+  loadDigestPreference()
 })
 </script>
 
@@ -512,6 +690,30 @@ onMounted(() => {
   display: flex;
   justify-content: flex-end;
   padding-top: 16px;
+}
+
+.digest-time-picker {
+  width: 120px;
+}
+
+.digest-sub-hint {
+  margin-top: 10px;
+}
+
+.digest-link {
+  color: var(--aw-primary);
+  text-decoration: none;
+}
+
+.digest-link:hover {
+  text-decoration: underline;
+}
+
+.digest-status {
+  margin: 12px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--aw-ink-muted-48);
 }
 
 .primary-btn,
