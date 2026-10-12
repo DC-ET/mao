@@ -31,14 +31,12 @@
         </el-form-item>
         <el-form-item label="作用域">
           <el-select v-model="scopeFilter" clearable placeholder="全部" style="width: 130px" @change="handleSearch">
-            <el-option label="用户级" value="USER" />
-            <el-option label="项目级" value="PROJECT" />
+            <el-option v-for="(label, value) in SCOPE_LABELS" :key="value" :label="label" :value="value" />
           </el-select>
         </el-form-item>
         <el-form-item label="状态">
           <el-select v-model="statusFilter" clearable placeholder="全部" style="width: 130px" @change="handleSearch">
-            <el-option label="生效中" value="ACTIVE" />
-            <el-option label="已忽略" value="DISMISSED" />
+            <el-option v-for="(label, value) in STATUS_LABELS" :key="value" :label="label" :value="value" />
           </el-select>
         </el-form-item>
         <el-form-item>
@@ -57,7 +55,7 @@
         <el-table-column label="作用域" width="110">
           <template #default="{ row }">
             <el-tag :type="row.scope === 'PROJECT' ? 'warning' : 'info'" size="small">
-              {{ row.scope === 'PROJECT' ? '项目' : '用户' }}
+              {{ scopeLabel(row.scope) }}
             </el-tag>
           </template>
         </el-table-column>
@@ -70,14 +68,14 @@
         <el-table-column label="来源" width="90">
           <template #default="{ row }">
             <el-tag :type="row.source === 'AUTO' ? 'success' : 'info'" size="small">
-              {{ row.source === 'AUTO' ? '自动' : '手动' }}
+              {{ sourceLabel(row.source) }}
             </el-tag>
           </template>
         </el-table-column>
         <el-table-column label="状态" width="90">
           <template #default="{ row }">
             <el-tag :type="row.status === 'ACTIVE' ? 'success' : 'info'" size="small">
-              {{ row.status === 'ACTIVE' ? '生效中' : '已忽略' }}
+              {{ statusLabel(row.status) }}
             </el-tag>
           </template>
         </el-table-column>
@@ -104,6 +102,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 import { api } from '../../api'
+import type { MemoryScope, MemorySource, MemoryStatus } from '@mao/contracts'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
 
 interface MemoryAuditItem {
@@ -111,24 +110,51 @@ interface MemoryAuditItem {
   userId: number
   username?: string | null
   displayName?: string | null
-  scope: string
+  scope: MemoryScope
   projectKey: string | null
   content: string
-  source: string
-  status: string
+  source: MemorySource
+  status: MemoryStatus
   originSessionId: number | null
   createdAt?: string | null
   updatedAt?: string | null
 }
 
 const userIdInput = ref('')
-const scopeFilter = ref('')
-const statusFilter = ref('')
+const scopeFilter = ref<MemoryScope | ''>('')
+const statusFilter = ref<MemoryStatus | ''>('')
 const loading = ref(false)
 const items = ref<MemoryAuditItem[]>([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
+
+const SCOPE_LABELS: Record<MemoryScope, string> = {
+  USER: '用户',
+  PROJECT: '项目'
+}
+
+const SOURCE_LABELS: Record<MemorySource, string> = {
+  AUTO: '自动',
+  MANUAL: '手动'
+}
+
+const STATUS_LABELS: Record<MemoryStatus, string> = {
+  ACTIVE: '生效中',
+  DISMISSED: '已忽略'
+}
+
+function scopeLabel(scope: MemoryScope): string {
+  return SCOPE_LABELS[scope] ?? scope
+}
+
+function sourceLabel(source: MemorySource): string {
+  return SOURCE_LABELS[source] ?? source
+}
+
+function statusLabel(status: MemoryStatus): string {
+  return STATUS_LABELS[status] ?? status
+}
 
 const userId = computed(() => {
   const parsed = Number(userIdInput.value.trim())

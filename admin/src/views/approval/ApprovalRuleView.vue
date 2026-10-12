@@ -87,15 +87,16 @@
 import { onMounted, ref } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 import { api } from '../../api'
+import type { ApprovalRuleScope, ApprovalRuleType } from '@mao/contracts'
 
 interface ApprovalRuleRow {
   id: number
   userId: number
   username: string | null
-  scope: 'SESSION' | 'USER'
+  scope: ApprovalRuleScope
   sessionId: number | null
   sessionTitle: string | null
-  ruleType: 'SHELL_PREFIX' | 'SHELL_EXACT' | 'MCP_TOOL'
+  ruleType: ApprovalRuleType
   ruleValue: string
   hitCount: number
   lastHitAt: string | null
@@ -111,17 +112,18 @@ const pageSize = 20
 const userOptions = ref<Array<{ id: number; username: string; displayName?: string | null }>>([])
 const filters = ref({
   userId: undefined as number | undefined,
-  ruleType: '' as '' | 'SHELL_PREFIX' | 'SHELL_EXACT' | 'MCP_TOOL',
+  ruleType: '' as '' | ApprovalRuleType,
   enabled: undefined as boolean | undefined
 })
 
-function typeLabel(t: string) {
-  switch (t) {
-    case 'SHELL_PREFIX': return '命令前缀'
-    case 'SHELL_EXACT': return '完整命令'
-    case 'MCP_TOOL': return 'MCP 工具'
-    default: return t
-  }
+const TYPE_LABELS: Record<ApprovalRuleType, string> = {
+  SHELL_PREFIX: '命令前缀',
+  SHELL_EXACT: '完整命令',
+  MCP_TOOL: 'MCP 工具'
+}
+
+function typeLabel(t: ApprovalRuleType): string {
+  return TYPE_LABELS[t] ?? t
 }
 
 function formatTime(value?: string | null) {

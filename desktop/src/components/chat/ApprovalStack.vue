@@ -72,12 +72,9 @@ import { ElMessage } from 'element-plus'
 import { WarningFilled } from '@element-plus/icons-vue'
 import { copyText as copyToClipboard } from '../../utils/clipboard'
 
-export interface ApprovalHint {
-  ruleType: 'SHELL_PREFIX' | 'SHELL_EXACT' | 'MCP_TOOL'
-  /** 归一化后的模式值全文（副标题展示，用户看清将要记住的确切模式） */
-  ruleValue: string
-  label: string
-}
+import type { ApprovalHint } from '@mao/contracts'
+
+export type { ApprovalHint }
 
 export interface ApprovalItem {
   requestId: string

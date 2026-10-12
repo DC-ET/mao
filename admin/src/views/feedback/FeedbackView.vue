@@ -337,10 +337,11 @@ import { api } from '../../api'
 import { formatDateTime } from '../../utils/datetime'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import { useAuthStore } from '../../stores/auth'
+import type { FeedbackReason, FeedbackSource, FeedbackStatus } from '@mao/contracts'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
 
 interface FeedbackSummaryItem {
-  reason: string
+  reason: FeedbackReason
   label: string
   count: number
 }
@@ -348,7 +349,7 @@ interface FeedbackSummaryItem {
 interface PendingMatrixItem {
   agentId: number | null
   agentName: string | null
-  reason: string
+  reason: FeedbackReason
   reasonLabel: string
   count: number
 }
@@ -370,10 +371,10 @@ interface FeedbackDetailItem {
   displayName: string | null
   agentId: number | null
   agentName: string | null
-  reason: string
+  reason: FeedbackReason
   reasonLabel: string
-  source: string
-  status: string
+  source: FeedbackSource
+  status: FeedbackStatus
   handledByName: string | null
   experienceId: number | null
   sameGroupCount: number
@@ -389,7 +390,7 @@ interface AgentOption {
 /** 与后端 DRAFT_LIMITS.MAX_EXPERIENCES 同口径：一次转换最多写 2 条经验。 */
 const MAX_EXPERIENCES = 2
 
-const REASON_TAG_TYPES: Record<string, 'danger' | 'warning' | 'info' | 'primary' | 'success'> = {
+const REASON_TAG_TYPES: Record<FeedbackReason, 'danger' | 'warning' | 'info' | 'primary' | 'success'> = {
   WRONG_RESULT: 'danger',
   SLOW_RESPONSE: 'warning',
   NOT_SOLVED: 'info',
@@ -397,36 +398,36 @@ const REASON_TAG_TYPES: Record<string, 'danger' | 'warning' | 'info' | 'primary'
   NO_REASON: 'success'
 }
 
-function reasonTagType(reason: string) {
+function reasonTagType(reason: FeedbackReason) {
   return REASON_TAG_TYPES[reason] ?? 'info'
 }
 
-const SOURCE_LABELS: Record<string, string> = {
+const SOURCE_LABELS: Record<FeedbackSource, string> = {
   feishu: '飞书',
   desktop: '桌面端'
 }
 
-function sourceLabel(source: string) {
+function sourceLabel(source: FeedbackSource) {
   return SOURCE_LABELS[source] ?? '桌面端'
 }
 
-const STATUS_TAG_TYPES: Record<string, 'warning' | 'success' | 'info'> = {
+const STATUS_TAG_TYPES: Record<FeedbackStatus, 'warning' | 'success' | 'info'> = {
   PENDING: 'warning',
   CONVERTED: 'success',
   DISMISSED: 'info'
 }
 
-const STATUS_LABELS: Record<string, string> = {
+const STATUS_LABELS: Record<FeedbackStatus, string> = {
   PENDING: '待处理',
   CONVERTED: '已转经验',
   DISMISSED: '已忽略'
 }
 
-function statusTagType(status: string) {
+function statusTagType(status: FeedbackStatus) {
   return STATUS_TAG_TYPES[status] ?? 'warning'
 }
 
-function statusLabel(status: string) {
+function statusLabel(status: FeedbackStatus) {
   return STATUS_LABELS[status] ?? status
 }
 
@@ -455,7 +456,7 @@ const loading = ref(false)
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
-const filters = reactive<{ status?: string; agentId?: number; reason?: string }>({ status: 'PENDING' })
+const filters = reactive<{ status?: FeedbackStatus; agentId?: number; reason?: FeedbackReason }>({ status: 'PENDING' })
 const dateRange = ref<[string, string] | null>(null)
 const agentOptions = ref<AgentOption[]>([])
 
@@ -464,7 +465,7 @@ const reasonOptions = computed(() => summary.value.byReason.map((item) => ({ val
 
 /** 矩阵行：按 Agent 聚合成一行，每列是对应原因的待处理数（单元格可点击下钻）。 */
 const matrixRows = computed(() => {
-  const byAgent = new Map<number | null, { counts: Record<string, number>; total: number }>()
+  const byAgent = new Map<number | null, { counts: Partial<Record<FeedbackReason, number>>; total: number }>()
   const nameByAgent = new Map<number | null, string | null>()
   for (const cell of summary.value.pendingMatrix) {
     if (!byAgent.has(cell.agentId)) byAgent.set(cell.agentId, { counts: {}, total: 0 })
@@ -558,7 +559,7 @@ function handleReset() {
 }
 
 /** 单元格点击：下钻到该 Agent + 该原因的待处理反馈。 */
-function applyMatrixFilter(agentId: number | null, reason: string) {
+function applyMatrixFilter(agentId: number | null, reason: FeedbackReason) {
   filters.status = 'PENDING'
   filters.reason = reason
   filters.agentId = agentId ?? undefined

@@ -1,11 +1,7 @@
 /** 记忆作用域：USER 用户级（跨 Agent、跨工作区）/ PROJECT 项目级（绑定 session.projectKey）。 */
-export type MemoryScope = 'USER' | 'PROJECT';
+import type { MemoryScope, MemoryStatus, MemorySource } from '@mao/contracts';
 
-/** 记忆状态：ACTIVE 生效（参与注入）/ DISMISSED 已忽略（保留行、不再注入、抽取不复活）。 */
-export type MemoryStatus = 'ACTIVE' | 'DISMISSED';
-
-/** 记忆来源：AUTO=Agent 抽取 / MANUAL=用户手写。 */
-export type MemorySource = 'AUTO' | 'MANUAL';
+export type { MemoryScope, MemoryStatus, MemorySource };
 
 /** memory_item 表行。 */
 export interface MemoryItemRow {
@@ -92,5 +88,5 @@ export const MEMORY_EXTRACT_INPUT_MAX_CHARS = 6000;
 /** 负面约束集上限：DISMISSED 行 content 进入抽取 prompt 的条数上限（D13，D14 淘汰会持续产生 DISMISSED 行）。 */
 export const MEMORY_EXTRACT_DISMISSED_HINT_LIMIT = 50;
 
-export const MEMORY_SCOPES: readonly MemoryScope[] = ['USER', 'PROJECT'];
-export const MEMORY_STATUSES: readonly MemoryStatus[] = ['ACTIVE', 'DISMISSED'];
+export const MEMORY_SCOPES = ['USER', 'PROJECT'] as const satisfies readonly MemoryScope[];
+export const MEMORY_STATUSES = ['ACTIVE', 'DISMISSED'] as const satisfies readonly MemoryStatus[];

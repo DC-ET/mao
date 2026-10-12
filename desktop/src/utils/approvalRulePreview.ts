@@ -4,6 +4,8 @@
  * 只剥首部连续的 env 赋值前缀、折叠空白；中段出现的赋值属于命令本身，必须原样保留。
  */
 
+import type { ApprovalRuleType } from '@mao/contracts'
+
 const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_-]*=/
 
 /** 剥除首部连续 env 赋值 token（FOO=bar …）。 */
@@ -17,7 +19,7 @@ export function stripLeadingEnvTokens(tokens: string[]): string[] {
  * 预览规则值：MCP 工具取输入原文（服务端只 trim + 截断）；
  * shell 取归一化后的全文（SHELL_EXACT）或前两个 token（SHELL_PREFIX）。
  */
-export function previewRuleValue(ruleType: string, raw: string): string {
+export function previewRuleValue(ruleType: ApprovalRuleType, raw: string): string {
   const trimmed = raw.trim()
   if (trimmed === '') return ''
   if (ruleType === 'MCP_TOOL') return trimmed

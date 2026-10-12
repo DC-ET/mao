@@ -1,10 +1,9 @@
-import type { ApprovalRuleType } from './approval-rule-normalize.js';
+import type { ApprovalRuleType, ApprovalRuleScope } from '@mao/contracts';
 
-export type { ApprovalRuleType };
+export type { ApprovalRuleType, ApprovalRuleScope };
 export { APPROVAL_RULE_TYPES } from './approval-rule-normalize.js';
 
-export type ApprovalRuleScope = 'SESSION' | 'USER';
-export const APPROVAL_RULE_SCOPES: readonly ApprovalRuleScope[] = ['SESSION', 'USER'];
+export const APPROVAL_RULE_SCOPES = ['SESSION', 'USER'] as const satisfies readonly ApprovalRuleScope[];
 
 export interface ApprovalRuleRow {
   id: number;

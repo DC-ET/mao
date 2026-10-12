@@ -1,16 +1,7 @@
-/**
- * 审批卡片「本会话总是允许」hint：由后端从当次工具参数归一化生成，
- * 随 tool_execute 帧下发到桌面审批卡片；用户点「总是允许」后客户端只回传布尔，
- * 后端按 requestId 从 ApprovalRegistry 取回服务端存储的同一 hint 落会话级规则。
- * 客户端永远拿不到 pattern 的决定权（不能注入 ruleValue）。
- */
-export interface ApprovalHint {
-  ruleType: 'SHELL_PREFIX' | 'SHELL_EXACT' | 'MCP_TOOL';
-  /** 归一化后的模式值（匹配语义的真实载体，卡片副标题展示全文） */
-  ruleValue: string;
-  /** 卡片按钮/副标题文案（如「本会话总是允许以 npm run 开头的命令」） */
-  label: string;
-}
+import type { ApprovalRuleType } from '@mao/contracts';
+
+export type { ApprovalHint } from '@mao/contracts';
+import type { ApprovalHint } from '@mao/contracts';
 
 /** 规则放行的匹配结果（fire-and-forget 命中计数 + approvalMark 留痕用）。 */
 export interface ApprovalRuleMatchHit {

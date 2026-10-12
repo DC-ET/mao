@@ -7,13 +7,14 @@ import type { InboxItem, InboxKind, InboxListResult } from '@mao/contracts'
  * 回归（BUG-2）：桌面 `KNOWN_INBOX_KINDS` 白名单漏 `WEIXIN_REPLY_WINDOW_CLOSED`。
  * 该 kind 由 commit 731fa2b6（0.0.258）加入后端 INBOX_KINDS，未同步桌面，
  * 导致落库条目不渲染（铃铛未读数比列表多 1），且不可点、不可置已读。
+ * 上一次同类漂移（BUDGET_WARN 漏白名单）已有回归测试。
  *
- * 上一次同类漂移（BUDGET_WARN 漏白名单）已有回归测试；本文件把「白名单必须覆盖
- * 契约全枚举」这条不变量固定下来。
+ * 2026-10-12：原实现手抄了一份后端 `INBOX_KINDS` 副本用于比对，该副本本身
+ * 又漏了 0.0.278 新增的 `WATCHER_DISABLED`——副本比对副本会一起过期。
+ * 现改为把每个 kind 显式标注为契约类型 `InboxKind`：契约新增成员而这里漏写时，
+ * `vitest` 的 tsc 检查直接报 TS2322，不再依赖副本同步。
  */
-
-// 与 backend-ts/src/inbox/types.ts 的 INBOX_KINDS 保持同一份事实来源（复制用于比对）。
-const BACKEND_INBOX_KINDS: readonly string[] = [
+const ALL_INBOX_KINDS: InboxKind[] = [
   'TASK_COMPLETED',
   'TASK_FAILED',
   'QUESTION_PENDING',
@@ -25,6 +26,7 @@ const BACKEND_INBOX_KINDS: readonly string[] = [
   'TOKEN_DISABLED',
   'OPEN_API_CALL_FAILED',
   'WEIXIN_REPLY_WINDOW_CLOSED',
+  'WATCHER_DISABLED',
 ]
 
 function makeItem(id: number, kind: InboxKind): InboxItem {
@@ -48,8 +50,8 @@ function makeList(items: InboxItem[]): InboxListResult {
 describe('BUG-2 回归：收件箱 kind 白名单与后端契约漂移', () => {
   beforeEach(() => setActivePinia(createPinia()))
 
-  it('C1 后端每个 kind 都必须被桌面白名单识别', () => {
-    const missing = BACKEND_INBOX_KINDS.filter((kind) => !isKnownInboxKind(kind))
+  it('C1 契约里每个 kind 都必须被桌面白名单识别', () => {
+    const missing = ALL_INBOX_KINDS.filter((kind) => !isKnownInboxKind(kind))
     console.log('C1 桌面白名单缺失的 kind =', JSON.stringify(missing), '（应为 []）')
     expect(missing).toEqual([])
   })

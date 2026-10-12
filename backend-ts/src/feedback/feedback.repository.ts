@@ -1,11 +1,13 @@
 import type { Db } from '../db/db.js';
 
-export const FEEDBACK_REASONS = ['WRONG_RESULT', 'SLOW_RESPONSE', 'NOT_SOLVED', 'OTHER', 'NO_REASON'] as const;
-export type FeedbackReason = (typeof FEEDBACK_REASONS)[number];
+import type { FeedbackReason, FeedbackSource, FeedbackStatus } from '@mao/contracts';
+
+export type { FeedbackReason, FeedbackSource, FeedbackStatus };
+
+export const FEEDBACK_REASONS = ['WRONG_RESULT', 'SLOW_RESPONSE', 'NOT_SOLVED', 'OTHER', 'NO_REASON'] as const satisfies readonly FeedbackReason[];
 
 /** 点踩来源：desktop 为桌面/Web/安卓端，feishu 为飞书进度卡点踩。 */
-export const FEEDBACK_SOURCES = ['desktop', 'feishu'] as const;
-export type FeedbackSource = (typeof FEEDBACK_SOURCES)[number];
+export const FEEDBACK_SOURCES = ['desktop', 'feishu'] as const satisfies readonly FeedbackSource[];
 
 /** 飞书点踩不选原因，固定写入该分类（后台展示为「未选择原因（飞书）」）。 */
 export const FEISHU_DISLIKE_REASON: FeedbackReason = 'NO_REASON';
@@ -15,8 +17,7 @@ export const FEISHU_DISLIKE_SOURCE: FeedbackSource = 'feishu';
  * 处理态：PENDING 是唯一入口态；CONVERTED 与 DISMISSED 均为终态，
  * 不可互相流转、不可回退（技术方案 §4.1）。
  */
-export const FEEDBACK_STATUSES = ['PENDING', 'CONVERTED', 'DISMISSED'] as const;
-export type FeedbackStatus = (typeof FEEDBACK_STATUSES)[number];
+export const FEEDBACK_STATUSES = ['PENDING', 'CONVERTED', 'DISMISSED'] as const satisfies readonly FeedbackStatus[];
 
 /** 批量 CAS 的 id 上限：防止一次请求带进过大的 IN 列表。 */
 const MAX_CAS_IDS = 100;

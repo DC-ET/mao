@@ -8,6 +8,12 @@
 2. **不下沉内部实现**：数据库实体（Row）、Repository/Service 接口、LlmAdapter 等内部抽象、前端 UI 视图模型（含交互状态如 `isExpanded`）都不放这里。
 3. **契约以 REST API 边界为准**：请求体 / 响应体 / 跨端枚举 / 分页结构。
 
+### 跨端枚举
+
+枚举联合类型放在这里，是为了让两端汉化表能以 `Record<枚举联合, 文案>` 声明——漏一项 `vue-tsc` 编译期即报错，不再依赖运行时才发现英文枚举。新增成员需同步三处：本包加联合成员、后端对应域加事实源常量（一致性由该文件的 `as const satisfies` 断言守住）、desktop / admin 汉化表加中文（由 `Record` 强制）。
+
+已收口：`LlmCallScene`（usage.ts）、`SignalCompareMode` / `SignalWatcherStatus` / `SignalWatcherWarning`（signal.ts）。
+
 ## 使用方式
 
 ### 后端

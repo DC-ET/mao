@@ -21,6 +21,11 @@ export type {
   InboxPreference,
 } from './inbox';
 export type { QuickCommandItem, QuickCommandsVO } from './command';
+export type { LlmCallScene } from './usage';
+export type { SignalCompareMode, SignalWatcherStatus, SignalWatcherWarning } from './signal';
+export type { MemoryScope, MemoryStatus, MemorySource } from './memory';
+export type { ApprovalRuleType, ApprovalRuleScope, ApprovalHint } from './approval-rule';
+export type { FeedbackReason, FeedbackSource, FeedbackStatus } from './feedback';
 export type { ToolVO } from './tool';
 export type { UserInfoVO, LoginVO } from './user';
 export type { ModelVO, ModelPageResult, ModelListFilter, ClientImpersonation } from './model';

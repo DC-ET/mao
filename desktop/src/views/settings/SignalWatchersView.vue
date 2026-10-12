@@ -247,6 +247,7 @@ import {
   type SignalCompareMode,
   type SignalWatcherStatus
 } from '../../api'
+import type { SignalWatcherWarning } from '@mao/contracts'
 import {
   DISABLE_AFTER_FAILURES,
   MAX_WATCHERS,
@@ -305,7 +306,7 @@ const COMPARE_MODE_LABELS: Record<SignalCompareMode, string> = {
   STATUS_CODE: '状态码'
 }
 
-const WARNING_LABELS: Record<string, string> = {
+const WARNING_LABELS: Record<SignalWatcherWarning, string> = {
   TRIGGER_RATE_LIMITED: '触发频次超限'
 }
 
@@ -325,7 +326,7 @@ function compareModeLabel(mode: SignalCompareMode): string {
   return COMPARE_MODE_LABELS[mode] ?? mode
 }
 
-function warningLabel(warning: string): string {
+function warningLabel(warning: SignalWatcherWarning): string {
   return WARNING_LABELS[warning] ?? warning
 }
 

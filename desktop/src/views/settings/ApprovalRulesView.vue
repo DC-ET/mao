@@ -132,11 +132,17 @@ const pageSize = ref(20)
 
 const typeFilter = ref<ApprovalRuleType | ''>('')
 
+const TYPE_LABELS: Record<ApprovalRuleType, string> = {
+  SHELL_PREFIX: '命令前缀',
+  SHELL_EXACT: '完整命令',
+  MCP_TOOL: 'MCP 工具'
+}
+
 const typeTabs: Array<{ value: ApprovalRuleType | ''; label: string }> = [
   { value: '', label: '全部' },
-  { value: 'SHELL_PREFIX', label: '命令前缀' },
-  { value: 'SHELL_EXACT', label: '完整命令' },
-  { value: 'MCP_TOOL', label: 'MCP 工具' }
+  { value: 'SHELL_PREFIX', label: TYPE_LABELS.SHELL_PREFIX },
+  { value: 'SHELL_EXACT', label: TYPE_LABELS.SHELL_EXACT },
+  { value: 'MCP_TOOL', label: TYPE_LABELS.MCP_TOOL }
 ]
 
 const dialogVisible = ref(false)
@@ -159,12 +165,15 @@ const normalizedPreview = computed(() => previewRuleValue(form.value.ruleType, f
 
 const canSubmit = computed(() => form.value.ruleValue.trim().length > 0 && normalizedPreview.value !== '')
 
+/** 卡片徽标用短标签（与筛选 tab 的完整称谓刻意不同：徽标空间窄）。 */
+const TYPE_BADGE_LABELS: Record<ApprovalRuleType, string> = {
+  SHELL_PREFIX: '前缀',
+  SHELL_EXACT: '全等',
+  MCP_TOOL: 'MCP'
+}
+
 function typeLabel(t: ApprovalRuleType): string {
-  switch (t) {
-    case 'SHELL_PREFIX': return '前缀'
-    case 'SHELL_EXACT': return '全等'
-    case 'MCP_TOOL': return 'MCP'
-  }
+  return TYPE_BADGE_LABELS[t] ?? t
 }
 
 function formatTime(value?: string | null) {

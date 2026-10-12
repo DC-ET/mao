@@ -1,8 +1,9 @@
 import type { ApprovalHint } from '../harness/approval/approval-hint.js';
+import type { ApprovalRuleType } from '@mao/contracts';
 
-export type ApprovalRuleType = 'SHELL_PREFIX' | 'SHELL_EXACT' | 'MCP_TOOL';
+export type { ApprovalRuleType };
 
-export const APPROVAL_RULE_TYPES: readonly ApprovalRuleType[] = ['SHELL_PREFIX', 'SHELL_EXACT', 'MCP_TOOL'];
+export const APPROVAL_RULE_TYPES = ['SHELL_PREFIX', 'SHELL_EXACT', 'MCP_TOOL'] as const satisfies readonly ApprovalRuleType[];
 
 export const RULE_VALUE_MAX_LENGTH = 512;
 /** MCP 工具全名上限（mcp__<server>__<tool>） */

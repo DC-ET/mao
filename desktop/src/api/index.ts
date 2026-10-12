@@ -372,7 +372,8 @@ export async function saveInboxPreference(payload: InboxPreference): Promise<Inb
 
 // ─── 消息点踩反馈 ───
 
-export type FeedbackReason = 'WRONG_RESULT' | 'SLOW_RESPONSE' | 'NOT_SOLVED' | 'OTHER'
+export type { FeedbackReason } from '@mao/contracts'
+import type { FeedbackReason } from '@mao/contracts'
 
 /** 提交（或覆盖）某条 assistant 消息的点踩。 */
 export async function dislikeMessage(messageId: number, reason: FeedbackReason): Promise<void> {
@@ -391,9 +392,8 @@ export async function fetchDislikedMessageIds(sessionId: number): Promise<number
 
 // ─── 长期记忆（跨会话记忆） ───
 
-export type MemoryScope = 'USER' | 'PROJECT'
-export type MemoryStatus = 'ACTIVE' | 'DISMISSED'
-export type MemorySource = 'AUTO' | 'MANUAL'
+export type { MemoryScope, MemoryStatus, MemorySource } from '@mao/contracts'
+import type { MemoryScope, MemoryStatus, MemorySource } from '@mao/contracts'
 
 export interface MemoryItem {
   id: number
@@ -475,11 +475,12 @@ export async function listMemoryProjects(): Promise<string[]> {
 
 // ─── 审批放行规则（LOCAL 工具审批 allowlist） ───
 
-export type ApprovalRuleType = 'SHELL_PREFIX' | 'SHELL_EXACT' | 'MCP_TOOL'
+export type { ApprovalRuleType, ApprovalRuleScope } from '@mao/contracts'
+import type { ApprovalRuleType, ApprovalRuleScope } from '@mao/contracts'
 
 export interface ApprovalRule {
   id: number
-  scope: 'SESSION' | 'USER'
+  scope: ApprovalRuleScope
   sessionId: number | null
   ruleType: ApprovalRuleType
   ruleValue: string
@@ -872,8 +873,8 @@ export async function fetchMyLlmCalls(params: {
 
 // ── 信号哨兵（/v1/signal-watchers）─────────────────────────────────────────
 
-export type SignalCompareMode = 'HASH' | 'JSON_FIELD' | 'STATUS_CODE'
-export type SignalWatcherStatus = 'ACTIVE' | 'PAUSED' | 'DISABLED'
+export type { SignalCompareMode, SignalWatcherStatus } from '@mao/contracts'
+import type { SignalCompareMode, SignalWatcherStatus } from '@mao/contracts'
 
 export interface SignalWatcherView {
   id: number

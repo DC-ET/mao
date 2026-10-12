@@ -79,6 +79,7 @@
 import { onActivated, onMounted, reactive, ref } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 import { api } from '../../api'
+import type { SignalCompareMode, SignalWatcherStatus } from '@mao/contracts'
 import { formatDateTime } from '../../utils/datetime'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
 
@@ -90,30 +91,30 @@ interface WatcherRow {
   url: string
   method: string
   intervalMinutes: number
-  compareMode: string
-  status: string
+  compareMode: SignalCompareMode
+  status: SignalWatcherStatus
   lastCheckedAt: string | null
   lastChangedAt: string | null
   consecutiveFailures: number
   createdAt: string | null
 }
 
-const statusOptions = ['ACTIVE', 'PAUSED', 'DISABLED']
-const compareModeOptions = ['HASH', 'JSON_FIELD', 'STATUS_CODE']
+const statusOptions: readonly SignalWatcherStatus[] = ['ACTIVE', 'PAUSED', 'DISABLED']
+const compareModeOptions: readonly SignalCompareMode[] = ['HASH', 'JSON_FIELD', 'STATUS_CODE']
 
-const STATUS_LABELS: Record<string, string> = {
+const STATUS_LABELS: Record<SignalWatcherStatus, string> = {
   ACTIVE: '运行中',
   PAUSED: '已暂停',
   DISABLED: '已停用'
 }
 
-const COMPARE_MODE_LABELS: Record<string, string> = {
+const COMPARE_MODE_LABELS: Record<SignalCompareMode, string> = {
   HASH: '内容哈希',
   JSON_FIELD: 'JSON 字段',
   STATUS_CODE: '状态码'
 }
 
-const STATUS_TAGS: Record<string, 'success' | 'warning' | 'danger'> = {
+const STATUS_TAGS: Record<SignalWatcherStatus, 'success' | 'warning' | 'danger'> = {
   ACTIVE: 'success',
   PAUSED: 'warning',
   DISABLED: 'danger'
@@ -130,15 +131,15 @@ const filters = reactive({
   compareMode: ''
 })
 
-function statusLabel(status: string): string {
+function statusLabel(status: SignalWatcherStatus): string {
   return STATUS_LABELS[status] ?? status
 }
 
-function compareModeLabel(mode: string): string {
+function compareModeLabel(mode: SignalCompareMode): string {
   return COMPARE_MODE_LABELS[mode] ?? mode
 }
 
-function statusTagType(status: string): 'success' | 'warning' | 'danger' | 'info' {
+function statusTagType(status: SignalWatcherStatus): 'success' | 'warning' | 'danger' | 'info' {
   return STATUS_TAGS[status] ?? 'info'
 }
 
