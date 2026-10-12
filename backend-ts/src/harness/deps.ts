@@ -166,6 +166,10 @@ export interface SessionService {
   getMessagesAfterId(sessionId: number, boundary: number): Promise<Message[]>;
   /** 按 id 单调序取最后一条用户消息；压缩后回注最新真实用户原话时使用。 */
   getLastUserMessage?(sessionId: number): Promise<Message | null>;
+  /** 会话首条现存用户消息（id 最小）：系统提示 current-date 的日期锚点（技术方案 2026-10-12 §5.1）。 */
+  getFirstUserStamp?(sessionId: number): Promise<Pick<Message, 'id' | 'createdAt'> | null>;
+  /** beforeId 之前最近的一条现存用户消息：跨天 `<date-change>` 提示的比较参照。 */
+  getPreviousUserStamp?(sessionId: number, beforeId: number): Promise<Pick<Message, 'id' | 'createdAt'> | null>;
   getMessages?(sessionId: number): Promise<Message[]>;
   /** 从（可能是多模态 JSON 的）消息 content 中提取可见文本，供摘要等场景使用。 */
   extractVisibleText?(content: string | null): string | null;

@@ -291,7 +291,10 @@ export class HarnessService {
 
     const context = new AgentExecutionContext();
     context.cancelFlag = cancelFlag;
-    context.currentTimestamp = shanghaiYmd();
+    // 日期锚定（技术方案 2026-10-12 §5.1）：系统提示 current-date 节取本会话首条现存用户
+    // 消息的日期，跨天不重算；无用户消息（信号 / 定时任务首轮 / 空会话）回落服务器当天，
+    // 与改造前行为完全一致。每轮重新解析，首条被软删后下一轮自动自愈。
+    context.sessionBaseYmd = await this.resolveSessionBaseYmd(sessionId);
     context.sessionId = sessionId;
     context.userId = session.userId;
     context.agentId = agent.id;
@@ -477,6 +480,24 @@ export class HarnessService {
         false, null, activeTokensHint, 'manual', true);
     } finally {
       await this.closeBoundCloudMcp(sessionId);
+    }
+  }
+
+  /**
+   * 日期锚点解析（技术方案 2026-10-12 §5.1）：首条现存用户消息的 `created_at` 前 10 位。
+   * created_at 是写入端墙钟字符串（nowSql 写、dateStrings 读），直接截取与写入端同口径，
+   * 不引入二次时区偏移；无用户消息或查询失败时回落 shanghaiYmd()，与改造前一致。
+   */
+  private async resolveSessionBaseYmd(sessionId: number): Promise<string> {
+    try {
+      const first = this.sessionService.getFirstUserStamp == null
+        ? null
+        : await this.sessionService.getFirstUserStamp(sessionId);
+      const ymd = first?.createdAt ? String(first.createdAt).slice(0, 10) : '';
+      return ymd.length === 10 ? ymd : shanghaiYmd();
+    } catch (e) {
+      harnessLog('warn', `Failed to resolve session base date for session ${sessionId}: ${(e as Error).message}`);
+      return shanghaiYmd();
     }
   }
 

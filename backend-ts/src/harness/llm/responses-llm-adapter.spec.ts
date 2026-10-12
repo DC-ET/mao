@@ -149,6 +149,16 @@ describe('convertMessages（请求转换）', () => {
     ]);
   });
 
+  it('内部字段 senderYmd 不进入 Responses 请求体', () => {
+    const { input } = convertMessages([
+      { role: 'user', content: '隔天再问', senderYmd: '2026-10-13' },
+    ]);
+    expect(input).toEqual([
+      { role: 'user', content: [{ type: 'input_text', text: '隔天再问' }] },
+    ]);
+    expect(JSON.stringify(input)).not.toContain('senderYmd');
+  });
+
   it('assistant toolCalls 平铺为 function_call 项，tool 消息转 function_call_output', () => {
     const { input } = convertMessages([
       { role: 'user', content: '查天气' },

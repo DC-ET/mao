@@ -11,6 +11,7 @@ import type { UserCommandService } from '../deps.js';
 import { harnessLog } from '../log.js';
 import type { AgentExecutionContext } from './agent-execution-context.js';
 import { MessageHistoryNormalizer } from './message-history-normalizer.js';
+import { applyDateChangeNotices } from './session-date-notice.js';
 import { ToolMediaInjector } from './tool-media-injector.js';
 import { TokenEstimator } from './token-estimator.js';
 import { buildHandoffUserContent } from './compaction-service.js';
@@ -148,6 +149,11 @@ export class PromptEngine {
     // 同一用户消息在每次 LLM 请求中内容漂移，且与崩溃恢复后单遍展开的首轮内容不一致。
     const historyCopy = history.map((m) => ({ ...m }));
     await this.replaceQuickCommandMarkers(historyCopy, context);
+    // 跨天提示（技术方案 2026-10-12 §5.3）：在快捷命令展开之后注入——`$skill$` / `#{cmd}#`
+    // 的展开语义必须基于 DB 原文，标签前缀不能进入展开输入。放在媒体注入与归一化之前：
+    // 注入的图片 user 消息本就不带 senderYmd，归一化只做 tool 组重排且保留对象身份。
+    // 只作用于副本数组：标签不写回 context.messages，也就不会落库或被压缩边界判定看到。
+    applyDateChangeNotices(historyCopy, context.sessionBaseYmd ?? '', context.previousUserYmdBefore ?? null);
     messages.push(...historyCopy);
     const injected = this.toolMediaInjector.inject(messages, context.toolAttachments, context.modelConfig) ?? messages;
     // 补齐缺失的 tool output、把被图片注入拆开的 tool 组重新挨在 assistant 后面。
@@ -220,7 +226,9 @@ export class PromptEngine {
       }
       replaced = replaced.replace(FILE_REF_PATTERN, (_match, filePath: string) => filePath);
       if (replaced !== content) {
-        messages[i] = { role: 'user', content: replaced };
+        // 必须保留原消息其余字段：senderYmd（跨天提示的日期基准）一旦在这里丢掉，
+        // 含快捷命令 marker 且恰好跨天的那条用户消息就收不到标签（技术方案 2026-10-12 §5.3）。
+        messages[i] = { ...msg, content: replaced };
       }
     }
   }
@@ -417,12 +425,14 @@ export class PromptEngine {
   }
 
   private currentDateHint(context: AgentExecutionContext, allowShellClock: boolean): string {
-    if (!context.currentTimestamp) return '';
+    if (!context.sessionBaseYmd) return '';
     let sb = '## 当前日期\n\n';
-    sb += `当前日期：\`${context.currentTimestamp}\``;
-    const weekday = formatChineseWeekday(context.currentTimestamp);
+    sb += `当前日期：\`${context.sessionBaseYmd}\``;
+    const weekday = formatChineseWeekday(context.sessionBaseYmd);
     if (weekday) sb += `（${weekday}）`;
     sb += '\n';
+    sb += '本节日期是本会话首条用户消息的日期，会话内固定不变。'
+      + '若你的用户消息前出现 <date-change> 标签，说明真实日期已经推进，以标签内日期为准。\n';
     if (allowShellClock) {
       sb += '如需精确到时分秒的时间，请使用 shell 执行 `date` 命令获取。\n';
     }

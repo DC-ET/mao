@@ -61,7 +61,7 @@ describe('PromptEngine', () => {
     context.platform = 'darwin';
     context.shellPath = 'bash';
     context.osVersion = 'Darwin 24';
-    context.currentTimestamp = '2026-08-13';
+    context.sessionBaseYmd = '2026-08-13';
     context.availableSkillNames = ['java', 'mine'];
     context.availableSkillDocs.set('java', { name: 'java', description: 'Java skill' });
     context.availableSkillDocs.set('mine', { name: 'mine', description: 'user skill' });
@@ -162,7 +162,7 @@ describe('PromptEngine', () => {
     context.executionMode = 'CLOUD';
     context.workspace = workspace;
     context.isGit = true;
-    context.currentTimestamp = '2026-09-10';
+    context.sessionBaseYmd = '2026-09-10';
     context.tools = [tool('page_screenshot'), tool('page_inspect'), tool('read_file')];
     const request = await engine.buildRequest(context);
     const system = request.messages[0].content as string;
@@ -448,7 +448,7 @@ describe('PromptEngine context manifest', () => {
       systemPrompt: 'You are Mao',
       experiences: ['经验一'],
       memories: [{ id: 42, scope: 'USER', projectKey: null, content: '输出报告用中文' }],
-      currentTimestamp: '2026-08-13',
+      sessionBaseYmd: '2026-08-13',
       messages: [{ role: 'user', content: '你好' }],
       modelConfig: { modelId: 'gpt-5', id: 1, contextWindowTokens: 200000 },
     });
@@ -477,11 +477,11 @@ describe('PromptEngine context manifest', () => {
       userId: 7,
       sessionId: 9,
       systemPrompt: 'You are Mao',
-      currentTimestamp: '2026-08-13',
+      sessionBaseYmd: '2026-08-13',
     });
     const withoutUpload = context({
       systemPrompt: 'You are Mao',
-      currentTimestamp: '2026-08-13',
+      sessionBaseYmd: '2026-08-13',
     });
     const request = await engine().buildRequest(withUpload);
     await engine().buildRequest(withoutUpload);
@@ -497,7 +497,7 @@ describe('PromptEngine context manifest', () => {
     // 构成分节合计必须与它同口径，否则数字永远对不上（此前差一整个工具定义段）。
     const ctx = context({
       systemPrompt: 'You are Mao',
-      currentTimestamp: '2026-08-13',
+      sessionBaseYmd: '2026-08-13',
       messages: [{ role: 'user', content: '你好' }],
     });
     const request = await engine().buildRequest(ctx);
@@ -518,7 +518,7 @@ describe('PromptEngine context manifest', () => {
     const ctx = context({
       systemPrompt: 'You are Mao',
       experiences: ['经验一', '经验二'],
-      currentTimestamp: '2026-08-13',
+      sessionBaseYmd: '2026-08-13',
     });
     const request = await engine().buildRequest(ctx);
     const system = request.messages[0].content as string;
@@ -599,7 +599,7 @@ describe('PromptEngine context manifest', () => {
   it('注入引用规范分节：系统消息含契约原文，manifest 聚合进「系统提示词」单节（keys 不变）', async () => {
     const ctx = context({
       systemPrompt: 'You are Mao',
-      currentTimestamp: '2026-08-13',
+      sessionBaseYmd: '2026-08-13',
       messages: [{ role: 'user', content: '你好' }],
     });
     const request = await engine().buildRequest(ctx);
@@ -617,12 +617,182 @@ describe('PromptEngine context manifest', () => {
   it('embed 页面 Agent 不注入引用规范（无联网工具面）', async () => {
     const ctx = context({
       systemPrompt: 'You are Mao',
-      currentTimestamp: '2026-08-13',
+      sessionBaseYmd: '2026-08-13',
       messages: [{ role: 'user', content: '你好' }],
       tools: [tool('page_inspect')],
     });
     const request = await engine().buildRequest(ctx);
     expect(request.messages[0].content as string).not.toContain('## 引用规范');
+  });
+});
+
+describe('PromptEngine 会话日期锚定与跨天提示', () => {
+  function engine() {
+    return new PromptEngine(
+      { hasSkill: () => false, getAllNames: () => [], getAllDocuments: () => [] } as never,
+      { getWorkspaceRoot: () => '/ws' } as never,
+      RuntimeDataResolver.forTest('/tmp/rt', '/tmp/home'),
+      { getByUserIdAndName: async () => null } as never,
+      { getUserSkillDocuments: () => [] } as never,
+    );
+  }
+
+  function context(overrides: Partial<AgentExecutionContext> = {}): AgentExecutionContext {
+    const ctx = new AgentExecutionContext();
+    ctx.executionMode = 'CLOUD';
+    ctx.workspace = '/ws';
+    ctx.tools = [tool('read_file')];
+    Object.assign(ctx, overrides);
+    return ctx;
+  }
+
+  function body(msg: { content?: unknown } | undefined): string {
+    return String(msg?.content ?? '');
+  }
+
+  it('系统提示日期节改为「会话开始日期」语义并解释 date-change 标签', async () => {
+    const ctx = context({ sessionBaseYmd: '2026-10-12', messages: [{ role: 'user', content: '你好' }] });
+    const request = await engine().buildRequest(ctx);
+    const system = request.messages[0].content as string;
+    expect(system).toContain('## 当前日期');
+    expect(system).toContain('当前日期：`2026-10-12`（星期一）');
+    expect(system).toContain('本节日期是本会话首条用户消息的日期，会话内固定不变');
+    expect(system).toContain('以标签内日期为准');
+    expect(system).toContain('如需精确到时分秒的时间，请使用 shell 执行 `date` 命令获取');
+  });
+
+  it('同一天连续多轮：无标签，system 与历史前缀逐字节不变', async () => {
+    const ctx = context({
+      sessionBaseYmd: '2026-10-12',
+      messages: [
+        { role: 'user', content: '第一问', senderYmd: '2026-10-12' },
+        { role: 'assistant', content: '第一答' },
+        { role: 'user', content: '第二问', senderYmd: '2026-10-12' },
+      ],
+    });
+    const first = await engine().buildRequest(ctx);
+    expect(JSON.stringify(first.messages!.slice(1))).not.toContain('date-change');
+
+    // 追加同日用户消息：已有前缀逐字节不变
+    ctx.messages.push({ role: 'assistant', content: '第二答' });
+    ctx.messages.push({ role: 'user', content: '第三问', senderYmd: '2026-10-12' });
+    const second = await engine().buildRequest(ctx);
+    expect(second.messages!.slice(0, first.messages!.length)).toEqual(first.messages);
+  });
+
+  it('跨天追加消息：除尾部新增外前缀逐字节不变，system 段不变化', async () => {
+    const sameDay = context({
+      sessionBaseYmd: '2026-10-12',
+      messages: [
+        { role: 'user', content: '第一问', senderYmd: '2026-10-12' },
+        { role: 'assistant', content: '第一答' },
+      ],
+    });
+    const before = await engine().buildRequest(sameDay);
+
+    const nextDay = context({
+      sessionBaseYmd: '2026-10-12',
+      messages: [
+        { role: 'user', content: '第一问', senderYmd: '2026-10-12' },
+        { role: 'assistant', content: '第一答' },
+        { role: 'user', content: '隔天再问', senderYmd: '2026-10-13' },
+      ],
+    });
+    const after = await engine().buildRequest(nextDay);
+
+    // 核心验收：system 段与全部历史前缀不变，新日期只以新增文本出现在尾部消息里
+    expect(after.messages!.slice(0, before.messages!.length)).toEqual(before.messages);
+    const tail = body(after.messages![after.messages!.length - 1]);
+    expect(tail).toContain('<date-change>系统提示：当前日期已变更为 2026-10-13（星期二）');
+    expect(tail.endsWith('\n\n隔天再问')).toBe(true);
+  });
+
+  it('跨天标签只写在请求副本里，不污染 context.messages', async () => {
+    const ctx = context({
+      sessionBaseYmd: '2026-10-12',
+      messages: [
+        { role: 'user', content: '隔天再问', senderYmd: '2026-10-13' },
+      ],
+    });
+    const request = await engine().buildRequest(ctx);
+    expect(body(request.messages![1])).toContain('<date-change>');
+    expect(ctx.messages[0].content).toBe('隔天再问');
+    expect(JSON.stringify(ctx.messages)).not.toContain('date-change');
+  });
+
+  it('含快捷命令 marker 且跨天的用户消息：展开后仍带标签且不丢字段', async () => {
+    const userCommandService = {
+      getByUserIdAndName: vi.fn(async (_uid: number, name: string) => (
+        name === 'review' ? { content: '请审查本次改动' } : null
+      )),
+    };
+    const pe = new PromptEngine(
+      { hasSkill: () => false, getAllNames: () => [], getAllDocuments: () => [] } as never,
+      { getWorkspaceRoot: () => '/ws' } as never,
+      RuntimeDataResolver.forTest('/tmp/rt', '/tmp/home'),
+      userCommandService as never,
+      { getUserSkillDocuments: () => [] } as never,
+    );
+    const ctx = context({
+      userId: 7,
+      sessionId: 9,
+      sessionBaseYmd: '2026-10-12',
+      messages: [{ role: 'user', content: '#{review}# 隔天的任务', senderYmd: '2026-10-13' }],
+    });
+    const request = await pe.buildRequest(ctx);
+    const tail = body(request.messages![1]);
+    expect(tail).toContain('<date-change>');
+    expect(tail).toContain('请审查本次改动');
+    expect(tail).toContain('隔天的任务');
+    // marker 展开必须保留 senderYmd，否则跨天标签会漏发
+    expect(request.messages![1].senderYmd).toBe('2026-10-13');
+    // 上下文原文未被展开污染（M-13 不变量）
+    expect(ctx.messages[0].content).toBe('#{review}# 隔天的任务');
+  });
+
+  it('多模态用户消息跨天：头部新增 text part，图片顺序不变', async () => {
+    const image = { type: 'image_url', imageUrl: { url: 'data:image/png;base64,abc' } };
+    const ctx = context({
+      sessionBaseYmd: '2026-10-12',
+      messages: [{ role: 'user', content: [image], senderYmd: '2026-10-13' }],
+    });
+    const request = await engine().buildRequest(ctx);
+    const parts = request.messages![1].content as Array<{ type?: string; text?: string }>;
+    expect(parts).toHaveLength(2);
+    expect(parts[0].type).toBe('text');
+    expect(parts[0].text).toContain('<date-change>');
+    expect(parts[1].type).toBe('image_url');
+    // 原数组未被原地改动
+    expect((ctx.messages[0].content as unknown[]).length).toBe(1);
+  });
+
+  it('压缩边界前的日期参照参与首条窗口消息的比较', async () => {
+    const ctx = context({
+      sessionBaseYmd: '2026-10-12',
+      previousUserYmdBefore: '2026-10-13',
+      messages: [{ role: 'user', content: '边界后首条', senderYmd: '2026-10-13' }],
+    });
+    const request = await engine().buildRequest(ctx);
+    expect(body(request.messages![1])).toBe('边界后首条');
+  });
+
+  it('带标签的请求副本里，最后一条真实用户消息仍被判为真实用户消息', async () => {
+    const ctx = context({
+      sessionBaseYmd: '2026-10-12',
+      messages: [{ role: 'user', content: '隔天再问', senderYmd: '2026-10-13' }],
+    });
+    const request = await engine().buildRequest(ctx);
+    const { isRealUserMessage } = await import('./compaction-service.js');
+    expect(isRealUserMessage(request.messages![1])).toBe(true);
+    // 系统注入通知仍被正确判为非真实用户消息（判定语义未被标签破坏）
+    expect(isRealUserMessage({ role: 'user', content: '<system-notice>\nhi\n</system-notice>' })).toBe(false);
+  });
+
+  it('sessionBaseYmd 缺失时不渲染日期节也不打标签（与改造前一致）', async () => {
+    const ctx = context({ messages: [{ role: 'user', content: '你好', senderYmd: '2026-10-13' }] });
+    const request = await engine().buildRequest(ctx);
+    expect(request.messages[0].content as string).not.toContain('## 当前日期');
+    expect(body(request.messages![1])).toBe('你好');
   });
 });
 void mkdirSync;

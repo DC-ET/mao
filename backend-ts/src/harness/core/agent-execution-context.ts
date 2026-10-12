@@ -34,7 +34,17 @@ export class AgentExecutionContext {
   availableSkillNames: string[] = [];
   availableSkillDocs = new Map<string, SkillDocument>();
   localUnsyncedSkills: LocalSkillRef[] = [];
-  currentTimestamp?: string | null;
+  /**
+   * 系统提示 current-date 节的日期锚点：本会话首条现存用户消息的日期，跨天不重算
+   * （技术方案 2026-10-12 §5.1）。无用户消息的会话回落服务器当天（shanghaiYmd）。
+   * 真实日期推进由用户消息前的 `<date-change>` 标签承载，见 session-date-notice.ts。
+   */
+  sessionBaseYmd?: string | null;
+  /**
+   * 压缩边界前最后一条现存用户消息的日期：`applyHistory` 装载时解析，供跨天提示与
+   * 窗口内第一条用户消息比较（跨过压缩边界也能判出日期变化）。窗口内无用户消息时为 null。
+   */
+  previousUserYmdBefore?: string | null;
   sessionSummary?: string | null;
   ephemeralSystemMessages: ChatMessage[] = [];
   lastPromptTokens = 0;

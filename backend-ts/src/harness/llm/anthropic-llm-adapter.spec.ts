@@ -615,6 +615,17 @@ describe('convertMessages', () => {
     expect(result.system).toBeNull();
   });
 
+  it('内部字段 senderYmd 不进入 Anthropic 请求体', () => {
+    const result = convertMessages([
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: '隔天再问', senderYmd: '2026-10-13' },
+    ]);
+    expect(result.messages).toEqual([
+      { role: 'user', content: [{ type: 'text', text: '隔天再问' }] },
+    ]);
+    expect(JSON.stringify(result.messages)).not.toContain('senderYmd');
+  });
+
   it('user 数组 content 中的图片转为 image block（data URL）', () => {
     const result = convertMessages([
       {

@@ -120,4 +120,19 @@ describe('serializeChatRequest', () => {
     const assistant = (body.messages as Record<string, unknown>[])[0];
     expect(assistant).not.toHaveProperty('reasoning_content');
   });
+
+  it('omits the internal senderYmd field from the serialized body', () => {
+    const request: ChatRequest = {
+      messages: [
+        { role: 'system', content: 'sys' },
+        { role: 'user', content: '隔天再问', senderYmd: '2026-10-13' },
+      ],
+    };
+    const body = serializeChatRequest(request, 'glm-5.3', false);
+    const user = (body.messages as Record<string, unknown>[])[1];
+    expect(user).not.toHaveProperty('senderYmd');
+    expect(JSON.stringify(body)).not.toContain('senderYmd');
+    // 原对象不被序列化过程改写
+    expect(request.messages![1].senderYmd).toBe('2026-10-13');
+  });
 });

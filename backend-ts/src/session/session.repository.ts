@@ -746,6 +746,31 @@ export class MessageRepository {
     );
   }
 
+  /**
+   * 会话首条（id 最小）现存用户消息的时钟戳（技术方案 2026-10-12 §4）：系统提示 current-date
+   * 节的日期锚点。首条被软删后下一轮自动切到下一条，无需持久化锚点。
+   */
+  selectFirstUserStamp(sessionId: number): Promise<Pick<Message, 'id' | 'createdAt'> | null> {
+    return this.db.queryOne<Pick<Message, 'id' | 'createdAt'>>(
+      `SELECT id, created_at AS createdAt FROM \`message\`
+       WHERE session_id = ? AND role = 'USER' AND ${notDeleted()} ORDER BY id ASC LIMIT 1`,
+      [sessionId],
+    );
+  }
+
+  /**
+   * beforeId 之前最近的一条现存用户消息时钟戳（跨天提示用）：用户消息正文前的
+   * `<date-change>` 标签要与「上一条用户消息」的日期比较。返回 null 表示 beforeId
+   * 之前没有现存用户消息（压缩边界跨过全部用户消息时即此态）。
+   */
+  selectPreviousUserStamp(sessionId: number, beforeId: number): Promise<Pick<Message, 'id' | 'createdAt'> | null> {
+    return this.db.queryOne<Pick<Message, 'id' | 'createdAt'>>(
+      `SELECT id, created_at AS createdAt FROM \`message\`
+       WHERE session_id = ? AND role = 'USER' AND ${notDeleted()} AND id < ? ORDER BY id DESC LIMIT 1`,
+      [sessionId, beforeId],
+    );
+  }
+
   /** 最后一条 role=ASSISTANT 且正文非空的消息（记忆抽取输入，技术方案 5.6 D8）。 */
   selectLastAssistantMessage(sessionId: number): Promise<Message | null> {
     return this.db.queryOne<Message>(

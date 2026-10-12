@@ -201,6 +201,8 @@ function makeHarness(overrides: Record<string, unknown> = {}) {
   const sessionService = {
     cleanupIncompleteTailAfterId: vi.fn(async () => 0),
     loadContextAnchor: vi.fn(async () => ({ lastPromptTokens: 11, contextAnchorMsgId: 4 })),
+    getFirstUserStamp: vi.fn(async () => null),
+    getPreviousUserStamp: vi.fn(async () => null),
     saveMessage: vi.fn(async () => ({ id: 99 })),
     getMessages: vi.fn(async () => [
       { role: 'USER', content: 'hello' },
@@ -350,7 +352,8 @@ describe('HarnessService.buildContext and execute', () => {
     });
   });
 
-  it('buildContextLoadsCloudSessionAndFiltersWeixinTools', async () => {    const { service, skillSync, promptEngine, toolRegistry } = makeHarness();
+  it('buildContextLoadsCloudSessionAndFiltersWeixinTools', async () => {
+    const { service, skillSync, promptEngine, toolRegistry, sessionService } = makeHarness();
     const ctx = await service.buildContext(10);
     expect(ctx.sessionId).toBe(10);
     expect(ctx.agentName).toBe('Coder');
@@ -362,7 +365,39 @@ describe('HarnessService.buildContext and execute', () => {
     expect(toolRegistry.getAllTools).toHaveBeenCalled();
     expect(ctx.lastPromptTokens).toBe(11);
     expect(ctx.compactionConfig?.maxSummaryTokens).toBe(8000);
-    expect(ctx.currentTimestamp).toBe(shanghaiYmd());
+    expect(ctx.sessionBaseYmd).toBe(shanghaiYmd());
+    expect(sessionService.getFirstUserStamp).toHaveBeenCalledWith(10);
+  });
+
+  it('buildContextAnchorsBaseDateOnFirstUserMessage', async () => {
+    const { service, sessionService } = makeHarness();
+    // 首条用户消息在一个过去的日期：系统提示锚点取它的日期，与服务器当天无关
+    sessionService.getFirstUserStamp.mockResolvedValue({ id: 3, createdAt: '2026-08-01 09:00:00' });
+    const ctx = await service.buildContext(10);
+    expect(ctx.sessionBaseYmd).toBe('2026-08-01');
+    expect(ctx.sessionBaseYmd).not.toBe(shanghaiYmd());
+  });
+
+  it('buildContextFallsBackToTodayWhenNoUserMessageOrQueryFails', async () => {
+    const { service, sessionService } = makeHarness();
+    // 无用户消息（信号 / 空会话首轮）
+    sessionService.getFirstUserStamp.mockResolvedValue(null);
+    expect((await service.buildContext(10)).sessionBaseYmd).toBe(shanghaiYmd());
+
+    // 首条消息缺 created_at：长度不足 10，回落当天
+    sessionService.getFirstUserStamp.mockResolvedValue({ id: 3, createdAt: '' });
+    expect((await service.buildContext(10)).sessionBaseYmd).toBe(shanghaiYmd());
+
+    // 查询抛错：不阻断会话启动，回落当天
+    sessionService.getFirstUserStamp.mockRejectedValue(new Error('db down'));
+    expect((await service.buildContext(10)).sessionBaseYmd).toBe(shanghaiYmd());
+  });
+
+  it('buildContextToleratesMissingFirstUserStampDependency', async () => {
+    const { service, sessionService } = makeHarness();
+    // 精简装配：deps 未挂 getFirstUserStamp，只锚定当天、不报错
+    delete (sessionService as Record<string, unknown>).getFirstUserStamp;
+    expect((await service.buildContext(10)).sessionBaseYmd).toBe(shanghaiYmd());
   });
 
   it('buildContextDoesNotLoadSystemSkillsWhenAgentSkillNamesNull', async () => {

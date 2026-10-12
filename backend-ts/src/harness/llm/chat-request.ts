@@ -64,6 +64,12 @@ export interface ChatMessage {
   toolCalls?: ToolCall[];
   audio?: ChatAudio;
   reasoningContent?: string;
+  /**
+   * Mao 内部字段（不参与任何协议序列化，与 ToolCall.summary 同一约定）：该消息在 DB 中的
+   * 发送日期（`created_at` 前 10 位）。仅供提示词渲染的 `<date-change>` 跨天提示比较使用，
+   * 三个适配器都按显式字段白名单序列化，故不会外泄。
+   */
+  senderYmd?: string;
 }
 
 export interface ChatRequest {

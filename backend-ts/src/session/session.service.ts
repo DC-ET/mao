@@ -1467,6 +1467,16 @@ export class SessionService {
     return this.messageRepo.selectLastUserMessage(sessionId);
   }
 
+  /** 会话首条现存用户消息（id 最小）：系统提示日期锚点，跨天不重算（技术方案 2026-10-12 §5.1）。 */
+  getFirstUserStamp(sessionId: number): Promise<Pick<Message, 'id' | 'createdAt'> | null> {
+    return this.messageRepo.selectFirstUserStamp(sessionId);
+  }
+
+  /** beforeId 之前最近的一条现存用户消息：跨天提示的「上一条用户消息」参照。 */
+  getPreviousUserStamp(sessionId: number, beforeId: number): Promise<Pick<Message, 'id' | 'createdAt'> | null> {
+    return this.messageRepo.selectPreviousUserStamp(sessionId, beforeId);
+  }
+
   async loadContextAnchor(sessionId: number): Promise<ContextAnchor> {
     const session = await this.getSession(sessionId);
     return {

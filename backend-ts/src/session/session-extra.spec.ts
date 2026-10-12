@@ -51,6 +51,8 @@ function makeService() {
     selectHitMessages: vi.fn(async () => [{ messageId: 1, sessionId: 11, role: 'USER', content: 'hello world keyword', createdAt: null, score: 1 }]),
     selectFirstMatchingMessages: vi.fn(async () => []),
     selectLastUserMessage: vi.fn(async () => null),
+    selectFirstUserStamp: vi.fn(async () => null),
+    selectPreviousUserStamp: vi.fn(async () => null),
   };
   const fileChangeRepo = {
     listBySession: vi.fn(async () => []),
@@ -346,6 +348,24 @@ describe('SessionService extra', () => {
     messageRepo.selectLast.mockResolvedValue({ id: 9, sessionId: 11 });
     await service.markLastMessageFinished(11);
     await service.getMaxMessageId(11);
+  });
+});
+
+describe('SessionService.getFirstUserStamp / getPreviousUserStamp', () => {
+  it('委托 messageRepo 的首条 / 上一条用户消息查询', async () => {
+    const { service, messageRepo } = makeService();
+    messageRepo.selectFirstUserStamp.mockResolvedValue({ id: 3, createdAt: '2026-10-12 23:50:11' });
+    expect(await service.getFirstUserStamp(11)).toEqual({ id: 3, createdAt: '2026-10-12 23:50:11' });
+    expect(messageRepo.selectFirstUserStamp).toHaveBeenCalledWith(11);
+
+    messageRepo.selectPreviousUserStamp.mockResolvedValue({ id: 2, createdAt: '2026-10-12 23:59:00' });
+    expect(await service.getPreviousUserStamp(11, 9)).toEqual({ id: 2, createdAt: '2026-10-12 23:59:00' });
+    expect(messageRepo.selectPreviousUserStamp).toHaveBeenCalledWith(11, 9);
+
+    messageRepo.selectFirstUserStamp.mockResolvedValue(null);
+    expect(await service.getFirstUserStamp(11)).toBeNull();
+    messageRepo.selectPreviousUserStamp.mockResolvedValue(null);
+    expect(await service.getPreviousUserStamp(11, 1)).toBeNull();
   });
 });
 

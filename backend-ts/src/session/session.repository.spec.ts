@@ -109,6 +109,36 @@ describe('MessageRepository', () => {
     expect(hitSql).toContain('created_at <');
     expect(db.query.mock.calls.at(-1)?.[1]).toEqual([1, '登录', '2026-10-01 00:00:00', '2026-10-02 00:00:00']);
   });
+
+  it('selectFirstUserStamp takes the earliest non-deleted USER stamp', async () => {
+    const db = mockDb({ id: 5, createdAt: '2026-10-12 23:50:11' }, [{ id: 5 }]);
+    const repo = new MessageRepository(db as never);
+    expect(await repo.selectFirstUserStamp(3)).toEqual({ id: 5, createdAt: '2026-10-12 23:50:11' });
+    const [sql, params] = db.queryOne.mock.calls.at(-1) as [string, unknown[]];
+    expect(sql).toContain("role = 'USER'");
+    expect(sql).toContain('deleted = 0');
+    expect(sql).toContain('created_at AS createdAt');
+    expect(sql).toContain('ORDER BY id ASC');
+    expect(sql).toContain('LIMIT 1');
+    expect(params).toEqual([3]);
+
+    db.queryOne.mockResolvedValueOnce(null);
+    expect(await repo.selectFirstUserStamp(3)).toBeNull();
+  });
+
+  it('selectPreviousUserStamp takes the latest USER stamp strictly before the id', async () => {
+    const db = mockDb({ id: 9, createdAt: '2026-10-13 08:00:02' }, [{ id: 9 }]);
+    const repo = new MessageRepository(db as never);
+    expect(await repo.selectPreviousUserStamp(3, 12)).toEqual({ id: 9, createdAt: '2026-10-13 08:00:02' });
+    const [sql, params] = db.queryOne.mock.calls.at(-1) as [string, unknown[]];
+    expect(sql).toContain("role = 'USER'");
+    expect(sql).toContain('deleted = 0');
+    expect(sql).toContain('id < ?');
+    expect(sql).toContain('created_at AS createdAt');
+    expect(sql).toContain('ORDER BY id DESC');
+    expect(sql).toContain('LIMIT 1');
+    expect(params).toEqual([3, 12]);
+  });
 });
 
 describe('FileChangeRepository', () => {
