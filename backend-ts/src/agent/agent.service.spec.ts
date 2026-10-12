@@ -109,6 +109,7 @@ describe('AgentService', () => {
     );
     expect(updated.name).toBe('new');
     expect(updated.skillNames).toBeNull();
+    expect(updated.mcpServerIds).toBeNull();
     expect(updated.isDefault).toBe(0);
     expect(agentRepo.updateById).toHaveBeenCalledWith(existing, 7, true);
     expect(experienceService.syncExperiences).toHaveBeenCalledWith(1, experiences);

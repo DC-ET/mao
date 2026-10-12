@@ -112,6 +112,43 @@ describe('CRUD routes', () => {
     await app.close();
   });
 
+  it('passes an empty mcpServerIds array through to updateAgent so clearing works', async () => {
+    const agent = { id: 1, name: 'A', systemPrompt: 'p', isDefault: 0 };
+    const agentService = {
+      getAgent: vi.fn(async () => agent),
+      createAgent: vi.fn(async () => agent),
+      updateAgent: vi.fn(async () => agent),
+      getAgentExperiences: vi.fn(async () => []),
+      getAgentSuggestedQuestions: vi.fn(async () => []),
+    };
+    const mcpServerValidator = { validateForAgent: vi.fn(async (ids: number[]) => ids) };
+    const permissionService = { hasPermission: vi.fn(async () => true) };
+    const app = await appWithUser(f => registerAgentRoutes(f, {
+      agentService: agentService as never,
+      experienceService: {} as never,
+      suggestedQuestionService: {} as never,
+      userRepo: { findById: vi.fn(async () => null) } as never,
+      mcpServerValidator: mcpServerValidator as never,
+      permissionService,
+    }));
+    try {
+      // 编辑页删掉最后一个 MCP 后提交空数组，清空意图必须透传到 updateAgent
+      const cleared = await app.inject({ method: 'PUT', url: '/v1/agents/1', payload: { mcpServerIds: [] } });
+      expect(cleared.statusCode).toBe(200);
+      expect(agentService.updateAgent).toHaveBeenCalledWith(
+        7, 1, undefined, undefined, undefined, undefined, [], null, null, undefined, undefined, undefined,
+      );
+      expect(mcpServerValidator.validateForAgent).not.toHaveBeenCalled();
+
+      // 未带 mcpServerIds 时保持“不改动”
+      const untouched = await app.inject({ method: 'PUT', url: '/v1/agents/1', payload: { name: 'B' } });
+      expect(untouched.statusCode).toBe(200);
+      expect(agentService.updateAgent.mock.calls.at(-1)?.at(6)).toBeUndefined();
+    } finally {
+      await app.close();
+    }
+  });
+
   it('lists disabled agents only with agent read permission and toggles enabled', async () => {
     const agent = { id: 1, name: 'A', systemPrompt: 'p', isDefault: 0, enabled: 1 };
     const agentService = {
