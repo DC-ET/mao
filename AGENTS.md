@@ -14,6 +14,7 @@
 
 ## 命令
 后端：`cd backend-ts && npm run {build|test|start:dev}`（tsc / Vitest / tsx）。
+前端构建验证：desktop/admin 一律跑 `npm run build`（`vue-tsc -b && vite build`）。两端根 `tsconfig.json` 都是 `files: []` + references，`npx vue-tsc --noEmit` 一个文件都不检查（假通过，曾致构建失败漏到合并后），勿拿它替代；确有残留缓存时用 `vue-tsc -b --force`。
 跑测试/构建等长输出命令必须先落盘再看：`npm test > /tmp/x.log 2>&1; echo exit=$?`，用 grep 提取摘要（Test Files|Tests|FAIL）。禁止 `tail -N` 截断——会丢掉覆盖率表格之前的 passed/failed 摘要，导致重跑浪费时间。
 部署：`bash scripts/deploy-{admin,desktop}.sh`（均不接受参数，无 dry-run；admin 用 rsync --delete，无需重启）。Electron 包：`cd desktop && npm run dist`（用户自行跑）。
 安卓壳：`cd android && bash build-apk.sh`（`--dry-run` 不发布；`--version 0.0.x`）。

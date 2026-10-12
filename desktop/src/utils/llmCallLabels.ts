@@ -3,6 +3,7 @@ export const LLM_CALL_SCENE_OPTIONS = [
   { value: 'compaction', label: '上下文压缩' },
   { value: 'session_title', label: '会话标题' },
   { value: 'git_commit_message', label: 'Git 提交信息' },
+  { value: 'feedback_experience_draft', label: '负反馈转经验' },
   { value: 'danger_assess', label: '危险评估' },
   { value: 'proxy_approve', label: '代理审批' },
   { value: 'voice_synthesis', label: '语音合成' },
