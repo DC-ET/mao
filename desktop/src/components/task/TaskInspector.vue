@@ -417,7 +417,8 @@ const inspectorActiveTab = ref<'workspace' | 'filetree' | 'git'>('workspace')
 const contextDrawerOpen = ref(false)
 const showFileTreeTab = computed(() => {
   if (props.executionMode === 'CLOUD') {
-    return !!props.sessionId
+    // 无会话的新建态：已选云端项目也放行——fileProvider 此时是 project 只读 provider
+    return !!props.sessionId || !!props.projectKey
   }
   return !!props.workspace
 })

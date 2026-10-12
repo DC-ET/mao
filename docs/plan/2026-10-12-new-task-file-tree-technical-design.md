@@ -1,6 +1,6 @@
 # 新建会话预显工作区文件树技术方案（LOCAL + CLOUD 双模式）
 
-- 状态：待实施（2026-10-12 需求共识；本轮目标为方案文档，不动代码）
+- 状态：已实施（2026-10-12 落地，分支 feat/new-task-file-tree）
 - 日期：2026-10-12
 - 能力底座：[2026-10-12-file-manager-tab-technical-design.md](2026-10-12-file-manager-tab-technical-design.md)（中央 Tab 文件管理器，共享同一 `WorkspaceFileProvider` 抽象）、[2026-10-09-workspace-file-manager-technical-design.md](2026-10-09-workspace-file-manager-technical-design.md)（CLOUD 工作区读写端点族）。本方案主体是侧边栏「文件」Tab 的**提前显形**与 CLOUD 无会话读链路，与上述两份不冲突：管理器 Tab 入口仍要求真实会话（`canWrite` 口径不变），本方案只把「只读浏览 + 添加到聊天」提前到新建态。
 
@@ -193,14 +193,15 @@ const showFileTreeTab = computed(() => {
 - `show-download-actions` 从 `executionMode === 'CLOUD'` 改为 computed `canDownload = props.executionMode === 'CLOUD' && !!props.provider?.downloadFile`；无会话态隐藏下载项，替代 L553 的 warning 兜底（兜底代码保留）。
 - 「复制绝对路径」增加显隐条件：`!!props.provider?.getAbsolutePath || !!props.workspace`。无会话 CLOUD 两者皆空时隐藏（此时复制出来的必然是相对路径，与「复制相对路径」重复且名不副实）；LOCAL 新建态有 workspace、真实 CLOUD 会话有 workspace（服务端路径），均保持显示。
 
-### 5.5 无会话下的两条关键链路（零改动验证）
+### 5.5 无会话下的两条关键链路
 
 - **添加到聊天**：`handleAddToChat` → `emit('add-file-to-chat', path)` → `TaskView.handleAddFileToChat`（L194–205）取 `activeTabId`（新建态为 `'chat'`）→ `chatInputHandles['chat']`（ChatPanel 的 ChatInput 默认 `registerKey: 'chat'`，`ChatInput.vue` L210）→ `insertFileReference` 插 `@{path}@`。发送时 `getPlainText` 序列化（L1184–1186）进消息体；后端建会话落 `workspace = projectPath`（`session.service.ts` L213），`FILE_REF_PATTERN` 按会话工作区还原路径——与文件树展示的是同一目录，引用必然可达。
-- **打开文件**：`open-file` → `openFileTab(path, title)`（`useCenterTabs.ts` L217）→ 中央 Tab `FileViewer(filePath, provider)`；project provider 的 `readFile/previewFile` 供数（`FileViewer.vue` L223/L183）。
+- **打开文件**：`open-file` → `openFileTab(path, title)`（`useCenterTabs.ts` L217）→ 中央 Tab `FileViewer(filePath, provider)`；project provider 的 `readFile/previewFile` 供数（`FileViewer.vue` L223/L183）。新建态无 sessionId，`getSessionState` 对空 key（含显式空串）回落固定占位键 `__new_task__` 承载 Tab 状态（原实现返回一次性对象，`openFileTab` 的写入被静默丢弃、中央区无任何反应）。占位状态只在本进程生命周期内有效、不写 localStorage；`TaskView` 进入新建态或切换工作区选择时调 `resetNewTaskTabs()` 作废——否则占位条目会在「新建态 → 会话 → 新建态」之间原样复用，重进新建态时复活上次的文件页签并保持激活，把新建态唯一的居中 Composer 顶掉。
 
 ### 5.6 边界与降级
 
 - **项目目录不存在**（新项目名 / 留空临时区）：directory/search 返空 → 「空目录」空态；读文件报错由 FileViewer 承接。临时区（cloudProjectKey 为空）根本不显示 Tab（`projectKey` 为空串）。
+- **通道会话带入的 projectKey**（飞书群 `oc_*` / 钉钉 / 微信 `weixin-bot`）：`cloudProjectKeyForNewTask` 只排除「独立 CLOUD 会话」（projectKey=会话 id），通道 key 会带进新建态。此时「文件」Tab 放行且目录不存在、恒显「空目录」——这是有意的：新建态带该 key 发送时后端 `initializeCloudWorkspace` 会建出 `<root>/<uid>/projects/<key>` 并作为会话工作区（`session.service.ts` L216–222），空树是该未来工作区的真实预览；若改为隐藏 Tab，反而会出现「发送前没有、发送后才出现」的不一致。
 - **非法 projectKey**（手改 URL/状态）：`normalizeAndValidate` 400 → provider 返回 error 节点，树显示错误行，不白屏。
 - **越权**：slug 钳制在请求者用户根内，他人项目表现为「不存在」。
 - **目录 500 条 / 搜索 100 条上限**：`WorkspaceBrowseService` 现有边界，沿用不放大。

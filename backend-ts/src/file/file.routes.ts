@@ -339,6 +339,67 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
     return sendOk(reply, { files });
   });
 
+  /**
+   * 新建态（会话未创建）按 projectKey 解析当前用户的云端项目工作区。
+   * 与 project-list 同一套口径：slug 合法性 + 用户根钳制，userId 只信 token。
+   */
+  function resolveUserProjectWorkspace(userId: number, projectKey: string | null | undefined): string {
+    if (projectKey == null) {
+      throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
+    }
+    const slug = CloudWorkspaceResolver.normalizeAndValidate(projectKey);
+    return CloudWorkspaceResolver.resolveProjectWorkspace(pathSandbox, userId, slug);
+  }
+
+  /** 项目目录尚不存在（新项目名 / 临时区）时按空内容处理，与 project-list 空目录口径一致 */
+  function isExistingDirectory(path: string): boolean {
+    return existsSync(path) && statSync(path).isDirectory();
+  }
+
+  app.get('/v1/files/project-directory', async (request, reply) => {
+    const userId = requireUserId(request);
+    const projectPath = resolveUserProjectWorkspace(userId, queryOptStr(request, 'projectKey'));
+    if (!isExistingDirectory(projectPath)) {
+      return sendOk(reply, { entries: [], truncated: false });
+    }
+    return sendOk(reply, workspaceBrowseService.listDirectory(projectPath, queryOptStr(request, 'dir')));
+  });
+
+  app.get('/v1/files/project-read', async (request, reply) => {
+    const userId = requireUserId(request);
+    const path = queryOptStr(request, 'path');
+    if (path == null) throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
+    const projectPath = resolveUserProjectWorkspace(userId, queryOptStr(request, 'projectKey'));
+    return sendOk(reply, await workspaceBrowseService.readFile(
+      projectPath, path, queryOptInt(request, 'offset') ?? 0, queryOptInt(request, 'limit') ?? 5000,
+    ));
+  });
+
+  app.get('/v1/files/project-search', async (request, reply) => {
+    const userId = requireUserId(request);
+    const pattern = queryOptStr(request, 'pattern');
+    if (pattern == null || pattern.trim().length === 0) {
+      throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
+    }
+    if (pattern.length > 100) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '搜索关键词过长');
+    }
+    const projectPath = resolveUserProjectWorkspace(userId, queryOptStr(request, 'projectKey'));
+    if (!isExistingDirectory(projectPath)) {
+      return sendOk(reply, { entries: [], truncated: false });
+    }
+    return sendOk(reply, workspaceBrowseService.searchFiles(projectPath, pattern, queryOptInt(request, 'limit') ?? 100));
+  });
+
+  app.get('/v1/files/project-preview', async (request, reply) => {
+    const userId = requireUserId(request);
+    const path = queryOptStr(request, 'path');
+    if (path == null) throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
+    const projectPath = resolveUserProjectWorkspace(userId, queryOptStr(request, 'projectKey'));
+    const result = workspaceBrowseService.readPdfFile(projectPath, path);
+    return sendFile(reply, result.path, result.fileName, 'application/pdf', result.size, 'inline');
+  });
+
   app.get('/v1/files', async (request, reply) => {
     const userId = requireUserId(request);
     const sessionId = queryOptInt(request, 'sessionId') ?? null;

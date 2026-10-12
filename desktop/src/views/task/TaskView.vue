@@ -71,7 +71,7 @@ import { useSessionStore, type TaskPhase, type SubagentItem } from '../../stores
 import { persistedContextWindow } from '../../stores/session/context-window'
 import { useDraftStore } from '../../stores/draft'
 import { usePanelLayout } from '../../composables/usePanelLayout'
-import { useCenterTabs } from '../../composables/useCenterTabs'
+import { resetNewTaskTabs, useCenterTabs } from '../../composables/useCenterTabs'
 import { useWorkspaceFileProvider } from '../../composables/workspace-file-provider'
 import { useWorkspaceGitProvider } from '../../composables/workspace-git-provider'
 import { useTaskPanelPrefs } from '../../composables/useTaskPanelPrefs'
@@ -151,6 +151,26 @@ provide('newTaskCloudProjects', newTaskCloudProjects)
 provide('initialLoading', initialLoading)
 provide('currentPhase', currentPhase)
 
+/**
+ * 新建态（会话未创建）：选择器里的工作区/项目/模式是右侧边栏与文件 provider 的事实源。
+ * TaskView 的 workspace/executionMode/projectKey 在新建态跟随 newTask* 三兄弟，
+ * 真实会话的这三个值由 loadSession / enterNewTaskMode / syncChatState 拥有，互不越写。
+ */
+watch(
+  [isNewTaskMode, newTaskMode, newTaskWorkspace, newTaskCloudProjectKey],
+  () => {
+    if (!isNewTaskMode.value) return
+    // 作废上次新建态的 Tab 状态：占位键无会话 id 可依，不清会在「新建态 → 会话 →
+    // 新建态」之间复活陈旧文件页签并保持激活，把居中 Composer 顶掉；切换工作区
+    // 选择时同样要作废，否则会用新 provider 读旧工作区的路径
+    resetNewTaskTabs()
+    executionMode.value = newTaskMode.value
+    workspace.value = newTaskMode.value === 'LOCAL' ? newTaskWorkspace.value : ''
+    projectKey.value = newTaskMode.value === 'CLOUD' ? newTaskCloudProjectKey.value : ''
+  },
+  { immediate: true },
+)
+
 function syncChatState(state: {
   workspace?: string
   agentName?: string
@@ -159,7 +179,9 @@ function syncChatState(state: {
   sending?: boolean
   pendingApprovals?: any[]
 }) {
-  if (state.workspace !== undefined) workspace.value = state.workspace
+  // 新建态 workspace 由上方 newTask* 回写 watch 拥有：ChatPanel 上报的是 useChat 的
+  // 占位空串（首发前不赋值），不守卫会把用户刚选的工作区擦掉
+  if (state.workspace !== undefined && !isNewTaskMode.value) workspace.value = state.workspace
   if (state.agentName !== undefined) agentName.value = state.agentName
   if (state.todos !== undefined) chatTodos.value = state.todos
   if (state.contextWindow !== undefined) chatContextWindow.value = state.contextWindow
@@ -422,7 +444,7 @@ watch(inspectorSessionId, (sid) => {
   void ensureInspectorTodos(sid)
 }, { immediate: true })
 
-const fileProvider = useWorkspaceFileProvider(executionMode, workspace, activeSessionIdRef)
+const fileProvider = useWorkspaceFileProvider(executionMode, workspace, activeSessionIdRef, projectKey)
 const gitProvider = useWorkspaceGitProvider(executionMode, workspace, activeSessionIdRef)
 provide('fileProvider', fileProvider)
 
@@ -772,6 +794,7 @@ async function enterNewTaskMode(defaults?: NewTaskDefaults | null) {
   const generation = ++newTaskModeGeneration
   // Apply known defaults synchronously BEFORE any await so the input model selector
   // does not briefly show a stale newTaskModelId from a previous draft/session.
+  const earlyMode = defaults?.executionMode ? normalizeNewTaskMode(defaults.executionMode) : newTaskMode.value
   if (defaults?.modelId) {
     newTaskModelId.value = defaults.modelId
   }
@@ -779,10 +802,15 @@ async function enterNewTaskMode(defaults?: NewTaskDefaults | null) {
     newTaskAgentId.value = String(defaults.agentId)
   }
   if (defaults?.executionMode) {
-    const earlyMode = normalizeNewTaskMode(defaults.executionMode)
     newTaskMode.value = earlyMode
     executionMode.value = earlyMode
   }
+  // 工作区/项目选择一并同步复位：isNewTaskMode 随路由立即转真，若等 await 之后再写，
+  // 窗口内回写 watch 会用上一个新建态草稿的残留值建文件 provider，闪一下旧文件树
+  newTaskWorkspace.value = earlyMode === 'LOCAL' ? (defaults?.workspace || '') : ''
+  newTaskCloudProjectKey.value = earlyMode === 'CLOUD' ? (defaults?.cloudProjectKey || '') : ''
+  // 进入新建态一律从干净工作台开始：作废上次新建态遗留的中心 Tab（见 resetNewTaskTabs）
+  resetNewTaskTabs()
   if (defaults?.permissionLevel) {
     permissionLevel.value = defaults.permissionLevel
   }

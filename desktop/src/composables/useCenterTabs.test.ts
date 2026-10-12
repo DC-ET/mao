@@ -1,7 +1,7 @@
 import { nextTick, ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { openSideTaskTabFor, removeSessionTabsFor, resetCenterTabs, useCenterTabs } from './useCenterTabs'
+import { openSideTaskTabFor, removeSessionTabsFor, resetCenterTabs, resetNewTaskTabs, useCenterTabs } from './useCenterTabs'
 
 vi.mock('../stores/session', () => ({
   useSessionStore: () => ({
@@ -337,6 +337,93 @@ describe('激活 Tab 持久化与恢复', () => {
     restored.openFileTab('/ws/a.ts', 'a.ts')
     await nextTick()
     expect(restored.activeTabId.value).toBe('file:/ws/a.ts')
+  })
+})
+
+describe('新建态（无会话）中心 Tab', () => {
+  beforeEach(async () => {
+    setActivePinia(createPinia())
+    localStorage.clear()
+    resetCenterTabs()
+    await nextTick()
+  })
+
+  // 新建态右侧文件树提前可见后，从树里打开文件走的是 openFileTab。
+  // 无 sessionId 时若退回一次性状态对象，写入即丢失、中央区没有任何反应。
+  it('无 sessionId 时 openFileTab 落到稳定状态，中央区出现文件页签', async () => {
+    const tabs = useCenterTabs(ref<string | null>(''))
+    await nextTick()
+
+    tabs.openFileTab('/ws/a.ts', 'a.ts')
+    await nextTick()
+
+    expect(tabs.tabs.value.some(t => t.type === 'file' && t.filePath === '/ws/a.ts')).toBe(true)
+    expect(tabs.activeTabId.value).toBe('file:/ws/a.ts')
+  })
+
+  it('新建态不写激活态持久化记录，不污染刷新后的会话还原', async () => {
+    const tabs = useCenterTabs(ref<string | null>(''))
+    await nextTick()
+
+    tabs.openFileTab('/ws/a.ts', 'a.ts')
+    await nextTick()
+
+    const persistedKeys = Array.from(store.keys()).filter(k => k.startsWith('mao:center-active-tab:'))
+    expect(persistedKeys).toEqual([])
+  })
+
+  it('会话落地后占位状态让位给真实会话，不把新建态的文件页签带进会话', async () => {
+    const sessionId = ref<string | null>('')
+    const tabs = useCenterTabs(sessionId)
+    await nextTick()
+    tabs.openFileTab('/ws/a.ts', 'a.ts')
+    await nextTick()
+    expect(tabs.tabs.value.some(t => t.type === 'file')).toBe(true)
+
+    // 首发建会话后 activeSessionId 落地：中心区回到该会话的 chat
+    sessionId.value = SESSION_ID
+    await nextTick()
+
+    expect(tabs.tabs.value.some(t => t.type === 'file')).toBe(false)
+    expect(tabs.activeTabId.value).toBe('chat')
+  })
+
+  it('resetNewTaskTabs 作废占位状态：新建态开文件 → 会话落地 → 再进新建态回到干净工作台', async () => {
+    const sessionId = ref<string | null>('')
+    const tabs = useCenterTabs(sessionId)
+    await nextTick()
+    tabs.openFileTab('/ws/a.ts', 'a.ts')
+    await nextTick()
+    expect(tabs.activeTabId.value).toBe('file:/ws/a.ts')
+
+    sessionId.value = SESSION_ID
+    await nextTick()
+    sessionId.value = ''
+    await nextTick()
+    // TaskView 进入新建态 / 切换工作区选择时作废上次的占位状态：不清会复活陈旧
+    // 文件页签并保持激活，中央区停在 FileViewer、把新建态唯一的居中 Composer 顶掉
+    resetNewTaskTabs()
+    await nextTick()
+
+    expect(tabs.tabs.value.some(t => t.type === 'file')).toBe(false)
+    expect(tabs.activeTabId.value).toBe('chat')
+
+    // 作废后状态载体仍可用：重新打开文件正常落位
+    tabs.openFileTab('/ws/b.ts', 'b.ts')
+    await nextTick()
+    expect(tabs.activeTabId.value).toBe('file:/ws/b.ts')
+  })
+
+  it('显式传空串 sid 也回落占位键：新建态 openTraceTab 不再写丢', async () => {
+    const tabs = useCenterTabs(ref<string | null>(''))
+    await nextTick()
+
+    // openTraceTab 内部 key 取 currentSessionId（新建态为 ''），显式空串同样要兜底
+    tabs.openTraceTab()
+    await nextTick()
+
+    expect(tabs.tabs.value.some(t => t.type === 'trace')).toBe(true)
+    expect(tabs.activeTabId.value).toBe('trace')
   })
 })
 
