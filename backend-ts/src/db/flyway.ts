@@ -91,7 +91,7 @@ export function resolveMigrationDir(cwd = process.cwd(), locations = 'filesystem
 }
 
 export function listMigrations(dir: string): FlywayMigration[] {
-  return readdirSync(dir)
+  const migrations = readdirSync(dir)
     .map((script) => {
       const parsed = parseMigrationName(script);
       if (!parsed) {
@@ -109,6 +109,17 @@ export function listMigrations(dir: string): FlywayMigration[] {
     })
     .filter((m): m is FlywayMigration => m !== null)
     .sort((a, b) => compareVersions(a.version, b.version));
+  // 同版本号只认先执行的那一个，后者会被 appliedVersions 静默跳过，必须硬失败。
+  // 两个并行分支各取同一版本号合并后就会这样，曾致 signal_watcher 建表被跳过。
+  const seen = new Map<string, string>();
+  for (const m of migrations) {
+    const first = seen.get(m.version);
+    if (first) {
+      throw new Error(`Flyway duplicate migration version ${m.version}: ${first} and ${m.script}`);
+    }
+    seen.set(m.version, m.script);
+  }
+  return migrations;
 }
 
 async function createHistoryTable(db: FlywayDb): Promise<void> {

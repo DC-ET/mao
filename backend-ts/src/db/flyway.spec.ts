@@ -1,4 +1,5 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
@@ -70,6 +71,19 @@ describe('Flyway checksum and filenames', () => {
     expect(migrations.some((m) => m.script.startsWith('V075'))).toBe(true);
     for (let i = 1; i < migrations.length; i += 1) {
       expect(compareVersions(migrations[i - 1].version, migrations[i].version)).toBeLessThanOrEqual(0);
+    }
+    // 版本号唯一：重名时后一个文件会被 appliedVersions 静默跳过，listMigrations 直接抛错
+    expect(new Set(migrations.map((m) => m.version)).size).toBe(migrations.length);
+  });
+
+  it('rejects duplicate versions instead of silently skipping the later file', () => {
+    const dir = mkdtempSync(resolve(tmpdir(), 'mao-flyway-dup-'));
+    try {
+      writeFileSync(resolve(dir, 'V148__first.sql'), 'SELECT 1;');
+      writeFileSync(resolve(dir, 'V148__second.sql'), 'SELECT 2;');
+      expect(() => listMigrations(dir)).toThrow(/duplicate migration version 148: V148__first\.sql and V148__second\.sql/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });
