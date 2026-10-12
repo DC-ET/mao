@@ -14,6 +14,14 @@
         <button
           v-if="canWrite"
           type="button"
+          class="toolbar-manager"
+          aria-label="文件管理"
+          title="文件管理"
+          @click="emit('open-manager')"
+        ><el-icon :size="14"><Files /></el-icon><span>文件管理</span></button>
+        <button
+          v-if="canWrite"
+          type="button"
           class="toolbar-refresh"
           aria-label="上传文件"
           @click="pickUpload(false)"
@@ -170,7 +178,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, toRef, watch, onUnmounted, nextTick } from 'vue'
-import { Refresh, Search, Upload, FolderAdd } from '@element-plus/icons-vue'
+import { Refresh, Search, Upload, FolderAdd, Files } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useFileBrowser } from '../../composables/useFileBrowser'
 import type { WorkspaceFileProvider } from '../../composables/workspace-file-provider'
@@ -208,6 +216,7 @@ const emit = defineEmits<{
   'open-file': [payload: { path: string; title: string }]
   'add-file-to-chat': [filePath: string]
   'paths-changed': [change: WorkspacePathChange]
+  'open-manager': []
 }>()
 
 const numericSessionId = computed(() => {
@@ -235,7 +244,7 @@ let draftBusy = false
 const canOpenInFinder = computed(() => typeof window !== 'undefined' && !!window.electronAPI?.showItemInFolder)
 
 const providerRef = toRef(props, 'provider')
-const { treeData, loading, expandDir, refresh } = useFileBrowser(providerRef)
+const { treeData, loading, expandDir, refresh, restoreExpandedPath } = useFileBrowser(providerRef)
 
 const isReady = computed(() => {
   if (props.executionMode === 'CLOUD') {
@@ -310,6 +319,24 @@ function parentOf(path: string): string {
   const index = path.lastIndexOf('/')
   return index < 0 ? '' : path.slice(0, index)
 }
+
+/**
+ * 文件管理器的「在文件树中显示」：展开到目标所在目录并选中它。
+ * 目标是目录时连它自身一起展开，文件则只展开父目录。
+ */
+async function reveal(relPath: string) {
+  if (treeData.value.length === 0) await refresh()
+  const dir = parentOf(relPath)
+  if (dir) await restoreExpandedPath(dir)
+  selectedPaths.value = [relPath]
+}
+
+defineExpose({
+  reveal,
+  refresh: () => {
+    handleRefresh()
+  },
+})
 
 function joinRel(dir: string, name: string): string {
   return dir ? `${dir}/${name}` : name
@@ -776,6 +803,27 @@ onUnmounted(() => {
 .toolbar-refresh:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+.toolbar-manager {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 8px;
+  font-size: var(--aw-text-fine);
+  color: var(--aw-ink-muted-64);
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  border-radius: var(--aw-radius-xs);
+  transition: color 0.15s, background 0.15s;
+}
+
+.toolbar-manager:hover {
+  color: var(--aw-primary);
+  background: var(--aw-canvas-parchment);
 }
 
 .file-tree-content {

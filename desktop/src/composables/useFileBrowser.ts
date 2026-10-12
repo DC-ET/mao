@@ -216,6 +216,7 @@ export function useFileBrowser(provider: Ref<WorkspaceFileProvider | null>) {
     expandDir,
     collapseDir,
     refresh,
+    restoreExpandedPath,
     findNodeByPath,
   }
 }

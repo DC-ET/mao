@@ -181,6 +181,7 @@
 
     <div v-if="showFileTreeTab && inspectorActiveTab === 'filetree'" class="inspector-tab-content file-tree-tab">
       <FileTree
+        ref="fileTree"
         :workspace="workspace || ''"
         :execution-mode="executionMode"
         :provider="fileProvider"
@@ -188,6 +189,7 @@
         @open-file="handleOpenFile"
         @add-file-to-chat="$emit('add-file-to-chat', $event)"
         @paths-changed="$emit('paths-changed', $event)"
+        @open-manager="$emit('open-manager')"
       />
     </div>
 
@@ -394,6 +396,7 @@ const emit = defineEmits<{
   'open-side-task': [payload: { sideSessionId: number; title: string }]
   'open-subagent': [payload: { childSessionId: number; title: string }]
   'open-trace': [sessionId: string]
+  'open-manager': []
   'edit-title': [payload: { sideSessionId: number; title: string }]
   'delete-side-task': [sideSessionId: number]
   'promote-side-task': [sideSessionId: number]
@@ -731,6 +734,31 @@ watch(
 function handleOpenFile(payload: { path: string; title: string }) {
   emit('open-file', payload)
 }
+
+/** FileTree 经 defineExpose 暴露的能力（文件管理器的定位 / 刷新入口） */
+interface FileTreeInstance {
+  reveal(relPath: string): Promise<void>
+  refresh(): void
+}
+
+const fileTree = ref<FileTreeInstance | null>(null)
+
+/**
+ * 文件管理器的「在文件树中显示」：文件树 Tab 未激活时它尚未挂载，
+ * 先切回文件 Tab 再定位，保证目标可见。
+ */
+async function revealInFileTree(relPath: string) {
+  if (!showFileTreeTab.value) return
+  if (inspectorActiveTab.value !== 'filetree') inspectorActiveTab.value = 'filetree'
+  await nextTick()
+  await fileTree.value?.reveal(relPath)
+}
+
+function refreshFileTree() {
+  fileTree.value?.refresh()
+}
+
+defineExpose({ revealInFileTree, refreshFileTree })
 
 function handleOpenGitDiff(file: GitChangedFile) {
   emit('open-git-diff', file, multiRepoMode.value ? selectedRepoPath.value : undefined)

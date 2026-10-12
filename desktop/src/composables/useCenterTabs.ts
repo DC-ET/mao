@@ -363,6 +363,23 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
   }
 
   /**
+   * 打开文件管理器 Tab（单例 id 'file-manager'，每会话一个）。
+   * 已存在则直接激活；不随刷新重建（与 file/diff/trace 一致，恢复激活态匹配不到就留 chat）。
+   */
+  function openFileManagerTab() {
+    const state = getSessionState()
+    const existing = state.tabs.find(t => t.type === 'file_manager')
+    if (existing) {
+      state.activeTabId = existing.id
+      notifyTabsChanged()
+      return
+    }
+    state.tabs.push({ id: 'file-manager', type: 'file_manager', title: '文件管理' })
+    state.activeTabId = 'file-manager'
+    notifyTabsChanged()
+  }
+
+  /**
    * 打开子代理只读 Tab。如果已存在则直接激活。
    */
   function openSubagentTab(childSessionId: number, title: string) {
@@ -631,6 +648,7 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     setSideTaskFork,
     openSubagentTab,
     openTraceTab,
+    openFileManagerTab,
     updateSideTaskTab,
     restoreSideTaskTabs,
     restoreSubagentTabs,

@@ -9,6 +9,17 @@ export interface DirectoryEntry {
   isDirectory: boolean
   size: number
   isSymlink: boolean
+  mtime?: number
+}
+
+/** CLOUD 目录接口的原始条目：时间字段名是 mtimeMs（epoch ms），由 provider 映射为 mtime */
+interface CloudDirectoryEntry {
+  name: string
+  path: string
+  isDirectory: boolean
+  size: number
+  isSymlink: boolean
+  mtimeMs?: number
 }
 
 export interface DirectoryResult {
@@ -182,8 +193,18 @@ export function createCloudProvider(sessionId: string): WorkspaceFileProvider {
         const { data } = await api.get('/files/workspace-directory', {
           params: { sessionId: numericSessionId, dir: relativeDir || undefined },
         })
+        // 后端字段是 mtimeMs，前端 DirectoryEntry 用 mtime；不做这层映射，
+        // 文件管理器的「修改时间」列会恒显未知、按时间排序退化成按名称。
+        const raw: CloudDirectoryEntry[] = data?.entries ?? []
         return {
-          entries: data?.entries ?? [],
+          entries: raw.map(({ name, path, isDirectory, size, isSymlink, mtimeMs }) => ({
+            name,
+            path,
+            isDirectory,
+            size,
+            isSymlink,
+            ...(typeof mtimeMs === 'number' ? { mtime: mtimeMs } : {}),
+          })),
           truncated: data?.truncated ?? false,
         }
       } catch (e: any) {

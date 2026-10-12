@@ -33,6 +33,18 @@
         :key="`trace-${activeTab.traceSessionId ?? props.sessionId}`"
         :session-id="activeTab.traceSessionId ?? props.sessionId"
       />
+      <!-- key 带会话 id：KeepAlive 下同 id 分支会跨会话复用实例，按会话分 key 让切换会话即换新面板 -->
+      <FileManagerPanel
+        v-else-if="activeTab?.type === 'file_manager'"
+        :key="`file-manager-${props.sessionId}`"
+        :session-id="props.sessionId"
+        :provider="fileProvider"
+        @open-file="emit('open-file', $event)"
+        @add-file-to-chat="emit('add-file-to-chat', $event)"
+        @paths-changed="emit('paths-changed', $event)"
+        @tree-refresh="emit('tree-refresh')"
+        @locate-in-tree="emit('locate-in-tree', $event)"
+      />
     </KeepAlive>
   </div>
 </template>
@@ -45,14 +57,24 @@ import FileDiffViewer from './FileDiffViewer.vue'
 import SideChatPanel from '../chat/SideChatPanel.vue'
 import SubagentChatPanel from '../chat/SubagentChatPanel.vue'
 import RunTracePanel from './RunTracePanel.vue'
+import FileManagerPanel from '../file-browser/FileManagerPanel.vue'
 import type { Tab } from '../../types/file-browser'
 import type { WorkspaceFileProvider } from '../../composables/workspace-file-provider'
+import type { WorkspacePathChange } from '../../utils/workspace-tab-paths'
 
 const props = defineProps<{
   tabs: Tab[]
   activeTabId: string
   sessionId: string
   fileProvider: WorkspaceFileProvider | null
+}>()
+
+const emit = defineEmits<{
+  'open-file': [payload: { path: string; title: string }]
+  'add-file-to-chat': [filePath: string]
+  'paths-changed': [change: WorkspacePathChange]
+  'tree-refresh': []
+  'locate-in-tree': [relPath: string]
 }>()
 
 const activeTab = computed(() => {

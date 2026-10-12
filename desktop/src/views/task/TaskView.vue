@@ -24,10 +24,16 @@
         :active-tab-id="activeTabId"
         :session-id="sessionIdForTabs"
         :file-provider="fileProvider"
+        @open-file="handleOpenFile"
+        @add-file-to-chat="handleAddFileToChat"
+        @paths-changed="applyWorkspacePathChange"
+        @tree-refresh="refreshFileTree"
+        @locate-in-tree="revealInFileTree"
       />
     </div>
 
     <TaskInspector
+      ref="inspectorRef"
       :todos="inspectorTodos"
       :side-tasks="sideTasks"
       :subagents="subagents"
@@ -58,6 +64,7 @@
       @delete-side-task="handleDeleteSideTask"
       @promote-side-task="handlePromoteSideTask"
       @open-git-diff="handleOpenGitDiff"
+      @open-manager="openFileManagerTab"
     />
   </div>
 </template>
@@ -228,7 +235,7 @@ function handleAddFileToChat(filePath: string) {
 
 // Center tabs
 const activeSessionIdRef = computed(() => sessionStore.activeSessionId ?? '')
-const { tabs, activeTab, activeTabId, openFileTab, openDiffTab, closeTab, closeAllFileTabs, closeOtherTabs, activateTab, openSideTaskTab, setSideTaskFork, openSubagentTab, openTraceTab, updateSideTaskTab, restoreSideTaskTabs, restoreTraceTab, restoreActiveTab, applyWorkspacePathChange } = useCenterTabs(activeSessionIdRef)
+const { tabs, activeTab, activeTabId, openFileTab, openDiffTab, closeTab, closeAllFileTabs, closeOtherTabs, activateTab, openSideTaskTab, setSideTaskFork, openSubagentTab, openTraceTab, openFileManagerTab, updateSideTaskTab, restoreSideTaskTabs, restoreTraceTab, restoreActiveTab, applyWorkspacePathChange } = useCenterTabs(activeSessionIdRef)
 
 // Derived state
 const sessionId = computed(() => sessionIdParam.value)
@@ -539,6 +546,21 @@ function handleSubagentSessionCreated(e: Event) {
 // Open file from TaskInspector's file tree
 function handleOpenFile(payload: { path: string; title: string }) {
   openFileTab(payload.path, payload.title)
+}
+
+/** 右侧边栏实例：文件管理器写操作后刷新文件树、定位目标路径 */
+interface TaskInspectorInstance {
+  revealInFileTree(relPath: string): Promise<void>
+  refreshFileTree(): void
+}
+const inspectorRef = ref<TaskInspectorInstance | null>(null)
+
+function refreshFileTree() {
+  inspectorRef.value?.refreshFileTree()
+}
+
+function revealInFileTree(relPath: string) {
+  void inspectorRef.value?.revealInFileTree(relPath)
 }
 
 async function handleOpenGitDiff(file: GitChangedFile, repoPath?: string) {

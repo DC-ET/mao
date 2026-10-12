@@ -98,7 +98,7 @@ TaskView.vue（改：接事件、转发现到侧边栏）
 │       ├─ 头部：标题 + 视图切换（网格/列表）+ 排序菜单 + 刷新
 │       ├─ 第二行：后退/前进 + 面包屑 + 搜索框
 │       ├─ 内容区：<FileManagerGrid> 或 <FileManagerList>（v-if viewMode）
-│       ├─ 底部状态栏：计数 + 主操作（上传文件/上传文件夹/新建文件夹/删除/下载）
+│       ├─ 底部状态栏：计数 + 主操作（上传文件/上传文件夹/新建文件/新建文件夹/删除/下载）
 │       ├─ 上传进度浮层（label + percent + error）
 │       └─ <FileManagerContextMenu>（Teleport 自研，抄 FileTreeContextMenu 边界防溢出）
 └─ TaskInspector.vue（改：defineExpose revealInFileTree / refreshFileTree）
@@ -150,7 +150,7 @@ composable 实例住在面板组件内，由 KeepAlive 保活——切到文件 
 | 上传文件 | 状态栏按钮 → 隐藏 `input[type=file] multiple` | — | — | `uploadWorkspace(sessionId, currentDir, items, onProgress)` |
 | 上传文件夹 | 状态栏按钮 → 隐藏 `input[webkitdirectory]` | — | — | 同上（保留相对目录结构） |
 | 拖拽导入 | 外部文件 drop 到内容区 | — | — | `filesFromDataTransfer` → `uploadWorkspace(dir=currentDir)`；drop 到文件夹格则 `dir=该文件夹` |
-| 新建文件/文件夹 | 状态栏"新建文件夹"、面板头部、右键（含空白处） | — | — | 行内输入名称（Enter 提交/Esc 取消/失焦提交；空名/含 `/` 前端即拒，同 FileTree `commitDraft` 规则）→ `mkdirWorkspace` / `writeWorkspaceFile`；新建文件成功后 `openFileTab` 打开（与侧边栏 `commitDraft` L396–397 一致），新建文件夹不打开 |
+| 新建文件/文件夹 | 状态栏"新建文件 / 新建文件夹"、面板头部、右键（含空白处） | — | — | 行内输入名称（Enter 提交/Esc 取消/失焦提交；空名/含 `/` 前端即拒，同 FileTree `commitDraft` 规则）→ `mkdirWorkspace` / `writeWorkspaceFile`；新建文件成功后 `openFileTab` 打开（与侧边栏 `commitDraft` L396–397 一致），新建文件夹不打开 |
 | 重命名 | 右键 / F2 | ✓ | — | 行内输入 → `renameWorkspacePath` |
 | 删除 | 右键 / Delete / 状态栏 | ✓ | ✓ | 强确认（§5.5）→ `deleteWorkspacePath` 逐条 |
 | 剪切/复制 | 右键 / Ctrl+X / Ctrl+C | ✓ | ✓ | `useFileClipboard.set(op, sessionId, paths)` |
