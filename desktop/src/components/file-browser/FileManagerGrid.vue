@@ -244,9 +244,12 @@ function commitCreate(value: string) {
 }
 
 .fm-grid-meta {
+  max-width: 100%;
   font-size: var(--aw-text-fine, 11px);
   color: var(--aw-ink-muted-48, #999);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .fm-grid-rename {
@@ -266,5 +269,42 @@ function commitCreate(value: string) {
 
 [data-theme="dark"] .fm-grid-name {
   color: var(--aw-ink, #e0e0e0);
+}
+
+/* 移动端（窄视口 / 安卓 Capacitor 壳）：桌面密度的 110px 格子 + 34px 图标在手机上
+   既占屏又空，改成 3 列紧凑网格：小图标、小字号、单元格贴边省左右留白，
+   图标与文字的间距也一并收紧。 */
+@media (max-width: 768px) {
+  .fm-grid {
+    grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+    gap: 4px;
+    padding: 8px;
+  }
+
+  .fm-grid-cell {
+    gap: 4px;
+    padding: 8px 4px 6px;
+    border-radius: var(--aw-radius-xs, 4px);
+  }
+
+  .fm-grid-icon {
+    font-size: 22px;
+  }
+
+  .fm-grid-check {
+    top: 2px;
+    left: 2px;
+    width: 14px;
+    height: 14px;
+    font-size: 9px;
+  }
+
+  .fm-grid-name {
+    font-size: var(--aw-text-fine, 11px);
+  }
+
+  .fm-grid-meta {
+    font-size: var(--aw-text-micro, 10px);
+  }
 }
 </style>

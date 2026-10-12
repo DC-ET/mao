@@ -15,24 +15,10 @@
           v-if="canWrite"
           type="button"
           class="toolbar-manager"
-          aria-label="文件管理"
-          title="文件管理"
+          aria-label="管理"
+          title="管理"
           @click="emit('open-manager')"
-        ><el-icon :size="14"><Files /></el-icon><span>文件管理</span></button>
-        <button
-          v-if="canWrite"
-          type="button"
-          class="toolbar-refresh"
-          aria-label="上传文件"
-          @click="pickUpload(false)"
-        ><el-icon :size="16"><Upload /></el-icon></button>
-        <button
-          v-if="canWrite"
-          type="button"
-          class="toolbar-refresh"
-          aria-label="上传文件夹"
-          @click="pickUpload(true)"
-        ><el-icon :size="16"><FolderAdd /></el-icon></button>
+        ><el-icon :size="14"><Files /></el-icon><span>管理</span></button>
         <button
           type="button"
           class="toolbar-refresh"
@@ -41,7 +27,6 @@
           @click="handleRefresh"
         ><el-icon :size="16"><Refresh /></el-icon></button>
         <input ref="fileInput" class="hidden-input" type="file" multiple @change="onPickFiles" />
-        <input ref="dirInput" class="hidden-input" type="file" multiple webkitdirectory @change="onPickFiles" />
       </div>
       <div v-if="uploadProgress" class="upload-progress">
         <span>{{ uploadProgress.error || uploadProgress.label }}</span>
@@ -178,7 +163,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, toRef, watch, onUnmounted, nextTick } from 'vue'
-import { Refresh, Search, Upload, FolderAdd, Files } from '@element-plus/icons-vue'
+import { Refresh, Search, Files } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useFileBrowser } from '../../composables/useFileBrowser'
 import type { WorkspaceFileProvider } from '../../composables/workspace-file-provider'
@@ -237,7 +222,6 @@ const createKind = ref<'file' | 'dir'>('file')
 const uploadDir = ref('.')
 const uploadProgress = ref<UploadProgress | null>(null)
 const fileInput = ref<HTMLInputElement>()
-const dirInput = ref<HTMLInputElement>()
 const rootCreateInput = ref<HTMLInputElement>()
 let draftBusy = false
 
@@ -495,12 +479,6 @@ function beginUpload() {
   const node = ctxMenu.node
   uploadDir.value = !node ? '.' : node.isDirectory ? (node.path || '.') : (parentOf(node.path) || '.')
   fileInput.value?.click()
-}
-
-function pickUpload(directory: boolean) {
-  uploadDir.value = '.'
-  if (directory) dirInput.value?.click()
-  else fileInput.value?.click()
 }
 
 async function onPickFiles(event: Event) {

@@ -895,4 +895,29 @@ function onSortCommand(command: { field: 'name' | 'size' | 'mtime' }) {
 [data-theme="dark"] .fm-crumb.active {
   color: var(--aw-ink, #e0e0e0);
 }
+
+/* 移动端适配：底部 8 个操作按钮在窄屏换行会占掉两三行高度，改为
+   「计数一行 + 按钮单行横向滚动」，省下的竖向空间还给文件列表。 */
+@media (max-width: 768px) {
+  .fm-statusbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+  }
+
+  .fm-status-actions {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .fm-status-actions::-webkit-scrollbar {
+    display: none;
+  }
+
+  .fm-text-btn {
+    flex-shrink: 0;
+  }
+}
 </style>
