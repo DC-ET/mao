@@ -49,16 +49,15 @@ function prefRow(overrides: Partial<DigestPreferenceRow> = {}): DigestPreference
 
 function makeService(repo: DigestRepository, opts: {
   inbox?: Partial<DigestInboxPort>;
-  outbound?: DigestOutboundPort | null;
+  outbound?: DigestOutboundPort;
 } = {}) {
   const inbox: DigestInboxPort = {
     writeDigestEntry: vi.fn(async () => undefined),
     hasDigestEntry: vi.fn(async () => false),
     ...opts.inbox,
   };
-  const outbound = opts.outbound === undefined
-    ? ({ dispatchDigest: vi.fn() } as unknown as DigestOutboundPort)
-    : opts.outbound;
+  const outbound: DigestOutboundPort = opts.outbound
+    ?? ({ dispatchDigest: vi.fn() } as unknown as DigestOutboundPort);
   const service = new DigestService({ repo, inbox, outbound, now: () => NOW });
   return { service, inbox, outbound };
 }
