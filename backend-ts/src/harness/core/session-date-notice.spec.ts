@@ -87,13 +87,24 @@ describe('applyDateChangeNotices', () => {
   });
 
   it('does not mutate the original nested content array (shallow-copy trap)', () => {
-    const original = [user('hello', '2026-10-13')];
-    // buildRequest 的浅拷贝：content 数组与原对象共享引用
+    const imageA = { type: 'image_url', imageUrl: { url: 'data:a' } };
+    const imageB = { type: 'image_url', imageUrl: { url: 'data:b' } };
+    const original = [user([imageA, imageB], '2026-10-13')];
+    const originalContent = original[0].content as unknown[];
+    // buildRequest 的浅拷贝：嵌套的 content 数组与原对象共享引用
     const copy = original.map((m) => ({ ...m }));
     applyDateChangeNotices(copy, '2026-10-12', null);
-    expect(textOf(original[0])).toBe('hello');
+    // 禁止原地 unshift：原数组必须一个元素都没多
+    expect(originalContent).toHaveLength(2);
+    expect(originalContent[0]).toBe(imageA);
+    expect(originalContent[1]).toBe(imageB);
     expect(original[0].senderYmd).toBe('2026-10-13');
-    expect(textOf(copy[0])).toContain('<date-change>');
+    const copied = copy[0].content as Array<{ type?: string; text?: string }>;
+    expect(copied).toHaveLength(3);
+    expect(copied[0].type).toBe('text');
+    expect(copied[0].text).toContain('<date-change>');
+    expect(copied[1]).toBe(imageA);
+    expect(copied[2]).toBe(imageB);
   });
 
   it('does not mutate the original string content either', () => {
