@@ -118,6 +118,39 @@ describe('桌面消息 store 流式气泡生命周期', () => {
     expect(msgs.filter((m) => m.role === 'assistant')).toHaveLength(1)
   })
 
+  // round2 遗留观察：工具轮的 REST 形状是同轮两条助手消息（先落空 content 的
+  // 工具调用消息，再落最终文本消息）。停止竞态下中断气泡携带最终文本，只比
+  // 第一条（空 content）比不中，最终回复会展示两份（气泡 + REST 版）。
+  it('同轮已落库的工具轮竞态时，携带最终文本的中断气泡也是回显', () => {
+    const store = useSessionStore()
+    store.setMessages('9', [{
+      id: '100', role: 'user', content: '看下 a.txt', createdAt: '2026-10-12 10:00:00',
+    }])
+    store.ensureStreamingAssistantMessage('9')
+    store.appendToolCallStart('9', { tool_call_id: 't1', tool_name: 'read_file', arguments: '{"path":"a.txt"}' })
+    store.updateToolCallResult('9', { tool_call_id: 't1', tool_name: 'read_file', result: 'hello', status: 'success' })
+    store.appendDelta('9', 'a.txt 的内容是 hello')
+    store.finishInterruptedStreamingMessage('9', '执行已被中止')
+
+    // 停止竞态：这一轮已完整落库。TOOL 结果在映射阶段合并进工具调用消息，
+    // 同轮剩两条助手消息：空 content 的工具调用消息 + 最终文本消息
+    store.applyFetchedMessages('9', [
+      { id: '100', role: 'user', content: '看下 a.txt', createdAt: '2026-10-12 10:00:00' },
+      {
+        id: '201', role: 'assistant', content: '', createdAt: '2026-10-12 10:00:03',
+        toolCalls: [{ id: 't1', name: 'read_file', status: 'success', result: 'hello', isExpanded: false, argsStreaming: false }],
+      },
+      { id: '202', role: 'assistant', content: 'a.txt 的内容是 hello', createdAt: '2026-10-12 10:00:05' },
+    ])
+
+    const msgs = store.getMessages('9')
+    expect(msgs.map((m) => m.role)).toEqual(['user', 'assistant', 'assistant'])
+    expect(msgs[1]!.id).toBe('201')
+    expect(msgs[2]!.id).toBe('202')
+    // 中断气泡是最终文本的本地副本，不得与 REST 版重复展示
+    expect(msgs.filter((m) => m.interrupted === true)).toHaveLength(0)
+  })
+
   it('下一轮完成后再重拉，中止轮次的气泡按原位置插回、不重复', () => {
     const store = useSessionStore()
     store.setMessages('9', [{

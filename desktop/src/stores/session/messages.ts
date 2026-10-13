@@ -19,13 +19,18 @@ function isInterruptedAssistant(message: ChatMessage): boolean {
  * 中断气泡是否是「同一轮已落库回复」的本地回显。
  *
  * 停止点击与服务端落库/完成广播竞态时（用户在看到回复完整产出后立刻点停止），
- * 这一轮其实已持久化：REST 里该用户消息之后的第一条助手消息正是这条回复的完整
- * 版本，气泡只是它的本地流式副本。两条都保留会在对话区显示重复回复，此时以
- * REST 版本为准。正常中止轮次服务端不落库，找不到同轮助手消息，气泡仍是唯一副本。
+ * 这一轮其实已持久化：REST 里该用户消息之后的助手消息正是这条回复的完整版本，
+ * 气泡只是它的本地流式副本。两条都保留会在对话区显示重复回复，此时以 REST 版本
+ * 为准。正常中止轮次服务端不落库，找不到同轮助手消息，气泡仍是唯一副本。
  *
- * 比较范围严格限定在同一轮内：从该用户消息向后扫到**下一条 user 消息即止**，
- * 绝不能拿下一轮已落库的回复和本轮中断气泡比内容——工具轮落库 content 为空、
- * 空 content 互相相等即误判，把「服务端不落库的唯一副本」当回显删掉。
+ * 两个边界必须卡死：
+ *  - 只认同一轮：从该用户消息向后扫到**下一条 user 消息即止**，绝不拿下一轮已
+ *    落库的回复和本轮中断气泡比内容（工具轮落库 content 为空、空 content 互相
+ *    相等即误判，把「服务端不落库的唯一副本」当回显删掉）。
+ *  - 比遍同轮全部助手消息：一轮可落库多条（工具轮先落空 content 的工具调用消息、
+ *    再落最终文本消息），中断气泡可能是其中任意一条的本地副本，只比第一条会让
+ *    携带最终文本的气泡漏过、与 REST 版重复展示。同轮已落库即 REST 持有完整轮次，
+ *    气泡无论如何都冗余，任一条内容（含图片）完全相等即可判回显。
  */
 function echoesPersistedReply(local: ChatMessage[], index: number, fetched: ChatMessage[]): boolean {
   const message = local[index]!;
@@ -37,8 +42,10 @@ function echoesPersistedReply(local: ChatMessage[], index: number, fetched: Chat
       // 进入下一轮：该轮回复不属于本条气泡的同轮回显
       if (fetched[k]!.role === 'user') break;
       if (fetched[k]!.role !== 'assistant') continue;
-      return fetched[k]!.content === message.content
-        && JSON.stringify(fetched[k]!.images ?? []) === JSON.stringify(message.images ?? []);
+      if (fetched[k]!.content === message.content
+        && JSON.stringify(fetched[k]!.images ?? []) === JSON.stringify(message.images ?? [])) {
+        return true;
+      }
     }
     return false;
   }
