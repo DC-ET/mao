@@ -201,12 +201,15 @@ export class ShellSessionTool extends BaseTool {
           taskId = this.backgroundTaskManager.submit(conversationId, async () => {
             try {
               const r = await this.outputManager.readUntilMarker(session, marker, yieldTimeMs, waitFor);
-              this.settleSession(session, r, keepSession);
-              // 与同步路径同口径：命令结束后向 shell 补一条 pwd 刷新工作目录。
-              // 直接用 session.currentWorkdir 会在异步 `cd sub && pwd` 后把旧值
-              // 报给模型（该字段随结果一起交付，陈旧即误导后续相对路径解析）
+              // 与同步路径同序：先向 shell 补 pwd 刷新工作目录，再按 keep_session
+              // 决定是否回收会话。settleSession 在命令完成且 keepSession=false（默认）
+              // 时会关闭会话，resolver 首行 !session.isAlive() 直接返回陈旧值，
+              // 反序会让异步 `cd sub && …` 刷新不到 current_workdir（该字段随结果
+              // 一起交付，陈旧即误导后续相对路径解析）
               const workdirNow = await this.resolveCurrentWorkdir(session, r);
-              return toJson(this.formatResult(session, r, workdirNow));
+              const payload = this.formatResult(session, r, workdirNow);
+              this.settleSession(session, r, keepSession);
+              return toJson(payload);
             } finally {
               // 后台任务退出后读取权交还会话，后续 await_async 才能接着读
               if (session.pendingCommand) session.pendingCommand.taskId = null;

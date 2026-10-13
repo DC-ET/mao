@@ -84,6 +84,24 @@ describe('handleReadFile', () => {
     expect(String(handleReadFile({ path: 'nope.txt' }, ws, SESSION_ID).content)).toMatch(/文件不存在/);
   });
 
+  // round2 审查 BUG-C：错误返回曾缺 error 键。LOCAL 结果经 LocalToolExecutor 原样
+  // 回传后端，由 normalizeToolResult 按「JSON 顶层含 error 键」判定成败——缺键会把
+  // 读取失败判成 success，UI 渲染绿色成功卡、审计计成功。与云端 readError 同口径。
+  it('reports read failures with an error key so the backend judges them as errors', () => {
+    const missingPath = handleReadFile({}, ws, SESSION_ID);
+    expect(missingPath.error).toMatch(/缺少必填参数 path/);
+    expect(missingPath.content).toBe(missingPath.error);
+    expect(missingPath.total_lines).toBe(0);
+
+    expect(handleReadFile({ path: 'nope.txt' }, ws, SESSION_ID).error).toMatch(/文件不存在/);
+
+    fs.mkdirSync(path.join(ws, 'dir'));
+    expect(handleReadFile({ path: 'dir' }, ws, SESSION_ID).error).toMatch(/不是普通文件/);
+
+    fs.writeFileSync(path.join(ws, 'bin.dat'), Buffer.from([0x01, 0x00, 0x02, 0x03]));
+    expect(handleReadFile({ path: 'bin.dat' }, ws, SESSION_ID).error).toMatch(/二进制文件无法按文本读取/);
+  });
+
   it('refuses directories', () => {
     fs.mkdirSync(path.join(ws, 'dir'));
     expect(String(handleReadFile({ path: 'dir' }, ws, SESSION_ID).content)).toMatch(/不是普通文件/);

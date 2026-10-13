@@ -55,15 +55,14 @@ function formatSize(bytes: number): string {
 function readImage(resolvedPath: string, filePath: string): Record<string, unknown> {
   const sizeBytes = fs.statSync(resolvedPath).size;
   if (sizeBytes > MAX_IMAGE_BYTES) {
-    return {
-      content: `错误：文件过大（${formatSize(sizeBytes)}），图片读取上限为 ${formatSize(MAX_IMAGE_BYTES)}：${filePath}。`
-        + '终端版不做缩放，请先本地压缩或裁剪后再读取。',
-      total_lines: 0,
-    };
+    return readError(
+      `错误：文件过大（${formatSize(sizeBytes)}），图片读取上限为 ${formatSize(MAX_IMAGE_BYTES)}：${filePath}。`
+      + '终端版不做缩放，请先本地压缩或裁剪后再读取。',
+    );
   }
   const buffer = fs.readFileSync(resolvedPath);
   const mime = detectMimeFromBytes(buffer);
-  if (!mime) return { content: `错误：不支持的图片格式或文件内容无效：${filePath}`, total_lines: 0 };
+  if (!mime) return readError(`错误：不支持的图片格式或文件内容无效：${filePath}`);
   const dataUri = `data:${mime};base64,${buffer.toString('base64')}`;
   return {
     content: `图片读取成功：${filePath} (${mime}, ${formatSize(buffer.length)})`,
@@ -233,25 +232,31 @@ function sandboxError(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+/**
+ * 与后端 read-file-tool.ts readError 同口径：错误返回必须带 error 键。
+ * LOCAL 结果经 LocalToolExecutor 原样回传后端，最终由 normalizeToolResult 按
+ * 「JSON 顶层含 error 键」判定成败——缺键会把读取失败渲染成成功卡、审计计成功。
+ */
+function readError(message: string): Record<string, unknown> {
+  return { content: message, error: message, total_lines: 0 };
+}
+
 export function handleReadFile(args: Record<string, unknown>, workspace: string | undefined, sessionId: number): Record<string, unknown> {
   try {
     const filePath = extractFilePath(args);
-    if (!filePath) return { content: '错误：缺少必填参数 path', total_lines: 0 };
+    if (!filePath) return readError('错误：缺少必填参数 path');
     const resolvedPath = resolvePathLenient(filePath, workspace);
     assertNotSymlink(resolvedPath, filePath);
-    if (!fs.existsSync(resolvedPath)) return { content: `错误：文件不存在：${filePath}`, total_lines: 0 };
-    if (!fs.statSync(resolvedPath).isFile()) return { content: `错误：不是普通文件：${filePath}`, total_lines: 0 };
+    if (!fs.existsSync(resolvedPath)) return readError(`错误：文件不存在：${filePath}`);
+    if (!fs.statSync(resolvedPath).isFile()) return readError(`错误：不是普通文件：${filePath}`);
     if (mimeFromPath(filePath)) return readImage(resolvedPath, filePath);
     const sizeBytes = fs.statSync(resolvedPath).size;
     if (sizeBytes > MAX_TEXT_BYTES) {
-      return {
-        content: `错误：文件过大（${formatSize(sizeBytes)}），文本读取上限为 ${formatSize(MAX_TEXT_BYTES)}：${filePath}`,
-        total_lines: 0,
-      };
+      return readError(`错误：文件过大（${formatSize(sizeBytes)}），文本读取上限为 ${formatSize(MAX_TEXT_BYTES)}：${filePath}`);
     }
     const buffer = fs.readFileSync(resolvedPath);
     if (isBinaryBuffer(buffer)) {
-      return { content: `错误：二进制文件无法按文本读取：${filePath}`, total_lines: 0 };
+      return readError(`错误：二进制文件无法按文本读取：${filePath}`);
     }
     const allLines = splitLines(stripBom(buffer.toString('utf8')));
     const totalLines = allLines.length;
@@ -265,7 +270,7 @@ export function handleReadFile(args: Record<string, unknown>, workspace: string 
     if (content.length > MAX_OUTPUT_LENGTH) content = content.slice(0, MAX_OUTPUT_LENGTH) + '\n... [output truncated]';
     return { content, total_lines: totalLines };
   } catch (e) {
-    return { content: `错误：${sandboxError(e)}`, total_lines: 0 };
+    return readError(`错误：${sandboxError(e)}`);
   }
 }
 

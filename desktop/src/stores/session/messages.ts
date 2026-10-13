@@ -22,6 +22,10 @@ function isInterruptedAssistant(message: ChatMessage): boolean {
  * 这一轮其实已持久化：REST 里该用户消息之后的第一条助手消息正是这条回复的完整
  * 版本，气泡只是它的本地流式副本。两条都保留会在对话区显示重复回复，此时以
  * REST 版本为准。正常中止轮次服务端不落库，找不到同轮助手消息，气泡仍是唯一副本。
+ *
+ * 比较范围严格限定在同一轮内：从该用户消息向后扫到**下一条 user 消息即止**，
+ * 绝不能拿下一轮已落库的回复和本轮中断气泡比内容——工具轮落库 content 为空、
+ * 空 content 互相相等即误判，把「服务端不落库的唯一副本」当回显删掉。
  */
 function echoesPersistedReply(local: ChatMessage[], index: number, fetched: ChatMessage[]): boolean {
   const message = local[index]!;
@@ -30,6 +34,8 @@ function echoesPersistedReply(local: ChatMessage[], index: number, fetched: Chat
     const userPos = fetched.findIndex(m => String(m.id) === String(local[j]!.id));
     if (userPos < 0) return false;
     for (let k = userPos + 1; k < fetched.length; k++) {
+      // 进入下一轮：该轮回复不属于本条气泡的同轮回显
+      if (fetched[k]!.role === 'user') break;
       if (fetched[k]!.role !== 'assistant') continue;
       return fetched[k]!.content === message.content
         && JSON.stringify(fetched[k]!.images ?? []) === JSON.stringify(message.images ?? []);

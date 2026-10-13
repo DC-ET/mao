@@ -356,6 +356,66 @@ describe('ShellSessionTool marker and environment handling', () => {
     expect(shellSession.setCurrentWorkdir).toHaveBeenCalledWith('/tmp/sub');
   });
 
+  // round2 审查 BUG-B：异步路径曾把 settleSession 放在 resolveCurrentWorkdir 之前，
+  // 而默认 keep_session=false 时 settle 就会 closeOwned 关掉会话，resolver 首行
+  // !session.isAlive() 直接返回陈旧值——异步 `cd sub && …` 的 current_workdir
+  // 刷新在默认参数下是死代码，随结果交付给模型的是会话创建时的旧目录。
+  it('refreshes current_workdir for async exec under the default keep_session=false', async () => {
+    let alive = true;
+    const shellSession = {
+      sessionId: 'sh-1',
+      conversationId: 11,
+      writeStdin: vi.fn(),
+      incrementCommandCount: vi.fn(),
+      touch: vi.fn(),
+      setCurrentWorkdir: vi.fn(),
+      currentWorkdir: '/tmp',
+      outputFile: '/tmp/out.log',
+      isAlive: () => alive,
+      peekBuffer: () => '',
+      pendingCommand: null as { marker: string; keepSession: boolean; persist: boolean; taskId: string | null } | null,
+      beginCommand(marker: string, keepSession: boolean, persist = true, taskId: string | null = null) {
+        shellSession.pendingCommand = { marker, keepSession, persist, taskId };
+      },
+    };
+    const sessionManager = {
+      getOrCreate: vi.fn(() => shellSession),
+      getSession: vi.fn(() => shellSession),
+      // 与真实 ShellSessionManager.close → session.close() 对齐：关闭后不再 alive，
+      // 否则测不出「先 settle 后 refresh 时刷新已成死代码」
+      close: vi.fn(() => { alive = false; }),
+      listByConversation: vi.fn(() => [shellSession]),
+    };
+    const background = { submit: vi.fn(() => 'task-1') };
+    const outputManager = {
+      readUntilMarker: vi.fn()
+        .mockImplementationOnce(async () => {
+          shellSession.pendingCommand = null;
+          return { output: 'done\n', truncated: false, completed: true, exitCode: 0, matched: null };
+        })
+        .mockImplementationOnce(async () => ({ output: '/tmp/sub\n', truncated: false, completed: true, exitCode: null, matched: null })),
+    };
+    const tool = new ShellSessionTool(
+      { resolve: vi.fn((p: string) => p), resolveLenient: vi.fn((p: string) => p) } as never,
+      sessionManager as never,
+      outputManager as never,
+      background as never,
+      null,
+    );
+
+    const submitted = JSON.parse(await tool.execute(
+      JSON.stringify({ command: 'cd sub', async: true }), 11, 7, '/tmp',
+    ));
+    expect(submitted.async).toBe(true);
+    // 后台任务是 submit 的实参，手动驱动它拿最终交付给 await_async 的结果
+    const task = background.submit.mock.calls[0]![1] as () => Promise<string>;
+    const result = JSON.parse(await task());
+    expect(result.current_workdir).toBe('/tmp/sub');
+    expect(shellSession.setCurrentWorkdir).toHaveBeenCalledWith('/tmp/sub');
+    // 默认 keep_session=false：会话照旧回收，只是回收前必须已完成刷新
+    expect(sessionManager.close).toHaveBeenCalledWith('sh-1', { conversationId: 11 });
+  });
+
   it('keeps the session and reports how to resume when wait_for fires early', async () => {
     const { tool, sessionManager, outputManager } = harness({
       output: 'Listening on 3000\n', completed: false, matched: 'Listening on',
