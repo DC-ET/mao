@@ -151,6 +151,34 @@ describe('桌面消息 store 流式气泡生命周期', () => {
     expect(msgs.filter((m) => m.interrupted === true)).toHaveLength(0)
   })
 
+  // 上条的负向看守（round3 复审建议转正）：停止竞态也可能只落库了工具调用消息、
+  // 最终文本没落库。此时气泡是最终文本的唯一副本，同轮没有任何助手消息与它内容
+  // 相等，必须保留——守住「比遍同轮」不会把比较放宽成前缀/包含后误删。
+  it('工具轮只落库了工具消息（最终文本未落库）时，中断气泡是唯一副本必须保留', () => {
+    const store = useSessionStore()
+    store.setMessages('9', [{
+      id: '100', role: 'user', content: '看下 a.txt', createdAt: '2026-10-12 10:00:00',
+    }])
+    store.ensureStreamingAssistantMessage('9')
+    store.appendToolCallStart('9', { tool_call_id: 't1', tool_name: 'read_file', arguments: '{"path":"a.txt"}' })
+    store.updateToolCallResult('9', { tool_call_id: 't1', tool_name: 'read_file', result: 'hello', status: 'success' })
+    store.appendDelta('9', 'a.txt 的内容是 hello')
+    store.finishInterruptedStreamingMessage('9', '执行已被中止')
+
+    store.applyFetchedMessages('9', [
+      { id: '100', role: 'user', content: '看下 a.txt', createdAt: '2026-10-12 10:00:00' },
+      {
+        id: '201', role: 'assistant', content: '', createdAt: '2026-10-12 10:00:03',
+        toolCalls: [{ id: 't1', name: 'read_file', status: 'success', result: 'hello', isExpanded: false, argsStreaming: false }],
+      },
+    ])
+
+    const msgs = store.getMessages('9')
+    expect(msgs.map((m) => m.role)).toEqual(['user', 'assistant', 'assistant'])
+    expect(msgs[2]!.interrupted).toBe(true)
+    expect(msgs[2]!.content).toBe('a.txt 的内容是 hello')
+  })
+
   it('下一轮完成后再重拉，中止轮次的气泡按原位置插回、不重复', () => {
     const store = useSessionStore()
     store.setMessages('9', [{
