@@ -6,9 +6,9 @@
         <div class="message-time">
           <span>{{ formatDateTime(userMessage.createdAt) }}</span>
         </div>
-        <div class="message-text user-text" :class="{ collapsed: userCollapsed }">
-          <div class="user-text-content">{{ userMessage.content }}</div>
-          <button v-if="isUserLong" class="user-collapse-toggle" @click="userCollapsed = !userCollapsed">
+        <div class="message-text user-text" :class="{ collapsed: userClamped }">
+          <div ref="userContentRef" class="user-text-content">{{ userMessage.content }}</div>
+          <button v-if="!userFits" class="user-collapse-toggle" @click="userCollapsed = !userCollapsed">
             {{ userCollapsed ? '展开全部' : '收起' }}
           </button>
         </div>
@@ -64,7 +64,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ArrowDown } from '@element-plus/icons-vue'
 import { formatDateTime } from '../../../utils/datetime'
 import { renderMarkdown } from '../composables/useMarkdown'
@@ -88,7 +88,6 @@ const props = withDefaults(defineProps<{
 
 const ACTIVE_PHASES = new Set(['RUNNING', 'WAITING_APPROVAL', 'CANCELLING'])
 
-const userCollapsed = ref(true)
 const processExpanded = ref(false)
 
 const HIDDEN_TOOL_NAMES = new Set(['todo', 'task_list', 'task_create', 'task_update', 'task_delete'])
@@ -174,10 +173,56 @@ const processSummary = computed(() => {
   return parts.join('，')
 })
 
-// 行数 > 10 或字符数 > 800：单行超长粘贴内容（无换行）也需折叠
-const isUserLong = computed(() => {
-  const content = props.userMessage?.content || ''
-  return content.split('\n').length > 10 || content.length > 800
+// 用户消息折叠按「实际渲染行数」判定：同一条消息宽屏一行放得下、窄屏折成十几行，
+// 按源码字符数或换行数估算会漏判（窄屏被裁掉又没有展开入口）。这里在挂载/尺寸变化后量真实高度。
+const MAX_USER_LINES = 10
+
+const userCollapsed = ref(true)
+const userContentRef = ref<HTMLElement | null>(null)
+// 测量前先按折叠态渲染（10 行内放得下的内容视觉上无差别），量出未超限再取消折叠。
+const userFits = ref(false)
+
+const userClamped = computed(() => userCollapsed.value && !userFits.value)
+
+function measureUserOverflow() {
+  const el = userContentRef.value
+  if (el == null) return
+  const style = getComputedStyle(el)
+  const lineHeight = Number.parseFloat(style.lineHeight)
+  const fontSize = Number.parseFloat(style.fontSize)
+  const perLine = lineHeight > 0 ? lineHeight : (fontSize > 0 ? fontSize : 14) * 1.5
+  const maxHeight = Math.ceil(perLine * MAX_USER_LINES) + 1
+  // 临时撤掉 clamp 量自然高度，同一个 JS 任务内还原，不会闪。
+  const prevDisplay = el.style.display
+  const prevClamp = el.style.webkitLineClamp
+  el.style.display = 'block'
+  el.style.webkitLineClamp = 'none'
+  const naturalHeight = el.scrollHeight
+  el.style.display = prevDisplay
+  el.style.webkitLineClamp = prevClamp
+  userFits.value = naturalHeight <= maxHeight
+}
+
+let userTextObserver: ResizeObserver | null = null
+
+onMounted(() => {
+  measureUserOverflow()
+  if (typeof ResizeObserver !== 'undefined' && userContentRef.value != null) {
+    userTextObserver = new ResizeObserver(() => measureUserOverflow())
+    userTextObserver.observe(userContentRef.value)
+  }
+})
+
+onBeforeUnmount(() => {
+  userTextObserver?.disconnect()
+  userTextObserver = null
+})
+
+// 组件复用到下一轮对话（消息内容整体替换）时重新测量
+watch(() => props.userMessage?.content, async () => {
+  userCollapsed.value = true
+  await nextTick()
+  measureUserOverflow()
 })
 </script>
 
