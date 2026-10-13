@@ -2,6 +2,7 @@ import { execFile, type ExecFileException } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { resolvePathLenient } from '../sandbox';
+import { asInt } from './params';
 
 function globToRegExp(pattern: string): RegExp {
   const escaped = pattern
@@ -105,7 +106,13 @@ function rgFailure(err: ExecFileException, stderr: string): Error {
 export async function handleGlobSearch(args: Record<string, unknown>, workspace: string | undefined, sessionId: number): Promise<Record<string, unknown>> {
   const pattern = typeof args.pattern === 'string' ? args.pattern : '';
   if (!pattern) return { files: [], error: 'pattern is required' };
-  const headLimit = Number(args.head_limit ?? 100) || 100;
+  // 与云端 glob_search 同口径：head_limit 必须是正整数，否则显式报错。
+  // 旧实现 `Number(x) || 100` 会把 0 静默改成 100（模型要 0 条却拿到全部）、
+  // 把负数原样传入 slice(0, -N)（变成「全部结果砍掉末尾 N 条」的错乱子集）
+  if (args.head_limit != null && (!Number.isSafeInteger(args.head_limit) || Number(args.head_limit) < 1)) {
+    return { files: [], error: 'head_limit 必须为正整数' };
+  }
+  const headLimit = args.head_limit != null ? asInt(args.head_limit, 100) : 100;
   try {
     const resolvedPath = resolveSearchRoot(args.path, workspace);
     const scope = resolveSearchScope(resolvedPath);
@@ -293,8 +300,10 @@ export async function handleGrepSearch(args: Record<string, unknown>, workspace:
   const glob = typeof args.glob === 'string' ? args.glob : null;
   const ignoreCase = args.ignore_case === true || args.ignore_case === 1
     || args.ignore_case === 'true' || args.ignore_case === '1';
-  const contextLines = Math.max(0, Number(args.context_lines ?? 0) || 0);
-  const maxOutputChars = Number(args.max_output_chars ?? 10000) || 10000;
+  const contextLines = Math.max(0, asInt(args.context_lines, 0));
+  // 与云端 grep_search 同口径：max_output_chars=0 是合法预算（0 条匹配），
+  // 旧实现 `Number(x) || 10000` 会把它静默改成 10000，作废模型的输出预算约束
+  const maxOutputChars = args.max_output_chars != null ? asInt(args.max_output_chars, 10000) : 10000;
   try {
     const resolvedPath = resolveSearchRoot(args.path, workspace);
     const scope = resolveSearchScope(resolvedPath);

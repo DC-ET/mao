@@ -7,7 +7,7 @@ import { loadDislikedIds } from './useMessageFeedback'
 import { collectLocalUnsyncedSkills } from '../utils/localSkills'
 import { collectAgentsMdContent } from '../utils/agentsMd'
 import { mapMessagesWithFileChanges, mapCompactionEvents } from '../utils/chatMessage'
-import { normalizeMessageRole, type ChatMessage, type QuestionAnswer } from '../types/chat'
+import { normalizeMessageRole, type QuestionAnswer } from '../types/chat'
 
 export type {
   ChatMessage,
@@ -658,6 +658,10 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     sessionStore.setCompacting(sid, false)
     sessionStore.clearAskQuestions(sid)
     sessionStore.clearLlmRetry(sid)
+    // 被中止轮次服务端不落库，流式气泡是已流出内容的唯一副本：必须先标记中断，
+    // 否则下方 phase watcher 的终态重拉（REST 先于服务端 CANCELLED 广播落地）会把
+    // 气泡当「REST 覆盖范围的尾部残留」删掉，迟到的 CANCELLED 帧再标记已空转
+    sessionStore.finishInterruptedStreamingMessage(sid, '执行已被中止')
     sessionStore.updateSessionPhase(sid, 'CANCELLED')
 
     fetchQueue()
@@ -759,16 +763,10 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
         imagesToSend.length > 0 ? imagesToSend : undefined
       )
 
-      // 添加空 assistant 占位消息
-      const placeholderMsg: ChatMessage = {
-        id: `msg_${Date.now()}_assistant`,
-        role: 'assistant',
-        content: '',
-        createdAt: nowDateTime(),
-        toolCalls: [],
-        segments: []
-      }
-      sessionStore.appendMessage(sid, placeholderMsg)
+      // 注册空 assistant 占位气泡：与 prepareAndSendMessage 同口径。必须走
+      // ensureStreamingAssistantMessage 写进流式注册表，否则首个 content_delta
+      // 认不出尾部是自己的气泡，会再新建一条，同一轮回复被劈成两段
+      sessionStore.ensureStreamingAssistantMessage(sid)
 
       subscribe(sid)
       const sent = await sendEditMessage(sid, newContent, messageId, imagesToSend, localSkills, agentsMdContent)

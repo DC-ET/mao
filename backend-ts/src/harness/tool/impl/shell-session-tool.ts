@@ -202,7 +202,11 @@ export class ShellSessionTool extends BaseTool {
             try {
               const r = await this.outputManager.readUntilMarker(session, marker, yieldTimeMs, waitFor);
               this.settleSession(session, r, keepSession);
-              return toJson(this.formatResult(session, r, session.currentWorkdir));
+              // 与同步路径同口径：命令结束后向 shell 补一条 pwd 刷新工作目录。
+              // 直接用 session.currentWorkdir 会在异步 `cd sub && pwd` 后把旧值
+              // 报给模型（该字段随结果一起交付，陈旧即误导后续相对路径解析）
+              const workdirNow = await this.resolveCurrentWorkdir(session, r);
+              return toJson(this.formatResult(session, r, workdirNow));
             } finally {
               // 后台任务退出后读取权交还会话，后续 await_async 才能接着读
               if (session.pendingCommand) session.pendingCommand.taskId = null;

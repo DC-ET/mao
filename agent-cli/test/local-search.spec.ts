@@ -128,3 +128,24 @@ describe('glob search', () => {
     expect(viaNode.search_root).toBe(workspace);
   });
 });
+
+// round 1 BUG-5：数值参数的非法值处理必须与云端（backend asInt 语义 + 各 tool 校验）一致。
+describe('numeric parameter semantics match the cloud tools', () => {
+  // head_limit 旧实现 Number(x) || 100：0 被静默改成 100（模型要 0 条却拿到全部）、
+  // 负数原样传入 slice(0, -N)（变成「全部结果砍掉末尾 N 条」的错乱子集）。
+  // 云端 glob_search 对非正整数显式报错，LOCAL 必须同口径。
+  it('rejects a non-positive glob head_limit instead of silently changing it', async () => {
+    fs.writeFileSync(path.join(workspace, 'x.txt'), 'x');
+    expect((await handleGlobSearch({ pattern: '*.txt', head_limit: 0 }, workspace, SESSION_ID)).error).toBeTruthy();
+    for (let i = 0; i < 6; i++) fs.writeFileSync(path.join(workspace, `f${i}.txt`), 'x');
+    expect((await handleGlobSearch({ pattern: '*.txt', head_limit: -2 }, workspace, SESSION_ID)).error).toBeTruthy();
+  });
+
+  // max_output_chars=0 是合法预算（0 条匹配），旧实现 Number(x) || 10000 静默改成
+  // 10000，作废模型的输出预算约束。asInt(0, 10000) = 0：0 是有限数，原样返回。
+  it('honours max_output_chars=0 as a zero budget', async () => {
+    fs.writeFileSync(path.join(workspace, 'g.txt'), 'hit1\nhit2\nhit3\n');
+    const res = await handleGrepSearch({ pattern: 'hit', max_output_chars: 0 }, workspace, SESSION_ID);
+    expect(Array.isArray(res.matches) ? res.matches.length : 0).toBe(0);
+  });
+});

@@ -88,6 +88,15 @@ describe('handleReadFile', () => {
     fs.mkdirSync(path.join(ws, 'dir'));
     expect(String(handleReadFile({ path: 'dir' }, ws, SESSION_ID).content)).toMatch(/不是普通文件/);
   });
+
+  // round 1 BUG-5：limit 非法/空串时必须回落「读全文件」而不是 0。
+  // 旧实现 Number(x) || 0 会把 "abc"/"" 变成 0，返回空 content 会让模型误判文件
+  // 为空，进而在 write_file 里整体覆写清空它。对齐云端 read_file 的 asInt 语义。
+  it('reads the whole file when limit is a non-numeric or empty string', () => {
+    fs.writeFileSync(path.join(ws, 'a.txt'), 'l1\nl2\nl3\n');
+    expect(handleReadFile({ path: 'a.txt', limit: 'abc' }, ws, SESSION_ID).content).toBe('l1\nl2\nl3');
+    expect(handleReadFile({ path: 'a.txt', limit: '' }, ws, SESSION_ID).content).toBe('l1\nl2\nl3');
+  });
 });
 
 describe('handleWriteFile', () => {

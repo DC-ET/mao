@@ -1150,6 +1150,11 @@ export function useStreamWS() {
           sessionStore.updateSessionPhase(sessionId, 'FAILED' as TaskPhase)
           sessionStore.updateSideTaskPhase(Number(sessionId), 'FAILED' as TaskPhase)
           sessionStore.updateSubagentPhase(Number(sessionId), 'FAILED' as TaskPhase)
+          // 与 session_status 终态分支（CANCELLED/FAILED）对称：error 帧由客户端自行翻
+          // FAILED，phase watcher 会立即触发不带 preserveLiveStream 的终态重拉；必须先标记
+          // 中断，否则已流出的部分回复（服务端不落库失败轮次，唯一副本）被当尾部残留删除，
+          // 而迟到的终态 session_status 帧再调 finishInterruptedStreamingMessage 已空转
+          sessionStore.finishInterruptedStreamingMessage(sessionId, '执行失败中断')
           resetSessionStreamState(sessionId)
           const cb = pendingCallbacks.get(sessionId)
           if (cb) {

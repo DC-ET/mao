@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { assertNotSymlink, resolvePathLenient } from '../sandbox';
 import { withFileLock } from './file-write-lock';
+import { asInt } from './params';
 
 const IMAGE_EXT: Record<string, string> = {
   '.png': 'image/png',
@@ -254,8 +255,10 @@ export function handleReadFile(args: Record<string, unknown>, workspace: string 
     }
     const allLines = splitLines(stripBom(buffer.toString('utf8')));
     const totalLines = allLines.length;
-    const offset = Math.max(0, Number(args.offset ?? 0) || 0);
-    const limit = args.limit != null ? Math.max(0, Number(args.limit) || 0) : Number.MAX_SAFE_INTEGER;
+    const offset = Math.max(0, asInt(args.offset, 0));
+    // 与云端 read_file 同口径：limit 非法/空串时回落「读全文件」而非 0——
+    // 返回空 content 会让模型误判文件为空，进而在 write_file 里整体覆写清空它
+    const limit = args.limit != null ? Math.max(0, asInt(args.limit, Number.MAX_SAFE_INTEGER)) : Number.MAX_SAFE_INTEGER;
     const from = Math.min(offset, totalLines);
     const to = Math.min(from + limit, totalLines);
     let content = allLines.slice(from, to).join('\n');

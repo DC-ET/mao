@@ -18,6 +18,9 @@ describe('weixin-http', () => {
         });
         return;
       }
+      if (req.url === '/hang') {
+        return; // 永不响应 → 触发 timeout 分支
+      }
       res.writeHead(404);
       res.end('missing');
     });
@@ -41,5 +44,16 @@ describe('weixin-http', () => {
     expect(posted.body.toString()).toBe('hello');
     const missing = await weixinRequest(`http://127.0.0.1:${port}/nope`);
     expect(missing.status).toBe(404);
+  });
+
+  // round 1 BUG-9：超时错误必须带 code='ETIMEDOUT'（Node 网络错误的惯例）。
+  // 本仓超时错误的唯一产生点就在这里；调用方（qr-login 的 isTimeoutError）按 code
+  // 判定超时，普通 Error 会让那些判据恒不命中。
+  it('attaches the ETIMEDOUT code to the timeout error', async () => {
+    const err = await weixinRequest(`http://127.0.0.1:${port}/hang`, { timeoutMs: 200 })
+      .then(() => null, (e: unknown) => e);
+    expect(err).not.toBeNull();
+    expect((err as { code?: string }).code).toBe('ETIMEDOUT');
+    expect((err as Error).message).toBe('timeout after 200ms');
   });
 });

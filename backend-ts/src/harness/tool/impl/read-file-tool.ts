@@ -51,14 +51,14 @@ export class ReadFileTool extends BaseTool {
       const args = parseObject(argumentsJson);
       const filePathArg = extractPath(args);
       if (filePathArg == null) {
-        return toJson({ content: '错误：缺少必填参数 path', total_lines: 0 });
+        return readError('错误：缺少必填参数 path');
       }
       const filePath = this.pathSandbox.resolveLenient(filePathArg, workspace);
       if (!existsSync(filePath)) {
-        return toJson({ content: '错误：文件不存在：' + filePathArg, total_lines: 0 });
+        return readError('错误：文件不存在：' + filePathArg);
       }
       if (!statSync(filePath).isFile()) {
-        return toJson({ content: '错误：不是普通文件：' + filePathArg, total_lines: 0 });
+        return readError('错误：不是普通文件：' + filePathArg);
       }
       if (ImageFileSupport.mimeFromPath(filePathArg)) {
         return await this.readImage(filePath, filePathArg);
@@ -81,22 +81,19 @@ export class ReadFileTool extends BaseTool {
       } else {
         harnessLog('error', 'ReadFileTool execution failed', e);
       }
-      return toJson({ content: '错误：' + (e as Error).message, total_lines: 0 });
+      return readError('错误：' + (e as Error).message);
     }
   }
 
   private async readImage(filePath: string, pathArg: string): Promise<string> {
     const sizeBytes = statSync(filePath).size;
     if (sizeBytes > ImageFileSupport.MAX_IMAGE_BYTES) {
-      return toJson({
-        content: `错误：文件过大（${ImageFileSupport.formatSize(sizeBytes)}），图片读取上限为 ${ImageFileSupport.formatSize(ImageFileSupport.MAX_IMAGE_BYTES)}：${pathArg}`,
-        total_lines: 0,
-      });
+      return readError(`错误：文件过大（${ImageFileSupport.formatSize(sizeBytes)}），图片读取上限为 ${ImageFileSupport.formatSize(ImageFileSupport.MAX_IMAGE_BYTES)}：${pathArg}`);
     }
     let bytes = readFileSync(filePath);
     const detectedMime = ImageFileSupport.detectMimeFromBytes(bytes);
     if (!detectedMime) {
-      return toJson({ content: '错误：不支持的图片格式或文件内容无效：' + pathArg, total_lines: 0 });
+      return readError('错误：不支持的图片格式或文件内容无效：' + pathArg);
     }
     let origWidth: number | null = null;
     let origHeight: number | null = null;
@@ -110,7 +107,7 @@ export class ReadFileTool extends BaseTool {
       resized = await PromptImageResizer.resizeForPrompt(bytes, detectedMime);
     } catch (e) {
       harnessLog('warn', `Prompt resize failed for ${pathArg}: ${(e as Error).message}`);
-      return toJson({ content: '错误：不支持的图片格式或文件内容无效：' + pathArg, total_lines: 0 });
+      return readError('错误：不支持的图片格式或文件内容无效：' + pathArg);
     }
     const mime = resized.mime;
     bytes = Buffer.from(resized.bytes);
@@ -131,6 +128,15 @@ export class ReadFileTool extends BaseTool {
       data_uri: resized.toDataUri(),
     });
   }
+}
+
+/**
+ * read_file 的错误返回：content 保留原文供模型直接阅读原因，同时必须带 error 键——
+ * normalizeToolResult 以「JSON 顶层含 error 键」判定失败态，缺键会被判成 success，
+ * 下游 UI、审计与统计会把读失败当成读成功。
+ */
+function readError(message: string): string {
+  return toJson({ content: message, error: message, total_lines: 0 });
 }
 
 /** 按行终止符切分，末尾换行不产生空行（与 Java Files.lines 一致）。 */

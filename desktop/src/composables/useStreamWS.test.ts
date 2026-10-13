@@ -1,11 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
+import { ref } from 'vue'
 
 vi.mock('../utils/auth-storage', () => ({
   getToken: () => 'test-token',
 }))
 vi.mock('../api', () => ({
-  api: { get: vi.fn().mockResolvedValue({ data: [] }) },
+  api: {
+    get: vi.fn().mockResolvedValue({ data: [] }),
+    post: vi.fn(),
+    put: vi.fn(),
+    patch: vi.fn(),
+    delete: vi.fn(),
+  },
   // inbox store 通过命名导出调用；这里给稳定空实现，避免 onopen 未读数重拉抛 TypeError
   fetchInboxUnreadCount: vi.fn().mockResolvedValue({ unreadCount: 0 }),
   fetchInboxList: vi.fn().mockResolvedValue({ records: [], total: 0, page: 1, size: 20 }),
@@ -23,6 +30,8 @@ vi.mock('../api', () => ({
   }),
   saveInboxPreference: vi.fn(),
 }))
+vi.mock('../utils/localSkills', () => ({ collectLocalUnsyncedSkills: vi.fn(async () => []) }))
+vi.mock('../utils/agentsMd', () => ({ collectAgentsMdContent: vi.fn(async () => undefined) }))
 
 const sockets: FakeWebSocket[] = []
 
@@ -71,6 +80,8 @@ Object.defineProperty(globalThis, 'window', {
 
 const { useStreamWS } = await import('./useStreamWS')
 const { useSessionStore } = await import('../stores/session')
+const { useChat } = await import('./useChat')
+const { api } = await import('../api')
 
 type ChatMessageLike = { id: string; role: 'user' | 'assistant' | 'system'; content: string; createdAt: string; images?: string[] }
 
@@ -528,5 +539,116 @@ describe('useStreamWS 后台子代理完成通知（assistant_message_saved）',
     store.setMessages('9', [])
     expect(() => noticeFrame({ ...notice, metadata: '{not-json' })).not.toThrow()
     expect(store.getMessages('9')).toHaveLength(0)
+  })
+})
+
+// round 1 BUG-2：error 帧由客户端自行翻 FAILED，phase watcher 立即触发不带
+// preserveLiveStream 的终态重拉；error 分支若不先标记中断，已流出的部分回复
+// （服务端不落库失败轮次，唯一副本）会被当「REST 覆盖范围的尾部残留」删掉，
+// 而迟到的终态 session_status FAILED 帧再标记已空转。这是确定性顺序
+// （后端先发 error 帧再走 finishFailedSession），不是竞态。
+describe('useStreamWS error 帧（执行中失败）保留部分回复', () => {
+  const deliver = (msg: Record<string, unknown>) =>
+    sockets[0].onmessage?.({ target: sockets[0], data: JSON.stringify(msg) })
+
+  // 本组用例用真实定时器等 useChat 的 phase watcher 落库（外层 beforeEach 装了假定时器）
+  beforeEach(() => {
+    vi.useRealTimers()
+  })
+
+  /** 失败轮次服务端不落库：REST 历史只有用户消息，没有那条部分回复。 */
+  const restWithoutReply = () => {
+    vi.mocked(api.get).mockImplementation((url: string) => {
+      if (url === '/sessions/9/messages') {
+        return Promise.resolve({
+          data: { messages: [{ id: 100, role: 'user', content: '写个快排' }], hasMore: false },
+        } as never)
+      }
+      if (url === '/sessions/9/queue') return Promise.resolve({ data: [] } as never)
+      return Promise.resolve({ data: null } as never)
+    })
+  }
+
+  const flushRest = async () => {
+    for (let i = 0; i < 8; i++) await Promise.resolve()
+    await new Promise(resolve => setTimeout(resolve, 0))
+  }
+
+  const seedStreaming = (store: ReturnType<typeof useSessionStore>) => {
+    store.setMessages('9', [{
+      id: '100', role: 'user', content: '写个快排', createdAt: '2026-10-13 10:00:00',
+    }])
+    store.ensureStreamingAssistantMessage('9')
+    store.appendDelta('9', '好的，这是快速排序实现：')
+    store.setActiveSession('9')
+  }
+
+  it('error 帧置 FAILED 后的终态重拉必须保留部分回复（与 CANCELLED 帧路径对称）', async () => {
+    restWithoutReply()
+    const store = useSessionStore()
+    seedStreaming(store)
+
+    const chat = useChat(ref('1'), ref('CLOUD'))
+    chat.sessionId.value = '9'
+
+    const { connect } = useStreamWS()
+    const connected = connect()
+    sockets[0].open()
+    await connected
+
+    // 执行开始：RUNNING 帧登记 executionId
+    deliver({ type: 'session_status', sessionId: 9, data: { phase: 'RUNNING', executionId: 'e1' } })
+    await flushRest()
+
+    // 执行中后端抛错：先发 error 帧，随后 finishFailedSession 发终态 session_status FAILED
+    deliver({ type: 'error', sessionId: 9, data: { message: 'Agent 执行异常', executionId: 'e1' } })
+    await flushRest()
+    deliver({ type: 'session_status', sessionId: 9, data: { phase: 'FAILED', executionId: 'e1' } })
+    await flushRest()
+
+    const msgs = store.getMessages('9')
+    expect(msgs.map(m => m.role)).toEqual(['user', 'assistant'])
+    expect(msgs[1].content).toContain('快速排序')
+  })
+
+  it('对照组：正常完成路径 REST 已含完整回复，重拉后不重复', async () => {
+    vi.mocked(api.get).mockImplementation((url: string) => {
+      if (url === '/sessions/9/messages') {
+        return Promise.resolve({
+          data: {
+            messages: [
+              { id: 100, role: 'user', content: '写个快排' },
+              { id: 201, role: 'assistant', content: '好的，这是快速排序实现：' },
+            ],
+            hasMore: false,
+          },
+        } as never)
+      }
+      if (url === '/sessions/9/queue') return Promise.resolve({ data: [] } as never)
+      return Promise.resolve({ data: null } as never)
+    })
+    const store = useSessionStore()
+    seedStreaming(store)
+
+    const chat = useChat(ref('1'), ref('CLOUD'))
+    chat.sessionId.value = '9'
+
+    const { connect } = useStreamWS()
+    const connected = connect()
+    sockets[0].open()
+    await connected
+
+    deliver({ type: 'session_status', sessionId: 9, data: { phase: 'RUNNING', executionId: 'e1' } })
+    await flushRest()
+
+    // 正常完成：message_end 清注册，服务端已落库完整回复
+    deliver({ type: 'message_end', sessionId: 9, data: {} })
+    deliver({ type: 'session_status', sessionId: 9, data: { phase: 'COMPLETED', executionId: 'e1' } })
+    await flushRest()
+
+    const msgs = store.getMessages('9')
+    expect(msgs.map(m => m.role)).toEqual(['user', 'assistant'])
+    expect(msgs[1].id).toBe('201')
+    expect(msgs.filter(m => m.role === 'assistant')).toHaveLength(1)
   })
 })

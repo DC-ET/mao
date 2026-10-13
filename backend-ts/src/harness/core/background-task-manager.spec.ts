@@ -107,3 +107,82 @@ describe('BackgroundTaskManager', () => {
     expect(await manager.consumeCompletedResults(7)).toEqual({ [taskId]: 'secret' });
   });
 });
+
+describe('BackgroundTaskManager shell result normalization', () => {
+  /** ShellSessionTool.formatResult 对「已完成、输出被截断」的后台命令产生的原始结果。 */
+  function shellResultJson(over: Record<string, unknown>): string {
+    return JSON.stringify({
+      exit_code: 0,
+      session_id: 'sh-1',
+      output: 'x'.repeat(500),
+      truncated: true,
+      completed: true,
+      current_workdir: '/work/pkg',
+      output_file: '/work/runtime/users/1/sessions/11/sh-1.out',
+      ...over,
+    });
+  }
+
+  // round 1 BUG-6：归一化曾用白名单重建 payload，truncated/output_file/
+  // current_workdir/shellExited 全被静默丢掉。注入给模型的摘要必须与同步路径
+  // formatResult 同构，否则模型把被裁掉尾段的构建日志当成完整输出，也失去完整
+  // 日志的读取入口（工具描述承诺「完整输出始终写入 output_file」）。
+  it('keeps truncated / output_file / current_workdir when re-assembling a shell result', async () => {
+    const manager = new BackgroundTaskManager();
+    manager.submit(11, async () => shellResultJson({}));
+    await flush();
+    const injected = await manager.consumeCompletedResults(11);
+    const text = Object.values(injected)[0]!;
+    expect(text).toContain('"truncated": true');
+    expect(text).toContain('output_file');
+    expect(text).toContain('current_workdir');
+  });
+
+  it('keeps shellExited so the model stops awaiting a dead session', async () => {
+    const manager = new BackgroundTaskManager();
+    manager.submit(11, async () => shellResultJson({
+      output: 'bye\n',
+      truncated: false,
+      message: 'shell 进程已退出，会话已关闭。常驻 bash 里的 exit/exec 会结束整个会话。',
+      shellExited: true,
+    }));
+    await flush();
+    const injected = await manager.consumeCompletedResults(11);
+    expect(Object.values(injected)[0]).toContain('shellExited');
+  });
+
+  it('caps an oversized output while keeping the rest of the payload intact', async () => {
+    const manager = new BackgroundTaskManager();
+    manager.submit(11, async () => shellResultJson({ output: 'x'.repeat(20000) }));
+    await flush();
+    const injected = await manager.consumeCompletedResults(11);
+    const text = Object.values(injected)[0]!;
+    // 整体不得触发外层二次截断（那会拦腰切断 JSON），且截断后的 JSON 仍可解析
+    expect(text.length).toBeLessThan(10000);
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    expect(String(parsed.output).endsWith('... [truncated]')).toBe(true);
+    expect(parsed.truncated).toBe(true);
+    expect(parsed.output_file).toBe('/work/runtime/users/1/sessions/11/sh-1.out');
+  });
+
+  it('keeps session_id and the resume hint for an unfinished command', async () => {
+    const manager = new BackgroundTaskManager();
+    const taskId = manager.submit(1, async () => JSON.stringify({
+      exit_code: 0,
+      completed: false,
+      output: 'x'.repeat(20000),
+      session_id: 'sh-1',
+      message: '等待超时，命令仍在运行。用 await_async 继续等待。',
+    }));
+    // awaitResult 主动领取路径同样过归一化
+    const res = await manager.awaitResult(taskId, 2000, 1);
+    expect(res.status).toBe('done');
+    if (res.status !== 'done') return;
+    const parsed = JSON.parse(res.result) as Record<string, unknown>;
+    // 未结束的命令必须带上 session_id 与续等提示，否则模型无从继续 await_async
+    expect(parsed.session_id).toBe('sh-1');
+    expect(String(parsed.message)).toContain('await_async');
+    expect(parsed.completed).toBe(false);
+    expect(String(parsed.output).length).toBeLessThanOrEqual(10000);
+  });
+});

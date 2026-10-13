@@ -95,3 +95,67 @@ describe('GrepSearchTool.searchWithRg（rg 进程失败不得吞成 0 命中）'
     expect(out.truncated).toBe(false);
   });
 });
+
+describe('GrepSearchTool ignore_case（字符串布尔不得静默改语义）', () => {
+  const dirs: string[] = [];
+
+  afterEach(() => {
+    spawnSyncMock.mockReset();
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function makeTool(workspace: string): GrepSearchTool {
+    return new GrepSearchTool(new PathSandbox(workspace));
+  }
+
+  /** 让 isRgAvailable() 判 false，走 JS 回退路径：不依赖 CI 是否有 rg，也不耦合 rg 输出格式。 */
+  function withoutRg(): void {
+    spawnSyncMock.mockImplementation(() => ({ status: 1, stdout: '', stderr: '' }));
+  }
+
+  // round 1 BUG-12：ignore_case 曾只认布尔 true，模型把布尔字段输出成字符串 "true"
+  // 时静默按大小写敏感搜索——0 命中会让模型误判「代码里不存在」。
+  // 与 edit_file 的 replace_all 同口径：asBool 已支持字符串布尔。
+  it('honors ignore_case passed as the string "true"', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'mao-grep-ic-'));
+    dirs.push(root);
+    writeFileSync(path.join(root, 'a.txt'), 'Hello World\n');
+    withoutRg();
+
+    const out = JSON.parse(await makeTool(root).execute(
+      JSON.stringify({ pattern: 'hello', path: root, ignore_case: 'true' }), root,
+    )) as { matches: unknown[]; total_matches: number; error?: string };
+
+    expect(out.error).toBeUndefined();
+    expect(out.total_matches).toBe(1);
+    expect(out.matches).toHaveLength(1);
+  });
+
+  it('honors the boolean form of ignore_case', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'mao-grep-ic-bool-'));
+    dirs.push(root);
+    writeFileSync(path.join(root, 'a.txt'), 'Hello World\n');
+    withoutRg();
+
+    const out = JSON.parse(await makeTool(root).execute(
+      JSON.stringify({ pattern: 'hello', path: root, ignore_case: true }), root,
+    )) as { matches: unknown[]; total_matches: number; error?: string };
+
+    expect(out.error).toBeUndefined();
+    expect(out.total_matches).toBe(1);
+  });
+
+  it('stays case-sensitive when ignore_case is absent', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'mao-grep-ic-none-'));
+    dirs.push(root);
+    writeFileSync(path.join(root, 'a.txt'), 'Hello World\n');
+    withoutRg();
+
+    const out = JSON.parse(await makeTool(root).execute(
+      JSON.stringify({ pattern: 'hello', path: root }), root,
+    )) as { matches: unknown[]; total_matches: number; error?: string };
+
+    expect(out.error).toBeUndefined();
+    expect(out.total_matches).toBe(0);
+  });
+});

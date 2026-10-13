@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
+import { whereFilter, type SqlRow } from '../testing/sql-where.js';
 import { SessionService, buildSnippet } from './session.service.js';
+import { CLOUD_TEMP } from './util/session-group-key.js';
 import type { FileChangeRepository, MessageRepository, SessionRepository } from './session.repository.js';
 import type { AgentLookup, Message, Session, UserCommandLookup } from './types.js';
 import type { PathSandbox } from '../harness/safety/path-sandbox.js';
@@ -705,6 +707,111 @@ describe('SessionService embed source', () => {
     const result = await service.listSessionsForAdmin(1, 10, null, null, null, null, '  ', null);
     expect(result.matchSnippets).toEqual({});
     expect(messageRepo.selectFirstMatchingMessages).not.toHaveBeenCalled();
+  });
+});
+
+describe('SessionService session group filtering', () => {
+  /**
+   * 回归：round 1 BUG-4。分组预览按 SessionGroupKey.of() 分组，「展开更多」按
+   * applyFilter() 过滤，两端口径漂移时同一会话会在预览里出现一次、展开后却多出
+   * 一条（total 对不上、分页偏移错乱）。这里用 testing/sql-where.ts 的求值器
+   * 代替 MySQL，驱动真实 SessionService 的两个列表接口互相对照。
+   *
+   * 行同时带 SQL 列名（WHERE 求值用）与 camelCase 字段（of() 读取用）。
+   */
+  function groupRow(over: Record<string, unknown>): Session {
+    const base: Record<string, unknown> = {
+      id: 1,
+      user_id: 7, userId: 7,
+      title: '会话',
+      session_type: 'NORMAL', sessionType: 'NORMAL',
+      status: 'ACTIVE',
+      phase: 'IDLE',
+      agent_id: 9, agentId: 9,
+      execution_mode: 'CLOUD', executionMode: 'CLOUD',
+      workspace: '/data/workspace/projects/proj',
+      project_key: null, projectKey: null,
+      source: null,
+      is_pinned: 0, isPinned: 0,
+      updated_at: '2026-10-13 10:00:00', updatedAt: '2026-10-13 10:00:00',
+    };
+    const merged = { ...base, ...over };
+    // 两套命名保持同值，避免 spec 自身因命名不一致误判
+    merged.userId = merged.user_id;
+    merged.sessionType = merged.session_type;
+    merged.agentId = merged.agent_id;
+    merged.executionMode = merged.execution_mode;
+    merged.projectKey = merged.project_key;
+    return merged as unknown as Session;
+  }
+
+  function mockGroupRepo(rows: Session[]) {
+    const { service, sessionRepo } = makeService();
+    const sqlRows = rows as unknown as SqlRow[];
+    vi.mocked(sessionRepo.list).mockImplementation(
+      async (whereSql: string, params: unknown[]) => whereFilter(whereSql, params, sqlRows) as unknown as Session[],
+    );
+    vi.mocked(sessionRepo.count).mockImplementation(
+      async (whereSql: string, params: unknown[]) => whereFilter(whereSql, params, sqlRows).length,
+    );
+    return { service };
+  }
+
+  it('嵌入 SDK 会话只出现在 EMBED 分组，不挤进同工作区的 CLOUD 分组', async () => {
+    const normal = groupRow({ id: 1, title: '普通会话' });
+    const embedded = groupRow({ id: 2, title: '嵌入会话', source: 'embed' });
+    const { service } = mockGroupRepo([normal, embedded]);
+
+    // 1) 分组预览：EMBED 与 CLOUD:<ws> 各一条，互不重叠
+    const groups = await service.listSessionGroups(7, null, null, 5);
+    const byKey = new Map(groups.map((g) => [g.key, g]));
+    expect([...byKey.keys()].sort()).toEqual(['CLOUD:/data/workspace/projects/proj', 'EMBED:9']);
+    expect(byKey.get('CLOUD:/data/workspace/projects/proj')!.total).toBe(1);
+    expect(byKey.get('EMBED:9')!.total).toBe(1);
+
+    // 2) 展开 CLOUD 分组：只能拿到普通会话，不能把嵌入会话也带出来
+    const cloudPage = await service.listSessionsByGroup(7, 'CLOUD:/data/workspace/projects/proj', null, null, 0, 20);
+    expect(cloudPage.total).toBe(1);
+    expect(cloudPage.items.map((s) => s.id)).toEqual([1]);
+
+    // 3) 展开 EMBED 分组：只能拿到嵌入会话
+    const embedPage = await service.listSessionsByGroup(7, 'EMBED:9', null, null, 0, 20);
+    expect(embedPage.total).toBe(1);
+    expect(embedPage.items.map((s) => s.id)).toEqual([2]);
+  });
+
+  it('临时工作区桶不含 embed 会话（含 workspace 为 NULL 的 embed 行）', async () => {
+    // embed 会话的 workspace 可能是 NULL（早期创建）或 {root}/{userId}/{sessionId}
+    // （create-app.ts 的自动工作区）；of() 一律分流到 EMBED:<agentId>，
+    // CLOUD:临时工作区 桶必须把两类 embed 都排除在外
+    const temp = groupRow({ id: 1, title: '临时会话', workspace: null });
+    const embeddedNull = groupRow({ id: 2, title: '嵌入会话(无工作区)', source: 'embed', workspace: null });
+    const embeddedAuto = groupRow({ id: 3, title: '嵌入会话(自动工作区)', source: 'embed', workspace: '/data/workspace/9/42' });
+    const { service } = mockGroupRepo([temp, embeddedNull, embeddedAuto]);
+
+    const groups = await service.listSessionGroups(7, null, null, 5);
+    const byKey = new Map(groups.map((g) => [g.key, g]));
+    expect([...byKey.keys()].sort()).toEqual([CLOUD_TEMP, 'EMBED:9']);
+    expect(byKey.get(CLOUD_TEMP)!.total).toBe(1);
+
+    const page = await service.listSessionsByGroup(7, CLOUD_TEMP, null, null, 0, 20);
+    expect(page.items.map((s) => s.id)).toEqual([1]);
+  });
+
+  it('飞书私聊会话只出现在 FEISHU_PRIVATE 分组', async () => {
+    // 形态与生产一致：飞书私聊 workspace 在 {root}/feishu-chat/{账号}/private-{userId} 下
+    const feishuPrivate = groupRow({
+      id: 3, title: '飞书私聊',
+      project_key: 'feishu-1-private-5', projectKey: 'feishu-1-private-5',
+      workspace: '/data/workspace/feishu-chat/1/private-5',
+    });
+    const { service } = mockGroupRepo([feishuPrivate]);
+
+    const groups = await service.listSessionGroups(7, null, null, 5);
+    expect(groups.map((g) => g.key)).toEqual(['FEISHU_PRIVATE:9']);
+
+    const page = await service.listSessionsByGroup(7, 'FEISHU_PRIVATE:9', null, null, 0, 20);
+    expect(page.items.map((s) => s.id)).toEqual([3]);
   });
 });
 

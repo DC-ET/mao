@@ -123,9 +123,8 @@ export class BackgroundTaskManager {
 
   /**
    * 把后台任务结果统一为可注入上下文的文本：
-   * shell 后台任务（CLOUD exec / LOCAL await_async）的返回是 JSON，先解析重组出
-   * 与同步路径同构的结构化摘要（exit_code/completed/output），再整体限长；
-   * 纯文本结果仅做整体限长。
+   * shell 后台任务（CLOUD exec / LOCAL await_async）的返回是 JSON，整体透传其字段、
+   * 仅对 output 限长，保证与同步路径 formatResult 同构；纯文本结果仅做整体限长。
    */
   private normalizeResult(raw: string): string {
     const parsed = parseObject(raw);
@@ -133,18 +132,15 @@ export class BackgroundTaskManager {
     if (parsed != null && typeof parsed.output === 'string') {
       // output 截断预留 JSON 头部与 error 字段开销，保证重组后的完整 JSON 不再触发整体二次截断
       const budget = MAX_RESULT_LENGTH - 400;
-      const exitCode = typeof parsed.exit_code === 'number' ? parsed.exit_code : -1;
-      const completed = parsed.completed !== false;
-      let output = parsed.output;
-      if (output.length > budget) {
-        output = output.slice(0, budget) + '... [truncated]';
-      }
-      const payload: Record<string, unknown> = { exit_code: exitCode, completed, output };
-      // 未结束的命令必须带上 session_id 与续等提示，否则模型无从继续 await_async
-      if (typeof parsed.session_id === 'string') payload.session_id = parsed.session_id;
-      if (typeof parsed.matched === 'string') payload.matched = parsed.matched;
-      if (!completed && typeof parsed.message === 'string') payload.message = parsed.message.slice(0, 300);
-      if (parsed.error != null) payload.error = String(parsed.error).slice(0, 100);
+      // 白名单重建会静默丢掉 truncated/output_file/current_workdir/shellExited 等字段：
+      // 模型会把被裁掉尾段的构建日志当成完整输出，也失去完整日志的读取入口，
+      // 甚至继续 await_async 一个已退出的死会话。这里展开全部字段，只对 output 限长。
+      const payload: Record<string, unknown> = { ...parsed };
+      const output = payload.output as string;
+      payload.output = output.length > budget ? output.slice(0, budget) + '... [truncated]' : output;
+      // message/error 可能来自本地 shell 的任意输出，仍保留长度上限
+      if (typeof payload.message === 'string') payload.message = payload.message.slice(0, 300);
+      if (payload.error != null) payload.error = String(payload.error).slice(0, 100);
       text = JSON.stringify(payload, null, 2);
     } else {
       text = raw;

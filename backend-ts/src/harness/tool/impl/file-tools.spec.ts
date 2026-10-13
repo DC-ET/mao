@@ -9,6 +9,7 @@ import { WriteFileTool } from './write-file-tool.js';
 import { EditFileTool } from './edit-file-tool.js';
 import { GlobSearchTool } from './glob-search-tool.js';
 import { GrepSearchTool } from './grep-search-tool.js';
+import { normalizeToolResult } from '../../tool/tool-result.js';
 import { PRIVATE_DIFF_FIELD } from '../file-change-diff-util.js';
 
 function tmp(): string {
@@ -126,6 +127,30 @@ describe('ReadFileTool', () => {
     const tool = new ReadFileTool(new PathSandbox(dir));
     const result = JSON.parse(await tool.execute(JSON.stringify({ path: join(outside, 'pic.txt') })));
     expect(result.content).toBe('outside content');
+  });
+
+  // round 1 BUG-11：错误返回必须带 error 键。normalizeToolResult 的既定规则是
+  // 「JSON 顶层含 error 键即 error」，read_file 曾把错误只写进 content，导致所有
+  // 失败被判成 success、渲染成绿色成功卡（路径写错是模型的高频错误）。
+  it('classifies every error branch as an error result', async () => {
+    const dir = tmp();
+    mkdirSync(join(dir, 'dir'));
+    writeFileSync(join(dir, 'fake.png'), 'not an image');
+    const tool = new ReadFileTool(new PathSandbox(dir));
+    const cases: Array<[string, string]> = [
+      ['缺少 path', '{}'],
+      ['文件不存在', JSON.stringify({ path: 'missing.txt' })],
+      ['目标是目录', JSON.stringify({ path: 'dir' })],
+      ['伪造图片扩展名', JSON.stringify({ path: 'fake.png' })],
+    ];
+    for (const [name, argsJson] of cases) {
+      const raw = await tool.execute(argsJson, 11, 1, dir);
+      const result = normalizeToolResult('call-readerr', raw);
+      expect(result.status, name).toBe('error');
+      expect(result.errorMessage, name).toBeTruthy();
+      // content 仍保留原文，模型能直接读到失败原因
+      expect(JSON.parse(raw).content, name).toContain('错误');
+    }
   });
 });
 

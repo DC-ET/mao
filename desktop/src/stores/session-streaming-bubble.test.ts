@@ -93,4 +93,59 @@ describe('桌面消息 store 流式气泡生命周期', () => {
     expect(msgs[1].id).toBe('201')
     expect(bubble.content).toContain('完整回复')
   })
+
+  // round 1 BUG-1 修复的竞态面：停止点击与服务端落库/完成广播竞态时，这一轮其实
+  // 已持久化（REST 该用户消息之后的第一条助手消息正是同一回复）。中断气泡若一并
+  // 保留，对话区出现「部分回复 + 完整回复」两条相同内容的气泡。
+  it('同轮已落库时中断气泡是本地回显，不重复保留', () => {
+    const store = useSessionStore()
+    store.setMessages('9', [{
+      id: '100', role: 'user', content: '写个快排', createdAt: '2026-10-12 10:00:00',
+    }])
+    store.ensureStreamingAssistantMessage('9')
+    store.appendDelta('9', '好的，这是快速排序实现：')
+    store.finishInterruptedStreamingMessage('9', '执行已被中止')
+
+    // 停止竞态：REST 里这一轮已落库（id 201）
+    store.applyFetchedMessages('9', [
+      { id: '100', role: 'user', content: '写个快排', createdAt: '2026-10-12 10:00:00' },
+      { id: '201', role: 'assistant', content: '好的，这是快速排序实现：', createdAt: '2026-10-12 10:00:05' },
+    ])
+
+    const msgs = store.getMessages('9')
+    expect(msgs.map((m) => m.role)).toEqual(['user', 'assistant'])
+    expect(msgs[1].id).toBe('201')
+    expect(msgs.filter((m) => m.role === 'assistant')).toHaveLength(1)
+  })
+
+  it('下一轮完成后再重拉，中止轮次的气泡按原位置插回、不重复', () => {
+    const store = useSessionStore()
+    store.setMessages('9', [{
+      id: '100', role: 'user', content: '写个快排', createdAt: '2026-10-12 10:00:00',
+    }])
+    store.ensureStreamingAssistantMessage('9')
+    store.appendDelta('9', '半段回复')
+    store.finishInterruptedStreamingMessage('9', '执行已被中止')
+    // 用户又发了一轮：乐观用户消息落库后 user_message_saved 换成本身 id
+    store.addUserMessage('9', {
+      id: 'msg_2_user', role: 'user', content: '再写个归并', createdAt: '2026-10-12 10:01:00',
+    })
+    store.updateLastMessageId('9', 'user', '101')
+    store.ensureStreamingAssistantMessage('9')
+    store.appendDelta('9', '归并排序实现')
+    store.markMessageComplete('9', { total_tokens: 10 })
+
+    // REST：第一轮未落库（无 assistant），第二轮已落库
+    store.applyFetchedMessages('9', [
+      { id: '100', role: 'user', content: '写个快排', createdAt: '2026-10-12 10:00:00' },
+      { id: '101', role: 'user', content: '再写个归并', createdAt: '2026-10-12 10:01:00' },
+      { id: '202', role: 'assistant', content: '归并排序实现', createdAt: '2026-10-12 10:01:05' },
+    ])
+
+    const msgs = store.getMessages('9')
+    // 半段回复插回第一轮之后、第二轮之前，位置与内容都不丢
+    expect(msgs.map((m) => m.content)).toEqual([
+      '写个快排', '半段回复', '再写个归并', '归并排序实现',
+    ])
+  })
 })

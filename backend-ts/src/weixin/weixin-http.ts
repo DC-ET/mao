@@ -123,7 +123,12 @@ export function weixinRequest(url: string, init: WeixinHttpRequestInit = {}): Pr
       },
     );
     req.on('timeout', () => {
-      req.destroy(new Error(`timeout after ${timeoutMs}ms`));
+      // 挂 code='ETIMEDOUT'（Node 网络错误的惯例）：调用方按 code 判定超时
+      // （如 qr-login 的 isTimeoutError），普通 Error 会让那些判据恒不命中。
+      // 这是本仓超时错误的唯一产生点，作为单一事实来源。
+      const err = new Error(`timeout after ${timeoutMs}ms`) as Error & { code?: string };
+      err.code = 'ETIMEDOUT';
+      req.destroy(err);
     });
     req.on('error', reject);
     if (init.signal) {

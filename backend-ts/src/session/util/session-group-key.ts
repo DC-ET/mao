@@ -200,16 +200,19 @@ export function applyFilter(groupKey: string | null | undefined): GroupFilterSql
       params: ['embed', n],
     };
   }
+  // 以下三个「模式 + 工作区」桶必须排除 source=embed：of() 优先把 embed 会话分流到
+  // EMBED:<agentId>（与工作区路径无关），不排除会让同一条会话在分组预览里只出现一次、
+  // 展开后却多出一条（total 对不上、分页偏移错乱）。CLOUD:临时工作区 桶本就带此排除。
   if (LOCAL_UNSET === groupKey) {
     return {
-      clauses: ['execution_mode = ?', '(workspace IS NULL OR workspace = ?)'],
-      params: ['LOCAL', ''],
+      clauses: ['execution_mode = ?', '(workspace IS NULL OR workspace = ?)', '(source IS NULL OR source != ?)'],
+      params: ['LOCAL', '', 'embed'],
     };
   }
   if (groupKey.startsWith('LOCAL:')) {
     return {
-      clauses: ['execution_mode = ?', 'workspace = ?'],
-      params: ['LOCAL', groupKey.slice(6)],
+      clauses: ['execution_mode = ?', 'workspace = ?', '(source IS NULL OR source != ?)'],
+      params: ['LOCAL', groupKey.slice(6), 'embed'],
     };
   }
   if (CLOUD_TEMP === groupKey) {
@@ -220,8 +223,8 @@ export function applyFilter(groupKey: string | null | undefined): GroupFilterSql
   }
   if (groupKey.startsWith('CLOUD:')) {
     return {
-      clauses: ['execution_mode = ?', 'workspace = ?'],
-      params: ['CLOUD', groupKey.slice(6)],
+      clauses: ['execution_mode = ?', 'workspace = ?', '(source IS NULL OR source != ?)'],
+      params: ['CLOUD', groupKey.slice(6), 'embed'],
     };
   }
   throw new Error(`Invalid groupKey: ${groupKey}`);

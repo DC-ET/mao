@@ -16,6 +16,30 @@ function isInterruptedAssistant(message: ChatMessage): boolean {
 }
 
 /**
+ * 中断气泡是否是「同一轮已落库回复」的本地回显。
+ *
+ * 停止点击与服务端落库/完成广播竞态时（用户在看到回复完整产出后立刻点停止），
+ * 这一轮其实已持久化：REST 里该用户消息之后的第一条助手消息正是这条回复的完整
+ * 版本，气泡只是它的本地流式副本。两条都保留会在对话区显示重复回复，此时以
+ * REST 版本为准。正常中止轮次服务端不落库，找不到同轮助手消息，气泡仍是唯一副本。
+ */
+function echoesPersistedReply(local: ChatMessage[], index: number, fetched: ChatMessage[]): boolean {
+  const message = local[index]!;
+  for (let j = index - 1; j >= 0; j--) {
+    if (local[j]!.role !== 'user') continue;
+    const userPos = fetched.findIndex(m => String(m.id) === String(local[j]!.id));
+    if (userPos < 0) return false;
+    for (let k = userPos + 1; k < fetched.length; k++) {
+      if (fetched[k]!.role !== 'assistant') continue;
+      return fetched[k]!.content === message.content
+        && JSON.stringify(fetched[k]!.images ?? []) === JSON.stringify(message.images ?? []);
+    }
+    return false;
+  }
+  return false;
+}
+
+/**
  * 会话运行态缓存：消息、todo、活动、上下文窗口、压缩、流式、审批、队列、文件变更、待回答、执行错误。
  * 按领域拆出，由 session store 主文件组装并导出。
  */
@@ -185,8 +209,12 @@ export function createMessageRuntimeModule(ctx: {
         && isOptimisticUserId(String(message.id))
         && newlyFetchedUsers.some(fetched => fetched.content === message.content
           && JSON.stringify(fetched.images ?? []) === JSON.stringify(message.images ?? []))
+      // 中断气泡默认保留（已流出内容的唯一副本）；但同轮已落库时它只是本地回显，
+      // 保留会显示重复回复（停止点击与服务端落库/完成广播的竞态）
+      const isInterruptedEcho = isInterruptedAssistant(message) && echoesPersistedReply(local, i, messages);
       if (!isReplacedOptimisticUser
-        && (message.role !== 'assistant' || (options?.preserveStreamingAssistant && isStreamingAssistant) || isInterruptedAssistant(message))) {
+        && (message.role !== 'assistant' || (options?.preserveStreamingAssistant && isStreamingAssistant)
+          || (isInterruptedAssistant(message) && !isInterruptedEcho))) {
         tail.unshift(message)
       }
     }
@@ -198,6 +226,8 @@ export function createMessageRuntimeModule(ctx: {
     for (let i = Math.max(firstFetchedIndex, 0); i < lastFetchedIndex; i++) {
       const message = local[i]
       if (fetchedIds.has(String(message.id)) || !isInterruptedAssistant(message)) continue
+      // 同轮已落库的回显不插回（否则与 REST 的完整回复重复显示）
+      if (echoesPersistedReply(local, i, fetched)) continue
       let anchor = -1
       for (let j = i + 1; j < local.length; j++) {
         if (!fetchedIds.has(String(local[j].id))) continue

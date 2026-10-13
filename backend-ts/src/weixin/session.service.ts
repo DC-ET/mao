@@ -82,13 +82,16 @@ export class WeixinSessionService {
     const prev = this.userLocks.get(userId) ?? Promise.resolve();
     let release!: () => void;
     const current = new Promise<void>((r) => { release = r; });
-    this.userLocks.set(userId, prev.then(() => current));
+    // Map 中存链式 Promise（同 weixin/agent-inbound-handler.withSessionLock），
+    // 清理时按同一引用比较；若与 current 比较，条件永假导致 Map 条目按 userId 泄漏。
+    const chained = prev.then(() => current, () => current);
+    this.userLocks.set(userId, chained);
     await prev;
     try {
       return await fn();
     } finally {
       release();
-      if (this.userLocks.get(userId) === current) this.userLocks.delete(userId);
+      if (this.userLocks.get(userId) === chained) this.userLocks.delete(userId);
     }
   }
 

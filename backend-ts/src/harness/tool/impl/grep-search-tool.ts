@@ -4,7 +4,7 @@ import { lstat, readdir } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import path from 'node:path';
 import { BaseTool } from '../tool.js';
-import { asInt, asText, parseObject, toJson } from '../json.js';
+import { asBool, asInt, asText, parseObject, toJson } from '../json.js';
 import { SearchScope } from '../search-scope.js';
 import type { PathSandbox } from '../../safety/path-sandbox.js';
 import { SecurityException } from '../../safety/path-sandbox.js';
@@ -56,7 +56,9 @@ export class GrepSearchTool extends BaseTool {
       const pattern = asText(args.pattern);
       if (pattern == null) return toJson({ matches: [], error: '缺少必填参数: pattern' });
       const glob = asText(args.glob);
-      const ignoreCase = args.ignore_case === true;
+      // 与 edit_file 的 replace_all 同口径：asBool 接受字符串布尔，模型把布尔字段
+      // 输出成 "true" 时不能静默退回大小写敏感（搜索结果为空会让模型误判"不存在"）
+      const ignoreCase = asBool(args.ignore_case, false);
       const contextLines = args.context_lines != null ? asInt(args.context_lines, 0) : 0;
       const maxOutputChars = args.max_output_chars != null ? asInt(args.max_output_chars, DEFAULT_MAX_OUTPUT_CHARS) : DEFAULT_MAX_OUTPUT_CHARS;
       const pathArg = asText(args.path);
