@@ -239,12 +239,20 @@ export function createSessionListModule(ctx: {
 
   // --- 实体 / 投影模型 ---
 
-  /** 唯一原子更新入口：只写实体，不自动加入任何查询投影（避免污染标准分页等）。 */
+  /** 唯一原子更新入口：只写实体，不自动加入任何查询投影（避免污染标准分页等）。
+   *  实时 phase（WS）优先于随会话带来的任何 phase 字段：列表/详情快照的读取时刻可能早于
+   *  执行启动或终止，迟到落地会把「执行中」打回空闲。与 updateSessionFromSnapshot 同口径，
+   *  收口到唯一写入口，避免每个 REST 调用点各写一遍守卫。 */
   function upsertSessionEntity(session: Session) {
     const sid = String(session.id)
     const normalized = normalizeSession(session)
     normalized.id = sid
     if (session.agentId != null) normalized.agentId = normalizeId(session.agentId)
+    const livePhase = getCtxSessionPhases().value.get(sid)
+    if (livePhase && normalized.phase !== livePhase) {
+      normalized.phase = livePhase
+      normalized.running = ACTIVE_PHASES.has(livePhase)
+    }
     sessionEntities.value.set(sid, normalized)
     sessionEntities.value = new Map(sessionEntities.value)
   }
@@ -529,8 +537,13 @@ export function createSessionListModule(ctx: {
     })
   }
 
-  /** 合并请求期间可能已被 WS 更新的会话快照，避免迟到的 REST 响应覆盖实时 phase。 */
-  function updateSessionFromSnapshot(id: string, snapshot: Partial<Session>, phaseAtRequest?: TaskPhase) {
+  /**
+   * 合并请求期间可能已被 WS 更新的会话快照，避免迟到的 REST 响应覆盖实时 phase。
+   * @returns 合并后实体上的最终 phase（实时 phase 优先）。调用方若有自己的 phase 镜像
+   *          （如 TaskView.currentPhase 驱动的「执行中」徽标）必须采用该返回值，
+   *          直接读快照字段会把徽标打回空态。
+   */
+  function updateSessionFromSnapshot(id: string, snapshot: Partial<Session>, phaseAtRequest?: TaskPhase): TaskPhase | undefined {
     const sid = String(id)
     const current = sessionEntities.value.get(sid)
     const livePhase = getCtxSessionPhases().value.get(sid)
@@ -540,9 +553,24 @@ export function createSessionListModule(ctx: {
     if (livePhase || phaseChangedWhileFetching) {
       const phase = livePhase ?? current!.phase
       updateSession(id, { ...snapshot, phase, running: ACTIVE_PHASES.has(phase) })
-      return
+    } else {
+      updateSession(id, snapshot)
     }
-    updateSession(id, snapshot)
+    return sessionEntities.value.get(sid)?.phase
+  }
+
+  /**
+   * REST 快照 phase 的写入入口（会话详情 / 子会话元数据补拉）：仅在没有更新的 WS 实时
+   * phase 时生效。补拉请求常发于执行启动前，迟到响应带着旧 phase（IDLE）会把「执行中」
+   * 打回空闲；实时值由 WS 事件在会话锁内登记，任何时刻都比快照新。
+   * @returns 最终生效的 phase（实时值优先），供调用方同步自己的镜像（如 sending）。
+   */
+  function applySnapshotPhase(id: string, phase: TaskPhase): TaskPhase {
+    const sid = String(id)
+    const livePhase = getCtxSessionPhases().value.get(sid)
+    if (livePhase) return livePhase
+    updateSessionPhase(sid, phase)
+    return phase
   }
 
   function getSessionPhase(id: string): TaskPhase | null {
@@ -715,6 +743,7 @@ export function createSessionListModule(ctx: {
     updateSession,
     updateSessionPhase,
     updateSessionFromSnapshot,
+    applySnapshotPhase,
     getSessionPhase,
     renameSession,
     updateSessionModel,

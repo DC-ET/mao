@@ -574,8 +574,10 @@ async function loadSideSessionMeta() {
       sideModelId.value = sideModelId.value ?? data.modelId
     }
     if (data?.phase) {
-      sessionStore.updateSessionPhase(String(sid), data.phase)
-      sending.value = ACTIVE_PHASES.has(data.phase)
+      // 补拉可能读到执行启动前的旧 phase（IDLE）：WS 已登记实时 phase 时不得回退，
+      // 否则刚开始运行的边路任务会被打回空闲态（徽标与圆点一起消失）。
+      const effectivePhase = sessionStore.applySnapshotPhase(String(sid), data.phase)
+      sending.value = ACTIVE_PHASES.has(effectivePhase)
     }
   } catch {
     // ignore

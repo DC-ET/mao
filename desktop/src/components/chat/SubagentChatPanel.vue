@@ -194,7 +194,9 @@ async function loadMeta() {
   try {
     const { data } = await api.get(`/sessions/${props.childSessionId}`)
     if (data?.phase) {
-      sessionStore.updateSessionPhase(sid.value, data.phase)
+      // 补拉可能读到执行启动前的旧 phase（IDLE）：WS 已登记实时 phase 时不得回退，
+      // 否则刚开始运行的子代理会被打回空闲态（徽标与圆点一起消失）。
+      sessionStore.applySnapshotPhase(sid.value, data.phase)
     }
     if (data?.title && !agentType.value) {
       const m = String(data.title).match(/^子代理\(([^)]+)\)/)

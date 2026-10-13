@@ -366,7 +366,11 @@ function ensureInspectorMeta(sid: string, viewType: 'side_task' | 'subagent', pa
   const p = (async () => {
     try {
       const { data: meta } = await api.get(`/sessions/${sid}`)
-      if (meta?.phase) sessionStore.updateSessionPhase(sid, meta.phase)
+      // 补拉可能读到执行启动前的旧 phase（IDLE）：WS 已登记实时 phase 时不得回退，
+      // 否则刚开始运行的边路任务/子代理会被打回空闲态（徽标与圆点一起消失）。
+      const effectivePhase = meta?.phase
+        ? sessionStore.applySnapshotPhase(String(sid), meta.phase)
+        : undefined
       // 补拉上下文占用：context_window 事件仅在该会话执行期间经 WS 推送，
       // 页面刷新或会话已停止后 store 缓存缺失，会回退显示主会话上下文。
       // 仅当无实时缓存时写入，避免覆盖执行中的实时值。
@@ -388,7 +392,8 @@ function ensureInspectorMeta(sid: string, viewType: 'side_task' | 'subagent', pa
       } else {
         sessionStore.updateSubagentMeta(num, {
           title: meta?.title,
-          phase: meta?.phase,
+          // 实时 phase 已登记时保留实时值，不回退补拉旧值
+          phase: effectivePhase ?? meta?.phase,
           modelId: meta?.modelId,
         })
       }
@@ -921,12 +926,15 @@ async function loadSession(sid: string) {
       }
       // Update store BEFORE setActiveSession so ChatPanel's watcher reads correct data.
       // Keep a newer WS phase when this REST request started before the transition.
-      sessionStore.updateSessionFromSnapshot(sid, data, phaseAtRequest)
+      // 返回值是合并后的最终 phase（实时 WS phase 优先）：新建会话首条消息的执行态常在
+      // GET 在途时就经 session_status 落地，而快照读于执行启动前（IDLE）。currentPhase
+      // 驱动右侧「执行中」徽标，直接采用 data.phase 会把徽标打回空态。
+      const effectivePhase = sessionStore.updateSessionFromSnapshot(sid, data, phaseAtRequest)
       const normalizedAgentId = String(data.agentId)
       // Set shared refs — ChatPanel reads these for useChat
       agentId.value = normalizedAgentId
       executionMode.value = data.executionMode || 'CLOUD'
-      currentPhase.value = data.phase || 'IDLE'
+      currentPhase.value = effectivePhase ?? (data.phase || 'IDLE')
       projectKey.value = data.projectKey || ''
       permissionLevel.value = data.permissionLevel || 'READ_ONLY'
       workspace.value = data.workspace || ''

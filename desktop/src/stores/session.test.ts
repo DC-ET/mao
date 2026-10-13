@@ -261,6 +261,134 @@ describe('session store 实体/投影模型', () => {
     expect(store.getSessionEntity('1')?.running).toBe(true)
   })
 
+  // 新建会话首条消息：执行态（session_status RUNNING）常在 loadSession 的 GET 在途时落地，
+  // 而快照读于执行启动前（IDLE）。TaskView.currentPhase（右侧「执行中」徽标）曾直接采用
+  // data.phase，徽标被打回空态；现改用 updateSessionFromSnapshot 的返回值与实体同源。
+  it('新建会话执行中迟到详情快照：返回的最终 phase 供 currentPhase 镜像保持 RUNNING', () => {
+    const store = useSessionStore()
+    // createSession 的 POST 响应先落地（IDLE），并成为活跃会话
+    store.updateSession('7', makeSession('7'))
+    store.setActiveSession('7')
+    const phaseAtRequest = store.getSessionEntity('7')?.phase
+
+    // WS session_status RUNNING 先于 GET 响应落地
+    store.updateSessionPhase('7', 'RUNNING')
+
+    // GET /sessions/7 响应迟到：读于 updatePhase 提交前（IDLE）
+    const effectivePhase = store.updateSessionFromSnapshot(
+      '7',
+      makeSession('7', { phase: 'IDLE', running: false }),
+      phaseAtRequest,
+    )
+
+    expect(effectivePhase).toBe('RUNNING')
+    expect(store.getSessionEntity('7')?.phase).toBe('RUNNING')
+    expect(store.getSessionEntity('7')?.running).toBe(true)
+  })
+
+  it('迟到的列表快照不把实时 RUNNING 打回 IDLE（刷新竞态，侧栏圆点/转圈）', async () => {
+    const store = useSessionStore()
+    const staleGroups = {
+      data: {
+        groups: [{
+          key: 'CLOUD:临时工作区', label: '临时工作区', total: 1, hasMore: false,
+          sessions: [makeSession('1', { phase: 'IDLE', running: false })],
+        }],
+      },
+    }
+    // 列表请求在执行启动前发出，响应在 WS RUNNING 之后才落地
+    mockGet.mockResolvedValueOnce(staleGroups)
+    await store.fetchSessions()
+    store.updateSessionPhase('1', 'RUNNING')
+
+    mockGet.mockResolvedValueOnce(staleGroups)
+    await store.fetchSessions()
+
+    expect(store.getSessionEntity('1')?.phase).toBe('RUNNING')
+    expect(store.getSessionEntity('1')?.running).toBe(true)
+    expect(store.sessions.map(s => s.id)).toEqual(['1'])
+  })
+
+  it('聚焦静默重拉的迟到快照同样不打回实时 phase', async () => {
+    const store = useSessionStore()
+    mockGet.mockResolvedValueOnce({ data: [makeSession('1', { phase: 'IDLE', running: false })] })
+    await store.fetchFocusSessions()
+    store.updateSessionPhase('1', 'RUNNING')
+
+    mockGet.mockResolvedValueOnce({ data: [makeSession('1', { phase: 'IDLE', running: false })] })
+    await store.fetchFocusSessions(true)
+
+    expect(store.getSessionEntity('1')?.phase).toBe('RUNNING')
+  })
+
+  it('无实时 phase 时快照正常落地（守卫不误伤普通刷新）', async () => {
+    const store = useSessionStore()
+    mockGet.mockResolvedValueOnce({
+      data: {
+        groups: [{
+          key: 'CLOUD:临时工作区', label: '临时工作区', total: 1, hasMore: false,
+          sessions: [makeSession('1', { phase: 'RUNNING', running: true })],
+        }],
+      },
+    })
+    await store.fetchSessions()
+
+    expect(store.getSessionEntity('1')?.phase).toBe('RUNNING')
+    expect(store.getSessionEntity('1')?.running).toBe(true)
+  })
+
+  it('实时终态优先于读到旧 RUNNING 的快照', async () => {
+    const store = useSessionStore()
+    mockGet.mockResolvedValueOnce({
+      data: {
+        groups: [{
+          key: 'CLOUD:临时工作区', label: '临时工作区', total: 1, hasMore: false,
+          sessions: [makeSession('1', { phase: 'RUNNING', running: true })],
+        }],
+      },
+    })
+    await store.fetchSessions()
+    store.updateSessionPhase('1', 'COMPLETED')
+
+    mockGet.mockResolvedValueOnce({
+      data: {
+        groups: [{
+          key: 'CLOUD:临时工作区', label: '临时工作区', total: 1, hasMore: false,
+          sessions: [makeSession('1', { phase: 'RUNNING', running: true })],
+        }],
+      },
+    })
+    await store.fetchSessions()
+
+    expect(store.getSessionEntity('1')?.phase).toBe('COMPLETED')
+    expect(store.getSessionEntity('1')?.running).toBe(false)
+  })
+
+  it('applySnapshotPhase：无实时 phase 时采用快照值', () => {
+    const store = useSessionStore()
+    store.updateSession('1', makeSession('1'))
+
+    const effective = store.applySnapshotPhase('1', 'RUNNING')
+
+    expect(effective).toBe('RUNNING')
+    expect(store.getSessionEntity('1')?.phase).toBe('RUNNING')
+    expect(store.getSessionEntity('1')?.running).toBe(true)
+  })
+
+  it('applySnapshotPhase：WS 已登记实时 phase 时补拉旧值不得回退', () => {
+    const store = useSessionStore()
+    store.updateSession('1', makeSession('1'))
+    // 执行启动的 WS 事件先落地（详情补拉请求在途）
+    store.updateSessionPhase('1', 'RUNNING')
+
+    // 补拉响应读于 updatePhase 提交前（IDLE）
+    const effective = store.applySnapshotPhase('1', 'IDLE')
+
+    expect(effective).toBe('RUNNING')
+    expect(store.getSessionEntity('1')?.phase).toBe('RUNNING')
+    expect(store.getSessionEntity('1')?.running).toBe(true)
+  })
+
   it('markAsRead：API 成功后才清本地；失败保留本地未读', async () => {
     const store = useSessionStore()
     mockGet.mockResolvedValueOnce({
