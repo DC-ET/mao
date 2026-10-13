@@ -5,7 +5,7 @@ import { monacoLangFromFence } from '../utils/monaco-lang'
 import { isExternalMarkdownLink } from '../utils/markdown-link'
 import { ensureCodeCopyDelegation } from '../utils/codeCopy'
 import { ensureExternalLinkDelegation } from '../utils/externalLink'
-import { renderCitationMarkers } from '../utils/citationMarkers'
+import { renderCitationMarkers, stripCitationDefinitions } from '../utils/citationMarkers'
 
 function escapeHtml(text: string): string {
   return text
@@ -50,6 +50,17 @@ export function createMarked(isDark: boolean, citeMap?: Record<number, number>):
   }
   marked.use({
     async: true,
+    // parse 前剥掉模型混用脚注语法写的定义行（`[^n^]: 链接`）：不剥时标记会转成
+    // 上标、后面跟着 `: 链接` 残句；与正文同段（无空行分隔）时 marked 不会把它当
+    // 引用定义消费，只能在这里按行删。挂在 marked 管道里而不是 renderMarkdown 入口，
+    // 是为了让 node 环境的 createMarked().parse() 测试能直接覆盖这条路径。
+    // 已知取舍：代码围栏内讲解本标记语法的示例行同样会被删（标准脚注 `[^1]:` 不匹配，
+    // 双重条件下误伤面仅剩「在代码块里演示 [^n^]: 链接」这一种，可接受）。
+    hooks: {
+      preprocess(source: string) {
+        return stripCitationDefinitions(source)
+      },
+    },
     async walkTokens(token) {
       if (token.type !== 'code') return
       const rawCode = token.text

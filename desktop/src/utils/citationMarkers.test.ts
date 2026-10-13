@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildCiteMap, renderCitationMarkers, stripCitationMarkers } from './citationMarkers'
+import { buildCiteMap, renderCitationMarkers, stripCitationDefinitions, stripCitationMarkers } from './citationMarkers'
 import type { Citation } from '../types/chat'
 
 function citations(...entries: Array<[number, string, string?]>): Citation[] {
@@ -25,6 +25,37 @@ describe('citationMarkers', () => {
       const text = '甲[^1^]乙[^2^]';
       expect(stripCitationMarkers(text)).toBe('甲乙');
       expect(stripCitationMarkers(text)).toBe('甲乙');
+    });
+  });
+
+  describe('stripCitationDefinitions（模型混用脚注语法写的定义行）', () => {
+    it('整行删掉 `[^n^]: 链接` 定义行，不剩 `: 链接` 残行', () => {
+      const text = '结论如上[^1^]\n\n[^1^]: https://a.example.com\n[^2^]: https://b.example.com "标题"';
+      expect(stripCitationDefinitions(text)).toBe('结论如上[^1^]\n\n');
+    });
+
+    it('标记本身保留（定义行剥离与标记转上标是两层，互不替代）', () => {
+      expect(stripCitationDefinitions('结论[^1^]\n[^1^]: https://a.example.com')).toBe('结论[^1^]\n');
+    });
+
+    it('冒号后无内容的裸定义行不匹配；句内写法（标记不在行首）不受影响', () => {
+      expect(stripCitationDefinitions('[^1^]:')).toBe('[^1^]:');
+      expect(stripCitationDefinitions('说明[^1^]: 这是结论')).toBe('说明[^1^]: 这是结论');
+      expect(stripCitationDefinitions('说明[^1^]：这是结论')).toBe('说明[^1^]：这是结论');
+    });
+
+    it('标准脚注 [^1]: 链接 不是本标记语法的定义行，不匹配', () => {
+      expect(stripCitationDefinitions('[^1]: https://a.example.com')).toBe('[^1]: https://a.example.com');
+    });
+
+    it('行首允许空白缩进；空串安全', () => {
+      expect(stripCitationDefinitions('  [^1^]: https://a.example.com')).toBe('');
+      expect(stripCitationDefinitions('')).toBe('');
+    });
+
+    it('stripCitationMarkers 组合出口（复制消息）：标记与定义行一并清掉', () => {
+      const text = '结论如上[^1^]\n\n[^1^]: https://a.example.com';
+      expect(stripCitationMarkers(text)).toBe('结论如上\n\n');
     });
   });
 

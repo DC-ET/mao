@@ -14,7 +14,7 @@ export class WebSearchTool extends BaseTool {
 
   getName(): string { return 'web_search'; }
   getDescription(): string {
-    return '使用配置的搜索引擎（Tavily / TinyFish）进行全网搜索。返回匹配的网页结果列表，包含标题、URL 和内容摘要。帮助 Agent 获取最新信息和外部知识。引用本工具结果时使用 [^n^] 标记（编号规则见系统提示词引用规范）。';
+    return '使用配置的搜索引擎（Tavily / TinyFish）进行全网搜索。返回匹配的网页结果列表，包含标题、URL 和内容摘要。帮助 Agent 获取最新信息和外部知识。引用本工具结果时使用 [^n^] 标记（编号规则见系统提示词引用规范；只在被支撑的句末插标记，不要在回复里写 URL 或 `[^n^]: 链接` 脚注定义行，来源列表由系统自动生成）。';
   }
   getToolPrompt(): string {
     return `## web_search 工具使用指南

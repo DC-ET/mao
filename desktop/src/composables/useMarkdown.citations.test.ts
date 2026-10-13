@@ -79,4 +79,26 @@ describe('useMarkdown citation rendering (marked layer)', () => {
     expect(fenced).toContain('[^1^]')
     expect(fenced).not.toContain('cite-ref')
   })
+
+  it('模型混用脚注语法写的定义行被整行剥掉：不再出现「上标 + : 链接」残句', async () => {
+    // 与正文同段（无空行分隔）时 marked 不会把定义行当引用定义消费，只能 parse 前按行删
+    const html = await parse('结论如上[^1^]\n[^1^]: https://a.example.com\n\n后续段落', { 1: 1 })
+    expect(html).toContain(SUP_1)
+    expect(html).not.toContain('https://a.example.com')
+    expect(html).not.toContain(': http')
+    expect(html).toContain('后续段落')
+  })
+
+  it('文末独立成段的定义行同样不渲染', async () => {
+    const html = await parse('结论如上[^1^]\n\n[^1^]: https://a.example.com\n[^2^]: https://b.example.com', { 1: 1, 2: 2 })
+    expect(html).toContain(SUP_1)
+    expect(html).not.toContain('https://a.example.com')
+    expect(html).not.toContain('https://b.example.com')
+  })
+
+  it('句内「说法[^1^]：……」不是定义行，照常渲染（行首锚定）', async () => {
+    const html = await parse('说明[^1^]: 这是结论', { 1: 1 })
+    expect(html).toContain(': 这是结论')
+    expect(html).toContain(SUP_1)
+  })
 })

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { channelAssistantReply, extractCitationMarkers, stripCitationMarkers } from './citation-markers.js';
+import {
+  channelAssistantReply,
+  extractCitationMarkers,
+  stripCitationDefinitions,
+  stripCitationMarkers,
+} from './citation-markers.js';
 
 describe('citation markers', () => {
   describe('stripCitationMarkers', () => {
@@ -31,6 +36,47 @@ describe('citation markers', () => {
       const text = '第一处[^1^]第二处[^2^]';
       expect(stripCitationMarkers(text)).toBe('第一处第二处');
       expect(stripCitationMarkers(text)).toBe('第一处第二处');
+    });
+  });
+
+  describe('stripCitationDefinitions（模型混用脚注语法写的定义行）', () => {
+    it('整行删掉 `[^n^]: 链接` 定义行，不剩 `: 链接` 残行', () => {
+      const text = '结论如上[^1^]\n\n[^1^]: https://a.example.com\n[^2^]: https://b.example.com "标题"';
+      expect(stripCitationDefinitions(text)).toBe('结论如上[^1^]\n\n');
+    });
+
+    it('标记本身保留（定义行剥离与标记转上标是两层，互不替代）', () => {
+      expect(stripCitationDefinitions('结论[^1^]\n[^1^]: https://a.example.com')).toBe('结论[^1^]\n');
+    });
+
+    it('冒号后无内容的裸定义行不匹配（避免误伤以标记开头的罕见行文）', () => {
+      expect(stripCitationDefinitions('[^1^]:')).toBe('[^1^]:');
+    });
+
+    it('句内写法不受影响：标记不在行首就还不是定义行', () => {
+      expect(stripCitationDefinitions('说明[^1^]: 这是结论')).toBe('说明[^1^]: 这是结论');
+      expect(stripCitationDefinitions('说明[^1^]：这是结论')).toBe('说明[^1^]：这是结论');
+    });
+
+    it('标准脚注 [^1]: 链接 不是本标记语法的定义行，不匹配', () => {
+      expect(stripCitationDefinitions('[^1]: https://a.example.com')).toBe('[^1]: https://a.example.com');
+    });
+
+    it('行首允许空白缩进；无空串与空值安全', () => {
+      expect(stripCitationDefinitions('  [^1^]: https://a.example.com')).toBe('');
+      expect(stripCitationDefinitions('')).toBe('');
+    });
+
+    it('stripCitationMarkers 组合出口：标记与定义行一并清掉', () => {
+      const text = '结论如上[^1^]\n\n[^1^]: https://a.example.com\n[^2^]: https://b.example.com';
+      expect(stripCitationMarkers(text)).toBe('结论如上\n\n');
+    });
+
+    it('渠道出口不再出现 `: https://…` 残行（飞书卡片反馈的显示问题）', () => {
+      const messages = [
+        { role: 'ASSISTANT', content: '约束如上[^1^][^2^]\n\n[^1^]: https://a.example.com\n[^2^]: https://b.example.com' },
+      ];
+      expect(channelAssistantReply(messages, '')).toBe('约束如上\n\n');
     });
   });
 

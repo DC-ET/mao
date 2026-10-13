@@ -608,6 +608,10 @@ describe('PromptEngine context manifest', () => {
     const system = request.messages[0].content as string;
     expect(system).toContain('## 引用规范');
     expect(system).toContain('[^n^]');
+    // 防模型混用脚注语法：显式禁止写定义行 / URL / 自行罗列来源列表
+    expect(system).toContain('不要写 `[^n^]: 链接` 形式的脚注定义行');
+    expect(system).toContain('不要出现任何 URL');
+    expect(system).toContain('来源列表由系统按标记自动生成');
     // 固有文案：不进 INJECTED_SECTION_KEYS，manifest 分节 key 列表与聚合口径不变
     //（本 describe 的 context 不带 experiences/memories，故 keys 为 system-prompt + tool-definitions + messages）
     expect(ctx.contextManifest!.sections.map((s) => s.key))
