@@ -1169,12 +1169,16 @@ async function copyMessage() {
   justify-content: flex-end;
 }
 
+/* 操作栏图标钮统一 24px 见方圆钮（同 fork-btn / share-btn-icon）；带文字的状态
+   （已复制）单独放宽成胶囊，避免为偶发文字把常驻宽度撑大。 */
 .copy-btn {
+  width: var(--aw-btn-height);
   height: var(--aw-btn-height);
+  padding: 0;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 3px;
-  padding: var(--aw-btn-padding);
   border: none;
   background: transparent;
   color: var(--aw-ink-muted-48);
@@ -1191,16 +1195,19 @@ async function copyMessage() {
 }
 
 .copy-btn.copied {
+  width: auto;
+  padding: var(--aw-btn-padding);
   color: var(--aw-success);
 }
 
 .dislike-btn {
+  width: var(--aw-btn-height);
   height: var(--aw-btn-height);
+  padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 3px;
-  padding: var(--aw-btn-padding);
   border: none;
   background: transparent;
   color: var(--aw-ink-muted-48);
@@ -1217,7 +1224,10 @@ async function copyMessage() {
   background: color-mix(in srgb, var(--aw-ink) 5%, transparent);
 }
 
+/* 文字态（已点踩）放宽成胶囊，与 .copy-btn.copied 一致 */
 .dislike-btn.disliked {
+  width: auto;
+  padding: var(--aw-btn-padding);
   color: var(--aw-danger, #e05252);
 }
 
@@ -1492,8 +1502,8 @@ async function copyMessage() {
   background: color-mix(in srgb, var(--aw-ink) 5%, transparent);
 }
 
-/* 分享会话：与 fork-btn 同形同度量（24px 见方圆钮，悬停主色）。图标用 Link 链条，
-   不用 element-plus 的 Share——后者同样是「三点 + 连线」，和 fork 拓扑撞车难以分辨。 */
+/* 分享会话：与 fork-btn 及整条操作栏同形同度量（24px 见方圆钮，悬停主色）。图标用 Link
+   链条，不用 element-plus 的 Share——后者同样是「三点 + 连线」，和 fork 拓扑撞车难以分辨。 */
 .share-btn-icon {
   width: var(--aw-btn-height);
   height: var(--aw-btn-height);
