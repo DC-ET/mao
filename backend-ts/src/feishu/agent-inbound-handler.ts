@@ -7,6 +7,7 @@ import { CompositeAgentEventListener } from '../harness/core/composite-agent-eve
 import { NoopAgentEventListener } from '../harness/core/agent-event-listener.js';
 import { FeishuCardProgressListener, countCompletedAgentRounds, type FeishuCardProgress } from './card-progress-listener.js';
 import { isInboundFileMessage } from './event-normalizer.js';
+import { toWorkspaceRelative } from '../common/workspace-path.js';
 
 export interface FeishuSessionAdapter {
   getOrCreateSession(accountId: string, context: FeishuInboundContext): Promise<{ id: number; workspace?: string | null; executionUserId?: number | null }>;
@@ -751,7 +752,7 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     const text = sections.join('\n\n');
     const media = await this.options.downloadMedia?.(context, workspace) ?? null;
     if (media == null) return text;
-    return this.composeContent(text, media);
+    return this.composeContent(text, media, workspace);
   }
 
   /** 纯文件入站：下载并写入会话（或忙碌时暂存），不 execute / 不入队 / 不发进度卡。 */
@@ -769,7 +770,7 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     const sessionId = session.id;
     const media = await this.options.downloadMedia?.(context, session.workspace ?? null)
       ?? { images: [], imagePaths: [], filePaths: [], errors: [] };
-    const content = this.fileAttachmentContent(context, media);
+    const content = this.fileAttachmentContent(context, media, session.workspace ?? null);
     if (await this.isBusyOrRecovering(sessionId)) {
       this.stashPendingAttachment(sessionId, content);
       return;
@@ -783,12 +784,12 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     });
   }
 
-  private fileAttachmentContent(context: FeishuInboundContext, media: FeishuMediaDownload): string {
+  private fileAttachmentContent(context: FeishuInboundContext, media: FeishuMediaDownload, workspace: string | null): string {
     const named = context.fileName?.trim();
     const label = named != null && named !== ''
       ? `[文件:${named}]`
       : (context.text?.trim() || '[文件]');
-    const composed = this.composeContent(label, media);
+    const composed = this.composeContent(label, media, workspace);
     return typeof composed === 'string' ? composed : label;
   }
 
@@ -870,7 +871,7 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     }));
   }
 
-  private composeContent(text: string, media: FeishuMediaDownload): string | FeishuContentPart[] {
+  private composeContent(text: string, media: FeishuMediaDownload, workspace: string | null): string | FeishuContentPart[] {
     let body = text;
     if (media.errors.length > 0) {
       const notice = `[以下文件接收失败：${media.errors.join('、')}]`;
@@ -881,8 +882,9 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
       body = body.trim() === '' ? refs : `${body}\n${refs}`;
     }
     // 图片已 data URI 直传模型，落盘路径仅作提示，供 Agent 后续用工具二次读取（同微信）。
+    // 提示用工作区相对路径：工具与 Shell 均按会话工作区解析，绝对路径冗长且无额外信息。
     if (media.imagePaths.length > 0) {
-      const hint = `图片已保存到会话工作区：${media.imagePaths.join('、')}`;
+      const hint = `图片已保存到会话工作区：${media.imagePaths.map((path) => toWorkspaceRelative(workspace, path)).join('、')}`;
       body = body.trim() === '' ? hint : `${body}\n${hint}`;
     }
     if (media.images.length === 0) return body;

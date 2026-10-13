@@ -6,6 +6,7 @@ import { userMessagePayloadOf } from '../session/ws/streaming-ws-handler.js';
 import { wsEvent } from '../session/ws/ws-event.js';
 import type { StreamingWsRegistry } from '../session/ws/streaming-ws-registry.js';
 import { isInboundFileMessage, isNewSessionCommand } from './event-normalizer.js';
+import { toWorkspaceRelative } from '../common/workspace-path.js';
 import type {
   CancelFlag, DingtalkHarnessService, DingtalkInboundContext, DingtalkInboundHandler,
   DingtalkInboundQueueRow, DingtalkQueuePayload, DingtalkQueueStoredContext, DingtalkReply, DingtalkTaskQueuePort,
@@ -460,7 +461,7 @@ export class AgentDingtalkInboundHandler implements DingtalkInboundHandler {
     else sections.push(context.text);
     const persistedText = sections.join('\n\n');
     const media = await this.options.downloadMedia?.(context, workspace) ?? null;
-    const persisted = media == null ? persistedText : composeContent(persistedText, media);
+    const persisted = media == null ? persistedText : composeContent(persistedText, media, workspace);
     const group = context.groupContext?.trim();
     if (group == null || group === '') return { persisted, forModel: persisted };
     const forModel = prependGroup(persisted, group);
@@ -470,7 +471,7 @@ export class AgentDingtalkInboundHandler implements DingtalkInboundHandler {
   private ingestFileWithoutExecute(session: DingtalkSessionRef, context: DingtalkInboundContext): Promise<void> {
     return this.runFileIngest(session.id, async () => {
       const media = await this.options.downloadMedia?.(context, session.workspace ?? null) ?? { images: [], imagePaths: [], filePaths: [], errors: [] };
-      const content = fileAttachmentContent(context, media);
+      const content = fileAttachmentContent(context, media, session.workspace ?? null);
       if (await this.isBusyOrRecovering(session.id)) {
         this.stash(session.id, content);
         return;
@@ -626,7 +627,7 @@ function contextFromQueue(payload: DingtalkQueuePayload, row: DingtalkInboundQue
   };
 }
 
-function composeContent(text: string, media: DingtalkMediaDownload): string | ContentPart[] {
+function composeContent(text: string, media: DingtalkMediaDownload, workspace: string | null): string | ContentPart[] {
   let body = text;
   if (media.errors.length > 0) {
     const notice = `[以下文件接收失败：${media.errors.join('、')}]`;
@@ -636,8 +637,9 @@ function composeContent(text: string, media: DingtalkMediaDownload): string | Co
     const refs = media.filePaths.map((path) => `@{${path}}@`).join('\n');
     body = body.trim() === '' ? refs : `${body}\n${refs}`;
   }
+  // 落盘路径提示用工作区相对路径：工具与 Shell 均按会话工作区解析，绝对路径冗长且无额外信息。
   if (media.imagePaths.length > 0) {
-    const hint = `图片已保存到会话工作区：${media.imagePaths.join('、')}`;
+    const hint = `图片已保存到会话工作区：${media.imagePaths.map((path) => toWorkspaceRelative(workspace, path)).join('、')}`;
     body = body.trim() === '' ? hint : `${body}\n${hint}`;
   }
   if (media.images.length === 0) return body;
@@ -659,9 +661,9 @@ function prependGroup(content: unknown, group: string): unknown {
   return [{ type: 'text', text: block.trim() }, ...parts];
 }
 
-function fileAttachmentContent(context: DingtalkInboundContext, media: DingtalkMediaDownload): string {
+function fileAttachmentContent(context: DingtalkInboundContext, media: DingtalkMediaDownload, workspace: string | null): string {
   const label = context.fileName?.trim() || '[文件]';
-  const composed = composeContent(`[文件:${label}]`, media);
+  const composed = composeContent(`[文件:${label}]`, media, workspace);
   return typeof composed === 'string' ? composed : `[文件:${label}]`;
 }
 

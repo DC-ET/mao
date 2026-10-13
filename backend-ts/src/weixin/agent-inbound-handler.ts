@@ -9,6 +9,7 @@ import type { WeixinAccountRepository } from './account.repository.js';
 import { StorageException, type WeixinFileStorageService } from './file-storage.service.js';
 import type { WeixinSessionService } from './session.service.js';
 import { bindWeixinSessionPeer } from './session-peer.js';
+import { toWorkspaceRelative } from '../common/workspace-path.js';
 import type { InboundFile, WeixinInboundHandler, WeixinInboundMessageContext, WeixinReply } from './types.js';
 
 const DEFAULT_IMAGE_PROMPT = '请查看这张图片';
@@ -136,7 +137,7 @@ export class AgentWeixinInboundHandler implements WeixinInboundHandler {
       context.body = appendDownloadErrorNotice(context.body, allErrors);
     }
 
-    const messageContent = this.buildMessageContent(context, savedFilePaths, savedImagePaths);
+    const messageContent = this.buildMessageContent(context, savedFilePaths, savedImagePaths, session.workspace ?? null);
     let savedMessage: Message;
     try {
       savedMessage = await this.deps.sessionService!.saveMessage(sessionId, 'USER', messageContent, null, null, null, 0, null);
@@ -392,7 +393,7 @@ export class AgentWeixinInboundHandler implements WeixinInboundHandler {
     }
   }
 
-  buildMessageContent(context: WeixinInboundMessageContext, filePaths: string[], imagePaths: string[] = []): unknown {
+  buildMessageContent(context: WeixinInboundMessageContext, filePaths: string[], imagePaths: string[], workspace: string | null): unknown {
     const imageDataUris = context.imageDataUris;
     const hasImages = imageDataUris != null && imageDataUris.length > 0;
     const hasFiles = filePaths != null && filePaths.length > 0;
@@ -406,7 +407,8 @@ export class AgentWeixinInboundHandler implements WeixinInboundHandler {
         textParts.push(this.buildMixedText('', filePaths));
       }
       if (imagePaths != null && imagePaths.length > 0) {
-        textParts.push(`图片已保存到会话工作区：${imagePaths.join('、')}`);
+        // 落盘路径提示用工作区相对路径：工具与 Shell 均按会话工作区解析，绝对路径冗长且无额外信息。
+        textParts.push(`图片已保存到会话工作区：${imagePaths.map((path) => toWorkspaceRelative(workspace, path)).join('、')}`);
       }
       parts.push({ type: 'text', text: textParts.join('\n') });
       this.appendImageParts(parts, imageDataUris!);

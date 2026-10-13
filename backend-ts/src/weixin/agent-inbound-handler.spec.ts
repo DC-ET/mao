@@ -8,14 +8,14 @@ describe('AgentWeixinInboundHandler', () => {
 
   it('buildMessageContent_textOnly', () => {
     const ctx: WeixinInboundMessageContext = { accountId: 'a', body: '你好' };
-    expect(handler.buildMessageContent(ctx, [])).toBe('你好');
+    expect(handler.buildMessageContent(ctx, [], [], null)).toBe('你好');
   });
 
   it('buildMessageContent_imageWithDefaultPrompt', () => {
     const ctx: WeixinInboundMessageContext = {
       accountId: 'a', body: '', imageDataUris: ['data:image/png;base64,abc'],
     };
-    const content = handler.buildMessageContent(ctx, []) as ContentPart[];
+    const content = handler.buildMessageContent(ctx, [], [], null) as ContentPart[];
     expect(content).toHaveLength(2);
     expect(content[0].type).toBe('text');
     expect(content[0].text).toBe('请查看这张图片');
@@ -27,36 +27,37 @@ describe('AgentWeixinInboundHandler', () => {
     const ctx: WeixinInboundMessageContext = {
       accountId: 'a', body: '', imageDataUris: ['data:image/png;base64,abc'],
     };
-    const content = handler.buildMessageContent(ctx, [], ['/ws/weixin-files/2026-08-06/a.png']) as ContentPart[];
+    const content = handler.buildMessageContent(ctx, [], ['/ws/weixin-files/2026-08-06/a.png'], '/ws') as ContentPart[];
     expect(content).toHaveLength(2);
     expect(content[0].type).toBe('text');
     expect(content[0].text).toContain('图片已保存到会话工作区');
-    expect(content[0].text).toContain('/ws/weixin-files/2026-08-06/a.png');
+    expect(content[0].text).toContain('weixin-files/2026-08-06/a.png');
+    expect(content[0].text).not.toContain('/ws/weixin-files');
   });
 
   it('buildMessageContent_textAndImage', () => {
     const ctx: WeixinInboundMessageContext = {
       accountId: 'a', body: '这是什么', imageDataUris: ['data:image/jpeg;base64,xyz'],
     };
-    const parts = handler.buildMessageContent(ctx, []) as ContentPart[];
+    const parts = handler.buildMessageContent(ctx, [], [], null) as ContentPart[];
     expect(parts[0].text).toBe('这是什么');
     expect(parts).toHaveLength(2);
   });
 
   it('buildMessageContent_fileOnly_injectsPathMarker', () => {
     const ctx: WeixinInboundMessageContext = { accountId: 'a', body: '' };
-    expect(handler.buildMessageContent(ctx, ['/ws/weixin-files/2026-08-06/a.pdf']))
+    expect(handler.buildMessageContent(ctx, ['/ws/weixin-files/2026-08-06/a.pdf'], [], null))
       .toBe('@{/ws/weixin-files/2026-08-06/a.pdf}@');
   });
 
   it('buildMessageContent_textAndFile_injectsPathMarkerAfterText', () => {
     const ctx: WeixinInboundMessageContext = { accountId: 'a', body: '帮我看看这个文件' };
-    expect(handler.buildMessageContent(ctx, ['/ws/a.pdf'])).toBe('帮我看看这个文件\n@{/ws/a.pdf}@');
+    expect(handler.buildMessageContent(ctx, ['/ws/a.pdf'], [], null)).toBe('帮我看看这个文件\n@{/ws/a.pdf}@');
   });
 
   it('buildMessageContent_multipleFiles_injectsAllMarkers', () => {
     const ctx: WeixinInboundMessageContext = { accountId: 'a', body: '' };
-    expect(handler.buildMessageContent(ctx, ['/ws/a.pdf', '/ws/b.docx']))
+    expect(handler.buildMessageContent(ctx, ['/ws/a.pdf', '/ws/b.docx'], [], null))
       .toBe('@{/ws/a.pdf}@\n@{/ws/b.docx}@');
   });
 
@@ -64,12 +65,12 @@ describe('AgentWeixinInboundHandler', () => {
     const ctx: WeixinInboundMessageContext = {
       accountId: 'a', body: '看下文件和图片', imageDataUris: ['data:image/png;base64,img'],
     };
-    const parts = handler.buildMessageContent(ctx, ['/ws/a.pdf'], ['/ws/weixin-files/2026-08-06/img.png']) as ContentPart[];
+    const parts = handler.buildMessageContent(ctx, ['/ws/a.pdf'], ['/ws/weixin-files/2026-08-06/img.png'], '/ws') as ContentPart[];
     expect(parts).toHaveLength(2);
     expect(parts[0].text).toContain('看下文件和图片');
     expect(parts[0].text).toContain('/ws/a.pdf');
     expect(parts[0].text).toContain('图片已保存到会话工作区');
-    expect(parts[0].text).toContain('/ws/weixin-files/2026-08-06/img.png');
+    expect(parts[0].text).toContain('weixin-files/2026-08-06/img.png');
     expect(parts[1].type).toBe('image_url');
   });
 

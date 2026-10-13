@@ -112,4 +112,19 @@ describe('AgentDingtalkInboundHandler sessions', () => {
     await inbound.onMessage(context({ text: '看这个文件', messageId: 'text-2' }));
     expect(execute).toHaveBeenCalledTimes(1);
   });
+
+  it('appends saved-image path hint as workspace-relative path', async () => {
+    const { handler: inbound, saveUserMessage } = handler({
+      downloadMedia: async () => ({
+        images: ['data:image/jpeg;base64,AAA'],
+        imagePaths: ['/ws/chat-files/2026-10-13/dingtalk-image-msg_1.jpg'],
+        filePaths: [],
+        errors: [],
+      }),
+    });
+    await inbound.onMessage(context({ msgtype: 'picture', text: '', messageId: 'img-1' }));
+    const parts = saveUserMessage.mock.calls[0][1] as Array<{ type: string; text?: string }>;
+    expect(parts[0].type).toBe('text');
+    expect(parts[0].text).toBe('图片已保存到会话工作区：chat-files/2026-10-13/dingtalk-image-msg_1.jpg');
+  });
 });

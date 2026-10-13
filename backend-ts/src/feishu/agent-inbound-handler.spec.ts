@@ -756,6 +756,29 @@ describe('AgentFeishuInboundHandler', () => {
   });
 
   it('appends saved-image path hint to the text part when images persisted', async () => {
+    const sessionService = makeSessionService({
+      getOrCreateSession: vi.fn(async () => ({ id: 7, executionUserId: 42, workspace: '/ws/feishu-chat/1/private-2' })),
+    });
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      downloadMedia: async () => ({
+        images: ['data:image/jpeg;base64,AAA'],
+        imagePaths: ['/ws/feishu-chat/1/private-2/chat-files/2026-08-31/feishu-image-om_1.jpg'],
+        filePaths: [],
+        errors: [],
+      }),
+      listenerFactory: async () => listener,
+    });
+    await handler.onMessage(makeContext({ chatType: 'p2p', messageType: 'image', imageKey: 'img_1', text: '' }));
+    expect(sessionService.saveUserMessage).toHaveBeenCalledWith(7, [
+      { type: 'text', text: '图片已保存到会话工作区：chat-files/2026-08-31/feishu-image-om_1.jpg' },
+      { type: 'image_url', imageUrl: { url: 'data:image/jpeg;base64,AAA' } },
+    ], null);
+  });
+
+  it('keeps absolute image path in hint when session workspace unknown', async () => {
     const sessionService = makeSessionService();
     const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
     const handler = new AgentFeishuInboundHandler({
