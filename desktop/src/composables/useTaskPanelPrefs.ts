@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import type { InternalAxiosRequestConfig } from 'axios'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { getToken } from '../utils/auth-storage'
@@ -69,6 +70,15 @@ const MAX_SAVE_ATTEMPTS = RETRY_DELAYS_MS.length + 1
 /** 服务端 PREFERENCE_CONFLICT（code 3032）：别端刚写过这行，需重取后合并再保存。 */
 const PREFERENCE_CONFLICT_CODE = 3032
 
+/**
+ * 冲突是「可自愈」的：3032 由 mergeWithServerThenSave 重取合并后重试成功，
+ * 拦截器默认弹的红色错误条只会在用户已经无感的情况下造成误报，因此屏蔽。
+ * 真实失败（重试耗尽）由本模块自行提示。
+ */
+const PREFS_REQUEST_CONFIG = {
+  skipBusinessCodes: [PREFERENCE_CONFLICT_CODE],
+} as unknown as InternalAxiosRequestConfig
+
 /** GET 返回的版本号，PUT 时回传以启用乐观锁校验。 */
 let savedVersion: number | null = null
 
@@ -103,7 +113,7 @@ async function persistPrefs() {
           collapsedGroups: Array.from(collapsedGroups.value),
           groupAliases: groupAliases.value,
           ...(savedVersion == null ? {} : { expectedVersion: savedVersion }),
-        })
+        }, PREFS_REQUEST_CONFIG)
         if (typeof data?.version === 'number') savedVersion = data.version
         clearLegacyOrder()
         clearLegacyAliases()
@@ -130,24 +140,47 @@ async function persistPrefs() {
   await savePromise
 }
 
+/**
+ * 分组顺序合并：以服务端顺序为基线，把本地新增的 key 追加到末尾。
+ * 本地没有的 key（手机上新建工作区产生的分组）保留；两边都有的保持服务端相对顺序，
+ * 避免用本地旧快照把手机端的拖拽结果覆盖回旧顺序。
+ */
+function mergeKeyOrder(serverOrder: string[], localOrder: string[]): string[] {
+  const merged = [...serverOrder]
+  const seen = new Set(merged)
+  for (const key of localOrder) {
+    if (!seen.has(key)) {
+      merged.push(key)
+      seen.add(key)
+    }
+  }
+  return merged
+}
+
 /** 冲突后重取服务端版本，并把本地尚未持久化的改动合并回去（增量重试一次）。 */
 async function mergeWithServerThenSave(attempt: number): Promise<boolean> {
   try {
-    const { data } = await api.get('/user-preferences/task-panel')
+    const { data } = await api.get('/user-preferences/task-panel', PREFS_REQUEST_CONFIG)
     if (typeof data?.version === 'number') savedVersion = data.version
     const serverAliases =
       data?.groupAliases && typeof data.groupAliases === 'object' && !Array.isArray(data.groupAliases)
         ? data.groupAliases
         : {}
-    // 本地独有的分组 key 优先保留（重命名/拖拽的结果），其余以服务端为准。
+    const serverOrder = Array.isArray(data?.groupOrder) ? data.groupOrder : []
+    const serverCollapsed = Array.isArray(data?.collapsedGroups) ? data.collapsedGroups : []
+    // 服务端为基线，本地独有的分组 key 优先保留（重命名/拖拽/折叠的结果），其余以服务端为准。
     const mergedAliases: Record<string, string> = { ...serverAliases, ...groupAliases.value }
+    const mergedOrder = serverOrder.length > 0 ? mergeKeyOrder(serverOrder, groupOrder.value) : groupOrder.value
+    const mergedCollapsed = new Set([...serverCollapsed, ...collapsedGroups.value])
     const { data: updated } = await api.put('/user-preferences/task-panel', {
-      groupOrder: groupOrder.value,
-      collapsedGroups: Array.from(collapsedGroups.value),
+      groupOrder: mergedOrder,
+      collapsedGroups: Array.from(mergedCollapsed),
       groupAliases: mergedAliases,
       ...(savedVersion == null ? {} : { expectedVersion: savedVersion }),
-    })
+    }, PREFS_REQUEST_CONFIG)
     if (typeof updated?.version === 'number') savedVersion = updated.version
+    groupOrder.value = mergedOrder
+    collapsedGroups.value = mergedCollapsed
     groupAliases.value = mergedAliases
     clearLegacyOrder()
     clearLegacyAliases()
