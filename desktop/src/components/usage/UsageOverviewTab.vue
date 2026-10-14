@@ -70,11 +70,13 @@ const agentSlices = computed(() => buildPieSlices((props.summary?.byAgent ?? [])
 
 const cards = computed(() => {
   const t = props.summary?.totals
+  const failHint = t && t.failCount > 0 ? `失败 ${formatNumber(t.failCount)} 次` : ''
+  const cancelHint = t && t.cancelledCount > 0 ? `取消 ${formatNumber(t.cancelledCount)} 次` : ''
   return [
     {
       label: '调用次数',
       value: formatNumber(t?.callCount ?? 0),
-      hint: t && t.failCount > 0 ? `失败 ${formatNumber(t.failCount)} 次` : '',
+      hint: [failHint, cancelHint].filter(Boolean).join(' / '),
     },
     {
       label: '总 Token',
@@ -88,7 +90,8 @@ const cards = computed(() => {
     },
     {
       label: '成功率',
-      value: formatPercent(t?.successCount ?? 0, t?.callCount ?? 0),
+      // 取消不是失败：分母 = 调用数 − 取消数，用户主动停止不再拉低成功率
+      value: formatPercent(t?.successCount ?? 0, (t?.callCount ?? 0) - (t?.cancelledCount ?? 0)),
       hint: '',
     },
     {

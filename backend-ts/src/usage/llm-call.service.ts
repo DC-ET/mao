@@ -1,5 +1,6 @@
 import type { ChatUsage } from '../harness/llm/chat-request.js';
 import { addDaysYmd, formatDateTime, shanghaiYmd } from '../common/json.js';
+import { isCancelledError } from '../common/llm-cancel.js';
 import { LlmCallContext } from './llm-call-context.js';
 import { computeCostMicros, parsePriceColumn, type CostPrice } from './cost-micros.js';
 import type {
@@ -46,6 +47,8 @@ export interface LlmCallListItem extends LlmCallRow {
   username?: string | null;
   displayName?: string | null;
   agentName?: string | null;
+  /** 是否取消（0/1，读时按 error_message 推导）：取消不是失败，前端单列一档 */
+  cancelled?: number;
 }
 
 /** 模型价格兜底查询：返回模型行四项价格（原始 DECIMAL 值）；模型不存在/已删返回 null。 */
@@ -220,7 +223,7 @@ function ymdDiffDays(from: string, to: string): number {
   return Math.round((Date.UTC(y2, m2 - 1, d2) - Date.UTC(y1, m1 - 1, d1)) / 86_400_000);
 }
 
-const ZERO_TREND_BUCKET = { callCount: 0, failCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0 } as const;
+const ZERO_TREND_BUCKET = { callCount: 0, failCount: 0, cancelledCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0 } as const;
 
 /** 聚合行按桶键回填到完整序列：缺失桶补零，前端无需再做日期运算（也无浏览器时区错位风险）。 */
 function fillTrendBuckets(rows: LlmCallTrendRow[], keys: string[]): LlmCallTrendRow[] {
@@ -409,6 +412,8 @@ export class LlmCallService {
       username: row.userId != null ? userMap.get(row.userId)?.username ?? null : null,
       displayName: row.userId != null ? userMap.get(row.userId)?.displayName ?? null : null,
       agentName: row.agentId != null ? agentMap.get(row.agentId) ?? null : null,
+      // 取消态读时推导（无独立列）：历史行同样按 error_message 生效，无需回填
+      cancelled: isCancelledError(row.errorMessage) ? 1 : 0,
     }));
   }
 }

@@ -1,4 +1,5 @@
 import type { Db } from '../db/db.js';
+import { CANCELLED_SQL, NOT_CANCELLED_SQL } from '../common/llm-cancel.js';
 
 export interface LlmCallRow {
   id?: number;
@@ -36,6 +37,11 @@ export interface LlmCallListFilter {
   modelId?: number | null;
   scene?: string | null;
   success?: boolean | null;
+  /**
+   * 取消筛选（第三态，按 error_message 推导，无独立列）。
+   * true = 只要取消；false = 排除取消。与 success=false 组合时取交集。
+   */
+  cancelled?: boolean | null;
   startAt?: string | null;
   /** 排他上界（次日 00:00:00），不是结束日 23:59:59；见 LlmCallAggFilter 注释。 */
   endAtExclusive?: string | null;
@@ -54,6 +60,8 @@ export interface LlmCallSummaryRow {
   callCount: number;
   successCount: number;
   failCount: number;
+  /** 窗口内取消数（用户点停止，error_message 含取消标记）；不计入 failCount，也不进成功率分母 */
+  cancelledCount: number;
   promptTokens: number;
   completionTokens: number;
   cachedTokens: number;
@@ -67,6 +75,7 @@ export interface LlmCallModelAggRow {
   modelName: string | null;
   callCount: number;
   failCount: number;
+  cancelledCount: number;
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
@@ -77,6 +86,7 @@ export interface LlmCallSceneAggRow {
   scene: string;
   callCount: number;
   failCount: number;
+  cancelledCount: number;
   totalTokens: number;
 }
 
@@ -86,6 +96,7 @@ export interface LlmCallAgentAggRow {
   agentName: string | null;
   callCount: number;
   failCount: number;
+  cancelledCount: number;
   totalTokens: number;
   cost: number;
 }
@@ -94,6 +105,7 @@ export interface LlmCallTrendRow {
   bucket: string;
   callCount: number;
   failCount: number;
+  cancelledCount: number;
   promptTokens: number;
   cachedTokens: number;
   totalTokens: number;
@@ -193,8 +205,11 @@ export class LlmCallRepository {
       params.push(filter.scene.trim());
     }
     if (filter.success != null) {
-      where.push('success = ?');
-      params.push(filter.success ? 1 : 0);
+      // success=false 是「纯失败」：取消单列一档，不混在失败里（历史口径取消也计失败，见 CHANGELOG）
+      where.push(filter.success ? 'success = 1' : `success = 0 AND ${NOT_CANCELLED_SQL}`);
+    }
+    if (filter.cancelled != null) {
+      where.push(filter.cancelled ? CANCELLED_SQL : NOT_CANCELLED_SQL);
     }
     if (filter.startAt != null) {
       where.push('created_at >= ?');
@@ -246,7 +261,8 @@ export class LlmCallRepository {
     const row = await this.db.queryOne<Record<string, unknown>>(
       `SELECT COUNT(*) AS callCount,
               COALESCE(SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END), 0) AS successCount,
-              COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0) AS failCount,
+              COALESCE(SUM(CASE WHEN success = 0 AND ${NOT_CANCELLED_SQL} THEN 1 ELSE 0 END), 0) AS failCount,
+              COALESCE(SUM(CASE WHEN ${CANCELLED_SQL} THEN 1 ELSE 0 END), 0) AS cancelledCount,
               COALESCE(SUM(prompt_tokens), 0) AS promptTokens,
               COALESCE(SUM(completion_tokens), 0) AS completionTokens,
               COALESCE(SUM(cached_tokens), 0) AS cachedTokens,
@@ -260,6 +276,7 @@ export class LlmCallRepository {
       callCount: toNumber(row?.callCount),
       successCount: toNumber(row?.successCount),
       failCount: toNumber(row?.failCount),
+      cancelledCount: toNumber(row?.cancelledCount),
       promptTokens: toNumber(row?.promptTokens),
       completionTokens: toNumber(row?.completionTokens),
       cachedTokens: toNumber(row?.cachedTokens),
@@ -275,7 +292,8 @@ export class LlmCallRepository {
       `SELECT model_id AS modelId,
               MAX(model_name) AS modelName,
               COUNT(*) AS callCount,
-              COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0) AS failCount,
+              COALESCE(SUM(CASE WHEN success = 0 AND ${NOT_CANCELLED_SQL} THEN 1 ELSE 0 END), 0) AS failCount,
+              COALESCE(SUM(CASE WHEN ${CANCELLED_SQL} THEN 1 ELSE 0 END), 0) AS cancelledCount,
               COALESCE(SUM(prompt_tokens), 0) AS promptTokens,
               COALESCE(SUM(completion_tokens), 0) AS completionTokens,
               COALESCE(SUM(total_tokens), 0) AS totalTokens,
@@ -291,6 +309,7 @@ export class LlmCallRepository {
       modelName: (r.modelName as string | null) ?? null,
       callCount: toNumber(r.callCount),
       failCount: toNumber(r.failCount),
+      cancelledCount: toNumber(r.cancelledCount),
       promptTokens: toNumber(r.promptTokens),
       completionTokens: toNumber(r.completionTokens),
       totalTokens: toNumber(r.totalTokens),
@@ -304,7 +323,8 @@ export class LlmCallRepository {
     const rows = await this.db.query<Record<string, unknown>>(
       `SELECT COALESCE(scene, 'unknown') AS scene,
               COUNT(*) AS callCount,
-              COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0) AS failCount,
+              COALESCE(SUM(CASE WHEN success = 0 AND ${NOT_CANCELLED_SQL} THEN 1 ELSE 0 END), 0) AS failCount,
+              COALESCE(SUM(CASE WHEN ${CANCELLED_SQL} THEN 1 ELSE 0 END), 0) AS cancelledCount,
               COALESCE(SUM(total_tokens), 0) AS totalTokens
        FROM llm_call
        WHERE user_id = ? AND ${sql}
@@ -316,6 +336,7 @@ export class LlmCallRepository {
       scene: String(r.scene ?? 'unknown'),
       callCount: toNumber(r.callCount),
       failCount: toNumber(r.failCount),
+      cancelledCount: toNumber(r.cancelledCount),
       totalTokens: toNumber(r.totalTokens),
     }));
   }
@@ -326,7 +347,8 @@ export class LlmCallRepository {
     const rows = await this.db.query<Record<string, unknown>>(
       `SELECT agent_id AS agentId,
               COUNT(*) AS callCount,
-              COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0) AS failCount,
+              COALESCE(SUM(CASE WHEN success = 0 AND ${NOT_CANCELLED_SQL} THEN 1 ELSE 0 END), 0) AS failCount,
+              COALESCE(SUM(CASE WHEN ${CANCELLED_SQL} THEN 1 ELSE 0 END), 0) AS cancelledCount,
               COALESCE(SUM(total_tokens), 0) AS totalTokens,
               COALESCE(SUM(cost_micros), 0) / 1000000 AS cost
        FROM llm_call
@@ -340,6 +362,7 @@ export class LlmCallRepository {
       agentName: null,
       callCount: toNumber(r.callCount),
       failCount: toNumber(r.failCount),
+      cancelledCount: toNumber(r.cancelledCount),
       totalTokens: toNumber(r.totalTokens),
       cost: toNumber(r.cost),
     }));
@@ -356,7 +379,8 @@ export class LlmCallRepository {
     const rows = await this.db.query<Record<string, unknown>>(
       `SELECT ${bucket} AS bucket,
               COUNT(*) AS callCount,
-              COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0) AS failCount,
+              COALESCE(SUM(CASE WHEN success = 0 AND ${NOT_CANCELLED_SQL} THEN 1 ELSE 0 END), 0) AS failCount,
+              COALESCE(SUM(CASE WHEN ${CANCELLED_SQL} THEN 1 ELSE 0 END), 0) AS cancelledCount,
               COALESCE(SUM(prompt_tokens), 0) AS promptTokens,
               COALESCE(SUM(cached_tokens), 0) AS cachedTokens,
               COALESCE(SUM(total_tokens), 0) AS totalTokens,
@@ -371,6 +395,7 @@ export class LlmCallRepository {
       bucket: String(r.bucket ?? ''),
       callCount: toNumber(r.callCount),
       failCount: toNumber(r.failCount),
+      cancelledCount: toNumber(r.cancelledCount),
       promptTokens: toNumber(r.promptTokens),
       cachedTokens: toNumber(r.cachedTokens),
       totalTokens: toNumber(r.totalTokens),

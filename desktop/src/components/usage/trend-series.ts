@@ -8,6 +8,8 @@ export interface TrendSeries {
   costs: number[]
   calls: number[]
   fails: number[]
+  /** 取消数（用户点停止）：不计入 fails，tooltip 单列一档 */
+  cancels: number[]
   /** 缓存命中率趋势（%）：桶内 promptTokens 为 0（无调用）时置 null，折线断开不画到 0 */
   hitRates: Array<number | null>
   totalTokens: number
@@ -33,6 +35,7 @@ export function buildTrendSeries(buckets: UsageTrendBucket[], granularity: 'day'
     costs: [],
     calls: [],
     fails: [],
+    cancels: [],
     hitRates: [],
     totalTokens: 0,
     totalCost: 0,
@@ -46,6 +49,7 @@ export function buildTrendSeries(buckets: UsageTrendBucket[], granularity: 'day'
     series.costs.push(b.cost);
     series.calls.push(b.callCount);
     series.fails.push(b.failCount);
+    series.cancels.push(b.cancelledCount);
     series.hitRates.push(hitRate(b));
     series.totalTokens += b.totalTokens;
     series.totalCost += b.cost;

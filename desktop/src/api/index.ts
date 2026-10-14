@@ -790,6 +790,8 @@ export interface UsageTotals {
   callCount: number
   successCount: number
   failCount: number
+  /** 取消数（用户点停止）：不计入 failCount，也不进成功率分母 */
+  cancelledCount: number
   promptTokens: number
   completionTokens: number
   cachedTokens: number
@@ -803,6 +805,7 @@ export interface UsageModelRow {
   modelName: string | null
   callCount: number
   failCount: number
+  cancelledCount: number
   promptTokens: number
   completionTokens: number
   totalTokens: number
@@ -813,6 +816,7 @@ export interface UsageSceneRow {
   scene: string
   callCount: number
   failCount: number
+  cancelledCount: number
   totalTokens: number
 }
 
@@ -822,6 +826,7 @@ export interface UsageAgentRow {
   agentName: string | null
   callCount: number
   failCount: number
+  cancelledCount: number
   totalTokens: number
   cost: number
 }
@@ -857,6 +862,8 @@ export interface UsageTrendBucket {
   bucket: string
   callCount: number
   failCount: number
+  /** 取消数（用户点停止）：不计入失败，tooltip 单列一档 */
+  cancelledCount: number
   /** 入 Token / 其中命中缓存的 Token，供缓存命中率趋势按桶计算 */
   promptTokens: number
   cachedTokens: number
@@ -883,6 +890,8 @@ export interface MyLlmCallRecord {
   firstTokenMs: number | null
   durationMs: number | null
   success: number | null
+  /** 是否取消（0/1，读时按 error_message 推导）：取消不是失败，表格单列一档 */
+  cancelled: number | null
   sessionId: number | null
 }
 
@@ -912,6 +921,8 @@ export async function fetchMyLlmCalls(params: {
   scene?: string
   modelId?: number
   success?: boolean
+  /** 取消筛选（第三态）：true = 只要取消，false = 排除取消 */
+  cancelled?: boolean
 }): Promise<{ records: MyLlmCallRecord[]; total: number; page: number; size: number }> {
   const { data } = await api.get('/llm-calls/me', { params })
   return data

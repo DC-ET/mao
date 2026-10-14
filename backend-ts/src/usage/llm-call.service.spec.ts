@@ -405,20 +405,46 @@ describe('LlmCallService 用户端用量汇总（/v1/llm-calls/me/summary|trends
       aggregateByModel: vi.fn(),
       aggregateByScene: vi.fn(),
       aggregateTrend: vi.fn(async () => [
-        { bucket: '2026-10-09', callCount: 3, failCount: 1, promptTokens: 200, cachedTokens: 80, totalTokens: 300, cost: 0.5 },
+        { bucket: '2026-10-09', callCount: 3, failCount: 1, cancelledCount: 1, promptTokens: 200, cachedTokens: 80, totalTokens: 300, cost: 0.5 },
       ]),
     };
     const service = new LlmCallService(repo as never);
     const day = await service.trendsForUser(7, 'last7');
     expect(day.buckets).toEqual([
-      { bucket: '2026-10-04', callCount: 0, failCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0 },
-      { bucket: '2026-10-05', callCount: 0, failCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0 },
-      { bucket: '2026-10-06', callCount: 0, failCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0 },
-      { bucket: '2026-10-07', callCount: 0, failCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0 },
-      { bucket: '2026-10-08', callCount: 0, failCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0 },
-      { bucket: '2026-10-09', callCount: 3, failCount: 1, promptTokens: 200, cachedTokens: 80, totalTokens: 300, cost: 0.5 },
-      { bucket: '2026-10-10', callCount: 0, failCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0 },
+      { bucket: '2026-10-04', callCount: 0, failCount: 0, cancelledCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0 },
+      { bucket: '2026-10-05', callCount: 0, failCount: 0, cancelledCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0 },
+      { bucket: '2026-10-06', callCount: 0, failCount: 0, cancelledCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0 },
+      { bucket: '2026-10-07', callCount: 0, failCount: 0, cancelledCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0 },
+      { bucket: '2026-10-08', callCount: 0, failCount: 0, cancelledCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0 },
+      { bucket: '2026-10-09', callCount: 3, failCount: 1, cancelledCount: 1, promptTokens: 200, cachedTokens: 80, totalTokens: 300, cost: 0.5 },
+      { bucket: '2026-10-10', callCount: 0, failCount: 0, cancelledCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0 },
     ]);
     vi.useRealTimers();
+  });
+});
+
+describe('LlmCallService 列表项取消派生（/v1/llm-calls、/v1/admin/llm-calls）', () => {
+  it('listForAdmin：error_message 含取消标记 → cancelled=1；其余（含 null/其他错误）→ 0', async () => {
+    const repo = {
+      list: vi.fn(async () => ({
+        records: [
+          { id: 1, success: 0, errorMessage: 'Cancelled by user' },
+          { id: 2, success: 0, errorMessage: 'upstream 500' },
+          { id: 3, success: 1, errorMessage: null },
+          { id: 4, success: 0, errorMessage: null },
+        ],
+        total: 4,
+      })),
+    };
+    const service = new LlmCallService(repo as never);
+    const { records } = await service.listForAdmin(1, 20, {});
+    expect(records.map((r) => [r.id, r.cancelled])).toEqual([[1, 1], [2, 0], [3, 0], [4, 0]]);
+  });
+
+  it('listForUser：cancelled 筛选条件透传到 repo.list', async () => {
+    const repo = { list: vi.fn(async () => ({ records: [], total: 0 })) };
+    const service = new LlmCallService(repo as never);
+    await service.listForUser(7, 1, 20, { cancelled: true });
+    expect(repo.list).toHaveBeenCalledWith(1, 20, expect.objectContaining({ userId: 7, cancelled: true }));
   });
 });

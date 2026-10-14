@@ -241,6 +241,28 @@ describe('UsageFilterBar 模型筛选', () => {
     ])
   })
 
+  it('选中「取消」→ 合并出 cancelled=true 并清空成败（取消单列一档，不是失败）', async () => {
+    const m = mount()
+    await flush()
+    m.clickOption('取消')
+    await flush()
+    expect(m.emissions).toEqual([
+      { type: 'update', value: { scene: '', modelId: undefined, success: undefined, cancelled: true } },
+      { type: 'search' },
+    ])
+  })
+
+  it('选中「失败」→ 纯失败（cancelled 清空，不再混入用户取消）', async () => {
+    const m = mount()
+    await flush()
+    m.clickOption('失败')
+    await flush()
+    expect(m.emissions).toEqual([
+      { type: 'update', value: { scene: '', modelId: undefined, success: false, cancelled: undefined } },
+      { type: 'search' },
+    ])
+  })
+
   it('重置 → 回落空筛选并触发查询', async () => {
     const m = mount()
     await flush()

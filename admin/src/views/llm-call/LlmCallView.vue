@@ -22,9 +22,10 @@
               </el-select>
             </el-form-item>
             <el-form-item label="结果">
-              <el-select v-model="filters.success" clearable placeholder="全部" style="width: 120px" @change="handleSearch">
-                <el-option label="成功" :value="true" />
-                <el-option label="失败" :value="false" />
+              <el-select v-model="resultFilter" clearable placeholder="全部" style="width: 120px" @change="handleSearch">
+                <el-option label="成功" value="success" />
+                <el-option label="失败" value="failed" />
+                <el-option label="取消" value="cancelled" />
               </el-select>
             </el-form-item>
             <el-form-item>
@@ -145,9 +146,7 @@
         </el-table-column>
         <el-table-column label="结果" width="80">
           <template #default="{ row }">
-            <el-tag size="small" :type="row.success === 1 ? 'success' : 'danger'">
-              {{ row.success === 1 ? '成功' : '失败' }}
-            </el-tag>
+            <el-tag size="small" :type="resultCell(row).type">{{ resultCell(row).label }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="150" fixed="right">
@@ -164,9 +163,7 @@
         <el-card v-for="row in records" :key="row.id" class="call-card" shadow="hover">
           <div class="call-card-head">
             <el-tag size="small">{{ llmCallSceneLabel(row.scene) }}</el-tag>
-            <el-tag size="small" :type="row.success === 1 ? 'success' : 'danger'">
-              {{ row.success === 1 ? '成功' : '失败' }}
-            </el-tag>
+            <el-tag size="small" :type="resultCell(row).type">{{ resultCell(row).label }}</el-tag>
           </div>
           <div class="call-card-row"><span class="call-card-label">时间</span><span>{{ formatDateTime(row.createdAt) }}</span></div>
           <div class="call-card-row"><span class="call-card-label">用户</span><span>{{ row.displayName || row.username || row.userId || '-' }}</span></div>
@@ -202,7 +199,7 @@
     <ResponsiveDialog v-if="detailVisible" v-model="detailVisible" title="调用详情" width="720px">
       <el-descriptions v-if="currentRecord" :column="2" border>
         <el-descriptions-item label="时间">{{ formatDateTime(currentRecord.createdAt) }}</el-descriptions-item>
-        <el-descriptions-item label="结果">{{ currentRecord.success === 1 ? '成功' : '失败' }}</el-descriptions-item>
+        <el-descriptions-item label="结果">{{ resultCell(currentRecord).label }}</el-descriptions-item>
         <el-descriptions-item label="用户">{{ currentRecord.displayName || currentRecord.username || currentRecord.userId || '-' }}</el-descriptions-item>
         <el-descriptions-item label="场景">{{ llmCallSceneLabel(currentRecord.scene) }}</el-descriptions-item>
         <el-descriptions-item label="会话 ID">{{ currentRecord.sessionId || '-' }}</el-descriptions-item>
@@ -229,7 +226,7 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, onMounted, onActivated } from 'vue'
+import { reactive, ref, computed, onMounted, onActivated } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Refresh } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
@@ -262,6 +259,7 @@ const EXPORT_MAX_ROWS = 10000
 const filters = reactive({
   scene: '',
   success: undefined as boolean | undefined,
+  cancelled: undefined as boolean | undefined,
   userId: undefined as number | undefined,
   agentId: undefined as number | string | undefined,
   sessionId: '',
@@ -270,12 +268,41 @@ const filters = reactive({
   endDate: '',
 })
 
+/**
+ * 结果四态下拉（全部 / 成功 / 失败 / 取消）↔ (success, cancelled) 两个后端筛选参数的映射。
+ * 「失败」是纯失败：取消单列一档，不再混在失败里（用户点停止产生的 Cancelled by user）。
+ */
+const resultFilter = computed<'success' | 'failed' | 'cancelled' | undefined>({
+  get: () => {
+    if (filters.cancelled) return 'cancelled'
+    if (filters.success === true) return 'success'
+    if (filters.success === false) return 'failed'
+    return undefined
+  },
+  set: (v) => {
+    filters.success = v === 'success' ? true : v === 'failed' ? false : undefined
+    filters.cancelled = v === 'cancelled' ? true : undefined
+  },
+})
+
+/** 结果单元格三态：取消（用户主动停止）不是失败，灰色单列。 */
+function resultCell(row: { success?: number | null; cancelled?: number | null }): { label: string; type: 'success' | 'info' | 'danger' } {
+  if (row.cancelled === 1) return { label: '取消', type: 'info' }
+  return row.success === 1 ? { label: '成功', type: 'success' } : { label: '失败', type: 'danger' }
+}
+
 function applyQueryFilters() {
   const q = route.query
   filters.scene = typeof q.scene === 'string' ? q.scene : ''
-  if (q.success === 'false' || q.success === '0') filters.success = false
-  else if (q.success === 'true' || q.success === '1') filters.success = true
-  else filters.success = undefined
+  if (q.cancelled === 'true' || q.cancelled === '1') {
+    filters.cancelled = true
+    filters.success = undefined
+  } else {
+    filters.cancelled = undefined
+    if (q.success === 'false' || q.success === '0') filters.success = false
+    else if (q.success === 'true' || q.success === '1') filters.success = true
+    else filters.success = undefined
+  }
   const userId = Number(q.userId)
   filters.userId = q.userId != null && q.userId !== '' && Number.isFinite(userId) ? userId : undefined
   const agentId = Number(q.agentId)
@@ -341,6 +368,7 @@ function buildFilterParams(page: number, size: number): Record<string, unknown> 
   const params: Record<string, unknown> = { page, size }
   if (filters.scene) params.scene = filters.scene
   if (filters.success !== undefined) params.success = filters.success
+  if (filters.cancelled !== undefined) params.cancelled = filters.cancelled
   if (filters.userId != null) params.userId = filters.userId
   if (filters.agentId != null && filters.agentId !== '') {
     const agentId = parseFilterId(filters.agentId)
@@ -386,6 +414,7 @@ async function loadRecords() {
 function handleReset() {
   filters.scene = ''
   filters.success = undefined
+  filters.cancelled = undefined
   filters.userId = undefined
   filters.agentId = undefined
   filters.sessionId = ''
@@ -445,7 +474,7 @@ async function doExportCsv() {
         row.durationMs ?? '',
         row.cachedTokens || 0,
         row.cacheCreationTokens || 0,
-        row.success === 1 ? '成功' : '失败',
+        row.cancelled === 1 ? '取消' : (row.success === 1 ? '成功' : '失败'),
         row.errorMessage || '',
         row.sessionId ?? '',
         row.agentId ?? ''

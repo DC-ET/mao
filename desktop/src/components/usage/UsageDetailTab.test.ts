@@ -210,7 +210,7 @@ describe('UsageDetailTab 分页与筛选', () => {
   it('挂载即拉第 1 页', async () => {
     mount()
     await flush()
-    expect(fetchCalls).toEqual([{ page: 1, size: 10, scene: undefined, modelId: undefined, success: undefined }])
+    expect(fetchCalls).toEqual([{ page: 1, size: 10, scene: undefined, modelId: undefined, success: undefined, cancelled: undefined }])
   })
 
   it('翻到第 2 页后改筛选 → 回第 1 页重拉', async () => {

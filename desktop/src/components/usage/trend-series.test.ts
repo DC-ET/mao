@@ -3,7 +3,7 @@ import type { UsageTrendBucket } from '../../api'
 import { buildTrendSeries, trendBucketLabel } from './trend-series'
 
 function bucket(partial: Partial<UsageTrendBucket>): UsageTrendBucket {
-  return { bucket: '2026-10-10', callCount: 0, failCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0, ...partial }
+  return { bucket: '2026-10-10', callCount: 0, failCount: 0, cancelledCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0, ...partial }
 }
 
 describe('trend-series', () => {
@@ -15,7 +15,7 @@ describe('trend-series', () => {
 
   it('buildTrendSeries：按桶序产出标签与指标序列，并累计窗口合计', () => {
     const series = buildTrendSeries([
-      bucket({ bucket: '2026-10-08', callCount: 2, failCount: 1, totalTokens: 200, cost: 0.5 }),
+      bucket({ bucket: '2026-10-08', callCount: 2, failCount: 1, cancelledCount: 1, totalTokens: 200, cost: 0.5 }),
       bucket({ bucket: '2026-10-09', callCount: 3, failCount: 0, totalTokens: 300, cost: 0.25 }),
     ])
     expect(series.labels).toEqual(['10-08', '10-09'])
@@ -23,6 +23,8 @@ describe('trend-series', () => {
     expect(series.costs).toEqual([0.5, 0.25])
     expect(series.calls).toEqual([2, 3])
     expect(series.fails).toEqual([1, 0])
+    // 取消单列一档，不混入 fails
+    expect(series.cancels).toEqual([1, 0])
     expect(series.totalTokens).toBe(500)
     expect(series.totalCost).toBe(0.75)
     expect(series.totalCalls).toBe(5)

@@ -86,6 +86,10 @@
           <span class="value">{{ formatNumber(qualitySummary.failCount || 0) }}</span>
         </div>
         <div class="q-item">
+          <span class="label">取消次数</span>
+          <span class="value">{{ formatNumber(qualitySummary.cancelledCount || 0) }}</span>
+        </div>
+        <div class="q-item">
           <span class="label">成功率</span>
           <span class="value">{{ rateText(qualitySummary.successRate) }}</span>
         </div>

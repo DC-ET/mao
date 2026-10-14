@@ -189,6 +189,7 @@ const qualityItems = computed(() => {
   return [
     { label: '调用次数', value: formatNumber(q.callCount || 0) },
     { label: '失败次数', value: formatNumber(q.failCount || 0) },
+    { label: '取消次数', value: formatNumber(q.cancelledCount || 0) },
     { label: '成功率', value: q.successRate == null ? '-' : `${q.successRate}%` },
     { label: '重试占比', value: q.retryRatio == null ? '-' : `${q.retryRatio}%` },
     { label: '缓存命中率', value: q.cacheHitRate == null ? '-' : `${q.cacheHitRate}%` },

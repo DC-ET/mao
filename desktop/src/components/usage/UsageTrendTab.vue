@@ -119,7 +119,11 @@ const callOption = computed<ChartOption>(() => buildTrendLineOption({
   },
   tooltipExtra: (i) => {
     const fails = series.value.fails[i] ?? 0
-    return fails > 0 ? [`失败 ${formatNumber(fails)} 次`] : []
+    const cancels = series.value.cancels[i] ?? 0
+    const hints: string[] = []
+    if (fails > 0) hints.push(`失败 ${formatNumber(fails)} 次`)
+    if (cancels > 0) hints.push(`取消 ${formatNumber(cancels)} 次`)
+    return hints
   },
   isDark: isDark.value,
 }))

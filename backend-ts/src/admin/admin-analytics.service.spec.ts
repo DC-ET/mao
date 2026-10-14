@@ -260,6 +260,7 @@ describe('AdminAnalyticsService', () => {
       callCount: 10,
       successCount: 9,
       failCount: 1,
+      cancelledCount: 0,
       retryCallCount: 2,
       promptTokens: 1000,
       cachedTokens: r.startYmd === windowStart ? 250 : 200,
@@ -280,6 +281,7 @@ describe('AdminAnalyticsService', () => {
       callCount: 0,
       successCount: 0,
       failCount: 0,
+      cancelledCount: 0,
       retryCallCount: 0,
       promptTokens: 0,
       cachedTokens: 0,
@@ -417,6 +419,72 @@ describe('AdminAnalyticsService', () => {
     expect(result.failTop.byModel[0]).toMatchObject({ name: 'gpt', failCount: 1 });
     expect(result.failTop.byScene[0]).toMatchObject({ name: 'compaction', failCount: 1 });
     expect(result.excludeConnectivity).toBe(true);
+  });
+
+  it('取消不计失败：failCount 剔除取消，成功率分母也剔除取消', async () => {
+    const statistics = { getOverview: vi.fn(async () => ({})) };
+    const store = buildStore();
+    store.selectLlmCallQualitySummary = vi.fn(async () => ({
+      callCount: 10,
+      successCount: 7,
+      failCount: 1,
+      cancelledCount: 2,
+      retryCallCount: 0,
+      promptTokens: 1000,
+      cachedTokens: 0,
+      callTokens: 1500,
+    }));
+    store.selectDailyLlmCallStats = vi.fn(async () => [
+      { day: today, callCount: 10, failCount: 1, cancelledCount: 2, promptTokens: 1000, cachedTokens: 0, callTokens: 1500 },
+    ]);
+    store.selectLlmCallStatsByModel = vi.fn(async () => [
+      {
+        id: 3,
+        callCount: 10,
+        successCount: 7,
+        failCount: 1,
+        cancelledCount: 2,
+        retryCallCount: 0,
+        promptTokens: 1000,
+        completionTokens: 500,
+        cachedTokens: 0,
+        callTokens: 1500,
+        firstTokenMsSum: 0,
+        firstTokenMsCount: 0,
+        durationMsSum: 0,
+      },
+    ]);
+    const service = new AdminAnalyticsService(statistics as never, store as never);
+
+    const trends = (await service.trendsScope(7)) as Record<string, any>;
+    // 成功率 = 7 / (10 - 2) = 87.5，取消的 2 次既不算失败也不进分母
+    expect(trends.callQuality).toMatchObject({ successRate: 87.5, failCount: 1, cancelledCount: 2 });
+    expect(trends.trends.at(-1)).toMatchObject({ callCount: 10, callFailCount: 1, callCancelledCount: 2, callSuccessRate: 87.5 });
+
+    const models = (await service.modelsScope(7)) as Record<string, any>;
+    expect(models.modelStats[0]).toMatchObject({ callFailCount: 1, callCancelledCount: 2, callSuccessRate: 87.5 });
+
+    const sessions = (await service.sessionsScope(7)) as Record<string, any>;
+    expect(sessions.callQuality).toMatchObject({ successRate: 87.5, cancelledCount: 2 });
+  });
+
+  it('全部取消时成功率为 null（分母归零，不除出 NaN）', async () => {
+    const statistics = { getOverview: vi.fn(async () => ({})) };
+    const store = buildStore();
+    store.selectLlmCallQualitySummary = vi.fn(async () => ({
+      callCount: 4,
+      successCount: 0,
+      failCount: 0,
+      cancelledCount: 4,
+      retryCallCount: 0,
+      promptTokens: 0,
+      cachedTokens: 0,
+      callTokens: 0,
+    }));
+    const service = new AdminAnalyticsService(statistics as never, store as never);
+
+    const trends = (await service.trendsScope(7)) as Record<string, any>;
+    expect(trends.callQuality).toMatchObject({ successRate: null });
   });
 
   it('usersAndAgentsScopeReturnTokenTopSortedIndependently', async () => {

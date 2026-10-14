@@ -88,6 +88,8 @@ export interface TrendPoint {
   backgroundCalls: number
   callCount?: number
   callFailCount?: number
+  /** 当日取消数（用户点停止）：不计入 callFailCount，也不进成功率分母 */
+  callCancelledCount?: number
   callTokens?: number
   promptTokens?: number
   cachedTokens?: number
@@ -130,6 +132,7 @@ export interface TrendsPayload {
   periodTotals: PeriodTotals & {
     callCount?: number
     callFailCount?: number
+    callCancelledCount?: number
     callTokens?: number
     promptTokens?: number
     cachedTokens?: number
@@ -142,6 +145,8 @@ export interface CallQualitySummary {
   callCount: number
   successCount: number
   failCount: number
+  /** 取消数（用户点停止）：不计入失败，成功率分母 = callCount − cancelledCount */
+  cancelledCount: number
   retryCallCount: number
   promptTokens: number
   cachedTokens: number
@@ -161,6 +166,7 @@ export interface NamedCallStat {
   key: string
   callCount: number
   failCount: number
+  cancelledCount: number
   callTokens: number
 }
 
@@ -186,6 +192,8 @@ export interface ModelStatRow {
   contextWindowTokens?: number
   callCount?: number
   callFailCount?: number
+  /** 取消数（用户点停止）：不计入失败，不进成功率分母 */
+  callCancelledCount?: number
   callSuccessRate?: number | null
   callTokens?: number
   promptTokens?: number
@@ -221,6 +229,7 @@ export interface UserActivityRow {
   lastLoginAt?: string | null
   callCount?: number
   callFailCount?: number
+  callCancelledCount?: number
   callTokens?: number
   /** 窗口内成本合计（成本单位，llm_call 口径） */
   cost?: number
@@ -243,6 +252,7 @@ export interface AgentStatRow {
   totalTokens: number
   callCount?: number
   callFailCount?: number
+  callCancelledCount?: number
   callTokens?: number
   /** 窗口内成本合计（成本单位，llm_call 口径） */
   cost?: number

@@ -75,6 +75,7 @@ async function fetchRecords() {
       scene: filters.scene || undefined,
       modelId: filters.modelId,
       success: filters.success,
+      cancelled: filters.cancelled,
     })
     if (seq !== fetchSeq) return
     records.value = data?.records || []

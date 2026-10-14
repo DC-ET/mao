@@ -55,6 +55,7 @@ export function registerLlmCallRoutes(app: FastifyInstance, deps: LlmCallRouteDe
       modelId: queryOptInt(request, 'modelId'),
       scene: queryOptStr(request, 'scene'),
       success: queryOptBool(request, 'success'),
+      cancelled: queryOptBool(request, 'cancelled'),
       startAt: range.startAt,
       endAtExclusive: range.endAtExclusive,
     });
@@ -73,6 +74,7 @@ export function registerLlmCallRoutes(app: FastifyInstance, deps: LlmCallRouteDe
       modelId: queryOptInt(request, 'modelId'),
       scene: queryOptStr(request, 'scene'),
       success: queryOptBool(request, 'success'),
+      cancelled: queryOptBool(request, 'cancelled'),
       startAt: range.startAt,
       endAtExclusive: range.endAtExclusive,
     });

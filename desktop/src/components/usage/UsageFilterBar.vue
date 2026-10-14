@@ -18,9 +18,10 @@
       </el-select>
     </el-form-item>
     <el-form-item label="结果">
-      <el-select v-model="successModel" clearable placeholder="全部" style="width: 100px">
-        <el-option label="成功" :value="true" />
-        <el-option label="失败" :value="false" />
+      <el-select v-model="resultModel" clearable placeholder="全部" style="width: 100px">
+        <el-option label="成功" value="success" />
+        <el-option label="失败" value="failed" />
+        <el-option label="取消" value="cancelled" />
       </el-select>
     </el-form-item>
     <el-form-item>
@@ -81,9 +82,21 @@ const modelModel = computed({
   set: (v: number | undefined) => patch({ modelId: v ?? undefined }),
 })
 
-const successModel = computed({
-  get: () => props.modelValue.success,
-  set: (v: boolean | undefined) => patch({ success: v ?? undefined }),
+/**
+ * 结果四态下拉（全部 / 成功 / 失败 / 取消）↔ (success, cancelled) 的映射：
+ * 「失败」是纯失败，用户点停止的取消单列一档，与调用流水同口径。
+ */
+const resultModel = computed<'success' | 'failed' | 'cancelled' | undefined>({
+  get: () => {
+    if (props.modelValue.cancelled) return 'cancelled'
+    if (props.modelValue.success === true) return 'success'
+    if (props.modelValue.success === false) return 'failed'
+    return undefined
+  },
+  set: (v) => patch({
+    success: v === 'success' ? true : v === 'failed' ? false : undefined,
+    cancelled: v === 'cancelled' ? true : undefined,
+  }),
 })
 
 function handleReset() {

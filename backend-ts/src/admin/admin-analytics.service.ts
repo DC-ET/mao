@@ -2,6 +2,7 @@ import type { Db } from '../db/db.js';
 import { notDeleted } from '../db/db.js';
 import type { Agent, LlmModel, UserRow } from '../domain/types.js';
 import { addDaysYmd, formatDateTime, shanghaiYmd } from '../common/json.js';
+import { CANCELLED_SQL, NOT_CANCELLED_SQL } from '../common/llm-cancel.js';
 import type { StatisticsService } from '../statistics/statistics.service.js';
 
 /** 统计窗口：闭区间日期 + 半开时间区间 [startAt, endAtExclusive)，避免 23:59:59 边界丢数据。 */
@@ -65,6 +66,8 @@ export interface LlmCallModelRow {
   callCount: number;
   successCount: number;
   failCount: number;
+  /** 取消数（error_message 含取消标记）：不计入 failCount，也不进成功率分母 */
+  cancelledCount: number;
   retryCallCount: number;
   promptTokens: number;
   completionTokens: number;
@@ -81,6 +84,7 @@ export interface LlmCallDailyRow {
   day: string;
   callCount: number;
   failCount: number;
+  cancelledCount: number;
   promptTokens: number;
   cachedTokens: number;
   callTokens: number;
@@ -91,6 +95,7 @@ export interface LlmCallNamedRow {
   key: string;
   callCount: number;
   failCount: number;
+  cancelledCount: number;
   callTokens: number;
 }
 
@@ -98,6 +103,7 @@ export interface LlmCallDimRow {
   id: number;
   callCount: number;
   failCount: number;
+  cancelledCount: number;
   callTokens: number;
   cost: number;
 }
@@ -106,6 +112,8 @@ export interface LlmCallQualitySummary {
   callCount: number;
   successCount: number;
   failCount: number;
+  /** 取消数：成功率分母 = callCount - cancelledCount（取消不是失败） */
+  cancelledCount: number;
   retryCallCount: number;
   promptTokens: number;
   cachedTokens: number;
@@ -373,7 +381,8 @@ export class AdminAnalyticsDbStore implements AdminAnalyticsStore {
     return this.db.query(
       `SELECT ${bucket} AS day,
               COUNT(*) AS callCount,
-              COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0) AS failCount,
+              COALESCE(SUM(CASE WHEN success = 0 AND ${NOT_CANCELLED_SQL} THEN 1 ELSE 0 END), 0) AS failCount,
+              COALESCE(SUM(CASE WHEN ${CANCELLED_SQL} THEN 1 ELSE 0 END), 0) AS cancelledCount,
               COALESCE(SUM(prompt_tokens), 0) AS promptTokens,
               COALESCE(SUM(cached_tokens), 0) AS cachedTokens,
               COALESCE(SUM(total_tokens), 0) AS callTokens,
@@ -391,7 +400,8 @@ export class AdminAnalyticsDbStore implements AdminAnalyticsStore {
       `SELECT COALESCE(model_id, 0) AS id,
               COUNT(*) AS callCount,
               COALESCE(SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END), 0) AS successCount,
-              COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0) AS failCount,
+              COALESCE(SUM(CASE WHEN success = 0 AND ${NOT_CANCELLED_SQL} THEN 1 ELSE 0 END), 0) AS failCount,
+              COALESCE(SUM(CASE WHEN ${CANCELLED_SQL} THEN 1 ELSE 0 END), 0) AS cancelledCount,
               COALESCE(SUM(CASE WHEN retry_count > 0 THEN 1 ELSE 0 END), 0) AS retryCallCount,
               COALESCE(SUM(prompt_tokens), 0) AS promptTokens,
               COALESCE(SUM(completion_tokens), 0) AS completionTokens,
@@ -413,7 +423,8 @@ export class AdminAnalyticsDbStore implements AdminAnalyticsStore {
     return this.db.query(
       `SELECT COALESCE(scene, 'unknown') AS \`key\`,
               COUNT(*) AS callCount,
-              COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0) AS failCount,
+              COALESCE(SUM(CASE WHEN success = 0 AND ${NOT_CANCELLED_SQL} THEN 1 ELSE 0 END), 0) AS failCount,
+              COALESCE(SUM(CASE WHEN ${CANCELLED_SQL} THEN 1 ELSE 0 END), 0) AS cancelledCount,
               COALESCE(SUM(total_tokens), 0) AS callTokens
        FROM llm_call
        WHERE ${sql}
@@ -427,7 +438,8 @@ export class AdminAnalyticsDbStore implements AdminAnalyticsStore {
     return this.db.query(
       `SELECT COALESCE(protocol, 'unknown') AS \`key\`,
               COUNT(*) AS callCount,
-              COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0) AS failCount,
+              COALESCE(SUM(CASE WHEN success = 0 AND ${NOT_CANCELLED_SQL} THEN 1 ELSE 0 END), 0) AS failCount,
+              COALESCE(SUM(CASE WHEN ${CANCELLED_SQL} THEN 1 ELSE 0 END), 0) AS cancelledCount,
               COALESCE(SUM(total_tokens), 0) AS callTokens
        FROM llm_call
        WHERE ${sql}
@@ -441,7 +453,8 @@ export class AdminAnalyticsDbStore implements AdminAnalyticsStore {
     return this.db.query(
       `SELECT user_id AS id,
               COUNT(*) AS callCount,
-              COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0) AS failCount,
+              COALESCE(SUM(CASE WHEN success = 0 AND ${NOT_CANCELLED_SQL} THEN 1 ELSE 0 END), 0) AS failCount,
+              COALESCE(SUM(CASE WHEN ${CANCELLED_SQL} THEN 1 ELSE 0 END), 0) AS cancelledCount,
               COALESCE(SUM(total_tokens), 0) AS callTokens,
               COALESCE(SUM(cost_micros), 0) / 1000000 AS cost
        FROM llm_call
@@ -456,7 +469,8 @@ export class AdminAnalyticsDbStore implements AdminAnalyticsStore {
     return this.db.query(
       `SELECT agent_id AS id,
               COUNT(*) AS callCount,
-              COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0) AS failCount,
+              COALESCE(SUM(CASE WHEN success = 0 AND ${NOT_CANCELLED_SQL} THEN 1 ELSE 0 END), 0) AS failCount,
+              COALESCE(SUM(CASE WHEN ${CANCELLED_SQL} THEN 1 ELSE 0 END), 0) AS cancelledCount,
               COALESCE(SUM(total_tokens), 0) AS callTokens,
               COALESCE(SUM(cost_micros), 0) / 1000000 AS cost
        FROM llm_call
@@ -472,6 +486,7 @@ export class AdminAnalyticsDbStore implements AdminAnalyticsStore {
       callCount: number;
       successCount: number;
       failCount: number;
+      cancelledCount: number;
       retryCallCount: number;
       promptTokens: number;
       cachedTokens: number;
@@ -480,7 +495,8 @@ export class AdminAnalyticsDbStore implements AdminAnalyticsStore {
     }>(
       `SELECT COUNT(*) AS callCount,
               COALESCE(SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END), 0) AS successCount,
-              COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0) AS failCount,
+              COALESCE(SUM(CASE WHEN success = 0 AND ${NOT_CANCELLED_SQL} THEN 1 ELSE 0 END), 0) AS failCount,
+              COALESCE(SUM(CASE WHEN ${CANCELLED_SQL} THEN 1 ELSE 0 END), 0) AS cancelledCount,
               COALESCE(SUM(CASE WHEN retry_count > 0 THEN 1 ELSE 0 END), 0) AS retryCallCount,
               COALESCE(SUM(prompt_tokens), 0) AS promptTokens,
               COALESCE(SUM(cached_tokens), 0) AS cachedTokens,
@@ -494,6 +510,7 @@ export class AdminAnalyticsDbStore implements AdminAnalyticsStore {
       callCount: toNumber(row?.callCount),
       successCount: toNumber(row?.successCount),
       failCount: toNumber(row?.failCount),
+      cancelledCount: toNumber(row?.cancelledCount),
       retryCallCount: toNumber(row?.retryCallCount),
       promptTokens: toNumber(row?.promptTokens),
       cachedTokens: toNumber(row?.cachedTokens),
@@ -807,6 +824,7 @@ export class AdminAnalyticsService {
       failedSessions: periodPhases.get('FAILED') ?? 0,
       callCount: quality.callCount,
       callFailCount: quality.failCount,
+      callCancelledCount: quality.cancelledCount,
       callTokens: quality.callTokens,
       promptTokens: quality.promptTokens,
       cachedTokens: quality.cachedTokens,
@@ -820,6 +838,7 @@ export class AdminAnalyticsService {
         ...previousTotals,
         callCount: prevQuality.callCount,
         callFailCount: prevQuality.failCount,
+        callCancelledCount: prevQuality.cancelledCount,
         callTokens: prevQuality.callTokens,
       },
       callQuality: qualitySummaryFields(quality),
@@ -1121,6 +1140,7 @@ export class AdminAnalyticsService {
     const backgroundCalls = bucketMap(usageRows, (r) => r.day, (r) => r.callCount, granularity);
     const callCount = bucketMap(callRows, (r) => r.day, (r) => r.callCount, granularity);
     const callFailCount = bucketMap(callRows, (r) => r.day, (r) => r.failCount, granularity);
+    const callCancelledCount = bucketMap(callRows, (r) => r.day, (r) => r.cancelledCount, granularity);
     const callTokens = bucketMap(callRows, (r) => r.day, (r) => r.callTokens, granularity);
     const promptTokens = bucketMap(callRows, (r) => r.day, (r) => r.promptTokens, granularity);
     const cachedTokens = bucketMap(callRows, (r) => r.day, (r) => r.cachedTokens, granularity);
@@ -1133,6 +1153,7 @@ export class AdminAnalyticsService {
       const background = backgroundTokens.get(date) ?? 0;
       const calls = callCount.get(date) ?? 0;
       const fails = callFailCount.get(date) ?? 0;
+      const cancels = callCancelledCount.get(date) ?? 0;
       const callTok = callTokens.get(date) ?? 0;
       const prompt = promptTokens.get(date) ?? 0;
       const cached = cachedTokens.get(date) ?? 0;
@@ -1146,11 +1167,13 @@ export class AdminAnalyticsService {
         backgroundCalls: backgroundCalls.get(date) ?? 0,
         callCount: calls,
         callFailCount: fails,
+        callCancelledCount: cancels,
         callTokens: callTok,
         promptTokens: prompt,
         cachedTokens: cached,
         cost: callCost.get(date) ?? 0,
-        callSuccessRate: calls > 0 ? Math.round(((calls - fails) / calls) * 1000) / 10 : null,
+        // 取消不是失败：分母剔除取消，成功率不再被用户主动停止拉低
+        callSuccessRate: calls - cancels > 0 ? Math.round(((calls - fails - cancels) / (calls - cancels)) * 1000) / 10 : null,
         cacheHitRate: prompt > 0 ? Math.round((cached / prompt) * 1000) / 10 : null,
       });
     }
@@ -1178,6 +1201,7 @@ export class AdminAnalyticsService {
       activeUsers,
       callCount: quality.callCount,
       callFailCount: quality.failCount,
+      callCancelledCount: quality.cancelledCount,
       callTokens: quality.callTokens,
       // 与 sumTrends 的 totalCost 同键名：admin 环比读 previousTotals.totalCost
       totalCost: quality.cost,
@@ -1204,12 +1228,14 @@ export class AdminAnalyticsService {
     const tokens = idMap(messageRows, (r) => r.totalTokens);
     const callCounts = idMap(callRows, (r) => r.callCount);
     const failCounts = idMap(callRows, (r) => r.failCount);
+    const cancelledCounts = idMap(callRows, (r) => r.cancelledCount);
     const callTokens = idMap(callRows, (r) => r.callTokens);
     const callCosts = idMap(callRows, (r) => r.cost);
     const rows: Array<Record<string, unknown>> = [];
     for (const agentId of unionKeys(sessionCounts, messageCounts, callCounts, failCounts, callTokens)) {
       const calls = callCounts.get(agentId) ?? 0;
       const fails = failCounts.get(agentId) ?? 0;
+      const cancels = cancelledCounts.get(agentId) ?? 0;
       rows.push({
         agentId,
         agentName: names.get(agentId) ?? '未知',
@@ -1218,9 +1244,11 @@ export class AdminAnalyticsService {
         totalTokens: tokens.get(agentId) ?? 0,
         callCount: calls,
         callFailCount: fails,
+        callCancelledCount: cancels,
         callTokens: callTokens.get(agentId) ?? 0,
         cost: callCosts.get(agentId) ?? 0,
-        callSuccessRate: calls > 0 ? Math.round(((calls - fails) / calls) * 1000) / 10 : null,
+        // 取消不是失败：分母剔除取消
+        callSuccessRate: calls - cancels > 0 ? Math.round(((calls - fails - cancels) / (calls - cancels)) * 1000) / 10 : null,
       });
     }
     rows.sort(byNumberDesc('sessionCount', 'messageCount'));
@@ -1244,6 +1272,7 @@ export class AdminAnalyticsService {
     const tokens = idMap(messageRows, (r) => r.totalTokens);
     const callCounts = idMap(callRows, (r) => r.callCount);
     const failCounts = idMap(callRows, (r) => r.failCount);
+    const cancelledCounts = idMap(callRows, (r) => r.cancelledCount);
     const callTokens = idMap(callRows, (r) => r.callTokens);
     const callCosts = idMap(callRows, (r) => r.cost);
     const rows: Array<Record<string, unknown>> = [];
@@ -1266,6 +1295,7 @@ export class AdminAnalyticsService {
         lastLoginAt: user.lastLoginAt != null ? String(user.lastLoginAt) : null,
         callCount: calls,
         callFailCount: fails,
+        callCancelledCount: cancelledCounts.get(uid) ?? 0,
         callTokens: callTokens.get(uid) ?? 0,
         cost: callCosts.get(uid) ?? 0,
       });
@@ -1354,6 +1384,7 @@ export class AdminAnalyticsService {
       const usageCalls = backgroundCalls.get(modelId) ?? 0;
       const callCount = toNumber(call?.callCount);
       const callFailCount = toNumber(call?.failCount);
+      const callCancelledCount = toNumber(call?.cancelledCount);
       const callTokens = toNumber(call?.callTokens);
       const callCost = toNumber(call?.cost);
       const promptTokens = toNumber(call?.promptTokens);
@@ -1392,7 +1423,12 @@ export class AdminAnalyticsService {
         contextWindowTokens: model?.contextWindowTokens,
         callCount,
         callFailCount,
-        callSuccessRate: callCount > 0 ? Math.round(((callCount - callFailCount) / callCount) * 1000) / 10 : null,
+        callCancelledCount,
+        // 取消不是失败：分母剔除取消，模型成功率不再被用户主动停止拉低
+        callSuccessRate:
+          callCount - callCancelledCount > 0
+            ? Math.round(((callCount - callFailCount - callCancelledCount) / (callCount - callCancelledCount)) * 1000) / 10
+            : null,
         callTokens,
         cost: callCost,
         promptTokens,
@@ -1409,16 +1445,19 @@ export class AdminAnalyticsService {
 }
 
 function qualitySummaryFields(quality: LlmCallQualitySummary): Record<string, number | null> {
+  // 取消不是失败：成功率分母 = 调用数 − 取消数，用户主动停止不再拉低成功率
+  const rateBase = toNumber(quality.callCount) - toNumber(quality.cancelledCount);
   return {
     callCount: quality.callCount,
     successCount: quality.successCount,
     failCount: quality.failCount,
+    cancelledCount: quality.cancelledCount,
     retryCallCount: quality.retryCallCount,
     promptTokens: quality.promptTokens,
     cachedTokens: quality.cachedTokens,
     callTokens: quality.callTokens,
     cost: quality.cost,
-    successRate: quality.callCount > 0 ? Math.round((quality.successCount / quality.callCount) * 1000) / 10 : null,
+    successRate: rateBase > 0 ? Math.round((quality.successCount / rateBase) * 1000) / 10 : null,
     retryRatio: quality.callCount > 0 ? Math.round((quality.retryCallCount / quality.callCount) * 1000) / 10 : null,
     cacheHitRate:
       quality.promptTokens > 0 ? Math.round((quality.cachedTokens / quality.promptTokens) * 1000) / 10 : null,
@@ -1432,6 +1471,7 @@ function namedCountRows(rows: LlmCallNamedRow[]): Array<Record<string, unknown>>
       key: String(row.key),
       callCount: toNumber(row.callCount),
       failCount: toNumber(row.failCount),
+      cancelledCount: toNumber(row.cancelledCount),
       callTokens: toNumber(row.callTokens),
     }))
     .sort((a, b) => b.callTokens - a.callTokens || b.callCount - a.callCount);

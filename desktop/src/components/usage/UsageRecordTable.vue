@@ -29,9 +29,7 @@
     </el-table-column>
     <el-table-column label="结果" width="64">
       <template #default="{ row }">
-        <el-tag size="small" :type="row.success === 1 ? 'success' : 'danger'">
-          {{ row.success === 1 ? '成功' : '失败' }}
-        </el-tag>
+        <el-tag size="small" :type="callResultTag(row).type">{{ callResultTag(row).label }}</el-tag>
       </template>
     </el-table-column>
     <el-table-column label="会话" width="64">
@@ -50,6 +48,7 @@ import type { MyLlmCallRecord } from '../../api'
 import { formatDateTime } from '../../utils/datetime'
 import { formatCacheHit, formatToken } from '../../utils/usageFormat'
 import { formatMs, llmCallSceneLabel } from '../../utils/llmCallLabels'
+import { callResultTag } from './result-tag'
 
 defineProps<{
   records: MyLlmCallRecord[]

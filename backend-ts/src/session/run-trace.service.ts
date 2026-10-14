@@ -5,6 +5,7 @@ import type { SessionActivityRepository } from './activity.repository.js';
 import type { SessionCompactionEventRepository } from './session-compaction.repository.js';
 import type { Message, SessionActivity, SessionCompactionEvent } from './types.js';
 import { javaLocalDateTimeString } from '../common/datetime.js';
+import { isCancelledError } from '../common/llm-cancel.js';
 import type {
   RunTracePageVO,
   RunTraceVO,
@@ -68,7 +69,6 @@ interface RunInput {
 
 const AGENT_SCENE = 'agent';
 const DELEGATE_TOOLS = new Set(['delegate', 'delegate_followup']);
-const CANCELLED_MARK = 'Cancelled by user';
 
 export class RunTraceService {
   constructor(
@@ -410,8 +410,8 @@ function toRoundVO(call: LlmCallRow, seq: number, query: RunTraceQuery): TraceRo
     firstTokenMs: call.firstTokenMs ?? null,
     retryCount: call.retryCount ?? 0,
     success: call.success === 1,
-    // 取消也会在 finally 落库：只认 error_message 含 Cancelled by user，不计失败
-    interrupted: errorMessage != null && errorMessage.includes(CANCELLED_MARK),
+    // 取消也会在 finally 落库：只认 error_message 含取消标记，不计失败
+    interrupted: isCancelledError(errorMessage),
     errorMessage,
     promptTokens,
     completionTokens,
