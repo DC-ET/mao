@@ -45,29 +45,29 @@
 |---|---|---|---|
 | 任务运行轨迹透视 | [2026-10-09-run-trace-timeline.md](2026-10-09-run-trace-timeline.md)（已转入实施，技术方案见 [docs/plan/2026-10-09-run-trace-technical-design.md](../plan/2026-10-09-run-trace-technical-design.md)） | 按轮次聚合 LLM/工具/事件的执行时间线，回答"为什么慢、贵、失败"；向过去看，补上下文透视（向未来看）的另一半 | 中 |
 
-## 第五批（2026-10-09，待评审）
+## 第五批（2026-10-09）
 
-背景：前四批全部落定后，基于代码现状摸底产出的五个方向，共同主题是"从能用到敢用"：故障时任务不断（模型容灾）、无人值守的自动化可信（定时任务可靠性）、人对工作区有直接掌控（文件直管）、过去找得回来（全文检索）、对外接口看得见（开放接口调用中心）。本批评审结果待定。
+背景：前四批全部落定后，基于代码现状摸底产出的五个方向，共同主题是"从能用到敢用"：故障时任务不断（模型容灾）、无人值守的自动化可信（定时任务可靠性）、人对工作区有直接掌控（文件直管）、过去找得回来（全文检索）、对外接口看得见（开放接口调用中心）。本批评审结果（2026-10-09）：**模型容灾与故障转移不做**（见下方台账），其余四件均转入实施。
 
 | 提案 | 文档 | 一句话 | 规模 |
 |---|---|---|---|
 | 模型容灾与故障转移 | [2026-10-09-model-fallback-health.md](2026-10-09-model-fallback-health.md)（已否决，存档） | 主模型重试耗尽/额度耗尽/供应商故障时按备用链自动切换并熔断冷却，任务不中断；转移全程留痕 | — |
-| 定时任务可靠性 | [2026-10-09-scheduled-task-reliability.md](2026-10-09-scheduled-task-reliability.md)（已确认，技术方案见 [docs/plan/2026-10-09-scheduled-task-reliability-technical-design.md](../plan/2026-10-09-scheduled-task-reliability-technical-design.md)，决策记录 11 条于 2026-10-09 逐条确认） | 失败重试、停机错过补偿、按任务运行历史、连续失败自动暂停并通知——无人值守自动化的信任基础 | 小~中 |
-| 工作区文件直管 | [2026-10-09-workspace-file-manager.md](2026-10-09-workspace-file-manager.md)（已出技术方案，见 [docs/plan/2026-10-09-workspace-file-manager-technical-design.md](../plan/2026-10-09-workspace-file-manager-technical-design.md)） | 文件树从只读浏览升级为文件管理器：上传/新建/重命名/删除（物理删除+强确认，不做回收站）/移动/复制，沙箱与 Agent 写锁协同 | 中 |
-| 跨会话全文检索 | [2026-10-09-global-message-search.md](2026-10-09-global-message-search.md)（待评审） | MySQL 8 ngram 全文索引覆盖 USER+ASSISTANT 消息，替代 LIKE 全表扫与只搜用户消息的现状，结果可筛选可跳转定位 | 中 |
-| 开放接口调用中心 | [2026-10-09-open-api-call-center.md](2026-10-09-open-api-call-center.md)（待评审） | 入站 API Token/Webhook 调用流水（含拒绝路径）、统计面板、失败告警与请求重放，补上开放接口三件套里缺失的可观测 | 小~中 |
+| 定时任务可靠性 | [2026-10-09-scheduled-task-reliability.md](2026-10-09-scheduled-task-reliability.md)（已实施，技术方案见 [docs/plan/2026-10-09-scheduled-task-reliability-technical-design.md](../plan/2026-10-09-scheduled-task-reliability-technical-design.md)，决策记录 11 条于 2026-10-09 逐条确认，0.0.256 发版） | 失败重试、停机错过补偿、按任务运行历史、连续失败自动暂停并通知——无人值守自动化的信任基础 | 小~中 |
+| 工作区文件直管 | [2026-10-09-workspace-file-manager.md](2026-10-09-workspace-file-manager.md)（已实施，技术方案见 [docs/plan/2026-10-09-workspace-file-manager-technical-design.md](../plan/2026-10-09-workspace-file-manager-technical-design.md)，0.0.281 发版） | 文件树从只读浏览升级为文件管理器：上传/新建/重命名/删除（物理删除+强确认，不做回收站）/移动/复制，沙箱与 Agent 写锁协同 | 中 |
+| 跨会话全文检索 | [2026-10-09-global-message-search.md](2026-10-09-global-message-search.md)（已实施，技术方案见 [docs/plan/2026-10-09-global-message-search-design.md](../plan/2026-10-09-global-message-search-design.md)，0.0.257 发版） | MySQL 8 ngram 全文索引覆盖 USER+ASSISTANT 消息，替代 LIKE 全表扫与只搜用户消息的现状，结果可筛选可跳转定位 | 中 |
+| 开放接口调用中心 | [2026-10-09-open-api-call-center.md](2026-10-09-open-api-call-center.md)（已实施，技术方案见 [docs/plan/2026-10-09-open-api-call-center-technical-design.md](../plan/2026-10-09-open-api-call-center-technical-design.md)，0.0.255 发版） | 入站 API Token/Webhook 调用流水（含拒绝路径）、统计面板、失败告警与请求重放，补上开放接口三件套里缺失的可观测 | 小~中 |
 
 排期注意：定时任务可靠性与模型容灾都碰执行收敛点附近，与历史上记忆/收件箱/预算动过的 `task-terminal.service.ts` 收敛点相邻，实施时错开；全文检索的 V142 迁移与另两份提案的新表（若都过）注意编号顺延（工作区文件直管零迁移，不占编号）；开放接口调用中心 P3 的 Token 自动停用与既有 Webhook 触发器自动停用模式对齐，可合并一次交互评审。
 
-## 第六批（2026-10-11，待评审）
+## 第六批（2026-10-11）
 
-背景：前五批落定后（轨迹 / 定时任务可靠性 / 全文检索 / 文件直管 / 开放接口调用中心 / 成本预算 / 审批规则 / 上下文透视 / 资产分发等均已实施），基于代码现状摸底产出的五个方向，共同主题是"**让系统自己长起来**"：踩过的坑变成能力（负反馈闭环）、外部变化自己敲门（信号哨兵）、一次成功复用一辈子（技能蒸馏）、环境起点不用每次裸奔（工作区模板）。提案均严格避开已否决方向（RAG / Evals / 多 Agent DAG / 计划门 / 出网边界 / 备份恢复 / 数据保留 / 模型容灾 / 检查点回滚），且都建立在已实施设施之上（经验表、轨迹服务、staged 技能写入、出站投递），不新增大规模基础设施。本批评审结果（2026-10-11）：**技能蒸馏、工作区环境模板、渠道人工接管不做**（见下方台账），负反馈闭环与信号哨兵已确认转入实施。
+背景：前五批落定后（轨迹 / 定时任务可靠性 / 全文检索 / 文件直管 / 开放接口调用中心 / 成本预算 / 审批规则 / 上下文透视 / 资产分发等均已实施），基于代码现状摸底产出的五个方向，共同主题是"**让系统自己长起来**"：踩过的坑变成能力（负反馈闭环）、外部变化自己敲门（信号哨兵）、一次成功复用一辈子（技能蒸馏）、环境起点不用每次裸奔（工作区模板）。提案均严格避开已否决方向（RAG / Evals / 多 Agent DAG / 计划门 / 出网边界 / 备份恢复 / 数据保留 / 模型容灾 / 检查点回滚），且都建立在已实施设施之上（经验表、轨迹服务、staged 技能写入、出站投递），不新增大规模基础设施。本批评审结果（2026-10-11）：**技能蒸馏、工作区环境模板、渠道人工接管不做**（见下方台账），负反馈闭环与信号哨兵已转入实施（分别落地 0.0.276 / 0.0.278）。
 
 | 提案 | 文档 | 一句话 | 规模 |
 |---|---|---|---|
 | 负反馈闭环 | [2026-10-11-feedback-experience-loop.md](2026-10-11-feedback-experience-loop.md)（**已实施**，技术方案见 [docs/plan/2026-10-11-feedback-experience-loop-technical-design.md](../plan/2026-10-11-feedback-experience-loop-technical-design.md)，决策记录 16 条于 2026-10-11 逐条确认；落地为 V148/V149 迁移 + 管理后台转经验向导与忽略闭环，CHANGELOG 0.0.276） | 点踩数据今天只进报表不改行为；单条 / 聚集反馈经 LLM 起草 + 人工确认流入既有 `agent_experiences` 管道，把"踩过的坑"变成 Agent 的能力 | 小~中 |
 | 渠道人工接管 | [2026-10-11-human-handoff.md](2026-10-11-human-handoff.md)（已否决，存档） | Agent 答不动时经工具或卡片按钮把会话切给真人（新相位 `WAITING_HUMAN` + 收件箱新 kind），接管人从桌面端回答并经渠道回发，补上 IM 客服 / 运维场景缺失的"人进来"出口 | — |
-| 信号哨兵 | [2026-10-11-signal-watcher.md](2026-10-11-signal-watcher.md)（已确认，技术方案见 [docs/plan/2026-10-11-signal-watcher-technical-design.md](../plan/2026-10-11-signal-watcher-technical-design.md)，决策记录 15 条于 2026-10-11 逐条确认） | HTTP 探针轮询外部信号（内容哈希 / JSON 字段比对），**只在变化时**触发 Agent 运行，替代"每分钟 cron 硬扫让模型自己判断有没有变"的烧钱模式 | 中 |
+| 信号哨兵 | [2026-10-11-signal-watcher.md](2026-10-11-signal-watcher.md)（已实施，技术方案见 [docs/plan/2026-10-11-signal-watcher-technical-design.md](../plan/2026-10-11-signal-watcher-technical-design.md)，决策记录 15 条于 2026-10-11 逐条确认，0.0.278 发版） | HTTP 探针轮询外部信号（内容哈希 / JSON 字段比对），**只在变化时**触发 Agent 运行，替代"每分钟 cron 硬扫让模型自己判断有没有变"的烧钱模式 | 中 |
 | 技能蒸馏 | [2026-10-11-skill-distillation.md](2026-10-11-skill-distillation.md)（已否决，存档） | 从会话轨迹（既有 RunTraceService）+ 结论 + 文件变更起草 `SKILL.md`，人预览 / 编辑 / 试跑后落用户技能目录——把"那次跑通了"变成"下次直接用" | — |
 
 排期注意：
@@ -77,21 +77,21 @@
 3. **收件箱新 kind**：信号哨兵需加 `WATCHER_DISABLED`，须同步 `backend-ts/src/inbox/types.ts` 白名单、`@mao/contracts` 的 `InboxKind` 联合类型、桌面抽屉图标与通知偏好。
 4. **桌面端工作量**：哨兵管理页为桌面端新界面，实施时注意与 `settings` 页既有改动的冲突。
 
-## 第七批（2026-10-12，待评审）
+## 第七批（2026-10-12）
 
-背景：前六批落定后，自动化设施（定时任务 / 哨兵 / 开放接口）与治理设施（轨迹 / 预算 / 审批 / 反馈闭环）均已就位，基于代码现状摸底（联网工具结果里的 URL 出口即丢、模型选择器一次只能选一个、出站订阅只有事件粒度没有日报粒度）产出的三个方向，共同主题是"**从敢用到可信、可择优、可总览**"：答案可验证（引用）、模型可对照（选型）、运营可总览（日报）。提案均避开已否决方向（RAG / Evals / 多 Agent DAG / 容灾 / 技能蒸馏等），且全部建立在既有设施之上（消息渲染 / message_feedback / 出站订阅 / 收件箱 / 偏好），不新增大规模基础设施。本批评审结果（2026-10-12）：**模型对照台不做**（见下方台账），**引用溯源已确认**（技术方案见 [docs/plan/2026-10-12-answer-citations-technical-design.md](../plan/2026-10-12-answer-citations-technical-design.md)，决策记录 9 条于 2026-10-12 逐条确认；实施时零迁移，citations 走 message.metadata），**每日运营摘要已确认**（技术方案见 [docs/plan/2026-10-12-daily-digest-technical-design.md](../plan/2026-10-12-daily-digest-technical-design.md)，决策记录 11 条于 2026-10-12 逐条确认；投递渠道定为收件箱 + 出站订阅，IM 明确不做，v1 一次交付）。
+背景：前六批落定后，自动化设施（定时任务 / 哨兵 / 开放接口）与治理设施（轨迹 / 预算 / 审批 / 反馈闭环）均已就位，基于代码现状摸底（联网工具结果里的 URL 出口即丢、模型选择器一次只能选一个、出站订阅只有事件粒度没有日报粒度）产出的三个方向，共同主题是"**从敢用到可信、可择优、可总览**"：答案可验证（引用）、模型可对照（选型）、运营可总览（日报）。提案均避开已否决方向（RAG / Evals / 多 Agent DAG / 容灾 / 技能蒸馏等），且全部建立在既有设施之上（消息渲染 / message_feedback / 出站订阅 / 收件箱 / 偏好），不新增大规模基础设施。本批评审结果（2026-10-12）：**模型对照台不做**（见下方台账），**引用溯源已实施**（技术方案见 [docs/plan/2026-10-12-answer-citations-technical-design.md](../plan/2026-10-12-answer-citations-technical-design.md)，决策记录 9 条于 2026-10-12 逐条确认，0.0.282 发版；实施时零迁移，citations 走 message.metadata），**每日运营摘要已实施**（技术方案见 [docs/plan/2026-10-12-daily-digest-technical-design.md](../plan/2026-10-12-daily-digest-technical-design.md)，决策记录 11 条于 2026-10-12 逐条确认，0.0.281 发版；投递渠道定为收件箱 + 出站订阅，IM 明确不做，v1 一次交付）。
 
 | 提案 | 文档 | 一句话 | 规模 |
 |---|---|---|---|
-| 回复引用溯源 | [2026-10-12-answer-citations.md](2026-10-12-answer-citations.md)（已确认，技术方案见 [docs/plan/2026-10-12-answer-citations-technical-design.md](../plan/2026-10-12-answer-citations-technical-design.md)） | 模型用 `[^n^]` 标记外部信息来源，后端按本轮工具结果 URL 白名单校验（伪造 URL 一律剥标），三端渲染可点击来源区——让每句话可验证 | 中 |
+| 回复引用溯源 | [2026-10-12-answer-citations.md](2026-10-12-answer-citations.md)（已实施，技术方案见 [docs/plan/2026-10-12-answer-citations-technical-design.md](../plan/2026-10-12-answer-citations-technical-design.md)，0.0.282 发版） | 模型用 `[^n^]` 标记外部信息来源，后端按本轮工具结果 URL 白名单校验（伪造 URL 一律剥标），三端渲染可点击来源区——让每句话可验证 | 中 |
 | 模型对照台 | [2026-10-12-model-compare.md](2026-10-12-model-compare.md)（已否决，存档） | 一次提问广播 2~4 个模型并排作答，人工择优固化进上下文，点踩 / 用量 / 轨迹全链路复用——换模型不用再复制原话重问 | — |
-| 每日运营摘要 | [2026-10-12-daily-digest.md](2026-10-12-daily-digest.md)（已确认，技术方案见 [docs/plan/2026-10-12-daily-digest-technical-design.md](../plan/2026-10-12-daily-digest-technical-design.md)，决策记录 11 条于 2026-10-12 逐条确认） | 按天汇总任务成败 / 定时任务 / 哨兵触发 / 审批待办 / 成本 Top，经收件箱（新 kind）与出站订阅（新事件）送达——"没有消息就是坏消息"的健康信号 | 小~中 |
+| 每日运营摘要 | [2026-10-12-daily-digest.md](2026-10-12-daily-digest.md)（已实施，技术方案见 [docs/plan/2026-10-12-daily-digest-technical-design.md](../plan/2026-10-12-daily-digest-technical-design.md)，决策记录 11 条于 2026-10-12 逐条确认，0.0.281 发版） | 按天汇总任务成败 / 定时任务 / 哨兵触发 / 审批待办 / 成本 Top，经收件箱（新 kind）与出站订阅（新事件）送达——"没有消息就是坏消息"的健康信号 | 小~中 |
 
 排期注意：
 
 1. **迁移编号**：Digest 需 V150（`user_digest_preference` 偏好表；事实表零新增）；引用溯源改走 metadata 后零迁移。当前最新 V149。
 2. **三处同改清单**：Digest 新增收件箱 kind `DAILY_DIGEST`，按规范同改 `backend-ts/src/inbox/types.ts` 白名单、`@mao/contracts` 的 `InboxKind` 联合、桌面抽屉图标与通知偏好。
-3. **相邻收敛点**：引用溯源（已确认）的 registry 构建挂在 `task-terminal.service.ts` 的 `TASK_COMPLETED` 相位收敛点（历史上记忆 / 收件箱 / 预算动过的同一位置），与在途同类改动错开；Digest 若做，其调度器与 `InboxCleanupScheduler` / `OutboundDeliveryScheduler` 同范式，不动收敛点。
+3. **相邻收敛点**：引用溯源（已实施）的 registry 构建挂在 `task-terminal.service.ts` 的 `TASK_COMPLETED` 相位收敛点（历史上记忆 / 收件箱 / 预算动过的同一位置），与在途同类改动错开；Digest 若做，其调度器与 `InboxCleanupScheduler` / `OutboundDeliveryScheduler` 同范式，不动收敛点。
 
 ## 已评估、明确不做
 
