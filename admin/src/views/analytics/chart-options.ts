@@ -49,13 +49,13 @@ export function formatCompact(value: number, decimals = 1): string {
 }
 
 /** Token 紧凑单位按业界惯例：K=千、M=百万、B=十亿。 */
-/** 成本展示：与模型价格填写单位一致，最多保留 3 位小数（小金额不丢精度）。 */
+/** 成本展示：与模型价格填写单位一致，最多保留 2 位小数（小金额不丢精度）。 */
 export function formatCost(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return '-'
   const abs = Math.abs(value)
   if (abs >= 10000) return value.toLocaleString('zh-CN', { maximumFractionDigits: 0 })
   if (abs >= 1000) return value.toLocaleString('zh-CN', { maximumFractionDigits: 1 })
-  return value.toLocaleString('zh-CN', { maximumFractionDigits: 3 })
+  return value.toLocaleString('zh-CN', { maximumFractionDigits: 2 })
 }
 
 export function formatTokens(value: number): string {

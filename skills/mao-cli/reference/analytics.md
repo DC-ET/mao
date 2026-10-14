@@ -36,6 +36,7 @@
 - 环比窗口是紧邻的上一个等长窗口（如 days=7 时为前 7 天；昨日的环比为前日）
 - Token 分两类：`chatTokens` 来自 `message.token_count`（对话消耗），`backgroundTokens` 来自 `llm_usage`（后台调用，如会话标题、Git 提交信息生成），`totalTokens` 为两者之和；管理后台 UI 紧凑展示用 K/M/B（千/百万/十亿）
 - 管理后台总览的计数类 KPI（新增会话 / 消息数 / 活跃用户 / 会话总数）≥1 万时紧凑展示为「万 / 亿」并固定保留两位小数（如 1.70 万）；图表坐标轴与条形排行标签仍为一位小数
+- 成本展示（0.0.294 起）：「数据统计」各 Tab 与成本趋势图最多保留 2 位小数（千位以上取 1 位、万位以上取整，如 149.627 → 149.63）；「LLM 调用」页与「预算」页的单次调用成本仍保留 3 位小数，避免小额被显示成 0
 - 缓存命中率（0.0.292 起进总览 KPI 条）= `sum(llm_call.cached_tokens) / sum(llm_call.prompt_tokens)`，默认排除连通性自检；分母为 0（窗口内无调用）时接口给 null、界面显示 `-`；环比按百分点差（pp）展示，30% → 35% 是 ↑ 5pp 而不是 ↑ 17%
 - 调用结果三态（0.0.294 起）：`failCount` / `callFailCount` 只数**纯失败**，用户取消（`error_message` 含 `Cancelled by user`）单列 `cancelledCount` / `callCancelledCount`；`successRate` / `callSuccessRate` 分母为 `callCount - cancelledCount`（取消不是失败，也不是成功）。历史数据同样按此口径派生，无迁移
 - 成本口径（0.0.243 起）：所有 `cost` / `totalCost` 字段均为**成本单位**（与模型价格填写口径一致），后端为 `COALESCE(SUM(llm_call.cost_micros),0)/1e6`。模型未配价格、或价格缺一个方向时该次调用成本为 NULL、不计入合计（不按 0 计），因此「没配价格的模型」在成本口径下等于没有开销，不等于免费。`connectivity_test` 等 scene 默认排除（`excludeConnectivity=true`）。子代理与边路任务会话的成本同样计入所属用户 / Agent
