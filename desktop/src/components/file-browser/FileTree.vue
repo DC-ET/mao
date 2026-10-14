@@ -228,7 +228,7 @@ let draftBusy = false
 const canOpenInFinder = computed(() => typeof window !== 'undefined' && !!window.electronAPI?.showItemInFolder)
 
 const providerRef = toRef(props, 'provider')
-const { treeData, loading, expandDir, refresh, restoreExpandedPath } = useFileBrowser(providerRef)
+const { treeData, loading, expandDir, refresh, restoreExpandedPath, findNodeByPath } = useFileBrowser(providerRef)
 
 const isReady = computed(() => {
   if (props.executionMode === 'CLOUD') {
@@ -720,9 +720,20 @@ function handleToggleDir(node: FileNode) {
 }
 
 function handleRetry(node: FileNode) {
-  node.error = undefined
-  node.children = undefined
-  expandDir(node)
+  // loadChildren 失败时造的是 { isDirectory: false, path: <失败目录> } 的占位错误节点，
+  // 直接 expandDir 会被首行的 !node.isDirectory 守卫挡掉，变成只抹掉错误文案的空操作。
+  // 先按 path 找回真正的目录节点再展开。占位节点自身也会被 findNodeByPath 命中（它的 path
+  // 就是失败目录），找回的还不是目录时——典型是根列举失败，错误节点就挂在树顶——只能整树刷新。
+  const target = node.isDirectory ? node : findNodeByPath(treeData.value, node.path)
+  if (target == null || !target.isDirectory) {
+    refresh()
+    return
+  }
+  target.error = undefined
+  target.children = undefined
+  // expanded 还是 true，不清掉的话 expandDir 会把它当收起，仍然不发列举请求
+  target.expanded = false
+  expandDir(target)
 }
 
 function handleRefresh() {

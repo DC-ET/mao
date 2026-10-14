@@ -174,6 +174,8 @@ function handleClick(event: MouseEvent) {
     return
   }
   if (props.node.isSymlink) return
+  // 列举失败的占位错误节点：点行不当作文件打开（它的 path 其实是目录），只走重试按钮
+  if (props.node.error) return
   if (props.node.isDirectory) {
     emit('toggle-dir', props.node)
   } else {

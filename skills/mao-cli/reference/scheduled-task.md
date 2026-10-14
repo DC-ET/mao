@@ -169,3 +169,5 @@ mao scheduled-task delete --id 3
 ## 返回字段
 
 常见字段：`id`、`userId`、`agentId`、`sessionId`、`name`、`prompt`、`cronExpression`、`status`、`lastFireTime`、`lastExecutionStatus`、`nextFireTime`、`fireCount`、`createdAt`、`updatedAt`。
+
+执行状态取值：任务 `status` 为 `ACTIVE` / `PAUSED`；运行记录与 `lastExecutionStatus` 为 `RUNNING` / `QUEUED` / `COMPLETED` / `FAILED` / `CANCELLED` / `MISSED`。前端（桌面与管理后台）对这几个值都有汉化，出现其它值会原样展示。

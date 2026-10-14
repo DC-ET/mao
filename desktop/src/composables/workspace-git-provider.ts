@@ -145,7 +145,9 @@ export function createLocalGitProvider(workspace: string, sessionId: string): Wo
       let result: GitOperationResult
       try {
         const changes = await window.electronAPI.gitCommitInput(workspace, repoPath)
-        if (changes.error) return failedOperation('commit', changes.error)
+        // gitCommitInput 的失败契约是返回 { error: string }；failedOperation 只对 Error 实例
+        // 保留 message，直接传字符串会被换成笼统的「Git 操作失败」，排障时看不到真实原因。
+        if (changes.error) return failedOperation('commit', new Error(changes.error))
         const { data } = await api.post('/files/git-commit-message', {
           sessionId: numericSessionId,
           changes,

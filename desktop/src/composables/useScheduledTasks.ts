@@ -131,12 +131,15 @@ export function useScheduledTasks() {
   function runBadge(run: ScheduledTaskRun): string {
     if (run.status === 'RUNNING' && run.attempt > 1) return '重试中'
     if (run.status === 'FAILED' && run.nextRetryAt && Date.parse(run.nextRetryAt.replace(' ', 'T')) > Date.now()) return '待重试'
+    // 文案与 statusLabel / admin task-display.ts 保持一致：同一个状态在「执行记录」徽标和
+    // 「上次执行」列里必须长得一样，QUEUED 尤其不能一处「排队」一处「排队中」。
     switch (run.status) {
       case 'COMPLETED': return '成功'
       case 'FAILED': return '失败'
+      case 'SKIPPED': return '跳过'
       case 'CANCELLED': return '取消'
       case 'MISSED': return '错过'
-      case 'QUEUED': return '排队'
+      case 'QUEUED': return '排队中'
       case 'RUNNING': return '运行中'
       default: return run.status
     }
@@ -155,11 +158,15 @@ export function useScheduledTasks() {
     return (costMicros / 1_000_000).toLocaleString('zh-CN', { maximumFractionDigits: 4 })
   }
 
+  /** 「上次执行」状态汉化。取值需与后端 lastExecutionStatus 一致（含 CANCELLED / MISSED / RUNNING）。 */
   function statusLabel(status: string): string {
     switch (status) {
       case 'COMPLETED': return '成功'
       case 'FAILED': return '失败'
       case 'SKIPPED': return '跳过'
+      case 'CANCELLED': return '取消'
+      case 'MISSED': return '错过'
+      case 'RUNNING': return '运行中'
       case 'QUEUED': return '排队中'
       default: return '-'
     }

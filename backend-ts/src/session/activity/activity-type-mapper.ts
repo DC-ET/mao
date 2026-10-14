@@ -10,8 +10,8 @@ export function mapToolToType(toolName: string | null | undefined): string {
       return 'EDIT';
     case 'shell':
       return 'RUN';
-    case 'glob':
-    case 'list':
+    case 'glob_search':
+    case 'grep_search':
       return 'EXPLORE';
     case 'task_create':
     case 'task_update':
