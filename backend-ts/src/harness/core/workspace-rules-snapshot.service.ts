@@ -114,7 +114,8 @@ export class WorkspaceRulesSnapshotService {
   }
 
   private touchLogged(sessionId: number, marker: string): void {
-    // 重新 set 会把该键移到插入序末尾；超限时淘汰最旧的一个（LRU 简易实现）。
+    // 去重表按插入序淘汰（Map.set 不会把已存在的键移到末尾，故这里是 FIFO 而非严格 LRU）：
+    // 超限时删最早写入的那个。被淘汰只意味着该会话下次可能多打一条 info 日志，不影响功能。
     // 键已存在时 set 不增长 size，不必淘汰。
     if (this.loggedDiskHashes.size >= MAX_LOGGED_SESSIONS && !this.loggedDiskHashes.has(sessionId)) {
       const oldest = this.loggedDiskHashes.keys().next();
