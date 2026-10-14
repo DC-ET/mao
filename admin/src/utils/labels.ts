@@ -20,6 +20,12 @@ const SESSION_STATUS_LABELS: Record<string, string> = {
   ARCHIVED: '已归档'
 }
 
+const SESSION_TYPE_LABELS: Record<string, string> = {
+  NORMAL: '主会话',
+  SIDE_TASK: '边路任务',
+  SUBAGENT: '子代理'
+}
+
 const AUDIT_ACTION_LABELS: Record<string, string> = {
   READ: '读取',
   CREATE: '创建',
@@ -47,6 +53,20 @@ export function phaseLabel(
 
 export function sessionStatusLabel(code: string | null | undefined): string {
   return labelOf(SESSION_STATUS_LABELS, code)
+}
+
+export interface SessionTypeTag {
+  label: string;
+  type: 'warning' | 'info';
+}
+
+/**
+ * 会话类型标签：主会话（NORMAL / 缺省）不返回，列表里只有边路任务与子代理着标签，
+ * 一眼把这两类从主会话里区分出来。未知类型按原值展示，不静默吞掉。
+ */
+export function sessionTypeTag(code: string | null | undefined): SessionTypeTag | null {
+  if (code == null || code === 'NORMAL') return null;
+  return { label: SESSION_TYPE_LABELS[code] ?? code, type: code === 'SIDE_TASK' ? 'warning' : 'info' };
 }
 
 export function auditActionLabel(code: string | null | undefined): string {

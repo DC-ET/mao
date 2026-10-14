@@ -71,6 +71,15 @@
         </el-table-column>
         <el-table-column prop="userName" label="用户" width="120" show-overflow-tooltip />
         <el-table-column prop="agentName" label="Agent" width="120" show-overflow-tooltip />
+        <el-table-column label="类型" width="90">
+          <template #default="{ row }">
+            <el-tooltip v-if="sessionTypeTag(row.sessionType)" :content="sessionTypeTip(row)" placement="top">
+              <el-tag :type="sessionTypeTag(row.sessionType)!.type" size="small">
+                {{ sessionTypeTag(row.sessionType)!.label }}
+              </el-tag>
+            </el-tooltip>
+          </template>
+        </el-table-column>
         <el-table-column prop="executionMode" label="执行模式" width="100">
           <template #default="{ row }">
             <el-tag :type="row.executionMode === 'CLOUD' ? 'primary' : 'warning'" size="small">
@@ -135,6 +144,12 @@
               {{ executionModeLabel(row.executionMode) }}
             </el-tag>
           </div>
+          <div v-if="sessionTypeTag(row.sessionType)" class="mobile-card-row">
+            <span class="mobile-card-label">类型</span>
+            <el-tag :type="sessionTypeTag(row.sessionType)!.type" size="small">
+              {{ sessionTypeTag(row.sessionType)!.label }}
+            </el-tag>
+          </div>
           <div class="mobile-card-row">
             <span class="mobile-card-label">Token</span>
             <el-progress
@@ -192,7 +207,8 @@ import {
   PHASE_OPTIONS,
   SESSION_STATUS_OPTIONS,
   executionModeLabel,
-  phaseLabel
+  phaseLabel,
+  sessionTypeTag
 } from '../../utils/labels'
 
 const route = useRoute()
@@ -251,6 +267,12 @@ function phaseTagType(phase: string, pendingQuestionCount?: number): 'primary' |
     case 'CANCELLED': return 'warning'
     default: return 'info'
   }
+}
+
+/** 悬停说明来源：有父会话 ID 时指回父会话，否则解释这类会话怎么来的。 */
+function sessionTypeTip(row: { sessionType?: string | null; parentSessionId?: number | null }): string {
+  if (row.parentSessionId != null) return `父会话 #${row.parentSessionId}`
+  return row.sessionType === 'SIDE_TASK' ? '由主会话拉起的边路任务' : '由主会话委派的子代理'
 }
 
 let fetchSessionsSeq = 0

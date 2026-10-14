@@ -70,6 +70,10 @@ export interface AdminSessionVO {
   title?: string | null;
   status?: string | null;
   executionMode?: string | null;
+  /** 会话类型：NORMAL=主会话、SIDE_TASK=边路任务、SUBAGENT=子代理。 */
+  sessionType?: string | null;
+  /** 边路 / 子代理会话的父会话 ID；主会话为 null。 */
+  parentSessionId?: number | null;
   phase?: string;
   summary?: string | null;
   elapsedMs?: number;
@@ -235,6 +239,8 @@ export function toAdminSessionVO(
     title: session.title,
     status: session.status,
     executionMode: session.executionMode,
+    sessionType: session.sessionType ?? null,
+    parentSessionId: session.parentSessionId ?? null,
     phase: visiblePhase(session.phase),
     elapsedMs: session.elapsedMs != null ? session.elapsedMs : 0,
     projectKey: session.projectKey,

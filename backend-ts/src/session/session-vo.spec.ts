@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseContextManifest, toSessionVO } from './session-vo.js';
+import { parseContextManifest, toAdminSessionVO, toSessionVO } from './session-vo.js';
 
 describe('parseContextManifest', () => {
   it('parses a stored snapshot and drops broken json', () => {
@@ -28,5 +28,30 @@ describe('parseContextManifest', () => {
 
     const without = toSessionVO({ userId: 1, contextTokens: 21000 }, new Map(), new Map());
     expect(without.contextManifest).toBeNull();
+  });
+});
+
+describe('toAdminSessionVO', () => {
+  it('透出会话类型与父会话，主会话缺省为 NORMAL / null', () => {
+    const normal = toAdminSessionVO({ userId: 1 }, new Map(), new Map(), new Map());
+    expect(normal.sessionType).toBeNull();
+    expect(normal.parentSessionId).toBeNull();
+
+    const side = toAdminSessionVO(
+      { userId: 1, sessionType: 'SIDE_TASK', parentSessionId: 12 },
+      new Map(),
+      new Map(),
+      new Map(),
+    );
+    expect(side.sessionType).toBe('SIDE_TASK');
+    expect(side.parentSessionId).toBe(12);
+
+    const subagent = toAdminSessionVO(
+      { userId: 1, sessionType: 'SUBAGENT', parentSessionId: 12 },
+      new Map(),
+      new Map(),
+      new Map(),
+    );
+    expect(subagent.sessionType).toBe('SUBAGENT');
   });
 });

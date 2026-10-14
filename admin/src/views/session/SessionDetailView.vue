@@ -66,6 +66,14 @@
               {{ executionModeLabel(sessionInfo.executionMode) }}
             </el-tag>
           </el-descriptions-item>
+          <el-descriptions-item label="类型">
+            <el-tag :type="sessionTypeTag(sessionInfo.sessionType)?.type ?? 'info'" size="small">
+              {{ sessionTypeTag(sessionInfo.sessionType)?.label ?? '主会话' }}
+            </el-tag>
+            <router-link v-if="sessionInfo.parentSessionId != null" class="drill-link" :to="`/sessions/${sessionInfo.parentSessionId}`">
+              父会话 #{{ sessionInfo.parentSessionId }}
+            </router-link>
+          </el-descriptions-item>
           <el-descriptions-item label="任务阶段">
             <el-tag :type="phaseTagType(sessionInfo.phase, sessionInfo.pendingQuestionCount)" size="small">{{ phaseLabel(sessionInfo.phase, sessionInfo.pendingQuestionCount) }}</el-tag>
           </el-descriptions-item>
@@ -115,7 +123,7 @@ import { Refresh, Download, ArrowDown, ArrowLeft } from '@element-plus/icons-vue
 import { api } from '../../api'
 import { downloadBlob } from '../../utils/download'
 import { formatDateTime } from '../../utils/datetime'
-import { executionModeLabel, phaseLabel } from '../../utils/labels'
+import { executionModeLabel, phaseLabel, sessionTypeTag } from '../../utils/labels'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import { mapApiMessagesToChat } from './utils/chatMessage'
 import type { ChatMessage } from './types/chat'
