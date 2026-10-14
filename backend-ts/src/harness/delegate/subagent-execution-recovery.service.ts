@@ -118,13 +118,22 @@ export class SubagentExecutionRecoveryService {
   }
 
   private async findPersistedFinal(execution: SubagentExecution): Promise<Message | null> {
+    // 只采纳「本次尝试」产生的终态：消息 created_at 必须不早于本轮 startedAt。
+    // 重试复用同一 execution 行，上一轮尝试的 finalMessageId 与 executionStartMessageId
+    // 边界内的旧 ASSISTANT 消息都可能还躺在库里——采纳它们等于把用户已经放弃的旧结论
+    // 当成本轮终态落库并跳过重跑。无法验证归属（缺 startedAt，或消息没有 created_at）
+    // 时一律不采纳：重新执行永远正确，代价至多重跑一遍已经完成的工作。
+    const ofThisAttempt = (message: Message): boolean =>
+      execution.startedAt != null && message.createdAt != null && message.createdAt >= execution.startedAt;
     if (execution.finalMessageId != null) {
       const messages = await this.sessionService.getMessagesAfterId(execution.childSessionId!, execution.finalMessageId - 1);
-      return messages.find((message) => message.id === execution.finalMessageId && message.role === 'ASSISTANT') ?? null;
+      const found = messages.find((message) => message.id === execution.finalMessageId && message.role === 'ASSISTANT') ?? null;
+      return found != null && ofThisAttempt(found) ? found : null;
     }
     if (execution.executionStartMessageId == null) return null;
     const messages = await this.sessionService.getMessagesAfterId(execution.childSessionId!, execution.executionStartMessageId);
-    return [...messages].reverse().find((message) => message.role === 'ASSISTANT' && !message.toolCalls) ?? null;
+    const lastAssistant = [...messages].reverse().find((message) => message.role === 'ASSISTANT' && !message.toolCalls) ?? null;
+    return lastAssistant != null && ofThisAttempt(lastAssistant) ? lastAssistant : null;
   }
 
   private async findLastAssistant(childSessionId: number, startMessageId: number): Promise<Message | null> {

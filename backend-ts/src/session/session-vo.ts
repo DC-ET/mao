@@ -184,7 +184,10 @@ export function toSessionVO(
     contextManifest: parseContextManifest(session.contextManifestJson),
     permissionLevel: session.permissionLevel,
     memoryInjectionDisabled: session.memoryInjectionDisabled === 1,
-    running: session.phase === 'RUNNING' || session.phase === 'RESUMING' || session.phase === 'WAITING_APPROVAL',
+    // 与 isActivePhase / treeRunning（fillTreeSignals）/ 删除提升守卫 / 桌面 ACTIVE_PHASES
+    // 统一口径：CANCELLING 是取消流程进行中的活跃相位，漏列会让同一份会话列表响应里
+    // running=false 与 treeRunning=true 自相矛盾，取消中的会话被当成空闲。
+    running: isActivePhase(session.phase),
     unread: session.unread === 1,
   };
   if (session.isGit != null) {

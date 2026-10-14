@@ -231,7 +231,9 @@ export function applyFilter(groupKey: string | null | undefined): GroupFilterSql
 }
 
 export function isActivePhase(phase: string | null | undefined): boolean {
-  return phase === 'RUNNING' || phase === 'RESUMING' || phase === 'WAITING_APPROVAL';
+  // 与 session-vo.ts 的 isActivePhase 同口径：CANCELLING 是取消流程进行中的活跃相位，
+  // 组预览排序漏列会把取消中的会话当空闲排到后面。
+  return phase === 'RUNNING' || phase === 'RESUMING' || phase === 'WAITING_APPROVAL' || phase === 'CANCELLING';
 }
 
 export function compareSessions(a: Session, b: Session): number {

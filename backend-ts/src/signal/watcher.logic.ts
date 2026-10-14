@@ -42,7 +42,11 @@ export function extractJsonPath(root: unknown, path: string): unknown {
     }
     if (typeof current !== 'object') throw new ProbeValueError(`路径段 ${segment} 不是对象`);
     const record = current as Record<string, unknown>;
-    if (!(segment in record)) throw new ProbeValueError(`路径段 ${segment} 不存在`);
+    // 必须按自有属性判定：`in` 会命中原型链成员（JSON.parse 的对象原型是
+    // Object.prototype，'toString' in {} 为 true），把 toString/constructor 等段名
+    // 当成存在并取到原型上的函数，最终归一化成空串、哈希退化成 sha256('')，
+    // 「字段消失」被伪装成一次正常变化——正是本函数契约要避免的情况。
+    if (!Object.prototype.hasOwnProperty.call(record, segment)) throw new ProbeValueError(`路径段 ${segment} 不存在`);
     current = record[segment];
   }
   if (current === undefined || current === null) throw new ProbeValueError('取到的值为 null');

@@ -133,6 +133,13 @@ function describeError(error: unknown): string {
 
 export class FeishuMonitorService {
   private readonly active = new Map<number, { handle: FeishuBotHandle; generation: symbol; fingerprint: string; clearRetryTimer: () => void }>();
+  /**
+   * botId -> 连续失败次数：跨 launch 常驻。
+   * 重连到点后删 entry 靠 reconcile() 重新 launch，计数若放在 launch 局部会被每次
+   * 清零，指数退避永远走不到第二档，reconnectMaxMs / maxConsecutiveFailures 也失效
+   * （与 dingtalk/monitor.service.ts 同一修法）。
+   */
+  private readonly failureCounts = new Map<number, number>();
   /** botId -> 连接运行状态（仅内存记录，进程重启后由 SDK 回调重新填充）。 */
   private readonly runtimeStates = new Map<number, FeishuBotRuntimeState>();
   private timer: NodeJS.Timeout | null = null;
@@ -191,6 +198,8 @@ export class FeishuMonitorService {
       try { entry.clearRetryTimer(); entry.handle.stop(); } catch (error) { console.error(`重连前停止飞书Bot失败, id=${botId}`, error); }
       this.active.delete(botId);
     }
+    // 手动重连是管理员显式动作，退避计数归零，别让上一次故障的退避继续生效。
+    this.failureCounts.delete(botId);
     this.markRuntimeState(botId, { status: 'reconnecting' });
     void this.reconcile();
     return true;
@@ -210,6 +219,7 @@ export class FeishuMonitorService {
       try { entry.clearRetryTimer(); entry.handle.stop(); } catch (error) { console.error(`停止飞书Bot失败, id=${id}`, error); }
     }
     this.active.clear();
+    this.failureCounts.clear();
     this.started = false;
     console.info('飞书Bot监控已停止');
   }
@@ -236,7 +246,9 @@ export class FeishuMonitorService {
         }
         if (this.active.has(bot.id)) continue;
         try {
-          let failureCount = 0;
+          // 退避计数按 botId 常驻：reconcile 会用全新的 launch 重连，计数放在 launch 局部
+          // 会被每次清零，指数退避永远走不到第二档，reconnectMaxMs 也随之失效。
+          let failureCount = this.failureCounts.get(bot.id) ?? 0;
           let retryTimer: NodeJS.Timeout | null = null;
           const clearRetryTimer = (): void => {
             if (retryTimer != null) {
@@ -249,17 +261,20 @@ export class FeishuMonitorService {
           const callbacks: FeishuBotHandleCallbacks = {
             onReady: () => {
               failureCount = 0;
+              this.failureCounts.set(bot.id!, 0);
               clearRetryTimer();
               this.markRuntimeState(bot.id!, { status: 'ready', lastReadyAt: new Date().toISOString() });
             },
             onReconnected: () => {
               failureCount = 0;
+              this.failureCounts.set(bot.id!, 0);
               clearRetryTimer();
               this.markRuntimeState(bot.id!, { status: 'ready', lastReadyAt: new Date().toISOString() });
             },
             onFailure: (error?: unknown) => {
               if (this.active.get(bot.id!)?.generation !== generation) return;
               failureCount += 1;
+              this.failureCounts.set(bot.id!, failureCount);
               this.markRuntimeState(bot.id!, {
                 status: 'failed',
                 lastFailureReason: error != null ? describeError(error) : '未知错误',
@@ -268,6 +283,7 @@ export class FeishuMonitorService {
               if (failureCount > this.config.longConnection.maxConsecutiveFailures) {
                 console.warn(`飞书Bot长连接连续失败, id=${bot.id}, count=${failureCount}, 进入退避重连`);
                 failureCount = 1;
+                this.failureCounts.set(bot.id!, 1);
               }
               const delay = Math.min(
                 this.config.longConnection.reconnectMaxMs,

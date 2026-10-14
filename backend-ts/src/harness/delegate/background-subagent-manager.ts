@@ -320,11 +320,25 @@ export class BackgroundSubagentManager {
       if (kept.length > 0) this.resultsByParent.set(parentSessionId, kept);
       else this.resultsByParent.delete(parentSessionId);
     }
+    // finalMessageId / totalRounds / totalToolCalls / totalPromptTokens /
+    // totalCompletionTokens 与 result 一样都是「一次尝试（attempt）」的语义：重试复用
+    // 同一 execution 行（task_id 不变），开新一轮必须一起作废，否则
+    //   1. check_subagent / progress 把上一轮尝试的统计当作新一轮的实时进度上报；
+    //   2. 更严重的是 finalMessageId 仍指向上一轮的结论文档——重试执行期间进程崩溃后，
+    //      SubagentExecutionRecoveryService.findPersistedFinal 会直接采纳这条陈旧指针，
+    //      把上一轮结论当本轮终态落库并跳过重跑（用户放弃的旧结论被当成重试结果）。
+    // startedAt 刷新为本轮开始时刻，恢复侧据此判断消息是否属于本次尝试。
     await this.deps.subagentExecutionMapper.updateById(execution.id, {
       status: 'RUNNING',
       result: null,
       completedAt: null,
       deliveryStatus: 'PENDING',
+      finalMessageId: null,
+      totalRounds: 0,
+      totalToolCalls: 0,
+      totalPromptTokens: 0,
+      totalCompletionTokens: 0,
+      startedAt: nowSql(),
     });
     this.trackRunning(parentSessionId, execution.id);
     return { ok: true, taskId: execution.id, childSessionId };

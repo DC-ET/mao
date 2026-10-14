@@ -169,7 +169,11 @@ export class SubagentResultDeliveryService {
       sourceSessionId: execution.childSessionId,
       deleted: 0,
     });
-    if (existingId == null && this.fileChangeRepo && execution.childSessionId != null) {
+    // 通知去重与文件变更聚合是两件独立的事：崩溃可能发生在「通知已提交」与
+    // 「copyFileChanges 提交」之间，恢复复用已有通知时仍必须执行聚合，否则该后台
+    // 子代理本轮的文件变更永久丢失（父会话变更面板静默缺失）。幂等由 copyFileChanges
+    // 内按 fileChangeCopyKey 构建的 seen 集合保证，重复调用不会复制出重复行。
+    if (this.fileChangeRepo && execution.childSessionId != null) {
       await this.copyFileChanges(
         execution.childSessionId, assistantId, parentSessionId, execution.executionStartMessageId ?? null,
       );

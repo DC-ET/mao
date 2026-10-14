@@ -127,12 +127,19 @@ export class MysqlSignalWatcherRepository {
     return result.affectedRows === 1;
   }
 
-  /** 到期扫描（索引 idx_watcher_due(status, last_checked_at) 覆盖）。 */
+  /**
+   * 到期扫描（技术方案 §5.3：`last_checked_at` 为空或早于 `NOW() - interval_minutes`）。
+   *
+   * 阈值按行扣减 `interval_minutes`：DATE_SUB 作用于参数侧而非列，索引
+   * idx_watcher_due(status, last_checked_at) 仍可用于范围扫描。若只与原始 now
+   * 比较，markChecked 成功路径把 last_checked_at 写成当前时刻后，下一轮 30s
+   * 扫描必然再次命中，配置的轮询间隔（1~1440 分钟）被彻底旁路。
+   */
   listDue(now: string, limit: number): Promise<SignalWatcher[]> {
     return this.db.query<SignalWatcher>(
       `SELECT * FROM signal_watcher
        WHERE status = 'ACTIVE'
-         AND (last_checked_at IS NULL OR last_checked_at < ?)
+         AND (last_checked_at IS NULL OR last_checked_at < DATE_SUB(?, INTERVAL interval_minutes MINUTE))
        ORDER BY last_checked_at IS NOT NULL, last_checked_at
        LIMIT ${Math.max(1, Math.min(200, limit))}`,
       [now],

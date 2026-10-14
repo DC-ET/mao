@@ -1513,13 +1513,15 @@ export class SessionService {
   }
 
   async listSessionsForDashboard(userId: number): Promise<Record<string, Session[]>> {
+    // 运行中口径与 isActivePhase / 删除提升守卫一致，含 CANCELLING（取消流程进行中）；
+    // recent 用同一集合取反，保证两个分桶互补、不重不漏。
     const running = await this.sessionRepo.list(
-      `user_id = ? AND status = 'ACTIVE' AND phase IN ('RUNNING', 'RESUMING', 'WAITING_APPROVAL')`,
+      `user_id = ? AND status = 'ACTIVE' AND phase IN ('RUNNING', 'RESUMING', 'WAITING_APPROVAL', 'CANCELLING')`,
       [userId],
       'ORDER BY last_activity_at DESC',
     );
     const recent = await this.sessionRepo.list(
-      `user_id = ? AND status = 'ACTIVE' AND phase NOT IN ('RUNNING', 'RESUMING', 'WAITING_APPROVAL')`,
+      `user_id = ? AND status = 'ACTIVE' AND phase NOT IN ('RUNNING', 'RESUMING', 'WAITING_APPROVAL', 'CANCELLING')`,
       [userId],
       'ORDER BY updated_at DESC LIMIT 20',
     );
