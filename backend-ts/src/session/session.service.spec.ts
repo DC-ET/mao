@@ -686,8 +686,8 @@ describe('SessionService embed source', () => {
     const result = await service.listSessionsForAdmin(1, 10, null, null, null, null, '登录页面', null);
     const call = vi.mocked(sessionRepo.selectPage).mock.calls[0];
     expect(String(call[2])).toContain('title LIKE');
-    expect(String(call[2])).toContain('FROM message m');
-    expect(call[3]).toEqual(['%登录页面%', '%登录页面%', '%登录页面%', 'ACTIVE']);
+    expect(String(call[2])).toContain('MATCH(m.content) AGAINST (? IN BOOLEAN MODE)');
+    expect(call[3]).toEqual(['%登录页面%', '%登录页面%', '"登录页面"', 'ACTIVE']);
     expect(result.matchSnippets[31]).toContain('登录页面');
     expect(result.matchSnippets[31]).toContain('500');
   });
@@ -730,6 +730,55 @@ describe('SessionService embed source', () => {
     const result = await service.listSessionsForAdmin(1, 10, null, null, null, null, '  ', null);
     expect(result.matchSnippets).toEqual({});
     expect(messageRepo.selectFirstMatchingMessages).not.toHaveBeenCalled();
+  });
+
+  it('admin list keyword hits messages through fulltext index', async () => {
+    const { service, sessionRepo } = makeService();
+    vi.mocked(sessionRepo.selectPage).mockResolvedValue({
+      records: [session(31, '排障会话', 'NORMAL', 9, '2026-08-07 10:00:00')],
+      total: 1,
+    });
+    await service.listSessionsForAdmin(1, 10, null, null, null, null, '登录页面', null);
+    const call = vi.mocked(sessionRepo.selectPage).mock.calls[0];
+    expect(String(call[2])).toContain('MATCH(m.content) AGAINST (? IN BOOLEAN MODE)');
+    expect(String(call[2])).not.toContain('m.content LIKE');
+    // 布尔短语串作为独立参数下发，不拼进 SQL
+    expect(call[3]).toEqual(['%登录页面%', '%登录页面%', '"登录页面"', 'ACTIVE']);
+  });
+
+  it('admin list single-char keyword stays on LIKE scan', async () => {
+    const { service, sessionRepo } = makeService();
+    vi.mocked(sessionRepo.selectPage).mockResolvedValue({ records: [], total: 0 });
+    await service.listSessionsForAdmin(1, 10, null, null, null, null, '的', null);
+    const call = vi.mocked(sessionRepo.selectPage).mock.calls[0];
+    // ngram(token_size=2) 索引不到单字，走 LIKE 才不漏召
+    expect(String(call[2])).toContain('m.content LIKE');
+    expect(String(call[2])).not.toContain('AGAINST');
+    expect(call[3]).toEqual(['%的%', '%的%', '%的%', 'ACTIVE']);
+  });
+
+  it('admin list keyword falls back to LIKE when fulltext disabled', async () => {
+    const { service, sessionRepo } = makeService();
+    vi.mocked(sessionRepo.selectPage).mockResolvedValue({ records: [], total: 0 });
+    const previous = process.env.SEARCH_FULLTEXT_ENABLED;
+    process.env.SEARCH_FULLTEXT_ENABLED = 'false';
+    try {
+      await service.listSessionsForAdmin(1, 10, null, null, null, null, '登录页面', null);
+    } finally {
+      if (previous == null) delete process.env.SEARCH_FULLTEXT_ENABLED;
+      else process.env.SEARCH_FULLTEXT_ENABLED = previous;
+    }
+    const call = vi.mocked(sessionRepo.selectPage).mock.calls[0];
+    expect(String(call[2])).toContain('m.content LIKE');
+    expect(String(call[2])).not.toContain('AGAINST');
+  });
+
+  it('admin list escapes like wildcards in title and summary match', async () => {
+    const { service, sessionRepo } = makeService();
+    vi.mocked(sessionRepo.selectPage).mockResolvedValue({ records: [], total: 0 });
+    await service.listSessionsForAdmin(1, 10, null, null, null, null, '100%', null);
+    const call = vi.mocked(sessionRepo.selectPage).mock.calls[0];
+    expect(call[3]).toEqual(['%100\\%%', '%100\\%%', '"100%"', 'ACTIVE']);
   });
 });
 

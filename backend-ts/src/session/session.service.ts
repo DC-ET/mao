@@ -466,16 +466,23 @@ export class SessionService {
       }
     }
     const trimmedKeyword = keyword != null ? keyword.trim() : '';
-    if (trimmedKeyword.length > 0) {
-      const escaped = escapeLike(trimmedKeyword);
-      // 标题/摘要/消息正文任一命中即可；消息覆盖用户与助手，便于按聊天记录反查会话
+    // 关键词命中消息正文优先走 ngram 全文索引：LIKE '%kw%' 对 23 万条 message 全表扫，
+    // 实测 1~2s/次；FT 命中消息再 LEFT JOIN 回 session，可降到几十毫秒。
+    // 单字符关键词 ngram(token_size=2) 索引不到，会漏召，仍走 LIKE 子查询。
+    const messageMatch = this.buildAdminMessageMatch(trimmedKeyword);
+    if (messageMatch != null) {
+      const [matchSql, ...matchParams] = messageMatch;
+      clauses.push(`(title LIKE ? ESCAPE '\\\\' OR summary LIKE ? ESCAPE '\\\\' OR id IN (${matchSql}))`);
+      params.push(`%${escapeLike(trimmedKeyword)}%`, `%${escapeLike(trimmedKeyword)}%`, ...matchParams);
+    } else if (trimmedKeyword.length > 0) {
+      // 无全文索引可用的关键词（单字符 / 显式关闭 FT）：退回消息正文子串扫描。
       clauses.push(
         `(title LIKE ? ESCAPE '\\\\' OR summary LIKE ? ESCAPE '\\\\' OR id IN (
           SELECT m.session_id FROM message m
           WHERE m.deleted = 0 AND m.content LIKE CONCAT('%', ?, '%') ESCAPE '\\\\'
         ))`,
       );
-      params.push(`%${escaped}%`, `%${escaped}%`, `%${escaped}%`);
+      params.push(`%${escapeLike(trimmedKeyword)}%`, `%${escapeLike(trimmedKeyword)}%`, `%${escapeLike(trimmedKeyword)}%`);
     }
     clauses.push('status = ?');
     params.push(status != null && status.length > 0 ? status : 'ACTIVE');
@@ -484,6 +491,23 @@ export class SessionService {
     const result = await this.sessionRepo.selectPage(page, size, whereSql, params, 'ORDER BY created_at DESC, id DESC');
     const matchSnippets = await this.loadAdminMatchSnippets(result.records, trimmedKeyword);
     return { ...result, current: page, size, matchSnippets };
+  }
+
+  /**
+   * 管理端关键词的消息正文匹配子查询。返回 [sql, ...params]，无法走全文索引时返回 null（调用方降级 LIKE）。
+   * 全文索引建在 message.content 上（V146 ngram），命中消息的 session 经 DISTINCT 去重后用于 `id IN (...)`。
+   */
+  private buildAdminMessageMatch(keyword: string): [string, ...unknown[]] | null {
+    if (keyword.length === 0) return null;
+    const prepared = prepareMessageSearch(keyword, this.searchFulltextEnabled());
+    if (prepared.path !== 'FULLTEXT') return null;
+    const match = prepared.match.replace(/\*/g, '');
+    if (match.length === 0) return null;
+    return [
+      `SELECT m.session_id FROM message m
+       WHERE m.deleted = 0 AND MATCH(m.content) AGAINST (? IN BOOLEAN MODE)`,
+      match,
+    ];
   }
 
   private async loadAdminMatchSnippets(records: Session[], keyword: string): Promise<Record<number, string>> {
