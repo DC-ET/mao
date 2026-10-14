@@ -15,6 +15,7 @@ Mao 的**产品文档唯一正文**（可独立分发）+ **REST 操作 CLI**。
 | 本地开发：克隆、MySQL、启动三端 | [reference/install.md](reference/install.md) |
 | 生产自托管：服务器、Nginx、HTTPS、升级、运维 | [reference/deploy.md](reference/deploy.md) |
 | 双域名合并为单域名 / 改 Nginx | 仓库 [docs/guides/single-domain-nginx-migration.md](../../docs/guides/single-domain-nginx-migration.md) |
+| 工作区规则（AGENTS.md）会话级冻结：改了不生效 / 前缀缓存塌陷 / 强制刷新 | 仓库 [docs/guides/workspace-rules-snapshot.md](../../docs/guides/workspace-rules-snapshot.md) |
 | 环境变量、数据目录、默认账号、认证方式 | [reference/config.md](reference/config.md) |
 | 管理后台怎么用 / Agent 头像与分组编辑 / 提示词版本与回滚 | [reference/admin.md](reference/admin.md) |
 | 桌面 Web 端（任务、工作区、终端、通知、渠道绑定、我的用量抽屉等） | [reference/desktop.md](reference/desktop.md) |

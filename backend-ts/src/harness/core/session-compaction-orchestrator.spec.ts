@@ -47,6 +47,7 @@ function setup(deps: {
   histories: ReturnType<typeof history>[];
   persisted: boolean;
   compactResult: ReturnType<typeof compactionResult> | null;
+  workspaceRulesSnapshot?: { invalidate: ReturnType<typeof vi.fn> } | null;
 }) {
   const sessionCompactionService = {
     loadValidated: vi.fn(),
@@ -63,6 +64,9 @@ function setup(deps: {
   const activeContextCalculator = { estimateRequestTokens: vi.fn(() => 100) };
   const promptEngine = { buildRequest: vi.fn(async () => ({ messages: [] })) };
   const compactionArchiveService = { writeArchive: vi.fn() };
+  const workspaceRulesSnapshot = deps.workspaceRulesSnapshot === undefined
+    ? { invalidate: vi.fn(async () => {}) }
+    : deps.workspaceRulesSnapshot;
   const orchestrator = new SessionCompactionOrchestrator(
     sessionCompactionService as never,
     sessionCompactionEventService as never,
@@ -72,6 +76,8 @@ function setup(deps: {
     activeContextCalculator as never,
     promptEngine as never,
     compactionArchiveService as never,
+    null,
+    workspaceRulesSnapshot as never,
   );
   sessionCompactionService.loadValidated.mockImplementation(async () => deps.loadValidatedCalls.shift() ?? null);
   sessionHistoryLoader.loadHistoryAfterBoundary.mockImplementation(async () => deps.histories.shift() ?? history([]));
@@ -82,7 +88,7 @@ function setup(deps: {
   const listener = { onCompactionEnd: vi.fn(), onCompactionPersisted: vi.fn(), onContextWindow: vi.fn() };
   return {
     orchestrator, context, listener, compactionArchiveService,
-    sessionCompactionEventService, sessionHistoryLoader,
+    sessionCompactionEventService, sessionHistoryLoader, workspaceRulesSnapshot,
   };
 }
 
@@ -172,5 +178,51 @@ describe('SessionCompactionOrchestrator compaction archive', () => {
     expect(seq).toBe(2);
     expect(archived.map((m: Message) => m.id)).toEqual([11, 15, 20]);
     expect(s.sessionCompactionEventService.record).not.toHaveBeenCalled();
+  });
+});
+
+describe('SessionCompactionOrchestrator workspace rules invalidation', () => {
+  function base(persisted: boolean) {
+    return {
+      loadValidatedCalls: [record(10, 1), record(20, 2)] as Array<SessionCompaction | null>,
+      histories: [history(entityMessages()), history([])] as ReturnType<typeof history>[],
+      persisted,
+      compactResult: compactionResult(),
+    };
+  }
+
+  it('压缩提交成功后解冻工作区规则快照', async () => {
+    const s = setup(base(true));
+    const advanced = await runCompact(s);
+    expect(advanced).toBe(true);
+    expect(s.workspaceRulesSnapshot.invalidate).toHaveBeenCalledOnce();
+    expect(s.workspaceRulesSnapshot.invalidate).toHaveBeenCalledWith(42);
+    // 失效只发生在压缩请求发出之后，不污染本次 afterRequest 的 token 估算
+    expect(s.compactionArchiveService.writeArchive).toHaveBeenCalledOnce();
+  });
+
+  it('CAS 冲突（persisted=false）不解冻，避免白刷一次前缀', async () => {
+    const s = setup(base(false));
+    await runCompact(s);
+    expect(s.workspaceRulesSnapshot.invalidate).not.toHaveBeenCalled();
+  });
+
+  it('未注入快照服务时不影响压缩', async () => {
+    const s = setup({ ...base(true), workspaceRulesSnapshot: null });
+    const advanced = await runCompact(s);
+    expect(advanced).toBe(true);
+  });
+
+  it('解冻失败不外抛：已成功的压缩不能被伪装成 CompactionStateReloadException', async () => {
+    const invalidate = vi.fn(async () => {
+      throw new Error('db down');
+    });
+    const s = setup({ ...base(true), workspaceRulesSnapshot: { invalidate } });
+    const advanced = await runCompact(s);
+    expect(advanced).toBe(true);
+    expect(invalidate).toHaveBeenCalledOnce();
+    // 压缩事件照常记录，说明 compact() 正常走完而非被外层 catch 改写
+    expect(s.sessionCompactionEventService.record).toHaveBeenCalledOnce();
+    expect(s.listener.onCompactionPersisted).toHaveBeenCalledOnce();
   });
 });

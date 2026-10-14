@@ -16,7 +16,7 @@
 管理后台 / CLI 的 `systemPrompt`（角色定义）只写身份、业务目标、文风和领域禁忌。通道规则由引擎按会话注入，不要复制进每个 Agent：
 
 - **嵌入网页浮窗**（会话持有 `page_*`）：页面上下文协议、可见范围、page 工具纪律、截图展示、安全边界、窄浮窗交互；不注入编程工作区 / `AGENTS.md`。
-- **桌面 / CLI 编程会话**：工作目录、文件与 shell 用法、上传文件、`AGENTS.md`。
+- **桌面 / CLI 编程会话**：工作目录、文件与 shell 用法、上传文件、`AGENTS.md`（会话级冻结：会话内编辑只对新会话 / 压缩后生效，见 [docs/guides/workspace-rules-snapshot.md](../../../docs/guides/workspace-rules-snapshot.md)）。
 - **微信**：另有媒体发送说明与默认经验。
 - **能力插件**：有对应工具才追加（待办、子代理、技能目录等）。
 

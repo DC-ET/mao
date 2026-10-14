@@ -192,6 +192,8 @@ import { ContextManager } from './harness/core/context-manager.js';
 import { CompactionService } from './harness/core/compaction-service.js';
 import { CompactionArchiveService } from './harness/core/compaction-archive.service.js';
 import { SessionCompactionOrchestrator } from './harness/core/session-compaction-orchestrator.js';
+import { WorkspaceRulesSnapshotRepository } from './harness/core/workspace-rules-snapshot.repository.js';
+import { WorkspaceRulesSnapshotService } from './harness/core/workspace-rules-snapshot.service.js';
 import { CompactionSignalBus } from './harness/core/compaction-signal-bus.js';
 import { SessionHistoryLoader } from './harness/core/session-history-loader.js';
 import { TokenEstimator } from './harness/core/token-estimator.js';
@@ -760,6 +762,10 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     { getValue: (key) => settingService.getValue(key) },
     { getUserId: async (sessionId) => (await sessionRepo.findById(sessionId))?.userId ?? null },
   );
+  // 会话级工作区规则快照（V153）：只依赖 db，必须早于 sessionService 构造——
+  // onSessionDeleted 钩子在下面就要直接引用它（技术方案 §4.6 评审补充）。
+  const workspaceRulesSnapshotRepo = new WorkspaceRulesSnapshotRepository(db);
+  const workspaceRulesSnapshotService = new WorkspaceRulesSnapshotService(workspaceRulesSnapshotRepo);
   const sessionService = new SessionService(
     sessionRepo, messageRepo, fileChangeRepo,
     {
@@ -776,6 +782,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     async (sessionId) => {
       await deleteScheduledTasksForSession?.(sessionId);
       mcpSyncRef?.clearCloudSnapshot(sessionId);
+      // 工作区规则快照同理会话级资源，物理删行（技术方案 §4.6）
+      await workspaceRulesSnapshotService.deleteBySessionId(sessionId);
     },
     (sessionId) => approvalRuleRepo.deleteBySessionId(sessionId),
   );
@@ -924,7 +932,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     ),
     llmCallService,
   );
-  const promptEngine = new PromptEngine(skillLoader, pathSandbox, runtimeResolver, commandService, skillSync);
+  const promptEngine = new PromptEngine(skillLoader, pathSandbox, runtimeResolver, commandService, skillSync, workspaceRulesSnapshotService);
   const tokenEstimator = new TokenEstimator();
   const compactionService = new CompactionService(llmAdapter, tokenEstimator);
   const contextManager = new ContextManager(tokenEstimator, compactionService);
@@ -944,7 +952,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const orchestrator = new SessionCompactionOrchestrator(
     compactionSvc, sessionCompactionEventService, historyLoader,
     contextManager, sessionSvc, activeContext, promptEngine, compactionArchiveService,
-    compactionModelResolver,
+    compactionModelResolver, workspaceRulesSnapshotService,
   );
   const backgroundTasks = new BackgroundTaskManager();
   const shellManager = new ShellSessionManager(
