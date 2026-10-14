@@ -184,10 +184,12 @@ export class McpClientManager {
   private buildTransport(server: McpServer, env: Record<string, string>): unknown {
     if (server.serverType === TYPE_STDIO) {
       const args = parseArgs(server.argsJson);
+      // env 白名单（技术方案 §5.10）：stdio MCP 是用户可控子进程，{ ...process.env }
+      // 会把 MYSQL_URL / APP_* 密钥等宿主机环境整包交给用户进程。只放行必要键。
       return new StdioClientTransport({
         command: server.command ?? '',
         args,
-        env: { ...process.env, ...env } as Record<string, string>,
+        env: mcpWhitelistEnv(env),
       });
     }
     // HTTP 路径在 connect() 中处理 Streamable→SSE 回退
@@ -243,6 +245,24 @@ function parseArgs(argsJson: string | null | undefined): string[] {
   } catch {
     return [];
   }
+}
+
+/**
+ * stdio MCP 子进程允许从宿主机 process.env 继承的键（技术方案 §5.10）。
+ * 白名单只保留路径/语言/终端类必要键；MYSQL_URL、APP_*、GIT_TOKEN_*、JWT_SECRET
+ * 等平台凭据一律不出现。server 自身配置的 envJson 与用户级凭据由调用方另行注入。
+ */
+const MCP_ALLOWED_INHERITED_ENV_KEYS = [
+  'PATH', 'HOME', 'LANG', 'LC_ALL', 'TERM', 'TMPDIR', 'SHELL', 'USER', 'LOGNAME',
+];
+
+export function mcpWhitelistEnv(serverEnv: Record<string, string>): Record<string, string> {
+  const inherited: Record<string, string> = {};
+  for (const key of MCP_ALLOWED_INHERITED_ENV_KEYS) {
+    const value = process.env[key];
+    if (value != null) inherited[key] = value;
+  }
+  return { ...inherited, ...serverEnv };
 }
 
 /** 解析工具参数；非法 JSON 或非对象返回 null（调用方据此拒绝调用），空参数视为 {}。 */

@@ -86,14 +86,16 @@ describe('ShellSessionTool', () => {
     expect(gone.error).toContain('不存在');
   });
 
-  it('allows shell workdirs outside the workspace', async () => {
-    const result = JSON.parse(await tool.execute(JSON.stringify({ command: 'ls', workdir: '/etc' }), 11, 7, '/tmp'));
+  it('resolves shell workdirs with the strict sandbox (no lenient path)', async () => {
+    // workdir 收紧（技术方案 §5.7.2）：改走严格 resolve，不再经 resolveLenient
+    const result = JSON.parse(await tool.execute(JSON.stringify({ command: 'ls', workdir: '/tmp/work' }), 11, 7, '/tmp'));
     expect(result.error).toBeUndefined();
-    expect(pathSandbox.resolveLenient).toHaveBeenCalledWith('/etc', '/tmp');
+    expect(pathSandbox.resolve).toHaveBeenCalledWith('/tmp/work', '/tmp');
+    expect(pathSandbox.resolveLenient).not.toHaveBeenCalled();
   });
 
   it('maps shell workdir resolution errors to error json', async () => {
-    pathSandbox.resolveLenient.mockImplementationOnce(() => { throw new SecurityException('blocked'); });
+    pathSandbox.resolve.mockImplementationOnce(() => { throw new SecurityException('blocked'); });
     const result = JSON.parse(await tool.execute(JSON.stringify({ command: 'ls', workdir: '/etc' }), 11, 7, '/tmp'));
     expect(result.error).toContain('blocked');
   });

@@ -1,8 +1,7 @@
-import { existsSync, readFileSync, statSync } from 'node:fs';
 import { BaseTool } from '../tool.js';
 import { asText, errorJson, parseObject, toJson } from '../json.js';
 import { ImageFileSupport } from '../image-file-support.js';
-import { fetchBytesWithLimits } from './fetch-bytes.js';
+import { loadSendFileBytes, type SendBytesSupport } from './send-file-bytes.js';
 import type { WeixinChannelTool } from '../weixin-channel-tool.js';
 import type { PathSandbox } from '../../safety/path-sandbox.js';
 import { harnessLog } from '../../log.js';
@@ -33,6 +32,7 @@ export class SendWechatImageTool extends BaseTool implements WeixinChannelTool {
     private readonly toolSupport: WeixinMediaToolSupport,
     private readonly uploadService: WeixinMediaUploadService,
     private readonly sendService: WeixinSendService,
+    private readonly sendBytesSupport?: SendBytesSupport | null,
   ) { super(); }
 
   getName(): string { return 'send_wechat_image'; }
@@ -59,7 +59,7 @@ export class SendWechatImageTool extends BaseTool implements WeixinChannelTool {
       if (!image) return errorJson('缺少必填参数: image');
       const account = await this.toolSupport.resolveAccount(sessionId, userId);
       if (!account) return errorJson('微信账号未绑定或尚未建立会话');
-      const bytes = await loadBytes(image, this.pathSandbox, workspace, MAX_IMAGE_BYTES);
+      const bytes = await loadSendFileBytes(image, this.pathSandbox, this.sendBytesSupport ?? null, { userId, sessionId, workspace }, MAX_IMAGE_BYTES);
       if (bytes.length > MAX_IMAGE_BYTES) return errorJson('图片超过 20MB 上限');
       const mime = ImageFileSupport.detectMimeFromBytes(bytes);
       if (!mime || !ALLOWED_IMAGE_MIMES.has(mime)) return errorJson('不支持的图片格式');
@@ -81,6 +81,7 @@ export class SendWechatFileTool extends BaseTool implements WeixinChannelTool {
     private readonly toolSupport: WeixinMediaToolSupport,
     private readonly uploadService: WeixinMediaUploadService,
     private readonly sendService: WeixinSendService,
+    private readonly sendBytesSupport?: SendBytesSupport | null,
   ) { super(); }
 
   getName(): string { return 'send_wechat_file'; }
@@ -108,7 +109,7 @@ export class SendWechatFileTool extends BaseTool implements WeixinChannelTool {
       if (!file) return errorJson('缺少必填参数: file');
       const account = await this.toolSupport.resolveAccount(sessionId, userId);
       if (!account) return errorJson('微信账号未绑定或尚未建立会话');
-      const bytes = await loadBytes(file, this.pathSandbox, workspace, MAX_FILE_BYTES);
+      const bytes = await loadSendFileBytes(file, this.pathSandbox, this.sendBytesSupport ?? null, { userId, sessionId, workspace }, MAX_FILE_BYTES);
       const fileName = asText(args.filename) ?? file.split(/[\\/]/).pop() ?? 'file';
       const uploaded = await this.uploadService.uploadFile(account.accountId, account.wxUserId, bytes, fileName, 'application/octet-stream');
       const ok = await this.sendService.sendFile(account.accountId, account.wxUserId, uploaded.mediaId, fileName);
@@ -120,13 +121,3 @@ export class SendWechatFileTool extends BaseTool implements WeixinChannelTool {
   }
 }
 
-async function loadBytes(src: string, sandbox: PathSandbox, workspace: string | null, maxBytes: number): Promise<Buffer> {
-  if (src.startsWith('http://') || src.startsWith('https://')) {
-    return fetchBytesWithLimits(src, maxBytes);
-  }
-  const resolved = sandbox.resolveLenient(src, workspace);
-  if (!existsSync(resolved) || !statSync(resolved).isFile()) {
-    throw new Error('文件不存在：' + src);
-  }
-  return readFileSync(resolved);
-}

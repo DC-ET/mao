@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { BaseTool } from '../tool.js';
 import { asText, errorJson, parseObject, toJson } from '../json.js';
 import { ImageFileSupport } from '../image-file-support.js';
-import { fetchBytesWithLimits } from './fetch-bytes.js';
+import { loadSendFileBytes, type SendBytesSupport } from './send-file-bytes.js';
 import type { PathSandbox } from '../../safety/path-sandbox.js';
 import type { FeishuChannelTool } from '../feishu-channel-tool.js';
 import type { FeishuSendTarget } from '../../../feishu/media-sender.js';
@@ -139,7 +139,7 @@ export class FeishuDownloadFileTool extends BaseTool implements FeishuChannelToo
     return { type: 'object', properties: { success: { type: 'boolean' }, path: { type: 'string', description: '下载后的本地文件路径' } } };
   }
 
-  protected override async executeWithUser(argumentsJson: string, sessionId: number | null, _userId: number | null, workspace: string | null): Promise<string> {
+  protected override async executeWithUser(argumentsJson: string, sessionId: number | null, userId: number | null, workspace: string | null): Promise<string> {
     try {
       const args = parseObject(argumentsJson) ?? {};
       const messageId = asText(args.message_id);
@@ -187,6 +187,7 @@ export class SendFeishuImageTool extends BaseTool implements FeishuChannelTool {
   constructor(
     private readonly pathSandbox: PathSandbox,
     private readonly support: FeishuMediaSendSupport,
+    private readonly sendBytesSupport?: SendBytesSupport | null,
   ) { super(); }
 
   getName(): string { return 'feishu_send_image'; }
@@ -206,14 +207,14 @@ export class SendFeishuImageTool extends BaseTool implements FeishuChannelTool {
     return { type: 'object', properties: { success: { type: 'boolean' } } };
   }
 
-  protected override async executeWithUser(argumentsJson: string, sessionId: number | null, _userId: number | null, workspace: string | null): Promise<string> {
+  protected override async executeWithUser(argumentsJson: string, sessionId: number | null, userId: number | null, workspace: string | null): Promise<string> {
     try {
       const args = parseObject(argumentsJson) ?? {};
       const image = asText(args.image);
       if (!image) return errorJson('缺少必填参数: image');
       const target = await this.support.resolveSendTarget(sessionId);
       if (!target) return errorJson('当前会话不是飞书通道会话，无法发送飞书图片');
-      const bytes = await loadBytes(image, this.pathSandbox, workspace, MAX_FEISHU_IMAGE_BYTES);
+      const bytes = await loadSendFileBytes(image, this.pathSandbox, this.sendBytesSupport ?? null, { userId, sessionId, workspace }, MAX_FEISHU_IMAGE_BYTES);
       if (bytes.length === 0) return errorJson('图片内容为空');
       if (bytes.length > MAX_FEISHU_IMAGE_BYTES) return errorJson('图片超过 10MB 上限');
       const mime = ImageFileSupport.detectMimeFromBytes(bytes);
@@ -233,6 +234,7 @@ export class SendFeishuFileTool extends BaseTool implements FeishuChannelTool {
   constructor(
     private readonly pathSandbox: PathSandbox,
     private readonly support: FeishuMediaSendSupport,
+    private readonly sendBytesSupport?: SendBytesSupport | null,
   ) { super(); }
 
   getName(): string { return 'feishu_send_file'; }
@@ -253,14 +255,14 @@ export class SendFeishuFileTool extends BaseTool implements FeishuChannelTool {
     return { type: 'object', properties: { success: { type: 'boolean' } } };
   }
 
-  protected override async executeWithUser(argumentsJson: string, sessionId: number | null, _userId: number | null, workspace: string | null): Promise<string> {
+  protected override async executeWithUser(argumentsJson: string, sessionId: number | null, userId: number | null, workspace: string | null): Promise<string> {
     try {
       const args = parseObject(argumentsJson) ?? {};
       const file = asText(args.file);
       if (!file) return errorJson('缺少必填参数: file');
       const target = await this.support.resolveSendTarget(sessionId);
       if (!target) return errorJson('当前会话不是飞书通道会话，无法发送飞书文件');
-      const bytes = await loadBytes(file, this.pathSandbox, workspace, MAX_FEISHU_FILE_BYTES);
+      const bytes = await loadSendFileBytes(file, this.pathSandbox, this.sendBytesSupport ?? null, { userId, sessionId, workspace }, MAX_FEISHU_FILE_BYTES);
       if (bytes.length === 0) return errorJson('文件内容为空');
       if (bytes.length > MAX_FEISHU_FILE_BYTES) return errorJson('文件超过 30MB 上限');
       const fileName = asText(args.filename) || file.replace(/\\/g, '/').split('/').pop() || 'file';
@@ -271,15 +273,4 @@ export class SendFeishuFileTool extends BaseTool implements FeishuChannelTool {
       return errorJson((e as Error).message);
     }
   }
-}
-
-async function loadBytes(src: string, sandbox: PathSandbox, workspace: string | null, maxBytes: number): Promise<Buffer> {
-  if (src.startsWith('http://') || src.startsWith('https://')) {
-    return fetchBytesWithLimits(src, maxBytes);
-  }
-  const resolved = sandbox.resolveLenient(src, workspace);
-  if (!existsSync(resolved) || !statSync(resolved).isFile()) {
-    throw new Error('文件不存在：' + src);
-  }
-  return readFile(resolved);
 }

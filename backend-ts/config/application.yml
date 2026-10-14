@@ -76,6 +76,24 @@ app:
     secret-key: ${APP_MCP_SECRET:mao-mcp-default-secret-change-me}
     client-timeout-seconds: ${APP_MCP_CLIENT_TIMEOUT_SECONDS:120}
     sync-timeout-seconds: ${APP_MCP_SYNC_TIMEOUT_SECONDS:60}
+  # 用户运行时容器隔离（技术方案 §5.12）：mode=host 保持现状；docker 时执行类工具进每用户容器。
+  # 注意 MAO_CONTAINER_IDLE_MINUTES 必须大于管理后台配置的 shell 会话空闲超时
+  # （sessionIdleTimeoutMinutes，默认 30）：容器先停会把容器内全部 shell 会话杀掉。
+  cloud-runtime:
+    mode: ${MAO_CLOUD_RUNTIME:host}
+    container:
+      idle-minutes: ${MAO_CONTAINER_IDLE_MINUTES:60}
+      max-lifetime-hours: ${MAO_CONTAINER_MAX_LIFETIME_HOURS:72}
+      memory-mb: ${MAO_CONTAINER_MEMORY_MB:2048}
+      cpus: ${MAO_CONTAINER_CPUS:2}
+      pids-limit: ${MAO_CONTAINER_PIDS_LIMIT:512}
+      image: ${MAO_CONTAINER_IMAGE:mao-runtime:latest}
+      network: ${MAO_CONTAINER_NETWORK:bridge}
+      channel-dir: ${MAO_CONTAINER_CHANNEL_DIR:/opt/mao-data/runtime/channels}
+      dist-dir: ${MAO_CONTAINER_DIST_DIR:/opt/mao/backend-ts/dist}
+      deps-dir: ${MAO_CONTAINER_DEPS_DIR:/opt/mao-data/deps}
+      tmpfs-size-mb: ${MAO_CONTAINER_TMPFS_SIZE_MB:512}
+      start-timeout-ms: ${MAO_CONTAINER_START_TIMEOUT_MS:15000}
 
 weixin:
   bot:

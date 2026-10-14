@@ -19,6 +19,17 @@ function validateUserStatus(status: number | null | undefined): void {
   }
 }
 
+/** 用户级运行时模式合法值；空串/null 视为清除覆盖（跟随全局）。 */
+export function normalizeRuntimeMode(value: string | null | undefined): string | null {
+  if (value == null) return null;
+  const trimmed = value.trim();
+  if (trimmed === '') return null;
+  if (trimmed !== 'docker' && trimmed !== 'host') {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, '运行时模式仅支持 docker / host');
+  }
+  return trimmed;
+}
+
 export class UserService {
   constructor(
     private readonly userRepo: UserRepository,
@@ -71,8 +82,12 @@ export class UserService {
     roleIds: number[] | null | undefined,
     status: number | null | undefined,
     currentUserId?: number,
+    runtimeMode?: string | null | undefined,
   ): Promise<User> {
     const user = await this.getUser(id);
+    if (runtimeMode !== undefined) {
+      user.runtimeMode = normalizeRuntimeMode(runtimeMode);
+    }
     if (hasText(displayName ?? undefined)) {
       user.displayName = displayName!.trim();
     }

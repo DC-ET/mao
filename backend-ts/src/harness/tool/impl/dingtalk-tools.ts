@@ -1,9 +1,7 @@
-import { existsSync, statSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
 import { BaseTool } from '../tool.js';
 import { asText, errorJson, parseObject, toJson } from '../json.js';
 import { ImageFileSupport } from '../image-file-support.js';
-import { fetchBytesWithLimits } from './fetch-bytes.js';
+import { loadSendFileBytes, type SendBytesSupport } from './send-file-bytes.js';
 import type { PathSandbox } from '../../safety/path-sandbox.js';
 import type { DingtalkChannelTool } from '../dingtalk-channel-tool.js';
 import { DINGTALK_FILE_EXTENSIONS, DINGTALK_FILE_MAX_BYTES, DINGTALK_IMAGE_MAX_BYTES, fileExtension, fileMessageParam } from '../../../dingtalk/send.service.js';
@@ -29,7 +27,7 @@ const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/bmp'
 export class SendDingtalkImageTool extends BaseTool implements DingtalkChannelTool {
   readonly dingtalkChannelTool = true as const;
 
-  constructor(private readonly pathSandbox: PathSandbox, private readonly support: DingtalkMediaSendSupport) { super(); }
+  constructor(private readonly pathSandbox: PathSandbox, private readonly support: DingtalkMediaSendSupport, private readonly sendBytesSupport?: SendBytesSupport | null) { super(); }
 
   getName(): string { return 'dingtalk_send_image'; }
   getDescription(): string {
@@ -46,13 +44,13 @@ export class SendDingtalkImageTool extends BaseTool implements DingtalkChannelTo
     return { type: 'object', properties: { success: { type: 'boolean' }, filename: { type: 'string' } } };
   }
 
-  protected override async executeWithUser(argumentsJson: string, sessionId: number | null, _userId: number | null, workspace: string | null): Promise<string> {
+  protected override async executeWithUser(argumentsJson: string, sessionId: number | null, userId: number | null, workspace: string | null): Promise<string> {
     try {
       const image = asText((parseObject(argumentsJson) ?? {}).image);
       if (!image) return errorJson('缺少必填参数: image');
       const target = await this.support.resolveSendTarget(sessionId);
       if (!target) return errorJson('当前会话不是钉钉通道会话，无法发送钉钉图片');
-      const bytes = await loadBytes(image, this.pathSandbox, workspace, DINGTALK_IMAGE_MAX_BYTES);
+      const bytes = await loadSendFileBytes(image, this.pathSandbox, this.sendBytesSupport ?? null, { userId, sessionId, workspace }, DINGTALK_IMAGE_MAX_BYTES);
       if (bytes.length === 0) return errorJson('图片内容为空');
       if (bytes.length > DINGTALK_IMAGE_MAX_BYTES) return errorJson('图片超过 20MB 上限');
       const mime = ImageFileSupport.detectMimeFromBytes(bytes);
@@ -70,7 +68,7 @@ export class SendDingtalkImageTool extends BaseTool implements DingtalkChannelTo
 export class SendDingtalkFileTool extends BaseTool implements DingtalkChannelTool {
   readonly dingtalkChannelTool = true as const;
 
-  constructor(private readonly pathSandbox: PathSandbox, private readonly support: DingtalkMediaSendSupport) { super(); }
+  constructor(private readonly pathSandbox: PathSandbox, private readonly support: DingtalkMediaSendSupport, private readonly sendBytesSupport?: SendBytesSupport | null) { super(); }
 
   getName(): string { return 'dingtalk_send_file'; }
   getDescription(): string {
@@ -90,7 +88,7 @@ export class SendDingtalkFileTool extends BaseTool implements DingtalkChannelToo
     return { type: 'object', properties: { success: { type: 'boolean' }, filename: { type: 'string' } } };
   }
 
-  protected override async executeWithUser(argumentsJson: string, sessionId: number | null, _userId: number | null, workspace: string | null): Promise<string> {
+  protected override async executeWithUser(argumentsJson: string, sessionId: number | null, userId: number | null, workspace: string | null): Promise<string> {
     try {
       const args = parseObject(argumentsJson) ?? {};
       const file = asText(args.file);
@@ -100,7 +98,7 @@ export class SendDingtalkFileTool extends BaseTool implements DingtalkChannelToo
       if ('error' in checked) return errorJson(checked.error);
       const target = await this.support.resolveSendTarget(sessionId);
       if (!target) return errorJson('当前会话不是钉钉通道会话，无法发送钉钉文件');
-      const bytes = await loadBytes(file, this.pathSandbox, workspace, DINGTALK_FILE_MAX_BYTES);
+      const bytes = await loadSendFileBytes(file, this.pathSandbox, this.sendBytesSupport ?? null, { userId, sessionId, workspace }, DINGTALK_FILE_MAX_BYTES);
       if (bytes.length === 0) return errorJson('文件内容为空');
       if (bytes.length > DINGTALK_FILE_MAX_BYTES) return errorJson('文件超过 20MB 上限');
       if (fileExtension(filename) === '') return errorJson(`钉钉文件仅支持 ${DINGTALK_FILE_EXTENSIONS.join('、')}`);
@@ -111,11 +109,4 @@ export class SendDingtalkFileTool extends BaseTool implements DingtalkChannelToo
       return errorJson((error as Error).message);
     }
   }
-}
-
-async function loadBytes(src: string, sandbox: PathSandbox, workspace: string | null, maxBytes: number): Promise<Buffer> {
-  if (src.startsWith('http://') || src.startsWith('https://')) return fetchBytesWithLimits(src, maxBytes);
-  const resolved = sandbox.resolveLenient(src, workspace);
-  if (!existsSync(resolved) || !statSync(resolved).isFile()) throw new Error('文件不存在：' + src);
-  return readFile(resolved);
 }

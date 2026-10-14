@@ -165,7 +165,8 @@ export class ShellSessionTool extends BaseTool {
     const yieldTimeMs = args.yield_time_ms != null ? asInt(args.yield_time_ms, DEFAULT_EXEC_YIELD_MS) : DEFAULT_EXEC_YIELD_MS;
     let workdir = workspace;
     const workdirArg = asText(args.workdir);
-    if (workdirArg) workdir = this.pathSandbox.resolveLenient(workdirArg, workspace);
+    // workdir 收紧为严格解析（技术方案 §5.7.2）：越界 workdir 一律拒绝
+    if (workdirArg) workdir = this.pathSandbox.resolve(workdirArg, workspace);
     const tokenMap = userId != null && this.gitCredentialService
       ? await this.gitCredentialService.getTokenMapByUser(userId) : {};
     const shellId = asText(args.session_id);

@@ -48,6 +48,61 @@ describe('app-config', () => {
   });
 });
 
+describe('cloud runtime config', () => {
+  const ENV_KEYS = [
+    'MAO_CLOUD_RUNTIME', 'MAO_CONTAINER_IDLE_MINUTES', 'MAO_CONTAINER_IMAGE',
+    'MAO_CONTAINER_CHANNEL_DIR', 'MAO_CONTAINER_DIST_DIR',
+  ];
+
+  function withEnv(env: Record<string, string | undefined>, fn: () => void): void {
+    const prev: Record<string, string | undefined> = {};
+    for (const key of ENV_KEYS) {
+      prev[key] = process.env[key];
+      if (env[key] === undefined) delete process.env[key];
+      else process.env[key] = env[key];
+    }
+    try {
+      resetConfigCache();
+      fn();
+    } finally {
+      for (const key of ENV_KEYS) {
+        if (prev[key] === undefined) delete process.env[key];
+        else process.env[key] = prev[key];
+      }
+      resetConfigCache();
+    }
+  }
+
+  it('defaultsToHostModeWithStandardContainerLimits', () => {
+    withEnv({}, () => {
+      const cfg = loadConfig();
+      expect(cfg.app.cloudRuntime.mode).toBe('host');
+      expect(cfg.app.cloudRuntime.container.idleMinutes).toBe(60);
+      expect(cfg.app.cloudRuntime.container.maxLifetimeHours).toBe(72);
+      expect(cfg.app.cloudRuntime.container.memoryMb).toBe(2048);
+      expect(cfg.app.cloudRuntime.container.image).toBe('mao-runtime:latest');
+      expect(cfg.app.cloudRuntime.container.network).toBe('bridge');
+    });
+  });
+
+  it('envOverridesEnableDockerAndPaths', () => {
+    withEnv({
+      MAO_CLOUD_RUNTIME: 'docker',
+      MAO_CONTAINER_IDLE_MINUTES: '30',
+      MAO_CONTAINER_IMAGE: 'mao-runtime:v9',
+      MAO_CONTAINER_CHANNEL_DIR: '/tmp/chan',
+      MAO_CONTAINER_DIST_DIR: '/tmp/dist',
+    }, () => {
+      const cfg = loadConfig();
+      expect(cfg.app.cloudRuntime.mode).toBe('docker');
+      expect(cfg.app.cloudRuntime.container.idleMinutes).toBe(30);
+      expect(cfg.app.cloudRuntime.container.image).toBe('mao-runtime:v9');
+      expect(cfg.app.cloudRuntime.container.channelDir).toBe('/tmp/chan');
+      expect(cfg.app.cloudRuntime.container.distDir).toBe('/tmp/dist');
+    });
+  });
+});
+
 describe('flyway files', () => {
   it('contains the current migration set', () => {
     const tsDir = join(process.cwd(), 'db/migration');

@@ -45,6 +45,7 @@ import {
 import { SendWechatFileTool, SendWechatImageTool } from './impl/wechat-tools.js';
 import { FeishuDownloadFileTool, ReadFeishuDocTool, SendFeishuFileTool, SendFeishuImageTool } from './impl/feishu-tools.js';
 import { SendDingtalkFileTool, SendDingtalkImageTool, type DingtalkMediaSendSupport } from './impl/dingtalk-tools.js';
+import type { SendBytesSupport } from './impl/send-file-bytes.js';
 import { createPageTools } from './impl/page-tools.js';
 import type { EmbedPageToolRegistry } from '../embed-page-tool-registry.js';
 
@@ -79,6 +80,8 @@ export interface DefaultToolRegistryDeps {
   feishuMaxInboundFileBytes: number;
   feishuMediaSendSupport: FeishuMediaSendSupport;
   dingtalkMediaSendSupport: DingtalkMediaSendSupport;
+  /** 外部发送工具的容器读字节支持（docker 模式下本地路径经容器读取，§5.8）。可选注入。 */
+  sendBytesSupport?: SendBytesSupport | null;
   definitionRegistry: AgentDefinitionRegistry;
   harnessService: HarnessService;
   agentLoop: AgentLoop;
@@ -128,14 +131,14 @@ export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRe
     new ListScheduledTasksTool(deps.scheduledTaskService),
     new UpdateScheduledTaskTool(deps.scheduledTaskService),
     new DeleteScheduledTaskTool(deps.scheduledTaskService),
-    new SendWechatImageTool(deps.pathSandbox, deps.weixinToolSupport, deps.weixinUploadService, deps.weixinSendService),
-    new SendWechatFileTool(deps.pathSandbox, deps.weixinToolSupport, deps.weixinUploadService, deps.weixinSendService),
+    new SendWechatImageTool(deps.pathSandbox, deps.weixinToolSupport, deps.weixinUploadService, deps.weixinSendService, deps.sendBytesSupport),
+    new SendWechatFileTool(deps.pathSandbox, deps.weixinToolSupport, deps.weixinUploadService, deps.weixinSendService, deps.sendBytesSupport),
     new ReadFeishuDocTool(deps.feishuToolSupport, deps.feishuDocReader),
     new FeishuDownloadFileTool(deps.feishuToolSupport, deps.feishuGroupMediaLookup, deps.feishuMediaDownloader, deps.feishuMaxInboundFileBytes, deps.feishuMessageDetailFetcher),
-    new SendFeishuImageTool(deps.pathSandbox, deps.feishuMediaSendSupport),
-    new SendFeishuFileTool(deps.pathSandbox, deps.feishuMediaSendSupport),
-    new SendDingtalkImageTool(deps.pathSandbox, deps.dingtalkMediaSendSupport),
-    new SendDingtalkFileTool(deps.pathSandbox, deps.dingtalkMediaSendSupport),
+    new SendFeishuImageTool(deps.pathSandbox, deps.feishuMediaSendSupport, deps.sendBytesSupport),
+    new SendFeishuFileTool(deps.pathSandbox, deps.feishuMediaSendSupport, deps.sendBytesSupport),
+    new SendDingtalkImageTool(deps.pathSandbox, deps.dingtalkMediaSendSupport, deps.sendBytesSupport),
+    new SendDingtalkFileTool(deps.pathSandbox, deps.dingtalkMediaSendSupport, deps.sendBytesSupport),
     new SpawnSubagentTool(deps.backgroundSubagentManager, deps.definitionRegistry),
     new SubagentFollowupTool(deps.backgroundSubagentManager),
     new CheckSubagentTool(deps.backgroundSubagentManager),

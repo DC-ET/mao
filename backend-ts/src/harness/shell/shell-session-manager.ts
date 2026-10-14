@@ -486,7 +486,24 @@ export class ShellSessionManager {
     private readonly maxSessionsPerConversation = 30,
     private readonly sessionIdleTimeoutMinutes = 30,
     private readonly sessionMaxLifetimeHours = 2,
+    /** 容器模式 askpass 私有目录（§5.7.2）：写 /tmp 而非宿主机共享的 runtime 路径，避免两套机制并发写同一文件。 */
+    private readonly askpassDirOverride?: string,
   ) {}
+
+  /** askpass 脚本落点：容器模式写私有目录，host 模式沿用会话 runtime 目录。 */
+  private askpassScriptPath(userId: number, sessionId: number): string {
+    if (this.askpassDirOverride) {
+      return path.join(this.askpassDirOverride, `askpass-${userId}-${sessionId}.sh`);
+    }
+    return this.runtimeDataResolver.resolveGitAskpassScript(userId, sessionId);
+  }
+
+  /** 关闭全部会话（容器 shutdown 时调用）。 */
+  closeAllSessions(): void {
+    for (const sessionId of [...this.sessions.keys()]) {
+      this.removeSession(sessionId);
+    }
+  }
 
   refreshUserEnvironment(
     session: ShellSession,
@@ -500,7 +517,7 @@ export class ShellSessionManager {
     }
     const uid = userId ?? 0;
     if (Object.keys(domainTokenMap).length > 0) {
-      const askPassScript = this.runtimeDataResolver.resolveGitAskpassScript(uid, session.conversationId ?? 0);
+      const askPassScript = this.askpassScriptPath(uid, session.conversationId ?? 0);
       mkdirSync(path.dirname(askPassScript), { recursive: true });
       writeFileSync(askPassScript, ASKPASS, 'utf8');
       try { chmodSync(askPassScript, 0o700); } catch { /* non-posix */ }
@@ -686,7 +703,7 @@ export class ShellSessionManager {
     for (const [domain, token] of Object.entries(domainTokenMap)) {
       env[GitCredentialService.envVarNameForDomain(domain)] = token;
     }
-    const askPassScript = this.runtimeDataResolver.resolveGitAskpassScript(userId, sessionId);
+    const askPassScript = this.askpassScriptPath(userId, sessionId);
     mkdirSync(path.dirname(askPassScript), { recursive: true });
     writeFileSync(askPassScript, ASKPASS, 'utf8');
     try {

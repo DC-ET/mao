@@ -3,6 +3,7 @@ import { join, relative } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { useTmpDir } from '../testing/tmp-dir.js';
 import { BusinessException } from '../common/business-exception.js';
+import { ErrorCode } from '../common/error-code.js';
 import { FileEntityRepository, FileService, type FileEntity } from './file.service.js';
 import { WorkspaceBrowseService } from './workspace-browse.service.js';
 import { PathSandbox } from '../harness/safety/path-sandbox.js';
@@ -184,7 +185,7 @@ describe('WorkspaceBrowseService', () => {
     await expect(service.readFile(workspace, 'dir', 0, 1)).rejects.toBeInstanceOf(BusinessException);
   });
 
-  it('browsesAndReadsPathsOutsideTheWorkspace', async () => {
+  it('rejectsPathsOutsideTheWorkspace', async () => {
     const dir = useTmpDir('mao-ws-out-');
     const workspace = join(dir, 'workspace');
     const outside = join(dir, 'outside');
@@ -192,15 +193,34 @@ describe('WorkspaceBrowseService', () => {
     mkdirSync(outside, { recursive: true });
     writeFileSync(join(outside, 'note.txt'), 'outside line1\noutside line2');
     const service = new WorkspaceBrowseService(new PathSandbox(workspace));
-    // 相对穿越与绝对路径都能到达工作区外（与 read_file 的 resolveLenient 同口径）
-    expect(await service.readFile(workspace, join('..', 'outside', 'note.txt'), 0, 10)).toMatchObject({
-      content: 'outside line1\noutside line2',
-      total_lines: 2,
-    });
-    const rel = await service.readFile(workspace, relative(workspace, join(outside, 'note.txt')), 0, 10);
-    expect(rel.content).toBe('outside line1\noutside line2');
-    const listing = service.listDirectory(workspace, relative(workspace, outside));
-    expect(listing.entries.map((e) => e.name)).toEqual(['note.txt']);
+    // 越界收口（技术方案 §5.9）：相对穿越与绝对路径一律拒绝，含符号链接逃逸
+    await expect(service.readFile(workspace, join('..', 'outside', 'note.txt'), 0, 10))
+      .rejects.toMatchObject({ code: ErrorCode.FORBIDDEN.code });
+    await expect(service.readFile(workspace, join(outside, 'note.txt'), 0, 10))
+      .rejects.toMatchObject({ code: ErrorCode.FORBIDDEN.code });
+    expect(() => service.listDirectory(workspace, relative(workspace, outside)))
+      .toThrow(BusinessException);
+    expect(() => service.listDirectory(workspace, join('..', 'outside')))
+      .toThrow(BusinessException);
+    // 工作区内正常读取不受影响
+    const inside = join(workspace, 'inside.txt');
+    writeFileSync(inside, 'inside');
+    const ok = await service.readFile(workspace, 'inside.txt', 0, 10);
+    expect(ok.content).toBe('inside');
+  });
+
+  it('rejectsSymlinkEscapeOutsideTheWorkspace', async () => {
+    const dir = useTmpDir('mao-ws-link-');
+    const workspace = join(dir, 'workspace');
+    const outside = join(dir, 'outside');
+    mkdirSync(workspace, { recursive: true });
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, 'note.txt'), 'outside line1');
+    symlinkSync(join(outside, 'note.txt'), join(workspace, 'leak.txt'));
+    const service = new WorkspaceBrowseService(new PathSandbox(workspace));
+    await expect(service.readFile(workspace, 'leak.txt', 0, 10))
+      .rejects.toMatchObject({ code: ErrorCode.FORBIDDEN.code });
+    expect(() => service.listDirectory(workspace, 'leak.txt')).toThrow(BusinessException);
   });
 
   it('readsPngImageWithDataUri', async () => {
@@ -260,14 +280,14 @@ describe('WorkspaceBrowseService', () => {
     writeFileSync(join(workspace, 'empty.pdf'), Buffer.alloc(0));
     expect(() => service.readPdfFile(workspace, 'empty.pdf')).toThrow(/不是有效的 PDF/);
     expect(() => service.readPdfFile(workspace, 'missing.pdf')).toThrow(/文件不存在/);
-    // workspace = dir/sessions/1，outside 文件放在 dir/sessions 下，用 ../ 指到它
+    // 越界收口（§5.9）：相对穿越与工作区外绝对路径一律拒绝
     writeFileSync(join(dir, 'sessions', 'outside.pdf'), pdf);
-    expect(service.readPdfFile(workspace, '../outside.pdf').fileName).toBe('outside.pdf');
-    // 绝对路径同样可达
+    expect(() => service.readPdfFile(workspace, '../outside.pdf')).toThrow(/路径访问被拒绝/);
     const absOutside = join(dir, 'sessions', 'outside-abs.pdf');
     writeFileSync(absOutside, pdf);
-    expect(service.readPdfFile(workspace, absOutside).fileName).toBe('outside-abs.pdf');
+    expect(() => service.readPdfFile(workspace, absOutside)).toThrow(/路径访问被拒绝/);
 
+    // 工作区内绝对路径不受影响
     const abs = join(workspace, 'abs.pdf');
     writeFileSync(abs, pdf);
     expect(service.readPdfFile(workspace, abs).fileName).toBe('abs.pdf');
@@ -281,7 +301,8 @@ describe('WorkspaceBrowseService', () => {
     writeFileSync(outside, Buffer.from('%PDF-1.4\n%%EOF\n'));
     symlinkSync(outside, join(workspace, 'link.pdf'));
     const service = new WorkspaceBrowseService(new PathSandbox(join(dir, 'default')));
-    expect(() => service.readPdfFile(workspace, 'link.pdf')).toThrow(/不是普通文件/);
+    // 收紧后符号链接逃逸在路径解析阶段即被拒绝（严格 resolve + realpath，§5.9）
+    expect(() => service.readPdfFile(workspace, 'link.pdf')).toThrow(/路径访问被拒绝/);
   });
 
   it('zipIncludesNestedDirsAndSkipsSymlinks', async () => {

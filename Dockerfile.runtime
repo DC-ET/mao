@@ -1,0 +1,29 @@
+# Mao 用户运行时容器镜像（技术方案 §4 镜像内容 / §6 部署）
+#
+# 与镜像 Node ABI 匹配的 sharp / node-pty 必须随镜像安装：容器内 read_file 读图走 sharp、
+# 云端终端走 node-pty，两者都是 native 模块，只读挂载宿主机 dist 带不上可用二进制。
+# 宿主机 Node 升级后必须同步重建本镜像（scripts/build-runtime-image.sh），否则容器内
+# 读图/pty 静默失败。
+#
+# 构建：bash scripts/build-runtime-image.sh（自动从 backend-ts/package.json 读取版本）
+FROM node:22-bookworm-slim
+
+ARG SHARP_VERSION=latest
+ARG NODE_PTY_VERSION=latest
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    bash git coreutils ca-certificates curl procps \
+    python3 python3-pip build-essential \
+  && rm -rf /var/lib/apt/lists/*
+
+# 原生模块安装到 /opt/mao/backend-ts/node_modules：运行时宿主机 dist 挂载到
+# /opt/mao/backend-ts/dist（ro），ESM 解析从 dist 向上即命中镜像内的 node_modules。
+RUN mkdir -p /opt/mao/backend-ts \
+  && cd /opt/mao/backend-ts \
+  && npm init -y >/dev/null \
+  && npm install --no-audit --no-fund "sharp@${SHARP_VERSION}" "node-pty@${NODE_PTY_VERSION}" \
+  && npm cache clean --force
+
+# 默认以 root 运行（决策 2：容器内 root，隔离靠挂载清单）
+CMD ["node", "/opt/mao/backend-ts/dist/harness/container/runtime-agent.js"]

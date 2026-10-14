@@ -107,6 +107,7 @@ export class MysqlUserRepository implements UserRepository {
       passwordHash: user.passwordHash,
       feishuUserId: user.feishuUserId,
       status: user.status,
+      runtimeMode: user.runtimeMode ?? null,
       lastLoginAt: user.lastLoginAt,
     });
   }

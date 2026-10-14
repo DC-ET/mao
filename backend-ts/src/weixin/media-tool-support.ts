@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { ImageFileSupport } from '../harness/tool/image-file-support.js';
 import { PathSandbox } from '../harness/safety/path-sandbox.js';
+import { StrictPathResolver } from '../harness/safety/strict-path.js';
 import type { WeixinAccountRepository } from './account.repository.js';
 import type { ContextTokenRepository } from './context-token.repository.js';
 import type { WeixinChannelAccount } from './types.js';
@@ -21,6 +22,8 @@ export class WeixinMediaToolSupport {
     private readonly contextTokenRepository: ContextTokenRepository,
     private readonly pathSandbox: PathSandbox,
     httpClient?: WeixinHttpClient,
+    /** 严格解析的额外允许根（当前用户 runtime/HOME/tmp），由装配层注入。 */
+    private readonly extraRootsProvider?: () => string[],
   ) {
     this.httpClient = httpClient ?? createWeixinHttpClient(60_000);
   }
@@ -65,7 +68,9 @@ export class WeixinMediaToolSupport {
   }
 
   private readLocalFile(filePath: string, workspace: string | null | undefined, maxBytes: number): Buffer {
-    const resolved = this.pathSandbox.resolveLenient(filePath, workspace);
+    // 越界收口（技术方案 §5.8）：严格解析，额外放行调用方注入的用户级根（runtime/HOME/tmp）
+    const primaryRoot = workspace != null && workspace !== '' ? workspace : this.pathSandbox.getEffectiveWorkspaceRoot(null);
+    const resolved = new StrictPathResolver(primaryRoot, this.extraRootsProvider?.() ?? []).resolve(filePath);
     if (!existsSync(resolved) || !statSync(resolved).isFile()) {
       throw new Error(`文件不存在或不是普通文件: ${filePath}`);
     }

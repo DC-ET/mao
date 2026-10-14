@@ -188,7 +188,8 @@ export class TerminalManager {
     try {
       cwd = this.deps.pathSandbox.getEffectiveWorkspaceRoot(params.workspace);
       const env = await this.buildEnv(params);
-      pty = this.ptyFactory({ shell: this.shell, args: ['-i'], cwd, cols, rows, env });
+      // docker 运行时：ptyFactory 异步经 channel 把 spawn 转发到容器内 node-pty（§5.7.3）
+      pty = await this.ptyFactory({ shell: this.shell, args: ['-i'], cwd, cols, rows, env, userId });
     } catch (e) {
       this.release(sessionId, terminalId);
       harnessLog('error', `Failed to spawn terminal PTY for session ${sessionId}`, e);

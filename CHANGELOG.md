@@ -15,6 +15,18 @@
 
 ---
 
+## 0.0.295 (2026-10-14)
+
+### 后端
+
+- **用户运行时容器隔离（docker 模式，默认关闭）**：新增全局开关 `MAO_CLOUD_RUNTIME=docker|host`（默认 host，行为与现状完全一致）与用户级覆盖 `user.runtime_mode`（管理后台用户管理页可按用户切换「跟随全局 / 容器隔离 / 宿主机」）。开启后，该用户 CLOUD 会话的执行类能力（shell、read_file / write_file / edit_file / glob_search / grep_search、MCP stdio、云端终端）在每用户独立 Docker 容器内执行：容器内 root、只挂载该用户自己的数据目录（工作区 / 虚拟 HOME / runtime / 依赖目录 / 个人技能），跨用户数据不可读；MySQL、JWT secret、LLM API key、平台级 IM appSecret 一律不进容器，用户级凭据（Git token、MAO_TOKEN、ECP_TOKEN、飞书 UAT）由宿主机在每次派发时按次下发，容器用完即弃。容器空闲 60 分钟回收（`MAO_CONTAINER_IDLE_MINUTES`，须大于 shell 会话空闲超时），72 小时强制重建（`MAO_CONTAINER_MAX_LIFETIME_HOURS`）；用户打开客户端即按活跃信号预热容器。依赖目录 `/opt/mao-data/deps/{userId}` 挂载进容器，`npm install -g` / `pip install` 的包在容器重建后不丢。
+- **宿主机侧越界收口（host 模式同样生效，与容器化无关）**：管理后台/桌面的 REST 文件服务（`/v1/files/workspace-*`）路径解析从「绝对路径直达任意位置」收紧为「严格限定在会话工作区内」（含符号链接逃逸拒绝），相对穿越与越界绝对路径一律拒绝；MCP stdio 服务器的子进程环境从整包继承 `process.env` 改为白名单（`PATH`/`HOME`/`LANG` 等），`MYSQL_URL`、`APP_*`、`GIT_TOKEN_*` 等平台凭据不再泄漏给用户配置的 MCP 进程；微信 / 飞书 / 钉钉发送工具的本地文件读取同步收紧，越界路径拒绝。docker 模式下发送工具的本地路径改由容器读字节、宿主机只负责上传发送。
+- 容器模式部署前置：生产机需安装 Docker 并运行 `bash scripts/build-runtime-image.sh` 构建 `mao-runtime` 镜像（内含与镜像 Node ABI 匹配的 sharp / node-pty；宿主机 Node 升级后必须重建镜像）。详见 DEPLOY.md「容器隔离运行时」。
+
+### 管理后台
+
+- 用户管理页「编辑用户」新增「运行时模式」下拉（跟随全局 / 容器隔离 docker / 宿主机 host），需 `user:write` 权限；用于容器模式的按用户灰度。
+
 ## 0.0.294 (2026-10-14)
 
 ### 前端（桌面 / Web / 安卓）

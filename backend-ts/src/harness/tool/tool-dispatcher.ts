@@ -24,6 +24,8 @@ import type { BackgroundTaskManager } from '../core/background-task-manager.js';
 import { parseObject } from './json.js';
 import type { TaskNotificationDelivery } from '../../notification/task/types.js';
 import { LLM_CALL_SCENES, LlmCallContext } from '../../usage/llm-call-context.js';
+import type { DockerToolRouter } from '../container/docker-tool-router.js';
+import { isDockerOnlyTool } from '../container/docker-tool-router.js';
 import type { ApprovalHint, ApprovalRuleFacade, ApprovalRuleMatchHit } from '../approval/approval-hint.js';
 
 /**
@@ -111,6 +113,8 @@ export class ToolDispatcher {
     private readonly inboxRecorder?: InboxRecorder | null,
     /** 审批规则域（V135）：可选注入，未注入时行为与旧版完全一致（零规则查询）。 */
     private readonly approvalRules?: ApprovalRuleFacade | null,
+    /** docker 运行时路由（技术方案 §5.7.1）：可选注入，host 模式 / 未注入时零行为差异。 */
+    private readonly dockerRouter?: DockerToolRouter | null,
   ) {}
 
   /**
@@ -329,6 +333,25 @@ export class ToolDispatcher {
       };
     }
 
+    // docker 运行时分支（§5.7.1）：审批/危险评估/规则命中已在宿主机完成，
+    // 这里只把已放行的执行动作派发到该用户的容器。host 模式整体短路。
+    const routeUserId = executionUserId ?? userId;
+    if (this.dockerRouter && routeUserId != null && isDockerOnlyTool(toolName)) {
+      try {
+        if (await this.dockerRouter.enabledFor(routeUserId)) {
+          return {
+            raw: await this.dockerRouter.dispatch(toolName, argumentsJson, {
+              userId: routeUserId, sessionId, workspace,
+            }),
+            llmVerdict: null,
+          };
+        }
+      } catch (e) {
+        // 容器不可达不静默降级到宿主机执行（§8 第 6 条）：错误以工具结果口径回传
+        harnessLog('warn', `Docker route failed, tool not executed on host: tool=${toolName}, error=${(e as Error).message}`);
+        return { raw: JSON.stringify({ error: `容器执行环境不可用：${(e as Error).message}` }), llmVerdict: null };
+      }
+    }
     let tool = this.toolRegistry.getTool(toolName);
     if (!tool && sessionTools) {
       tool = sessionTools.find((t) => t.getName() === toolName);
