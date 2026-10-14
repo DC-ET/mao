@@ -34,7 +34,7 @@
           <div class="value-row">
             <span class="value">{{ item.display }}</span>
             <span v-if="item.delta !== null" class="delta" :class="deltaClass(item.delta)">
-              {{ deltaText(item.delta) }}
+              {{ deltaText(item.delta, item.deltaUnit) }}
             </span>
           </div>
           <div class="sub">{{ item.sub }}</div>
@@ -134,7 +134,7 @@ import { useRouter } from 'vue-router'
 import BaseChart from '../../../components/BaseChart.vue'
 import { CHART_PALETTE } from '../../../utils/echarts'
 import { formatCompact, formatCost, formatTokens, sparklineOption } from '../chart-options'
-import { delta, deltaClass, deltaText } from '../composables/metrics'
+import { delta, deltaClass, deltaText, ppDelta } from '../composables/metrics'
 import type { OverviewPayload, PeriodTotals, PreviousTotals } from '../types'
 
 const props = defineProps<{
@@ -168,24 +168,35 @@ const previousLabel = computed(() => props.previousText || '上一周期')
 const tokenDelta = computed(() => delta(totals.value.totalTokens, previous.value.totalTokens))
 const costDelta = computed(() => delta(totals.value.totalCost, previous.value.totalCost))
 
-const secondaryMetrics = computed(() => [
+interface SecondaryMetric {
+  label: string
+  display: string
+  delta: number | null
+  /** 环比单位：计数类为百分比，比率类（缓存命中率）为百分点 pp */
+  deltaUnit?: 'pp'
+  sub: string
+  path: string
+}
+
+/** KPI 计数卡片（新增会话 / 消息数 / 活跃用户）按两位小数展示，避免大数被压成一位小数。 */
+const secondaryMetrics = computed<SecondaryMetric[]>(() => [
   {
     label: '新增会话',
-    display: formatCompact(totals.value.sessions),
+    display: formatCompact(totals.value.sessions, 2),
     delta: delta(totals.value.sessions, previous.value.sessions),
     sub: `完成 ${formatNumber(totals.value.completedSessions)} · 失败 ${formatNumber(totals.value.failedSessions)}`,
     path: '/analytics?tab=sessions'
   },
   {
     label: '消息数',
-    display: formatCompact(totals.value.messages),
+    display: formatCompact(totals.value.messages, 2),
     delta: delta(totals.value.messages, previous.value.messages),
     sub: `后台调用 ${formatNumber(totals.value.backgroundCalls)}`,
     path: '/analytics?tab=trends'
   },
   {
     label: '活跃用户',
-    display: formatCompact(totals.value.activeUsers),
+    display: formatCompact(totals.value.activeUsers, 2),
     delta: delta(totals.value.activeUsers, previous.value.activeUsers),
     sub: '窗口内有会话或消息',
     path: '/analytics?tab=users'
@@ -196,6 +207,15 @@ const secondaryMetrics = computed(() => [
     delta: costDelta.value,
     sub: '单位与模型价格填写一致（llm_call 口径）',
     path: '/budgets'
+  },
+  {
+    label: '缓存命中率',
+    display: rateText(totals.value.cacheHitRate),
+    // 比率环比按百分点差，避免把 30% → 35% 说成「上升 17%」
+    delta: ppDelta(totals.value.cacheHitRate, previous.value.cacheHitRate),
+    deltaUnit: 'pp',
+    sub: `命中 ${formatTokens(totals.value.cachedTokens ?? 0)} / 入 ${formatTokens(totals.value.promptTokens ?? 0)} Token`,
+    path: '/analytics?tab=trends'
   }
 ])
 
@@ -255,6 +275,11 @@ function formatNumber(value: number): string {
   return value.toLocaleString('zh-CN')
 }
 
+/** 命中率为 null 表示窗口内没有 llm_call 调用（分母为 0），不展示 0% 误导。 */
+function rateText(value: number | null | undefined): string {
+  return value == null ? '-' : `${value}%`
+}
+
 function go(path?: string) {
   if (path) router.push(path)
 }
@@ -286,7 +311,7 @@ export default {
 
 .metric-strip {
   display: grid;
-  grid-template-columns: minmax(220px, 1.4fr) repeat(4, minmax(140px, 1fr));
+  grid-template-columns: minmax(220px, 1.4fr) repeat(5, minmax(140px, 1fr));
   gap: 8px;
   min-height: 120px;
 }
@@ -535,7 +560,7 @@ export default {
 
 @media (max-width: 960px) {
   .metric-strip {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .metric {

@@ -5,17 +5,23 @@ export function delta(current: number, previous: number | undefined): number | n
   return Math.round(((current - previous) / previous) * 100)
 }
 
-export function deltaText(value: number | null): string {
+export function deltaText(value: number | null, unit: '%' | 'pp' = '%'): string {
   if (value === null) return ''
   if (value === Infinity) return '新增'
   if (value === 0) return '持平'
-  return `${value > 0 ? '↑' : '↓'} ${Math.abs(value)}%`
+  return `${value > 0 ? '↑' : '↓'} ${Math.abs(value)}${unit}`
 }
 
 /** 展示口径统一：上升=红、下降=绿（只表示方向，不区分指标好坏）。 */
 export function deltaClass(value: number | null): 'up' | 'down' | 'flat' {
   if (value === null || value === 0) return 'flat'
   return value > 0 ? 'up' : 'down'
+}
+
+/** 比率类指标（命中率等）的环比按百分点差：30% → 35% 是 ↑ 5pp，不是 ↑ 17%。任一端无值返回 null。 */
+export function ppDelta(current: number | null | undefined, previous: number | null | undefined): number | null {
+  if (current == null || previous == null) return null
+  return Math.round((current - previous) * 10) / 10
 }
 
 export function percent(part: number, total: number): number {

@@ -740,13 +740,15 @@ export class AdminAnalyticsService {
   /** 总览：运行态 + 窗口合计 + 环比 + Token spark + 规则洞察；不拉维度排行。 */
   async overview(days: number, endOffset = 0): Promise<Record<string, unknown>> {
     const { range, previous } = this.resolveWindows(days, endOffset);
-    const [baseOverview, livePhaseRows, periodPhaseRows, trends, activeUsers, previousTotals] = await Promise.all([
+    const [baseOverview, livePhaseRows, periodPhaseRows, trends, activeUsers, previousTotals, quality] = await Promise.all([
       this.statisticsService.getOverview(),
       this.store.selectLivePhaseCounts(),
       this.store.selectPhaseCounts(range),
       this.trends(range),
       this.store.countActiveUsers(range),
       this.previousTotals(previous),
+      // 缓存命中率口径 llm_call，默认排除连通性自检（与趋势 Tab 一致）
+      this.store.selectLlmCallQualitySummary(range),
     ]);
 
     const livePhases = phaseMap(livePhaseRows);
@@ -756,6 +758,9 @@ export class AdminAnalyticsService {
       activeUsers,
       completedSessions: periodPhases.get('COMPLETED') ?? 0,
       failedSessions: periodPhases.get('FAILED') ?? 0,
+      promptTokens: quality.promptTokens,
+      cachedTokens: quality.cachedTokens,
+      cacheHitRate: qualitySummaryFields(quality).cacheHitRate,
     };
 
     return {
@@ -1155,7 +1160,7 @@ export class AdminAnalyticsService {
   private async previousTotals(
     previous: AnalyticsRange,
     callOpts?: { excludeConnectivity?: boolean },
-  ): Promise<Record<string, number>> {
+  ): Promise<Record<string, number | null>> {
     const opts = { excludeConnectivity: callOpts?.excludeConnectivity !== false };
     const [sessions, messages, backgroundTokens, activeUsers, quality] = await Promise.all([
       this.store.countSessions(previous),
@@ -1176,6 +1181,8 @@ export class AdminAnalyticsService {
       callTokens: quality.callTokens,
       // 与 sumTrends 的 totalCost 同键名：admin 环比读 previousTotals.totalCost
       totalCost: quality.cost,
+      // 与 trendsScope.periodTotals 同键名：admin 环比读 previousTotals.cacheHitRate
+      cacheHitRate: qualitySummaryFields(quality).cacheHitRate,
     };
   }
 
@@ -1491,8 +1498,8 @@ function deltaPercent(current: number, previous: number | undefined): number | n
 
 /** 总览洞察只依赖窗口合计与环比，避免 overview 被维度排行拖慢。 */
 function buildOverviewInsights(
-  totals: Record<string, number>,
-  previous: Record<string, number>,
+  totals: Record<string, number | null>,
+  previous: Record<string, number | null>,
 ): AnalyticsInsight[] {
   const insights: AnalyticsInsight[] = [];
   const sessions = toNumber(totals.sessions);
@@ -1527,7 +1534,7 @@ function buildOverviewInsights(
     }
   }
 
-  const tokenDelta = deltaPercent(totalTokens, previous.totalTokens);
+  const tokenDelta = deltaPercent(totalTokens, toNumber(previous.totalTokens));
   if (tokenDelta != null && Math.abs(tokenDelta) >= 30) {
     insights.push({
       level: tokenDelta > 0 ? 'warn' : 'info',
@@ -1536,7 +1543,7 @@ function buildOverviewInsights(
     });
   }
 
-  const userDelta = deltaPercent(toNumber(totals.activeUsers), previous.activeUsers);
+  const userDelta = deltaPercent(toNumber(totals.activeUsers), toNumber(previous.activeUsers));
   if (userDelta != null && userDelta <= -30) {
     insights.push({
       level: 'warn',

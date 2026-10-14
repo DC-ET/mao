@@ -40,11 +40,11 @@ export function formatNumber(value: number): string {
   return value.toLocaleString('zh-CN')
 }
 
-/** 计数类大数用中文万/亿，避免坐标轴与卡片被长数字撑开。 */
-export function formatCompact(value: number): string {
+/** 计数类大数用中文万/亿，避免坐标轴与卡片被长数字撑开。decimals 控制万/亿前的小数位，KPI 卡片传 2 固定保留两位。 */
+export function formatCompact(value: number, decimals = 1): string {
   const abs = Math.abs(value)
-  if (abs >= 1e8) return `${trimZero(value / 1e8)} 亿`
-  if (abs >= 1e4) return `${trimZero(value / 1e4)} 万`
+  if (abs >= 1e8) return `${trimZero(value / 1e8, decimals)} 亿`
+  if (abs >= 1e4) return `${trimZero(value / 1e4, decimals)} 万`
   return String(value)
 }
 
@@ -66,8 +66,10 @@ export function formatTokens(value: number): string {
   return String(value)
 }
 
-function trimZero(value: number): string {
-  return value.toFixed(1).replace(/\.0$/, '')
+/** decimals > 1 时按指定位数补齐（KPI 口径 1.7 → 1.70）；默认只去掉整数部分多余的 .0。 */
+function trimZero(value: number, decimals = 1): string {
+  const fixed = value.toFixed(decimals)
+  return decimals > 1 ? fixed : fixed.replace(/\.0$/, '')
 }
 
 /** 阶段配色按枚举绑定，零值阶段被过滤后颜色不会错位。图表与会话 Tab 的 live 标签共用。 */

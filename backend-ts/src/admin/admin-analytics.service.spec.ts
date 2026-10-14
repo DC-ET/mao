@@ -221,6 +221,9 @@ describe('AdminAnalyticsService', () => {
       completedSessions: 5,
       failedSessions: 2,
     });
+    // 缓存命中率走 llm_call 口径：mock 命中 200 / 入 1000 = 20%
+    expect(result.periodTotals).toMatchObject({ promptTokens: 1000, cachedTokens: 200, cacheHitRate: 20 });
+    expect(result.previousTotals).toMatchObject({ cacheHitRate: 20 });
     expect(result.spark).toHaveLength(7);
     expect(result.spark.at(-1)).toEqual({ date: today, totalTokens: 1000 });
     expect(result.insights.length).toBeGreaterThan(0);
@@ -246,6 +249,48 @@ describe('AdminAnalyticsService', () => {
     expect(result.periodTotals).toMatchObject({ sessions: 0, messages: 0, totalTokens: 0 });
     expect(result.insights[0]).toMatchObject({ level: 'info' });
     expect(String(result.insights[0].text)).toContain('放宽');
+  });
+
+  it('overviewCarriesCacheHitRateFromLlmCallQuality', async () => {
+    const statistics = { getOverview: vi.fn(async () => ({})) };
+    const store = buildStore();
+    // 本窗口命中 250/1000 = 25%，上一窗口 200/1000 = 20%（环比 ↑ 5pp）；按窗口起点区分两次取数
+    const windowStart = addDaysYmd(today, -6);
+    store.selectLlmCallQualitySummary = vi.fn(async (r: any) => ({
+      callCount: 10,
+      successCount: 9,
+      failCount: 1,
+      retryCallCount: 2,
+      promptTokens: 1000,
+      cachedTokens: r.startYmd === windowStart ? 250 : 200,
+      callTokens: 1500,
+    }));
+    const service = new AdminAnalyticsService(statistics as never, store as never);
+
+    const result = (await service.overview(7)) as Record<string, any>;
+
+    expect(result.periodTotals).toMatchObject({ promptTokens: 1000, cachedTokens: 250, cacheHitRate: 25 });
+    expect(result.previousTotals).toMatchObject({ cacheHitRate: 20 });
+  });
+
+  it('overviewCacheHitRateIsNullWhenWindowHasNoLlmCall', async () => {
+    const statistics = { getOverview: vi.fn(async () => ({})) };
+    const store = buildStore();
+    store.selectLlmCallQualitySummary = vi.fn(async () => ({
+      callCount: 0,
+      successCount: 0,
+      failCount: 0,
+      retryCallCount: 0,
+      promptTokens: 0,
+      cachedTokens: 0,
+      callTokens: 0,
+    }));
+    const service = new AdminAnalyticsService(statistics as never, store as never);
+
+    const result = (await service.overview(7)) as Record<string, any>;
+
+    expect(result.periodTotals).toMatchObject({ cacheHitRate: null });
+    expect(result.previousTotals).toMatchObject({ cacheHitRate: null });
   });
 
   it('trendsScopeReturnsDailySeriesWithoutDimensionStats', async () => {

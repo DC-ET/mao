@@ -70,9 +70,11 @@ test.describe('Analytics Homepage', () => {
     const metrics = page.locator('.metric-strip .metric')
     await expect(metrics.first()).toBeVisible({ timeout: 10_000 })
     // 0.0.243 起总览新增「成本」指标卡（口径 llm_call 成本快照，单位与模型价格一致）
-    await expect(metrics).toHaveCount(5)
+    // 0.0.292 起再新增「缓存命中率」指标卡（llm_call 命中 / 入 Token，环比按百分点）
+    await expect(metrics).toHaveCount(6)
     await expect(page.locator('.metric.primary .label')).toHaveText('Token 消耗')
     await expect(page.locator('.metric', { hasText: '成本' })).toBeVisible()
+    await expect(page.locator('.metric', { hasText: '缓存命中率' })).toBeVisible()
   })
 
   test('should show auto-refresh control default off', async ({ page }) => {

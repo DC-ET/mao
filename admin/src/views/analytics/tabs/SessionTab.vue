@@ -10,7 +10,7 @@
             </div>
           </template>
           <BaseChart
-            :option="donutOption(phaseItems, '会话总数', formatCompact(periodSessions))"
+            :option="donutOption(phaseItems, '会话总数', formatCompact(periodSessions, 2))"
             :empty="phaseItems.length === 0"
             :height="300"
           />

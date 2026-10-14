@@ -68,6 +68,12 @@ export interface PeriodTotals {
   activeUsers: number
   completedSessions: number
   failedSessions: number
+  /** 窗口 llm_call 入 Token 合计（缓存命中率的分母，默认排除连通性自检） */
+  promptTokens?: number
+  /** 窗口 llm_call 命中缓存的 Token 合计（缓存命中率的分子） */
+  cachedTokens?: number
+  /** 缓存命中率（%）= cachedTokens / promptTokens；无调用（分母为 0）时为 null */
+  cacheHitRate?: number | null
 }
 
 export type PreviousTotals = Partial<PeriodTotals>

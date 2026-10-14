@@ -35,6 +35,8 @@
 - 除 `overview` 中的实时运行态外，所有数字均为**窗口内新增**，不是全表累计
 - 环比窗口是紧邻的上一个等长窗口（如 days=7 时为前 7 天；昨日的环比为前日）
 - Token 分两类：`chatTokens` 来自 `message.token_count`（对话消耗），`backgroundTokens` 来自 `llm_usage`（后台调用，如会话标题、Git 提交信息生成），`totalTokens` 为两者之和；管理后台 UI 紧凑展示用 K/M/B（千/百万/十亿）
+- 管理后台总览的计数类 KPI（新增会话 / 消息数 / 活跃用户 / 会话总数）≥1 万时紧凑展示为「万 / 亿」并固定保留两位小数（如 1.70 万）；图表坐标轴与条形排行标签仍为一位小数
+- 缓存命中率（0.0.292 起进总览 KPI 条）= `sum(llm_call.cached_tokens) / sum(llm_call.prompt_tokens)`，默认排除连通性自检；分母为 0（窗口内无调用）时接口给 null、界面显示 `-`；环比按百分点差（pp）展示，30% → 35% 是 ↑ 5pp 而不是 ↑ 17%
 - 成本口径（0.0.243 起）：所有 `cost` / `totalCost` 字段均为**成本单位**（与模型价格填写口径一致），后端为 `COALESCE(SUM(llm_call.cost_micros),0)/1e6`。模型未配价格、或价格缺一个方向时该次调用成本为 NULL、不计入合计（不按 0 计），因此「没配价格的模型」在成本口径下等于没有开销，不等于免费。`connectivity_test` 等 scene 默认排除（`excludeConnectivity=true`）。子代理与边路任务会话的成本同样计入所属用户 / Agent
 - 会话结局：窗口内**创建**的会话按 phase 分布；`livePhases` / `overview.runningSessions` 等为实时快照，不与窗口分布混算
 - 环比色约定：红=上升、绿=下降（纯方向口径，不区分指标的好坏）
@@ -66,8 +68,8 @@
 | 字段 | 说明 |
 |------|------|
 | `overview` | 全局累计概览 + `runningSessions` / `waitingSessions` / `failedSessions` / `cancelledSessions`（**实时快照**） |
-| `periodTotals` | 窗口内合计：`sessions` / `messages` / `chatTokens` / `backgroundTokens` / `totalTokens` / `backgroundCalls` / `activeUsers` / `completedSessions` / `failedSessions` / `totalCost` |
-| `previousTotals` | 上一等长窗口同口径 |
+| `periodTotals` | 窗口内合计：`sessions` / `messages` / `chatTokens` / `backgroundTokens` / `totalTokens` / `backgroundCalls` / `activeUsers` / `completedSessions` / `failedSessions` / `totalCost` / `promptTokens` / `cachedTokens` / `cacheHitRate`（后三项 llm_call 口径，缓存命中率分母为 0 时为 null） |
+| `previousTotals` | 上一等长窗口同口径（含 `cacheHitRate`） |
 | `spark[]` | Token 日走势：`date` / `totalTokens` |
 | `phaseDistribution[]` | 窗口内创建会话的阶段分布（固定 7 阶段，无数据为 0） |
 | `insights[]` | 规则洞察：`level`（info/warn）/ `text` / 可选 `path` |
