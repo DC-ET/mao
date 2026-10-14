@@ -17,6 +17,7 @@ import { TokenEstimator } from './token-estimator.js';
 import { buildHandoffUserContent } from './compaction-service.js';
 import type { ContextManifest, ContextSectionStat } from './context-manifest.js';
 import { observePrefix } from './prompt-prefix-monitor.js';
+import type { WorkspaceRulesSnapshotService } from './workspace-rules-snapshot.service.js';
 
 const TASK_TOOL_NAMES = new Set(['task_create', 'task_update', 'task_list', 'task_delete']);
 const WEIXIN_MEDIA_TOOL_NAMES = new Set(['send_wechat_image', 'send_wechat_file']);
@@ -135,6 +136,9 @@ export class PromptEngine {
     private readonly runtimeDataResolver: RuntimeDataResolver,
     private readonly userCommandService: UserCommandService,
     private readonly skillSyncService: SkillSyncService,
+    // 会话级工作区规则快照（技术方案 2026-10-14 §4.3）。可选依赖：缺省时退化为
+    // 改造前行为（每轮读盘、不落库），既有测试因此一行不用改。
+    private readonly workspaceRulesSnapshot: WorkspaceRulesSnapshotService | null = null,
     private readonly toolMediaInjector = new ToolMediaInjector(),
     private readonly tokenEstimator = new TokenEstimator(),
   ) {}
@@ -142,7 +146,10 @@ export class PromptEngine {
   async buildRequest(context: AgentExecutionContext): Promise<ChatRequest> {
     // 系统提示分节构建：join 后逐字节等于重构前 buildSystemPrompt 的输出（决策 1 硬不变量），
     // 同一批 sections 直接喂给 manifest，保证「所见即所发」。
-    const sections = this.buildSystemPromptSections(context);
+    const effectiveWorkspace = hasText(context.workspace) ? context.workspace! : this.pathSandbox.getWorkspaceRoot();
+    // 工作区规则节文本：读盘 + 会话级快照冻结/取用（技术方案 2026-10-14 §4.3）。
+    const rulesText = await this.resolveWorkspaceRules(context, effectiveWorkspace);
+    const sections = this.buildSystemPromptSections(context, effectiveWorkspace, rulesText);
     const messages: ChatMessage[] = [];
     messages.push({ role: 'system', content: sections.map((s) => s.text).join('') });
     const history = context.messages;
@@ -252,15 +259,25 @@ export class PromptEngine {
   }
 
   private buildSystemPrompt(context: AgentExecutionContext): string {
-    return this.buildSystemPromptSections(context).map((s) => s.text).join('');
+    const effectiveWorkspace = hasText(context.workspace) ? context.workspace! : this.pathSandbox.getWorkspaceRoot();
+    // 无调用方（仅作重构前的逐字节参照）：同步取读盘文本，语义等同"未注入快照服务"时注入的内容。
+    const rulesText = this.readWorkspaceRules(context, effectiveWorkspace).text;
+    return this.buildSystemPromptSections(context, effectiveWorkspace, rulesText).map((s) => s.text).join('');
   }
 
   /**
    * 逐节构建系统提示（技术方案 5.2）。收集-拼接分离：各节 text 依原顺序 join 后与重构前
    * buildSystemPrompt 输出逐字节一致（空节不产生 text，跳过与追加空串等价）。
    * key/label/count 仅用于 manifest 展示，不参与拼接。
+   *
+   * @param effectiveWorkspace 生效工作区（调用方已算好：context.workspace 优先，缺失回落沙箱根）
+   * @param rulesText 「工作区规则」节注入文本，已由 readWorkspaceRules + 快照服务解析
    */
-  private buildSystemPromptSections(context: AgentExecutionContext): PromptSection[] {
+  private buildSystemPromptSections(
+    context: AgentExecutionContext,
+    effectiveWorkspace: string,
+    rulesText: string,
+  ): PromptSection[] {
     const sections: PromptSection[] = [];
     if (hasText(context.systemPrompt)) {
       sections.push({ key: 'system-prompt', label: 'Agent 人格', text: context.systemPrompt! + '\n\n' });
@@ -281,9 +298,6 @@ export class PromptEngine {
       sections.push({ key: 'memories', label: '长期记忆', text: memoriesText, count: memoryCount });
     }
     const embedPageAgent = this.isEmbedPageAgent(context);
-    const effectiveWorkspace = hasText(context.workspace)
-      ? context.workspace!
-      : this.pathSandbox.getWorkspaceRoot();
     if (embedPageAgent) {
       sections.push({ key: 'environment', label: '运行环境', text: this.embedEnvironmentHint() });
     } else {
@@ -337,7 +351,6 @@ export class PromptEngine {
       sections.push({ key: 'embed', label: '嵌入页面', text: EMBED_PAGE_AGENT_HINTS });
     }
     if (!embedPageAgent) {
-      const rulesText = this.workspaceRules(context, effectiveWorkspace);
       if (rulesText.length > 0) {
         sections.push({ key: 'workspace-rules', label: '工作区规则', text: rulesText });
       }
@@ -614,21 +627,64 @@ export class PromptEngine {
 `;
   }
 
-  private workspaceRules(context: AgentExecutionContext, effectiveWorkspace: string): string {
+  /**
+   * 取「工作区规则」节的注入文本：纯读盘 + 会话级快照冻结/取用
+   * （技术方案 2026-10-14 §4.2/§4.3）。
+   *
+   * 未注入快照服务或非 harness 场景（sessionId 为空）时退化为改造前的每轮读盘；
+   * 快照查询失败时降级为本次读盘内容——规则注入不能阻断对话（§7）。
+   */
+  private async resolveWorkspaceRules(context: AgentExecutionContext, effectiveWorkspace: string): Promise<string> {
+    // 嵌入网页浮窗不注入「工作区规则」节（与 buildSystemPromptSections 的 embed 分支一致）：
+    // 这里直接跳过读盘与快照，避免每轮白做 fs/DB，也免得落一行永远不会被注入的孤儿行。
+    if (this.isEmbedPageAgent(context)) return '';
+    const raw = this.readWorkspaceRules(context, effectiveWorkspace);
+    const snapshot = this.workspaceRulesSnapshot;
+    if (snapshot == null || context.sessionId == null) return raw.text;
+    try {
+      return await snapshot.resolve(context.sessionId, effectiveWorkspace, raw.text, {
+        sourcePath: raw.sourcePath,
+        sourceMtime: raw.sourceMtime,
+      });
+    } catch (e) {
+      harnessLog('warn', `Failed to resolve workspace rules snapshot session=${context.sessionId},`
+        + ` falling back to disk content`, e);
+      return raw.text;
+    }
+  }
+
+  /**
+   * 纯读「工作区规则」源内容并加工成该节的完整注入文本（含 `## 工作区规则` 标题与
+   * 200 行截断提示）。CLOUD 读 `${effectiveWorkspace}/AGENTS.md`；LOCAL 用桌面端上报的
+   * `context.agentsMdContent`（服务端看不到用户本地文件，来源信息为 null）。
+   *
+   * 返回的 text 即"所见即所存"的快照内容：截断规则只在此处生效一次，读侧不再二次加工。
+   */
+  private readWorkspaceRules(
+    context: AgentExecutionContext,
+    effectiveWorkspace: string,
+  ): { text: string; sourcePath: string | null; sourceMtime: number | null } {
     let content: string | null = null;
+    let sourcePath: string | null = null;
+    let sourceMtime: number | null = null;
     if (context.executionMode?.toUpperCase() === 'LOCAL') {
       content = context.agentsMdContent ?? null;
     } else {
       const agentsMdPath = path.join(effectiveWorkspace, 'AGENTS.md');
-      if (existsSync(agentsMdPath) && statSync(agentsMdPath).isFile()) {
+      sourcePath = agentsMdPath;
+      if (existsSync(agentsMdPath)) {
         try {
-          content = readFileSync(agentsMdPath, 'utf8');
+          const stat = statSync(agentsMdPath);
+          if (stat.isFile()) {
+            content = readFileSync(agentsMdPath, 'utf8');
+            sourceMtime = Math.round(stat.mtimeMs);
+          }
         } catch (e) {
           harnessLog('warn', `Failed to read AGENTS.md from workspace: ${agentsMdPath}`, e);
         }
       }
     }
-    if (!hasText(content)) return '';
+    if (!hasText(content)) return { text: '', sourcePath, sourceMtime };
     const lines = content!.split(/\r?\n|\r/);
     const truncated = lines.length > AGENTS_MD_MAX_LINES;
     let ruleContent = '';
@@ -636,7 +692,7 @@ export class PromptEngine {
       ruleContent += lines[i] + '\n';
     }
     if (truncated) ruleContent += AGENTS_MD_TRUNCATED_HINT;
-    return '## 工作区规则\n\n' + ruleContent + '\n';
+    return { text: '## 工作区规则\n\n' + ruleContent + '\n', sourcePath, sourceMtime };
   }
 }
 

@@ -11,6 +11,7 @@ import type { SessionCompactionEventService, SessionCompactionService, SessionSe
 import { contextManifestJson } from './context-manifest.js';
 import { harnessLog } from '../log.js';
 import { LLM_CALL_SCENES, LlmCallContext } from '../../usage/llm-call-context.js';
+import type { WorkspaceRulesSnapshotService } from './workspace-rules-snapshot.service.js';
 
 export class CompactionStateReloadException extends Error {
   constructor(cause?: unknown) {
@@ -36,6 +37,9 @@ export class SessionCompactionOrchestrator {
     private readonly promptEngine: PromptEngine,
     private readonly compactionArchiveService: CompactionArchiveService,
     private readonly compactionModelResolver?: CompactionModelResolverLike | null,
+    // 会话级工作区规则快照（技术方案 2026-10-14 §4.5）：压缩提交成功后解冻，
+    // 让新规则在本会话尽快生效。可选依赖，缺省时不等效任何行为。
+    private readonly workspaceRulesSnapshot?: WorkspaceRulesSnapshotService | null,
   ) {}
 
   async compact(
@@ -93,6 +97,14 @@ export class SessionCompactionOrchestrator {
       // 序号 = 本线程 CAS 推进后的确定性值（旧记录 compactCount + 1），
       // 不依赖 latest 重载（并发场景下 latest 可能是他人记录，存在同名覆盖风险）
       if (persisted) {
+        // 压缩边界已推进：解冻工作区规则，让后续请求重新读取 AGENTS.md（技术方案 §3.5）。
+        // 必须 try-catch：这里的异常会被外层 catch 包成 CompactionStateReloadException，
+        // 把已成功的压缩伪装成需要重载的故障（§4.5 评审补充）。
+        try {
+          await this.workspaceRulesSnapshot?.invalidate(sessionId);
+        } catch (e) {
+          harnessLog('warn', `Failed to invalidate workspace rules snapshot session=${sessionId}`, e);
+        }
         this.compactionArchiveService.writeArchive(
           context.executionMode, context.userId, context.sessionId,
           (record?.compactCount ?? 0) + 1,

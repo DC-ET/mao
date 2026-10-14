@@ -694,6 +694,9 @@ export class SessionService {
 
       await tx.execute('DELETE FROM session_compaction WHERE session_id = ?', [sideSessionId]);
       await tx.execute('DELETE FROM session_compaction_event WHERE session_id = ?', [sideSessionId]);
+      // 工作区规则快照同属会话级资源：本路径不走 onSessionDeleted，需在同一事务内回收，
+      // 否则边路会话每提升一次就泄漏一行（技术方案 §4.6 评审补充）。
+      await tx.execute('DELETE FROM session_workspace_rules WHERE session_id = ?', [sideSessionId]);
       await txMessageRepo.logicalDeleteBySession(sideSessionId);
       // 提升是「插入新主会话 + 逻辑删除旧边路会话」：直接子会话的 parent 仍指向旧 id，
       // 不重挂则整棵边路子树在新旧两棵树上都不可达（BFS / 树信号 / 搜索全部失联）。

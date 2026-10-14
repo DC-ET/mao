@@ -1,10 +1,11 @@
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { useTmpDir } from '../../testing/tmp-dir.js';
 import { WEIXIN_PROJECT_KEY } from '../../domain/types.js';
 import { AgentExecutionContext } from './agent-execution-context.js';
 import { PromptEngine } from './prompt-engine.js';
+import { WorkspaceRulesSnapshotService } from './workspace-rules-snapshot.service.js';
 import { MISSING_TOOL_RESULT_PLACEHOLDER } from './message-history-normalizer.js';
 import { SYNTHETIC_ATTACHMENT_PROMPT } from './tool-media-injector.js';
 import { RuntimeDataResolver } from '../runtime/runtime-data-resolver.js';
@@ -889,6 +890,229 @@ describe('PromptEngine prefix stability guards', () => {
     expect(serialized).not.toContain('"summary"');
     expect(serialized).not.toContain('promptCacheKey');
     expect(body).toHaveProperty('prompt_cache_key', 'mao-session-77');
+  });
+});
+
+describe('PromptEngine 工作区规则会话级快照', () => {
+  function fakeRepo() {
+    const rows = new Map<number, Record<string, unknown>>();
+    return {
+      rows,
+      selectBySessionId: vi.fn(async (sessionId: number) => rows.get(sessionId) ?? null),
+      upsert: vi.fn(async (row: Record<string, unknown>) => {
+        rows.set(row.sessionId as number, { ...row });
+      }),
+      deleteBySessionId: vi.fn(async (sessionId: number) => (rows.delete(sessionId) ? 1 : 0)),
+    };
+  }
+
+  function engineWithSnapshot(workspace: string, repo: ReturnType<typeof fakeRepo>) {
+    return new PromptEngine(
+      { hasSkill: () => false, getAllNames: () => [], getAllDocuments: () => [] } as never,
+      { getWorkspaceRoot: () => workspace } as never,
+      RuntimeDataResolver.forTest('/tmp/rt', '/tmp/home'),
+      { getByUserIdAndName: async () => null } as never,
+      { getUserSkillDocuments: () => [] } as never,
+      new WorkspaceRulesSnapshotService(repo as never),
+    );
+  }
+
+  function plainEngine(workspace: string) {
+    // 第 6 参缺省：退化为改造前行为（每轮读盘、不落库）
+    return new PromptEngine(
+      { hasSkill: () => false, getAllNames: () => [], getAllDocuments: () => [] } as never,
+      { getWorkspaceRoot: () => workspace } as never,
+      RuntimeDataResolver.forTest('/tmp/rt', '/tmp/home'),
+      { getByUserIdAndName: async () => null } as never,
+      { getUserSkillDocuments: () => [] } as never,
+    );
+  }
+
+  function context(workspace: string, sessionId: number | null): AgentExecutionContext {
+    const ctx = new AgentExecutionContext();
+    ctx.executionMode = 'CLOUD';
+    ctx.workspace = workspace;
+    ctx.sessionId = sessionId;
+    ctx.tools = [tool('read_file')];
+    return ctx;
+  }
+
+  function systemOf(request: { messages?: Array<{ content?: unknown }> }): string {
+    return String(request.messages?.[0]?.content ?? '');
+  }
+
+  it('同会话两次 buildRequest 之间改写 AGENTS.md：system 首条消息逐字节不变', async () => {
+    resetPrefixMonitorForTest();
+    const workspace = useTmpDir('pe-rules-');
+    writeFileSync(join(workspace, 'AGENTS.md'), '## 索引\n\n- repo-a\n');
+    const repo = fakeRepo();
+    const engine = engineWithSnapshot(workspace, repo);
+    const logSpy = vi.spyOn(harnessLogModule, 'harnessLog').mockImplementation(() => undefined);
+    try {
+      const first = await engine.buildRequest(context(workspace, 811));
+      expect(systemOf(first)).toContain('- repo-a');
+      expect(repo.upsert).toHaveBeenCalledOnce();
+
+      writeFileSync(join(workspace, 'AGENTS.md'), '## 索引\n\n- repo-a\n- repo-b\n');
+      const second = await engine.buildRequest(context(workspace, 811));
+      expect(systemOf(second)).toBe(systemOf(first));
+      expect(systemOf(second)).not.toContain('- repo-b');
+      // 前缀没有变化：monitor 不应告警
+      expect(logSpy).not.toHaveBeenCalledWith('warn', expect.stringContaining('prefix changed'));
+    } finally {
+      logSpy.mockRestore();
+      resetPrefixMonitorForTest();
+    }
+  });
+
+  it('换 sessionId（新会话）立刻使用新内容', async () => {
+    resetPrefixMonitorForTest();
+    const workspace = useTmpDir('pe-rules-');
+    writeFileSync(join(workspace, 'AGENTS.md'), '## 索引\n\n- repo-a\n');
+    const repo = fakeRepo();
+    const engine = engineWithSnapshot(workspace, repo);
+
+    await engine.buildRequest(context(workspace, 811));
+    writeFileSync(join(workspace, 'AGENTS.md'), '## 索引\n\n- repo-a\n- repo-b\n');
+    const fresh = await engine.buildRequest(context(workspace, 812));
+
+    expect(systemOf(fresh)).toContain('- repo-b');
+    expect(repo.upsert).toHaveBeenCalledTimes(2);
+  });
+
+  it('已冻结后 AGENTS.md 被删空：该节仍在且字节不变（不摘节）', async () => {
+    resetPrefixMonitorForTest();
+    const workspace = useTmpDir('pe-rules-');
+    writeFileSync(join(workspace, 'AGENTS.md'), '## 索引\n\n- repo-a\n');
+    const repo = fakeRepo();
+    const engine = engineWithSnapshot(workspace, repo);
+
+    const first = await engine.buildRequest(context(workspace, 811));
+    rmSync(join(workspace, 'AGENTS.md'));
+    const second = await engine.buildRequest(context(workspace, 811));
+
+    expect(systemOf(second)).toBe(systemOf(first));
+    expect(systemOf(second)).toContain('- repo-a');
+  });
+
+  it('首轮无规则文件时不注入该节，文件出现后该节出现（§3.4 一次性 miss）', async () => {
+    resetPrefixMonitorForTest();
+    const workspace = useTmpDir('pe-rules-');
+    const repo = fakeRepo();
+    const engine = engineWithSnapshot(workspace, repo);
+
+    const first = await engine.buildRequest(context(workspace, 813));
+    expect(systemOf(first)).not.toContain('## 工作区规则');
+    expect(repo.upsert).not.toHaveBeenCalled();
+
+    writeFileSync(join(workspace, 'AGENTS.md'), '## 索引\n\n- repo-c\n');
+    const second = await engine.buildRequest(context(workspace, 813));
+    expect(systemOf(second)).toContain('## 工作区规则');
+    expect(systemOf(second)).toContain('- repo-c');
+  });
+
+  it('未注入快照服务时保持改造前行为：每轮读盘、变更即生效', async () => {
+    resetPrefixMonitorForTest();
+    const workspace = useTmpDir('pe-rules-');
+    writeFileSync(join(workspace, 'AGENTS.md'), '## 索引\n\n- repo-a\n');
+    const engine = plainEngine(workspace);
+
+    await engine.buildRequest(context(workspace, 814));
+    writeFileSync(join(workspace, 'AGENTS.md'), '## 索引\n\n- repo-a\n- repo-b\n');
+    const second = await engine.buildRequest(context(workspace, 814));
+
+    expect(systemOf(second)).toContain('- repo-b');
+  });
+
+  it('LOCAL 模式同样冻结桌面端上报的 rules 内容', async () => {
+    resetPrefixMonitorForTest();
+    const workspace = useTmpDir('pe-rules-');
+    const repo = fakeRepo();
+    const engine = engineWithSnapshot(workspace, repo);
+    const local = (agentsMdContent: string | null): AgentExecutionContext => {
+      const ctx = context(workspace, 815);
+      ctx.executionMode = 'LOCAL';
+      ctx.agentsMdContent = agentsMdContent;
+      return ctx;
+    };
+
+    const first = await engine.buildRequest(local('## 索引\n\n- repo-a\n'));
+    const second = await engine.buildRequest(local('## 索引\n\n- repo-a\n- repo-b\n'));
+    expect(systemOf(second)).toBe(systemOf(first));
+
+    // 桌面端漏报（内容为 null）：仍注入快照文本，不摘节
+    const third = await engine.buildRequest(local(null));
+    expect(systemOf(third)).toBe(systemOf(first));
+  });
+
+  it('超过 200 行的 AGENTS.md 仍按 200 行截断，且冻结的就是截断后的文本', async () => {
+    resetPrefixMonitorForTest();
+    const workspace = useTmpDir('pe-rules-');
+    const lines = Array.from({ length: 260 }, (_, i) => `- line-${i}`);
+    writeFileSync(join(workspace, 'AGENTS.md'), lines.join('\n'));
+    const repo = fakeRepo();
+    const engine = engineWithSnapshot(workspace, repo);
+
+    const request = await engine.buildRequest(context(workspace, 817));
+    const system = systemOf(request);
+    expect(system).toContain('- line-199');
+    expect(system).not.toContain('- line-200');
+    expect(system).toContain('当前仅展示前200行规则');
+    // 冻结内容 = 注入内容（所见即所存）：行数上限只在这一处生效
+    const pinned = repo.rows.get(817) as { rulesText: string };
+    expect(pinned.rulesText).toBe(system.slice(system.indexOf('## 工作区规则')));
+  });
+
+  it('嵌入网页浮窗（page_* 工具）会话不注入规则节，也不读盘/不落快照行', async () => {
+    resetPrefixMonitorForTest();
+    const workspace = useTmpDir('pe-rules-');
+    writeFileSync(join(workspace, 'AGENTS.md'), '## 索引\n\n- repo-a\n');
+    const repo = fakeRepo();
+    const engine = engineWithSnapshot(workspace, repo);
+    const ctx = context(workspace, 818);
+    ctx.tools = [tool('page_inspect'), tool('page_screenshot')];
+
+    const request = await engine.buildRequest(ctx);
+
+    expect(systemOf(request)).not.toContain('## 工作区规则');
+    expect(systemOf(request)).not.toContain('- repo-a');
+    expect(repo.selectBySessionId).not.toHaveBeenCalled();
+    expect(repo.upsert).not.toHaveBeenCalled();
+  });
+
+  it('sessionId 为空（非 harness 场景）不走快照，直接用读盘内容', async () => {
+    resetPrefixMonitorForTest();
+    const workspace = useTmpDir('pe-rules-');
+    writeFileSync(join(workspace, 'AGENTS.md'), '## 索引\n\n- repo-a\n');
+    const repo = fakeRepo();
+    const engine = engineWithSnapshot(workspace, repo);
+
+    const request = await engine.buildRequest(context(workspace, null));
+    expect(systemOf(request)).toContain('- repo-a');
+    expect(repo.upsert).not.toHaveBeenCalled();
+    expect(repo.selectBySessionId).not.toHaveBeenCalled();
+  });
+
+  it('快照查询失败时降级为读盘内容，不阻断对话', async () => {
+    resetPrefixMonitorForTest();
+    const workspace = useTmpDir('pe-rules-');
+    writeFileSync(join(workspace, 'AGENTS.md'), '## 索引\n\n- repo-a\n');
+    const repo = {
+      selectBySessionId: vi.fn(async () => {
+        throw new Error('db down');
+      }),
+      upsert: vi.fn(async () => {}),
+      deleteBySessionId: vi.fn(async () => 1),
+    };
+    const engine = engineWithSnapshot(workspace, repo);
+    const logSpy = vi.spyOn(harnessLogModule, 'harnessLog').mockImplementation(() => undefined);
+    try {
+      const request = await engine.buildRequest(context(workspace, 816));
+      expect(systemOf(request)).toContain('- repo-a');
+      expect(logSpy).toHaveBeenCalledWith('warn', expect.stringContaining('falling back to disk content'), expect.anything());
+    } finally {
+      logSpy.mockRestore();
+    }
   });
 });
 void mkdirSync;

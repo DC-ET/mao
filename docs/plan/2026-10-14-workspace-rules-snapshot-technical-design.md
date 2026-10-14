@@ -144,6 +144,8 @@ resolve(sessionId, workspace, rawText, source) 每轮 buildRequest 调用一次�
          → 用本次 rawText 注入，info「快照已冻结」
     3) 未命中且 rawText 为空
          → 返回 ''，不落库、不注入该节                            [§3.4]
+    3') 存在**无效行**（workspace 不一致 / rules_text 异常空）且 rawText 为空
+         → 删掉该无效行后返回 ''（无效行不残留到会话删除）          [实施补充 2026-10-14]
 ```
 
 - **评审补充（2026-10-14）upsert 必须是整列赋值，不能写成 no-op。** 分支 2 的语义是「workspace 不一致 → 覆盖重写」，若沿用 `ON DUPLICATE KEY UPDATE session_id = session_id`，冲突行不会被改写（`rules_text` / `workspace` 原样保留），§6 中「workspace 不一致 → 覆盖重写」的用例会直接失败，且 A 工作区的规则会被继续注入到 B 工作区。正确写法是把 `rules_text / rules_hash / workspace / source_path / source_mtime / updated_at` 一并写回（项目既有同款口径见 `dingtalk/message.repository.ts:40` 的 `VALUES(...)`）。并发首轮撞主键也由同一条语句兜底，无需额外的 no-op 保底。
@@ -166,6 +168,7 @@ const sections = this.buildSystemPromptSections(context, effectiveWorkspace, rul
 - `buildSystemPromptSections` 增加两个入参，原 `:340` 处改为 `if (rulesText.length > 0) sections.push({ key: 'workspace-rules', ... })`；`effectiveWorkspace` 的计算从节内上提到 `buildRequest`（节内不再自行计算）。
 - 原 `workspaceRules()` 拆成**纯读**的 `readWorkspaceRules(context, effectiveWorkspace): { text, sourcePath, sourceMtime }`（CLOUD 读文件 + 200 行截断；LOCAL 用 `context.agentsMdContent`）+ 快照服务的冻结/取用。
 - `private buildSystemPrompt()`（`:254`，当前无调用方，仅作重构前的逐字节参照）同步补传参，保持可编译与语义一致。
+- **实施补充（2026-10-14）embed 会话跳过解析**：`resolveWorkspaceRules` 首行判 `isEmbedPageAgent(context)` 直接返回 `''`。嵌入网页浮窗（`page_*` 工具）会话本就不注入「工作区规则」节，改造前 `workspaceRules()` 只在 `!embedPageAgent` 分支内调用；`rulesText` 计算上提后若不保留该判定，这类会话每轮会白做 3 次 fs 调用 + 1 次主键点查，还会落一行永远不会被注入的快照行（只能等会话删除回收）。
 - 构造参数追加第 6 个**可选**依赖 `workspaceRulesSnapshot?: WorkspaceRulesSnapshotService | null`：缺省时退化为现状行为（每轮读盘、不落库）。**评审补充（2026-10-14）**：新参数必须插在 `skillSyncService` 之后（第 6 位），把现有两个可选的 `toolMediaInjector` / `tokenEstimator` 顺延为第 7/8 位——`prompt-engine.spec.ts` 里共 **16 处** `new PromptEngine(...)`，全部只传前 5 个参数（生产装配点 `create-app.ts:927` 同样只传 5 个），插在中间才能保证它们一行不改；插到末尾虽也能编译，但会把"引擎可选依赖"的语义顺序打乱。
 
 ### 4.4 新增模块
@@ -221,7 +224,7 @@ async (sessionId) => {
 |---|---|---|
 | 首次冻结 | info | `workspace rules snapshot pinned session=811 chars=15169 source=/…/AGENTS.md mtime=…` |
 | 磁盘已变但被冻结 | info | `workspace rules changed on disk but snapshot retained session=811 disk_hash=ab12… pinned_hash=cd34… effective=on-next-snapshot`（同一 `disk_hash` 每会话只打一次，避免每轮刷屏） |
-| 磁盘已空/漏报但被冻结 | info | `workspace rules empty on disk but snapshot retained session=811 effective=on-next-snapshot`（§3.4 评审补充：LOCAL 桌面端漏报 `agentsMdContent` 与文件被删空走同一分支） |
+| 磁盘已空/漏报但被冻结 | info | `workspace rules empty on disk but snapshot retained session=811 effective=on-next-snapshot`（§3.4 评审补充：LOCAL 桌面端漏报 `agentsMdContent` 与文件被删空走同一分支；**实施补充（2026-10-14）**：与「磁盘已变」共用同一去重口径——每会话只打一次，重新 pin / invalidate / 删除后清除，避免后端重启后 LOCAL 会话每轮一条无界刷屏） |
 | 失效 | info | `workspace rules snapshot invalidated session=811 reason=compaction-committed` |
 | 取用快照 | — | 不打日志（每轮都发生） |
 
@@ -250,7 +253,7 @@ async (sessionId) => {
 - 空文本不落库；`sessionId=null` 不走快照。
 - 磁盘已变日志：同一 `disk_hash` 只打一次；`disk_hash` 再变时再打一次。
 - `invalidate` 后下一次 `resolve` 落到新文本。
-- `invalidate` / `deleteBySessionId` 在 DB 抛错时不外抛（仅 warn）——orchestrator 接入点靠这条避免把成功压缩伪装成 `CompactionStateReloadException`。
+- `invalidate` / `deleteBySessionId` 在 DB 抛错时不外抛（仅 warn）。**实现口径（2026-10-14 定稿）**：保护放在两个真实调用点而非 service 内部——orchestrator 接入点自带 try-catch（§4.5 代码即此写法，凭此避免把成功压缩伪装成 `CompactionStateReloadException`），`deleteBySessionId` 由 `SessionService.deleteSession` 对 `onSessionDeleted` 钩子既有的 try-catch 兜底；service 方法本身照常上抛，便于调用方按需感知。§7 的"失败降级"原则由此两层覆盖，无用户可见影响。
 
 **PromptEngine**
 - 同会话两次 `buildRequest`，中途改写 `AGENTS.md` → `request.messages[0]` 字节不变（复用 `observePrefix` 断言 `changedSections` 为空）。

@@ -249,6 +249,29 @@ describe('SessionService archive', () => {
     );
   });
 
+  it('promotesSideTaskAndDeletesItsWorkspaceRulesSnapshot', async () => {
+    // 边路会话提升不走 onSessionDeleted，工作区规则快照须在同一事务内回收（技术方案 §4.6 评审补充）
+    const { service, sessionRepo, txDb } = makeService();
+    vi.mocked(sessionRepo.findById).mockResolvedValue({
+      id: 20,
+      userId: 7,
+      title: '边路任务',
+      sessionType: 'SIDE_TASK',
+      phase: 'COMPLETED',
+      executionMode: 'CLOUD',
+      workspace: '/tmp/w',
+    });
+    vi.mocked(sessionRepo.list).mockResolvedValue([]);
+
+    const promoted = await service.promoteSideTaskToMainSession(20, 7);
+
+    expect(promoted.id).toBe(99);
+    expect(txDb.execute).toHaveBeenCalledWith(
+      expect.stringContaining('DELETE FROM session_workspace_rules WHERE session_id = ?'),
+      [20],
+    );
+  });
+
   it('rejectsDeleteWhenSessionRunning', async () => {
     const { service, sessionRepo } = makeService();
     vi.mocked(sessionRepo.findById).mockResolvedValue({ id: 11, userId: 7, phase: 'RUNNING' });
