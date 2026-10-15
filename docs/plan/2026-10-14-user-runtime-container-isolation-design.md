@@ -183,6 +183,8 @@ loop 的输入输出是数据库中的会话与消息，不是用户文件系统
 
 关于「用户个人技能目录」：宿主机 `SkillSyncService` 会把用户技能与系统技能以**符号链接**同步进 `runtime/{userId}/{sessionId}/skills/`（`skill-sync-service.ts:56`）。`runtime/{userId}` 已在清单内，链接目标 `${USER_SKILLS_DIR}/{userId}` 若不挂，容器内这些链接会全部悬空，技能内容读不到——这是原方案遗漏的一项。系统技能走 `runtime/.../skills` 的链接 + `/opt/mao/data/skills` 只读挂载，已覆盖。
 
+关于「通道会话工作区」（飞书 / 钉钉入站会话，实施补充）：web 会话工作区在 `{workspaceRoot}/{userId}` 之内，被标准清单覆盖；而飞书 / 钉钉入站会话的工作区是 `{workspaceRoot}/feishu-chat|dingtalk-chat/{bot}/{leaf}`（`leaf` 为群聊 ID 或 `private-{userId}`），越出每用户根。该类工作区作为**附加挂载**进入清单：创建容器时按数据库 `user_id` 查出该用户自己的通道工作区（归属校验即 SQL 过滤），结构上只允许 `{account}/{leaf}` 两级以上的具体工作区——挂整个通道根或账号目录会把其他用户的私聊工作区带进容器，一律拒绝；`assertSafe` 的「rw 项必须含 `/{userId}/` 段」规则对这类条目豁免，由上述两侧约束共同保证。群聊工作区由同群多个 mao 用户的会话按现有设计共享，挂进各自容器不构成跨用户泄漏。挂载清单在 `docker run` 时定型，运行中容器无法新增：用户在此前已运行的容器上首次使用新的通道会话时，`ensureRunning` 会重建容器并入该工作区（旧容器内在途 shell / 终端任务随重建丢失，这是把新工作区纳入容器的必要代价）；既非每用户根也非通道工作区的会话工作区（异常数据）明确报错，不退化成"容器内目录不存在"的空输出静默失败。目录名在宿主机生成侧与 planner 之间经 `harness/container/channel-workspace.ts` 共用，防字面量漂移。
+
 校验规则（`ContainerMountPlanner.assertSafe`）：
 
 - 每条源路径 resolve 后必须位于已登记的数据根（`userHomeDir` / `runtimeDir` / `workspaceRoot` / `depsDir` / `userSkillsDir` / `channelsDir`）之下；
