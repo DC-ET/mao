@@ -18,9 +18,9 @@ export interface ContainerMount {
    * 会话工作区附加挂载（飞书/钉钉通道会话，N-2）：rw 项里唯一豁免"必须含 /{userId}/ 段"
    * 规则的条目。豁免的安全性由两侧共同保证：本类校验路径位于通道工作区根下、为
    * {account}/{leaf} 两级以上（挂整个通道根或账号目录一律拒绝）且 leaf 归属本人
-   * （私聊工作区 private-{userId} 必须与容器 userId 一致），调用方只传入经数据库
-   * 按 user_id 过滤的该用户自己的会话工作区。群聊工作区由同群多个用户的会话按设计共享，
-   * 挂进各自容器不构成跨用户泄漏。
+   * （私聊工作区 private-{userId} / p2p-{userId} 必须与容器 userId 一致），调用方
+   * 只传入经数据库按 user_id 过滤的该用户自己的会话工作区。群聊工作区由同群多个
+   * 用户的会话按设计共享，挂进各自容器不构成跨用户泄漏。
    */
   sessionWorkspace?: boolean;
 }
@@ -102,15 +102,16 @@ export class ContainerMountPlanner {
     if (segments.length < 2) {
       throw new MountPlanError(`mount sessionWorkspace: ${host} must be a concrete {account}/{leaf} workspace under ${owning}`);
     }
-    // 归属校验（N-5，纵深防御）：私聊工作区 private-{userId} 只允许挂进本人容器。
-    // session.workspace 是用户可控字段（建会话 API 原样落库），缺少这道校验时可把
-    // 其他用户的飞书私聊工作区以 rw 挂进本人容器。群聊工作区（leaf 为 chatId）按
-    // 设计由同群多用户会话共享，不在此判定；用户自建会话的通道工作区入口已在
-    // 建会话侧按归属收口（session.routes.ts），这里是不依赖上游永远正确的第二道
-    const privateLeaf = /^private-(\d+)$/.exec(segments[1]!);
+    // 归属校验（N-5，纵深防御）：私聊工作区只允许挂进本人容器——飞书 private-{userId}、
+    // 钉钉 p2p-{userId}。session.workspace 是用户可控字段（建会话 API 原样落库），缺少
+    // 这道校验时可把其他用户的飞书/钉钉私聊工作区以 rw 挂进本人容器。群聊工作区
+    // （leaf 为 chatId / conversationId）按设计由同群多用户会话共享，不在此判定；
+    // 用户自建会话的通道工作区入口已在建会话侧按归属收口（session.routes.ts），
+    // 这里是不依赖上游永远正确的第二道
+    const privateLeaf = /^(?:private|p2p)-(\d+)$/.exec(segments[1]!);
     if (privateLeaf && privateLeaf[1] !== String(userId)) {
       throw new MountPlanError(
-        `mount sessionWorkspace: private workspace private-${privateLeaf[1]} does not belong to user ${userId}: ${host}`,
+        `mount sessionWorkspace: private workspace ${segments[1]} does not belong to user ${userId}: ${host}`,
       );
     }
     return { hostPath: host, containerPath: host, mode: 'rw', purpose: 'sessionWorkspace', sessionWorkspace: true };
