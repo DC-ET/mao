@@ -138,7 +138,7 @@ describe('session and admin routes', () => {
       })),
     } as unknown as OssStsService;
     registerOssRoutes(fastify, { ossStsService });
-    return { fastify, sessionService, ossStsService, compactionEvents: compactionEventService, compactionRecordService, runTraceService };
+    return { fastify, sessionService, ossStsService, compactionEvents: compactionEventService, compactionRecordService, runTraceService, root };
   }
 
   it('covers session rest endpoints', async () => {
@@ -490,6 +490,34 @@ describe('session and admin routes', () => {
       method: 'POST', url: '/v1/sessions', payload: { title: 't', source: 'mobile' },
     })).body);
     expect(bad.code).toBe(2001);
+    await fastify.close();
+  });
+
+  it('accepts cloud workspace under own root and rejects foreign channel workspaces', async () => {
+    // N-5 回归：CLOUD 会话工作区会以 rw 挂进该用户的 docker 容器，用户自建会话只能
+    // 指定本人每用户根之下的目录；他人通道工作区（如飞书私聊 private-8）必须被拒
+    const { fastify, sessionService, root } = await app();
+    mkdirSync(join(root, '7', 'projects', 'demo'), { recursive: true });
+    mkdirSync(join(root, 'feishu-chat', 'bot-1', 'private-8'), { recursive: true });
+    const own = JSON.parse((await fastify.inject({
+      method: 'POST', url: '/v1/sessions', payload: { title: 't', agentId: 9, workspace: join(root, '7', 'projects', 'demo') },
+    })).body);
+    expect(own.code).toBe(0);
+    expect(vi.mocked(sessionService.createSession).mock.calls[0][4]).toBe(join(root, '7', 'projects', 'demo'));
+
+    const foreign = JSON.parse((await fastify.inject({
+      method: 'POST', url: '/v1/sessions', payload: { title: 't', agentId: 9, workspace: join(root, 'feishu-chat', 'bot-1', 'private-8') },
+    })).body);
+    expect(foreign.code).toBe(2001);
+    // 越界工作区不得进入 service 层（mock 的调用次数不增加）
+    expect(vi.mocked(sessionService.createSession).mock.calls).toHaveLength(1);
+
+    // LOCAL 模式的工作区是宿主机本机项目目录，不做每用户根校验
+    const local = JSON.parse((await fastify.inject({
+      method: 'POST', url: '/v1/sessions', payload: { title: 't', agentId: 9, executionMode: 'LOCAL', workspace: '/Users/someone/project' },
+    })).body);
+    expect(local.code).toBe(0);
+    expect(vi.mocked(sessionService.createSession).mock.calls[1][4]).toBe('/Users/someone/project');
     await fastify.close();
   });
 

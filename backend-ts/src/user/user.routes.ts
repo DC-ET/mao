@@ -85,9 +85,10 @@ export function registerUserRoutes(
       email?: string;
       roleIds?: number[];
       status?: number;
+      runtimeMode?: string | null;
     }>(request);
     const user = await userService.updateUser(
-      pathId(request), body.displayName, body.email, body.roleIds, body.status, userId,
+      pathId(request), body.displayName, body.email, body.roleIds, body.status, userId, body.runtimeMode,
     );
     const roles = await userService.getUserRoles(user.id!);
     return sendOk(reply, toUserVO(user, roles));
@@ -135,6 +136,7 @@ function toUserVO(user: User, roles: Array<{ id?: number; name: string }>) {
     email: user.email,
     avatarUrl: user.avatarUrl,
     status: user.status,
+    runtimeMode: user.runtimeMode ?? null,
     authSource: UserService.resolveAuthSource(user),
     roleIds: roles.map((r) => r.id),
     roleNames: roles.map((r) => r.name),

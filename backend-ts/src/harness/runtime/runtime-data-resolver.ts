@@ -20,6 +20,11 @@ export class RuntimeDataResolver {
     return path.join(this.runtimeRoot, String(userId), String(sessionId));
   }
 
+  /** 用户级 runtime 根（容器挂载与 envelope 使用的 {runtimeRoot}/{userId}）。 */
+  resolveUserRuntimeDir(userId: number): string {
+    return path.join(this.runtimeRoot, String(userId));
+  }
+
   resolveSkillsDir(userId: number, sessionId: number): string {
     return path.join(this.resolveSessionRuntimeDir(userId, sessionId), 'skills');
   }

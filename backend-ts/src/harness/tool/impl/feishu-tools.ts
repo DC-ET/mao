@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { BaseTool } from '../tool.js';
 import { asText, errorJson, parseObject, toJson } from '../json.js';
 import { ImageFileSupport } from '../image-file-support.js';
-import { fetchBytesWithLimits } from './fetch-bytes.js';
+import { loadSendFileBytes, type SendBytesSupport } from './send-file-bytes.js';
 import type { PathSandbox } from '../../safety/path-sandbox.js';
 import type { FeishuChannelTool } from '../feishu-channel-tool.js';
 import type { FeishuSendTarget } from '../../../feishu/media-sender.js';
@@ -139,7 +139,7 @@ export class FeishuDownloadFileTool extends BaseTool implements FeishuChannelToo
     return { type: 'object', properties: { success: { type: 'boolean' }, path: { type: 'string', description: '下载后的本地文件路径' } } };
   }
 
-  protected override async executeWithUser(argumentsJson: string, sessionId: number | null, _userId: number | null, workspace: string | null): Promise<string> {
+  protected override async executeWithUser(argumentsJson: string, sessionId: number | null, userId: number | null, workspace: string | null): Promise<string> {
     try {
       const args = parseObject(argumentsJson) ?? {};
       const messageId = asText(args.message_id);
@@ -187,17 +187,18 @@ export class SendFeishuImageTool extends BaseTool implements FeishuChannelTool {
   constructor(
     private readonly pathSandbox: PathSandbox,
     private readonly support: FeishuMediaSendSupport,
+    private readonly sendBytesSupport?: SendBytesSupport | null,
   ) { super(); }
 
   getName(): string { return 'feishu_send_image'; }
   getDescription(): string {
-    return '向当前会话对应的飞书用户或群聊发送一张图片（仅飞书通道会话可用，私聊发给该用户、群聊发到该群）。支持本地文件路径（绝对路径或会话工作区相对路径）或 http(s) 图片 URL；仅支持 PNG/JPG/JPEG/GIF/WebP，大小不超过 10MB。';
+    return '向当前会话对应的飞书用户或群聊发送一张图片（仅飞书通道会话可用，私聊发给该用户、群聊发到该群）。支持本地文件路径（工作区相对路径，或允许集内的绝对路径：会话工作区、本人 uploads/{userId} 产物目录、runtime、HOME、/tmp）或 http(s) 图片 URL；仅支持 PNG/JPG/JPEG/GIF/WebP，大小不超过 10MB。';
   }
   getInputSchema(): Record<string, unknown> {
     return {
       type: 'object',
       properties: {
-        image: { type: 'string', description: '要发送的图片：本地文件路径（绝对路径或工作区相对路径），或 http(s) 图片 URL' },
+        image: { type: 'string', description: '要发送的图片：本地文件路径（工作区相对路径，或允许集内的绝对路径：会话工作区、本人 uploads/{userId} 产物目录、runtime、HOME、/tmp），或 http(s) 图片 URL' },
       },
       required: ['image'],
     };
@@ -206,14 +207,14 @@ export class SendFeishuImageTool extends BaseTool implements FeishuChannelTool {
     return { type: 'object', properties: { success: { type: 'boolean' } } };
   }
 
-  protected override async executeWithUser(argumentsJson: string, sessionId: number | null, _userId: number | null, workspace: string | null): Promise<string> {
+  protected override async executeWithUser(argumentsJson: string, sessionId: number | null, userId: number | null, workspace: string | null): Promise<string> {
     try {
       const args = parseObject(argumentsJson) ?? {};
       const image = asText(args.image);
       if (!image) return errorJson('缺少必填参数: image');
       const target = await this.support.resolveSendTarget(sessionId);
       if (!target) return errorJson('当前会话不是飞书通道会话，无法发送飞书图片');
-      const bytes = await loadBytes(image, this.pathSandbox, workspace, MAX_FEISHU_IMAGE_BYTES);
+      const bytes = await loadSendFileBytes(image, this.pathSandbox, this.sendBytesSupport ?? null, { userId, sessionId, workspace }, MAX_FEISHU_IMAGE_BYTES);
       if (bytes.length === 0) return errorJson('图片内容为空');
       if (bytes.length > MAX_FEISHU_IMAGE_BYTES) return errorJson('图片超过 10MB 上限');
       const mime = ImageFileSupport.detectMimeFromBytes(bytes);
@@ -233,17 +234,18 @@ export class SendFeishuFileTool extends BaseTool implements FeishuChannelTool {
   constructor(
     private readonly pathSandbox: PathSandbox,
     private readonly support: FeishuMediaSendSupport,
+    private readonly sendBytesSupport?: SendBytesSupport | null,
   ) { super(); }
 
   getName(): string { return 'feishu_send_file'; }
   getDescription(): string {
-    return '向当前会话对应的飞书用户或群聊发送一份文件（仅飞书通道会话可用，私聊发给该用户、群聊发到该群）。支持本地文件路径（绝对路径或会话工作区相对路径）或 http(s) URL，大小不超过 30MB。';
+    return '向当前会话对应的飞书用户或群聊发送一份文件（仅飞书通道会话可用，私聊发给该用户、群聊发到该群）。支持本地文件路径（工作区相对路径，或允许集内的绝对路径：会话工作区、本人 uploads/{userId} 产物目录、runtime、HOME、/tmp）或 http(s) URL，大小不超过 30MB。';
   }
   getInputSchema(): Record<string, unknown> {
     return {
       type: 'object',
       properties: {
-        file: { type: 'string', description: '要发送的文件：本地文件路径（绝对路径或工作区相对路径），或 http(s) URL' },
+        file: { type: 'string', description: '要发送的文件：本地文件路径（工作区相对路径，或允许集内的绝对路径：会话工作区、本人 uploads/{userId} 产物目录、runtime、HOME、/tmp），或 http(s) URL' },
         filename: { type: 'string', description: '可选，发送到飞书时展示的文件名，默认取路径 basename' },
       },
       required: ['file'],
@@ -253,14 +255,14 @@ export class SendFeishuFileTool extends BaseTool implements FeishuChannelTool {
     return { type: 'object', properties: { success: { type: 'boolean' } } };
   }
 
-  protected override async executeWithUser(argumentsJson: string, sessionId: number | null, _userId: number | null, workspace: string | null): Promise<string> {
+  protected override async executeWithUser(argumentsJson: string, sessionId: number | null, userId: number | null, workspace: string | null): Promise<string> {
     try {
       const args = parseObject(argumentsJson) ?? {};
       const file = asText(args.file);
       if (!file) return errorJson('缺少必填参数: file');
       const target = await this.support.resolveSendTarget(sessionId);
       if (!target) return errorJson('当前会话不是飞书通道会话，无法发送飞书文件');
-      const bytes = await loadBytes(file, this.pathSandbox, workspace, MAX_FEISHU_FILE_BYTES);
+      const bytes = await loadSendFileBytes(file, this.pathSandbox, this.sendBytesSupport ?? null, { userId, sessionId, workspace }, MAX_FEISHU_FILE_BYTES);
       if (bytes.length === 0) return errorJson('文件内容为空');
       if (bytes.length > MAX_FEISHU_FILE_BYTES) return errorJson('文件超过 30MB 上限');
       const fileName = asText(args.filename) || file.replace(/\\/g, '/').split('/').pop() || 'file';
@@ -271,15 +273,4 @@ export class SendFeishuFileTool extends BaseTool implements FeishuChannelTool {
       return errorJson((e as Error).message);
     }
   }
-}
-
-async function loadBytes(src: string, sandbox: PathSandbox, workspace: string | null, maxBytes: number): Promise<Buffer> {
-  if (src.startsWith('http://') || src.startsWith('https://')) {
-    return fetchBytesWithLimits(src, maxBytes);
-  }
-  const resolved = sandbox.resolveLenient(src, workspace);
-  if (!existsSync(resolved) || !statSync(resolved).isFile()) {
-    throw new Error('文件不存在：' + src);
-  }
-  return readFile(resolved);
 }

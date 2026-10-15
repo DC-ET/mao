@@ -9,6 +9,8 @@ export interface User {
   /** 由 user_external_identity 带出（只读，不落 user 表），用于判定外部登录来源。 */
   externalProvider?: string | null;
   status?: number | null;
+  /** 用户级运行时模式覆盖（技术方案 §5.12）：'docker' / 'host' / null=跟随全局。 */
+  runtimeMode?: string | null;
   lastLoginAt?: string | null;
   deleted?: number;
   createdAt?: string | null;

@@ -90,10 +90,12 @@ export interface SpawnPtyOptions {
   cols: number;
   rows: number;
   env: NodeJS.ProcessEnv;
+  /** 触发终端创建的用户：docker 运行时据此路由到该用户容器（技术方案 §5.7.3）。 */
+  userId?: number;
 }
 
-/** PTY 工厂：生产用 node-pty，单测注入 fake 实现。 */
-export type PtyFactory = (options: SpawnPtyOptions) => PtyLike;
+/** PTY 工厂：生产用 node-pty，docker 模式返回容器桥（异步），单测注入 fake 实现。 */
+export type PtyFactory = (options: SpawnPtyOptions) => PtyLike | Promise<PtyLike>;
 
 export const nodePtyFactory: PtyFactory = (options) => {
   const pty: IPty = spawn(options.shell, options.args, {

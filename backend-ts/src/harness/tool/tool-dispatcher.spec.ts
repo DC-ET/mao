@@ -972,3 +972,77 @@ describe('ToolDispatcher 审批规则短路（V135）', () => {
   });
 });
 
+
+describe('ToolDispatcher docker routing', () => {
+  // §5.7.1：docker 分支只放行已审批的执行动作；host 模式/未启用用户零行为差异
+  const cloudTool = mockTool('read_file');
+  const mcpTool = mockTool('mcp__filesystem__write_file');
+  const registry = new ToolRegistry([cloudTool, mcpTool]);
+  const localToolExecutor = { execute: vi.fn() } as unknown as LocalToolExecutor & { execute: ReturnType<typeof vi.fn> };
+  const dangerAssessor = new DangerAssessor({ chat: vi.fn(), stream: vi.fn() } as unknown as LlmAdapter);
+  const sessionMapper = { selectById: vi.fn() } as unknown as SessionMapper & { selectById: ReturnType<typeof vi.fn> };
+  const streamingWsRegistry = { hasConnection: vi.fn(), send: vi.fn() } as unknown as StreamingWsRegistry;
+  const askUserQuestionsRegistry = { register: vi.fn(), waitForAnswer: vi.fn() } as unknown as AskUserQuestionsRegistry;
+  const localToolSessionRegistry = { getUserIdForSession: vi.fn(), isConnected: vi.fn() } as unknown as LocalToolSessionRegistry;
+  const treeSignalPublisher = { publishForSession: vi.fn() } as unknown as SessionTreeSignalPublisher;
+
+  function makeDockerDispatcher(router: { enabledFor: ReturnType<typeof vi.fn>; dispatch: ReturnType<typeof vi.fn> }) {
+    return new ToolDispatcher(
+      registry, localToolExecutor, dangerAssessor, sessionMapper, streamingWsRegistry,
+      askUserQuestionsRegistry, localToolSessionRegistry, treeSignalPublisher,
+      null, null, null, null, null, null, null, null,
+      router as never,
+    );
+  }
+
+  beforeEach(() => {
+    sessionMapper.selectById.mockReset();
+    sessionMapper.selectById.mockResolvedValue(null);
+    cloudTool.execute.mockReset();
+    mcpTool.execute.mockReset();
+    localToolExecutor.execute.mockReset();
+  });
+
+  it('routesDockerOnlyToolsToContainer', async () => {
+    const router = { enabledFor: vi.fn(async () => true), dispatch: vi.fn(async () => 'container-result') };
+    const dockerDispatcher = makeDockerDispatcher(router);
+    const result = await dockerDispatcher.dispatch('read_file', '{"path":"a.txt"}', 'CLOUD', 11, 7, '/ws', null, null, null);
+    expect(result).toBe('container-result');
+    expect(router.dispatch).toHaveBeenCalledWith('read_file', '{"path":"a.txt"}', { userId: 7, sessionId: 11, workspace: '/ws' });
+    // 宿主机工具未被触碰
+    expect(cloudTool.execute).not.toHaveBeenCalled();
+  });
+
+  it('keepsMcpToolsOutOfTheDockerOnlyList', async () => {
+    // BUG-5 回归：mcp__* 不走 tool_call 帧进容器（容器执行器无 MCP 工具），
+    // 继续经 sessionTools → RoutingMcpClientManager 的 mcpConnect/mcpCall 进容器
+    const router = { enabledFor: vi.fn(async () => true), dispatch: vi.fn(async () => 'container-result') };
+    const dockerDispatcher = makeDockerDispatcher(router);
+    mcpTool.execute.mockResolvedValue('mcp-host-result');
+    const result = await dockerDispatcher.dispatch('mcp__filesystem__write_file', '{"path":"a.txt"}', 'CLOUD', 11, 7, '/ws', null, null, [mcpTool]);
+    expect(router.dispatch).not.toHaveBeenCalled();
+    expect(mcpTool.execute).toHaveBeenCalled();
+    expect(result).toBe('mcp-host-result');
+  });
+
+  it('fallsBackToHostWhenUserNotOnDocker', async () => {
+    const router = { enabledFor: vi.fn(async () => false), dispatch: vi.fn(async () => 'container-result') };
+    const dockerDispatcher = makeDockerDispatcher(router);
+    cloudTool.execute.mockResolvedValue('host-result');
+    const result = await dockerDispatcher.dispatch('read_file', '{"path":"a.txt"}', 'CLOUD', 11, 7, '/ws', null, null, null);
+    expect(result).toBe('host-result');
+    expect(router.dispatch).not.toHaveBeenCalled();
+  });
+
+  it('reportsContainerFailureWithoutSilentHostFallback', async () => {
+    const router = {
+      enabledFor: vi.fn(async () => true),
+      dispatch: vi.fn(async () => { throw new Error('channel not connected'); }),
+    };
+    const dockerDispatcher = makeDockerDispatcher(router);
+    const result = await dockerDispatcher.dispatch('shell', '{"action":"exec","command":"ls"}', 'CLOUD', 11, 7, '/ws', null, null, null);
+    expect(JSON.parse(result).error).toContain('容器执行环境不可用');
+    // 不静默降级：宿主机 shell 未执行
+    expect(localToolExecutor.execute).not.toHaveBeenCalled();
+  });
+});

@@ -10,6 +10,7 @@ import { mkdirSync, existsSync, rmSync, lstatSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { resolve, relative } from 'node:path';
 import { fail } from './common/result.js';
+import { harnessLog } from './harness/log.js';
 import { ErrorCode } from './common/error-code.js';
 import { fastifyLoggerOptions, redactCredentialQuery } from './common/structured-logger.js';
 import { sendJson, handleError } from './common/http-error.js';
@@ -341,6 +342,15 @@ import { DigestRepository } from './digest/repository.js';
 import { DigestService } from './digest/service.js';
 import { DigestScheduler } from './digest/scheduler.js';
 import { registerDigestRoutes } from './digest/routes.js';
+import { RuntimeChannelServer } from './harness/container/runtime-channel-server.js';
+import { ContainerRegistry } from './harness/container/container-registry.js';
+import { DockerToolRouter } from './harness/container/docker-tool-router.js';
+import { SessionEnvelopeBuilder, buildDepsEnv } from './harness/container/session-envelope-builder.js';
+import { DockerSendBytesBridge } from './harness/container/read-bytes-bridge.js';
+import { RoutingMcpClientManager } from './harness/container/routing-mcp-client-manager.js';
+import { PtyChannelHub } from './harness/container/pty-bridge.js';
+import { FEISHU_CHAT_DIR, isChannelWorkspace } from './harness/container/channel-workspace.js';
+import { nodePtyFactory, type PtyLike, type SpawnPtyOptions } from './harness/terminal/remote-terminal.js';
 
 export interface MaoApp {
   app: FastifyInstance;
@@ -351,8 +361,9 @@ function resolveFeishuChatWorkspace(root: string, accountId: string, leaf: strin
   const safeAccountId = encodeURIComponent(accountId);
   const safeLeaf = encodeURIComponent(leaf);
   const workspaceRoot = resolve(root);
-  const workspace = resolve(workspaceRoot, 'feishu-chat', safeAccountId, safeLeaf);
-  for (const candidate of [workspaceRoot, resolve(workspaceRoot, 'feishu-chat'), resolve(workspaceRoot, 'feishu-chat', safeAccountId)]) {
+  // 目录名与容器挂载清单（channel-workspace.ts）共用，防两侧漂移导致 docker 模式失效
+  const workspace = resolve(workspaceRoot, FEISHU_CHAT_DIR, safeAccountId, safeLeaf);
+  for (const candidate of [workspaceRoot, resolve(workspaceRoot, FEISHU_CHAT_DIR), resolve(workspaceRoot, FEISHU_CHAT_DIR, safeAccountId)]) {
     try {
       if (lstatSync(candidate).isSymbolicLink()) throw new Error('飞书会话工作区路径不允许符号链接');
     } catch (error) {
@@ -978,6 +989,145 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       errorMessage: truncateAuditError(ctx?.errorMessage),
     }).catch((e) => console.error('Failed to record terminal audit log', e));
   };
+  // ── 用户运行时容器隔离（技术方案 §5）：host 模式下整组组件闲置、派发分支短路 ──
+  const cloudRuntimeCfg = cfg.app.cloudRuntime;
+  const containerChannelHolder: { registry: ContainerRegistry | null } = { registry: null };
+  const channelServer = new RuntimeChannelServer({
+    channelDir: cloudRuntimeCfg.container.channelDir,
+    // 回调仅在连接建立后触发，此处引用 channelServer 自身无 TDZ 问题
+    tokenOf: (userId): string => channelServer.issueToken(userId),
+    onConnectionDead: (userId) => containerChannelHolder.registry?.markConnectionDead(userId),
+    onRuntimeStatus: (userId, status) => containerChannelHolder.registry?.reportRuntimeStatus(userId, status),
+  });
+  const containerRegistry = new ContainerRegistry({
+    config: cloudRuntimeCfg,
+    workspaceRoot: cfg.app.harness.workspaceRoot,
+    userHomeDir: cfg.app.harness.userHomeDir,
+    runtimeDir: cfg.app.harness.runtimeDir,
+    userSkillsDir,
+    skillsDir: cfg.app.harness.skillsDir,
+    // 图片产物按用户隔离：容器挂 {uploadDir}/{userId}（nginx /uploads/ 静态出口同源）
+    uploadDir,
+    // 先 listen 再 docker run：容器 agent 启动即连 socket，宿主机没监听时只会无限重连
+    ensureChannelListening: async (userId) => channelServer.ensureListening(userId),
+    // token 随 docker run -e 注入（不再依赖容器读 .token 文件的隐式路径）
+    issueChannelToken: (userId) => channelServer.issueToken(userId),
+    waitSocketReady: async (userId, timeoutMs) => {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        if (channelServer.getConnection(userId)) return;
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+      throw new Error(`容器运行时通道连接超时: userId=${userId} (${timeoutMs}ms)`);
+    },
+    requestShutdown: async (userId) => {
+      const conn = channelServer.getConnection(userId);
+      return conn ? conn.requestShutdown(5000) : false;
+    },
+    // 通道会话（飞书/钉钉）工作区越出每用户根，需按用户会话并入挂载清单（N-2）。
+    // 归属校验即 SQL 的 user_id 过滤：只可能拿到该用户自己的会话工作区
+    sessionWorkspacesOf: async (userId) => {
+      const all = await sessionRepo.listWorkspacesByUser(userId).catch((e) => {
+        console.debug(`Session workspace lookup skipped for user ${userId}: ${(e as Error).message}`);
+        return [] as string[];
+      });
+      // 只挂通道工作区：web 会话在 {workspaceRoot}/{userId} 之内已被标准清单覆盖，
+      // 其余形态（null/异常路径）一律不挂，交由 ensureRunning 的明确报错兜底
+      return all.filter((w) => isChannelWorkspace(w, cfg.app.harness.workspaceRoot));
+    },
+  });
+  containerChannelHolder.registry = containerRegistry;
+  const envelopeBuilder = new SessionEnvelopeBuilder({
+    runtimeResolver,
+    gitCredentialService: gitLookup,
+    jwtService: jwt,
+    userLookup: { findById: (id: number) => userRepo.findById(id) as Promise<{ username?: string | null } | null> },
+    ecpInjector,
+    larkUatInjector,
+  }, cloudRuntimeCfg.container.depsDir);
+  const dockerRouter = new DockerToolRouter({
+    containerRegistry,
+    channelServer,
+    envelopeBuilder,
+    runtimeModeLookup: {
+      runtimeModeOf: async (userId) => {
+        const user = await userRepo.findById(userId).catch(() => null);
+        const mode = user?.runtimeMode ?? null;
+        return mode === 'docker' || mode === 'host' ? mode : null;
+      },
+    },
+    globalMode: () => cloudRuntimeCfg.mode,
+  });
+  const sendBytesBridge = new DockerSendBytesBridge({
+    router: dockerRouter,
+    runtimeResolver,
+    runtimeDir: cfg.app.harness.runtimeDir,
+    uploadDir,
+  });
+  // MCP stdio 容器路由：容器用户的连接与 callTool 在容器内执行（§5.10），其余直通宿主机
+  const mcpRuntimeProbe = {
+    shouldHandle: async (sessionId: number): Promise<boolean> => {
+      const session = await sessionRepo.findById(sessionId).catch(() => null);
+      if (session?.userId == null) return false;
+      return dockerRouter.enabledFor(session.userId);
+    },
+    userIdOf: async (sessionId: number): Promise<number | null> => {
+      const session = await sessionRepo.findById(sessionId).catch(() => null);
+      return session?.userId ?? null;
+    },
+  };
+  const routingMcpClient = new RoutingMcpClientManager({
+    host: mcpClient,
+    router: dockerRouter,
+    probe: mcpRuntimeProbe,
+  }) as never;
+  // 终端 pty 容器桥：docker 用户经 channel 在容器内 spawn（§5.7.3），其余走宿主机 node-pty。
+  // hub 按用户长生存期：agent 重连换连接时 bindConnection 迁移订阅（在飞终端不中断）；
+  // 容器重建（startedAtMs 变化）时旧容器内的 pty 已不存在，旧 hub 全部收尾后换绑新连接。
+  const ptyChannelHubs = new Map<number, PtyChannelHub>();
+  const ptyHubGeneration = new Map<number, number>();
+  const containerPtyFactory = async (options: SpawnPtyOptions): Promise<PtyLike> => {
+    const userId = options.userId;
+    if (userId != null && await dockerRouter.enabledFor(userId)) {
+      // cwd 即会话工作区：通道会话（飞书/钉钉）越出每用户根，未挂载时先重建容器
+      const entry = await containerRegistry.ensureRunning(userId, options.cwd);
+      const connection = channelServer.getConnection(userId);
+      if (!connection) throw new Error(`容器终端通道未就绪: userId=${userId}`);
+      let hub = ptyChannelHubs.get(userId);
+      if (!hub || ptyHubGeneration.get(userId) !== entry.startedAtMs) {
+        hub?.dispose();
+        hub = new PtyChannelHub(connection);
+        ptyChannelHubs.set(userId, hub);
+        ptyHubGeneration.set(userId, entry.startedAtMs);
+      } else {
+        hub.bindConnection(connection);
+      }
+      const bridge = await hub.open(userId, options);
+      harnessLog('info', `[container] terminal pty opened in container: user=${userId}, pid=${bridge.pid}`);
+      return bridge;
+    }
+    return nodePtyFactory(options);
+  };
+  // 容器预热：会话活跃（WS 连接/执行心跳）时确保该用户容器就绪（决策 15）
+  activityHeartbeat.onActivity((sessionId) => {
+    void (async () => {
+      const session = await sessionRepo.findById(sessionId).catch(() => null);
+      if (session?.userId == null) return;
+      if (!(await dockerRouter.enabledFor(session.userId))) return;
+      // 带上会话工作区：通道会话工作区未挂载时预热阶段就重建，避免首个工具调用才触发
+      await containerRegistry.ensureRunning(session.userId, session.workspace ?? null);
+    })().catch((e) => {
+      console.debug(`Container prewarm skipped for session ${sessionId}: ${(e as Error).message}`);
+    });
+  });
+  if (cloudRuntimeCfg.mode === 'docker') {
+    containerRegistry.precheck().catch((e) => {
+      console.error(`[container] 启动预检失败，请先安装 Docker 并构建运行时镜像: ${(e as Error).message}`);
+      process.exit(1);
+    });
+    containerRegistry.startIdleLoop();
+  }
+
   const terminalManager = new TerminalManager({
     pathSandbox,
     runtimeResolver,
@@ -986,8 +1136,12 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     userLookup: { findById: (id: number) => userRepo.findById(id) as Promise<{ username: string } | null> },
     ecpInjector,
     larkUatInjector,
+    // §5.13：仅容器用户注入 deps env（npm/pip 安装落到每用户 /deps 挂载），host 用户零变化
+    depsEnvProvider: async (userId) =>
+      (await dockerRouter.enabledFor(userId)) ? buildDepsEnv(cloudRuntimeCfg.container.depsDir, userId) : null,
     config: terminalCfg,
     audit: terminalAudit,
+    ptyFactory: containerPtyFactory,
   });
   terminalManagerRef = terminalManager;
   const terminalWsHandler = new TerminalWsHandler({
@@ -1209,6 +1363,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   });
 
   const dingtalkMediaHolder: { current: DingtalkMediaSendSupport | null } = { current: null };
+
   const toolRegistry = createDefaultToolRegistry({
     pathSandbox,
     sessionTodoMapper: todoMapper,
@@ -1229,6 +1384,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     imageModelLookup: modelService,
     uploadDir,
     getUploadBaseUrl: async () => (await settingService.getUploadConfig()).baseUrl,
+    uploadContextPath: apiPrefix,
     weixinToolSupport: wechatBridges.toolSupport,
     weixinUploadService: wechatBridges.uploadService,
     weixinSendService: wechatBridges.sendService,
@@ -1294,6 +1450,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         }
       },
     },
+    sendBytesSupport: sendBytesBridge,
     dingtalkMediaSendSupport: {
       resolveSendTarget: (sessionId) => dingtalkMediaHolder.current?.resolveSendTarget(sessionId) ?? Promise.resolve(null),
       sendImage: async (target, bytes, fileName) => {
@@ -1325,12 +1482,13 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     proxyApprover, jevRiskAssessor, approvalModelResolver,
     inboxService,
     approvalRuleService,
+    dockerRouter,
   );
   // 手动压缩信号总线：AgentLoop（工具轮边界消费）与 StreamingWsHandler（运行中置位）共享同一实例。
   const compactionSignalBus = new CompactionSignalBus();
   const agentLoop = new AgentLoop(
     llmAdapter, promptEngine, contextManager, toolDispatcher, backgroundTasks,
-    shellManager, activityHeartbeat, sessionSvc, orchestrator, activeContext, mcpClient,
+    shellManager, activityHeartbeat, sessionSvc, orchestrator, activeContext, routingMcpClient,
     () => backgroundSubagentManager,
     compactionSignalBus,
   );
@@ -1339,7 +1497,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     agentLoop, toolRegistry, skillLoader, skillSync, localSkills, localAgentsMd,
     sessionMap, agentRepo as never, experienceService, modelRepo as never, fileChangeRepo as never,
     sessionSvc, compactionSvc, historyLoader, orchestrator,
-    promptEngine, activeContext, compactionConfig, envInfo, db, mcpClient, mcpSync,
+    promptEngine, activeContext, compactionConfig, envInfo, db, routingMcpClient, mcpSync,
     { isEmbedSession: (sid: number) => embedPageToolRegistry.isEmbedSession(sid) },
     memoryService,
   );
@@ -1438,7 +1596,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     localSkillRegistry: localSkills,
     localAgentsMdRegistry: localAgentsMd,
     mcpSyncService: mcpSync,
-    mcpClientManager: mcpClient,
+    mcpClientManager: routingMcpClient,
     agentMapper: { selectById: (id: number) => agentRepo.findById(id) },
     llmModelMapper: {
       selectById: (id: number) => modelRepo.findById(id),
@@ -3052,6 +3210,13 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       shellManager.stopCleanup();
       terminalManager.stopCleanup();
       terminalManager.closeAll();
+      // 在飞容器终端按断开收尾（exit -1），再退订连接监听
+      for (const hub of ptyChannelHubs.values()) hub.dispose();
+      ptyChannelHubs.clear();
+      ptyHubGeneration.clear();
+      containerRegistry.stopIdleLoop();
+      await containerRegistry.stopAllForShutdown().catch((e) => console.warn(`[container] stopAllForShutdown failed: ${(e as Error).message}`));
+      await channelServer.stop();
       runtimeCleanup.stop();
       activityHeartbeat.stopAll();
       wsRegistry.shutdown();

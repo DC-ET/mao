@@ -33,23 +33,50 @@ export function buildImageApiConfig(
   };
 }
 
-/** 将 API 结果落盘 uploadDir 并组装工具返回 JSON 对象。 */
+/**
+ * 从 upload.baseUrl（形如 https://<域名>/api，servlet contextPath 段结尾）派生静态
+ * origin：按 contextPath 剥掉结尾的后缀段得 https://<域名>，产物 URL 拼
+ * {origin}/uploads/...，与 nginx 静态出口（location ^~ /uploads/）直连，不经后端。
+ *
+ * contextPath 不能硬编码成 /api：后台自定义 contextPath（如 /api/v1）时硬编码剥不掉，
+ * image_url 会拼成 /api/v1/uploads/...（后端只注册 /uploads/ 与 {contextPath}/uploads/），
+ * 从而 404。contextPath 为空时按 /api 兜底（历史默认值），裸域名则原样返回，
+ * 由后端 /uploads/ 静态前缀兜底。
+ */
+export function toStaticUploadBase(baseUrl: string, contextPath = '/api'): string {
+  const trimmed = (baseUrl ?? '').replace(/\/+$/, '');
+  const prefix = (contextPath ?? '').replace(/\/+$/, '');
+  if (prefix !== '' && trimmed.endsWith(prefix)) return trimmed.slice(0, trimmed.length - prefix.length);
+  return trimmed;
+}
+
+/**
+ * 将 API 结果落盘并组装工具返回 JSON 对象。
+ *
+ * userId 非空时落 {uploadDir}/{userId}/ 子目录（按用户隔离，容器按用户挂载可见）；
+ * userId 为空（单测 / 无用户上下文调用）退平坦目录。image_url 修对为
+ * {静态 origin}/uploads/{userId}/<file>（baseUrl 为空时回落绝对路径）。
+ */
 export function materializeImageApiResult(
   result: ImageApiResult,
   uploadDir: string,
   namePrefix: 'gen' | 'edit',
   baseUrl: string,
   prompt: string,
+  userId: number | null = null,
+  contextPath = '/api',
 ): Record<string, unknown> {
-  mkdirSync(uploadDir, { recursive: true });
+  const uidSegment = userId != null ? `${String(userId)}/` : '';
+  const dir = userId != null ? path.join(uploadDir, String(userId)) : uploadDir;
+  mkdirSync(dir, { recursive: true });
   const images: Array<Record<string, unknown>> = [];
   for (const item of result.images) {
     const fileName = `${namePrefix}-${randomUUID()}${path.extname(item.fileName) || '.png'}`;
-    const filePath = path.join(uploadDir, fileName);
+    const filePath = path.join(dir, fileName);
     writeFileSync(filePath, item.bytes);
-    const base = (baseUrl ?? '').replace(/\/$/, '');
+    const origin = toStaticUploadBase(baseUrl, contextPath);
     images.push({
-      image_url: base ? `${base}/${fileName}` : filePath,
+      image_url: origin ? `${origin}/uploads/${uidSegment}${fileName}` : filePath,
       image_path: filePath,
       size_bytes: item.bytes.length,
       source: item.source,
@@ -72,6 +99,8 @@ export class GenerateImageTool extends BaseTool {
     private readonly modelService: ImageModelLookup,
     private readonly uploadDir: string,
     private readonly getBaseUrl: () => Promise<string> = async () => '',
+    /** servlet contextPath（默认 /api）：从 upload.baseUrl 剥后缀段派生静态 origin。 */
+    private readonly contextPath: string = '/api',
   ) { super(); }
 
   getName(): string { return 'generate_image'; }
@@ -131,7 +160,12 @@ export class GenerateImageTool extends BaseTool {
     };
   }
 
-  protected async executeWithSession(argumentsJson: string): Promise<string> {
+  protected async executeWithUser(
+    argumentsJson: string,
+    _sessionId: number | null,
+    userId: number | null,
+    _workspace: string | null,
+  ): Promise<string> {
     let model: LlmModel | null = null;
     try {
       const args = parseObject(argumentsJson) ?? {};
@@ -158,7 +192,7 @@ export class GenerateImageTool extends BaseTool {
         quality: qualityRaw,
       });
       const baseUrl = await this.getBaseUrl();
-      return toJson(materializeImageApiResult(result, this.uploadDir, 'gen', baseUrl, prompt));
+      return toJson(materializeImageApiResult(result, this.uploadDir, 'gen', baseUrl, prompt, userId, this.contextPath));
     } catch (e) {
       const err = toImageApiError(e, model?.apiKey);
       harnessLog('error', 'GenerateImageTool failed', err);

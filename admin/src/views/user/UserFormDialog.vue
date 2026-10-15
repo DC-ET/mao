@@ -73,6 +73,13 @@
           />
         </el-tooltip>
       </el-form-item>
+      <el-form-item v-if="isEdit" label="运行时模式">
+        <el-select v-model="form.runtimeMode" placeholder="跟随全局" style="width: 100%">
+          <el-option label="跟随全局" value="" />
+          <el-option label="容器隔离（docker）" value="docker" />
+          <el-option label="宿主机（host）" value="host" />
+        </el-select>
+      </el-form-item>
     </el-form>
     <template #footer>
       <el-button @click="$emit('update:visible', false)">取消</el-button>
@@ -127,7 +134,8 @@ const form = reactive({
   password: '',
   confirmPassword: '',
   roleIds: [] as number[],
-  enabled: true
+  enabled: true,
+  runtimeMode: '' as string
 })
 
 const passwordPattern = /^(?=.*[A-Za-z])(?=.*\d).{8,64}$/
@@ -193,7 +201,8 @@ function resetForm() {
     password: '',
     confirmPassword: '',
     roleIds: [] as number[],
-    enabled: true
+    enabled: true,
+    runtimeMode: ''
   })
 }
 
@@ -217,7 +226,8 @@ watch(() => props.visible, async (val) => {
       password: '',
       confirmPassword: '',
       roleIds: [...(props.userData.roleIds || [])],
-      enabled: props.userData.status === 1
+      enabled: props.userData.status === 1,
+      runtimeMode: props.userData.runtimeMode || ''
     })
   } else {
     resetForm()
@@ -242,7 +252,8 @@ async function handleSubmit() {
         displayName: form.displayName,
         email: form.email,
         roleIds: form.roleIds,
-        status
+        status,
+        runtimeMode: form.runtimeMode === '' ? null : form.runtimeMode
       })
       ElMessage.success('用户更新成功')
     } else {

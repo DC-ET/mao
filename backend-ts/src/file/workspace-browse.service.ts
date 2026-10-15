@@ -11,6 +11,7 @@ import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { ImageFileSupport } from '../harness/tool/image-file-support.js';
 import { PathSandbox, SecurityException } from '../harness/safety/path-sandbox.js';
+import { StrictPathResolver } from '../harness/safety/strict-path.js';
 
 const MAX_ENTRIES = 500;
 const MAX_SEARCH_RESULTS = 100;
@@ -409,8 +410,10 @@ export class WorkspaceBrowseService {
 
   private resolvePath(userPath: string, sessionWorkspace: string): string {
     try {
-      // 与 read_file 工具同一口径：相对路径按工作区解析，绝对路径直达任意位置。
-      return this.pathSandbox.resolveLenient(userPath, sessionWorkspace);
+      // 严格解析（技术方案 §5.9 越界收口）：REST 文件服务以会话工作区为唯一根，
+      // 相对穿越与越界绝对路径（含符号链接逃逸）一律拒绝。业务上前端只传
+      // 工作区内相对路径，收紧不影响正常使用。
+      return new StrictPathResolver(sessionWorkspace).resolve(userPath);
     } catch (e) {
       if (e instanceof SecurityException) {
         throw new BusinessException(ErrorCode.FORBIDDEN, '路径访问被拒绝');

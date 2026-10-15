@@ -1,6 +1,7 @@
 node_modules/
 dist/
 coverage/
+.tmp-test/
 .env
 config/application-local.yml
 *.log

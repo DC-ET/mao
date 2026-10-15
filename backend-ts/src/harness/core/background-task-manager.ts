@@ -48,6 +48,11 @@ export class BackgroundTaskManager {
     return taskId;
   }
 
+  /** 未消费（含未完成）任务数：容器 idle 判定的容器内状态上报用（技术方案 §5.3.1）。 */
+  countUnfinished(): number {
+    return this.tasks.size;
+  }
+
   async consumeCompletedResults(sessionId: number | null): Promise<Record<string, string>> {
     const completed: Record<string, string> = {};
     const now = this.now();

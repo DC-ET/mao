@@ -32,6 +32,26 @@ export interface FeishuBotConfig {
   file: { maxInboundFileMb: number };
 }
 
+/** 用户运行时容器隔离配置（技术方案 §5.12）。mode=docker 时执行类工具进每用户容器。 */
+export interface CloudRuntimeConfig {
+  /** host：现状行为；docker：执行类工具派发到每用户容器。用户级 user.runtime_mode 可覆盖。 */
+  mode: 'host' | 'docker';
+  container: {
+    idleMinutes: number;
+    maxLifetimeHours: number;
+    memoryMb: number;
+    cpus: number;
+    pidsLimit: number;
+    image: string;
+    network: string;
+    channelDir: string;
+    distDir: string;
+    depsDir: string;
+    tmpfsSizeMb: number;
+    startTimeoutMs: number;
+  };
+}
+
 export interface AppConfig {
   server: {
     port: number;
@@ -108,6 +128,7 @@ export interface AppConfig {
     search: {
       fulltextEnabled: boolean;
     };
+    cloudRuntime: CloudRuntimeConfig;
   };
   weixin: {
     bot: {
@@ -230,6 +251,23 @@ const DEFAULTS: AppConfig = {
     },
     search: {
       fulltextEnabled: true,
+    },
+    cloudRuntime: {
+      mode: 'host',
+      container: {
+        idleMinutes: 60,
+        maxLifetimeHours: 72,
+        memoryMb: 2048,
+        cpus: 2,
+        pidsLimit: 512,
+        image: 'mao-runtime:latest',
+        network: 'bridge',
+        channelDir: '/opt/mao-data/runtime/channels',
+        distDir: '/opt/mao/backend-ts/dist',
+        depsDir: '/opt/mao-data/deps',
+        tmpfsSizeMb: 512,
+        startTimeoutMs: 15000,
+      },
     },
   },
   weixin: {
@@ -370,6 +408,28 @@ function coerceTypes(cfg: AppConfig): AppConfig {
   cfg.spring.flyway.enabled = b(process.env.FLYWAY_ENABLED ?? cfg.spring.flyway.enabled, true);
   cfg.app.search = cfg.app.search ?? { fulltextEnabled: true };
   cfg.app.search.fulltextEnabled = b(process.env.SEARCH_FULLTEXT_ENABLED ?? cfg.app.search.fulltextEnabled, true);
+  cfg.app.cloudRuntime = cfg.app.cloudRuntime ?? {
+    mode: 'host',
+    container: {
+      idleMinutes: 60, maxLifetimeHours: 72, memoryMb: 2048, cpus: 2, pidsLimit: 512,
+      image: 'mao-runtime:latest', network: 'bridge', channelDir: '/opt/mao-data/runtime/channels',
+      distDir: '/opt/mao/backend-ts/dist', depsDir: '/opt/mao-data/deps', tmpfsSizeMb: 512, startTimeoutMs: 15000,
+    },
+  };
+  cfg.app.cloudRuntime.mode = (process.env.MAO_CLOUD_RUNTIME as 'host' | 'docker' | undefined)
+    === 'docker' ? 'docker' : (process.env.MAO_CLOUD_RUNTIME === 'host' ? 'host' : cfg.app.cloudRuntime.mode);
+  cfg.app.cloudRuntime.container.idleMinutes = n(process.env.MAO_CONTAINER_IDLE_MINUTES ?? cfg.app.cloudRuntime.container.idleMinutes, 60);
+  cfg.app.cloudRuntime.container.maxLifetimeHours = n(process.env.MAO_CONTAINER_MAX_LIFETIME_HOURS ?? cfg.app.cloudRuntime.container.maxLifetimeHours, 72);
+  cfg.app.cloudRuntime.container.memoryMb = n(process.env.MAO_CONTAINER_MEMORY_MB ?? cfg.app.cloudRuntime.container.memoryMb, 2048);
+  cfg.app.cloudRuntime.container.cpus = n(process.env.MAO_CONTAINER_CPUS ?? cfg.app.cloudRuntime.container.cpus, 2);
+  cfg.app.cloudRuntime.container.pidsLimit = n(process.env.MAO_CONTAINER_PIDS_LIMIT ?? cfg.app.cloudRuntime.container.pidsLimit, 512);
+  if (process.env.MAO_CONTAINER_IMAGE) cfg.app.cloudRuntime.container.image = process.env.MAO_CONTAINER_IMAGE;
+  if (process.env.MAO_CONTAINER_NETWORK) cfg.app.cloudRuntime.container.network = process.env.MAO_CONTAINER_NETWORK;
+  if (process.env.MAO_CONTAINER_CHANNEL_DIR) cfg.app.cloudRuntime.container.channelDir = process.env.MAO_CONTAINER_CHANNEL_DIR;
+  if (process.env.MAO_CONTAINER_DIST_DIR) cfg.app.cloudRuntime.container.distDir = process.env.MAO_CONTAINER_DIST_DIR;
+  if (process.env.MAO_CONTAINER_DEPS_DIR) cfg.app.cloudRuntime.container.depsDir = process.env.MAO_CONTAINER_DEPS_DIR;
+  cfg.app.cloudRuntime.container.tmpfsSizeMb = n(process.env.MAO_CONTAINER_TMPFS_SIZE_MB ?? cfg.app.cloudRuntime.container.tmpfsSizeMb, 512);
+  cfg.app.cloudRuntime.container.startTimeoutMs = n(process.env.MAO_CONTAINER_START_TIMEOUT_MS ?? cfg.app.cloudRuntime.container.startTimeoutMs, 15000);
   cfg.dingtalk.enabled = b(process.env.DINGTALK_BOT_ENABLED ?? cfg.dingtalk.enabled, false);
   cfg.dingtalk.reconcileIntervalMs = n(process.env.DINGTALK_BOT_RECONCILE_INTERVAL_MS ?? cfg.dingtalk.reconcileIntervalMs, 5000);
   cfg.dingtalk.reconnectBaseMs = n(process.env.DINGTALK_BOT_RECONNECT_BASE_MS ?? cfg.dingtalk.reconnectBaseMs, 1000);

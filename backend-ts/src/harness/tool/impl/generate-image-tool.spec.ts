@@ -1,12 +1,14 @@
 import http from 'node:http';
-import { readdirSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readdirSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { useTmpDir } from '../../../testing/tmp-dir.js';
-import { GenerateImageTool } from './generate-image-tool.js';
+import { GenerateImageTool, materializeImageApiResult, toStaticUploadBase } from './generate-image-tool.js';
 import { EditImageTool } from './edit-image-tool.js';
 import { PathSandbox } from '../../safety/path-sandbox.js';
+import type { SendBytesSupport } from './send-file-bytes.js';
+import type { ImageApiResult } from '../image-api-client.js';
 import { normalizeImageModelName, buildAuthorizationHeader, stripTrailingSlash } from '../image-api-client.js';
 
 const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d]);
@@ -150,12 +152,74 @@ describe('normalizeImageModelName', () => {
   });
 });
 
+describe('materializeImageApiResult（图片产物按用户隔离）', () => {
+  const apiResult: ImageApiResult = {
+    images: [{ bytes: PNG_BYTES, mime: 'image/png', source: 'b64_json', fileName: 'a.png' }],
+    model: 'gpt-image-2.5-flare',
+  };
+
+  it('derives static origin by stripping a trailing /api', () => {
+    expect(toStaticUploadBase('https://mao.example/api')).toBe('https://mao.example');
+    expect(toStaticUploadBase('https://mao.example/api/')).toBe('https://mao.example');
+    expect(toStaticUploadBase('https://mao.example')).toBe('https://mao.example');
+    expect(toStaticUploadBase('https://mao.example/')).toBe('https://mao.example');
+    expect(toStaticUploadBase('')).toBe('');
+  });
+
+  it('strips the configured contextPath instead of a hardcoded /api', () => {
+    // 后台自定义 contextPath=/api/v1：硬编码剥 /api 会残留 /api/v1，image_url 必 404
+    expect(toStaticUploadBase('https://mao.example/api/v1', '/api/v1')).toBe('https://mao.example');
+    expect(toStaticUploadBase('https://mao.example/api/v1/', '/api/v1')).toBe('https://mao.example');
+    // 默认 contextPath 未传时按 /api 兜底
+    expect(toStaticUploadBase('https://mao.example/api/v1')).toBe('https://mao.example/api/v1');
+    // contextPath 为空（裸域名部署）：原样返回，由后端 /uploads/ 前缀兜底
+    expect(toStaticUploadBase('https://mao.example/api', '')).toBe('https://mao.example/api');
+  });
+
+  it('builds the uploads url for a custom contextPath', () => {
+    const dir = useTmpDir('mat-');
+    const payload = materializeImageApiResult(apiResult, dir, 'gen', 'https://mao.example/api/v1', 'cat', 7, '/api/v1');
+    const image = payload.images[0] as Record<string, unknown>;
+    const fileName = (image.image_path as string).split('/').pop()!;
+    expect(image.image_url).toBe(`https://mao.example/uploads/7/${fileName}`);
+  });
+
+  it('writes into {uploadDir}/{userId} and builds /uploads/{uid}/ url', () => {
+    const dir = useTmpDir('mat-');
+    const payload = materializeImageApiResult(apiResult, dir, 'gen', 'https://mao.example/api', 'cat', 7);
+    const image = payload.images[0] as Record<string, unknown>;
+    const fileName = (image.image_path as string).split('/').pop()!;
+    expect(image.image_path).toBe(join(dir, '7', fileName));
+    expect(image.image_url).toBe(`https://mao.example/uploads/7/${fileName}`);
+    expect(existsSync(image.image_path as string)).toBe(true);
+    expect(payload.model).toBe('gpt-image-2.5-flare');
+  });
+
+  it('falls back to the flat dir when userId is absent (internal/test callers)', () => {
+    const dir = useTmpDir('mat-');
+    const payload = materializeImageApiResult(apiResult, dir, 'gen', 'https://mao.example/api', 'cat');
+    const image = payload.images[0] as Record<string, unknown>;
+    const fileName = (image.image_path as string).split('/').pop()!;
+    expect(image.image_path).toBe(join(dir, fileName));
+    expect(image.image_url).toBe(`https://mao.example/uploads/${fileName}`);
+    expect(readdirSync(dir).some((f) => f === fileName)).toBe(true);
+  });
+
+  it('falls back to the absolute path when baseUrl is empty', () => {
+    const dir = useTmpDir('mat-');
+    const payload = materializeImageApiResult(apiResult, dir, 'edit', '', 'cat', 7);
+    const image = payload.images[0] as Record<string, unknown>;
+    expect(image.image_url).toBe(image.image_path);
+    expect(image.image_path as string).toContain(join(dir, '7'));
+  });
+});
+
 describe('GenerateImageTool', () => {
   function makeTool(extra?: Record<string, unknown> | null) {
     const dir = useTmpDir('img-');
     const tool = new GenerateImageTool({
       findFirstActiveImageModel: async () => model(extra) as never,
-    }, dir, async () => 'https://mao.example/uploads');
+    }, dir, async () => 'https://mao.example/api');
     return { tool, dir };
   }
 
@@ -197,6 +261,29 @@ describe('GenerateImageTool', () => {
 
     const files = readdirSync(dir);
     expect(files.some((f) => f.startsWith('gen-') && f.endsWith('.png'))).toBe(true);
+  });
+
+  it('isolates artifacts per user when userId is present', async () => {
+    const { tool, dir } = makeTool();
+    const result = JSON.parse(await tool.execute(JSON.stringify({ prompt: 'cat' }), 1, 7, null));
+    expect(result.error).toBeUndefined();
+    const image = result.images[0];
+    expect(image.image_path.startsWith(join(dir, '7') + '/')).toBe(true);
+    expect(image.image_url.startsWith('https://mao.example/uploads/7/')).toBe(true);
+    const fileName = image.image_path.split('/').pop();
+    expect(existsSync(join(dir, '7', fileName))).toBe(true);
+    // 只建 {uid} 子目录，平坦根不落文件
+    expect(readdirSync(dir)).toEqual(['7']);
+  });
+
+  it('keeps the flat dir for callers without a user context', async () => {
+    const { tool, dir } = makeTool();
+    const result = JSON.parse(await tool.execute(JSON.stringify({ prompt: 'cat' }), 1));
+    expect(result.error).toBeUndefined();
+    const image = result.images[0];
+    expect(image.image_path.startsWith(dir + '/')).toBe(true);
+    expect(image.image_path).not.toContain(`${join(dir, '7')}`);
+    expect(image.image_url.startsWith('https://mao.example/uploads/gen-')).toBe(true);
   });
 
   it('clamps n and normalizes model override aliases', async () => {
@@ -267,19 +354,34 @@ describe('GenerateImageTool', () => {
 });
 
 describe('EditImageTool', () => {
-  function makeTool(extra?: Record<string, unknown> | null) {
+  /**
+   * @param support 'host-bridge' = host 模式桥接桩（readBytes 返回 null 降级本地严格读，
+   *   extraRoots 放行本人 uploads/{uid}，与 DockerSendBytesBridge 同口径）；
+   *   其余值原样作为 SendBytesSupport 传入（默认 null = 无桥，只按会话工作区解析）。
+   */
+  function makeTool(extra?: Record<string, unknown> | null, support?: SendBytesSupport | null | 'host-bridge') {
     const ws = useTmpDir('edit-ws-');
     const out = useTmpDir('edit-out-');
+    const uploads = useTmpDir('edit-uploads-');
     mkdirSync(join(ws, 'chat-files'), { recursive: true });
     writeFileSync(join(ws, 'input.png'), PNG_BYTES);
     writeFileSync(join(ws, 'mask.png'), PNG_BYTES);
+    // 图片产物按用户隔离后的落盘形态：{uploads}/{uid}/gen-*.png
+    mkdirSync(join(uploads, '7'), { recursive: true });
+    mkdirSync(join(uploads, '8'), { recursive: true });
+    writeFileSync(join(uploads, '7', 'gen-own.png'), PNG_BYTES);
+    writeFileSync(join(uploads, '8', 'gen-other.png'), PNG_BYTES);
+    const bridge: SendBytesSupport | null = support === 'host-bridge'
+      ? { readBytes: async () => null, extraRoots: (userId) => ['/tmp', join(uploads, String(userId))] }
+      : (support ?? null);
     const tool = new EditImageTool(
       { findFirstActiveImageModel: async () => model(extra) as never },
       new PathSandbox(ws),
       out,
-      async () => 'https://mao.example/uploads',
+      async () => 'https://mao.example/api',
+      bridge,
     );
-    return { tool, ws, out };
+    return { tool, ws, out, uploads };
   }
 
   it('edits local images via multipart and returns files', async () => {
@@ -321,6 +423,59 @@ describe('EditImageTool', () => {
 
     const files = readdirSync(out);
     expect(files.some((f) => f.startsWith('edit-') && f.endsWith('.png'))).toBe(true);
+  });
+
+  it('accepts own uploads artifacts as input and writes output under {uid}', async () => {
+    const { tool, out, uploads } = makeTool(undefined, 'host-bridge');
+    const result = JSON.parse(await tool.execute(JSON.stringify({
+      prompt: 'x',
+      image_paths: [join(uploads, '7', 'gen-own.png')],
+    }), 1, 7, null));
+    expect(result.error).toBeUndefined();
+    const image = result.images[0];
+    expect(image.image_path.startsWith(join(out, '7') + '/')).toBe(true);
+    expect(image.image_url.startsWith('https://mao.example/uploads/7/edit-')).toBe(true);
+    expect(readdirSync(join(out, '7')).some((f) => f.startsWith('edit-') && f.endsWith('.png'))).toBe(true);
+  });
+
+  it('rejects another user uploads artifact', async () => {
+    const { tool, uploads } = makeTool(undefined, 'host-bridge');
+    const result = JSON.parse(await tool.execute(JSON.stringify({
+      prompt: 'x',
+      image: join(uploads, '8', 'gen-other.png'),
+    }), 1, 7, null));
+    expect(result.error).toContain('Path escape');
+  });
+
+  it('reads input bytes through the container bridge (docker mode)', async () => {
+    const seen: Array<{ userId: number | null; sessionId: number | null; path: string }> = [];
+    const support: SendBytesSupport = {
+      // 宿主机上不存在的容器内路径也能编辑：字节全部由容器桥提供
+      readBytes: async (input) => {
+        seen.push({ userId: input.userId, sessionId: input.sessionId, path: input.path });
+        return PNG_BYTES;
+      },
+      extraRoots: () => [],
+    };
+    const { tool, ws } = makeTool(undefined, support);
+    const result = JSON.parse(await tool.execute(JSON.stringify({
+      prompt: 'x',
+      image_paths: ['/tmp/container-only.png'],
+    }), 1, 7, ws));
+    expect(result.error).toBeUndefined();
+    expect(result.images.length).toBe(1);
+    expect(seen).toEqual([{ userId: 7, sessionId: 1, path: '/tmp/container-only.png' }]);
+  });
+
+  it('accepts a mask from own uploads artifacts', async () => {
+    const { tool, uploads } = makeTool(undefined, 'host-bridge');
+    const result = JSON.parse(await tool.execute(JSON.stringify({
+      prompt: 'x',
+      image_paths: [join(uploads, '7', 'gen-own.png')],
+      mask_path: join(uploads, '7', 'gen-own.png'),
+    }), 1, 7, null));
+    expect(result.error).toBeUndefined();
+    expect(lastRawBody.toString('latin1')).toContain('name="mask"');
   });
 
   it('accepts singular image field and rejects url / missing / non-image', async () => {

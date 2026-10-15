@@ -202,6 +202,21 @@ server {
         add_header Access-Control-Allow-Origin "*" always;
     }
 
+    # 文件服务返回的图片类 file.url 形如 {baseUrl}/uploads/x.png = /api/uploads/x.png，
+    # 必须用 ^~ 前缀 location 压过下面的扩展名正则 location，否则会被 desktop/dist 吞掉变 404。
+    # /api/uploads/releases/ 同理禁缓存（自动更新清单），且必须写在 /api/uploads/ 之前。
+    location ^~ /api/uploads/releases/ {
+        alias /opt/mao-data/uploads/releases/;
+        add_header Cache-Control "no-cache" always;
+        add_header Access-Control-Allow-Origin "*" always;
+    }
+    location ^~ /api/uploads/ {
+        alias /opt/mao-data/uploads/;
+        expires 7d;
+        add_header Cache-Control "public, immutable";
+        add_header Access-Control-Allow-Origin "*" always;
+    }
+
     # 自动更新清单内容会变且被客户端轮询（Electron autoUpdater / 安卓 OTA），禁缓存。
     # 注意：必须用 ^~ 前缀 location 且写在 ^~ /uploads/ 之前；正则 location 会被 ^~ 压制不生效。
     location ^~ /uploads/releases/ {
@@ -359,3 +374,43 @@ FROM message WHERE deleted = 0;
 `ngram_token_size` 必须是 2。耗时大约按 30MB 正文一分钟估算，数据目录空闲空间不小于 `message` 表的 `data_length`。把 `MAO_BLUE_GREEN_HEALTH_RETRIES` 设成大于预估秒数（间隔 1 秒），再跑 `bash scripts/restart-backend.sh`。健康检查默认只等 60 秒，超时会杀掉正在建索引的新进程，索引会回滚，重跑会再来一次，不会跳过。
 
 只有日志出现 `Flyway migrated V146__message_content_fulltext.sql` 才算迁移完成。切流后抽查一次两字以上的中文搜索，以及一次点开助手回复后的定位。若全文查询异常，设 `SEARCH_FULLTEXT_ENABLED=false` 后重启，查询退回模糊匹配，不要删索引。
+
+## 容器隔离运行时（V0.0.295）
+
+`MAO_CLOUD_RUNTIME=docker` 启用用户运行时容器隔离：该用户的 CLOUD 会话中，shell、文件工具（read/write/edit/glob/grep）、MCP stdio、云端终端在每用户独立 Docker 容器内执行，容器内只挂载该用户自己的数据目录，跨用户数据不可读；MySQL / JWT secret / LLM key / 平台级 IM appSecret 不进容器，用户级凭据（Git token、MAO_TOKEN 等）由宿主机每次派发时下发。`MAO_CLOUD_RUNTIME=host`（默认）行为与历史版本完全一致。
+
+### 前置条件
+
+1. **Docker**：生产机安装 Docker（`docker version` 可用）。容器使用默认 bridge 网络，可出网（npm/pip 安装、curl 外部 API），不对外暴露任何端口，进出只走 Unix socket。
+2. **运行时镜像**：构建 `mao-runtime` 镜像（Node + bash + git + coreutils + 与镜像 Node ABI 匹配的 `sharp`/`node-pty`）：
+
+   ```bash
+   bash scripts/build-runtime-image.sh        # 产出 mao-runtime:latest
+   ```
+
+   版本从 `backend-ts/package.json` 读取。**宿主机 Node 升级后必须同步重建镜像**，否则容器内读图（sharp）与终端（node-pty）静默失败。
+3. **数据目录**：`/opt/mao-data/runtime/channels`（socket 根）与 `/opt/mao-data/deps`（持久依赖）需存在且后端进程可写（首次启动预检会校验，不满足直接启动失败，不静默降级）。
+4. **上传目录**：图片产物（`generate_image` / `edit_image`）落 `{FILE_UPLOAD_DIR}/{userId}/`（宿主机按用户隔离、同名挂入容器），外网经 Nginx `^~ /uploads/` 与 `^~ /api/uploads/` 两个前缀访问；按用户隔离后请确认 Nginx 配置含这两个 location（见上文 Nginx 片段），否则图片类 `file.url` 会被扩展名正则 location 吞掉变 404。
+
+### 配置（环境变量，见 config.md）
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `MAO_CLOUD_RUNTIME` | `host` | `docker` 启用容器模式 |
+| `MAO_CONTAINER_IDLE_MINUTES` | `60` | 空闲回收阈值。**必须大于管理后台「系统设置」的 shell 会话空闲超时（默认 30）**：容器先停会把容器内全部 shell 会话与后台任务杀掉 |
+| `MAO_CONTAINER_MAX_LIFETIME_HOURS` | `72` | 强制重建阈值 |
+| `MAO_CONTAINER_MEMORY_MB` / `MAO_CONTAINER_CPUS` / `MAO_CONTAINER_PIDS_LIMIT` | 2048 / 2 / 512 | 单容器资源上限 |
+| `MAO_CONTAINER_IMAGE` | `mao-runtime:latest` | 运行时镜像 |
+| `MAO_CONTAINER_CHANNEL_DIR` | `/opt/mao-data/runtime/channels` | socket 根目录（每用户子目录） |
+| `MAO_CONTAINER_DEPS_DIR` | `/opt/mao-data/deps` | 持久依赖目录（npm -g / pip 安装位置，容器重建不丢） |
+
+### 灰度与回收
+
+- 用户级覆盖：管理后台「用户管理 → 编辑用户 → 运行时模式」（跟随全局 / 容器隔离 / 宿主机）。先对内部账号开启观察，再逐步放大。
+- 空闲回收只 `docker stop` 不删（数据在挂载卷，秒级恢复）；容器内有活跃 shell 会话 / 未消费后台任务 / attach 中终端时不回收。异常容器兜底清理：`scripts/container-gc.sh`（建议 cron 每 10 分钟）。
+- 切换某用户到 docker 模式时，其宿主机上仍活着的旧 shell 会话会被终止，不做迁移。
+
+### 运维排查
+
+- 容器名 `mao-user-{userId}`；socket 位于 `{MAO_CONTAINER_CHANNEL_DIR}/{userId}/runtime.sock`，容器接入需通过该目录下的 token 校验（其他用户的容器挂载不到该目录）。
+- 挂载清单由后端集中生成并审计（启动日志 `[container-mount]`），含每行容器内路径、宿主机源路径与 rw/ro。

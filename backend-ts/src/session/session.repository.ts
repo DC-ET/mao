@@ -207,6 +207,19 @@ export class SessionRepository {
     );
   }
 
+  /**
+   * 用户全部未删除会话使用过的工作区绝对路径去重集合（容器挂载清单用，N-2）。
+   * 按 user_id 过滤即归属校验：只可能返回该用户自己的会话工作区（含飞书/钉钉
+   * 通道会话越出每用户根的工作区），由调用方再按通道根前缀筛选后挂进容器。
+   */
+  listWorkspacesByUser(userId: number): Promise<string[]> {
+    return this.db.query<{ workspace: string | null }>(
+      `SELECT DISTINCT workspace FROM \`session\`
+       WHERE user_id = ? AND ${notDeleted()} AND workspace IS NOT NULL AND workspace <> ''`,
+      [userId],
+    ).then((rows) => rows.map((r) => r.workspace).filter((w): w is string => typeof w === 'string' && w.length > 0));
+  }
+
   async lockActiveSessionById(sessionId: number): Promise<number | null> {
     const row = await this.db.queryOne<{ id: number }>(
       `SELECT id FROM \`session\` WHERE id = ? AND ${notDeleted()} FOR UPDATE`,

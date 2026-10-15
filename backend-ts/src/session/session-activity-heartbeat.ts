@@ -13,8 +13,17 @@ const MIN_INTERVAL_MS = 30_000;
 export class SessionActivityHeartbeat {
   private readonly lastTouchMs = new Map<number, number>();
   private readonly timers = new Map<number, { timer: NodeJS.Timeout; depth: number }>();
+  private activityListener: ((sessionId: number) => void) | null = null;
 
   constructor(private readonly sessionService: SessionService) {}
+
+  /**
+   * 会话活跃回调（可选注入）：docker 运行时由装配层触发用户容器预热
+   * （技术方案 §5.2 / 决策 15）。write 是所有活性来源（touch/start 定时）的汇聚点。
+   */
+  onActivity(listener: (sessionId: number) => void): void {
+    this.activityListener = listener;
+  }
 
   touch(sessionId: number | null | undefined): void {
     if (sessionId == null) return;
@@ -67,6 +76,14 @@ export class SessionActivityHeartbeat {
 
   private write(sessionId: number): void {
     this.lastTouchMs.set(sessionId, Date.now());
+    const listener = this.activityListener;
+    if (listener != null) {
+      try {
+        listener(sessionId);
+      } catch (e) {
+        console.debug(`Session activity listener failed for session ${sessionId}: ${(e as Error).message}`);
+      }
+    }
     void this.sessionService.touchLastActivity(sessionId).catch((e) => {
       console.debug(`Failed to touch last_activity_at for session ${sessionId}: ${(e as Error).message}`);
     });

@@ -87,6 +87,8 @@ describe('ShellSessionTool', () => {
   });
 
   it('allows shell workdirs outside the workspace', async () => {
+    // workdir 保持宽松（d554a3b8 决策）：docker 模式越界由挂载清单兜底，host 模式与
+    // 8-26 后一致；任务常需 cd 到同用户其他项目 / deps 等会话工作区之外的目录
     const result = JSON.parse(await tool.execute(JSON.stringify({ command: 'ls', workdir: '/etc' }), 11, 7, '/tmp'));
     expect(result.error).toBeUndefined();
     expect(pathSandbox.resolveLenient).toHaveBeenCalledWith('/etc', '/tmp');

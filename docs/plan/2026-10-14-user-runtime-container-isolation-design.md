@@ -1,6 +1,6 @@
 # 用户运行时容器隔离（User Runtime Container Isolation）技术方案
 
-> 状态：待评审（P0 缺口已按用户三项决策补充完毕；架构级决策见 §10）
+> 状态：已确认（2026-10-14 开发完成；架构级决策见 §10）
 > 日期：2026-10-14
 > 覆盖端：后端 backend-ts、部署脚本、数据库迁移。桌面端 desktop、管理后台 admin、安卓 android、`shared/contracts` **不改**。
 > 上游讨论：本方案由 2026-10-14 与用户的架构对话产出，无独立提案文档。
@@ -39,6 +39,8 @@ Mao 当前所有 CLOUD 用户共用同一台 ECS 上的同一个后端进程、�
 7. **凭据横向**：多用户共享一个 shell 会话池时，`sanitizeInheritedEnv` 只清了启动时继承的键；若存在跨用户复用会话的路径，Git token 与 `MAO_TOKEN` 会残留。
 
 其中 1~5 是**同一条根因**：所有执行面共用一个操作系统身份，目录命名约定不是安全边界。6 是同一根因的另一种表现：宿主机进程身份 + 用户可控子进程。
+
+> **注（shell `workdir` 保持宽松，2026-10-15 决策记录）**：场景 2 中的 shell 越界包含两条路径——命令本身（`cat ../../users/2/...`，deny-list 之外无钳制）与 `workdir` 参数。`workdir` 在 2026-08-26（`d554a3b8`）已从严格解析有意放开为宽松，理由是任务常需 cd 到会话工作区之外的目录（同用户其他项目、`/opt/mao-data/deps/{userId}` 持久依赖目录等），工具描述亦明确告知模型这一用法。本方案初期曾将其收回严格解析，经复审确认为净负面：打破上述合法用途、与仍宽松的五个文件工具（`read_file`/`write_file`/`edit_file`/`glob_search`/`grep_search`）行为不一致，且并未真正收口越界面（模型可改用 `read_file` 达到同样目的）。故维持宽松：docker 模式下越界由挂载清单兜底（未挂载路径在容器内不存在）；host 模式下与 8-26 后现状一致，跨用户读取的收口依赖 REST 文件服务收紧（§5.9）与 MCP env 白名单（§5.10），不在 shell 工具层单点收紧。后续若要在工具层收口，应五个文件工具与 shell 统一按「用户自己的根」钳制（`PathSandbox.addAllowedRoot` 可挂多根），而非只收 shell。
 
 ### 1.3 设计目标
 
@@ -179,15 +181,18 @@ loop 的输入输出是数据库中的会话与消息，不是用户文件系统
 | `{deployDir}/backend-ts/dist` | 同左 | **ro** | runtime agent 代码 |
 | `/opt/mao/data/skills` | 同左 | **ro** | 外部共享技能（用户明确要求只读） |
 | `/opt/mao-data/userskills/{userId}` | 同左 | rw | **用户个人技能目录**（`USER_SKILLS_DIR`，见下） |
+| `{FILE_UPLOAD_DIR}/{userId}` | 同左 | rw | **图片产物目录**（`generate_image` / `edit_image` 落盘，实施补充，见下） |
 | `/tmp` | 同左 | tmpfs | 容器内临时目录，随容器生命周期（见 §5.6） |
 
 关于「用户个人技能目录」：宿主机 `SkillSyncService` 会把用户技能与系统技能以**符号链接**同步进 `runtime/{userId}/{sessionId}/skills/`（`skill-sync-service.ts:56`）。`runtime/{userId}` 已在清单内，链接目标 `${USER_SKILLS_DIR}/{userId}` 若不挂，容器内这些链接会全部悬空，技能内容读不到——这是原方案遗漏的一项。系统技能走 `runtime/.../skills` 的链接 + `/opt/mao/data/skills` 只读挂载，已覆盖。
 
-关于「通道会话工作区」（飞书 / 钉钉入站会话，实施补充）：web 会话工作区在 `{workspaceRoot}/{userId}` 之内，被标准清单覆盖；而飞书 / 钉钉入站会话的工作区是 `{workspaceRoot}/feishu-chat|dingtalk-chat/{bot}/{leaf}`（`leaf` 为群聊 ID 或 `private-{userId}`），越出每用户根。该类工作区作为**附加挂载**进入清单：创建容器时按数据库 `user_id` 查出该用户自己的通道工作区（归属校验即 SQL 过滤），结构上只允许 `{account}/{leaf}` 两级以上的具体工作区——挂整个通道根或账号目录会把其他用户的私聊工作区带进容器，一律拒绝；`assertSafe` 的「rw 项必须含 `/{userId}/` 段」规则对这类条目豁免，由上述两侧约束共同保证。群聊工作区由同群多个 mao 用户的会话按现有设计共享，挂进各自容器不构成跨用户泄漏。挂载清单在 `docker run` 时定型，运行中容器无法新增：用户在此前已运行的容器上首次使用新的通道会话时，`ensureRunning` 会重建容器并入该工作区（旧容器内在途 shell / 终端任务随重建丢失，这是把新工作区纳入容器的必要代价）；既非每用户根也非通道工作区的会话工作区（异常数据）明确报错，不退化成"容器内目录不存在"的空输出静默失败。目录名在宿主机生成侧与 planner 之间经 `harness/container/channel-workspace.ts` 共用，防字面量漂移。
+关于「通道会话工作区」（飞书 / 钉钉入站会话，实施补充）：web 会话工作区在 `{workspaceRoot}/{userId}` 之内、被标准清单覆盖；而飞书 / 钉钉入站会话的工作区位于 `{workspaceRoot}/feishu-chat|dingtalk-chat/{account}/{leaf}`（leaf 为群 chatId / conversationId，或私聊 `private-{userId}`（飞书）/ `p2p-{userId}`（钉钉）），越出上表的每用户根，需作为**附加挂载**进入清单。规则：① 只挂 `{account}/{leaf}` 两级以上的具体会话目录——挂整个通道根或账号目录会把其他用户的私聊工作区一起带进容器，一律拒绝；② 归属校验两侧共同保证：创建容器时按数据库 `user_id` 查出该用户自己的通道工作区（归属校验即 SQL 过滤），planner 侧另对私聊叶子 `private-{userId}` / `p2p-{userId}` 做本人校验（纵深防御），`assertSafe` 的「rw 项必须含 `/{userId}/` 段」规则对这类条目按结构豁免；③ 用户自建会话（`POST /v1/sessions`）的 `workspace` 必须位于本人每用户根之下，通道工作区只由入站消息上下文在内部创建，不接受手工指定；④ 挂载清单在 `docker run` 时定型，运行中 / 停止后启动都无法新增：会话工作区不在集合内时只能重建容器（旧容器内既有 shell/pty/在途任务随重建丢失，这是把新通道会话工作区纳入容器的必要代价，仅在首次用到该工作区时发生一次），既非每用户根也非通道工作区的路径明确报错，绝不静默。群聊工作区由同群多个 mao 用户的会话按设计共享，挂进各自容器不构成跨用户泄漏。目录名在宿主机生成侧与 planner 之间经 `harness/container/channel-workspace.ts` 共用，防字面量漂移。
+
+关于「图片产物目录」（实施补充）：`generate_image` / `edit_image` 的落盘目录为 `{FILE_UPLOAD_DIR}/{userId}/`（按用户隔离，nginx `/uploads/` 静态出口直达，URL 形如 `https://<域名>/uploads/{userId}/gen-<uuid>.png`）。该目录既不属于任何会话工作区、也不在最初的每用户根清单里，需按用户挂进容器：宿主机侧外部发送工具与 `edit_image` 输入经 `extraRoots` 放行 `{uploadDir}/{userId}`，容器内经 `addAllowedRoot` 同口径放行。挂载清单在 `docker run` 时定型，planner 变更不会让既有容器重建：条目记录标准挂载计划指纹（`ContainerMountPlanner.standardMountsFingerprint`，不含动态会话工作区），`ensureRunning` 比对到漂移即回收重建一次（stopped 分支在 `docker start` 之前判定，避免一次无用启动），日志标注 `mount plan changed` 便于运维归因。
 
 校验规则（`ContainerMountPlanner.assertSafe`）：
 
-- 每条源路径 resolve 后必须位于已登记的数据根（`userHomeDir` / `runtimeDir` / `workspaceRoot` / `depsDir` / `userSkillsDir` / `channelsDir`）之下；
+- 每条源路径 resolve 后必须位于已登记的数据根（`userHomeDir` / `runtimeDir` / `workspaceRoot` / `depsDir` / `userSkillsDir` / `channelsDir` / `uploadDir`）之下；
 - 源路径必须包含 `/{userId}/` 或等于 `/{userId}` 形式的尾段，**拒绝任何上级目录**；
 - 只读项（`dist`、`/opt/mao/data/skills`）不得被调用方覆写为 rw；
 - 源路径不得是另一个已登记数据根的父目录（例如不得挂 `/opt/mao-data/users` 本身）；
@@ -208,9 +213,12 @@ ensureRunning(userId):
   return entry
 ```
 
+- **按用户串行（实施补充）**：同一用户的全部生命周期操作（创建、重启、recycle、stop）经每用户锁串行执行。容器名固定为 `mao-user-{userId}`，两个并发调用各自执行「停-删-建」会互相摧毁对方刚建好的容器，并让在册条目的挂载集合与真实容器错位（重复重建、条目被删、容器被 `rm -f`）。recycle 走**原地更新条目**（对象身份不变、世代 +1）：并发调用方持有的句柄始终是在册条目；await 之后的副作用点（`docker stop` / `rm -f` / 摘除条目）按世代识别「条目已被重建」，避免按容器名误伤新容器。锁的重入（`waitSocketReady` / `requestShutdown` 回调内再次 `ensureRunning`）由 `AsyncLocalStorage` 识别并直接放行，不会自锁。
+- **启动失败自愈（实施补充）**：`docker run` / `docker start` / 等待 socket 就绪失败时，一律摘除条目 + `rm -f` 半成品容器，下次 `ensureRunning` 走完整重建——不把失败固化成「自称 running 却连不上」或「卡死 stopped」的条目（该用户每次工具调用都同样失败，只有重启后端才恢复）。失败收尾按两道校验防止误伤并发建出的新容器：**世代校验**识别「同一条目对象被原地重建」（recycle 交错）；**在册条目身份校验**识别「首建期间重入方另建新条目并登记」（外层条目从未登记、世代没变，仅按容器名 `rm -f` 会摧毁在册健康容器）。
+
 - **idle 回收**：`MAO_CONTAINER_IDLE_MINUTES`（默认 60）。无工具调用且无 socket 流量的用户容器 `docker stop`（不 `rm`，挂载数据保留）。**idle 判定必须叠加容器内运行时状态**，见 §5.3.1。
 - **强制回收**：`MAO_CONTAINER_MAX_LIFETIME_HOURS`（默认 72）。到期 stop，下次 `ensureRunning` 时重建（依赖在 `/deps`，不丢）。
-- **名称**：`mao-user-{userId}`，可预测便于运维排查；并发创建用 Docker 自身的 name 唯一约束兜底，冲突时等待对方就绪。
+- **名称**：`mao-user-{userId}`，可预测便于运维排查。进程内并发由每用户串行锁消除（见上）；进程外同名残留（上次进程退出未清理）在 `docker run` 撞名时清掉后重试一次，绝不把冲突吞掉、按本次挂载清单登记一个与真实容器不符的条目。
 - **资源限制**：`--memory`、`--cpus`、`--pids-limit` 取全局配置，防止单用户吃光宿主机。
 - **网络**：`--network bridge`（默认 Docker 网桥），容器可出网访问公网，满足 `npm install` / `pip install` / `curl` 外部 API。容器**不暴露任何端口到宿主机**（`-P`/`--publish` 一律不用），进出容器只走 Unix socket，因此外部无法直连用户容器。
   - 出网限速：`--device-write-bps` 不适用于网络；如需限速走宿主机 `tc` 对 docker0 做整形（P2 可选，默认不限）。
@@ -315,6 +323,7 @@ ensureRunning(userId):
 | `/opt/mao-data/users/{userId}` | 虚拟 HOME |
 | `/opt/mao-data/runtime/{userId}` | 会话 runtime（shellOutput / webPages / incoming / skills / git-askpass.sh） |
 | `/opt/mao-data/userskills/{userId}` | 用户个人技能 |
+| `{FILE_UPLOAD_DIR}/{userId}` | 图片产物（`generate_image` / `edit_image` 落盘，宿主同名挂载） |
 | `/tmp` | 容器内临时目录（tmpfs，见 §5.6） |
 | `{workspaceRoot}/{userId}/projects/{slug}` | 会话工作区（`getEffectiveWorkspaceRoot`） |
 
@@ -356,12 +365,11 @@ if (dockerRuntime.enabledFor(userId) && DOCKER_ONLY_TOOLS.has(toolName)):
 | `harness/tool/impl/shell-session-tool.ts` `injectMaoToken` + `refreshUserEnvironment` | git token map、`MAO_TOKEN`、`ECP_TOKEN`、`LARKSUITE_CLI_*` |
 | `harness/shell/shell-session-manager.ts` `createSession` / `refreshUserEnvironment` | 同上（首次 spawn env） |
 | `harness/terminal/terminal-manager.ts` `buildEnv` | 同上（pty env） |
-| `harness/tool/impl/shell-session-tool.ts:168` workdir | `resolveLenient` 需改严格 `resolve` |
 
 docker 模式下：
 
-- 宿主机侧新增 `SessionEnvelopeBuilder`，在派发前查库取值并组装 envelope，作为上述四处的统一数据源；
-- 容器内四个位置改为从 envelope 读取，查库路径仅在 host 模式保留。
+- 宿主机侧新增 `SessionEnvelopeBuilder`，在派发前查库取值并组装 envelope，作为上述三处的统一数据源；
+- 容器内三个位置改为从 envelope 读取，查库路径仅在 host 模式保留。
 
 `sanitizeInheritedEnv` 逻辑保留：容器内 spawn bash 时同样不继承宿主机敏感键（容器里本来就没有，但代码路径要一致）。
 
@@ -486,7 +494,7 @@ docker 模式下：
 | 文件 | 改动 |
 |---|---|
 | `src/harness/tool/tool-dispatcher.ts` | `dispatchFullOutcome` 插入 docker 路由分支（host 模式短路）；`DOCKER_ONLY_TOOLS` 增加 `mcp__*` |
-| `src/harness/tool/impl/shell-session-tool.ts` | 凭据来源支持 envelope 注入（host 模式保留查库路径）；`workdir` 的 `resolveLenient` 改严格 `resolve` |
+| `src/harness/tool/impl/shell-session-tool.ts` | 凭据来源支持 envelope 注入（host 模式保留查库路径）；`workdir` 保持宽松解析（决策记录见 §1.2 注） |
 | `src/harness/shell/shell-session-manager.ts` | `createSession` / `refreshUserEnvironment` 凭据来源改 envelope；askpass 脚本写容器私有路径（§5.7.2） |
 | `src/harness/terminal/terminal-manager.ts` / `remote-terminal.ts` | docker 模式下 `ptyFactory` 走 pty-bridge（改造入口是 `TerminalManager.create`，不经 ToolDispatcher） |
 | `src/harness/mcp/mcp-client-manager.ts` | `buildTransport` 的 `{ ...process.env }` 改白名单 env；docker 模式下 stdio 客户端改由容器内 bridge 持有 |

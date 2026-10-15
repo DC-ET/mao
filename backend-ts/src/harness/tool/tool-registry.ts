@@ -45,6 +45,7 @@ import {
 import { SendWechatFileTool, SendWechatImageTool } from './impl/wechat-tools.js';
 import { FeishuDownloadFileTool, ReadFeishuDocTool, SendFeishuFileTool, SendFeishuImageTool } from './impl/feishu-tools.js';
 import { SendDingtalkFileTool, SendDingtalkImageTool, type DingtalkMediaSendSupport } from './impl/dingtalk-tools.js';
+import type { SendBytesSupport } from './impl/send-file-bytes.js';
 import { createPageTools } from './impl/page-tools.js';
 import type { EmbedPageToolRegistry } from '../embed-page-tool-registry.js';
 
@@ -68,6 +69,8 @@ export interface DefaultToolRegistryDeps {
   imageModelLookup: ImageModelLookup;
   uploadDir: string;
   getUploadBaseUrl?: () => Promise<string>;
+  /** servlet contextPath（默认 /api）：图片产物 image_url 派生静态 origin 用。 */
+  uploadContextPath?: string;
   weixinToolSupport: WeixinMediaToolSupport;
   weixinUploadService: WeixinMediaUploadService;
   weixinSendService: WeixinSendService;
@@ -79,6 +82,8 @@ export interface DefaultToolRegistryDeps {
   feishuMaxInboundFileBytes: number;
   feishuMediaSendSupport: FeishuMediaSendSupport;
   dingtalkMediaSendSupport: DingtalkMediaSendSupport;
+  /** 外部发送工具的容器读字节支持（docker 模式下本地路径经容器读取，§5.8）。可选注入。 */
+  sendBytesSupport?: SendBytesSupport | null;
   definitionRegistry: AgentDefinitionRegistry;
   harnessService: HarnessService;
   agentLoop: AgentLoop;
@@ -118,8 +123,8 @@ export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRe
         return session?.executionMode === 'LOCAL';
       },
     ),
-    new GenerateImageTool(deps.imageModelLookup, deps.uploadDir, deps.getUploadBaseUrl ?? (async () => '')),
-    new EditImageTool(deps.imageModelLookup, deps.pathSandbox, deps.uploadDir, deps.getUploadBaseUrl ?? (async () => '')),
+    new GenerateImageTool(deps.imageModelLookup, deps.uploadDir, deps.getUploadBaseUrl ?? (async () => ''), deps.uploadContextPath),
+    new EditImageTool(deps.imageModelLookup, deps.pathSandbox, deps.uploadDir, deps.getUploadBaseUrl ?? (async () => ''), deps.sendBytesSupport, deps.uploadContextPath),
     new TaskCreateTool(deps.sessionTodoMapper),
     new TaskListTool(deps.sessionTodoMapper),
     new TaskUpdateTool(deps.sessionTodoMapper),
@@ -128,14 +133,14 @@ export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRe
     new ListScheduledTasksTool(deps.scheduledTaskService),
     new UpdateScheduledTaskTool(deps.scheduledTaskService),
     new DeleteScheduledTaskTool(deps.scheduledTaskService),
-    new SendWechatImageTool(deps.pathSandbox, deps.weixinToolSupport, deps.weixinUploadService, deps.weixinSendService),
-    new SendWechatFileTool(deps.pathSandbox, deps.weixinToolSupport, deps.weixinUploadService, deps.weixinSendService),
+    new SendWechatImageTool(deps.pathSandbox, deps.weixinToolSupport, deps.weixinUploadService, deps.weixinSendService, deps.sendBytesSupport),
+    new SendWechatFileTool(deps.pathSandbox, deps.weixinToolSupport, deps.weixinUploadService, deps.weixinSendService, deps.sendBytesSupport),
     new ReadFeishuDocTool(deps.feishuToolSupport, deps.feishuDocReader),
     new FeishuDownloadFileTool(deps.feishuToolSupport, deps.feishuGroupMediaLookup, deps.feishuMediaDownloader, deps.feishuMaxInboundFileBytes, deps.feishuMessageDetailFetcher),
-    new SendFeishuImageTool(deps.pathSandbox, deps.feishuMediaSendSupport),
-    new SendFeishuFileTool(deps.pathSandbox, deps.feishuMediaSendSupport),
-    new SendDingtalkImageTool(deps.pathSandbox, deps.dingtalkMediaSendSupport),
-    new SendDingtalkFileTool(deps.pathSandbox, deps.dingtalkMediaSendSupport),
+    new SendFeishuImageTool(deps.pathSandbox, deps.feishuMediaSendSupport, deps.sendBytesSupport),
+    new SendFeishuFileTool(deps.pathSandbox, deps.feishuMediaSendSupport, deps.sendBytesSupport),
+    new SendDingtalkImageTool(deps.pathSandbox, deps.dingtalkMediaSendSupport, deps.sendBytesSupport),
+    new SendDingtalkFileTool(deps.pathSandbox, deps.dingtalkMediaSendSupport, deps.sendBytesSupport),
     new SpawnSubagentTool(deps.backgroundSubagentManager, deps.definitionRegistry),
     new SubagentFollowupTool(deps.backgroundSubagentManager),
     new CheckSubagentTool(deps.backgroundSubagentManager),
