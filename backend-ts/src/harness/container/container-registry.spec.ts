@@ -15,7 +15,12 @@ function fakeDocker(log: string[]): DockerCli {
   };
 }
 
-function makeRegistry(base: string, log: string[], overrides: Partial<ConstructorParameters<typeof ContainerRegistry>[0]> = {}) {
+function makeRegistry(
+  base: string,
+  log: string[],
+  overrides: Partial<ConstructorParameters<typeof ContainerRegistry>[0]> = {},
+  docker: DockerCli = fakeDocker(log),
+) {
   const waits: number[] = [];
   const listenings: number[] = [];
   const tokens: number[] = [];
@@ -44,8 +49,15 @@ function makeRegistry(base: string, log: string[], overrides: Partial<Constructo
     waitSocketReady: async (userId) => { waits.push(userId); },
     requestShutdown: async () => true,
     ...overrides,
-  }, fakeDocker(log));
+  }, docker);
   return { registry, waits, listenings, tokens };
+}
+
+/** 只取 docker 生命周期动作（run -d / rm -f / stop），忽略 listen/token 等宿主机回调。 */
+function dockerOps(log: string[]): string[] {
+  return log
+    .filter((l) => /^(run -d|rm -f|stop -t 10)/.test(l))
+    .map((l) => l.split(' ').slice(0, 2).join(' '));
 }
 
 describe('container registry', () => {
@@ -357,5 +369,143 @@ describe('container registry', () => {
     expect(lastStop).toBeLessThan(lastRun);
     expect(registry.getEntry(7)?.state).toBe('running');
     expect(registry.getEntry(7)?.mountedPaths.has(feishuWs)).toBe(true);
+  });
+
+  it('serializesConcurrentRecyclesAfterIdleReap', async () => {
+    // N-4a 回归：idle 回收后两个通道工作区并发 ensureRunning。按用户串行化后不会
+    // 双重 stop/rm -f，也不会因同名冲突被静默合并出"挂载集合与真实容器不符"的条目；
+    // 最终在册条目同时覆盖两个工作区，后续调用不再重建
+    const base = useTmpDir('mao-registry-race-a-');
+    for (const d of ['workspace', 'users', 'runtime', 'userskills', 'skills', 'channels', 'dist', 'deps']) {
+      mkdirSync(join(base, d), { recursive: true });
+    }
+    const wsA = join(base, 'workspace', 'feishu-chat', 'bot-1', 'oc_chat_a');
+    const wsB = join(base, 'workspace', 'feishu-chat', 'bot-1', 'oc_chat_b');
+    mkdirSync(wsA, { recursive: true });
+    mkdirSync(wsB, { recursive: true });
+    const log: string[] = [];
+    // sessionWorkspacesOf 返回 []：DB 查询失败的降级形态，两个调用方都判"需要重建"
+    const { registry } = makeRegistry(base, log, { sessionWorkspacesOf: async () => [] });
+
+    await registry.ensureRunning(7);
+    registry.getEntry(7)!.lastUsedAtMs = Date.now() - 100 * 60_000;
+    await registry.reapExpired(); // → stopped
+
+    log.length = 0;
+    const [a, b] = await Promise.all([registry.ensureRunning(7, wsA), registry.ensureRunning(7, wsB)]);
+    // recycle 原地更新条目：两个调用方拿到的是同一条目（句柄不错位）
+    expect(a).toBe(b);
+    expect(registry.getEntry(7)).toBe(a);
+    // 在册条目的挂载集合与真实容器一致
+    expect(registry.getEntry(7)!.mountedPaths.has(wsA)).toBe(true);
+    expect(registry.getEntry(7)!.mountedPaths.has(wsB)).toBe(true);
+    // 串行化：每次 run -d 之前都有对应的 rm -f，没有"同名冲突被吞掉"的第二次 run -d，
+    // 也没有对同一容器的双重 stop
+    expect(dockerOps(log)).toEqual(['rm -f', 'run -d', 'stop -t', 'rm -f', 'run -d']);
+    // 两个工作区都已在册：后续调用不触发任何重建
+    log.length = 0;
+    await registry.ensureRunning(7, wsA);
+    await registry.ensureRunning(7, wsB);
+    expect(dockerOps(log)).toEqual([]);
+  });
+
+  it('serializesConcurrentCreateForDifferentChannelWorkspaces', async () => {
+    // N-4b 回归：容器不存在时两个通道工作区并发首调。串行化后后到者只做一次
+    // "保留既有挂载、增量并入新工作区"的 recycle，两个调用方拿到同一条目；
+    // 旧行为下先到者会拿到已被 stop + rm -f 的陈旧条目（startedAtMs/mountedPaths 错位）
+    const base = useTmpDir('mao-registry-race-b-');
+    for (const d of ['workspace', 'users', 'runtime', 'userskills', 'skills', 'channels', 'dist', 'deps']) {
+      mkdirSync(join(base, d), { recursive: true });
+    }
+    const wsA = join(base, 'workspace', 'feishu-chat', 'bot-1', 'oc_chat_a');
+    const wsB = join(base, 'workspace', 'feishu-chat', 'bot-1', 'oc_chat_b');
+    mkdirSync(wsA, { recursive: true });
+    mkdirSync(wsB, { recursive: true });
+    const log: string[] = [];
+    const { registry } = makeRegistry(base, log);
+
+    log.length = 0;
+    const [a, b] = await Promise.all([registry.ensureRunning(7, wsA), registry.ensureRunning(7, wsB)]);
+    expect(a).toBe(b);
+    expect(registry.getEntry(7)).toBe(a);
+    expect(a.mountedPaths.has(wsA)).toBe(true);
+    expect(a.mountedPaths.has(wsB)).toBe(true);
+    expect(dockerOps(log)).toEqual(['run -d', 'stop -t', 'rm -f', 'run -d']);
+  });
+
+  it('keepsRecycledContainerWhenConcurrentRestartTimesOut', async () => {
+    // N-4c 回归：dockerStart 等待 socket 期间并发 recycle 已建好新容器，旧路径超时
+    // 失败时的清理不得删掉在册新条目、也不得按同容器名 rm -f 掉新容器
+    const base = useTmpDir('mao-registry-dstart-race-');
+    for (const d of ['workspace', 'users', 'runtime', 'userskills', 'skills', 'channels', 'dist', 'deps']) {
+      mkdirSync(join(base, d), { recursive: true });
+    }
+    const wsB = join(base, 'workspace', 'feishu-chat', 'bot-1', 'oc_chat_b');
+    mkdirSync(wsB, { recursive: true });
+    const log: string[] = [];
+    let registry: ContainerRegistry | null = null;
+    // 0=初始创建放行；1=重启等待（期间并发 recycle，随后超时）；2=recycle 新建正常就绪
+    let phase = 0;
+    const { registry: reg } = makeRegistry(base, log, {
+      waitSocketReady: async () => {
+        if (phase === 0) return;
+        if (phase === 1) {
+          phase = 2;
+          await registry!.ensureRunning(7, wsB);
+          throw new Error('容器运行时通道连接超时: userId=7 (1000ms)');
+        }
+      },
+      sessionWorkspacesOf: async () => [],
+    });
+    registry = reg;
+
+    await registry.ensureRunning(7);
+    registry.getEntry(7)!.lastUsedAtMs = Date.now() - 100 * 60_000;
+    await registry.reapExpired(); // → stopped
+    phase = 1;
+
+    log.length = 0;
+    await expect(registry.ensureRunning(7)).rejects.toThrow(/连接超时/);
+    // 并发 recycle 建好的新容器与在册条目都存活，wsB 已挂载
+    expect(registry.getEntry(7)?.state).toBe('running');
+    expect(registry.getEntry(7)?.mountedPaths.has(wsB)).toBe(true);
+    // 最后一次 rm -f 不得落在最后一次 run -d 之后（旧行为会把新容器 rm 掉）
+    const lastRun = log.map((l) => l.startsWith('run -d')).lastIndexOf(true);
+    const lastRm = log.map((l) => l.startsWith('rm -f')).lastIndexOf(true);
+    expect(lastRm).toBeLessThan(lastRun);
+  });
+
+  it('removesStoppedContainerBeforeRebuildAndRecoversFromNameConflict', async () => {
+    // connectionDead 重建必须 rm 掉停止的旧容器再 docker run：容器名固定，不 rm 必然
+    // 同名冲突。同名残留（上次进程退出未清理）时清掉后重试，而不是把冲突吞掉、按本次
+    // 挂载清单登记一个与真实容器不符的条目
+    const base = useTmpDir('mao-registry-conflict-');
+    for (const d of ['workspace', 'users', 'runtime', 'userskills', 'skills', 'channels', 'dist', 'deps']) {
+      mkdirSync(join(base, d), { recursive: true });
+    }
+    const log: string[] = [];
+    const inner = fakeDocker(log);
+    let runAttempts = 0;
+    const { registry } = makeRegistry(base, log, {}, {
+      async run(args) {
+        if (args[0] === 'run' && args[1] === '-d') {
+          runAttempts += 1;
+          // 第二次 docker run（connectionDead 重建的首次尝试）撞上同名残留容器
+          if (runAttempts === 2) {
+            throw new Error('docker run -d failed: Conflict. The container name "/mao-user-7" is already in use');
+          }
+        }
+        return inner.run(args);
+      },
+    });
+
+    await registry.ensureRunning(7);
+    registry.markConnectionDead(7);
+    log.length = 0;
+    const entry = await registry.ensureRunning(7);
+    expect(entry.state).toBe('running');
+    expect(registry.getEntry(7)).toBe(entry);
+    // stop → rm -f → run -d（撞同名残留，未落日志）→ rm -f → run -d（重试成功）
+    expect(dockerOps(log)).toEqual(['stop -t', 'rm -f', 'rm -f', 'run -d']);
   });
 });

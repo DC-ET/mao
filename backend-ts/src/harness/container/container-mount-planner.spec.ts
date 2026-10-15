@@ -149,4 +149,30 @@ describe('container mount planner', () => {
     expect(() => planner.plan(7, [join(base, 'users', '8')])).toThrow(/channel workspace root/);
     expect(() => planner.plan(7, ['/etc'])).toThrow(/channel workspace root/);
   });
+
+  it('rejectsPrivateChannelWorkspaceOfAnotherUser', () => {
+    // N-5 归属校验（挂载边界纵深防御）：session.workspace 用户可控，私聊工作区
+    // private-{userId} 只允许挂进本人容器，否则可把他人飞书私聊目录以 rw 挂进本人容器
+    const base = useTmpDir('mao-mount-own-');
+    for (const dir of Object.values(roots(base))) mkdirSync(dir, { recursive: true });
+    const planner = new ContainerMountPlanner(roots(base));
+    const otherPrivate = join(base, 'workspace', 'feishu-chat', 'bot-1', 'private-8');
+    mkdirSync(otherPrivate, { recursive: true });
+    writeFileSync(join(otherPrivate, 'secret.txt'), 'foreign');
+    expect(() => planner.plan(7, [otherPrivate])).toThrow(/does not belong to user 7/);
+    // 钉钉侧同规则
+    const otherDingtalk = join(base, 'workspace', 'dingtalk-chat', 'bot-1', 'private-9');
+    mkdirSync(otherDingtalk, { recursive: true });
+    expect(() => planner.plan(7, [otherDingtalk])).toThrow(/does not belong to user 7/);
+    // 本人的私聊工作区照常挂载
+    const ownPrivate = join(base, 'workspace', 'feishu-chat', 'bot-1', 'private-7');
+    mkdirSync(ownPrivate, { recursive: true });
+    const mount = planner.plan(7, [ownPrivate]).find((m) => m.hostPath === ownPrivate);
+    expect(mount?.mode).toBe('rw');
+    expect(mount?.purpose).toBe('sessionWorkspace');
+    // 群聊工作区（leaf 为 chatId）按设计由同群多用户会话共享，不按 userId 拒绝
+    const groupWs = join(base, 'workspace', 'feishu-chat', 'bot-1', 'oc_chat');
+    mkdirSync(groupWs, { recursive: true });
+    expect(planner.plan(7, [groupWs]).some((m) => m.hostPath === groupWs)).toBe(true);
+  });
 });

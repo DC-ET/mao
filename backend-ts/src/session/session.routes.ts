@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
@@ -143,6 +143,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     if (body.source != null && !isSessionSource(body.source)) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, "source 仅允许 'web' / 'embed'");
     }
+    assertOwnedSessionWorkspace(deps.pathSandbox, userId, body.executionMode, body.workspace);
     const session = await sessionService.createSession(
       userId, parseEntityId(body.agentId), body.title, body.executionMode, body.workspace,
       body.permissionLevel, body.isGit, body.platform, body.shell, body.osVersion,
@@ -589,4 +590,27 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
 function clamp(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
   return Math.min(max, Math.max(min, Math.floor(value)));
+}
+
+/**
+ * 建会话时 CLOUD 工作区的归属校验（N-5）：用户自建会话的工作区必须位于本人每用户
+ * 工作区根之下。飞书/钉钉通道会话工作区（{workspaceRoot}/feishu-chat|dingtalk-chat/…）
+ * 由入站消息上下文在内部创建（可信调用方直接调 SessionService，不经此 HTTP 入口），
+ * 不接受用户指定。docker 模式下会话工作区会以 rw 挂进该用户的运行时容器，缺少这道
+ * 校验可把其他用户的通道工作区（如飞书私聊 private-{userId}）挂进本人容器，
+ * 构成跨用户读写。LOCAL 模式的工作区是宿主机本机项目目录，与此无关。
+ */
+function assertOwnedSessionWorkspace(
+  pathSandbox: PathSandbox,
+  userId: number,
+  executionMode: string | null | undefined,
+  workspace: string | null | undefined,
+): void {
+  if (workspace == null || workspace.length === 0) return;
+  // createSession 对 executionMode 的默认值是 CLOUD：未显式传时按 CLOUD 口径校验
+  if ((executionMode ?? 'CLOUD') !== 'CLOUD') return;
+  const userRoot = resolve(pathSandbox.getWorkspaceRoot(), String(userId));
+  const target = resolve(workspace);
+  if (target === userRoot || target.startsWith(userRoot + sep)) return;
+  throw new BusinessException(ErrorCode.PARAM_INVALID, 'workspace 必须位于本人工作区根目录之下');
 }

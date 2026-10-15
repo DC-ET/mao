@@ -183,6 +183,8 @@ loop 的输入输出是数据库中的会话与消息，不是用户文件系统
 
 关于「用户个人技能目录」：宿主机 `SkillSyncService` 会把用户技能与系统技能以**符号链接**同步进 `runtime/{userId}/{sessionId}/skills/`（`skill-sync-service.ts:56`）。`runtime/{userId}` 已在清单内，链接目标 `${USER_SKILLS_DIR}/{userId}` 若不挂，容器内这些链接会全部悬空，技能内容读不到——这是原方案遗漏的一项。系统技能走 `runtime/.../skills` 的链接 + `/opt/mao/data/skills` 只读挂载，已覆盖。
 
+关于「通道会话工作区」（飞书 / 钉钉入站会话，实施补充）：飞书 / 钉钉入站会话的工作区位于 `{workspaceRoot}/feishu-chat|dingtalk-chat/{account}/{leaf}`（leaf 为群 chatId 或 `private-{userId}`），越出上表的每用户根，需作为附加挂载进入清单。规则：① 只挂 `{account}/{leaf}` 两级以上的具体会话目录——挂整个通道根或账号目录会把其他用户的私聊工作区一起带进容器，一律拒绝；② 私聊叶子 `private-{userId}` 必须与容器 userId 一致（`planSessionWorkspace` 归属校验，纵深防御），群聊叶子按设计由同群多个用户的会话共享；③ 用户自建会话（`POST /v1/sessions`）的 `workspace` 必须位于本人每用户根之下，通道工作区只由入站消息上下文在内部创建，不接受手工指定；④ 挂载清单在 `docker run` 时定型，运行中 / 停止后启动都无法新增：会话工作区不在集合内时只能重建容器（旧容器内既有 shell/pty/在途任务随重建丢失，这是把新通道会话工作区纳入容器的必要代价，仅在首次用到该工作区时发生一次），既非每用户根也非通道工作区的路径明确报错，绝不静默。
+
 校验规则（`ContainerMountPlanner.assertSafe`）：
 
 - 每条源路径 resolve 后必须位于已登记的数据根（`userHomeDir` / `runtimeDir` / `workspaceRoot` / `depsDir` / `userSkillsDir` / `channelsDir`）之下；
@@ -206,9 +208,11 @@ ensureRunning(userId):
   return entry
 ```
 
+- **按用户串行（实施补充）**：同一用户的全部生命周期操作（创建、重启、recycle、stop）经每用户锁串行执行。容器名固定为 `mao-user-{userId}`，两个并发调用各自执行「停-删-建」会互相摧毁对方刚建好的容器，并让在册条目的挂载集合与真实容器错位（重复重建、条目被删、容器被 `rm -f`）。recycle 走**原地更新条目**（对象身份不变、世代 +1）：并发调用方持有的句柄始终是在册条目；await 之后的副作用点（`docker stop` / `rm -f` / 摘除条目）按世代识别「条目已被重建」，避免按容器名误伤新容器。
+
 - **idle 回收**：`MAO_CONTAINER_IDLE_MINUTES`（默认 60）。无工具调用且无 socket 流量的用户容器 `docker stop`（不 `rm`，挂载数据保留）。**idle 判定必须叠加容器内运行时状态**，见 §5.3.1。
 - **强制回收**：`MAO_CONTAINER_MAX_LIFETIME_HOURS`（默认 72）。到期 stop，下次 `ensureRunning` 时重建（依赖在 `/deps`，不丢）。
-- **名称**：`mao-user-{userId}`，可预测便于运维排查；并发创建用 Docker 自身的 name 唯一约束兜底，冲突时等待对方就绪。
+- **名称**：`mao-user-{userId}`，可预测便于运维排查。进程内并发由每用户串行锁消除（见上）；进程外同名残留（上次进程退出未清理）在 `docker run` 撞名时清掉后重试一次，绝不把冲突吞掉、按本次挂载清单登记一个与真实容器不符的条目。
 - **资源限制**：`--memory`、`--cpus`、`--pids-limit` 取全局配置，防止单用户吃光宿主机。
 - **网络**：`--network bridge`（默认 Docker 网桥），容器可出网访问公网，满足 `npm install` / `pip install` / `curl` 外部 API。容器**不暴露任何端口到宿主机**（`-P`/`--publish` 一律不用），进出容器只走 Unix socket，因此外部无法直连用户容器。
   - 出网限速：`--device-write-bps` 不适用于网络；如需限速走宿主机 `tc` 对 docker0 做整形（P2 可选，默认不限）。
