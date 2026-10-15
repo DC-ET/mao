@@ -1,4 +1,5 @@
 import { existsSync, lstatSync, mkdirSync, realpathSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { harnessLog } from '../log.js';
 import { channelWorkspaceRoots } from './channel-workspace.js';
@@ -36,6 +37,8 @@ export interface MountPlannerRoots {
   distDir: string;
   /** 只读项：外部共享技能目录。 */
   skillsDir: string;
+  /** rw 项：图片产物上传根（FILE_UPLOAD_DIR），按用户挂 {uploadDir}/{userId}。 */
+  uploadDir: string;
 }
 
 export class MountPlanError extends Error {
@@ -43,6 +46,15 @@ export class MountPlanError extends Error {
     super(message);
     this.name = 'MountPlanError';
   }
+}
+
+/** 挂载清单指纹：purpose + 宿主机/容器内路径 + 模式，排序后取 sha256 前 16 位。 */
+function fingerprintOfMounts(mounts: readonly ContainerMount[]): string {
+  const serialized = mounts
+    .map((m) => `${m.purpose}|${m.hostPath}|${m.containerPath}|${m.mode}`)
+    .sort()
+    .join('\n');
+  return createHash('sha256').update(serialized).digest('hex').slice(0, 16);
 }
 
 export class ContainerMountPlanner {
@@ -66,6 +78,7 @@ export class ContainerMountPlanner {
       { hostPath: this.under(this.roots.depsDir, u), containerPath: this.under(this.roots.depsDir, u), mode: 'rw', purpose: 'deps' },
       { hostPath: this.under(this.roots.channelDir, u), containerPath: this.under(this.roots.channelDir, u), mode: 'rw', purpose: 'channel' },
       { hostPath: this.under(this.roots.userSkillsDir, u), containerPath: this.under(this.roots.userSkillsDir, u), mode: 'rw', purpose: 'userSkills' },
+      { hostPath: this.under(this.roots.uploadDir, u), containerPath: this.under(this.roots.uploadDir, u), mode: 'rw', purpose: 'uploads' },
       { hostPath: this.under(this.roots.distDir, ''), containerPath: this.under(this.roots.distDir, ''), mode: 'ro', purpose: 'dist' },
       { hostPath: this.under(this.roots.skillsDir, ''), containerPath: this.under(this.roots.skillsDir, ''), mode: 'ro', purpose: 'skills' },
     ];
@@ -131,7 +144,7 @@ export class ContainerMountPlanner {
     const registeredRoots = [
       this.roots.userHomeDir, this.roots.runtimeDir, this.roots.workspaceRoot,
       this.roots.depsDir, this.roots.userSkillsDir, this.roots.channelDir,
-      this.roots.distDir, this.roots.skillsDir,
+      this.roots.distDir, this.roots.skillsDir, this.roots.uploadDir,
     ].map((r) => path.resolve(r));
 
     const seenContainerPaths = new Set<string>();
@@ -194,6 +207,21 @@ export class ContainerMountPlanner {
       args.push('--volume', `${m.hostPath}:${m.containerPath}:${m.mode === 'ro' ? 'ro' : 'rw'}`);
     }
     return args;
+  }
+
+  /**
+   * 标准挂载计划（不含动态会话工作区）的指纹。容器挂载清单在 docker run 时定型，
+   * `docker start` 复用创建时的清单：planner 变更（如新增 uploads 挂载）不会让既有
+   * 容器重建，上线后老容器会一直缺新挂载。指纹供 ContainerRegistry 在 ensureRunning
+   * 时比对，漂移即回收重建（一次性代价，见 container-registry ensureRunningLocked）。
+   */
+  standardMountsFingerprint(userId: number): string {
+    return this.fingerprintOf(this.plan(userId).filter((m) => !m.sessionWorkspace));
+  }
+
+  /** 给定挂载子集的指纹（createAndStart 复用同一次 plan 的结果，避免二次规划）。 */
+  fingerprintOf(mounts: readonly ContainerMount[]): string {
+    return fingerprintOfMounts(mounts);
   }
 
   /** 挂载清单审计日志（userId + 完整挂载表）。 */

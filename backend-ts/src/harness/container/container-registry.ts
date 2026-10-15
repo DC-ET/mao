@@ -43,6 +43,13 @@ export interface ContainerEntry {
    * 世代用于在 await 之后识别"条目已被重建"，防止陈旧副作用点按容器名误伤新容器。
    */
   generation: number;
+  /**
+   * 本次 docker run 固化的标准挂载计划指纹（planner.standardMountsFingerprint）。
+   * 挂载清单在 docker run 时定型：planner 变更（新增 uploads 挂载等）后既有容器
+   * 不会自动重建，指纹漂移时 ensureRunning 主动回收重建（一次性代价）。
+   * 缺省（升级过渡的旧条目 / 测试手工构造）视为漂移，自然自愈一次。
+   */
+  mountFingerprint?: string;
 }
 
 export interface DockerCli {
@@ -77,6 +84,8 @@ export interface ContainerRegistryOptions {
   runtimeDir: string;
   userSkillsDir: string;
   skillsDir: string;
+  /** 图片产物上传根（FILE_UPLOAD_DIR）：按用户挂 {uploadDir}/{userId} 并注入容器 env。 */
+  uploadDir: string;
   /** 创建前确保宿主机 socket server 已监听（先 listen 再 docker run），返回 socket 路径。 */
   ensureChannelListening(userId: number): Promise<string>;
   /** 创建前确保该用户连接 token 已落盘（容器启动时经 -e 注入）。 */
@@ -118,6 +127,7 @@ export class ContainerRegistry {
       channelDir: c.channelDir,
       distDir: c.distDir,
       skillsDir: opts.skillsDir,
+      uploadDir: opts.uploadDir,
     });
   }
 
@@ -171,19 +181,28 @@ export class ContainerRegistry {
       return this.ensureWorkspaceMounted(created, requiredWorkspace);
     }
     if (entry.state === 'running' && !entry.connectionDead) {
+      // 挂载计划漂移（planner 变更，如新增 uploads 挂载）：docker start/复用都不会
+      // 补上新挂载，只能重建。指纹缺省（旧条目/测试构造）同样按漂移处理，自愈一次
+      if (this.mountPlanDrifted(entry, userId)) {
+        harnessLog('warn', `[container] recreating container for user=${userId} (mount plan changed)`);
+        return this.ensureWorkspaceMounted(
+          await this.rebuildEntry(entry, entry.sessionWorkspaces),
+          requiredWorkspace,
+        );
+      }
       entry.lastUsedAtMs = Date.now();
       return this.ensureWorkspaceMounted(entry, requiredWorkspace);
     }
     if (entry.state === 'stopped' && !entry.connectionDead) {
       // 停止期间（idle 回收后）新增的通道会话工作区只能随完整重建挂入：docker start
       // 复用创建时的挂载清单，带不上新目录。requiredWorkspace 一并参与判定，避免
-      // "先 docker start 再立刻重建"的一次无用启动
+      // "先 docker start 再立刻重建"的一次无用启动；挂载计划漂移同理（先判定再 start）
       const desired = [
         ...await this.sessionWorkspaces(userId),
         ...(requiredWorkspace ? [path.resolve(requiredWorkspace)] : []),
       ].filter((p) => isChannelWorkspace(p, this.opts.workspaceRoot));
-      if (this.hasUnmountedWorkspace(entry, desired)) {
-        harnessLog('warn', `[container] recreating container for user=${userId} (new session workspaces while stopped)`);
+      if (this.hasUnmountedWorkspace(entry, desired) || this.mountPlanDrifted(entry, userId)) {
+        harnessLog('warn', `[container] recreating container for user=${userId} (new session workspaces or mount plan changed while stopped)`);
         return this.ensureWorkspaceMounted(
           await this.rebuildEntry(entry, [...entry.sessionWorkspaces, ...desired]),
           requiredWorkspace,
@@ -255,6 +274,15 @@ export class ContainerRegistry {
 
   private hasUnmountedWorkspace(entry: ContainerEntry, workspaces: readonly string[]): boolean {
     return workspaces.some((w) => !this.isMounted(entry, w));
+  }
+
+  /**
+   * 标准挂载计划是否已漂移（条目固化的指纹与当前 planner 产出不一致）。docker 挂载
+   * 清单在 docker run 时定型，planner 变更（新增 uploads 挂载、根路径调整）后既有
+   * 容器永远补不上新挂载；指纹缺省按漂移处理，让升级过渡的旧条目自愈重建一次。
+   */
+  private mountPlanDrifted(entry: ContainerEntry, userId: number): boolean {
+    return entry.mountFingerprint !== this.planner.standardMountsFingerprint(userId);
   }
 
   /**
@@ -378,6 +406,9 @@ export class ContainerRegistry {
       ...extraWorkspaces.map((p) => path.resolve(p)),
     ])].filter((p) => isChannelWorkspace(p, this.opts.workspaceRoot));
     const mounts = this.planner.plan(userId, sessionWorkspaces);
+    // 指纹与 standardMountsFingerprint 同源（共享序列化口径）：只含标准挂载，
+    // 动态会话工作区不进指纹，否则每次新通道会话都会误判漂移触发重建
+    const mountFingerprint = this.planner.fingerprintOf(mounts.filter((m) => !m.sessionWorkspace));
     this.planner.auditLog(userId, mounts);
     // 先 listen 再 run：容器 agent 启动即连 socket，宿主机没监听时只会无限重连
     const socketPath = await this.opts.ensureChannelListening(userId);
@@ -399,6 +430,7 @@ export class ContainerRegistry {
       '-e', `MAO_RUNTIME_DIR=${this.opts.runtimeDir}`,
       '-e', `MAO_USER_HOME_DIR=${this.opts.userHomeDir}`,
       '-e', `MAO_USER_SKILLS_DIR=${this.opts.userSkillsDir}`,
+      '-e', `MAO_UPLOAD_DIR=${this.opts.uploadDir}`,
       ...this.planner.toDockerArgs(mounts),
       // 容器不暴露任何端口：进出只走 Unix socket（§5.2）
       '--restart', 'no',
@@ -457,6 +489,7 @@ export class ContainerRegistry {
     entry.lastUsedAtMs = Date.now();
     entry.mountedPaths = new Set(mounts.map((m) => m.hostPath));
     entry.sessionWorkspaces = sessionWorkspaces;
+    entry.mountFingerprint = mountFingerprint;
     // 新容器（含原地重建）内没有任何 shell/pty/在途任务：忙计数清零，避免旧容器的
     // 陈旧 runtime_status 把 idle 回收挡在门外（新 agent 握手后会补报真实状态）
     entry.inContainer = { shellSessions: 0, pendingTasks: 0, attachedTerminals: 0 };

@@ -1,4 +1,3 @@
-import { readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { BaseTool } from '../tool.js';
 import { asInt, asText, errorJson, parseObject, toJson } from '../json.js';
@@ -17,6 +16,7 @@ import {
   materializeImageApiResult,
   type ImageModelLookup,
 } from './generate-image-tool.js';
+import { loadSendFileBytes, type SendBytesCallContext, type SendBytesSupport } from './send-file-bytes.js';
 
 const SIZES = new Set(['auto', '1024x1024', '1536x1024', '1024x1536']);
 const QUALITIES = new Set(['auto', 'high', 'medium', 'low']);
@@ -35,48 +35,33 @@ function asPathList(value: unknown): string[] {
   return [];
 }
 
-function loadLocalImage(
+/**
+ * 读取改图入参字节：与外部发送工具同款桥接（技术方案 §5.8 + 图片产物按用户隔离方案）——
+ * docker 模式优先向容器取字节（宿主机不可见的容器内 /tmp 产物也能编辑），host 模式 /
+ * 降级路径走宿主机严格解析，允许根 = 会话工作区 + extraRoots（含本人 uploads/{uid}、
+ * runtime/{uid}、HOME/{uid}、/tmp）。URL 一律拒绝（与工具承诺一致）。
+ */
+async function loadLocalImage(
   rawPath: string,
   pathSandbox: PathSandbox,
-  workspace: string | null,
+  support: SendBytesSupport | null,
+  ctx: SendBytesCallContext,
   label: string,
-): EditImageFile {
+): Promise<EditImageFile> {
   if (/^https?:\/\//i.test(rawPath)) {
     throw new ImageApiError(`${label} 只接受本地文件路径，不支持 URL: ${rawPath}`, 'invalid_params', null);
   }
-  let resolved: string;
-  try {
-    resolved = pathSandbox.resolve(rawPath, workspace);
-  } catch (e) {
-    throw new ImageApiError(
-      `${label} 路径不合法: ${rawPath}（${e instanceof Error ? e.message : String(e)}）`,
-      'invalid_params',
-      null,
-    );
-  }
-  let st;
-  try {
-    st = statSync(resolved);
-  } catch {
-    throw new ImageApiError(`${label} 不存在或不可读: ${rawPath}`, 'invalid_params', null);
-  }
-  if (!st.isFile()) {
-    throw new ImageApiError(`${label} 不是文件: ${rawPath}`, 'invalid_params', null);
-  }
-  if (st.size > MAX_EDIT_IMAGE_BYTES) {
-    throw new ImageApiError(
-      `${label} 超过 ${Math.floor(MAX_EDIT_IMAGE_BYTES / (1024 * 1024))}MB 上限: ${rawPath}`,
-      'invalid_params',
-      null,
-    );
-  }
-  const bytes = readFileSync(resolved);
+  const bytes = await loadSendFileBytes(rawPath, pathSandbox, support, ctx, MAX_EDIT_IMAGE_BYTES);
   // 改图入参必须是真实图片字节（魔数校验），不信任扩展名伪装。
   const mime = ImageFileSupport.detectMimeFromBytes(bytes);
   if (!mime) {
     throw new ImageApiError(`${label} 不是支持的图片格式: ${rawPath}`, 'invalid_params', null);
   }
-  return { bytes, fileName: path.basename(resolved), mime };
+  // multipart 文件名取入参 basename（读到的字节与解析后路径同源；容器桥接只回字节）
+  const raw = rawPath.replace(/[\\/]+$/, '');
+  let fileName = path.basename(raw);
+  if (fileName === '' || fileName === '.' || fileName === '..') fileName = 'image.png';
+  return { bytes, fileName, mime };
 }
 
 export class EditImageTool extends BaseTool {
@@ -85,6 +70,8 @@ export class EditImageTool extends BaseTool {
     private readonly pathSandbox: PathSandbox,
     private readonly uploadDir: string,
     private readonly getBaseUrl: () => Promise<string> = async () => '',
+    /** 改图入参的容器/宿主机读字节桥（与外部发送工具同源）；未注入时只按会话工作区严格解析。 */
+    private readonly sendBytesSupport: SendBytesSupport | null = null,
   ) { super(); }
 
   getName(): string { return 'edit_image'; }
@@ -95,7 +82,7 @@ export class EditImageTool extends BaseTool {
     return `## edit_image 工具使用指南
 
 - edit_image 用于修改已有图片（改图 / 图生图），底层调用管理后台配置的文生图模型（images/edits）。
-- image_paths 必填：一张或多张本地图片路径（工作区相对路径或绝对路径），不接受 http(s) URL。多图会一并参与编辑/合成。
+- image_paths 必填：一张或多张本地图片路径（工作区相对路径，或允许集内的绝对路径：会话工作区、本人 uploads/{userId} 产物目录、runtime、HOME、/tmp），不接受 http(s) URL。多图会一并参与编辑/合成。
 - prompt 必填：描述要怎么改（例如「把小猫改成蓝色，背景保持白色」），越具体越好。
 - mask_path 可选：蒙版图片本地路径；提供后只修改蒙版区域。
 - size：auto（默认）/ 1024x1024 / 1536x1024 / 1024x1536。
@@ -104,6 +91,7 @@ export class EditImageTool extends BaseTool {
 - output_format：png（默认）/ jpeg；仅 jpeg 时可传 output_compression（0–100）。
 - model 可选：覆盖后台默认模型。别名 flare=gpt-image-2.5-flare（快速），sunburst=gpt-image-2.5-sunburst（精细编辑/多图合成）。用户点名模型时只用该模型，失败不要换其他模型再交图。
 - 成功后返回 images[].image_url 与 images[].image_path；结果可继续交给 send_wechat_image / feishu_send_image / dingtalk_send_image。
+- generate_image / edit_image 返回的 image_path（本人 uploads 产物）可直接作为本工具输入，无需先复制到工作区。
 - 纯文生图请用 generate_image；本工具需要至少一张已有本地图。
 - 若没有可用文生图模型（model_type=image），工具会报错，请提示用户先在管理后台配置。
 `;
@@ -177,8 +165,8 @@ export class EditImageTool extends BaseTool {
 
   protected async executeWithUser(
     argumentsJson: string,
-    _sessionId: number | null,
-    _userId: number | null,
+    sessionId: number | null,
+    userId: number | null,
     workspace: string | null,
   ): Promise<string> {
     let model: Awaited<ReturnType<ImageModelLookup['findFirstActiveImageModel']>> = null;
@@ -208,12 +196,15 @@ export class EditImageTool extends BaseTool {
         return errorJson('output_compression 必须是 0–100 的整数');
       }
 
+      const ctx: SendBytesCallContext = { userId, sessionId, workspace };
       const images: EditImageFile[] = [];
       for (let i = 0; i < pathArgs.length; i++) {
-        images.push(loadLocalImage(pathArgs[i]!, this.pathSandbox, workspace, `image_paths[${i}]`));
+        images.push(await loadLocalImage(pathArgs[i]!, this.pathSandbox, this.sendBytesSupport, ctx, `image_paths[${i}]`));
       }
       const maskRaw = asText(args.mask_path) ?? asText(args.mask);
-      const mask = maskRaw ? loadLocalImage(maskRaw, this.pathSandbox, workspace, 'mask_path') : null;
+      const mask = maskRaw
+        ? await loadLocalImage(maskRaw, this.pathSandbox, this.sendBytesSupport, ctx, 'mask_path')
+        : null;
 
       const cfg = buildImageApiConfig(model, asText(args.model));
       if (!cfg.baseUrl) return errorJson('文生图模型未配置 base_url');
@@ -233,7 +224,7 @@ export class EditImageTool extends BaseTool {
           : undefined,
       });
       const baseUrl = await this.getBaseUrl();
-      return toJson(materializeImageApiResult(result, this.uploadDir, 'edit', baseUrl, prompt));
+      return toJson(materializeImageApiResult(result, this.uploadDir, 'edit', baseUrl, prompt, userId));
     } catch (e) {
       const err = toImageApiError(e, model?.apiKey);
       harnessLog('error', 'EditImageTool failed', err);

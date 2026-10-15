@@ -181,15 +181,18 @@ loop 的输入输出是数据库中的会话与消息，不是用户文件系统
 | `{deployDir}/backend-ts/dist` | 同左 | **ro** | runtime agent 代码 |
 | `/opt/mao/data/skills` | 同左 | **ro** | 外部共享技能（用户明确要求只读） |
 | `/opt/mao-data/userskills/{userId}` | 同左 | rw | **用户个人技能目录**（`USER_SKILLS_DIR`，见下） |
+| `{FILE_UPLOAD_DIR}/{userId}` | 同左 | rw | **图片产物目录**（`generate_image` / `edit_image` 落盘，实施补充，见下） |
 | `/tmp` | 同左 | tmpfs | 容器内临时目录，随容器生命周期（见 §5.6） |
 
 关于「用户个人技能目录」：宿主机 `SkillSyncService` 会把用户技能与系统技能以**符号链接**同步进 `runtime/{userId}/{sessionId}/skills/`（`skill-sync-service.ts:56`）。`runtime/{userId}` 已在清单内，链接目标 `${USER_SKILLS_DIR}/{userId}` 若不挂，容器内这些链接会全部悬空，技能内容读不到——这是原方案遗漏的一项。系统技能走 `runtime/.../skills` 的链接 + `/opt/mao/data/skills` 只读挂载，已覆盖。
 
 关于「通道会话工作区」（飞书 / 钉钉入站会话，实施补充）：web 会话工作区在 `{workspaceRoot}/{userId}` 之内、被标准清单覆盖；而飞书 / 钉钉入站会话的工作区位于 `{workspaceRoot}/feishu-chat|dingtalk-chat/{account}/{leaf}`（leaf 为群 chatId / conversationId，或私聊 `private-{userId}`（飞书）/ `p2p-{userId}`（钉钉）），越出上表的每用户根，需作为**附加挂载**进入清单。规则：① 只挂 `{account}/{leaf}` 两级以上的具体会话目录——挂整个通道根或账号目录会把其他用户的私聊工作区一起带进容器，一律拒绝；② 归属校验两侧共同保证：创建容器时按数据库 `user_id` 查出该用户自己的通道工作区（归属校验即 SQL 过滤），planner 侧另对私聊叶子 `private-{userId}` / `p2p-{userId}` 做本人校验（纵深防御），`assertSafe` 的「rw 项必须含 `/{userId}/` 段」规则对这类条目按结构豁免；③ 用户自建会话（`POST /v1/sessions`）的 `workspace` 必须位于本人每用户根之下，通道工作区只由入站消息上下文在内部创建，不接受手工指定；④ 挂载清单在 `docker run` 时定型，运行中 / 停止后启动都无法新增：会话工作区不在集合内时只能重建容器（旧容器内既有 shell/pty/在途任务随重建丢失，这是把新通道会话工作区纳入容器的必要代价，仅在首次用到该工作区时发生一次），既非每用户根也非通道工作区的路径明确报错，绝不静默。群聊工作区由同群多个 mao 用户的会话按设计共享，挂进各自容器不构成跨用户泄漏。目录名在宿主机生成侧与 planner 之间经 `harness/container/channel-workspace.ts` 共用，防字面量漂移。
 
+关于「图片产物目录」（实施补充）：`generate_image` / `edit_image` 的落盘目录为 `{FILE_UPLOAD_DIR}/{userId}/`（按用户隔离，nginx `/uploads/` 静态出口直达，URL 形如 `https://<域名>/uploads/{userId}/gen-<uuid>.png`）。该目录既不属于任何会话工作区、也不在最初的每用户根清单里，需按用户挂进容器：宿主机侧外部发送工具与 `edit_image` 输入经 `extraRoots` 放行 `{uploadDir}/{userId}`，容器内经 `addAllowedRoot` 同口径放行。挂载清单在 `docker run` 时定型，planner 变更不会让既有容器重建：条目记录标准挂载计划指纹（`ContainerMountPlanner.standardMountsFingerprint`，不含动态会话工作区），`ensureRunning` 比对到漂移即回收重建一次（stopped 分支在 `docker start` 之前判定，避免一次无用启动），日志标注 `mount plan changed` 便于运维归因。
+
 校验规则（`ContainerMountPlanner.assertSafe`）：
 
-- 每条源路径 resolve 后必须位于已登记的数据根（`userHomeDir` / `runtimeDir` / `workspaceRoot` / `depsDir` / `userSkillsDir` / `channelsDir`）之下；
+- 每条源路径 resolve 后必须位于已登记的数据根（`userHomeDir` / `runtimeDir` / `workspaceRoot` / `depsDir` / `userSkillsDir` / `channelsDir` / `uploadDir`）之下；
 - 源路径必须包含 `/{userId}/` 或等于 `/{userId}` 形式的尾段，**拒绝任何上级目录**；
 - 只读项（`dist`、`/opt/mao/data/skills`）不得被调用方覆写为 rw；
 - 源路径不得是另一个已登记数据根的父目录（例如不得挂 `/opt/mao-data/users` 本身）；
@@ -320,6 +323,7 @@ ensureRunning(userId):
 | `/opt/mao-data/users/{userId}` | 虚拟 HOME |
 | `/opt/mao-data/runtime/{userId}` | 会话 runtime（shellOutput / webPages / incoming / skills / git-askpass.sh） |
 | `/opt/mao-data/userskills/{userId}` | 用户个人技能 |
+| `{FILE_UPLOAD_DIR}/{userId}` | 图片产物（`generate_image` / `edit_image` 落盘，宿主同名挂载） |
 | `/tmp` | 容器内临时目录（tmpfs，见 §5.6） |
 | `{workspaceRoot}/{userId}/projects/{slug}` | 会话工作区（`getEffectiveWorkspaceRoot`） |
 

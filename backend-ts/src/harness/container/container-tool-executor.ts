@@ -20,6 +20,8 @@ export interface ContainerRoots {
   runtimeDir: string;
   userHomeDir: string;
   userSkillsDir: string;
+  /** 图片产物上传根：容器内放行 {uploadDir}/{userId}（宿主同名挂载）。 */
+  uploadDir: string;
 }
 
 /**
@@ -54,6 +56,9 @@ export class ContainerToolExecutor {
     this.pathSandbox.addAllowedRoot(path.join(roots.runtimeDir, u));
     this.pathSandbox.addAllowedRoot(path.join(roots.userHomeDir, u));
     this.pathSandbox.addAllowedRoot(path.join(roots.userSkillsDir, u));
+    // 图片产物（generate_image/edit_image 落盘）在宿主机按 {uploadDir}/{uid} 隔离后
+    // 同名挂入容器，容器内 read_file 等按同一允许根放行
+    this.pathSandbox.addAllowedRoot(path.join(roots.uploadDir, u));
     this.pathSandbox.addAllowedRoot('/tmp');
     this.outputManager = new OutputManager();
     this.backgroundTasks = new BackgroundTaskManager();

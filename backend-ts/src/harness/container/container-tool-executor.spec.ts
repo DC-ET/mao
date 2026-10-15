@@ -38,7 +38,7 @@ describe('container tool executor', () => {
     writeFileSync(join(userWorkspace, 'a.txt'), 'hello container');
     writeFileSync(join(otherUser, 'secret.txt'), 'foreign');
 
-    const executor = new ContainerToolExecutor({ workspaceRoot, runtimeDir, userHomeDir, userSkillsDir }, USER_ID);
+    const executor = new ContainerToolExecutor({ workspaceRoot, runtimeDir, userHomeDir, userSkillsDir, uploadDir: join(base, 'uploads') }, USER_ID);
 
     // read_file 工作区相对路径
     const read = await executor.handleToolCall('read_file', JSON.stringify({ path: 'a.txt' }), envelopeOf(userWorkspace));
@@ -75,7 +75,7 @@ describe('container tool executor', () => {
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, 'secret.txt'), 'foreign');
     }
-    const executor = new ContainerToolExecutor({ workspaceRoot, runtimeDir, userHomeDir, userSkillsDir }, USER_ID);
+    const executor = new ContainerToolExecutor({ workspaceRoot, runtimeDir, userHomeDir, userSkillsDir, uploadDir: join(base, 'uploads') }, USER_ID);
     const env = envelopeOf(userWorkspace);
 
     for (const path of [
@@ -106,6 +106,7 @@ describe('container tool executor', () => {
       runtimeDir: join(base, 'runtime'),
       userHomeDir: join(base, 'users'),
       userSkillsDir: join(base, 'userskills'),
+      uploadDir: join(base, 'uploads'),
     }, USER_ID);
     const env = envelopeOf(userWorkspace);
 
@@ -129,6 +130,38 @@ describe('container tool executor', () => {
     }
   });
 
+  it('allowsOwnUploadsArtifactsAndRejectsOtherUsers', async () => {
+    // 图片产物按用户隔离：容器内 read_file / read_bytes 放行 {uploadDir}/{uid}，跨用户拒绝
+    const base = useTmpDir('mao-exec-uploads-');
+    const workspaceRoot = join(base, 'workspace');
+    const uploadDir = join(base, 'uploads');
+    const userWorkspace = join(workspaceRoot, '7');
+    mkdirSync(userWorkspace, { recursive: true });
+    mkdirSync(join(uploadDir, '7'), { recursive: true });
+    mkdirSync(join(uploadDir, '8'), { recursive: true });
+    writeFileSync(join(uploadDir, '7', 'gen-x.txt'), 'own-image');
+    writeFileSync(join(uploadDir, '8', 'gen-y.txt'), 'foreign');
+    const executor = new ContainerToolExecutor({
+      workspaceRoot,
+      runtimeDir: join(base, 'runtime'),
+      userHomeDir: join(base, 'users'),
+      userSkillsDir: join(base, 'userskills'),
+      uploadDir,
+    }, USER_ID);
+    const env = envelopeOf(userWorkspace);
+
+    const own = await executor.handleToolCall('read_file', JSON.stringify({ path: join(uploadDir, '7', 'gen-x.txt') }), env);
+    expect(JSON.parse(own).content).toBe('own-image');
+    const other = await executor.handleToolCall('read_file', JSON.stringify({ path: join(uploadDir, '8', 'gen-y.txt') }), env);
+    expect(JSON.parse(other).error).toBeDefined();
+
+    // read_bytes 桥（外部发送工具容器读字节）同口径
+    const ownBytes = executor.handleReadBytes(join(uploadDir, '7', 'gen-x.txt'), 1000, env);
+    expect(ownBytes.ok).toBe(true);
+    const otherBytes = executor.handleReadBytes(join(uploadDir, '8', 'gen-y.txt'), 1000, env);
+    expect(otherBytes.ok).toBe(false);
+  });
+
   it('shellToolRejectsForeignWorkdirInStrictMode', async () => {
     const base = useTmpDir('mao-exec-shell-');
     const workspaceRoot = join(base, 'workspace');
@@ -141,6 +174,7 @@ describe('container tool executor', () => {
       runtimeDir: join(base, 'runtime'),
       userHomeDir: join(base, 'users'),
       userSkillsDir: join(base, 'userskills'),
+      uploadDir: join(base, 'uploads'),
     }, USER_ID);
     // workdir 越界（他人目录）被严格 resolve 拒绝
     const result = await executor.handleToolCall('shell', JSON.stringify({
@@ -163,6 +197,7 @@ describe('container tool executor', () => {
       runtimeDir: join(base, 'runtime'),
       userHomeDir: join(base, 'users'),
       userSkillsDir: join(base, 'userskills'),
+      uploadDir: join(base, 'uploads'),
     }, USER_ID);
     const read = await executor.handleToolCall('read_file', JSON.stringify({ path: 'leak.txt' }), envelopeOf(userWorkspace));
     expect(JSON.parse(read).error).toBeDefined();
@@ -181,6 +216,7 @@ describe('container tool executor', () => {
       runtimeDir: join(base, 'runtime'),
       userHomeDir: join(base, 'users'),
       userSkillsDir: join(base, 'userskills'),
+      uploadDir: join(base, 'uploads'),
     }, USER_ID);
     const depsEnv = {
       NPM_CONFIG_PREFIX: join(depsUserDir, 'npm'),
@@ -217,6 +253,7 @@ describe('container tool executor', () => {
       runtimeDir: join(base, 'runtime'),
       userHomeDir: join(base, 'users'),
       userSkillsDir: join(base, 'userskills'),
+      uploadDir: join(base, 'uploads'),
     }, USER_ID);
     const depsBin = join(depsUserDir, 'npm', 'bin');
     const depsEnv = {

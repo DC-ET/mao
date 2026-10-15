@@ -1006,6 +1006,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     runtimeDir: cfg.app.harness.runtimeDir,
     userSkillsDir,
     skillsDir: cfg.app.harness.skillsDir,
+    // 图片产物按用户隔离：容器挂 {uploadDir}/{userId}（nginx /uploads/ 静态出口同源）
+    uploadDir,
     // 先 listen 再 docker run：容器 agent 启动即连 socket，宿主机没监听时只会无限重连
     ensureChannelListening: async (userId) => channelServer.ensureListening(userId),
     // token 随 docker run -e 注入（不再依赖容器读 .token 文件的隐式路径）
@@ -1060,6 +1062,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     router: dockerRouter,
     runtimeResolver,
     runtimeDir: cfg.app.harness.runtimeDir,
+    uploadDir,
   });
   // MCP stdio 容器路由：容器用户的连接与 callTool 在容器内执行（§5.10），其余直通宿主机
   const mcpRuntimeProbe = {

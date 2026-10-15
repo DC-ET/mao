@@ -14,6 +14,7 @@ function roots(base: string) {
     channelDir: join(base, 'runtime', 'channels'),
     distDir: join(base, 'mao', 'backend-ts', 'dist'),
     skillsDir: join(base, 'mao', 'data', 'skills'),
+    uploadDir: join(base, 'uploads'),
   };
 }
 
@@ -36,6 +37,41 @@ describe('container mount planner', () => {
     // 不包含其他用户尾段
     expect(JSON.stringify(mounts)).not.toContain('/users/8');
     expect(JSON.stringify(mounts)).not.toContain('/runtime/8');
+  });
+
+  it('mountsUploadsPerUserAndRejectsFlatRoot', () => {
+    // 图片产物按用户隔离：{uploadDir}/{userId} 同名挂载，容器内路径与宿主机一致
+    const base = useTmpDir('mao-mount-up-');
+    for (const dir of Object.values(roots(base))) mkdirSync(dir, { recursive: true });
+    const planner = new ContainerMountPlanner(roots(base));
+    const uploads = planner.plan(7).find((m) => m.purpose === 'uploads');
+    expect(uploads).toBeDefined();
+    expect(uploads!.hostPath).toBe(join(base, 'uploads', '7'));
+    expect(uploads!.containerPath).toBe(uploads!.hostPath);
+    expect(uploads!.mode).toBe('rw');
+    // 平坦 uploads 根（含所有用户产物）不得挂进容器
+    expect(() => planner.assertSafe([
+      { hostPath: join(base, 'uploads'), containerPath: join(base, 'uploads'), mode: 'rw', purpose: 'bad' },
+    ], 7)).toThrow(/must contain/);
+  });
+
+  it('fingerprintTracksStandardMountPlan', () => {
+    // 挂载清单在 docker run 时定型：指纹漂移是既有容器重建的唯一触发条件
+    const base = useTmpDir('mao-mount-fp-');
+    for (const dir of Object.values(roots(base))) mkdirSync(dir, { recursive: true });
+    const planner = new ContainerMountPlanner(roots(base));
+    const fp = planner.standardMountsFingerprint(7);
+    expect(fp).toMatch(/^[0-9a-f]{16}$/);
+    // 同一计划稳定；动态会话工作区不进指纹
+    expect(planner.standardMountsFingerprint(7)).toBe(fp);
+    const feishu = join(base, 'workspace', 'feishu-chat', 'bot-1', 'oc_chat');
+    mkdirSync(feishu, { recursive: true });
+    expect(planner.standardMountsFingerprint(7)).toBe(fp);
+    // roots 变更（planner 升级新增/移动挂载）→ 指纹变化
+    const moved = new ContainerMountPlanner({ ...roots(base), uploadDir: join(base, 'uploads2') });
+    expect(moved.standardMountsFingerprint(7)).not.toBe(fp);
+    // 不同用户的标准计划不同（uid 段进清单）
+    expect(planner.standardMountsFingerprint(8)).not.toBe(fp);
   });
 
   it('rejectsParentDirectoryMounts', () => {

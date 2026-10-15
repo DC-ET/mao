@@ -39,6 +39,7 @@ function makeRegistry(
     runtimeDir: join(base, 'runtime'),
     userSkillsDir: join(base, 'userskills'),
     skillsDir: join(base, 'skills'),
+    uploadDir: join(base, 'uploads'),
     // 宿主机先 listen 再 docker run（BUG-2 回归）：listen/token 回调先于 run 发生
     ensureChannelListening: async (userId) => {
       listenings.push(userId);
@@ -94,6 +95,9 @@ describe('container registry', () => {
     expect(runArgs).toContain(`-e MAO_RUNTIME_DIR=${join(base, 'runtime')}`);
     expect(runArgs).toContain(`-e MAO_USER_HOME_DIR=${join(base, 'users')}`);
     expect(runArgs).toContain(`-e MAO_USER_SKILLS_DIR=${join(base, 'userskills')}`);
+    // 图片产物上传根（按用户挂 {uploadDir}/{userId}，nginx /uploads/ 静态出口同源）
+    expect(runArgs).toContain(`-e MAO_UPLOAD_DIR=${join(base, 'uploads')}`);
+    expect(runArgs).toContain(`${join(base, 'uploads', '7')}:${join(base, 'uploads', '7')}:rw`);
     // socket 路径由 ensureChannelListening 返回（唯一真相）
     expect(runArgs).toContain(`--socket ${join(base, 'channels', '7', 'runtime.sock')}`);
     // 不暴露端口
@@ -150,6 +154,57 @@ describe('container registry', () => {
     expect(second.containerName).toBe(first.containerName);
     expect(log.some((line) => line.startsWith('start mao-user-7'))).toBe(true);
     expect(log.filter((line) => line.startsWith('run -d')).length).toBe(1);
+  });
+
+  it('rebuildsStoppedContainerWhenMountPlanDrifts', async () => {
+    // 挂载漂移自愈（图片产物按用户隔离方案⑦）：planner 变更前创建的旧条目指纹过期，
+    // stopped 分支必须先重建再起——docker start 复用创建时的清单，补不上 uploads 挂载
+    const base = useTmpDir('mao-registry-drift-stopped-');
+    for (const d of ['workspace', 'users', 'runtime', 'userskills', 'skills', 'channels', 'dist', 'deps']) {
+      mkdirSync(join(base, d), { recursive: true });
+    }
+    const log: string[] = [];
+    const { registry } = makeRegistry(base, log);
+    await registry.ensureRunning(7);
+    const entry = registry.getEntry(7)!;
+    expect(entry.mountFingerprint).toMatch(/^[0-9a-f]{16}$/);
+    entry.lastUsedAtMs = Date.now() - 100 * 60_000;
+    await registry.reapExpired(); // → stopped
+    // 模拟 planner 升级前固化的旧条目（指纹与当前计划不符）
+    entry.mountFingerprint = 'stale-fingerprint';
+    log.length = 0;
+    const again = await registry.ensureRunning(7);
+    expect(again.state).toBe('running');
+    expect(again.mountFingerprint).not.toBe('stale-fingerprint');
+    // rm -f → run -d：没有多余的 docker start（不会先 start 再立刻重建）
+    expect(dockerOps(log)).toEqual(['rm -f', 'run -d']);
+    const runArgs = log.find((l) => l.startsWith('run -d'))!;
+    expect(runArgs).toContain(`${join(base, 'uploads', '7')}:${join(base, 'uploads', '7')}:rw`);
+    // 指纹恢复一致后不再重建
+    log.length = 0;
+    await registry.ensureRunning(7);
+    expect(dockerOps(log)).toEqual([]);
+  });
+
+  it('recyclesRunningContainerWhenMountPlanDrifts', async () => {
+    // 运行中条目同样只认指纹：漂移即回收重建一次，之后稳定复用
+    const base = useTmpDir('mao-registry-drift-running-');
+    for (const d of ['workspace', 'users', 'runtime', 'userskills', 'skills', 'channels', 'dist', 'deps']) {
+      mkdirSync(join(base, d), { recursive: true });
+    }
+    const log: string[] = [];
+    const { registry } = makeRegistry(base, log);
+    await registry.ensureRunning(7);
+    registry.getEntry(7)!.mountFingerprint = 'stale-fingerprint';
+    log.length = 0;
+    const entry = await registry.ensureRunning(7);
+    expect(entry.state).toBe('running');
+    expect(entry.mountFingerprint).not.toBe('stale-fingerprint');
+    expect(dockerOps(log)).toEqual(['stop -t', 'rm -f', 'run -d']);
+    // 一次性行为：指纹一致后零 docker 动作
+    log.length = 0;
+    await registry.ensureRunning(7);
+    expect(dockerOps(log)).toEqual([]);
   });
 
   it('rebuildsWhenConnectionDead', async () => {
@@ -346,6 +401,7 @@ describe('container registry', () => {
       runtimeDir: join(base, 'runtime'),
       userSkillsDir: join(base, 'userskills'),
       skillsDir: join(base, 'skills'),
+      uploadDir: join(base, 'uploads'),
       ensureChannelListening: async () => join(base, 'channels', '7', 'runtime.sock'),
       issueChannelToken: () => 'tok-7',
       waitSocketReady: async () => undefined,
