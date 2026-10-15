@@ -165,8 +165,10 @@ export class ShellSessionTool extends BaseTool {
     const yieldTimeMs = args.yield_time_ms != null ? asInt(args.yield_time_ms, DEFAULT_EXEC_YIELD_MS) : DEFAULT_EXEC_YIELD_MS;
     let workdir = workspace;
     const workdirArg = asText(args.workdir);
-    // workdir 收紧为严格解析（技术方案 §5.7.2）：越界 workdir 一律拒绝
-    if (workdirArg) workdir = this.pathSandbox.resolve(workdirArg, workspace);
+    // workdir 保持宽松解析（d554a3b8 起的有意决策）：任务常需 cd 到同用户其他项目 /
+    // deps 等会话工作区之外的目录。docker 模式下越界由挂载清单兜底（未挂载的路径在
+    // 容器内不存在）；host 模式的跨用户越界靠 REST/MCP 收口与 deny-list，与 8-26 前一致
+    if (workdirArg) workdir = this.pathSandbox.resolveLenient(workdirArg, workspace);
     const tokenMap = userId != null && this.gitCredentialService
       ? await this.gitCredentialService.getTokenMapByUser(userId) : {};
     const shellId = asText(args.session_id);

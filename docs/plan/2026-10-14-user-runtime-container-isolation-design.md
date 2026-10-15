@@ -40,6 +40,8 @@ Mao 当前所有 CLOUD 用户共用同一台 ECS 上的同一个后端进程、�
 
 其中 1~5 是**同一条根因**：所有执行面共用一个操作系统身份，目录命名约定不是安全边界。6 是同一根因的另一种表现：宿主机进程身份 + 用户可控子进程。
 
+> **注（shell `workdir` 保持宽松，2026-10-15 决策记录）**：场景 2 中的 shell 越界包含两条路径——命令本身（`cat ../../users/2/...`，deny-list 之外无钳制）与 `workdir` 参数。`workdir` 在 2026-08-26（`d554a3b8`）已从严格解析有意放开为宽松，理由是任务常需 cd 到会话工作区之外的目录（同用户其他项目、`/opt/mao-data/deps/{userId}` 持久依赖目录等），工具描述亦明确告知模型这一用法。本方案初期曾将其收回严格解析，经复审确认为净负面：打破上述合法用途、与仍宽松的五个文件工具（`read_file`/`write_file`/`edit_file`/`glob_search`/`grep_search`）行为不一致，且并未真正收口越界面（模型可改用 `read_file` 达到同样目的）。故维持宽松：docker 模式下越界由挂载清单兜底（未挂载路径在容器内不存在）；host 模式下与 8-26 后现状一致，跨用户读取的收口依赖 REST 文件服务收紧（§5.9）与 MCP env 白名单（§5.10），不在 shell 工具层单点收紧。后续若要在工具层收口，应五个文件工具与 shell 统一按「用户自己的根」钳制（`PathSandbox.addAllowedRoot` 可挂多根），而非只收 shell。
+
 ### 1.3 设计目标
 
 | 目标 | 判定标准 |
@@ -359,12 +361,11 @@ if (dockerRuntime.enabledFor(userId) && DOCKER_ONLY_TOOLS.has(toolName)):
 | `harness/tool/impl/shell-session-tool.ts` `injectMaoToken` + `refreshUserEnvironment` | git token map、`MAO_TOKEN`、`ECP_TOKEN`、`LARKSUITE_CLI_*` |
 | `harness/shell/shell-session-manager.ts` `createSession` / `refreshUserEnvironment` | 同上（首次 spawn env） |
 | `harness/terminal/terminal-manager.ts` `buildEnv` | 同上（pty env） |
-| `harness/tool/impl/shell-session-tool.ts:168` workdir | `resolveLenient` 需改严格 `resolve` |
 
 docker 模式下：
 
-- 宿主机侧新增 `SessionEnvelopeBuilder`，在派发前查库取值并组装 envelope，作为上述四处的统一数据源；
-- 容器内四个位置改为从 envelope 读取，查库路径仅在 host 模式保留。
+- 宿主机侧新增 `SessionEnvelopeBuilder`，在派发前查库取值并组装 envelope，作为上述三处的统一数据源；
+- 容器内三个位置改为从 envelope 读取，查库路径仅在 host 模式保留。
 
 `sanitizeInheritedEnv` 逻辑保留：容器内 spawn bash 时同样不继承宿主机敏感键（容器里本来就没有，但代码路径要一致）。
 
@@ -489,7 +490,7 @@ docker 模式下：
 | 文件 | 改动 |
 |---|---|
 | `src/harness/tool/tool-dispatcher.ts` | `dispatchFullOutcome` 插入 docker 路由分支（host 模式短路）；`DOCKER_ONLY_TOOLS` 增加 `mcp__*` |
-| `src/harness/tool/impl/shell-session-tool.ts` | 凭据来源支持 envelope 注入（host 模式保留查库路径）；`workdir` 的 `resolveLenient` 改严格 `resolve` |
+| `src/harness/tool/impl/shell-session-tool.ts` | 凭据来源支持 envelope 注入（host 模式保留查库路径）；`workdir` 保持宽松解析（决策记录见 §1.2 注） |
 | `src/harness/shell/shell-session-manager.ts` | `createSession` / `refreshUserEnvironment` 凭据来源改 envelope；askpass 脚本写容器私有路径（§5.7.2） |
 | `src/harness/terminal/terminal-manager.ts` / `remote-terminal.ts` | docker 模式下 `ptyFactory` 走 pty-bridge（改造入口是 `TerminalManager.create`，不经 ToolDispatcher） |
 | `src/harness/mcp/mcp-client-manager.ts` | `buildTransport` 的 `{ ...process.env }` 改白名单 env；docker 模式下 stdio 客户端改由容器内 bridge 持有 |

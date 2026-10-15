@@ -86,16 +86,16 @@ describe('ShellSessionTool', () => {
     expect(gone.error).toContain('不存在');
   });
 
-  it('resolves shell workdirs with the strict sandbox (no lenient path)', async () => {
-    // workdir 收紧（技术方案 §5.7.2）：改走严格 resolve，不再经 resolveLenient
-    const result = JSON.parse(await tool.execute(JSON.stringify({ command: 'ls', workdir: '/tmp/work' }), 11, 7, '/tmp'));
+  it('allows shell workdirs outside the workspace', async () => {
+    // workdir 保持宽松（d554a3b8 决策）：docker 模式越界由挂载清单兜底，host 模式与
+    // 8-26 后一致；任务常需 cd 到同用户其他项目 / deps 等会话工作区之外的目录
+    const result = JSON.parse(await tool.execute(JSON.stringify({ command: 'ls', workdir: '/etc' }), 11, 7, '/tmp'));
     expect(result.error).toBeUndefined();
-    expect(pathSandbox.resolve).toHaveBeenCalledWith('/tmp/work', '/tmp');
-    expect(pathSandbox.resolveLenient).not.toHaveBeenCalled();
+    expect(pathSandbox.resolveLenient).toHaveBeenCalledWith('/etc', '/tmp');
   });
 
   it('maps shell workdir resolution errors to error json', async () => {
-    pathSandbox.resolve.mockImplementationOnce(() => { throw new SecurityException('blocked'); });
+    pathSandbox.resolveLenient.mockImplementationOnce(() => { throw new SecurityException('blocked'); });
     const result = JSON.parse(await tool.execute(JSON.stringify({ command: 'ls', workdir: '/etc' }), 11, 7, '/tmp'));
     expect(result.error).toContain('blocked');
   });
