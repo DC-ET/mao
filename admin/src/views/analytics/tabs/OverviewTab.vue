@@ -358,6 +358,8 @@ export default {
   line-height: 1.2;
   color: var(--mao-ink);
   font-variant-numeric: tabular-nums;
+  /* 数字整体不拆行，避免窄列里「1.45 万」被折成两行 */
+  white-space: nowrap;
 }
 
 .primary .value {
@@ -558,9 +560,11 @@ export default {
   color: var(--mao-danger);
 }
 
+/* 窄屏：指标条由 6 列收成 3 列，拉开列间距，避免数值与环比徽章贴在一起 */
 @media (max-width: 960px) {
   .metric-strip {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0 12px;
   }
 
   .metric {
@@ -578,6 +582,34 @@ export default {
   }
 }
 
+/* 手机：主指标独占整行，其余指标两列铺开；数值与环比徽章改为换行而非互相挤压 */
+@media (max-width: 768px) {
+  .metric-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .metric.primary {
+    grid-column: 1 / -1;
+  }
+
+  .value-row {
+    flex-wrap: wrap;
+    gap: 4px 8px;
+  }
+
+  .value {
+    font-size: 20px;
+  }
+
+  .primary .value {
+    font-size: 28px;
+  }
+
+  .sub {
+    line-height: 1.5;
+  }
+}
+
 @media (max-width: 480px) {
   .live-grid--2,
   .live-grid--3 {
@@ -585,7 +617,7 @@ export default {
   }
 
   .primary .value {
-    font-size: 30px;
+    font-size: 28px;
   }
 }
 </style>
