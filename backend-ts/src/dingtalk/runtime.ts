@@ -81,7 +81,7 @@ export function createDingtalkRuntime(deps: {
   modelService: ModelService;
   userRepo: { findById(id: number): Promise<{ id?: number } | null> };
   settingService: { getEcpConfig(): Promise<{ desktopCallbackUrl?: string | null }> };
-  taskTerminal: { finishExecution(sessionId: number, userId: number, phase: string, executionId: string): Promise<void> };
+  taskTerminal: { finishExecution(sessionId: number, userId: number, phase: string, executionId: string, failureReason?: string): Promise<void> };
   activityService: unknown;
   activityHeartbeat: unknown;
   todoMapper: unknown;
@@ -309,9 +309,9 @@ export function createDingtalkRuntime(deps: {
         sessionService: deps.sessionService as never,
       }, sessionId, session.userId, executionId, model?.supportsVision === 1);
     },
-    onExecutionFinished: async (sessionId, _context, executionId, phase) => {
+    onExecutionFinished: async (sessionId, _context, executionId, phase, failureReason) => {
       const session = await deps.sessionService.getSession(sessionId);
-      await deps.taskTerminal.finishExecution(sessionId, session.userId, phase, executionId);
+      await deps.taskTerminal.finishExecution(sessionId, session.userId, phase, executionId, failureReason);
     },
     afterDelivery: async (sessionId, phase) => {
       if (phase === 'FAILED') return;

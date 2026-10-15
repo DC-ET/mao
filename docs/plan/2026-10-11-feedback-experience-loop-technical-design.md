@@ -225,6 +225,7 @@ async locateRunByMessageId(sessionId: number, messageId: number): Promise<RunTra
 - 60s 超时（`withTimeout` + `cancelFlag`），失败分类：`LLM_TIMEOUT` / `LLM_CALL_FAILED`。
 - 解析失败或条数/字数不符 → 带错误信息重试一次 → 仍失败抛 `LLM_CALL_FAILED`，**不降级为模板文案**。
 - `finally` 里 `usageService.record(operatorId, null, model.id, SCENE_FEEDBACK_EXPERIENCE_DRAFT, usage, success)`。注意 userId 用操作的管理员（不是点踩用户），因为这是管理动作。
+- **实施修正（2026-10-15）**：`llm_usage.session_id` 建表时为 `NOT NULL`，上面这行 `record(..., null, ...)` 抛 `Column 'session_id' cannot be null`；异常发生在 `finally`，会顶掉真实业务异常并以 500「服务内部错误」暴露（`/feedback/admin/draft` 因此必然失败）。已由 V154 迁移把该列改为可空。另，`create-app.ts` 装配此前误传 `routeChatClient`（按协议路由的**工厂函数**，无 `chat` 方法），LLM 调用在发出请求前即 `TypeError` 失败；现改为 `llmAdapter`，并把服务的客户端依赖类型收敛为 `Pick<LlmAdapter, 'chat'>`，让编译器兜住同类误配。
 
 ### 5.5 忽略
 

@@ -106,10 +106,13 @@ export class SubagentExecutionRecoveryService {
         totalToolCalls: collector.toolCallCount,
         completedAt: nowSql(),
       });
-      await this.visibilityService.finishSubagent(child.id!, parent.userId, status, run.executionId);
+      await this.visibilityService.finishSubagent(
+        child.id!, parent.userId, status, run.executionId,
+        status === 'FAILED' ? result : undefined,
+      );
     } catch (error) {
       await this.fail(execution, `子代理恢复失败：${(error as Error).message}`);
-      await this.visibilityService.finishSubagent(child.id!, parent.userId, 'FAILED', '');
+      await this.visibilityService.finishSubagent(child.id!, parent.userId, 'FAILED', '', (error as Error).message);
     } finally {
       this.agentLoop.removeCancelFlag(child.id!);
       this.localRegistry.removeSession?.(child.id!);

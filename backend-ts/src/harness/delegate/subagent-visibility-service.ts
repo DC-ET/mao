@@ -123,14 +123,19 @@ export class SubAgentVisibilityService {
     return { collector, executionId };
   }
 
+  /**
+   * 子代理终态落库 + WS 广播。`reason` 仅 FAILED 有意义（finishExecution 内部按相位
+   * 决定是否持久化到 runtime_status_json.executionError），供管理后台展示失败原因。
+   */
   async finishSubagent(
     childSessionId: number,
     userId: number | null | undefined,
     phase: string,
     executionId: string,
+    reason?: string,
   ): Promise<void> {
     try {
-      await this.deps.taskTerminalService.finishExecution(childSessionId, userId, phase, executionId);
+      await this.deps.taskTerminalService.finishExecution(childSessionId, userId, phase, executionId, reason);
     } catch (e) {
       harnessLog('warn', `Failed to finish subagent session ${childSessionId}: ${(e as Error).message}`);
       try {

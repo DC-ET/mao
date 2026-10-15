@@ -518,7 +518,7 @@ export class BackgroundSubagentManager {
         deliveryStatus: 'SUPPRESSED',
         completedAt: nowSql(),
       });
-      await this.deps.visibilityService.finishSubagent(child.id, child.userId, 'FAILED', '');
+      await this.deps.visibilityService.finishSubagent(child.id, child.userId, 'FAILED', '', message);
       // 必须向父代理投递失败结果：否则 waitForAll 正常退出且无待收结果，
       // 父代理上下文永远不知道这个子代理失败了
       const entries = this.resultsByParent.get(execution.parentSessionId) ?? [];
@@ -716,7 +716,10 @@ export class BackgroundSubagentManager {
         });
         if (!applied) return;
       }
-      await this.deps.visibilityService.finishSubagent(childSessionId, childSession.userId, status, runExecutionId);
+      await this.deps.visibilityService.finishSubagent(
+        childSessionId, childSession.userId, status, runExecutionId,
+        status === 'FAILED' ? resultText : undefined,
+      );
       await this.onCompleted(execution, childSession, status, resultText, subContext, collector);
     } catch (e) {
       const message = '后台子代理执行失败: ' + ((e as Error)?.message ?? '子代理执行异常');
@@ -926,7 +929,7 @@ export class BackgroundSubagentManager {
         });
         if (!applied) return;
       }
-      await this.deps.visibilityService.finishSubagent(childSession.id!, childSession.userId, 'FAILED', runExecutionId);
+      await this.deps.visibilityService.finishSubagent(childSession.id!, childSession.userId, 'FAILED', runExecutionId, message);
 
       const parent = await this.deps.sessionMapper.selectById(parentId);
       if (!parent || isTerminal(parent.phase)) {

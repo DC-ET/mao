@@ -6,16 +6,13 @@ import { LLM_CALL_SCENES, LlmCallContext } from '../usage/llm-call-context.js';
 import { FEEDBACK_DRAFT_MODEL_ID_KEY } from '../settings/settings.service.js';
 import type { LlmModelRef } from '../session/types.js';
 import type { RunTraceVO } from '../session/session-vo.js';
+import type { ChatRequest, LlmAdapter, LlmModelConfig } from '../harness/llm/chat-request.js';
 import {
   ExperienceDraftService,
   DRAFT_LIMITS,
   serializeRunTrace,
   validateExperiences,
   type DraftMaterial,
-  type LlmAdapterLike,
-  type LlmModelConfigLike,
-  type ChatRequestLike,
-  type ChatResponseLike,
 } from './experience-draft.service.js';
 
 function model(id: number, over: Partial<LlmModelRef> = {}): LlmModelRef {
@@ -66,9 +63,9 @@ function material(over: Partial<DraftMaterial> = {}): DraftMaterial {
 
 /** 捕获请求体并按脚本返回响应的 adapter。 */
 function makeAdapter(responses: string[]) {
-  const calls: Array<{ request: ChatRequestLike; config: LlmModelConfigLike }> = [];
+  const calls: Array<{ request: ChatRequest; config: LlmModelConfig }> = [];
   let index = 0;
-  const adapter: LlmAdapterLike = {
+  const adapter: Pick<LlmAdapter, 'chat'> = {
     chat: async (request, config) => {
       calls.push({ request, config });
       const content = responses[Math.min(index, responses.length - 1)];
@@ -85,7 +82,7 @@ function makeUsage() {
 }
 
 function makeService(options: {
-  adapter: LlmAdapterLike;
+  adapter: Pick<LlmAdapter, 'chat'>;
   setting?: string | null;
   models?: Record<string, LlmModelRef | null>;
   defaultModel?: LlmModelRef | null;
@@ -227,14 +224,14 @@ describe('ExperienceDraftService.draft', () => {
     const { service } = makeService({ adapter, defaultModel: model(3), existingCount: 4 });
     const result = await service.draft(9, 7, [material()]);
     expect(result.experiences).toHaveLength(1);
-    const userPrompt = calls[0].request.messages[1].content;
+    const userPrompt = calls[0].request.messages![1].content;
     expect(userPrompt).toContain('以下是一条用户点踩反馈');
     expect(userPrompt).toContain('目标 Agent id=7（已有 4 条经验）');
     expect(userPrompt).toContain('点踩原因：结果错误');
     expect(userPrompt).toContain('被点踩的回复：');
     expect(userPrompt).not.toContain('promptTokens');
     // 系统提示声明只输出 JSON、禁臆测、禁围栏
-    expect(calls[0].request.messages[0].content).toContain('只输出 JSON');
+    expect(calls[0].request.messages![0].content).toContain('只输出 JSON');
   });
 
   it('N≥2 走归纳 prompt，并要求 1～2 条', async () => {
@@ -242,7 +239,7 @@ describe('ExperienceDraftService.draft', () => {
     const { service } = makeService({ adapter, defaultModel: model(3) });
     const result = await service.draft(9, null, [material(), material({ messageId: 13, reason: 'NOT_SOLVED', reasonLabel: '问题未解决' })]);
     expect(result.experiences.map((e) => e.content)).toEqual(['甲甲甲', '乙乙乙']);
-    const userPrompt = calls[0].request.messages[1].content;
+    const userPrompt = calls[0].request.messages![1].content;
     expect(userPrompt).toContain('以下是 2 条用户点踩反馈');
     expect(userPrompt).toContain('归纳出 1～2 条更通用的经验');
     expect(userPrompt).toContain('目标 Agent 未指定');
@@ -309,8 +306,8 @@ describe('ExperienceDraftService.draft', () => {
     expect(result.experiences).toHaveLength(1);
     expect(calls).toHaveLength(2);
     // 第二次带上了上次输出与纠错说明
-    expect(calls[1].request.messages[2].content).toBe('这不是 JSON');
-    expect(calls[1].request.messages[3].content).toContain('上次输出不合规');
+    expect(calls[1].request.messages![2].content).toBe('这不是 JSON');
+    expect(calls[1].request.messages![3].content).toContain('上次输出不合规');
   });
 
   it('连续两次不合规抛 LLM_CALL_FAILED，不写任何状态', async () => {
@@ -326,12 +323,12 @@ describe('ExperienceDraftService.draft', () => {
     const { service } = makeService({ adapter, defaultModel: model(3) });
     const result = await service.draft(9, 7, [material()]);
     expect(result.experiences).toHaveLength(1);
-    expect(calls[1].request.messages[3].content).toContain('最多 2 条');
+    expect(calls[1].request.messages![3].content).toContain('最多 2 条');
   });
 
   it('模型调用失败抛 LLM_CALL_FAILED 且用量记 success=false', async () => {
     const record = vi.fn(async () => undefined);
-    const adapter: LlmAdapterLike = { chat: async () => { throw new Error('boom'); } };
+    const adapter: Pick<LlmAdapter, 'chat'> = { chat: async () => { throw new Error('boom'); } };
     const service = new ExperienceDraftService(
       adapter,
       { resolveModel: async () => model(3) },
@@ -353,7 +350,7 @@ describe('ExperienceDraftService.draft', () => {
     vi.useFakeTimers();
     try {
       let cancelled = false;
-      const adapter: LlmAdapterLike = {
+      const adapter: Pick<LlmAdapter, 'chat'> = {
         chat: async (_req, _config, cancelFlag) => new Promise((_resolve, reject) => {
           // 模拟流式调用被取消：超时回调置 cancelFlag 后适配器据此中止并拒绝
           const timer = setInterval(() => {

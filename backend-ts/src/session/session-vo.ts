@@ -87,6 +87,8 @@ export interface AdminSessionVO {
   lastActivityAt?: string | null;
   /** 当前等待用户回答的 ask_user_questions 数量（内存态，phase 仍为 RUNNING）。 */
   pendingQuestionCount?: number;
+  /** FAILED 会话的失败原因（runtime_status_json.executionError）；非失败态为 null。 */
+  failureReason?: string | null;
   matchSnippet?: string | null;
 }
 
@@ -137,6 +139,25 @@ export interface CompactionEventVO {
 
 export function visiblePhase(phase: string | null | undefined): string {
   return phase === 'RESUMING' ? 'RUNNING' : phase ?? 'IDLE';
+}
+
+/**
+ * 从 runtime_status_json 提取失败原因（executionError，由 TaskTerminalService.finishExecution
+ * 在 FAILED 终态落库）。快照损坏、字段缺失或空串都返回 null，不让整份会话 VO 失败。
+ * 仅在 phase 为 FAILED 时有值：执行中的会话 runtimeStatusJson 承载 compacting / llmRetry
+ * 等瞬态，重试跑起来后旧 executionError 可能还没被覆盖，按相位取才能防止把上次失败原因
+ * 误当成本次执行的现状。
+ */
+export function parseFailureReason(raw: string | null | undefined, phase: string | null | undefined): string | null {
+  if (visiblePhase(phase) !== 'FAILED') return null;
+  if (raw == null || raw.trim() === '') return null;
+  try {
+    const parsed = JSON.parse(raw) as { executionError?: unknown } | null;
+    const reason = parsed?.executionError;
+    return typeof reason === 'string' && reason.trim().length > 0 ? reason : null;
+  } catch {
+    return null;
+  }
 }
 
 /** 落库快照损坏时当没有构成，不让整份会话 VO 失败。 */
@@ -245,6 +266,7 @@ export function toAdminSessionVO(
     sessionType: session.sessionType ?? null,
     parentSessionId: session.parentSessionId ?? null,
     phase: visiblePhase(session.phase),
+    failureReason: parseFailureReason(session.runtimeStatusJson, session.phase),
     elapsedMs: session.elapsedMs != null ? session.elapsedMs : 0,
     projectKey: session.projectKey,
     workspace: session.workspace,

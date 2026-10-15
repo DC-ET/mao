@@ -169,7 +169,10 @@ export class DelegateTool extends BaseTool {
           completedAt: nowSql(),
         });
       }
-      await this.visibilityService.finishSubagent(childSession.id!, parentSession.userId, terminalPhase, runResult.executionId);
+      await this.visibilityService.finishSubagent(
+        childSession.id!, parentSession.userId, terminalPhase, runResult.executionId,
+        terminalPhase === 'FAILED' ? resultText : undefined,
+      );
       const response: Record<string, unknown> = {
         success, cancelled, agent_type: agentType, child_session_id: childSession.id, result: resultText,
         rounds: subContext.currentRound, tool_calls: collector.toolCallCount,
@@ -245,7 +248,7 @@ export class DelegateTool extends BaseTool {
     }
     await this.sessionService.saveMessage(childSession.id!, 'ASSISTANT', resultText, null, null, null, 0, null);
     const userId = parentSession?.userId ?? childSession.userId;
-    await this.visibilityService.finishSubagent(childSession.id!, userId, 'FAILED', runExecutionId ?? '');
+    await this.visibilityService.finishSubagent(childSession.id!, userId, 'FAILED', runExecutionId ?? '', resultText);
   }
 
   private async markExecutionTerminal(
@@ -495,7 +498,10 @@ export class DelegateFollowupTool extends BaseTool {
         await this.markExecutionTerminal(execution, 'FAILED', resultText, subContext.currentRound, resultCollector);
       }
 
-      await this.visibilityService.finishSubagent(childSessionId, parentSession.userId, terminalPhase, runExecutionId);
+      await this.visibilityService.finishSubagent(
+        childSessionId, parentSession.userId, terminalPhase, runExecutionId,
+        terminalPhase === 'FAILED' ? resultText : undefined,
+      );
       terminalHandled = true;
 
       const round = await this.subagentExecutionMapper.countByChildSessionId(childSessionId);
@@ -550,7 +556,7 @@ export class DelegateFollowupTool extends BaseTool {
     }
     await this.sessionService.saveMessage(childSession.id!, 'ASSISTANT', resultText, null, null, null, 0, null);
     const userId = parentSession?.userId ?? childSession.userId;
-    await this.visibilityService.finishSubagent(childSession.id!, userId, 'FAILED', runExecutionId ?? '');
+    await this.visibilityService.finishSubagent(childSession.id!, userId, 'FAILED', runExecutionId ?? '', resultText);
   }
 
   private async markExecutionTerminal(

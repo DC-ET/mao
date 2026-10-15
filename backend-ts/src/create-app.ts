@@ -1516,7 +1516,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const usageService = new LlmUsageService(new LlmUsageRepository(db));
   // 经验起草（转经验向导）：与 git 提交信息同款非流式链路（按 apiProtocol 路由的客户端 + 模型解析 + 用量落库）
   const experienceDraft = new ExperienceDraftService(
-    routeChatClient as never,
+    llmAdapter,
     harness as never,
     usageService,
     { getValue: (key: string) => settingService.getValue(key) },
@@ -2286,9 +2286,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         sessionService: sessionService as never,
       }, sessionId, ownerUserId, executionId, session.modelId != null && (await modelService.getModel(session.modelId))?.supportsVision === 1);
     },
-    onExecutionFinished: async (sessionId, _context, executionId, phase) => {
+    onExecutionFinished: async (sessionId, _context, executionId, phase, failureReason) => {
       const session = await sessionService.getSession(sessionId);
-      await taskTerminal.finishExecution(sessionId, session.userId!, phase, executionId);
+      await taskTerminal.finishExecution(sessionId, session.userId!, phase, executionId, failureReason);
       // FAILED 保留映射：失败卡「重试」需凭映射定位 bot；COMPLETED/CANCELLED 清理，避免崩溃恢复误更旧卡。
       if (phase === 'FAILED') return;
       try { await feishuProgressCardRepo.deleteBySessionId(sessionId); } catch (error) {

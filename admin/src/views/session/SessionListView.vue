@@ -89,7 +89,10 @@
         </el-table-column>
         <el-table-column prop="phase" label="任务阶段" width="120">
           <template #default="{ row }">
-            <el-tag :type="phaseTagType(row.phase, row.pendingQuestionCount)" size="small">{{ phaseLabel(row.phase, row.pendingQuestionCount) }}</el-tag>
+            <el-tooltip v-if="row.failureReason" :content="row.failureReason" placement="top">
+              <el-tag :type="phaseTagType(row.phase, row.pendingQuestionCount)" size="small">{{ phaseLabel(row.phase, row.pendingQuestionCount) }}</el-tag>
+            </el-tooltip>
+            <el-tag v-else :type="phaseTagType(row.phase, row.pendingQuestionCount)" size="small">{{ phaseLabel(row.phase, row.pendingQuestionCount) }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="contextTokens" label="上下文Token" width="110" align="right" />
@@ -125,6 +128,10 @@
           <div class="mobile-card-head">
             <span class="mobile-card-title">{{ row.title || '-' }}</span>
             <el-tag :type="phaseTagType(row.phase, row.pendingQuestionCount)" size="small">{{ phaseLabel(row.phase, row.pendingQuestionCount) }}</el-tag>
+          </div>
+          <div v-if="row.failureReason" class="mobile-card-row">
+            <span class="mobile-card-label">失败原因</span>
+            <span class="mobile-failure-reason">{{ row.failureReason }}</span>
           </div>
           <div v-if="row.matchSnippet" class="mobile-card-row match-snippet">
             <span class="mobile-card-label">消息</span>
@@ -455,6 +462,17 @@ onActivated(() => {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+/* 移动端失败原因限 3 行：完整异常串/堆栈进会话详情看 */
+.mobile-failure-reason {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+  min-width: 0;
+  word-break: break-word;
 }
 
 @media (max-width: 768px) {

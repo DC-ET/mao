@@ -77,6 +77,9 @@
           <el-descriptions-item label="任务阶段">
             <el-tag :type="phaseTagType(sessionInfo.phase, sessionInfo.pendingQuestionCount)" size="small">{{ phaseLabel(sessionInfo.phase, sessionInfo.pendingQuestionCount) }}</el-tag>
           </el-descriptions-item>
+          <el-descriptions-item v-if="sessionInfo.failureReason" label="失败原因">
+            <div class="failure-reason">{{ sessionInfo.failureReason }}</div>
+          </el-descriptions-item>
           <el-descriptions-item label="项目">{{ sessionInfo.projectKey || '-' }}</el-descriptions-item>
           <el-descriptions-item label="上下文Token">{{ sessionInfo.contextTokens || '-' }}</el-descriptions-item>
           <el-descriptions-item label="摘要">{{ sessionInfo.summary || '-' }}</el-descriptions-item>
@@ -461,6 +464,15 @@ onActivated(() => {
 
 .info-card :deep(.el-descriptions__label) {
   width: 96px;
+}
+
+/* 失败原因可能是长异常串/堆栈：保留换行、允许纵向滚动，避免撑爆信息卡 */
+.failure-reason {
+  max-height: 160px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
 }
 
 .chat-card :deep(.el-card__body) {
