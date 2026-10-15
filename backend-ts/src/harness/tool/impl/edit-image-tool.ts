@@ -72,6 +72,8 @@ export class EditImageTool extends BaseTool {
     private readonly getBaseUrl: () => Promise<string> = async () => '',
     /** 改图入参的容器/宿主机读字节桥（与外部发送工具同源）；未注入时只按会话工作区严格解析。 */
     private readonly sendBytesSupport: SendBytesSupport | null = null,
+    /** servlet contextPath（默认 /api）：从 upload.baseUrl 剥后缀段派生静态 origin。 */
+    private readonly contextPath: string = '/api',
   ) { super(); }
 
   getName(): string { return 'edit_image'; }
@@ -224,7 +226,7 @@ export class EditImageTool extends BaseTool {
           : undefined,
       });
       const baseUrl = await this.getBaseUrl();
-      return toJson(materializeImageApiResult(result, this.uploadDir, 'edit', baseUrl, prompt, userId));
+      return toJson(materializeImageApiResult(result, this.uploadDir, 'edit', baseUrl, prompt, userId, this.contextPath));
     } catch (e) {
       const err = toImageApiError(e, model?.apiKey);
       harnessLog('error', 'EditImageTool failed', err);

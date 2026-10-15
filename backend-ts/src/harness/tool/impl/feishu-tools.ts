@@ -192,13 +192,13 @@ export class SendFeishuImageTool extends BaseTool implements FeishuChannelTool {
 
   getName(): string { return 'feishu_send_image'; }
   getDescription(): string {
-    return '向当前会话对应的飞书用户或群聊发送一张图片（仅飞书通道会话可用，私聊发给该用户、群聊发到该群）。支持本地文件路径（绝对路径或会话工作区相对路径）或 http(s) 图片 URL；仅支持 PNG/JPG/JPEG/GIF/WebP，大小不超过 10MB。';
+    return '向当前会话对应的飞书用户或群聊发送一张图片（仅飞书通道会话可用，私聊发给该用户、群聊发到该群）。支持本地文件路径（工作区相对路径，或允许集内的绝对路径：会话工作区、本人 uploads/{userId} 产物目录、runtime、HOME、/tmp）或 http(s) 图片 URL；仅支持 PNG/JPG/JPEG/GIF/WebP，大小不超过 10MB。';
   }
   getInputSchema(): Record<string, unknown> {
     return {
       type: 'object',
       properties: {
-        image: { type: 'string', description: '要发送的图片：本地文件路径（绝对路径或工作区相对路径），或 http(s) 图片 URL' },
+        image: { type: 'string', description: '要发送的图片：本地文件路径（工作区相对路径，或允许集内的绝对路径：会话工作区、本人 uploads/{userId} 产物目录、runtime、HOME、/tmp），或 http(s) 图片 URL' },
       },
       required: ['image'],
     };
@@ -239,13 +239,13 @@ export class SendFeishuFileTool extends BaseTool implements FeishuChannelTool {
 
   getName(): string { return 'feishu_send_file'; }
   getDescription(): string {
-    return '向当前会话对应的飞书用户或群聊发送一份文件（仅飞书通道会话可用，私聊发给该用户、群聊发到该群）。支持本地文件路径（绝对路径或会话工作区相对路径）或 http(s) URL，大小不超过 30MB。';
+    return '向当前会话对应的飞书用户或群聊发送一份文件（仅飞书通道会话可用，私聊发给该用户、群聊发到该群）。支持本地文件路径（工作区相对路径，或允许集内的绝对路径：会话工作区、本人 uploads/{userId} 产物目录、runtime、HOME、/tmp）或 http(s) URL，大小不超过 30MB。';
   }
   getInputSchema(): Record<string, unknown> {
     return {
       type: 'object',
       properties: {
-        file: { type: 'string', description: '要发送的文件：本地文件路径（绝对路径或工作区相对路径），或 http(s) URL' },
+        file: { type: 'string', description: '要发送的文件：本地文件路径（工作区相对路径，或允许集内的绝对路径：会话工作区、本人 uploads/{userId} 产物目录、runtime、HOME、/tmp），或 http(s) URL' },
         filename: { type: 'string', description: '可选，发送到飞书时展示的文件名，默认取路径 basename' },
       },
       required: ['file'],

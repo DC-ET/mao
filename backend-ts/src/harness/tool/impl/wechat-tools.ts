@@ -37,13 +37,13 @@ export class SendWechatImageTool extends BaseTool implements WeixinChannelTool {
 
   getName(): string { return 'send_wechat_image'; }
   getDescription(): string {
-    return '向微信用户发送一张图片（仅微信通道会话可用）。支持本地文件路径（绝对路径或会话工作区相对路径）或 http(s) 图片 URL；仅支持 PNG/JPG/JPEG/GIF/WebP，大小不超过 20MB。发送成功后微信用户会收到该图片。';
+    return '向微信用户发送一张图片（仅微信通道会话可用）。支持本地文件路径（工作区相对路径，或允许集内的绝对路径：会话工作区、本人 uploads/{userId} 产物目录、runtime、HOME、/tmp）或 http(s) 图片 URL；仅支持 PNG/JPG/JPEG/GIF/WebP，大小不超过 20MB。发送成功后微信用户会收到该图片。';
   }
   getInputSchema(): Record<string, unknown> {
     return {
       type: 'object',
       properties: {
-        image: { type: 'string', description: '要发送的图片：本地文件路径（绝对路径或工作区相对路径），或 http(s) 图片 URL' },
+        image: { type: 'string', description: '要发送的图片：本地文件路径（工作区相对路径，或允许集内的绝对路径：会话工作区、本人 uploads/{userId} 产物目录、runtime、HOME、/tmp），或 http(s) 图片 URL' },
       },
       required: ['image'],
     };
@@ -86,7 +86,7 @@ export class SendWechatFileTool extends BaseTool implements WeixinChannelTool {
 
   getName(): string { return 'send_wechat_file'; }
   getDescription(): string {
-    return '向微信用户发送一份文件（仅微信通道会话可用）。支持本地文件路径或 http(s) URL。';
+    return '向微信用户发送一份文件（仅微信通道会话可用）。支持本地文件路径（工作区相对路径，或允许集内的绝对路径：会话工作区、本人 uploads/{userId} 产物目录、runtime、HOME、/tmp）或 http(s) URL。';
   }
   getInputSchema(): Record<string, unknown> {
     return {

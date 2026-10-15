@@ -202,6 +202,21 @@ server {
         add_header Access-Control-Allow-Origin "*" always;
     }
 
+    # 文件服务返回的图片类 file.url 形如 {baseUrl}/uploads/x.png = /api/uploads/x.png，
+    # 必须用 ^~ 前缀 location 压过下面的扩展名正则 location，否则会被 desktop/dist 吞掉变 404。
+    # /api/uploads/releases/ 同理禁缓存（自动更新清单），且必须写在 /api/uploads/ 之前。
+    location ^~ /api/uploads/releases/ {
+        alias /opt/mao-data/uploads/releases/;
+        add_header Cache-Control "no-cache" always;
+        add_header Access-Control-Allow-Origin "*" always;
+    }
+    location ^~ /api/uploads/ {
+        alias /opt/mao-data/uploads/;
+        expires 7d;
+        add_header Cache-Control "public, immutable";
+        add_header Access-Control-Allow-Origin "*" always;
+    }
+
     # 自动更新清单内容会变且被客户端轮询（Electron autoUpdater / 安卓 OTA），禁缓存。
     # 注意：必须用 ^~ 前缀 location 且写在 ^~ /uploads/ 之前；正则 location 会被 ^~ 压制不生效。
     location ^~ /uploads/releases/ {
@@ -375,6 +390,7 @@ FROM message WHERE deleted = 0;
 
    版本从 `backend-ts/package.json` 读取。**宿主机 Node 升级后必须同步重建镜像**，否则容器内读图（sharp）与终端（node-pty）静默失败。
 3. **数据目录**：`/opt/mao-data/runtime/channels`（socket 根）与 `/opt/mao-data/deps`（持久依赖）需存在且后端进程可写（首次启动预检会校验，不满足直接启动失败，不静默降级）。
+4. **上传目录**：图片产物（`generate_image` / `edit_image`）落 `{FILE_UPLOAD_DIR}/{userId}/`（宿主机按用户隔离、同名挂入容器），外网经 Nginx `^~ /uploads/` 与 `^~ /api/uploads/` 两个前缀访问；按用户隔离后请确认 Nginx 配置含这两个 location（见上文 Nginx 片段），否则图片类 `file.url` 会被扩展名正则 location 吞掉变 404。
 
 ### 配置（环境变量，见 config.md）
 

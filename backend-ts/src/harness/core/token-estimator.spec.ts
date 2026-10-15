@@ -8,7 +8,7 @@ import { EnvironmentInfoProvider } from './environment-info-provider.js';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AgentEventListener } from './agent-event-listener.js';
-import { useTmpDir } from '../../testing/tmp-dir.js';
+import { useTmpDir, useTmpDirOutsideRepo } from '../../testing/tmp-dir.js';
 import { UPDATE_WITH_BOUNDARY_CAS } from './session-compaction.mapper.js';
 
 describe('TokenEstimator', () => {
@@ -366,7 +366,7 @@ describe('EnvironmentInfoProvider', () => {
   const provider = new EnvironmentInfoProvider();
 
   it('detectReportsGitWorkspaceAndRuntimeDefaults', async () => {
-    const dir = useTmpDir('mao-env-');
+    const dir = useTmpDirOutsideRepo('mao-env-');
     mkdirSync(join(dir, 'repo', 'subdir'), { recursive: true });
     mkdirSync(join(dir, 'repo', '.git'), { recursive: true });
     const info = await provider.detect(join(dir, 'repo', 'subdir'));
@@ -377,7 +377,8 @@ describe('EnvironmentInfoProvider', () => {
   });
 
   it('detectReturnsFalseWhenWorkspaceIsBlankOrNotGit', async () => {
-    const dir = useTmpDir('mao-env-');
+    // 夹具必须在仓库外：在仓库内会向上发现 .git，isGit 恒为 true
+    const dir = useTmpDirOutsideRepo('mao-env-');
     expect((await provider.detect(null)).isGit).toBe(false);
     expect((await provider.detect(dir)).isGit).toBe(false);
   });

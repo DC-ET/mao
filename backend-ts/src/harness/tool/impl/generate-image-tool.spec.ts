@@ -166,6 +166,24 @@ describe('materializeImageApiResult（图片产物按用户隔离）', () => {
     expect(toStaticUploadBase('')).toBe('');
   });
 
+  it('strips the configured contextPath instead of a hardcoded /api', () => {
+    // 后台自定义 contextPath=/api/v1：硬编码剥 /api 会残留 /api/v1，image_url 必 404
+    expect(toStaticUploadBase('https://mao.example/api/v1', '/api/v1')).toBe('https://mao.example');
+    expect(toStaticUploadBase('https://mao.example/api/v1/', '/api/v1')).toBe('https://mao.example');
+    // 默认 contextPath 未传时按 /api 兜底
+    expect(toStaticUploadBase('https://mao.example/api/v1')).toBe('https://mao.example/api/v1');
+    // contextPath 为空（裸域名部署）：原样返回，由后端 /uploads/ 前缀兜底
+    expect(toStaticUploadBase('https://mao.example/api', '')).toBe('https://mao.example/api');
+  });
+
+  it('builds the uploads url for a custom contextPath', () => {
+    const dir = useTmpDir('mat-');
+    const payload = materializeImageApiResult(apiResult, dir, 'gen', 'https://mao.example/api/v1', 'cat', 7, '/api/v1');
+    const image = payload.images[0] as Record<string, unknown>;
+    const fileName = (image.image_path as string).split('/').pop()!;
+    expect(image.image_url).toBe(`https://mao.example/uploads/7/${fileName}`);
+  });
+
   it('writes into {uploadDir}/{userId} and builds /uploads/{uid}/ url', () => {
     const dir = useTmpDir('mat-');
     const payload = materializeImageApiResult(apiResult, dir, 'gen', 'https://mao.example/api', 'cat', 7);

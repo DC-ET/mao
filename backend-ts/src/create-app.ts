@@ -1384,6 +1384,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     imageModelLookup: modelService,
     uploadDir,
     getUploadBaseUrl: async () => (await settingService.getUploadConfig()).baseUrl,
+    uploadContextPath: apiPrefix,
     weixinToolSupport: wechatBridges.toolSupport,
     weixinUploadService: wechatBridges.uploadService,
     weixinSendService: wechatBridges.sendService,

@@ -69,6 +69,8 @@ export interface DefaultToolRegistryDeps {
   imageModelLookup: ImageModelLookup;
   uploadDir: string;
   getUploadBaseUrl?: () => Promise<string>;
+  /** servlet contextPath（默认 /api）：图片产物 image_url 派生静态 origin 用。 */
+  uploadContextPath?: string;
   weixinToolSupport: WeixinMediaToolSupport;
   weixinUploadService: WeixinMediaUploadService;
   weixinSendService: WeixinSendService;
@@ -121,8 +123,8 @@ export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRe
         return session?.executionMode === 'LOCAL';
       },
     ),
-    new GenerateImageTool(deps.imageModelLookup, deps.uploadDir, deps.getUploadBaseUrl ?? (async () => '')),
-    new EditImageTool(deps.imageModelLookup, deps.pathSandbox, deps.uploadDir, deps.getUploadBaseUrl ?? (async () => ''), deps.sendBytesSupport),
+    new GenerateImageTool(deps.imageModelLookup, deps.uploadDir, deps.getUploadBaseUrl ?? (async () => ''), deps.uploadContextPath),
+    new EditImageTool(deps.imageModelLookup, deps.pathSandbox, deps.uploadDir, deps.getUploadBaseUrl ?? (async () => ''), deps.sendBytesSupport, deps.uploadContextPath),
     new TaskCreateTool(deps.sessionTodoMapper),
     new TaskListTool(deps.sessionTodoMapper),
     new TaskUpdateTool(deps.sessionTodoMapper),

@@ -31,12 +31,12 @@ export class SendDingtalkImageTool extends BaseTool implements DingtalkChannelTo
 
   getName(): string { return 'dingtalk_send_image'; }
   getDescription(): string {
-    return '向当前钉钉会话发送一张图片（仅钉钉通道可用，私聊发给该用户、群聊发到该群）。支持本地路径或 http(s) 图片 URL。成功返回文件名。';
+    return '向当前钉钉会话发送一张图片（仅钉钉通道可用，私聊发给该用户、群聊发到该群）。支持本地路径（工作区相对路径，或允许集内的绝对路径：会话工作区、本人 uploads/{userId} 产物目录、runtime、HOME、/tmp）或 http(s) 图片 URL。成功返回文件名。';
   }
   getInputSchema(): Record<string, unknown> {
     return {
       type: 'object',
-      properties: { image: { type: 'string', description: '图片本地路径（绝对或工作区相对）或 http(s) URL' } },
+      properties: { image: { type: 'string', description: '图片本地路径（工作区相对路径，或允许集内的绝对路径：会话工作区、本人 uploads/{userId} 产物目录、runtime、HOME、/tmp）或 http(s) URL' } },
       required: ['image'],
     };
   }
@@ -78,7 +78,7 @@ export class SendDingtalkFileTool extends BaseTool implements DingtalkChannelToo
     return {
       type: 'object',
       properties: {
-        file: { type: 'string', description: '文件本地路径（绝对或工作区相对）或 http(s) URL' },
+        file: { type: 'string', description: '文件本地路径（工作区相对路径，或允许集内的绝对路径：会话工作区、本人 uploads/{userId} 产物目录、runtime、HOME、/tmp）或 http(s) URL' },
         filename: { type: 'string', description: '可选，发送时展示的文件名' },
       },
       required: ['file'],
