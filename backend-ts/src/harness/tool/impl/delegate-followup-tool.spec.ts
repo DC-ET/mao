@@ -186,8 +186,39 @@ describe('DelegateFollowupTool', () => {
     expect(sessionService.saveMessage).toHaveBeenCalledWith(100, 'USER', '已修复上一轮问题，请核查并继续审查', null, null, null, 0, null);
     expect(sessionService.cleanupIncompleteTailAfterId).toHaveBeenCalledWith(100, 0);
     expect(subagentExecutionMapper.insert).toHaveBeenCalled();
-    expect(visibilityService.finishSubagent).toHaveBeenCalledWith(100, 7, 'COMPLETED', 'exec-1');
+    // COMPLETED 不传原因（第 5 参为 undefined）；FAILED 时才带 resultText 供后台展示
+    expect(visibilityService.finishSubagent).toHaveBeenCalledWith(100, 7, 'COMPLETED', 'exec-1', undefined);
     expect(visibilityService.ensureSubscribed).toHaveBeenCalledWith(7, 100);
+  });
+
+  it('followupFailurePassesReasonToFinishSubagent', async () => {
+    sessionMapper.selectById.mockImplementation(async (id: number) =>
+      id === 1 ? parentSession(1) : childSession(100, 1, 'SUBAGENT', 'COMPLETED'));
+    subagentExecutionMapper.findByChildSessionId.mockResolvedValue({ agentType: 'reviewer' });
+    definitionRegistry.getDefinition.mockReturnValue({ name: 'reviewer', description: 'code review' });
+    sessionMapper.claimRunningIfIdle.mockResolvedValue(1);
+    sessionCompactionService.loadValidated.mockResolvedValue(null);
+    agentLoop.getCancelFlag.mockReturnValue(null);
+    agentLoop.registerCancelFlag.mockReturnValue(new AtomicBoolean(false));
+    const subCtx = new AgentExecutionContext();
+    subCtx.currentRound = 2;
+    delegateTool.buildSubContext.mockResolvedValue(subCtx);
+    const collector = new SubAgentResultCollector();
+    collector.onError(new Error('LLM 重试耗尽'));
+    visibilityService.executeVisible.mockResolvedValue({ collector, executionId: 'exec-2' });
+    subagentExecutionMapper.countByChildSessionId.mockResolvedValue(2);
+    subagentExecutionMapper.countCompletedByChildSessionId.mockResolvedValue(1);
+    sessionService.saveMessage.mockResolvedValue({ id: 9 });
+    sessionService.getMessagesAfterId.mockResolvedValue([]);
+    messageMapper.selectLast.mockResolvedValue(null);
+
+    const result = JSON.parse(await tool.execute(
+      '{"child_session_id":100,"task":"继续审查"}', 1, null,
+    ));
+    expect(result.success).toBe(false);
+    expect(visibilityService.finishSubagent).toHaveBeenCalledWith(
+      100, 7, 'FAILED', 'exec-2', '子代理执行失败: LLM 重试耗尽',
+    );
   });
 
   it('parentCancelledFollowupSkipsAndReleasesChildCancelFlag', async () => {

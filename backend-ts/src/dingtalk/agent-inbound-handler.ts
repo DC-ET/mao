@@ -82,7 +82,7 @@ export class AgentDingtalkInboundHandler implements DingtalkInboundHandler {
     settleCancel?: (sessionId: number) => Promise<void>;
     downloadMedia?: (context: DingtalkInboundContext, workspace: string | null) => Promise<DingtalkMediaDownload | null>;
     listenerFactory?: (sessionId: number, context: DingtalkInboundContext, executionId: string) => Promise<Parameters<DingtalkHarnessService['execute']>[2]>;
-    onExecutionFinished?: (sessionId: number, context: DingtalkInboundContext, executionId: string, phase: 'COMPLETED' | 'FAILED' | 'CANCELLED') => Promise<void>;
+    onExecutionFinished?: (sessionId: number, context: DingtalkInboundContext, executionId: string, phase: 'COMPLETED' | 'FAILED' | 'CANCELLED', failureReason?: string) => Promise<void>;
     /** 回复发出之后再清进度卡映射，便于发送失败时把原因写回卡片。 */
     afterDelivery?: (sessionId: number, phase: 'COMPLETED' | 'FAILED' | 'CANCELLED') => Promise<void>;
     /** 失败重试没有入站上下文，按进度卡映射还原发送目标。 */
@@ -309,7 +309,7 @@ export class AgentDingtalkInboundHandler implements DingtalkInboundHandler {
       await this.options.sessionService.cleanupIncompleteTail?.(sessionId);
       const failText = error instanceof Error ? error.message : 'Agent 执行异常';
       await cardListener?.fail(failText);
-      await this.options.onExecutionFinished?.(sessionId, context, executionId, 'FAILED');
+      await this.options.onExecutionFinished?.(sessionId, context, executionId, 'FAILED', failText);
       return { text: failText, phase: 'FAILED' };
     } finally {
       if (swap && savedId != null) {
@@ -352,7 +352,7 @@ export class AgentDingtalkInboundHandler implements DingtalkInboundHandler {
     } catch (error) {
       const failText = error instanceof Error ? error.message : 'Agent 执行异常';
       await cardListener?.fail(failText);
-      await this.options.onExecutionFinished?.(sessionId, stub, '', 'FAILED');
+      await this.options.onExecutionFinished?.(sessionId, stub, '', 'FAILED', failText);
       if (failText) await this.reply(await this.replyContext(sessionId, stub), failText, sessionId);
       await this.options.afterDelivery?.(sessionId, 'FAILED');
       return 'FAILED';

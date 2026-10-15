@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseContextManifest, toAdminSessionVO, toSessionVO } from './session-vo.js';
+import { parseContextManifest, parseFailureReason, toAdminSessionVO, toSessionVO } from './session-vo.js';
 
 describe('parseContextManifest', () => {
   it('parses a stored snapshot and drops broken json', () => {
@@ -53,5 +53,68 @@ describe('toAdminSessionVO', () => {
       new Map(),
     );
     expect(subagent.sessionType).toBe('SUBAGENT');
+  });
+
+  it('FAILED 会话透出失败原因，非失败态与坏快照均为 null', () => {
+    const failed = toAdminSessionVO(
+      {
+        userId: 1,
+        phase: 'FAILED',
+        runtimeStatusJson: JSON.stringify({ executionError: 'LLM 请求超时' }),
+      },
+      new Map(),
+      new Map(),
+      new Map(),
+    );
+    expect(failed.failureReason).toBe('LLM 请求超时');
+
+    // 非失败态：executionError 只应由 FAILED 终态写入，RUNNING/COMPLETED 一律不展示
+    const running = toAdminSessionVO(
+      {
+        userId: 1,
+        phase: 'RUNNING',
+        runtimeStatusJson: JSON.stringify({ executionError: '上一次失败的原因' }),
+      },
+      new Map(),
+      new Map(),
+      new Map(),
+    );
+    expect(running.failureReason).toBeNull();
+    expect(
+      toAdminSessionVO(
+        { userId: 1, phase: 'COMPLETED', runtimeStatusJson: JSON.stringify({ executionError: 'x' }) },
+        new Map(),
+        new Map(),
+        new Map(),
+      ).failureReason,
+    ).toBeNull();
+
+    // 缺字段 / 空串 / 坏 JSON 都不让整份 VO 失败
+    expect(
+      toAdminSessionVO({ userId: 1, phase: 'FAILED', runtimeStatusJson: '{"compacting":true}' }, new Map(), new Map(), new Map())
+        .failureReason,
+    ).toBeNull();
+    expect(
+      toAdminSessionVO({ userId: 1, phase: 'FAILED', runtimeStatusJson: '{"executionError":""}' }, new Map(), new Map(), new Map())
+        .failureReason,
+    ).toBeNull();
+    expect(
+      toAdminSessionVO({ userId: 1, phase: 'FAILED', runtimeStatusJson: 'not-json' }, new Map(), new Map(), new Map())
+        .failureReason,
+    ).toBeNull();
+    expect(
+      toAdminSessionVO({ userId: 1, phase: 'FAILED', runtimeStatusJson: null }, new Map(), new Map(), new Map())
+        .failureReason,
+    ).toBeNull();
+  });
+});
+
+describe('parseFailureReason', () => {
+  it('按相位取值：FAILED 才解析，RESUMING 归一到 RUNNING 后同样不解析', () => {
+    const raw = JSON.stringify({ executionError: 'boom' });
+    expect(parseFailureReason(raw, 'FAILED')).toBe('boom');
+    expect(parseFailureReason(raw, 'CANCELLED')).toBeNull();
+    expect(parseFailureReason(raw, 'RESUMING')).toBeNull();
+    expect(parseFailureReason(raw, null)).toBeNull();
   });
 });

@@ -157,7 +157,7 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     /** 图片/文件下载：返回 data URI 与落盘路径；返回 null 表示无媒体或未处理。 */
     downloadMedia?: (context: FeishuInboundContext, workspace: string | null) => Promise<FeishuMediaDownload | null>;
     listenerFactory?: (sessionId: number, context: FeishuInboundContext, executionId: string) => Parameters<FeishuHarnessService['execute']>[2] | Promise<Parameters<FeishuHarnessService['execute']>[2]>;
-    onExecutionFinished?: (sessionId: number, context: FeishuInboundContext, executionId: string, phase: 'COMPLETED' | 'FAILED' | 'CANCELLED') => Promise<void>;
+    onExecutionFinished?: (sessionId: number, context: FeishuInboundContext, executionId: string, phase: 'COMPLETED' | 'FAILED' | 'CANCELLED', failureReason?: string) => Promise<void>;
     createProgressCard?: (context: FeishuInboundContext, sessionId: number) => Promise<FeishuCardProgress | null>;
     // 队列支持
     queueService?: FeishuTaskQueuePort;
@@ -304,7 +304,7 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
       await this.options.sessionService.cleanupIncompleteTail?.(sessionId);
       const failText = feishuFailureText(error);
       const cardUpdated = await cardListener?.fail(failText);
-      await this.options.onExecutionFinished?.(sessionId, stubContext, executionId, 'FAILED');
+      await this.options.onExecutionFinished?.(sessionId, stubContext, executionId, 'FAILED', failText);
       if ((cardListener == null || cardUpdated === false) && failText !== '') {
         await this.reply(stubContext, failText, sessionId).catch(() => undefined);
       }
@@ -688,7 +688,7 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
       // 与客户端 ExecutionErrorBanner 一致：透传具体 error.message，便于在会话详情里定位根因。
       const failText = feishuFailureText(error);
       const cardUpdated = await cardListener?.fail(failText);
-      await this.options.onExecutionFinished?.(sessionId, context, executionId, 'FAILED');
+      await this.options.onExecutionFinished?.(sessionId, context, executionId, 'FAILED', failText);
       const replyText = cardListener == null || cardUpdated === false ? failText : null;
       return { text: replyText, phase: 'FAILED' };
     }
