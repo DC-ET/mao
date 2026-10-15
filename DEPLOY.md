@@ -19,7 +19,7 @@
 | 信号哨兵（定时探测外部接口，变化触发 Agent） | [skills/mao-cli/reference/signal-watcher.md](skills/mao-cli/reference/signal-watcher.md)；用户在桌面「设置 → 信号哨兵」自助管理，管理后台 `signal:read` 权限提供只读清单；哨兵请求头 / 请求体由 `APP_SIGNAL_SECRET` 加密（未配置时回退内置默认密钥，仍建议显式设置；轮换该密钥后已存哨兵需重新填写请求头与请求体）；V148 迁移随 TS 启动自动执行，无额外 Nginx 配置（探测由后端主动出站） |
 | 用户运行时容器隔离（docker 模式，默认关闭） | [部署说明](skills/mao-cli/reference/deploy.md#容器隔离运行时v0295)；`MAO_CLOUD_RUNTIME=docker` 启用每用户容器隔离，生产机需预装 Docker 并先运行 `bash scripts/build-runtime-image.sh` 构建 `mao-runtime` 镜像（含与镜像 Node ABI 匹配的 sharp / node-pty，宿主机 Node 升级后必须重建镜像）；`MAO_CONTAINER_IDLE_MINUTES`（默认 60）必须大于管理后台的 shell 会话空闲超时（默认 30）；灰度用管理后台「用户管理 → 运行时模式」按用户切换；V154 迁移（`user.runtime_mode`）随 TS 启动自动执行 |
 
-**维护者注意**：服务器上真实部署目录为 `/opt/mao`（与云端 Agent 会话工作区路径不同）。`git pull`、构建、`restart.sh` 应在 `/opt/mao` 执行。
+**维护者注意**：服务器上真实部署目录为 `/opt/mao`（与云端 Agent 会话工作区路径不同）。`git pull`、构建、`restart.sh` 应在 `/opt/mao` 执行。开机自启安装 `scripts/systemd/mao-backend.service`（见部署文档「开机自启」）。
 
 本地开发安装见 [skills/mao-cli/reference/install.md](skills/mao-cli/reference/install.md)。
 

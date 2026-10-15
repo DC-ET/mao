@@ -1,0 +1,19 @@
+[Unit]
+Description=Mao backend
+After=network-online.target mysql.service nginx.service
+Wants=network-online.target mysql.service nginx.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# 不把 node 交给 systemd 常驻：蓝绿会主动停旧实例，Restart=always 会把刚停掉的端口再拉起来。
+# 开机只跑一次冷启动；进程崩溃不自动拉起。日常发版仍用 backend-ts/restart.sh。
+Environment=MAO_RESTART_DETACHED=1
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+WorkingDirectory=/opt/mao/backend-ts
+ExecStart=/opt/mao/scripts/mao-backend-boot.sh
+ExecStop=/opt/mao/scripts/mao-backend-stop.sh
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

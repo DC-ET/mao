@@ -149,6 +149,19 @@ cat /opt/mao-data/runtime/active-backend-port
 tail -50 /opt/mao/backend-ts/logs/backend-ts-*.log
 ```
 
+### 5. 开机自启
+
+后端进程由 `restart.sh` 以 `nohup` 拉起，不随 systemd 常驻。安装下面的单元后，开机在 MySQL、Nginx 就绪后按 `active-backend-port` 冷启动；该端口已经健康则跳过，不会触发蓝绿切换。
+
+```bash
+chmod +x /opt/mao/scripts/mao-backend-boot.sh /opt/mao/scripts/mao-backend-stop.sh
+cp /opt/mao/scripts/systemd/mao-backend.service /etc/systemd/system/mao-backend.service
+systemctl daemon-reload
+systemctl enable --now mao-backend.service
+```
+
+`systemctl stop mao-backend` 会停掉 9080 和 9081。日常发版仍用 `restart.sh`（或 `scripts/restart-backend.sh`）做蓝绿，不要改成 `Restart=always`：蓝绿会主动停掉旧端口，systemd 再把它拉起来会和切流抢进程。进程自己崩溃不会被这个单元重新拉起。
+
 ## 三、Nginx
 
 upstream（`/etc/nginx/conf.d/mao-upstream.conf`），`restart.sh` 会自动改端口：
