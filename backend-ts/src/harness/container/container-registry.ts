@@ -467,13 +467,16 @@ export class ContainerRegistry {
   }
 
   /**
-   * 启动失败收尾（N-3 / F-1 / F-2）：摘除条目 + rm 半成品容器，让下次 ensureRunning
+   * 启动失败收尾（N-3 / F-1 / F-2 / G-1）：摘除条目 + rm 半成品容器，让下次 ensureRunning
    * 走完整重建，不把失败固化成"自称就绪"或"卡死 stopped"的条目。
    *
-   * 世代校验是承重的：recycle 原地更新条目后对象身份恒等，仅凭身份校验识别不了
-   * "失败等待期间条目已被重入 recycle 重建"（withUserLock 的 ALS 重入场景）——世代
-   * 变了说明在册的已是新容器，此时删条目、按容器名 rm -f 都会误伤新容器（N-4c 同类）。
-   * 新条目尚未登记时世代恒为进入失败路径时捕获的值，校验通过，照常清理半成品。
+   * 两道校验都是承重的：
+   * - 世代校验识别"同一条目对象被原地重建"（recycle 交错，F-1）：世代变了说明在册的
+   *   已是新容器，整个清理都必须跳过；
+   * - 摘条目后再按"在册条目是本人或无人"决定是否 rm（首建交错，G-1）：容器名按用户
+   *   固定，失败等待期间重入方可能另建并登记了新条目（外层条目尚未登记，世代没变），
+   *   此时在册容器是它的——rm -f 会摧毁健康容器、把在册条目毒化成"自称 running、
+   *   容器已不存在"。新条目首次创建的正常失败（无重入）在册无人，照常清理半成品。
    */
   private async cleanupFailedStart(
     userId: number,
@@ -486,6 +489,11 @@ export class ContainerRegistry {
       return;
     }
     this.dropFailedEntry(userId, entry);
+    const current = this.entries.get(userId);
+    if (current !== undefined && current !== entry) {
+      harnessLog('warn', `[container] skip rm of container ${name} for user=${userId} (a newer entry owns it now)`);
+      return;
+    }
     await this.cleanupHalfCreated(name);
   }
 

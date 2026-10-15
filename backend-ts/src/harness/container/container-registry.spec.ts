@@ -591,4 +591,42 @@ describe('container registry', () => {
     const lastRm = log.map((l) => l.startsWith('rm -f')).lastIndexOf(true);
     expect(lastRm).toBeLessThan(lastRun);
   });
+
+  it('keepsReentrantFirstCreateContainerWhenOuterFirstCreateTimesOut', async () => {
+    // G-1 回归：首建交错。外层首建等待 socket 期间，重入方（waitSocketReady 回调内再调
+    // ensureRunning，ALS 重入）另建并登记了新条目。外层条目从未登记、世代恒为捕获值，
+    // 世代校验放行；此时若只按容器名 rm -f，会把重入方刚建好的容器删掉，在册条目被毒化
+    // 成"自称 running、容器已不存在"（下次调用才经 markConnectionDead/挂载缺检自愈）
+    const base = useTmpDir('mao-registry-firstcreate-race-');
+    for (const d of ['workspace', 'users', 'runtime', 'userskills', 'skills', 'channels', 'dist', 'deps']) {
+      mkdirSync(join(base, d), { recursive: true });
+    }
+    const wsA = join(base, 'workspace', 'feishu-chat', 'bot-1', 'oc_chat_a');
+    const wsB = join(base, 'workspace', 'feishu-chat', 'bot-1', 'oc_chat_b');
+    mkdirSync(wsA, { recursive: true });
+    mkdirSync(wsB, { recursive: true });
+    const log: string[] = [];
+    let registry: ContainerRegistry | null = null;
+    let reentered = false;
+    const { registry: reg } = makeRegistry(base, log, {
+      sessionWorkspacesOf: async () => [],
+      waitSocketReady: async () => {
+        if (reentered) return;
+        reentered = true;
+        await registry!.ensureRunning(7, wsB); // 首建期间的重入方：另建新条目并登记
+        throw new Error('容器运行时通道连接超时: userId=7 (1000ms)');
+      },
+    });
+    registry = reg;
+
+    log.length = 0;
+    await expect(registry.ensureRunning(7, wsA)).rejects.toThrow(/连接超时/);
+    // 重入方建好的新容器与在册条目都存活，wsB 已挂载
+    expect(registry.getEntry(7)?.state).toBe('running');
+    expect(registry.getEntry(7)?.mountedPaths.has(wsB)).toBe(true);
+    // 最后一次 rm -f 不得落在最后一次 run -d 之后（旧行为 rm 掉重入方的新容器）
+    const lastRun = log.map((l) => l.startsWith('run -d')).lastIndexOf(true);
+    const lastRm = log.map((l) => l.startsWith('rm -f')).lastIndexOf(true);
+    expect(lastRm).toBeLessThan(lastRun);
+  });
 });
