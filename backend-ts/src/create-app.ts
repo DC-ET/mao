@@ -1362,7 +1362,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const usageService = new LlmUsageService(new LlmUsageRepository(db));
   // 经验起草（转经验向导）：与 git 提交信息同款非流式链路（按 apiProtocol 路由的客户端 + 模型解析 + 用量落库）
   const experienceDraft = new ExperienceDraftService(
-    routeChatClient as never,
+    llmAdapter,
     harness as never,
     usageService,
     { getValue: (key: string) => settingService.getValue(key) },

@@ -4,7 +4,7 @@ import type { ClientImpersonation } from '@mao/contracts';
 import { AtomicBoolean } from '../harness/atomic-boolean.js';
 import { hasText } from '../common/case.js';
 import type { LlmModelRef } from '../session/types.js';
-import type { ChatUsage } from '../file/git-commit-message.service.js';
+import type { ChatRequest, ChatResponse, LlmAdapter, LlmModelConfig } from '../harness/llm/chat-request.js';
 import { isSensitive } from '../file/git-write-operation.service.js';
 import { extractStoredText } from '../memory/memory-extraction.service.js';
 import { LlmUsageService } from '../usage/llm-usage.service.js';
@@ -58,38 +58,6 @@ export interface ExperienceDraftResult {
   experiences: ExperienceDraft[];
 }
 
-export interface ChatRequestLike {
-  messages: Array<{ role: string; content: string }>;
-  tools: unknown[];
-  stream: boolean;
-  temperature: number;
-  reasoning?: { effort: string };
-  thinking?: { type: string };
-  enableThinking?: boolean;
-}
-
-export interface ChatResponseLike {
-  usage?: ChatUsage | null;
-  choices?: Array<{ message?: { content?: unknown } }>;
-}
-
-export interface LlmAdapterLike {
-  chat(request: ChatRequestLike, config: LlmModelConfigLike, cancelFlag?: { get(): boolean } | null): Promise<ChatResponseLike>;
-}
-
-export interface LlmModelConfigLike {
-  id?: number;
-  name?: string | null;
-  provider?: string | null;
-  apiProtocol?: string | null;
-  baseUrl?: string | null;
-  apiKey?: string | null;
-  modelId?: string | null;
-  contextWindowTokens?: number | null;
-  supportsVision?: boolean;
-  clientImpersonation?: ClientImpersonation;
-}
-
 export interface DraftModelResolver {
   resolveModel(modelId: number | null | undefined): Promise<LlmModelRef | null> | LlmModelRef | null;
 }
@@ -105,7 +73,7 @@ export interface DraftExperienceCountLookup {
 
 export class ExperienceDraftService {
   constructor(
-    private readonly llmAdapter: LlmAdapterLike,
+    private readonly llmAdapter: Pick<LlmAdapter, 'chat'>,
     private readonly modelResolver: DraftModelResolver,
     private readonly usageService: Pick<LlmUsageService, 'record'>,
     private readonly settingLookup: DraftSettingLookup,
@@ -129,7 +97,7 @@ export class ExperienceDraftService {
 
     const existingCount = agentId == null ? 0 : await this.experienceCountLookup.countByAgentId(agentId);
     const userPrompt = buildUserPrompt(materials, agentId, existingCount);
-    const messages: ChatRequestLike['messages'] = [
+    const messages: ChatRequest['messages'] = [
       { role: 'system', content: SYSTEM_PROMPT },
       { role: 'user', content: userPrompt },
     ];
@@ -155,10 +123,10 @@ export class ExperienceDraftService {
     operatorId: number,
     agentId: number | null,
     model: LlmModelRef,
-    config: LlmModelConfigLike,
-    messages: ChatRequestLike['messages'],
+    config: LlmModelConfig,
+    messages: ChatRequest['messages'],
   ): Promise<string> {
-    const request: ChatRequestLike = {
+    const request: ChatRequest = {
       messages,
       tools: [],
       stream: false,
@@ -167,7 +135,7 @@ export class ExperienceDraftService {
       thinking: { type: 'disabled' },
       enableThinking: false,
     };
-    let response: ChatResponseLike | null = null;
+    let response: ChatResponse | null = null;
     let success = false;
     const cancelFlag = new AtomicBoolean(false);
     try {
@@ -287,7 +255,7 @@ export function parseExperiences(raw: string): ExperienceDraft[] {
   return parsed.experiences.slice(0, MAX_EXPERIENCES).map((item) => ({ content: item.content.trim() }));
 }
 
-function extractContent(response: ChatResponseLike | null): string {
+function extractContent(response: ChatResponse | null): string {
   const content = response?.choices?.[0]?.message?.content;
   if (typeof content !== 'string') {
     throw new BusinessException(ErrorCode.LLM_CALL_FAILED, '模型未返回经验草稿');
@@ -324,17 +292,17 @@ export const DRAFT_LIMITS = {
   MAX_CONTENT_LENGTH,
 };
 
-function toConfig(model: LlmModelRef): LlmModelConfigLike {
+function toConfig(model: LlmModelRef): LlmModelConfig {
   return {
     id: model.id,
-    name: model.name,
-    provider: model.provider,
-    apiProtocol: model.apiProtocol,
-    baseUrl: model.baseUrl,
-    apiKey: model.apiKey,
-    modelId: model.modelId,
-    contextWindowTokens: model.contextWindowTokens,
-    supportsVision: model.supportsVision != null && model.supportsVision === 1,
+    name: model.name ?? undefined,
+    provider: model.provider ?? undefined,
+    apiProtocol: model.apiProtocol ?? undefined,
+    baseUrl: model.baseUrl ?? undefined,
+    apiKey: model.apiKey ?? undefined,
+    modelId: model.modelId ?? undefined,
+    contextWindowTokens: model.contextWindowTokens ?? undefined,
+    supportsVision: model.supportsVision === 1,
     clientImpersonation: toClientImpersonation(model.clientImpersonation),
   };
 }
