@@ -306,4 +306,56 @@ describe('container registry', () => {
     await expect(registry.ensureRunning(7, bogus)).rejects.toThrow(/不在容器可挂载范围内/);
     expect(log.filter((line) => /^(run -d|rm -f|stop)/.test(line)).length).toBe(0);
   });
+
+  it('doesNotStopReplacementContainerWhenStaleEntryIsReaped', async () => {
+    // 竞态防护：idle 回收的 shutdown 通知期间条目被 recycle 替换成新容器时，
+    // 旧条目随后的 docker stop 不得按同容器名误伤新容器
+    const base = useTmpDir('mao-registry-stale-');
+    for (const d of ['workspace', 'users', 'runtime', 'userskills', 'skills', 'channels', 'dist', 'deps']) {
+      mkdirSync(join(base, d), { recursive: true });
+    }
+    const feishuWs = join(base, 'workspace', 'feishu-chat', 'bot-1', 'oc_chat');
+    mkdirSync(feishuWs, { recursive: true });
+    const log: string[] = [];
+    let registry: ContainerRegistry | null = null;
+    let noticed = false;
+    registry = new ContainerRegistry({
+      config: {
+        mode: 'docker',
+        container: {
+          idleMinutes: 60, maxLifetimeHours: 72, memoryMb: 512, cpus: 1, pidsLimit: 100,
+          image: 'mao-runtime:latest', network: 'bridge',
+          channelDir: join(base, 'channels'), distDir: join(base, 'dist'),
+          depsDir: join(base, 'deps'), tmpfsSizeMb: 64, startTimeoutMs: 1000,
+        },
+      },
+      workspaceRoot: join(base, 'workspace'),
+      userHomeDir: join(base, 'users'),
+      runtimeDir: join(base, 'runtime'),
+      userSkillsDir: join(base, 'userskills'),
+      skillsDir: join(base, 'skills'),
+      ensureChannelListening: async () => join(base, 'channels', '7', 'runtime.sock'),
+      issueChannelToken: () => 'tok-7',
+      waitSocketReady: async () => undefined,
+      // 回收通知执行期间，并发发生 recycle（用户新建了飞书群会话）
+      requestShutdown: async () => {
+        if (!noticed) {
+          noticed = true;
+          await registry!.ensureRunning(7, feishuWs);
+        }
+        return true;
+      },
+    }, fakeDocker(log));
+
+    await registry.ensureRunning(7);
+    registry.getEntry(7)!.lastUsedAtMs = Date.now() - 100 * 60_000; // 远超 idle
+    await registry.reapExpired();
+    // 新容器就绪且未被误伤：最后一次 run -d（重建）之后不得再出现 stop
+    const lastRun = log.map((l) => l.startsWith('run -d')).lastIndexOf(true);
+    const lastStop = log.map((l) => l.startsWith('stop -t 10')).lastIndexOf(true);
+    expect(lastRun).toBeGreaterThanOrEqual(0);
+    expect(lastStop).toBeLessThan(lastRun);
+    expect(registry.getEntry(7)?.state).toBe('running');
+    expect(registry.getEntry(7)?.mountedPaths.has(feishuWs)).toBe(true);
+  });
 });

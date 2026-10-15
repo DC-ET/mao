@@ -392,15 +392,27 @@ export class ContainerRegistry {
 
   /** idle 回收只 stop 不 rm：挂载数据保留（§5.2）。 */
   private async stopContainer(entry: ContainerEntry, opts: { force: boolean }): Promise<void> {
+    // 陈旧条目防护：条目已被 recycle/重建替换（同容器名 mao-user-{userId} 下已是
+    // 新容器）时，旧条目的 stop 会误伤新容器（requestShutdown 走当前连接、docker
+    // stop 按容器名），必须直接跳过。requestShutdown 是异步通知，期间同样可能发生
+    // 替换，因此通知前后各校验一次
+    if (this.isStaleEntry(entry)) return;
     entry.state = 'stopped';
     if (!opts.force) {
       // 回收前通知：容器内有机会拒绝/收尾（§5.3.1 对策 3）。无响应时按 idle 判定结果照常停。
       await this.opts.requestShutdown(entry.userId);
+      if (this.isStaleEntry(entry)) return;
     }
     await this.docker.run(['stop', '-t', '10', entry.containerName], 30_000).catch((e) => {
       harnessLog('warn', `[container] docker stop failed for user=${entry.userId}: ${(e as Error).message}`);
     });
     harnessLog('info', `[container] container stopped: user=${entry.userId}`);
+  }
+
+  private isStaleEntry(entry: ContainerEntry): boolean {
+    if (this.entries.get(entry.userId) === entry) return false;
+    harnessLog('warn', `[container] skip stopping stale entry for user=${entry.userId} (replaced by a newer container)`);
+    return true;
   }
 
   private async cleanupHalfCreated(name: string): Promise<void> {
