@@ -508,4 +508,87 @@ describe('container registry', () => {
     // stop → rm -f → run -d（撞同名残留，未落日志）→ rm -f → run -d（重试成功）
     expect(dockerOps(log)).toEqual(['stop -t', 'rm -f', 'rm -f', 'run -d']);
   });
+
+  it('dropsEntryWhenDockerStartFailsSoNextCallRebuilds', async () => {
+    // F-2 回归：idle 回收产生的 exited 容器会被 scripts/container-gc.sh（status=exited）
+    // 或 docker container prune 清掉，此后 docker start 报 No such container。条目必须
+    // 摘除（与 createAndStart 失败同口径），否则卡在 stopped：该用户每次工具调用都同样
+    // 失败、永不重建，只有重启后端才恢复
+    const base = useTmpDir('mao-registry-dstart-missing-');
+    for (const d of ['workspace', 'users', 'runtime', 'userskills', 'skills', 'channels', 'dist', 'deps']) {
+      mkdirSync(join(base, d), { recursive: true });
+    }
+    const log: string[] = [];
+    const inner = fakeDocker(log);
+    let startFails = false;
+    const { registry } = makeRegistry(base, log, {}, {
+      async run(args) {
+        if (args[0] === 'start' && startFails) {
+          throw new Error('docker start failed: Error response from daemon: No such container: mao-user-7');
+        }
+        return inner.run(args);
+      },
+    });
+
+    await registry.ensureRunning(7);
+    registry.getEntry(7)!.lastUsedAtMs = Date.now() - 100 * 60_000;
+    await registry.reapExpired(); // → stopped（容器 exited，仍被注册表跟踪）
+    expect(registry.getEntry(7)?.state).toBe('stopped');
+
+    startFails = true; // 容器已被 GC 清掉
+    log.length = 0;
+    await expect(registry.ensureRunning(7)).rejects.toThrow(/No such container/);
+    expect(registry.getEntry(7)).toBeUndefined();
+    // 自愈：下次 ensureRunning 走完整 docker run 重建（新容器带新 agent）
+    startFails = false;
+    log.length = 0;
+    const entry = await registry.ensureRunning(7);
+    expect(entry.state).toBe('running');
+    expect(log.filter((l) => l.startsWith('run -d')).length).toBe(1);
+  });
+
+  it('keepsRecycledContainerWhenOuterCreateFailsAfterReentrantRebuild', async () => {
+    // F-1 回归：createAndStart 的失败清理也必须按世代校验。原地更新条目后对象身份恒等，
+    // 重入 recycle（withUserLock 的 ALS 重入）建成新容器后，外层失败不能删掉在册新条目、
+    // 更不能按容器名 rm -f 把新容器删掉
+    const base = useTmpDir('mao-registry-recycle-fail-');
+    for (const d of ['workspace', 'users', 'runtime', 'userskills', 'skills', 'channels', 'dist', 'deps']) {
+      mkdirSync(join(base, d), { recursive: true });
+    }
+    const wsA = join(base, 'workspace', 'feishu-chat', 'bot-1', 'oc_chat_a');
+    const wsB = join(base, 'workspace', 'feishu-chat', 'bot-1', 'oc_chat_b');
+    mkdirSync(wsA, { recursive: true });
+    mkdirSync(wsB, { recursive: true });
+    const log: string[] = [];
+    let registry: ContainerRegistry | null = null;
+    // 0=初始创建放行；1=recycle 的 createAndStart 等待（期间重入 recycle，随后超时）；2=重入新建放行
+    let phase = 0;
+    const { registry: reg } = makeRegistry(base, log, {
+      sessionWorkspacesOf: async () => [],
+      waitSocketReady: async () => {
+        if (phase === 0) return;
+        if (phase === 1) {
+          phase = 2;
+          await registry!.ensureRunning(7, wsB);
+          throw new Error('容器运行时通道连接超时: userId=7 (1000ms)');
+        }
+      },
+    });
+    registry = reg;
+
+    await registry.ensureRunning(7);
+    registry.getEntry(7)!.lastUsedAtMs = Date.now() - 100 * 60_000;
+    await registry.reapExpired(); // → stopped
+    phase = 1;
+
+    log.length = 0;
+    await expect(registry.ensureRunning(7, wsA)).rejects.toThrow(/连接超时/);
+    // 重入 recycle 建好的新容器与在册条目都存活，wsB 已挂载
+    expect(registry.getEntry(7)?.state).toBe('running');
+    expect(registry.getEntry(7)?.mountedPaths.has(wsB)).toBe(true);
+    // 最后一次 rm -f 不得落在最后一次 run -d 之后
+    const lastRun = log.map((l) => l.startsWith('run -d')).lastIndexOf(true);
+    const lastRm = log.map((l) => l.startsWith('rm -f')).lastIndexOf(true);
+    expect(lastRm).toBeLessThan(lastRun);
+  });
 });

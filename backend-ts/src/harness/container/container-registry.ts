@@ -419,6 +419,9 @@ export class ContainerRegistry {
       generation: 0,
     };
     entry.state = 'creating';
+    // 进入失败路径时的世代：recycle 原地更新条目后对象身份恒等，识别"失败等待期间
+    // 条目已被重入 recycle 重建"只能靠世代（见 cleanupFailedStart）
+    const generation = entry.generation;
     try {
       await this.docker.run(args, c.startTimeoutMs + 30_000);
     } catch (e) {
@@ -432,12 +435,11 @@ export class ContainerRegistry {
         try {
           await this.docker.run(args, c.startTimeoutMs + 30_000);
         } catch (retryError) {
-          this.dropFailedEntry(userId, entry);
+          await this.cleanupFailedStart(userId, entry, generation, name);
           throw new ContainerStartError(`容器创建失败（清理同名容器后重试仍失败）: ${(retryError as Error).message}`);
         }
       } else {
-        this.dropFailedEntry(userId, entry);
-        await this.cleanupHalfCreated(name);
+        await this.cleanupFailedStart(userId, entry, generation, name);
         throw new ContainerStartError(`容器创建失败: ${message}`);
       }
     }
@@ -446,8 +448,7 @@ export class ContainerRegistry {
     } catch (e) {
       // 条目必须等 socket 就绪后才登记/固化为 running：先登记会把超时失败固化成
       // "容器就绪"的毒化状态，后续 ensureRunning 直接复用、永不重试（N-3）
-      this.dropFailedEntry(userId, entry);
-      await this.cleanupHalfCreated(name);
+      await this.cleanupFailedStart(userId, entry, generation, name);
       throw e;
     }
     entry.state = 'running';
@@ -456,6 +457,9 @@ export class ContainerRegistry {
     entry.lastUsedAtMs = Date.now();
     entry.mountedPaths = new Set(mounts.map((m) => m.hostPath));
     entry.sessionWorkspaces = sessionWorkspaces;
+    // 新容器（含原地重建）内没有任何 shell/pty/在途任务：忙计数清零，避免旧容器的
+    // 陈旧 runtime_status 把 idle 回收挡在门外（新 agent 握手后会补报真实状态）
+    entry.inContainer = { shellSessions: 0, pendingTasks: 0, attachedTerminals: 0 };
     entry.generation += 1;
     this.entries.set(userId, entry);
     harnessLog('info', `[container] container ready: user=${userId}, name=${name}`);
@@ -463,9 +467,31 @@ export class ContainerRegistry {
   }
 
   /**
-   * 启动失败后摘除条目（N-3）：只摘自己那一条。身份校验是纵深防御——串行锁保证失败
-   * 等待期间不会有并发重建；万一将来出现未持锁的调用方，至少不会把别人刚登记的新
-   * 条目删掉、再按同容器名 rm -f 把新容器删掉（N-4c 同类误伤）。
+   * 启动失败收尾（N-3 / F-1 / F-2）：摘除条目 + rm 半成品容器，让下次 ensureRunning
+   * 走完整重建，不把失败固化成"自称就绪"或"卡死 stopped"的条目。
+   *
+   * 世代校验是承重的：recycle 原地更新条目后对象身份恒等，仅凭身份校验识别不了
+   * "失败等待期间条目已被重入 recycle 重建"（withUserLock 的 ALS 重入场景）——世代
+   * 变了说明在册的已是新容器，此时删条目、按容器名 rm -f 都会误伤新容器（N-4c 同类）。
+   * 新条目尚未登记时世代恒为进入失败路径时捕获的值，校验通过，照常清理半成品。
+   */
+  private async cleanupFailedStart(
+    userId: number,
+    entry: ContainerEntry,
+    generation: number,
+    name: string,
+  ): Promise<void> {
+    if (entry.generation !== generation) {
+      harnessLog('warn', `[container] skip cleanup of failed start for user=${userId} (entry rebuilt concurrently)`);
+      return;
+    }
+    this.dropFailedEntry(userId, entry);
+    await this.cleanupHalfCreated(name);
+  }
+
+  /**
+   * 启动失败后摘除条目（N-3）：只摘自己那一条。身份校验是纵深防御——串行锁 + 世代校验
+   * （cleanupFailedStart）已保证不会误删在册新条目，这里再兜一层。
    */
   private dropFailedEntry(userId: number, entry: ContainerEntry): void {
     const current = this.entries.get(userId);
@@ -476,11 +502,23 @@ export class ContainerRegistry {
   private async dockerStart(entry: ContainerEntry): Promise<void> {
     const c = this.opts.config.container;
     const generation = entry.generation;
-    await this.docker.run(['start', entry.containerName], 30_000);
+    try {
+      await this.docker.run(['start', entry.containerName], 30_000);
+    } catch (e) {
+      // docker start 失败（典型：idle 回收产生的 exited 容器已被 scripts/container-gc.sh
+      // 或 docker container prune 清掉，报 No such container）：条目必须摘除，否则卡在
+      // stopped——该用户此后每次工具调用都同样失败、永不重建，只有重启后端才恢复（F-2）。
+      // 与 createAndStart 失败路径同口径：下次 ensureRunning 走完整 docker run 重建
+      await this.cleanupFailedStart(entry.userId, entry, generation, entry.containerName);
+      throw new ContainerStartError(`容器启动失败: ${(e as Error).message}`);
+    }
     entry.state = 'running';
     entry.connectionDead = false;
     entry.startedAtMs = Date.now();
     entry.lastUsedAtMs = Date.now();
+    // 停止期间容器内的 shell/pty/任务已全部消亡：忙计数清零，避免陈旧 runtime_status
+    // 把 idle 回收永久挡在门外（新 agent 握手后会补报真实状态）
+    entry.inContainer = { shellSessions: 0, pendingTasks: 0, attachedTerminals: 0 };
     try {
       await this.opts.waitSocketReady(entry.userId, c.startTimeoutMs);
     } catch (e) {
@@ -488,11 +526,8 @@ export class ContainerRegistry {
       // 毒化条目（后续 ensureRunning 直接复用、工具调用固定报"未就绪"且要等 idle
       // 回收才可能恢复）。删条目 + rm 容器，下次 ensureRunning 走完整 docker run
       // 重建（新容器带新 agent），根因未除时也每次都有一次自愈机会。
-      // 身份校验：条目在失败等待期间已被重建/摘除时，不得删在册新条目、rm 新容器
-      if (this.isLive(entry, generation)) {
-        this.entries.delete(entry.userId);
-        await this.cleanupHalfCreated(entry.containerName);
-      }
+      // 身份/世代校验：条目在失败等待期间已被重建/摘除时，不得删在册新条目、rm 新容器
+      await this.cleanupFailedStart(entry.userId, entry, generation, entry.containerName);
       throw e;
     }
     entry.generation += 1;
