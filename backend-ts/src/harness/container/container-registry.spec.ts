@@ -179,4 +179,131 @@ describe('container registry', () => {
     expect(log.some((line) => line.startsWith('start mao-user-7'))).toBe(true);
     expect(log.filter((line) => line.startsWith('run -d')).length).toBe(0);
   });
+
+  it('doesNotPoisonEntryWhenRestartSocketNeverReady', async () => {
+    // N-3 回归：dockerStart（重启路径）等待 socket 超时后同样不得残留毒化 running 条目
+    const base = useTmpDir('mao-registry-restart-timeout-');
+    for (const d of ['workspace', 'users', 'runtime', 'userskills', 'skills', 'channels', 'dist', 'deps']) {
+      mkdirSync(join(base, d), { recursive: true });
+    }
+    const log: string[] = [];
+    let ready = true;
+    const { registry, waits } = makeRegistry(base, log, {
+      waitSocketReady: async (userId) => {
+        waits.push(userId);
+        if (!ready) throw new Error('容器运行时通道连接超时: userId=7 (1000ms)');
+      },
+    });
+    await registry.ensureRunning(7);
+    // idle 回收 → stopped，下次 ensureRunning 走 dockerStart 重启路径
+    registry.getEntry(7)!.lastUsedAtMs = Date.now() - 100 * 60_000;
+    await registry.reapExpired();
+    expect(registry.getEntry(7)?.state).toBe('stopped');
+
+    ready = false; // 重启：start 成功但容器内 agent 永不连接
+    log.length = 0;
+    await expect(registry.ensureRunning(7)).rejects.toThrow(/容器运行时通道连接超时/);
+    // 毒化条目被清理（旧行为：残留 state=running，后续 ensureRunning 直接复用、永不重试）
+    expect(registry.getEntry(7)).toBeUndefined();
+    expect(log.some((line) => line.startsWith('rm -f mao-user-7'))).toBe(true);
+    // 根因恢复后：完整 docker run 重建（自愈），不再无限复用死条目
+    ready = true;
+    log.length = 0;
+    const entry = await registry.ensureRunning(7);
+    expect(entry.state).toBe('running');
+    expect(log.filter((line) => line.startsWith('run -d')).length).toBe(1);
+    expect(waits).toEqual([7, 7, 7]);
+  });
+
+  it('mountsChannelSessionWorkspacesReturnedBySessionLookup', async () => {
+    // N-2 回归：飞书/钉钉通道会话工作区越出每用户根，创建时随挂载清单进入容器
+    const base = useTmpDir('mao-registry-channel-mount-');
+    for (const d of ['workspace', 'users', 'runtime', 'userskills', 'skills', 'channels', 'dist', 'deps']) {
+      mkdirSync(join(base, d), { recursive: true });
+    }
+    const feishuWs = join(base, 'workspace', 'feishu-chat', 'bot-1', 'oc_chat');
+    const dingtalkWs = join(base, 'workspace', 'dingtalk-chat', 'bot-1', 'p2p-7');
+    mkdirSync(feishuWs, { recursive: true });
+    mkdirSync(dingtalkWs, { recursive: true });
+    const log: string[] = [];
+    const seenByLookup: number[] = [];
+    const { registry } = makeRegistry(base, log, {
+      sessionWorkspacesOf: async (userId) => {
+        seenByLookup.push(userId);
+        return [feishuWs, dingtalkWs, join(base, 'workspace', '7', 'web-session')];
+      },
+    });
+    await registry.ensureRunning(7);
+    const runArgs = log.find((line) => line.startsWith('run -d'))!;
+    expect(runArgs).toContain(`${feishuWs}:${feishuWs}:rw`);
+    expect(runArgs).toContain(`${dingtalkWs}:${dingtalkWs}:rw`);
+    // web 会话工作区在每用户根内，不重复附加挂载
+    expect(runArgs).not.toContain(`${join(base, 'workspace', '7', 'web-session')}:`);
+    expect(seenByLookup).toEqual([7]);
+    // 条目记录挂载集合，供后续 isMounted 判定
+    const entry = registry.getEntry(7)!;
+    expect([...entry.mountedPaths]).toContain(feishuWs);
+    expect([...entry.sessionWorkspaces]).toEqual([feishuWs, dingtalkWs]);
+  });
+
+  it('recyclesRunningContainerToMountNewChannelWorkspace', async () => {
+    // N-2 回归：运行中容器的挂载清单已定型，新通道会话工作区只能重建容器后可见
+    const base = useTmpDir('mao-registry-recycle-');
+    for (const d of ['workspace', 'users', 'runtime', 'userskills', 'skills', 'channels', 'dist', 'deps']) {
+      mkdirSync(join(base, d), { recursive: true });
+    }
+    const groupWs = join(base, 'workspace', 'feishu-chat', 'bot-1', 'oc_chat');
+    mkdirSync(groupWs, { recursive: true });
+    const log: string[] = [];
+    const { registry } = makeRegistry(base, log);
+    // 首个会话（web，每用户根内）建容器：不带通道工作区
+    await registry.ensureRunning(7, join(base, 'workspace', '7', 'web-session'));
+    expect(log.filter((line) => line.startsWith('run -d')).length).toBe(1);
+    expect(registry.getEntry(7)!.mountedPaths.has(groupWs)).toBe(false);
+
+    // 新通道会话的首个工具调用：工作区未挂载 → 重建（rm + run），新容器带该挂载
+    const entry = await registry.ensureRunning(7, groupWs);
+    expect(entry.state).toBe('running');
+    expect(entry.mountedPaths.has(groupWs)).toBe(true);
+    const runs = log.filter((line) => line.startsWith('run -d'));
+    expect(runs.length).toBe(2);
+    expect(runs[1]).toContain(`${groupWs}:${groupWs}:rw`);
+    // 重建后同工作区复用，不再反复重建
+    log.length = 0;
+    await registry.ensureRunning(7, groupWs);
+    expect(log.filter((line) => line.startsWith('run -d')).length).toBe(0);
+  });
+
+  it('doesNotRecycleForWorkspaceUnderUserRoot', async () => {
+    // N-2 对照：每用户根之下的会话工作区（web）命中已挂载集合，不触发重建
+    const base = useTmpDir('mao-registry-no-recycle-');
+    for (const d of ['workspace', 'users', 'runtime', 'userskills', 'skills', 'channels', 'dist', 'deps']) {
+      mkdirSync(join(base, d), { recursive: true });
+    }
+    const log: string[] = [];
+    const { registry } = makeRegistry(base, log);
+    await registry.ensureRunning(7, join(base, 'workspace', '7', 'projects', 'demo'));
+    log.length = 0;
+    await registry.ensureRunning(7, join(base, 'workspace', '7', 'other-session'));
+    expect(log.filter((line) => line.startsWith('run -d')).length).toBe(0);
+  });
+
+  it('failsClearlyWhenSessionWorkspaceNotMountable', async () => {
+    // N-2 兜底：既非每用户根也非通道工作区的会话工作区，明确报错（绝不让"容器内
+    // 目录不存在"退化成空输出/会话秒退的静默失败），且不反复重建容器
+    const base = useTmpDir('mao-registry-unmountable-');
+    for (const d of ['workspace', 'users', 'runtime', 'userskills', 'skills', 'channels', 'dist', 'deps']) {
+      mkdirSync(join(base, d), { recursive: true });
+    }
+    const log: string[] = [];
+    const { registry } = makeRegistry(base, log);
+    const bogus = join(base, 'elsewhere', 'x');
+    await expect(registry.ensureRunning(7, bogus)).rejects.toThrow(/不在容器可挂载范围内/);
+    // 容器本体健康（该用户其他会话可用），但该会话工作区永远不可见
+    expect(registry.getEntry(7)?.state).toBe('running');
+    // 再次调用同样明确失败，不产生额外 docker 动作
+    log.length = 0;
+    await expect(registry.ensureRunning(7, bogus)).rejects.toThrow(/不在容器可挂载范围内/);
+    expect(log.filter((line) => /^(run -d|rm -f|stop)/.test(line)).length).toBe(0);
+  });
 });

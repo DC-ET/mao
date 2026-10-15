@@ -349,6 +349,7 @@ import { SessionEnvelopeBuilder, buildDepsEnv } from './harness/container/sessio
 import { DockerSendBytesBridge } from './harness/container/read-bytes-bridge.js';
 import { RoutingMcpClientManager } from './harness/container/routing-mcp-client-manager.js';
 import { PtyChannelHub } from './harness/container/pty-bridge.js';
+import { FEISHU_CHAT_DIR, isChannelWorkspace } from './harness/container/channel-workspace.js';
 import { nodePtyFactory, type PtyLike, type SpawnPtyOptions } from './harness/terminal/remote-terminal.js';
 
 export interface MaoApp {
@@ -360,8 +361,9 @@ function resolveFeishuChatWorkspace(root: string, accountId: string, leaf: strin
   const safeAccountId = encodeURIComponent(accountId);
   const safeLeaf = encodeURIComponent(leaf);
   const workspaceRoot = resolve(root);
-  const workspace = resolve(workspaceRoot, 'feishu-chat', safeAccountId, safeLeaf);
-  for (const candidate of [workspaceRoot, resolve(workspaceRoot, 'feishu-chat'), resolve(workspaceRoot, 'feishu-chat', safeAccountId)]) {
+  // 目录名与容器挂载清单（channel-workspace.ts）共用，防两侧漂移导致 docker 模式失效
+  const workspace = resolve(workspaceRoot, FEISHU_CHAT_DIR, safeAccountId, safeLeaf);
+  for (const candidate of [workspaceRoot, resolve(workspaceRoot, FEISHU_CHAT_DIR), resolve(workspaceRoot, FEISHU_CHAT_DIR, safeAccountId)]) {
     try {
       if (lstatSync(candidate).isSymbolicLink()) throw new Error('飞书会话工作区路径不允许符号链接');
     } catch (error) {
@@ -1020,6 +1022,17 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       const conn = channelServer.getConnection(userId);
       return conn ? conn.requestShutdown(5000) : false;
     },
+    // 通道会话（飞书/钉钉）工作区越出每用户根，需按用户会话并入挂载清单（N-2）。
+    // 归属校验即 SQL 的 user_id 过滤：只可能拿到该用户自己的会话工作区
+    sessionWorkspacesOf: async (userId) => {
+      const all = await sessionRepo.listWorkspacesByUser(userId).catch((e) => {
+        console.debug(`Session workspace lookup skipped for user ${userId}: ${(e as Error).message}`);
+        return [] as string[];
+      });
+      // 只挂通道工作区：web 会话在 {workspaceRoot}/{userId} 之内已被标准清单覆盖，
+      // 其余形态（null/异常路径）一律不挂，交由 ensureRunning 的明确报错兜底
+      return all.filter((w) => isChannelWorkspace(w, cfg.app.harness.workspaceRoot));
+    },
   });
   containerChannelHolder.registry = containerRegistry;
   const envelopeBuilder = new SessionEnvelopeBuilder({
@@ -1073,7 +1086,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const containerPtyFactory = async (options: SpawnPtyOptions): Promise<PtyLike> => {
     const userId = options.userId;
     if (userId != null && await dockerRouter.enabledFor(userId)) {
-      const entry = await containerRegistry.ensureRunning(userId);
+      // cwd 即会话工作区：通道会话（飞书/钉钉）越出每用户根，未挂载时先重建容器
+      const entry = await containerRegistry.ensureRunning(userId, options.cwd);
       const connection = channelServer.getConnection(userId);
       if (!connection) throw new Error(`容器终端通道未就绪: userId=${userId}`);
       let hub = ptyChannelHubs.get(userId);
@@ -1097,7 +1111,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       const session = await sessionRepo.findById(sessionId).catch(() => null);
       if (session?.userId == null) return;
       if (!(await dockerRouter.enabledFor(session.userId))) return;
-      await containerRegistry.ensureRunning(session.userId);
+      // 带上会话工作区：通道会话工作区未挂载时预热阶段就重建，避免首个工具调用才触发
+      await containerRegistry.ensureRunning(session.userId, session.workspace ?? null);
     })().catch((e) => {
       console.debug(`Container prewarm skipped for session ${sessionId}: ${(e as Error).message}`);
     });

@@ -749,9 +749,15 @@ export class ShellSessionManager {
     const depsBin = deps.MAO_DEPS_BIN;
     if (!depsBin) return;
     const base = basePath ?? env.PATH;
+    // 幂等：base 里可能已含上次注入的 deps bin（持久会话每条 exec 前都会 refresh，
+    // 以 session.currentPath 为 base 再前置一份），先剥掉历史残留再前置唯一一份，
+    // 否则 PATH 随 exec 次数无界增长
+    const kept = base
+      ? base.split(path.delimiter).filter((seg) => seg !== '' && seg !== depsBin)
+      : [];
     // PATH 缺失（sanitize 后为空 / refresh map 不带 PATH）时退回系统默认 PATH：
     // 只留 deps bin 会让 bash 里所有命令都找不到二进制
-    env.PATH = base ? `${depsBin}:${base}` : `${depsBin}:${DEFAULT_CHILD_PATH}`;
+    env.PATH = kept.length > 0 ? `${depsBin}${path.delimiter}${kept.join(path.delimiter)}` : `${depsBin}${path.delimiter}${DEFAULT_CHILD_PATH}`;
   }
 
   private removeSession(sessionId: string): void {

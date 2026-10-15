@@ -72,13 +72,14 @@ export class DockerToolRouter {
   }
 
   /** ensureRunning + 通道就绪（终端 pty / read_bytes / MCP 等非工具链路复用）。 */
-  async ensureReady(userId: number): Promise<void> {
-    await this.deps.containerRegistry.ensureRunning(userId);
+  async ensureReady(userId: number, workspace?: string | null): Promise<void> {
+    await this.deps.containerRegistry.ensureRunning(userId, workspace);
   }
 
   async dispatch(toolName: string, argumentsJson: string, ctx: DockerDispatchContext): Promise<string> {
     const started = Date.now();
-    const entry = await this.deps.containerRegistry.ensureRunning(ctx.userId);
+    // requiredWorkspace：通道会话工作区越出每用户根，未挂载时容器需重建后才能真正执行
+    const entry = await this.deps.containerRegistry.ensureRunning(ctx.userId, ctx.workspace);
     entry.lastUsedAtMs = Date.now();
     const envelope = await this.deps.envelopeBuilder.build({
       userId: ctx.userId, sessionId: ctx.sessionId, workspace: ctx.workspace,
@@ -106,7 +107,7 @@ export class DockerToolRouter {
   /** 外部发送工具的容器读字节链路（§5.8）。用户不走容器时返回 null。 */
   async readBytes(input: { userId: number; sessionId: number | null; workspace: string | null; path: string; maxBytes: number }): Promise<Buffer | null> {
     if (!(await this.enabledFor(input.userId))) return null;
-    const entry = await this.deps.containerRegistry.ensureRunning(input.userId);
+    const entry = await this.deps.containerRegistry.ensureRunning(input.userId, input.workspace);
     entry.lastUsedAtMs = Date.now();
     const envelope = await this.deps.envelopeBuilder.build({
       userId: input.userId, sessionId: input.sessionId, workspace: input.workspace,

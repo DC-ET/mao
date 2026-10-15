@@ -202,6 +202,44 @@ describe('container tool executor', () => {
     expect(parsed.output).toContain(`BIN=[${depsEnv.MAO_DEPS_BIN}]`);
     expect(parsed.output).toContain(`PATH=[${depsEnv.MAO_DEPS_BIN}:`);
   });
+
+  it('keepsDepsBinIdempotentAcrossExecsInPersistentSession', async () => {
+    // N-1 回归：持久 shell 会话每条 exec 前都会 refresh env，deps bin 只能前置一份，
+    // 否则 PATH 随命令条数无界增长（旧实现 6 条命令后含 7 份 deps bin）
+    const base = useTmpDir('mao-exec-deps-idem-');
+    const workspaceRoot = join(base, 'workspace');
+    const userWorkspace = join(workspaceRoot, '7');
+    const depsUserDir = join(base, 'deps', '7');
+    mkdirSync(userWorkspace, { recursive: true });
+    mkdirSync(join(depsUserDir, 'npm', 'bin'), { recursive: true });
+    const executor = new ContainerToolExecutor({
+      workspaceRoot,
+      runtimeDir: join(base, 'runtime'),
+      userHomeDir: join(base, 'users'),
+      userSkillsDir: join(base, 'userskills'),
+    }, USER_ID);
+    const depsBin = join(depsUserDir, 'npm', 'bin');
+    const depsEnv = {
+      NPM_CONFIG_PREFIX: join(depsUserDir, 'npm'),
+      PIP_TARGET: join(depsUserDir, 'py'),
+      PIP_BREAK_SYSTEM_PACKAGES: '1',
+      MAO_DEPS_BIN: depsBin,
+    };
+    const counts: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      const result = await executor.handleToolCall('shell', JSON.stringify({
+        action: 'exec',
+        command: 'echo $PATH',
+        session_id: 'sh-deps-idem',
+        keep_session: true,
+        yield_time_ms: 8000,
+      }), envelopeOf(userWorkspace, 11, depsEnv));
+      const parsed = JSON.parse(result);
+      expect(parsed.error).toBeUndefined();
+      counts.push(parsed.output.split(depsBin).length - 1);
+    }
+    expect(counts).toEqual([1, 1, 1, 1, 1, 1]);
+  });
 });
 
 function otherHome(userHomeDir: string): string {

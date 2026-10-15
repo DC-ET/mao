@@ -4,6 +4,7 @@ import path from 'node:path';
 import { harnessLog } from '../log.js';
 import type { CloudRuntimeConfig } from '../../config/app-config.js';
 import { ContainerMountPlanner, type ContainerMount } from './container-mount-planner.js';
+import { isChannelWorkspace } from './channel-workspace.js';
 import type { RuntimeStatus } from './runtime-channel-server.js';
 
 /**
@@ -21,6 +22,13 @@ export interface ContainerEntry {
   inContainer: RuntimeStatus;
   /** 连接断开（容器内 agent 未重连）时置 true，下次 ensureRunning 触发重建。 */
   connectionDead: boolean;
+  /**
+   * 本次 docker run 固化的挂载源路径集合（N-2）。docker 挂载清单在创建时定型，
+   * 运行中/停止后启动都无法新增：会话工作区不在集合内时 ensureRunning 只能重建容器。
+   */
+  mountedPaths: ReadonlySet<string>;
+  /** 本次挂载的通道会话工作区（mountedPaths 中除每用户标准根之外的部分），重建时并入新清单。 */
+  sessionWorkspaces: readonly string[];
 }
 
 export interface DockerCli {
@@ -63,6 +71,12 @@ export interface ContainerRegistryOptions {
   waitSocketReady(userId: number, timeoutMs: number): Promise<void>;
   /** 停止前发 shutdown 帧让容器收尾（§5.3.1 对策 3）。返回 false 表示容器无响应。 */
   requestShutdown(userId: number): Promise<boolean>;
+  /**
+   * 该用户当前会话使用的工作区绝对路径（N-2）。创建/重建容器时把越出每用户根的
+   * 通道会话工作区一并挂入；返回空数组或未注入时行为与旧版一致。
+   * 实现必须按数据库 user_id 过滤（归属校验），不得返回其他用户的工作区。
+   */
+  sessionWorkspacesOf?(userId: number): Promise<string[]>;
 }
 
 const IDLE_CHECK_INTERVAL_MS = 60_000;
@@ -118,29 +132,119 @@ export class ContainerRegistry {
     return this.entries.get(userId);
   }
 
-  /** ensureRunning：不存在则创建并等待就绪；stopped 则 start；running 直接复用。并发调用合并为一次创建。 */
-  async ensureRunning(userId: number): Promise<ContainerEntry> {
+  /**
+   * ensureRunning：不存在则创建并等待就绪；stopped 则 start；running 直接复用。
+   * 并发调用合并为一次创建。
+   *
+   * requiredWorkspace：本次调用所属会话的工作区（N-2）。docker 挂载清单在 docker run
+   * 时定型，运行中容器无法新增挂载：工作区不在已挂载集合内时重建容器（旧容器内既有
+   * shell/pty/在途任务随重建丢失，这是把新通道会话工作区纳入容器的必要代价，仅在
+   * 用户新建该类会话的首次调用时发生）。web 会话工作区在 {workspaceRoot}/{userId}
+   * 之下，命中已挂载集合，不会触发重建。
+   */
+  async ensureRunning(userId: number, requiredWorkspace?: string | null): Promise<ContainerEntry> {
     const inFlight = this.creating.get(userId);
-    if (inFlight) return inFlight;
+    if (inFlight) {
+      // 并发创建合并：本次调用无法把 requiredWorkspace 并入已发出的 docker run，
+      // 等创建完成后再按挂载检查决定是否重建
+      const entry = await inFlight;
+      return this.ensureWorkspaceMounted(entry, requiredWorkspace);
+    }
     const entry = this.entries.get(userId);
     if (entry) {
       if (entry.state === 'running' && !entry.connectionDead) {
         entry.lastUsedAtMs = Date.now();
-        return entry;
+        return this.ensureWorkspaceMounted(entry, requiredWorkspace);
       }
       if (entry.state === 'stopped' && !entry.connectionDead) {
-        entry.lastUsedAtMs = Date.now();
-        await this.dockerStart(entry);
-        return entry;
+        const desired = await this.sessionWorkspaces(userId);
+        if (this.hasUnmountedWorkspace(entry, desired)) {
+          // 停止期间（idle 回收后）新增的通道会话工作区只能随完整重建挂入：
+          // docker start 复用创建时的挂载清单，带不上新目录
+          harnessLog('warn', `[container] recreating container for user=${userId} (new session workspaces while stopped)`);
+          await this.cleanupHalfCreated(entry.containerName);
+          this.entries.delete(userId);
+        } else {
+          entry.lastUsedAtMs = Date.now();
+          await this.dockerStart(entry);
+          return this.ensureWorkspaceMounted(entry, requiredWorkspace);
+        }
+      } else {
+        // connectionDead（容器内 agent 失联）或状态异常：停止旧容器后重建
+        harnessLog('warn', `[container] rebuilding container for user=${userId} (state=${entry.state}, dead=${entry.connectionDead})`);
+        await this.stopContainer(entry, { force: true });
+        this.entries.delete(userId);
       }
-      // connectionDead（容器内 agent 失联）或状态异常：停止旧容器后重建
-      harnessLog('warn', `[container] rebuilding container for user=${userId} (state=${entry.state}, dead=${entry.connectionDead})`);
-      await this.stopContainer(entry, { force: true });
-      this.entries.delete(userId);
     }
-    const create = this.createAndStart(userId).finally(() => this.creating.delete(userId));
+    const create = this.createAndStart(userId, requiredWorkspace ? [requiredWorkspace] : [])
+      .finally(() => this.creating.delete(userId));
     this.creating.set(userId, create);
-    return create;
+    const created = await create;
+    return this.ensureWorkspaceMounted(created, requiredWorkspace);
+  }
+
+  /** 该用户会话工作区（供挂载清单附加项）；未注入回调时为空。 */
+  private async sessionWorkspaces(userId: number): Promise<string[]> {
+    if (!this.opts.sessionWorkspacesOf) return [];
+    try {
+      const list = await this.opts.sessionWorkspacesOf(userId);
+      if (!Array.isArray(list)) return [];
+      // 防御性过滤：只放行通道工作区（结构校验见 ContainerMountPlanner.planSessionWorkspace）。
+      // web 会话在每用户根内无需附加；其余异常形态忽略，由 ensureRunning 的明确报错兜底
+      return list.filter((p): p is string => typeof p === 'string' && p.length > 0)
+        .map((p) => path.resolve(p))
+        .filter((p) => isChannelWorkspace(p, this.opts.workspaceRoot));
+    } catch (e) {
+      // 查询失败不阻塞容器创建：附加挂载缺失时通道会话按明确报错失败，好过静默错位
+      harnessLog('warn', `[container] session workspace lookup failed for user=${userId}: ${(e as Error).message}`);
+      return [];
+    }
+  }
+
+  /** 路径是否已被当前挂载清单覆盖（等于某挂载源或位于其下）。 */
+  private isMounted(entry: ContainerEntry, workspace: string): boolean {
+    const target = path.resolve(workspace);
+    for (const mounted of entry.mountedPaths) {
+      if (target === mounted || target.startsWith(mounted + path.sep)) return true;
+    }
+    return false;
+  }
+
+  private hasUnmountedWorkspace(entry: ContainerEntry, workspaces: readonly string[]): boolean {
+    return workspaces.some((w) => !this.isMounted(entry, w));
+  }
+
+  /**
+   * 运行中容器的工作区挂载检查（N-2）：
+   * - 已挂载（每用户根之下的 web 会话工作区即此列）→ 直接返回；
+   * - 未挂载但是通道会话工作区 → 重建容器把该工作区并入挂载清单；
+   * - 未挂载也不是通道工作区 → 容器内永远不可见，明确抛错。绝不让"容器内目录
+   *   不存在"退化成的空输出 / 会话秒退这类无法归因的静默失败，也不做无意义的重建。
+   */
+  private async ensureWorkspaceMounted(entry: ContainerEntry, workspace?: string | null): Promise<ContainerEntry> {
+    if (!workspace) return entry;
+    const target = path.resolve(workspace);
+    if (this.isMounted(entry, target)) return entry;
+    if (!isChannelWorkspace(target, this.opts.workspaceRoot)) {
+      throw new ContainerStartError(
+        `会话工作区不在容器可挂载范围内（仅支持每用户工作区与飞书/钉钉通道工作区）: ${target}`,
+      );
+    }
+    harnessLog('warn', `[container] recycling container user=${entry.userId} to mount session workspace ${target}`);
+    await this.stopContainer(entry, { force: true });
+    await this.cleanupHalfCreated(entry.containerName);
+    this.entries.delete(entry.userId);
+    // 保留此前已挂载的会话工作区，只增量并入新工作区
+    const extras = [...new Set([...entry.sessionWorkspaces, target])];
+    const create = this.createAndStart(entry.userId, extras).finally(() => this.creating.delete(entry.userId));
+    this.creating.set(entry.userId, create);
+    const created = await create;
+    if (!this.isMounted(created, target)) {
+      throw new ContainerStartError(
+        `会话工作区不在容器可挂载范围内（仅支持每用户工作区与飞书/钉钉通道工作区）: ${target}`,
+      );
+    }
+    return created;
   }
 
   /** 宿主机主动标记连接断开（RuntimeChannelServer onConnectionDead 回调）。 */
@@ -192,10 +296,16 @@ export class ContainerRegistry {
     }
   }
 
-  private async createAndStart(userId: number): Promise<ContainerEntry> {
+  private async createAndStart(userId: number, extraWorkspaces: readonly string[] = []): Promise<ContainerEntry> {
     const name = ContainerRegistry.containerName(userId);
     const c = this.opts.config.container;
-    const mounts = this.planner.plan(userId);
+    // 会话工作区（通道会话）并入挂载清单。统一按通道根过滤：web 会话工作区在
+    // {workspaceRoot}/{userId} 之内、由标准清单覆盖，显式传入也不需要附加挂载
+    const sessionWorkspaces = [...new Set([
+      ...await this.sessionWorkspaces(userId),
+      ...extraWorkspaces.map((p) => path.resolve(p)),
+    ])].filter((p) => isChannelWorkspace(p, this.opts.workspaceRoot));
+    const mounts = this.planner.plan(userId, sessionWorkspaces);
     this.planner.auditLog(userId, mounts);
     // 先 listen 再 run：容器 agent 启动即连 socket，宿主机没监听时只会无限重连
     const socketPath = await this.opts.ensureChannelListening(userId);
@@ -242,6 +352,8 @@ export class ContainerRegistry {
       lastUsedAtMs: Date.now(),
       inContainer: { shellSessions: 0, pendingTasks: 0, attachedTerminals: 0 },
       connectionDead: false,
+      mountedPaths: new Set(mounts.map((m) => m.hostPath)),
+      sessionWorkspaces,
     };
     try {
       await this.opts.waitSocketReady(userId, c.startTimeoutMs);
@@ -264,7 +376,17 @@ export class ContainerRegistry {
     entry.connectionDead = false;
     entry.startedAtMs = Date.now();
     entry.lastUsedAtMs = Date.now();
-    await this.opts.waitSocketReady(entry.userId, c.startTimeoutMs);
+    try {
+      await this.opts.waitSocketReady(entry.userId, c.startTimeoutMs);
+    } catch (e) {
+      // 与 createAndStart 同口径收尾：重启路径等待超时同样不能留下"自称 running"的
+      // 毒化条目（后续 ensureRunning 直接复用、工具调用固定报"未就绪"且要等 idle
+      // 回收才可能恢复）。删条目 + rm 容器，下次 ensureRunning 走完整 docker run
+      // 重建（新容器带新 agent），根因未除时也每次都有一次自愈机会。
+      this.entries.delete(entry.userId);
+      await this.cleanupHalfCreated(entry.containerName);
+      throw e;
+    }
     harnessLog('info', `[container] container restarted: user=${entry.userId}`);
   }
 

@@ -79,4 +79,50 @@ describe('docker tool router', () => {
     expect(await router.enabledFor(7)).toBe(true);
     expect(runtimeModeOf).toHaveBeenCalledTimes(2);
   });
+
+  it('passesSessionWorkspaceToEnsureRunningOnDispatch', async () => {
+    // N-2 回归：dispatch 必须把会话工作区交给 ensureRunning——通道会话工作区越出
+    // 每用户根，缺了它容器不会挂载该目录，shell 会以空输出 + 秒退静默失败
+    const ensureRunning = vi.fn(async () => ({
+      userId: 7, containerName: 'mao-user-7', state: 'running', startedAtMs: 1, lastUsedAtMs: 1,
+      inContainer: { shellSessions: 0, pendingTasks: 0, attachedTerminals: 0 },
+      connectionDead: false, mountedPaths: new Set<string>(), sessionWorkspaces: [],
+    }));
+    const request = vi.fn(async () => ({ v: 1, type: 'tool_result', id: 'x', ok: true, result: 'done' }));
+    const router = new DockerToolRouter({
+      containerRegistry: { ensureRunning } as never,
+      channelServer: { getConnection: () => ({ request }) } as never,
+      envelopeBuilder: { build: async () => ({ userId: 7 }) } as never,
+      runtimeModeLookup: { runtimeModeOf: async () => 'docker' },
+      globalMode: () => 'docker',
+    });
+    const result = await router.dispatch('shell', '{"action":"exec","command":"echo hi"}', {
+      userId: 7, sessionId: 11, workspace: '/opt/mao-data/workspace/feishu-chat/bot-1/oc_chat',
+    });
+    expect(result).toBe('done');
+    expect(ensureRunning).toHaveBeenCalledWith(7, '/opt/mao-data/workspace/feishu-chat/bot-1/oc_chat');
+  });
+
+  it('passesSessionWorkspaceToEnsureRunningOnReadBytes', async () => {
+    // N-2 回归：外部发送工具的容器读字节链路同样携带会话工作区
+    const ensureRunning = vi.fn(async () => ({
+      userId: 7, containerName: 'mao-user-7', state: 'running', startedAtMs: 1, lastUsedAtMs: 1,
+      inContainer: { shellSessions: 0, pendingTasks: 0, attachedTerminals: 0 },
+      connectionDead: false, mountedPaths: new Set<string>(), sessionWorkspaces: [],
+    }));
+    const request = vi.fn(async () => ({ v: 1, type: 'read_bytes_result', id: 'x', ok: true, base64: Buffer.from('hi').toString('base64') }));
+    const router = new DockerToolRouter({
+      containerRegistry: { ensureRunning } as never,
+      channelServer: { getConnection: () => ({ request }) } as never,
+      envelopeBuilder: { build: async () => ({ userId: 7 }) } as never,
+      runtimeModeLookup: { runtimeModeOf: async () => 'docker' },
+      globalMode: () => 'docker',
+    });
+    const bytes = await router.readBytes({
+      userId: 7, sessionId: 11, workspace: '/opt/mao-data/workspace/dingtalk-chat/bot-1/p2p-7',
+      path: 'chat-files/a.png', maxBytes: 1024,
+    });
+    expect(bytes?.toString()).toBe('hi');
+    expect(ensureRunning).toHaveBeenCalledWith(7, '/opt/mao-data/workspace/dingtalk-chat/bot-1/p2p-7');
+  });
 });

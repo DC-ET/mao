@@ -108,4 +108,45 @@ describe('container mount planner', () => {
     expect(mounts.length).toBeGreaterThanOrEqual(8);
     expect(mounts.every((m) => m.mode === 'rw' || m.mode === 'ro')).toBe(true);
   });
+
+  it('mountsChannelSessionWorkspacesPassedAsExtras', () => {
+    // N-2 回归：飞书/钉钉通道会话工作区（越出每用户根）按调用方传入的清单附加挂载
+    const base = useTmpDir('mao-mount-ch-');
+    for (const dir of Object.values(roots(base))) mkdirSync(dir, { recursive: true });
+    const feishu = join(base, 'workspace', 'feishu-chat', 'bot-1', 'oc_chat');
+    const dingtalk = join(base, 'workspace', 'dingtalk-chat', 'bot-1', 'p2p-7');
+    mkdirSync(feishu, { recursive: true });
+    mkdirSync(dingtalk, { recursive: true });
+    const planner = new ContainerMountPlanner(roots(base));
+    const mounts = planner.plan(7, [feishu, dingtalk]);
+    for (const ws of [feishu, dingtalk]) {
+      const mount = mounts.find((m) => m.hostPath === ws);
+      expect(mount, `${ws} 应被附加挂载`).toBeDefined();
+      expect(mount!.mode).toBe('rw');
+      expect(mount!.containerPath).toBe(ws);
+      expect(mount!.purpose).toBe('sessionWorkspace');
+    }
+    // 重复传入只挂一份
+    expect(planner.plan(7, [feishu, feishu]).filter((m) => m.hostPath === feishu).length).toBe(1);
+    // 已在标准清单内的每用户根工作区不重复附加
+    const webWs = join(base, 'workspace', '7', 'web');
+    mkdirSync(webWs, { recursive: true });
+    expect(planner.plan(7, [webWs]).filter((m) => m.hostPath === webWs).length).toBe(0);
+  });
+
+  it('rejectsChannelRootAndAccountLevelExtras', () => {
+    // N-2 安全边界：挂整个通道根或账号目录会把其他用户的私聊工作区带进容器，一律拒绝
+    const base = useTmpDir('mao-mount-ch-bad-');
+    for (const dir of Object.values(roots(base))) mkdirSync(dir, { recursive: true });
+    const planner = new ContainerMountPlanner(roots(base));
+    const channelRoot = join(base, 'workspace', 'feishu-chat');
+    mkdirSync(channelRoot, { recursive: true });
+    const accountDir = join(channelRoot, 'bot-1');
+    mkdirSync(accountDir, { recursive: true });
+    expect(() => planner.plan(7, [channelRoot])).toThrow(/concrete \{account\}\/\{leaf\}/);
+    expect(() => planner.plan(7, [accountDir])).toThrow(/concrete \{account\}\/\{leaf\}/);
+    // 非通道根路径（其他数据根/系统目录）不得作为附加挂载
+    expect(() => planner.plan(7, [join(base, 'users', '8')])).toThrow(/channel workspace root/);
+    expect(() => planner.plan(7, ['/etc'])).toThrow(/channel workspace root/);
+  });
 });
