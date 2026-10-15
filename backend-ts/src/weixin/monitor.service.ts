@@ -14,6 +14,8 @@ export class WeixinMonitorService {
   private readonly activeMonitors = new Map<string, { abort: AbortController }>();
   private httpClient: WeixinHttpClient | null = null;
   private started = false;
+  private reconciling = false;
+  private timer: NodeJS.Timeout | null = null;
 
   constructor(
     private readonly config: WeixinBotConfig,
@@ -34,24 +36,52 @@ export class WeixinMonitorService {
     const readTimeout = this.config.monitor.longPollTimeoutMs + 15_000;
     this.httpClient ??= createWeixinHttpClient(readTimeout);
     void this.startAll();
+    // 周期对账：monitorLoop 连续失败达到 maxConsecutiveFailures 后会自行退出，
+    // 若无人补启动，已绑定账号在 ilink 一次网络抖动后就永久掉线——
+    // 只能等进程重启或用户重新扫码。与飞书 / 钉钉的 reconcile 定时器同构。
+    this.timer = setInterval(() => { void this.reconcile(); }, this.config.monitor.reconcileIntervalMs);
+    this.timer.unref();
   }
 
   shutdown(): void {
+    if (this.timer != null) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
     for (const [accountId, handle] of this.activeMonitors) {
       handle.abort.abort();
       void accountId;
     }
     this.activeMonitors.clear();
     this.started = false;
+    this.reconciling = false;
     console.info('微信Bot监控已停止');
   }
 
   async startAll(): Promise<void> {
-    const accounts = await this.accountRepository.findAllEnabled();
-    for (const account of accounts) {
-      if (account.accountId) this.startMonitor(account.accountId);
-    }
+    await this.reconcile();
     console.info(`微信Bot监控已启动, 账号数=${this.activeMonitors.size}`);
+  }
+
+  /**
+   * 周期对账：把所有「应当活着但已不在 activeMonitors」的账号重新拉起。
+   * 覆盖三类掉线——monitorLoop 连续失败自行退出、账号被重新绑定后旧循环尚未退出、
+   * 以及 start() 早于绑定发生（新增账号）。已活跃的账号由 startMonitor 的幂等判断跳过。
+   */
+  private async reconcile(): Promise<void> {
+    if (!this.started || this.reconciling) return;
+    this.reconciling = true;
+    try {
+      const accounts = await this.accountRepository.findAllEnabled();
+      for (const account of accounts) {
+        if (!this.started) return;
+        if (account.accountId) this.startMonitor(account.accountId);
+      }
+    } catch (error) {
+      console.error('微信Bot监控 reconcile 失败', error);
+    } finally {
+      this.reconciling = false;
+    }
   }
 
   startMonitor(accountId: string): void {
