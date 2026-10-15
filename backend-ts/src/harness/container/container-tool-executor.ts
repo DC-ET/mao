@@ -24,11 +24,12 @@ export interface ContainerRoots {
 
 /**
  * 容器内工具执行器（技术方案 §5.5）：复用现有工具实现，构造参数从宿主机全局
- * 改为 envelope 注入。PathSandbox 必须使用严格 resolve（strict），允许根为该用户
- * 的 workspace/HOME/runtime/userskills 与 /tmp（tmpfs）。
+ * 改为 envelope 注入。PathSandbox 必须使用严格 resolve（strict），允许根按 userId
+ * 收窄为该用户的 workspace/HOME/runtime/userskills 与 /tmp（§5.5 允许根表），
+ * 不把全局父目录登记为允许根（纵深防御：宿主机挂载清单之外再加一层跨用户隔离）。
  *
  * 关键约束：不得 import 任何触及 MySQL / JWT secret / LLM key 的模块（由静态
- * import 扫描单测守住，见 container-runtime-agent.spec）。
+ * import 扫描单测守住，见 container-import-constraints.spec）。
  */
 export class ContainerToolExecutor {
   private readonly pathSandbox: PathSandbox;
@@ -42,17 +43,22 @@ export class ContainerToolExecutor {
 
   constructor(
     roots: ContainerRoots,
+    /** 容器归属用户（MAO_CONTAINER_USER_ID）：沙箱允许根与 envelope 一样按用户收窄。 */
+    userId: number,
     options: { maxShellSessionsPerConversation?: number; shellIdleTimeoutMinutes?: number; shellMaxLifetimeHours?: number } = {},
   ) {
-    this.pathSandbox = new PathSandbox(roots.workspaceRoot, { strict: true });
+    const u = String(userId);
+    // §5.5 允许根：每用户子目录 + /tmp（tmpfs）。绝对路径与宿主机逐字节一致（决策 15）
+    this.pathSandbox = new PathSandbox(path.join(roots.workspaceRoot, u), { strict: true });
     this.runtimeResolver = new RuntimeDataResolver(roots.runtimeDir, roots.userHomeDir);
-    this.pathSandbox.addAllowedRoot(roots.runtimeDir);
-    this.pathSandbox.addAllowedRoot(roots.userHomeDir);
-    this.pathSandbox.addAllowedRoot(roots.userSkillsDir);
+    this.pathSandbox.addAllowedRoot(path.join(roots.runtimeDir, u));
+    this.pathSandbox.addAllowedRoot(path.join(roots.userHomeDir, u));
+    this.pathSandbox.addAllowedRoot(path.join(roots.userSkillsDir, u));
     this.pathSandbox.addAllowedRoot('/tmp');
     this.outputManager = new OutputManager();
     this.backgroundTasks = new BackgroundTaskManager();
-    // askpass 写容器私有路径（§5.7.2）：不复用宿主机共享的 runtime/{u}/{s}/git-askpass.sh
+    // askpass 写容器私有路径（§5.7.2）：不复用宿主机共享的 runtime/{u}/{s}/git-askpass.sh；
+    // deps env 取当前请求 envelope（§5.13）：npm/pip 安装落到每用户 /deps 挂载
     this.shellManager = new ShellSessionManager(
       this.pathSandbox,
       this.runtimeResolver,
@@ -60,6 +66,7 @@ export class ContainerToolExecutor {
       options.shellIdleTimeoutMinutes ?? 30,
       options.shellMaxLifetimeHours ?? 2,
       '/tmp',
+      () => this.currentEnvelope?.depsEnv ?? null,
     );
     const envelopeGitLookup = {
       getTokenMapByUser: async (_userId: number) => this.currentEnvelope?.gitTokens ?? {},

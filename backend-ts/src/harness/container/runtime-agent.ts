@@ -1,13 +1,14 @@
 import { connect, type Socket } from 'node:net';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   FrameDecoder, encodeFrame,
-  type RuntimeEnvelope, type RuntimeFrame, type RuntimeRequestFrame,
+  type PtyOpenOptions, type RuntimeEnvelope, type RuntimeFrame, type RuntimeRequestFrame,
 } from './runtime-channel-protocol.js';
 import { ContainerToolExecutor, type ContainerRoots } from './container-tool-executor.js';
 import { ContainerMcpBridge } from './container-mcp-bridge.js';
-import { PtyHub } from './pty-hub.js';
+import { PtyHub, type ContainerPtyFactory } from './pty-hub.js';
 
 /**
  * 容器内常驻 runtime agent（技术方案 §5.5）。
@@ -18,6 +19,8 @@ import { PtyHub } from './pty-hub.js';
 const STATUS_INTERVAL_MS = 10_000;
 const RECONNECT_BASE_MS = 500;
 const RECONNECT_MAX_MS = 15_000;
+/** 宿主机迟迟不回 hello_result 的兜底：超时销毁连接，交给 connectLoop 退避重连。 */
+const HANDSHAKE_TIMEOUT_MS = 15_000;
 
 function parseArgs(argv: string[]): { socketPath: string } {
   let socketPath = process.env.MAO_CHANNEL_SOCKET ?? '';
@@ -48,7 +51,7 @@ function readToken(socketPath: string): string {
   process.exit(1);
 }
 
-class RuntimeAgent {
+export class RuntimeAgent {
   private readonly executor: ContainerToolExecutor;
   private readonly mcpBridge: ContainerMcpBridge;
   private readonly ptyHub: PtyHub;
@@ -61,31 +64,53 @@ class RuntimeAgent {
     private readonly socketPath: string,
     private readonly token: string,
     private readonly userId: number,
+    /** pty spawn 工厂（生产用 node-pty；宿主机单测注入 fake 验证 pty_open 往返）。 */
+    private readonly ptyFactory?: ContainerPtyFactory,
   ) {
-    this.executor = new ContainerToolExecutor(resolveRoots());
+    this.executor = new ContainerToolExecutor(resolveRoots(), this.userId);
     this.mcpBridge = new ContainerMcpBridge();
     this.ptyHub = new PtyHub({
       sendData: (ptyId, data) => this.send({ v: 1, type: 'pty_data', ptyId, data }),
       sendExit: (ptyId, exitCode) => this.send({ v: 1, type: 'pty_exit', ptyId, exitCode }),
-    });
+    }, ptyFactory);
   }
 
   async run(): Promise<void> {
-    this.statusTimer = setInterval(() => {
-      this.send({
-        v: 1, type: 'runtime_status',
-        shellSessions: this.executor.activeShellSessions,
-        pendingTasks: this.executor.unfinishedBackgroundTasks,
-        attachedTerminals: this.ptyHub.activeCount,
-      });
-    }, STATUS_INTERVAL_MS);
+    this.statusTimer = setInterval(() => this.reportStatus(), STATUS_INTERVAL_MS);
     this.statusTimer.unref?.();
     await this.connectLoop();
+  }
+
+  /** 停止 agent：停状态上报、标记关机并断开当前连接（connectLoop 随即退出）。 */
+  stop(): void {
+    this.closedByShutdown = true;
+    if (this.statusTimer) { clearInterval(this.statusTimer); this.statusTimer = null; }
+    this.socket?.destroy();
+  }
+
+  /** 释放容器内资源：shell 会话、MCP stdio 子进程、pty（宿主机单测收尾与 shutdown 帧共用）。 */
+  dispose(): void {
+    this.stop();
+    this.executor.closeAll();
+    this.mcpBridge.closeAll();
+    this.ptyHub.closeAll();
+  }
+
+  /** 容器内活跃状态上报（§5.3.1 idle 忙等保护的唯一数据源）。 */
+  private reportStatus(): void {
+    this.send({
+      v: 1, type: 'runtime_status',
+      shellSessions: this.executor.activeShellSessions,
+      pendingTasks: this.executor.unfinishedBackgroundTasks,
+      attachedTerminals: this.ptyHub.activeCount,
+    });
   }
 
   private async connectLoop(): Promise<void> {
     while (!this.closedByShutdown) {
       try {
+        // connectOnce 只在连接就绪后真正断开时 resolve：连接存活期间本循环一直 await，
+        // 不会连上又立刻重连（指数退避只作用于"断开之后"）
         await this.connectOnce();
         this.reconnectAttempt = 0;
       } catch (e) {
@@ -100,15 +125,32 @@ class RuntimeAgent {
 
   private connectOnce(): Promise<void> {
     return new Promise((resolve, reject) => {
-      let readyResolve: (() => void) | null = null;
-      const ready = new Promise<void>((r) => { readyResolve = r; });
       const socket = connect(this.socketPath);
-      let settled = false;
       const decoder = new FrameDecoder();
+      let settled = false;
+      // hello_result 已到达：此后的 close 才算"就绪连接断开"，resolve 交给 connectLoop 重连
+      let ready = false;
+      let handshakeTimer: NodeJS.Timeout | null = null;
+      const clearHandshakeTimer = () => {
+        if (handshakeTimer) { clearTimeout(handshakeTimer); handshakeTimer = null; }
+      };
+      const fail = (error: Error) => {
+        if (settled) return;
+        settled = true;
+        clearHandshakeTimer();
+        socket.destroy();
+        reject(error);
+      };
       socket.on('connect', () => {
+        // 兜底销毁可能残留的旧 socket（正常路径下 connectLoop 已等旧连接结束）
+        if (this.socket && this.socket !== socket && !this.socket.destroyed) {
+          this.socket.destroy();
+        }
         this.socket = socket;
         // hello：token 认证（宿主机校验失败会立即断开）
         socket.write(encodeFrame({ v: 1, type: 'hello', userId: this.userId, token: this.token }));
+        handshakeTimer = setTimeout(() => fail(new Error('hello handshake timeout')), HANDSHAKE_TIMEOUT_MS);
+        handshakeTimer.unref?.();
       });
       socket.on('data', (chunk: Buffer) => {
         let frames: RuntimeFrame[];
@@ -120,27 +162,27 @@ class RuntimeAgent {
           return;
         }
         for (const frame of frames) {
-          if (frame.type === 'hello_result' && readyResolve) {
-            readyResolve();
-            readyResolve = null;
-            console.log('[runtime-agent] channel ready');
+          if (frame.type === 'hello_result') {
+            if (!ready) {
+              ready = true;
+              clearHandshakeTimer();
+              console.log('[runtime-agent] channel ready');
+              // 重连后立即补报一次状态：宿主机 idle 忙等判定不等下一个 10s 周期
+              this.reportStatus();
+            }
             continue;
           }
           void this.handleFrame(frame);
         }
       });
-      socket.on('error', (e) => {
-        if (!settled) { settled = true; reject(e); }
-      });
+      socket.on('error', (e) => fail(e));
       socket.on('close', () => {
-        this.socket = null;
-        readyResolve?.();
-        if (!settled) { settled = true; reject(new Error('connection closed before ready')); }
-        else resolve();
-      });
-      // 宿主机始终未回 hello_result（协议异常）时兜底退出等待
-      void ready.then(() => {
-        if (!settled) { settled = true; resolve(); }
+        clearHandshakeTimer();
+        // 身份判断：旧连接晚到的 close 不得把新连接的 this.socket 置空，
+        // 否则容器→宿主机帧（tool_result/pty_*/runtime_status/pong）被静默丢弃
+        if (this.socket === socket) this.socket = null;
+        if (ready) resolve();
+        else fail(new Error('connection closed before ready'));
       });
     });
   }
@@ -164,9 +206,7 @@ class RuntimeAgent {
         this.send({ v: 1, type: 'shutdown_ack', id: frame.id });
         // 给 ack 一点写出时间再退出
         setTimeout(() => {
-          this.executor.closeAll();
-          this.mcpBridge.closeAll();
-          this.ptyHub.closeAll();
+          this.dispose();
           process.exit(0);
         }, 200);
         break;
@@ -177,7 +217,7 @@ class RuntimeAgent {
         this.handleReadBytes(frame.id, frame.path, frame.maxBytes, frame.envelope);
         break;
       case 'mcp_connect':
-        void this.handleMcpConnect(frame.id, frame.sessionId, frame.server, frame.env);
+        void this.handleMcpConnect(frame.id, frame.sessionId, frame.server, frame.env, frame.envelope);
         break;
       case 'mcp_call':
         void this.handleMcpCall(frame.id, frame.sessionId, frame.serverId, frame.toolName, frame.argumentsJson);
@@ -186,7 +226,7 @@ class RuntimeAgent {
         void this.handleMcpClose(frame.id, frame.sessionId);
         break;
       case 'pty_open':
-        void this.ptyHub.open(frame.ptyId, frame.options);
+        void this.handlePtyOpen(frame.id, frame.ptyId, frame.options);
         break;
       case 'pty_data':
         this.ptyHub.write(frame.ptyId, frame.data);
@@ -225,12 +265,26 @@ class RuntimeAgent {
     id: string, sessionId: number,
     server: { id: number; name: string; serverType: string; command?: string | null; argsJson?: string | null; url?: string | null },
     env: Record<string, string>,
+    envelope: RuntimeEnvelope,
   ): Promise<void> {
     try {
-      const refs = await this.mcpBridge.connectAndListTools(sessionId, server, env);
+      // envelope 必须透传：容器内 MCP stdio 子进程的用户凭据（git token / MAO_TOKEN /
+      // ECP / larkUat）与 §5.13 depsEnv 全部由它注入（§5.10）
+      const refs = await this.mcpBridge.connectAndListTools(sessionId, server, env, envelope);
       this.send({ v: 1, type: 'mcp_result', id, ok: true, payload: refs });
     } catch (e) {
       this.send({ v: 1, type: 'mcp_result', id, ok: false, error: (e as Error).message });
+    }
+  }
+
+  private async handlePtyOpen(id: string, ptyId: string, options: PtyOpenOptions): Promise<void> {
+    // pty_open 是请求/响应语义：宿主机 PtyChannelHub.open 等同名 pty_open_result，
+    // 只处理不回帧会让宿主机干等到超时（终端永远打不开）
+    const outcome = await this.ptyHub.open(ptyId, options);
+    if (outcome.ok) {
+      this.send({ v: 1, type: 'pty_open_result', id, ok: true, pid: outcome.pid });
+    } else {
+      this.send({ v: 1, type: 'pty_open_result', id, ok: false, error: outcome.error });
     }
   }
 
@@ -253,15 +307,28 @@ class RuntimeAgent {
   }
 }
 
-const { socketPath } = parseArgs(process.argv.slice(2));
-const token = readToken(socketPath);
-const userId = Number(process.env.MAO_CONTAINER_USER_ID ?? 0);
-if (!Number.isFinite(userId) || userId <= 0) {
-  console.error('[runtime-agent] missing MAO_CONTAINER_USER_ID');
-  process.exit(1);
+// 仅作为容器入口脚本直接执行时运行；被 import（宿主机单测驱动）时不自动启动
+function isMainModule(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return path.resolve(entry) === fileURLToPath(import.meta.url);
+  } catch {
+    return false;
+  }
 }
-const agent = new RuntimeAgent(socketPath, token, userId);
-void agent.run().catch((e) => {
-  console.error('[runtime-agent] fatal:', e);
-  process.exit(1);
-});
+
+if (isMainModule()) {
+  const { socketPath } = parseArgs(process.argv.slice(2));
+  const token = readToken(socketPath);
+  const userId = Number(process.env.MAO_CONTAINER_USER_ID ?? 0);
+  if (!Number.isFinite(userId) || userId <= 0) {
+    console.error('[runtime-agent] missing MAO_CONTAINER_USER_ID');
+    process.exit(1);
+  }
+  const agent = new RuntimeAgent(socketPath, token, userId);
+  void agent.run().catch((e) => {
+    console.error('[runtime-agent] fatal:', e);
+    process.exit(1);
+  });
+}

@@ -136,6 +136,11 @@ export interface TerminalManagerDeps {
   userLookup?: TerminalUserLookup;
   ecpInjector?: TerminalEcpInjector;
   larkUatInjector?: TerminalLarkUatInjector;
+  /**
+   * §5.13 依赖持久化 env 提供者（仅容器用户装配层注入）：docker 用户的终端在容器内
+   * spawn，pip/npm 安装位置须指向每用户 /deps 挂载。host 用户返回 null，行为零变化。
+   */
+  depsEnvProvider?: (userId: number) => Record<string, string> | null | Promise<Record<string, string> | null>;
   config: TerminalManagerConfig;
   audit?: TerminalAuditRecorder;
   ptyFactory?: PtyFactory;
@@ -389,6 +394,20 @@ export class TerminalManager {
       MAO_TASK_NAME: normalizeTaskName(params.taskName, sessionId),
     };
     const home = this.configureUserHome(env, userId);
+    if (this.deps.depsEnvProvider) {
+      try {
+        const depsEnv = await this.deps.depsEnvProvider(userId);
+        if (depsEnv && Object.keys(depsEnv).length > 0) {
+          Object.assign(env, depsEnv);
+          // deps bin 前置 PATH：容器内 npm i -g 的可执行文件在交互终端里直接可用（§5.13）
+          if (depsEnv.MAO_DEPS_BIN) {
+            env.PATH = env.PATH ? `${depsEnv.MAO_DEPS_BIN}:${env.PATH}` : depsEnv.MAO_DEPS_BIN;
+          }
+        }
+      } catch (e) {
+        harnessLog('warn', `Failed to resolve deps env for user ${userId}`, e);
+      }
+    }
     if (this.deps.gitCredentials) {
       try {
         const tokenMap = await this.deps.gitCredentials.getTokenMapByUser(userId);

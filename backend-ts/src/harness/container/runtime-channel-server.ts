@@ -31,6 +31,8 @@ export interface ChannelConnection {
   requestShutdown(timeoutMs?: number): Promise<boolean>;
   onPtyData(listener: (ptyId: string, data: string) => void): () => void;
   onPtyExit(listener: (ptyId: string, exitCode: number) => void): () => void;
+  /** 连接彻底关闭时回调一次（pty 分发器据此把在飞终端按断开收尾）。 */
+  onClosed(listener: () => void): () => void;
   readonly alive: boolean;
   close(): void;
 }
@@ -217,6 +219,8 @@ class ConnectionImpl implements ChannelConnection {
   private readonly pending = new PendingRegistry<RuntimeResponseFrame>();
   private readonly ptyDataListeners: Array<(ptyId: string, data: string) => void> = [];
   private readonly ptyExitListeners: Array<(ptyId: string, exitCode: number) => void> = [];
+  private readonly closedListeners: Array<() => void> = [];
+  private closedNotified = false;
   private readonly writeQueue: Buffer[] = [];
   private draining = false;
   private closed = false;
@@ -235,7 +239,8 @@ class ConnectionImpl implements ChannelConnection {
     this.heartbeatTimer = setInterval(() => {
       if (this.closed) return;
       this.missedPongs += 1;
-      if (this.missedPongs > HEARTBEAT_MISS_LIMIT) {
+      // 连续 HEARTBEAT_MISS_LIMIT 次未回 pong 判定异常（§5.4：30s 一次、3 次即 90s）
+      if (this.missedPongs >= HEARTBEAT_MISS_LIMIT) {
         harnessLog('warn', `Runtime channel heartbeat lost: userId=${this.userId}`);
         this.close();
         return;
@@ -285,6 +290,19 @@ class ConnectionImpl implements ChannelConnection {
     };
   }
 
+  onClosed(listener: () => void): () => void {
+    // 连接已关闭时同步回调：装配与连接断开竞态下订阅方不会永远等不到通知
+    if (this.closed) {
+      listener();
+      return () => undefined;
+    }
+    this.closedListeners.push(listener);
+    return () => {
+      const idx = this.closedListeners.indexOf(listener);
+      if (idx >= 0) this.closedListeners.splice(idx, 1);
+    };
+  }
+
   handleFrame(frame: RuntimeFrame): void {
     switch (frame.type) {
       case 'pong':
@@ -325,6 +343,14 @@ class ConnectionImpl implements ChannelConnection {
     this.pending.failAll(new Error('Runtime channel closed'));
     try { this.socket.destroy(); } catch { /* ignore */ }
     this.hooks.onClosed();
+    this.notifyClosed();
+  }
+
+  /** closed 监听只通知一次（hub 可能在 close 之后仍被换绑进来）。 */
+  private notifyClosed(): void {
+    if (this.closedNotified) return;
+    this.closedNotified = true;
+    for (const listener of [...this.closedListeners]) listener();
   }
 
   /** 简单写队列：socket 高水位时入队，drain 后继续；超出上限丢最旧帧防内存堆积。 */

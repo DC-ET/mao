@@ -93,13 +93,21 @@ export class SessionEnvelopeBuilder {
    * 由派发时注入 shell/pty 会话（与 git token 同一机制），不写进镜像。
    */
   private buildDepsEnv(userId: number): Record<string, string> {
-    const depsUserDir = path.join(path.resolve(this.depsRoot), String(userId));
-    return {
-      NPM_CONFIG_PREFIX: path.join(depsUserDir, 'npm'),
-      PIP_TARGET: path.join(depsUserDir, 'py'),
-      PIP_BREAK_SYSTEM_PACKAGES: '1',
-      // PATH 注入由容器侧拼接（depsUserDir/npm/bin 前置到现有 PATH），这里给前缀根
-      MAO_DEPS_BIN: path.join(depsUserDir, 'npm', 'bin'),
-    };
+    return buildDepsEnv(this.depsRoot, userId);
   }
+}
+
+/**
+ * §5.13 依赖持久化 env（NPM_CONFIG_PREFIX / PIP_TARGET / PIP_BREAK_SYSTEM_PACKAGES / MAO_DEPS_BIN）。
+ * 宿主机与容器路径逐字节一致（决策 15），shell 与 pty 子进程注入、MCP stdio env 共用。
+ * PATH 注入由消费方拼接（MAO_DEPS_BIN 前置到现有 PATH），这里只给前缀根。
+ */
+export function buildDepsEnv(depsRoot: string, userId: number): Record<string, string> {
+  const depsUserDir = path.join(path.resolve(depsRoot), String(userId));
+  return {
+    NPM_CONFIG_PREFIX: path.join(depsUserDir, 'npm'),
+    PIP_TARGET: path.join(depsUserDir, 'py'),
+    PIP_BREAK_SYSTEM_PACKAGES: '1',
+    MAO_DEPS_BIN: path.join(depsUserDir, 'npm', 'bin'),
+  };
 }

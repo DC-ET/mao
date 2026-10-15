@@ -345,10 +345,10 @@ import { registerDigestRoutes } from './digest/routes.js';
 import { RuntimeChannelServer } from './harness/container/runtime-channel-server.js';
 import { ContainerRegistry } from './harness/container/container-registry.js';
 import { DockerToolRouter } from './harness/container/docker-tool-router.js';
-import { SessionEnvelopeBuilder } from './harness/container/session-envelope-builder.js';
+import { SessionEnvelopeBuilder, buildDepsEnv } from './harness/container/session-envelope-builder.js';
 import { DockerSendBytesBridge } from './harness/container/read-bytes-bridge.js';
 import { RoutingMcpClientManager } from './harness/container/routing-mcp-client-manager.js';
-import { PtyChannelHub, PtyBridgePty } from './harness/container/pty-bridge.js';
+import { PtyChannelHub } from './harness/container/pty-bridge.js';
 import { nodePtyFactory, type PtyLike, type SpawnPtyOptions } from './harness/terminal/remote-terminal.js';
 
 export interface MaoApp {
@@ -1004,6 +1004,10 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     runtimeDir: cfg.app.harness.runtimeDir,
     userSkillsDir,
     skillsDir: cfg.app.harness.skillsDir,
+    // 先 listen 再 docker run：容器 agent 启动即连 socket，宿主机没监听时只会无限重连
+    ensureChannelListening: async (userId) => channelServer.ensureListening(userId),
+    // token 随 docker run -e 注入（不再依赖容器读 .token 文件的隐式路径）
+    issueChannelToken: (userId) => channelServer.issueToken(userId),
     waitSocketReady: async (userId, timeoutMs) => {
       const deadline = Date.now() + timeoutMs;
       while (Date.now() < deadline) {
@@ -1061,18 +1065,25 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     router: dockerRouter,
     probe: mcpRuntimeProbe,
   }) as never;
-  // 终端 pty 容器桥：docker 用户经 channel 在容器内 spawn（§5.7.3），其余走宿主机 node-pty
+  // 终端 pty 容器桥：docker 用户经 channel 在容器内 spawn（§5.7.3），其余走宿主机 node-pty。
+  // hub 按用户长生存期：agent 重连换连接时 bindConnection 迁移订阅（在飞终端不中断）；
+  // 容器重建（startedAtMs 变化）时旧容器内的 pty 已不存在，旧 hub 全部收尾后换绑新连接。
   const ptyChannelHubs = new Map<number, PtyChannelHub>();
+  const ptyHubGeneration = new Map<number, number>();
   const containerPtyFactory = async (options: SpawnPtyOptions): Promise<PtyLike> => {
     const userId = options.userId;
     if (userId != null && await dockerRouter.enabledFor(userId)) {
-      await containerRegistry.ensureRunning(userId);
+      const entry = await containerRegistry.ensureRunning(userId);
       const connection = channelServer.getConnection(userId);
       if (!connection) throw new Error(`容器终端通道未就绪: userId=${userId}`);
       let hub = ptyChannelHubs.get(userId);
-      if (!hub) {
+      if (!hub || ptyHubGeneration.get(userId) !== entry.startedAtMs) {
+        hub?.dispose();
         hub = new PtyChannelHub(connection);
         ptyChannelHubs.set(userId, hub);
+        ptyHubGeneration.set(userId, entry.startedAtMs);
+      } else {
+        hub.bindConnection(connection);
       }
       const bridge = await hub.open(userId, options);
       harnessLog('info', `[container] terminal pty opened in container: user=${userId}, pid=${bridge.pid}`);
@@ -1107,6 +1118,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     userLookup: { findById: (id: number) => userRepo.findById(id) as Promise<{ username: string } | null> },
     ecpInjector,
     larkUatInjector,
+    // §5.13：仅容器用户注入 deps env（npm/pip 安装落到每用户 /deps 挂载），host 用户零变化
+    depsEnvProvider: async (userId) =>
+      (await dockerRouter.enabledFor(userId)) ? buildDepsEnv(cloudRuntimeCfg.container.depsDir, userId) : null,
     config: terminalCfg,
     audit: terminalAudit,
     ptyFactory: containerPtyFactory,
@@ -3177,7 +3191,10 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       shellManager.stopCleanup();
       terminalManager.stopCleanup();
       terminalManager.closeAll();
+      // 在飞容器终端按断开收尾（exit -1），再退订连接监听
+      for (const hub of ptyChannelHubs.values()) hub.dispose();
       ptyChannelHubs.clear();
+      ptyHubGeneration.clear();
       containerRegistry.stopIdleLoop();
       await containerRegistry.stopAllForShutdown().catch((e) => console.warn(`[container] stopAllForShutdown failed: ${(e as Error).message}`));
       await channelServer.stop();

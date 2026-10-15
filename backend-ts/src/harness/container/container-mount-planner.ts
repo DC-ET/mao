@@ -82,14 +82,14 @@ export class ContainerMountPlanner {
         // 路径空间一致性：容器内路径必须与宿主机逐字节一致（决策 15）
         throw new MountPlanError(`mount ${mount.purpose}: container path must equal host path (${mount.containerPath} != ${host})`);
       }
+      if (mount.mode !== 'ro' && mount.mode !== 'rw') {
+        throw new MountPlanError(`mount ${mount.purpose}: invalid mount mode '${String(mount.mode)}'`);
+      }
       const ro = mount.mode === 'ro';
       // 登记根校验：源路径必须等于某个登记根（仅 ro 项允许）或位于其下
       const owningRoot = registeredRoots.find((root) => host === root || host.startsWith(root + path.sep));
       if (!owningRoot) {
         throw new MountPlanError(`mount ${mount.purpose}: host path ${host} is not under any registered data root`);
-      }
-      if (ro && mount.mode !== 'ro') {
-        throw new MountPlanError(`mount ${mount.purpose}: read-only mount cannot be overridden`);
       }
       if (!ro) {
         // rw 项必须含 userId 尾段/中间段，拒绝把整个数据根或上级挂进容器

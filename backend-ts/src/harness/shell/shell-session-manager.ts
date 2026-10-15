@@ -41,6 +41,8 @@ export class ShellSession {
   private readonly userEnvironmentKeys = new Set<string>();
   /** stdout 'end' 之后才不会再有输出；进程 exit 可能早于管道排空。 */
   private stdoutEnded = false;
+  /** 子进程当前 PATH（spawn 时记录、refresh 时更新）：deps env 前置时基于它拼接。 */
+  currentPath: string | null;
 
   constructor(
     readonly sessionId: string,
@@ -49,8 +51,10 @@ export class ShellSession {
     readonly workspaceDir: string,
     readonly outputFile: string,
     initialUserEnvironmentKeys: Iterable<string> = [],
+    pathValue: string | null = null,
   ) {
     for (const key of initialUserEnvironmentKeys) this.userEnvironmentKeys.add(key);
+    this.currentPath = pathValue;
     this.currentWorkdir = workspaceDir;
     this.process.stdout.setEncoding('utf8');
     this.process.stderr.setEncoding('utf8');
@@ -239,8 +243,10 @@ export class ShellSession {
 
   refreshEnvironment(env: Record<string, string | null | undefined>): void {
     const nextKeys = new Set(Object.keys(env));
+    // PATH 永不 unset：deps env 刷新曾把它写进 userEnvironmentKeys，某次刷新不再带 PATH 时
+    // unset 会让 shell 后续所有命令找不到二进制
     const commands = [...this.userEnvironmentKeys]
-      .filter((key) => !nextKeys.has(key))
+      .filter((key) => !nextKeys.has(key) && key !== 'PATH')
       .map((key) => `unset ${key}`);
     for (const [key, value] of Object.entries(env)) {
       commands.push(value == null
@@ -470,6 +476,9 @@ export class OutputManager {
   }
 }
 
+/** 子进程 PATH 缺失时的兜底（bash 编译期默认值的显式化）。 */
+const DEFAULT_CHILD_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
+
 export class ShellSessionManager {
   private readonly sessions = new Map<string, ShellSession>();
   private readonly conversationSessions = new Map<number, Set<string>>();
@@ -488,6 +497,11 @@ export class ShellSessionManager {
     private readonly sessionMaxLifetimeHours = 2,
     /** 容器模式 askpass 私有目录（§5.7.2）：写 /tmp 而非宿主机共享的 runtime 路径，避免两套机制并发写同一文件。 */
     private readonly askpassDirOverride?: string,
+    /**
+     * §5.13 依赖持久化 env 提供者（仅容器模式装配）：返回 NPM_CONFIG_PREFIX 等变量，
+     * 注入 shell 子进程使命 pip/npm 安装落到每用户 /deps 挂载。host 模式不传，行为零变化。
+     */
+    private readonly depsEnvProvider?: () => Record<string, string> | null,
   ) {}
 
   /** askpass 脚本落点：容器模式写私有目录，host 模式沿用会话 runtime 目录。 */
@@ -509,6 +523,7 @@ export class ShellSessionManager {
     session: ShellSession,
     userId: number | null,
     domainTokenMap: Record<string, string>,
+    depsEnv?: Record<string, string> | null,
   ): void {
     const env: Record<string, string | null> = {};
     this.configureUserHome(env as NodeJS.ProcessEnv, userId);
@@ -527,9 +542,12 @@ export class ShellSessionManager {
       env.GIT_ASKPASS = null;
       env.GIT_TERMINAL_PROMPT = null;
     }
+    const deps = this.resolveDepsEnv(depsEnv);
+    if (deps) this.applyDepsEnv(env, deps, session.currentPath);
     // 进程启动时继承、未登记进 userEnvironmentKeys 的 GIT_TOKEN_* 清不掉，先按前缀全清再注入当前用户
     session.writeStdin('for k in ${!GIT_TOKEN_@}; do unset "$k"; done\n');
     session.refreshEnvironment(env);
+    if (env.PATH != null) session.currentPath = env.PATH;
   }
 
   getOrCreate(
@@ -673,6 +691,12 @@ export class ShellSessionManager {
       initialUserEnvironmentKeys.add('GIT_TERMINAL_PROMPT');
       for (const domain of Object.keys(domainTokenMap)) initialUserEnvironmentKeys.add(GitCredentialService.envVarNameForDomain(domain));
     }
+    const deps = this.resolveDepsEnv();
+    if (deps) {
+      this.applyDepsEnv(env, deps);
+      // PATH 不登记：refreshEnvironment 的 unset 清单若含 PATH 会引爆 shell（见 refreshEnvironment 守卫）
+      for (const key of Object.keys(deps)) initialUserEnvironmentKeys.add(key);
+    }
     const child = spawn('bash', ['-c', 'exec 2>&1; exec bash --norc --noprofile'], {
       cwd: workDir,
       env,
@@ -680,7 +704,7 @@ export class ShellSessionManager {
       // 独立进程组，close() 才能一次性回收 bash 的所有后代进程
       detached: true,
     });
-    return new ShellSession(shellSessionId, conversationId, child, workDir, outputFile, initialUserEnvironmentKeys);
+    return new ShellSession(shellSessionId, conversationId, child, workDir, outputFile, initialUserEnvironmentKeys, env.PATH ?? null);
   }
 
   private configureUserHome(env: NodeJS.ProcessEnv, userId: number | null): void {
@@ -711,6 +735,23 @@ export class ShellSessionManager {
     } catch { /* non-posix */ }
     env.GIT_ASKPASS = askPassScript;
     env.GIT_TERMINAL_PROMPT = '0';
+  }
+
+  /** 取当前请求的 §5.13 deps env：host 模式无提供者返回 null（零变化）。 */
+  private resolveDepsEnv(explicit?: Record<string, string> | null): Record<string, string> | null {
+    const deps = explicit ?? this.depsEnvProvider?.() ?? null;
+    return deps && Object.keys(deps).length > 0 ? deps : null;
+  }
+
+  /** deps env 写入子进程环境：原样注入 + MAO_DEPS_BIN 前置 PATH（npm i -g 的可执行文件直接可用）。 */
+  private applyDepsEnv(env: Record<string, string | null | undefined>, deps: Record<string, string>, basePath?: string | null): void {
+    for (const [key, value] of Object.entries(deps)) env[key] = value;
+    const depsBin = deps.MAO_DEPS_BIN;
+    if (!depsBin) return;
+    const base = basePath ?? env.PATH;
+    // PATH 缺失（sanitize 后为空 / refresh map 不带 PATH）时退回系统默认 PATH：
+    // 只留 deps bin 会让 bash 里所有命令都找不到二进制
+    env.PATH = base ? `${depsBin}:${base}` : `${depsBin}:${DEFAULT_CHILD_PATH}`;
   }
 
   private removeSession(sessionId: string): void {

@@ -4,12 +4,19 @@ import type { RuntimeChannelServer } from './runtime-channel-server.js';
 import type { ContainerRegistry } from './container-registry.js';
 import type { SessionEnvelopeBuilder } from './session-envelope-builder.js';
 
-/** docker 模式下必须进容器执行的工具（技术方案 §5.7.1）。mcp__* 前缀另行匹配。 */
+/**
+ * docker 模式下必须进容器执行的工具（技术方案 §5.7.1）。
+ *
+ * 注意 `mcp__*` 不在本清单内：MCP 工具经 ToolDispatcher 的 sessionTools 命中，
+ * 其连接与 callTool 由 RoutingMcpClientManager 路由到 DockerToolRouter 的
+ * mcpConnect/mcpCall（§5.10），容器内 ContainerMcpBridge spawn stdio 子进程。
+ * 若把 `mcp__*` 并进本清单，它会被当成普通 tool_call 帧发进容器，而容器执行器
+ * 只注册文件/shell 工具，MCP 调用必然失败。
+ */
 export const DOCKER_ONLY_TOOLS = new Set(['shell', 'read_file', 'write_file', 'edit_file', 'glob_search', 'grep_search']);
-export const MCP_TOOL_PREFIX = 'mcp__';
 
 export function isDockerOnlyTool(toolName: string): boolean {
-  return DOCKER_ONLY_TOOLS.has(toolName) || toolName.startsWith(MCP_TOOL_PREFIX);
+  return DOCKER_ONLY_TOOLS.has(toolName);
 }
 
 export interface UserRuntimeModeLookup {
@@ -25,6 +32,12 @@ export interface DockerDispatchContext {
 
 /** 工具结果回传与容器请求超时：shell exec 默认 yield 300s、async 后台任务续等可达数分钟，取 30 分钟兜底。 */
 const TOOL_CALL_TIMEOUT_MS = 30 * 60_000;
+/**
+ * enabledFor 判定的短 TTL 缓存（§5.7.1「host 模式零变化」）：host 模式下每个
+ * docker-only 工具调用都要判定一次，不缓存则每次多一次 userRepo 查库。用户改
+ * runtime_mode 后最多一个 TTL 生效；全局模式进缓存 key，切换立即反映。
+ */
+const RUNTIME_MODE_CACHE_TTL_MS = 5_000;
 
 /**
  * DockerToolRouter（技术方案 §3.2 / §5.7.1）：docker 模式唯一的派发分支。
@@ -32,6 +45,8 @@ const TOOL_CALL_TIMEOUT_MS = 30 * 60_000;
  * host 模式下 ToolDispatcher 不经过本类，代码路径零变化。
  */
 export class DockerToolRouter {
+  private readonly modeCache = new Map<string, { value: boolean; atMs: number }>();
+
   constructor(
     private readonly deps: {
       containerRegistry: ContainerRegistry;
@@ -45,11 +60,15 @@ export class DockerToolRouter {
 
   /** 用户是否走容器：用户级字段优先，空跟随全局。 */
   async enabledFor(userId: number): Promise<boolean> {
-    if (this.deps.globalMode() !== 'docker') {
-      // 全局 host 时仍允许用户级显式开启 docker（部署级灰度 + 精细覆盖）
-      return (await this.deps.runtimeModeLookup.runtimeModeOf(userId)) === 'docker';
-    }
-    return (await this.deps.runtimeModeLookup.runtimeModeOf(userId)) !== 'host';
+    const global = this.deps.globalMode();
+    const cacheKey = `${global}:${userId}`;
+    const now = Date.now();
+    const cached = this.modeCache.get(cacheKey);
+    if (cached && now - cached.atMs < RUNTIME_MODE_CACHE_TTL_MS) return cached.value;
+    const override = await this.deps.runtimeModeLookup.runtimeModeOf(userId);
+    const value = global === 'docker' ? override !== 'host' : override === 'docker';
+    this.modeCache.set(cacheKey, { value, atMs: now });
+    return value;
   }
 
   /** ensureRunning + 通道就绪（终端 pty / read_bytes / MCP 等非工具链路复用）。 */
@@ -60,6 +79,7 @@ export class DockerToolRouter {
   async dispatch(toolName: string, argumentsJson: string, ctx: DockerDispatchContext): Promise<string> {
     const started = Date.now();
     const entry = await this.deps.containerRegistry.ensureRunning(ctx.userId);
+    entry.lastUsedAtMs = Date.now();
     const envelope = await this.deps.envelopeBuilder.build({
       userId: ctx.userId, sessionId: ctx.sessionId, workspace: ctx.workspace,
     });
@@ -71,7 +91,6 @@ export class DockerToolRouter {
     const response = await connection.request({
       v: 1, type: 'tool_call', id, tool: toolName, args: argumentsJson, envelope,
     }, TOOL_CALL_TIMEOUT_MS);
-    entry.lastUsedAtMs = Date.now();
     if (response.type !== 'tool_result') {
       throw new Error(`容器返回了意外的响应类型: ${response.type}`);
     }
@@ -88,6 +107,7 @@ export class DockerToolRouter {
   async readBytes(input: { userId: number; sessionId: number | null; workspace: string | null; path: string; maxBytes: number }): Promise<Buffer | null> {
     if (!(await this.enabledFor(input.userId))) return null;
     const entry = await this.deps.containerRegistry.ensureRunning(input.userId);
+    entry.lastUsedAtMs = Date.now();
     const envelope = await this.deps.envelopeBuilder.build({
       userId: input.userId, sessionId: input.sessionId, workspace: input.workspace,
     });
@@ -97,7 +117,6 @@ export class DockerToolRouter {
     const response = await connection.request({
       v: 1, type: 'read_bytes', id, path: input.path, maxBytes: input.maxBytes, envelope,
     }, 120_000);
-    entry.lastUsedAtMs = Date.now();
     if (response.type !== 'read_bytes_result') {
       throw new Error(`容器返回了意外的响应类型: ${response.type}`);
     }
@@ -112,7 +131,8 @@ export class DockerToolRouter {
     userId: number; sessionId: number; server: { id: number; name: string; serverType: string; command?: string | null; argsJson?: string | null; url?: string | null };
     env: Record<string, string>;
   }): Promise<McpToolRefLike[]> {
-    await this.deps.containerRegistry.ensureRunning(input.userId);
+    const entry = await this.deps.containerRegistry.ensureRunning(input.userId);
+    entry.lastUsedAtMs = Date.now();
     const envelope = await this.deps.envelopeBuilder.build({ userId: input.userId, sessionId: input.sessionId, workspace: null });
     const connection = this.deps.channelServer.getConnection(input.userId);
     if (!connection) throw new Error(`用户运行时容器未就绪（channel 未连接）: userId=${input.userId}`);
@@ -128,7 +148,8 @@ export class DockerToolRouter {
   }
 
   async mcpCall(input: { userId: number; sessionId: number; serverId: number; toolName: string; argumentsJson: string }): Promise<string> {
-    await this.deps.containerRegistry.ensureRunning(input.userId);
+    const entry = await this.deps.containerRegistry.ensureRunning(input.userId);
+    entry.lastUsedAtMs = Date.now();
     const connection = this.deps.channelServer.getConnection(input.userId);
     if (!connection) throw new Error(`用户运行时容器未就绪（channel 未连接）: userId=${input.userId}`);
     const id = newFrameId('mcpcall');

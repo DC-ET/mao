@@ -43,6 +43,9 @@ export interface PtyHubHooks {
   sendExit(ptyId: string, exitCode: number): void;
 }
 
+/** PtyHub.open 的 spawn 结果：成功回 pid 供宿主机 ack，失败回错误文本。 */
+export type PtyOpenOutcome = { ok: true; pid: number } | { ok: false; error: string };
+
 /**
  * 容器内 pty 通道集线器（技术方案 §5.7.3 / §8 第 8 条）：
  * 与 tool_call 共用同一条 socket 连接，pty 输出经分帧协议回传宿主机。
@@ -60,8 +63,8 @@ export class PtyHub {
     return this.ptys.size;
   }
 
-  async open(ptyId: string, options: PtyOpenOptions): Promise<void> {
-    if (this.ptys.has(ptyId)) return;
+  async open(ptyId: string, options: PtyOpenOptions): Promise<PtyOpenOutcome> {
+    if (this.ptys.has(ptyId)) return { ok: true, pid: this.ptys.get(ptyId)!.pid };
     try {
       const pty = this.factory(options);
       this.ptys.set(ptyId, pty);
@@ -70,9 +73,11 @@ export class PtyHub {
         this.ptys.delete(ptyId);
         this.hooks.sendExit(ptyId, exitCode ?? -1);
       });
+      return { ok: true, pid: pty.pid };
     } catch (e) {
       console.error(`[pty-hub] open failed: ${(e as Error).message}`);
       this.hooks.sendExit(ptyId, -1);
+      return { ok: false, error: (e as Error).message };
     }
   }
 

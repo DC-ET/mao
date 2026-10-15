@@ -55,6 +55,10 @@ export interface ContainerRegistryOptions {
   runtimeDir: string;
   userSkillsDir: string;
   skillsDir: string;
+  /** 创建前确保宿主机 socket server 已监听（先 listen 再 docker run），返回 socket 路径。 */
+  ensureChannelListening(userId: number): Promise<string>;
+  /** 创建前确保该用户连接 token 已落盘（容器启动时经 -e 注入）。 */
+  issueChannelToken(userId: number): string;
   /** 容器启动命令等待 socket 就绪时轮询连接的回调。 */
   waitSocketReady(userId: number, timeoutMs: number): Promise<void>;
   /** 停止前发 shutdown 帧让容器收尾（§5.3.1 对策 3）。返回 false 表示容器无响应。 */
@@ -193,6 +197,9 @@ export class ContainerRegistry {
     const c = this.opts.config.container;
     const mounts = this.planner.plan(userId);
     this.planner.auditLog(userId, mounts);
+    // 先 listen 再 run：容器 agent 启动即连 socket，宿主机没监听时只会无限重连
+    const socketPath = await this.opts.ensureChannelListening(userId);
+    const channelToken = this.opts.issueChannelToken(userId);
     const args = [
       'run', '-d',
       '--name', name,
@@ -203,12 +210,19 @@ export class ContainerRegistry {
       '--pids-limit', String(c.pidsLimit),
       '--network', c.network,
       '--tmpfs', `/tmp:size=${c.tmpfsSizeMb}m,mode=1777`,
+      // 容器 agent 硬依赖：userId 缺失即 exit(1)；roots 显式注入避免容器内出现第二套路径真相
+      '-e', `MAO_CONTAINER_USER_ID=${userId}`,
+      '-e', `MAO_CHANNEL_TOKEN=${channelToken}`,
+      '-e', `MAO_WORKSPACE_ROOT=${this.opts.workspaceRoot}`,
+      '-e', `MAO_RUNTIME_DIR=${this.opts.runtimeDir}`,
+      '-e', `MAO_USER_HOME_DIR=${this.opts.userHomeDir}`,
+      '-e', `MAO_USER_SKILLS_DIR=${this.opts.userSkillsDir}`,
       ...this.planner.toDockerArgs(mounts),
       // 容器不暴露任何端口：进出只走 Unix socket（§5.2）
       '--restart', 'no',
       c.image,
       'node', path.posix.join(c.distDir, 'harness/container/runtime-agent.js'),
-      '--socket', path.join(c.channelDir, String(userId), 'runtime.sock'),
+      '--socket', socketPath,
     ];
     // 并发创建靠 docker name 唯一约束兜底：冲突说明对方已在建，改为等待就绪
     try {
@@ -229,8 +243,16 @@ export class ContainerRegistry {
       inContainer: { shellSessions: 0, pendingTasks: 0, attachedTerminals: 0 },
       connectionDead: false,
     };
+    try {
+      await this.opts.waitSocketReady(userId, c.startTimeoutMs);
+    } catch (e) {
+      // 条目必须等 socket 就绪后才登记为 running：先登记会把超时失败固化成
+      // "容器就绪"的毒化状态，后续 ensureRunning 直接复用、永不重试
+      this.entries.delete(userId);
+      await this.cleanupHalfCreated(name);
+      throw e;
+    }
     this.entries.set(userId, entry);
-    await this.opts.waitSocketReady(userId, c.startTimeoutMs);
     harnessLog('info', `[container] container ready: user=${userId}, name=${name}`);
     return entry;
   }
