@@ -78,6 +78,7 @@ import { MysqlSystemSettingRepository } from './settings/settings.repository.js'
 import { SystemSettingService } from './settings/settings.service.js';
 import { runSettingsBootstrap } from './settings/settings-bootstrap.js';
 import { registerSystemSettingRoutes } from './settings/settings.routes.js';
+import { registerEmbedRoutes } from './embed/embed.routes.js';
 import { MysqlUserCommandRepository } from './command/command.repository.js';
 import { UserCommandService } from './command/command.service.js';
 import { registerCommandRoutes } from './command/command.routes.js';
@@ -2755,6 +2756,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     registerSharedAgentRoutes(api, { sharedAgentService, permissionService });
     registerModelRoutes(api, { modelService, permissionService });
     registerSystemSettingRoutes(api, { systemSettingService: settingService, permissionService });
+    registerEmbedRoutes(api, { systemSettingService: settingService, agentService });
     registerCommandRoutes(api, {
       userCommandService: commandService,
       agentService,

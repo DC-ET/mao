@@ -90,6 +90,49 @@ describe('SystemSettingService', () => {
     expect(updated.value).toBe('9');
   });
 
+  it('updateAllowsEmptyEmbedAgentId', async () => {
+    const row = setting(SystemSettingService.EMBED_AGENT_ID_KEY, '集成配置', 1);
+    vi.mocked(mapper.findByKey).mockResolvedValue(row);
+    const updated = await service().update(SystemSettingService.EMBED_AGENT_ID_KEY, '');
+    expect(updated.value).toBe('');
+    expect(mapper.updateById).toHaveBeenCalledWith(row);
+  });
+
+  it('updateRejectsNonNumericEmbedAgentId', async () => {
+    vi.mocked(mapper.findByKey).mockResolvedValue(setting(SystemSettingService.EMBED_AGENT_ID_KEY, '集成配置', 1));
+    await expect(service().update(SystemSettingService.EMBED_AGENT_ID_KEY, 'abc')).rejects.toThrow(/浮窗助手配置必须是有效的 Agent ID/);
+    expect(agentLookup.findById).not.toHaveBeenCalled();
+  });
+
+  it('updateValidatesEmbedAgentExists', async () => {
+    vi.mocked(mapper.findByKey).mockResolvedValue(setting(SystemSettingService.EMBED_AGENT_ID_KEY, '集成配置', 1));
+    vi.mocked(agentLookup.findById).mockResolvedValue(null);
+    await expect(service().update(SystemSettingService.EMBED_AGENT_ID_KEY, '9')).rejects.toThrow(/Agent 不存在/);
+  });
+
+  it('updateRejectsNewlyAssignedDisabledEmbedAgent', async () => {
+    vi.mocked(mapper.findByKey).mockResolvedValue(setting(SystemSettingService.EMBED_AGENT_ID_KEY, '集成配置', 1));
+    vi.mocked(agentLookup.findById).mockResolvedValue({ id: 9, enabled: 0 });
+    await expect(service().update(SystemSettingService.EMBED_AGENT_ID_KEY, '9')).rejects.toThrow(/已停用/);
+  });
+
+  it('updateKeepsAlreadyConfiguredDisabledEmbedAgent', async () => {
+    const row = setting(SystemSettingService.EMBED_AGENT_ID_KEY, '集成配置', 1);
+    row.value = '9';
+    vi.mocked(mapper.findByKey).mockResolvedValue(row);
+    vi.mocked(agentLookup.findById).mockResolvedValue({ id: 9, enabled: 0 });
+    const updated = await service().update(SystemSettingService.EMBED_AGENT_ID_KEY, '9');
+    expect(updated.value).toBe('9');
+  });
+
+  it('updateAcceptsValidEmbedAgentId', async () => {
+    const row = setting(SystemSettingService.EMBED_AGENT_ID_KEY, '集成配置', 1);
+    vi.mocked(mapper.findByKey).mockResolvedValue(row);
+    vi.mocked(agentLookup.findById).mockResolvedValue({ id: 9 });
+    const updated = await service().update(SystemSettingService.EMBED_AGENT_ID_KEY, '9');
+    expect(updated.value).toBe('9');
+  });
+
   it('updateAllowsEmptyWeixinModelId', async () => {
     const row = setting(SystemSettingService.WEIXIN_MODEL_ID_KEY, '微信', 1);
     vi.mocked(mapper.findByKey).mockResolvedValue(row);

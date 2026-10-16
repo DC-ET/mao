@@ -57,8 +57,8 @@ Mao 不是又一个 ChatGPT 套壳，也不是 Dify / n8n 那样的低代码工�
 | **信号哨兵** | 按固定间隔探测外部 HTTP(S) 接口，判定值（内容哈希 / JSON 字段 / 状态码）变化时自动开一次 Agent 会话；连续失败自动停用并通知，探测地址禁私网。 |
 | **工作区** | 云端新建 / 复用 / Git HTTPS clone；文件树与 Git diff 浏览，CLOUD 可直接管理工作区文件（文件树增删改传，或「文件管理」页签整幅操作）；CLOUD 可开服务端交互终端。 |
 | **治理** | RBAC、管理 API 审计、[用量分析](skills/mao-cli/reference/analytics.md)（含成本口径）、[调用流水](skills/mao-cli/reference/llm-call.md)、[月度用量预算](skills/mao-cli/reference/budget.md)（全局 / 用户 / Agent，超额提醒或拦截，开放接口一并生效）；任务结果消息点踩反馈（管理后台汇总与明细）；本地账号 / LDAP / 飞书登录。 |
-| **多端** | 管理后台、Web / Electron、安卓 APP（CLOUD）、终端 `mao-agent`、REST `mao-cli`。 |
-| **通道** | 飞书机器人、钉钉机器人、微信 Bot、页面 Embed SDK（可操作宿主页面）。 |
+| **多端** | 管理后台（右下角浮窗助手，见「通道」）、Web / Electron、安卓 APP（CLOUD）、终端 `mao-agent`、REST `mao-cli`。 |
+| **通道** | 飞书机器人、钉钉机器人、微信 Bot、页面 Embed SDK（可操作宿主页面；管理后台已内置接入，管理员登录即用，Agent 在「系统设置 → 集成配置」选择）。 |
 
 任意 [OpenAI 兼容](skills/mao-cli/reference/admin.md#模型管理) 模型均可接入。若你要的是画布编排或托管服务，更适合看 Dify、n8n；若要对齐 Codex 类编码助手但数据不出域，看 [与 Codex 的对比](skills/mao-cli/reference/project.md#与-openai-codex-对比)。
 

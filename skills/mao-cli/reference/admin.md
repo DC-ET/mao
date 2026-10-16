@@ -180,6 +180,7 @@ CLI：`mao llm-call list`（见 [llm-call.md](llm-call.md)）。
 - **登录认证**（密钥 AES 加密存储，LDAP/飞书登录/OSS 提供一键测试连接）：
   - 公司 SSO（0.0.111）：启用开关、校验域名白名单、宿主 Origin 白名单、Access 有效期、校验超时；白名单支持换行或逗号输入，宿主 Origin 可填精确 HTTPS、`https://*.example.com`（任意层级子域、不含根域、端口严格匹配）或 `*`（所有来源）。以 `auth.companySso.config` 完整快照保存，新换票即时生效，取消 SSO 环境变量。业务系统仍用 `MaoChat.init` 的 `auth.checkUrl` 指定接口地址，详见 [SSO 配置](config.md#公司-ssoweb-embed-sdk)。
   - ECP 飞书登录、LDAP 认证、飞书 OAuth 登录（0.0.82 起由环境变量迁入）
+  - 集成配置（0.0.298）：浮窗助手 Agent（`embed.agentId`，留空回落系统默认 Agent，见下文「浮窗助手」）
 - **文件与存储**：上传（存储方式 local/OSS、访问前缀、单文件大小上限）、阿里云 OSS 对象存储与 STS 临时凭证
 - **Agent 引擎**：Agent 运行（0.0.88 迁入，线程池与 WS 超时重启生效）、LLM 超时与重试、上下文压缩（Harness 调参 0.0.89 迁入，保存后重启后端生效）
 - **模型任务**（各功能的默认模型，留空则跟随会话/系统默认）：会话（`session.titleModelId` 标题生成）、代码（`git.commitMessageModelId` Git 提交信息）、记忆（`memory.extractionModelId` 记忆自动抽取）
@@ -188,6 +189,17 @@ CLI：`mao llm-call list`（见 [llm-call.md](llm-call.md)）。
 - **平台与运维**：Agent 资产（Bundle registry 只读端点开关与访问令牌）、分享（匿名分享链接开关）、审计（日志保留天数）、运行环境（工作区与 Skill 目录，只读展示）
 
 读写需 `settings:read` / `settings:write` 权限；页面左侧目录按上述分两级展示（默认折叠为分组标题行，点击分组或滚动到该组内容时自动展开），可快速跳转分组；滚动右侧配置时目录固定不跟随页面滚走。CLI：`mao settings list|set`（见 [settings.md](settings.md)）。
+
+## 浮窗助手（0.0.298 起）
+
+管理后台右下角的 Mao 助手浮动入口（Web Embed SDK 内置接入，与外部业务系统接入同一产物）。登录后点开浮窗即可就当前页面与 Agent 对话：流式输出、思考过程、工具执行状态、追问卡片、手动停止、历史会话、粘贴附件；Agent 还可在「每次写操作前确认」的授权下操作当前页面（如改筛选、填表单）。浮窗对所有登录用户可见，不占新权限码。
+
+- **使用的 Agent**：「系统设置 → 登录认证 → 集成配置」的 `embed.agentId` 选择；留空回落系统默认 Agent，均不可用时浮窗不出现。
+- **页面上下文**：Agent 只收到路由结构性信息（页面名/路径/参数），不收表格数据行与表单值；要看页面内容时 Agent 用 `page_*` 工具按授权获取。
+- **登出联动**：登出后入口与浮窗立即消失。
+- **已知限制**：展开的浮窗会覆盖 `el-dialog` / `el-drawer`（默认收起不遮挡）；切换 Agent 后浮窗历史不再显示旧 Agent 的会话（会话本身在「会话管理」可见）。
+
+详见 [embed-sdk.md](embed-sdk.md#管理后台浮窗助手内置宿主)。
 
 ## 飞书机器人通道
 
