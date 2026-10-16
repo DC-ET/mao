@@ -50,6 +50,33 @@ export interface WorkspaceFilesState {
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api/v1'
 const MARKDOWN_EXTENSIONS = ['.md', '.markdown']
 
+/**
+ * 管理后台文件端点 URL 前缀。
+ *
+ * 与桌面端的根本差异：admin 的 api 实例（`src/api/index.ts`）自身已带
+ * `baseURL = VITE_API_BASE_URL || '/api/v1'`，因此这里的后缀不能再含
+ * `/api/v1`——否则裸 fetch（下载/预览）会请求 `/api/v1/api/v1/...` 得到 404，
+ * 而 404 的错误体被 `loadDirectory` 归一成「目录加载失败」，用户看到的是
+ * 误导性的「工作区目录不存在或已被清理」（工作区其实好着）。
+ * 后缀形式与 desktop 一致：`/admin/sessions/{id}/files/...`，由调用方拼上
+ * `API_BASE` 得到绝对路径。
+ */
+const FILES_PATH_PREFIX = '/admin/sessions'
+
+/** 拼接会话工作区文件端点 URL；params 中 null/undefined/'' 不参与查询串。 */
+function sessionFilesUrl(
+  sessionId: number,
+  suffix: string,
+  params?: Record<string, string | number | undefined>,
+): string {
+  const query = new URLSearchParams()
+  for (const [key, value] of Object.entries(params ?? {})) {
+    if (value != null && value !== '') query.set(key, String(value))
+  }
+  const qs = query.toString()
+  return `${API_BASE}${FILES_PATH_PREFIX}/${sessionId}/files/${suffix}${qs ? `?${qs}` : ''}`
+}
+
 function isMarkdownPath(path: string): boolean {
   const lower = path.toLowerCase()
   return MARKDOWN_EXTENSIONS.some((ext) => lower.endsWith(ext))
@@ -139,6 +166,9 @@ async function fetchBytes(url: string): Promise<{ blob?: Blob; fileName?: string
 /**
  * 管理后台会话工作区文件浏览状态机：目录导航 / 搜索 / 预览 / 下载。
  * JSON 端点（directory/search/read）走全局 api 实例；字节流端点（preview/download/download-zip）走裸 fetch。
+ * 两类请求共用 sessionFilesUrl 拼出的完整 URL：api 实例的 baseURL 与本文件的 API_BASE
+ * 取同一个 VITE_API_BASE_URL，且 URL 本身是绝对路径（以 / 开头）时 axios 会忽略 baseURL，
+ * 因此不会出现前缀被拼两次的问题。
  */
 export function useWorkspaceFiles() {
   const state = reactive<WorkspaceFilesState>({
@@ -152,15 +182,6 @@ export function useWorkspaceFiles() {
     searchLoading: false,
     preview: null,
   })
-
-  function filesUrl(suffix: string, params?: Record<string, string | number | undefined>): string {
-    const query = new URLSearchParams()
-    for (const [key, value] of Object.entries(params ?? {})) {
-      if (value != null && value !== '') query.set(key, String(value))
-    }
-    const qs = query.toString()
-    return `${API_BASE}/admin/sessions/${state.sessionId}/files/${suffix}${qs ? `?${qs}` : ''}`
-  }
 
   function revokePdf() {
     if (state.preview?.pdfUrl) {
@@ -178,12 +199,12 @@ export function useWorkspaceFiles() {
     state.searchLoading = false
   }
 
-  async function loadDirectory(dir: string) {
+  async function loadDirectory(dir: string, sessionId: number = state.sessionId!) {
     state.currentDir = dir
     state.loading = true
     state.error = null
     try {
-      const { data } = await api.get(filesUrl('directory', { dir: dir || undefined }), { skipErrorToast: true })
+      const { data } = await api.get(sessionFilesUrl(sessionId, 'directory', { dir: dir || undefined }), { skipErrorToast: true })
       state.entries = data?.entries ?? []
       state.truncated = Boolean(data?.truncated)
     } catch (e) {
@@ -227,7 +248,7 @@ export function useWorkspaceFiles() {
     }
     state.searchLoading = true
     try {
-      const { data } = await api.get(filesUrl('search', { pattern: keyword }), { skipErrorToast: true })
+      const { data } = await api.get(sessionFilesUrl(state.sessionId!, 'search', { pattern: keyword }), { skipErrorToast: true })
       state.search = { pattern: keyword, entries: data?.entries ?? [], truncated: Boolean(data?.truncated) }
     } catch (e) {
       // 搜索失败清空结果，避免把上一次的关键词结果当成当前的
@@ -255,7 +276,7 @@ export function useWorkspaceFiles() {
     }
     state.preview = preview
     if (isPdfPath(relativePath)) {
-      const result = await fetchBytes(filesUrl('preview', { path: relativePath }))
+      const result = await fetchBytes(sessionFilesUrl(state.sessionId!, 'preview', { path: relativePath }))
       // 期间可能已切换预览目标：仅回填仍是当前目标的结果
       if (state.preview !== preview) return
       preview.loading = false
@@ -267,7 +288,7 @@ export function useWorkspaceFiles() {
       return
     }
     try {
-      const { data } = await api.get(filesUrl('read', { path: relativePath }), { skipErrorToast: true })
+      const { data } = await api.get(sessionFilesUrl(state.sessionId!, 'read', { path: relativePath }), { skipErrorToast: true })
       if (state.preview !== preview) return
       preview.loading = false
       preview.data = data ?? null
@@ -285,7 +306,7 @@ export function useWorkspaceFiles() {
   }
 
   async function downloadFile(relativePath: string) {
-    const result = await fetchBytes(filesUrl('download', { path: relativePath }))
+    const result = await fetchBytes(sessionFilesUrl(state.sessionId!, 'download', { path: relativePath }))
     if (!result.blob) {
       throw new Error(result.error ?? '下载失败')
     }
@@ -293,7 +314,7 @@ export function useWorkspaceFiles() {
   }
 
   async function downloadZip(relativeDir?: string) {
-    const result = await fetchBytes(filesUrl('download-zip', { path: relativeDir || undefined }))
+    const result = await fetchBytes(sessionFilesUrl(state.sessionId!, 'download-zip', { path: relativeDir || undefined }))
     if (!result.blob) {
       throw new Error(result.error ?? '下载失败')
     }

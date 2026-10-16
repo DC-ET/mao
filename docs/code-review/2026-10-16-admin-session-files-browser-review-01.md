@@ -104,7 +104,7 @@ AssertionError: the given combination of arguments (undefined and string) is inv
 | `pathId` 收到非数字 id（NaN） | `getSession(NaN)` → `SESSION_NOT_FOUND`，与既有 admin 路由同口径，非本次引入 |
 | 搜索 / 目录加载的并发竞态（快速连续点击时 `entries` 与 `currentDir` 可能短暂不一致） | 瞬时且下一次导航即自恢复，无法构造确定性失败测试，按审查方法不采纳 |
 | 裸 `fetch` 无 401 静默刷新 | 方案 §11.3 明知取舍（换取无 30s 掐断与可读错误体），失败时有明确错误提示 |
-| `loadDirectory` 失败时 `state.currentDir` 仍指向失败目录、dialog 错误文案固定为「工作区目录不存在或已被清理」 | 与方案 §5.5 约定的空态文案一致 |
+| `loadDirectory` 失败时 `state.currentDir` 仍指向失败目录、dialog 错误文案固定为「工作区目录不存在或已被清理」 | 与方案 §5.5 约定的空态文案一致。**2026-10-16 补充**：该文案会把「URL 拼错导致 404」误报成「目录不存在」（线上即此形态，见 CHANGELOG 0.0.298 管理后台小节的修复）。纯展示层的其他失败（权限 403、会话不存在）仍有各自的明确 toast，仅目录这一路的文案对失败原因不敏感——后续若要细化，宜把后端 message 一并透出 |
 | PDF blob 为空（size 0）时 iframe 空白 | 服务端 PDF 头校验已拦截空文件，桌面端同款行为 |
 | 关闭 Dialog 后 `searchInput` 残留上次关键词 | 纯展示层瞬时态，不影响功能正确性 |
 
