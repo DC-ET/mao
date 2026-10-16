@@ -104,6 +104,9 @@ async function extractFetchError(resp: Response): Promise<string> {
  * 字节流请求统一走裸 fetch（不用 api 实例）：
  * 1) axios 默认 30s 超时会掐断大 zip 的「先打包再吐字节」；
  * 2) responseType:'blob' 的错误体是 Blob，拦截器只能弹通用提示，拿不到后端明确错误。
+ * 注意：平台约定业务错误（PARAM_INVALID / SESSION_NOT_FOUND 等）经 handleError 归一为
+ * HTTP 200 + Result JSON，resp.ok 为真，需按「无 Content-Disposition 且 content-type 为
+ * JSON → 解析 code !== 0」识别，否则错误体会被当成文件 blob（对齐桌面端守卫）。
  */
 async function fetchBytes(url: string): Promise<{ blob?: Blob; fileName?: string; error?: string }> {
   const token = localStorage.getItem('token')
@@ -118,7 +121,19 @@ async function fetchBytes(url: string): Promise<{ blob?: Blob; fileName?: string
   if (!resp.ok) {
     return { error: await extractFetchError(resp) }
   }
-  return { blob: await resp.blob(), fileName: parseDownloadFileName(resp.headers.get('content-disposition')) }
+  const disposition = resp.headers.get('content-disposition')
+  const contentType = resp.headers.get('content-type') || ''
+  if (!disposition && contentType.includes('application/json')) {
+    try {
+      const body = await resp.json()
+      if (body?.code !== undefined && body.code !== 0) {
+        return { error: body.message || '请求失败' }
+      }
+    } catch {
+      /* 解析失败回落按文件流处理 */
+    }
+  }
+  return { blob: await resp.blob(), fileName: parseDownloadFileName(disposition) }
 }
 
 /**
