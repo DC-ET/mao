@@ -130,7 +130,18 @@
     </div>
 
     <!-- 会话工作区文件浏览器（只读）：CLOUD 会话可浏览/预览/下载，LOCAL 工作区在用户设备上服务端不可见 -->
-    <WorkspaceFileDialog :visible="fileDialogVisible" :files="workspaceFiles" @update:visible="onFileDialogVisibleChange" />
+    <WorkspaceFileDialog
+      :visible="fileDialogVisible"
+      :files="workspaceFiles"
+      @update:visible="onFileDialogVisibleChange"
+      @preview="onWorkspaceFilePreview"
+    />
+    <!-- 文件预览独立弹窗：与目录列表分离，避免两者纵向堆叠把列表弹窗顶高 -->
+    <WorkspaceFilePreviewDialog
+      :visible="previewDialogVisible"
+      :files="workspaceFiles"
+      @update:visible="onPreviewDialogVisibleChange"
+    />
   </div>
 </template>
 
@@ -148,6 +159,7 @@ import { mapApiMessagesToChat } from './utils/chatMessage'
 import type { ChatMessage } from './types/chat'
 import MessageGroup from './components/MessageGroup.vue'
 import WorkspaceFileDialog from './components/WorkspaceFileDialog.vue'
+import WorkspaceFilePreviewDialog from './components/WorkspaceFilePreviewDialog.vue'
 import { useWorkspaceFiles } from './composables/useWorkspaceFiles'
 
 const route = useRoute()
@@ -170,6 +182,7 @@ const ROUND_LIMIT = 5
 // 会话工作区文件浏览器：状态机由父页面持有，聊天记录联动可直接驱动预览
 const workspaceFiles = useWorkspaceFiles()
 const fileDialogVisible = ref(false)
+const previewDialogVisible = ref(false)
 
 const canBrowseFiles = computed(() =>
   sessionInfo.value?.executionMode === 'CLOUD' && Boolean(sessionInfo.value?.workspace),
@@ -196,11 +209,19 @@ function onFileChangePreview(relativePath: string) {
     return
   }
   fileDialogVisible.value = true
+  previewDialogVisible.value = true
   void workspaceFiles.open(id, relativePath)
+}
+
+/** 目录列表内点击「预览」：打开独立预览弹窗（列表弹窗保持打开） */
+function onWorkspaceFilePreview(relativePath: string) {
+  previewDialogVisible.value = true
+  void workspaceFiles.previewFile(relativePath)
 }
 
 function closeFileBrowser() {
   fileDialogVisible.value = false
+  previewDialogVisible.value = false
   workspaceFiles.reset()
 }
 
@@ -212,6 +233,24 @@ function onFileDialogVisibleChange(value: boolean) {
   }
   closeFileBrowser()
 }
+
+/** 预览弹窗关闭：只收起预览（释放 PDF blob URL），目录浏览状态保留 */
+function onPreviewDialogVisibleChange(value: boolean) {
+  if (value) {
+    previewDialogVisible.value = true
+    return
+  }
+  previewDialogVisible.value = false
+  workspaceFiles.closePreview()
+}
+
+// 预览态被清空（列表内刷新 / 目录导航触发）时同步收起预览弹窗，避免停在「未选择文件」
+watch(
+  () => workspaceFiles.state.preview,
+  (preview) => {
+    if (preview == null) previewDialogVisible.value = false
+  },
+)
 
 /** 复制工作区路径：clipboard API 优先，execCommand 兜底（参照 utils/codeCopy.ts 降级写法） */
 async function copyWorkspace() {
