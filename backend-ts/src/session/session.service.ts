@@ -48,7 +48,7 @@ import type {
   SessionTodo,
   UserCommandLookup,
 } from './types.js';
-import { SessionGroupKey } from './util/session-group-key.js';
+import { SessionGroupKey, ACTIVE_PHASE_SQL_LIST } from './util/session-group-key.js';
 import { GitUrlParser } from './util/git-url-parser.js';
 import { toStoredContentJson } from './session-vo.js';
 import { stripCitationMarkers } from './util/citation-markers.js';
@@ -301,7 +301,9 @@ export class SessionService {
     const total = await this.sessionRepo.count(whereSql, params);
     const orderSql = status === 'ARCHIVED'
       ? 'ORDER BY updated_at DESC, id DESC'
-      : `ORDER BY CASE WHEN phase IN ('RUNNING','RESUMING','WAITING_APPROVAL') THEN 0 ELSE 1 END, is_pinned DESC, updated_at DESC, id DESC`;
+      // 活跃相位与 ACTIVE_PHASES（isActivePhase / 侧边栏组预览 / dashboard）同一口径，含 CANCELLING；
+      // 漏列会把取消中的会话当空闲排到后面，与组预览排序互相打架。
+      : `ORDER BY CASE WHEN phase IN (${ACTIVE_PHASE_SQL_LIST}) THEN 0 ELSE 1 END, is_pinned DESC, updated_at DESC, id DESC`;
     const items = await this.sessionRepo.list(
       whereSql,
       params,
@@ -1513,15 +1515,15 @@ export class SessionService {
   }
 
   async listSessionsForDashboard(userId: number): Promise<Record<string, Session[]>> {
-    // 运行中口径与 isActivePhase / 删除提升守卫一致，含 CANCELLING（取消流程进行中）；
+    // 运行中口径与 ACTIVE_PHASES（isActivePhase / 删除提升守卫）一致，含 CANCELLING（取消流程进行中）；
     // recent 用同一集合取反，保证两个分桶互补、不重不漏。
     const running = await this.sessionRepo.list(
-      `user_id = ? AND status = 'ACTIVE' AND phase IN ('RUNNING', 'RESUMING', 'WAITING_APPROVAL', 'CANCELLING')`,
+      `user_id = ? AND status = 'ACTIVE' AND phase IN (${ACTIVE_PHASE_SQL_LIST})`,
       [userId],
       'ORDER BY last_activity_at DESC',
     );
     const recent = await this.sessionRepo.list(
-      `user_id = ? AND status = 'ACTIVE' AND phase NOT IN ('RUNNING', 'RESUMING', 'WAITING_APPROVAL', 'CANCELLING')`,
+      `user_id = ? AND status = 'ACTIVE' AND phase NOT IN (${ACTIVE_PHASE_SQL_LIST})`,
       [userId],
       'ORDER BY updated_at DESC LIMIT 20',
     );

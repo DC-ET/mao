@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fail } from '../common/result.js';
 import type { SkillLoader } from '../harness/skill/skill-loader.js';
 import type { SkillDocDetailVO, SkillDocVO, SkillResult, UploadedSkillFile } from './user-skill.service.js';
@@ -60,10 +60,18 @@ export class SkillDocService {
     }
     const importedNames: string[] = [];
     for (const [skillName, group] of grouped) {
+      const skillFolder = resolve(skillsDir, skillName);
       for (const file of group) {
         const relativePath = relativeAfterSkill(file.originalFilename);
         if (relativePath.length === 0 || relativePath.includes('/.')) continue;
-        const targetFile = join(skillsDir, skillName, relativePath);
+        // 与 writeSkillGroup / staged-skill-writer / read-skill-files 同口径的段校验：
+        // 仅查 includes('/.') 拦不住位于最前的 `..` 段（如 `myskill/../evil.txt`），
+        // join 归一化后会越出技能子目录落盘。
+        if (relativePath.split('/').some((segment) => segment === '..' || segment.length === 0)) continue;
+        // 解析后路径收口：目标必须落在技能子目录内（双保险，防任何归一化逃逸）。
+        const targetFile = join(skillFolder, relativePath);
+        const resolvedTarget = resolve(targetFile);
+        if (resolvedTarget !== skillFolder && !resolvedTarget.startsWith(skillFolder + sep)) continue;
         try {
           mkdirSync(dirname(targetFile), { recursive: true });
           writeFileSync(targetFile, file.buffer, { mode: uploadFileMode(relativePath, file.buffer) });

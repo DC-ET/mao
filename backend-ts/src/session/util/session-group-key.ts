@@ -230,10 +230,18 @@ export function applyFilter(groupKey: string | null | undefined): GroupFilterSql
   throw new Error(`Invalid groupKey: ${groupKey}`);
 }
 
+/**
+ * 活跃相位唯一口径（isActivePhase / session-vo / dashboard SQL / 分组展开页 ORDER BY 共用）。
+ * CANCELLING 是取消流程进行中的活跃相位，漏列会把取消中的会话当空闲排到后面。
+ * 新增相位或调整口径时只改这一处，SQL 侧用 ACTIVE_PHASE_SQL_LIST 派生，防再次漂移。
+ */
+export const ACTIVE_PHASES = ['RUNNING', 'RESUMING', 'WAITING_APPROVAL', 'CANCELLING'] as const;
+
+/** 供 SQL IN (...) 使用：'RUNNING', 'RESUMING', 'WAITING_APPROVAL', 'CANCELLING' */
+export const ACTIVE_PHASE_SQL_LIST = ACTIVE_PHASES.map((phase) => `'${phase}'`).join(', ');
+
 export function isActivePhase(phase: string | null | undefined): boolean {
-  // 与 session-vo.ts 的 isActivePhase 同口径：CANCELLING 是取消流程进行中的活跃相位，
-  // 组预览排序漏列会把取消中的会话当空闲排到后面。
-  return phase === 'RUNNING' || phase === 'RESUMING' || phase === 'WAITING_APPROVAL' || phase === 'CANCELLING';
+  return phase != null && (ACTIVE_PHASES as readonly string[]).includes(phase);
 }
 
 export function compareSessions(a: Session, b: Session): number {

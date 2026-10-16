@@ -1,6 +1,7 @@
 import type { Db } from '../db/db.js';
 import type { User } from '../user/types.js';
 import { lockUserIdentityWrites } from '../user/user-email.js';
+import { isActiveAccount } from '../permission/permission.service.js';
 import { EcpError } from './ecp.error.js';
 import type { EcpSessionUser } from './ecp.client.js';
 import { buildUniqueUsername, usernameTaken } from './username.js';
@@ -69,6 +70,9 @@ export class EcpIdentityRepository {
   }
 
   private assertActive(user: User | null): void {
-    if (!user || user.deleted !== 0 || user.status !== 1) throw new EcpError('账号已禁用或不存在');
+    // 与 isActiveAccount / 本地密码登录同口径：仅 status===0 停用，deleted 非 0 拒绝；
+    // status=NULL 是文档化的第三态「未设置」（SSO/ECP 外部账号的默认取值），必须放行，
+    // 否则同一账号本地登录成功、SSO/ECP 登录被拒，两个入口结论相反。
+    if (!user || user.deleted !== 0 || !isActiveAccount(user.status)) throw new EcpError('账号已禁用或不存在');
   }
 }

@@ -385,10 +385,7 @@ export class WorkspaceGitService {
         if (line.length === 0) continue;
         const parts = line.split('\t');
         if (parts.length < 3) continue;
-        let path = parts[parts.length - 1].replace(/\\/g, '/');
-        if (path.includes(' => ')) {
-          path = path.slice(path.lastIndexOf(' => ') + 4).trim();
-        }
+        const path = numstatNewPath(parts[parts.length - 1]);
         const file = files.get(path);
         if (!file) continue;
         if (parts[0] === '-' || parts[1] === '-') {
@@ -446,6 +443,27 @@ export class WorkspaceGitService {
 
 function unavailableRepo(repoDir: string): GitRepoSummaryDTO {
   return { name: basename(repoDir), path: basename(repoDir), unavailable: true };
+}
+
+/**
+ * numstat 路径字段还原成完整新路径，与 name-status 的键对齐。
+ * git 对检测到的改名不输出完整新路径，而是紧凑形态：
+ * - 无共同前后缀：`old => new`（简单形态）
+ * - 有共同前缀（或有共同后缀）：`prefix/{old => new}suffix`（花括号紧凑形态，实测同目录改名即此形态）
+ * name-status 的 R 行始终输出完整 old/new 两个路径，因此这里必须把紧凑形态还原，
+ * 否则键匹配不上，改名文件的 insertions/deletions 被静默丢弃（恒显示 +0/-0）。
+ */
+function numstatNewPath(raw: string): string {
+  const path = raw.replace(/\\/g, '/').trim();
+  const arrow = path.lastIndexOf(' => ');
+  if (arrow < 0) return path;
+  const braceStart = path.lastIndexOf('{', arrow);
+  const braceEnd = braceStart >= 0 ? path.indexOf('}', arrow) : -1;
+  if (braceStart >= 0 && braceEnd > arrow) {
+    // 花括号紧凑形态：新路径 = 公共前缀 + 括号内新名 + 公共后缀
+    return path.slice(0, braceStart) + path.slice(arrow + 4, braceEnd) + path.slice(braceEnd + 1);
+  }
+  return path.slice(arrow + 4).trim();
 }
 
 function parseNameStatusLine(line: string): GitChangedFileDTO | null {

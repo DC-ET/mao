@@ -1,6 +1,7 @@
 import { javaLocalDateTimeString } from '../common/datetime.js';
 import type { ContextManifest } from '../harness/core/context-manifest.js';
 import { idMapGet } from '../common/request.js';
+import { isActivePhase } from './util/session-group-key.js';
 import type {
   ApprovalRegistry,
   AskUserQuestionsRegistry,
@@ -609,9 +610,8 @@ export function toQueueMessageVO(item: MessageQueue) {
   return vo;
 }
 
-export function isActivePhase(phase: string | null | undefined): boolean {
-  return phase === 'RUNNING' || phase === 'RESUMING' || phase === 'WAITING_APPROVAL' || phase === 'CANCELLING';
-}
+// 活跃相位唯一口径在 util/session-group-key.ts（ACTIVE_PHASES），此处转出以保持既有导入方不变
+export { isActivePhase };
 
 export function applySessionListSignals(
   sessions: Session[],

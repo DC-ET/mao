@@ -132,8 +132,14 @@ export class MysqlUserRepository implements UserRepository {
       params.push(kw, kw, kw);
     }
     if (status != null) {
-      where.push('status = ?');
-      params.push(status);
+      // 三态口径与 isActiveAccount 一致：status=NULL（未设置）是活跃账号，
+      // 筛「启用」时必须含 NULL，否则未设置账号在启用/禁用两个筛选下都查不到。
+      if (status === 1) {
+        where.push('(status = 1 OR status IS NULL)');
+      } else {
+        where.push('status = ?');
+        params.push(status);
+      }
     }
     const authSourceSql = authSourceWhere(authSource);
     if (authSourceSql) where.push(authSourceSql);
