@@ -12,12 +12,33 @@ import type {
 } from './types.js';
 import type { WeixinVoiceReplyService } from './voice-reply.service.js';
 import type { WeixinWebhookFallbackService } from './webhook-fallback.service.js';
+import { InboundMergeWindow } from '../common/inbound-merge-window.js';
 
 const ITEM_TYPE_TEXT = 1;
 const ITEM_TYPE_IMAGE = 2;
 const ITEM_TYPE_FILE = 4;
 
+/**
+ * 窗口条目：入队（认领表 CLAIMED）后的待处理消息。
+ * messageKey 是认领表幂等键：合并执行期间所有 absorbed key 都要持续心跳，
+ * 否则会被重放器按「无心跳超 10 分钟」回收，与合并执行并发双跑。
+ */
+interface WeixinWindowEntry {
+  accountId: string;
+  message: Record<string, unknown>;
+  /** 认领表键；未挂认领表（直接调用）时为空串。 */
+  messageKey: string;
+  /** process() 入口同步分配的到达序号：保证合并顺序 = 到达顺序。 */
+  arrivalSeq: number;
+}
+
 export class InboundProcessor {
+  /** process() 入口同步分配的到达序号（跨账号单调即可，窗口内只比较同键条目）。 */
+  private arrivalSeqCounter = 0;
+
+  /** 入站防抖合并窗口：同账号 + 发送者的连续纯文本消息合并为一次触发；0 = 禁用（与加窗前一致）。 */
+  private readonly window: InboundMergeWindow<WeixinWindowEntry>;
+
   constructor(
     private readonly inboundHandler: WeixinInboundHandler,
     private readonly contextTokenRepository: ContextTokenRepository,
@@ -29,7 +50,18 @@ export class InboundProcessor {
     private readonly webhookFallback?: WeixinWebhookFallbackService,
     /** 账号仓库（可选）：降级推送前用 accountId 反查归属 userId。 */
     private readonly accountRepository?: { findByAccountId(accountId: string): Promise<{ userId?: number | null } | null> },
-  ) {}
+    /** 入站防抖合并窗口时长（ms）。同账号 + 发送者的连续纯文本消息合并为一次触发；0 = 禁用。 */
+    private readonly mergeWindowMs = 0,
+  ) {
+    this.window = new InboundMergeWindow<WeixinWindowEntry>({
+      windowMs: mergeWindowMs,
+      keyOf: (entry) => this.windowKeyOf(entry),
+      dedupeKeyOf: (entry) => (entry.messageKey === '' ? null : entry.messageKey),
+      canJoin: (entry) => this.canJoinEntry(entry),
+      seqOf: (entry) => entry.arrivalSeq,
+      onFlush: (batch) => this.flushEntries(batch),
+    });
+  }
 
   /**
    * 入队一条拉取到的消息（在 monitor 循环中 await 调用）。
@@ -54,8 +86,10 @@ export class InboundProcessor {
 
   /**
    * 处理一条已入队的消息（CLAIMED → DONE/FAILED）。
-   * 处理期间定期心跳刷新 updated_at：重放器只回收「无心跳超 10 分钟」的中断消息，
-   * 正常长执行不会被误判中断而并发双执行。
+   * 入队（幂等键 + payload 落库）在本方法内同步完成，随后提交到合并窗口：
+   * 窗口期内同发送者的连续纯文本消息会合并为一次 handler.onMessage；
+   * mergeWindowMs=0 时立即单条处理，行为与加窗前一致。
+   * 返回只代表「已提交」：窗口期内的消息实际处理发生在 flush 时（由窗口驱动）。
    */
   async processInboundMessage(accountId: string, message: Record<string, unknown>, knownKey?: string | null): Promise<void> {
     const repo = this.inboundMessages;
@@ -71,21 +105,84 @@ export class InboundProcessor {
         await repo.reclaimForResend(accountId, messageKey!, JSON.stringify(message));
       }
     }
-    const stopHeartbeat = this.startHeartbeat(repo ?? null, accountId, messageKey);
+    // 到达序号必须在任何 await 之前同步分配：入队耗时差异会让 submit 顺序偏离到达顺序，
+    // 批内排序以此恢复「合并顺序 = 到达顺序」。
+    const arrivalSeq = (this.arrivalSeqCounter += 1);
+    await this.window.submit({
+      accountId, message, messageKey: messageKey ?? '', arrivalSeq,
+    });
+  }
+
+  /**
+   * 窗口 flush 入口：批内消息合并为一条合成消息走既有处理链，
+   * 执行期间对所有 absorbed key 持续心跳，结束后按成败整批 markDone/markFailed。
+   * 失败走重放器（每条原消息各自重放），避免合并执行失败导致内容丢失。
+   */
+  private async flushEntries(batch: WeixinWindowEntry[]): Promise<void> {
+    const repo = this.inboundMessages;
+    const accountId = batch[0].accountId;
+    const keys = batch.map((entry) => entry.messageKey).filter((key) => key !== '');
+    const merged = this.mergeMessages(batch);
+    const stopHeartbeat = this.startHeartbeat(repo ?? null, accountId, keys);
     try {
-      await this.processClaimed(accountId, message);
-      if (repo != null && messageKey != null) await repo.markDone(accountId, messageKey);
+      await this.processClaimed(accountId, merged);
+      if (repo != null) {
+        for (const key of keys) await repo.markDone(accountId, key);
+      }
     } catch (e) {
-      console.error(`处理微信入站消息失败, accountId=${accountId}`, e);
-      if (repo != null && messageKey != null) await repo.markFailed(accountId, messageKey);
+      console.error(`处理微信入站消息失败, accountId=${accountId}, merged=${batch.length}条`, e);
+      if (repo != null) {
+        // 整批标记失败交重放器：重放时每条原消息单独处理，内容不丢。
+        for (const key of keys) await repo.markFailed(accountId, key);
+      }
     } finally {
       stopHeartbeat();
     }
   }
 
-  /** 处理已在认领表中登记的消息（重放路径：行已存在，无需再次入队）。 */
+  /**
+   * 合成合并消息：单条（豁免/禁用路径）原样返回，与加窗前的处理链完全一致。
+   * 多条时（canJoin 已保证批内全是纯文本）：发送方取首条，context_token 取最后非空
+   * （回复只能用最新 token），正文按到达序拼接为单个文本项——extractMessageBody
+   * 只取第一个文本项，不合并就会丢失后续消息的正文。
+   * description 删除：正文已并入 item_list，避免空正文时兜底读到首条描述。
+   */
+  private mergeMessages(entries: WeixinWindowEntry[]): Record<string, unknown> {
+    if (entries.length === 1) return entries[0].message;
+    const first = entries[0].message;
+    const bodies = entries
+      .map((entry) => this.extractMessageBody(entry.message))
+      .filter((body) => body.trim() !== '');
+    let contextToken: unknown = first.context_token ?? null;
+    for (const entry of entries) {
+      const token = entry.message.context_token;
+      if (token != null && String(token) !== '') contextToken = token;
+    }
+    const merged: Record<string, unknown> = {
+      ...first,
+      context_token: contextToken,
+      item_list: [{ type: ITEM_TYPE_TEXT, text_item: { text: bodies.join('\n') } }],
+    };
+    delete merged.description;
+    return merged;
+  }
+
+  /** 窗口键 = 账号 + 发送者：只合同一用户在同一账号下的连续消息。 */
+  private windowKeyOf(entry: WeixinWindowEntry): string {
+    return `${entry.accountId}:${String(entry.message.from_user_id ?? '')}`;
+  }
+
+  /** 准入：仅纯文本消息入窗。带图片/文件/语音的消息整体豁免出窗（媒体不跨消息合并）。 */
+  private canJoinEntry(entry: WeixinWindowEntry): boolean {
+    const itemList = entry.message.item_list;
+    if (!Array.isArray(itemList)) return true;
+    return itemList.every((item) => Number((item as Record<string, unknown>).type ?? -1) === ITEM_TYPE_TEXT);
+  }
+
+  /** 处理已在认领表中登记的消息（重放路径：行已存在，无需再次入队）。
+   *  重放不经过合并窗口：行已是独立 CLAIMED 记录，与在窗新消息合并会双跑。 */
   async processReplayedMessage(accountId: string, messageKey: string, message: Record<string, unknown>): Promise<void> {
-    const stopHeartbeat = this.startHeartbeat(this.inboundMessages ?? null, accountId, messageKey);
+    const stopHeartbeat = this.startHeartbeat(this.inboundMessages ?? null, accountId, [messageKey]);
     try {
       await this.processClaimed(accountId, message);
       await this.inboundMessages!.markDone(accountId, messageKey);
@@ -97,16 +194,19 @@ export class InboundProcessor {
     }
   }
 
-  /** CLAIMED 处理期心跳：进程崩溃后心跳停止，超时被重放器回收；正常执行持续存活。 */
+  /** CLAIMED 处理期心跳：进程崩溃后心跳停止，超时被重放器回收；正常执行持续存活。
+   *  合并执行期间对批内所有 absorbed key 心跳——漏掉任何一个都会被重放器回收并发重跑。 */
   private startHeartbeat(
     repo: WeixinInboundMessageRepository | null,
     accountId: string,
-    messageKey: string | null,
+    messageKeys: string[],
   ): () => void {
-    if (repo == null || messageKey == null) return () => {};
+    if (repo == null || messageKeys.length === 0) return () => {};
     const beat = () => {
-      void repo.heartbeat(accountId, messageKey).catch((e) =>
-        console.warn(`微信入站心跳刷新失败, accountId=${accountId}`, e));
+      for (const messageKey of messageKeys) {
+        void repo.heartbeat(accountId, messageKey).catch((e) =>
+          console.warn(`微信入站心跳刷新失败, accountId=${accountId}`, e));
+      }
     };
     beat(); // 启动即心跳一次：避免回收/入队后至首个周期间的窗口被再次回收
     const timer = setInterval(beat, WeixinInboundMessageRepository.HEARTBEAT_INTERVAL_MS);

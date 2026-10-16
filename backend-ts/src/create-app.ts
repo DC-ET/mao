@@ -511,7 +511,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         const pending = await pendingBindingMessages.claim(state);
         if (pending != null) {
           try {
-            await pendingBindingProcessor.process(String(pending.appId), { ...pending.event, progressCardMessageId: pending.cardMessageId }, true);
+            // 绑定后补投绕开合并窗口：用户等的是这条消息的即时响应，不能被窗口期拖延。
+            await pendingBindingProcessor.process(String(pending.appId), { ...pending.event, progressCardMessageId: pending.cardMessageId }, true, { bypassWindow: true });
             await pendingBindingMessages.complete(state!);
           } catch (error) {
             await pendingBindingMessages.release(state!);
@@ -855,6 +856,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     cdnBaseUrl: cfg.weixin.bot.cdnBaseUrl || DEFAULT_WEIXIN_BOT_CONFIG.cdnBaseUrl,
     maxInboundFileMb: cfg.weixin.bot.maxInboundFileMb,
     monitor: cfg.weixin.bot.monitor,
+    mergeWindowMs: cfg.weixin.bot.mergeWindowMs,
   };
   const weixinAccounts = new WeixinAccountRepository(db);
   const feishuBots = new MysqlFeishuBotRepository(db);
@@ -1561,7 +1563,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const weixinInboundMessages = new WeixinInboundMessageRepository(db);
   const inboundProcessor = new InboundProcessor(
     weixinInboundHandler, weixinTokens, weixinSend, weixinMedia, voiceReply, weixinInboundMessages,
-    weixinWebhookFallback, weixinAccounts,
+    weixinWebhookFallback, weixinAccounts, weixinConfig.mergeWindowMs,
   );
   const weixinMonitor = new WeixinMonitorService(weixinConfig, weixinAccounts, inboundProcessor);
   const qrLogin = new QrLoginService(weixinConfig, weixinAccounts, weixinMonitor);
@@ -2470,6 +2472,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   };
   const feishuInboundProcessor = new FeishuInboundProcessor(feishuInboundHandler, {
     messageService: feishuMessageService,
+    mergeWindowMs: cfg.feishu.bot.mergeWindowMs,
     resolveSenderName: resolveFeishuSenderName,
     downloadGroupImage: downloadFeishuGroupImage,
     downloadGroupFile: downloadFeishuGroupFile,
@@ -2693,6 +2696,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       replyMaxLength: cfg.dingtalk.replyMaxLength,
       groupContextMaxItems: cfg.dingtalk.groupContext.maxItems,
       groupContextMaxMinutes: cfg.dingtalk.groupContext.maxMinutes,
+      mergeWindowMs: cfg.dingtalk.mergeWindowMs,
     },
     workspaceRoot: cfg.app.harness.workspaceRoot,
     jwt,
@@ -3209,6 +3213,12 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       feishuMonitor.shutdown();
       dingtalk.shutdown();
       weixinInboundHandler.shutdown();
+      // 冲刷飞书/钉钉在途合并窗口：停机前到达但还在窗口期的消息触发出去，
+      // 由下方 settle 等待/标记其执行（只保证触发启动，不等执行完成）。
+      // 微信不在此列：handler 已 stopped，冲刷只会回滚用户消息后置 DONE 造成丢失，
+      // 留在认领表里由重放器兜底（与在途消息的停机语义一致）。
+      await feishuInboundProcessor.flushAll();
+      await dingtalk.flushInbound();
       await settleInFlightExecutions(isDrainingForDeploy() ? drainGraceMs() : 0);
       scheduler.stop();
       deliveryScheduler.stop();

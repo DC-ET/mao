@@ -43,10 +43,16 @@ interface LogRow {
 
 /** 带内存日志的 messageService 假件：record/listPending/buildContext 都按 enrich_pending 语义联动，
  *  buildGroupContext 复刻真实实现的「遇未富化行即停、@ 消息不注入」，用于验证触发前的补齐时序。 */
-function makeLogService(): { svc: Record<string, unknown>; rows: Map<number, LogRow>; calls: string[] } {
+function makeLogService(): { svc: Record<string, unknown>; rows: Map<number, LogRow>; calls: string[]; seed: (row: LogRow) => void } {
   const rows = new Map<number, LogRow>();
   const calls: string[] = [];
   let nextId = 0;
+  /** 预置日志行（重启遗留等场景），并把自增计数推到该行之后：
+   *  日志行 ID 顺序即到达顺序，早到的行 ID 必须小于后续 record 的行。 */
+  const seed = (row: LogRow): void => {
+    rows.set(row.id, row);
+    nextId = Math.max(nextId, row.id);
+  };
   const svc = {
     claimInboundMessage: vi.fn(async () => true),
     releaseInboundMessage: vi.fn(async () => undefined),
@@ -89,7 +95,7 @@ function makeLogService(): { svc: Record<string, unknown>; rows: Map<number, Log
       calls.push(`mark:${id}`);
     }),
   };
-  return { svc, rows, calls };
+  return { svc, rows, calls, seed };
 }
 
 describe('FeishuInboundProcessor', () => {
@@ -755,9 +761,9 @@ describe('FeishuInboundProcessor', () => {
     // 后台富化从未启动（进程重启遗留等）时，行会一直挂在 enrich_pending 上，
     // 旧逻辑同样在这行截断；现在触发前就地展开，内容本轮即可见。
     const excerpt = '【合并转发，共 1 条】\n[2026-10-10 10:30] 张三：重启前转发的记录';
-    const { svc, rows, calls } = makeLogService();
-    rows.set(7, {
-      id: 7, messageId: 'om_stuck', msgType: 'merge_forward',
+    const { svc, rows, calls, seed } = makeLogService();
+    seed({
+      id: 1, messageId: 'om_stuck', msgType: 'merge_forward',
       content: 'Merged and Forwarded Message', enrichPending: 1, isMention: false,
     });
     const expandMergeForward = vi.fn(async () => excerpt);
@@ -770,9 +776,9 @@ describe('FeishuInboundProcessor', () => {
     });
     await processor.process('1', makeEvent({ messageId: 'om_ment', text: '@bot 继续', isBotMentioned: true }));
     expect(expandMergeForward).toHaveBeenCalledWith('1', 'om_stuck', '/ws/oc_group');
-    expect(svc.updateGroupMessageContent).toHaveBeenCalledWith(7, excerpt);
-    expect(svc.markGroupMessageEnriched).toHaveBeenCalledWith(7);
-    expect(calls.indexOf('context')).toBeGreaterThan(calls.indexOf('update:7'));
+    expect(svc.updateGroupMessageContent).toHaveBeenCalledWith(1, excerpt);
+    expect(svc.markGroupMessageEnriched).toHaveBeenCalledWith(1);
+    expect(calls.indexOf('context')).toBeGreaterThan(calls.indexOf('update:1'));
     expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
       groupContext: expect.stringContaining(excerpt),
     }));
@@ -781,9 +787,9 @@ describe('FeishuInboundProcessor', () => {
   it('leaves a pending image row without in-flight enrichment to the lazy placeholder path', async () => {
     // 图片/文件/卡片的富化输入（imageKey/fileKey/事件 content）不在日志行里，无在飞行任务时
     // 不能重建：维持占位由 Agent 经 feishu_download_file 懒加载兜底，也不提前清 enrich_pending。
-    const { svc, rows } = makeLogService();
-    rows.set(8, {
-      id: 8, messageId: 'om_img', msgType: 'image', content: '[图片 msg=om_img]', enrichPending: 1, isMention: false,
+    const { svc, rows, seed } = makeLogService();
+    seed({
+      id: 1, messageId: 'om_img', msgType: 'image', content: '[图片 msg=om_img]', enrichPending: 1, isMention: false,
     });
     const downloadGroupImage = vi.fn(async () => '/ws/img.png');
     const onMessage = vi.fn(async () => ({ text: 'r' }));
@@ -794,8 +800,8 @@ describe('FeishuInboundProcessor', () => {
     });
     await processor.process('1', makeEvent({ messageId: 'om_ment', text: '@bot 看图', isBotMentioned: true }));
     expect(downloadGroupImage).not.toHaveBeenCalled();
-    expect(svc.markGroupMessageEnriched).not.toHaveBeenCalledWith(8);
-    expect(rows.get(8)!.enrichPending).toBe(1);
+    expect(svc.markGroupMessageEnriched).not.toHaveBeenCalledWith(1);
+    expect(rows.get(1)!.enrichPending).toBe(1);
   });
 
   it('waits for an in-flight image enrichment before building context', async () => {
@@ -830,9 +836,9 @@ describe('FeishuInboundProcessor', () => {
 
   it('keeps the trigger unblocked when a stuck merge_forward fails to expand during flush', async () => {
     // 补齐失败不能拖死触发：保留占位文本、放行水位线，行为与后台富化失败一致。
-    const { svc, rows } = makeLogService();
-    rows.set(9, {
-      id: 9, messageId: 'om_stuck_fail', msgType: 'merge_forward',
+    const { svc, rows, seed } = makeLogService();
+    seed({
+      id: 1, messageId: 'om_stuck_fail', msgType: 'merge_forward',
       content: 'Merged and Forwarded Message', enrichPending: 1, isMention: false,
     });
     const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -846,7 +852,7 @@ describe('FeishuInboundProcessor', () => {
       await processor.process('1', makeEvent({ messageId: 'om_ment', text: '@bot 继续', isBotMentioned: true }));
       expect(onMessage).toHaveBeenCalledOnce();
       expect(svc.updateGroupMessageContent).not.toHaveBeenCalled();
-      expect(svc.markGroupMessageEnriched).toHaveBeenCalledWith(9);
+      expect(svc.markGroupMessageEnriched).toHaveBeenCalledWith(1);
     } finally {
       consoleWarn.mockRestore();
     }
@@ -920,5 +926,205 @@ describe('FeishuInboundProcessor', () => {
     await processor.process('1', event!);
     expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({ text: '@李四 大家好' }));
     expect(onMessage.mock.calls[0][0].text).not.toContain('@_user_');
+  });
+});
+
+describe('FeishuInboundProcessor 合并窗口', () => {
+  const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+  function windowedProcessor(
+    onMessage: (ctx: FeishuInboundContext) => Promise<FeishuReply | null>,
+    options: ConstructorParameters<typeof FeishuInboundProcessor>[1] = {},
+  ): FeishuInboundProcessor {
+    // 群消息必须挂 messageService（与现状一致：无 messageService 的群消息不触发）；
+    // 未显式注入时给一份内存日志假件。
+    const fallbackLog = options.messageService == null ? makeLogService() : null;
+    return new FeishuInboundProcessor(makeHandler(onMessage), {
+      mergeWindowMs: 30, authorizeSender: async () => true,
+      ...(fallbackLog != null ? { messageService: fallbackLog.svc as never } : {}),
+      ...options,
+    });
+  }
+
+  it('两条文本窗口期内合并为一次触发，正文按到达序拼接，两条 claim 均 complete', async () => {
+    const { svc } = makeLogService();
+    const onMessage = vi.fn(async () => ({ text: 'r' }));
+    const processor = windowedProcessor(onMessage, { messageService: svc as never });
+    await processor.process('1', makeEvent({ messageId: 'om_a', text: '看看这个', isBotMentioned: true }));
+    await processor.process('1', makeEvent({ messageId: 'om_b', text: '帮我总结', isBotMentioned: true }));
+    await wait(120);
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    expect(onMessage.mock.calls[0][0].text).toBe('看看这个\n\n帮我总结');
+    expect(svc.completeInboundMessage).toHaveBeenCalledWith('1', 'om_a');
+    expect(svc.completeInboundMessage).toHaveBeenCalledWith('1', 'om_b');
+  });
+
+  it('单条消息窗口到点后单次触发', async () => {
+    const onMessage = vi.fn(async () => ({ text: 'r' }));
+    const processor = windowedProcessor(onMessage);
+    await processor.process('1', makeEvent({ messageId: 'om_solo', isBotMentioned: true }));
+    await wait(120);
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    expect(onMessage.mock.calls[0][0].messageId).toBe('om_solo');
+  });
+
+  it('图片消息到达即冲刷窗口，任务先跑，图片单独触发', async () => {
+    const onMessage = vi.fn(async () => ({ text: 'r' }));
+    const processor = windowedProcessor(onMessage);
+    await processor.process('1', makeEvent({ messageId: 'om_t', text: '看这张', isBotMentioned: true }));
+    await processor.process('1', makeEvent({ messageId: 'om_img', messageType: 'image', text: '[图片]', isBotMentioned: true }));
+    // 豁免路径同步等到批次触发返回后才触发自己，定时器尚未到点。
+    expect(onMessage).toHaveBeenCalledTimes(2);
+    expect(onMessage.mock.calls[0][0].text).toBe('看这张');
+    expect(onMessage.mock.calls[1][0].messageId).toBe('om_img');
+    await wait(120);
+    expect(onMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it('`---` 到达即冲刷窗口后单独生效', async () => {
+    const onMessage = vi.fn(async () => ({ text: 'r' }));
+    const processor = windowedProcessor(onMessage);
+    await processor.process('1', makeEvent({ messageId: 'om_t', chatType: 'p2p', text: '继续', isBotMentioned: true }));
+    await processor.process('1', makeEvent({ messageId: 'om_cmd', chatType: 'p2p', text: '---', isBotMentioned: true }));
+    expect(onMessage).toHaveBeenCalledTimes(2);
+    expect(onMessage.mock.calls[1][0].text).toBe('---');
+  });
+
+  it('p2p 引用切换消息不入窗，单独触发', async () => {
+    const onMessage = vi.fn(async () => ({ text: 'r' }));
+    const processor = windowedProcessor(onMessage);
+    await processor.process('1', makeEvent({ messageId: 'om_t', chatType: 'p2p', text: '第一句', isBotMentioned: true }));
+    await processor.process('1', makeEvent({ messageId: 'om_q', chatType: 'p2p', text: '引用这条', parentId: 'om_parent', isBotMentioned: true }));
+    expect(onMessage).toHaveBeenCalledTimes(2);
+    expect(onMessage.mock.calls[0][0].text).toBe('第一句');
+    expect(onMessage.mock.calls[1][0].messageId).toBe('om_q');
+  });
+
+  it('带内嵌图片的 post 豁免出窗，单独触发', async () => {
+    // 同时守护「先批后豁免」顺序：post 自己的日志行（待富化）到达序在批次之后，
+    // 批次的触发不能等它——否则豁免消息的后台富化会把批次挂住、让 post 反超。
+    const onMessage = vi.fn(async () => ({ text: 'r' }));
+    const processor = windowedProcessor(onMessage);
+    await processor.process('1', makeEvent({ messageId: 'om_t', text: '看这条', isBotMentioned: true }));
+    await processor.process('1', makeEvent({ messageId: 'om_post', messageType: 'post', text: '图文', imageKeys: ['img_x'], isBotMentioned: true }));
+    expect(onMessage).toHaveBeenCalledTimes(2);
+    expect(onMessage.mock.calls[1][0].messageId).toBe('om_post');
+    expect(onMessage.mock.calls[1][0].imageKeys).toEqual(['img_x']);
+  });
+
+  it('不同发送者同群窗口期内仍是两次触发', async () => {
+    const onMessage = vi.fn(async () => ({ text: 'r' }));
+    const processor = windowedProcessor(onMessage);
+    await processor.process('1', makeEvent({ messageId: 'om_u1', senderId: 'ou_1', text: '甲说', isBotMentioned: true }));
+    await processor.process('1', makeEvent({ messageId: 'om_u2', senderId: 'ou_2', text: '乙说', isBotMentioned: true }));
+    await wait(120);
+    expect(onMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it('群聊两条 @ 合并：两条群日志 + 一次触发，groupContext 由末条消息读出', async () => {
+    const { svc, calls } = makeLogService();
+    const onMessage = vi.fn(async () => ({ text: 'r' }));
+    const processor = windowedProcessor(onMessage, { messageService: svc as never });
+    await processor.process('1', makeEvent({ messageId: 'om_g1', text: '第一条', isBotMentioned: true }));
+    await processor.process('1', makeEvent({ messageId: 'om_g2', text: '第二条', isBotMentioned: true }));
+    await wait(120);
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    expect(calls.filter((c) => c.startsWith('record:'))).toHaveLength(2);
+    // 合并触发只读一次群上下文（用末条 messageId），且 @ 行按既有语义不注入。
+    expect(calls.filter((c) => c === 'context')).toHaveLength(1);
+    expect(onMessage.mock.calls[0][0].text).toBe('第一条\n\n第二条');
+  });
+
+  it('合并转发 + 附言：慢展开不乱序，摘录与附言在同一条用户消息内（到达序）', async () => {
+    const onMessage = vi.fn(async () => ({ text: 'r' }));
+    const processor = windowedProcessor(onMessage, {
+      mergeWindowMs: 120,
+      expandMergeForward: async () => { await wait(60); return '【转发摘录】'; },
+    });
+    const chatType = 'p2p' as const;
+    // 转发先到达（process 入口先拿到 arrivalSeq），但其展开是慢操作、附言先 submit。
+    const p1 = processor.process('1', makeEvent({ messageId: 'om_fwd', chatType, messageType: 'merge_forward', text: '[合并转发]', isBotMentioned: true }));
+    const p2 = processor.process('1', makeEvent({ messageId: 'om_note', chatType, text: '看看这个', isBotMentioned: true }));
+    await Promise.all([p1, p2]);
+    await wait(250);
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    expect(onMessage.mock.calls[0][0].text).toBe('【转发摘录】\n\n看看这个');
+    expect(onMessage.mock.calls[0][0].messageId).toBe('om_fwd');
+  });
+
+  it('窗口期同 messageId 重投被 claim 去重，不入窗', async () => {
+    const { svc } = makeLogService();
+    svc.claimInboundMessage = vi.fn()
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+    const onMessage = vi.fn(async () => ({ text: 'r' }));
+    const processor = windowedProcessor(onMessage, { messageService: svc as never });
+    await processor.process('1', makeEvent({ messageId: 'om_dup', text: '一次', isBotMentioned: true }));
+    await processor.process('1', makeEvent({ messageId: 'om_dup', text: '重投', isBotMentioned: true }));
+    await wait(120);
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    expect(onMessage.mock.calls[0][0].text).toBe('一次');
+  });
+
+  it('豁免消息只等在途批次触发启动，不被其执行阻塞', async () => {
+    let release = (): void => undefined;
+    const onMessage = vi.fn(async (ctx: FeishuInboundContext) => {
+      if (ctx.messageId === 'om_slow') {
+        await new Promise<void>((resolve) => { release = resolve; });
+      }
+      return { text: 'r' };
+    });
+    const processor = windowedProcessor(onMessage);
+    await processor.process('1', makeEvent({ messageId: 'om_slow', text: '慢任务', isBotMentioned: true }));
+    await processor.process('1', makeEvent({ messageId: 'om_img', messageType: 'image', text: '[图片]', isBotMentioned: true }));
+    // 批次 [om_slow] 的执行一直挂起，图片已在其启动后立即单独触发。
+    expect(onMessage).toHaveBeenCalledTimes(2);
+    expect(onMessage.mock.calls[1][0].messageId).toBe('om_img');
+    release();
+    await wait(20);
+  });
+
+  it('合并触发抛错时批内 claim 全部 release', async () => {
+    const { svc } = makeLogService();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const processor = windowedProcessor(async () => { throw new Error('boom'); }, { messageService: svc as never });
+    await processor.process('1', makeEvent({ messageId: 'om_e1', text: '一', isBotMentioned: true }));
+    await processor.process('1', makeEvent({ messageId: 'om_e2', text: '二', isBotMentioned: true }));
+    await wait(120);
+    expect(svc.releaseInboundMessage).toHaveBeenCalledWith('1', 'om_e1');
+    expect(svc.releaseInboundMessage).toHaveBeenCalledWith('1', 'om_e2');
+    errorSpy.mockRestore();
+  });
+
+  it('bypassWindow（绑定后补投）不经过窗口，立即单条触发', async () => {
+    const onMessage = vi.fn(async () => ({ text: 'r' }));
+    const processor = windowedProcessor(onMessage);
+    await processor.process('1', makeEvent({ messageId: 'om_replay', text: '补投', isBotMentioned: true }), true, { bypassWindow: true });
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    expect(onMessage.mock.calls[0][0].messageId).toBe('om_replay');
+  });
+
+  it('flushAll 冲刷在途批次', async () => {
+    const onMessage = vi.fn(async () => ({ text: 'r' }));
+    const processor = windowedProcessor(onMessage);
+    await processor.process('1', makeEvent({ messageId: 'om_f1', text: '待冲刷', isBotMentioned: true }));
+    // flushAll 只保证批次 flush 启动（onMessage 在其内部 await 之后），给一点时间让触发完成。
+    await processor.flushAll();
+    await wait(50);
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    expect(onMessage.mock.calls[0][0].text).toBe('待冲刷');
+    await wait(120);
+    expect(onMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('windowMs=0 时立即单条触发，行为与加窗前一致', async () => {
+    const onMessage = vi.fn(async () => ({ text: 'r' }));
+    const processor = windowedProcessor(onMessage, { mergeWindowMs: 0 });
+    await processor.process('1', makeEvent({ messageId: 'om_z1', text: '甲', isBotMentioned: true }));
+    await processor.process('1', makeEvent({ messageId: 'om_z2', text: '乙', isBotMentioned: true }));
+    // submit 已 await 到 onFlush 返回：无需等待定时器即两次触发、无合并。
+    expect(onMessage).toHaveBeenCalledTimes(2);
+    expect(onMessage.mock.calls[0][0].text).toBe('甲');
+    expect(onMessage.mock.calls[1][0].text).toBe('乙');
   });
 });

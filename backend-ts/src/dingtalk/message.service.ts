@@ -92,11 +92,13 @@ export class DingtalkMessageService {
 
   /**
    * 只格式化已落库的 @ 往来。调用方应在写入本条之前取上下文，避免本条重复出现。
+   * excludeMessageIds 支持一次排除多条：合并窗口把连续多条 @ 合并为一次触发时，
+   * 批内全部消息都已落库，只排除末条会让批内其余消息作为「历史」重复注入。
    */
-  async buildGroupContext(accountId: string, conversationId: string, excludeMessageId?: string | null): Promise<string> {
+  async buildGroupContext(accountId: string, conversationId: string, excludeMessageIds: readonly string[] = []): Promise<string> {
     const rows = await this.repository.listGroupMessages(Number(accountId), conversationId, this.contextWindow + 1, this.maxMinutes);
     const kept = rows
-      .filter((row) => excludeMessageId == null || row.messageId !== excludeMessageId)
+      .filter((row) => excludeMessageIds.length === 0 || row.messageId == null || !excludeMessageIds.includes(row.messageId))
       .slice(0, this.contextWindow)
       .reverse();
     if (kept.length === 0) return '';

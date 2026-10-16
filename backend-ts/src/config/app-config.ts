@@ -15,6 +15,8 @@ export interface DingtalkBotConfig {
   queueCardTemplateId: string;
   replyMaxLength: number;
   groupContext: { maxItems: number; maxMinutes: number };
+  /** 入站防抖合并窗口（ms）：同账号+会话+发送者的连续文本消息合并为一次触发；0=禁用。 */
+  mergeWindowMs: number;
 }
 
 export interface FeishuBotConfig {
@@ -30,6 +32,8 @@ export interface FeishuBotConfig {
   groupContext: { maxItems: number; maxMinutes: number; overflowItems: number };
   reply: { maxLength: number };
   file: { maxInboundFileMb: number };
+  /** 入站防抖合并窗口（ms）：同账号+会话(+话题)+发送者的连续文本消息合并为一次触发；0=禁用。 */
+  mergeWindowMs: number;
 }
 
 /** 用户运行时容器隔离配置（技术方案 §5.12）。mode=docker 时执行类工具进每用户容器。 */
@@ -146,6 +150,8 @@ export interface AppConfig {
         longPollTimeoutMs: number;
         maxConsecutiveFailures: number;
       };
+      /** 入站防抖合并窗口（ms）：同账号+会话+发送者的连续文本消息合并为一次触发；0=禁用。 */
+      mergeWindowMs: number;
     };
   };
 }
@@ -194,6 +200,7 @@ const DEFAULTS: AppConfig = {
     queueCardTemplateId: '',
     replyMaxLength: 2000,
     groupContext: { maxItems: 10, maxMinutes: 120 },
+    mergeWindowMs: 1000,
   },
   feishu: {
     bot: {
@@ -209,6 +216,7 @@ const DEFAULTS: AppConfig = {
       groupContext: { maxItems: 20, maxMinutes: 120, overflowItems: 100 },
       reply: { maxLength: 2000 },
       file: { maxInboundFileMb: 100 },
+      mergeWindowMs: 1000,
     },
   },
   app: {
@@ -286,6 +294,7 @@ const DEFAULTS: AppConfig = {
         longPollTimeoutMs: 35000,
         maxConsecutiveFailures: 3,
       },
+      mergeWindowMs: 1000,
     },
   },
 };
@@ -438,6 +447,7 @@ function coerceTypes(cfg: AppConfig): AppConfig {
   cfg.dingtalk.replyMaxLength = n(process.env.DINGTALK_BOT_REPLY_MAX_LENGTH ?? cfg.dingtalk.replyMaxLength, 2000);
   cfg.dingtalk.groupContext.maxItems = n(process.env.DINGTALK_BOT_GROUP_CONTEXT_MAX_ITEMS ?? cfg.dingtalk.groupContext.maxItems, 10);
   cfg.dingtalk.groupContext.maxMinutes = n(process.env.DINGTALK_BOT_GROUP_CONTEXT_MAX_MINUTES ?? cfg.dingtalk.groupContext.maxMinutes, 120);
+  cfg.dingtalk.mergeWindowMs = n(process.env.DINGTALK_BOT_MERGE_WINDOW_MS ?? cfg.dingtalk.mergeWindowMs, 1000);
   cfg.feishu.bot.enabled = b(process.env.FEISHU_BOT_ENABLED ?? cfg.feishu.bot.enabled, false);
   cfg.feishu.bot.longConnection.enabled = b(process.env.FEISHU_BOT_LC_ENABLED ?? cfg.feishu.bot.longConnection.enabled, true);
   cfg.feishu.bot.longConnection.reconcileIntervalMs = n(process.env.FEISHU_BOT_RECONCILE_INTERVAL_MS ?? cfg.feishu.bot.longConnection.reconcileIntervalMs, 5000);
@@ -449,6 +459,7 @@ function coerceTypes(cfg: AppConfig): AppConfig {
   cfg.feishu.bot.groupContext.overflowItems = n(process.env.FEISHU_BOT_GROUP_CONTEXT_OVERFLOW_ITEMS ?? cfg.feishu.bot.groupContext.overflowItems, 100);
   cfg.feishu.bot.reply.maxLength = n(process.env.FEISHU_BOT_REPLY_MAX_LENGTH ?? cfg.feishu.bot.reply.maxLength, 2000);
   cfg.feishu.bot.file.maxInboundFileMb = n(process.env.FEISHU_BOT_MAX_INBOUND_FILE_MB ?? cfg.feishu.bot.file.maxInboundFileMb, 100);
+  cfg.feishu.bot.mergeWindowMs = n(process.env.FEISHU_BOT_MERGE_WINDOW_MS ?? cfg.feishu.bot.mergeWindowMs, 1000);
   cfg.jwt.expiration = n(cfg.jwt.expiration, 86400000);
   cfg.jwt.refreshExpiration = n(cfg.jwt.refreshExpiration, 604800000);
   cfg.jwt.shellExpiration = n(cfg.jwt.shellExpiration, 7200000);

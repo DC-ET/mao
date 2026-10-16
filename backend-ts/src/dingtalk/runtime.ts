@@ -52,12 +52,16 @@ export interface DingtalkRuntimeConfig extends DingtalkMonitorConfig {
   replyMaxLength: number;
   groupContextMaxItems: number;
   groupContextMaxMinutes: number;
+  /** 入站防抖合并窗口（ms）；0=禁用。 */
+  mergeWindowMs: number;
 }
 
 export interface DingtalkRuntime {
   registerRoutes(app: FastifyInstance): void;
   start(): void;
   shutdown(): void;
+  /** 关机时 best-effort 冲刷在途合并窗口（只保证触发启动，执行由停机收尾等待/标记）。 */
+  flushInbound(): Promise<void>;
   mediaSend: DingtalkMediaSendSupport;
   recoverProgress(sessionId: number): Promise<{ progress: FeishuCardProgress; roundOffset: number } | null>;
   onCrashFinished(sessionId: number, phase: string): Promise<void>;
@@ -354,6 +358,7 @@ export function createDingtalkRuntime(deps: {
 
   const processor = new DingtalkInboundProcessor(handler, {
     messageService,
+    mergeWindowMs: deps.config.mergeWindowMs,
     oauthConfigured: () => oauthConfigured(deps.config.oauth),
     resolveUserId: ( _accountId, event) => binding.findUserId(event.senderUserid, event.senderUnionId),
     rememberMember: async (accountId, event, userId) => {
@@ -465,7 +470,8 @@ export function createDingtalkRuntime(deps: {
           const replay = await pending.claim(state);
           if (replay == null) return;
           try {
-            await processor.process(String(replay.botId), replay.event, true);
+            // 绑定后补投绕开合并窗口：用户等的是这条消息的即时响应，不能被窗口期拖延。
+            await processor.process(String(replay.botId), replay.event, true, { bypassWindow: true });
             await pending.complete(state);
           } catch (error) {
             await pending.release(state);
@@ -482,6 +488,7 @@ export function createDingtalkRuntime(deps: {
       }).catch((error) => console.error('加载 dingtalk-stream 失败', error));
     },
     shutdown() { monitor.shutdown(); },
+    async flushInbound() { await processor.flushAll(); },
     recoverProgress: async (sessionId) => {
       const row = await progressRepo.findBySessionId(sessionId);
       if (row == null) return null;
