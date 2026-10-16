@@ -58,8 +58,9 @@ export function formatCost(value: number | null | undefined): string {
 }
 
 /** Token 紧凑单位按业界惯例：K=千、M=百万、B=十亿。 */
-/** decimals 控制 K/M/B 前的小数位，KPI 卡片传 2 固定保留两位；图表坐标轴与排行标签用默认一位。 */
-export function formatTokens(value: number, decimals = 1): string {
+/** 全站统一保留两位小数（1.4B → 1.40B），与计数卡片、成本的小数位口径一致；
+ *  需要一位的场合（坐标轴刻度等）显式传 1。 */
+export function formatTokens(value: number, decimals = 2): string {
   const abs = Math.abs(value)
   if (abs >= 1e9) return `${trimZero(value / 1e9, decimals)}B`
   if (abs >= 1e6) return `${trimZero(value / 1e6, decimals)}M`

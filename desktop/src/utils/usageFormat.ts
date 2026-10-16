@@ -41,7 +41,7 @@ export function pickTokenUnit(value: number): TokenUnit | null {
   return null
 }
 
-/** token 紧凑展示：667577705 → 667.6M；小于 1000 原样；null/非法值按 0。 */
+/** token 紧凑展示：667577705 → 667.58M；小于 1000 原样；null/非法值按 0。 */
 export function formatToken(value: number | null | undefined): string {
   const v = value ?? 0
   if (!Number.isFinite(v)) return '0'
@@ -52,7 +52,7 @@ export function formatToken(value: number | null | undefined): string {
 export function formatTokenWithUnit(value: number, unit: TokenUnit | null): string {
   if (!unit) return String(Math.round(value))
   if (value === 0) return '0'
-  return `${trimZero(value / unit.divisor)}${unit.label}`
+  return `${(value / unit.divisor).toFixed(2)}${unit.label}`
 }
 
 /** 缓存命中：命中数（占入 token 百分比）；无命中或无入 token 时只显示数字。 */
@@ -81,8 +81,4 @@ export function formatPercentValue(percent: number): string {
   // 贴近 10% 时进位（9.96 → 10%），读数不出现 10.0% 这种跨档数字
   if (percent < 9.95) return `${percent.toFixed(1)}%`
   return `${Math.round(percent)}%`
-}
-
-function trimZero(value: number): string {
-  return value.toFixed(1).replace(/\.0$/, '')
 }

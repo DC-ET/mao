@@ -218,11 +218,12 @@ describe('formatTokens', () => {
     expect(formatTokens(9999)).toBe('9,999')
   })
 
-  it('1 万起折算 k', () => {
-    expect(formatTokens(20_392)).toBe('20.4k')
+  it('1 万起折算 k，固定两位小数', () => {
+    expect(formatTokens(20_392)).toBe('20.39k')
   })
 
-  it('百万起折算 M', () => {
-    expect(formatTokens(20_392_700)).toBe('20.4M')
+  it('百万起折算 M，固定两位小数', () => {
+    expect(formatTokens(20_392_700)).toBe('20.39M')
+    expect(formatTokens(1_400_000_000)).toBe('1400.00M')
   })
 })

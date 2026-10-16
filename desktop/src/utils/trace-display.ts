@@ -88,9 +88,9 @@ export function formatClock(startedAt: string | null): string {
   return matched ? matched[1]! : startedAt
 }
 
-/** token 折算：>=1M 用 M，>=1 万用 k，其余千分位——20.4M 比 20392.7k 好读。 */
+/** token 折算：>=1M 用 M，>=1 万用 k，其余千分位——20.40M 比 20392.7k 好读。K/M 前固定两位小数。 */
 export function formatTokens(tokens: number): string {
-  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`
-  if (tokens >= 10_000) return `${(tokens / 1000).toFixed(1)}k`
+  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(2)}M`
+  if (tokens >= 10_000) return `${(tokens / 1000).toFixed(2)}k`
   return tokens.toLocaleString('zh-CN')
 }

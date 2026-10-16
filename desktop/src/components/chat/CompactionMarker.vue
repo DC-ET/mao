@@ -28,8 +28,7 @@ const savedLabel = computed(() => {
   const saved = props.event.savedTokens
   if (!saved || saved <= 0) return ''
   if (saved < 1000) return `约节省 ${saved} tokens`
-  if (saved < 10000) return `约节省 ${(saved / 1000).toFixed(1).replace(/\.0$/, '')}k tokens`
-  return `约节省 ${Math.round(saved / 1000)}k tokens`
+  return `约节省 ${(saved / 1000).toFixed(2)}k tokens`
 })
 </script>
 

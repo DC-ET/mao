@@ -305,7 +305,7 @@ describe('TaskInspector 上下文入口：徽标开抽屉，无顶层页签（0.
     expect(m.pageText()).not.toContain('本会话注入记忆')
     expect(m.pageText()).not.toContain('本次未注入长期记忆')
     // 容量保持模型水位 max(estimated=100, actual=50)，不改成构成原始估算 1234。
-    expect(m.pageText()).toContain('100/200k（0%）')
+    expect(m.pageText()).toContain('100/200.00k（0%）')
     expect(m.pageText()).not.toContain('1.2k')
   })
 
