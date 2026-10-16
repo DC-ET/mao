@@ -226,7 +226,9 @@ watch(() => props.visible, async (val) => {
       password: '',
       confirmPassword: '',
       roleIds: [...(props.userData.roleIds || [])],
-      enabled: props.userData.status === 1,
+      // 三态口径与后端一致：status=NULL（未设置）是活跃账号，开关必须落「启用」，
+      // 否则打开未设置用户的编辑框再保存会静默把 status 写成 0（真禁用）。
+      enabled: props.userData.status !== 0,
       runtimeMode: props.userData.runtimeMode || ''
     })
   } else {

@@ -22,8 +22,8 @@
           <span v-if="!user.roleNames?.length">-</span>
         </el-descriptions-item>
         <el-descriptions-item label="状态">
-          <el-tag :type="user.status === 1 ? 'success' : 'danger'" size="small">
-            {{ user.status === 1 ? '启用' : '禁用' }}
+          <el-tag :type="statusTagType(user.status)" size="small">
+            {{ statusLabel(user.status) }}
           </el-tag>
         </el-descriptions-item>
         <el-descriptions-item label="最后登录">{{ formatDateTime(user.lastLoginAt) || '-' }}</el-descriptions-item>
@@ -237,6 +237,19 @@ function phaseTagType(phase: string, pendingQuestionCount?: number): 'primary' |
     case 'CANCELLED': return 'warning'
     default: return 'info'
   }
+}
+
+/** 用户状态三态：1=启用 0=禁用 null=未设置（与后端 validateUserStatus 注释、列表页一致）。 */
+function statusTagType(status?: number | null): 'success' | 'danger' | 'info' {
+  if (status === 1) return 'success'
+  if (status === 0) return 'danger'
+  return 'info'
+}
+
+function statusLabel(status?: number | null): string {
+  if (status === 1) return '启用'
+  if (status === 0) return '禁用'
+  return '未设置'
 }
 
 function execStatusLabel(status: string): string {

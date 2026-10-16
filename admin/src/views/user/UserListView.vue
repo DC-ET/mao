@@ -120,8 +120,8 @@
         </el-table-column>
         <el-table-column prop="status" label="状态" width="90">
           <template #default="{ row }">
-            <el-tag :type="row.status === 1 ? 'success' : 'danger'" size="small">
-              {{ row.status === 1 ? '启用' : '禁用' }}
+            <el-tag :type="statusTagType(row.status)" size="small">
+              {{ statusLabel(row.status) }}
             </el-tag>
           </template>
         </el-table-column>
@@ -164,8 +164,8 @@
               </el-avatar>
               <span class="user-card-name">{{ row.displayName || row.username }}</span>
             </div>
-            <el-tag :type="row.status === 1 ? 'success' : 'danger'" size="small">
-              {{ row.status === 1 ? '启用' : '禁用' }}
+            <el-tag :type="statusTagType(row.status)" size="small">
+              {{ statusLabel(row.status) }}
             </el-tag>
           </div>
           <div class="user-card-row">
@@ -306,6 +306,19 @@ const AUTH_SOURCE_LABELS: Record<string, string> = {
 
 function authSourceLabel(source?: string | null) {
   return (source && AUTH_SOURCE_LABELS[source]) || source || '-'
+}
+
+/** 用户状态三态：1=启用 0=禁用 null=未设置（与后端 validateUserStatus 注释一致）。 */
+function statusLabel(status?: number | null) {
+  if (status === 1) return '启用'
+  if (status === 0) return '禁用'
+  return '未设置'
+}
+
+function statusTagType(status?: number | null): 'success' | 'danger' | 'info' {
+  if (status === 1) return 'success'
+  if (status === 0) return 'danger'
+  return 'info'
 }
 
 const formDialogVisible = ref(false)
