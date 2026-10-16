@@ -118,6 +118,7 @@ import { MysqlSessionShareRepository } from './session/session-share.repository.
 import { SessionShareService } from './session/session-share.service.js';
 import { SessionExportService } from './session/session-export.service.js';
 import { registerAdminSessionRoutes } from './session/admin-session.routes.js';
+import { registerAdminSessionFilesRoutes } from './session/admin-session-files.routes.js';
 import { SessionActivityHeartbeat } from './session/session-activity-heartbeat.js';
 import { TaskTerminalService } from './session/task-terminal.service.js';
 import { MemoryRepository } from './memory/memory.repository.js';
@@ -2838,6 +2839,13 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       } as never,
       permissionService,
       askUserQuestionsRegistry,
+    });
+    // 管理后台会话工作区只读文件端点：复用 WorkspaceBrowseService，鉴权只认 session:read，
+    // 不做出属主校验（admin 跨用户查看是本职）；审计由 /v1/admin 全局 onResponse 钩子承担，不注入 auditService
+    registerAdminSessionFilesRoutes(api, {
+      sessionService,
+      workspaceBrowseService: workspaceBrowse,
+      permissionService,
     });
     registerTerminalRoutes(api, {
       terminalManager,

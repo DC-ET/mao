@@ -81,6 +81,18 @@
             <div class="failure-reason">{{ sessionInfo.failureReason }}</div>
           </el-descriptions-item>
           <el-descriptions-item label="项目">{{ sessionInfo.projectKey || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="工作区">
+            <span v-if="!sessionInfo.workspace">-</span>
+            <template v-else>
+              <span class="workspace-path" :title="sessionInfo.workspace">{{ sessionInfo.workspace }}</span>
+              <el-button link type="primary" size="small" @click="copyWorkspace">复制</el-button>
+              <el-tooltip :content="browseDisabledTip" :disabled="canBrowseFiles" placement="top">
+                <span class="browse-entry-wrap">
+                  <el-button size="small" :disabled="!canBrowseFiles" @click="openFileBrowser">查看文件</el-button>
+                </span>
+              </el-tooltip>
+            </template>
+          </el-descriptions-item>
           <el-descriptions-item label="上下文Token">{{ sessionInfo.contextTokens || '-' }}</el-descriptions-item>
           <el-descriptions-item label="摘要">{{ sessionInfo.summary || '-' }}</el-descriptions-item>
           <el-descriptions-item label="创建时间">{{ formatDateTime(sessionInfo.createdAt) }}</el-descriptions-item>
@@ -111,10 +123,14 @@
             :is-last-turn="index === messageTurns.length - 1"
             :phase="sessionInfo?.phase"
             :phase-ready="sessionInfo != null"
+            @preview="onFileChangePreview"
           />
         </div>
       </el-card>
     </div>
+
+    <!-- 会话工作区文件浏览器（只读）：CLOUD 会话可浏览/预览/下载，LOCAL 工作区在用户设备上服务端不可见 -->
+    <WorkspaceFileDialog :visible="fileDialogVisible" :files="workspaceFiles" @update:visible="onFileDialogVisibleChange" />
   </div>
 </template>
 
@@ -131,6 +147,8 @@ import { useBreakpoint } from '../../composables/useBreakpoint'
 import { mapApiMessagesToChat } from './utils/chatMessage'
 import type { ChatMessage } from './types/chat'
 import MessageGroup from './components/MessageGroup.vue'
+import WorkspaceFileDialog from './components/WorkspaceFileDialog.vue'
+import { useWorkspaceFiles } from './composables/useWorkspaceFiles'
 
 const route = useRoute()
 const router = useRouter()
@@ -148,6 +166,75 @@ const exporting = ref(false)
 // 移动端会话信息默认收起：把屏幕留给聊天记录（桌面端不受影响，始终展开）
 const infoExpanded = ref(false)
 const ROUND_LIMIT = 5
+
+// 会话工作区文件浏览器：状态机由父页面持有，聊天记录联动可直接驱动预览
+const workspaceFiles = useWorkspaceFiles()
+const fileDialogVisible = ref(false)
+
+const canBrowseFiles = computed(() =>
+  sessionInfo.value?.executionMode === 'CLOUD' && Boolean(sessionInfo.value?.workspace),
+)
+
+const browseDisabledTip = computed(() =>
+  sessionInfo.value?.workspace
+    ? '本地执行会话的文件在用户设备上，服务端不可见'
+    : '会话未配置工作区',
+)
+
+function openFileBrowser() {
+  const id = sessionInfo.value?.id ?? Number(route.params.id)
+  if (!Number.isFinite(id)) return
+  fileDialogVisible.value = true
+  void workspaceFiles.open(id)
+}
+
+/** 聊天记录文件变更路径点击：CLOUD 会话直接打开该文件预览，LOCAL / 无工作区给明确提示 */
+function onFileChangePreview(relativePath: string) {
+  const id = sessionInfo.value?.id ?? Number(route.params.id)
+  if (!canBrowseFiles.value || !Number.isFinite(id)) {
+    ElMessage.warning('本地执行会话的文件在用户设备上，服务端不可见')
+    return
+  }
+  fileDialogVisible.value = true
+  void workspaceFiles.open(id, relativePath)
+}
+
+function closeFileBrowser() {
+  fileDialogVisible.value = false
+  workspaceFiles.reset()
+}
+
+/** Dialog 关闭（X / ESC / 遮罩）：收起并清空浏览状态（含 PDF blob URL 释放） */
+function onFileDialogVisibleChange(value: boolean) {
+  if (value) {
+    fileDialogVisible.value = true
+    return
+  }
+  closeFileBrowser()
+}
+
+/** 复制工作区路径：clipboard API 优先，execCommand 兜底（参照 utils/codeCopy.ts 降级写法） */
+async function copyWorkspace() {
+  const path = sessionInfo.value?.workspace
+  if (!path) return
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(path)
+    } else {
+      const textarea = document.createElement('textarea')
+      textarea.value = path
+      textarea.style.position = 'fixed'
+      textarea.style.top = '-9999px'
+      document.body.appendChild(textarea)
+      textarea.select()
+      document.execCommand('copy')
+      document.body.removeChild(textarea)
+    }
+    ElMessage.success('已复制工作区路径')
+  } catch {
+    ElMessage.error('复制失败，请手动选择复制')
+  }
+}
 
 const mobileInfoSummary = computed(() => {
   const info = sessionInfo.value
@@ -490,6 +577,23 @@ onActivated(() => {
 .drill-link {
   color: var(--el-color-primary);
   text-decoration: none;
+}
+
+/* 工作区路径超长省略；入口按钮包一层 span 让禁用态也能挂 tooltip */
+.workspace-path {
+  display: inline-block;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  font-size: 12px;
+}
+
+.browse-entry-wrap {
+  display: inline-block;
+  margin-left: 4px;
 }
 
 .drill-link:hover {

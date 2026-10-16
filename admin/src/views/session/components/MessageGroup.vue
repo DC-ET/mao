@@ -59,6 +59,7 @@
       v-if="showFileChanges"
       :changes="aggregatedFileChanges"
       :workspace="workspace"
+      @preview="onFileChangePreview"
     />
   </div>
 </template>
@@ -85,6 +86,15 @@ const props = withDefaults(defineProps<{
   phase: '',
   phaseReady: false
 })
+
+const emit = defineEmits<{
+  /** 文件变更路径点击：透传到详情页打开工作区文件预览 */
+  (e: 'preview', relativePath: string): void
+}>()
+
+function onFileChangePreview(relativePath: string) {
+  emit('preview', relativePath)
+}
 
 const ACTIVE_PHASES = new Set(['RUNNING', 'WAITING_APPROVAL', 'CANCELLING'])
 
