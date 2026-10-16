@@ -1,4 +1,4 @@
-import { reactive } from 'vue'
+import { reactive, toRaw } from 'vue'
 import { api } from '../../../api'
 import { downloadBlob } from '../../../utils/download'
 
@@ -280,6 +280,17 @@ export function useWorkspaceFiles() {
     clearSearch()
   }
 
+  /**
+   * 判断当前预览目标是否仍是传入的那个。
+   *
+   * 必须用 toRaw 比较：普通对象赋进 reactive 的 state.preview 后会被 Vue 包装成
+   * 代理，`state.preview === preview` 恒为 false。早期直接比引用，导致请求返回后
+   * 一律判定「已切换目标」而丢弃结果，loading 永不置 false，预览永远停在「加载中…」。
+   */
+  function isCurrentPreview(preview: WorkspacePreviewState): boolean {
+    return toRaw(state.preview) === preview
+  }
+
   async function previewFile(relativePath: string) {
     revokePdf()
     const preview: WorkspacePreviewState = {
@@ -295,7 +306,7 @@ export function useWorkspaceFiles() {
     if (isPdfPath(relativePath)) {
       const result = await fetchBytes(sessionFilesUrl(state.sessionId!, 'preview', { path: relativePath }))
       // 期间可能已切换预览目标：仅回填仍是当前目标的结果
-      if (state.preview !== preview) return
+      if (!isCurrentPreview(preview)) return
       preview.loading = false
       if (result.blob) {
         preview.pdfUrl = URL.createObjectURL(result.blob)
@@ -306,11 +317,11 @@ export function useWorkspaceFiles() {
     }
     try {
       const { data } = await api.get(sessionFilesPath(state.sessionId!, 'read', { path: relativePath }), { skipErrorToast: true })
-      if (state.preview !== preview) return
+      if (!isCurrentPreview(preview)) return
       preview.loading = false
       preview.data = data ?? null
     } catch (e) {
-      if (state.preview !== preview) return
+      if (!isCurrentPreview(preview)) return
       preview.loading = false
       preview.error = (e as Error)?.message || '预览失败'
     }

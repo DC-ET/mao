@@ -155,3 +155,98 @@ describe('useWorkspaceFiles URL 拼接', () => {
       .toBe('https://x.test/api/v1/admin/sessions/1/files/directory')
   })
 })
+
+describe('useWorkspaceFiles 预览状态机', () => {
+  beforeEach(() => {
+    apiGet.mockClear()
+    fetchCalls.length = 0
+    localStorage.clear()
+    stubFetch()
+  })
+
+  it('文本预览：请求成功后 loading 置 false 并回填内容', async () => {
+    const files = await loadComposable(undefined)
+    await files.open(3)
+    apiGet.mockResolvedValueOnce({ data: { content: 'hello\nworld', total_lines: 2 } })
+
+    expect(files.state.preview).toBeNull()
+    await files.previewFile('README.md')
+
+    expect(files.state.preview?.loading).toBe(false)
+    expect(files.state.preview?.data).toEqual({ content: 'hello\nworld', total_lines: 2 })
+    expect(files.state.preview?.error).toBeNull()
+    expect(files.state.preview?.path).toBe('README.md')
+  })
+
+  it('文本预览失败：loading 置 false 并给出错误（不停在「加载中…」）', async () => {
+    const files = await loadComposable(undefined)
+    await files.open(3)
+    apiGet.mockRejectedValueOnce(new Error('二进制文件，无法预览'))
+
+    await files.previewFile('blob.bin')
+
+    expect(files.state.preview?.loading).toBe(false)
+    expect(files.state.preview?.error).toBe('二进制文件，无法预览')
+    expect(files.state.preview?.data).toBeNull()
+  })
+
+  it('PDF 预览：拿到的 blob 转成 url，loading 置 false', async () => {
+    const files = await loadComposable(undefined)
+    await files.open(3)
+    await files.previewFile('docs/a.pdf')
+
+    expect(files.state.preview?.loading).toBe(false)
+    expect(files.state.preview?.pdfUrl).toBeTruthy()
+    expect(files.state.preview?.error).toBeNull()
+    expect(fetchCalls).toEqual(['/api/v1/admin/sessions/3/files/preview?path=docs%2Fa.pdf'])
+  })
+
+  it('PDF 预览失败：展示错误而非空白 iframe', async () => {
+    const files = await loadComposable(undefined)
+    await files.open(3)
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      // 按 name 取值：无 Content-Disposition、content-type 为 JSON —— 即后端 HTTP200 错误体形态
+      headers: {
+        get: (name: string) => (name === 'content-disposition' ? null : 'application/json'),
+      },
+      json: async () => ({ code: 2001, message: '不是有效的 PDF 文件或文件已损坏：a.pdf' }),
+      blob: async () => new Blob(['nope']),
+    } as unknown as Response)))
+
+    await files.previewFile('docs/a.pdf')
+
+    expect(files.state.preview?.loading).toBe(false)
+    expect(files.state.preview?.error).toBe('不是有效的 PDF 文件或文件已损坏：a.pdf')
+    expect(files.state.preview?.pdfUrl).toBeNull()
+  })
+
+  it('切换预览目标后，前一个请求的结果被丢弃', async () => {
+    // 第一个请求慢、第二个快：慢的返回时当前目标已是第二个，不得覆盖
+    let releaseFirst: (v: unknown) => void = () => {}
+    const files = await loadComposable(undefined)
+    await files.open(3)
+
+    apiGet.mockImplementationOnce(() => new Promise((res) => { releaseFirst = res }))
+    apiGet.mockResolvedValueOnce({ data: { content: 'second', total_lines: 1 } })
+
+    const first = files.previewFile('first.md')
+    const second = files.previewFile('second.md')
+    await second
+    releaseFirst({ data: { content: 'FIRST', total_lines: 1 } })
+    await first
+
+    expect(files.state.preview?.path).toBe('second.md')
+    expect(files.state.preview?.data).toEqual({ content: 'second', total_lines: 1 })
+    expect(files.state.preview?.loading).toBe(false)
+  })
+
+  it('closePreview 后状态清空', async () => {
+    const files = await loadComposable(undefined)
+    await files.open(3)
+    apiGet.mockResolvedValueOnce({ data: { content: 'x', total_lines: 1 } })
+    await files.previewFile('a.md')
+    files.closePreview()
+    expect(files.state.preview).toBeNull()
+  })
+})
