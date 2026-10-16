@@ -1,11 +1,17 @@
 import type { FeishuInboundHandler, FeishuNormalizedMessage, FeishuInboundContext, FeishuReply } from './types.js';
 import { inboundImageKeys, isInboundFileMessage } from './event-normalizer.js';
+import { isNewSessionCommand } from './agent-inbound-handler.js';
 import type { FeishuMessageService } from './message.service.js';
 import { botSenderLabel, isBotSender } from './message.service.js';
 import { describeMessageText, FEISHU_CARD_UPGRADE_FALLBACK } from './message-detail.js';
+import { InboundMergeWindow } from '../common/inbound-merge-window.js';
 
 /** 触发前同步补齐的待富化行上限：正常只有刚到达的一两条，上限只是防御僵死行拖慢触发。 */
 const PENDING_FLUSH_LIMIT = 10;
+
+/** 可并入合并窗口的消息类型；其余（image/file/sticker/audio/video 等）到达即冲刷窗口后单独处理。
+ *  带内嵌图片的 post 也豁免（imageKeys 非空）：媒体不跨消息合并，Agent 仍可按 msg 占位懒加载。 */
+const JOINABLE_MESSAGE_TYPES = new Set(['text', 'merge_forward', 'post', 'interactive']);
 
 export interface FeishuInboundProcessorOptions {
   messageService?: FeishuMessageService;
@@ -36,17 +42,60 @@ export interface FeishuInboundProcessorOptions {
   expandMergeForward?: (accountId: string, messageId: string, workspace: string | null) => Promise<string | null>;
   /** 合并转发落盘用的会话工作区。群聊按 chatId，私聊按 private-{userId}；失败返回 null。 */
   resolveMergeWorkspace?: (accountId: string, event: FeishuNormalizedMessage) => Promise<string | null> | string | null;
+  /** 入站防抖合并窗口时长（ms）。0 = 关闭：消息到达即单条触发，行为与加窗之前一致。 */
+  mergeWindowMs?: number;
+}
+
+/**
+ * 窗口条目：到达即完成重活（claim、群日志、富化登记、合并转发展开），
+ * 只把 handler.onMessage 这一个触发点挂到窗口上；flush 时批内合并为一次触发。
+ * kind='file' 为群聊纯文件（ingest-only，不触发任务），一律豁免出窗。
+ */
+interface FeishuWindowEntry {
+  kind: 'trigger' | 'file';
+  accountId: string;
+  /** 已解析发送人名、（p2p）合并转发摘录替换后的事件。 */
+  event: FeishuNormalizedMessage;
+  senderLabel: string;
+  maoUserId?: number;
+  messageId: string;
+  /** process() 入口同步分配的到达序号：保证合并顺序 = 到达顺序（prepare 耗时不同不会乱序）。 */
+  arrivalSeq: number;
+  /** 群日志行 ID（prepare 时落库）；p2p 无日志行为 undefined。
+   *  触发前补齐待富化行时只等到此 ID 及更早的行：更晚的行属于后续触发，
+   *  等它会把本批挂在后到消息的后台富化上，让后到消息的触发反超本批（合并顺序被破坏）。 */
+  logId?: number;
 }
 
 export class FeishuInboundProcessor {
-  constructor(private readonly handler: FeishuInboundHandler, private readonly options: FeishuInboundProcessorOptions = {}) {}
-
   /** 同群保序门闩：群消息「写入日志」与触发时「读取上下文」必须按到达顺序执行，
    * 防止并发入站处理乱序（图片尚未入库、水位线已被触发推进，导致该消息永远进不了上下文）。 */
   private readonly chatOrderQueues = new Map<string, Promise<unknown>>();
 
   /** 后台富化在飞行登记（logId → 富化 Promise）：触发路径据此等待而非重复展开。 */
   private readonly enrichments = new Map<number, Promise<void>>();
+
+  /** process() 入口同步分配的到达序号（跨 bot 单调即可，窗口内只比较同键条目）。 */
+  private arrivalSeqCounter = 0;
+
+  /** 入站防抖合并窗口：windowMs=0 时所有消息走豁免路径单条触发，与现状恒等。 */
+  private readonly window: InboundMergeWindow<FeishuWindowEntry>;
+
+  constructor(private readonly handler: FeishuInboundHandler, private readonly options: FeishuInboundProcessorOptions = {}) {
+    this.window = new InboundMergeWindow<FeishuWindowEntry>({
+      windowMs: options.mergeWindowMs ?? 0,
+      keyOf: (entry) => this.windowKeyOf(entry),
+      dedupeKeyOf: (entry) => entry.messageId,
+      canJoin: (entry) => this.canJoinEntry(entry),
+      seqOf: (entry) => entry.arrivalSeq,
+      onFlush: (batch) => this.flushEntries(batch),
+    });
+  }
+
+  /** 关机时 best-effort 冲刷在途窗口（只保证触发启动，执行由停机收尾等待/标记）。 */
+  async flushAll(): Promise<void> {
+    await this.window.flushAll();
+  }
 
   private runInChatOrder<T>(accountId: string, chatId: string | null, fn: () => Promise<T>): Promise<T> {
     const key = `${accountId}:${chatId ?? ''}`;
@@ -69,8 +118,33 @@ export class FeishuInboundProcessor {
     }).catch(() => undefined);
   }
 
-  async process(accountId: string, event: FeishuNormalizedMessage, skipClaim = false): Promise<void> {
+  /**
+   * 入站主入口：prepare（到达即完成 claim/日志/富化登记/合并转发展开）→ 窗口 submit。
+   * `bypassWindow` 供绑定后补投使用：不经过窗口，立即单条触发（与加窗前的补投行为一致）。
+   */
+  async process(accountId: string, event: FeishuNormalizedMessage, skipClaim = false, options: { bypassWindow?: boolean } = {}): Promise<void> {
     if (event.senderId == null || event.messageId == null) return;
+    // 到达序号必须在任何 await 之前同步分配：prepare 耗时差异（合并转发展开是网络调用）
+    // 会让 submit 顺序偏离到达顺序，批内排序以此恢复「合并顺序 = 到达顺序」。
+    const arrivalSeq = (this.arrivalSeqCounter += 1);
+    const entry = await this.prepareOne(accountId, event, skipClaim, arrivalSeq);
+    if (entry == null) return;
+    if (options.bypassWindow) {
+      await this.flushEntries([entry]);
+      return;
+    }
+    await this.window.submit(entry);
+  }
+
+  /**
+   * 到达即执行的重活（与加窗前一致）：claim → 姓名/授权/合并转发展开 → 群日志落库。
+   * 产出窗口条目；不触发的分支（未授权/未@/空身份）在此完成 claim 收尾并返回 null。
+   * 触发类条目的 claim 保留到 flush 触发返回后再 complete/release（状态机不变，时机随批次后移）。
+   */
+  private async prepareOne(
+    accountId: string, event: FeishuNormalizedMessage, skipClaim: boolean, arrivalSeq: number,
+  ): Promise<FeishuWindowEntry | null> {
+    if (event.senderId == null || event.messageId == null) return null;
     // 媒体消息（图片/文件）无文本时生成标注文本，避免空消息进入链路且群日志内容为空。
     const normalized = this.normalizeText(event);
     const messageId = normalized.messageId!;
@@ -78,8 +152,9 @@ export class FeishuInboundProcessor {
     const claimed = skipClaim || messageService == null
       ? true
       : await messageService.claimInboundMessage(accountId, { ...normalized, accountId, messageId });
-    if (messageService != null && !claimed) return;
+    if (messageService != null && !claimed) return null;
     let completed = false;
+    let entry: FeishuWindowEntry | null = null;
     try {
       if (normalized.chatType === 'p2p') {
         const named = await this.resolveSenderName(normalized, accountId);
@@ -88,16 +163,19 @@ export class FeishuInboundProcessor {
         } else if (this.handler.authorizeDirectMessage(accountId, named.senderUnionId ?? named.senderId!, named.text)) {
           const resolvedUserId = await this.options.resolveUserId?.(accountId, named);
           const expanded = await this.expandMergeForwardText(accountId, named);
-          const quotedContext = await this.resolveQuoted(accountId, expanded);
-          const reply = await this.handler.onMessage({ ...expanded, accountId, maoUserId: resolvedUserId ?? undefined, quotedContext });
-          if (reply?.text) await this.sendReply(accountId, expanded, reply);
+          entry = {
+            kind: 'trigger', accountId, event: expanded,
+            senderLabel: this.options.senderLabel?.(expanded) ?? defaultSenderLabel(expanded),
+            maoUserId: resolvedUserId ?? undefined, messageId, arrivalSeq,
+          };
+          return entry;
         }
         completed = true;
-        return;
+        return null;
       }
       if (normalized.chatType !== 'group' || messageService == null) {
         completed = true;
-        return;
+        return null;
       }
       let mentioned = this.isBotMentioned(normalized);
       // 话题消息免 @ 触发：仅当话题会话映射已存在（机器人已在该话题中）时放行。
@@ -119,7 +197,7 @@ export class FeishuInboundProcessor {
       if (!mentioned) {
         this.trackEnrichment(logId, this.enrichGroupMessage(accountId, logId, normalized));
         completed = true;
-        return;
+        return null;
       }
       const mergeForward = normalized.messageType === 'merge_forward';
       try {
@@ -130,38 +208,17 @@ export class FeishuInboundProcessor {
           if (mergeForward) this.trackEnrichment(logId, this.enrichGroupMessage(accountId, logId, named, { skipMergeForward: true }));
           await this.sendUnauthorizedGuide(accountId, named);
           completed = true;
-          return;
+          return null;
         }
         if (mergeForward) named = await this.persistExpandedMergeForward(accountId, logId, named);
         const resolvedUserId = await this.options.resolveUserId?.(accountId, named);
-        // 纯文件：只下载并交给 handler 落库，不拼群上下文、不触发任务（飞书文件与文字分两条消息）。
-        if (isInboundFileMessage(named)) {
-          const quotedContext = await this.resolveQuoted(accountId, named);
-          const fileContext: FeishuInboundContext = {
-            ...named, accountId, messageId, maoUserId: resolvedUserId ?? undefined,
-            senderLabel: this.options.senderLabel?.(named) ?? defaultSenderLabel(named),
-            quotedContext,
-          };
-          await this.runInChatOrder(accountId, named.chatId, () => this.handler.onMessage(fileContext));
-          completed = true;
-          return;
-        }
-        // 同群内上下文读取排在更早消息的入库之后（runInChatOrder 保序），保证图片等先到消息已可见。
-        // 读之前先同步补齐待富化行：后台富化与触发读取存在竞态——用户「先转发记录、马上 @ 机器人」时，
-        // buildGroupContext 会在 enrich_pending 行处截断，本轮 prompt 完全拿不到转发摘录，
-        // 而用户往往不会有下一轮触发来补（水位线未推进，内容只会原样留在日志行里）。
-        await this.flushPendingEnrichments(accountId, named);
-        const group = await this.runInChatOrder(accountId, named.chatId,
-          () => messageService.buildGroupContext(accountId, { ...named, accountId, messageId, maoUserId: resolvedUserId ?? undefined }));
-        const quotedContext = await this.resolveQuoted(accountId, named);
-        const context: FeishuInboundContext = {
-          ...named, accountId, messageId, maoUserId: resolvedUserId ?? undefined, groupContext: group.prompt,
+        entry = {
+          // 纯文件：只下载并交给 handler 落库，不拼群上下文、不触发任务（飞书文件与文字分两条消息）。
+          kind: isInboundFileMessage(named) ? 'file' : 'trigger', accountId, event: named,
           senderLabel: this.options.senderLabel?.(named) ?? defaultSenderLabel(named),
-          quotedContext,
+          maoUserId: resolvedUserId ?? undefined, messageId, arrivalSeq, logId,
         };
-        const reply = await this.handler.onMessage(context);
-        if (reply?.text) await this.sendReply(accountId, named, reply);
-        completed = true;
+        return entry;
       } catch (error) {
         // 授权或后续步骤抛错时，合并转发还没进 enrich 的 finally，必须在这里放行水位线。
         if (mergeForward) {
@@ -174,11 +231,108 @@ export class FeishuInboundProcessor {
         throw error;
       }
     } finally {
-      if (messageService != null) {
+      // 仅「未产出条目」（早返/异常）时在此收尾 claim；触发类条目的收尾随 flush 后移。
+      if (entry == null && messageService != null) {
         if (completed) await messageService.completeInboundMessage(accountId, messageId);
         else await messageService.releaseInboundMessage(accountId, messageId);
       }
     }
+  }
+
+  /** 窗口 flush 入口：合并批内条目为一次触发，随后逐条 complete/release claim（与单条 finally 语义一致）。 */
+  private async flushEntries(batch: FeishuWindowEntry[]): Promise<void> {
+    const messageService = this.options.messageService;
+    let completed = false;
+    try {
+      // file 条目一律豁免出窗（单条到达）；此处防御性分流，避免混合批次漏处理。
+      for (const entry of batch) {
+        if (entry.kind === 'file') await this.triggerFile(entry);
+      }
+      const triggers = batch.filter((entry) => entry.kind === 'trigger');
+      if (triggers.length > 0) await this.triggerMerged(triggers);
+      completed = true;
+    } finally {
+      if (messageService != null) {
+        for (const entry of batch) {
+          try {
+            if (completed) await messageService.completeInboundMessage(entry.accountId, entry.messageId);
+            else await messageService.releaseInboundMessage(entry.accountId, entry.messageId);
+          } catch (error) {
+            console.warn(`飞书入站 claim 收尾失败, messageId=${entry.messageId}: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        }
+      }
+    }
+  }
+
+  /** 合并触发：批内条目按到达序合并为一个 InboundContext，handler.onMessage ×1。
+   *  身份字段（messageId/parentId/rootId/threadId/senderLabel/maoUserId）取首条（同键同发送者本一致）；
+   *  正文与 quotedContext 按到达序空行拼接；群上下文以末条 messageId 读一次（各条 prepare 时已落日志）。 */
+  private async triggerMerged(entries: FeishuWindowEntry[]): Promise<void> {
+    const first = entries[0];
+    const last = entries[entries.length - 1];
+    const accountId = first.accountId;
+    const text = entries.map((e) => e.event.text).filter((t) => t.trim() !== '').join('\n\n') || first.event.text;
+    const quotedParts = await Promise.all(entries.map((e) => this.resolveQuoted(accountId, e.event)));
+    const quoted = quotedParts.filter((q): q is string => q != null && q.trim() !== '').join('\n\n');
+    const quotedContext = quoted === '' ? undefined : quoted;
+    if (first.event.chatType === 'p2p') {
+      const context: FeishuInboundContext = {
+        ...first.event, accountId, maoUserId: first.maoUserId, text, quotedContext,
+      };
+      const reply = await this.handler.onMessage(context);
+      if (reply?.text) await this.sendReply(accountId, first.event, reply);
+      return;
+    }
+    const messageService = this.options.messageService!;
+    // 同群内上下文读取排在更早消息的入库之后（runInChatOrder 保序），保证图片等先到消息已可见。
+    // 读之前先同步补齐待富化行：后台富化与触发读取存在竞态——用户「先转发记录、马上 @ 机器人」时，
+    // buildGroupContext 会在 enrich_pending 行处截断，本轮 prompt 完全拿不到转发摘录，
+    // 而用户往往不会有下一轮触发来补（水位线未推进，内容只会原样留在日志行里）。
+    // 只补齐到本批末条消息为止：更晚的行属于后续触发，等它会让本批被后到的豁免消息反超。
+    const upToLogId = entries.reduce((max, e) => Math.max(max, e.logId ?? 0), 0);
+    await this.flushPendingEnrichments(accountId, last.event, upToLogId > 0 ? upToLogId : undefined);
+    const group = await this.runInChatOrder(accountId, first.event.chatId,
+      () => messageService.buildGroupContext(accountId, { ...last.event, accountId, messageId: last.messageId, maoUserId: last.maoUserId }));
+    const context: FeishuInboundContext = {
+      ...first.event, accountId, messageId: first.messageId, maoUserId: first.maoUserId, text,
+      groupContext: group.prompt, senderLabel: first.senderLabel, quotedContext,
+    };
+    const reply = await this.handler.onMessage(context);
+    if (reply?.text) await this.sendReply(accountId, first.event, reply);
+  }
+
+  /** 群聊纯文件豁免路径：下载并交给 handler 落库，不拼群上下文、不触发任务（与加窗前一致）。 */
+  private async triggerFile(entry: FeishuWindowEntry): Promise<void> {
+    const quotedContext = await this.resolveQuoted(entry.accountId, entry.event);
+    const fileContext: FeishuInboundContext = {
+      ...entry.event, accountId: entry.accountId, messageId: entry.messageId,
+      maoUserId: entry.maoUserId, senderLabel: entry.senderLabel, quotedContext,
+    };
+    if (entry.event.chatType === 'group' && entry.event.chatId != null) {
+      await this.runInChatOrder(entry.accountId, entry.event.chatId, () => this.handler.onMessage(fileContext));
+      return;
+    }
+    await this.handler.onMessage(fileContext);
+  }
+
+  /** 窗口键 = 账号 + 会话 +（群的）话题 + 发送者：只合同一发送者在同一会话（话题）内的连续消息。 */
+  private windowKeyOf(entry: FeishuWindowEntry): string {
+    const event = entry.event;
+    return [entry.accountId, event.chatId ?? '', event.threadId ?? '', event.senderId ?? ''].join(':');
+  }
+
+  /** 准入：仅文本类且会触发的消息入窗。豁免：媒体/带图富文本、`---`、p2p 引用切换、群纯文件。 */
+  private canJoinEntry(entry: FeishuWindowEntry): boolean {
+    if (entry.kind !== 'trigger') return false;
+    const event = entry.event;
+    if (!JOINABLE_MESSAGE_TYPES.has(event.messageType)) return false;
+    // 带内嵌图片的富文本（post）：媒体不跨消息合并，其 imageKeys 随首条字段合并会丢，整体豁免。
+    if (inboundImageKeys(event).length > 0) return false;
+    // `---` 新建会话（p2p 专属）与 p2p 引用切换：混入批次会让指令/指针切换失效或错位。
+    if (isNewSessionCommand(event.text)) return false;
+    if (event.chatType === 'p2p' && event.parentId != null && event.parentId !== '') return false;
+    return true;
   }
 
   private async resolveSenderName(event: FeishuNormalizedMessage, accountId: string): Promise<FeishuNormalizedMessage> {
@@ -234,8 +388,12 @@ export class FeishuInboundProcessor {
   }
 
   /** 触发前同步补齐范围内待富化行：合并转发行就地展开，其余类型等待已在飞行的后台富化。
-   *  只在读取群上下文前调用；查询失败不阻塞触发（维持原有占位行为）。 */
-  private async flushPendingEnrichments(accountId: string, event: FeishuNormalizedMessage): Promise<void> {
+   *  只在读取群上下文前调用；查询失败不阻塞触发（维持原有占位行为）。
+   *  upToLogId 限定补齐范围（本批末条消息的日志行）：窗口期后到达的行不属于本次触发，
+   *  等它的富化会把本次触发挂到后到消息上，破坏「先批后豁免」的顺序。 */
+  private async flushPendingEnrichments(
+    accountId: string, event: FeishuNormalizedMessage, upToLogId?: number,
+  ): Promise<void> {
     const messageService = this.options.messageService;
     if (messageService == null || event.chatType !== 'group' || event.chatId == null || event.chatId === '') return;
     let pending: Array<{ id: number; messageId: string; msgType: string }>;
@@ -245,7 +403,8 @@ export class FeishuInboundProcessor {
       console.warn(`查询飞书待富化群消息失败, chatId=${event.chatId}: ${error instanceof Error ? error.message : String(error)}`);
       return;
     }
-    for (const row of pending) {
+    const rows = upToLogId == null ? pending : pending.filter((row) => row.id <= upToLogId);
+    for (const row of rows) {
       await this.flushPendingRow(accountId, event, row);
     }
   }

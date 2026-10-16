@@ -13,6 +13,8 @@ export interface WeixinBotConfig {
     longPollTimeoutMs: number;
     maxConsecutiveFailures: number;
   };
+  /** 入站防抖合并窗口（ms）：同账号 + 发送者的连续纯文本消息合并为一次触发；0 = 禁用。 */
+  mergeWindowMs: number;
 }
 
 export const DEFAULT_WEIXIN_BOT_CONFIG: WeixinBotConfig = {
@@ -30,6 +32,7 @@ export const DEFAULT_WEIXIN_BOT_CONFIG: WeixinBotConfig = {
     longPollTimeoutMs: 35000,
     maxConsecutiveFailures: 3,
   },
+  mergeWindowMs: 1000,
 };
 
 export const DEFAULT_CDN_BASE = 'https://novac2c.cdn.weixin.qq.com/c2c';

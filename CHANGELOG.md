@@ -41,6 +41,7 @@
 
 ### 后端
 
+- **IM 入站消息防抖合并（飞书 / 钉钉 / 微信）**：同一发送者在同一会话（飞书含话题）内 1 秒窗口期中连续发出的多条**纯文本**消息，合并为一次任务触发，正文按到达顺序空行拼接，不再每条消息各起一轮执行。合并只发生在「文本类且会触发」的消息上：带内嵌图片的富文本（飞书 post / 钉钉 richText）、图片、文件、语音/视频、私聊 `---` 新建会话、私聊引用切换（飞书）一律立即单独触发，不等窗口；不同发送者、不同会话互不影响。微信侧仅合并纯文本，图片/文件/语音消息单独处理（与既有的「后到消息接管」语义叠加：间隔超过 1 秒的两条消息仍是取代而非合并）。窗口时长可按通道分别配置：`FEISHU_BOT_MERGE_WINDOW_MS`、`DINGTALK_BOT_MERGE_WINDOW_MS`、`WEIXIN_BOT_MERGE_WINDOW_MS`（默认均为 1000，单位毫秒；设为 0 即完全关闭合并，行为与升级前一致，重启后端生效）。停机（含蓝绿发布排空）前会把在途窗口里的消息冲刷触发出去，不再静默丢弃；绑定成功后补投的原始消息不受窗口影响，仍即时触发。
 - 新增只读接口 `GET /v1/embed/admin-config`：仅要求登录（不要求 `settings:read`），返回浮窗助手最终使用的 Agent ID；配置值非数字 / 不存在 / 已停用一律回落系统默认 Agent，均不可用时返回空（前端不初始化浮窗），不抛 500。
 - 新增系统配置 `embed.agentId`（V156 迁移，分类「集成配置」）：浮窗助手使用的 Agent ID，保存时校验必须为有效、未停用的 Agent，留空回落系统默认 Agent。
 - **管理后台会话工作区只读文件端点**：新增 `/v1/admin/sessions/:id/files/{directory,search,read,preview,download,download-zip}` 六个只读端点，复用 `WorkspaceBrowseService`（与用户侧 `/v1/files/workspace-*` 同一套 `StrictPathResolver` 越界收口：相对穿越、越界绝对路径、符号链接逃逸一律拒绝）。鉴权只校验 `session:read` 权限码 + 会话存在、有工作区且为 CLOUD 执行模式，不做出属主校验（管理后台跨用户查看是本职；LOCAL 会话工作区在用户设备上，服务端不可浏览）；用户侧属主校验与现有端点零改动。审计由 `/v1/admin` 前缀的全局 `onResponse` 钩子自动留痕（action=READ、objectType=admin.sessions、objectId=会话 id、queryString 含 path/dir），无显式审计代码。

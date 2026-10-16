@@ -103,6 +103,58 @@ describe('cloud runtime config', () => {
   });
 });
 
+describe('入站合并窗口环境变量', () => {
+  const ENV_KEYS = [
+    'FEISHU_BOT_MERGE_WINDOW_MS',
+    'DINGTALK_BOT_MERGE_WINDOW_MS',
+    'WEIXIN_BOT_MERGE_WINDOW_MS',
+  ];
+
+  function withEnv(env: Record<string, string | undefined>, fn: () => void): void {
+    const prev: Record<string, string | undefined> = {};
+    for (const key of ENV_KEYS) {
+      prev[key] = process.env[key];
+      if (env[key] === undefined) delete process.env[key];
+      else process.env[key] = env[key];
+    }
+    try {
+      resetConfigCache();
+      fn();
+    } finally {
+      for (const key of ENV_KEYS) {
+        if (prev[key] === undefined) delete process.env[key];
+        else process.env[key] = prev[key];
+      }
+      resetConfigCache();
+    }
+  }
+
+  it('三端默认均为 1000ms', () => {
+    withEnv({}, () => {
+      const cfg = loadConfig();
+      expect(cfg.feishu.bot.mergeWindowMs).toBe(1000);
+      expect(cfg.dingtalk.mergeWindowMs).toBe(1000);
+      expect(cfg.weixin.bot.mergeWindowMs).toBe(1000);
+    });
+  });
+
+  it('WEIXIN_BOT_MERGE_WINDOW_MS 生效：0 即关闭微信合并（文档承诺的回滚开关）', () => {
+    // 回归：该变量曾只写进文档没有接线，运维配 0 后微信合并照旧。
+    withEnv({ WEIXIN_BOT_MERGE_WINDOW_MS: '0' }, () => {
+      const cfg = loadConfig();
+      expect(cfg.weixin.bot.mergeWindowMs).toBe(0);
+    });
+  });
+
+  it('FEISHU/DINGTALK_BOT_MERGE_WINDOW_MS 生效（对照组）', () => {
+    withEnv({ FEISHU_BOT_MERGE_WINDOW_MS: '250', DINGTALK_BOT_MERGE_WINDOW_MS: '500' }, () => {
+      const cfg = loadConfig();
+      expect(cfg.feishu.bot.mergeWindowMs).toBe(250);
+      expect(cfg.dingtalk.mergeWindowMs).toBe(500);
+    });
+  });
+});
+
 describe('flyway files', () => {
   it('contains the current migration set', () => {
     const tsDir = join(process.cwd(), 'db/migration');

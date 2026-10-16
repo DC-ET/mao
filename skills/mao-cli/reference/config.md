@@ -127,6 +127,7 @@ web_search 工具支持 Tavily / TinyFish 双实现，在管理后台「系统�
 | `FEISHU_BOT_RECONNECT_MAX_MS` | 30000 | 重连最大退避 |
 | `FEISHU_BOT_MAX_CONSECUTIVE_FAILURES` | 5 | 连续失败告警阈值 |
 | `FEISHU_BOT_GROUP_CONTEXT_MAX_ITEMS` | 20 | 群聊上下文注入的最大消息条数 |
+| `FEISHU_BOT_MERGE_WINDOW_MS` | 1000 | 入站防抖合并窗口（毫秒）：同一发送者在同一会话（含话题）内窗口期中连续发出的多条纯文本消息合并为一次任务触发，正文按到达顺序拼接；带内嵌图片的富文本、图片、文件、`---`、私聊引用切换仍立即单独触发。设为 0 关闭合并，重启后端生效 |
 
 注意：飞书应用需开通「获取用户 union_id」权限，否则无法识别发送者身份，全员按未绑定处理。使用详见 [feishu-bot.md](feishu-bot.md)。
 
@@ -143,12 +144,13 @@ web_search 工具支持 Tavily / TinyFish 双实现，在管理后台「系统�
 | `DINGTALK_BOT_REPLY_MAX_LENGTH` | 2000 | markdown 截断长度 |
 | `DINGTALK_BOT_GROUP_CONTEXT_MAX_ITEMS` | 10 | @ 往来条数 |
 | `DINGTALK_BOT_GROUP_CONTEXT_MAX_MINUTES` | 120 | @ 往来时间窗 |
+| `DINGTALK_BOT_MERGE_WINDOW_MS` | 1000 | 入站防抖合并窗口（毫秒）：同一发送者在同一会话内窗口期中连续发出的多条纯文本（含不带图富文本）合并为一次任务触发，正文按到达顺序拼接；带图富文本、图片、语音/视频、`---` 仍立即单独触发。设为 0 关闭合并，重启后端生效 |
 
 使用详见 [dingtalk-bot.md](dingtalk-bot.md)。任务完成通知里的钉钉 Webhook 与本通道无关。
 
 ### 微信 Bot（可选，默认开启）
 
-`WEIXIN_BOT_ENABLED`（默认 true）为微信 Bot 总开关；语音回复依赖本机 `silk-encoder` / `ffmpeg`。绑定流程见 [weixin.md](weixin.md)。管理后台系统设置可指定 `weixin.agentId`、`weixin.modelId`。
+`WEIXIN_BOT_ENABLED`（默认 true）为微信 Bot 总开关；语音回复依赖本机 `silk-encoder` / `ffmpeg`。绑定流程见 [weixin.md](weixin.md)。管理后台系统设置可指定 `weixin.agentId`、`weixin.modelId`。`WEIXIN_BOT_MERGE_WINDOW_MS`（默认 1000）为入站防抖合并窗口（毫秒）：同一用户窗口期中连续发出的多条纯文本合并为一次任务触发，正文按到达顺序拼接；图片/文件/语音消息单独处理，间隔超过窗口的两条消息仍是「后到消息接管」而非合并。设为 0 关闭合并，重启后端生效。
 
 ### 任务通知 Worker
 
