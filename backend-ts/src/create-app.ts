@@ -284,6 +284,7 @@ import { buildQuotedInjection } from './feishu/quoted-injection.js';
 import { feishuSummarizerModelConfig, GroupContextSummarizer } from './feishu/group-context-summarizer.js';
 import { FeishuInboundProcessor } from './feishu/inbound-processor.js';
 import { MysqlFeishuPendingBindingRepository } from './feishu/pending-binding.repository.js';
+import { replayFeishuPendingMessage } from './feishu/pending-replay.js';
 import {
   completeFeishuPendingAfterEcp,
   FEISHU_ECP_IDENTITY_MISMATCH_TEXT,
@@ -511,8 +512,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         const pending = await pendingBindingMessages.claim(state);
         if (pending != null) {
           try {
-            // 绑定后补投绕开合并窗口：用户等的是这条消息的即时响应，不能被窗口期拖延。
-            await pendingBindingProcessor.process(String(pending.appId), { ...pending.event, progressCardMessageId: pending.cardMessageId }, true, { bypassWindow: true });
+            await replayFeishuPendingMessage(pendingBindingProcessor, pending);
             await pendingBindingMessages.complete(state!);
           } catch (error) {
             await pendingBindingMessages.release(state!);
@@ -544,11 +544,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         bind: (userId, unionId) => earlyFeishuBinding.bind(userId, unionId),
         replay: async (pending) => {
           if (pendingBindingProcessor == null) throw new Error('飞书入站处理器未就绪');
-          await pendingBindingProcessor.process(
-            String(pending.appId),
-            { ...pending.event, progressCardMessageId: pending.cardMessageId },
-            true,
-          );
+          await replayFeishuPendingMessage(pendingBindingProcessor, pending);
         },
         complete: (s) => pendingBindingMessages.complete(s),
         release: (s) => pendingBindingMessages.release(s),
@@ -3068,7 +3064,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       const claimed = await pendingBindingMessages.claim(message.state);
       if (claimed == null) continue;
       try {
-        await pendingBindingProcessor.process(String(claimed.appId), { ...claimed.event, progressCardMessageId: claimed.cardMessageId }, true);
+        await replayFeishuPendingMessage(pendingBindingProcessor, claimed);
         await pendingBindingMessages.complete(claimed.state);
       } catch (error) {
         await pendingBindingMessages.release(claimed.state);

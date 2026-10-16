@@ -460,6 +460,7 @@ function coerceTypes(cfg: AppConfig): AppConfig {
   cfg.feishu.bot.reply.maxLength = n(process.env.FEISHU_BOT_REPLY_MAX_LENGTH ?? cfg.feishu.bot.reply.maxLength, 2000);
   cfg.feishu.bot.file.maxInboundFileMb = n(process.env.FEISHU_BOT_MAX_INBOUND_FILE_MB ?? cfg.feishu.bot.file.maxInboundFileMb, 100);
   cfg.feishu.bot.mergeWindowMs = n(process.env.FEISHU_BOT_MERGE_WINDOW_MS ?? cfg.feishu.bot.mergeWindowMs, 1000);
+  cfg.weixin.bot.mergeWindowMs = n(process.env.WEIXIN_BOT_MERGE_WINDOW_MS ?? cfg.weixin.bot.mergeWindowMs, 1000);
   cfg.jwt.expiration = n(cfg.jwt.expiration, 86400000);
   cfg.jwt.refreshExpiration = n(cfg.jwt.refreshExpiration, 604800000);
   cfg.jwt.shellExpiration = n(cfg.jwt.shellExpiration, 7200000);
