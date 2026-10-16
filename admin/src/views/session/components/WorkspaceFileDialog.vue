@@ -1,7 +1,8 @@
 <template>
   <el-dialog
     :model-value="visible"
-    fullscreen
+    width="1080px"
+    top="6vh"
     append-to-body
     destroy-on-close
     class="workspace-file-dialog"
@@ -272,6 +273,20 @@ watch(
 </script>
 
 <style scoped>
+/* 非全屏弹窗：固定最大高度，内部改为「面包屑/表格/预览」纵向滚动，
+   避免弹窗被内容顶高后超出视口（全屏时期 vh 上限即够，弹窗下不再成立）。 */
+.workspace-file-dialog :deep(.el-dialog) {
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 0 !important;
+}
+
+.workspace-file-dialog :deep(.el-dialog__body) {
+  min-height: 0;
+  overflow: hidden;
+}
+
 .wf-header {
   display: flex;
   align-items: center;
@@ -311,6 +326,7 @@ watch(
   padding: 6px 10px;
   background: var(--el-fill-color-light);
   border-radius: 4px;
+  flex-shrink: 0;
 }
 
 .wf-sep {
@@ -358,8 +374,11 @@ watch(
   color: var(--el-text-color-secondary);
 }
 
+/* 表格与预览区各自滚动，父级（.wf-body）不整体撑高弹窗 */
 .wf-table-wrap {
-  max-height: 46vh;
+  flex: 1 1 auto;
+  min-height: 120px;
+  max-height: 44vh;
   overflow: auto;
 }
 
@@ -463,7 +482,7 @@ watch(
 
 .wf-preview-body {
   padding: 10px;
-  max-height: 40vh;
+  max-height: 36vh;
   overflow: auto;
 }
 
@@ -500,14 +519,14 @@ watch(
 
 .wf-image {
   max-width: 100%;
-  max-height: 32vh;
+  max-height: 30vh;
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 4px;
 }
 
 .wf-pdf {
   width: 100%;
-  height: 36vh;
+  height: 34vh;
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 4px;
 }
@@ -544,12 +563,23 @@ watch(
 }
 
 @media (max-width: 768px) {
+  /* 窄屏拉满可用宽度（1080px 会超出视口被裁切） */
+  .workspace-file-dialog :deep(.el-dialog) {
+    width: calc(100vw - 24px) !important;
+    max-height: 92vh;
+  }
+
   .wf-search {
     width: 160px;
   }
 
   .wf-time {
     display: none;
+  }
+
+  .wf-table-wrap,
+  .wf-preview-body {
+    max-height: 34vh;
   }
 }
 </style>

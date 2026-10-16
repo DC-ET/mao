@@ -1,4 +1,4 @@
-import { reactive } from 'vue'
+import { reactive, toRaw } from 'vue'
 import { api } from '../../../api'
 import { downloadBlob } from '../../../utils/download'
 
@@ -49,6 +49,51 @@ export interface WorkspaceFilesState {
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api/v1'
 const MARKDOWN_EXTENSIONS = ['.md', '.markdown']
+
+/**
+ * 管理后台文件端点路径（不含 API base）。
+ *
+ * admin 有两类请求，base 的处理方式不同，别混：
+ * 1) JSON 端点（directory/search/read）走全局 `api` 实例，它自带
+ *    `baseURL = VITE_API_BASE_URL || '/api/v1'`。axios 的 baseURL 只豁免
+ *    形如 `http://` 的绝对 URL，**以 `/` 开头的路径一样会被拼上 base**，
+ *    所以这里必须传不含 base 的相对路径（与 desktop 的 api 调用同口径）。
+ * 2) 字节流端点（preview/download/download-zip）走裸 fetch，没有 baseURL，
+ *    必须自己带上完整 base。
+ *
+ * 曾经把 base 拼进返回值，导致 api 请求 `/api/v1/api/v1/...` → 404，
+ * 被 loadDirectory 归一成「目录加载失败」，用户看到误导性的
+ * 「工作区目录不存在或已被清理」（工作区其实好着）。
+ */
+const FILES_PATH_PREFIX = '/admin/sessions'
+
+/** 拼接查询串：params 中 null/undefined/'' 不参与。 */
+function queryOf(params?: Record<string, string | number | undefined>): string {
+  const query = new URLSearchParams()
+  for (const [key, value] of Object.entries(params ?? {})) {
+    if (value != null && value !== '') query.set(key, String(value))
+  }
+  return query.toString()
+}
+
+/** api 实例用：`/admin/sessions/{id}/files/{suffix}[?query]`（不含 base）。 */
+function sessionFilesPath(
+  sessionId: number,
+  suffix: string,
+  params?: Record<string, string | number | undefined>,
+): string {
+  const qs = queryOf(params)
+  return `${FILES_PATH_PREFIX}/${sessionId}/files/${suffix}${qs ? `?${qs}` : ''}`
+}
+
+/** 裸 fetch 用：带完整 base 的绝对路径。 */
+function sessionFilesUrl(
+  sessionId: number,
+  suffix: string,
+  params?: Record<string, string | number | undefined>,
+): string {
+  return `${API_BASE}${sessionFilesPath(sessionId, suffix, params)}`
+}
 
 function isMarkdownPath(path: string): boolean {
   const lower = path.toLowerCase()
@@ -138,7 +183,9 @@ async function fetchBytes(url: string): Promise<{ blob?: Blob; fileName?: string
 
 /**
  * 管理后台会话工作区文件浏览状态机：目录导航 / 搜索 / 预览 / 下载。
- * JSON 端点（directory/search/read）走全局 api 实例；字节流端点（preview/download/download-zip）走裸 fetch。
+ * JSON 端点（directory/search/read）走全局 api 实例，传 sessionFilesPath（不含 base，
+ * 由 axios 拼 baseURL）；字节流端点（preview/download/download-zip）走裸 fetch，传
+ * sessionFilesUrl（自带完整 base）。两者最终请求同一个地址。
  */
 export function useWorkspaceFiles() {
   const state = reactive<WorkspaceFilesState>({
@@ -152,15 +199,6 @@ export function useWorkspaceFiles() {
     searchLoading: false,
     preview: null,
   })
-
-  function filesUrl(suffix: string, params?: Record<string, string | number | undefined>): string {
-    const query = new URLSearchParams()
-    for (const [key, value] of Object.entries(params ?? {})) {
-      if (value != null && value !== '') query.set(key, String(value))
-    }
-    const qs = query.toString()
-    return `${API_BASE}/admin/sessions/${state.sessionId}/files/${suffix}${qs ? `?${qs}` : ''}`
-  }
 
   function revokePdf() {
     if (state.preview?.pdfUrl) {
@@ -178,12 +216,12 @@ export function useWorkspaceFiles() {
     state.searchLoading = false
   }
 
-  async function loadDirectory(dir: string) {
+  async function loadDirectory(dir: string, sessionId: number = state.sessionId!) {
     state.currentDir = dir
     state.loading = true
     state.error = null
     try {
-      const { data } = await api.get(filesUrl('directory', { dir: dir || undefined }), { skipErrorToast: true })
+      const { data } = await api.get(sessionFilesPath(sessionId, 'directory', { dir: dir || undefined }), { skipErrorToast: true })
       state.entries = data?.entries ?? []
       state.truncated = Boolean(data?.truncated)
     } catch (e) {
@@ -227,7 +265,7 @@ export function useWorkspaceFiles() {
     }
     state.searchLoading = true
     try {
-      const { data } = await api.get(filesUrl('search', { pattern: keyword }), { skipErrorToast: true })
+      const { data } = await api.get(sessionFilesPath(state.sessionId!, 'search', { pattern: keyword }), { skipErrorToast: true })
       state.search = { pattern: keyword, entries: data?.entries ?? [], truncated: Boolean(data?.truncated) }
     } catch (e) {
       // 搜索失败清空结果，避免把上一次的关键词结果当成当前的
@@ -240,6 +278,31 @@ export function useWorkspaceFiles() {
 
   function exitSearch() {
     clearSearch()
+  }
+
+  /**
+   * 判断当前预览目标是否仍是传入的那个。
+   *
+   * 必须用 toRaw 比较：普通对象赋进 reactive 的 state.preview 后会被 Vue 包装成
+   * 代理，`state.preview === preview` 恒为 false。早期直接比引用，导致请求返回后
+   * 一律判定「已切换目标」而丢弃结果，loading 永不置 false，预览永远停在「加载中…」。
+   */
+  function isCurrentPreview(preview: WorkspacePreviewState): boolean {
+    return toRaw(state.preview) === preview
+  }
+
+  /**
+   * 回填预览结果：只改 state.preview（代理）上的字段，不改原始对象。
+   *
+   * reactive 深包装后 `state.preview` 是代理，读写与原对象互通，但 Vue 的依赖
+   * 触发挂在代理的 setter 上——直接写 `preview.loading = false` 改的是原始对象，
+   * 代理侧收不到 trigger，模板不会重渲染（表现为预览永远停在「加载中…」）。
+   * state.preview 为 null 时（已被 closePreview）不写。
+   */
+  function fillPreview(patch: Partial<WorkspacePreviewState>): void {
+    const target = state.preview
+    if (target == null) return
+    Object.assign(target, patch)
   }
 
   async function previewFile(relativePath: string) {
@@ -255,26 +318,21 @@ export function useWorkspaceFiles() {
     }
     state.preview = preview
     if (isPdfPath(relativePath)) {
-      const result = await fetchBytes(filesUrl('preview', { path: relativePath }))
+      const result = await fetchBytes(sessionFilesUrl(state.sessionId!, 'preview', { path: relativePath }))
       // 期间可能已切换预览目标：仅回填仍是当前目标的结果
-      if (state.preview !== preview) return
-      preview.loading = false
-      if (result.blob) {
-        preview.pdfUrl = URL.createObjectURL(result.blob)
-      } else {
-        preview.error = result.error ?? 'PDF 预览失败'
-      }
+      if (!isCurrentPreview(preview)) return
+      fillPreview(result.blob
+        ? { loading: false, pdfUrl: URL.createObjectURL(result.blob) }
+        : { loading: false, error: result.error ?? 'PDF 预览失败' })
       return
     }
     try {
-      const { data } = await api.get(filesUrl('read', { path: relativePath }), { skipErrorToast: true })
-      if (state.preview !== preview) return
-      preview.loading = false
-      preview.data = data ?? null
+      const { data } = await api.get(sessionFilesPath(state.sessionId!, 'read', { path: relativePath }), { skipErrorToast: true })
+      if (!isCurrentPreview(preview)) return
+      fillPreview({ loading: false, data: data ?? null })
     } catch (e) {
-      if (state.preview !== preview) return
-      preview.loading = false
-      preview.error = (e as Error)?.message || '预览失败'
+      if (!isCurrentPreview(preview)) return
+      fillPreview({ loading: false, error: (e as Error)?.message || '预览失败' })
     }
   }
 
@@ -285,7 +343,7 @@ export function useWorkspaceFiles() {
   }
 
   async function downloadFile(relativePath: string) {
-    const result = await fetchBytes(filesUrl('download', { path: relativePath }))
+    const result = await fetchBytes(sessionFilesUrl(state.sessionId!, 'download', { path: relativePath }))
     if (!result.blob) {
       throw new Error(result.error ?? '下载失败')
     }
@@ -293,7 +351,7 @@ export function useWorkspaceFiles() {
   }
 
   async function downloadZip(relativeDir?: string) {
-    const result = await fetchBytes(filesUrl('download-zip', { path: relativeDir || undefined }))
+    const result = await fetchBytes(sessionFilesUrl(state.sessionId!, 'download-zip', { path: relativeDir || undefined }))
     if (!result.blob) {
       throw new Error(result.error ?? '下载失败')
     }
