@@ -1,12 +1,12 @@
 # 管理后台会话工作区文件浏览技术方案
 
-- 状态：待实施（2026-10-15 需求共识，7 项决策见 §4；本轮目标仅为方案文档，不动代码）
+- 状态：待实施（2026-10-15 需求共识，7 项决策见 §4；2026-10-16 评审：需求与方案均可行，按 §11 评审记录修订后实施；评审轮不动代码）
 - 日期：2026-10-15
 - 能力底座：后端 `WorkspaceBrowseService` + `/v1/files/workspace-*` 端点族（[2026-10-09-workspace-file-manager-technical-design.md](2026-10-09-workspace-file-manager-technical-design.md) 已落地）、admin 会话详情页双栏布局（`admin/src/views/session/SessionDetailView.vue`）
 
 ## 1. 需求背景
 
-管理后台会话详情页当前展示会话信息与聊天记录：排障时能看到 Agent"说了什么、调了哪些工具、改过哪些文件"（`FileChangePanel`），但看不到"磁盘上最终留下了什么"——工作区目录里现在有哪些文件、某个产物的完整内容、能否把整个工作区取下来分析，都无从入手。会话 VO 其实已透出 `workspace` 绝对路径（`session-vo.ts` L192/L272），但详情页没有消费它。
+管理后台会话详情页当前展示会话信息与聊天记录：排障时能看到 Agent"说了什么、调了哪些工具、改过哪些文件"（`FileChangePanel`），但看不到"磁盘上最终留下了什么"——工作区目录里现在有哪些文件、某个产物的完整内容、能否把整个工作区取下来分析，都无从入手。会话 VO 其实已透出 `workspace` 绝对路径（`session-vo.ts` L192/L272），但详情页只把它透传给文件变更面板做相对路径展示（`SessionDetailView.vue` L110），没有浏览入口。
 
 能力底座已经齐备，缺口只在"admin 作用域"这一层：
 
@@ -55,7 +55,7 @@
 | admin（新） | `src/views/session/utils/file-format.ts`：`formatSize` / `formatTime` 纯函数（规则对齐桌面端 `utils/file-manager.ts`） |
 | admin（改） | `src/views/session/SessionDetailView.vue`：信息卡"工作区"行（路径 + 复制 + 入口按钮）、Dialog 挂载与状态、接收文件变更面板的预览联动 |
 | admin（改） | `src/views/session/components/FileChangePanel.vue` + `MessageGroup.vue`：文件路径可点击，事件透传到详情页 |
-| admin（复用，零改） | `api` 实例（`src/api/index.ts`，blob 透传已支持）、`utils/download.ts`（`downloadBlob`）、`utils/workspace-path.ts`（`toRelativeWorkspacePath`）、`views/session/composables/useMarkdown.ts`（Markdown 渲染） |
+| admin（复用，零改） | `api` 实例（`src/api/index.ts`，目录/搜索/读取等 JSON 请求）、`utils/download.ts`（`downloadBlob`）、`utils/workspace-path.ts`（`toRelativeWorkspacePath`）、`views/session/composables/useMarkdown.ts`（Markdown 渲染） |
 | 文档 | CHANGELOG.md、skills/mao-cli/SKILL.md（管理后台手册）、README.md（若列 admin 功能清单则补） |
 
 ### 3.2 不做什么
@@ -88,7 +88,7 @@
 | 浏览能力 | 复用 `WorkspaceBrowseService`，零改动 | 目录/搜索/读取/图片/PDF/zip 全部就绪，`StrictPathResolver` 越界收口已在用户侧上线验证；admin 与用户侧共用同一套安全内核 |
 | 鉴权 | `requireRequestPermission(permissionService, request, 'session:read')` | 与详情页现有鉴权一致，不新增权限码 |
 | 审计 | 零显式审计代码，依赖既有全局 `onResponse` 钩子 | `/v1/admin` 前缀被钩子全量自动留痕（`audit.interceptor.ts` 的 `AUDITED_PREFIXES`），下载天然有迹；显式 `record()` 只用于钩子之外的场景（如云端终端），为文件端点叠加会产生重复行 |
-| 前端载体 | Element Plus `el-dialog`（fullscreen）+ 表格风格列表 | admin 全站 Element Plus，零新依赖；`UserDetailDrawer` / `ScheduledTaskDetailDialog` 已有弹层先例 |
+| 前端载体 | Element Plus `el-dialog`（fullscreen）+ 表格风格列表 | admin 全站 Element Plus，零新依赖；`UserDetailDrawer` / `ScheduledTaskDetailDialog` 已有弹层先例。文件浏览器桌面端也需全屏，故不用 `components/ResponsiveDialog.vue`（其 fullscreen 仅移动端生效，显式 `fullscreen` 会被其内部 prop 覆盖） |
 | 前端状态 | 新增 `useWorkspaceFiles.ts` composable | 目录导航、搜索、预览、加载/错误状态集中管理；请求仍走全局 `api` 实例，与 admin 现有风格（页面直调 `api`）兼容 |
 | Markdown 渲染 | 复用 `views/session/composables/useMarkdown.ts` | 聊天记录已在用，零新增依赖 |
 | 复制路径 | `navigator.clipboard.writeText` + `execCommand` 兜底 | 参照 `utils/codeCopy.ts` 的降级写法，在 composable 内实现小函数 |
@@ -188,8 +188,8 @@ async function requireBrowsableSession(sessionId: number): Promise<Session> {
 - 面包屑段可点击回跳；组件内维护 `currentDir` 相对路径（`''` = 工作区根）。
 - 目录行点击进入子目录；文件行点击打开预览面板。
 - 大小/时间格式化用 `views/session/utils/file-format.ts`（规则对齐桌面端：B/KB/MB/GB，≥100 取整；`YYYY-MM-DD HH:mm`）。
-- 下载：单文件与 zip 均走 `api.get(url, { responseType: 'blob' })` + `utils/download.ts` 的 `downloadBlob`（响应拦截器对 blob 原样透传，已支持）。
-- 搜索：输入防抖 300ms 调 `/files/search`；结果行显示完整相对路径，点击进入该文件所在目录（不做选中高亮）。
+- 下载：单文件与 zip 一律走带 `Authorization: Bearer` header 的裸 `fetch`，拿到 blob 后交 `utils/download.ts` 的 `downloadBlob` 落地。不走 axios：`api` 默认 30s 超时会掐断大 zip（先全量打包再吐字节，nginx `/api/` 的 `proxy_read_timeout` 为 300s，桌面端同样用裸 fetch）；且 axios `responseType:'blob'` 的错误体是 Blob，拦截器只能弹通用"请求失败"，§5.5 承诺的明确错误会丢失——裸 fetch 下按桌面端 `extractDownloadError` 模式解析（blob→JSON→message）。zip 文件名优先解析 `Content-Disposition` 的 `filename*=UTF-8''`（对齐桌面端 `parseDownloadFileName`），失败退回当前目录名；单文件退回条目名。
+- 搜索：输入防抖 300ms 调 `/files/search`，空 pattern 前端短路不发请求（避免后端 400 的 toast 噪音）；结果行显示完整相对路径，点击进入该文件所在目录（不做选中高亮）。
 - 空态：`/directory` 返回"目录不存在"时展示"工作区目录不存在或已被清理"。
 
 #### 5.3.3 `useWorkspaceFiles.ts` 状态机
@@ -198,7 +198,7 @@ async function requireBrowsableSession(sessionId: number): Promise<Session> {
 interface WorkspaceFilesState {
   sessionId: number
   currentDir: string                                        // 相对路径，'' = 工作区根
-  entries: DirectoryEntryDTO[]                              // 类型在 admin 侧复刻声明
+  entries: DirectoryEntryDTO[]                              // 类型在 admin 侧复刻声明（DTO 暂不在 @mao/contracts，与 admin 现状一致；后续桌面/admin 共用可下沉，见 §11）
   truncated: boolean
   loading: boolean
   search: { pattern: string; entries: DirectoryEntryDTO[]; truncated: boolean } | null
@@ -212,21 +212,22 @@ interface WorkspaceFilesState {
 }
 ```
 
-方法：`open(sessionId)` / `enterDir(rel)` / `navigateTo(rel)` / `search(pattern)` / `previewFile(rel)` / `closePreview()` / `downloadFile(rel)` / `downloadZip(rel)` / `refresh()`。PDF 预览用带 `Authorization: Bearer` header 的 `fetch` 取 blob（axios 不适合 blob 流，做法参照桌面端 `workspace-file-provider.ts` L254-272）。
+方法：`open(sessionId)` / `enterDir(rel)` / `navigateTo(rel)` / `search(pattern)` / `previewFile(rel)` / `closePreview()` / `downloadFile(rel)` / `downloadZip(rel)` / `refresh()`。PDF 预览与文件下载统一走带 `Authorization: Bearer` header 的裸 `fetch` 取 blob（axios 的 30s 默认超时与 blob 错误体不可读两个原因都不适用字节流，做法参照桌面端 `workspace-file-provider.ts` L254-272/L364-393）；错误响应按 `extractDownloadError` 模式解析出后端 message；PDF blob URL 在 `closePreview`/ Dialog 关闭时 `revokeObjectURL`。
 
 #### 5.3.4 聊天记录联动（D6）
 
-- `FileChangePanel.vue`：文件路径从纯文本改为可点击元素（点击样式 + `role="button"`），点击 `emit('preview', relativePath)`；变更类型为 delete 时同样发事件，由详情页统一提示"文件已删除，无法预览"。
+- `FileChangePanel.vue`：文件路径从纯文本改为可点击元素（点击样式 + `role="button"`），点击 `emit('preview', relativePath)`；`relativePath` 用组件内已有的 `toRelativeWorkspacePath(workspace, change.path)` 计算，workspace 缺失或路径不在会话工作区内（函数原样返回绝对路径）时该行不可点。
+- 变更类型为 delete 时同样发事件、不拦截：DELETED 只代表该轮结束时的状态，文件可能在后轮被重建（前轮 DELETED 行仍会在面板里），一律提示"已删除，无法预览"会误报；放行后由后端"文件不存在"错误决定文案（如"文件当前不存在（该轮记录为删除）"）。
 - `MessageGroup.vue`：透传 `preview` 事件到 `SessionDetailView.vue`。
-- `SessionDetailView.vue`：收到事件后打开 `WorkspaceFileDialog` 并直接进入该文件预览态（`previewFile(relativePath)`），用户无需手动导航。
+- `SessionDetailView.vue`：收到事件后先守卫生成条件——`executionMode === 'CLOUD' && workspace` 非空才打开 `WorkspaceFileDialog` 并直接进入该文件预览态（`previewFile(relativePath)`），用户无需手动导航；LOCAL / 无 workspace 会话的变更路径在用户设备上，toast"本地执行会话的文件在用户设备上，服务端不可见"。
 
 ### 5.4 安全设计
 
 1. **根收口**：所有文件操作经 `WorkspaceBrowseService.resolvePath` → `StrictPathResolver(sessionWorkspace)`：相对穿越（`../`）、越界绝对路径、符号链接逃逸一律 `FORBIDDEN`（service L411-423；用户侧已上线，admin 复用同内核）。
 2. **鉴权**：`session:read` 权限码 + JWT 身份，与详情页一致。不做出属主校验是有意设计（admin 跨用户查看是本职），门槛由权限码把守。
 3. **敏感文件**：admin 可下载 `.env`、密钥等敏感文件——接受：admin 本是平台最高权限角色，且下载有审计留迹；接口层不做文件类型黑名单。
-4. **资源上限**：目录 500 条/层、搜索 100 条（遍历 ≤2000 目录 / 12 层深）、文本 5000 行 / 512KB、图片 10MB、zip 1GB——全部沿用 service 现有上限，admin 侧不放大。
-5. **审计**：全部动作（含下载）由全局 `onResponse` 钩子留痕（§5.2.3），审计页可按 `objectType=admin.sessions` + path 后缀 `files/*` 检索。
+4. **资源上限**：目录 500 条/层、搜索 100 条（遍历 ≤2000 目录 / 12 层深）、文本 5000 行 / 512KB、图片 5MB（`ImageFileSupport.MAX_IMAGE_BYTES`）、zip 1GB——全部沿用 service 现有上限，admin 侧不放大。
+5. **审计**：全部动作（含下载）由全局 `onResponse` 钩子留痕（§5.2.3）；审计页可按 `objectType=admin.sessions` 过滤，`path` 列/详情可核对 `files/*` 具体路径与 `path`/`dir` 参数（`/v1/audit/logs` 与审计页暂不支持按 path 过滤，见 §11）。
 
 ### 5.5 边界与降级
 
@@ -237,6 +238,8 @@ interface WorkspaceFilesState {
 | 工作区目录已被清理 | `/directory` 返回"目录不存在"，Dialog 空态提示"工作区目录不存在或已被清理" |
 | 目录超 500 条 | `truncated=true`，列表底部提示进入子目录查看 |
 | 二进制 / 超大文件 | 预览区展示后端错误消息 + 下载按钮兜底 |
+| 符号链接条目 | `listDirectory` 对 symlink-to-dir 返回 `isDirectory=false, isSymlink=true`；列表标注链接标识并禁用进入/预览（service 对 symlink 一律拒绝），对齐桌面端 `iconKindOf` 的 link 态 |
+| 变更路径不在工作区内 / 会话无 workspace | 变更行不可点或提示"文件不在会话工作区内"；LOCAL 会话 toast"文件在用户设备上，服务端不可见"（§5.3.4） |
 | zip 超 1GB | 明确错误"目录过大（x.x GB），请选择子目录下载" |
 | 通道会话（飞书/钉钉群） | 正常浏览（admin 不做出属主校验，绕开用户侧群共享 403） |
 | 移动端（≤768px） | Dialog fullscreen 天然适配；"工作区"行随信息卡折叠态隐藏（与现有 `infoExpanded` 逻辑一致） |
@@ -251,7 +254,7 @@ interface WorkspaceFilesState {
 6. **详情页入口**：`SessionDetailView.vue` 信息卡"工作区"行 + 入口按钮 + Dialog 挂载。
 7. **联动**：`FileChangePanel.vue` + `MessageGroup.vue` 路径点击透传。
 8. **前端验证**：`cd admin && npm run build`（`vue-tsc -b && vite build`；禁止用 `npx vue-tsc --noEmit` 假通过）。
-9. **手工验证**：CLOUD 会话浏览/预览（四格式）/下载/搜索；LOCAL 禁用态；空 workspace；`../` 越界参数；审计页确认 `/v1/admin/sessions/:id/files/*` 请求有自动记录（全局钩子，含 path/dir 参数）。
+9. **手工验证**：CLOUD 会话浏览/预览（四格式）/下载/搜索；LOCAL 禁用态；空 workspace；`../` 越界参数；大目录 zip 下载（验证裸 fetch 无 30s 掐断、"目录过大"明确错误可读）；审计页按 `objectType=admin.sessions` 过滤可见 `/v1/admin/sessions/:id/files/*` 的 READ 记录（path 列与详情含 path/dir 参数；审计页不支持按 path 过滤）。
 10. **文档**：CHANGELOG（admin 小节）、skills/mao-cli、README（如需）。
 11. **部署**：后端 `/opt/mao` pull + `restart-backend.sh`；admin `bash scripts/deploy-admin.sh`（rsync 静态资源，无需重启）。
 
@@ -273,8 +276,9 @@ interface WorkspaceFilesState {
 - directory：根目录、子目录、不存在目录、`../` 越界 → FORBIDDEN
 - read：文本文件（content/total_lines）、图片（media_type=image + data_uri）、二进制 → 明确错误
 - search：命中、空 pattern 拒绝、limit 夹取到 100
-- download / download-zip：正常流 + 越界拒绝；审计由全局钩子承担，本方案零显式 `record()`，不新增审计断言（全局钩子为既有行为，`file.routes.spec.ts` 模式同样不覆盖 `onResponse`）
+- download / download-zip：正常流 + 越界拒绝；**download-zip 的 `path` 缺省 = 整个工作区**（service `normalizeRelativeDir` 将 null 归一为 `.`）；审计由全局钩子承担，本方案零显式 `record()`，不新增审计断言（全局钩子为既有行为，`file.routes.spec.ts` 模式同样不覆盖 `onResponse`）
 - **属主是他人时正常返回**（验证 D1：不做出属主校验）
+- read：图片超 `ImageFileSupport.MAX_IMAGE_BYTES`（5MB）→ 明确"文件过大"错误（订正原文"10MB"表述，见 §11）
 
 前端：
 
@@ -306,3 +310,34 @@ interface WorkspaceFilesState {
 - [ ] `backend-ts` build + test 通过（输出落盘，grep Test Files/Tests/FAIL 摘要）
 - [ ] `admin` `npm run build` 通过（`vue-tsc -b && vite build`）
 - [ ] 后端 `/opt/mao` pull + `restart-backend.sh`；admin `bash scripts/deploy-admin.sh`
+
+## 11. 评审记录（2026-10-16）
+
+**评审结论：需求与方案均可行**，可进入实施；实施前先落本记录中的修订（已就地并入上述章节）。
+
+### 11.1 已逐项核对通过的关键事实（评审依据）
+
+- 后端能力底座：`WorkspaceBrowseService` 六方法签名与上限（500 条/层、搜索 100 条/2000 目录/12 层、文本 5000 行/512KB、图片 5MB、zip 1GB）与 `resolvePath` → `StrictPathResolver` 越界收口（`workspace-browse.service.ts` L16-26、L411-423）；`zipDirectory(null)` 归一为整个工作区，admin `download-zip` 的 `path` 可选成立。
+- 用户侧安全模型：`file.routes.ts` L43-48（`requireCloudWorkspace`）、L50-59（`requireOwnedSession`）、L113-190（`/v1/files/workspace-*`）与方案描述一致，本方案零改动。
+- admin 接入模式：`admin-session.routes.ts` 的 `requireRead` = `requireRequestPermission(permissionService, request, 'session:read')`；注册点 `create-app.ts` L2820、`workspaceBrowse` 构造点 L812 均如方案所述。
+- 审计：全局 `onResponse` 钩子（`create-app.ts` L641-653）中 `AUDITED_PREFIXES` 含 `/v1/admin` 且不限请求方法；`objectType` 推导为 `admin.sessions`、`objectId` 取路径首个数字段、`queryString` 入库且仅脱敏 token 类参数（`path`/`dir` 原样保留）——D7 零显式审计代码成立。
+- 前端可复用件：`api` 实例、`downloadBlob`、`toRelativeWorkspacePath`、`useMarkdown`、`codeCopy` 降级写法均存在且如描述；`MessageGroup` 仅 `SessionDetailView` 使用（事件链简单）；`FileChangePanel` 已收 `workspace` prop；compact 模式摘要查询带 `file_path`（D6 在详情页 `compact=true` 下成立）。
+- 桌面端参照物：`formatSize`/`formatTime` 规则、fetch + Authorization、`extractDownloadError`、`parseDownloadFileName`、`FileTree.vue`/`FileManagerPanel.vue`/`FileViewer.vue` 均存在。
+- 需求侧：只读排障定位与 admin 角色匹配、不动用户侧安全模型、无新权限码/DDL/依赖，工作量与风险可控；LOCAL 不可浏览有服务端双保险。
+
+### 11.2 事实更正（原文有误，已就地改正）
+
+1. **图片预览上限为 5MB**（`ImageFileSupport.MAX_IMAGE_BYTES`），§5.4.4 原写"10MB"已订正。
+2. **审计页不支持按 path 检索**：`/v1/audit/logs` 仅接受 userId/action/objectType/success/起止日期，`AuditLogView` 过滤器相同；`path` 只在列表列与详情可见。§5.4.5 已改为"按 objectType 过滤 + path 列核对"；按 path 过滤需扩展 audit 查询与前端过滤器，列后续增强，本期不做。
+3. §1"详情页没有消费 workspace"已过时：详情页已将其传给 `FileChangePanel` 做相对路径展示（L110），缺的只是浏览入口，已订正。
+
+### 11.3 补充完善（已并入对应章节）
+
+1. **字节流请求一律裸 fetch、不走 axios**（§5.3.2/§5.3.3）：`api` 默认 timeout 30s（`api/index.ts` L16），小于 nginx `/api/` 的 `proxy_read_timeout 300s`，大 zip（先全量打包再吐字节）必被 axios 掐断；且 axios `responseType:'blob'` 的错误体是 Blob，拦截器只能弹"请求失败"，§5.5 承诺的"目录过大（x.x GB）"等明确错误会丢失。桌面端对这两个端点都用裸 fetch + `extractDownloadError`，admin 对齐；JSON 请求仍走 `api`。
+2. **D6 联动护栏**（§5.3.4/§5.5）：delete 变更不一律拒预览（DELETED 只是该轮状态、后轮可能重建，拒预览会误报）；LOCAL/无 workspace 会话需先判 `CLOUD + workspace` 再开 Dialog；相对化失败（路径不在工作区内）时该行不可点或明确提示。
+3. **符号链接条目**（§5.5）：symlink-to-dir 在列表里 `isDirectory=false`，点它会当文件预览并被 service 拒绝，需标识并禁用进入/预览。
+4. **zip 下载文件名**（§5.3.2）：从 `Content-Disposition` 的 `filename*=UTF-8''` 解析（对齐桌面端 `parseDownloadFileName`），失败退回当前目录名，避免中文/特殊字符目录名乱码。
+5. **弹层选型说明**（§5.1）：桌面端也需全屏，故用裸 `el-dialog(fullscreen)` 而非 `ResponsiveDialog`（其 fullscreen 仅移动端生效）。
+6. **前端小节流**（§5.3.2）：搜索框空 pattern 不发请求，避免后端 400 toast。
+7. **DTO 声明**（§5.3.3）：`DirectoryEntryDTO` 等暂不在 `@mao/contracts`，admin 侧复刻与现状一致；后续桌面/admin 共用时可下沉。
+8. **测试补充**（§8/§6）：download-zip `path` 缺省用例；图片超 5MB 错误用例；手工验证的审计确认改为"按 objectType 过滤可见 READ 记录"。
