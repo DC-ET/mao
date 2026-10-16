@@ -63,9 +63,6 @@
           <div class="header-actions">
             <span v-if="canWrite && selectedIds.length > 0" class="batch-bar">
               已选 {{ selectedIds.length }} 条
-              <el-button type="primary" size="small" :disabled="!canBatchConvert" @click="openWizard(selectedRows)">
-                转为经验
-              </el-button>
               <el-button size="small" @click="handleBatchDismiss">忽略</el-button>
               <el-button link size="small" @click="clearSelection">取消选择</el-button>
             </span>
@@ -143,7 +140,7 @@
           <template #default="{ row }">
             {{ agentLabel(row) }}
             <el-tooltip v-if="row.sameGroupCount > 1" effect="dark" placement="top">
-              <template #content>同 Agent 同原因的待处理反馈共 {{ row.sameGroupCount }} 条，可多选后一并归纳</template>
+              <template #content>同 Agent 同原因的待处理反馈共 {{ row.sameGroupCount }} 条</template>
               <el-tag type="info" size="small" class="group-tag">同类 {{ row.sameGroupCount }} 条</el-tag>
             </el-tooltip>
           </template>
@@ -176,7 +173,6 @@
         <el-table-column label="操作" width="150" fixed="right">
           <template #default="{ row }">
             <template v-if="row.status === 'PENDING'">
-              <el-button v-if="canWrite" type="primary" link @click="openWizard([row])">转经验</el-button>
               <el-button v-if="canWrite" type="danger" link @click="handleDismiss(row)">忽略</el-button>
               <span v-if="!canWrite" class="readonly-hint">只读</span>
             </template>
@@ -222,7 +218,6 @@
             <span>#{{ row.experienceId }}</span>
           </div>
           <div v-if="canWrite && row.status === 'PENDING'" class="mobile-card-actions">
-            <el-button type="primary" size="small" link @click="openWizard([row])">转经验</el-button>
             <el-button type="danger" size="small" link @click="handleDismiss(row)">忽略</el-button>
           </div>
         </el-card>
@@ -238,93 +233,6 @@
         @size-change="handleSizeChange"
       />
     </el-card>
-
-    <!-- 转经验向导 -->
-    <el-drawer
-      v-model="wizardVisible"
-      title="转为经验"
-      :size="isMobile ? '100%' : 720"
-      class="experience-wizard"
-      :close-on-click-modal="false"
-    >
-      <template #header>
-        <div class="wizard-header">
-          <span class="wizard-title">转为经验</span>
-          <span class="wizard-subtitle">{{ wizardRows.length }} 条反馈{{ wizardRows.length >= 2 ? ' · 将归纳为 1～2 条经验' : '' }}</span>
-        </div>
-      </template>
-
-      <div class="wizard-body">
-        <div class="wizard-left">
-          <div v-for="row in wizardRows" :key="row.id" class="wizard-feedback">
-            <div class="wizard-feedback-head">
-              <el-tag :type="reasonTagType(row.reason)" size="small">{{ row.reasonLabel }}</el-tag>
-              <span class="wizard-feedback-time">{{ formatDateTime(row.createdAt) }}</span>
-            </div>
-            <div class="wizard-feedback-body">{{ row.contentPreview || '（消息已不存在）' }}</div>
-            <div class="wizard-feedback-meta">
-              {{ userLabel(row) }} · {{ agentLabel(row) }}
-            </div>
-          </div>
-        </div>
-
-        <div class="wizard-right" v-loading="drafting">
-          <el-form label-position="top">
-            <el-form-item label="目标 Agent" required>
-              <el-select v-model="wizardAgentId" filterable placeholder="选择要写入经验的 Agent" style="width: 100%">
-                <el-option v-for="opt in agentOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
-              </el-select>
-              <div v-if="wizardAgentId == null" class="wizard-field-hint">请选择目标 Agent，经验将写入它的 system prompt</div>
-            </el-form-item>
-            <el-form-item label="经验草稿">
-              <div v-for="(item, index) in wizardExperiences" :key="index" class="draft-item">
-                <el-input
-                  v-model="item.content"
-                  type="textarea"
-                  :rows="4"
-                  maxlength="300"
-                  show-word-limit
-                  resize="none"
-                  placeholder="形如「X 场景下优先 Y，避免 Z」"
-                />
-                <div class="draft-item-actions">
-                  <el-button
-                    v-if="wizardExperiences.length > 1"
-                    type="danger"
-                    link
-                    size="small"
-                    @click="removeDraft(index)"
-                  >
-                    删除
-                  </el-button>
-                </div>
-              </div>
-              <el-button
-                v-if="wizardExperiences.length < MAX_EXPERIENCES"
-                link
-                size="small"
-                class="draft-add"
-                @click="addDraft"
-              >
-                + 再写一条（最多 {{ MAX_EXPERIENCES }} 条）
-              </el-button>
-            </el-form-item>
-          </el-form>
-        </div>
-      </div>
-
-      <template #footer>
-        <div class="wizard-footer">
-          <el-button :loading="drafting" @click="generateDraft">重新生成</el-button>
-          <div class="wizard-footer-right">
-            <el-button @click="wizardVisible = false">取消</el-button>
-            <el-button type="primary" :loading="submitting" :disabled="!canSubmitWizard" @click="submitWizard">
-              确认写入
-            </el-button>
-          </div>
-        </div>
-      </template>
-    </el-drawer>
   </div>
 </template>
 
@@ -387,9 +295,6 @@ interface AgentOption {
   label: string
 }
 
-/** 与后端 DRAFT_LIMITS.MAX_EXPERIENCES 同口径：一次转换最多写 2 条经验。 */
-const MAX_EXPERIENCES = 2
-
 const REASON_TAG_TYPES: Record<FeedbackReason, 'danger' | 'warning' | 'info' | 'primary' | 'success'> = {
   WRONG_RESULT: 'danger',
   SLOW_RESPONSE: 'warning',
@@ -435,7 +340,7 @@ const router = useRouter()
 const { isMobile } = useBreakpoint()
 const authStore = useAuthStore()
 
-/** 写操作（转经验 / 忽略）门槛与后端 feedback:write 一致：只读账号看不到入口，避免点了才报 403。 */
+/** 写操作（忽略）门槛与后端 feedback:write 一致：只读账号看不到入口，避免点了才报 403。 */
 const canWrite = computed(() => authStore.hasPermission('feedback:write'))
 
 function userLabel(row: FeedbackDetailItem) {
@@ -497,7 +402,7 @@ async function fetchAgents() {
     const { data } = await api.get('/agents', { params: { includeDisabled: true } })
     agentOptions.value = (data ?? []).map((agent: { id: number; name: string }) => ({ value: agent.id, label: agent.name }))
   } catch {
-    // Agent 下拉失败只影响筛选与目标选择，不阻断页面其余部分
+    // Agent 下拉失败只影响筛选，不阻断页面其余部分
   }
 }
 
@@ -582,7 +487,7 @@ const selectedIds = ref<number[]>([])
 const selectedRows = ref<FeedbackDetailItem[]>([])
 
 function isRowSelectable(row: FeedbackDetailItem) {
-  // 终态行不可勾选：混批已处理行会让整批转换失败，从入口就拦掉
+  // 终态行不可勾选：混批已处理行会让整批忽略失败，从入口就拦掉
   return row.status === 'PENDING'
 }
 
@@ -594,89 +499,6 @@ function handleSelectionChange(rows: FeedbackDetailItem[]) {
 function clearSelection() {
   selectedRows.value = []
   selectedIds.value = []
-}
-
-/** 批量转经验要求目标 Agent 一致；混批不同 Agent 时引导在向导里显式选择，不猜默认目标。 */
-const canBatchConvert = computed(() => {
-  if (selectedIds.value.length === 0) return false
-  const agentIds = new Set(selectedRows.value.map((row) => row.agentId))
-  return agentIds.size <= 1
-})
-
-// ---- 转经验向导 ----
-const wizardVisible = ref(false)
-const wizardRows = ref<FeedbackDetailItem[]>([])
-const wizardAgentId = ref<number | null>(null)
-const wizardExperiences = ref<Array<{ content: string }>>([])
-const drafting = ref(false)
-const submitting = ref(false)
-
-const canSubmitWizard = computed(() =>
-  wizardAgentId.value != null
-  && wizardExperiences.value.length > 0
-  && wizardExperiences.value.every((item) => item.content.trim().length > 0)
-)
-
-function openWizard(rows: FeedbackDetailItem[]) {
-  const pending = rows.filter((row) => row.status === 'PENDING')
-  if (pending.length === 0) return
-  wizardRows.value = pending
-  // 默认预选快照 agent_id（批量一致时）；不一致或为 null 时留空要求显式选择
-  const agentIds = new Set(pending.map((row) => row.agentId))
-  wizardAgentId.value = agentIds.size === 1 ? pending[0].agentId : null
-  wizardExperiences.value = []
-  wizardVisible.value = true
-  generateDraft()
-}
-
-function addDraft() {
-  if (wizardExperiences.value.length >= MAX_EXPERIENCES) return
-  wizardExperiences.value.push({ content: '' })
-}
-
-function removeDraft(index: number) {
-  wizardExperiences.value.splice(index, 1)
-}
-
-async function generateDraft() {
-  const feedbackIds = wizardRows.value.map((row) => row.id)
-  if (feedbackIds.length === 0) return
-  drafting.value = true
-  try {
-    const { data } = await api.post('/feedback/admin/draft', {
-      feedbackIds,
-      agentId: wizardAgentId.value ?? undefined
-    })
-    const experiences = (data?.experiences ?? []).map((item: { content: string }) => ({ content: item.content }))
-    wizardExperiences.value = experiences.length > 0 ? experiences.slice(0, MAX_EXPERIENCES) : [{ content: '' }]
-  } catch {
-    // 拦截器已提示失败；保留原有草稿，管理员可手工编辑后再写入
-  } finally {
-    drafting.value = false
-  }
-}
-
-async function submitWizard() {
-  if (!canSubmitWizard.value) return
-  submitting.value = true
-  try {
-    await api.post('/feedback/admin/convert', {
-      feedbackIds: wizardRows.value.map((row) => row.id),
-      agentId: wizardAgentId.value,
-      experiences: wizardExperiences.value.map((item) => ({ content: item.content.trim() }))
-    })
-    ElMessage.success(`已写入 ${wizardExperiences.value.length} 条经验`)
-    wizardVisible.value = false
-    clearSelection()
-    // 写入后回到「待处理」视角：刚处理的行已离开默认视图，避免看起来像写入失败
-    filters.status = 'PENDING'
-    page.value = 1
-    await refreshAll()
-  } catch {
-    // 拦截器已提示失败（含并发冲突提示），停留在向导内便于重试
-  } finally {
-    submitting.value = false
-  }
 }
 
 async function handleDismiss(row: FeedbackDetailItem) {
@@ -875,114 +697,5 @@ onActivated(() => {
   word-break: break-word;
 }
 
-/* ---- 转经验向导 ---- */
-.wizard-header {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-}
-
-.wizard-title {
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.wizard-subtitle {
-  font-size: 12px;
-  color: var(--mao-muted);
-}
-
-.wizard-body {
-  display: flex;
-  gap: 16px;
-  height: 100%;
-}
-
-.wizard-left {
-  flex: 1 1 45%;
-  min-width: 0;
-  overflow-y: auto;
-  padding-right: 4px;
-}
-
-.wizard-feedback {
-  padding: 10px 12px;
-  margin-bottom: 10px;
-  border: 1px solid var(--mao-border);
-  border-radius: 6px;
-}
-
-.wizard-feedback-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-
-.wizard-feedback-time {
-  font-size: 12px;
-  color: var(--mao-muted);
-}
-
-.wizard-feedback-body {
-  font-size: 13px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.wizard-feedback-meta {
-  margin-top: 6px;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-}
-
-.wizard-right {
-  flex: 1 1 55%;
-  min-width: 0;
-}
-
-.wizard-field-hint {
-  margin-top: 4px;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  line-height: 1.4;
-}
-
-.draft-item {
-  margin-bottom: 8px;
-}
-
-.draft-item-actions {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 2px;
-}
-
-.draft-add {
-  padding-left: 0;
-}
-
-.wizard-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.wizard-footer-right {
-  display: flex;
-  gap: 8px;
-}
-
-@media (max-width: 768px) {
-  .wizard-body {
-    flex-direction: column;
-  }
-
-  .wizard-left {
-    flex: none;
-    max-height: 40vh;
-  }
-}
 </style>
 

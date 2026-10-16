@@ -14,13 +14,11 @@ export const FEISHU_DISLIKE_REASON: FeedbackReason = 'NO_REASON';
 export const FEISHU_DISLIKE_SOURCE: FeedbackSource = 'feishu';
 
 /**
- * 处理态：PENDING 是唯一入口态；CONVERTED 与 DISMISSED 均为终态，
- * 不可互相流转、不可回退（技术方案 §4.1）。
+ * 处理态：PENDING 是唯一入口态；DISMISSED 为终态，不可回退。
+ * CONVERTED 是「转经验」功能（已下线）留下的存量终态：不再产生新行，
+ * 但历史行仍按该值展示与筛选。
  */
 export const FEEDBACK_STATUSES = ['PENDING', 'CONVERTED', 'DISMISSED'] as const satisfies readonly FeedbackStatus[];
-
-/** 批量 CAS 的 id 上限：防止一次请求带进过大的 IN 列表。 */
-const MAX_CAS_IDS = 100;
 
 export interface FeedbackSummaryRow {
   reason: string;
@@ -177,50 +175,9 @@ export class FeedbackRepository {
     );
   }
 
-  /**
-   * 批量 CAS：只把仍为 PENDING 的行改为 CONVERTED。返回受影响行数，
-   * 与传入 id 数量不等即说明有行已被其他管理员处理（并发 convert / 已 dismiss）。
-   */
-  casMarkConverted(ids: number[], operatorId: number): Promise<number> {
-    return this.casUpdateStatus(ids, 'CONVERTED', operatorId);
-  }
-
-  /** 批量忽略：与 convert 同款 CAS，只是目标终态为 DISMISSED。 */
+  /** 批量忽略：CAS 只把仍为 PENDING 的行改为 DISMISSED，返回受影响行数。 */
   markDismissed(ids: number[], operatorId: number): Promise<number> {
     return this.casUpdateStatus(ids, 'DISMISSED', operatorId);
-  }
-
-  /**
-   * 回写经验关联：一次转换可能写多条经验，单值列只记第一条
-   * （技术方案 §5.2「多经验与 experience_id 的对应关系」）。
-   */
-  bindExperience(ids: number[], experienceId: number, operatorId: number): Promise<void> {
-    return this.db.execute(
-      `UPDATE message_feedback SET experience_id = ?, handled_by = ? WHERE id IN (${placeholders(ids.length)})`,
-      [experienceId, operatorId, ...ids],
-    ).then(() => undefined);
-  }
-
-  /** 事务外预校验用：按 id 取反馈行的处理态、归属快照与原因。 */
-  listByIds(ids: number[]): Promise<Array<{
-    id: number;
-    status: FeedbackStatus;
-    agentId: number | null;
-    messageId: number;
-    sessionId: number;
-    reason: FeedbackReason;
-  }>> {
-    return this.db.query<Record<string, unknown>>(
-      `SELECT id, status, agent_id, message_id, session_id, reason FROM message_feedback WHERE id IN (${placeholders(ids.length)})`,
-      ids,
-    ).then((rows) => rows.map((row) => ({
-      id: Number(row.id),
-      status: asStatus(row.status),
-      agentId: row.agentId == null ? null : Number(row.agentId),
-      messageId: Number(row.messageId),
-      sessionId: Number(row.sessionId),
-      reason: row.reason as FeedbackReason,
-    })));
   }
 
   private casUpdateStatus(ids: number[], status: FeedbackStatus, operatorId: number): Promise<number> {

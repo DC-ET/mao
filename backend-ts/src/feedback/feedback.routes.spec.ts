@@ -4,7 +4,6 @@ import { handleError } from '../common/http-error.js';
 import { ErrorCode } from '../common/error-code.js';
 import { registerFeedbackRoutes, type FeedbackRouteDeps } from './feedback.routes.js';
 import type { FeedbackService } from './feedback.service.js';
-import type { ExperienceDraftService } from './experience-draft.service.js';
 import type { JwtService } from '../crypto/jwt.service.js';
 
 /**
@@ -12,7 +11,6 @@ import type { JwtService } from '../crypto/jwt.service.js';
  * 403 的口径是 BusinessException(403) → handleError 转成 HTTP 403 + code=1002。
  */
 
-const FEEDBACK_WRITE = 'feedback:write';
 const FEEDBACK_READ = 'feedback:read';
 
 function makeDeps(over: Partial<FeedbackRouteDeps> = {}): { deps: FeedbackRouteDeps; calls: Record<string, unknown[][]> } {
@@ -29,30 +27,15 @@ function makeDeps(over: Partial<FeedbackRouteDeps> = {}): { deps: FeedbackRouteD
       (calls.listDetails ??= []).push(args);
       return { total: 0, items: [] };
     }),
-    buildDraftContext: vi.fn(async (...args: unknown[]) => {
-      (calls.buildDraftContext ??= []).push(args);
-      return { materials: [{ reason: 'WRONG_RESULT', reasonLabel: '结果错误', messageId: 1, userText: 'u', assistantText: 'a', traceText: 't' }], snapshotAgentId: 3 };
-    }),
-    convertToExperience: vi.fn(async (...args: unknown[]) => {
-      (calls.convertToExperience ??= []).push(args);
-      return { experienceId: 42 };
-    }),
     dismiss: vi.fn(async (...args: unknown[]) => {
       (calls.dismiss ??= []).push(args);
       return { updated: args[1]?.length ?? 0 };
-    }),
-  };
-  const experienceDraft = {
-    draft: vi.fn(async (...args: unknown[]) => {
-      (calls.draft ??= []).push(args);
-      return { experiences: [{ content: '经验内容' }] };
     }),
   };
   return {
     deps: {
       jwt: {} as JwtService,
       feedback: feedback as unknown as FeedbackService,
-      experienceDraft: experienceDraft as unknown as ExperienceDraftService,
       permissionService: { hasPermission: vi.fn(async () => true) },
       ...over,
     },
@@ -114,78 +97,6 @@ describe('feedback admin routes', () => {
     await fastify.close();
   });
 
-  it('draft 未传 agentId 时回落反馈行快照 agent_id', async () => {
-    const { deps, calls } = makeDeps();
-    const fastify = await app(deps);
-    const response = json(await fastify.inject({
-      method: 'POST',
-      url: '/v1/feedback/admin/draft',
-      payload: { feedbackIds: [1] },
-    }));
-    expect(response.code).toBe(0);
-    expect(response.data).toEqual({ experiences: [{ content: '经验内容' }] });
-    // buildDraftContext 先取原料与快照，draft 再用快照 agentId 调模型
-    expect(calls.buildDraftContext[0][0]).toEqual([1]);
-    expect(calls.draft[0]).toEqual([7, 3, expect.any(Array)]);
-    await fastify.close();
-  });
-
-  it('draft 显式 agentId 优先于快照', async () => {
-    const { deps, calls } = makeDeps();
-    const fastify = await app(deps);
-    const response = json(await fastify.inject({
-      method: 'POST',
-      url: '/v1/feedback/admin/draft',
-      payload: { feedbackIds: [1, 2], agentId: 8 },
-    }));
-    expect(response.code).toBe(0);
-    expect(calls.draft[0]).toEqual([7, 8, expect.any(Array)]);
-    await fastify.close();
-  });
-
-  it('draft 空 feedbackIds 直接拒绝，不调 service', async () => {
-    const { deps, calls } = makeDeps();
-    const fastify = await app(deps);
-    const response = json(await fastify.inject({
-      method: 'POST',
-      url: '/v1/feedback/admin/draft',
-      payload: { feedbackIds: [] },
-    }));
-    expect(response.code).toBe(ErrorCode.PARAM_INVALID.code);
-    expect(calls.buildDraftContext).toBeUndefined();
-    await fastify.close();
-  });
-
-  it('convert 缺 agentId 拒绝；合法请求透传 experiences', async () => {
-    const { deps, calls } = makeDeps();
-    const fastify = await app(deps);
-    const missing = json(await fastify.inject({
-      method: 'POST',
-      url: '/v1/feedback/admin/convert',
-      payload: { feedbackIds: [1], experiences: [{ content: 'x' }] },
-    }));
-    expect(missing.code).toBe(ErrorCode.PARAM_INVALID.code);
-
-    const ok1 = json(await fastify.inject({
-      method: 'POST',
-      url: '/v1/feedback/admin/convert',
-      payload: {
-        feedbackIds: [1, 2],
-        agentId: 5,
-        experiences: [{ content: '第一条', sortOrder: 0 }, { content: '第二条' }],
-      },
-    }));
-    expect(ok1.code).toBe(0);
-    expect(ok1.data).toEqual({ experienceId: 42 });
-    expect(calls.convertToExperience[0][0]).toBe(7);
-    expect(calls.convertToExperience[0][1]).toEqual({
-      feedbackIds: [1, 2],
-      agentId: 5,
-      experiences: [{ content: '第一条', sortOrder: 0 }, { content: '第二条', sortOrder: undefined }],
-    });
-    await fastify.close();
-  });
-
   it('dismiss 返回 updated 并透传操作人', async () => {
     const { deps, calls } = makeDeps();
     const fastify = await app(deps);
@@ -200,30 +111,34 @@ describe('feedback admin routes', () => {
     await fastify.close();
   });
 
-  it('feedback:read 可读 list/summary，但不能写 draft/convert/dismiss', async () => {
+  it('dismiss 空 feedbackIds 直接拒绝，不调 service', async () => {
+    const { deps, calls } = makeDeps();
+    const fastify = await app(deps);
+    const response = json(await fastify.inject({
+      method: 'POST',
+      url: '/v1/feedback/admin/dismiss',
+      payload: { feedbackIds: [] },
+    }));
+    expect(response.code).toBe(ErrorCode.PARAM_INVALID.code);
+    expect(calls.dismiss).toBeUndefined();
+    await fastify.close();
+  });
+
+  it('feedback:read 可读 list/summary，但不能写 dismiss', async () => {
     const { deps, calls } = makeDeps({
       permissionService: { hasPermission: vi.fn(async (_u: number, code: string) => code === FEEDBACK_READ) },
     });
     const fastify = await app(deps);
     expect(json(await fastify.inject({ method: 'GET', url: '/v1/feedback/admin/list' })).code).toBe(0);
     expect(json(await fastify.inject({ method: 'GET', url: '/v1/feedback/admin/summary' })).code).toBe(0);
-    const draft = json(await fastify.inject({ method: 'POST', url: '/v1/feedback/admin/draft', payload: { feedbackIds: [1] } }));
-    expect(draft.code).toBe(1002);
-    const convert = json(await fastify.inject({
-      method: 'POST', url: '/v1/feedback/admin/convert',
-      payload: { feedbackIds: [1], agentId: 1, experiences: [{ content: 'x' }] },
-    }));
-    expect(convert.code).toBe(1002);
     const dismiss = json(await fastify.inject({ method: 'POST', url: '/v1/feedback/admin/dismiss', payload: { feedbackIds: [1] } }));
     expect(dismiss.code).toBe(1002);
-    // 三个写端点都不能触达 service
-    expect(calls.buildDraftContext).toBeUndefined();
-    expect(calls.convertToExperience).toBeUndefined();
+    // 写端点不能触达 service
     expect(calls.dismiss).toBeUndefined();
     await fastify.close();
   });
 
-  it('无权限时四个管理端点全部 403', async () => {
+  it('无权限时三个管理端点全部 403', async () => {
     const { deps, calls } = makeDeps({
       permissionService: { hasPermission: vi.fn(async () => false) },
     });
@@ -231,8 +146,6 @@ describe('feedback admin routes', () => {
     for (const [method, url, payload] of [
       ['GET', '/v1/feedback/admin/list', undefined],
       ['GET', '/v1/feedback/admin/summary', undefined],
-      ['POST', '/v1/feedback/admin/draft', { feedbackIds: [1] }],
-      ['POST', '/v1/feedback/admin/convert', { feedbackIds: [1], agentId: 1, experiences: [{ content: 'x' }] }],
       ['POST', '/v1/feedback/admin/dismiss', { feedbackIds: [1] }],
     ] as Array<[string, string, unknown]>) {
       const response = json(await fastify.inject({ method: method as 'GET', url, payload }));
@@ -246,13 +159,13 @@ describe('feedback admin routes', () => {
   it('service 抛 FEEDBACK_ALREADY_HANDLED 时按业务码返回（HTTP 200 + 3046）', async () => {
     const { deps } = makeDeps({
       feedback: {
-        convertToExperience: vi.fn(async () => { throw new (await import('../common/business-exception.js')).BusinessException(ErrorCode.FEEDBACK_ALREADY_HANDLED); }),
+        dismiss: vi.fn(async () => { throw new (await import('../common/business-exception.js')).BusinessException(ErrorCode.FEEDBACK_ALREADY_HANDLED); }),
       } as unknown as FeedbackService,
     });
     const fastify = await app(deps);
     const response = await fastify.inject({
-      method: 'POST', url: '/v1/feedback/admin/convert',
-      payload: { feedbackIds: [1], agentId: 1, experiences: [{ content: 'x' }] },
+      method: 'POST', url: '/v1/feedback/admin/dismiss',
+      payload: { feedbackIds: [1] },
     });
     expect(response.statusCode).toBe(200);
     expect(json(response).code).toBe(ErrorCode.FEEDBACK_ALREADY_HANDLED.code);

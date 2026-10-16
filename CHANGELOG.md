@@ -15,6 +15,21 @@
 
 ---
 
+## 0.0.299 (2026-10-16)
+
+### 管理后台
+
+- **移除「转经验」功能**：「点踩反馈」页的行内与批量「转经验 / 转为经验」按钮、「转为经验」向导（LLM 自动起草、编辑、确认写入）整体下线，后续重新设计后再上线。点踩反馈的查看、筛选（状态 / Agent / 原因 / 时间）与「忽略」处理不受影响；历史已转为经验的反馈行仍以「已转经验」状态展示、可按该状态筛选，「处理信息」列仍显示关联的经验 ID。
+
+### 后端
+
+- 移除 `POST /v1/feedback/admin/draft` 与 `POST /v1/feedback/admin/convert` 两个端点及其实现（经验草稿 LLM 起草、转经验同事务写入）；「忽略」端点 `POST /v1/feedback/admin/dismiss` 与用户端点踩接口不变。
+- 删除 `feedback.draftModelId` 设置项（V157 迁移）：「系统设置 → Agent 与模型」里的「负反馈转经验的起草模型」选项移除，留空回落默认模型的逻辑随功能一并删除。
+- 移除仅供转经验使用的「按消息 ID 精确定位 run 轨迹」能力（`RunTraceService.locateRunByMessageId`）；翻页式运行轨迹接口不受影响。
+- `message_feedback` 表结构不变：`status='CONVERTED'` 与 `experience_id` 作为存量数据保留可查；「负反馈转经验」用量场景（`feedback_experience_draft`）的历史用量记录仍在「我的用量」正常显示中文。
+
+---
+
 ## 0.0.298 (2026-10-16)
 
 ### 管理后台

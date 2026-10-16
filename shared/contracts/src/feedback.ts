@@ -20,5 +20,9 @@ export type FeedbackReason =
 /** 点踩来源：desktop 为桌面/Web/安卓端，feishu 为飞书进度卡点踩。 */
 export type FeedbackSource = 'desktop' | 'feishu';
 
-/** 处理态：PENDING 是唯一入口态；CONVERTED 与 DISMISSED 均为终态。 */
+/**
+ * 处理态：PENDING 是唯一入口态；DISMISSED 为终态。
+ * CONVERTED 是「转经验」功能（已下线）的存量终态：不再产生新行，
+ * 历史行仍按该值展示与筛选。
+ */
 export type FeedbackStatus = 'PENDING' | 'CONVERTED' | 'DISMISSED';

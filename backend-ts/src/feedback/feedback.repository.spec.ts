@@ -202,34 +202,13 @@ describe('FeedbackRepository SQL 构造', () => {
     expect(sql).not.toContain('JOIN session');
   });
 
-  it('casMarkConvertedOnlyTouchesPendingRows', async () => {
+  it('markDismissedOnlyTouchesPendingRows', async () => {
     const { repo, captured } = makeCaptureDb();
-    await expect(repo.casMarkConverted([1, 2], 9)).resolves.toBe(1);
+    await expect(repo.markDismissed([3], 9)).resolves.toBe(1);
     const { sql, params } = captured[0];
     expect(sql).toContain("SET status = ?, handled_by = ?, handled_at = NOW(3)");
     expect(sql).toContain("AND status = 'PENDING'");
-    expect(params).toEqual(['CONVERTED', 9, 1, 2]);
-  });
-
-  it('markDismissedUsesSameCasShape', async () => {
-    const { repo, captured } = makeCaptureDb();
-    await expect(repo.markDismissed([3], 9)).resolves.toBe(1);
-    expect(captured[0].params).toEqual(['DISMISSED', 9, 3]);
-  });
-
-  it('bindExperienceWritesExperienceIdAndOperator', async () => {
-    const { repo, captured } = makeCaptureDb();
-    await repo.bindExperience([1, 2], 100, 9);
-    const { sql, params } = captured[0];
-    expect(sql).toContain('SET experience_id = ?, handled_by = ?');
-    expect(params).toEqual([100, 9, 1, 2]);
-  });
-
-  it('listByIdsReturnsStatusAndSnapshotAgent', async () => {
-    const { repo, captured } = makeCaptureDb();
-    await repo.listByIds([1, 2]);
-    const { sql } = captured[0];
-    expect(sql).toContain('SELECT id, status, agent_id, message_id, session_id, reason FROM message_feedback');
+    expect(params).toEqual(['DISMISSED', 9, 3]);
   });
 });
 

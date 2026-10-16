@@ -18,7 +18,6 @@ export const EMBED_AGENT_ID_KEY = 'embed.agentId';
 export const WEIXIN_MODEL_ID_KEY = 'weixin.modelId';
 export const SESSION_TITLE_MODEL_ID_KEY = 'session.titleModelId';
 export const GIT_COMMIT_MESSAGE_MODEL_ID_KEY = 'git.commitMessageModelId';
-export const FEEDBACK_DRAFT_MODEL_ID_KEY = 'feedback.draftModelId';
 export const APPROVAL_MODEL_ID_KEY = 'approval.modelId';
 export const MEMORY_EXTRACTION_MODEL_ID_KEY = 'memory.extractionModelId';
 /** 哨兵轮询记录保留天数（V148，默认 90）。 */
@@ -148,7 +147,6 @@ export class SystemSettingService {
   static readonly WEIXIN_MODEL_ID_KEY = WEIXIN_MODEL_ID_KEY;
   static readonly SESSION_TITLE_MODEL_ID_KEY = SESSION_TITLE_MODEL_ID_KEY;
   static readonly GIT_COMMIT_MESSAGE_MODEL_ID_KEY = GIT_COMMIT_MESSAGE_MODEL_ID_KEY;
-  static readonly FEEDBACK_DRAFT_MODEL_ID_KEY = FEEDBACK_DRAFT_MODEL_ID_KEY;
   static readonly MEMORY_EXTRACTION_MODEL_ID_KEY = MEMORY_EXTRACTION_MODEL_ID_KEY;
 
   constructor(
@@ -660,7 +658,7 @@ export class SystemSettingService {
     }
     if (key === WEIXIN_MODEL_ID_KEY || key === SESSION_TITLE_MODEL_ID_KEY || key === GIT_COMMIT_MESSAGE_MODEL_ID_KEY
       || key === APPROVAL_MODEL_ID_KEY || key === MEMORY_EXTRACTION_MODEL_ID_KEY
-      || key === COMPACTION_MODEL_ID_KEY || key === FEEDBACK_DRAFT_MODEL_ID_KEY) {
+      || key === COMPACTION_MODEL_ID_KEY) {
       if (!hasText(value)) {
         return;
       }

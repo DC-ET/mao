@@ -198,7 +198,7 @@ const authStore = useAuthStore()
 /** 后端 PUT /system-settings/:key 需 settings:write，无权限时禁用全部写控件 */
 const canWrite = computed(() => authStore.hasPermission('settings:write'))
 
-const MODEL_SELECT_KEYS = new Set(['weixin.modelId', 'session.titleModelId', 'git.commitMessageModelId', 'approval.modelId', 'memory.extractionModelId', 'compaction.modelId', 'feedback.draftModelId'])
+const MODEL_SELECT_KEYS = new Set(['weixin.modelId', 'session.titleModelId', 'git.commitMessageModelId', 'approval.modelId', 'memory.extractionModelId', 'compaction.modelId'])
 /** Agent 下拉 key：weixin.agentId / embed.agentId 共用同一 el-select + agents 数据源（留空回落默认 Agent）。 */
 const AGENT_SELECT_KEYS = new Set(['weixin.agentId', 'embed.agentId'])
 const INTEGRATION_KEYS = new Set([

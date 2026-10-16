@@ -22,12 +22,7 @@ function makeRepo(): FeedbackRepository {
       { agentId: 2, agentName: 'Coder', reason: 'NO_REASON', count: 1 },
       { agentId: null, agentName: null, reason: 'OTHER', count: 1 },
     ]),
-    casMarkConverted: vi.fn(async () => 1),
     markDismissed: vi.fn(async () => 1),
-    bindExperience: vi.fn(async () => undefined),
-    listByIds: vi.fn(async () => [
-      { id: 1, status: 'PENDING', agentId: 2, messageId: 11, sessionId: 5, reason: 'WRONG_RESULT' },
-    ]),
     listDetails: vi.fn(async () => [
       {
         id: 1,
@@ -57,7 +52,6 @@ function makeLookup(ownership: Parameters<FeedbackMessageLookup['findAssistantMe
   return {
     findAssistantMessageOwner: vi.fn(async () => ownership),
     findLatestAssistantMessageId: vi.fn(async () => 11),
-    findMessageContent: vi.fn(async () => '我已经改好了'),
   };
 }
 

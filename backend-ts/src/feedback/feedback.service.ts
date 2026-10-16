@@ -1,12 +1,6 @@
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import type { Db } from '../db/db.js';
-import { normalizeExperienceContent } from '../agent/agent-experience.service.js';
-import type { AgentExperienceRepository } from '../agent/types.js';
-import { MysqlAgentExperienceRepository } from '../agent/agent.repository.js';
-import type { RunTraceService } from '../session/run-trace.service.js';
-import { stripCitationMarkers } from '../session/util/citation-markers.js';
-import { truncateStoredText, DRAFT_LIMITS, serializeRunTrace, type DraftMaterial } from './experience-draft.service.js';
 import {
   FEEDBACK_REASONS, FEEDBACK_STATUSES, FEISHU_DISLIKE_REASON,
   FeedbackRepository, type FeedbackReason, type FeedbackSource, type FeedbackStatus,
@@ -27,8 +21,6 @@ export interface FeedbackMessageLookup {
   findAssistantMessageOwner(messageId: number): Promise<MessageOwnership | null>;
   /** 查询会话内最后一条 ASSISTANT 消息 ID（与 getLatestAssistantReply 同源口径），不存在返回 null */
   findLatestAssistantMessageId(sessionId: number): Promise<number | null>;
-  /** 取消息正文（转经验原料：被点踩的回复原文），不存在返回 null */
-  findMessageContent(messageId: number): Promise<string | null>;
 }
 
 export class FeedbackDbLookup implements FeedbackMessageLookup {
@@ -55,14 +47,6 @@ export class FeedbackDbLookup implements FeedbackMessageLookup {
       [sessionId],
     );
     return row == null ? null : Number(row.id);
-  }
-
-  async findMessageContent(messageId: number): Promise<string | null> {
-    const row = await this.db.queryOne<{ content: string | null }>(
-      'SELECT content FROM message WHERE id = ? AND deleted = 0',
-      [messageId],
-    );
-    return row?.content ?? null;
   }
 }
 
@@ -112,7 +96,7 @@ export const REASON_LABELS: Record<FeedbackReason, string> = {
 };
 
 export class FeedbackService {
-  /** 批量操作（convert / dismiss）的 id 上限：与仓储 IN 列表规模匹配，超长请求直接拒绝。 */
+  /** 批量操作（dismiss）的 id 上限：与仓储 IN 列表规模匹配，超长请求直接拒绝。 */
   static readonly MAX_BATCH_IDS = 100;
 
   constructor(
@@ -121,12 +105,8 @@ export class FeedbackService {
     private readonly sessionOwnerLookup: (sessionId: number) => Promise<number | null>,
     /** 冗余统计字段：取会话使用的 Agent，读不到时写 null */
     private readonly sessionAgentLookup: (sessionId: number) => Promise<number | null> = async () => null,
-    /** 事务内写经验用的连接来源（db.transaction 把连接包成新 Db 传回调）。 */
+    /** 事务内回写反馈状态用的连接来源（db.transaction 把连接包成新 Db 传回调）。 */
     private readonly db: Db | null = null,
-    /** 轨迹定位：转经验向导的原料来源（技术方案 §5.3）。 */
-    private readonly runTraceService: RunTraceService | null = null,
-    /** 目标 Agent 存在性校验（仓储直接查 agent 表）。 */
-    private readonly agentExistsLookup: (agentId: number) => Promise<boolean> = async () => false,
   ) {}
 
   async dislike(userId: number, messageId: number, reason: string, source: FeedbackSource = 'desktop'): Promise<void> {
@@ -246,72 +226,9 @@ export class FeedbackService {
   }
 
   /**
-   * 转经验：写经验与回写反馈状态严格同事务（技术方案 §5.2）。
-   *
-   * 事务外预校验（反馈存在且仍为 PENDING、目标 Agent 存在、条数 1~2）先失败先返回，
-   * 不开无谓事务；事务内第一行 CAS 抢占，影响行数与传入数量不等即回滚抛
-   * FEEDBACK_ALREADY_HANDLED——并发下只有一个管理员能写入。
-   */
-  async convertToExperience(
-    operatorId: number,
-    input: { feedbackIds: number[]; agentId: number; experiences: Array<{ content: string; sortOrder?: number }> },
-  ): Promise<{ experienceId: number }> {
-    const feedbackIds = normalizeBatchIds(input.feedbackIds);
-    if (!Number.isSafeInteger(input.agentId) || input.agentId <= 0) {
-      throw new BusinessException(ErrorCode.PARAM_INVALID, '目标 Agent 无效');
-    }
-    if (input.experiences.length === 0 || input.experiences.length > DRAFT_LIMITS.MAX_EXPERIENCES) {
-      throw new BusinessException(ErrorCode.PARAM_INVALID, `经验条数必须为 1～${DRAFT_LIMITS.MAX_EXPERIENCES} 条`);
-    }
-    if (this.db == null) {
-      throw new BusinessException(ErrorCode.INTERNAL_ERROR, '反馈处理未装配数据库连接');
-    }
-    // 预校验一：目标 Agent 必须存在（已删 / 快照过期的 Agent 不允许写入）
-    if (!(await this.agentExistsLookup(input.agentId))) {
-      throw new BusinessException(ErrorCode.AGENT_NOT_FOUND);
-    }
-    // 预校验二：全部反馈行存在且仍为 PENDING。混入已处理行时整体失败，不做部分写入。
-    // 「id 不存在」与「已被处理」分开报：前者是请求过期/传错（提示刷新重查），后者是并发抢占
-    // （提示被别人处理了）——同一个错误码会让前端文案无法两全。
-    const rows = await this.repository.listByIds(feedbackIds);
-    if (rows.length !== feedbackIds.length) {
-      throw new BusinessException(ErrorCode.PARAM_INVALID, '部分反馈记录不存在');
-    }
-    const handled = rows.filter((row) => row.status !== 'PENDING');
-    if (handled.length > 0) {
-      throw new BusinessException(ErrorCode.FEEDBACK_ALREADY_HANDLED);
-    }
-    // 预校验三：内容在事务外先过一遍共享校验，超 300 字不进事务
-    const contents = input.experiences.map((item) => normalizeExperienceContent(item.content));
-
-    return this.db.transaction(async (tx) => {
-      const feedbackRepo = new FeedbackRepository(tx);
-      // 事务内必须用 tx 新建仓储：全局单例持有的是池连接，不在事务里
-      const experienceRepo: AgentExperienceRepository = new MysqlAgentExperienceRepository(tx);
-      const claimed = await feedbackRepo.casMarkConverted(feedbackIds, operatorId);
-      if (claimed !== feedbackIds.length) {
-        // 并发 convert / dismiss：CAS 影响行数不符，整体回滚
-        throw new BusinessException(ErrorCode.FEEDBACK_ALREADY_HANDLED);
-      }
-      const ids: number[] = [];
-      for (let i = 0; i < contents.length; i++) {
-        ids.push(await experienceRepo.insert({
-          agentId: input.agentId,
-          content: contents[i],
-          sortOrder: input.experiences[i].sortOrder ?? i,
-          enabled: 1,
-        }));
-      }
-      // 一次转换写多条时 experience_id 只记第一条（单值列，不做 JSON）
-      await feedbackRepo.bindExperience(feedbackIds, ids[0], operatorId);
-      return { experienceId: ids[0] };
-    });
-  }
-
-  /**
-   * 忽略：置 DISMISSED 终态并记录处理人。与 convert 同为「全或无」口径——
-   * 批量里混入已处理行时整体失败并回滚，避免部分写入导致状态不一致。
-   * 因此也走事务：CAS 影响行数与传入数量不符即回滚。
+   * 忽略：置 DISMISSED 终态并记录处理人。「全或无」口径——批量里混入已处理行时
+   * 整体失败并回滚，避免部分写入导致状态不一致。因此走事务：CAS 影响行数与
+   * 传入数量不符即回滚。
    */
   async dismiss(operatorId: number, feedbackIds: number[]): Promise<{ updated: number }> {
     const ids = normalizeBatchIds(feedbackIds);
@@ -326,61 +243,6 @@ export class FeedbackService {
       }
       return { updated };
     });
-  }
-
-  /**
-   * 装配转经验的 LLM 原料：点踩原因 + 用户原话 + 被点踩回复 + 该消息所在 run 的工具轨迹。
-   *
-   * 轨迹一律走 locateRunByMessageId 精确定位：listBySession 默认 limit=50 且按 id DESC
-   * 取最新，时隔多日点踩会取错轮次（技术方案 §1.2 修正 2）。定位不到时该条反馈没有
-   * 轨迹可用，仍以原因 + 对话原文起草（轨迹段给占位说明）。
-   */
-  /**
-   * 转经验向导的原料入口：除原料外同时给出快照 agent_id，
-   * 供路由在请求未显式指定目标 Agent 时回落（技术方案 §5.6「draft 接收可选 agentId」）。
-   *
-   * 快照口径：批量行的 agent_id 一致时取该值；不一致（混了不同 Agent 的点踩）时返回 null，
-   * 让管理员在向导里显式选择，不猜一个默认目标。
-   */
-  async buildDraftContext(feedbackIds: number[]): Promise<{ materials: DraftMaterial[]; snapshotAgentId: number | null }> {
-    const ids = normalizeBatchIds(feedbackIds);
-    const rows = (await this.repository.listByIds(ids)).sort((a, b) => a.id - b.id);
-    if (rows.length !== ids.length) {
-      throw new BusinessException(ErrorCode.PARAM_INVALID, '部分反馈记录不存在');
-    }
-    const pending = rows.filter((row) => row.status !== 'PENDING');
-    if (pending.length > 0) {
-      throw new BusinessException(ErrorCode.FEEDBACK_ALREADY_HANDLED);
-    }
-    if (this.runTraceService == null) {
-      throw new BusinessException(ErrorCode.INTERNAL_ERROR, '反馈处理未装配轨迹服务');
-    }
-    const agentIds = new Set(rows.map((row) => row.agentId));
-    const snapshotAgentId = agentIds.size === 1 ? rows[0].agentId : null;
-    const materials: DraftMaterial[] = [];
-    for (const row of rows) {
-      const run = await this.runTraceService.locateRunByMessageId(row.sessionId, row.messageId);
-      materials.push({
-        reason: row.reason,
-        reasonLabel: REASON_LABELS[row.reason] ?? row.reason,
-        messageId: row.messageId,
-        userText: truncateStoredText(run?.userMessagePreview ?? null, DRAFT_LIMITS.MAX_USER_TEXT_CHARS),
-        assistantText: await this.loadAssistantText(row.messageId),
-        traceText: run == null ? '（该消息的运行轨迹不可用）' : serializeRunTrace(run),
-      });
-    }
-    return { materials, snapshotAgentId };
-  }
-
-  async buildDraftMaterials(feedbackIds: number[]): Promise<DraftMaterial[]> {
-    const { materials } = await this.buildDraftContext(feedbackIds);
-    return materials;
-  }
-
-  /** 被点踩回复正文：多模态分片只取文本部分，剥掉引用标记（[^n^] 只是渲染层约定，喂给 LLM 会被复述进经验），超长截断。 */
-  private async loadAssistantText(messageId: number): Promise<string> {
-    const message = await this.messageLookup.findMessageContent(messageId);
-    return truncateStoredText(stripCitationMarkers(message ?? ''), DRAFT_LIMITS.MAX_ASSISTANT_TEXT_CHARS);
   }
 
   private async requireOwnedAssistantMessage(userId: number, messageId: number): Promise<MessageOwnership> {

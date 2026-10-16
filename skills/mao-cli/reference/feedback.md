@@ -33,19 +33,15 @@
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/feedback/admin/draft` | body `{feedbackIds:number[], agentId?:number}` → `{experiences:[{content}]}`。按反馈 ID 装配原料（原因 / 用户原话 / 被点踩回复 / 该消息所在 run 的工具轨迹）让模型起草 1～2 条经验草稿，只读不写、可反复调用；`agentId` 缺省回落反馈行快照 `agent_id`。原料条数 1 走单条 prompt，≥2 走归纳 prompt，前端无感 |
-| POST | `/feedback/admin/convert` | body `{feedbackIds:number[], agentId:number, experiences:[{content,sortOrder?}]}` → `{experienceId}`。经验写入与反馈状态回写严格同事务；`agentId` 不存在返回 3001，反馈已被处理返回 3046（HTTP 200 + `Result.code`，非 409），一次写多条时 `experienceId` 只记第一条 |
 | POST | `/feedback/admin/dismiss` | body `{feedbackIds:number[]}` → `{updated}`。批量忽略，全或无：混入已处理行时整体失败并回滚 |
 
-写入侧共用的失败口径：反馈 ID 无效 / 超 100 条上限 / 经验条数不为 1～2 / 单条超 300 字均返回 2001；目标 Agent 不存在返回 3001；反馈已被他人处理返回 3046，前端统一提示「该反馈已被处理，请刷新后重试」。
+失败口径：反馈 ID 无效 / 超 100 条上限均返回 2001；反馈已被他人处理返回 3046，前端统一提示「该反馈已被处理，请刷新后重试」。dismiss 无独立的存在性预校验，走纯 CAS，「不存在」与「已处理」都归 3046。
 
-错误码细分：`convert` 与 `draft` 对「传入的反馈 ID 不存在」返回 2001（请求过期 / 传错），对「ID 存在但已被处理」返回 3046（并发抢占）；`dismiss` 无独立的存在性预校验，走纯 CAS，「不存在」与「已处理」都归 3046。
-
-**起草模型**：`feedback.draftModelId` 系统设置指定起草用的模型，留空或配置失效时回落默认模型；模型调用计入 `feedback_experience_draft` 场景用量（userId 记操作管理员）。
+> 「转经验」功能（`draft` / `convert` 端点与管理后台「转为经验」向导）已下线；`status='CONVERTED'` 与 `experience_id` 仅为存量数据，不再产生新行。
 
 ## 数据表
 
-`message_feedback`（V123 迁移，V125 加 `source` 列，V148 加处理态四列）：`message_id` 唯一键，冗余 `session_id/user_id/agent_id` 便于统计；`source` 标识点踩来源（`desktop` / `feishu`）；`status`（`PENDING` / `CONVERTED` / `DISMISSED`，后两者终态）、`handled_by`、`handled_at`、`experience_id` 记录处理结果，存量行由列默认值回填为 `PENDING`。
+`message_feedback`（V123 迁移，V125 加 `source` 列，V148 加处理态四列）：`message_id` 唯一键，冗余 `session_id/user_id/agent_id` 便于统计；`source` 标识点踩来源（`desktop` / `feishu`）；`status`（`PENDING` / `CONVERTED` / `DISMISSED`，后两者为终态；`CONVERTED` 是已下线的转经验功能留下的存量状态）、`handled_by`、`handled_at`、`experience_id` 记录处理结果，存量行由列默认值回填为 `PENDING`。
 
 ## 示例
 
@@ -53,7 +49,5 @@
 mao-cli http put /v1/feedback/messages/123/dislike --data '{"reason":"WRONG_RESULT"}'
 mao-cli http get "/v1/feedback/admin/summary?startDate=2026-09-01&endDate=2026-09-27"
 mao-cli http get "/v1/feedback/admin/list?status=PENDING&agentId=9"
-mao-cli http post /v1/feedback/admin/draft --data '{"feedbackIds":[1,2]}'
-mao-cli http post /v1/feedback/admin/convert --data '{"feedbackIds":[1,2],"agentId":9,"experiences":[{"content":"改构建脚本前先看 package.json 的 scripts，避免直接改 CI 配置。"}]}'
 mao-cli http post /v1/feedback/admin/dismiss --data '{"feedbackIds":[3]}'
 ```

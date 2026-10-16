@@ -5,10 +5,8 @@ import type { AgentExperience, AgentExperienceRepository, ExperienceInput } from
 /**
  * 经验正文规范化与校验（共享纯函数）。
  *
- * 供两处复用：AgentExperienceService 的既有 CRUD / 全量同步，以及
- * 负反馈闭环转经验时在 db.transaction 内直接写轻量仓储的路径
- * （技术方案 2026-10-11-feedback-experience-loop §5.2）。
- * 两处必须同口径，避免复制漂移。
+ * 供 AgentExperienceService 的既有 CRUD / 全量同步复用；作为模块级导出，
+ * 任何新增写入路径（如未来的反馈闭环）都应复用同一校验，避免复制漂移。
  */
 export function normalizeExperienceContent(content: string | null | undefined): string {
   if (content == null) {
