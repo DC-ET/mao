@@ -81,6 +81,7 @@ import { ElMessageBox } from 'element-plus'
 import { useAuthStore } from '../stores/auth'
 import { useTabStore } from '../stores/tabs'
 import { useBreakpoint } from '../composables/useBreakpoint'
+import { useEmbedChat } from '../composables/useEmbedChat'
 import { homeTitle, pickHomePath } from '../utils/home'
 import TabBar from './TabBar.vue'
 import SideMenu from './SideMenu.vue'
@@ -93,6 +94,8 @@ const router = useRouter()
 const authStore = useAuthStore()
 const tabStore = useTabStore()
 const { isMobile } = useBreakpoint()
+// 浮窗助手：Layout 仅在登录后路由树挂载，卸载（登出跳 /login）时自动销毁 SDK 实例
+useEmbedChat()
 
 const drawerVisible = ref(false)
 const collapsed = ref(localStorage.getItem(SIDEBAR_KEY) === '1')

@@ -13,6 +13,8 @@ import type {
 export const COMPANY_SSO_CONFIG_KEY = 'auth.companySso.config';
 
 export const WEIXIN_AGENT_ID_KEY = 'weixin.agentId';
+/** 管理后台浮窗助手 Agent（V156）；留空回落系统默认 Agent，解析见 embed/embed.routes.ts resolveEmbedAgentId。 */
+export const EMBED_AGENT_ID_KEY = 'embed.agentId';
 export const WEIXIN_MODEL_ID_KEY = 'weixin.modelId';
 export const SESSION_TITLE_MODEL_ID_KEY = 'session.titleModelId';
 export const GIT_COMMIT_MESSAGE_MODEL_ID_KEY = 'git.commitMessageModelId';
@@ -142,6 +144,7 @@ const DEFAULT_HARNESS_WEB_PAGE_USER_AGENT = 'Mozilla/5.0 (compatible; AgentWorkb
 
 export class SystemSettingService {
   static readonly WEIXIN_AGENT_ID_KEY = WEIXIN_AGENT_ID_KEY;
+  static readonly EMBED_AGENT_ID_KEY = EMBED_AGENT_ID_KEY;
   static readonly WEIXIN_MODEL_ID_KEY = WEIXIN_MODEL_ID_KEY;
   static readonly SESSION_TITLE_MODEL_ID_KEY = SESSION_TITLE_MODEL_ID_KEY;
   static readonly GIT_COMMIT_MESSAGE_MODEL_ID_KEY = GIT_COMMIT_MESSAGE_MODEL_ID_KEY;
@@ -651,24 +654,8 @@ export class SystemSettingService {
   }
 
   private async validateValue(key: string, value: string | null | undefined): Promise<void> {
-    if (key === WEIXIN_AGENT_ID_KEY) {
-      if (!hasText(value)) {
-        return;
-      }
-      const parsed = parseLongId(value!.trim());
-      if (parsed == null) {
-        throw new BusinessException(ErrorCode.PARAM_INVALID, '微信智能体配置必须是有效的 Agent ID');
-      }
-      const agent = await this.agentLookup.findById(parsed);
-      if (!agent) {
-        throw new BusinessException(ErrorCode.PARAM_INVALID, '指定的 Agent 不存在');
-      }
-      if (agent.enabled === 0) {
-        const current = (await this.settingRepo.findByKey(key))?.value ?? '';
-        if (current.trim() !== value!.trim()) {
-          throw new BusinessException(ErrorCode.PARAM_INVALID, '指定的 Agent 已停用');
-        }
-      }
+    if (key === WEIXIN_AGENT_ID_KEY || key === EMBED_AGENT_ID_KEY) {
+      await this.validateAgentIdSetting(key, value, key === WEIXIN_AGENT_ID_KEY ? '微信智能体' : '浮窗助手');
       return;
     }
     if (key === WEIXIN_MODEL_ID_KEY || key === SESSION_TITLE_MODEL_ID_KEY || key === GIT_COMMIT_MESSAGE_MODEL_ID_KEY
@@ -732,6 +719,30 @@ export class SystemSettingService {
     }
     if (key === UPLOAD_BASE_URL_KEY && !/^https?:\/\//i.test(value!)) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '上传基础地址必须以 http:// 或 https:// 开头');
+    }
+  }
+
+  /**
+   * Agent ID 类配置（weixin.agentId / embed.agentId）保存校验：空值放行（回落默认 Agent 语义）；
+   * 非数字 / Agent 不存在 / 新指向已停用 Agent 一律拒绝（值与存量相同则豁免，允许保存其他字段）。
+   */
+  private async validateAgentIdSetting(key: string, value: string | null | undefined, label: string): Promise<void> {
+    if (!hasText(value)) {
+      return;
+    }
+    const parsed = parseLongId(value!.trim());
+    if (parsed == null) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, `${label}配置必须是有效的 Agent ID`);
+    }
+    const agent = await this.agentLookup.findById(parsed);
+    if (!agent) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '指定的 Agent 不存在');
+    }
+    if (agent.enabled === 0) {
+      const current = (await this.settingRepo.findByKey(key))?.value ?? '';
+      if (current.trim() !== value!.trim()) {
+        throw new BusinessException(ErrorCode.PARAM_INVALID, '指定的 Agent 已停用');
+      }
     }
   }
 }

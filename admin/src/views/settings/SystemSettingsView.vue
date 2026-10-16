@@ -112,7 +112,7 @@
                           @change="(val: string | number | boolean) => { plainModel[row.settingKey] = val === true ? 'true' : 'false' }"
                         />
                         <el-select
-                          v-else-if="row.settingKey === 'weixin.agentId'"
+                          v-else-if="isAgentSetting(row.settingKey)"
                           v-model="plainModel[row.settingKey]"
                           :disabled="!canWrite"
                           clearable
@@ -199,6 +199,8 @@ const authStore = useAuthStore()
 const canWrite = computed(() => authStore.hasPermission('settings:write'))
 
 const MODEL_SELECT_KEYS = new Set(['weixin.modelId', 'session.titleModelId', 'git.commitMessageModelId', 'approval.modelId', 'memory.extractionModelId', 'compaction.modelId', 'feedback.draftModelId'])
+/** Agent 下拉 key：weixin.agentId / embed.agentId 共用同一 el-select + agents 数据源（留空回落默认 Agent）。 */
+const AGENT_SELECT_KEYS = new Set(['weixin.agentId', 'embed.agentId'])
 const INTEGRATION_KEYS = new Set([
   'auth.ldap.enabled', 'auth.ldap.url', 'auth.ldap.baseDn', 'auth.ldap.userDn', 'auth.ldap.password', 'auth.ldap.userSearchBase',
   'auth.feishu.enabled', 'auth.feishu.appId', 'auth.feishu.appSecret', 'auth.feishu.redirectUri',
@@ -241,6 +243,8 @@ const TOC_GROUPS: Array<{ label: string; sections: Array<{ kind: 'company-sso' |
       { kind: 'ecp', name: 'ecp' },
       { kind: 'integration', name: 'ldap' },
       { kind: 'integration', name: 'feishu' },
+      // 集成配置分类：既有 key 均走 IntegrationConfigPanel / 专属面板，此处只渲染 embed.agentId（浮窗助手）
+      { kind: 'category', name: '集成配置' },
     ],
   },
   {
@@ -451,6 +455,10 @@ function isBooleanSetting(key: string | undefined | null) {
 
 function isModelSetting(key: string | undefined | null) {
   return !!key && MODEL_SELECT_KEYS.has(key)
+}
+
+function isAgentSetting(key: string | undefined | null) {
+  return !!key && AGENT_SELECT_KEYS.has(key)
 }
 
 const integrationRows = computed(() => settings.value.filter((item) => INTEGRATION_KEYS.has(item.settingKey)))

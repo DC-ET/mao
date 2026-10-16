@@ -24,6 +24,21 @@
 
 实例方法：`open()` / `close()` / `toggle()` / `newSession()` / `setContext(ctx)` / `destroy()`；页面操作相关：`inspectPage()` / `executePageAction(action, snapshotId?)` / `getPageAuthorization()` / `setPageAuthorization(level)` / `capturePageScreenshot({ maskSensitive?, reason? })`。重复 `init()` 会先销毁旧实例（单实例约束）。
 
+## 管理后台浮窗助手（内置宿主）
+
+Mao 自己的管理后台是 Embed SDK 的第一个「自家宿主」：`admin/index.html` 以与外部宿主完全一致的形态引入产物 `<script src="/embed/mao-chat.js">`，由 `admin/src/composables/useEmbedChat.ts` 统一初始化，管理员登录后右下角即出现浮窗入口。接入要点（与外部宿主的差异）：
+
+- **鉴权**：走 SDK `getToken` 模式，回调读 admin 登录态（`localStorage.token`），不引入公司 SSO 换票；admin axios 拦截器 refresh 写回新 token 后，SDK 下一次请求自然拿到。
+- **Agent 配置**：`embed.agentId` 系统配置（管理后台「系统设置 → 登录认证 → 集成配置」内选择，V156 迁移），留空回落系统默认 Agent。读取接口 `GET /v1/embed/admin-config` 仅要求登录、不要求 `settings:read`（浮窗全员可用）；配置无效 / Agent 停用 / 无默认 Agent 时返回空，前端不初始化浮窗，接口不报错。
+- **页面上下文**：只采集路由结构性信息（`route.name` / `path` / `params` / `query` + `document.title`，见 `admin/src/utils/embedContext.ts`），**禁止采集表格数据行与表单值**；Agent 需要页面内容时用 `page_*` 工具按授权级别自行获取。
+- **页面操作**：默认 `per_action`（每个写操作前在浮窗确认），`full` 完全授权只能由用户在浮窗内显式授予。
+- **登出联动**：登出 / token 失效 / Layout 卸载时销毁 SDK 实例，入口与 Shadow DOM host 一并移除。
+- **部署顺序**：产物由 desktop 部署提供，**必须先部署 desktop 再部署 admin**；反序则浮窗不出现（控制台 warn，不影响后台其他功能），补齐 desktop 后刷新恢复。
+- **本地开发**：admin dev（:5200）需同时运行 desktop dev server（:5201）——`admin/vite.config.ts` 已把 `/embed` 代理到 :5201，`/api` 代理开了 `ws: true`（SDK 的 WS 走同源升级）。
+- **已知限制**：浮窗 z-index 极高会覆盖 `el-dialog` / `el-drawer`（默认收起不遮挡）；主题不跟随 admin；切换 `embed.agentId` 后浮窗历史不再显示旧 Agent 的会话（SDK 历史按 agentId 过滤，会话本身在「会话管理」可见）。
+
+设计文档：仓库 `docs/plan/2026-10-16-admin-embed-chat-technical-design.md`。
+
 ## 页面操作 Agent
 
 在对话中直接要求 Agent 查看或操作当前页面（如「帮我把收货地址填成……」）。业务方仍然只需 `MaoChat.init()`，不需要为按钮/表单增加标记，也不需要提供 selector 或回调。Agent 通过后端 `page_*` 工具请求、由 SDK 在用户浏览器本地执行并回传结果。
