@@ -48,7 +48,6 @@ export function formatCompact(value: number, decimals = 1): string {
   return String(value)
 }
 
-/** Token 紧凑单位按业界惯例：K=千、M=百万、B=十亿。 */
 /** 成本展示：与模型价格填写单位一致，最多保留 2 位小数（小金额不丢精度）。 */
 export function formatCost(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return '-'
@@ -58,11 +57,13 @@ export function formatCost(value: number | null | undefined): string {
   return value.toLocaleString('zh-CN', { maximumFractionDigits: 2 })
 }
 
-export function formatTokens(value: number): string {
+/** Token 紧凑单位按业界惯例：K=千、M=百万、B=十亿。 */
+/** decimals 控制 K/M/B 前的小数位，KPI 卡片传 2 固定保留两位；图表坐标轴与排行标签用默认一位。 */
+export function formatTokens(value: number, decimals = 1): string {
   const abs = Math.abs(value)
-  if (abs >= 1e9) return `${trimZero(value / 1e9)}B`
-  if (abs >= 1e6) return `${trimZero(value / 1e6)}M`
-  if (abs >= 1e3) return `${trimZero(value / 1e3)}K`
+  if (abs >= 1e9) return `${trimZero(value / 1e9, decimals)}B`
+  if (abs >= 1e6) return `${trimZero(value / 1e6, decimals)}M`
+  if (abs >= 1e3) return `${trimZero(value / 1e3, decimals)}K`
   return String(value)
 }
 

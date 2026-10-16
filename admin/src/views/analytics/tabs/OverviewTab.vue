@@ -5,7 +5,7 @@
         <div class="metric primary">
           <div class="label">Token 消耗</div>
           <div class="value-row">
-            <span class="value">{{ formatTokens(totalTokens) }}</span>
+            <span class="value">{{ formatTokens(totalTokens, 2) }}</span>
             <span v-if="tokenDelta !== null" class="delta" :class="deltaClass(tokenDelta)">
               {{ deltaText(tokenDelta) }}
             </span>
@@ -214,7 +214,7 @@ const secondaryMetrics = computed<SecondaryMetric[]>(() => [
     // 比率环比按百分点差，避免把 30% → 35% 说成「上升 17%」
     delta: ppDelta(totals.value.cacheHitRate, previous.value.cacheHitRate),
     deltaUnit: 'pp',
-    sub: `命中 ${formatTokens(totals.value.cachedTokens ?? 0)} / 入 ${formatTokens(totals.value.promptTokens ?? 0)} Token`,
+    sub: `命中 ${formatTokens(totals.value.cachedTokens ?? 0, 2)} / 入 ${formatTokens(totals.value.promptTokens ?? 0, 2)} Token`,
     path: '/analytics?tab=trends'
   }
 ])
@@ -263,9 +263,10 @@ const liveWindow = computed<LiveItem[]>(() => {
 })
 
 /** 构成明细：补充指标条之外的结构信息，避免与环比重复 */
+/** Token 行与指标条同口径：K/M/B 前固定两位小数，避免同一页两种精度。 */
 const composeRows = computed(() => [
-  { label: '对话 Token', valueText: formatTokens(totals.value.chatTokens), fail: false },
-  { label: '后台 Token', valueText: formatTokens(totals.value.backgroundTokens), fail: false },
+  { label: '对话 Token', valueText: formatTokens(totals.value.chatTokens, 2), fail: false },
+  { label: '后台 Token', valueText: formatTokens(totals.value.backgroundTokens, 2), fail: false },
   { label: '成本合计', valueText: formatCost(totals.value.totalCost), fail: false },
   { label: '完成会话', valueText: formatNumber(totals.value.completedSessions), fail: false },
   { label: '失败会话', valueText: formatNumber(totals.value.failedSessions), fail: true }
