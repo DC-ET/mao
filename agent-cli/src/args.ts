@@ -369,9 +369,13 @@ export function parseCliConfig(
   // 未显式下发（flag / 环境变量都没有）时必须留空：parseEnum 的 fallback 会让
   // resolveConfig 的 `cli.x || project.x || user.x` 链永远命中 CLI 默认，
   // 用户/项目配置里的这两项永久失效（--help 声明的优先级被破坏）。
+  // 空串/纯空白（置空但未 unset 的环境变量、`--output-format=` 内联空值）按「未下发」
+  // 处理，与 config-store 的 envBool / resolveConfig 归一口径一致；否则 `'' != null`
+  // 成立，parseEnum 抛错导致任何子命令都无法启动。
   const outputFormatRaw = optionalString(flags, 'output-format') ?? process.env.MAO_AGENT_OUTPUT_FORMAT;
-  const outputFormat = outputFormatRaw != null
-    ? parseEnum('output-format', outputFormatRaw, ['text', 'json', 'stream-json'] as const, 'text', lower)
+  const outputFormatTrimmed = outputFormatRaw?.trim();
+  const outputFormat = outputFormatTrimmed
+    ? parseEnum('output-format', outputFormatTrimmed, ['text', 'json', 'stream-json'] as const, 'text', lower)
     : undefined;
   const permissionLevelRaw = optionalString(flags, 'permission-level');
   const permissionLevel = permissionLevelRaw != null

@@ -127,7 +127,10 @@ export function resolveConfig(cli: {
   const user = loadUserConfig();
   const project = findProjectConfig() ?? {};
   const envBase = process.env.MAO_BASE_URL;
-  const envFormat = process.env.MAO_AGENT_OUTPUT_FORMAT as OutputFormat | undefined;
+  // 与 envBool / args.ts 同口径：空串或纯空白都按「未下发」处理。
+  // 直接用原值会让空白串（truthy）穿透回落链，产出非法的 outputFormat。
+  const envFormatRaw = process.env.MAO_AGENT_OUTPUT_FORMAT?.trim();
+  const envFormat = envFormatRaw ? (envFormatRaw as OutputFormat) : undefined;
   const envVerbose = envBool(process.env.MAO_AGENT_VERBOSE);
   const baseUrl = cli.baseUrl || envBase || project.baseUrl || user.baseUrl || DEFAULT_BASE_URL;
   return {
