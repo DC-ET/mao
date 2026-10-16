@@ -22,14 +22,23 @@
 - **浮窗助手（接入 Web Embed SDK）**：管理后台右下角新增 Mao 助手浮动入口。管理员登录后点开浮窗，即可就当前页面与配置的 Agent 对话（流式输出、思考过程、工具执行状态、追问作答、手动停止、历史会话、粘贴附件），排障时不必再切到桌面端。浮窗复用 admin 登录态与 Embed SDK 既有能力，无新增鉴权链路；Agent 可在 `per_action`（每个写操作前在浮窗确认）授权下操作当前后台页面。在「系统设置 → 登录认证 → 集成配置」选择浮窗使用的 Agent，留空回落系统默认 Agent。已知限制：浮窗层级极高，展开时会覆盖 `el-dialog` / `el-drawer`（默认收起不遮挡）；视觉不跟随后台主题；切换 Agent 后浮窗历史不再显示旧 Agent 的会话（会话本身不受影响）；浮窗会话混在「会话管理」列表，无法按来源筛选。
 - **会话详情支持查看工作区目录与文件**：信息卡新增「工作区」行（绝对路径省略展示 + 复制 + 「查看文件」入口；LOCAL 或无工作区时入口禁用并说明原因）。点「查看文件」打开全屏文件浏览器：面包屑导航 + 单层列表（名称/大小/修改时间，目录优先，符号链接标识且不可进入）、按文件名递归搜索（大小写不敏感，上限 100 条）、文本/Markdown（渲染态/源码双态）/图片/PDF 四种预览（其余格式提示下载后查看）、单文件与整目录 zip 下载（后端 1GB 上限，超限给明确错误）。聊天记录里文件变更面板的路径可点击，直接打开该文件当前内容预览。只读定位：不含上传/删除/重命名等写操作，也不含 Git 面板。
 - admin 新增 vitest 单测基建（`npm test`，仅覆盖纯逻辑，不改变构建产物）。
+- **用户管理三态状态口径修正**：用户状态为文档化三态（1=启用 / 0=禁用 / null=未设置），此前后台把「未设置」显示为「禁用」，且编辑未设置用户后保存会静默将其写成真禁用。现在列表（桌面表格与移动端卡片）与用户详情抽屉将 null 显示为「未设置」；编辑框打开未设置用户时状态开关落「启用」（与后端登录口径一致，未设置即活跃）；「启用」筛选现在包含未设置账号（此前 `status = 1` 两边都查不到）。
 
 ### 后端
 
 - 新增只读接口 `GET /v1/embed/admin-config`：仅要求登录（不要求 `settings:read`），返回浮窗助手最终使用的 Agent ID；配置值非数字 / 不存在 / 已停用一律回落系统默认 Agent，均不可用时返回空（前端不初始化浮窗），不抛 500。
 - 新增系统配置 `embed.agentId`（V156 迁移，分类「集成配置」）：浮窗助手使用的 Agent ID，保存时校验必须为有效、未停用的 Agent，留空回落系统默认 Agent。
 - **管理后台会话工作区只读文件端点**：新增 `/v1/admin/sessions/:id/files/{directory,search,read,preview,download,download-zip}` 六个只读端点，复用 `WorkspaceBrowseService`（与用户侧 `/v1/files/workspace-*` 同一套 `StrictPathResolver` 越界收口：相对穿越、越界绝对路径、符号链接逃逸一律拒绝）。鉴权只校验 `session:read` 权限码 + 会话存在、有工作区且为 CLOUD 执行模式，不做出属主校验（管理后台跨用户查看是本职；LOCAL 会话工作区在用户设备上，服务端不可浏览）；用户侧属主校验与现有端点零改动。审计由 `/v1/admin` 前缀的全局 `onResponse` 钩子自动留痕（action=READ、objectType=admin.sessions、objectId=会话 id、queryString 含 path/dir），无显式审计代码。
+- **修复 SSO / ECP 登录把「未设置」状态账号判为已禁用**：用户状态是三态（1=启用 / 0=禁用 / null=未设置），此前 SSO / ECP 登录用 `status !== 1` 判定，把 null 账号拒之门外（403 `account_forbidden` / 「账号已禁用或不存在」），而同一账号本地密码登录成功——两个入口结论相反。现两处校验统一到 `isActiveAccount` 口径（仅 `status === 0` 停用），null（未设置，SSO/ECP 外部账号的默认取值）正常放行；`deleted != 0` 与 `status = 0` 仍按原语义拒绝。
+- **修复系统技能上传路径穿越**：`POST /v1/skill-docs/upload` 的落盘守卫原先只查 `includes('/.')`，`..` 段位于路径最前时（如 `myskill/../evil.txt`）不被拦截，文件会被写到技能子目录之外（skills 根或其它技能目录，可污染/覆盖其它技能的 SKILL.md）。现补齐与用户技能安装相同的双重防护：按段拒绝 `..` 与空段，外加解析后路径必须落在技能子目录内的收口检查；合法文件行为不变。
+- **修复 Git 面板同目录改名文件增减行数恒为 +0/-0**：git numstat 对同目录（同前缀目录）改名输出花括号紧凑形态 `src/{a.txt => b.txt}`，后端切片后残留尾部 `}`，与 name-status 的键匹配不上，该文件的 insertions/deletions 被静默丢弃。现按紧凑形态（公共前缀 + 新名 + 公共后缀）完整还原新路径，同目录与跨目录改名口径一致；仓库级总数统计本就正确，不受影响。
+- **修复分组展开页排序漏掉取消中的会话**：分组展开页 ORDER BY 的活跃相位原先只列 RUNNING/RESUMING/WAITING_APPROVAL，漏掉 CANCELLING，与侧边栏分组预览、仪表盘查询的口径矛盾——取消流程进行中的会话会被当成空闲排到后面。现四处口径（isActivePhase、VO、dashboard SQL、分组展开页 ORDER BY）统一由 `ACTIVE_PHASES` 单一常量派生，防止再次漂移。
 
 **部署提示（顺序敏感）**：SDK 产物 `/embed/mao-chat.js` 由 desktop 部署提供（desktop prebuild 自动构建 `sdk/embed` 并拷入 `desktop/public/embed/`），**必须先部署 desktop 再部署 admin**；反序部署 admin 会引用 404，浮窗不出现（控制台有 warn，不影响后台其他功能），补齐 desktop 部署后刷新即恢复。无其他手工步骤。
+
+### 终端 CLI（mao-agent）
+
+- **修复 `MAO_AGENT_OUTPUT_FORMAT` 置空串导致任何子命令无法启动**：环境变量置空但未 unset（Docker `ENV MAO_AGENT_OUTPUT_FORMAT=`、CI 继承空值）或 `--output-format=` 内联空值时，空串被当作「已下发」进入枚举校验并抛错。现空串按「未显式下发」处理，回落 `resolveConfig` 的项目/用户配置链与默认值，与同仓 `envBool` 的口径一致；显式有效值行为不变。
 
 ## 0.0.297 (2026-10-15)
 
