@@ -291,6 +291,20 @@ export function useWorkspaceFiles() {
     return toRaw(state.preview) === preview
   }
 
+  /**
+   * 回填预览结果：只改 state.preview（代理）上的字段，不改原始对象。
+   *
+   * reactive 深包装后 `state.preview` 是代理，读写与原对象互通，但 Vue 的依赖
+   * 触发挂在代理的 setter 上——直接写 `preview.loading = false` 改的是原始对象，
+   * 代理侧收不到 trigger，模板不会重渲染（表现为预览永远停在「加载中…」）。
+   * state.preview 为 null 时（已被 closePreview）不写。
+   */
+  function fillPreview(patch: Partial<WorkspacePreviewState>): void {
+    const target = state.preview
+    if (target == null) return
+    Object.assign(target, patch)
+  }
+
   async function previewFile(relativePath: string) {
     revokePdf()
     const preview: WorkspacePreviewState = {
@@ -307,23 +321,18 @@ export function useWorkspaceFiles() {
       const result = await fetchBytes(sessionFilesUrl(state.sessionId!, 'preview', { path: relativePath }))
       // 期间可能已切换预览目标：仅回填仍是当前目标的结果
       if (!isCurrentPreview(preview)) return
-      preview.loading = false
-      if (result.blob) {
-        preview.pdfUrl = URL.createObjectURL(result.blob)
-      } else {
-        preview.error = result.error ?? 'PDF 预览失败'
-      }
+      fillPreview(result.blob
+        ? { loading: false, pdfUrl: URL.createObjectURL(result.blob) }
+        : { loading: false, error: result.error ?? 'PDF 预览失败' })
       return
     }
     try {
       const { data } = await api.get(sessionFilesPath(state.sessionId!, 'read', { path: relativePath }), { skipErrorToast: true })
       if (!isCurrentPreview(preview)) return
-      preview.loading = false
-      preview.data = data ?? null
+      fillPreview({ loading: false, data: data ?? null })
     } catch (e) {
       if (!isCurrentPreview(preview)) return
-      preview.loading = false
-      preview.error = (e as Error)?.message || '预览失败'
+      fillPreview({ loading: false, error: (e as Error)?.message || '预览失败' })
     }
   }
 

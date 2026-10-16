@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { watchEffect } from 'vue'
 import axios from 'axios'
 
 /**
@@ -248,5 +249,46 @@ describe('useWorkspaceFiles 预览状态机', () => {
     await files.previewFile('a.md')
     files.closePreview()
     expect(files.state.preview).toBeNull()
+  })
+
+  it('回填结果会触发响应式依赖（模板读 state.preview.loading 能收到更新）', async () => {
+    // 回归：早期在原始对象上写 loading/data，reactive 代理收不到 trigger，
+    // 模板永远显示「加载中…」。单测必须订阅 state.preview.loading 才能暴露。
+    const files = await loadComposable(undefined)
+    await files.open(3)
+    apiGet.mockResolvedValueOnce({ data: { content: 'hi', total_lines: 1 } })
+
+    const seen: Array<{ loading: boolean | undefined; hasData: boolean }> = []
+    const stop = watchEffect(() => {
+      const p = files.state.preview
+      seen.push({ loading: p?.loading, hasData: Boolean(p?.data) })
+    })
+
+    await files.previewFile('a.md')
+    // watchEffect 默认 flush:'pre'，等一个微任务让回调跑完
+    await Promise.resolve()
+    stop()
+
+    // 至少观测到一次 loading=true，以及一次 loading=false 且已有 data
+    expect(seen.some((s) => s.loading === true)).toBe(true)
+    expect(seen.some((s) => s.loading === false && s.hasData)).toBe(true)
+  })
+
+  it('预览失败也会触发响应式依赖（error 可达，不停在加载中）', async () => {
+    const files = await loadComposable(undefined)
+    await files.open(3)
+    apiGet.mockRejectedValueOnce(new Error('二进制文件，无法预览'))
+
+    const seen: Array<{ loading: boolean | undefined; error: string | null | undefined }> = []
+    const stop = watchEffect(() => {
+      const p = files.state.preview
+      seen.push({ loading: p?.loading, error: p?.error })
+    })
+
+    await files.previewFile('blob.bin')
+    await Promise.resolve()
+    stop()
+
+    expect(seen.some((s) => s.loading === false && s.error === '二进制文件，无法预览')).toBe(true)
   })
 })

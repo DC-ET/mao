@@ -346,4 +346,5 @@ interface WorkspaceFilesState {
 
 1. **Dialog 不再全屏**：按产品反馈改为常规弹窗（宽 1080px、`top: 6vh`、最高 88vh，≤768px 拉满视口宽度）。§5.1/§5.3.2/§5.5/D3 中"全屏 `el-dialog`"的表述作废；表格与预览区改为各自滚动、面包屑固定，图片/PDF 高度随弹窗收敛。
 2. **JSON 与字节流端点的 base 归属**（§5.3.3）：`api` 实例自带 `baseURL`，且 axios 只豁免 `http(s)://` 绝对 URL、`/` 开头路径一样会被拼 base——JSON 端点必须传**不含** base 的相对路径，仅裸 fetch 的字节流端点自带完整 base。最初两者都拼 base，导致请求 `/api/v1/api/v1/...` 404 并被误报为"工作区目录不存在或已被清理"。
-3. **预览状态机的身份比较**（§5.3.3）：普通对象赋进 reactive 的 `state.preview` 后是代理，`state.preview === preview` 恒 false；判断"预览目标是否已切换"必须用 `toRaw`，否则请求结果被一律丢弃、预览永远停在"加载中…"。
+3. **预览状态机的身份比较**（§5.3.3）：普通对象赋进 reactive 的 `state.preview` 后是代理，`state.preview === preview` 恒 false；判断"预览目标是否已切换"必须用 `toRaw`，否则请求结果被一律丢弃。
+4. **回填必须走代理**：即使能通过 `toRaw` 守卫，结果也不能写在传入的原始对象上（`preview.loading = false`）——reactive 代理的读写与原对象互通，但依赖触发只认代理的 setter，写原始对象不会 trigger，模板永远停在"加载中…"。统一经 `state.preview` 回填。
