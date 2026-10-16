@@ -96,7 +96,7 @@
                 <td class="wf-time">{{ formatTime(entry.mtimeMs) }}</td>
                 <td class="wf-ops">
                   <template v-if="!entry.isSymlink">
-                    <el-button v-if="!entry.isDirectory" text size="small" @click.stop="files.previewFile(entry.path)">预览</el-button>
+                    <el-button v-if="!entry.isDirectory" text size="small" @click.stop="emit('preview', entry.path)">预览</el-button>
                     <el-button text size="small" @click.stop="onDownload(entry)">下载</el-button>
                   </template>
                   <span v-else class="wf-symlink-hint">符号链接不可进入</span>
@@ -107,51 +107,14 @@
         </div>
         <div v-if="files.state.truncated" class="wf-truncated">仅显示前 500 条，请进入子目录查看</div>
       </template>
-
-      <!-- 预览面板 -->
-      <div v-if="preview" ref="previewRef" class="wf-panel wf-preview">
-        <div class="wf-panel-bar">
-          <span class="wf-preview-path" :title="preview.path">{{ preview.path }}</span>
-          <div class="wf-preview-actions">
-            <template v-if="preview.data && preview.isMarkdown">
-              <el-button text size="small" :type="preview.markdownRendered ? 'primary' : 'default'" @click="setMarkdownView(true)">渲染态</el-button>
-              <el-button text size="small" :type="!preview.markdownRendered ? 'primary' : 'default'" @click="setMarkdownView(false)">源码</el-button>
-            </template>
-            <el-button text size="small" @click="files.closePreview()">关闭预览</el-button>
-          </div>
-        </div>
-        <div class="wf-preview-body">
-          <div v-if="preview.loading" class="wf-empty">加载中…</div>
-          <template v-else-if="preview.error">
-            <div class="wf-preview-error">
-              <div>暂不支持预览，请下载后查看</div>
-              <div class="wf-preview-error-detail">{{ preview.error }}</div>
-              <el-button size="small" type="primary" @click="onDownloadPath(preview.path)">下载</el-button>
-            </div>
-          </template>
-          <template v-else-if="preview.pdfUrl">
-            <iframe class="wf-pdf" :src="preview.pdfUrl" title="PDF 预览" />
-          </template>
-          <template v-else-if="preview.data?.media_type === 'image'">
-            <div class="wf-image-summary">{{ preview.data.content }}</div>
-            <img class="wf-image" :src="preview.data.data_uri" :alt="preview.path" />
-          </template>
-          <template v-else-if="preview.data">
-            <div v-if="preview.isMarkdown && preview.markdownRendered" class="markdown-body wf-markdown" v-html="renderMarkdown(preview.data.content)" />
-            <pre v-else class="wf-text">{{ preview.data.content }}</pre>
-            <div v-if="textTruncated" class="wf-truncated">仅显示前 {{ textDisplayedLines }} 行 / 共 {{ preview.data.total_lines }} 行</div>
-          </template>
-        </div>
-      </div>
     </div>
   </el-dialog>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { formatSize, formatTime } from '../utils/file-format'
-import { renderMarkdown } from '../composables/useMarkdown'
 import type { DirectoryEntry, WorkspaceFilesController } from '../composables/useWorkspaceFiles'
 
 const props = defineProps<{
@@ -161,14 +124,14 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'update:visible': [value: boolean]
+  /** 打开文件预览：内容渲染在父级挂载的独立预览弹窗里 */
+  preview: [path: string]
 }>()
 
 const files = props.files
-const preview = computed(() => files.state.preview)
 
 const searchInput = ref('')
 const zipLoading = ref(false)
-const previewRef = ref<HTMLElement | null>(null)
 let searchTimer: ReturnType<typeof setTimeout> | null = null
 
 const breadcrumbSegments = computed(() => {
@@ -178,24 +141,13 @@ const breadcrumbSegments = computed(() => {
   return parts.map((name, idx) => ({ name, path: parts.slice(0, idx + 1).join('/') }))
 })
 
-const textDisplayedLines = computed(() => {
-  const data = files.state.preview?.data
-  if (data == null || data.media_type != null) return 0
-  return data.content.length === 0 ? 0 : data.content.split('\n').length
-})
-
-const textTruncated = computed(() => {
-  const p = files.state.preview
-  return p?.data != null && p.data.media_type == null && textDisplayedLines.value < p.data.total_lines
-})
-
 function onRowClick(entry: DirectoryEntry) {
   if (entry.isSymlink) return
   if (entry.isDirectory) {
     files.enterDir(entry)
     return
   }
-  void files.previewFile(entry.path)
+  emit('preview', entry.path)
 }
 
 function onSearchResultClick(entry: DirectoryEntry) {
@@ -226,21 +178,6 @@ async function onDownloadZip() {
   }
 }
 
-async function onDownloadPath(path: string) {
-  try {
-    await files.downloadFile(path)
-  } catch (e) {
-    ElMessage.error((e as Error)?.message || '下载失败')
-  }
-}
-
-function setMarkdownView(rendered: boolean) {
-  const p = files.state.preview
-  if (p && p.markdownRendered !== rendered) {
-    files.toggleMarkdownView()
-  }
-}
-
 function onSearchInput(value: string) {
   if (searchTimer) clearTimeout(searchTimer)
   searchTimer = setTimeout(() => {
@@ -260,16 +197,6 @@ function onSearchClear() {
   if (searchTimer) clearTimeout(searchTimer)
   files.exitSearch()
 }
-
-// 预览目标变化后滚动到预览面板，避免全屏 Dialog 里预览在视口外
-watch(
-  () => files.state.preview?.path,
-  async () => {
-    if (files.state.preview == null) return
-    await nextTick()
-    previewRef.value?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
-  },
-)
 </script>
 
 <style scoped>
@@ -466,102 +393,6 @@ watch(
   font-size: 13px;
 }
 
-.wf-preview-path {
-  font-family: 'SF Mono', Monaco, Consolas, monospace;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.wf-preview-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
-}
-
-.wf-preview-body {
-  padding: 10px;
-  max-height: 36vh;
-  overflow: auto;
-}
-
-.wf-preview-error {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 8px;
-  font-size: 13px;
-}
-
-.wf-preview-error-detail {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-}
-
-.wf-text {
-  margin: 0;
-  padding: 10px;
-  font-family: 'SF Mono', Monaco, Consolas, monospace;
-  font-size: 12px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-all;
-  background: var(--el-fill-color-light);
-  border-radius: 4px;
-}
-
-.wf-image-summary {
-  margin-bottom: 8px;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-}
-
-.wf-image {
-  max-width: 100%;
-  max-height: 30vh;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 4px;
-}
-
-.wf-pdf {
-  width: 100%;
-  height: 34vh;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 4px;
-}
-
-/* Markdown 渲染态复用聊天记录样式（marked + DOMPurify 产物） */
-.wf-markdown :deep(p) {
-  margin: 4px 0;
-  font-size: 13px;
-  line-height: 1.8;
-}
-
-.wf-markdown :deep(pre) {
-  margin: 4px 0;
-  border-radius: 4px;
-  overflow: hidden;
-}
-
-.wf-markdown :deep(.code-block-header) {
-  display: flex;
-  justify-content: space-between;
-  padding: 6px 12px;
-  background: var(--el-fill-color);
-  font-size: 12px;
-}
-
-.wf-markdown :deep(code) {
-  font-family: 'SF Mono', Monaco, Consolas, monospace;
-  font-size: 12px;
-}
-
-.wf-markdown :deep(.hljs) {
-  padding: 12px;
-  background: var(--el-fill-color-light);
-}
-
 @media (max-width: 768px) {
   /* 窄屏拉满可用宽度（1080px 会超出视口被裁切） */
   .workspace-file-dialog :deep(.el-dialog) {
@@ -577,8 +408,7 @@ watch(
     display: none;
   }
 
-  .wf-table-wrap,
-  .wf-preview-body {
+  .wf-table-wrap {
     max-height: 34vh;
   }
 }
