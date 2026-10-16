@@ -17,17 +17,18 @@ function mount() {
 }
 
 describe('Launcher', () => {
-  it('使用矢量标识和具名原生按钮，点击仍打开助手', () => {
+  it('使用品牌图标和具名原生按钮，点击仍打开助手', () => {
     const state = mount();
     const button = el.querySelector('button')!;
     expect(button.type).toBe('button');
     expect(button.getAttribute('aria-label')).toBe('打开 Mao 助手');
-    const svg = button.querySelector('svg')!;
-    expect(svg.classList.contains('mao-assistant-mark')).toBe(true);
-    expect(svg.getAttribute('aria-hidden')).toBe('true');
-    expect(svg.getAttribute('fill')).toBe('none');
-    expect(svg.querySelectorAll('path')).toHaveLength(2);
-    expect(svg.querySelector('path')?.getAttribute('stroke')).toBe('currentColor');
+    const icon = button.querySelector<HTMLImageElement>('.mao-brand-icon')!;
+    // 品牌位图（深色圆盘 + 金羽）替代原矢量标识：仍须装饰性、不阻挡点击
+    expect(icon).not.toBeNull();
+    expect(icon.getAttribute('aria-hidden')).toBe('true');
+    expect(icon.getAttribute('alt')).toBe('');
+    expect(icon.getAttribute('draggable')).toBe('false');
+    expect(icon.src).toMatch(/\.png$/);
     button.click();
     expect(state.clicks()).toBe(1);
   });

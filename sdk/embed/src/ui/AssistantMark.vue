@@ -1,14 +1,21 @@
+<script setup lang="ts">
+import launcherIcon from '../assets/launcher-icon.png';
+
+defineProps<{
+  /** 面板标题栏小头像：21px 下金色羽毛笔画仍可辨 */
+  small?: boolean;
+}>();
+</script>
+
 <template>
-  <svg class="mao-assistant-mark" viewBox="0 0 32 32" fill="none" aria-hidden="true" focusable="false">
-    <!-- 开口对话轮廓与 M 形声波：小尺寸下仍可辨识，不依赖渐变 ID。 -->
-    <path
-      d="M24.5 5.5H12A7.5 7.5 0 0 0 4.5 13v6a7.5 7.5 0 0 0 7.5 7.5h1.5l5 3v-3H20a7.5 7.5 0 0 0 7.5-7.5v-6"
-      stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
-    />
-    <path
-      d="M10 20v-7l6 6 6-6v7"
-      stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-    />
-    <circle cx="27" cy="5.5" r="1.8" fill="currentColor" />
-  </svg>
+  <!-- 品牌图标：深色圆盘 + 金色羽毛（docs/assets/logo-design）。位图而非 SVG 描摹，
+       保证五端同一视觉；由 style.css 按 small 切换尺寸。 -->
+  <img
+    class="mao-brand-icon"
+    :class="{ 'mao-brand-icon--small': small }"
+    :src="launcherIcon"
+    alt=""
+    aria-hidden="true"
+    draggable="false"
+  />
 </template>

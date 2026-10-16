@@ -111,7 +111,10 @@
 }
 .mao-launcher[data-pos='right'] { right: 24px; }
 .mao-launcher[data-pos='left'] { left: 24px; }
-.mao-launcher .mao-assistant-mark { width: 32px; height: 32px; fill: none; transform: translateY(-1px); }
+/* 品牌位图（AssistantMark.vue）：铺满浮窗按钮，保持圆盘比例不被拉伸。
+   Agent 头像未配置时用它，配了则让位给 agent-avatar（同为 100% 满铺）。 */
+.mao-launcher .mao-brand-icon { width: 100%; height: 100%; display: block; }
+.mao-panel__avatar .mao-brand-icon { width: 21px; height: 21px; display: block; }
 .mao-agent-avatar { display: block; width: 100%; height: 100%; border-radius: inherit; object-fit: cover; }
 .mao-launcher__dot {
   position: absolute;
@@ -182,7 +185,6 @@
   justify-content: center;
   flex-shrink: 0;
 }
-.mao-panel__avatar .mao-assistant-mark { width: 21px; height: 21px; fill: none; }
 .mao-panel__meta {
   display: flex;
   flex-direction: column;

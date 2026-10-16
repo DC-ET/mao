@@ -123,7 +123,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown));
     <div class="mao-panel__header">
       <span class="mao-panel__avatar" aria-hidden="true">
         <img v-if="agentAvatarUrl" class="mao-agent-avatar" :src="agentAvatarUrl" alt="" />
-        <AssistantMark v-else />
+        <AssistantMark v-else small />
       </span>
       <span class="mao-panel__meta">
         <span class="mao-panel__title">{{ sessionTitle }}</span>

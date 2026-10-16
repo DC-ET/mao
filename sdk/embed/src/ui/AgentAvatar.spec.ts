@@ -8,7 +8,7 @@ let el: HTMLDivElement;
 afterEach(() => { app?.unmount(); el?.remove(); });
 
 describe('Agent avatar', () => {
-  it('入口和面板使用同一头像，移除后恢复原有 AssistantMark 并保留运行提示', async () => {
+  it('入口和面板使用同一头像，移除后恢复品牌图标并保留运行提示', async () => {
     const ui = createUiState({ serverUrl: 'https://mao.example.com', agentId: 3, getToken: async () => '' });
     ui.panelOpen = true;
     ui.phase = 'RUNNING';
@@ -23,12 +23,12 @@ describe('Agent avatar', () => {
     expect(el.querySelector('.mao-launcher')?.getAttribute('aria-label')).toBe('客服助手，正在处理');
     expect(el.querySelector<HTMLTextAreaElement>('.mao-composer__input')?.disabled).toBe(false);
     expect(el.querySelector('.mao-composer__stop')).not.toBeNull();
-    expect(el.querySelectorAll('.mao-assistant-mark')).toHaveLength(2);
+    expect(el.querySelectorAll('.mao-brand-icon')).toHaveLength(2);
     expect(el.querySelectorAll('.mao-agent-avatar')).toHaveLength(0);
 
     ui.agentAvatarUrl = 'https://mao.example.com/uploads/agents/3.png';
     await nextTick();
-    expect(el.querySelectorAll('.mao-assistant-mark')).toHaveLength(0);
+    expect(el.querySelectorAll('.mao-brand-icon')).toHaveLength(0);
     const images = el.querySelectorAll<HTMLImageElement>('.mao-agent-avatar');
     expect(images).toHaveLength(2);
     for (const image of images) {
@@ -40,7 +40,7 @@ describe('Agent avatar', () => {
 
     ui.agentAvatarUrl = null;
     await nextTick();
-    expect(el.querySelectorAll('.mao-assistant-mark')).toHaveLength(2);
+    expect(el.querySelectorAll('.mao-brand-icon')).toHaveLength(2);
     expect(el.querySelectorAll('.mao-agent-avatar')).toHaveLength(0);
   });
 });
