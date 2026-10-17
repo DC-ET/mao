@@ -906,6 +906,48 @@ describe('ScheduledTaskService 预算 BLOCK 闸门（§5.7）', () => {
     expect(notified[0].body).toContain('24 小时');
   });
 
+  it('微信回复：超过24小时窗口时也把回复降级推送到 webhook（勿只写站内通知）', async () => {
+    // 回归：预检短路此前只写站内收件箱就 return，webhook 降级分支只在 sendText 失败后
+    // 才触发，导致「超过 24 小时无对话」时微信与 webhook 两边都收不到任何内容。
+    const store: ScheduledTaskStore = {
+      insert: vi.fn(async (t) => { t.id = 1; return 1; }),
+      updateById: vi.fn(),
+      deleteById: vi.fn(),
+      selectById: vi.fn(async () => ({
+        id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', status: 'ACTIVE', name: 'daily', prompt: 'hello', fireCount: 0,
+      })),
+      listByUser: vi.fn(async () => []),
+      listAll: vi.fn(async () => ({ records: [], total: 0 })),
+      listDue: vi.fn(async () => []),
+    } as never;
+    const stubs = {
+      getSession: vi.fn(async () => ({ id: 11, phase: 'IDLE', projectKey: 'weixin-bot' })),
+      updatePhase: vi.fn(),
+      saveMessage: vi.fn(async () => ({ id: 88, content: 'x' })),
+      getMessages: vi.fn(async () => [{ role: 'ASSISTANT', content: '定时任务回答' }]),
+    };
+    const send = { sendText: vi.fn(async () => true) };
+    const sendFallback = vi.fn(async () => true);
+    const notified: Array<Record<string, unknown>> = [];
+    let ran: Promise<void> | null = null;
+    const svc = new ScheduledTaskService(
+      store, stubs as never, { enqueue: vi.fn() }, { executeFromEvent: vi.fn(async () => undefined) },
+      { finishExecution: vi.fn() }, send as never,
+      { findByUserId: vi.fn(async () => ({ accountId: 'acc' })) } as never,
+      { findByAccountId: vi.fn(async () => [{ wxUserId: 'wx1' }]) } as never,
+      (fn) => { ran = Promise.resolve().then(fn); },
+    );
+    svc.setWeixinInboundRepository({ findLatestInboundAt: vi.fn(async () => new Date(Date.now() - 30 * 60 * 60 * 1000)) } as never);
+    svc.setWeixinWindowNotifier(async (input) => { notified.push(input as unknown as Record<string, unknown>); });
+    svc.setWeixinWebhookFallback({ sendFallback } as never);
+    await svc.executeTask({ id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', prompt: 'hello', fireCount: 0 } as never);
+    await ran;
+    // 超窗不打 ilink，但回复原文必须抵达 webhook，站内通知照旧
+    expect(send.sendText).not.toHaveBeenCalled();
+    expect(sendFallback).toHaveBeenCalledWith(7, '定时任务回答');
+    expect(notified).toHaveLength(1);
+  });
+
   it('微信回复：窗口内正常发送且不发窗口通知', async () => {
     const stubs = {
       getSession: vi.fn(async () => ({ id: 11, phase: 'IDLE', projectKey: 'weixin-bot' })),

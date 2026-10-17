@@ -961,6 +961,10 @@ export class ScheduledTaskService {
       // 超窗则不打 ilink，转站内通知指路，用户下次说话时即可在微信收到后续回复。
       if (!(await this.isWeixinInboundWindowOpen(account.accountId))) {
         console.warn(`定时任务微信回复跳过：超过24小时主动发送窗口, accountId=${account.accountId}, sessionId=${sessionId}`);
+        // 预检短路同样属于「微信侧完全不可达」：连降级提示都发不出去。必须与 ilink 拒收
+        // （下面 sendText 失败分支）同口径把回复原文推到用户配置的钉钉/飞书 webhook，
+        // 否则超窗后微信与 webhook 两边都收不到任何内容（线上 10-17 反馈的场景）。
+        await this.pushWeixinWebhookFallback(userId, reply);
         await this.notifyWeixinWindowClosed(sessionId, userId);
         return;
       }
