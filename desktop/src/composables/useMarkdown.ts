@@ -30,9 +30,14 @@ function encodeCodeForCopy(text: string): string {
   return btoa(unescape(encodeURIComponent(text)))
 }
 
-/** 仅允许 http/https 链接，拦截 javascript: 等危险协议 */
+/** 放行 http(s)/mailto 与无协议的相对路径、锚点；只拦截 javascript:/data: 等显式危险协议。 */
 function isSafeHref(href: string): boolean {
-  return /^https?:\/\//i.test(href)
+  const trimmed = href.trim()
+  if (!trimmed) return false
+  if (/^(https?:\/\/|mailto:)/i.test(trimmed)) return true
+  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) return false
+  // 协议相对 URL（//host）会跳出站点，走外链委托而不是站内相对路径。
+  return !trimmed.startsWith('//')
 }
 
 /**

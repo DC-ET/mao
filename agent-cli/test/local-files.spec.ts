@@ -181,6 +181,17 @@ describe('handleEditFile', () => {
     expect(fs.readFileSync(path.join(ws, 'e.txt'), 'utf8')).toBe('a\r\nB\r\nc\r\n');
   });
 
+  it('matches a multi-line old_string copied from the LF read output of a CRLF file', async () => {
+    fs.writeFileSync(path.join(ws, 'e.txt'), 'alpha\r\nbeta\r\ngamma\r\n');
+    const read = await handleReadFile({ path: 'e.txt' }, ws, SESSION_ID);
+    expect(read.content).toBe('alpha\nbeta\ngamma');
+    const res = await handleEditFile({
+      path: 'e.txt', old_string: 'alpha\nbeta', new_string: 'alpha\nBETA',
+    }, ws, SESSION_ID);
+    expect(res.success).toBe(true);
+    expect(fs.readFileSync(path.join(ws, 'e.txt'), 'utf8')).toBe('alpha\r\nBETA\r\ngamma\r\n');
+  });
+
   it('serializes parallel edits of the same file so both replacements land', async () => {
     fs.writeFileSync(path.join(ws, 'p.txt'), 'A\nB\n');
     const [first, second] = await Promise.all([

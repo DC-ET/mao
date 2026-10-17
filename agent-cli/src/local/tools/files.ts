@@ -228,6 +228,11 @@ function stripBom(raw: string): string {
   return raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
 }
 
+/** 统一成 LF：匹配用 LF 文本，写回时再由 applyEol 还原文件行尾。 */
+function toLf(content: string): string {
+  return content.replace(/\r\n?/g, '\n');
+}
+
 function sandboxError(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
@@ -399,8 +404,8 @@ export async function handleEditFile(args: Record<string, unknown>, workspace: s
     if (typeof args.old_string !== 'string' || typeof args.new_string !== 'string') {
       return { success: false, replacements: 0, error: '缺少必填参数: old_string, new_string' };
     }
-    const oldStr = args.old_string;
-    const newStr = args.new_string;
+    const oldStr = toLf(args.old_string);
+    const newStr = toLf(args.new_string);
     if (oldStr === newStr) {
       return {
         success: false,
@@ -414,7 +419,7 @@ export async function handleEditFile(args: Record<string, unknown>, workspace: s
       if (!fs.existsSync(resolvedPath)) return { success: false, replacements: 0, error: `文件不存在：${filePath}` };
       const raw = fs.readFileSync(resolvedPath, 'utf-8');
       const eol = detectEol(raw);
-      const content = stripBom(raw);
+      const content = toLf(stripBom(raw));
       const match = applyEditMatch(content, oldStr, newStr, asBool(args.replace_all));
       if (!match.ok) {
         return {

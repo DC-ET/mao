@@ -43,6 +43,8 @@ export function isInboxKindEnabled(kind: InboxKind, preference: InboxPreference)
     case 'TRIGGER_DISABLED':
     case 'WATCHER_DISABLED':
     case 'TOKEN_DISABLED':
+    case 'WEIXIN_REPLY_WINDOW_CLOSED':
+    case 'DAILY_DIGEST':
       return true
     case 'OPEN_API_CALL_FAILED':
       return preference.openApiCallFailedEnabled

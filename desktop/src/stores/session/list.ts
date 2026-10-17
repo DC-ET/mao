@@ -223,18 +223,19 @@ export function createSessionListModule(ctx: {
     return loadingMoreGroups.value.has(String(groupKey))
   }
 
-  function bumpGroupMetaForSession(session: Session, delta: number) {
+  function bumpGroupMetaForSession(session: Session, delta: number, archived = false) {
     const key = cloudGroupKey(session)
-    const existing = groupMeta.value.get(key)
+    const target = archived ? archivedGroupMeta : groupMeta
+    const existing = target.value.get(key)
     if (existing) {
-      groupMeta.value.set(key, {
+      target.value.set(key, {
         ...existing,
         total: Math.max(0, existing.total + delta)
       })
     } else if (delta > 0) {
-      groupMeta.value.set(key, { label: key, total: 1, hasMore: false })
+      target.value.set(key, { label: key, total: 1, hasMore: false })
     }
-    groupMeta.value = new Map(groupMeta.value)
+    target.value = new Map(target.value)
   }
 
   // --- 实体 / 投影模型 ---
@@ -616,7 +617,7 @@ export function createSessionListModule(ctx: {
       sessionEntities.value.delete(sid)
       sessionEntities.value = new Map(sessionEntities.value)
       if (existing) {
-        bumpGroupMetaForSession(existing, -1)
+        bumpGroupMetaForSession(existing, -1, existing.status === 'ARCHIVED')
       }
       if (activeSessionId.value === sid) {
         activeSessionId.value = null

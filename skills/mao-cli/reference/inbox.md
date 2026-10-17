@@ -43,7 +43,7 @@
 **会重复推送吗？**
 不会。写入按 `dedup_key`（`userId:kind:sessionId:executionId|requestId`）幂等；重试、取消后重发、排队消费、崩溃恢复（新 executionId）不会刷出重复条目。预算提醒另按「预算 id + 自然月」去重：同一预算同一月只提醒一次（WARN 越线提示与 BLOCK 留队提示共用同一条目，不会出两条）。
 
-偏好开关管不到的两类：`TRIGGER_DISABLED`（触发器停用）始终写入；预算提醒由 `budgetWarnEnabled` 控制，默认开。
+偏好开关管不到的条目：`TRIGGER_DISABLED`（触发器停用）、`WATCHER_DISABLED`（哨兵停用）、`WEIXIN_REPLY_WINDOW_CLOSED`（微信 24 小时窗口已关）始终写入，桌面系统通知也始终允许；`DAILY_DIGEST` 由摘要总开关在写入前判定，写入后同样不受五类 kind 开关门控、桌面系统通知始终允许。预算提醒由 `budgetWarnEnabled` 控制，默认开。
 
 **条目保留多久？**
 90 天，超期自动清理（已读未读一并清）。

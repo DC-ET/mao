@@ -434,15 +434,15 @@ function formatCost(costMicros: number): string {
 
 function tokenTotal(run: RunTrace): number {
   const t = run.totals
-  return t.promptTokens + t.completionTokens + t.cachedTokens + t.cacheCreationTokens
+  return t.promptTokens + t.completionTokens
 }
 
 function tokenTotalOfRound(round: TraceRound): number {
-  return round.promptTokens + round.completionTokens + round.cachedTokens + round.cacheCreationTokens
+  return round.promptTokens + round.completionTokens
 }
 
 function tokenTotalOfSide(side: TraceSideCall): number {
-  return side.promptTokens + side.completionTokens + side.cachedTokens + side.cacheCreationTokens
+  return side.promptTokens + side.completionTokens
 }
 
 function toolDisplayName(name: string): string {

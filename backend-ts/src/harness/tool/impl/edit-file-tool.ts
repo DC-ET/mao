@@ -6,7 +6,7 @@ import type { PathSandbox } from '../../safety/path-sandbox.js';
 import { harnessLog } from '../../log.js';
 import { applyEditMatch } from './edit-file-match.js';
 import { withFileLock } from './file-write-lock.js';
-import { applyEol, detectEol, stripBom } from './file-eol.js';
+import { applyEol, detectEol, stripBom, toLf } from './file-eol.js';
 
 export class EditFileTool extends BaseTool {
   constructor(private readonly pathSandbox: PathSandbox) {
@@ -49,12 +49,15 @@ export class EditFileTool extends BaseTool {
       const args = parseObject(argumentsJson);
       if (!args) return toJson({ success: false, replacements: 0, error: '无效的JSON参数' });
       const filePathArg = asText(args.path);
-      const oldString = asText(args.old_string);
-      const newString = asText(args.new_string);
+      const oldStringRaw = asText(args.old_string);
+      const newStringRaw = asText(args.new_string);
       const replaceAll = asBool(args.replace_all, false);
-      if (filePathArg == null || oldString == null || newString == null) {
+      if (filePathArg == null || oldStringRaw == null || newStringRaw == null) {
         return toJson({ success: false, replacements: 0, error: '缺少必填参数: path, old_string, new_string' });
       }
+      // read_file 展示的是 LF 文本；匹配前统一成 LF，写回时按原文件行尾还原。
+      const oldString = toLf(oldStringRaw);
+      const newString = toLf(newStringRaw);
       if (oldString === newString) {
         return toJson({
           success: false,
@@ -70,7 +73,7 @@ export class EditFileTool extends BaseTool {
         }
         const raw = readFileSync(filePath, 'utf8');
         const eol = detectEol(raw);
-        const content = stripBom(raw);
+        const content = toLf(stripBom(raw));
         const match = applyEditMatch(content, oldString, newString, replaceAll);
         if (!match.ok) {
           return toJson({

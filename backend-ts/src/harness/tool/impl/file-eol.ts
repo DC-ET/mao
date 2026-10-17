@@ -22,3 +22,8 @@ export function applyEol(content: string, eol: FileEol): string {
 export function stripBom(raw: string): string {
   return raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
 }
+
+/** 统一成 LF：匹配用 LF 文本，写回时再由 applyEol 还原文件行尾。 */
+export function toLf(content: string): string {
+  return content.replace(/\r\n?/g, '\n');
+}

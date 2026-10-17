@@ -8,8 +8,10 @@ const TABLE_SEPARATOR = /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$/;
 const INLINE_CODE = /`+/g;
 const IMAGE_LINK = /!\[([^\]]*)]\([^)]*\)/g;
 const MARKDOWN_LINK = /\[([^\]]+)]\([^)]*\)/g;
-const STRONG = /\*\*|__|~~/g;
-const EMPHASIS = /[*_]/g;
+const STRONG_PAIR = /\*\*([^*\n]+?)\*\*|~~([^~\n]+?)~~/g;
+const UNDERSCORE_STRONG = /(?<![\w])__(?![\w\s])([^_\n]+?)(?<![\s])__(?![\w])/g;
+const EMPHASIS_PAIR = /\*([^*\n]+?)\*/g;
+const UNDERSCORE_EMPHASIS = /(?<![\w])_(?![\w\s])([^_\n]+?)(?<![\s])_(?![\w])/g;
 const HTML_TAG = /<[^>]+>/g;
 const SENTENCE_END_PUNCT = '。！？；，、：…!?;,:.';
 
@@ -63,8 +65,10 @@ export class WeixinVoiceTextSanitizer {
       let cleaned = line.replace(INLINE_CODE, '');
       cleaned = cleaned.replace(IMAGE_LINK, '$1');
       cleaned = cleaned.replace(MARKDOWN_LINK, '$1');
-      cleaned = cleaned.replace(STRONG, '');
-      cleaned = cleaned.replace(EMPHASIS, '');
+      cleaned = cleaned.replace(STRONG_PAIR, '$1$2');
+      cleaned = cleaned.replace(UNDERSCORE_STRONG, '$1');
+      cleaned = cleaned.replace(EMPHASIS_PAIR, '$1');
+      cleaned = cleaned.replace(UNDERSCORE_EMPHASIS, '$1');
       cleaned = cleaned.replace(HTML_TAG, '');
       cleaned = cleaned.replace(/\s+/g, ' ').trim();
       if (cleaned !== '') {

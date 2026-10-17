@@ -165,7 +165,7 @@ describe('summarizeRuns', () => {
       interrupted: 1,
       error: 1,
       wallClockMs: 100_000,
-      tokens: 165,
+      tokens: 130,
       costMicros: 1700,
       toolSuccess: 3,
       toolError: 4,

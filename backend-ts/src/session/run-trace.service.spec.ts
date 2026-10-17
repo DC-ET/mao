@@ -803,10 +803,10 @@ describe('RunTraceService', () => {
     expect(rounds[1].expensive).toBe(true);
   });
 
-  it('counts cache creation tokens separately and keeps them in expensive check', async () => {
+  it('keeps cached tokens inside promptTokens when checking expensive', async () => {
     const service = makeService({
       messages: [user(1, '2026-10-09 10:00:00', '你好')],
-      calls: [call(1, { createdAt: '2026-10-09 10:00:02', promptTokens: 0, completionTokens: 0, cachedTokens: 30_000, cacheCreationTokens: 20_000 })],
+      calls: [call(1, { createdAt: '2026-10-09 10:00:02', promptTokens: 50_000, completionTokens: 0, cachedTokens: 30_000, cacheCreationTokens: 20_000 })],
       activities: [],
       events: [],
     });

@@ -300,7 +300,7 @@ describe('RunTracePanel 轨迹展示', () => {
     expect(text).toContain('1 成功')
     expect(text).toContain('1 失败')
     expect(text).toContain('总耗时 1m 30s')
-    expect(text).toContain('2,140 tokens')
+    expect(text).toContain('1,800 tokens')
     expect(text).toContain('总成本 4')
     expect(text).toContain('工具成功率 80%')
   })

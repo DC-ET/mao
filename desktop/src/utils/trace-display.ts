@@ -63,8 +63,9 @@ export function summarizeRuns(runs: RunTrace[]): RunTraceSummary {
   for (const run of runs) {
     summary[runStatus(run)] += 1
     summary.wallClockMs += run.totals.wallClockMs
-    summary.tokens +=
-      run.totals.promptTokens + run.totals.completionTokens + run.totals.cachedTokens + run.totals.cacheCreationTokens
+    // promptTokens 是总输入（OpenAI prompt_tokens 含缓存命中，Anthropic 适配器已把
+    // cache_read / cache_creation 并入 promptTokens），缓存分项只做展示，不能再加一次。
+    summary.tokens += run.totals.promptTokens + run.totals.completionTokens
     summary.toolSuccess += run.totals.toolSuccess
     summary.toolError += run.totals.toolError
     if (run.totals.costMicros == null) anyUnpriced = true

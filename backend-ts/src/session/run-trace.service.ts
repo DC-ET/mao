@@ -370,8 +370,8 @@ function toRoundVO(call: LlmCallRow, seq: number, query: RunTraceQuery): TraceRo
     cacheCreationTokens,
     costMicros: call.costMicros ?? null,
     slow: durationMs >= query.slowMs,
-    // 贵看四类 token 之和，与是否配价无关
-    expensive: promptTokens + completionTokens + cachedTokens + cacheCreationTokens >= query.expensiveTokens,
+    // promptTokens 是总输入（含缓存命中/写入），缓存分项不能再加一次。
+    expensive: promptTokens + completionTokens >= query.expensiveTokens,
     tools: [],
   };
 }

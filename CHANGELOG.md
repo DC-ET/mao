@@ -15,6 +15,27 @@
 
 ---
 
+## 0.0.304 (2026-10-17)
+
+### 后端
+
+- **修复运行轨迹 Token 总量重复计入缓存**：统一 `ChatUsage.promptTokens` 本身已包含缓存命中/写入（OpenAI 的 `prompt_tokens` 含 `cached_tokens`，Anthropic 适配器已把 `cache_read`/`cache_creation` 并入 `promptTokens`），轨迹的「贵 ≥ N tokens」判定不再把 `cachedTokens`/`cacheCreationTokens` 再加一次，避免缓存越多阈值越早误触发。
+- **修复 CRLF 文件多行编辑失败**：`read_file` 向模型展示的是归一化后的 LF 文本，`edit_file` 之前却按保留 `\r\n` 的原文匹配 `old_string`，导致 Windows 检出/`eol=crlf` 文件的多行替换必然报「文件中未找到 old_string」。现在匹配前统一按 LF 比较，写回时仍保留原文件 CRLF/BOM；CLOUD 与 LOCAL 工具同步修复。
+- **修复微信语音文本清洗吞掉 snake_case 下划线**：只移除成对的 Markdown 强调符，`user_id`、`session_id`、`__init__` 等标识符不再被读成 `userid`/`sessionid`；`**重点**`、`_斜体_` 等成对强调仍正常去除。
+
+### 前端（桌面 / Web / 安卓）
+
+- **修复运行轨迹 Token 汇总虚高**：轨迹面板的 run/轮次/旁路调用与整页汇总改为「输入 + 输出」口径，与后端 `llm_call.total_tokens`、管理后台用量一致；缓存命中仍作为分项展示，不重复计入总量。
+- **修复工作区 Markdown 相对链接无法点击**：链接渲染不再只放行 http(s)，`./other.md`、`../README.md`、`#anchor` 与 `mailto:` 均保留 `href`，`FileViewer` 内的文件间跳转恢复；`javascript:`、`data:` 等危险协议继续降级为纯文本。
+- **修复微信超窗与每日摘要不弹系统通知**：桌面系统通知的 kind 白名单补齐 `WEIXIN_REPLY_WINDOW_CLOSED` 与 `DAILY_DIGEST`，与后端「无偏好开关、始终通知」的口径一致；窗口失焦时这两类收件箱条目也会弹出通知。
+- **修复删除已归档会话后分组计数错位**：删除归档会话只扣减归档区计数，不再误减活跃分组；归档区徽标与活跃分组总数保持与实际列表一致。
+
+### 终端 CLI（mao-agent）
+
+- **修复 LOCAL `edit_file` 对 CRLF 文件的多行匹配**：与 CLOUD 同口径，匹配前统一 LF、写回保留原行尾。
+
+---
+
 ## 0.0.303 (2026-10-17)
 
 ### 后端
