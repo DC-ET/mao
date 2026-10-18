@@ -118,6 +118,7 @@ const INJECTED_SECTION_KEYS = new Set([
   'memories',         // 长期记忆（可治理：会话开关 / 设置页）
   'skills',           // 技能（构成标签；提示词标题仍是「可用技能」）
   'workspace-rules',  // 工作区规则（AGENTS.md，可治理）
+  'mcp-workingset',   // MCP 工作集（名单 + 工具名，不含 schema；可单独统计 token 开销）
 ]);
 const AGENTS_MD_TRUNCATED_HINT = '\n> 当前仅展示前200行规则，读取AGENTS.md文件以了解更多规则。\n';
 
@@ -266,6 +267,35 @@ export class PromptEngine {
   }
 
   /**
+   * MCP 工作集提示段（技术方案 2026-10-18 §5.2）：只列 server / 用途 / 工具名与只读标记，
+   * 不含任何 schema。文本必须确定性生成（排序在 buildMcpWorkingSet 完成，无时间戳/随机序），
+   * 否则每轮变化会击穿 system prompt 前缀缓存。
+   */
+  private buildMcpWorkingSetSection(context: AgentExecutionContext): string {
+    const workingSet = context.mcpWorkingSet;
+    if (workingSet == null || workingSet.servers.length === 0) return '';
+    let text = '## MCP 工作集\n\n';
+    text += '以下 MCP 工具按「server → tool」两级寻址，统一通过 mcp_call 调用。\n';
+    text += '调用前若不确定参数结构，先用 mcp_describe 查询该工具的完整 schema。\n';
+    text += '被标注为「当前不可用」的 server 请勿调用。\n\n';
+    for (const server of workingSet.servers) {
+      let title = `### ${server.name}`;
+      if (server.unavailableReason != null) {
+        title += `（当前不可用：${compactReason(server.unavailableReason)}）`;
+      } else if (server.hasAnnotations) {
+        title += `（只读工具 ${server.readOnlyCount} 个 / 可写工具 ${server.writeCount} 个）`;
+      }
+      text += title + '\n';
+      if (server.description.length > 0) text += `用途：${server.description}\n`;
+      for (const tool of server.tools) {
+        text += `- ${tool.name}${tool.readOnly ? ' [只读]' : ''}\n`;
+      }
+      text += '\n';
+    }
+    return text;
+  }
+
+  /**
    * 逐节构建系统提示（技术方案 5.2）。收集-拼接分离：各节 text 依原顺序 join 后与重构前
    * buildSystemPrompt 输出逐字节一致（空节不产生 text，跳过与追加空串等价）。
    * key/label/count 仅用于 manifest 展示，不参与拼接。
@@ -334,6 +364,12 @@ export class PromptEngine {
         text += catalog + '\n\n';
         sections.push({ key: 'skills', label: '技能', text, count: skillNames.length });
       }
+    }
+    // MCP 工作集：紧跟技能之后（同为「按需加载的工具/知识目录」），schema 不在此处展开。
+    const workingSetText = this.buildMcpWorkingSetSection(context);
+    if (workingSetText.length > 0) {
+      const toolCount = context.mcpWorkingSet?.servers.reduce((sum, server) => sum + server.tools.length, 0) ?? 0;
+      sections.push({ key: 'mcp-workingset', label: 'MCP 工作集', text: workingSetText, count: toolCount });
     }
     const taskText = this.toolBehaviorHints(context);
     if (taskText.length > 0) {
@@ -703,4 +739,10 @@ function formatBoolean(value: boolean | null | undefined): string {
 
 function formatValue(value: string | null | undefined): string {
   return hasText(value) ? value! : '未知';
+}
+
+/** 工作集标题里的失败原因：压成单行并截断，避免连接错误正文膨胀系统提示。 */
+function compactReason(reason: string): string {
+  const singleLine = reason.replace(/\s+/g, ' ').trim();
+  return singleLine.length > 80 ? singleLine.slice(0, 80) + '…' : singleLine;
 }

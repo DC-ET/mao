@@ -541,6 +541,7 @@ export interface TraceRoundVO {
   cacheCreationTokens: number;
   costMicros: number | null;
   slow: boolean;
+  /** 「贵」为单轮成本口径（costMicros >= 阈值）；该轮模型未配价（costMicros 为 null）时为 false。 */
   expensive: boolean;
   tools: TraceToolVO[];
 }

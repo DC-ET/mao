@@ -17,6 +17,8 @@ export const WEIXIN_AGENT_ID_KEY = 'weixin.agentId';
 export const EMBED_AGENT_ID_KEY = 'embed.agentId';
 /** 三级环境变量注入总开关（V158，默认开启；关闭后三层变量全部不注入）。 */
 export const SHELL_ENV_VARS_ENABLED_KEY = 'shell.envVars.enabled';
+/** MCP 工具加载模式全局默认（V159）：working_set=工作集（默认） | full=全量注入。 */
+export const MCP_LOAD_MODE_KEY = 'mcp.loadMode';
 export const WEIXIN_MODEL_ID_KEY = 'weixin.modelId';
 export const SESSION_TITLE_MODEL_ID_KEY = 'session.titleModelId';
 export const GIT_COMMIT_MESSAGE_MODEL_ID_KEY = 'git.commitMessageModelId';
@@ -146,6 +148,7 @@ const DEFAULT_HARNESS_WEB_PAGE_USER_AGENT = 'Mozilla/5.0 (compatible; AgentWorkb
 export class SystemSettingService {
   static readonly WEIXIN_AGENT_ID_KEY = WEIXIN_AGENT_ID_KEY;
   static readonly EMBED_AGENT_ID_KEY = EMBED_AGENT_ID_KEY;
+  static readonly MCP_LOAD_MODE_KEY = MCP_LOAD_MODE_KEY;
   static readonly WEIXIN_MODEL_ID_KEY = WEIXIN_MODEL_ID_KEY;
   static readonly SESSION_TITLE_MODEL_ID_KEY = SESSION_TITLE_MODEL_ID_KEY;
   static readonly GIT_COMMIT_MESSAGE_MODEL_ID_KEY = GIT_COMMIT_MESSAGE_MODEL_ID_KEY;

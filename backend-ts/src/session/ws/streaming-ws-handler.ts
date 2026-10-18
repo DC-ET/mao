@@ -53,6 +53,7 @@ import { wsEvent } from './ws-event.js';
 import { isActivePhase } from '../session-vo.js';
 import type { AgentExecutionContext } from '../../harness/core/agent-execution-context.js';
 import type { EmbedPageToolRegistry } from '../../harness/embed-page-tool-registry.js';
+import type { McpConnectionError } from '../../harness/mcp/entity/mcp-server.js';
 import type { ApprovalHint } from '../../harness/approval/approval-hint.js';
 
 export interface WsHandlerDeps {
@@ -172,7 +173,7 @@ export interface WsHandlerDeps {
     clearSession(sessionId: number): void;
     clearLocalSession(sessionId: number): void;
     resolveServerIdByName(name: string): number | null;
-    recordReport(sessionId: number, tools: McpToolRef[]): void;
+    recordReport(sessionId: number, tools: McpToolRef[], connectionErrors?: McpConnectionError[]): void;
   };
   mcpClientManager: { closeSession(sessionId: number): void };
   agentMapper: { selectById(id: number): Promise<Agent | null> };
@@ -1933,13 +1934,23 @@ export class StreamingWsHandler {
     if (!pending) return;
     if (reportSyncId == null || reportSyncId !== pending.syncId) return;
     const tools: McpToolRef[] = [];
+    const connectionErrors: McpConnectionError[] = [];
     const servers = root.servers;
     if (Array.isArray(servers)) {
       for (const serverNode of servers as Array<Record<string, unknown>>) {
         const connected = serverNode.connected !== false;
         const name = typeof serverNode.name === 'string' ? serverNode.name : null;
-        if (!connected || !name) continue;
+        if (!name) continue;
         const serverId = this.deps.mcpSyncService.resolveServerIdByName(name);
+        if (!connected) {
+          // 失败名单必须显式收集：工作集要把它标注为「当前不可用」，
+          // 静默丢弃会让服务端对着一份「少了一台 server」的清单猜原因。
+          const reason = typeof serverNode.error === 'string' && serverNode.error.trim() !== ''
+            ? serverNode.error
+            : '连接失败';
+          connectionErrors.push({ serverId, serverName: name, reason });
+          continue;
+        }
         const toolArray = serverNode.tools;
         if (!Array.isArray(toolArray)) continue;
         for (const toolNode of toolArray as Array<Record<string, unknown>>) {
@@ -1953,11 +1964,12 @@ export class StreamingWsHandler {
             inputSchema: (toolNode.schema as Record<string, unknown> | undefined)
               ?? (toolNode.inputSchema as Record<string, unknown> | undefined)
               ?? {},
+            annotations: (toolNode.annotations as { readOnlyHint?: boolean } | null | undefined) ?? null,
           });
         }
       }
     }
-    this.deps.mcpSyncService.recordReport(sessionId, tools);
+    this.deps.mcpSyncService.recordReport(sessionId, tools, connectionErrors);
     const current = this.pendingMcpSyncs.get(sessionId);
     if (current && current.syncId === reportSyncId) current.resolve();
   }

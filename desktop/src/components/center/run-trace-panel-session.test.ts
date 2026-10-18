@@ -31,7 +31,7 @@ vi.mock('../../api', () => ({
 
 function makeStore() {
   return {
-    traceThresholds: { slowMs: 60_000, expensiveTokens: 50_000 },
+    traceThresholds: { slowMs: 60_000, expensiveCost: 0.5 },
     getTraceRuns: (): RunTrace[] => [],
     getTraceHasMore: () => false,
     getTraceUnattributed: () => null,

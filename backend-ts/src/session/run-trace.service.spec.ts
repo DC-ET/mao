@@ -124,7 +124,13 @@ function makeService(fixture: Fixture) {
   } as unknown as SessionCompactionEventRepository;
   return new RunTraceService(messageRepo, llmCallRepo, activityRepo, compactionEventRepo);
 }
-const QUERY = { beforeRunId: null, limit: 5, slowMs: 60_000, expensiveTokens: 50_000 };
+const QUERY = {
+  beforeRunId: null,
+  limit: 5,
+  slowMs: 60_000,
+  expensiveCost: 0.5,
+  expensiveCostMicros: 500_000,
+};
 
 describe('RunTraceService', () => {
   it('groups parallel tools of one assistant message into the same round', async () => {
@@ -784,12 +790,12 @@ describe('RunTraceService', () => {
     expect(page2.unattributed).toBeNull();
   });
 
-  it('marks slow and expensive at the exact threshold boundaries', async () => {
+  it('marks slow and expensive at the exact cost threshold boundaries', async () => {
     const service = makeService({
       messages: [user(1, '2026-10-09 10:00:00', '你好')],
       calls: [
-        call(1, { createdAt: '2026-10-09 10:00:02', durationMs: 60_000, promptTokens: 49_999, completionTokens: 1, cachedTokens: 0, cacheCreationTokens: 0, costMicros: null }),
-        call(2, { id: 2, createdAt: '2026-10-09 10:01:00', durationMs: 59_999, promptTokens: 50_000, completionTokens: 0, cachedTokens: 0, cacheCreationTokens: 0 }),
+        call(1, { createdAt: '2026-10-09 10:00:02', durationMs: 60_000, costMicros: 500_000 }),
+        call(2, { id: 2, createdAt: '2026-10-09 10:01:00', durationMs: 59_999, costMicros: 499_999 }),
       ],
       activities: [],
       events: [],
@@ -798,22 +804,45 @@ describe('RunTraceService', () => {
     const rounds = page.runs[0].segments[0].rounds;
     expect(rounds[0].slow).toBe(true);
     expect(rounds[0].expensive).toBe(true);
-    expect(rounds[0].costMicros).toBeNull();
     expect(rounds[1].slow).toBe(false);
-    expect(rounds[1].expensive).toBe(true);
+    // 成本差 1 micros 即不标「贵」——判定单位是整数微元，不是 token 估算
+    expect(rounds[1].expensive).toBe(false);
   });
 
-  it('keeps cached tokens inside promptTokens when checking expensive', async () => {
+  it('never marks a round expensive when the model has no configured price', async () => {
     const service = makeService({
       messages: [user(1, '2026-10-09 10:00:00', '你好')],
-      calls: [call(1, { createdAt: '2026-10-09 10:00:02', promptTokens: 50_000, completionTokens: 0, cachedTokens: 30_000, cacheCreationTokens: 20_000 })],
+      calls: [call(1, {
+        createdAt: '2026-10-09 10:00:02',
+        // token 远超旧口径 50k，但该轮模型未配价：按约定一律不算贵
+        promptTokens: 900_000,
+        completionTokens: 100_000,
+        costMicros: null,
+      })],
+      activities: [],
+      events: [],
+    });
+    const page = await service.buildTrace(1, QUERY);
+    expect(page.runs[0].segments[0].rounds[0].expensive).toBe(false);
+  });
+
+  it('judges expensive by cost only; cached tokens do not affect it', async () => {
+    const service = makeService({
+      messages: [user(1, '2026-10-09 10:00:00', '你好')],
+      calls: [
+        call(1, { createdAt: '2026-10-09 10:00:02', promptTokens: 50_000, cachedTokens: 30_000, cacheCreationTokens: 20_000, costMicros: 500_000 }),
+        call(2, { id: 2, createdAt: '2026-10-09 10:01:00', promptTokens: 800_000, completionTokens: 200_000, costMicros: 0 }),
+      ],
       activities: [],
       events: [],
     });
     const page = await service.buildTrace(1, QUERY);
     const run = page.runs[0];
     expect(run.totals.cacheCreationTokens).toBe(20_000);
-    expect(run.segments[0].rounds[0].expensive).toBe(true);
+    const rounds = run.segments[0].rounds;
+    expect(rounds[0].expensive).toBe(true);
+    // 百万 token 但成本为 0：仍然不标贵（token 不再是判定量）
+    expect(rounds[1].expensive).toBe(false);
   });
 
   it('prefers approval mark from tool message metadata over activity detail', async () => {

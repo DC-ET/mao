@@ -182,4 +182,6 @@ export interface McpToolRefLike {
   description: string;
   inputSchema: Record<string, unknown>;
   fullToolName: string;
+  /** 只读注解：工作集 `[只读]` 标记与审批免审依赖它跨通道透传。 */
+  annotations?: { readOnlyHint?: boolean } | null;
 }

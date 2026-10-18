@@ -106,5 +106,6 @@ function toMcpToolRef(ref: McpToolRefLike): McpToolRef {
     description: ref.description,
     inputSchema: ref.inputSchema,
     fullToolName: ref.fullToolName,
+    annotations: ref.annotations?.readOnlyHint === true ? { readOnlyHint: true } : null,
   };
 }

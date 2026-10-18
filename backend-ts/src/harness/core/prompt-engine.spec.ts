@@ -475,6 +475,52 @@ describe('PromptEngine context manifest', () => {
     expect(system).toContain('# 使用你的工具');
   });
 
+  it('renders the MCP working set section deterministically and keeps it out of the aggregated system prompt', async () => {
+    const workingSet = {
+      servers: [
+        {
+          name: 'fs', description: '文件系统',
+          tools: [{ name: 'read_file', readOnly: true }, { name: 'write_file', readOnly: false }],
+          readOnlyCount: 1, writeCount: 1, hasAnnotations: true, unavailableReason: null,
+        },
+        {
+          name: 'github', description: '',
+          tools: [], readOnlyCount: 0, writeCount: 0, hasAnnotations: false,
+          unavailableReason: '连接超时',
+        },
+      ],
+    };
+    const ctx = context({
+      systemPrompt: 'You are Mao',
+      sessionBaseYmd: '2026-08-13',
+      messages: [{ role: 'user', content: '你好' }],
+      mcpWorkingSet: workingSet,
+    });
+    const request = await engine().buildRequest(ctx);
+    const system = request.messages[0].content as string;
+    expect(system).toContain('## MCP 工作集');
+    expect(system).toContain('### fs（只读工具 1 个 / 可写工具 1 个）');
+    expect(system).toContain('用途：文件系统');
+    expect(system).toContain('- read_file [只读]');
+    expect(system).toContain('- write_file\n');
+    expect(system).toContain('### github（当前不可用：连接超时）');
+    // 独立分节：manifest 单独统计，不并入「系统提示词」
+    const section = ctx.contextManifest!.sections.find((s) => s.key === 'mcp-workingset')!;
+    expect(section).toBeDefined();
+    expect(section.label).toBe('MCP 工作集');
+    expect(section.count).toBe(2);
+    // 确定性：同一数据两次构建系统提示逐字节一致（前缀缓存前提）
+    const second = await engine().buildRequest(ctx);
+    expect(second.messages[0].content).toBe(system);
+  });
+
+  it('omits the MCP working set section when no working set is present', async () => {
+    const ctx = context({ systemPrompt: 'You are Mao', sessionBaseYmd: '2026-08-13' });
+    const request = await engine().buildRequest(ctx);
+    expect(request.messages[0].content as string).not.toContain('## MCP 工作集');
+    expect(ctx.contextManifest!.sections.some((s) => s.key === 'mcp-workingset')).toBe(false);
+  });
+
   it('folds upload-file guidance into 系统提示词 instead of a standalone section', async () => {
     const withUpload = context({
       userId: 7,

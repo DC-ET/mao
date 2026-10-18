@@ -31,6 +31,20 @@ export function queryOptInt(request: FastifyRequest, name: string): number | und
   return Number.isFinite(n) ? n : undefined;
 }
 
+/**
+ * 浮点 query 参数：缺省 / 空串 / 非法值返回 undefined。
+ * 与 queryOptInt 的差别只在语义命名——两者都走 Number() 解析，
+ * 但金额类阈值（如 trace 的「贵」阈值 0.5）不能用名字暗示「只接受整数」。
+ */
+export function queryOptFloat(request: FastifyRequest, name: string): number | undefined {
+  const raw = queryMap(request)[name];
+  if (raw == null || raw === '') {
+    return undefined;
+  }
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : undefined;
+}
+
 export function queryOptStr(request: FastifyRequest, name: string): string | undefined {
   const raw = queryMap(request)[name];
   return raw == null || raw === '' ? undefined : raw;

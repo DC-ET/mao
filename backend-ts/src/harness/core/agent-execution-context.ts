@@ -7,6 +7,7 @@ import type { MemoryHint } from '../../memory/types.js';
 import type { Tool } from '../tool/tool.js';
 import type { ToolAttachment } from './tool-attachment.js';
 import type { ContextManifest } from './context-manifest.js';
+import type { McpWorkingSet } from '../mcp/workingset/mcp-working-set.js';
 import { AtomicBoolean } from '../atomic-boolean.js';
 
 export class AgentExecutionContext {
@@ -34,6 +35,11 @@ export class AgentExecutionContext {
   availableSkillNames: string[] = [];
   availableSkillDocs = new Map<string, SkillDocument>();
   localUnsyncedSkills: LocalSkillRef[] = [];
+  /**
+   * MCP 工作集结构化数据（技术方案 2026-10-18 §5.3）。全量模式 / 无 MCP server 时为 null，
+   * 提示词 section 据此决定是否渲染（空值必须零输出，前缀缓存前提）。
+   */
+  mcpWorkingSet: McpWorkingSet | null = null;
   /**
    * 系统提示 current-date 节的日期锚点：本会话首条现存用户消息的日期，跨天不重算
    * （技术方案 2026-10-12 §5.1）。无用户消息的会话回落服务器当天（shanghaiYmd）。

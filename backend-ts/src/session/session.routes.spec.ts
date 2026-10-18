@@ -227,24 +227,34 @@ describe('session and admin routes', () => {
 
   it('GET /sessions/:id/trace 透传分页锚点并钳制慢 / 贵阈值', async () => {
     const { fastify, runTraceService } = await app();
-    const res = await fastify.inject({ method: 'GET', url: '/v1/sessions/1/trace?beforeRunId=9&limit=50&slowMs=10&expensiveTokens=99999999' });
+    const res = await fastify.inject({ method: 'GET', url: '/v1/sessions/1/trace?beforeRunId=9&limit=50&slowMs=10&expensiveCost=99999' });
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body).code).toBe(0);
     expect(runTraceService.buildTrace).toHaveBeenCalledWith(1, {
       beforeRunId: 9,
       limit: 50,
       slowMs: 1_000,
-      expensiveTokens: 10_000_000,
+      expensiveCost: 1000,
+      expensiveCostMicros: 1_000_000_000,
     });
 
-    // 缺省值：limit=5、slowMs=60s、expensiveTokens=50k
+    // 小数阈值原样透传：0.5 元 = 500000 micros，不能被整数 clamp 取整成 0
+    vi.mocked(runTraceService.buildTrace).mockClear();
+    await fastify.inject({ method: 'GET', url: '/v1/sessions/1/trace?expensiveCost=0.5' });
+    expect(runTraceService.buildTrace).toHaveBeenCalledWith(1, expect.objectContaining({
+      expensiveCost: 0.5,
+      expensiveCostMicros: 500_000,
+    }));
+
+    // 缺省值：limit=5、slowMs=60s、贵阈值 0.5 元
     vi.mocked(runTraceService.buildTrace).mockClear();
     await fastify.inject({ method: 'GET', url: '/v1/sessions/1/trace' });
     expect(runTraceService.buildTrace).toHaveBeenCalledWith(1, {
       beforeRunId: null,
       limit: 5,
       slowMs: 60_000,
-      expensiveTokens: 50_000,
+      expensiveCost: 0.5,
+      expensiveCostMicros: 500_000,
     });
 
     // limit 下限也要钳：0 / 负值会让 service 把「本页被裁空」误判成「会话没有用户消息」，

@@ -35,7 +35,27 @@ export interface RunTraceQuery {
   /** 每页 run 数（路由已钳到 1–50，服务端不再判断合法性） */
   limit: number;
   slowMs: number;
-  expensiveTokens: number;
+  /** 单轮成本阈值（价格填写口径的金额），仅供展示 / 文档口径，判定读 expensiveCostMicros */
+  expensiveCost: number;
+  /**
+   * 与 expensiveCost 等值的微元整数（路由一次性换算）。服务端循环内只比整数，
+   * 避免对每条轮次重复做浮点乘法、在阈值边界上抖动。
+   * cost_micros 为 null（该轮模型未配价）时一律不算贵。
+   */
+  expensiveCostMicros: number;
+}
+
+/** 「贵」阈值默认值：价格填写口径的金额（元）。与桌面端 DEFAULT_TRACE_THRESHOLDS 保持一致。 */
+export const DEFAULT_EXPENSIVE_COST = 0.5;
+/** 阈值下限：千分之一元，与 formatCost 的三位小数精度对齐。 */
+export const EXPENSIVE_COST_MIN = 0.001;
+/** 阈值上限：一次调用一千元，足以覆盖任何单轮。 */
+export const EXPENSIVE_COST_MAX = 1000;
+
+/** 金额阈值 → 微元整数（先钳制再换算，防止越界值溢出比较口径）。 */
+export function expensiveCostToMicros(cost: number): number {
+  const bounded = Math.min(EXPENSIVE_COST_MAX, Math.max(EXPENSIVE_COST_MIN, cost));
+  return Math.round(bounded * 1_000_000);
 }
 
 interface UserStamp {
@@ -370,8 +390,9 @@ function toRoundVO(call: LlmCallRow, seq: number, query: RunTraceQuery): TraceRo
     cacheCreationTokens,
     costMicros: call.costMicros ?? null,
     slow: durationMs >= query.slowMs,
-    // promptTokens 是总输入（含缓存命中/写入），缓存分项不能再加一次。
-    expensive: promptTokens + completionTokens >= query.expensiveTokens,
+    // 「贵」看单轮成本，与模型价格配置联动；未配价（cost_micros 为 null）一律不算贵。
+    // promptTokens 是总输入（含缓存命中/写入），与成本判定无关，缓存分项也不能再加一次。
+    expensive: call.costMicros != null && call.costMicros >= query.expensiveCostMicros,
     tools: [],
   };
 }

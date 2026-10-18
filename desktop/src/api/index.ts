@@ -268,6 +268,22 @@ export interface McpToolItem {
   serverName: string
   toolName: string
   description: string
+  /** MCP tools/list 注解（只读标记；未标注的 server 不返回）。 */
+  annotations?: { readOnlyHint?: boolean } | null
+}
+
+/** MCP 工具加载模式：WORKING_SET=工作集（只列名单，schema 按需查） | FULL=全量注入。 */
+export type McpLoadMode = 'WORKING_SET' | 'FULL'
+
+/** 读取本人当前生效的 MCP 加载模式（用户偏好 → 全局默认）。 */
+export async function getMcpLoadMode(): Promise<McpLoadMode> {
+  const { data } = await api.get('/mcp-servers/load-mode')
+  return data?.loadMode === 'FULL' ? 'FULL' : 'WORKING_SET'
+}
+
+/** 保存本人 MCP 加载模式（用户级单值，与 per-server 启用偏好解耦）。 */
+export async function saveMcpLoadMode(loadMode: McpLoadMode): Promise<void> {
+  await api.put('/mcp-servers/load-mode', { loadMode })
 }
 
 /** 获取当前用户的私有 MCP 服务器列表。 */

@@ -115,6 +115,8 @@ export interface McpToolRef {
   description: string;
   inputSchema: Record<string, unknown>;
   schema?: Record<string, unknown>;
+  /** 工具注解（桌面上报透传；工作集只读标记与审批免审消费 readOnlyHint）。 */
+  annotations?: { readOnlyHint?: boolean } | null;
 }
 
 export interface McpServerRow {

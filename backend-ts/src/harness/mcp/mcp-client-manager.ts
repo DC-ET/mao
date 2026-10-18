@@ -3,11 +3,11 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { harnessLog } from '../log.js';
-import { TYPE_STDIO, fullToolName, normalizeMcpInputSchema, type McpServer, type McpToolRef } from './entity/mcp-server.js';
+import { TYPE_STDIO, fullToolName, normalizeMcpAnnotations, normalizeMcpInputSchema, type McpServer, type McpToolRef } from './entity/mcp-server.js';
 
 type AnyClient = {
   connect(transport: unknown): Promise<void>;
-  listTools(): Promise<{ tools?: Array<{ name: string; description?: string; inputSchema?: Record<string, unknown> }> }>;
+  listTools(): Promise<{ tools?: Array<{ name: string; description?: string; inputSchema?: Record<string, unknown>; annotations?: unknown }> }>;
   callTool(args: { name: string; arguments?: Record<string, unknown> }): Promise<{
     isError?: boolean;
     content?: Array<{ type?: string; text?: string }>;
@@ -198,7 +198,7 @@ export class McpClientManager {
 
   private async toToolRefs(
     server: McpServer,
-    result: { tools?: Array<{ name: string; description?: string; inputSchema?: Record<string, unknown> }> },
+    result: { tools?: Array<{ name: string; description?: string; inputSchema?: Record<string, unknown>; annotations?: unknown }> },
   ): Promise<McpToolRef[]> {
     const refs: McpToolRef[] = [];
     for (const tool of result.tools ?? []) {
@@ -209,6 +209,7 @@ export class McpClientManager {
         description: tool.description ?? '',
         inputSchema: normalizeMcpInputSchema(tool.inputSchema),
         fullToolName: fullToolName(server.name ?? '', tool.name),
+        annotations: normalizeMcpAnnotations(tool.annotations),
       });
     }
     return refs;

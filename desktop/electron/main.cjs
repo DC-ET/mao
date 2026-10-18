@@ -1822,7 +1822,9 @@ async function connectMcpServer(sessionId, server) {
   const tools = (list.tools || []).map((t) => ({
     name: t.name,
     description: t.description || '',
-    schema: t.inputSchema || { type: 'object', properties: {} }
+    schema: t.inputSchema || { type: 'object', properties: {} },
+    // 透传 MCP 标准注解：服务端工作集用它标注 [只读]、审批据此对明确只读的工具免审。
+    annotations: t.annotations || null
   }))
   return { client, transport, tools }
 }
