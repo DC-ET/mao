@@ -867,6 +867,92 @@ describe('ScheduledTaskService 预算 BLOCK 闸门（§5.7）', () => {
     expect(row.lastExecutionStatus).toBe('COMPLETED');
   });
 
+  // 回归：once 收口曾把 status==='ACTIVE' 与 once===1 耦合，PAUSED 期间整个分支被跳过，
+  // 任务停在 finished=0 + nextFireTime=null；重新启用时 reactivate 分支命中并重开下一档，
+  // once 任务被执行第二次。暂停只影响「是否重开档期」，不影响「这一档是否算跑完」。
+  it('settles a paused one-shot task instead of leaving it to re-run', async () => {
+    const row: Record<string, unknown> = {
+      id: 1, userId: 7, sessionId: 11, cronExpression: '0 * * * * *', status: 'PAUSED',
+      once: 1, finished: 0, finishedAt: null, nextFireTime: null, lastExecutionStatus: 'QUEUED',
+    };
+    const store: ScheduledTaskStore = {
+      insert: vi.fn(),
+      updateById: vi.fn(async (patch) => { Object.assign(row, patch); }),
+      deleteById: vi.fn(),
+      selectById: vi.fn(async () => ({ ...row })),
+      listByUser: vi.fn(async () => []),
+      listAll: vi.fn(async () => ({ records: [], total: 0 })),
+      listDue: vi.fn(async () => []),
+    };
+    const service = new ScheduledTaskService(
+      store, {} as never, { enqueue: vi.fn() } as never, { executeFromEvent: vi.fn() } as never,
+      { finishExecution: vi.fn() } as never, { sendText: vi.fn() } as never,
+      { findByUserId: vi.fn() } as never, { findByAccountId: vi.fn() } as never,
+    );
+    await service.settleQueuedExecution(1, 'COMPLETED');
+    // 收口：finished=1 且无档期 → 重新启用时 reactivate 判据（nextFireTime==null）虽成立，
+    // 但 finished 已置 1，列表显示已完结，不会再排下一档
+    expect(row.finished).toBe(1);
+    expect(row.finishedAt).toEqual(expect.any(String));
+    expect(row.nextFireTime).toBeNull();
+    expect(row.lastExecutionStatus).toBe('COMPLETED');
+  });
+
+  // 取消同样不收口也不行：PAUSED 下不重开档期（用户已要求别再跑），
+  // 但必须离开「nextFireTime=null + finished=0」的悬空态——否则列表里既非已完结也无档期。
+  // 收口后由 reactivate 在用户显式重新启用时按当前 cron 排期，属文档明示的设计口径。
+  it('settles a paused one-shot task on CANCELLED without reopening a slot', async () => {
+    const row: Record<string, unknown> = {
+      id: 1, userId: 7, sessionId: 11, cronExpression: '0 * * * * *', status: 'PAUSED',
+      once: 1, finished: 0, finishedAt: null, nextFireTime: null, lastExecutionStatus: 'QUEUED',
+    };
+    const store: ScheduledTaskStore = {
+      insert: vi.fn(),
+      updateById: vi.fn(async (patch) => { Object.assign(row, patch); }),
+      deleteById: vi.fn(),
+      selectById: vi.fn(async () => ({ ...row })),
+      listByUser: vi.fn(async () => []),
+      listAll: vi.fn(async () => ({ records: [], total: 0 })),
+      listDue: vi.fn(async () => []),
+    };
+    const service = new ScheduledTaskService(
+      store, {} as never, { enqueue: vi.fn() } as never, { executeFromEvent: vi.fn() } as never,
+      { finishExecution: vi.fn() } as never, { sendText: vi.fn() } as never,
+      { findByUserId: vi.fn() } as never, { findByAccountId: vi.fn() } as never,
+    );
+    await service.settleQueuedExecution(1, 'CANCELLED');
+    // PAUSED 下不重开档期；这一档取消未跑完，等用户显式重新启用时再由 reactivate 排期
+    expect(row.finished).toBe(0);
+    expect(row.nextFireTime).toBeNull();
+    expect(row.lastExecutionStatus).toBe('CANCELLED');
+  });
+
+  // 对照组：ACTIVE 行为不变（取消仍恢复下一档，已有 spec 覆盖，此处锁定不被本次改动破坏）
+  it('still reopens the next slot for an active one-shot task on CANCELLED', async () => {
+    const row: Record<string, unknown> = {
+      id: 1, userId: 7, sessionId: 11, cronExpression: '0 * * * * *', status: 'ACTIVE',
+      once: 1, finished: 0, finishedAt: null, nextFireTime: null, lastExecutionStatus: 'QUEUED',
+    };
+    const store: ScheduledTaskStore = {
+      insert: vi.fn(),
+      updateById: vi.fn(async (patch) => { Object.assign(row, patch); }),
+      deleteById: vi.fn(),
+      selectById: vi.fn(async () => ({ ...row })),
+      listByUser: vi.fn(async () => []),
+      listAll: vi.fn(async () => ({ records: [], total: 0 })),
+      listDue: vi.fn(async () => []),
+    };
+    const service = new ScheduledTaskService(
+      store, {} as never, { enqueue: vi.fn() } as never, { executeFromEvent: vi.fn() } as never,
+      { finishExecution: vi.fn() } as never, { sendText: vi.fn() } as never,
+      { findByUserId: vi.fn() } as never, { findByAccountId: vi.fn() } as never,
+    );
+    await service.settleQueuedExecution(1, 'CANCELLED');
+    expect(row.finished).toBe(0);
+    expect(row.nextFireTime).toEqual(expect.any(String));
+    expect(row.lastExecutionStatus).toBe('CANCELLED');
+  });
+
   it('微信回复：超过24小时主动发送窗口时不打 ilink，改发站内通知', async () => {
     // selectById 返回 ACTIVE：锁内重读最新任务状态，null 会让整轮直接 return
     const store: ScheduledTaskStore = {

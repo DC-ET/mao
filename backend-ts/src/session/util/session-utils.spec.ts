@@ -176,6 +176,39 @@ describe('ToolResultSummarizer', () => {
     expect(ToolResultSummarizer.summarize('task_delete', '{}', '{"message":"已删除"}')).toBe('已删除');
   });
 
+  // 回归：五个文件/搜索类工具曾无 error 分支，失败态在摘要里显示成成功——
+  // 「读取 missing.ts」「搜索内容 (0 处匹配)」让用户无法从轨迹区分成败，
+  // 「0 处匹配」更会被误读成「确实搜过了」，而真实原因是正则非法导致搜索从未执行。
+  it('surfacesFailuresForFileAndSearchTools', () => {
+    expect(ToolResultSummarizer.summarize('read_file', '{"path":"src/missing.ts"}', '{"content":"错误：文件不存在","error":"错误：文件不存在","total_lines":0}'))
+      .toBe('读取 src/missing.ts (失败: 错误：文件不存在)');
+    // 带 offset/limit 的读取失败也不能退回区间文案
+    expect(ToolResultSummarizer.summarize('read_file', '{"path":"src/a.ts","offset":0,"limit":10}', '{"error":"权限不足","total_lines":0}'))
+      .toBe('读取 src/a.ts (失败: 权限不足)');
+    expect(ToolResultSummarizer.summarize('edit_file', '{"path":"src/a.ts"}', '{"success":false,"replacements":0,"error":"old_string 在文件中出现 2 次","occurrences":2}'))
+      .toBe('编辑 src/a.ts (失败: old_string 在文件中出现 2 次)');
+    expect(ToolResultSummarizer.summarize('write_file', '{"path":"etc/passwd"}', '{"success":false,"bytes_written":0,"error":"EACCES: permission denied"}'))
+      .toBe('写入 etc/passwd (失败: EACCES: permission denied)');
+    expect(ToolResultSummarizer.summarize('glob_search', '{}', '{"files":[],"error":"Search path does not exist"}'))
+      .toBe('搜索文件 (失败: Search path does not exist)');
+    expect(ToolResultSummarizer.summarize('grep_search', '{}', '{"matches":[],"error":"ripgrep 搜索失败（exit 2）"}'))
+      .toBe('搜索内容 (失败: ripgrep 搜索失败（exit 2）)');
+  });
+
+  // 成功形状不得被误加失败后缀（error 键缺失即成功）
+  it('doesNotMarkSuccessfulFileToolResultsAsFailed', () => {
+    expect(ToolResultSummarizer.summarize('read_file', '{"path":"a.ts"}', '{"content":"x","total_lines":1}'))
+      .toBe('读取 a.ts (1 行)');
+    expect(ToolResultSummarizer.summarize('grep_search', '{}', '{"total_matches":0}'))
+      .toBe('搜索内容 (0 处匹配)');
+  });
+
+  it('truncatesLongErrorMessagesInTheSummary', () => {
+    const long = 'x'.repeat(80);
+    expect(ToolResultSummarizer.summarize('read_file', '{"path":"a.ts"}', `{"error":"${long}"}`))
+      .toBe(`读取 a.ts (失败: ${'x'.repeat(40)}...)`);
+  });
+
   it('summarizesPageTools', () => {
     expect(ToolResultSummarizer.summarize('page_inspect', '{}', '{"success":true,"result":{"elements":[{},{}]}}')).toBe('查看页面元素 (2 个元素)');
     expect(ToolResultSummarizer.summarize('page_observe', '{}', '{"success":true,"result":{"elementCount":7}}')).toBe('观察页面变化 (7 个元素)');

@@ -436,6 +436,38 @@ describe('WatcherService.runCheck', () => {
     expect(h.checks[0]!.triggeredSessionId).toBeNull();
   });
 
+  // 回归：触发失败曾只调 recordFailure 而不传 checkId，另起一行 check——
+  // 同一次轮询落「changed=1,error=null」与「changed=0,error=预算」两行自相矛盾的记录。
+  // 且基线 hash 不推进，目标值不变时下一轮再次判为「变化」并重新发起 Agent 运行。
+  it('reuses the check row and advances the baseline when the trigger fails', async () => {
+    const h = harness({
+      watcher: watcher({ lastValueHash: 'oldhash', lastValueSnippet: 'old-body' }),
+      probe: () => probeResult({ body: 'new-body', bodyBytes: Buffer.from('new-body', 'utf8') }),
+    });
+    h.openRun.run.mockRejectedValue(new Error('budget blocked'));
+    await h.service.runCheck(1);
+
+    // 只落一行：复用 markChanged 写过的那行，把失败原因补在同一行上
+    expect(h.checks).toHaveLength(1);
+    expect(h.checks[0]!.changed).toBe(1);
+    expect(h.checks[0]!.error).toContain('budget blocked');
+    expect(h.checks[0]!.triggeredSessionId).toBeNull();
+    expect(h.recordFailure).toHaveBeenCalledTimes(1);
+    // 只落一行即证明复用了已 markChanged 的那行；若未传 checkId，recordFailure 内部会另插一行
+    // （harness 的 recordFailure mock 只收 3 参，故以行数作为复用的判据）
+
+    // 基线推进到本次读到的值：同值再次轮询不再判为「变化」
+    expect(h.watchers.get(1)!.lastValueHash).toBe(sha256('new-body'));
+    // 变化时刻不因失败而刷新（这一次没有真正通知用户）
+    expect(h.watchers.get(1)!.lastChangedAt).toBeNull();
+
+    await h.service.runCheck(1);
+    // 同值 → 不再触发，也不新增 check 行
+    expect(h.openRun.run).toHaveBeenCalledTimes(1);
+    expect(h.checks).toHaveLength(2);
+    expect(h.checks[1]!.changed).toBe(0);
+  });
+
   it('keeps triggering but flags a warning past the hourly cap', async () => {
     const h = harness({
       watcher: watcher({ lastValueHash: 'different' }),

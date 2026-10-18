@@ -15,7 +15,21 @@
 
 ---
 
-## 0.0.306 (2026-10-18)
+## 0.0.307 (2026-10-18)
+
+### 后端
+
+- **`read_file` 剥离 BOM**：读取侧与写回侧（`write_file` / `edit_file`）统一口径，读出的首行不再带 `\uFEFF`。此前模型把读到首行原样复制进 `edit_file` 的 `old_string` 必然匹配失败（磁盘上无 BOM），且报错无法指向真实原因；CLOUD 与 LOCAL 在同一文件上返回的 `content` 也不一致。写回仍保留原文件的 BOM 与 CRLF。
+- **`read_file` 的 `offset` / `limit` 改为显式校验**：负数与非数字入参不再被 `Math.max(0, ...)` 静默钳成 0 行窗口——那会返回「空 content + success + total_lines=100」，模型极易误判文件为空并用 `write_file` 整体覆写清空它。现在返回带 `error` 键的错误（下游据此判失败态），模型可重试；`limit: 0` 仍是合法的空窗。
+- **工具结果摘要可见失败态**：`read_file` / `write_file` / `edit_file` / `glob_search` / `grep_search` 五个分支补上 `error` 判定，与 `summarizeShell` / `summarizePageTool` 的既有口径一致。此前路径写错、`edit_file` 匹配歧义、grep 正则非法、rg 崩溃这些最高频的失败，在会话摘要、运行轨迹与活动流里全部显示成一次正常的「读取 X」「搜索内容 (0 处匹配)」——「0 处匹配」更会被误读成「确实搜过了」。
+- **信号哨兵触发失败不再重复落记录、不再反复触发**：触发失败（预算 BLOCK / Agent 停用 / 会话创建失败）时复用本轮已落的 check 行补写失败原因（此前另起一行，同一次轮询显示「变化」+「失败」两行自相矛盾的记录），同时把基线 hash 推进到本次读到的值。此前目标值不变时每轮都判为「变化」并重新发起一次 Agent 运行，退避期内会重复触发 N 个会话与计费。
+- **一次性定时任务暂停期间也能收口**：`settleQueuedExecution` 的 once 收口判据从 `once === 1 && status === 'ACTIVE'` 改为只看 `once === 1`。此前 busy 入队后用户暂停任务、队列消息随后执行到终态时，整个 once 分支被跳过，任务停在 `finished=0 + nextFireTime=null` 的悬空态；用户之后从 PAUSED 重新启用时 `reactivate` 分支命中并重开下一档，**once 任务被执行第二次**。`status` 现在只决定「取消时是否重开档期」：ACTIVE 下取消仍恢复下一档，PAUSED 下不重开。
+
+### 前端（桌面 / Web / 安卓）
+
+- **文件体积展示不再出现 `1024 KB` / `1024 GB`**：`formatSize` 在展示前按 `Math.round` 的实际进位点（`>= 1023.5`）再判一次档，与 `usageFormat.pickTokenUnit` 的进位口径对齐。此前体积落在单位上限附近（如 `1023.5 KB`）的文件会显示成跨档读数。
+
+---
 
 ### 后端
 

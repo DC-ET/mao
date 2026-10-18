@@ -6,6 +6,7 @@ import { PromptImageResizer } from '../prompt-image-resizer.js';
 import type { PathSandbox } from '../../safety/path-sandbox.js';
 import { SecurityException } from '../../safety/path-sandbox.js';
 import { harnessLog } from '../../log.js';
+import { stripBom } from './file-eol.js';
 
 const MAX_OUTPUT_LENGTH = 50000;
 const PATH_KEYS = ['path', 'file', 'filePath', 'file_path', 'target_file'];
@@ -63,9 +64,14 @@ export class ReadFileTool extends BaseTool {
       if (ImageFileSupport.mimeFromPath(filePathArg)) {
         return await this.readImage(filePath, filePathArg);
       }
-      const offset = args && 'offset' in args ? Math.max(0, asInt(args.offset, 0)) : 0;
-      const limit = args && 'limit' in args ? Math.max(0, asInt(args.limit, Number.MAX_SAFE_INTEGER)) : Number.MAX_SAFE_INTEGER;
-      const allLines = splitLines(readFileSync(filePath, 'utf8'));
+      // offset/limit 校验而非静默钳制：负数钳到 0 会让模型拿到「空 content + success」，
+      // 进而误判文件为空并用 write_file 整体覆写清空它（agent-cli 同源动机）。故显式报错，
+      // 让模型知道入参非法后可以重试，而不是基于空窗口下错误结论。
+      const offset = args && 'offset' in args ? parseLineIndex(args.offset, 'offset') : 0;
+      const limit = args && 'limit' in args ? parseLineIndex(args.limit, 'limit') : Number.MAX_SAFE_INTEGER;
+      // 读取侧同样剥 BOM：写回侧（write/edit）都以 stripBom 后的文本匹配，
+      // 不剥则模型会把首行 \uFEFF 复制进 old_string，CLOUD 下必然匹配失败。
+      const allLines = splitLines(stripBom(readFileSync(filePath, 'utf8')));
       const totalLines = allLines.length;
       const from = Math.min(offset, totalLines);
       const to = Math.min(from + limit, totalLines);
@@ -137,6 +143,18 @@ export class ReadFileTool extends BaseTool {
  */
 function readError(message: string): string {
   return toJson({ content: message, error: message, total_lines: 0 });
+}
+
+/**
+ * 解析 offset / limit：只接受有限且非负的整数。非法值（负数、非数字、小数）一律抛错，
+ * 由 executeWithWorkspace 的 catch 转成 readError——带 error 键，下游据此判失败态。
+ */
+function parseLineIndex(value: unknown, field: 'offset' | 'limit'): number {
+  const n = asInt(value, Number.NaN);
+  if (!Number.isInteger(n) || n < 0) {
+    throw new Error(`参数 ${field} 必须是非负整数，收到 ${JSON.stringify(value) ?? String(value)}`);
+  }
+  return n;
 }
 
 /** 按行终止符切分，末尾换行不产生空行（与 Java Files.lines 一致）。 */

@@ -891,6 +891,12 @@ export class ScheduledTaskService {
    * busy 入队的定时任务在队列终态回写。
    * 一次性任务入队时不再立刻完结。取消说明这一次没有跑完，恢复下一档；
    * 成功或重试耗尽后才完结；还会重试时保持未完结且下一档为空。
+   *
+   * 收口判据只看 `once`，不看 status：暂停只是用户侧「别再开新档」，不影响「已在队列里的
+   * 这一档是否算跑完」。若把 status===ACTIVE 与 once 耦合，PAUSED 期间收尾会整个分支被跳过，
+   * 任务停在 finished=0 + nextFireTime=null；用户之后从 PAUSED 重新启用时 reactivate 分支
+   * （判据是 nextFireTime==null && status==ACTIVE，与 finished 无关）命中并重开下一档，
+   * once 任务被执行第二次。status 只用来决定「取消时是否重开档期」。
    */
   async settleQueuedExecution(taskId: number, status: 'COMPLETED' | 'FAILED' | 'CANCELLED'): Promise<void> {
     const task = await this.store.selectById(taskId);
@@ -905,11 +911,14 @@ export class ScheduledTaskService {
       })).willRetry;
     }
     const patch: Partial<ScheduledTask> & { id: number } = { id: taskId, lastExecutionStatus: status };
-    if (task.once === 1 && task.status === 'ACTIVE') {
+    if (task.once === 1) {
       if (status === 'CANCELLED') {
+        // 没跑完：只有仍处于启用态才重开下一档；PAUSED 下用户已要求别再跑，保持无档期。
         patch.finished = 0;
         patch.finishedAt = null;
-        patch.nextFireTime = task.cronExpression ? this.calculateNextFireTime(task.cronExpression) : null;
+        patch.nextFireTime = task.status === 'ACTIVE' && task.cronExpression
+          ? this.calculateNextFireTime(task.cronExpression)
+          : null;
       } else if (status === 'COMPLETED' || (status === 'FAILED' && !willRetry)) {
         patch.finished = 1;
         patch.finishedAt = formatDateTime(new Date());

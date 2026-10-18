@@ -207,6 +207,20 @@ describe('formatters', () => {
     expect(formatSize(100 * 1024 * 1024)).toBe('100 MB')
   })
 
+  // 回归：退出 while 时 value ∈ [100, 1024)，展示层对 value >= 100 走 Math.round，
+  // 进位到 1024 就出现「1024 KB」这种跨档读数（与 usageFormat.pickTokenUnit 的 999.95 进位同口径）。
+  it('formatSize 贴近单位上限时升档，不出现 1024 KB / 1024 GB', () => {
+    expect(formatSize(1023.5 * 1024)).toBe('1.0 MB')
+    expect(formatSize(1023.95 * 1024)).toBe('1.0 MB')
+    expect(formatSize(1023.99 * 1024)).toBe('1.0 MB')
+    expect(formatSize(1023.96 * 1024 ** 3)).toBe('1.0 TB')
+    // TB 是最高档，没有上级可升：保持 1024 TB 而非伪造单位（与 pickTokenUnit 到 T 档后不再进位同口径）
+    expect(formatSize(1023.99 * 1024 ** 4)).toBe('1024 TB')
+    // 未触及上限时不提前升档
+    expect(formatSize(1023.4 * 1024)).toBe('1023 KB')
+    expect(formatSize(999 * 1024 * 1024)).toBe('999 MB')
+  })
+
   it('formatTime', () => {
     expect(formatTime(undefined)).toBe('—')
     expect(formatTime(0)).toBe('—')

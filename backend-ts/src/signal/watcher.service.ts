@@ -427,14 +427,24 @@ export class WatcherService {
 
     // 触发失败（预算 BLOCK / Agent 停用 / 会话创建失败等）：计入连败并退避。
     // 预算 BLOCK 计入连败与 webhook-trigger.service.ts 同口径，防超限哨兵无限重试刷量。
-    await this.recordFailure(watcher, failure, result.httpStatus, result.durationMs);
+    // 传 checkId 复用已落的行：该轮已 markChanged，若另起一行，用户会看到一条「变化」加一条
+    // 「失败」两行自相矛盾的记录。同时把基线 hash 推进到本次读到的值——否则目标值不变时
+    // 下一轮仍判为「变化」，每轮都重新发起一次 Agent 运行（退避期内重复触发 N 次）。
+    await this.markCheckError(checkId, failure);
+    await this.deps.watcherRepo.markChecked(watcher.id, {
+      lastValueHash: valueHash,
+      lastValueSnippet: newText,
+      lastChangedAt: watcher.lastChangedAt,
+      consecutiveFailures: watcher.consecutiveFailures ?? 0,
+    });
+    await this.recordFailure(watcher, failure, result.httpStatus, result.durationMs, checkId);
   }
 
   // ── 内部 ─────────────────────────────────────────────────────────────────
 
   /**
    * 记录一次失败：写 check 行（若尚无）+ 累加失败计数与退避 + 达阈值自动停用并通知。
-   * `existingCheckId` 非 null 时复用该行（取值计算失败：runCheck 已落盘并标记 error），
+   * `existingCheckId` 非 null 时复用该行（取值计算失败、触发失败：runCheck 已落盘并标记 error），
    * 为 null 时新建一行（探针本身失败的场景）。
    */
   private async recordFailure(

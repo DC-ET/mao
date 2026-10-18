@@ -130,6 +130,14 @@ export function formatSize(bytes?: number): string {
     value /= 1024
     i++
   }
+  // 展示前再判一次档：退出循环时 value ∈ [100, 1024)，下面 value >= 100 走 Math.round，
+  // 进位到 1024 就会出现「1024 KB」这种跨档读数（与 usageFormat.pickTokenUnit 的 999.95 进位同口径）。
+  // 阈值取 1023.5 而非 1000：这是 Math.round 实际进位到 1024 的起点，取 1000 会把 1000~1023.4
+  // 这一段本应显示「1000 KB」~「1023 KB」的读数提前升档。
+  if (value >= 1023.5 && i < units.length - 1) {
+    value /= 1024
+    i++
+  }
   return `${value >= 100 ? Math.round(value) : value.toFixed(1)} ${units[i]}`
 }
 

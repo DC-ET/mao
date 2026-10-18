@@ -80,6 +80,17 @@ function has(node: Record<string, unknown> | null, key: string): boolean {
   return node != null && key in node && node[key] != null;
 }
 
+/**
+ * 失败态摘要：文件/搜索类工具的 error 形状是顶层字符串键（read/write/edit 的 `error`、
+ * glob/grep 的 `error`），与 page 工具的 `{error:{message}}` 不同。缺了这段，路径写错、
+ * 匹配歧义、正则非法这些最高频的失败会在摘要里显示成一次正常的「读取 X」「搜索内容 (0 处匹配)」，
+ * 用户巡检轨迹时无法从摘要区分成功与失败，「0 处匹配」还会被误读成「确实搜过了」。
+ */
+function failureSuffix(node: Record<string, unknown> | null): string {
+  if (!has(node, 'error')) return '';
+  return ` (失败: ${truncate(String(node!.error), 40)})`;
+}
+
 export function summarize(toolName: string | null | undefined, argumentsJson: string | null | undefined, result: string | null | undefined): string | null {
   if (toolName == null) {
     return null;
@@ -256,6 +267,8 @@ function summarizeReadFile(argumentsJson: string | null | undefined, result: str
   if (result == null) return `读取 ${displayPath}`;
   const node = asObj(parseJson(result));
   if (!node) return `读取 ${displayPath}`;
+  const failure = failureSuffix(node);
+  if (failure) return `读取 ${displayPath}${failure}`;
   const totalLines = has(node, 'total_lines') ? Number(node.total_lines) : 0;
   if (node.media_type === 'image') {
     const width = has(node, 'width') ? Number(node.width) : 0;
@@ -282,6 +295,8 @@ function summarizeWriteFile(argumentsJson: string | null | undefined, result: st
   if (result == null) return `写入 ${displayPath}`;
   const node = asObj(parseJson(result));
   if (!node) return `写入 ${displayPath}`;
+  const failure = failureSuffix(node);
+  if (failure) return `写入 ${displayPath}${failure}`;
   const fileChange = asObj(node.file_change) ?? {};
   const totalLines = has(fileChange, 'total_lines') ? Number(fileChange.total_lines) : 0;
   const linesAdded = has(fileChange, 'lines_added') ? Number(fileChange.lines_added) : 0;
@@ -300,6 +315,8 @@ function summarizeEditFile(argumentsJson: string | null | undefined, result: str
   if (result == null) return `编辑 ${displayPath}`;
   const node = asObj(parseJson(result));
   if (!node) return `编辑 ${displayPath}`;
+  const failure = failureSuffix(node);
+  if (failure) return `编辑 ${displayPath}${failure}`;
   const fileChange = asObj(node.file_change) ?? {};
   const linesAdded = has(fileChange, 'lines_added') ? Number(fileChange.lines_added) : 0;
   const linesDeleted = has(fileChange, 'lines_deleted') ? Number(fileChange.lines_deleted) : 0;
@@ -311,6 +328,8 @@ function summarizeGlobSearch(result: string | null | undefined): string {
   if (result == null) return '搜索文件';
   const node = asObj(parseJson(result));
   if (!node) return '搜索文件';
+  const failure = failureSuffix(node);
+  if (failure) return `搜索文件${failure}`;
   const count = Array.isArray(node.files) ? node.files.length : 0;
   const truncated = node.truncated === true;
   return `搜索文件 (${count} 个文件${truncated ? ', 已截断' : ''})`;
@@ -320,6 +339,8 @@ function summarizeGrepSearch(result: string | null | undefined): string {
   if (result == null) return '搜索内容';
   const node = asObj(parseJson(result));
   if (!node) return '搜索内容';
+  const failure = failureSuffix(node);
+  if (failure) return `搜索内容${failure}`;
   const count = has(node, 'total_matches') ? Number(node.total_matches) : 0;
   const truncated = node.truncated === true;
   return `搜索内容 (${count} 处匹配${truncated ? ', 已截断' : ''})`;

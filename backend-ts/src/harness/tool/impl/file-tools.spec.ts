@@ -35,6 +35,67 @@ describe('ReadFileTool', () => {
     expect(result.total_lines).toBe(4);
   });
 
+  // 回归：读取侧曾不剥 BOM，模型把首行 \uFEFF 复制进 edit_file 的 old_string 必然匹配失败。
+  // 写回侧（write/edit）都以 stripBom 后的文本匹配，读取侧必须同口径。
+  it('strips the BOM so read and edit agree on the first line', async () => {
+    const dir = tmp();
+    writeFileSync(join(dir, 'bom.txt'), '\uFEFFalpha\nbeta\ngamma\n');
+    const readTool = new ReadFileTool(new PathSandbox(dir));
+    const result = JSON.parse(await readTool.execute(JSON.stringify({ path: 'bom.txt' })));
+    expect(result.content).toBe('alpha\nbeta\ngamma');
+    // read→edit 往返：以读到的首行作 old_string 必须命中（修复前报「文件中未找到 old_string」）
+    const editTool = new EditFileTool(new PathSandbox(dir));
+    const edited = JSON.parse(await editTool.execute(JSON.stringify({
+      path: 'bom.txt', old_string: 'alpha', new_string: 'ALPHA',
+    })));
+    expect(edited.success).toBe(true);
+    // 写回仍保留原 BOM 与 CRLF（detectEol 在原文上取，不受读取侧影响）
+    expect(readFileSync(join(dir, 'bom.txt'), 'utf8')).toBe('\uFEFFALPHA\nbeta\ngamma\n');
+  });
+
+  it('keeps a BOM-only first line from shifting the line count', async () => {
+    const dir = tmp();
+    writeFileSync(join(dir, 'bom-only.txt'), '\uFEFF');
+    const tool = new ReadFileTool(new PathSandbox(dir));
+    const result = JSON.parse(await tool.execute(JSON.stringify({ path: 'bom-only.txt' })));
+    // 剥掉 BOM 后是空串，与空文件同口径（splitLines('') → []）
+    expect(result.total_lines).toBe(0);
+    expect(result.content).toBe('');
+  });
+
+  // 回归：负 limit 曾被 Math.max(0, ...) 静默钳成 0 行窗口，返回空 content 且不带 error 键，
+  // normalizeToolResult 判 success，模型据此误判「文件为空」并用 write_file 整体覆写清空它。
+  it('rejects a negative limit instead of silently returning an empty window', async () => {
+    const dir = tmp();
+    writeFileSync(join(dir, 'big.txt'), Array.from({ length: 100 }, (_, i) => `line-${i}`).join('\n'));
+    const tool = new ReadFileTool(new PathSandbox(dir));
+    const result = JSON.parse(await tool.execute(JSON.stringify({ path: 'big.txt', limit: -5 })));
+    expect(result.error).toContain('limit');
+    expect(result.error).toContain('非负整数');
+    // error 键在，normalizeToolResult 据此判失败态，模型知道要重试而不是当成空文件
+    expect(result.content).toBe('错误：参数 limit 必须是非负整数，收到 -5');
+  });
+
+  it('rejects a negative offset and a non-numeric limit', async () => {
+    const dir = tmp();
+    writeFileSync(join(dir, 'a.txt'), 'one\ntwo\nthree\n');
+    const tool = new ReadFileTool(new PathSandbox(dir));
+    const offset = JSON.parse(await tool.execute(JSON.stringify({ path: 'a.txt', offset: -3 })));
+    expect(offset.error).toContain('offset');
+    const limit = JSON.parse(await tool.execute(JSON.stringify({ path: 'a.txt', limit: 'abc' })));
+    expect(limit.error).toContain('limit');
+  });
+
+  it('treats limit 0 as a legal empty window without erroring', async () => {
+    const dir = tmp();
+    writeFileSync(join(dir, 'a.txt'), 'one\ntwo\nthree');
+    const tool = new ReadFileTool(new PathSandbox(dir));
+    const result = JSON.parse(await tool.execute(JSON.stringify({ path: 'a.txt', limit: 0 })));
+    expect(result.error).toBeUndefined();
+    expect(result.content).toBe('');
+    expect(result.total_lines).toBe(3);
+  });
+
   it('does not count a trailing newline as an extra line', async () => {
     const dir = tmp();
     const tool = new ReadFileTool(new PathSandbox(dir));
