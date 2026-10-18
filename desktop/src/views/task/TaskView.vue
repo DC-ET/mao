@@ -89,6 +89,7 @@ import type { SideTaskEntryOptions } from '../../composables/useCenterTabs'
 import { getToken } from '../../utils/auth-storage'
 import { nowDateTime } from '../../utils/datetime'
 import { cloudProjectKeyForNewTask } from '../../utils/cloud-project'
+import { resolveInspectorTarget, type InspectorTarget, type InspectorViewType } from '../../utils/inspector-target'
 import { api } from '../../api'
 import TaskIndexPanel from '../../components/task/TaskIndexPanel.vue'
 import TaskInspector from '../../components/task/TaskInspector.vue'
@@ -263,22 +264,20 @@ const subagents = computed(() => {
 const sessionIdForTabs = computed(() => sessionId.value || sessionIdParam.value || '')
 
 /**
- * 右侧边栏展示对象：主会话（chat） / 边路任务（side_task） / 子代理（subagent）。
- * 文件 / Diff Tab 只是浏览工具，无独立会话，保持主会话视角。
+ * 右侧边栏展示对象：由当前中心 Tab 归属解析得出（utils/inspector-target.ts）。
+ * 边路 / 子代理 / 轨迹 Tab 各自展示自己那个会话；文件 / Diff / 文件管理是浏览工具，
+ * 无独立会话，保持主会话视角。轨迹 Tab 此前不参与判定，导致从边路任务点开运行轨迹后
+ * 边栏悄悄退回主会话，排查时看到的是另一个会话的信息。
  */
-const inspectorViewType = computed<'chat' | 'side_task' | 'subagent'>(() => {
-  const tab = activeTab.value
-  if (tab?.type === 'side_task' && tab.sideSessionId != null && tab.sideSessionId > 0) return 'side_task'
-  if (tab?.type === 'subagent' && tab.sideSessionId != null && tab.sideSessionId > 0) return 'subagent'
-  return 'chat'
-})
-
-const inspectorSessionId = computed(() => {
-  if (inspectorViewType.value === 'chat') return sessionIdForTabs.value
-  // 占位边路 Tab（sideSessionId <= 0）尚未落库：返回空串，别让 '0' 冒充会话 id
-  const sid = activeTab.value.sideSessionId
-  return sid != null && sid > 0 ? String(sid) : ''
-})
+const inspectorTarget = computed<InspectorTarget>(() => resolveInspectorTarget(activeTab.value, {
+  mainSessionId: sessionIdForTabs.value,
+  sideTasks: sideTasks.value,
+  subagents: subagents.value,
+}))
+const inspectorViewType = computed<InspectorViewType>(() => inspectorTarget.value.viewType)
+const inspectorSessionId = computed(() => inspectorTarget.value.sessionId)
+/** 子会话数字 id：边路任务 / 子代理 Tab 与对应轨迹 Tab 下非空，主会话与占位态为 null */
+const inspectorSubSessionId = computed(() => inspectorTarget.value.subSessionId)
 
 const sessionTitle = computed(() => {
   const session = sessionStore.activeSession
@@ -287,13 +286,15 @@ const sessionTitle = computed(() => {
 
 // 右侧边栏标题：子会话优先取列表缓存 title，缺失回退主会话标题
 const inspectorTitle = computed(() => {
-  const sid = activeTab.value.sideSessionId
-  if (inspectorViewType.value === 'side_task' && sid != null) {
-    const item = sideTasks.value.find(t => t.id === sid)
-    if (item?.title) return item.title
-  } else if (inspectorViewType.value === 'subagent' && sid != null) {
-    const item = subagents.value.find(sa => sa.id === sid)
-    if (item?.title) return item.title
+  const sid = inspectorSubSessionId.value
+  if (sid != null) {
+    if (inspectorViewType.value === 'side_task') {
+      const item = sideTasks.value.find(t => t.id === sid)
+      if (item?.title) return item.title
+    } else if (inspectorViewType.value === 'subagent') {
+      const item = subagents.value.find(sa => sa.id === sid)
+      if (item?.title) return item.title
+    }
   }
   return sessionTitle.value
 })
@@ -301,8 +302,8 @@ const inspectorTitle = computed(() => {
 // 右侧边栏状态：子会话优先取 phase 缓存（WS 实时），缺失回退主会话 phase
 const inspectorPhase = computed<TaskPhase>(() => {
   if (inspectorViewType.value === 'chat') return currentPhase.value
-  const sid = activeTab.value.sideSessionId
-  if (sid == null || sid <= 0) return currentPhase.value
+  const sid = inspectorSubSessionId.value
+  if (sid == null) return currentPhase.value
   const phase = sessionStore.getSessionPhase(String(sid))
   if (phase) return phase
   if (inspectorViewType.value === 'side_task') {
@@ -318,24 +319,24 @@ const inspectorPhase = computed<TaskPhase>(() => {
 // 右侧边栏进度：子会话取对应会话 todos，缺失回退主会话
 const inspectorTodos = computed(() => {
   if (inspectorViewType.value === 'chat') return todos.value
-  const sid = activeTab.value.sideSessionId
-  if (sid == null || sid <= 0) return todos.value
+  const sid = inspectorSubSessionId.value
+  if (sid == null) return todos.value
   return sessionStore.getTodos(String(sid))
 })
 
 // 右侧边栏上下文：子会话取对应会话 context_window，缺失回退主会话
 const inspectorContextWindow = computed(() => {
   if (inspectorViewType.value === 'chat') return contextWindow.value
-  const sid = activeTab.value.sideSessionId
-  if (sid == null || sid <= 0) return contextWindow.value
+  const sid = inspectorSubSessionId.value
+  if (sid == null) return contextWindow.value
   return sessionStore.getContextWindow(String(sid)) ?? contextWindow.value
 })
 
 // 右侧边栏模型：子会话优先使用自己的 modelId，避免上下文是否已回填影响模型解析。
 const inspectorModelId = computed<number | undefined>(() => {
   if (inspectorViewType.value === 'chat') return undefined
-  const sid = activeTab.value.sideSessionId
-  if (sid == null || sid <= 0) return undefined
+  const sid = inspectorSubSessionId.value
+  if (sid == null) return undefined
   if (inspectorViewType.value === 'side_task') {
     return sideTasks.value.find(t => t.id === sid)?.modelId ?? sessionStore.activeSession?.modelId
   }
@@ -599,10 +600,10 @@ function handleTodoUpdate() {
 
 function handleRename(title: string) {
   // 右侧边栏重命名按当前展示对象分流：边路任务走独立 PATCH；子代理只读（双保险不处理）
+  const subSessionId = inspectorSubSessionId.value
   if (inspectorViewType.value === 'side_task') {
-    const sid = activeTab.value.sideSessionId
-    if (sid != null && sid > 0) {
-      void handleEditSideTaskTitle({ sideSessionId: sid, title })
+    if (subSessionId != null) {
+      void handleEditSideTaskTitle({ sideSessionId: subSessionId, title })
     }
     return
   }
