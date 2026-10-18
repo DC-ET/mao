@@ -13,6 +13,21 @@
     <div v-if="loading" class="empty-state">加载中...</div>
 
     <template v-else>
+      <!-- ── 工具加载模式（用户级单值） ── -->
+      <section class="section-block">
+        <div class="section-header">
+          <h2 class="section-title">工具加载模式</h2>
+        </div>
+        <p class="page-hint">
+          工作集模式只在系统提示中列出服务器与工具名，模型按需查询参数后调用，减少每轮请求携带的 schema；
+          全量注入模式把每个工具的完整参数直接放进每次模型请求。切换对新会话生效。
+        </p>
+        <el-radio-group v-model="loadMode" :disabled="loadModeSaving" @change="handleLoadModeChange">
+          <el-radio value="WORKING_SET">工作集（推荐）</el-radio>
+          <el-radio value="FULL">全量注入</el-radio>
+        </el-radio-group>
+      </section>
+
       <!-- ── 我的服务器 ── -->
       <section class="section-block">
         <div class="section-header">
@@ -205,13 +220,21 @@ import {
   updateMyMcpServer,
   deleteMyMcpServer,
   testMyMcpServer,
+  getMcpLoadMode,
+  saveMcpLoadMode,
   type McpServerPreferenceItem,
   type McpServerConfig,
-  type McpToolItem
+  type McpToolItem,
+  type McpLoadMode
 } from '../../api'
 
 const loading = ref(true)
 const savingId = ref<number | null>(null)
+/** 用户级 MCP 工具加载模式：WORKING_SET（默认）| FULL */
+const loadMode = ref<McpLoadMode>('WORKING_SET')
+/** 最近一次加载 / 保存成功的模式：保存失败时回滚到它（change 事件触发时 v-model 已是新值）。 */
+const savedLoadMode = ref<McpLoadMode>('WORKING_SET')
+const loadModeSaving = ref(false)
 /** 私有服务器：完整配置 + 用户级启用状态 */
 type MyMcpServer = McpServerConfig & { userEnabled: boolean }
 const myServers = ref<MyMcpServer[]>([])
@@ -288,6 +311,13 @@ async function load() {
   loading.value = true
   try {
     const [prefs, mine] = await Promise.all([getMcpServerPreferences(), getMyMcpServers()])
+    // 加载模式是新增接口：后端未升级时 404 不应拖垮整页服务器列表加载，降级显示默认值。
+    try {
+      loadMode.value = await getMcpLoadMode()
+    } catch {
+      loadMode.value = 'WORKING_SET'
+    }
+    savedLoadMode.value = loadMode.value
     // 偏好列表按 scope 分块展示；私有服务器保留完整配置（command/argsJson/url）供编辑回填
     globalServers.value = (prefs || []).filter((s) => s.scope === 'GLOBAL')
     const prefMap = new Map<number, McpServerPreferenceItem>()
@@ -306,8 +336,25 @@ async function load() {
   }
 }
 
-async function handleToggle(server: { id: number; name: string; userEnabled: boolean }, enabled: boolean) {
-  // 乐观更新
+/** 切换加载模式：乐观更新，失败回滚（后端 400 / 网络错误由拦截器提示）。 */
+async function handleLoadModeChange(value: string | number | boolean) {
+  const next: McpLoadMode = value === 'FULL' ? 'FULL' : 'WORKING_SET'
+  // el-radio-group 会先更新 v-model 再触发 change，不能用 loadMode.value 当旧值
+  const previous = savedLoadMode.value
+  loadMode.value = next
+  loadModeSaving.value = true
+  try {
+    await saveMcpLoadMode(next)
+    savedLoadMode.value = next
+    ElMessage.success(next === 'FULL' ? '已切换为全量注入（新会话生效）' : '已切换为工作集模式（新会话生效）')
+  } catch {
+    loadMode.value = previous
+  } finally {
+    loadModeSaving.value = false
+  }
+}
+
+async function handleToggle(server: { id: number; name: string; userEnabled: boolean }, enabled: boolean) {  // 乐观更新
   const previous = server.userEnabled
   server.userEnabled = enabled
   savingId.value = server.id

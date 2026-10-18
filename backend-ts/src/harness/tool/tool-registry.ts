@@ -48,6 +48,9 @@ import { SendDingtalkFileTool, SendDingtalkImageTool, type DingtalkMediaSendSupp
 import type { SendBytesSupport } from './impl/send-file-bytes.js';
 import { createPageTools } from './impl/page-tools.js';
 import type { EmbedPageToolRegistry } from '../embed-page-tool-registry.js';
+import { McpCallTool, type McpToolCaller } from '../mcp/workingset/impl/mcp-call-tool.js';
+import { McpDescribeTool } from '../mcp/workingset/impl/mcp-describe-tool.js';
+import type { McpToolsRegistry } from '../mcp/local/mcp-tools-registry.js';
 
 export interface DefaultToolRegistryDeps {
   pathSandbox: PathSandbox;
@@ -95,11 +98,17 @@ export interface DefaultToolRegistryDeps {
   messageMapper: MessageMapper;
   sessionCompactionService: SessionCompactionService;
   embedPageToolRegistry: EmbedPageToolRegistry;
+  /**
+   * MCP 工作集工具（mcp_call / mcp_describe）。两者都依赖会话工具清单；
+   * 未注入时（部分单测/精简装配）不注册，全量模式行为不受影响。
+   */
+  mcpToolsRegistry?: McpToolsRegistry | null;
+  mcpClientManager?: McpToolCaller | null;
 }
 
 /** Instantiates and registers all built-in tools (mirrors Spring Tool bean auto-registration). */
 export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRegistry {
-  return new ToolRegistry([
+  const tools: Tool[] = [
     new AskUserQuestionsTool(),
     new ReadFileTool(deps.pathSandbox),
     new WriteFileTool(deps.pathSandbox),
@@ -147,7 +156,22 @@ export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRe
     new CancelSubagentTool(deps.backgroundSubagentManager),
     new WaitSubagentsTool(deps.backgroundSubagentManager, (sid) => deps.agentLoop.getCancelFlag(sid)),
     ...createPageTools(deps.embedPageToolRegistry),
-  ]);
+  ];
+  // 工作集模式的两个入口工具：只在依赖齐备时注册，未注入的装配保持原工具集不变。
+  if (deps.mcpToolsRegistry != null && deps.mcpClientManager != null) {
+    tools.push(
+      new McpCallTool({
+        sessionMapper: deps.sessionMapper,
+        toolsRegistry: deps.mcpToolsRegistry,
+        clientManager: deps.mcpClientManager,
+      }),
+      new McpDescribeTool({
+        sessionMapper: deps.sessionMapper,
+        toolsRegistry: deps.mcpToolsRegistry,
+      }),
+    );
+  }
+  return new ToolRegistry(tools);
 }
 
 

@@ -19,18 +19,19 @@
           />
           <span>ms</span>
         </label>
-        <label class="threshold-field" title="四类 token 之和达到该值记「贵」">
+        <label class="threshold-field" title="模型调用成本达到该值记「贵」；模型未配置价格时不算贵">
           <span>贵 ≥</span>
           <el-input-number
-            v-model="expensiveTokensInput"
-            :min="1000"
-            :max="10000000"
-            :step="1000"
+            v-model="expensiveCostInput"
+            :min="0.001"
+            :max="1000"
+            :precision="3"
+            :step="0.1"
             :controls="false"
             size="small"
             @change="applyThresholds"
           />
-          <span>tokens</span>
+          <span>元</span>
         </label>
         <el-tooltip
           content="并行执行的工具耗时互相重叠，逐项相加会大于墙钟；墙钟取最早的开始到最晚的结束。工具按 tool_call_id 归轮；缺 id 的历史行按 created_at 归轮，时间戳完全相同时不猜轮，单独列为「未挂到轮」。"
@@ -260,8 +261,8 @@ const sessionStore = useSessionStore()
 
 const SLOW_MS_MIN = 1_000
 const SLOW_MS_MAX = 3_600_000
-const EXPENSIVE_MIN = 1_000
-const EXPENSIVE_MAX = 10_000_000
+const COST_MIN = 0.001
+const COST_MAX = 1000
 const TERMINAL_PHASES = new Set(['IDLE', 'COMPLETED', 'FAILED', 'CANCELLED'])
 
 const runs = computed(() => sessionStore.getTraceRuns(props.sessionId))
@@ -280,10 +281,10 @@ const exporting = ref(false)
 const loadedPages = ref(1)
 
 const slowMsInput = ref(sessionStore.traceThresholds.slowMs)
-const expensiveTokensInput = ref(sessionStore.traceThresholds.expensiveTokens)
+const expensiveCostInput = ref(sessionStore.traceThresholds.expensiveCost)
 watch(() => sessionStore.traceThresholds, (value) => {
   slowMsInput.value = value.slowMs
-  expensiveTokensInput.value = value.expensiveTokens
+  expensiveCostInput.value = value.expensiveCost
 }, { deep: true })
 
 function clamp(value: number, min: number, max: number): number {
@@ -291,10 +292,16 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, Math.round(value)))
 }
 
+/** 金额阈值保留小数：0.5 元这类输入不能被取整成 0。 */
+function clampCost(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min
+  return Math.min(max, Math.max(min, value))
+}
+
 function applyThresholds() {
   sessionStore.setTraceThresholds({
     slowMs: clamp(slowMsInput.value, SLOW_MS_MIN, SLOW_MS_MAX),
-    expensiveTokens: clamp(expensiveTokensInput.value, EXPENSIVE_MIN, EXPENSIVE_MAX),
+    expensiveCost: clampCost(expensiveCostInput.value, COST_MIN, COST_MAX),
   })
   void reload()
 }
@@ -305,7 +312,7 @@ async function fetchTracePage(beforeRunId: number | null, limit: number): Promis
       limit,
       beforeRunId: beforeRunId ?? undefined,
       slowMs: sessionStore.traceThresholds.slowMs,
-      expensiveTokens: sessionStore.traceThresholds.expensiveTokens,
+      expensiveCost: sessionStore.traceThresholds.expensiveCost,
     },
   })
   return data as RunTracePage

@@ -9,7 +9,13 @@ import type {
 import { DEFAULT_TRACE_THRESHOLDS } from '../../types/trace'
 import { safeSetItem } from '../../utils/safe-storage'
 
-const THRESHOLDS_KEY = 'mao:trace-thresholds'
+/**
+ * 阈值存储 key 换版（v2）：旧 key 里是 `{ slowMs, expensiveTokens }`，
+ * 沿用会把 50000 读成 50000 元（clamp 到上限后「所有轮都贵」），
+ * 正好是本次改成本口径要消除的现象。换 key 让老用户回到默认 0.5 元，
+ * slowMs 一并回到 60s——一次性重置，属可接受的展示参数成本。
+ */
+const THRESHOLDS_KEY = 'mao:trace-thresholds:v2'
 
 function loadThresholds(): TraceThresholds {
   try {
@@ -18,9 +24,10 @@ function loadThresholds(): TraceThresholds {
     const parsed = JSON.parse(raw) as Partial<TraceThresholds>
     return {
       slowMs: typeof parsed.slowMs === 'number' && parsed.slowMs > 0 ? parsed.slowMs : DEFAULT_TRACE_THRESHOLDS.slowMs,
-      expensiveTokens: typeof parsed.expensiveTokens === 'number' && parsed.expensiveTokens > 0
-        ? parsed.expensiveTokens
-        : DEFAULT_TRACE_THRESHOLDS.expensiveTokens
+      // 金额可以是 0.001 这类小数：只判 > 0，不要用 Number.isInteger
+      expensiveCost: typeof parsed.expensiveCost === 'number' && parsed.expensiveCost > 0
+        ? parsed.expensiveCost
+        : DEFAULT_TRACE_THRESHOLDS.expensiveCost
     }
   } catch {
     return { ...DEFAULT_TRACE_THRESHOLDS }

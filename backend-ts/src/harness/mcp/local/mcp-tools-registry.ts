@@ -1,5 +1,5 @@
 import { harnessLog } from '../../log.js';
-import type { McpToolRef } from '../entity/mcp-server.js';
+import type { McpConnectionError, McpToolRef } from '../entity/mcp-server.js';
 
 /**
  * MCP 工具注册表：LOCAL（桌面上报）与 CLOUD（服务端连接快照）两个维度分开存，
@@ -8,13 +8,25 @@ import type { McpToolRef } from '../entity/mcp-server.js';
  */
 export class McpToolsRegistry {
   private readonly sessionTools = new Map<number, McpToolRef[]>();
+  /** 最近一次桌面上报里连接失败的 server（与工具清单同批写入，供工作集标注不可用）。 */
+  private readonly connectionErrors = new Map<number, McpConnectionError[]>();
   /** CLOUD 维度快照：会话内最近一次成功连接得到的工具集（按 (serverName, toolName) 排序）。 */
   private readonly cloudSnapshot = new Map<number, McpToolRef[]>();
   /** 会话删除才清快照，故需上限防止长跑进程泄漏（与 prompt-prefix-monitor 同策略）。 */
   private static readonly MAX_SNAPSHOT_SESSIONS = 512;
 
-  report(sessionId: number | null | undefined, tools: McpToolRef[] | null | undefined): void {
+  report(
+    sessionId: number | null | undefined,
+    tools: McpToolRef[] | null | undefined,
+    connectionErrors: McpConnectionError[] | null | undefined = [],
+  ): void {
     if (sessionId == null) return;
+    // 失败信息独立于工具清单：全部连接失败时 tools 为空，但错误清单仍要保留给工作集标注。
+    if (connectionErrors && connectionErrors.length > 0) {
+      this.connectionErrors.set(sessionId, [...connectionErrors]);
+    } else {
+      this.connectionErrors.delete(sessionId);
+    }
     if (!tools || tools.length === 0) {
       this.sessionTools.delete(sessionId);
       return;
@@ -26,6 +38,12 @@ export class McpToolsRegistry {
   getSessionTools(sessionId: number | null | undefined): McpToolRef[] {
     if (sessionId == null) return [];
     return this.sessionTools.get(sessionId) ?? [];
+  }
+
+  /** 最近一次桌面上报的连接失败清单（无则空数组）。 */
+  getConnectionErrors(sessionId: number | null | undefined): McpConnectionError[] {
+    if (sessionId == null) return [];
+    return this.connectionErrors.get(sessionId) ?? [];
   }
 
   hasTools(sessionId: number | null | undefined): boolean {
@@ -57,6 +75,7 @@ export class McpToolsRegistry {
   clear(sessionId: number | null | undefined): void {
     if (sessionId == null) return;
     this.sessionTools.delete(sessionId);
+    this.connectionErrors.delete(sessionId);
     this.cloudSnapshot.delete(sessionId);
   }
 
@@ -77,5 +96,6 @@ export class McpToolsRegistry {
   clearLocalSession(sessionId: number | null | undefined): void {
     if (sessionId == null) return;
     this.sessionTools.delete(sessionId);
+    this.connectionErrors.delete(sessionId);
   }
 }

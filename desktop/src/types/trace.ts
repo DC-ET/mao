@@ -94,13 +94,16 @@ export interface TraceMarker {
   detail: string
 }
 
-/** 慢 / 贵阈值：展示参数，桌面记 localStorage（不新建偏好表） */
+/**
+ * 慢 / 贵阈值：展示参数，桌面记 localStorage（不新建偏好表）。
+ * 「贵」按单轮成本（价格填写口径的金额，单位元）判定；模型未配置价格的轮次不算贵。
+ */
 export interface TraceThresholds {
   slowMs: number
-  expensiveTokens: number
+  expensiveCost: number
 }
 
-export const DEFAULT_TRACE_THRESHOLDS: TraceThresholds = { slowMs: 60_000, expensiveTokens: 50_000 }
+export const DEFAULT_TRACE_THRESHOLDS: TraceThresholds = { slowMs: 60_000, expensiveCost: 0.5 }
 
 /** 进行中临时态按 executionId 隔离：崩溃恢复 / 重跑换 executionId，旧帧不画进当前 run */
 export interface TraceLiveRound {

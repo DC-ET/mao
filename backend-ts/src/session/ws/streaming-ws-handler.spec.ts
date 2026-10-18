@@ -950,6 +950,32 @@ describe('StreamingWsHandler', () => {
     await handler.handleTextMessage(ws, 'not-json');
   });
 
+  it('collects failed MCP servers and annotation hints from the desktop report', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('LOCAL', 'IDLE'));
+    mcpSyncService.resolveServerIdByName.mockImplementation((name: string) => (name === 'fs' ? 3 : null));
+    (handler as unknown as { pendingMcpSyncs: Map<number, unknown> })
+      .pendingMcpSyncs.set(11, { syncId: 'sync-2', resolve: vi.fn(), reject: vi.fn() });
+    await handler.handleTextMessage(ws, JSON.stringify({
+      type: 'mcp_tools_report', sessionId: 11, syncId: 'sync-2',
+      servers: [
+        {
+          connected: true, name: 'fs',
+          tools: [{ name: 'read', description: 'd', schema: {}, annotations: { readOnlyHint: true } }],
+        },
+        { connected: false, name: 'github', tools: [], error: '连接超时' },
+      ],
+    }));
+    expect(mcpSyncService.recordReport).toHaveBeenCalledWith(
+      11,
+      [expect.objectContaining({
+        serverId: 3, serverName: 'fs', toolName: 'read', annotations: { readOnlyHint: true },
+      })],
+      [{ serverId: null, serverName: 'github', reason: '连接超时' }],
+    );
+  });
+
   it('releases auto-consume suppression when insert bails on a consumed queue item', async () => {
     vi.clearAllMocks();
     executor.tasks.length = 0;

@@ -35,6 +35,9 @@ import type { LocalSkillRef, SkillDocument } from '../skill/skill-document.js';
 import type { McpClientManager } from '../mcp/mcp-client-manager.js';
 import type { McpSyncService } from '../mcp/local/mcp-sync-service.js';
 import { McpToolAdapter } from '../mcp/mcp-tool-adapter.js';
+import type { McpLoadModeResolver } from '../mcp/workingset/mcp-load-mode.js';
+import { buildMcpWorkingSet, type McpWorkingSet } from '../mcp/workingset/mcp-working-set.js';
+import type { McpConnectionError, McpServer, McpToolRef } from '../mcp/entity/mcp-server.js';
 import { WEIXIN_PROJECT_KEY } from '../../domain/types.js';
 import { shanghaiYmd } from '../../common/json.js';
 import { BusinessException } from '../../common/business-exception.js';
@@ -43,6 +46,8 @@ import type { ChatRequest, ChatUsage, ToolCall } from '../llm/chat-request.js';
 import type { MemoryHint } from '../../memory/types.js';
 
 const ASK_USER_QUESTIONS = 'ask_user_questions';
+/** 工作集模式的两个内置入口工具：只在该模式注入，全量模式不出现。 */
+const MCP_WORKING_SET_TOOL_NAMES = new Set(['mcp_call', 'mcp_describe']);
 
 export class HarnessService {
   constructor(
@@ -70,6 +75,8 @@ export class HarnessService {
     private readonly mcpSyncService?: McpSyncService | null,
     private readonly embedSessionLookup?: { isEmbedSession(sessionId: number): boolean } | null,
     private readonly memoryInjection?: { listForInjection(userId: number, projectKey: string | null, workspace: string | null): Promise<MemoryHint[]> } | null,
+    /** MCP 加载模式解析（工作集 / 全量）。未注入时维持全量注入，行为与改造前一致。 */
+    private readonly mcpLoadModeResolver?: McpLoadModeResolver | null,
   ) {}
 
   prepareMessage(_sessionId: number, _userContent: unknown): string {
@@ -337,16 +344,35 @@ export class HarnessService {
     let sessionTools = HarnessService.filterToolsForSession(this.toolRegistry.getAllTools(), session.projectKey, session.workspace);
     // 页面工具只在绑定了 embed 页面连接的会话中暴露；其他会话（桌面/CLI/微信/子代理）不可见也不可调用。
     sessionTools = HarnessService.filterPageTools(sessionTools, this.embedSessionLookup?.isEmbedSession(sessionId) === true);
+    // 工作集工具只按模式注入：先从默认工具集中剔除，避免全量模式凭空多出两个模型可见工具。
+    sessionTools = sessionTools.filter((tool) => !MCP_WORKING_SET_TOOL_NAMES.has(tool.getName()));
     const mcpWarnings: string[] = [];
     let cloudMcpBound = false;
     if (this.mcpSyncService) {
       try {
         const mcpServers = await this.mcpSyncService.loadAgentServers(agent, session.userId ?? null);
         if (mcpServers.length > 0) {
+          // 模式解析放在 server 清单非空判断之后：未配置 MCP 的用户零查库、零行为差异。
+          const loadMode = this.mcpLoadModeResolver != null
+            ? await this.mcpLoadModeResolver.resolve(session.userId ?? null)
+            : 'full';
           if (executionMode.toUpperCase() === 'LOCAL') {
             const localTools = this.mcpSyncService.getLocalSessionTools(sessionId);
-            for (const ref of localTools) {
-              sessionTools.push(new McpToolAdapter(ref, this.mcpClientManager ?? null));
+            if (loadMode === 'full') {
+              for (const ref of localTools) {
+                sessionTools.push(new McpToolAdapter(ref, this.mcpClientManager ?? null));
+              }
+            } else {
+              const connectionErrors = this.mcpSyncService.getLocalConnectionErrors(sessionId);
+              this.applyMcpWorkingSet(
+                context, sessionTools, mcpServers, localTools, connectionErrors,
+              );
+              // 与 CLOUD 的 cloudResult.warnings 同口径：失败原因同时进尾部 system-notice，
+              // 不只藏在工作集标题里（设计 §5.2 / §5.5）。
+              for (const error of connectionErrors) {
+                const message = `${error.serverName}: ${error.reason}`;
+                if (!mcpWarnings.includes(message)) mcpWarnings.push(message);
+              }
             }
           } else if (this.mcpClientManager) {
             // 透传取消标志：buildContext 在 LLM 首轮之前连接 MCP，用户此时点「停止」
@@ -354,8 +380,14 @@ export class HarnessService {
             // WS handler 的 claim/future 永久残留（线上 session 2026 即此态）。
             const cloudResult = await this.mcpSyncService.connectForCloud(sessionId, mcpServers, this.mcpClientManager, cancelFlag ?? null);
             cloudMcpBound = true;
-            for (const ref of cloudResult.tools) {
-              sessionTools.push(new McpToolAdapter(ref, this.mcpClientManager));
+            if (loadMode === 'full') {
+              for (const ref of cloudResult.tools) {
+                sessionTools.push(new McpToolAdapter(ref, this.mcpClientManager));
+              }
+            } else {
+              this.applyMcpWorkingSet(
+                context, sessionTools, mcpServers, cloudResult.tools, cloudResult.failedServers,
+              );
             }
             mcpWarnings.push(...cloudResult.warnings);
           } else {
@@ -451,9 +483,30 @@ export class HarnessService {
     }
   }
 
+  /**
+   * 工作集模式注入：生成结构化工作集 + 把 mcp_call / mcp_describe 放进本轮工具集。
+   * 两个工具未注册（精简装配 / 单测）时不渲染 section——否则模型会被提示调用不存在的工具。
+   */
+  private applyMcpWorkingSet(
+    context: AgentExecutionContext,
+    sessionTools: Tool[],
+    servers: McpServer[],
+    refs: McpToolRef[],
+    connectionErrors: McpConnectionError[],
+  ): void {
+    const workingSetTools = [...MCP_WORKING_SET_TOOL_NAMES]
+      .map((name) => this.toolRegistry.getTool(name))
+      .filter((tool): tool is Tool => tool != null);
+    if (workingSetTools.length === 0) {
+      harnessLog('warn', `MCP working set tools not registered, skip working set for session ${context.sessionId}`);
+      return;
+    }
+    context.mcpWorkingSet = buildMcpWorkingSet(servers, refs, connectionErrors);
+    sessionTools.push(...workingSetTools);
+  }
+
   /** buildContext 在连上云端 MCP 之后失败时回收连接。成功路径仍由 AgentLoop / WS finally 关闭。 */
-  private async closeBoundCloudMcp(sessionId: number): Promise<void> {
-    if (!this.mcpClientManager) return;
+  private async closeBoundCloudMcp(sessionId: number): Promise<void> {    if (!this.mcpClientManager) return;
     try {
       await this.mcpClientManager.closeSession(sessionId);
     } catch (e) {

@@ -6,6 +6,9 @@ import { bodyOf, pathId, queryOptStr } from '../../../common/request.js';
 import { fail } from '../../../common/result.js';
 import type { McpClientManager } from '../mcp-client-manager.js';
 import type { UserMcpPreferenceService } from '../preference/service/user-mcp-preference.service.js';
+import type { UserMcpLoadModeService } from '../preference/service/user-mcp-load-mode.service.js';
+import type { McpLoadModeResolver } from '../workingset/mcp-load-mode.js';
+import { parseMcpLoadMode, toApiMcpLoadMode } from '../workingset/mcp-load-mode.js';
 import type { McpServerService } from '../service/mcp-server.service.js';
 import { STATUS_ENABLED, type McpServer } from '../entity/mcp-server.js';
 
@@ -13,6 +16,10 @@ export interface McpServerRouteDeps {
   mcpServerService: McpServerService;
   mcpClientManager: McpClientManager;
   userMcpPreferenceService: UserMcpPreferenceService;
+  /** 用户级 MCP 加载模式（工作集 / 全量），V159。 */
+  userMcpLoadModeService: UserMcpLoadModeService;
+  /** 生效值解析：用户偏好 → 全局 mcp.loadMode → working_set。 */
+  mcpLoadModeResolver: McpLoadModeResolver;
   permissionService: { hasPermission(userId: number, code: string): Promise<boolean> };
 }
 
@@ -39,8 +46,35 @@ interface UpdateStatusRequest {
   status?: string;
 }
 
+interface SaveMcpLoadModeRequest {
+  loadMode?: string;
+}
+
 export function registerMcpServerRoutes(app: FastifyInstance, deps: McpServerRouteDeps): void {
-  const { mcpServerService, mcpClientManager, userMcpPreferenceService, permissionService } = deps;
+  const {
+    mcpServerService, mcpClientManager, userMcpPreferenceService,
+    userMcpLoadModeService, mcpLoadModeResolver, permissionService,
+  } = deps;
+
+  // 用户级加载模式（技术方案 2026-10-18 §5.10）：单值偏好，独立于 per-server preferences 接口。
+  app.get('/v1/mcp-servers/load-mode', async (request, reply) => {
+    const userId = requireUserId(request);
+    const mode = await mcpLoadModeResolver.resolve(userId);
+    return sendOk(reply, { loadMode: toApiMcpLoadMode(mode) });
+  });
+
+  app.put('/v1/mcp-servers/load-mode', async (request, reply) => {
+    const userId = requireUserId(request);
+    const body = bodyOf<SaveMcpLoadModeRequest>(request);
+    const mode = parseMcpLoadMode(body.loadMode ?? null);
+    if (mode == null) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, 'loadMode 只能是 WORKING_SET 或 FULL');
+    }
+    await userMcpLoadModeService.save(userId, mode);
+    // 切完立刻失效解析缓存，避免用户回到设置页仍看到旧值（最多 5s 的 TTL 只兜底异常路径）。
+    mcpLoadModeResolver.invalidate(userId);
+    return sendOk(reply, { loadMode: toApiMcpLoadMode(mode) });
+  });
 
   app.get('/v1/mcp-servers/preferences', async (request, reply) => {
     const userId = requireUserId(request);

@@ -1,11 +1,12 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { mcpWhitelistEnv } from '../mcp/mcp-client-manager.js';
+import { normalizeMcpAnnotations } from '../mcp/entity/mcp-server.js';
 import type { McpServerSpec, RuntimeEnvelope } from './runtime-channel-protocol.js';
 
 type AnyClient = {
   connect(transport: unknown): Promise<void>;
-  listTools(): Promise<{ tools?: Array<{ name: string; description?: string; inputSchema?: Record<string, unknown> }> }>;
+  listTools(): Promise<{ tools?: Array<{ name: string; description?: string; inputSchema?: Record<string, unknown>; annotations?: unknown }> }>;
   callTool(args: { name: string; arguments?: Record<string, unknown> }): Promise<{
     isError?: boolean;
     content?: Array<{ type?: string; text?: string }>;
@@ -21,6 +22,7 @@ export interface ContainerMcpToolRef {
   description: string;
   inputSchema: Record<string, unknown>;
   fullToolName: string;
+  annotations?: { readOnlyHint?: boolean } | null;
 }
 
 /**
@@ -64,6 +66,7 @@ export class ContainerMcpBridge {
         description: tool.description ?? '',
         inputSchema: (tool.inputSchema ?? {}) as Record<string, unknown>,
         fullToolName: `mcp__${server.name}__${tool.name}`,
+        annotations: normalizeMcpAnnotations(tool.annotations),
       });
     }
     return refs;

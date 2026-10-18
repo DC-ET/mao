@@ -4,7 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { requireUserId, sendOk } from '../common/http-error.js';
-import { bodyOf, collectEntityIds, idMapGet, parseEntityId, pathId, queryOptBool, queryOptInt, queryOptStr } from '../common/request.js';
+import { bodyOf, collectEntityIds, idMapGet, parseEntityId, pathId, queryOptBool, queryOptFloat, queryOptInt, queryOptStr } from '../common/request.js';
 import { isSessionSource, type SessionSource } from './session.repository.js';
 import { javaLocalDateTimeString } from '../common/datetime.js';
 import type { PathSandbox } from '../harness/safety/path-sandbox.js';
@@ -14,6 +14,9 @@ import type { MessageQueueService } from './message-queue.service.js';
 import type { SessionCompactionEventService } from './session-compaction-event.service.js';
 import type { SessionCompactionService } from './session-compaction.service.js';
 import type { RunTraceService } from './run-trace.service.js';
+import {
+  DEFAULT_EXPENSIVE_COST, EXPENSIVE_COST_MAX, EXPENSIVE_COST_MIN, expensiveCostToMicros,
+} from './run-trace.service.js';
 import type { SessionTodoRepository, SubagentExecutionRepository } from './activity.repository.js';
 import type {
   AgentLookup,
@@ -536,12 +539,17 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     // 整会话调用倒进未归属且 hasMore=false，分页语义断裂
     const limit = clamp(queryOptInt(request, 'limit') ?? 5, 1, 50);
     const slowMs = clamp(queryOptInt(request, 'slowMs') ?? 60_000, 1_000, 3_600_000);
-    const expensiveTokens = clamp(queryOptInt(request, 'expensiveTokens') ?? 50_000, 1_000, 10_000_000);
+    // 「贵」阈值是价格填写口径的金额（元），允许小数；clamp 用整数语义，这里单独保留小数。
+    const expensiveCost = clampCost(
+      queryOptFloat(request, 'expensiveCost') ?? DEFAULT_EXPENSIVE_COST,
+      EXPENSIVE_COST_MIN, EXPENSIVE_COST_MAX,
+    );
     return sendOk(reply, await deps.runTraceService.buildTrace(id, {
       beforeRunId: queryOptInt(request, 'beforeRunId') ?? null,
       limit,
       slowMs,
-      expensiveTokens,
+      expensiveCost,
+      expensiveCostMicros: expensiveCostToMicros(expensiveCost),
     }));
   });
 
@@ -590,6 +598,12 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
 function clamp(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
   return Math.min(max, Math.max(min, Math.floor(value)));
+}
+
+/** 金额阈值钳制：保留小数，不做取整（0.5 这类值必须原样落进比较口径）。 */
+function clampCost(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, value));
 }
 
 /**

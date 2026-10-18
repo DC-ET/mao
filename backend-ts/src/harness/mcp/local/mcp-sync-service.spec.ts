@@ -93,11 +93,25 @@ describe('McpSyncService', () => {
       toolName: 'map_geocode',
       description: 'geocode',
       schema: { type: null, properties: { address: { type: 'string' } } },
+      annotations: { readOnlyHint: true },
     } as never]);
     const tools = service.getLocalSessionTools(11);
     expect(tools).toHaveLength(1);
     expect(tools[0].inputSchema.type).toBe('object');
     expect(tools[0].fullToolName).toBe('mcp__baidu_map__map_geocode');
+    // 只读注解跨桌面上报保留：工作集标记与审批免审依赖它
+    expect(tools[0].annotations).toEqual({ readOnlyHint: true });
+  });
+
+  it('recordReportKeepsFailedServersForTheWorkingSet', () => {
+    service.recordReport(12, [], [{ serverId: 3, serverName: 'github', reason: '连接超时' }]);
+    expect(service.getLocalConnectionErrors(12)).toEqual([
+      { serverId: 3, serverName: 'github', reason: '连接超时' },
+    ]);
+    expect(service.getLocalSessionTools(12)).toEqual([]);
+    // 下一批全部成功 → 失败清单被清空
+    service.recordReport(12, [], []);
+    expect(service.getLocalConnectionErrors(12)).toEqual([]);
   });
 
   describe('connectForCloud', () => {

@@ -4,6 +4,8 @@
 
 工具注入命名：`mcp__{server}__{tool}`。CLOUD 模式服务端直连；LOCAL 由桌面端/Electron 或 `mao-agent --local` 代理并纳入审批。
 
+**MCP 工作集（0.0.306 起默认）**：会话不再把每个工具的完整 JSON Schema 塞进模型请求，系统提示只列服务器、用途与工具名；模型按需用 `mcp_describe(server, tool)` 查参数、用 `mcp_call(server, tool, arguments)` 执行。可在桌面端「设置 → MCP 服务器 → 工具加载模式」切换为「全量注入」（旧行为）。模式是用户级单值偏好，与每台服务器的启用开关互不影响；切换对新会话生效。加载模式接口：`GET/PUT /v1/mcp-servers/load-mode`，body `{"loadMode":"WORKING_SET"|"FULL"}`。系统级默认值由管理员在系统设置 `mcp.loadMode` 调整。
+
 生产环境使用 MCP 时建议配置 `APP_MCP_SECRET`（见 [config.md](config.md)）。
 
 ## 命令选择
@@ -58,6 +60,7 @@ mao mcp set-status --id 1 --status DISABLED
 |-----|------|
 | `preferences` | GET `/mcp-servers/preferences` |
 | `preferences-set` | PUT `/mcp-servers/preferences` |
+| 加载模式（UI 使用） | GET/PUT `/mcp-servers/load-mode` |
 | `me-list` | GET `/mcp-servers/me` |
 | `me-create` | POST `/mcp-servers/me` |
 | `me-update` | PUT `/mcp-servers/me/:id` |

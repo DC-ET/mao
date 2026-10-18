@@ -174,6 +174,10 @@ import { McpClientManager } from './harness/mcp/mcp-client-manager.js';
 import { McpToolsRegistry } from './harness/mcp/local/mcp-tools-registry.js';
 import { McpSyncService } from './harness/mcp/local/mcp-sync-service.js';
 import { registerMcpServerRoutes } from './harness/mcp/controller/mcp-server.routes.js';
+import { UserMcpLoadModeMapper } from './harness/mcp/mapper/user-mcp-load-mode.mapper.js';
+import { UserMcpLoadModeService } from './harness/mcp/preference/service/user-mcp-load-mode.service.js';
+import { McpLoadModeResolver } from './harness/mcp/workingset/mcp-load-mode.js';
+import { createMcpReadOnlyLookup } from './harness/mcp/workingset/mcp-read-only-lookup.js';
 import { OpenAiLlmAdapter } from './harness/llm/openai-llm-adapter.js';
 import { AnthropicLlmAdapter } from './harness/llm/anthropic-llm-adapter.js';
 import { ResponsesLlmAdapter } from './harness/llm/responses-llm-adapter.js';
@@ -889,6 +893,11 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   });
   const mcpClient = new McpClientManager(cfg.app.mcp.clientTimeoutSeconds);
   const mcpToolsRegistry = new McpToolsRegistry();
+  const userMcpLoadModeService = new UserMcpLoadModeService(new UserMcpLoadModeMapper(db));
+  const mcpLoadModeResolver = new McpLoadModeResolver({
+    userLoadMode: userMcpLoadModeService,
+    systemSettingService: settingService,
+  });
   const mcpSync = new McpSyncService(mcpMapper, mcpServerService, mcpToolsRegistry, mcpPref);
   // 会话删除路径要回收 CLOUD MCP 快照，而 mcpSync 晚于 sessionService 构造：先用引用占位。
   mcpSyncRef = mcpSync;
@@ -1487,6 +1496,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     messageMapper: messageRepo as never,
     sessionCompactionService: compactionSvc,
     embedPageToolRegistry,
+    mcpToolsRegistry,
+    // 用可路由实例：CLOUD + docker 运行时下 mcp_call 需派发到容器内 bridge。
+    mcpClientManager: routingMcpClient,
   });
 
   const toolDispatcher = new ToolDispatcher(
@@ -1497,6 +1509,13 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     inboxService,
     approvalRuleService,
     dockerRouter,
+    // 工作集审批：LOCAL 会话从桌面上报的清单里取 readOnlyHint（未标注 → false，维持一律审批）。
+    // 只在工作集模式免审：全量注入是「旧行为」开关，必须保持 MCP 一律审批（设计 §5.6）。
+    createMcpReadOnlyLookup({
+      sessionMapper: sessionMap,
+      loadModeResolver: mcpLoadModeResolver,
+      toolsRegistry: mcpToolsRegistry,
+    }),
   );
   // 手动压缩信号总线：AgentLoop（工具轮边界消费）与 StreamingWsHandler（运行中置位）共享同一实例。
   const compactionSignalBus = new CompactionSignalBus();
@@ -1514,6 +1533,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     promptEngine, activeContext, compactionConfig, envInfo, db, routingMcpClient, mcpSync,
     { isEmbedSession: (sid: number) => embedPageToolRegistry.isEmbedSession(sid) },
     memoryService,
+    mcpLoadModeResolver,
   );
   holder.harness = harness;
 
@@ -2976,7 +2996,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       },
     });
     registerMcpServerRoutes(api, {
-      mcpServerService, mcpClientManager: mcpClient, userMcpPreferenceService: mcpPref, permissionService,
+      mcpServerService, mcpClientManager: mcpClient, userMcpPreferenceService: mcpPref,
+      userMcpLoadModeService, mcpLoadModeResolver, permissionService,
     });
     registerWeixinBotRoutes(api, { jwt, qrLogin, accountRepository: weixinAccounts, monitorService: weixinMonitor });
     registerFeishuBotRoutes(api, {

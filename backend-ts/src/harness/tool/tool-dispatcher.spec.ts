@@ -1046,3 +1046,110 @@ describe('ToolDispatcher docker routing', () => {
     expect(localToolExecutor.execute).not.toHaveBeenCalled();
   });
 });
+
+describe('MCP 工作集（mcp_call 还原 / 只读免审）', () => {
+  const registry = new ToolRegistry([mockTool('read_file')]);
+  const localToolExecutor = { execute: vi.fn() } as unknown as LocalToolExecutor & { execute: ReturnType<typeof vi.fn> };
+  const dangerAssessor = new DangerAssessor({ chat: vi.fn(), stream: vi.fn() } as unknown as LlmAdapter);
+  const sessionMapper = { selectById: vi.fn(async () => null) } as unknown as SessionMapper & {
+    selectById: ReturnType<typeof vi.fn>;
+  };
+  const streamingWsRegistry = {
+    hasConnection: vi.fn(),
+    send: vi.fn(),
+  } as unknown as StreamingWsRegistry & { hasConnection: ReturnType<typeof vi.fn>; send: ReturnType<typeof vi.fn> };
+  const askUserQuestionsRegistry = {
+    register: vi.fn(),
+    waitForAnswer: vi.fn(),
+  } as unknown as AskUserQuestionsRegistry & { register: ReturnType<typeof vi.fn>; waitForAnswer: ReturnType<typeof vi.fn> };
+  const localToolSessionRegistry = {
+    getUserIdForSession: vi.fn(),
+    isConnected: vi.fn(async () => true),
+  } as unknown as LocalToolSessionRegistry & {
+    getUserIdForSession: ReturnType<typeof vi.fn>;
+    isConnected: ReturnType<typeof vi.fn>;
+  };
+  const treeSignalPublisher = { publishForSession: vi.fn() } as unknown as SessionTreeSignalPublisher;
+
+  beforeEach(() => {
+    localToolExecutor.execute.mockReset();
+    localToolExecutor.execute.mockResolvedValue('ok');
+    sessionMapper.selectById.mockReset();
+    sessionMapper.selectById.mockResolvedValue(null);
+  });
+
+  const mcpCallArgs = JSON.stringify({
+    server: 'fs', tool: 'read_file', arguments: { path: 'a.txt' },
+  });
+
+    function buildDispatcherWith(options: {
+      readOnlyLookup?: ((sessionId: number | null, fullToolName: string) => boolean) | null;
+      rules?: Record<string, unknown> | null;
+    } = {}) {
+      return new ToolDispatcher(
+        registry, localToolExecutor, dangerAssessor, sessionMapper, streamingWsRegistry,
+        askUserQuestionsRegistry, localToolSessionRegistry, treeSignalPublisher,
+        null, null, null, null, null, null, null,
+        (options.rules as never) ?? null,
+        null,
+        options.readOnlyLookup ?? null,
+      );
+    }
+
+    it('restores the full tool name and sends inner arguments to the desktop', async () => {
+      localToolExecutor.execute.mockResolvedValue('ok');
+      const result = await buildDispatcherWith().dispatch(
+        'mcp_call', mcpCallArgs, 'LOCAL', 7, 'workspace', 'READ_WRITE', null,
+      );
+      expect(result).toBe('ok');
+      expect(localToolExecutor.execute).toHaveBeenCalledWith(
+        7, 'mcp__fs__read_file', '{"path":"a.txt"}', 'workspace', true, null,
+      );
+    });
+
+    it('skips approval for explicitly read-only MCP tools at READ_ONLY', async () => {
+      localToolExecutor.execute.mockResolvedValue('ok');
+      const readOnlyDispatcher = buildDispatcherWith({
+        readOnlyLookup: (_sid, full) => full === 'mcp__fs__read_file',
+      });
+      await readOnlyDispatcher.dispatch('mcp_call', mcpCallArgs, 'LOCAL', 7, 'w', 'READ_ONLY', null);
+      expect(localToolExecutor.execute).toHaveBeenCalledWith(
+        7, 'mcp__fs__read_file', '{"path":"a.txt"}', 'w', false, null,
+      );
+    });
+
+    it('still requires approval when the tool has no readOnlyHint', async () => {
+      localToolExecutor.execute.mockResolvedValue('ok');
+      const readOnlyDispatcher = buildDispatcherWith({ readOnlyLookup: () => false });
+      await readOnlyDispatcher.dispatch('mcp_call', mcpCallArgs, 'LOCAL', 7, 'w', 'READ_WRITE', null);
+      expect(localToolExecutor.execute).toHaveBeenCalledWith(
+        7, 'mcp__fs__read_file', '{"path":"a.txt"}', 'w', true, null,
+      );
+    });
+
+    it('keeps conservative approval when the arguments cannot be restored', async () => {
+      localToolExecutor.execute.mockResolvedValue('{"error":"unknown tool"}');
+      await buildDispatcherWith().dispatch('mcp_call', '{"server":"fs"}', 'LOCAL', 7, 'w', 'READ_ONLY', null);
+      // 还原失败仍走 MCP 审批分支，原样下发原名（错误由执行层返回）
+      expect(localToolExecutor.execute).toHaveBeenCalledWith(
+        7, 'mcp_call', '{"server":"fs"}', 'w', true, null,
+      );
+    });
+
+    it('matches approval rules by the restored full name but keeps original arguments', async () => {
+      localToolExecutor.execute.mockResolvedValue('ok');
+      const rules = {
+        match: vi.fn(async () => null),
+        buildHint: vi.fn(async () => null),
+        recordHit: vi.fn(),
+      };
+      const rulesDispatcher = buildDispatcherWith({ rules });
+      await rulesDispatcher.dispatch('mcp_call', mcpCallArgs, 'LOCAL', 7, 9, 'w', 'READ_WRITE', null);
+      expect(rules.match).toHaveBeenCalledWith({
+        userId: 9, sessionId: 7, toolName: 'mcp__fs__read_file', argumentsJson: mcpCallArgs,
+      });
+      expect(localToolExecutor.execute).toHaveBeenCalledWith(
+        7, 'mcp__fs__read_file', '{"path":"a.txt"}', 'w', true, null,
+      );
+    });
+  });

@@ -153,8 +153,10 @@ function makeHarness(overrides: Record<string, unknown> = {}) {
     execute: vi.fn(async () => undefined),
     removeCancelFlag: vi.fn(),
   };
+  const builtinTools = [fakeTool('read_file'), fakeTool('ask_user_questions'), fakeTool('send_wechat_image', true)];
   const toolRegistry = {
-    getAllTools: vi.fn(() => [fakeTool('read_file'), fakeTool('ask_user_questions'), fakeTool('send_wechat_image', true)]),
+    getAllTools: vi.fn(() => builtinTools),
+    getTool: vi.fn((name: string) => builtinTools.find((tool) => tool.getName() === name)),
   };
   const skillLoader = {
     hasSkill: vi.fn((n: string) => n === 'java'),
@@ -272,6 +274,7 @@ function makeHarness(overrides: Record<string, unknown> = {}) {
     deps.skillSync as never,
     deps.embedSessionLookup ?? null,
     deps.memoryInjection ?? null,
+    deps.mcpLoadModeResolver ?? null,
   );
   return { service, ...deps };
 }
@@ -370,6 +373,110 @@ describe('HarnessService.buildContext and execute', () => {
     expect(ctx.compactionConfig?.maxSummaryTokens).toBe(8000);
     expect(ctx.sessionBaseYmd).toBe(shanghaiYmd());
     expect(sessionService.getFirstUserStamp).toHaveBeenCalledWith(10);
+  });
+
+  it('buildContextInjectsWorkingSetToolsAndSectionOnlyInWorkingSetMode', async () => {
+    const mcpCall = fakeTool('mcp_call');
+    const mcpDescribe = fakeTool('mcp_describe');
+    const builtin = [fakeTool('read_file'), mcpCall, mcpDescribe];
+    const toolRegistry = {
+      getAllTools: vi.fn(() => builtin),
+      getTool: vi.fn((name: string) => builtin.find((tool) => tool.getName() === name)),
+    };
+    const refs = [{
+      serverId: 5, serverName: 'fs', toolName: 'read_file', description: 'read',
+      inputSchema: { type: 'object', properties: {} }, annotations: { readOnlyHint: true },
+    }];
+    const mcpSync = {
+      syncToSession: vi.fn(async () => undefined),
+      getUserSkillNames: vi.fn(() => []),
+      getUserSkillDocuments: vi.fn(() => []),
+      loadAgentServers: vi.fn(async () => [{ id: 5, name: 'fs', description: '文件系统' }]),
+      getLocalSessionTools: vi.fn(() => []),
+      getLocalConnectionErrors: vi.fn(() => []),
+      connectForCloud: vi.fn(async () => ({ tools: refs, warnings: [], failedServers: [] })),
+      clearSession: vi.fn(), clearLocalSession: vi.fn(), clearCloudSnapshot: vi.fn(),
+    };
+    const workingSetResolver = { resolve: vi.fn(async () => 'working_set') };
+    const workingSetHarness = makeHarness({
+      toolRegistry, skillSync: mcpSync, mcpLoadModeResolver: workingSetResolver,
+    });
+    const ctx = await workingSetHarness.service.buildContext(10);
+    expect(ctx.mcpWorkingSet?.servers[0].name).toBe('fs');
+    expect(ctx.mcpWorkingSet?.servers[0].tools[0]).toEqual({ name: 'read_file', readOnly: true });
+    expect(ctx.tools.map((tool) => tool.getName())).toEqual(expect.arrayContaining(['mcp_call', 'mcp_describe']));
+    // 工作集模式不注入逐工具 adapter
+    expect(ctx.tools.map((tool) => tool.getName())).not.toContain('mcp__fs__read_file');
+
+    // 全量模式：恢复逐工具注入，两个工作集入口不出现
+    const fullResolver = { resolve: vi.fn(async () => 'full') };
+    const fullHarness = makeHarness({
+      toolRegistry, skillSync: mcpSync, mcpLoadModeResolver: fullResolver,
+    });
+    const fullCtx = await fullHarness.service.buildContext(10);
+    expect(fullCtx.mcpWorkingSet).toBeNull();
+    expect(fullCtx.tools.map((tool) => tool.getName())).toContain('mcp__fs__read_file');
+    expect(fullCtx.tools.map((tool) => tool.getName())).not.toContain('mcp_call');
+  });
+
+  it('buildContextSkipsLoadModeResolutionWhenNoMcpServerIsConfigured', async () => {
+    const mcpCall = fakeTool('mcp_call');
+    const builtin = [fakeTool('read_file'), mcpCall];
+    const toolRegistry = {
+      getAllTools: vi.fn(() => builtin),
+      getTool: vi.fn((name: string) => builtin.find((tool) => tool.getName() === name)),
+    };
+    const mcpSync = {
+      syncToSession: vi.fn(async () => undefined),
+      getUserSkillNames: vi.fn(() => []),
+      getUserSkillDocuments: vi.fn(() => []),
+      loadAgentServers: vi.fn(async () => []),
+      getLocalSessionTools: vi.fn(() => []),
+      getLocalConnectionErrors: vi.fn(() => []),
+      connectForCloud: vi.fn(async () => ({ tools: [], warnings: [], failedServers: [] })),
+      clearSession: vi.fn(), clearLocalSession: vi.fn(), clearCloudSnapshot: vi.fn(),
+    };
+    const resolver = { resolve: vi.fn(async () => 'working_set') };
+    const { service } = makeHarness({ toolRegistry, skillSync: mcpSync, mcpLoadModeResolver: resolver });
+    const ctx = await service.buildContext(10);
+    expect(resolver.resolve).not.toHaveBeenCalled();
+    expect(ctx.mcpWorkingSet).toBeNull();
+    expect(ctx.tools.map((tool) => tool.getName())).not.toContain('mcp_call');
+  });
+
+  it('buildContextPushesLocalMcpConnectionErrorsIntoSystemNotice', async () => {
+    const mcpCall = fakeTool('mcp_call');
+    const mcpDescribe = fakeTool('mcp_describe');
+    const builtin = [fakeTool('read_file'), mcpCall, mcpDescribe];
+    const toolRegistry = {
+      getAllTools: vi.fn(() => builtin),
+      getTool: vi.fn((name: string) => builtin.find((tool) => tool.getName() === name)),
+    };
+    const mcpSync = {
+      syncToSession: vi.fn(async () => undefined),
+      getUserSkillNames: vi.fn(() => []),
+      getUserSkillDocuments: vi.fn(() => []),
+      loadAgentServers: vi.fn(async () => [{ id: 5, name: 'fs', description: '' }]),
+      getLocalSessionTools: vi.fn(() => []),
+      getLocalConnectionErrors: vi.fn(() => [{ serverId: 5, serverName: 'fs', reason: '连接超时' }]),
+      connectForCloud: vi.fn(async () => ({ tools: [], warnings: [], failedServers: [] })),
+      clearSession: vi.fn(), clearLocalSession: vi.fn(), clearCloudSnapshot: vi.fn(),
+    };
+    const { service, sessionMapper } = makeHarness({
+      toolRegistry, skillSync: mcpSync,
+      mcpLoadModeResolver: { resolve: vi.fn(async () => 'working_set') },
+    });
+    sessionMapper.selectById.mockResolvedValue({
+      id: 10, userId: 7, agentId: 2, executionMode: 'LOCAL',
+      projectKey: 'proj', workspace: '/ws', permissionLevel: 'READ_WRITE', modelId: 3,
+    });
+    const ctx = await service.buildContext(10);
+    expect(ctx.mcpWorkingSet?.servers[0].unavailableReason).toBe('连接超时');
+    // 与 CLOUD 同口径：失败原因同时进尾部 system-notice，不只藏在工作集标题
+    const noticed = ctx.messages.some((message) => typeof message.content === 'string'
+      && message.content.includes('system-notice')
+      && message.content.includes('连接超时'));
+    expect(noticed).toBe(true);
   });
 
   it('buildContextAnchorsBaseDateOnFirstUserMessage', async () => {

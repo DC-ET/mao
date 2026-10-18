@@ -116,6 +116,16 @@
                           @change="(val: string | number | boolean) => { plainModel[row.settingKey] = val === true ? 'true' : 'false' }"
                         />
                         <el-select
+                          v-else-if="isMcpLoadModeSetting(row.settingKey)"
+                          v-model="plainModel[row.settingKey]"
+                          :disabled="!canWrite"
+                          placeholder="MCP 工具加载模式"
+                          style="width: 100%"
+                        >
+                          <el-option label="工作集（默认，按需查询参数）" value="working_set" />
+                          <el-option label="全量注入（旧行为，每次请求带完整 schema）" value="full" />
+                        </el-select>
+                        <el-select
                           v-else-if="isAgentSetting(row.settingKey)"
                           v-model="plainModel[row.settingKey]"
                           :disabled="!canWrite"
@@ -467,6 +477,11 @@ function isModelSetting(key: string | undefined | null) {
 
 function isAgentSetting(key: string | undefined | null) {
   return !!key && AGENT_SELECT_KEYS.has(key)
+}
+
+/** MCP 工具加载模式：枚举值下拉，避免管理员手填拼错（后端仍会回落 working_set 兜底）。 */
+function isMcpLoadModeSetting(key: string | undefined | null) {
+  return key === 'mcp.loadMode'
 }
 
 const integrationRows = computed(() => settings.value.filter((item) => INTEGRATION_KEYS.has(item.settingKey)))

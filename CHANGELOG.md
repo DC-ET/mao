@@ -15,6 +15,27 @@
 
 ---
 
+## 0.0.306 (2026-10-18)
+
+### 后端
+
+- **MCP 工作集（Working Set，默认开启）**：新增用户级「MCP 工具加载模式」。工作集模式下会话不再把每台 MCP server 的全部工具 JSON Schema 注入 `tools` 数组，改为在系统提示新增独立一节「MCP 工作集」，只列 server 名、用途、工具名与只读标记；模型不确定参数时先调 `mcp_describe(server, tool)` 取 schema，再调 `mcp_call(server, tool, arguments)` 执行。全量注入模式保留为可切换项（行为与改造前一致）。工具清单获取链路（CLOUD 连接 / LOCAL 桌面上报）不变，两种模式复用同一套连接与执行内核。
+- **存储与接口**：新增 `V159` 迁移——用户级单值表 `user_mcp_load_mode`（`WORKING_SET` / `FULL`，与 per-server 的 `user_mcp_preference` 解耦）与系统设置 `mcp.loadMode` 全局默认（默认 `working_set`）；新增 `GET/PUT /v1/mcp-servers/load-mode`。解析顺序「用户偏好 → 全局默认 → 工作集」，带 5s TTL 缓存，查询失败降级为工作集、不阻断会话。
+- **失败信息与只读注解**：`McpToolsRegistry` 与 `CloudConnectResult` 新增结构化失败清单（`failedServers` / `connected:false` 的 server 与原因），工作集对连接失败的 server 标注「当前不可用」而不静默消失；`McpToolRef` 新增 `annotations.readOnlyHint`，CLOUD 连接、桌面上报、`mao-agent`、docker 容器四条来源全链路透传。工作集模式下 LOCAL 审批对明确只读的 MCP 工具在 READ_ONLY / READ_WRITE 级免审，未标注一律维持审批；SMART 级仍人工审批。全量注入模式不消费该注解，保持改造前「MCP 一律审批」的行为。
+- **审批与展示**：LOCAL 会话的 `mcp_call` 在 `ToolDispatcher` 内还原为 `mcp__{server}__{tool}` 全名并拆出内层参数下发桌面端，规则匹配 / 「总是允许」hint / 审计口径沿现有链路生效；参数无法还原时按 MCP 工具保守审批。工具结果摘要新增 `mcp_call` / `mcp_describe` 分支，流式事件保留原始工具名，桌面展示层还原为 `server.tool`。
+
+### 前端（桌面 / Web / 安卓）
+
+- **设置 → MCP 服务器**：新增「工具加载模式」单选（工作集 / 全量注入），切换后对新会话生效；模式为用户级单值偏好，与每台服务器的启用开关互不影响。
+- **工具卡片**：`mcp_call` / `mcp_describe` 显示中文名与 `server.tool` 参数预览；全量模式与历史消息里的 `mcp__server__tool` 名称同样展示为 `server.tool`。
+- **运行轨迹「贵」改为按成本判定**：「贵」不再看 token 量，改为单轮成本 `cost_micros` 达到阈值；阈值单位从 tokens 改为金额（元，默认 0.5，范围 0.001–1000），输入框保留三位小数。模型未配置价格的轮次一律不算贵（不设 token 回退口径）。阈值 localStorage 换 key（`mao:trace-thresholds:v2`），老用户阈值一次性重置为默认值。慢阈值、run 汇总、导出结构与后台「最贵的轮」榜不变。
+
+### 终端 CLI（mao-agent）
+
+- LOCAL 模式下 MCP 工具上报透传 `annotations`，使工作集的只读标记与审批免审对 CLI 会话同样生效（旧版 CLI 未升级时按缺失处理，功能降级但不报错）。
+
+---
+
 ## 0.0.305 (2026-10-18)
 
 ### 后端

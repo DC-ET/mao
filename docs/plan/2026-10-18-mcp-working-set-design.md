@@ -97,7 +97,7 @@ Mao 已支持按 Agent 关联 MCP server（`docs/plan/2026-08-03-mcp-integration
 
 ### 5.1 数据模型
 
-#### 5.1.1 `user_mcp_load_mode` 新表（Flyway `V158__mcp_working_set.sql`）
+#### 5.1.1 `user_mcp_load_mode` 新表（Flyway `V159__mcp_working_set.sql`）
 
 模式是**用户级单值偏好**，与 per-server 的 `user_mcp_preference`（`userId, serverId, enabled`）粒度不同，必须独立建表。v1.0 曾设想复用 `user_mcp_preference` 加列，评审已否决，原因：
 
@@ -306,7 +306,7 @@ annotations?: { readOnlyHint?: boolean } | null;
 - LOCAL：`normalizeMcpToolRef`（`mcp-sync-service.ts` 尾部）同样提取，桌面上报的 `tools` 数组里带上；
 - 桌面端 `main.cjs` 的 `mcp-sync` IPC 上报时，把 SDK 返回的 `annotations` 一并回传（Node SDK 的 `listTools` 已返回该字段）；
 - **agent-cli（mao-agent）同为 LOCAL 客户端**：`agent-cli/src/local/tools/mcp.ts` 的 `mapTools` / `McpServerReport` 同样透传 `annotations`，否则 CLI 上报丢只读标记；
-- **docker 容器路径（v1.1 补充，v1.0 遗漏）**：`container-mcp-bridge.ts` 构造 refs 处、`runtime-channel-protocol.ts` 的 `McpToolRefLike` / `McpServerSpec` 也要加字段，否则容器内执行的会话 annotations 丢失、免审判定失效。
+- **docker 容器路径（v1.1 补充，v1.0 遗漏）**：`container-mcp-bridge.ts` 构造 refs 处、`docker-tool-router.ts` 的跨通道传输形状 `McpToolRefLike` 也要加字段，否则容器内执行的会话 annotations 丢失、免审判定失效。
 
 消费点仅两处：工作集文本里的 `[只读]` 标记，以及 5.7 的审批判定。**全量模式不使用该字段**，行为与现在完全一致。
 
@@ -403,8 +403,8 @@ const isMcpTool = descriptor?.source === 'mcp' || effectiveToolName.startsWith(M
 
 | 阶段 | 内容 | 验证方式 |
 |------|------|----------|
-| **P1 数据与配置** | `V158__mcp_working_set.sql`（`user_mcp_load_mode` 新表 + `mcp.loadMode` 种子）；`McpLoadMode` 类型与解析（含短 TTL 缓存）；`UserMcpLoadModeService`（upsert）；`SystemSettingService.MCP_LOAD_MODE_KEY`；`PUT/GET /v1/mcp-servers/load-mode` | `cd backend-ts && npm test`；Flyway 迁移成功；curl 验证读写与回落 |
-| **P2 工作集核心** | `mcp-working-set.ts`（纯函数生成 + 确定性排序 + connectionErrors 标注）；`McpToolRef.annotations` 提取（`McpClientManager.toToolRefs` + `normalizeMcpToolRef` + 桌面端 / agent-cli 透传 + docker `container-mcp-bridge` / `runtime-channel-protocol`）；失败信息通道（`handleMcpToolsReport` 收集 `connected:false` + `CloudConnectResult.failedServers`）；`AgentExecutionContext.mcpWorkingSet`；`PromptEngine` 新增 `mcp-workingset` section 并加入 `INJECTED_SECTION_KEYS` | 单测：排序确定性、连接失败标注、只读标记、多轮字节一致；`prompt-engine.spec.ts` 补 section 断言（含 manifest keys） |
+| **P1 数据与配置** | `V159__mcp_working_set.sql`（`user_mcp_load_mode` 新表 + `mcp.loadMode` 种子）；`McpLoadMode` 类型与解析（含短 TTL 缓存）；`UserMcpLoadModeService`（upsert）；`SystemSettingService.MCP_LOAD_MODE_KEY`；`PUT/GET /v1/mcp-servers/load-mode` | `cd backend-ts && npm test`；Flyway 迁移成功；curl 验证读写与回落 |
+| **P2 工作集核心** | `mcp-working-set.ts`（纯函数生成 + 确定性排序 + connectionErrors 标注）；`McpToolRef.annotations` 提取（`McpClientManager.toToolRefs` + `normalizeMcpToolRef` + 桌面端 / agent-cli 透传 + docker `container-mcp-bridge` / `docker-tool-router`）；失败信息通道（`handleMcpToolsReport` 收集 `connected:false` + `CloudConnectResult.failedServers`）；`AgentExecutionContext.mcpWorkingSet`；`PromptEngine` 新增 `mcp-workingset` section 并加入 `INJECTED_SECTION_KEYS` | 单测：排序确定性、连接失败标注、只读标记、多轮字节一致；`prompt-engine.spec.ts` 补 section 断言（含 manifest keys） |
 | **P3 两个工具** | `McpCallTool` / `McpDescribeTool` 实现 + `createDefaultToolRegistry` 注册；`DefaultToolRegistryDeps` 注入 `McpToolsRegistry` / `McpClientManager` / `LocalToolExecutor`；`dispatchFullOutcome` LOCAL 分支内按 `mcp_call` 还原 fullToolName 并拆出内层 arguments 下发 | 单测：参数非法、server 不存在、tool 不存在、CLOUD/LOCAL 两条执行路径、LOCAL 会话下 `mcp_call` 经还原名下发表明审批链路生效 |
 | **P4 双模式与审批** | `HarnessService.buildContext` 按 `resolveMcpLoadMode` 二选一（全量路径逐字保留；解析放空清单判断之后）；LOCAL 分支全名还原 + annotations 免审；`tool-result-summarizer` / `ws-streaming-event-listener` 的 `mcp_call` / `mcp_describe` 摘要分支；桌面端 `toolDisplay.ts` 中文名与 preview 还原 | `tool-dispatcher.spec.ts` 补：还原名匹配规则、readOnlyHint 免审、未标注仍审批、还原失败保守审批；desktop `npm run build` |
 | **P5 界面收尾** | `McpServersView.vue` 模式单选 + api 扩展（独立 load-mode 接口）；`CHANGELOG.md` 顶部小节；`docs/` 与 `skills/mao-cli/` 同步 | `npm run build`（desktop / admin）；手工走通切换与回落 |
@@ -415,9 +415,9 @@ const isMcpTool = descriptor?.source === 'mcp' || effectiveToolName.startsWith(M
 
 ### 7.1 要做的（明确）
 
-1. 数据库：`V158__mcp_working_set.sql`——`user_mcp_load_mode` 新表（用户级单值）+ `mcp.loadMode` 系统配置种子。
+1. 数据库：`V159__mcp_working_set.sql`——`user_mcp_load_mode` 新表（用户级单值）+ `mcp.loadMode` 系统配置种子。
 2. 后端 `harness/mcp/workingset/`：`mcp-load-mode.ts`、`mcp-working-set.ts`、`impl/mcp-call-tool.ts`、`impl/mcp-describe-tool.ts`。
-3. `McpToolRef` 增加 `annotations?: { readOnlyHint?: boolean }`，五处填充：`McpClientManager.toToolRefs`（CLOUD）、`normalizeMcpToolRef`（LOCAL 服务端归一化）、桌面端 `main.cjs` 上报透传、agent-cli `src/local/tools/mcp.ts`（mapTools/McpServerReport）、docker `container-mcp-bridge.ts` + `runtime-channel-protocol.ts`（容器路径）。
+3. `McpToolRef` 增加 `annotations?: { readOnlyHint?: boolean }`，五处填充：`McpClientManager.toToolRefs`（CLOUD）、`normalizeMcpToolRef`（LOCAL 服务端归一化）、桌面端 `main.cjs` 上报透传、agent-cli `src/local/tools/mcp.ts`（mapTools/McpServerReport）、docker `container-mcp-bridge.ts` + `docker-tool-router.ts`（容器路径）。
 4. `AgentExecutionContext.mcpWorkingSet` + `PromptEngine` 新增 `mcp-workingset` section，并把 `mcp-workingset` 加入 `prompt-engine.ts` 的 `INJECTED_SECTION_KEYS`（否则被聚合进「系统提示词」大节，manifest 独立统计落空）。
 5. `McpCallTool` / `McpDescribeTool` 注册进 `createDefaultToolRegistry`；`DefaultToolRegistryDeps` 增加所需依赖注入（不含 `PathSandbox`）。
 6. `HarnessService.buildContext` 按模式二选一注入；全量模式代码路径保持原样。

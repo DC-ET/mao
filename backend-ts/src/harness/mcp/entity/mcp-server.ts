@@ -21,6 +21,11 @@ export interface McpServer {
   updatedAt?: string | null;
 }
 
+export interface McpToolAnnotations {
+  /** MCP tools/list 标准字段：为 true 表示该工具不修改外部状态。 */
+  readOnlyHint?: boolean;
+}
+
 export interface McpToolRef {
   serverId: number;
   serverName: string;
@@ -28,6 +33,26 @@ export interface McpToolRef {
   description: string;
   inputSchema: Record<string, unknown>;
   fullToolName?: string;
+  /** 工具注解（仅消费 readOnlyHint：工作集清单标记 + 审批免审）。 */
+  annotations?: McpToolAnnotations | null;
+}
+
+/** 某台 server 本次连接失败的结构化信息（工作集需标注「当前不可用」）。 */
+export interface McpConnectionError {
+  serverId: number | null;
+  serverName: string;
+  reason: string;
+}
+
+/**
+ * 只保留工作集与审批会消费的字段：读快照 / 桌面上报 / 容器三条来源都经此处归一，
+ * 保证同一工具在多来源下产出相同结构（前缀缓存要求文本稳定）。
+ * 未标注 readOnlyHint 时返回 null，避免把上游的任意扩展注解带进内存。
+ */
+export function normalizeMcpAnnotations(raw: unknown): McpToolAnnotations | null {
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  if ((raw as { readOnlyHint?: unknown }).readOnlyHint !== true) return null;
+  return { readOnlyHint: true };
 }
 
 export function fullToolName(serverName: string, toolName: string): string {

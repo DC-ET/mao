@@ -14,6 +14,8 @@ export interface McpToolDef {
   name: string;
   description: string;
   schema: Record<string, unknown>;
+  /** MCP tools/list 标准注解；服务端工作集 / 审批消费 readOnlyHint。 */
+  annotations?: { readOnlyHint?: boolean } | null;
 }
 
 export interface McpServerReport {
@@ -143,11 +145,12 @@ function notify(conn: McpConn, method: string, params: unknown): void {
   conn.proc?.stdin.write(frame({ jsonrpc: '2.0', method, params }));
 }
 
-function mapTools(listed: { tools?: Array<{ name: string; description?: string; inputSchema?: Record<string, unknown> }> }): McpToolDef[] {
+function mapTools(listed: { tools?: Array<{ name: string; description?: string; inputSchema?: Record<string, unknown>; annotations?: { readOnlyHint?: boolean } | null }> }): McpToolDef[] {
   return (listed.tools ?? []).map((t) => ({
     name: t.name,
     description: t.description || '',
     schema: t.inputSchema || { type: 'object', properties: {} },
+    annotations: t.annotations ?? null,
   }));
 }
 

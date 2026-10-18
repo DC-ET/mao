@@ -1,6 +1,6 @@
 import { harnessLog } from '../../log.js';
 import type { Agent } from '../../deps.js';
-import { STATUS_ENABLED, TYPE_STDIO, fullToolName, normalizeMcpInputSchema, type McpServer, type McpToolRef } from '../entity/mcp-server.js';
+import { STATUS_ENABLED, TYPE_STDIO, fullToolName, normalizeMcpAnnotations, normalizeMcpInputSchema, type McpConnectionError, type McpServer, type McpToolRef } from '../entity/mcp-server.js';
 import type { McpServerMapper } from '../mapper/mcp-server.mapper.js';
 import type { McpServerService } from '../service/mcp-server.service.js';
 import type { UserMcpPreferenceService } from '../preference/service/user-mcp-preference.service.js';
@@ -10,6 +10,8 @@ import { McpToolsRegistry } from './mcp-tools-registry.js';
 export interface CloudConnectResult {
   tools: McpToolRef[];
   warnings: string[];
+  /** 本轮连接失败 / 被取消的 server（工作集「当前不可用」标注的数据源）。 */
+  failedServers: McpConnectionError[];
 }
 
 export class McpSyncService {
@@ -84,6 +86,7 @@ export class McpSyncService {
   ): Promise<CloudConnectResult> {
     const tools: McpToolRef[] = [];
     const warnings: string[] = [];
+    const failedServers: McpConnectionError[] = [];
     // 成功集合按 server 主键记录：mcp_server.name 无唯一约束（后台允许重名），
     // 按名字匹配会把「同名但挂了的那一个」误判为成功，导致它的工具本轮直接消失、
     // 也没有不可用 notice——tools 抖动正是本方案要消除的东西。
@@ -94,6 +97,11 @@ export class McpSyncService {
       // 否则执行体到不了 finally，WS handler 的执行簿记永久残留。
       if (cancelFlag?.get()) {
         warnings.push(`${server.name}: 会话已取消`);
+        // 取消点之后的 server 本轮都没有尝试连接，同样标记为不可用（工作集清单要如实标注）。
+        const cancelFrom = servers.indexOf(server);
+        for (const rest of servers.slice(cancelFrom >= 0 ? cancelFrom : servers.length)) {
+          failedServers.push({ serverId: rest.id ?? null, serverName: rest.name ?? '', reason: '会话已取消' });
+        }
         break;
       }
       try {
@@ -104,6 +112,7 @@ export class McpSyncService {
         if (server.name != null) succeededByName.add(server.name);
       } catch (e) {
         warnings.push(`${server.name}: ${(e as Error).message}`);
+        failedServers.push({ serverId: server.id ?? null, serverName: server.name ?? '', reason: (e as Error).message });
         harnessLog('warn', `MCP connect failed for ${server.name}: ${(e as Error).message}`);
       }
     }
@@ -126,7 +135,7 @@ export class McpSyncService {
     for (const serverName of staleServers) {
       warnings.push(`${serverName} 当前不可用，相关工具调用可能失败`);
     }
-    return { tools: snapshot, warnings };
+    return { tools: snapshot, warnings, failedServers };
   }
 
   buildSyncPayload(servers: McpServer[]): Record<string, unknown> {
@@ -148,8 +157,13 @@ export class McpSyncService {
     return { servers: payloadServers };
   }
 
-  recordReport(sessionId: number, tools: McpToolRef[]): void {
-    this.toolsRegistry.report(sessionId, tools.map((tool) => normalizeMcpToolRef(tool)));
+  recordReport(sessionId: number, tools: McpToolRef[], connectionErrors: McpConnectionError[] = []): void {
+    this.toolsRegistry.report(sessionId, tools.map((tool) => normalizeMcpToolRef(tool)), connectionErrors);
+  }
+
+  /** 最近一次桌面上报里连接失败的 server（工作集「当前不可用」标注用）。 */
+  getLocalConnectionErrors(sessionId: number): McpConnectionError[] {
+    return this.toolsRegistry.getConnectionErrors(sessionId);
   }
 
   resolveServerIdByName(name: string): number | null {
@@ -190,7 +204,7 @@ export class McpSyncService {
   }
 }
 
-/** 桌面上报与云端连接共用的工具引用归一化：补 serverId / inputSchema / fullToolName 缺省。 */
+/** 桌面上报与云端连接共用的工具引用归一化：补 serverId / inputSchema / fullToolName / annotations 缺省。 */
 function normalizeMcpToolRef(tool: McpToolRef): McpToolRef {
   return {
     ...tool,
@@ -199,6 +213,7 @@ function normalizeMcpToolRef(tool: McpToolRef): McpToolRef {
       tool.inputSchema ?? (tool as { schema?: unknown }).schema,
     ),
     fullToolName: tool.fullToolName ?? fullToolName(tool.serverName, tool.toolName),
+    annotations: normalizeMcpAnnotations(tool.annotations),
   };
 }
 

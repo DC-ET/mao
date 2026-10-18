@@ -43,7 +43,7 @@
 
 | 层 | 文件 | 改动 |
 |---|---|---|
-| backend-ts | `src/session/run-trace.service.ts` | `RunTraceQuery.expensiveTokens` → `expensiveCost`；`toRoundVO` 判定改为 `call.costMicros != null && call.costMicros >= query.expensiveCost` |
+| backend-ts | `src/session/run-trace.service.ts` | `RunTraceQuery.expensiveTokens` → `expensiveCost` / `expensiveCostMicros`；`toRoundVO` 判定改为 `call.costMicros != null && call.costMicros >= query.expensiveCostMicros` |
 | backend-ts | `src/session/session.routes.ts` | query 参数名与钳制范围改为金额口径 |
 | backend-ts | `src/session/session-vo.ts` | 注释口径同步（VO 字段名不变） |
 | backend-ts | `src/session/run-trace.service.spec.ts`、`session.routes.spec.ts` | 阈值边界、未配价不标、钳制范围用例改写 |

@@ -27,6 +27,7 @@ import { LLM_CALL_SCENES, LlmCallContext } from '../../usage/llm-call-context.js
 import type { DockerToolRouter } from '../container/docker-tool-router.js';
 import { isDockerOnlyTool } from '../container/docker-tool-router.js';
 import type { ApprovalHint, ApprovalRuleFacade, ApprovalRuleMatchHit } from '../approval/approval-hint.js';
+import { restoreMcpCallForLocal } from '../mcp/workingset/impl/mcp-call-tool.js';
 
 /**
  * 飞书进度卡上的提问表单。
@@ -54,12 +55,16 @@ export interface InboxRecorder {
 
 const ASK_USER_QUESTIONS = 'ask_user_questions';
 const MCP_TOOL_PREFIX = 'mcp__';
+/** 工作集模式的执行入口（LOCAL 需先还原成全名再下发桌面端）。 */
+const MCP_CALL = 'mcp_call';
 const SERVER_ONLY_TOOLS = new Set([
   'task_create', 'task_update', 'task_list', 'task_delete',
   'create_scheduled_task', 'update_scheduled_task', 'list_scheduled_tasks', 'delete_scheduled_task',
   'spawn_subagent', 'subagent_followup', 'check_subagent', 'cancel_subagent', 'wait_subagents',
   'web_search', 'open_web_page', 'generate_image', 'edit_image',
   'send_wechat_image', 'send_wechat_file',
+  // mcp_describe 是纯本地查询（读会话缓存清单），两种执行模式都不进 LOCAL 委托分支。
+  'mcp_describe',
 ]);
 const WRITE_TOOLS = new Set(['write_file', 'edit_file']);
 
@@ -115,6 +120,12 @@ export class ToolDispatcher {
     private readonly approvalRules?: ApprovalRuleFacade | null,
     /** docker 运行时路由（技术方案 §5.7.1）：可选注入，host 模式 / 未注入时零行为差异。 */
     private readonly dockerRouter?: DockerToolRouter | null,
+    /**
+     * MCP 只读注解查询（工作集审批用）：fullToolName → 是否 readOnlyHint===true。
+     * 可选注入，未注入时一律按可写处理（现状行为）。解析器需自行判断当前会话是否工作集模式——
+     * 全量模式必须保持改造前「MCP 一律审批」的行为（设计 §5.6）。
+     */
+    private readonly mcpReadOnlyLookup?: ((sessionId: number | null, fullToolName: string) => boolean | Promise<boolean>) | null,
   ) {}
 
   /**
@@ -267,7 +278,22 @@ export class ToolDispatcher {
         if (session?.permissionLevel) latest = session.permissionLevel;
       }
       const level = permissionLevelFromString(latest);
-      const isMcpTool = descriptor?.source === 'mcp' || toolName.startsWith(MCP_TOOL_PREFIX);
+      // 工作集模式：mcp_call 只是外壳，LOCAL 会话必须还原成 mcp__server__tool 才能被桌面端路由，
+      // 审批规则 / hint / denylist 也才能沿现有链路命中。还原发生在 shouldRequireApproval 之前。
+      const restoredMcpCall = toolName === MCP_CALL ? restoreMcpCallForLocal(argumentsJson) : null;
+      const effectiveToolName = restoredMcpCall?.fullToolName ?? toolName;
+      const executeArgumentsJson = restoredMcpCall?.argumentsJson ?? argumentsJson;
+      const isMcpCall = toolName === MCP_CALL;
+      const isMcpTool = isMcpCall || descriptor?.source === 'mcp'
+        || (effectiveToolName != null && effectiveToolName.startsWith(MCP_TOOL_PREFIX));
+      // 只读标记只对能取得全名的 MCP 工具生效；还原失败（无 mcp__ 前缀）保守按可写处理。
+      const mcpReadOnly = isMcpTool && effectiveToolName.startsWith(MCP_TOOL_PREFIX)
+        ? (await this.mcpReadOnlyLookup?.(sessionId, effectiveToolName)) === true
+        : false;
+      // 参数非法导致无法还原时，仍按 MCP 工具保守审批（不能因为还原失败就绕过审批）。
+      const approvalDescriptor = isMcpCall && restoredMcpCall == null
+        ? { ...descriptor, source: 'mcp' as const }
+        : descriptor;
       const rules = this.approvalRules;
       const triggerUserId = executionUserId ?? userId;
       // 规则准入（V135 决策 11）：仅对「本来需要审批」的调用查规则——
@@ -276,10 +302,10 @@ export class ToolDispatcher {
       // 触发人未知（userId=null，规则按用户隔离）同样不查。
       const ruleEligible = rules != null && triggerUserId != null
         && level !== 'READ_ONLY' && level !== 'FULL'
-        && (toolName === 'shell' || isMcpTool);
+        && (effectiveToolName === 'shell' || isMcpTool);
       if (rules && ruleEligible) {
         const hit = await rules.match({
-          userId: triggerUserId, sessionId, toolName, argumentsJson,
+          userId: triggerUserId, sessionId, toolName: effectiveToolName, argumentsJson,
         });
         if (hit) {
           // 命中即短路：静默放行 + 计数 + rule 徽标；Jev 前置/DangerAssessor/ProxyApprover 均不运行
@@ -295,14 +321,17 @@ export class ToolDispatcher {
             };
           }
           return {
-            raw: await this.localToolExecutor.execute(sessionId, toolName, argumentsJson, workspace, false, null),
+            raw: await this.localToolExecutor.execute(
+              sessionId, effectiveToolName, executeArgumentsJson, workspace, false, null,
+            ),
             llmVerdict: null,
             approvalMark,
           };
         }
       }
       const decision = await this.shouldRequireApproval(
-        descriptor, toolName, level, argumentsJson, modelConfig, sessionId, executionUserId ?? userId, contextSnapshot,
+        approvalDescriptor, effectiveToolName, level, argumentsJson, modelConfig, sessionId,
+        executionUserId ?? userId, contextSnapshot, mcpReadOnly,
       );
       // PROXY 级 AI 审批拒绝：不下发执行，直接把拒绝理由作为工具错误返回给主模型
       if (decision.llmVerdict && !decision.llmVerdict.approved) {
@@ -313,7 +342,7 @@ export class ToolDispatcher {
       }
       // 需审批且可规则化 → 生成「总是允许」hint 随 tool_execute 下发（denylist 命中 → null，卡片两按钮不变）
       const approvalHint = rules && decision.needApproval && ruleEligible
-        ? await rules.buildHint(toolName, argumentsJson)
+        ? await rules.buildHint(effectiveToolName, argumentsJson)
         : null;
       if (toolName === 'shell' && this.backgroundTaskManager && isLocalShellAsyncExec(argumentsJson)) {
         return {
@@ -326,7 +355,7 @@ export class ToolDispatcher {
       return {
         // 无 hint 时保持 6 参调用形态（旧行为字节级不变，审批 spec 的精确参数断言不受影响）
         raw: await this.localToolExecutor.execute(
-          sessionId, toolName, argumentsJson, workspace, decision.needApproval, decision.dangerReason,
+          sessionId, effectiveToolName, executeArgumentsJson, workspace, decision.needApproval, decision.dangerReason,
           ...(approvalHint ? [approvalHint] : []),
         ),
         llmVerdict: decision.llmVerdict ?? null,
@@ -478,17 +507,20 @@ export class ToolDispatcher {
     sessionId: number | null,
     userId: number | null,
     contextSnapshot: string | null = null,
+    /** MCP annotations.readOnlyHint === true：仅让「明确只读」的工具免审，不扩大任何风险面。 */
+    mcpReadOnly = false,
   ): Promise<ApprovalDecision> {
     // MCP 识别：descriptor.source 优先，mcp__ 前缀保留为 fallback（缺 descriptor 的直接实现/旧名场景）
     const isMcpTool = descriptor?.source === 'mcp' || (toolName != null && toolName.startsWith(MCP_TOOL_PREFIX));
+    const writableMcp = isMcpTool && !mcpReadOnly;
     switch (level) {
       case 'READ_ONLY':
-        return { needApproval: this.isWriteOrShellTool(toolName) || isMcpTool, dangerReason: null };
+        return { needApproval: this.isWriteOrShellTool(toolName) || writableMcp, dangerReason: null };
       case 'READ_WRITE':
-        return { needApproval: toolName === 'shell' || isMcpTool, dangerReason: null };
+        return { needApproval: toolName === 'shell' || writableMcp, dangerReason: null };
       case 'SMART': {
         if (toolName !== 'shell' && !isMcpTool) return { needApproval: false, dangerReason: null };
-        // MCP 无 LLM 推理阶段，维持一律人工审批，不经过前置决策
+        // MCP 无 LLM 推理阶段，维持一律人工审批，不经过前置决策（只读注解也不放宽 SMART）
         if (isMcpTool) return { needApproval: true, dangerReason: 'MCP 工具调用需要用户确认' };
         // Jev 前置：低风险直接放行；高风险或未配置/失败（null）则继续走 DangerAssessor
         const pre = await this.tryJevPrefilter(toolName, argumentsJson);

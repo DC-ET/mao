@@ -46,15 +46,33 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   page_keyboard: '发送键盘输入',
   page_wait: '等待页面',
   page_actions: '执行批量页面操作',
+  mcp_call: '调用 MCP 工具',
+  mcp_describe: '查询 MCP 工具参数',
 }
 
 export function getToolDisplayName(name: string): string {
-  return TOOL_DISPLAY_NAMES[name] ?? name
+  const mapped = TOOL_DISPLAY_NAMES[name]
+  if (mapped) return mapped
+  // 全量模式 / 历史消息里的工具名是 mcp__server__tool：展示层还原为 server.tool
+  if (name.startsWith('mcp__')) {
+    const rest = name.slice('mcp__'.length)
+    const sep = rest.indexOf('__')
+    if (sep > 0 && sep + 2 < rest.length) return `${rest.slice(0, sep)}.${rest.slice(sep + 2)}`
+  }
+  return name
 }
 
 export function getToolInputPreview(name: string, input?: Record<string, unknown> | null): string {
   if (!input) return ''
   switch (name) {
+    case 'mcp_call':
+    case 'mcp_describe': {
+      // 流式事件下发的仍是原始工具名 mcp_call，还原在展示层完成：
+      // 从外壳 {server, tool, arguments} 取 server.tool，避免卡片显示裸 JSON。
+      const server = typeof input.server === 'string' ? input.server : ''
+      const tool = typeof input.tool === 'string' ? input.tool : ''
+      return server && tool ? `${server}.${tool}` : ''
+    }
     case 'generate_image':
     case 'edit_image': {
       const prompt = input.prompt

@@ -133,6 +133,10 @@ export function summarize(toolName: string | null | undefined, argumentsJson: st
       return summarizeSendWechatImage(argumentsJson, result);
     case 'send_wechat_file':
       return summarizeSendWechatFile(argumentsJson, result);
+    case 'mcp_call':
+      return summarizeMcpCall(argumentsJson, result);
+    case 'mcp_describe':
+      return summarizeMcpDescribe(argumentsJson, result);
     case 'feishu_read_doc':
     case 'feishu_download_file':
     case 'feishu_send_image':
@@ -542,8 +546,33 @@ function summarizeFeishuTool(toolName: string, argumentsJson: string | null | un
   return summary;
 }
 
-function summarizeGeneric(toolName: string, result: string | null | undefined): string {
-  if (result == null) return toolName;
+/** mcp_call 摘要：外壳参数里取 server.tool，流式阶段参数不完整时回退通用文案。 */
+function summarizeMcpCall(argumentsJson: string | null | undefined, result: string | null | undefined): string {
+  const target = extractMcpTarget(argumentsJson);
+  const label = target != null ? `调用 MCP 工具 ${target}` : '调用 MCP 工具';
+  const node = asObj(parseJson(result ?? null));
+  if (node != null && has(node, 'error')) return `${label} (失败)`;
+  return label;
+}
+
+function summarizeMcpDescribe(argumentsJson: string | null | undefined, result: string | null | undefined): string {
+  const target = extractMcpTarget(argumentsJson);
+  const label = target != null ? `查询 MCP 工具 ${target}` : '查询 MCP 工具';
+  const node = asObj(parseJson(result ?? null));
+  if (node != null && has(node, 'error')) return `${label} (失败)`;
+  return label;
+}
+
+/** 从 {server, tool} 外壳里取 `server.tool`；缺字段 / 非法 JSON 返回 null。 */
+function extractMcpTarget(argumentsJson: string | null | undefined): string | null {
+  const node = asObj(parseJson(argumentsJson ?? null));
+  if (node == null) return null;
+  const server = typeof node.server === 'string' ? node.server.trim() : '';
+  const tool = typeof node.tool === 'string' ? node.tool.trim() : '';
+  return server !== '' && tool !== '' ? `${server}.${tool}` : null;
+}
+
+function summarizeGeneric(toolName: string, result: string | null | undefined): string {  if (result == null) return toolName;
   const node = asObj(parseJson(result));
   if (!node) return toolName;
   if (has(node, 'error')) return `${toolName} (错误)`;
