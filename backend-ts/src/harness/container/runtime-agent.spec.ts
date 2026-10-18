@@ -27,6 +27,7 @@ function envelopeOf(workspace: string): RuntimeEnvelope {
     ecpToken: 'ecp-probe',
     larkUat: null,
     depsEnv: { NPM_CONFIG_PREFIX: '/deps/7/npm' },
+    envVars: {},
   };
 }
 

@@ -128,6 +128,11 @@ export interface TerminalLarkUatInjector {
   injectForUser(userId: number): Promise<TerminalLarkUatCredentials | null>;
 }
 
+/** 三级环境变量解析（结构化依赖，避免终端模块与 env 域耦合）。 */
+export interface TerminalEnvVarsLookup {
+  resolveForSession(userId: number, workspace: string | null): Promise<Record<string, string>>;
+}
+
 export interface TerminalManagerDeps {
   pathSandbox: TerminalPathSandbox;
   runtimeResolver: TerminalRuntimeResolver;
@@ -141,6 +146,11 @@ export interface TerminalManagerDeps {
    * spawn，pip/npm 安装位置须指向每用户 /deps 挂载。host 用户返回 null，行为零变化。
    */
   depsEnvProvider?: (userId: number) => Record<string, string> | null | Promise<Record<string, string> | null>;
+  /**
+   * 三级环境变量（§5.7(3)）：PTY 长驻，buildEnv 只在 spawn 时执行一次，
+   * 已打开的终端不感知后续配置变更（与 git token / deps env 现状一致）。
+   */
+  envVariableService?: TerminalEnvVarsLookup;
   config: TerminalManagerConfig;
   audit?: TerminalAuditRecorder;
   ptyFactory?: PtyFactory;
@@ -406,6 +416,16 @@ export class TerminalManager {
         }
       } catch (e) {
         harnessLog('warn', `Failed to resolve deps env for user ${userId}`, e);
+      }
+    }
+    if (this.deps.envVariableService) {
+      try {
+        // params.workspace 可为 null；服务内统一归一化为全局根，与 host 侧键一致
+        const vars = await this.deps.envVariableService.resolveForSession(userId, params.workspace ?? null);
+        Object.assign(env, vars);
+      } catch (e) {
+        // 变量解析失败不应阻断终端创建
+        harnessLog('warn', `Failed to resolve env vars for user ${userId}`, e);
       }
     }
     if (this.deps.gitCredentials) {

@@ -12,6 +12,8 @@ describe('sensitive-env', () => {
     expect(isSensitiveChildEnvKey('MYSQL_PASSWORD')).toBe(true);
     expect(isSensitiveChildEnvKey('APP_NOTIFICATION_WEBHOOK_SECRET')).toBe(true);
     expect(isSensitiveChildEnvKey('APP_MCP_SECRET')).toBe(true);
+    expect(isSensitiveChildEnvKey('SETTINGS_SECRET')).toBe(true);
+    expect(isSensitiveChildEnvKey('DINGTALK_OAUTH_SECRET')).toBe(true);
     expect(isSensitiveChildEnvKey('MAO_TOKEN')).toBe(true);
     expect(isSensitiveChildEnvKey('ECP_TOKEN')).toBe(true);
     expect(isSensitiveChildEnvKey('LARKSUITE_CLI_USER_ACCESS_TOKEN')).toBe(true);

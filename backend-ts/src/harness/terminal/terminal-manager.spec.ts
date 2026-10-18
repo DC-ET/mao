@@ -81,6 +81,7 @@ async function newManager(overrides: Partial<TerminalManagerConfig> = {}, extra:
   tokenMap?: Record<string, string>;
   ecpInjector?: { injectForUser: (userId: number) => Promise<string | null> };
   larkUatInjector?: { injectForUser: (userId: number) => Promise<{ uat: string; appId: string } | null> };
+  envVariableService?: { resolveForSession: (userId: number, workspace: string | null) => Promise<Record<string, string>> };
 } = {}): Promise<{ manager: TerminalManager; root: string }> {
   const root = useTmpDir('mao-term-');
   const sandbox = new PathSandbox(root);
@@ -92,6 +93,7 @@ async function newManager(overrides: Partial<TerminalManagerConfig> = {}, extra:
     userLookup: { findById: async (id) => ({ id, username: `user${id}` }) },
     ecpInjector: extra.ecpInjector,
     larkUatInjector: extra.larkUatInjector,
+    envVariableService: extra.envVariableService,
     config: config(overrides),
     ptyFactory: extra.ptyFactory ?? fakeFactory,
     audit: extra.audit
@@ -178,8 +180,31 @@ describe('TerminalManager', () => {
     expect(FakePty.instances[0].options.env.ECP_TOKEN).toBe('ecp-session-token');
   });
 
-  it('injects LARKSUITE_CLI credentials when lark UAT injector returns a value', async () => {
+  it('injects three-layer env vars resolved for the session workspace', async () => {
+    const resolved: Array<{ userId: number; workspace: string | null }> = [];
     const { manager, root } = await newManager({}, {
+      envVariableService: {
+        resolveForSession: async (userId, workspace) => {
+          resolved.push({ userId, workspace });
+          return { NPM_REGISTRY: 'https://mirror.internal' };
+        },
+      },
+    });
+    await manager.create({ sessionId: 11, userId: 7, workspace: `${root}/proj` });
+    expect(resolved).toEqual([{ userId: 7, workspace: `${root}/proj` }]);
+    expect(FakePty.instances[0].options.env.NPM_REGISTRY).toBe('https://mirror.internal');
+  });
+
+  it('keeps terminal creation alive when env var resolution fails', async () => {
+    const { manager, root } = await newManager({}, {
+      envVariableService: { resolveForSession: async () => { throw new Error('db down'); } },
+    });
+    const terminal = await manager.create({ sessionId: 12, userId: 7, workspace: root });
+    expect(terminal).toBeTruthy();
+    expect(FakePty.instances[0].options.env.NPM_REGISTRY).toBeUndefined();
+  });
+
+  it('injects LARKSUITE_CLI credentials when lark UAT injector returns a value', async () => {    const { manager, root } = await newManager({}, {
       larkUatInjector: { injectForUser: async () => ({ uat: 'u-lark', appId: 'cli_lark' }) },
     });
     await manager.create({ sessionId: 9, userId: 6, workspace: root });

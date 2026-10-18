@@ -171,8 +171,12 @@ export class ShellSessionTool extends BaseTool {
     if (workdirArg) workdir = this.pathSandbox.resolveLenient(workdirArg, workspace);
     const tokenMap = userId != null && this.gitCredentialService
       ? await this.gitCredentialService.getTokenMapByUser(userId) : {};
+    // 工作区变量按「会话创建时的工作区」绑定（workdir 参数可能是子目录，不能作为绑定键）
+    const envVars = await this.sessionManager.resolveEnvVarsFor(userId, workspace);
     const shellId = asText(args.session_id);
-    const session = this.sessionManager.getOrCreate(conversationId ?? 0, shellId, userId, workdir, tokenMap);
+    const session = this.sessionManager.getOrCreate(
+      conversationId ?? 0, shellId, userId, workdir, tokenMap, envVars, workspace,
+    );
     const releaseCommand = await session.acquireCommand?.() ?? (() => undefined);
     // 上一条命令未结束时再写新命令会让两条命令的输出交织，且新命令要排在它之后才执行
     if (session.pendingCommand) {
@@ -181,7 +185,7 @@ export class ShellSessionTool extends BaseTool {
     }
     try {
       // 持久会话的用户环境不会自动更新，执行前按当前触发者刷新 Git/Home 环境。
-      this.sessionManager.refreshUserEnvironment?.(session, userId, tokenMap);
+      this.sessionManager.refreshUserEnvironment?.(session, userId, tokenMap, null, envVars);
       await this.injectMaoToken(session, userId);
       // 复用已有会话时 getOrCreate 不会改变 cwd，必须显式 cd
       if (workdirArg && workdir) {
@@ -329,7 +333,9 @@ export class ShellSessionTool extends BaseTool {
       }
       const tokenMap = userId != null && this.gitCredentialService
         ? await this.gitCredentialService.getTokenMapByUser(userId) : {};
-      this.sessionManager.refreshUserEnvironment?.(session, userId, tokenMap);
+      this.sessionManager.refreshUserEnvironment?.(
+        session, userId, tokenMap, null, await this.sessionManager.resolveEnvVarsForSession(session, userId),
+      );
       // 与 exec 一致：写命令前重新注入短效 MAO_TOKEN
       await this.injectMaoToken(session, userId);
       // 输入本身不带结束标记，必须额外回显 marker，否则只能空等到超时

@@ -21,6 +21,9 @@
         <router-link to="/settings/git-credentials" class="settings-nav-item" active-class="active">
           Git 凭证
         </router-link>
+        <router-link to="/settings/env-variables" class="settings-nav-item" active-class="active">
+          环境变量
+        </router-link>
         <router-link to="/settings/notifications" class="settings-nav-item" active-class="active">
           消息通知
         </router-link>

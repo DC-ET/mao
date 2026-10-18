@@ -64,6 +64,12 @@ export const ErrorCode = {
   /** 点踩反馈已被其他管理员处理（并发 convert/dismiss，CAS 影响行数不符）。HTTP 409。 */
   FEEDBACK_ALREADY_HANDLED: { code: 3046, message: '该反馈已被处理，请刷新后重试' },
 
+  /** 三级环境变量：不存在 / 同层重名 / 超条数上限 / 保留键（技术方案 §8.1）。 */
+  ENV_VARIABLE_NOT_FOUND: { code: 3047, message: '环境变量不存在' },
+  ENV_VARIABLE_KEY_DUPLICATE: { code: 3048, message: '同名变量已存在' },
+  ENV_VARIABLE_LIMIT_EXCEEDED: { code: 3049, message: '单层最多配置 50 个变量' },
+  ENV_VARIABLE_KEY_RESERVED: { code: 3050, message: '该变量名为平台保留变量，不允许配置' },
+
   /** 用量预算 BLOCK 超线：message 动态携带 scope/当期消耗/上限（技术方案 §5.7）。 */
   BUDGET_EXCEEDED: { code: 3041, message: '用量预算已超限' },
 

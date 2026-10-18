@@ -46,6 +46,9 @@ import { UserService } from './user/user.service.js';
 import { registerUserRoutes } from './user/user.routes.js';
 import { GitCredentialService, assertGitCredentialSecret } from './user/git-credential.service.js';
 import { registerAdminGitCredentialRoutes, registerGitCredentialRoutes } from './user/git-credential.routes.js';
+import { MysqlEnvVariableRepository } from './env/env-variable.repository.js';
+import { EnvVariableService } from './env/env-variable.service.js';
+import { registerAdminEnvVariableRoutes, registerEnvVariableRoutes } from './env/env-variable.routes.js';
 import {
   MysqlPermissionRepository,
   MysqlRolePermissionRepository,
@@ -715,6 +718,15 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   );
   const commandRepo = new MysqlUserCommandRepository(db);
   const commandService = new UserCommandService(commandRepo);
+  // 三级环境变量（技术方案 §5.6）：系统层 + 用户层 + 工作区层共用一套仓储/校验/缓存
+  const envVariableService = new EnvVariableService(
+    new MysqlEnvVariableRepository(db),
+    cfg.app.gitCredential.secretKey,
+    cfg.app.harness.workspaceRoot,
+    { shellEnvVarsEnabled: () => settingService.shellEnvVarsEnabled() },
+    async (userId) => (await gitCredentials.listByUserId(userId))
+      .map((credential) => GitCredentialService.envVarNameForDomain(credential.domain)),
+  );
   const weixinPref = new UserWeixinPreferenceService(new MysqlUserWeixinPreferenceRepository(db));
   const taskPanelPref = new UserTaskPanelPreferenceService(new MysqlUserTaskPanelPreferenceRepository(db));
 
@@ -967,6 +979,10 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     harnessTuning.shell.maxSessionsPerConversation,
     harnessTuning.shell.sessionIdleTimeoutMinutes,
     harnessTuning.shell.sessionMaxLifetimeHours,
+    undefined,
+    undefined,
+    // 三级环境变量：host 侧查库 + 解密，每条命令前随 refreshUserEnvironment 刷新
+    (userId, workspace) => envVariableService.resolveForSession(userId, workspace),
   );
   // 云端终端：与 shellManager 并列（后者是 Agent 的管道 shell，本类是用户的交互式 PTY）
   const terminalAudit: TerminalAuditRecorder = (event, terminal, ctx) => {
@@ -1040,6 +1056,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     userLookup: { findById: (id: number) => userRepo.findById(id) as Promise<{ username?: string | null } | null> },
     ecpInjector,
     larkUatInjector,
+    envVariableService,
   }, cloudRuntimeCfg.container.depsDir);
   const dockerRouter = new DockerToolRouter({
     containerRegistry,
@@ -1135,6 +1152,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     // §5.13：仅容器用户注入 deps env（npm/pip 安装落到每用户 /deps 挂载），host 用户零变化
     depsEnvProvider: async (userId) =>
       (await dockerRouter.enabledFor(userId)) ? buildDepsEnv(cloudRuntimeCfg.container.depsDir, userId) : null,
+    envVariableService,
     config: terminalCfg,
     audit: terminalAudit,
     ptyFactory: containerPtyFactory,
@@ -2736,6 +2754,12 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     registerPermissionRoutes(api, permissionService);
     registerGitCredentialRoutes(api, gitCredentials);
     registerAdminGitCredentialRoutes(api, { gitCredentialService: gitCredentials, permissionService });
+    registerEnvVariableRoutes(api, { envVariableService, sessionLookup: sessionRepo });
+    registerAdminEnvVariableRoutes(api, {
+      envVariableService,
+      permissionService,
+      userLookup: { findById: (id: number) => userRepo.findById(id) },
+    });
     registerAgentAvatarRoutes(api, fileService, permissionService);
     registerAgentRoutes(api, {
       agentService, experienceService, suggestedQuestionService, userRepo, mcpServerValidator: mcpValidator,

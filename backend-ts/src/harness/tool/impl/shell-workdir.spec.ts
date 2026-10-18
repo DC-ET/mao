@@ -31,6 +31,9 @@ describe('workdir 的 cd 失败必须上报而不是静默执行', () => {
     getSession: vi.fn(() => session),
     close: vi.fn(),
     listByConversation: vi.fn(() => [session]),
+    refreshUserEnvironment: vi.fn(),
+    resolveEnvVarsFor: vi.fn(async () => null),
+    resolveEnvVarsForSession: vi.fn(async () => null),
   };
   // 第 1 次 readUntilMarker 对应 cd（失败），第 2 次对应真实命令
   const readResults: Array<{ output: string; truncated: boolean; completed: boolean; exitCode: number | null; matched: null }> = [

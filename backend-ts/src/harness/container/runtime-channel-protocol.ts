@@ -23,6 +23,11 @@ export interface RuntimeEnvelope {
   larkUat: { appId: string; uat: string } | null;
   /** §5.13 依赖持久化 env（NPM_CONFIG_PREFIX / PIP_TARGET / PIP_BREAK_SYSTEM_PACKAGES / PATH 前缀）。 */
   depsEnv: Record<string, string>;
+  /**
+   * 三级环境变量合并结果（技术方案 §4.2）：由宿主机查库 + 解密后随 envelope 下发，
+   * 容器内零查库（container-import-constraints.spec.ts 禁止 import env 域模块）。
+   */
+  envVars: Record<string, string>;
 }
 
 export interface McpServerSpec {

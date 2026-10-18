@@ -1037,3 +1037,81 @@ export async function testSignalWatcher(id: number): Promise<SignalWatcherTestRe
   const { data } = await api.post(`/signal-watchers/${id}/test`)
   return data
 }
+
+// ---------------------------------------------------------------- 三级环境变量
+
+export interface EnvVariableView {
+  id: number
+  envKey: string
+  note?: string | null
+  createdAt?: string | null
+  updatedAt?: string | null
+}
+
+export interface EnvVariablePayload {
+  envKey?: string
+  envValue: string
+  note?: string | null
+}
+
+export interface WorkspaceEnvVariablePayload extends EnvVariablePayload {
+  workspacePath: string
+}
+
+export interface EffectiveEnvItem {
+  envKey: string
+  source: 'SYSTEM' | 'USER' | 'WORKSPACE' | 'BUILTIN' | 'INHERITED'
+  note: string | null
+}
+
+export interface EffectiveEnvView {
+  enabled: boolean
+  items: EffectiveEnvItem[]
+  totals: { system: number; user: number; workspace: number; builtin: number; inherited: number }
+}
+
+export async function listEnvVariables(): Promise<EnvVariableView[]> {
+  const { data } = await api.get('/user/env-variables')
+  return data ?? []
+}
+
+export async function createEnvVariable(payload: EnvVariablePayload): Promise<EnvVariableView> {
+  const { data } = await api.post('/user/env-variables', payload)
+  return data
+}
+
+export async function updateEnvVariable(id: number, payload: EnvVariablePayload): Promise<EnvVariableView> {
+  const { data } = await api.put(`/user/env-variables/${id}`, payload)
+  return data
+}
+
+export async function deleteEnvVariable(id: number): Promise<void> {
+  await api.delete(`/user/env-variables/${id}`)
+}
+
+export async function listWorkspaceEnvVariables(workspace?: string | null): Promise<EnvVariableView[]> {
+  const { data } = await api.get('/user/workspace-env-variables', {
+    params: workspace ? { workspace } : {}
+  })
+  return data ?? []
+}
+
+export async function createWorkspaceEnvVariable(payload: WorkspaceEnvVariablePayload): Promise<EnvVariableView> {
+  const { data } = await api.post('/user/workspace-env-variables', payload)
+  return data
+}
+
+export async function updateWorkspaceEnvVariable(id: number, payload: EnvVariablePayload): Promise<EnvVariableView> {
+  const { data } = await api.put(`/user/workspace-env-variables/${id}`, payload)
+  return data
+}
+
+export async function deleteWorkspaceEnvVariable(id: number): Promise<void> {
+  await api.delete(`/user/workspace-env-variables/${id}`)
+}
+
+/** 会话最终生效变量（配置态视图：三层 + 内置 + 继承，值一律不回显）。 */
+export async function getEffectiveEnv(sessionId: number): Promise<EffectiveEnvView> {
+  const { data } = await api.get(`/sessions/${sessionId}/effective-env`)
+  return data
+}

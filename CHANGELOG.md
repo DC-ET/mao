@@ -15,6 +15,27 @@
 
 ---
 
+## 0.0.305 (2026-10-18)
+
+### 后端
+
+- **三级环境变量（用户 / 工作区 / 系统）**：环境变量从代码硬编码升级为三层可配置，优先级「工作区 > 用户全局 > 系统全局」，平台内置凭据（`GIT_TOKEN_*` / `MAO_TOKEN` / `ECP_TOKEN` / `LARKSUITE_CLI_*` / `HOME` / `PATH` / deps env）任何一层都不可覆盖。三条 CLOUD 执行链路（Agent shell、云端交互终端、docker 容器内 shell）共用同一套合并逻辑：host 模式每条命令前随 `refreshUserEnvironment` 刷新，容器模式经 `RuntimeEnvelope.envVars` 下发（容器内零查库），云端终端在 spawn 时注入。
+- **存储与安全**：新增 `V158` 迁移与 `user_env_variable` / `workspace_env_variable` / `system_env_variable` 三张表，值一律 AES-CBC 加密（复用 `APP_GIT_CREDENTIAL_SECRET`），任何用户侧接口都不返回值。保留键清单（`PATH` / `HOME` / `LD_PRELOAD` / `NODE_OPTIONS` / `BASH_ENV` / `PYTHONPATH` 等，前缀 `GIT_TOKEN_` / `MYSQL_` / `APP_` / `MAO_`）在写入与合并两处双重拦截；单层≤50 条、值按 UTF-8 字节≤2048、解密失败跳过并告警。
+- **新增接口**：`/v1/user/env-variables`、`/v1/user/workspace-env-variables`、`/v1/sessions/:id/effective-env`（仅会话归属人可读）、`/v1/admin/system-env-variables`（`settings:read/write`）、`/v1/admin/users/:id/env-variables` 与 `.../workspace-env-variables`（`user:read`，只读、值按密文长度掩码 `**** (N chars)`，读操作落 `/v1/admin` 审计）。管理员对用户层变量无任何写入口。
+- **生效与开关**：进程内 5s TTL 缓存（开关与系统层同 TTL 同时失效），写入后本实例即时失效；`system_setting` 新增 `shell.envVars.enabled` 总开关（行缺失按开启处理，显式 `false` 才停用）。工作区绑定键统一 `path.resolve` 归一化，`workspace=null` 与全局工作区根同键，host / 容器 / 终端行为一致。
+
+### 前端（桌面 / Web / 安卓）
+
+- **设置 → 环境变量**：维护个人全局变量（新增 / 编辑 / 删除，值加密保存后不回显），页面说明优先级、生效延迟与保留键。
+- **会话头部「环境变量」抽屉**：按来源分组查看当前会话生效变量（工作区 / 用户 / 系统 / 内置 / 继承，带条数），并管理当前工作区变量；仅 CLOUD 会话且非新建任务态显示，明确提示「配置态视图」与「已打开的终端需重开」。
+
+### 管理后台
+
+- **系统设置 → Shell 环境变量**：管理系统级变量（`settings:write`），并保留 `shell.envVars.enabled` 总开关。
+- **用户详情 → 环境变量 Tab**：只读查看该用户的用户层与工作区层变量（键名明文、值脱敏），顶部明示「查看行为将被审计」，无操作列。
+
+---
+
 ## 0.0.304 (2026-10-17)
 
 ### 后端

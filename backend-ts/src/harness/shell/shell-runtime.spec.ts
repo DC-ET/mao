@@ -399,6 +399,91 @@ describe('ShellSessionManager', () => {
     manager.closeByConversation(12);
   });
 
+  it('injects three-layer env vars at spawn and refreshes them per command', async () => {
+    const dir = useTmpDir('mao-shell-env-');
+    mkdirSync(join(dir, 'runtime'), { recursive: true });
+    mkdirSync(join(dir, 'users'), { recursive: true });
+    const manager = new ShellSessionManager(
+      new PathSandbox(dir),
+      RuntimeDataResolver.forTest(join(dir, 'runtime'), join(dir, 'users')),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      // 宿主侧提供者：workspace 归一化由 EnvVariableService 负责，这里断言工具传入的是原始 workspace
+      async (_userId, workspace) => ({ DEMO_TEST_VAR: `hello:${workspace}`, PATH: '/evil' }),
+    );
+    const session = manager.getOrCreate(31, 'sh-env', 7, dir, {}, { DEMO_TEST_VAR: 'spawn-value' });
+    const output = new OutputManager();
+    session.writeStdin(`printf '%s\n' "$DEMO_TEST_VAR" "$PATH"` + '\n' + 'echo __DONE__\n');
+    const first = await output.readUntilMarker(session, '__DONE__', 5000);
+    const firstLines = first.output.split('\n').map((line) => line.trim()).filter((line) => line !== '');
+    expect(firstLines[0]).toBe('spawn-value');
+    // 保留键（PATH）不得被注入覆盖
+    expect(firstLines[1]).not.toBe('/evil');
+
+    const vars = await manager.resolveEnvVarsForSession(session, 7);
+    expect(vars).toEqual({ DEMO_TEST_VAR: `hello:${dir}`, PATH: '/evil' });
+
+    manager.refreshUserEnvironment(session, 7, {}, null, { DEMO_TEST_VAR: 'refreshed', PATH: '/evil' });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    session.writeStdin(`printf '%s\n' "$DEMO_TEST_VAR" "$PATH"` + '\n' + 'echo __DONE2__\n');
+    const second = await output.readUntilMarker(session, '__DONE2__', 5000);
+    const secondLines = second.output.split('\n').map((line) => line.trim()).filter((line) => line !== '');
+    expect(secondLines[0]).toBe('refreshed');
+    expect(secondLines[1]).not.toBe('/evil');
+
+    // 删除变量：下一次 refresh 不再带该键时，必须 unset 掉旧值
+    manager.refreshUserEnvironment(session, 7, {}, null, {});
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    session.writeStdin('printf \'%s\\n\' "${DEMO_TEST_VAR:-unset}"' + '\n' + 'echo __DONE3__\n');
+    const third = await output.readUntilMarker(session, '__DONE3__', 5000);
+    const thirdLines = third.output.split('\n').map((line) => line.trim()).filter((line) => line !== '');
+    expect(thirdLines[0]).toBe('unset');
+    manager.close('sh-env');
+  });
+
+  it('gives refreshUserEnvironment an explicit envVars entry (container mode deletion semantics)', async () => {
+    const dir = useTmpDir('mao-shell-env2-');
+    mkdirSync(join(dir, 'runtime'), { recursive: true });
+    mkdirSync(join(dir, 'users'), { recursive: true });
+    const manager = new ShellSessionManager(
+      new PathSandbox(dir),
+      RuntimeDataResolver.forTest(join(dir, 'runtime'), join(dir, 'users')),
+    );
+    const session = manager.getOrCreate(32, 'sh-env2', 7, dir, {});
+    manager.refreshUserEnvironment(session, 7, {}, null, { CONTAINER_VAR: 'from-envelope' });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const output = new OutputManager();
+    session.writeStdin(`printf '%s\n' "$CONTAINER_VAR"` + '\n' + 'echo __DONE__\n');
+    const result = await output.readUntilMarker(session, '__DONE__', 5000);
+    expect(result.output.split('\n').map((l) => l.trim()).filter((l) => l !== '')[0]).toBe('from-envelope');
+    manager.close('sh-env2');
+  });
+
+  it('binds env vars to the session workspace, not the workdir subdirectory', async () => {
+    const dir = useTmpDir('mao-shell-env3-');
+    mkdirSync(join(dir, 'runtime'), { recursive: true });
+    mkdirSync(join(dir, 'users'), { recursive: true });
+    mkdirSync(join(dir, 'sub'), { recursive: true });
+    const seen: Array<string | null> = [];
+    const manager = new ShellSessionManager(
+      new PathSandbox(dir),
+      RuntimeDataResolver.forTest(join(dir, 'runtime'), join(dir, 'users')),
+      undefined, undefined, undefined, undefined, undefined,
+      async (_userId, workspace) => {
+        seen.push(workspace);
+        return { DEMO_WS_VAR: 'v' };
+      },
+    );
+    // workdir=sub（cd 进子目录）但工作区变量绑定仍应是会话工作区 dir
+    const session = manager.getOrCreate(33, 'sh-env3', 7, join(dir, 'sub'), {}, null, dir);
+    await manager.resolveEnvVarsForSession(session, 7);
+    expect(seen).toEqual([dir]);
+    manager.close('sh-env3');
+  });
+
   it('runs cleanupExpiredSessions on the scheduled interval', () => {
     vi.useFakeTimers();
     const dir = useTmpDir('mao-shell-timer-');

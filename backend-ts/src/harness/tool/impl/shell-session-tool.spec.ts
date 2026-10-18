@@ -26,6 +26,9 @@ describe('ShellSessionTool', () => {
     getSession: vi.fn(() => session),
     close: vi.fn(),
     listByConversation: vi.fn(() => [session]),
+    refreshUserEnvironment: vi.fn(),
+    resolveEnvVarsFor: vi.fn(async () => null),
+    resolveEnvVarsForSession: vi.fn(async () => null),
   };
   const outputManager = {
     readUntilMarker: vi.fn(async () => {
@@ -143,6 +146,9 @@ describe('ShellSessionTool marker and environment handling', () => {
       getSession: vi.fn(() => shellSession),
       close: vi.fn(),
       listByConversation: vi.fn(() => [shellSession]),
+      refreshUserEnvironment: vi.fn(),
+      resolveEnvVarsFor: vi.fn(async () => null),
+      resolveEnvVarsForSession: vi.fn(async () => null),
     };
     const outputManager = {
       readUntilMarker: vi.fn(async () => {
@@ -199,6 +205,9 @@ describe('ShellSessionTool marker and environment handling', () => {
       getSession: vi.fn(() => shellSession),
       close: vi.fn(),
       listByConversation: vi.fn(() => [shellSession]),
+      refreshUserEnvironment: vi.fn(),
+      resolveEnvVarsFor: vi.fn(async () => null),
+      resolveEnvVarsForSession: vi.fn(async () => null),
     };
     const outputManager = {
       readUntilMarker: vi.fn(async () => {
@@ -267,6 +276,9 @@ describe('ShellSessionTool marker and environment handling', () => {
       getSession: vi.fn(() => shellSession),
       close: vi.fn(),
       listByConversation: vi.fn(() => [shellSession]),
+      refreshUserEnvironment: vi.fn(),
+      resolveEnvVarsFor: vi.fn(async () => null),
+      resolveEnvVarsForSession: vi.fn(async () => null),
     };
     const outputManager = {
       readUntilMarker: vi.fn(async () => {
@@ -312,6 +324,9 @@ describe('ShellSessionTool marker and environment handling', () => {
       getSession: vi.fn(() => shellSession),
       close: vi.fn(),
       listByConversation: vi.fn(() => [shellSession]),
+      refreshUserEnvironment: vi.fn(),
+      resolveEnvVarsFor: vi.fn(async () => null),
+      resolveEnvVarsForSession: vi.fn(async () => null),
     };
     const outputManager = {
       readUntilMarker: vi.fn(async () => {
@@ -387,6 +402,9 @@ describe('ShellSessionTool marker and environment handling', () => {
       // 否则测不出「先 settle 后 refresh 时刷新已成死代码」
       close: vi.fn(() => { alive = false; }),
       listByConversation: vi.fn(() => [shellSession]),
+      refreshUserEnvironment: vi.fn(),
+      resolveEnvVarsFor: vi.fn(async () => null),
+      resolveEnvVarsForSession: vi.fn(async () => null),
     };
     const background = { submit: vi.fn(() => 'task-1') };
     const outputManager = {
