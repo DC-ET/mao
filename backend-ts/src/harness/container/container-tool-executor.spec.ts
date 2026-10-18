@@ -7,7 +7,12 @@ import { useTmpDir } from '../../testing/tmp-dir.js';
 
 const USER_ID = 7;
 
-function envelopeOf(workspace: string | null, sessionId = 11, depsEnv: Record<string, string> = {}): RuntimeEnvelope {
+function envelopeOf(
+  workspace: string | null,
+  sessionId = 11,
+  depsEnv: Record<string, string> = {},
+  envVars: Record<string, string> = {},
+): RuntimeEnvelope {
   return {
     userId: USER_ID,
     sessionId,
@@ -19,6 +24,7 @@ function envelopeOf(workspace: string | null, sessionId = 11, depsEnv: Record<st
     ecpToken: null,
     larkUat: null,
     depsEnv,
+    envVars,
   };
 }
 
@@ -237,6 +243,31 @@ describe('container tool executor', () => {
     // deps bin 前置进 PATH
     expect(parsed.output).toContain(`BIN=[${depsEnv.MAO_DEPS_BIN}]`);
     expect(parsed.output).toContain(`PATH=[${depsEnv.MAO_DEPS_BIN}:`);
+  });
+
+  it('injectsThreeLayerEnvVarsFromEnvelopeAndFiltersReservedKeys', async () => {
+    const base = useTmpDir('mao-exec-env-');
+    const workspaceRoot = join(base, 'workspace');
+    const userWorkspace = join(workspaceRoot, String(USER_ID), 'proj');
+    mkdirSync(userWorkspace, { recursive: true });
+    const executor = new ContainerToolExecutor({
+      workspaceRoot,
+      runtimeDir: join(base, 'runtime'),
+      userHomeDir: join(base, 'users'),
+      userSkillsDir: join(base, 'userskills'),
+      uploadDir: join(base, 'uploads'),
+    }, USER_ID);
+    const result = await executor.handleToolCall('shell', JSON.stringify({
+      action: 'exec',
+      command: 'echo "REG=[$NPM_REGISTRY] PATHHEAD=[${PATH%%:*}]"',
+      keep_session: true,
+      yield_time_ms: 8000,
+    }), envelopeOf(userWorkspace, 11, {}, { NPM_REGISTRY: 'https://mirror.internal', PATH: '/evil' }));
+    const parsed = JSON.parse(result);
+    expect(parsed.error).toBeUndefined();
+    expect(parsed.output).toContain('REG=[https://mirror.internal]');
+    // 保留键（PATH）不得被 envelope 里的条目覆盖
+    expect(parsed.output).not.toContain('PATHHEAD=[/evil]');
   });
 
   it('keepsDepsBinIdempotentAcrossExecsInPersistentSession', async () => {

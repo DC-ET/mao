@@ -15,6 +15,8 @@ export const COMPANY_SSO_CONFIG_KEY = 'auth.companySso.config';
 export const WEIXIN_AGENT_ID_KEY = 'weixin.agentId';
 /** 管理后台浮窗助手 Agent（V156）；留空回落系统默认 Agent，解析见 embed/embed.routes.ts resolveEmbedAgentId。 */
 export const EMBED_AGENT_ID_KEY = 'embed.agentId';
+/** 三级环境变量注入总开关（V158，默认开启；关闭后三层变量全部不注入）。 */
+export const SHELL_ENV_VARS_ENABLED_KEY = 'shell.envVars.enabled';
 export const WEIXIN_MODEL_ID_KEY = 'weixin.modelId';
 export const SESSION_TITLE_MODEL_ID_KEY = 'session.titleModelId';
 export const GIT_COMMIT_MESSAGE_MODEL_ID_KEY = 'git.commitMessageModelId';
@@ -181,6 +183,15 @@ export class SystemSettingService {
   async getValue(key: string): Promise<string | null> {
     const setting = await this.settingRepo.findByKey(key);
     return setting != null ? (setting.value ?? null) : null;
+  }
+
+  /**
+   * 环境变量注入总开关（技术方案 §5.1）。行缺失或值非 false/0 一律视为开启：
+   * 新能力默认可用；紧急停用必须显式写 false（与 getBool 未设置返回 false 的语义不同）。
+   */
+  async shellEnvVarsEnabled(): Promise<boolean> {
+    const raw = (await this.getText(SHELL_ENV_VARS_ENABLED_KEY)).trim().toLowerCase();
+    return raw !== 'false' && raw !== '0';
   }
 
   /**

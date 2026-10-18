@@ -73,6 +73,7 @@
       :disabled="disabled"
       :execution-mode="executionMode"
       :is-new-task="isNewTask"
+      :session-id="sessionId"
       :layout="layout"
       :is-mobile-viewport="isMobileViewport"
       :selected-agent-id="selectedAgentId"
@@ -166,6 +167,8 @@ const props = withDefaults(defineProps<{
   initializingWorkspace?: boolean
   initializingWorkspaceLabel?: string
   workspace?: string
+  /** 当前会话 id：会话头部「环境变量」抽屉用；新建任务占位态为 null。 */
+  sessionId?: number | null
   cloudProjectKey?: string
   projectKey?: string
   executionMode?: string

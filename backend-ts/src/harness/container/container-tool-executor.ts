@@ -72,6 +72,8 @@ export class ContainerToolExecutor {
       options.shellMaxLifetimeHours ?? 2,
       '/tmp',
       () => this.currentEnvelope?.depsEnv ?? null,
+      // 三级环境变量走 envelope 下发（容器内零查库）：与 deps env 完全同构的注入路径
+      () => this.currentEnvelope?.envVars ?? null,
     );
     const envelopeGitLookup = {
       getTokenMapByUser: async (_userId: number) => this.currentEnvelope?.gitTokens ?? {},

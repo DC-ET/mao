@@ -142,6 +142,31 @@
           </el-table>
         </el-tab-pane>
 
+        <!-- 环境变量（需求变更 c：管理员只读可见，键名明文 + 值掩码） -->
+        <el-tab-pane label="环境变量" name="env">
+          <el-alert
+            type="info"
+            :closable="false"
+            show-icon
+            title="只读视图。查看行为将被审计。值已脱敏，无法查看明文；管理员不可代配用户变量。"
+            class="env-readonly-tip"
+          />
+          <el-table :data="envVariables" v-loading="loadingTabs['env']" size="small" stripe>
+            <template #empty><el-empty description="暂无环境变量" :image-size="48" /></template>
+            <el-table-column label="作用域" width="150" show-overflow-tooltip>
+              <template #default="{ row }">
+                <span>{{ row.workspacePath || '全局' }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="envKey" label="变量名" min-width="160" show-overflow-tooltip />
+            <el-table-column prop="maskedValue" label="值" width="170" show-overflow-tooltip />
+            <el-table-column prop="note" label="备注" min-width="140" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.note || '-' }}</template>
+            </el-table-column>
+            <el-table-column prop="updatedAt" label="更新时间" width="160" :formatter="formatDateTimeColumn" />
+          </el-table>
+        </el-tab-pane>
+
         <!-- MCP 服务器 -->
         <el-tab-pane label="MCP 服务器" name="mcp">
           <el-table :data="mcpServers" v-loading="loadingTabs['mcp']" size="small" stripe>
@@ -224,6 +249,7 @@ const tasksTotal = ref(0)
 const commands = ref<any[]>([])
 const skills = ref<any[]>([])
 const gitCredentials = ref<any[]>([])
+const envVariables = ref<any[]>([])
 const mcpServers = ref<any[]>([])
 
 function phaseTagType(phase: string, pendingQuestionCount?: number): 'primary' | 'success' | 'danger' | 'warning' | 'info' {
@@ -269,6 +295,7 @@ function handleOpen() {
   commands.value = []
   skills.value = []
   gitCredentials.value = []
+  envVariables.value = []
   mcpServers.value = []
   sessionsTotal.value = 0
   tasksTotal.value = 0
@@ -277,6 +304,7 @@ function handleOpen() {
   void loadCommands()
   void loadSkills()
   void loadGitCredentials()
+  void loadEnvVariables()
   void loadMcpServers()
 }
 
@@ -341,6 +369,21 @@ async function loadGitCredentials() {
   }
 }
 
+async function loadEnvVariables() {
+  if (!props.user) return
+  loadingTabs['env'] = true
+  try {
+    // 用户层 + 全部工作区层（只读）：合并展示，workspacePath 为空即用户全局
+    const [userResp, workspaceResp] = await Promise.all([
+      api.get(`/admin/users/${props.user.id}/env-variables`),
+      api.get(`/admin/users/${props.user.id}/workspace-env-variables`)
+    ])
+    envVariables.value = [...(userResp.data || []), ...(workspaceResp.data || [])]
+  } catch { /* 拦截器已提示失败 */ } finally {
+    loadingTabs['env'] = false
+  }
+}
+
 async function loadMcpServers() {
   if (!props.user) return
   loadingTabs['mcp'] = true
@@ -382,6 +425,10 @@ function goSession(row: any) {
 
 .role-tag {
   margin-right: 4px;
+}
+
+.env-readonly-tip {
+  margin-bottom: 12px;
 }
 
 .text-muted {

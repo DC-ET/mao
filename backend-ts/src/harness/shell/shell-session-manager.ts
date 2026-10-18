@@ -5,7 +5,7 @@ import path from 'node:path';
 import { harnessLog } from '../log.js';
 import { GitCredentialService } from '../../user/git-credential.service.js';
 import { ASKPASS } from '../../file/git-write-operation.service.js';
-import { sanitizeInheritedEnv } from '../../common/sensitive-env.js';
+import { isReservedEnvKey, sanitizeInheritedEnv } from '../../common/sensitive-env.js';
 
 /** 已写入 stdin 但尚未读到结束标记的命令。 */
 export interface PendingCommand {
@@ -52,6 +52,8 @@ export class ShellSession {
     readonly outputFile: string,
     initialUserEnvironmentKeys: Iterable<string> = [],
     pathValue: string | null = null,
+    /** 三级环境变量的工作区绑定键（会话创建时的 workspace，未经 cd 改写）；null 归一为全局根。 */
+    readonly envWorkspace: string | null = null,
   ) {
     for (const key of initialUserEnvironmentKeys) this.userEnvironmentKeys.add(key);
     this.currentPath = pathValue;
@@ -502,7 +504,35 @@ export class ShellSessionManager {
      * 注入 shell 子进程使命 pip/npm 安装落到每用户 /deps 挂载。host 模式不传，行为零变化。
      */
     private readonly depsEnvProvider?: () => Record<string, string> | null,
+    /**
+     * 三级环境变量提供者（§5.7）：宿主侧查库 + 解密，容器侧直接取当前 envelope。
+     * 返回已合并、已过滤保留键的 KV；不传即行为零变化（LOCAL / 旧装配）。
+     */
+    private readonly envVarsProvider?: (
+      userId: number,
+      workspace: string | null,
+    ) => Record<string, string> | null | Promise<Record<string, string> | null>,
   ) {}
+
+  /** 供 ShellSessionTool 解析（工具侧只认 ShellSessionManager，不直接依赖 EnvVariableService）。 */
+  async resolveEnvVarsFor(
+    userId: number | null,
+    workspace: string | null,
+  ): Promise<Record<string, string> | null> {
+    if (userId == null || !this.envVarsProvider) return null;
+    try {
+      const vars = await this.envVarsProvider(userId, workspace);
+      return vars && Object.keys(vars).length > 0 ? vars : null;
+    } catch (e) {
+      harnessLog('warn', `Failed to resolve env vars for user=${userId}: ${(e as Error).message}`);
+      return null;
+    }
+  }
+
+  /** 会话刷新入口：绑定键取会话创建时的 workspace，不随 cd 变化。 */
+  async resolveEnvVarsForSession(session: ShellSession, userId: number | null): Promise<Record<string, string> | null> {
+    return this.resolveEnvVarsFor(userId, session.envWorkspace);
+  }
 
   /** askpass 脚本落点：容器模式写私有目录，host 模式沿用会话 runtime 目录。 */
   private askpassScriptPath(userId: number, sessionId: number): string {
@@ -524,6 +554,8 @@ export class ShellSessionManager {
     userId: number | null,
     domainTokenMap: Record<string, string>,
     depsEnv?: Record<string, string> | null,
+    /** 三级合并结果（§5.7 P0-1）：必须显式传入，否则删除变量无法 unset。 */
+    envVars?: Record<string, string> | null,
   ): void {
     const env: Record<string, string | null> = {};
     this.configureUserHome(env as NodeJS.ProcessEnv, userId);
@@ -544,6 +576,8 @@ export class ShellSessionManager {
     }
     const deps = this.resolveDepsEnv(depsEnv);
     if (deps) this.applyDepsEnv(env, deps, session.currentPath);
+    // 三层变量在 deps 之后、GIT_TOKEN_* 前缀全清之前并入 env map（§7.4 P1-2：全清位置固定）
+    if (envVars) this.applyEnvVars(env, envVars);
     // 进程启动时继承、未登记进 userEnvironmentKeys 的 GIT_TOKEN_* 清不掉，先按前缀全清再注入当前用户
     session.writeStdin('for k in ${!GIT_TOKEN_@}; do unset "$k"; done\n');
     session.refreshEnvironment(env);
@@ -556,6 +590,14 @@ export class ShellSessionManager {
     userId: number | null,
     workspace: string | null,
     domainTokenMap?: Record<string, string>,
+    /** 三级合并结果：仅在新建会话时注入 spawn env；已存在会话由 refreshUserEnvironment 刷新。 */
+    envVars?: Record<string, string> | null,
+    /**
+     * 三级变量的工作区绑定键：必须是会话创建时的工作区（`workspace` 入参），
+     * 不能取 workdir（workdir 可能是子目录，cd 到子目录不应换一套变量）。
+     * 不传时回落 `workspace`。
+     */
+    envWorkspace?: string | null,
   ): ShellSession {
     if (shellSessionId && this.sessions.has(shellSessionId)) {
       const existing = this.sessions.get(shellSessionId)!;
@@ -583,7 +625,10 @@ export class ShellSessionManager {
     if (!shellSessionId || this.sessions.has(shellSessionId)) {
       shellSessionId = `sh-${conversationId}-${Date.now()}-${randomUUID().replace(/-/g, '').slice(0, 8)}`;
     }
-    const session = this.createSession(shellSessionId, conversationId, userId, workspace, domainTokenMap);
+    const session = this.createSession(
+      shellSessionId, conversationId, userId, workspace, domainTokenMap, envVars,
+      envWorkspace === undefined ? workspace : envWorkspace,
+    );
     this.sessions.set(shellSessionId, session);
     convSessions.add(shellSessionId);
     harnessLog('info', `Created shell session: ${shellSessionId} for conversation: ${conversationId}`);
@@ -673,6 +718,8 @@ export class ShellSessionManager {
     userId: number | null,
     workspace: string | null,
     domainTokenMap?: Record<string, string>,
+    envVars?: Record<string, string> | null,
+    envWorkspace: string | null = workspace,
   ): ShellSession {
     const workDir = this.pathSandbox.getEffectiveWorkspaceRoot(workspace);
     const uid = userId ?? 0;
@@ -697,6 +744,10 @@ export class ShellSessionManager {
       // PATH 不登记：refreshEnvironment 的 unset 清单若含 PATH 会引爆 shell（见 refreshEnvironment 守卫）
       for (const key of Object.keys(deps)) initialUserEnvironmentKeys.add(key);
     }
+    if (envVars) {
+      this.applyEnvVars(env, envVars);
+      for (const key of Object.keys(envVars)) initialUserEnvironmentKeys.add(key);
+    }
     const child = spawn('bash', ['-c', 'exec 2>&1; exec bash --norc --noprofile'], {
       cwd: workDir,
       env,
@@ -704,7 +755,7 @@ export class ShellSessionManager {
       // 独立进程组，close() 才能一次性回收 bash 的所有后代进程
       detached: true,
     });
-    return new ShellSession(shellSessionId, conversationId, child, workDir, outputFile, initialUserEnvironmentKeys, env.PATH ?? null);
+    return new ShellSession(shellSessionId, conversationId, child, workDir, outputFile, initialUserEnvironmentKeys, env.PATH ?? null, envWorkspace);
   }
 
   private configureUserHome(env: NodeJS.ProcessEnv, userId: number | null): void {
@@ -741,6 +792,23 @@ export class ShellSessionManager {
   private resolveDepsEnv(explicit?: Record<string, string> | null): Record<string, string> | null {
     const deps = explicit ?? this.depsEnvProvider?.() ?? null;
     return deps && Object.keys(deps).length > 0 ? deps : null;
+  }
+
+  /**
+   * 三层变量写入 env map：保留键在此再过滤一次（双保险第二道，防「清单扩充但库里已有旧数据」）。
+   * PATH 不在保留键之外还能进来：清单已禁配，refreshEnvironment 也有 PATH 守卫。
+   */
+  private applyEnvVars(
+    env: Record<string, string | null | undefined>,
+    vars: Record<string, string>,
+  ): void {
+    for (const [key, value] of Object.entries(vars)) {
+      if (isReservedEnvKey(key)) {
+        harnessLog('warn', `[env] reserved key skipped when injecting: ${key}`);
+        continue;
+      }
+      env[key] = value;
+    }
   }
 
   /** deps env 写入子进程环境：原样注入 + MAO_DEPS_BIN 前置 PATH（npm i -g 的可执行文件直接可用）。 */

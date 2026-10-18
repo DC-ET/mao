@@ -22,6 +22,9 @@ const FORBIDDEN_PATTERNS: Array<{ pattern: RegExp; why: string }> = [
   { pattern: /llm-adapter|LlmAdapterFacade|danger-assessor|openai-llm|anthropic-llm|responses-llm/i, why: 'LLM 调用' },
   { pattern: /app-config(?!\.spec)/, why: 'app-config 会带入全部平台配置' },
   { pattern: /git-credential\.service/i, why: '平台级 git 凭据服务（容器内凭据走 envelope）' },
+  // 三级环境变量（技术方案 §5.6 P0-3）：容器内变量由宿主机经 envelope.envVars 下发，
+  // 容器代码不得直接触碰 env 仓储 / 解密服务
+  { pattern: /env-variable\.(service|repository)/, why: '环境变量仓库（容器内变量走 envelope 下发）' },
 ];
 
 describe('container runtime module import constraints', () => {

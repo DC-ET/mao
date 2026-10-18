@@ -72,6 +72,11 @@ const routes: RouteRecordRaw[] = [
             component: () => import('../views/settings/GitCredentialsView.vue')
           },
           {
+            path: 'env-variables',
+            name: 'EnvVariables',
+            component: () => import('../views/settings/EnvVariablesView.vue')
+          },
+          {
             path: 'notifications',
             name: 'NotificationSettings',
             component: () => import('../views/settings/NotificationSettingsView.vue')

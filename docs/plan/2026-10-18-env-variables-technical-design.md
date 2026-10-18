@@ -819,7 +819,7 @@ interface AdminEnvVariableVO {
 | admin 构建 | `cd admin && npm run build` | 零错误 |
 | 容器 import 约束 | `container-import-constraints.spec.ts` | 通过（`env` 域模块不得被容器内代码 import；envelope 透传不破坏该约束）。**（评审修订）需按 §5.6 P0-3 给该 spec 的 `FORBIDDEN_PATTERNS` 追加 `env-variable.(service|repository)` 模式** |
 | 管理端只读（需求变更 c） | `env-variable.routes.spec.ts` 新增用例 | 非 `user:read` 权限 → 403；返回体**不含**明文值（`maskedValue` 形态校验）；`workspace` 省略时返回全部分组；**不提供** admin 侧 POST/PUT/DELETE 用户层变量的路由（用 `fastify.inject` 打这些路径应得 404，防止将来误加） |
-| 手工联调 | 配一条 `MAO_TEST_VAR=hello` → shell `echo $MAO_TEST_VAR` → 输出 `hello`；删掉 → 下一条命令为空 | 三条链路一致 |
+| 手工联调 | 配一条 `DEMO_TEST_VAR=hello` → shell `echo $DEMO_TEST_VAR` → 输出 `hello`；删掉 → 下一条命令为空。**注意不要用 `MAO_TEST_VAR`：`MAO_` 是保留前缀，会被拒绝** | 三条链路一致 |
 
 ---
 

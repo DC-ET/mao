@@ -16,6 +16,11 @@ export interface EnvelopeBuildInput {
   workspace: string | null;
 }
 
+/** 三级环境变量解析的结构化依赖（避免容器相关文件 import env 域模块）。 */
+export interface EnvVarsLookup {
+  resolveForSession(userId: number, workspace: string | null): Promise<Record<string, string>>;
+}
+
 export class SessionEnvelopeBuilder {
   constructor(
     private readonly deps: {
@@ -25,6 +30,8 @@ export class SessionEnvelopeBuilder {
       userLookup?: ShellUserLookup | null;
       ecpInjector?: ShellEcpInjector | null;
       larkUatInjector?: ShellLarkUatInjector | null;
+      /** 三级环境变量解析（宿主机侧查库 + 解密），容器内只消费 envelope.envVars。 */
+      envVariableService?: EnvVarsLookup | null;
     },
     private readonly depsRoot: string,
   ) {}
@@ -72,6 +79,15 @@ export class SessionEnvelopeBuilder {
       }
     }
 
+    let envVars: Record<string, string> = {};
+    if (this.deps.envVariableService) {
+      try {
+        envVars = await this.deps.envVariableService.resolveForSession(userId, workspace ?? null);
+      } catch (e) {
+        harnessLog('warn', `[envelope] env vars resolve failed for user=${userId}: ${(e as Error).message}`);
+      }
+    }
+
     return {
       userId,
       sessionId,
@@ -85,6 +101,7 @@ export class SessionEnvelopeBuilder {
       ecpToken,
       larkUat,
       depsEnv: this.buildDepsEnv(userId),
+      envVars,
     };
   }
 
