@@ -422,7 +422,9 @@ export class ContainerRegistry {
       '--cpus', String(c.cpus),
       '--pids-limit', String(c.pidsLimit),
       '--network', c.network,
-      '--tmpfs', `/tmp:size=${c.tmpfsSizeMb}m,mode=1777`,
+      // /tmp 显式 exec：Docker 默认把 tmpfs 挂成 noexec，会让 /tmp 下的脚本无法直接执行
+      // （GIT_ASKPASS 凭据脚本、npm/pip 临时编译脚本等）；隔离边界靠挂载清单，不靠 noexec。
+      '--tmpfs', `/tmp:size=${c.tmpfsSizeMb}m,mode=1777,exec`,
       // 容器 agent 硬依赖：userId 缺失即 exit(1)；roots 显式注入避免容器内出现第二套路径真相
       '-e', `MAO_CONTAINER_USER_ID=${userId}`,
       '-e', `MAO_CHANNEL_TOKEN=${channelToken}`,

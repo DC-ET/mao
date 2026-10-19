@@ -15,6 +15,14 @@
 
 ---
 
+## 0.0.315 (2026-10-19)
+
+### 后端
+
+- **容器 `/tmp` 改为可执行（tmpfs 显式 `exec`）**：Docker 默认把 tmpfs 挂成 `noexec`，导致容器内 `/tmp` 下的脚本无法直接执行——最典型的是平台注入的 `GIT_ASKPASS` 凭据脚本（`git push` / `git clone` 直接报 `cannot exec ... Permission denied`），npm / pip / node-gyp 的临时编译脚本也可能受影响。现在容器启动参数显式加 `exec`；隔离边界仍由挂载清单、无 docker.sock、凭据不进容器保证。本次不改挂载清单，已有容器不会自动重建，需 stop/rm 容器或等下次重建后生效。
+
+---
+
 ## 0.0.314 (2026-10-19)
 
 ### 后端
