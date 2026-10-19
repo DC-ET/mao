@@ -73,9 +73,9 @@
         <el-table-column prop="agentName" label="Agent" width="120" show-overflow-tooltip />
         <el-table-column label="类型" width="90">
           <template #default="{ row }">
-            <el-tooltip v-if="sessionTypeTag(row.sessionType)" :content="sessionTypeTip(row)" placement="top">
-              <el-tag :type="sessionTypeTag(row.sessionType)!.type" size="small">
-                {{ sessionTypeTag(row.sessionType)!.label }}
+            <el-tooltip :content="sessionTypeTip(row)" placement="top">
+              <el-tag :type="sessionTypeTag(row.sessionType).type" size="small">
+                {{ sessionTypeTag(row.sessionType).label }}
               </el-tag>
             </el-tooltip>
           </template>
@@ -151,10 +151,10 @@
               {{ executionModeLabel(row.executionMode) }}
             </el-tag>
           </div>
-          <div v-if="sessionTypeTag(row.sessionType)" class="mobile-card-row">
+          <div class="mobile-card-row">
             <span class="mobile-card-label">类型</span>
-            <el-tag :type="sessionTypeTag(row.sessionType)!.type" size="small">
-              {{ sessionTypeTag(row.sessionType)!.label }}
+            <el-tag :type="sessionTypeTag(row.sessionType).type" size="small">
+              {{ sessionTypeTag(row.sessionType).label }}
             </el-tag>
           </div>
           <div class="mobile-card-row">
@@ -279,7 +279,9 @@ function phaseTagType(phase: string, pendingQuestionCount?: number): 'primary' |
 /** 悬停说明来源：有父会话 ID 时指回父会话，否则解释这类会话怎么来的。 */
 function sessionTypeTip(row: { sessionType?: string | null; parentSessionId?: number | null }): string {
   if (row.parentSessionId != null) return `父会话 #${row.parentSessionId}`
-  return row.sessionType === 'SIDE_TASK' ? '由主会话拉起的边路任务' : '由主会话委派的子代理'
+  if (row.sessionType === 'SIDE_TASK') return '由主会话拉起的边路任务'
+  if (row.sessionType === 'SUBAGENT') return '由主会话委派的子代理'
+  return '用户直接发起的主会话'
 }
 
 let fetchSessionsSeq = 0

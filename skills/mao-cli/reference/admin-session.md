@@ -31,7 +31,7 @@
 
 `GET /admin/sessions`
 
-关键词会同时匹配标题、摘要与消息正文（任意角色）。命消息时记录带 `matchSnippet`（命中片段），便于拿聊天记录反查会话。
+关键词会同时匹配标题、摘要与消息正文（任意角色）。命消息时记录带 `matchSnippet`（命中片段），便于拿聊天记录反查会话。记录带 `sessionType`（`NORMAL`/`SIDE_TASK`/`SUBAGENT`）与 `parentSessionId`：管理后台列表「类型」列三种类型都着标签（边路任务橙色、子代理与主会话蓝色），悬停显示来源说明；`parentSessionId` 非空时指向父会话。
 
 ```bash
 mao admin-session list --user-id 1 --execution-mode LOCAL --page 1 --size 20

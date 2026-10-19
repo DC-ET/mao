@@ -67,8 +67,8 @@
             </el-tag>
           </el-descriptions-item>
           <el-descriptions-item label="类型">
-            <el-tag :type="sessionTypeTag(sessionInfo.sessionType)?.type ?? 'info'" size="small">
-              {{ sessionTypeTag(sessionInfo.sessionType)?.label ?? '主会话' }}
+            <el-tag :type="sessionTypeTag(sessionInfo.sessionType).type" size="small">
+              {{ sessionTypeTag(sessionInfo.sessionType).label }}
             </el-tag>
             <router-link v-if="sessionInfo.parentSessionId != null" class="drill-link" :to="`/sessions/${sessionInfo.parentSessionId}`">
               父会话 #{{ sessionInfo.parentSessionId }}
