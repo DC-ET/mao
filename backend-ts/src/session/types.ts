@@ -186,6 +186,18 @@ export interface SubagentExecution {
   updatedAt?: string | null;
 }
 
+/** 运行中子代理的轻量查询行：仅卡片展示所需字段，不读取结果正文。 */
+export interface RunningSubagentExecutionRow {
+  id: number;
+  childSessionId: number | null;
+  agentType: string | null;
+  taskDescription: string | null;
+  status: string;
+  totalRounds: number | null;
+  /** 子代理会话标题（session.title），可能为空或仍是自动生成前缀。 */
+  childTitle: string | null;
+}
+
 export interface AgentRef {
   id: number;
   name: string;

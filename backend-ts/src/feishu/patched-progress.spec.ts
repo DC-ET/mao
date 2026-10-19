@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { FeishuAskFormStore } from './ask-form-store.js';
 import { createFeishuPatchedProgress } from './patched-progress.js';
-import { buildFeishuProgressCard } from './progress-card.js';
+import { buildFeishuProgressCard, type FeishuSubagentSummary } from './progress-card.js';
 
 const question = {
   question: '选哪个？',
@@ -10,16 +10,22 @@ const question = {
   options: [{ label: '甲', description: '说明甲' }, { label: '乙', description: '说明乙' }],
 };
 
-function progressOf(store: FeishuAskFormStore, patch: (card: Record<string, unknown>) => Promise<void>, throttleMs = 0) {
+function progressOf(
+  store: FeishuAskFormStore,
+  patch: (card: Record<string, unknown>) => Promise<void>,
+  throttleMs = 0,
+  options: { loadSubagents?: () => Promise<FeishuSubagentSummary[]>; now?: () => number } = {},
+) {
   return createFeishuPatchedProgress({
     listAsks: () => store.list(1),
     clearAsks: () => store.clearSession(1),
     patch,
-    buildCard: ({ status, round, content, tools, pendingAsks, elapsedMs, disliked }) => buildFeishuProgressCard(
-      status, round, content, tools, { sessionId: 1, sender: 'ou_sender' }, elapsedMs, undefined, pendingAsks, disliked,
+    buildCard: ({ status, round, content, tools, subagents, pendingAsks, elapsedMs, disliked }) => buildFeishuProgressCard(
+      status, round, content, tools, { sessionId: 1, sender: 'ou_sender' }, elapsedMs, undefined, pendingAsks, disliked, subagents,
     ),
+    loadSubagents: options.loadSubagents,
     startedAtMs: 0,
-    now: () => 1_000,
+    now: options.now ?? (() => 1_000),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     throttleMs,
   });
@@ -158,5 +164,79 @@ describe('飞书进度卡点踩态透传', () => {
   it('RUNNING 态 renderCurrent 仍按当前时刻算（不展示耗时）', () => {
     const progress = progressOf(new FeishuAskFormStore(), async () => undefined);
     expect(JSON.stringify(progress.renderCurrent())).not.toContain('耗时');
+  });
+});
+
+describe('飞书进度卡运行中子代理', () => {
+  const subagents: FeishuSubagentSummary[] = [
+    { taskId: 1, agentType: 'explorer', title: '排查卡片进度链路', status: 'RUNNING', round: 2 },
+  ];
+
+  it('update 前加载并渲染运行中子代理', async () => {
+    const cards: Array<Record<string, unknown>> = [];
+    const progress = progressOf(new FeishuAskFormStore(), async (card) => { cards.push(card); }, 0, {
+      loadSubagents: async () => subagents,
+    });
+    await progress.update('RUNNING', 1, '正文', []);
+    expect(JSON.stringify(cards[0])).toContain('调研 · 排查卡片进度链路 · 第 2 轮');
+  });
+
+  it('1s 内连续 update 复用快照，refresh 强制重新加载', async () => {
+    let clock = 1_000;
+    let loads = 0;
+    const progress = progressOf(new FeishuAskFormStore(), async () => undefined, 0, {
+      loadSubagents: async () => { loads++; return subagents; },
+      now: () => clock,
+    });
+    await progress.update('RUNNING', 1, '一', []);
+    await progress.update('RUNNING', 2, '二', []);
+    expect(loads).toBe(1);
+    await progress.refresh();
+    expect(loads).toBe(2);
+    clock += 1_001;
+    await progress.update('RUNNING', 3, '三', []);
+    expect(loads).toBe(3);
+  });
+
+  it('加载失败保留上次快照，卡片仍更新', async () => {
+    let fail = false;
+    let clock = 0;
+    const cards: Array<Record<string, unknown>> = [];
+    const progress = progressOf(new FeishuAskFormStore(), async (card) => { cards.push(card); }, 0, {
+      loadSubagents: async () => {
+        if (fail) throw new Error('db down');
+        return subagents;
+      },
+      now: () => clock,
+    });
+    clock = 2_000;
+    await progress.update('RUNNING', 1, '一', []);
+    fail = true;
+    clock = 4_000;
+    await progress.update('RUNNING', 2, '二', []);
+    expect(JSON.stringify(cards[1])).toContain('调研 · 排查卡片进度链路');
+  });
+
+  it('renderCurrent 使用缓存，不重新加载', async () => {
+    let loads = 0;
+    const progress = progressOf(new FeishuAskFormStore(), async () => undefined, 0, {
+      loadSubagents: async () => { loads++; return subagents; },
+    });
+    await progress.update('RUNNING', 1, '正文', []);
+    const before = loads;
+    const card = progress.renderCurrent();
+    expect(loads).toBe(before);
+    expect(JSON.stringify(card)).toContain('调研 · 排查卡片进度链路');
+  });
+
+  it('终态清空子代理，renderCurrent 也不携带', async () => {
+    const cards: Array<Record<string, unknown>> = [];
+    const progress = progressOf(new FeishuAskFormStore(), async (card) => { cards.push(card); }, 0, {
+      loadSubagents: async () => subagents,
+    });
+    await progress.update('RUNNING', 1, '正文', []);
+    await progress.update('COMPLETED', 1, '完成', []);
+    expect(JSON.stringify(cards.at(-1))).not.toContain('调研');
+    expect(JSON.stringify(progress.renderCurrent())).not.toContain('调研');
   });
 });

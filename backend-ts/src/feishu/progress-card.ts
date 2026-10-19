@@ -4,6 +4,15 @@ import type { FeishuPendingAsk } from './ask-form-store.js';
 /** 飞书进度卡片状态：RUNNING 为执行中，其余为终态。 */
 export type FeishuCardStatus = 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
 
+/** 进度卡展示用的运行中子代理摘要（与 harness 层解耦，由装配层映射）。 */
+export interface FeishuSubagentSummary {
+  taskId: number;
+  agentType: string | null;
+  title: string;
+  status: string;
+  round: number;
+}
+
 /** 进度卡操作按钮携带的执行归属（点击者须为原发送者）。 */
 export interface FeishuProgressCancelAction {
   sessionId: number;
@@ -24,6 +33,17 @@ const STATUS_TITLES: Record<FeishuCardStatus, string> = {
   FAILED: '处理失败',
   CANCELLED: '任务已取消',
 };
+
+/** 子代理类型展示文案；未知类型保留原值，避免吞掉自定义 agent 类型。 */
+const SUBAGENT_TYPE_LABELS: Record<string, string> = {
+  explorer: '调研',
+  worker: '开发',
+  reviewer: '审查',
+  default: '通用',
+};
+
+/** 卡片上最多列出的运行中子代理条数，其余折叠为「另有 N 个」。 */
+const MAX_CARD_SUBAGENTS = 5;
 
 /**
  * 由网页端/桌面回调地址（或站点根）推导会话详情深链 `…/tasks/{id}`。
@@ -65,11 +85,13 @@ function sessionDetailButton(sessionDetailUrl: string): Record<string, unknown> 
  * @param action 执行中渲染「取消任务」；FAILED 且带 botId/sender 时渲染「重试」。
  * @param disliked 完成卡点踩态；COMPLETED 且 action != null 时渲染点踩按钮，true 为红色「已点踩 · 再点取消」。
  * @param pendingAsks 执行中尚未提交的提问。终态忽略。每组一个 form，放在工具摘要下方、取消按钮上方。
+ * @param subagents 运行中的后台子代理；仅执行中渲染，放在正文下方、本轮工具上方。
  */
 export function buildFeishuProgressCard(
   status: FeishuCardStatus, round: number, content: string, tools: string[],
   action?: FeishuProgressCancelAction, elapsedMs?: number, sessionDetailUrl?: string,
   pendingAsks?: FeishuPendingAsk[], disliked = false,
+  subagents: FeishuSubagentSummary[] = [],
 ): Record<string, unknown> {
   const waiting = status === 'RUNNING' && pendingAsks != null && pendingAsks.length > 0;
   const visibleTools = waiting ? tools.filter((tool) => !isAskUserQuestionsToolLine(tool)) : tools;
@@ -80,6 +102,12 @@ export function buildFeishuProgressCard(
     sections.push({ tag: 'markdown', content: waitingHint(pendingAsks.length), text_align: 'left', text_size: 'normal_v2' });
   }
   if (content.trim() !== '') sections.push({ tag: 'markdown', content: content.slice(0, 6000), text_align: 'left', text_size: 'normal_v2' });
+  if (status === 'RUNNING') {
+    const subagentText = subagentSection(subagents);
+    if (subagentText != null) {
+      sections.push({ tag: 'markdown', content: subagentText, text_align: 'left', text_size: 'normal_v2' });
+    }
+  }
   if (visibleTools.length > 0) sections.push({ tag: 'markdown', content: `**本轮工具**\n${visibleTools.map((tool) => `- ${tool}`).join('\n').slice(0, 3000)}`, text_align: 'left', text_size: 'normal_v2' });
   if (waiting) {
     sections.push({ tag: 'hr' });
@@ -128,6 +156,32 @@ export function buildFeishuProgressCard(
     card.header = { template: 'orange', title: { tag: 'plain_text', content: '等待你的回复' } };
   }
   return card;
+}
+
+/** 运行中子代理段落：`**子代理 · 2 个运行中**` + 每行类型/标题/轮次。 */
+function subagentSection(subagents: FeishuSubagentSummary[]): string | null {
+  const visible = subagents.filter((subagent) => subagent.title.trim() !== '').slice(0, MAX_CARD_SUBAGENTS);
+  if (visible.length === 0) return null;
+  const lines = visible.map((subagent) => {
+    const type = SUBAGENT_TYPE_LABELS[subagent.agentType ?? ''] ?? (subagent.agentType ?? '子代理');
+    const meta: string[] = [];
+    if (subagent.round > 0) meta.push(`第 ${subagent.round} 轮`);
+    if (subagent.status === 'RECOVERING') meta.push('恢复中');
+    const suffix = meta.length > 0 ? ` · ${meta.join(' · ')}` : '';
+    return `- ${type} · ${sanitizeInlineTitle(subagent.title)}${suffix}`;
+  });
+  const rest = subagents.length - visible.length;
+  if (rest > 0) lines.push(`- 另有 ${rest} 个运行中`);
+  return `**子代理 · ${subagents.length} 个运行中**\n${lines.join('\n')}`;
+}
+
+/** 单行标题清洗：去掉会破坏飞书 markdown 的字符；长度由 harness 侧统一截断。 */
+function sanitizeInlineTitle(value: string): string {
+  return value
+    .replace(/[\u0000-\u001F\u007F]/g, ' ')
+    .replace(/[*_~`\[\]<>|]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 /** 提问进行中时去掉「ask_user_questions：…（执行中）」：表单本身就是这步，再写执行中会让人以为不用操作。 */

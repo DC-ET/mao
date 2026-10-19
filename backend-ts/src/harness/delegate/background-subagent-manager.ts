@@ -1,5 +1,5 @@
 import { nowSql } from '../../common/datetime.js';
-import type { FileChange, SubagentExecution } from '../../session/types.js';
+import type { FileChange, RunningSubagentExecutionRow, SubagentExecution } from '../../session/types.js';
 import type { AtomicBoolean } from '../atomic-boolean.js';
 import type { AgentExecutionContext } from '../core/agent-execution-context.js';
 import type { AgentLoop } from '../core/agent-loop.js';
@@ -43,6 +43,16 @@ export interface BackgroundProgress {
   totalPromptTokens: number | null;
   totalCompletionTokens: number | null;
   recentOutput: string | null;
+}
+
+/** 运行中子代理的轻量摘要（渠道进度卡展示用）。 */
+export interface RunningSubagentSummary {
+  taskId: number;
+  childSessionId: number | null;
+  agentType: string | null;
+  title: string;
+  status: string;
+  round: number;
 }
 
 interface BackgroundResultEntry {
@@ -187,6 +197,32 @@ export class BackgroundSubagentManager {
     const submitted = await this.submitExecution(parentSession, created.child, created.execution, definition);
     if (!submitted.ok) return submitted;
     return { ok: true, taskId: created.execution.id, childSessionId, corrected };
+  }
+
+  /**
+   * 运行中的后台子代理快照（渠道进度卡展示用）。
+   * 以 DB 为权威来源，覆盖崩溃恢复后的场景；运行中轮次优先取内存实时值，
+   * 内存缺失（跨重启）时回退 DB 的 total_rounds。
+   */
+  async listRunning(parentSessionId: number): Promise<RunningSubagentSummary[]> {
+    let rows: RunningSubagentExecutionRow[];
+    try {
+      rows = await this.deps.subagentExecutionMapper.listRunningByParent(parentSessionId);
+    } catch (e) {
+      harnessLog('warn', `Failed to list running subagents for parent ${parentSessionId}: ${(e as Error).message}`);
+      return [];
+    }
+    return rows.map((row) => {
+      const refs = this.runningRefsByTask.get(row.id);
+      return {
+        taskId: row.id,
+        childSessionId: row.childSessionId,
+        agentType: row.agentType,
+        title: runningSubagentTitle(row),
+        status: row.status,
+        round: refs ? Math.max(0, refs.context.currentRound) : Math.max(0, row.totalRounds ?? 0),
+      };
+    });
   }
 
   hasRunning(parentSessionId: number | null | undefined): boolean {
@@ -1033,6 +1069,17 @@ function cleanTitle(raw: string | null | undefined): string | null {
   const normalized = raw.replace(/[\u0000-\u001F\u007F]/g, ' ').replace(/\s+/g, ' ').trim();
   if (!normalized) return null;
   return normalized.length > 40 ? normalized.slice(0, 40) + '...' : normalized;
+}
+
+/** 自动生成的子代理会话标题前缀（resolveChildTitle 产生），展示时去掉以免与类型文案重复。 */
+const AUTO_SUBAGENT_TITLE_PREFIX = /^后台子代理\([^)]*\):\s*/;
+
+/** 运行中子代理的展示标题：优先会话标题（去自动前缀），缺失时回退任务描述，最后回退执行 ID。 */
+function runningSubagentTitle(row: RunningSubagentExecutionRow): string {
+  const raw = row.childTitle != null && row.childTitle.trim() !== ''
+    ? row.childTitle.replace(AUTO_SUBAGENT_TITLE_PREFIX, '')
+    : row.taskDescription ?? '';
+  return cleanTitle(raw) ?? `子代理 #${row.childSessionId ?? row.id}`;
 }
 
 function truncate(text: string, maxLen: number): string {

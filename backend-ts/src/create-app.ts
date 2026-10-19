@@ -1981,9 +1981,20 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       patch: async (card) => {
         await client.im.v1.message.patch({ path: { message_id: cardMessageId }, data: { content: JSON.stringify(card) } });
       },
-      buildCard: ({ status, round, content, tools, pendingAsks, elapsedMs, disliked }) => buildFeishuProgressCard(
-        status, round, content, tools, cancelAction ?? undefined, elapsedMs, sessionDetailUrl, pendingAsks, disliked,
+      buildCard: ({ status, round, content, tools, subagents, pendingAsks, elapsedMs, disliked }) => buildFeishuProgressCard(
+        status, round, content, tools, cancelAction ?? undefined, elapsedMs, sessionDetailUrl, pendingAsks, disliked, subagents,
       ),
+      // 运行中子代理随进度卡刷新：以 execution 表为准，内存轮次由 manager 合并。
+      loadSubagents: async () => {
+        const running = await backgroundSubagentManager.listRunning(sessionId);
+        return running.map((subagent) => ({
+          taskId: subagent.taskId,
+          agentType: subagent.agentType,
+          title: subagent.title,
+          status: subagent.status,
+          round: subagent.round,
+        }));
+      },
       startedAtMs,
       seed: { status: 'RUNNING', round: seed?.round ?? 0, content: seed?.content ?? '', tools: [] },
     });

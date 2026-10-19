@@ -1,4 +1,4 @@
-import type { FeishuCardStatus } from './progress-card.js';
+import type { FeishuCardStatus, FeishuSubagentSummary } from './progress-card.js';
 import type { FeishuPendingAsk } from './ask-form-store.js';
 
 export interface FeishuProgressSnapshot {
@@ -6,6 +6,8 @@ export interface FeishuProgressSnapshot {
   round: number;
   content: string;
   tools: string[];
+  /** 运行中的后台子代理；仅 RUNNING 快照携带，终态清空。 */
+  subagents?: FeishuSubagentSummary[];
 }
 
 export interface FeishuProgressHandle {
@@ -20,6 +22,9 @@ export interface FeishuProgressHandle {
 
 const DEFAULT_THROTTLE_MS = 250;
 
+/** 运行中子代理查询缓存：避免工具参数流高频更新时重复查库。 */
+const SUBAGENT_CACHE_MS = 1000;
+
 /**
  * 进度卡 PATCH 闭包。
  * 节流等待结束、真正发出 PATCH 之前才读取表单列表，这样工具开始时排队的更新只要发生在登记之后就会带上表单。
@@ -31,6 +36,8 @@ export function createFeishuPatchedProgress(deps: {
   clearAsks: () => void;
   patch: (card: Record<string, unknown>) => Promise<void>;
   buildCard: (input: FeishuProgressSnapshot & { pendingAsks: FeishuPendingAsk[]; elapsedMs?: number; disliked?: boolean }) => Record<string, unknown>;
+  /** 运行中子代理加载器；失败时保留上次快照，不影响卡片更新。 */
+  loadSubagents?: () => Promise<FeishuSubagentSummary[]>;
   startedAtMs: number;
   seed?: FeishuProgressSnapshot;
   now?: () => number;
@@ -49,6 +56,25 @@ export function createFeishuPatchedProgress(deps: {
   // （飞书完成卡长期挂着，用户几分钟后点踩会看到「耗时」被凭空拉长）。
   let terminalElapsedMs: number | undefined;
   let last: FeishuProgressSnapshot = deps.seed ?? { status: 'RUNNING', round: 0, content: '', tools: [] };
+  let lastSubagents: FeishuSubagentSummary[] = deps.seed?.subagents ?? [];
+  let lastSubagentsAt = 0;
+  let lastSubagentsLoaded = false;
+
+  /** 加载运行中子代理；失败保留上次快照，1s 内复用，refresh 时可强制刷新。 */
+  const loadSubagents = async (force: boolean): Promise<FeishuSubagentSummary[]> => {
+    if (deps.loadSubagents == null) return [];
+    if (!force && lastSubagentsLoaded && now() - lastSubagentsAt < SUBAGENT_CACHE_MS) {
+      return lastSubagents;
+    }
+    try {
+      lastSubagents = await deps.loadSubagents();
+    } catch (e) {
+      console.warn(`飞书进度卡加载运行中子代理失败: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    lastSubagentsAt = now();
+    lastSubagentsLoaded = true;
+    return lastSubagents;
+  };
 
   const enqueue = (task: () => Promise<void>): Promise<void> => {
     const run = chain.then(async () => {
@@ -61,7 +87,12 @@ export function createFeishuPatchedProgress(deps: {
     return run;
   };
 
-  const send = async (status: FeishuCardStatus, round: number, content: string, tools: string[]): Promise<void> => {
+  const send = async (
+    status: FeishuCardStatus, round: number, content: string, tools: string[],
+    forceSubagents = false,
+  ): Promise<void> => {
+    // 终态卡片不展示子代理，同时清空快照，避免后续 renderCurrent 把运行中列表带进终态卡。
+    lastSubagents = status === 'RUNNING' ? await loadSubagents(forceSubagents) : [];
     if (status !== 'RUNNING') {
       deps.clearAsks();
       terminalElapsedMs = Math.max(0, now() - deps.startedAtMs);
@@ -69,9 +100,9 @@ export function createFeishuPatchedProgress(deps: {
     const elapsedMs = status === 'RUNNING' ? undefined : terminalElapsedMs;
     const asksNow = (): FeishuPendingAsk[] => (status === 'RUNNING' ? deps.listAsks() : []);
     const build = (pendingAsks: FeishuPendingAsk[]): Record<string, unknown> => deps.buildCard({
-      status, round, content, tools, pendingAsks, elapsedMs, disliked,
+      status, round, content, tools, subagents: lastSubagents, pendingAsks, elapsedMs, disliked,
     });
-    last = { status, round, content, tools };
+    last = { status, round, content, tools, subagents: lastSubagents };
     const card = build(asksNow());
     await deps.patch(card);
     const latest = build(asksNow());
@@ -87,13 +118,13 @@ export function createFeishuPatchedProgress(deps: {
     refresh() {
       return enqueue(async () => {
         if (last.status !== 'RUNNING') return;
-        await send(last.status, last.round, last.content, last.tools);
+        await send(last.status, last.round, last.content, last.tools, true);
       });
     },
     renderCurrent() {
       const pendingAsks = last.status === 'RUNNING' ? deps.listAsks() : [];
       const elapsedMs = last.status === 'RUNNING' ? undefined : terminalElapsedMs;
-      return deps.buildCard({ ...last, pendingAsks, elapsedMs, disliked });
+      return deps.buildCard({ ...last, subagents: last.subagents ?? [], pendingAsks, elapsedMs, disliked });
     },
     setDisliked(value: boolean) {
       disliked = value;

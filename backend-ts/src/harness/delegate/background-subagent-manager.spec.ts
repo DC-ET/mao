@@ -729,3 +729,72 @@ describe('BackgroundSubagentManager 完成通知广播（assistant_message_saved
     expect(exec.deliveryStatus).toBe('DELIVERED');
   });
 });
+
+describe('BackgroundSubagentManager.listRunning', () => {
+  function managerWith(
+    rows: Array<Record<string, unknown>>,
+    opts: { fail?: boolean; refs?: Array<{ id: number; round: number }> } = {},
+  ): BackgroundSubagentManager {
+    const listRunningByParent = vi.fn(async () => {
+      if (opts.fail) throw new Error('db down');
+      return rows;
+    });
+    const manager = new BackgroundSubagentManager({
+      subagentExecutionMapper: { listRunningByParent },
+    } as never);
+    for (const ref of opts.refs ?? []) {
+      (manager as unknown as { runningRefsByTask: Map<number, unknown> }).runningRefsByTask.set(ref.id, {
+        context: { currentRound: ref.round } as never,
+        collector: new SubAgentResultCollector(),
+      });
+    }
+    return manager;
+  }
+
+  const rows = [
+    {
+      id: 1, childSessionId: 11, agentType: 'explorer', taskDescription: '排查 X',
+      status: 'RUNNING', totalRounds: 0, childTitle: '后台子代理(explorer): 排查任务标题',
+    },
+    {
+      id: 2, childSessionId: 12, agentType: 'worker', taskDescription: '修复 Y',
+      status: 'RECOVERING', totalRounds: 3, childTitle: '自定义标题',
+    },
+    {
+      id: 3, childSessionId: 13, agentType: 'reviewer', taskDescription: '审查 Z',
+      status: 'RUNNING', totalRounds: 0, childTitle: '',
+    },
+  ];
+
+  it('映射行、去自动标题前缀、空标题回退任务描述', async () => {
+    const manager = managerWith(rows);
+    await expect(manager.listRunning(1)).resolves.toEqual([
+      { taskId: 1, childSessionId: 11, agentType: 'explorer', title: '排查任务标题', status: 'RUNNING', round: 0 },
+      { taskId: 2, childSessionId: 12, agentType: 'worker', title: '自定义标题', status: 'RECOVERING', round: 3 },
+      { taskId: 3, childSessionId: 13, agentType: 'reviewer', title: '审查 Z', status: 'RUNNING', round: 0 },
+    ]);
+  });
+
+  it('内存实时轮次优先于 DB totalRounds', async () => {
+    const manager = managerWith(rows, { refs: [{ id: 1, round: 5 }] });
+    const result = await manager.listRunning(1);
+    expect(result[0].round).toBe(5);
+    expect(result[1].round).toBe(3);
+  });
+
+  it('标题与任务描述都为空时回退会话 ID', async () => {
+    const manager = managerWith([
+      {
+        id: 9, childSessionId: 99, agentType: null, taskDescription: '',
+        status: 'RUNNING', totalRounds: 0, childTitle: '   ',
+      },
+    ]);
+    const result = await manager.listRunning(1);
+    expect(result[0].title).toBe('子代理 #99');
+  });
+
+  it('查询失败返回空列表，不向上抛', async () => {
+    const manager = managerWith([], { fail: true });
+    await expect(manager.listRunning(1)).resolves.toEqual([]);
+  });
+});

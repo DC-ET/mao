@@ -1,5 +1,5 @@
 import type { Db } from '../../db/db.js';
-import type { SubagentExecution } from '../../session/types.js';
+import type { RunningSubagentExecutionRow, SubagentExecution } from '../../session/types.js';
 
 export class SubagentExecutionMapper {
   constructor(private readonly db: Db) {}
@@ -78,6 +78,26 @@ export class SubagentExecutionMapper {
   listByParent(parentSessionId: number): Promise<SubagentExecution[]> {
     return this.db.query<SubagentExecution>(
       'SELECT * FROM subagent_execution WHERE parent_session_id = ? ORDER BY id DESC',
+      [parentSessionId],
+    );
+  }
+
+  /** 运行中的后台子代理：卡片展示用轻量查询，不读取 result 等长文本。 */
+  listRunningByParent(parentSessionId: number): Promise<RunningSubagentExecutionRow[]> {
+    return this.db.query<RunningSubagentExecutionRow>(
+      `SELECT e.id,
+              e.child_session_id,
+              e.agent_type,
+              e.task_description,
+              e.status,
+              e.total_rounds,
+              s.title AS child_title
+         FROM subagent_execution e
+         LEFT JOIN session s ON s.id = e.child_session_id
+        WHERE e.parent_session_id = ?
+          AND e.status IN ('RUNNING', 'RECOVERING')
+          AND e.invocation_type IN ('BACKGROUND', 'FOLLOWUP')
+        ORDER BY e.id ASC`,
       [parentSessionId],
     );
   }

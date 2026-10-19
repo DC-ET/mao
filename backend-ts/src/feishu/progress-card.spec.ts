@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildFeishuProgressCard, feishuSessionDetailUrl, formatFeishuDuration } from './progress-card.js';
+import { buildFeishuProgressCard, feishuSessionDetailUrl, formatFeishuDuration, type FeishuSubagentSummary } from './progress-card.js';
 
 type CardElement = {
   tag?: string;
@@ -318,5 +318,81 @@ describe('formatFeishuDuration', () => {
 
   it('负数按 0 秒处理', () => {
     expect(formatFeishuDuration(-5000)).toBe('0 秒');
+  });
+});
+
+describe('飞书进度卡片运行中子代理', () => {
+  const subagents: FeishuSubagentSummary[] = [
+    { taskId: 1, agentType: 'explorer', title: '排查卡片进度链路', status: 'RUNNING', round: 2 },
+    { taskId: 2, agentType: 'worker', title: '实现子代理展示', status: 'RUNNING', round: 0 },
+  ];
+
+  function cardWith(
+    subagentList: FeishuSubagentSummary[] = subagents,
+    status: 'RUNNING' | 'COMPLETED' = 'RUNNING',
+    content = '正文',
+  ): Record<string, unknown> {
+    return buildFeishuProgressCard(
+      status, 1, content, ['wait_subagents：等待后台子代理（执行中）'],
+      undefined, undefined, undefined, undefined, false, subagentList,
+    );
+  }
+
+  function subagentTextOf(card: Record<string, unknown>): string | undefined {
+    return elementsOf(card)
+      .map((element) => element.content ?? '')
+      .find((value) => value.startsWith('**子代理'));
+  }
+
+  it('执行中在正文后、本轮工具前展示类型/标题/轮次', () => {
+    const card = cardWith();
+    const contents = elementsOf(card).map((element) => element.content ?? '');
+    expect(subagentTextOf(card)).toBe(
+      '**子代理 · 2 个运行中**\n- 调研 · 排查卡片进度链路 · 第 2 轮\n- 开发 · 实现子代理展示',
+    );
+    const contentIndex = contents.indexOf('正文');
+    const subagentIndex = contents.findIndex((text) => text.startsWith('**子代理'));
+    const toolsIndex = contents.findIndex((text) => text.startsWith('**本轮工具'));
+    expect(subagentIndex).toBeGreaterThan(contentIndex);
+    expect(toolsIndex).toBeGreaterThan(subagentIndex);
+  });
+
+  it('无子代理或终态不渲染段落', () => {
+    expect(JSON.stringify(cardWith([]))).not.toContain('**子代理');
+    expect(JSON.stringify(cardWith(subagents, 'COMPLETED'))).not.toContain('**子代理');
+  });
+
+  it('超过 5 条折叠为「另有 N 个运行中」', () => {
+    const many = Array.from({ length: 7 }, (_, index) => ({
+      taskId: index + 1,
+      agentType: 'explorer',
+      title: `任务 ${index + 1}`,
+      status: 'RUNNING',
+      round: 1,
+    }));
+    const text = subagentTextOf(cardWith(many));
+    expect(text).toContain('- 另有 2 个运行中');
+    expect(text?.match(/- 调研/g)).toHaveLength(5);
+  });
+
+  it('未知类型保留原值，空类型显示「子代理」，恢复中带状态', () => {
+    const text = subagentTextOf(cardWith([
+      { taskId: 3, agentType: 'custom', title: '自定义任务', status: 'RUNNING', round: 1 },
+      { taskId: 4, agentType: null, title: '空类型任务', status: 'RECOVERING', round: 0 },
+      { taskId: 5, agentType: 'default', title: '默认任务', status: 'RUNNING', round: 0 },
+    ]));
+    expect(text).toContain('- custom · 自定义任务 · 第 1 轮');
+    expect(text).toContain('- 子代理 · 空类型任务 · 恢复中');
+    expect(text).toContain('- 通用 · 默认任务');
+  });
+
+  it('标题清洗换行与 markdown 字符', () => {
+    const text = subagentTextOf(cardWith([
+      { taskId: 6, agentType: 'reviewer', title: '  审查\n*卡片*  `代码`  ', status: 'RUNNING', round: 0 },
+    ]));
+    const line = text?.split('\n').find((value) => value.startsWith('- 审查'));
+    expect(line).toBe('- 审查 · 审查 卡片 代码');
+    expect(line).not.toContain('*');
+    expect(line).not.toContain('`');
   });
 });
