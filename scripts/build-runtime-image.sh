@@ -17,11 +17,14 @@ fi
 
 SHARP_VERSION="$(node -e "console.log(require('${ROOT_DIR}/backend-ts/package.json').dependencies.sharp || 'latest')")"
 NODE_PTY_VERSION="$(node -e "console.log(require('${ROOT_DIR}/backend-ts/package.json').dependencies['node-pty'] || 'latest')")"
-echo "构建 ${IMAGE}:${TAG}（sharp=${SHARP_VERSION}, node-pty=${NODE_PTY_VERSION}）"
+# Debian 源：默认官方源；访问不了 deb.debian.org 的构建机可传 APT_MIRROR=mirrors.aliyun.com
+APT_MIRROR="${APT_MIRROR:-deb.debian.org}"
+echo "构建 ${IMAGE}:${TAG}（sharp=${SHARP_VERSION}, node-pty=${NODE_PTY_VERSION}, apt=${APT_MIRROR}）"
 
 docker build \
   --build-arg SHARP_VERSION="${SHARP_VERSION}" \
   --build-arg NODE_PTY_VERSION="${NODE_PTY_VERSION}" \
+  --build-arg APT_MIRROR="${APT_MIRROR}" \
   -f "${ROOT_DIR}/Dockerfile.runtime" \
   -t "${IMAGE}:${TAG}" \
   "${ROOT_DIR}"

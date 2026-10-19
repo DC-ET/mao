@@ -1,0 +1,8 @@
+# Dockerfile.runtime 不需要任何构建上下文文件（只 FROM + apt + npm install），
+# 排除大目录，避免每次构建都打包整个仓库。
+.git
+**/node_modules
+**/dist
+**/coverage
+**/.tmp-test
+*.log
