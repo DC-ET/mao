@@ -24,14 +24,14 @@ describe('container mount planner', () => {
     for (const dir of Object.values(roots(base))) mkdirSync(dir, { recursive: true });
     const planner = new ContainerMountPlanner(roots(base));
     const mounts = planner.plan(7);
-    // 每条 rw 挂载都只含 user=7 的路径
-    for (const m of mounts.filter((x) => x.mode === 'rw')) {
+    // 除平台技能根外，每条 rw 挂载都只含 user=7 的路径
+    for (const m of mounts.filter((x) => x.mode === 'rw' && x.purpose !== 'skills')) {
       expect(m.hostPath).toContain('/7');
       expect(m.hostPath.startsWith(base)).toBe(true);
     }
-    // dist 与共享技能只读
+    // dist 只读；平台技能根按产品要求可写
     expect(mounts.find((m) => m.purpose === 'dist')?.mode).toBe('ro');
-    expect(mounts.find((m) => m.purpose === 'skills')?.mode).toBe('ro');
+    expect(mounts.find((m) => m.purpose === 'skills')?.mode).toBe('rw');
     // 容器内路径与宿主机逐字节一致（决策 15）
     for (const m of mounts) expect(m.containerPath).toBe(m.hostPath);
     // 不包含其他用户尾段

@@ -80,7 +80,10 @@ export class ContainerMountPlanner {
       { hostPath: this.under(this.roots.userSkillsDir, u), containerPath: this.under(this.roots.userSkillsDir, u), mode: 'rw', purpose: 'userSkills' },
       { hostPath: this.under(this.roots.uploadDir, u), containerPath: this.under(this.roots.uploadDir, u), mode: 'rw', purpose: 'uploads' },
       { hostPath: this.under(this.roots.distDir, ''), containerPath: this.under(this.roots.distDir, ''), mode: 'ro', purpose: 'dist' },
-      { hostPath: this.under(this.roots.skillsDir, ''), containerPath: this.under(this.roots.skillsDir, ''), mode: 'ro', purpose: 'skills' },
+      // 平台技能：全局可写（产品要求，容器内可安装/更新共享技能）。
+      // 注意这是全员共享目录，容器内 root 可修改会影响其他用户加载的技能，
+      // 个人技能仍写 userSkillsDir/{userId}。
+      { hostPath: this.under(this.roots.skillsDir, ''), containerPath: this.under(this.roots.skillsDir, ''), mode: 'rw', purpose: 'skills' },
     ];
     for (const workspace of extraWorkspaces) {
       const mount = this.planSessionWorkspace(workspace, userId);
@@ -134,7 +137,8 @@ export class ContainerMountPlanner {
    * 校验规则（技术方案 §5.1）：
    * - 每条源路径必须位于已登记数据根之下（或 ro 项等于其根自身）；
    * - rw 项的源路径必须以 /{userId} 结尾或包含 /{userId}/ 段，拒绝任何上级目录；
-   * - 只读项（dist/skills）不得被覆写为 rw；
+   *   唯一例外是平台技能根（purpose=skills，按产品要求全局可写）；
+   * - dist 只读，不得被覆写为 rw；
    * - 源路径不得是另一个已登记数据根的父目录（如挂 /opt/mao-data 整体）；
    * - 符号链接源路径 realpath 后仍必须在登记根内（防链接逃逸）；
    * - 同一容器内路径不得重复挂载。
@@ -164,12 +168,17 @@ export class ContainerMountPlanner {
         throw new MountPlanError(`mount ${mount.purpose}: host path ${host} is not under any registered data root`);
       }
       if (!ro && !mount.sessionWorkspace) {
+        // 平台技能根是唯一的共享 rw 例外（产品要求容器内可安装/更新共享技能），
+        // 且必须恰为登记的 skillsDir 根，不能借 purpose 放宽到其它共享路径。
+        const isPlatformSkillsRoot = mount.purpose === 'skills' && host === path.resolve(this.roots.skillsDir);
         // rw 项必须含 userId 尾段/中间段，拒绝把整个数据根或上级挂进容器。
         // 通道会话工作区（sessionWorkspace）按 {account}/{leaf} 结构性豁免 + 私聊
         // 叶子归属校验（planSessionWorkspace），并由调用方按数据库 user_id 过滤保证
-        const rel = path.relative(owningRoot, host);
-        if (!this.containsUserSegment(rel, u)) {
-          throw new MountPlanError(`mount ${mount.purpose}: rw path ${host} must contain /${u}/ segment (got relative '${rel}')`);
+        if (!isPlatformSkillsRoot) {
+          const rel = path.relative(owningRoot, host);
+          if (!this.containsUserSegment(rel, u)) {
+            throw new MountPlanError(`mount ${mount.purpose}: rw path ${host} must contain /${u}/ segment (got relative '${rel}')`);
+          }
         }
       }
       // 父目录防护：不得挂任何登记根的父目录（含 /opt/mao 与 /opt/mao-data 互为父子的场景）
