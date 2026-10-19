@@ -2,7 +2,7 @@
   <el-dialog
     :model-value="visible"
     width="1080px"
-    top="6vh"
+    top="4vh"
     append-to-body
     destroy-on-close
     class="workspace-file-dialog"
@@ -273,15 +273,21 @@ function onSearchClear() {
 /* 非全屏弹窗：固定最大高度，内部改为「面包屑/表格/预览」纵向滚动，
    避免弹窗被内容顶高后超出视口（全屏时期 vh 上限即够，弹窗下不再成立）。 */
 .workspace-file-dialog :deep(.el-dialog) {
-  max-height: 88vh;
+  max-height: 92vh;
   display: flex;
   flex-direction: column;
   margin-bottom: 0 !important;
 }
 
+.workspace-file-dialog :deep(.el-dialog__header) {
+  flex-shrink: 0;
+}
+
 .workspace-file-dialog :deep(.el-dialog__body) {
   min-height: 0;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .wf-header {
@@ -317,6 +323,8 @@ function onSearchClear() {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  flex: 1;
+  min-height: 0;
 }
 
 .wf-breadcrumb {
@@ -359,6 +367,10 @@ function onSearchClear() {
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 4px;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 
 .wf-panel-bar {
@@ -369,6 +381,7 @@ function onSearchClear() {
   padding: 6px 10px;
   font-size: 13px;
   background: var(--el-fill-color-light);
+  flex-shrink: 0;
 }
 
 .wf-searching {
@@ -376,20 +389,21 @@ function onSearchClear() {
   color: var(--el-text-color-secondary);
 }
 
-/* 表格与预览区各自滚动，父级（.wf-body）不整体撑高弹窗 */
-.wf-table-wrap {
+/* 表格与网格区各自滚动：弹性填满弹窗剩余高度（不写死 vh），
+   内容超出才出现滚动条——写死 max-height 会让弹窗内容偏少、下方留白。
+   父级 .wf-body 是 column flex 且 min-height:0，这里 flex:1 + min-height:0 才能正确收缩。 */
+.wf-table-wrap,
+.wf-grid-wrap {
   flex: 1 1 auto;
-  min-height: 120px;
-  max-height: 44vh;
+  min-height: 0;
   overflow: auto;
 }
 
-/* 图标视图：自适应网格（minmax 100px），与列表区共用滚动约束 */
-.wf-grid-wrap {
-  flex: 1 1 auto;
+.wf-table-wrap {
   min-height: 120px;
-  max-height: 44vh;
-  overflow: auto;
+}
+
+.wf-grid-wrap {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
   gap: 4px;
@@ -586,11 +600,6 @@ function onSearchClear() {
 
   .wf-time {
     display: none;
-  }
-
-  .wf-table-wrap,
-  .wf-grid-wrap {
-    max-height: 34vh;
   }
 
   /* 窄屏图标网格收紧为紧凑密度，操作按钮常显（触屏没有 hover） */
