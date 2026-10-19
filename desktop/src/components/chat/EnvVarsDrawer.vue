@@ -18,39 +18,6 @@
 
       <section class="drawer-section">
         <div class="section-title">
-          <span>当前生效变量</span>
-          <el-tag v-if="!effective.enabled" type="warning" size="small">总开关已关闭</el-tag>
-        </div>
-        <p class="section-hint">
-          优先级：工作区 &gt; 用户全局 &gt; 系统全局；平台内置凭据不可覆盖。值一律 <code>****</code>，不回显。
-        </p>
-
-        <div v-if="loadingEffective" class="empty-state">加载中...</div>
-        <div v-else-if="effective.items.length === 0" class="empty-state">暂无生效变量</div>
-        <div v-else class="source-groups">
-          <div v-for="group in sourceGroups" :key="group.source" class="source-group">
-            <div class="source-header" @click="toggleGroup(group.source)">
-              <el-icon :size="12" class="chevron" :class="{ open: isGroupOpen(group.source) }">
-                <ArrowRight />
-              </el-icon>
-              <span class="source-label">{{ group.label }}</span>
-              <span class="source-count">{{ group.items.length }}</span>
-            </div>
-            <div v-if="isGroupOpen(group.source)" class="source-items">
-              <div v-for="item in visibleItems(group)" :key="`${group.source}:${item.envKey}`" class="source-item">
-                <span class="env-key">{{ item.envKey }}</span>
-                <span v-if="item.note" class="env-note">{{ item.note }}</span>
-              </div>
-              <div v-if="group.items.length > visibleItems(group).length" class="more-hint">
-                共 {{ group.items.length }} 项，已折叠显示前 {{ GROUP_VISIBLE_LIMIT }} 项
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section class="drawer-section">
-        <div class="section-title">
           <span>当前工作区变量</span>
           <button v-if="hasWorkspace" class="mini-btn" @click="openCreateDialog">
             <el-icon :size="12"><Plus /></el-icon>
@@ -90,6 +57,39 @@
                   <el-icon :size="12"><Delete /></el-icon>
                 </button>
               </template>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="drawer-section">
+        <div class="section-title">
+          <span>当前生效变量</span>
+          <el-tag v-if="!effective.enabled" type="warning" size="small">总开关已关闭</el-tag>
+        </div>
+        <p class="section-hint">
+          优先级：工作区 &gt; 用户全局 &gt; 系统全局；平台内置凭据不可覆盖。值一律 <code>****</code>，不回显。
+        </p>
+
+        <div v-if="loadingEffective" class="empty-state">加载中...</div>
+        <div v-else-if="effective.items.length === 0" class="empty-state">暂无生效变量</div>
+        <div v-else class="source-groups">
+          <div v-for="group in sourceGroups" :key="group.source" class="source-group">
+            <div class="source-header" @click="toggleGroup(group.source)">
+              <el-icon :size="12" class="chevron" :class="{ open: isGroupOpen(group.source) }">
+                <ArrowRight />
+              </el-icon>
+              <span class="source-label">{{ group.label }}</span>
+              <span class="source-count">{{ group.items.length }}</span>
+            </div>
+            <div v-if="isGroupOpen(group.source)" class="source-items">
+              <div v-for="item in visibleItems(group)" :key="`${group.source}:${item.envKey}`" class="source-item">
+                <span class="env-key">{{ item.envKey }}</span>
+                <span v-if="item.note" class="env-note">{{ item.note }}</span>
+              </div>
+              <div v-if="group.items.length > visibleItems(group).length" class="more-hint">
+                共 {{ group.items.length }} 项，已折叠显示前 {{ GROUP_VISIBLE_LIMIT }} 项
+              </div>
             </div>
           </div>
         </div>
