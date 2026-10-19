@@ -1168,6 +1168,8 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   color: var(--aw-ink);
   font-family: var(--aw-font-mono);
   font-size: var(--aw-text-caption);
+  /* 与同区块的 Git 摘要 / 环境变量入口同基准（全局 1.47≈20.6px 会让四行文字两种行高） */
+  line-height: 18px;
   word-break: break-all;
 }
 
