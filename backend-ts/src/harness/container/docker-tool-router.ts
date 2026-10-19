@@ -53,14 +53,15 @@ export class DockerToolRouter {
       channelServer: RuntimeChannelServer;
       envelopeBuilder: SessionEnvelopeBuilder;
       runtimeModeLookup: UserRuntimeModeLookup;
-      /** 全局 MAO_CLOUD_RUNTIME。 */
-      globalMode: () => 'host' | 'docker';
+      /** 全局模式解析（system_setting.runtime.mode → MAO_CLOUD_RUNTIME 回落，见 RuntimeModeResolver）。 */
+      globalMode: () => Promise<'host' | 'docker'>;
     },
   ) {}
 
   /** 用户是否走容器：用户级字段优先，空跟随全局。 */
   async enabledFor(userId: number): Promise<boolean> {
-    const global = this.deps.globalMode();
+    // globalMode 内部有短 TTL 缓存；后台切换后 resolver.invalidate() 立即反映到缓存 key
+    const global = await this.deps.globalMode();
     const cacheKey = `${global}:${userId}`;
     const now = Date.now();
     const cached = this.modeCache.get(cacheKey);

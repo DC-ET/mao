@@ -392,6 +392,8 @@ FROM message WHERE deleted = 0;
 
 `MAO_CLOUD_RUNTIME=docker` 启用用户运行时容器隔离：该用户的 CLOUD 会话中，shell、文件工具（read/write/edit/glob/grep）、MCP stdio、云端终端在每用户独立 Docker 容器内执行，容器内只挂载该用户自己的数据目录，跨用户数据不可读；MySQL / JWT secret / LLM key / 平台级 IM appSecret 不进容器，用户级凭据（Git token、MAO_TOKEN 等）由宿主机每次派发时下发。`MAO_CLOUD_RUNTIME=host`（默认）行为与历史版本完全一致。
 
+**全局开关也可在管理后台切换**：系统设置 → 平台与运维 → 运行环境 → 「用户运行时模式」。DB 值（`system_setting.runtime.mode`，V160）优先于 `MAO_CLOUD_RUNTIME`，保存后无需重启、5 秒内生效；切到 `docker` 时后端先执行容器预检（Docker 可用 + 镜像存在 + socket 根目录可写），预检失败直接拒绝保存并返回原因，不会出现「配置已是 docker 但机器上跑不起来」。`MAO_CLOUD_RUNTIME` 从此只作为缺省值（DB 行缺失 / 值非法 / 查询失败时使用）。
+
 ### 前置条件
 
 1. **Docker**：生产机安装 Docker（`docker version` 可用）。容器使用默认 bridge 网络，可出网（npm/pip 安装、curl 外部 API），不对外暴露任何端口，进出只走 Unix socket。
@@ -409,7 +411,7 @@ FROM message WHERE deleted = 0;
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `MAO_CLOUD_RUNTIME` | `host` | `docker` 启用容器模式 |
+| `MAO_CLOUD_RUNTIME` | `host` | 部署缺省值：`docker` 为容器模式。管理后台「系统设置 → 运行环境 → 用户运行时模式」优先，后台未配置 / 值非法时回落此值 |
 | `MAO_CONTAINER_IDLE_MINUTES` | `60` | 空闲回收阈值。**必须大于管理后台「系统设置」的 shell 会话空闲超时（默认 30）**：容器先停会把容器内全部 shell 会话与后台任务杀掉 |
 | `MAO_CONTAINER_MAX_LIFETIME_HOURS` | `72` | 强制重建阈值 |
 | `MAO_CONTAINER_MEMORY_MB` / `MAO_CONTAINER_CPUS` / `MAO_CONTAINER_PIDS_LIMIT` | 2048 / 2 / 512 | 单容器资源上限 |
@@ -419,9 +421,10 @@ FROM message WHERE deleted = 0;
 
 ### 灰度与回收
 
+- 全局切换：管理后台「系统设置 → 平台与运维 → 运行环境 → 用户运行时模式」（host / docker），保存即生效、无需重启；切到 docker 时先预检，失败拒绝保存。DB 值优先于 `MAO_CLOUD_RUNTIME`。
 - 用户级覆盖：管理后台「用户管理 → 编辑用户 → 运行时模式」（跟随全局 / 容器隔离 / 宿主机）。先对内部账号开启观察，再逐步放大。
 - 空闲回收只 `docker stop` 不删（数据在挂载卷，秒级恢复）；容器内有活跃 shell 会话 / 未消费后台任务 / attach 中终端时不回收。异常容器兜底清理：`scripts/container-gc.sh`（建议 cron 每 10 分钟）。
-- 切换某用户到 docker 模式时，其宿主机上仍活着的旧 shell 会话会被终止，不做迁移。
+- 切换（全局或单用户）到 docker 模式时，其宿主机上仍活着的旧 shell 会话会被终止，不做迁移。
 
 ### 运维排查
 

@@ -354,6 +354,7 @@ import { registerDigestRoutes } from './digest/routes.js';
 import { RuntimeChannelServer } from './harness/container/runtime-channel-server.js';
 import { ContainerRegistry } from './harness/container/container-registry.js';
 import { DockerToolRouter } from './harness/container/docker-tool-router.js';
+import { RuntimeModeResolver, RUNTIME_MODE_SETTING_KEY, validateRuntimeModeSave } from './harness/container/runtime-mode.js';
 import { SessionEnvelopeBuilder, buildDepsEnv } from './harness/container/session-envelope-builder.js';
 import { DockerSendBytesBridge } from './harness/container/read-bytes-bridge.js';
 import { RoutingMcpClientManager } from './harness/container/routing-mcp-client-manager.js';
@@ -1058,6 +1059,20 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     },
   });
   containerChannelHolder.registry = containerRegistry;
+  // 全局运行时模式：管理后台「系统设置 → 运行环境」写 system_setting.runtime.mode，
+  // 缺行/非法/查询失败回落 MAO_CLOUD_RUNTIME（app.cloudRuntime.mode，默认 host）。
+  const runtimeModeResolver = new RuntimeModeResolver({
+    systemSettingService: settingService,
+    fallbackMode: cloudRuntimeCfg.mode,
+  });
+  let containerRuntimeActive = false;
+  /** 幂等激活容器运行时（预检 + 空闲回收巡检）；失败不置位，修复后可由后台再次保存触发。 */
+  const activateContainerRuntime = async (): Promise<void> => {
+    if (containerRuntimeActive) return;
+    await containerRegistry.precheck();
+    containerRegistry.startIdleLoop();
+    containerRuntimeActive = true;
+  };
   const envelopeBuilder = new SessionEnvelopeBuilder({
     runtimeResolver,
     gitCredentialService: gitLookup,
@@ -1078,7 +1093,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         return mode === 'docker' || mode === 'host' ? mode : null;
       },
     },
-    globalMode: () => cloudRuntimeCfg.mode,
+    globalMode: () => runtimeModeResolver.resolve(),
   });
   const sendBytesBridge = new DockerSendBytesBridge({
     router: dockerRouter,
@@ -1142,12 +1157,20 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       console.debug(`Container prewarm skipped for session ${sessionId}: ${(e as Error).message}`);
     });
   });
-  if (cloudRuntimeCfg.mode === 'docker') {
-    containerRegistry.precheck().catch((e) => {
-      console.error(`[container] 启动预检失败，请先安装 Docker 并构建运行时镜像: ${(e as Error).message}`);
-      process.exit(1);
-    });
-    containerRegistry.startIdleLoop();
+  // 启动激活：env 显式 docker 时预检失败沿用「直接退出」语义；DB 覆盖为 docker 时
+  // 只记 error 并继续启动，避免一条配置值让服务起不来（管理员可在后台切回 host）。
+  const bootRuntimeMode = await runtimeModeResolver.resolve();
+  if (bootRuntimeMode === 'docker') {
+    try {
+      await activateContainerRuntime();
+    } catch (e) {
+      const message = (e as Error).message;
+      if (cloudRuntimeCfg.mode === 'docker') {
+        console.error(`[container] 启动预检失败，请先安装 Docker 并构建运行时镜像: ${message}`);
+        process.exit(1);
+      }
+      console.error(`[container] 全局运行时模式为 docker，但预检失败（可在管理后台「系统设置 → 运行环境」切回 host）: ${message}`);
+    }
   }
 
   const terminalManager = new TerminalManager({
@@ -2804,7 +2827,17 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     registerAgentBundleRoutes(api, { agentBundleService, permissionService, registryConfig: settingService });
     registerSharedAgentRoutes(api, { sharedAgentService, permissionService });
     registerModelRoutes(api, { modelService, permissionService });
-    registerSystemSettingRoutes(api, { systemSettingService: settingService, permissionService });
+    registerSystemSettingRoutes(api, {
+      systemSettingService: settingService,
+      permissionService,
+      beforeSave: async (items) => {
+        await validateRuntimeModeSave(items, activateContainerRuntime);
+      },
+      afterSave: (keys) => {
+        // 后台切换后立即按新模式判定，不等解析缓存 TTL
+        if (keys.includes(RUNTIME_MODE_SETTING_KEY)) runtimeModeResolver.invalidate();
+      },
+    });
     registerEmbedRoutes(api, { systemSettingService: settingService, agentService });
     registerCommandRoutes(api, {
       userCommandService: commandService,

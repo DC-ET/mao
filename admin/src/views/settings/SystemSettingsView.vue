@@ -126,6 +126,16 @@
                           <el-option label="全量注入（旧行为，每次请求带完整 schema）" value="full" />
                         </el-select>
                         <el-select
+                          v-else-if="isRuntimeModeSetting(row.settingKey)"
+                          v-model="plainModel[row.settingKey]"
+                          :disabled="!canWrite"
+                          placeholder="用户运行时模式"
+                          style="width: 100%"
+                        >
+                          <el-option label="宿主机（host，默认）：工具在服务端宿主机执行" value="host" />
+                          <el-option label="容器隔离（docker）：每用户独立容器；切换后旧 shell 会话会终止" value="docker" />
+                        </el-select>
+                        <el-select
                           v-else-if="isAgentSetting(row.settingKey)"
                           v-model="plainModel[row.settingKey]"
                           :disabled="!canWrite"
@@ -482,6 +492,11 @@ function isAgentSetting(key: string | undefined | null) {
 /** MCP 工具加载模式：枚举值下拉，避免管理员手填拼错（后端仍会回落 working_set 兜底）。 */
 function isMcpLoadModeSetting(key: string | undefined | null) {
   return key === 'mcp.loadMode'
+}
+
+/** 全局用户运行时模式：枚举下拉；后端保存前会预检容器运行时，失败则拒绝保存并提示原因。 */
+function isRuntimeModeSetting(key: string | undefined | null) {
+  return key === 'runtime.mode'
 }
 
 const integrationRows = computed(() => settings.value.filter((item) => INTEGRATION_KEYS.has(item.settingKey)))

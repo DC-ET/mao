@@ -11,6 +11,13 @@ import {
 export interface SystemSettingRouteDeps {
   systemSettingService: SystemSettingService;
   permissionService: { hasPermission(userId: number, code: string): Promise<boolean> };
+  /**
+   * 保存前校验（items 已是最终待写入值，secret 未修改时为 null）：
+   * 抛错则整次保存失败、DB 不变。当前用于 runtime.mode=docker 的容器运行时预检。
+   */
+  beforeSave?: (items: Array<{ key: string; value: string | null }>) => Promise<void>;
+  /** 保存成功后回调（例如失效运行时模式解析缓存，让后台切换立即生效）。 */
+  afterSave?: (keys: string[]) => void;
 }
 
 interface UpdateSettingRequest {
@@ -37,14 +44,21 @@ export function registerSystemSettingRoutes(app: FastifyInstance, deps: SystemSe
     await requirePermission(permissionService, userId, 'settings:write');
     const body = bodyOf<BatchUpdateRequest>(request);
     const items = (body.items ?? []).map((item) => ({ key: String(item.key ?? ''), value: item.value ?? null }));
-    return sendOk(reply, await systemSettingService.updateBatch(items));
+    await deps.beforeSave?.(items);
+    const result = await systemSettingService.updateBatch(items);
+    deps.afterSave?.(items.map((item) => item.key));
+    return sendOk(reply, result);
   });
 
   app.put('/v1/system-settings/:key', async (request, reply) => {
     const userId = requireUserId(request);
     await requirePermission(permissionService, userId, 'settings:write');
     const body = bodyOf<UpdateSettingRequest>(request);
-    return sendOk(reply, await systemSettingService.update(pathParam(request, 'key'), body.value));
+    const key = pathParam(request, 'key');
+    await deps.beforeSave?.([{ key, value: body.value ?? null }]);
+    const result = await systemSettingService.update(key, body.value);
+    deps.afterSave?.([key]);
+    return sendOk(reply, result);
   });
 
   app.post('/v1/system-settings/test/ldap', async (request, reply) => {

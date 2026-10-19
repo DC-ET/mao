@@ -32,7 +32,7 @@ describe('docker tool router', () => {
       channelServer: {} as never,
       envelopeBuilder: {} as never,
       runtimeModeLookup: { runtimeModeOf },
-      globalMode: () => globalMode,
+      globalMode: async () => globalMode,
     });
     return { router, runtimeModeOf };
   }
@@ -63,7 +63,7 @@ describe('docker tool router', () => {
   });
 
   it('reflectsGlobalModeSwitchImmediately', async () => {
-    // 缓存 key 含全局模式：运维切 MAO_CLOUD_RUNTIME 重启后立即按新模式判定
+    // 缓存 key 含解析后的全局模式：后台切换 runtime.mode 后立即按新模式判定
     vi.useFakeTimers();
     let globalMode: 'host' | 'docker' = 'host';
     const runtimeModeOf = vi.fn(async () => null);
@@ -72,7 +72,7 @@ describe('docker tool router', () => {
       channelServer: {} as never,
       envelopeBuilder: {} as never,
       runtimeModeLookup: { runtimeModeOf },
-      globalMode: () => globalMode,
+      globalMode: async () => globalMode,
     });
     expect(await router.enabledFor(7)).toBe(false);
     globalMode = 'docker';
@@ -94,7 +94,7 @@ describe('docker tool router', () => {
       channelServer: { getConnection: () => ({ request }) } as never,
       envelopeBuilder: { build: async () => ({ userId: 7 }) } as never,
       runtimeModeLookup: { runtimeModeOf: async () => 'docker' },
-      globalMode: () => 'docker',
+      globalMode: async () => 'docker',
     });
     const result = await router.dispatch('shell', '{"action":"exec","command":"echo hi"}', {
       userId: 7, sessionId: 11, workspace: '/opt/mao-data/workspace/feishu-chat/bot-1/oc_chat',
@@ -116,7 +116,7 @@ describe('docker tool router', () => {
       channelServer: { getConnection: () => ({ request }) } as never,
       envelopeBuilder: { build: async () => ({ userId: 7 }) } as never,
       runtimeModeLookup: { runtimeModeOf: async () => 'docker' },
-      globalMode: () => 'docker',
+      globalMode: async () => 'docker',
     });
     const bytes = await router.readBytes({
       userId: 7, sessionId: 11, workspace: '/opt/mao-data/workspace/dingtalk-chat/bot-1/p2p-7',
