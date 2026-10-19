@@ -7,6 +7,8 @@ export type TaskNotificationPhase = 'COMPLETED' | 'FAILED' | 'ASK_USER';
 /** 卡片内任务标题与用户消息的展示上限，超出截断并加省略号。 */
 export const NOTIFICATION_TITLE_MAX_CHARS = 80;
 export const NOTIFICATION_USER_MESSAGE_MAX_CHARS = 300;
+/** 微信回复降级推送的标题：两处出口（卡片 header 与文本前缀）共用，避免文案漂移。 */
+export const WEIXIN_FALLBACK_HEADER = 'Mao 微信回复发送失败';
 
 export interface TaskNotificationContentInput {
   phase: TaskNotificationPhase;
@@ -73,6 +75,31 @@ export function buildTaskNotificationCard(input: TaskNotificationContentInput): 
   return {
     config: { wide_screen_mode: true },
     header: { template: meta.template, title: { tag: 'plain_text', content: meta.header } },
+    elements,
+  };
+}
+
+/**
+ * 微信回复降级推送的飞书卡片（1.0 结构）。
+ *
+ * 与任务通知卡片同源但语义不同：这里没有「任务标题/状态相位」概念，主体是
+ * Agent 已生成的回复原文，头部固定为告警色。`reply` 由调用方预先按渠道上限
+ * 截断（见 WeixinWebhookFallbackService），此处只负责排版，不再裁剪。
+ */
+export function buildWeixinFallbackCard(input: { reply: string; now?: Date }): Record<string, unknown> {
+  const elements: Array<Record<string, unknown>> = [
+    markdownOf('回复已生成，但无法送达微信。以下为完整内容：'),
+    { tag: 'hr' },
+    markdownOf(input.reply),
+    { tag: 'hr' },
+    {
+      tag: 'note',
+      elements: [{ tag: 'plain_text', content: `时间：${formatDateTime(input.now ?? new Date())}` }],
+    },
+  ];
+  return {
+    config: { wide_screen_mode: true },
+    header: { template: 'orange', title: { tag: 'plain_text', content: WEIXIN_FALLBACK_HEADER } },
     elements,
   };
 }

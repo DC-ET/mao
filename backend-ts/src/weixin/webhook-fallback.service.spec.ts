@@ -5,15 +5,15 @@ import type { WebhookSenderRegistry } from '../notification/task/webhook-sender.
 function buildService(overrides: {
   preference?: { channel: string; webhookCiphertext: string } | null;
   decrypt?: (c: string) => string;
-  send?: (url: string, message: { text: string }) => Promise<{ success: boolean; retryable: boolean; httpStatus: number | null; providerCode: string | null; error: string | null }>;
+  send?: (url: string, message: { text: string; card?: Record<string, unknown> }) => Promise<{ success: boolean; retryable: boolean; httpStatus: number | null; providerCode: string | null; error: string | null }>;
 } = {}) {
   const preference = overrides.preference === undefined
     ? { channel: 'DINGTALK', webhookCiphertext: 'cipher-1' }
     : overrides.preference;
   const repo = { findEnabled: vi.fn(async () => preference) };
   const cipher = { decrypt: overrides.decrypt ?? vi.fn(() => 'https://oapi.dingtalk.com/robot/send?access_token=abc') };
-  const sent: Array<{ url: string; message: { text: string } }> = [];
-  const send = overrides.send ?? vi.fn(async (url: string, message: { text: string }) => {
+  const sent: Array<{ url: string; message: { text: string; card?: Record<string, unknown> } }> = [];
+  const send = overrides.send ?? vi.fn(async (url: string, message: { text: string; card?: Record<string, unknown> }) => {
     sent.push({ url, message });
     return { success: true, retryable: false, httpStatus: 200, providerCode: '0', error: null };
   });
@@ -32,6 +32,19 @@ describe('WeixinWebhookFallbackService', () => {
     expect(sent[0].url).toContain('oapi.dingtalk.com');
     expect(sent[0].message.text).toContain('微信发送失败的完整回答');
     expect(sent[0].message.text).toContain('发送失败');
+  });
+
+  it('飞书渠道_同时下发 text 与 interactive 卡片（勿只发文本退化成普通消息）', async () => {
+    const { service, sent } = buildService({ preference: { channel: 'FEISHU', webhookCiphertext: 'c' } });
+    expect(await service.sendFallback(42, '微信发送失败的完整回答')).toBe(true);
+    const message = sent[0].message;
+    expect(message.text).toContain('微信发送失败的完整回答');
+    // 卡片是飞书 interactive 分支的开关：缺失时 FeishuWebhookSender 会退化为纯文本消息。
+    expect(message.card).toBeDefined();
+    const card = JSON.stringify(message.card);
+    expect(card).toContain('微信发送失败的完整回答');
+    expect(card).toContain('Mao 微信回复发送失败');
+    expect(card).toContain('无法送达微信');
   });
 
   it('userId 为空_跳过且不查询配置', async () => {
@@ -93,5 +106,15 @@ describe('WeixinWebhookFallbackService', () => {
     await service.sendFallback(42, 'x'.repeat(9000));
     expect(sent[0].message.text).toContain('内容过长已截断');
     expect(sent[0].message.text.length).toBeLessThan(9000);
+  });
+
+  it('超长回复_卡片内同样截断（卡片上限小于文本上限）', async () => {
+    const { service, sent } = buildService({ preference: { channel: 'FEISHU', webhookCiphertext: 'c' } });
+    await service.sendFallback(42, 'x'.repeat(9000));
+    const card = JSON.stringify(sent[0].message.card);
+    // 3000 字符预算 + 提示文案 + JSON 结构开销，远小于 9000：确认卡片没有把整段原文塞进去
+    expect(card.length).toBeLessThan(9000);
+    expect(card).not.toContain('x'.repeat(3001));
+    expect(card).toContain('内容过长已截断');
   });
 });

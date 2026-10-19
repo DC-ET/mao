@@ -1,11 +1,16 @@
 import type { NotificationChannel } from '../notification/task/types.js';
 import type { WebhookSenderRegistry } from '../notification/task/webhook-sender.js';
+import { buildWeixinFallbackCard, WEIXIN_FALLBACK_HEADER } from '../notification/task/feishu-notification-card.js';
 
 /** webhook 降级推送的正文长度上限：钉钉/飞书文本消息均有长度限制，超长直接截断。 */
 const MAX_FALLBACK_TEXT_CHARS = 4000;
 
-/** 降级推送标题：让用户在钉钉/飞书里一眼看出这不是普通任务通知。 */
-const FALLBACK_TITLE = 'Mao 微信回复发送失败';
+/**
+ * 飞书单张卡片的 markdown 元素上限：超出后飞书侧渲染异常/拒收。
+ * 回复原文按本预算裁剪后再进卡片（与文本出口的 MAX_FALLBACK_TEXT_CHARS 分开计量：
+ * 文本上限是给钉钉的，卡片上限是给飞书卡片结构的）。
+ */
+const MAX_FALLBACK_CARD_CHARS = 3000;
 
 /**
  * 微信下行失败时的 webhook 降级推送。
@@ -77,10 +82,18 @@ export class WeixinWebhookFallbackService {
     const body = text.length > MAX_FALLBACK_TEXT_CHARS
       ? `${text.slice(0, MAX_FALLBACK_TEXT_CHARS)}\n\n（内容过长已截断，完整内容请在 Mao 桌面端/网页端查看）`
       : text;
+    // 与正常任务通知同口径：text（钉钉/飞书回退）与 card（飞书 interactive 卡片）都传。
+    // 只传 text 时飞书侧退化为纯文本消息，与其它通知的卡片形态不一致。
+    const cardBody = text.length > MAX_FALLBACK_CARD_CHARS
+      ? `${text.slice(0, MAX_FALLBACK_CARD_CHARS)}\n\n（内容过长已截断，完整内容请在 Mao 桌面端/网页端查看）`
+      : text;
     try {
       const result = await this.senderRegistry
         .get(channel as NotificationChannel)
-        .send(webhookUrl, { text: `${FALLBACK_TITLE}\n\n${body}` });
+        .send(webhookUrl, {
+          text: `${WEIXIN_FALLBACK_HEADER}\n\n${body}`,
+          card: buildWeixinFallbackCard({ reply: cardBody }),
+        });
       if (result.success) {
         console.info(`微信回复已降级推送至 webhook, userId=${userId}, channel=${channel}`);
         return true;

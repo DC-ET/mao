@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   buildTaskNotificationCard,
   buildTaskNotificationText,
+  buildWeixinFallbackCard,
+  WEIXIN_FALLBACK_HEADER,
   NOTIFICATION_USER_MESSAGE_MAX_CHARS,
 } from './feishu-notification-card.js';
 
@@ -66,6 +68,36 @@ describe('buildTaskNotificationCard', () => {
     expect(text).toContain('Mao 提问通知');
     expect(text).toContain('精简 Termix 界面');
     expect(text).toContain('请到会话页面作答');
+  });
+});
+
+describe('buildWeixinFallbackCard', () => {
+  it('renders reply body with a warning header and no action button', () => {
+    const card = buildWeixinFallbackCard({
+      reply: 'ET，早呀～今天的申购情况查好了：\n新股：有 1 只',
+      now: new Date('2026-10-19T10:00:00+08:00'),
+    });
+    expect(card.header).toEqual({
+      template: 'orange',
+      title: { tag: 'plain_text', content: WEIXIN_FALLBACK_HEADER },
+    });
+    const text = cardText(card);
+    // 主体是回复原文，不是任务标题/状态
+    expect(text).toContain('今天的申购情况查好了');
+    expect(text).toContain('无法送达微信');
+    expect(text).toContain('2026-10-19 10:00:00');
+    // 降级推送没有会话深链可点：不应出现按钮
+    expect(text).not.toContain('"tag":"action"');
+  });
+
+  it('keeps markdown structure of the reply intact', () => {
+    const card = buildWeixinFallbackCard({ reply: '**新股：有 1 只**\n| 项目 | 信息 |' });
+    expect(cardText(card)).toContain('lark_md');
+  });
+
+  it('empty reply still yields a valid card skeleton', () => {
+    const card = buildWeixinFallbackCard({ reply: '' });
+    expect(cardText(card)).toContain('无法送达微信');
   });
 });
 
