@@ -52,22 +52,27 @@ export function compactToolCalls(raw: string | null | undefined): string | null 
 
 function shrinkArgumentJson(raw: string): string {
   const noteFor = (length: number) => `\n…（参数过长已省略，原文 ${length} 字符，完整内容请导出记录）`;
+  let obj: unknown;
   try {
-    const obj = JSON.parse(raw) as unknown;
-    if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
-      let changed = false;
-      const record = obj as Record<string, unknown>;
-      for (const [key, value] of Object.entries(record)) {
-        if (typeof value !== 'string' || value.length <= ARG_FIELD_LIMIT) continue;
-        record[key] = value.slice(0, ARG_KEEP) + noteFor(value.length);
-        changed = true;
-      }
-      if (changed) return JSON.stringify(record);
-    }
+    obj = JSON.parse(raw);
   } catch {
-    // 参数不是 JSON 时下面按纯文本截断
+    // 参数不是 JSON：才按纯文本截断（截断后不再合法，但原文本就不是 JSON）。
+    return raw.slice(0, ARG_KEEP) + noteFor(raw.length);
   }
-  return raw.slice(0, ARG_KEEP) + noteFor(raw.length);
+  if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+    const record = obj as Record<string, unknown>;
+    let changed = false;
+    for (const [key, value] of Object.entries(record)) {
+      if (typeof value !== 'string' || value.length <= ARG_FIELD_LIMIT) continue;
+      record[key] = value.slice(0, ARG_KEEP) + noteFor(value.length);
+      changed = true;
+    }
+    // 有顶层字段超限才压缩并重新序列化；无字段超限时原样返回——否则会把合法 JSON 截成非法片段，
+    // 管理后台 parseToolArguments 解析失败会导致工具卡片「输入」面板整段消失。
+    return changed ? JSON.stringify(record) : raw;
+  }
+  // JSON 合法但不是可压缩的普通对象（数组 / 标量）：原样返回，保持 JSON 合法。
+  return raw;
 }
 
 /**

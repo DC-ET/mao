@@ -3,6 +3,7 @@ import type { Message, SessionService } from '../deps.js';
 import type { AgentExecutionContext } from './agent-execution-context.js';
 import type { CompactionArchiveService } from './compaction-archive.service.js';
 import { isRealUserMessage } from './compaction-service.js';
+import { isMultimodalContentParts } from '../../common/multimodal-content.js';
 import type { ContextManager } from './context-manager.js';
 import { MessageHistoryNormalizer } from './message-history-normalizer.js';
 import { PersistedChatMessage } from './persisted-chat-message.js';
@@ -156,12 +157,3 @@ function parseContent(raw: string | null | undefined): unknown {
   return raw;
 }
 
-/** 每个元素必须是含 type（text/image_url）的对象，且任一元素不满足则整体按原始字符串返回。 */
-function isMultimodalContentParts(parsed: unknown): parsed is Array<Record<string, unknown>> {
-  if (!Array.isArray(parsed) || parsed.length === 0) return false;
-  return parsed.every((part) => {
-    if (part == null || typeof part !== 'object' || Array.isArray(part)) return false;
-    const map = part as Record<string, unknown>;
-    return map.type === 'text' || map.type === 'image_url';
-  });
-}

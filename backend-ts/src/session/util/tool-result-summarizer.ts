@@ -256,7 +256,11 @@ function summarizeShell(argumentsJson: string | null | undefined, result: string
   const exitCode = has(node, 'exit_code') ? Number(node.exit_code) : -1;
   const output = has(node, 'output') ? String(node.output) : '';
   if (exitCode !== 0) return `${label} (exit ${exitCode})`;
-  const lineCount = output.length === 0 ? 0 : output.split('\n').length;
+  // 结尾换行不产生空行（与 read-file-tool 的 splitLines 同口径）：终端输出几乎总以换行结尾，
+  // 直接 split('\n').length 会系统性多算 1 行（a\nb\n 显示成「3 行」）。
+  const lines = output.length === 0 ? [] : output.split('\n');
+  if (lines[lines.length - 1] === '') lines.pop();
+  const lineCount = lines.length;
   if (lineCount > 1) return `${label} (${lineCount} 行输出)`;
   return label;
 }

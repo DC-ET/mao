@@ -1,4 +1,5 @@
 import { javaLocalDateTimeString } from '../common/datetime.js';
+import { isMultimodalContentParts } from '../common/multimodal-content.js';
 import type { ContextManifest } from '../harness/core/context-manifest.js';
 import { idMapGet } from '../common/request.js';
 import { isActivePhase } from './util/session-group-key.js';
@@ -359,26 +360,30 @@ export function toMessageVO(message: Message): MessageVO {
   };
   const raw = message.content;
   if (raw != null && raw.trim().startsWith('[')) {
+    let parts: unknown;
     try {
-      const parts = JSON.parse(raw) as unknown[];
+      parts = JSON.parse(raw);
+    } catch {
+      parts = undefined;
+    }
+    // 仅当整体确为多模态 content part 数组时才展开；纯文本 JSON 数组（[1,2,3]、["a","b"]、[]）
+    // 在 DB 中与多模态数组无法区分，不校验结构会把 content 清空（与 session-history-loader 同口径）。
+    if (parts !== undefined && isMultimodalContentParts(parts)) {
       let text = '';
       const images: string[] = [];
       for (const part of parts) {
-        if (part && typeof part === 'object' && !Array.isArray(part)) {
-          const map = part as Record<string, unknown>;
-          if (map.type === 'text' && map.text != null) {
-            text += String(map.text);
-          } else if (map.type === 'image_url') {
-            const url = imageUrlFromPart(map);
-            if (url) images.push(url);
-          }
+        if (part.type === 'text' && part.text != null) {
+          text += String(part.text);
+        } else if (part.type === 'image_url') {
+          const url = imageUrlFromPart(part);
+          if (url) images.push(url);
         }
       }
       vo.content = text;
       if (images.length > 0) {
         vo.images = images;
       }
-    } catch {
+    } else {
       vo.content = raw;
     }
   } else {

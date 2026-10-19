@@ -21,12 +21,14 @@ export interface DigestSchedulerDeps {
  *    注意语义是“被汇总日期”而非发送日期：改推送时间当天不补发，次日正常）；
  * 3. 当前上海时刻 ≥ 用户推送时间（HH:MM 字符串字典序即时间序）。
  *
- * 单 tick 内逐用户串行处理，天然单飞（无 CAS / 无 Map 标记的需要）；
+ * 单 tick 内逐用户串行处理；tick 之间用 dispatching 在途标志防重入（setInterval 不 await 上一轮，
+ * 慢 tick 重叠时跳过本轮，避免对同一用户重复投递）。
  * 单用户异常只记日志不写标记，下一 tick 自动重试。
  */
 export class DigestScheduler {
   private timer: ReturnType<typeof setInterval> | null = null;
   private stopped = false;
+  private dispatching = false;
   private readonly now: () => Date;
 
   constructor(private readonly deps: DigestSchedulerDeps) {
@@ -49,6 +51,11 @@ export class DigestScheduler {
   /** 暴露给单测：手动跑一轮判定（不依赖定时器）。 */
   async tick(): Promise<void> {
     if (this.stopped) return;
+    // 重入保护：setInterval 不 await 上一轮，慢 tick（>60s）重叠时若放行第二轮，
+    // 会带着过期 rows 快照对尚未写回 last_digest_date 的用户重复投递——把已读日报打回未读、
+    // 让 Webhook 订阅方收到两份。上一轮未结束直接跳过本轮。
+    if (this.dispatching) return;
+    this.dispatching = true;
     try {
       const now = this.now();
       const yesterday = addDaysYmd(shanghaiYmd(now), -1);
@@ -66,6 +73,8 @@ export class DigestScheduler {
       }
     } catch (e) {
       console.error('[digest] scheduler tick failed:', e);
+    } finally {
+      this.dispatching = false;
     }
   }
 }

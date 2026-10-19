@@ -53,7 +53,7 @@ function globWithNode(pattern: string, scope: SearchScope, headLimit: number): s
   const re = globToRegExp(pattern);
   const reBase = globToRegExp(path.basename(pattern));
   function walk(dir: string): void {
-    if (files.length >= headLimit) return;
+    if (files.length > headLimit) return;
     let entries: fs.Dirent[];
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -61,7 +61,7 @@ function globWithNode(pattern: string, scope: SearchScope, headLimit: number): s
       return;
     }
     for (const entry of entries) {
-      if (files.length >= headLimit) return;
+      if (files.length > headLimit) return;
       if (entry.name === 'node_modules' || entry.name === '.git') continue;
       const fullPath = path.join(dir, entry.name);
       if (entry.isDirectory()) walk(fullPath);
@@ -88,7 +88,7 @@ function globWithRg(pattern: string, scope: SearchScope, headLimit: number): Pro
         if (isRgNoMatch(err, stderr)) return resolve([]);
         return reject(rgFailure(err, stderr));
       }
-      const lines = (stdout || '').split('\n').filter(Boolean).slice(0, headLimit);
+      const lines = (stdout || '').split('\n').filter(Boolean).slice(0, headLimit + 1);
       resolve(lines.map((l) => relativizeRgPath(l, scope.cwd)));
     });
   });
@@ -116,10 +116,14 @@ export async function handleGlobSearch(args: Record<string, unknown>, workspace:
   try {
     const resolvedPath = resolveSearchRoot(args.path, workspace);
     const scope = resolveSearchScope(resolvedPath);
-    const files = (await isRgAvailable())
+    const collected = (await isRgAvailable())
       ? await globWithRg(pattern, scope, headLimit)
       : globWithNode(pattern, scope, headLimit);
-    return { files, search_root: scope.cwd, truncated: files.length >= headLimit, total_matched: files.length };
+    // 与云端 glob_search 同口径：遍历器最多收集 headLimit+1 条，只有真的存在第 head_limit+1 个
+    // 匹配才判截断；「命中数恰好等于 head_limit」不是截断（此前用 >= 会误报）。
+    const truncated = collected.length > headLimit;
+    const files = truncated ? collected.slice(0, headLimit) : collected;
+    return { files, search_root: scope.cwd, truncated, total_matched: files.length };
   } catch (e) {
     return { files: [], error: e instanceof Error ? e.message : String(e) };
   }

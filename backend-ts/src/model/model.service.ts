@@ -445,11 +445,14 @@ export function parseWavInfo(bytes: Buffer): { sampleRate: number; durationMs: n
   let dataSize = 0;
   while (offset + 8 <= bytes.length) {
     const chunkId = bytes.subarray(offset, offset + 4).toString('ascii');
+    // 小端无符号读取 chunk size。若按有符号解释，非 fmt/data chunk（如 JUNK）声明 0xFFFFFFxx 时
+    // 会得到负数，使 offset 原地踏步、while 永不成立退出——同步死循环挂死事件循环。
     const chunkSize =
-      ((bytes[offset + 7] & 0xff) << 24)
-      | ((bytes[offset + 6] & 0xff) << 16)
-      | ((bytes[offset + 5] & 0xff) << 8)
-      | (bytes[offset + 4] & 0xff);
+      (((bytes[offset + 7] & 0xff) << 24)
+        | ((bytes[offset + 6] & 0xff) << 16)
+        | ((bytes[offset + 5] & 0xff) << 8)
+        | (bytes[offset + 4] & 0xff)) >>>
+      0;
     const bodyStart = offset + 8;
     if (chunkId === 'fmt ' && bodyStart + 16 <= bytes.length) {
       sampleRate =
@@ -460,12 +463,13 @@ export function parseWavInfo(bytes: Buffer): { sampleRate: number; durationMs: n
       channels = ((bytes[bodyStart + 3] & 0xff) << 8) | (bytes[bodyStart + 2] & 0xff);
       bitsPerSample = ((bytes[bodyStart + 15] & 0xff) << 8) | (bytes[bodyStart + 14] & 0xff);
     } else if (chunkId === 'data') {
-      dataSize = chunkSize;
+      // 只认实际存在的字节：流式 / 截断的 WAV 会把 data 长度写成占位值（0x7FFFFFFF 最常见），
+      // 采信声明值会把时长放大到数小时。
+      dataSize = Math.min(chunkSize, Math.max(0, bytes.length - bodyStart));
     }
-    offset = bodyStart + Math.min(chunkSize, Number.MAX_SAFE_INTEGER);
-    if ((chunkSize & 1) === 1) {
-      offset += 1;
-    }
+    const nextOffset = bodyStart + chunkSize + (chunkSize & 1);
+    if (nextOffset <= offset) break; // chunkSize 已无符号，理论不达；兜底防未来改动 reintroduce 死循环
+    offset = nextOffset;
   }
   if (sampleRate <= 0 || dataSize <= 0) {
     return null;
