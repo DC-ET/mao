@@ -19,3 +19,16 @@ export function formatTime(mtimeMs?: number | null): string {
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
+
+/** 条目图标分类：符号链接 > 目录 > 图片 > 文档（规则对齐桌面端 utils/file-manager.ts 的 iconKindOf） */
+export type FileIconKind = 'folder' | 'link' | 'image' | 'doc'
+
+const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'])
+
+export function iconKindOf(name: string, isDirectory: boolean, isSymlink?: boolean): FileIconKind {
+  if (isSymlink) return 'link'
+  if (isDirectory) return 'folder'
+  const dot = name.lastIndexOf('.')
+  const ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : ''
+  return IMAGE_EXTENSIONS.has(ext) ? 'image' : 'doc'
+}
