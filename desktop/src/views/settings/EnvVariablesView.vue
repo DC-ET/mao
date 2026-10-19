@@ -12,7 +12,7 @@
       <el-icon :size="14"><InfoFilled /></el-icon>
       <span>
         变量值加密存储，保存后不再回显；<code>PATH</code> / <code>HOME</code> / <code>MAO_TOKEN</code>
-        等平台保留变量不可配置。工作区变量请在会话头部的「环境变量」中维护。
+        等平台保留变量不可配置。工作区变量请在右侧「任务」面板的工作区区块中维护。
       </span>
     </div>
 

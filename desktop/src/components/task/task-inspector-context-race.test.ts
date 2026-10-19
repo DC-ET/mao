@@ -86,6 +86,27 @@ vi.mock('element-plus', () => ({
   ElTooltip: defineComponent({ render() { return h('div', this.$slots.default?.() ?? []) } }),
 }))
 
+// 环境变量抽屉替身：真实抽屉把内容挂到 body teleport 且内部要打接口，这里退化成
+// 「打开即渲染一段可见标记」的普通组件，用来验证入口点击真的打开了抽屉、且带对了参数。
+// 必须 mock 模块：模板编译产物是 $setup["EnvVarsDrawer"]，走 setup 绑定而非 components 解析。
+vi.mock('../chat/EnvVarsDrawer.vue', async () => {
+  const { defineComponent: def, h: hn } = await import('vue')
+  return {
+    default: def({
+      name: 'EnvVarsDrawerStub',
+      props: {
+        modelValue: { type: Boolean, default: false },
+        sessionId: { type: [Number, String], default: null },
+        workspace: { type: String, default: '' },
+      },
+      render() {
+        if (!this.modelValue) return null
+        return hn('div', { class: 'env-vars-drawer-stub' }, `ENV-DRAWER-OPEN:${this.sessionId}:${this.workspace}`)
+      },
+    }),
+  }
+})
+
 vi.mock('./TodoChecklist.vue', () => ({ default: { render: () => null } }))
 vi.mock('./SideTaskList.vue', () => ({ default: { render: () => null } }))
 vi.mock('./SubagentList.vue', () => ({ default: { render: () => null } }))
@@ -183,7 +204,7 @@ function subtreeText(el: StubEl): string {
 
 function mountInspector(
   initialMemoryIds: number[],
-  opts: { viewType?: 'chat' | 'side_task' | 'subagent'; phase?: string } = {},
+  opts: { viewType?: 'chat' | 'side_task' | 'subagent'; phase?: string; executionMode?: string } = {},
 ) {
   const sid = ref('11')
   const memoryIds = ref<number[]>(initialMemoryIds)
@@ -200,7 +221,7 @@ function mountInspector(
     render: () => h(ClientInspector as never, {
       title: 'T', phase: opts.phase ?? 'COMPLETED', panelCollapsed: false, fileProvider: null,
       sessionId: sid.value, contextWindow: contextWindow.value,
-      executionMode: 'CLOUD', workspace: '/ws', gitProvider: null,
+      executionMode: opts.executionMode ?? 'CLOUD', workspace: '/ws', gitProvider: null,
       viewType: opts.viewType,
       onOpenTrace: (emittedSid: string) => { traceOpens.value++; traceOpens.sid = emittedSid },
     } as never),
@@ -237,6 +258,7 @@ function mountInspector(
   return {
     sid, memoryIds, traceOpens,
     clickContextBadge: () => clickWhere(el => subtreeText(el).includes('上下文'), 'context badge'),
+    clickEnvVars: () => clickWhere(el => subtreeText(el).trim() === '环境变量', 'env vars entry'),
     clickStatusBadge: (label = '已完成') => clickWhere(el => subtreeText(el).includes(label), 'status badge'),
     clickSummaryToggle: () => clickWhere(el => String(el.props.class ?? '').includes('ctx-summary-toggle'), 'summary toggle'),
     buttonTexts: () => findAll(el => el.tag === 'button').map(el => subtreeText(el)),
@@ -377,5 +399,47 @@ describe('TaskInspector 运行轨迹入口：点任务状态徽标（0.0.252）'
     await flush()
     // .phase-badge.idle 被 CSS 隐藏，label 为空字符串：没有可点的状态文本
     expect(m.pageText()).not.toMatch(/执行中|恢复中|待审批|取消中|已完成|失败|已取消/)
+  })
+})
+
+describe('TaskInspector 环境变量入口：工作区区块的行式按钮（0.0.308）', () => {
+  it('CLOUD 会话：工作区区块渲染入口，点击打开抽屉并带上会话 id 与工作区', async () => {
+    const m = mountInspector([])
+    await flush()
+    expect(m.buttonTexts().some(t => t.trim() === '环境变量')).toBe(true)
+    // 抽屉内容不在 DOM 里，直到点开
+    expect(m.pageText()).not.toContain('ENV-DRAWER-OPEN')
+
+    m.clickEnvVars()
+    await flush()
+    expect(m.pageText()).toContain('ENV-DRAWER-OPEN:11:/ws')
+  })
+
+  it('LOCAL 会话不渲染入口：本机环境不注入，没有可配置的三层变量', async () => {
+    const m = mountInspector([], { executionMode: 'LOCAL' })
+    await flush()
+    expect(m.buttonTexts().some(t => t.trim() === '环境变量')).toBe(false)
+  })
+
+  it('没有会话 id（新建任务占位态）不渲染入口：effective-env 按会话归属鉴权', async () => {
+    const m = mountInspector([])
+    m.sid.value = ''
+    await flush()
+    expect(m.buttonTexts().some(t => t.trim() === '环境变量')).toBe(false)
+  })
+
+  it('切换会话后抽屉自动关闭：避免把变量改到另一个会话的工作区上', async () => {
+    const m = mountInspector([])
+    m.clickEnvVars()
+    await flush()
+    expect(m.pageText()).toContain('ENV-DRAWER-OPEN:11:/ws')
+
+    m.sid.value = '22'
+    await flush()
+    expect(m.pageText()).not.toContain('ENV-DRAWER-OPEN')
+
+    m.clickEnvVars()
+    await flush()
+    expect(m.pageText()).toContain('ENV-DRAWER-OPEN:22:/ws')
   })
 })

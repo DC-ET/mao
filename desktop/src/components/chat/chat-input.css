@@ -321,27 +321,6 @@
   transform: scale(1.05);
 }
 
-/* 会话头部「环境变量」入口：与 workspace indicator 同侧，仅 CLOUD 会话显示 */
-.env-vars-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--aw-ink-muted-80);
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: color 0.15s, background 0.15s;
-}
-
-.env-vars-btn:hover {
-  color: var(--aw-primary);
-  background: var(--aw-surface-hover);
-}
-
 /* Workspace indicator */
 .workspace-indicator {
   display: flex;

@@ -61,16 +61,6 @@
         :current-level="permissionLevel"
         @update:permission-level="$event => emit('update:permissionLevel', $event)"
       />
-      <!-- 三级环境变量：仅 CLOUD 会话（LOCAL 用本机环境，不注入）且非新建任务占位态 -->
-      <el-tooltip
-        v-if="executionMode === 'CLOUD' && !isNewTask && sessionId"
-        content="环境变量"
-        :show-after="300"
-      >
-        <button class="env-vars-btn" type="button" @click="envDrawerVisible = true">
-          <el-icon :size="14"><Setting /></el-icon>
-        </button>
-      </el-tooltip>
     </div>
     <div class="toolbar-right">
       <ModelSelector
@@ -120,28 +110,21 @@
         </svg>
       </button>
     </div>
-    <EnvVarsDrawer v-model="envDrawerVisible" :session-id="sessionId" :workspace="workspace" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
-import { Plus, WarningFilled, FolderOpened, Cloudy, Loading, Setting } from '@element-plus/icons-vue'
+import { Plus, WarningFilled, FolderOpened, Cloudy, Loading } from '@element-plus/icons-vue'
 import PermissionLevelSwitcher from './PermissionLevelSwitcher.vue'
 import AgentChip from './AgentChip.vue'
 import WorkspaceChip from './WorkspaceChip.vue'
 import ModelSelector from './ModelSelector.vue'
-import EnvVarsDrawer from './EnvVarsDrawer.vue'
 import type { CloudProject } from '../../stores/session'
-
-const envDrawerVisible = ref(false)
 
 defineProps<{
   disabled: boolean
   executionMode: string
   isNewTask: boolean
-  /** 当前会话 id；新建任务占位态为 null（环境变量抽屉不可用）。 */
-  sessionId?: number | null
   layout: 'centered' | 'docked'
   isMobileViewport: boolean
   selectedAgentId: string | null

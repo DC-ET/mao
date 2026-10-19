@@ -85,7 +85,7 @@
         </div>
       </div>
 
-      <div v-if="workspace || agentName" class="inspector-section">
+      <div v-if="workspace || agentName || showEnvVarsEntry" class="inspector-section">
         <h4 class="section-title">工作区</h4>
         <div v-if="agentName" class="task-workspace-row">
           <el-icon class="workspace-icon"><User /></el-icon>
@@ -109,6 +109,10 @@
               <el-icon :size="12"><DocumentCopy /></el-icon>
             </button>
           </span>
+        </div>
+        <div v-if="showEnvVarsEntry" class="task-workspace-row env-vars-row">
+          <el-icon class="workspace-icon"><Setting /></el-icon>
+          <button class="env-vars-entry" type="button" @click="envDrawerVisible = true">环境变量</button>
         </div>
         <div v-if="gitSummaryVisible" class="task-workspace-row git-summary-row">
           <el-icon class="workspace-icon"><Share /></el-icon>
@@ -250,6 +254,8 @@
 
     </template>
 
+    <EnvVarsDrawer v-model="envDrawerVisible" :session-id="envVarsSessionId" :workspace="workspace || ''" />
+
     <el-drawer
       v-model="contextDrawerOpen"
       class="context-drawer"
@@ -340,12 +346,13 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
-import { FolderOpened, DocumentCopy, User, Share } from '@element-plus/icons-vue'
+import { FolderOpened, DocumentCopy, User, Share, Setting } from '@element-plus/icons-vue'
 import { ElMessage, ElTooltip } from 'element-plus'
 import TodoChecklist from './TodoChecklist.vue'
 import SideTaskList from './SideTaskList.vue'
 import SubagentList from './SubagentList.vue'
 import GitChangeList from './GitChangeList.vue'
+import EnvVarsDrawer from '../chat/EnvVarsDrawer.vue'
 import FileTree from '../file-browser/FileTree.vue'
 import type { TodoItem } from '../../types/chat'
 import type { SideTaskItem, SubagentItem, TaskPhase } from '../../stores/session'
@@ -418,6 +425,17 @@ const { maxTokens } = useModelContext(currentModelId)
 
 const inspectorActiveTab = ref<'workspace' | 'filetree' | 'git'>('workspace')
 const contextDrawerOpen = ref(false)
+
+// 环境变量入口：仅 CLOUD 会话（LOCAL 用本机环境，不注入）且有会话 id 时可查看/维护。
+// effective-env 按会话归属鉴权，占位态（新建任务 / 占位边路 Tab）拿不到 id，不露入口。
+const showEnvVarsEntry = computed(() => props.executionMode === 'CLOUD' && !!props.sessionId)
+const envDrawerVisible = ref(false)
+const envVarsSessionId = computed(() => {
+  const sid = props.sessionId
+  if (sid == null || sid === '') return null
+  const n = Number(sid)
+  return Number.isFinite(n) ? n : null
+})
 const showFileTreeTab = computed(() => {
   if (props.executionMode === 'CLOUD') {
     // 无会话的新建态：已选云端项目也放行——fileProvider 此时是 project 只读 provider
@@ -691,6 +709,7 @@ watch([showFileTreeTab, showGitTab], () => {
 // 切换会话后关闭抽屉：内容属于被切换走的会话，继续开着会让治理动作打到错误会话上
 watch(() => props.sessionId, () => {
   contextDrawerOpen.value = false
+  envDrawerVisible.value = false
 })
 
 watch(inspectorActiveTab, (tab) => {
@@ -1380,6 +1399,27 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
 
 .workspace-copy-btn:hover {
   background: rgba(0, 0, 0, 0.06);
+  color: var(--aw-primary);
+}
+
+/* 工作区「环境变量」入口：与路径 / Git 摘要同区块的行式按钮，沿用 caption 字号与主色 hover */
+.env-vars-row {
+  align-items: center;
+}
+
+.env-vars-entry {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-size: var(--aw-text-caption);
+  font-family: inherit;
+  line-height: 18px;
+  color: var(--aw-ink);
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.env-vars-entry:hover {
   color: var(--aw-primary);
 }
 
