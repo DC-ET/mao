@@ -33,6 +33,13 @@ export interface FeishuInboundProcessorOptions {
   downloadGroupFile?: (accountId: string, event: FeishuNormalizedMessage) => Promise<string | null>;
   /** 话题会话映射查询：threadId 存在且映射命中（机器人已在该话题中）时免 @ 触发。 */
   resolveThreadSession?: (accountId: string, event: FeishuNormalizedMessage) => Promise<{ sessionId: number } | null>;
+  /**
+   * 触发前确保话题会话映射已存在。话题水位线存在 `feishu_thread_session.last_context_log_id`，
+   * 而该行原先要等 handler.onMessage 才创建：首个触发在 buildGroupContext 里推进水位线时行还不存在，
+   * UPDATE 命中 0 行且不报错，水位线永久停在 0，同一话题的下一次触发会把已注入过的窗口重复注入。
+   * 必须在 buildGroupContext 之前调用（授权已通过，不会为用户未授权的话题建会话）。
+   */
+  ensureThreadSession?: (accountId: string, context: FeishuInboundContext) => Promise<{ sessionId: number } | null>;
   /** interactive 卡片入站占位升级：事件 content 被飞书降级时按 messageId 拉详情补真实文本；null/抛错保留占位。 */
   resolveMessageText?: (accountId: string, messageId: string) => Promise<string | null>;
   /**
@@ -285,6 +292,9 @@ export class FeishuInboundProcessor {
       return;
     }
     const messageService = this.options.messageService!;
+    // 读上下文前先确保话题会话行存在：水位线落库依赖它，否则首个触发写入会被静默丢弃，
+    // 同一话题的下一次触发会重复注入本窗口（详见 ensureThreadSession 注释）。
+    await this.ensureThreadSessionBeforeContext(accountId, last);
     // 同群内上下文读取排在更早消息的入库之后（runInChatOrder 保序），保证图片等先到消息已可见。
     // 读之前先同步补齐待富化行：后台富化与触发读取存在竞态——用户「先转发记录、马上 @ 机器人」时，
     // buildGroupContext 会在 enrich_pending 行处截断，本轮 prompt 完全拿不到转发摘录，
@@ -300,6 +310,25 @@ export class FeishuInboundProcessor {
     };
     const reply = await this.handler.onMessage(context);
     if (reply?.text) await this.sendReply(accountId, first.event, reply);
+  }
+
+  /**
+   * 话题群触发前预创建会话映射：`feishu_thread_session` 行是话题水位线的载体，
+   * 原先由 handler.onMessage 创建，晚于本方法的调用方 buildGroupContext，
+   * 导致首个触发推进水位线的 UPDATE 命中 0 行（静默失败），下一次触发重复注入。
+   * 创建失败不阻断触发：handler 内还会再尝试一次，本次上下文最多按 watermark=0 注入。
+   */
+  private async ensureThreadSessionBeforeContext(accountId: string, entry: FeishuWindowEntry): Promise<void> {
+    if (this.options.ensureThreadSession == null) return;
+    const event = entry.event;
+    if (event.chatType !== 'group' || event.threadId == null) return;
+    try {
+      await this.options.ensureThreadSession(accountId, {
+        ...event, accountId, messageId: entry.messageId, maoUserId: entry.maoUserId,
+      });
+    } catch (error) {
+      console.warn(`飞书话题会话预创建失败, threadId=${event.threadId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   /** 群聊纯文件豁免路径：下载并交给 handler 落库，不拼群上下文、不触发任务（与加窗前一致）。 */

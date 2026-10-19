@@ -2502,6 +2502,11 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       const result = await feishuMessageService.findThreadSession(String(accountId), event.threadId);
       return result == null ? null : { sessionId: result.sessionId };
     },
+    ensureThreadSession: async (accountId, context) => {
+      // 触发前先建话题会话行：水位线写在 feishu_thread_session 上，行不存在会让本次推进静默丢失。
+      const result = await feishuMessageService.getOrCreateThreadSession(String(accountId), context);
+      return result == null ? null : { sessionId: result.sessionId };
+    },
     resolveQuotedMessage: async (accountId, event) => {
       if (event.parentId == null) return null;
       const persist = async (raw: string): Promise<string> => {

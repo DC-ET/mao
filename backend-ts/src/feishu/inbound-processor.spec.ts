@@ -260,6 +260,44 @@ describe('FeishuInboundProcessor', () => {
     expect(onMessage).toHaveBeenCalledOnce();
   });
 
+  it('群聊话题触发前先确保话题会话存在，再读取上下文', async () => {
+    messageService.claimInboundMessage.mockResolvedValueOnce(true);
+    const order: string[] = [];
+    const ensureThreadSession = vi.fn(async () => {
+      order.push('ensure');
+      return { sessionId: 10 };
+    });
+    const buildGroupContext = vi.fn(async () => {
+      order.push('context');
+      return { conversation: {} as never, messages: [], prompt: 'group context' };
+    });
+    const processor = new FeishuInboundProcessor(makeHandler(), {
+      messageService: { ...messageService, buildGroupContext },
+      authorizeSender: async () => true,
+      ensureThreadSession,
+    });
+    await processor.process('1', makeEvent({
+      isBotMentioned: true, threadId: 'omt_abc', messageId: 'om_topic_trigger',
+    }));
+    // 会话行是话题水位线的载体：必须先于 buildGroupContext 创建，否则首个触发的水位线推进会被丢弃。
+    expect(ensureThreadSession).toHaveBeenCalledWith('1', expect.objectContaining({
+      accountId: '1', messageId: 'om_topic_trigger', chatType: 'group', threadId: 'omt_abc',
+    }));
+    expect(order).toEqual(['ensure', 'context']);
+  });
+
+  it('非话题群触发不预创建话题会话', async () => {
+    messageService.claimInboundMessage.mockResolvedValueOnce(true);
+    const ensureThreadSession = vi.fn(async () => ({ sessionId: 10 }));
+    const processor = new FeishuInboundProcessor(makeHandler(), {
+      messageService,
+      authorizeSender: async () => true,
+      ensureThreadSession,
+    });
+    await processor.process('1', makeEvent({ isBotMentioned: true }));
+    expect(ensureThreadSession).not.toHaveBeenCalled();
+  });
+
   it('only records group message when bot not mentioned', async () => {
     messageService.claimInboundMessage.mockResolvedValueOnce(true);
     const onMessage = vi.fn(async () => ({ text: 'r' }));
