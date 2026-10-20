@@ -1,7 +1,7 @@
 import * as Lark from '@larksuiteoapi/node-sdk';
 import { lstatSync } from 'node:fs';
 import { resolve, relative } from 'node:path';
-import { FEISHU_CHAT_DIR } from '../harness/container/channel-workspace.js';
+import { FEISHU_CHAT_DIR } from './harness/container/channel-workspace.js';
 
 export function resolveFeishuChatWorkspace(root: string, accountId: string, leaf: string): string {
   const safeAccountId = encodeURIComponent(accountId);
