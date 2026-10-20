@@ -332,6 +332,7 @@ import { createFeishuUserIdHelper } from './feishu-user-id.js';
 import { createPersistCancelledHelper } from './persist-cancelled.js';
 import { createPatchedProgressHelper } from './feishu-patched-progress.js';
 import { createFeishuProgressCardHelper } from './feishu-progress-card.js';
+import { createFeishuRecoveryProgressHelper } from './feishu-recovery-progress.js';
 import type { FeishuInboundContext, FeishuNormalizedMessage } from './feishu/types.js';
 import { WsStreamingEventListener } from './session/ws/ws-streaming-event-listener.js';
 import { MysqlApiTokenRepository, MysqlOutboundDeliveryRepository, MysqlOutboundSubscriptionRepository, MysqlWebhookTriggerRepository } from './openapi/openapi.repository.js';
@@ -1815,42 +1816,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     getFeishuClient, feishuMessageService, feishuProgressCardRepo, resolveFeishuSessionDetailUrl, createPatchedProgress,
   });
   const resolveFeishuRoundOffset = createFeishuRoundOffsetHelper({ sessionService });
-  const createFeishuRecoveryProgress = async (sessionId: number): Promise<{ progress: FeishuCardProgress; roundOffset: number } | null> => {
-    try {
-      const row = await feishuProgressCardRepo.findBySessionId(sessionId);
-      if (row == null) {
-        console.warn(`飞书恢复进度卡片无映射, sessionId=${sessionId}`);
-        return null;
-      }
-      const client = await getFeishuClient(row.botId);
-      if (client == null) {
-        console.warn(`飞书恢复进度卡片无法创建客户端, sessionId=${sessionId} botId=${row.botId}`);
-        return null;
-      }
-      const cancelAction = row.senderOpenId != null && row.senderOpenId !== ''
-        ? { sessionId, sender: row.senderOpenId, botId: row.botId }
-        : null;
-      const sessionDetailUrl = await resolveFeishuSessionDetailUrl(sessionId);
-      // 续跑任务的耗时以崩溃前会话记录的 startedAt 起算（读不到时退回恢复开始的时刻）。
-      const session = await sessionService.getSession(sessionId).catch(() => null);
-      const startedAtMs = parseSqlTimeMs(session?.startedAt) ?? Date.now();
-      const progress = createPatchedProgress(client, row.cardMessageId, sessionId, cancelAction, startedAtMs, sessionDetailUrl, {
-        content: '任务正在恢复执行。',
-      }, row.botId);
-      // 卡片轮次按当前任务已落库的助手消息接续，避免重启后从 0 重计。
-      const roundOffset = await resolveFeishuRoundOffset(sessionId);
-      // 重启后续跑立刻刷新卡片并带上取消按钮，避免旧卡停在崩溃前的「正在处理」且取消回调失效。
-      try {
-        await progress.update('RUNNING', roundOffset, '任务正在恢复执行。', []);
-      } catch (error) {
-        console.warn(`飞书恢复进度卡片首次 PATCH 失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
-      }
-      return { progress, roundOffset };
-    } catch (error) {
-      console.warn(`飞书恢复进度卡片加载失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
-      return null;
-    }
-  };
+  const createFeishuRecoveryProgress = createFeishuRecoveryProgressHelper({
+    getFeishuClient, feishuProgressCardRepo, sessionService, resolveFeishuSessionDetailUrl, resolveFeishuRoundOffset, createPatchedProgress,
+  });
   const resolveFeishuUserId = createFeishuUserIdHelper({ feishuBinding });
   const feishuInboundQueueRepo = new FeishuInboundQueueRepository(db);
   const feishuTaskQueue = new FeishuTaskQueueService(feishuInboundQueueRepo);
