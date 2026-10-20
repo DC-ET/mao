@@ -85,12 +85,18 @@
         </div>
       </div>
 
-      <div v-if="workspace || agentName || showEnvVarsEntry" class="inspector-section">
+      <div v-if="agentId || agentName" ref="agentSectionEl" class="inspector-section agent-section">
+        <h4 class="section-title">智能体</h4>
+        <AgentBadge
+          :agent-id="agentId || null"
+          :agent-name="agentName"
+          size="lg"
+          show-description
+        />
+      </div>
+
+      <div v-if="workspace || showEnvVarsEntry" class="inspector-section">
         <h4 class="section-title">工作区</h4>
-        <div v-if="agentName" class="task-workspace-row">
-          <el-icon class="workspace-icon"><User /></el-icon>
-          <span class="workspace-path">{{ agentName }}</span>
-        </div>
         <div v-if="workspace || executionMode === 'CLOUD'" class="task-workspace-row">
           <el-icon class="workspace-icon"><FolderOpened /></el-icon>
           <span
@@ -346,9 +352,10 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
-import { FolderOpened, DocumentCopy, User, Share, Setting } from '@element-plus/icons-vue'
+import { FolderOpened, DocumentCopy, Share, Setting } from '@element-plus/icons-vue'
 import { ElMessage, ElTooltip } from 'element-plus'
 import TodoChecklist from './TodoChecklist.vue'
+import AgentBadge from '../agent/AgentBadge.vue'
 import SideTaskList from './SideTaskList.vue'
 import SubagentList from './SubagentList.vue'
 import GitChangeList from './GitChangeList.vue'
@@ -377,6 +384,7 @@ const props = defineProps<{
   sideTasks?: SideTaskItem[]
   subagents?: SubagentItem[]
   title: string
+  agentId?: string | null
   agentName?: string
   workspace?: string
   projectKey?: string
@@ -777,7 +785,15 @@ function refreshFileTree() {
   fileTree.value?.refresh()
 }
 
-defineExpose({ revealInFileTree, refreshFileTree })
+/** 顶部身份条 / 工具条徽标的「查看智能体」：切到任务 Tab 并滚到智能体分区。 */
+const agentSectionEl = ref<HTMLElement | null>(null)
+
+function focusAgentSection() {
+  inspectorActiveTab.value = 'workspace'
+  void nextTick(() => agentSectionEl.value?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }))
+}
+
+defineExpose({ revealInFileTree, refreshFileTree, focusAgentSection })
 
 function handleOpenGitDiff(file: GitChangedFile) {
   emit('open-git-diff', file, multiRepoMode.value ? selectedRepoPath.value : undefined)
@@ -1026,6 +1042,15 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   color: var(--aw-ink);
   letter-spacing: 0.5px;
   text-transform: uppercase;
+}
+
+/* 右栏宽度有限：描述允许两行，避免被单行省略截得看不出差异 */
+.agent-section :deep(.agent-badge-desc) {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: normal;
 }
 
 .resize-handle {

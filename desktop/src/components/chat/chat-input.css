@@ -322,6 +322,38 @@
 }
 
 /* Workspace indicator */
+/* 已有会话的 Agent 只读徽标：点击展开右栏「智能体」分区 */
+.toolbar-agent {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  min-width: 0;
+  max-width: 180px;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--aw-radius-pill);
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.toolbar-agent:hover {
+  background: var(--aw-primary-hover);
+}
+
+.toolbar-agent .agent-badge-name {
+  max-width: 120px;
+}
+
+@media (max-width: 768px) {
+  .toolbar-agent {
+    max-width: none;
+    padding: 2px;
+  }
+}
+
 .workspace-indicator {
   display: flex;
   align-items: center;

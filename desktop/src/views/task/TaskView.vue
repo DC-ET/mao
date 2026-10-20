@@ -10,6 +10,15 @@
     />
 
     <div class="task-container">
+      <SessionAgentBar
+        v-if="!isNewTaskMode"
+        :agent-id="agentId || null"
+        :agent-name="agentName || null"
+        :session-id="sessionId"
+        :active-session-id="sessionStore.activeSessionId"
+        :loading="initialLoading"
+        @open-detail="openAgentInspector"
+      />
       <CenterTabBar
         v-if="tabs.length > 1"
         :tabs="tabs"
@@ -38,6 +47,7 @@
       :side-tasks="sideTasks"
       :subagents="subagents"
       :title="inspectorTitle"
+      :agent-id="isNewTaskMode ? null : (agentId || null)"
       :agent-name="agentName"
       :workspace="workspace"
       :project-key="projectKey"
@@ -93,6 +103,7 @@ import { resolveInspectorTarget, type InspectorTarget, type InspectorViewType } 
 import { api } from '../../api'
 import TaskIndexPanel from '../../components/task/TaskIndexPanel.vue'
 import TaskInspector from '../../components/task/TaskInspector.vue'
+import SessionAgentBar from '../../components/agent/SessionAgentBar.vue'
 import CenterTabBar from '../../components/center/CenterTabBar.vue'
 import CenterTabContainer from '../../components/center/CenterTabContainer.vue'
 
@@ -558,8 +569,17 @@ function handleOpenFile(payload: { path: string; title: string }) {
 interface TaskInspectorInstance {
   revealInFileTree(relPath: string): Promise<void>
   refreshFileTree(): void
+  focusAgentSection(): void
 }
 const inspectorRef = ref<TaskInspectorInstance | null>(null)
+
+/** 身份条 / 工具条徽标共用：展开右栏并定位到「智能体」分区 */
+function openAgentInspector() {
+  if (rightCollapsed.value) toggleRight()
+  void nextTick(() => inspectorRef.value?.focusAgentSection())
+}
+
+provide('openAgentInspector', openAgentInspector)
 
 function refreshFileTree() {
   inspectorRef.value?.refreshFileTree()

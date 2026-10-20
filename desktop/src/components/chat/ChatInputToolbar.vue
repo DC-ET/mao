@@ -8,6 +8,22 @@
         <el-icon :size="16"><Plus /></el-icon>
       </label>
 
+      <!-- 已有会话：只读 Agent 徽标（点击展开右栏「智能体」分区） -->
+      <button
+        v-if="sessionAgentId"
+        type="button"
+        class="toolbar-agent"
+        :title="`当前智能体：${sessionAgentName || ''}`"
+        @click="emit('openAgentDetail')"
+      >
+        <AgentBadge
+          :agent-id="sessionAgentId"
+          :agent-name="sessionAgentName"
+          :size="isMobileViewport ? 'sm' : 'md'"
+          :avatar-only="isMobileViewport"
+        />
+      </button>
+
       <!-- Centered new-task chips（桌面：占工具条；移动：见下方 meta 行） -->
       <template v-if="isNewTask && layout === 'centered' && !isMobileViewport">
         <AgentChip
@@ -117,6 +133,7 @@
 import { Plus, WarningFilled, FolderOpened, Cloudy, Loading } from '@element-plus/icons-vue'
 import PermissionLevelSwitcher from './PermissionLevelSwitcher.vue'
 import AgentChip from './AgentChip.vue'
+import AgentBadge from '../agent/AgentBadge.vue'
 import WorkspaceChip from './WorkspaceChip.vue'
 import ModelSelector from './ModelSelector.vue'
 import type { CloudProject } from '../../stores/session'
@@ -128,6 +145,9 @@ defineProps<{
   layout: 'centered' | 'docked'
   isMobileViewport: boolean
   selectedAgentId: string | null
+  /** 已有会话的 Agent（只读展示）；新建态传 null */
+  sessionAgentId?: string | null
+  sessionAgentName?: string | null
   workspace: string
   cloudProjectKey: string | undefined
   projectKey: string | undefined
@@ -157,6 +177,7 @@ defineProps<{
 
 const emit = defineEmits<{
   'update:selectedAgentId': [id: string | null]
+  openAgentDetail: []
   'update:workspace': [workspace: string]
   'update:gitBranch': [branch: string]
   'update:permissionLevel': [level: string]
