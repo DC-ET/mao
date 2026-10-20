@@ -336,6 +336,7 @@ import { createFeishuRecoveryProgressHelper } from './feishu-recovery-progress.j
 import { createQueuePositionHelper } from './queue-position.js';
 import { createAuthorizeSenderHelper } from './feishu-authorize-sender.js';
 import { createSendUnauthorizedCardHelper } from './feishu-unauthorized-card.js';
+import { createResolveUserIdHelper } from './feishu-resolve-user-id.js';
 import type { FeishuInboundContext, FeishuNormalizedMessage } from './feishu/types.js';
 import { WsStreamingEventListener } from './session/ws/ws-streaming-event-listener.js';
 import { MysqlApiTokenRepository, MysqlOutboundDeliveryRepository, MysqlOutboundSubscriptionRepository, MysqlWebhookTriggerRepository } from './openapi/openapi.repository.js';
@@ -2146,11 +2147,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       const detail = await fetchFeishuMessageDetail(client, messageId);
       return detail?.text ?? null;
     },
-    resolveUserId: async (_accountId, event) => {
-      const unionId = senderUnionIdOf(event);
-      if (unionId == null) return null;
-      return (await feishuBinding.findUserIdByUnionId(unionId)) ?? null;
-    },
+    resolveUserId: createResolveUserIdHelper({ feishuBinding }),
     authorizeSender: createAuthorizeSenderHelper({ feishuBinding, feishuMessageRepository, ecpAuth, ecpSessionRepo }),
     sendReply: async (accountId, event, text) => { await sendFeishuText(Number(accountId), event, text); },
     sendUnauthorizedCard: createSendUnauthorizedCardHelper({ getFeishuClient, ecpAuth, feishu, pendingBindingMessages }),
