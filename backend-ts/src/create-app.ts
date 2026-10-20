@@ -1,14 +1,13 @@
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
-import fastifyStatic from '@fastify/static';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { Transform } from 'node:stream';
-import { mkdirSync, existsSync, rmSync, lstatSync } from 'node:fs';
+import { mkdirSync, existsSync, rmSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
-import { resolve, relative } from 'node:path';
+import { resolve } from 'node:path';
 import { fail } from './common/result.js';
 import { harnessLog } from './harness/log.js';
 import { ErrorCode } from './common/error-code.js';
@@ -367,106 +366,21 @@ import { SessionEnvelopeBuilder, buildDepsEnv } from './harness/container/sessio
 import { DockerSendBytesBridge } from './harness/container/read-bytes-bridge.js';
 import { RoutingMcpClientManager } from './harness/container/routing-mcp-client-manager.js';
 import { PtyChannelHub } from './harness/container/pty-bridge.js';
-import { FEISHU_CHAT_DIR, isChannelWorkspace } from './harness/container/channel-workspace.js';
+import { isChannelWorkspace } from './harness/container/channel-workspace.js';
 import { nodePtyFactory, type PtyLike, type SpawnPtyOptions } from './harness/terminal/remote-terminal.js';
+import {
+  resolveFeishuChatWorkspace,
+  sanitizeFeishuFileName,
+  truncateQuoted,
+  downloadFeishuMediaBuffer,
+  dataUriOf,
+} from './feishu-media.js';
+import { registerUploadStatic } from './upload-static.js';
+import { expandHome, parseSqlTimeMs, runtimeSessionCleanup } from './app-utils.js';
 
 export interface MaoApp {
   app: FastifyInstance;
   close(): Promise<void>;
-}
-
-function resolveFeishuChatWorkspace(root: string, accountId: string, leaf: string): string {
-  const safeAccountId = encodeURIComponent(accountId);
-  const safeLeaf = encodeURIComponent(leaf);
-  const workspaceRoot = resolve(root);
-  // 目录名与容器挂载清单（channel-workspace.ts）共用，防两侧漂移导致 docker 模式失效
-  const workspace = resolve(workspaceRoot, FEISHU_CHAT_DIR, safeAccountId, safeLeaf);
-  for (const candidate of [workspaceRoot, resolve(workspaceRoot, FEISHU_CHAT_DIR), resolve(workspaceRoot, FEISHU_CHAT_DIR, safeAccountId)]) {
-    try {
-      if (lstatSync(candidate).isSymbolicLink()) throw new Error('飞书会话工作区路径不允许符号链接');
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    }
-  }
-  const rel = relative(workspaceRoot, workspace);
-  if (rel.startsWith('..') || rel.includes('..' + '/') || rel.startsWith('/')) {
-    throw new Error('飞书会话工作区路径非法');
-  }
-  return workspace;
-}
-
-/** 文件落盘文件名清洗：去除路径分隔符与穿越片段，仅保留 basename。 */
-function sanitizeFeishuFileName(name: string | null | undefined, fallback: string): string {
-  const raw = (name ?? '').trim();
-  if (raw === '') return fallback;
-  const basename = raw.replace(/\\/g, '/').split('/').pop() ?? fallback;
-  const cleaned = basename.replace(/[^\w.\u4e00-\u9fa5-]/g, '_').replace(/^_+|_+$/g, '');
-  return cleaned === '' ? fallback : cleaned.length > 128 ? cleaned.slice(0, 128) : cleaned;
-}
-
-/** 引用消息注入文本截断：告警堆栈等长内容防止撑爆用户消息。 */
-function truncateQuoted(text: string, maxLength = 1500): string {
-  return text.length <= maxLength ? text : `${text.slice(0, maxLength)}…（引用内容过长已截断）`;
-}
-
-/** 下载消息资源（图片/文件），流式收集并校验大小上限（字节），超限抛错。 */
-async function downloadFeishuMediaBuffer(
-  client: Lark.Client,
-  messageId: string,
-  fileKey: string,
-  type: 'image' | 'file',
-  maxBytes: number,
-): Promise<{ buffer: Buffer; contentType: string }> {
-  const result = await client.im.v1.messageResource.get({
-    path: { message_id: messageId, file_key: fileKey },
-    params: { type },
-  });
-  const contentType = String((result as { headers?: Record<string, string> }).headers?.['content-type'] ?? 'application/octet-stream').split(';')[0].trim();
-  const stream = result.getReadableStream();
-  const chunks: Buffer[] = [];
-  let total = 0;
-  for await (const chunk of stream) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    total += buffer.length;
-    if (total > maxBytes) throw new Error(`飞书资源超出大小限制: ${total} > ${maxBytes}`);
-    chunks.push(buffer);
-  }
-  return { buffer: Buffer.concat(chunks), contentType };
-}
-
-function dataUriOf(contentType: string, buffer: Buffer): string {
-  return `data:${contentType || 'image/jpeg'};base64,${buffer.toString('base64')}`;
-}
-
-/**
- * uploads 静态托管：文件名为 UUID/唯一序号，内容不可变，默认长缓存；
- * 自动更新清单（releases/ 下的 yml/json、latest*.yml）内容会变且被客户端轮询
- * （Electron autoUpdater / 安卓 OTA / useVersionCheck），不加缓存头，避免拿到旧版本号。
- */
-const UPLOAD_CACHE_EXCLUDED = /(^|\/)(releases\/[^/]*\.(json|ya?ml)|latest[^/]*\.ya?ml)$/i;
-
-function uploadCacheHeaders(path: string): Record<string, string> {
-  if (UPLOAD_CACHE_EXCLUDED.test(path)) return { 'Cache-Control': 'no-cache' };
-  return { 'Cache-Control': 'public, max-age=604800' };
-}
-
-export async function registerUploadStatic(app: FastifyInstance, uploadDir: string, apiPrefix: string): Promise<void> {
-  await app.register(fastifyStatic, {
-    root: uploadDir,
-    prefix: '/uploads/',
-    decorateReply: false,
-    setHeaders: (reply, path) => {
-      for (const [k, v] of Object.entries(uploadCacheHeaders(path))) reply.header(k, v);
-    },
-  });
-  await app.register(fastifyStatic, {
-    root: uploadDir,
-    prefix: `${apiPrefix.replace(/\/$/, '')}/uploads/`,
-    decorateReply: false,
-    setHeaders: (reply, path) => {
-      for (const [k, v] of Object.entries(uploadCacheHeaders(path))) reply.header(k, v);
-    },
-  });
 }
 
 export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: FastifyInstance): Promise<MaoApp> {
@@ -3451,32 +3365,5 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   return {
     app,
     close: closeApp,
-  };
-}
-
-function expandHome(v: string): string {
-  if (v.startsWith('$HOME')) return v.replace(/^\$HOME/, process.env.HOME ?? '');
-  if (v.startsWith('~/')) return resolve(process.env.HOME ?? '', v.slice(2));
-  return v;
-}
-
-/** 解析 MySQL datetime（`yyyy-MM-dd HH:mm:ss`）为毫秒时间戳；缺失或不可解析返回 null。 */
-function parseSqlTimeMs(value: string | null | undefined): number | null {
-  if (value == null || value === '') return null;
-  const ms = Date.parse(value.includes('T') ? value : value.replace(' ', 'T'));
-  return Number.isFinite(ms) ? ms : null;
-}
-
-/** 会话删除时清理该会话 runtime 目录（incoming 上传、skills 同步副本、shell 输出等临时数据）。 */
-function runtimeSessionCleanup(runtimeRoot: string): (userId: number, sessionId: number) => void {
-  return (userId: number, sessionId: number): void => {
-    try {
-      const sessionDir = resolve(runtimeRoot, String(userId), String(sessionId));
-      if (existsSync(sessionDir)) {
-        rmSync(sessionDir, { recursive: true, force: true });
-      }
-    } catch (e) {
-      console.error(`Failed to clean runtime dir for session ${sessionId}`, e);
-    }
   };
 }
