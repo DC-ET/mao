@@ -326,6 +326,8 @@ import { wsEvent } from './session/ws/ws-event.js';
 import { inboundImageKeys } from './feishu/event-normalizer.js';
 import { chatFilesDirOf, resolveChatFileTarget } from './feishu/chat-files.js';
 import { createFeishuMediaHelper, IMAGE_EXT_BY_CONTENT_TYPE } from './feishu-media-helpers.js';
+import { createFeishuQueueCardHelper } from './feishu-queue-card.js';
+import { createFeishuSessionUrlHelper } from './feishu-session-url.js';
 import type { FeishuInboundContext, FeishuNormalizedMessage } from './feishu/types.js';
 import { WsStreamingEventListener } from './session/ws/ws-streaming-event-listener.js';
 import { MysqlApiTokenRepository, MysqlOutboundDeliveryRepository, MysqlOutboundSubscriptionRepository, MysqlWebhookTriggerRepository } from './openapi/openapi.repository.js';
@@ -382,7 +384,6 @@ import { createContainerPtyFactory } from './container-pty-factory.js';
 import { createTerminalAudit } from './terminal-audit.js';
 import { createFeishuSessionHelper } from './feishu-session.js';
 import { createFeishuClientHelper } from './feishu-client.js';
-import { buildFeishuQueueCard } from './feishu-cards.js';
 
 export interface MaoApp {
   app: FastifyInstance;
@@ -1799,30 +1800,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   ctx.notifyFeishuPendingMismatch = async (pending) => {
     await sendFeishuText(pending.appId, pending.event, FEISHU_ECP_IDENTITY_MISMATCH_TEXT);
   };
-  const createFeishuQueueCard = async (context: FeishuInboundContext, queueId: number, position: number, sessionId: number): Promise<string | null> => {
-    const client = await getFeishuClient(Number(context.accountId));
-    if (client == null) return null;
-    const data = { msg_type: 'interactive', content: JSON.stringify(buildFeishuQueueCard(context, queueId, position)) };
-    // 群聊用 reply 触发消息：话题群中 message.create 到 chat_id 会创建新话题，reply 才落入当前话题。
-    const response = await (context.chatType === 'group' && context.messageId != null
-      ? client.im.v1.message.reply({ path: { message_id: context.messageId }, data })
-      : client.im.v1.message.create({ params: { receive_id_type: 'open_id' }, data: { ...data, receive_id: context.senderId! } }));
-    const cardMessageId = (response as { data?: { message_id?: string } }).data?.message_id ?? null;
-    // 私聊排队卡片可被回复/引用，记录卡片消息 → 会话映射供引用切换定位。
-    if (cardMessageId != null && context.chatType === 'p2p') {
-      await feishuMessageService.recordP2pMessage(context.accountId, cardMessageId, sessionId, 'OUT');
-    }
-    return cardMessageId;
-  };
-  /** 网页端会话详情深链：取 ECP desktopCallbackUrl 的 origin 拼 `/tasks/{id}`；配置异常时不渲染按钮。 */
-  const resolveFeishuSessionDetailUrl = async (sessionId: number): Promise<string | undefined> => {
-    try {
-      const ecp = await settingService.getEcpConfig();
-      return feishuSessionDetailUrl(ecp.desktopCallbackUrl, sessionId);
-    } catch {
-      return undefined;
-    }
-  };
+  const feishuQueueCard = createFeishuQueueCardHelper({ getFeishuClient, feishuMessageService });
+  const resolveFeishuSessionDetailUrl = createFeishuSessionUrlHelper({ settingService });
   /** 250ms 节流的进度卡片 PATCH 闭包：正常执行与崩溃恢复续跑共用同一实现。
    *  真正 PATCH 前读取当前提问表单；终态先清表单。旧进度对象被新任务替换后不再改表单状态。
    *  @param startedAtMs 任务起算时间（毫秒），终态时据此计算卡片上的「耗时」。
@@ -2144,7 +2123,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       await persistCancelledIfActive(sessionId);
     },
     queueService: feishuTaskQueue,
-    createQueueCard: async (context, _queueId, sessionId) => createFeishuQueueCard(context, _queueId, await queuePositionOf(sessionId), sessionId),
+    createQueueCard: async (context, _queueId, sessionId) => feishuQueueCard(context, _queueId, await queuePositionOf(sessionId), sessionId),
     resolveBotId: (accountId) => Number(accountId),
     downloadMedia: async (context, workspace) => {
       const botId = Number(context.accountId);
