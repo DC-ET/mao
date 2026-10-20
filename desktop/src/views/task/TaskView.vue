@@ -327,12 +327,15 @@ const inspectorTodos = computed(() => {
   return sessionStore.getTodos(String(sid))
 })
 
-// 右侧边栏上下文：子会话取对应会话 context_window，缺失回退主会话
+// 右侧边栏上下文：子会话取对应会话 context_window，缺失回退主会话。
+// 子代理例外：缺失时不回退——只读徽标展示的是它自己的占用，拿主会话水位冒充会误报。
 const inspectorContextWindow = computed(() => {
   if (inspectorViewType.value === 'chat') return contextWindow.value
   const sid = inspectorSubSessionId.value
   if (sid == null) return contextWindow.value
-  return sessionStore.getContextWindow(String(sid)) ?? contextWindow.value
+  const own = sessionStore.getContextWindow(String(sid)) ?? null
+  if (own) return own
+  return inspectorViewType.value === 'subagent' ? null : contextWindow.value
 })
 
 // 右侧边栏模型：子会话优先使用自己的 modelId，避免上下文是否已回填影响模型解析。

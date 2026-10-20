@@ -82,6 +82,15 @@
               {{ contextDisplay ? `上下文 ${contextDisplay}` : '上下文' }}
             </button>
           </el-tooltip>
+          <!-- 子代理：只读占用百分比，不提供上下文详情抽屉 -->
+          <el-tooltip
+            v-else-if="showSubagentContextBadge"
+            :content="contextTooltip"
+            placement="top"
+            :show-after="300"
+          >
+            <span class="context-badge is-readonly">{{ `上下文 ${contextDisplay}` }}</span>
+          </el-tooltip>
         </div>
       </div>
 
@@ -928,6 +937,15 @@ const contextTooltip = computed(() => {
   return formatTokenCompact(contextTokens.value)
 })
 
+/**
+ * 子代理只读徽标：恢复 0.0.244 之前的展示口径——有自身上下文水位才显示，
+ * 但不提供抽屉入口（手动整理 / 记忆注入只对主会话与边路任务开放）。
+ * 不能复用 showContextDrawer：那个条件专门排除了子代理。
+ */
+const showSubagentContextBadge = computed(
+  () => props.viewType === 'subagent' && !!props.sessionId && !!contextDisplay.value,
+)
+
 const panelEl = ref<HTMLElement | null>(null)
 const panelWidth = ref<number | null>(null)
 const MIN_WIDTH = 120
@@ -1534,6 +1552,16 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   background: var(--aw-primary-hover);
 }
 
+/* 子代理只读徽标：可看占比，不可点开详情 */
+.context-badge.is-readonly {
+  cursor: default;
+}
+
+.context-badge.is-readonly:hover {
+  color: var(--aw-ink-muted-48);
+  background: rgba(0, 0, 0, 0.04);
+}
+
 .inspector-tab-content::-webkit-scrollbar {
   width: 4px;
 }
@@ -1584,6 +1612,11 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
 [data-theme="dark"] .context-badge:hover {
   color: var(--aw-primary);
   background: var(--aw-primary-hover);
+}
+
+[data-theme="dark"] .context-badge.is-readonly:hover {
+  color: var(--aw-ink-muted-48);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 /* ===== 上下文透视抽屉 ===== */

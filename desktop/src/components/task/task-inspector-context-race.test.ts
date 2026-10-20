@@ -114,6 +114,7 @@ vi.mock('./GitChangeList.vue', () => ({ default: { render: () => null } }))
 vi.mock('../file-browser/FileTree.vue', () => ({ default: { render: () => null } }))
 
 import TaskInspector from './TaskInspector.vue'
+import type { ContextWindowInfo } from '../../types/chat'
 
 const descriptor = parse(readFileSync(new URL('./TaskInspector.vue', import.meta.url), 'utf8')).descriptor
 const script = compileScript(descriptor, { id: 'review-inspector' })
@@ -204,18 +205,27 @@ function subtreeText(el: StubEl): string {
 
 function mountInspector(
   initialMemoryIds: number[],
-  opts: { viewType?: 'chat' | 'side_task' | 'subagent'; phase?: string; executionMode?: string } = {},
+  opts: {
+    viewType?: 'chat' | 'side_task' | 'subagent'
+    phase?: string
+    executionMode?: string
+    /** 覆盖默认水位；传 null 表示该视图没有自身上下文数据 */
+    contextWindow?: ContextWindowInfo | null
+  } = {},
 ) {
   const sid = ref('11')
   const memoryIds = ref<number[]>(initialMemoryIds)
-  const contextWindow = computed(() => ({
-    estimated: 100, actual: 50,
-    manifest: {
-      sections: [{ key: 'messages', label: '会话消息', tokens: 1234, count: 2 }],
-      memoryIds: memoryIds.value,
-      estimatedWindowTokens: 200000,
-    },
-  }))
+  const contextWindow = computed<ContextWindowInfo | null>(() => {
+    if (opts.contextWindow !== undefined) return opts.contextWindow
+    return {
+      estimated: 100, actual: 50,
+      manifest: {
+        sections: [{ key: 'messages', label: '会话消息', tokens: 1234, count: 2 }],
+        memoryIds: memoryIds.value,
+        estimatedWindowTokens: 200000,
+      },
+    }
+  })
   const traceOpens = { value: 0, sid: '' as string }
   const Host = defineComponent({
     render: () => h(ClientInspector as never, {
@@ -341,6 +351,41 @@ describe('TaskInspector 上下文入口：徽标开抽屉，无顶层页签（0.
     await flush()
 
     expect(m.pageText()).not.toContain('上下文容量')
+    m.clickContextBadge()
+    await flush()
+    expect(m.pageText()).toContain('上下文容量')
+  })
+})
+
+describe('TaskInspector 子代理上下文徽标：只读占比（0.0.323）', () => {
+  it('子代理视图显示自身占比，徽标不是按钮、不能打开抽屉', async () => {
+    const m = mountInspector([], {
+      viewType: 'subagent',
+      contextWindow: {
+        estimated: 20000,
+        actual: 18000,
+        manifest: { sections: [], memoryIds: [], estimatedWindowTokens: 200000 },
+      },
+    })
+    await flush()
+
+    expect(m.pageText()).toContain('上下文 10%')
+    // 只读徽标用 span 渲染：按钮列表里没有上下文，也就没有抽屉入口
+    expect(m.buttonTexts().some(t => t.includes('上下文'))).toBe(false)
+    expect(m.pageText()).not.toContain('上下文容量')
+  })
+
+  it('子代理没有自身上下文时不显示徽标，避免拿主会话水位冒充', async () => {
+    const m = mountInspector([], { viewType: 'subagent', contextWindow: null })
+    await flush()
+    expect(m.pageText()).not.toContain('上下文')
+  })
+
+  it('边路任务仍可通过徽标打开上下文详情抽屉', async () => {
+    const m = mountInspector([], { viewType: 'side_task' })
+    await flush()
+    expect(m.buttonTexts().some(t => t.includes('上下文'))).toBe(true)
+
     m.clickContextBadge()
     await flush()
     expect(m.pageText()).toContain('上下文容量')
