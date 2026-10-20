@@ -324,23 +324,11 @@ import { createFeishuAskMount } from './feishu/ask-mount.js';
 import { wsEvent } from './session/ws/ws-event.js';
 import { inboundImageKeys } from './feishu/event-normalizer.js';
 import { chatFilesDirOf, resolveChatFileTarget } from './feishu/chat-files.js';
-import { createFeishuMediaHelper, IMAGE_EXT_BY_CONTENT_TYPE } from './feishu-media-helpers.js';
-import { createFeishuQueueCardHelper } from './feishu-queue-card.js';
-import { createFeishuSessionUrlHelper } from './feishu-session-url.js';
-import { createFeishuRoundOffsetHelper } from './feishu-round-offset.js';
-import { createFeishuUserIdHelper } from './feishu-user-id.js';
-import { createPersistCancelledHelper } from './persist-cancelled.js';
-import { createPatchedProgressHelper } from './feishu-patched-progress.js';
-import { createFeishuProgressCardHelper } from './feishu-progress-card.js';
-import { createFeishuRecoveryProgressHelper } from './feishu-recovery-progress.js';
-import { createQueuePositionHelper } from './queue-position.js';
-import { createAuthorizeSenderHelper } from './feishu-authorize-sender.js';
-import { createSendUnauthorizedCardHelper } from './feishu-unauthorized-card.js';
-import { createResolveUserIdHelper } from './feishu-resolve-user-id.js';
-import { createResolveMessageTextHelper } from './feishu-resolve-message-text.js';
-import { createUnauthorizedTextHelper } from './feishu-unauthorized-text.js';
-import { createResolveQuotedMessageHelper } from './feishu-resolve-quoted-message.js';
-import { createThreadSessionHelper } from './feishu-thread-session.js';
+import { createFeishuMediaHelper, IMAGE_EXT_BY_CONTENT_TYPE, createResolveMessageTextHelper } from './feishu-media.js';
+import { createFeishuQueueCardHelper, createPatchedProgressHelper, createFeishuProgressCardHelper, createFeishuRecoveryProgressHelper, createSendUnauthorizedCardHelper, createUnauthorizedTextHelper } from './feishu-cards.js';
+import { createFeishuSessionUrlHelper, createFeishuUserIdHelper, createResolveUserIdHelper, createAuthorizeSenderHelper, createResolveQuotedMessageHelper, createThreadSessionHelper } from './feishu-session.js';
+import { createFeishuRoundOffsetHelper } from './feishu-client.js';
+import { createPersistCancelledHelper, createQueuePositionHelper, registerUploadStatic, createContainerPtyFactory, createTerminalAudit } from './app-utils.js';
 import type { FeishuInboundContext, FeishuNormalizedMessage } from './feishu/types.js';
 import { WsStreamingEventListener } from './session/ws/ws-streaming-event-listener.js';
 import { MysqlApiTokenRepository, MysqlOutboundDeliveryRepository, MysqlOutboundSubscriptionRepository, MysqlWebhookTriggerRepository } from './openapi/openapi.repository.js';
@@ -390,11 +378,8 @@ import {
   downloadFeishuMediaBuffer,
   dataUriOf,
 } from './feishu-media.js';
-import { registerUploadStatic } from './upload-static.js';
 import { expandHome, parseSqlTimeMs, runtimeSessionCleanup } from './app-utils.js';
 import { createShutdownHandler } from './app-shutdown.js';
-import { createContainerPtyFactory } from './container-pty-factory.js';
-import { createTerminalAudit } from './terminal-audit.js';
 import { createFeishuSessionHelper } from './feishu-session.js';
 import { createFeishuClientHelper } from './feishu-client.js';
 

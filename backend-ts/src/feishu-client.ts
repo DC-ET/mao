@@ -1,7 +1,11 @@
 import * as Lark from '@larksuiteoapi/node-sdk';
 import { decryptAesGcm } from './crypto/aes-gcm.js';
+import { countCompletedAgentRounds } from './feishu/card-progress-listener.js';
 import type { MysqlFeishuBotRepository } from './feishu/feishu_bot.repository.js';
 import type { FeishuNormalizedMessage } from './feishu/types.js';
+import type { SessionService } from './session/session.service.js';
+
+// ========== 飞书客户端 ==========
 
 export interface FeishuClientDeps {
   feishuBots: MysqlFeishuBotRepository;
@@ -74,4 +78,22 @@ export function createFeishuClientHelper(deps: FeishuClientDeps): FeishuClientHe
   };
 
   return { getFeishuClient, getFeishuChatTitle, sendFeishuText };
+}
+
+// ========== 轮次偏移 ==========
+
+export interface FeishuRoundOffsetDeps {
+  sessionService: SessionService;
+}
+
+export function createFeishuRoundOffsetHelper(deps: FeishuRoundOffsetDeps) {
+  const { sessionService } = deps;
+
+  return async (sessionId: number): Promise<number> => {
+    try {
+      return countCompletedAgentRounds(await sessionService.getMessages(sessionId));
+    } catch {
+      return 0;
+    }
+  };
 }
