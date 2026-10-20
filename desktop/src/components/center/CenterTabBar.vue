@@ -8,7 +8,14 @@
       @click="$emit('activate', tab.id)"
       @contextmenu.prevent="onContextMenu($event, tab)"
     >
-      <el-icon v-if="tab.type === 'chat' || tab.type === 'side_task' || tab.type === 'subagent'" class="tab-icon"><ChatDotRound /></el-icon>
+      <AgentAvatar
+        v-if="tab.type === 'chat' && agentIdentity.id"
+        :name="agentIdentity.name"
+        :avatar-url="agentIdentity.avatarUrl"
+        :size="18"
+        class="tab-icon tab-agent-avatar"
+      />
+      <el-icon v-else-if="tab.type === 'chat' || tab.type === 'side_task' || tab.type === 'subagent'" class="tab-icon"><ChatDotRound /></el-icon>
       <el-icon v-else-if="tab.type === 'diff'" class="tab-icon"><DocumentCopy /></el-icon>
       <el-icon v-else-if="tab.type === 'trace'" class="tab-icon"><TrendCharts /></el-icon>
       <el-icon v-else class="tab-icon"><Document /></el-icon>
@@ -52,15 +59,32 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { computed, reactive, ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { ChatDotRound, Document, DocumentCopy, Close, TrendCharts } from '@element-plus/icons-vue'
 import type { Tab } from '../../types/file-browser'
 import { shouldDismissContextMenuForScroll } from '../../utils/contextMenuDismiss'
+import { useAgentStore } from '../../stores/agent'
+import { resolveAgentIdentity } from '../../utils/agent-identity'
+import AgentAvatar from '../agent/AgentAvatar.vue'
 
-defineProps<{
+const props = defineProps<{
   tabs: Tab[]
   activeTabId: string
+  /** 主会话 Tab 的 Agent 头像：有归属 Agent 时替代默认会话图标 */
+  agentId?: string | null
+  agentName?: string | null
 }>()
+
+const agentStore = useAgentStore()
+
+const agentIdentity = computed(() =>
+  resolveAgentIdentity({
+    agentId: props.agentId,
+    fallbackName: props.agentName,
+    activeAgent: agentStore.activeAgent,
+    agents: agentStore.agents,
+  }),
+)
 
 defineEmits<{
   activate: [tabId: string]

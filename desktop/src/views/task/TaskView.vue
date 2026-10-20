@@ -10,17 +10,10 @@
     />
 
     <div class="task-container">
-      <SessionAgentBar
-        v-if="!isNewTaskMode"
-        :agent-id="agentId || null"
-        :agent-name="agentName || null"
-        :session-id="sessionId"
-        :active-session-id="sessionStore.activeSessionId"
-        :loading="initialLoading"
-        @open-detail="openAgentInspector"
-      />
       <CenterTabBar
         v-if="tabs.length > 1"
+        :agent-id="isNewTaskMode ? null : (agentId || null)"
+        :agent-name="agentName || null"
         :tabs="tabs"
         :active-tab-id="activeTabId"
         @activate="activateTab"
@@ -103,7 +96,6 @@ import { resolveInspectorTarget, type InspectorTarget, type InspectorViewType } 
 import { api } from '../../api'
 import TaskIndexPanel from '../../components/task/TaskIndexPanel.vue'
 import TaskInspector from '../../components/task/TaskInspector.vue'
-import SessionAgentBar from '../../components/agent/SessionAgentBar.vue'
 import CenterTabBar from '../../components/center/CenterTabBar.vue'
 import CenterTabContainer from '../../components/center/CenterTabContainer.vue'
 
