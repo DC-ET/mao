@@ -20,6 +20,7 @@
 ### 后端
 
 - **容器 `/tmp` 改为每用户持久目录**：容器内 `/tmp` 从 tmpfs 改为挂载宿主机 `{MAO_CONTAINER_TMP_DIR}/{userId}`（默认 `/opt/mao-data/tmp/{userId}`），容器 stop/重建后临时文件与脚本不再丢失；目录权限统一 1777，超过 `MAO_CONTAINER_TMP_RETENTION_DAYS`（默认 7 天，按 mtime）的条目在容器创建与空闲巡检时清理。顺带消除 tmpfs 的 `noexec` 限制。新增 `MAO_CONTAINER_TMP_DIR` / `MAO_CONTAINER_TMP_RETENTION_DAYS`，移除 `MAO_CONTAINER_TMPFS_SIZE_MB`。挂载清单新增 `purpose=tmp` 条目（容器路径唯一例外：`{tmpDir}/{userId}` → `/tmp`），已有容器在下次创建/重建时自动带上。
+- **子代理等待引导修正**：`wait_subagents` 由「慎用」改为「需要子代理结果时直接调用」（阻塞到全部结束或超时返回），并明确只在看进度/纠偏时用 `check_subagent`、禁止固定 sleep 轮询；`spawn_subagent` 的委派纪律与 `wait_subagents` 工具描述同步补上该指引。
 
 ---
 

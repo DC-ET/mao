@@ -32,7 +32,7 @@ export class SpawnSubagentTool extends BaseTool {
       + '   派发时通过 `title` 参数提供简短可区分的标题（建议 4-12 个字概括任务，不要照抄任务指令），便于并行子代理的识别与跟踪\n'
       + '3. 不要在同一未解决线程上重复派发；并行子任务写入范围不得重叠\n'
       + '4. 代码改动优先 worker；审查用 reviewer 且不要让其改代码\n'
-      + '5. `wait_subagents` 慎用，仅在下一步被阻塞时调用；运行期间做不重叠的本地工作\n'
+      + '5. 下一步需要子代理结果时直接调用 `wait_subagents`（阻塞到全部结束或超时返回）；运行期间做不重叠的本地工作，禁止用 sleep 轮询等待\n'
       + '6. 子代理返回后先快速审查改动/结论，再集成或细化\n\n'
       + '注意：后台子代理无法与用户交互，也不能再派生后台子代理。\n'
       + '主代理在主线完成时若仍有后台子代理运行，会自动挂起等待，无需手动等待。';
@@ -194,7 +194,8 @@ export class WaitSubagentsTool extends BaseTool {
 
   getName(): string { return 'wait_subagents'; }
   getDescription(): string {
-    return '等待当前会话全部后台子代理结束，返回汇总结果。默认最多等待 30 分钟；超时会返回当前运行状态，由主代理决定继续等待、取消或执行其他操作。';
+    return '等待当前会话全部后台子代理结束，返回汇总结果。默认最多等待 30 分钟；超时会返回当前运行状态，由主代理决定继续等待、取消或执行其他操作。'
+      + '需要子代理结果时直接调用本工具，不要用 `check_subagent` 配合固定 sleep 轮询。';
   }
   getInputSchema(): Record<string, unknown> {
     return {

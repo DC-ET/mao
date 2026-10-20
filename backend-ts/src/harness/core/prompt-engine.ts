@@ -634,7 +634,7 @@ export class PromptEngine {
         + '2. 任务描述要具体，包含明确目标、输入数据和期望输出格式\n'
         + '3. 子代理无法与用户交互，不要派发需要用户确认的任务\n'
         + '4. 并行子任务写入范围不得重叠；代码改动优先 worker，审查用 reviewer\n'
-        + '5. `wait_subagents` 慎用；后续可用 `check_subagent` 查看进度\n\n';
+        + '5. 需要子代理结果时直接调用 `wait_subagents`（阻塞到全部结束或超时返回）；只在需要中途查看进度或纠偏时用 `check_subagent`，禁止用 sleep 轮询等待\n\n';
     }
     if (hasFollowup) {
       sb += '## 子代理追问 / 纠偏\n\n'
