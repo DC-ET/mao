@@ -13,7 +13,13 @@ export interface FeishuSessionAdapter {
   getOrCreateSession(accountId: string, context: FeishuInboundContext): Promise<{ id: number; workspace?: string | null; executionUserId?: number | null }>;
   /** 保存用户消息。metadata 用于标记该消息与某条队列行的关联（hydrate 判断消息是否已落库）。 */
   saveUserMessage(sessionId: number, content: unknown, metadata?: string | null): Promise<void>;
-  getLatestAssistantReply(sessionId: number): Promise<string>;
+  /**
+   * 终态回复连同其消息 ID 一次取出（同一批消息，文本与 id 同源）：
+   * 文本即卡片正文口径（channelAssistantReply，取最后一条 ASSISTANT，不论 content 是否为空）；
+   * messageId 供完成卡快照按卡归属落库——终态回复为空/纯空白时也必须绑定本卡终态消息，
+   * 不能静默落到更早的有内容消息上（否则点踩反馈打错对象）。
+   */
+  getLatestAssistantReplyWithId(sessionId: number): Promise<{ text: string; messageId: number | null }>;
   /** 读取会话消息，供失败重试把进度卡片轮次接到已完成的助手轮之后。 */
   getMessages?(sessionId: number): Promise<Array<{ role?: string | null }>>;
   /** 执行前重置会话 phase（如 RUNNING），避免上一轮终态（FAILED/CANCELLED）触发 AgentLoop 取消。 */
@@ -292,10 +298,10 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
         return outcome;
       }
       await this.options.onExecutionFinished?.(sessionId, stubContext, executionId, 'COMPLETED');
-      const text = await this.options.sessionService.getLatestAssistantReply(sessionId);
-      const cardUpdated = await cardListener.complete(text);
-      if (cardUpdated === false && text != null && text !== '') {
-        await this.reply(stubContext, text, sessionId).catch(() => undefined);
+      const reply = await this.options.sessionService.getLatestAssistantReplyWithId(sessionId);
+      const cardUpdated = await cardListener.complete(reply.text, reply.messageId ?? undefined);
+      if (cardUpdated === false && reply.text != null && reply.text !== '') {
+        await this.reply(stubContext, reply.text, sessionId).catch(() => undefined);
       }
       outcome = 'COMPLETED';
       return outcome;
@@ -678,9 +684,9 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
         return { text, phase: 'CANCELLED' };
       }
       await this.options.onExecutionFinished?.(sessionId, context, executionId, 'COMPLETED');
-      const text = await this.options.sessionService.getLatestAssistantReply(sessionId);
-      const cardUpdated = await cardListener?.complete(text);
-      const replyText = cardListener == null || cardUpdated === false ? text : null;
+      const reply = await this.options.sessionService.getLatestAssistantReplyWithId(sessionId);
+      const cardUpdated = await cardListener?.complete(reply.text, reply.messageId ?? undefined);
+      const replyText = cardListener == null || cardUpdated === false ? reply.text : null;
       return { text: replyText, phase: 'COMPLETED' };
     } catch (error) {
       console.error(`飞书 Agent 执行失败, sessionId=${sessionId}`, error);

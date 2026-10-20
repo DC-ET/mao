@@ -17,7 +17,7 @@ function progressOf(
   options: {
     loadSubagents?: () => Promise<FeishuSubagentSummary[]>;
     now?: () => number;
-    persistTerminal?: (snapshot: { round: number; content: string; elapsedMs?: number }) => Promise<void>;
+    persistTerminal?: (snapshot: { round: number; content: string; elapsedMs?: number; messageId?: number }) => Promise<void>;
   } = {},
 ) {
   return createFeishuPatchedProgress({
@@ -187,6 +187,29 @@ describe('飞书完成卡终态快照持久化（persistTerminal）', () => {
     expect(persistTerminal).toHaveBeenCalledWith({ round: 8, content: '这是任务的最终结果正文。', elapsedMs: 506_000 });
     // D9：快照必须先落库再 PATCH，避免「卡已更新、快照未落」的点击竞态
     expect(order).toEqual(['persist:8:这是任务的最终结果正文。:506000', 'patch']);
+  });
+
+  it('update 透传终态 messageId 给 persistTerminal', async () => {
+    const persistTerminal = vi.fn(async (snapshot: { round: number; content: string; elapsedMs?: number; messageId?: number }) => {
+      expect(snapshot.messageId).toBe(42);
+    });
+    const progress = progressOf(new FeishuAskFormStore(), async () => undefined, 0, {
+      now: () => 1_000,
+      persistTerminal,
+    });
+    await progress.update('COMPLETED', 3, '正文', [], 42);
+    expect(persistTerminal).toHaveBeenCalledTimes(1);
+    expect(persistTerminal).toHaveBeenCalledWith({ round: 3, content: '正文', elapsedMs: 1_000, messageId: 42 });
+  });
+
+  it('未传 messageId 时 persistTerminal 收到 undefined', async () => {
+    const persistTerminal = vi.fn(async () => undefined);
+    const progress = progressOf(new FeishuAskFormStore(), async () => undefined, 0, {
+      now: () => 1_000,
+      persistTerminal,
+    });
+    await progress.update('COMPLETED', 3, '正文', []);
+    expect(persistTerminal).toHaveBeenCalledWith({ round: 3, content: '正文', elapsedMs: 1_000, messageId: undefined });
   });
 
   it('RUNNING / FAILED / CANCELLED 不触发', async () => {

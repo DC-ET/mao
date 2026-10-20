@@ -41,15 +41,17 @@ export function createFeishuPatchedProgress(deps: {
   /**
    * 终态快照持久化（D9）：COMPLETED 真正 PATCH 前 await，避免「卡已更新、快照未落」的点击竞态。
    * 失败仅 warn 不阻断 PATCH；轮次/耗时取终态固化值，正文与卡片同口径。
+   * @param messageId 该卡终态回复的 ASSISTANT 消息 ID（调用方读取终态回复时同源确定）；
+   *                  缺省时由装配层落库查询兜底（崩溃恢复等未带回的路径）。
    */
-  persistTerminal?: (snapshot: { round: number; content: string; elapsedMs?: number }) => Promise<void>;
+  persistTerminal?: (snapshot: { round: number; content: string; elapsedMs?: number; messageId?: number }) => Promise<void>;
   startedAtMs: number;
   seed?: FeishuProgressSnapshot;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   throttleMs?: number;
 }): FeishuProgressHandle & {
-  update(status: FeishuCardStatus, round: number, content: string, tools: string[]): Promise<void>;
+  update(status: FeishuCardStatus, round: number, content: string, tools: string[], terminalMessageId?: number): Promise<void>;
 } {
   const now = deps.now ?? (() => Date.now());
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
@@ -95,6 +97,7 @@ export function createFeishuPatchedProgress(deps: {
   const send = async (
     status: FeishuCardStatus, round: number, content: string, tools: string[],
     forceSubagents = false,
+    terminalMessageId?: number,
   ): Promise<void> => {
     // 终态卡片不展示子代理，同时清空快照，避免后续 renderCurrent 把运行中列表带进终态卡。
     lastSubagents = status === 'RUNNING' ? await loadSubagents(forceSubagents) : [];
@@ -112,7 +115,7 @@ export function createFeishuPatchedProgress(deps: {
     // D9：终态快照先落库再 PATCH。失败仅 warn——快照缺失只让该卡点击退化为兜底路径，不能卡住终态更新。
     if (status === 'COMPLETED' && deps.persistTerminal != null) {
       try {
-        await deps.persistTerminal({ round, content, elapsedMs: terminalElapsedMs });
+        await deps.persistTerminal({ round, content, elapsedMs: terminalElapsedMs, messageId: terminalMessageId });
       } catch (e) {
         console.warn(`飞书完成卡终态快照持久化失败: ${e instanceof Error ? e.message : String(e)}`);
       }
@@ -125,8 +128,8 @@ export function createFeishuPatchedProgress(deps: {
   };
 
   return {
-    update(status, round, content, tools) {
-      return enqueue(() => send(status, round, content, tools));
+    update(status, round, content, tools, terminalMessageId) {
+      return enqueue(() => send(status, round, content, tools, false, terminalMessageId));
     },
     refresh() {
       return enqueue(async () => {

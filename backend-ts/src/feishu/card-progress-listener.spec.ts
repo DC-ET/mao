@@ -225,6 +225,22 @@ describe('FeishuCardProgressListener', () => {
     expect(updates[updates.length - 1].content).toBe('截止时间是 11 月 30 日，详见通知。');
   });
 
+  it('forwards the terminal messageId to update so the snapshot binds to the card own reply', async () => {
+    // 点踩归属口径：终态正文对应的消息 id 必须在 complete 时回传，
+    // 否则终态正文为空时快照会绑到更早的 ASSISTANT 消息上
+    const calls: Array<{ status: string; messageId?: number }> = [];
+    const listener = new FeishuCardProgressListener({
+      update: async (status, _round, _content, _tools, messageId) => { calls.push({ status, messageId }); },
+    });
+    await listener.complete('最终答案', 42);
+    await listener.complete('最终答案');
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(calls).toEqual([
+      { status: 'COMPLETED', messageId: 42 },
+      { status: 'COMPLETED', messageId: undefined },
+    ]);
+  });
+
   it('has nothing to carry when the first round emits no content', async () => {
     const updates: Array<{ content: string; tools: string[] }> = [];
     const listener = new FeishuCardProgressListener({

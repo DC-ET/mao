@@ -2023,15 +2023,18 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       },
       // D9：COMPLETED 终态 PATCH 前落快照行（card_message_id → 终态消息/轮次/耗时/正文）。
       // 时序上前置保证已满足：execute() 返回后最终 ASSISTANT 消息才落库，之后才 complete() 走到这里。
+      // 归属口径与卡片正文一致：正常/重试路径由 complete() 在读取终态回复的同一时刻带回该消息 ID
+      //（终态回复为空/纯空白时也绑定本卡终态消息，不会静默落到更早的有内容消息上）；
+      // 未带回的路径（崩溃恢复续跑，其正文口径本就跳过空 content）才退回落库查询。
       // 失败仅 warn 不阻断 PATCH（patched-progress 侧统一兜底）；查不到消息时跳过，该卡点击走兜底路径。
-      persistTerminal: botId == null ? undefined : async ({ round, content, elapsedMs }) => {
-        const messageId = await feedbackMessageLookup.findLatestAssistantMessageId(sessionId);
-        if (messageId == null) {
+      persistTerminal: botId == null ? undefined : async ({ round, content, elapsedMs, messageId }) => {
+        const terminalMessageId = messageId ?? await feedbackMessageLookup.findLatestAssistantMessageId(sessionId);
+        if (terminalMessageId == null) {
           console.warn(`飞书完成卡快照跳过: 终态时未找到ASSISTANT消息, sessionId=${sessionId}, cardMessageId=${cardMessageId}`);
           return;
         }
         await feishuCardSnapshotRepo.upsert({
-          cardMessageId, sessionId, botId, messageId,
+          cardMessageId, sessionId, botId, messageId: terminalMessageId,
           status: 'COMPLETED', round, elapsedMs: elapsedMs ?? 0, content,
         });
       },
@@ -2179,10 +2182,20 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       updatePhase: async (sessionId, phase) => { await sessionService.updatePhase(sessionId, phase); },
       cleanupIncompleteTail: async (sessionId) => sessionService.cleanupIncompleteTail(sessionId),
       getPhase: async (sessionId) => (await sessionService.getSession(sessionId))?.phase ?? null,
-      getLatestAssistantReply: async (sessionId) => {
+      getLatestAssistantReplyWithId: async (sessionId) => {
         const messages = await sessionService.getMessages(sessionId);
+        // 归属与正文同源：channelAssistantReply 取最后一条 ASSISTANT（不论 content 是否为空），
+        // 其消息 id 即该卡终态归属；同批消息一次算出，避免二次全量拉取。
+        // 不能改用「跳过空 content」的查询口径——终态回复为空时会静默绑定到更早的消息，点踩打错对象。
+        let messageId: number | null = null;
+        for (let i = messages.length - 1; i >= 0; i--) {
+          if (messages[i].role === 'ASSISTANT') {
+            messageId = messages[i].id ?? null;
+            break;
+          }
+        }
         // 渠道不发桌面来源区，[^n^] 标记原样露出会像没渲染干净的模板变量，统一剥掉
-        return channelAssistantReply(messages, '抱歉，暂时无法生成回复。');
+        return { text: channelAssistantReply(messages, '抱歉，暂时无法生成回复。'), messageId };
       },
       getMessages: async (sessionId) => sessionService.getMessages(sessionId),
     },

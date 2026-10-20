@@ -4,7 +4,12 @@ import { ToolResultSummarizer } from '../session/util/tool-result-summarizer.js'
 import { stripCitationMarkers } from '../session/util/citation-markers.js';
 
 export interface FeishuCardProgress {
-  update(status: 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED', round: number, content: string, tools: string[]): Promise<void>;
+  /**
+   * @param terminalMessageId 仅 COMPLETED 终态携带：该卡终态回复对应的 ASSISTANT 消息 ID，
+   *                          由调用方在读取终态回复的同一时刻确定（与卡片正文同源），
+   *                          供完成卡快照按卡归属落库；其余状态不传。
+   */
+  update(status: 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED', round: number, content: string, tools: string[], terminalMessageId?: number): Promise<void>;
 }
 
 type ToolProgress = { name: string; argumentsJson: string | null; summary: string | null };
@@ -92,11 +97,11 @@ export class FeishuCardProgressListener implements AgentEventListener {
     this.queue('FAILED', message);
   }
 
-  async complete(finalContent: string): Promise<boolean> {
+  async complete(finalContent: string, terminalMessageId?: number): Promise<boolean> {
     await this.flush();
     // 渠道卡片不渲染来源区，终态正文同样剥掉 [^n^]（与 displayContent 同口径）：
     // 正常路径的入参已由 getLatestAssistantReply 剥过，这里兜住崩溃恢复等其他调用方
-    return this.updateTerminal('COMPLETED', this.round, trimCardText(stripCitationMarkers(finalContent)), []);
+    return this.updateTerminal('COMPLETED', this.round, trimCardText(stripCitationMarkers(finalContent)), [], terminalMessageId);
   }
 
   async cancel(interrupted = false): Promise<boolean> {
@@ -124,9 +129,9 @@ export class FeishuCardProgressListener implements AgentEventListener {
     return stripCitationMarkers(raw);
   }
 
-  private async safeUpdate(status: 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED', round: number, content: string, tools: string[]): Promise<boolean> {
+  private async safeUpdate(status: 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED', round: number, content: string, tools: string[], terminalMessageId?: number): Promise<boolean> {
     try {
-      await this.progress.update(status, round, trimCardText(content), tools);
+      await this.progress.update(status, round, trimCardText(content), tools, terminalMessageId);
       return true;
     } catch (error) {
       console.warn(`飞书进度卡片更新失败: ${error instanceof Error ? error.message : String(error)}`);
@@ -134,8 +139,8 @@ export class FeishuCardProgressListener implements AgentEventListener {
     }
   }
 
-  private async updateTerminal(status: 'COMPLETED' | 'FAILED' | 'CANCELLED', round: number, content: string, tools: string[]): Promise<boolean> {
-    return this.safeUpdate(status, round, content, tools);
+  private async updateTerminal(status: 'COMPLETED' | 'FAILED' | 'CANCELLED', round: number, content: string, tools: string[], terminalMessageId?: number): Promise<boolean> {
+    return this.safeUpdate(status, round, content, tools, terminalMessageId);
   }
 
   private toolValues(): string[] {

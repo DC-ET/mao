@@ -32,7 +32,7 @@ function baseSessionService() {
   return {
     getOrCreateSession: vi.fn(async () => ({ id: 7, executionUserId: 42 })),
     saveUserMessage: vi.fn(async () => undefined),
-    getLatestAssistantReply: vi.fn(async () => 'assistant text'),
+    getLatestAssistantReplyWithId: vi.fn(async () => ({ text: 'assistant text', messageId: 11 })),
     updatePhase: vi.fn(async () => undefined),
     cleanupIncompleteTail: vi.fn(async () => 0),
     getPhase: vi.fn(async (): Promise<string | null> => null),
@@ -169,6 +169,32 @@ describe('AgentFeishuInboundHandler', () => {
     });
     await handler.onMessage(makeContext());
     expect(createProgressCard).toHaveBeenCalledWith(expect.anything(), 7);
+  });
+
+  it('passes the terminal messageId to the progress card so the snapshot binds to the card own reply', async () => {
+    // 终态正文为空（本轮只调用工具）时，卡片对应的 ASSISTANT 消息 id 仍须回传，
+    // 否则快照会绑到更早的消息上，点踩落错记录
+    const sessionService = makeSessionService({
+      getLatestAssistantReplyWithId: vi.fn(async () => ({ text: '', messageId: 11 })),
+    });
+    const harness = { prepareMessage: vi.fn(() => 'exec-1'), execute: vi.fn(async () => undefined) };
+    const updates: Array<{ status: string; messageId?: number }> = [];
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      createProgressCard: vi.fn(async () => ({
+        update: async (status: string, _round: number, _content: string, _tools: string[], messageId?: number) => {
+          updates.push({ status, messageId });
+        },
+      })),
+      listenerFactory: async () => listener,
+      onExecutionFinished: async () => undefined,
+    });
+    await handler.onMessage(makeContext());
+    await vi.waitFor(() => {
+      expect(updates).toContainEqual({ status: 'COMPLETED', messageId: 11 });
+    });
   });
 
   it('formats group history without redundant wrapper text', async () => {
@@ -421,7 +447,7 @@ describe('AgentFeishuInboundHandler', () => {
   it('cleans up incomplete tail when interrupted and replies next message text', async () => {
     const sessionService = makeSessionService({
       cleanupIncompleteTail: vi.fn(async () => 1),
-      getLatestAssistantReply: vi.fn(async () => 'r'),
+      getLatestAssistantReplyWithId: vi.fn(async () => ({ text: 'r', messageId: 11 })),
     });
     const flag = makeFlag();
     const harness = {
@@ -446,7 +472,7 @@ describe('AgentFeishuInboundHandler', () => {
   it('returns user-cancelled text when cancelled mid-execution', async () => {
     const sessionService = makeSessionService({
       cleanupIncompleteTail: vi.fn(async () => 1),
-      getLatestAssistantReply: vi.fn(async () => 'r'),
+      getLatestAssistantReplyWithId: vi.fn(async () => ({ text: 'r', messageId: 11 })),
     });
     const flag = makeFlag();
     const harness = {
@@ -546,7 +572,7 @@ describe('AgentFeishuInboundHandler', () => {
       getPhase: vi.fn(async () => 'FAILED'),
       cleanupIncompleteTail: vi.fn(async () => 1),
       updatePhase: vi.fn(async () => undefined),
-      getLatestAssistantReply: vi.fn(async () => '重试后的答案'),
+      getLatestAssistantReplyWithId: vi.fn(async () => ({ text: '重试后的答案', messageId: 12 })),
     });
     const saveUserMessage = vi.fn(async () => undefined);
     sessionService.saveUserMessage = saveUserMessage;
@@ -592,7 +618,7 @@ describe('AgentFeishuInboundHandler', () => {
   it('drains the feishu queue after a successful retry', async () => {
     const sessionService = makeSessionService({
       getPhase: vi.fn(async () => 'FAILED'),
-      getLatestAssistantReply: vi.fn(async () => '重试后的答案'),
+      getLatestAssistantReplyWithId: vi.fn(async () => ({ text: '重试后的答案', messageId: 12 })),
     });
     const claimNext = vi.fn(async () => null);
     const handler = new AgentFeishuInboundHandler({
@@ -615,7 +641,7 @@ describe('AgentFeishuInboundHandler', () => {
       getMessages: vi.fn(async () => [
         { role: 'USER' }, { role: 'ASSISTANT' }, { role: 'TOOL' }, { role: 'ASSISTANT' },
       ]),
-      getLatestAssistantReply: vi.fn(async () => '重试后的答案'),
+      getLatestAssistantReplyWithId: vi.fn(async () => ({ text: '重试后的答案', messageId: 12 })),
     });
     const rounds: number[] = [];
     const handler = new AgentFeishuInboundHandler({
@@ -1321,7 +1347,7 @@ describe('AgentFeishuInboundHandler p2p multi-session', () => {
   });
 
   it('records outbound mapping when the reply message id is returned', async () => {
-    const sessionService = makeSessionService({ getLatestAssistantReply: vi.fn(async () => 'done') });
+    const sessionService = makeSessionService({ getLatestAssistantReplyWithId: vi.fn(async () => ({ text: 'done', messageId: 13 })) });
     const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
     const control = makeP2pControl();
     const onReply = vi.fn(async () => 'om_reply');
