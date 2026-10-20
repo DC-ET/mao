@@ -321,7 +321,6 @@ import { buildFeishuProgressCard, feishuSessionDetailUrl } from './feishu/progre
 import { FeishuAskFormStore } from './feishu/ask-form-store.js';
 import { FeishuActiveProgressRegistry } from './feishu/active-progress.js';
 import { createFeishuAskMount } from './feishu/ask-mount.js';
-import { createFeishuPatchedProgress, type FeishuProgressHandle } from './feishu/patched-progress.js';
 import { wsEvent } from './session/ws/ws-event.js';
 import { inboundImageKeys } from './feishu/event-normalizer.js';
 import { chatFilesDirOf, resolveChatFileTarget } from './feishu/chat-files.js';
@@ -331,6 +330,7 @@ import { createFeishuSessionUrlHelper } from './feishu-session-url.js';
 import { createFeishuRoundOffsetHelper } from './feishu-round-offset.js';
 import { createFeishuUserIdHelper } from './feishu-user-id.js';
 import { createPersistCancelledHelper } from './persist-cancelled.js';
+import { createPatchedProgressHelper } from './feishu-patched-progress.js';
 import type { FeishuInboundContext, FeishuNormalizedMessage } from './feishu/types.js';
 import { WsStreamingEventListener } from './session/ws/ws-streaming-event-listener.js';
 import { MysqlApiTokenRepository, MysqlOutboundDeliveryRepository, MysqlOutboundSubscriptionRepository, MysqlWebhookTriggerRepository } from './openapi/openapi.repository.js';
@@ -1805,74 +1805,10 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   };
   const feishuQueueCard = createFeishuQueueCardHelper({ getFeishuClient, feishuMessageService });
   const resolveFeishuSessionDetailUrl = createFeishuSessionUrlHelper({ settingService });
-  /** 250ms 节流的进度卡片 PATCH 闭包：正常执行与崩溃恢复续跑共用同一实现。
-   *  真正 PATCH 前读取当前提问表单；终态先清表单。旧进度对象被新任务替换后不再改表单状态。
-   *  @param startedAtMs 任务起算时间（毫秒），终态时据此计算卡片上的「耗时」。
-   *  @param botId 卡片所属 Bot（终态快照落库用；取不到时跳过快照，该卡点击退化为兜底路径）。 */
-  const createPatchedProgress = (
-    client: Lark.Client,
-    cardMessageId: string,
-    sessionId: number,
-    cancelAction: { sessionId: number; sender: string; botId?: number } | null,
-    startedAtMs: number,
-    sessionDetailUrl?: string,
-    seed?: { round?: number; content?: string },
-    botId?: number,
-  ): FeishuCardProgress => {
-    const gate: { progress: FeishuProgressHandle | null } = { progress: null };
-    const progress = createFeishuPatchedProgress({
-      listAsks: () => (
-        gate.progress != null && feishuActiveProgress.current(sessionId) === gate.progress
-          ? feishuAskFormStore.list(sessionId)
-          : []
-      ),
-      clearAsks: () => {
-        if (gate.progress != null && feishuActiveProgress.current(sessionId) === gate.progress) {
-          feishuAskFormStore.clearSession(sessionId);
-        }
-      },
-      patch: async (card) => {
-        await client.im.v1.message.patch({ path: { message_id: cardMessageId }, data: { content: JSON.stringify(card) } });
-      },
-      buildCard: ({ status, round, content, tools, subagents, pendingAsks, elapsedMs, disliked }) => buildFeishuProgressCard(
-        status, round, content, tools, cancelAction ?? undefined, elapsedMs, sessionDetailUrl, pendingAsks, disliked, subagents,
-      ),
-      // 运行中子代理随进度卡刷新：以 execution 表为准，内存轮次由 manager 合并。
-      loadSubagents: async () => {
-        const running = await backgroundSubagentManager.listRunning(sessionId);
-        return running.map((subagent) => ({
-          taskId: subagent.taskId,
-          agentType: subagent.agentType,
-          title: subagent.title,
-          status: subagent.status,
-          round: subagent.round,
-        }));
-      },
-      // D9：COMPLETED 终态 PATCH 前落快照行（card_message_id → 终态消息/轮次/耗时/正文）。
-      // 时序上前置保证已满足：execute() 返回后最终 ASSISTANT 消息才落库，之后才 complete() 走到这里。
-      // 归属口径与卡片正文一致：正常/重试路径由 complete() 在读取终态回复的同一时刻带回该消息 ID
-      //（终态回复为空/纯空白时也绑定本卡终态消息，不会静默落到更早的有内容消息上）；
-      // 未带回的路径（崩溃恢复续跑，其正文口径本就跳过空 content）才退回落库查询。
-      // 失败仅 warn 不阻断 PATCH（patched-progress 侧统一兜底）；查不到消息时跳过，该卡点击走兜底路径。
-      persistTerminal: botId == null ? undefined : async ({ round, content, elapsedMs, messageId }) => {
-        const terminalMessageId = messageId ?? await feedbackMessageLookup.findLatestAssistantMessageId(sessionId);
-        if (terminalMessageId == null) {
-          console.warn(`飞书完成卡快照跳过: 终态时未找到ASSISTANT消息, sessionId=${sessionId}, cardMessageId=${cardMessageId}`);
-          return;
-        }
-        await feishuCardSnapshotRepo.upsert({
-          cardMessageId, sessionId, botId, messageId: terminalMessageId,
-          status: 'COMPLETED', round, elapsedMs: elapsedMs ?? 0, content,
-        });
-      },
-      startedAtMs,
-      seed: { status: 'RUNNING', round: seed?.round ?? 0, content: seed?.content ?? '', tools: [] },
-    });
-    gate.progress = progress;
-    // 双键绑定：session 键服务提问门禁/刷新；cardMessageId 键服务点踩按卡归属（旧卡不串到最新句柄）。
-    feishuActiveProgress.bind(sessionId, cancelAction?.sender ?? '', progress, cardMessageId);
-    return progress;
-  };
+  const feishuCardSnapshotRepo = new MysqlFeishuCardSnapshotRepository(db);
+  const createPatchedProgress = createPatchedProgressHelper({
+    feishuActiveProgress, feishuAskFormStore, feishuCardSnapshotRepo, backgroundSubagentManager, feedbackMessageLookup,
+  });
   const createFeishuProgressCard = async (context: FeishuInboundContext, sessionId: number): Promise<FeishuCardProgress | null> => {
     const botId = Number(context.accountId);
     const client = await getFeishuClient(botId);
@@ -1961,7 +1897,6 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const resolveFeishuUserId = createFeishuUserIdHelper({ feishuBinding });
   const feishuInboundQueueRepo = new FeishuInboundQueueRepository(db);
   const feishuProgressCardRepo = new MysqlFeishuProgressCardRepository(db);
-  const feishuCardSnapshotRepo = new MysqlFeishuCardSnapshotRepository(db);
   const feishuTaskQueue = new FeishuTaskQueueService(feishuInboundQueueRepo);
   /** 排队卡片展示位置：入队完成后队列中的 QUEUED 行数（含本条，插入语义=队尾第 N 位）。 */
   const queuePositionOf = async (sessionId: number): Promise<number> => (await feishuInboundQueueRepo.countPending(sessionId));
