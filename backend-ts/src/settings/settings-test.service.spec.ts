@@ -187,7 +187,7 @@ describe('mergeWithDefaults', () => {
   });
 });
 
-describe('testSmtpConnection（V161 邮件测试连接）', () => {
+describe('testSmtpConnection（V162 邮件测试连接）', () => {
   const baseCfg: EmailSmtpSettings = {
     enabled: true,
     smtpHost: 'smtp.example.com',

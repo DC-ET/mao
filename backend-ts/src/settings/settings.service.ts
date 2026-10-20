@@ -66,7 +66,7 @@ export const WS_IDLE_TIMEOUT_MS_KEY = 'ws.idleTimeoutMs';
 export const NOTIFY_WORKER_DELAY_MS_KEY = 'notify.workerDelayMs';
 export const NOTIFY_BATCH_SIZE_KEY = 'notify.batchSize';
 export const NOTIFY_MAX_ATTEMPTS_KEY = 'notify.maxAttempts';
-/** 邮件通知渠道（V161）：7 个设置行，密码行 is_secret=1。缺行/未启用 = 邮件渠道不可用。 */
+/** 邮件通知渠道（V162）：7 个设置行，密码行 is_secret=1。缺行/未启用 = 邮件渠道不可用。 */
 export const NOTIFY_EMAIL_ENABLED_KEY = 'notify.email.enabled';
 export const NOTIFY_EMAIL_SMTP_HOST_KEY = 'notify.email.smtpHost';
 export const NOTIFY_EMAIL_SMTP_PORT_KEY = 'notify.email.smtpPort';
@@ -431,7 +431,7 @@ export class SystemSettingService {
   }
 
   /**
-   * 邮件通知（SMTP）配置（V161）。发送时实时读取：保存后即时生效，不在服务内缓存。
+   * 邮件通知（SMTP）配置（V162）。发送时实时读取：保存后即时生效，不在服务内缓存。
    * 缺行回落默认值（端口 465 / 隐式 TLS），enabled 缺行视为关闭。
    */
   async getEmailSmtpConfig(): Promise<EmailSmtpSettings> {
@@ -439,7 +439,7 @@ export class SystemSettingService {
       this.getBool(NOTIFY_EMAIL_ENABLED_KEY),
       this.getText(NOTIFY_EMAIL_SMTP_HOST_KEY),
       this.getText(NOTIFY_EMAIL_SMTP_PORT_KEY, String(DEFAULT_NOTIFY_EMAIL_SMTP_PORT)),
-      // 缺行回落 V161 seed 默认值：465 + 隐式 TLS
+      // 缺行回落 V162 seed 默认值：465 + 隐式 TLS
       this.getText(NOTIFY_EMAIL_SMTP_SECURE_KEY, '1'),
       this.getText(NOTIFY_EMAIL_SMTP_USER_KEY),
       this.getSecret(NOTIFY_EMAIL_SMTP_PASSWORD_KEY),
@@ -587,7 +587,7 @@ export class SystemSettingService {
   }
 
   /**
-   * 邮件 SMTP 组保存校验（V161）：enabled=1 时 host / port / fromAddr 必填且合法。
+   * 邮件 SMTP 组保存校验（V162）：enabled=1 时 host / port / fromAddr 必填且合法。
    * 单 key 与 batch 两条路径共用：pending 为本次待写值（secret 的 null=不修改），
    * 未提交的 key 回落已存值，避免 enabled 与 host 同批保存时漏检。
    */

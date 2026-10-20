@@ -135,7 +135,7 @@ describe('UserService', () => {
   });
 });
 
-describe('UserService 邮箱变更通知钩子（V161 决策 2）', () => {
+describe('UserService 邮箱变更通知钩子（V162 决策 2）', () => {
   function localService(listener?: (userId: number, email: string | null) => void) {
     const userRepo = {
       findById: vi.fn(),

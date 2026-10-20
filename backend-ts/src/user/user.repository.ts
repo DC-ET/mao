@@ -56,7 +56,7 @@ export class MysqlUserRepository implements UserRepository {
     return this.db.queryOne<User>(`SELECT *, ${EXTERNAL_PROVIDER_COLUMN} FROM \`user\` WHERE email = ? AND ${notDeleted()}`, [email]);
   }
 
-  /** 邮件通知渠道收件地址查询（V161）：只取 email 列；用户不存在返回 null。 */
+  /** 邮件通知渠道收件地址查询（V162）：只取 email 列；用户不存在返回 null。 */
   findEmailById(userId: number): Promise<string | null> {
     return this.db
       .queryOne<{ email: string | null }>('SELECT email FROM `user` WHERE id = ?', [userId])

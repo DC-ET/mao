@@ -1294,7 +1294,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
 
   const senderRegistry = new WebhookSenderRegistry([
     new DingTalkWebhookSender(), new FeishuWebhookSender(),
-    // 邮件渠道（V161）：发送时实时读 SMTP 配置（settingService），保存后即时生效
+    // 邮件渠道（V162）：发送时实时读 SMTP 配置（settingService），保存后即时生效
     new EmailWebhookSender(settingService),
   ]);
   const urlValidator = new WebhookUrlValidator();

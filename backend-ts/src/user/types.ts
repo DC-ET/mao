@@ -56,7 +56,7 @@ export interface UserRepository {
   findById(id: number): Promise<User | null>;
   findByUsername(username: string): Promise<User | null>;
   findByEmail?(email: string): Promise<User | null>;
-  /** 邮件通知渠道收件地址查询（V161）：按 id 只取 email 列，用户不存在返回 null。 */
+  /** 邮件通知渠道收件地址查询（V162）：按 id 只取 email 列，用户不存在返回 null。 */
   findEmailById(userId: number): Promise<string | null>;
   findByFeishuUserId?(feishuUserId: string): Promise<User | null>;
   countByUsername(username: string): Promise<number>;

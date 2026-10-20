@@ -358,7 +358,7 @@ describe('WebhookDeliveryScheduler', () => {
   });
 });
 
-describe('WebhookDeliveryScheduler 邮件渠道（V161）', () => {
+describe('WebhookDeliveryScheduler 邮件渠道（V162）', () => {
   function buildScheduler(delivery: Record<string, unknown>, send: (url: string, message: unknown) => Promise<unknown>) {
     const store = {
       recoverInterrupted: vi.fn(async () => undefined),

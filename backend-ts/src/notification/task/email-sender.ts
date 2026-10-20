@@ -37,7 +37,7 @@ export interface EmailTransportOptions {
 export type TransportFactory = (options: EmailTransportOptions) => Transporter;
 
 /**
- * 邮件渠道发送器（V161）：把通知消息渲染为双 Part 邮件（HTML + 纯文本）经 SMTP 发出。
+ * 邮件渠道发送器（V162）：把通知消息渲染为双 Part 邮件（HTML + 纯文本）经 SMTP 发出。
  *
  * 接口第一参对邮件渠道即收件邮箱（delivery.scheduler 解密的 `webhookCiphertext`
  * 在 EMAIL 偏好里存的是收件地址密文）；message.card 与 sessionDetailUrl 被忽略（决策 6）。

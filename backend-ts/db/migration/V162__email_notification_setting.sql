@@ -1,4 +1,4 @@
--- V161: 邮件通知渠道（第三通知渠道：飞书/钉钉/邮件）。
+-- V162: 邮件通知渠道（第三通知渠道：飞书/钉钉/邮件）。
 -- 消费方 EmailSmtpSettings：缺行/未启用 = 邮件渠道不可用（偏好保存 EMAIL 时拒绝并提示联系管理员）。
 INSERT IGNORE INTO `system_setting` (`setting_key`, `value`, `category`, `description`, `editable`) VALUES
 ('notify.email.enabled',   '0',    '通知与消息', '邮件通知渠道开关：0=关（默认），1=开。开启后用户可在消息通知里选择邮件渠道', 1),

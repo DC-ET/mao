@@ -102,7 +102,7 @@ export interface OssSettings {
 }
 
 /**
- * 实例级邮件通知（SMTP）配置（V161）。
+ * 实例级邮件通知（SMTP）配置（V162）。
  * 缺行 / enabled=false 均表示邮件渠道不可用：用户保存 EMAIL 偏好时拒绝，发送时返回不可重试失败。
  */
 export interface EmailSmtpSettings {

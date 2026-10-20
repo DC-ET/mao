@@ -576,7 +576,7 @@ describe('SystemSettingService bundle registry 配置', () => {
   });
 });
 
-describe('SystemSettingService 邮件 SMTP 配置（V161）', () => {
+describe('SystemSettingService 邮件 SMTP 配置（V162）', () => {
   const mapper: SystemSettingRepository = {
     list: vi.fn(),
     findByKey: vi.fn(),

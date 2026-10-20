@@ -119,7 +119,7 @@ describe('WeixinWebhookFallbackService', () => {
   });
 });
 
-describe('WeixinWebhookFallbackService 邮件渠道（V161 决策 4）', () => {
+describe('WeixinWebhookFallbackService 邮件渠道（V162 决策 4）', () => {
   function buildEmailService(send = vi.fn(async () => ({ success: true, retryable: false, httpStatus: 250, providerCode: null, error: null }))) {
     const preference = { channel: 'EMAIL', webhookCiphertext: 'enc(user@corp.com)' };
     const repo = { findEnabled: vi.fn(async () => preference) };
