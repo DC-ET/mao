@@ -1,4 +1,4 @@
-import { createTransport, type Transporter, type TransportOptions } from 'nodemailer';
+import { createTransport, type Transporter } from 'nodemailer';
 import { hasText } from '../../common/case.js';
 import type { EmailSmtpSettings } from '../../settings/types.js';
 import type { NotificationChannel, WebhookMessage, WebhookSendResult } from './types.js';
@@ -19,8 +19,22 @@ export interface EmailSmtpConfigProvider {
   getEmailSmtpConfig(): Promise<EmailSmtpSettings>;
 }
 
+/**
+ * nodemailer SMTP 传输选项（@types/nodemailer 的 SMTPTransport.Options 在 Node16
+ * 解析下无法深层导入，这里按 createTransport 实际消费的字段本地声明）。
+ */
+export interface EmailTransportOptions {
+  host: string;
+  port: number;
+  secure: boolean;
+  auth?: { user: string; pass: string };
+  connectionTimeout: number;
+  greetingTimeout: number;
+  socketTimeout: number;
+}
+
 /** transport 工厂：默认 nodemailer.createTransport，测试注入 stub（方案 §3.1）。 */
-export type TransportFactory = (options: TransportOptions) => Transporter;
+export type TransportFactory = (options: EmailTransportOptions) => Transporter;
 
 /**
  * 邮件渠道发送器（V161）：把通知消息渲染为双 Part 邮件（HTML + 纯文本）经 SMTP 发出。
