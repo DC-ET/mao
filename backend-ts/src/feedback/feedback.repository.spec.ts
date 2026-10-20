@@ -6,18 +6,21 @@ import { FeedbackRepository } from './feedback.repository.js';
  * 防止 buildDetailWhere（f. 前缀条件）与表别名不匹配、
  * 以及查询行键（camelCase）读取错位这类两轮审查中出现的真实 bug。
  */
-function makeCaptureDb() {
+const DETAIL_ROW: Record<string, unknown> = {
+  id: 1, messageId: 11, sessionId: 5, userId: 9, agentId: 2,
+  reason: 'NO_REASON', source: 'feishu', createdAt: '2026-09-27T00:00:00.000Z',
+  username: 'alice', displayName: 'Alice', agentName: 'Coder',
+  messageExists: 1, contentRaw: 'hello', toolSummaryRaw: null, toolCallCount: 0,
+};
+
+function makeCaptureDb(detailRow: Record<string, unknown> = DETAIL_ROW) {
   const captured: Array<{ sql: string; params: unknown[] }> = [];
   const rowsByCall: Record<string, unknown[]> = {
     count: [{ c: 5 }],
     group: [{ reason: 'WRONG_RESULT', count: 5 }],
     ids: [{ messageId: 42 }],
     exists: [{ id: 1 }],
-    detail: [{
-      id: 1, messageId: 11, sessionId: 5, userId: 9, agentId: 2,
-      reason: 'NO_REASON', source: 'feishu', createdAt: '2026-09-27T00:00:00.000Z',
-      username: 'alice', displayName: 'Alice', agentName: 'Coder', contentRaw: 'hello',
-    }],
+    detail: [detailRow],
   };
   const db = {
     query: vi.fn(async (sql: string, params: unknown[] = []) => {
@@ -134,7 +137,31 @@ describe('FeedbackRepository SQL 构造', () => {
   it('listDetailsMapsSourceColumn', async () => {
     const { repo } = makeCaptureDb();
     const rows = await repo.listDetails({ offset: 0, limit: 10 });
-    expect(rows[0]).toMatchObject({ source: 'feishu', reason: 'NO_REASON', contentPreview: 'hello' });
+    expect(rows[0]).toMatchObject({
+      source: 'feishu',
+      reason: 'NO_REASON',
+      messageExists: true,
+      content: 'hello',
+      toolSummary: null,
+      toolCallCount: 0,
+      createdAt: '2026-09-27T00:00:00.000Z',
+    });
+  });
+
+  it('listDetailsMarksDeletedMessageAndMissingContent', async () => {
+    // message 行被清理时 LEFT JOIN 全空：messageExists 必须为 false，content 为 null
+    const { repo } = makeCaptureDb({ ...DETAIL_ROW, messageExists: 0, contentRaw: null, toolSummaryRaw: null, toolCallCount: 0 });
+    const rows = await repo.listDetails({ offset: 0, limit: 10 });
+    expect(rows[0]).toMatchObject({ messageExists: false, content: null, toolSummary: null });
+  });
+
+  it('listDetailsSelectsCreatedAtColumn', async () => {
+    // 回归：828ff6b2 重写 SELECT 时漏了 f.created_at，明细时间全部变成 "undefined"
+    const { repo, captured } = makeCaptureDb();
+    await repo.listDetails({ offset: 0, limit: 10 });
+    expect(captured[0].sql).toContain('f.created_at');
+    expect(captured[0].sql).toContain('AS message_exists');
+    expect(captured[0].sql).toContain('AS tool_summary_raw');
   });
 
   it('listDetailsSelectsStatusColumnsAndSameGroupCountSubquery', async () => {

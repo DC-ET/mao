@@ -40,9 +40,12 @@ export class FeedbackDbLookup implements FeedbackMessageLookup {
   }
 
   async findLatestAssistantMessageId(sessionId: number): Promise<number | null> {
+    // 只认有文本内容的 ASSISTANT 消息：流式执行期间会产生大量只有 tool_calls、content 为空的
+    // 中间消息，点踩落到它们身上会让后台预览恒为空、反馈对象也错位（本轮 vs 上一轮结果）。
     const row = await this.db.queryOne<{ id: number }>(
       `SELECT id FROM message
        WHERE session_id = ? AND role = 'ASSISTANT' AND deleted = 0
+         AND content IS NOT NULL AND TRIM(content) <> ''
        ORDER BY created_at DESC, id DESC LIMIT 1`,
       [sessionId],
     );
@@ -78,6 +81,8 @@ export interface FeedbackDetailItem {
   handledAt: string | null;
   experienceId: number | null;
   sameGroupCount: number;
+  /** 被点踩消息是否仍存在；false 时前端显示「消息已不存在」 */
+  messageExists: boolean;
   contentPreview: string | null;
   createdAt: string;
 }
@@ -217,11 +222,14 @@ export class FeedbackService {
     ]);
     return {
       total,
-      items: rows.map((row) => ({
-        ...row,
-        reasonLabel: REASON_LABELS[row.reason] ?? row.reason,
-        contentPreview: row.contentPreview == null ? null : buildPreview(row.contentPreview),
-      })),
+      items: rows.map((row) => {
+        const { content, toolSummary, toolCallCount, ...rest } = row;
+        return {
+          ...rest,
+          reasonLabel: REASON_LABELS[row.reason] ?? row.reason,
+          contentPreview: buildContentPreview(row.messageExists, content, toolSummary, toolCallCount),
+        };
+      }),
     };
   }
 
@@ -267,6 +275,26 @@ export function buildPreview(raw: string): string {
     .trim();
   if (stripped.length <= PREVIEW_MAX_CHARS) return stripped;
   return `${stripped.slice(0, PREVIEW_MAX_CHARS)}…`;
+}
+
+/**
+ * 明细预览：消息存在时优先正文，正文为空则回退首个工具调用摘要（工具调用中间消息）。
+ * 返回 null 表示「没有可展示内容」——消息已删除，或既无正文也无工具调用，
+ * 由前端按 messageExists 区分两种文案，不再把「无文本」误报成「消息已不存在」。
+ */
+export function buildContentPreview(
+  messageExists: boolean,
+  content: string | null,
+  toolSummary: string | null,
+  toolCallCount: number,
+): string | null {
+  if (!messageExists) return null;
+  const text = content == null ? '' : buildPreview(content);
+  if (text !== '') return text;
+  const summary = toolSummary == null ? '' : toolSummary.replace(/\s+/g, ' ').trim();
+  if (summary === '') return null;
+  const more = toolCallCount > 1 ? ` 等 ${toolCallCount} 项工具调用` : '';
+  return buildPreview(`[工具调用] ${summary}${more}`);
 }
 
 /**

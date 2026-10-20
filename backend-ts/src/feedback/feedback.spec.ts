@@ -1,8 +1,32 @@
 import { describe, expect, it, vi } from 'vitest';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
-import { FeedbackService, buildPreview, REASON_LABELS, type FeedbackMessageLookup } from './feedback.service.js';
+import { FeedbackDbLookup, FeedbackService, buildContentPreview, buildPreview, REASON_LABELS, type FeedbackMessageLookup } from './feedback.service.js';
 import type { FeedbackRepository } from './feedback.repository.js';
+
+const DETAIL_ROW = {
+  id: 1,
+  messageId: 11,
+  sessionId: 5,
+  userId: 9,
+  username: 'alice',
+  displayName: 'Alice',
+  agentId: 2,
+  agentName: 'Coder',
+  reason: 'WRONG_RESULT',
+  source: 'desktop',
+  status: 'PENDING',
+  handledBy: null,
+  handledByName: null,
+  handledAt: null,
+  experienceId: null,
+  sameGroupCount: 3,
+  messageExists: true,
+  content: 'hello ${skill}$ world',
+  toolSummary: null,
+  toolCallCount: 0,
+  createdAt: '2026-09-27T00:00:00.000Z',
+} as const;
 
 function makeRepo(): FeedbackRepository {
   return {
@@ -23,28 +47,7 @@ function makeRepo(): FeedbackRepository {
       { agentId: null, agentName: null, reason: 'OTHER', count: 1 },
     ]),
     markDismissed: vi.fn(async () => 1),
-    listDetails: vi.fn(async () => [
-      {
-        id: 1,
-        messageId: 11,
-        sessionId: 5,
-        userId: 9,
-        username: 'alice',
-        displayName: 'Alice',
-        agentId: 2,
-        agentName: 'Coder',
-        reason: 'WRONG_RESULT',
-        source: 'desktop',
-        status: 'PENDING',
-        handledBy: null,
-        handledByName: null,
-        handledAt: null,
-        experienceId: null,
-        sameGroupCount: 3,
-        contentPreview: 'hello ${skill}$ world',
-        createdAt: '2026-09-27T00:00:00.000Z',
-      },
-    ]),
+    listDetails: vi.fn(async (): Promise<unknown[]> => [DETAIL_ROW]),
   } as unknown as FeedbackRepository;
 }
 
@@ -267,6 +270,37 @@ describe('buildPreview', () => {
   });
 });
 
+describe('buildContentPreview', () => {
+  it('优先正文，其次工具调用摘要', () => {
+    expect(buildContentPreview(true, '正文', '执行 shell', 2)).toBe('正文');
+    expect(buildContentPreview(true, '', '执行 shell', 2)).toBe('[工具调用] 执行 shell 等 2 项工具调用');
+    expect(buildContentPreview(true, null, '执行 shell', 1)).toBe('[工具调用] 执行 shell');
+  });
+
+  it('消息不存在或无任何内容时返回 null', () => {
+    // messageExists=false 优先于一切：消息被清理时不展示残留摘要
+    expect(buildContentPreview(false, '正文', '执行 shell', 2)).toBeNull();
+    expect(buildContentPreview(true, '   ', null, 0)).toBeNull();
+    expect(buildContentPreview(true, null, '  ', 1)).toBeNull();
+  });
+});
+
+describe('FeedbackDbLookup', () => {
+  it('findLatestAssistantMessageId 跳过 content 为空的工具调用中间消息', async () => {
+    const captured: string[] = [];
+    const db = {
+      queryOne: vi.fn(async (sql: string) => {
+        captured.push(sql);
+        return { id: 7 };
+      }),
+    };
+    const lookup = new FeedbackDbLookup(db as never);
+    await expect(lookup.findLatestAssistantMessageId(5)).resolves.toBe(7);
+    expect(captured[0]).toContain("role = 'ASSISTANT'");
+    expect(captured[0]).toContain("content IS NOT NULL AND TRIM(content) <> ''");
+  });
+});
+
 describe('FeedbackService 待处理视角', () => {
   it('getSummary 附带 pendingCount 与 pendingMatrix，矩阵原因带中文标签', async () => {
     const repo = makeRepo();
@@ -305,6 +339,38 @@ describe('FeedbackService 待处理视角', () => {
       handledByName: null,
       experienceId: null,
       sameGroupCount: 3,
+      messageExists: true,
     });
+  });
+
+  it('listDetails 正文为空时回退工具调用摘要', async () => {
+    // 工具调用中间消息 content 为空：预览取首个 summary，并标出工具调用总数
+    const repo = makeRepo();
+    (repo.listDetails as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { ...DETAIL_ROW, content: '', toolSummary: '执行 cd vtn-mall && echo "..." (20 行输出)', toolCallCount: 3 },
+    ]);
+    const service = new FeedbackService(repo, makeLookup(OWNERSHIP), async () => 9);
+    const page = await service.listDetails({ page: 1, pageSize: 20 });
+    expect(page.items[0].contentPreview).toBe('[工具调用] 执行 cd vtn-mall && echo "..." (20 行输出) 等 3 项工具调用');
+  });
+
+  it('listDetails 消息已删除时 contentPreview 为 null', async () => {
+    const repo = makeRepo();
+    (repo.listDetails as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { ...DETAIL_ROW, messageExists: false, content: null, toolSummary: null, toolCallCount: 0 },
+    ]);
+    const service = new FeedbackService(repo, makeLookup(OWNERSHIP), async () => 9);
+    const page = await service.listDetails({ page: 1, pageSize: 20 });
+    expect(page.items[0]).toMatchObject({ messageExists: false, contentPreview: null });
+  });
+
+  it('listDetails 消息存在但无正文也无工具调用时 contentPreview 为 null', async () => {
+    const repo = makeRepo();
+    (repo.listDetails as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { ...DETAIL_ROW, content: '   ', toolSummary: null, toolCallCount: 0 },
+    ]);
+    const service = new FeedbackService(repo, makeLookup(OWNERSHIP), async () => 9);
+    const page = await service.listDetails({ page: 1, pageSize: 20 });
+    expect(page.items[0]).toMatchObject({ messageExists: true, contentPreview: null });
   });
 });

@@ -158,6 +158,7 @@
         <el-table-column label="消息内容" min-width="240" show-overflow-tooltip>
           <template #default="{ row }">
             <span v-if="row.contentPreview">{{ row.contentPreview }}</span>
+            <span v-else-if="row.messageExists" class="content-missing">（消息无文本内容）</span>
             <span v-else class="content-missing">（消息已不存在）</span>
           </template>
         </el-table-column>
@@ -211,6 +212,7 @@
           <div class="mobile-card-row">
             <span class="mobile-card-label">消息</span>
             <span v-if="row.contentPreview" class="feedback-card-preview">{{ row.contentPreview }}</span>
+            <span v-else-if="row.messageExists" class="content-missing">（消息无文本内容）</span>
             <span v-else class="content-missing">（消息已不存在）</span>
           </div>
           <div v-if="row.status === 'CONVERTED' && row.experienceId != null" class="mobile-card-row">
@@ -286,6 +288,7 @@ interface FeedbackDetailItem {
   handledByName: string | null
   experienceId: number | null
   sameGroupCount: number
+  messageExists: boolean
   contentPreview: string | null
   createdAt: string
 }

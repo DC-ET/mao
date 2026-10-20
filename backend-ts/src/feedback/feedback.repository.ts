@@ -65,7 +65,14 @@ export interface FeedbackDetailRow {
   experienceId: number | null;
   /** 同 agent_id + reason + PENDING 的聚集条数（快照口径，不 JOIN session）。 */
   sameGroupCount: number;
-  contentPreview: string | null;
+  /** 被点踩消息是否仍存在：false 表示 message 行已被清理（预览显示「消息已不存在」）。 */
+  messageExists: boolean;
+  /** 原始消息文本（仅前 200 字符）；消息不存在时为 null。 */
+  content: string | null;
+  /** content 为空时用于回退预览的首个工具调用摘要；没有工具调用时为 null。 */
+  toolSummary: string | null;
+  /** 该消息包含的工具调用数量，用于摘要后缀（「等 N 项」）。 */
+  toolCallCount: number;
   createdAt: string;
 }
 
@@ -134,13 +141,21 @@ export class FeedbackRepository {
     // db.query 返回行键为 camelCase（内部经 toCamelList 转换），SQL 别名用 snake 仅为可读性
     return this.db.query<Record<string, unknown>>(
       `SELECT f.id, f.message_id, f.session_id, f.user_id, f.agent_id, f.reason, f.source,
-              f.status, f.handled_by, f.handled_at, f.experience_id,
+              f.status, f.handled_by, f.handled_at, f.experience_id, f.created_at,
               u.username, u.display_name,
               hu.username AS handled_by_name,
               a.name AS agent_name,
               (SELECT COUNT(*) FROM message_feedback g
                 WHERE g.agent_id <=> f.agent_id AND g.reason = f.reason AND g.status = 'PENDING') AS same_group_count,
-              LEFT(m.content, 200) AS content_raw
+              -- message 可能已被清理：message_exists 区分「消息不存在」与「消息无文本内容」
+              (m.id IS NOT NULL) AS message_exists,
+              LEFT(m.content, 200) AS content_raw,
+              -- 工具调用中间消息 content 为空，回退展示首个工具调用摘要（summary 优先，其次函数名）
+              COALESCE(
+                JSON_UNQUOTE(JSON_EXTRACT(m.tool_calls, '$[0].summary')),
+                JSON_UNQUOTE(JSON_EXTRACT(m.tool_calls, '$[0].function.name'))
+              ) AS tool_summary_raw,
+              COALESCE(JSON_LENGTH(m.tool_calls), 0) AS tool_call_count
        FROM message_feedback f
        LEFT JOIN user u ON u.id = f.user_id
        LEFT JOIN user hu ON hu.id = f.handled_by
@@ -261,7 +276,10 @@ function mapDetailRow(row: Record<string, unknown>): FeedbackDetailRow {
     handledAt: handledAt == null ? null : handledAt instanceof Date ? handledAt.toISOString() : String(handledAt),
     experienceId: row.experienceId == null ? null : Number(row.experienceId),
     sameGroupCount: Number(row.sameGroupCount ?? 0),
-    contentPreview: row.contentRaw == null ? null : String(row.contentRaw),
+    messageExists: Number(row.messageExists ?? 0) === 1,
+    content: row.contentRaw == null ? null : String(row.contentRaw),
+    toolSummary: row.toolSummaryRaw == null ? null : String(row.toolSummaryRaw),
+    toolCallCount: Number(row.toolCallCount ?? 0),
     createdAt: createdAt instanceof Date ? createdAt.toISOString() : String(createdAt),
   };
 }
