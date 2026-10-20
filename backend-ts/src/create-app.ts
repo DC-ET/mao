@@ -3284,11 +3284,6 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   // 进入 RUNNING 的（消息落到待排空实例），必须靠周期巡检兜住。仅承接流量的实例执行。
   crash.startPeriodicSweep();
 
-  /** 幂等关闭：可能被 drain 监听器与 SIGTERM 路径同时触发。 */
-  const closeApp = (): Promise<void> => {
-    if (ctx.closing != null) return ctx.closing;
-    ctx.closing = (async () => {
-
   /**
    * 只有"蓝绿切流后本实例是被替换掉的旧端口"时才值得等待在途执行收尾——
    * 此时新实例已经在承接流量，可以立刻接管被中断的会话。
