@@ -3285,6 +3285,15 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   // 进入 RUNNING 的（消息落到待排空实例），必须靠周期巡检兜住。仅承接流量的实例执行。
   crash.startPeriodicSweep();
 
+  const drainWatcher = new DeployDrainWatcher({
+    runtimeDir: cfg.app.harness.runtimeDir,
+    selfPort: cfg.server.port,
+    // 只认"本进程启动之后开始的部署"：端口在 9080↔9081 之间来回切，
+    // 历史残留的 switched 锁的 oldPort 可能正好等于本实例端口，不能据此自杀。
+    startedAtSec: Math.floor((Date.now() - process.uptime() * 1000) / 1000),
+    shutdown: () => closeApp(),
+  });
+
   const closeApp = createShutdownHandler({
     app, db, cfg, ctx,
     crash, drainWatcher,
@@ -3294,15 +3303,6 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     shellManager, terminalManager, ptyChannelHubs, ptyHubGeneration,
     containerRegistry, channelServer, runtimeCleanup, activityHeartbeat, wsRegistry,
     agentLoop, wsHandler, sessionService,
-  });
-
-  const drainWatcher = new DeployDrainWatcher({
-    runtimeDir: cfg.app.harness.runtimeDir,
-    selfPort: cfg.server.port,
-    // 只认"本进程启动之后开始的部署"：端口在 9080↔9081 之间来回切，
-    // 历史残留的 switched 锁的 oldPort 可能正好等于本实例端口，不能据此自杀。
-    startedAtSec: Math.floor((Date.now() - process.uptime() * 1000) / 1000),
-    shutdown: closeApp,
   });
   drainWatcher.start();
 
