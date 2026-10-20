@@ -334,6 +334,7 @@ import { createPatchedProgressHelper } from './feishu-patched-progress.js';
 import { createFeishuProgressCardHelper } from './feishu-progress-card.js';
 import { createFeishuRecoveryProgressHelper } from './feishu-recovery-progress.js';
 import { createQueuePositionHelper } from './queue-position.js';
+import { createAuthorizeSenderHelper } from './feishu-authorize-sender.js';
 import type { FeishuInboundContext, FeishuNormalizedMessage } from './feishu/types.js';
 import { WsStreamingEventListener } from './session/ws/ws-streaming-event-listener.js';
 import { MysqlApiTokenRepository, MysqlOutboundDeliveryRepository, MysqlOutboundSubscriptionRepository, MysqlWebhookTriggerRepository } from './openapi/openapi.repository.js';
@@ -2149,20 +2150,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       if (unionId == null) return null;
       return (await feishuBinding.findUserIdByUnionId(unionId)) ?? null;
     },
-    authorizeSender: async (accountId, event) => {
-      const unionId = senderUnionIdOf(event);
-      if (unionId == null) return false;
-      const userId = await feishuBinding.findUserIdByUnionId(unionId);
-      if (userId == null) return false;
-      if (await ecpAuth.isEnabled() && !(await hasUsableEcpSession(ecpSessionRepo, userId))) return false;
-      if (event.chatType === 'group') {
-        if (event.chatId == null) return false;
-        // 已绑定用户在群内发言即登记为成员并放行（feishu_chat_member 是登记表，不是白名单门槛）。
-        await feishuMessageRepository.addGroupMember(String(accountId), event.chatId, userId, event.senderId!, senderName(event));
-        return true;
-      }
-      return true;
-    },
+    authorizeSender: createAuthorizeSenderHelper({ feishuBinding, feishuMessageRepository, ecpAuth, ecpSessionRepo }),
     sendReply: async (accountId, event, text) => { await sendFeishuText(Number(accountId), event, text); },
     sendUnauthorizedCard: async (accountId, event) => {
       const client = await getFeishuClient(Number(accountId));
