@@ -330,6 +330,7 @@ import { createFeishuQueueCardHelper } from './feishu-queue-card.js';
 import { createFeishuSessionUrlHelper } from './feishu-session-url.js';
 import { createFeishuRoundOffsetHelper } from './feishu-round-offset.js';
 import { createFeishuUserIdHelper } from './feishu-user-id.js';
+import { createPersistCancelledHelper } from './persist-cancelled.js';
 import type { FeishuInboundContext, FeishuNormalizedMessage } from './feishu/types.js';
 import { WsStreamingEventListener } from './session/ws/ws-streaming-event-listener.js';
 import { MysqlApiTokenRepository, MysqlOutboundDeliveryRepository, MysqlOutboundSubscriptionRepository, MysqlWebhookTriggerRepository } from './openapi/openapi.repository.js';
@@ -1964,18 +1965,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const feishuTaskQueue = new FeishuTaskQueueService(feishuInboundQueueRepo);
   /** 排队卡片展示位置：入队完成后队列中的 QUEUED 行数（含本条，插入语义=队尾第 N 位）。 */
   const queuePositionOf = async (sessionId: number): Promise<number> => (await feishuInboundQueueRepo.countPending(sessionId));
-  /** 重启后内存无 cancel flag、DB 仍 RUNNING/RESUMING 时，把会话落成 CANCELLED（与桌面端停止同语义）。 */
-  const persistCancelledIfActive = async (sessionId: number): Promise<boolean> => {
-    const session = await sessionService.getSession(sessionId).catch(() => null);
-    if (session == null) return false;
-    if (session.phase !== 'RUNNING' && session.phase !== 'RESUMING') return false;
-    await sessionService.cleanupIncompleteTail(sessionId);
-    await taskTerminal.finishExecution(sessionId, session.userId, 'CANCELLED', randomUUID());
-    try { await feishuProgressCardRepo.deleteBySessionId(sessionId); } catch (error) {
-      console.warn(`清理飞书进度卡片映射失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
-    }
-    return true;
-  };
+  const persistCancelledIfActive = createPersistCancelledHelper({ sessionService, taskTerminal, feishuProgressCardRepo });
   const feishuInboundHandler = new AgentFeishuInboundHandler({
     registry: wsRegistry,
     resolveStreamUserId: async (sessionId) => {
