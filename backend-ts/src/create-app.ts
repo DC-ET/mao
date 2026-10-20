@@ -211,7 +211,7 @@ import { BackgroundTaskManager } from './harness/core/background-task-manager.js
 import { CompactionConfig } from './harness/core/compaction-config.js';
 import { CrashRecoveryRunner } from './harness/core/crash-recovery-runner.js';
 import { DeployDrainWatcher } from './harness/core/deploy-drain-watcher.js';
-import { deployDrainSec, isDrainingInstance, readActiveBackendPort, readDeployLock } from './harness/core/deploy-lock.js';
+import { readActiveBackendPort, readDeployLock } from './harness/core/deploy-lock.js';
 import { sumCostMicros, wallClockMs } from './session/run-window.js';
 import { createAgentExecutor } from './harness/core/agent-executor.js';
 import { LocalAgentsMdRegistry } from './harness/core/local-agents-md-registry.js';
@@ -377,6 +377,7 @@ import {
 } from './feishu-media.js';
 import { registerUploadStatic } from './upload-static.js';
 import { expandHome, parseSqlTimeMs, runtimeSessionCleanup } from './app-utils.js';
+import { createShutdownHandler } from './app-shutdown.js';
 
 export interface MaoApp {
   app: FastifyInstance;
@@ -3284,98 +3285,16 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   // 进入 RUNNING 的（消息落到待排空实例），必须靠周期巡检兜住。仅承接流量的实例执行。
   crash.startPeriodicSweep();
 
-  /**
-   * 只有"蓝绿切流后本实例是被替换掉的旧端口"时才值得等待在途执行收尾——
-   * 此时新实例已经在承接流量，可以立刻接管被中断的会话。
-   * 普通重启（stop/restart）没有接手方，等待只会拖慢停机，交给下次启动的恢复扫描即可。
-   */
-  const isDrainingForDeploy = (): boolean => isDrainingInstance(cfg.app.harness.runtimeDir, cfg.server.port);
-
-  /**
-   * 等在途执行收尾；超过 graceMs 仍被中断的会话标记为 RESUMING，
-   * 由新实例（或下次启动）的崩溃恢复续跑——否则会话会永久停在 RUNNING，
-   * 表现为"消息发出去了，一直没响应"。
-   *
-   * 在途判定必须取两个来源的并集：AgentLoop 的取消标志覆盖全部执行入口
-   * （桌面 WS、飞书/钉钉/微信入站、定时任务、子代理），wsHandler 的 claim 集合额外兜底。
-   */
-  const listInFlightSessionIds = (): number[] => [
-    ...new Set([...agentLoop.listActiveSessionIds(), ...wsHandler.listActiveExecutionSessionIds()]),
-  ];
-  const settleInFlightExecutions = async (graceMs: number): Promise<void> => {
-    const deadline = Date.now() + graceMs;
-    while (Date.now() < deadline) {
-      if (listInFlightSessionIds().length === 0) return;
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    }
-    const interrupted = listInFlightSessionIds();
-    if (interrupted.length === 0) return;
-    console.warn(`停机时仍有 ${interrupted.length} 个执行未收尾，尝试标记 RESUMING: ${interrupted.join(',')}`);
-    for (const sessionId of interrupted) {
-      try {
-        // CAS：若执行已在此期间收尾并写入终态，这里不会把终态改回 RESUMING。
-        await sessionService.markInterruptedIfActive(sessionId);
-      } catch (error) {
-        console.error(`标记被中断会话失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    }
-  };
-
-  /**
-   * 蓝绿排空前等待在途执行收尾的上限：必须明显小于发布脚本的 drain 窗口，
-   * 否则脚本会先 SIGTERM（再过 2s SIGKILL）把等待和标记一起截断。
-   */
-  const drainGraceMs = (): number => {
-    const lock = readDeployLock(cfg.app.harness.runtimeDir);
-    const drainWindowMs = deployDrainSec(lock) * 1000;
-    return Math.max(3_000, Math.min(40_000, drainWindowMs - 15_000));
-  };
-
-  /** 幂等关闭：可能被 drain 监听器与 SIGTERM 路径同时触发。 */
-  const closeApp = (): Promise<void> => {
-    if (ctx.closing != null) return ctx.closing;
-    ctx.closing = (async () => {
-      crash.stopPeriodicSweep();
-      drainWatcher.stop();
-      // 静默 IM 入站：长连接关掉后新消息自然落到新实例，避免停机窗口内再起新执行。
-      // 注：已建立的桌面 WS 连接无法在此刻切断（nginx reload 不断开长连接），
-      // 其新起的执行会被 settle 的等待/标记覆盖。
-      weixinMonitor.shutdown();
-      feishuMonitor.shutdown();
-      dingtalk.shutdown();
-      weixinInboundHandler.shutdown();
-      // 冲刷飞书/钉钉在途合并窗口：停机前到达但还在窗口期的消息触发出去，
-      // 由下方 settle 等待/标记其执行（只保证触发启动，不等执行完成）。
-      // 微信不在此列：handler 已 stopped，冲刷只会回滚用户消息后置 DONE 造成丢失，
-      // 留在认领表里由重放器兜底（与在途消息的停机语义一致）。
-      await feishuInboundProcessor.flushAll();
-      await dingtalk.flushInbound();
-      await settleInFlightExecutions(isDrainingForDeploy() ? drainGraceMs() : 0);
-      scheduler.stop();
-      deliveryScheduler.stop();
-      callLogService.stop();
-      callLogCleanup.stop();
-      watcherScheduler.stop();
-      signalCheckCleanup.stop();
-      ecpRenewScheduler.stop();
-      shellManager.stopCleanup();
-      terminalManager.stopCleanup();
-      terminalManager.closeAll();
-      // 在飞容器终端按断开收尾（exit -1），再退订连接监听
-      for (const hub of ptyChannelHubs.values()) hub.dispose();
-      ptyChannelHubs.clear();
-      ptyHubGeneration.clear();
-      containerRegistry.stopIdleLoop();
-      await containerRegistry.stopAllForShutdown().catch((e) => console.warn(`[container] stopAllForShutdown failed: ${(e as Error).message}`));
-      await channelServer.stop();
-      runtimeCleanup.stop();
-      activityHeartbeat.stopAll();
-      wsRegistry.shutdown();
-      await app.close();
-      await db.close();
-    })();
-    return ctx.closing;
-  };
+  const closeApp = createShutdownHandler({
+    app, db, cfg, ctx,
+    crash, drainWatcher,
+    weixinMonitor, feishuMonitor, dingtalk, weixinInboundHandler, feishuInboundProcessor,
+    scheduler, deliveryScheduler, callLogService, callLogCleanup,
+    watcherScheduler, signalCheckCleanup, ecpRenewScheduler,
+    shellManager, terminalManager, ptyChannelHubs, ptyHubGeneration,
+    containerRegistry, channelServer, runtimeCleanup, activityHeartbeat, wsRegistry,
+    agentLoop, wsHandler, sessionService,
+  });
 
   const drainWatcher = new DeployDrainWatcher({
     runtimeDir: cfg.app.harness.runtimeDir,
