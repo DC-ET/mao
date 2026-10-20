@@ -314,7 +314,7 @@ import { readFeishuDocMarkdown } from './feishu/doc-reader.js';
 import { fetchFeishuMessageDetail } from './feishu/message-detail.js';
 import { resolveFeishuQuotedText } from './feishu/merge-forward.js';
 import { feishuSendTargetOf, sendFeishuFile, sendFeishuImage } from './feishu/media-sender.js';
-import { FeishuCardProgressListener, countCompletedAgentRounds, type FeishuCardProgress } from './feishu/card-progress-listener.js';
+import { FeishuCardProgressListener, type FeishuCardProgress } from './feishu/card-progress-listener.js';
 import { createDingtalkRuntime } from './dingtalk/runtime.js';
 import type { DingtalkMediaSendSupport } from './harness/tool/impl/dingtalk-tools.js';
 import { buildFeishuProgressCard, feishuSessionDetailUrl } from './feishu/progress-card.js';
@@ -328,6 +328,7 @@ import { chatFilesDirOf, resolveChatFileTarget } from './feishu/chat-files.js';
 import { createFeishuMediaHelper, IMAGE_EXT_BY_CONTENT_TYPE } from './feishu-media-helpers.js';
 import { createFeishuQueueCardHelper } from './feishu-queue-card.js';
 import { createFeishuSessionUrlHelper } from './feishu-session-url.js';
+import { createFeishuRoundOffsetHelper } from './feishu-round-offset.js';
 import type { FeishuInboundContext, FeishuNormalizedMessage } from './feishu/types.js';
 import { WsStreamingEventListener } from './session/ws/ws-streaming-event-listener.js';
 import { MysqlApiTokenRepository, MysqlOutboundDeliveryRepository, MysqlOutboundSubscriptionRepository, MysqlWebhookTriggerRepository } from './openapi/openapi.repository.js';
@@ -1918,14 +1919,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       content: '任务已接收，正在准备执行。',
     }, botId);
   };
-  /** 崩溃恢复续跑：按会话查找活跃进度卡片并构造续更 progress；无映射或加载失败返回 null（不阻断恢复）。 */
-  const resolveFeishuRoundOffset = async (sessionId: number): Promise<number> => {
-    try {
-      return countCompletedAgentRounds(await sessionService.getMessages(sessionId));
-    } catch {
-      return 0;
-    }
-  };
+  const resolveFeishuRoundOffset = createFeishuRoundOffsetHelper({ sessionService });
   const createFeishuRecoveryProgress = async (sessionId: number): Promise<{ progress: FeishuCardProgress; roundOffset: number } | null> => {
     try {
       const row = await feishuProgressCardRepo.findBySessionId(sessionId);
