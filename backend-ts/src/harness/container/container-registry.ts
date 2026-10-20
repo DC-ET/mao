@@ -1,5 +1,5 @@
 import { execFile as execFileCb } from 'node:child_process';
-import { existsSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import path from 'node:path';
 import { harnessLog } from '../log.js';
@@ -112,6 +112,8 @@ export class ContainerRegistry {
   private readonly lockContext = new AsyncLocalStorage<Set<number>>();
   private readonly planner: ContainerMountPlanner;
   private idleTimer: NodeJS.Timeout | null = null;
+  /** 每用户 /tmp 过期清理节流（24h 一次，容器创建 / idle 巡检触发）。 */
+  private lastTmpCleanupAtMs = 0;
 
   constructor(
     private readonly opts: ContainerRegistryOptions,
@@ -128,6 +130,7 @@ export class ContainerRegistry {
       distDir: c.distDir,
       skillsDir: opts.skillsDir,
       uploadDir: opts.uploadDir,
+      tmpDir: c.tmpDir,
     });
   }
 
@@ -341,6 +344,7 @@ export class ContainerRegistry {
     if (this.idleTimer) return;
     this.idleTimer = setInterval(() => {
       void this.reapExpired().catch((e) => harnessLog('warn', `[container] idle reap failed: ${(e as Error).message}`));
+      this.cleanupExpiredTmp();
     }, IDLE_CHECK_INTERVAL_MS);
     this.idleTimer.unref?.();
   }
@@ -348,6 +352,39 @@ export class ContainerRegistry {
   stopIdleLoop(): void {
     if (this.idleTimer) clearInterval(this.idleTimer);
     this.idleTimer = null;
+  }
+
+  /**
+   * 每用户 /tmp 过期条目清理：24h 最多一次（容器创建与 idle 巡检触发）。
+   * 只清 {tmpDir}/{数字 userId} 目录内 mtime 超过阈值的顶层条目，目录本身保留；
+   * 单项失败不影响其余条目。
+   */
+  private cleanupExpiredTmp(): void {
+    if (Date.now() - this.lastTmpCleanupAtMs < 24 * 3600_000) return;
+    this.lastTmpCleanupAtMs = Date.now();
+    const c = this.opts.config.container;
+    const days = c.tmpRetentionDays > 0 ? c.tmpRetentionDays : 7;
+    const retentionMs = days * 86400_000;
+    let users: string[];
+    try { users = readdirSync(c.tmpDir); } catch { return; }
+    for (const name of users) {
+      if (!/^\d+$/.test(name)) continue;
+      const dir = path.join(c.tmpDir, name);
+      try {
+        const st = lstatSync(dir);
+        if (!st.isDirectory() || st.isSymbolicLink()) continue;
+      } catch { continue; }
+      let entries: string[];
+      try { entries = readdirSync(dir); } catch { continue; }
+      for (const entry of entries) {
+        const target = path.join(dir, entry);
+        try {
+          if (Date.now() - lstatSync(target).mtimeMs > retentionMs) {
+            rmSync(target, { recursive: true, force: true });
+          }
+        } catch { /* 单项失败不阻塞其它条目 */ }
+      }
+    }
   }
 
   /** 应用关闭时停掉本实例管理的容器（数据在挂载卷，下次 start 秒级恢复）。 */
@@ -397,6 +434,7 @@ export class ContainerRegistry {
     extraWorkspaces: readonly string[] = [],
     existing?: ContainerEntry,
   ): Promise<ContainerEntry> {
+    this.cleanupExpiredTmp();
     const name = ContainerRegistry.containerName(userId);
     const c = this.opts.config.container;
     // 会话工作区（通道会话）并入挂载清单。统一按通道根过滤：web 会话工作区在
@@ -422,9 +460,7 @@ export class ContainerRegistry {
       '--cpus', String(c.cpus),
       '--pids-limit', String(c.pidsLimit),
       '--network', c.network,
-      // /tmp 显式 exec：Docker 默认把 tmpfs 挂成 noexec，会让 /tmp 下的脚本无法直接执行
-      // （GIT_ASKPASS 凭据脚本、npm/pip 临时编译脚本等）；隔离边界靠挂载清单，不靠 noexec。
-      '--tmpfs', `/tmp:size=${c.tmpfsSizeMb}m,mode=1777,exec`,
+      // /tmp 由 planner 按 {tmpDir}/{userId} 挂载（持久化，跨重建保留），不再使用 --tmpfs。
       // 容器 agent 硬依赖：userId 缺失即 exit(1)；roots 显式注入避免容器内出现第二套路径真相
       '-e', `MAO_CONTAINER_USER_ID=${userId}`,
       '-e', `MAO_CHANNEL_TOKEN=${channelToken}`,

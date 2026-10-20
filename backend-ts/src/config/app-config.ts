@@ -51,7 +51,10 @@ export interface CloudRuntimeConfig {
     channelDir: string;
     distDir: string;
     depsDir: string;
-    tmpfsSizeMb: number;
+    /** 每用户 /tmp 的宿主机根：{tmpDir}/{userId} 挂到容器 /tmp，跨重建保留。 */
+    tmpDir: string;
+    /** /tmp 清理阈值（天）：超过该 mtime 的条目在容器创建时顺带清理。 */
+    tmpRetentionDays: number;
     startTimeoutMs: number;
   };
 }
@@ -273,7 +276,8 @@ const DEFAULTS: AppConfig = {
         channelDir: '/opt/mao-data/runtime/channels',
         distDir: '/opt/mao/backend-ts/dist',
         depsDir: '/opt/mao-data/deps',
-        tmpfsSizeMb: 512,
+        tmpDir: '/opt/mao-data/tmp',
+        tmpRetentionDays: 7,
         startTimeoutMs: 15000,
       },
     },
@@ -422,7 +426,8 @@ function coerceTypes(cfg: AppConfig): AppConfig {
     container: {
       idleMinutes: 60, maxLifetimeHours: 72, memoryMb: 2048, cpus: 2, pidsLimit: 512,
       image: 'mao-runtime:latest', network: 'bridge', channelDir: '/opt/mao-data/runtime/channels',
-      distDir: '/opt/mao/backend-ts/dist', depsDir: '/opt/mao-data/deps', tmpfsSizeMb: 512, startTimeoutMs: 15000,
+      distDir: '/opt/mao/backend-ts/dist', depsDir: '/opt/mao-data/deps',
+      tmpDir: '/opt/mao-data/tmp', tmpRetentionDays: 7, startTimeoutMs: 15000,
     },
   };
   cfg.app.cloudRuntime.mode = (process.env.MAO_CLOUD_RUNTIME as 'host' | 'docker' | undefined)
@@ -437,7 +442,8 @@ function coerceTypes(cfg: AppConfig): AppConfig {
   if (process.env.MAO_CONTAINER_CHANNEL_DIR) cfg.app.cloudRuntime.container.channelDir = process.env.MAO_CONTAINER_CHANNEL_DIR;
   if (process.env.MAO_CONTAINER_DIST_DIR) cfg.app.cloudRuntime.container.distDir = process.env.MAO_CONTAINER_DIST_DIR;
   if (process.env.MAO_CONTAINER_DEPS_DIR) cfg.app.cloudRuntime.container.depsDir = process.env.MAO_CONTAINER_DEPS_DIR;
-  cfg.app.cloudRuntime.container.tmpfsSizeMb = n(process.env.MAO_CONTAINER_TMPFS_SIZE_MB ?? cfg.app.cloudRuntime.container.tmpfsSizeMb, 512);
+  if (process.env.MAO_CONTAINER_TMP_DIR) cfg.app.cloudRuntime.container.tmpDir = process.env.MAO_CONTAINER_TMP_DIR;
+  cfg.app.cloudRuntime.container.tmpRetentionDays = n(process.env.MAO_CONTAINER_TMP_RETENTION_DAYS ?? cfg.app.cloudRuntime.container.tmpRetentionDays, 7);
   cfg.app.cloudRuntime.container.startTimeoutMs = n(process.env.MAO_CONTAINER_START_TIMEOUT_MS ?? cfg.app.cloudRuntime.container.startTimeoutMs, 15000);
   cfg.dingtalk.enabled = b(process.env.DINGTALK_BOT_ENABLED ?? cfg.dingtalk.enabled, false);
   cfg.dingtalk.reconcileIntervalMs = n(process.env.DINGTALK_BOT_RECONCILE_INTERVAL_MS ?? cfg.dingtalk.reconcileIntervalMs, 5000);

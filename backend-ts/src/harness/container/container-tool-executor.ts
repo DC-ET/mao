@@ -50,7 +50,7 @@ export class ContainerToolExecutor {
     options: { maxShellSessionsPerConversation?: number; shellIdleTimeoutMinutes?: number; shellMaxLifetimeHours?: number } = {},
   ) {
     const u = String(userId);
-    // §5.5 允许根：每用户子目录 + /tmp（tmpfs）。绝对路径与宿主机逐字节一致（决策 15）
+    // §5.5 允许根：每用户子目录 + /tmp（宿主 {tmpDir}/{userId} 的持久挂载，容器内路径为 /tmp）
     this.pathSandbox = new PathSandbox(path.join(roots.workspaceRoot, u), { strict: true });
     this.runtimeResolver = new RuntimeDataResolver(roots.runtimeDir, roots.userHomeDir);
     this.pathSandbox.addAllowedRoot(path.join(roots.runtimeDir, u));

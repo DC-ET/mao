@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ContainerMountPlanner, MountPlanError } from './container-mount-planner.js';
 import { useTmpDir } from '../../testing/tmp-dir.js';
@@ -15,6 +15,7 @@ function roots(base: string) {
     distDir: join(base, 'mao', 'backend-ts', 'dist'),
     skillsDir: join(base, 'mao', 'data', 'skills'),
     uploadDir: join(base, 'uploads'),
+    tmpDir: join(base, 'tmp'),
   };
 }
 
@@ -32,8 +33,14 @@ describe('container mount planner', () => {
     // dist 只读；平台技能根按产品要求可写
     expect(mounts.find((m) => m.purpose === 'dist')?.mode).toBe('ro');
     expect(mounts.find((m) => m.purpose === 'skills')?.mode).toBe('rw');
-    // 容器内路径与宿主机逐字节一致（决策 15）
-    for (const m of mounts) expect(m.containerPath).toBe(m.hostPath);
+    // 除每用户 /tmp 的路径映射外，容器内路径与宿主机逐字节一致（决策 15）
+    for (const m of mounts.filter((x) => x.purpose !== 'tmp')) expect(m.containerPath).toBe(m.hostPath);
+    // /tmp 持久化：宿主 {tmpDir}/{userId} -> 容器 /tmp，rw
+    const tmp = mounts.find((m) => m.purpose === 'tmp');
+    expect(tmp?.hostPath).toBe(join(base, 'tmp', '7'));
+    expect(tmp?.containerPath).toBe('/tmp');
+    expect(tmp?.mode).toBe('rw');
+    expect(statSync(tmp!.hostPath).mode & 0o7777).toBe(0o1777);
     // 不包含其他用户尾段
     expect(JSON.stringify(mounts)).not.toContain('/users/8');
     expect(JSON.stringify(mounts)).not.toContain('/runtime/8');

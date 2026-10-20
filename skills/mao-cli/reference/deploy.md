@@ -418,6 +418,8 @@ FROM message WHERE deleted = 0;
 | `MAO_CONTAINER_IMAGE` | `mao-runtime:latest` | 运行时镜像 |
 | `MAO_CONTAINER_CHANNEL_DIR` | `/opt/mao-data/runtime/channels` | socket 根目录（每用户子目录） |
 | `MAO_CONTAINER_DEPS_DIR` | `/opt/mao-data/deps` | 持久依赖目录（npm -g / pip 安装位置，容器重建不丢） |
+| `MAO_CONTAINER_TMP_DIR` | `/opt/mao-data/tmp` | 每用户 /tmp 持久根：`{tmpDir}/{userId}` 挂到容器 `/tmp`（stop/重建不丢），目录权限 1777 |
+| `MAO_CONTAINER_TMP_RETENTION_DAYS` | `7` | /tmp 过期清理阈值（按 mtime，天）；容器创建与空闲巡检时顺带清理，0/负数按 7 处理 |
 
 ### 灰度与回收
 

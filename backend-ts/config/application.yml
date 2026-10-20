@@ -92,7 +92,8 @@ app:
       channel-dir: ${MAO_CONTAINER_CHANNEL_DIR:/opt/mao-data/runtime/channels}
       dist-dir: ${MAO_CONTAINER_DIST_DIR:/opt/mao/backend-ts/dist}
       deps-dir: ${MAO_CONTAINER_DEPS_DIR:/opt/mao-data/deps}
-      tmpfs-size-mb: ${MAO_CONTAINER_TMPFS_SIZE_MB:512}
+      tmp-dir: ${MAO_CONTAINER_TMP_DIR:/opt/mao-data/tmp}
+      tmp-retention-days: ${MAO_CONTAINER_TMP_RETENTION_DAYS:7}
       start-timeout-ms: ${MAO_CONTAINER_START_TIMEOUT_MS:15000}
 
 weixin:

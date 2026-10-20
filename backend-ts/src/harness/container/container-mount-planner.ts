@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, mkdirSync, realpathSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, realpathSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { harnessLog } from '../log.js';
@@ -9,6 +9,7 @@ import { channelWorkspaceRoots } from './channel-workspace.js';
  * 清单由本类单点生成并校验，调用点（ContainerRegistry）不得自行拼接 docker -v 参数。
  *
  * 路径空间原则（决策 15/16）：容器内绝对路径与宿主机逐字节一致，不做翻译。
+ * 唯一例外：每用户 /tmp（{tmpDir}/{userId} -> /tmp，持久化），见 purpose='tmp'。
  */
 export interface ContainerMount {
   hostPath: string;
@@ -35,10 +36,12 @@ export interface MountPlannerRoots {
   channelDir: string;
   /** 只读项：后端 dist（runtime agent 代码）。 */
   distDir: string;
-  /** 只读项：外部共享技能目录。 */
+  /** rw 项：平台共享技能目录（按产品要求容器内可写）。 */
   skillsDir: string;
   /** rw 项：图片产物上传根（FILE_UPLOAD_DIR），按用户挂 {uploadDir}/{userId}。 */
   uploadDir: string;
+  /** rw 项：每用户 /tmp 持久根，{tmpDir}/{userId} 映射到容器 /tmp。 */
+  tmpDir: string;
 }
 
 export class MountPlanError extends Error {
@@ -79,6 +82,9 @@ export class ContainerMountPlanner {
       { hostPath: this.under(this.roots.channelDir, u), containerPath: this.under(this.roots.channelDir, u), mode: 'rw', purpose: 'channel' },
       { hostPath: this.under(this.roots.userSkillsDir, u), containerPath: this.under(this.roots.userSkillsDir, u), mode: 'rw', purpose: 'userSkills' },
       { hostPath: this.under(this.roots.uploadDir, u), containerPath: this.under(this.roots.uploadDir, u), mode: 'rw', purpose: 'uploads' },
+      // 每用户 /tmp 持久化：宿主 {tmpDir}/{userId} 映射到容器 /tmp（路径映射的唯一例外），
+      // 跨 stop/重建保留；3077 语义由 assertSafe 统一 chmod 1777。
+      { hostPath: this.under(this.roots.tmpDir, u), containerPath: '/tmp', mode: 'rw', purpose: 'tmp' },
       { hostPath: this.under(this.roots.distDir, ''), containerPath: this.under(this.roots.distDir, ''), mode: 'ro', purpose: 'dist' },
       // 平台技能：全局可写（产品要求，容器内可安装/更新共享技能）。
       // 注意这是全员共享目录，容器内 root 可修改会影响其他用户加载的技能，
@@ -148,13 +154,18 @@ export class ContainerMountPlanner {
     const registeredRoots = [
       this.roots.userHomeDir, this.roots.runtimeDir, this.roots.workspaceRoot,
       this.roots.depsDir, this.roots.userSkillsDir, this.roots.channelDir,
-      this.roots.distDir, this.roots.skillsDir, this.roots.uploadDir,
+      this.roots.distDir, this.roots.skillsDir, this.roots.uploadDir, this.roots.tmpDir,
     ].map((r) => path.resolve(r));
 
     const seenContainerPaths = new Set<string>();
     for (const mount of mounts) {
       const host = path.resolve(mount.hostPath);
-      if (mount.containerPath !== host) {
+      // 唯一允许容器路径与宿主机路径不同的挂载：每用户 /tmp（{tmpDir}/{userId} -> /tmp）。
+      // 其余条目仍必须逐字节一致（决策 15）。
+      const isUserTmpMount = mount.purpose === 'tmp'
+        && mount.containerPath === '/tmp'
+        && host === path.join(path.resolve(this.roots.tmpDir), u);
+      if (mount.containerPath !== host && !isUserTmpMount) {
         // 路径空间一致性：容器内路径必须与宿主机逐字节一致（决策 15）
         throw new MountPlanError(`mount ${mount.purpose}: container path must equal host path (${mount.containerPath} != ${host})`);
       }
@@ -200,6 +211,12 @@ export class ContainerMountPlanner {
         // rw 目录必须存在（容器启动前由宿主机创建）
         try { mkdirSync(host, { recursive: true }); } catch (e) {
           throw new MountPlanError(`mount ${mount.purpose}: cannot create host dir ${host}: ${(e as Error).message}`);
+        }
+      }
+      // 容器内 /tmp 的 sticky 语义：宿主机目录统一 1777（root 可写、普通用户互删受限）
+      if (mount.purpose === 'tmp' && existsSync(host) && !lstatSync(host).isSymbolicLink()) {
+        try { chmodSync(host, 0o1777); } catch (e) {
+          throw new MountPlanError(`mount tmp: cannot chmod 1777 ${host}: ${(e as Error).message}`);
         }
       }
       if (seenContainerPaths.has(mount.containerPath)) {
