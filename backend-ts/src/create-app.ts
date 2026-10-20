@@ -383,11 +383,44 @@ export interface MaoApp {
   close(): Promise<void>;
 }
 
+/**
+ * 装配期共享上下文：集中管理 createMaoApp 内部的延迟解引用变量。
+ * 这些变量在构造顺序上晚于某些 service 的构造，通过 ctx 属性访问
+ * 使依赖关系显式化，避免散落的 let + 闭包捕获。
+ */
+interface AppContext {
+  db: Db;
+  /** 飞书入站处理器：构造于 feishu AuthService 之后，pendingBinding 回调延迟解引用。 */
+  pendingBindingProcessor: FeishuInboundProcessor | undefined;
+  /** 飞书待绑定消息不匹配通知：同上，延迟解引用。 */
+  notifyFeishuPendingMismatch: ((pending: { appId: number; event: FeishuNormalizedMessage }) => Promise<void>) | undefined;
+  /** 终端管理器：会话删除回调延迟解引用。 */
+  terminalManagerRef: TerminalManager | null;
+  /** 定时任务清理回调：会话删除路径延迟解引用。 */
+  deleteScheduledTasksForSession: ((sessionId: number) => Promise<void>) | null;
+  /** MCP 同步服务：会话删除路径延迟解引用。 */
+  mcpSyncRef: McpSyncService | null;
+  /** 容器运行时激活标志：幂等激活用。 */
+  containerRuntimeActive: boolean;
+  /** 幂等关闭 Promise：drain 监听器与 SIGTERM 可能同时触发。 */
+  closing: Promise<void> | null;
+}
+
 export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: FastifyInstance): Promise<MaoApp> {
   assertGitCredentialSecret(cfg.app.gitCredential.secretKey);
   await runFlywayIfEnabled(cfg);
   const pool = createPool(cfg);
   const db = new Db(pool);
+  const ctx: AppContext = {
+    db,
+    pendingBindingProcessor: undefined,
+    notifyFeishuPendingMismatch: undefined,
+    terminalManagerRef: null,
+    deleteScheduledTasksForSession: null,
+    mcpSyncRef: null,
+    containerRuntimeActive: false,
+    closing: null,
+  };
   const settingsSecret = process.env.SETTINGS_SECRET ?? '';
   const settingRepo = new MysqlSystemSettingRepository(db);
   await runSettingsBootstrap(settingRepo, settingsSecret);
@@ -430,8 +463,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const authService = new AuthService(userRepo, jwt, hasher, ldap, permissionService);
   const earlyFeishuBinding = new MysqlFeishuBindingRepository(db);
   const pendingBindingMessages = new MysqlFeishuPendingBindingRepository(db);
-  let pendingBindingProcessor: FeishuInboundProcessor | undefined;
-  let notifyFeishuPendingMismatch: ((pending: { appId: number; event: FeishuNormalizedMessage }) => Promise<void>) | undefined;
+  // pendingBindingProcessor / notifyFeishuPendingMismatch 已迁移到 ctx（延迟解引用）
   const feishu = new FeishuAuthService(
     userRepo, userRoleRepo, new MysqlFeishuOauthStateRepository(db), jwt, async () => (await settingService.getFeishuOAuthConfig()),
     undefined,
@@ -439,11 +471,11 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       if (user.id != null && user.feishuUserId != null && user.feishuUserId !== '') {
         await earlyFeishuBinding.bind(targetUserId ?? user.id, user.feishuUserId);
       }
-      if (state != null && pendingBindingProcessor != null) {
+      if (state != null && ctx.pendingBindingProcessor != null) {
         const pending = await pendingBindingMessages.claim(state);
         if (pending != null) {
           try {
-            await replayFeishuPendingMessage(pendingBindingProcessor, pending);
+            await replayFeishuPendingMessage(ctx.pendingBindingProcessor, pending);
             await pendingBindingMessages.complete(state!);
           } catch (error) {
             await pendingBindingMessages.release(state!);
@@ -474,14 +506,14 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         findUserIdByUnionId: (unionId) => earlyFeishuBinding.findUserIdByUnionId(unionId),
         bind: (userId, unionId) => earlyFeishuBinding.bind(userId, unionId),
         replay: async (pending) => {
-          if (pendingBindingProcessor == null) throw new Error('飞书入站处理器未就绪');
-          await replayFeishuPendingMessage(pendingBindingProcessor, pending);
+          if (ctx.pendingBindingProcessor == null) throw new Error('飞书入站处理器未就绪');
+          await replayFeishuPendingMessage(ctx.pendingBindingProcessor, pending);
         },
         complete: (s) => pendingBindingMessages.complete(s),
         release: (s) => pendingBindingMessages.release(s),
         failClaimed: (s) => pendingBindingMessages.failClaimed(s),
         notifyMismatch: async (pending) => {
-          await notifyFeishuPendingMismatch?.(pending);
+          await ctx.notifyFeishuPendingMismatch?.(pending);
         },
       });
     },
@@ -697,11 +729,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const gitOps = new GitOperationService(gitLookup, runtimeResolver);
   const todoMapper = new SessionTodoMapper(db);
   const todoRepo = new SessionTodoRepository(db);
-  // TerminalManager / 定时任务存储都在后面才构造，会话删除回调延迟解引用
-  let terminalManagerRef: TerminalManager | null = null;
-  let deleteScheduledTasksForSession: ((sessionId: number) => Promise<void>) | null = null;
-  // MCP 同步服务同样晚于 sessionService 构造，会话删除回调延迟解引用
-  let mcpSyncRef: McpSyncService | null = null;
+  // TerminalManager / 定时任务存储 / MCP 同步服务已迁移到 ctx（延迟解引用）
   // 审批放行规则（V135）：repo/service 早于 sessionService 与 toolDispatcher 构造（双向依赖）
   const approvalRuleRepo = new ApprovalRuleRepository(db);
   const approvalRuleService = new ApprovalRuleService(
@@ -723,12 +751,12 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     },
     pathSandbox, envInfo, commandService, gitOps, sessionCompactionService, sessionCompactionEventService, todoRepo,
     runtimeSessionCleanup(runtimeRoot),
-    (sessionId) => { terminalManagerRef?.closeBySession(sessionId); },
+    (sessionId) => { ctx.terminalManagerRef?.closeBySession(sessionId); },
     // 会话删除后清理绑定资源：定时任务 + CLOUD MCP 快照（技术方案 §4.5 第 3 点，
     // 快照存活期是会话级，只在会话删除路径回收）。mcpSync 晚于本 service 构造，故延迟解引用。
     async (sessionId) => {
-      await deleteScheduledTasksForSession?.(sessionId);
-      mcpSyncRef?.clearCloudSnapshot(sessionId);
+      await ctx.deleteScheduledTasksForSession?.(sessionId);
+      ctx.mcpSyncRef?.clearCloudSnapshot(sessionId);
       // 工作区规则快照同理会话级资源，物理删行（技术方案 §4.6）
       await workspaceRulesSnapshotService.deleteBySessionId(sessionId);
     },
@@ -825,7 +853,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   });
   const mcpSync = new McpSyncService(mcpMapper, mcpServerService, mcpToolsRegistry, mcpPref);
   // 会话删除路径要回收 CLOUD MCP 快照，而 mcpSync 晚于 sessionService 构造：先用引用占位。
-  mcpSyncRef = mcpSync;
+  ctx.mcpSyncRef = mcpSync;
 
   // Agent 资产化：bundle 导出/导入（P1）+ 团队共享目录（P2）+ registry/URL 导入/检查更新（P2 分发闭环）
   const mcpServerLookup = new MysqlMcpServerLookup(db);
@@ -989,13 +1017,12 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     systemSettingService: settingService,
     fallbackMode: cloudRuntimeCfg.mode,
   });
-  let containerRuntimeActive = false;
   /** 幂等激活容器运行时（预检 + 空闲回收巡检）；失败不置位，修复后可由后台再次保存触发。 */
   const activateContainerRuntime = async (): Promise<void> => {
-    if (containerRuntimeActive) return;
+    if (ctx.containerRuntimeActive) return;
     await containerRegistry.precheck();
     containerRegistry.startIdleLoop();
-    containerRuntimeActive = true;
+    ctx.containerRuntimeActive = true;
   };
   const envelopeBuilder = new SessionEnvelopeBuilder({
     runtimeResolver,
@@ -1113,7 +1140,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     audit: terminalAudit,
     ptyFactory: containerPtyFactory,
   });
-  terminalManagerRef = terminalManager;
+  ctx.terminalManagerRef = terminalManager;
   const terminalWsHandler = new TerminalWsHandler({
     terminalManager,
     jwtService: jwt,
@@ -1210,7 +1237,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
 
   const holder: { harness?: HarnessService; loop?: AgentLoop } = {};
   const scheduledStore = new ScheduledTaskDbStore(db);
-  deleteScheduledTasksForSession = (sessionId) => scheduledStore.deleteBySessionId(sessionId);
+  ctx.deleteScheduledTasksForSession = (sessionId) => scheduledStore.deleteBySessionId(sessionId);
 
   const senderRegistry = new WebhookSenderRegistry([
     new DingTalkWebhookSender(), new FeishuWebhookSender(),
@@ -1876,7 +1903,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     });
     return (response as { data?: { message_id?: string } }).data?.message_id ?? null;
   };
-  notifyFeishuPendingMismatch = async (pending) => {
+  ctx.notifyFeishuPendingMismatch = async (pending) => {
     await sendFeishuText(pending.appId, pending.event, FEISHU_ECP_IDENTITY_MISMATCH_TEXT);
   };
   // 排队交互卡片：提示当前任务执行中、新消息已入队，并提供「立即发送/取消排队」两个按钮。
@@ -2640,7 +2667,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       return feishuUnauthorizedFallbackText(feishuUnauthorizedGuide(ecpEnabled, event.chatType));
     },
   });
-  pendingBindingProcessor = feishuInboundProcessor;
+  ctx.pendingBindingProcessor = feishuInboundProcessor;
   const feishuCardActionService = new FeishuCardActionService({
     queuePort: feishuTaskQueue,
     interrupt: (sessionId) => feishuInboundHandler.interrupt(sessionId),
@@ -3170,11 +3197,11 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   dingtalk.start();
   void pendingBindingMessages.listRecoverable().then(async (pending) => {
     for (const message of pending) {
-      if (pendingBindingProcessor == null) return;
+      if (ctx.pendingBindingProcessor == null) return;
       const claimed = await pendingBindingMessages.claim(message.state);
       if (claimed == null) continue;
       try {
-        await replayFeishuPendingMessage(pendingBindingProcessor, claimed);
+        await replayFeishuPendingMessage(ctx.pendingBindingProcessor, claimed);
         await pendingBindingMessages.complete(claimed.state);
       } catch (error) {
         await pendingBindingMessages.release(claimed.state);
@@ -3257,7 +3284,10 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   // 进入 RUNNING 的（消息落到待排空实例），必须靠周期巡检兜住。仅承接流量的实例执行。
   crash.startPeriodicSweep();
 
-  let closing: Promise<void> | null = null;
+  /** 幂等关闭：可能被 drain 监听器与 SIGTERM 路径同时触发。 */
+  const closeApp = (): Promise<void> => {
+    if (ctx.closing != null) return ctx.closing;
+    ctx.closing = (async () => {
 
   /**
    * 只有"蓝绿切流后本实例是被替换掉的旧端口"时才值得等待在途执行收尾——
@@ -3308,8 +3338,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
 
   /** 幂等关闭：可能被 drain 监听器与 SIGTERM 路径同时触发。 */
   const closeApp = (): Promise<void> => {
-    if (closing != null) return closing;
-    closing = (async () => {
+    if (ctx.closing != null) return ctx.closing;
+    ctx.closing = (async () => {
       crash.stopPeriodicSweep();
       drainWatcher.stop();
       // 静默 IM 入站：长连接关掉后新消息自然落到新实例，避免停机窗口内再起新执行。
@@ -3349,7 +3379,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       await app.close();
       await db.close();
     })();
-    return closing;
+    return ctx.closing;
   };
 
   const drainWatcher = new DeployDrainWatcher({
