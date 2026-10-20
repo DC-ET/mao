@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { Transporter, TransportOptions } from 'nodemailer';
+import type { Transporter } from 'nodemailer';
 import {
   EmailWebhookSender, EMAIL_NOT_CONFIGURED_ERROR, maskEmail, renderEmail,
-  type EmailSmtpConfigProvider, type TransportFactory,
+  type EmailSmtpConfigProvider, type EmailTransportOptions, type TransportFactory,
 } from './email-sender.js';
 import type { EmailSmtpSettings } from '../../settings/types.js';
 
@@ -34,7 +34,7 @@ interface CapturedMail {
 /** 捕获 sendMail 入参与 transport 工厂选项的 stub（方案 §3.1：测试可注入 transport stub）。 */
 function stubFactory(handler: (mail: CapturedMail) => Promise<Record<string, unknown>>) {
   const mails: CapturedMail[] = [];
-  const options: TransportOptions[] = [];
+  const options: EmailTransportOptions[] = [];
   const factory: TransportFactory = (opts) => {
     options.push(opts);
     return {
