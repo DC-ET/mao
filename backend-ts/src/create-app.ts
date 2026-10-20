@@ -333,6 +333,7 @@ import { createPersistCancelledHelper } from './persist-cancelled.js';
 import { createPatchedProgressHelper } from './feishu-patched-progress.js';
 import { createFeishuProgressCardHelper } from './feishu-progress-card.js';
 import { createFeishuRecoveryProgressHelper } from './feishu-recovery-progress.js';
+import { createQueuePositionHelper } from './queue-position.js';
 import type { FeishuInboundContext, FeishuNormalizedMessage } from './feishu/types.js';
 import { WsStreamingEventListener } from './session/ws/ws-streaming-event-listener.js';
 import { MysqlApiTokenRepository, MysqlOutboundDeliveryRepository, MysqlOutboundSubscriptionRepository, MysqlWebhookTriggerRepository } from './openapi/openapi.repository.js';
@@ -1822,8 +1823,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const resolveFeishuUserId = createFeishuUserIdHelper({ feishuBinding });
   const feishuInboundQueueRepo = new FeishuInboundQueueRepository(db);
   const feishuTaskQueue = new FeishuTaskQueueService(feishuInboundQueueRepo);
-  /** 排队卡片展示位置：入队完成后队列中的 QUEUED 行数（含本条，插入语义=队尾第 N 位）。 */
-  const queuePositionOf = async (sessionId: number): Promise<number> => (await feishuInboundQueueRepo.countPending(sessionId));
+  const queuePositionOf = createQueuePositionHelper({ feishuInboundQueueRepo });
   const persistCancelledIfActive = createPersistCancelledHelper({ sessionService, taskTerminal, feishuProgressCardRepo });
   const feishuInboundHandler = new AgentFeishuInboundHandler({
     registry: wsRegistry,
