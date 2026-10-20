@@ -581,7 +581,7 @@ describe('AgentFeishuInboundHandler', () => {
       execute: vi.fn(async () => undefined),
     };
     const onExecutionFinished = vi.fn(async () => undefined);
-    const updates: Array<{ status: string; content: string }> = [];
+    const updates: Array<{ status: string; content: string; messageId?: number }> = [];
     const registry = { send: vi.fn() };
     const handler = new AgentFeishuInboundHandler({
       sessionService,
@@ -594,8 +594,8 @@ describe('AgentFeishuInboundHandler', () => {
       onExecutionFinished,
     });
     const result = await handler.retryExecution(7, async () => ({
-      update: async (status: string, _round: number, content: string) => {
-        updates.push({ status, content });
+      update: async (status: string, _round: number, content: string, _tools: string[], messageId?: number) => {
+        updates.push({ status, content, messageId });
       },
     }));
     // 回调只等「起跑」，execute 在后台跑完
@@ -611,8 +611,9 @@ describe('AgentFeishuInboundHandler', () => {
       sessionId: 7,
       data: expect.objectContaining({ phase: 'RUNNING', executionId: expect.any(String) }),
     }));
-    expect(updates).toContainEqual({ status: 'RUNNING', content: '正在重试，请稍候…' });
-    expect(updates).toContainEqual({ status: 'COMPLETED', content: '重试后的答案' });
+    expect(updates).toContainEqual({ status: 'RUNNING', content: '正在重试，请稍候…', messageId: undefined });
+    // 重试路径同样回传终态消息 id，快照才绑到本卡对应的回复上
+    expect(updates).toContainEqual({ status: 'COMPLETED', content: '重试后的答案', messageId: 12 });
   });
 
   it('drains the feishu queue after a successful retry', async () => {
