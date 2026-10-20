@@ -13,6 +13,9 @@ describe('jwt-hook public paths', () => {
     expect(isPublicPath('GET', '/api/v1/dingtalk/bind/abc')).toBe(true);
     expect(isPublicPath('GET', '/api/v1/dingtalk/oauth/callback')).toBe(true);
     expect(isPublicPath('POST', '/api/v1/dingtalk/binding')).toBe(false);
+    expect(isPublicPath('GET', '/api/v1/health')).toBe(true);
+    expect(isPublicPath('POST', '/api/v1/health')).toBe(true);
+    expect(isPublicPath('GET', '/api/v1/healthz')).toBe(false);
   });
 });
 

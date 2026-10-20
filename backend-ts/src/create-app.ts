@@ -13,7 +13,7 @@ import { fail } from './common/result.js';
 import { harnessLog } from './harness/log.js';
 import { ErrorCode } from './common/error-code.js';
 import { fastifyLoggerOptions, redactCredentialQuery } from './common/structured-logger.js';
-import { sendJson, handleError } from './common/http-error.js';
+import { sendJson, sendOk, handleError } from './common/http-error.js';
 import { loadConfig, type AppConfig } from './config/app-config.js';
 import { corsForRequest } from './config/cors-policy.js';
 import { loadTrustedProxyAddresses } from './config/trusted-proxy.js';
@@ -2894,6 +2894,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     api.get('/v3/api-docs', async (_req, reply) => {
       return reply.send(app.swagger());
     });
+    // 健康检查：免登录，供负载均衡/蓝绿部署探活使用（scripts/lib/blue-green.sh 亦可用其替代 swagger 探测）
+    api.get('/v1/health', async (_req, reply) => sendOk(reply, { status: 'UP' }));
     registerAuthRoutes(api, authService, feishu, ecpAuth);
     registerEcpAuthRoutes(api, ecpAuth);
     registerCompanySsoRoutes(api, new CompanySsoService(
