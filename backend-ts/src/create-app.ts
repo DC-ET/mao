@@ -340,6 +340,7 @@ import { createResolveUserIdHelper } from './feishu-resolve-user-id.js';
 import { createResolveMessageTextHelper } from './feishu-resolve-message-text.js';
 import { createUnauthorizedTextHelper } from './feishu-unauthorized-text.js';
 import { createResolveQuotedMessageHelper } from './feishu-resolve-quoted-message.js';
+import { createThreadSessionHelper } from './feishu-thread-session.js';
 import type { FeishuInboundContext, FeishuNormalizedMessage } from './feishu/types.js';
 import { WsStreamingEventListener } from './session/ws/ws-streaming-event-listener.js';
 import { MysqlApiTokenRepository, MysqlOutboundDeliveryRepository, MysqlOutboundSubscriptionRepository, MysqlWebhookTriggerRepository } from './openapi/openapi.repository.js';
@@ -2100,21 +2101,15 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     maxInboundFileMb: cfg.feishu.bot.file.maxInboundFileMb,
   });
   const { resolveFeishuSenderName, resolveFeishuUserNames, resolveMergeWorkspace, expandMergeForward, resolveQuotedWorkspace, downloadFeishuGroupImage, downloadFeishuImageTo, downloadFeishuGroupFile } = feishuMediaHelper;
+  const threadSessionHelper = createThreadSessionHelper({ feishuMessageService });
   const feishuInboundProcessor = new FeishuInboundProcessor(feishuInboundHandler, {
     messageService: feishuMessageService,
     mergeWindowMs: cfg.feishu.bot.mergeWindowMs,
     resolveSenderName: resolveFeishuSenderName,
     downloadGroupImage: downloadFeishuGroupImage,
     downloadGroupFile: downloadFeishuGroupFile,
-    resolveThreadSession: async (accountId, event) => {
-      const result = await feishuMessageService.findThreadSession(String(accountId), event.threadId);
-      return result == null ? null : { sessionId: result.sessionId };
-    },
-    ensureThreadSession: async (accountId, context) => {
-      // 触发前先建话题会话行：水位线写在 feishu_thread_session 上，行不存在会让本次推进静默丢失。
-      const result = await feishuMessageService.getOrCreateThreadSession(String(accountId), context);
-      return result == null ? null : { sessionId: result.sessionId };
-    },
+    resolveThreadSession: threadSessionHelper.resolveThreadSession,
+    ensureThreadSession: threadSessionHelper.ensureThreadSession,
     resolveQuotedMessage: createResolveQuotedMessageHelper({
       getFeishuClient, feishuMessageRepository, resolveQuotedWorkspace, expandMergeForward,
     }),
