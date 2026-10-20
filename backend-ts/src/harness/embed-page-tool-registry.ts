@@ -59,6 +59,11 @@ export class EmbedPageToolRegistry {
     return this.registry.isEmbedSession(sessionId);
   }
 
+  /** embed 会话且连接未关闭页面能力：HarnessService 工具过滤口径的委托。 */
+  isEmbedPageSession(sessionId: number): boolean {
+    return this.registry.isEmbedPageSession(sessionId);
+  }
+
   hasBoundConnection(sessionId: number): boolean {
     return this.registry.getEmbedSessionConnection(sessionId) != null;
   }
@@ -66,6 +71,11 @@ export class EmbedPageToolRegistry {
   async request(sessionId: number, tool: string, args: unknown): Promise<PendingPageToolRequest> {
     if (!this.registry.isEmbedSession(sessionId)) {
       return errorResult('embed_session_required', '当前会话不是嵌入式页面会话，无法执行页面操作');
+    }
+    // 宿主已关闭页面能力（连接换绑到关闭态连接的在途请求、新旧后端版本交错）：
+    // 直接失败，不下发到 SDK，模型读到可解释错误后自行调整。
+    if (!this.registry.isEmbedPageSession(sessionId)) {
+      return errorResult('page_operation_disabled', '宿主已关闭页面操作能力');
     }
     const connection = this.registry.getEmbedSessionConnection(sessionId);
     if (!connection) {

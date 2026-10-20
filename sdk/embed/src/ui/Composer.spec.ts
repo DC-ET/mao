@@ -11,12 +11,14 @@ afterEach(() => { app?.unmount(); el?.remove(); });
 function mount(overrides: {
   running?: boolean;
   quotedSelection?: string | null;
+  pageEnabled?: boolean;
   pageAuthorization?: PageAuthorizationLevel;
   maxAttachmentMb?: number;
 } = {}) {
   const props = reactive({
     running: false,
     quotedSelection: null as string | null,
+    pageEnabled: true,
     pageAuthorization: 'per_action' as PageAuthorizationLevel,
     maxAttachmentMb: 5,
     ...overrides,
@@ -205,6 +207,20 @@ describe('Composer', () => {
     expect(state.levels).toEqual(['full']);
     expect(el.querySelector('.mao-auth__menu')).toBeNull();
     expect(el.querySelector('.mao-auth__stop')).toBeNull();
+  });
+
+  it('pageEnabled=false 时不渲染授权下拉，发送/停止不受影响', async () => {
+    const state = mount({ pageEnabled: false });
+    expect(el.querySelector('.mao-auth__badge')).toBeNull();
+    expect(el.querySelector('.mao-auth__menu')).toBeNull();
+    // 输入与发送链路保持可用
+    state.input().value = '你好';
+    state.input().dispatchEvent(new Event('input'));
+    await nextTick();
+    state.send().click();
+    await nextTick();
+    expect(state.sent.map((s) => s.content)).toEqual(['你好']);
+    expect(state.levels).toEqual([]);
   });
 
   it('setText 填入推荐问题草稿且不自动发送，覆盖已有草稿', async () => {

@@ -49,11 +49,14 @@ const chat = MaoChat.init({
   agentId: 1,
   getToken: () => fetch('/your-backend/embed-token').then(r => r.json()).then(d => d.accessToken),
   page: {
-    initialLevel: 'per_action',       // 可选：默认每次确认；宿主不得借此静默授予高权限
-    screenshotRenderer: myRenderer,   // 可选：自定义截图渲染器，缺省用内置视口渲染器
+    enabled: true,                  // 可选：缺省 true；false 时整条页面操作链路关闭（见下）
+    initialLevel: 'per_action',     // 可选：默认每次确认；宿主不得借此静默授予高权限
+    screenshotRenderer: myRenderer, // 可选：自定义截图渲染器，缺省用内置视口渲染器
   },
 });
 ```
+
+- **页面操作总开关**：`page.enabled` 缺省 `true`（不传 `page` 或只传其他字段均视为开启，存量接入零改动）。传 `false` 时端到端关闭：Agent 拿不到任何 `page_*` 工具（后端按连接级声明过滤，模型侧表现为「没有页面操作能力」）；SDK 不创建页面引擎（不 patch `history`、不挂窗口监听、不扫描 DOM）；浮窗不展示授权下拉、确认卡片、动作日志与目标高亮；实例方法 `inspectPage()` / `capturePageScreenshot()` 抛错，`executePageAction()` 返回 `page_operation_disabled`，`getPageAuthorization()` 固定 `per_action`，`setPageAuthorization()` 为空操作。与 `initialLevel` 并传时后者被忽略（禁用态无授权语义）。声明随 WS 连接发送，重连自动重发；后端版本低于 0.0.319 时该字段被忽略（按开启处理）。
 
 - **能力**：`page_inspect`（可见交互元素快照，含已打开的下拉建议）、`page_screenshot`（当前视口截图）、`page_observe`、`page_scroll`、`page_focus`、`page_fill`、`page_select`、`page_check` / `page_uncheck`、`page_click`、`page_keyboard`、`page_wait`、`page_actions`（有序批量）。
 - **元素引用**：只使用快照作用域内的 opaque `elementId`；不向 Agent 暴露 selector、XPath、outerHTML 或任意脚本。页面导航、SPA 路由或 DOM 重建后旧引用立即失效，Agent 必须重新 `page_inspect`。

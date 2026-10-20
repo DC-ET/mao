@@ -140,4 +140,39 @@ describe('EmbedPageToolRegistry', () => {
     expect(pageTools.pendingCount(11)).toBe(1);
     expect(pageTools.complete(11, requestId!, bound, { success: true, result: {} })).toBe(true);
   });
+
+  it('refuses requests when the host disabled page operations on the connection', async () => {
+    const { registry, pageTools } = setup();
+    const bound = socket('embed-bound');
+    registry.register(bound, 7, 'embed', undefined, false);
+    registry.bindEmbedSession(11, bound);
+    // 连接仍是 embed 会话，但页面能力已关闭
+    expect(pageTools.isEmbedSession(11)).toBe(true);
+    expect(pageTools.isEmbedPageSession(11)).toBe(false);
+
+    const pending = await pageTools.request(11, 'page_click', { elementId: 'e1' });
+    expect(pending.requestId).toBeNull();
+    const outcome = JSON.parse(await pending.future) as { success: boolean; error: { code: string; message: string } };
+    expect(outcome.success).toBe(false);
+    expect(outcome.error.code).toBe('page_operation_disabled');
+    expect(outcome.error.message).toBe('宿主已关闭页面操作能力');
+    // 不下发到 SDK：宿主侧不应收到任何页面请求帧
+    expect(bound.sent).toHaveLength(0);
+    expect(pageTools.pendingCount(11)).toBe(0);
+  });
+
+  it('isEmbedPageSession follows the connection flag after re-declaration', async () => {
+    const { registry, pageTools } = setup();
+    const bound = socket('embed-bound');
+    registry.register(bound, 7, 'embed', undefined, false);
+    registry.bindEmbedSession(11, bound);
+    expect(pageTools.isEmbedPageSession(11)).toBe(false);
+    // 重连后宿主改为开启：auth 首帧重新声明，能力随之恢复
+    registry.register(bound, 7, 'embed', undefined, true);
+    expect(pageTools.isEmbedPageSession(11)).toBe(true);
+    const { requestId } = await pageTools.request(11, 'page_inspect', {});
+    expect(requestId).toBeTruthy();
+    expect(bound.sent).toHaveLength(1);
+    pageTools.complete(11, requestId!, bound, { success: true, result: {} });
+  });
 });

@@ -1014,3 +1014,103 @@ describe('EmbedController', () => {
     h.ctl.destroy();
   });
 });
+
+describe('EmbedController 页面操作开关（init page.enabled）', () => {
+  let originalWs: typeof WebSocket;
+  let originalFetch: typeof fetch;
+
+  beforeEach(() => {
+    originalWs = globalThis.WebSocket;
+    originalFetch = globalThis.fetch;
+    FakeWebSocket.instances = [];
+    (globalThis as Record<string, unknown>).WebSocket = FakeWebSocket;
+    window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    (globalThis as Record<string, unknown>).WebSocket = originalWs;
+    globalThis.fetch = originalFetch;
+  });
+
+  it('缺省 page 选项：引擎创建、auth 帧声明 pageEnabled=true', async () => {
+    const h = await makeHarness();
+    expect(h.ui.pageEnabled).toBe(true);
+    expect(h.ctl.pageEngine).not.toBeNull();
+    const socket = await boot(h);
+    expect(socket.framesOfType('auth')[0]).toMatchObject({ client: 'embed', pageEnabled: true });
+    h.ctl.destroy();
+  });
+
+  it('page.enabled=false：不创建引擎、不 patch history、auth 帧声明 pageEnabled=false', async () => {
+    const originalPushState = window.history.pushState;
+    const h = await makeHarness({ page: { enabled: false } });
+    expect(h.ui.pageEnabled).toBe(false);
+    expect(h.ui.pageAuthorization).toBe('per_action');
+    expect(h.ctl.pageEngine).toBeNull();
+    const socket = await boot(h);
+    expect(socket.framesOfType('auth')[0]).toMatchObject({ client: 'embed', pageEnabled: false });
+    // 禁用态不创建 PageEngine：PageSnapshotManager 构造即把 history.pushState 替换为包装函数，此处应保持原函数
+    expect(window.history.pushState).toBe(originalPushState);
+    h.ctl.destroy();
+  });
+
+  it('page.enabled=false 且并传 initialLevel：授权固定 per_action（initialLevel 被忽略）', async () => {
+    const h = await makeHarness({ page: { enabled: false, initialLevel: 'task' } });
+    expect(h.ui.pageAuthorization).toBe('per_action');
+    expect(h.ctl.pageEngine).toBeNull();
+    h.ctl.destroy();
+  });
+
+  it('page.initialLevel=task（无 enabled）：引擎创建且首个任务自动升到 task 授权', async () => {
+    const h = await makeHarness({ page: { initialLevel: 'task' } });
+    expect(h.ui.pageEnabled).toBe(true);
+    expect(h.ctl.pageEngine).not.toBeNull();
+    // initialTask 语义：授权在首个任务开始时才生效，init 后徽标仍是 per_action
+    expect(h.ui.pageAuthorization).toBe('per_action');
+    h.ctl.pageEngine!.beginTask(SESSION_ID);
+    expect(h.ui.pageAuthorization).toBe('task');
+    h.ctl.destroy();
+  });
+
+  it('page.enabled=false：收到 page_tool_request 立即回传 page_operation_disabled，无任何页面副作用', async () => {
+    const h = await makeHarness({ page: { enabled: false } });
+    const socket = await boot(h);
+    const before = document.body.innerHTML;
+    socket.emit({
+      type: 'page_tool_request',
+      sessionId: SESSION_ID,
+      data: { requestId: 'req-1', tool: 'page_click', arguments: { elementId: 'e1' } },
+    });
+    await vi.waitFor(() => expect(socket.framesOfType('page_tool_result')).toHaveLength(1));
+    const result = socket.framesOfType('page_tool_result')[0]!;
+    expect(result).toMatchObject({
+      sessionId: SESSION_ID,
+      requestId: 'req-1',
+      data: { success: false, error: { code: 'page_operation_disabled', message: '宿主已关闭页面操作能力' } },
+    });
+    // 无引擎即无日志/确认/高亮等 UI 副作用
+    expect(h.ui.pageLogs).toEqual([]);
+    expect(h.ui.pageConfirm).toBeNull();
+    expect(h.ui.pageHighlight).toBeNull();
+    expect(document.body.innerHTML).toBe(before);
+    h.ctl.destroy();
+  });
+
+  it('page.enabled=false：page_tool_cancel 不抛错', async () => {
+    const h = await makeHarness({ page: { enabled: false } });
+    const socket = await boot(h);
+    expect(() => socket.emit({ type: 'page_tool_cancel', sessionId: SESSION_ID, data: {} })).not.toThrow();
+    h.ctl.destroy();
+  });
+
+  it('page.enabled=false：发送/停止/新会话/销毁等主链路不抛错（空守卫覆盖）', async () => {
+    const h = await makeHarness({ page: { enabled: false } });
+    const socket = await boot(h);
+    await h.ctl.send('你好');
+    expect(socket.framesOfType('send_message')).toHaveLength(1);
+    await h.ctl.stop();
+    expect(socket.framesOfType('cancel')).toHaveLength(1);
+    await h.ctl.newSession();
+    expect(() => h.ctl.destroy()).not.toThrow();
+  });
+});

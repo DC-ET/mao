@@ -25,6 +25,8 @@ const props = defineProps<{
   pendingQuestion: PendingQuestion | null;
   questionSubmitting: boolean;
   quotedSelection: string | null;
+  /** 页面操作总开关（init page.enabled）：false 时动作面板与授权入口全部隐藏 */
+  pageEnabled: boolean;
   pageAuthorization: PageAuthorizationLevel;
   pageTaskActive: boolean;
   pageConfirm: PageConfirmRequest | null;
@@ -190,6 +192,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown));
     />
 
     <PageActionPanel
+      v-if="pageEnabled"
       :confirm="pageConfirm"
       :logs="pageConfirm || pageTaskActive ? pageLogs : []"
       @confirm="(id, approved) => emit('resolvePageConfirm', id, approved)"
@@ -199,6 +202,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown));
       ref="composerEl"
       :running="running"
       :quoted-selection="quotedSelection"
+      :page-enabled="pageEnabled"
       :page-authorization="pageAuthorization"
       :max-attachment-mb="maxAttachmentMb"
       @send="(c, a) => emit('send', c, a)"

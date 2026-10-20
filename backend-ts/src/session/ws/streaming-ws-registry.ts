@@ -99,6 +99,8 @@ export class StreamingWsRegistry {
   private readonly embedSessionBindings = new Map<number, WsSocket>();
   /** embed 连接 → 该连接绑定的 agent sessionId 集合（断线清理用）。 */
   private readonly embedConnectionSessions = new Map<string, Set<number>>();
+  /** 连接级页面操作能力声明：socket.id → pageEnabled（auth 首帧定格，缺省 true）。 */
+  private readonly sessionPageEnabled = new Map<string, boolean>();
 
   constructor(outboundQueueCapacity = 10000) {
     this.capacity = outboundQueueCapacity;
@@ -130,7 +132,7 @@ export class StreamingWsRegistry {
     return this.outboundQueue.length + this.criticalQueue.length;
   }
 
-  register(session: WsSocket, userId: number, clientType: string | null | undefined, metadata?: WsAuthMetadata): void {
+  register(session: WsSocket, userId: number, clientType: string | null | undefined, metadata?: WsAuthMetadata, pageEnabled = true): void {
     if (this.closedConnections.has(session)) return;
     const previous = this.connectionAuth.get(session.id);
     if (previous?.timer) clearTimeout(previous.timer);
@@ -142,13 +144,14 @@ export class StreamingWsRegistry {
     }
     this.sessionToUser.set(session.id, userId);
     this.sessionToClientType.set(session.id, this.normalizeClientType(clientType));
+    this.sessionPageEnabled.set(session.id, pageEnabled);
     let set = this.userSessions.get(userId);
     if (!set) {
       set = new Set();
       this.userSessions.set(userId, set);
     }
     set.add(session);
-    console.info(`WS stream registered: userId=${userId}, wsSessionId=${session.id}, clientType=${this.sessionToClientType.get(session.id)}`);
+    console.info(`WS stream registered: userId=${userId}, wsSessionId=${session.id}, clientType=${this.sessionToClientType.get(session.id)}, pageEnabled=${pageEnabled}`);
   }
 
   unregister(session: WsSocket): void {
@@ -156,6 +159,7 @@ export class StreamingWsRegistry {
     const auth = this.connectionAuth.get(session.id);
     if (auth?.timer) clearTimeout(auth.timer);
     this.connectionAuth.delete(session.id);
+    this.sessionPageEnabled.delete(session.id);
     this.releaseEmbedConnection(session);
     const userId = this.sessionToUser.get(session.id);
     this.sessionToUser.delete(session.id);
@@ -367,6 +371,20 @@ export class StreamingWsRegistry {
 
   isEmbedSession(sessionId: number): boolean {
     return this.getEmbedSessionConnection(sessionId) != null;
+  }
+
+  /** 连接的页面操作能力声明；缺省 true（未命中 map 时按开启处理，兼容不发送该字段的客户端）。 */
+  getPageEnabled(session: WsSocket): boolean {
+    return this.sessionPageEnabled.get(session.id) ?? true;
+  }
+
+  /**
+   * embed 会话且页面能力开启：HarnessService 工具过滤与 EmbedPageToolRegistry 的统一口径。
+   * 连接非 OPEN / 未鉴权时 getEmbedSessionConnection 返回 null，即向「关闭」收敛。
+   */
+  isEmbedPageSession(sessionId: number): boolean {
+    const socket = this.getEmbedSessionConnection(sessionId);
+    return socket != null && this.getPageEnabled(socket);
   }
 
   /** 某 embed 连接当前绑定的 agent 会话（断线时用于清理 pending 页面请求）。 */

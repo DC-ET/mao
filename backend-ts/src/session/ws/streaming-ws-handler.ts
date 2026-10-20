@@ -369,7 +369,9 @@ export class StreamingWsHandler {
         return;
       }
       const clientType = this.normalizeClient(typeof root.client === 'string' ? root.client : undefined);
-      this.deps.registry.register(session, metadata.userId, clientType, metadata);
+      // 页面操作能力声明：缺省/非布尔按 true（旧版 SDK 不发送该字段，行为与现状一致）。
+      const pageEnabled = typeof root.pageEnabled === 'boolean' ? root.pageEnabled : true;
+      this.deps.registry.register(session, metadata.userId, clientType, metadata, pageEnabled);
       this.deps.registry.sendToConnection(session, wsEvent('connected', null, { userId: metadata.userId }));
       return;
     }

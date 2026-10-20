@@ -52,7 +52,7 @@ const attention = computed(() => props.ui.unread > 0 || props.ui.pendingQuestion
     @lostpointercapture="placement.pointerCancel"
     @click="(event) => { if (placement.allowClick(event)) $emit('launcherClick'); }"
   />
-  <PageHighlight :target="ui.pageHighlight" />
+  <PageHighlight v-if="ui.pageEnabled" :target="ui.pageHighlight" />
   <ChatPanel
     :key="ui.identityVersion"
     :open="ui.panelOpen"
@@ -69,6 +69,7 @@ const attention = computed(() => props.ui.unread > 0 || props.ui.pendingQuestion
     :question-submitting="ui.questionSubmitting"
     :quoted-selection="ui.quotedSelection"
     :suggested-questions="ui.suggestedQuestions"
+    :page-enabled="ui.pageEnabled"
     :page-authorization="ui.pageAuthorization"
     :page-task-active="ui.pageTaskActive"
     :page-confirm="ui.pageConfirm"

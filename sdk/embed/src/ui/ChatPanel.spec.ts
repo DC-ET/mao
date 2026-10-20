@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createApp, h, nextTick, reactive, type App } from 'vue';
 import ChatPanel from './ChatPanel.vue';
 import type { ChatMessage } from '../types';
+import type { PageActionLogEntry, PageConfirmRequest } from '../page';
 
 let app: App | undefined;
 let el: HTMLDivElement;
@@ -18,6 +19,9 @@ interface PanelState {
   messages: ChatMessage[];
   quotedSelection: string | null;
   suggestedQuestions: string[];
+  pageEnabled: boolean;
+  pageConfirm: PageConfirmRequest | null;
+  pageLogs: PageActionLogEntry[];
 }
 
 function mountPanel(overrides: Partial<PanelState> = {}) {
@@ -32,6 +36,9 @@ function mountPanel(overrides: Partial<PanelState> = {}) {
     messages: [],
     quotedSelection: null,
     suggestedQuestions: ['帮我总结当前页面', '这个页面上有什么按钮？'],
+    pageEnabled: true,
+    pageConfirm: null,
+    pageLogs: [],
     ...overrides,
   });
   const sent: Array<{ content: string; attachments: unknown[] }> = [];
@@ -46,8 +53,6 @@ function mountPanel(overrides: Partial<PanelState> = {}) {
         questionSubmitting: false,
         pageAuthorization: 'per_action',
         pageTaskActive: false,
-        pageConfirm: null,
-        pageLogs: [],
         maxAttachmentMb: 5,
         historyOpen: false,
         historyItems: [],
@@ -114,5 +119,32 @@ describe('ChatPanel 推荐问题', () => {
   it('推荐问题为空数组时不渲染该区块', () => {
     mountPanel({ suggestedQuestions: [] });
     expect(el.querySelector('.mao-suggested')).toBeNull();
+  });
+});
+
+describe('ChatPanel 页面操作面板', () => {
+  const confirm: PageConfirmRequest = {
+    id: 'pc-1',
+    tool: 'page_click',
+    summary: '点击「保存」',
+    risk: 'normal',
+    sessionId: 11,
+  };
+
+  it('pageEnabled=true 且有待确认动作时渲染动作面板', () => {
+    mountPanel({ pageConfirm: confirm });
+    expect(el.querySelector('.mao-page__confirm')).not.toBeNull();
+    expect(el.querySelector('.mao-page__confirm-text')?.textContent).toContain('点击「保存」');
+  });
+
+  it('pageEnabled=false 时即使有待确认动作与日志也不渲染动作面板', () => {
+    mountPanel({
+      pageEnabled: false,
+      pageConfirm: confirm,
+      pageLogs: [{
+        id: 'log-1', tool: 'page_click', summary: '点击「保存」', status: 'success', risk: 'normal', at: Date.now(),
+      }],
+    });
+    expect(el.querySelector('.mao-page')).toBeNull();
   });
 });

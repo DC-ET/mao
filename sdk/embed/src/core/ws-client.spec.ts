@@ -72,6 +72,7 @@ function makeHooks(overrides: Partial<Parameters<typeof makeClient>[0]> = {}) {
   };
   const hooks = {
     getToken: overrides.getToken ?? (() => Promise.resolve('tok')),
+    getPageEnabled: overrides.getPageEnabled,
     onAuthenticated: (isReconnect: boolean) => calls.authenticated.push(isReconnect),
     onAuthFailed: () => calls.authFailed++,
     onDisconnected: () => calls.disconnected++,
@@ -82,6 +83,7 @@ function makeHooks(overrides: Partial<Parameters<typeof makeClient>[0]> = {}) {
 
 function makeClient(hooks: {
   getToken: () => Promise<string>;
+  getPageEnabled?: () => boolean;
   onAuthenticated: (isReconnect: boolean) => void;
   onAuthFailed: () => void;
   onDisconnected: () => void;
@@ -124,7 +126,8 @@ describe('WsClient', () => {
     const socket = FakeWebSocket.instances[0];
     socket.open();
     await p;
-    expect(socket.frames()[0]).toEqual({ type: 'auth', token: 'tok', client: 'embed' });
+    // 未提供 getPageEnabled 时按开启声明（缺省 true，兼容不发送该字段的旧口径）
+    expect(socket.frames()[0]).toEqual({ type: 'auth', token: 'tok', client: 'embed', pageEnabled: true });
     expect(ws.connected.value).toBe(true);
     // 尚未收到 connected 帧：业务上不可用
     expect(ws.authenticated.value).toBe(false);
@@ -134,6 +137,29 @@ describe('WsClient', () => {
     expect(calls.authenticated).toEqual([false]);
     // connected 帧同时透传给业务层
     expect(calls.events.map((e) => e.type)).toEqual(['connected']);
+    ws.disconnect();
+  });
+
+  it('getPageEnabled=false 时首帧声明 pageEnabled:false，重连仍重发', async () => {
+    vi.useFakeTimers();
+    const { hooks } = makeHooks({ getPageEnabled: () => false });
+    const ws = makeClient(hooks);
+    const p = ws.connect();
+    const socket = FakeWebSocket.instances[0];
+    socket.open();
+    await vi.advanceTimersByTimeAsync(0);
+    await p;
+    expect(socket.frames()[0]).toEqual({ type: 'auth', token: 'tok', client: 'embed', pageEnabled: false });
+    // 断线重连：能力声明随新连接 auth 帧重发
+    socket.serverClose(1006);
+    await vi.advanceTimersByTimeAsync(1_100);
+    const socket2 = FakeWebSocket.instances[FakeWebSocket.instances.length - 1];
+    expect(socket2).not.toBe(socket);
+    const p2 = ws.connect();
+    socket2.open();
+    await vi.advanceTimersByTimeAsync(0);
+    await p2;
+    expect(socket2.frames()[0]).toEqual({ type: 'auth', token: 'tok', client: 'embed', pageEnabled: false });
     ws.disconnect();
   });
 

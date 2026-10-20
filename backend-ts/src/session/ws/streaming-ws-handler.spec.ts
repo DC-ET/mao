@@ -685,7 +685,7 @@ describe('StreamingWsHandler', () => {
     registry.hasLocalClientConnection.mockReturnValue(false);
     const connected: WsSocket = { id: 'ws-1', readyState: WS_OPEN, send: vi.fn(), close: vi.fn() };
     await handler.handleTextMessage(connected, JSON.stringify({ type: 'auth', token: 'valid.jwt.token', client: 'electron' }));
-    expect(registry.register).toHaveBeenCalledWith(connected, 7, 'electron', authMetadata);
+    expect(registry.register).toHaveBeenCalledWith(connected, 7, 'electron', authMetadata, true);
     expect(registry.sendToConnection).toHaveBeenCalledWith(connected, expect.objectContaining({ type: 'connected' }));
     // 已认证连接再次发 auth 应为无害 no-op（不重复注册）
     registry.register.mockClear();
@@ -713,7 +713,30 @@ describe('StreamingWsHandler', () => {
     const connected: WsSocket = { id: 'ws-embed', readyState: WS_OPEN, send: vi.fn(), close: vi.fn() };
     // 大小写不敏感归一化为 'embed'
     await handler.handleTextMessage(connected, JSON.stringify({ type: 'auth', token: 'valid.jwt.token', client: 'Embed' }));
-    expect(registry.register).toHaveBeenCalledWith(connected, 7, 'embed', authMetadata);
+    expect(registry.register).toHaveBeenCalledWith(connected, 7, 'embed', authMetadata, true);
+  });
+
+  it('authFramePageEnabledFalseIsPassedToRegistry', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValueOnce(null).mockReturnValue(7);
+    jwtService.getAccessTokenMetadata.mockReturnValue(authMetadata);
+    const connected: WsSocket = { id: 'ws-embed', readyState: WS_OPEN, send: vi.fn(), close: vi.fn() };
+    await handler.handleTextMessage(connected, JSON.stringify({
+      type: 'auth', token: 'valid.jwt.token', client: 'embed', pageEnabled: false,
+    }));
+    expect(registry.register).toHaveBeenCalledWith(connected, 7, 'embed', authMetadata, false);
+  });
+
+  it('authFramePageEnabledNonBooleanFallsBackToTrue', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValueOnce(null).mockReturnValue(7);
+    jwtService.getAccessTokenMetadata.mockReturnValue(authMetadata);
+    const connected: WsSocket = { id: 'ws-embed', readyState: WS_OPEN, send: vi.fn(), close: vi.fn() };
+    // 旧版 SDK 不发送该字段、或发送非布尔值：一律按开启处理，行为与现状一致
+    await handler.handleTextMessage(connected, JSON.stringify({
+      type: 'auth', token: 'valid.jwt.token', client: 'embed', pageEnabled: 'false',
+    }));
+    expect(registry.register).toHaveBeenCalledWith(connected, 7, 'embed', authMetadata, true);
   });
 
   it('subscribeRePushesPendingAskUserQuestionsOnReconnect', async () => {
@@ -766,7 +789,7 @@ describe('StreamingWsHandler', () => {
     registry.getUserId.mockReturnValue(null);
     jwtService.getAccessTokenMetadata.mockReturnValue(authMetadata);
     await handler.handleTextMessage(ws, JSON.stringify({ type: 'auth', token: 'ok', client: 'cli' }));
-    expect(registry.register).toHaveBeenCalledWith(ws, 7, 'cli', authMetadata);
+    expect(registry.register).toHaveBeenCalledWith(ws, 7, 'cli', authMetadata, true);
   });
 
   it('autoConsumesQueuedMessageAfterExecutionCompletes', async () => {

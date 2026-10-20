@@ -375,6 +375,48 @@ describe('HarnessService.buildContext and execute', () => {
     expect(sessionService.getFirstUserStamp).toHaveBeenCalledWith(10);
   });
 
+  it('buildContext 保留开启页面能力的 embed 会话的 page_* 工具', async () => {
+    const pageTools = [fakeTool('read_file'), fakeTool('page_inspect'), fakeTool('page_click')];
+    const toolRegistry = {
+      getAllTools: vi.fn(() => pageTools),
+      getTool: vi.fn((name: string) => pageTools.find((tool) => tool.getName() === name)),
+    };
+    const { service } = makeHarness({
+      toolRegistry,
+      embedSessionLookup: { isEmbedSession: () => true, isEmbedPageSession: () => true },
+    });
+    const ctx = await service.buildContext(10);
+    expect(names(ctx.tools)).toEqual(['read_file', 'page_inspect', 'page_click']);
+  });
+
+  it('buildContext 过滤关闭页面能力的 embed 会话的 page_* 工具', async () => {
+    const pageTools = [fakeTool('read_file'), fakeTool('page_inspect'), fakeTool('page_click')];
+    const toolRegistry = {
+      getAllTools: vi.fn(() => pageTools),
+      getTool: vi.fn((name: string) => pageTools.find((tool) => tool.getName() === name)),
+    };
+    const { service } = makeHarness({
+      toolRegistry,
+      embedSessionLookup: { isEmbedSession: () => true, isEmbedPageSession: () => false },
+    });
+    const ctx = await service.buildContext(10);
+    expect(names(ctx.tools)).toEqual(['read_file']);
+  });
+
+  it('buildContext 对仅提供 isEmbedSession 的存量注入按关闭收敛（fail-closed）', async () => {
+    const pageTools = [fakeTool('read_file'), fakeTool('page_inspect')];
+    const toolRegistry = {
+      getAllTools: vi.fn(() => pageTools),
+      getTool: vi.fn((name: string) => pageTools.find((tool) => tool.getName() === name)),
+    };
+    const { service } = makeHarness({
+      toolRegistry,
+      embedSessionLookup: { isEmbedSession: () => true },
+    });
+    const ctx = await service.buildContext(10);
+    expect(names(ctx.tools)).toEqual(['read_file']);
+  });
+
   it('buildContextInjectsWorkingSetToolsAndSectionOnlyInWorkingSetMode', async () => {
     const mcpCall = fakeTool('mcp_call');
     const mcpDescribe = fakeTool('mcp_describe');

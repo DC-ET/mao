@@ -21,6 +21,8 @@ export interface WsClientHooks {
   getToken: () => Promise<string>;
   /** Expiry of the exact credential returned for the initial auth frame. */
   getExpiresAt?: (token: string) => number;
+  /** 页面操作能力声明（auth 首帧携带）；缺省 true。与 identity 同构，便于将来看似动态化。 */
+  getPageEnabled?: () => boolean;
   /** 认证通过（收到 connected 帧）后的回调：断线重连后的会话对账在此进行 */
   onAuthenticated: (isReconnect: boolean) => void;
   /** 认证失败（token 无效） */
@@ -156,8 +158,10 @@ export class WsClient {
             }
             this.authToken = token;
             this.authExpiresAt = this.hooks.getExpiresAt?.(token) ?? Infinity;
-            // 鉴权首帧：必须先于任何业务帧
-            socket.send(JSON.stringify({ type: 'auth', token, client: 'embed' }));
+            // 鉴权首帧：必须先于任何业务帧。pageEnabled 为连接级能力声明，随重连自动重发。
+            socket.send(JSON.stringify({
+              type: 'auth', token, client: 'embed', pageEnabled: this.hooks.getPageEnabled?.() ?? true,
+            }));
             this.startHeartbeat();
             this.connectPromise = null;
             resolve();

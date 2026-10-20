@@ -64,15 +64,36 @@ function createInstance(options: MaoChatInitOptions): MaoChatInstance {
     newSession: () => controller.newSession(),
     toggleHistory: () => controller.toggleHistory(),
     setContext: (ctx) => controller.setContext(ctx),
-    inspectPage: () => controller.pageEngine.inspect({ sessionId: controller.store.sessionId() }),
-    executePageAction: (action, snapshotId) => controller.pageEngine.executeAction(
-      action, snapshotId ?? controller.pageEngine.manager.currentSnapshotId ?? undefined, controller.store.sessionId() ?? 0,
-    ),
-    getPageAuthorization: () => controller.pageEngine.authorizationLevel,
-    setPageAuthorization: (level) => controller.setPageAuthorization(level),
-    capturePageScreenshot: (opts) => controller.pageEngine.screenshot({
-      maskSensitive: opts?.maskSensitive, reason: opts?.reason, sessionId: controller.store.sessionId(),
-    }),
+    // 禁用态（init page.enabled=false）行为：见技术方案 §4.2.5。
+    // inspectPage 抛错：宿主主动关闭又主动调用属编程错误，静默返回空快照会被误读为「页面无元素」。
+    inspectPage: () => {
+      if (!controller.pageEngine) throw new Error('页面操作已关闭（init page.enabled=false）');
+      return controller.pageEngine.inspect({ sessionId: controller.store.sessionId() });
+    },
+    executePageAction: (action, snapshotId) => {
+      if (!controller.pageEngine) {
+        return Promise.resolve({
+          success: false, action, pageVersion: '',
+          error: { code: 'page_operation_disabled', message: '宿主已关闭页面操作能力' },
+        });
+      }
+      return controller.pageEngine.executeAction(
+        action, snapshotId ?? controller.pageEngine.manager.currentSnapshotId ?? undefined, controller.store.sessionId() ?? 0,
+      );
+    },
+    getPageAuthorization: () => controller.pageEngine?.authorizationLevel ?? controller.ui.pageAuthorization,
+    setPageAuthorization: (level) => {
+      // 禁用态 no-op：不抛，避免打断宿主调用链（无授权语义可设置）。
+      if (controller.pageEngine) controller.setPageAuthorization(level);
+    },
+    capturePageScreenshot: (opts) => {
+      if (!controller.pageEngine) {
+        return Promise.reject(new Error('页面操作已关闭（init page.enabled=false）'));
+      }
+      return controller.pageEngine.screenshot({
+        maskSensitive: opts?.maskSensitive, reason: opts?.reason, sessionId: controller.store.sessionId(),
+      });
+    },
     destroy: () => {
       controller.destroy();
       window.__maoChatInstance = undefined;

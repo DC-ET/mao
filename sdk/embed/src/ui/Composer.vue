@@ -15,6 +15,8 @@ import PageAuthSwitcher from './PageAuthSwitcher.vue';
 const props = defineProps<{
   running: boolean;
   quotedSelection: string | null;
+  /** 页面操作总开关（init page.enabled）：false 时授权下拉不渲染 */
+  pageEnabled: boolean;
   pageAuthorization: PageAuthorizationLevel;
   /** 后台配置的单文件大小上限（MB） */
   maxAttachmentMb: number;
@@ -188,6 +190,7 @@ defineExpose({ focus, setText, closeMenu, isMenuOpen });
       <div v-if="notice" class="mao-composer__notice" role="status">{{ notice }}</div>
       <div class="mao-composer__toolbar">
         <PageAuthSwitcher
+          v-if="pageEnabled"
           ref="authEl"
           :level="pageAuthorization"
           @set-level="(level) => emit('setPageAuthorization', level)"

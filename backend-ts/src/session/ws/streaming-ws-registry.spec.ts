@@ -115,4 +115,57 @@ describe('StreamingWsRegistry', () => {
     await pending;
     expect(resolved).toEqual({ targetCount: 0, successCount: 0, failureCount: 0 });
   });
+
+  describe('页面操作能力声明（pageEnabled）', () => {
+    it('缺省注册按开启：绑定 embed 会话后 isEmbedPageSession 为 true', () => {
+      const socket = mockSocket('ws-1');
+      registry.register(socket, 1, 'embed');
+      registry.bindEmbedSession(10, socket);
+      expect(registry.getPageEnabled(socket)).toBe(true);
+      expect(registry.isEmbedPageSession(10)).toBe(true);
+    });
+
+    it('pageEnabled=false 注册：isEmbedPageSession 为 false，但 isEmbedSession 仍为 true', () => {
+      const socket = mockSocket('ws-1');
+      registry.register(socket, 1, 'embed', undefined, false);
+      registry.bindEmbedSession(10, socket);
+      expect(registry.getPageEnabled(socket)).toBe(false);
+      // 连接仍是 embed 会话（用于事件投递），只是页面能力关闭
+      expect(registry.isEmbedSession(10)).toBe(true);
+      expect(registry.isEmbedPageSession(10)).toBe(false);
+    });
+
+    it('连接非 OPEN 时一律收敛为 false（即使声明过开启）', () => {
+      const socket = mockSocket('ws-1');
+      registry.register(socket, 1, 'embed');
+      registry.bindEmbedSession(10, socket);
+      socket.readyState = 2; // CLOSING
+      expect(registry.isEmbedPageSession(10)).toBe(false);
+    });
+
+    it('未注册连接按开启缺省：getPageEnabled 返回 true', () => {
+      expect(registry.getPageEnabled(mockSocket('ws-unknown'))).toBe(true);
+    });
+
+    it('unregister 后能力声明随连接清理，isEmbedPageSession 回落 false', () => {
+      const socket = mockSocket('ws-1');
+      registry.register(socket, 1, 'embed');
+      registry.bindEmbedSession(10, socket);
+      expect(registry.isEmbedPageSession(10)).toBe(true);
+      registry.unregister(socket);
+      expect(registry.isEmbedPageSession(10)).toBe(false);
+      expect(registry.getPageEnabled(socket)).toBe(true);
+    });
+
+    it('重连重新声明：同一 socket 再次 register 覆盖上次的 pageEnabled', () => {
+      const socket = mockSocket('ws-1');
+      registry.register(socket, 1, 'embed', undefined, false);
+      registry.bindEmbedSession(10, socket);
+      expect(registry.isEmbedPageSession(10)).toBe(false);
+      // 重连后宿主改为开启：auth 首帧重新声明
+      registry.register(socket, 1, 'embed', undefined, true);
+      expect(registry.getPageEnabled(socket)).toBe(true);
+      expect(registry.isEmbedPageSession(10)).toBe(true);
+    });
+  });
 });

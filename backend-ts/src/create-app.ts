@@ -1565,7 +1565,10 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     sessionMap, agentRepo as never, experienceService, modelRepo as never, fileChangeRepo as never,
     sessionSvc, compactionSvc, historyLoader, orchestrator,
     promptEngine, activeContext, compactionConfig, envInfo, db, routingMcpClient, mcpSync,
-    { isEmbedSession: (sid: number) => embedPageToolRegistry.isEmbedSession(sid) },
+    {
+      isEmbedSession: (sid: number) => embedPageToolRegistry.isEmbedSession(sid),
+      isEmbedPageSession: (sid: number) => embedPageToolRegistry.isEmbedPageSession(sid),
+    },
     memoryService,
     mcpLoadModeResolver,
   );

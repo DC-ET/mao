@@ -16,6 +16,8 @@ export interface WsAuthFrame {
   type: 'auth';
   token: string;
   client: WsClientType;
+  /** 页面操作能力声明；缺省 true（旧版 SDK 不发送该字段） */
+  pageEnabled?: boolean;
 }
 
 export interface WsAuthRefreshFrame {
@@ -118,6 +120,7 @@ export type PageToolErrorCode =
   | 'closed_shadow_root'
   | 'navigation_detected'
   | 'task_cancelled'
+  | 'page_operation_disabled'
   | 'screenshot_failed'
   | 'screenshot_too_large'
   | 'invalid_arguments'

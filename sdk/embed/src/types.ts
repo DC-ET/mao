@@ -26,10 +26,25 @@ export type AuthStatus =
 
 /** 页面操作相关选项。 */
 export interface MaoChatPageOptions {
+  /**
+   * 是否允许 Agent 操作当前页面；缺省 true。
+   * false 时：Agent 不会获得 page_* 工具，SDK 不执行任何页面动作，
+   * 浮窗不展示授权/确认/日志 UI，实例页面 API 返回 page_operation_disabled。
+   * 与 initialLevel 并传时后者被忽略（禁用态无授权语义）。
+   */
+  enabled?: boolean;
   /** 初始授权级别；缺省 per_action。宿主不能借此静默授予高权限（full 会被降级），用户仍可在浮窗中调整。 */
   initialLevel?: PageAuthorizationLevel;
   /** 截图渲染器；缺省使用内置 DOM 渲染器（当前视口，排除 SDK 浮窗）。 */
   screenshotRenderer?: ScreenshotRenderer;
+}
+
+/**
+ * 页面操作总开关判定：undefined、true、缺省 page 均为开启；只有显式 false 关闭。
+ * 导出供 controller 与测试共用，避免各处重复字面量判断。
+ */
+export function isPageEnabled(options: MaoChatInitOptions): boolean {
+  return options.page?.enabled !== false;
 }
 
 export interface MaoChatCommonOptions {

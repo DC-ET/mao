@@ -10,6 +10,8 @@ interface DemoConfig {
   agentId: number;
   username: string;
   password: string;
+  /** 页面操作总开关：false 时 Agent 无 page_* 工具、浮窗无授权/确认/日志 UI；缺省 true */
+  pageEnabled?: boolean;
 }
 
 const CFG_KEY = 'mao_embed_demo_cfg';
@@ -26,6 +28,7 @@ function loadConfig(): DemoConfig {
     agentId: 1,
     username: 'admin',
     password: 'admin123',
+    pageEnabled: true,
   };
 }
 
@@ -79,7 +82,20 @@ function boot(): void {
     context: pageContext,
     theme: { primary: '#4f6ef7' },
     position: 'right',
+    // 页面操作总开关演示：勾选框切换后写回配置并刷新，验证两态行为。
+    page: { enabled: config.pageEnabled !== false },
     onEvent: (e: unknown) => console.info('[mao-embed event]', e),
+  });
+}
+
+/** 页面开关勾选框：写入 demo 配置后刷新，init 以新声明重建浮窗 */
+function bindPageToggle(): void {
+  const toggle = document.getElementById('page-enabled') as HTMLInputElement | null;
+  if (!toggle) return;
+  toggle.checked = config.pageEnabled !== false;
+  toggle.addEventListener('change', () => {
+    saveConfig({ ...config, pageEnabled: toggle.checked });
+    window.location.reload();
   });
 }
 
@@ -99,4 +115,5 @@ document.querySelectorAll<HTMLAnchorElement>('.nav a').forEach((a) => {
   });
 });
 
+bindPageToggle();
 boot();

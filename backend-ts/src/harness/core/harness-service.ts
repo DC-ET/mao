@@ -73,7 +73,11 @@ export class HarnessService {
     private readonly db?: Db | null,
     private readonly mcpClientManager?: McpClientManager | null,
     private readonly mcpSyncService?: McpSyncService | null,
-    private readonly embedSessionLookup?: { isEmbedSession(sessionId: number): boolean } | null,
+    private readonly embedSessionLookup?: {
+      isEmbedSession(sessionId: number): boolean;
+      /** embed 会话且连接声明了页面能力（缺省开启）；工具过滤的唯一口径，见 filterPageTools 调用点。 */
+      isEmbedPageSession?(sessionId: number): boolean;
+    } | null,
     private readonly memoryInjection?: { listForInjection(userId: number, projectKey: string | null, workspace: string | null): Promise<MemoryHint[]> } | null,
     /** MCP 加载模式解析（工作集 / 全量）。未注入时维持全量注入，行为与改造前一致。 */
     private readonly mcpLoadModeResolver?: McpLoadModeResolver | null,
@@ -342,8 +346,11 @@ export class HarnessService {
     context.contextAnchorMsgId = anchor.contextAnchorMsgId;
 
     let sessionTools = HarnessService.filterToolsForSession(this.toolRegistry.getAllTools(), session.projectKey, session.workspace);
-    // 页面工具只在绑定了 embed 页面连接的会话中暴露；其他会话（桌面/CLI/微信/子代理）不可见也不可调用。
-    sessionTools = HarnessService.filterPageTools(sessionTools, this.embedSessionLookup?.isEmbedSession(sessionId) === true);
+    // 页面工具只在绑定了 embed 页面连接、且该连接未关闭页面能力的会话中暴露；
+    // 其他会话（桌面/CLOUD 他端、微信、子代理）与关闭态 embed 连接均不可见也不可调用。
+    // isEmbedPageSession 为可选方法（存量注入只提供 isEmbedSession）：用可选调用防运行时抛错，
+    // 缺失/非 true 一律按关闭收敛（fail-closed），不暴露 page_* 工具。
+    sessionTools = HarnessService.filterPageTools(sessionTools, this.embedSessionLookup?.isEmbedPageSession?.(sessionId) === true);
     // 工作集工具只按模式注入：先从默认工具集中剔除，避免全量模式凭空多出两个模型可见工具。
     sessionTools = sessionTools.filter((tool) => !MCP_WORKING_SET_TOOL_NAMES.has(tool.getName()));
     const mcpWarnings: string[] = [];

@@ -15,6 +15,18 @@
 
 ---
 
+## 0.0.319 (2026-10-20)
+
+### 后端
+
+- **Embed SDK 新增页面操作总开关（连接级）**：WS 鉴权首帧新增 `pageEnabled` 声明（缺省/非布尔按 `true`，旧版 SDK 不发送该字段，行为与现状一致）；后端按连接记录该标记，`buildContext` 对声明关闭的 embed 连接过滤全部 `page_*` 工具（Agent 侧表现为「没有页面操作能力」，不浪费轮次）；`EmbedPageToolRegistry` 对关闭态连接的在途/新请求直接返回可解释错误 `page_operation_disabled`，不下发到宿主页面。连接非 OPEN/未鉴权时一律向「关闭」收敛（fail-closed）。
+
+### 前端（桌面 / Web / 安卓）
+
+- **Embed SDK 新增 `page.enabled` 初始化选项**（缺省 `true`，存量接入零改动）：传 `false` 时端到端关闭页面操作——Agent 拿不到 `page_*` 工具；SDK 不创建页面引擎（不 patch `history`、不挂窗口监听、不扫描 DOM）；浮窗不展示授权下拉、确认卡片、动作日志与目标高亮；`inspectPage()` / `capturePageScreenshot()` 抛错，`executePageAction()` 返回 `page_operation_disabled`，`getPageAuthorization()` 固定 `per_action`，`setPageAuthorization()` 为空操作；与 `initialLevel` 并传时后者被忽略。声明随 WS 连接发送、重连自动重发；新旧版本交错窗口期内行为安全（新 SDK + 旧后端：禁用态请求被 SDK 直接失败；新后端 + 旧 SDK：按开启处理）。SDK 产物版本 0.2.0 → 0.3.0。
+
+---
+
 ## 0.0.318 (2026-10-20)
 
 ### 管理后台

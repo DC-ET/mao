@@ -1,6 +1,6 @@
 import { createApp, reactive, watch, type App as VueApp } from 'vue';
 import type { MaoChatEvent, MaoChatInitOptions, PendingQuestion } from './types';
-import { resolveApiBase, resolveAssetUrl } from './types';
+import { isPageEnabled, resolveApiBase, resolveAssetUrl } from './types';
 import RootApp from './ui/RootApp.vue';
 import styleText from './ui/style.css?inline';
 import { WsClient } from './core/ws-client';
@@ -75,6 +75,8 @@ export interface UiState {
   position: 'right' | 'left';
   /** 后台配置的单文件附件大小上限（MB） */
   attachmentMaxMb: number;
+  /** 页面操作总开关（init page.enabled，缺省 true）：false 时无 PageEngine、页面 UI 全部隐藏 */
+  pageEnabled: boolean;
   /** 页面操作授权级别（默认 per_action） */
   pageAuthorization: PageAuthorizationLevel;
   /** 当前是否有正在进行的页面任务 */
@@ -108,6 +110,8 @@ export interface EmbedSessionListItem {
 }
 
 export function createUiState(options: MaoChatInitOptions): UiState {
+  // 禁用态无授权语义：pageAuthorization 固定 per_action，不读 initialLevel。
+  const pageEnabled = isPageEnabled(options);
   return reactive({
     identityVersion: 0,
     launcherVisible: options.launcher?.visible !== false,
@@ -126,7 +130,8 @@ export function createUiState(options: MaoChatInitOptions): UiState {
     quotedSelection: null,
     position: options.position ?? 'right',
     attachmentMaxMb: DEFAULT_MAX_ATTACHMENT_MB,
-    pageAuthorization: options.page?.initialLevel ?? 'per_action',
+    pageEnabled,
+    pageAuthorization: pageEnabled ? (options.page?.initialLevel ?? 'per_action') : 'per_action',
     pageTaskActive: false,
     pageConfirm: null,
     pageLogs: [],
@@ -237,8 +242,9 @@ export class EmbedController {
   private readonly tabs: TabsCoordinator;
   private readonly contextCollector: ContextCollector;
   private selectionTracker: SelectionTracker | null = null;
-  /** 页面能力引擎：快照 / 动作 / 授权 / 截图，与 controller 共用同一页面实例 */
-  readonly pageEngine: PageEngine;
+  /** 页面能力引擎：快照 / 动作 / 授权 / 截图，与 controller 共用同一页面实例。
+   *  init page.enabled=false 时为 null：不创建即不 monkey-patch history、不挂 window 监听。 */
+  readonly pageEngine: PageEngine | null;
   private destroyed = false;
   private booted = false;
   private identity: string | null = null;
@@ -313,6 +319,8 @@ export class EmbedController {
       getExpiresAt: (token) => this.tokens.getExpiresAt(token),
       beforeSend: options.auth ? async () => { await this.tokens.get(); } : undefined,
       identity: () => this.identity,
+      // 连接级页面能力声明：auth 首帧随连接发送，重连自动重发。
+      getPageEnabled: () => this.ui.pageEnabled,
       onAuthenticated: (isReconnect) => this.onAuthenticated(isReconnect),
       onAuthFailed: () => {
         if (options.auth) {
@@ -342,7 +350,9 @@ export class EmbedController {
     this.selectionTracker = new SelectionTracker((sel) => {
       this.ui.quotedSelection = sel;
     }, host);
-    this.pageEngine = new PageEngine({
+    // 禁用态不创建 PageEngine：其构造即 monkey-patch history 并挂 window 监听，
+    // 「创建但禁用」也会动宿主页面；所有 this.pageEngine 调用点均已做空守卫。
+    this.pageEngine = this.ui.pageEnabled ? new PageEngine({
       host,
       serverUrl: options.serverUrl,
       agentId: options.agentId,
@@ -366,8 +376,8 @@ export class EmbedController {
       onTaskStateChange: (active) => {
         this.ui.pageTaskActive = active;
       },
-    });
-    if (options.page?.initialLevel) this.pageEngine.setInitialLevel(options.page.initialLevel);
+    }) : null;
+    if (this.pageEngine && options.page?.initialLevel) this.pageEngine.setInitialLevel(options.page.initialLevel);
     // ws → ui：连接指示灯/输入禁用以"已鉴权"为准（socket OPEN 但未鉴权时业务帧不可用）
     watch(this.ws.authenticated, (v) => {
       this.ui.connected = v;
@@ -384,8 +394,8 @@ export class EmbedController {
     watch(this.store.phase, (v) => {
       this.ui.phase = v;
       const sid = this.store.sessionId();
-      // 任务终态：task 授权随任务结束失效，页面任务标记清除
-      if (v === 'COMPLETED' || v === 'FAILED' || v === 'CANCELLED') this.pageEngine.endTask();
+        // 任务终态：task 授权随任务结束失效，页面任务标记清除
+        if (v === 'COMPLETED' || v === 'FAILED' || v === 'CANCELLED') this.pageEngine?.endTask();
       // phase 事件以 store 为准透传给宿主：与 UI 显示的状态严格一致
       // （stale CANCELLING、cancel 抑制等过滤已在 store 内完成）
       if (v != null && sid != null) this.emitEvent({ type: 'phase', phase: v, sessionId: sid });
@@ -447,7 +457,7 @@ export class EmbedController {
     this.ui.agentAvatarUrl = null;
     this.ui.suggestedQuestions = [];
     // 身份切换：取消页面任务并清空页面授权/日志，避免跨身份继承
-    this.pageEngine.cancel();
+    this.pageEngine?.cancel();
     this.ui.pageLogs = [];
     this.ui.pageConfirm = null;
     this.ui.pageHighlight = null;
@@ -701,7 +711,7 @@ export class EmbedController {
       }
       case 'page_tool_cancel': {
         // 该会话的页面执行端已被其他标签页/连接接管：中止在途动作，避免与新连接重复执行 DOM 副作用
-        if (msg.sessionId == null || msg.sessionId === this.store.sessionId()) this.pageEngine.abortInFlight();
+        if (msg.sessionId == null || msg.sessionId === this.store.sessionId()) this.pageEngine?.abortInFlight();
         return;
       }
       default:
@@ -785,7 +795,7 @@ export class EmbedController {
       this.clearPendingSaves();
       this.submittedQuestionIds.clear();
       // 新会话：页面任务与 task 授权立即失效，页面日志清空
-      this.pageEngine.cancel();
+      this.pageEngine?.cancel();
       this.ui.pageLogs = [];
       this.ui.pageConfirm = null;
       this.store.reset();
@@ -841,7 +851,7 @@ export class EmbedController {
       if (previous != null) this.ws.unsubscribe(previous);
       this.clearPendingSaves();
       this.submittedQuestionIds.clear();
-      this.pageEngine.cancel();
+      this.pageEngine?.cancel();
       this.ui.pageLogs = [];
       this.ui.pageConfirm = null;
       this.store.reset();
@@ -931,7 +941,7 @@ export class EmbedController {
   destroy() {
     if (this.destroyed) return;
     this.destroyed = true;
-    this.pageEngine.destroy();
+    this.pageEngine?.destroy();
     this.tokens.destroy();
     this.store.reset();
     this.clearPendingSaves();
@@ -999,7 +1009,7 @@ export class EmbedController {
 
   async send(content: string, attachments: PendingAttachment[] = []) {
     // 新消息代表新一轮任务：清掉上一轮 stop() 留下的取消阻断态。
-    this.pageEngine.prepareNewTask();
+    this.pageEngine?.prepareNewTask();
     const version = this.identityVersion;
     if (this.options.auth) {
       try { await this.tokens.get(); } catch { return; }
@@ -1111,7 +1121,7 @@ export class EmbedController {
     const sid = this.store.sessionId();
     if (sid == null) return;
     // 用户停止：先取消本地页面任务与等待中的确认，再通知服务端
-    this.pageEngine.cancel();
+    this.pageEngine?.cancel();
     this.ui.pageConfirm = null;
     // 先 await 成功才抑制：失败时不能让本地进入抑制态（否则服务端续推的内容被吞）
     const ok = await this.ws.cancel(sid);
@@ -1153,16 +1163,16 @@ export class EmbedController {
 
   setPageAuthorization(level: PageAuthorizationLevel): void {
     // 宿主公开 API：full 降级（用户需在浮窗内显式授权）
-    this.pageEngine.setHostLevel(level, this.store.sessionId());
+    this.pageEngine?.setHostLevel(level, this.store.sessionId());
   }
 
   /** 浮窗内用户点击授权级别：允许授予并持久化 full。 */
   applyUserPageAuthorization(level: PageAuthorizationLevel): void {
-    this.pageEngine.setLevel(level, this.store.sessionId());
+    this.pageEngine?.setLevel(level, this.store.sessionId());
   }
 
   resolvePageConfirm(id: string, approved: boolean): void {
-    this.pageEngine.resolveConfirmation(id, approved);
+    this.pageEngine?.resolveConfirmation(id, approved);
   }
 
   /** 后端 page_tool_request → 本地执行 → page_tool_result 回传。requestId 幂等。 */
@@ -1172,6 +1182,15 @@ export class EmbedController {
     const requestId = data?.requestId;
     const tool = data?.tool;
     if (!requestId || !tool || sessionId == null || !isPageToolName(tool)) return;
+    // 禁用态（init page.enabled=false）：无 PageEngine，立即回传失败。
+    // 置于缓存/inFlight 判定之前：禁用态不存在幂等缓存与并发执行问题；
+    // 覆盖新 SDK + 旧后端（照常注入并下发）的窗口期，不等后端超时。
+    if (!this.pageEngine) {
+      await this.ws.sendPageToolResult(sessionId, requestId, {
+        success: false, error: { code: 'page_operation_disabled', message: '宿主已关闭页面操作能力' },
+      });
+      return;
+    }
     const cached = this.pageToolResults.get(requestId);
     if (cached) {
       await this.ws.sendPageToolResult(sessionId, requestId, cached);
