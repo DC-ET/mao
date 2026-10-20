@@ -121,8 +121,13 @@ test.describe('管理后台定时任务', () => {
       cronExpression: '0 0 9 * * ?',
       once: false
     })
-    // 只提交这 4 个字段，不携带 status / user / agent 等
-    expect(Object.keys(putBody ?? {}).sort()).toEqual(['cronExpression', 'name', 'once', 'prompt'])
+    // 重试与错过补偿随表单整包提交（任务未配时回落表单默认值），不携带 status / user / agent 等
+    expect(putBody).toMatchObject({
+      retryMax: 2,
+      retryIntervalMinutes: 5,
+      missedPolicy: 'RUN_ONCE'
+    })
+    expect(Object.keys(putBody ?? {}).sort()).toEqual(['cronExpression', 'missedPolicy', 'name', 'once', 'prompt', 'retryIntervalMinutes', 'retryMax'])
     await expect(page.locator('.el-message--success')).toContainText('已保存')
   })
 

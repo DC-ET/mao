@@ -208,6 +208,19 @@ SQL
   echo "  已刷新业务时间戳并清理分组别名（分析页窗口有数据、重命名测试可重放）"
 fi
 
+# 集成配置 E2E 依赖：飞书密钥与 OSS region 需有值（隔离环境无真实凭证，
+# 种子提供「已设置」态与可往返的 region；测试连接接口由用例自行 mock）。
+# 放在 session 守卫之外：老 e2e 库也能补上；ON DUPLICATE 保证每次 setup 重置，
+# 避免上次运行中途失败留下的脏值影响后续断言。
+MYSQL_E2E <<'SQL'
+INSERT INTO system_setting (setting_key, value, category, description, editable, is_secret) VALUES
+ ('auth.feishu.appId', 'e2e-app-id', '集成配置', '飞书应用 App ID', 1, 0),
+ ('auth.feishu.appSecret', 'e2e-app-secret', '集成配置', '飞书应用 App Secret', 1, 1),
+ ('oss.region', 'oss-cn-e2e', '集成配置', 'OSS Region', 1, 0)
+ON DUPLICATE KEY UPDATE value = VALUES(value);
+SQL
+echo "  已写入集成配置种子（飞书 appId/appSecret、oss.region）"
+
 echo "==> 生成 backend-ts/.env.e2e"
 if [[ ! -f "$ROOT_DIR/backend-ts/.env.e2e" ]] || ! grep -q "MAO_RUNTIME_DIR" "$ROOT_DIR/backend-ts/.env.e2e"; then
   cat > "$ROOT_DIR/backend-ts/.env.e2e" <<EOF

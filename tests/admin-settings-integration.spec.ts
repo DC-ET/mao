@@ -1,10 +1,10 @@
 import { test, expect } from '@playwright/test'
 
 /**
- * UI 验证（针对线上已部署版本，通过本地 vite dev server 代理到生产 API）：
+ * UI 验证（隔离 e2e 环境，经本地 vite 代理指向 :9180 隔离后端）：
  * 1. 登录后进入系统设置页，出现"集成配置"分区
- * 2. 五张卡片渲染、secret 显示掩码输入框
- * 3. 飞书"测试连接"真实调用（凭证已从环境变量导入 DB，应成功）
+ * 2. 五张卡片渲染、secret 显示掩码输入框（飞书密钥由 e2e-setup.sh 种子提供）
+ * 3. 飞书"测试连接"：隔离环境无真实凭证，mock 接口验证 UI 成功路径
  * 4. batch 保存往返：改动→保存→回读→还原
  */
 
@@ -41,7 +41,10 @@ test('settings integration panel renders with masked secrets and feishu test pas
   await expect(appSecretInput).toHaveCount(1)
   await expect(appSecretInput).toHaveAttribute('placeholder', /已设置/)
 
-  // 4. 飞书测试连接（真实 API，导入的凭证应有效）
+  // 4. 飞书测试连接：隔离环境无真实飞书凭证，mock 接口验证 UI 成功路径
+  await page.route('**/api/v1/system-settings/test/feishu', route =>
+    route.fulfill({ json: { code: 0, message: 'ok', data: { ok: true } } })
+  )
   const feishuCard = page.locator('.group-card', { hasText: '飞书 OAuth 登录' })
   await feishuCard.locator('button', { hasText: '测试连接' }).click()
   await expect(page.locator('.el-message', { hasText: '连接成功' })).toBeVisible({ timeout: 15_000 })

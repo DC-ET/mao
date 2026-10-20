@@ -86,6 +86,18 @@ async function mockLoggedInDesktopApi(page: Page, onSearch?: (keyword: string) =
       data = { groups: [] }
     } else if (pathname.endsWith('/agents') || pathname.endsWith('/models/default')) {
       data = pathname.endsWith('/models/default') ? { id: 1, name: 'Default Model' } : []
+    } else if (/\/sessions\/\d+\/messages$/.test(pathname)) {
+      // 定位流程：搜索命中跳转后，任务页按 aroundMessageId 拉取命中消息所在轮次（useMessageLocate）
+      const around = url.searchParams.get('aroundMessageId')
+      const sessionId = Number(pathname.match(/\/sessions\/(\d+)\/messages$/)?.[1] ?? 0)
+      data = around
+        ? {
+            messages: [{ id: Number(around), sessionId, role: 'USER', content: '……帮我看看登录页面为什么报 500 错误……', createdAt: '2026-08-07T10:30' }],
+            hasMore: false,
+            nextBeforeMessageId: null,
+            compactionEvents: [],
+          }
+        : {}
     } else if (pathname.includes('/sessions/')) {
       // /sessions/{id}、/sessions/{id}/side-tasks、/sessions/{id}/subagents 等
       data = {}
@@ -540,16 +552,20 @@ test.describe('Session Search', () => {
     await page.goto('/')
     await page.waitForSelector('.top-nav', { timeout: 15_000 })
     await page.locator('.search-toggle').first().click()
-    await expect(page.locator('.session-search-dialog input')).toBeVisible({ timeout: 5_000 })
+    await expect(page.locator('.session-search-dialog .search-input input')).toBeVisible({ timeout: 5_000 })
 
-    await page.locator('.session-search-dialog input').fill('登录')
+    await page.locator('.session-search-dialog .search-input input').fill('登录')
     await expect.poll(() => searchKeyword, { timeout: 8_000 }).toBe('登录')
     await expect(page.locator('.search-result-item')).toHaveCount(2)
     await expect(page.locator('.snippet-hit').first()).toContainText('登录')
 
     await page.locator('.search-result-item').first().click()
     await expect(page).toHaveURL(/\/tasks\/11(\?|$)/, { timeout: 8_000 })
-    await expect(page).toHaveURL(/locateMessageId=1100/)
+    // locateMessageId 是一次性信号：useMessageLocate 消费后即从 URL 清除，
+    // 断言落到效果——命中的那条消息高亮闪烁
+    const flashed = page.locator('.message-bubble.message-locate-flash')
+    await expect(flashed).toBeVisible({ timeout: 8_000 })
+    await expect(flashed).toContainText('登录')
   })
 
   test('should jump to parent session and open side task tab', async ({ page }) => {
@@ -558,7 +574,7 @@ test.describe('Session Search', () => {
     await page.goto('/')
     await page.waitForSelector('.top-nav', { timeout: 15_000 })
     await page.locator('.search-toggle').first().click()
-    await page.locator('.session-search-dialog input').fill('登录')
+    await page.locator('.session-search-dialog .search-input input').fill('登录')
     await expect(page.locator('.search-result-item')).toHaveCount(2)
 
     // 第二个结果为边路会话（parentSessionId=3）→ 跳父会话并打开边路 Tab

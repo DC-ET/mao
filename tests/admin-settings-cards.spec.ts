@@ -4,7 +4,7 @@ import { test, expect } from '@playwright/test'
  * 系统设置页卡片化改版 UI 验证（经本地 vite 代理指向后端）：
  * 1. 普通分类渲染为卡片表单（与集成配置面板同风格）
  * 2. 按卡片批量保存往返：改动→保存→API 回读→还原→回读
- * 3. 只读分类（运行环境）无保存按钮、纯展示
+ * 3. 运行环境分类：只读字段纯展示 + runtime.mode 可编辑（带保存按钮）
  * 线上管理员密码通过 MAO_ADMIN_PASS 注入，不入库不入 git。
  */
 
@@ -35,10 +35,11 @@ test('plain categories render as card forms', async ({ page }) => {
   const codeCard = page.locator('.group-card', { hasText: '代码' })
   await expect(codeCard.locator('.el-select')).toHaveCount(1)
 
-  // 只读分类：无保存按钮，纯文本展示
+  // 运行环境：workspace.root/skills.dir 只读展示，runtime.mode 可编辑（V160 起带保存按钮）
   const envCard = page.locator('.group-card', { hasText: '运行环境' })
-  await expect(envCard.locator('button', { hasText: '保存' })).toHaveCount(0)
+  await expect(envCard.locator('button', { hasText: '保存' })).toHaveCount(1)
   await expect(envCard.locator('.field-readonly')).toHaveCount(2)
+  await expect(envCard.locator('.el-select')).toHaveCount(1)
 })
 
 test('category card batch save round-trip', async ({ page }) => {

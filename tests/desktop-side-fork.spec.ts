@@ -210,8 +210,8 @@ test.describe('Desktop - side fork (任意深度)', () => {
     await page.goto('/')
     await page.waitForSelector('.top-nav', { timeout: 15_000 })
     await page.locator('.search-toggle').first().click()
-    await expect(page.locator('.session-search-dialog input')).toBeVisible({ timeout: 5_000 })
-    await page.locator('.session-search-dialog input').fill('关键词')
+    await expect(page.locator('.session-search-dialog .search-input input')).toBeVisible({ timeout: 5_000 })
+    await page.locator('.session-search-dialog .search-input input').fill('关键词')
     await expect(page.locator('.search-result-item')).toHaveCount(1)
     await page.locator('.search-result-item').first().click()
     // 跳根主会话 1（若误用 parentSessionId 会落到 /tasks/20）

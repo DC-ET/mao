@@ -1,9 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 import { handleSlash, type ReplOptions } from '../src/repl/repl';
 import { PromptQueue } from '../src/ui/prompt-queue';
+import { copyToClipboard } from '../src/ui/clipboard';
 import type { SessionRunner } from '../src/session/session-runner';
 import type { InkTuiRenderer } from '../src/tui/ink-renderer';
 import type { TuiHandle } from '../src/tui/types';
+
+// 剪贴板命令因平台而异（pbcopy/wl-copy/xclip/xsel），mock 掉让用例与运行环境无关。
+vi.mock('../src/ui/clipboard', () => ({
+  copyToClipboard: vi.fn(async () => false),
+}));
 
 interface Io {
   hints: string[];
@@ -228,8 +234,17 @@ describe('handleSlash /copy', () => {
   });
 
   it('falls back to printing the reply when no clipboard command exists', async () => {
+    vi.mocked(copyToClipboard).mockResolvedValue(false)
     const t = setup({ lastAssistant: '上一回合回复正文' });
     await t.run('/copy');
     expect(allOutput(t.io)).toContain('上一回合回复正文');
+  });
+
+  it('hints success when the clipboard command works', async () => {
+    vi.mocked(copyToClipboard).mockResolvedValue(true)
+    const t = setup({ lastAssistant: '上一回合回复正文' });
+    await t.run('/copy');
+    expect(t.io.hints[0]).toContain('已复制');
+    expect(allOutput(t.io)).not.toContain('上一回合回复正文');
   });
 });
