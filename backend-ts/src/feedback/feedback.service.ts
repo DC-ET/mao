@@ -126,24 +126,38 @@ export class FeedbackService {
   }
 
   /**
-   * 会话级点踩 toggle（飞书进度卡点踩按钮）：取会话归属用户与最后一条 ASSISTANT 消息，
-   * 有记录则删除、无记录则插入。返回 null 表示无可反馈的任务结果（会话不存在/消息被清理）。
+   * 点踩 toggle（飞书进度卡点踩按钮）：有记录则删除、无记录则插入。返回 null 表示无可反馈的任务结果。
    * 状态以 message_feedback 表为准，进程重启后再次点击结果一致。
    * 判定不区分来源：同一条消息只保留一条反馈记录（桌面端与飞书共用 `uk_message(message_id)`），
    * 任一侧的新反馈会覆盖另一侧的旧记录——与桌面端「已点踩可重新选择原因」的覆盖语义一致。
+   *
+   * @param messageId 被点卡片对应的 ASSISTANT 消息（快照表解析）。显式传入时跳过「取会话最新消息」，
+   *                  并用 findAssistantMessageOwner 校验消息归属（role=ASSISTANT、未删、属于该会话）防串会话；
+   *                  不传时按会话最后一条 ASSISTANT 消息（桌面链路与存量飞书卡的原有行为）。
    */
-  async toggleSessionDislike(userId: number, sessionId: number, source: FeedbackSource = 'desktop'): Promise<{ disliked: boolean } | null> {
-    const owner = await this.sessionOwnerLookup(sessionId);
-    if (owner == null) return null;
-    const messageId = await this.messageLookup.findLatestAssistantMessageId(sessionId);
-    if (messageId == null) return null;
-    const exists = await this.repository.existsByMessageId(messageId);
+  async toggleSessionDislike(userId: number, sessionId: number, source: FeedbackSource = 'desktop', messageId?: number): Promise<{ disliked: boolean } | null> {
+    let targetId: number;
+    let owner: number;
+    if (messageId != null) {
+      const ownership = await this.messageLookup.findAssistantMessageOwner(messageId);
+      if (ownership == null || ownership.sessionId !== sessionId) return null;
+      targetId = messageId;
+      owner = ownership.userId;
+    } else {
+      const sessionOwner = await this.sessionOwnerLookup(sessionId);
+      if (sessionOwner == null) return null;
+      const latestId = await this.messageLookup.findLatestAssistantMessageId(sessionId);
+      if (latestId == null) return null;
+      targetId = latestId;
+      owner = sessionOwner;
+    }
+    const exists = await this.repository.existsByMessageId(targetId);
     if (exists) {
-      await this.repository.deleteByMessageId(messageId);
+      await this.repository.deleteByMessageId(targetId);
       return { disliked: false };
     }
     const agentId = await this.sessionAgentLookup(sessionId);
-    await this.repository.upsert(messageId, sessionId, owner, agentId, FEISHU_DISLIKE_REASON, source);
+    await this.repository.upsert(targetId, sessionId, owner, agentId, FEISHU_DISLIKE_REASON, source);
     return { disliked: true };
   }
 

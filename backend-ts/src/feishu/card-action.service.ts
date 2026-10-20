@@ -84,9 +84,11 @@ export class FeishuCardActionService {
     cancelRunning: (sessionId: number) => boolean | Promise<boolean>;
     /**
      * 完成卡「点踩」toggle（飞书）：写库/删库 message_feedback 记录，并同步进度卡内存点踩态。
-     * 返回 null 表示未找到可反馈的任务结果（会话不存在或最后一条 ASSISTANT 消息已不存在）。
+     * cardMessageId 为被点卡片身份（事件 context.open_message_id，null 表示事件未携带）；
+     * 装配层据此把反馈落到该卡对应的消息、点踩态按卡隔离。
+     * 返回 null 表示未找到可反馈的任务结果（会话不存在或该卡对应消息已不存在）。
      */
-    toggleDislike?: (sessionId: number) => Promise<{ disliked: boolean } | null>;
+    toggleDislike?: (sessionId: number, cardMessageId: string | null) => Promise<{ disliked: boolean } | null>;
     /**
      * 失败卡「重试」：基于会话历史续跑（不插入新用户消息），并 PATCH 原进度卡片。
      * cardMessageId 取自回调事件的 open_message_id（点击的那张失败卡）。
@@ -108,6 +110,16 @@ export class FeishuCardActionService {
     };
     /** 按当前表单状态渲染进度卡；没有进度对象时调用方改用一张不含表单的卡。 */
     renderProgressCard?: (sessionId: number) => Record<string, unknown> | null;
+    /**
+     * 按被点卡片渲染（一级降级）：内存里该卡的句柄快照，保真度最高（含提问表单等运行态细节）。
+     * 未绑定过该卡（如进程重启后的旧卡）返回 null。
+     */
+    renderProgressCardByCard?: (cardMessageId: string) => Record<string, unknown> | null;
+    /**
+     * 按持久化快照重建该卡（二级降级）：查快照行 → 行缺失返回 null；否则按行内轮次/耗时/正文重建。
+     * sender 必须传被点卡片原发送者（回调鉴权已保证点击者即原发送者），否则点踩按钮不渲染。
+     */
+    rebuildCardFromSnapshot?: (sessionId: number, cardMessageId: string, disliked: boolean, sender: string) => Promise<Record<string, unknown> | null>;
     /** 给群内其他人补一次 PATCH。不得在回调返回前 await。 */
     refreshProgress?: (sessionId: number) => void | Promise<unknown>;
     /** 唤醒挂起的 ask_user_questions。返回 false 表示这轮提问已经不在了。 */
@@ -170,7 +182,9 @@ export class FeishuCardActionService {
   /**
    * 完成卡「点踩」toggle：鉴权同取消任务（仅原发送者可点）。
    * 回调必须带回整张新卡片（飞书 3 秒约束，否则客户端还原为点击前旧卡）。
-   * 卡片复用当前进度快照重建，保住完成卡的轮次、耗时与任务正文，只把点踩按钮切到 toggle 后的态。
+   * 按卡归属：卡片身份取事件 context.open_message_id（与 retry 同款），反馈落在该卡对应的消息上，
+   * 重绘也只重绘该卡——旧完成卡与新任务互不影响。三级降级：① 内存按卡句柄 → ② 持久化快照重建 →
+   * ③ 会话级兜底（仅存量卡，补 warn 日志）。任何一级都不得返回 round=0 的空壳卡，除非确无快照。
    * 与方案一致：群内其他人只更新点击者视图，不做额外 PATCH。
    */
   private async handleProgressDislike(event: FeishuCardActionEvent, action: FeishuProgressCardActionValue): Promise<FeishuCardActionResponse | undefined> {
@@ -180,17 +194,31 @@ export class FeishuCardActionService {
     }
     const toggleDislike = this.options.toggleDislike;
     if (toggleDislike == null) return { toast: { type: 'info', content: '点踩功能不可用' } };
-    const result = await toggleDislike(action.sessionId);
+    // 被点卡片 ID：回调事件始终携带（队列卡与 retry 路径同款读法）；为空时退化为会话级行为。
+    const clickedCardId = event.context?.open_message_id ?? event.open_message_id ?? null;
+    const result = await toggleDislike(action.sessionId, clickedCardId);
     if (result == null) {
       return { toast: { type: 'info', content: '未找到可反馈的任务结果' } };
     }
-    // 先落 toggle 态，再渲染快照：renderCurrent 会带上新的按钮文案/颜色。
-    // 快照缺失（进程重启后内存无进度对象）时退回一张完成态空卡，绝不能渲染成 RUNNING。
-    const card = this.options.renderProgressCard?.(action.sessionId)
-      ?? buildFeishuProgressCard(
-        'COMPLETED', 0, '', [], { sessionId: action.sessionId, sender: action.sender },
-        undefined, await this.resolveSessionDetailUrl(action.sessionId), undefined, result.disliked,
-      );
+    let card: Record<string, unknown> | null = null;
+    if (clickedCardId != null) {
+      // ① 内存按卡句柄：保真度最高；未命中（进程重启后的旧卡）落 ②
+      card = this.options.renderProgressCardByCard?.(clickedCardId) ?? null;
+      // ② 持久化快照重建：正文/轮次/耗时与该卡终态一致，按钮按 toggle 后状态渲染
+      card ??= (await this.options.rebuildCardFromSnapshot?.(action.sessionId, clickedCardId, result.disliked, action.sender)) ?? null;
+    }
+    if (card == null) {
+      // ③ 兜底：存量卡（改造前发出，无快照行）或事件缺卡片身份。按 today 行为走会话级，
+      // warn 日志便于线上发现（当前兜底路径完全静默，是问题 A 长期未暴露的原因之一）。
+      if (clickedCardId != null) {
+        console.warn(`飞书点踩无快照可重绘, cardMessageId=${clickedCardId}, sessionId=${action.sessionId}`);
+      }
+      card = this.options.renderProgressCard?.(action.sessionId)
+        ?? buildFeishuProgressCard(
+          'COMPLETED', 0, '', [], { sessionId: action.sessionId, sender: action.sender },
+          undefined, await this.resolveSessionDetailUrl(action.sessionId), undefined, result.disliked,
+        );
+    }
     return {
       toast: { type: result.disliked ? 'success' : 'info', content: result.disliked ? '已标记不满意' : '已取消点踩' },
       card: { type: 'raw', data: card },

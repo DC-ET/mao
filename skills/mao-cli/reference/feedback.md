@@ -20,6 +20,8 @@
 
 **飞书专属原因 `NO_REASON`**：飞书进度卡点踩不弹原因选项，固定写入 `NO_REASON`，后台展示为「未选择原因（飞书）」。服务端放行该值，桌面端原因选项列表不含它。
 
+**飞书点踩按卡归属**：飞书点踩记录落在**被点那张完成卡对应的** ASSISTANT 消息上（不再固定取会话最后一条）——卡片身份取自回调事件的 `open_message_id`，经 `feishu_card_snapshot` 快照表解析到该卡终态时刻的最后一条 ASSISTANT 消息；同一张卡重复点击即 toggle 该消息的记录，点旧卡不影响最新消息的反馈记录与其它卡片。卡片重绘按「内存按卡句柄 → 持久化快照重建 → 会话级兜底」三级降级，兜底仅命中改造前发出的存量卡（无快照行）。被点卡片对应的消息已被清理时，与桌面端口径一致返回「未找到可反馈的任务结果」。桌面/Web/安卓端点踩链路（按 messageId）不变。
+
 ### 管理端（需 `feedback:read`，默认仅系统管理员）
 
 | 方法 | 路径 | 说明 |
@@ -42,6 +44,8 @@
 ## 数据表
 
 `message_feedback`（V123 迁移，V125 加 `source` 列，V148 加处理态四列）：`message_id` 唯一键，冗余 `session_id/user_id/agent_id` 便于统计；`source` 标识点踩来源（`desktop` / `feishu`）；`status`（`PENDING` / `CONVERTED` / `DISMISSED`，后两者为终态；`CONVERTED` 是已下线的转经验功能留下的存量状态）、`handled_by`、`handled_at`、`experience_id` 记录处理结果，存量行由列默认值回填为 `PENDING`。
+
+`feishu_card_snapshot`（V161 迁移）：飞书完成卡终态快照，一行一张 COMPLETED 卡（`card_message_id` 唯一），记录该卡对应的 ASSISTANT `message_id` 与终态 `round` / `elapsed_ms` / `content`（与卡片同口径）。服务于飞书点踩的按卡归属与快照重建：进程重启或点旧完成卡时据此重绘完整卡片；无快照行的存量卡点击走会话级兜底。
 
 ## 示例
 

@@ -17,7 +17,7 @@ function makeService(overrides: {
   interrupt?: (sessionId: number) => void;
   interruptAndDrain?: (sessionId: number) => void;
   cancelRunning?: (sessionId: number) => boolean;
-  toggleDislike?: (sessionId: number) => Promise<{ disliked: boolean } | null>;
+  toggleDislike?: (sessionId: number, cardMessageId: string | null) => Promise<{ disliked: boolean } | null>;
   retryFailed?: (sessionId: number, cardMessageId: string) => Promise<
     | { ok: true }
     | { ok: false; reason: 'BUSY' | 'NOT_FAILED' | 'NO_PROGRESS' }
@@ -26,6 +26,8 @@ function makeService(overrides: {
   sessionDetailUrl?: (sessionId: number) => Promise<string | undefined> | string | undefined;
   askForms?: FeishuAskFormStore;
   renderProgressCard?: (sessionId: number) => Record<string, unknown> | null;
+  renderProgressCardByCard?: (cardMessageId: string) => Record<string, unknown> | null;
+  rebuildCardFromSnapshot?: (sessionId: number, cardMessageId: string, disliked: boolean, sender: string) => Promise<Record<string, unknown> | null>;
   refreshProgress?: (sessionId: number) => void | Promise<unknown>;
   completeAsk?: (sessionId: number, requestId: string, resultJson: string) => boolean;
   notifyAskAnswered?: (sessionId: number, requestId: string) => void;
@@ -47,6 +49,8 @@ function makeService(overrides: {
     ...(overrides.sessionDetailUrl != null ? { sessionDetailUrl: overrides.sessionDetailUrl } : {}),
     ...(overrides.askForms != null ? { askForms: overrides.askForms } : {}),
     ...(overrides.renderProgressCard != null ? { renderProgressCard: overrides.renderProgressCard } : {}),
+    ...(overrides.renderProgressCardByCard != null ? { renderProgressCardByCard: overrides.renderProgressCardByCard } : {}),
+    ...(overrides.rebuildCardFromSnapshot != null ? { rebuildCardFromSnapshot: overrides.rebuildCardFromSnapshot } : {}),
     ...(overrides.refreshProgress != null ? { refreshProgress: overrides.refreshProgress } : {}),
     ...(overrides.completeAsk != null ? { completeAsk: overrides.completeAsk } : {}),
     ...(overrides.notifyAskAnswered != null ? { notifyAskAnswered: overrides.notifyAskAnswered } : {}),
@@ -381,7 +385,8 @@ describe('FeishuCardActionService 完成卡点踩', () => {
       sessionDetailUrl: () => 'https://mao.example.com/tasks/7',
     });
     const res = await service.handle(makeEvent(dislikeValue), '');
-    expect(toggleDislike).toHaveBeenCalledWith(7);
+    // 卡片身份来自事件 context.open_message_id（与 retry 同款读法）
+    expect(toggleDislike).toHaveBeenCalledWith(7, 'cm_1');
     expect(res?.toast).toEqual({ type: 'success', content: '已标记不满意' });
     const json = JSON.stringify(res);
     // 回调必须带回整张完成卡：轮次、耗时、正文都不能丢（用户正是要评价这段结果）
@@ -433,6 +438,79 @@ describe('FeishuCardActionService 完成卡点踩', () => {
     expect(json).toContain('👎 已点踩 · 再点取消');
   });
 
+  it('旧卡点击只走按卡通道：toggle 带 cardMessageId，卡来自快照重建，不触达会话级渲染', async () => {
+    // 问题 B：点非最新旧卡时，反馈必须落在旧卡对应消息、卡片按旧卡快照重绘，
+    // 绝不能走会话级（会拿到最新任务的句柄，把旧卡重绘成最新卡内容）。
+    const toggleDislike = vi.fn(async () => ({ disliked: true }));
+    const renderProgressCard = vi.fn(() => buildFeishuProgressCard('COMPLETED', 99, '最新任务的回复', [], { sessionId: 7, sender: 'ou_1' }));
+    const rebuildCardFromSnapshot = vi.fn(async () => buildFeishuProgressCard(
+      'COMPLETED', 3, '旧卡对应的回复', [], { sessionId: 7, sender: 'ou_1' }, 12_000, undefined, undefined, true,
+    ));
+    const service = makeService({
+      toggleDislike, renderProgressCard, rebuildCardFromSnapshot,
+    });
+    const res = await service.handle(makeEvent(dislikeValue, 'ou_1', 'cm_old'), '');
+    expect(toggleDislike).toHaveBeenCalledWith(7, 'cm_old');
+    expect(rebuildCardFromSnapshot).toHaveBeenCalledWith(7, 'cm_old', true, 'ou_1');
+    expect(renderProgressCard).not.toHaveBeenCalled();
+    const json = JSON.stringify(res);
+    expect(json).toContain('旧卡对应的回复');
+    expect(json).toContain('共 3 轮 · 耗时 12 秒');
+    expect(json).not.toContain('最新任务的回复');
+    expect(json).not.toContain('共 99 轮');
+  });
+
+  it('内存按卡句柄优先于快照重建', async () => {
+    const inMemory = buildFeishuProgressCard('COMPLETED', 8, '内存快照正文', [], { sessionId: 7, sender: 'ou_1' }, 506_000);
+    const rebuildCardFromSnapshot = vi.fn(async () => buildFeishuProgressCard('COMPLETED', 0, '快照重建正文', [], { sessionId: 7, sender: 'ou_1' }));
+    const service = makeService({
+      toggleDislike: async () => ({ disliked: true }),
+      renderProgressCardByCard: () => inMemory,
+      rebuildCardFromSnapshot,
+    });
+    const res = await service.handle(makeEvent(dislikeValue, 'ou_1', 'cm_live'), '');
+    expect(rebuildCardFromSnapshot).not.toHaveBeenCalled();
+    const json = JSON.stringify(res);
+    expect(json).toContain('内存快照正文');
+    expect(json).toContain('共 8 轮 · 耗时 8 分 26 秒');
+    expect(json).not.toContain('快照重建正文');
+  });
+
+  it('按卡两级都未命中时走会话级兜底并打 warn（存量卡）', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const renderProgressCard = vi.fn(() => buildFeishuProgressCard('COMPLETED', 5, '会话级兜底正文', [], { sessionId: 7, sender: 'ou_1' }));
+      const service = makeService({
+        toggleDislike: async () => ({ disliked: false }),
+        renderProgressCardByCard: () => null,
+        rebuildCardFromSnapshot: async () => null,
+        renderProgressCard,
+      });
+      const res = await service.handle(makeEvent(dislikeValue, 'ou_1', 'cm_legacy'), '');
+      expect(renderProgressCard).toHaveBeenCalledWith(7);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('飞书点踩无快照可重绘'));
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('cm_legacy'));
+      expect(JSON.stringify(res)).toContain('会话级兜底正文');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('事件无 context（无卡片身份）时退化为会话级行为', async () => {
+    const toggleDislike = vi.fn(async () => ({ disliked: true }));
+    const renderProgressCardByCard = vi.fn(() => buildFeishuProgressCard('COMPLETED', 1, '', [], { sessionId: 7, sender: 'ou_1' }));
+    const rebuildCardFromSnapshot = vi.fn(async () => buildFeishuProgressCard('COMPLETED', 1, '', [], { sessionId: 7, sender: 'ou_1' }));
+    const renderProgressCard = vi.fn(() => buildFeishuProgressCard('COMPLETED', 6, '会话级正文', [], { sessionId: 7, sender: 'ou_1' }));
+    const service = makeService({ toggleDislike, renderProgressCardByCard, rebuildCardFromSnapshot, renderProgressCard });
+    // 既无 context.open_message_id 也无顶层 open_message_id
+    const res = await service.handle({ operator: { open_id: 'ou_1' }, action: { value: dislikeValue } }, '');
+    expect(toggleDislike).toHaveBeenCalledWith(7, null);
+    expect(renderProgressCardByCard).not.toHaveBeenCalled();
+    expect(rebuildCardFromSnapshot).not.toHaveBeenCalled();
+    expect(renderProgressCard).toHaveBeenCalledWith(7);
+    expect(JSON.stringify(res)).toContain('会话级正文');
+  });
+
   it('再次点击取消点踩并回调恢复未点踩态', async () => {
     const toggleDislike = vi.fn(async () => ({ disliked: false }));
     const service = makeService({ toggleDislike });
@@ -478,7 +556,7 @@ describe('FeishuCardActionService 完成卡点踩', () => {
     const service = makeService({ toggleDislike });
     const res = await service.handle(makeEvent(JSON.stringify(dislikeValue)), '');
     expect(res?.toast?.content).toBe('已标记不满意');
-    expect(toggleDislike).toHaveBeenCalledWith(7);
+    expect(toggleDislike).toHaveBeenCalledWith(7, 'cm_1');
   });
 
   it('toggle 抛错时不崩溃，回调 info toast', async () => {

@@ -257,6 +257,58 @@ describe('FeedbackService.toggleSessionDislike', () => {
     (repo.existsByMessageId as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(true);
     await expect(service.toggleSessionDislike(9, 5, 'feishu')).resolves.toEqual({ disliked: false });
   });
+
+  it('显式 messageId 时按该消息 toggle，跳过取会话最新消息', async () => {
+    // 飞书按卡归属：反馈必须落在被点卡片对应的消息上，不是会话最后一条
+    const repo = makeRepo();
+    const lookup = makeLookup({ messageId: 22, sessionId: 5, userId: 9, agentId: 2 });
+    const service = new FeedbackService(repo, lookup, async () => 9, async () => 2);
+    await expect(service.toggleSessionDislike(9, 5, 'feishu', 22)).resolves.toEqual({ disliked: true });
+    expect(lookup.findLatestAssistantMessageId).not.toHaveBeenCalled();
+    expect(repo.existsByMessageId).toHaveBeenCalledWith(22);
+    expect(repo.upsert).toHaveBeenCalledWith(22, 5, 9, 2, 'NO_REASON', 'feishu');
+  });
+
+  it('显式 messageId 已有记录时删除该消息的记录', async () => {
+    const repo = makeRepo();
+    (repo.existsByMessageId as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    const service = new FeedbackService(repo, makeLookup(OWNERSHIP), async () => 9, async () => 2);
+    await expect(service.toggleSessionDislike(9, 5, 'feishu', 11)).resolves.toEqual({ disliked: false });
+    expect(repo.deleteByMessageId).toHaveBeenCalledWith(11);
+    expect(repo.upsert).not.toHaveBeenCalled();
+  });
+
+  it('显式 messageId 属于其他会话时拒绝（防串会话）', async () => {
+    const repo = makeRepo();
+    // 消息 22 实际归属会话 6，却按会话 5 的点踩传入：不得写入
+    const lookup: FeedbackMessageLookup = {
+      findAssistantMessageOwner: vi.fn(async (messageId: number) => (
+        messageId === 22 ? { messageId: 22, sessionId: 6, userId: 9, agentId: 2 } : null
+      )),
+      findLatestAssistantMessageId: vi.fn(async () => 11),
+    };
+    const service = new FeedbackService(repo, lookup, async () => 9, async () => 2);
+    await expect(service.toggleSessionDislike(9, 5, 'feishu', 22)).resolves.toBeNull();
+    expect(repo.upsert).not.toHaveBeenCalled();
+    expect(repo.deleteByMessageId).not.toHaveBeenCalled();
+  });
+
+  it('显式 messageId 的消息已不存在时返回 null', async () => {
+    const repo = makeRepo();
+    const service = new FeedbackService(repo, makeLookup(null), async () => 9, async () => 2);
+    await expect(service.toggleSessionDislike(9, 5, 'feishu', 11)).resolves.toBeNull();
+    expect(repo.upsert).not.toHaveBeenCalled();
+    expect(repo.deleteByMessageId).not.toHaveBeenCalled();
+  });
+
+  it('不传 messageId 时行为不变：按会话最新消息 toggle', async () => {
+    const repo = makeRepo();
+    const lookup = makeLookup(OWNERSHIP);
+    const service = new FeedbackService(repo, lookup, async () => 9, async () => 2);
+    await expect(service.toggleSessionDislike(9, 5, 'feishu')).resolves.toEqual({ disliked: true });
+    expect(lookup.findLatestAssistantMessageId).toHaveBeenCalledWith(5);
+    expect(repo.upsert).toHaveBeenCalledWith(11, 5, 9, 2, 'NO_REASON', 'feishu');
+  });
 });
 
 describe('buildPreview', () => {

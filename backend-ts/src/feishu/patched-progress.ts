@@ -38,6 +38,11 @@ export function createFeishuPatchedProgress(deps: {
   buildCard: (input: FeishuProgressSnapshot & { pendingAsks: FeishuPendingAsk[]; elapsedMs?: number; disliked?: boolean }) => Record<string, unknown>;
   /** 运行中子代理加载器；失败时保留上次快照，不影响卡片更新。 */
   loadSubagents?: () => Promise<FeishuSubagentSummary[]>;
+  /**
+   * 终态快照持久化（D9）：COMPLETED 真正 PATCH 前 await，避免「卡已更新、快照未落」的点击竞态。
+   * 失败仅 warn 不阻断 PATCH；轮次/耗时取终态固化值，正文与卡片同口径。
+   */
+  persistTerminal?: (snapshot: { round: number; content: string; elapsedMs?: number }) => Promise<void>;
   startedAtMs: number;
   seed?: FeishuProgressSnapshot;
   now?: () => number;
@@ -104,6 +109,14 @@ export function createFeishuPatchedProgress(deps: {
     });
     last = { status, round, content, tools, subagents: lastSubagents };
     const card = build(asksNow());
+    // D9：终态快照先落库再 PATCH。失败仅 warn——快照缺失只让该卡点击退化为兜底路径，不能卡住终态更新。
+    if (status === 'COMPLETED' && deps.persistTerminal != null) {
+      try {
+        await deps.persistTerminal({ round, content, elapsedMs: terminalElapsedMs });
+      } catch (e) {
+        console.warn(`飞书完成卡终态快照持久化失败: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
     await deps.patch(card);
     const latest = build(asksNow());
     if (JSON.stringify(latest) !== JSON.stringify(card)) {

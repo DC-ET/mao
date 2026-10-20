@@ -171,6 +171,12 @@ describe('飞书进度卡片「不满意」按钮', () => {
       .toEqual({ kind: 'feishu_progress', act: 'dislike', sessionId: 7, sender: 'ou_sender' });
   });
 
+  it('按钮 value 不含 cardMessageId：卡片身份取自事件 context，不做冗余扩容', () => {
+    // D3：改造前发出的存量卡 value 同样只有四字段，靠 context.open_message_id 归属
+    const value = dislikeButtonValue(buildFeishuProgressCard('COMPLETED', 1, '', [], cancelAction, 1000, detailUrl));
+    expect(Object.keys(value ?? {}).sort()).toEqual(['act', 'kind', 'sender', 'sessionId']);
+  });
+
   it('非 COMPLETED 终态不渲染点踩按钮', () => {
     for (const status of ['RUNNING', 'FAILED', 'CANCELLED'] as const) {
       const card = buildFeishuProgressCard(status, 1, '', [], { sessionId: 7, sender: 'ou_sender', botId: 1 }, 1000, detailUrl);

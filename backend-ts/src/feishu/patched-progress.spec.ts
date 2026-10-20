@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { FeishuAskFormStore } from './ask-form-store.js';
 import { createFeishuPatchedProgress } from './patched-progress.js';
 import { buildFeishuProgressCard, type FeishuSubagentSummary } from './progress-card.js';
@@ -14,7 +14,11 @@ function progressOf(
   store: FeishuAskFormStore,
   patch: (card: Record<string, unknown>) => Promise<void>,
   throttleMs = 0,
-  options: { loadSubagents?: () => Promise<FeishuSubagentSummary[]>; now?: () => number } = {},
+  options: {
+    loadSubagents?: () => Promise<FeishuSubagentSummary[]>;
+    now?: () => number;
+    persistTerminal?: (snapshot: { round: number; content: string; elapsedMs?: number }) => Promise<void>;
+  } = {},
 ) {
   return createFeishuPatchedProgress({
     listAsks: () => store.list(1),
@@ -24,6 +28,7 @@ function progressOf(
       status, round, content, tools, { sessionId: 1, sender: 'ou_sender' }, elapsedMs, undefined, pendingAsks, disliked, subagents,
     ),
     loadSubagents: options.loadSubagents,
+    persistTerminal: options.persistTerminal,
     startedAtMs: 0,
     now: options.now ?? (() => 1_000),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
@@ -164,6 +169,55 @@ describe('飞书进度卡点踩态透传', () => {
   it('RUNNING 态 renderCurrent 仍按当前时刻算（不展示耗时）', () => {
     const progress = progressOf(new FeishuAskFormStore(), async () => undefined);
     expect(JSON.stringify(progress.renderCurrent())).not.toContain('耗时');
+  });
+});
+
+describe('飞书完成卡终态快照持久化（persistTerminal）', () => {
+  it('COMPLETED 在 PATCH 前触发，参数取终态固化值', async () => {
+    const order: string[] = [];
+    const persistTerminal = vi.fn(async (snapshot: { round: number; content: string; elapsedMs?: number }) => {
+      order.push(`persist:${snapshot.round}:${snapshot.content}:${snapshot.elapsedMs}`);
+    });
+    const progress = progressOf(new FeishuAskFormStore(), async () => { order.push('patch'); }, 0, {
+      now: () => 506_000,
+      persistTerminal,
+    });
+    await progress.update('COMPLETED', 8, '这是任务的最终结果正文。', []);
+    expect(persistTerminal).toHaveBeenCalledTimes(1);
+    expect(persistTerminal).toHaveBeenCalledWith({ round: 8, content: '这是任务的最终结果正文。', elapsedMs: 506_000 });
+    // D9：快照必须先落库再 PATCH，避免「卡已更新、快照未落」的点击竞态
+    expect(order).toEqual(['persist:8:这是任务的最终结果正文。:506000', 'patch']);
+  });
+
+  it('RUNNING / FAILED / CANCELLED 不触发', async () => {
+    const persistTerminal = vi.fn(async () => undefined);
+    const progress = progressOf(new FeishuAskFormStore(), async () => undefined, 0, { persistTerminal });
+    await progress.update('RUNNING', 1, '执行中', []);
+    await progress.update('FAILED', 2, '失败了', []);
+    await progress.update('CANCELLED', 3, '已取消', []);
+    expect(persistTerminal).not.toHaveBeenCalled();
+  });
+
+  it('未注入 persistTerminal 时终态更新照常', async () => {
+    const cards: Array<Record<string, unknown>> = [];
+    const progress = progressOf(new FeishuAskFormStore(), async (card) => { cards.push(card); });
+    await expect(progress.update('COMPLETED', 1, '结果', [])).resolves.toBeUndefined();
+    expect(cards).toHaveLength(1);
+  });
+
+  it('persistTerminal 抛错不阻断 PATCH，仅 warn', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const cards: Array<Record<string, unknown>> = [];
+      const progress = progressOf(new FeishuAskFormStore(), async (card) => { cards.push(card); }, 0, {
+        persistTerminal: async () => { throw new Error('db down'); },
+      });
+      await expect(progress.update('COMPLETED', 8, '结果', [])).resolves.toBeUndefined();
+      expect(cards).toHaveLength(1);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('终态快照持久化失败'));
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

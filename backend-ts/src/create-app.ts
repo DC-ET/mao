@@ -305,6 +305,7 @@ import { hasUsableEcpSession } from './auth/ecp-session.repository.js';
 import { AgentFeishuInboundHandler } from './feishu/agent-inbound-handler.js';
 import { FeishuInboundQueueRepository } from './feishu/inbound-queue.repository.js';
 import { MysqlFeishuProgressCardRepository } from './feishu/progress-card.repository.js';
+import { MysqlFeishuCardSnapshotRepository } from './feishu/card-snapshot.repository.js';
 import { FeishuTaskQueueService } from './feishu/inbound-queue.service.js';
 import { FeishuCardActionService } from './feishu/card-action.service.js';
 import { persistFeishuCancelIfIdle } from './feishu/cancel-running.js';
@@ -1979,7 +1980,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   };
   /** 250ms 节流的进度卡片 PATCH 闭包：正常执行与崩溃恢复续跑共用同一实现。
    *  真正 PATCH 前读取当前提问表单；终态先清表单。旧进度对象被新任务替换后不再改表单状态。
-   *  @param startedAtMs 任务起算时间（毫秒），终态时据此计算卡片上的「耗时」。 */
+   *  @param startedAtMs 任务起算时间（毫秒），终态时据此计算卡片上的「耗时」。
+   *  @param botId 卡片所属 Bot（终态快照落库用；取不到时跳过快照，该卡点击退化为兜底路径）。 */
   const createPatchedProgress = (
     client: Lark.Client,
     cardMessageId: string,
@@ -1988,6 +1990,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     startedAtMs: number,
     sessionDetailUrl?: string,
     seed?: { round?: number; content?: string },
+    botId?: number,
   ): FeishuCardProgress => {
     const gate: { progress: FeishuProgressHandle | null } = { progress: null };
     const progress = createFeishuPatchedProgress({
@@ -2018,11 +2021,26 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
           round: subagent.round,
         }));
       },
+      // D9：COMPLETED 终态 PATCH 前落快照行（card_message_id → 终态消息/轮次/耗时/正文）。
+      // 时序上前置保证已满足：execute() 返回后最终 ASSISTANT 消息才落库，之后才 complete() 走到这里。
+      // 失败仅 warn 不阻断 PATCH（patched-progress 侧统一兜底）；查不到消息时跳过，该卡点击走兜底路径。
+      persistTerminal: botId == null ? undefined : async ({ round, content, elapsedMs }) => {
+        const messageId = await feedbackMessageLookup.findLatestAssistantMessageId(sessionId);
+        if (messageId == null) {
+          console.warn(`飞书完成卡快照跳过: 终态时未找到ASSISTANT消息, sessionId=${sessionId}, cardMessageId=${cardMessageId}`);
+          return;
+        }
+        await feishuCardSnapshotRepo.upsert({
+          cardMessageId, sessionId, botId, messageId,
+          status: 'COMPLETED', round, elapsedMs: elapsedMs ?? 0, content,
+        });
+      },
       startedAtMs,
       seed: { status: 'RUNNING', round: seed?.round ?? 0, content: seed?.content ?? '', tools: [] },
     });
     gate.progress = progress;
-    feishuActiveProgress.bind(sessionId, cancelAction?.sender ?? '', progress);
+    // 双键绑定：session 键服务提问门禁/刷新；cardMessageId 键服务点踩按卡归属（旧卡不串到最新句柄）。
+    feishuActiveProgress.bind(sessionId, cancelAction?.sender ?? '', progress, cardMessageId);
     return progress;
   };
   const createFeishuProgressCard = async (context: FeishuInboundContext, sessionId: number): Promise<FeishuCardProgress | null> => {
@@ -2054,7 +2072,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       await persistCard(existingMessageId);
       return createPatchedProgress(client, existingMessageId, sessionId, cancelAction, startedAtMs, sessionDetailUrl, {
         content: '任务已接收，正在准备执行。',
-      });
+      }, botId);
     }
     const card = buildFeishuProgressCard('RUNNING', 0, '任务已接收，正在准备执行。', [], cancelAction, undefined, sessionDetailUrl);
     const data = { msg_type: 'interactive', content: JSON.stringify(card) };
@@ -2071,7 +2089,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     if (context.chatType === 'p2p') await feishuMessageService.recordP2pMessage(String(botId), messageId, sessionId, 'OUT');
     return createPatchedProgress(client, messageId, sessionId, cancelAction, startedAtMs, sessionDetailUrl, {
       content: '任务已接收，正在准备执行。',
-    });
+    }, botId);
   };
   /** 崩溃恢复续跑：按会话查找活跃进度卡片并构造续更 progress；无映射或加载失败返回 null（不阻断恢复）。 */
   const resolveFeishuRoundOffset = async (sessionId: number): Promise<number> => {
@@ -2102,7 +2120,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       const startedAtMs = parseSqlTimeMs(session?.startedAt) ?? Date.now();
       const progress = createPatchedProgress(client, row.cardMessageId, sessionId, cancelAction, startedAtMs, sessionDetailUrl, {
         content: '任务正在恢复执行。',
-      });
+      }, row.botId);
       // 卡片轮次按当前任务已落库的助手消息接续，避免重启后从 0 重计。
       const roundOffset = await resolveFeishuRoundOffset(sessionId);
       // 重启后续跑立刻刷新卡片并带上取消按钮，避免旧卡停在崩溃前的「正在处理」且取消回调失效。
@@ -2125,6 +2143,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   };
   const feishuInboundQueueRepo = new FeishuInboundQueueRepository(db);
   const feishuProgressCardRepo = new MysqlFeishuProgressCardRepository(db);
+  const feishuCardSnapshotRepo = new MysqlFeishuCardSnapshotRepository(db);
   const feishuTaskQueue = new FeishuTaskQueueService(feishuInboundQueueRepo);
   /** 排队卡片展示位置：入队完成后队列中的 QUEUED 行数（含本条，插入语义=队尾第 N 位）。 */
   const queuePositionOf = async (sessionId: number): Promise<number> => (await feishuInboundQueueRepo.countPending(sessionId));
@@ -2675,15 +2694,30 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       });
     },
     // 完成卡「点踩」toggle：写库/删库 message_feedback（source=feishu），并把点踩态同步给
-    // 本会话的进度卡闭包，使回调返回的卡片渲染「已点踩 · 再点取消」。
+    // 被点卡片的进度卡闭包，使回调返回的卡片渲染「已点踩 · 再点取消」。
+    // 按卡归属：cardMessageId 为被点卡片身份（事件 context.open_message_id）——经快照表解析到
+    // 该卡对应的 ASSISTANT 消息，反馈不再固定落到会话最后一条；无快照行（存量卡）才按最新消息兜底。
     // 与方案 5.2.6 一致：群内其他人只更新点击者视图，不做额外 PATCH。
     // user_id 取会话所属用户（飞书会话由绑定用户创建，发送者即会话所有者）。
-    toggleDislike: async (sessionId) => {
+    toggleDislike: async (sessionId, cardMessageId) => {
       const session = await sessionService.getSession(sessionId).catch(() => null);
       if (session == null) return null;
-      const result = await feedbackService.toggleSessionDislike(session.userId, sessionId, FEISHU_DISLIKE_SOURCE);
+      let messageId: number | undefined;
+      if (cardMessageId != null) {
+        const snapshot = await feishuCardSnapshotRepo.findByCardMessageId(cardMessageId).catch((error) => {
+          console.warn(`飞书点踩查询卡片快照失败, cardMessageId=${cardMessageId}, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+          return null;
+        });
+        messageId = snapshot?.messageId;
+      }
+      const result = await feedbackService.toggleSessionDislike(session.userId, sessionId, FEISHU_DISLIKE_SOURCE, messageId);
       if (result == null) return null;
-      feishuActiveProgress.current(sessionId)?.setDisliked(result.disliked);
+      // disliked 态按卡隔离：点旧卡不把态写到最新任务的句柄上；事件缺卡片身份才退回会话级。
+      if (cardMessageId == null) {
+        feishuActiveProgress.current(sessionId)?.setDisliked(result.disliked);
+      } else {
+        feishuActiveProgress.setDislikedByCard(cardMessageId, result.disliked);
+      }
       return result;
     },
     // 失败卡「重试」：凭仍保留的进度卡片映射定位 bot，PATCH 点击的那张失败卡并基于历史续跑。
@@ -2715,6 +2749,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
           { sessionId, sender, botId: mapping.botId },
           startedAtMs, sessionDetailUrl,
           { content: '正在重试，请稍候…' },
+          mapping.botId,
         );
       });
     },
@@ -2729,6 +2764,21 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     sessionDetailUrl: (sessionId) => resolveFeishuSessionDetailUrl(sessionId),
     askForms: feishuAskFormStore,
     renderProgressCard: (sessionId) => feishuActiveProgress.render(sessionId),
+    // 点踩重绘一级降级：内存里被点卡片的句柄快照（进程重启后未命中，交快照表重建）。
+    renderProgressCardByCard: (cardMessageId) => feishuActiveProgress.renderByCard(cardMessageId),
+    // 点踩重绘二级降级：持久化快照行 → 按该卡终态（轮次/耗时/正文）重建，按钮按 toggle 后状态渲染。
+    // sender 必须传被点卡片原发送者（handleProgressDislike 鉴权已保证点击者即原发送者）。
+    rebuildCardFromSnapshot: async (sessionId, cardMessageId, disliked, sender) => {
+      const snapshot = await feishuCardSnapshotRepo.findByCardMessageId(cardMessageId).catch((error) => {
+        console.warn(`飞书点踩查询卡片快照失败, cardMessageId=${cardMessageId}, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+        return null;
+      });
+      if (snapshot == null) return null;
+      return buildFeishuProgressCard(
+        'COMPLETED', snapshot.round, snapshot.content ?? '', [],
+        { sessionId, sender }, snapshot.elapsedMs, await resolveFeishuSessionDetailUrl(sessionId), undefined, disliked,
+      );
+    },
     refreshProgress: (sessionId) => feishuActiveProgress.refresh(sessionId),
     completeAsk: (sessionId, requestId, resultJson) => askUserQuestionsRegistry.complete(sessionId, requestId, resultJson),
     notifyAskAnswered: (sessionId, requestId) => {
