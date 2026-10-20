@@ -378,6 +378,9 @@ import {
 import { registerUploadStatic } from './upload-static.js';
 import { expandHome, parseSqlTimeMs, runtimeSessionCleanup } from './app-utils.js';
 import { createShutdownHandler } from './app-shutdown.js';
+import { createFeishuSessionHelper } from './feishu-session.js';
+import { createFeishuClientHelper } from './feishu-client.js';
+import { buildFeishuQueueCard } from './feishu-cards.js';
 
 export interface MaoApp {
   app: FastifyInstance;
@@ -1816,124 +1819,17 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     }),
     cfg.feishu.bot.groupContext.overflowItems,
   );
-  // 会话复用时按机器人配置热切换 Agent/模型（对齐微信通道切换逻辑）。
-  const applyFeishuBotConfig = async (sessionId: number, botId: number): Promise<void> => {
-    const bot = await feishuBots.findById(botId);
-    if (bot == null) return;
-    const session = await sessionService.getSession(sessionId);
-    if (session == null || session.id == null) return;
-    const agent = bot.agentId != null ? await agentService.getAgent(bot.agentId) : await agentService.requireDefaultAgent();
-    const model = bot.modelId != null ? await modelService.getModel(bot.modelId) : await modelService.getDefaultModel();
-    const agentId = agent?.id ?? null;
-    const modelId = model?.id ?? null;
-    const fields: Record<string, unknown> = {};
-    if (agentId != null && session.agentId !== agentId) fields.agentId = agentId;
-    if (session.modelId !== modelId) fields.modelId = modelId;
-    if (Object.keys(fields).length > 0) {
-      console.info(`飞书会话热切换 Agent/模型, sessionId=${sessionId}, botId=${botId}`, fields);
-      await sessionRepo.updateFields(session.id, fields);
-    }
-  };
-  // 存量群会话标题仍为默认“飞书Bot会话”时，补一次群名称；失败静默，下次触发重试。
-  const ensureFeishuSessionTitle = async (sessionId: number, accountId: number, context: FeishuInboundContext): Promise<void> => {
-    try {
-      if (context.chatType !== 'group' || context.chatId == null) return;
-      const session = await sessionService.getSession(sessionId);
-      if (session?.title !== '飞书Bot会话') return;
-      const title = await getFeishuChatTitle(accountId, context.chatId);
-      if (title === '') return;
-      await sessionRepo.updateFields(sessionId, { title });
-      console.info(`飞书会话标题更新为群名称, sessionId=${sessionId}, chatId=${context.chatId}, title=${title}`);
-    } catch (error) {
-      console.warn(`更新飞书会话标题失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  };
-  // 按机器人缓存 Lark Client，避免每次收发都重新走 tenant_access_token 换取端点；
-  // 缓存 key 包含 appId 与 appSecret 密文，admin 修改 app_id/app_secret 后自动失效重建；停用的机器人直接拒绝。
-  const feishuClients = new Map<string, Lark.Client>();
   const feishuSenderNames = new Map<string, Promise<string | null>>();
-  const getFeishuClient = async (botId: number): Promise<Lark.Client | null> => {
-    const bot = await feishuBots.findById(botId);
-    if (bot == null || bot.enabled === 0 || !cfg.feishu.bot.appSecretKey) return null;
-    const key = `${botId}:${bot.appId}:${bot.appSecret}`;
-    const cached = feishuClients.get(key);
-    if (cached != null) return cached;
-    const appSecret = decryptAesGcm(bot.appSecret, cfg.feishu.bot.appSecretKey, '飞书Bot appSecret解密失败');
-    const client = new Lark.Client({ appId: bot.appId, appSecret });
-    feishuClients.set(key, client);
-    return client;
-  };
-  // 群名称按 botId+chatId 缓存（成功结果）；获取失败不缓存，下次触发重试并告警提示权限缺口。
-  const feishuChatTitles = new Map<string, Promise<string>>();
-  const getFeishuChatTitle = (botId: number, chatId: string): Promise<string> => {
-    const key = `${botId}:${chatId}`;
-    const cached = feishuChatTitles.get(key);
-    if (cached != null) return cached;
-    const promise = (async () => {
-      try {
-        const client = await getFeishuClient(botId);
-        if (client == null) return '';
-        const response = await client.im.v1.chat.get({ path: { chat_id: chatId } });
-        return (response as { data?: { name?: string } }).data?.name?.trim() ?? '';
-      } catch (error) {
-        console.warn(`获取飞书群名称失败, botId=${botId}, chatId=${chatId}: ${error instanceof Error ? error.message : String(error)}`);
-        return '';
-      }
-    })();
-    feishuChatTitles.set(key, promise);
-    return promise;
-  };
-  const sendFeishuText = async (botId: number, event: FeishuNormalizedMessage, text: string): Promise<string | null> => {
-    const client = await getFeishuClient(botId);
-    if (client == null) return null;
-    const maxReplyLength = Math.max(100, Math.min(10000, cfg.feishu.bot.reply.maxLength));
-    const limited = text.length > maxReplyLength ? `${text.slice(0, maxReplyLength)}…（回复过长已截断）` : text;
-    if (event.chatType === 'group' && event.messageId != null) {
-      const response = await client.im.v1.message.reply({
-        path: { message_id: event.messageId },
-        data: { msg_type: 'text', content: JSON.stringify({ text: limited }) },
-      });
-      return (response as { data?: { message_id?: string } }).data?.message_id ?? null;
-    }
-    const receiveId = event.chatType === 'group' ? event.chatId : event.senderId;
-    const receiveIdType = event.chatType === 'group' ? 'chat_id' : 'open_id';
-    if (receiveId == null) return null;
-    const response = await client.im.v1.message.create({
-      params: { receive_id_type: receiveIdType },
-      data: { receive_id: receiveId, msg_type: 'text', content: JSON.stringify({ text: limited }) },
-    });
-    return (response as { data?: { message_id?: string } }).data?.message_id ?? null;
-  };
+  const { getFeishuClient, getFeishuChatTitle, sendFeishuText } = createFeishuClientHelper({
+    feishuBots,
+    appSecretKey: cfg.feishu.bot.appSecretKey,
+    replyMaxLength: cfg.feishu.bot.reply.maxLength,
+  });
+  const { applyFeishuBotConfig, ensureFeishuSessionTitle } = createFeishuSessionHelper({
+    feishuBots, sessionService, sessionRepo, agentService, modelService, getFeishuChatTitle,
+  });
   ctx.notifyFeishuPendingMismatch = async (pending) => {
     await sendFeishuText(pending.appId, pending.event, FEISHU_ECP_IDENTITY_MISMATCH_TEXT);
-  };
-  // 排队交互卡片：提示当前任务执行中、新消息已入队，并提供「立即发送/取消排队」两个按钮。
-  const buildFeishuQueueCard = (context: FeishuInboundContext, queueId: number, position: number): Record<string, unknown> => {
-    const summary = context.text.length > 60 ? `${context.text.slice(0, 60)}…` : context.text;
-    // 私聊是一对一对话，对端即用户本人，无需（也不应）显示「发送者：」前缀；群聊则保留发送者名以区分多人。
-    const showSender = context.chatType === 'group';
-    const senderLabel = (context.senderLabel?.trim() || '用户');
-    const body = showSender ? `${senderLabel}：${summary}` : summary;
-    return {
-      schema: '2.0',
-      config: { update_multi: true },
-      body: {
-        direction: 'vertical', padding: '12px 12px 12px 12px',
-        elements: [
-          { tag: 'markdown', content: '**⏳ 任务排队中**', text_align: 'left', text_size: 'normal_v2' },
-          { tag: 'markdown', content: `当前任务正在执行中，这条消息已进入队列（第 ${position} 位），将在当前任务完成后自动开始处理。`, text_align: 'left', text_size: 'normal_v2' },
-          { tag: 'markdown', content: body, text_align: 'left', text_size: 'normal_v2' },
-          {
-            // 卡片 JSON 2.0 不支持 tag:'action' 交互模块，按钮需放入 elements（并排用 column_set）。
-            tag: 'column_set', flex_mode: 'flow', background_style: 'default',
-            columns: [
-              { tag: 'column', width: 'auto', vertical_align: 'top', elements: [{ tag: 'button', text: { tag: 'plain_text', content: '立即发送' }, type: 'primary', size: 'sm', value: { kind: 'feishu_queue', queueId, act: 'run' } }] },
-              { tag: 'column', width: 'auto', vertical_align: 'top', elements: [{ tag: 'button', text: { tag: 'plain_text', content: '取消排队' }, type: 'default', size: 'sm', value: { kind: 'feishu_queue', queueId, act: 'cancel' } }] },
-            ],
-          },
-        ],
-      },
-    };
   };
   const createFeishuQueueCard = async (context: FeishuInboundContext, queueId: number, position: number, sessionId: number): Promise<string | null> => {
     const client = await getFeishuClient(Number(context.accountId));
