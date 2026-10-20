@@ -1,9 +1,10 @@
 import Fastify from 'fastify';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import Fastify from 'fastify';
 import { describe, expect, it } from 'vitest';
 import { useTmpDir } from './testing/tmp-dir.js';
-import { registerUploadStatic } from './create-app.js';
+import { registerUploadStatic } from './app-utils.js';
 
 describe('registerUploadStatic', () => {
   it('serves uploads from both the direct and context-path URLs', async () => {
