@@ -11,6 +11,16 @@ function cardText(card: Record<string, unknown>): string {
   return JSON.stringify(card);
 }
 
+/** 卡片 2.0 结构取正文元素。 */
+function elementsOf(card: Record<string, unknown>): Array<Record<string, unknown>> {
+  return (card.body as { elements: Array<Record<string, unknown>> }).elements;
+}
+
+/** 在正文元素里找内容包含 needle 的 markdown 元素。 */
+function markdownElementWith(card: Record<string, unknown>, needle: string): Record<string, unknown> | undefined {
+  return elementsOf(card).find((element) => element.tag === 'markdown' && String(element.content).includes(needle));
+}
+
 describe('buildTaskNotificationCard', () => {
   it('renders title status user message and session detail button', () => {
     const card = buildTaskNotificationCard({
@@ -20,19 +30,25 @@ describe('buildTaskNotificationCard', () => {
       sessionDetailUrl: 'https://mao.example.com/tasks/7',
       now: new Date('2026-09-25T09:13:20+08:00'),
     });
+    expect(card.schema).toBe('2.0');
     expect(card.header).toEqual({
       template: 'green',
       title: { tag: 'plain_text', content: 'Mao 任务完成通知' },
     });
+    expect(markdownElementWith(card, '技能指令入口迁移')).toBeDefined();
+    expect(markdownElementWith(card, '已完成')).toBeDefined();
+    expect(markdownElementWith(card, '把技能指令入口迁到新目录')).toBeDefined();
+    // 时间戳在 note 脚注（plain_text）里，不在正文 markdown 元素中
+    expect(cardText(card)).toContain('2026-09-25 09:13:20');
+    // 2.0 已移除 action 交互模块：按钮入 elements（column_set）+ behaviors.open_url 跳转。
     const text = cardText(card);
-    expect(text).toContain('技能指令入口迁移');
-    expect(text).toContain('已完成');
-    expect(text).toContain('把技能指令入口迁到新目录');
     expect(text).toContain('会话详情');
     expect(text).toContain('https://mao.example.com/tasks/7');
-    expect(text).toContain('2026-09-25 09:13:20');
-    // 1.0 卡片结构：按钮放在 action 模块里。
-    expect(text).toContain('"tag":"action"');
+    expect(text).toContain('"tag":"column_set"');
+    expect(text).toContain('"type":"open_url"');
+    expect(text).not.toContain('"tag":"action"');
+    // 不得退回 div>lark_md：那是 Markdown 表格不渲染的根因
+    expect(text).not.toContain('lark_md');
   });
 
   it('truncates an over-long user message', () => {
@@ -48,7 +64,7 @@ describe('buildTaskNotificationCard', () => {
     const text = cardText(card);
     expect(text).not.toContain('用户消息');
     expect(text).not.toContain('会话详情');
-    expect(text).not.toContain('"tag":"action"');
+    expect(text).not.toContain('"tag":"column_set"');
   });
 
   it('marks failures with a red header and the failure reason', () => {
@@ -56,18 +72,26 @@ describe('buildTaskNotificationCard', () => {
       phase: 'FAILED', title: '插件平台匹配问题', failureReason: '上游 502',
     });
     expect((card.header as { template: string }).template).toBe('red');
-    const text = cardText(card);
-    expect(text).toContain('执行失败');
-    expect(text).toContain('上游 502');
+    expect(markdownElementWith(card, '执行失败')).toBeDefined();
+    expect(markdownElementWith(card, '上游 502')).toBeDefined();
   });
 
   it('marks pending questions with an orange header and answering hint', () => {
     const card = buildTaskNotificationCard({ phase: 'ASK_USER', title: '精简 Termix 界面' });
     expect((card.header as { template: string }).template).toBe('orange');
-    const text = cardText(card);
-    expect(text).toContain('Mao 提问通知');
-    expect(text).toContain('精简 Termix 界面');
-    expect(text).toContain('请到会话页面作答');
+    expect((card.header as { title: { content: string } }).title.content).toBe('Mao 提问通知');
+    expect(markdownElementWith(card, '精简 Termix 界面')).toBeDefined();
+    expect(markdownElementWith(card, '请到会话页面作答')).toBeDefined();
+  });
+
+  it('renders a markdown table in the user message section', () => {
+    // 2.0 + 顶层 markdown 元素的核心收益：正文含表格时正常渲染，不再吐出管道符。
+    const card = buildTaskNotificationCard({
+      phase: 'COMPLETED', title: '申购日报', userMessage: '| 名称 | 申菱转债 |\n| --- | --- |\n| 申购价 | 100 元/张 |',
+    });
+    expect(card.schema).toBe('2.0');
+    expect(markdownElementWith(card, '申菱转债')).toBeDefined();
+    expect(cardText(card)).not.toContain('lark_md');
   });
 });
 

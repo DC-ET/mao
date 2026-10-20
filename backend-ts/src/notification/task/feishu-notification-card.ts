@@ -35,25 +35,35 @@ const PHASE_META: Record<TaskNotificationPhase, PhaseMeta> = {
 };
 
 /**
- * 飞书卡片 JSON（1.0 结构）。自定义机器人 webhook 用 `msg_type: interactive` + `card` 发送，
- * 1.0 的 header / elements / action 在 webhook 与机器人两条发送链路上都被支持。
+ * 任务通知的飞书卡片（卡片 JSON 2.0 结构）。
+ *
+ * 自定义机器人 webhook 用 `msg_type: interactive` + `card` 发送；2.0 的
+ * `schema`/`header`/`body.elements` 在 webhook 与机器人两条链路上都被支持。
+ *
+ * 必须用 2.0 + 顶层 `tag:'markdown'` 元素，不能用 1.0 的 `div > lark_md`：
+ * `lark_md` 是「文本格式」tag，只渲染加粗/斜体/链接等基本语法，Markdown 表格会被
+ * 原样吐出管道符；`markdown` 才是「元素」tag，与飞书会话进度卡
+ * （buildFeishuProgressCard）同口径。二者仅一字之差。
+ *
+ * 2.0 不支持 1.0 的 `{ tag:'action', actions:[{ url }] }` 交互模块，按钮需放入
+ * elements（并排用 column_set）并以 `behaviors.open_url` 跳转。
  */
 export function buildTaskNotificationCard(input: TaskNotificationContentInput): Record<string, unknown> {
   const meta = PHASE_META[input.phase];
   const elements: Array<Record<string, unknown>> = [
-    markdownOf(`**任务**：${truncate(input.title, NOTIFICATION_TITLE_MAX_CHARS)}`),
-    markdownOf(`**状态**：${meta.status}`),
+    markdownElement(`**任务**：${truncate(input.title, NOTIFICATION_TITLE_MAX_CHARS)}`),
+    markdownElement(`**状态**：${meta.status}`),
   ];
   const userMessage = trimToEmpty(input.userMessage);
   if (userMessage !== '') {
-    elements.push(markdownOf(`**用户消息**\n${truncate(userMessage, NOTIFICATION_USER_MESSAGE_MAX_CHARS)}`));
+    elements.push(markdownElement(`**用户消息**\n${truncate(userMessage, NOTIFICATION_USER_MESSAGE_MAX_CHARS)}`));
   }
   const failureReason = trimToEmpty(input.failureReason);
   if (input.phase === 'FAILED' && failureReason !== '') {
-    elements.push(markdownOf(`**失败原因**\n${failureReason}`));
+    elements.push(markdownElement(`**失败原因**\n${failureReason}`));
   }
   if (input.phase === 'ASK_USER') {
-    elements.push(markdownOf('Agent 向你发起了提问，请到会话页面作答。'));
+    elements.push(markdownElement('Agent 向你发起了提问，请到会话页面作答。'));
   }
   elements.push({ tag: 'hr' });
   elements.push({
@@ -63,19 +73,35 @@ export function buildTaskNotificationCard(input: TaskNotificationContentInput): 
   const detailUrl = trimToEmpty(input.sessionDetailUrl);
   if (detailUrl !== '') {
     elements.push({
-      tag: 'action',
-      actions: [{
-        tag: 'button',
-        text: { tag: 'plain_text', content: '会话详情' },
-        type: 'default',
-        url: detailUrl,
+      tag: 'column_set', flex_mode: 'flow', background_style: 'default',
+      columns: [{
+        tag: 'column', width: 'auto', vertical_align: 'top',
+        elements: [sessionDetailButton(detailUrl)],
       }],
     });
   }
   return {
-    config: { wide_screen_mode: true },
+    schema: '2.0',
+    config: { update_multi: true },
     header: { template: meta.template, title: { tag: 'plain_text', content: meta.header } },
-    elements,
+    body: { direction: 'vertical', padding: '12px 12px 12px 12px', elements },
+  };
+}
+
+/** 「会话详情」跳转按钮：2.0 交互模块已移除，按钮入 elements 并用 behaviors.open_url 跳转。 */
+function sessionDetailButton(detailUrl: string): Record<string, unknown> {
+  return {
+    tag: 'button',
+    text: { tag: 'plain_text', content: '会话详情' },
+    type: 'default',
+    size: 'sm',
+    behaviors: [{
+      type: 'open_url',
+      default_url: detailUrl,
+      pc_url: detailUrl,
+      ios_url: detailUrl,
+      android_url: detailUrl,
+    }],
   };
 }
 
@@ -127,13 +153,10 @@ export function buildTaskNotificationText(input: TaskNotificationContentInput): 
   return content;
 }
 
-function markdownOf(content: string): Record<string, unknown> {
-  return { tag: 'div', text: { tag: 'lark_md', content } };
-}
-
 /**
  * 卡片 2.0 的富文本元素：顶层 `tag:'markdown'`，支持 Markdown 表格。
- * 与 `markdownOf`（1.0 的 `div > lark_md`，仅基本语法）刻意分开，勿混用。
+ * 勿退回 `{ tag:'div', text:{ tag:'lark_md' } }`：`lark_md` 是「文本格式」tag，
+ * 只渲染加粗/斜体/链接等基本语法，表格会被原样吐出管道符。
  */
 function markdownElement(content: string): Record<string, unknown> {
   return { tag: 'markdown', content, text_align: 'left', text_size: 'normal_v2' };
