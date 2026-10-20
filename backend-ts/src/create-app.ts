@@ -286,7 +286,7 @@ import { registerFeishuBotRoutes } from './feishu/admin.routes.js';
 import { registerFeishuBindingRoutes } from './feishu/binding.routes.js';
 import { FeishuMonitorService } from './feishu/monitor.service.js';
 import { MysqlFeishuMessageRepository } from './feishu/message.repository.js';
-import { FeishuMessageService, botSenderLabel, formatGroupTime, isBotSender, senderName } from './feishu/message.service.js';
+import { FeishuMessageService, formatGroupTime, senderName } from './feishu/message.service.js';
 import { buildQuotedInjection } from './feishu/quoted-injection.js';
 import { feishuSummarizerModelConfig, GroupContextSummarizer } from './feishu/group-context-summarizer.js';
 import { FeishuInboundProcessor } from './feishu/inbound-processor.js';
@@ -312,8 +312,7 @@ import { FeishuCardActionService } from './feishu/card-action.service.js';
 import { persistFeishuCancelIfIdle } from './feishu/cancel-running.js';
 import { readFeishuDocMarkdown } from './feishu/doc-reader.js';
 import { fetchFeishuMessageDetail } from './feishu/message-detail.js';
-import { expandFeishuMergeForward, resolveFeishuQuotedText } from './feishu/merge-forward.js';
-import { batchResolveFeishuUserNames } from './feishu/sender-names.js';
+import { resolveFeishuQuotedText } from './feishu/merge-forward.js';
 import { feishuSendTargetOf, sendFeishuFile, sendFeishuImage } from './feishu/media-sender.js';
 import { FeishuCardProgressListener, countCompletedAgentRounds, type FeishuCardProgress } from './feishu/card-progress-listener.js';
 import { createDingtalkRuntime } from './dingtalk/runtime.js';
@@ -326,6 +325,7 @@ import { createFeishuPatchedProgress, type FeishuProgressHandle } from './feishu
 import { wsEvent } from './session/ws/ws-event.js';
 import { inboundImageKeys } from './feishu/event-normalizer.js';
 import { chatFilesDirOf, resolveChatFileTarget } from './feishu/chat-files.js';
+import { createFeishuMediaHelper, IMAGE_EXT_BY_CONTENT_TYPE } from './feishu-media-helpers.js';
 import type { FeishuInboundContext, FeishuNormalizedMessage } from './feishu/types.js';
 import { WsStreamingEventListener } from './session/ws/ws-streaming-event-listener.js';
 import { MysqlApiTokenRepository, MysqlOutboundDeliveryRepository, MysqlOutboundSubscriptionRepository, MysqlWebhookTriggerRepository } from './openapi/openapi.repository.js';
@@ -2266,143 +2266,16 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       await feishuMessageService.recordP2pMessage(channel.appId, pushedMessageId, sessionId, 'OUT');
     }
   });
-  const resolveFeishuSenderName = async (accountId: string, event: FeishuNormalizedMessage): Promise<string | null> => {
-    const senderId = event.senderId;
-    if (senderId == null) return null;
-    // 机器人（应用）发送者：飞书无名称查询能力，直接用统一占位名，避免无谓的通讯录查询报错。
-    if (isBotSender(event)) return botSenderLabel(event.senderId);
-    const key = `${accountId}:${senderId}`;
-    const cached = feishuSenderNames.get(key);
-    if (cached != null) return cached;
-    const lookup = (async (): Promise<string | null> => {
-      try {
-        const client = await getFeishuClient(Number(accountId));
-        if (client == null) return null;
-        // basicBatch 仅返回姓名且不受通讯录授权范围限制，适合群聊消息发送人展示。
-        const response = await client.contact.v3.user.basicBatch({
-          data: { user_ids: [senderId] }, params: { user_id_type: 'open_id' },
-        });
-        const user = (response as { data?: { users?: Array<{ name?: string }> } }).data?.users?.[0];
-        return user?.name?.trim() || null;
-      } catch (error) {
-        // 失败不缓存（权限补开后自动恢复）；回退到已绑定 mao 账号的用户名。
-        console.warn(`获取飞书发送人姓名失败, accountId=${accountId}, openId=${event.senderId}`, error);
-        const unionId = event.senderUnionId ?? event.senderId;
-        const userId = unionId == null ? null : await feishuBinding.findUserIdByUnionId(unionId);
-        const bound = userId == null ? null : await userRepo.findById(userId);
-        return bound?.displayName?.trim() || null;
-      }
-    })();
-    const name = await lookup;
-    // 仅缓存成功结果：失败（如通讯录权限未开通）不缓存，后续消息重试。
-    if (name != null && name !== '') feishuSenderNames.set(key, Promise.resolve(name));
-    return name;
-  };
-  const resolveFeishuUserNames = async (accountId: string, openIds: string[]): Promise<Map<string, string>> => {
-    const client = await getFeishuClient(Number(accountId));
-    if (client == null || openIds.length === 0) return new Map();
-    return batchResolveFeishuUserNames(
-      (req) => client.contact.v3.user.basicBatch(req),
-      openIds,
-      {
-        get: (openId) => feishuSenderNames.get(`${accountId}:${openId}`),
-        set: (openId, name) => { feishuSenderNames.set(`${accountId}:${openId}`, Promise.resolve(name)); },
-      },
-    );
-  };
-  const resolveMergeWorkspace = async (accountId: string, event: FeishuNormalizedMessage): Promise<string | null> => {
-    try {
-      if (event.chatType === 'group') {
-        if (event.chatId == null || event.chatId === '') return null;
-        return resolveFeishuChatWorkspace(cfg.app.harness.workspaceRoot, accountId, event.chatId);
-      }
-      const unionId = event.senderUnionId ?? event.senderId;
-      const userId = unionId == null ? null : await feishuBinding.findUserIdByUnionId(unionId);
-      if (userId == null) return null;
-      return resolveFeishuChatWorkspace(cfg.app.harness.workspaceRoot, String(accountId), `private-${userId}`);
-    } catch (error) {
-      console.warn(`定位合并转发工作区失败, accountId=${accountId}: ${error instanceof Error ? error.message : String(error)}`);
-      return null;
-    }
-  };
-  const expandMergeForward = async (accountId: string, messageId: string, workspace: string | null): Promise<string | null> => {
-    try {
-      const client = await getFeishuClient(Number(accountId));
-      if (client == null) return null;
-      return await expandFeishuMergeForward(client, messageId, {
-        workspace,
-        resolveUserNames: (openIds) => resolveFeishuUserNames(accountId, openIds),
-        // 转发内图片预下载（与直接入站一致的 @{路径}@ 引用），失败/超上限时保留 msg 占位符走懒加载。
-        downloadImage: async (childMessageId, imageKey, index) => {
-          if (workspace == null || workspace === '') return null;
-          return downloadFeishuImageTo(accountId, workspace, childMessageId, imageKey, index);
-        },
-      });
-    } catch (error) {
-      console.warn(`展开飞书合并转发失败, messageId=${messageId}, code=unknown: ${error instanceof Error ? error.message : String(error)}`);
-      return null;
-    }
-  };
-  // 群图片入站即下载（非懒加载）：落到群工作区，占位文本携带 @{路径}@ 引用，Agent 免工具直接读取；
-  // 失败返回 null 由调用方保留 msg 占位符，仍可通过 feishu_download_file 懒加载兜底。
-  const IMAGE_EXT_BY_CONTENT_TYPE: Record<string, string> = {
-    'image/jpeg': '.jpg', 'image/png': '.png', 'image/gif': '.gif', 'image/webp': '.webp', 'image/bmp': '.bmp',
-  };
-  // 引用消息全文落盘的工作区定位：群会话此时已由 buildGroupContext 创建（直接查库）；
-  // 私聊会话可能尚未创建，按绑定用户推导与建会话一致的 leaf。定位失败降级为纯截断。
-  const QUOTED_INLINE_LIMIT = 100;
-  const resolveQuotedWorkspace = async (accountId: string, event: FeishuNormalizedMessage): Promise<string | null> => {
-    try {
-      if (event.chatType === 'group') {
-        if (event.chatId == null) return null;
-        const conversation = await feishuMessageRepository.findGroupConversation(String(accountId), event.chatId);
-        return conversation?.workspace ?? null;
-      }
-      const unionId = event.senderUnionId ?? event.senderId;
-      const userId = unionId == null ? null : await feishuBinding.findUserIdByUnionId(unionId);
-      if (userId == null) return null;
-      return resolveFeishuChatWorkspace(cfg.app.harness.workspaceRoot, String(accountId), `private-${userId}`);
-    } catch (error) {
-      console.warn(`定位引用消息工作区失败, accountId=${accountId}: ${error instanceof Error ? error.message : String(error)}`);
-      return null;
-    }
-  };
-  const downloadFeishuGroupImage = async (accountId: string, event: FeishuNormalizedMessage, imageKey: string, index = 0): Promise<string | null> => {
-    if (event.chatType !== 'group' || event.chatId == null || event.messageId == null) return null;
-    const workspace = resolveFeishuChatWorkspace(cfg.app.harness.workspaceRoot, accountId, event.chatId);
-    return downloadFeishuImageTo(accountId, workspace, event.messageId, imageKey, index);
-  };
-  // 合并转发里的图片预下载：工作区由展开入口解析（群/私聊都可能），消息 ID 取转发内的子消息。
-  const downloadFeishuImageTo = async (accountId: string, workspace: string, messageId: string, imageKey: string, index = 0): Promise<string | null> => {
-    const client = await getFeishuClient(Number(accountId));
-    if (client == null) return null;
-    const maxBytes = Math.max(1, cfg.feishu.bot.file.maxInboundFileMb) * 1024 * 1024;
-    const { buffer, contentType } = await downloadFeishuMediaBuffer(client, messageId, imageKey, 'image', maxBytes);
-    if (buffer.length === 0) return null;
-    const dir = chatFilesDirOf(workspace);
-    mkdirSync(dir, { recursive: true });
-    const ext = IMAGE_EXT_BY_CONTENT_TYPE[contentType] ?? '.jpg';
-    // 同一 post 消息可能含多图：首图沿用原命名，其余追加序号防覆盖。
-    const target = resolve(dir, index > 0 ? `feishu-image-${messageId}-${index + 1}${ext}` : `feishu-image-${messageId}${ext}`);
-    await writeFile(target, buffer);
-    return target;
-  };
-  const downloadFeishuGroupFile = async (accountId: string, event: FeishuNormalizedMessage): Promise<string | null> => {
-    if (event.chatType !== 'group' || event.chatId == null || event.messageId == null || event.fileKey == null) return null;
-    const client = await getFeishuClient(Number(accountId));
-    if (client == null) return null;
-    const workspace = resolveFeishuChatWorkspace(cfg.app.harness.workspaceRoot, accountId, event.chatId);
-    const maxBytes = Math.max(1, cfg.feishu.bot.file.maxInboundFileMb) * 1024 * 1024;
-    const { buffer } = await downloadFeishuMediaBuffer(client, event.messageId, event.fileKey, 'file', maxBytes);
-    if (buffer.length === 0) return null;
-    const dir = chatFilesDirOf(workspace);
-    mkdirSync(dir, { recursive: true });
-    const fileName = sanitizeFeishuFileName(event.fileName, `feishu-${event.fileKey}`);
-    // 同日同名文件防覆盖：命中时改用带 messageId 的唯一名，历史引用不被篡改
-    const target = resolveChatFileTarget(dir, fileName, event.messageId);
-    await writeFile(target, buffer);
-    return target;
-  };
+  const feishuMediaHelper = createFeishuMediaHelper({
+    getFeishuClient,
+    feishuSenderNames,
+    feishuBinding,
+    feishuMessageRepository,
+    userRepo,
+    workspaceRoot: cfg.app.harness.workspaceRoot,
+    maxInboundFileMb: cfg.feishu.bot.file.maxInboundFileMb,
+  });
+  const { resolveFeishuSenderName, resolveFeishuUserNames, resolveMergeWorkspace, expandMergeForward, resolveQuotedWorkspace, downloadFeishuGroupImage, downloadFeishuImageTo, downloadFeishuGroupFile } = feishuMediaHelper;
   const feishuInboundProcessor = new FeishuInboundProcessor(feishuInboundHandler, {
     messageService: feishuMessageService,
     mergeWindowMs: cfg.feishu.bot.mergeWindowMs,
@@ -2421,7 +2294,6 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     resolveQuotedMessage: async (accountId, event) => {
       if (event.parentId == null) return null;
       const persist = async (raw: string): Promise<string> => {
-        if (raw.length <= QUOTED_INLINE_LIMIT) return raw;
         return buildQuotedInjection(raw, { parentMessageId: event.parentId!, workspace: await resolveQuotedWorkspace(accountId, event) });
       };
       // 群消息日志优先：免 API 调用，发送人姓名与占位符格式也和上下文一致。
