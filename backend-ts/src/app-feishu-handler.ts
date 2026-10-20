@@ -5,11 +5,12 @@ import { resolve } from 'node:path';
 import type { Db } from './db/db.js';
 import type { AppConfig } from './config/app-config.js';
 import type { AppContext } from './create-app.js';
+import type { MysqlFeishuMessageRepository } from './feishu/message.repository.js';
+import type { FeishuMessageService } from './feishu/message.service.js';
+import type { FeishuClientHelper } from './feishu-client.js';
+import type { HarnessService } from './harness/core/harness-service.js';
+import type { AgentLoop } from './harness/core/agent-loop.js';
 
-import { MysqlFeishuMessageRepository } from './feishu/message.repository.js';
-import { FeishuMessageService } from './feishu/message.service.js';
-import { feishuSummarizerModelConfig, GroupContextSummarizer } from './feishu/group-context-summarizer.js';
-import { createFeishuClientHelper } from './feishu-client.js';
 import { createFeishuSessionHelper } from './feishu-session.js';
 import { FEISHU_ECP_IDENTITY_MISMATCH_TEXT } from './feishu/ecp-inbound-gate.js';
 import { createFeishuQueueCardHelper } from './feishu-cards.js';
@@ -32,7 +33,7 @@ import { WsStreamingEventListener } from './session/ws/ws-streaming-event-listen
 import { buildFeishuProgressCard } from './feishu/progress-card.js';
 import { feishuSendTargetOf } from './feishu/media-sender.js';
 import { createFeishuMediaHelper, IMAGE_EXT_BY_CONTENT_TYPE } from './feishu-media.js';
-import { resolveFeishuChatWorkspace, sanitizeFeishuFileName, downloadFeishuMediaBuffer, dataUriOf } from './feishu-media.js';
+import { sanitizeFeishuFileName, downloadFeishuMediaBuffer, dataUriOf } from './feishu-media.js';
 import { createThreadSessionHelper } from './feishu-session.js';
 import { FeishuInboundProcessor } from './feishu/inbound-processor.js';
 import { createResolveQuotedMessageHelper } from './feishu-session.js';
@@ -61,16 +62,20 @@ export interface FeishuHandlerDeps {
   db: Db;
   cfg: AppConfig;
   ctx: AppContext;
-  // All dependencies passed as any to avoid complex type issues
+  /** 飞书消息层（app-feishu-messaging）先于 harness 装配，这里只做消费。 */
+  feishuMessageRepository: MysqlFeishuMessageRepository;
+  feishuMessageService: FeishuMessageService;
+  getFeishuClient: FeishuClientHelper['getFeishuClient'];
+  getFeishuChatTitle: FeishuClientHelper['getFeishuChatTitle'];
+  sendFeishuText: FeishuClientHelper['sendFeishuText'];
+  /** harness/agentLoop 已于本模块之前装配完成（钉钉运行时需要真实实例）。 */
+  harness: HarnessService;
+  agentLoop: AgentLoop;
+  // 其余依赖仍以 any 透传，避免逐个下沉类型
   [key: string]: any;
 }
 
 export interface FeishuHandlerResult {
-  feishuMessageRepository: MysqlFeishuMessageRepository;
-  feishuMessageService: FeishuMessageService;
-  getFeishuClient: (botId: number) => Promise<any>;
-  getFeishuChatTitle: (botId: number, chatId: string) => Promise<string>;
-  sendFeishuText: (botId: number, event: any, text: string) => Promise<string | null>;
   feishuInboundHandler: AgentFeishuInboundHandler;
   feishuInboundProcessor: FeishuInboundProcessor;
   feishuCardActionService: FeishuCardActionService;
@@ -90,53 +95,10 @@ export function assembleFeishuHandler(deps: FeishuHandlerDeps): FeishuHandlerRes
   const d = deps as any;
   const { db, cfg, ctx } = d;
 
-  const feishuMessageRepository = new MysqlFeishuMessageRepository(db);
-  const feishuMessageService = new FeishuMessageService(
-    feishuMessageRepository,
-    {
-      create: async (accountId: any, context: any) => {
-        const bot = await d.feishuBots.findById(Number(accountId));
-        if (bot == null) throw new Error(`飞书Bot不存在: ${accountId}`);
-        const unionId = context.senderUnionId ?? context.senderId;
-        const userId = unionId == null ? null : await d.feishuBinding.findUserIdByUnionId(unionId);
-        const user = userId == null ? null : await d.userRepo.findById(userId);
-        if (user?.id == null) throw new Error(`飞书用户未绑定: ${context.senderId ?? ''}`);
-        const agent = bot.agentId != null ? await d.agentService.getAgent(bot.agentId) : await d.agentService.requireDefaultAgent();
-        const model = bot.modelId != null ? await d.modelService.getModel(bot.modelId) : await d.modelService.getDefaultModel();
-        const workspaceLeaf = context.chatType === 'group' && context.chatId != null ? context.chatId! : `private-${user.id}`;
-        const workspace = resolveFeishuChatWorkspace(cfg.app.harness.workspaceRoot, accountId, workspaceLeaf);
-        mkdirSync(workspace, { recursive: true });
-        const isGroup = context.chatType === 'group' && context.chatId != null;
-        const title = isGroup && context.threadId == null
-          ? (await d.getFeishuChatTitle(Number(accountId), context.chatId!)) || '飞书Bot会话'
-          : '飞书Bot会话';
-        const session = await d.sessionService.createSession(
-          user.id, agent.id, title, 'CLOUD', workspace, 'FULL', false,
-          'linux', '/bin/bash', 'Linux', model?.id ?? null,
-          isGroup ? `feishu-chat-${accountId}-${context.chatId}` : `feishu-${accountId}-private-${user.id}`,
-          'new', null, null,
-        );
-        return { sessionId: session.id!, ownerUserId: user.id, workspace: session.workspace };
-      },
-    },
-    cfg.feishu.bot.groupContext.maxItems,
-    cfg.feishu.bot.groupContext.maxMinutes,
-    new GroupContextSummarizer(d.routeChatClient, async (sessionId: number) => {
-      const session = await d.sessionService.getSession(sessionId);
-      const model = session?.modelId != null
-        ? await d.modelService.getModel(session.modelId).catch(() => null)
-        : await d.modelService.getDefaultModel();
-      if (model == null || model.baseUrl === '' || model.modelId === '') return null;
-      return feishuSummarizerModelConfig(model);
-    }),
-    cfg.feishu.bot.groupContext.overflowItems,
-  );
+  const {
+    feishuMessageRepository, feishuMessageService, getFeishuClient, getFeishuChatTitle, sendFeishuText,
+  } = d;
   const feishuSenderNames = new Map<string, Promise<string | null>>();
-  const { getFeishuClient, getFeishuChatTitle, sendFeishuText } = createFeishuClientHelper({
-    feishuBots: d.feishuBots,
-    appSecretKey: cfg.feishu.bot.appSecretKey,
-    replyMaxLength: cfg.feishu.bot.reply.maxLength,
-  });
   const { applyFeishuBotConfig, ensureFeishuSessionTitle } = createFeishuSessionHelper({
     feishuBots: d.feishuBots, sessionService: d.sessionService, sessionRepo: d.sessionRepo, agentService: d.agentService, modelService: d.modelService, getFeishuChatTitle,
   });
@@ -265,12 +227,12 @@ export function assembleFeishuHandler(deps: FeishuHandlerDeps): FeishuHandlerRes
       }
       return messageId;
     },
-    harnessService: { execute: (...args: any[]) => d.holder.harness!.execute(...args), prepareMessage: (...args: any[]) => d.holder.harness!.prepareMessage(...args) } as never,
-    createCancelFlag: (sessionId: number) => d.holder.loop!.registerCancelFlag(sessionId),
-    releaseCancelFlag: (sessionId: number) => d.holder.loop!.removeCancelFlag(sessionId),
+    harnessService: { execute: (...args: any[]) => d.harness.execute(...args), prepareMessage: (...args: any[]) => d.harness.prepareMessage(...args) } as never,
+    createCancelFlag: (sessionId: number) => d.agentLoop.registerCancelFlag(sessionId),
+    releaseCancelFlag: (sessionId: number) => d.agentLoop.removeCancelFlag(sessionId),
     createProgressCard: (context: any, sessionId: number) => createFeishuProgressCard(context, sessionId),
     onInterruptRunning: (sessionId: number) => {
-      d.holder.loop!.requestCancel(sessionId);
+      d.agentLoop.requestCancel(sessionId);
       try { d.shellManager.closeByConversation(sessionId); } catch (error) {
         console.debug(`关闭飞书会话 Shell 失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -278,7 +240,7 @@ export function assembleFeishuHandler(deps: FeishuHandlerDeps): FeishuHandlerRes
       d.askUserQuestionsRegistry.failAllForSession(sessionId);
     },
     resolveIdleRunning: async (sessionId: number) => {
-      if (d.holder.loop!.getCancelFlag(sessionId) != null) return;
+      if (d.agentLoop.getCancelFlag(sessionId) != null) return;
       await persistCancelledIfActive(sessionId);
     },
     queueService: feishuTaskQueue,
@@ -434,7 +396,7 @@ export function assembleFeishuHandler(deps: FeishuHandlerDeps): FeishuHandlerRes
       feishuInboundHandler.cancel(sessionId);
       return persistFeishuCancelIfIdle({
         sessionId,
-        hadLoop: d.holder.loop!.getCancelFlag(sessionId) != null,
+        hadLoop: d.agentLoop.getCancelFlag(sessionId) != null,
         persistCancelledIfActive,
         drainNextIfPending: (id: number) => feishuInboundHandler.drainNextIfPending(id),
       });
@@ -548,8 +510,8 @@ export function assembleFeishuHandler(deps: FeishuHandlerDeps): FeishuHandlerRes
     permissionService: d.permissionService,
     sessionService: d.sessionService,
     sessionRepo: d.sessionRepo,
-    harness: d.holder.harness,
-    agentLoop: d.holder.loop,
+    harness: d.harness,
+    agentLoop: d.agentLoop,
     wsRegistry: d.wsRegistry,
     agentService: d.agentService,
     modelService: d.modelService,
@@ -571,11 +533,6 @@ export function assembleFeishuHandler(deps: FeishuHandlerDeps): FeishuHandlerRes
   const mcpValidator = new McpServerValidatorImpl(d.mcpServerLookup);
 
   return {
-    feishuMessageRepository,
-    feishuMessageService,
-    getFeishuClient,
-    getFeishuChatTitle,
-    sendFeishuText,
     feishuInboundHandler,
     feishuInboundProcessor,
     feishuCardActionService,

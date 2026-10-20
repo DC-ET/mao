@@ -39,7 +39,9 @@ export interface WsHandlerDeps {
   jwt: JwtService;
   wsRegistry: StreamingWsRegistry;
   sessionTitleService: SessionTitleService;
-  holder: { harness?: HarnessService; loop?: AgentLoop; compactionSignalBus?: CompactionSignalBus };
+  harnessService: HarnessService;
+  agentLoop: AgentLoop;
+  compactionSignalBus: CompactionSignalBus;
   sessionService: SessionService;
   taskTerminal: TaskTerminalService;
   messageQueueService: MessageQueueService;
@@ -70,7 +72,7 @@ export interface WsHandlerDeps {
 
 export function assembleWsHandler(deps: WsHandlerDeps): StreamingWsHandler {
   const {
-    cfg, jwt, wsRegistry, sessionTitleService, holder, sessionService, taskTerminal,
+    cfg, jwt, wsRegistry, sessionTitleService, harnessService, agentLoop, compactionSignalBus, sessionService, taskTerminal,
     messageQueueService, embedPageToolRegistry, localToolSessions, askUserQuestionsRegistry,
     treeSignalPublisher, approvalRegistry, approvalRuleService, activityService,
     activityHeartbeat, todoMapper, backgroundSubagentManager, shellManager,
@@ -82,7 +84,7 @@ export function assembleWsHandler(deps: WsHandlerDeps): StreamingWsHandler {
   const wsHandler = new StreamingWsHandler({
     registry: wsRegistry,
     titleService: sessionTitleService,
-    harnessService: holder.harness!,
+    harnessService,
     sessionService,
     taskTerminalService: taskTerminal,
     messageQueueService,
@@ -95,8 +97,8 @@ export function assembleWsHandler(deps: WsHandlerDeps): StreamingWsHandler {
     activityService,
     activityHeartbeat,
     sessionTodoMapper: todoMapper,
-    agentLoop: holder.loop!,
-    compactionSignalBus: holder.compactionSignalBus!,
+    agentLoop,
+    compactionSignalBus,
     backgroundSubagentManager,
     shellSessionManager: shellManager,
     skillSyncService: skillSync,

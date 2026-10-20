@@ -2,6 +2,7 @@ import type { Db } from './db/db.js';
 import type { SystemSettingService } from './settings/settings.service.js';
 import type { MysqlUserRepository } from './user/user.repository.js';
 import type { SessionRepository } from './session/session.repository.js';
+import type { SessionService } from './session/session.service.js';
 import type { MessageRepository } from './session/session.repository.js';
 import type { MessageQueueService } from './session/message-queue.service.js';
 import type { MysqlLlmModelRepository } from './model/model.repository.js';
@@ -25,6 +26,7 @@ export interface NotificationServicesDeps {
   settingService: SystemSettingService;
   userRepo: MysqlUserRepository;
   sessionRepo: SessionRepository;
+  sessionService: SessionService;
   messageRepo: MessageRepository;
   messageQueueService: MessageQueueService;
   modelRepo: MysqlLlmModelRepository;
@@ -44,7 +46,7 @@ export interface NotificationServicesResult {
 }
 
 export function assembleNotificationServices(deps: NotificationServicesDeps): NotificationServicesResult {
-  const { db, settingService, userRepo, sessionRepo, messageRepo, messageQueueService, modelRepo, llmAdapter, notifCipher } = deps;
+  const { db, settingService, userRepo, sessionRepo, sessionService, messageRepo, messageQueueService, modelRepo, llmAdapter, notifCipher } = deps;
 
   const senderRegistry = new WebhookSenderRegistry([
     new DingTalkWebhookSender(), new FeishuWebhookSender(),
@@ -82,7 +84,7 @@ export function assembleNotificationServices(deps: NotificationServicesDeps): No
     },
     llmAdapter,
   );
-  const messageCitationService = new MessageCitationService(sessionRepo as never);
+  const messageCitationService = new MessageCitationService(sessionService);
 
   return {
     senderRegistry, notifPref, weixinWebhookFallback, deliveryService,

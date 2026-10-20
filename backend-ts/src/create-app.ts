@@ -149,7 +149,6 @@ import { LlmCallRepository } from './usage/llm-call.repository.js';
 import { LlmCallService } from './usage/llm-call.service.js';
 import { RecordingLlmChatClient } from './usage/recording-llm-chat-client.js';
 import { MysqlFeishuBindingRepository } from './feishu/binding.repository.js';
-import { feishuSummarizerModelConfig, GroupContextSummarizer } from './feishu/group-context-summarizer.js';
 import { FeishuInboundProcessor } from './feishu/inbound-processor.js';
 import { MysqlFeishuPendingBindingRepository } from './feishu/pending-binding.repository.js';
 import { replayFeishuPendingMessage } from './feishu/pending-replay.js';
@@ -199,6 +198,7 @@ import { assembleNotificationServices } from './app-notification-services.js';
 import { assembleOpenApiServices } from './app-openapi-services.js';
 import { assembleWeixinServices } from './app-weixin-services.js';
 import { assembleFeishuHandler } from './app-feishu-handler.js';
+import { assembleFeishuMessaging } from './app-feishu-messaging.js';
 import { assembleLifecycle } from './app-lifecycle.js';
 import { assembleWeixinMcpServices } from './app-weixin-mcp-services.js';
 import { assembleHarnessEngine } from './app-harness-engine.js';
@@ -565,6 +565,14 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   // 会话删除路径要回收 CLOUD MCP 快照，而 mcpSync 晚于 sessionService 构造：先用引用占位。
   ctx.mcpSyncRef = mcpSync;
 
+  // 飞书消息层先于 harness 装配：tool registry 的飞书工具在执行期通过闭包取用这里的
+  // message service / client，晚绑定语义与原 create-app 单体版本一致；同时保证后续
+  // wsHandler / 微信 / 钉钉 / GitCommitMessageService 拿到真实 harness 实例。
+  const feishuMessaging = assembleFeishuMessaging({
+    db, cfg, feishuBots, feishuBinding, userRepo, agentService, modelService, sessionService, routeChatClient,
+  });
+  const { feishuMessageRepository, feishuMessageService, getFeishuClient, getFeishuChatTitle, sendFeishuText } = feishuMessaging;
+
   // Agent 资产化：bundle 导出/导入（P1）+ 团队共享目录（P2）+ registry/URL 导入/检查更新（P2 分发闭环）
   const mcpServerLookup = new MysqlMcpServerLookup(db);
   const agentImportOriginRepo = new AgentImportOriginRepository(db);
@@ -729,7 +737,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   ctx.deleteScheduledTasksForSession = (sessionId) => scheduledStore.deleteBySessionId(sessionId);
 
   const notifServices = assembleNotificationServices({
-    db, settingService, userRepo, sessionRepo, messageRepo, messageQueueService,
+    db, settingService, userRepo, sessionRepo, sessionService, messageRepo, messageQueueService,
     modelRepo, llmAdapter, notifCipher,
   });
   const { senderRegistry, notifPref, weixinWebhookFallback, deliveryService, memoryRepo, memoryService, memoryExtraction, messageCitationService } = notifServices;
@@ -763,6 +771,28 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     allowlistProvider: () => settingService.getPrivateAllowlistCidrs(),
   });
 
+  // harness 必须在 wsHandler / 微信 / 钉钉 / GitCommitMessageService 之前装配：
+  // 这些消费者在构造时就读取真实的 harness 与 agentLoop（holder 只是给运行期晚绑定用）。
+  const harnessEngine = assembleHarnessEngine({
+    cfg, apiPrefix, uploadDir, harnessTuning, pathSandbox, todoMapper, scheduledService,
+    sessionSvc, sessionMap, shellManager, outputManager, backgroundTasks, gitLookup, jwt,
+    userRepo, ecpInjector, larkUatInjector, settingService, runtimeResolver, modelService,
+    wechatBridges, feishuMessageService, feishuMessageRepository, getFeishuClient,
+    sendBytesBridge, dingtalkMediaHolder, definitionRegistry, holder, subagentMapper,
+    subagentInvocation, localToolSessions, visibility, backgroundSubagentManager,
+    messageRepo, compactionSvc, embedPageToolRegistry, mcpToolsRegistry, routingMcpClient,
+    userToolService, httpApiExecutor, llmAdapter, promptEngine, contextManager,
+    compactionService, compactionArchiveService, compactionConfig, historyLoader,
+    activeContext, orchestrator, tokenEstimator, compactionModelResolver,
+    localToolExecutor, dangerAssessor, proxyApprover, jevRiskAssessor, approvalModelResolver,
+    approvalRuleService, dockerRouter, approvalRegistry, askUserQuestionsRegistry,
+    treeSignalPublisher, deliveryService, feishuAskMount,
+    inboxService, skillLoader, skillSync, localSkills, localAgentsMd, agentRepo,
+    experienceService, modelRepo, fileChangeRepo, envInfo, db, mcpSync, mcpLoadModeResolver,
+    activityHeartbeat, memoryService, wsRegistry,
+  });
+  const { toolRegistry, toolDispatcher, compactionSignalBus, agentLoop, harness } = harnessEngine;
+
   const sessionTitleService = new SessionTitleService(
     sessionRepo,
     messageRepo,
@@ -778,7 +808,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   );
 
   const usageService = new LlmUsageService(new LlmUsageRepository(db));
-  const gitCommitMsg = new GitCommitMessageService(llmAdapter as never, holder.harness as never, usageService, { getValue: (key: string) => settingService.getValue(key) });
+  const gitCommitMsg = new GitCommitMessageService(llmAdapter as never, harness as never, usageService, { getValue: (key: string) => settingService.getValue(key) });
   const gitWrite = new GitWriteOperationService(
     workspaceGit, gitCommitMsg, gitLookup, runtimeResolver, activityService,
   );
@@ -786,7 +816,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const weixinServices = assembleWeixinServices({
     db, sessionService, sessionRepo, agentService, modelService, settingService,
     weixinConfig, weixinAccounts, weixinTokens, weixinSend, weixinUpload, weixinMedia,
-    weixinPref, harness: holder.harness!, agentLoop: holder.loop!, shellManager, wsRegistry, taskTerminal,
+    weixinPref, harness, agentLoop, shellManager, wsRegistry, taskTerminal,
     activityService, activityHeartbeat, todoMapper, weixinWebhookFallback, llmAdapter, agentExecutor,
   });
   const { weixinSession, voiceSynthesis, voiceCodec, voiceReply, weixinFiles, weixinInboundHandler, weixinInboundMessages, inboundProcessor, weixinMonitor, qrLogin } = weixinServices;
@@ -804,7 +834,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const openTriggerSettle: { current: ((triggerId: number, status: 'COMPLETED' | 'FAILED' | 'CANCELLED') => Promise<void>) | null } = { current: null };
   const openCallSettle: { current: ((callLogId: number, phase: 'COMPLETED' | 'FAILED' | 'CANCELLED', queueWaitMs: number | null, messageId: number | null) => Promise<void>) | null } = { current: null };
   const wsHandler = assembleWsHandler({
-    cfg, jwt, wsRegistry, sessionTitleService, holder, sessionService, taskTerminal,
+    cfg, jwt, wsRegistry, sessionTitleService, harnessService: harness, agentLoop, compactionSignalBus, sessionService, taskTerminal,
     messageQueueService, embedPageToolRegistry, localToolSessions, askUserQuestionsRegistry,
     treeSignalPublisher, approvalRegistry, approvalRuleService, activityService,
     activityHeartbeat, todoMapper, backgroundSubagentManager, shellManager,
@@ -825,7 +855,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const feishuHandler = assembleFeishuHandler({
     db, cfg, ctx,
     feishuBots, feishuBinding, userRepo, agentService, modelService, settingService,
-    sessionService, sessionRepo, wsRegistry, holder, shellManager,
+    sessionService, sessionRepo, wsRegistry, harness, agentLoop, shellManager,
+    feishuMessageRepository, feishuMessageService, getFeishuClient, getFeishuChatTitle, sendFeishuText,
     taskTerminal, scheduledService, feedbackService, feedbackMessageLookup,
     backgroundSubagentManager, localToolSessions, treeSignalPublisher, askUserQuestionsRegistry,
     ecpAuth, ecpSessionRepo, feishu, pendingBindingMessages, sessionTitleService,
@@ -833,27 +864,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     dingtalkMediaHolder, mcpServerLookup, activityService, activityHeartbeat, todoMapper,
     jwt,
   });
-  const { feishuMessageRepository, feishuMessageService, getFeishuClient, getFeishuChatTitle, sendFeishuText, feishuInboundHandler, feishuInboundProcessor, feishuCardActionService, feishuMonitor, dingtalk, feishuTaskQueue, feishuProgressCardRepo, createFeishuRecoveryProgress, analyticsService, statisticsService, adminAnalytics, userToolStatsStore, mcpValidator } = feishuHandler;
-
-  const harnessEngine = assembleHarnessEngine({
-    cfg, apiPrefix, uploadDir, harnessTuning, pathSandbox, todoMapper, scheduledService,
-    sessionSvc, sessionMap, shellManager, outputManager, backgroundTasks, gitLookup, jwt,
-    userRepo, ecpInjector, larkUatInjector, settingService, runtimeResolver, modelService,
-    wechatBridges, feishuMessageService, feishuMessageRepository, getFeishuClient,
-    sendBytesBridge, dingtalkMediaHolder, definitionRegistry, holder, subagentMapper,
-    subagentInvocation, localToolSessions, visibility, backgroundSubagentManager,
-    messageRepo, compactionSvc, embedPageToolRegistry, mcpToolsRegistry, routingMcpClient,
-    userToolService, httpApiExecutor, llmAdapter, promptEngine, contextManager,
-    compactionService, compactionArchiveService, compactionConfig, historyLoader,
-    activeContext, orchestrator, tokenEstimator, compactionModelResolver,
-    localToolExecutor, dangerAssessor, proxyApprover, jevRiskAssessor, approvalModelResolver,
-    approvalRuleService, dockerRouter, approvalRegistry, askUserQuestionsRegistry,
-    treeSignalPublisher, deliveryService, feishuAskMount,
-    inboxService, skillLoader, skillSync, localSkills, localAgentsMd, agentRepo,
-    experienceService, modelRepo, fileChangeRepo, envInfo, db, mcpSync, mcpLoadModeResolver,
-    activityHeartbeat, memoryService, wsRegistry,
-  });
-  const { toolRegistry, toolDispatcher, compactionSignalBus, agentLoop, harness } = harnessEngine;
+  const { feishuInboundHandler, feishuInboundProcessor, feishuCardActionService, feishuMonitor, dingtalk, feishuTaskQueue, feishuProgressCardRepo, createFeishuRecoveryProgress, analyticsService, statisticsService, adminAnalytics, userToolStatsStore, mcpValidator } = feishuHandler;
 
   await registerAllRoutes({
     app, db, cfg, apiPrefix, jwt, agentRuntimeCfg,
