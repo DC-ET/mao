@@ -331,6 +331,7 @@ import { createFeishuRoundOffsetHelper } from './feishu-round-offset.js';
 import { createFeishuUserIdHelper } from './feishu-user-id.js';
 import { createPersistCancelledHelper } from './persist-cancelled.js';
 import { createPatchedProgressHelper } from './feishu-patched-progress.js';
+import { createFeishuProgressCardHelper } from './feishu-progress-card.js';
 import type { FeishuInboundContext, FeishuNormalizedMessage } from './feishu/types.js';
 import { WsStreamingEventListener } from './session/ws/ws-streaming-event-listener.js';
 import { MysqlApiTokenRepository, MysqlOutboundDeliveryRepository, MysqlOutboundSubscriptionRepository, MysqlWebhookTriggerRepository } from './openapi/openapi.repository.js';
@@ -1806,57 +1807,13 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const feishuQueueCard = createFeishuQueueCardHelper({ getFeishuClient, feishuMessageService });
   const resolveFeishuSessionDetailUrl = createFeishuSessionUrlHelper({ settingService });
   const feishuCardSnapshotRepo = new MysqlFeishuCardSnapshotRepository(db);
+  const feishuProgressCardRepo = new MysqlFeishuProgressCardRepository(db);
   const createPatchedProgress = createPatchedProgressHelper({
     feishuActiveProgress, feishuAskFormStore, feishuCardSnapshotRepo, backgroundSubagentManager, feedbackMessageLookup,
   });
-  const createFeishuProgressCard = async (context: FeishuInboundContext, sessionId: number): Promise<FeishuCardProgress | null> => {
-    const botId = Number(context.accountId);
-    const client = await getFeishuClient(botId);
-    if (client == null) return null;
-    const cancelAction = { sessionId, sender: context.senderId ?? '', botId };
-    const sessionDetailUrl = await resolveFeishuSessionDetailUrl(sessionId);
-    // 持久化「会话 → 活跃进度卡片」映射：进程重启后崩溃恢复续跑可凭此续更卡片直至终态。
-    // 持久化失败不阻断执行，仅丢失该任务的恢复续更能力。
-    const persistCard = async (cardMessageId: string): Promise<void> => {
-      try {
-        await feishuProgressCardRepo.upsert({
-          sessionId, botId, cardMessageId,
-          chatType: context.chatType,
-          chatId: context.chatId,
-          senderOpenId: context.senderId,
-        });
-      } catch (error) {
-        console.warn(`飞书进度卡片映射持久化失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    };
-    const existingMessageId = context.progressCardMessageId;
-    // 任务起算时间取卡片就绪时刻：排队消息的等待时间不计入耗时。
-    const startedAtMs = Date.now();
-    if (existingMessageId != null) {
-      const card = buildFeishuProgressCard('RUNNING', 0, '任务已接收，正在准备执行。', [], cancelAction, undefined, sessionDetailUrl);
-      await client.im.v1.message.patch({ path: { message_id: existingMessageId }, data: { content: JSON.stringify(card) } });
-      await persistCard(existingMessageId);
-      return createPatchedProgress(client, existingMessageId, sessionId, cancelAction, startedAtMs, sessionDetailUrl, {
-        content: '任务已接收，正在准备执行。',
-      }, botId);
-    }
-    const card = buildFeishuProgressCard('RUNNING', 0, '任务已接收，正在准备执行。', [], cancelAction, undefined, sessionDetailUrl);
-    const data = { msg_type: 'interactive', content: JSON.stringify(card) };
-    const response = await (context.chatType === 'group' && context.messageId != null
-      ? client.im.v1.message.reply({ path: { message_id: context.messageId }, data })
-      : client.im.v1.message.create({
-        params: { receive_id_type: context.chatType === 'group' ? 'chat_id' : 'open_id' },
-        data: { ...data, receive_id: context.chatType === 'group' ? context.chatId! : context.senderId! },
-      }));
-    const messageId = (response as { data?: { message_id?: string } }).data?.message_id;
-    if (messageId == null || messageId === '') throw new Error('飞书处理中卡片发送失败：未返回 message_id');
-    await persistCard(messageId);
-    // 私聊进度卡片可被回复/引用，记录卡片消息 → 会话映射供引用切换定位。
-    if (context.chatType === 'p2p') await feishuMessageService.recordP2pMessage(String(botId), messageId, sessionId, 'OUT');
-    return createPatchedProgress(client, messageId, sessionId, cancelAction, startedAtMs, sessionDetailUrl, {
-      content: '任务已接收，正在准备执行。',
-    }, botId);
-  };
+  const createFeishuProgressCard = createFeishuProgressCardHelper({
+    getFeishuClient, feishuMessageService, feishuProgressCardRepo, resolveFeishuSessionDetailUrl, createPatchedProgress,
+  });
   const resolveFeishuRoundOffset = createFeishuRoundOffsetHelper({ sessionService });
   const createFeishuRecoveryProgress = async (sessionId: number): Promise<{ progress: FeishuCardProgress; roundOffset: number } | null> => {
     try {
@@ -1896,7 +1853,6 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   };
   const resolveFeishuUserId = createFeishuUserIdHelper({ feishuBinding });
   const feishuInboundQueueRepo = new FeishuInboundQueueRepository(db);
-  const feishuProgressCardRepo = new MysqlFeishuProgressCardRepository(db);
   const feishuTaskQueue = new FeishuTaskQueueService(feishuInboundQueueRepo);
   /** 排队卡片展示位置：入队完成后队列中的 QUEUED 行数（含本条，插入语义=队尾第 N 位）。 */
   const queuePositionOf = async (sessionId: number): Promise<number> => (await feishuInboundQueueRepo.countPending(sessionId));
