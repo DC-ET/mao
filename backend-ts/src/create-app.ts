@@ -339,6 +339,7 @@ import { createSendUnauthorizedCardHelper } from './feishu-unauthorized-card.js'
 import { createResolveUserIdHelper } from './feishu-resolve-user-id.js';
 import { createResolveMessageTextHelper } from './feishu-resolve-message-text.js';
 import { createUnauthorizedTextHelper } from './feishu-unauthorized-text.js';
+import { createResolveQuotedMessageHelper } from './feishu-resolve-quoted-message.js';
 import type { FeishuInboundContext, FeishuNormalizedMessage } from './feishu/types.js';
 import { WsStreamingEventListener } from './session/ws/ws-streaming-event-listener.js';
 import { MysqlApiTokenRepository, MysqlOutboundDeliveryRepository, MysqlOutboundSubscriptionRepository, MysqlWebhookTriggerRepository } from './openapi/openapi.repository.js';
@@ -2114,33 +2115,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       const result = await feishuMessageService.getOrCreateThreadSession(String(accountId), context);
       return result == null ? null : { sessionId: result.sessionId };
     },
-    resolveQuotedMessage: async (accountId, event) => {
-      if (event.parentId == null) return null;
-      const persist = async (raw: string): Promise<string> => {
-        return buildQuotedInjection(raw, { parentMessageId: event.parentId!, workspace: await resolveQuotedWorkspace(accountId, event) });
-      };
-      // 群消息日志优先：免 API 调用，发送人姓名与占位符格式也和上下文一致。
-      // 合并转发日志若仍是固定英文，或私聊没有日志，则展开后再注入。
-      const fromLog = event.chatId != null
-        ? await feishuMessageRepository.findGroupMessageByMessageId(String(accountId), event.chatId, event.parentId)
-        : null;
-      return resolveFeishuQuotedText({
-        log: fromLog == null ? null : {
-          msgType: fromLog.msgType,
-          content: fromLog.content,
-          line: `[${formatGroupTime(fromLog.createdAt)}] ${fromLog.senderName}：${fromLog.content ?? ''}`,
-        },
-        fetchDetail: async () => {
-          const client = await getFeishuClient(Number(accountId));
-          if (client == null) return null;
-          const detail = await fetchFeishuMessageDetail(client, event.parentId!);
-          return detail == null ? null : { msgType: detail.msgType, text: detail.text };
-        },
-        expand: (workspace) => expandMergeForward(accountId, event.parentId!, workspace),
-        resolveWorkspace: () => resolveQuotedWorkspace(accountId, event),
-        persist,
-      });
-    },
+    resolveQuotedMessage: createResolveQuotedMessageHelper({
+      getFeishuClient, feishuMessageRepository, resolveQuotedWorkspace, expandMergeForward,
+    }),
     expandMergeForward,
     resolveMergeWorkspace,
     resolveMessageText: createResolveMessageTextHelper({ getFeishuClient }),
