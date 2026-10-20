@@ -90,9 +90,22 @@ describe('buildWeixinFallbackCard', () => {
     expect(text).not.toContain('"tag":"action"');
   });
 
+  it('uses card 2.0 schema with top-level markdown element so md tables render', () => {
+    // 回归：曾用 1.0 的 div>lark_md（文本格式 tag，只支持加粗/斜体/链接），
+    // Markdown 表格被原样吐出管道符。必须与飞书会话进度卡同口径：
+    // schema 2.0 + 顶层 tag:'markdown' 元素。
+    const card = buildWeixinFallbackCard({ reply: '| 名称 | 天元重工 |\n| --- | --- |\n| 申购价 | 4.48 元/股 |' });
+    expect(card.schema).toBe('2.0');
+    const elements = (card.body as { elements: Array<Record<string, unknown>> }).elements;
+    const body = elements.find((element) => element.tag === 'markdown' && String(element.content).includes('天元重工'));
+    expect(body).toBeDefined();
+    // 不得退回 div>lark_md：那是表格不渲染的根因
+    expect(cardText(card)).not.toContain('lark_md');
+  });
+
   it('keeps markdown structure of the reply intact', () => {
     const card = buildWeixinFallbackCard({ reply: '**新股：有 1 只**\n| 项目 | 信息 |' });
-    expect(cardText(card)).toContain('lark_md');
+    expect(cardText(card)).toContain('"tag":"markdown"');
   });
 
   it('empty reply still yields a valid card skeleton', () => {

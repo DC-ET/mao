@@ -80,17 +80,22 @@ export function buildTaskNotificationCard(input: TaskNotificationContentInput): 
 }
 
 /**
- * 微信回复降级推送的飞书卡片（1.0 结构）。
+ * 微信回复降级推送的飞书卡片（卡片 JSON 2.0 结构）。
  *
  * 与任务通知卡片同源但语义不同：这里没有「任务标题/状态相位」概念，主体是
  * Agent 已生成的回复原文，头部固定为告警色。`reply` 由调用方预先按渠道上限
  * 截断（见 WeixinWebhookFallbackService），此处只负责排版，不再裁剪。
+ *
+ * 必须用 2.0 + 顶层 `tag:'markdown'` 元素，不能沿用任务通知卡的 1.0
+ * `div > lark_md`：`lark_md` 是「文本格式」tag，只渲染加粗/斜体/链接等基本语法，
+ * Markdown 表格会被原样吐出管道符；`markdown` 才是「元素」tag，与飞书会话进度卡
+ * （buildFeishuProgressCard）同口径，表格正常渲染。二者仅一字之差。
  */
 export function buildWeixinFallbackCard(input: { reply: string; now?: Date }): Record<string, unknown> {
   const elements: Array<Record<string, unknown>> = [
-    markdownOf('回复已生成，但无法送达微信。以下为完整内容：'),
+    markdownElement('回复已生成，但无法送达微信。以下为完整内容：'),
     { tag: 'hr' },
-    markdownOf(input.reply),
+    markdownElement(input.reply),
     { tag: 'hr' },
     {
       tag: 'note',
@@ -98,9 +103,10 @@ export function buildWeixinFallbackCard(input: { reply: string; now?: Date }): R
     },
   ];
   return {
-    config: { wide_screen_mode: true },
+    schema: '2.0',
+    config: { update_multi: true },
     header: { template: 'orange', title: { tag: 'plain_text', content: WEIXIN_FALLBACK_HEADER } },
-    elements,
+    body: { direction: 'vertical', padding: '12px 12px 12px 12px', elements },
   };
 }
 
@@ -123,6 +129,14 @@ export function buildTaskNotificationText(input: TaskNotificationContentInput): 
 
 function markdownOf(content: string): Record<string, unknown> {
   return { tag: 'div', text: { tag: 'lark_md', content } };
+}
+
+/**
+ * 卡片 2.0 的富文本元素：顶层 `tag:'markdown'`，支持 Markdown 表格。
+ * 与 `markdownOf`（1.0 的 `div > lark_md`，仅基本语法）刻意分开，勿混用。
+ */
+function markdownElement(content: string): Record<string, unknown> {
+  return { tag: 'markdown', content, text_align: 'left', text_size: 'normal_v2' };
 }
 
 function trimToEmpty(value: string | null | undefined): string {
