@@ -337,6 +337,7 @@ import { createQueuePositionHelper } from './queue-position.js';
 import { createAuthorizeSenderHelper } from './feishu-authorize-sender.js';
 import { createSendUnauthorizedCardHelper } from './feishu-unauthorized-card.js';
 import { createResolveUserIdHelper } from './feishu-resolve-user-id.js';
+import { createResolveMessageTextHelper } from './feishu-resolve-message-text.js';
 import type { FeishuInboundContext, FeishuNormalizedMessage } from './feishu/types.js';
 import { WsStreamingEventListener } from './session/ws/ws-streaming-event-listener.js';
 import { MysqlApiTokenRepository, MysqlOutboundDeliveryRepository, MysqlOutboundSubscriptionRepository, MysqlWebhookTriggerRepository } from './openapi/openapi.repository.js';
@@ -2141,12 +2142,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     },
     expandMergeForward,
     resolveMergeWorkspace,
-    resolveMessageText: async (accountId, messageId) => {
-      const client = await getFeishuClient(Number(accountId));
-      if (client == null) return null;
-      const detail = await fetchFeishuMessageDetail(client, messageId);
-      return detail?.text ?? null;
-    },
+    resolveMessageText: createResolveMessageTextHelper({ getFeishuClient }),
     resolveUserId: createResolveUserIdHelper({ feishuBinding }),
     authorizeSender: createAuthorizeSenderHelper({ feishuBinding, feishuMessageRepository, ecpAuth, ecpSessionRepo }),
     sendReply: async (accountId, event, text) => { await sendFeishuText(Number(accountId), event, text); },
