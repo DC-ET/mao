@@ -338,6 +338,7 @@ import { createAuthorizeSenderHelper } from './feishu-authorize-sender.js';
 import { createSendUnauthorizedCardHelper } from './feishu-unauthorized-card.js';
 import { createResolveUserIdHelper } from './feishu-resolve-user-id.js';
 import { createResolveMessageTextHelper } from './feishu-resolve-message-text.js';
+import { createUnauthorizedTextHelper } from './feishu-unauthorized-text.js';
 import type { FeishuInboundContext, FeishuNormalizedMessage } from './feishu/types.js';
 import { WsStreamingEventListener } from './session/ws/ws-streaming-event-listener.js';
 import { MysqlApiTokenRepository, MysqlOutboundDeliveryRepository, MysqlOutboundSubscriptionRepository, MysqlWebhookTriggerRepository } from './openapi/openapi.repository.js';
@@ -2147,10 +2148,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     authorizeSender: createAuthorizeSenderHelper({ feishuBinding, feishuMessageRepository, ecpAuth, ecpSessionRepo }),
     sendReply: async (accountId, event, text) => { await sendFeishuText(Number(accountId), event, text); },
     sendUnauthorizedCard: createSendUnauthorizedCardHelper({ getFeishuClient, ecpAuth, feishu, pendingBindingMessages }),
-    unauthorizedText: async (_accountId, event) => {
-      const ecpEnabled = await ecpAuth.isEnabled();
-      return feishuUnauthorizedFallbackText(feishuUnauthorizedGuide(ecpEnabled, event.chatType));
-    },
+    unauthorizedText: createUnauthorizedTextHelper({ ecpAuth }),
   });
   ctx.pendingBindingProcessor = feishuInboundProcessor;
   const feishuCardActionService = new FeishuCardActionService({
