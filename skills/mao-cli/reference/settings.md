@@ -23,7 +23,7 @@
 | 列出设置 | `settings list` |
 | 更新某项 | `settings set` |
 | 批量保存 | `settings batch` |
-| 测试集成配置连通性 | `settings test ldap\|feishu\|oss\|jev` |
+| 测试集成配置连通性 | `settings test ldap\|feishu\|oss\|jev\|smtp` |
 
 ## 命令：settings list
 
@@ -74,14 +74,36 @@ mao settings batch --items '[{"key":"weixin.agentId","value":"1"},{"key":"sessio
 | `feishu` | `--app-id` `--app-secret` | 飞书 OAuth 凭证测试 |
 | `oss` | `--region` `--access-key-id` `--access-key-secret` `--bucket` `--sts-region-id` `--sts-endpoint` `--sts-access-key-id` `--sts-access-key-secret` `--sts-role-arn` | OSS 凭证与 STS 试签 |
 | `jev` | `--endpoint` `--model` `--api-key` | Jev 前置决策端点与 API Key：发一次只读探测，校验 Key 与决策协议响应 |
+| `smtp` | `--smtp-host` `--smtp-port` `--smtp-secure` `--smtp-user` `--smtp-password` `--from-addr` | 邮件（SMTP）配置：发一封测试邮件到当前管理员个人资料邮箱 |
 
-`POST /system-settings/test/{ldap|feishu|oss|jev}`
+`POST /system-settings/test/{ldap|feishu|oss|jev|smtp}`
 
 ```bash
 mao settings test ldap
 mao settings test oss --region cn-hangzhou --access-key-id AK --access-key-secret SK
 mao settings test jev --endpoint https://api.typesafe.ai/v1/systemone --model jev-latest --api-key sk-...
+mao settings test smtp --smtp-host smtp.example.com --smtp-port 465 --smtp-secure 1 --smtp-user sender@example.com --smtp-password '***' --from-addr noreply@example.com
 ```
+
+`smtp` 测试只发到**当前管理员本人**的 `user.email`：管理员未在个人资料填写邮箱时拒绝并提示；`--smtp-secure` 接受 `1/0` 或 `true/false`；留空项回落已存配置（可测未保存的修改），`enabled` 强制置 true（未启用也可先测通再开启）。
+
+## 邮件通知配置（`notify.email.*`，0.0.318 起）
+
+管理后台「系统设置 → 通知与消息 → 邮件（SMTP）」，即时生效（每次发送时实时读取，无需重启）。启用后，用户在桌面「设置 → 消息通知」的推送方式三选一（钉钉 / 飞书 / 邮件）；邮件渠道的收件地址固定取用户个人资料邮箱（保存偏好时从用户表读取并加密留存），用户后续修改邮箱会自动更新收件地址，清空邮箱则停止投递。
+
+| key | 默认 | 说明 |
+|-----|------|------|
+| `notify.email.enabled` | `0` | 邮件通知渠道开关；关闭时用户保存邮件偏好被拒绝（「邮件通知未启用，请联系管理员」） |
+| `notify.email.smtpHost` | 空 | SMTP 服务器地址；启用时必填 |
+| `notify.email.smtpPort` | `465` | SMTP 端口（1-65535）；TLS 隐式 465 / STARTTLS 587 |
+| `notify.email.smtpSecure` | `1` | 是否隐式 TLS：`1`=是（465），`0`=STARTTLS（587）；接受 `1/0` 或 `true/false` |
+| `notify.email.smtpUser` | 空 | SMTP 登录用户名；为空时不带 AUTH |
+| `notify.email.smtpPassword` | 空（secret） | SMTP 登录密码；加密存储，保存后仅掩码回显，留空表示不修改 |
+| `notify.email.fromAddr` | 空 | 发件人地址；留空回落 `smtpUser`；启用时必填且须为合法邮箱格式 |
+
+启用时的跨字段校验：host / port / fromAddr 必填（批量保存同一事务内整体判定）；密码非必填（适配无需认证的内网中继）。投递失败可见性与钉钉 / 飞书一致：重试耗尽后只落 `task_notification_delivery`（FAILED + 原因），用户侧无提醒；「配置缺失/已停用」为不可重试失败，不会无谓重试 20 分钟。
+
+等价命令：`mao settings test smtp`（见上）。注意自托管实例的发信信誉（SPF / DKIM / 中继）决定邮件是否进收件箱而非垃圾箱，部署建议见 [DEPLOY.md](../../../DEPLOY.md#邮件通知渠道smtp)。
 
 ## 云端终端配置（`terminal.*`，0.0.97 起）
 

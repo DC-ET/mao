@@ -118,3 +118,36 @@ describe('WeixinWebhookFallbackService', () => {
     expect(card).toContain('内容过长已截断');
   });
 });
+
+describe('WeixinWebhookFallbackService 邮件渠道（V161 决策 4）', () => {
+  function buildEmailService(send = vi.fn(async () => ({ success: true, retryable: false, httpStatus: 250, providerCode: null, error: null }))) {
+    const preference = { channel: 'EMAIL', webhookCiphertext: 'enc(user@corp.com)' };
+    const repo = { findEnabled: vi.fn(async () => preference) };
+    const cipher = { decrypt: vi.fn(() => 'user@corp.com') };
+    const sent: Array<{ url: string; message: { text: string; card?: Record<string, unknown> } }> = [];
+    const wrapped = vi.fn(async (url: string, message: { text: string; card?: Record<string, unknown> }) => {
+      sent.push({ url, message });
+      return send(url, message);
+    });
+    const senderRegistry = { get: vi.fn(() => ({ channel: () => 'EMAIL', send: wrapped })) } as unknown as WebhookSenderRegistry;
+    const service = new WeixinWebhookFallbackService(repo as never, cipher as never, senderRegistry);
+    return { service, sent, send: wrapped };
+  }
+
+  it('EMAIL 渠道放行：text 含降级头，card 被忽略不抛错', async () => {
+    const { service, sent } = buildEmailService();
+    expect(await service.sendFallback(42, '微信发送失败的完整回答')).toBe(true);
+    expect(sent).toHaveLength(1);
+    // 第一参对邮件渠道即收件邮箱（偏好密文解密值）
+    expect(sent[0].url).toBe('user@corp.com');
+    expect(sent[0].message.text).toContain('Mao 微信回复发送失败');
+    expect(sent[0].message.text).toContain('微信发送失败的完整回答');
+    // card 仍然传入（由 email sender 忽略），接口形状不变
+    expect(sent[0].message.card).toBeDefined();
+  });
+
+  it('EMAIL 渠道发送失败：返回 false 不抛出（不影响微信主流程）', async () => {
+    const { service } = buildEmailService(vi.fn(async () => ({ success: false, retryable: false, httpStatus: 535, providerCode: 'EAUTH', error: '535 auth' })));
+    expect(await service.sendFallback(42, '回答')).toBe(false);
+  });
+});

@@ -68,7 +68,9 @@ export class WeixinWebhookFallbackService {
       return false;
     }
     const channel = preference.channel.trim().toUpperCase();
-    if (channel !== 'DINGTALK' && channel !== 'FEISHU') {
+    // 渠道白名单放行 EMAIL（决策 4）：否则 EMAIL 用户静默收不到降级推送。
+    // DINGTALK / FEISHU 行为不变；email sender 忽略 card，只把 text 渲染为邮件。
+    if (channel !== 'DINGTALK' && channel !== 'FEISHU' && channel !== 'EMAIL') {
       console.warn(`微信回复 webhook 降级跳过: 不支持的通知渠道 ${channel}, userId=${userId}`);
       return false;
     }

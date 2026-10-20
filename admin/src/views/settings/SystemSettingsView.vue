@@ -92,6 +92,13 @@
                           @click="testJevConnection"
                         >测试连接</el-button>
                         <el-button
+                          v-else-if="section.name === '通知与消息'"
+                          size="small"
+                          :loading="testingSmtp"
+                          :disabled="!canWrite"
+                          @click="testSmtpConnection"
+                        >测试连接</el-button>
+                        <el-button
                           type="primary"
                           size="small"
                           :loading="savingKeys.has(section.name)"
@@ -111,7 +118,7 @@
                       <template v-else>
                         <el-switch
                           v-if="isBooleanSetting(row.settingKey)"
-                          :model-value="plainModel[row.settingKey] === 'true'"
+                          :model-value="isSwitchOn(row.settingKey)"
                           :disabled="!canWrite"
                           @change="(val: string | number | boolean) => { plainModel[row.settingKey] = val === true ? 'true' : 'false' }"
                         />
@@ -313,6 +320,8 @@ const TOC_GROUPS: Array<{ label: string; sections: Array<{ kind: 'company-sso' |
     label: '通知与消息',
     sections: [
       { kind: 'integration', name: 'notify' },
+      // 邮件（SMTP）设置行（V161，category=通知与消息）：含启用开关与测试连接
+      { kind: 'category', name: '通知与消息' },
       { kind: 'category', name: '微信' },
     ],
   },
@@ -340,6 +349,7 @@ const activeSection = ref('')
 const plainModel = reactive<Record<string, string>>({})
 const savingKeys = ref(new Set<string>())
 const testingJev = ref(false)
+const testingSmtp = ref(false)
 /** 待清除的 secret key 集合：保存时提交空串（后端 isSecret=1 空串=显式清空），从已设置 secret 的输入框旁触发 */
 const pendingClearKeys = ref(new Set<string>())
 
@@ -356,7 +366,10 @@ function unmarkSecretClear(key: string) {
 }
 
 /** 数值类配置键：渲染为数字输入。 */
-const NUMERIC_KEYS = new Set(['audit.retentionDays', 'agent.threadPoolSize', 'agent.threadPoolMax', 'agent.threadPoolQueue', 'ws.idleTimeoutMs', 'notify.workerDelayMs', 'notify.batchSize', 'notify.maxAttempts', 'file.maxSizeMb', 'openapi.callLogRetentionDays', 'openapi.tokenAutoDisableThreshold'])
+const NUMERIC_KEYS = new Set(['audit.retentionDays', 'agent.threadPoolSize', 'agent.threadPoolMax', 'agent.threadPoolQueue', 'ws.idleTimeoutMs', 'notify.workerDelayMs', 'notify.batchSize', 'notify.maxAttempts', 'file.maxSizeMb', 'openapi.callLogRetentionDays', 'openapi.tokenAutoDisableThreshold', 'notify.email.smtpPort'])
+
+/** 布尔开关 key：默认按 *.enabled 后缀判定；notify.email.smtpSecure（TLS 开关）同款渲染。 */
+const BOOLEAN_KEYS = new Set(['notify.email.smtpSecure'])
 
 function isNumericKey(key: string): boolean {
   return NUMERIC_KEYS.has(key)
@@ -477,12 +490,63 @@ async function testJevConnection() {
   }
 }
 
+/** 用当前表单（未保存也可）探测 SMTP：host/port/secure/user/password/fromAddr 非空才作为 overrides 提交，
+ * 留空项后端回落已存值；密码已标记清除且未填新值则拒绝（与 Jev 测试同口径）。 */
+async function testSmtpConnection() {
+  if (!canWrite.value || testingSmtp.value) return
+  const host = (plainModel[SMTP_KEYS.host] ?? '').trim()
+  const port = (plainModel[SMTP_KEYS.port] ?? '').trim()
+  const secure = (plainModel[SMTP_KEYS.secure] ?? '').trim()
+  const user = (plainModel[SMTP_KEYS.user] ?? '').trim()
+  const password = (plainModel[SMTP_KEYS.password] ?? '').trim()
+  const fromAddr = (plainModel[SMTP_KEYS.fromAddr] ?? '').trim()
+  if (pendingClearKeys.value.has(SMTP_KEYS.password) && !password) {
+    ElMessage.error('密码已标记清除，请先填写新密码或取消清除后再测试')
+    return
+  }
+  const payload: Record<string, string> = {}
+  if (host) payload.smtpHost = host
+  if (port) payload.smtpPort = port
+  if (secure) payload.smtpSecure = secure
+  if (user) payload.smtpUser = user
+  if (password) payload.smtpPassword = password
+  if (fromAddr) payload.fromAddr = fromAddr
+  testingSmtp.value = true
+  try {
+    const { data } = await api.post('/system-settings/test/smtp', payload)
+    if (data?.ok) {
+      ElMessage.success('测试邮件已发送至你的邮箱')
+    } else {
+      ElMessage.warning(data?.message || '连接失败')
+    }
+  } catch { /* 拦截器已提示失败 */ } finally {
+    testingSmtp.value = false
+  }
+}
+
 function isBooleanSetting(key: string | undefined | null) {
-  return !!key && key.endsWith('enabled')
+  return !!key && (key.endsWith('enabled') || BOOLEAN_KEYS.has(key))
+}
+
+/** 开关回显：兼容 true/'true' 与 1/'1'（存量 seed 行用 0/1，如 notify.email.smtpSecure）。 */
+function isSwitchOn(key: string): boolean {
+  const raw = (plainModel[key] ?? '').trim().toLowerCase()
+  return raw === 'true' || raw === '1'
 }
 
 function isModelSetting(key: string | undefined | null) {
   return !!key && MODEL_SELECT_KEYS.has(key)
+}
+
+/** 邮件 SMTP 设置 key：表单值与 test/smtp overrides 的映射口径集中在此。 */
+const SMTP_KEYS = {
+  enabled: 'notify.email.enabled',
+  host: 'notify.email.smtpHost',
+  port: 'notify.email.smtpPort',
+  secure: 'notify.email.smtpSecure',
+  user: 'notify.email.smtpUser',
+  password: 'notify.email.smtpPassword',
+  fromAddr: 'notify.email.fromAddr',
 }
 
 function isAgentSetting(key: string | undefined | null) {

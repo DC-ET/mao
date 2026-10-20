@@ -2,7 +2,7 @@ import { Client } from 'ldapts';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { hasText } from '../common/case.js';
-import type { LdapSettings, OssSettings } from './types.js';
+import type { EmailSmtpSettings, LdapSettings, OssSettings } from './types.js';
 
 export interface LdapTestClient {
   bind(dn: string, password: string): Promise<void>;
@@ -92,7 +92,47 @@ export async function testOssCredentials(
 }
 
 export interface OssTestClient {
-  assumeRole(input: { roleArn: string; roleSessionName: string; durationSeconds: number; policy?: string }): Promise<unknown>;
+  assumeRole(input: { roleArn: string; roleSessionName: string; durationSeconds: number; policy?: unknown }): Promise<unknown>;
+}
+
+/** 邮箱格式：与 user.service.ts / settings.service.ts 保存校验口径一致。 */
+const EMAIL_PATTERN = /^[\w.+-]+@[\w-]+(\.[\w-]+)+$/;
+
+/** 邮件发送最小形状（EmailWebhookSender 满足；测试可注入 stub）。 */
+export interface EmailTestSender {
+  send(to: string, message: { text: string }): Promise<{ success: boolean; error: string | null }>;
+}
+
+/**
+ * 验证 SMTP 配置（决策 8）：用当前（表单 overrides 与已存合并后的）配置发一封
+ * 测试邮件到管理员自己的 user.email。管理员未填邮箱时拒绝并提示先去个人资料填写。
+ * cfg.enabled 由路由强制置 true：未启用的实例也要能先测通再开启。
+ */
+export async function testSmtpConnection(cfg: EmailSmtpSettings, toEmail: string, sender: EmailTestSender): Promise<void> {
+  if (!hasText(toEmail)) {
+    fail('请先在个人资料中填写邮箱，再测试邮件通知');
+  }
+  if (!EMAIL_PATTERN.test(toEmail.trim())) {
+    fail('个人资料中的邮箱格式不正确，请先修改');
+  }
+  if (!cfg.enabled || !hasText(cfg.smtpHost)) {
+    fail('SMTP 服务器地址不能为空');
+  }
+  if (!Number.isInteger(cfg.smtpPort) || cfg.smtpPort < 1 || cfg.smtpPort > 65535) {
+    fail('SMTP 端口必须是 1-65535 之间的整数');
+  }
+  if (hasText(cfg.fromAddr) && !EMAIL_PATTERN.test(cfg.fromAddr.trim())) {
+    fail('发件人地址邮箱格式不正确');
+  }
+  if (!hasText(cfg.fromAddr) && !hasText(cfg.smtpUser)) {
+    fail('发件人地址不能为空（留空则使用 SMTP 用户名）');
+  }
+  const result = await sender.send(toEmail.trim(), {
+    text: 'Mao Agent 测试通知\n这是一封来自 Mao 管理后台的测试邮件，表示 SMTP 配置可用。',
+  });
+  if (!result.success) {
+    fail(result.error ?? '测试邮件发送失败');
+  }
 }
 
 export function defaultLdapClientFactory(): LdapClientFactory {

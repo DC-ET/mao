@@ -5,12 +5,17 @@ import { bodyOf, pathParam, queryOptStr } from '../common/request.js';
 import { JEV_API_KEY_KEY, JEV_ENDPOINT_KEY, JEV_MODEL_KEY, type SystemSettingService } from './settings.service.js';
 import { defaultFeishuHttp } from '../auth/feishu-auth.service.js';
 import {
-  defaultJevHttp, defaultLdapClientFactory, mergeWithDefaults, testFeishuCredentials, testJevConnection, testLdapConnection, testOssCredentials,
+  defaultJevHttp, defaultLdapClientFactory, mergeWithDefaults, testFeishuCredentials, testJevConnection, testLdapConnection, testOssCredentials, testSmtpConnection,
+  type EmailTestSender,
 } from './settings-test.service.js';
+import { EmailWebhookSender } from '../notification/task/email-sender.js';
+import type { EmailSmtpSettings } from './types.js';
 
 export interface SystemSettingRouteDeps {
   systemSettingService: SystemSettingService;
   permissionService: { hasPermission(userId: number, code: string): Promise<boolean> };
+  /** 当前管理员资料邮箱查询（test/smtp 发测试信到管理员本人）。 */
+  adminEmailLookup: { findEmailById(userId: number): Promise<string | null> };
   /**
    * 保存前校验（items 已是最终待写入值，secret 未修改时为 null）：
    * 抛错则整次保存失败、DB 不变。当前用于 runtime.mode=docker 的容器运行时预检。
@@ -32,6 +37,7 @@ export { registerSystemSettingRoutes as registerSettingsRoutes };
 
 export function registerSystemSettingRoutes(app: FastifyInstance, deps: SystemSettingRouteDeps): void {
   const { systemSettingService, permissionService } = deps;
+
 
   app.get('/v1/system-settings', async (request, reply) => {
     const userId = requireUserId(request);
@@ -133,5 +139,33 @@ export function registerSystemSettingRoutes(app: FastifyInstance, deps: SystemSe
     }, stored);
     const result = await testJevConnection(merged, defaultJevHttp());
     return sendOk(reply, { ok: true, model: result.model, probability: result.probability });
+  });
+
+  app.post('/v1/system-settings/test/smtp', async (request, reply) => {
+    const userId = requireUserId(request);
+    await requirePermission(permissionService, userId, 'settings:write');
+    // 表单 overrides 与已存配置合并（留空回落已存值），可在保存前验证未落库的 SMTP 配置；
+    // enabled 强制置 true：未启用的实例也要能先测通再开启。
+    const overrides = bodyOf<Partial<{
+      smtpHost: string; smtpPort: string; smtpSecure: string; smtpUser: string; smtpPassword: string; fromAddr: string;
+    }>>(request);
+    const stored = await systemSettingService.getEmailSmtpConfig();
+    const merged: EmailSmtpSettings = {
+      ...stored,
+      enabled: true,
+      ...(hasText(overrides.smtpHost) ? { smtpHost: overrides.smtpHost!.trim() } : {}),
+      ...(hasText(overrides.smtpPort) ? { smtpPort: Number(overrides.smtpPort) } : {}),
+      ...(hasText(overrides.smtpSecure) ? { useTls: overrides.smtpSecure === 'true' || overrides.smtpSecure === '1' } : {}),
+      ...(hasText(overrides.smtpUser) ? { smtpUser: overrides.smtpUser!.trim() } : {}),
+      ...(hasText(overrides.smtpPassword) ? { smtpPassword: overrides.smtpPassword! } : {}),
+      ...(hasText(overrides.fromAddr) ? { fromAddr: overrides.fromAddr!.trim() } : {}),
+    };
+    // 测试信只发当前管理员本人（决策 8）：管理员未填邮箱时拒绝并提示
+    const toEmail = await deps.adminEmailLookup.findEmailById(userId);
+    const sender: EmailTestSender = {
+      send: (to, message) => new EmailWebhookSender({ getEmailSmtpConfig: async () => merged }).send(to, message),
+    };
+    await testSmtpConnection(merged, toEmail ?? '', sender);
+    return sendOk(reply, { ok: true });
   });
 }

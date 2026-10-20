@@ -19,10 +19,10 @@ export function parseNotificationChannel(value: string | null | undefined): Noti
     throw new BusinessException(ErrorCode.PARAM_INVALID, '请选择通知渠道');
   }
   const upper = value.trim().toUpperCase();
-  if (upper === 'DINGTALK' || upper === 'FEISHU') {
+  if (upper === 'DINGTALK' || upper === 'FEISHU' || upper === 'EMAIL') {
     return upper;
   }
-  throw new BusinessException(ErrorCode.PARAM_INVALID, '通知渠道只支持 DINGTALK 或 FEISHU');
+  throw new BusinessException(ErrorCode.PARAM_INVALID, '通知渠道只支持 DINGTALK、FEISHU 或 EMAIL');
 }
 
 export interface UserTaskNotificationPreference {

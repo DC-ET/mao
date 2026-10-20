@@ -5,7 +5,7 @@ import { ErrorCode } from '../common/error-code.js';
 import { hasText } from '../common/case.js';
 import { decryptAesGcm, encryptAesGcmNonNull } from '../crypto/aes-gcm.js';
 import type {
-  AgentLookup, AgentRuntimeSettings, BundleRegistrySettings, FeishuOAuthSettings, HarnessTuningSettings, LdapSettings, ModelLookup,
+  AgentLookup, AgentRuntimeSettings, BundleRegistrySettings, EmailSmtpSettings, FeishuOAuthSettings, HarnessTuningSettings, LdapSettings, ModelLookup,
   NotificationTuningSettings, OssSettings, SettingsRuntimeConfig, SystemSetting, SystemSettingRepository,
   TavilySettings, TerminalSettings, TinyFishSettings, UploadSettings, WebSearchConfig, WebSearchProvider,
 } from './types.js';
@@ -66,6 +66,20 @@ export const WS_IDLE_TIMEOUT_MS_KEY = 'ws.idleTimeoutMs';
 export const NOTIFY_WORKER_DELAY_MS_KEY = 'notify.workerDelayMs';
 export const NOTIFY_BATCH_SIZE_KEY = 'notify.batchSize';
 export const NOTIFY_MAX_ATTEMPTS_KEY = 'notify.maxAttempts';
+/** 邮件通知渠道（V161）：7 个设置行，密码行 is_secret=1。缺行/未启用 = 邮件渠道不可用。 */
+export const NOTIFY_EMAIL_ENABLED_KEY = 'notify.email.enabled';
+export const NOTIFY_EMAIL_SMTP_HOST_KEY = 'notify.email.smtpHost';
+export const NOTIFY_EMAIL_SMTP_PORT_KEY = 'notify.email.smtpPort';
+export const NOTIFY_EMAIL_SMTP_SECURE_KEY = 'notify.email.smtpSecure';
+export const NOTIFY_EMAIL_SMTP_USER_KEY = 'notify.email.smtpUser';
+export const NOTIFY_EMAIL_SMTP_PASSWORD_KEY = 'notify.email.smtpPassword';
+export const NOTIFY_EMAIL_FROM_ADDR_KEY = 'notify.email.fromAddr';
+/** 邮件 SMTP 全部设置 key：保存时的跨字段校验（enabled 时 host/port/fromAddr 必填）按组整体判定。 */
+export const NOTIFY_EMAIL_KEYS: readonly string[] = [
+  NOTIFY_EMAIL_ENABLED_KEY, NOTIFY_EMAIL_SMTP_HOST_KEY, NOTIFY_EMAIL_SMTP_PORT_KEY,
+  NOTIFY_EMAIL_SMTP_SECURE_KEY, NOTIFY_EMAIL_SMTP_USER_KEY, NOTIFY_EMAIL_SMTP_PASSWORD_KEY,
+  NOTIFY_EMAIL_FROM_ADDR_KEY,
+];
 
 export const SHARE_TOKEN_LINKS_ENABLED_KEY = 'share.tokenLinksEnabled';
 
@@ -143,6 +157,9 @@ const DEFAULT_WS_IDLE_TIMEOUT_MS = 90000;
 const DEFAULT_NOTIFY_WORKER_DELAY_MS = 30000;
 const DEFAULT_NOTIFY_BATCH_SIZE = 100;
 const DEFAULT_NOTIFY_MAX_ATTEMPTS = 4;
+const DEFAULT_NOTIFY_EMAIL_SMTP_PORT = 465;
+/** 邮箱格式：与 user.service.ts / 桌面 ProfileView 校验口径一致（不同模块各自持有，避免跨域依赖）。 */
+const EMAIL_PATTERN = /^[\w.+-]+@[\w-]+(\.[\w-]+)+$/;
 const DEFAULT_HARNESS_WEB_PAGE_USER_AGENT = 'Mozilla/5.0 (compatible; AgentWorkbench/1.0)';
 
 export class SystemSettingService {
@@ -210,6 +227,9 @@ export class SystemSettingService {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '该配置仅展示，不支持在后台修改');
     }
     const next = await this.resolveNextValue(setting, value);
+    if (NOTIFY_EMAIL_KEYS.includes(key)) {
+      await this.validateEmailSmtpGroup(new Map([[key, next]]));
+    }
     if (next == null) {
       return this.masked(setting);
     }
@@ -233,6 +253,9 @@ export class SystemSettingService {
         throw new BusinessException(ErrorCode.PARAM_INVALID, `该配置仅展示，不支持在后台修改: ${item.key}`);
       }
       rows.push({ setting, next: await this.resolveNextValue(setting, item.value) });
+    }
+    if (rows.some(({ setting }) => NOTIFY_EMAIL_KEYS.includes(setting.settingKey))) {
+      await this.validateEmailSmtpGroup(new Map(rows.map(({ setting, next }) => [setting.settingKey, next])));
     }
     return this.settingRepo.transaction(async (tx) => {
       const result: SystemSetting[] = [];
@@ -407,6 +430,37 @@ export class SystemSettingService {
     };
   }
 
+  /**
+   * 邮件通知（SMTP）配置（V161）。发送时实时读取：保存后即时生效，不在服务内缓存。
+   * 缺行回落默认值（端口 465 / 隐式 TLS），enabled 缺行视为关闭。
+   */
+  async getEmailSmtpConfig(): Promise<EmailSmtpSettings> {
+    const [enabled, host, portRaw, secureRaw, user, password, fromAddr] = await Promise.all([
+      this.getBool(NOTIFY_EMAIL_ENABLED_KEY),
+      this.getText(NOTIFY_EMAIL_SMTP_HOST_KEY),
+      this.getText(NOTIFY_EMAIL_SMTP_PORT_KEY, String(DEFAULT_NOTIFY_EMAIL_SMTP_PORT)),
+      // 缺行回落 V161 seed 默认值：465 + 隐式 TLS
+      this.getText(NOTIFY_EMAIL_SMTP_SECURE_KEY, '1'),
+      this.getText(NOTIFY_EMAIL_SMTP_USER_KEY),
+      this.getSecret(NOTIFY_EMAIL_SMTP_PASSWORD_KEY),
+      this.getText(NOTIFY_EMAIL_FROM_ADDR_KEY),
+    ]);
+    return {
+      enabled,
+      smtpHost: host.trim(),
+      smtpPort: parsePortNumber(portRaw) ?? DEFAULT_NOTIFY_EMAIL_SMTP_PORT,
+      smtpUser: user.trim(),
+      smtpPassword: password,
+      fromAddr: fromAddr.trim(),
+      useTls: isEnabledFlag(secureRaw),
+    };
+  }
+
+  /** 邮件渠道开关窄接口：用户保存 EMAIL 通知偏好前校验（未启用即拒绝）。 */
+  async emailSmtpEnabled(): Promise<boolean> {
+    return this.getBool(NOTIFY_EMAIL_ENABLED_KEY);
+  }
+
   /** harness 调参：压缩 / LLM / 网页抓取 / Shell 会话。均启动时构建，修改后需重启后端生效。 */
   async getHarnessTuningConfig(): Promise<HarnessTuningSettings> {
     const [
@@ -530,6 +584,36 @@ export class SystemSettingService {
         maxSizeMb: parsePositiveInt(maxSizeRaw) ?? DEFAULT_OSS_STS_MAX_SIZE_MB,
       },
     };
+  }
+
+  /**
+   * 邮件 SMTP 组保存校验（V161）：enabled=1 时 host / port / fromAddr 必填且合法。
+   * 单 key 与 batch 两条路径共用：pending 为本次待写值（secret 的 null=不修改），
+   * 未提交的 key 回落已存值，避免 enabled 与 host 同批保存时漏检。
+   */
+  private async validateEmailSmtpGroup(pending: Map<string, string | null>): Promise<void> {
+    const stored = new Map<string, SystemSetting | null>();
+    for (const key of NOTIFY_EMAIL_KEYS) {
+      stored.set(key, await this.settingRepo.findByKey(key));
+    }
+    const valueOf = (key: string): string => {
+      if (pending.has(key)) {
+        return pending.get(key) ?? '';
+      }
+      return stored.get(key)?.value ?? '';
+    };
+    if (!isEnabledFlag(valueOf(NOTIFY_EMAIL_ENABLED_KEY))) {
+      return;
+    }
+    if (!hasText(valueOf(NOTIFY_EMAIL_SMTP_HOST_KEY))) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '启用邮件通知前必须填写 SMTP 服务器地址');
+    }
+    if (parsePortNumber(valueOf(NOTIFY_EMAIL_SMTP_PORT_KEY)) == null) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '启用邮件通知前必须填写有效的 SMTP 端口（1-65535）');
+    }
+    if (!EMAIL_PATTERN.test(valueOf(NOTIFY_EMAIL_FROM_ADDR_KEY).trim())) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '启用邮件通知前必须填写有效的邮箱格式发件人地址');
+    }
   }
 
   private async resolveNextValue(setting: SystemSetting, value: string | null | undefined): Promise<string | null> {
@@ -726,6 +810,15 @@ export class SystemSettingService {
     if (key === LDAP_URL_KEY && !/^ldaps?:\/\//i.test(value!)) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, 'LDAP 服务地址必须以 ldap:// 或 ldaps:// 开头');
     }
+    if (key === NOTIFY_EMAIL_SMTP_PORT_KEY && parsePortNumber(value) == null) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, 'SMTP 端口必须是 1-65535 之间的整数');
+    }
+    if (key === NOTIFY_EMAIL_FROM_ADDR_KEY && !EMAIL_PATTERN.test(value!.trim())) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '发件人地址必须是有效的邮箱格式');
+    }
+    if (key === NOTIFY_EMAIL_SMTP_SECURE_KEY && !/^(true|false|1|0)$/i.test(value!.trim())) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, 'TLS 开关值必须为 true / false 或 1 / 0');
+    }
     if (key === FEISHU_REDIRECT_URI_KEY && !/^https?:\/\//i.test(value!)) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '飞书回调地址必须以 http:// 或 https:// 开头');
     }
@@ -773,6 +866,21 @@ function parsePositiveInt(value: string | null | undefined): number | null {
   }
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+/** SMTP 端口合法区间 1-65535；越界/非整数按未配置处理（回落默认 465）。 */
+function parsePortNumber(value: string | null | undefined): number | null {
+  if (!hasText(value)) {
+    return null;
+  }
+  const parsed = Number(value!.trim());
+  return Number.isInteger(parsed) && parsed >= 1 && parsed <= 65535 ? parsed : null;
+}
+
+/** 设置行布尔语义：true / 1（大小写不敏感）为开，其余（含空）为关。 */
+function isEnabledFlag(raw: string | null | undefined): boolean {
+  const normalized = (raw ?? '').trim().toLowerCase();
+  return normalized === 'true' || normalized === '1';
 }
 
 function optBool(raw: string | null, fallback: boolean): boolean {

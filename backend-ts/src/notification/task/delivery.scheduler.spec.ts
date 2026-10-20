@@ -357,3 +357,72 @@ describe('WebhookDeliveryScheduler', () => {
     }
   });
 });
+
+describe('WebhookDeliveryScheduler 邮件渠道（V161）', () => {
+  function buildScheduler(delivery: Record<string, unknown>, send: (url: string, message: unknown) => Promise<unknown>) {
+    const store = {
+      recoverInterrupted: vi.fn(async () => undefined),
+      listDue: vi.fn(async () => [delivery]),
+      claim: vi.fn(async () => true),
+      countPending: vi.fn(async () => 0),
+      updateById: vi.fn(async () => undefined),
+      deleteHistory: vi.fn(async () => undefined),
+    };
+    const executed: Promise<void>[] = [];
+    const scheduler = new WebhookDeliveryScheduler(
+      store as never,
+      { workerDelayMs: 1000, batchSize: 10, maxAttempts: 3 },
+      { decrypt: vi.fn(() => 'user@corp.com') } as never,
+      { get: vi.fn(() => ({ send })) } as never,
+      undefined,
+      (fn: () => void) => { executed.push(fn() as unknown as Promise<void>); },
+    );
+    return { scheduler, store, executed };
+  }
+
+  it('EMAIL 分派：解密后的密文即收件地址，成功写 SUCCEEDED', async () => {
+    const delivery = {
+      id: 21, userId: 1, channel: 'EMAIL', webhookCiphertext: 'enc(user@corp.com)',
+      titleSnapshot: '任务C', terminalPhase: 'COMPLETED', status: DeliveryStatus.PENDING, attemptCount: 0,
+    };
+    const send = vi.fn(async () => webhookSuccess(250, null));
+    const { scheduler, store, executed } = buildScheduler(delivery, send as never);
+    await scheduler.dispatchDueDeliveries();
+    await Promise.all(executed);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0]).toBe('user@corp.com');
+    expect(store.updateById).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 21, status: DeliveryStatus.SUCCEEDED, attemptCount: 1 }),
+    );
+  });
+
+  it('EMAIL 不可重试失败（配置缺失）：直接终态 FAILED 不重试', async () => {
+    const delivery = {
+      id: 22, userId: 1, channel: 'EMAIL', webhookCiphertext: 'enc(user@corp.com)',
+      titleSnapshot: '任务D', terminalPhase: 'FAILED', status: DeliveryStatus.PENDING, attemptCount: 0,
+    };
+    const send = vi.fn(async () => ({ success: false, retryable: false, httpStatus: null, providerCode: null, error: '邮件通知未配置或已停用，请联系管理员' }));
+    const { scheduler, store, executed } = buildScheduler(delivery, send as never);
+    await scheduler.dispatchDueDeliveries();
+    await Promise.all(executed);
+    expect(store.updateById).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 22, status: DeliveryStatus.FAILED, attemptCount: 1, nextRetryAt: null }),
+    );
+  });
+
+  it('EMAIL 可重试失败：排入重试（与 webhook 同口径）', async () => {
+    const delivery = {
+      id: 23, userId: 1, channel: 'EMAIL', webhookCiphertext: 'enc(user@corp.com)',
+      titleSnapshot: '任务E', terminalPhase: 'FAILED', status: DeliveryStatus.PENDING, attemptCount: 0,
+    };
+    const send = vi.fn(async () => ({ success: false, retryable: true, httpStatus: 451, providerCode: null, error: 'SMTP 服务端错误(451)' }));
+    const { scheduler, store, executed } = buildScheduler(delivery, send as never);
+    await scheduler.dispatchDueDeliveries();
+    await Promise.all(executed);
+    expect(store.updateById).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 23, status: DeliveryStatus.PENDING, attemptCount: 1, lastHttpStatus: 451 }),
+    );
+    const update = store.updateById.mock.calls[0][0] as { nextRetryAt: string | null };
+    expect(update.nextRetryAt).not.toBeNull();
+  });
+});

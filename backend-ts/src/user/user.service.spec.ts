@@ -134,3 +134,79 @@ describe('UserService', () => {
     await expect(service.batchGetUserRoles([1])).resolves.toBe(map);
   });
 });
+
+describe('UserService 邮箱变更通知钩子（V161 决策 2）', () => {
+  function localService(listener?: (userId: number, email: string | null) => void) {
+    const userRepo = {
+      findById: vi.fn(),
+      findByUsername: vi.fn(),
+      countByUsername: vi.fn(),
+      countByEmailExcept: vi.fn(async () => 0),
+      insert: vi.fn(async (u) => { u.id = 11; return 11; }),
+      updateById: vi.fn(),
+      updateFields: vi.fn(),
+      selectPage: vi.fn(),
+      findEmailById: vi.fn(),
+    } as unknown as UserRepository;
+    const permissionService = {
+      assignRoles: vi.fn(), changeRolesWithAdminGuard: vi.fn(), assertCanChangeRoles: vi.fn(),
+      assertCanDisableUser: vi.fn(), updateUserStatusWithAdminGuard: vi.fn(),
+      batchGetUserRoles: vi.fn(), getUserRoles: vi.fn(),
+    } as unknown as PermissionService;
+    const hasher: PasswordHasher = { hash: vi.fn(async () => 'hash'), matches: vi.fn() };
+    const listenerSpy = listener ?? vi.fn();
+    return { service: new UserService(userRepo, permissionService, hasher, listenerSpy), userRepo, listenerSpy };
+  }
+
+  it('自助改邮箱：实际变化后触发钩子（含改为空）', async () => {
+    const { service, userRepo, listenerSpy } = localService();
+    vi.mocked(userRepo.findById).mockResolvedValue(user(7, 'alice', 'Alice', 'old@example.test', 'hash', 1));
+    await service.updateOwnProfile(7, null, 'new@example.test', null);
+    expect(listenerSpy).toHaveBeenCalledWith(7, 'new@example.test');
+
+    vi.mocked(userRepo.findById).mockResolvedValue(user(7, 'alice', 'Alice', 'new@example.test', 'hash', 1));
+    await service.updateOwnProfile(7, null, '', null);
+    expect(listenerSpy).toHaveBeenLastCalledWith(7, null);
+  });
+
+  it('自助未改邮箱（相同值）：不触发钩子', async () => {
+    const { service, userRepo, listenerSpy } = localService();
+    vi.mocked(userRepo.findById).mockResolvedValue(user(7, 'alice', 'Alice', 'same@example.test', 'hash', 1));
+    await service.updateOwnProfile(7, null, 'same@example.test', null);
+    expect(listenerSpy).not.toHaveBeenCalled();
+  });
+
+  it('未注入监听器时改邮箱不报错（兼容既有装配）', async () => {
+    const userRepo = {
+      findById: vi.fn(async () => user(7, 'alice', 'Alice', 'old@example.test', 'hash', 1)),
+      findByUsername: vi.fn(), countByUsername: vi.fn(), countByEmailExcept: vi.fn(async () => 0),
+      insert: vi.fn(), updateById: vi.fn(), updateFields: vi.fn(), selectPage: vi.fn(), findEmailById: vi.fn(),
+    } as unknown as UserRepository;
+    const permissionService = {
+      assignRoles: vi.fn(), changeRolesWithAdminGuard: vi.fn(), assertCanChangeRoles: vi.fn(),
+      assertCanDisableUser: vi.fn(), updateUserStatusWithAdminGuard: vi.fn(),
+      batchGetUserRoles: vi.fn(), getUserRoles: vi.fn(),
+    } as unknown as PermissionService;
+    const hasher: PasswordHasher = { hash: vi.fn(), matches: vi.fn() };
+    const service = new UserService(userRepo, permissionService, hasher);
+    await expect(service.updateOwnProfile(7, null, 'new@example.test', null)).resolves.toBeUndefined();
+  });
+
+  it('管理端改邮箱：触发钩子；格式非法拒绝（垃圾地址不进密文）', async () => {
+    const { service, userRepo, listenerSpy } = localService();
+    vi.mocked(userRepo.findById).mockResolvedValue(user(7, 'alice', 'Alice', 'old@example.test', 'hash', 1));
+    await service.updateUser(7, null, 'admin-set@example.test', null, null, 1);
+    expect(listenerSpy).toHaveBeenCalledWith(7, 'admin-set@example.test');
+
+    await expect(service.updateUser(7, null, 'not-an-email', null, null, 1)).rejects.toThrow(/邮箱格式不正确/);
+    expect(listenerSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('管理端未改邮箱（email 入参为 null 占位以外无变化）：不触发钩子', async () => {
+    const { service, userRepo, listenerSpy } = localService();
+    vi.mocked(userRepo.findById).mockResolvedValue(user(7, 'alice', 'Alice', null, 'hash', 1));
+    // email 入参为 null 表示「本次不修改邮箱」：不触发
+    await service.updateUser(7, null, null, null, null, 1);
+    expect(listenerSpy).not.toHaveBeenCalled();
+  });
+});

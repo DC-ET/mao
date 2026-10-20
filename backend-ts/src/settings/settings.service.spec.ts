@@ -575,3 +575,159 @@ describe('SystemSettingService bundle registry 配置', () => {
     await expect(svc.update('auth.ldap.password', '******')).rejects.toThrow(/掩码/);
   });
 });
+
+describe('SystemSettingService 邮件 SMTP 配置（V161）', () => {
+  const mapper: SystemSettingRepository = {
+    list: vi.fn(),
+    findByKey: vi.fn(),
+    updateById: vi.fn(),
+    transaction: vi.fn(async (fn: (repo: SystemSettingRepository) => Promise<unknown>) => fn(mapper)),
+  };
+  const agentLookup: AgentLookup = { findById: vi.fn() };
+  const modelLookup: ModelLookup = { findById: vi.fn() };
+  const runtime = { workspaceRoot: '/workspace', skillsDir: '/skills' };
+
+  function service(secretKey = ''): SystemSettingService {
+    return new SystemSettingService(mapper, agentLookup, modelLookup, { ...runtime }, secretKey);
+  }
+
+  function emailRow(key: string, value: string | null, isSecret = 0): SystemSetting {
+    return { id: 1, settingKey: key, value, category: '通知与消息', editable: 1, isSecret };
+  }
+
+  function mockRows(rows: Record<string, SystemSetting | null>): void {
+    vi.mocked(mapper.findByKey).mockImplementation(async (key: string) => rows[key] ?? null);
+  }
+
+  const fullRows = (): Record<string, SystemSetting | null> => ({
+    'notify.email.enabled': emailRow('notify.email.enabled', '1'),
+    'notify.email.smtpHost': emailRow('notify.email.smtpHost', 'smtp.example.com'),
+    'notify.email.smtpPort': emailRow('notify.email.smtpPort', '587'),
+    'notify.email.smtpSecure': emailRow('notify.email.smtpSecure', '0'),
+    'notify.email.smtpUser': emailRow('notify.email.smtpUser', 'sender@example.com'),
+    'notify.email.smtpPassword': emailRow('notify.email.smtpPassword', encryptAesGcmNonNull('smtp-pass', 'unit-secret'), 1),
+    'notify.email.fromAddr': emailRow('notify.email.fromAddr', 'noreply@example.com'),
+  });
+
+  beforeEach(() => {
+    vi.mocked(mapper.findByKey).mockReset();
+    vi.mocked(mapper.updateById).mockReset();
+    vi.mocked(mapper.transaction).mockClear();
+  });
+
+  it('getEmailSmtpConfig：缺行回落默认值（端口 465 / 隐式 TLS / 关闭）', async () => {
+    mockRows({});
+    const cfg = await service().getEmailSmtpConfig();
+    expect(cfg).toEqual({
+      enabled: false, smtpHost: '', smtpPort: 465, smtpUser: '', smtpPassword: '', fromAddr: '', useTls: true,
+    });
+  });
+
+  it('getEmailSmtpConfig：读取已存值并解密密码', async () => {
+    mockRows(fullRows());
+    const cfg = await service('unit-secret').getEmailSmtpConfig();
+    expect(cfg).toEqual({
+      enabled: true,
+      smtpHost: 'smtp.example.com',
+      smtpPort: 587,
+      smtpUser: 'sender@example.com',
+      smtpPassword: 'smtp-pass',
+      fromAddr: 'noreply@example.com',
+      useTls: false,
+    });
+  });
+
+  it('getEmailSmtpConfig：端口越界回落默认 465', async () => {
+    mockRows({ ...fullRows(), 'notify.email.smtpPort': emailRow('notify.email.smtpPort', '70000') });
+    const cfg = await service('unit-secret').getEmailSmtpConfig();
+    expect(cfg.smtpPort).toBe(465);
+  });
+
+  it('emailSmtpEnabled 反映开关行', async () => {
+    mockRows({ 'notify.email.enabled': emailRow('notify.email.enabled', 'true') });
+    expect(await service().emailSmtpEnabled()).toBe(true);
+    mockRows({ 'notify.email.enabled': emailRow('notify.email.enabled', '0') });
+    expect(await service().emailSmtpEnabled()).toBe(false);
+    mockRows({});
+    expect(await service().emailSmtpEnabled()).toBe(false);
+  });
+
+  it('保存校验：端口越界 / 发件人格式 / TLS 开关值', async () => {
+    mockRows({ ...fullRows() });
+    await expect(service().update('notify.email.smtpPort', '70000')).rejects.toThrow(/1-65535/);
+    await expect(service().update('notify.email.smtpPort', 'abc')).rejects.toThrow(/1-65535/);
+    await expect(service().update('notify.email.fromAddr', 'not-an-email')).rejects.toThrow(/邮箱格式/);
+    await expect(service().update('notify.email.smtpSecure', 'yes')).rejects.toThrow(/TLS 开关/);
+    expect(mapper.updateById).not.toHaveBeenCalled();
+  });
+
+  it('组校验：enabled=1 时清空 host 被拒绝', async () => {
+    mockRows(fullRows());
+    await expect(service().update('notify.email.smtpHost', '')).rejects.toThrow(/SMTP 服务器地址/);
+  });
+
+  it('组校验：enabled=1 时缺发件人被拒绝', async () => {
+    mockRows({ ...fullRows(), 'notify.email.fromAddr': emailRow('notify.email.fromAddr', null) });
+    await expect(service().update('notify.email.fromAddr', '')).rejects.toThrow(/发件人地址/);
+  });
+
+  it('组校验：enabled=1 时端口留空被拒绝', async () => {
+    mockRows({ ...fullRows(), 'notify.email.smtpPort': emailRow('notify.email.smtpPort', null) });
+    await expect(service().update('notify.email.smtpPort', '')).rejects.toThrow(/SMTP 端口/);
+  });
+
+  it('组校验：关闭开关时留空 host/fromAddr 放行', async () => {
+    mockRows({
+      'notify.email.enabled': emailRow('notify.email.enabled', '0'),
+      'notify.email.smtpHost': emailRow('notify.email.smtpHost', null),
+      'notify.email.fromAddr': emailRow('notify.email.fromAddr', null),
+    });
+    await expect(service().update('notify.email.smtpHost', '')).resolves.toBeDefined();
+  });
+
+  it('组校验：batch 同批保存 enabled+host+port+fromAddr 成功（顺序无关）', async () => {
+    mockRows({
+      'notify.email.enabled': emailRow('notify.email.enabled', '0'),
+      'notify.email.smtpHost': emailRow('notify.email.smtpHost', null),
+      'notify.email.smtpPort': emailRow('notify.email.smtpPort', '465'),
+      'notify.email.fromAddr': emailRow('notify.email.fromAddr', null),
+    });
+    const result = await service().updateBatch([
+      { key: 'notify.email.enabled', value: 'true' },
+      { key: 'notify.email.smtpHost', value: 'smtp.example.com' },
+      { key: 'notify.email.smtpPort', value: '587' },
+      { key: 'notify.email.fromAddr', value: 'noreply@example.com' },
+    ]);
+    expect(result).toHaveLength(4);
+    expect(mapper.updateById).toHaveBeenCalledTimes(4);
+  });
+
+  it('组校验：batch 启用但缺 host 整体失败且不落库', async () => {
+    mockRows({
+      'notify.email.enabled': emailRow('notify.email.enabled', '0'),
+      'notify.email.smtpHost': emailRow('notify.email.smtpHost', null),
+      'notify.email.smtpPort': emailRow('notify.email.smtpPort', '465'),
+    });
+    await expect(service().updateBatch([
+      { key: 'notify.email.enabled', value: 'true' },
+      { key: 'notify.email.smtpPort', value: '587' },
+    ])).rejects.toThrow(/SMTP 服务器地址/);
+    expect(mapper.updateById).not.toHaveBeenCalled();
+  });
+
+  it('密码行加密存储：secret 未提交（null）不修改', async () => {
+    mockRows(fullRows());
+    const updated = await service('unit-secret').update('notify.email.smtpPassword', null);
+    expect(updated.value).toBe('******');
+    expect(mapper.updateById).not.toHaveBeenCalled();
+  });
+
+  it('密码行加密存储：新密码加密落库', async () => {
+    mockRows(fullRows());
+    await service('unit-secret').update('notify.email.smtpPassword', 'new-pass');
+    const written = vi.mocked(mapper.updateById).mock.calls[0][0];
+    expect(written.value).not.toBe('new-pass');
+    const decrypted = await service('unit-secret').getEmailSmtpConfig();
+    expect(decrypted.smtpPassword).toBe('new-pass');
+  });
+});

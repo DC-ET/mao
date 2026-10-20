@@ -8,10 +8,11 @@ import {
   testJevConnection,
   testLdapConnection,
   testOssCredentials,
+  testSmtpConnection,
   type JevTestHttp,
 } from './settings-test.service.js';
 import { BusinessException } from '../common/business-exception.js';
-import type { LdapSettings, OssSettings } from './types.js';
+import type { EmailSmtpSettings, LdapSettings, OssSettings } from './types.js';
 
 const ldapCfg: LdapSettings = {
   enabled: true,
@@ -183,5 +184,55 @@ describe('mergeWithDefaults', () => {
     const merged = mergeWithDefaults({ url: '', password: 'new' }, ldapCfg);
     expect(merged.url).toBe(ldapCfg.url);
     expect(merged.password).toBe('new');
+  });
+});
+
+describe('testSmtpConnection（V161 邮件测试连接）', () => {
+  const baseCfg: EmailSmtpSettings = {
+    enabled: true,
+    smtpHost: 'smtp.example.com',
+    smtpPort: 465,
+    smtpUser: 'sender@example.com',
+    smtpPassword: 'secret',
+    fromAddr: 'noreply@example.com',
+    useTls: true,
+  };
+
+  function sender(behavior: 'ok' | 'fail' = 'ok') {
+    const send = vi.fn(async () => behavior === 'ok'
+      ? { success: true, error: null }
+      : { success: false, error: '535 认证失败' });
+    return { send };
+  }
+
+  it('成功：测试信发到管理员本人邮箱', async () => {
+    const s = sender();
+    await testSmtpConnection(baseCfg, 'admin@corp.com', s);
+    expect(s.send).toHaveBeenCalledWith('admin@corp.com', expect.objectContaining({
+      text: expect.stringContaining('Mao Agent 测试通知'),
+    }));
+  });
+
+  it('管理员未填邮箱：拒绝且不发送', async () => {
+    const s = sender();
+    await expect(testSmtpConnection(baseCfg, '', s)).rejects.toThrow(/请先在个人资料中填写邮箱/);
+    expect(s.send).not.toHaveBeenCalled();
+  });
+
+  it('管理员邮箱格式非法：拒绝', async () => {
+    const s = sender();
+    await expect(testSmtpConnection(baseCfg, 'not-an-email', s)).rejects.toThrow(/邮箱格式不正确/);
+    expect(s.send).not.toHaveBeenCalled();
+  });
+
+  it('host 为空 / 端口越界 / 发件人格式错 / 发件人与用户名皆空：拒绝', async () => {
+    await expect(testSmtpConnection({ ...baseCfg, smtpHost: '' }, 'a@b.co', sender())).rejects.toThrow(/SMTP 服务器地址/);
+    await expect(testSmtpConnection({ ...baseCfg, smtpPort: 70000 }, 'a@b.co', sender())).rejects.toThrow(/1-65535/);
+    await expect(testSmtpConnection({ ...baseCfg, fromAddr: 'bad' }, 'a@b.co', sender())).rejects.toThrow(/发件人地址邮箱格式/);
+    await expect(testSmtpConnection({ ...baseCfg, fromAddr: '', smtpUser: '' }, 'a@b.co', sender())).rejects.toThrow(/发件人地址不能为空/);
+  });
+
+  it('发送失败：透出 sender 错误原因', async () => {
+    await expect(testSmtpConnection(baseCfg, 'admin@corp.com', sender('fail'))).rejects.toThrow(/535 认证失败/);
   });
 });

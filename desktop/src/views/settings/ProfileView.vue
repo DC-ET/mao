@@ -67,6 +67,7 @@
         </el-form-item>
         <el-form-item label="邮箱" :error="emailError">
           <el-input v-model="form.email" :disabled="!isLocalUser" :maxlength="128" placeholder="请输入邮箱" @blur="validateEmail" />
+          <div class="field-hint">用于接收任务通知邮件。</div>
         </el-form-item>
         <div v-if="!isLocalUser" class="profile-tip">
           LDAP / 飞书账号的显示名称与邮箱由系统维护，仅可修改头像。
@@ -356,6 +357,12 @@ onBeforeUnmount(() => {
   font-size: 12px;
   color: var(--aw-ink-muted);
   margin-bottom: 16px;
+}
+
+.field-hint {
+  font-size: 12px;
+  color: var(--aw-ink-muted);
+  line-height: 1.5;
 }
 
 .profile-actions {

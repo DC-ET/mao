@@ -101,6 +101,22 @@ export interface OssSettings {
   };
 }
 
+/**
+ * 实例级邮件通知（SMTP）配置（V161）。
+ * 缺行 / enabled=false 均表示邮件渠道不可用：用户保存 EMAIL 偏好时拒绝，发送时返回不可重试失败。
+ */
+export interface EmailSmtpSettings {
+  enabled: boolean;
+  smtpHost: string;
+  smtpPort: number;
+  smtpUser: string;
+  smtpPassword: string;
+  /** 发件人地址；为空时回落 smtpUser。 */
+  fromAddr: string;
+  /** true=隐式 TLS（465），false=STARTTLS（587）。 */
+  useTls: boolean;
+}
+
 /** Agent 运行参数：线程池三元组启动时构建（改后需重启），WS 空闲超时同理。 */
 export interface AgentRuntimeSettings {
   threadPoolSize: number;

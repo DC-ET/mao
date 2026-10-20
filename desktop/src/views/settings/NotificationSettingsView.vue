@@ -28,7 +28,7 @@
         />
       </section>
 
-      <section v-if="form.enabled && form.channel" class="settings-section webhook-section">
+      <section v-if="form.enabled && form.channel && form.channel !== 'EMAIL'" class="settings-section webhook-section">
         <label class="field-label" for="notification-webhook">Webhook 地址</label>
         <el-input
           id="notification-webhook"
@@ -50,6 +50,22 @@
         <p v-else-if="preference.webhookConfigured && !form.webhookUrl" class="configured-hint">
           <el-icon><CircleCheck /></el-icon>
           已配置 {{ preference.maskedWebhook }}
+        </p>
+      </section>
+
+      <section v-else-if="form.enabled && form.channel === 'EMAIL'" class="settings-section webhook-section">
+        <label class="field-label">收件邮箱</label>
+        <p v-if="currentUserEmail" class="configured-hint">
+          <el-icon><Message /></el-icon>
+          将发送到：{{ currentUserEmail }}
+        </p>
+        <p v-else class="field-error">
+          尚未填写邮箱，请先到
+          <router-link to="/settings/profile" class="email-guide-link">个人资料</router-link>
+          填写后再选择邮件通知。
+        </p>
+        <p class="field-desc email-channel-desc">
+          通知邮件发送到个人资料中的邮箱；修改邮箱后自动生效，不会继续发往旧地址。
         </p>
       </section>
 
@@ -241,7 +257,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { Check, CircleCheck, Connection, Hide, View } from '@element-plus/icons-vue'
+import { Check, CircleCheck, Connection, Hide, Message, View } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import {
   getTaskNotificationPreference,
@@ -259,10 +275,14 @@ import {
   type YesterdayDigestStatus
 } from '../../api'
 import { isElectronClient } from '../../utils/platform'
+import { useAuthStore } from '../../stores/auth'
+
+const authStore = useAuthStore()
 
 const channelOptions = [
   { label: '钉钉', value: 'DINGTALK' },
-  { label: '飞书', value: 'FEISHU' }
+  { label: '飞书', value: 'FEISHU' },
+  { label: '邮件', value: 'EMAIL' }
 ]
 
 const loading = ref(true)
@@ -297,7 +317,12 @@ const webhookPlaceholder = computed(() => {
     : 'https://open.feishu.cn/open-apis/bot/v2/hook/...'
 })
 
+/** 当前用户资料邮箱：邮件渠道的收件地址（后端保存时从用户表取，页面只做门禁与展示）。 */
+const currentUserEmail = computed(() => (authStore.user?.email ?? '').trim())
+
 const hasUsableWebhook = computed(() => {
+  // EMAIL 分支旁路：可用性 = 资料邮箱非空，不要求 webhook 输入
+  if (form.channel === 'EMAIL') return currentUserEmail.value.length > 0
   return form.webhookUrl.trim().length > 0
     || (preference.webhookConfigured && form.channel === savedChannel.value)
 })
@@ -467,6 +492,8 @@ async function handleDigestSendNow() {
 
 function validateWebhook(): boolean {
   webhookError.value = ''
+  // EMAIL 分支旁路：地址来自个人资料邮箱，无本地输入可校验
+  if (form.channel === 'EMAIL') return true
   const value = form.webhookUrl.trim()
   if (!value) return hasUsableWebhook.value
   const valid = form.channel === 'DINGTALK'
@@ -703,6 +730,19 @@ onMounted(() => {
 .digest-link {
   color: var(--aw-primary);
   text-decoration: none;
+}
+
+.email-guide-link {
+  color: var(--aw-primary);
+  text-decoration: none;
+}
+
+.email-guide-link:hover {
+  text-decoration: underline;
+}
+
+.email-channel-desc {
+  margin-top: 10px;
 }
 
 .digest-link:hover {

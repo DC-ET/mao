@@ -477,6 +477,56 @@ test.describe('Desktop Notification Settings', () => {
       webhookUrl: webhook
     })
   })
+
+  test('should configure and test the email channel without webhook input', async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('token', 'test-access-token')
+    })
+
+    let savedPayload: Record<string, unknown> | null = null
+    let testPayload: Record<string, unknown> | null = null
+    await page.route('**/api/v1/**', async route => {
+      const request = route.request()
+      const pathname = new URL(request.url()).pathname
+      let data: unknown = null
+      if (pathname.endsWith('/user-preferences/task-notification/test')) {
+        testPayload = request.postDataJSON()
+      } else if (pathname.endsWith('/user-preferences/task-notification')) {
+        if (request.method() === 'PUT') savedPayload = request.postDataJSON()
+        data = savedPayload
+          ? { enabled: true, channel: 'EMAIL', webhookConfigured: true,
+              maskedWebhook: 'u***@corp.com' }
+          : { enabled: false, channel: null, webhookConfigured: false, maskedWebhook: null }
+      } else if (pathname.endsWith('/auth/features')) {
+        data = { feishuEnabled: false }
+      } else if (pathname.endsWith('/users/me')) {
+        data = { id: 1, username: 'admin', displayName: 'Admin', email: 'admin@corp.com' }
+      }
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ code: 0, message: 'success', data })
+      })
+    })
+
+    await page.goto('/settings/notifications')
+    await expect(page.getByRole('heading', { name: '消息通知' })).toBeVisible()
+    await page.locator('.page-header .el-switch').click()
+    await page.getByText('邮件', { exact: true }).click()
+
+    // EMAIL 分支：隐藏 Webhook 输入，展示个人资料邮箱作为收件地址
+    await expect(page.getByRole('textbox', { name: 'Webhook 地址' })).toHaveCount(0)
+    await expect(page.getByText('将发送到：admin@corp.com')).toBeVisible()
+    // 有邮箱即可测试/保存（门禁旁路：不要求 webhook 输入）
+    await expect(page.getByRole('button', { name: '发送测试通知' })).toBeEnabled()
+    await page.getByRole('button', { name: '发送测试通知' }).click()
+    await expect.poll(() => testPayload).toEqual({ channel: 'EMAIL' })
+
+    await page.getByRole('button', { name: '保存', exact: true }).click()
+    await expect.poll(() => savedPayload).toEqual({
+      enabled: true,
+      channel: 'EMAIL'
+    })
+  })
 })
 
 // ─────────────────────────────────────────────────────────

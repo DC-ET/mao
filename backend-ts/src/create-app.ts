@@ -270,6 +270,7 @@ import { WebhookDeliveryScheduler, DeliverySchedulerDbStore } from './notificati
 import { userMessagePreviewOf } from './notification/task/user-message-preview.js';
 import { TaskNotificationDeliveryService } from './notification/task/delivery.service.js';
 import { WebhookSenderRegistry, DingTalkWebhookSender, FeishuWebhookSender } from './notification/task/webhook-sender.js';
+import { EmailWebhookSender } from './notification/task/email-sender.js';
 import { WebhookUrlValidator } from './notification/task/webhook-url-validator.js';
 import { LlmUsageRepository, LlmUsageService } from './usage/llm-usage.service.js';
 import { LlmCallRepository } from './usage/llm-call.repository.js';
@@ -502,7 +503,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const rolePermRepo = new MysqlRolePermissionRepository(db);
   const userRoleRepo = new MysqlUserRoleRepository(db);
   const permissionService = new PermissionService(roleRepo, permRepo, rolePermRepo, userRoleRepo, userRepo);
-  const userService = new UserService(userRepo, permissionService, hasher);
+  // 邮箱变更监听（决策 2）：闭包延迟绑定 notifPref（装配顺序上它构造于后），
+  // 仅在资料更新的请求处理期被调用，不存在时序风险。
+  const userService = new UserService(userRepo, permissionService, hasher, (userId, email) => notifPref.refreshEmailAddress(userId, email));
   const ldap = new LdapAuthService(userRepo, userRoleRepo, jwt, async () => (await settingService.getLdapConfig()));
   const authService = new AuthService(userRepo, jwt, hasher, ldap, permissionService);
   const earlyFeishuBinding = new MysqlFeishuBindingRepository(db);
@@ -1289,10 +1292,17 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const scheduledStore = new ScheduledTaskDbStore(db);
   deleteScheduledTasksForSession = (sessionId) => scheduledStore.deleteBySessionId(sessionId);
 
-  const senderRegistry = new WebhookSenderRegistry([new DingTalkWebhookSender(), new FeishuWebhookSender()]);
+  const senderRegistry = new WebhookSenderRegistry([
+    new DingTalkWebhookSender(), new FeishuWebhookSender(),
+    // 邮件渠道（V161）：发送时实时读 SMTP 配置（settingService），保存后即时生效
+    new EmailWebhookSender(settingService),
+  ]);
   const urlValidator = new WebhookUrlValidator();
   const notifPref = new TaskNotificationPreferenceService(
     new PreferenceDbStore(db), notifCipher, urlValidator, senderRegistry,
+    // EMAIL 渠道依赖：收件地址取用户表 email；SMTP 开关用设置服务窄接口
+    { findEmailById: (userId) => userRepo.findEmailById(userId) },
+    settingService,
   );
   // 微信下行失败时的 webhook 降级推送：复用 notifPref 的 findEnabled，不重复读配置。
   const weixinWebhookFallback = new WeixinWebhookFallbackService(
@@ -2893,6 +2903,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     registerSystemSettingRoutes(api, {
       systemSettingService: settingService,
       permissionService,
+      // test/smtp 测试信发当前管理员本人（user.email）
+      adminEmailLookup: { findEmailById: (userId) => userRepo.findEmailById(userId) },
       beforeSave: async (items) => {
         await validateRuntimeModeSave(items, activateContainerRuntime);
       },
