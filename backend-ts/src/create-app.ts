@@ -329,6 +329,7 @@ import { createFeishuMediaHelper, IMAGE_EXT_BY_CONTENT_TYPE } from './feishu-med
 import { createFeishuQueueCardHelper } from './feishu-queue-card.js';
 import { createFeishuSessionUrlHelper } from './feishu-session-url.js';
 import { createFeishuRoundOffsetHelper } from './feishu-round-offset.js';
+import { createFeishuUserIdHelper } from './feishu-user-id.js';
 import type { FeishuInboundContext, FeishuNormalizedMessage } from './feishu/types.js';
 import { WsStreamingEventListener } from './session/ws/ws-streaming-event-listener.js';
 import { MysqlApiTokenRepository, MysqlOutboundDeliveryRepository, MysqlOutboundSubscriptionRepository, MysqlWebhookTriggerRepository } from './openapi/openapi.repository.js';
@@ -1956,12 +1957,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       return null;
     }
   };
-  // 私聊会话按当前绑定用户隔离：同一 union_id 换绑到其他用户时不复用原会话/工作区。
-  const resolveFeishuUserId = async (accountId: string, context: FeishuInboundContext): Promise<number | undefined> => {
-    const unionId = context.senderUnionId ?? context.senderId;
-    if (unionId == null) return undefined;
-    return (await feishuBinding.findUserIdByUnionId(unionId)) ?? undefined;
-  };
+  const resolveFeishuUserId = createFeishuUserIdHelper({ feishuBinding });
   const feishuInboundQueueRepo = new FeishuInboundQueueRepository(db);
   const feishuProgressCardRepo = new MysqlFeishuProgressCardRepository(db);
   const feishuCardSnapshotRepo = new MysqlFeishuCardSnapshotRepository(db);
