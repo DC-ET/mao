@@ -143,7 +143,8 @@ function handleDigestOpenUsage() {
 <template>
   <!--
     必须 teleport 到 body：同 UsageDrawer，抽屉由顶栏头像菜单的「站内收件箱」渲染，
-    .top-nav 的 drag 区会吞掉伸进去的点击（420px 宽的抽屉左侧尤甚）。
+    就地渲染会被 .top-nav 的 overflow 裁掉；拖拽区吞点击由全局 style.css 的
+    .el-overlay/.el-popper no-drag 规则解决（420px 宽的抽屉左侧尤甚）。
   -->
   <el-drawer
     v-model="visible"

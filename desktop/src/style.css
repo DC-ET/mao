@@ -185,6 +185,28 @@
   margin-right: 36px;
 }
 
+/*
+ * Electron 窗口拖拽区是几何区域，与绘制层级无关：可拖拽范围 = 所有
+ * -webkit-app-region: drag 元素盒子并集 − 所有 no-drag 元素盒子并集。
+ * .top-nav 整条是 drag（仅 .nav-left/.nav-right 自身盒子是 no-drag），
+ * teleport 到 body 的 EP 浮层即使画在拖拽带上方也不会被自动抠出——落在
+ * 拖拽带里的 mousedown/mousemove 被系统吞掉（无 hover、无点击），
+ * Web/安卓不受影响（该属性在非 Electron 下无效）。
+ *
+ * 曾致「我的用量」抽屉头部点不动：刷新按钮与统计周期前 7 项都落在拖拽带
+ * 里，只有伸进 .nav-right 盒子（约 x≥1194）的「近 30 天/自定义」幸存。
+ * 0.0.270 的 append-to-body 只解决了抽屉被顶栏裁剪，没解决几何重叠。
+ *
+ * 把浮层整体标为 no-drag 即从拖拽带里抠掉：.el-overlay 覆盖
+ * 抽屉/对话框的遮罩与内容，.el-popper 覆盖下拉、日期面板、气泡等。
+ * 无浮层时规则不命中任何元素，拖拽区与此前完全一致；有浮层时整块
+ * 遮罩不可拖拽（模态打开期间本就不该拖窗口），属预期行为。
+ */
+.el-overlay,
+.el-popper {
+  -webkit-app-region: no-drag;
+}
+
 @media (max-width: 768px) {
   .usage-drawer .el-drawer__header > :first-child {
     margin-right: 0;

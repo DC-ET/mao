@@ -1,8 +1,8 @@
 <template>
   <!--
-    必须 teleport 到 body：抽屉由顶栏「我的指令」图标渲染，而 .top-nav 带
-    -webkit-app-region: drag（Electron 窗口拖拽区），仅 .nav-right 自身盒子是
-    no-drag。留在原处时抽屉头部会伸进拖拽区，落在那里的点击被系统吞掉。
+    必须 teleport 到 body：抽屉由顶栏「我的指令」图标渲染，就地渲染会被
+    .top-nav 的 overflow 裁掉。teleport 只解决裁剪；拖拽区吞点击由全局
+    style.css 的 .el-overlay/.el-popper no-drag 规则解决。
     与 UsageDrawer / InboxDrawer 同一套约束，三处口径保持一致。
   -->
   <el-drawer

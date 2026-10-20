@@ -1,10 +1,11 @@
 <template>
-  <!--
-    必须 teleport 到 body：抽屉由顶栏 UsageBell 渲染，而 .top-nav 带
-    -webkit-app-region: drag（Electron 窗口拖拽区），仅 .nav-right 自身
-    盒子是 no-drag。留在原处时抽屉头部会伸进拖拽区，落在里面的点击被系统
-    吞掉——统计周期最左侧几项（如今日/昨日）就点不动。
-  -->
+    <!--
+      必须 teleport 到 body：抽屉由顶栏 UsageBell 渲染，就地渲染会被 .top-nav
+      的 overflow 裁掉。注意 teleport 只解决裁剪——.top-nav 是 Electron 拖拽区
+      （几何区域，与绘制层级无关），抽屉画在拖拽带上方时落在带里的点击仍会被
+      系统吞掉；那部分由全局 style.css 的 .el-overlay/.el-popper no-drag 规则
+      从拖拽区里抠掉（统计周期最左侧几项与刷新按钮曾因此点不动）。
+    -->
   <el-drawer
     v-model="visible"
     class="usage-drawer"

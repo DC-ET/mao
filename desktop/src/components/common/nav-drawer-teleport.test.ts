@@ -1,9 +1,8 @@
 // 顶栏渲染的抽屉必须 teleport 到 body。
 // 背景：el-drawer 默认 appendToBody=false，抽屉就地渲染在 UsageBell / InboxDrawer / CommandManagerDrawer 里，
-// 而 .top-nav 带 -webkit-app-region: drag（Electron 窗口拖拽区），只有 .nav-right
-// 自身盒子是 no-drag。留在原处时，宽于 .nav-right 的抽屉头部会伸进拖拽区，落在那里
-// 的点击被系统吞掉——「我的用量」的统计周期最左侧几项（今日/昨日）曾因此点不动
-// （周期选项从 3 个加到 6 个、分段控件变宽后才暴露）。
+// 会被 .top-nav 的 overflow 裁掉。teleport 只解决裁剪；抽屉画在拖拽区上方仍会被
+// 系统吞点击（拖拽区是几何区域，与绘制层级无关），那部分由全局 style.css 的
+// .el-overlay/.el-popper no-drag 规则解决，见 drag-region-overlay.test.ts。
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { parse } from '@vue/compiler-sfc'
