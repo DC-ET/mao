@@ -378,6 +378,8 @@ import {
 import { registerUploadStatic } from './upload-static.js';
 import { expandHome, parseSqlTimeMs, runtimeSessionCleanup } from './app-utils.js';
 import { createShutdownHandler } from './app-shutdown.js';
+import { createContainerPtyFactory } from './container-pty-factory.js';
+import { createTerminalAudit } from './terminal-audit.js';
 import { createFeishuSessionHelper } from './feishu-session.js';
 import { createFeishuClientHelper } from './feishu-client.js';
 import { buildFeishuQueueCard } from './feishu-cards.js';
@@ -951,22 +953,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     (userId, workspace) => envVariableService.resolveForSession(userId, workspace),
   );
   // 云端终端：与 shellManager 并列（后者是 Agent 的管道 shell，本类是用户的交互式 PTY）
-  const terminalAudit: TerminalAuditRecorder = (event, terminal, ctx) => {
-    const meta = TERMINAL_AUDIT_META[event];
-    void auditService.record({
-      action: meta.action,
-      objectType: 'terminal',
-      objectId: terminal.terminalId,
-      method: meta.method,
-      path: meta.path(terminal.sessionId, terminal.terminalId),
-      userId: terminal.userId,
-      username: ctx?.username ?? null,
-      ip: ctx?.ip ?? null,
-      status: ctx?.errorMessage == null ? 200 : 500,
-      success: ctx?.errorMessage == null ? 1 : 0,
-      errorMessage: truncateAuditError(ctx?.errorMessage),
-    }).catch((e) => console.error('Failed to record terminal audit log', e));
-  };
+  const terminalAudit = createTerminalAudit(auditService);
   // ── 用户运行时容器隔离（技术方案 §5）：host 模式下整组组件闲置、派发分支短路 ──
   const cloudRuntimeCfg = cfg.app.cloudRuntime;
   const containerChannelHolder: { registry: ContainerRegistry | null } = { registry: null };
@@ -1078,28 +1065,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   // 容器重建（startedAtMs 变化）时旧容器内的 pty 已不存在，旧 hub 全部收尾后换绑新连接。
   const ptyChannelHubs = new Map<number, PtyChannelHub>();
   const ptyHubGeneration = new Map<number, number>();
-  const containerPtyFactory = async (options: SpawnPtyOptions): Promise<PtyLike> => {
-    const userId = options.userId;
-    if (userId != null && await dockerRouter.enabledFor(userId)) {
-      // cwd 即会话工作区：通道会话（飞书/钉钉）越出每用户根，未挂载时先重建容器
-      const entry = await containerRegistry.ensureRunning(userId, options.cwd);
-      const connection = channelServer.getConnection(userId);
-      if (!connection) throw new Error(`容器终端通道未就绪: userId=${userId}`);
-      let hub = ptyChannelHubs.get(userId);
-      if (!hub || ptyHubGeneration.get(userId) !== entry.startedAtMs) {
-        hub?.dispose();
-        hub = new PtyChannelHub(connection);
-        ptyChannelHubs.set(userId, hub);
-        ptyHubGeneration.set(userId, entry.startedAtMs);
-      } else {
-        hub.bindConnection(connection);
-      }
-      const bridge = await hub.open(userId, options);
-      harnessLog('info', `[container] terminal pty opened in container: user=${userId}, pid=${bridge.pid}`);
-      return bridge;
-    }
-    return nodePtyFactory(options);
-  };
+  const containerPtyFactory = createContainerPtyFactory({
+    dockerRouter, containerRegistry, channelServer, ptyChannelHubs, ptyHubGeneration, nodePtyFactory,
+  });
   // 容器预热：会话活跃（WS 连接/执行心跳）时确保该用户容器就绪（决策 15）
   activityHeartbeat.onActivity((sessionId) => {
     void (async () => {
