@@ -93,6 +93,34 @@
 2. **三处同改清单**：Digest 新增收件箱 kind `DAILY_DIGEST`，按规范同改 `backend-ts/src/inbox/types.ts` 白名单、`@mao/contracts` 的 `InboxKind` 联合、桌面抽屉图标与通知偏好。
 3. **相邻收敛点**：引用溯源（已实施）的 registry 构建挂在 `task-terminal.service.ts` 的 `TASK_COMPLETED` 相位收敛点（历史上记忆 / 收件箱 / 预算动过的同一位置），与在途同类改动错开；Digest 若做，其调度器与 `InboxCleanupScheduler` / `OutboundDeliveryScheduler` 同范式，不动收敛点。
 
+## 第八批（2026-10-19）
+
+背景：前七批落定后，基于代码现状摸底（35 个内置工具零 Git 能力而桌面 Git 面板服务层齐全、重复 SOP 无任务级模板资产、三层知识资产全部孤岛且负反馈闭环刚下线）产出的三个方向，共同主题是「**补上干活的角色欠的装备**」：Agent 手里的工具（Git）、重复劳动的资产化（模板）、团队尺度上的知识复利（共享与提案）。提案均避开已否决方向（RAG / Evals / 多 Agent DAG / 计划门 / 出网边界 / 备份恢复 / 数据保留 / 模型容灾 / 检查点回滚 / 技能蒸馏 / 工作区模板 / 人工接管 / 模型对照台）与 README 贡献边界（低代码画布 / 语音 / i18n / 官方 SaaS），且全部建立在既有设施之上（file 域 Git 服务层、schedule / signal 域模板先例、memory 注入管道与 agent_experiences）。本批评审结果（2026-10-19）：**三件均不做**（存档勿再评审，见下方台账）。
+
+| 提案 | 文档 | 一句话 | 规模 |
+|---|---|---|---|
+| Agent 结构化 Git 工具链 | [2026-10-19-agent-git-tools.md](2026-10-19-agent-git-tools.md)（已否决，存档） | 把桌面 Git 面板背后的 status/diff/commit/pull/push 服务层开放为 Agent 工具（只读双工具 + 审批门写操作 + reviewer 换装），替掉 shell 拼 git 字符串的现状 | — |
+| 任务模板 / Runbook | [2026-10-19-task-template-runbook.md](2026-10-19-task-template-runbook.md)（已否决，存档） | Agent + 参数化提示词 + 调度建议存为模板，一键创建定时任务 / 会话，让重复 SOP 从「每次重打」变「一次配置多次运行」 | — |
+| 团队知识层 | [2026-10-19-team-knowledge-layer.md](2026-10-19-team-knowledge-layer.md)（已否决，存档） | TEAM 级共享记忆（个人提升 + 管理员可见可删）+ 普通用户可发起的经验提案通道（管理员审核落 agent_experiences），补上被拆除的反馈闭环留下的知识流转缺口 | — |
+
+## 第九批（2026-10-19）
+
+背景：第八批三件（Git 工具链 / 任务模板 / 团队知识层）同日评审全部否决后，不再「补既有链路缺口」，转向**打开新轴线**的三个方向，共同主题是「**把 Agent 的触角伸到今天够不着的地方**」：够到外部世界最通用的异步通道（邮件）、够到用户自己的系统而不必先跑一个 server（自定义工具）、让输出本身长出界面（结构化卡片）。三件互不依赖、分属三个域（通知 / 工具树 / 消息渲染），均避开已否决方向与贡献边界。本批评审结果（2026-10-19）：**结构化卡片不做**（存档）；**邮件渠道方向认可但范围收窄**——只做「任务通知第三渠道（飞书 / 钉钉 / 邮件）」，入站邮件域明确不做（原入站框架随收窄存档）；**自定义 HTTP 工具方向认可但重新设计**——不做全量 schema 注入的 Agent tool（防上下文膨胀），改为参考 MCP 工作集的懒加载形态（目录分节 + describe 按需 + 单一 `http_call` 入口）。
+
+| 提案 | 文档 | 一句话 | 规模 |
+|---|---|---|---|
+| 邮件通知渠道 | [2026-10-19-email-notification.md](2026-10-19-email-notification.md)（**已确认**，决策记录 8 条于 2026-10-19 逐条确认，技术方案见 [../plan/2026-10-19-email-notification-technical-design.md](../plan/2026-10-19-email-notification-technical-design.md)：仅出站通知渠道，实例 SMTP 配置 + `NotificationChannel` 扩 `EMAIL` + 复用既有偏好 / 调度 / 重试全链路；原「邮件渠道」入站部分不做） | 通知第三渠道：实例 SMTP 配置 + `NotificationChannel` 扩 `EMAIL` + 目标地址用本人资料邮箱（`user.email` 第一次被真正使用），投递全链路复用既有偏好 / 调度 / 重试 | 小~中 |
+| 自定义 HTTP 工具（懒加载） | [2026-10-19-custom-http-tools.md](2026-10-19-custom-http-tools.md)（**已确认**，决策记录 6 条于 2026-10-19 逐条确认，技术方案见 [../plan/2026-10-19-custom-http-tools-technical-design.md](../plan/2026-10-19-custom-http-tools-technical-design.md)：MCP 工作集式懒加载，不进 `tools` 数组） | 声明式工具定义（端点 + 参数 + 加密请求头）填个表单连内部系统；提示词只放紧凑目录，`http_describe` 按需取 schema，`http_call` 单一入口执行——「连我的系统」从「先跑个 MCP server」降为「填个表单」 | 中 |
+| 结构化回复卡片 | [2026-10-19-structured-reply-cards.md](2026-10-19-structured-reply-cards.md)（已否决，存档） | 封闭集块协议（table/chart/file/choices/actions）：模型埋围栏块 → 后端 citations 式校验 → 三端 + CLI + 分享原生渲染，主对话第一次拥有 IM 渠道早有卡片形态 | — |
+
+排期注意：
+
+1. **迁移编号**：邮件通知仅 V161（`system_setting` 的 SMTP seed 行，业务表零迁移——偏好 / 投递的 channel 列是字符串）；自定义工具 V162（`user_tool` + `user_tool_param` 两表）。当前最新 V160，按实施顺序顺延。
+2. **三处同改清单**：邮件通知的 `NotificationChannel += 'EMAIL'` 按规范同改 `shared/contracts/src/notification.ts` 联合、后端 `notification/task/types.ts` 的 `parseNotificationChannel`、桌面 `NotificationSettingsView.vue` 的渠道单选（编译期穷尽兜底）；自定义工具按 AGENTS.md 规范同步 `tool-result-summarizer.ts` 与 `desktop/src/utils/toolDisplay.ts`（`http_call` / `http_describe` 分支）并补回归测试。
+3. **SSRF 面**：自定义工具的用户配 URL = 服务端代发，需过安全评审（私网段禁令 + 管理员放行，复用哨兵同款判定）；邮件通知的 SMTP 是实例级管理员配置，无用户面 SSRF，两者不合并评审。
+4. **前缀缓存**：自定义工具的目录分节是用户级内容（与 MCP 工作集同类，0.0.309 已接受的语义）；邮件通知不动提示词。结构化卡片否决后，其提示词分节方案一并存档。
+5. **宪法级约束的机械保障**：自定义工具「不进 `tools` 数组」需在测试里加断言防回归（见该提案测试要点末条）。
+
 ## 已评估、明确不做
 
 以下各项已复审定案，**不再重启、不再提案**（存档文档已标否决，勿再评审）：
@@ -109,6 +137,10 @@
 - **CLOUD 工作区环境模板与快照**：2026-10-11 评审：不做（重复装环境的问题真实存在，但模板资产带来磁盘配额、敏感文件进 TEAM 共享、符号链接逃逸三重新增风险面，收益/风险比不划算；建会话时装依赖的需求可先用"Git clone + 初始化命令"的既有链路人工满足）。存档：[2026-10-11-workspace-template.md](2026-10-11-workspace-template.md)。
 - **渠道会话人工接管（Human Handoff）**：2026-10-11 评审：不做。存档：[2026-10-11-human-handoff.md](2026-10-11-human-handoff.md)。
 - **模型对照台（一次提问多模型并排作答）**：2026-10-12 评审：不做。存档：[2026-10-12-model-compare.md](2026-10-12-model-compare.md)。
+- **Agent 结构化 Git 工具链**：2026-10-19 评审：不做。存档：[2026-10-19-agent-git-tools.md](2026-10-19-agent-git-tools.md)。
+- **任务模板 / Runbook**：2026-10-19 评审：不做。存档：[2026-10-19-task-template-runbook.md](2026-10-19-task-template-runbook.md)。
+- **团队知识层（TEAM 记忆 + 经验提案）**：2026-10-19 评审：不做。存档：[2026-10-19-team-knowledge-layer.md](2026-10-19-team-knowledge-layer.md)。
+- **结构化回复卡片（封闭集块协议）**：2026-10-19 评审：不做。存档：[2026-10-19-structured-reply-cards.md](2026-10-19-structured-reply-cards.md)。
 
 ## 已排除的方向（与产品定位或约束冲突）
 
