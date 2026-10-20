@@ -26,6 +26,7 @@ Mao 的**产品文档唯一正文**（可独立分发）+ **REST 操作 CLI**。
 | 开放接口（API Token / 入站 Webhook 触发器 / 出站事件订阅） | [reference/open-api.md](reference/open-api.md) |
 | 信号哨兵 | [reference/signal-watcher.md](reference/signal-watcher.md) |
 | 信号哨兵（定时探测外部接口，变化触发 Agent） | [reference/signal-watcher.md](reference/signal-watcher.md) |
+| 自定义 HTTP 工具（把自己的接口封装成 Agent 工具） | [reference/user-tool.md](reference/user-tool.md) |
 | 飞书机器人通道（绑定 / 群聊@机器人 / 多机器人配置） | [reference/feishu-bot.md](reference/feishu-bot.md) |
 | 钉钉机器人通道（绑定 / 群聊@机器人 / 多机器人配置） | [reference/dingtalk-bot.md](reference/dingtalk-bot.md) |
 | 任务通知邮件渠道（SMTP 配置 / 用户选邮件推送） | [reference/settings.md](reference/settings.md#邮件通知配置notifyemail0.0.318-起) |
@@ -43,6 +44,7 @@ Mao 的**产品文档唯一正文**（可独立分发）+ **REST 操作 CLI**。
 - 登录并缓存 JWT；查询/配置用户、角色、Agent、模型（含价格）、Skill、会话元数据、文件诊断、定时任务、微信、MCP、审计等
 - 管理开放接口：API Token、入站 Webhook 触发器、出站事件订阅的 CRUD（见 [reference/open-api.md](reference/open-api.md)）
 - 管理信号哨兵：定时探测外部接口、变化触发 Agent 的 CRUD 与轮询记录（见 [reference/signal-watcher.md](reference/signal-watcher.md)）
+- 查询自定义 HTTP 工具全站清单与调用统计（只读，需 `user_tool:read`，见 [reference/user-tool.md](reference/user-tool.md)）
 - 管理用量预算：全局 / 用户 / Agent 月度预算，金额或 token 口径，超额提醒或拦截（见 [reference/budget.md](reference/budget.md)）
 - 脚本或 Agent 流程中以 JSON 消费上述 API
 

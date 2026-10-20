@@ -51,6 +51,17 @@ import type { EmbedPageToolRegistry } from '../embed-page-tool-registry.js';
 import { McpCallTool, type McpToolCaller } from '../mcp/workingset/impl/mcp-call-tool.js';
 import { McpDescribeTool } from '../mcp/workingset/impl/mcp-describe-tool.js';
 import type { McpToolsRegistry } from '../mcp/local/mcp-tools-registry.js';
+import {
+  HttpCallTool, HttpDescribeTool, type HttpApiToolServicePort,
+} from './impl/http-api-tools.js';
+import type { HttpApiExecutor } from './impl/http-api-executor.js';
+
+/**
+ * 自定义 HTTP 工具的两个入口（技术方案 2026-10-19 §5.3）：默认工具集中先剔除，
+ * 仅当用户有启用工具时按会话推入（装配见 harness-service buildContext）。
+ * 顺序即推入顺序：先 describe 后 call。
+ */
+export const HTTP_TOOL_NAMES = ['http_describe', 'http_call'] as const;
 
 export interface DefaultToolRegistryDeps {
   pathSandbox: PathSandbox;
@@ -104,6 +115,12 @@ export interface DefaultToolRegistryDeps {
    */
   mcpToolsRegistry?: McpToolsRegistry | null;
   mcpClientManager?: McpToolCaller | null;
+  /**
+   * 自定义 HTTP 工具（http_describe / http_call，技术方案 2026-10-19 §5.3）。
+   * 与 MCP 工作集同款条件注册：未注入时（精简装配/单测）不注册，全量模式行为不受影响。
+   */
+  userToolService?: HttpApiToolServicePort | null;
+  httpApiExecutor?: HttpApiExecutor | null;
 }
 
 /** Instantiates and registers all built-in tools (mirrors Spring Tool bean auto-registration). */
@@ -168,6 +185,20 @@ export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRe
       new McpDescribeTool({
         sessionMapper: deps.sessionMapper,
         toolsRegistry: deps.mcpToolsRegistry,
+      }),
+    );
+  }
+  // 自定义 HTTP 工具的两个入口：同样条件注册（执行内核与定义域齐备时才可用）。
+  if (deps.userToolService != null && deps.httpApiExecutor != null) {
+    tools.push(
+      new HttpDescribeTool({
+        sessionMapper: deps.sessionMapper,
+        userToolService: deps.userToolService,
+      }),
+      new HttpCallTool({
+        sessionMapper: deps.sessionMapper,
+        userToolService: deps.userToolService,
+        executor: deps.httpApiExecutor,
       }),
     );
   }

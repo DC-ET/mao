@@ -30,6 +30,7 @@ const systemCommand = require('./commands/system-command');
 const mcp = require('./commands/mcp');
 const open = require('./commands/open');
 const budget = require('./commands/budget');
+const userTool = require('./commands/user-tool');
 
 const GLOBAL_HELP = `mao-cli — Mao 用户端与管理后台统一 CLI
 
@@ -63,6 +64,7 @@ const GLOBAL_HELP = `mao-cli — Mao 用户端与管理后台统一 CLI
   git             Git 凭证
   tool            内置工具查询
   mcp             MCP 偏好与用户级 / 全局服务器
+  user-tool       自定义 HTTP 工具：我的工具 CRUD / 启停 / 试运行，管理端只读清单与调用统计
 
 管理端模块:
   user            用户管理
@@ -77,6 +79,7 @@ const GLOBAL_HELP = `mao-cli — Mao 用户端与管理后台统一 CLI
   settings        系统设置
   system-command  指令管理：系统指令 CRUD、跨用户个人指令，以及提升为系统指令（管理员）
   budget          用量预算：全局 / 用户 / Agent 月度预算的增改删查
+  user-tool       自定义 HTTP 工具：全站只读清单与调用统计（需 user_tool:read）
 
 环境变量:
   MAO_BASE_URL         私有化请设为自己的站点，如 https://mao.example.com
@@ -153,6 +156,7 @@ const MODULES = {
   'system-command': systemCommand,
   mcp,
   budget,
+  'user-tool': userTool,
 };
 
 const ADMIN_COMPAT = {

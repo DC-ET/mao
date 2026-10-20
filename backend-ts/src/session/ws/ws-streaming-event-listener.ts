@@ -365,6 +365,10 @@ function extractActivityTarget(toolName: string | null, argumentsJson: string | 
         return typeof node.path === 'string' ? node.path : null;
       case 'shell':
         return typeof node.command === 'string' ? node.command : null;
+      // 自定义 HTTP 工具：内层 slug 进 target（§9.4 管理统计聚合依据）；
+      // http_describe target 为 null，天然不计入调用统计。
+      case 'http_call':
+        return typeof node.tool === 'string' ? node.tool : null;
       case 'glob':
       case 'list':
         return typeof node.pattern === 'string' ? node.pattern : null;

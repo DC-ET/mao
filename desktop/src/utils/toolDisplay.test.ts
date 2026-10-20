@@ -112,4 +112,32 @@ describe('getToolInputPreview', () => {
     expect(getToolInputPreview('page_wait', { ms: 500 })).toBe('等待 500ms')
     expect(getToolInputPreview('page_actions', { actions: [{ type: 'click' }, { type: 'wait' }] })).toBe('2 个动作')
   })
+
+  it('自定义 HTTP 工具展示中文名', () => {
+    expect(getToolDisplayName('http_call')).toBe('调用自定义工具')
+    expect(getToolDisplayName('http_describe')).toBe('查询自定义工具参数')
+  })
+
+  it('http_describe 只回显内层 slug', () => {
+    expect(getToolInputPreview('http_describe', { tool: 'weather' })).toBe('weather')
+    expect(getToolInputPreview('http_describe', { tool: 'weather', arguments: { city: '上海' } })).toBe('weather')
+  })
+
+  it('http_call 回显内层 slug 与参数摘要', () => {
+    expect(getToolInputPreview('http_call', { tool: 'weather', arguments: { city: '上海' } })).toBe('weather(city=上海)')
+    expect(getToolInputPreview('http_call', { tool: 'weather' })).toBe('weather')
+    expect(getToolInputPreview('http_call', { tool: 'weather', arguments: {} })).toBe('weather')
+    expect(getToolInputPreview('http_call', { tool: 'weather', arguments: { city: '上海', days: 3, unit: 'c', extra: true } })).toBe('weather(city=上海, days=3, unit=c, ...)')
+  })
+
+  it('http_call 参数缺失或非法时只回显 slug', () => {
+    expect(getToolInputPreview('http_call', { tool: 'weather', arguments: '上海' })).toBe('weather')
+    expect(getToolInputPreview('http_call', { tool: 'weather', arguments: [1, 2] })).toBe('weather')
+    expect(getToolInputPreview('http_call', { arguments: { city: '上海' } })).toBe('')
+    expect(getToolInputPreview('http_call', { tool: 42 })).toBe('')
+  })
+
+  it('http_call 超长参数值截断到 20 字符', () => {
+    expect(getToolInputPreview('http_call', { tool: 'weather', arguments: { city: '上'.repeat(30) } })).toBe(`weather(city=${'上'.repeat(20)}...)`)
+  })
 })

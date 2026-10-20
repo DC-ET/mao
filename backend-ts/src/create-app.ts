@@ -184,6 +184,7 @@ import { ResponsesLlmAdapter } from './harness/llm/responses-llm-adapter.js';
 import { LlmAdapterFacade } from './harness/llm/llm-adapter-facade.js';
 import type { LlmAdapter } from './harness/llm/chat-request.js';
 import { createDefaultToolRegistry } from './harness/tool/tool-registry.js';
+import { HttpApiExecutor } from './harness/tool/impl/http-api-executor.js';
 import { ToolDispatcher } from './harness/tool/tool-dispatcher.js';
 import { DangerAssessor } from './harness/tool/danger-assessor.js';
 import { ProxyApprover } from './harness/tool/proxy-approver.js';
@@ -343,6 +344,11 @@ import { OpenApiCallLogService } from './openapi/open-api-call-log.service.js';
 import { OpenApiCallLogCleanup } from './openapi/open-api-call-log.cleanup.js';
 import { registerOpenApiCallLogRoutes } from './openapi/open-api-call-log.routes.js';
 import { SignalSecretCipher } from './signal/signal-cipher.js';
+import { MysqlUserToolRepository } from './user-tool/user-tool.repository.js';
+import { UserToolService } from './user-tool/user-tool.service.js';
+import { UserToolHeaderCipher } from './user-tool/user-tool-cipher.js';
+import { registerUserToolRoutes } from './user-tool/user-tool.routes.js';
+import { registerAdminUserToolRoutes } from './user-tool/user-tool-admin.routes.js';
 import { MysqlSignalCheckRepository, MysqlSignalWatcherRepository } from './signal/signal.repository.js';
 import { WatcherService } from './signal/watcher.service.js';
 import { WatcherScheduler } from './signal/watcher-scheduler.js';
@@ -1421,6 +1427,21 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
 
   const dingtalkMediaHolder: { current: DingtalkMediaSendSupport | null } = { current: null };
 
+  // 自定义 HTTP 工具（V163）：定义域 + 执行内核。保留字校验要读内置工具名，
+  // 而 registry 在下方创建，用惰性闭包打破循环（调用只发生在用户请求期）。
+  const userToolRepo = new MysqlUserToolRepository(db);
+  const userToolCipher = new UserToolHeaderCipher(cfg.app.userTool.secretKey);
+  const userToolService = new UserToolService({
+    repo: userToolRepo,
+    cipher: userToolCipher,
+    settings: settingService,
+    builtinToolNames: () => toolRegistry.getAllTools().map((tool) => tool.getName()),
+  });
+  // 放行名单走系统设置（5s TTL 缓存由内核持有）；试运行与 http_call 共用同一实例。
+  const httpApiExecutor = new HttpApiExecutor({
+    allowlistProvider: () => settingService.getPrivateAllowlistCidrs(),
+  });
+
   const toolRegistry = createDefaultToolRegistry({
     pathSandbox,
     sessionTodoMapper: todoMapper,
@@ -1533,6 +1554,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     mcpToolsRegistry,
     // 用可路由实例：CLOUD + docker 运行时下 mcp_call 需派发到容器内 bridge。
     mcpClientManager: routingMcpClient,
+    // 自定义 HTTP 工具入口（http_describe / http_call）：依赖齐备才注册。
+    userToolService,
+    httpApiExecutor,
   });
 
   const toolDispatcher = new ToolDispatcher(
@@ -1571,6 +1595,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     },
     memoryService,
     mcpLoadModeResolver,
+    // 自定义 HTTP 工具装配（V163）：用户有启用工具时才注入两入口 + 目录分节。
+    userToolService,
   );
   holder.harness = harness;
 
@@ -2859,6 +2885,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const analyticsService = new AnalyticsService(new AnalyticsDbStore(db));
   const statisticsService = new StatisticsService(new StatisticsDbStore(db));
   const adminAnalytics = new AdminAnalyticsService(statisticsService, new AdminAnalyticsDbStore(db));
+  // 自定义 HTTP 工具调用统计（§9.4）：与 admin 分析共用同一 DbStore 实例。
+  const userToolStatsStore = new AdminAnalyticsDbStore(db);
   const mcpValidator = new McpServerValidatorImpl(mcpServerLookup);
 
   await app.register(async (api) => {
@@ -2894,6 +2922,12 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       envVariableService,
       permissionService,
       userLookup: { findById: (id: number) => userRepo.findById(id) },
+    });
+    registerUserToolRoutes(api, { userToolService, httpApiExecutor });
+    registerAdminUserToolRoutes(api, {
+      repo: userToolRepo,
+      stats: userToolStatsStore,
+      permissionService,
     });
     registerAgentAvatarRoutes(api, fileService, permissionService);
     registerAgentRoutes(api, {

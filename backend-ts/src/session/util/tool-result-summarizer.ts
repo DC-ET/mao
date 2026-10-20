@@ -148,6 +148,10 @@ export function summarize(toolName: string | null | undefined, argumentsJson: st
       return summarizeMcpCall(argumentsJson, result);
     case 'mcp_describe':
       return summarizeMcpDescribe(argumentsJson, result);
+    case 'http_call':
+      return summarizeHttpCall(argumentsJson, result);
+    case 'http_describe':
+      return summarizeHttpDescribe(argumentsJson, result);
     case 'feishu_read_doc':
     case 'feishu_download_file':
     case 'feishu_send_image':
@@ -595,6 +599,59 @@ function extractMcpTarget(argumentsJson: string | null | undefined): string | nu
   const server = typeof node.server === 'string' ? node.server.trim() : '';
   const tool = typeof node.tool === 'string' ? node.tool.trim() : '';
   return server !== '' && tool !== '' ? `${server}.${tool}` : null;
+}
+
+/**
+ * http_call 摘要：成功「调用 <中文名>（HTTP <status>）」+ arguments 关键值；
+ * 失败显示 error（0.0.308 起失败可见口径）。中文名取执行结果里的 displayName
+ * （工具自有信息，非敏感），缺失时回退外壳参数里的 slug。
+ */
+function summarizeHttpCall(argumentsJson: string | null | undefined, result: string | null | undefined): string {
+  const slug = extractJsonString(argumentsJson, 'tool');
+  const node = asObj(parseJson(result ?? null));
+  const displayName = node != null && typeof node.displayName === 'string' && node.displayName.trim() !== ''
+    ? node.displayName.trim()
+    : slug;
+  const label = displayName != null ? `调用 ${displayName}` : '调用自定义工具';
+  if (node != null && has(node, 'error')) {
+    return `${label} (失败: ${truncate(String(node.error), 40)})`;
+  }
+  if (node == null) return label;
+  const status = has(node, 'status') ? Number(node.status) : null;
+  let text = status != null ? `${label}（HTTP ${status}）` : label;
+  if (node.truncated === true) text += '（响应已截断）';
+  const argsPart = httpCallArgsDigest(argumentsJson);
+  if (argsPart !== '') text += ` ${argsPart}`;
+  return text;
+}
+
+/** arguments 关键值摘要：最多取前 2 个键值对（对齐「+ arguments 关键值」口径，防刷屏）。 */
+function httpCallArgsDigest(argumentsJson: string | null | undefined): string {
+  const node = asObj(parseJson(argumentsJson ?? null));
+  const inner = node != null ? asObj(node.arguments) : null;
+  if (inner == null) return '';
+  const pairs: string[] = [];
+  for (const [key, value] of Object.entries(inner)) {
+    if (value == null) continue;
+    const text = typeof value === 'object' ? JSON.stringify(value) : String(value);
+    pairs.push(`${key}=${truncate(text, 20)}`);
+    if (pairs.length >= 2) break;
+  }
+  return pairs.join(', ');
+}
+
+/** http_describe 摘要：查询自定义工具参数定义；失败显示 error。 */
+function summarizeHttpDescribe(argumentsJson: string | null | undefined, result: string | null | undefined): string {
+  const slug = extractJsonString(argumentsJson, 'tool');
+  const label = slug != null ? `查询 ${slug} 参数` : '查询自定义工具参数';
+  const node = asObj(parseJson(result ?? null));
+  if (node != null && has(node, 'error')) {
+    return `${label} (失败: ${truncate(String(node.error), 40)})`;
+  }
+  if (node != null && Array.isArray(node.params)) {
+    return `${label}（${node.params.length} 个）`;
+  }
+  return label;
 }
 
 function summarizeGeneric(toolName: string, result: string | null | undefined): string {  if (result == null) return toolName;

@@ -102,7 +102,7 @@
 
 ### 5.1 数据模型
 
-迁移 `V161__user_custom_http_tools.sql`（编号按实施时空闲号顺延，当前最新 V160；邮件通知方案同期待评审，若先实施则本方案顺延一位）：
+迁移 `V163__user_custom_http_tools.sql`（编号按实施时空闲号顺延，当前最新 V160；邮件通知方案同期待评审，若先实施则本方案顺延一位）：
 
 ```sql
 CREATE TABLE IF NOT EXISTS `user_tool` (
@@ -292,7 +292,7 @@ if (userTools.length > 0) {
 
 ## 6. 实现步骤
 
-1. **迁移与模型层**：`V161`（两表 + 设置 seed + 权限 seed）；`backend-ts/src/tool/`（新域，或挂 `harness/tool/` 下的 `custom/`——倾向新域 `backend-ts/src/user-tool/` 管 CRUD，执行内核放 harness）repository / service / types / routes + spec。
+1. **迁移与模型层**：`V163`（两表 + 设置 seed + 权限 seed）；`backend-ts/src/tool/`（新域，或挂 `harness/tool/` 下的 `custom/`——倾向新域 `backend-ts/src/user-tool/` 管 CRUD，执行内核放 harness）repository / service / types / routes + spec。
 2. **执行内核**：`http-api-executor.ts`（SSRF 判定扩展 `common/ssrf.ts`、渲染、fetch、截断、归一化）+ spec（含 SSRF 用例矩阵）。
 3. **两个工具**：`http-api-tools.ts`（`HttpDescribeTool` / `HttpCallTool`）+ `tool-registry.ts` 注册 + spec。
 4. **装配与提示词**：`agent-execution-context.ts` 加字段；`harness-service.ts` 加装配块（全模式一致，无审批门，§9.3）；`prompt-engine.ts` 加分节 builder 与 section 注册 + spec（空列表无分节、分节顺序稳定）。
@@ -309,7 +309,7 @@ if (userTools.length > 0) {
 
 **后端**
 
-- `db/migration/V161__user_custom_http_tools.sql`：两表 + `tools.http.privateAllowlist` / `tools.http.maxEnabledPerUser` 设置 seed + `user_tool:read` 权限 seed 与授权
+- `db/migration/V163__user_custom_http_tools.sql`：两表 + `tools.http.privateAllowlist` / `tools.http.maxEnabledPerUser` 设置 seed + `user_tool:read` 权限 seed 与授权
 - `backend-ts/src/user-tool/`（新域）：`types.ts`（行 / VO / 查询类型 / 常量：`USER_TOOL_NAME_RE`、`MAX_ENABLED_DEFAULT=20`、`RESPONSE_MAX_BYTES=64KB`、`TIMEOUT_MIN/MAX`）、`user-tool.repository.ts`、`user-tool.service.ts`（CRUD / 启停 / 属主隔离 / read_only 预推断 / 敏感头识别）、`user-tool.routes.ts`（§5.10 用户侧端点）、`user-tool-admin.routes.ts`（管理侧清单 + 统计）、各 spec
 - `backend-ts/src/common/ssrf.ts`：新增 `isHostInCidrAllowlist` / `isCloudMetadataHost`（不改 `isPrivateOrReservedHostname` 语义）+ spec
 - `backend-ts/src/harness/tool/impl/http-api-executor.ts`：执行内核（渲染 / 解密 / fetch / 截断 / 归一化）+ spec

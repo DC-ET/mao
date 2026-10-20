@@ -1131,3 +1131,94 @@ export async function getEffectiveEnv(sessionId: number): Promise<EffectiveEnvVi
   const { data } = await api.get(`/sessions/${sessionId}/effective-env`)
   return data
 }
+
+// ---------------------------------------------------------------- 自定义 HTTP 工具
+
+/** 请求头回显 VO：敏感值打码（******），编辑时回传掩码视为不修改。 */
+export interface UserToolHeaderVO {
+  key: string
+  value: string
+  sensitive: boolean
+}
+
+export interface UserToolParamVO {
+  id?: number
+  name: string
+  label: string
+  type: string
+  required: boolean
+  defaultValue: string | null
+  sortOrder: number
+}
+
+export interface UserToolView {
+  id?: number
+  name: string
+  displayName: string
+  description: string
+  method: string
+  url: string
+  headers: UserToolHeaderVO[]
+  bodyTemplate: string | null
+  readOnly: boolean
+  timeoutMs: number
+  enabled: boolean
+  params: UserToolParamVO[]
+  createdAt?: string | null
+  updatedAt?: string | null
+}
+
+/** 编辑器草稿：headers 按行维护（[{key,value}]，敏感值回传掩码即不修改）。 */
+export interface UserToolPayload {
+  name: string
+  displayName: string
+  description: string
+  method: string
+  url: string
+  headers: Array<{ key: string; value: string }>
+  bodyTemplate: string | null
+  readOnly: boolean
+  timeoutMs: number
+  enabled: boolean
+  params: Array<{ name: string; label: string; type: string; required: boolean; defaultValue: string | null }>
+}
+
+export interface UserToolTestResult {
+  status?: number
+  body?: string
+  truncated?: boolean
+  notice?: string | null
+  displayName?: string
+  durationMs?: number
+  error?: string
+}
+
+export async function listUserTools(): Promise<UserToolView[]> {
+  const { data } = await api.get('/user-tools')
+  return data ?? []
+}
+
+export async function createUserTool(payload: UserToolPayload): Promise<UserToolView> {
+  const { data } = await api.post('/user-tools', payload)
+  return data
+}
+
+export async function updateUserTool(id: number, payload: UserToolPayload): Promise<UserToolView> {
+  const { data } = await api.put(`/user-tools/${id}`, payload)
+  return data
+}
+
+export async function deleteUserTool(id: number): Promise<void> {
+  await api.delete(`/user-tools/${id}`)
+}
+
+export async function setUserToolEnabled(id: number, enabled: boolean): Promise<UserToolView> {
+  const { data } = await api.put(`/user-tools/${id}/enabled`, { enabled })
+  return data
+}
+
+/** 试运行：草稿 + arguments 直接走后端执行内核（与正式调用同一条代码路径）。 */
+export async function testUserTool(payload: UserToolPayload & { arguments?: Record<string, unknown> }): Promise<UserToolTestResult> {
+  const { data } = await api.post('/user-tools/test', payload)
+  return data
+}

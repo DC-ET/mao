@@ -102,6 +102,11 @@ const routes: RouteRecordRaw[] = [
             component: () => import('../views/settings/McpServersView.vue')
           },
           {
+            path: 'user-tools',
+            name: 'UserTools',
+            component: () => import('../views/settings/UserToolsView.vue')
+          },
+          {
             path: 'skills',
             name: 'Skills',
             component: () => import('../views/settings/SkillsView.vue')

@@ -3,6 +3,7 @@ import { ECP_CONFIG_KEY, parseEcpConfig, type EcpConfig } from '../auth/ecp.conf
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { hasText } from '../common/case.js';
+import { cidrOverlapsHardDeniedNet, isValidCidr, parseCidrList } from '../common/ssrf.js';
 import { decryptAesGcm, encryptAesGcmNonNull } from '../crypto/aes-gcm.js';
 import type {
   AgentLookup, AgentRuntimeSettings, BundleRegistrySettings, EmailSmtpSettings, FeishuOAuthSettings, HarnessTuningSettings, LdapSettings, ModelLookup,
@@ -19,6 +20,10 @@ export const EMBED_AGENT_ID_KEY = 'embed.agentId';
 export const SHELL_ENV_VARS_ENABLED_KEY = 'shell.envVars.enabled';
 /** MCP 工具加载模式全局默认（V159）：working_set=工作集（默认） | full=全量注入。 */
 export const MCP_LOAD_MODE_KEY = 'mcp.loadMode';
+/** 自定义 HTTP 工具内网放行清单（V163，CIDR JSON 数组）：环回与云元数据永拒，默认空数组=一律按私网拒绝。 */
+export const HTTP_TOOL_PRIVATE_ALLOWLIST_KEY = 'tools.http.privateAllowlist';
+/** 自定义 HTTP 工具单用户启用上限（V163，默认 20，与 user-tool 域 MAX_ENABLED_DEFAULT 一致）。 */
+export const HTTP_TOOL_MAX_ENABLED_PER_USER_KEY = 'tools.http.maxEnabledPerUser';
 export const WEIXIN_MODEL_ID_KEY = 'weixin.modelId';
 export const SESSION_TITLE_MODEL_ID_KEY = 'session.titleModelId';
 export const GIT_COMMIT_MESSAGE_MODEL_ID_KEY = 'git.commitMessageModelId';
@@ -738,6 +743,22 @@ export class SystemSettingService {
     return Number.isInteger(n) && n > 0 ? n : 90;
   }
 
+  /**
+   * 自定义 HTTP 工具内网放行清单（V163）：CIDR JSON 数组 → 合法 CIDR 列表。
+   * 非法/缺失按空数组处理（=一律按私网拒绝，失败即拒绝不放开）。
+   */
+  async getPrivateAllowlistCidrs(): Promise<string[]> {
+    const raw = await this.getText(HTTP_TOOL_PRIVATE_ALLOWLIST_KEY);
+    return parseCidrList(raw);
+  }
+
+  /** 单用户可启用的自定义工具数上限（V163，默认 20）；非法值回落默认（可用性配置，非安全门）。 */
+  async getMaxEnabledPerUser(): Promise<number> {
+    const raw = await this.getOpt(HTTP_TOOL_MAX_ENABLED_PER_USER_KEY);
+    const n = raw == null ? NaN : Number(raw);
+    return Number.isInteger(n) && n > 0 && n <= 100 ? n : 20;
+  }
+
   async isOpenApiTokenAutoDisableEnabled(): Promise<boolean> {
     const raw = await this.getText('openapi.tokenAutoDisable.enabled', 'true');
     return raw === 'true' || raw === '1';
@@ -803,6 +824,43 @@ export class SystemSettingService {
     }
     if (key === UPLOAD_STORAGE_MODE_KEY && value !== 'local' && value !== 'oss') {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '上传存储模式仅支持 local 或 oss');
+    }
+    if (key === HTTP_TOOL_PRIVATE_ALLOWLIST_KEY) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(value!);
+      } catch {
+        throw new BusinessException(ErrorCode.PARAM_INVALID, '内网放行清单必须是 JSON 数组，如 ["10.0.0.0/8"]');
+      }
+      if (!Array.isArray(parsed)) {
+        throw new BusinessException(
+          ErrorCode.PARAM_INVALID,
+          '内网放行清单必须是 JSON 数组（CIDR 列表），如 ["10.0.0.0/8","192.168.1.0/24"]',
+        );
+      }
+      if (!parsed.every((item) => typeof item === 'string' && isValidCidr(item))) {
+        throw new BusinessException(
+          ErrorCode.PARAM_INVALID,
+          '内网放行清单必须是 CIDR 数组（IPv4，可带 /前缀，如 ["10.0.0.0/8","192.168.1.0/24"]）；环回与云元数据端点永不允许放行',
+        );
+      }
+      // 文案声称永不放行的段必须在保存时就拒掉：执行内核虽另有硬拒兜底，
+      // 但静默接受会让管理员得到「配了却不生效」的项，排查时没有任何反馈。
+      const hardDenied = (parsed as string[]).filter((item) => cidrOverlapsHardDeniedNet(item));
+      if (hardDenied.length > 0) {
+        throw new BusinessException(
+          ErrorCode.PARAM_INVALID,
+          `内网放行清单不允许包含环回（127.0.0.0/8）或云元数据（169.254.169.254）网段：${hardDenied.slice(0, 3).join('、')}`,
+        );
+      }
+      return;
+    }
+    if (key === HTTP_TOOL_MAX_ENABLED_PER_USER_KEY) {
+      const n = Number(value);
+      if (!Number.isInteger(n) || n < 1 || n > 100) {
+        throw new BusinessException(ErrorCode.PARAM_INVALID, '单用户启用上限需为 1~100 的整数');
+      }
+      return;
     }
     if (key === WEB_SEARCH_PROVIDER_KEY && value !== 'tavily' && value !== 'tinyfish') {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '搜索实现仅支持 tavily 或 tinyfish');

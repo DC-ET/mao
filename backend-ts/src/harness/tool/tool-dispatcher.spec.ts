@@ -1153,3 +1153,77 @@ describe('MCP 工作集（mcp_call 还原 / 只读免审）', () => {
       );
     });
   });
+
+describe('ToolDispatcher 自定义 HTTP 工具执行位置（2026-10-20 方案二 §9.3）', () => {
+  const httpDescribe = mockTool('http_describe');
+  const httpCall = mockTool('http_call');
+  const registry = new ToolRegistry([httpDescribe, httpCall]);
+  const localToolExecutor = { execute: vi.fn() } as unknown as LocalToolExecutor & { execute: ReturnType<typeof vi.fn> };
+  const dangerAssessor = new DangerAssessor({ chat: vi.fn(), stream: vi.fn() } as unknown as LlmAdapter);
+  const assessSpy = vi.spyOn(dangerAssessor, 'assess');
+  const sessionMapper = { selectById: vi.fn() } as unknown as SessionMapper & { selectById: ReturnType<typeof vi.fn> };
+  const streamingWsRegistry = {
+    hasConnection: vi.fn(),
+    send: vi.fn(),
+  } as unknown as StreamingWsRegistry & { hasConnection: ReturnType<typeof vi.fn>; send: ReturnType<typeof vi.fn> };
+  const askUserQuestionsRegistry = {
+    register: vi.fn(),
+    waitForAnswer: vi.fn(),
+  } as unknown as AskUserQuestionsRegistry & { register: ReturnType<typeof vi.fn>; waitForAnswer: ReturnType<typeof vi.fn> };
+  const localToolSessionRegistry = {
+    getUserIdForSession: vi.fn(),
+    isConnected: vi.fn(),
+  } as unknown as LocalToolSessionRegistry & {
+    getUserIdForSession: ReturnType<typeof vi.fn>;
+    isConnected: ReturnType<typeof vi.fn>;
+  };
+  const treeSignalPublisher = { publishForSession: vi.fn() } as unknown as SessionTreeSignalPublisher;
+  const dispatcher = new ToolDispatcher(
+    registry, localToolExecutor, dangerAssessor, sessionMapper, streamingWsRegistry,
+    askUserQuestionsRegistry, localToolSessionRegistry, treeSignalPublisher,
+  );
+
+  beforeEach(() => {
+    localToolExecutor.execute.mockReset();
+    sessionMapper.selectById.mockReset();
+    sessionMapper.selectById.mockResolvedValue(null);
+    streamingWsRegistry.hasConnection.mockReset();
+    streamingWsRegistry.send.mockReset();
+    askUserQuestionsRegistry.register.mockReset();
+    askUserQuestionsRegistry.waitForAnswer.mockReset();
+    localToolSessionRegistry.getUserIdForSession.mockReset();
+    localToolSessionRegistry.isConnected.mockReset();
+    localToolSessionRegistry.isConnected.mockResolvedValue(true);
+    httpDescribe.execute.mockReset();
+    httpCall.execute.mockReset();
+    assessSpy.mockClear();
+  });
+
+  it('http_call / http_describe 在 LOCAL 模式仍由后端直连，不进桌面委托分支', async () => {
+    httpCall.execute.mockResolvedValue('http-result');
+    const result = await dispatcher.dispatch('http_call', '{"tool":"weather"}', 'LOCAL', 7, 9, 'workspace', 'FULL', null);
+    expect(result).toBe('http-result');
+    expect(localToolExecutor.execute).not.toHaveBeenCalled();
+
+    httpDescribe.execute.mockResolvedValue('describe-result');
+    const described = await dispatcher.dispatch('http_describe', '{"tool":"weather"}', 'LOCAL', 7, 9, 'workspace', 'FULL', null);
+    expect(described).toBe('describe-result');
+    expect(localToolExecutor.execute).not.toHaveBeenCalled();
+  });
+
+  it('CLOUD 模式同样后端直连', async () => {
+    httpCall.execute.mockResolvedValue('cloud-http');
+    expect(await dispatcher.dispatch('http_call', '{"tool":"weather"}', 'CLOUD', 7, 9, 'workspace', 'FULL', null)).toBe('cloud-http');
+    expect(localToolExecutor.execute).not.toHaveBeenCalled();
+  });
+
+  it('无审批门：READ_ONLY 权限级别下也不产生审批帧，直接执行', async () => {
+    // SERVER_ONLY 分支先于审批判定返回；若走了审批链路，READ_ONLY + 未注册审批服务会挂起或抛错
+    sessionMapper.selectById.mockResolvedValue({ permissionLevel: 'READ_ONLY' });
+    httpCall.execute.mockResolvedValue('no-approval');
+    const result = await dispatcher.dispatch('http_call', '{"tool":"weather"}', 'LOCAL', 7, 9, 'workspace', 'READ_ONLY', null);
+    expect(result).toBe('no-approval');
+    expect(assessSpy).not.toHaveBeenCalled();
+    expect(localToolExecutor.execute).not.toHaveBeenCalled();
+  });
+});

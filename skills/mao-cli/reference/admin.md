@@ -175,6 +175,14 @@ CLI：`mao budget list|create|update|delete`。详见 [budget.md](budget.md)。
 
 CLI：`mao llm-call list`（见 [llm-call.md](llm-call.md)）。
 
+## 自定义工具
+
+「运行 → 自定义工具」（需 `user_tool:read`）查看全站用户自建的 HTTP 工具，只读无写操作：清单表按关键字 / 用户名 / 启用态筛选（工具名、展示名、属主、端点、只读 / 可写、超时），统计表按工具名聚合并调用次数、失败次数、失败率、调用用户数与首次 / 最近调用时间（数据来自运行轨迹中的 `http_call` 记录，仅交互会话产生）。
+
+工具定义与调用口径见 [user-tool.md](user-tool.md)；内网放行网段在「系统设置 → 工具与终端 → 自定义 HTTP 工具」配置。
+
+CLI：`mao user-tool admin-list|admin-stats`。
+
 ## 系统设置
 
 平台级配置，例如：
@@ -186,7 +194,7 @@ CLI：`mao llm-call list`（见 [llm-call.md](llm-call.md)）。
 - **文件与存储**：上传（存储方式 local/OSS、访问前缀、单文件大小上限）、阿里云 OSS 对象存储与 STS 临时凭证
 - **Agent 引擎**：Agent 运行（0.0.88 迁入，线程池与 WS 超时重启生效）、LLM 超时与重试、上下文压缩（Harness 调参 0.0.89 迁入，保存后重启后端生效）
 - **模型任务**（各功能的默认模型，留空则跟随会话/系统默认）：会话（`session.titleModelId` 标题生成）、代码（`git.commitMessageModelId` Git 提交信息）、记忆（`memory.extractionModelId` 记忆自动抽取）
-- **工具与终端**：网络工具（Tavily / TinyFish 搜索实现切换与各自 API Key，0.0.83 新增双实现）、网页抓取、Shell 会话、云端终端、审批（审批模型与 Jev 前置决策；「测试连接」用当前表单探测 Jev 端点与 API Key，可未保存）
+- **工具与终端**：网络工具（Tavily / TinyFish 搜索实现切换与各自 API Key，0.0.83 新增双实现）、网页抓取、Shell 会话、云端终端、审批（审批模型与 Jev 前置决策；「测试连接」用当前表单探测 Jev 端点与 API Key，可未保存）、自定义 HTTP 工具（`tools.http.privateAllowlist` 内网放行 CIDR 清单与 `tools.http.maxEnabledPerUser` 单用户启用上限，见 [user-tool.md](user-tool.md)）
 - **通知与消息**：任务通知（0.0.88 迁入，即时生效）、微信（`weixin.agentId` / `weixin.modelId` 微信通道 Agent 与模型）
 - **平台与运维**：Agent 资产（Bundle registry 只读端点开关与访问令牌）、分享（匿名分享链接开关）、审计（日志保留天数）、运行环境（工作区与 Skill 目录，只读展示）
 

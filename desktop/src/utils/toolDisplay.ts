@@ -48,6 +48,8 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   page_actions: '执行批量页面操作',
   mcp_call: '调用 MCP 工具',
   mcp_describe: '查询 MCP 工具参数',
+  http_call: '调用自定义工具',
+  http_describe: '查询自定义工具参数',
 }
 
 export function getToolDisplayName(name: string): string {
@@ -72,6 +74,27 @@ export function getToolInputPreview(name: string, input?: Record<string, unknown
       const server = typeof input.server === 'string' ? input.server : ''
       const tool = typeof input.tool === 'string' ? input.tool : ''
       return server && tool ? `${server}.${tool}` : ''
+    }
+    case 'http_call':
+    case 'http_describe': {
+      // 同 mcp 还原思路：外壳 {tool, arguments} 取内层 slug，调用再拼参数摘要
+      const tool = typeof input.tool === 'string' ? input.tool : ''
+      if (name === 'http_describe') return tool
+      const inner = input.arguments
+      if (!tool) return ''
+      if (inner == null) return tool
+      if (typeof inner !== 'object' || Array.isArray(inner)) return tool
+      const keys = Object.keys(inner as Record<string, unknown>)
+      if (keys.length === 0) return tool
+      const summary = keys
+        .slice(0, 3)
+        .map((key) => {
+          const value = (inner as Record<string, unknown>)[key]
+          const text = typeof value === 'string' ? value : JSON.stringify(value) ?? ''
+          return `${key}=${text.length > 20 ? `${text.slice(0, 20)}...` : text}`
+        })
+        .join(', ')
+      return `${tool}(${summary}${keys.length > 3 ? ', ...' : ''})`
     }
     case 'generate_image':
     case 'edit_image': {

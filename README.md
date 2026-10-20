@@ -86,6 +86,7 @@ Mao 不是又一个 ChatGPT 套壳，也不是 Dify / n8n 那样的低代码工�
 - **每日运营摘要**：默认每天 09:30 汇总昨天的任务成败、定时任务、哨兵触发、审批挂起、Token 成本与开放接口调用，写进收件箱（配了出站订阅可同步推送）；在「设置 → 消息通知 → 每日运营摘要」改推送时间、开关，或立即试发昨日摘要。
 - **开放接口**：在「设置 → 开放接口」签发 API Token 或用入站 Webhook 触发器把外部系统（CI、客服工单、自建脚本）接入 Agent；Token 明文加密留存，可随时用列表里的「复制 Token」再次获取；需要把结果推回自建系统时配出站事件订阅。页面顶部的「接口文档」卡片可查阅完整调用说明，或下载 / 复制 Markdown 交给外部系统。详见 [skills/mao-cli/reference/open-api.md](skills/mao-cli/reference/open-api.md)。
 - **信号哨兵**：在「设置 → 信号哨兵」盯一个外部接口（汇率、库存、发布状态、接口健康度），按间隔自动探测，判定值变化时自动开一次 Agent 会话处理；可暂停、可立即测试探针，失败自动退避、连续失败自动停用并站内提醒。详见 [skills/mao-cli/reference/signal-watcher.md](skills/mao-cli/reference/signal-watcher.md)。
+- **自定义 HTTP 工具**：在「设置 → 我的工具」把自己的 HTTP 接口封装成 Agent 可调用的工具——填端点 URL、方法、参数、固定请求头（Token 等敏感值加密存储）即可；Agent 按需查询参数并调用，请求由服务端直连目标地址（**无审批确认**，只封装可信端点），保存前可先「测试调用」实调一次看原始响应。默认拒绝访问内网地址，需要时由管理员按网段放行。详见 [skills/mao-cli/reference/user-tool.md](skills/mao-cli/reference/user-tool.md)。
 - **环境变量**：设置 → 环境变量维护个人全局变量；右侧「任务」面板的工作区区块点「环境变量」查看当前会话生效变量（按来源分组）并维护当前工作区变量。优先级「工作区 > 用户全局 > 系统全局」，`PATH` / `HOME` / `MAO_TOKEN` 等平台保留键不可配置；值加密存储、保存后不回显，最多 5 秒对新命令生效（已打开的交互终端需重开）。管理员在系统设置 → Shell 环境变量下发全站变量。
 
 完整手册见 [USER_GUIDE.md](USER_GUIDE.md)。上线检查清单见 [business_process.md](skills/mao-cli/business_process.md)。

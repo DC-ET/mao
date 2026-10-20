@@ -731,3 +731,73 @@ describe('SystemSettingService 邮件 SMTP 配置（V162）', () => {
     expect(decrypted.smtpPassword).toBe('new-pass');
   });
 });
+
+describe('SystemSettingService 自定义 HTTP 工具设置项（V163）', () => {
+  const mapper: SystemSettingRepository = {
+    list: vi.fn(),
+    findByKey: vi.fn(),
+    updateById: vi.fn(),
+    transaction: vi.fn(async (fn: (repo: SystemSettingRepository) => Promise<unknown>) => fn(mapper)),
+  };
+  const agentLookup: AgentLookup = { findById: vi.fn() };
+  const modelLookup: ModelLookup = { findById: vi.fn() };
+
+  function service(): SystemSettingService {
+    return new SystemSettingService(mapper, agentLookup, modelLookup, { workspaceRoot: '/ws', skillsDir: '/skills' });
+  }
+
+  function setting(key: string, value: string): SystemSetting {
+    return { id: 1, settingKey: key, category: '自定义 HTTP 工具', value, editable: 1 };
+  }
+
+  it('接受合法 CIDR 数组并落库', async () => {
+    vi.mocked(mapper.findByKey).mockResolvedValue(setting('tools.http.privateAllowlist', '[]'));
+    const updated = await service().update('tools.http.privateAllowlist', '["10.0.0.0/8","192.168.1.5"]');
+    expect(updated.value).toBe('["10.0.0.0/8","192.168.1.5"]');
+  });
+
+  it('拒绝非 JSON / 非数组 / 非法 CIDR 的放行清单', async () => {
+    vi.mocked(mapper.findByKey).mockResolvedValue(setting('tools.http.privateAllowlist', '[]'));
+    await expect(service().update('tools.http.privateAllowlist', '10.0.0.0/8')).rejects.toThrow(/JSON 数组/);
+    await expect(service().update('tools.http.privateAllowlist', '{"a":"10.0.0.0/8"}')).rejects.toThrow(/JSON 数组/);
+    await expect(service().update('tools.http.privateAllowlist', '["10.0.0.0/33"]')).rejects.toThrow(/CIDR/);
+    await expect(service().update('tools.http.privateAllowlist', '["example.com"]')).rejects.toThrow(/CIDR/);
+    await expect(service().update('tools.http.privateAllowlist', '[1]')).rejects.toThrow(/CIDR/);
+  });
+
+  it('拒绝与环回 / 云元数据网段相交的放行清单（配了也不生效，保存时就报错）', async () => {
+    vi.mocked(mapper.findByKey).mockResolvedValue(setting('tools.http.privateAllowlist', '[]'));
+    await expect(service().update('tools.http.privateAllowlist', '["127.0.0.0/8"]'))
+      .rejects.toThrow(/环回（127\.0\.0\.0\/8）或云元数据/);
+    await expect(service().update('tools.http.privateAllowlist', '["169.254.169.254"]'))
+      .rejects.toThrow(/环回（127\.0\.0\.0\/8）或云元数据/);
+    await expect(service().update('tools.http.privateAllowlist', '["10.0.0.0/8","169.254.0.0/16"]'))
+      .rejects.toThrow(/环回（127\.0\.0\.0\/8）或云元数据/);
+    await expect(service().update('tools.http.privateAllowlist', '["10.0.0.0/8","172.16.0.0/12"]'))
+      .resolves.toMatchObject({ value: '["10.0.0.0/8","172.16.0.0/12"]' });
+  });
+
+  it('启用上限限 1~100 整数', async () => {
+    vi.mocked(mapper.findByKey).mockResolvedValue(setting('tools.http.maxEnabledPerUser', '20'));
+    await expect(service().update('tools.http.maxEnabledPerUser', '50')).resolves.toMatchObject({ value: '50' });
+    await expect(service().update('tools.http.maxEnabledPerUser', '0')).rejects.toThrow(/1~100/);
+    await expect(service().update('tools.http.maxEnabledPerUser', '101')).rejects.toThrow(/1~100/);
+    await expect(service().update('tools.http.maxEnabledPerUser', 'abc')).rejects.toThrow(/1~100/);
+  });
+
+  it('getPrivateAllowlistCidrs 解析合法 CIDR，非法/缺失按空数组（失败即拒绝）', async () => {
+    vi.mocked(mapper.findByKey).mockResolvedValue(setting('tools.http.privateAllowlist', '["10.0.0.0/8","bogus"]'));
+    await expect(service().getPrivateAllowlistCidrs()).resolves.toEqual(['10.0.0.0/8']);
+    vi.mocked(mapper.findByKey).mockResolvedValue(null);
+    await expect(service().getPrivateAllowlistCidrs()).resolves.toEqual([]);
+  });
+
+  it('getMaxEnabledPerUser 非法值回落 20', async () => {
+    vi.mocked(mapper.findByKey).mockResolvedValue(setting('tools.http.maxEnabledPerUser', '7'));
+    await expect(service().getMaxEnabledPerUser()).resolves.toBe(7);
+    vi.mocked(mapper.findByKey).mockResolvedValue(setting('tools.http.maxEnabledPerUser', '999'));
+    await expect(service().getMaxEnabledPerUser()).resolves.toBe(20);
+    vi.mocked(mapper.findByKey).mockResolvedValue(null);
+    await expect(service().getMaxEnabledPerUser()).resolves.toBe(20);
+  });
+});

@@ -8,6 +8,7 @@ import type { Tool } from '../tool/tool.js';
 import type { ToolAttachment } from './tool-attachment.js';
 import type { ContextManifest } from './context-manifest.js';
 import type { McpWorkingSet } from '../mcp/workingset/mcp-working-set.js';
+import type { CustomHttpToolCatalog } from './custom-http-tools-catalog.js';
 import { AtomicBoolean } from '../atomic-boolean.js';
 
 export class AgentExecutionContext {
@@ -40,6 +41,11 @@ export class AgentExecutionContext {
    * 提示词 section 据此决定是否渲染（空值必须零输出，前缀缓存前提）。
    */
   mcpWorkingSet: McpWorkingSet | null = null;
+  /**
+   * 自定义 HTTP 工具目录（技术方案 2026-10-19 §5.2）。用户无启用工具 / 未装配时为 null，
+   * 提示词 section 据此决定是否渲染（空值必须零输出，前缀缓存前提）。
+   */
+  customHttpTools: CustomHttpToolCatalog | null = null;
   /**
    * 系统提示 current-date 节的日期锚点：本会话首条现存用户消息的日期，跨天不重算
    * （技术方案 2026-10-12 §5.1）。无用户消息的会话回落服务器当天（shanghaiYmd）。

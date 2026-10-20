@@ -174,12 +174,21 @@
                           v-else-if="isNumericKey(row.settingKey)"
                           :model-value="toNumberOrNull(plainModel[row.settingKey])"
                           :min="1"
+                          :max="row.settingKey === 'tools.http.maxEnabledPerUser' ? 100 : undefined"
                           :step="1"
                           step-strictly
                           controls-position="right"
                           :disabled="!canWrite"
                           style="width: 100%"
                           @update:model-value="(val: number | undefined) => { plainModel[row.settingKey] = val == null ? '' : String(val) }"
+                        />
+                        <el-input
+                          v-else-if="isCidrAllowlistSetting(row.settingKey)"
+                          v-model="plainModel[row.settingKey]"
+                          type="textarea"
+                          :rows="4"
+                          :disabled="!canWrite"
+                          placeholder='["10.0.0.0/8","192.168.1.0/24"]'
                         />
                         <el-input
                           v-else
@@ -199,6 +208,9 @@
                           </template>
                         </el-input>
                         <div v-if="row.settingKey === 'bundle.registry.accessToken' && row.value" class="field-hint">当前 token：{{ row.value }}</div>
+                        <div v-if="isCidrAllowlistSetting(row.settingKey) && cidrAllowlistError(plainModel[row.settingKey])" class="field-error">
+                          {{ cidrAllowlistError(plainModel[row.settingKey]) }}
+                        </div>
                         <div class="field-hint">{{ row.settingKey }}</div>
                       </template>
                     </el-form-item>
@@ -225,6 +237,7 @@ import EcpConfigPanel from './components/EcpConfigPanel.vue'
 import ShellEnvVarsPanel from './components/ShellEnvVarsPanel.vue'
 import { COMPANY_SSO_KEY } from './companySsoConfig'
 import { ECP_CONFIG_KEY } from './ecpConfig'
+import { cidrAllowlistError } from './cidrAllowlist'
 
 const authStore = useAuthStore()
 /** 后端 PUT /system-settings/:key 需 settings:write，无权限时禁用全部写控件 */
@@ -314,6 +327,8 @@ const TOC_GROUPS: Array<{ label: string; sections: Array<{ kind: 'company-sso' |
       { kind: 'shell-env', name: 'shell-env' },
       { kind: 'category', name: 'Shell 环境' },
       { kind: 'category', name: '审批' },
+      // 自定义 HTTP 工具：内网放行清单 + 单用户启用上限
+      { kind: 'category', name: '自定义 HTTP 工具' },
     ],
   },
   {
@@ -366,7 +381,7 @@ function unmarkSecretClear(key: string) {
 }
 
 /** 数值类配置键：渲染为数字输入。 */
-const NUMERIC_KEYS = new Set(['audit.retentionDays', 'agent.threadPoolSize', 'agent.threadPoolMax', 'agent.threadPoolQueue', 'ws.idleTimeoutMs', 'notify.workerDelayMs', 'notify.batchSize', 'notify.maxAttempts', 'file.maxSizeMb', 'openapi.callLogRetentionDays', 'openapi.tokenAutoDisableThreshold', 'notify.email.smtpPort'])
+const NUMERIC_KEYS = new Set(['audit.retentionDays', 'agent.threadPoolSize', 'agent.threadPoolMax', 'agent.threadPoolQueue', 'ws.idleTimeoutMs', 'notify.workerDelayMs', 'notify.batchSize', 'notify.maxAttempts', 'file.maxSizeMb', 'openapi.callLogRetentionDays', 'openapi.tokenAutoDisableThreshold', 'notify.email.smtpPort', 'tools.http.maxEnabledPerUser'])
 
 /** 布尔开关 key：默认按 *.enabled 后缀判定；notify.email.smtpSecure（TLS 开关）同款渲染。 */
 const BOOLEAN_KEYS = new Set(['notify.email.smtpSecure'])
@@ -423,6 +438,16 @@ async function saveCategory(category: string) {
         ElMessage.error(`「${row.description || row.settingKey}」需为正整数`)
         return
       }
+    }
+    if (isCidrAllowlistSetting(row.settingKey)) {
+      const error = cidrAllowlistError(raw)
+      if (error) {
+        ElMessage.error(`「${row.description || row.settingKey}」${error}`)
+        return
+      }
+      // 空输入 = 一律按私网拒绝；后端不接受空串，提交前归一为 []
+      items.push({ key: row.settingKey, value: raw.trim() === '' ? '[]' : raw.trim() })
+      continue
     }
     items.push({ key: row.settingKey, value: raw })
   }
@@ -561,6 +586,11 @@ function isMcpLoadModeSetting(key: string | undefined | null) {
 /** 全局用户运行时模式：枚举下拉；后端保存前会预检容器运行时，失败则拒绝保存并提示原因。 */
 function isRuntimeModeSetting(key: string | undefined | null) {
   return key === 'runtime.mode'
+}
+
+/** 自定义 HTTP 工具内网放行清单：CIDR JSON 数组多行编辑器，保存前按格式校验（后端同样强校验）。 */
+function isCidrAllowlistSetting(key: string | undefined | null) {
+  return key === 'tools.http.privateAllowlist'
 }
 
 const integrationRows = computed(() => settings.value.filter((item) => INTEGRATION_KEYS.has(item.settingKey)))
@@ -987,6 +1017,13 @@ onActivated(() => {
 .field-hint {
   font-size: 12px;
   color: var(--mao-muted);
+  line-height: 1.4;
+  margin-top: 2px;
+}
+
+.field-error {
+  font-size: 12px;
+  color: var(--el-color-danger);
   line-height: 1.4;
   margin-top: 2px;
 }

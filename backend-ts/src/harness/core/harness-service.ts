@@ -38,6 +38,9 @@ import { McpToolAdapter } from '../mcp/mcp-tool-adapter.js';
 import type { McpLoadModeResolver } from '../mcp/workingset/mcp-load-mode.js';
 import { buildMcpWorkingSet, type McpWorkingSet } from '../mcp/workingset/mcp-working-set.js';
 import type { McpConnectionError, McpServer, McpToolRef } from '../mcp/entity/mcp-server.js';
+import { HTTP_TOOL_NAMES } from '../tool/tool-registry.js';
+import { buildCustomHttpToolCatalog } from './custom-http-tools-catalog.js';
+import type { UserTool } from '../../user-tool/types.js';
 import { WEIXIN_PROJECT_KEY } from '../../domain/types.js';
 import { shanghaiYmd } from '../../common/json.js';
 import { BusinessException } from '../../common/business-exception.js';
@@ -48,6 +51,14 @@ import type { MemoryHint } from '../../memory/types.js';
 const ASK_USER_QUESTIONS = 'ask_user_questions';
 /** 工作集模式的两个内置入口工具：只在该模式注入，全量模式不出现。 */
 const MCP_WORKING_SET_TOOL_NAMES = new Set(['mcp_call', 'mcp_describe']);
+/** 自定义 HTTP 工具入口：默认工具集中先剔除，仅当用户有启用工具时按会话推入（§5.4）。 */
+const HTTP_TOOL_ENTRY_NAMES = new Set<string>(HTTP_TOOL_NAMES);
+
+/** 自定义 HTTP 工具装配依赖（UserToolService 满足；未注入时零查库、零行为差异）。 */
+export interface CustomHttpToolAssemblyPort {
+  listEnabled(userId: number | null): Promise<UserTool[]>;
+  getMaxEnabledPerUser(): Promise<number>;
+}
 
 export class HarnessService {
   constructor(
@@ -81,6 +92,11 @@ export class HarnessService {
     private readonly memoryInjection?: { listForInjection(userId: number, projectKey: string | null, workspace: string | null): Promise<MemoryHint[]> } | null,
     /** MCP 加载模式解析（工作集 / 全量）。未注入时维持全量注入，行为与改造前一致。 */
     private readonly mcpLoadModeResolver?: McpLoadModeResolver | null,
+    /**
+     * 自定义 HTTP 工具装配（技术方案 2026-10-19 §5.4）。未注入时维持改造前行为：
+     * 入口工具已在默认工具集中被剔除，任何会话都看不到 http_describe / http_call。
+     */
+    private readonly userToolService?: CustomHttpToolAssemblyPort | null,
   ) {}
 
   prepareMessage(_sessionId: number, _userContent: unknown): string {
@@ -353,6 +369,8 @@ export class HarnessService {
     sessionTools = HarnessService.filterPageTools(sessionTools, this.embedSessionLookup?.isEmbedPageSession?.(sessionId) === true);
     // 工作集工具只按模式注入：先从默认工具集中剔除，避免全量模式凭空多出两个模型可见工具。
     sessionTools = sessionTools.filter((tool) => !MCP_WORKING_SET_TOOL_NAMES.has(tool.getName()));
+    // 自定义 HTTP 工具入口同样先剔除；用户有启用工具时在 MCP 块之后条件推入（§5.4）。
+    sessionTools = sessionTools.filter((tool) => !HTTP_TOOL_ENTRY_NAMES.has(tool.getName()));
     const mcpWarnings: string[] = [];
     let cloudMcpBound = false;
     if (this.mcpSyncService) {
@@ -404,6 +422,28 @@ export class HarnessService {
       } catch (e) {
         harnessLog('warn', `MCP tool injection failed for session ${sessionId}: ${(e as Error).message}`);
         mcpWarnings.push('MCP 工具加载失败：' + (e as Error).message);
+      }
+    }
+    // 自定义 HTTP 工具（§5.4）：与 MCP 工作集同款两步——剔除已做，这里按启用数条件推入。
+    // 全模式一致（SERVER_ONLY_TOOLS 后端直连、无审批门），渠道会话不特判；listEnabled(null) 零查库。
+    if (this.userToolService) {
+      try {
+        const userTools = await this.userToolService.listEnabled(session.userId ?? null);
+        if (userTools.length > 0) {
+          const maxEnabled = await this.userToolService.getMaxEnabledPerUser();
+          const httpEntryTools = [...HTTP_TOOL_NAMES]
+            .map((name) => this.toolRegistry.getTool(name))
+            .filter((tool): tool is Tool => tool != null);
+          if (httpEntryTools.length > 0) {
+            sessionTools.push(...httpEntryTools);
+            context.customHttpTools = buildCustomHttpToolCatalog(userTools, maxEnabled);
+          } else {
+            harnessLog('warn', `Custom HTTP tool entries not registered, skip assembly for session ${sessionId}`);
+          }
+        }
+      } catch (e) {
+        // 装配失败不阻断会话启动：本轮不注入自定义工具（失败即不可用，不暴露半截目录）。
+        harnessLog('warn', `Custom HTTP tool assembly failed for session ${sessionId}: ${(e as Error).message}`);
       }
     }
     context.tools = sessionTools;

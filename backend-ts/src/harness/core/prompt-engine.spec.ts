@@ -1162,3 +1162,88 @@ describe('PromptEngine 工作区规则会话级快照', () => {
   });
 });
 void mkdirSync;
+
+describe('PromptEngine 自定义 HTTP 工具目录分节（技术方案 2026-10-19 §5.2）', () => {
+  function engine() {
+    return new PromptEngine(
+      { hasSkill: () => false, getAllNames: () => [], getAllDocuments: () => [] } as never,
+      { getWorkspaceRoot: () => '/ws' } as never,
+      RuntimeDataResolver.forTest('/tmp/rt', '/tmp/home'),
+      { getByUserIdAndName: async () => null } as never,
+      { getUserSkillDocuments: () => [] } as never,
+    );
+  }
+
+  function context(overrides: Partial<AgentExecutionContext> = {}): AgentExecutionContext {
+    const ctx = new AgentExecutionContext();
+    ctx.executionMode = 'CLOUD';
+    ctx.workspace = '/ws';
+    ctx.tools = [tool('read_file')];
+    Object.assign(ctx, overrides);
+    return ctx;
+  }
+
+  const catalog = {
+    tools: [
+      { name: 'weather', displayName: '天气查询', method: 'GET', readOnly: true, description: '查询城市天气' },
+      { name: 'create_order', displayName: '下单', method: 'POST', readOnly: false, description: '创建订单' },
+    ],
+    hiddenCount: 0,
+  };
+
+  it('renders the catalog section without any parameter schema (lazy-load constitution)', async () => {
+    const ctx = context({ systemPrompt: 'You are Mao', sessionBaseYmd: '2026-08-13', customHttpTools: catalog });
+    const system = (await engine().buildRequest(ctx)).messages[0].content as string;
+    expect(system).toContain('## 自定义 HTTP 工具');
+    expect(system).toContain('先用 http_describe 取该工具的参数字段，再用 http_call 执行');
+    expect(system).toContain('- weather（天气查询）— 查询城市天气 [GET, 只读]');
+    expect(system).toContain('- create_order（下单）— 创建订单 [POST, 可写]');
+    // 懒加载宪法：目录只含名称/用途/方法/只读标记，绝不展开 schema
+    expect(system).not.toContain('properties');
+    expect(system).not.toContain('inputSchema');
+    const section = ctx.contextManifest!.sections.find((s) => s.key === 'custom-http-tools')!;
+    expect(section).toBeDefined();
+    expect(section.label).toBe('自定义 HTTP 工具');
+    expect(section.count).toBe(2);
+  });
+
+  it('omits the section when the catalog is null or empty', async () => {
+    for (const value of [null, { tools: [], hiddenCount: 0 }]) {
+      const ctx = context({ systemPrompt: 'You are Mao', sessionBaseYmd: '2026-08-13', customHttpTools: value });
+      const system = (await engine().buildRequest(ctx)).messages[0].content as string;
+      expect(system).not.toContain('## 自定义 HTTP 工具');
+      expect(ctx.contextManifest!.sections.some((s) => s.key === 'custom-http-tools')).toBe(false);
+    }
+  });
+
+  it('notes hidden tools beyond the enabled cap and stays deterministic across builds', async () => {
+    const ctx = context({
+      systemPrompt: 'You are Mao',
+      sessionBaseYmd: '2026-08-13',
+      customHttpTools: { tools: [catalog.tools[0]!], hiddenCount: 3 },
+    });
+    const request = await engine().buildRequest(ctx);
+    const system = request.messages[0].content as string;
+    expect(system).toContain('另有 3 个工具因超出启用上限未加载。');
+    const second = await engine().buildRequest(ctx);
+    expect(second.messages[0].content).toBe(system);
+  });
+
+  it('places the catalog section after the MCP working set section (stable order)', async () => {
+    const ctx = context({
+      systemPrompt: 'You are Mao',
+      sessionBaseYmd: '2026-08-13',
+      mcpWorkingSet: {
+        servers: [{
+          name: 'fs', description: '', tools: [{ name: 'read_file', readOnly: true }],
+          readOnlyCount: 1, writeCount: 0, hasAnnotations: true, unavailableReason: null,
+        }],
+      },
+      customHttpTools: catalog,
+    });
+    await engine().buildRequest(ctx);
+    const keys = ctx.contextManifest!.sections.map((s) => s.key);
+    expect(keys.indexOf('mcp-workingset')).toBeGreaterThanOrEqual(0);
+    expect(keys.indexOf('custom-http-tools')).toBeGreaterThan(keys.indexOf('mcp-workingset'));
+  });
+});

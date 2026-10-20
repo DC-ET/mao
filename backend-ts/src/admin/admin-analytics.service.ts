@@ -144,6 +144,16 @@ export interface RunTraceToolFailureRow {
   totalCount: number;
 }
 
+/** 自定义 HTTP 工具调用统计行（§9.4）：一次算出调用次数 / 失败数 / 活跃用户数 / 首末次调用时间。 */
+export interface UserToolCallStatRow {
+  slug: string;
+  calls: number;
+  errors: number;
+  users: number;
+  firstAt: string | null;
+  lastAt: string | null;
+}
+
 export interface LlmCallFilterOpts {
   excludeConnectivity?: boolean;
   modelId?: number | null;
@@ -200,6 +210,8 @@ export interface AdminAnalyticsStore {
     limit: number,
   ): Promise<RunTraceRoundRow[]>;
   selectRunTraceToolFailureRates(range: AnalyticsRange): Promise<RunTraceToolFailureRow[]>;
+  /** 自定义 HTTP 工具调用统计（§9.4）：type='TOOL' AND target IS NOT NULL 即 http_call 行，按内层 slug 聚合。 */
+  selectUserToolCallStats(slug?: string | null): Promise<UserToolCallStatRow[]>;
   listAgents(): Promise<Agent[]>;
   listUsers(): Promise<UserRow[]>;
   listModelsOrderByCreatedDesc(): Promise<LlmModel[]>;
@@ -654,6 +666,35 @@ export class AdminAnalyticsDbStore implements AdminAnalyticsStore {
        WHERE created_at >= ? AND created_at < ?
        GROUP BY type`,
       [range.startAt, range.endAtExclusive],
+    );
+  }
+
+  /**
+   * 自定义 HTTP 工具调用聚合（§9.4）：http_call 的 target 即内层 slug
+   * （ws-streaming-event-listener extractActivityTarget 分支），http_describe target 为 null 天然不计入。
+   * slug 入参仅供清单页按行下钻，为空时返回全部工具。
+   */
+  selectUserToolCallStats(slug?: string | null): Promise<UserToolCallStatRow[]> {
+    const clauses = [`a.type = 'TOOL'`, `a.target IS NOT NULL`];
+    const params: unknown[] = [];
+    const trimmed = slug?.trim();
+    if (trimmed) {
+      clauses.push('a.target = ?');
+      params.push(trimmed);
+    }
+    return this.db.query<UserToolCallStatRow>(
+      `SELECT a.target AS slug,
+              COUNT(*) AS calls,
+              COALESCE(SUM(CASE WHEN a.status = 'ERROR' THEN 1 ELSE 0 END), 0) AS errors,
+              COUNT(DISTINCT s.user_id) AS users,
+              MIN(a.created_at) AS firstAt,
+              MAX(a.created_at) AS lastAt
+       FROM session_activity a
+       JOIN session s ON s.id = a.session_id
+       WHERE ${clauses.join(' AND ')}
+       GROUP BY a.target
+       ORDER BY calls DESC`,
+      params,
     );
   }
 

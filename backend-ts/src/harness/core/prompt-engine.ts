@@ -119,6 +119,7 @@ const INJECTED_SECTION_KEYS = new Set([
   'skills',           // 技能（构成标签；提示词标题仍是「可用技能」）
   'workspace-rules',  // 工作区规则（AGENTS.md，可治理）
   'mcp-workingset',   // MCP 工作集（名单 + 工具名，不含 schema；可单独统计 token 开销）
+  'custom-http-tools', // 自定义 HTTP 工具（目录：slug + 用途 + 方法 + 只读标记，不含 schema）
 ]);
 const AGENTS_MD_TRUNCATED_HINT = '\n> 当前仅展示前200行规则，读取AGENTS.md文件以了解更多规则。\n';
 
@@ -296,6 +297,25 @@ export class PromptEngine {
   }
 
   /**
+   * 自定义 HTTP 工具目录提示段（技术方案 2026-10-19 §5.2）：只列 slug / 中文名 / 用途 /
+   * 方法与只读标记，不含参数 schema。文本必须确定性生成（目录排序在装配层完成），
+   * 否则每轮变化会击穿 system prompt 前缀缓存。空目录返回 ''（不渲染分节）。
+   */
+  private buildCustomHttpToolsSection(context: AgentExecutionContext): string {
+    const catalog = context.customHttpTools;
+    if (catalog == null || catalog.tools.length === 0) return '';
+    let text = '## 自定义 HTTP 工具\n\n';
+    text += '以下是你可调用的 HTTP 工具。参数不确定时先用 http_describe 取该工具的参数字段，再用 http_call 执行。\n\n';
+    for (const tool of catalog.tools) {
+      text += `- ${tool.name}（${tool.displayName}）— ${tool.description} [${tool.method}, ${tool.readOnly ? '只读' : '可写'}]\n`;
+    }
+    if (catalog.hiddenCount > 0) {
+      text += `\n另有 ${catalog.hiddenCount} 个工具因超出启用上限未加载。\n`;
+    }
+    return text;
+  }
+
+  /**
    * 逐节构建系统提示（技术方案 5.2）。收集-拼接分离：各节 text 依原顺序 join 后与重构前
    * buildSystemPrompt 输出逐字节一致（空节不产生 text，跳过与追加空串等价）。
    * key/label/count 仅用于 manifest 展示，不参与拼接。
@@ -370,6 +390,12 @@ export class PromptEngine {
     if (workingSetText.length > 0) {
       const toolCount = context.mcpWorkingSet?.servers.reduce((sum, server) => sum + server.tools.length, 0) ?? 0;
       sections.push({ key: 'mcp-workingset', label: 'MCP 工作集', text: workingSetText, count: toolCount });
+    }
+    // 自定义 HTTP 工具目录：紧邻 MCP 工作集之后，同样只列目录不含 schema。
+    const customHttpToolsText = this.buildCustomHttpToolsSection(context);
+    if (customHttpToolsText.length > 0) {
+      const toolCount = context.customHttpTools?.tools.length ?? 0;
+      sections.push({ key: 'custom-http-tools', label: '自定义 HTTP 工具', text: customHttpToolsText, count: toolCount });
     }
     const taskText = this.toolBehaviorHints(context);
     if (taskText.length > 0) {

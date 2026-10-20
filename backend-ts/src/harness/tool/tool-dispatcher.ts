@@ -65,6 +65,9 @@ const SERVER_ONLY_TOOLS = new Set([
   'send_wechat_image', 'send_wechat_file',
   // mcp_describe 是纯本地查询（读会话缓存清单），两种执行模式都不进 LOCAL 委托分支。
   'mcp_describe',
+  // 自定义 HTTP 工具（2026-10-20 方案二）：后端 fetch 直连，全模式无审批门，
+  // 与 web_search / send_wechat_image 同口径；SSRF 判定是这条路径上的服务端强制闸口。
+  'http_describe', 'http_call',
 ]);
 const WRITE_TOOLS = new Set(['write_file', 'edit_file']);
 

@@ -905,3 +905,44 @@ describe('AdminAnalyticsService runTraceScope', () => {
     expect((db.query.mock.calls[2] as unknown[])[1]).toEqual([range.startAt, range.endAtExclusive]);
   });
 });
+
+describe('AdminAnalyticsDbStore 自定义 HTTP 工具调用统计（§9.4）', () => {
+  function store(rows: Array<Record<string, unknown>> = []) {
+    const db = {
+      query: vi.fn(async () => rows),
+      queryOne: vi.fn(async () => ({ c: rows.length })),
+    };
+    return { db, store: new AdminAnalyticsDbStore(db as never) };
+  }
+
+  it('按内层 slug 聚合调用次数 / 失败数 / 活跃用户 / 首末次时间', async () => {
+    const { db, store: dbStore } = store([
+      { slug: 'weather', calls: 12, errors: 3, users: 4, firstAt: '2026-10-20 09:00:00', lastAt: '2026-10-20 10:30:00' },
+    ]);
+    const rows = await dbStore.selectUserToolCallStats();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ slug: 'weather', calls: 12, errors: 3, users: 4 });
+    const sql = db.query.mock.calls[0]![0] as string;
+    expect(sql).toContain("a.type = 'TOOL'");
+    expect(sql).toContain('a.target IS NOT NULL');
+    expect(sql).toContain('COUNT(DISTINCT s.user_id)');
+    expect(sql).toContain('GROUP BY a.target');
+    expect(sql).toContain('JOIN session s ON s.id = a.session_id');
+  });
+
+  it('slug 下钻时拼进 WHERE 且绑定为参数', async () => {
+    const { db, store: dbStore } = store();
+    await dbStore.selectUserToolCallStats('weather');
+    const sql = db.query.mock.calls[0]![0] as string;
+    expect(sql).toContain('a.target = ?');
+    expect(db.query.mock.calls[0]![1]).toEqual(['weather']);
+  });
+
+  it('空 slug / 空白 slug 不下钻（返回全部工具）', async () => {
+    const { db, store: dbStore } = store();
+    await dbStore.selectUserToolCallStats('   ');
+    const sql = db.query.mock.calls[0]![0] as string;
+    expect(sql).not.toContain('a.target = ?');
+    expect(db.query.mock.calls[0]![1]).toEqual([]);
+  });
+});
