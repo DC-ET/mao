@@ -42,6 +42,7 @@ interface CreateAgentRequest {
   suggestedQuestions?: SuggestedQuestionVO[];
   isDefault?: number | null;
   defaultModelId?: number | null;
+  clientVisible?: boolean | null;
 }
 
 interface UpdateAgentRequest {
@@ -55,6 +56,7 @@ interface UpdateAgentRequest {
   suggestedQuestions?: SuggestedQuestionVO[] | null;
   isDefault?: number | null;
   defaultModelId?: number | null;
+  clientVisible?: boolean | null;
 }
 
 interface ExperienceRequest {
@@ -75,12 +77,16 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
   app.get('/v1/agents', async (request, reply) => {
     const userId = requireUserId(request);
     const keyword = queryOptStr(request, 'keyword');
+    const scope = queryOptStr(request, 'scope');
+    if (scope != null && scope !== 'client') {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, "scope 仅支持 'client'");
+    }
     const wantDisabled = queryOptBool(request, 'includeDisabled') === true;
     const includeDisabled = wantDisabled && (
       await permissionService.hasPermission(userId, 'agent:read')
       || await permissionService.hasPermission(userId, 'agent:write')
     );
-    const agents = await agentService.listAgents(userId, keyword, includeDisabled);
+    const agents = await agentService.listAgents(userId, keyword, includeDisabled, scope === 'client');
     const voList = await Promise.all(agents.map((agent) => toVO(agent, agentService, userRepo)));
     return sendOk(reply, voList);
   });
@@ -113,6 +119,7 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
       body.isDefault,
       body.defaultModelId,
       body.avatarUrl,
+      body.clientVisible,
     );
     return sendOk(reply, await toVO(agent, agentService, userRepo));
   });
@@ -134,6 +141,7 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
       body.isDefault,
       body.defaultModelId,
       body.avatarUrl,
+      body.clientVisible,
     );
     return sendOk(reply, await toVO(agent, agentService, userRepo));
   });
@@ -243,6 +251,7 @@ async function toVO(agent: Agent, agentService: AgentService, userRepo: UserRepo
     creatorId: agent.creatorId,
     isDefault: agent.isDefault != null && agent.isDefault === 1,
     enabled: agent.enabled !== 0,
+    clientVisible: agent.clientVisible !== 0,
     defaultModelId: agent.defaultModelId ?? null,
     createdAt: agent.createdAt ?? null,
     experiences: [],

@@ -37,6 +37,10 @@ describe('MysqlAgentRepository', () => {
     expect(db.updateById).toHaveBeenCalledWith('agent', 5, expect.objectContaining({ avatarUrl }));
     await repo.updateById({ ...agent, avatarUrl: null }, 7, false);
     expect(db.updateById).toHaveBeenLastCalledWith('agent', 5, expect.objectContaining({ avatarUrl: null }));
+    // 客户端可见性：缺省按 1 落库，显式 0 必须原样写入（否则隐藏动作会被重置）
+    expect(db.insert).toHaveBeenCalledWith('agent', expect.objectContaining({ clientVisible: 1 }));
+    await repo.updateById({ ...agent, clientVisible: 0 }, 7, false);
+    expect(db.updateById).toHaveBeenLastCalledWith('agent', 5, expect.objectContaining({ clientVisible: 0 }));
   });
   it('covers list find insert update delete and experiences', async () => {
     const db = mockDb();
@@ -47,6 +51,11 @@ describe('MysqlAgentRepository', () => {
     expect(db.query).toHaveBeenLastCalledWith(expect.stringContaining('enabled = 1'), ['%coder%']);
     await repo.selectList(null, true);
     expect(String(db.query.mock.calls.at(-1)?.[0])).not.toContain('enabled = 1');
+    // 客户端新建会话：只取 client_visible = 1；不带该参数时不追加条件
+    await repo.selectList(null, false, true);
+    expect(db.query).toHaveBeenLastCalledWith(expect.stringContaining('client_visible = 1'), []);
+    await repo.selectList(null, false, false);
+    expect(String(db.query.mock.calls.at(-1)?.[0])).not.toContain('client_visible = 1');
     await repo.findDefault();
     expect(db.queryOne).toHaveBeenCalledWith(expect.stringContaining('enabled = 1'));
     await repo.updateEnabled(5, 0);

@@ -50,7 +50,7 @@ LOCAL 本机工具需 Electron，见 [electron.md](electron.md)。对话执行�
 
 ## 新建任务
 
-1. 选 Agent（已在管理后台停用的不会出现在列表中）
+1. 选 Agent（已在管理后台停用或设为「客户端不可见」的不会出现在列表中）
 2. 选 CLOUD 或 LOCAL（浏览器仅 CLOUD）
 3. 选/建工作区
 4. 选模型（可选，默认模型）

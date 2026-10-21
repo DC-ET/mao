@@ -43,7 +43,8 @@ export const useAgentStore = defineStore('agent', () => {
     loading.value = true
     try {
       const [agentsRes, sharedRes] = await Promise.allSettled([
-        api.get('/agents'),
+        // 新建会话只展示「客户端可见」的 Agent；不带 scope 的全量列表留给管理后台与其他入口
+        api.get('/agents', { params: { scope: 'client' } }),
         api.get('/shared-agents'),
       ])
       if (agentsRes.status === 'fulfilled') {

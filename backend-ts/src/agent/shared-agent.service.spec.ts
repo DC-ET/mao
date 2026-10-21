@@ -181,6 +181,16 @@ describe('SharedAgentService', () => {
     expect(list[0].mcpIssues).toEqual(['context7（已停用）', 'MCP#13（不存在）']);
   });
 
+  it('客户端不可见的 Agent 不进入共享目录', async () => {
+    putAgent(1, { clientVisible: 0 });
+    putAgent(2, {});
+    await service.putEntry(1, 'hidden', 0, OPERATOR);
+    await service.putEntry(2, 'visible', 1, OPERATOR);
+
+    const list = await service.listSharedAgents(7);
+    expect(list.map(item => item.agentId)).toEqual([2]);
+  });
+
   it('已删除 / 停用的 Agent 不出现在共享列表（条目保留，重新启用即恢复）', async () => {
     putAgent(1, { enabled: 1 });
     putAgent(2, { enabled: 1 });

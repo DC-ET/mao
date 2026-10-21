@@ -170,6 +170,8 @@ mao agent list --include-disabled --json
 
 返回元素含 `enabled`（布尔）。管理后台列表使用 `includeDisabled=true`。
 
+返回元素另含 `clientVisible`（布尔）：`false` 表示该 Agent 不出现在客户端「新建会话」的智能体列表里（对应管理后台 Agent 表单的「客户端可见」开关，当前仅支持在管理后台修改）。`GET /agents?scope=client` 只返回可见项，客户端新建会话用该参数；CLI 与其它入口不传 `scope`，仍是全量。默认 Agent 恒为可见，不可见的 Agent 也不能设为默认；关闭可见不影响已绑定会话继续对话。
+
 ---
 
 ## 命令：mao agent set-enabled

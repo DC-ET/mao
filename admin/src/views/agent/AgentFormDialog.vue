@@ -81,6 +81,13 @@
         <el-switch v-model="form.isDefault" />
         <span class="form-hint">开启后，新建会话未指定 Agent 时将使用该智能体</span>
       </el-form-item>
+      <el-form-item label="客户端可见">
+        <el-switch v-model="form.clientVisible" :disabled="form.isDefault" />
+        <div class="form-hint">
+          关闭后，客户端「新建会话」的智能体列表不再展示该 Agent；已绑定它的会话不受影响，仍可继续对话。
+          默认 Agent 必须保持客户端可见。
+        </div>
+      </el-form-item>
       <el-form-item label="默认模型">
         <el-select
           v-model="form.defaultModelId"
@@ -327,7 +334,8 @@ const form = reactive({
   experiences: [] as ExperienceFormItem[],
   suggestedQuestions: [] as SuggestedQuestionFormItem[],
   isDefault: false,
-  defaultModelId: null as number | null
+  defaultModelId: null as number | null,
+  clientVisible: true
 })
 
 const rules: FormRules = {
@@ -597,7 +605,8 @@ watch(() => props.visible, async (val) => {
       experiences: mapExperiences(props.agentData.experiences, props.mode === 'edit'),
       suggestedQuestions: mapSuggestedQuestions(props.agentData.suggestedQuestions, props.mode === 'edit'),
       isDefault: props.mode === 'copy' ? false : !!props.agentData.isDefault,
-      defaultModelId: props.mode === 'copy' ? null : props.agentData.defaultModelId ?? null
+      defaultModelId: props.mode === 'copy' ? null : props.agentData.defaultModelId ?? null,
+      clientVisible: props.agentData.clientVisible !== false
     })
   } else {
     resetForm()
@@ -616,6 +625,14 @@ watch([experienceView, activeTab], () => {
     nextTick(startExperienceScrollSync)
   } else {
     stopExperienceScrollSync()
+  }
+})
+
+// 默认 Agent 必须客户端可见：勾上默认时自动回弹，避免提交后被后端拒绝
+watch(() => form.isDefault, (isDefault) => {
+  if (isDefault && !form.clientVisible) {
+    form.clientVisible = true
+    ElMessage.warning('默认 Agent 必须客户端可见，已自动开启')
   }
 })
 
@@ -717,6 +734,7 @@ async function handleSubmit() {
     mcpServerIds: form.mcpServerIds,
     isDefault: form.isDefault ? 1 : 0,
     defaultModelId: form.defaultModelId || null,
+    clientVisible: form.clientVisible,
     experiences: form.experiences.map((item, index) => ({
       id: isEdit.value ? item.id ?? null : null,
       content: item.content.trim(),

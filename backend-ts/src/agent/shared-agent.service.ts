@@ -135,7 +135,7 @@ export class SharedAgentService {
     const result: SharedAgentVO[] = [];
     for (const entry of entries) {
       const agent = await this.agentRepo.findById(entry.agentId);
-      if (!agent || agent.enabled === 0) continue;
+      if (!agent || agent.enabled === 0 || agent.clientVisible === 0) continue;
       result.push(await this.buildEntryVO(entry, agent, userId));
     }
     return result;

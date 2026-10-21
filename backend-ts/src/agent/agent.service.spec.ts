@@ -70,7 +70,7 @@ describe('AgentService', () => {
     vi.mocked(agentRepo.findById).mockResolvedValue(existing);
 
     expect(await service.listAgents(7, 'old')).toEqual([existing]);
-    expect(agentRepo.selectList).toHaveBeenCalledWith('old', false);
+    expect(agentRepo.selectList).toHaveBeenCalledWith('old', false, false);
     expect(await service.getAgent(1)).toBe(existing);
 
     const experiences = [experienceInputOf(null, 'tip', 0, true)];
@@ -231,6 +231,54 @@ describe('AgentService', () => {
         serviceWithLookup.updateAgent(7, 1, null, null, null, null, null, null, null, null, 404),
       ).rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
       expect(agentRepo.updateById).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('client visibility', () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+      vi.mocked(agentRepo.insert).mockImplementation(async (a) => {
+        a.id = a.id ?? 1;
+        return a.id;
+      });
+    });
+
+    it('passes clientVisibleOnly through to the repository', async () => {
+      vi.mocked(agentRepo.selectList).mockResolvedValue([]);
+      await service.listAgents(7, null, false, true);
+      expect(agentRepo.selectList).toHaveBeenCalledWith(null, false, true);
+    });
+
+    it('defaults new agents to visible and persists hidden when requested', async () => {
+      const visible = await service.createAgent(7, 'a', null, 'p', null, null, null, null, 0, null);
+      expect(visible.clientVisible).toBe(1);
+      const hidden = await service.createAgent(7, 'b', null, 'p', null, null, null, null, 0, null, null, false);
+      expect(hidden.clientVisible).toBe(0);
+    });
+
+    it('rejects hiding the default agent', async () => {
+      vi.mocked(agentRepo.findById).mockResolvedValue({ ...agent(1, 'd', 1), clientVisible: 1 });
+      await expect(
+        service.updateAgent(7, 1, null, null, null, null, null, null, null, null, undefined, undefined, false),
+      ).rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
+      expect(agentRepo.updateById).not.toHaveBeenCalled();
+    });
+
+    it('rejects making a hidden agent default', async () => {
+      vi.mocked(agentRepo.findById).mockResolvedValue({ ...agent(1, 'd', 0), clientVisible: 0 });
+      await expect(
+        service.updateAgent(7, 1, null, null, null, null, null, null, null, 1, undefined),
+      ).rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
+      expect(agentRepo.clearDefaultFlag).not.toHaveBeenCalled();
+    });
+
+    it('keeps visibility when omitted and persists explicit values', async () => {
+      vi.mocked(agentRepo.findById).mockResolvedValue({ ...agent(1, 'a', 0), clientVisible: 0 });
+      const updated = await service.updateAgent(7, 1, 'renamed', null, null, null, null, null, null, null, undefined);
+      expect(updated.clientVisible).toBe(0);
+
+      await service.updateAgent(7, 1, null, null, null, null, null, null, null, null, undefined, undefined, true);
+      expect(agentRepo.updateById.mock.calls.at(-1)![0]).toMatchObject({ clientVisible: 1 });
     });
   });
 });

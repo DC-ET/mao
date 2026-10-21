@@ -19,6 +19,7 @@ const AGENT = {
 function mockApis(
   page: Page,
   options: { agentId?: number; agentName?: string; agentFound?: boolean } = {},
+  requests: string[] = [],
 ): Promise<void> {
   const agentId = options.agentId ?? AGENT_ID
   const agentFound = options.agentFound ?? true
@@ -39,7 +40,10 @@ function mockApis(
     if (path === '/sessions/groups') return fulfill({ groups: [] })
     if (path === '/sessions/search') return fulfill({ items: [] })
     if (path === '/models/default') return fulfill({ id: 1, name: 'Default Model' })
-    if (path === '/agents') return fulfill(agentFound ? [AGENT] : [])
+    if (path === '/agents') {
+      requests.push(url.toString())
+      return fulfill(agentFound ? [AGENT] : [])
+    }
     if (path === `/agents/${AGENT_ID}`) {
       if (!agentFound) {
         await route.fulfill({
@@ -69,6 +73,7 @@ function mockApis(
       })
     }
     if (path === '/sessions/101/messages') return fulfill({ messages: [], hasMore: false })
+    if (path === '/sessions/cloud-projects') return fulfill([])
     if (path.endsWith('/side-tasks') || path.endsWith('/subagents')) return fulfill([])
     return fulfill(null)
   })
@@ -123,6 +128,17 @@ test.describe('Desktop - 会话 Agent 身份可见性', () => {
     const toolbarAgent = page.locator('.toolbar-agent')
     await expect(toolbarAgent.locator('.agent-badge-name')).toHaveText('已停用的助手')
     await expect(toolbarAgent.locator('.agent-badge-hint')).toHaveText('已停用或不可见')
+  })
+
+  test('新建会话只拉取客户端可见的 Agent', async ({ page }) => {
+    const requests: string[] = []
+    await mockApis(page, {}, requests)
+    await page.addInitScript(() => {
+      localStorage.setItem('token', 'test-access-token')
+    })
+    await page.goto('/?newTask=1')
+    await expect(page.locator('.agent-chip')).toBeVisible({ timeout: 15_000 })
+    expect(requests.some(url => url.includes('scope=client'))).toBe(true)
   })
 
   test('移动端工具条只保留头像', async ({ page }) => {

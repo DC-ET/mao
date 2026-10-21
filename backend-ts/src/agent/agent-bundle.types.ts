@@ -18,6 +18,8 @@ export interface BundleAgent {
   systemPrompt: string;
   /** 原样搬运（当前仅压缩配置覆盖项，无敏感语义）；对象或 null。 */
   configJson?: Record<string, unknown> | null;
+  /** 客户端新建会话可选性；缺省（旧 bundle）按可见处理。 */
+  clientVisible?: boolean;
 }
 
 export interface BundleExperience {

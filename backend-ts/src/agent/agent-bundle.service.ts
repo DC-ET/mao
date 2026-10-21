@@ -132,6 +132,8 @@ export interface ParsedBundle {
     description: string | null;
     systemPrompt: string;
     configJson: Record<string, unknown> | null;
+    /** 客户端新建会话可选性；旧 bundle 缺该字段时按可见处理。 */
+    clientVisible: boolean;
   };
   experiences: BundleExperience[];
   suggestedQuestions: BundleSuggestedQuestion[];
@@ -304,6 +306,7 @@ export class AgentBundleService {
         description: agent.description ?? null,
         systemPrompt: agent.systemPrompt,
         configJson: parseJsonObject(agent.configJson),
+        clientVisible: agent.clientVisible !== 0,
       },
       experiences,
       suggestedQuestions,
@@ -414,6 +417,7 @@ export class AgentBundleService {
       defaultModelId: null,
       isDefault: 0,
       enabled: 1,
+      clientVisible: parsed.agent.clientVisible ? 1 : 0,
     };
     const agentId = await this.agentRepo.insert(agent);
 
@@ -587,6 +591,7 @@ export class AgentBundleService {
       throw new BusinessException(ErrorCode.PARAM_INVALID, 'bundle 内角色定义（systemPrompt）不能为空');
     }
     const description = typeof agent.description === 'string' ? agent.description : null;
+    const clientVisible = agent.clientVisible !== false;
     let configJson: Record<string, unknown> | null = null;
     if (agent.configJson != null) {
       if (typeof agent.configJson !== 'object' || Array.isArray(agent.configJson)) {
@@ -697,7 +702,7 @@ export class AgentBundleService {
     }
 
     return {
-      agent: { name, description, systemPrompt, configJson },
+      agent: { name, description, systemPrompt, configJson, clientVisible },
       experiences,
       suggestedQuestions,
       skills,

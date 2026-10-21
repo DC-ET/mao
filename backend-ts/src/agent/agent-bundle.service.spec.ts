@@ -265,6 +265,7 @@ describe('AgentBundleService 导出组装', () => {
       expect(bundle.formatVersion).toBe(1);
       expect(bundle.agent).toMatchObject({ name: '代码评审员', description: '负责 PR 评审', systemPrompt: '你是评审员' });
       expect(bundle.agent.configJson).toEqual({ compaction: { enabled: true } });
+      expect(bundle.agent.clientVisible).toBe(true);
       expect(bundle.skills).toHaveLength(2);
       expect(bundle.skills.map((s) => s.name)).toEqual(['web-search', 'code-review']);
       expect(bundle.skills.every((s) => s.include === 'reference')).toBe(true);
@@ -276,6 +277,29 @@ describe('AgentBundleService 导出组装', () => {
       expect(filename).toBe('mao-agent-bundle-agent-v1.json');
     } finally {
       rmSync(fx.root, { recursive: true, force: true });
+    }
+  });
+
+  it('bundle 携带客户端可见性：隐藏 Agent 导出 false，导入后仍保持隐藏', async () => {
+    const source = buildFixture();
+    try {
+      const agent = await insertAgent(source.agentRepo, {
+        name: '内部助手', systemPrompt: 'p', clientVisible: 0,
+      });
+      const { bundle } = await source.service.exportBundle(agent.id!);
+      expect(bundle.agent.clientVisible).toBe(false);
+
+      const target = buildFixture();
+      try {
+        const result = await target.service.importBundle(JSON.parse(JSON.stringify(bundle)), true, 7);
+        if (!('agentId' in result)) throw new Error('expected import result');
+        const imported = await target.agentRepo.findById(result.agentId);
+        expect(imported?.clientVisible).toBe(0);
+      } finally {
+        rmSync(target.root, { recursive: true, force: true });
+      }
+    } finally {
+      rmSync(source.root, { recursive: true, force: true });
     }
   });
 

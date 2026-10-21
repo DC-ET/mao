@@ -22,7 +22,8 @@ mao-agent-bundle 是 Mao 的 Agent 资产搬运格式：把一个调教好的 Ag
     "name": "代码评审员",
     "description": "负责 PR 评审的助手",
     "systemPrompt": "<当前生效版本全文>",
-    "configJson": { "compaction": { "contextWindowTokens": 100000 } }
+    "configJson": { "compaction": { "contextWindowTokens": 100000 } },
+    "clientVisible": true
   },
   "experiences": [
     { "content": "先读变更说明再逐文件评审", "sortOrder": 0, "enabled": true },
@@ -73,6 +74,7 @@ mao-agent-bundle 是 Mao 的 Agent 资产搬运格式：把一个调教好的 Ag
 | `description` | string \| null | 描述 |
 | `systemPrompt` | string | 必填非空。导入后作为提示词版本 v1 起版 |
 | `configJson` | object \| null | 原样搬运（当前仅 Harness 压缩配置覆盖项） |
+| `clientVisible` | boolean | 可选。客户端「新建会话」是否展示该 Agent；缺省（旧 bundle 或无字段）按 `true` 处理，导入后原样保留 |
 
 ### skills[].include
 

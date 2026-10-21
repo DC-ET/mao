@@ -67,6 +67,14 @@ async function chooseOption(page: Page, dialog: Locator, label: string, option: 
   await page.keyboard.press('Escape')
 }
 
+/** 按 form-item label 定位开关项：表单里有「默认 Agent」「客户端可见」两个 switch。
+ *  点击用可见的 `.el-switch`，状态断言用内部 `role=switch` 的 input（容器本身不可点）。 */
+function switchItem(page: Page, dialog: Locator, label: string): Locator {
+  return dialog
+    .locator('.el-form-item')
+    .filter({ has: page.locator('.el-form-item__label', { hasText: new RegExp(`^\\s*${label}\\s*$`) }) })
+}
+
 test('all three tabs preserve values and save the complete payload', async ({ page }) => {
   const state = await setup(page)
   const dialog = await openDialog(page, '创建')
@@ -83,7 +91,7 @@ test('all three tabs preserve values and save the complete payload', async ({ pa
   await chooseOption(page, dialog, 'Skills', 'mock-skill')
   await chooseOption(page, dialog, 'MCP 服务器', 'mock-mcp（HTTP）')
   await selectTab(dialog, '基本信息')
-  await dialog.locator('.el-tab-pane:visible .el-switch').click()
+  await switchItem(page, dialog, '默认 Agent').locator('.el-switch').click()
   await chooseOption(page, dialog, '默认模型', 'mock-model')
   for (const name of tabs) {
     await selectTab(dialog, name)
@@ -92,7 +100,7 @@ test('all three tabs preserve values and save the complete payload', async ({ pa
       await expect(dialog.getByPlaceholder('请输入描述', { exact: true })).toHaveValue('保留描述')
       await expect(dialog.getByRole('tabpanel', { name, exact: true })).toContainText('mock-skill')
       await expect(dialog.getByRole('tabpanel', { name, exact: true })).toContainText('mock-mcp（HTTP）')
-      await expect(dialog.getByRole('switch')).toBeChecked()
+      await expect(switchItem(page, dialog, '默认 Agent').getByRole('switch')).toBeChecked()
       await expect(dialog.getByRole('tabpanel', { name, exact: true })).toContainText('mock-model')
     } else if (name === '角色提示词') {
       await expect(dialog.getByPlaceholder(promptPlaceholder)).toHaveValue('保留角色定义')
@@ -107,6 +115,7 @@ test('all three tabs preserve values and save the complete payload', async ({ pa
   expect(state.writes).toEqual([{ method: 'POST', path: '/api/v1/agents', payload: {
     avatarUrl: null, name: '跨页签 Agent', description: '保留描述', systemPrompt: '保留角色定义',
     skillNames: ['mock-skill'], mcpServerIds: [21], isDefault: 1, defaultModelId: 11,
+    clientVisible: true,
     experiences: [{ id: null, content: '保留经验', sortOrder: 0, enabled: false }],
     suggestedQuestions: [],
   } }])
@@ -210,7 +219,7 @@ test('copy inherits the avatar without reuploading and creates instead of updati
   const dialog = await openDialog(page, '复制')
   await expect(dialog.locator('img[src$="/uploads/original.png"]')).toBeVisible()
   await selectTab(dialog, '基本信息')
-  await expect(dialog.getByRole('switch')).not.toBeChecked()
+  await expect(switchItem(page, dialog, '默认 Agent').getByRole('switch')).not.toBeChecked()
   await dialog.getByRole('button', { name: '创建', exact: true }).click()
   await expect(dialog).not.toBeVisible()
   expect(state.writes).toHaveLength(1)

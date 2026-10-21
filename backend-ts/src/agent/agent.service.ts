@@ -27,8 +27,8 @@ export class AgentService {
     private readonly sharedEntryCleanup?: { deleteByAgentId(agentId: number): Promise<void> },
   ) {}
 
-  listAgents(_userId: number, keyword?: string | null, includeDisabled = false): Promise<Agent[]> {
-    return this.agentRepo.selectList(keyword, includeDisabled);
+  listAgents(_userId: number, keyword?: string | null, includeDisabled = false, clientVisibleOnly = false): Promise<Agent[]> {
+    return this.agentRepo.selectList(keyword, includeDisabled, clientVisibleOnly);
   }
 
   async getAgent(id: number): Promise<Agent> {
@@ -63,8 +63,13 @@ export class AgentService {
     isDefault: number | null | undefined,
     defaultModelId: number | null | undefined,
     avatarUrl?: string | null,
+    clientVisible?: boolean | null,
   ): Promise<Agent> {
     validateAgentAvatarUrl(avatarUrl);
+    const clientVisibleFlag = clientVisible === false ? 0 : 1;
+    if (isDefault != null && isDefault === 1 && clientVisibleFlag === 0) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '默认 Agent 必须客户端可见，请先更改默认 Agent 或开启客户端可见');
+    }
     if (isDefault != null && isDefault === 1) {
       await this.agentRepo.clearDefaultFlag();
     }
@@ -78,6 +83,7 @@ export class AgentService {
       defaultModelId: defaultModelId ?? null,
       isDefault: isDefault != null ? isDefault : 0,
       enabled: 1,
+      clientVisible: clientVisibleFlag,
     };
     if (skillNames != null && skillNames.length > 0) {
       agent.skillNames = JSON.stringify(skillNames);
@@ -110,9 +116,18 @@ export class AgentService {
     isDefault: number | null | undefined,
     defaultModelId: number | null | undefined,
     avatarUrl?: string | null,
+    clientVisible?: boolean | null,
   ): Promise<Agent> {
     validateAgentAvatarUrl(avatarUrl);
     const agent = await this.getAgent(id);
+    const nextClientVisible = clientVisible == null
+      ? (agent.clientVisible ?? 1)
+      : (clientVisible ? 1 : 0);
+    // 默认 Agent 必须客户端可见：同一次请求同时改两个字段时，用合并后的最终状态判断
+    const nextIsDefault = isDefault == null ? (agent.isDefault ?? 0) : isDefault;
+    if (nextIsDefault === 1 && nextClientVisible === 0) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '默认 Agent 必须客户端可见，请先更改默认 Agent 或开启客户端可见');
+    }
     if (avatarUrl !== undefined) agent.avatarUrl = avatarUrl;
     if (name != null) agent.name = name;
     if (description != null) agent.description = description;
@@ -126,6 +141,9 @@ export class AgentService {
     if (defaultModelId !== undefined) {
       await this.requireEnabledModel(defaultModelId);
       agent.defaultModelId = defaultModelId;
+    }
+    if (clientVisible != null) {
+      agent.clientVisible = nextClientVisible;
     }
     if (isDefault != null) {
       if (isDefault === 1) {

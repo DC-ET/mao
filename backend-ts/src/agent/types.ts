@@ -15,6 +15,8 @@ export interface Agent {
   isDefault?: number | null;
   /** 1-启用 0-停用；缺省视为启用 */
   enabled?: number | null;
+  /** 1-客户端新建会话可选 0-仅管理端可见；缺省视为可见 */
+  clientVisible?: number | null;
   deleted?: number;
   createdAt?: string | null;
   updatedAt?: string | null;
@@ -63,7 +65,7 @@ export interface SuggestedQuestionInput {
 }
 
 export interface AgentRepository {
-  selectList(keyword?: string | null, includeDisabled?: boolean): Promise<Agent[]>;
+  selectList(keyword?: string | null, includeDisabled?: boolean, clientVisibleOnly?: boolean): Promise<Agent[]>;
   findById(id: number): Promise<Agent | null>;
   findDefault(): Promise<Agent | null>;
   insert(agent: Agent): Promise<number>;

@@ -43,6 +43,16 @@
         </el-form-item>
       </el-form>
 
+      <el-alert
+        v-if="allClientHidden"
+        type="warning"
+        show-icon
+        :closable="false"
+        class="client-hidden-alert"
+        title="当前没有客户端可见的 Agent"
+        description="客户端新建会话将显示「暂无可用智能体」。请在任一 Agent 的编辑页开启「客户端可见」。"
+      />
+
       <el-table v-if="!isMobile" :data="filteredAgents" v-loading="loading" stripe>
         <template #empty>
           <el-empty description="暂无数据" :image-size="60" />
@@ -61,10 +71,13 @@
           </template>
         </el-table-column>
         <el-table-column prop="description" label="描述" min-width="160" show-overflow-tooltip />
-        <el-table-column label="状态" width="88">
+        <el-table-column label="状态" width="150">
           <template #default="{ row }">
             <el-tag :type="row.enabled === false ? 'info' : 'success'" size="small">
               {{ row.enabled === false ? '停用' : '启用' }}
+            </el-tag>
+            <el-tag v-if="row.clientVisible === false" type="warning" size="small" class="client-hidden-tag">
+              仅管理端
             </el-tag>
           </template>
         </el-table-column>
@@ -129,6 +142,7 @@
             <el-tag :type="row.enabled === false ? 'info' : 'success'" size="small">
               {{ row.enabled === false ? '停用' : '启用' }}
             </el-tag>
+            <el-tag v-if="row.clientVisible === false" type="warning" size="small">仅管理端</el-tag>
           </div>
           <div class="mobile-card-row">
             <span class="mobile-card-label">描述</span>
@@ -307,6 +321,11 @@ const currentAgent = ref<any>(null)
 const dialogMode = ref<'create' | 'edit' | 'copy'>('create')
 const authStore = useAuthStore()
 const canWrite = computed(() => authStore.hasPermission('agent:write'))
+
+/** 全量视角（不受搜索/状态筛选影响）：全部 Agent 都被设为客户端不可见时给出提示。 */
+const allClientHidden = computed(
+  () => allAgents.value.length > 0 && allAgents.value.every(agent => agent.clientVisible === false),
+)
 
 let fetchAgentsSeq = 0
 async function fetchAgents() {
@@ -541,6 +560,12 @@ onActivated(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+.client-hidden-alert {
+  margin-bottom: 12px;
+}
+.client-hidden-tag {
+  margin-left: 6px;
 }
 .header-actions {
   display: flex;

@@ -90,15 +90,16 @@ describe('CRUD routes', () => {
       permissionService,
     }));
     expect((await app.inject({ method: 'GET', url: '/v1/agents' })).json().data[0].avatarUrl).toBe(agent.avatarUrl);
+    expect((await app.inject({ method: 'GET', url: '/v1/agents' })).json().data[0].clientVisible).toBe(true);
     expect((await app.inject({ method: 'GET', url: '/v1/agents/1' })).json().data.avatarUrl).toBe(agent.avatarUrl);
     expect((await app.inject({
       method: 'POST', url: '/v1/agents', payload: { name: 'A', systemPrompt: 'p', avatarUrl: agent.avatarUrl },
     })).json().data.avatarUrl).toBe(agent.avatarUrl);
-    expect(agentService.createAgent.mock.calls[0]?.at(-1)).toBe(agent.avatarUrl);
+    expect(agentService.createAgent.mock.calls[0]?.at(-2)).toBe(agent.avatarUrl);
     expect((await app.inject({
       method: 'PUT', url: '/v1/agents/1', payload: { name: 'B', avatarUrl: null },
     })).statusCode).toBe(200);
-    expect(agentService.updateAgent.mock.calls[0]?.at(-1)).toBeNull();
+    expect(agentService.updateAgent.mock.calls[0]?.at(-2)).toBeNull();
     expect((await app.inject({ method: 'DELETE', url: '/v1/agents/1' })).statusCode).toBe(200);
     expect((await app.inject({ method: 'GET', url: '/v1/agents/1/experiences' })).statusCode).toBe(200);
     expect((await app.inject({
@@ -108,7 +109,7 @@ describe('CRUD routes', () => {
       method: 'PUT', url: '/v1/agents/1/experiences/1', payload: { content: 'u' },
     })).statusCode).toBe(200);
     expect((await app.inject({ method: 'DELETE', url: '/v1/agents/1/experiences/1' })).statusCode).toBe(200);
-    expect(agentService.listAgents).toHaveBeenCalledWith(7, undefined, false);
+    expect(agentService.listAgents).toHaveBeenCalledWith(7, undefined, false, false);
     await app.close();
   });
 
@@ -136,7 +137,7 @@ describe('CRUD routes', () => {
       const cleared = await app.inject({ method: 'PUT', url: '/v1/agents/1', payload: { mcpServerIds: [] } });
       expect(cleared.statusCode).toBe(200);
       expect(agentService.updateAgent).toHaveBeenCalledWith(
-        7, 1, undefined, undefined, undefined, undefined, [], null, null, undefined, undefined, undefined,
+        7, 1, undefined, undefined, undefined, undefined, [], null, null, undefined, undefined, undefined, undefined,
       );
       expect(mcpServerValidator.validateForAgent).not.toHaveBeenCalled();
 
@@ -169,13 +170,21 @@ describe('CRUD routes', () => {
     }));
     try {
       await app.inject({ method: 'GET', url: '/v1/agents?includeDisabled=true' });
-      expect(agentService.listAgents).toHaveBeenCalledWith(7, undefined, false);
+      expect(agentService.listAgents).toHaveBeenCalledWith(7, undefined, false, false);
       expect((await app.inject({ method: 'PATCH', url: '/v1/agents/1/enabled', payload: { enabled: false } })).statusCode).toBe(403);
       expect(agentService.setEnabled).not.toHaveBeenCalled();
 
       permissionService.hasPermission.mockImplementation(async (_userId: number, code: string) => code === 'agent:read' || code === 'agent:write');
       await app.inject({ method: 'GET', url: '/v1/agents?includeDisabled=true&keyword=coder' });
-      expect(agentService.listAgents).toHaveBeenLastCalledWith(7, 'coder', true);
+      expect(agentService.listAgents).toHaveBeenLastCalledWith(7, 'coder', true, false);
+
+      // 客户端新建会话：只取客户端可见的 Agent
+      await app.inject({ method: 'GET', url: '/v1/agents?scope=client' });
+      expect(agentService.listAgents).toHaveBeenLastCalledWith(7, undefined, false, true);
+
+      // 非法 scope 直接拒绝，避免拼写错误静默退化成全量（项目约定：业务错误 HTTP 200 + code≠0）
+      const badScope = await app.inject({ method: 'GET', url: '/v1/agents?scope=admin' });
+      expect(badScope.json().code).not.toBe(0);
 
       const invalid = await app.inject({ method: 'PATCH', url: '/v1/agents/1/enabled', payload: { enabled: 'no' } });
       expect(invalid.json().code).not.toBe(0);

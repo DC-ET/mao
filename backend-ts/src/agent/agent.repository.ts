@@ -15,11 +15,14 @@ import type {
 export class MysqlAgentRepository implements AgentRepository {
   constructor(private readonly db: Db) {}
 
-  selectList(keyword?: string | null, includeDisabled = false): Promise<Agent[]> {
+  selectList(keyword?: string | null, includeDisabled = false, clientVisibleOnly = false): Promise<Agent[]> {
     const where: string[] = [notDeleted()];
     const params: unknown[] = [];
     if (!includeDisabled) {
       where.push('enabled = 1');
+    }
+    if (clientVisibleOnly) {
+      where.push('client_visible = 1');
     }
     if (keyword != null && keyword.length > 0) {
       where.push('name LIKE ?');
@@ -68,6 +71,7 @@ export class MysqlAgentRepository implements AgentRepository {
         defaultModelId: agent.defaultModelId ?? null,
         isDefault: agent.isDefault ?? 0,
         enabled: agent.enabled ?? 1,
+        clientVisible: agent.clientVisible ?? 1,
         deleted: 0,
       });
       await tx.insert('agent_prompt_versions', {
@@ -99,6 +103,7 @@ export class MysqlAgentRepository implements AgentRepository {
         mcpServerIds: agent.mcpServerIds ?? null,
         defaultModelId: agent.defaultModelId ?? null,
         isDefault: agent.isDefault,
+        clientVisible: agent.clientVisible ?? 1,
       });
       if (agent.systemPrompt !== current.systemPrompt) {
         await this.appendPromptVersion(tx, agent.id!, agent.systemPrompt, operatorId, null);
