@@ -40,6 +40,7 @@ function makeRegistry(
     userSkillsDir: join(base, 'userskills'),
     skillsDir: join(base, 'skills'),
     uploadDir: join(base, 'uploads'),
+    shareDir: join(base, 'share'),
     // 宿主机先 listen 再 docker run（BUG-2 回归）：listen/token 回调先于 run 发生
     ensureChannelListening: async (userId) => {
       listenings.push(userId);
@@ -98,6 +99,9 @@ describe('container registry', () => {
     // 图片产物上传根（按用户挂 {uploadDir}/{userId}，nginx /uploads/ 静态出口同源）
     expect(runArgs).toContain(`-e MAO_UPLOAD_DIR=${join(base, 'uploads')}`);
     expect(runArgs).toContain(`${join(base, 'uploads', '7')}:${join(base, 'uploads', '7')}:rw`);
+    // 公共共享目录（共享目录方案 §4.3）：env 注入 + ro 挂载，容器内路径与宿主机一致
+    expect(runArgs).toContain(`-e MAO_SHARE_DIR=${join(base, 'share')}`);
+    expect(runArgs).toContain(`${join(base, 'share')}:${join(base, 'share')}:ro`);
     // socket 路径由 ensureChannelListening 返回（唯一真相）
     expect(runArgs).toContain(`--socket ${join(base, 'channels', '7', 'runtime.sock')}`);
     // 不暴露端口
@@ -402,6 +406,7 @@ describe('container registry', () => {
       userSkillsDir: join(base, 'userskills'),
       skillsDir: join(base, 'skills'),
       uploadDir: join(base, 'uploads'),
+      shareDir: join(base, 'share'),
       ensureChannelListening: async () => join(base, 'channels', '7', 'runtime.sock'),
       issueChannelToken: () => 'tok-7',
       waitSocketReady: async () => undefined,

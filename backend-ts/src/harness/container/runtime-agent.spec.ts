@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { RuntimeChannelServer, type RuntimeStatus } from './runtime-channel-server.js';
 import { RuntimeAgent } from './runtime-agent.js';
 import { ContainerMcpBridge } from './container-mcp-bridge.js';
+import { PathSandbox } from '../safety/path-sandbox.js';
 import type { ContainerPty, ContainerPtyFactory } from './pty-hub.js';
 import type { RuntimeEnvelope } from './runtime-channel-protocol.js';
 import { useTmpDir } from '../../testing/tmp-dir.js';
@@ -13,7 +14,7 @@ import { useTmpDir } from '../../testing/tmp-dir.js';
  * 用真实 RuntimeChannelServer + 真实 RuntimeAgent 打通 Unix socket，
  * 断言连接稳定性、pty_open ack、mcp_connect envelope 透传。
  */
-const ROOT_ENV_KEYS = ['MAO_WORKSPACE_ROOT', 'MAO_RUNTIME_DIR', 'MAO_USER_HOME_DIR', 'MAO_USER_SKILLS_DIR'];
+const ROOT_ENV_KEYS = ['MAO_WORKSPACE_ROOT', 'MAO_RUNTIME_DIR', 'MAO_USER_HOME_DIR', 'MAO_USER_SKILLS_DIR', 'MAO_SHARE_DIR'];
 
 function envelopeOf(workspace: string): RuntimeEnvelope {
   return {
@@ -65,6 +66,7 @@ describe('runtime agent channel behavior', () => {
     process.env.MAO_RUNTIME_DIR = join(base, 'runtime');
     process.env.MAO_USER_HOME_DIR = join(base, 'users');
     process.env.MAO_USER_SKILLS_DIR = join(base, 'userskills');
+    process.env.MAO_SHARE_DIR = join(base, 'share');
     const socketPath = await server.ensureListening(7);
     agent = new RuntimeAgent(socketPath, 'probe-token', 7, ptyFactory);
     void agent.run();
@@ -163,5 +165,22 @@ describe('runtime agent channel behavior', () => {
     const call = spy.mock.calls[0];
     expect(call[0]).toBe(11);
     expect(call[3]).toEqual(envelope);
+  });
+
+  it('defaultsShareDirWhenEnvUnset', () => {
+    // 共享目录方案 §4.3：MAO_SHARE_DIR 未设置时 resolveRoots 回落默认值
+    // /opt/mao-data/share，并经 ContainerToolExecutor 登记为沙箱允许根。
+    // 用 addAllowedRoot 探针断言接线（不触碰真实文件系统）
+    delete process.env.MAO_SHARE_DIR;
+    const registered: string[] = [];
+    const spy = vi.spyOn(PathSandbox.prototype, 'addAllowedRoot')
+      .mockImplementation((root: string) => { registered.push(root); });
+    const agent = new RuntimeAgent('/tmp/mao-probe.sock', 'probe-token', 7);
+    try {
+      expect(registered).toContain('/opt/mao-data/share');
+    } finally {
+      agent.dispose();
+      spy.mockRestore();
+    }
   });
 });

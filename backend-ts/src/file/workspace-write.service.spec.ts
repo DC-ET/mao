@@ -372,7 +372,9 @@ describe('workspace write service', () => {
     ]).catch((e) => { uploadError = e; });
     await tick();
     expect(uploadError).toBeNull();
-    expect(typeof releaseRecord).toBe('function');
+    // upload 流程先做多个 fs 操作才调 activity.record：固定 15ms 等待在并行负载下
+    // 不足以覆盖，改为条件等待（record 被调用即说明已进入持锁状态）
+    await vi.waitFor(() => expect(typeof releaseRecord).toBe('function'), { timeout: 5000 });
     expect(readFileSync(join(workspace, 'src/sub/a.txt'), 'utf8')).toBe('user');
     let ran = false;
     const agent = withFileLock(join(workspace, 'src/sub/a.txt'), async () => {

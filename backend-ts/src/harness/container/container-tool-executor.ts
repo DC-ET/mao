@@ -22,6 +22,9 @@ export interface ContainerRoots {
   userSkillsDir: string;
   /** 图片产物上传根：容器内放行 {uploadDir}/{userId}（宿主同名挂载）。 */
   uploadDir: string;
+  /** 公共共享目录（共享目录方案 §4.2）：唯一跨用户共享的允许根——内容对全员公开且
+   * 挂载为 ro，纵深防御层放行整根；写操作由 ro 挂载以 EROFS 拒绝。 */
+  shareDir: string;
 }
 
 /**
@@ -59,6 +62,10 @@ export class ContainerToolExecutor {
     // 图片产物（generate_image/edit_image 落盘）在宿主机按 {uploadDir}/{uid} 隔离后
     // 同名挂入容器，容器内 read_file 等按同一允许根放行
     this.pathSandbox.addAllowedRoot(path.join(roots.uploadDir, u));
+    // 公共共享目录（共享目录方案 §4.2）：唯一跨用户共享的允许根（/tmp 宿主机侧按
+    // {tmpDir}/{userId} 收窄，仍属每用户）——内容对全员公开且挂载为 ro，放行整根；
+    // 写操作由 ro 挂载以 EROFS 拒绝，沙箱层不引入 ro 概念
+    this.pathSandbox.addAllowedRoot(roots.shareDir);
     this.pathSandbox.addAllowedRoot('/tmp');
     this.outputManager = new OutputManager();
     this.backgroundTasks = new BackgroundTaskManager();

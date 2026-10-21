@@ -27,6 +27,7 @@
 | `/opt/mao-data/uploads` | 上传与 APK OTA（`FILE_UPLOAD_DIR`） |
 | `/opt/mao-data/users` | CLOUD 用户 HOME（`MAO_USER_HOME_DIR`） |
 | `/opt/mao-data/runtime` | 运行时状态、蓝绿部署锁（`MAO_RUNTIME_DIR`） |
+| `/opt/mao-data/share` | 公共共享目录（`MAO_SHARE_DIR`）：管理员宿主机投放，全员 CLOUD 用户只读；容器模式 ro 挂载，host 模式只读不强制 |
 
 开发环境可使用仓库内或自定义路径，在 `backend-ts/.env` 中覆盖。
 
@@ -51,6 +52,7 @@
 | `FILE_UPLOAD_DIR` | **是** | 本地上传目录 |
 | `MAO_RUNTIME_DIR` | 否 | 运行时目录 |
 | `MAO_USER_HOME_DIR` | 否 | CLOUD 用户 HOME |
+| `MAO_SHARE_DIR` | 否 | 公共共享目录，默认 `/opt/mao-data/share`：管理员宿主机投放，全员 CLOUD 用户只读（容器模式 ro 挂载，host 模式只读不强制）。不属于 `MAO_CONTAINER_*` 容器调参系列 |
 | `MAO_CLOUD_RUNTIME` | 否 | CLOUD 执行面运行时缺省值：`host`（默认，现状行为）；`docker` 每用户容器隔离（部署前置见 [deploy.md](deploy.md#容器隔离运行时v0295)）。管理后台「系统设置 → 运行环境 → 用户运行时模式」（`system_setting.runtime.mode`）优先于该变量，后台可切换且保存即生效 |
 | `MAO_CONTAINER_*` | 否 | 容器模式参数：`MAO_CONTAINER_IDLE_MINUTES` / `MAO_CONTAINER_MAX_LIFETIME_HOURS` / `MAO_CONTAINER_MEMORY_MB` / `MAO_CONTAINER_CPUS` / `MAO_CONTAINER_PIDS_LIMIT` / `MAO_CONTAINER_IMAGE` / `MAO_CONTAINER_NETWORK` / `MAO_CONTAINER_CHANNEL_DIR` / `MAO_CONTAINER_DIST_DIR` / `MAO_CONTAINER_DEPS_DIR` / `MAO_CONTAINER_TMP_DIR`（默认 `/opt/mao-data/tmp`，按 `{tmpDir}/{userId}` 挂到容器 `/tmp`） / `MAO_CONTAINER_TMP_RETENTION_DAYS`（默认 7） / `MAO_CONTAINER_START_TIMEOUT_MS` |
 | `MAO_BLUE_GREEN_DRAIN_SEC` | 否 | 蓝绿切换后停旧实例延迟，默认 60s |

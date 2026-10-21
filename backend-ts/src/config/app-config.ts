@@ -112,6 +112,8 @@ export interface AppConfig {
       skillsDir: string;
       userSkillsDir: string;
       skillsCacheSeconds: number;
+      /** 公共共享目录（MAO_SHARE_DIR）：管理员宿主机投放，全员只读。 */
+      shareDir: string;
       shell: {
         output: { maxPreviewLines: number; maxPreviewChars: number };
       };
@@ -244,6 +246,7 @@ const DEFAULTS: AppConfig = {
       skillsDir: './skills',
       userSkillsDir: join(process.env.HOME ?? '/tmp', '.mao/data/userskills'),
       skillsCacheSeconds: 300,
+      shareDir: '/opt/mao-data/share',
       shell: {
         output: { maxPreviewLines: 100, maxPreviewChars: 10000 },
       },

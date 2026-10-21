@@ -42,6 +42,8 @@ export interface MountPlannerRoots {
   uploadDir: string;
   /** rw 项：每用户 /tmp 持久根，{tmpDir}/{userId} 映射到容器 /tmp。 */
   tmpDir: string;
+  /** ro 项：公共共享目录（管理员宿主机投放，全员只读，容器内路径与宿主机一致）。 */
+  shareDir: string;
 }
 
 export class MountPlanError extends Error {
@@ -74,6 +76,7 @@ export class ContainerMountPlanner {
    */
   plan(userId: number, extraWorkspaces: readonly string[] = []): ContainerMount[] {
     const u = String(userId);
+    this.assertShareDirIndependent();
     const mounts: ContainerMount[] = [
       { hostPath: this.under(this.roots.userHomeDir, u), containerPath: this.under(this.roots.userHomeDir, u), mode: 'rw', purpose: 'userHome' },
       { hostPath: this.under(this.roots.workspaceRoot, u), containerPath: this.under(this.roots.workspaceRoot, u), mode: 'rw', purpose: 'workspace' },
@@ -86,6 +89,9 @@ export class ContainerMountPlanner {
       // 跨 stop/重建保留；3077 语义由 assertSafe 统一 chmod 1777。
       { hostPath: this.under(this.roots.tmpDir, u), containerPath: '/tmp', mode: 'rw', purpose: 'tmp' },
       { hostPath: this.under(this.roots.distDir, ''), containerPath: this.under(this.roots.distDir, ''), mode: 'ro', purpose: 'dist' },
+      // 公共共享目录：管理员宿主机投放，全员只读（容器内路径与宿主机一致，决策 15）。
+      // 写保护由 ro 挂载以 EROFS 强制，沙箱层不引入 ro 概念。
+      { hostPath: this.under(this.roots.shareDir, ''), containerPath: this.under(this.roots.shareDir, ''), mode: 'ro', purpose: 'share' },
       // 平台技能：全局可写（产品要求，容器内可安装/更新共享技能）。
       // 注意这是全员共享目录，容器内 root 可修改会影响其他用户加载的技能，
       // 个人技能仍写 userSkillsDir/{userId}。
@@ -99,6 +105,27 @@ export class ContainerMountPlanner {
     }
     this.assertSafe(mounts, userId);
     return mounts;
+  }
+
+  /**
+   * shareDir 独立性校验（共享目录方案 §4.1 等式盲区）：shareDir 若等于某个按用户
+   * 收窄的登记根、或位于其下（如误配为 workspaceRoot 自身或 {workspaceRoot}/7），
+   * 现有 assertSafe 规则全部放行——这些根按 {root}/{userId} 挂载，容器路径不重复；
+   * 父目录防护对等式 continue 跳过——整棵每用户数据会以 ro 挂进所有容器，构成跨用户
+   * 可读。放在 plan() 而非构造器：host 模式不起容器，不应因误配在启动时炸掉。
+   */
+  private assertShareDirIndependent(): void {
+    const share = path.resolve(this.roots.shareDir);
+    const perUserRoots = [
+      this.roots.workspaceRoot, this.roots.runtimeDir, this.roots.userHomeDir,
+      this.roots.userSkillsDir, this.roots.uploadDir, this.roots.channelDir,
+      this.roots.depsDir, this.roots.tmpDir,
+    ].map((r) => path.resolve(r));
+    for (const root of perUserRoots) {
+      if (share === root || share.startsWith(root + path.sep)) {
+        throw new MountPlanError(`shareDir ${share} must not be or under per-user data root ${root}`);
+      }
+    }
   }
 
   /**
@@ -155,6 +182,7 @@ export class ContainerMountPlanner {
       this.roots.userHomeDir, this.roots.runtimeDir, this.roots.workspaceRoot,
       this.roots.depsDir, this.roots.userSkillsDir, this.roots.channelDir,
       this.roots.distDir, this.roots.skillsDir, this.roots.uploadDir, this.roots.tmpDir,
+      this.roots.shareDir,
     ].map((r) => path.resolve(r));
 
     const seenContainerPaths = new Set<string>();

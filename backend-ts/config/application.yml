@@ -72,6 +72,7 @@ app:
     user-home-dir: ${MAO_USER_HOME_DIR:/opt/mao-data/users}
     skills-dir: ${SKILLS_DIR:./skills}
     user-skills-dir: ${USER_SKILLS_DIR:}
+    share-dir: ${MAO_SHARE_DIR:/opt/mao-data/share}
   mcp:
     secret-key: ${APP_MCP_SECRET:mao-mcp-default-secret-change-me}
     client-timeout-seconds: ${APP_MCP_CLIENT_TIMEOUT_SECONDS:120}

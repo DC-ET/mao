@@ -86,6 +86,8 @@ export interface ContainerRegistryOptions {
   skillsDir: string;
   /** 图片产物上传根（FILE_UPLOAD_DIR）：按用户挂 {uploadDir}/{userId} 并注入容器 env。 */
   uploadDir: string;
+  /** 公共共享目录（共享目录方案 §4.3）：ro 挂载进每用户容器并注入容器 env。 */
+  shareDir: string;
   /** 创建前确保宿主机 socket server 已监听（先 listen 再 docker run），返回 socket 路径。 */
   ensureChannelListening(userId: number): Promise<string>;
   /** 创建前确保该用户连接 token 已落盘（容器启动时经 -e 注入）。 */
@@ -131,6 +133,7 @@ export class ContainerRegistry {
       skillsDir: opts.skillsDir,
       uploadDir: opts.uploadDir,
       tmpDir: c.tmpDir,
+      shareDir: opts.shareDir,
     });
   }
 
@@ -469,6 +472,7 @@ export class ContainerRegistry {
       '-e', `MAO_USER_HOME_DIR=${this.opts.userHomeDir}`,
       '-e', `MAO_USER_SKILLS_DIR=${this.opts.userSkillsDir}`,
       '-e', `MAO_UPLOAD_DIR=${this.opts.uploadDir}`,
+      '-e', `MAO_SHARE_DIR=${this.opts.shareDir}`,
       ...this.planner.toDockerArgs(mounts),
       // 容器不暴露任何端口：进出只走 Unix socket（§5.2）
       '--restart', 'no',

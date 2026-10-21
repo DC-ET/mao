@@ -16,6 +16,7 @@ function roots(base: string) {
     skillsDir: join(base, 'mao', 'data', 'skills'),
     uploadDir: join(base, 'uploads'),
     tmpDir: join(base, 'tmp'),
+    shareDir: join(base, 'share'),
   };
 }
 
@@ -77,8 +78,55 @@ describe('container mount planner', () => {
     // roots 变更（planner 升级新增/移动挂载）→ 指纹变化
     const moved = new ContainerMountPlanner({ ...roots(base), uploadDir: join(base, 'uploads2') });
     expect(moved.standardMountsFingerprint(7)).not.toBe(fp);
+    // share 配置变化同样进指纹（上线后既有容器指纹漂移即回收重建补齐挂载）
+    const movedShare = new ContainerMountPlanner({ ...roots(base), shareDir: join(base, 'share2') });
+    expect(movedShare.standardMountsFingerprint(7)).not.toBe(fp);
     // 不同用户的标准计划不同（uid 段进清单）
     expect(planner.standardMountsFingerprint(8)).not.toBe(fp);
+  });
+
+  it('mountsShareDirReadOnly', () => {
+    // 共享目录方案 §4.1：share 以 ro 挂载，容器内路径与宿主机逐字节一致，
+    // hostPath 恰为 shareDir 根自身（ro 豁免 userId 段规则）
+    const base = useTmpDir('mao-mount-share-');
+    for (const dir of Object.values(roots(base))) mkdirSync(dir, { recursive: true });
+    const planner = new ContainerMountPlanner(roots(base));
+    const share = planner.plan(7).find((m) => m.purpose === 'share');
+    expect(share).toBeDefined();
+    expect(share!.mode).toBe('ro');
+    expect(share!.hostPath).toBe(join(base, 'share'));
+    expect(share!.containerPath).toBe(share!.hostPath);
+  });
+
+  it('shareDirMissingIsTolerated', () => {
+    // ro 项不强制创建：shareDir 不存在时 plan 不抛错（docker -v 对缺失源自动建空目录，
+    // 叠加后端启动 mkdirSync 兜底，双保险）
+    const base = useTmpDir('mao-mount-share-miss-');
+    for (const dir of Object.values(roots(base))) mkdirSync(dir, { recursive: true });
+    const planner = new ContainerMountPlanner({ ...roots(base), shareDir: join(base, 'no-such-share') });
+    const mounts = planner.plan(7);
+    expect(mounts.find((m) => m.purpose === 'share')?.hostPath).toBe(join(base, 'no-such-share'));
+  });
+
+  it('rejectsShareDirAsParentOfRoot', () => {
+    // shareDir 误配为某登记根的父目录（如 /opt/mao-data）→ assertSafe 父目录防护 fail-fast
+    const base = useTmpDir('mao-mount-share-parent-');
+    for (const dir of Object.values(roots(base))) mkdirSync(dir, { recursive: true });
+    const planner = new ContainerMountPlanner({ ...roots(base), shareDir: base });
+    expect(() => planner.plan(7)).toThrow(MountPlanError);
+  });
+
+  it('rejectsShareDirEqualToPerUserRoot', () => {
+    // 共享目录方案 §4.1 等式盲区：shareDir 等于某个按用户收窄的登记根、或位于其下，
+    // 现有 assertSafe 规则全部放行（容器路径不重复、父目录防护对等式 continue），
+    // 会把整棵每用户数据 ro 挂进所有容器——必须 fail-fast
+    const base = useTmpDir('mao-mount-share-eq-');
+    for (const dir of Object.values(roots(base))) mkdirSync(dir, { recursive: true });
+    const planner = new ContainerMountPlanner({ ...roots(base), shareDir: join(base, 'workspace') });
+    expect(() => planner.plan(7)).toThrow(/must not be or under per-user data root/);
+    // 位于每用户根之下（如某用户的工作区子目录）同样拒绝
+    const underPlanner = new ContainerMountPlanner({ ...roots(base), shareDir: join(base, 'workspace', '7') });
+    expect(() => underPlanner.plan(7)).toThrow(/must not be or under per-user data root/);
   });
 
   it('rejectsParentDirectoryMounts', () => {

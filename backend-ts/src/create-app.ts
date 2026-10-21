@@ -271,6 +271,11 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   await app.register(multipart, { limits: { fileSize: multipartLimitMb * 1024 * 1024, files: 500 } });
   const uploadDir = resolve(expandHome(cfg.app.file.uploadDir));
   mkdirSync(uploadDir, { recursive: true });
+  // 公共共享目录（共享目录方案 §3.1）：与 uploadDir 同口径启动兜底创建，
+  // 容器模式 ro 挂载前保证宿主机源目录存在（docker -v 对缺失源虽会自动建空目录，
+  // 但属主会是 root，这里以后端运行用户创建，管理员投放时属主一致）
+  const shareDir = resolve(expandHome(cfg.app.harness.shareDir));
+  mkdirSync(shareDir, { recursive: true });
   await registerUploadStatic(app, uploadDir, apiPrefix);
   await app.register(swagger, {
     openapi: { info: { title: 'Mao API', version: '0.1.0' } },
@@ -616,7 +621,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   // ── 用户运行时容器隔离（技术方案 §5）：host 模式下整组组件闲置、派发分支短路 ──
   const containerRuntime = await assembleContainerRuntime({
     cfg, ctx, jwt, sessionRepo, userRepo, settingService, runtimeResolver, gitLookup,
-    envVariableService, uploadDir, userSkillsDir, mcpClient, activityHeartbeat,
+    envVariableService, uploadDir, userSkillsDir, shareDir, mcpClient, activityHeartbeat,
     ecpInjector, larkUatInjector,
   });
   const { cloudRuntimeCfg, containerChannelHolder, channelServer, containerRegistry, runtimeModeResolver, activateContainerRuntime, envelopeBuilder, dockerRouter, sendBytesBridge, mcpRuntimeProbe, routingMcpClient, ptyChannelHubs, ptyHubGeneration, containerPtyFactory, bootRuntimeMode } = containerRuntime;

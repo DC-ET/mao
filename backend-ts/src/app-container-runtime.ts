@@ -35,6 +35,8 @@ export interface ContainerRuntimeDeps {
   envVariableService: EnvVariableService;
   uploadDir: string;
   userSkillsDir: string;
+  /** 公共共享目录（共享目录方案 §4.3）：ro 挂载进每用户容器并注入容器 env。 */
+  shareDir: string;
   mcpClient: McpClientManager;
   activityHeartbeat: SessionActivityHeartbeat;
   ecpInjector: ShellEcpInjector;
@@ -60,7 +62,7 @@ export interface ContainerRuntimeResult {
 }
 
 export async function assembleContainerRuntime(deps: ContainerRuntimeDeps): Promise<ContainerRuntimeResult> {
-  const { cfg, ctx, jwt, sessionRepo, userRepo, settingService, runtimeResolver, gitLookup, envVariableService, uploadDir, userSkillsDir, mcpClient, activityHeartbeat, ecpInjector, larkUatInjector } = deps;
+  const { cfg, ctx, jwt, sessionRepo, userRepo, settingService, runtimeResolver, gitLookup, envVariableService, uploadDir, userSkillsDir, shareDir, mcpClient, activityHeartbeat, ecpInjector, larkUatInjector } = deps;
 
   const cloudRuntimeCfg = cfg.app.cloudRuntime;
   const containerChannelHolder: { registry: ContainerRegistry | null } = { registry: null };
@@ -78,6 +80,7 @@ export async function assembleContainerRuntime(deps: ContainerRuntimeDeps): Prom
     userSkillsDir,
     skillsDir: cfg.app.harness.skillsDir,
     uploadDir,
+    shareDir,
     ensureChannelListening: async (userId) => channelServer.ensureListening(userId),
     issueChannelToken: (userId) => channelServer.issueToken(userId),
     waitSocketReady: async (userId, timeoutMs) => {
