@@ -38,7 +38,7 @@ describe('buildTaskNotificationCard', () => {
     expect(markdownElementWith(card, '技能指令入口迁移')).toBeDefined();
     expect(markdownElementWith(card, '已完成')).toBeDefined();
     expect(markdownElementWith(card, '把技能指令入口迁到新目录')).toBeDefined();
-    // 时间戳在 note 脚注（plain_text）里，不在正文 markdown 元素中
+    // 时间戳在卡片底部小字行（markdown + 灰字），不在正文 markdown 段落里
     expect(cardText(card)).toContain('2026-09-25 09:13:20');
     // 2.0 已移除 action 交互模块：按钮入 elements（column_set）+ behaviors.open_url 跳转。
     const text = cardText(card);
@@ -49,6 +49,9 @@ describe('buildTaskNotificationCard', () => {
     expect(text).not.toContain('"tag":"action"');
     // 不得退回 div>lark_md：那是 Markdown 表格不渲染的根因
     expect(text).not.toContain('lark_md');
+    // 不得含 1.0 独有元素：2.0 会整体拒绝卡片，飞书返回 HTTP 200 + code 11246，
+    // 表现为 webhook 静默失效（2026-10-20 线上事故：note 元素致所有飞书通知投递失败）。
+    expect(text).not.toContain('"tag":"note"');
   });
 
   it('truncates an over-long user message', () => {
@@ -112,6 +115,8 @@ describe('buildWeixinFallbackCard', () => {
     expect(text).toContain('2026-10-19 10:00:00');
     // 降级推送没有会话深链可点：不应出现按钮
     expect(text).not.toContain('"tag":"action"');
+    // note 是 1.0 独有元素，2.0 会整体拒绝（飞书 code 11246）
+    expect(text).not.toContain('"tag":"note"');
   });
 
   it('uses card 2.0 schema with top-level markdown element so md tables render', () => {

@@ -45,6 +45,10 @@ const PHASE_META: Record<TaskNotificationPhase, PhaseMeta> = {
  * 原样吐出管道符；`markdown` 才是「元素」tag，与飞书会话进度卡
  * （buildFeishuProgressCard）同口径。二者仅一字之差。
  *
+ * 同样不能用 1.0 独有的 `tag:'note'`（卡片底部小字时间）：2.0 会整体拒绝该卡片，
+ * 飞书返回 HTTP 200 + code 11246，表现为 webhook 静默失效。时间行改用
+ * `markdown` + `<font color='grey'>` 近似原视觉。
+ *
  * 2.0 不支持 1.0 的 `{ tag:'action', actions:[{ url }] }` 交互模块，按钮需放入
  * elements（并排用 column_set）并以 `behaviors.open_url` 跳转。
  */
@@ -66,10 +70,9 @@ export function buildTaskNotificationCard(input: TaskNotificationContentInput): 
     elements.push(markdownElement('Agent 向你发起了提问，请到会话页面作答。'));
   }
   elements.push({ tag: 'hr' });
-  elements.push({
-    tag: 'note',
-    elements: [{ tag: 'plain_text', content: `时间：${formatDateTime(input.now ?? new Date())}` }],
-  });
+  // 时间行用 markdown 渲染：note 是 1.0 独有元素，2.0 会整体拒绝（飞书返回 code 11246，
+  // 表现为 webhook HTTP 200 但投递失败）。
+  elements.push(markdownElement(`<font color='grey'>时间：${formatDateTime(input.now ?? new Date())}</font>`));
   const detailUrl = trimToEmpty(input.sessionDetailUrl);
   if (detailUrl !== '') {
     elements.push({
@@ -123,10 +126,8 @@ export function buildWeixinFallbackCard(input: { reply: string; now?: Date }): R
     { tag: 'hr' },
     markdownElement(input.reply),
     { tag: 'hr' },
-    {
-      tag: 'note',
-      elements: [{ tag: 'plain_text', content: `时间：${formatDateTime(input.now ?? new Date())}` }],
-    },
+    // 同 buildTaskNotificationCard：note 是 1.0 独有元素，2.0 会整体拒绝。
+    markdownElement(`<font color='grey'>时间：${formatDateTime(input.now ?? new Date())}</font>`),
   ];
   return {
     schema: '2.0',
