@@ -564,17 +564,8 @@ function handleOpenFile(payload: { path: string; title: string }) {
 interface TaskInspectorInstance {
   revealInFileTree(relPath: string): Promise<void>
   refreshFileTree(): void
-  focusAgentSection(): void
 }
 const inspectorRef = ref<TaskInspectorInstance | null>(null)
-
-/** 身份条 / 工具条徽标共用：展开右栏并定位到「智能体」分区 */
-function openAgentInspector() {
-  if (rightCollapsed.value) toggleRight()
-  void nextTick(() => inspectorRef.value?.focusAgentSection())
-}
-
-provide('openAgentInspector', openAgentInspector)
 
 function refreshFileTree() {
   inspectorRef.value?.refreshFileTree()

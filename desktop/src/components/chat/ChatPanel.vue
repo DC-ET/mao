@@ -172,8 +172,6 @@
         :permission-level="permissionLevel"
         :is-new-task="isNewTaskMode"
         :selected-agent-id="newTaskAgentId"
-        :session-agent-id="isNewTaskMode ? null : (agentId || null)"
-        :session-agent-name="isNewTaskMode ? null : agentName"
         :agents="agentStore.agents"
         :workspace-mode="isNewTaskMode ? newTaskWorkspaceMode : 'new'"
         :git-clone-url="isNewTaskMode ? newTaskGitCloneUrl : ''"
@@ -194,7 +192,6 @@
         @update:workspace-mode="handleNewTaskWorkspaceModeChange"
         @update:git-clone-url="handleNewTaskGitCloneUrlChange"
         @update:git-branch="handleNewTaskGitBranchChange"
-        @open-agent-detail="openAgentInspector"
       />
     </template>
 
@@ -258,8 +255,6 @@ type SyncChatStateFn = (state: {
 }) => void
 const syncChatState = inject<SyncChatStateFn>('syncChatState')!
 const chatFocusInput = inject<Ref<(() => void) | null>>('chatFocusInput')!
-/** 由 TaskView 提供：展开右栏并定位「智能体」分区（身份条与工具条徽标共用） */
-const openAgentInspector = inject<() => void>('openAgentInspector')!
 const openSideTask = inject<
   ((contextMode?: SideTaskContextMode, fork?: { messageId: string; label: string }) => void) | undefined
 >('openSideTask', undefined)

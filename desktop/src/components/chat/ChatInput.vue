@@ -76,8 +76,6 @@
       :layout="layout"
       :is-mobile-viewport="isMobileViewport"
       :selected-agent-id="selectedAgentId"
-      :session-agent-id="sessionAgentId"
-      :session-agent-name="sessionAgentName"
       :workspace="workspace"
       :cloud-project-key="cloudProjectKey"
       :project-key="projectKey"
@@ -109,7 +107,6 @@
       @update:permission-level="$event => emit('update:permissionLevel', $event)"
       @update:model-id="id => emit('update:modelId', id)"
       @select:model="(id, modelIdStr) => emit('select:model', id, modelIdStr)"
-      @open-agent-detail="emit('openAgentDetail')"
     />
 
     <!-- 移动居中态：智能体/工作区配置条（输入与操作行下方，不占工具条横向空间） -->
@@ -178,9 +175,6 @@ const props = withDefaults(defineProps<{
   permissionLevel?: string
   isNewTask?: boolean
   selectedAgentId?: string | null
-  /** 已有会话的 Agent（只读展示，与新建态 selectedAgentId 区分） */
-  sessionAgentId?: string | null
-  sessionAgentName?: string | null
   agents?: Agent[]
   workspaceMode?: string
   gitCloneUrl?: string
@@ -207,8 +201,6 @@ const props = withDefaults(defineProps<{
   permissionLevel: 'READ_ONLY',
   isNewTask: false,
   selectedAgentId: null,
-  sessionAgentId: null,
-  sessionAgentName: null,
   agents: () => [],
   workspaceMode: 'new',
   gitCloneUrl: '',
@@ -238,7 +230,6 @@ const emit = defineEmits<{
   'update:workspaceMode': [mode: string]
   'update:gitCloneUrl': [url: string]
   'update:gitBranch': [branch: string]
-  openAgentDetail: []
 }>()
 
 const sessionStore = useSessionStore()

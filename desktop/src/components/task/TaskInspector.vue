@@ -94,7 +94,7 @@
         </div>
       </div>
 
-      <div v-if="agentId || agentName" ref="agentSectionEl" class="inspector-section agent-section">
+      <div v-if="agentId || agentName" class="inspector-section agent-section">
         <h4 class="section-title">智能体</h4>
         <AgentBadge
           :agent-id="agentId || null"
@@ -795,15 +795,7 @@ function refreshFileTree() {
   fileTree.value?.refresh()
 }
 
-/** 顶部身份条 / 工具条徽标的「查看智能体」：切到任务 Tab 并滚到智能体分区。 */
-const agentSectionEl = ref<HTMLElement | null>(null)
-
-function focusAgentSection() {
-  inspectorActiveTab.value = 'workspace'
-  void nextTick(() => agentSectionEl.value?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }))
-}
-
-defineExpose({ revealInFileTree, refreshFileTree, focusAgentSection })
+defineExpose({ revealInFileTree, refreshFileTree })
 
 function handleOpenGitDiff(file: GitChangedFile) {
   emit('open-git-diff', file, multiRepoMode.value ? selectedRepoPath.value : undefined)
