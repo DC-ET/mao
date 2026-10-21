@@ -10,7 +10,7 @@
           <div class="todo-progress-fill" :style="{ width: progressPercent + '%' }"></div>
         </div>
       </div>
-      <div class="todo-list">
+      <div ref="listEl" class="todo-list">
         <div
           v-for="item in todos"
           :key="item.id"
@@ -30,13 +30,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { Select } from '@element-plus/icons-vue'
 import type { TodoItem } from '../../types/chat'
 
 const props = defineProps<{
   todos?: TodoItem[]
 }>()
+
+const listEl = ref<HTMLElement | null>(null)
 
 const completedCount = computed(() =>
   props.todos?.filter(t => t.status === 'completed').length ?? 0
@@ -45,6 +47,40 @@ const completedCount = computed(() =>
 const progressPercent = computed(() =>
   props.todos?.length ? Math.round((completedCount.value / props.todos.length) * 100) : 0
 )
+
+/**
+ * 焦点项：进行中优先（历史脏数据可能残留多条，取最后一条即最新推进的），
+ * 否则最后一条已完成，都没有则取第一项。
+ */
+const focusIndex = computed(() => {
+  const list = props.todos ?? []
+  let focus = -1
+  for (let i = 0; i < list.length; i++) {
+    if (list[i].status === 'in_progress') focus = i
+  }
+  if (focus >= 0) return focus
+  for (let i = 0; i < list.length; i++) {
+    if (list[i].status === 'completed') focus = i
+  }
+  return focus >= 0 ? focus : 0
+})
+
+/**
+ * 让焦点项落在列表可视区内。列表超出 5 项后内部滚动，不跟随的话
+ * 当前推进的项会滑出视野；已在可视区内则不动，避免用户回看时被拽回来。
+ */
+function revealFocus() {
+  const el = listEl.value
+  const item = el?.querySelectorAll<HTMLElement>('.todo-item')[focusIndex.value]
+  if (!el || !item) return
+  const listRect = el.getBoundingClientRect()
+  const itemRect = item.getBoundingClientRect()
+  if (itemRect.top >= listRect.top && itemRect.bottom <= listRect.bottom) return
+  el.scrollTop += itemRect.top - listRect.top - (el.clientHeight - itemRect.height) / 2
+}
+
+watch(focusIndex, () => nextTick(revealFocus))
+onMounted(() => nextTick(revealFocus))
 </script>
 
 <style scoped>
@@ -88,6 +124,26 @@ const progressPercent = computed(() =>
   display: flex;
   flex-direction: column;
   gap: 6px;
+  /* 最多约 5 项（14px 字号 × 1.47 行高 + 上下 4px 内边距）：超出后列表内部滚动，
+     避免任务多时把右栏整体顶长、把边路任务/子代理挤到屏幕外 */
+  max-height: 172px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  padding-right: 2px;
+}
+
+.todo-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.todo-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.todo-list::-webkit-scrollbar-thumb {
+  background: var(--aw-hairline);
+  border-radius: 2px;
 }
 
 .todo-item {

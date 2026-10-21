@@ -174,7 +174,8 @@
 
       <div class="inspector-section">
         <h4 class="section-title">进度</h4>
-        <TodoChecklist :todos="todos" />
+        <!-- 按会话重建，切换任务 / 边路任务 / 子代理时重置列表滚动位置 -->
+        <TodoChecklist :key="sessionId" :todos="todos" />
       </div>
 
       <div class="inspector-section">
