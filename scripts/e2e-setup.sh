@@ -234,13 +234,22 @@ APP_GIT_CREDENTIAL_SECRET=$(openssl rand -base64 32 2>/dev/null || head -c 32 /d
 # 运行期目录全部指向 e2e 临时目录，严禁触及生产 /opt/mao-data：
 # runtimeDir 默认值是 /opt/mao-data/runtime，后端启动即跑一轮清理调度器，
 # 会删除生产会话的超龄 shell 输出与 skills 副本，必须重定向。
+# shareDir 默认值是 /opt/mao-data/share，后端启动即 mkdir（0.0.325 共享目录），
+# /opt 不可写的开发机上会 EACCES 退出，同样必须重定向。
 MAO_RUNTIME_DIR=$ROOT_DIR/backend-ts/.e2e-data/runtime
 MAO_USER_HOME_DIR=$ROOT_DIR/backend-ts/.e2e-data/users
 WORKSPACE_ROOT=$ROOT_DIR/backend-ts/.e2e-data/workspace
 FILE_UPLOAD_DIR=$ROOT_DIR/backend-ts/.e2e-data/uploads
+MAO_SHARE_DIR=$ROOT_DIR/backend-ts/.e2e-data/share
 EOF
 else
   echo "  已存在，保留"
+  # 老版本生成的 .env.e2e 缺 MAO_SHARE_DIR（0.0.325 新增）：补一行重定向，
+  # 否则默认 /opt/mao-data/share 在 /opt 不可写的开发机上启动即 EACCES
+  if ! grep -q "MAO_SHARE_DIR" "$ROOT_DIR/backend-ts/.env.e2e"; then
+    echo "MAO_SHARE_DIR=$ROOT_DIR/backend-ts/.e2e-data/share" >> "$ROOT_DIR/backend-ts/.env.e2e"
+    echo "  已补 MAO_SHARE_DIR 重定向"
+  fi
 fi
 
 # .env.e2e 必须不入 git

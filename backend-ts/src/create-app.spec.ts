@@ -66,6 +66,7 @@ describe('resolveShareDir', () => {
 
   it('expands ~ to the home directory', () => {
     expect(resolveShareDir('~/share')).toBe(join(process.env.HOME ?? '', 'share'));
+    expect(resolveShareDir('$HOME/share')).toBe(join(process.env.HOME ?? '', 'share'));
   });
 
   it('rejects empty and relative values that would silently resolve to cwd', () => {
@@ -74,6 +75,10 @@ describe('resolveShareDir', () => {
     // 防护又依赖 cwd 与 distDir 的相对布局——误配时整个后端工作树（含 .env 密钥）
     // 会被 ro 挂进所有用户容器，启动即拒
     for (const bad of ['', 'share', './share', 'relative/../share']) {
+      expect(() => resolveShareDir(bad), bad).toThrow(/must be a non-empty absolute path/);
+    }
+    // 裸 ~ / ~foo 不在 expandHome 展开范围（仅 ~/ 与 $HOME 前缀），同样拒绝
+    for (const bad of ['~', '~foo']) {
       expect(() => resolveShareDir(bad), bad).toThrow(/must be a non-empty absolute path/);
     }
   });
