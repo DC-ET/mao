@@ -1,13 +1,14 @@
 /**
- * 自定义 HTTP 工具域类型与常量（docs/plan/2026-10-19-custom-http-tools-technical-design.md §5.1）。
- * 定义态（用户 CRUD）在此；运行态装配见 harness/core/custom-http-tools-catalog.ts，
+ * 自定义 HTTP 工具域类型与常量（docs/plan/2026-10-21-custom-http-tools-agent-scoped-technical-design.md §5.1）。
+ * 定义态（管理员 CRUD）在此；运行态装配见 harness/core/custom-http-tools-catalog.ts，
  * 执行内核见 harness/tool/impl/http-api-executor.ts。
+ * 归属模型：管理员配置 + 按 Agent 关联（agent.http_tool_ids），无属主列。
  */
 
 /** 工具名 slug：小写字母开头，小写字母/数字/下划线，总长 ≤64。 */
-export const USER_TOOL_NAME_RE = /^[a-z][a-z0-9_]{0,63}$/;
+export const HTTP_TOOL_NAME_RE = /^[a-z][a-z0-9_]{0,63}$/;
 /** 参数名 slug：http_call arguments 的键，允许大写开头（camelCase 友好）。 */
-export const USER_TOOL_PARAM_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_]{0,63}$/;
+export const HTTP_TOOL_PARAM_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_]{0,63}$/;
 
 export const HTTP_METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'] as const;
 export type HttpMethod = (typeof HTTP_METHODS)[number];
@@ -15,8 +16,6 @@ export type HttpMethod = (typeof HTTP_METHODS)[number];
 /** 只读预推断方法：GET/HEAD 新建时 read_only 默认 1，其余默认 0。 */
 const READ_ONLY_METHODS = new Set<string>(['GET', 'HEAD']);
 
-/** 单用户启用上限默认值（系统设置 tools.http.maxEnabledPerUser 可配）。 */
-export const MAX_ENABLED_DEFAULT = 20;
 /** 响应截断字节数（64KB，读满即断，对齐 open_web_page 截断范式）。 */
 export const RESPONSE_MAX_BYTES = 64 * 1024;
 /** http_call 入参 arguments JSON 大小上限（64KB，防模型灌入超大对象）。 */
@@ -41,12 +40,10 @@ export const MAX_HEADERS_PER_TOOL = 20;
 
 /**
  * 工具名排序比较器（JS code-unit 序，非数据库 collation 序）。
- * 目录截断（harness/core/custom-http-tools-catalog.ts）与可调用名次
- * （user-tool.service.ts findCallableEnabled）共用同一比较器：两侧必须同序，
- * 否则「目录里看得见却调不动 / 目录外看不见却调得通」的分歧会随上限边界出现
- * （MySQL utf8mb4_0900_ai_ci 把 `_` 排在数字前，与 JS 序相反）。
+ * 目录排序（harness/core/custom-http-tools-catalog.ts）使用：MySQL utf8mb4_0900_ai_ci
+ * 把 `_` 排在数字前，与 JS 序相反，目录排序必须在 JS 侧做（防抖动）。
  */
-export function compareUserToolName(a: string, b: string): number {
+export function compareHttpToolName(a: string, b: string): number {
   return a === b ? 0 : a < b ? -1 : 1;
 }
 export const HEADER_KEY_MAX_CHARS = 64;
@@ -54,18 +51,17 @@ export const HEADER_VALUE_MAX_CHARS = 4096;
 /** body 模板长度上限（纯文本替换模板，非递归）。 */
 export const BODY_TEMPLATE_MAX_CHARS = 64 * 1024;
 
-/** 工具自身两个入口名（保留字，用户 slug 不得占用）。 */
+/** 工具自身两个入口名（保留字，slug 不得占用）。 */
 export const HTTP_TOOL_NAMES = ['http_describe', 'http_call'] as const;
 /** MCP 全量模式命名空间（保留字前缀）。 */
 export const MCP_TOOL_NAMESPACE_PREFIX = 'mcp__';
 
-export const USER_TOOL_PARAM_TYPES = ['string', 'number', 'boolean'] as const;
-export type UserToolParamType = (typeof USER_TOOL_PARAM_TYPES)[number];
+export const HTTP_TOOL_PARAM_TYPES = ['string', 'number', 'boolean'] as const;
+export type HttpToolParamType = (typeof HTTP_TOOL_PARAM_TYPES)[number];
 
-export interface UserTool {
+export interface HttpTool {
   id?: number;
-  userId: number;
-  /** slug：调用与目录分节使用的唯一标识（属主内唯一）。 */
+  /** slug：调用与目录分节使用的唯一标识（全局唯一）。 */
   name: string;
   displayName: string;
   description: string;
@@ -81,7 +77,7 @@ export interface UserTool {
   updatedAt?: string | null;
 }
 
-export interface UserToolParam {
+export interface HttpToolParam {
   id?: number;
   toolId: number;
   name: string;
@@ -92,19 +88,19 @@ export interface UserToolParam {
   sortOrder: number;
 }
 
-export interface UserToolWithParams {
-  tool: UserTool;
-  params: UserToolParam[];
+export interface HttpToolWithParams {
+  tool: HttpTool;
+  params: HttpToolParam[];
 }
 
 /** 列表 / 编辑回显 VO：请求头敏感值打码，不出密文。 */
-export interface UserToolHeaderVO {
+export interface HttpToolHeaderVO {
   key: string;
   value: string;
   sensitive: boolean;
 }
 
-export interface UserToolParamVO {
+export interface HttpToolParamVO {
   id?: number;
   name: string;
   label: string;
@@ -114,25 +110,25 @@ export interface UserToolParamVO {
   sortOrder: number;
 }
 
-export interface UserToolVO {
+export interface HttpToolVO {
   id?: number;
   name: string;
   displayName: string;
   description: string;
   method: string;
   url: string;
-  headers: UserToolHeaderVO[];
+  headers: HttpToolHeaderVO[];
   bodyTemplate: string | null;
   readOnly: boolean;
   timeoutMs: number;
   enabled: boolean;
-  params: UserToolParamVO[];
+  params: HttpToolParamVO[];
   createdAt?: string | null;
   updatedAt?: string | null;
 }
 
 /** 新建 / 编辑入参（路由 → service）。headers 为完整替换语义；敏感值传掩码视为不修改。 */
-export interface UserToolParamInput {
+export interface HttpToolParamInput {
   name: string;
   label: string;
   type?: string;
@@ -140,7 +136,7 @@ export interface UserToolParamInput {
   defaultValue?: string | null;
 }
 
-export interface UserToolDraft {
+export interface HttpToolDraft {
   name: string;
   displayName: string;
   description: string;
@@ -151,11 +147,11 @@ export interface UserToolDraft {
   readOnly?: boolean;
   timeoutMs?: number;
   enabled?: boolean;
-  params?: UserToolParamInput[];
+  params?: HttpToolParamInput[];
 }
 
 /** 试运行入参：完整草稿 + 本次 arguments（不落库）。 */
-export interface UserToolTestDraft extends UserToolDraft {
+export interface HttpToolTestDraft extends HttpToolDraft {
   arguments?: unknown;
 }
 
@@ -172,57 +168,55 @@ export interface ResolvedHttpTool {
 
 export interface ResolvedHttpToolExecution {
   tool: ResolvedHttpTool;
-  params: UserToolParam[];
+  params: HttpToolParam[];
 }
 
-export interface UserToolRepository {
-  listByUserId(userId: number): Promise<UserTool[]>;
-  listEnabledByUserId(userId: number): Promise<UserTool[]>;
-  findById(id: number): Promise<UserTool | null>;
-  findByIdAndUserId(id: number, userId: number): Promise<UserTool | null>;
-  findByUserIdAndName(userId: number, name: string): Promise<UserTool | null>;
-  countEnabledByUserId(userId: number): Promise<number>;
-  listParamsByToolId(toolId: number): Promise<UserToolParam[]>;
-  insert(tool: UserTool): Promise<number>;
-  updateById(tool: UserTool): Promise<void>;
+export interface HttpToolRepository {
+  /** 按 id 集合取启用工具（Agent 装配用；空集合由调用方短路，不进 SQL）。 */
+  listEnabledByIds(ids: number[]): Promise<HttpTool[]>;
+  findById(id: number): Promise<HttpTool | null>;
+  findByName(name: string): Promise<HttpTool | null>;
+  listParamsByToolId(toolId: number): Promise<HttpToolParam[]>;
+  insert(tool: HttpTool): Promise<number>;
+  updateById(tool: HttpTool): Promise<void>;
   deleteById(id: number): Promise<void>;
-  insertParam(param: UserToolParam): Promise<number>;
+  insertParam(param: HttpToolParam): Promise<number>;
   deleteParamsByToolId(toolId: number): Promise<void>;
   /** 事务内执行（建/改/删跨两表，任一失败整体回滚）。 */
-  transaction<T>(fn: (repo: UserToolRepository) => Promise<T>): Promise<T>;
-}
-
-/** 管理侧清单行（带属主展示名）。 */
-export interface AdminUserToolRow extends UserTool {
-  username: string | null;
-  userDisplayName: string | null;
-}
-
-export interface AdminUserToolQuery {
-  keyword?: string | null;
-  username?: string | null;
-  enabled?: boolean | null;
-}
-
-export interface AdminUserToolRepository {
+  transaction<T>(fn: (repo: HttpToolRepository) => Promise<T>): Promise<T>;
+  /** 管理侧清单：keyword 匹配工具名/展示名，enabled 过滤启用态（无属主维度）。 */
   listForAdmin(
     page: number,
     size: number,
-    query: AdminUserToolQuery,
-  ): Promise<{ rows: AdminUserToolRow[]; total: number }>;
+    query: AdminHttpToolQuery,
+  ): Promise<{ rows: AdminHttpToolRow[]; total: number }>;
+  /** 启用工具轻量列表（Agent 表单下拉用）。 */
+  listEnabledBrief(): Promise<Array<Pick<HttpTool, 'id' | 'name' | 'displayName' | 'method' | 'readOnly'>>>;
 }
 
-/** 系统设置端口（user-tool 域不直接依赖 settings 域实现）。 */
-export interface UserToolSettingsPort {
-  getMaxEnabledPerUser(): Promise<number>;
+/** 管理侧清单行（无属主维度）。 */
+export type AdminHttpToolRow = HttpTool;
+
+export interface AdminHttpToolQuery {
+  keyword?: string | null;
+  enabled?: boolean | null;
+}
+
+/** 系统设置端口（http-tool 域不直接依赖 settings 域实现）。 */
+export interface HttpToolSettingsPort {
   getPrivateAllowlistCidrs(): Promise<string[]>;
+}
+
+/** Agent 关联校验端口（HttpToolValidatorImpl 满足；由 agent.routes 注入使用）。 */
+export interface HttpToolValidator {
+  validateForAgent(ids: number[]): Promise<number[]>;
 }
 
 /** 内置工具名提供者（保留字校验用；由 ToolRegistry 装配层注入，避免循环依赖）。 */
 export type BuiltinToolNamesProvider = () => string[];
 
 /** 请求头加解密（敏感值 AES-GCM，对齐 MCP env / 哨兵凭据口径）。 */
-export interface UserToolSecretCipher {
+export interface HttpToolSecretCipher {
   encrypt(plaintext: string): string;
   decrypt(ciphertext: string): string;
 }
@@ -254,4 +248,21 @@ export function isReservedToolName(name: string, builtinNames: readonly string[]
   if (name.startsWith(MCP_TOOL_NAMESPACE_PREFIX)) return true;
   if ((HTTP_TOOL_NAMES as readonly string[]).includes(name)) return true;
   return builtinNames.includes(name);
+}
+
+/**
+ * 解析 Agent 关联的工具 id 列表（agent.http_tool_ids，JSON 数组）。
+ * 空 / 缺失 / 非法 JSON → 空数组；过滤非正整数 id（防脏数据进 SQL IN）。
+ * 镜像 mcp-sync-service 的 parseAgentServerIds 口径。
+ */
+export function parseHttpToolIds(agent: { httpToolIds?: string | null } | null | undefined): number[] {
+  const raw = agent?.httpToolIds;
+  if (raw == null || raw.trim() === '') return [];
+  try {
+    const ids = JSON.parse(raw) as unknown;
+    if (!Array.isArray(ids)) return [];
+    return ids.filter((id): id is number => Number.isInteger(id) && (id as number) > 0);
+  } catch {
+    return [];
+  }
 }

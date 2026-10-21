@@ -11,6 +11,8 @@ export interface Agent {
   configJson?: string | null;
   skillNames?: string | null;
   mcpServerIds?: string | null;
+  /** 关联的自定义 HTTP 工具 ID 列表（JSON 数组字符串），为空表示不启用 */
+  httpToolIds?: string | null;
   defaultModelId?: number | null;
   isDefault?: number | null;
   /** 1-启用 0-停用；缺省视为启用 */

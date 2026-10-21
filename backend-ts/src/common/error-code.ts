@@ -71,10 +71,9 @@ export const ErrorCode = {
   ENV_VARIABLE_KEY_RESERVED: { code: 3050, message: '该变量名为平台保留变量，不允许配置' },
 
   /** 自定义 HTTP 工具：不存在 / 属主不符 / 重名 / 保留字 / 启用数超上限。 */
-  USER_TOOL_NOT_FOUND: { code: 3051, message: '自定义工具不存在' },
-  USER_TOOL_NAME_DUPLICATE: { code: 3052, message: '同名工具已存在' },
-  USER_TOOL_NAME_RESERVED: { code: 3053, message: '工具名与内置工具冲突或含保留前缀' },
-  USER_TOOL_ENABLED_LIMIT_EXCEEDED: { code: 3054, message: '启用的自定义工具数已达上限' },
+  HTTP_TOOL_NOT_FOUND: { code: 3051, message: '自定义工具不存在' },
+  HTTP_TOOL_NAME_DUPLICATE: { code: 3052, message: '同名工具已存在' },
+  HTTP_TOOL_NAME_RESERVED: { code: 3053, message: '工具名与内置工具冲突或含保留前缀' },
 
   /** 用量预算 BLOCK 超线：message 动态携带 scope/当期消耗/上限（技术方案 §5.7）。 */
   BUDGET_EXCEEDED: { code: 3041, message: '用量预算已超限' },

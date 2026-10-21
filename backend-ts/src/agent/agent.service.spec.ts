@@ -49,16 +49,16 @@ describe('AgentService', () => {
 
   it('persists, preserves and clears avatarUrl; rejects unsafe values before writes', async () => {
     const avatarUrl = '/uploads/12345678-1234-1234-1234-123456789abc.png';
-    const created = await service.createAgent(7, 'A', null, 'p', null, null, null, null, 0, null, avatarUrl);
+    const created = await service.createAgent(7, 'A', null, 'p', null, null, null, null, null, 0, null, avatarUrl);
     expect(created.avatarUrl).toBe(avatarUrl);
     expect(agentRepo.insert).toHaveBeenCalledWith(expect.objectContaining({ avatarUrl }));
     vi.mocked(agentRepo.findById).mockResolvedValue(created);
-    expect((await service.updateAgent(7, 1, null, null, null, null, null, null, null, null, undefined)).avatarUrl).toBe(avatarUrl);
-    expect((await service.updateAgent(7, 1, null, null, null, null, null, null, null, null, undefined, null)).avatarUrl).toBeNull();
-    expect((await service.updateAgent(7, 1, null, null, null, null, null, null, null, null, undefined, avatarUrl)).avatarUrl).toBe(avatarUrl);
+    expect((await service.updateAgent(7, 1, null, null, null, null, null, null, null, null, null, undefined)).avatarUrl).toBe(avatarUrl);
+    expect((await service.updateAgent(7, 1, null, null, null, null, null, null, null, null, null, undefined, null)).avatarUrl).toBeNull();
+    expect((await service.updateAgent(7, 1, null, null, null, null, null, null, null, null, null, undefined, avatarUrl)).avatarUrl).toBe(avatarUrl);
     vi.clearAllMocks();
-    await expect(service.createAgent(7, 'A', null, 'p', null, null, null, null, 1, null, 'javascript:alert(1)')).rejects.toThrow();
-    await expect(service.updateAgent(7, 1, null, null, null, null, null, null, null, null, undefined, 'https://evil/a.svg')).rejects.toThrow();
+    await expect(service.createAgent(7, 'A', null, 'p', null, null, null, null, null, 1, null, 'javascript:alert(1)')).rejects.toThrow();
+    await expect(service.updateAgent(7, 1, null, null, null, null, null, null, null, null, null, undefined, 'https://evil/a.svg')).rejects.toThrow();
     expect(agentRepo.insert).not.toHaveBeenCalled();
     expect(agentRepo.updateById).not.toHaveBeenCalled();
     expect(agentRepo.clearDefaultFlag).not.toHaveBeenCalled();
@@ -81,6 +81,7 @@ describe('AgentService', () => {
       'prompt',
       ['skill-a'],
       [10, 20],
+      null,
       experiences,
       null,
       1,
@@ -102,6 +103,7 @@ describe('AgentService', () => {
       'new prompt',
       [],
       [],
+      null,
       experiences,
       null,
       0,
@@ -143,7 +145,7 @@ describe('AgentService', () => {
 
   it('marks an omitted prompt as not written', async () => {
     vi.mocked(agentRepo.findById).mockResolvedValue(agent(1, 'a', 0));
-    await service.updateAgent(7, 1, 'renamed', null, undefined, null, null, null, null, null, undefined);
+    await service.updateAgent(7, 1, 'renamed', null, undefined, null, null, null, null, null, null, undefined);
     expect(agentRepo.updateById).toHaveBeenCalledWith(expect.objectContaining({ name: 'renamed' }), 7, false);
   });
 
@@ -168,7 +170,7 @@ describe('AgentService', () => {
   it('updateRejectsMakingDisabledAgentDefault', async () => {
     vi.mocked(agentRepo.findById).mockResolvedValue({ ...agent(2, 'coder', 0), enabled: 0 });
     await expect(
-      service.updateAgent(7, 2, null, null, null, null, null, null, null, 1, undefined),
+      service.updateAgent(7, 2, null, null, null, null, null, null, null, null, 1, undefined),
     ).rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
     expect(agentRepo.clearDefaultFlag).not.toHaveBeenCalled();
   });
@@ -200,19 +202,19 @@ describe('AgentService', () => {
 
     it('createRejectsMissingOrDisabledModel', async () => {
       await expect(
-        serviceWithLookup.createAgent(7, 'a', null, 'p', null, null, null, null, 0, 404),
+        serviceWithLookup.createAgent(7, 'a', null, 'p', null, null, null, null, null, 0, 404),
       ).rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
       await expect(
-        serviceWithLookup.createAgent(7, 'a', null, 'p', null, null, null, null, 0, 8),
+        serviceWithLookup.createAgent(7, 'a', null, 'p', null, null, null, null, null, 0, 8),
       ).rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
       expect(agentRepo.insert).not.toHaveBeenCalled();
     });
 
     it('createAcceptsEnabledModelAndNullClearsOnUpdate', async () => {
-      const created = await serviceWithLookup.createAgent(7, 'a', null, 'p', null, null, null, null, 0, 7);
+      const created = await serviceWithLookup.createAgent(7, 'a', null, 'p', null, null, null, null, null, 0, 7);
       expect(created.defaultModelId).toBe(7);
 
-      await serviceWithLookup.updateAgent(7, 1, null, null, null, null, null, null, null, null, null);
+      await serviceWithLookup.updateAgent(7, 1, null, null, null, null, null, null, null, null, null, null);
       const updated = vi.mocked(agentRepo.updateById).mock.calls.at(-1)![0] as Agent;
       expect(updated.defaultModelId).toBeNull();
     });
@@ -223,12 +225,12 @@ describe('AgentService', () => {
       vi.mocked(agentRepo.findById).mockResolvedValue(existing);
 
       // undefined：不改动
-      await serviceWithLookup.updateAgent(7, 1, 'renamed', null, null, null, null, null, null, undefined);
+      await serviceWithLookup.updateAgent(7, 1, 'renamed', null, null, null, null, null, null, null, undefined);
       expect(existing.defaultModelId).toBe(7);
 
       // 非法值：报错且不落库
       await expect(
-        serviceWithLookup.updateAgent(7, 1, null, null, null, null, null, null, null, null, 404),
+        serviceWithLookup.updateAgent(7, 1, null, null, null, null, null, null, null, null, null, 404),
       ).rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
       expect(agentRepo.updateById).toHaveBeenCalledTimes(1);
     });
@@ -250,16 +252,16 @@ describe('AgentService', () => {
     });
 
     it('defaults new agents to visible and persists hidden when requested', async () => {
-      const visible = await service.createAgent(7, 'a', null, 'p', null, null, null, null, 0, null);
+      const visible = await service.createAgent(7, 'a', null, 'p', null, null, null, null, null, 0, null);
       expect(visible.clientVisible).toBe(1);
-      const hidden = await service.createAgent(7, 'b', null, 'p', null, null, null, null, 0, null, null, false);
+      const hidden = await service.createAgent(7, 'b', null, 'p', null, null, null, null, null, 0, null, null, false);
       expect(hidden.clientVisible).toBe(0);
     });
 
     it('rejects hiding the default agent', async () => {
       vi.mocked(agentRepo.findById).mockResolvedValue({ ...agent(1, 'd', 1), clientVisible: 1 });
       await expect(
-        service.updateAgent(7, 1, null, null, null, null, null, null, null, null, undefined, undefined, false),
+        service.updateAgent(7, 1, null, null, null, null, null, null, null, null, null, undefined, undefined, false),
       ).rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
       expect(agentRepo.updateById).not.toHaveBeenCalled();
     });
@@ -267,17 +269,17 @@ describe('AgentService', () => {
     it('rejects making a hidden agent default', async () => {
       vi.mocked(agentRepo.findById).mockResolvedValue({ ...agent(1, 'd', 0), clientVisible: 0 });
       await expect(
-        service.updateAgent(7, 1, null, null, null, null, null, null, null, 1, undefined),
+        service.updateAgent(7, 1, null, null, null, null, null, null, null, null, 1, undefined),
       ).rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
       expect(agentRepo.clearDefaultFlag).not.toHaveBeenCalled();
     });
 
     it('keeps visibility when omitted and persists explicit values', async () => {
       vi.mocked(agentRepo.findById).mockResolvedValue({ ...agent(1, 'a', 0), clientVisible: 0 });
-      const updated = await service.updateAgent(7, 1, 'renamed', null, null, null, null, null, null, null, undefined);
+      const updated = await service.updateAgent(7, 1, 'renamed', null, null, null, null, null, null, null, null, undefined);
       expect(updated.clientVisible).toBe(0);
 
-      await service.updateAgent(7, 1, null, null, null, null, null, null, null, null, undefined, undefined, true);
+      await service.updateAgent(7, 1, null, null, null, null, null, null, null, null, null, undefined, undefined, true);
       expect(agentRepo.updateById.mock.calls.at(-1)![0]).toMatchObject({ clientVisible: 1 });
     });
   });

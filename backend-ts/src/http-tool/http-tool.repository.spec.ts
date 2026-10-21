@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { MysqlUserToolRepository } from './user-tool.repository.js';
+import { MysqlHttpToolRepository } from './http-tool.repository.js';
 import { toSnakeRow } from '../common/case.js';
 import type { Db } from '../db/db.js';
-import type { UserTool, UserToolParam } from './types.js';
+import type { HttpTool, HttpToolParam } from './types.js';
 
 /**
  * 仓库层回归（曾因 DELETE 走 db.query 触发 rows.map is not a function 的 500）：
@@ -47,10 +47,9 @@ function makeDb(options: {
   return db;
 }
 
-function row(overrides: Partial<UserTool> = {}): UserTool {
+function row(overrides: Partial<HttpTool> = {}): HttpTool {
   return {
     id: 3,
-    userId: 9,
     name: 'weather',
     displayName: '天气查询',
     description: '查天气',
@@ -67,35 +66,35 @@ function row(overrides: Partial<UserTool> = {}): UserTool {
   };
 }
 
-function paramRow(overrides: Partial<UserToolParam> = {}): UserToolParam {
+function paramRow(overrides: Partial<HttpToolParam> = {}): HttpToolParam {
   return { id: 1, toolId: 3, name: 'city', label: '城市', type: 'string', required: 1, defaultValue: null, sortOrder: 0, ...overrides };
 }
 
-describe('MysqlUserToolRepository write statements', () => {
+describe('MysqlHttpToolRepository write statements', () => {
   it('deletes params and the row through execute (not query)', async () => {
     const db = makeDb();
-    const repo = new MysqlUserToolRepository(db as unknown as Db);
+    const repo = new MysqlHttpToolRepository(db as unknown as Db);
     await repo.deleteById(3);
     const sqls = db.calls.map((call) => call.sql);
-    expect(sqls).toContain('DELETE FROM user_tool_param WHERE tool_id = ?');
-    expect(sqls).toContain('DELETE FROM user_tool WHERE id = ?');
+    expect(sqls).toContain('DELETE FROM http_tool_param WHERE tool_id = ?');
+    expect(sqls).toContain('DELETE FROM http_tool WHERE id = ?');
     // 参数行先删、主行后删（外键无约束，顺序仅保证语义清晰）
     expect(db.calls.map((call) => call.kind)).toEqual(['execute', 'execute']);
   });
 
   it('deleteParamsByToolId uses execute so the update path does not 500', async () => {
     const db = makeDb();
-    const repo = new MysqlUserToolRepository(db as unknown as Db);
+    const repo = new MysqlHttpToolRepository(db as unknown as Db);
     await repo.deleteParamsByToolId(3);
-    expect(db.calls).toEqual([{ kind: 'execute', sql: 'DELETE FROM user_tool_param WHERE tool_id = ?', params: [3] }]);
+    expect(db.calls).toEqual([{ kind: 'execute', sql: 'DELETE FROM http_tool_param WHERE tool_id = ?', params: [3] }]);
   });
 
   it('insert maps camelCase fields to snake_case columns', async () => {
     const db = makeDb();
-    const repo = new MysqlUserToolRepository(db as unknown as Db);
+    const repo = new MysqlHttpToolRepository(db as unknown as Db);
     const id = await repo.insert(row());
     expect(id).toBe(7);
-    const insertCall = db.calls.find((call) => call.sql.startsWith('INSERT INTO user_tool'));
+    const insertCall = db.calls.find((call) => call.sql.startsWith('INSERT INTO http_tool'));
     expect(insertCall).toBeDefined();
     const data = insertCall!.params[0] as Record<string, unknown>;
     expect(Object.keys(data)).toContain('display_name');
@@ -108,9 +107,9 @@ describe('MysqlUserToolRepository write statements', () => {
 
   it('insertParam maps toolId / sortOrder to snake_case columns', async () => {
     const db = makeDb();
-    const repo = new MysqlUserToolRepository(db as unknown as Db);
+    const repo = new MysqlHttpToolRepository(db as unknown as Db);
     await repo.insertParam(paramRow());
-    const insertCall = db.calls.find((call) => call.sql.startsWith('INSERT INTO user_tool_param'));
+    const insertCall = db.calls.find((call) => call.sql.startsWith('INSERT INTO http_tool_param'));
     const data = insertCall!.params[0] as Record<string, unknown>;
     expect(Object.keys(data)).toEqual(expect.arrayContaining(['tool_id', 'sort_order', 'default_value']));
     expect(Object.keys(data)).not.toContain('toolId');
@@ -118,9 +117,9 @@ describe('MysqlUserToolRepository write statements', () => {
 
   it('updateById writes the full mutable column set', async () => {
     const db = makeDb();
-    const repo = new MysqlUserToolRepository(db as unknown as Db);
+    const repo = new MysqlHttpToolRepository(db as unknown as Db);
     await repo.updateById(row({ displayName: '新名字' }));
-    const updateCall = db.calls.find((call) => call.sql.startsWith('UPDATE user_tool'));
+    const updateCall = db.calls.find((call) => call.sql.startsWith('UPDATE http_tool'));
     const data = updateCall!.params[0] as Record<string, unknown>;
     expect(data.display_name).toBe('新名字');
     expect(data.headers_json).toBeNull();
@@ -128,60 +127,59 @@ describe('MysqlUserToolRepository write statements', () => {
   });
 });
 
-describe('MysqlUserToolRepository read statements', () => {
-  it('lists by user ordered by name and filters enabled tools', async () => {
+describe('MysqlHttpToolRepository read statements', () => {
+  it('lists enabled tools by id set ordered by name', async () => {
     const db = makeDb({ rows: [row()] });
-    const repo = new MysqlUserToolRepository(db as unknown as Db);
-    const all = await repo.listByUserId(9);
-    const enabled = await repo.listEnabledByUserId(9);
-    expect(all).toHaveLength(1);
-    expect(enabled).toHaveLength(1);
+    const repo = new MysqlHttpToolRepository(db as unknown as Db);
+    const list = await repo.listEnabledByIds([3, 4]);
+    expect(list).toHaveLength(1);
+    expect(db.calls[0]!.sql).toContain('enabled = 1');
+    expect(db.calls[0]!.sql).toContain('id IN (?,?)');
     expect(db.calls[0]!.sql).toContain('ORDER BY name ASC');
-    expect(db.calls[0]!.sql).not.toContain('enabled = 1');
-    expect(db.calls[1]!.sql).toContain('enabled = 1');
-    expect(db.calls[1]!.params).toEqual([9]);
+    expect(db.calls[0]!.params).toEqual([3, 4]);
   });
 
-  it('scopes lookups by owner for update / delete / duplicate checks', async () => {
+  it('looks up by id and by globally unique name', async () => {
     const db = makeDb({ one: row() });
-    const repo = new MysqlUserToolRepository(db as unknown as Db);
-    await repo.findByIdAndUserId(3, 9);
-    await repo.findByUserIdAndName(9, 'weather');
-    await repo.countEnabledByUserId(9);
-    expect(db.calls[0]!.sql).toContain('user_id = ?');
-    expect(db.calls[1]!.params).toEqual([9, 'weather']);
-    expect(db.calls[2]!.sql).toContain('COUNT(*)');
+    const repo = new MysqlHttpToolRepository(db as unknown as Db);
+    await repo.findById(3);
+    await repo.findByName('weather');
+    expect(db.calls[0]!.sql).toContain('WHERE id = ?');
+    expect(db.calls[1]!.sql).toContain('WHERE name = ?');
+    expect(db.calls[1]!.params).toEqual(['weather']);
   });
 
   it('orders params by sort_order then id', async () => {
     const db = makeDb({ rows: [paramRow()] });
-    const repo = new MysqlUserToolRepository(db as unknown as Db);
+    const repo = new MysqlHttpToolRepository(db as unknown as Db);
     await repo.listParamsByToolId(3);
     expect(db.calls[0]!.sql).toContain('ORDER BY sort_order ASC, id ASC');
     expect(db.calls[0]!.params).toEqual([3]);
   });
 
-  it('counts enabled tools as a number even when the driver returns a string', async () => {
-    const db = makeDb({ one: { c: '4' } });
-    const repo = new MysqlUserToolRepository(db as unknown as Db);
-    expect(await repo.countEnabledByUserId(9)).toBe(4);
+  it('lists enabled brief rows for the agent form select', async () => {
+    const db = makeDb({ rows: [row()] });
+    const repo = new MysqlHttpToolRepository(db as unknown as Db);
+    await repo.listEnabledBrief();
+    expect(db.calls[0]!.sql).toContain('WHERE enabled = 1');
+    expect(db.calls[0]!.sql).toContain('ORDER BY name ASC');
   });
 });
 
-describe('MysqlUserToolRepository admin listing', () => {
-  it('escapes LIKE wildcards in keyword and username filters', async () => {
+describe('MysqlHttpToolRepository admin listing', () => {
+  it('escapes LIKE wildcards in keyword filter', async () => {
     const db = makeDb({ rows: [], one: { c: 0 } });
-    const repo = new MysqlUserToolRepository(db as unknown as Db);
-    await repo.listForAdmin(2, 50, { keyword: '100%_x', username: 'ad\\min' });
+    const repo = new MysqlHttpToolRepository(db as unknown as Db);
+    await repo.listForAdmin(2, 50, { keyword: '100%_x' });
     const countSql = db.calls[0]!.sql;
-    expect(countSql).toContain('t.name LIKE ?');
-    expect(countSql).toContain('u.username LIKE ?');
-    expect(db.calls[0]!.params).toEqual(['%100\\%\\_x%', '%100\\%\\_x%', '%ad\\\\min%', '%ad\\\\min%']);
+    expect(countSql).toContain('name LIKE ?');
+    expect(countSql).toContain('display_name LIKE ?');
+    expect(db.calls[0]!.params).toEqual(['%100\\%\\_x%', '%100\\%\\_x%']);
   });
 
   it('applies LIMIT / OFFSET from page and size', async () => {
     const db = makeDb({ rows: [], one: { c: 0 } });
-    const repo = new MysqlUserToolRepository(db as unknown as Db);
+    const repo = new MysqlHttpToolRepository(db as unknown as Db);
     await repo.listForAdmin(3, 20, {});
     const listCall = db.calls[1]!;
     expect(listCall.sql).toContain('LIMIT ? OFFSET ?');
@@ -190,15 +188,15 @@ describe('MysqlUserToolRepository admin listing', () => {
 
   it('filters by enabled state with a boolean flag', async () => {
     const db = makeDb({ rows: [], one: { c: 0 } });
-    const repo = new MysqlUserToolRepository(db as unknown as Db);
+    const repo = new MysqlHttpToolRepository(db as unknown as Db);
     await repo.listForAdmin(1, 20, { enabled: false });
-    expect(db.calls[0]!.sql).toContain('t.enabled = ?');
+    expect(db.calls[0]!.sql).toContain('enabled = ?');
     expect(db.calls[0]!.params).toContain(0);
   });
 
   it('omits the WHERE clause when no filter is given', async () => {
     const db = makeDb({ rows: [], one: { c: 0 } });
-    const repo = new MysqlUserToolRepository(db as unknown as Db);
+    const repo = new MysqlHttpToolRepository(db as unknown as Db);
     const result = await repo.listForAdmin(1, 20, {});
     expect(db.calls[0]!.sql).not.toContain('WHERE');
     expect(result).toEqual({ rows: [], total: 0 });
@@ -206,7 +204,7 @@ describe('MysqlUserToolRepository admin listing', () => {
 
   it('returns total as a number', async () => {
     const db = makeDb({ rows: [], one: { c: '12' } });
-    const repo = new MysqlUserToolRepository(db as unknown as Db);
+    const repo = new MysqlHttpToolRepository(db as unknown as Db);
     const result = await repo.listForAdmin(1, 20, {});
     expect(result.total).toBe(12);
   });

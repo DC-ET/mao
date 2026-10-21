@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { HttpApiExecutor, validateArguments } from './http-api-executor.js';
-import type { ResolvedHttpTool, UserToolParam } from '../../../user-tool/types.js';
+import type { ResolvedHttpTool, HttpToolParam } from '../../../http-tool/types.js';
 
 function tool(overrides: Partial<ResolvedHttpTool> = {}): ResolvedHttpTool {
   return {
@@ -15,7 +15,7 @@ function tool(overrides: Partial<ResolvedHttpTool> = {}): ResolvedHttpTool {
   };
 }
 
-function param(overrides: Partial<UserToolParam> = {}): UserToolParam {
+function param(overrides: Partial<HttpToolParam> = {}): HttpToolParam {
   return { toolId: 1, name: 'city', label: '城市', type: 'string', required: 1, defaultValue: null, sortOrder: 0, ...overrides };
 }
 

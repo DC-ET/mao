@@ -5,6 +5,7 @@ import { hasText } from '../common/case.js';
 import { requirePermission, requireUserId, sendOk } from '../common/http-error.js';
 import { bodyOf, pathId, queryOptBool, queryOptStr } from '../common/request.js';
 import type { UserRepository } from '../user/types.js';
+import type { HttpToolValidator } from '../http-tool/types.js';
 import { experienceInputOf } from './agent-experience.service.js';
 import type { AgentExperienceService } from './agent-experience.service.js';
 import { suggestedQuestionInputOf } from './agent-suggested-question.service.js';
@@ -28,6 +29,7 @@ export interface AgentRouteDeps {
   suggestedQuestionService: AgentSuggestedQuestionService;
   userRepo: UserRepository;
   mcpServerValidator: McpServerValidator;
+  httpToolValidator: HttpToolValidator;
   permissionService: { hasPermission(userId: number, code: string): Promise<boolean> };
 }
 
@@ -38,6 +40,7 @@ interface CreateAgentRequest {
   systemPrompt?: string;
   skillNames?: string[];
   mcpServerIds?: number[];
+  httpToolIds?: number[];
   experiences?: ExperienceVO[];
   suggestedQuestions?: SuggestedQuestionVO[];
   isDefault?: number | null;
@@ -52,6 +55,7 @@ interface UpdateAgentRequest {
   systemPrompt?: string | null;
   skillNames?: string[] | null;
   mcpServerIds?: number[] | null;
+  httpToolIds?: number[] | null;
   experiences?: ExperienceVO[] | null;
   suggestedQuestions?: SuggestedQuestionVO[] | null;
   isDefault?: number | null;
@@ -66,7 +70,7 @@ interface ExperienceRequest {
 }
 
 export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps): void {
-  const { agentService, experienceService, userRepo, mcpServerValidator, permissionService } = deps;
+  const { agentService, experienceService, userRepo, mcpServerValidator, httpToolValidator, permissionService } = deps;
 
   async function requireAgentWrite(request: Parameters<typeof requireUserId>[0]): Promise<number> {
     const userId = requireUserId(request);
@@ -107,6 +111,7 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
       throw new BusinessException(ErrorCode.PARAM_INVALID, '角色定义不能为空');
     }
     const mcpServerIds = await resolveMcpServerIds(mcpServerValidator, body.mcpServerIds);
+    const httpToolIds = await resolveHttpToolIds(httpToolValidator, body.httpToolIds);
     const agent = await agentService.createAgent(
       userId,
       body.name!,
@@ -114,6 +119,7 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
       body.systemPrompt!,
       body.skillNames,
       mcpServerIds,
+      httpToolIds,
       toExperienceInputs(body.experiences),
       toSuggestedQuestionInputs(body.suggestedQuestions),
       body.isDefault,
@@ -128,6 +134,7 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
     const userId = await requireAgentWrite(request);
     const body = bodyOf<UpdateAgentRequest>(request);
     const mcpServerIds = await resolveMcpServerIds(mcpServerValidator, body.mcpServerIds ?? undefined);
+    const httpToolIds = await resolveHttpToolIds(httpToolValidator, body.httpToolIds ?? undefined);
     const agent = await agentService.updateAgent(
       userId,
       pathId(request),
@@ -136,6 +143,7 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
       body.systemPrompt,
       body.skillNames,
       mcpServerIds,
+      httpToolIds,
       toExperienceInputs(body.experiences),
       toSuggestedQuestionInputs(body.suggestedQuestions),
       body.isDefault,
@@ -241,6 +249,20 @@ async function resolveMcpServerIds(
   return validator.validateForAgent(mcpServerIds);
 }
 
+async function resolveHttpToolIds(
+  validator: HttpToolValidator,
+  httpToolIds: number[] | null | undefined,
+): Promise<number[] | null | undefined> {
+  if (httpToolIds == null) {
+    return httpToolIds;
+  }
+  // 空数组是“清空关联”，不能塌缩成 null：更新语义里 null/undefined 表示不改动。
+  if (httpToolIds.length === 0) {
+    return [];
+  }
+  return validator.validateForAgent(httpToolIds);
+}
+
 async function toVO(agent: Agent, agentService: AgentService, userRepo: UserRepository): Promise<AgentVO> {
   const vo: AgentVO = {
     id: agent.id,
@@ -276,6 +298,14 @@ async function toVO(agent: Agent, agentService: AgentService, userRepo: UserRepo
   if (agent.mcpServerIds != null) {
     try {
       vo.mcpServerIds = JSON.parse(agent.mcpServerIds) as number[];
+    } catch {
+      // ignore deserialization error
+    }
+  }
+
+  if (agent.httpToolIds != null) {
+    try {
+      vo.httpToolIds = JSON.parse(agent.httpToolIds) as number[];
     } catch {
       // ignore deserialization error
     }

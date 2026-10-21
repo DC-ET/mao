@@ -2,7 +2,7 @@ import { harnessLog } from '../log.js';
 import type { Tool } from './tool.js';
 import type { PathSandbox } from '../safety/path-sandbox.js';
 import type { SessionTodoMapper } from '../todo/session-todo.mapper.js';
-import type { MessageMapper, SessionCompactionService, SessionMapper, SessionService } from '../deps.js';
+import type { AgentMapper, MessageMapper, SessionCompactionService, SessionMapper, SessionService } from '../deps.js';
 import type { ScheduledTaskService } from '../../schedule/scheduled-task.service.js';
 import type { ShellSessionManager, OutputManager } from '../shell/shell-session-manager.js';
 import type { BackgroundTaskManager } from '../core/background-task-manager.js';
@@ -116,11 +116,13 @@ export interface DefaultToolRegistryDeps {
   mcpToolsRegistry?: McpToolsRegistry | null;
   mcpClientManager?: McpToolCaller | null;
   /**
-   * 自定义 HTTP 工具（http_describe / http_call，技术方案 2026-10-19 §5.3）。
+   * 自定义 HTTP 工具（http_describe / http_call，技术方案 2026-10-21 §5.3）。
    * 与 MCP 工作集同款条件注册：未注入时（精简装配/单测）不注册，全量模式行为不受影响。
+   * 执行解析按 Agent 维度：sessionId → agentId → agent.httpToolIds。
    */
-  userToolService?: HttpApiToolServicePort | null;
+  httpToolService?: HttpApiToolServicePort | null;
   httpApiExecutor?: HttpApiExecutor | null;
+  agentMapper?: AgentMapper | null;
 }
 
 /** Instantiates and registers all built-in tools (mirrors Spring Tool bean auto-registration). */
@@ -189,15 +191,17 @@ export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRe
     );
   }
   // 自定义 HTTP 工具的两个入口：同样条件注册（执行内核与定义域齐备时才可用）。
-  if (deps.userToolService != null && deps.httpApiExecutor != null) {
+  if (deps.httpToolService != null && deps.httpApiExecutor != null && deps.agentMapper != null) {
     tools.push(
       new HttpDescribeTool({
         sessionMapper: deps.sessionMapper,
-        userToolService: deps.userToolService,
+        agentMapper: deps.agentMapper,
+        httpToolService: deps.httpToolService,
       }),
       new HttpCallTool({
         sessionMapper: deps.sessionMapper,
-        userToolService: deps.userToolService,
+        agentMapper: deps.agentMapper,
+        httpToolService: deps.httpToolService,
         executor: deps.httpApiExecutor,
       }),
     );

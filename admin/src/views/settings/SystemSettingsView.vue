@@ -174,7 +174,6 @@
                           v-else-if="isNumericKey(row.settingKey)"
                           :model-value="toNumberOrNull(plainModel[row.settingKey])"
                           :min="1"
-                          :max="row.settingKey === 'tools.http.maxEnabledPerUser' ? 100 : undefined"
                           :step="1"
                           step-strictly
                           controls-position="right"
@@ -381,7 +380,7 @@ function unmarkSecretClear(key: string) {
 }
 
 /** 数值类配置键：渲染为数字输入。 */
-const NUMERIC_KEYS = new Set(['audit.retentionDays', 'agent.threadPoolSize', 'agent.threadPoolMax', 'agent.threadPoolQueue', 'ws.idleTimeoutMs', 'notify.workerDelayMs', 'notify.batchSize', 'notify.maxAttempts', 'file.maxSizeMb', 'openapi.callLogRetentionDays', 'openapi.tokenAutoDisableThreshold', 'notify.email.smtpPort', 'tools.http.maxEnabledPerUser'])
+const NUMERIC_KEYS = new Set(['audit.retentionDays', 'agent.threadPoolSize', 'agent.threadPoolMax', 'agent.threadPoolQueue', 'ws.idleTimeoutMs', 'notify.workerDelayMs', 'notify.batchSize', 'notify.maxAttempts', 'file.maxSizeMb', 'openapi.callLogRetentionDays', 'openapi.tokenAutoDisableThreshold', 'notify.email.smtpPort'])
 
 /** 布尔开关 key：默认按 *.enabled 后缀判定；notify.email.smtpSecure（TLS 开关）同款渲染。 */
 const BOOLEAN_KEYS = new Set(['notify.email.smtpSecure'])

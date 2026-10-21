@@ -77,6 +77,28 @@
         </el-select>
         <div class="form-hint">该 Agent 的会话可调用所选 MCP 服务器暴露的工具；建议关联不超过 10 台以避免工具清单膨胀。</div>
       </el-form-item>
+      <el-form-item label="自定义 HTTP 工具">
+        <el-select
+          v-model="form.httpToolIds"
+          multiple
+          filterable
+          clearable
+          :loading="optionsLoading"
+          placeholder="请选择已启用的自定义 HTTP 工具（留空则不可调用）"
+          style="width: 100%"
+        >
+          <el-option
+            v-for="t in httpTools"
+            :key="t.id"
+            :label="`${t.displayName}（${t.name}）`"
+            :value="t.id"
+          />
+        </el-select>
+        <div class="form-hint">
+          该 Agent 的会话可调用所选工具（经 http_describe / http_call 入口）；仅列出已启用的工具，
+          在「自定义工具」页停用的工具对所有 Agent 立即失效。
+        </div>
+      </el-form-item>
       <el-form-item label="默认 Agent">
         <el-switch v-model="form.isDefault" />
         <span class="form-hint">开启后，新建会话未指定 Agent 时将使用该智能体</span>
@@ -274,6 +296,7 @@ const activeTab = ref('basic')
 const formRef = ref<FormInstance>()
 const skillDocs = ref<any[]>([])
 const mcpServers = ref<any[]>([])
+const httpTools = ref<any[]>([])
 const models = ref<any[]>([])
 const optionsLoading = ref(false)
 const optionsLoadFailed = ref(false)
@@ -331,6 +354,7 @@ const form = reactive({
   systemPrompt: '',
   skillNames: [] as string[],
   mcpServerIds: [] as number[],
+  httpToolIds: [] as number[],
   experiences: [] as ExperienceFormItem[],
   suggestedQuestions: [] as SuggestedQuestionFormItem[],
   isDefault: false,
@@ -382,6 +406,7 @@ function resetForm() {
     systemPrompt: '',
     skillNames: [],
     mcpServerIds: [],
+    httpToolIds: [],
     experiences: [],
     suggestedQuestions: [],
     isDefault: false,
@@ -602,6 +627,7 @@ watch(() => props.visible, async (val) => {
       systemPrompt: props.agentData.systemPrompt || '',
       skillNames: props.agentData.skillNames || [],
       mcpServerIds: props.agentData.mcpServerIds || [],
+      httpToolIds: props.agentData.httpToolIds || [],
       experiences: mapExperiences(props.agentData.experiences, props.mode === 'edit'),
       suggestedQuestions: mapSuggestedQuestions(props.agentData.suggestedQuestions, props.mode === 'edit'),
       isDefault: props.mode === 'copy' ? false : !!props.agentData.isDefault,
@@ -658,6 +684,13 @@ async function loadOptions() {
   } catch {
     mcpServers.value = []
     failed.push('MCP')
+  }
+  try {
+    const { data: httpToolData } = await api.get('/admin/http-tools/enabled')
+    httpTools.value = httpToolData || []
+  } catch {
+    httpTools.value = []
+    failed.push('自定义 HTTP 工具')
   }
   try {
     const { data: modelData } = await api.get('/models/active')
@@ -732,6 +765,7 @@ async function handleSubmit() {
     systemPrompt: form.systemPrompt,
     skillNames: form.skillNames,
     mcpServerIds: form.mcpServerIds,
+    httpToolIds: form.httpToolIds,
     isDefault: form.isDefault ? 1 : 0,
     defaultModelId: form.defaultModelId || null,
     clientVisible: form.clientVisible,

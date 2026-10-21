@@ -102,10 +102,10 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '信号哨兵', keepAlive: true, permission: 'signal:read' }
       },
       {
-        path: 'user-tools',
-        name: 'UserTools',
-        component: () => import('../views/user-tool/UserToolListView.vue'),
-        meta: { title: '自定义工具', keepAlive: true, permission: 'user_tool:read' }
+        path: 'http-tools',
+        name: 'HttpTools',
+        component: () => import('../views/http-tool/HttpToolListView.vue'),
+        meta: { title: '自定义工具', keepAlive: true, permission: 'http_tool:read' }
       },
       {
         path: 'feedback',

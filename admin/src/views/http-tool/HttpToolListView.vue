@@ -1,99 +1,134 @@
 <template>
-  <div class="user-tools-page">
-    <div class="page-header">
-      <h1 class="page-title">我的工具</h1>
-      <p class="page-desc">
-        把自己常用的 HTTP 接口封装成 Agent 可调用的工具。工具定义（URL / 方法 / 参数 / 请求头）保存后，
-        Agent 通过 <code>http_describe</code> 查看参数、<code>http_call</code> 发起调用；请求由服务端直连目标地址。
-      </p>
-    </div>
-
-    <div class="hint-card">
-      <el-icon :size="14"><InfoFilled /></el-icon>
-      <span>
-        敏感请求头（Token / Key 等）加密存储、保存后不回显；可写工具（<code>read_only</code> 关闭）调用时
-        <strong>没有审批确认</strong>，请只封装可信端点并先用「测试调用」验证。服务端默认拒绝访问内网地址，
-        确需访问请联系管理员在系统设置中放行网段。
-      </span>
-    </div>
-
-    <button class="create-btn" @click="openCreateDialog">
-      <el-icon><Plus /></el-icon>
-      新增工具
-    </button>
-
-    <div v-if="loading" class="empty-state">加载中...</div>
-    <div v-else-if="tools.length === 0" class="empty-state">
-      暂无自定义工具，点击上方按钮添加
-    </div>
-    <div v-else class="tool-list">
-      <div v-for="item in tools" :key="item.id" class="tool-card">
-        <div class="tool-header">
-          <div class="tool-title">
-            <span class="tool-name">{{ item.displayName }}</span>
-            <span class="tool-slug">{{ item.name }}</span>
-            <el-tag :type="item.readOnly ? 'success' : 'warning'" size="small" effect="light">
-              {{ item.readOnly ? '只读' : '可写' }}
-            </el-tag>
-            <el-tag v-if="!item.enabled" type="info" size="small" effect="plain">已停用</el-tag>
-          </div>
-          <div class="tool-actions">
-            <template v-if="deletingId === item.id">
-              <button class="action-btn action-btn-danger" title="确认删除" @click="confirmDelete(item)">
-                <el-icon :size="14"><Check /></el-icon>
-              </button>
-              <button class="action-btn" title="取消" @click="deletingId = null">
-                <el-icon :size="14"><Close /></el-icon>
-              </button>
-            </template>
-            <template v-else>
-              <el-tooltip :content="cardTestTooltip(item)" :show-after="300">
-                <span class="action-btn-slot">
-                  <button class="action-btn" :disabled="hasSensitiveHeader(item)" @click="openTestDrawer(item)">
-                    <el-icon :size="14"><VideoPlay /></el-icon>
-                  </button>
-                </span>
-              </el-tooltip>
-              <el-tooltip :content="item.enabled ? '停用' : '启用'" :show-after="300">
-                <button class="action-btn" @click="toggleEnabled(item)">
-                  <el-icon :size="14"><SwitchButton /></el-icon>
-                </button>
-              </el-tooltip>
-              <el-tooltip content="编辑" :show-after="300">
-                <button class="action-btn" @click="openEditDialog(item)">
-                  <el-icon :size="14"><Edit /></el-icon>
-                </button>
-              </el-tooltip>
-              <el-tooltip content="删除" :show-after="300">
-                <button class="action-btn action-btn-danger" @click="deletingId = item.id!">
-                  <el-icon :size="14"><Delete /></el-icon>
-                </button>
-              </el-tooltip>
-            </template>
+  <div class="http-tool-page">
+    <el-card>
+      <template #header>
+        <div class="card-header">
+          <span>自定义工具清单</span>
+          <div class="header-actions">
+            <el-button type="primary" @click="openCreateDialog">
+              <el-icon><Plus /></el-icon>
+              新建工具
+            </el-button>
+            <el-button :loading="loading" @click="loadRecords"><el-icon><Refresh /></el-icon></el-button>
           </div>
         </div>
-        <div class="tool-endpoint">
-          <span class="tool-method" :class="methodClass(item.method)">{{ item.method }}</span>
-          <span class="tool-url">{{ item.url }}</span>
+      </template>
+
+      <el-alert type="info" :closable="false" class="list-hint">
+        工具由管理员统一配置，并在「Agent 管理」中关联到具体 Agent；Agent 会话经
+        <code>http_describe</code> 查看参数、<code>http_call</code> 发起调用，请求由服务端直连目标地址。
+        可写工具（只读关闭）调用时<strong>没有审批确认</strong>，请只封装可信端点并先用「测试」验证。
+      </el-alert>
+
+      <el-form :inline="true" class="search-form">
+        <el-form-item label="关键字">
+          <el-input v-model="filters.keyword" clearable placeholder="工具名 / 展示名" style="width: 220px" @keyup.enter="handleSearch" />
+        </el-form-item>
+        <el-form-item label="启用态">
+          <el-select v-model="filters.enabled" clearable placeholder="全部" style="width: 120px" @change="handleSearch">
+            <el-option label="已启用" :value="true" />
+            <el-option label="已停用" :value="false" />
+          </el-select>
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" @click="handleSearch">查询</el-button>
+          <el-button @click="handleReset">重置</el-button>
+        </el-form-item>
+      </el-form>
+
+      <el-table v-loading="loading" :data="records">
+        <el-table-column prop="id" label="ID" width="80" />
+        <el-table-column prop="name" label="工具名" min-width="150" show-overflow-tooltip />
+        <el-table-column prop="displayName" label="展示名" min-width="130" show-overflow-tooltip />
+        <el-table-column label="端点" min-width="260" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="method-tag" :class="methodClass(row.method)">{{ row.method }}</span>
+            {{ row.url }}
+          </template>
+        </el-table-column>
+        <el-table-column label="只读" width="80">
+          <template #default="{ row }">
+            <el-tag :type="row.readOnly ? 'success' : 'warning'" size="small">{{ row.readOnly ? '只读' : '可写' }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="启用" width="80">
+          <template #default="{ row }">
+            <el-tag :type="row.enabled ? 'success' : 'info'" size="small">{{ row.enabled ? '启用' : '停用' }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="timeoutMs" label="超时(ms)" width="100" />
+        <el-table-column label="更新时间" width="170">
+          <template #default="{ row }">{{ formatDateTime(row.updatedAt) }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="220" fixed="right">
+          <template #default="{ row }">
+            <el-tooltip :content="cardTestTooltip(row)" :show-after="300">
+              <span>
+                <el-button link type="primary" size="small" :disabled="hasSensitiveHeader(row)" @click="openTestDrawer(row)">测试</el-button>
+              </span>
+            </el-tooltip>
+            <el-button link type="primary" size="small" @click="toggleEnabled(row)">
+              {{ row.enabled ? '停用' : '启用' }}
+            </el-button>
+            <el-button link type="primary" size="small" @click="openEditDialog(row)">编辑</el-button>
+            <el-popconfirm title="确认删除该工具？关联它的 Agent 将无法再调用。" @confirm="confirmDelete(row)">
+              <template #reference>
+                <el-button link type="danger" size="small">删除</el-button>
+              </template>
+            </el-popconfirm>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <ResponsivePagination
+        v-model:current-page="currentPage"
+        v-model:page-size="pageSize"
+        :total="total"
+        :page-sizes="[20, 50, 100]"
+        @current-change="loadRecords"
+        @size-change="handleSizeChange"
+      />
+    </el-card>
+
+    <el-card class="stats-card">
+      <template #header>
+        <div class="card-header">
+          <span>调用统计</span>
+          <div class="header-actions">
+            <el-input v-model="statsSlug" clearable placeholder="按工具名筛选" style="width: 200px" @keyup.enter="loadStats" @clear="loadStats" />
+            <el-button :loading="statsLoading" @click="loadStats"><el-icon><Refresh /></el-icon></el-button>
+          </div>
         </div>
-        <div class="tool-meta">
-          <span class="tool-desc">{{ item.description }}</span>
-        </div>
-        <div class="tool-meta">
-          <span v-if="item.params.length > 0" class="tool-params">
-            参数：{{ item.params.map((param) => param.name + (param.required ? '*' : '')).join('、') }}
-          </span>
-          <span v-else class="tool-params">无参数</span>
-          <span class="tool-time">更新于 {{ formatTime(item.updatedAt) }}</span>
-        </div>
-      </div>
-    </div>
+      </template>
+
+      <el-alert type="info" :closable="false" class="stats-hint">
+        统计来源为运行轨迹中 http_call 的工具调用记录（按内层工具名聚合），仅交互会话产生数据。
+      </el-alert>
+
+      <el-table v-loading="statsLoading" :data="stats">
+        <el-table-column prop="slug" label="工具名" min-width="180" show-overflow-tooltip />
+        <el-table-column prop="calls" label="调用次数" width="110" />
+        <el-table-column prop="errors" label="失败次数" width="110" />
+        <el-table-column label="失败率" width="100">
+          <template #default="{ row }">
+            <span :class="{ 'fail-text': row.failRate >= 0.5 }">{{ formatRate(row.failRate) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="users" label="调用用户数" width="110" />
+        <el-table-column label="首次调用" width="170">
+          <template #default="{ row }">{{ formatDateTime(row.firstAt) }}</template>
+        </el-table-column>
+        <el-table-column label="最近调用" width="170">
+          <template #default="{ row }">{{ formatDateTime(row.lastAt) }}</template>
+        </el-table-column>
+      </el-table>
+      <div v-if="!statsLoading && stats.length === 0" class="stats-empty">暂无调用记录</div>
+    </el-card>
 
     <el-dialog
       v-model="dialogVisible"
-      :title="isEditing ? '编辑自定义工具' : '新增自定义工具'"
-      width="680px"
-      class="user-tool-dialog management-dialog"
+      :title="isEditing ? '编辑自定义工具' : '新建自定义工具'"
+      width="720px"
       append-to-body
       @closed="resetForm"
     >
@@ -138,7 +173,7 @@
 
         <div class="section-title">
           <span>请求头</span>
-          <button class="link-btn" type="button" @click="addHeaderRow">+ 添加请求头</button>
+          <el-button link type="primary" @click="addHeaderRow">+ 添加请求头</el-button>
         </div>
         <div v-for="(row, index) in form.headers" :key="`header-${index}`" class="kv-row">
           <el-input v-model="row.key" placeholder="名称，如 Authorization" class="kv-key" maxlength="64" />
@@ -151,7 +186,7 @@
             show-password
           />
           <el-checkbox v-model="row.sensitive" class="kv-sensitive">敏感</el-checkbox>
-          <button class="link-btn link-btn-danger" type="button" @click="removeHeaderRow(index)">删除</button>
+          <el-button link type="danger" @click="removeHeaderRow(index)">删除</el-button>
         </div>
         <p class="section-hint">
           勾选「敏感」的值加密存储、保存后不再回显；编辑时保持掩码 <code>******</code> 表示不修改，清空则表示删除该请求头。
@@ -159,7 +194,7 @@
 
         <div class="section-title">
           <span>参数定义</span>
-          <button class="link-btn" type="button" @click="addParamRow">+ 添加参数</button>
+          <el-button link type="primary" @click="addParamRow">+ 添加参数</el-button>
         </div>
         <div v-for="(row, index) in form.params" :key="`param-${index}`" class="param-row">
           <el-input v-model="row.name" placeholder="参数名" class="param-name" maxlength="64" />
@@ -169,7 +204,7 @@
           </el-select>
           <el-checkbox v-model="row.required" class="param-required">必填</el-checkbox>
           <el-input v-model="row.defaultValue" placeholder="默认值（选填）" class="param-default" maxlength="500" />
-          <button class="link-btn link-btn-danger" type="button" @click="removeParamRow(index)">删除</button>
+          <el-button link type="danger" @click="removeParamRow(index)">删除</el-button>
         </div>
         <p class="section-hint">
           参数会拼进 <code>http_call(tool, arguments)</code>；URL 查询串与 body 模板里的
@@ -194,17 +229,16 @@
             <el-switch v-model="form.enabled" />
           </el-form-item>
         </div>
-        <div v-if="!form.readOnly" class="write-warning">
-          <el-icon :size="14"><WarningFilled /></el-icon>
-          <span>该工具可写：Agent 调用时<strong>没有审批确认</strong>，请确认端点可信。</span>
-        </div>
+        <el-alert v-if="!form.readOnly" type="warning" :closable="false" class="write-warning">
+          该工具可写：Agent 调用时<strong>没有审批确认</strong>，请确认端点可信。
+        </el-alert>
       </el-form>
       <template #footer>
-        <button class="dialog-btn dialog-btn-cancel" @click="dialogVisible = false">取消</button>
-        <button class="dialog-btn dialog-btn-test" :disabled="!canSave" @click="openTestFromDialog">测试调用</button>
-        <button class="dialog-btn dialog-btn-confirm" :disabled="!canSave || submitting" @click="handleSubmit">
-          {{ submitting ? '保存中…' : (isEditing ? '保存' : '创建') }}
-        </button>
+        <el-button @click="dialogVisible = false">取消</el-button>
+        <el-button :disabled="!canSave" @click="openTestFromDialog">测试调用</el-button>
+        <el-button type="primary" :disabled="!canSave || submitting" :loading="submitting" @click="handleSubmit">
+          {{ isEditing ? '保存' : '创建' }}
+        </el-button>
       </template>
     </el-dialog>
 
@@ -236,14 +270,15 @@
         <div v-if="testForm.params.length === 0" class="test-no-params">该工具无参数</div>
       </el-form>
       <div class="test-actions">
-        <button
-          class="dialog-btn dialog-btn-confirm"
+        <el-button
+          type="primary"
           :disabled="testing || hasMaskedHeader"
           :title="hasMaskedHeader ? '请先回填敏感请求头的真实值' : ''"
+          :loading="testing"
           @click="runTest"
         >
-          {{ testing ? '调用中…' : '发起调用' }}
-        </button>
+          发起调用
+        </el-button>
       </div>
       <div v-if="testResult" class="test-result" :class="{ 'test-result-error': testResult.error }">
         <div class="test-result-head">
@@ -259,24 +294,17 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { Plus, Check, Close, Edit, Delete, InfoFilled, VideoPlay, SwitchButton, WarningFilled } from '@element-plus/icons-vue'
+import { computed, onActivated, onMounted, reactive, ref } from 'vue'
+import { Plus, Refresh } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import {
-  createUserTool,
-  deleteUserTool,
-  listUserTools,
-  setUserToolEnabled,
-  testUserTool,
-  updateUserTool,
-  type UserToolTestResult,
-  type UserToolView,
-} from '../../api'
+import { api } from '../../api'
+import { formatDateTime } from '../../utils/datetime'
+import ResponsivePagination from '../../components/ResponsivePagination.vue'
 
 const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'] as const
 const PARAM_TYPES = ['string', 'number', 'boolean'] as const
 const TOOL_NAME_RE = /^[a-z][a-z0-9_]{0,63}$/
-/** 与后端 user-tool.service 的 HEADER_KEY_RE 保持一致（不含点号）。 */
+/** 与后端 http-tool.service 的 HEADER_KEY_RE 保持一致（不含点号）。 */
 const HEADER_KEY_RE = /^[A-Za-z0-9_-]+$/
 /** 与后端 HEADER_VALUE_MASK 一致：敏感请求头回显掩码。 */
 const HEADER_VALUE_MASK = '******'
@@ -295,12 +323,60 @@ interface ParamRow {
   defaultValue: string
 }
 
+interface HttpToolRow {
+  id: number
+  name: string
+  displayName: string
+  description: string
+  method: string
+  url: string
+  headers: HeaderRow[]
+  bodyTemplate: string | null
+  readOnly: boolean
+  enabled: boolean
+  timeoutMs: number
+  params: Array<ParamRow & { id?: number; sortOrder: number }>
+  createdAt: string | null
+  updatedAt: string | null
+}
+
+interface HttpToolStatRow {
+  slug: string
+  calls: number
+  errors: number
+  failRate: number
+  users: number
+  firstAt: string | null
+  lastAt: string | null
+}
+
+interface TestResult {
+  status?: number
+  body?: string
+  truncated?: boolean
+  notice?: string | null
+  displayName?: string
+  durationMs?: number
+  error?: string
+}
+
 const loading = ref(false)
-const tools = ref<UserToolView[]>([])
+const records = ref<HttpToolRow[]>([])
+const total = ref(0)
+const currentPage = ref(1)
+const pageSize = ref(20)
+const filters = reactive({
+  keyword: '',
+  enabled: '' as '' | boolean
+})
+
+const statsLoading = ref(false)
+const stats = ref<HttpToolStatRow[]>([])
+const statsSlug = ref('')
+
 const dialogVisible = ref(false)
 const isEditing = ref(false)
 const editingId = ref<number | null>(null)
-const deletingId = ref<number | null>(null)
 const submitting = ref(false)
 const nameError = ref('')
 const urlError = ref('')
@@ -323,7 +399,7 @@ const form = ref(emptyForm())
 
 const testVisible = ref(false)
 const testing = ref(false)
-const testResult = ref<UserToolTestResult | null>(null)
+const testResult = ref<TestResult | null>(null)
 const testValues = ref<Record<string, unknown>>({})
 const testForm = ref({ name: '', displayName: '', params: [] as ParamRow[] })
 
@@ -333,26 +409,26 @@ const hasMaskedHeader = computed(() =>
 )
 
 /** 已存工具是否带加密请求头：列表 VO 只回显掩码，直接试运行必然被内核拒绝。 */
-function hasSensitiveHeader(item: UserToolView) {
+function hasSensitiveHeader(item: HttpToolRow) {
   return item.headers.some((header) => header.sensitive)
 }
 
-function cardTestTooltip(item: UserToolView) {
+function cardTestTooltip(item: HttpToolRow) {
   return hasSensitiveHeader(item)
     ? '该工具含加密请求头，请从「编辑」填写真实值后在编辑器内测试'
     : '测试调用'
 }
 
-function formatTime(value?: string | null) {
-  if (!value) return '-'
-  return value.replace('T', ' ').slice(0, 16)
-}
-
-function methodClass(method: string) {
-  const upper = method.toUpperCase()
+function methodClass(method: string): string {
+  const upper = (method || '').toUpperCase()
   if (upper === 'GET' || upper === 'HEAD') return 'method-get'
   if (upper === 'DELETE') return 'method-delete'
   return 'method-write'
+}
+
+function formatRate(rate: number): string {
+  const value = Number(rate ?? 0) * 100
+  return `${Number.isInteger(value) ? value : value.toFixed(1)}%`
 }
 
 function statusClass(status?: number) {
@@ -435,13 +511,57 @@ const canSave = computed(() => {
   return true
 })
 
-async function fetchTools() {
+function buildParams(page: number, size: number): Record<string, unknown> {
+  return {
+    page,
+    size,
+    keyword: filters.keyword.trim() || undefined,
+    enabled: filters.enabled === '' ? undefined : filters.enabled
+  }
+}
+
+async function loadRecords(): Promise<void> {
   loading.value = true
   try {
-    tools.value = await listUserTools()
+    const { data } = await api.get('/admin/http-tools', { params: buildParams(currentPage.value, pageSize.value) })
+    records.value = data?.records || []
+    total.value = data?.total || 0
+  } catch {
+    records.value = []
+    total.value = 0
   } finally {
     loading.value = false
   }
+}
+
+async function loadStats(): Promise<void> {
+  statsLoading.value = true
+  try {
+    const { data } = await api.get('/admin/http-tools/stats', {
+      params: { slug: statsSlug.value.trim() || undefined }
+    })
+    stats.value = Array.isArray(data) ? data : []
+  } catch {
+    stats.value = []
+  } finally {
+    statsLoading.value = false
+  }
+}
+
+function handleSearch(): void {
+  currentPage.value = 1
+  void loadRecords()
+}
+
+function handleReset(): void {
+  filters.keyword = ''
+  filters.enabled = ''
+  handleSearch()
+}
+
+function handleSizeChange(): void {
+  currentPage.value = 1
+  void loadRecords()
 }
 
 /** 编辑器草稿 → 提交体（请求头 / 参数按行过滤空行）。 */
@@ -487,9 +607,9 @@ function openCreateDialog() {
   dialogVisible.value = true
 }
 
-function openEditDialog(item: UserToolView) {
+function openEditDialog(item: HttpToolRow) {
   isEditing.value = true
-  editingId.value = item.id ?? null
+  editingId.value = item.id
   form.value = {
     name: item.name,
     displayName: item.displayName,
@@ -527,14 +647,14 @@ async function handleSubmit() {
   submitting.value = true
   try {
     if (isEditing.value && editingId.value != null) {
-      await updateUserTool(editingId.value, toPayload())
+      await api.put(`/admin/http-tools/${editingId.value}`, toPayload())
       ElMessage.success('工具已更新')
     } else {
-      await createUserTool(toPayload())
+      await api.post('/admin/http-tools', toPayload())
       ElMessage.success('工具已创建')
     }
     dialogVisible.value = false
-    await fetchTools()
+    await loadRecords()
   } catch {
     // handled by interceptor
   } finally {
@@ -542,36 +662,29 @@ async function handleSubmit() {
   }
 }
 
-async function confirmDelete(item: UserToolView) {
+async function confirmDelete(item: HttpToolRow) {
   try {
-    await deleteUserTool(item.id!)
+    await api.delete(`/admin/http-tools/${item.id}`)
     ElMessage.success(`已删除 ${item.displayName}`)
-    deletingId.value = null
-    await fetchTools()
+    await loadRecords()
   } catch {
     // handled by interceptor
   }
 }
 
-async function toggleEnabled(item: UserToolView) {
+async function toggleEnabled(item: HttpToolRow) {
   try {
-    await setUserToolEnabled(item.id!, !item.enabled)
+    await api.put(`/admin/http-tools/${item.id}/enabled`, { enabled: !item.enabled })
     ElMessage.success(item.enabled ? '已停用' : '已启用')
-    await fetchTools()
+    await loadRecords()
   } catch {
     // handled by interceptor
   }
 }
 
-function openTestDrawer(item: UserToolView) {
+function openTestDrawer(item: HttpToolRow) {
   // 已保存的工具：直接用落库定义试运行（不经过编辑器草稿）
-  form.value = openEditFormFromView(item)
-  syncTestFormFromCurrent()
-  testVisible.value = true
-}
-
-function openEditFormFromView(item: UserToolView) {
-  return {
+  form.value = {
     name: item.name,
     displayName: item.displayName,
     description: item.description,
@@ -590,6 +703,8 @@ function openEditFormFromView(item: UserToolView) {
       defaultValue: param.defaultValue ?? '',
     })),
   }
+  syncTestFormFromCurrent()
+  testVisible.value = true
 }
 
 function openTestFromDialog() {
@@ -628,7 +743,8 @@ function resetTest() {
 async function runTest() {
   testing.value = true
   try {
-    testResult.value = await testUserTool(toPayload(testValues.value))
+    const { data } = await api.post('/admin/http-tools/test', toPayload(testValues.value))
+    testResult.value = data
   } catch {
     // handled by interceptor
   } finally {
@@ -637,222 +753,77 @@ async function runTest() {
 }
 
 onMounted(() => {
-  fetchTools()
+  void loadRecords()
+  void loadStats()
+})
+
+onActivated(() => {
+  void loadStats()
 })
 </script>
 
 <style scoped>
-.page-header {
-  margin-bottom: 20px;
-}
-
-.page-title {
-  font-size: 20px;
-  font-weight: 600;
-  color: var(--aw-ink);
-  margin: 0 0 8px;
-}
-
-.page-desc {
-  font-size: 13px;
-  color: var(--aw-ink-muted);
-  margin: 0;
-  line-height: 1.6;
-  max-width: 720px;
-}
-
-.page-desc code,
-.section-hint code {
-  padding: 0 3px;
-  border-radius: 3px;
-  background: var(--aw-surface-hover);
-  font-family: var(--aw-font-mono, monospace);
-}
-
-.hint-card {
+.card-header,
+.header-actions {
   display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  max-width: 720px;
-  margin-bottom: 16px;
-  padding: 10px 12px;
-  border: 1px solid var(--aw-divider-soft);
-  border-radius: 8px;
-  background: var(--aw-surface);
-  color: var(--aw-ink-muted);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.hint-card code {
-  padding: 0 3px;
-  border-radius: 3px;
-  background: var(--aw-surface-hover);
-  font-family: var(--aw-font-mono, monospace);
-}
-
-.create-btn {
-  display: inline-flex;
   align-items: center;
-  gap: 4px;
-  height: var(--aw-btn-height);
-  padding: var(--aw-btn-padding);
-  border: none;
-  border-radius: var(--aw-radius-xs);
-  background: var(--aw-primary);
-  color: #fff;
-  font-size: var(--aw-text-fine);
-  font-weight: 500;
-  cursor: pointer;
-  margin-bottom: 20px;
-}
-
-.create-btn:hover {
-  opacity: 0.85;
-}
-
-.empty-state {
-  text-align: center;
-  padding: 48px 16px;
-  color: var(--aw-ink-muted);
-  font-size: 13px;
-}
-
-.tool-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  max-width: 720px;
-}
-
-.tool-card {
-  background: var(--aw-surface);
-  border: 1px solid var(--aw-divider-soft);
-  border-radius: 8px;
-  padding: 12px 14px;
-}
-
-.tool-header {
-  display: flex;
-  align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: 6px;
 }
 
-.tool-title {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  min-width: 0;
+.list-hint {
+  margin-bottom: 12px;
 }
 
-.tool-name {
-  font-size: 14px;
+.list-hint code {
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--el-fill-color);
+  font-family: monospace;
+}
+
+.stats-card {
+  margin-top: 16px;
+}
+
+.stats-hint {
+  margin-bottom: 12px;
+}
+
+.stats-empty {
+  padding: 24px 0;
+  text-align: center;
+  color: var(--mao-muted);
+  font-size: 13px;
+}
+
+.fail-text {
+  color: var(--el-color-danger);
   font-weight: 600;
-  color: var(--aw-ink);
 }
 
-.tool-slug {
+.method-tag {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 4px;
+  border-radius: 3px;
   font-size: 12px;
-  color: var(--aw-ink-muted);
-  font-family: var(--aw-font-mono, monospace);
-}
-
-.tool-actions {
-  display: flex;
-  gap: 4px;
-  flex: 0 0 auto;
-}
-
-.action-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border: none;
-  border-radius: 6px;
-  background: var(--aw-surface-hover);
-  color: var(--aw-ink-muted);
-  cursor: pointer;
-}
-
-.action-btn:hover {
-  color: var(--aw-ink);
-}
-
-/* tooltip 触发器包裹层：让禁用态按钮也能收到 hover（禁用按钮自身不派发鼠标事件） */
-.action-btn-slot {
-  display: inline-flex;
-}
-
-.action-btn:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-.action-btn-danger:hover {
-  color: var(--aw-danger);
-}
-
-.tool-endpoint {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  font-family: var(--aw-font-mono, monospace);
-  margin-bottom: 4px;
-  min-width: 0;
-}
-
-.tool-method {
-  flex: 0 0 auto;
-  padding: 1px 6px;
-  border-radius: 4px;
   font-weight: 600;
-  font-size: 11px;
 }
 
 .method-get {
-  background: var(--aw-surface-hover);
-  color: var(--aw-ink-muted);
+  background: var(--el-fill-color-dark);
+  color: var(--mao-muted);
 }
 
 .method-write {
-  background: color-mix(in srgb, var(--aw-primary) 18%, transparent);
-  color: var(--aw-primary);
+  background: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
 }
 
 .method-delete {
-  background: color-mix(in srgb, var(--aw-danger) 18%, transparent);
-  color: var(--aw-danger);
-}
-
-.tool-url {
-  color: var(--aw-ink-muted);
-  word-break: break-all;
-}
-
-.tool-meta {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  font-size: 12px;
-  color: var(--aw-ink-muted);
-}
-
-.tool-desc {
-  word-break: break-all;
-}
-
-.tool-params {
-  font-family: var(--aw-font-mono, monospace);
-}
-
-.tool-time {
-  color: var(--aw-ink-muted-80);
+  background: var(--el-color-danger-light-9);
+  color: var(--el-color-danger);
 }
 
 .form-row {
@@ -880,27 +851,20 @@ onMounted(() => {
   margin: 4px 0 8px;
   font-size: 13px;
   font-weight: 600;
-  color: var(--aw-ink);
 }
 
 .section-hint {
   margin: 0 0 12px;
   font-size: 12px;
-  color: var(--aw-ink-muted);
+  color: var(--mao-muted);
   line-height: 1.6;
 }
 
-.link-btn {
-  border: none;
-  background: none;
-  padding: 0;
-  font-size: 12px;
-  color: var(--aw-primary);
-  cursor: pointer;
-}
-
-.link-btn-danger {
-  color: var(--aw-danger);
+.section-hint code {
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--el-fill-color);
+  font-family: monospace;
 }
 
 .kv-row,
@@ -936,51 +900,7 @@ onMounted(() => {
 }
 
 .write-warning {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 8px 10px;
-  border: 1px solid color-mix(in srgb, var(--aw-danger) 35%, transparent);
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--aw-danger) 8%, transparent);
-  color: var(--aw-danger);
-  font-size: 12px;
-  line-height: 1.6;
   margin-bottom: 8px;
-}
-
-.dialog-btn {
-  height: var(--aw-btn-height);
-  padding: var(--aw-btn-padding);
-  border-radius: var(--aw-radius-xs);
-  border: 1px solid var(--aw-divider-soft);
-  background: var(--aw-surface);
-  color: var(--aw-ink);
-  font-size: var(--aw-text-fine);
-  cursor: pointer;
-}
-
-.dialog-btn-confirm {
-  margin-left: 8px;
-  border-color: var(--aw-primary);
-  background: var(--aw-primary);
-  color: #fff;
-}
-
-.dialog-btn-test {
-  margin-left: 8px;
-  border-color: var(--aw-primary);
-  color: var(--aw-primary);
-}
-
-.dialog-btn-cancel {
-  margin-left: auto;
-}
-
-.dialog-btn-confirm:disabled,
-.dialog-btn-test:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 .drawer-title {
@@ -991,14 +911,14 @@ onMounted(() => {
 .test-hint {
   margin: 0 0 12px;
   font-size: 12px;
-  color: var(--aw-ink-muted);
+  color: var(--mao-muted);
   line-height: 1.6;
 }
 
 .test-no-params {
   padding: 12px;
   font-size: 12px;
-  color: var(--aw-ink-muted);
+  color: var(--mao-muted);
   text-align: center;
 }
 
@@ -1015,7 +935,7 @@ onMounted(() => {
 }
 
 .test-result {
-  border: 1px solid var(--aw-divider-soft);
+  border: 1px solid var(--el-border-color-lighter);
   border-radius: 8px;
   overflow: hidden;
 }
@@ -1025,33 +945,33 @@ onMounted(() => {
   align-items: center;
   justify-content: space-between;
   padding: 8px 10px;
-  background: var(--aw-surface-hover);
+  background: var(--el-fill-color-light);
   font-size: 12px;
 }
 
 .test-status {
   font-weight: 600;
-  font-family: var(--aw-font-mono, monospace);
+  font-family: monospace;
 }
 
 .test-status-ok {
-  color: var(--aw-primary);
+  color: var(--el-color-primary);
 }
 
 .test-status-error {
-  color: var(--aw-danger);
+  color: var(--el-color-danger);
 }
 
 .test-duration {
-  color: var(--aw-ink-muted);
-  font-family: var(--aw-font-mono, monospace);
+  color: var(--mao-muted);
+  font-family: monospace;
 }
 
 .test-notice {
   padding: 6px 10px;
   font-size: 12px;
-  color: var(--aw-ink-muted);
-  border-bottom: 1px solid var(--aw-divider-soft);
+  color: var(--mao-muted);
+  border-bottom: 1px solid var(--el-border-color-lighter);
 }
 
 .test-body {
@@ -1061,13 +981,12 @@ onMounted(() => {
   overflow: auto;
   font-size: 12px;
   line-height: 1.6;
-  font-family: var(--aw-font-mono, monospace);
-  color: var(--aw-ink);
+  font-family: monospace;
   white-space: pre-wrap;
   word-break: break-all;
 }
 
 .test-result-error .test-body {
-  color: var(--aw-danger);
+  color: var(--el-color-danger);
 }
 </style>

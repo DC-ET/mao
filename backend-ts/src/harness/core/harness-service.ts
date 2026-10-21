@@ -4,7 +4,7 @@ import { AtomicBoolean } from '../atomic-boolean.js';
 import { harnessLog } from '../log.js';
 import { boolish, llmModelToConfig, wsEvent } from '../deps.js';
 import type {
-  AgentMapper, AgentExperienceService, FileChange, FileChangeMapper, LlmModel, LlmModelMapper,
+  Agent, AgentMapper, AgentExperienceService, FileChange, FileChangeMapper, LlmModel, LlmModelMapper,
   Message, Session, SessionActivityHeartbeat, SessionCompaction, SessionCompactionEvent,
   SessionCompactionService, SessionMapper, SessionService, StreamingWsRegistry, TaskTerminalService,
   ActivityService,
@@ -40,7 +40,7 @@ import { buildMcpWorkingSet, type McpWorkingSet } from '../mcp/workingset/mcp-wo
 import type { McpConnectionError, McpServer, McpToolRef } from '../mcp/entity/mcp-server.js';
 import { HTTP_TOOL_NAMES } from '../tool/tool-registry.js';
 import { buildCustomHttpToolCatalog } from './custom-http-tools-catalog.js';
-import type { UserTool } from '../../user-tool/types.js';
+import type { HttpTool } from '../../http-tool/types.js';
 import { WEIXIN_PROJECT_KEY } from '../../domain/types.js';
 import { shanghaiYmd } from '../../common/json.js';
 import { BusinessException } from '../../common/business-exception.js';
@@ -54,10 +54,9 @@ const MCP_WORKING_SET_TOOL_NAMES = new Set(['mcp_call', 'mcp_describe']);
 /** 自定义 HTTP 工具入口：默认工具集中先剔除，仅当用户有启用工具时按会话推入（§5.4）。 */
 const HTTP_TOOL_ENTRY_NAMES = new Set<string>(HTTP_TOOL_NAMES);
 
-/** 自定义 HTTP 工具装配依赖（UserToolService 满足；未注入时零查库、零行为差异）。 */
+/** 自定义 HTTP 工具装配依赖（HttpToolService 满足；未注入时零查库、零行为差异）。 */
 export interface CustomHttpToolAssemblyPort {
-  listEnabled(userId: number | null): Promise<UserTool[]>;
-  getMaxEnabledPerUser(): Promise<number>;
+  listEnabledForAgent(agent: Pick<Agent, 'httpToolIds'>): Promise<HttpTool[]>;
 }
 
 export class HarnessService {
@@ -96,7 +95,7 @@ export class HarnessService {
      * 自定义 HTTP 工具装配（技术方案 2026-10-19 §5.4）。未注入时维持改造前行为：
      * 入口工具已在默认工具集中被剔除，任何会话都看不到 http_describe / http_call。
      */
-    private readonly userToolService?: CustomHttpToolAssemblyPort | null,
+    private readonly httpToolService?: CustomHttpToolAssemblyPort | null,
   ) {}
 
   prepareMessage(_sessionId: number, _userContent: unknown): string {
@@ -424,19 +423,18 @@ export class HarnessService {
         mcpWarnings.push('MCP 工具加载失败：' + (e as Error).message);
       }
     }
-    // 自定义 HTTP 工具（§5.4）：与 MCP 工作集同款两步——剔除已做，这里按启用数条件推入。
-    // 全模式一致（SERVER_ONLY_TOOLS 后端直连、无审批门），渠道会话不特判；listEnabled(null) 零查库。
-    if (this.userToolService) {
+    // 自定义 HTTP 工具（§5.4）：按 Agent 关联装配——agent.httpToolIds → 启用工具 → 入口工具 + 目录。
+    // 全模式一致（SERVER_ONLY_TOOLS 后端直连、无审批门），渠道会话不特判；无关联零查库。
+    if (this.httpToolService) {
       try {
-        const userTools = await this.userToolService.listEnabled(session.userId ?? null);
-        if (userTools.length > 0) {
-          const maxEnabled = await this.userToolService.getMaxEnabledPerUser();
+        const httpTools = await this.httpToolService.listEnabledForAgent(agent);
+        if (httpTools.length > 0) {
           const httpEntryTools = [...HTTP_TOOL_NAMES]
             .map((name) => this.toolRegistry.getTool(name))
             .filter((tool): tool is Tool => tool != null);
           if (httpEntryTools.length > 0) {
             sessionTools.push(...httpEntryTools);
-            context.customHttpTools = buildCustomHttpToolCatalog(userTools, maxEnabled);
+            context.customHttpTools = buildCustomHttpToolCatalog(httpTools);
           } else {
             harnessLog('warn', `Custom HTTP tool entries not registered, skip assembly for session ${sessionId}`);
           }

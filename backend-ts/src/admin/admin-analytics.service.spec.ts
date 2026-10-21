@@ -919,7 +919,7 @@ describe('AdminAnalyticsDbStore 自定义 HTTP 工具调用统计（§9.4）', (
     const { db, store: dbStore } = store([
       { slug: 'weather', calls: 12, errors: 3, users: 4, firstAt: '2026-10-20 09:00:00', lastAt: '2026-10-20 10:30:00' },
     ]);
-    const rows = await dbStore.selectUserToolCallStats();
+    const rows = await dbStore.selectHttpToolCallStats();
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ slug: 'weather', calls: 12, errors: 3, users: 4 });
     const sql = db.query.mock.calls[0]![0] as string;
@@ -932,7 +932,7 @@ describe('AdminAnalyticsDbStore 自定义 HTTP 工具调用统计（§9.4）', (
 
   it('slug 下钻时拼进 WHERE 且绑定为参数', async () => {
     const { db, store: dbStore } = store();
-    await dbStore.selectUserToolCallStats('weather');
+    await dbStore.selectHttpToolCallStats('weather');
     const sql = db.query.mock.calls[0]![0] as string;
     expect(sql).toContain('a.target = ?');
     expect(db.query.mock.calls[0]![1]).toEqual(['weather']);
@@ -940,7 +940,7 @@ describe('AdminAnalyticsDbStore 自定义 HTTP 工具调用统计（§9.4）', (
 
   it('空 slug / 空白 slug 不下钻（返回全部工具）', async () => {
     const { db, store: dbStore } = store();
-    await dbStore.selectUserToolCallStats('   ');
+    await dbStore.selectHttpToolCallStats('   ');
     const sql = db.query.mock.calls[0]![0] as string;
     expect(sql).not.toContain('a.target = ?');
     expect(db.query.mock.calls[0]![1]).toEqual([]);

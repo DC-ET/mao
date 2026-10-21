@@ -52,7 +52,7 @@ reference/
   troubleshooting.md  常见问题
   mcp.md              MCP REST CLI
   signal-watcher.md   信号哨兵
-  user-tool.md        自定义 HTTP 工具
+  http-tool.md         自定义 HTTP 工具
   …                   各 REST 模块 CLI 说明
 bin/ lib/ package.json CLI 实现
 ```

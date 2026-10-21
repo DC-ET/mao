@@ -38,19 +38,21 @@ function deps(overrides: Partial<DefaultToolRegistryDeps> = {}): DefaultToolRegi
     messageMapper: {} as never,
     sessionCompactionService: {} as never,
     embedPageToolRegistry: {} as never,
+    agentMapper: { selectById: vi.fn(async () => ({ id: 2, httpToolIds: null })) } as never,
     ...overrides,
   };
 }
 
-const userToolService = {
+const httpToolService = {
   findEnabledWithParams: vi.fn(),
   resolveForExecution: vi.fn(),
 };
 const httpApiExecutor = { execute: vi.fn() } as never;
+const agentMapper = { selectById: vi.fn(async () => ({ id: 2, httpToolIds: null })) } as never;
 
 describe('createDefaultToolRegistry 自定义 HTTP 工具条件注册', () => {
   it('依赖齐备时注册两个入口工具（顺序：describe 在前）', () => {
-    const registry = createDefaultToolRegistry(deps({ userToolService, httpApiExecutor }));
+    const registry = createDefaultToolRegistry(deps({ httpToolService, httpApiExecutor, agentMapper }));
     const names = registry.getAllTools().map((tool) => tool.getName());
     expect(names).toContain('http_describe');
     expect(names).toContain('http_call');
@@ -60,9 +62,10 @@ describe('createDefaultToolRegistry 自定义 HTTP 工具条件注册', () => {
   it('任一依赖缺失时不注册（精简装配工具集不变）', () => {
     for (const overrides of [
       {},
-      { userToolService, httpApiExecutor: null },
-      { userToolService: null, httpApiExecutor },
-      { userToolService: null, httpApiExecutor: null },
+      { httpToolService, httpApiExecutor, agentMapper: null },
+      { httpToolService: null, httpApiExecutor, agentMapper },
+      { httpToolService, httpApiExecutor: null, agentMapper },
+      { httpToolService: null, httpApiExecutor: null, agentMapper: null },
     ] as Partial<DefaultToolRegistryDeps>[]) {
       const names = createDefaultToolRegistry(deps(overrides)).getAllTools().map((tool) => tool.getName());
       expect(names).not.toContain('http_describe');
@@ -71,7 +74,7 @@ describe('createDefaultToolRegistry 自定义 HTTP 工具条件注册', () => {
   });
 
   it('入口工具可被名称取到（/v1/tools 枚举与装配推入同源）', () => {
-    const registry = createDefaultToolRegistry(deps({ userToolService, httpApiExecutor }));
+    const registry = createDefaultToolRegistry(deps({ httpToolService, httpApiExecutor, agentMapper }));
     for (const name of HTTP_TOOL_NAMES) {
       const tool = registry.getTool(name);
       expect(tool, name).toBeDefined();
@@ -82,7 +85,7 @@ describe('createDefaultToolRegistry 自定义 HTTP 工具条件注册', () => {
   });
 
   it('入口工具的输入 schema 不含任何自定义工具的具体参数（懒加载宪法）', () => {
-    const registry = createDefaultToolRegistry(deps({ userToolService, httpApiExecutor }));
+    const registry = createDefaultToolRegistry(deps({ httpToolService, httpApiExecutor, agentMapper }));
     const callSchema = JSON.stringify(registry.getTool('http_call')!.getInputSchema());
     // 只有外壳参数 tool / arguments，不出现具体业务字段
     expect(callSchema).toContain('"tool"');

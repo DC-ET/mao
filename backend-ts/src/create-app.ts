@@ -175,9 +175,10 @@ import { WebhookTriggerService, type WebhookTriggerDeps } from './openapi/webhoo
 import { OutboundSubscriptionService } from './openapi/outbound-subscription.service.js';
 import { OPEN_HOOKS_PATH_PREFIX, registerOpenApiRoutes, type RawBodyRequest } from './openapi/open.routes.js';
 import { OpenApiCallLogService } from './openapi/open-api-call-log.service.js';
-import { MysqlUserToolRepository } from './user-tool/user-tool.repository.js';
-import { UserToolService } from './user-tool/user-tool.service.js';
-import { UserToolHeaderCipher } from './user-tool/user-tool-cipher.js';
+import { MysqlHttpToolRepository } from './http-tool/http-tool.repository.js';
+import { HttpToolService } from './http-tool/http-tool.service.js';
+import { HttpToolValidatorImpl, MysqlHttpToolLookup } from './http-tool/http-tool-validator.js';
+import { HttpToolHeaderCipher } from './http-tool/http-tool-cipher.js';
 import { MysqlSignalCheckRepository, MysqlSignalWatcherRepository } from './signal/signal.repository.js';
 import { RuntimeModeResolver, RUNTIME_MODE_SETTING_KEY, validateRuntimeModeSave } from './harness/container/runtime-mode.js';
 import { SessionEnvelopeBuilder, buildDepsEnv } from './harness/container/session-envelope-builder.js';
@@ -753,20 +754,21 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
 
   const dingtalkMediaHolder: { current: DingtalkMediaSendSupport | null } = { current: null };
 
-  // 自定义 HTTP 工具（V163）：定义域 + 执行内核。保留字校验要读内置工具名，
-  // 而 registry 在下方创建，用惰性闭包打破循环（调用只发生在用户请求期）。
-  const userToolRepo = new MysqlUserToolRepository(db);
-  const userToolCipher = new UserToolHeaderCipher(cfg.app.userTool.secretKey);
-  const userToolService = new UserToolService({
-    repo: userToolRepo,
-    cipher: userToolCipher,
-    settings: settingService,
+  // 自定义 HTTP 工具（V166）：定义域 + 执行内核 + Agent 关联校验器。保留字校验要读内置工具名，
+  // 而 registry 在下方创建，用惰性闭包打破循环（调用只发生在管理请求期）。
+  const httpToolRepo = new MysqlHttpToolRepository(db);
+  const httpToolCipher = new HttpToolHeaderCipher(cfg.app.httpTool.secretKey);
+  const httpToolService = new HttpToolService({
+    repo: httpToolRepo,
+    cipher: httpToolCipher,
     builtinToolNames: () => (toolRegistry as any).getAllTools().map((tool: any) => tool.getName()),
   });
   // 放行名单走系统设置（5s TTL 缓存由内核持有）；试运行与 http_call 共用同一实例。
   const httpApiExecutor = new HttpApiExecutor({
     allowlistProvider: () => settingService.getPrivateAllowlistCidrs(),
   });
+  // Agent 关联校验（镜像 mcpValidator 接线）：id 存在性 + 启用态。
+  const httpToolValidator = new HttpToolValidatorImpl(new MysqlHttpToolLookup(db));
 
   // harness 必须在 wsHandler / 微信 / 钉钉 / GitCommitMessageService 之前装配：
   // 这些消费者在构造时就读取真实的 harness 与 agentLoop（holder 只是给运行期晚绑定用）。
@@ -778,7 +780,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     sendBytesBridge, dingtalkMediaHolder, definitionRegistry, holder, subagentMapper,
     subagentInvocation, localToolSessions, visibility, backgroundSubagentManager,
     messageRepo, compactionSvc, embedPageToolRegistry, mcpToolsRegistry, routingMcpClient,
-    userToolService, httpApiExecutor, llmAdapter, promptEngine, contextManager,
+    httpToolService, httpApiExecutor, llmAdapter, promptEngine, contextManager,
     compactionService, compactionArchiveService, compactionConfig, historyLoader,
     activeContext, orchestrator, tokenEstimator, compactionModelResolver,
     localToolExecutor, dangerAssessor, proxyApprover, jevRiskAssessor, approvalModelResolver,
@@ -861,15 +863,15 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     dingtalkMediaHolder, mcpServerLookup, activityService, activityHeartbeat, todoMapper,
     jwt,
   });
-  const { feishuInboundHandler, feishuInboundProcessor, feishuCardActionService, feishuMonitor, dingtalk, feishuTaskQueue, feishuProgressCardRepo, createFeishuRecoveryProgress, analyticsService, statisticsService, adminAnalytics, userToolStatsStore, mcpValidator } = feishuHandler;
+  const { feishuInboundHandler, feishuInboundProcessor, feishuCardActionService, feishuMonitor, dingtalk, feishuTaskQueue, feishuProgressCardRepo, createFeishuRecoveryProgress, analyticsService, statisticsService, adminAnalytics, httpToolStatsStore, mcpValidator } = feishuHandler;
 
   await registerAllRoutes({
     app, db, cfg, apiPrefix, jwt, agentRuntimeCfg,
     authService, feishu, ecpAuth, userService, userRepo, permissionService,
     gitCredentials, envVariableService, sessionRepo,
-    userToolService, userToolRepo, httpApiExecutor, userToolStatsStore,
+    httpToolService, httpApiExecutor, httpToolStatsStore,
     fileService, agentService, experienceService, suggestedQuestionService,
-    agentBundleService, mcpValidator,
+    agentBundleService, mcpValidator, httpToolValidator,
     modelService,
     settingService, activateContainerRuntime, runtimeModeResolver,
     commandService, commandRepo, skillLoader, skillSync,

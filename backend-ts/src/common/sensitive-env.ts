@@ -10,7 +10,7 @@ export function isSensitiveChildEnvKey(key: string): boolean {
   if (key === 'JWT_SECRET') return true;
   if (key.startsWith('MYSQL_')) return true;
   if (key === 'APP_NOTIFICATION_WEBHOOK_SECRET' || key === 'APP_MCP_SECRET') return true;
-  if (key === 'APP_USER_TOOL_SECRET') return true;
+  if (key === 'APP_HTTP_TOOL_SECRET') return true;
   // 非 APP_ 前缀的平台主密钥/集成密钥：settings 加密主密钥与钉钉 OAuth secret
   if (key === 'SETTINGS_SECRET' || key === 'DINGTALK_OAUTH_SECRET') return true;
   // 按用户短效注入；继承会残留上一身份

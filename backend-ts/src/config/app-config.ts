@@ -134,8 +134,8 @@ export interface AppConfig {
     signal: {
       secretKey: string;
     };
-    userTool: {
-      /** 自定义 HTTP 工具请求头敏感值加密密钥（APP_USER_TOOL_SECRET 覆盖，独立轮换）。 */
+    httpTool: {
+      /** 自定义 HTTP 工具请求头敏感值加密密钥（APP_HTTP_TOOL_SECRET 覆盖，独立轮换）。 */
       secretKey: string;
     };
     search: {
@@ -267,8 +267,8 @@ const DEFAULTS: AppConfig = {
     signal: {
       secretKey: 'mao-signal-secret-default-key-v1-20261011',
     },
-    userTool: {
-      secretKey: 'mao-user-tool-default-secret-change-me',
+    httpTool: {
+      secretKey: 'mao-http-tool-default-secret-change-me',
     },
     search: {
       fulltextEnabled: true,
@@ -527,8 +527,8 @@ export function loadConfig(): AppConfig {
   if (process.env.APP_SIGNAL_SECRET) {
     cfg.app.signal.secretKey = process.env.APP_SIGNAL_SECRET;
   }
-  if (process.env.APP_USER_TOOL_SECRET) {
-    cfg.app.userTool.secretKey = process.env.APP_USER_TOOL_SECRET;
+  if (process.env.APP_HTTP_TOOL_SECRET) {
+    cfg.app.httpTool.secretKey = process.env.APP_HTTP_TOOL_SECRET;
   }
   if (process.env.APP_FEISHU_BOT_SECRET) {
     cfg.feishu.bot.appSecretKey = process.env.APP_FEISHU_BOT_SECRET;

@@ -87,7 +87,7 @@ export interface FeishuHandlerResult {
   analyticsService: AnalyticsService;
   statisticsService: StatisticsService;
   adminAnalytics: AdminAnalyticsService;
-  userToolStatsStore: AdminAnalyticsDbStore;
+  httpToolStatsStore: AdminAnalyticsDbStore;
   mcpValidator: McpServerValidatorImpl;
 }
 
@@ -529,7 +529,7 @@ export function assembleFeishuHandler(deps: FeishuHandlerDeps): FeishuHandlerRes
   const analyticsService = new AnalyticsService(new AnalyticsDbStore(db));
   const statisticsService = new StatisticsService(new StatisticsDbStore(db));
   const adminAnalytics = new AdminAnalyticsService(statisticsService, new AdminAnalyticsDbStore(db));
-  const userToolStatsStore = new AdminAnalyticsDbStore(db);
+  const httpToolStatsStore = new AdminAnalyticsDbStore(db);
   const mcpValidator = new McpServerValidatorImpl(d.mcpServerLookup);
 
   return {
@@ -544,7 +544,7 @@ export function assembleFeishuHandler(deps: FeishuHandlerDeps): FeishuHandlerRes
     analyticsService,
     statisticsService,
     adminAnalytics,
-    userToolStatsStore,
+    httpToolStatsStore,
     mcpValidator,
   };
 }

@@ -1,14 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import { HttpCallTool, HttpDescribeTool, httpCallTarget, parseCallArguments } from './http-api-tools.js';
-import type { UserToolWithParams } from '../../../user-tool/types.js';
+import type { HttpToolWithParams } from '../../../http-tool/types.js';
 
 const SESSION_ID = 7;
+const AGENT = { id: 5, httpToolIds: JSON.stringify([3]) };
 
-function found(toolName = 'weather'): UserToolWithParams {
+function found(toolName = 'weather'): HttpToolWithParams {
   return {
     tool: {
       id: 3,
-      userId: 9,
       name: toolName,
       displayName: '天气查询',
       description: '查询城市天气',
@@ -27,17 +27,21 @@ function found(toolName = 'weather'): UserToolWithParams {
   };
 }
 
-/** 组装两个工具：userToolService 桩 + executor 桩；sessionId → userId 固定映射。 */
+/** 组装两个工具：httpToolService 桩 + executor 桩；sessionId → agentId 固定映射。 */
 function makeTools(options: {
-  found?: UserToolWithParams | null;
+  found?: HttpToolWithParams | null;
   resolve?: Awaited<ReturnType<never>> | null;
   sessionMissing?: boolean;
+  agentMissing?: boolean;
   decryptThrows?: boolean;
 } = {}) {
   const sessionMapper = {
-    selectById: vi.fn(async () => (options.sessionMissing ? null : { userId: 9, executionMode: 'CLOUD' })),
+    selectById: vi.fn(async () => (options.sessionMissing ? null : { userId: 9, agentId: 5, executionMode: 'CLOUD' })),
   };
-  const userToolService = {
+  const agentMapper = {
+    selectById: vi.fn(async () => (options.agentMissing ? null : AGENT)),
+  };
+  const httpToolService = {
     findEnabledWithParams: vi.fn(async () => ('found' in options ? options.found : found())),
     resolveForExecution: vi.fn(async () => {
       if (options.decryptThrows) throw new Error('decrypt failed');
@@ -54,10 +58,11 @@ function makeTools(options: {
   const executor = { execute: vi.fn(async () => ({ status: 200, body: '{"temp":26}', truncated: false, displayName: '天气查询' })) };
   return {
     sessionMapper,
-    userToolService,
+    agentMapper,
+    httpToolService,
     executor,
-    describeTool: new HttpDescribeTool({ sessionMapper: sessionMapper as never, userToolService }),
-    callTool: new HttpCallTool({ sessionMapper: sessionMapper as never, userToolService, executor: executor as never }),
+    describeTool: new HttpDescribeTool({ sessionMapper: sessionMapper as never, agentMapper: agentMapper as never, httpToolService }),
+    callTool: new HttpCallTool({ sessionMapper: sessionMapper as never, agentMapper: agentMapper as never, httpToolService, executor: executor as never }),
   };
 }
 
@@ -66,12 +71,12 @@ function parse(result: string | Promise<string>): Record<string, unknown> {
 }
 
 describe('HttpDescribeTool', () => {
-  it('returns the parameter schema for an enabled tool of the session owner', async () => {
-    const { describeTool, userToolService } = makeTools();
+  it('returns the parameter schema for a tool associated with the session agent', async () => {
+    const { describeTool, httpToolService } = makeTools();
     const result = parse(await describeTool.execute(JSON.stringify({ tool: 'weather' }), SESSION_ID));
     expect(result).toMatchObject({ name: 'weather', displayName: '天气查询', method: 'GET', readOnly: true });
     expect(result.params).toHaveLength(2);
-    expect(userToolService.findEnabledWithParams).toHaveBeenCalledWith(9, 'weather');
+    expect(httpToolService.findEnabledWithParams).toHaveBeenCalledWith(AGENT, 'weather');
   });
 
   it('does not hit the network and never leaks header ciphertext', async () => {
@@ -83,11 +88,11 @@ describe('HttpDescribeTool', () => {
   });
 
   it('rejects missing / non-object / empty tool arguments', async () => {
-    const { describeTool, userToolService } = makeTools();
+    const { describeTool, httpToolService } = makeTools();
     expect(parse(await describeTool.execute('{}', SESSION_ID)).error).toContain('缺少 tool');
     expect(parse(await describeTool.execute('{bad', SESSION_ID)).error).toContain('不是合法 JSON');
     expect(parse(await describeTool.execute('"weather"', SESSION_ID)).error).toContain('必须是 JSON 对象');
-    expect(userToolService.findEnabledWithParams).not.toHaveBeenCalled();
+    expect(httpToolService.findEnabledWithParams).not.toHaveBeenCalled();
   });
 
   it('reports unknown or disabled tools distinctly', async () => {
@@ -96,22 +101,29 @@ describe('HttpDescribeTool', () => {
     expect(result.error).toBe('工具不存在或未启用：ghost');
   });
 
-  it('requires a session context to resolve the owner', async () => {
-    const { describeTool, userToolService } = makeTools({ sessionMissing: true });
+  it('requires a session context to resolve the agent', async () => {
+    const { describeTool, httpToolService } = makeTools({ sessionMissing: true });
     const result = parse(await describeTool.execute(JSON.stringify({ tool: 'weather' }), null));
     expect(result.error).toContain('需要会话上下文');
-    expect(userToolService.findEnabledWithParams).not.toHaveBeenCalled();
+    expect(httpToolService.findEnabledWithParams).not.toHaveBeenCalled();
+  });
+
+  it('requires the session agent to exist', async () => {
+    const { describeTool, httpToolService } = makeTools({ agentMissing: true });
+    const result = parse(await describeTool.execute(JSON.stringify({ tool: 'weather' }), SESSION_ID));
+    expect(result.error).toContain('需要会话上下文');
+    expect(httpToolService.findEnabledWithParams).not.toHaveBeenCalled();
   });
 });
 
 describe('HttpCallTool', () => {
   it('executes through the kernel and returns the normalized result', async () => {
-    const { callTool, executor, userToolService } = makeTools();
+    const { callTool, executor, httpToolService } = makeTools();
     const result = parse(await callTool.execute(
       JSON.stringify({ tool: 'weather', arguments: { city: '上海' } }), SESSION_ID,
     ));
     expect(result).toMatchObject({ status: 200, body: '{"temp":26}' });
-    expect(userToolService.resolveForExecution).toHaveBeenCalledWith(9, 'weather');
+    expect(httpToolService.resolveForExecution).toHaveBeenCalledWith(AGENT, 'weather');
     expect(executor.execute).toHaveBeenCalledTimes(1);
   });
 
@@ -133,12 +145,12 @@ describe('HttpCallTool', () => {
   });
 
   it('rejects oversized arguments before any resolution', async () => {
-    const { callTool, userToolService, executor } = makeTools();
+    const { callTool, httpToolService, executor } = makeTools();
     const result = parse(await callTool.execute(
       JSON.stringify({ tool: 'weather', arguments: { blob: 'x'.repeat(70 * 1024) } }), SESSION_ID,
     ));
     expect(result.error).toContain('参数过大');
-    expect(userToolService.resolveForExecution).not.toHaveBeenCalled();
+    expect(httpToolService.resolveForExecution).not.toHaveBeenCalled();
     expect(executor.execute).not.toHaveBeenCalled();
   });
 
@@ -157,16 +169,17 @@ describe('HttpCallTool', () => {
     expect(executor.execute).not.toHaveBeenCalled();
   });
 
-  it('requires a session context to resolve the owner', async () => {
-    const { callTool, userToolService } = makeTools({ sessionMissing: true });
+  it('requires a session context to resolve the agent', async () => {
+    const { callTool, httpToolService } = makeTools({ sessionMissing: true });
     const result = parse(await callTool.execute(JSON.stringify({ tool: 'weather' }), null));
     expect(result.error).toContain('需要会话上下文');
-    expect(userToolService.resolveForExecution).not.toHaveBeenCalled();
+    expect(httpToolService.resolveForExecution).not.toHaveBeenCalled();
   });
 
   it('surfaces kernel failures (SSRF deny / HTTP status) as error payloads', async () => {
-    const sessionMapper = { selectById: vi.fn(async () => ({ userId: 9 })) };
-    const userToolService = {
+    const sessionMapper = { selectById: vi.fn(async () => ({ userId: 9, agentId: 5 })) };
+    const agentMapper = { selectById: vi.fn(async () => AGENT) };
+    const httpToolService = {
       findEnabledWithParams: vi.fn(),
       resolveForExecution: vi.fn(async () => ({
         tool: {
@@ -177,14 +190,15 @@ describe('HttpCallTool', () => {
       })),
     };
     const executor = { execute: vi.fn(async () => ({ error: '请求被拒绝：目标地址不在允许访问的网段内' })) };
-    const callTool = new HttpCallTool({ sessionMapper: sessionMapper as never, userToolService, executor: executor as never });
+    const callTool = new HttpCallTool({ sessionMapper: sessionMapper as never, agentMapper: agentMapper as never, httpToolService, executor: executor as never });
     const result = parse(await callTool.execute(JSON.stringify({ tool: 'weather' }), SESSION_ID));
     expect(result.error).toContain('请求被拒绝');
   });
 
   it('errors clearly when the execution kernel is not assembled', async () => {
-    const sessionMapper = { selectById: vi.fn(async () => ({ userId: 9 })) };
-    const userToolService = {
+    const sessionMapper = { selectById: vi.fn(async () => ({ userId: 9, agentId: 5 })) };
+    const agentMapper = { selectById: vi.fn(async () => AGENT) };
+    const httpToolService = {
       findEnabledWithParams: vi.fn(),
       resolveForExecution: vi.fn(async () => ({
         tool: {
@@ -194,7 +208,7 @@ describe('HttpCallTool', () => {
         params: found().params,
       })),
     };
-    const tool = new HttpCallTool({ sessionMapper: sessionMapper as never, userToolService, executor: null });
+    const tool = new HttpCallTool({ sessionMapper: sessionMapper as never, agentMapper: agentMapper as never, httpToolService, executor: null });
     const result = parse(await tool.execute(JSON.stringify({ tool: 'weather' }), SESSION_ID));
     expect(result.error).toContain('执行内核未装配');
   });

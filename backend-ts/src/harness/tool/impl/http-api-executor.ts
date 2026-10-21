@@ -2,7 +2,7 @@ import {
   areIpsInCidrAllowlist, isCloudMetadataHost, isCloudMetadataIp, isLoopbackIp,
   isPrivateOrReservedHostname, isPrivateOrReservedIp, isValidCidr, resolveHostIps,
 } from '../../../common/ssrf.js';
-import { RESPONSE_MAX_BYTES, type ResolvedHttpTool, type UserToolParam } from '../../../user-tool/types.js';
+import { RESPONSE_MAX_BYTES, type ResolvedHttpTool, type HttpToolParam } from '../../../http-tool/types.js';
 
 /** 默认请求头（用户头覆盖；Content-Type 仅在有请求体时默认给出）。 */
 const DEFAULT_USER_AGENT = 'Mozilla/5.0 (compatible; AgentWorkbench/1.0)';
@@ -66,7 +66,7 @@ export class HttpApiExecutor {
 
   async execute(
     tool: ResolvedHttpTool,
-    params: UserToolParam[],
+    params: HttpToolParam[],
     argumentsJson: string,
   ): Promise<HttpExecutionResult> {
     const parsedArgs = parseArgsObject(argumentsJson);
@@ -287,7 +287,7 @@ function buildHeaders(tool: ResolvedHttpTool, withBody: boolean): Record<string,
 
 function renderBodyTemplate(
   template: string,
-  params: UserToolParam[],
+  params: HttpToolParam[],
   args: Record<string, unknown>,
 ): string {
   // 单遍替换（String.replace 函数式不再扫替换结果），参数值里的 {{ 不递归展开
@@ -308,7 +308,7 @@ function renderBodyTemplate(
  */
 function renderUrlTemplate(
   url: string,
-  params: UserToolParam[],
+  params: HttpToolParam[],
   args: Record<string, unknown>,
 ): string {
   return url.replace(PLACEHOLDER_RE, (match, name: string) => {
@@ -338,7 +338,7 @@ function parseArgsObject(argumentsJson: string | null | undefined): { value: Rec
 }
 
 /** 参数契约校验：必填缺失 / 类型不符 / 未定义参数均返回可读错误引导重试。 */
-export function validateArguments(params: UserToolParam[], args: Record<string, unknown>): string | null {
+export function validateArguments(params: HttpToolParam[], args: Record<string, unknown>): string | null {
   const defined = new Set(params.map((param) => param.name));
   for (const key of Object.keys(args)) {
     if (!defined.has(key)) {

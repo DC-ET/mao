@@ -26,7 +26,7 @@ import type { SessionCompactionService } from './session/session-compaction.serv
 import type { EmbedPageToolRegistry } from './harness/embed-page-tool-registry.js';
 import type { McpToolsRegistry } from './harness/mcp/local/mcp-tools-registry.js';
 import type { McpClientManager } from './harness/mcp/mcp-client-manager.js';
-import type { UserToolService } from './user-tool/user-tool.service.js';
+import type { HttpToolService } from './http-tool/http-tool.service.js';
 import type { HttpApiExecutor } from './harness/tool/impl/http-api-executor.js';
 import type { HarnessTuningSettings } from './settings/types.js';
 import type { LlmAdapter } from './harness/llm/chat-request.js';
@@ -118,7 +118,7 @@ export interface HarnessEngineDeps {
   embedPageToolRegistry: EmbedPageToolRegistry;
   mcpToolsRegistry: McpToolsRegistry;
   routingMcpClient: McpClientManager;
-  userToolService: UserToolService;
+  httpToolService: HttpToolService;
   httpApiExecutor: HttpApiExecutor;
   llmAdapter: LlmAdapter;
   promptEngine: PromptEngine;
@@ -280,8 +280,9 @@ export function assembleHarnessEngine(deps: HarnessEngineDeps): HarnessEngineRes
     embedPageToolRegistry: d.embedPageToolRegistry,
     mcpToolsRegistry: d.mcpToolsRegistry,
     mcpClientManager: d.routingMcpClient,
-    userToolService: d.userToolService,
+    httpToolService: d.httpToolService,
     httpApiExecutor: d.httpApiExecutor,
+    agentMapper: d.agentRepo as never,
   });
 
   const toolDispatcher = new ToolDispatcher(
@@ -318,7 +319,7 @@ export function assembleHarnessEngine(deps: HarnessEngineDeps): HarnessEngineRes
     },
     d.memoryService,
     d.mcpLoadModeResolver,
-    d.userToolService,
+    d.httpToolService,
   );
   d.holder.harness = harness;
 

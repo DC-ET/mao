@@ -56,6 +56,7 @@ export class AgentService {
     systemPrompt: string,
     skillNames: string[] | null | undefined,
     mcpServerIds: number[] | null | undefined,
+    httpToolIds: number[] | null | undefined,
     experiences: ExperienceInput[] | null | undefined,
     suggestedQuestions: SuggestedQuestionInput[] | null | undefined,
     isDefault: number | null | undefined,
@@ -89,6 +90,9 @@ export class AgentService {
     if (mcpServerIds != null && mcpServerIds.length > 0) {
       agent.mcpServerIds = JSON.stringify(mcpServerIds);
     }
+    if (httpToolIds != null && httpToolIds.length > 0) {
+      agent.httpToolIds = JSON.stringify(httpToolIds);
+    }
     await this.agentRepo.insert(agent);
 
     if (experiences != null) {
@@ -109,6 +113,7 @@ export class AgentService {
     systemPrompt: string | null | undefined,
     skillNames: string[] | null | undefined,
     mcpServerIds: number[] | null | undefined,
+    httpToolIds: number[] | null | undefined,
     experiences: ExperienceInput[] | null | undefined,
     suggestedQuestions: SuggestedQuestionInput[] | null | undefined,
     isDefault: number | null | undefined,
@@ -135,6 +140,9 @@ export class AgentService {
     }
     if (mcpServerIds != null) {
       agent.mcpServerIds = mcpServerIds.length === 0 ? null : JSON.stringify(mcpServerIds);
+    }
+    if (httpToolIds != null) {
+      agent.httpToolIds = httpToolIds.length === 0 ? null : JSON.stringify(httpToolIds);
     }
     if (defaultModelId !== undefined) {
       await this.requireEnabledModel(defaultModelId);

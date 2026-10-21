@@ -275,7 +275,7 @@ function makeHarness(overrides: Record<string, unknown> = {}) {
     deps.embedSessionLookup ?? null,
     deps.memoryInjection ?? null,
     deps.mcpLoadModeResolver ?? null,
-    deps.userToolService ?? null,
+    deps.httpToolService ?? null,
   );
   return { service, ...deps };
 }
@@ -840,9 +840,9 @@ describe('HarnessService 自定义 HTTP 工具装配（技术方案 2026-10-19 �
     };
   }
 
-  function userTool(overrides: Record<string, unknown> = {}) {
+  function httpTool(overrides: Record<string, unknown> = {}) {
     return {
-      id: 1, userId: 7, name: 'weather', displayName: '天气查询', description: '查询城市天气',
+      id: 1, name: 'weather', displayName: '天气查询', description: '查询城市天气',
       method: 'GET', url: 'https://api.example.com/v1/weather', headersJson: null, bodyTemplate: null,
       readOnly: 1, timeoutMs: 15000, enabled: 1, ...overrides,
     };
@@ -851,7 +851,7 @@ describe('HarnessService 自定义 HTTP 工具装配（技术方案 2026-10-19 �
   it('默认工具集中剔除两个入口工具（无启用工具时任何会话都看不到）', async () => {
     const { service } = makeHarness({
       toolRegistry: httpRegistry(),
-      userToolService: { listEnabled: vi.fn(async () => []), getMaxEnabledPerUser: vi.fn(async () => 20) },
+      httpToolService: { listEnabledForAgent: vi.fn(async () => []) },
     });
     const ctx = await service.buildContext(10);
     expect(ctx.tools.map((tool) => tool.getName())).not.toContain('http_describe');
@@ -859,29 +859,23 @@ describe('HarnessService 自定义 HTTP 工具装配（技术方案 2026-10-19 �
     expect(ctx.customHttpTools).toBeNull();
   });
 
-  it('userId 为空（无主会话）时零查库、零注入', async () => {
-    // 真实 UserToolService.listEnabled(null) 直接返回 []（零查库），这里同口径打桩
-    const listEnabled = vi.fn(async (userId: number | null) => (userId == null ? [] : [userTool()]));
+  it('agent 无关联时零查库、零注入', async () => {
+    // 真实 HttpToolService.listEnabledForAgent 对 httpToolIds 为空直接返回 []（零查库），这里同口径打桩
+    const listEnabledForAgent = vi.fn(async (agent: { httpToolIds?: string | null }) => (agent?.httpToolIds ? [httpTool()] : []));
     const { service } = makeHarness({
       toolRegistry: httpRegistry(),
-      userToolService: { listEnabled, getMaxEnabledPerUser: vi.fn(async () => 20) },
-    });
-    (service['sessionMapper'].selectById as ReturnType<typeof vi.fn>).mockResolvedValue({
-      id: 10, userId: null, agentId: 2, executionMode: 'CLOUD', modelId: 3,
+      httpToolService: { listEnabledForAgent },
     });
     const ctx = await service.buildContext(10);
-    expect(listEnabled).toHaveBeenCalledWith(null);
+    expect(listEnabledForAgent).toHaveBeenCalledWith(expect.objectContaining({ id: 2 }));
     expect(ctx.tools.map((tool) => tool.getName())).not.toContain('http_call');
     expect(ctx.customHttpTools).toBeNull();
   });
 
-  it('用户有启用工具时推入两个入口并生成目录分节数据', async () => {
+  it('agent 关联工具时推入两个入口并生成目录分节数据', async () => {
     const { service } = makeHarness({
       toolRegistry: httpRegistry(),
-      userToolService: {
-        listEnabled: vi.fn(async () => [userTool()]),
-        getMaxEnabledPerUser: vi.fn(async () => 20),
-      },
+      httpToolService: { listEnabledForAgent: vi.fn(async () => [httpTool()]) },
     });
     const ctx = await service.buildContext(10);
     expect(ctx.tools.map((tool) => tool.getName())).toEqual(expect.arrayContaining(['http_describe', 'http_call']));
@@ -889,26 +883,30 @@ describe('HarnessService 自定义 HTTP 工具装配（技术方案 2026-10-19 �
     expect(ctx.customHttpTools?.tools[0]).toEqual({
       name: 'weather', displayName: '天气查询', method: 'GET', readOnly: true, description: '查询城市天气',
     });
-    expect(ctx.customHttpTools?.hiddenCount).toBe(0);
   });
 
-  it('启用数超上限时只加载前 maxEnabled 个并给出隐藏计数', async () => {
+  it('按 agent.httpToolIds 关联装配（无上限截断）', async () => {
     const tools = [
-      userTool({ id: 1, name: 'alerts' }),
-      userTool({ id: 2, name: 'weather' }),
-      userTool({ id: 3, name: 'orders' }),
+      httpTool({ id: 1, name: 'alerts' }),
+      httpTool({ id: 2, name: 'weather' }),
+      httpTool({ id: 3, name: 'orders' }),
     ];
+    const listEnabledForAgent = vi.fn(async () => tools);
     const { service } = makeHarness({
       toolRegistry: httpRegistry(),
-      userToolService: { listEnabled: vi.fn(async () => tools), getMaxEnabledPerUser: vi.fn(async () => 2) },
+      httpToolService: { listEnabledForAgent },
+    });
+    (service['agentMapper'].selectById as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 2, name: 'Coder', systemPrompt: 'You are a coder', skillNames: '["java"]',
+      httpToolIds: JSON.stringify([1, 2, 3]),
+      configJson: JSON.stringify({ compaction: { enabled: true, maxSummaryTokens: 8000 } }),
     });
     const ctx = await service.buildContext(10);
-    // name ASC：alerts < orders < weather，截前 2 个
-    expect(ctx.customHttpTools?.tools.map((tool) => tool.name)).toEqual(['alerts', 'orders']);
-    expect(ctx.customHttpTools?.hiddenCount).toBe(1);
+    expect(listEnabledForAgent).toHaveBeenCalledWith(expect.objectContaining({ httpToolIds: JSON.stringify([1, 2, 3]) }));
+    expect(ctx.customHttpTools?.tools.map((tool) => tool.name)).toEqual(['alerts', 'orders', 'weather']);
   });
 
-  it('未注入 userToolService 时（精简装配）维持改造前行为', async () => {
+  it('未注入 httpToolService 时（精简装配）维持改造前行为', async () => {
     const { service } = makeHarness({ toolRegistry: httpRegistry() });
     const ctx = await service.buildContext(10);
     expect(ctx.tools.map((tool) => tool.getName())).not.toContain('http_call');
@@ -918,9 +916,8 @@ describe('HarnessService 自定义 HTTP 工具装配（技术方案 2026-10-19 �
   it('装配失败不阻断会话启动（本轮不注入自定义工具）', async () => {
     const { service } = makeHarness({
       toolRegistry: httpRegistry(),
-      userToolService: {
-        listEnabled: vi.fn(async () => { throw new Error('db down'); }),
-        getMaxEnabledPerUser: vi.fn(async () => 20),
+      httpToolService: {
+        listEnabledForAgent: vi.fn(async () => { throw new Error('db down'); }),
       },
     });
     const ctx = await service.buildContext(10);
@@ -930,10 +927,7 @@ describe('HarnessService 自定义 HTTP 工具装配（技术方案 2026-10-19 �
 
   it('入口工具未注册时跳过装配（精简 registry）', async () => {
     const { service } = makeHarness({
-      userToolService: {
-        listEnabled: vi.fn(async () => [userTool()]),
-        getMaxEnabledPerUser: vi.fn(async () => 20),
-      },
+      httpToolService: { listEnabledForAgent: vi.fn(async () => [httpTool()]) },
     });
     const ctx = await service.buildContext(10);
     expect(ctx.customHttpTools).toBeNull();

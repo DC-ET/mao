@@ -22,8 +22,6 @@ export const SHELL_ENV_VARS_ENABLED_KEY = 'shell.envVars.enabled';
 export const MCP_LOAD_MODE_KEY = 'mcp.loadMode';
 /** 自定义 HTTP 工具内网放行清单（V163，CIDR JSON 数组）：环回与云元数据永拒，默认空数组=一律按私网拒绝。 */
 export const HTTP_TOOL_PRIVATE_ALLOWLIST_KEY = 'tools.http.privateAllowlist';
-/** 自定义 HTTP 工具单用户启用上限（V163，默认 20，与 user-tool 域 MAX_ENABLED_DEFAULT 一致）。 */
-export const HTTP_TOOL_MAX_ENABLED_PER_USER_KEY = 'tools.http.maxEnabledPerUser';
 export const WEIXIN_MODEL_ID_KEY = 'weixin.modelId';
 export const SESSION_TITLE_MODEL_ID_KEY = 'session.titleModelId';
 export const GIT_COMMIT_MESSAGE_MODEL_ID_KEY = 'git.commitMessageModelId';
@@ -752,13 +750,6 @@ export class SystemSettingService {
     return parseCidrList(raw);
   }
 
-  /** 单用户可启用的自定义工具数上限（V163，默认 20）；非法值回落默认（可用性配置，非安全门）。 */
-  async getMaxEnabledPerUser(): Promise<number> {
-    const raw = await this.getOpt(HTTP_TOOL_MAX_ENABLED_PER_USER_KEY);
-    const n = raw == null ? NaN : Number(raw);
-    return Number.isInteger(n) && n > 0 && n <= 100 ? n : 20;
-  }
-
   async isOpenApiTokenAutoDisableEnabled(): Promise<boolean> {
     const raw = await this.getText('openapi.tokenAutoDisable.enabled', 'true');
     return raw === 'true' || raw === '1';
@@ -852,13 +843,6 @@ export class SystemSettingService {
           ErrorCode.PARAM_INVALID,
           `内网放行清单不允许包含环回（127.0.0.0/8）或云元数据（169.254.169.254）网段：${hardDenied.slice(0, 3).join('、')}`,
         );
-      }
-      return;
-    }
-    if (key === HTTP_TOOL_MAX_ENABLED_PER_USER_KEY) {
-      const n = Number(value);
-      if (!Number.isInteger(n) || n < 1 || n > 100) {
-        throw new BusinessException(ErrorCode.PARAM_INVALID, '单用户启用上限需为 1~100 的整数');
       }
       return;
     }

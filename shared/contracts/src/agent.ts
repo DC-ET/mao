@@ -37,6 +37,8 @@ export interface AgentVO {
   defaultModelId?: number | null;
   skillNames?: string[];
   mcpServerIds?: number[];
+  /** 关联的自定义 HTTP 工具 ID 列表（管理员在 Agent 表单多选；该 Agent 的会话可调用） */
+  httpToolIds?: number[];
   experiences?: ExperienceVO[];
   suggestedQuestions?: SuggestedQuestionVO[];
   createdAt?: string | null;

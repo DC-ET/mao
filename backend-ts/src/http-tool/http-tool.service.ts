@@ -1,15 +1,16 @@
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { hasText } from '../common/case.js';
+import type { Agent } from '../agent/types.js';
 import {
   BODY_TEMPLATE_MAX_CHARS, DESCRIPTION_MAX_CHARS, HEADER_KEY_MAX_CHARS,
-  HEADER_VALUE_MASK, HEADER_VALUE_MAX_CHARS, HTTP_METHODS, MAX_ENABLED_DEFAULT, MAX_HEADERS_PER_TOOL,
-  MAX_PARAMS_PER_TOOL, USER_TOOL_NAME_RE, USER_TOOL_PARAM_NAME_RE, USER_TOOL_PARAM_TYPES,
-  clampTimeoutMs, compareUserToolName, inferReadOnlyByMethod, isReservedToolName, isSensitiveHeaderKey,
-  type BuiltinToolNamesProvider, type ResolvedHttpTool, type ResolvedHttpToolExecution,
-  type UserTool, type UserToolDraft, type UserToolHeaderVO, type UserToolParam, type UserToolParamInput,
-  type UserToolRepository, type UserToolSecretCipher, type UserToolSettingsPort, type UserToolVO,
-  type UserToolWithParams,
+  HEADER_VALUE_MASK, HEADER_VALUE_MAX_CHARS, HTTP_METHODS, MAX_HEADERS_PER_TOOL,
+  MAX_PARAMS_PER_TOOL, HTTP_TOOL_NAME_RE, HTTP_TOOL_PARAM_NAME_RE, HTTP_TOOL_PARAM_TYPES,
+  clampTimeoutMs, inferReadOnlyByMethod, isReservedToolName, isSensitiveHeaderKey, parseHttpToolIds,
+  type AdminHttpToolQuery, type BuiltinToolNamesProvider, type ResolvedHttpTool, type ResolvedHttpToolExecution,
+  type HttpTool, type HttpToolDraft, type HttpToolHeaderVO, type HttpToolParam, type HttpToolParamInput,
+  type HttpToolRepository, type HttpToolSecretCipher,
+  type HttpToolVO, type HttpToolWithParams,
 } from './types.js';
 
 /** 请求头键名字符集（HTTP token 实用子集）。 */
@@ -17,60 +18,62 @@ const HEADER_KEY_RE = /^[A-Za-z0-9_-]+$/;
 /** 存储形态前缀：`enc:<ciphertext>` 表示敏感值密文。 */
 const ENC_PREFIX = 'enc:';
 
-export interface UserToolServiceDeps {
-  repo: UserToolRepository;
-  cipher: UserToolSecretCipher;
-  settings: Pick<UserToolSettingsPort, 'getMaxEnabledPerUser'>;
+export interface HttpToolServiceDeps {
+  repo: HttpToolRepository;
+  cipher: HttpToolSecretCipher;
   builtinToolNames: BuiltinToolNamesProvider;
 }
 
 /**
  * 自定义 HTTP 工具定义态服务（技术方案 §5.1 / §5.10）：
- * CRUD + 启停 + 属主隔离 + read_only 预推断 + 敏感头识别与加解密 + 启用上限。
- * 数据隔离强制 userId：所有用户侧方法首参即属主，执行链路的 userId 只从 sessionId 解析。
+ * 管理员 CRUD + 全局启停 + read_only 预推断 + 敏感头识别与加解密。
+ * 归属模型：管理员配置 + 按 Agent 关联——无属主维度，name 全局唯一；
+ * 运行态装配与执行解析按 Agent 关联 id 集合（agent.http_tool_ids）。
  */
-export class UserToolService {
-  constructor(private readonly deps: UserToolServiceDeps) {}
+export class HttpToolService {
+  constructor(private readonly deps: HttpToolServiceDeps) {}
 
   // ── 查询 ──────────────────────────────────────────────────────────────
 
-  /** 设置页列表：含参数与打码请求头。 */
-  async listForUser(userId: number): Promise<UserToolVO[]> {
-    const tools = await this.deps.repo.listByUserId(userId);
-    if (tools.length === 0) return [];
-    const paramsByTool = await this.loadParams(tools);
-    return tools.map((tool) => this.toVO(tool, paramsByTool.get(tool.id!) ?? []));
+  /** 运行态装配输入：Agent 关联 id 集合中的启用工具，name ASC；空集合零查库。 */
+  async listEnabledForAgent(agent: Pick<Agent, 'httpToolIds'>): Promise<HttpTool[]> {
+    const ids = parseHttpToolIds(agent);
+    if (ids.length === 0) return [];
+    return this.deps.repo.listEnabledByIds(ids);
   }
 
-  /** 运行态装配输入：仅启用工具，name ASC；userId 为空（无主会话）零查库。 */
-  async listEnabled(userId: number | null): Promise<UserTool[]> {
-    if (userId == null) return [];
-    return this.deps.repo.listEnabledByUserId(userId);
+  /**
+   * 管理侧清单 VO：含掩码请求头与参数定义——编辑表单回填用（掩码 = 不修改，
+   * 与桌面编辑器口径一致）；敏感值一律打码，不暴露密文。
+   */
+  async listForAdmin(
+    page: number,
+    size: number,
+    query: AdminHttpToolQuery,
+  ): Promise<{ records: HttpToolVO[]; total: number }> {
+    const { rows, total } = await this.deps.repo.listForAdmin(page, size, query);
+    const paramsByTool = await this.loadParams(rows);
+    return {
+      records: rows.map((row) => this.toVO(row, paramsByTool.get(row.id!) ?? [])),
+      total,
+    };
   }
 
-  async getMaxEnabledPerUser(): Promise<number> {
-    try {
-      return await this.deps.settings.getMaxEnabledPerUser();
-    } catch {
-      // 上限是可用性配置而非安全门：读取失败回落默认值，不阻断会话装配。
-      return MAX_ENABLED_DEFAULT;
-    }
+  /** 启用工具轻量列表（Agent 表单下拉用）。 */
+  listEnabledBrief(): Promise<Array<Pick<HttpTool, 'id' | 'name' | 'displayName' | 'method' | 'readOnly'>>> {
+    return this.deps.repo.listEnabledBrief();
   }
 
-  // ── 写操作 ────────────────────────────────────────────────────────────
+  // ── 写操作（管理态，无属主校验） ──────────────────────────────────────
 
-  async create(userId: number, draft: UserToolDraft): Promise<UserToolVO> {
+  async create(draft: HttpToolDraft): Promise<HttpToolVO> {
     const normalized = this.validateDraft(draft, 1);
-    const existing = await this.deps.repo.findByUserIdAndName(userId, normalized.name);
+    const existing = await this.deps.repo.findByName(normalized.name);
     if (existing != null) {
-      throw new BusinessException(ErrorCode.USER_TOOL_NAME_DUPLICATE, '同名工具已存在，请更换工具名');
-    }
-    if (normalized.enabled === 1) {
-      await this.assertEnabledBelowLimit(userId);
+      throw new BusinessException(ErrorCode.HTTP_TOOL_NAME_DUPLICATE, '同名工具已存在，请更换工具名');
     }
     const headersJson = encodeHeaders(normalized.headers ?? {}, null, this.deps.cipher);
-    const tool: UserTool = {
-      userId,
+    const tool: HttpTool = {
       name: normalized.name,
       displayName: normalized.displayName,
       description: normalized.description,
@@ -92,25 +95,22 @@ export class UserToolService {
     return this.toVO(tool, params);
   }
 
-  async update(userId: number, id: number, draft: UserToolDraft): Promise<UserToolVO> {
-    const existing = await this.deps.repo.findByIdAndUserId(id, userId);
+  async update(id: number, draft: HttpToolDraft): Promise<HttpToolVO> {
+    const existing = await this.deps.repo.findById(id);
     if (existing == null) {
-      throw new BusinessException(ErrorCode.USER_TOOL_NOT_FOUND, '自定义工具不存在');
+      throw new BusinessException(ErrorCode.HTTP_TOOL_NOT_FOUND, '自定义工具不存在');
     }
     const normalized = this.validateDraft(draft, existing.enabled);
     if (normalized.name !== existing.name) {
-      const clash = await this.deps.repo.findByUserIdAndName(userId, normalized.name);
+      const clash = await this.deps.repo.findByName(normalized.name);
       if (clash != null) {
-        throw new BusinessException(ErrorCode.USER_TOOL_NAME_DUPLICATE, '同名工具已存在，请更换工具名');
+        throw new BusinessException(ErrorCode.HTTP_TOOL_NAME_DUPLICATE, '同名工具已存在，请更换工具名');
       }
-    }
-    if (normalized.enabled === 1 && existing.enabled !== 1) {
-      await this.assertEnabledBelowLimit(userId);
     }
     // 敏感头传掩码 = 不修改：沿用已存密文；传新值 = 加密覆盖；传空 = 清除。
     const previousStored = parseStoredHeaders(existing.headersJson);
     const headersJson = encodeHeaders(normalized.headers ?? {}, previousStored, this.deps.cipher);
-    const next: UserTool = {
+    const next: HttpTool = {
       ...existing,
       name: normalized.name,
       displayName: normalized.displayName,
@@ -134,24 +134,20 @@ export class UserToolService {
     return this.toVO(next, params);
   }
 
-  async remove(userId: number, id: number): Promise<void> {
-    const existing = await this.deps.repo.findByIdAndUserId(id, userId);
+  async remove(id: number): Promise<void> {
+    const existing = await this.deps.repo.findById(id);
     if (existing == null) {
-      throw new BusinessException(ErrorCode.USER_TOOL_NOT_FOUND, '自定义工具不存在');
+      throw new BusinessException(ErrorCode.HTTP_TOOL_NOT_FOUND, '自定义工具不存在');
     }
     await this.deps.repo.deleteById(id);
   }
 
-  async setEnabled(userId: number, id: number, enabled: boolean): Promise<UserToolVO> {
-    const existing = await this.deps.repo.findByIdAndUserId(id, userId);
+  async setEnabled(id: number, enabled: boolean): Promise<HttpToolVO> {
+    const existing = await this.deps.repo.findById(id);
     if (existing == null) {
-      throw new BusinessException(ErrorCode.USER_TOOL_NOT_FOUND, '自定义工具不存在');
+      throw new BusinessException(ErrorCode.HTTP_TOOL_NOT_FOUND, '自定义工具不存在');
     }
-    const nextEnabled = enabled ? 1 : 0;
-    if (nextEnabled === 1 && existing.enabled !== 1) {
-      await this.assertEnabledBelowLimit(userId);
-    }
-    const next: UserTool = { ...existing, enabled: nextEnabled };
+    const next: HttpTool = { ...existing, enabled: enabled ? 1 : 0 };
     await this.deps.repo.updateById(next);
     const params = await this.deps.repo.listParamsByToolId(id);
     return this.toVO(next, params);
@@ -160,12 +156,11 @@ export class UserToolService {
   // ── 执行解析（http_call / 试运行共用） ────────────────────────────────
 
   /**
-   * 正式调用：仅取「本人 + 启用 + 在启用上限前 N 名内」的定义并解密请求头；否则 null。
-   * 前 N 名与目录（buildCustomHttpToolCatalog）同源同序：都取 listEnabled 的 name ASC
-   * 前 maxEnabled 个——模型看不到的工具不允许调用（设计 §5.4 可调用集合与目录一致）。
+   * 正式调用：取「该 Agent 关联 + 启用」的定义并解密请求头；否则 null。
+   * 可见范围与目录装配同源：都取 listEnabledForAgent（agent.http_tool_ids ∩ enabled=1）。
    */
-  async resolveForExecution(userId: number, name: string): Promise<ResolvedHttpToolExecution | null> {
-    const tool = await this.findCallableEnabled(userId, name);
+  async resolveForExecution(agent: Pick<Agent, 'httpToolIds'>, name: string): Promise<ResolvedHttpToolExecution | null> {
+    const tool = await this.findEnabledForAgent(agent, name);
     if (tool == null) return null;
     const params = await this.deps.repo.listParamsByToolId(tool.id!);
     return {
@@ -182,16 +177,16 @@ export class UserToolService {
     };
   }
 
-  /** http_describe：同 resolveForExecution 的可见范围（本人 + 启用 + 前 N 名），含中文 label，无网络。 */
-  async findEnabledWithParams(userId: number, name: string): Promise<UserToolWithParams | null> {
-    const tool = await this.findCallableEnabled(userId, name);
+  /** http_describe：同 resolveForExecution 的可见范围（关联 + 启用），含中文 label，无网络。 */
+  async findEnabledWithParams(agent: Pick<Agent, 'httpToolIds'>, name: string): Promise<HttpToolWithParams | null> {
+    const tool = await this.findEnabledForAgent(agent, name);
     if (tool == null) return null;
     const params = await this.deps.repo.listParamsByToolId(tool.id!);
     return { tool, params };
   }
 
-  /** 试运行：草稿校验后直接构造可执行定义（不落库、不查启用态与上限）。 */
-  resolveDraftForExecution(draft: UserToolDraft): ResolvedHttpToolExecution {
+  /** 试运行：草稿校验后直接构造可执行定义（不落库、不查启用态）。 */
+  resolveDraftForExecution(draft: HttpToolDraft): ResolvedHttpToolExecution {
     const normalized = this.validateDraft(draft, 1);
     const headers: Record<string, string> = {};
     for (const [key, value] of Object.entries(normalized.headers ?? {})) {
@@ -216,42 +211,21 @@ export class UserToolService {
 
   // ── 内部 ──────────────────────────────────────────────────────────────
 
-  /**
-   * 取「本人 + 启用 + 启用上限前 N 名」的工具定义；越界 / 未启用 / 非本人都返回 null。
-   * 排序与截断口径与 harness 目录装配完全一致：都按 compareUserToolName（JS code-unit 序）
-   * 重排后取前 maxEnabled 个——数据库 ORDER BY 用的是 utf8mb4_0900_ai_ci collation
-   * （`_` 排在数字前），与 JS 序相反，直接用 SQL 名次会让目录与可调用集合在边界处分歧。
-   */
-  private async findCallableEnabled(userId: number, name: string): Promise<UserTool | null> {
-    const enabled = await this.deps.repo.listEnabledByUserId(userId);
-    const max = await this.getMaxEnabledPerUser();
-    const limit = Number.isFinite(max) && max > 0 ? Math.floor(max) : 0;
-    const sorted = [...enabled].sort((a, b) => compareUserToolName(a.name, b.name));
-    const rank = sorted.findIndex((tool) => tool.name === name);
-    if (rank < 0 || rank >= limit) return null;
-    return sorted[rank]!;
+  /** 取「该 Agent 关联 + 启用」的工具定义；未关联 / 已停用 / 名称不存在都返回 null。 */
+  private async findEnabledForAgent(agent: Pick<Agent, 'httpToolIds'>, name: string): Promise<HttpTool | null> {
+    const enabled = await this.listEnabledForAgent(agent);
+    return enabled.find((tool) => tool.name === name) ?? null;
   }
 
-  private async assertEnabledBelowLimit(userId: number): Promise<void> {
-    const max = await this.getMaxEnabledPerUser();
-    const count = await this.deps.repo.countEnabledByUserId(userId);
-    if (count >= max) {
-      throw new BusinessException(
-        ErrorCode.USER_TOOL_ENABLED_LIMIT_EXCEEDED,
-        `单用户可启用的自定义工具数已达上限（${max}），请先停用其他工具`,
-      );
-    }
-  }
-
-  private async loadParams(tools: UserTool[]): Promise<Map<number, UserToolParam[]>> {
-    const result = new Map<number, UserToolParam[]>();
+  private async loadParams(tools: HttpTool[]): Promise<Map<number, HttpToolParam[]>> {
+    const result = new Map<number, HttpToolParam[]>();
     for (const tool of tools) {
       result.set(tool.id!, await this.deps.repo.listParamsByToolId(tool.id!));
     }
     return result;
   }
 
-  private toVO(tool: UserTool, params: UserToolParam[]): UserToolVO {
+  private toVO(tool: HttpTool, params: HttpToolParam[]): HttpToolVO {
     return {
       id: tool.id,
       name: tool.name,
@@ -279,13 +253,13 @@ export class UserToolService {
   }
 
   /**
-   * 草稿归一化 + 全量校验（不触库的唯一性 / 上限由调用方补查）。
+   * 草稿归一化 + 全量校验（不触库的唯一性由调用方补查）。
    * `defaultEnabled`：草稿未传 enabled 时的取值——新建默认启用（1）；
-   * 编辑沿用已存启停态，避免省略字段把用户停用的工具静默改回启用。
+   * 编辑沿用已存启停态，避免省略字段把停用工具静默改回启用。
    */
-  private validateDraft(draft: UserToolDraft, defaultEnabled: number): NormalizedDraft {
+  private validateDraft(draft: HttpToolDraft, defaultEnabled: number): NormalizedDraft {
     const name = (draft.name ?? '').trim();
-    if (!USER_TOOL_NAME_RE.test(name)) {
+    if (!HTTP_TOOL_NAME_RE.test(name)) {
       throw new BusinessException(
         ErrorCode.PARAM_INVALID,
         '工具名需为小写字母开头，仅含小写字母/数字/下划线，长度 1~64',
@@ -294,7 +268,7 @@ export class UserToolService {
     const builtinNames = this.deps.builtinToolNames();
     if (isReservedToolName(name, builtinNames)) {
       throw new BusinessException(
-        ErrorCode.USER_TOOL_NAME_RESERVED,
+        ErrorCode.HTTP_TOOL_NAME_RESERVED,
         '工具名与内置工具冲突或使用了保留前缀（mcp__ / http_call / http_describe）',
       );
     }
@@ -351,7 +325,7 @@ interface NormalizedDraft {
   readOnly: number;
   enabled: number;
   timeoutMs: number;
-  params: UserToolParam[];
+  params: HttpToolParam[];
 }
 
 function normalizeHeadersInput(headers: Record<string, unknown> | null | undefined): Record<string, string> {
@@ -392,7 +366,7 @@ function normalizeBodyTemplate(bodyTemplate: unknown): string | null {
   return value;
 }
 
-function normalizeParamsInput(params: UserToolParamInput[]): UserToolParam[] {
+function normalizeParamsInput(params: HttpToolParamInput[]): HttpToolParam[] {
   if (!Array.isArray(params)) {
     throw new BusinessException(ErrorCode.PARAM_INVALID, '参数定义必须是数组');
   }
@@ -402,7 +376,7 @@ function normalizeParamsInput(params: UserToolParamInput[]): UserToolParam[] {
   const seen = new Set<string>();
   return params.map((param, index) => {
     const name = (param?.name ?? '').trim();
-    if (!USER_TOOL_PARAM_NAME_RE.test(name)) {
+    if (!HTTP_TOOL_PARAM_NAME_RE.test(name)) {
       throw new BusinessException(
         ErrorCode.PARAM_INVALID,
         `第 ${index + 1} 个参数名需以字母开头，仅含字母/数字/下划线，长度 1~64`,
@@ -417,8 +391,8 @@ function normalizeParamsInput(params: UserToolParamInput[]): UserToolParam[] {
       throw new BusinessException(ErrorCode.PARAM_INVALID, `参数 ${name} 的说明需为 1~128 字`);
     }
     const type = (param?.type ?? 'string').trim();
-    if (!(USER_TOOL_PARAM_TYPES as readonly string[]).includes(type)) {
-      throw new BusinessException(ErrorCode.PARAM_INVALID, `参数 ${name} 的类型仅支持 ${USER_TOOL_PARAM_TYPES.join('/')}`);
+    if (!(HTTP_TOOL_PARAM_TYPES as readonly string[]).includes(type)) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, `参数 ${name} 的类型仅支持 ${HTTP_TOOL_PARAM_TYPES.join('/')}`);
     }
     const defaultValue = normalizeDefaultValue(name, type, param?.defaultValue);
     return {
@@ -455,7 +429,7 @@ function normalizeDefaultValue(name: string, type: string, defaultValue: unknown
 function encodeHeaders(
   headers: Record<string, string>,
   previousStored: Record<string, string> | null,
-  cipher: UserToolSecretCipher,
+  cipher: HttpToolSecretCipher,
 ): Record<string, string> {
   const result: Record<string, string> = {};
   for (const [key, value] of Object.entries(headers)) {
@@ -475,7 +449,7 @@ function encodeHeaders(
 }
 
 /** 存储形态 → 明文（执行用）；解密失败抛错（密钥轮换后失败闭合，不静默丢头）。 */
-function decodeHeaders(headersJson: string | null, cipher: UserToolSecretCipher): Record<string, string> {
+function decodeHeaders(headersJson: string | null, cipher: HttpToolSecretCipher): Record<string, string> {
   const stored = parseStoredHeaders(headersJson);
   const result: Record<string, string> = {};
   for (const [key, value] of Object.entries(stored)) {
@@ -489,7 +463,7 @@ function decodeHeaders(headersJson: string | null, cipher: UserToolSecretCipher)
 }
 
 /** 存储形态 → 打码回显（敏感值一律掩码，不暴露密文长度信息）。 */
-function maskHeaders(headersJson: string | null): UserToolHeaderVO[] {
+function maskHeaders(headersJson: string | null): HttpToolHeaderVO[] {
   const stored = parseStoredHeaders(headersJson);
   return Object.entries(stored).map(([key, value]) => ({
     key,

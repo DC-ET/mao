@@ -11,8 +11,7 @@ import type { PermissionService } from './permission/permission.service.js';
 import type { GitCredentialService } from './user/git-credential.service.js';
 import type { EnvVariableService } from './env/env-variable.service.js';
 import type { SessionRepository } from './session/session.repository.js';
-import type { UserToolService } from './user-tool/user-tool.service.js';
-import type { MysqlUserToolRepository } from './user-tool/user-tool.repository.js';
+import type { HttpToolService } from './http-tool/http-tool.service.js';
 import type { HttpApiExecutor } from './harness/tool/impl/http-api-executor.js';
 import type { FileService } from './file/file.service.js';
 import type { AgentService } from './agent/agent.service.js';
@@ -20,6 +19,7 @@ import type { AgentExperienceService } from './agent/agent-experience.service.js
 import type { AgentSuggestedQuestionService } from './agent/agent-suggested-question.service.js';
 import type { AgentBundleService } from './agent/agent-bundle.service.js';
 import type { McpServerValidatorImpl } from './agent/mcp-validator.js';
+import type { HttpToolValidatorImpl } from './http-tool/http-tool-validator.js';
 import type { ModelService } from './model/model.service.js';
 import type { SystemSettingService } from './settings/settings.service.js';
 import type { UserCommandService } from './command/command.service.js';
@@ -103,8 +103,8 @@ import { registerUserRoutes } from './user/user.routes.js';
 import { registerPermissionRoutes } from './permission/permission.routes.js';
 import { registerAdminGitCredentialRoutes, registerGitCredentialRoutes } from './user/git-credential.routes.js';
 import { registerAdminEnvVariableRoutes, registerEnvVariableRoutes } from './env/env-variable.routes.js';
-import { registerUserToolRoutes } from './user-tool/user-tool.routes.js';
-import { registerAdminUserToolRoutes } from './user-tool/user-tool-admin.routes.js';
+
+import { registerAdminHttpToolRoutes } from './http-tool/http-tool-admin.routes.js';
 import { registerAgentAvatarRoutes } from './agent/agent-avatar.js';
 import { registerAgentRoutes } from './agent/agent.routes.js';
 import { registerAgentBundleRoutes } from './agent/agent-bundle.routes.js';
@@ -172,11 +172,10 @@ export interface RouteDeps {
   envVariableService: EnvVariableService;
   sessionRepo: SessionRepository;
 
-  // user-tool
-  userToolService: UserToolService;
-  userToolRepo: MysqlUserToolRepository;
+  // http-tool
+  httpToolService: HttpToolService;
   httpApiExecutor: HttpApiExecutor;
-  userToolStatsStore: AdminAnalyticsDbStore;
+  httpToolStatsStore: AdminAnalyticsDbStore;
 
   // agent
   fileService: FileService;
@@ -185,6 +184,7 @@ export interface RouteDeps {
   suggestedQuestionService: AgentSuggestedQuestionService;
   agentBundleService: AgentBundleService;
   mcpValidator: McpServerValidatorImpl;
+  httpToolValidator: HttpToolValidatorImpl;
 
   // model
   modelService: ModelService;
@@ -314,7 +314,8 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
     app, db, cfg, apiPrefix, jwt, agentRuntimeCfg,
     authService, feishu, ecpAuth, userService, userRepo, permissionService,
     gitCredentials, envVariableService, sessionRepo,
-    userToolService, userToolRepo, httpApiExecutor, userToolStatsStore,
+    httpToolService, httpApiExecutor, httpToolStatsStore,
+    httpToolValidator,
     fileService, agentService, experienceService, suggestedQuestionService,
     agentBundleService, mcpValidator,
     modelService,
@@ -385,15 +386,16 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
       permissionService,
       userLookup: { findById: (id: number) => userRepo.findById(id) },
     });
-    registerUserToolRoutes(api, { userToolService, httpApiExecutor });
-    registerAdminUserToolRoutes(api, {
-      repo: userToolRepo,
-      stats: userToolStatsStore,
+    registerAdminHttpToolRoutes(api, {
+      service: httpToolService,
+      stats: httpToolStatsStore,
+      httpApiExecutor,
       permissionService,
     });
     registerAgentAvatarRoutes(api, fileService, permissionService);
     registerAgentRoutes(api, {
       agentService, experienceService, suggestedQuestionService, userRepo, mcpServerValidator: mcpValidator,
+      httpToolValidator,
       permissionService,
     });
     registerAgentBundleRoutes(api, { agentBundleService, permissionService, registryConfig: settingService });

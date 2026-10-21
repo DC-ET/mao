@@ -297,7 +297,7 @@ export class PromptEngine {
   }
 
   /**
-   * 自定义 HTTP 工具目录提示段（技术方案 2026-10-19 §5.2）：只列 slug / 中文名 / 用途 /
+   * 自定义 HTTP 工具目录提示段（技术方案 2026-10-21 §5.2）：只列 slug / 中文名 / 用途 /
    * 方法与只读标记，不含参数 schema。文本必须确定性生成（目录排序在装配层完成），
    * 否则每轮变化会击穿 system prompt 前缀缓存。空目录返回 ''（不渲染分节）。
    */
@@ -308,9 +308,6 @@ export class PromptEngine {
     text += '以下是你可调用的 HTTP 工具。参数不确定时先用 http_describe 取该工具的参数字段，再用 http_call 执行。\n\n';
     for (const tool of catalog.tools) {
       text += `- ${tool.name}（${tool.displayName}）— ${tool.description} [${tool.method}, ${tool.readOnly ? '只读' : '可写'}]\n`;
-    }
-    if (catalog.hiddenCount > 0) {
-      text += `\n另有 ${catalog.hiddenCount} 个工具因超出启用上限未加载。\n`;
     }
     return text;
   }

@@ -1,28 +1,29 @@
 import { BaseTool } from '../tool.js';
 import { harnessLog } from '../../log.js';
-import type { SessionMapper } from '../../deps.js';
+import type { AgentMapper, SessionMapper } from '../../deps.js';
 import { HttpApiExecutor } from './http-api-executor.js';
 import {
   ARGUMENTS_MAX_BYTES, truncateToolDescription,
-  type ResolvedHttpToolExecution, type UserToolWithParams,
-} from '../../../user-tool/types.js';
+  type ResolvedHttpToolExecution, type HttpToolWithParams,
+} from '../../../http-tool/types.js';
 
-/** 两个工具对 user-tool 域的最小依赖面（UserToolService 满足）。 */
+/** 两个工具对 http-tool 域的最小依赖面（HttpToolService 满足）。 */
 export interface HttpApiToolServicePort {
-  findEnabledWithParams(userId: number, name: string): Promise<UserToolWithParams | null>;
-  resolveForExecution(userId: number, name: string): Promise<ResolvedHttpToolExecution | null>;
+  findEnabledWithParams(agent: { httpToolIds?: string | null }, name: string): Promise<HttpToolWithParams | null>;
+  resolveForExecution(agent: { httpToolIds?: string | null }, name: string): Promise<ResolvedHttpToolExecution | null>;
 }
 
 export interface HttpApiToolDeps {
   sessionMapper: Pick<SessionMapper, 'selectById'>;
-  userToolService: HttpApiToolServicePort;
+  agentMapper: Pick<AgentMapper, 'selectById'>;
+  httpToolService: HttpApiToolServicePort;
   /** 执行内核；http_describe 不需要，http_call 缺失时显式报错（精简装配不注册两工具）。 */
   executor?: HttpApiExecutor | null;
 }
 
 /**
  * `http_describe(tool)`（技术方案 §5.3）：按需取自定义工具的参数字段。
- * 纯查库、无网络；userId 只从 sessionId 解析，数据隔离强制走属主。
+ * 纯查库、无网络；agent 只从 sessionId 解析（session → agentId → agent.httpToolIds）。
  */
 export class HttpDescribeTool extends BaseTool {
   constructor(private readonly deps: HttpApiToolDeps) {
@@ -65,11 +66,11 @@ export class HttpDescribeTool extends BaseTool {
   ): Promise<string> {
     const parsed = parseDescribeArguments(argumentsJson);
     if ('error' in parsed) return JSON.stringify({ error: parsed.error });
-    const userId = await this.resolveUserId(sessionId);
-    if (userId == null) {
+    const agent = await this.resolveAgent(sessionId);
+    if (agent == null) {
       return JSON.stringify({ error: 'http_describe 需要会话上下文才能定位自定义工具' });
     }
-    const found = await this.deps.userToolService.findEnabledWithParams(userId, parsed.tool);
+    const found = await this.deps.httpToolService.findEnabledWithParams(agent, parsed.tool);
     if (found == null) {
       return JSON.stringify({ error: `工具不存在或未启用：${parsed.tool}` });
     }
@@ -90,17 +91,18 @@ export class HttpDescribeTool extends BaseTool {
     });
   }
 
-  private async resolveUserId(sessionId: number | null): Promise<number | null> {
+  private async resolveAgent(sessionId: number | null): Promise<{ httpToolIds?: string | null } | null> {
     if (sessionId == null) return null;
     const session = await this.deps.sessionMapper.selectById(sessionId);
-    return session?.userId ?? null;
+    if (session?.agentId == null) return null;
+    return this.deps.agentMapper.selectById(session.agentId);
   }
 }
 
 /**
  * `http_call(tool, arguments)`（技术方案 §5.3）：自定义 HTTP 工具单一执行入口。
  * 后端 fetch 直连（SERVER_ONLY_TOOLS 短路，全模式无审批门，方案二 §9.3）；
- * userId 只从 sessionId 解析，不接受调用方传入。
+ * agent 只从 sessionId 解析（session → agentId → agent.httpToolIds），不接受调用方传入。
  */
 export class HttpCallTool extends BaseTool {
   constructor(private readonly deps: HttpApiToolDeps) {
@@ -148,17 +150,17 @@ export class HttpCallTool extends BaseTool {
     }
     const parsed = parseCallArguments(argumentsJson);
     if ('error' in parsed) return JSON.stringify({ error: parsed.error });
-    const userId = await this.resolveUserId(sessionId);
-    if (userId == null) {
+    const agent = await this.resolveAgent(sessionId);
+    if (agent == null) {
       return JSON.stringify({ error: 'http_call 需要会话上下文才能定位自定义工具' });
     }
     let resolved: ResolvedHttpToolExecution | null;
     try {
-      resolved = await this.deps.userToolService.resolveForExecution(userId, parsed.tool);
+      resolved = await this.deps.httpToolService.resolveForExecution(agent, parsed.tool);
     } catch (e) {
       // 请求头解密失败（密钥轮换后）：失败闭合，提示重新保存而非静默丢头
       harnessLog('warn', `http_call header decrypt failed: tool=${parsed.tool}, error=${(e as Error).message}`);
-      return JSON.stringify({ error: '工具请求头解密失败，请在设置中重新保存该工具的请求头后重试' });
+      return JSON.stringify({ error: '工具请求头解密失败，请联系管理员在管理后台重新保存该工具的请求头后重试' });
     }
     if (resolved == null) {
       return JSON.stringify({ error: `工具不存在或未启用：${parsed.tool}` });
@@ -171,10 +173,11 @@ export class HttpCallTool extends BaseTool {
     return JSON.stringify(await executor.execute(resolved.tool, resolved.params, parsed.argumentsJson));
   }
 
-  private async resolveUserId(sessionId: number | null): Promise<number | null> {
+  private async resolveAgent(sessionId: number | null): Promise<{ httpToolIds?: string | null } | null> {
     if (sessionId == null) return null;
     const session = await this.deps.sessionMapper.selectById(sessionId);
-    return session?.userId ?? null;
+    if (session?.agentId == null) return null;
+    return this.deps.agentMapper.selectById(session.agentId);
   }
 }
 

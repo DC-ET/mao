@@ -33,7 +33,7 @@ describe('CRUD routes', () => {
     const app = await appWithUser(f => registerAgentRoutes(f, {
       agentService: service as never, experienceService: {} as never,
       suggestedQuestionService: {} as never,
-      userRepo: {} as never, mcpServerValidator: {} as never, permissionService,
+      userRepo: {} as never, mcpServerValidator: {} as never, httpToolValidator: {} as never, permissionService,
     }));
     try {
       expect((await app.inject({ method: 'GET', url: '/v1/agents/1/prompt-versions' })).statusCode).toBe(403);
@@ -87,6 +87,7 @@ describe('CRUD routes', () => {
       suggestedQuestionService: suggestedQuestionService as never,
       userRepo: userRepo as never,
       mcpServerValidator: mcpServerValidator as never,
+      httpToolValidator: { validateForAgent: vi.fn(async (ids: number[]) => ids) } as never,
       permissionService,
     }));
     expect((await app.inject({ method: 'GET', url: '/v1/agents' })).json().data[0].avatarUrl).toBe(agent.avatarUrl);
@@ -123,6 +124,7 @@ describe('CRUD routes', () => {
       getAgentSuggestedQuestions: vi.fn(async () => []),
     };
     const mcpServerValidator = { validateForAgent: vi.fn(async (ids: number[]) => ids) };
+    const httpToolValidator = { validateForAgent: vi.fn(async (ids: number[]) => ids) };
     const permissionService = { hasPermission: vi.fn(async () => true) };
     const app = await appWithUser(f => registerAgentRoutes(f, {
       agentService: agentService as never,
@@ -130,6 +132,7 @@ describe('CRUD routes', () => {
       suggestedQuestionService: {} as never,
       userRepo: { findById: vi.fn(async () => null) } as never,
       mcpServerValidator: mcpServerValidator as never,
+      httpToolValidator: httpToolValidator as never,
       permissionService,
     }));
     try {
@@ -137,9 +140,18 @@ describe('CRUD routes', () => {
       const cleared = await app.inject({ method: 'PUT', url: '/v1/agents/1', payload: { mcpServerIds: [] } });
       expect(cleared.statusCode).toBe(200);
       expect(agentService.updateAgent).toHaveBeenCalledWith(
-        7, 1, undefined, undefined, undefined, undefined, [], null, null, undefined, undefined, undefined, undefined,
+        7, 1, undefined, undefined, undefined, undefined, [], undefined, null, null, undefined, undefined, undefined, undefined,
       );
       expect(mcpServerValidator.validateForAgent).not.toHaveBeenCalled();
+
+      // 自定义 HTTP 工具关联同理：空数组清空、非空走校验
+      const clearedTools = await app.inject({ method: 'PUT', url: '/v1/agents/1', payload: { httpToolIds: [] } });
+      expect(clearedTools.statusCode).toBe(200);
+      expect(agentService.updateAgent.mock.calls.at(-1)?.at(7)).toEqual([]);
+      const associated = await app.inject({ method: 'PUT', url: '/v1/agents/1', payload: { httpToolIds: [3, 4] } });
+      expect(associated.statusCode).toBe(200);
+      expect(httpToolValidator.validateForAgent).toHaveBeenCalledWith([3, 4]);
+      expect(agentService.updateAgent.mock.calls.at(-1)?.at(7)).toEqual([3, 4]);
 
       // 未带 mcpServerIds 时保持“不改动”
       const untouched = await app.inject({ method: 'PUT', url: '/v1/agents/1', payload: { name: 'B' } });
@@ -166,6 +178,7 @@ describe('CRUD routes', () => {
       suggestedQuestionService: {} as never,
       userRepo: userRepo as never,
       mcpServerValidator: {} as never,
+      httpToolValidator: {} as never,
       permissionService,
     }));
     try {

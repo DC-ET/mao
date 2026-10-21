@@ -39,9 +39,6 @@
         <router-link to="/settings/mcp-servers" class="settings-nav-item" active-class="active">
           MCP 服务器
         </router-link>
-        <router-link to="/settings/user-tools" class="settings-nav-item" active-class="active">
-          我的工具
-        </router-link>
         <router-link to="/settings/skills" class="settings-nav-item" active-class="active">
           我的技能
         </router-link>
