@@ -12,6 +12,7 @@ import { harnessLog } from '../log.js';
 import type { AgentExecutionContext } from './agent-execution-context.js';
 import { MessageHistoryNormalizer } from './message-history-normalizer.js';
 import { applyDateChangeNotices, formatChineseWeekday } from './session-date-notice.js';
+import { applyNoProgressNotices } from './no-progress-notice.js';
 import { ToolMediaInjector } from './tool-media-injector.js';
 import { TokenEstimator } from './token-estimator.js';
 import { buildHandoffUserContent } from './compaction-service.js';
@@ -170,9 +171,12 @@ export class PromptEngine {
     // 补齐缺失的 tool output、把被图片注入拆开的 tool 组重新挨在 assistant 后面。
     // 否则 Responses / Chat Completions / Anthropic 都会 400，重试同一段历史会把会话卡死。
     const normalized = MessageHistoryNormalizer.normalizeChatMessages(injected) ?? injected;
+    // 无进展提醒（技术方案 2026-10-21 §4.4）：在归一化之后按 tool_call_id 锚点插入，
+    // 只作用于请求副本——不写回 context.messages，也就不会落库、不会进压缩边界判定。
+    const rendered = applyNoProgressNotices(normalized, context.noProgressNotices);
     const tools = this.buildToolDefinitions(context);
     const request: ChatRequest = {
-      messages: normalized,
+      messages: rendered,
       tools: tools.length === 0 ? undefined : tools,
       stream: true,
     };
@@ -190,14 +194,14 @@ export class PromptEngine {
     if (context.sessionId != null) {
       request.promptCacheKey = `mao-session-${context.sessionId}`;
     }
-    // manifest 只读最终请求对象（normalized = quick command 展开 / 媒体注入 / 归一化之后），
+    // manifest 只读最终请求对象（rendered = quick command 展开 / 媒体注入 / 归一化 / 提醒注入之后），
     // 禁止用组装前的 context.messages 口径（决策 1、§8 漂移对策）。
-    context.contextManifest = this.buildContextManifest(context, sections, normalized, request);
+    context.contextManifest = this.buildContextManifest(context, sections, rendered, request);
     // 前缀指纹观测（技术方案 2026-10-12 §4.3）：此处 sections 与 request.tools 都在手，
     // 且是「所见即所发」口径；与上一次比对，变化时 warn 点名是哪几节变了。
-    // messages 口径排除 system（normalized[0] 恒为 system 消息），只数历史轮次。
+    // messages 口径排除 system（rendered[0] 恒为 system 消息），只数历史轮次。
     if (context.sessionId != null) {
-      const historyMessageCount = Math.max(0, normalized.length - 1);
+      const historyMessageCount = Math.max(0, rendered.length - 1);
       observePrefix(context.sessionId, sections, request.tools, historyMessageCount);
     }
     return request;

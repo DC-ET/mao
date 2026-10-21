@@ -8,6 +8,7 @@ import type { ContextManager } from './context-manager.js';
 import { MessageHistoryNormalizer } from './message-history-normalizer.js';
 import { PersistedChatMessage } from './persisted-chat-message.js';
 import { ToolAttachmentLoader } from './tool-attachment-loader.js';
+import { scanNoProgressNotices } from './no-progress-notice.js';
 import { harnessLog } from '../log.js';
 
 export interface HistorySnapshot {
@@ -61,6 +62,12 @@ export class SessionHistoryLoader {
     for (const [k, v] of Object.entries(ToolAttachmentLoader.loadAllFromMessages(history.normalizedEntities))) {
       context.toolAttachments.set(k, v);
     }
+    // 无进展提醒（技术方案 2026-10-21 §4.4.1）：消息与附件都就绪后重算渲染锚点与尾部状态。
+    // 必须清空旧值——压缩会重写窗口，沿用上一窗口的提醒会与重放结果分叉。
+    const noProgress = scanNoProgressNotices(context.messages, context.toolAttachments);
+    context.noProgressNotices = noProgress.notices;
+    context.noProgressTail = noProgress.tail;
+    context.noProgressEpoch += 1;
   }
 
   private async resolveLatestUserMessage(

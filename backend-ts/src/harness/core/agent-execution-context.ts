@@ -7,6 +7,7 @@ import type { MemoryHint } from '../../memory/types.js';
 import type { Tool } from '../tool/tool.js';
 import type { ToolAttachment } from './tool-attachment.js';
 import type { ContextManifest } from './context-manifest.js';
+import type { NoProgressNotice, NoProgressTail } from './no-progress-notice.js';
 import type { McpWorkingSet } from '../mcp/workingset/mcp-working-set.js';
 import type { CustomHttpToolCatalog } from './custom-http-tools-catalog.js';
 import { AtomicBoolean } from '../atomic-boolean.js';
@@ -71,6 +72,22 @@ export class AgentExecutionContext {
   currentRound = 0;
   cancelFlag?: AtomicBoolean | null;
   toolAttachments = new Map<string, ToolAttachment>();
+  /**
+   * 渲染期重放的提醒锚点（不落库）。执行开始 / 压缩重载时由历史扫描重建，运行中增量追加。
+   * 只在 PromptEngine.buildRequest 的请求副本上生效，不进入 context.messages。
+   */
+  noProgressNotices: NoProgressNotice[] = [];
+  /**
+   * 历史扫描得到的尾部状态：执行开始 / 压缩重载时 seed guard，避免运行时与重放分叉。
+   * 每轮结束不回写；只有 applyHistory 重算后才更新。
+   */
+  noProgressTail: NoProgressTail | null = null;
+  /**
+   * applyHistory 每次重算提醒锚点 / 尾部状态时自增。执行循环据此判断「压缩是否真的重载了
+   * 历史」——不能用 tail 是否为 null 当哨兵：窗口内没有完整工具轮时 tail 恒为 null，
+   * 压缩前后都为 null 会让 resetFrom 被跳过，运行时 streak 与重放结果分叉。
+   */
+  noProgressEpoch = 0;
   agentsMdContent?: string | null;
 
   addUserMessage(content: string | ContentPart[]): void {

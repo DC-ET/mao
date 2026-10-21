@@ -17,6 +17,8 @@ import type { SessionService } from '../deps.js';
 import type { McpClientManager } from '../mcp/mcp-client-manager.js';
 import type { Tool } from '../tool/tool.js';
 import { ToolCallContext } from '../tool/tool-call-context.js';
+import { NoProgressLoopException } from './no-progress-guard.js';
+import { roundSignature, type NoProgressCall } from './no-progress-notice.js';
 
 describe('AgentLoop', () => {
   const llmAdapter = { stream: vi.fn(), chat: vi.fn() } as unknown as LlmAdapter & { stream: ReturnType<typeof vi.fn> };
@@ -1067,5 +1069,209 @@ describe('AgentLoop', () => {
     expect(sessionCompactionOrchestrator.compact).not.toHaveBeenCalled();
     // finally 必须清掉未消费信号，否则下次执行首个工具轮边界会误压缩
     expect(bus.has(11)).toBe(false);
+  });
+
+  // ---- 无进展工具循环止损（技术方案 2026-10-21 §6.4） ----
+
+  const NO_PROGRESS_ARGS = '{"path":"backend-ts/src/feishu","pattern":"群名"}';
+  const NO_PROGRESS_RESULT = '{"total_matches":0,"matches":[]}';
+
+  function noProgressCall(result = NO_PROGRESS_RESULT): NoProgressCall {
+    return { toolName: 'grep_search', argumentsJson: NO_PROGRESS_ARGS, resultContent: result };
+  }
+
+  /** 前 rounds 轮返回同一工具调用，之后返回纯文本收尾。 */
+  function stubRepeatedToolRounds(rounds: number, toolName = 'grep_search', args = NO_PROGRESS_ARGS): void {
+    let call = 0;
+    llmAdapter.stream.mockImplementation(async (_r: unknown, _c: unknown, callback: StreamCallback) => {
+      if (call < rounds) {
+        call += 1;
+        callback.onChunk(toolChunk({ id: `call-${call}`, function: { name: toolName, arguments: args } }));
+        callback.onComplete({ promptTokens: 3, completionTokens: 2, totalTokens: 5 });
+      } else {
+        callback.onChunk(contentChunk(null, 'done'));
+        callback.onComplete({ promptTokens: 4, completionTokens: 1, totalTokens: 5 });
+      }
+    });
+  }
+
+  it('injects a no-progress nudge after five identical tool rounds without persisting it', async () => {
+    const ctx = context();
+    ctx.tools = [namedTool('grep_search')];
+    const l = listener();
+    const p = persistence();
+    promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
+    backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
+    stubActiveContext(5);
+    toolDispatcher.dispatchInvocation.mockResolvedValue(toolResult(NO_PROGRESS_RESULT));
+    stubRepeatedToolRounds(5);
+
+    await agentLoop.execute(ctx, l, p);
+
+    expect(ctx.noProgressNotices).toHaveLength(1);
+    expect(ctx.noProgressNotices[0].afterToolCallId).toBe('call-5');
+    expect(ctx.noProgressNotices[0].text).toContain('最近 5 轮');
+    // 提醒只作用于请求副本：不落 context.messages、不落库
+    expect(JSON.stringify(ctx.messages)).not.toContain('检测到重复调用');
+    expect(JSON.stringify(p.onSaveToolMessage.mock.calls)).not.toContain('检测到重复调用');
+    expect(ctx.preparedRequest).toBeNull();
+  });
+
+  it('aborts after fifteen identical tool rounds and keeps round callbacks paired', async () => {
+    const ctx = context();
+    ctx.tools = [namedTool('grep_search')];
+    const l = listener();
+    let savedRounds = 0;
+    const p = {
+      onSaveAssistantMessage: vi.fn(),
+      onSaveToolMessage: vi.fn(),
+      onSaveToolRound: vi.fn(async () => { savedRounds += 1; }),
+    };
+    promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
+    backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
+    stubActiveContext(5);
+    toolDispatcher.dispatchInvocation.mockResolvedValue(toolResult(NO_PROGRESS_RESULT));
+    stubRepeatedToolRounds(15);
+
+    await expect(agentLoop.execute(ctx, l, p)).rejects.toBeInstanceOf(NoProgressLoopException);
+
+    expect(toolDispatcher.dispatchInvocation).toHaveBeenCalledTimes(15);
+    expect(l.onRoundStart).toHaveBeenCalledTimes(15);
+    expect(l.onRoundEnd).toHaveBeenCalledTimes(15);
+    expect(l.onError).not.toHaveBeenCalled();
+    expect(ctx.noProgressNotices.map((notice) => notice.afterToolCallId)).toEqual(['call-5', 'call-10']);
+    // 第 15 轮消息已落库，便于复盘最后一次重复调用
+    expect(savedRounds).toBe(15);
+  });
+
+  it('does not trigger when results keep changing', async () => {
+    const ctx = context();
+    ctx.tools = [namedTool('grep_search')];
+    const l = listener();
+    const p = persistence();
+    promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
+    backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
+    stubActiveContext(5);
+    let matches = 0;
+    toolDispatcher.dispatchInvocation.mockImplementation(async () => toolResult(`{"total_matches":${matches++},"matches":[]}`));
+    stubRepeatedToolRounds(6);
+
+    await agentLoop.execute(ctx, l, p);
+
+    expect(ctx.noProgressNotices).toEqual([]);
+  });
+
+  it('does not abort long shell waits that report completed=false', async () => {
+    const ctx = context();
+    ctx.tools = [namedTool('shell')];
+    const l = listener();
+    const p = persistence();
+    promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
+    backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
+    stubActiveContext(5);
+    toolDispatcher.dispatchInvocation.mockResolvedValue(toolResult('{"completed":false,"session_id":"sh-1","output":""}'));
+    stubRepeatedToolRounds(17, 'shell', '{"action":"await_async","session_id":"sh-1"}');
+
+    await agentLoop.execute(ctx, l, p);
+
+    expect(ctx.noProgressNotices).toEqual([]);
+    expect(toolDispatcher.dispatchInvocation).toHaveBeenCalledTimes(17);
+  });
+
+  it('honours a user cancel that lands before the abort check', async () => {
+    const ctx = context();
+    ctx.tools = [namedTool('grep_search')];
+    const l = listener();
+    const flag = agentLoop.registerCancelFlag(11);
+    let savedRounds = 0;
+    const p = {
+      onSaveAssistantMessage: vi.fn(),
+      onSaveToolMessage: vi.fn(),
+      onSaveToolRound: vi.fn(async () => {
+        savedRounds += 1;
+        if (savedRounds === 15) flag.set(true);
+      }),
+    };
+    promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
+    backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
+    stubActiveContext(5);
+    toolDispatcher.dispatchInvocation.mockResolvedValue(toolResult(NO_PROGRESS_RESULT));
+    stubRepeatedToolRounds(15);
+
+    await agentLoop.execute(ctx, l, p);
+
+    expect(flag.get()).toBe(true);
+    expect(l.onMessageEnd).toHaveBeenCalledTimes(1);
+    // 消息与用量已落库，不因取消回滚
+    expect(savedRounds).toBe(15);
+  });
+
+  it('re-seeds the guard from the rescanned tail after mid-loop compaction', async () => {
+    const ctx = contextWithMidLoopConfig(100, 0.5);
+    ctx.tools = [namedTool('grep_search')];
+    const key = roundSignature([noProgressCall()]);
+    ctx.noProgressTail = { streak: 2, lastRoundKey: key, nudgedAt: [] };
+    const l = listener();
+    const p = persistence();
+    promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
+    stubActiveContext(80);
+    backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
+    toolDispatcher.dispatchInvocation.mockResolvedValue(toolResult(NO_PROGRESS_RESULT));
+    sessionCompactionOrchestrator.compact.mockImplementation(async (_sid: number, compacted: AgentExecutionContext) => {
+      // 压缩重载会重写窗口并重算 tail（epoch 自增）：从 14 续算，下一轮即中止
+      compacted.noProgressTail = { streak: 14, lastRoundKey: key, nudgedAt: [5, 10] };
+      compacted.noProgressEpoch += 1;
+      return true;
+    });
+    stubRepeatedToolRounds(2);
+
+    await expect(agentLoop.execute(ctx, l, p)).rejects.toBeInstanceOf(NoProgressLoopException);
+    expect(sessionCompactionOrchestrator.compact).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the runtime streak when mid-loop compaction did not reload history', async () => {
+    const ctx = contextWithMidLoopConfig(100, 0.5);
+    ctx.tools = [namedTool('grep_search')];
+    const key = roundSignature([noProgressCall()]);
+    ctx.noProgressTail = { streak: 3, lastRoundKey: key, nudgedAt: [] };
+    const l = listener();
+    const p = persistence();
+    promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
+    stubActiveContext(80);
+    backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
+    toolDispatcher.dispatchInvocation.mockResolvedValue(toolResult(NO_PROGRESS_RESULT));
+    sessionCompactionOrchestrator.compact.mockResolvedValue(false);
+    stubRepeatedToolRounds(2);
+
+    await agentLoop.execute(ctx, l, p);
+
+    // seed 3 → 第 1 轮 4 → 第 2 轮 5：若压缩后被误重置回 3，这里不会有提醒
+    expect(ctx.noProgressNotices).toHaveLength(1);
+    expect(ctx.noProgressNotices[0].afterToolCallId).toBe('call-2');
+  });
+
+  it('resets the guard when compaction reloads a tail that is still null', async () => {
+    const ctx = contextWithMidLoopConfig(100, 0.5);
+    ctx.tools = [namedTool('grep_search')];
+    ctx.noProgressTail = null;
+    const l = listener();
+    const p = persistence();
+    promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
+    stubActiveContext(80);
+    backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
+    toolDispatcher.dispatchInvocation.mockResolvedValue(toolResult(NO_PROGRESS_RESULT));
+    sessionCompactionOrchestrator.compact.mockImplementation(async (_sid: number, compacted: AgentExecutionContext) => {
+      // 窗口内没有完整工具轮：重放结果仍是 null，但 applyHistory 已执行，epoch 必须自增
+      compacted.noProgressTail = null;
+      compacted.noProgressEpoch += 1;
+      return true;
+    });
+    stubRepeatedToolRounds(16);
+
+    await agentLoop.execute(ctx, l, p);
+
+    // 每轮压缩后 streak 都按重放结果归零，不会在第 15 轮误中止
+    expect(toolDispatcher.dispatchInvocation).toHaveBeenCalledTimes(16);
+    expect(ctx.noProgressNotices).toEqual([]);
   });
 });

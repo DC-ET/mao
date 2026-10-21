@@ -30,6 +30,7 @@ import { ToolResultSummarizer } from '../../session/util/tool-result-summarizer.
 import type { Tool } from '../tool/tool.js';
 import type { ShellSessionManager } from '../shell/shell-session-manager.js';
 import type { McpClientManager } from '../mcp/mcp-client-manager.js';
+import { NoProgressGuard, NoProgressLoopException } from './no-progress-guard.js';
 
 export interface MessagePersistenceCallback {
   onSaveAssistantMessage(
@@ -173,6 +174,9 @@ export class AgentLoop {
       let roundOpen = false;
 
       await this.ensureContextAnchorLoaded(context);
+      // 无进展循环止损（技术方案 2026-10-21 §4.6）：一次执行一个 guard；用历史扫描的尾部
+      // 状态 seed，让无新用户消息的崩溃恢复 / 压缩后重载继续计数，而不是从 0 重来。
+      const noProgress = new NoProgressGuard(context.noProgressTail);
 
       while (true) {
         round++;
@@ -429,7 +433,7 @@ export class AgentLoop {
 
         const toolResults: Record<string, string> = {};
         const pendingToolSaves: ToolMessageSave[] = [];
-        await this.executeToolCalls(pendingCalls, context, listener, pendingToolSaves, toolResults, cancelFlag ?? null);
+        await this.executeToolCalls(pendingCalls, context, listener, pendingToolSaves, toolResults, cancelFlag ?? null, noProgress);
         this.activityHeartbeat.touch(context.sessionId);
 
         if (await this.isCancelled(context)) {
@@ -475,10 +479,42 @@ export class AgentLoop {
         context.clearPendingToolCalls();
         closeRound();
 
+        // 无进展止损判定（技术方案 2026-10-21 §4.6）：必须在消息落库与 closeRound 之后、
+        // 压缩之前——保证最后一次重复调用可复盘、onRoundStart/End 成对，且提醒能进入下一轮请求。
+        // 不在工具派发前预判，避免「结果本来会变化」的误杀（代价是第 15 次调用仍会真实执行）。
+        noProgress.endRound(pendingCalls[pendingCalls.length - 1]?.id ?? '');
+        const noProgressAction = noProgress.takeAction();
+        if (noProgressAction?.kind === 'nudge') {
+          harnessLog('warn',
+            `[no-progress] nudge session=${sessionId} round=${round} streak=${noProgress.streak}`
+            + ` tools=${noProgress.toolNames.join(',')} digest=${noProgress.digest}`
+            + ` argsLength=${noProgress.argsLength}`);
+          context.noProgressNotices.push({
+            afterToolCallId: noProgressAction.afterToolCallId,
+            text: noProgressAction.text,
+          });
+          // 下一轮必须重新渲染，否则会命中压缩时预构建的旧请求而看不到提醒。
+          context.preparedRequest = null;
+        }
+        if (noProgressAction?.kind === 'abort') {
+          if (await this.isCancelled(context)) {
+            // 落库 / closeRound 期间用户点了停止：按 CANCELLED 收尾，不记成 FAILED。
+            // 消息与用量已持久化，不回滚。
+            cancelFlag?.set(true);
+            break;
+          }
+          harnessLog('error',
+            `[no-progress] abort session=${sessionId} round=${round} streak=${noProgress.streak}`
+            + ` tools=${noProgress.toolNames.join(',')} digest=${noProgress.digest}`
+            + ` argsLength=${noProgress.argsLength}`);
+          throw new NoProgressLoopException(noProgress.toolNames, noProgress.streak);
+        }
+
         // 手动压缩信号消费（技术方案 5.4 / 决策 12）：必须置于 midLoopAllowed 门外——
         // enabled=false 只关「自动整理」，不得连带禁用用户显式的手动压缩。
         // 与纯文本收尾同理：工具轮消息与用量已落库，压缩被取消只是附带动作失败，
         // 不能 abortRound 回滚已持久化的轮次用量。
+        const noProgressEpochBeforeCompaction = context.noProgressEpoch;
         if (await this.consumeManualCompaction(context, listener, persistenceCallback, cancelFlag ?? null)) {
           break;
         }
@@ -508,6 +544,12 @@ export class AgentLoop {
             }
             harnessLog('warn', 'Mid-loop compaction failed, continuing with the original next request', e);
           }
+        }
+        // 压缩会重写历史窗口：applyHistory 重算后会自增 epoch，此时无条件按重放结果重置 guard。
+        // 用 epoch 而不是 tail 引用/null 判断——窗口内没有完整工具轮时 tail 恒为 null，
+        // 压缩前后都为 null 会漏掉重置，让运行时 streak 与重放结果分叉。
+        if (context.noProgressEpoch !== noProgressEpochBeforeCompaction) {
+          noProgress.resetFrom(context.noProgressTail);
         }
       }
 
@@ -613,6 +655,7 @@ export class AgentLoop {
     pendingToolSaves: ToolMessageSave[],
     toolResults: Record<string, string>,
     cancelFlag: AtomicBoolean | null,
+    noProgress: NoProgressGuard,
   ): Promise<void> {
     const runOne = (tc: ToolCall): Promise<ToolResult> => ToolCallContext.run(tc.id, () =>
       Promise.resolve(this.dispatchTool(tc, context)),
@@ -632,6 +675,7 @@ export class AgentLoop {
       context.addToolResult(tc.id!, toolSave.content);
       listener.onToolCallResult(tc.id!, rawResult, { ...toolResultMeta(result), resultTruncated: toolSave.resultTruncated });
       pendingToolSaves.push(toolSave);
+      this.observeNoProgress(noProgress, tc, toolSave, context);
       return;
     }
 
@@ -650,7 +694,23 @@ export class AgentLoop {
       context.addToolResult(tc.id!, toolSave.content);
       listener.onToolCallResult(tc.id!, rawResult, { ...toolResultMeta(result), resultTruncated: toolSave.resultTruncated });
       pendingToolSaves.push(toolSave);
+      this.observeNoProgress(noProgress, tc, toolSave, context);
     }
+  }
+
+  /** 把本轮每个已落库的工具结果交给无进展 guard（含图片附件，保证与历史重放同源）。 */
+  private observeNoProgress(
+    guard: NoProgressGuard,
+    tc: ToolCall,
+    toolSave: ToolMessageSave,
+    context: AgentExecutionContext,
+  ): void {
+    guard.observeCall({
+      toolName: tc.function?.name ?? '',
+      argumentsJson: tc.function?.arguments ?? '',
+      resultContent: toolSave.content,
+      attachment: tc.id ? context.toolAttachments.get(tc.id) ?? null : null,
+    });
   }
 
   private processToolResult(
