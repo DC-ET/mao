@@ -171,6 +171,14 @@ describe('runtime agent channel behavior', () => {
     // 共享目录方案 §4.3：MAO_SHARE_DIR 未设置时 resolveRoots 回落默认值
     // /opt/mao-data/share，并经 ContainerToolExecutor 登记为沙箱允许根。
     // 用 addAllowedRoot 探针断言接线（不触碰真实文件系统）
+    const base = useTmpDir('mao-agent-share-default-');
+    // 其余 root env 指向临时目录：PathSandbox 构造器会 mkdirSync workspaceRoot，
+    // 不重定向的话在 /opt 可写的机器（root 身份 CI）上会留下真实 /opt/mao-data
+    // 目录（round-02 review 观察 1）
+    process.env.MAO_WORKSPACE_ROOT = join(base, 'workspace');
+    process.env.MAO_RUNTIME_DIR = join(base, 'runtime');
+    process.env.MAO_USER_HOME_DIR = join(base, 'users');
+    process.env.MAO_USER_SKILLS_DIR = join(base, 'userskills');
     delete process.env.MAO_SHARE_DIR;
     const registered: string[] = [];
     const spy = vi.spyOn(PathSandbox.prototype, 'addAllowedRoot')

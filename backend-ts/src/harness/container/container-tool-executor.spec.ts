@@ -206,6 +206,33 @@ describe('container tool executor', () => {
     expect(JSON.parse(escape).error).toBeDefined();
   });
 
+  it('shellWorkdirUnderShareRootIsAllowed', async () => {
+    // 设计 §1.2 目标 2 / CHANGELOG：shell 对 share 可达（与 read_file 同一
+    // resolveLenient 代码路径）。补 shell workdir 一例（round-02 review 观察 2：
+    // 此前只有 read_file 有覆盖）
+    const base = useTmpDir('mao-exec-share-shell-');
+    const workspaceRoot = join(base, 'workspace');
+    const userWorkspace = join(workspaceRoot, '7');
+    const shareDir = join(base, 'share');
+    const shareSub = join(shareDir, 'docs');
+    mkdirSync(userWorkspace, { recursive: true });
+    mkdirSync(shareSub, { recursive: true });
+    const executor = new ContainerToolExecutor({
+      workspaceRoot,
+      runtimeDir: join(base, 'runtime'),
+      userHomeDir: join(base, 'users'),
+      userSkillsDir: join(base, 'userskills'),
+      uploadDir: join(base, 'uploads'),
+      shareDir,
+    }, USER_ID);
+    const result = await executor.handleToolCall('shell', JSON.stringify({
+      action: 'exec', command: 'pwd', workdir: shareSub,
+    }), envelopeOf(userWorkspace));
+    const parsed = JSON.parse(result);
+    expect(parsed.error).toBeUndefined();
+    expect(parsed.output).toContain(shareSub);
+  });
+
   it('shellToolRejectsForeignWorkdirInStrictMode', async () => {
     const base = useTmpDir('mao-exec-shell-');
     const workspaceRoot = join(base, 'workspace');

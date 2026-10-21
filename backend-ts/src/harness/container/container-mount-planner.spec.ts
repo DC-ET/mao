@@ -129,6 +129,28 @@ describe('container mount planner', () => {
     expect(() => underPlanner.plan(7)).toThrow(/must not be or under per-user data root/);
   });
 
+  it('rejectsShareDirEqualToRootFilesystem', () => {
+    // 回归（round-02 review Bug 2）：shareDir='/' 时旧父目录防护的
+    // startsWith(host + sep) 拼出 '//' 永不匹配，防护静默失效——整棵宿主文件系统
+    // （/etc/shadow、他人工作区）会被 ro 挂进所有容器。path.relative 包含判定修复
+    const base = useTmpDir('mao-mount-share-root-');
+    for (const dir of Object.values(roots(base))) mkdirSync(dir, { recursive: true });
+    const planner = new ContainerMountPlanner({ ...roots(base), shareDir: '/' });
+    expect(() => planner.plan(7)).toThrow(/is a parent of registered root/);
+  });
+
+  it('rejectsShareDirEqualToDistOrSkills', () => {
+    // 设计 §4.1：shareDir 等于 distDir/skillsDir 时容器内路径重复（两条 ro/rw 条目
+    // 指向同一容器路径），assertSafe 重复容器路径检测拒绝
+    const base = useTmpDir('mao-mount-share-dup-');
+    for (const dir of Object.values(roots(base))) mkdirSync(dir, { recursive: true });
+    const r = roots(base);
+    expect(() => new ContainerMountPlanner({ ...r, shareDir: r.distDir }).plan(7))
+      .toThrow(/duplicate container path/);
+    expect(() => new ContainerMountPlanner({ ...r, shareDir: r.skillsDir }).plan(7))
+      .toThrow(/duplicate container path/);
+  });
+
   it('rejectsParentDirectoryMounts', () => {
     const base = useTmpDir('mao-mount-p-');
     for (const dir of Object.values(roots(base))) mkdirSync(dir, { recursive: true });

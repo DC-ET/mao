@@ -220,10 +220,13 @@ export class ContainerMountPlanner {
           }
         }
       }
-      // 父目录防护：不得挂任何登记根的父目录（含 /opt/mao 与 /opt/mao-data 互为父子的场景）
+      // 父目录防护：不得挂任何登记根的父目录（含 /opt/mao 与 /opt/mao-data 互为父子的场景）。
+      // 用 path.relative 包含判定而非 startsWith(host + sep)：host='/' 时后者拼出
+      // '//' 永不匹配，整棵宿主文件系统会被 ro 挂进所有容器（round-02 review Bug 2）。
       for (const root of registeredRoots) {
         if (root === host) continue;
-        if (root.startsWith(host + path.sep) || root === host) {
+        const rel = path.relative(host, root);
+        if (rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel)) {
           throw new MountPlanError(`mount ${mount.purpose}: ${host} is a parent of registered root ${root}`);
         }
       }

@@ -189,7 +189,7 @@ import {
   downloadFeishuMediaBuffer,
   dataUriOf,
 } from './feishu-media.js';
-import { expandHome, parseSqlTimeMs, runtimeSessionCleanup } from './app-utils.js';
+import { expandHome, parseSqlTimeMs, resolveShareDir, runtimeSessionCleanup } from './app-utils.js';
 import { registerAllRoutes } from './app-routes.js';
 import { registerAppHooks } from './app-hooks.js';
 import { assembleContainerRuntime } from './app-container-runtime.js';
@@ -273,8 +273,10 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   mkdirSync(uploadDir, { recursive: true });
   // 公共共享目录（共享目录方案 §3.1）：与 uploadDir 同口径启动兜底创建，
   // 容器模式 ro 挂载前保证宿主机源目录存在（docker -v 对缺失源虽会自动建空目录，
-  // 但属主会是 root，这里以后端运行用户创建，管理员投放时属主一致）
-  const shareDir = resolve(expandHome(cfg.app.harness.shareDir));
+  // 但属主会是 root，这里以后端运行用户创建，管理员投放时属主一致）。
+  // resolveShareDir 对空值/相对路径启动即拒：静默按 cwd 解析会把后端工作树
+  // （含 .env 密钥）ro 挂进所有用户容器（round-02 review Bug 1）。
+  const shareDir = resolveShareDir(cfg.app.harness.shareDir);
   mkdirSync(shareDir, { recursive: true });
   await registerUploadStatic(app, uploadDir, apiPrefix);
   await app.register(swagger, {

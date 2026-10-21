@@ -1,5 +1,5 @@
 import { existsSync, rmSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import fastifyStatic from '@fastify/static';
 import type { FastifyInstance } from 'fastify';
@@ -23,6 +23,21 @@ export function expandHome(v: string): string {
   if (v.startsWith('$HOME')) return v.replace(/^\$HOME/, process.env.HOME ?? '');
   if (v.startsWith('~/')) return resolve(process.env.HOME ?? '', v.slice(2));
   return v;
+}
+
+/**
+ * 共享目录路径解析（共享目录方案 §4.1 误配防护）：空值或相对路径若被 resolve 静默
+ * 按 cwd 解析，容器模式下 assertSafe 的 owningRoot 校验对 share 条目恒真通过
+ * （shareDir 自身即登记根），唯一兜底的父目录防护又依赖 cwd 与 distDir 的相对
+ * 布局——误配时整个后端工作树（含 .env 密钥）会被 ro 挂进所有用户容器。
+ * 启动即拒：必须在 resolve 之前校验原始值，否则相对路径已被静默转绝对。
+ */
+export function resolveShareDir(raw: string): string {
+  const expanded = expandHome(raw);
+  if (!expanded || !isAbsolute(expanded)) {
+    throw new Error(`MAO_SHARE_DIR must be a non-empty absolute path, got '${raw}'`);
+  }
+  return resolve(expanded);
 }
 
 export function parseSqlTimeMs(value: string | null | undefined): number | null {

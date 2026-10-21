@@ -3,7 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { useTmpDir } from './testing/tmp-dir.js';
-import { registerUploadStatic } from './app-utils.js';
+import { registerUploadStatic, resolveShareDir } from './app-utils.js';
 
 describe('registerUploadStatic', () => {
   it('serves uploads from both the direct and context-path URLs', async () => {
@@ -51,9 +51,30 @@ describe('registerUploadStatic', () => {
       expect(res.headers['cache-control'], name).toBe('no-cache');
     }
     // 发布产物 APK 内容不可变，仍走长缓存
-    const apk = await app.inject({ method: 'GET', url: '/uploads/releases/mao-android-0.0.10.apk' });
+    const apk = await app.inject({ method: 'GET', url: `/uploads/releases/mao-android-0.0.10.apk` });
     expect(apk.statusCode).toBe(200);
     expect(apk.headers['cache-control']).toBe('public, max-age=604800');
     await app.close();
+  });
+});
+
+describe('resolveShareDir', () => {
+  it('accepts absolute paths and normalizes trailing slash', () => {
+    expect(resolveShareDir('/opt/mao-data/share')).toBe('/opt/mao-data/share');
+    expect(resolveShareDir('/mnt/share/')).toBe('/mnt/share');
+  });
+
+  it('expands ~ to the home directory', () => {
+    expect(resolveShareDir('~/share')).toBe(join(process.env.HOME ?? '', 'share'));
+  });
+
+  it('rejects empty and relative values that would silently resolve to cwd', () => {
+    // 回归（round-02 review Bug 1）：空值/相对路径经 resolve 静默变成 cwd 绝对路径，
+    // 容器模式下 owningRoot 校验对 share 条目恒真（shareDir 自身即登记根），父目录
+    // 防护又依赖 cwd 与 distDir 的相对布局——误配时整个后端工作树（含 .env 密钥）
+    // 会被 ro 挂进所有用户容器，启动即拒
+    for (const bad of ['', 'share', './share', 'relative/../share']) {
+      expect(() => resolveShareDir(bad), bad).toThrow(/must be a non-empty absolute path/);
+    }
   });
 });
