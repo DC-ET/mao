@@ -98,16 +98,6 @@
               <el-button type="primary" link size="small" @click="handleEdit(row)">编辑</el-button>
               <el-button type="primary" link size="small" @click="handleExport(row)">导出</el-button>
               <el-button type="primary" link size="small" @click="historyAgent = row">提示词版本</el-button>
-              <el-button type="primary" link size="small" @click="handleSharedEntry(row)">
-                {{ sharedEntries.has(row.id) ? '推荐语' : '上架' }}
-              </el-button>
-              <el-button
-                v-if="sharedEntries.has(row.id)"
-                type="danger"
-                link
-                size="small"
-                @click="handleUnshare(row)"
-              >下架</el-button>
               <el-tooltip v-if="row.isDefault && row.enabled !== false" content="默认 Agent 不可停用" placement="top">
                 <span class="disabled-btn-wrap">
                   <el-button type="danger" link size="small" disabled>停用</el-button>
@@ -158,15 +148,6 @@
               <el-button type="primary" link @click="handleEdit(row)">编辑</el-button>
               <el-button type="primary" link @click="handleExport(row)">导出</el-button>
               <el-button type="primary" link @click="historyAgent = row">提示词版本</el-button>
-              <el-button type="primary" link @click="handleSharedEntry(row)">
-                {{ sharedEntries.has(row.id) ? '推荐语' : '上架' }}
-              </el-button>
-              <el-button
-                v-if="sharedEntries.has(row.id)"
-                type="danger"
-                link
-                @click="handleUnshare(row)"
-              >下架</el-button>
               <el-tooltip v-if="row.isDefault && row.enabled !== false" content="默认 Agent 不可停用" placement="top">
                 <span class="disabled-btn-wrap">
                   <el-button type="danger" link disabled>停用</el-button>
@@ -262,12 +243,6 @@
       </el-table>
       <div class="updates-tip">应用更新 = 重新走导入预检并生成新副本，旧 Agent 原样保留；标「已漂移」表示本地提示词与导入时快照不一致。</div>
     </el-dialog>
-    <SharedEntryDialog
-      v-if="sharedAgent"
-      :agent="sharedAgent"
-      @close="sharedAgent = null"
-      @saved="fetchSharedEntries"
-    />
   </div>
 </template>
 
@@ -285,15 +260,12 @@ import AgentFormDialog from './AgentFormDialog.vue'
 import AgentPromptHistoryDialog from './AgentPromptHistoryDialog.vue'
 import AgentExportDialog from './AgentExportDialog.vue'
 import AgentImportDialog from './AgentImportDialog.vue'
-import SharedEntryDialog from './SharedEntryDialog.vue'
 
 const historyAgent = ref<{ id: number; name: string } | null>(null)
 const exportAgent = ref<{ id: number; name: string; skillNames?: string[] | null } | null>(null)
 const importVisible = ref(false)
 const importInitialUrl = ref<string | undefined>(undefined)
-const sharedAgent = ref<{ id: number; name: string; enabled?: boolean } | null>(null)
-const sharedEntries = ref<Map<number, { note: string; sortOrder: number; sourceUrl: string | null }>>(new Map())
-// 检查更新（agent_import_origin 基线 + shared_agent_entry.source_url）
+// 检查更新（agent_import_origin 基线：URL 导入时记录的来源与内容 hash）
 interface CheckUpdateItem {
   agentId: number
   sourceUrl: string | null
@@ -381,23 +353,6 @@ function handleExport(row: any) {
   exportAgent.value = { id: row.id, name: row.name, skillNames: row.skillNames ?? [] }
 }
 
-function handleSharedEntry(row: any) {
-  sharedAgent.value = { id: row.id, name: row.name, enabled: row.enabled !== false }
-}
-
-async function fetchSharedEntries() {
-  try {
-    const { data } = await api.get('/shared-agents')
-    const map = new Map<number, { note: string; sortOrder: number; sourceUrl: string | null }>()
-    for (const entry of data ?? []) {
-      map.set(entry.agentId, { note: entry.note, sortOrder: entry.sortOrder, sourceUrl: entry.sourceUrl ?? null })
-    }
-    sharedEntries.value = map
-  } catch {
-    sharedEntries.value = new Map()
-  }
-}
-
 function remoteChanged(agentId: number): boolean {
   return updateItems.value.some((item) => item.agentId === agentId && item.changed && !item.error)
 }
@@ -426,21 +381,6 @@ function reimportFromUrl(row: CheckUpdateItem) {
 function openImport(url?: string) {
   importInitialUrl.value = url
   importVisible.value = true
-}
-
-async function handleUnshare(row: any) {
-  try {
-    await ElMessageBox.confirm(
-      `确定要将 Agent「${row.name}」从团队共享目录下架吗？工作台将不再展示该条目。`,
-      '确认下架',
-      { type: 'warning' }
-    )
-    await api.delete(`/agents/${row.id}/shared-entry`)
-    ElMessage.success('已下架')
-    fetchSharedEntries()
-  } catch {
-    // Cancelled or handled by interceptor
-  }
 }
 
 async function handleCopy(row: any) {
@@ -506,7 +446,6 @@ async function handleDelete(row: any) {
 
 onMounted(() => {
   fetchAgents()
-  if (canWrite.value) fetchSharedEntries()
 })
 
 let firstActivation = true
@@ -516,7 +455,6 @@ onActivated(() => {
     return
   }
   fetchAgents()
-  if (canWrite.value) fetchSharedEntries()
 })
 </script>
 

@@ -121,11 +121,6 @@ export interface BundleOriginRepo {
   upsert(agentId: number, sourceUrl: string, contentHash: string, importedSystemPrompt: string | null, importedBy: number): Promise<void>;
 }
 
-/** 共享条目远端来源读取能力（SharedAgentEntryRepository 已实现）。 */
-export interface BundleEntrySourceLookup {
-  listAll(): Promise<Array<{ agentId: number; sourceUrl: string | null }>>;
-}
-
 export interface ParsedBundle {
   agent: {
     name: string;
@@ -154,14 +149,13 @@ export class AgentBundleService {
     private readonly mcpMapper: BundleMcpMapper,
     private readonly mcpCipher: McpSecretCipher,
     private readonly originRepo: BundleOriginRepo,
-    private readonly entrySourceLookup: BundleEntrySourceLookup,
   ) {}
 
   // ---------------------------------------------------------------- 导出
 
   /**
    * registry 只读导出（URL 导入的数据源）：对 Agent 的每个用户技能生成 name@userId 显式 token
-   * 全量内联——默认 reference 导出会让 URL 导入产出缺技能的 Agent，且目标实例无属主、fix-deps 无法补齐。
+   * 全量内联——默认 reference 导出会让 URL 导入产出缺技能的 Agent，且目标实例无属主、无从补齐。
    * 同名多归属/超 inline 上限时抛错（路由映射 409），check-updates 落为该项 error。
    */
   async exportRegistryBundle(agentId: number): Promise<{ bundle: AgentBundle; contentHash: string }> {
@@ -458,30 +452,19 @@ export class AgentBundleService {
   /**
    * 批量检查更新（P2）：changed 以导入时的 origin.content_hash 快照为基准（导入损耗会造成
    * "本地重导出 vs 远端"口径的永久假 changed，禁止）；localEdited 仅覆盖 systemPrompt 漂移。
-   * 双 URL（origin.source_url 与 shared_agent_entry.source_url）不一致时条目优先（管理员显式维护），
-   * 但条目 URL 与 origin URL 不一致时基线语义错配（remoteHash 来源与 originHash 来源不同），
-   * 直接比对会恒真或恒假，此时落 error 要求重新导入建立基线而非输出 changed。
+   * 来源 URL 取 agent_import_origin.source_url（URL 导入时记录）。
    */
   async checkUpdates(agentIds: number[] | null): Promise<BundleCheckUpdateItem[]> {
-    const entryRows = await this.entrySourceLookup.listAll();
-    const entryUrlByAgent = new Map<number, string>();
-    for (const row of entryRows) {
-      if (row.sourceUrl != null && row.sourceUrl.trim() !== '') entryUrlByAgent.set(row.agentId, row.sourceUrl.trim());
-    }
     // value=null 表示"显式指定但无来源"：产出 error 项而非静默跳过
     const targets = new Map<number, string | null>();
     if (agentIds != null && agentIds.length > 0) {
       for (const id of agentIds) {
-        const url = entryUrlByAgent.get(id) ?? (await this.originRepo.findByAgentId(id))?.sourceUrl ?? null;
-        targets.set(id, url);
+        const origin = await this.originRepo.findByAgentId(id).catch(() => null);
+        targets.set(id, origin?.sourceUrl ?? null);
       }
     } else {
       for (const origin of await this.originRepo.listAll()) {
         targets.set(origin.agentId, origin.sourceUrl);
-      }
-      // 条目 source_url 优先于 origin（管理员显式维护），同 agentId 覆盖
-      for (const [id, url] of entryUrlByAgent) {
-        targets.set(id, url);
       }
     }
 
@@ -504,17 +487,11 @@ export class AgentBundleService {
       agentId, sourceUrl, originHash: null, remoteHash: null, changed: false, localEdited: false,
     };
     if (sourceUrl == null) {
-      item.error = '无导入来源（从未 URL 导入且共享条目未配置远端来源）';
+      item.error = '无导入来源（从未通过 URL 导入）';
       return item;
     }
     const origin = await this.originRepo.findByAgentId(agentId).catch(() => null);
     item.originHash = origin?.contentHash ?? null;
-    // 条目 URL 与导入 URL 不一致时，remoteHash 与 originHash 来自两个不同远端，
-    // 语义不对应：不产出 changed（远端从未变化也恒真），而是显式阻断，引导重新导入建立基线
-    if (origin != null && origin.sourceUrl !== sourceUrl) {
-      item.error = `共享条目来源与导入来源不一致（导入：${origin.sourceUrl}；条目：${sourceUrl}），更新检查无法比对基线，请改用导入来源或重新导入`;
-      return item;
-    }
     let bundle: AgentBundle;
     try {
       bundle = await fetchBundleFromUrl(sourceUrl);
@@ -524,7 +501,7 @@ export class AgentBundleService {
       return item;
     }
     if (origin == null) {
-      item.error = '该 Agent 未通过 URL 导入过，无比对基线（可在共享条目配置远端来源后重新导入建立基线）';
+      item.error = '该 Agent 未通过 URL 导入过，无比对基线';
       return item;
     }
     item.changed = item.remoteHash !== item.originHash;

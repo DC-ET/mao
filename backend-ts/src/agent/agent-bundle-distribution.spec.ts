@@ -128,7 +128,6 @@ interface Fixture {
   userSkillService: UserSkillService;
   agentRows: Map<number, Agent>;
   originRows: Map<number, { sourceUrl: string; contentHash: string; importedSystemPrompt: string | null; importedBy: number }>;
-  entryRows: Array<{ agentId: number; sourceUrl: string | null }>;
   service: AgentBundleService;
 }
 
@@ -151,7 +150,6 @@ function buildFixture(): Fixture {
     },
   };
   const originRows = new Map<number, { sourceUrl: string; contentHash: string; importedSystemPrompt: string | null; importedBy: number }>();
-  const entryRows: Array<{ agentId: number; sourceUrl: string | null }> = [];
   const cipher = new McpSecretCipher('unit-test-secret');
   const service = new AgentBundleService(
     agentRepo as never,
@@ -173,9 +171,8 @@ function buildFixture(): Fixture {
         originRows.set(agentId, { sourceUrl, contentHash, importedSystemPrompt, importedBy });
       },
     },
-    { listAll: async () => entryRows.map((r) => ({ ...r })) },
   );
-  return { root, skillLoader, userSkillService, agentRows, originRows, entryRows, service };
+  return { root, skillLoader, userSkillService, agentRows, originRows, service };
 }
 
 function putAgent(fx: Fixture, id: number, agent: Partial<Agent>): void {
@@ -306,7 +303,7 @@ describe('AgentBundleService.importBundleFromUrl / checkUpdates', () => {
     expect(items[0]).toMatchObject({ changed: false, localEdited: true });
   });
 
-  it('双 URL 取舍：条目 URL 一致时按条目拉取；不一致时基线错配落 error 不拉取；单项失败不阻断；无来源显式项报 error', async () => {
+  it('多 Agent 批量：单项远端故障不阻断其余项；显式指定无来源的 Agent 落 error', async () => {
     let remoteBundle = validBundleJson('v1 提示词');
     const seenUrls: string[] = [];
     let brokenUrl: string | null = null;
@@ -317,37 +314,27 @@ describe('AgentBundleService.importBundleFromUrl / checkUpdates', () => {
     }));
     const a = await fx.service.importBundleFromUrl('http://src-a.example.com/r/1', true, 7) as { agentId: number };
     const b = await fx.service.importBundleFromUrl('http://src-b.example.com/r/2', true, 7) as { agentId: number };
-    const c = await fx.service.importBundleFromUrl('http://src-c.example.com/r/3', true, 7) as { agentId: number };
-
-    // a：条目 URL 与导入来源一致 → 按条目 URL 拉取并正常比对（changed=false）
-    fx.entryRows.push({ agentId: a.agentId, sourceUrl: 'http://src-a.example.com/r/1' });
-    // b：条目 URL 与导入来源一致但导入后远端故障 → 单项失败不阻断其余项
-    fx.entryRows.push({ agentId: b.agentId, sourceUrl: 'http://src-b.example.com/r/2' });
-    brokenUrl = 'http://src-b.example.com/r/2';
-    // c：条目 URL 与导入来源不一致 → remoteHash 与 originHash 语义不对应（远端从未变化也恒真），
-    // 落 error 且不发起拉取，而不是输出误导性的 changed=true
-    fx.entryRows.push({ agentId: c.agentId, sourceUrl: 'http://other.example.com/r/9' });
     // 无来源显式项
     putAgent(fx, 99, {});
 
+    // a：按导入来源拉取并正常比对（changed=false）
     const items = await fx.service.checkUpdates(null);
     const itemA = items.find((i) => i.agentId === a.agentId)!;
-    const itemB = items.find((i) => i.agentId === b.agentId)!;
-    const itemC = items.find((i) => i.agentId === c.agentId)!;
     expect(itemA.sourceUrl).toBe('http://src-a.example.com/r/1');
     expect(seenUrls).toContain('http://src-a.example.com/r/1');
     expect(itemA.error).toBeUndefined();
     expect(itemA.changed).toBe(false);
-    expect(itemB.error).toContain('500');
-    expect(itemC.sourceUrl).toBe('http://other.example.com/r/9');
-    expect(itemC.error).toContain('不一致');
-    expect(itemC.changed).toBe(false);
-    expect(seenUrls).not.toContain('http://other.example.com/r/9');
 
-    const items2 = await fx.service.checkUpdates([99]);
-    expect(items2).toHaveLength(1);
-    expect(items2[0].agentId).toBe(99);
-    expect(items2[0].error).toContain('无导入来源');
+    // b：远端故障 → 单项失败不阻断其余项
+    brokenUrl = 'http://src-b.example.com/r/2';
+    const items2 = await fx.service.checkUpdates(null);
+    expect(items2.find((i) => i.agentId === b.agentId)!.error).toContain('500');
+    expect(items2.find((i) => i.agentId === a.agentId)!.error).toBeUndefined();
+
+    const items3 = await fx.service.checkUpdates([99]);
+    expect(items3).toHaveLength(1);
+    expect(items3[0].agentId).toBe(99);
+    expect(items3[0].error).toContain('无导入来源');
   });
 });
 

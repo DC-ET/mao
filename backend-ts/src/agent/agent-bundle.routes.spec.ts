@@ -2,9 +2,7 @@ import Fastify from 'fastify';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { handleError } from '../common/http-error.js';
 import { registerAgentBundleRoutes } from './agent-bundle.routes.js';
-import { registerSharedAgentRoutes } from './shared-agent.routes.js';
 import { BUNDLE_FORMAT } from './agent-bundle.types.js';
-import type { SharedAgentVO } from './shared-agent.service.js';
 
 function appWithUser(userId: number | null) {
   const fastify = Fastify();
@@ -86,87 +84,6 @@ describe('Agent bundle routes 权限与响应契约', () => {
     try {
       expect((await anon.inject({ method: 'GET', url: '/v1/agents/1/bundle' })).statusCode).toBe(401);
       expect((await anon.inject({ method: 'POST', url: '/v1/agent-bundle/import', payload: {} })).statusCode).toBe(401);
-    } finally {
-      await anon.close();
-    }
-  });
-});
-
-describe('Shared agent routes 权限', () => {
-  let permission: { hasPermission: ReturnType<typeof vi.fn> };
-  let sharedAgentService: {
-    listSharedAgents: ReturnType<typeof vi.fn>;
-    putEntry: ReturnType<typeof vi.fn>;
-    removeEntry: ReturnType<typeof vi.fn>;
-    fixDependencies: ReturnType<typeof vi.fn>;
-  };
-  let app: ReturnType<typeof appWithUser>;
-
-  beforeEach(() => {
-    permission = { hasPermission: vi.fn(async () => false) };
-    const vo: SharedAgentVO = {
-      agentId: 3, name: '评审员', description: null, avatarUrl: null,
-      note: '适合 PR 评审', sortOrder: 0, sourceUrl: null, missingSkills: ['x'], mcpIssues: [],
-    };
-    sharedAgentService = {
-      listSharedAgents: vi.fn(async () => [vo]),
-      putEntry: vi.fn(),
-      removeEntry: vi.fn(),
-      fixDependencies: vi.fn(async () => ({ skills: [], mcpServers: [], selfCheck: vo })),
-    };
-    app = appWithUser(7);
-    registerSharedAgentRoutes(app, { sharedAgentService: sharedAgentService as never, permissionService: permission });
-  });
-
-  afterEach(async () => {
-    await app.close();
-  });
-
-  it('普通登录用户可 GET /v1/shared-agents，写路径被拒', async () => {
-    const list = await app.inject({ method: 'GET', url: '/v1/shared-agents' });
-    expect(list.statusCode).toBe(200);
-    expect(list.json().data[0]).toMatchObject({ agentId: 3, note: '适合 PR 评审', missingSkills: ['x'] });
-    expect(sharedAgentService.listSharedAgents).toHaveBeenCalledWith(7);
-
-    expect((await app.inject({ method: 'PUT', url: '/v1/agents/3/shared-entry', payload: { note: 'x' } })).statusCode).toBe(403);
-    expect((await app.inject({ method: 'DELETE', url: '/v1/agents/3/shared-entry' })).statusCode).toBe(403);
-    expect(sharedAgentService.putEntry).not.toHaveBeenCalled();
-    expect(sharedAgentService.removeEntry).not.toHaveBeenCalled();
-  });
-
-  it('agent:write 用户可上架/下架', async () => {
-    permission.hasPermission = vi.fn(async () => true);
-    const put = await app.inject({
-      method: 'PUT', url: '/v1/agents/3/shared-entry',
-      payload: { note: '推荐语', sortOrder: 2 },
-    });
-    expect(put.statusCode).toBe(200);
-    expect(sharedAgentService.putEntry).toHaveBeenCalledWith(3, '推荐语', 2, 7, undefined);
-    const del = await app.inject({ method: 'DELETE', url: '/v1/agents/3/shared-entry' });
-    expect(del.statusCode).toBe(200);
-    expect(sharedAgentService.removeEntry).toHaveBeenCalledWith(3);
-  });
-
-  it('登录用户可 POST fix-deps（无需权限码，安装目标为本人）；未登录 401', async () => {
-    const res = await app.inject({ method: 'POST', url: '/v1/shared-agents/3/fix-deps' });
-    expect(res.statusCode).toBe(200);
-    expect(res.json().data).toMatchObject({ selfCheck: { agentId: 3 } });
-    expect(sharedAgentService.fixDependencies).toHaveBeenCalledWith(3, 7);
-
-    const anon = appWithUser(null);
-    registerSharedAgentRoutes(anon, { sharedAgentService: sharedAgentService as never, permissionService: permission });
-    try {
-      expect((await anon.inject({ method: 'POST', url: '/v1/shared-agents/3/fix-deps' })).statusCode).toBe(401);
-    } finally {
-      await anon.close();
-    }
-  });
-
-  it('未登录 GET /v1/shared-agents 返回 401', async () => {
-    const anon = appWithUser(null);
-    registerSharedAgentRoutes(anon, { sharedAgentService: sharedAgentService as never, permissionService: permission });
-    try {
-      expect((await anon.inject({ method: 'GET', url: '/v1/shared-agents' })).statusCode).toBe(401);
     } finally {
       await anon.close();
     }

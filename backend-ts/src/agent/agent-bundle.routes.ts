@@ -17,7 +17,7 @@ export interface AgentBundleRouteDeps {
 /**
  * Agent Bundle 导出/导入（P1）+ registry 只读端点 / URL 导入 / 检查更新（P2）。
  * 导出与 registry 响应体是 bundle JSON 本身（非 Result 信封）——bundle 文件顶层即格式契约；
- * 其余走常规 sendOk 信封。共享目录路由见 shared-agent.routes.ts。
+ * 其余走常规 sendOk 信封。
  */
 export function registerAgentBundleRoutes(app: FastifyInstance, deps: AgentBundleRouteDeps): void {
   const { agentBundleService, permissionService, registryConfig } = deps;

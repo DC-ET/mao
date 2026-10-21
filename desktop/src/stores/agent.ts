@@ -13,21 +13,8 @@ export interface Agent {
   enabled?: boolean
 }
 
-/** 团队共享条目（GET /v1/shared-agents）：管理员背书 + 按当前用户实时计算的依赖自检。 */
-export interface SharedAgent {
-  agentId: number
-  name: string
-  description: string | null
-  avatarUrl: string | null
-  note: string
-  sortOrder: number
-  missingSkills: string[]
-  mcpIssues: string[]
-}
-
 export const useAgentStore = defineStore('agent', () => {
   const agents = ref<Agent[]>([])
-  const sharedAgents = ref<SharedAgent[]>([])
   const activeAgent = ref<Agent | null>(null)
   const loading = ref(false)
   const error = ref(false)
@@ -35,29 +22,19 @@ export const useAgentStore = defineStore('agent', () => {
   async function fetchAgents() {
     if (!getToken()) {
       agents.value = []
-      sharedAgents.value = []
       error.value = false
       return
     }
 
     loading.value = true
     try {
-      const [agentsRes, sharedRes] = await Promise.allSettled([
-        // 新建会话只展示「客户端可见」的 Agent；不带 scope 的全量列表留给管理后台与其他入口
-        api.get('/agents', { params: { scope: 'client' } }),
-        api.get('/shared-agents'),
-      ])
-      if (agentsRes.status === 'fulfilled') {
-        agents.value = ((agentsRes.value.data || []) as Agent[]).filter((agent) => agent.enabled !== false)
-        error.value = false
-      } else {
-        agents.value = []
-        error.value = true
-      }
-      // 共享目录拉取失败不阻塞主列表，仅置空分区
-      sharedAgents.value = sharedRes.status === 'fulfilled'
-        ? ((sharedRes.value.data || []) as SharedAgent[])
-        : []
+      // 新建会话只展示「客户端可见」的 Agent；不带 scope 的全量列表留给管理后台与其他入口
+      const { data } = await api.get('/agents', { params: { scope: 'client' } })
+      agents.value = ((data || []) as Agent[]).filter((agent) => agent.enabled !== false)
+      error.value = false
+    } catch {
+      agents.value = []
+      error.value = true
     } finally {
       loading.value = false
     }
@@ -77,25 +54,13 @@ export const useAgentStore = defineStore('agent', () => {
     return agents.value.find(a => a.id === id) || null
   }
 
-  /** 依赖补装完成后用服务端重算的自检结果替换条目（自检徽标实时消失）。 */
-  function replaceSharedAgent(vo: SharedAgent) {
-    const index = sharedAgents.value.findIndex((item) => item.agentId === vo.agentId)
-    if (index >= 0) {
-      sharedAgents.value.splice(index, 1, vo)
-    } else {
-      sharedAgents.value.push(vo)
-    }
-  }
-
   return {
     agents,
-    sharedAgents,
     activeAgent,
     loading,
     error,
     fetchAgents,
     fetchAgent,
     getAgentById,
-    replaceSharedAgent
   }
 })

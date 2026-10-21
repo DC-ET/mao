@@ -59,7 +59,7 @@
 
 把 Agent（主体 + 经验 + 推荐问题 + 当前提示词 + 技能 + MCP 定义）打包为 `mao-agent-bundle` v1 JSON，用于自托管实例之间交换或离线备份。两个命令均需 `agent:write`；格式契约与脱敏规则（MCP env 值全量替换 `$MAO_REDACTED`、HTTP url 不脱敏）见仓库 [docs/guides/agent-bundle-format.md](../../docs/guides/agent-bundle-format.md)。
 
-导入为两段式：缺省 `confirm=false` 仅输出预检报告（名称冲突、技能/MCP 逐项动作、警告），`--confirm` 落库（服务端重新执行全部校验）。导入生成全新 Agent：名称冲突自动加“ 副本”后缀；MCP 以停用态创建、同名跳过且不绑定，需在管理端补齐 env 并手动启用；内联技能写入系统技能目录（同名不覆盖）。`configJson` 原样搬运；`defaultModelId` 置空、`isDefault=0`、`enabled=1`、起提示词版本 v1。团队共享目录（上架/下架/推荐语）暂无 CLI 子命令，REST 见下文“团队共享目录”。
+导入为两段式：缺省 `confirm=false` 仅输出预检报告（名称冲突、技能/MCP 逐项动作、警告），`--confirm` 落库（服务端重新执行全部校验）。导入生成全新 Agent：名称冲突自动加“ 副本”后缀；MCP 以停用态创建、同名跳过且不绑定，需在管理端补齐 env 并手动启用；内联技能写入系统技能目录（同名不覆盖）。`configJson` 原样搬运；`defaultModelId` 置空、`isDefault=0`、`enabled=1`、起提示词版本 v1。
 
 ---
 
@@ -107,21 +107,6 @@ mao agent export 3 --inline-skills code-review@12,packer -o ./reviewer.json
 mao agent import ./mao-agent-bundle-代码评审员-v1.json
 mao agent import ./reviewer.json --confirm
 ```
-
----
-
-## 团队共享目录（REST）
-
-管理员将启用中的 Agent 上架到工作台“团队共享”分区（登录即可读，写路径需 `agent:write`；CLI 暂无子命令）：
-
-| 操作 | 接口 | 说明 |
-|------|------|------|
-| 列表 + 依赖自检 | `GET /api/v1/shared-agents` | 按 `sortOrder asc, agentId asc` 返回条目；`missingSkills` 为当前用户缺失的技能，`mcpIssues` 形如 `context7（已停用）`；`sourceUrl` 为条目远端来源（可空） |
-| 依赖一键补装 | `POST /api/v1/shared-agents/:agentId/fix-deps` | 登录即可；缺失的用户技能自动安装到**操作者本人**名下（多归属/无属主/名称非法逐项标注），MCP 停用需操作者有 `mcp:write`（无则报 needs-admin）；响应含重算后的 `selfCheck` |
-| 上架/更新 | `PUT /api/v1/agents/:id/shared-entry` | body `{ note, sortOrder, sourceUrl? }`，note ≤512，sourceUrl 为可选 registry URL（≤1024，http/https，空串清除）；停用中的 Agent 报错“请先启用该 Agent”；重复上架即更新 |
-| 下架 | `DELETE /api/v1/agents/:id/shared-entry` | 幂等 |
-
-Agent 删除时条目级联删除；停用时条目保留、列表隐藏，重新启用即恢复展示。
 
 ---
 

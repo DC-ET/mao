@@ -19,7 +19,6 @@ import type { AgentService } from './agent/agent.service.js';
 import type { AgentExperienceService } from './agent/agent-experience.service.js';
 import type { AgentSuggestedQuestionService } from './agent/agent-suggested-question.service.js';
 import type { AgentBundleService } from './agent/agent-bundle.service.js';
-import type { SharedAgentService } from './agent/shared-agent.service.js';
 import type { McpServerValidatorImpl } from './agent/mcp-validator.js';
 import type { ModelService } from './model/model.service.js';
 import type { SystemSettingService } from './settings/settings.service.js';
@@ -109,7 +108,6 @@ import { registerAdminUserToolRoutes } from './user-tool/user-tool-admin.routes.
 import { registerAgentAvatarRoutes } from './agent/agent-avatar.js';
 import { registerAgentRoutes } from './agent/agent.routes.js';
 import { registerAgentBundleRoutes } from './agent/agent-bundle.routes.js';
-import { registerSharedAgentRoutes } from './agent/shared-agent.routes.js';
 import { registerModelRoutes } from './model/model.routes.js';
 import { registerSystemSettingRoutes } from './settings/settings.routes.js';
 import { registerEmbedRoutes } from './embed/embed.routes.js';
@@ -186,7 +184,6 @@ export interface RouteDeps {
   experienceService: AgentExperienceService;
   suggestedQuestionService: AgentSuggestedQuestionService;
   agentBundleService: AgentBundleService;
-  sharedAgentService: SharedAgentService;
   mcpValidator: McpServerValidatorImpl;
 
   // model
@@ -319,7 +316,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
     gitCredentials, envVariableService, sessionRepo,
     userToolService, userToolRepo, httpApiExecutor, userToolStatsStore,
     fileService, agentService, experienceService, suggestedQuestionService,
-    agentBundleService, sharedAgentService, mcpValidator,
+    agentBundleService, mcpValidator,
     modelService,
     settingService, activateContainerRuntime, runtimeModeResolver,
     commandService, commandRepo, skillLoader, skillSync,
@@ -400,7 +397,6 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
       permissionService,
     });
     registerAgentBundleRoutes(api, { agentBundleService, permissionService, registryConfig: settingService });
-    registerSharedAgentRoutes(api, { sharedAgentService, permissionService });
     registerModelRoutes(api, { modelService, permissionService });
     registerSystemSettingRoutes(api, {
       systemSettingService: settingService,
