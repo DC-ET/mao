@@ -210,11 +210,10 @@ onMounted(() => nextTick(revealFocus))
 }
 
 .todo-content {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   min-width: 0;
   flex: 1;
+  /* 任务名完整展示，多行折行而不是截断；长英文标识符也不会撑破侧栏 */
+  overflow-wrap: anywhere;
 }
 
 /* in_progress: bold highlight + left accent */
