@@ -751,6 +751,12 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     weixinWebhookFallback, weixinSend, weixinAccounts, weixinTokens, weixinInboundMessagesRef,
     definitionRegistry, subagentMapper, subagentInvocation, localToolSessions,
     scheduledStore, agentExecutor, holder,
+    // 等待子代理期间父侧无 AgentLoop 事件，飞书进度卡靠它每 10s 续更一次子代理轮次。
+    waitProgressNotifier: (sessionId: number) => {
+      void feishuActiveProgress.refresh(sessionId).catch((error) => {
+        console.warn(`飞书进度卡等待子代理期间刷新失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    },
   });
   const { taskTerminal, visibility, backgroundSubagentManager, scheduledService } = sessionServices;
 

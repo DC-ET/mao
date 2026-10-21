@@ -71,6 +71,8 @@ export interface SessionServicesDeps {
   scheduledStore: ScheduledTaskDbStore;
   agentExecutor: ReturnType<typeof createAgentExecutor>;
   holder: { harness?: HarnessService; loop?: AgentLoop };
+  /** waitForAll 阻塞期间的进度通知（飞书进度卡刷新）；未注入时等待期间不续更卡片。 */
+  waitProgressNotifier?: ((parentSessionId: number) => void | Promise<void>) | null;
 }
 
 export interface SessionServicesResult {
@@ -123,6 +125,7 @@ export function assembleSessionServices(deps: SessionServicesDeps): SessionServi
         d.wsRegistry.send(userId, wsEvent('assistant_message_saved', event.sessionId, event.data));
       },
     },
+    waitProgressNotifier: d.waitProgressNotifier,
   });
 
   const scheduledService = new ScheduledTaskService(

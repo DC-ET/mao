@@ -26,6 +26,9 @@ export const BACKGROUND_SUBAGENT_TOOLS = [
 /** 所有子代理（前台委派与后台）都不可用。提问只由主会话发起。 */
 export const SUBAGENT_EXCLUDED_TOOLS = ['ask_user_questions', 'dingtalk_send_image', 'dingtalk_send_file'] as const;
 
+/** waitForAll 阻塞期间的进度通知间隔：渠道卡片只在父侧事件时刷新，等待期间靠它续更。 */
+const WAIT_PROGRESS_TICK_MS = 10_000;
+
 export interface BackgroundSpawnResult {
   ok: boolean;
   taskId?: number;
@@ -84,6 +87,12 @@ export interface BackgroundSubagentManagerDeps {
   inboxRecorder?: SubagentInboxRecorder | null;
   /** 完成通知落库后的实时广播（可选注入）：WS registry 只保留窄接口，harness 不反向依赖 ws 域实现。 */
   completionNoticeBroadcaster?: BackgroundCompletionNoticeBroadcaster | null;
+  /**
+   * 等待子代理期间的周期进度通知（可选注入）：waitForAll 阻塞时父侧不产生 AgentLoop 事件，
+   * 渠道进度卡（飞书）会冻结在进入等待那一刻，子代理轮次不再刷新。每 WAIT_PROGRESS_TICK_MS
+   * 回调一次，由装配层接到进度卡刷新上；通知失败不影响等待。
+   */
+  waitProgressNotifier?: ((parentSessionId: number) => void | Promise<void>) | null;
 }
 
 /** SUBAGENT_DONE 写入能力：覆盖 COMPLETED / FAILED / CANCELLED 三种子代理终态。 */
@@ -249,6 +258,7 @@ export class BackgroundSubagentManager {
   ): Promise<{ completed: boolean; timedOut: boolean }> {
     if (parentSessionId == null) return { completed: true, timedOut: false };
     const deadline = timeoutMs != null ? Date.now() + timeoutMs : null;
+    let lastTickAt = Date.now();
     while (true) {
       if (cancelFlag?.get()) return { completed: false, timedOut: false };
       if (!this.hasRunning(parentSessionId)) return { completed: true, timedOut: false };
@@ -259,7 +269,24 @@ export class BackgroundSubagentManager {
       } else {
         await sleep(300);
       }
+      // 阻塞等待期间父侧不产生 AgentLoop 事件，渠道进度卡（如飞书）不再 PATCH，
+      // 子代理轮次会冻结在进入等待那一刻；周期性通知让卡片继续刷新。
+      if (Date.now() - lastTickAt >= WAIT_PROGRESS_TICK_MS) {
+        lastTickAt = Date.now();
+        this.notifyWaitProgress(parentSessionId);
+      }
     }
+  }
+
+  /** 进度通知走 fire-and-forget：卡片 PATCH 失败（网络等）只告警，不中断等待。 */
+  private notifyWaitProgress(parentSessionId: number): void {
+    const notifier = this.deps.waitProgressNotifier;
+    if (notifier == null) return;
+    void Promise.resolve()
+      .then(() => notifier(parentSessionId))
+      .catch((e) => {
+        harnessLog('warn', `Wait progress notify failed for parent ${parentSessionId}: ${(e as Error)?.message ?? String(e)}`);
+      });
   }
 
   async consumeResults(parentSessionId: number | null | undefined): Promise<Record<string, string>> {

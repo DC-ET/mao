@@ -4,7 +4,7 @@ import type { Tool } from '../tool/tool.js';
 import { BackgroundSubagentManager, type BackgroundProgress } from './background-subagent-manager.js';
 import { SubAgentResultCollector } from './subagent-result-collector.js';
 
-function buildManager(execution: Record<string, unknown>, messages: unknown[] = []) {
+function buildManager(execution: Record<string, unknown>, messages: unknown[] = [], extraDeps: Record<string, unknown> = {}) {
   const subagentExecutionMapper = {
     findById: vi.fn(async () => execution),
     listByParent: vi.fn(async () => [execution]),
@@ -12,7 +12,7 @@ function buildManager(execution: Record<string, unknown>, messages: unknown[] = 
   const sessionService = {
     getMessages: vi.fn(async () => messages),
   };
-  const deps = { subagentExecutionMapper, sessionService } as never;
+  const deps = { subagentExecutionMapper, sessionService, ...extraDeps } as never;
   return new BackgroundSubagentManager(deps);
 }
 
@@ -124,6 +124,71 @@ describe('BackgroundSubagentManager.progress snapshot', () => {
     expect(snap.totalPromptTokens).toBe(500);
     expect(snap.totalCompletionTokens).toBe(200);
     expect(snap.recentOutput).toBe('done');
+  });
+});
+
+describe('BackgroundSubagentManager.waitForAll progress notify', () => {
+  /** 直接置运行中集合，绕过真实子代理执行。 */
+  function markRunning(manager: BackgroundSubagentManager, parentSessionId: number): void {
+    (manager as unknown as { runningByParent: Map<number, Set<number>> }).runningByParent.set(parentSessionId, new Set([7]));
+  }
+
+  function clearRunning(manager: BackgroundSubagentManager): void {
+    (manager as unknown as { runningByParent: Map<number, Set<number>> }).runningByParent.clear();
+  }
+
+  it('notifies periodically while blocked waiting', async () => {
+    vi.useFakeTimers();
+    try {
+      const notifier = vi.fn();
+      const manager = buildManager({}, [], { waitProgressNotifier: notifier });
+      markRunning(manager, 1);
+
+      const waiting = manager.waitForAll(1, null, 60_000);
+      // 不足一个 tick 间隔不通知
+      await vi.advanceTimersByTimeAsync(9_000);
+      expect(notifier).not.toHaveBeenCalled();
+      // 跨过 10s 间隔通知一次，带父会话 ID
+      await vi.advanceTimersByTimeAsync(1_500);
+      expect(notifier).toHaveBeenCalledTimes(1);
+      expect(notifier).toHaveBeenCalledWith(1);
+      // 再跨一个间隔第二次
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(notifier).toHaveBeenCalledTimes(2);
+
+      // 子代理结束后等待退出，不再通知
+      clearRunning(manager);
+      await vi.advanceTimersByTimeAsync(300);
+      expect(await waiting).toEqual({ completed: true, timedOut: false });
+      expect(notifier).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps waiting when the notifier rejects', async () => {
+    vi.useFakeTimers();
+    try {
+      const notifier = vi.fn().mockRejectedValue(new Error('card patch failed'));
+      const manager = buildManager({}, [], { waitProgressNotifier: notifier });
+      markRunning(manager, 1);
+
+      const waiting = manager.waitForAll(1, null, 60_000);
+      await vi.advanceTimersByTimeAsync(10_500);
+      expect(notifier).toHaveBeenCalledTimes(1);
+
+      clearRunning(manager);
+      await vi.advanceTimersByTimeAsync(300);
+      expect(await waiting).toEqual({ completed: true, timedOut: false });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('waits normally when no notifier is injected', async () => {
+    const manager = buildManager({});
+    markRunning(manager, 1);
+    expect(await manager.waitForAll(1, null, 20)).toEqual({ completed: false, timedOut: true });
   });
 });
 
