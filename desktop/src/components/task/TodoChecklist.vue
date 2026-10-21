@@ -10,7 +10,12 @@
           <div class="todo-progress-fill" :style="{ width: progressPercent + '%' }"></div>
         </div>
       </div>
-      <div ref="listEl" class="todo-list">
+      <div
+        ref="listEl"
+        class="todo-list"
+        :class="{ 'has-more-below': hasMoreBelow }"
+        @scroll.passive="updateOverflowHint"
+      >
         <div
           v-for="item in todos"
           :key="item.id"
@@ -39,6 +44,7 @@ const props = defineProps<{
 }>()
 
 const listEl = ref<HTMLElement | null>(null)
+const hasMoreBelow = ref(false)
 
 const completedCount = computed(() =>
   props.todos?.filter(t => t.status === 'completed').length ?? 0
@@ -72,14 +78,27 @@ const focusIndex = computed(() => {
 function revealFocus() {
   const el = listEl.value
   const item = el?.querySelectorAll<HTMLElement>('.todo-item')[focusIndex.value]
-  if (!el || !item) return
-  const listRect = el.getBoundingClientRect()
-  const itemRect = item.getBoundingClientRect()
-  if (itemRect.top >= listRect.top && itemRect.bottom <= listRect.bottom) return
-  el.scrollTop += itemRect.top - listRect.top - (el.clientHeight - itemRect.height) / 2
+  if (el && item) {
+    const listRect = el.getBoundingClientRect()
+    const itemRect = item.getBoundingClientRect()
+    if (itemRect.top < listRect.top || itemRect.bottom > listRect.bottom) {
+      el.scrollTop += itemRect.top - listRect.top - (el.clientHeight - itemRect.height) / 2
+    }
+  }
+  updateOverflowHint()
+}
+
+/**
+ * 滚动条隐藏后不再占侧栏宽度，改用底部渐隐表达「下面还有」；
+ * 滚到底或内容本身不溢出时去掉渐隐。
+ */
+function updateOverflowHint() {
+  const el = listEl.value
+  hasMoreBelow.value = !!el && el.scrollHeight - el.scrollTop - el.clientHeight > 2
 }
 
 watch(focusIndex, () => nextTick(revealFocus))
+watch(() => props.todos, () => nextTick(updateOverflowHint))
 onMounted(() => nextTick(revealFocus))
 </script>
 
@@ -129,21 +148,19 @@ onMounted(() => nextTick(revealFocus))
   max-height: 172px;
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-width: thin;
-  padding-right: 2px;
+  /* 侧栏本来就窄，滚动条不再占位：自定义 ::-webkit-scrollbar 会把 Android 的
+     overlay 滚动条变成常驻占位条，直接吃掉任务名的可用宽度 */
+  scrollbar-width: none;
 }
 
 .todo-list::-webkit-scrollbar {
-  width: 4px;
+  display: none;
 }
 
-.todo-list::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.todo-list::-webkit-scrollbar-thumb {
-  background: var(--aw-hairline);
-  border-radius: 2px;
+/* 还能往下滚时底部渐隐，替代滚动条提示下方还有内容；滚到底自动消失 */
+.todo-list.has-more-below {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 12px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 12px), transparent);
 }
 
 .todo-item {
