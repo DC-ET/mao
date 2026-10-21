@@ -217,7 +217,7 @@ CLI：`mao http-tool list|enabled|stats|create|update|delete|set-enabled|test`�
 
 侧边栏位于「能力」分组、「Skills 管理」上方。「飞书机器人」页面管理飞书自建应用机器人：每个机器人独立配置 App ID / App Secret、Agent、模型，可启用/停用/删除。App Secret 以 `APP_FEISHU_BOT_SECRET` 加密存储，不返回明文；未配置该密钥时无法添加机器人。
 
-启用后服务端与飞书建立长连接接收消息：用户在飞书内私聊或群里 @ 机器人即可触发对应 Agent。用户绑定流程见 [feishu-bot.md](feishu-bot.md)。
+启用后服务端与飞书建立长连接接收消息：用户在飞书内私聊或群里 @ 机器人即可触发对应 Agent。创建飞书应用时可用飞书「创建飞书智能体应用」一键建基础应用，但完整能力还需额外开通 `im:message.group_msg.include_bot:read`、`im:chat`、`contact:user.basic_profile:readonly` 三个权限并订阅 `im.chat.updated_v1` 事件（见 [feishu-bot.md](feishu-bot.md)）。用户绑定流程见 [feishu-bot.md](feishu-bot.md)。
 
 REST：`/v1/admin/feishu-bots` 系列（详见 [feishu-bot.md](feishu-bot.md)）。
 
