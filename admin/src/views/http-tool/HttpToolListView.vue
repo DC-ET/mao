@@ -179,17 +179,26 @@
           <el-input v-model="row.key" placeholder="名称，如 Authorization" class="kv-key" maxlength="64" />
           <el-input
             v-model="row.value"
-            :type="row.sensitive ? 'password' : 'text'"
-            :placeholder="row.sensitive ? '已加密（留空保存原值）' : '值'"
+            :type="isSensitiveHeaderKey(row.key) ? 'password' : 'text'"
+            :placeholder="isSensitiveHeaderKey(row.key) ? '值（加密存储）' : '值'"
             class="kv-value"
             maxlength="4096"
             show-password
           />
-          <el-checkbox v-model="row.sensitive" class="kv-sensitive">敏感</el-checkbox>
+          <span
+            v-if="row.key.trim()"
+            class="kv-sensitive"
+            :title="isSensitiveHeaderKey(row.key) ? '键名命中敏感词，值将加密存储' : '普通请求头，值明文存储'"
+          >
+            <el-tag size="small" :type="isSensitiveHeaderKey(row.key) ? 'warning' : 'info'">
+              {{ isSensitiveHeaderKey(row.key) ? '加密' : '明文' }}
+            </el-tag>
+          </span>
           <el-button link type="danger" @click="removeHeaderRow(index)">删除</el-button>
         </div>
         <p class="section-hint">
-          勾选「敏感」的值加密存储、保存后不再回显；编辑时保持掩码 <code>******</code> 表示不修改，清空则表示删除该请求头。
+          键名包含 token / secret / key / authorization / cookie 的请求头会自动加密存储，保存后不再回显；
+          编辑时保持掩码 <code>******</code> 表示不修改，清空则表示删除该请求头。
         </p>
 
         <div class="section-title">
@@ -299,6 +308,7 @@ import { Plus, Refresh } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../../api'
 import { formatDateTime } from '../../utils/datetime'
+import { HEADER_VALUE_MASK, isSensitiveHeaderKey } from '../../utils/httpTool'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
 
 const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'] as const
@@ -306,13 +316,10 @@ const PARAM_TYPES = ['string', 'number', 'boolean'] as const
 const TOOL_NAME_RE = /^[a-z][a-z0-9_]{0,63}$/
 /** 与后端 http-tool.service 的 HEADER_KEY_RE 保持一致（不含点号）。 */
 const HEADER_KEY_RE = /^[A-Za-z0-9_-]+$/
-/** 与后端 HEADER_VALUE_MASK 一致：敏感请求头回显掩码。 */
-const HEADER_VALUE_MASK = '******'
 
 interface HeaderRow {
   key: string
   value: string
-  sensitive: boolean
 }
 
 interface ParamRow {
@@ -405,12 +412,12 @@ const testForm = ref({ name: '', displayName: '', params: [] as ParamRow[] })
 
 /** 草稿含未回显的敏感请求头（掩码值）：执行内核拒掩码，试运行前需回填真实值。 */
 const hasMaskedHeader = computed(() =>
-  form.value.headers.some((row) => row.sensitive && row.value === HEADER_VALUE_MASK)
+  form.value.headers.some((row) => isSensitiveHeaderKey(row.key) && row.value === HEADER_VALUE_MASK)
 )
 
 /** 已存工具是否带加密请求头：列表 VO 只回显掩码，直接试运行必然被内核拒绝。 */
 function hasSensitiveHeader(item: HttpToolRow) {
-  return item.headers.some((header) => header.sensitive)
+  return item.headers.some((header) => isSensitiveHeaderKey(header.key))
 }
 
 function cardTestTooltip(item: HttpToolRow) {
@@ -476,7 +483,7 @@ function addHeaderRow() {
     ElMessage.warning('请求头最多 20 个')
     return
   }
-  form.value.headers.push({ key: '', value: '', sensitive: false })
+  form.value.headers.push({ key: '', value: '' })
 }
 
 function removeHeaderRow(index: number) {
@@ -616,7 +623,7 @@ function openEditDialog(item: HttpToolRow) {
     description: item.description,
     method: item.method,
     url: item.url,
-    headers: item.headers.map((header) => ({ ...header })),
+    headers: item.headers.map((header) => ({ key: header.key, value: header.value })),
     bodyTemplate: item.bodyTemplate ?? '',
     readOnly: item.readOnly,
     timeoutMs: item.timeoutMs,
@@ -690,7 +697,7 @@ function openTestDrawer(item: HttpToolRow) {
     description: item.description,
     method: item.method,
     url: item.url,
-    headers: item.headers.map((header) => ({ ...header })),
+    headers: item.headers.map((header) => ({ key: header.key, value: header.value })),
     bodyTemplate: item.bodyTemplate ?? '',
     readOnly: item.readOnly,
     timeoutMs: item.timeoutMs,

@@ -135,7 +135,10 @@ export interface AppConfig {
       secretKey: string;
     };
     httpTool: {
-      /** 自定义 HTTP 工具请求头敏感值加密密钥（APP_HTTP_TOOL_SECRET 覆盖，独立轮换）。 */
+      /**
+       * 自定义 HTTP 工具请求头敏感值加密密钥（独立轮换）。
+       * 优先 APP_HTTP_TOOL_SECRET，回退历史名 APP_USER_TOOL_SECRET（设计 §5.12 要求兼容旧部署）。
+       */
       secretKey: string;
     };
     search: {
@@ -527,8 +530,10 @@ export function loadConfig(): AppConfig {
   if (process.env.APP_SIGNAL_SECRET) {
     cfg.app.signal.secretKey = process.env.APP_SIGNAL_SECRET;
   }
-  if (process.env.APP_HTTP_TOOL_SECRET) {
-    cfg.app.httpTool.secretKey = process.env.APP_HTTP_TOOL_SECRET;
+  // 历史部署只配置 APP_USER_TOOL_SECRET；新名可选，旧名必须继续生效（设计 §5.12）。
+  const httpToolSecret = process.env.APP_HTTP_TOOL_SECRET ?? process.env.APP_USER_TOOL_SECRET;
+  if (httpToolSecret) {
+    cfg.app.httpTool.secretKey = httpToolSecret;
   }
   if (process.env.APP_FEISHU_BOT_SECRET) {
     cfg.feishu.bot.appSecretKey = process.env.APP_FEISHU_BOT_SECRET;

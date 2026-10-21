@@ -209,7 +209,12 @@ export interface HttpToolSettingsPort {
 
 /** Agent 关联校验端口（HttpToolValidatorImpl 满足；由 agent.routes 注入使用）。 */
 export interface HttpToolValidator {
-  validateForAgent(ids: number[]): Promise<number[]>;
+  /**
+   * @param ids 本次提交的关联 id（去重后返回）
+   * @param existingIds 编辑前的存量关联：其中的失效 id（已停用/已删除）保留，
+   *   只对新增 id 校验存在性与启用态，避免失效关联阻塞 Agent 的其它字段编辑。
+   */
+  validateForAgent(ids: number[], existingIds?: readonly number[]): Promise<number[]>;
 }
 
 /** 内置工具名提供者（保留字校验用；由 ToolRegistry 装配层注入，避免循环依赖）。 */

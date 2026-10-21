@@ -12,6 +12,9 @@ describe('sensitive-env', () => {
     expect(isSensitiveChildEnvKey('MYSQL_PASSWORD')).toBe(true);
     expect(isSensitiveChildEnvKey('APP_NOTIFICATION_WEBHOOK_SECRET')).toBe(true);
     expect(isSensitiveChildEnvKey('APP_MCP_SECRET')).toBe(true);
+    expect(isSensitiveChildEnvKey('APP_HTTP_TOOL_SECRET')).toBe(true);
+    // 历史名必须继续剥离，否则升级窗口期旧主密钥会透传给 Agent shell。
+    expect(isSensitiveChildEnvKey('APP_USER_TOOL_SECRET')).toBe(true);
     expect(isSensitiveChildEnvKey('SETTINGS_SECRET')).toBe(true);
     expect(isSensitiveChildEnvKey('DINGTALK_OAUTH_SECRET')).toBe(true);
     expect(isSensitiveChildEnvKey('MAO_TOKEN')).toBe(true);
@@ -34,6 +37,7 @@ describe('sensitive-env', () => {
       APP_GIT_CREDENTIAL_SECRET: 'secret',
       MYSQL_URL: 'jdbc:…',
       MAO_TOKEN: 'stale',
+      APP_USER_TOOL_SECRET: 'legacy',
       WORKSPACE_ROOT: '/data/ws',
     });
     expect(out).toEqual({ PATH: '/usr/bin', WORKSPACE_ROOT: '/data/ws' });

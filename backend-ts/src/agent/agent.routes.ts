@@ -6,6 +6,7 @@ import { requirePermission, requireUserId, sendOk } from '../common/http-error.j
 import { bodyOf, pathId, queryOptBool, queryOptStr } from '../common/request.js';
 import type { UserRepository } from '../user/types.js';
 import type { HttpToolValidator } from '../http-tool/types.js';
+import { parseHttpToolIds } from '../http-tool/types.js';
 import { experienceInputOf } from './agent-experience.service.js';
 import type { AgentExperienceService } from './agent-experience.service.js';
 import { suggestedQuestionInputOf } from './agent-suggested-question.service.js';
@@ -132,12 +133,23 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
 
   app.put('/v1/agents/:id', async (request, reply) => {
     const userId = await requireAgentWrite(request);
+    const agentId = pathId(request);
     const body = bodyOf<UpdateAgentRequest>(request);
     const mcpServerIds = await resolveMcpServerIds(mcpServerValidator, body.mcpServerIds ?? undefined);
-    const httpToolIds = await resolveHttpToolIds(httpToolValidator, body.httpToolIds ?? undefined);
+    // 存量关联用于容忍「工具被停用/删除后的残留 id」：这类 id 不是本次新关联，不能拒绝整次编辑。
+    const existingHttpToolIds = body.httpToolIds != null
+      && Array.isArray(body.httpToolIds)
+      && body.httpToolIds.length > 0
+      ? parseHttpToolIds(await agentService.getAgent(agentId))
+      : [];
+    const httpToolIds = await resolveHttpToolIds(
+      httpToolValidator,
+      body.httpToolIds ?? undefined,
+      existingHttpToolIds,
+    );
     const agent = await agentService.updateAgent(
       userId,
-      pathId(request),
+      agentId,
       body.name,
       body.description,
       body.systemPrompt,
@@ -252,15 +264,28 @@ async function resolveMcpServerIds(
 async function resolveHttpToolIds(
   validator: HttpToolValidator,
   httpToolIds: number[] | null | undefined,
+  existingIds: readonly number[] = [],
 ): Promise<number[] | null | undefined> {
   if (httpToolIds == null) {
     return httpToolIds;
   }
+  // 运行时可能是任意 JSON：非数组直接给业务错误，避免 .length 读 undefined 后被兜底成 500。
+  if (!Array.isArray(httpToolIds)) {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, 'httpToolIds 必须是正整数数组');
+  }
+  const normalized: number[] = [];
+  for (const id of httpToolIds as unknown[]) {
+    // 不依赖 MySQL 隐式转换：字符串 id 落库后运行时解析会被过滤成空关联（静默丢工具）。
+    if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, `httpToolIds 含非法 id：${String(id)}`);
+    }
+    normalized.push(id);
+  }
   // 空数组是“清空关联”，不能塌缩成 null：更新语义里 null/undefined 表示不改动。
-  if (httpToolIds.length === 0) {
+  if (normalized.length === 0) {
     return [];
   }
-  return validator.validateForAgent(httpToolIds);
+  return validator.validateForAgent(normalized, existingIds);
 }
 
 async function toVO(agent: Agent, agentService: AgentService, userRepo: UserRepository): Promise<AgentVO> {

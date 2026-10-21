@@ -38,6 +38,7 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { Select } from '@element-plus/icons-vue'
 import type { TodoItem } from '../../types/chat'
+import { focusScrollDelta } from '../../utils/todoScroll'
 
 const props = defineProps<{
   todos?: TodoItem[]
@@ -82,7 +83,12 @@ function revealFocus() {
     const listRect = el.getBoundingClientRect()
     const itemRect = item.getBoundingClientRect()
     if (itemRect.top < listRect.top || itemRect.bottom > listRect.bottom) {
-      el.scrollTop += itemRect.top - listRect.top - (el.clientHeight - itemRect.height) / 2
+      el.scrollTop += focusScrollDelta({
+        listTop: listRect.top,
+        listHeight: el.clientHeight,
+        itemTop: itemRect.top,
+        itemHeight: itemRect.height,
+      })
     }
   }
   updateOverflowHint()
@@ -100,6 +106,12 @@ function updateOverflowHint() {
 watch(focusIndex, () => nextTick(revealFocus))
 watch(() => props.todos, () => nextTick(updateOverflowHint))
 onMounted(() => nextTick(revealFocus))
+
+/**
+ * 「任务」页签用 v-show 隐藏时布局尺寸为 0，自动跟随无从计算；
+ * 切回页签后由 TaskInspector 调用该入口重算滚动位置与底部渐隐。
+ */
+defineExpose({ revealFocus })
 </script>
 
 <style scoped>

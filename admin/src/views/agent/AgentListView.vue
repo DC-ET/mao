@@ -187,7 +187,7 @@
       :agent-id="historyAgent.id"
       :agent-name="historyAgent.name"
       @close="historyAgent = null"
-      @restored="fetchAgents"
+      @restored="refreshAgentData"
     />
     <AgentFormDialog
       v-if="dialogVisible"
@@ -195,7 +195,7 @@
       :agent-data="currentAgent"
       :mode="dialogMode"
       @update:visible="dialogVisible = $event"
-      @saved="fetchAgents"
+      @saved="refreshAgentData"
     />
     <AgentExportDialog
       v-if="exportAgent"
@@ -206,7 +206,7 @@
       v-if="importVisible"
       :initial-url="importInitialUrl"
       @close="importVisible = false"
-      @saved="fetchAgents"
+      @saved="refreshAgentData"
     />
     <el-dialog v-model="updatesVisible" title="检查更新" width="720px">
       <el-table :data="updateItems" size="small" border v-loading="checkingUpdates">
@@ -284,6 +284,8 @@ const { isMobile } = useBreakpoint()
 const loading = ref(false)
 const loadingDetail = ref(false)
 const allAgents = ref<any[]>([])
+/** 全量 Agent（不带 keyword）：只用于客户端可见性提示，避免搜索过滤后误报。 */
+const visibilityAgents = ref<any[]>([])
 const searchQuery = ref('')
 const statusFilter = ref('')
 const currentPage = ref(1)
@@ -296,7 +298,7 @@ const canWrite = computed(() => authStore.hasPermission('agent:write'))
 
 /** 全量视角（不受搜索/状态筛选影响）：全部 Agent 都被设为客户端不可见时给出提示。 */
 const allClientHidden = computed(
-  () => allAgents.value.length > 0 && allAgents.value.every(agent => agent.clientVisible === false),
+  () => visibilityAgents.value.length > 0 && visibilityAgents.value.every(agent => agent.clientVisible === false),
 )
 
 let fetchAgentsSeq = 0
@@ -312,6 +314,23 @@ async function fetchAgents() {
   } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
     if (seq === fetchAgentsSeq) loading.value = false
   }
+}
+
+let fetchVisibilitySeq = 0
+/** 单独拉全量列表：keyword 过滤后的 allAgents 不能用来判断「全局是否都不可见」。 */
+async function fetchVisibilityAgents() {
+  const seq = ++fetchVisibilitySeq
+  try {
+    const { data } = await api.get('/agents', { params: { includeDisabled: true } })
+    if (seq !== fetchVisibilitySeq) return
+    visibilityAgents.value = data || []
+  } catch { /* 拦截器已提示失败；保留上一次可见性判断 */ }
+}
+
+/** 列表与可见性提示的数据源一起刷新（增删改 / 激活页面时使用）。 */
+function refreshAgentData() {
+  fetchAgents()
+  fetchVisibilityAgents()
 }
 
 const matchedAgents = computed(() => {
@@ -422,7 +441,7 @@ async function handleToggleEnabled(row: any) {
     )
     await api.patch(`/agents/${row.id}/enabled`, { enabled: enable })
     ElMessage.success(`${actionText}成功`)
-    fetchAgents()
+    refreshAgentData()
   } catch {
     // Cancelled or error handled by interceptor
   }
@@ -438,14 +457,14 @@ async function handleDelete(row: any) {
     // 当前页删空时回退页码，避免停留在空白页
     const maxPage = Math.max(1, Math.ceil((total.value - 1) / pageSize.value))
     if (currentPage.value > maxPage) currentPage.value = maxPage
-    fetchAgents()
+    refreshAgentData()
   } catch {
     // Cancelled
   }
 }
 
 onMounted(() => {
-  fetchAgents()
+  refreshAgentData()
 })
 
 let firstActivation = true
@@ -454,7 +473,7 @@ onActivated(() => {
     firstActivation = false
     return
   }
-  fetchAgents()
+  refreshAgentData()
 })
 </script>
 

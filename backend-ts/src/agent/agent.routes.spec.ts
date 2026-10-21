@@ -7,6 +7,7 @@ import { registerCommandRoutes } from '../command/command.routes.js';
 import { registerUserRoutes } from '../user/user.routes.js';
 import { registerAdminAnalyticsRoutes, registerAdminRuntimeRoutes } from '../admin/admin.routes.js';
 import { registerMcpServerRoutes } from '../harness/mcp/controller/mcp-server.routes.js';
+import { HttpToolValidatorImpl } from '../http-tool/http-tool-validator.js';
 
 async function appWithUser(register: (app: ReturnType<typeof Fastify>) => void) {
   const fastify = Fastify();
@@ -150,7 +151,7 @@ describe('CRUD routes', () => {
       expect(agentService.updateAgent.mock.calls.at(-1)?.at(7)).toEqual([]);
       const associated = await app.inject({ method: 'PUT', url: '/v1/agents/1', payload: { httpToolIds: [3, 4] } });
       expect(associated.statusCode).toBe(200);
-      expect(httpToolValidator.validateForAgent).toHaveBeenCalledWith([3, 4]);
+      expect(httpToolValidator.validateForAgent).toHaveBeenCalledWith([3, 4], []);
       expect(agentService.updateAgent.mock.calls.at(-1)?.at(7)).toEqual([3, 4]);
 
       // 未带 mcpServerIds 时保持“不改动”
@@ -316,5 +317,90 @@ describe('CRUD routes', () => {
       expect(res.statusCode, `${method} ${url} ${res.body}`).toBe(200);
     }
     await app.close();
+  });
+
+  it('keeps editing possible when an associated http tool was disabled or deleted', async () => {
+    const agent = { id: 1, name: 'A', systemPrompt: 'p', isDefault: 0, httpToolIds: '[3]' };
+    let tool: { id: number; name: string; enabled: number } | null = { id: 3, name: 'orders', enabled: 0 };
+    const lookup = {
+      findById: vi.fn(async (id: number) => (tool && tool.id === id ? tool as never : null)),
+    };
+    const agentService = {
+      getAgent: vi.fn(async () => agent),
+      updateAgent: vi.fn(async () => agent),
+      getAgentExperiences: vi.fn(async () => []),
+      getAgentSuggestedQuestions: vi.fn(async () => []),
+    };
+    const app = await appWithUser(f => registerAgentRoutes(f, {
+      agentService: agentService as never,
+      experienceService: {} as never,
+      suggestedQuestionService: {} as never,
+      userRepo: { findById: vi.fn(async () => null) } as never,
+      mcpServerValidator: {} as never,
+      httpToolValidator: new HttpToolValidatorImpl(lookup as never),
+      permissionService: { hasPermission: vi.fn(async () => true) },
+    }));
+    try {
+      // 存量关联已停用：编辑 Agent 其它字段必须成功，关联 id 保留（装配侧会跳过）
+      const disabled = await app.inject({
+        method: 'PUT', url: '/v1/agents/1', payload: { name: 'A2', httpToolIds: [3] },
+      });
+      expect(disabled.json().code).toBe(0);
+      expect(agentService.updateAgent).toHaveBeenCalled();
+      expect(agentService.updateAgent.mock.calls.at(-1)?.at(7)).toEqual([3]);
+
+      // 存量关联的工具已删除：同样不阻塞
+      tool = null;
+      const deleted = await app.inject({
+        method: 'PUT', url: '/v1/agents/1', payload: { name: 'A3', httpToolIds: [3] },
+      });
+      expect(deleted.json().code).toBe(0);
+      expect(agentService.updateAgent.mock.calls.at(-1)?.at(7)).toEqual([3]);
+
+      // 对没有存量关联的 Agent 新关联停用工具仍然拒绝（设计：停用工具不允许新关联）
+      tool = { id: 3, name: 'orders', enabled: 0 };
+      agentService.getAgent.mockResolvedValue({ ...agent, httpToolIds: '[]' });
+      const callsBefore = agentService.updateAgent.mock.calls.length;
+      const rejected = await app.inject({
+        method: 'PUT', url: '/v1/agents/1', payload: { name: 'A4', httpToolIds: [3] },
+      });
+      expect(rejected.json().code).not.toBe(0);
+      expect(agentService.updateAgent.mock.calls.length).toBe(callsBefore);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('rejects malformed httpToolIds with a business error instead of 500 or silent loss', async () => {
+    const agent = { id: 1, name: 'A', systemPrompt: 'p', isDefault: 0 };
+    const agentService = {
+      getAgent: vi.fn(async () => agent),
+      updateAgent: vi.fn(async () => agent),
+      getAgentExperiences: vi.fn(async () => []),
+      getAgentSuggestedQuestions: vi.fn(async () => []),
+    };
+    const validator = { validateForAgent: vi.fn(async (ids: number[]) => ids) };
+    const app = await appWithUser(f => registerAgentRoutes(f, {
+      agentService: agentService as never,
+      experienceService: {} as never,
+      suggestedQuestionService: {} as never,
+      userRepo: { findById: vi.fn(async () => null) } as never,
+      mcpServerValidator: {} as never,
+      httpToolValidator: validator as never,
+      permissionService: { hasPermission: vi.fn(async () => true) },
+    }));
+    try {
+      for (const httpToolIds of [3, ['3'], [0], [1.5], [null]] as unknown[]) {
+        const res = await app.inject({
+          method: 'PUT', url: '/v1/agents/1', payload: { name: 'B', httpToolIds },
+        });
+        expect(res.statusCode, `payload=${JSON.stringify(httpToolIds)}`).toBe(200);
+        expect(res.json().code, `payload=${JSON.stringify(httpToolIds)}`).not.toBe(0);
+      }
+      expect(agentService.updateAgent).not.toHaveBeenCalled();
+      expect(validator.validateForAgent).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
   });
 });

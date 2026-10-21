@@ -175,7 +175,7 @@
       <div class="inspector-section">
         <h4 class="section-title">进度</h4>
         <!-- 按会话重建，切换任务 / 边路任务 / 子代理时重置列表滚动位置 -->
-        <TodoChecklist :key="sessionId" :todos="todos" />
+        <TodoChecklist ref="todoChecklist" :key="sessionId" :todos="todos" />
       </div>
 
       <div class="inspector-section">
@@ -443,6 +443,8 @@ const { maxTokens } = useModelContext(currentModelId)
 
 const inspectorActiveTab = ref<'workspace' | 'filetree' | 'git'>('workspace')
 const contextDrawerOpen = ref(false)
+/** 进度列表的自动跟随入口（页签切回任务时重算，见下方 watch）。 */
+const todoChecklist = ref<{ revealFocus: () => void } | null>(null)
 
 // 环境变量入口：仅 CLOUD 会话（LOCAL 用本机环境，不注入）且有会话 id 时可查看/维护。
 // effective-env 按会话归属鉴权，占位态（新建任务 / 占位边路 Tab）拿不到 id，不露入口。
@@ -731,6 +733,10 @@ watch(() => props.sessionId, () => {
 })
 
 watch(inspectorActiveTab, (tab) => {
+  if (tab === 'workspace') {
+    // 文件 / Git 页签隐藏期间列表尺寸为 0，切回任务页签时重新跟随当前任务并重算渐隐。
+    void nextTick(() => todoChecklist.value?.revealFocus())
+  }
   if (tab === 'git') {
     // 方案5：切 Tab 只刷新选中仓库明细，不重复扫描仓库列表（挂载/手动/阶段结束才全量）
     if (gitEnabled.value) void refreshGit()

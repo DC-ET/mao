@@ -155,6 +155,41 @@ describe('入站合并窗口环境变量', () => {
   });
 });
 
+describe('自定义 HTTP 工具加密密钥环境变量', () => {
+  const ENV_KEYS = ['APP_HTTP_TOOL_SECRET', 'APP_USER_TOOL_SECRET'];
+
+  function withEnv(env: Record<string, string | undefined>, fn: () => void): void {
+    const prev: Record<string, string | undefined> = {};
+    for (const key of ENV_KEYS) {
+      prev[key] = process.env[key];
+      if (env[key] === undefined) delete process.env[key];
+      else process.env[key] = env[key];
+    }
+    try {
+      resetConfigCache();
+      fn();
+    } finally {
+      for (const key of ENV_KEYS) {
+        if (prev[key] === undefined) delete process.env[key];
+        else process.env[key] = prev[key];
+      }
+      resetConfigCache();
+    }
+  }
+
+  it('旧部署的 APP_USER_TOOL_SECRET 仍然生效（设计 §5.12 要求不改名）', () => {
+    withEnv({ APP_USER_TOOL_SECRET: 'legacy-ops-secret' }, () => {
+      expect(loadConfig().app.httpTool.secretKey).toBe('legacy-ops-secret');
+    });
+  });
+
+  it('新名 APP_HTTP_TOOL_SECRET 优先于旧名', () => {
+    withEnv({ APP_HTTP_TOOL_SECRET: 'new-secret', APP_USER_TOOL_SECRET: 'legacy-ops-secret' }, () => {
+      expect(loadConfig().app.httpTool.secretKey).toBe('new-secret');
+    });
+  });
+});
+
 describe('flyway files', () => {
   it('contains the current migration set', () => {
     const tsDir = join(process.cwd(), 'db/migration');
