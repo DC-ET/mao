@@ -16,6 +16,7 @@ vi.mock('../api', () => ({
 const mockGet = vi.mocked(api.get)
 const mockPut = vi.mocked(api.put)
 const mockPost = vi.mocked(api.post)
+const mockDelete = vi.mocked(api.delete)
 
 function makeSession(id: string, overrides: Record<string, any> = {}): any {
   return {
@@ -890,5 +891,55 @@ describe('session store 边路任务待处理计数同步', () => {
     expect(store.getQueueMessages('11')).toEqual([
       { id: '4', sessionId: '11', content: 'm4', sortOrder: 1 },
     ])
+  })
+})
+
+// 记录详情抽屉的正文缓存（工具参数 / 结果）是用户期望「删除会话即消失」的敏感数据：
+// deleteSession 走的 purgeSessionRuntime 必须一并清掉 traceRecords，否则已删除会话的
+// 正文会留在内存里直到登出或整页刷新。
+describe('session store 删除会话时清理记录详情缓存', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    mockGet.mockReset()
+    mockDelete.mockReset()
+    mockDelete.mockResolvedValue({ data: {} })
+  })
+
+  it('deleteSession 成功后 traceRecords 随会话一起丢', async () => {
+    const store = useSessionStore()
+    store.updateSession('7', makeSession('7'))
+    store.setTraceRecord('7', 'tool:tc1', {
+      kind: 'tool',
+      data: {
+        toolCallId: 'tc1', toolName: 'read_file', argumentsJson: '{"path":"secret.txt"}',
+        resultContent: '密钥内容', resultMetadata: null, call: null,
+      },
+    } as never)
+    expect(store.getTraceRecord('7', 'tool:tc1')).not.toBeNull()
+
+    expect(await store.deleteSession('7')).toBe(true)
+    expect(store.getTraceRecord('7', 'tool:tc1')).toBeNull()
+  })
+
+  it('删除一个会话不影响其他会话的记录缓存（按 sessionId 分桶）', async () => {
+    const store = useSessionStore()
+    store.updateSession('7', makeSession('7'))
+    store.updateSession('8', makeSession('8'))
+    store.setTraceRecord('7', 'tool:tc1', { kind: 'tool', data: { toolCallId: 'tc1' } } as never)
+    store.setTraceRecord('8', 'tool:tc2', { kind: 'tool', data: { toolCallId: 'tc2' } } as never)
+
+    expect(await store.deleteSession('7')).toBe(true)
+    expect(store.getTraceRecord('7', 'tool:tc1')).toBeNull()
+    expect(store.getTraceRecord('8', 'tool:tc2')).not.toBeNull()
+  })
+
+  it('删除失败（API 抛错）不清缓存', async () => {
+    const store = useSessionStore()
+    store.updateSession('7', makeSession('7'))
+    store.setTraceRecord('7', 'tool:tc1', { kind: 'tool', data: { toolCallId: 'tc1' } } as never)
+    mockDelete.mockRejectedValueOnce(new Error('network'))
+
+    expect(await store.deleteSession('7')).toBe(false)
+    expect(store.getTraceRecord('7', 'tool:tc1')).not.toBeNull()
   })
 })

@@ -1,6 +1,8 @@
-/** 运行轨迹展示层纯函数：结果状态、关注点徽标、会话汇总与格式化。
+/** 运行轨迹展示层纯函数：结果状态、关注点徽标、会话汇总、计时补全与时间条带几何。
  *  供 RunTracePanel 与单测共用；语义与后端 VO（session-vo.ts 的 RunTraceVO）对齐。 */
-import type { RunTrace } from '../types/trace'
+import type { RunTrace, TraceRound, TraceTool } from '../types/trace'
+import { getToolDisplayName } from './toolDisplay'
+import { llmCallSceneLabel } from './llmCallLabels'
 
 /** run 结果状态：失败优先于中断，其余算成功。重试 / 慢 / 贵只是关注点，不改变结果状态。 */
 export type RunStatus = 'ok' | 'interrupted' | 'error'
@@ -95,3 +97,166 @@ export function formatTokens(tokens: number): string {
   if (tokens >= 10_000) return `${(tokens / 1000).toFixed(2)}k`
   return tokens.toLocaleString('zh-CN')
 }
+
+/* ------------------------------------------------------------------ *
+ * 计时补全（技术方案 2026-10-22-run-trace-deep-dive §5.7）
+ * 解码耗时与吞吐量是纯派生量，不进 VO：同一数字两处真相会让「哪个对」变成问题。
+ * 异常行（首字晚于结束、解码为 0）一律 null → 显示「—」，不出负数、不出 Infinity。
+ * ------------------------------------------------------------------ */
+
+/** 解码耗时 = durationMs − firstTokenMs；首字缺失或晚于结束（时钟异常）时为 null。 */
+export function decodingMs(round: Pick<TraceRound, 'durationMs' | 'firstTokenMs'>): number | null {
+  if (round.firstTokenMs == null) return null
+  if (round.firstTokenMs > round.durationMs) return null
+  return round.durationMs - round.firstTokenMs
+}
+
+/** 吞吐量 = 输出 token ÷ 解码秒；解码不可算或为 0、输出为 0 时为 null（不显示 0 误导）。 */
+export function throughput(round: Pick<TraceRound, 'durationMs' | 'firstTokenMs' | 'completionTokens'>): number | null {
+  const decode = decodingMs(round)
+  if (decode == null || decode <= 0) return null
+  if (round.completionTokens <= 0) return null
+  return round.completionTokens / (decode / 1000)
+}
+
+/** 吞吐量展示：1 位小数 + 单位；null → 「—」。 */
+export function formatThroughput(round: Pick<TraceRound, 'durationMs' | 'firstTokenMs' | 'completionTokens'>): string {
+  const value = throughput(round)
+  return value == null ? '—' : `${value.toFixed(1)} tok/s`
+}
+
+/* ------------------------------------------------------------------ *
+ * 时间概览条带（技术方案 2026-10-22-run-trace-deep-dive §5.5）
+ * 横轴取 run 内全部节点估算起止的 min/max，不用 totals.wallClockMs
+ * （墙钟是跨度不是右端点，直接当总宽会让最后一条色条溢出右边界）。
+ * ------------------------------------------------------------------ */
+
+export interface TimeBandNode {
+  /**
+   * 定位 key：round 用 `round:${段}:${seq}`，工具用 `tool:${段}:${toolCallId ?? name}`，
+   * 旁路用 `side:${index}`。段维度必须有——编辑重发时 before_edit / current 两段
+   * 各自从 1 编号，只用 seq 会撞 key 与行锚点；旁路调用不在任何段内，用 index 即可。
+   */
+  key: string
+  kind: 'round' | 'tool' | 'side'
+  label: string
+  startedAtMs: number | null
+  durationMs: number | null
+  firstTokenMs: number | null
+  status: 'ok' | 'error' | 'interrupted'
+}
+
+/** run 内可投影的节点：轮次（before_edit 与 current 都取）、工具（含未挂到轮）、旁路调用。
+ *  startedAtMs / durationMs 缺失的节点仍进数组（tooltip 说明与总数），但不画色条。
+ *  key 与行锚点 id 必须一一对应且唯一：编辑重发时 before_edit / current 两段各自从 1
+ *  编号，只用 seq 会撞 key（v-for 重复 key + getElementById 取到编辑前那一行），
+ *  所以 round / tool 的 key 都带段维度；side 旁路调用不在任何段内，用 index 即可。 */
+export function runTimeNodes(run: RunTrace): TimeBandNode[] {
+  const nodes: TimeBandNode[] = [];
+  for (const segment of run.segments) {
+    for (const round of segment.rounds) {
+      nodes.push({
+        key: `round:${segment.kind}:${round.seq}`,
+        kind: 'round',
+        label: `#${round.seq} ${round.modelName ?? '未知模型'}`,
+        startedAtMs: round.startedAtMs,
+        durationMs: round.durationMs,
+        firstTokenMs: round.firstTokenMs,
+        status: round.interrupted ? 'interrupted' : (round.success ? 'ok' : 'error'),
+      });
+    }
+    for (const tool of segment.unplacedTools) {
+      nodes.push(toolNode(tool, segment.kind));
+    }
+    for (const round of segment.rounds) {
+      for (const tool of round.tools) {
+        nodes.push(toolNode(tool, segment.kind));
+      }
+    }
+  }
+  run.sideCalls.forEach((side, index) => {
+    nodes.push({
+      key: `side:${index}`,
+      kind: 'side',
+      label: `${llmCallSceneLabel(side.scene)} · ${side.modelName ?? '未知模型'}`,
+      startedAtMs: side.startedAtMs,
+      durationMs: side.durationMs,
+      firstTokenMs: null,
+      status: side.success ? 'ok' : 'error',
+    });
+  });
+  return nodes;
+}
+
+function toolNode(tool: TraceTool, segmentKind: string): TimeBandNode {
+  return {
+    key: `tool:${segmentKind}:${tool.toolCallId ?? tool.name}`,
+    kind: 'tool',
+    // 带段后缀：同一工具在编辑前 / 当前两段都被调用时，两条 tooltip 也能分辨
+    label: `${toolDisplayNameForBand(tool.name)}（${segmentKind === 'before_edit' ? '编辑前' : '当前'}）`,
+    startedAtMs: tool.startedAtMs,
+    durationMs: tool.durationMs,
+    firstTokenMs: null,
+    status: tool.status === 'ERROR' ? 'error' : 'ok',
+  };
+}
+
+/** 条带 tooltip 用的工具名：优先中文展示名，退回原名（与面板工具行一致）。 */
+function toolDisplayNameForBand(name: string): string {
+  try {
+    return getToolDisplayName(name) || name;
+  } catch {
+    return name;
+  }
+}
+
+/** 全部节点估算起止的 min/max；全 null 返回 null（组件整体不渲染，不画空条）。 */
+export function runTimeWindow(nodes: TimeBandNode[]): { startMs: number; endMs: number } | null {
+  let startMs: number | null = null;
+  let endMs: number | null = null;
+  for (const node of nodes) {
+    if (node.startedAtMs == null || node.durationMs == null) continue;
+    const end = node.startedAtMs + Math.max(0, node.durationMs);
+    if (startMs == null || node.startedAtMs < startMs) startMs = node.startedAtMs;
+    if (endMs == null || end > endMs) endMs = end;
+  }
+  if (startMs == null || endMs == null) return null;
+  return { startMs, endMs };
+}
+
+export interface TimeBandSegment {
+  x: number
+  width: number
+  part: 'ttft' | 'decode'
+}
+
+/**
+ * 单个色条在给定横轴上的几何（百分比坐标）。起止不可估算返回 null → 不画。
+ * 助手轮次分「首字 / 解码」两段：firstTokenMs 有效且落在 (0, durationMs) 内才分段，
+ * 两段宽度和恒等于总宽；否则单段（firstTokenMs 为 null 的非流式调用退化为单段）。
+ * lane 由调用方（TIME_BAND_LANES）映射后用于 y 坐标，这里只算 x 与宽——
+ * 几何与泳道解耦，单测不必关心泳道序号。
+ */
+export function timeBandGeometry(
+  node: TimeBandNode,
+  window: { startMs: number; endMs: number },
+  width: number,
+): { x: number; width: number; segments: TimeBandSegment[] | null } | null {
+  if (node.startedAtMs == null || node.durationMs == null) return null;
+  const span = window.endMs - window.startMs;
+  const duration = Math.max(0, node.durationMs);
+  // 单点窗口（startMs === endMs）给最小宽度，避免除零
+  const effectiveSpan = span > 0 ? span : 1;
+  const x = ((node.startedAtMs - window.startMs) / effectiveSpan) * width;
+  const total = Math.max((duration / effectiveSpan) * width, 0.5);
+  const segments = node.firstTokenMs != null && node.firstTokenMs > 0 && node.firstTokenMs < duration
+    ? [
+      { x, width: (node.firstTokenMs / duration) * total, part: 'ttft' as const },
+      { x: x + (node.firstTokenMs / duration) * total, width: total - (node.firstTokenMs / duration) * total, part: 'decode' as const },
+    ]
+    : null;
+  return { x, width: total, segments };
+}
+
+/** 泳道序号：轮次 / 工具 / 旁路各一条（同一泳道内并行色条自然重叠，不做堆叠避让）。 */
+export const TIME_BAND_LANES: Record<TimeBandNode['kind'], number> = { round: 0, tool: 1, side: 2 }

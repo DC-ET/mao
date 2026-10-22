@@ -255,6 +255,14 @@ export class LlmCallRepository {
     );
   }
 
+  /**
+   * 主键查询（运行轨迹记录详情下钻用）：llm_call 行按 id 取，会话归属由调用方校验
+   * （row.sessionId 与路径 sessionId 不一致即视为不存在，防越权读他人会话的调用行）。
+   */
+  selectById(id: number): Promise<LlmCallRow | null> {
+    return this.db.queryOne<LlmCallRow>(`SELECT * FROM llm_call WHERE id = ?`, [id]);
+  }
+
   /** 用户维度窗口总览：一次取调用数/成败/token 四项/成本（走 user_created 索引）。 */
   async aggregateSummary(userId: number, filter: LlmCallAggFilter): Promise<LlmCallSummaryRow> {
     const { sql, params } = this.aggWhere(filter);

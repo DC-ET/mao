@@ -110,17 +110,26 @@
         </button>
 
         <div v-if="isExpanded(run.runId)" class="run-detail">
+          <!-- 时间概览条带：run 展开区顶部，与该 run 时间域对齐；点击色条定位到对应行 -->
+          <RunTraceTimeBand
+            :run="run"
+            :active-run-key="activeBandKey"
+            @locate="(key: string) => locateNode(run.runId, key)"
+          />
           <div v-for="segment in run.segments" :key="segment.kind" class="trace-segment">
             <div class="segment-label">{{ segment.kind === 'before_edit' ? '编辑前' : '当前' }}</div>
-            <div v-for="round in segment.rounds" :key="round.seq" class="round-row">
+            <div v-for="round in segment.rounds" :key="`${segment.kind}-${round.seq}`" :id="rowAnchorId(run.runId, 'round', roundAnchorKey(segment.kind, round.seq))" class="round-row">
               <div class="round-head">
                 <span class="round-seq">#{{ round.seq }}</span>
                 <span class="round-model">{{ round.modelName ?? '未知模型' }}</span>
+                <span v-if="round.provider" class="round-provider" :title="`模型提供方 ${round.provider}`">{{ round.provider }}</span>
                 <span class="round-scene">{{ llmCallSceneLabel(round.scene) }}</span>
                 <span class="round-metrics">
                   <span>{{ formatMs(round.durationMs) }}</span>
-                  <span>{{ formatTokens(tokenTotalOfRound(round)) }} tokens</span>
+                  <span v-if="decodingMs(round) != null" title="解码耗时 = 总耗时 − 首字耗时">解码 {{ formatMs(decodingMs(round)) }}</span>
+                  <span v-if="throughput(round) != null" title="吞吐量 = 输出 tokens ÷ 解码耗时">{{ formatThroughput(round) }}</span>
                   <span v-if="round.firstTokenMs != null">首字 {{ formatMs(round.firstTokenMs) }}</span>
+                  <span>{{ formatTokens(tokenTotalOfRound(round)) }} tokens</span>
                   <span v-if="round.costMicros != null">成本 {{ formatCost(round.costMicros) }}</span>
                 </span>
                 <span class="round-badges">
@@ -129,10 +138,17 @@
                   <span v-if="round.retryCount > 0" class="run-badge badge-warn">重试 {{ round.retryCount }}</span>
                   <span v-if="round.slow" class="run-badge badge-info">慢</span>
                   <span v-if="round.expensive" class="run-badge badge-info">贵</span>
+                  <button
+                    v-if="round.llmCallId != null"
+                    type="button"
+                    class="row-detail-btn"
+                    title="查看本轮请求元信息与工具清单"
+                    @click="openCallRecord(round.llmCallId)"
+                  >详情</button>
                 </span>
               </div>
               <div v-if="round.errorMessage" class="round-error">{{ round.errorMessage }}</div>
-              <div v-for="tool in round.tools" :key="toolKey(tool)" class="tool-row">
+              <div v-for="tool in round.tools" :key="toolKey(tool)" :id="rowAnchorId(run.runId, 'tool', toolAnchorKey(segment.kind, tool))" class="tool-row">
                 <span class="tool-status" :class="tool.status === 'ERROR' ? 'tool-error' : 'tool-ok'">
                   {{ tool.status === 'ERROR' ? '✕' : '✓' }}
                 </span>
@@ -141,11 +157,18 @@
                 <span v-if="tool.target" class="tool-target" :title="tool.target">{{ tool.target }}</span>
                 <span v-if="tool.approvalMark" class="tool-approval">{{ tool.approvalMark }}</span>
                 <span class="tool-duration">{{ tool.durationMs == null ? '—' : formatMs(tool.durationMs) }}</span>
+                <button
+                  v-if="tool.toolCallId"
+                  type="button"
+                  class="row-detail-btn"
+                  title="查看本次调用的参数与结果"
+                  @click="openToolRecord(tool.toolCallId)"
+                >详情</button>
               </div>
             </div>
             <div v-if="segment.unplacedTools.length > 0" class="unplaced-tools">
               <div class="unplaced-label">未挂到轮</div>
-              <div v-for="tool in segment.unplacedTools" :key="toolKey(tool)" class="tool-row">
+              <div v-for="tool in segment.unplacedTools" :key="toolKey(tool)" :id="rowAnchorId(run.runId, 'tool', toolAnchorKey(segment.kind, tool))" class="tool-row">
                 <span class="tool-status" :class="tool.status === 'ERROR' ? 'tool-error' : 'tool-ok'">
                   {{ tool.status === 'ERROR' ? '✕' : '✓' }}
                 </span>
@@ -154,13 +177,20 @@
                 <span v-if="tool.target" class="tool-target" :title="tool.target">{{ tool.target }}</span>
                 <span v-if="tool.approvalMark" class="tool-approval">{{ tool.approvalMark }}</span>
                 <span class="tool-duration">{{ tool.durationMs == null ? '—' : formatMs(tool.durationMs) }}</span>
+                <button
+                  v-if="tool.toolCallId"
+                  type="button"
+                  class="row-detail-btn"
+                  title="查看本次调用的参数与结果"
+                  @click="openToolRecord(tool.toolCallId)"
+                >详情</button>
               </div>
             </div>
           </div>
 
           <div v-if="run.sideCalls.length > 0" class="side-calls">
             <div class="segment-label">旁路调用</div>
-            <div v-for="(side, idx) in run.sideCalls" :key="idx" class="side-row">
+            <div v-for="(side, idx) in run.sideCalls" :key="idx" :id="rowAnchorId(run.runId, 'side', idx)" class="side-row">
               <span class="side-scene">{{ llmCallSceneLabel(side.scene) }}</span>
               <span class="side-model">{{ side.modelName ?? '未知模型' }}</span>
               <span class="side-metrics">
@@ -238,11 +268,21 @@
         </button>
       </div>
     </div>
+
+    <!-- 记录详情抽屉：面板内 absolute 定位，不挂全局侧边栏（el-drawer 的 append-to-body
+         会带出跨会话错配类问题，抽屉的 sessionId 上下文必须严格属于本面板） -->
+    <RunTraceRecordDrawer
+      v-if="drawerTarget != null"
+      :session-id="props.sessionId"
+      :target="drawerTarget"
+      @close="drawerTarget = null"
+      @open-tool="openToolRecord"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { ArrowDown, ArrowRight, CircleCheck, CircleClose, InfoFilled, TrendCharts, WarningFilled } from '@element-plus/icons-vue'
 import { api } from '../../api'
@@ -250,8 +290,14 @@ import { useSessionStore } from '../../stores/session'
 import { getToolDisplayName } from '../../utils/toolDisplay'
 import { llmCallSceneLabel } from '../../utils/llmCallLabels'
 import { downloadTraceCsv, downloadTraceJson } from '../../utils/trace-export'
-import { formatClock, formatTokens, RUN_STATUS_META, runAttentionBadges, runStatus, summarizeRuns, toolSuccessRate } from '../../utils/trace-display'
+import {
+  decodingMs, formatClock, formatTokens, RUN_STATUS_META, runAttentionBadges, runStatus, summarizeRuns,
+  throughput, formatThroughput, toolSuccessRate,
+} from '../../utils/trace-display'
+import RunTraceTimeBand from './RunTraceTimeBand.vue'
+import RunTraceRecordDrawer from './RunTraceRecordDrawer.vue'
 import type { RunTrace, RunTracePage, TraceRound, TraceSideCall, TraceTool, UnattributedGroup } from '../../types/trace'
+import type { TraceDrawerTarget } from '../../types/trace'
 
 const props = defineProps<{
   sessionId: string
@@ -458,6 +504,66 @@ function toolDisplayName(name: string): string {
 
 function toolKey(tool: TraceTool): string {
   return `${tool.toolCallId ?? ''}|${tool.target ?? ''}|${tool.name}`
+}
+
+/**
+ * 轮次行锚点 key：与条带节点 key 同口径（`${segment.kind}:${seq}`）。
+ * 必须带段维度——编辑重发时 before_edit / current 两段各自从 1 编号，只用 seq 会撞。
+ */
+function roundAnchorKey(segmentKind: string, seq: number): string {
+  return `${segmentKind}:${seq}`
+}
+
+/** 工具行锚点 key：与条带节点 key 同口径（`${segment.kind}:${toolCallId ?? name}`） */
+function toolAnchorKey(segmentKind: string, tool: TraceTool): string {
+  return `${segmentKind}:${tool.toolCallId ?? tool.name}`
+}
+
+/**
+ * 行锚点 id：sessionId + runId + kind + key 四个维度都要带。
+ * sessionId 防多个轨迹 Tab 并存串锚；runId 防同一会话内多个 run 同时展开串锚
+ * （expandedRuns 是 Set，可同时展开多个 run，两段的 seq 又各自从 1 起）；
+ * key 里的段维度防编辑重发的 before_edit / current 两段相撞。
+ */
+function rowAnchorId(runId: number, kind: 'round' | 'tool' | 'side', key: string | number): string {
+  return `trace-${props.sessionId}-run${runId}-${kind}-${key}`
+}
+
+// ===== 时间条带点击定位 =====
+/** 当前定位到的节点：runId + key 一起记，避免多个展开 run 的同名色条一起高亮 */
+const activeBandKey = ref<string | null>(null)
+
+/**
+ * 条带色条点击：确保该 run 已展开 → nextTick 后按行锚点滚动定位 → 该行加 1.2s 高亮后移除。
+ * 行不存在（如条带节点的工具行在另一段）时静默返回：定位是辅助操作，不该弹错误打扰。
+ * key 形如 `round:${段}:${seq}` / `tool:${段}:${toolCallId}` / `side:${index}`，后半段
+ * （toolCallId）自身可能含冒号，所以按第一个冒号切，余下整段都当 key。
+ */
+async function locateNode(runId: number, key: string) {
+  activeBandKey.value = `${runId}|${key}`
+  const sep = key.indexOf(':')
+  if (sep <= 0) return
+  const kind = key.slice(0, sep)
+  const rawKey = key.slice(sep + 1)
+  if (rawKey === '') return
+  const anchor = rowAnchorId(runId, kind as 'round' | 'tool' | 'side', rawKey)
+  await nextTick()
+  const row = document.getElementById(anchor)
+  if (row == null) return
+  row.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  row.classList.add('row-located')
+  window.setTimeout(() => { row.classList.remove('row-located') }, 1200)
+}
+
+// ===== 记录详情抽屉 =====
+const drawerTarget = ref<TraceDrawerTarget | null>(null)
+
+function openToolRecord(toolCallId: string) {
+  drawerTarget.value = { kind: 'tool', toolCallId }
+}
+
+function openCallRecord(llmCallId: number) {
+  drawerTarget.value = { kind: 'call', llmCallId }
 }
 
 /** 摘要条按最高严重度描边：失败红，重试与中断黄，慢与贵中性色。 */
@@ -886,6 +992,21 @@ async function exportCsv() {
   color: var(--aw-ink);
 }
 
+/* provider 徽标：小号中性色，跟在模型名后，不抢轮次行的主信息 */
+.round-provider {
+  flex-shrink: 0;
+  font-size: var(--aw-text-micro);
+  padding: 0 4px;
+  border-radius: var(--aw-radius-xs);
+  line-height: 1.5;
+  color: var(--aw-ink-muted-64);
+  background: rgba(0, 0, 0, 0.05);
+}
+
+[data-theme="dark"] .round-provider {
+  background: rgba(255, 255, 255, 0.08);
+}
+
 .round-scene {
   color: var(--aw-ink-muted-40);
 }
@@ -966,6 +1087,44 @@ async function exportCsv() {
   font-family: var(--aw-font-mono);
   font-size: var(--aw-text-micro);
   color: var(--aw-ink-muted-48);
+}
+
+/* 下钻入口：默认极淡，悬停/聚焦才显形——轨迹行以摘要为主，不该被一排按钮稀释 */
+.row-detail-btn {
+  flex-shrink: 0;
+  font-size: var(--aw-text-micro);
+  font-family: var(--aw-font-text);
+  height: 16px;
+  padding: 0 5px;
+  border-radius: var(--aw-radius-xs);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--aw-ink-muted-40);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.round-row:hover .row-detail-btn,
+.tool-row:hover .row-detail-btn,
+.row-detail-btn:focus-visible {
+  opacity: 1;
+}
+
+.row-detail-btn:hover {
+  color: var(--aw-primary);
+  border-color: var(--aw-primary-line);
+  background: var(--aw-primary-hover);
+}
+
+/* 条带点击定位的高亮：1.2s 后由 JS 移除，不靠 transition 残留 */
+.row-located {
+  animation: row-locate-flash 1.2s ease-out;
+}
+
+@keyframes row-locate-flash {
+  0%, 60% { background: var(--aw-primary-soft); }
+  100% { background: transparent; }
 }
 
 .unplaced-tools {

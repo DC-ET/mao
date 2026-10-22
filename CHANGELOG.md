@@ -13,6 +13,17 @@
 
 发版前在顶部新增 `## 版本 (日期)` 条目；前端部署 Web 后安卓/Electron 刷新即可；仅安卓原生壳变更时 `cd android && bash build-apk.sh`。
 
+## 0.0.336 (2026-10-22)
+
+- **后端**
+  - **运行轨迹 VO 增量（零迁移）**：轮次 / 旁路调用 / 工具三类行补 `startedAtMs`（服务端按 `created_at − duration_ms` 估算的起点，两侧任一缺失为 `null`）、`provider`，轮次行另补 `llmCallId`（下钻定位 key）。解码耗时与吞吐量仍是前端派生量，不进 VO，避免同一数字两处真相。
+  - **新增记录详情两个只读端点**：`GET /v1/sessions/:id/trace/records/tool/:toolCallId` 与 `GET /v1/sessions/:id/trace/records/call/:llmCallId`，按 key 分流，权限复用 `requireSessionOwner`（`buildCallRecord` 内再校验 `llm_call.session_id`，防越权读他人会话）。轨迹主 VO 仍不带正文，参数 / 结果原文与 `llm_call` 全字段元信息按需拉取；找不到返回空态 VO（200）而非 404。工具调用按 `tool_call_id` 精确配对，`llm_call` 用助手消息与 TOOL 消息的 `created_at` 夹半开窗取窗内 `scene='agent'` 的最后一条，**不跨窗猜**。
+- **前端（桌面 / Web / 安卓）**
+  - **run 展开区顶部新增时间概览条带**：SVG 三泳道（轮次 / 工具 / 旁路），色条起点与宽度取估算起止，同一泳道内并行色条自然重叠以表达 `Promise.all` 并行；助手轮次分「首字 / 解码」两段。悬停 300ms 显示 tooltip（起止均标注「估算」），点击色条展开该 run 并平滑滚动定位到对应行（行加 1.2s 高亮）。横轴取 run 内全部节点的 min/max，不用墙钟跨度；起止不可估算的节点不画但在图例报「N 项起止不可估算未画」。
+  - **工具行 / 轮次行支持记录详情下钻**：点「详情」开面板内右侧抽屉。工具抽屉三个 tab（参数 / 结果 / 计时与元信息），JSON 原文支持「格式化 / 原样」切换，非法 JSON 按原样展示并标注「非 JSON 文本」；轮次抽屉为单页，展示 `llm_call` 全字段 + token 明细 + 派生三行（解码耗时 / 吞吐量 / 请求编号）与「本轮工具」清单（可继续跳到工具抽屉）。记录按 `sessionId` + key 分桶缓存，重复点同一行不重复请求；`Esc` / 遮罩 / × 三种方式关闭。抽屉为面板内 absolute 定位，不用 `el-drawer`，避免 append-to-body 带出跨会话错配。
+  - **轮次行计时补全**：新增 provider 徽标、解码耗时（`durationMs − firstTokenMs`）、吞吐量（输出 tok/s），全部前端派生。首字缺失、首字晚于结束（时钟异常）、解码为 0、输出为 0 一律显示「—」，不出负数与 Infinity。
+  - **CSV 导出新增 `provider` 列**（置于「模型」之后，18 → 19 列）：模型行填值，工具行留空。`startedAtMs` / `llmCallId` / 解码 / 吞吐不进 CSV——前者是 epoch ms 与主键，对人类复盘无意义；后两者是前端派生量，与 CSV 的「落库事实」定位冲突。JSON 导出结构与接口一致，自然带上新字段。
+
 ## 0.0.335 (2026-10-22)
 
 - **后端**

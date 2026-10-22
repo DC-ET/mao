@@ -3,6 +3,7 @@ import type {
   RunTrace,
   TraceLiveRound,
   TraceLiveTool,
+  TraceLoadedRecord,
   TraceThresholds,
   UnattributedGroup
 } from '../../types/trace'
@@ -50,6 +51,13 @@ export function createTraceModule() {
   const liveRounds = ref<Map<string, TraceLiveRound>>(new Map())
   /** 进行中工具计时（tool_call_start 起表，结果回来或执行结束清除） */
   const liveTools = ref<Map<string, TraceLiveTool[]>>(new Map())
+  /**
+   * 记录详情抽屉的加载态缓存（技术方案 2026-10-22-run-trace-deep-dive §5.6）：
+   * key = `tool:${toolCallId}` / `call:${llmCallId}`，按 sessionId 分桶——切会话不串。
+   * 空态 VO（记录不存在）也缓存：重复点同一行不再打请求。
+   * 存的是带 kind 判别的包装（TraceLoadedRecord），与抽屉直接渲染同型。
+   */
+  const traceRecords = ref<Map<string, Map<string, TraceLoadedRecord>>>(new Map())
 
   watch(traceThresholds, (value) => {
     safeSetItem(THRESHOLDS_KEY, JSON.stringify(value))
@@ -114,6 +122,27 @@ export function createTraceModule() {
 
   function liveKey(sessionId: string, executionId: string): string {
     return `${sessionId}|${executionId}`
+  }
+
+  /** 记录详情缓存读取：未命中返回 null（调用方去拉取）。 */
+  function getTraceRecord(sessionId: string, key: string): TraceLoadedRecord | null {
+    return traceRecords.value.get(String(sessionId))?.get(key) ?? null
+  }
+
+  /** 记录详情缓存写入：同 key 覆盖（重拉后刷新）。 */
+  function setTraceRecord(sessionId: string, key: string, record: TraceLoadedRecord) {
+    const sid = String(sessionId)
+    const bucket = traceRecords.value.get(sid) ?? new Map<string, TraceLoadedRecord>()
+    bucket.set(key, record)
+    traceRecords.value.set(sid, bucket)
+    traceRecords.value = new Map(traceRecords.value)
+  }
+
+  /** 会话级清理（删除会话 / 登出）：缓存随会话一起丢，不跨会话残留正文。 */
+  function clearTraceRecords(sessionId: string) {
+    const sid = String(sessionId)
+    if (!traceRecords.value.delete(sid)) return
+    traceRecords.value = new Map(traceRecords.value)
   }
 
   function getLiveRound(sessionId: string, executionId: string): TraceLiveRound | null {
@@ -209,6 +238,7 @@ export function createTraceModule() {
     traceLoading.value = new Map()
     liveRounds.value = new Map()
     liveTools.value = new Map()
+    traceRecords.value = new Map()
   }
 
   return {
@@ -226,6 +256,9 @@ export function createTraceModule() {
     setTraceLoading,
     setTraceThresholds,
     clearTrace,
+    getTraceRecord,
+    setTraceRecord,
+    clearTraceRecords,
     getLiveRound,
     getLiveTools,
     getLiveExecutionId,

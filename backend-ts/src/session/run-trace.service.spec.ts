@@ -949,3 +949,93 @@ describe('RunTraceService', () => {
   });
 });
 
+// 时间条带与下钻的 VO 增量（技术方案 2026-10-22-run-trace-deep-dive §5.1 / §5.2）：
+// startedAtMs 是「结束时刻 − duration」的估算起点，必须与墙钟同一口径；
+// 任一侧缺失一律 null，不补 0、不用 createdAt 冒充起点。
+describe('RunTraceService VO 增量（startedAtMs / provider / llmCallId）', () => {
+  it('轮次 / 工具 / 旁路都带估算起点、provider 与主键', async () => {
+    const service = makeService({
+      messages: [
+        user(1, '2026-10-09 10:00:00', '查一下'),
+        assistant(2, '2026-10-09 10:00:05', [{ id: 'tc1', name: 'shell', args: '{"command":"ls"}' }]),
+        toolMessage(3, '2026-10-09 10:00:06', 'tc1', '{"ok":true}'),
+      ],
+      calls: [
+        call(1, { id: 31, createdAt: '2026-10-09 10:00:02.000', durationMs: 2000, provider: 'anthropic' }),
+        call(2, { id: 32, scene: 'session_title', createdAt: '2026-10-09 10:00:04.000', durationMs: 500, provider: 'openai' }),
+      ],
+      activities: [activity(1, { detailJson: JSON.stringify({ toolCallId: 'tc1' }), durationMs: 400, createdAt: '2026-10-09 10:00:06.000' })],
+      events: [],
+    });
+    const page = await service.buildTrace(1, QUERY);
+    const run = page.runs[0];
+    const round = run.segments[0].rounds[0];
+    // 2026-10-09 10:00:02.000 − 2000ms = 10:00:00.000
+    expect(round.llmCallId).toBe(31);
+    expect(round.provider).toBe('anthropic');
+    expect(round.startedAtMs).toBe(Date.parse('2026-10-09T10:00:00.000'));
+    expect(round.tools[0].startedAtMs).toBe(Date.parse('2026-10-09T10:00:05.600'));
+    const side = run.sideCalls[0];
+    expect(side.provider).toBe('openai');
+    expect(side.startedAtMs).toBe(Date.parse('2026-10-09T10:00:03.500'));
+  });
+
+  it('durationMs 缺失 → startedAtMs 为 null（不补 0、不用 createdAt 冒充）', async () => {
+    // 调用行 durationMs 缺失、活动行 durationMs 缺失（历史行未回填行为）都算「起止不可估算」：
+    // 有 createdAt 也不冒充起点。createdAt 为 null 的活动根本归不进 run（时间窗不可比），
+    // 与真实 SQL 的 created_at >= ? 过滤行为一致，所以那一侧不在本用例覆盖。
+    const service = makeService({
+      messages: [user(1, '2026-10-09 10:00:00', '查一下')],
+      calls: [
+        call(1, { durationMs: null }),
+        call(2, { id: 2, createdAt: '2026-10-09 10:00:05.000', durationMs: null }),
+      ],
+      activities: [activity(1, { detailJson: JSON.stringify({ toolCallId: 'missing' }), durationMs: null })],
+      events: [],
+    });
+    const page = await service.buildTrace(1, QUERY);
+    const rounds = page.runs[0].segments[0].rounds;
+    expect(rounds.map((r) => r.startedAtMs)).toEqual([null, null]);
+    expect(page.runs[0].segments[0].unplacedTools.map((t) => t.startedAtMs)).toEqual([null]);
+  });
+
+  it('历史秒级行（无毫秒）换算不 NaN', async () => {
+    const service = makeService({
+      messages: [user(1, '2026-10-01 10:00:00', '旧会话')],
+      calls: [call(1, { createdAt: '2026-10-01 10:00:03', durationMs: 2500 })],
+      activities: [activity(1, { detailJson: JSON.stringify({ toolCallId: 'tc1' }), createdAt: '2026-10-01 10:00:05', durationMs: 300 })],
+      events: [],
+    });
+    const page = await service.buildTrace(1, QUERY);
+    const round = page.runs[0].segments[0].rounds[0];
+    expect(round.startedAtMs).toBe(Date.parse('2026-10-01T10:00:00.500'));
+    expect(Number.isNaN(round.startedAtMs!)).toBe(false);
+  });
+
+  it('provider 缺失 → null；llmCallId 恒等于行 id', async () => {
+    const service = makeService({
+      messages: [user(1, '2026-10-09 10:00:00', '查一下')],
+      calls: [call(1, { id: 77, provider: null })],
+      activities: [],
+      events: [],
+    });
+    const page = await service.buildTrace(1, QUERY);
+    expect(page.runs[0].segments[0].rounds[0].provider).toBeNull();
+    expect(page.runs[0].segments[0].rounds[0].llmCallId).toBe(77);
+  });
+
+  it('未归属组的轮同样带新字段（sessionId 归属外也能下钻定位）', async () => {
+    const service = makeService({
+      messages: [],
+      calls: [call(1, { id: 5, createdAt: '2026-10-09 09:00:00.000', durationMs: 1000, provider: 'deepseek' })],
+      activities: [],
+      events: [],
+    });
+    const page = await service.buildTrace(1, QUERY);
+    const round = page.unattributed!.rounds[0];
+    expect(round.llmCallId).toBe(5);
+    expect(round.startedAtMs).toBe(Date.parse('2026-10-09T08:59:59.000'));
+    expect(round.provider).toBe('deepseek');
+  });
+});
+

@@ -8,7 +8,7 @@ import * as Vue from 'vue'
 import { h, nextTick, ref, defineComponent, createRenderer } from 'vue'
 import { parse, compileScript } from '@vue/compiler-sfc'
 import { compile } from '@vue/compiler-dom'
-import type { RunTrace, TraceRound } from '../../types/trace'
+import type { RunTrace, TraceRound, UnattributedGroup } from '../../types/trace'
 
 vi.mock('vue', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>()
@@ -34,7 +34,7 @@ function makeStore() {
     traceThresholds: { slowMs: 60_000, expensiveCost: 0.5 },
     getTraceRuns: (): RunTrace[] => [],
     getTraceHasMore: () => false,
-    getTraceUnattributed: () => null,
+    getTraceUnattributed: (): UnattributedGroup | null => null,
     isTraceLoading: () => false,
     setTraceLoading: vi.fn(),
     setTracePage: vi.fn(),
@@ -44,6 +44,8 @@ function makeStore() {
     getLiveExecutionId: () => null,
     getLiveRound: () => null,
     getLiveTools: () => [],
+    getTraceRecord: vi.fn((): unknown => null),
+    setTraceRecord: vi.fn(),
   }
 }
 
@@ -80,6 +82,55 @@ vi.mock('../../utils/trace-export', () => ({
   downloadTraceJson: vi.fn(),
 }))
 
+// 条带与抽屉 stub：模板编译产物走 $setup.RunTraceTimeBand（script setup 的 import 绑定），
+// 只能靠 mock 模块替换。本测试验面板的挂载点 / 传参 / 事件接线，子组件内部由各自用例覆盖。
+const bandBars: Array<{ count: number; runId: number; activeRunKey: string | null }> = []
+const drawerOpened: Array<{ kind: string; sessionId: string; target: unknown }> = []
+
+vi.mock('./RunTraceTimeBand.vue', () => ({
+  default: defineComponent({
+    props: { run: { type: Object, required: true }, activeRunKey: { type: String, default: null } },
+    emits: ['locate'],
+    render() {
+      const run = this.run as {
+        runId: number
+        segments: Array<{ rounds: Array<{ tools: unknown[] }>; unplacedTools: unknown[] }>
+        sideCalls: unknown[]
+      }
+      // 与 runTimeNodes 同口径：轮次 + 轮内工具 + 未挂轮工具 + 旁路
+      const count = run.segments.flatMap((s) => s.rounds).length
+        + run.segments.flatMap((s) => s.rounds.flatMap((r) => r.tools)).length
+        + run.segments.flatMap((s) => s.unplacedTools).length
+        + run.sideCalls.length
+      bandBars.push({ count, runId: run.runId, activeRunKey: this.activeRunKey as string | null })
+      return h('button', {
+        class: 'time-band-stub',
+        'data-bars': String(count),
+        // 与真实条带同口径的 key（round:${段}:${seq}）
+        onClick: () => this.$emit('locate', 'round:current:1'),
+      }, '时间条带')
+    },
+  }),
+}))
+
+vi.mock('./RunTraceRecordDrawer.vue', () => ({
+  default: defineComponent({
+    props: { sessionId: { type: String, required: true }, target: { type: Object, required: true } },
+    emits: ['close', 'open-tool'],
+    render() {
+      const target = this.target as { kind: string }
+      drawerOpened.push({ kind: target.kind, sessionId: this.sessionId as string, target })
+      // 把 emit 挂到根元素上：自绘 nodeOps 只把 props / 事件存在元素 props 里，
+      // 测试据此触发「抽屉内跳工具抽屉」这条链路。
+      return h('div', {
+        class: 'drawer-stub',
+        'data-kind': target.kind,
+        onOpenTool: (id: string) => this.$emit('open-tool', id),
+        onClose: () => this.$emit('close'),
+      }, '抽屉')
+    },
+  }),
+}))
 import RunTracePanel from './RunTracePanel.vue'
 
 const descriptor = parse(readFileSync(new URL('./RunTracePanel.vue', import.meta.url), 'utf8')).descriptor
@@ -92,6 +143,7 @@ const compiled = compile(descriptor.template!.content, {
 const clientRender = new Function('Vue', compiled.code)(Vue) as (ctx: unknown, cache: unknown) => unknown
 
 const ElIconStub = defineComponent({ render() { return h('i', this.$slots.default?.() ?? []) } })
+
 const ClientPanel = {
   ...(RunTracePanel as object),
   components: { 'el-icon': ElIconStub, ElIcon: ElIconStub },
@@ -192,6 +244,9 @@ function makeTraceRound(overrides: Partial<TraceRound> = {}): TraceRound {
     slow: false,
     expensive: false,
     tools: [],
+    llmCallId: 101,
+    startedAtMs: Date.parse('2026-10-10T09:03:00Z') - 4200,
+    provider: 'anthropic',
     ...overrides,
   }
 }
@@ -328,5 +383,246 @@ describe('RunTracePanel 轨迹展示', () => {
     expect(text).toContain('重试 2')
     expect(text).toContain('失败')
     expect(text).toContain('boom')
+  })
+})
+
+// 时间概览条带 + 记录详情下钻 + 计时补全（技术方案 2026-10-22-run-trace-deep-dive）。
+// 条带与抽屉用 stub：这里验的是面板的挂载位置、传参与事件接线——
+// 条带几何 / 抽屉内容已由 trace-display.test.ts 与各组件自身覆盖。
+describe('RunTracePanel 时间条带与记录下钻', () => {
+  const bandRun = makeTraceRun({
+    runId: 21,
+    segments: [{
+      kind: 'current',
+      rounds: [makeTraceRound({ seq: 1, tools: [] })],
+      unplacedTools: [],
+    }],
+  })
+
+  beforeEach(() => {
+    bandBars.length = 0
+    drawerOpened.length = 0
+    store = { ...makeStore(), getTraceRuns: () => [bandRun] }
+  })
+
+  it('条带挂在 run 展开区顶部，收起时不渲染', async () => {
+    const root = await mountPanel()
+    // 未展开：没有条带
+    expect(bandBars).toHaveLength(0)
+    ;(findAllByClass(root, 'run-summary')[0]!.props.onClick as () => void)()
+    await flush()
+    // 展开后渲染一次条带，且拿到的就是该 run
+    expect(bandBars).toEqual([{ count: 1, runId: 21, activeRunKey: null }])
+    const bands = findAllByClass(root, 'time-band-stub')
+    expect(bands).toHaveLength(1)
+    // 条带位于 run 明细内（run-detail 的第一个元素子节点）
+    const detail = findAllByClass(root, 'run-detail')
+    expect(detail).toHaveLength(1)
+    const elementChildren = detail[0]!.children.filter((c): c is StubEl => !('text' in c))
+    expect(elementChildren[0]?.props.class).toBe('time-band-stub')
+  })
+
+  it('条带节点数含轮次、工具（含未挂到轮）与旁路调用', async () => {
+    store = {
+      ...makeStore(),
+      getTraceRuns: () => [makeTraceRun({
+        runId: 22,
+        segments: [{
+          kind: 'current',
+          rounds: [makeTraceRound({
+            tools: [
+              { toolCallId: 'c1', name: 'read_file', target: 'a.txt', status: 'OK', durationMs: 100, startedAtMs: 0, approvalMark: null, actor: null },
+              { toolCallId: 'c2', name: 'write_file', target: 'b.txt', status: 'ERROR', durationMs: 100, startedAtMs: 0, approvalMark: null, actor: null },
+            ],
+          })],
+          unplacedTools: [
+            { toolCallId: 'c3', name: 'glob', target: null, status: 'OK', durationMs: 100, startedAtMs: 0, approvalMark: null, actor: null },
+          ],
+        }],
+        sideCalls: [{
+          scene: 'title', modelName: 'step-mini', createdAt: '2026-10-10 09:03:01', startedAtMs: 0, provider: 'anthropic',
+          durationMs: 100, promptTokens: 1, completionTokens: 1, cachedTokens: 0, cacheCreationTokens: 0, costMicros: null, success: true,
+        }],
+      })],
+    }
+    const root = await mountPanel()
+    ;(findAllByClass(root, 'run-summary')[0]!.props.onClick as () => void)()
+    await flush()
+    // 1 轮 + 2 轮内工具 + 1 未挂轮工具 + 1 旁路
+    expect(bandBars).toEqual([{ count: 5, runId: 22, activeRunKey: null }])
+  })
+
+  it('点色条 emit locate 后按行锚点滚动定位（锚点 id 带 sessionId / runId / 段维度防串锚）', async () => {
+    const root = await mountPanel()
+    ;(findAllByClass(root, 'run-summary')[0]!.props.onClick as () => void)()
+    await flush()
+    const band = findAllByClass(root, 'time-band-stub')[0]!
+    ;(band.props.onClick as () => void)()
+    await flush()
+    // 定位键必须带 runId：多 run 同时展开时只有被点那个 run 的色条高亮
+    expect(bandBars.at(-1)!.activeRunKey).toBe('21|round:current:1')
+    // 轮次行锚点 id = trace-${sessionId}-run${runId}-round-${段}-${seq}
+    expect(findAllByClass(root, 'round-row')[0]!.props.id).toBe('trace-11-run21-round-current:1')
+    // 工具行锚点 id = trace-${sessionId}-run${runId}-tool-${段}-${toolCallId ?? name}
+    store = {
+      ...makeStore(),
+      getTraceRuns: () => [makeTraceRun({
+        runId: 23,
+        segments: [
+          {
+            kind: 'before_edit',
+            rounds: [makeTraceRound({
+              tools: [{ toolCallId: 'call_old', name: 'read_file', target: 'a.txt', status: 'OK', durationMs: 100, startedAtMs: 0, approvalMark: null, actor: null }],
+            })],
+            unplacedTools: [],
+          },
+          {
+            kind: 'current',
+            rounds: [makeTraceRound({
+              tools: [{ toolCallId: 'call_new', name: 'read_file', target: 'a.txt', status: 'OK', durationMs: 100, startedAtMs: 0, approvalMark: null, actor: null }],
+            })],
+            unplacedTools: [],
+          },
+        ],
+      })],
+    }
+    const root2 = await mountPanel()
+    ;(findAllByClass(root2, 'run-summary')[0]!.props.onClick as () => void)()
+    await flush()
+    // 编辑重发：两段各有一行，锚点带段维度，不重复
+    const toolRows = findAllByClass(root2, 'tool-row')
+    expect(toolRows.map((r) => r.props.id)).toEqual([
+      'trace-11-run23-tool-before_edit:call_old',
+      'trace-11-run23-tool-current:call_new',
+    ])
+  })
+
+  it('多个 run 同时展开时行锚点 id 不跨 run 重复', async () => {
+    store = {
+      ...makeStore(),
+      getTraceRuns: () => [
+        makeTraceRun({ runId: 31, segments: [{ kind: 'current', rounds: [makeTraceRound({ seq: 1 })], unplacedTools: [] }] }),
+        makeTraceRun({ runId: 32, segments: [{ kind: 'current', rounds: [makeTraceRound({ seq: 1 })], unplacedTools: [] }] }),
+      ],
+    }
+    const root = await mountPanel()
+    const summaries = findAllByClass(root, 'run-summary')
+    expect(summaries).toHaveLength(2)
+    ;(summaries[0]!.props.onClick as () => void)()
+    ;(summaries[1]!.props.onClick as () => void)()
+    await flush()
+    // 两个 run 都展开，同类行的 id 必须因 runId 而不同（getElementById 才能取到对的那一行）
+    const roundIds = findAllByClass(root, 'round-row').map((r) => r.props.id)
+    expect(roundIds).toEqual(['trace-11-run31-round-current:1', 'trace-11-run32-round-current:1'])
+    expect(new Set(roundIds).size).toBe(roundIds.length)
+  })
+
+  it('轮次行展示 provider 徽标与解码耗时 / 吞吐量', async () => {
+    const root = await mountPanel()
+    ;(findAllByClass(root, 'run-summary')[0]!.props.onClick as () => void)()
+    await flush()
+    const text = flatText(root)
+    expect(text).toContain('anthropic')
+    // durationMs 4200 − firstTokenMs 800 = 3400
+    expect(text).toContain('解码 3.40s')
+    // completionTokens 200 ÷ 3.4s ≈ 58.8
+    expect(text).toContain('58.8 tok/s')
+  })
+
+  it('首字缺失（非流式）时解码与吞吐不展示，provider 缺失时不渲染徽标', async () => {
+    store = {
+      ...makeStore(),
+      getTraceRuns: () => [makeTraceRun({
+        runId: 24,
+        segments: [{
+          kind: 'current',
+          rounds: [makeTraceRound({ firstTokenMs: null, provider: null, completionTokens: 0 })],
+          unplacedTools: [],
+        }],
+      })],
+    }
+    const root = await mountPanel()
+    ;(findAllByClass(root, 'run-summary')[0]!.props.onClick as () => void)()
+    await flush()
+    const text = flatText(root)
+    expect(text).not.toContain('解码')
+    expect(text).not.toContain('tok/s')
+    expect(findAllByClass(root, 'round-provider')).toHaveLength(0)
+  })
+
+  it('点轮次行「详情」开轮次抽屉（kind=call，带 sessionId）', async () => {
+    const root = await mountPanel()
+    ;(findAllByClass(root, 'run-summary')[0]!.props.onClick as () => void)()
+    await flush()
+    const detailBtns = findAllByClass(root, 'row-detail-btn')
+    expect(detailBtns).toHaveLength(1)
+    ;(detailBtns[0]!.props.onClick as () => void)()
+    await flush()
+    expect(drawerOpened).toEqual([{ kind: 'call', sessionId: '11', target: { kind: 'call', llmCallId: 101 } }])
+    expect(findAllByClass(root, 'drawer-stub')).toHaveLength(1)
+  })
+
+  it('点工具行「详情」开工具抽屉（kind=tool），历史行无 toolCallId 时没有入口', async () => {
+    store = {
+      ...makeStore(),
+      getTraceRuns: () => [makeTraceRun({
+        runId: 25,
+        segments: [{
+          kind: 'current',
+          rounds: [makeTraceRound({
+            tools: [{ toolCallId: 'call_x', name: 'read_file', target: 'a.txt', status: 'OK', durationMs: 100, startedAtMs: 0, approvalMark: null, actor: null }],
+          })],
+          unplacedTools: [{ toolCallId: null, name: 'glob', target: null, status: 'OK', durationMs: 100, startedAtMs: 0, approvalMark: null, actor: null }],
+        }],
+      })],
+    }
+    const root = await mountPanel()
+    ;(findAllByClass(root, 'run-summary')[0]!.props.onClick as () => void)()
+    await flush()
+    // 两条工具行：一条有 toolCallId（有详情按钮），一条没有
+    const toolRows = findAllByClass(root, 'tool-row')
+    expect(toolRows).toHaveLength(2)
+    const withIdBtn = findAllByClass(toolRows[0]!, 'row-detail-btn')
+    expect(withIdBtn).toHaveLength(1)
+    expect(findAllByClass(toolRows[1]!, 'row-detail-btn')).toHaveLength(0)
+    ;(withIdBtn[0]!.props.onClick as () => void)()
+    await flush()
+    expect(drawerOpened).toEqual([{ kind: 'tool', sessionId: '11', target: { kind: 'tool', toolCallId: 'call_x' } }])
+  })
+
+  it('未归属组不画条带（没有 run 上下文）', async () => {
+    store = {
+      ...makeStore(),
+      getTraceRuns: () => [],
+      getTraceUnattributed: (): UnattributedGroup | null => ({
+        count: 1,
+        startedAt: '2026-10-10 09:00:00',
+        endedAt: '2026-10-10 09:00:05',
+        rounds: [makeTraceRound({ seq: 1 })],
+        tools: [{ toolCallId: 'c1', name: 'read_file', target: 'a.txt', status: 'OK', durationMs: 100, startedAtMs: 0, approvalMark: null, actor: null }],
+      }),
+    }
+    const root = await mountPanel()
+    expect(flatText(root)).toContain('未归属')
+    expect(bandBars).toHaveLength(0)
+    expect(findAllByClass(root, 'time-band-stub')).toHaveLength(0)
+  })
+
+  it('抽屉内点「本轮工具」跳转到工具抽屉：抽屉实例复用但拿到新 target', async () => {
+    const root = await mountPanel()
+    ;(findAllByClass(root, 'run-summary')[0]!.props.onClick as () => void)()
+    await flush()
+    ;(findAllByClass(root, 'row-detail-btn')[0]!.props.onClick as () => void)()
+    await flush()
+    expect(drawerOpened.at(-1)).toEqual({ kind: 'call', sessionId: '11', target: { kind: 'call', llmCallId: 101 } })
+
+    // 轮次抽屉 emit open-tool → 父组件 openToolRecord 换 target。
+    // 抽屉 v-if 是 null → 非 null，实例不销毁，所以抽屉必须自己 watch target 重载；
+    // 这里验父组件确实把新 target 传了进去（抽屉侧重载由 watch 负责，另有针对性用例）。
+    const drawerEl = findAllByClass(root, 'drawer-stub')[0]!
+    ;(drawerEl.props.onOpenTool as (id: string) => void)('call_abc')
+    await flush()
+    expect(drawerOpened.at(-1)).toEqual({ kind: 'tool', sessionId: '11', target: { kind: 'tool', toolCallId: 'call_abc' } })
+    expect(findAllByClass(root, 'drawer-stub')).toHaveLength(1)
   })
 })

@@ -4,7 +4,9 @@ import type { FastifyInstance } from 'fastify';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { requireUserId, sendOk } from '../common/http-error.js';
-import { bodyOf, collectEntityIds, idMapGet, parseEntityId, pathId, queryOptBool, queryOptFloat, queryOptInt, queryOptStr } from '../common/request.js';
+import {
+  bodyOf, collectEntityIds, idMapGet, parseEntityId, pathId, pathParam, queryOptBool, queryOptFloat, queryOptInt, queryOptStr,
+} from '../common/request.js';
 import { isSessionSource, type SessionSource } from './session.repository.js';
 import { javaLocalDateTimeString } from '../common/datetime.js';
 import type { PathSandbox } from '../harness/safety/path-sandbox.js';
@@ -14,6 +16,7 @@ import type { MessageQueueService } from './message-queue.service.js';
 import type { SessionCompactionEventService } from './session-compaction-event.service.js';
 import type { SessionCompactionService } from './session-compaction.service.js';
 import type { RunTraceService } from './run-trace.service.js';
+import type { RunTraceRecordService } from './run-trace-record.service.js';
 import {
   DEFAULT_EXPENSIVE_COST, EXPENSIVE_COST_MAX, EXPENSIVE_COST_MIN, expensiveCostToMicros,
 } from './run-trace.service.js';
@@ -53,6 +56,7 @@ export interface SessionRouteDeps {
   sessionCompactionEventService: SessionCompactionEventService;
   sessionCompactionService: SessionCompactionService;
   runTraceService: RunTraceService;
+  runTraceRecordService: RunTraceRecordService;
   approvalRegistry?: ApprovalRegistry;
   askUserQuestionsRegistry?: AskUserQuestionsRegistry;
   treeSignalPublisher?: SessionTreeSignalPublisher;
@@ -553,6 +557,31 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     }));
   });
 
+  // run 轨迹记录详情（技术方案 2026-10-22-run-trace-deep-dive §5.3 / §5.4）：按需拉取，
+  // 轨迹主 VO 不带正文，防载荷膨胀。权限复用 requireSessionOwner（只读本会话轨迹）。
+  // 路径参数非法（空串 / 超长 / 非正整数）返回空态 VO（200），不抛 404/500——
+  // 前端据此提示「记录不存在或已删除」，静默忽略会让用户以为按钮坏了。
+  app.get('/v1/sessions/:id/trace/records/tool/:toolCallId', async (request, reply) => {
+    const userId = requireUserId(request);
+    const id = pathId(request);
+    await requireSessionOwner(userId, id);
+    const toolCallId = pathParam(request, 'toolCallId');
+    if (toolCallId === '' || toolCallId.length > TOOL_CALL_ID_MAX_LENGTH) {
+      return sendOk(reply, await deps.runTraceRecordService.buildToolRecord(id, ''));
+    }
+    return sendOk(reply, await deps.runTraceRecordService.buildToolRecord(id, toolCallId));
+  });
+
+  app.get('/v1/sessions/:id/trace/records/call/:llmCallId', async (request, reply) => {
+    const userId = requireUserId(request);
+    const id = pathId(request);
+    await requireSessionOwner(userId, id);
+    const llmCallId = Number(pathParam(request, 'llmCallId'));
+    // 非正整数（含 NaN / 小数 / 越界）走空态 VO；钳制与 service 侧校验同口径
+    const safe = Number.isSafeInteger(llmCallId) && llmCallId > 0 ? llmCallId : 0;
+    return sendOk(reply, await deps.runTraceRecordService.buildCallRecord(id, safe));
+  });
+
   app.get('/v1/sessions/:id/todos', async (request, reply) => {
     const userId = requireUserId(request);
     const id = pathId(request);
@@ -605,6 +634,9 @@ function clampCost(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
   return Math.min(max, Math.max(min, value));
 }
+
+/** tool_call_id 路径参数长度上限（各 provider 的 call id 都远小于此）：超长按空态 VO 处理。 */
+const TOOL_CALL_ID_MAX_LENGTH = 128;
 
 /**
  * 建会话时 CLOUD 工作区的归属校验（N-5）：用户自建会话的工作区必须位于本人每用户
