@@ -134,7 +134,47 @@ export class RequestSizeEstimator {
 - **精度**：JSON 转义会让文本里的 `"` `\` `\n` 膨胀，但占比极低；base64 不需要转义。估算值乘 **1.02** 安全系数。
 - **性能**：229 条消息 + 54 个 data URI，一次估算 < 2ms（`length` 为 O(1)，只有文本走 `byteLength`）。
 
-### 4.3 与 token 口径的关系
+### 4.3 逐项公式与校准
+
+```ts
+estimate(request) =
+    160                                    // model / stream / reasoning_effort / prompt_cache_key 等顶层字段
+  + toolsBytes                             // JSON.stringify(tool.parameters) 的字节和，WeakMap 缓存
+  + Σ estimateMessage(m)
+
+estimateMessage(m) =
+    48                                     // role/content/tool_calls 等 key 与 JSON 标点
+  + byteLength(m.role)
+  + contentBytes(m.content)
+  + byteLength(m.toolCallId ?? '')
+  + Σ_{tc ∈ m.toolCalls} (60 + byteLength(id) + byteLength(name) + byteLength(arguments))
+  + (echoReasoning && m.role === 'assistant' ? 20 + byteLength(m.reasoningContent ?? '') : 0)
+
+contentBytes(c) =
+  string  → Buffer.byteLength(c, 'utf8')          // 中文 3 bytes/字
+  array   → Σ { type=text      → byteLength(text)
+                type=image_url → url.length }      // data URI 是 ASCII base64，1 char = 1 byte
+```
+
+口径细节：
+
+| 项 | 口径 | 原因 |
+|---|---|---|
+| `image_url.url` | 取 `.length` 而不是 `byteLength` | base64 字符集全在 ASCII 内，长度即字节数；`byteLength` 会扫 50MB 字符串 |
+| `tools` | `JSON.stringify(parameters)` 后 `byteLength`，按数组引用 `WeakMap` 缓存 | 一次执行内工具集不变，避免每轮重复序列化 |
+| `reasoningContent` | 仅 deepseek 系（`modelId` 含 `deepseek` 或 `ds-` 前缀）的 assistant 消息计入 | 与 `serializeChatRequest` 的 `shouldEchoReasoningContent` 同口径，否则会低估 thinking 回传字节 |
+| 固定开销 | 每条消息 48B、每个 toolCall 60B、顶层 160B | 覆盖 JSON key、引号、逗号；文本会话误差 <2% |
+| 安全系数 | 估算结果 × 1.02 | JSON 转义（`"` `\` 换行）会让文本膨胀，base64 不转义 |
+
+精度与校准：
+
+- 图片占比高的会话（本次事故 90% 以上是 base64），误差几乎为 0；
+- 纯文本会话的固定开销按消息数线性计入，229 条消息约 14KB，相对 40MB 阈值可忽略；
+- 用会话 1396 回测：最后一次成功请求估算 **49.76MB**，下一轮估到 **50.39MB** 时被上游以 50MB 拒绝，与真实边界偏差 <1%。
+
+不计入的部分：HTTP 头、分块编码开销（合计几十字节），以及网关 gzip——按未压缩 body 估算，偏保守。
+
+### 4.4 与 token 口径的关系
 
 - token 判定继续用 `ActiveContextCalculator`（锚点 + 增量），既有行为不变。
 - 体积判定**总是对完整请求估算**，不做锚点增量：图片注入发生在 `buildRequest` 阶段，锚点里没有「体积」概念。
@@ -325,7 +365,48 @@ export const STORE_MAX_DIMENSION = 2048;                       // 长边上限�
 
 > 写入侧压缩是**一次性**的：落库的 `message.metadata.attachments[].data_uri` 就是处理后的字节，历史回放与请求构建不再重复编码，前缀天然稳定。
 
-### 7.3 收益实测（会话 1396 原始数据）
+### 7.3 实现方式：sharp（进程内，无外部脚本）
+
+压缩由 `sharp ^0.34.3`（libvips 的 Node 绑定）在 backend-ts 进程内完成，**不调用 ImageMagick / ffmpeg，也不起子进程**。`backend-ts/package.json` 已有该依赖，现有的 `PromptImageResizer.resizeForPrompt` 就在使用，不新增依赖。
+
+```ts
+async function compressForStore(input: Buffer, mimeHint: string, opts) {
+  const meta = await sharp(input).metadata();                 // 只读头，判断尺寸与 alpha
+  const target = computeTargetSize(meta.width, meta.height);  // 长边 ≤2048、patches ≤2500
+
+  // ≤500KB 且尺寸合规：原样返回，不重编码
+  if (fitsLimits(meta) && input.length <= STORE_COMPRESS_THRESHOLD_BYTES) return input;
+
+  const encode = async (width: number, height: number, quality: number) => sharp(input)
+    .rotate()                                                  // 按 EXIF 方向摆正
+    .resize({ width, height, fit: 'inside', withoutEnlargement: true })
+    .flatten({ background: '#fff' })                           // 仅无 alpha 时
+    .webp({ quality, effort: 4 })                              // 有 alpha；无 alpha 用 .jpeg({ quality, mozjpeg: true })
+    .toBuffer();
+
+  for (const attempt of attempts(target)) {                    // 质量 80/70/60，再按 0.85 缩尺寸
+    const buf = await encode(attempt.width, attempt.height, attempt.quality);
+    if (buf.length <= STORE_TARGET_BYTES) return buf;
+  }
+  return best;                                                 // 仍超目标：接受最好结果 + warn
+}
+```
+
+实现要点：
+
+| 项 | 说明 |
+|---|---|
+| 编码格式 | 有 alpha → WebP q80；无 alpha → JPEG q80（mozjpeg）；`rotate()` 摆正 EXIF |
+| 迭代上限 | 质量 80→70→60，再按 0.85 缩尺寸，最多 3 轮；总编码次数 ≤6，防止 CPU 失控 |
+| 确定性 | 固定参数、无随机、不保留元数据；同一输入两次输出字节一致（单测锚定） |
+| 失败处理 | 解码/编码失败 → 回退原图并 `warn`，不阻断工具 |
+| 运行位置 | backend-ts 进程（`read_file` / `page_screenshot` 的工具执行进程）；runtime 镜像内置与镜像 Node ABI 匹配的 sharp，容器模式不受影响 |
+| 性能 | 单张 2MP 图 10–30ms；1396 的 34 张约 0.7s，分散在各次工具调用中 |
+| 并发 | 同一执行内的工具调用串行/小并发，sharp 内部有线程池，无需额外限流 |
+
+为什么不用系统命令：runtime 镜像不含 ImageMagick/ffmpeg，子进程还要处理路径、编码、超时；sharp 已在依赖里，且与现有图片链路是同一套实现，行为一致、可单测。
+
+### 7.4 收益实测（会话 1396 原始数据）
 
 | 指标 | 数值 |
 |---|---|
@@ -337,13 +418,13 @@ export const STORE_MAX_DIMENSION = 2048;                       // 长边上限�
 
 结论：500KB 阈值能把 1396 这类会话从 51.5MB（base64）压到约 24.8MB，**不再触发体积压缩**；代价是 34 张截图转为有损编码，需要灰度验证文字清晰度。同一批数据用 1MB 阈值只能省 11%（仍会触发一次压缩），所以 500KB 是更合适的默认值。
 
-### 7.4 确定性
+### 7.5 确定性
 
 - 同一输入 + 同一参数 → 输出字节完全一致（sharp/libvips 编码确定）；
 - 压缩参数变更（部署）只影响**新读的图**，历史消息不重写 → 不产生中段变化；
 - 同一条消息重放时读的是落库后的字节，不重新编码。
 
-### 7.5 压缩次数：每张图只压一次
+### 7.6 压缩次数：每张图只压一次
 
 - 压缩发生在**工具产出图片时**（`read_file` / `page_screenshot`），不是在每次 LLM 请求时；
 - 压缩结果直接写进 `message.metadata.attachments[].data_uri`，之后每次 `buildRequest` 只是把这段字符串原样注入（`ToolMediaInjector` 只做字符串拼接），**零解码、零编码**；
