@@ -74,6 +74,7 @@ import { SessionService } from './session/session.service.js';
 import { SessionTitleService } from './session/session-title.service.js';
 import { ActivityService } from './session/activity.service.js';
 import { RunTraceService } from './session/run-trace.service.js';
+import { RunTraceRecordService } from './session/run-trace-record.service.js';
 import { SessionActivityRepository, SessionTodoRepository, SubagentExecutionRepository } from './session/activity.repository.js';
 import { MessageQueueService } from './session/message-queue.service.js';
 import { MessageQueueRepository } from './session/message-queue.repository.js';
@@ -460,6 +461,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     new SessionActivityRepository(db),
     new SessionCompactionEventRepository(db),
   );
+  // run 轨迹记录详情读模型（技术方案 2026-10-22-run-trace-deep-dive §5.3）：只读，
+  // 按需拉取参数 / 结果 / 计时与元信息，与 buildTrace 共用 messageRepo / llmCallRepo。
+  const runTraceRecordService = new RunTraceRecordService(messageRepo, llmCallRepo);
   const feedbackRepository = new FeedbackRepository(db);
   const feedbackMessageLookup = new FeedbackDbLookup(db);
   const feedbackService = new FeedbackService(
@@ -881,7 +885,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     llmCallService,
     sessionService, activityService, messageQueueService,
     agentRepo, modelRepo, todoRepo, pathSandbox, subagentExecutionRepo,
-    sessionCompactionEventService, sessionCompactionService, runTraceService,
+    sessionCompactionEventService, sessionCompactionService, runTraceService, runTraceRecordService,
     approvalRegistry, askUserQuestionsRegistry, treeSignalPublisher,
     workspaceBrowse, terminalManager, workspaceGit, gitCommitMsg, gitWrite, runtimeResolver,
     ossSts,

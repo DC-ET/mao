@@ -20,6 +20,9 @@ function makeRun(overrides: Partial<RunTrace> = {}): RunTrace {  return {
             modelName: 'claude-sonnet',
             scene: 'agent',
             createdAt: '2026-10-09 10:00:05',
+            llmCallId: 501,
+            startedAtMs: null,
+            provider: 'anthropic',
             durationMs: 4200,
             firstTokenMs: 800,
             retryCount: 0,
@@ -40,6 +43,7 @@ function makeRun(overrides: Partial<RunTrace> = {}): RunTrace {  return {
                 target: 'src/login.ts',
                 status: 'SUCCESS',
                 durationMs: 120,
+                startedAtMs: null,
                 approvalMark: '低风险放行',
               },
             ],
@@ -52,6 +56,7 @@ function makeRun(overrides: Partial<RunTrace> = {}): RunTrace {  return {
             target: 'npm test',
             status: 'ERROR',
             durationMs: null,
+            startedAtMs: null,
             approvalMark: null,
           },
         ],
@@ -62,6 +67,8 @@ function makeRun(overrides: Partial<RunTrace> = {}): RunTrace {  return {
         scene: 'session_title',
         modelName: 'gpt-4o-mini',
         createdAt: '2026-10-09 10:00:06',
+        startedAtMs: null,
+        provider: 'openai',
         durationMs: 300,
         promptTokens: 10,
         completionTokens: 5,
@@ -93,27 +100,39 @@ describe('buildTraceCsv', () => {
     const lines = csv.split('\r\n')
     // BOM + 表头 + 轮 + 轮内工具 + 未挂到轮 + 旁路
     expect(lines).toHaveLength(5)
-    expect(lines[0]!.startsWith('\ufeffrunId,段,序号,种类,时间,模型,场景')).toBe(true)
+    expect(lines[0]!.startsWith('\ufeffrunId,段,序号,种类,时间,模型,provider,场景')).toBe(true)
+    // provider 列在「模型」之后：模型行填值、工具行留空（§5.8）
     // 模型行：token / 成本 / 场景都填
     expect(csvCells(lines[1]!)).toEqual([
-      '11', '当前', '1', 'round', '2026-10-09 10:00:05', 'claude-sonnet', '对话',
+      '11', '当前', '1', 'round', '2026-10-09 10:00:05', 'claude-sonnet', 'anthropic', '对话',
       '1000', '200', '300', '40', '1.234567', '4200', '成功', '', '', '', ''
     ])
-    // 工具行：token / 成本 / 场景留空，种类 = tool
+    // 工具行：token / 成本 / provider / 场景留空，种类 = tool
     expect(csvCells(lines[2]!)).toEqual([
-      '11', '当前', '', 'tool', '', '', '', '', '', '', '', '',
+      '11', '当前', '', 'tool', '', '', '', '', '', '', '', '', '',
       '120', '成功', '', 'read_file', 'src/login.ts', '低风险放行'
     ])
     // 未挂到轮：历史行没有 duration，留空
     expect(csvCells(lines[3]!)).toEqual([
-      '11', '当前', '', 'tool', '', '', '', '', '', '', '', '',
+      '11', '当前', '', 'tool', '', '', '', '', '', '', '', '', '',
       '', '失败', '', 'shell', 'npm test', ''
     ])
     // 旁路调用：序号留空，种类 side
     expect(csvCells(lines[4]!)).toEqual([
-      '11', '旁路', '', 'side', '2026-10-09 10:00:06', 'gpt-4o-mini', '会话标题',
+      '11', '旁路', '', 'side', '2026-10-09 10:00:06', 'gpt-4o-mini', 'openai', '会话标题',
       '10', '5', '0', '0', '', '300', '成功', '', '', '', ''
     ])
+  })
+
+  it('provider 缺省（llm_call.provider 为 null）的模型行该列留空', () => {
+    const run = makeRun()
+    run.segments[0]!.rounds[0]!.provider = null
+    run.sideCalls[0]!.provider = null
+    // 列序：runId, 段, 序号, 种类, 时间, 模型, provider, 场景 …
+    const roundCells = csvCells(buildTraceCsv([run], null).split('\r\n')[1]!)
+    expect(roundCells[6]).toBe('')
+    const sideCells = csvCells(buildTraceCsv([run], null).split('\r\n').at(-1)!)
+    expect(sideCells[6]).toBe('')
   })
 
   it('中断写成「已中断」而不是「失败」', () => {
@@ -146,6 +165,9 @@ describe('buildTraceCsv', () => {
           modelName: 'claude-sonnet',
           scene: 'compaction',
           createdAt: '2026-10-09 09:00:09',
+          llmCallId: 900,
+          startedAtMs: null,
+          provider: 'deepseek',
           durationMs: 9000,
           firstTokenMs: null,
           retryCount: 0,
@@ -166,7 +188,7 @@ describe('buildTraceCsv', () => {
     }
     const csv = buildTraceCsv([makeRun()], unattributed)
     const lines = csv.split('\r\n')
-    expect(lines[lines.length - 1]!.startsWith(',,1,round,2026-10-09 09:00:09,claude-sonnet,上下文压缩')).toBe(true)
+    expect(lines[lines.length - 1]!.startsWith(',,1,round,2026-10-09 09:00:09,claude-sonnet,deepseek,上下文压缩')).toBe(true)
   })
 
   it('单元格内的逗号与引号按 CSV 规则转义', () => {

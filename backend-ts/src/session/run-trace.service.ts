@@ -1,6 +1,6 @@
 import type { MessageRepository } from './session.repository.js';
 import type { LlmCallRepository, LlmCallRow } from '../usage/llm-call.repository.js';
-import { sumCostMicros, wallClockMs } from './run-window.js';
+import { estimatedStartMs, sumCostMicros, wallClockMs } from './run-window.js';
 import type { SessionActivityRepository } from './activity.repository.js';
 import type { SessionCompactionEventRepository } from './session-compaction.repository.js';
 import type { Message, SessionActivity, SessionCompactionEvent } from './types.js';
@@ -378,6 +378,11 @@ function toRoundVO(call: LlmCallRow, seq: number, query: RunTraceQuery): TraceRo
     modelName: call.modelName ?? null,
     scene: AGENT_SCENE,
     createdAt: call.createdAt ?? null,
+    // 轮次行下钻的定位 key（历史行理论上恒有值，为兜底仍声明 null）
+    llmCallId: call.id ?? null,
+    // 时间条带起点：与 wallClockMs 同一估算口径（created_at 是结束时刻）
+    startedAtMs: estimatedStartMs(call.createdAt, call.durationMs),
+    provider: call.provider ?? null,
     durationMs,
     firstTokenMs: call.firstTokenMs ?? null,
     retryCount: call.retryCount ?? 0,
@@ -403,6 +408,8 @@ function toSideCallVO(call: LlmCallRow): TraceSideCallVO {
     scene: call.scene ?? 'unknown',
     modelName: call.modelName ?? null,
     createdAt: call.createdAt ?? null,
+    startedAtMs: estimatedStartMs(call.createdAt, call.durationMs),
+    provider: call.provider ?? null,
     durationMs: call.durationMs ?? 0,
     promptTokens: call.promptTokens ?? 0,
     completionTokens: call.completionTokens ?? 0,
@@ -421,6 +428,8 @@ function toToolVO(call: DeclaredToolCall, toolMessage: Message | undefined, acti
     // 状态以活动行为权威；没有活动行（写入失败 / 极早期）才回退工具消息内容启发式
     status: activity?.status ?? heuristicStatus(toolMessage?.content),
     durationMs: activity?.durationMs ?? null,
+    // 时间条带起点：活动 created_at 是结束时刻，与 llm_call 同一估算口径
+    startedAtMs: estimatedStartMs(activity?.createdAt, activity?.durationMs),
     // 审批标记：先读工具消息 metadataJson，没有再用活动 detail_json
     approvalMark: approvalMarkLabel(parseMetadataMark(toolMessage?.metadata)) ?? approvalMarkLabel(parseDetailMark(activity?.detailJson)),
     actor: parseActor(activity?.detailJson),
@@ -435,6 +444,7 @@ function activityToToolVO(activity: SessionActivity): TraceToolVO {
     target: activity.target ?? null,
     status: activity.status ?? 'SUCCESS',
     durationMs: activity.durationMs ?? null,
+    startedAtMs: estimatedStartMs(activity.createdAt, activity.durationMs),
     approvalMark: approvalMarkLabel(parseDetailMark(activity.detailJson)),
     actor: parseActor(activity.detailJson),
   };

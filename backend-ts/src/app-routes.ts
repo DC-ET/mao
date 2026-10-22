@@ -41,6 +41,7 @@ import type { SubagentExecutionRepository } from './session/activity.repository.
 import type { SessionCompactionEventService } from './session/session-compaction-event.service.js';
 import type { SessionCompactionService } from './session/session-compaction.service.js';
 import type { RunTraceService } from './session/run-trace.service.js';
+import type { RunTraceRecordService } from './session/run-trace-record.service.js';
 import type { ApprovalRegistry } from './harness/approval/approval-registry.js';
 import type { AskUserQuestionsRegistry } from './harness/tool/ask-user-questions-registry.js';
 import type { SessionTreeSignalPublisher } from './harness/approval/session-tree-signal-publisher.js';
@@ -225,6 +226,7 @@ export interface RouteDeps {
   sessionCompactionEventService: SessionCompactionEventService;
   sessionCompactionService: SessionCompactionService;
   runTraceService: RunTraceService;
+  runTraceRecordService: RunTraceRecordService;
   approvalRegistry: ApprovalRegistry;
   askUserQuestionsRegistry: AskUserQuestionsRegistry;
   treeSignalPublisher: SessionTreeSignalPublisher;
@@ -327,7 +329,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
     llmCallService,
     sessionService, activityService, messageQueueService,
     agentRepo, modelRepo, todoRepo, pathSandbox, subagentExecutionRepo,
-    sessionCompactionEventService, sessionCompactionService, runTraceService,
+    sessionCompactionEventService, sessionCompactionService, runTraceService, runTraceRecordService,
     approvalRegistry, askUserQuestionsRegistry, treeSignalPublisher,
     workspaceBrowse, terminalManager, workspaceGit, gitCommitMsg, gitWrite, runtimeResolver,
     ossSts,
@@ -446,6 +448,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
       sessionCompactionEventService,
       sessionCompactionService,
       runTraceService,
+      runTraceRecordService,
       approvalRegistry,
       askUserQuestionsRegistry,
       treeSignalPublisher,

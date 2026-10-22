@@ -46,6 +46,15 @@ export interface TraceRound {
   scene: string
   /** llm_call.created_at：调用结束时刻，导出 CSV 的「时间」列 */
   createdAt: string | null
+  /** llm_call 主键：轮次行下钻的定位 key；历史行理论上恒有值 */
+  llmCallId: number | null
+  /**
+   * 估算开始时刻（epoch ms）= Date.parse(created_at) − duration_ms；
+   * 两侧任一缺失为 null（时间条带不画色条、tooltip 显示「—」）。不补 0、不冒充。
+   */
+  startedAtMs: number | null
+  /** llm_call.provider 冗余快照列；null 时不渲染徽标 */
+  provider: string | null
   durationMs: number
   firstTokenMs: number | null
   retryCount: number
@@ -67,6 +76,10 @@ export interface TraceSideCall {
   modelName: string | null
   /** llm_call.created_at：调用结束时刻，导出 CSV 的「时间」列 */
   createdAt: string | null
+  /** 估算开始时刻（epoch ms）；口径与 TraceRound.startedAtMs 一致 */
+  startedAtMs: number | null
+  /** llm_call.provider 冗余快照列；null 时不渲染徽标 */
+  provider: string | null
   durationMs: number
   promptTokens: number
   completionTokens: number
@@ -83,6 +96,8 @@ export interface TraceTool {
   status: string
   /** 历史行与未回填行为 null，UI 显示「—」 */
   durationMs: number | null
+  /** 估算开始时刻（epoch ms）；两侧任一缺失为 null（时间条带不画色条） */
+  startedAtMs: number | null
   approvalMark: string | null
   /** 用户手动文件操作才是 user；历史行与工具活动缺省 */
   actor?: 'user' | 'agent' | null
@@ -116,3 +131,58 @@ export interface TraceLiveTool {
   name: string
   startedAt: number
 }
+
+/* ------------------------------------------------------------------ *
+ * 记录详情（与后端 session-vo.ts 的 TraceToolRecordVO / TraceCallRecordVO 对齐）
+ * 轨迹主 VO 不带正文，按需拉取；配不上的字段为 null，前端提示而非静默。
+ * ------------------------------------------------------------------ */
+
+/** 配对 llm_call 的完整元信息（配不上为 null）。 */
+export interface TraceCallMeta {
+  llmCallId: number | null
+  provider: string | null
+  protocol: string | null
+  stream: boolean | null
+  effort: string | null
+  scene: string | null
+  modelName: string | null
+  retryCount: number
+  firstTokenMs: number | null
+  durationMs: number
+  errorMessage: string | null
+  promptTokens: number
+  completionTokens: number
+  cachedTokens: number
+  cacheCreationTokens: number
+  costMicros: number | null
+  createdAt: string | null
+}
+
+/** 工具记录详情：参数 / 结果原文 + 配对的调用元信息。 */
+export interface TraceToolRecord {
+  toolCallId: string
+  toolName: string | null
+  argumentsJson: string | null
+  resultContent: string | null
+  resultMetadata: string | null
+  call: TraceCallMeta | null
+}
+
+/** 轮次记录详情：调用元信息 + 本轮工具清单（供抽屉内跳转）。 */
+export interface TraceCallRecord {
+  call: TraceCallMeta | null
+  tools: Array<{ toolCallId: string; name: string; target: string | null }>
+}
+
+/**
+ * 记录详情抽屉的打开目标：工具抽屉按 toolCallId，轮次抽屉按 llmCallId。
+ * 二者 key 语义不同（一个查 message 表、一个查 llm_call 表），后端按端点分流。
+ */
+export type TraceDrawerTarget =
+  | { kind: 'tool'; toolCallId: string }
+  | { kind: 'call'; llmCallId: number }
+
+/** 抽屉里已加载的记录：带 kind 判别（与 store 缓存同型，缓存命中后直接渲染）。 */
+export type TraceLoadedRecord =
+  | { kind: 'tool'; data: TraceToolRecord }
+  | { kind: 'call'; data: TraceCallRecord }

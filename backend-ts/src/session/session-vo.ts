@@ -533,6 +533,16 @@ export interface TraceRoundVO {
   scene: string;
   /** llm_call.created_at：调用结束时刻，导出 CSV 的「时间」列 */
   createdAt: string | null;
+  /** llm_call 主键：轮次行下钻的定位 key；历史行理论上恒有值（llm_call 才有这一行） */
+  llmCallId: number | null;
+  /**
+   * 估算开始时刻（epoch ms）= Date.parse(created_at) − duration_ms；
+   * 两侧任一缺失为 null（时间条带不画色条、tooltip 不显示，显示「—」）。
+   * 不补 0、不用 createdAt 冒充起点：秒级 created_at 下是估算值，必须与事实区分。
+   */
+  startedAtMs: number | null;
+  /** llm_call.provider 冗余快照列，轮次行展示用；null 时前端不渲染徽标 */
+  provider: string | null;
   durationMs: number;
   firstTokenMs: number | null;
   retryCount: number;
@@ -556,6 +566,10 @@ export interface TraceSideCallVO {
   modelName: string | null;
   /** llm_call.created_at：调用结束时刻，导出 CSV 的「时间」列 */
   createdAt: string | null;
+  /** 估算开始时刻（epoch ms）；口径与 TraceRoundVO.startedAtMs 一致 */
+  startedAtMs: number | null;
+  /** llm_call.provider 冗余快照列；null 时前端不渲染徽标 */
+  provider: string | null;
   durationMs: number;
   promptTokens: number;
   completionTokens: number;
@@ -572,6 +586,11 @@ export interface TraceToolVO {
   status: string;
   /** 历史行与未回填行为 null，UI 显示「—」 */
   durationMs: number | null;
+  /**
+   * 估算开始时刻（epoch ms）= session_activity.created_at − duration_ms；
+   * 两侧任一缺失为 null（时间条带不画色条）。口径与 TraceRoundVO.startedAtMs 一致。
+   */
+  startedAtMs: number | null;
   approvalMark: string | null;
   /** 用户手动文件操作才是 user；工具活动与历史行是 null */
   actor: 'user' | 'agent' | null;
@@ -678,4 +697,50 @@ export function indexSubagentExecutions(executions: SubagentExecution[]): Map<nu
     }
   }
   return map;
+}
+
+/* ------------------------------------------------------------------ *
+ * 记录详情读模型 VO（技术方案 2026-10-22-run-trace-deep-dive §5.3）
+ * 轨迹主 VO 不带正文，按需拉取；配不上的字段一律 null，不猜、不抛错。
+ * ------------------------------------------------------------------ */
+
+/** 配对 llm_call 的完整元信息（配不上为 null）。 */
+export interface TraceCallMetaVO {
+  llmCallId: number | null;
+  provider: string | null;
+  protocol: string | null;
+  stream: boolean | null;
+  effort: string | null;
+  scene: string | null;
+  modelName: string | null;
+  retryCount: number;
+  firstTokenMs: number | null;
+  durationMs: number;
+  errorMessage: string | null;
+  promptTokens: number;
+  completionTokens: number;
+  cachedTokens: number;
+  cacheCreationTokens: number;
+  costMicros: number | null;
+  createdAt: string | null;
+}
+
+/** 工具记录详情：参数 / 结果原文 + 配对的调用元信息。 */
+export interface TraceToolRecordVO {
+  toolCallId: string;
+  /** 助手消息 tool_calls 数组里该次调用的元素：name + argumentsJson 原文 */
+  toolName: string | null;
+  argumentsJson: string | null;
+  /** TOOL 消息 content 原文（含 metadata 的审批标记由调用方从 resultMetadata 读） */
+  resultContent: string | null;
+  resultMetadata: string | null;
+  /** 配对 llm_call 的完整元信息；配不上为 null */
+  call: TraceCallMetaVO | null;
+}
+
+/** 轮次记录详情：调用元信息 + 该轮已声明且现存于会话内的工具（供抽屉内跳转）。 */
+export interface TraceCallRecordVO {
+  call: TraceCallMetaVO | null;
+  /** toolCallId + 名称 + 目标摘要；近似归属仅用于跳转链接，内容以按 tool_call_id 的精确查询为准 */
+  tools: Array<{ toolCallId: string; name: string; target: string | null }>;
 }

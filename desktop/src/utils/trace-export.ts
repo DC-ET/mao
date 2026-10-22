@@ -8,7 +8,7 @@ import { llmCallSceneLabel } from './llmCallLabels'
  */
 
 const CSV_HEADER = [
-  'runId', '段', '序号', '种类', '时间', '模型', '场景',
+  'runId', '段', '序号', '种类', '时间', '模型', 'provider', '场景',
   '输入 Token', '输出 Token', '缓存 Token', '缓存写 Token',
   '成本', '耗时(ms)', '状态', '错误信息', '名称', '目标', '审批'
 ]
@@ -42,6 +42,7 @@ function modelRow(runId: number | null, segment: string, row: {
   kind: 'round' | 'side'
   createdAt: string | null
   modelName: string | null
+  provider: string | null
   scene: string
   promptTokens: number
   completionTokens: number
@@ -61,6 +62,8 @@ function modelRow(runId: number | null, segment: string, row: {
     row.kind === 'side' ? 'side' : 'round',
     row.createdAt ?? '',
     row.modelName ?? '',
+    // provider 只对模型行有意义：llm_call 冗余快照列，缺省留空
+    row.provider ?? '',
     llmCallSceneLabel(row.scene),
     row.promptTokens,
     row.completionTokens,
@@ -91,6 +94,7 @@ function toolRow(runId: number | null, segment: string, tool: TraceTool): string
     '',
     '',
     '',
+    '',
     tool.durationMs ?? '',
     toolStatusCell(tool),
     '',
@@ -109,6 +113,7 @@ function unattributedRows(group: UnattributedGroup): string[] {
       kind: 'round',
       createdAt: round.createdAt,
       modelName: round.modelName,
+      provider: round.provider,
       scene: round.scene,
       promptTokens: round.promptTokens,
       completionTokens: round.completionTokens,
@@ -138,6 +143,7 @@ export function buildTraceCsv(runs: RunTrace[], unattributed: UnattributedGroup 
           kind: 'round',
           createdAt: round.createdAt,
           modelName: round.modelName,
+          provider: round.provider,
           scene: round.scene,
           promptTokens: round.promptTokens,
           completionTokens: round.completionTokens,
@@ -163,6 +169,7 @@ export function buildTraceCsv(runs: RunTrace[], unattributed: UnattributedGroup 
         kind: 'side',
         createdAt: side.createdAt,
         modelName: side.modelName,
+        provider: side.provider,
         scene: side.scene,
         promptTokens: side.promptTokens,
         completionTokens: side.completionTokens,

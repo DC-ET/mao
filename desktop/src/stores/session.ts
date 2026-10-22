@@ -26,7 +26,12 @@ export const useSessionStore = defineStore('session', () => {
     sessionContextWindow: () => messageRuntime.sessionContextWindow,
     ctxSessionPhases: () => messageRuntime.sessionPhases,
     viewingSideTaskId,
-    purgeSessionRuntime: (sid) => messageRuntime.purgeSessionRuntime(sid),
+    purgeSessionRuntime: (sid) => {
+      messageRuntime.purgeSessionRuntime(sid)
+      // 记录详情抽屉的正文缓存（工具参数 / 结果）随会话删除一起丢：抽屉正文是用户
+      // 期望「删除会话即消失」的敏感数据，不能留到登出或整页刷新才清。
+      trace.clearTraceRecords(sid)
+    },
     reconcileSideTaskPendingCounts: sideTask.reconcileSideTaskPendingCounts,
     setCompacting: (sid, v) => messageRuntime.setCompacting(sid, v),
     clearLlmRetry: (sid) => messageRuntime.clearLlmRetry(sid),

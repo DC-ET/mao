@@ -2,6 +2,7 @@ import type { Db } from '../db/db.js';
 import { fulltextStopwordTableName, notDeleted } from '../db/db.js';
 import { toSnakeRow } from '../common/case.js';
 import { nowSql } from '../common/datetime.js';
+import { escapeLike } from './message-search.js';
 import type { FileChange, Message, Session, SessionGroupPage } from './types.js';
 
 export const SESSION_SOURCE_VALUES = ['web', 'embed'] as const;
@@ -686,12 +687,43 @@ export class MessageRepository {
    * 全会话现存助手消息声明的工具调用（run 轨迹用）：工具活动是异步落库的，created_at
    * 可能晚到下一条用户消息之后，落进下一个 run 的时间窗。归属要以 tool_call_id 对准的
    * 消息为准，本页对不上时靠它判断该活动归属的 run 是否在本页，不能按时间窗改挂。
+   *
+   * created_at 一并带出：记录详情抽屉的「本轮工具」清单按 llm_call 时间窗近似归属
+   * （技术方案 2026-10-22-run-trace-deep-dive §5.3），没有时钟就退化成全会话清单。
    */
-  selectAssistantToolCalls(sessionId: number): Promise<Array<Pick<Message, 'id' | 'toolCalls'>>> {
-    return this.db.query<Pick<Message, 'id' | 'toolCalls'>>(
-      `SELECT id, tool_calls AS toolCalls FROM \`message\`
+  selectAssistantToolCalls(sessionId: number): Promise<Array<Pick<Message, 'id' | 'createdAt' | 'toolCalls'>>> {
+    return this.db.query<Pick<Message, 'id' | 'createdAt' | 'toolCalls'>>(
+      `SELECT id, created_at AS createdAt, tool_calls AS toolCalls FROM \`message\`
        WHERE session_id = ? AND ${notDeleted()} AND role = 'ASSISTANT' AND tool_calls IS NOT NULL ORDER BY id ASC`,
       [sessionId],
+    );
+  }
+
+  /**
+   * 按 tool_call_id 反查声明该调用的助手消息（运行轨迹记录详情下钻用）。
+   * tool_calls 是 JSON 文本、没有独立列，只能 LIKE 前缀匹配 `"id":"<toolCallId>"`；
+   * tool_call_id 虽来自后端 VO（不是用户输入），仍按边界输入统一做 LIKE 转义。
+   * 单次点开抽屉才查，session_id 过滤后行数可控；同 id 多条时取最早一条。
+   */
+  selectAssistantByToolCallId(sessionId: number, toolCallId: string): Promise<Message | null> {
+    if (toolCallId === '') return Promise.resolve(null);
+    return this.db.queryOne<Message>(
+      `SELECT * FROM \`message\` WHERE session_id = ? AND ${notDeleted()} AND role = 'ASSISTANT'
+        AND tool_calls LIKE CONCAT('%"id":"', ?, '"%') ESCAPE '\\\\' ORDER BY id ASC LIMIT 1`,
+      [sessionId, escapeLike(toolCallId)],
+    );
+  }
+
+  /**
+   * 按 tool_call_id 取 TOOL 行（运行轨迹记录详情下钻用）。
+   * 与 selectToolMessagesByCallIds 的区别：单条精确取，不带消息 id 上界。
+   */
+  selectToolMessageByCallId(sessionId: number, toolCallId: string): Promise<Message | null> {
+    if (toolCallId === '') return Promise.resolve(null);
+    return this.db.queryOne<Message>(
+      `SELECT * FROM \`message\` WHERE session_id = ? AND ${notDeleted()} AND role = 'TOOL'
+        AND tool_call_id = ? ORDER BY id ASC LIMIT 1`,
+      [sessionId, toolCallId],
     );
   }
 

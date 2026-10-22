@@ -155,3 +155,26 @@ describe('LlmCallRepository 列表筛选（成败 + 取消第三态）', () => {
     expect(sql).toContain("error_message IS NULL OR error_message NOT LIKE '%Cancelled by user%'");
   });
 });
+
+// 记录详情下钻（技术方案 2026-10-22-run-trace-deep-dive §5.3）：主键查询，
+// 会话归属由调用方校验（row.sessionId 与路径 sessionId 不一致即视为不存在）。
+describe('LlmCallRepository.selectById', () => {
+  function build(one: Record<string, unknown> | null = null) {
+    const query = vi.fn(async () => []);
+    const queryOne = vi.fn(async () => one);
+    const repo = new LlmCallRepository({ query, queryOne } as never);
+    return { repo, queryOne };
+  }
+
+  it('按主键取整行；不存在返回 null', async () => {
+    const { repo, queryOne } = build({ id: 42, sessionId: 1, provider: 'anthropic' });
+    expect(await repo.selectById(42)).toEqual({ id: 42, sessionId: 1, provider: 'anthropic' });
+    const [sql, params] = queryOne.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain('FROM llm_call WHERE id = ?');
+    expect(params).toEqual([42]);
+
+    const { repo: emptyRepo, queryOne: emptyOne } = build(null);
+    expect(await emptyRepo.selectById(999)).toBeNull();
+    expect(emptyOne.mock.calls[0]?.[1]).toEqual([999]);
+  });
+});

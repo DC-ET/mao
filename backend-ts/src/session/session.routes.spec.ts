@@ -10,6 +10,7 @@ import type { MessageQueueService } from './message-queue.service.js';
 import type { SessionCompactionEventService } from './session-compaction-event.service.js';
 import type { SessionCompactionService } from './session-compaction.service.js';
 import type { RunTraceService } from './run-trace.service.js';
+import type { RunTraceRecordService } from './run-trace-record.service.js';
 import type { SessionTodoRepository, SubagentExecutionRepository } from './activity.repository.js';
 import type { AgentLookup, LlmModelLookup, UserLookup } from './types.js';
 import type { PathSandbox } from '../harness/safety/path-sandbox.js';
@@ -101,6 +102,12 @@ describe('session and admin routes', () => {
     const compactionEventService = { listBySessionId: vi.fn(async () => []) } as unknown as SessionCompactionEventService;
     const compactionRecordService = { findBySessionId: vi.fn(async () => null) };
     const runTraceService = { buildTrace: vi.fn(async () => ({ runs: [], hasMore: false, unattributed: null })) };
+    const runTraceRecordService = {
+      buildToolRecord: vi.fn(async (sessionId: number, toolCallId: string) => ({
+        toolCallId, toolName: null, argumentsJson: null, resultContent: null, resultMetadata: null, call: null,
+      })),
+      buildCallRecord: vi.fn(async () => ({ call: null, tools: [] as unknown[] })),
+    };
     registerSessionRoutes(fastify, {
       sessionService,
       agentLookup,
@@ -118,6 +125,7 @@ describe('session and admin routes', () => {
       sessionCompactionEventService: compactionEventService,
       sessionCompactionService: compactionRecordService as unknown as SessionCompactionService,
       runTraceService: runTraceService as unknown as RunTraceService,
+      runTraceRecordService: runTraceRecordService as unknown as RunTraceRecordService,
     });
     registerAdminSessionRoutes(fastify, {
       sessionService,
@@ -138,7 +146,7 @@ describe('session and admin routes', () => {
       })),
     } as unknown as OssStsService;
     registerOssRoutes(fastify, { ossStsService });
-    return { fastify, sessionService, ossStsService, compactionEvents: compactionEventService, compactionRecordService, runTraceService, root };
+    return { fastify, sessionService, ossStsService, compactionEvents: compactionEventService, compactionRecordService, runTraceService, runTraceRecordService, root };
   }
 
   it('covers session rest endpoints', async () => {
@@ -274,6 +282,57 @@ describe('session and admin routes', () => {
 
     await fastify.close();
     await f2.close();
+  });
+
+  // 记录详情下钻（技术方案 2026-10-22-run-trace-deep-dive §5.4）：两个端点按 key 分流，
+  // 路径参数非法走空态 VO（200），不抛 404/500；归属复用 requireSessionOwner。
+  it('GET /trace/records/tool/:toolCallId 透传 key，非法 toolCallId 走空态 VO', async () => {
+    const { fastify, runTraceRecordService } = await app();
+    const ok = await fastify.inject({ method: 'GET', url: '/v1/sessions/1/trace/records/tool/call_1' });
+    expect(ok.statusCode).toBe(200);
+    expect(JSON.parse(ok.body).code).toBe(0);
+    expect(JSON.parse(ok.body).data.toolCallId).toBe('call_1');
+    expect(runTraceRecordService.buildToolRecord).toHaveBeenCalledWith(1, 'call_1');
+
+    // 超长 toolCallId 由 Fastify 的 URL 上限先拒（414），路由内的长度钳制是深层防御：
+    // 即使将来 URL 上限放宽，service 侧同样按空态 VO 处理，不会把超长串带进 LIKE 查询。
+    vi.mocked(runTraceRecordService.buildToolRecord).mockClear();
+    const long = 'x'.repeat(129);
+    const tooLong = await fastify.inject({ method: 'GET', url: `/v1/sessions/1/trace/records/tool/${long}` });
+    expect(tooLong.statusCode).toBe(414);
+    expect(runTraceRecordService.buildToolRecord).not.toHaveBeenCalled();
+
+    await fastify.close();
+  });
+
+  it('GET /trace/records/call/:llmCallId 只接受正整数，其余走空态 VO', async () => {
+    const { fastify, runTraceRecordService } = await app();
+    const ok = await fastify.inject({ method: 'GET', url: '/v1/sessions/1/trace/records/call/42' });
+    expect(ok.statusCode).toBe(200);
+    expect(JSON.parse(ok.body).code).toBe(0);
+    expect(runTraceRecordService.buildCallRecord).toHaveBeenCalledWith(1, 42);
+
+    for (const bad of ['0', '-5', 'abc', '1.5']) {
+      vi.mocked(runTraceRecordService.buildCallRecord).mockClear();
+      const res = await fastify.inject({ method: 'GET', url: `/v1/sessions/1/trace/records/call/${bad}` });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body).code).toBe(0);
+      expect(runTraceRecordService.buildCallRecord).toHaveBeenCalledWith(1, 0);
+    }
+
+    await fastify.close();
+  });
+
+  it('记录详情端点对越权会话拒绝（与 /trace 同一归属口径）', async () => {
+    const { fastify, sessionService } = await app();
+    (sessionService.getSession as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 1, userId: 999, agentId: 9 });
+    const tool = await fastify.inject({ method: 'GET', url: '/v1/sessions/1/trace/records/tool/call_1' });
+    expect(tool.statusCode).not.toBe(200);
+    expect(JSON.parse(tool.body).code).not.toBe(0);
+    const call = await fastify.inject({ method: 'GET', url: '/v1/sessions/1/trace/records/call/42' });
+    expect(call.statusCode).not.toBe(200);
+    expect(JSON.parse(call.body).code).not.toBe(0);
+    await fastify.close();
   });
 
   it('PATCH /sessions/:id 切换 memoryInjectionDisabled（含 false）并回显到 VO', async () => {
