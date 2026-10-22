@@ -167,6 +167,8 @@ import { useToolApprovals } from '../../composables/useChat'
 import { loadDislikedIds } from '../../composables/useMessageFeedback'
 import { useForkPreview } from '../../composables/useForkPreview'
 import { useChatScroll } from '../../composables/useChatScroll'
+import { useChatQueue } from '../../composables/useChatQueue'
+import { guardUploadsBeforeSend, waitForMessageSaved, awaitExecutionSettled, finalizeCancelledSession } from '../../composables/chatSessionActions'
 import { LOCATE_FLASH_KEY, useMessageLocate } from '../../composables/useMessageLocate'
 import { uploadImages } from '../../utils/imageUpload'
 import { uploadPendingFiles } from '../../utils/chatFileUpload'
@@ -179,9 +181,7 @@ import ApprovalStack from './ApprovalStack.vue'
 import ExecutionErrorBanner from './ExecutionErrorBanner.vue'
 import CommandEditDialog from '../command/CommandEditDialog.vue'
 import ShareDialog from '../task/ShareDialog.vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { fetchImagesAsFiles } from '../../utils/file'
-import type { QueueMessage } from '../../types/chat'
+import { ElMessage } from 'element-plus'
 
 const chatInputRef = ref<InstanceType<typeof ChatInput>>()
 
@@ -202,7 +202,7 @@ const props = defineProps<{
 
 const sessionStore = useSessionStore()
 const draftStore = useDraftStore()
-const { connect, createSideSession, sendMessage, cancel, retryExecution, subscribe, unsubscribe, sendAskUserQuestionsResult, enqueueMessage, insertMessage, deleteQueueMessage: wsDeleteQueueMessage, reorderQueueMessage: wsReorderQueueMessage, onMessageSaved, offMessageSaved } = useStreamWS()
+const { connect, createSideSession, sendMessage, cancel, retryExecution, subscribe, unsubscribe, sendAskUserQuestionsResult, enqueueMessage } = useStreamWS()
 const { pendingApprovals, confirmApproval } = useToolApprovals()
 
 const commandEditDialogRef = ref<InstanceType<typeof CommandEditDialog>>()
@@ -279,6 +279,12 @@ const parentCloudProjectKey = computed(() => {
 // Real session ID: start with props if positive, otherwise 0
 const realSessionId = ref(props.sideSessionId > 0 ? props.sideSessionId : 0)
 const hasRealSession = computed(() => realSessionId.value > 0)
+
+// 队列操作与主会话共用同一实现；差异只有会话 id 来源（占位态还没有真实会话）
+const { fetchQueue, insertQueueMessage, deleteQueueMessage, reorderQueueMessage, handleQueueEdit } = useChatQueue(
+  () => hasRealSession.value ? String(realSessionId.value) : null,
+  () => chatInputRef.value,
+)
 
 /** 分享会话弹窗（与任务列表右键「分享…」共用 ShareDialog）：只分享当前边路会话 */
 const shareVisible = ref(false)
@@ -663,17 +669,6 @@ async function loadOlderMessages(): Promise<boolean> {
   }
 }
 
-async function fetchQueue() {
-  if (!hasRealSession.value) return
-  const sid = String(realSessionId.value)
-  try {
-    const { data } = await api.get(`/sessions/${sid}/queue`)
-    sessionStore.setQueueMessages(sid, data || [])
-  } catch {
-    // ignore
-  }
-}
-
 // --- 自动滚动：与主聊天共用 useChatScroll（同一套手势判定与定位时序） ---
 const {
   scrollToBottom, resumeFollow, pauseFollow, handleMarkdownRendered,
@@ -758,10 +753,6 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
       ? String(realSessionId.value)
       : (sourceSession.value || null)
     const imageUrls = files.length > 0 ? await uploadImages(files, uploadSessionId) : []
-    // If user attached images but all uploads failed, do not send a text-only message by mistake.
-    if (files.length > 0 && imageUrls.length === 0) {
-      return
-    }
 
     // Upload non-image files to runtime incoming (uses parent session ID for first side send)
     let resolvedText = trimmed
@@ -771,10 +762,15 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
       resolvedText = uploaded.text
       uploadedFileCount = uploaded.uploadedCount
     }
-    // 非图片附件全部失败且没有图片/文本可发时同样中止，避免发出无附件的空消息
-    if ((pendingUploads?.length ?? 0) > 0 && uploadedFileCount === 0 && imageUrls.length === 0 && !resolvedText) {
-      return
-    }
+    // 与主会话同一道防线：全部失败阻断、部分失败二次确认、空内容拦截
+    const canSend = await guardUploadsBeforeSend({
+      imageCount: files.length,
+      imageUrls,
+      fileCount: pendingUploads?.length ?? 0,
+      uploadedFileCount,
+      resolvedText,
+    })
+    if (!canSend) return
 
     // 边路任务正在执行中：消息入队。不改动 sending——它由 phase 维护表示执行中，
     // 入队后若误清会导致停止按钮/loading 提前消失。
@@ -812,6 +808,8 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
     // 本次发送注册的监听统一收尾：被拒、发送失败、异常、保存确认、卸载都必须走到它，
     // 否则残留的 side_session_created 监听会被别处成功的创建命中，清掉本面板的输入框。
     let disposeSendListeners: (() => void) | null = null
+    // 等待 user_message_saved 的取消信号：卸载 / 创建被拒 / 超时都要能立刻收尾
+    const saveAbort = new AbortController()
     try {
       if (isFirstSideSend) {
         // 首次发送：先校验来源会话存在，再插乐观消息，避免校验失败后留下幽灵消息。
@@ -840,6 +838,7 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
           // user_message_saved，必须在这里收尾。否则占位 Tab 里留下两条发不出去的幽灵消息，
           // waitingForSave 还要干等 60 秒。
           rollbackOptimisticMessages(placeholderCacheKey.value, optimisticUserId)
+          saveAbort.abort()
           disposeSendListeners?.()
           pendingSendCleanup = null
           waitingForSave.value = false
@@ -854,6 +853,7 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
         }
         // 监听已挂上：await createSideSession 期间被卸载也要能摘掉
         pendingSendCleanup = () => {
+          saveAbort.abort()
           disposeSendListeners?.()
           waitingForSave.value = false
         }
@@ -920,35 +920,24 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
       return
     }
 
-    // 等待消息保存确认：仅在保存成功时清空输入（与主会话 ChatPanel 一致）；
+    // 等待消息保存确认：仅在保存成功时清空输入（与主会话同一实现）；
     // 超时/卸载只解锁 waitingForSave，保留草稿以便重试。
     // 发送前捕获 tabId：等待期间 tab 可能被关闭/晋升，保存成功后必须清掉对应草稿槽位。
     const draftKeyAtSend = props.tabId
-    let settled = false
-    let saveTimeoutId: ReturnType<typeof setTimeout>
-    let callbackId = ''
-    const finishWaiting = (clearInput: boolean) => {
-      if (settled) return
-      settled = true
-      pendingSendCleanup = null
-      clearTimeout(saveTimeoutId)
+    pendingSendCleanup = () => {
+      saveAbort.abort()
       disposeSendListeners?.()
-      offMessageSaved(callbackId)
       waitingForSave.value = false
-      // 成功路径由 phase 终态/watcher 收敛 sending；保存确认本身不释放忙碌态
-      if (clearInput) {
-        draftStore.clearDraft(draftKeyAtSend)
-        chatInputRef.value?.clearInput()
-      }
     }
-    callbackId = onMessageSaved((callbackSessionId: string) => {
-      if (expectedSavedSessionId != null && callbackSessionId === expectedSavedSessionId) {
-        finishWaiting(true)
-      }
-    })
-    pendingSendCleanup = () => finishWaiting(false)
-    // 设置超时，避免永远等待
-    saveTimeoutId = setTimeout(() => finishWaiting(false), 60000)
+    const saved = await waitForMessageSaved(() => expectedSavedSessionId, { signal: saveAbort.signal })
+    pendingSendCleanup = null
+    disposeSendListeners?.()
+    waitingForSave.value = false
+    // 成功路径由 phase 终态/watcher 收敛 sending；保存确认本身不释放忙碌态
+    if (saved) {
+      draftStore.clearDraft(draftKeyAtSend)
+      chatInputRef.value?.clearInput()
+    }
   } catch (e) {
     // connect/upload 等前置 await 异常；若已占用 sending（非执行中路径）则复位，避免忙碌卡住
     if (busyClaimed) sending.value = false
@@ -969,6 +958,8 @@ async function handleStop() {
     ElMessage.error('停止失败，网络连接不可用，请重试')
     return
   }
+  // 与主会话同一套本地收尾：清流式/思考/压缩状态并标记气泡已中止
+  finalizeCancelledSession(String(sid))
   sending.value = false
 }
 
@@ -984,6 +975,13 @@ async function handleRetryExecution() {
     return
   }
   sessionStore.ensureStreamingAssistantMessage(String(sid))
+  // 与主会话一致：等本轮执行收敛（终态/失败）后再收敛本地忙碌态
+  try {
+    await awaitExecutionSettled(String(sid))
+  } catch {
+    // 失败提示由流事件负责，这里只收敛本地状态
+  }
+  if (realSessionId.value === sid) sending.value = false
 }
 
 async function submitQuestionAnswer(requestId: string, answers: QuestionAnswer[], done: (ok: boolean) => void) {
@@ -1010,57 +1008,6 @@ function rollbackOptimisticMessages(cacheKey: string, optimisticUserId: string) 
   }
 }
 
-async function insertQueueMessage(queueId: string) {
-  if (!hasRealSession.value) return
-  if (!await insertMessage(String(realSessionId.value), queueId)) {
-    ElMessage.error('操作失败，网络连接不可用，请重试')
-  }
-}
-
-async function deleteQueueMessage(queueId: string): Promise<boolean> {
-  if (!hasRealSession.value) return false
-  if (!await wsDeleteQueueMessage(String(realSessionId.value), queueId)) {
-    ElMessage.error('操作失败，网络连接不可用，请重试')
-    return false
-  }
-  return true
-}
-
-async function reorderQueueMessage(queueId: string, targetIndex: number) {
-  if (!hasRealSession.value) return
-  if (!await wsReorderQueueMessage(String(realSessionId.value), queueId, targetIndex)) {
-    ElMessage.error('操作失败，网络连接不可用，请重试')
-  }
-}
-
-// --- 队列消息撤回编辑 ---
-
-async function handleQueueEdit(msg: QueueMessage) {
-  if (chatInputRef.value?.hasDraft()) {
-    try {
-      await ElMessageBox.confirm('输入框已有未发送内容，撤回将覆盖，是否继续？', '编辑队列消息', {
-        confirmButtonText: '覆盖并编辑',
-        cancelButtonText: '取消',
-        type: 'warning',
-      })
-    } catch {
-      return
-    }
-  }
-  let files: File[] = []
-  if (msg.images && msg.images.length > 0) {
-    try {
-      files = await fetchImagesAsFiles(msg.images)
-    } catch {
-      ElMessage.error('图片获取失败，已取消编辑')
-      return
-    }
-  }
-  const deleted = await deleteQueueMessage(msg.id)
-  if (!deleted) return
-  chatInputRef.value?.restoreContent(msg.content, files)
-  nextTick(() => chatInputRef.value?.focusInput())
-}
 </script>
 
 <style scoped>
