@@ -129,10 +129,42 @@ describe('createProjectProvider', () => {
     expect(result.error).toBe('项目名称非法')
   })
 
-  it('不实现下载与绝对路径能力（无会话不可用）', () => {
+  it('不实现下载能力（写与下载依附会话，无会话不可用）', () => {
     const provider = createProjectProvider('demo')
     expect(provider.downloadFile).toBeUndefined()
     expect(provider.downloadDirectory).toBeUndefined()
-    expect(provider.getAbsolutePath).toBeUndefined()
+  })
+})
+
+describe('getAbsolutePath（复制绝对路径）', () => {
+  it('CLOUD：目录拉取后以响应里的 workspaceRoot 为基准拼绝对路径', async () => {
+    mockApiGet({
+      entries: [{ name: 'a.txt', path: 'a.txt', isDirectory: false, size: 1, isSymlink: false }],
+      truncated: false,
+      workspaceRoot: '/opt/mao-data/workspace/42',
+    })
+    const provider = useWorkspaceFileProvider(ref('CLOUD'), ref(''), ref('42'), ref('demo')).value!
+    // 拉取前无根可依：原样返回相对路径，不拼出错路径
+    expect(provider.getAbsolutePath!('scripts/deploy.sh')).toBe('scripts/deploy.sh')
+    await provider.listDirectory('scripts')
+    expect(provider.getAbsolutePath!('scripts/deploy.sh')).toBe('/opt/mao-data/workspace/42/scripts/deploy.sh')
+    // 搜索响应同样刷新根，路径语义与目录一致
+    mockApiGet({ entries: [], truncated: false, workspaceRoot: '/opt/mao-data/workspace/42' })
+    await provider.searchFiles('deploy')
+    expect(provider.getAbsolutePath!('scripts/deploy.sh')).toBe('/opt/mao-data/workspace/42/scripts/deploy.sh')
+  })
+
+  it('project：以 project-directory 响应里的 workspaceRoot 为基准（新建态无会话也可用）', async () => {
+    mockApiGet({ entries: [], truncated: false, workspaceRoot: '/opt/mao-data/workspace/7/projects/demo' })
+    const provider = createProjectProvider('demo')
+    expect(provider.getAbsolutePath!('src/main.ts')).toBe('src/main.ts')
+    await provider.listDirectory('src')
+    expect(provider.getAbsolutePath!('src/main.ts')).toBe('/opt/mao-data/workspace/7/projects/demo/src/main.ts')
+  })
+
+  it('LOCAL：以 Electron 选中的 workspace 拼绝对路径（行为不变）', async () => {
+    ;(globalThis as any).window = { electronAPI: { listDirectory: vi.fn(async () => ({ entries: [], truncated: false })) } }
+    const provider = useWorkspaceFileProvider(ref('LOCAL'), ref('/tmp/ws'), ref(''), ref('')).value!
+    expect(provider.getAbsolutePath!('scripts/deploy.sh')).toBe('/tmp/ws/scripts/deploy.sh')
   })
 })

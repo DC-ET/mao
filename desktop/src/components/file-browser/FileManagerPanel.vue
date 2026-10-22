@@ -164,7 +164,17 @@
         <button class="fm-text-btn" @click="beginCreate('dir')"><el-icon><FolderAdd /></el-icon>新建文件夹</button>
         <button class="fm-text-btn" :disabled="selectedCount === 0" @click="handleDelete"><el-icon><Delete /></el-icon>删除</button>
         <button class="fm-text-btn" :disabled="selectedCount === 0" @click="handleDownload"><el-icon><Download /></el-icon>下载</button>
-        <button class="fm-text-btn" :disabled="selectedCount === 0" @click="handleCopyPath"><el-icon><DocumentCopy /></el-icon>复制路径</button>
+        <el-dropdown trigger="click" :disabled="selectedCount === 0" @command="onCopyPathCommand">
+          <button class="fm-text-btn" :disabled="selectedCount === 0">
+            <el-icon><DocumentCopy /></el-icon>复制路径<el-icon><ArrowDown /></el-icon>
+          </button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="absolute">复制绝对路径</el-dropdown-item>
+              <el-dropdown-item command="relative">复制相对路径</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </div>
     </div>
 
@@ -190,7 +200,8 @@
       @paste="handlePaste"
       @download="handleDownload"
       @download-zip="handleDownloadZip"
-      @copy-path="handleCopyPath"
+      @copy-absolute="handleCopyAbsolutePath"
+      @copy-relative="handleCopyRelativePath"
       @add-to-chat="handleAddToChat"
       @locate="handleLocate"
       @select-all="selectAll"
@@ -202,7 +213,7 @@
 import { computed, onActivated, onMounted, reactive, ref, toRef } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  ArrowLeft, ArrowRight, CaretBottom, CaretTop, Delete, Document, DocumentAdd, DocumentCopy,
+  ArrowLeft, ArrowRight, ArrowDown, CaretBottom, CaretTop, Delete, Document, DocumentAdd, DocumentCopy,
   Download, FolderAdd, FolderOpened, Grid, List, Refresh, Search, Sort, Upload,
 } from '@element-plus/icons-vue'
 import type { FileNode } from '../../types/file-browser'
@@ -560,11 +571,23 @@ async function handleDownloadZip() {
   if (res && !res.ok) ElMessage.error(res.error || '下载失败')
 }
 
-function handleCopyPath() {
+function handleCopyAbsolutePath() {
   const paths = selectedList.value
   if (paths.length === 0) return
   const abs = paths.map((p) => props.provider?.getAbsolutePath?.(p) ?? p)
   copyText(abs.join('\n'))
+}
+
+function handleCopyRelativePath() {
+  const paths = selectedList.value
+  if (paths.length === 0) return
+  copyText(paths.join('\n'))
+}
+
+/** 底栏「复制路径」下拉：绝对 / 相对两条命令共用同一选区口径 */
+function onCopyPathCommand(command: 'absolute' | 'relative') {
+  if (command === 'absolute') handleCopyAbsolutePath()
+  else handleCopyRelativePath()
 }
 
 function handleAddToChat() {

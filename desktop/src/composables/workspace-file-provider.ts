@@ -26,6 +26,8 @@ export interface DirectoryResult {
   entries?: DirectoryEntry[]
   truncated?: boolean
   error?: string
+  /** 服务端工作区绝对根路径：条目 path 相对它；CLOUD provider 据此实现 getAbsolutePath */
+  workspaceRoot?: string
 }
 
 export interface ReadFileResult {
@@ -41,6 +43,8 @@ export interface FileSearchResult {
   entries?: DirectoryEntry[]
   truncated?: boolean
   error?: string
+  /** 同 DirectoryResult.workspaceRoot：搜索结果 path 的相对基准 */
+  workspaceRoot?: string
 }
 
 export interface PreviewFileResult {
@@ -64,6 +68,12 @@ export interface WorkspaceFileProvider {
    * 一次调用返回全部匹配，避免前端逐层拉目录造成请求风暴。
    */
   searchFiles(pattern: string, limit?: number): Promise<FileSearchResult>
+  /**
+   * 把工作区相对路径拼成绝对路径（复制绝对路径 / 添加到聊天 / 在 Finder 中打开）。
+   * 本地 provider 用 Electron 选的 workspace；CLOUD / project provider 以最近一次
+   * 目录 / 搜索响应里的 workspaceRoot 为基准——UI 只在条目渲染后（即至少成功拉取过
+   * 一次）才会触发复制，根未就绪时原样返回相对路径而非拼出错误路径。
+   */
   getAbsolutePath?(relativePath: string): string
   /** 下载单个文件到浏览器（仅 CLOUD 模式实现）。 */
   downloadFile?(relativePath: string, suggestedName: string): Promise<DownloadResult>
@@ -187,6 +197,13 @@ export function createCloudProvider(sessionId: string): WorkspaceFileProvider {
     }
   }
 
+  let workspaceRoot: string | undefined
+  /** 目录 / 搜索响应携带的 workspaceRoot 既回传调用方也缓存下来供 getAbsolutePath 使用 */
+  const withRoot = <T extends { workspaceRoot?: string }>(result: T): T => {
+    if (result.workspaceRoot) workspaceRoot = result.workspaceRoot
+    return result
+  }
+
   return {
     async listDirectory(relativeDir: string) {
       try {
@@ -196,7 +213,7 @@ export function createCloudProvider(sessionId: string): WorkspaceFileProvider {
         // 后端字段是 mtimeMs，前端 DirectoryEntry 用 mtime；不做这层映射，
         // 文件管理器的「修改时间」列会恒显未知、按时间排序退化成按名称。
         const raw: CloudDirectoryEntry[] = data?.entries ?? []
-        return {
+        return withRoot({
           entries: raw.map(({ name, path, isDirectory, size, isSymlink, mtimeMs }) => ({
             name,
             path,
@@ -206,7 +223,8 @@ export function createCloudProvider(sessionId: string): WorkspaceFileProvider {
             ...(typeof mtimeMs === 'number' ? { mtime: mtimeMs } : {}),
           })),
           truncated: data?.truncated ?? false,
-        }
+          ...(typeof data?.workspaceRoot === 'string' ? { workspaceRoot: data.workspaceRoot } : {}),
+        })
       } catch (e: any) {
         return { error: e.message || '读取目录失败' }
       }
@@ -237,10 +255,11 @@ export function createCloudProvider(sessionId: string): WorkspaceFileProvider {
         const { data } = await api.get('/files/workspace-search', {
           params: { sessionId: numericSessionId, pattern, limit },
         })
-        return {
+        return withRoot({
           entries: data?.entries ?? [],
           truncated: data?.truncated ?? false,
-        }
+          ...(typeof data?.workspaceRoot === 'string' ? { workspaceRoot: data.workspaceRoot } : {}),
+        })
       } catch (e: any) {
         return { error: e.message || '搜索失败' }
       }
@@ -270,24 +289,34 @@ export function createCloudProvider(sessionId: string): WorkspaceFileProvider {
         return { error: e?.message || 'PDF 预览失败' }
       }
     },
+    getAbsolutePath(relativePath: string) {
+      return workspaceRoot ? resolveWorkspaceFilePath(workspaceRoot, relativePath) : relativePath
+    },
   }
 }
 
 /**
  * 新建态（会话未创建）CLOUD 项目 provider：按 projectKey 走后端 project 只读端点族。
- * 不实现 getAbsolutePath / downloadFile / downloadDirectory——写与下载都依附于会话，无会话不可用。
+ * 不实现 downloadFile / downloadDirectory——写与下载都依附于会话，无会话不可用；
+ * getAbsolutePath 以 project 目录 / 搜索响应里的 workspaceRoot 为基准（只读信息，无需会话）。
  */
 export function createProjectProvider(projectKey: string): WorkspaceFileProvider {
+  let workspaceRoot: string | undefined
+  const withRoot = <T extends { workspaceRoot?: string }>(result: T): T => {
+    if (result.workspaceRoot) workspaceRoot = result.workspaceRoot
+    return result
+  }
   return {
     async listDirectory(relativeDir: string) {
       try {
         const { data } = await api.get('/files/project-directory', {
           params: { projectKey, dir: relativeDir || undefined },
         })
-        return {
+        return withRoot({
           entries: data?.entries ?? [],
           truncated: data?.truncated ?? false,
-        }
+          ...(typeof data?.workspaceRoot === 'string' ? { workspaceRoot: data.workspaceRoot } : {}),
+        })
       } catch (e: any) {
         return { error: e.message || '读取目录失败' }
       }
@@ -318,10 +347,11 @@ export function createProjectProvider(projectKey: string): WorkspaceFileProvider
         const { data } = await api.get('/files/project-search', {
           params: { projectKey, pattern, limit },
         })
-        return {
+        return withRoot({
           entries: data?.entries ?? [],
           truncated: data?.truncated ?? false,
-        }
+          ...(typeof data?.workspaceRoot === 'string' ? { workspaceRoot: data.workspaceRoot } : {}),
+        })
       } catch (e: any) {
         return { error: e.message || '搜索失败' }
       }
@@ -344,6 +374,9 @@ export function createProjectProvider(projectKey: string): WorkspaceFileProvider
       } catch (e: any) {
         return { error: e?.message || 'PDF 预览失败' }
       }
+    },
+    getAbsolutePath(relativePath: string) {
+      return workspaceRoot ? resolveWorkspaceFilePath(workspaceRoot, relativePath) : relativePath
     },
   }
 }

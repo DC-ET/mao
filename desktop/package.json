@@ -1,7 +1,7 @@
 {
   "name": "desktop",
   "private": true,
-  "version": "0.0.333",
+  "version": "0.0.334",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -13,6 +13,7 @@
     "preview": "vite preview",
     "test:unit": "vitest run && node --test electron/gitOperations.test.cjs electron/localShell.test.cjs electron/serverConfig.test.cjs",
     "test:unit:watch": "vitest",
+    "test:bugcheck": "vitest run --config vitest.bugcheck.config.ts",
     "postinstall": "node ./node_modules/electron-rebuild/lib/src/cli.js -f -w node-pty"
   },
   "dependencies": {

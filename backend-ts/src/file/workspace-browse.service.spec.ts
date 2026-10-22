@@ -1,5 +1,5 @@
 import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
 import { PathSandbox } from '../harness/safety/path-sandbox.js';
@@ -31,6 +31,8 @@ describe('WorkspaceBrowseService.searchFiles', () => {
     expect(result.truncated).toBe(false);
     expect(result.entries.map((e) => e.path)).toEqual(['amber-acg/src/main/UserService.java']);
     expect(result.entries[0].size).toBe(1);
+    // 结果 path 相对工作区根，workspaceRoot 供前端拼绝对路径（复制绝对路径）
+    expect(result.workspaceRoot).toBe(resolve(ws));
   });
 
   it('skipsGitNodeModulesAndSymlinkedDirs', () => {
@@ -113,5 +115,15 @@ describe('WorkspaceBrowseService.listDirectory', () => {
     expect(result.entries.map((e) => e.name)).toEqual(['zdir', 'a.txt', 'link.txt']);
     expect(result.entries.find((e) => e.name === 'link.txt')?.isSymlink).toBe(true);
     expect(result.entries.find((e) => e.name === 'zdir')?.isSymlink).toBe(false);
+  });
+
+  it('returnsWorkspaceRootAsAbsolutePathOfSessionWorkspace', () => {
+    const { service, ws } = createService();
+    writeFileSync(join(ws, 'a.txt'), 'x');
+    const result = service.listDirectory(ws, '');
+    expect(result.workspaceRoot).toBe(resolve(ws));
+    // 子目录同样以工作区根为基准，不随 dir 参数漂移
+    mkdirSync(join(ws, 'sub'));
+    expect(service.listDirectory(ws, 'sub').workspaceRoot).toBe(resolve(ws));
   });
 });

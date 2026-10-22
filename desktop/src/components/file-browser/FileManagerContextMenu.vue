@@ -13,7 +13,8 @@
         <div class="context-menu-item" @click="$emit('copy')"><el-icon><DocumentCopy /></el-icon><span>复制</span></div>
         <div class="context-menu-divider"></div>
         <div class="context-menu-item" @click="$emit('download')"><el-icon><Download /></el-icon><span>下载（{{ selectedCount }} 项）</span></div>
-        <div class="context-menu-item" @click="$emit('copy-path')"><el-icon><DocumentCopy /></el-icon><span>复制绝对路径</span></div>
+        <div class="context-menu-item" @click="$emit('copy-absolute')"><el-icon><DocumentCopy /></el-icon><span>复制绝对路径</span></div>
+        <div class="context-menu-item" @click="$emit('copy-relative')"><el-icon><DocumentCopy /></el-icon><span>复制相对路径</span></div>
         <div class="context-menu-item" @click="$emit('add-to-chat')"><el-icon><ChatDotRound /></el-icon><span>添加到聊天</span></div>
       </template>
       <template v-else-if="entry">
@@ -31,7 +32,8 @@
         <div class="context-menu-divider"></div>
         <div v-if="entry.isDirectory" class="context-menu-item" @click="$emit('download-zip')"><el-icon><Download /></el-icon><span>下载此目录（zip）</span></div>
         <div v-else class="context-menu-item" @click="$emit('download')"><el-icon><Download /></el-icon><span>下载此文件</span></div>
-        <div class="context-menu-item" @click="$emit('copy-path')"><el-icon><DocumentCopy /></el-icon><span>复制绝对路径</span></div>
+        <div class="context-menu-item" @click="$emit('copy-absolute')"><el-icon><DocumentCopy /></el-icon><span>复制绝对路径</span></div>
+        <div class="context-menu-item" @click="$emit('copy-relative')"><el-icon><DocumentCopy /></el-icon><span>复制相对路径</span></div>
         <div class="context-menu-item" @click="$emit('add-to-chat')"><el-icon><ChatDotRound /></el-icon><span>添加到聊天</span></div>
         <div class="context-menu-item" @click="$emit('locate')"><el-icon><Position /></el-icon><span>在文件树中显示</span></div>
       </template>
@@ -77,7 +79,8 @@ const emit = defineEmits<{
   paste: []
   download: []
   'download-zip': []
-  'copy-path': []
+  'copy-absolute': []
+  'copy-relative': []
   'add-to-chat': []
   locate: []
   'select-all': []

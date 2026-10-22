@@ -38,11 +38,15 @@ export interface DirectoryEntryDTO {
 export interface DirectoryListingDTO {
   entries: DirectoryEntryDTO[];
   truncated: boolean;
+  /** 工作区绝对根路径（服务端）：条目 path 是相对它的相对路径，供前端拼「复制绝对路径」 */
+  workspaceRoot: string;
 }
 
 export interface WorkspaceSearchDTO {
   entries: DirectoryEntryDTO[];
   truncated: boolean;
+  /** 同 DirectoryListingDTO.workspaceRoot：搜索结果 path 的相对基准 */
+  workspaceRoot: string;
 }
 
 export interface FileContentDTO {
@@ -124,7 +128,7 @@ export class WorkspaceBrowseService {
       }
       return a.name.localeCompare(b.name, undefined, { sensitivity: 'accent' });
     });
-    return { entries, truncated };
+    return { entries, truncated, workspaceRoot };
   }
 
   /**
@@ -197,7 +201,7 @@ export class WorkspaceBrowseService {
       }
     }
     entries.sort((a, b) => a.path.localeCompare(b.path, undefined, { sensitivity: 'accent' }));
-    return { entries, truncated };
+    return { entries, truncated, workspaceRoot: rootPath };
   }
 
   downloadFile(sessionWorkspace: string, relativePath: string | null | undefined): DownloadResult {
