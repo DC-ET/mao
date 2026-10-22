@@ -399,8 +399,7 @@ test.describe('Desktop Theme', () => {
     await page.goto('/settings/profile')
     await expect(page.getByRole('heading', { name: '个人信息' })).toBeVisible({ timeout: 15_000 })
 
-    // 主题色控件在设置页内，顶栏不再有切换图标
-    await expect(page.locator('.nav-right .commands-toggle')).toBeVisible()
+    // 主题色控件在设置页内，顶栏不再有切换图标（0.0.274 起已从头像菜单与顶栏移除）
     const themeCard = page.locator('.theme-card')
     await expect(themeCard).toBeVisible()
     await expect(themeCard.getByRole('radio', { name: '深色' })).toBeVisible()
@@ -620,11 +619,11 @@ test.describe('Desktop - Settings entry', () => {
     await mockLoggedInDesktopApi(page)
     await page.goto('/')
     await expect(page.getByRole('heading', { name: '今天想完成什么？' })).toBeVisible({ timeout: 15_000 })
-    // 设置页内齿轮入口隐藏，避免设置页顶栏重复一个进入设置页的图标
-    await expect(page.locator('.settings-toggle')).toHaveCount(0)
     await page.getByRole('button', { name: '用户菜单' }).click()
     await page.getByRole('menuitem', { name: '设置' }).click()
     await expect(page.locator('.settings-layout')).toBeVisible({ timeout: 10_000 })
+    // 设置页内齿轮入口隐藏，避免设置页顶栏重复一个进入设置页的图标
+    await expect(page.locator('.settings-toggle')).toHaveCount(0)
     await expect(page.locator('.settings-title')).toHaveText('设置')
   })
 
