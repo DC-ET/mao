@@ -22,6 +22,8 @@ export interface LocatedMessagePage {
 export function useMessageLocate(options: {
   sessionId: () => string | null | undefined;
   container: Ref<HTMLElement | undefined | null>;
+  /** 定位前回调：跳到某条历史消息属于「显式暂停跟随」，避免后续内容增长把视野拽回底部 */
+  onLocate?: () => void;
 }) {
   const route = useRoute();
   const router = useRouter();
@@ -31,6 +33,7 @@ export function useMessageLocate(options: {
   let consuming = false;
 
   function flash(messageId: string) {
+    options.onLocate?.()
     flashId.value = messageId;
     if (flashTimer != null) window.clearTimeout(flashTimer);
     flashTimer = window.setTimeout(() => {

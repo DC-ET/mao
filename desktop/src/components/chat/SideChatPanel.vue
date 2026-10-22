@@ -2,7 +2,8 @@
   <div class="side-chat-panel">
     <!-- 消息列表 -->
     <div class="messages" ref="messagesContainer"
-      @touchstart.passive="handleTouchStart" @touchmove.passive="handleTouchMove">
+      @touchstart.passive="handleTouchStart" @touchmove.passive="handleTouchMove"
+      @pointerdown="handlePointerDown">
       <div v-if="sideHistoryAnchored" class="history-anchor-bar">
         <span>正在查看较早的消息</span>
         <button type="button" class="history-anchor-back" @click="backToLatestSide">回到最新</button>
@@ -291,6 +292,7 @@ function openShareDialog() {
 const { flashId: locateFlashId } = useMessageLocate({
   sessionId: () => hasRealSession.value ? String(realSessionId.value) : null,
   container: messagesContainer,
+  onLocate: () => pauseFollow(),
 })
 provide(LOCATE_FLASH_KEY, locateFlashId)
 const sideHistoryAnchored = computed(() => hasRealSession.value && sessionStore.isHistoryAnchored(String(realSessionId.value)))
@@ -674,40 +676,13 @@ async function fetchQueue() {
 
 // --- 自动滚动：与主聊天共用 useChatScroll（同一套手势判定与定位时序） ---
 const {
-  scrollToBottom, resumeFollow, handleMarkdownRendered,
-  handleWheel, handleTouchStart, handleTouchMove, handleScroll,
+  scrollToBottom, resumeFollow, pauseFollow, handleMarkdownRendered,
+  handleWheel, handleTouchStart, handleTouchMove, handlePointerDown, handleScroll,
   resetScrollBaseline, dispose: disposeScroll,
 } = useChatScroll(messagesContainer, {
   loadOlder: loadOlderMessages,
   canLoadOlder: () => sideMessageHasMore.value && !sideMessageLoadingOlder.value,
 })
-
-function buildScrollAnchor(): string {
-  const msgs = displayMessages.value
-  const last = msgs[msgs.length - 1]
-  const segmentStructure = last?.segments?.map(s => {
-    switch (s.type) {
-      case 'thinking': return 't'
-      case 'text': return 'x'
-      case 'tool': return `o:${s.callId}`
-    }
-  }).join(',') || ''
-  return [
-    msgs.length,
-    last?.content?.length || 0,
-    segmentStructure,
-    last?.toolCalls?.map(t => t.status).join(',') || '',
-    sending.value,
-    showTypingIndicator.value,
-    sidePendingQuestions.value.length,
-    sessionStore.getLlmRetry(hasRealSession.value ? String(realSessionId.value) : '') ? 'retry' : '',
-  ].join('|')
-}
-
-// 消息 / 流式状态变化时自动滚动（flush:'post' 确保 DOM 已更新）
-watch(buildScrollAnchor, () => {
-  scrollToBottom()
-}, { flush: 'post' })
 
 onMounted(async () => {
   const el = messagesContainer.value

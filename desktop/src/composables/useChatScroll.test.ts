@@ -33,9 +33,46 @@ async function frameSettled() {
   await vi.advanceTimersByTimeAsync(16)
 }
 
+/** 模拟滚轮上滑手势：打开手势窗口并立即停止跟随 */
+function gestureUp(s: ReturnType<typeof setup>) {
+  s.handleWheel({ deltaY: -1 } as WheelEvent)
+}
+
+/** 等待跟随调度落地（50ms 最小间隔 + rAF） */
+async function settleFollow() {
+  await nextTick()
+  await vi.advanceTimersByTimeAsync(120)
+}
+
+/** 完成一次会话恢复并等 300ms 恢复窗口结束，得到真实收发消息时的稳定态 */
+async function settledAtBottom(s: ReturnType<typeof setup>) {
+  s.beginRestore()
+  s.completeRestore(s.beginRestore())
+  await frameSettled()
+  await vi.advanceTimersByTimeAsync(400)
+  expect(s.el.scrollTop).toBe(1500)
+}
+
+
+function stubResizeObserver() {
+  const callbacks: Array<() => void> = []
+  class FakeResizeObserver {
+    constructor(cb: () => void) { callbacks.push(cb) }
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  vi.stubGlobal('ResizeObserver', FakeResizeObserver as unknown as typeof ResizeObserver)
+  return {
+    trigger() { callbacks.forEach(cb => cb()) },
+    restore() { vi.unstubAllGlobals() },
+  }
+}
+
 beforeEach(() => {
   vi.useFakeTimers()
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => setTimeout(() => callback(0), 16))
+  vi.stubGlobal('cancelAnimationFrame', (id: number) => clearTimeout(id))
 })
 afterEach(() => {
   vi.useRealTimers()
@@ -106,6 +143,7 @@ describe('会话切换自动定位', () => {
     const s = setup()
     let resolve!: (loaded: boolean) => void
     s.loadOlder.mockImplementation(() => new Promise(r => { resolve = r }))
+    gestureUp(s)
     s.el.scrollTop = 50
     s.handleScroll()
     expect(s.loadOlder).toHaveBeenCalledOnce()
@@ -119,6 +157,7 @@ describe('会话切换自动定位', () => {
 
   it('正常分页保留顶部偏移，失败时不改位置', async () => {
     const s = setup()
+    gestureUp(s)
     s.el.scrollTop = 50
     s.loadOlder.mockImplementation(async () => { s.el.scrollHeight += 1000; return true })
     s.handleScroll()
@@ -147,15 +186,6 @@ describe('会话切换自动定位', () => {
 })
 
 describe('非手势滚动不误判上滑（发送消息时消息区不跳顶）', () => {
-  /** 完成一次会话恢复并等 300ms 恢复窗口结束，得到真实收发消息时的稳定态 */
-  async function settledAtBottom(s: ReturnType<typeof setup>) {
-    s.beginRestore()
-    s.completeRestore(s.beginRestore())
-    await frameSettled()
-    await vi.advanceTimersByTimeAsync(400)
-    expect(s.el.scrollTop).toBe(1500)
-  }
-
   /** 发送消息：QueuePanel 等兄弟面板出现，clientHeight 被压缩而 scrollTop 不变 */
   it('兄弟面板压缩 clientHeight 不停止跟随，仍能定位到底部', async () => {
     const s = setup()
@@ -192,6 +222,7 @@ describe('非手势滚动不误判上滑（发送消息时消息区不跳顶）'
     await settledAtBottom(s)
 
     // 用户上滑到历史中：内部已停止跟随（边路滚动条隐藏，用户看不出与底部的差距）
+    gestureUp(s)
     s.el.scrollTop = 800
     s.handleScroll()
     expect(s.userScrolledUp.value).toBe(true)
@@ -211,6 +242,7 @@ describe('非手势滚动不误判上滑（发送消息时消息区不跳顶）'
     await settledAtBottom(s)
 
     s.el.clientHeight = 300
+    gestureUp(s)
     s.el.scrollTop = 800
     s.handleScroll()
     expect(s.userScrolledUp.value).toBe(true)
@@ -234,6 +266,7 @@ describe('非手势滚动不误判上滑（发送消息时消息区不跳顶）'
     expect(s.el.scrollTop).toBe(1900)
 
     // 用户真的主动上滑：位置向上移动超过容差 → 停止跟随
+    gestureUp(s)
     s.el.scrollTop = 1800
     s.handleScroll()
     expect(s.userScrolledUp.value).toBe(true)
@@ -261,6 +294,7 @@ describe('非手势滚动不误判上滑（发送消息时消息区不跳顶）'
     await settledAtBottom(s)
 
     // 用户已上滑到历史中，触发分页
+    gestureUp(s)
     s.el.scrollTop = 50
     s.handleScroll()
     expect(s.userScrolledUp.value).toBe(true)
@@ -315,11 +349,114 @@ describe('非手势滚动不误判上滑（发送消息时消息区不跳顶）'
     expect(s.el.scrollTop).toBe(1100)
 
     // 无论如何，用户真的主动上滑必须仍然生效
+    gestureUp(s)
     s.el.scrollTop = 400
     s.handleScroll()
     expect(s.userScrolledUp.value).toBe(true)
     s.scrollToBottom()
     await frameSettled()
     expect(s.el.scrollTop).toBe(400)
+  })
+})
+
+describe('手势窗口与尺寸驱动', () => {
+  it('ResizeObserver 尺寸变化直接驱动贴底（不再依赖 anchor 枚举）', async () => {
+    const ro = stubResizeObserver()
+    const s = setup()
+    try {
+      await settledAtBottom(s)
+      // 流式内容变高：没有任何 anchor 字段变化，只靠尺寸观察
+      s.el.scrollHeight = 2400
+      ro.trigger()
+      await settleFollow()
+      expect(s.el.scrollTop).toBe(1900)
+    } finally {
+      ro.restore()
+    }
+  })
+
+  it('容器被压缩（队列 / 审批面板出现）后仍贴到新的底部', async () => {
+    const ro = stubResizeObserver()
+    const s = setup()
+    try {
+      await settledAtBottom(s)
+      s.el.clientHeight = 300
+      ro.trigger()
+      await settleFollow()
+      expect(s.el.scrollTop).toBe(1700)
+    } finally {
+      ro.restore()
+    }
+  })
+
+  it('窗口外的 scroll（布局钳制 / 滚动锚定）不关闭跟随', async () => {
+    const s = setup()
+    await settledAtBottom(s)
+    // 内容变高后浏览器把位置钳制/锚定到中间：没有手势，不得据此停止跟随
+    s.el.scrollHeight = 2400
+    s.el.scrollTop = 700
+    s.handleScroll()
+    expect(s.userScrolledUp.value).toBe(false)
+  })
+
+  it('手势窗口内的上滑仍然立即停止跟随', async () => {
+    const s = setup()
+    await settledAtBottom(s)
+    gestureUp(s)
+    s.el.scrollTop = 1200
+    s.handleScroll()
+    expect(s.userScrolledUp.value).toBe(true)
+  })
+
+  it('上滑会取消已排队的定位帧，不把正在阅读的用户拽回底部', async () => {
+    const ro = stubResizeObserver()
+    const s = setup()
+    try {
+      await settledAtBottom(s)
+      s.el.scrollHeight = 2400
+      ro.trigger()                                // 内容变高，排入一次定位
+      gestureUp(s)                                // 用户在同一帧上滑
+      await settleFollow()
+      expect(s.userScrolledUp.value).toBe(true)
+      expect(s.el.scrollTop).toBe(1500)           // 停在原处，没有被拉到底
+    } finally {
+      ro.restore()
+    }
+  })
+
+  it('距底超过两屏时不强行拉回（用户已真正离开底部）', async () => {
+    const ro = stubResizeObserver()
+    const s = setup()
+    try {
+      await settledAtBottom(s)
+      s.el.scrollHeight = 6000
+      s.el.scrollTop = 100
+      ro.trigger()
+      await settleFollow()
+      expect(s.el.scrollTop).toBe(100)
+    } finally {
+      ro.restore()
+    }
+  })
+
+  it('定位到历史消息后暂停跟随（搜索跳转不被后续增长拽回）', async () => {
+    const s = setup()
+    await settledAtBottom(s)
+    ;(s.el as unknown as { querySelector: () => null }).querySelector = () => null
+    s.scrollToMessage('42')
+    await frame()
+    expect(s.userScrolledUp.value).toBe(true)
+    // 空 id（回到最新的第一步）不得误伤跟随
+    s.resumeFollow()
+    await frameSettled()
+    s.scrollToMessage('')
+    expect(s.userScrolledUp.value).toBe(false)
+  })
+
+  it('ctrl+wheel（双指缩放）不算上滑', async () => {
+    const s = setup()
+    await settledAtBottom(s)
+    s.handleWheel({ deltaY: -100, ctrlKey: true } as WheelEvent)
+    expect(s.userScrolledUp.value).toBe(false)
   })
 })

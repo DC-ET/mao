@@ -24,7 +24,19 @@ describe('对话区自动滚动共用 useChatScroll', () => {
       expect(src, `${name} 未复用 useChatScroll`).toContain('useChatScroll(messagesContainer')
       expect(src, `${name} 仍自带 userScrolledUp 状态`).not.toContain('const userScrolledUp = ref(false)')
       expect(src, `${name} 仍自带 scrollToBottom 实现`).not.toContain('function scrollToBottom()')
+      // 触发源统一由 ResizeObserver 观察，禁止再回到「枚举高度来源」的 anchor 字符串
+      expect(src, `${name} 仍在用 buildScrollAnchor 枚举触发源`).not.toContain('buildScrollAnchor')
     }
+  })
+
+  it('useChatScroll 用 ResizeObserver 观察尺寸，手势窗口只认手势后的 scroll', () => {
+    expect(useChatScroll).toContain('new ResizeObserver(')
+    expect(useChatScroll).toContain('GESTURE_WINDOW_MS')
+    expect(useChatScroll).toContain('new MutationObserver(')
+    // 程序写入与恢复期替换缓存产生的 scroll 必须被吞掉
+    expect(useChatScroll).toContain('if (programmatic || (restoring && !userScrolledUp.value))')
+    // 上滑要取消已排队的定位帧，避免「上滑第一下被吃掉」
+    expect(useChatScroll).toContain('cancelScheduledFollow()')
   })
 
   it('useChatScroll 暴露 resumeFollow：显式恢复跟随（发送 / 切回 Tab / 回到最新）', () => {
@@ -33,7 +45,13 @@ describe('对话区自动滚动共用 useChatScroll', () => {
     const body = fnBody(useChatScroll, 'function resumeFollow()')
     expect(body).toContain('userScrolledUp.value = false')
     expect(body).toContain('scrollToBottom()')
-    expect(useChatScroll).toContain('resumeFollow, scrollToMessage')
+    expect(useChatScroll).toContain('resumeFollow, pauseFollow: stopFollowing, scrollToMessage')
+  })
+
+  it('搜索定位属于显式暂停跟随：两个可定位面板都接入 onLocate', () => {
+    for (const [name, src] of [['ChatPanel', chatPanel], ['SideChatPanel', sidePanel]] as const) {
+      expect(src, `${name} 未把定位与跟随联动（会被后续增长拽回底部）`).toContain('onLocate')
+    }
   })
 
   it('边路发送链路（首发 / 普通 / 入队）都恢复跟随并补定位', () => {
@@ -51,6 +69,7 @@ describe('对话区自动滚动共用 useChatScroll', () => {
     for (const [name, src] of [['SideChatPanel', sidePanel], ['SubagentChatPanel', subagentPanel]] as const) {
       expect(src, `${name} 未绑定 wheel`).toContain("addEventListener('wheel', handleWheel")
       expect(src, `${name} 未绑定触摸手势`).toContain('handleTouchStart')
+      expect(src, `${name} 未绑定按压手势（中键自动滚动等）`).toContain('handlePointerDown')
       expect(src, `${name} 未解绑 wheel`).toContain("removeEventListener('wheel', handleWheel")
       expect(src, `${name} 未释放滚动生命周期`).toContain('disposeScroll()')
       expect(src, `${name} 未在切回时恢复跟随`).toContain('resumeFollow()')

@@ -6,7 +6,8 @@
     </div>
 
     <div class="messages" ref="messagesContainer"
-      @touchstart.passive="handleTouchStart" @touchmove.passive="handleTouchMove">
+      @touchstart.passive="handleTouchStart" @touchmove.passive="handleTouchMove"
+      @pointerdown="handlePointerDown">
       <div v-if="displayMessages.length === 0 && !sending" class="subagent-empty">
         <el-icon :size="40" class="empty-icon"><Opportunity /></el-icon>
         <p>等待子代理开始输出…</p>
@@ -264,28 +265,12 @@ async function fetchMessages() {
 // 本面板只读、无历史分页，故 loadOlder 恒为 false（分页入口自然关闭）。
 const {
   scrollToBottom, resumeFollow, handleMarkdownRendered,
-  handleWheel, handleTouchStart, handleTouchMove, handleScroll,
+  handleWheel, handleTouchStart, handleTouchMove, handlePointerDown, handleScroll,
   resetScrollBaseline, dispose: disposeScroll,
 } = useChatScroll(messagesContainer, {
   loadOlder: async () => false,
   canLoadOlder: () => false,
 })
-
-// 执行过程中流式内容持续增长、工具状态变化、打字指示切换等都会影响可见高度，统一驱动自动滚动
-watch(
-  () => {
-    const msgs = displayMessages.value
-    const last = msgs[msgs.length - 1]
-    return [
-      msgs.length,
-      last?.content?.length || 0,
-      last?.toolCalls?.map(t => t.status).join(',') || '',
-      sessionStore.isSessionStreaming(sid.value) ? 's' : '',
-      showTypingIndicator.value,
-    ].join('|')
-  },
-  () => { void scrollToBottom() }
-)
 
 // 重试提示出现/更新时滚动到底部（与主会话行为对齐）
 watch(

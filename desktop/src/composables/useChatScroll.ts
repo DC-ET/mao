@@ -1,12 +1,36 @@
-import { nextTick, ref, type Ref } from 'vue'
+import { nextTick, ref, watch, type Ref } from 'vue'
 import { scrollElementToMessage } from '../components/search/search-highlight'
 
 /** 判定「用户上滑」时离底部的像素阈值（含一点容差，避免亚像素抖动） */
 const NEAR_BOTTOM = 80
 /** scrollTop 向上移动超过该像素数才算主动上滑（容忍 1-2px 的回弹） */
 const SCROLL_UP_TOLERANCE = 2
+/**
+ * 手势窗口：只有手势（滚轮/触摸/按键/鼠标按下）之后这段时间内派发的 scroll，
+ * 才允许改变「是否跟随」。窗口外一切 scrollTop 位移都是布局产物——浏览器钳制、
+ * 滚动锚定、兄弟面板挤压、内容塌陷——不得据此关闭跟随。
+ */
+const GESTURE_WINDOW_MS = 250
+/** 两次自动定位的最小间隔：合并流式高频重排，降低与用户手势抢帧的概率 */
+const FOLLOW_MIN_INTERVAL_MS = 50
+/**
+ * 自动补位的最大距底距离（倍屏）。超过说明用户已经真正离开底部，不再强行拉回；
+ * 「跟随中但底部被面板挤走」通常只有几十到几百 px，远小于该上限。
+ */
+const MAX_FOLLOW_DISTANCE_RATIO = 2
 
-/** 主聊天的滚动生命周期；每次切换都作废旧帧、恢复定时器和分页定位。 */
+/**
+ * 对话区滚动控制器：主会话 / 边路任务 / 子代理共用同一套实现。
+ *
+ * 状态只有两个来源，不再从 scroll 事件反推意图：
+ * - 用户手势（滚轮上滑、触摸下拉）→ 停止跟随；
+ * - 用户手势结束时已回到近底部 → 恢复跟随；
+ * - 显式动作（发送消息、切回 Tab、点「回到最新」）→ resumeFollow()。
+ *
+ * 触发定位也不靠枚举事件，而是 ResizeObserver 观察容器与内容子元素的尺寸：
+ * 队列面板/审批卡/软键盘压缩 clientHeight、流式文本/图片/工具卡片撑高内容，
+ * 都会走到同一个 scheduleFollow()。
+ */
 export function useChatScroll(container: Ref<HTMLElement | undefined>, options: {
   loadOlder: () => Promise<boolean>
   canLoadOlder: () => boolean
@@ -18,10 +42,81 @@ export function useChatScroll(container: Ref<HTMLElement | undefined>, options: 
   let programmatic = false
   let disposed = false
   let timer: ReturnType<typeof setTimeout> | undefined
+  let followRaf: number | undefined
+  let followTimer: ReturnType<typeof setTimeout> | undefined
+  let lastFollowAt = Number.NEGATIVE_INFINITY
+  /** 最近一次用户手势的时间戳；初值 -Infinity 保证首帧 scroll 一律按布局处理 */
+  let lastGestureAt = Number.NEGATIVE_INFINITY
+  let resizeObserver: ResizeObserver | undefined
+  let mutationObserver: MutationObserver | undefined
+
+  // 上次 scroll 事件的 scrollTop / scrollHeight，仅用于手势窗口内的方向判定
+  let lastScrollTop = -1
+  let lastScrollHeight = -1
 
   function clearTimer() {
     clearTimeout(timer)
     timer = undefined
+  }
+
+  function distanceFromBottom(el: HTMLElement): number {
+    return el.scrollHeight - el.scrollTop - el.clientHeight
+  }
+
+  function syncBaseline(el: HTMLElement) {
+    lastScrollTop = el.scrollTop
+    lastScrollHeight = el.scrollHeight
+  }
+
+  function cancelScheduledFollow() {
+    if (followRaf != null) {
+      cancelAnimationFrame(followRaf)
+      followRaf = undefined
+    }
+    if (followTimer != null) {
+      clearTimeout(followTimer)
+      followTimer = undefined
+    }
+  }
+
+  /** 停止跟随：手势上滑的唯一副作用，同时取消已经排队的定位帧 */
+  function stopFollowing() {
+    userScrolledUp.value = true
+    cancelScheduledFollow()
+  }
+
+  /** 真正写到底部；只在跟随中、且底部确实离开视口时才写 */
+  function writeBottom() {
+    const el = container.value
+    if (!el || disposed || userScrolledUp.value) return
+    const dist = distanceFromBottom(el)
+    if (dist <= 1) return
+    if (dist > el.clientHeight * MAX_FOLLOW_DISTANCE_RATIO) return
+    programmatic = true
+    el.scrollTop = el.scrollHeight
+    syncBaseline(el)
+    lastFollowAt = performance.now()
+    requestAnimationFrame(() => {
+      programmatic = false
+    })
+  }
+
+  /** 尺寸变化的统一入口：rAF 合并 + 最小间隔，避免每帧强制布局 */
+  function scheduleFollow() {
+    if (disposed || userScrolledUp.value) return
+    if (followRaf != null || followTimer != null) return
+    const wait = Math.max(0, FOLLOW_MIN_INTERVAL_MS - (performance.now() - lastFollowAt))
+    if (wait === 0) {
+      followRaf = requestAnimationFrame(() => {
+        followRaf = undefined
+        writeBottom()
+      })
+      return
+    }
+    followTimer = setTimeout(() => {
+      followTimer = undefined
+      scheduleFollow()
+    }, wait)
   }
 
   function scrollToBottom() {
@@ -32,9 +127,8 @@ export function useChatScroll(container: Ref<HTMLElement | undefined>, options: 
         if (disposed || current !== generation || userScrolledUp.value || !el) return
         programmatic = true
         el.scrollTop = el.scrollHeight
-        // 同步基准：紧随其后的 scroll 事件（programmatic 已复位）不应被判为「向上移动」
-        lastScrollTop = el.scrollTop
-        lastScrollHeight = el.scrollHeight
+        syncBaseline(el)
+        lastFollowAt = performance.now()
         requestAnimationFrame(() => {
           if (current === generation) programmatic = false
         })
@@ -62,6 +156,7 @@ export function useChatScroll(container: Ref<HTMLElement | undefined>, options: 
     lastScrollTop = -1
     lastScrollHeight = -1
     touchY = undefined
+    cancelScheduledFollow()
     return generation
   }
 
@@ -82,67 +177,66 @@ export function useChatScroll(container: Ref<HTMLElement | undefined>, options: 
   }
 
   function handleMarkdownRendered() {
-    // 高亮/Markdown 可能晚于恢复窗口完成；只要用户未上滑，仍跟随到底部。
-    scrollToBottom()
+    // 高亮/Markdown 可能晚于恢复窗口完成；尺寸变化本身由 ResizeObserver 兜底，
+    // 这里只补一次调度（重复调用会被 scheduleFollow 合并）。
+    scheduleFollow()
     if (restoring) settleRestore()
   }
 
+  function markGesture() {
+    lastGestureAt = performance.now()
+  }
+
   function handleWheel(event: WheelEvent) {
-    if (event.deltaY < 0) userScrolledUp.value = true
+    // 双指缩放（ctrl+wheel）不是滚动，不能被当成上滑
+    if (event.ctrlKey) return
+    markGesture()
+    if (event.deltaY < 0) stopFollowing()
   }
 
   let touchY: number | undefined
   function handleTouchStart(event: TouchEvent) {
+    markGesture()
     touchY = event.touches[0]?.clientY
   }
   function handleTouchMove(event: TouchEvent) {
+    markGesture()
     const y = event.touches[0]?.clientY
-    if (y != null && touchY != null && y > touchY) userScrolledUp.value = true
+    if (y != null && touchY != null && y > touchY) stopFollowing()
     touchY = y
   }
 
-  // 上次 scroll 事件的 scrollTop 与 scrollHeight：只有位置**向上**移动才算用户上滑。
-  // 兄弟面板（QueuePanel / ApprovalStack / QuestionPanel）出现会压缩
-  // clientHeight，此时 scrollTop 不变而「距底」骤增，不能当成用户上滑；
-  // 同理，消息列表被 REST 结果整体覆盖（终态回填 / roundLimit 截断）导致
-  // 内容塌陷时，浏览器会把 scrollTop 向下钳制到新的最大可滚动值——位置
-  // 绝对值反而变小，单看方向会误判为用户上滑，把跟随永久关死，
-  // 表现为发送消息后停在顶部且后续流式输出也不再滚动。
-  // 还有一类：发送消息使 sending 变 true，ChatRoundList 把最后一轮从折叠态
-  // 展开为平铺，内容变高、scrollTop 相对变小——这同样是布局变化而非手势。
-  let lastScrollTop = -1
-  let lastScrollHeight = -1
+  /** 鼠标按下：覆盖中键自动滚动 / 拖拽选择等没有 wheel 事件的滚动来源 */
+  function handlePointerDown() {
+    markGesture()
+  }
 
   function handleScroll() {
     const el = container.value
-    if (!el || disposed || programmatic) return
-    // 替换缓存消息、浏览器滚动锚定产生的 scroll 不代表用户上滑。
-    if (restoring && !userScrolledUp.value) return
-    if (el.scrollTop !== lastScrollTop && el.scrollTop > 0) {
-      // 内容塌陷（scrollHeight 缩小）时 scrollTop 的变化是浏览器钳制，不是用户手势；
-      // 内容增高（追加消息 / 展开轮次）时 scrollTop 的位移是浏览器滚动锚定的副作用，
-      // 用户同样没有产生任何手势。二者都不得据此停止跟随。
+    if (!el || disposed) return
+    // 程序写入与恢复期替换缓存产生的 scroll 不代表任何意图
+    if (programmatic || (restoring && !userScrolledUp.value)) {
+      syncBaseline(el)
+      return
+    }
+    // 只有手势窗口内的 scroll 才允许改变跟随状态；窗口外一律视为布局产物
+    if (performance.now() - lastGestureAt <= GESTURE_WINDOW_MS) {
       const contentShrank = lastScrollHeight >= 0 && el.scrollHeight < lastScrollHeight - 2
       const contentGrew = lastScrollHeight >= 0 && el.scrollHeight > lastScrollHeight + 2
       if (lastScrollTop < 0) {
-        // 无基准（容器重建 / 首帧）：无从判断方向，按距底推断
-        userScrolledUp.value = el.scrollHeight - el.scrollTop - el.clientHeight >= NEAR_BOTTOM
+        // 无基准（容器重建 / 首帧）：按距底推断
+        if (distanceFromBottom(el) >= NEAR_BOTTOM) stopFollowing()
       } else if (contentShrank || contentGrew) {
-        // 布局变化（塌陷钳制 / 追加消息 / 展开轮次）不是用户手势，不得据此
-        // 停止跟随；已上滑时仍按距底判断用户是否已滚回底部。
-        if (userScrolledUp.value) {
-          userScrolledUp.value = el.scrollHeight - el.scrollTop - el.clientHeight >= NEAR_BOTTOM
-        }
+        // 手势窗口内也可能夹杂布局变化，不据此关闭跟随；已上滑时按距底恢复
+        if (userScrolledUp.value && distanceFromBottom(el) < NEAR_BOTTOM) userScrolledUp.value = false
       } else if (el.scrollTop < lastScrollTop - SCROLL_UP_TOLERANCE) {
-        // 位置向上移动超过容差 = 用户主动上滑，停止跟随
-        userScrolledUp.value = true
-      } else if (el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM) {
-        // 位置向下且已回到近底部 = 恢复跟随；距底仍远时保持当前状态
+        stopFollowing()
+      } else if (distanceFromBottom(el) < NEAR_BOTTOM) {
         userScrolledUp.value = false
       }
     }
-    lastScrollTop = el.scrollTop
-    lastScrollHeight = el.scrollHeight
+    syncBaseline(el)
+
     if (loading || !userScrolledUp.value || el.scrollTop > 120 || !options.canLoadOlder()) return
     const current = generation
     const oldHeight = el.scrollHeight
@@ -152,8 +246,7 @@ export function useChatScroll(container: Ref<HTMLElement | undefined>, options: 
       if (!loaded || disposed || current !== generation || !userScrolledUp.value || container.value !== el) return
       el.scrollTop = oldTop + el.scrollHeight - oldHeight
       // 同步基准：追加历史后位置是「保持」而非「上滑」
-      lastScrollTop = el.scrollTop
-      lastScrollHeight = el.scrollHeight
+      syncBaseline(el)
     })
   }
 
@@ -165,6 +258,7 @@ export function useChatScroll(container: Ref<HTMLElement | undefined>, options: 
     programmatic = false
     lastScrollTop = -1
     lastScrollHeight = -1
+    cancelScheduledFollow()
   }
 
   /** 容器重建（中心态 → 会话态）后重新开始度量，避免拿旧容器的 scrollTop 当基准 */
@@ -174,6 +268,8 @@ export function useChatScroll(container: Ref<HTMLElement | undefined>, options: 
   }
 
   function scrollToMessage(messageId: string) {
+    // 定位到某条历史消息 = 用户要看那一屏，后续内容增长不得把视野拽回底部
+    if (messageId !== '') stopFollowing()
     const current = generation
     void nextTick(() => {
       if (disposed || current !== generation) return
@@ -185,12 +281,53 @@ export function useChatScroll(container: Ref<HTMLElement | undefined>, options: 
     })
   }
 
-  function dispose() {
-    disposed = true
-    cancelRestore()
+  // --- 尺寸观察：容器（clientHeight）+ 内容直接子元素（内容高度）---
+  function observeTargets() {
+    if (!resizeObserver) return
+    const el = container.value
+    if (!el) return
+    resizeObserver.disconnect()
+    resizeObserver.observe(el)
+    for (const child of Array.from(el.children ?? [])) resizeObserver.observe(child)
   }
 
-  return { userScrolledUp, scrollToBottom, resumeFollow, scrollToMessage, beginRestore, completeRestore,
-    handleMarkdownRendered, handleWheel, handleTouchStart, handleTouchMove, handleScroll,
-    cancelRestore, resetScrollBaseline, dispose }
+  function bindObservers() {
+    unbindObservers()
+    const el = container.value
+    // 测试环境（node）没有 ResizeObserver / MutationObserver，静默降级为显式触发
+    if (!el || typeof ResizeObserver === 'undefined') return
+    resizeObserver = new ResizeObserver(() => scheduleFollow())
+    observeTargets()
+    if (typeof MutationObserver !== 'undefined') {
+      mutationObserver = new MutationObserver(() => {
+        // 子元素增删（新轮次 / 折叠块替换）后重新登记观察目标
+        observeTargets()
+        scheduleFollow()
+      })
+      mutationObserver.observe(el, { childList: true })
+    }
+  }
+
+  function unbindObservers() {
+    resizeObserver?.disconnect()
+    mutationObserver?.disconnect()
+    resizeObserver = undefined
+    mutationObserver = undefined
+  }
+
+  watch(container, () => {
+    bindObservers()
+    resetScrollBaseline()
+  }, { flush: 'post', immediate: true })
+
+  function dispose() {
+    disposed = true
+    unbindObservers()
+    cancelRestore()
+    cancelScheduledFollow()
+  }
+
+  return { userScrolledUp, scrollToBottom, resumeFollow, pauseFollow: stopFollowing, scrollToMessage, beginRestore, completeRestore,
+    handleMarkdownRendered, handleWheel, handleTouchStart, handleTouchMove, handlePointerDown, handleScroll,
+    cancelRestore, resetScrollBaseline, scheduleFollow, dispose }
 }

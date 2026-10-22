@@ -64,7 +64,8 @@
     <!-- 会话态 / 加载态：底部 Composer -->
     <template v-else>
         <div class="messages" ref="messagesContainer" :aria-busy="historyLoading"
-        @touchstart.passive="handleTouchStart" @touchmove.passive="handleTouchMove">
+        @touchstart.passive="handleTouchStart" @touchmove.passive="handleTouchMove"
+        @pointerdown="handlePointerDown">
         <div v-if="historyAnchored" class="history-anchor-bar">
           <span>正在查看较早的消息</span>
           <button type="button" class="history-anchor-back" @click="backToLatest">回到最新</button>
@@ -376,8 +377,8 @@ watch(pendingApprovals, () => syncToTaskView(), { deep: true })
 // Session restore — ChatPanel watches sessionStore.activeSessionId
 const messagesContainer = ref<HTMLElement>()
 const {
-  userScrolledUp, scrollToBottom, scrollToMessage, beginRestore, completeRestore,
-  handleMarkdownRendered, handleWheel, handleTouchStart, handleTouchMove, handleScroll, cancelRestore, resetScrollBaseline, dispose: disposeScroll,
+  userScrolledUp, scrollToBottom, resumeFollow, pauseFollow, scrollToMessage, beginRestore, completeRestore,
+  handleMarkdownRendered, handleWheel, handleTouchStart, handleTouchMove, handlePointerDown, handleScroll, cancelRestore, resetScrollBaseline, dispose: disposeScroll,
 } = useChatScroll(messagesContainer, {
   loadOlder: loadOlderMessages,
   canLoadOlder: () => sessionStore.activeMessageHasMore && !sessionStore.activeMessageLoadingOlder,
@@ -385,6 +386,7 @@ const {
 const { flashId } = useMessageLocate({
   sessionId: () => sessionId.value,
   container: messagesContainer,
+  onLocate: pauseFollow,
 })
 provide(LOCATE_FLASH_KEY, flashId)
 
@@ -395,7 +397,7 @@ async function backToLatest() {
   if (!sid) return
   await fetchMessages({ sessionId: sid, forceLatest: true })
   scrollToMessage('')
-  scrollToBottom()
+  resumeFollow()
 }
 
 let restoreGeneration = 0
@@ -624,42 +626,6 @@ async function handleQueueEdit(msg: QueueMessage) {
 function scrollToBottomSmooth() {
   scrollToBottom()
 }
-
-/**
- * 聚合会影响消息区「可见高度」的状态，用于触发自动滚动。
- * 不包含 thinking 正文长度等高频但不可见（折叠态）的变化，避免流式阶段反复滚动。
- */
-function buildScrollAnchor(): string {
-  const last = messages.value[messages.value.length - 1]
-  const segmentStructure = last?.segments?.map(s => {
-    switch (s.type) {
-      case 'thinking': return 't'
-      case 'text': return 'x'
-      case 'tool': return `o:${s.callId}`
-    }
-  }).join(',') || ''
-  return [
-    messages.value.length,
-    last?.content?.length || 0,
-    segmentStructure,
-    last?.toolCalls?.length || 0,
-    last?.toolCalls?.map(t => t.status).join(',') || '',
-    // sending 切换会让最后一轮从折叠态展开为平铺（ChatRoundList），
-    // 可见高度突变，需要重新定位到底部
-    agentRunning.value ? 'run' : '',
-    sessionStore.activeThinking,
-    sessionStore.activeStreaming,
-    sessionStore.activeLlmRetry ? 'retry' : '',
-    showTypingIndicator.value,
-  ].join('|')
-}
-
-// Auto-scroll: scroll when message/thinking/streaming state changes.
-// flush:'post' ensures DOM is updated before measuring scrollHeight.
-watch(buildScrollAnchor, () => {
-  if (userScrolledUp.value) return
-  scrollToBottom()
-}, { flush: 'post' })
 
 // Phase sync
 // When sending goes false, verify against the server-side phase before
