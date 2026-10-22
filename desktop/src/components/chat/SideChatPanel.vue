@@ -672,7 +672,7 @@ async function loadOlderMessages(): Promise<boolean> {
 // --- 自动滚动：与主聊天共用 useChatScroll（同一套手势判定与定位时序） ---
 const {
   scrollToBottom, resumeFollow, pauseFollow, handleMarkdownRendered,
-  handleWheel, handleTouchStart, handleTouchMove, handlePointerDown, handleScroll,
+  handleWheel, handleTouchStart, handleTouchMove, handlePointerDown, handleKeyDown, handleScroll,
   resetScrollBaseline, dispose: disposeScroll,
 } = useChatScroll(messagesContainer, {
   loadOlder: loadOlderMessages,
@@ -683,6 +683,7 @@ onMounted(async () => {
   const el = messagesContainer.value
   el?.addEventListener('scroll', handleScroll, { passive: true })
   el?.addEventListener('wheel', handleWheel, { passive: true })
+  el?.addEventListener('keydown', handleKeyDown)
   window.addEventListener('mao:markdown-rendered', handleMarkdownRendered)
 
   if (hasRealSession.value) {
@@ -709,6 +710,7 @@ onUnmounted(() => {
   const el = messagesContainer.value
   el?.removeEventListener('scroll', handleScroll)
   el?.removeEventListener('wheel', handleWheel)
+  el?.removeEventListener('keydown', handleKeyDown)
   window.removeEventListener('mao:markdown-rendered', handleMarkdownRendered)
   disposeScroll()
 

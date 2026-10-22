@@ -3,24 +3,20 @@ import { nextTick, shallowRef } from 'vue'
 import { useChatScroll } from './useChatScroll'
 
 /**
- * 2026-10-22 代码审查 BUG 验证用例（对话区自动跟随 / 手势判定）。
+ * 回归用例（BUG-S1 / S2 / S3 已修复）：对话区自动跟随 / 手势判定。
  *
- * 用例断言「应有行为」，当前代码不满足 → 用例失败即证明 BUG 真实存在。
+ * BUG-S1：writeBottom 曾按「距底超过两屏就不拉回」判断用户是否离开底部。内容单帧暴涨
+ *        （大工具卡 / 长 diff）时浏览器保持 scrollTop 不变，距底距离随流式输出持续变大
+ *        → 跟随被永久关闭，用户再也看不到后续回复。修复：改判「位置是否相对基准上移」。
  *
- * BUG-S1：writeBottom 的「距底超过两屏就不拉回」阈值把「内容单帧暴涨」误判成
- *        「用户已离开底部」。内容暴涨时浏览器保持 scrollTop 不变，距底距离随
- *        流式输出持续变大 → 跟随被永久关闭，用户再也看不到后续回复。
- *        该阈值是 53fb6dab（2026-10-22 重构）新引入的，旧实现没有 writeBottom。
- *
- * BUG-S2：手势窗口只由 wheel / touch / pointerdown 打开，代码注释却把「按键」
- *        列为手势来源。键盘滚动（ArrowUp / PageUp / Home）既不能停止跟随，
- *        也到不了 loadOlder 的分页门槛（要求 userScrolledUp === true）→
- *        键盘用户完全无法翻看历史。53fb6dab 之前的实现对每个 scroll 事件都判方向，
- *        键盘滚动是可用的，属于本次重构引入的回归。
+ * BUG-S2：手势窗口只由 wheel / touch / pointerdown 打开，键盘滚动（ArrowUp / PageUp /
+ *        Home）既不能停止跟随，也到不了 loadOlder 的分页门槛（要求 userScrolledUp）。
+ *        修复：新增 handleKeyDown 手势来源（输入控件内的按键不算），三个面板挂载。
  *
  * BUG-S3：handleScroll 的分支顺序让「内容高度变化」先于「位置向上移动」命中，
- *        流式输出期间 scrollHeight 持续增长 → contentGrew 恒为真 → 用户真正的
- *        上滑手势被判成布局变化，stopFollowing() 从不执行。
+ *        流式输出期间 scrollHeight 持续增长 → contentGrew 恒为真 → 用户拖滚动条上滑
+ *        被判成布局变化，stopFollowing() 从不执行。
+ *        修复：顺序改为 contentShrank → 位置上移 → 距底恢复（塌陷钳制仍不误判）。
  */
 
 function setup() {
@@ -131,7 +127,8 @@ describe('BUG-S2 键盘滚动无法停止自动跟随，也无法触发加载更
   it('键盘上滑（ArrowUp / PageUp）应能停止跟随', async () => {
     const s = setup()
     await settledAtBottom(s)
-    // 键盘滚动：没有 wheel / touch / pointerdown 事件
+    // 键盘滚动：keydown 打开手势窗口，随后容器派发 scroll
+    s.handleKeyDown({ key: 'ArrowUp' } as KeyboardEvent)
     s.el.scrollTop = 900
     s.handleScroll()
     expect(s.userScrolledUp.value).toBe(true)
@@ -140,10 +137,20 @@ describe('BUG-S2 键盘滚动无法停止自动跟随，也无法触发加载更
   it('键盘上滑应能触发加载更早历史（分页）', async () => {
     const s = setup()
     await settledAtBottom(s)
+    s.handleKeyDown({ key: 'PageUp' } as KeyboardEvent)
     s.el.scrollTop = 60
     s.handleScroll()
     expect(s.userScrolledUp.value).toBe(true)
     expect(s.loadOlder).toHaveBeenCalled()
+  })
+
+  it('输入控件里的方向键不算滚动手势', async () => {
+    const s = setup()
+    await settledAtBottom(s)
+    s.handleKeyDown({ key: 'ArrowUp', target: { tagName: 'TEXTAREA' } } as unknown as KeyboardEvent)
+    s.el.scrollTop = 900
+    s.handleScroll()
+    expect(s.userScrolledUp.value).toBe(false)
   })
 })
 

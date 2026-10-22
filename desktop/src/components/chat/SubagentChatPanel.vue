@@ -265,7 +265,7 @@ async function fetchMessages() {
 // 本面板只读、无历史分页，故 loadOlder 恒为 false（分页入口自然关闭）。
 const {
   scrollToBottom, resumeFollow, handleMarkdownRendered,
-  handleWheel, handleTouchStart, handleTouchMove, handlePointerDown, handleScroll,
+  handleWheel, handleTouchStart, handleTouchMove, handlePointerDown, handleKeyDown, handleScroll,
   resetScrollBaseline, dispose: disposeScroll,
 } = useChatScroll(messagesContainer, {
   loadOlder: async () => false,
@@ -300,6 +300,7 @@ onMounted(async () => {
   const el = messagesContainer.value
   el?.addEventListener('scroll', handleScroll, { passive: true })
   el?.addEventListener('wheel', handleWheel, { passive: true })
+  el?.addEventListener('keydown', handleKeyDown)
   window.addEventListener('mao:markdown-rendered', handleMarkdownRendered)
   await Promise.all([loadMeta(), fetchMessages()])
   resumeFollow()
@@ -320,6 +321,7 @@ onUnmounted(() => {
   const el = messagesContainer.value
   el?.removeEventListener('scroll', handleScroll)
   el?.removeEventListener('wheel', handleWheel)
+  el?.removeEventListener('keydown', handleKeyDown)
   window.removeEventListener('mao:markdown-rendered', handleMarkdownRendered)
   disposeScroll()
 })

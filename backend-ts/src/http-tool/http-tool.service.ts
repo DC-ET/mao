@@ -433,17 +433,21 @@ function encodeHeaders(
 ): Record<string, string> {
   const result: Record<string, string> = {};
   for (const [key, value] of Object.entries(headers)) {
-    if (isSensitiveHeaderKey(key)) {
-      if (value === HEADER_VALUE_MASK) {
-        const previous = previousStored?.[key];
-        // 掩码但库里没有对应值（新增敏感头传了掩码）：视为未设置，不写脏数据。
-        if (previous != null && previous !== '') result[key] = previous;
-        continue;
+    // 掩码是「值」语义，必须在键敏感性判断之前处理：否则敏感头改名为非敏感键时，
+    // 掩码会被当成真实凭据落库，旧密文同时被销毁，运行时带着 `******` 发请求。
+    if (value === HEADER_VALUE_MASK) {
+      const previous = previousStored?.[key];
+      if (previous == null || previous === '') {
+        // 掩码解析不到旧值（改键名 / 新增头填了掩码）：拒绝保存，而不是写入假凭据。
+        throw new BusinessException(
+          ErrorCode.PARAM_INVALID,
+          `请求头 ${key} 提交的是掩码值，无法对应到已保存的凭据，请填写真实值后重试`,
+        );
       }
-      result[key] = ENC_PREFIX + cipher.encrypt(value);
-    } else {
-      result[key] = value;
+      result[key] = previous;
+      continue;
     }
+    result[key] = isSensitiveHeaderKey(key) ? ENC_PREFIX + cipher.encrypt(value) : value;
   }
   return result;
 }
@@ -453,7 +457,9 @@ function decodeHeaders(headersJson: string | null, cipher: HttpToolSecretCipher)
   const stored = parseStoredHeaders(headersJson);
   const result: Record<string, string> = {};
   for (const [key, value] of Object.entries(stored)) {
-    if (value.startsWith(ENC_PREFIX)) {
+    // 与编码用同一个谓词（键是否敏感）：非敏感头恒为明文，即使值恰好以 `enc:` 开头
+    // 也不得送进解密——否则该工具永久不可用，且「重新保存」也修不好。
+    if (isSensitiveHeaderKey(key) && value.startsWith(ENC_PREFIX)) {
       result[key] = cipher.decrypt(value.slice(ENC_PREFIX.length));
     } else {
       result[key] = value;

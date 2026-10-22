@@ -386,10 +386,15 @@ function resolvePlaceholders(value: unknown, root: unknown): unknown {
   if (typeof value === 'string') {
     return value.replace(/\$\{([^}:]+)(?::([^}]*))?\}/g, (_m, key: string, def: string | undefined) => {
       if (key === 'HOME' || key === '$HOME') {
-        return process.env.HOME ?? def ?? '';
+        const home = process.env.HOME;
+        return home != null && home !== '' ? home : def ?? '';
       }
-      if (process.env[key] !== undefined) {
-        return process.env[key] as string;
+      // 空串按「未设置」处理：运维在 .env / systemd 里写 `KEY=` 很常见，若当成已设置
+      // 会顶掉 ${VAR:default} 的默认值（路径类配置变空 → 落成进程 cwd）。
+      // 与 coerceTypes 里的 `if (process.env.X)` 口径保持一致。
+      const fromEnv = process.env[key];
+      if (fromEnv !== undefined && fromEnv !== '') {
+        return fromEnv;
       }
       const fromConfig = lookupPath(root, key);
       if (fromConfig !== undefined) {
@@ -412,13 +417,20 @@ function resolvePlaceholders(value: unknown, root: unknown): unknown {
 }
 
 function coerceTypes(cfg: AppConfig): AppConfig {
+  // 空串 / 纯空白按「未设置」处理：`MAO_TS_PORT=` 若被 Number('') 解析成 0，端口会变成
+  // 随机端口（服务起来了但网关与健康检查都连不上）；同理 `MAO_CLEANUP_INTERVAL_MS=` 会得到 0。
   const n = (v: unknown, d: number) => {
+    if (v == null || (typeof v === 'string' && v.trim() === '')) return d;
     const x = Number(v);
     return Number.isFinite(x) ? x : d;
   };
   const b = (v: unknown, d: boolean) => {
     if (typeof v === 'boolean') return v;
-    if (typeof v === 'string') return v === 'true' || v === '1';
+    if (typeof v === 'string') {
+      const text = v.trim().toLowerCase();
+      if (text === '') return d; // `FLYWAY_ENABLED=` 不应被当成显式 false
+      return text === 'true' || text === '1';
+    }
     return d;
   };
   cfg.server.port = n(process.env.MAO_TS_PORT ?? cfg.server.port, 9080);

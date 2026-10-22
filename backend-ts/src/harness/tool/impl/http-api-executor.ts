@@ -2,7 +2,9 @@ import {
   areIpsInCidrAllowlist, isCloudMetadataHost, isCloudMetadataIp, isLoopbackIp,
   isPrivateOrReservedHostname, isPrivateOrReservedIp, isValidCidr, resolveHostIps,
 } from '../../../common/ssrf.js';
-import { RESPONSE_MAX_BYTES, type ResolvedHttpTool, type HttpToolParam } from '../../../http-tool/types.js';
+import {
+  isSensitiveHeaderKey, RESPONSE_MAX_BYTES, type ResolvedHttpTool, type HttpToolParam,
+} from '../../../http-tool/types.js';
 
 /** 默认请求头（用户头覆盖；Content-Type 仅在有请求体时默认给出）。 */
 const DEFAULT_USER_AGENT = 'Mozilla/5.0 (compatible; AgentWorkbench/1.0)';
@@ -129,6 +131,9 @@ export class HttpApiExecutor {
           currentBody = undefined;
           delete headers['Content-Type'];
         }
+        // 跳转到别的站点（或降级为明文）时剥离管理员配置的凭据头：上游 API 的开放
+        // 重定向参数、或 URL 模板里的主机占位符都能把请求引到攻击者主机
+        if (shouldStripCredentials(currentUrl, next)) stripCredentialHeaders(headers);
         currentUrl = next;
         continue;
       }
@@ -285,6 +290,29 @@ function buildHeaders(tool: ResolvedHttpTool, withBody: boolean): Record<string,
   return headers;
 }
 
+/**
+ * 跟随重定向时是否必须剥离凭据头：换主机（站点变了）或 https → http（同主机也会明文外传）。
+ * 同主机的 http → https 升级与端口变化不剥离，避免误伤常见的「升级到 HTTPS」重定向。
+ */
+function shouldStripCredentials(from: URL, to: URL): boolean {
+  if (from.hostname.toLowerCase() !== to.hostname.toLowerCase()) return true;
+  return from.protocol === 'https:' && to.protocol === 'http:';
+}
+
+/**
+ * 凭据类请求头判定：复用敏感头口径（token/secret/key/authorization/cookie），
+ * 并补上不命中该正则的短名（如 X-Auth）。
+ */
+function isCredentialHeader(key: string): boolean {
+  return isSensitiveHeaderKey(key) || /(?:^|-)auth$/i.test(key);
+}
+
+function stripCredentialHeaders(headers: Record<string, string>): void {
+  for (const key of Object.keys(headers)) {
+    if (isCredentialHeader(key)) delete headers[key];
+  }
+}
+
 function renderBodyTemplate(
   template: string,
   params: HttpToolParam[],
@@ -348,7 +376,9 @@ export function validateArguments(params: HttpToolParam[], args: Record<string, 
   for (const param of params) {
     const value = args[param.name];
     if (value === undefined || value === null) {
-      if (param.required === 1) {
+      // 有默认值的参数由模板渲染补位（实参 > 默认值），不算「缺失」；
+      // 否则「必填 + 默认值」并存的工具永远无法调用（后台两个控件并不互斥）。
+      if (param.required === 1 && param.defaultValue == null) {
         return `缺少必填参数 ${param.name}（${param.label}）`;
       }
       continue;

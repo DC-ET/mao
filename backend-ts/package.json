@@ -10,8 +10,7 @@
     "start:dev": "tsx src/main.ts",
     "build": "tsc -p tsconfig.build.json",
     "test": "vitest run --coverage",
-    "test:watch": "vitest",
-    "test:bugcheck": "vitest run --config vitest.bugcheck.config.ts"
+    "test:watch": "vitest"
   },
   "engines": {
     "node": ">=22"

@@ -5,6 +5,8 @@
 > 结论：**确认 11 个逻辑 BUG**，每个 BUG 都有对应的失败用例证明其真实存在（见「验证用例」一节）。
 > 本次审查未修改任何产品代码，只新增验证用例与本报告。
 >
+> **修复状态（2026-10-22 当日闭环）**：11 条 BUG 已全部修复，用例已并入默认测试套件，详见下方「修复记录」一节。
+>
 > **复核记录（同日二次复核）**：逐条对照源码 + 重跑全部验证用例与默认测试套件后更新本文——
 > - 12 条初查结论中 11 条确认存在并实跑复现（后端 12 失败 / 2 通过，前端 7 失败，见 3.3）；
 > - **BUG-C1** 的影响链按生产实际布局修正：父目录防护会先于挂载拒绝（实跑证实），「后端工作树被 rw 挂进用户容器」在默认布局下不成立，严重度 P1 → P2；
@@ -14,20 +16,47 @@
 
 ---
 
+## 修复记录（2026-10-22 当日闭环）
+
+**11 条 BUG 已全部修复**，验证用例从「预期失败」转为通过，并已并入默认测试套件（文件从 `*.review-bugcheck.*` 更名为 `*.bugcheck.*`，临时配置 `vitest.bugcheck.config.ts` 与 `test:bugcheck` 脚本已删除）。
+
+| # | 修复位置 | 关键改动 |
+|---|---------|---------|
+| BUG-E3 | `backend-ts/src/common/ssrf.ts` | 元数据硬拒名单补 `100.100.100.200`（阿里云）、`169.254.0.23`（腾讯云）、`169.254.170.2`（ECS）、`fd00:ec2::254`（IPv6 IMDS）与 `metadata.tencentyun.com` / `instance-data(.ec2.internal)`；`100.64.0.0/10`（CGNAT）纳入私网/保留段；`HARD_DENY_NETS` 同步补齐，放行名单无法覆盖这些地址 |
+| BUG-E2 | `backend-ts/src/harness/tool/impl/http-api-executor.ts` | 重定向到不同主机、或 https 降级为 http 时剥离凭据类请求头（复用 `isSensitiveHeaderKey`，并补 `X-Auth` 这类短名）；同主机 HTTPS 升级与端口变化不剥离 |
+| BUG-H2 | `backend-ts/src/http-tool/http-tool.service.ts` | 掩码按「值」语义在键敏感性判断之前处理；解析不到旧值时**拒绝保存并提示重填真实值**（新增头填掩码同样拒绝），不再把 `******` 当凭据落库 |
+| BUG-H1 | 同上（`decodeHeaders`） | 解码改用与编码同一个谓词「键是否敏感」，非敏感头的值以 `enc:` 开头也不再送进解密；另加「敏感键且带 `enc:` 前缀」双重条件，兼容历史明文数据 |
+| BUG-E1 | `backend-ts/src/harness/tool/impl/http-api-executor.ts` | `validateArguments` 不再把「有默认值」的必填参数判为缺失，渲染口径仍是「实参 > 默认值」 |
+| BUG-S4 | `desktop/src/composables/useChat.ts` | `prepareAndSendMessage` 与 `sendMessage` 的 catch 统一写回入口捕获的会话 id（`rollbackSessionId` / `sid`），与 `editAndResend` 的 M-10 口径一致 |
+| BUG-S1 | `desktop/src/composables/useChatScroll.ts` | 删除「距底超过两屏就不拉回」阈值，改为比较 `scrollTop` 是否相对基准上移：内容在下方增长时位置不动 → 继续贴底，用户真的上移才停手 |
+| BUG-S2 | 同上 + 三个面板 | 新增 `handleKeyDown`（ArrowUp / PageUp / Home 直接停止跟随，其余滚动键只开手势窗口；输入控件内的按键与组合键不算），`ChatPanel` / `SideChatPanel` / `SubagentChatPanel` 与 wheel 同批挂载、卸载 |
+| BUG-S3 | `desktop/src/composables/useChatScroll.ts` | `handleScroll` 分支顺序改为 `contentShrank → 位置上移 → 距底恢复`，流式输出期间拖滚动条上滑不再被内容增长否决；内容塌陷钳制仍不误判 |
+| BUG-C1 | `backend-ts/src/config/app-config.ts` | `${VAR:default}` 判定「已设置」时排除空串（`HOME` 同口径），与 `coerceTypes` 的 `if (process.env.X)` 对齐 |
+| BUG-C2 | 同上（`coerceTypes`） | `n()` 把空串 / 纯空白按未设置（`MAO_TS_PORT=` → 9080）；`b()` 同口径（`FLYWAY_ENABLED=` 不再被当成显式 false） |
+
+与建议修复方向的差异（均为有意收敛）：
+
+- **BUG-H2** 选择「拒绝保存」，而不是静默丢弃掩码——管理员不会在无提示的情况下丢掉凭据，也不需要猜为什么头没保存上。
+- **BUG-S1** 没有保留「距底几屏」这个维度：位置未动的暴涨正是必须跟随的场景，阈值只会帮倒忙；旧用例「距底超过两屏时不强行拉回」因为位置确实上移，按新判据仍然通过。
+- **BUG-E3** 未纳入 `169.254.169.253`（AWS VPC 内 DNS，非元数据端点）。
+- **BUG-C1** 只做了「空串按未设置」，**未做**路径类配置的「启动即拒」（空值 / 相对路径 / `~` 无法解析时启动报错）——那会改变启动校验行为，留作后续独立改动。
+
+---
+
 ## 一、结论摘要
 
 | # | 位置 | 严重度 | 一句话描述 | 回归用例 |
 |---|------|--------|-----------|---------|
-| BUG-E3 | 后端 `ssrf.ts` / `http-api-executor.ts` | **P0 安全** | SSRF 硬拒名单漏掉阿里云元数据地址 `100.100.100.200`，且该地址被当公网主机放行；URL 模板主机占位符使这条路径**模型可达** | `http-api-executor.review-bugcheck.spec.ts` |
+| BUG-E3 | 后端 `ssrf.ts` / `http-api-executor.ts` | **P0 安全** | SSRF 硬拒名单漏掉阿里云元数据地址 `100.100.100.200`，且该地址被当公网主机放行；URL 模板主机占位符使这条路径**模型可达** | `http-api-executor.bugcheck.spec.ts` |
 | BUG-E2 | 后端 `http-api-executor.ts` | **P0 安全** | 重定向到不同主机时，解密后的 `Authorization` / `X-Api-Key` 等凭据照旧发出 | 同上 |
-| BUG-H2 | 后端 `http-tool.service.ts` | **P1** | 敏感头改名为非敏感键后，掩码哨兵 `******` 被当真实凭据落库，旧密文被销毁 | `http-tool-headers.review-bugcheck.spec.ts` |
+| BUG-H2 | 后端 `http-tool.service.ts` | **P1** | 敏感头改名为非敏感键后，掩码哨兵 `******` 被当真实凭据落库，旧密文被销毁 | `http-tool-headers.bugcheck.spec.ts` |
 | BUG-H1 | 后端 `http-tool.service.ts` | **P1** | 请求头解码按「值以 `enc:` 开头」而非「键是否敏感」判断解密 → 非敏感头值以 `enc:` 开头时工具永久不可用（触发罕见，但失败不可逆且提示误导） | 同上 |
-| BUG-S4 | 前端 `useChat.ts` | **P1** | 发送失败回滚用 `sessionId.value`（当前会话）而非入口 `sid` → 回滚打到期间切换过去的会话 | `useChat.rollback.review-bugcheck.test.ts` |
-| BUG-S1 | 前端 `useChatScroll.ts` | **P1** | 自动贴底的「距底超过两屏」阈值把「内容单帧暴涨」误判成「用户已离开底部」→ 自动跟随不再恢复（可点「回到最新」显式恢复） | `useChatScroll.review-bugcheck.test.ts` |
-| BUG-E1 | 后端 `http-api-executor.ts` | P2 | 「必填 + 默认值」并存的参数永远走不到默认值分支 → 工具无法调用 | `http-api-executor.review-bugcheck.spec.ts` |
-| BUG-C1 | 后端 `app-config.ts` | P2 | 空串环境变量顶掉 `${VAR:default}` → 路径类配置为空 → 默认布局下 docker 模式容器创建被父目录防护拒绝（可用性故障）、host 模式技能扫描/工作区落进后端树 | `app-config.review-bugcheck.spec.ts` |
+| BUG-S4 | 前端 `useChat.ts` | **P1** | 发送失败回滚用 `sessionId.value`（当前会话）而非入口 `sid` → 回滚打到期间切换过去的会话 | `useChat.rollback.bugcheck.test.ts` |
+| BUG-S1 | 前端 `useChatScroll.ts` | **P1** | 自动贴底的「距底超过两屏」阈值把「内容单帧暴涨」误判成「用户已离开底部」→ 自动跟随不再恢复（可点「回到最新」显式恢复） | `useChatScroll.bugcheck.test.ts` |
+| BUG-E1 | 后端 `http-api-executor.ts` | P2 | 「必填 + 默认值」并存的参数永远走不到默认值分支 → 工具无法调用 | `http-api-executor.bugcheck.spec.ts` |
+| BUG-C1 | 后端 `app-config.ts` | P2 | 空串环境变量顶掉 `${VAR:default}` → 路径类配置为空 → 默认布局下 docker 模式容器创建被父目录防护拒绝（可用性故障）、host 模式技能扫描/工作区落进后端树 | `app-config-env-empty.bugcheck.spec.ts` |
 | BUG-C2 | 后端 `app-config.ts` | P2 | 数字型环境变量为空串时被解析成 `0` → `MAO_TS_PORT=` 得到随机端口，服务起来但不可达 | 同上 |
-| BUG-S2 | 前端 `useChatScroll.ts` | P2 | 手势窗口只有滚轮/触摸/指针来源，键盘滚动既停不了跟随也触发不了分页 | `useChatScroll.review-bugcheck.test.ts` |
+| BUG-S2 | 前端 `useChatScroll.ts` | P2 | 手势窗口只有滚轮/触摸/指针来源，键盘滚动既停不了跟随也触发不了分页 | `useChatScroll.bugcheck.test.ts` |
 | BUG-S3 | 前端 `useChatScroll.ts` | P2 | 「内容高度变化」分支先于「位置上移」分支命中 → 流式输出期间滚动条拖拽上滑被判成布局变化（重构前既有问题；滚轮/触摸不受影响） | 同上 |
 
 严重度口径：**P0** = 可造成凭据外泄 / 云账号失陷；**P1** = 用户可感知的功能失效或数据被误改；**P2** = 特定配置或操作路径下的功能失效（含误配置触发的可用性故障）。
@@ -35,6 +64,8 @@
 ---
 
 ## 二、逐条详述
+
+> 本节保留审查当时的代码现状与复现路径（用于对照缺陷成因），**所有缺陷均已在 2026-10-22 修复**，当前行为见「修复记录」与 3.3。
 
 ### BUG-E3（后端 / P0 安全）SSRF 硬拒名单漏掉阿里云元数据地址，模型可直达
 
@@ -482,103 +513,83 @@ if (performance.now() - lastGestureAt <= GESTURE_WINDOW_MS) {
 
 ## 三、验证用例
 
-### 3.1 新增文件
+### 3.1 用例文件（已并入默认套件）
 
 | 文件 | 覆盖 BUG |
 |------|---------|
-| `backend-ts/src/http-tool/http-tool-headers.review-bugcheck.spec.ts` | BUG-H1、BUG-H2 |
-| `backend-ts/src/harness/tool/impl/http-api-executor.review-bugcheck.spec.ts` | BUG-E1、BUG-E2、BUG-E3 |
-| `backend-ts/src/config/app-config.review-bugcheck.spec.ts` | BUG-C1、BUG-C2 |
-| `desktop/src/composables/useChatScroll.review-bugcheck.test.ts` | BUG-S1、BUG-S2、BUG-S3 |
-| `desktop/src/composables/useChat.rollback.review-bugcheck.test.ts` | BUG-S4 |
+| `backend-ts/src/http-tool/http-tool-headers.bugcheck.spec.ts` | BUG-H1、BUG-H2 |
+| `backend-ts/src/harness/tool/impl/http-api-executor.bugcheck.spec.ts` | BUG-E1、BUG-E2、BUG-E3 |
+| `backend-ts/src/config/app-config-env-empty.bugcheck.spec.ts` | BUG-C1、BUG-C2 |
+| `desktop/src/composables/useChatScroll.bugcheck.test.ts` | BUG-S1、BUG-S2、BUG-S3 |
+| `desktop/src/composables/useChat.rollback.bugcheck.test.ts` | BUG-S4 |
 
-用例断言的是**应有行为**，因此在对应缺陷修复前**必然失败**——失败即证明缺陷真实存在。修复后应把用例从「失败」转为「通过」。
+用例断言的是**应有行为**：修复前全部失败（失败即证明缺陷存在），修复后全部通过，并作为回归用例留在默认套件里防止回退。
 
 ### 3.2 运行方式
 
-用例文件用 `*.review-bugcheck.*` 后缀与仓库既有的 `*.bugcheck.*`（历史修复回归用例）区分开，并被排除在默认测试之外——否则未修复的缺陷会让 CI 恒红。
+修复完成后用例已从临时隔离状态并回默认套件（文件名带 `.bugcheck.`，与仓库既有回归用例同一命名约定）：
 
 ```bash
-# 后端：只跑本次审查的验证用例（当前应为「全部失败」）
-cd backend-ts && npm run test:bugcheck
+# 后端
+cd backend-ts && npm test
 
-# 前端：同上
-cd desktop && npm run test:bugcheck
+# 前端
+cd desktop && npm run test:unit
 ```
 
-配套改动：
+配套改动（临时脚手架已删除）：
 
-- `backend-ts/vitest.config.ts` / `desktop/vitest.config.ts`：`exclude` 增加 `*.review-bugcheck.*`。
-- 新增 `backend-ts/vitest.bugcheck.config.ts` / `desktop/vitest.bugcheck.config.ts`：只收集 `*.review-bugcheck.*`，关闭覆盖率。
-- `backend-ts/package.json` / `desktop/package.json`：新增 `test:bugcheck` 脚本。
+- `backend-ts/vitest.config.ts` / `desktop/vitest.config.ts`：已移除 `*.review-bugcheck.*` 的 `exclude`。
+- 已删除 `backend-ts/vitest.bugcheck.config.ts` / `desktop/vitest.bugcheck.config.ts`。
+- 已删除 `backend-ts/package.json` / `desktop/package.json` 的 `test:bugcheck` 脚本。
 
-### 3.3 实跑结果（复核后重跑）
+### 3.3 用例结果（修复后）
 
-```
-# cd backend-ts && npm run test:bugcheck
- Test Files  3 failed (3)
-      Tests  12 failed | 2 passed (14)
-
-# cd desktop && npm run test:bugcheck
- Test Files  2 failed (2)
-      Tests  7 failed (7)
-```
-
-失败明细与预期缺陷一一对应（2 个通过的用例分别断言「非敏感头不以 `enc:` 开头时正常透传」与「100.100.100.200 当前被当成非私网地址（漏网根因记录）」）：
+本轮新增/改写的用例全部通过（后端 15 条、前端 8 条），逐条对应关系：
 
 ```
-× BUG-E1 validateArguments 不应在参数存在默认值时判为缺失       → expected '缺少必填参数 city（城市）' to be null
-× BUG-E1 必填参数缺省时应使用默认值完成请求                        → expected true to be false
-× BUG-E2 跨主机重定向应剥离 Authorization / 自定义密钥头            → expected 'Bearer super-secret' to be undefined
-× BUG-E3 100.100.100.200 应被识别为云元数据端点                   → expected false to be true
-× BUG-E3 100.100.100.200 不应被当成公网主机直接放行                → 请求已发出（fetch 被调用）
-× BUG-E3 URL 模板的主机占位符由模型指定元数据地址时必须被拒绝       → expected "spy" to not be called at all, but actually been called 1 times
-× BUG-H1 非敏感头值恰好以 enc: 开头时执行期仍应原样透传            → 请求头解密失败
-× BUG-H2 掩码哨兵不得被当作真实请求头值落库                        → expected '******' not to be '******'
-× BUG-C1 SKILLS_DIR= 空串时不应把 skills-dir 解析成空路径           → expected '' not to be ''
-× BUG-C1 WORKSPACE_ROOT= 空串时不应把 workspace-root 解析成空路径   → expected '' not to be ''
-× BUG-C2 MAO_TS_PORT= 空串时端口应为默认 9080，而不是 0            → expected +0 to be 9080
-× BUG-C2 MAO_CLEANUP_INTERVAL_MS= 空串时应保留默认间隔              → expected +0 to be 86400000
-
-× 内容暴涨（位置未动）时应继续贴底，而不是停在原地                   → 停在 1500（应为 5500）
-× 内容连续暴涨时跟随不应永久失效                                   → 停在 1500（应为 8500）
-× 键盘上滑（ArrowUp / PageUp）应能停止跟随                          → userScrolledUp 仍为 false
-× 键盘上滑应能触发加载更早历史（分页）                               → loadOlder 未被调用
-× 拖动滚动条上滑应停止跟随（内容同时在增长）                         → userScrolledUp 仍为 false
-× 拖动滚动条上滑应触发加载更早历史                                   → loadOlder 未被调用
-× 失败回滚只作用于发起发送的会话，不影响期间切换到的会话             → B 的消息被删 / A 的幽灵消息未回滚
+✓ BUG-E1 有默认值的必填参数不再判缺失，且默认值参与 URL 渲染
+✓ BUG-E2 跨主机重定向剥离 Authorization / X-Api-Key
+✓ BUG-E3 100.100.100.200 被识别为元数据端点、按保留段处理、URL 主机占位符被拒
+✓ BUG-H1 非敏感头值以 enc: 开头时原样透传
+✓ BUG-H2 掩码改名后拒绝保存（旧密文保持、运行时无 ******），新增头填掩码同样拒绝
+✓ BUG-C1 SKILLS_DIR= / WORKSPACE_ROOT= 空串回落到默认值
+✓ BUG-C2 MAO_TS_PORT= → 9080，MAO_CLEANUP_INTERVAL_MS= → 24h
+✓ BUG-S1 内容暴涨（位置未动）继续贴底，连续暴涨仍跟随
+✓ BUG-S2 键盘上滑（ArrowUp / PageUp）停止跟随并触发分页，输入控件内按键不误判
+✓ BUG-S3 拖动滚动条上滑停止跟随并触发分页（内容同时增长）
+✓ BUG-S4 失败回滚只作用于发起发送的会话
 ```
 
-### 3.4 未被本次改动影响的既有测试（复核重跑）
+### 3.4 修复后全量回归
 
 ```
-# cd backend-ts && npm test            （默认套件，不含 review-bugcheck）
- Test Files  384 passed | 1 skipped (385)
-      Tests  4621 passed | 13 skipped (4634)
+# cd backend-ts && npm test
+ Test Files  387 passed | 1 skipped (388)
+      Tests  4635 passed | 14 skipped (4649)
 
-# cd desktop && npm run test:unit      （默认套件，不含 review-bugcheck）
- Test Files  80 passed (80)            ← vitest 部分
-      Tests  723 passed (723)
+# cd desktop && npm run test:unit      （默认套件，已含 .bugcheck 回归用例）
+ Test Files  82 passed (82)            ← vitest 部分
+      Tests  731 passed (731)
 ```
 
-类型检查同样通过：
+类型检查（与改动前同口径）：`backend-ts` 源码与新增用例零报错；`desktop` `vue-tsc -b --force` exit 0。
 
-```
-cd backend-ts && npx tsc -p tsconfig.json --noEmit   # 本次新增文件零报错
-cd desktop && npx vue-tsc -b --force                  # exit 0
-```
-
-> 注：`npm run test:unit` 附带的 `node --test electron/*.cjs` 有 2 个**既有**失败（`gitOperations` 的身份注入依赖机器无全局 git 身份、`localShell` 依赖 macOS `/private` 前缀之外的环境），与本次审查无关，复核时亦未因本次改动变化。
+> 注 1：`backend-ts` 的 `npx tsc -p tsconfig.json --noEmit` 在**既有** spec 文件里仍有大量报错（757 处，均为历史遗留的 vitest mock 类型问题），本次改动的源文件与回归用例文件均不在其中。
+> 注 2：`npm run test:unit` 附带的 `node --test electron/*.cjs` 有 1 个**既有**失败 + 1 个跳过（`gitOperations` 的身份注入依赖机器有全局 git 身份；`localShell` 的 macOS 专用用例在本机被 skip），与本次改动无关。
+> 注 3：本轮用 root 跑后端全量，`src/skill/user-skill.service.spec.ts` 的 1 条用例按 `it.skipIf(getuid() === 0)` 跳过，因此 skipped 从 13 变为 14（用例本身与本次改动无关）。
 
 ---
 
-## 四、修复建议顺序
+## 四、修复顺序（已按此执行）
 
-1. **BUG-E3 + BUG-E2**（安全 P0）：补元数据地址硬拒 + 跨主机重定向剥离凭据。这两条可组合利用，建议同批修复。
+1. **BUG-E3 + BUG-E2**（安全 P0）：补元数据地址硬拒 + 跨主机重定向剥离凭据。这两条可组合利用，同批修复。
 2. **BUG-H2**（P1）：掩码按值语义处理，改名场景拒绝保存。
-3. **BUG-S4 / BUG-S1**（P1）：回滚用 `sid`（两处 catch 同改）；贴底阈值区分「内容暴涨」与「用户上移」。S1 的阈值修复需与第 4 组 S3 配套。
-4. **BUG-S2 + BUG-S3**（P2，手势逻辑同批）：补 keydown 手势来源；`handleScroll` 分支顺序改为 `contentShrank → 位置上移 → contentGrew`。
+3. **BUG-S4 / BUG-S1**（P1）：回滚用 `sid`（两处 catch 同改）；贴底判据区分「内容暴涨」与「用户上移」。
+4. **BUG-S2 + BUG-S3**（P2，手势逻辑同批）：补 keydown 手势来源；`handleScroll` 分支顺序改为 `contentShrank → 位置上移 → 距底恢复`。
 5. **BUG-H1 / BUG-E1 / BUG-C2**（P2）：解码按键判定；校验考虑默认值；数字环境变量空串口径。
-6. **BUG-C1**（P2）：空串环境变量按未设置 + 路径类配置启动即拒。单独列组是因为它防的是整类运维误配（空串 .env），改动小但需要先定口径。
+6. **BUG-C1**（P2）：空串环境变量按未设置（「路径类配置启动即拒」未做，见「修复记录」差异说明）。
 
 修复完成后，请把对应 `*.review-bugcheck.*` 用例从两处 `vitest.config.ts` 的 `exclude` 列表中移除，并入默认测试套件。
+
+> 已执行：6 组修复全部落地，用例已更名为 `*.bugcheck.*` 并入默认套件，见「修复记录」与 3.3。

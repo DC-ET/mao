@@ -332,6 +332,10 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       return null
     }
 
+    // 入口捕获的会话 id：WS 发送是异步的，等待期间用户可能切到别的会话，
+    // 失败回滚必须写回消息实际发往的会话（见 editAndResend 的 M-10 口径）
+    let rollbackSessionId: string | null = null
+
     try {
       // Upload images to OSS
       const imageUrls = await uploadChatImages(files || [])
@@ -405,6 +409,8 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       }
 
       const sid = sessionId.value!
+      // 失败回滚的目标会话：此后即使用户切走也不跟着变
+      rollbackSessionId = sid
       // Upload non-image files to runtime incoming now that session exists
       let resolvedText = text || ''
       let uploadedFileCount = 0
@@ -475,15 +481,17 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       sending.value = false
       initializingWorkspace.value = false
       initializingWorkspaceLabel.value = ''
-      if (sessionId.value) {
+      if (rollbackSessionId) {
         // 回滚乐观插入的用户消息与 assistant 占位，避免失败后留下幽灵气泡
-        // （内容被修改后重发时，尾部保留逻辑无法识别旧乐观消息，会双条上屏）
-        sessionStore.removeTrailingEmptyAssistant(sessionId.value)
-        sessionStore.removeLastUserMessage?.(sessionId.value)
-        sessionStore.fetchSession(sessionId.value)
+        // （内容被修改后重发时，尾部保留逻辑无法识别旧乐观消息，会双条上屏）。
+        // 必须用入口捕获的会话：期间用户可能已切到别的会话，用 sessionId.value
+        // 会删掉当前会话的消息、甚至销毁它正在流式输出的气泡。
+        sessionStore.removeTrailingEmptyAssistant(rollbackSessionId)
+        sessionStore.removeLastUserMessage?.(rollbackSessionId)
+        sessionStore.fetchSession(rollbackSessionId)
       }
       if (!(error as Error & { toastShown?: boolean }).toastShown) {
-        const failedBeforeSession = !sessionId.value
+        const failedBeforeSession = rollbackSessionId == null
         ElMessage.error(
           error?.response?.data?.message
           || error?.message
@@ -526,20 +534,17 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       sending.value = false
       initializingWorkspace.value = false
       initializingWorkspaceLabel.value = ''
-      if (sessionId.value) {
-        sessionStore.removeTrailingEmptyAssistant(sessionId.value)
-      }
+      // 回滚写回发起发送的会话：等待执行期间用户可能已切到别的会话，
+      // 不能摘掉当前会话尾部的气泡（可能就是它正在流式输出的那条）
+      sessionStore.removeTrailingEmptyAssistant(sid)
       if (!(error as Error & { toastShown?: boolean }).toastShown) {
-        const failedBeforeSession = !sessionId.value
         ElMessage.error(
           error?.response?.data?.message
           || error?.message
-          || (failedBeforeSession ? '任务创建失败' : 'Agent 执行中断')
+          || 'Agent 执行中断'
         )
       }
-      if (sessionId.value) {
-        sessionStore.fetchSession(sessionId.value)
-      }
+      sessionStore.fetchSession(sid)
     }
   }
 

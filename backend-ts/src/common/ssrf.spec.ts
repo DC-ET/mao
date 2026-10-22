@@ -63,7 +63,10 @@ describe('isPrivateOrReservedIp', () => {
   it('mirrors the IPv4 matrix', () => {
     expect(isPrivateOrReservedIp('192.168.0.10')).toBe(true);
     expect(isPrivateOrReservedIp('169.254.169.254')).toBe(true);
-    expect(isPrivateOrReservedIp('100.64.0.1')).toBe(false);
+    // CGNAT / 阿里云内部段：100.64.0.0/10（元数据 100.100.100.200 在此段内）
+    expect(isPrivateOrReservedIp('100.64.0.1')).toBe(true);
+    expect(isPrivateOrReservedIp('100.100.100.200')).toBe(true);
+    expect(isPrivateOrReservedIp('100.128.0.1')).toBe(false);
     expect(isPrivateOrReservedIp('8.8.8.8')).toBe(false);
   });
 
@@ -88,12 +91,16 @@ describe('hard-deny predicates', () => {
     expect(isLoopbackIp('169.254.169.254')).toBe(false);
   });
 
-  it('cloud metadata covers the endpoint IP and known hostnames (case-insensitive)', () => {
+  it('cloud metadata covers the endpoint IPs and known hostnames (case-insensitive)', () => {
     expect(isCloudMetadataIp('169.254.169.254')).toBe(true);
+    expect(isCloudMetadataIp('100.100.100.200')).toBe(true);
+    expect(isCloudMetadataIp('169.254.0.23')).toBe(true);
     expect(isCloudMetadataIp('169.254.169.253')).toBe(false);
     expect(isCloudMetadataHost('169.254.169.254')).toBe(true);
+    expect(isCloudMetadataHost('100.100.100.200')).toBe(true);
     expect(isCloudMetadataHost('metadata.google.internal')).toBe(true);
     expect(isCloudMetadataHost('METADATA.GOOG')).toBe(true);
+    expect(isCloudMetadataHost('metadata.tencentyun.com')).toBe(true);
     expect(isCloudMetadataHost('metadata.example.com')).toBe(false);
   });
 });

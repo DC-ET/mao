@@ -198,7 +198,8 @@
         </div>
         <p class="section-hint">
           键名包含 token / secret / key / authorization / cookie 的请求头会自动加密存储，保存后不再回显；
-          编辑时保持掩码 <code>******</code> 表示不修改，清空则表示删除该请求头。
+          编辑时保持掩码 <code>******</code> 表示不修改，清空则表示删除该请求头；
+          修改键名后掩码无法对应到原凭据，请重新填写真实值。
         </p>
 
         <div class="section-title">

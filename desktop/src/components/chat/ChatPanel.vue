@@ -378,7 +378,7 @@ watch(pendingApprovals, () => syncToTaskView(), { deep: true })
 const messagesContainer = ref<HTMLElement>()
 const {
   userScrolledUp, scrollToBottom, resumeFollow, pauseFollow, scrollToMessage, beginRestore, completeRestore,
-  handleMarkdownRendered, handleWheel, handleTouchStart, handleTouchMove, handlePointerDown, handleScroll, cancelRestore, resetScrollBaseline, dispose: disposeScroll,
+  handleMarkdownRendered, handleWheel, handleTouchStart, handleTouchMove, handlePointerDown, handleKeyDown, handleScroll, cancelRestore, resetScrollBaseline, dispose: disposeScroll,
 } = useChatScroll(messagesContainer, {
   loadOlder: loadOlderMessages,
   canLoadOlder: () => sessionStore.activeMessageHasMore && !sessionStore.activeMessageLoadingOlder,
@@ -527,10 +527,12 @@ const typingRetry = computed(() => {
 watch(messagesContainer, (el, oldEl) => {
   oldEl?.removeEventListener('scroll', handleScroll)
   oldEl?.removeEventListener('wheel', handleWheel)
+  oldEl?.removeEventListener('keydown', handleKeyDown)
   // 新容器的 scrollTop 起点与旧容器无关，重新度量避免误判上滑
   resetScrollBaseline()
   el?.addEventListener('scroll', handleScroll, { passive: true })
   el?.addEventListener('wheel', handleWheel, { passive: true })
+  el?.addEventListener('keydown', handleKeyDown)
 }, { flush: 'post' })
 
 onMounted(async () => {
@@ -557,6 +559,7 @@ onUnmounted(() => {
   const el = messagesContainer.value
   el?.removeEventListener('scroll', handleScroll)
   el?.removeEventListener('wheel', handleWheel)
+  el?.removeEventListener('keydown', handleKeyDown)
   // 组件卸载（KeepAlive 关 Tab / 切 Settings）必须退订 WS 并清理审批队列，
   // 否则订阅与 pendingApprovals 一直残留，依赖 KeepAlive LRU 淘汰才释放
   cleanup()

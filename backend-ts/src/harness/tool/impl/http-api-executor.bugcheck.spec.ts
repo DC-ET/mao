@@ -1,18 +1,19 @@
 /**
- * 2026-10-22 代码审查 BUG 验证用例（自定义 HTTP 工具执行内核）。
- *
- * 用例断言「应有行为」，当前代码不满足 → 用例失败即证明 BUG 真实存在。
+ * 回归用例（BUG-E1 / E2 / E3 已修复）：自定义 HTTP 工具执行内核。
  *
  * BUG-E1：参数校验先于模板渲染执行，且 `required === 1` 时直接判缺失，
  *        于是「必填 + 默认值」并存的参数永远走不到默认值分支 —— 默认值成了死代码，
  *        管理后台允许同时勾选「必填」并填写「默认值」，工具因此完全无法调用。
+ *        修复：有默认值的参数不判缺失（渲染口径仍是 实参 > 默认值）。
  *
  * BUG-E2：请求头（含解密后的 Authorization / X-Api-Key 等凭据）在 execute() 入口
  *        只构建一次，重定向循环里被原样复用；跳转到不同主机时凭据照旧发出。
+ *        修复：跨主机（或 https → http）重定向剥离凭据类请求头。
  *
  * BUG-E3：SSRF 硬拒名单只覆盖 169.254.169.254（AWS）/ metadata.google.internal（GCP），
  *        未覆盖阿里云实例元数据 100.100.100.200；且 100.64.0.0/10 不在私网保留段里，
  *        该地址被当成公网主机，连放行名单都不需要检查。
+ *        修复：补齐各云厂商元数据 IP / 主机名，并把 100.64.0.0/10 纳入保留段。
  */
 import { describe, expect, it, vi } from 'vitest';
 import { HttpApiExecutor, validateArguments } from './http-api-executor.js';
@@ -111,9 +112,11 @@ describe('BUG-E3 SSRF 硬拒名单漏掉阿里云元数据地址 100.100.100.200
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it('100.100.100.200 当前被当成非私网地址（这正是漏网的原因）', () => {
-    // 该断言记录的是「现状」：说明漏网根因是私网保留段判定不含 100.64.0.0/10
-    expect(isPrivateOrReservedIp('100.100.100.200')).toBe(false);
+  it('100.100.100.200 属于 CGNAT 保留段（100.64.0.0/10），需要放行名单而不是按公网放行', () => {
+    // 修复前该地址不在私网/保留段列表里，连放行名单都不检查就直接发出请求
+    expect(isPrivateOrReservedIp('100.100.100.200')).toBe(true);
+    expect(isPrivateOrReservedIp('100.64.0.1')).toBe(true);
+    expect(isPrivateOrReservedIp('100.128.0.1')).toBe(false);
   });
 
   it('URL 模板的主机占位符由模型指定元数据地址时必须被拒绝', async () => {

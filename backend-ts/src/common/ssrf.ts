@@ -24,6 +24,9 @@ function isPrivateOrReservedIpv4(a: number, b: number, c: number, d: number): bo
   if (a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)) return true; // 私网
   if (a === 127) return true; // 环回
   if (a === 169 && b === 254) return true; // 链路本地
+  // CGNAT / 云厂商内部段（100.64.0.0/10）：阿里云实例元数据 100.100.100.200 落在此段，
+  // 且该段不可公网路由，按保留段处理（访问需管理员放行对应网段）。
+  if (a === 100 && b >= 64 && b <= 127) return true;
   if (ip >= 0x0A000000 && ip <= 0x0AFFFFFF) return true;
   if (ip <= 0x00FFFFFF || ip >= 0xFFFFFFFF - 0xFF) return true; // 0.x 与 255.x
   if (a >= 224) return true; // 组播/保留
@@ -81,17 +84,38 @@ export function isLoopbackIp(ip: string): boolean {
   return ip.replace(/^\[|\]$/g, '').toLowerCase() === '::1';
 }
 
-/** 云元数据端点 IP（169.254.169.254）——任何形态下永拒，不放行。 */
+/**
+ * 云元数据端点 IP：任何形态下永拒，不参与放行名单判定。
+ *
+ * 覆盖实际部署过 / 可能部署的云厂商（本项目线上在阿里云）：
+ * - 169.254.169.254：AWS / GCP / Azure / OpenStack 通用
+ * - 100.100.100.200：阿里云（返回 RAM 角色的临时 AK/SK/Token）
+ * - 169.254.0.23：腾讯云
+ * - 169.254.170.2：AWS ECS 任务元数据（容器内取任务角色凭据）
+ * - fd00:ec2::254：AWS IPv6 IMDS
+ */
+const CLOUD_METADATA_IPS: readonly string[] = [
+  '169.254.169.254',
+  '100.100.100.200',
+  '169.254.0.23',
+  '169.254.170.2',
+  'fd00:ec2::254',
+];
+
 export function isCloudMetadataIp(ip: string): boolean {
-  return ip.trim() === '169.254.169.254';
+  const bare = ip.trim().toLowerCase().replace(/^\[|\]$/g, '');
+  return CLOUD_METADATA_IPS.includes(bare);
 }
 
 /** 云元数据端点主机名（含常见云厂商别名；字面量 IP 由 isCloudMetadataIp 覆盖）。 */
 export function isCloudMetadataHost(hostname: string): boolean {
   const host = hostname.trim().toLowerCase().replace(/^\[|\]$/g, '');
-  return host === '169.254.169.254'
+  return isCloudMetadataIp(host)
     || host === 'metadata.google.internal'
-    || host === 'metadata.goog';
+    || host === 'metadata.goog'
+    || host === 'metadata.tencentyun.com'
+    || host === 'instance-data'
+    || host === 'instance-data.ec2.internal';
 }
 
 /** CIDR 字面量合法性：IPv4 + 可选 /0~32 前缀（裸 IPv4 合法，按 /32 处理）。 */
@@ -154,10 +178,13 @@ export function areIpsInCidrAllowlist(ips: readonly string[], cidrs: readonly st
   return true;
 }
 
-/** 执行内核永不放行的网段（环回 + 云元数据）：放行名单不得与它们相交。 */
+/** 执行内核永不放行的网段（环回 + 各云厂商元数据端点）：放行名单不得与它们相交。 */
 const HARD_DENY_NETS: readonly { net: number; prefix: number }[] = [
   { net: ipv4ToUint32('127.0.0.0')!, prefix: 8 },
   { net: ipv4ToUint32('169.254.169.254')!, prefix: 32 },
+  { net: ipv4ToUint32('100.100.100.200')!, prefix: 32 },
+  { net: ipv4ToUint32('169.254.0.23')!, prefix: 32 },
+  { net: ipv4ToUint32('169.254.170.2')!, prefix: 32 },
 ];
 
 /** 两个 CIDR 是否相交（CIDR 之间只可能嵌套或不相交，双向包含即判相交）。 */

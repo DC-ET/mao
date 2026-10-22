@@ -13,17 +13,16 @@ const SCROLL_UP_TOLERANCE = 2
 const GESTURE_WINDOW_MS = 250
 /** 两次自动定位的最小间隔：合并流式高频重排，降低与用户手势抢帧的概率 */
 const FOLLOW_MIN_INTERVAL_MS = 50
-/**
- * 自动补位的最大距底距离（倍屏）。超过说明用户已经真正离开底部，不再强行拉回；
- * 「跟随中但底部被面板挤走」通常只有几十到几百 px，远小于该上限。
- */
-const MAX_FOLLOW_DISTANCE_RATIO = 2
+/** 键盘上会滚动容器的按键（方向键 / 翻页 / 首尾 / 空格） */
+const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ', 'Spacebar'])
+/** 其中向上翻的按键：与滚轮上滑等价，直接停止跟随 */
+const SCROLL_UP_KEYS = new Set(['ArrowUp', 'PageUp', 'Home'])
 
 /**
  * 对话区滚动控制器：主会话 / 边路任务 / 子代理共用同一套实现。
  *
  * 状态只有两个来源，不再从 scroll 事件反推意图：
- * - 用户手势（滚轮上滑、触摸下拉）→ 停止跟随；
+ * - 用户手势（滚轮上滑、触摸下拉、键盘上翻、滚动条拖拽）→ 停止跟随；
  * - 用户手势结束时已回到近底部 → 恢复跟随；
  * - 显式动作（发送消息、切回 Tab、点「回到最新」）→ resumeFollow()。
  *
@@ -85,13 +84,19 @@ export function useChatScroll(container: Ref<HTMLElement | undefined>, options: 
     cancelScheduledFollow()
   }
 
-  /** 真正写到底部；只在跟随中、且底部确实离开视口时才写 */
+  /**
+   * 真正写到底部；只在跟随中、且底部确实离开视口时才写。
+   *
+   * 判据不是「距底多少屏」：内容单帧暴涨（大工具卡 / 长 diff）时浏览器保持 scrollTop
+   * 不变，距底距离会瞬间超过两屏——那恰恰是最需要跟随的场景。改为比较位置是否相对
+   * 基准上移：内容在下方增长时 scrollTop 不动，只有用户真的把位置往上挪了才放弃补位。
+   */
   function writeBottom() {
     const el = container.value
     if (!el || disposed || userScrolledUp.value) return
     const dist = distanceFromBottom(el)
     if (dist <= 1) return
-    if (dist > el.clientHeight * MAX_FOLLOW_DISTANCE_RATIO) return
+    if (lastScrollTop >= 0 && el.scrollTop < lastScrollTop - SCROLL_UP_TOLERANCE) return
     programmatic = true
     el.scrollTop = el.scrollHeight
     syncBaseline(el)
@@ -211,6 +216,22 @@ export function useChatScroll(container: Ref<HTMLElement | undefined>, options: 
     markGesture()
   }
 
+  /**
+   * 键盘滚动：方向键 / PageUp / PageDown / Home / End / 空格同样会滚动容器并派发
+   * scroll，但整个模块没有键位手势来源时，这些 scroll 会被当成布局产物——
+   * 键盘用户既停不了跟随（视野被拽回底部），也到不了分页门槛（要求已上滑）。
+   * 输入控件内的方向键不是滚动，组合键（Ctrl+Home 等）也不按滚动处理。
+   */
+  function handleKeyDown(event: KeyboardEvent) {
+    if (!SCROLL_KEYS.has(event.key)) return
+    if (event.altKey || event.ctrlKey || event.metaKey) return
+    const target = event.target as HTMLElement | null
+    const tag = target?.tagName
+    if (target?.isContentEditable || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+    markGesture()
+    if (SCROLL_UP_KEYS.has(event.key)) stopFollowing()
+  }
+
   function handleScroll() {
     const el = container.value
     if (!el || disposed) return
@@ -222,14 +243,15 @@ export function useChatScroll(container: Ref<HTMLElement | undefined>, options: 
     // 只有手势窗口内的 scroll 才允许改变跟随状态；窗口外一律视为布局产物
     if (performance.now() - lastGestureAt <= GESTURE_WINDOW_MS) {
       const contentShrank = lastScrollHeight >= 0 && el.scrollHeight < lastScrollHeight - 2
-      const contentGrew = lastScrollHeight >= 0 && el.scrollHeight > lastScrollHeight + 2
       if (lastScrollTop < 0) {
         // 无基准（容器重建 / 首帧）：按距底推断
         if (distanceFromBottom(el) >= NEAR_BOTTOM) stopFollowing()
-      } else if (contentShrank || contentGrew) {
-        // 手势窗口内也可能夹杂布局变化，不据此关闭跟随；已上滑时按距底恢复
+      } else if (contentShrank) {
+        // 内容塌陷（REST 回填 / roundLimit 截断）时浏览器会把 scrollTop 向下钳制，
+        // 产生假的「位置上移」——必须先于方向判定排除，不能据此关闭跟随。
         if (userScrolledUp.value && distanceFromBottom(el) < NEAR_BOTTOM) userScrolledUp.value = false
       } else if (el.scrollTop < lastScrollTop - SCROLL_UP_TOLERANCE) {
+        // 位置真的上移了（滚动条拖拽 / 键盘翻页），即便流式输出同时在撑高内容也要停止跟随
         stopFollowing()
       } else if (distanceFromBottom(el) < NEAR_BOTTOM) {
         userScrolledUp.value = false
@@ -328,6 +350,6 @@ export function useChatScroll(container: Ref<HTMLElement | undefined>, options: 
   }
 
   return { userScrolledUp, scrollToBottom, resumeFollow, pauseFollow: stopFollowing, scrollToMessage, beginRestore, completeRestore,
-    handleMarkdownRendered, handleWheel, handleTouchStart, handleTouchMove, handlePointerDown, handleScroll,
+    handleMarkdownRendered, handleWheel, handleTouchStart, handleTouchMove, handlePointerDown, handleKeyDown, handleScroll,
     cancelRestore, resetScrollBaseline, scheduleFollow, dispose }
 }
