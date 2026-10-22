@@ -506,6 +506,61 @@ describe('session store 实体/投影模型', () => {
     expect(store.getMessages('1').filter(m => m.content === 'deploy_desktop')).toHaveLength(1)
   })
 
+  // user_message_saved 帧丢失/迟到（WS 重连期间只发给当前连接、被陈旧过滤器吞掉）时，
+  // 乐观消息的 id 停在 msg_*，之后 fetchMessages 走 REST 兜底。落库文本 part 带图片 URL
+  // 注入行而乐观消息是原始正文，不剥离就会判不出同一条 → 同一次发送重复上屏两条。
+  it('applyFetchedMessages 在 user_message_saved 丢失后按剥离注入行的正文去重带图消息', () => {
+    const store = useSessionStore()
+    store.setMessages('1', [
+      { id: '10', role: 'user', content: '上一轮', createdAt: '2026-08-13 16:00:00' },
+      { id: '11', role: 'assistant', content: '上一轮回复', createdAt: '2026-08-13 16:01:00' },
+    ])
+    store.addUserMessage('1', {
+      id: 'msg_1755075600000_user',
+      role: 'user',
+      content: '转成CAD',
+      images: ['https://a/b.png'],
+      createdAt: '2026-08-13 17:00:00',
+    })
+
+    store.applyFetchedMessages('1', [
+      { id: '10', role: 'user', content: '上一轮', createdAt: '2026-08-13 16:00:00' },
+      { id: '11', role: 'assistant', content: '上一轮回复', createdAt: '2026-08-13 16:01:00' },
+      {
+        id: '12', role: 'user',
+        content: '转成CAD\n\n[图片 1] https://a/b.png',
+        images: ['https://a/b.png'],
+        createdAt: '2026-08-13 17:00:00',
+      },
+    ])
+
+    expect(store.getMessages('1').map(m => m.id)).toEqual(['10', '11', '12'])
+    expect(store.getMessages('1').filter(m => m.role === 'user')).toHaveLength(2)
+  })
+
+  it('applyFetchedMessages 不因剥离注入行误删不同的用户消息', () => {
+    const store = useSessionStore()
+    store.setMessages('1', [
+      { id: '10', role: 'user', content: '上一轮', createdAt: '2026-08-13 16:00:00' },
+    ])
+    store.addUserMessage('1', {
+      id: 'msg_1755075600000_user',
+      role: 'user',
+      content: '转成CAD',
+      createdAt: '2026-08-13 17:00:00',
+    })
+
+    store.applyFetchedMessages('1', [
+      { id: '10', role: 'user', content: '上一轮', createdAt: '2026-08-13 16:00:00' },
+      { id: '12', role: 'user', content: '转成CAD\n\n[图片 1] https://a/b.png', images: ['https://a/b.png'], createdAt: '2026-08-13 17:00:00' },
+    ])
+
+    // 图片不同 → 不是同一条：乐观消息按内容不匹配保留（尾部规则，与 REST 版本并列），
+    // 但两者都保留说明没有误判为「同一条」
+    expect(store.getMessages('1').map(m => m.id)).toEqual(['10', '12', 'msg_1755075600000_user'])
+    expect(store.getMessages('1')).toHaveLength(3)
+  })
+
   it('applyFetchedMessages 用落库消息替换边路任务的乐观用户消息', () => {
     const store = useSessionStore()
     store.setMessages('side-1', [

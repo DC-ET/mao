@@ -7,6 +7,7 @@ import { getToken } from '../utils/auth-storage'
 import { nowDateTime } from '../utils/datetime'
 import { mapCompactionEvents } from '../utils/chatMessage'
 import { isAndroidCapacitor } from '../utils/capacitor'
+import { stripImageUrlLines } from '../utils/imageUrlAnnotation'
 import { isElectronClient } from '../utils/platform'
 import { updateSideTaskTabTitleFor } from './useCenterTabs'
 import { notifyInboxSystemUpdate } from './useInboxSystemNotify'
@@ -867,12 +868,15 @@ export function useStreamWS() {
           // 本端刚发送的乐观消息：最后一条乐观用户消息（msg_/side_user_ 等临时 ID 前缀），
           // 其内容与本事件一致 → 只替换 ID。注意边路任务乐观 ID 是 side_user_ 前缀，
           // 不能只判 msg_，否则会误判为远端回显、追加出重复的用户消息。
+          // 两侧都剥离图片 URL 注入行再比对：广播口径是剥离后的正文，而用户正文恰好
+          // 命中注入行格式时（[图片 N] <无空格串>）广播端会被误剥，逐字比对会失配。
           const list = sessionStore.getMessages(sid) ?? []
           const lastUser = [...list].reverse().find(m => m.role === 'user')
           const remoteText = content.trim()
           const isLocalOptimistic = lastUser != null
             && sessionStore.isOptimisticUserId(String(lastUser.id))
-            && (lastUser.content === content || (lastUser.content.trim() === '' && remoteText === ''))
+            && (stripImageUrlLines(lastUser.content) === stripImageUrlLines(content)
+              || (lastUser.content.trim() === '' && remoteText === ''))
 
           if (isLocalOptimistic && remoteMsgId != null) {
             sessionStore.updateLastMessageId(sid, 'user', remoteMsgId)
