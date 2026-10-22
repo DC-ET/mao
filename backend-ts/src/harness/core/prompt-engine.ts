@@ -197,12 +197,12 @@ export class PromptEngine {
     // manifest 只读最终请求对象（rendered = quick command 展开 / 媒体注入 / 归一化 / 提醒注入之后），
     // 禁止用组装前的 context.messages 口径（决策 1、§8 漂移对策）。
     context.contextManifest = this.buildContextManifest(context, sections, rendered, request);
-    // 前缀指纹观测（技术方案 2026-10-12 §4.3）：此处 sections 与 request.tools 都在手，
-    // 且是「所见即所发」口径；与上一次比对，变化时 warn 点名是哪几节变了。
-    // messages 口径排除 system（rendered[0] 恒为 system 消息），只数历史轮次。
+    // 前缀指纹观测（技术方案 2026-10-12 §4.3；2026-10-22 补消息级）：
+    // sections / request.tools / rendered 都是「所见即所发」口径。消息口径排除首条
+    // system 消息（rendered[0] 恒为 system），逐条 hash 后按最长公共前缀比对，
+    // 覆盖 <date-change>、<system-notice> 等请求期注入；尾部追加不告警。
     if (context.sessionId != null) {
-      const historyMessageCount = Math.max(0, rendered.length - 1);
-      observePrefix(context.sessionId, sections, request.tools, historyMessageCount);
+      observePrefix(context.sessionId, sections, request.tools, rendered.slice(1));
     }
     return request;
   }
