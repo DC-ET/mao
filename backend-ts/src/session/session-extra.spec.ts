@@ -340,6 +340,12 @@ describe('SessionService extra', () => {
     messageRepo.selectLastUserMessage.mockResolvedValue({ id: 3, sessionId: 11, role: 'USER', content: 'old' });
     await service.editMessageAndTruncate(11, 3, 'new', ['img']);
     expect(messageRepo.logicalDeleteAfter).toHaveBeenCalled();
+    expect(messageRepo.updateById).toHaveBeenCalledWith(expect.objectContaining({
+      content: JSON.stringify([
+        { type: 'text', text: 'new\n\n[图片 1] img' },
+        { type: 'image_url', image_url: { url: 'img' } },
+      ]),
+    }));
     sessionRepo.findById.mockResolvedValue({ id: 11, phase: 'WAITING_APPROVAL' });
     expect(await service.restoreRunningAfterApproval(11)).toBe(true);
     await service.save({ id: 12, title: 'x' } as never);

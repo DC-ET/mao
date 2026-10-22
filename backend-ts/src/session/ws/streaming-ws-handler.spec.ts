@@ -142,6 +142,54 @@ describe('StreamingWsHandler', () => {
     expect(mcpSyncService.clearSession).not.toHaveBeenCalled();
   });
 
+  it('sendMessageInjectsImageUrlsIntoThePersistedTextPart', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('CLOUD', 'IDLE'));
+    sessionService.saveMessage.mockResolvedValue(message(99, 'USER'));
+    harnessService.prepareMessage.mockResolvedValue('event-img');
+    messageQueueService.listPending.mockResolvedValue([]);
+    llmModelMapper.selectDefault.mockResolvedValue({ supportsVision: 1 });
+    await handler.handleTextMessage(ws, JSON.stringify({
+      type: 'send_message', sessionId: 11,
+      data: { content: '这个图片能帮我转成CAD格式的文件？', eventId: 'event-img', images: ['https://a/b.png', 'https://a/c.png'] },
+    }));
+    await executor.runAll();
+    expect(sessionService.saveMessage).toHaveBeenCalledWith(
+      11, 'USER',
+      [
+        { type: 'text', text: '这个图片能帮我转成CAD格式的文件？\n\n[图片 1] https://a/b.png\n[图片 2] https://a/c.png' },
+        { type: 'image_url', image_url: { url: 'https://a/b.png' } },
+        { type: 'image_url', image_url: { url: 'https://a/c.png' } },
+      ],
+      null, null, null, 0, null,
+    );
+    expect(titleService.scheduleForFirstUserMessage).toHaveBeenCalledWith(11, 99, expect.any(Array));
+  });
+
+  it('sendMessageWithImageOnlyContentStillPersistsATextPartWithUrls', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('CLOUD', 'IDLE'));
+    sessionService.saveMessage.mockResolvedValue(message(99, 'USER'));
+    harnessService.prepareMessage.mockResolvedValue('event-only');
+    messageQueueService.listPending.mockResolvedValue([]);
+    llmModelMapper.selectDefault.mockResolvedValue({ supportsVision: 1 });
+    await handler.handleTextMessage(ws, JSON.stringify({
+      type: 'send_message', sessionId: 11,
+      data: { content: '', eventId: 'event-only', images: ['https://a/b.png'] },
+    }));
+    await executor.runAll();
+    expect(sessionService.saveMessage).toHaveBeenCalledWith(
+      11, 'USER',
+      [
+        { type: 'text', text: '[图片 1] https://a/b.png' },
+        { type: 'image_url', image_url: { url: 'https://a/b.png' } },
+      ],
+      null, null, null, 0, null,
+    );
+  });
+
   it('finishes an accepted CLOUD task after its SSO connection expires', async () => {
     vi.useFakeTimers();
     vi.clearAllMocks();
@@ -538,6 +586,28 @@ describe('StreamingWsHandler', () => {
     expect(sessionService.editMessageAndTruncate).toHaveBeenCalledWith(11, 3, 'edited', []);
     expect(harnessService.executeFromEvent).toHaveBeenCalled();
     expect(taskTerminalService.finishExecution).toHaveBeenCalledWith(11, 7, 'COMPLETED', 'edit-event');
+  });
+
+  it('editAndResendWithImagesPassesTheEditedBodyThroughUnchanged', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('CLOUD', 'IDLE'));
+    sessionService.getMessages.mockResolvedValue([message(1, 'USER'), message(2, 'ASSISTANT'), message(3, 'USER')]);
+    sessionService.editMessageAndTruncate.mockResolvedValue(message(3, 'USER'));
+    harnessService.prepareMessage.mockResolvedValue('edit-img-event');
+    messageQueueService.listPending.mockResolvedValue([]);
+    llmModelMapper.selectDefault.mockResolvedValue({ supportsVision: 1 });
+    // 前端编辑框按存储文本回填（已含注入行），回传的 content 带有旧注入行
+    await handler.handleTextMessage(ws, JSON.stringify({
+      type: 'edit_and_resend', sessionId: 11, messageId: 3,
+      content: '转成CAD\n\n[图片 1] https://a/b.png', images: ['https://a/b.png'],
+    }));
+    await executor.runAll();
+    // 幂等：剥离由共享模块完成，handler 透传原文，落库/执行都只有一套注入行
+    expect(sessionService.editMessageAndTruncate).toHaveBeenCalledWith(
+      11, 3, '转成CAD\n\n[图片 1] https://a/b.png', ['https://a/b.png'],
+    );
+    expect(harnessService.executeFromEvent).toHaveBeenCalled();
   });
 
   it('queueAndToolMessagesAreRoutedToCollaborators', async () => {
