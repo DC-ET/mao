@@ -8,9 +8,9 @@ export const MAX_PATCHES = 2500;
 export const JPEG_QUALITY = 0.85;
 
 /** 写入侧压缩：超过该字节数才做有损压缩（技术方案 2026-10-22 §7.1）。 */
-export const STORE_COMPRESS_THRESHOLD_BYTES = 500 * 1024;
-/** 写入侧压缩目标：单图 ≤300KB（必须小于触发阈值，否则会把图“压”得更大）。 */
-export const STORE_TARGET_BYTES = 300 * 1024;
+export const STORE_COMPRESS_THRESHOLD_BYTES = 1.5 * 1024 * 1024;
+/** 写入侧压缩目标：单图 ≤1.2MB（必须小于触发阈值，否则会把图“压”得更大）。 */
+export const STORE_TARGET_BYTES = 1.2 * 1024 * 1024;
 /** 质量控制档位：先降质量，再缩尺寸。 */
 export const STORE_QUALITY_STEPS = [80, 70, 60] as const;
 /** 质量降到底仍超目标时，每次缩小的比例。 */
@@ -147,8 +147,8 @@ export const PromptImageResizer = {
 
   /**
    * 写入侧压缩（技术方案 2026-10-22 §7.1）：
-   * - 尺寸合规且 ≤500KB → 原样返回，不做有损重编码；
-   * - 否则按 300KB 目标迭代（质量 80→70→60，再按 0.85 缩尺寸，共 6 次编码；含尺寸规整总计 ≤7）。
+   * - 尺寸合规且 ≤1.5MB → 原样返回，不做有损重编码；
+   * - 否则按 1.2MB 目标迭代（质量 80→70→60，再按 0.85 缩尺寸，共 6 次编码；含尺寸规整总计 ≤7）。
    *
    * 只在工具产出图片时调用一次，结果落库后不再重编码（前缀缓存稳定）。
    */
@@ -180,7 +180,7 @@ export const PromptImageResizer = {
     const thresholdBytes = opts?.thresholdBytes ?? STORE_COMPRESS_THRESHOLD_BYTES;
     const targetBytes = opts?.targetBytes ?? STORE_TARGET_BYTES;
 
-    // 先做既有尺寸规整（保持原编码）；结果 ≤500KB 就原样使用，不做有损重编码。
+    // 先做既有尺寸规整（保持原编码）；结果 ≤1.5MB 就原样使用，不做有损重编码。
     // 这样“仅因尺寸超限”的图仍保持 PNG 无损（与改造前行为一致）。
     const normalized = await this.resizeForPrompt(input, mimeHint);
     if (normalized.bytes.length <= thresholdBytes) {

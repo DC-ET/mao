@@ -107,12 +107,12 @@ describe('RequestSizeEstimator', () => {
   });
 
   it('counts remote image URLs as their expanded data URI size', () => {
-    // 上传图在消息里是 URL，发送前会被适配器下载并压成 ≤300KB 的 data URI；
+    // 上传图在消息里是 URL，发送前会被适配器下载并压成 ≤1.2MB 的 data URI；
     // 只按 URL 长度计会让「150 张上传图 ≈ 45MB」的会话估算成 10KB，体积触发彻底失效。
     const estimated = estimator.estimate({
       messages: [{ role: 'user', content: [{ type: 'image_url', imageUrl: { url: 'https://cdn.example.com/a.png' } }] }],
     });
-    expect(estimated).toBeGreaterThan(400 * 1024);
+    expect(estimated).toBeGreaterThan(1.5 * 1024 * 1024);
   });
 
   it('compensates JSON escaping in text-dense payloads', () => {

@@ -435,7 +435,7 @@ export class AgentWeixinInboundHandler implements WeixinInboundHandler {
   }
 
   private async appendImageParts(parts: ContentPart[], imageDataUris: string[]): Promise<void> {
-    // 入站图片写入前压一次：落盘原图不变，消息内 data URI 控制在 300KB 级（技术方案 2026-10-22 §7.1）。
+    // 入站图片写入前压一次：落盘原图不变，消息内 data URI 控制在 1.2MB 级（技术方案 2026-10-22 §7.1）。
     // 有界并发（2）压缩，避免串行推迟入库、也避免多张大图同时解码顶爆内存。
     const uris = await mapWithConcurrency(
       imageDataUris.filter((dataUri) => dataUri != null && dataUri.trim() !== ''),

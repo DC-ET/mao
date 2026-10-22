@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import sharp from 'sharp';
 import { describe, expect, it } from 'vitest';
+import { STORE_COMPRESS_THRESHOLD_BYTES, STORE_TARGET_BYTES } from '../harness/tool/prompt-image-resizer.js';
 import { AgentWeixinInboundHandler, appendDownloadErrorNotice } from './agent-inbound-handler.js';
 import type { ContentPart } from '../domain/types.js';
 import type { WeixinInboundMessageContext } from './types.js';
@@ -47,18 +48,18 @@ describe('AgentWeixinInboundHandler', () => {
   });
 
   it('buildMessageContent_compressesLargeInboundImages', async () => {
-    // 1200x1200 随机噪声 PNG 必然 >500KB：入站写入前应压到 ≤300KB（消息 data URI），
+    // 1200x1200 随机噪声 PNG 必然 >1.5MB：入站写入前应压到 ≤1.2MB（消息 data URI），
     // 同时保持图片类型不变（image_url part），不影响图片可见性。
     const source = await sharp(randomBytes(1200 * 1200 * 3), {
       raw: { width: 1200, height: 1200, channels: 3 },
     }).png().toBuffer();
-    expect(source.length).toBeGreaterThan(500 * 1024);
+    expect(source.length).toBeGreaterThan(STORE_COMPRESS_THRESHOLD_BYTES);
     const original = `data:image/png;base64,${source.toString('base64')}`;
     const ctx: WeixinInboundMessageContext = { accountId: 'a', body: '', imageDataUris: [original] };
     const parts = await handler.buildMessageContent(ctx, [], [], null) as ContentPart[];
     const url = parts[1].imageUrl!.url;
     const bytes = Buffer.from(url.slice(url.indexOf(',') + 1), 'base64');
-    expect(bytes.length).toBeLessThanOrEqual(300 * 1024);
+    expect(bytes.length).toBeLessThanOrEqual(STORE_TARGET_BYTES);
     expect(url).not.toBe(original);
     // 原 data URI 不被修改（落盘/预览仍用原图）
     expect(ctx.imageDataUris![0]).toBe(original);

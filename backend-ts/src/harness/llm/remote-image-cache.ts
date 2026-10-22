@@ -1,13 +1,13 @@
 import { harnessLog } from '../log.js';
 import { ImageFileSupport } from '../tool/image-file-support.js';
-import { PromptImageResizer } from '../tool/prompt-image-resizer.js';
+import { PromptImageResizer, STORE_TARGET_BYTES } from '../tool/prompt-image-resizer.js';
 
 /**
  * 远程图片下载/压缩缓存（技术方案 2026-10-22 §7.2）。
  *
  * 桌面/Web 上传的图片以 URL 形式进入消息，适配器每轮都要下载并转 data URI。
  * 同一个 URL 在多轮里内容不变，因此：
- * - 首次下载后压缩到 ≤300KB 并缓存 data URI；
+ * - 首次下载后压缩到 ≤1.2MB 并缓存 data URI；
  * - 后续命中直接复用，不下载、不重编码（输出字节稳定，不破坏前缀缓存）；
  * - 缓存过期后带 ETag/Last-Modified 做条件请求：304 复用旧值，200 重新压缩；
  * - 网络/解析失败回退旧值，保证可用性不受缓存影响。
@@ -15,8 +15,8 @@ import { PromptImageResizer } from '../tool/prompt-image-resizer.js';
  * 进程内 LRU，按 data URI 字符数计算占用；重启后重新计算，但同一输入字节一致。
  */
 
-/** 单张远程图片压缩目标：≤300KB（留出 base64 与前缀缓存余量）。 */
-export const REMOTE_IMAGE_TARGET_BYTES = 300 * 1024;
+/** 单张远程图片压缩目标：与写入侧同口径 ≤1.2MB（超出即压到目标，留 base64 与前缀缓存余量）。 */
+export const REMOTE_IMAGE_TARGET_BYTES = STORE_TARGET_BYTES;
 /** 缓存总占用上限（按 data URI 字符数近似字节数）。 */
 export const REMOTE_IMAGE_CACHE_MAX_BYTES = 64 * 1024 * 1024;
 /** 缓存有效期：过期后做一次条件请求校验内容是否变化。 */

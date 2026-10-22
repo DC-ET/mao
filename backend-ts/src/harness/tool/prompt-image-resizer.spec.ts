@@ -40,7 +40,8 @@ describe('PromptImageResizer.compressForStore', () => {
   });
 
   it('keeps alpha images as webp', async () => {
-    const input = await noisePng(600, 600, 4);
+    // 900x900 RGBA 噪声 PNG ≈ 3.2MB，稳定高于 1.5MB 阈值（600x600 只有 ~1.4MB，会落在阈值内）
+    const input = await noisePng(900, 900, 4);
     expect(input.length).toBeGreaterThan(STORE_COMPRESS_THRESHOLD_BYTES);
     const result = await PromptImageResizer.compressForStore(input, 'image/png');
     expect(result.resized).toBe(true);
@@ -73,7 +74,7 @@ describe('PromptImageResizer.compressForStore', () => {
   });
 
   it('reports rotated dimensions for EXIF images through the lossy path', async () => {
-    // 1600x900 噪声 + orientation=6（展示时旋转 90° → 900x1600），体积 > 500KB 走有损压缩。
+    // 1600x900 噪声 + orientation=6（展示时旋转 90° → 900x1600），体积 > 1.5MB 走有损压缩。
     const input = await sharp(randomBytes(1600 * 900 * 3), { raw: { width: 1600, height: 900, channels: 3 } })
       .jpeg({ quality: 100 })
       .withMetadata({ orientation: 6 })

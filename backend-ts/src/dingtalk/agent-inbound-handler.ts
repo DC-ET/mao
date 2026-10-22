@@ -646,7 +646,7 @@ async function composeContent(text: string, media: DingtalkMediaDownload, worksp
   }
   if (media.images.length === 0) return body;
   const parts: ContentPart[] = [{ type: 'text', text: body.trim() === '' ? '请查看图片' : body }];
-  // 入站图片写入前压一次：落盘原图不变，消息内 data URI 控制在 300KB 级（技术方案 2026-10-22 §7.1）。
+  // 入站图片写入前压一次：落盘原图不变，消息内 data URI 控制在 1.2MB 级（技术方案 2026-10-22 §7.1）。
   // 有界并发（2）压缩，避免串行推迟入库、也避免多张大图同时解码顶爆内存。
   const uris = await mapWithConcurrency(
     media.images,

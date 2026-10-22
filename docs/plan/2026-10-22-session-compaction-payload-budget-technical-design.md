@@ -5,7 +5,7 @@
 - 事故来源：会话 1396（王胡云 / 「VTN APP 首页改版方向」）连续 5 次 `LLM API returned 413`，会话被置为 `FAILED`
 - 本版修订（按 2026-10-22 评审意见）：
   1. **压缩请求必须命中前缀缓存**：默认不剥图，压缩阈值控制在供应商上限的 80% 以内，保证「压缩请求 = 主请求前缀 + 一条指令」仍在供应商上限内；
-  2. **图片只在 >500KB 时压缩**，≤500KB 原样使用，避免无差别有损重编码；
+  2. **图片只在 >1.5MB 时压缩**，≤1.5MB 原样使用，避免无差别有损重编码；
   3. **去掉注入侧总量预算（原 L2）与适配器兜底（原 L3）**：两者都会引入周期性前缀变化或重复编码，收益不及代价；存量数据由体积触发压缩兜底。
 - 范围：后端 harness 的压缩触发、压缩请求构造、图片写入侧压缩；模型表新增 1 个可选上限字段；管理后台新增 1 个压缩配置项。**不改** WS 事件协议
 - 关联代码（当前工作区 `mao/`，2026-10-22）：
@@ -62,7 +62,7 @@
 1. **新增请求体体积触发**：请求体估算体积超过阈值时触发会话压缩，与 token 阈值是「或」关系。
 2. **阈值跟随供应商上限**：触发阈值默认取 `min(全局 40 MiB, 供应商请求体上限 × 0.8)`，保证「压缩请求 = 主请求 + 一条指令」不会超过供应商上限。
 3. **压缩请求必须命中前缀缓存**：默认**不剥离历史图片、不裁剪历史消息**，压缩请求与主请求共享完全一致的前缀，只追加一条交接指令。
-4. **图片前置压缩**：工具产出图片时，**仅当图片字节 > 500KB** 才做有损压缩（目标 ≤300KB）；≤500KB 原样使用，不做任何重编码。
+4. **图片前置压缩**：工具产出图片时，**仅当图片字节 > 1.5MB** 才做有损压缩（目标 ≤1.2MB）；≤1.5MB 原样使用，不做任何重编码。
 5. **不影响正常轮次缓存**：未触发压缩的轮次，请求体逐字节与改造前一致。
 6. **可观测**：上下文详情能看到本次请求体积；压缩日志能看到触发原因（tokens / payload / both / manual）与实际请求体积。
 
@@ -97,7 +97,7 @@
 
 | 机制 | 位置 | 作用 | 对缓存的影响 |
 |---|---|---|---|
-| A. 图片前置压缩 | `read_file` / `page_screenshot` → `PromptImageResizer.compressForStore` | >500KB 的图压到 ≤300KB，写入即固定 | 无（写入侧一次性） |
+| A. 图片前置压缩 | `read_file` / `page_screenshot` → `PromptImageResizer.compressForStore` | >1.5MB 的图压到 ≤1.2MB，写入即固定 | 无（写入侧一次性） |
 | B. 体积触发压缩 | `harness-service`（request_start）+ `agent-loop`（mid-loop） | 请求体到阈值时整窗重置 | 一次性失效（压缩本身），压缩调用命中前缀 |
 | C. 阈值跟随供应商上限 | 模型配置 `maxRequestBodyBytes` | 保证压缩请求发得出去 | 保证压缩请求与主请求同前缀 |
 
@@ -154,7 +154,7 @@ contentBytes(c) =
   string  → byteLength(c) + 转义膨胀（采样估算）   // 中文 3 bytes/字；引号/换行会再膨胀
   array   → Σ { type=text      → byteLength + 转义膨胀
                 type=image_url → data URI: url.length（ASCII base64，1 char = 1 byte）
-                                 http(s): 410KB（发送前会压成 ≤300KB 的 data URI）
+                                 http(s): ~1.65MB（发送前会压成 ≤1.2MB 的 data URI）
 ```
 
 口径细节：
@@ -162,7 +162,7 @@ contentBytes(c) =
 | 项 | 口径 | 原因 |
 |---|---|---|
 | `image_url.url`（data URI） | 取 `.length` 而不是 `byteLength` | base64 字符集全在 ASCII 内，长度即字节数；`byteLength` 会扫 50MB 字符串 |
-| `image_url.url`（http/https） | 按压缩目标最坏值 ~438KB 计入（320KB × 4/3 + 前缀） | 适配器发送前会下载并压缩成 ≤300KB 的 data URI；只算 URL 长度会严重低估上传图会话。非视觉模型实际会替换成占位文本，属保守高估（<1% 场景） |
+| `image_url.url`（http/https） | 按压缩目标最坏值 ~1.65MB 计入（1.2MB × 1.03 × 4/3 + 前缀） | 适配器发送前会下载并压缩成 ≤1.2MB 的 data URI；只算 URL 长度会严重低估上传图会话。非视觉模型实际会替换成占位文本，属保守高估（<1% 场景） |
 | 文本转义 | UTF-8 字节 + 首/中/尾各取 32KB 采样外推的转义膨胀（`"` `\` `\b` `\f` `\n` `\r` `\t` 各 +1 字符，其余控制字符 +5） | 工具输出里的 JSON 在 body 中是字符串值，实测不补偿会低 35% |
 | `tools` | `JSON.stringify(parameters)` 后 `byteLength`，按数组引用 `WeakMap` 缓存 | schema 是嵌套对象，只序列化一次即最终字节，不再叠加转义补偿；调用方每轮新建数组时命中率为 0（40 工具约 0.5ms，可忽略） |
 | `reasoningContent` | 仅 deepseek 系（`modelId` 含 `deepseek` 或 `ds-` 前缀）的 assistant 消息计入 | 与 `serializeChatRequest` 的 `shouldEchoReasoningContent` 同口径，否则会低估 thinking 回传字节 |
@@ -350,36 +350,38 @@ if (estimate(compactionRequest) >= stripLimit) {
 
 ## 7. 图片前置压缩
 
-### 7.1 触发规则：只压 >500KB 的图
+### 7.1 触发规则：只压 >1.5MB 的图
 
 ```ts
-export const STORE_COMPRESS_THRESHOLD_BYTES = 500 * 1024;      // 500KB（二进制）
-export const STORE_TARGET_BYTES = 300 * 1024;                  // 压缩目标 ≤300KB
-export const STORE_MAX_DIMENSION = 2048;                       // 长边上限（沿用）
+export const STORE_COMPRESS_THRESHOLD_BYTES = 1.5 * 1024 * 1024; // 1.5MB（二进制）
+export const STORE_TARGET_BYTES = 1.2 * 1024 * 1024;             // 压缩目标 ≤1.2MB
+export const STORE_MAX_DIMENSION = 2048;                         // 长边上限（沿用）
 ```
 
 判定顺序：
 
 1. 先做**尺寸规整**（既有行为）：长边 > 2048px 或 patches > 2500 时缩放；
-2. 若结果字节 **≤ 500KB** → **原样返回，不重编码**（保留 PNG 无损）；
-3. 若结果字节 **> 500KB** → 进入压缩：按目标 300KB 迭代（质量 80→70→60，仍超则按 0.85 缩尺寸，最多 3 轮）；
+2. 若结果字节 **≤ 1.5MB** → **原样返回，不重编码**（保留 PNG 无损）；
+3. 若结果字节 **> 1.5MB** → 进入压缩：按目标 1.2MB 迭代（质量 80→70→60，仍超则按 0.85 缩尺寸，最多 3 轮）；
 4. 编码选择：带 alpha → WebP q80（截图文字优于 JPEG）；无 alpha → JPEG q80；
-5. 仍超 300KB 时接受实际结果并记 `warn`，不阻断工具。
+5. 仍超 1.2MB 时接受实际结果并记 `warn`，不阻断工具。
 
-> 说明：「≤500KB 原样返回」指不做有损重编码；尺寸本身超限（>2048px / >2500 patches）仍按既有逻辑缩放，否则模型侧无法接受。
+> 说明：「≤1.5MB 原样返回」指不做有损重编码；尺寸本身超限（>2048px / >2500 patches）仍按既有逻辑缩放，否则模型侧无法接受。
 >
-> 目标值必须小于触发阈值（500KB → 300KB），否则 600KB 的图会被「压」成更大的 800KB，反而增加体积。
+> 目标值必须小于触发阈值（1.5MB → 1.2MB），否则 1.4MB 的图会被「压」成更大的 1.6MB，反而增加体积。
 >
-> 边界：动图（多帧 GIF / 动画 WebP）超过 500KB 时会被压成单帧（sharp 默认只取首帧，视觉模型本身也只取首帧）；无法解码的图（只有文件头）按原字节转 data URI，不会丢图；极端情况下所有编码尝试都不比原图小，则保留原图（不「压大」）。
+> 阈值取舍：早期默认 500KB→300KB 能把图片会话压到触发线以下，但截图文字有可见损失；改为 1.5MB→1.2MB 后绝大多数截图（含 2K 屏整屏 PNG）不再重编码，代价是图片总体积上升、图片密集会话更容易触发一次体积压缩（见 §7.4）。
+>
+> 边界：动图（多帧 GIF / 动画 WebP）超过 1.5MB 时会被压成单帧（sharp 默认只取首帧，视觉模型本身也只取首帧）；无法解码的图（只有文件头）按原字节转 data URI，不会丢图；极端情况下所有编码尝试都不比原图小，则保留原图（不「压大」）。
 
 ### 7.2 接入点
 
 | 工具 | 现状 | 改造 |
 |---|---|---|
-| `read_file`（`readImage`） | `PromptImageResizer.resizeForPrompt`（只限尺寸） | 尺寸规整后追加 `compressForStore`（>500KB 才生效） |
+| `read_file`（`readImage`） | `PromptImageResizer.resizeForPrompt`（只限尺寸） | 尺寸规整后追加 `compressForStore`（>1.5MB 才生效） |
 | `page_screenshot`（`PageScreenshotTool`） | 直接把客户端 data URI 塞进结果 | 解码 data URI → 同样的两步处理；失败时回退原图并 `warn` |
-| IM 入站（feishu / weixin / dingtalk） | `media.images` 的 data URI 原样进 content part | 构造 content part 时 `compressDataUriForStore`（>500KB → ≤300KB）；落盘原图不动 |
-| 远程图片 URL（桌面/Web 上传图，三个 LLM 适配器） | 每轮 `downloadAndEncode` 都重新下载 + 限尺寸 | 进程内 LRU：首次下载后 `compressForStore` 到 ≤300KB 并缓存，后续命中不再下载/编码 |
+| IM 入站（feishu / weixin / dingtalk） | `media.images` 的 data URI 原样进 content part | 构造 content part 时 `compressDataUriForStore`（>1.5MB → ≤1.2MB）；落盘原图不动 |
+| 远程图片 URL（桌面/Web 上传图，三个 LLM 适配器） | 每轮 `downloadAndEncode` 都重新下载 + 限尺寸 | 进程内 LRU：首次下载后 `compressForStore` 到 ≤1.2MB 并缓存，后续命中不再下载/编码 |
 | 其他图片工具 | `ToolImageResultProcessor` 只做透传 | 不改 |
 
 > 写入侧压缩是**一次性**的：落库的 `message.metadata.attachments[].data_uri` 就是处理后的字节，历史回放与请求构建不再重复编码，前缀天然稳定。
@@ -393,8 +395,8 @@ async function compressForStore(input: Buffer, mimeHint: string, opts) {
   const meta = await sharp(input).metadata();                 // 只读头，判断尺寸与 alpha
   const target = computeTargetSize(meta.width, meta.height);  // 长边 ≤2048、patches ≤2500
 
-  // ≤500KB 且尺寸合规：原样返回，不重编码
-  if (fitsLimits(meta) && input.length <= STORE_COMPRESS_THRESHOLD_BYTES) return input;
+  // ≤1.5MB 且尺寸合规：原样返回，不重编码
+  if (fitsLimits(meta) && input.length <= STORE_COMPRESS_THRESHOLD_BYTES) return input;  // 1.5MB
 
   const encode = async (width: number, height: number, quality: number) => sharp(input)
     .rotate()                                                  // 按 EXIF 方向摆正
@@ -427,6 +429,8 @@ async function compressForStore(input: Buffer, mimeHint: string, opts) {
 
 ### 7.4 收益实测（会话 1396 原始数据）
 
+历史参数（500KB → 300KB）下的实测：
+
 | 指标 | 数值 |
 |---|---|
 | 工具图片总数 | 59 张（54 张事故时 + 5 张恢复后新增） |
@@ -435,7 +439,12 @@ async function compressForStore(input: Buffer, mimeHint: string, opts) {
 | 压到 300KB 后 | 10.2 MB，总量降到 **18.57 MB（省 20.08 MB，约 52%）** |
 | 处理后 base64 体积 | 约 **24.8 MB**，低于 40 MiB 触发线 |
 
-结论：500KB 阈值能把 1396 这类会话从 51.5MB（base64）压到约 24.8MB，**不再触发体积压缩**；代价是 34 张截图转为有损编码，需要灰度验证文字清晰度。同一批数据用 1MB 阈值只能省 11%（仍会触发一次压缩），所以 500KB 是更合适的默认值。
+当前默认（1.5MB → 1.2MB）的重算：
+
+- 同一批事故数据平均单图 716KB，**全部低于 1.5MB → 一张都不压**，base64 仍是约 51.5MB，必然触发一次体积压缩（压缩请求会按 §6.4 剥图兜底，会话不会卡死，但要付一次前缀缓存 miss）；
+- 线上 1396 会话现存 15 张图（二进制 9.64MB，最大单图 1.48MB）在 1.5MB 阈值下同样零压缩，base64 由约 6.9MB 变为 12.85MB。
+
+结论：1.5MB→1.2MB 是「画质优先」的取舍——常规截图（2K 整屏 PNG 约 0.8–1.4MB）完全不重编码，文字不会糊；代价是图片密集会话总量更高、更容易撞 40MiB 触发线。真要压总量，把这两个常量调回 500KB/300KB 即可（只影响新读入的图，历史不重写）。
 
 ### 7.5 确定性
 
@@ -464,7 +473,7 @@ async function compressForStore(input: Buffer, mimeHint: string, opts) {
 | 项 | 取值 / 行为 |
 |---|---|
 | 缓存键 | URL；条目内记录 `ETag` / `Last-Modified` 作为内容版本 |
-| 首次 | 下载 → `compressForStore(threshold=300KB, target=300KB)` → 存 data URI |
+| 首次 | 下载 → `compressForStore(threshold=1.2MB, target=1.2MB)` → 存 data URI |
 | 命中（TTL 内） | 直接返回 data URI，不下载、不编码 |
 | 过期（TTL 1h） | 带 `If-None-Match` / `If-Modified-Since` 条件请求：304 复用旧值并续期；200 重新压缩替换 |
 | 失败 | 有旧值 → 复用旧值（只 `warn`）；无旧值 → 抛错，适配器回退原始 URL |
@@ -487,7 +496,7 @@ async function compressForStore(input: Buffer, mimeHint: string, opts) {
 
 | 方案点 | 是否改动历史中段 | 对缓存的影响 |
 |---|---|---|
-| 图片前置压缩（>500KB） | 否，写入时固定 | **无**：同一条历史每轮字节一致 |
+| 图片前置压缩（>1.5MB） | 否，写入时固定 | **无**：同一条历史每轮字节一致 |
 | 体积触发压缩 | 是（整窗重置） | **一次性失效**，与现有 token 压缩同性质；之后重建前缀 |
 | 压缩请求（不剥图） | 否，只在末尾追加指令 | **命中**：前缀与主请求完全一致 |
 | 压缩请求兜底剥图 | 是（仅在配置错误时） | 该次压缩调用不命中，日志标注 |
@@ -520,8 +529,8 @@ async function compressForStore(input: Buffer, mimeHint: string, opts) {
 | `llm_model.max_request_body_bytes`（新增列） | bigint | `0`（未知） | 模型配置即时生效 | 供应商请求体上限；>0 时触发阈值 = `min(全局, 80%×该值)` |
 | `harness.compaction.triggerRatio` | number | `0.8`（线上为 0.9） | 冷启动构建 | 既有 token 触发 |
 | `harness.compaction.enabled` | boolean | `true` | 冷启动构建 | 关闭后自动压缩（含体积触发）不生效，手动仍可用 |
-| 图片压缩阈值 | 常量 | `500 KiB` | 代码常量 | >500KB 才压 |
-| 图片压缩目标 | 常量 | `300 KiB` | 代码常量 | 压到 ≤300KB |
+| 图片压缩阈值 | 常量 | `1.5 MiB` | 代码常量 | >1.5MB 才压 |
+| 图片压缩目标 | 常量 | `1.2 MiB` | 代码常量 | 压到 ≤1.2MB |
 | 图片尺寸上限 | 常量 | `2048px / 2500 patches` | 代码常量 | 沿用现有 |
 
 新增设置项需要同步：
@@ -574,12 +583,12 @@ export interface ContextManifest {
 | 风险 | 影响 | 对策 |
 |---|---|---|
 | 压缩触发导致上下文被摘要化 | 长会话细节丢失 | 默认 40MB 远高于正常会话（绝大多数 < 5MB）；阈值可配 |
-| 图片有损压缩影响识别 | 截图文字可能不清 | 只压 >500KB 的图，目标 300KB、长边 2048px；保留原文件路径，模型可 `read_file` 重看；灰度对比识别结果 |
-| 500KB 阈值压缩面变大 | 34/59 张图被转有损，清晰度风险高于 1MB 档 | 先灰度一批真实 UI 截图做识别对比；必要时上调目标到 400KB 或阈值到 1MB |
+| 图片有损压缩影响识别 | 截图文字可能不清 | 只压 >1.5MB 的图（常规 2K 整屏截图不重编码），目标 1.2MB、长边 2048px；保留原文件路径，模型可 `read_file` 重看 |
+| 1.5MB 阈值压缩面变小 | 图片密集会话总量更高（1396 平均单图 716KB 全部不压），更容易撞 40MiB 触发线 | 体积触发 + 剥图兜底保证不卡死；需要压总量时把阈值/目标调回 500KB/300KB |
 | 供应商上限填错 | 阈值过高 → 413；过低 → 频繁压缩 | 模型配置可随时改；未填时用全局 40MiB；P2 加 413 自愈 |
 | 压缩模型被配成别的模型 | 压缩请求吃不到缓存 | 后台提示「留空 = 使用会话模型（可命中缓存）」；日志记录本次压缩使用的模型 |
 | 网关把同一模型路由到不同上游 | 压缩请求命中率不稳定 | 不在本项目控制范围；`prompt_cache_key` 已用于 Responses 粘性路由 |
-| 单图压缩后仍偏大 | 个别复杂截图压不到 300KB | 接受实际结果并记 `warn`，不阻断工具；总量仍由体积触发压缩兜底 |
+| 单图压缩后仍偏大 | 个别复杂截图压不到 1.2MB | 接受实际结果并记 `warn`，不阻断工具；总量仍由体积触发压缩兜底 |
 
 ## 13. 测试计划
 
@@ -593,15 +602,16 @@ export interface ContextManifest {
   - 阈值配置错误导致压缩请求超限时，剥图分支生效并打日志；
   - `force=true` 绕过判定。
 - `prompt-image-resizer.spec.ts`：
-  - ≤500KB 输入原样返回（字节完全一致）；
-  - >500KB 输入压到 ≤300KB；
+  - ≤1.5MB 输入原样返回（字节完全一致）；
+  - >1.5MB 输入压到 ≤1.2MB；
   - alpha 图走 WebP；
   - 同输入两次输出字节一致（确定性）。
 - `file-tools.spec.ts` / `page-tools.spec.ts`：`data_uri` 为处理后字节，`size_bytes` 口径正确。
 
 ### 13.2 集成 / 回归
 
-- 构造 60 张 800KB 图片的会话（压缩后约 60×300KB）→ 请求体积到阈值 → 触发一次压缩 → 压缩请求命中前缀 → 下一次请求 < 5MB。
+- 构造 60 张 2MB 图片的会话（1.5MB 阈值下每张压到 1.2MB，合计约 72MB base64 约 96MB）→ 请求体积越过 40MiB → 触发一次体积压缩 → 压缩请求（>40MiB 安全线）剥图兜底后能发出 → 之后按新窗口继续。
+- 反向：构造 30 张 1MB 图片（低于 1.5MB 阈值，全部原样）→ 不产生任何有损重编码，只由体积触发压缩兜底。
 - 回归：普通会话（<1MB）不产生任何压缩调用（spy 断言 `compact` 未调用）。
 - 缓存回归：同一历史连续两次构建请求，序列化字节一致。
 
@@ -621,13 +631,13 @@ export interface ContextManifest {
 
 | 阶段 | 内容 | 价值 | 预估 |
 |---|---|---|---|
-| P0 | §4 估算器、§5 体积触发 + 模型上限、§6 压缩保缓存、§7 图片前置压缩（>500KB） | 消除 413 卡死；压降低频；正常轮次缓存零影响 | 1.5–2 天 |
+| P0 | §4 估算器、§5 体积触发 + 模型上限、§6 压缩保缓存、§7 图片前置压缩（>1.5MB） | 消除 413 卡死；压降低频；正常轮次缓存零影响 | 1.5–2 天 |
 | P1 | §10 manifest 展示、压缩事件记录 reason/bytes | 可观测性 | 0.5–1 天 |
 | P2 | 413 自愈（剥图重试一次）、按模型灰度阈值 | 对未知上游兜底 | 1 天 |
 
 ## 16. 待确认问题
 
-1. **压缩目标字节**：`>500KB 才压` 已确认；目标值暂定 300KB（必须小于阈值）。若实测文字清晰度不足，可上调到 400KB 或把阈值改回 1MB。
+1. **压缩目标字节**：已确认 `>1.5MB 才压、目标 ≤1.2MB`（画质优先；目标必须小于阈值）。若图片密集会话频繁撞 40MiB，可把两个常量整体调回 500KB/300KB。
 2. **模型级上限**：新增 `llm_model.max_request_body_bytes`（MB），默认 0 = 未知、用全局 40MiB。是否所有模型都填？建议至少给 50MB 通道的模型填 50。
 3. **图片格式**：PNG 截图压缩时默认转 WebP（带 alpha）或 JPEG（无 alpha），是否接受无损转有损？若要求保持 PNG，可改为「仅缩尺寸 + PNG 重编码」，收益会明显下降。
 4. **触发阈值是否按模型灰度**：P0 先用全局 + 模型上限，暂不做按模型独立阈值。

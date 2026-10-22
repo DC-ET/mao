@@ -142,7 +142,7 @@ export class PageScreenshotTool extends PageToolBase {
     const dataUri = asText(shot.dataUri);
     if (!dataUri || !dataUri.startsWith('data:image/')) return raw;
     const mime = asText(shot.mime) ?? 'image/png';
-    // 写入侧一次性压缩（技术方案 2026-10-22 §7.2）：截图同样 >500KB 才压，≤500KB 原样。
+    // 写入侧一次性压缩（技术方案 2026-10-22 §7.2）：截图同样 >1.5MB 才压，≤1.5MB 原样。
     const compressed = await compressScreenshot(dataUri, mime);
     return toJson({
       media_type: 'image',

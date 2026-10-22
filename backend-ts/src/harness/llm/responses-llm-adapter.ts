@@ -1179,7 +1179,7 @@ async function resizeDataUri(dataUri: string): Promise<string> {
 }
 
 async function downloadAndEncode(imageUrl: string): Promise<string> {
-  // 远程图片走进程内 LRU：首轮下载并压到 ≤300KB，后续命中不再下载/重编码。
+  // 远程图片走进程内 LRU：首轮下载并压到 ≤1.2MB，后续命中不再下载/重编码。
   return remoteImageCache.resolve(imageUrl);
 }
 

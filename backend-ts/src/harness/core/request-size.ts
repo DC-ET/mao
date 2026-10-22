@@ -1,5 +1,6 @@
 import type { ChatMessage, ChatRequest, ToolDefinition } from '../llm/chat-request.js';
 import { shouldEchoReasoningContent } from '../llm/json.js';
+import { STORE_TARGET_BYTES } from '../tool/prompt-image-resizer.js';
 
 /**
  * 请求体体积估算（技术方案 2026-10-22 §4）。
@@ -29,11 +30,11 @@ const TOOL_DEFINITION_OVERHEAD = 40;
 /** 结构/字段名级的安全系数（不再承担 JSON 转义膨胀，转义按采样实测补偿）。 */
 const SAFETY_FACTOR = 1.02;
 /**
- * 远程 URL 图在发送前会被适配器下载并压到 ≤300KB，估算按最坏值计入。
- * 目标 300KB 迭代可能收敛在略高处（实测 307KB），再叠加 base64 膨胀 4/3 与 data URI 前缀。
- * 已知低估边界：6 次编码仍未到目标的极端噪声图（实际可到 ~1MB），以及解码失败回退原始字节的图。
+ * 远程 URL 图在发送前会被适配器下载并压到 ≤1.2MB，估算按最坏值计入。
+ * 目标值迭代可能收敛在略高处（约 +2.5%），再叠加 base64 膨胀 4/3 与 data URI 前缀。
+ * 已知低估边界：6 次编码仍未到目标的极端噪声图，以及解码失败回退原始字节的图。
  */
-const REMOTE_IMAGE_BYTES = Math.ceil((320 * 1024 * 4) / 3) + 1024;
+const REMOTE_IMAGE_BYTES = Math.ceil((STORE_TARGET_BYTES * 1.03 * 4) / 3) + 1024;
 /** 转义采样长度：首/中/尾各采样这么多字符。 */
 const ESCAPE_SAMPLE_CHARS = 32 * 1024;
 
@@ -76,8 +77,8 @@ function jsonStringBytes(text: string | null | undefined): number {
 /**
  * 图片 URL 的 body 占用：
  * - data URI 是纯 ASCII，长度即字节数；
- * - http(s) URL 会被适配器下载并替换成压缩后的 data URI（≤300KB），按最坏值计入，
- *   否则上传图较多的会话会被严重低估（URL 只有几十字节，实际每张约 300KB）。
+ * - http(s) URL 会被适配器下载并替换成压缩后的 data URI（≤1.2MB），按最坏值计入，
+ *   否则上传图较多的会话会被严重低估（URL 只有几十字节，实际每张可达 MB 级）。
  */
 function urlBytes(url: string | null | undefined): number {
   if (url == null || url === '') return 0;

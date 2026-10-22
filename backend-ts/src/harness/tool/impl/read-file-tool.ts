@@ -107,8 +107,8 @@ export class ReadFileTool extends BaseTool {
     const origHeight = origSize?.height ?? null;
     let resized;
     try {
-      // 写入侧一次性压缩（技术方案 2026-10-22 §7.1）：>500KB 才做有损压缩，
-      // ≤500KB 且尺寸合规时原样返回；结果落库后不再重编码。
+      // 写入侧一次性压缩（技术方案 2026-10-22 §7.1）：>1.5MB 才做有损压缩，
+      // ≤1.5MB 且尺寸合规时原样返回；结果落库后不再重编码。
       resized = await PromptImageResizer.compressForStore(bytes, detectedMime);
     } catch (e) {
       harnessLog('warn', `Prompt image compress failed for ${pathArg}: ${(e as Error).message}`);
