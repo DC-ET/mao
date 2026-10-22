@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
 import type { ChatMessage, TodoItem, ContextWindowInfo, CompactionEvent, QueueMessage, FileChange, PendingQuestion } from '../../types/chat'
 import { appendTextDelta, appendThinkingDelta as appendThinkingDeltaUtil, appendToolCallStart as appendToolCallStartUtil, discardAbortedStreamTail } from '../../utils/chatMessage'
+import { stripImageUrlLines } from '../../utils/imageUrlAnnotation'
 import { nowDateTime } from '../../utils/datetime'
 import type { TaskPhase } from './types'
 import type { LlmRetryInfo } from './types'
@@ -207,9 +208,7 @@ export function createMessageRuntimeModule(ctx: {
     const earlier = firstFetchedIndex > 0
       ? local.slice(0, firstFetchedIndex).filter(m => !(m.role === 'user'
         && isOptimisticUserId(String(m.id))
-        && newlyFetchedUsers.some(fetched =>
-          fetched.content === m.content
-          && JSON.stringify(fetched.images ?? []) === JSON.stringify(m.images ?? []))))
+        && newlyFetchedUsers.some(fetched => isOptimisticEchoOf(fetched, m))))
       : []
     const tail: ChatMessage[] = []
     let lastFetchedIndex = -1
@@ -220,8 +219,7 @@ export function createMessageRuntimeModule(ctx: {
         && streamingAssistantMessageIds.get(sid) === String(message.id)
       const isReplacedOptimisticUser = message.role === 'user'
         && isOptimisticUserId(String(message.id))
-        && newlyFetchedUsers.some(fetched => fetched.content === message.content
-          && JSON.stringify(fetched.images ?? []) === JSON.stringify(message.images ?? []))
+        && newlyFetchedUsers.some(fetched => isOptimisticEchoOf(fetched, message))
       // 中断气泡默认保留（已流出内容的唯一副本）；但同轮已落库时它只是本地回显，
       // 保留会显示重复回复（停止点击与服务端落库/完成广播的竞态）
       const isInterruptedEcho = isInterruptedAssistant(message) && echoesPersistedReply(local, i, messages);
@@ -656,6 +654,18 @@ export function createMessageRuntimeModule(ctx: {
   /** 乐观插入（尚未落库）的用户消息 ID 判定：user_message_saved 替换 / fetch 合并去重共用。 */
   function isOptimisticUserId(id: string): boolean {
     return OPTIMISTIC_USER_ID_PREFIXES.some(prefix => id.startsWith(prefix))
+  }
+
+  /**
+   * 落库消息是否为某条乐观用户消息的服务端回显：正文（剥离图片 URL 注入行后）与图片都相同。
+   *
+   * 剥离是为了容忍注入行：带图消息落库的文本 part 尾部有 `[图片 N] <url>` 行，而乐观消息
+   * 是用户原始正文。`user_message_saved` 帧丢失/迟到后走 REST 兜底时，不剥离就判不出
+   * 是同一条，同一次发送会重复上屏两条用户消息。对无注入行内容是恒等操作。
+   */
+  function isOptimisticEchoOf(fetched: ChatMessage, optimistic: ChatMessage): boolean {
+    return stripImageUrlLines(fetched.content) === stripImageUrlLines(optimistic.content)
+      && JSON.stringify(fetched.images ?? []) === JSON.stringify(optimistic.images ?? [])
   }
 
   /**

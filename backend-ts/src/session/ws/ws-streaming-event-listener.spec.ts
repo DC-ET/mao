@@ -246,10 +246,31 @@ describe('WsStreamingEventListener', () => {
 
   it('contentParts builds text and image parts', () => {
     expect(contentParts('hi', ['https://a/b.png'])).toEqual([
-      { type: 'text', text: 'hi' },
+      { type: 'text', text: 'hi\n\n[图片 1] https://a/b.png' },
       { type: 'image_url', image_url: { url: 'https://a/b.png' } },
     ]);
     expect(contentParts('  ', [])).toEqual([]);
+  });
+
+  it('contentParts injects url lines for image-only messages', () => {
+    expect(contentParts('', ['https://a/b.png'])).toEqual([
+      { type: 'text', text: '[图片 1] https://a/b.png' },
+      { type: 'image_url', image_url: { url: 'https://a/b.png' } },
+    ]);
+  });
+
+  it('contentParts strips previously injected lines before re-appending', () => {
+    // 编辑重发回传的正文已含注入行（前端按存储文本回填）：不得重复堆积
+    const edited = contentParts('hi\n\n[图片 1] https://a/b.png', ['https://a/b.png']);
+    expect(edited).toEqual([
+      { type: 'text', text: 'hi\n\n[图片 1] https://a/b.png' },
+      { type: 'image_url', image_url: { url: 'https://a/b.png' } },
+    ]);
+    expect(contentParts('hi', ['https://a/b.png'])).toEqual(edited);
+  });
+
+  it('contentParts keeps plain text messages byte-identical', () => {
+    expect(contentParts('hello', [])).toEqual([{ type: 'text', text: 'hello' }]);
   });
 
   it('coalesces content deltas into one flushed frame', async () => {

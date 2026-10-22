@@ -8,6 +8,7 @@ import { nowSql } from '../common/datetime.js';
 import type { MessageRepository, SessionRepository } from './session.repository.js';
 import { SESSION_TITLE_MODEL_ID_KEY } from '../settings/settings.service.js';
 import { TitleGenerator } from './util/title-generator.js';
+import { stripImageUrlLines } from './util/image-url-annotation.js';
 import { wsEvent } from './ws/ws-event.js';
 import { LLM_CALL_SCENES, LlmCallContext } from '../usage/llm-call-context.js';
 
@@ -254,7 +255,10 @@ function extractText(content: unknown): string {
   return content
     .filter((item): item is Record<string, unknown> => item != null && typeof item === 'object')
     .filter((item) => item.type === 'text' && item.text != null)
-    .map((item) => String(item.text))
+    // 剥离图片 URL 注入行（技术方案 2026-10-22 §5.4）：注入行只服务于模型下载文件本体，
+    // 进入标题输入会把 URL 片段带进标题
+    .map((item) => stripImageUrlLines(String(item.text)))
+    .filter((t) => t.trim() !== '')
     .join(' ');
 }
 

@@ -52,6 +52,7 @@ import type {
 import { SessionGroupKey, ACTIVE_PHASE_SQL_LIST } from './util/session-group-key.js';
 import { GitUrlParser } from './util/git-url-parser.js';
 import { toStoredContentJson } from './session-vo.js';
+import { buildUserContentParts } from './util/image-url-annotation.js';
 import { stripCitationMarkers } from './util/citation-markers.js';
 import { WEIXIN_PROJECT_KEY } from '../domain/types.js';
 
@@ -1601,12 +1602,10 @@ function buildEditContent(text: string | null, images: string[] | null): string 
   if (images == null || images.length === 0) {
     return text;
   }
-  const parts: unknown[] = [{ type: 'text', text: text ?? '' }];
-  for (const imageUrl of images) {
-    parts.push({ type: 'image_url', image_url: { url: imageUrl } });
-  }
   try {
-    return JSON.stringify(parts);
+    // 委托统一实现（技术方案 2026-10-22 §5.3）：幂等由共享模块保证——
+    // 编辑回传的正文含旧注入行时先剥离再追加，不重复堆积。
+    return JSON.stringify(buildUserContentParts(text ?? '', images));
   } catch {
     return text;
   }

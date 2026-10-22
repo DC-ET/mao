@@ -149,6 +149,24 @@ describe('SessionTitleService', () => {
     );
   });
 
+  it('strips injected image url lines from the title input', async () => {
+    const ctx = makeService();
+    // 注入行只服务于模型下载文件本体，不能进标题输入（技术方案 2026-10-22 §5.4）
+    await ctx.service.generateAndApply(11, 21, [{
+      type: 'text',
+      text: '这个图片能帮我转成CAD格式的文件？\n\n[图片 1] https://mao.etarch.cn/uploads/a.png',
+    }, { type: 'image_url', imageUrl: { url: 'https://mao.etarch.cn/uploads/a.png' } }]);
+    expect(ctx.llm.chat).toHaveBeenCalledWith(expect.objectContaining({
+      messages: [
+        expect.objectContaining({ role: 'system' }),
+        { role: 'user', content: '这个图片能帮我转成CAD格式的文件？' },
+      ],
+    }), expect.anything(), expect.anything());
+    expect(ctx.sessionRepo.updateTitleIfPlaceholder).toHaveBeenCalledWith(
+      11, 'NORMAL', '未命名会话', '排查登录接口超时', expect.any(String),
+    );
+  });
+
   it('skips non-first messages and unsupported session types', async () => {
     const earlier = makeService({ messageRepo: { hasOwnEarlierUserMessage: vi.fn(async () => true) } });
     await earlier.service.generateAndApply(11, 21, 'hello');

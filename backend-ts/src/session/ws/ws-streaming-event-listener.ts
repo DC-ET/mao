@@ -3,6 +3,7 @@ import type { ToolCall } from '../../harness/llm/chat-request.js';
 import type { StreamingWsRegistry } from './streaming-ws-registry.js';
 import { mapToolToType } from '../activity/activity-type-mapper.js';
 import { ToolResultSummarizer } from '../util/tool-result-summarizer.js';
+import { buildUserContentParts } from '../util/image-url-annotation.js';
 import { FileChangeDiffUtil } from '../../harness/tool/file-change-diff-util.js';
 import { ToolImageResultProcessor } from '../../harness/tool/tool-image-result-processor.js';
 import type { ToolCallResultMeta } from '../../harness/tool/tool-result.js';
@@ -381,12 +382,6 @@ function extractActivityTarget(toolName: string | null, argumentsJson: string | 
 }
 
 export function contentParts(text: string, images: string[]): ContentPart[] {
-  const parts: ContentPart[] = [];
-  if (text && text.trim() !== '') {
-    parts.push({ type: 'text', text });
-  }
-  for (const url of images) {
-    parts.push({ type: 'image_url', image_url: { url } } as ContentPart);
-  }
-  return parts;
+  // 委托统一实现：行为 = 原 parts 组装 + 图片 URL 注入（技术方案 2026-10-22 §5.2）
+  return buildUserContentParts(text, images);
 }
