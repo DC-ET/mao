@@ -5,7 +5,8 @@
       <span v-if="agentType" class="banner-type">{{ agentType }}</span>
     </div>
 
-    <div class="messages" ref="messagesContainer">
+    <div class="messages" ref="messagesContainer"
+      @touchstart.passive="handleTouchStart" @touchmove.passive="handleTouchMove">
       <div v-if="displayMessages.length === 0 && !sending" class="subagent-empty">
         <el-icon :size="40" class="empty-icon"><Opportunity /></el-icon>
         <p>等待子代理开始输出…</p>
@@ -59,10 +60,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted, onUnmounted, onActivated } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, onActivated } from 'vue'
 import { Opportunity } from '@element-plus/icons-vue'
 import { useSessionStore } from '../../stores/session'
 import { useStreamWS } from '../../composables/useStreamWS'
+import { useChatScroll } from '../../composables/useChatScroll'
 import { useToolApprovals } from '../../composables/useChat'
 import { api } from '../../api'
 import { ElMessage } from 'element-plus'
@@ -88,7 +90,7 @@ const { subscribe, unsubscribe, retryExecution, sendAskUserQuestionsResult } = u
 const { pendingApprovals, confirmApproval } = useToolApprovals()
 const commandEditDialogRef = ref<InstanceType<typeof CommandEditDialog>>()
 
-const messagesContainer = ref<HTMLElement | null>(null)
+const messagesContainer = ref<HTMLElement>()
 const agentType = ref(props.agentType || '')
 const historyLoaded = ref(false)
 const retrying = ref(false)
@@ -258,35 +260,16 @@ async function fetchMessages() {
   }
 }
 
-const userScrolledUp = ref(false)
-const isProgrammaticScroll = ref(false)
-const NEAR_BOTTOM = 80
-
-function scrollToBottom() {
-  nextTick(() => {
-    requestAnimationFrame(() => {
-      if (userScrolledUp.value) return
-      const el = messagesContainer.value
-      if (!el) return
-      isProgrammaticScroll.value = true
-      el.scrollTop = el.scrollHeight
-      requestAnimationFrame(() => { isProgrammaticScroll.value = false })
-    })
-  })
-}
-
-function handleScroll() {
-  const el = messagesContainer.value
-  if (!el) return
-  if (isProgrammaticScroll.value) return
-  userScrolledUp.value = el.scrollHeight - el.scrollTop - el.clientHeight > NEAR_BOTTOM
-}
-
-// Markdown 渲染为异步（含代码块高亮），渲染完成后内容高度才最终确定，需再滚动一次
-function handleMarkdownRendered() {
-  if (userScrolledUp.value) return
-  scrollToBottom()
-}
+// --- 自动滚动：与主聊天 / 边路任务共用 useChatScroll ---
+// 本面板只读、无历史分页，故 loadOlder 恒为 false（分页入口自然关闭）。
+const {
+  scrollToBottom, resumeFollow, handleMarkdownRendered,
+  handleWheel, handleTouchStart, handleTouchMove, handleScroll,
+  resetScrollBaseline, dispose: disposeScroll,
+} = useChatScroll(messagesContainer, {
+  loadOlder: async () => false,
+  canLoadOlder: () => false,
+})
 
 // 执行过程中流式内容持续增长、工具状态变化、打字指示切换等都会影响可见高度，统一驱动自动滚动
 watch(
@@ -331,12 +314,16 @@ onMounted(async () => {
   subscribe(sid.value)
   const el = messagesContainer.value
   el?.addEventListener('scroll', handleScroll, { passive: true })
+  el?.addEventListener('wheel', handleWheel, { passive: true })
   window.addEventListener('mao:markdown-rendered', handleMarkdownRendered)
   await Promise.all([loadMeta(), fetchMessages()])
-  void scrollToBottom()
+  resumeFollow()
 })
 
 onActivated(() => {
+  // KeepAlive 恢复的容器位置与缓存前无关，重新度量后恢复跟随
+  resetScrollBaseline()
+  resumeFollow()
   // KeepAlive 切回时若无活跃流式，再拉一次历史（覆盖断线丢包）
   if (!shouldPreserveLiveStream(sessionStore.getMessages(sid.value))) {
     void fetchMessages()
@@ -347,7 +334,9 @@ onUnmounted(() => {
   unsubscribe(sid.value)
   const el = messagesContainer.value
   el?.removeEventListener('scroll', handleScroll)
+  el?.removeEventListener('wheel', handleWheel)
   window.removeEventListener('mao:markdown-rendered', handleMarkdownRendered)
+  disposeScroll()
 })
 </script>
 

@@ -42,6 +42,16 @@ export function useChatScroll(container: Ref<HTMLElement | undefined>, options: 
     })
   }
 
+  /**
+   * 显式「恢复跟随」：发送消息、切回 Tab、点「回到最新」等动作调用。
+   * 与 scrollToBottom 的差别是它不信任当前的上滑状态——这些动作本身就代表
+   * 用户要看最新内容，不能因为历史上一次（可能是布局引起的）误判继续停在原处。
+   */
+  function resumeFollow() {
+    userScrolledUp.value = false
+    scrollToBottom()
+  }
+
   function beginRestore() {
     clearTimer()
     generation++
@@ -180,7 +190,7 @@ export function useChatScroll(container: Ref<HTMLElement | undefined>, options: 
     cancelRestore()
   }
 
-  return { userScrolledUp, scrollToBottom, scrollToMessage, beginRestore, completeRestore,
+  return { userScrolledUp, scrollToBottom, resumeFollow, scrollToMessage, beginRestore, completeRestore,
     handleMarkdownRendered, handleWheel, handleTouchStart, handleTouchMove, handleScroll,
     cancelRestore, resetScrollBaseline, dispose }
 }

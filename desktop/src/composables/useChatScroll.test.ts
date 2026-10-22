@@ -187,6 +187,39 @@ describe('非手势滚动不误判上滑（发送消息时消息区不跳顶）'
     expect(s.el.scrollTop).toBe(1900)
   })
 
+  it('resumeFollow 复位上滑并定位到底部（发送消息场景）', async () => {
+    const s = setup()
+    await settledAtBottom(s)
+
+    // 用户上滑到历史中：内部已停止跟随（边路滚动条隐藏，用户看不出与底部的差距）
+    s.el.scrollTop = 800
+    s.handleScroll()
+    expect(s.userScrolledUp.value).toBe(true)
+    s.scrollToBottom()
+    await frameSettled()
+    expect(s.el.scrollTop).toBe(800)
+
+    // 发送消息 = 显式恢复跟随：必须无条件贴底，不能沿用历史上滑状态
+    s.resumeFollow()
+    await frameSettled()
+    expect(s.userScrolledUp.value).toBe(false)
+    expect(s.el.scrollTop).toBe(1500)
+  })
+
+  it('resumeFollow 在容器被压扁后仍定位到新的底部', async () => {
+    const s = setup()
+    await settledAtBottom(s)
+
+    s.el.clientHeight = 300
+    s.el.scrollTop = 800
+    s.handleScroll()
+    expect(s.userScrolledUp.value).toBe(true)
+
+    s.resumeFollow()
+    await frameSettled()
+    expect(s.el.scrollTop).toBe(1700)
+  })
+
   it('滚动位置未变而距底骤增（面板挤压）不改判，用户主动上滑仍生效', async () => {
     const s = setup()
     await settledAtBottom(s)
