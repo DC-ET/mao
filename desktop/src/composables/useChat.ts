@@ -1,8 +1,15 @@
 import { ref, computed, watch, type Ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { useSessionStore, type SessionEnvironmentInfo } from '../stores/session'
 import { useStreamWS } from './useStreamWS'
+import { useChatQueue } from './useChatQueue'
+import {
+  guardUploadsBeforeSend,
+  waitForMessageSaved,
+  awaitExecutionSettled,
+  finalizeCancelledSession,
+} from './chatSessionActions'
 import { loadDislikedIds } from './useMessageFeedback'
 import { collectLocalUnsyncedSkills } from '../utils/localSkills'
 import { collectAgentsMdContent } from '../utils/agentsMd'
@@ -157,7 +164,7 @@ export function isCurrentChatSession(
 
 export function useChat(agentId: Ref<string>, executionMode: Ref<string>, selectedModelId?: Ref<number | undefined>, permissionLevel?: Ref<string>) {
   const sessionStore = useSessionStore()
-  const { connect, subscribe, unsubscribe, sendMessage: wsSendMessage, sendEditMessage, cancel: wsCancel, retryExecution: wsRetryExecution, sendAskUserQuestionsResult, enqueueMessage: wsEnqueueMessage, insertMessage: wsInsertMessage, deleteQueueMessage: wsDeleteQueueMessage, reorderQueueMessage: wsReorderQueueMessage, pendingCallbacks, setActiveExecution, clearActiveExecution, onMessageSaved, offMessageSaved } = useStreamWS()
+  const { connect, subscribe, unsubscribe, sendMessage: wsSendMessage, sendEditMessage, cancel: wsCancel, retryExecution: wsRetryExecution, sendAskUserQuestionsResult, enqueueMessage: wsEnqueueMessage, pendingCallbacks, setActiveExecution } = useStreamWS()
   const { pendingApprovals, confirmApproval, clearPendingApprovals } = useToolApprovals()
 
   const sending = ref(false)
@@ -264,43 +271,6 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
 
   function uploadChatImages(files: File[]): Promise<string[]> {
     return uploadImages(files, sessionId.value)
-  }
-
-  /**
-   * 发送前的上传结果校验（与 SideChatPanel 的防线同源，上移到公共路径）：
-   * 附件全部失败 → 提示并阻断；部分失败 → 弹「仍然发送 / 取消」确认；
-   * 最终文本为空且没有任何图片 → 阻断。返回 true 才可继续发送。
-   */
-  async function guardUploadsBeforeSend(params: {
-    imageCount: number
-    imageUrls: string[]
-    fileCount: number
-    uploadedFileCount: number
-    resolvedText: string
-  }): Promise<boolean> {
-    const { imageCount, imageUrls, fileCount, uploadedFileCount, resolvedText } = params
-    const total = imageCount + fileCount
-    const succeeded = imageUrls.length + uploadedFileCount
-    if (total > 0 && succeeded === 0) {
-      ElMessage.error('附件全部上传失败，已取消发送')
-      return false
-    }
-    if (succeeded < total) {
-      try {
-        await ElMessageBox.confirm(
-          `${total - succeeded} 个附件上传失败，仍要发送其余内容吗？`,
-          '部分附件上传失败',
-          { confirmButtonText: '仍然发送', cancelButtonText: '取消', type: 'warning' }
-        )
-      } catch {
-        return false
-      }
-    }
-    if (!resolvedText.trim() && imageUrls.length === 0) {
-      ElMessage.warning('消息内容为空，已取消发送')
-      return false
-    }
-    return true
   }
 
   function resolveWorkspaceInitLabel(): string {
@@ -584,24 +554,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     // 等待消息保存确认后立即返回，解锁输入框；Agent 在后台继续执行
     // 完成后的 sending / 刷新由 phase watcher 处理
     // 超时不得当作保存成功，否则 ChatPanel 会误清空输入并表现为「发送成功」
-    const saved = await new Promise<boolean>((resolve) => {
-      let settled = false
-      let timeoutId: ReturnType<typeof setTimeout>
-      let callbackId = ''
-      const finish = (ok: boolean) => {
-        if (settled) return
-        settled = true
-        clearTimeout(timeoutId)
-        offMessageSaved(callbackId)
-        resolve(ok)
-      }
-      callbackId = onMessageSaved((callbackSessionId: string, _messageId: string) => {
-        if (callbackSessionId === sid) {
-          finish(true)
-        }
-      })
-      timeoutId = setTimeout(() => finish(false), 60000)
-    })
+    const saved = await waitForMessageSaved(sid)
 
     // 保存确认后按实际 phase 同步 sending：
     // - Agent 尚未进入 RUNNING 时复位，避免误显示停止按钮
@@ -647,30 +600,12 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       return
     }
 
-    clearActiveExecution(sid)
-
     sending.value = false
     sendingSessionId.value = null
     startedAt.value = null
 
-    sessionStore.setThinking(sid, false)
-    sessionStore.setStreaming(sid, false)
-    sessionStore.setCompacting(sid, false)
-    sessionStore.clearAskQuestions(sid)
-    sessionStore.clearLlmRetry(sid)
-    // 被中止轮次服务端不落库，流式气泡是已流出内容的唯一副本：必须先标记中断，
-    // 否则下方 phase watcher 的终态重拉（REST 先于服务端 CANCELLED 广播落地）会把
-    // 气泡当「REST 覆盖范围的尾部残留」删掉，迟到的 CANCELLED 帧再标记已空转
-    sessionStore.finishInterruptedStreamingMessage(sid, '执行已被中止')
-    sessionStore.updateSessionPhase(sid, 'CANCELLED')
-
-    fetchQueue()
-
-    const cb = pendingCallbacks.get(sid)
-    if (cb) {
-      pendingCallbacks.delete(sid)
-      cb.resolve?.()
-    }
+    // 与边路任务共用的取消收尾：清流式/思考/压缩状态、标记气泡已中止、唤醒等待收敛的调用方
+    finalizeCancelledSession(sid)
   }
 
   async function retryExecution() {
@@ -690,9 +625,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     sessionStore.ensureStreamingAssistantMessage(sid)
     // 注册 pendingCallbacks：error 事件 reject 到本地 catch 复位 sending，避免幽灵运行中
     try {
-      await new Promise<void>((resolve, reject) => {
-        pendingCallbacks.set(sid, { resolve, reject })
-      })
+      await awaitExecutionSettled(sid)
       if (sessionId.value === sid) {
         sending.value = false
       }
@@ -855,6 +788,8 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
 
   const isActive = computed(() => isActivePhase(sessionStore.activeSession?.phase))
 
+  const { fetchQueue, insertQueueMessage, deleteQueueMessage, reorderQueueMessage } = useChatQueue(() => sessionId.value)
+
   async function sendMessageWithQueue(text: string, files: File[], pendingUploads?: File[]): Promise<boolean> {
     if (isActive.value) {
       return enqueueMessage(text, files, pendingUploads)
@@ -893,43 +828,6 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       return false
     }
     return true
-  }
-
-  async function insertQueueMessage(queueId: string) {
-    if (!sessionId.value) return
-    await connect()
-    if (!await wsInsertMessage(sessionId.value, queueId)) {
-      ElMessage.error('操作失败，网络连接不可用，请重试')
-    }
-  }
-
-  async function deleteQueueMessage(queueId: string): Promise<boolean> {
-    if (!sessionId.value) return false
-    await connect()
-    if (!await wsDeleteQueueMessage(sessionId.value, queueId)) {
-      ElMessage.error('操作失败，网络连接不可用，请重试')
-      return false
-    }
-    return true
-  }
-
-  async function reorderQueueMessage(queueId: string, targetIndex: number) {
-    if (!sessionId.value) return
-    await connect()
-    if (!await wsReorderQueueMessage(sessionId.value, queueId, targetIndex)) {
-      ElMessage.error('操作失败，网络连接不可用，请重试')
-    }
-  }
-
-  async function fetchQueue() {
-    const sid = sessionId.value
-    if (!sid) return
-    try {
-      const { data } = await api.get(`/sessions/${sid}/queue`)
-      sessionStore.setQueueMessages(sid, data || [])
-    } catch {
-      // ignore
-    }
   }
 
   function newSession() {

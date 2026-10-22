@@ -207,14 +207,14 @@ import { useRouter } from 'vue-router'
 import { ChatDotRound, Loading } from '@element-plus/icons-vue'
 import { useChat, normalizeMessageRole, type ChatMessage } from '../../composables/useChat'
 import { useChatScroll } from '../../composables/useChatScroll'
+import { useChatQueue } from '../../composables/useChatQueue'
 import { LOCATE_FLASH_KEY, useMessageLocate } from '../../composables/useMessageLocate'
 import { useAgentStore } from '../../stores/agent'
 import { useSessionStore, type TaskPhase } from '../../stores/session'
 import { useDraftStore } from '../../stores/draft'
 import { api } from '../../api'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { fetchImagesAsFiles } from '../../utils/file'
-import type { QueueMessage, QuestionAnswer } from '../../types/chat'
+import { ElMessage } from 'element-plus'
+import type { QuestionAnswer } from '../../types/chat'
 import type { SideTaskContextMode } from '../../types/file-browser'
 import ChatRoundList from './ChatRoundList.vue'
 import ChatInput from './ChatInput.vue'
@@ -596,32 +596,10 @@ async function confirmEdit(messageId: string, newContent: string) {
 
 // --- 队列消息撤回编辑 ---
 
-async function handleQueueEdit(msg: QueueMessage) {
-  if (chatInputRef.value?.hasDraft()) {
-    try {
-      await ElMessageBox.confirm('输入框已有未发送内容，撤回将覆盖，是否继续？', '编辑队列消息', {
-        confirmButtonText: '覆盖并编辑',
-        cancelButtonText: '取消',
-        type: 'warning',
-      })
-    } catch {
-      return
-    }
-  }
-  let files: File[] = []
-  if (msg.images && msg.images.length > 0) {
-    try {
-      files = await fetchImagesAsFiles(msg.images)
-    } catch {
-      ElMessage.error('图片获取失败，已取消编辑')
-      return
-    }
-  }
-  const deleted = await deleteQueueMessage(msg.id)
-  if (!deleted) return
-  chatInputRef.value?.restoreContent(msg.content, files)
-  nextTick(() => chatInputRef.value?.focusInput())
-}
+const { handleQueueEdit } = useChatQueue(
+  () => sessionId.value,
+  () => chatInputRef.value,
+)
 
 function scrollToBottomSmooth() {
   scrollToBottom()
