@@ -101,18 +101,17 @@ export class ReadFileTool extends BaseTool {
     if (!detectedMime) {
       return readError('错误：不支持的图片格式或文件内容无效：' + pathArg);
     }
-    let origWidth: number | null = null;
-    let origHeight: number | null = null;
-    try {
-      const meta = await (await import('sharp')).default(bytes).metadata();
-      origWidth = meta.width ?? null;
-      origHeight = meta.height ?? null;
-    } catch { /* ignore */ }
+    // 原图尺寸按 EXIF 摆正后展示，否则带旋转标记的手机照片会显示成横图。
+    const origSize = await PromptImageResizer.orientedSize(bytes);
+    const origWidth = origSize?.width ?? null;
+    const origHeight = origSize?.height ?? null;
     let resized;
     try {
-      resized = await PromptImageResizer.resizeForPrompt(bytes, detectedMime);
+      // 写入侧一次性压缩（技术方案 2026-10-22 §7.1）：>500KB 才做有损压缩，
+      // ≤500KB 且尺寸合规时原样返回；结果落库后不再重编码。
+      resized = await PromptImageResizer.compressForStore(bytes, detectedMime);
     } catch (e) {
-      harnessLog('warn', `Prompt resize failed for ${pathArg}: ${(e as Error).message}`);
+      harnessLog('warn', `Prompt image compress failed for ${pathArg}: ${(e as Error).message}`);
       return readError('错误：不支持的图片格式或文件内容无效：' + pathArg);
     }
     const mime = resized.mime;

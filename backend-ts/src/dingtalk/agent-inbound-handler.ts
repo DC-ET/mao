@@ -7,6 +7,8 @@ import { wsEvent } from '../session/ws/ws-event.js';
 import type { StreamingWsRegistry } from '../session/ws/streaming-ws-registry.js';
 import { isInboundFileMessage, isNewSessionCommand } from './event-normalizer.js';
 import { toWorkspaceRelative } from '../common/workspace-path.js';
+import { mapWithConcurrency } from '../common/concurrency.js';
+import { INBOUND_IMAGE_COMPRESS_CONCURRENCY, PromptImageResizer } from '../harness/tool/prompt-image-resizer.js';
 import type {
   CancelFlag, DingtalkHarnessService, DingtalkInboundContext, DingtalkInboundHandler,
   DingtalkInboundQueueRow, DingtalkQueuePayload, DingtalkQueueStoredContext, DingtalkReply, DingtalkTaskQueuePort,
@@ -461,7 +463,7 @@ export class AgentDingtalkInboundHandler implements DingtalkInboundHandler {
     else sections.push(context.text);
     const persistedText = sections.join('\n\n');
     const media = await this.options.downloadMedia?.(context, workspace) ?? null;
-    const persisted = media == null ? persistedText : composeContent(persistedText, media, workspace);
+    const persisted = media == null ? persistedText : await composeContent(persistedText, media, workspace);
     const group = context.groupContext?.trim();
     if (group == null || group === '') return { persisted, forModel: persisted };
     const forModel = prependGroup(persisted, group);
@@ -471,7 +473,7 @@ export class AgentDingtalkInboundHandler implements DingtalkInboundHandler {
   private ingestFileWithoutExecute(session: DingtalkSessionRef, context: DingtalkInboundContext): Promise<void> {
     return this.runFileIngest(session.id, async () => {
       const media = await this.options.downloadMedia?.(context, session.workspace ?? null) ?? { images: [], imagePaths: [], filePaths: [], errors: [] };
-      const content = fileAttachmentContent(context, media, session.workspace ?? null);
+      const content = await fileAttachmentContent(context, media, session.workspace ?? null);
       if (await this.isBusyOrRecovering(session.id)) {
         this.stash(session.id, content);
         return;
@@ -627,7 +629,7 @@ function contextFromQueue(payload: DingtalkQueuePayload, row: DingtalkInboundQue
   };
 }
 
-function composeContent(text: string, media: DingtalkMediaDownload, workspace: string | null): string | ContentPart[] {
+async function composeContent(text: string, media: DingtalkMediaDownload, workspace: string | null): Promise<string | ContentPart[]> {
   let body = text;
   if (media.errors.length > 0) {
     const notice = `[以下文件接收失败：${media.errors.join('、')}]`;
@@ -644,7 +646,14 @@ function composeContent(text: string, media: DingtalkMediaDownload, workspace: s
   }
   if (media.images.length === 0) return body;
   const parts: ContentPart[] = [{ type: 'text', text: body.trim() === '' ? '请查看图片' : body }];
-  for (const uri of media.images) parts.push({ type: 'image_url', imageUrl: { url: uri } });
+  // 入站图片写入前压一次：落盘原图不变，消息内 data URI 控制在 300KB 级（技术方案 2026-10-22 §7.1）。
+  // 有界并发（2）压缩，避免串行推迟入库、也避免多张大图同时解码顶爆内存。
+  const uris = await mapWithConcurrency(
+    media.images,
+    INBOUND_IMAGE_COMPRESS_CONCURRENCY,
+    (uri) => PromptImageResizer.compressDataUriForStore(uri),
+  );
+  for (const url of uris) parts.push({ type: 'image_url', imageUrl: { url } });
   return parts;
 }
 
@@ -661,9 +670,9 @@ function prependGroup(content: unknown, group: string): unknown {
   return [{ type: 'text', text: block.trim() }, ...parts];
 }
 
-function fileAttachmentContent(context: DingtalkInboundContext, media: DingtalkMediaDownload, workspace: string | null): string {
+async function fileAttachmentContent(context: DingtalkInboundContext, media: DingtalkMediaDownload, workspace: string | null): Promise<string> {
   const label = context.fileName?.trim() || '[文件]';
-  const composed = composeContent(`[文件:${label}]`, media, workspace);
+  const composed = await composeContent(`[文件:${label}]`, media, workspace);
   return typeof composed === 'string' ? composed : `[文件:${label}]`;
 }
 

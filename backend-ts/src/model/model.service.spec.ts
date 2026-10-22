@@ -112,6 +112,7 @@ describe('ModelService', () => {
     expect(priced.priceInput).toBe(2.5);
     expect(priced.priceOutput).toBe(8);
 
+
     // 未提供（undefined）→ null：不计成本
     const unpriced = await service.createModel('n', 'p', 'https://x', 'k', 'm', 0, 0, null, 'text', null, null, null, undefined, undefined, undefined, undefined);
     expect(unpriced.priceInput).toBeNull();
@@ -133,6 +134,48 @@ describe('ModelService', () => {
     ).rejects.toThrow(/priceInput 最多保留 6 位小数/);
     expect(modelRepo.insert).not.toHaveBeenCalledWith(
       expect.objectContaining({ priceInput: 1000000 }),
+    );
+  });
+
+  it('createModelValidatesMaxRequestBodyBytes', async () => {
+    const created = await service.createModel(
+      'n', 'p', 'https://x', 'k', 'm', 0, 0, null, 'text', null, null, null,
+      undefined, undefined, undefined, undefined, 50 * 1024 * 1024,
+    );
+    expect(created.maxRequestBodyBytes).toBe(50 * 1024 * 1024);
+    // 必须真的落库：repository 漏字段的话接口返回内存对象看似正常，刷新即丢
+    expect(modelRepo.insert).toHaveBeenCalledWith(
+      expect.objectContaining({ maxRequestBodyBytes: 50 * 1024 * 1024 }),
+    );
+
+    await expect(service.createModel(
+      'n', 'p', 'https://x', 'k', 'm', 0, 0, null, 'text', null, null, null,
+      undefined, undefined, undefined, undefined, -1,
+    )).rejects.toThrow(/请求体上限/);
+  });
+
+  it('updateModelPersistsAndClearsMaxRequestBodyBytes', async () => {
+    const existing = model(7, 'old', 0, 1);
+    existing.maxRequestBodyBytes = 20_000_000;
+    vi.mocked(modelRepo.findById).mockResolvedValue(existing);
+    const call = (value: number | null | undefined) => service.updateModel(
+      7, null, null, null, null, null, null, null, null, null, null, null, null,
+      undefined, undefined, undefined, undefined, value,
+    );
+
+    await call(50_000_000);
+    expect(existing.maxRequestBodyBytes).toBe(50_000_000);
+    expect(modelRepo.updateById).toHaveBeenCalledWith(
+      expect.objectContaining({ maxRequestBodyBytes: 50_000_000 }),
+    );
+
+    await call(undefined);
+    expect(existing.maxRequestBodyBytes).toBe(50_000_000); // 未提供 = 保留
+
+    await call(null);
+    expect(existing.maxRequestBodyBytes).toBeNull(); // 显式清空
+    expect(modelRepo.updateById).toHaveBeenLastCalledWith(
+      expect.objectContaining({ maxRequestBodyBytes: null }),
     );
   });
 

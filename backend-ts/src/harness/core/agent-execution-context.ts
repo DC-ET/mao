@@ -63,6 +63,14 @@ export class AgentExecutionContext {
   lastPromptTokens = 0;
   contextAnchorMsgId = 0;
   messagesCoveredByAnchor = -1;
+  /** 最近一次 buildRequest 估算的请求体字节数（与 manifest.requestBytes 同源）。 */
+  lastRequestBytes = 0;
+  /** 本次执行已因体积触发过一次压缩（防止压缩后仍超阈值时重复压缩）。 */
+  payloadCompactionDone = false;
+  /** 本次执行已发起的体积压缩次数（含失败），用于限制重试。 */
+  payloadCompactionAttempts = 0;
+  /** 达到重试上限的告警只打一次。 */
+  payloadCompactionCapLogged = false;
   compactionConfig?: CompactionConfig | null;
   preparedRequest?: ChatRequest | null;
   /** 最近一次 buildRequest 同源产出的上下文构成清单（技术方案 5.2），随 onContextWindow 推送。 */

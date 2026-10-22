@@ -52,6 +52,19 @@
             />
             <span class="form-hint-inline">用于上下文压缩水位展示</span>
           </el-form-item>
+          <el-form-item v-if="isTextType" label="请求体上限 (MB)">
+            <el-input-number
+              v-model="form.maxRequestBodyMb"
+              :min="0"
+              :max="2048"
+              :step="1"
+              :precision="2"
+              style="width: 220px"
+            />
+            <span class="form-hint-inline">
+              供应商允许的单次请求体上限，按十进制 MB 计（1 MB = 1,000,000 字节），用于推导压缩阈值（上限×0.8）；留空=未知
+            </span>
+          </el-form-item>
           <el-form-item v-if="isTextType" label="支持视觉">
             <el-switch v-model="form.supportsVision" />
             <span class="form-hint-inline">开启后可在任务中发送图片</span>
@@ -245,6 +258,7 @@ const form = reactive({
   baseUrl: '',
   apiKey: '',
   contextWindowTokens: 256000,
+  maxRequestBodyMb: null as number | null,
   priceInput: undefined as number | undefined | null,
   priceCacheRead: undefined as number | undefined | null,
   priceCacheWrite: undefined as number | undefined | null,
@@ -277,6 +291,7 @@ function resetForm() {
     baseUrl: '',
     apiKey: '',
     contextWindowTokens: 256000,
+    maxRequestBodyMb: null,
     priceInput: null,
     priceCacheRead: null,
     priceCacheWrite: null,
@@ -304,6 +319,9 @@ watch(() => props.visible, (val) => {
       // 掩码写成新密钥导致模型调用全部鉴权失败。编辑时留空 = 不修改，由后端保留原值。
       apiKey: isMaskedApiKey(props.modelData.apiKey) ? '' : props.modelData.apiKey || '',
       contextWindowTokens: props.modelData.contextWindowTokens || 256000,
+      maxRequestBodyMb: props.modelData.maxRequestBodyBytes != null
+        ? Math.round((props.modelData.maxRequestBodyBytes / 1_000_000) * 100) / 100
+        : null,
       priceInput: props.modelData.priceInput ?? null,
       priceCacheRead: props.modelData.priceCacheRead ?? null,
       priceCacheWrite: props.modelData.priceCacheWrite ?? null,
@@ -335,11 +353,20 @@ async function handleSubmit() {
 
   submitting.value = true
   try {
-    const payload: any = { ...form, supportsVision: form.supportsVision ? 1 : 0, isDefault: form.isDefault ? 1 : 0 }
+    const { maxRequestBodyMb, ...rest } = form
+    const payload: any = {
+      ...rest,
+      maxRequestBodyBytes: maxRequestBodyMb != null && maxRequestBodyMb > 0
+        ? Math.round(maxRequestBodyMb * 1_000_000)
+        : null,
+      supportsVision: form.supportsVision ? 1 : 0,
+      isDefault: form.isDefault ? 1 : 0
+    }
     // 语音/文生图模型不参与默认模型与上下文压缩，强制归零；价格同样不参与成本核算
     if (form.modelType !== 'text') {
       payload.supportsVision = 0
       payload.isDefault = 0
+      payload.maxRequestBodyBytes = null
       payload.priceInput = null
       payload.priceCacheRead = null
       payload.priceCacheWrite = null

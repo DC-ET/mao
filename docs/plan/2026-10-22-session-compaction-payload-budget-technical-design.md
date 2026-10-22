@@ -128,18 +128,18 @@ export class RequestSizeEstimator {
 | `content: ContentPart[]` | 文本 `byteLength` + `image_url.url.length` | data URI 为纯 ASCII base64，`length` 即字节数 |
 | `toolCalls` | `arguments.length + id.length + 常量` | 参数是 JSON 字符串 |
 | `reasoningContent` | `Buffer.byteLength` | 历史 thinking 随请求回传 |
-| `tools` | `Buffer.byteLength(JSON.stringify(tool.parameters))` | 一次执行内不变，`WeakMap` 缓存 |
+| `tools` | `Buffer.byteLength(JSON.stringify(tool.parameters))` | 按数组引用缓存；调用方每轮新建数组时命中率为 0（见 §4.3） |
 | 顶层参数 | 常量（≤1KB） | 计入 |
 
-- **精度**：JSON 转义会让文本里的 `"` `\` `\n` 膨胀，但占比极低；base64 不需要转义。估算值乘 **1.02** 安全系数。
-- **性能**：229 条消息 + 54 个 data URI，一次估算 < 2ms（`length` 为 O(1)，只有文本走 `byteLength`）。
+- **精度**：JSON 转义会让文本里的 `"` `\` `\n` 膨胀，按首/中/尾采样外推补偿（实测不补偿时 JSON 密集会话低 35%）；base64 不需要转义。估算值再乘 **1.02** 安全系数。
+- **性能**：229 条消息 + 54 个 data URI，一次估算 < 2ms（`length` 为 O(1)，文本走 `byteLength` + 96K 字符采样扫）。
 
 ### 4.3 逐项公式与校准
 
 ```ts
 estimate(request) =
     160                                    // model / stream / reasoning_effort / prompt_cache_key 等顶层字段
-  + toolsBytes                             // JSON.stringify(tool.parameters) 的字节和，WeakMap 缓存
+  + toolsBytes                             // JSON.stringify(tool.parameters) 的字节和（按数组引用缓存，新建数组时 miss）
   + Σ estimateMessage(m)
 
 estimateMessage(m) =
@@ -151,26 +151,30 @@ estimateMessage(m) =
   + (echoReasoning && m.role === 'assistant' ? 20 + byteLength(m.reasoningContent ?? '') : 0)
 
 contentBytes(c) =
-  string  → Buffer.byteLength(c, 'utf8')          // 中文 3 bytes/字
-  array   → Σ { type=text      → byteLength(text)
-                type=image_url → url.length }      // data URI 是 ASCII base64，1 char = 1 byte
+  string  → byteLength(c) + 转义膨胀（采样估算）   // 中文 3 bytes/字；引号/换行会再膨胀
+  array   → Σ { type=text      → byteLength + 转义膨胀
+                type=image_url → data URI: url.length（ASCII base64，1 char = 1 byte）
+                                 http(s): 410KB（发送前会压成 ≤300KB 的 data URI）
 ```
 
 口径细节：
 
 | 项 | 口径 | 原因 |
 |---|---|---|
-| `image_url.url` | 取 `.length` 而不是 `byteLength` | base64 字符集全在 ASCII 内，长度即字节数；`byteLength` 会扫 50MB 字符串 |
-| `tools` | `JSON.stringify(parameters)` 后 `byteLength`，按数组引用 `WeakMap` 缓存 | 一次执行内工具集不变，避免每轮重复序列化 |
+| `image_url.url`（data URI） | 取 `.length` 而不是 `byteLength` | base64 字符集全在 ASCII 内，长度即字节数；`byteLength` 会扫 50MB 字符串 |
+| `image_url.url`（http/https） | 按压缩目标最坏值 ~438KB 计入（320KB × 4/3 + 前缀） | 适配器发送前会下载并压缩成 ≤300KB 的 data URI；只算 URL 长度会严重低估上传图会话。非视觉模型实际会替换成占位文本，属保守高估（<1% 场景） |
+| 文本转义 | UTF-8 字节 + 首/中/尾各取 32KB 采样外推的转义膨胀（`"` `\` `\b` `\f` `\n` `\r` `\t` 各 +1 字符，其余控制字符 +5） | 工具输出里的 JSON 在 body 中是字符串值，实测不补偿会低 35% |
+| `tools` | `JSON.stringify(parameters)` 后 `byteLength`，按数组引用 `WeakMap` 缓存 | schema 是嵌套对象，只序列化一次即最终字节，不再叠加转义补偿；调用方每轮新建数组时命中率为 0（40 工具约 0.5ms，可忽略） |
 | `reasoningContent` | 仅 deepseek 系（`modelId` 含 `deepseek` 或 `ds-` 前缀）的 assistant 消息计入 | 与 `serializeChatRequest` 的 `shouldEchoReasoningContent` 同口径，否则会低估 thinking 回传字节 |
 | 固定开销 | 每条消息 48B、每个 toolCall 60B、顶层 160B | 覆盖 JSON key、引号、逗号；文本会话误差 <2% |
-| 安全系数 | 估算结果 × 1.02 | JSON 转义（`"` `\` 换行）会让文本膨胀，base64 不转义 |
+| 安全系数 | 估算结果 × 1.02 | 覆盖字段名/结构开销抖动；JSON 转义另行采样补偿 |
 
 精度与校准：
 
 - 图片占比高的会话（本次事故 90% 以上是 base64），误差几乎为 0；
 - 纯文本会话的固定开销按消息数线性计入，229 条消息约 14KB，相对 40MB 阈值可忽略；
-- 用会话 1396 回测：最后一次成功请求估算 **49.76MB**，下一轮估到 **50.39MB** 时被上游以 50MB 拒绝，与真实边界偏差 <1%。
+- 用会话 1396 回测：最后一次成功请求估算 **49.76MB**，下一轮估到 **50.39MB** 时被上游以 50MB 拒绝，与真实边界偏差 <1%；
+- JSON 密集文本（工具输出里回放 JSON）：转义补偿后误差收敛到 5% 内；仍未覆盖的是极端集中在一处的转义（采样误差），由 1.02 系数与 20% 阈值余量吸收。
 
 不计入的部分：HTTP 头、分块编码开销（合计几十字节），以及网关 gzip——按未压缩 body 估算，偏保守。
 
@@ -213,7 +217,7 @@ if (providerLimit > 0) {
 - 未配置上限的模型 → 用全局 40 MiB。
 - **保证**：`effectiveTrigger + 交接指令（几 KB）< providerLimit`，压缩请求一定发得出去。
 
-> 单位：模型上限在管理后台以 MB 输入，落库按 MiB（×1024×1024）。按 50MB 上限计算，触发阈值 40MiB=41.9MB，相对真实的 50,000,000 字节上限仍留 16% 余量。
+> 单位：模型上限在管理后台以**十进制 MB** 输入（1 MB = 1,000,000 字节），与供应商文档口径一致；按 50MB 上限填 `50` → 落库 50,000,000 → 触发阈值 min(40MiB, 40,000,000)=40,000,000，留 20% 余量。全局阈值仍按 MiB（41943040）。
 
 ### 5.2 判定函数
 
@@ -272,7 +276,9 @@ async compactSession(
 
 `loopMidwayCompact` 控制的是「每轮工具结束后是否检查 token 水位」，默认 true。如果把体积检查挂在同一个开关下，管理员关掉该开关后，一轮内连续读 20 张大图（30MB）就可能直接撞 50MB。
 
-因此：**体积检查在每个工具轮边界无条件执行**（成本仅一次估算），`loopMidwayCompact` 只控制 token 检查。
+因此：**体积检查在每个工具轮边界无条件执行**，`loopMidwayCompact` 只控制 token 检查、快照落库与 `context_window` 事件。
+
+> 实现成本：体积必须对「即将发送的完整请求」估算（含本轮工具结果、图片注入），因此每个工具轮仍会 `buildRequest` 一次；关掉 `loopMidwayCompact` 只是不再多算 tokens、不写上下文快照、不推 WS 事件。
 
 ## 6. 压缩请求与缓存
 
@@ -302,27 +308,36 @@ return { ...source, messages, stream: true };  // promptCacheKey 随 ...source �
 
 **配置约束**（需要写进运维文档/后台提示）：
 - 若把 `compaction.modelId` 配成另一个模型（例如便宜的小模型），压缩请求会打到不同模型/不同上游 → **缓存必然不共享**，且摘要质量口径变化；
-- 因此「压缩必须命中缓存」的前提是：`compaction.modelId` 留空，或配置为与会话相同的模型。
+- 因此「压缩必须命中缓存」的前提是：`compaction.modelId` 留空，或配置为与会话相同的模型；
+- 实现上两者不一致时会打 `warn`（`Compaction model differs from session model, prompt cache will miss`），便于运维发现配置漂移。
 
 ### 6.4 兜底：只有超限才剥图
 
 构造完压缩请求后再估算一次：
 
 ```
-if (estimate(compactionRequest) >= providerLimit - SAFETY_MARGIN) {
-  // 只会在「阈值配置错误」或「供应商上限填小了」时命中：
+// 剥图安全线与「触发开关」解耦：triggerPayloadBytes=0 只关触发，不能连 413 兜底一起关掉。
+// 未声明供应商上限时用独立常量 40MiB（存量 50MB 会话的第一次压缩请求不能原样发出去撞 413）；
+// agent 级把 trigger 调小用于「提前压缩」时，也不该让每次压缩都剥图、miss 前缀缓存。
+stripLimit = providerLimit > 0 ? providerLimit - 64KB : 40MiB
+if (estimate(compactionRequest) >= stripLimit) {
+  // 只会在「阈值配置错误」「供应商上限填小了」或「存量超大会话」时命中：
   // 剥掉历史图片（牺牲本次缓存）保证压缩动作能执行
   stripImagesForCompaction(compactionRequest);
-  log('warn', 'compaction request exceeded provider limit, images stripped (cache miss for this call)');
-}
-if (estimate(compactionRequest) >= providerLimit) {
-  throw new CompactionContextOverflowException(...);  // 复用现有异常，走既有降级
+  log('warn', 'compaction request exceeded payload limit, images stripped (cache miss for this call)');
+  // 只有已知供应商硬上限才中断；未声明上限时剥图是尽力而为，剥完仍大也继续尝试
+  // （纯文本超大会话没有图可剥，直接失败会让用户会话彻底卡死）。
+  if (providerLimit > 0 && estimate(compactionRequest) >= providerLimit) {
+    throw new CompactionPayloadOverflowException(...);  // 走既有降级
+  }
 }
 ```
 
 - 正常路径（阈值 = 80% 上限）永远走不到剥图分支；
 - 剥图只在兜底时发生，且日志明确标注本次压缩未命中缓存，便于排查配置问题；
-- 现有的 `compactionRequestTokens >= overflowWindow` token 溢出保护保持不变。
+- 现有的 `compactionRequestTokens >= overflowWindow` token 溢出保护保持不变；
+- 体积压缩的**重试上限**：`compact()` 在摘要不合规/CAS 未推进时返回 false（不抛），mid-loop 最多尝试 2 次（`MAX_PAYLOAD_COMPACTION_ATTEMPTS`），避免每个工具轮都烧一次全量历史压缩；
+- **运维建议**：未填供应商上限时剥图线固定 40MiB，意味着「提前压缩」（把全局 trigger 调到 40MiB 以下）不会提前剥图；对 32MB 级通道，请在模型配置里填真实上限，才能让 20% 余量与剥图线都按真实值生效。
 
 ### 6.5 缓存命中范围（以会话 1396 为例）
 
@@ -354,6 +369,8 @@ export const STORE_MAX_DIMENSION = 2048;                       // 长边上限�
 > 说明：「≤500KB 原样返回」指不做有损重编码；尺寸本身超限（>2048px / >2500 patches）仍按既有逻辑缩放，否则模型侧无法接受。
 >
 > 目标值必须小于触发阈值（500KB → 300KB），否则 600KB 的图会被「压」成更大的 800KB，反而增加体积。
+>
+> 边界：动图（多帧 GIF / 动画 WebP）超过 500KB 时会被压成单帧（sharp 默认只取首帧，视觉模型本身也只取首帧）；无法解码的图（只有文件头）按原字节转 data URI，不会丢图；极端情况下所有编码尝试都不比原图小，则保留原图（不「压大」）。
 
 ### 7.2 接入点
 
@@ -361,6 +378,8 @@ export const STORE_MAX_DIMENSION = 2048;                       // 长边上限�
 |---|---|---|
 | `read_file`（`readImage`） | `PromptImageResizer.resizeForPrompt`（只限尺寸） | 尺寸规整后追加 `compressForStore`（>500KB 才生效） |
 | `page_screenshot`（`PageScreenshotTool`） | 直接把客户端 data URI 塞进结果 | 解码 data URI → 同样的两步处理；失败时回退原图并 `warn` |
+| IM 入站（feishu / weixin / dingtalk） | `media.images` 的 data URI 原样进 content part | 构造 content part 时 `compressDataUriForStore`（>500KB → ≤300KB）；落盘原图不动 |
+| 远程图片 URL（桌面/Web 上传图，三个 LLM 适配器） | 每轮 `downloadAndEncode` 都重新下载 + 限尺寸 | 进程内 LRU：首次下载后 `compressForStore` 到 ≤300KB 并缓存，后续命中不再下载/编码 |
 | 其他图片工具 | `ToolImageResultProcessor` 只做透传 | 不改 |
 
 > 写入侧压缩是**一次性**的：落库的 `message.metadata.attachments[].data_uri` 就是处理后的字节，历史回放与请求构建不再重复编码，前缀天然稳定。
@@ -429,7 +448,29 @@ async function compressForStore(input: Buffer, mimeHint: string, opts) {
 - 压缩发生在**工具产出图片时**（`read_file` / `page_screenshot`），不是在每次 LLM 请求时；
 - 压缩结果直接写进 `message.metadata.attachments[].data_uri`，之后每次 `buildRequest` 只是把这段字符串原样注入（`ToolMediaInjector` 只做字符串拼接），**零解码、零编码**；
 - 同一文件被重复读取时会产生新的工具消息并再压一次（输出确定、字节相同），历史里已有的那条不会被改写；
-- 适配器层既有的 `resizeDataUri` 仍会读一次图片头（判断尺寸是否合规），合规图直接返回原 data URI、不重编码——这是改造前就有的行为，本方案不新增请求期压缩。
+- 适配器层既有的 `resizeDataUri` 仍会读一次图片头（判断尺寸是否合规），合规图直接返回原 data URI、不重编码——这是改造前就有的行为，本方案不新增请求期压缩；
+- 唯一新增的请求期处理是**远程图片 URL 的下载缓存**（见 §7.7）：首次下载后压缩并缓存，后续请求直接复用字符串，不再解码/编码。
+
+### 7.7 入站图片与远程 URL 图片
+
+**IM 入站（一次性、写入侧）**：feishu / weixin / dingtalk 在把 `media.images` 的 data URI 放进 content part 时调用 `PromptImageResizer.compressDataUriForStore`：
+
+- 落盘原图（`media.imagePaths`）不动，Agent 仍可用 `read_file` 读原图；
+- 压缩只发生在消息入库那一刻，之后历史回放读的是同一段字符串，前缀稳定；
+- 压缩失败、非 data URI 或压缩后未变小 → 原样返回，不影响消息入库。
+
+**远程 URL 图片（进程内 LRU + 条件校验）**：桌面/Web 上传的图以 URL 进入消息，三个适配器（openai / responses / anthropic）的 `downloadAndEncode` 统一走 `harness/llm/remote-image-cache.ts`：
+
+| 项 | 取值 / 行为 |
+|---|---|
+| 缓存键 | URL；条目内记录 `ETag` / `Last-Modified` 作为内容版本 |
+| 首次 | 下载 → `compressForStore(threshold=300KB, target=300KB)` → 存 data URI |
+| 命中（TTL 内） | 直接返回 data URI，不下载、不编码 |
+| 过期（TTL 1h） | 带 `If-None-Match` / `If-Modified-Since` 条件请求：304 复用旧值并续期；200 重新压缩替换 |
+| 失败 | 有旧值 → 复用旧值（只 `warn`）；无旧值 → 抛错，适配器回退原始 URL |
+| 淘汰 | 按 data URI 字符数的字节预算（默认 64MB）做 LRU |
+| 并发 | 同一 URL 的并发请求合并成一次下载 |
+| 确定性 | 同一输入 + 同一参数输出字节一致；重启后重新计算，字节相同，不破坏前缀缓存 |
 
 ## 8. 前缀缓存影响分析
 

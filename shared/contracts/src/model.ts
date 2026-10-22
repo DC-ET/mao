@@ -18,6 +18,8 @@ export interface ModelVO {
   modelType?: string | null;
   clientImpersonation?: ClientImpersonation;
   contextWindowTokens?: number | null;
+  /** 供应商请求体上限（字节）；null=未声明。用于推导压缩的请求体体积阈值。 */
+  maxRequestBodyBytes?: number | null;
   /** 每百万「非缓存」输入 token 价格（成本单位；null=该类不计成本）。仅影响后续调用的成本快照，不追溯历史。 */
   priceInput?: number | null;
   /** 每百万缓存命中输入 token 价格（成本单位；null=该类不计成本）。语义同 priceInput。 */

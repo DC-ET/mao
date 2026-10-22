@@ -19,6 +19,10 @@ export interface ContextManifest {
   memoryIds: number[];
   /** 生效窗口（模型 contextWindowTokens 优先），无法解析时为 null。 */
   estimatedWindowTokens: number | null;
+  /** 本次请求估算体积（字节，口径见 RequestSizeEstimator）；无法估算时缺省。 */
+  requestBytes?: number;
+  /** 生效的体积触发阈值（字节，0 表示关闭）；用于上下文抽屉展示水位。 */
+  payloadLimitBytes?: number;
 }
 
 /** manifest 序列化上限（技术方案 §7）：超限裁剪 memoryIds，避免长会话膨胀。 */

@@ -103,6 +103,10 @@ export interface ContextManifest {
   sections: ContextSectionStat[]
   memoryIds: number[]
   estimatedWindowTokens: number | null
+  /** 本次请求估算体积（字节，技术方案 2026-10-22） */
+  requestBytes?: number
+  /** 生效的体积触发阈值（字节，0 表示关闭） */
+  payloadLimitBytes?: number
 }
 
 export interface ContextWindowInfo {

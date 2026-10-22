@@ -8,6 +8,8 @@ import { NoopAgentEventListener } from '../harness/core/agent-event-listener.js'
 import { FeishuCardProgressListener, countCompletedAgentRounds, type FeishuCardProgress } from './card-progress-listener.js';
 import { isInboundFileMessage } from './event-normalizer.js';
 import { toWorkspaceRelative } from '../common/workspace-path.js';
+import { mapWithConcurrency } from '../common/concurrency.js';
+import { INBOUND_IMAGE_COMPRESS_CONCURRENCY, PromptImageResizer } from '../harness/tool/prompt-image-resizer.js';
 
 export interface FeishuSessionAdapter {
   getOrCreateSession(accountId: string, context: FeishuInboundContext): Promise<{ id: number; workspace?: string | null; executionUserId?: number | null }>;
@@ -776,7 +778,7 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     const sessionId = session.id;
     const media = await this.options.downloadMedia?.(context, session.workspace ?? null)
       ?? { images: [], imagePaths: [], filePaths: [], errors: [] };
-    const content = this.fileAttachmentContent(context, media, session.workspace ?? null);
+    const content = await this.fileAttachmentContent(context, media, session.workspace ?? null);
     if (await this.isBusyOrRecovering(sessionId)) {
       this.stashPendingAttachment(sessionId, content);
       return;
@@ -790,12 +792,12 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     });
   }
 
-  private fileAttachmentContent(context: FeishuInboundContext, media: FeishuMediaDownload, workspace: string | null): string {
+  private async fileAttachmentContent(context: FeishuInboundContext, media: FeishuMediaDownload, workspace: string | null): Promise<string> {
     const named = context.fileName?.trim();
     const label = named != null && named !== ''
       ? `[文件:${named}]`
       : (context.text?.trim() || '[文件]');
-    const composed = this.composeContent(label, media, workspace);
+    const composed = await this.composeContent(label, media, workspace);
     return typeof composed === 'string' ? composed : label;
   }
 
@@ -877,7 +879,7 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     }));
   }
 
-  private composeContent(text: string, media: FeishuMediaDownload, workspace: string | null): string | FeishuContentPart[] {
+  private async composeContent(text: string, media: FeishuMediaDownload, workspace: string | null): Promise<string | FeishuContentPart[]> {
     let body = text;
     if (media.errors.length > 0) {
       const notice = `[以下文件接收失败：${media.errors.join('、')}]`;
@@ -895,10 +897,14 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     }
     if (media.images.length === 0) return body;
     const parts: FeishuContentPart[] = [{ type: 'text', text: body.trim() === '' ? '请查看图片' : body }];
-    for (const uri of media.images) {
-      if (uri == null || uri.trim() === '') continue;
-      parts.push({ type: 'image_url', imageUrl: { url: uri } });
-    }
+    // 入站图片写入前压一次：落盘原图不变，消息内 data URI 控制在 300KB 级（技术方案 2026-10-22 §7.1）。
+    // 有界并发（2）压缩，避免串行推迟入库、也避免多张大图同时解码顶爆内存。
+    const uris = await mapWithConcurrency(
+      media.images.filter((uri) => uri != null && uri.trim() !== ''),
+      INBOUND_IMAGE_COMPRESS_CONCURRENCY,
+      (uri) => PromptImageResizer.compressDataUriForStore(uri),
+    );
+    for (const url of uris) parts.push({ type: 'image_url', imageUrl: { url } });
     return parts;
   }
 

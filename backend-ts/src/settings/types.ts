@@ -138,6 +138,8 @@ export interface HarnessTuningSettings {
     enabled: boolean;
     contextWindowTokens: number;
     triggerRatio: number;
+    /** 请求体体积触发阈值（字节）；0 表示关闭体积触发。 */
+    triggerPayloadBytes: number;
     maxSummaryTokens: number;
     loopMidwayCompact: boolean;
   };

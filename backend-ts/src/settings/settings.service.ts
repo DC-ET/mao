@@ -92,6 +92,7 @@ export const BUNDLE_REGISTRY_ACCESS_TOKEN_KEY = 'bundle.registry.accessToken';
 const HARNESS_COMPACTION_ENABLED_KEY = 'harness.compaction.enabled';
 const HARNESS_COMPACTION_CONTEXT_WINDOW_TOKENS_KEY = 'harness.compaction.contextWindowTokens';
 const HARNESS_COMPACTION_TRIGGER_RATIO_KEY = 'harness.compaction.triggerRatio';
+const HARNESS_COMPACTION_TRIGGER_PAYLOAD_BYTES_KEY = 'harness.compaction.triggerPayloadBytes';
 const HARNESS_COMPACTION_MAX_SUMMARY_TOKENS_KEY = 'harness.compaction.maxSummaryTokens';
 const HARNESS_COMPACTION_LOOP_MIDWAY_KEY = 'harness.compaction.loopMidwayCompact';
 const HARNESS_LLM_RATE_LIMIT_MAX_RETRIES_KEY = 'harness.llm.rateLimitMaxRetries';
@@ -467,7 +468,7 @@ export class SystemSettingService {
   /** harness 调参：压缩 / LLM / 网页抓取 / Shell 会话。均启动时构建，修改后需重启后端生效。 */
   async getHarnessTuningConfig(): Promise<HarnessTuningSettings> {
     const [
-      compactionEnabledRaw, contextWindowRaw, triggerRatioRaw, maxSummaryRaw, loopMidwayRaw,
+      compactionEnabledRaw, contextWindowRaw, triggerRatioRaw, triggerPayloadRaw, maxSummaryRaw, loopMidwayRaw,
       rateLimitMaxRetriesRaw, rateLimitRetryDelayRaw, rateLimitMaxRetryDelayRaw,
       callTimeoutRaw, httpCallTimeoutRaw, streamIdleTimeoutRaw,
       anthropicAutoCacheRaw, anthropicCacheTtlRaw,
@@ -477,6 +478,7 @@ export class SystemSettingService {
       this.getOpt(HARNESS_COMPACTION_ENABLED_KEY),
       this.getOpt(HARNESS_COMPACTION_CONTEXT_WINDOW_TOKENS_KEY),
       this.getOpt(HARNESS_COMPACTION_TRIGGER_RATIO_KEY),
+      this.getOpt(HARNESS_COMPACTION_TRIGGER_PAYLOAD_BYTES_KEY),
       this.getOpt(HARNESS_COMPACTION_MAX_SUMMARY_TOKENS_KEY),
       this.getOpt(HARNESS_COMPACTION_LOOP_MIDWAY_KEY),
       this.getOpt(HARNESS_LLM_RATE_LIMIT_MAX_RETRIES_KEY),
@@ -501,6 +503,7 @@ export class SystemSettingService {
         enabled: optBool(compactionEnabledRaw, true),
         contextWindowTokens: optPositiveInt(contextWindowRaw, 256000),
         triggerRatio: optRatio(triggerRatioRaw, 0.8),
+        triggerPayloadBytes: optNonNegativeInt(triggerPayloadRaw, 40 * 1024 * 1024),
         maxSummaryTokens: optPositiveInt(maxSummaryRaw, 12000),
         loopMidwayCompact: optBool(loopMidwayRaw, true),
       },
@@ -807,6 +810,12 @@ export class SystemSettingService {
         throw new BusinessException(ErrorCode.PARAM_INVALID, '压缩触发比例必须为 0~1 之间的小数');
       }
     }
+    if (key === HARNESS_COMPACTION_TRIGGER_PAYLOAD_BYTES_KEY) {
+      const bytes = Number(value);
+      if (!Number.isInteger(bytes) || bytes < 0) {
+        throw new BusinessException(ErrorCode.PARAM_INVALID, '请求体体积阈值必须为非负整数（字节，0 表示关闭）');
+      }
+    }
     if (HARNESS_BOOL_KEYS.has(key) && !(value!.toLowerCase() === 'true' || value!.toLowerCase() === 'false')) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '开关值必须为 true 或 false');
     }
@@ -936,6 +945,13 @@ function optBool(raw: string | null, fallback: boolean): boolean {
 
 function optPositiveInt(raw: string | null, fallback: number): number {
   return parsePositiveInt(raw) ?? fallback;
+}
+
+/** 允许 0（表示关闭）的非负整数配置；非法值回落默认。 */
+function optNonNegativeInt(raw: string | null, fallback: number): number {
+  if (!hasText(raw)) return fallback;
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 function optRatio(raw: string | null, fallback: number): number {

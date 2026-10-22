@@ -3,11 +3,20 @@ import type { AgentEventListener } from './agent-event-listener.js';
 import { CompactionConfig } from './compaction-config.js';
 import type { PersistedChatMessage } from './persisted-chat-message.js';
 import { TokenEstimator } from './token-estimator.js';
+import { RequestSizeEstimator } from './request-size.js';
+import { stripImagesForCompaction } from './compaction-image-stripper.js';
 import { harnessLog } from '../log.js';
 
 const HANDOFF_PATTERN = /<handoff>(.*?)<\/handoff>/s;
 const SYSTEM_NOTICE_OPEN = '<system-notice>';
 const HANDOFF_USER_HEADER = '## 会话任务交接';
+/** 压缩请求接近供应商上限时的兜底余量：给交接指令、JSON 转义与网关开销留空间。 */
+const COMPACTION_PAYLOAD_SAFETY_MARGIN_BYTES = 64 * 1024;
+/**
+ * 未声明供应商上限时的剥图安全线（字节）。
+ * 与 `harness.compaction.triggerPayloadBytes` 解耦：后者 0 = 关闭触发，但仍需防 413。
+ */
+const DEFAULT_COMPACTION_STRIP_LIMIT_BYTES = 40 * 1024 * 1024;
 
 /** 真实用户消息：排除交接模板与 `<system-notice>` 系统注入。 */
 export function isRealUserMessage(message: ChatMessage): boolean {
@@ -63,6 +72,14 @@ export class CompactionContextOverflowException extends Error {
   }
 }
 
+/** 压缩请求体积超过供应商上限（剥图兜底后仍超）：与 token 溢出同属“压缩无法执行”的终态。 */
+export class CompactionPayloadOverflowException extends Error {
+  constructor(readonly estimatedBytes: number, readonly providerLimitBytes: number) {
+    super(`会话交接压缩请求估算为 ${estimatedBytes} 字节，已达到供应商请求体上限 ${providerLimitBytes} 字节；请检查模型配置的请求体上限，或新建会话。`);
+    this.name = 'CompactionPayloadOverflowException';
+  }
+}
+
 export class CompactionCancelledException extends Error {
   constructor(cause?: unknown) {
     super('Cancelled by user');
@@ -80,6 +97,7 @@ export class CompactionService {
   constructor(
     private readonly llmAdapter: LlmAdapter,
     private readonly tokenEstimator: TokenEstimator,
+    private readonly requestSizeEstimator = new RequestSizeEstimator(),
   ) {}
 
   async compactSession(
@@ -96,6 +114,8 @@ export class CompactionService {
     force = false,
     /** 会话主模型。触发阈值用它的窗口；缺省时用 config 兜底窗口，不用压缩模型窗口。 */
     sessionModelConfig?: LlmModelConfig | null,
+    /** 本次请求体估算字节数（与 manifest.requestBytes 同源）；未传按 0 处理。 */
+    payloadBytes?: number | null,
   ): Promise<SessionCompactionResult | null> {
     // 决策 6：enabled=false 只关「自动整理」，不禁止人工动作。force（手动压缩）旁路 enabled 门，
     // 但缺消息 / 缺请求仍无从压缩，照常短路。
@@ -115,19 +135,62 @@ export class CompactionService {
     const measuredTokens = activeTokensHint != null && activeTokensHint > normalRequestTokens
       ? activeTokensHint
       : normalRequestTokens;
-    const triggerThreshold = Math.floor(triggerWindow * config.triggerRatio);
+    const effectiveTriggerBytes = CompactionConfig.resolveEffectiveTriggerBytes(sessionModelConfig, config);
+    const measuredBytes = payloadBytes != null && payloadBytes > 0 ? payloadBytes : 0;
     // force 旁路阈值判定：手动压缩即便未达阈值也强制执行（技术方案 5.4 / 决策 5）
-    if (!force && measuredTokens < triggerThreshold) {
-      harnessLog('info', `Session handoff compaction skipped below threshold: sessionId=${sessionId}`
-        + `, measuredTokens=${measuredTokens}, estimatorTokens=${normalRequestTokens}, threshold=${triggerThreshold}`);
-      return null;
+    if (!force) {
+      const trigger = CompactionConfig.shouldTrigger({
+        tokens: measuredTokens,
+        payloadBytes: measuredBytes,
+        triggerWindowTokens: triggerWindow,
+        effectiveTriggerBytes,
+        config,
+      });
+      if (trigger == null) {
+        harnessLog('info', `Session handoff compaction skipped below threshold: sessionId=${sessionId}`
+          + `, measuredTokens=${measuredTokens}, estimatorTokens=${normalRequestTokens}`
+          + `, payloadBytes=${measuredBytes}, payloadThreshold=${effectiveTriggerBytes}`);
+        return null;
+      }
+      harnessLog('info', `Session handoff compaction trigger=${trigger}: sessionId=${sessionId}`
+        + `, tokens=${measuredTokens}/${Math.floor(triggerWindow * config.triggerRatio)}`
+        + `, bytes=${measuredBytes}/${effectiveTriggerBytes}`);
     }
 
     const started = Date.now();
-    const compactionRequest = this.deriveRequest(normalRequest, this.buildHandoffInstruction(config.maxSummaryTokens));
+    let compactionRequest = this.deriveRequest(normalRequest, this.buildHandoffInstruction(config.maxSummaryTokens));
     const compactionRequestTokens = this.tokenEstimator.estimateRequestTokens(compactionRequest);
     if (compactionRequestTokens >= overflowWindow) {
       throw new CompactionContextOverflowException(compactionRequestTokens, overflowWindow);
+    }
+    // 体积兜底（技术方案 2026-10-22 §6.4）：默认不剥图以复用主请求的前缀缓存；
+    // 只有压缩请求贴近供应商上限时才剥图，保证压缩动作能执行（这一次会 miss 缓存）。
+    // 未声明供应商上限时用独立安全线（40MiB）兜底：不能复用 triggerPayloadBytes——
+    // 它设 0 表示「关闭体积触发」，若剥图线跟着变 0，token 触发/手动整理一个 50MB 会话时
+    // 压缩请求会原样发出去撞 413；反向把 agent 级 trigger 调小也不该让每次压缩都剥图 miss 缓存。
+    const providerLimitBytes = modelConfig.maxRequestBodyBytes ?? 0;
+    if (sessionModelConfig != null && sessionModelConfig.modelId !== modelConfig.modelId) {
+      // 压缩模型与会话模型不同 → 压缩请求前缀必然 miss 缓存（设计 §6.3 要求留空或保持一致）。
+      harnessLog('warn', `Compaction model differs from session model, prompt cache will miss:`
+        + ` sessionId=${sessionId} sessionModel=${sessionModelConfig.modelId} compactionModel=${modelConfig.modelId}`);
+    }
+    const stripLimitBytes = providerLimitBytes > 0
+      ? Math.max(1, providerLimitBytes - COMPACTION_PAYLOAD_SAFETY_MARGIN_BYTES)
+      : DEFAULT_COMPACTION_STRIP_LIMIT_BYTES;
+    if (stripLimitBytes > 0) {
+      const compactionBytes = this.requestSizeEstimator.estimate(compactionRequest, modelConfig.modelId);
+      if (compactionBytes >= stripLimitBytes) {
+        compactionRequest = stripImagesForCompaction(compactionRequest);
+        harnessLog('warn', `Compaction request exceeded payload limit, images stripped (this call misses prompt cache):`
+          + ` sessionId=${sessionId} bytes=${compactionBytes} limit=${stripLimitBytes}`
+          + ` providerLimit=${providerLimitBytes > 0 ? providerLimitBytes : 'unknown'}`);
+        const strippedBytes = this.requestSizeEstimator.estimate(compactionRequest, modelConfig.modelId);
+        // 只有「已知供应商硬上限」才中断：未声明上限时剥图是尽力而为，
+        // 剥完仍大也继续尝试（纯文本超大会话没有图可剥，直接失败会让用户会话彻底卡死）。
+        if (providerLimitBytes > 0 && strippedBytes >= providerLimitBytes) {
+          throw new CompactionPayloadOverflowException(strippedBytes, providerLimitBytes);
+        }
+      }
     }
 
     listener?.onCompactionStart?.('session', messages.length, measuredTokens);

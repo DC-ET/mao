@@ -2,9 +2,9 @@ import http from 'node:http';
 import https from 'node:https';
 import { URL } from 'node:url';
 import { ensureContentPresent, MISSING_TOOL_RESULT_PLACEHOLDER } from '../core/message-history-normalizer.js';
-import { ImageFileSupport } from '../tool/image-file-support.js';
 import { PromptImageResizer } from '../tool/prompt-image-resizer.js';
 import { harnessLog } from '../log.js';
+import { remoteImageCache } from './remote-image-cache.js';
 import type {
   ChatCallback,
   ChatMessage,
@@ -1179,17 +1179,8 @@ async function resizeDataUri(dataUri: string): Promise<string> {
 }
 
 async function downloadAndEncode(imageUrl: string): Promise<string> {
-  const res = await fetch(imageUrl);
-  if (!res.ok) throw new Error(`HTTP ${res.status} when downloading image: ${imageUrl}`);
-  const bytes = Buffer.from(await res.arrayBuffer());
-  const declaredMime = res.headers.get('content-type')?.split(';')[0] ?? null;
-  const mimeType = ImageFileSupport.resolveImageMime(bytes, declaredMime, imageUrl);
-  if (!mimeType) {
-    throw new Error(`Downloaded content is not a supported image type: ${imageUrl} (Content-Type=${declaredMime})`);
-  }
-  const resized = await PromptImageResizer.tryResizeForPrompt(bytes, mimeType);
-  if (resized) return resized.toDataUri();
-  return `data:${mimeType};base64,${bytes.toString('base64')}`;
+  // 远程图片走进程内 LRU：首轮下载并压到 ≤300KB，后续命中不再下载/重编码。
+  return remoteImageCache.resolve(imageUrl);
 }
 
 function extractImageUrl(part: unknown): string | null {

@@ -22,6 +22,7 @@ interface CreateModelRequest {
   modelType?: string;
   clientImpersonation?: string;
   contextWindowTokens?: number;
+  maxRequestBodyBytes?: number | null;
   priceInput?: number | null;
   priceCacheRead?: number | null;
   priceCacheWrite?: number | null;
@@ -111,6 +112,7 @@ export function registerModelRoutes(app: FastifyInstance, deps: ModelRouteDeps):
       body.priceCacheRead,
       body.priceCacheWrite,
       body.priceOutput,
+      body.maxRequestBodyBytes,
     );
     return sendOk(reply, toVO(model, true));
   });
@@ -136,6 +138,7 @@ export function registerModelRoutes(app: FastifyInstance, deps: ModelRouteDeps):
       body.priceCacheRead,
       body.priceCacheWrite,
       body.priceOutput,
+      body.maxRequestBodyBytes,
     );
     return sendOk(reply, toVO(model, true));
   });
@@ -178,6 +181,7 @@ function toVO(entity: LlmModel, revealApiKey: boolean): ModelVO {
     modelType: entity.modelType,
     clientImpersonation: normalizeVoClientImpersonation(entity.clientImpersonation),
     contextWindowTokens: entity.contextWindowTokens,
+    maxRequestBodyBytes: entity.maxRequestBodyBytes ?? null,
     priceInput: parsePriceColumn(entity.priceInput),
     priceCacheRead: parsePriceColumn(entity.priceCacheRead),
     priceCacheWrite: parsePriceColumn(entity.priceCacheWrite),
