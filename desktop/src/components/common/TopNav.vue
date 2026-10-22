@@ -26,7 +26,7 @@
       </el-tooltip>
       <SessionSearchPopover ref="searchPopoverRef" />
       <UsageBell />
-      <el-tooltip content="我的指令" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
+      <el-tooltip v-if="!isSettingsRoute" content="我的指令" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
         <div
           class="theme-toggle commands-toggle"
           role="button"
@@ -68,6 +68,16 @@
         </div>
       </el-tooltip>
       <template v-if="authStore.user">
+        <el-tooltip v-if="!isSettingsRoute" content="设置" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
+          <div
+            class="theme-toggle settings-toggle"
+            role="button"
+            aria-label="设置"
+            @click="router.push('/settings/profile')"
+          >
+            <el-icon :size="16"><Setting /></el-icon>
+          </div>
+        </el-tooltip>
         <el-dropdown @command="handleCommand" trigger="click">
           <div class="nav-user" role="button" aria-label="用户菜单">
             <el-avatar :size="24" :src="authStore.user?.avatarUrl || undefined">
@@ -512,6 +522,11 @@ async function handleCommand(command: string) {
 }
 
 .commands-toggle {
+  text-decoration: none;
+  color: var(--aw-nav-text-muted);
+}
+
+.settings-toggle {
   text-decoration: none;
   color: var(--aw-nav-text-muted);
 }

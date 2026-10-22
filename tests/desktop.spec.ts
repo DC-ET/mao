@@ -300,11 +300,11 @@ test.describe('Desktop App - Logged In', () => {
     await mockLoggedInDesktopApi(page)
     await page.goto('/')
     await page.waitForSelector('.top-nav', { timeout: 15_000 })
-    // 顶栏右侧的动作图标（面板开关 / 搜索 / 用量 / 我的指令 / 终端 / 刷新）
+    // 顶栏右侧的动作图标（面板开关 / 搜索 / 用量 / 我的指令 / 终端 / 刷新 / 设置）
     await expect(page.locator('.theme-toggle').first()).toBeVisible()
-    // 站内信、主题色切换、设置三个图标已从头像菜单与设置页收敛
+    // 站内信、主题色切换图标已从头像菜单与设置页收敛；设置入口回到头像左侧齿轮图标
     await expect(page.locator('.inbox-bell')).toHaveCount(0)
-    await expect(page.locator('.settings-toggle')).toHaveCount(0)
+    await expect(page.locator('.nav-right .settings-toggle')).toBeVisible()
     await expect(page.locator('.nav-right .commands-toggle')).toBeVisible()
   })
 
@@ -620,10 +620,22 @@ test.describe('Desktop - Settings entry', () => {
     await mockLoggedInDesktopApi(page)
     await page.goto('/')
     await expect(page.getByRole('heading', { name: '今天想完成什么？' })).toBeVisible({ timeout: 15_000 })
-    // 顶栏不再有齿轮图标，设置入口收敛到头像菜单
+    // 设置页内齿轮入口隐藏，避免设置页顶栏重复一个进入设置页的图标
     await expect(page.locator('.settings-toggle')).toHaveCount(0)
     await page.getByRole('button', { name: '用户菜单' }).click()
     await page.getByRole('menuitem', { name: '设置' }).click()
+    await expect(page.locator('.settings-layout')).toBeVisible({ timeout: 10_000 })
+    await expect(page.locator('.settings-title')).toHaveText('设置')
+  })
+
+  test('should open settings from top-nav gear icon left of avatar', async ({ page }) => {
+    await mockLoggedInDesktopApi(page)
+    await page.goto('/')
+    await expect(page.getByRole('heading', { name: '今天想完成什么？' })).toBeVisible({ timeout: 15_000 })
+    // 齿轮位于头像左侧：在头像菜单按钮之前的最后一个 theme-toggle
+    const gear = page.locator('.nav-right .settings-toggle')
+    await expect(gear).toBeVisible()
+    await gear.click()
     await expect(page.locator('.settings-layout')).toBeVisible({ timeout: 10_000 })
     await expect(page.locator('.settings-title')).toHaveText('设置')
   })
