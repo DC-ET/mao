@@ -27,6 +27,7 @@ import { CloudWorkspaceResolver } from '../harness/safety/cloud-workspace-resolv
 import type { PathSandbox } from '../harness/safety/path-sandbox.js';
 import { fromString as permissionFromString } from './permission-level.js';
 import { isFeishuChannelSession } from '../harness/tool/feishu-channel-tool.js';
+import { isDingtalkChannelSession } from '../harness/tool/dingtalk-channel-tool.js';
 import type { GitOperationService } from './git-operation.service.js';
 import type { SessionCompactionService } from './session-compaction.service.js';
 import type { SessionCompactionEventService } from './session-compaction-event.service.js';
@@ -1389,10 +1390,11 @@ export class SessionService {
         fields.elapsedMs = (session.elapsedMs != null ? session.elapsedMs : 0) + Math.max(0, elapsed);
         fields.startedAt = null;
       }
-      // 微信/飞书通道会话由机器人等外部触发，终态不计未读，避免聚焦模式被无人工关注的会话置顶
+      // 微信/飞书/钉钉通道会话由机器人等外部触发，终态不计未读，避免聚焦模式被无人工关注的会话置顶
       if (!isTerminalPhase(oldPhase) && isTerminalPhase(phase)
         && session.projectKey !== WEIXIN_PROJECT_KEY
-        && !isFeishuChannelSession(session.projectKey, session.workspace)) {
+        && !isFeishuChannelSession(session.projectKey, session.workspace)
+        && !isDingtalkChannelSession(session.projectKey, session.workspace)) {
         fields.unread = 1;
       }
     }

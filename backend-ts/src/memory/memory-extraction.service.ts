@@ -3,6 +3,7 @@ import type { LlmModel } from '../domain/types.js';
 import { llmModelToConfig } from '../harness/deps.js';
 import { AtomicBoolean } from '../harness/atomic-boolean.js';
 import { hasText } from '../common/case.js';
+import { isMultimodalContentParts } from '../common/multimodal-content.js';
 import { LlmCallContext, LLM_CALL_SCENES } from '../usage/llm-call-context.js';
 import { MEMORY_EXTRACTION_MODEL_ID_KEY } from '../settings/settings.service.js';
 import { computeDedupHash, isRobotChannelProjectKey, memoryContentLength, normalizeMemoryContent } from './memory.service.js';
@@ -499,9 +500,8 @@ export function extractStoredText(content: string | null | undefined): string {
   if (trimmed.startsWith('[')) {
     try {
       const parsed = JSON.parse(trimmed) as unknown;
-      if (Array.isArray(parsed)) {
+      if (isMultimodalContentParts(parsed)) {
         return parsed
-          .filter((part): part is Record<string, unknown> => part != null && typeof part === 'object')
           .filter((part) => part.type === 'text' && typeof part.text === 'string')
           .map((part) => part.text as string)
           .join('\n')

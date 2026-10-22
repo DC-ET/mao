@@ -9,6 +9,7 @@ import type { TaskNotificationDelivery } from '../notification/task/types.js';
 import type { ExtractionSessionInput } from '../memory/memory-extraction.service.js';
 import { WEIXIN_PROJECT_KEY } from '../domain/types.js';
 import { isFeishuChannelSession } from '../harness/tool/feishu-channel-tool.js';
+import { isDingtalkChannelSession } from '../harness/tool/dingtalk-channel-tool.js';
 
 const TERMINAL = new Set(['COMPLETED', 'FAILED', 'CANCELLED']);
 
@@ -126,10 +127,12 @@ export class TaskTerminalService {
     // 不影响任务完成事件链。
     await this.buildCitations(session, phase);
 
-    // 微信/飞书通道会话由机器人等外部触发，终态不计未读，与 updatePhase 的 DB 写入保持一致
+    // 微信/飞书/钉钉通道会话由机器人等外部触发，终态不计未读，与 updatePhase 的 DB 写入保持一致
     const statusData: Record<string, unknown> = {
       phase,
-      unread: session.projectKey !== WEIXIN_PROJECT_KEY && !isFeishuChannelSession(session.projectKey, session.workspace),
+      unread: session.projectKey !== WEIXIN_PROJECT_KEY
+        && !isFeishuChannelSession(session.projectKey, session.workspace)
+        && !isDingtalkChannelSession(session.projectKey, session.workspace),
     };
     if (executionId != null && executionId.trim() !== '') {
       statusData.executionId = executionId;
@@ -193,7 +196,7 @@ export class TaskTerminalService {
    * - SIDE_TASK：侧任务面板未读徽标已承载（SIDE_TASK 可被提升为 parentSessionId=null
    *   的主会话，用 parentSessionId 判定会漏判，故必须读 sessionType）；
    * - CANCELLED：取消多由用户自己发起，无通知价值；
-   * - 微信/飞书通道会话：由机器人触发，没有「用户等着看站内」的语义；
+   * - 微信/飞书/钉钉通道会话：由机器人触发，没有「用户等着看站内」的语义；
    * - 未知用户：notification.user_id NOT NULL。
    *
    * 异常全吞：收件箱是补充通知，绝不能影响任务完成事件链。
@@ -212,6 +215,7 @@ export class TaskTerminalService {
     if (session.sessionType === 'SUBAGENT' || session.sessionType === 'SIDE_TASK') return;
     if (session.projectKey === WEIXIN_PROJECT_KEY) return;
     if (isFeishuChannelSession(session.projectKey, session.workspace)) return;
+    if (isDingtalkChannelSession(session.projectKey, session.workspace)) return;
     if (ownerId == null) return;
     const sessionId = session.id;
     if (sessionId == null) return;

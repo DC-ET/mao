@@ -27,6 +27,9 @@ const OG_TITLE_ALT_PATTERN = /<meta[^>]+content=["'](.*?)["'][^>]+property=["']o
 const TRUNCATION_NOTICE = '\n\n... [内容已截断，完整内容见 full_content_file 字段给出的文件路径，'
   + '请用 read_file（支持 offset/limit 分页）或 grep_search 读取被截断部分，不要重新抓取该网页]';
 
+/** 原始响应被 maxRawBytes 截断、且没有完整文件可落盘时的提示。 */
+const RAW_TRUNCATION_NOTICE = '\n\n... [目标页面原始响应超过抓取上限，正文可能不完整，请勿把当前内容当作全文]';
+
 /** 供 OpenWebPageTool 落盘全文所需的最小 runtime 能力（避免直接依赖实现类）。 */
 export interface WebPageCacheLocator {
   resolveWebPageCacheDir(userId: number, sessionId: number): string;
@@ -56,8 +59,9 @@ export class OpenWebPageTool extends BaseTool {
 - 网页内容会经过正文提取（去除导航栏、广告等干扰内容）后转为 Markdown。
 - 如果页面需要 JavaScript 渲染（SPA 应用），提取的内容可能不完整。
 - 建议配合 web_search 使用：先用 web_search 发现相关页面，再用 open_web_page 获取详情。
-- 正文超过上限会被截断：返回的 JSON 里 truncated=true，并在 full_content_file 给出完整内容的落盘文件路径。
-  此时不要重新抓取同一网页，用 read_file（可传 offset/limit 分页）或 grep_search 读取该文件获取被截断的部分。
+- 正文超过输出上限、或目标页面原始响应超过抓取上限时，返回的 JSON 里 truncated=true，并在 message 说明截断情况。
+  正文超限且完整内容成功落盘时，full_content_file 会给出文件路径；此时不要重新抓取同一网页，
+  用 read_file（可传 offset/limit 分页）或 grep_search 读取该文件获取被截断的部分。
 `;
   }
   getInputSchema(): Record<string, unknown> {
@@ -76,8 +80,8 @@ export class OpenWebPageTool extends BaseTool {
         content: { type: 'string' },
         content_length: { type: 'integer' },
         truncated: { type: 'boolean' },
-        full_content_file: { type: 'string', description: '仅 truncated=true 时存在：完整正文的落盘文件路径' },
-        message: { type: 'string', description: '仅 truncated=true 时存在：如何回读被截断内容的说明' },
+        full_content_file: { type: 'string', description: '仅「正文超过输出上限且成功落盘」时存在：抽取后完整正文的文件路径' },
+        message: { type: 'string', description: '仅 truncated=true 时存在：截断原因与后续读取方式（原始响应截断时可能没有完整文件可读）' },
       },
     };
   }
@@ -109,24 +113,33 @@ export class OpenWebPageTool extends BaseTool {
    */
   private async fetchAndExtract(url: string, sessionId: number | null, userId: number | null): Promise<string> {
     try {
-      const { html, contentType } = await fetchHtml(url, this.webPage);
+      const { html, contentType, rawTruncated } = await fetchHtml(url, this.webPage);
       if (contentType && !contentType.includes('text/html') && contentType.trim() !== '') {
         return errorJson('不支持的内容类型：' + contentType + '，仅支持 text/html', url);
       }
       const extracted = this.extract(html, url);
       const fullContent = extracted.content;
-      const truncated = fullContent.length > this.webPage.maxOutputLength;
-      let content = truncated ? fullContent.slice(0, this.webPage.maxOutputLength) : fullContent;
+      const outputTruncated = fullContent.length > this.webPage.maxOutputLength;
+      const truncated = rawTruncated || outputTruncated;
+      let content = outputTruncated ? fullContent.slice(0, this.webPage.maxOutputLength) : fullContent;
       let fullContentFile: string | null = null;
-      let message: string | null = null;
-      if (truncated) {
+      const messages: string[] = [];
+      if (outputTruncated) {
         fullContentFile = await this.writeFullContent(userId, sessionId, url, extracted.title, fullContent);
         content += TRUNCATION_NOTICE;
-        message = fullContentFile != null
+        messages.push(fullContentFile != null
           ? `网页正文超过 ${this.webPage.maxOutputLength} 字符，已截断。完整内容已保存到 ${fullContentFile}，`
             + '如需被截断部分，请用 read_file（可传 offset/limit 分页）或 grep_search 读取该文件，不要重新抓取。'
-          : `网页正文超过 ${this.webPage.maxOutputLength} 字符，已截断，且完整内容未能落盘，被截断部分本次不可恢复。`;
+          : `网页正文超过 ${this.webPage.maxOutputLength} 字符，已截断，且完整内容未能落盘，被截断部分本次不可恢复。`);
       }
+      if (rawTruncated) {
+        if (!outputTruncated) content += RAW_TRUNCATION_NOTICE;
+        messages.push(`目标页面原始响应超过 ${this.webPage.maxRawBytes} 字节，已截断，`
+          + (outputTruncated
+            ? '已落盘的完整内容也可能缺失原文后半段，解读时请注意。'
+            : '抽取出的正文可能不完整，请勿当作全文。'));
+      }
+      const message = messages.length > 0 ? messages.join(' ') : null;
       return toJson({
         url,
         title: extracted.title,
@@ -246,7 +259,11 @@ function isWechatHost(hostname: string): boolean {
   return host === 'weixin.qq.com' || host.endsWith('.weixin.qq.com');
 }
 
-function fetchHtml(url: string, cfg: WebPageConfig, redirects = 0): Promise<{ html: string; contentType: string }> {
+function fetchHtml(
+  url: string,
+  cfg: WebPageConfig,
+  redirects = 0,
+): Promise<{ html: string; contentType: string; rawTruncated: boolean }> {
   return new Promise((resolve, reject) => {
     if (redirects > MAX_REDIRECTS) {
       reject(new Error('重定向次数过多'));
@@ -254,7 +271,10 @@ function fetchHtml(url: string, cfg: WebPageConfig, redirects = 0): Promise<{ ht
     }
     let settled = false;
     let connectTimer: ReturnType<typeof setTimeout> | undefined;
-    const finish = (err: Error | null, value?: { html: string; contentType: string }) => {
+    const finish = (
+      err: Error | null,
+      value?: { html: string; contentType: string; rawTruncated: boolean },
+    ) => {
       if (settled) return;
       settled = true;
       if (err) reject(err);
@@ -289,6 +309,7 @@ function fetchHtml(url: string, cfg: WebPageConfig, redirects = 0): Promise<{ ht
 
       const chunks: Buffer[] = [];
       let size = 0;
+      let rawTruncated = false;
       const readTimer = setTimeout(() => {
         req.destroy();
         finish(new Error('请求超时，目标网站无响应'));
@@ -303,17 +324,28 @@ function fetchHtml(url: string, cfg: WebPageConfig, redirects = 0): Promise<{ ht
         finish(null, {
           html: Buffer.concat(chunks).toString('utf8'),
           contentType: String(res.headers['content-type'] ?? ''),
+          rawTruncated,
         });
       };
 
       res.on('data', (chunk: Buffer) => {
         const room = cfg.maxRawBytes - size;
-        if (room <= 0) return;
+        if (room <= 0) {
+          // 已经读满上限又收到新数据：响应被截断
+          rawTruncated = true;
+          res.destroy();
+          complete();
+          return;
+        }
         if (chunk.length >= room) {
           chunks.push(chunk.subarray(0, room));
           size = cfg.maxRawBytes;
-          res.destroy();
-          complete();
+          // 恰好读满时先不判定，等下一个 data（说明还有内容）或 end（说明刚好读完）
+          if (chunk.length > room) {
+            rawTruncated = true;
+            res.destroy();
+            complete();
+          }
           return;
         }
         chunks.push(chunk);

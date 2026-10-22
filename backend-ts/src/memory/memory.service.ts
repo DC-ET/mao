@@ -4,6 +4,7 @@ import { ErrorCode } from '../common/error-code.js';
 import { hasText } from '../common/case.js';
 import { WEIXIN_PROJECT_KEY } from '../domain/types.js';
 import { isFeishuChannelSession } from '../harness/tool/feishu-channel-tool.js';
+import { isDingtalkChannelSession } from '../harness/tool/dingtalk-channel-tool.js';
 import { isDuplicateKeyError, type MemoryRepository } from './memory.repository.js';
 import type {
   MemoryHint,
@@ -44,14 +45,17 @@ export function computeDedupHash(scope: MemoryScope, projectKey: string | null |
 
 /**
  * 机器人渠道会话的项目键不是真实项目：与 task-terminal.service.ts 未读判定同款
- * （WEIXIN_PROJECT_KEY 及飞书渠道 key），并补充飞书群聊键前缀（该键仅靠 workspace 才能识别，
- * 手工创建路径没有 workspace，会穿透校验成为永不注入的死数据）。
+ * （WEIXIN_PROJECT_KEY 及飞书/钉钉渠道 key），并补充飞书/钉钉群聊键前缀（该键仅靠
+ * workspace 才能识别，手工创建路径没有 workspace，会穿透校验成为永不注入的死数据）。
  */
 export function isRobotChannelProjectKey(projectKey: string | null | undefined, workspace: string | null | undefined): boolean {
   if (projectKey == null || projectKey === '') return false;
   return projectKey === WEIXIN_PROJECT_KEY
     || /^feishu-chat-\d+-/.test(projectKey)
-    || isFeishuChannelSession(projectKey, workspace);
+    || /^dingtalk-\d+-private-\d+$/.test(projectKey)
+    || /^dingtalk-chat-\d+-/.test(projectKey)
+    || isFeishuChannelSession(projectKey, workspace)
+    || isDingtalkChannelSession(projectKey, workspace);
 }
 
 /** PROJECT 级记忆的有效绑定键：非空且非机器人渠道特殊值。 */

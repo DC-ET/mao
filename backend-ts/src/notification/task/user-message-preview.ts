@@ -1,3 +1,4 @@
+import { isMultimodalContentParts } from '../../common/multimodal-content.js';
 import type { ContentPart } from '../../domain/types.js';
 
 /** 图片 part 在预览中的占位文本，避免纯图片消息在通知里变成空白。 */
@@ -23,7 +24,11 @@ export function userMessagePreviewOf(content: unknown): string {
     const parsed = parsePartsJson(content);
     return normalizePreview(parsed == null ? content : partsToText(parsed));
   }
-  if (Array.isArray(content)) return normalizePreview(partsToText(content));
+  if (Array.isArray(content)) {
+    return normalizePreview(
+      isMultimodalContentParts(content) ? partsToText(content) : JSON.stringify(content),
+    );
+  }
   return '';
 }
 
@@ -44,7 +49,7 @@ function parsePartsJson(content: string): unknown[] | null {
   if (!trimmed.startsWith('[') || !trimmed.endsWith(']')) return null;
   try {
     const parsed: unknown = JSON.parse(trimmed);
-    return Array.isArray(parsed) ? parsed : null;
+    return isMultimodalContentParts(parsed) ? parsed : null;
   } catch {
     return null;
   }

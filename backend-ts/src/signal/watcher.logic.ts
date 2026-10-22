@@ -135,14 +135,12 @@ export interface RenderVars {
 }
 
 /**
- * 渲染 prompt 模板：`{url}` / `{name}` / `{diff}` 用 split/join 替换（不用正则，
- * 避免用户模板里的 `$` 被当分组引用）。渲染结果超长按整体截断。
+ * 渲染 prompt 模板：`{url}` / `{name}` / `{diff}` 单遍替换。用函数式替换，
+ * 替换值里的 `$` 不会被当分组引用，且不会被后续占位符二次扫描。
  */
 export function renderWatcherPrompt(template: string, vars: RenderVars): string {
   const base = template ?? '';
-  let out = base.split('{diff}').join(vars.diff ?? '');
-  out = out.split('{url}').join(vars.url ?? '');
-  out = out.split('{name}').join(vars.name ?? '');
+  let out = base.replace(/\{(diff|url|name)\}/g, (_match, key: string) => vars[key as keyof RenderVars] ?? '');
   if (out.length > WATCHER_PROMPT_MAX_LENGTH) {
     out = `${out.slice(0, WATCHER_PROMPT_MAX_LENGTH)}…（已截断）`;
   }

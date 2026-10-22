@@ -5,6 +5,7 @@ import type { SessionActivityRepository } from './activity.repository.js';
 import type { SessionCompactionEventRepository } from './session-compaction.repository.js';
 import type { Message, SessionActivity, SessionCompactionEvent } from './types.js';
 import { javaLocalDateTimeString } from '../common/datetime.js';
+import { isMultimodalContentParts } from '../common/multimodal-content.js';
 import { isCancelledError } from '../common/llm-cancel.js';
 import type {
   RunTracePageVO,
@@ -593,15 +594,12 @@ function previewOf(content: string | null | undefined, max = 80): string {
   let text = content;
   if (text.trim().startsWith('[')) {
     try {
-      const parts = JSON.parse(text) as unknown[];
-      text = parts
-        .map((part) => {
-          if (part != null && typeof part === 'object' && (part as Record<string, unknown>).type === 'text') {
-            return String((part as Record<string, unknown>).text ?? '');
-          }
-          return '';
-        })
-        .join('');
+      const parsed: unknown = JSON.parse(text);
+      if (isMultimodalContentParts(parsed)) {
+        text = parsed
+          .map((part) => (part.type === 'text' ? String(part.text ?? '') : ''))
+          .join('');
+      }
     } catch { /* 非 JSON 数组时按原文 */ }
   }
   text = text.replace(/\s+/g, ' ').trim();
