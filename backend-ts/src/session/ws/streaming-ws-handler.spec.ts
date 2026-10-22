@@ -190,6 +190,98 @@ describe('StreamingWsHandler', () => {
     );
   });
 
+  /** 取最后一次 user_message_saved 广播的 data；前端乐观消息替换依赖这个口径。 */
+  function savedEventData(): Record<string, unknown> {
+    const calls = vi.mocked(registry.send).mock.calls
+      .map((c) => c[1] as WsEvent)
+      .filter((e) => e.type === 'user_message_saved');
+    expect(calls.length).toBeGreaterThan(0);
+    return calls[calls.length - 1]!.data!;
+  }
+
+  it('broadcastsTheStrippedUserTextForImageMessagesSoOptimisticMessagesMatch', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('CLOUD', 'IDLE'));
+    sessionService.saveMessage.mockResolvedValue(message(99, 'USER'));
+    harnessService.prepareMessage.mockResolvedValue('event-img');
+    messageQueueService.listPending.mockResolvedValue([]);
+    llmModelMapper.selectDefault.mockResolvedValue({ supportsVision: 1 });
+    await handler.handleTextMessage(ws, JSON.stringify({
+      type: 'send_message', sessionId: 11,
+      data: { content: '这个图片能帮我转成CAD格式的文件？', eventId: 'event-img', images: ['https://a/b.png', 'https://a/c.png'] },
+    }));
+    await executor.runAll();
+
+    // 落库保留注入行，但广播必须回到用户原始正文：前端按 content 逐字比对替换乐观消息，
+    // 带上注入行会让用户消息重复上屏、乐观 id 永不替换。
+    expect(sessionService.saveMessage).toHaveBeenCalledWith(
+      11, 'USER',
+      expect.arrayContaining([
+        { type: 'text', text: '这个图片能帮我转成CAD格式的文件？\n\n[图片 1] https://a/b.png\n[图片 2] https://a/c.png' },
+      ]),
+      null, null, null, 0, null,
+    );
+    const data = savedEventData();
+    expect(data.content).toBe('这个图片能帮我转成CAD格式的文件？');
+    expect(data.images).toEqual(['https://a/b.png', 'https://a/c.png']);
+  });
+
+  it('broadcastsEmptyContentForImageOnlyMessagesSoTheFrontendEmptyFallbackHolds', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('CLOUD', 'IDLE'));
+    sessionService.saveMessage.mockResolvedValue(message(99, 'USER'));
+    harnessService.prepareMessage.mockResolvedValue('event-only');
+    messageQueueService.listPending.mockResolvedValue([]);
+    llmModelMapper.selectDefault.mockResolvedValue({ supportsVision: 1 });
+    await handler.handleTextMessage(ws, JSON.stringify({
+      type: 'send_message', sessionId: 11,
+      data: { content: '', eventId: 'event-only', images: ['https://a/b.png'] },
+    }));
+    await executor.runAll();
+
+    // 纯图消息的乐观消息 content 是空串，广播也必须是空串才能命中前端的空串兜底。
+    const data = savedEventData();
+    expect(data.content).toBe('');
+    expect(data.images).toEqual(['https://a/b.png']);
+  });
+
+  it('keepsThePlainTextBroadcastUnchanged', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('CLOUD', 'IDLE'));
+    sessionService.saveMessage.mockResolvedValue(message(99, 'USER'));
+    harnessService.prepareMessage.mockResolvedValue('event-plain');
+    messageQueueService.listPending.mockResolvedValue([]);
+    await handler.handleTextMessage(ws, JSON.stringify({
+      type: 'send_message', sessionId: 11, data: { content: 'plain text', eventId: 'event-plain' },
+    }));
+    await executor.runAll();
+    expect(savedEventData().content).toBe('plain text');
+  });
+
+  it('stripsInjectedUrlLinesFromTheSideSessionFirstMessageBroadcast', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    const parent = session('CLOUD', 'IDLE');
+    parent.workspace = '/repo';
+    parent.projectKey = 'repo';
+    sessionService.getSession.mockResolvedValue(parent);
+    sessionService.saveMessage.mockResolvedValue(message(99, 'USER'));
+    sessionService.save.mockImplementation(async (s: Session) => { s.id = 13; });
+    llmModelMapper.selectDefault.mockResolvedValue({ supportsVision: 1 });
+    await handler.handleTextMessage(ws, JSON.stringify({
+      type: 'create_side_session', sessionId: 11,
+      data: { content: '看下这张图', contextMode: 'summary', images: ['https://a/b.png'] },
+    }));
+    await executor.runAll();
+
+    const data = savedEventData();
+    expect(data.content).toBe('看下这张图');
+    expect(data.images).toEqual(['https://a/b.png']);
+  });
+
   it('finishes an accepted CLOUD task after its SSO connection expires', async () => {
     vi.useFakeTimers();
     vi.clearAllMocks();

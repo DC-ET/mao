@@ -3,6 +3,7 @@ import type { Agent, ContentPart, LlmModel, LocalSkillRef, Message, MessageQueue
 import type { TaskNotifySource } from '../task-terminal.service.js';
 import type { MessageQueueSource } from '../types.js';
 import { imageUrlFromPart } from '../session-vo.js';
+import { stripImageUrlLines } from '../util/image-url-annotation.js';
 import { queueWaitMsOf } from '../../openapi/open-api-call-log.logic.js';
 
 /** user_message_saved 广播用的用户消息内容：text 提取自纯文本或 ContentPart，images 提取自图片 URL。 */
@@ -26,7 +27,11 @@ export function userMessagePayloadOf(messageContent: unknown): UserMessagePayloa
         if (url != null) images.push(url);
       }
     }
-    return { content: content.join('\n'), images };
+    // 带图消息的文本 part 尾部含注入行（image-url-annotation）。广播要回到「用户原始正文」口径：
+    // 前端按 content 逐字比对来替换乐观消息，口径不一致会让用户消息重复上屏、乐观 id 永不替换。
+    // 无图时是恒等操作：纯文本消息与各渠道自建内容（feishu/dingtalk/weixin/scheduled）不受影响。
+    const raw = content.join('\n');
+    return { content: images.length > 0 ? stripImageUrlLines(raw) : raw, images };
   }
   return { content: '', images: [] };
 }
