@@ -109,17 +109,23 @@ export class StatisticsDbStore implements StatisticsStore {
 export class StatisticsService {
   constructor(private readonly store: StatisticsStore) {}
 
+  /**
+   * 全局累计概览。7 个计数互不依赖，并行发出：
+   * 串行时一次约 130ms（其中 message 全表 COUNT 占 ~73ms），而它挂在总览请求的关键路径上。
+   */
   async getOverview(): Promise<Record<string, unknown>> {
     const todayStart = `${shanghaiYmd()} 00:00:00`;
-    return {
-      totalAgents: await this.store.countAgents(),
-      totalModels: await this.store.countModels(),
-      totalUsers: await this.store.countUsers(),
-      totalSessions: await this.store.countSessions(),
-      totalMessages: await this.store.countMessages(),
-      todaySessions: await this.store.countSessionsSince(todayStart),
-      todayMessages: await this.store.countMessagesSince(todayStart),
-    };
+    const [totalAgents, totalModels, totalUsers, totalSessions, totalMessages, todaySessions, todayMessages] =
+      await Promise.all([
+        this.store.countAgents(),
+        this.store.countModels(),
+        this.store.countUsers(),
+        this.store.countSessions(),
+        this.store.countMessages(),
+        this.store.countSessionsSince(todayStart),
+        this.store.countMessagesSince(todayStart),
+      ]);
+    return { totalAgents, totalModels, totalUsers, totalSessions, totalMessages, todaySessions, todayMessages };
   }
 
   getAgentStats(): Promise<Array<Record<string, unknown>>> {

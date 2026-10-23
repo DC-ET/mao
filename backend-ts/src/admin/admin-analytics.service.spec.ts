@@ -3,6 +3,7 @@ import { addDaysYmd, formatDateTime, shanghaiYmd } from '../common/json.js';
 import {
   AdminAnalyticsDbStore,
   AdminAnalyticsService,
+  PREVIOUS_TOTALS_TTL_MS,
   buildTrendBucketKeys,
   type AnalyticsRange,
 } from './admin-analytics.service.js';
@@ -527,6 +528,78 @@ describe('AdminAnalyticsService', () => {
     const sql = (db.query.mock.calls[0] as unknown[])[0] as string;
     expect(sql).toContain('m.deleted = 0');
     expect(sql).toContain('s.deleted = 0');
+  });
+
+  it('messageAggregationSqlPinsMessageFirstJoinOrder', async () => {
+    const db = { query: vi.fn(async () => []), queryOne: vi.fn(async () => ({ c: 0 })) };
+    const store = new AdminAnalyticsDbStore(db as never);
+
+    await store.selectMessageStatsByAgent(range);
+    await store.selectMessageStatsByUser(range);
+    await store.selectMessageStatsByModel(range);
+    await store.countActiveUsers(range);
+
+    // 默认计划会以 session 为驱动逐会话回查 message（40 万行 / 2.1GB 表上约 1s），
+    // 这几条按 message 时间窗驱动，必须带优化器提示，否则慢查询会随统计信息回归。
+    for (const call of db.query.mock.calls) {
+      expect(String((call as unknown[])[0])).toContain('JOIN_ORDER(m, s)');
+    }
+    expect(String((db.queryOne.mock.calls[0] as unknown[])[0])).toContain('JOIN_ORDER(m, s)');
+  });
+});
+
+describe('AdminAnalyticsService 环比窗口缓存', () => {
+  /** 用固定时钟，避免跨零点时窗口位移导致缓存 key 变化。 */
+  function withFixedClock<T>(fn: () => Promise<T>): Promise<T> {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-10T10:00:00+08:00'));
+    return fn().finally(() => vi.useRealTimers());
+  }
+
+  it('同一环比窗口在 TTL 内只聚合一次', async () => {
+    await withFixedClock(async () => {
+      const statistics = { getOverview: vi.fn(async () => ({})) };
+      const store = buildStore();
+      const service = new AdminAnalyticsService(statistics as never, store as never);
+
+      await service.overview(7);
+      await service.overview(7);
+      expect(store.countSessions).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(PREVIOUS_TOTALS_TTL_MS + 1);
+      await service.overview(7);
+      expect(store.countSessions).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it('不同环比窗口各自缓存，不串数据', async () => {
+    await withFixedClock(async () => {
+      const statistics = { getOverview: vi.fn(async () => ({})) };
+      const store = buildStore();
+      const service = new AdminAnalyticsService(statistics as never, store as never);
+
+      const weekly = (await service.overview(7)) as Record<string, any>;
+      const monthly = (await service.overview(30)) as Record<string, any>;
+
+      expect(store.countSessions).toHaveBeenCalledTimes(2);
+      expect(weekly.previousTotals).toEqual(monthly.previousTotals);
+      expect(weekly.period.previousStart).not.toBe(monthly.period.previousStart);
+    });
+  });
+
+  it('连通性口径不同的环比分开缓存', async () => {
+    await withFixedClock(async () => {
+      const statistics = { getOverview: vi.fn(async () => ({})) };
+      const store = buildStore();
+      const service = new AdminAnalyticsService(statistics as never, store as never);
+
+      await service.trendsScope(7, 0, { excludeConnectivity: true });
+      await service.trendsScope(7, 0, { excludeConnectivity: false });
+      await service.trendsScope(7, 0, { excludeConnectivity: true });
+
+      // 两次口径各算一次，第三次命中缓存
+      expect(store.countSessions).toHaveBeenCalledTimes(2);
+    });
   });
 });
 

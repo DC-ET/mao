@@ -36,6 +36,40 @@ describe('StatisticsService', () => {
     });
   });
 
+  it('overviewCountsRunConcurrently', async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const counter = () =>
+      vi.fn(async () => {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        inFlight -= 1;
+        return 1;
+      });
+    const store: StatisticsStore = {
+      countAgents: counter(),
+      countModels: counter(),
+      countUsers: counter(),
+      countSessions: counter(),
+      countMessages: counter(),
+      countSessionsSince: counter(),
+      countMessagesSince: counter(),
+      selectAgentUsageStats: vi.fn(),
+      listModels: vi.fn(),
+      countMessagesByModel: vi.fn(),
+      selectTokenCountByModel: vi.fn(),
+      sumUsageByModelId: vi.fn(),
+      listUsers: vi.fn(),
+      countSessionsByUser: vi.fn(),
+    };
+
+    await new StatisticsService(store).getOverview();
+
+    // 串行时一次只会有一个计数在途（maxInFlight=1），并行后 7 个同时发出。
+    expect(maxInFlight).toBe(7);
+  });
+
   it('agentStatsIncludesMessageAndTokenCountsForSessions', async () => {
     const expected = [
       { agentId: 1, agentName: 'Coder', sessionCount: 2, messageCount: 3, totalTokens: 25 },

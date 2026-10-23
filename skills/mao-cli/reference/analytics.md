@@ -34,6 +34,7 @@
 - 按半开区间 `[start 00:00:00, end+1 00:00:00)` 过滤 `created_at`
 - 除 `overview` 中的实时运行态外，所有数字均为**窗口内新增**，不是全表累计
 - 环比窗口是紧邻的上一个等长窗口（如 days=7 时为前 7 天；昨日的环比为前日）
+- 环比窗口（已结束区间）的聚合结果在**后端进程内缓存 5 分钟**（0.0.338 起）：过去窗口不再增长，同一份结果供各 Tab 复用，因此`previousTotals` 最多滞后 5 分钟；本期窗口每次实时计算
 - Token 分两类：`chatTokens` 来自 `message.token_count`（对话消耗），`backgroundTokens` 来自 `llm_usage`（后台调用，如会话标题、Git 提交信息生成），`totalTokens` 为两者之和；管理后台 UI 紧凑展示用 K/M/B（千/百万/十亿）
 - 管理后台总览的计数类 KPI（新增会话 / 消息数 / 活跃用户 / 会话总数）≥1 万时紧凑展示为「万 / 亿」并固定保留两位小数（如 1.70 万）；图表坐标轴与条形排行标签仍为一位小数
 - 管理后台总览的 Token KPI（0.0.301 起）同样固定保留两位小数：`totalTokens` ≥1B 显示 1.40B、`chatTokens` / `backgroundTokens` / 命中与入 Token 同口径；趋势图纵轴、模型 / 用户 / Agent 各 Tab 的条形排行与 tooltip 仍为一位小数

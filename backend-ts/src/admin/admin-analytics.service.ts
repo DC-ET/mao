@@ -289,7 +289,7 @@ export class AdminAnalyticsDbStore implements AdminAnalyticsStore {
 
   selectMessageStatsByAgent(range: AnalyticsRange): Promise<GroupMessageRow[]> {
     return this.db.query(
-      `SELECT s.agent_id AS id, COUNT(m.id) AS messageCount, COALESCE(SUM(m.token_count), 0) AS totalTokens
+      `SELECT ${MESSAGE_FIRST_HINT} s.agent_id AS id, COUNT(m.id) AS messageCount, COALESCE(SUM(m.token_count), 0) AS totalTokens
        FROM message m JOIN session s ON m.session_id = s.id
        WHERE m.created_at >= ? AND m.created_at < ? AND m.deleted = 0 AND s.deleted = 0
        GROUP BY s.agent_id`,
@@ -309,7 +309,7 @@ export class AdminAnalyticsDbStore implements AdminAnalyticsStore {
 
   selectMessageStatsByUser(range: AnalyticsRange): Promise<GroupMessageRow[]> {
     return this.db.query(
-      `SELECT s.user_id AS id, COUNT(m.id) AS messageCount, COALESCE(SUM(m.token_count), 0) AS totalTokens
+      `SELECT ${MESSAGE_FIRST_HINT} s.user_id AS id, COUNT(m.id) AS messageCount, COALESCE(SUM(m.token_count), 0) AS totalTokens
        FROM message m JOIN session s ON m.session_id = s.id
        WHERE m.created_at >= ? AND m.created_at < ? AND m.deleted = 0 AND s.deleted = 0
        GROUP BY s.user_id`,
@@ -329,7 +329,7 @@ export class AdminAnalyticsDbStore implements AdminAnalyticsStore {
 
   selectMessageStatsByModel(range: AnalyticsRange): Promise<GroupMessageRow[]> {
     return this.db.query(
-      `SELECT m.model_id AS id, COUNT(*) AS messageCount, COALESCE(SUM(m.token_count), 0) AS totalTokens
+      `SELECT ${MESSAGE_FIRST_HINT} m.model_id AS id, COUNT(*) AS messageCount, COALESCE(SUM(m.token_count), 0) AS totalTokens
        FROM message m JOIN session s ON m.session_id = s.id
        WHERE m.created_at >= ? AND m.created_at < ? AND m.model_id IS NOT NULL AND m.deleted = 0 AND s.deleted = 0
        GROUP BY m.model_id`,
@@ -567,7 +567,7 @@ export class AdminAnalyticsDbStore implements AdminAnalyticsStore {
          SELECT user_id FROM session
           WHERE created_at >= ? AND created_at < ? AND deleted = 0
          UNION
-         SELECT s.user_id FROM message m JOIN session s ON m.session_id = s.id
+         SELECT ${MESSAGE_FIRST_HINT} s.user_id FROM message m JOIN session s ON m.session_id = s.id
           WHERE m.created_at >= ? AND m.created_at < ? AND m.deleted = 0 AND s.deleted = 0
        ) t`,
       [range.startAt, range.endAtExclusive, range.startAt, range.endAtExclusive],
@@ -715,6 +715,20 @@ const PHASES = ['IDLE', 'RUNNING', 'RESUMING', 'WAITING_APPROVAL', 'COMPLETED', 
 const RANK_LIMIT = 20;
 const MAX_SCOPE_LIMIT = 100;
 
+/**
+ * 强制 message 驱动、按主键回查 session（MySQL 8 优化器提示；5.7 会当普通注释忽略）。
+ *
+ * 默认计划会反过来：以 session 为驱动，按 idx_session 逐个会话回查 message。
+ * message 表约 40 万行 / 2.1GB，每个会话平均回查 287 行 → 数十万次随机回表，
+ * 实测昨日的活跃用户查询 0.97~1.25s、30 天的用户消息聚合 1.15s；固定连接顺序后
+ * 分别降到 0.12s / 0.64s（配 V168 覆盖索引后约 0.2s），也不再随统计信息在窗口间漂移。
+ */
+const MESSAGE_FIRST_HINT = '/*+ JOIN_ORDER(m, s) */';
+
+/** 环比窗口（已结束区间）聚合缓存：过去窗口数据基本不再变化，但所有 Tab 每次都要取一次。 */
+export const PREVIOUS_TOTALS_TTL_MS = 5 * 60 * 1000;
+const PREVIOUS_TOTALS_CACHE_MAX = 64;
+
 export interface AnalyticsPeriodMeta {
   days: number;
   start: string;
@@ -730,6 +744,9 @@ export interface AnalyticsInsight {
 }
 
 export class AdminAnalyticsService {
+  /** 环比窗口聚合结果短 TTL 缓存，key = 窗口起止 + 连通性口径；跨 Tab / 刷新复用同一份环比。 */
+  private readonly previousTotalsCache = new Map<string, { at: number; value: Record<string, number | null> }>();
+
   constructor(
     private readonly statisticsService: StatisticsService,
     private readonly store: AdminAnalyticsStore,
@@ -1226,6 +1243,21 @@ export class AdminAnalyticsService {
     callOpts?: { excludeConnectivity?: boolean },
   ): Promise<Record<string, number | null>> {
     const opts = { excludeConnectivity: callOpts?.excludeConnectivity !== false };
+    const cacheKey = `${previous.startAt}|${previous.endAtExclusive}|${opts.excludeConnectivity ? 1 : 0}`;
+    const cached = this.previousTotalsCache.get(cacheKey);
+    if (cached != null && Date.now() - cached.at < PREVIOUS_TOTALS_TTL_MS) {
+      return cached.value;
+    }
+    const value = await this.queryPreviousTotals(previous, opts);
+    this.rememberPreviousTotals(cacheKey, value);
+    return value;
+  }
+
+  /** 环比窗口已结束，数据只会因跨零点补齐少量变化：5 分钟内复用，避免每个 Tab 重复扫 message / llm_call。 */
+  private async queryPreviousTotals(
+    previous: AnalyticsRange,
+    opts: { excludeConnectivity: boolean },
+  ): Promise<Record<string, number | null>> {
     const [sessions, messages, backgroundTokens, activeUsers, quality] = await Promise.all([
       this.store.countSessions(previous),
       this.store.sumMessages(previous),
@@ -1249,6 +1281,24 @@ export class AdminAnalyticsService {
       // 与 trendsScope.periodTotals 同键名：admin 环比读 previousTotals.cacheHitRate
       cacheHitRate: qualitySummaryFields(quality).cacheHitRate,
     };
+  }
+
+  /** 写入缓存并做有界清理：先清过期，再按写入序淘汰最旧，保证长跑进程不会无限增长。 */
+  private rememberPreviousTotals(cacheKey: string, value: Record<string, number | null>): void {
+    const now = Date.now();
+    if (this.previousTotalsCache.size >= PREVIOUS_TOTALS_CACHE_MAX) {
+      for (const [key, slot] of this.previousTotalsCache) {
+        if (now - slot.at >= PREVIOUS_TOTALS_TTL_MS) {
+          this.previousTotalsCache.delete(key);
+        }
+      }
+      while (this.previousTotalsCache.size >= PREVIOUS_TOTALS_CACHE_MAX) {
+        const oldest = this.previousTotalsCache.keys().next().value;
+        if (oldest == null) break;
+        this.previousTotalsCache.delete(oldest);
+      }
+    }
+    this.previousTotalsCache.set(cacheKey, { at: now, value });
   }
 
   private async agentStats(
