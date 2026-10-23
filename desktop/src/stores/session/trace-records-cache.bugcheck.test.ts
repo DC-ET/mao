@@ -82,6 +82,16 @@ describe('traceRecords 缓存容量', () => {
     expect(trace.getTraceRecord('11', 'tool:call_0')).toBeNull()
   })
 
+  it('M-2：跨会话桶有总上限，点开很多会话也不会无界累积', () => {
+    const trace = mountTrace()
+    for (let s = 0; s < 40; s++) {
+      trace.setTraceRecord(`s${s}`, 'tool:call_0', toolRecord('call_0', 1024))
+    }
+    // 单会话 200 条之外，跨会话桶也要有上限：最早的会话桶被淘汰
+    expect(trace.getTraceRecord('s0', 'tool:call_0')).toBeNull()
+    expect(trace.getTraceRecord('s39', 'tool:call_0')).not.toBeNull()
+  })
+
   it('正确性基线：删会话时 records 随会话一起清掉（不跨会话残留正文）', () => {
     const trace = mountTrace()
     trace.setTraceRecord('11', 'tool:call_0', toolRecord('call_0', 1024))

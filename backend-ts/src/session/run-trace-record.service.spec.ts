@@ -67,11 +67,16 @@ function makeService(fixture: Fixture) {
       }
       return null;
     }),
-    // 与 SQL 同口径：upperCreatedAtExclusive 非 null 时只取 created_at 严格早于它的行
-    selectAssistantToolCalls: vi.fn(async (_sid: number, upperCreatedAtExclusive?: string | null) =>
-      upperCreatedAtExclusive == null
-        ? fixture.assistantToolCalls
-        : fixture.assistantToolCalls.filter((r) => (r.createdAt ?? '') < upperCreatedAtExclusive)),
+    // 与 SQL 同口径：lower 含、upper 不含；任一侧 null 表示该侧开放
+    selectAssistantToolCalls: vi.fn(async (
+      _sid: number,
+      upperCreatedAtExclusive?: string | null,
+      lowerCreatedAtInclusive?: string | null,
+    ) => fixture.assistantToolCalls.filter((r) => {
+      const createdAt = r.createdAt ?? '';
+      return (lowerCreatedAtInclusive == null || createdAt >= lowerCreatedAtInclusive)
+        && (upperCreatedAtExclusive == null || createdAt < upperCreatedAtExclusive);
+    })),
   } as unknown as MessageRepository;
   const llmCallRepo = {
     selectById: vi.fn(async (id: number) => fixture.calls.find((c) => c.id === id) ?? null),
@@ -256,9 +261,9 @@ describe('RunTraceRecordService.buildCallRecord', () => {
       toolMessages: [],
       assistantMessages: [],
       assistantToolCalls: [
-        { id: 2, createdAt: '2026-10-22 10:00:01.000', toolCalls: 'not-json' },
-        { id: 3, createdAt: '2026-10-22 10:00:02.000', toolCalls: JSON.stringify([{ id: '', function: { name: 'shell', arguments: '{}' } }]) },
-        { id: 4, createdAt: '2026-10-22 10:00:02.500', toolCalls: JSON.stringify([{ id: 'tc4', function: { name: 'shell', arguments: '{}' } }]) },
+        { id: 2, createdAt: '2026-10-22 10:00:04.900', toolCalls: 'not-json' },
+        { id: 3, createdAt: '2026-10-22 10:00:05.000', toolCalls: JSON.stringify([{ id: '', function: { name: 'shell', arguments: '{}' } }]) },
+        { id: 4, createdAt: '2026-10-22 10:00:05.100', toolCalls: JSON.stringify([{ id: 'tc4', function: { name: 'shell', arguments: '{}' } }]) },
       ],
       calls: [call()],
     });

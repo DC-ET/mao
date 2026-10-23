@@ -66,6 +66,11 @@ export function createTraceModule() {
    * 「点开才拉、短期内可能反复看」的数据，LRU 的收益不足以换取复杂度。
    */
   const TRACE_RECORDS_CAP = 200
+  /**
+   * 跨会话桶上限：单会话有 200 条上限，但用户一天里点开很多会话的抽屉时，
+   * 每个会话都会留一个桶；不设总量上限仍会无界增长。超过上限时按插入序淘汰最旧会话。
+   */
+  const TRACE_RECORDS_SESSION_CAP = 20
 
   watch(traceThresholds, (value) => {
     safeSetItem(THRESHOLDS_KEY, JSON.stringify(value))
@@ -144,7 +149,12 @@ export function createTraceModule() {
   /** 记录详情缓存写入：同 key 覆盖（重拉后刷新）；超上限时淘汰最早写入的一条。 */
   function setTraceRecord(sessionId: string, key: string, record: TraceLoadedRecord) {
     const sid = String(sessionId)
-    const bucket = traceRecords.value.get(sid) ?? new Map<string, TraceLoadedRecord>()
+    const existing = traceRecords.value.get(sid)
+    const bucket = existing ?? new Map<string, TraceLoadedRecord>()
+    if (existing == null && traceRecords.value.size >= TRACE_RECORDS_SESSION_CAP) {
+      const oldestSession = traceRecords.value.keys().next()
+      if (oldestSession.done !== true) traceRecords.value.delete(oldestSession.value)
+    }
     bucket.set(key, record)
     while (bucket.size > TRACE_RECORDS_CAP) {
       const oldest = bucket.keys().next()

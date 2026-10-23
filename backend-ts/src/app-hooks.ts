@@ -14,8 +14,12 @@ import type { OpenApiCallLogService } from './openapi/open-api-call-log.service.
 import type { AuditLogService } from './audit/audit.service.js';
 import type { MysqlUserRepository } from './user/user.repository.js';
 
-/** onResponse 写审计用：错误处理器暂存的业务失败原因（errorMessage）。 */
-type AuditedRequest = FastifyRequest & { auditErrorMessage?: string };
+/** onResponse 写审计用：错误处理器暂存的业务失败原因；鉴权阶段查到的用户行供审计复用。 */
+type AuthenticatedUser = Awaited<ReturnType<MysqlUserRepository['findById']>>
+type AuditedRequest = FastifyRequest & {
+  auditErrorMessage?: string
+  authenticatedUser?: AuthenticatedUser
+};
 
 export interface HookDeps {
   app: FastifyInstance;
@@ -46,11 +50,11 @@ export function registerAppHooks(deps: HookDeps): void {
   const { app, jwt, apiTokenService, openCallLogHolder, auditService, userRepo, ssoExchangePath } = deps;
 
   // 停用账号短 TTL 负缓存（BUG-C3）：命中「已确认停用」后短时间内不再打库，重新启用最多
-  // TTL 后生效；启用态不缓存——禁用即时生效，代价是活跃用户每请求一次状态查询，与下方
-  // onResponse 审计查用户的既有开销同量级。按 app 实例隔离（测试各自建 app 不互相污染）。
+  // TTL 后生效；启用态不缓存——禁用即时生效。鉴权阶段查到的用户行挂到 request 上，
+  // onResponse 审计复用，避免每个请求对 user 表查两次。按 app 实例隔离（测试各自建 app 不互相污染）。
   const disabledAccountCache = new Map<number, number>();
   const DISABLED_ACCOUNT_CACHE_TTL_MS = 30_000;
-  const accountStatusChecker = async (userId: number): Promise<boolean> => {
+  const accountStatusChecker = async (userId: number, request?: FastifyRequest): Promise<boolean> => {
     const now = Date.now();
     const expiry = disabledAccountCache.get(userId);
     if (expiry !== undefined) {
@@ -66,8 +70,13 @@ export function registerAppHooks(deps: HookDeps): void {
     // findById 带 notDeleted()：null = 账号不存在/已删除，与刷新 token 口径一致（拒）
     if (user == null) return false;
     const disabled = user.status != null && user.status === 0;
-    if (disabled) disabledAccountCache.set(userId, now + DISABLED_ACCOUNT_CACHE_TTL_MS);
-    return !disabled;
+    if (disabled) {
+      disabledAccountCache.set(userId, now + DISABLED_ACCOUNT_CACHE_TTL_MS);
+      return false;
+    }
+    // 仅放行的请求缓存用户行：停用请求的 userId 不会写入 request，审计不展示其用户名
+    if (request != null) (request as AuditedRequest).authenticatedUser = user;
+    return true;
   };
 
   app.addHook('preParsing', async (request, _reply, payload) => {
@@ -130,7 +139,11 @@ export function registerAppHooks(deps: HookDeps): void {
   });
   app.addHook('onResponse', async (request, reply) => {
     const path = request.url.split('?')[0].replace(/^\/api/, '');
-    const user = request.userId != null ? await userRepo.findById(request.userId).catch(() => null) : null;
+    // 鉴权阶段已查过用户时直接复用：避免每个已认证请求对 user 表再查一次
+    const cachedUser = (request as AuditedRequest).authenticatedUser;
+    const user = cachedUser !== undefined
+      ? cachedUser
+      : (request.userId != null ? await userRepo.findById(request.userId).catch(() => null) : null);
     void recordAudit(auditService, {
       method: request.method,
       path,

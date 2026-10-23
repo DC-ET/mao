@@ -688,41 +688,54 @@ export class MessageRepository {
    * 可能晚到下一条用户消息之后，落进下一个 run 的时间窗。归属要以 tool_call_id 对准的
    * 消息为准，本页对不上时靠它判断该活动归属的 run 是否在本页，不能按时间窗改挂。
    *
-   * created_at 一并带出：记录详情抽屉的「本轮工具」清单按 llm_call 时间窗近似归属
+   * created_at 一并带出：记录详情抽屉的「本轮工具」清单按 llm_call 时间窗归属
    * （技术方案 2026-10-22-run-trace-deep-dive §5.3），没有时钟就退化成全会话清单。
    *
-   * `upperCreatedAtExclusive`（`llm_call.created_at` 原样字符串，可选）：只取 created_at
-   * 严格早于该时刻的助手消息。抽屉点开一次就要付一遍全量 JSON.parse 的成本，大会话下
-   * 随规模线性恶化，所以把窗口下推到 SQL；传 null 保持全会话扫描
-   * （run-trace.service 的归属判定用）。DATETIME(3) 的字典序与时间序一致，可直接比。
+   * `lowerCreatedAtInclusive` / `upperCreatedAtExclusive`（`llm_call.created_at` 原样字符串）：
+   * 下界取本轮调用的结束时刻——本轮助手消息在工具跑完后才落库，必然晚于该时刻；上一轮
+   * 助手消息则必然早于本轮调用开始，因此不会混入。上界取下一轮 agent 调用的结束时刻，
+   * 排除下一轮助手消息。窗口下推 SQL，避免抽屉每次点开都全量 JSON.parse 会话消息。
+   * 任一侧传 null 表示该侧开放；两侧都 null 保持全会话扫描（run-trace.service 的归属判定用）。
+   * DATETIME(3) 的字典序与时间序一致，可直接比。
    */
   selectAssistantToolCalls(
     sessionId: number,
     upperCreatedAtExclusive?: string | null,
+    lowerCreatedAtInclusive?: string | null,
   ): Promise<Array<Pick<Message, 'id' | 'createdAt' | 'toolCalls'>>> {
     const upper = upperCreatedAtExclusive ?? null;
-    const where = upper == null
-      ? ''
-      : ' AND created_at < ?';
+    const lower = lowerCreatedAtInclusive ?? null;
+    const conditions: string[] = [];
+    const params: unknown[] = [sessionId];
+    if (lower != null) {
+      conditions.push('created_at >= ?');
+      params.push(lower);
+    }
+    if (upper != null) {
+      conditions.push('created_at < ?');
+      params.push(upper);
+    }
+    const where = conditions.length === 0 ? '' : ` AND ${conditions.join(' AND ')}`;
     return this.db.query<Pick<Message, 'id' | 'createdAt' | 'toolCalls'>>(
       `SELECT id, created_at AS createdAt, tool_calls AS toolCalls FROM \`message\`
        WHERE session_id = ? AND ${notDeleted()} AND role = 'ASSISTANT' AND tool_calls IS NOT NULL${where} ORDER BY id ASC`,
-      upper == null ? [sessionId] : [sessionId, upper],
+      params,
     );
   }
 
   /**
    * 按 tool_call_id 反查声明该调用的助手消息（运行轨迹记录详情下钻用）。
-   * tool_calls 是 JSON 文本、没有独立列，只能 LIKE 前缀匹配 `"id":"<toolCallId>"`；
-   * tool_call_id 虽来自后端 VO（不是用户输入），仍按边界输入统一做 LIKE 转义。
+   * `tool_calls` 是 MySQL JSON 列：取出来是 `"id": "call_x"`（冒号后有空格），
+   * 不能按紧凑 JSON 的 `"id":"call_x"` 做 LIKE；用 JSON_CONTAINS 精确匹配对象，
+   * 既不依赖 JSON 文本格式，也不受 LIKE 通配符影响。
    * 单次点开抽屉才查，session_id 过滤后行数可控；同 id 多条时取最早一条。
    */
   selectAssistantByToolCallId(sessionId: number, toolCallId: string): Promise<Message | null> {
     if (toolCallId === '') return Promise.resolve(null);
     return this.db.queryOne<Message>(
       `SELECT * FROM \`message\` WHERE session_id = ? AND ${notDeleted()} AND role = 'ASSISTANT'
-        AND tool_calls LIKE CONCAT('%"id":"', ?, '"%') ESCAPE '\\\\' ORDER BY id ASC LIMIT 1`,
-      [sessionId, escapeLike(toolCallId)],
+        AND JSON_CONTAINS(tool_calls, JSON_OBJECT('id', ?)) ORDER BY id ASC LIMIT 1`,
+      [sessionId, toolCallId],
     );
   }
 

@@ -493,7 +493,42 @@ describe('RunTracePanel 时间条带与记录下钻', () => {
     const toolRows = findAllByClass(root2, 'tool-row')
     expect(toolRows.map((r) => r.props.id)).toEqual([
       'trace-11-run23-tool-before_edit:call_old|a.txt|read_file|0',
-      'trace-11-run23-tool-current:call_new|a.txt|read_file|0',
+      'trace-11-run23-tool-current:call_new|a.txt|read_file|1',
+    ])
+  })
+
+  it('工具行锚点复用条带 key：跨轮 / 未挂轮工具的序号与条带一致', async () => {
+    store = {
+      ...makeStore(),
+      getTraceRuns: () => [makeTraceRun({
+        runId: 24,
+        segments: [{
+          kind: 'current',
+          rounds: [
+            makeTraceRound({
+              seq: 1,
+              tools: [{ toolCallId: 'call_a', name: 'read_file', target: 'a.txt', status: 'OK', durationMs: 100, startedAtMs: 0, approvalMark: null, actor: null }],
+            }),
+            makeTraceRound({
+              seq: 2,
+              tools: [{ toolCallId: 'call_b', name: 'read_file', target: 'b.txt', status: 'OK', durationMs: 100, startedAtMs: 0, approvalMark: null, actor: null }],
+            }),
+          ],
+          unplacedTools: [{ toolCallId: null, name: 'glob', target: 'u.txt', status: 'OK', durationMs: 100, startedAtMs: 0, approvalMark: null, actor: null }],
+        }],
+      })],
+    }
+    const root = await mountPanel()
+    ;(findAllByClass(root, 'run-summary')[0]!.props.onClick as () => void)()
+    await flush()
+    // 模板渲染顺序：round1 的 A、round2 的 B、未挂轮 U；
+    // runTimeNodes 的序号顺序：每段先 unplacedTools 再 rounds.tools → U=0、A=1、B=2。
+    // 行锚点必须直接复用条带 key，否则第 2 轮的工具色条会定位不到行。
+    const ids = findAllByClass(root, 'tool-row').map((r) => r.props.id)
+    expect(ids).toEqual([
+      'trace-11-run24-tool-current:call_a|a.txt|read_file|1',
+      'trace-11-run24-tool-current:call_b|b.txt|read_file|2',
+      'trace-11-run24-tool-current:|u.txt|glob|0',
     ])
   })
 

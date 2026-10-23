@@ -148,7 +148,7 @@
                 </span>
               </div>
               <div v-if="round.errorMessage" class="round-error">{{ round.errorMessage }}</div>
-              <div v-for="(tool, toolIndex) in round.tools" :key="toolKey(tool)" :id="rowAnchorId(run.runId, 'tool', toolAnchorKey(segment.kind, tool, toolIndex))" class="tool-row">
+              <div v-for="tool in round.tools" :key="toolRowKey(run, tool)" :id="rowAnchorId(run.runId, 'tool', toolRowAnchor(run, tool))" class="tool-row">
                 <span class="tool-status" :class="tool.status === 'ERROR' ? 'tool-error' : 'tool-ok'">
                   {{ tool.status === 'ERROR' ? '✕' : '✓' }}
                 </span>
@@ -168,7 +168,7 @@
             </div>
             <div v-if="segment.unplacedTools.length > 0" class="unplaced-tools">
               <div class="unplaced-label">未挂到轮</div>
-              <div v-for="(tool, toolIndex) in segment.unplacedTools" :key="toolKey(tool)" :id="rowAnchorId(run.runId, 'tool', toolAnchorKey(segment.kind, tool, toolIndex))" class="tool-row">
+              <div v-for="tool in segment.unplacedTools" :key="toolRowKey(run, tool)" :id="rowAnchorId(run.runId, 'tool', toolRowAnchor(run, tool))" class="tool-row">
                 <span class="tool-status" :class="tool.status === 'ERROR' ? 'tool-error' : 'tool-ok'">
                   {{ tool.status === 'ERROR' ? '✕' : '✓' }}
                 </span>
@@ -250,7 +250,7 @@
             </div>
             <div v-if="round.errorMessage" class="round-error">{{ round.errorMessage }}</div>
           </div>
-          <div v-for="tool in unattributed.tools" :key="toolKey(tool)" class="tool-row">
+          <div v-for="(tool, toolIndex) in unattributed.tools" :key="`${toolKey(tool)}|${toolIndex}`" class="tool-row">
             <span class="tool-status" :class="tool.status === 'ERROR' ? 'tool-error' : 'tool-ok'">
               {{ tool.status === 'ERROR' ? '✕' : '✓' }}
             </span>
@@ -292,7 +292,7 @@ import { llmCallSceneLabel } from '../../utils/llmCallLabels'
 import { downloadTraceCsv, downloadTraceJson } from '../../utils/trace-export'
 import {
   decodingMs, formatClock, formatTokens, RUN_STATUS_META, runAttentionBadges, runStatus, summarizeRuns,
-  throughput, formatThroughput, toolSuccessRate, toolAnchorKey as toolAnchorKeyOf,
+  throughput, formatThroughput, toolSuccessRate, toolAnchorKey as toolAnchorKeyOf, runTimeNodes,
 } from '../../utils/trace-display'
 import RunTraceTimeBand from './RunTraceTimeBand.vue'
 import RunTraceRecordDrawer from './RunTraceRecordDrawer.vue'
@@ -508,21 +508,40 @@ function toolKey(tool: TraceTool): string {
 }
 
 /**
+ * 工具节点 key 反查：runTimeNodes 的遍历顺序（每段先 unplacedTools 再 rounds.tools）与
+ * 序号是唯一口径。行锚点直接复用条带 key，避免两处各自编号（曾经行用列表内下标、
+ * 条带用跨段全局序号，导致第 2 轮之后的工具色条点击定位不到行）。
+ * WeakMap 以 run 对象为键缓存，同一 run 的多行 / 多次渲染只算一次。
+ */
+const toolBandKeysByRun = new WeakMap<RunTrace, Map<TraceTool, string>>()
+function toolBandKeyMap(run: RunTrace): Map<TraceTool, string> {
+  const cached = toolBandKeysByRun.get(run)
+  if (cached != null) return cached
+  const map = new Map<TraceTool, string>()
+  for (const node of runTimeNodes(run)) {
+    if (node.toolRef != null) map.set(node.toolRef, node.key)
+  }
+  toolBandKeysByRun.set(run, map)
+  return map
+}
+
+/** 行 :key 直接用条带 key（含段维度 + 全局序号），同 toolCallId/target/name 也不会重复。 */
+function toolRowKey(run: RunTrace, tool: TraceTool): string {
+  return toolBandKeyMap(run).get(tool) ?? toolAnchorKeyOf(tool)
+}
+
+/** 行锚点 key = 条带 key 去掉 `tool:` 前缀（locateNode 已按同样规则剥前缀）。 */
+function toolRowAnchor(run: RunTrace, tool: TraceTool): string {
+  const key = toolRowKey(run, tool)
+  return key.startsWith('tool:') ? key.slice('tool:'.length) : key
+}
+
+/**
  * 轮次行锚点 key：与条带节点 key 同口径（`${segment.kind}:${seq}`）。
  * 必须带段维度——编辑重发时 before_edit / current 两段各自从 1 编号，只用 seq 会撞。
  */
 function roundAnchorKey(segmentKind: string, seq: number): string {
   return `${segmentKind}:${seq}`
-}
-
-/** 工具行锚点 key：与条带节点 key 同口径（`${segment.kind}:${toolAnchorKeyOf(tool)}|${ordinal}`）。
- *  必须带段维度——编辑重发时 before_edit / current 两段可能含同一条工具调用；
- *  序号 ordinal 与 runTimeNodes 的 toolOrdinal 严格同步（先 unplacedTools 再 rounds.tools），
- *  否则点击色条会定位到别的行。
- *  命名带 Of 后缀：本文件同时 import 了同名导出 toolAnchorKey，同名会遮蔽并在
- *  toolKey() 里形成无限递归（import 版才是单参口径的那个）。 */
-function toolAnchorKey(segmentKind: string, tool: TraceTool, ordinal: number): string {
-  return `${segmentKind}:${toolAnchorKeyOf(tool)}|${ordinal}`
 }
 
 /**

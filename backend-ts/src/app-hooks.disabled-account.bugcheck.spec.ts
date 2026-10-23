@@ -60,7 +60,7 @@ function buildApp(userStatus: number | null) {
 
 describe('BUGCHECK disabled account must lose access with its still-valid access token', () => {
   it('rejects a request carrying the access token of a disabled (status = 0) user', async () => {
-    const { app } = buildApp(0);
+    const { app, userRepo } = buildApp(0);
 
     const res = await app.inject({
       method: 'GET',
@@ -72,10 +72,12 @@ describe('BUGCHECK disabled account must lose access with its still-valid access
     // 停用账号的存量 token 必须失效：成功码（0）不应出现
     // （拒绝时可能是 1001 未登录 / 1002 无权限 / 1006 账号已禁用）
     expect(body.code === 0 ? '放行' : '拒绝').toBe('拒绝');
+    // 鉴权阶段查一次；停用请求 userId 为空，onResponse 不再查
+    expect(userRepo.findById).toHaveBeenCalledTimes(1);
   });
 
   it('still accepts a request from an enabled user (control group)', async () => {
-    const { app } = buildApp(1);
+    const { app, userRepo } = buildApp(1);
 
     const res = await app.inject({
       method: 'GET',
@@ -85,5 +87,69 @@ describe('BUGCHECK disabled account must lose access with its still-valid access
 
     const body = res.json() as { code: number };
     expect(body.code).toBe(0);
+    // 鉴权阶段查一次，onResponse 审计复用，不再打第二次 user 表
+    expect(userRepo.findById).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * API Token 与 JWT 同口径：账号被停用 / 删除后，已签发的 mao_ token 也不得再调用 /v1/open/**。
+ * 之前 authenticateRequest 在 API Token 分支提前 return，账号状态检查只覆盖 JWT。
+ */
+function buildApiTokenApp(userStatus: number | null) {
+  const app = Fastify();
+
+  const jwt = {
+    validateAccessToken: () => false,
+    getUserIdFromToken: () => 42,
+    getTokenType: () => 'access',
+  } as unknown as JwtService;
+
+  const apiTokenService = {
+    resolveByToken: vi.fn(async () => ({ ok: true, userId: 42, scopes: [], tokenId: 7 })),
+  } as unknown as ApiTokenService;
+
+  const userRepo = {
+    findById: vi.fn(async () => ({ id: 42, username: 'api-user', status: userStatus, deleted: 0 })),
+  } as unknown as MysqlUserRepository;
+
+  registerAppHooks({
+    app,
+    jwt,
+    apiTokenService,
+    openCallLogHolder: { current: null as OpenApiCallLogService | null },
+    auditService: { record: vi.fn(async () => undefined) } as unknown as AuditLogService,
+    userRepo,
+    ssoExchangePath: '/api/v1/auth/sso/exchange',
+  });
+
+  app.get('/v1/open/ping', async (_request, reply) => {
+    return reply.status(200).send({ code: 0, message: 'success', data: 'pong' });
+  });
+
+  return { app, userRepo };
+}
+
+describe('BUGCHECK disabled account must also lose API token access', () => {
+  it('rejects a mao_ API token whose owner is disabled', async () => {
+    const { app, userRepo } = buildApiTokenApp(0);
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/open/ping',
+      headers: { authorization: 'Bearer mao_test_token' },
+    });
+    expect((res.json() as { code: number }).code).not.toBe(0);
+    expect(userRepo.findById).toHaveBeenCalledTimes(1);
+  });
+
+  it('still accepts the API token of an enabled user (control group)', async () => {
+    const { app, userRepo } = buildApiTokenApp(1);
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/open/ping',
+      headers: { authorization: 'Bearer mao_test_token' },
+    });
+    expect((res.json() as { code: number }).code).toBe(0);
+    expect(userRepo.findById).toHaveBeenCalledTimes(1);
   });
 });

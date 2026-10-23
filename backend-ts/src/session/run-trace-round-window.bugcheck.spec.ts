@@ -63,11 +63,16 @@ function makeService(rows: Array<{ id: number; createdAt: string | null; toolCal
   const messageRepo = {
     selectToolMessageByCallId: vi.fn(async () => null),
     selectAssistantByToolCallId: vi.fn(async () => null),
-    // 与 SQL 同口径：upperCreatedAtExclusive 非 null 时只取 created_at 严格早于它的行
-    selectAssistantToolCalls: vi.fn(async (_sid: number, upperCreatedAtExclusive?: string | null) =>
-      upperCreatedAtExclusive == null
-        ? rows
-        : rows.filter((r) => (r.createdAt ?? '') < upperCreatedAtExclusive)),
+    // 与 SQL 同口径：lower 含、upper 不含；任一侧 null 表示该侧开放
+    selectAssistantToolCalls: vi.fn(async (
+      _sid: number,
+      upperCreatedAtExclusive?: string | null,
+      lowerCreatedAtInclusive?: string | null,
+    ) => rows.filter((r) => {
+      const createdAt = r.createdAt ?? '';
+      return (lowerCreatedAtInclusive == null || createdAt >= lowerCreatedAtInclusive)
+        && (upperCreatedAtExclusive == null || createdAt < upperCreatedAtExclusive);
+    })),
   } as unknown as MessageRepository;
   const llmCallRepo = {
     selectById: vi.fn(async (id: number) => calls.find((c) => c.id === id) ?? null),
@@ -131,19 +136,36 @@ describe('findRoundTools 归属窗口', () => {
     const { service, messageRepo } = makeService(rows, [call(), nextCall]);
     const record = await service.buildCallRecord(1, 100);
     const select = messageRepo.selectAssistantToolCalls as unknown as { mock: { calls: unknown[][] } };
-    // 期望：仓库层拿到 sessionId + 下一轮 llm_call.created_at 上界，由 SQL 裁行
-    expect(select.mock.calls).toEqual([[1, '2026-10-22 10:00:09.000']]);
+    // 期望：仓库层拿到 sessionId + 下一轮 llm_call.created_at 上界 + 本轮 llm_call.created_at 下界
+    expect(select.mock.calls).toEqual([[1, '2026-10-22 10:00:09.000', '2026-10-22 10:00:04.200']]);
     expect(record.tools.map((t) => t.toolCallId)).toEqual(['call_this']);
   });
 
-  it('正确性基线：本轮就是最后一轮时上界开放，取到会话最新一条助手消息', async () => {
+  it('上界只认下一轮 agent 调用：夹在两轮之间的旁路调用不会把本轮工具截断', async () => {
+    // 标题 / 压缩调用可能在本轮工具执行期间落 llm_call；若用它当上界，
+    // 本轮助手消息（工具跑完才落库）会被误排除。
+    const sideCall = call({ id: 150, scene: 'title', createdAt: '2026-10-22 10:00:05.000' });
     const { service, messageRepo } = makeService(
       [assistantToolRow(1, '2026-10-22 10:00:04.900', ['call_this'])],
+      [call(), sideCall, nextCall],
+    );
+    const record = await service.buildCallRecord(1, 100);
+    const select = messageRepo.selectAssistantToolCalls as unknown as { mock: { calls: unknown[][] } };
+    expect(select.mock.calls).toEqual([[1, '2026-10-22 10:00:09.000', '2026-10-22 10:00:04.200']]);
+    expect(record.tools.map((t) => t.toolCallId)).toEqual(['call_this']);
+  });
+
+  it('正确性基线：本轮就是最后一轮时上界开放，下界仍收在本轮', async () => {
+    const { service, messageRepo } = makeService(
+      [
+        assistantToolRow(1, '2026-10-22 09:00:00.000', ['call_old']),
+        assistantToolRow(2, '2026-10-22 10:00:04.900', ['call_this']),
+      ],
       [call()],
     );
     const record = await service.buildCallRecord(1, 100);
     const select = messageRepo.selectAssistantToolCalls as unknown as { mock: { calls: unknown[][] } };
-    expect(select.mock.calls).toEqual([[1, null]]);
+    expect(select.mock.calls).toEqual([[1, null, '2026-10-22 10:00:04.200']]);
     expect(record.tools.map((t) => t.toolCallId)).toEqual(['call_this']);
   })
 
@@ -157,7 +179,7 @@ describe('findRoundTools 归属窗口', () => {
       [call({ createdAt: '2026-10-22 09:59:00.000' }), call({ id: 101, createdAt: '2026-10-22 10:00:09.000' })],
     );
     const record = await service.buildCallRecord(1, 100);
-    expect(record.tools.map((t) => t.toolCallId).sort()).toEqual(['call_a', 'call_b', 'call_old']);
+    expect(record.tools.map((t) => t.toolCallId).sort()).toEqual(['call_a', 'call_b']);
   })
 
   it('正确性基线：时钟缺失时退化为全会话清单（不猜归属）', async () => {

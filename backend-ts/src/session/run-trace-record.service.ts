@@ -80,16 +80,17 @@ export class RunTraceRecordService {
   }
 
   /**
-   * 「本轮工具」清单：本轮调用结束后、下一轮调用结束前落库的现存助手消息声明的工具调用。
+   * 「本轮工具」清单：本轮调用结束后、下一轮 agent 调用结束前落库的现存助手消息声明的工具调用。
    *
    * 归属口径说明：`llm_call.created_at` 是**调用结束时刻**，而本轮助手消息是在工具执行
    * 完之后才落库的，所以本轮助手消息的 `created_at` **晚于** 本轮 `llm_call.created_at`
    * （`C < A`，同 `run-trace.service.ts` 的 `notAfter(call.createdAt, message.createdAt)`）。
-   * 因此窗口上界不能取本轮自己的结束时刻——那会把本轮助手消息整个排除（清单恒空），
-   * 正是本方法曾经的缺陷。上界取**下一轮** llm_call 的结束时刻：本轮工具必然在那之前
-   * 落库，而下一轮助手消息要等下一轮工具跑完才落库，自然落在窗外。
+   * 因此窗口下界取本轮调用的结束时刻（含同刻），上界取**下一轮 agent 调用**的结束时刻：
+   * 本轮工具必然在那之前落库，而下一轮助手消息要等下一轮工具跑完才落库，自然落在窗外。
+   * 上界只看 scene = 'agent'——标题 / 压缩等旁路调用可能夹在两轮之间，用它们当上界会把
+   * 本轮助手消息误排除。
    *
-   * 下一轮不存在（本轮就是最后一轮）时上界开放，取到会话最新一条助手消息。
+   * 下一轮不存在（本轮就是最后一轮）时上界开放，下界仍把范围收在本轮；
    * 时钟缺失（created_at 不可用）时退化为全会话清单：不猜归属，也不空列表误导。
    * 点过去仍以 buildToolRecord 按 tool_call_id 精确查询为准。
    */
@@ -100,8 +101,12 @@ export class RunTraceRecordService {
     // 同一会话的调用序列（created_at 升序）；找不到本轮就退化为全会话清单
     const calls = await this.llmCallRepo.selectBySessionWindow(sessionId, null, null);
     const index = call.id != null ? calls.findIndex((row) => row.id === call.id) : -1;
-    const next = index >= 0 ? calls[index + 1] : undefined;
-    const rows = await this.messageRepo.selectAssistantToolCalls(sessionId, next?.createdAt ?? null);
+    const next = index >= 0 ? calls.slice(index + 1).find((row) => row.scene === 'agent') : undefined;
+    const rows = await this.messageRepo.selectAssistantToolCalls(
+      sessionId,
+      next?.createdAt ?? null,
+      call.createdAt ?? null,
+    );
     const tools: Array<{ toolCallId: string; name: string; target: string | null }> = [];
     for (const row of rows) {
       for (const declared of parseToolCalls(row.toolCalls)) {

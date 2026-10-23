@@ -54,8 +54,9 @@ export type ApiTokenResolver = (plainToken: string) => Promise<TokenResolveResul
 /**
  * 账号状态检查（app-hooks 注入；auth 域不反向依赖 user 仓储实现）。
  * 返回 false = 停用/不存在，请求按未认证处理。
+ * 第二参是当前请求：REST 注入方可把查到的用户行挂到 request 上，供 onResponse 审计复用。
  */
-export type AccountStatusChecker = (userId: number) => Promise<boolean>;
+export type AccountStatusChecker = (userId: number, request?: FastifyRequest) => Promise<boolean>;
 
 export interface AuthenticationOutcome {
   userId: number | null;
@@ -86,9 +87,10 @@ function bearerToken(request: FastifyRequest): string | null {
  * API Token 仅 `/v1/open/**` 生效：落在其它端点上直接按未认证处理（401），
  * 避免泄露的 token 以该用户身份调用任意 REST 接口。
  *
- * JWT 路径在验签 + 过期之后追加账号状态校验（accountStatusChecker）：只验签不查状态时，
- * 管理员禁用用户后其未过期 access token（默认 24h）仍可调用全部接口——登录 / 刷新 /
- * 分享链接等入口都拒停用账号，这里补齐同一口径。停用判定的负缓存由注入方收敛开销。
+ * JWT 与 API Token 路径在验签 / 解析之后都追加账号状态校验（accountStatusChecker）：
+ * 只验签不查状态时，管理员禁用用户后其未过期 access token（默认 24h）或已签发的 API Token
+ * 仍可调用接口——登录 / 刷新 / 分享链接等入口都拒停用账号，这里补齐同一口径。
+ * 停用判定的负缓存由注入方收敛开销。
  */
 export async function authenticateRequest(
   request: FastifyRequest,
@@ -112,6 +114,11 @@ export async function authenticateRequest(
         resolverRejected: true,
       });
     }
+    // 账号被停用 / 删除时，已签发的 API Token 同样失效（与 JWT 路径同口径）。
+    // 不置 resolverRejected：resolver 没有触发 onReject，让 preHandler 落一行鉴权拒绝日志。
+    if (accountStatusChecker != null && !(await accountStatusChecker(identity.userId, request))) {
+      return anonymous();
+    }
     (request as ApiTokenAuthedRequest).apiTokenScopes = identity.scopes;
     (request as ApiTokenAuthedRequest).apiTokenId = identity.tokenId;
     return { userId: identity.userId, tokenAutoDisabled: false, resolverRejected: false };
@@ -126,7 +133,7 @@ export async function authenticateRequest(
     return anonymous();
   }
   const userId = jwt.getUserIdFromToken(token);
-  if (accountStatusChecker != null && !(await accountStatusChecker(userId))) {
+  if (accountStatusChecker != null && !(await accountStatusChecker(userId, request))) {
     return anonymous();
   }
   return { userId, tokenAutoDisabled: false, resolverRejected: false };

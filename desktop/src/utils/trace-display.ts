@@ -147,6 +147,8 @@ export interface TimeBandNode {
   durationMs: number | null
   firstTokenMs: number | null
   status: 'ok' | 'error' | 'interrupted'
+  /** 工具节点对应的原始行对象：面板据此把行锚点 id 与条带 key 对齐；轮次 / 旁路为 undefined */
+  toolRef?: TraceTool
 }
 
 /** run 内可投影的节点：轮次（before_edit 与 current 都取）、工具（含未挂到轮）、旁路调用。
@@ -217,6 +219,7 @@ function toolNode(tool: TraceTool, segmentKind: string, ordinal: number): TimeBa
     durationMs: tool.durationMs,
     firstTokenMs: null,
     status: tool.status === 'ERROR' ? 'error' : 'ok',
+    toolRef: tool,
   };
 }
 

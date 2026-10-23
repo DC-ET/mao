@@ -141,22 +141,21 @@ describe('MessageRepository', () => {
   });
 
   // 记录详情下钻（技术方案 2026-10-22-run-trace-deep-dive §5.3）：按 tool_call_id 反查。
-  // tool_calls 是 JSON 文本，走 LIKE 前缀匹配；tool_call_id 来自后端 VO，仍按边界输入转义。
-  it('selectAssistantByToolCallId matches the declaring assistant message with escaped LIKE', async () => {
+  // tool_calls 是 MySQL JSON 列，取出来是 `"id": "call_x"`（带空格），用 JSON_CONTAINS 精确匹配。
+  it('selectAssistantByToolCallId matches the declaring assistant message via JSON_CONTAINS', async () => {
     const db = mockDb({ id: 5, toolCalls: '[]' }, []);
     const repo = new MessageRepository(db as never);
     expect(await repo.selectAssistantByToolCallId(3, 'call_1')).toEqual({ id: 5, toolCalls: '[]' });
     const [sql, params] = db.queryOne.mock.calls.at(-1) as [string, unknown[]];
     expect(sql).toContain("role = 'ASSISTANT'");
     expect(sql).toContain('deleted = 0');
-    expect(sql).toContain('tool_calls LIKE');
-    expect(sql).toContain('ESCAPE');
+    expect(sql).toContain('JSON_CONTAINS(tool_calls, JSON_OBJECT(\'id\', ?))');
     expect(sql).toContain('ORDER BY id ASC');
-    expect(params).toEqual([3, 'call\\_1']);
+    expect(params).toEqual([3, 'call_1']);
 
-    // % / _ / \ 是 LIKE 通配符：全部转义，否则「call_1」能误配「callX1」
+    // JSON_CONTAINS 不解释 LIKE 通配符：% / _ / \ 原样传参，不会误配
     await repo.selectAssistantByToolCallId(3, 'call_%_\\1');
-    expect(db.queryOne.mock.calls.at(-1)?.[1]).toEqual([3, 'call\\_\\%\\_\\\\1']);
+    expect(db.queryOne.mock.calls.at(-1)?.[1]).toEqual([3, 'call_%_\\1']);
   });
 
   it('selectAssistantByToolCallId / selectToolMessageByCallId 对空 id 不发查询', async () => {

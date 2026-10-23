@@ -114,7 +114,7 @@ describe('runTimeNodes key 唯一性', () => {
     expect(new Set(keys).size).toBe(keys.length)
   })
 
-  it('行渲染层的 :key（toolKey）能区分这两条，条带 key 与锚点 key 却撞了', () => {
+  it('行渲染层的 :key 与条带 key 同源，跨轮 / 未挂轮工具不重复', () => {
     // 与 RunTracePanel.vue 的 toolKey() 同口径
     const tools = [
       makeTool({ toolCallId: null, name: '用户删除', target: 'a.txt' }),
@@ -133,7 +133,9 @@ describe('runTimeNodes key 唯一性', () => {
 
     const panelSource = readFileSync(new URL('../components/center/RunTracePanel.vue', import.meta.url), 'utf8')
     expect(panelSource).toContain('function toolKey(tool: TraceTool): string {')
-    expect(panelSource).toContain('function toolAnchorKey(segmentKind: string, tool: TraceTool, ordinal: number): string {')
+    expect(panelSource).toContain('function toolRowKey(run: RunTrace, tool: TraceTool): string {')
+    expect(panelSource).toContain('function toolRowAnchor(run: RunTrace, tool: TraceTool): string {')
+    expect(panelSource).toContain('runTimeNodes(run)')
   })
 
   it('既有正确性基线：toolCallId 非 null 时 key 跨段唯一', () => {
