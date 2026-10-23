@@ -191,6 +191,7 @@ import { resolveForkCutPoint, useMessageRounds, expandRoundContainingMessage, ty
 import { LOCATE_FLASH_KEY } from '../../composables/useMessageLocate'
 import { formatDateTime } from '../../utils/datetime'
 import { stripInternalMarkers } from '../../utils/internalMarkers'
+import { userVisibleText } from '../../utils/imageUrlAnnotation'
 import MessageBubble from './MessageBubble.vue'
 import FileChangePanel from './FileChangePanel.vue'
 import CompactionMarker from './CompactionMarker.vue'
@@ -266,7 +267,7 @@ function markersInMessages(messages: ChatMessage[]): CompactionEvent[] {
 /** 分叉来源标签：该轮用户消息的时间 + 可见文本前 12 字（剥离内部标记，避免把 ${skill}$ 之类原文露出来）。 */
 function forkLabelOf(round: MessageRound): string {
   const time = formatDateTime(round.userMessage.createdAt)
-  const excerpt = stripInternalMarkers(round.userMessage.content ?? '')
+  const excerpt = stripInternalMarkers(userVisibleText(round.userMessage.content ?? ''))
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 12)

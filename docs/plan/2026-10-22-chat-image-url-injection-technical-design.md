@@ -37,7 +37,7 @@
 |---|------|------|
 | N1 | 不加系统提示词指引 | 不在 `prompt-engine.ts` 新增「图片 URL 可用 shell 下载」提示节。信任模型自行判断；实测发现模型经常忽略再补 |
 | N2 | 不做服务端物化 | 不把图片下载/复制到 incoming 目录、不加沙箱允许根、不动 `path-sandbox.ts` 与 `create-app.ts` |
-| N3 | 前端零改动 | 气泡、编辑框、历史回显照旧；URL 行作为正文自然展示，不做隐藏/美化 |
+| N3 | 前端零改动 | 气泡、编辑框、历史回显照旧；URL 行作为正文自然展示，不做隐藏/美化。**2026-10-23 补充**：用户反馈「发送后消息被改掉」后，展示层改为隐藏 URL 行（气泡 / 编辑回填 / 复制 / 添加到指令统一剥离）；落库与 Agent 可见内容不变 |
 | N4 | 不做相对 URL 补全 | local 模式未配 `upload.baseUrl` 时消息存的是相对路径 `/uploads/xxx.png`，注入的 URL 无法 curl。本期仅文档化该依赖并给出上线前核验步骤；服务端补全（有 `file.routes.ts` 的 `getUploadBaseUrl` 先例）作为可选加固，需要时再排 |
 | N5 | 不新增下载工具 | 不封装 `download_file` 内置工具。作为兜底升级路径预留，shell 方案实测不稳再做 |
 | N6 | 不动非视觉模型占位符逻辑 | `replaceImagesWithPlaceholder` 维持现状 |
@@ -187,7 +187,7 @@ return content
 | 编辑时用户手改正文 | 只影响非注入行；注入行按当前 images 重建 |
 | 队列消息 | 队列行存原始正文；消费落库时注入一次；`autoSavedMessageId` 防二次落库 |
 | 边路会话 / fork | 走同一 `contentParts`，自动覆盖 |
-| `user_message_saved` 广播 | `userMessagePayloadOf` 提取的 content 含注入行；发送端本地乐观消息仍是原始正文（刷新后一致），纯展示差异 |
+| `user_message_saved` 广播 | `userMessagePayloadOf` 带图时剥离注入行，广播回「用户原始正文」口径；落库 parts 不变。纯图片消息广播 content 为 `''`（前端空串兜底成立）。2026-10-23 起展示层也剥离，发送瞬间与重拉后口径一致 |
 | 历史消息（改造前） | 无 URL 行，视觉通道原样工作，无回归 |
 | 非视觉模型 | 维持占位符替换，不扩展 |
 | OSS 模式 | URL 为公网绝对地址，curl 直接可用 |
@@ -214,7 +214,8 @@ return content
 
 - `harness/` 下全部文件（适配器、prompt-engine、path-sandbox、container 挂载）
 - `create-app.ts`、`Dockerfile.runtime`
-- `desktop/`、`admin/`、`android/`、`agent-cli/`
+- `admin/`、`android/`、`agent-cli/`
+- `desktop/`：本期原定零改动；**2026-10-23 补充**——为解决「发送后消息多出一行 URL」的展示问题，新增 `utils/imageUrlAnnotation.ts` 的 `userVisibleText`，`MessageBubble.vue` / `ChatRoundList.vue` 的展示出口改为剥离口径。不含业务逻辑改动，落库与 Agent 可见内容不变
 
 ## 7. 风险与注意事项
 
@@ -223,8 +224,8 @@ return content
 | local 模式相对 URL | 未配 `upload.baseUrl` 时注入的是 `/uploads/xxx.png`，模型 curl 不到（且现状视觉通道的 adapter fetch 同样失败） | 上线前核验配置（步骤清单末项）；可选加固：注入时用 settings 的 `getUploadBaseUrl`（`file.routes.ts:33` 同款依赖）补全为绝对 URL |
 | 模型不下载 | 不加提示词，是否 curl 由模型自行判断，存在概率性失败 | 任务明确（要字节）时模型可靠；URL 行与图片同消息、序号对应，降低误判；兜底升级路径：`fetchBytesWithLimits`（`fetch-bytes.ts`，已带双超时与大小上限）包 `download_file` 工具，实测不稳再排 |
 | 注入行格式碰撞 | 用户正文恰好出现 `[图片 N] <无空格串>` 形态的行，编辑时会被剥离 | 行首锚定 + 序号 + URL 形态三重约束，碰撞面极小；接受该残余风险 |
-| URL 行露出到 UI/导出 | 气泡、会话导出、分享、admin 消息查看会显示 URL 行 | 标题已剥离；气泡展示 URL 属信息正向；前端美化（显示态隐藏）不在本期 |
-| 发送端与远端显示不一致 | 发送端乐观消息是原始正文，`user_message_saved` 广播的 content 含注入行 | 纯展示差异，刷新/重进会话即一致；不接受客户端改动的前提下可接受 |
+| URL 行露出到 UI/导出 | 气泡、编辑框、复制、添加到指令已剥离（2026-10-23 起，用户反馈「发送后消息被改掉」后补充）；会话导出、分享页、admin 消息查看、搜索 snippet 仍会显示 URL 行 | 标题已剥离；气泡等主要出口已隐藏；剩余出口属信息正向，前端美化（显示态隐藏）后续按需排 |
+| 发送端与远端显示不一致 | 发送端乐观消息是原始正文，`user_message_saved` 广播的 content 含注入行 | 纯展示差异，刷新/重进会话即一致；不接受客户端改动的前提下可接受。**2026-10-23 起已消除**：广播与展示层都回到剥离口径，发送瞬间与重拉后一致 |
 | OSS Bucket 非公共读 | curl 得 403 | 非本期新增风险——浏览器渲染与视觉通道现状已依赖公共读 |
 | LOCAL 模式 | 文件工具在桌面执行，curl 需从用户机器访问该 URL | 公网部署天然覆盖；内网部署需确认桌面可访问（登记为已知限制） |
 

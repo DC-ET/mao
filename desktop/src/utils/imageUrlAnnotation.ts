@@ -21,3 +21,15 @@ const IMAGE_URL_LINE_PATTERN = /^\[图片 \d+\] \S+[ \t\r]*$/gm
 export function stripImageUrlLines(text: string): string {
   return text.replace(IMAGE_URL_LINE_PATTERN, '').replace(/[\r\n]+$/, '')
 }
+
+/**
+ * 用户消息的展示口径：剥离注入行后的正文。
+ *
+ * 注入行是给 Agent 的文件地址通道（存储即注入，技术方案 §5.1），对用户是噪音——
+ * 落库文本带 URL 行而本地乐观消息只有正文，历史重拉后气泡会「多出一行」，看起来像
+ * 消息被服务端改掉。气泡、编辑框回填、复制、添加到指令统一走这个口径；
+ * 落库内容与 Agent 可见内容不变。
+ */
+export function userVisibleText(text: string): string {
+  return stripImageUrlLines(text)
+}

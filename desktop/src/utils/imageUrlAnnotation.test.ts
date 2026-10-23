@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { stripImageUrlLines } from './imageUrlAnnotation'
+import { stripImageUrlLines, userVisibleText } from './imageUrlAnnotation'
 
 describe('stripImageUrlLines', () => {
   it('strips injected url lines and keeps the original body', () => {
@@ -23,5 +23,18 @@ describe('stripImageUrlLines', () => {
 
   it('keeps trailing body newlines out of the injected-line block', () => {
     expect(stripImageUrlLines('正文\n[图片 1] https://a/b.png')).toBe('正文')
+  })
+})
+
+describe('userVisibleText', () => {
+  it('hides injected url lines from the bubble, keeping the user body', () => {
+    expect(userVisibleText('OCR\n\n[图片 1] https://etarch.oss-cn-hangzhou.aliyuncs.com/uploads/1792732526431_image.png'))
+      .toBe('OCR')
+    expect(userVisibleText('[图片 1] https://a/b.png')).toBe('')
+  })
+
+  it('leaves plain text untouched', () => {
+    expect(userVisibleText('plain text')).toBe('plain text')
+    expect(userVisibleText('')).toBe('')
   })
 })

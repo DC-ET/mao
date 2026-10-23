@@ -162,11 +162,11 @@
         <span class="stream-dot"></span>
         <span class="stream-dot"></span>
       </div>
-      <div v-if="message.content && showCopy && !isAssistantRunning && !isEditing" class="message-footer">
+      <div v-if="displayText && showCopy && !isAssistantRunning && !isEditing" class="message-footer">
         <button v-if="canEdit" class="edit-btn" @click="$emit('edit')" title="编辑消息">
           <el-icon :size="12"><Edit /></el-icon>
         </button>
-        <button v-if="role === 'user'" class="add-command-btn" @click="$emit('addToCommand', message.content)" title="添加到我的指令">
+        <button v-if="role === 'user'" class="add-command-btn" @click="$emit('addToCommand', userText)" title="添加到我的指令">
           <el-icon :size="12"><Plus /></el-icon>
         </button>
         <button class="copy-btn" :class="{ copied }" @click="copyMessage">
@@ -288,6 +288,7 @@ import {
 } from '../../composables/useMessageFeedback'
 import type { FeedbackReason } from '../../api'
 import { stripInternalMarkers } from '../../utils/internalMarkers'
+import { userVisibleText } from '../../utils/imageUrlAnnotation'
 import {
   getBackgroundCompletion,
   isBackgroundNoticeFailed,
@@ -341,13 +342,13 @@ const emit = defineEmits<{
 }>()
 
 // Edit mode state
-const editContent = ref(props.message.content || '')
+const editContent = ref(userVisibleText(props.message.content || ''))
 const editInput = ref<HTMLTextAreaElement>()
 const userCollapsed = ref(true)
 
 watch(() => props.isEditing, async (editing) => {
   if (editing) {
-    editContent.value = props.message.content || ''
+    editContent.value = userVisibleText(props.message.content || '')
     await nextTick()
     editInput.value?.focus()
     editInput.value?.select()
@@ -609,14 +610,24 @@ function estimateUserVisualLines(content: string): number {
 
 const isUserLong = computed(() => {
   if (role.value !== 'user') return false
-  const content = props.message.content || ''
+  const content = userText.value
   return content.length >= USER_COLLAPSE_MIN_CHARS
     && estimateUserVisualLines(content) > USER_COLLAPSE_LINES
 })
 
+/**
+ * 用户消息的展示口径：剥离图片 URL 注入行后的正文。
+ * 落库文本 part 带注入行（给 Agent 下载文件本体用），本地乐观消息只有正文，
+ * 不统一口径会让历史重拉后气泡「多出一行」。气泡 / 编辑 / 复制都读这个值。
+ */
+const userText = computed(() => userVisibleText(props.message.content || ''))
+
+/** footer / 复制等与角色无关的出口：用户走剥离口径，assistant 原样。 */
+const displayText = computed(() => role.value === 'user' ? userText.value : (props.message.content || ''))
+
 const userParsedSegments = computed(() => {
   if (role.value !== 'user') return []
-  return parseQuickCommandSegments(props.message.content || '')
+  return parseQuickCommandSegments(userText.value)
 })
 
 // Fetch commands when user messages with command tags are rendered
@@ -693,7 +704,7 @@ async function handleCancelDislike() {
 
 async function copyMessage() {
   // 引用标记同样是渲染层约定（来源区不在剪贴板语境里），复制时一并剥掉
-  const text = stripCitationMarkers(stripInternalMarkers(props.message.content ?? '')).trim()
+  const text = stripCitationMarkers(stripInternalMarkers(displayText.value)).trim()
   if (!text) return
   const ok = await copyText(text)
   if (!ok) return

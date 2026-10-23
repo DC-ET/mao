@@ -32,6 +32,7 @@
   - 工具卡片摘要统一走中文工具名（执行命令 / 读取文件 / 编辑文件…），单个工具的分组标题不再为空。
 - **前端（桌面 / Web / 安卓）**
   - **修复 WebSocket 重连风暴**：连接 open 不再直接视为可用，改为收到服务端 `connected` 鉴权确认帧后再置 `connected`、重置重连退避并补发订阅；鉴权确认前不发送任何业务帧。鉴权被拒（`1003` + `Not authenticated` / `Missing or invalid token` / `Account disabled` / `Authentication expired`）时退避保持增长（最长 30s），不再 1s 一次热循环；每次重连都会重读 token，令牌刷新后自动恢复。握手阶段被判死时同步结束在途 connect Promise，避免后续连接拿到永不 settle 的旧 Promise。
+  - **修复带图消息发送后「多出一行 URL」**：图片 URL 注入行是给 Agent 下载文件本体用的（`[图片 N] <url>` 追加在消息文本尾部），落库文本带注入行而发送瞬间的乐观消息只有正文，Agent 跑完重拉历史后气泡会多出一行 URL，看起来像消息被服务端改掉。现在气泡、编辑框回填、复制、添加到指令统一走剥离注入行后的口径，URL 行不再出现在用户可见的展示与剪贴板里；落库内容与 Agent 可见内容不变，编辑往返的幂等也不受影响。
   - **修复记录详情抽屉遮罩铺满整个视口**：抽屉层是 `position: absolute`，但祖先链上没有任何定位祖先，包含块回落到初始包含块（视口），遮罩会盖住面板外区域、抽屉右边缘贴屏幕右边。`.run-trace-panel` 改为 `position: relative`，遮罩回到「只挡面板内」的设计意图。
   - **修复时间条带 key 与行锚点重复导致定位错行**：用户手动文件写入 / Git 操作这类未挂到轮的活动没有 `tool_call_id`，条带 key 与行锚点 key 只用 `toolCallId ?? name`，同一 run 内出现两条同类活动时 key 完全相同——v-for 重复 key、两个 tool-row 的锚点 id 相同，点击第二条色条会定位到第一条行上。现在条带 key 与行锚点 key 统一为 `toolCallId|target|name` + 段内序号，与行渲染 `:key` 同源。
   - **修复切换色条时 tooltip 短暂显示旧节点内容**：色条之间移动不触发 svg 的 `mouseleave`，`showTip` 只清了定时器没有立即撤下已弹出的 tooltip，从 A 快速移到 B 时 A 的内容会继续显示约 300ms，与鼠标所在色条不符。现在切换时立即清空；同时补上组件卸载时清理定时器，避免 run 收起后回调写入已销毁组件。
