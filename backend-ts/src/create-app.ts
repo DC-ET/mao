@@ -112,6 +112,7 @@ import { ApprovalModelResolver } from './harness/tool/approval-model-resolver.js
 import { BudgetRepository, BudgetSpendStore } from './budget/budget.repository.js';
 import { BudgetService } from './budget/budget.service.js';
 import { AskUserQuestionsRegistry } from './harness/tool/ask-user-questions-registry.js';
+import { InFlightToolRegistry } from './harness/core/in-flight-tool-registry.js';
 import { AgentLoop } from './harness/core/agent-loop.js';
 import { HarnessService } from './harness/core/harness-service.js';
 import { WorkspaceRulesSnapshotRepository } from './harness/core/workspace-rules-snapshot.repository.js';
@@ -680,6 +681,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const subagentInvocation = new SubagentInvocationService(db);
   const subagentResultDelivery = new SubagentResultDeliveryService(db, fileChangeRepo as never, inboxService);
   const askUserQuestionsRegistry = new AskUserQuestionsRegistry();
+  const inFlightToolRegistry = new InFlightToolRegistry();
   const feishuAskFormStore = new FeishuAskFormStore();
   const feishuActiveProgress = new FeishuActiveProgressRegistry();
   const feishuAskMount = createFeishuAskMount(feishuAskFormStore, feishuActiveProgress);
@@ -784,7 +786,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     compactionService, compactionArchiveService, compactionConfig, historyLoader,
     activeContext, orchestrator, tokenEstimator, compactionModelResolver,
     localToolExecutor, dangerAssessor, proxyApprover, jevRiskAssessor, approvalModelResolver,
-    approvalRuleService, dockerRouter, approvalRegistry, askUserQuestionsRegistry,
+    approvalRuleService, dockerRouter, approvalRegistry, askUserQuestionsRegistry, inFlightToolRegistry,
     treeSignalPublisher, deliveryService, feishuAskMount,
     inboxService, skillLoader, skillSync, localSkills, localAgentsMd, agentRepo,
     experienceService, modelRepo, fileChangeRepo, envInfo, db, mcpSync, mcpLoadModeResolver,
@@ -882,7 +884,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     sessionService, activityService, messageQueueService,
     agentRepo, modelRepo, todoRepo, pathSandbox, subagentExecutionRepo,
     sessionCompactionEventService, sessionCompactionService, runTraceService,
-    approvalRegistry, askUserQuestionsRegistry, treeSignalPublisher,
+    approvalRegistry, askUserQuestionsRegistry, inFlightToolRegistry, treeSignalPublisher,
     workspaceBrowse, terminalManager, workspaceGit, gitCommitMsg, gitWrite, runtimeResolver,
     ossSts,
     skillBundleService, userSkillService, skillDocService,

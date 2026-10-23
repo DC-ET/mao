@@ -5,7 +5,8 @@ import type { SessionService } from './session.service.js';
 import type { AgentLookup, AgentRef, AskUserQuestionsRegistry, LlmModelLookup, Session, UserLookup } from './types.js';
 import { emptyQuestionRegistry } from './types.js';
 import { compactAdminTranscript } from './admin-message-compact.js';
-import { toAdminSessionVO, toMessageVOList, toPendingAskUserQuestionsMessageVOs } from './session-vo.js';
+import { toAdminSessionVO, toInFlightToolCallsMessageVOs, toMessageVOList, toPendingAskUserQuestionsMessageVOs } from './session-vo.js';
+import type { InFlightToolRegistry } from '../harness/core/in-flight-tool-registry.js';
 
 export interface AdminSessionRouteDeps {
   sessionService: SessionService;
@@ -14,6 +15,7 @@ export interface AdminSessionRouteDeps {
   modelLookup: LlmModelLookup;
   permissionService: { hasPermission(userId: number, code: string): Promise<boolean> };
   askUserQuestionsRegistry?: AskUserQuestionsRegistry;
+  inFlightToolRegistry?: InFlightToolRegistry;
 }
 
 export function registerAdminSessionRoutes(app: FastifyInstance, deps: AdminSessionRouteDeps): void {
@@ -145,9 +147,11 @@ export function registerAdminSessionRoutes(app: FastifyInstance, deps: AdminSess
       : await sessionService.getFileChangesByMessageIds(id, messageIds);
     const messages = compact ? compactAdminTranscript(page.messages) : page.messages;
     const vos = toMessageVOList(messages, changesByMsg);
-    // 等待回复中的 ask_user_questions 尚未随整轮落库，从内存注册表补进行中卡片（仅最新一页）
+    // 等待回复中的 ask_user_questions 与正在执行的工具调用都尚未随整轮落库，
+    // 从内存注册表补进行中卡片（仅最新一页）
     if (beforeMessageId == null) {
       vos.push(...toPendingAskUserQuestionsMessageVOs(questionRegistry.getPendingForSession(id)));
+      vos.push(...toInFlightToolCallsMessageVOs(deps.inFlightToolRegistry?.listForSession(id) ?? []));
     }
     return sendOk(reply, {
       messages: vos,

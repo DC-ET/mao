@@ -43,6 +43,7 @@ import type { SessionCompactionService } from './session/session-compaction.serv
 import type { RunTraceService } from './session/run-trace.service.js';
 import type { ApprovalRegistry } from './harness/approval/approval-registry.js';
 import type { AskUserQuestionsRegistry } from './harness/tool/ask-user-questions-registry.js';
+import type { InFlightToolRegistry } from './harness/core/in-flight-tool-registry.js';
 import type { SessionTreeSignalPublisher } from './harness/approval/session-tree-signal-publisher.js';
 import type { WorkspaceBrowseService } from './file/workspace-browse.service.js';
 import type { TerminalManager } from './harness/terminal/terminal-manager.js';
@@ -227,6 +228,8 @@ export interface RouteDeps {
   runTraceService: RunTraceService;
   approvalRegistry: ApprovalRegistry;
   askUserQuestionsRegistry: AskUserQuestionsRegistry;
+  /** 正在执行的工具调用（内存态），管理后台会话详情补进行中卡片 */
+  inFlightToolRegistry: InFlightToolRegistry;
   treeSignalPublisher: SessionTreeSignalPublisher;
   workspaceBrowse: WorkspaceBrowseService;
   terminalManager: TerminalManager;
@@ -328,7 +331,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
     sessionService, activityService, messageQueueService,
     agentRepo, modelRepo, todoRepo, pathSandbox, subagentExecutionRepo,
     sessionCompactionEventService, sessionCompactionService, runTraceService,
-    approvalRegistry, askUserQuestionsRegistry, treeSignalPublisher,
+    approvalRegistry, askUserQuestionsRegistry, inFlightToolRegistry, treeSignalPublisher,
     workspaceBrowse, terminalManager, workspaceGit, gitCommitMsg, gitWrite, runtimeResolver,
     ossSts,
     skillBundleService, userSkillService, skillDocService,
@@ -493,6 +496,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
       } as never,
       permissionService,
       askUserQuestionsRegistry,
+      inFlightToolRegistry,
     });
     registerAdminSessionFilesRoutes(api, {
       sessionService,

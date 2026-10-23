@@ -146,7 +146,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, onMounted, onActivated, watch } from 'vue'
+import { ref, computed, nextTick, onMounted, onActivated, onBeforeUnmount, onDeactivated, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Refresh, Download, ArrowDown, ArrowLeft } from '@element-plus/icons-vue'
@@ -178,6 +178,9 @@ const exporting = ref(false)
 // 移动端会话信息默认收起：把屏幕留给聊天记录（桌面端不受影响，始终展开）
 const infoExpanded = ref(false)
 const ROUND_LIMIT = 5
+/** 运行中会话的静默刷新间隔：既能看到新落库的工具轮，也能刷出内存态的「正在执行」卡片 */
+const POLL_INTERVAL_MS = 5000
+const ACTIVE_PHASES = new Set(['RUNNING', 'WAITING_APPROVAL', 'CANCELLING'])
 
 // 会话工作区文件浏览器：状态机由父页面持有，聊天记录联动可直接驱动预览
 const workspaceFiles = useWorkspaceFiles()
@@ -389,6 +392,30 @@ function mergeMessages(olderMessages: ChatMessage[], currentMessages: ChatMessag
   return olderMessages.concat(currentMessages.filter(msg => !seen.has(msg.id)))
 }
 
+/** 最近 rounds 轮（按 user 消息切轮）在列表中的起始下标；不足 rounds 轮返回 0 */
+function recentTurnsStartIndex(list: ChatMessage[], rounds: number): number {
+  let seen = 0
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i].role !== 'user') continue
+    seen += 1
+    if (seen === rounds) return i
+  }
+  return 0
+}
+
+/** 静默刷新只替换最近 N 轮，保留「加载更多」拉到的更早历史，避免视野跳走 */
+function mergeLatestPage(latest: ChatMessage[]): ChatMessage[] {
+  const current = messages.value
+  // 最新页为空（会话刚建/接口返回异常）不清空已有内容，避免页面突然空白
+  if (latest.length === 0) return current
+  if (current.length === 0) return latest
+  const start = recentTurnsStartIndex(current, ROUND_LIMIT)
+  if (start <= 0) return latest
+  const kept = current.slice(0, start)
+  const keptIds = new Set(kept.map(msg => msg.id))
+  return kept.concat(latest.filter(msg => !keptIds.has(msg.id)))
+}
+
 /** 循环 beforeMessageId 拉全量消息（含工具调用、思考过程），导出 JSON 文件留存证据 */
 async function exportMessages() {
   const id = route.params.id
@@ -458,19 +485,81 @@ async function keepChatViewport(previousScrollHeight: number, previousScrollTop:
   }
 }
 
+const isSessionActive = computed(() => ACTIVE_PHASES.has(String(sessionInfo.value?.phase ?? '')))
+
+let pollTimer: ReturnType<typeof setInterval> | null = null
+let polling = false
+let pageActive = true
+
+function nearScrollBottom(container: HTMLElement): boolean {
+  return container.scrollHeight - container.scrollTop - container.clientHeight < 80
+}
+
+/**
+ * 运行中会话的静默刷新：不发 loading、不弹错误、不打断历史浏览。
+ * 管理后台没有 WS 通道，只能靠轮询同时拿到「新落库的工具轮」和「内存态的正在执行卡片」。
+ */
+async function refreshSessionSilently(): Promise<void> {
+  if (polling || messagesLoading.value || infoLoading.value || loadingMore.value) return
+  if (!pageActive || document.visibilityState === 'hidden' || !isSessionActive.value) return
+  const id = route.params.id
+  const seq = ++latestFetchSeq
+  polling = true
+  const chatContainer = scrollHost()
+  const stickToBottom = chatContainer != null && nearScrollBottom(chatContainer)
+  try {
+    const [sessionRes, messagesRes] = await Promise.all([
+      api.get(`/admin/sessions/${id}`, { skipErrorToast: true }),
+      api.get(`/admin/sessions/${id}/messages`, {
+        params: { roundLimit: ROUND_LIMIT, compact: true },
+        skipErrorToast: true,
+      }),
+    ])
+    if (seq !== latestFetchSeq) return
+    sessionInfo.value = (sessionRes as { data?: unknown }).data
+    const data = (messagesRes as { data?: unknown }).data as { messages?: Array<Record<string, unknown>> } | undefined
+    messages.value = mergeLatestPage(mapApiMessagesToChat(data?.messages || []))
+    if (stickToBottom) await scrollChatToBottom()
+  } catch {
+    // 静默刷新失败不打扰用户，下一轮自动重试
+  } finally {
+    polling = false
+  }
+}
+
+function startPolling() {
+  stopPolling()
+  pollTimer = setInterval(() => { void refreshSessionSilently() }, POLL_INTERVAL_MS)
+}
+
+function stopPolling() {
+  if (pollTimer != null) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
 watch(() => route.params.id, (id, prev) => {
   if (id && id !== prev) fetchDetail()
 })
 
-onMounted(fetchDetail)
+onMounted(() => {
+  void fetchDetail()
+  startPolling()
+})
+onBeforeUnmount(stopPolling)
 // keep-alive 首次挂载：onActivated 紧随 onMounted 触发，首次跳过避免重复请求；之后每次重新激活刷新
 let activatedOnce = false
 onActivated(() => {
+  pageActive = true
   if (!activatedOnce) {
     activatedOnce = true
     return
   }
   fetchDetail()
+})
+onDeactivated(() => {
+  pageActive = false
 })
 </script>
 
