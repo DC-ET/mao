@@ -261,10 +261,10 @@ describe('SessionService extra', () => {
     messageRepo.selectRange.mockResolvedValue([{ id: 3, role: 'USER', content: 'q' }]);
     await service.getMessagesByRounds(11, 2, null, { maxMessageId: 4 });
     expect(messageRepo.selectUserStarts).toHaveBeenLastCalledWith(11, null, 3, 4);
-    expect(messageRepo.selectRange).toHaveBeenLastCalledWith(11, 3, null, 4);
+    expect(messageRepo.selectRange).toHaveBeenLastCalledWith(11, 3, null, 4, undefined, false);
     await service.getMessagesByRounds(11, 2, null, { excludeSourceSessionId: 99 });
     expect(messageRepo.selectUserStarts).toHaveBeenLastCalledWith(11, null, 3, null, 99);
-    expect(messageRepo.selectRange).toHaveBeenLastCalledWith(11, 3, null, null, 99);
+    expect(messageRepo.selectRange).toHaveBeenLastCalledWith(11, 3, null, null, 99, false);
     fileChangeRepo.listBySession.mockResolvedValue([{ messageId: 1, path: 'a.ts' }]);
     await service.getFileChangesBySession(11);
     await service.getFileChangesByMessageIds(11, [1]);

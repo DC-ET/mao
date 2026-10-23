@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compactAdminTranscript, compactToolCalls, compactToolResult } from './admin-message-compact.js';
+import { compactAdminTranscript, compactMetadata, compactToolCalls, compactToolResult } from './admin-message-compact.js';
 
 describe('compactAdminTranscript', () => {
   it('leaves short tool output unchanged', () => {
@@ -53,5 +53,44 @@ describe('compactAdminTranscript', () => {
     ]);
     expect(messages[0].content).toBe('hi');
     expect(messages[1].content!.length).toBeLessThanOrEqual(4000);
+  });
+
+  it('drops inline image base64 from tool metadata but keeps its locator', () => {
+    const metadata = JSON.stringify({
+      attachments: [
+        { mime: 'image/png', path: 'bw-check7.png', data_uri: `data:image/png;base64,${'A'.repeat(500000)}` },
+      ],
+    });
+    const compact = compactMetadata(metadata)!;
+    const parsed = JSON.parse(compact) as { attachments: Array<Record<string, unknown>> };
+    expect(parsed.attachments[0]).toEqual({ mime: 'image/png', path: 'bw-check7.png' });
+    expect(compact).not.toContain('data_uri');
+    // 13MB 级响应里 96% 是这类 base64：剥离后单条只剩几十字节
+    expect(compact.length).toBeLessThan(metadata.length / 1000);
+  });
+
+  it('leaves metadata without attachments / data_uri untouched', () => {
+    expect(compactMetadata(null)).toBeNull();
+    expect(compactMetadata('')).toBe('');
+    expect(compactMetadata('{"attachments":[{"mime":"image/png","path":"a.png"}]}')).toBe(
+      '{"attachments":[{"mime":"image/png","path":"a.png"}]}',
+    );
+    const notJson = 'raw-not-json';
+    expect(compactMetadata(notJson)).toBe(notJson);
+    const scalarJson = '"just-a-string"';
+    expect(compactMetadata(scalarJson)).toBe(scalarJson);
+  });
+
+  it('总览型 transcript 压缩同时作用于 content 与 metadata', () => {
+    const messages = compactAdminTranscript([
+      {
+        sessionId: 1,
+        role: 'TOOL',
+        content: 'x'.repeat(5000),
+        metadata: JSON.stringify({ attachments: [{ mime: 'image/png', data_uri: 'data:image/png;base64,AAA' }] }),
+      },
+    ]);
+    expect(messages[0].content!.length).toBeLessThanOrEqual(4000);
+    expect(messages[0].metadata).not.toContain('data_uri');
   });
 });

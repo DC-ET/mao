@@ -9,16 +9,49 @@ const ARG_KEEP = 1500;
 export function compactAdminTranscript(messages: Message[]): Message[] {
   return messages.map((message) => {
     const role = (message.role || '').toUpperCase();
+    const patch: Partial<Message> = {};
     if (role === 'TOOL') {
       const content = compactToolResult(message.content);
-      return content === message.content ? message : { ...message, content };
-    }
-    if (role === 'ASSISTANT' && typeof message.toolCalls === 'string') {
+      if (content !== message.content) patch.content = content;
+    } else if (role === 'ASSISTANT' && typeof message.toolCalls === 'string') {
       const toolCalls = compactToolCalls(message.toolCalls);
-      return toolCalls === message.toolCalls ? message : { ...message, toolCalls };
+      if (toolCalls !== message.toolCalls) patch.toolCalls = toolCalls;
     }
-    return message;
+    const metadata = compactMetadata(message.metadata);
+    if (metadata !== message.metadata) patch.metadata = metadata;
+    return Object.keys(patch).length === 0 ? message : { ...message, ...patch };
   });
+}
+
+/**
+ * 管理端紧凑载荷：工具附件里的图片 base64（data_uri）不随消息列表返回。
+ *
+ * 一条 1800×1200 的截图 base64 约 350–500KB，5 轮对话里几十张就能把响应撑到 13MB，
+ * 而界面只在展开工具卡片时才看图。这里只保留 mime/path/附件下标，字节由
+ * `GET /v1/admin/sessions/:id/messages/:messageId/attachments/:index` 按需取。
+ */
+export function compactMetadata(metadata: string | null | undefined): string | null | undefined {
+  if (metadata == null || metadata.length === 0 || !metadata.includes('data_uri')) {
+    return metadata;
+  }
+  try {
+    const parsed = JSON.parse(metadata) as unknown;
+    if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)) return metadata;
+    const root = parsed as Record<string, unknown>;
+    if (!Array.isArray(root.attachments)) return metadata;
+    let changed = false;
+    root.attachments = root.attachments.map((att) => {
+      if (att == null || typeof att !== 'object' || Array.isArray(att)) return att;
+      const item = att as Record<string, unknown>;
+      if (typeof item.data_uri !== 'string' || item.data_uri.length === 0) return att;
+      changed = true;
+      const { data_uri: _omitted, ...rest } = item;
+      return rest;
+    });
+    return changed ? JSON.stringify(root) : metadata;
+  } catch {
+    return metadata;
+  }
 }
 
 export function compactToolResult(content: string | null | undefined): string | null | undefined {

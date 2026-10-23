@@ -1,5 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { requireAnyRequestPermission, requireRequestPermission, sendOk } from '../common/http-error.js';
+import { BusinessException } from '../common/business-exception.js';
+import { ErrorCode } from '../common/error-code.js';
 import { collectEntityIds, parseEntityId, pathId, queryInt, queryOptBool, queryOptInt, queryOptStr } from '../common/request.js';
 import type { SessionService } from './session.service.js';
 import type { AgentLookup, AgentRef, AskUserQuestionsRegistry, LlmModelLookup, Session, UserLookup } from './types.js';
@@ -138,10 +140,13 @@ export function registerAdminSessionRoutes(app: FastifyInstance, deps: AdminSess
     const id = pathId(request);
     const roundLimit = queryOptInt(request, 'roundLimit') ?? 5;
     const beforeMessageId = queryOptInt(request, 'beforeMessageId') ?? null;
-    const page = await sessionService.getMessagesByRounds(id, roundLimit, beforeMessageId);
-    const messageIds = page.messages.map((m) => m.id!);
-    // compact：详情页不展示 diff，工具卡片也只画出截断后的输出。导出仍走完整载荷。
+    // compact：详情页不展示 diff，工具卡片也只画出截断后的输出；图片附件同样不内联，
+    // 由 /messages/:messageId/attachments/:index 按需取。导出仍走完整载荷。
     const compact = queryOptBool(request, 'compact') === true;
+    const page = await sessionService.getMessagesByRounds(id, roundLimit, beforeMessageId, {
+      compactMedia: compact,
+    });
+    const messageIds = page.messages.map((m) => m.id!);
     const changesByMsg = compact
       ? await sessionService.getFileChangeSummariesByMessageIds(id, messageIds)
       : await sessionService.getFileChangesByMessageIds(id, messageIds);
@@ -158,6 +163,28 @@ export function registerAdminSessionRoutes(app: FastifyInstance, deps: AdminSess
       hasMore: page.hasMore,
       nextBeforeMessageId: page.nextBeforeMessageId,
     });
+  });
+
+  /**
+   * 工具附件按需下载（管理端）：compact 列表不再内联图片 base64，
+   * 前端展开工具卡片时才请求这一张图，并带上可缓存的私有头。
+   */
+  app.get('/v1/admin/sessions/:id/messages/:messageId/attachments/:index', async (request, reply) => {
+    await requireRead(request);
+    const sessionId = pathId(request);
+    const params = request.params as { messageId?: string; index?: string };
+    const messageId = Number(params.messageId);
+    const index = Number(params.index);
+    if (!Number.isSafeInteger(messageId) || messageId <= 0 || !Number.isSafeInteger(index) || index < 0) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID);
+    }
+    const attachment = await sessionService.getMessageAttachment(sessionId, messageId, index);
+    // 附件随消息写入后不再变化：允许浏览器私有缓存一天，翻页/切 Tab 不重复下载。
+    return reply
+      .header('Content-Type', attachment.mime)
+      .header('Content-Length', String(attachment.bytes.length))
+      .header('Cache-Control', 'private, max-age=86400')
+      .send(attachment.bytes);
   });
 
   app.delete('/v1/admin/sessions/:id', async (request, reply) => {

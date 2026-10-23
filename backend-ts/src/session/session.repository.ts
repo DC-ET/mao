@@ -497,6 +497,20 @@ export class SessionRepository {
   }
 }
 
+/**
+ * 管理端 compact 投影：列表接口不返回附件里的图片 base64（data_uri），只留 mime/path/下标，
+ * 字节由 `GET /v1/admin/sessions/:id/messages/:messageId/attachments/:index` 按需取。
+ *
+ * 一条 1800×1200 截图约 350–500KB，5 轮对话能撑到 13MB；投影后同样一页约 0.6MB。
+ * 这里只选 toMessageVO 需要的列 —— message 新增列且管理端要展示时，必须同步补进来。
+ * JSON_REMOVE 只处理前 5 个附件（实际几乎都是 1 个），其余由 compactMetadata 在 JS 侧兜底。
+ */
+const COMPACT_MESSAGE_COLUMNS = `id, session_id, role, content, thinking_content, tool_call_id, tool_calls,
+  token_count, model_id, source_session_id, created_at, updated_at,
+  CASE WHEN metadata IS NULL THEN NULL ELSE JSON_REMOVE(metadata,
+    '$.attachments[0].data_uri', '$.attachments[1].data_uri', '$.attachments[2].data_uri',
+    '$.attachments[3].data_uri', '$.attachments[4].data_uri') END AS metadata`;
+
 export class MessageRepository {
   constructor(private readonly db: Db) {}
 
@@ -758,18 +772,20 @@ export class MessageRepository {
     beforeId: number | null,
     maxMessageId?: number | null,
     excludeSourceSessionId?: number | null,
+    compactMedia = false,
   ): Promise<Message[]> {
     const cap = maxMessageId == null ? '' : ' AND id <= ?';
     const capParams = maxMessageId == null ? [] : [maxMessageId];
     const src = sourceExcludeSql(excludeSourceSessionId);
+    const columns = compactMedia ? COMPACT_MESSAGE_COLUMNS : '*';
     if (beforeId != null) {
       return this.db.query<Message>(
-        `SELECT * FROM \`message\` WHERE session_id = ? AND ${notDeleted()} AND id >= ? AND id < ?${cap}${src.sql} ORDER BY created_at ASC, id ASC`,
+        `SELECT ${columns} FROM \`message\` WHERE session_id = ? AND ${notDeleted()} AND id >= ? AND id < ?${cap}${src.sql} ORDER BY created_at ASC, id ASC`,
         [sessionId, startId, beforeId, ...capParams, ...src.params],
       );
     }
     return this.db.query<Message>(
-      `SELECT * FROM \`message\` WHERE session_id = ? AND ${notDeleted()} AND id >= ?${cap}${src.sql} ORDER BY created_at ASC, id ASC`,
+      `SELECT ${columns} FROM \`message\` WHERE session_id = ? AND ${notDeleted()} AND id >= ?${cap}${src.sql} ORDER BY created_at ASC, id ASC`,
       [sessionId, startId, ...capParams, ...src.params],
     );
   }

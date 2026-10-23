@@ -180,6 +180,10 @@ const infoExpanded = ref(false)
 const ROUND_LIMIT = 5
 /** 运行中会话的静默刷新间隔：既能看到新落库的工具轮，也能刷出内存态的「正在执行」卡片 */
 const POLL_INTERVAL_MS = 5000
+/** 轮询只拉最新一轮：5 轮整页在带截图的会话里能到十几兆，轮询没必要重复搬运 */
+const POLL_ROUND_LIMIT = 1
+/** keep-alive 切回 Tab 时复用已加载内容的窗口：超过才重拉，避免一页消息反复下载 */
+const ACTIVATION_REUSE_MS = 30_000
 const ACTIVE_PHASES = new Set(['RUNNING', 'WAITING_APPROVAL', 'CANCELLING'])
 
 // 会话工作区文件浏览器：状态机由父页面持有，聊天记录联动可直接驱动预览
@@ -325,6 +329,8 @@ function phaseTagType(phase: string, pendingQuestionCount?: number): 'primary' |
 }
 
 let latestFetchSeq = 0
+/** 上一次成功拉取完整详情的时间：keep-alive 切回 Tab 时用于判断能否复用 */
+let lastFetchedAt = 0
 
 async function fetchDetail() {
   const id = route.params.id
@@ -354,6 +360,7 @@ async function fetchDetail() {
     if (seq === latestFetchSeq) messagesLoading.value = false
   })
   await Promise.all([sessionTask, messagesTask])
+  if (seq === latestFetchSeq) lastFetchedAt = Date.now()
 }
 
 async function loadMoreMessages() {
@@ -381,7 +388,7 @@ async function loadMoreMessages() {
 
 function applyMessagePage(data: any, prepend: boolean) {
   const rawMessages = data?.messages || []
-  const pageMessages = mapApiMessagesToChat(rawMessages)
+  const pageMessages = mapApiMessagesToChat(rawMessages, String(route.params.id))
   messages.value = prepend ? mergeMessages(pageMessages, messages.value) : pageMessages
   hasMore.value = Boolean(data?.hasMore)
   nextBeforeMessageId.value = data?.nextBeforeMessageId != null ? String(data.nextBeforeMessageId) : null
@@ -404,12 +411,12 @@ function recentTurnsStartIndex(list: ChatMessage[], rounds: number): number {
 }
 
 /** 静默刷新只替换最近 N 轮，保留「加载更多」拉到的更早历史，避免视野跳走 */
-function mergeLatestPage(latest: ChatMessage[]): ChatMessage[] {
+function mergeLatestPage(latest: ChatMessage[], rounds: number = ROUND_LIMIT): ChatMessage[] {
   const current = messages.value
   // 最新页为空（会话刚建/接口返回异常）不清空已有内容，避免页面突然空白
   if (latest.length === 0) return current
   if (current.length === 0) return latest
-  const start = recentTurnsStartIndex(current, ROUND_LIMIT)
+  const start = recentTurnsStartIndex(current, rounds)
   if (start <= 0) return latest
   const kept = current.slice(0, start)
   const keptIds = new Set(kept.map(msg => msg.id))
@@ -433,7 +440,7 @@ async function exportMessages() {
         params: { roundLimit: 50, ...(beforeId ? { beforeMessageId: beforeId } : {}) }
       })
       const page = pageOf((res as { data?: unknown }).data)
-      const pageMessages = mapApiMessagesToChat(page.messages || [])
+      const pageMessages = mapApiMessagesToChat(page.messages || [], String(id))
       allMessages.unshift(...pageMessages)
       if (!page.hasMore || !page.nextBeforeMessageId || pageMessages.length === 0) break
       const nextCursor = String(page.nextBeforeMessageId)
@@ -511,14 +518,14 @@ async function refreshSessionSilently(): Promise<void> {
     const [sessionRes, messagesRes] = await Promise.all([
       api.get(`/admin/sessions/${id}`, { skipErrorToast: true }),
       api.get(`/admin/sessions/${id}/messages`, {
-        params: { roundLimit: ROUND_LIMIT, compact: true },
+        params: { roundLimit: POLL_ROUND_LIMIT, compact: true },
         skipErrorToast: true,
       }),
     ])
     if (seq !== latestFetchSeq) return
     sessionInfo.value = (sessionRes as { data?: unknown }).data
     const data = (messagesRes as { data?: unknown }).data as { messages?: Array<Record<string, unknown>> } | undefined
-    messages.value = mergeLatestPage(mapApiMessagesToChat(data?.messages || []))
+    messages.value = mergeLatestPage(mapApiMessagesToChat(data?.messages || [], String(id)), POLL_ROUND_LIMIT)
     if (stickToBottom) await scrollChatToBottom()
   } catch {
     // 静默刷新失败不打扰用户，下一轮自动重试
@@ -548,7 +555,8 @@ onMounted(() => {
   startPolling()
 })
 onBeforeUnmount(stopPolling)
-// keep-alive 首次挂载：onActivated 紧随 onMounted 触发，首次跳过避免重复请求；之后每次重新激活刷新
+// keep-alive 首次挂载：onActivated 紧随 onMounted 触发，首次跳过避免重复请求；之后重新激活时
+// 只有距上次加载超过复用窗口才重拉 —— 一页消息可能上兆，切个 Tab 就整包重下纯属浪费。
 let activatedOnce = false
 onActivated(() => {
   pageActive = true
@@ -556,6 +564,7 @@ onActivated(() => {
     activatedOnce = true
     return
   }
+  if (Date.now() - lastFetchedAt < ACTIVATION_REUSE_MS) return
   fetchDetail()
 })
 onDeactivated(() => {

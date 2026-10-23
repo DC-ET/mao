@@ -7,7 +7,13 @@ export interface ToolCall {
   preview?: {
     media_type?: string
     mime?: string
+    /** 旧响应 / 导出仍可能内联 base64；compact 列表已改为按需取，见下方定位字段 */
     data_uri?: string
+    path?: string
+    /** compact 列表里图片只留定位信息，展开工具卡片时再向附件端点取字节 */
+    sessionId?: string
+    messageId?: string
+    attachmentIndex?: number
   }
   status: 'pending' | 'running' | 'success' | 'error'
   isExpanded: boolean

@@ -21,6 +21,15 @@
     - **新增 `V168` message 覆盖索引** `(created_at, deleted, token_count, session_id, model_id)`：窗口聚合不再回表读正文（实测索引区间扫描 7d 0.10s / 30d 0.18s / 90d 0.22s，原方案 0.38–0.56s），也不再因为扫 2.1GB 正文页把 buffer pool 里的热点数据挤出去。新索引以 `created_at` 为最左前缀，冗余的 `idx_created` 同迁移下线，减少热表写放大。
     - `StatisticsService.getOverview()` 的 7 条全表计数由串行改并行（约 130ms → 单条最慢的 ~73ms），返回字段不变，mao-cli 的 `analytics overview` 不受影响。
     - 环比窗口（已结束区间）聚合结果加进程内 5 分钟 TTL 缓存（上限 64 个窗口，按写入序淘汰）：所有 Tab 的 `previousTotals` 复用同一份，过去窗口最多滞后 5 分钟；本期窗口仍每次实时计算，刷新按钮语义不变。
+  - **会话详情首屏瘦身：带截图的会话从 13.7MB 降到约 0.6MB（gzip 后 ~150KB）**。`GET /v1/admin/sessions/:id/messages?compact=true` 原先把工具产出图片的 base64 整包返回（实测 5 轮 327 条消息 13.7MB，其中 12.5MB 是 37 张 1800×1200 截图），服务端还要从 MySQL 搬 13.8MB：
+    - `compact=true` 时 `metadata.attachments[].data_uri` 不再返回，只留 `mime` / `path` / 下标；列表 SQL 同步用 `JSON_REMOVE` 去掉前 5 个附件的 base64，DB→应用也不再搬这 13MB。
+    - 新增 `GET /v1/admin/sessions/:id/messages/:messageId/attachments/:index`：按需取单张图片字节，带 `Cache-Control: private, max-age=86400`，会话归属与 `session:read` 双重校验。
+    - 导出（`export/jsonl`）与桌面端走非 compact 路径，行为不变。
+
+- **管理后台**
+  - 会话详情的工具卡片图片改为**展开时才加载**（axios blob + objectURL，滚走即释放）；附件缺失（老会话 / 工作区已清理）静默降级，不影响卡片其它内容。
+  - keep-alive 切回会话详情页时 30s 内复用已加载内容，不再每次整页重拉（截图里 4 个会话 Tab 之间来回切，每次都会重下十几兆）。
+  - 运行中会话的 5s 静默轮询只拉最新 1 轮再合并（原先每 5s 重拉 5 轮），带截图的会话轮询流量降到约 1/5。
 
 - **前端（桌面 / Web / 安卓）**
   - **设置页技能入口改名、默认展示系统技能并禁止上传系统同名技能**：侧边栏「我的技能」更名为「Skills 技能」；技能页默认 Tab 由「已上传」改为「系统技能」，进入页面即可看到系统预置技能，上传完成后仍会自动切到「已上传」；「本地技能」列表中与系统预置技能同名的技能名称后显示「系统已有同名」标记，上传按钮禁用、「一键全部上传」自动跳过并在汇总里说明，拖拽 / 选择上传前按 SKILL.md 的 name 预检拦截；后端 `POST /v1/user-skills/upload`（含管理后台代传用户路径）按 frontmatter 名判重返回 409 拒绝——个人技能会在会话里覆盖同名系统技能，放行上传会让用户版本静默顶掉系统预置版本、管理员更新系统技能也对已上传同名技能的用户不生效。

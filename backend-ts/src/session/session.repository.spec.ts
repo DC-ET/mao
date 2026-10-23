@@ -93,6 +93,12 @@ describe('MessageRepository', () => {
     expect(String(db.query.mock.calls.at(-1)?.[0])).toContain('source_session_id <> ?');
     await repo.selectRange(1, 1, null, null, 99);
     expect(String(db.query.mock.calls.at(-1)?.[0])).toContain('source_session_id <> ?');
+    // 管理端 compact 投影：metadata 去掉图片 base64，且保留 VO 需要的列
+    await repo.selectRange(1, 1, null, null, null, true);
+    const compactSql = String(db.query.mock.calls.at(-1)?.[0]);
+    expect(compactSql).toContain('JSON_REMOVE(metadata');
+    expect(compactSql).toContain('thinking_content');
+    expect(compactSql).not.toContain('SELECT *');
     await repo.logicalDeleteById(3);
     await repo.deleteById(3);
     await repo.logicalDeleteBySession(1);

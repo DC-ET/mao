@@ -76,6 +76,7 @@ describe('session and admin routes', () => {
       getMessagesByRounds: vi.fn(async () => ({ messages: [], hasMore: false, nextBeforeMessageId: null })),
       getFileChangesByMessageIds: vi.fn(async () => new Map()),
       getFileChangeSummariesByMessageIds: vi.fn(async () => new Map()),
+      getMessageAttachment: vi.fn(async () => ({ mime: 'image/png', bytes: Buffer.from('img') })),
       findOwnedMessage: vi.fn(async () => null),
       getForkPreview: vi.fn(async () => ({ messages: [], hasMore: false, nextBeforeMessageId: null })),
       editMessageAndTruncate: vi.fn(async () => ({ id: 2, sessionId: 1, role: 'USER', content: 'edited' })),
@@ -581,6 +582,66 @@ describe('session and admin routes', () => {
     })).body);
     expect(older.data.messages).toHaveLength(1);
     expect(older.data.messages[0].id).toBe(10);
+    await fastify.close();
+  });
+
+  it('admin message attachment endpoint streams image bytes and rejects bad index', async () => {
+    const fastify = Fastify();
+    fastify.setErrorHandler(handleError);
+    fastify.addHook('preHandler', (req, _r, done) => {
+      req.userId = 7;
+      done();
+    });
+    const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    const sessionService = {
+      getMessageAttachment: vi.fn(async () => ({ mime: 'image/png', bytes })),
+    } as unknown as SessionService;
+    registerAdminSessionRoutes(fastify, {
+      sessionService,
+      userLookup: { findByIds: vi.fn(async () => []), listOptions: vi.fn(async () => []) } as never,
+      agentLookup: { findById: vi.fn(), findByIds: vi.fn(async () => []), requireDefaultAgent: vi.fn(), listOptions: vi.fn(async () => []) } as never,
+      modelLookup: { findById: vi.fn(), findByIds: vi.fn(async () => []), findDefault: vi.fn(async () => null) } as never,
+      permissionService: { hasPermission: vi.fn(async () => true) },
+    });
+
+    const res = await fastify.inject({ method: 'GET', url: '/v1/admin/sessions/1/messages/42/attachments/0' });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toContain('image/png');
+    expect(res.headers['cache-control']).toContain('private');
+    expect(res.rawPayload.equals(bytes)).toBe(true);
+    expect(vi.mocked(sessionService.getMessageAttachment)).toHaveBeenCalledWith(1, 42, 0);
+
+    const bad = await fastify.inject({ method: 'GET', url: '/v1/admin/sessions/1/messages/42/attachments/-1' });
+    expect(JSON.parse(bad.body).code).not.toBe(0);
+    expect(vi.mocked(sessionService.getMessageAttachment)).toHaveBeenCalledTimes(1);
+    await fastify.close();
+  });
+
+  it('admin messages 在 compact=true 时启用紧凑投影', async () => {
+    const fastify = Fastify();
+    fastify.setErrorHandler(handleError);
+    fastify.addHook('preHandler', (req, _r, done) => {
+      req.userId = 7;
+      done();
+    });
+    const sessionService = {
+      getMessagesByRounds: vi.fn(async () => ({ messages: [], hasMore: false, nextBeforeMessageId: null })),
+      getFileChangeSummariesByMessageIds: vi.fn(async () => new Map()),
+      getFileChangesByMessageIds: vi.fn(async () => new Map()),
+    } as unknown as SessionService;
+    registerAdminSessionRoutes(fastify, {
+      sessionService,
+      userLookup: { findByIds: vi.fn(async () => []), listOptions: vi.fn(async () => []) } as never,
+      agentLookup: { findById: vi.fn(), findByIds: vi.fn(async () => []), requireDefaultAgent: vi.fn(), listOptions: vi.fn(async () => []) } as never,
+      modelLookup: { findById: vi.fn(), findByIds: vi.fn(async () => []), findDefault: vi.fn(async () => null) } as never,
+      permissionService: { hasPermission: vi.fn(async () => true) },
+    });
+
+    await fastify.inject({ method: 'GET', url: '/v1/admin/sessions/1/messages?compact=true' });
+    expect(vi.mocked(sessionService.getMessagesByRounds)).toHaveBeenLastCalledWith(1, 5, null, { compactMedia: true });
+
+    await fastify.inject({ method: 'GET', url: '/v1/admin/sessions/1/messages' });
+    expect(vi.mocked(sessionService.getMessagesByRounds)).toHaveBeenLastCalledWith(1, 5, null, { compactMedia: false });
     await fastify.close();
   });
 

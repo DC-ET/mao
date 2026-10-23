@@ -1157,7 +1157,13 @@ export class SessionService {
     sessionId: number,
     roundLimit: number,
     beforeMessageId: number | null,
-    options?: { maxMessageId?: number | null; excludeSourceSessionId?: number | null; aroundMessageId?: number | null },
+    options?: {
+      maxMessageId?: number | null;
+      excludeSourceSessionId?: number | null;
+      aroundMessageId?: number | null;
+      /** 管理端紧凑载荷：不拉附件图片 base64（见 MessageRepository.COMPACT_MESSAGE_COLUMNS）。 */
+      compactMedia?: boolean;
+    },
   ): Promise<MessagePage> {
     if (options?.aroundMessageId != null) {
       return this.loadMessagesAround(sessionId, roundLimit, options.aroundMessageId, options);
@@ -1165,6 +1171,7 @@ export class SessionService {
     const limit = Math.max(1, Math.min(roundLimit, 50));
     const maxMessageId = options?.maxMessageId ?? null;
     const excludeSourceSessionId = options?.excludeSourceSessionId ?? null;
+    const compactMedia = options?.compactMedia === true;
     let beforeMessage: Message | null = null;
     if (beforeMessageId != null) {
       beforeMessage = await this.messageRepo.findById(beforeMessageId);
@@ -1186,9 +1193,9 @@ export class SessionService {
     const startId = pageStarts[pageStarts.length - 1].id!;
     const raw = excludeSourceSessionId == null
       ? (maxMessageId == null
-        ? await this.messageRepo.selectRange(sessionId, startId, beforeId)
-        : await this.messageRepo.selectRange(sessionId, startId, beforeId, maxMessageId))
-      : await this.messageRepo.selectRange(sessionId, startId, beforeId, maxMessageId, excludeSourceSessionId);
+        ? await this.messageRepo.selectRange(sessionId, startId, beforeId, undefined, undefined, compactMedia)
+        : await this.messageRepo.selectRange(sessionId, startId, beforeId, maxMessageId, undefined, compactMedia))
+      : await this.messageRepo.selectRange(sessionId, startId, beforeId, maxMessageId, excludeSourceSessionId, compactMedia);
     const supplemented = await this.includeMissingToolResults(sessionId, raw, {
       maxMessageId,
       excludeSourceSessionId,
@@ -1236,7 +1243,7 @@ export class SessionService {
     sessionId: number,
     roundLimit: number,
     aroundMessageId: number,
-    options?: { maxMessageId?: number | null; excludeSourceSessionId?: number | null },
+    options?: { maxMessageId?: number | null; excludeSourceSessionId?: number | null; compactMedia?: boolean },
   ): Promise<MessagePage> {
     const hit = await this.messageRepo.findById(aroundMessageId);
     if (hit == null || hit.sessionId !== sessionId) {
@@ -1249,9 +1256,9 @@ export class SessionService {
       const excludeSourceSessionId = options?.excludeSourceSessionId ?? null;
       const raw = excludeSourceSessionId == null
         ? (maxMessageId == null
-          ? await this.messageRepo.selectRange(sessionId, aroundMessageId, nextUserId)
-          : await this.messageRepo.selectRange(sessionId, aroundMessageId, nextUserId, maxMessageId))
-        : await this.messageRepo.selectRange(sessionId, aroundMessageId, nextUserId, maxMessageId, excludeSourceSessionId);
+          ? await this.messageRepo.selectRange(sessionId, aroundMessageId, nextUserId, undefined, undefined, options?.compactMedia === true)
+          : await this.messageRepo.selectRange(sessionId, aroundMessageId, nextUserId, maxMessageId, undefined, options?.compactMedia === true))
+        : await this.messageRepo.selectRange(sessionId, aroundMessageId, nextUserId, maxMessageId, excludeSourceSessionId, options?.compactMedia === true);
       const supplemented = await this.includeMissingToolResults(sessionId, raw, {
         maxMessageId,
         excludeSourceSessionId,
@@ -1269,6 +1276,7 @@ export class SessionService {
     const page = await this.getMessagesByRounds(sessionId, roundLimit, nextUserId, {
       maxMessageId: options?.maxMessageId,
       excludeSourceSessionId: options?.excludeSourceSessionId,
+      compactMedia: options?.compactMedia,
     });
     return { ...page, hasNewer: nextUserId != null };
   }
@@ -1293,6 +1301,26 @@ export class SessionService {
       return new Map();
     }
     return groupFileChanges(await this.fileChangeRepo.listSummaryByMessageIds(sessionId, messageIds));
+  }
+
+  /**
+   * 管理端按需读取工具附件字节：图片 base64 存在 message.metadata.attachments[index].data_uri，
+   * 列表接口（compact）不再内联返回，前端展开工具卡片时才取这一张图。
+   */
+  async getMessageAttachment(
+    sessionId: number,
+    messageId: number,
+    index: number,
+  ): Promise<{ mime: string; bytes: Buffer }> {
+    const message = await this.messageRepo.findById(messageId);
+    if (message == null || message.sessionId !== sessionId) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID);
+    }
+    const attachment = parseAttachmentDataUri(message.metadata, index);
+    if (attachment == null) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID);
+    }
+    return attachment;
   }
 
   async cleanupIncompleteTail(sessionId: number): Promise<number> {
@@ -1627,4 +1655,32 @@ function parseToolCallsJson(json: string): Array<{ id?: string }> {
   } catch {
     return [];
   }
+}
+
+/**
+ * 解析工具附件里的内联图片：`metadata.attachments[index].data_uri` 形如
+ * `data:image/png;base64,xxxx`。index 越界、非图片或 metadata 不是 JSON 时返回 null。
+ */
+function parseAttachmentDataUri(
+  metadata: string | null | undefined,
+  index: number,
+): { mime: string; bytes: Buffer } | null {
+  if (metadata == null || metadata.length === 0) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(metadata);
+  } catch {
+    return null;
+  }
+  if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  const attachments = (parsed as { attachments?: unknown }).attachments;
+  if (!Array.isArray(attachments)) return null;
+  const attachment = attachments[index];
+  if (attachment == null || typeof attachment !== 'object' || Array.isArray(attachment)) return null;
+  const item = attachment as { mime?: unknown; data_uri?: unknown };
+  if (typeof item.data_uri !== 'string') return null;
+  const match = /^data:([^;,]+);base64,([\s\S]+)$/.exec(item.data_uri);
+  if (match == null) return null;
+  const mime = typeof item.mime === 'string' && item.mime.trim() !== '' ? item.mime.trim() : match[1];
+  return { mime, bytes: Buffer.from(match[2], 'base64') };
 }

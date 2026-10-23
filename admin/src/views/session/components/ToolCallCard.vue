@@ -33,6 +33,7 @@
           :preview-teleported="true"
           @click.stop
         />
+        <div v-else-if="loadingImage" class="image-loading">图片加载中…</div>
         <div v-if="displayResultText" class="code-block-wrapper">
           <pre class="result-content"><code>{{ displayResultText }}</code></pre>
           <button class="copy-btn" title="复制" @click="copyText(displayResultText)">
@@ -45,11 +46,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Select, CloseBold, ArrowDown, CopyDocument, Loading } from '@element-plus/icons-vue'
 import type { ToolCall } from '../types/chat'
 import { toolCallLabel } from '../utils/toolDisplay'
+import { api } from '../../../api'
 
 const props = defineProps<{ toolCall: ToolCall }>()
 
@@ -67,9 +69,8 @@ const formattedInput = computed(() => {
   }
 })
 
-const hasExpandableBody = computed(() => !!(formattedInput.value || props.toolCall.result || imagePreviewUrl.value))
-
-const imagePreviewUrl = computed(() => {
+/** 旧载荷（导出 / 旧响应）仍是内联 base64，直接渲染 */
+const inlineImageUrl = computed(() => {
   if (props.toolCall.preview?.data_uri) {
     return props.toolCall.preview.data_uri
   }
@@ -83,6 +84,50 @@ const imagePreviewUrl = computed(() => {
     // not json
   }
   return ''
+})
+
+/** compact 列表只带附件定位信息：展开卡片时才向附件端点取图 */
+const hasRemoteImage = computed(() => {
+  const preview = props.toolCall.preview
+  return preview != null && preview.data_uri == null && preview.sessionId != null && preview.messageId != null
+})
+
+const loadingImage = ref(false)
+const remoteImageUrl = ref('')
+const imagePreviewUrl = computed(() => inlineImageUrl.value || remoteImageUrl.value)
+const hasExpandableBody = computed(() => !!(formattedInput.value || props.toolCall.result || inlineImageUrl.value || hasRemoteImage.value))
+
+async function loadRemoteImage(): Promise<void> {
+  const preview = props.toolCall.preview
+  if (preview == null || inlineImageUrl.value || remoteImageUrl.value || loadingImage.value) return
+  if (preview.sessionId == null || preview.messageId == null) return
+  loadingImage.value = true
+  try {
+    const res = await api.get(
+      `/admin/sessions/${preview.sessionId}/messages/${preview.messageId}/attachments/${preview.attachmentIndex ?? 0}`,
+      { responseType: 'blob', skipErrorToast: true }
+    )
+    const blob = (res as { data?: Blob }).data
+    if (blob != null && typeof blob.type === 'string' && blob.type.startsWith('image/')) {
+      remoteImageUrl.value = URL.createObjectURL(blob)
+    }
+  } catch {
+    // 附件缺失（老会话 / 工作区已清理）时静默降级，卡片其它内容照常显示
+  } finally {
+    loadingImage.value = false
+  }
+}
+
+watch(
+  () => [isExpanded.value, props.toolCall.preview] as const,
+  () => {
+    if (isExpanded.value) void loadRemoteImage()
+  },
+  { immediate: true }
+)
+
+onBeforeUnmount(() => {
+  if (remoteImageUrl.value) URL.revokeObjectURL(remoteImageUrl.value)
 })
 
 const displayResultText = computed(() => {
@@ -269,6 +314,12 @@ function toggleExpand() {
   margin-bottom: 8px;
   border: 1px solid var(--el-border-color-lighter);
   cursor: zoom-in;
+}
+
+.image-loading {
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
 }
 
 .image-preview :deep(img) {

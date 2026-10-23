@@ -29,12 +29,21 @@ export function extractToolPreviewFromMetadata(metadata: unknown): ToolCall['pre
     const root = typeof metadata === 'string' ? JSON.parse(metadata) : metadata
     const attachments = (root as { attachments?: unknown[] })?.attachments
     if (!Array.isArray(attachments) || attachments.length === 0) return undefined
-    const first = attachments[0] as { mime?: string; data_uri?: string }
-    if (!first?.data_uri) return undefined
+    const first = attachments[0] as { mime?: string; path?: string; data_uri?: string }
+    if (first?.data_uri) {
+      // 旧载荷 / 导出文件仍是内联 base64，直接渲染
+      return {
+        media_type: 'image',
+        mime: first.mime,
+        data_uri: first.data_uri
+      }
+    }
+    // compact 列表不再内联图片，只留定位信息；展开工具卡片时按需取
     return {
       media_type: 'image',
-      mime: first.mime,
-      data_uri: first.data_uri
+      mime: first?.mime,
+      path: first?.path,
+      attachmentIndex: 0
     }
   } catch {
     return undefined
@@ -110,7 +119,18 @@ export function buildSegmentsFromContentAndTools(
   return segments
 }
 
-export function mapApiMessagesToChat(raw: Array<Record<string, unknown>>): ChatMessage[] {
+/** compact 列表的图片预览只带附件下标，这里补上会话 / 消息 id 供 ToolCallCard 按需取图。 */
+function attachPreviewLocator(
+  preview: ToolCall['preview'] | undefined,
+  sessionId: string | undefined,
+  messageId: unknown
+): ToolCall['preview'] | undefined {
+  if (preview == null || preview.data_uri != null) return preview
+  if (sessionId == null || messageId == null) return preview
+  return { ...preview, sessionId, messageId: String(messageId) }
+}
+
+export function mapApiMessagesToChat(raw: Array<Record<string, unknown>>, sessionId?: string): ChatMessage[] {
   const result: ChatMessage[] = []
   const pendingToolResults: Array<{ toolCallId: string; content: string; preview?: ToolCall['preview'] }> = []
 
@@ -120,7 +140,7 @@ export function mapApiMessagesToChat(raw: Array<Record<string, unknown>>): ChatM
     if (roleRaw === 'tool' || roleRaw === 'function') {
       const toolCallId = m.toolCallId != null ? String(m.toolCallId) : ''
       const content = String(m.content ?? '')
-      const preview = extractToolPreviewFromMetadata(m.metadata)
+      const preview = attachPreviewLocator(extractToolPreviewFromMetadata(m.metadata), sessionId, m.id)
       let matched = false
       for (let j = result.length - 1; j >= 0; j--) {
         const prev = result[j]
