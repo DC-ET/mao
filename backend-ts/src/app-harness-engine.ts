@@ -49,6 +49,7 @@ import type { ApprovalRuleService } from './approval-rule/approval-rule.service.
 import type { DockerToolRouter } from './harness/container/docker-tool-router.js';
 import type { ApprovalRegistry } from './harness/approval/approval-registry.js';
 import type { AskUserQuestionsRegistry } from './harness/tool/ask-user-questions-registry.js';
+import type { InFlightToolRegistry } from './harness/core/in-flight-tool-registry.js';
 import type { SessionTreeSignalPublisher } from './harness/approval/session-tree-signal-publisher.js';
 import type { TaskNotificationDeliveryService } from './notification/task/delivery.service.js';
 import type { InboxService } from './inbox/inbox.service.js';
@@ -140,6 +141,7 @@ export interface HarnessEngineDeps {
   dockerRouter: DockerToolRouter;
   approvalRegistry: ApprovalRegistry;
   askUserQuestionsRegistry: AskUserQuestionsRegistry;
+  inFlightToolRegistry: InFlightToolRegistry;
   treeSignalPublisher: SessionTreeSignalPublisher;
   deliveryService: TaskNotificationDeliveryService;
   feishuAskMount: any;
@@ -305,6 +307,7 @@ export function assembleHarnessEngine(deps: HarnessEngineDeps): HarnessEngineRes
     d.shellManager, d.activityHeartbeat, d.sessionSvc, d.orchestrator, d.activeContext, d.routingMcpClient,
     () => d.backgroundSubagentManager,
     compactionSignalBus,
+    d.inFlightToolRegistry,
   );
   d.holder.loop = agentLoop;
   d.holder.compactionSignalBus = compactionSignalBus;

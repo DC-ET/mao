@@ -31,6 +31,7 @@ import type { Tool } from '../tool/tool.js';
 import type { ShellSessionManager } from '../shell/shell-session-manager.js';
 import type { McpClientManager } from '../mcp/mcp-client-manager.js';
 import { NoProgressGuard, NoProgressLoopException } from './no-progress-guard.js';
+import type { InFlightToolRegistry } from './in-flight-tool-registry.js';
 
 /**
  * 单次执行内「体积压缩」最多尝试次数（含成功那次）。
@@ -83,6 +84,8 @@ export class AgentLoop {
     private readonly mcpClientManager: McpClientManager,
     private readonly backgroundSubagentManager?: (() => BackgroundSubagentManager | null | undefined) | null,
     private readonly compactionSignalBus?: CompactionSignalBus | null,
+    /** 进行中的工具调用登记表：管理后台会话详情需要，见 in-flight-tool-registry.ts */
+    private readonly inFlightTools?: InFlightToolRegistry | null,
   ) {}
 
   registerCancelFlag(sessionId: number): AtomicBoolean {
@@ -605,6 +608,7 @@ export class AgentLoop {
         this.shellSessionManager.closeByConversation(sessionId);
         this.mcpClientManager.closeSession(sessionId);
         this.backgroundSubagentManager?.()?.clearResults(sessionId);
+        this.inFlightTools?.clear(sessionId);
       }
     }
   }
@@ -700,9 +704,22 @@ export class AgentLoop {
     cancelFlag: AtomicBoolean | null,
     noProgress: NoProgressGuard,
   ): Promise<void> {
-    const runOne = (tc: ToolCall): Promise<ToolResult> => ToolCallContext.run(tc.id, () =>
-      Promise.resolve(this.dispatchTool(tc, context)),
-    );
+    const runOne = async (tc: ToolCall): Promise<ToolResult> => {
+      const sessionId = context.sessionId;
+      if (sessionId != null) {
+        this.inFlightTools?.start(sessionId, {
+          id: tc.id ?? '',
+          name: tc.function?.name ?? '',
+          arguments: tc.function?.arguments ?? '',
+        });
+      }
+      try {
+        return await ToolCallContext.run(tc.id, () => Promise.resolve(this.dispatchTool(tc, context)));
+      } finally {
+        // 同步抛错 / 异步失败 / 正常返回都要注销，否则后台会一直挂着「执行中」卡片
+        if (sessionId != null && tc.id) this.inFlightTools?.finish(sessionId, tc.id);
+      }
+    };
 
     if (pendingCalls.length === 1) {
       if (cancelFlag?.get()) return;

@@ -44,6 +44,15 @@
       </div>
     </div>
 
+    <!-- 正在执行的工具调用：该轮 tool_calls 尚未落库，由后端内存态补齐，默认展开可见 -->
+    <div v-if="activeToolCalls.length > 0" class="active-tools">
+      <div class="active-tools-title">
+        <el-icon class="is-loading active-tools-icon"><Loading /></el-icon>
+        <span>正在执行</span>
+      </div>
+      <ToolCallCard v-for="tc in activeToolCalls" :key="tc.id" :tool-call="tc" />
+    </div>
+
     <!-- Final reply text (always last assistant message content, not folded) -->
     <div v-if="finalReply && finalReplyText" class="message-item assistant">
       <div class="message-content">
@@ -66,7 +75,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { ArrowDown } from '@element-plus/icons-vue'
+import { ArrowDown, Loading } from '@element-plus/icons-vue'
 import { formatDateTime } from '../../../utils/datetime'
 import { renderMarkdown } from '../composables/useMarkdown'
 import type { ChatMessage, FileChange } from '../types/chat'
@@ -115,6 +124,19 @@ function isInFlightToolOnly(msg: ChatMessage): boolean {
   return tools.every(tc => tc.status === 'running' || tc.status === 'pending')
 }
 
+const ACTIVE_TOOL_STATUS = new Set(['running', 'pending'])
+
+// 正在执行的工具（含后端内存态补的进行中卡片、等待作答的 ask_user_questions）：
+// 独立成块默认可见，不再埋在执行过程的折叠区里。
+const activeToolCalls = computed(() => {
+  const msgs = props.assistantMessages
+  const last = msgs[msgs.length - 1]
+  if (!last?.toolCalls?.length) return []
+  return last.toolCalls.filter(tc => ACTIVE_TOOL_STATUS.has(tc.status) && tc.name !== 'ask_user_questions')
+})
+
+const activeToolIds = computed(() => new Set(activeToolCalls.value.map(tc => tc.id)))
+
 // Align with desktop useMessageRounds: last assistant message is always the final reply
 const finalReply = computed(() => {
   const msgs = props.assistantMessages
@@ -161,6 +183,7 @@ const processItems = computed((): ProcessItem[] => {
       items.push({ type: 'text', content: msg.content })
     }
     const tc = getVisibleToolCalls(msg)
+      .filter(call => !activeToolIds.value.has(call.id))
     if (tc.length > 0) {
       items.push({ type: 'tools', toolCalls: tc })
     }
@@ -466,6 +489,29 @@ watch(() => props.userMessage?.content, async () => {
 
 .process-inline {
   padding: 2px 0;
+}
+
+/* 正在执行（内存态补齐的进行中工具）：默认可见，与折叠的执行过程区分开 */
+.active-tools {
+  margin: 4px 0 12px;
+  padding: 6px 8px 8px;
+  border: 1px solid var(--el-color-primary-light-7);
+  border-radius: 4px;
+  background: var(--el-color-primary-light-9);
+}
+
+.active-tools-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 2px 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--el-color-primary);
+}
+
+.active-tools-icon {
+  font-size: 13px;
 }
 
 /* Process block */

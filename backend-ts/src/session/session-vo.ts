@@ -1,6 +1,7 @@
 import { javaLocalDateTimeString } from '../common/datetime.js';
 import { isMultimodalContentParts } from '../common/multimodal-content.js';
 import type { ContextManifest } from '../harness/core/context-manifest.js';
+import type { InFlightToolCall } from '../harness/core/in-flight-tool-registry.js';
 import { idMapGet } from '../common/request.js';
 import { isActivePhase } from './util/session-group-key.js';
 import type {
@@ -428,6 +429,51 @@ export function toPendingAskUserQuestionsMessageVOs(pending: PendingAskQuestion[
     tokenCount: 0,
     createdAt: javaLocalDateTimeString(new Date()),
   }];
+}
+
+/** 与 admin-message-compact 同口径：参数值超 8000 字符才截断，避免把大文件写入塞进轮询响应。 */
+const IN_FLIGHT_ARG_FIELD_LIMIT = 8000;
+const IN_FLIGHT_ARG_KEEP = 1500;
+
+/**
+ * 把内存里正在执行的工具调用补成一条进行中的助手消息。
+ * 与 ask_user_questions 同因：该轮 tool_calls 要等工具全部返回后才落库，管理端只读 DB 时看不见。
+ */
+export function toInFlightToolCallsMessageVOs(pending: InFlightToolCall[]): MessageVO[] {
+  if (pending.length === 0) return [];
+  const toolCalls = pending.map((p) => ({
+    id: p.id,
+    name: p.name,
+    input: parseToolArgumentsJson(p.arguments),
+    status: 'running',
+  }));
+  return [{
+    id: `pending-tool-${pending[0].id}`,
+    role: 'ASSISTANT',
+    content: null,
+    toolCalls: JSON.stringify(toolCalls),
+    tokenCount: 0,
+    createdAt: javaLocalDateTimeString(new Date(pending[0].startedAt)),
+  }];
+}
+
+/** 工具参数是模型下发的 JSON 字符串；解析失败时前端仍会按 name 渲染卡片。 */
+function parseToolArgumentsJson(raw: string): Record<string, unknown> | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+    const record = parsed as Record<string, unknown>;
+    for (const [key, value] of Object.entries(record)) {
+      if (typeof value === 'string' && value.length > IN_FLIGHT_ARG_FIELD_LIMIT) {
+        record[key] = value.slice(0, IN_FLIGHT_ARG_KEEP)
+          + `\n…（参数过长已省略，原文 ${value.length} 字符，完整内容见落库记录）`;
+      }
+    }
+    return record;
+  } catch {
+    return undefined;
+  }
 }
 
 export function toFileChangeVO(fc: FileChange): FileChangeVO {

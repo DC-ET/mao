@@ -49,37 +49,13 @@ import { ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Select, CloseBold, ArrowDown, CopyDocument, Loading } from '@element-plus/icons-vue'
 import type { ToolCall } from '../types/chat'
+import { toolCallLabel } from '../utils/toolDisplay'
 
 const props = defineProps<{ toolCall: ToolCall }>()
 
 const isExpanded = ref(false)
 
-const displaySummary = computed(() => {
-  if (props.toolCall.summary) return props.toolCall.summary
-  const preview = inputPreview.value
-  return preview ? `${props.toolCall.name} · ${preview}` : props.toolCall.name
-})
-
-const inputPreview = computed(() => {
-  const input = props.toolCall.input
-  if (!input) return ''
-  const cmd = input.command
-  if (typeof cmd === 'string') {
-    return cmd.slice(0, 60) + (cmd.length > 60 ? '...' : '')
-  }
-  const pattern = input.pattern
-  if (typeof pattern === 'string') {
-    const searchPath = input.path
-    const suffix = typeof searchPath === 'string' && searchPath ? ` in ${searchPath}` : ''
-    const text = `${pattern}${suffix}`
-    return text.length > 60 ? text.slice(0, 60) + '...' : text
-  }
-  const path = input.path ?? input.file_path
-  if (typeof path === 'string') return path
-  const query = input.query
-  if (typeof query === 'string') return query
-  return ''
-})
+const displaySummary = computed(() => toolCallLabel(props.toolCall))
 
 const formattedInput = computed(() => {
   const input = props.toolCall.input

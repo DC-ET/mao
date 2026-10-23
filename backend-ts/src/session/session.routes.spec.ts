@@ -16,6 +16,7 @@ import type { AgentLookup, LlmModelLookup, UserLookup } from './types.js';
 import type { PathSandbox } from '../harness/safety/path-sandbox.js';
 import type { OssStsService } from '../oss/oss-sts.service.js';
 import { useTmpDir } from '../testing/tmp-dir.js';
+import { InFlightToolRegistry } from '../harness/core/in-flight-tool-registry.js';
 import { join } from 'node:path';
 import { mkdirSync, writeFileSync } from 'node:fs';
 
@@ -470,6 +471,64 @@ describe('session and admin routes', () => {
     expect(body.data.messages[0].content.startsWith('Tool execution failed')).toBe(true);
     expect(body.data.messages[0].content.length).toBeLessThanOrEqual(4000);
     expect(body.data.messages[0].content).toContain('已截断');
+    await fastify.close();
+  });
+
+  it('admin messages append in-flight tool calls only on the latest page', async () => {
+    const fastify = Fastify();
+    fastify.setErrorHandler(handleError);
+    fastify.addHook('preHandler', (req, _r, done) => {
+      req.userId = 7;
+      done();
+    });
+    const sessionService = {
+      getMessagesByRounds: vi.fn(async () => ({
+        messages: [{ id: 12, sessionId: 1, role: 'ASSISTANT', content: '先跑一下命令', toolCalls: null }],
+        hasMore: false,
+        nextBeforeMessageId: null,
+      })),
+      getFileChangesByMessageIds: vi.fn(async () => new Map()),
+      getFileChangeSummariesByMessageIds: vi.fn(async () => new Map()),
+    } as unknown as SessionService;
+    const inFlightToolRegistry = new InFlightToolRegistry();
+    inFlightToolRegistry.start(1, {
+      id: 'call-live',
+      name: 'shell',
+      arguments: JSON.stringify({ command: 'npm run build' }),
+    });
+    registerAdminSessionRoutes(fastify, {
+      sessionService,
+      userLookup: { findByIds: vi.fn(async () => []), listOptions: vi.fn(async () => []) } as never,
+      agentLookup: { findById: vi.fn(), findByIds: vi.fn(async () => []), requireDefaultAgent: vi.fn(), listOptions: vi.fn(async () => []) } as never,
+      modelLookup: { findById: vi.fn(), findByIds: vi.fn(async () => []), findDefault: vi.fn(async () => null) } as never,
+      permissionService: { hasPermission: vi.fn(async () => true) },
+      inFlightToolRegistry,
+    });
+
+    const latest = JSON.parse((await fastify.inject({
+      method: 'GET', url: '/v1/admin/sessions/1/messages',
+    })).body);
+    expect(latest.data.messages).toHaveLength(2);
+    const pending = latest.data.messages[1];
+    expect(pending.id).toBe('pending-tool-call-live');
+    expect(pending.role).toBe('ASSISTANT');
+    const toolCalls = JSON.parse(pending.toolCalls) as Array<{ id: string; name: string; status: string; input: { command?: string } }>;
+    expect(toolCalls).toHaveLength(1);
+    expect(toolCalls[0]).toMatchObject({ id: 'call-live', name: 'shell', status: 'running' });
+    expect(toolCalls[0].input.command).toBe('npm run build');
+
+    // 执行结束（注销）后不再补卡片
+    inFlightToolRegistry.finish(1, 'call-live');
+    const after = JSON.parse((await fastify.inject({
+      method: 'GET', url: '/v1/admin/sessions/1/messages',
+    })).body);
+    expect(after.data.messages).toHaveLength(1);
+
+    const older = JSON.parse((await fastify.inject({
+      method: 'GET', url: '/v1/admin/sessions/1/messages?beforeMessageId=5',
+    })).body);
+    expect(older.data.messages).toHaveLength(1);
+    expect(older.data.messages[0].id).toBe(12);
     await fastify.close();
   });
 
