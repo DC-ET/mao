@@ -52,11 +52,26 @@ function normalizeApiProtocol(value: string | null | undefined): string | null {
 
 const EFFORT_VALUES = ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 
+/** 供应商请求体上限（字节）：null/0 表示未声明；非法值显式拒绝，避免阈值被写成负数。 */
+function normalizeMaxRequestBodyBytes(value: number | null | undefined): number | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (!Number.isInteger(value) || value < 0 || value > MAX_REQUEST_BODY_BYTES) {
+    throw new BusinessException(
+      ErrorCode.PARAM_INVALID.code,
+      `请求体上限必须是 0~${MAX_REQUEST_BODY_BYTES} 之间的整数（字节），0 或留空表示未声明`,
+    );
+  }
+  return value > 0 ? value : null;
+}
+
 /** 价格列 DECIMAL(12,6)：整数位 6 位、小数位 6 位。超上限直接写库会触发 MySQL 1264 让接口 500；
  *  小数位超过 6 位则被静默四舍五入（0.0000004 → 0.000000，一个"拿钱买"的模型变成免费模型），
  *  两者都必须在应用层显式拦截，不能依赖数据库行为。 */
 const PRICE_MAX = 999999.999999;
 const PRICE_DECIMALS = 6;
+/** 请求体上限的合理上界（2GB），防止把阈值写成天文数字或负数。 */
+const MAX_REQUEST_BODY_BYTES = 2 * 1024 * 1024 * 1024;
 
 /** 价格校验：null 表示不计成本；填写的值必须是非负有限数且完整落在 DECIMAL(12,6) 值域内。 */
 function normalizePrice(value: number | null | undefined, field: string): number | null {
@@ -174,6 +189,7 @@ export class ModelService {
     priceCacheRead: number | null | undefined,
     priceCacheWrite: number | null | undefined,
     priceOutput: number | null | undefined,
+    maxRequestBodyBytes?: number | null,
   ): Promise<LlmModel> {
     if (isDefault != null && isDefault === 1) {
       await this.modelRepo.clearDefaultFlag();
@@ -191,6 +207,7 @@ export class ModelService {
       supportsVision: supportsVision != null ? supportsVision : 0,
       isDefault: isDefault != null ? isDefault : 0,
       contextWindowTokens,
+      maxRequestBodyBytes: normalizeMaxRequestBodyBytes(maxRequestBodyBytes) ?? null,
       priceInput: normalizePrice(priceInput, 'priceInput'),
       priceCacheRead: normalizePrice(priceCacheRead, 'priceCacheRead'),
       priceCacheWrite: normalizePrice(priceCacheWrite, 'priceCacheWrite'),
@@ -219,6 +236,7 @@ export class ModelService {
     priceCacheRead: number | null | undefined,
     priceCacheWrite: number | null | undefined,
     priceOutput: number | null | undefined,
+    maxRequestBodyBytes?: number | null,
   ): Promise<LlmModel> {
     const model = await this.getModel(id);
     if (name != null) model.name = name;
@@ -235,6 +253,8 @@ export class ModelService {
     if (impersonation != null) model.clientImpersonation = impersonation;
     if (supportsVision != null) model.supportsVision = supportsVision;
     if (contextWindowTokens != null) model.contextWindowTokens = contextWindowTokens;
+    const maxRequestBody = normalizeMaxRequestBodyBytes(maxRequestBodyBytes);
+    if (maxRequestBody !== undefined) model.maxRequestBodyBytes = maxRequestBody;
     // 价格字段显式区分「未提供」（undefined=保留）与「提供为 null」（清空=不计成本）：
     // 前端编辑表单总是回传全部价格字段，清空输入框即显式置 null。
     if (priceInput !== undefined) model.priceInput = normalizePrice(priceInput, 'priceInput');

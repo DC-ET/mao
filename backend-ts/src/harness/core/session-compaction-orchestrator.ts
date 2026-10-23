@@ -53,6 +53,7 @@ export class SessionCompactionOrchestrator {
     activeTokensHint?: number | null,
     triggerMode: 'request_start' | 'mid_loop' | 'manual' = compactCurrentTurn ? 'mid_loop' : 'request_start',
     force = false,
+    payloadBytes?: number | null,
   ): Promise<boolean> {
     const record = await this.sessionCompactionService.loadValidated(sessionId);
     const boundary = this.sessionCompactionService.boundaryOf(record);
@@ -74,7 +75,7 @@ export class SessionCompactionOrchestrator {
     }, async () => this.contextManager.compactSession(
       sessionId, boundary, history.persistedMessages, history.snapshotMessageIds,
       normalRequest, compactionModelConfig!, config, listener, cancelFlag, activeTokensHint ?? null, force,
-      context.modelConfig));
+      context.modelConfig, payloadBytes ?? null));
     if (result == null) return false;
 
     let compactionEnded = false;

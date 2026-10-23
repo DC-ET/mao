@@ -19,7 +19,7 @@ import type { LocalAgentsMdRegistry } from './local-agents-md-registry.js';
 import type { PromptEngine } from './prompt-engine.js';
 import type { SessionHistoryLoader } from './session-history-loader.js';
 import type { SessionCompactionOrchestrator } from './session-compaction-orchestrator.js';
-import { CompactionCancelledException, CompactionContextOverflowException } from './compaction-service.js';
+import { CompactionCancelledException, CompactionContextOverflowException, CompactionPayloadOverflowException } from './compaction-service.js';
 import { CompactionStateReloadException } from './session-compaction-orchestrator.js';
 import type { ActiveContextCalculator } from './active-context-calculator.js';
 import type { ToolRegistry } from '../tool/tool-registry.js';
@@ -506,11 +506,21 @@ export class HarnessService {
           context.messages, context.messagesCoveredByAnchor, normalRequest),
       );
       try {
-        await this.sessionCompactionOrchestrator.compact(
-          sessionId, context, normalRequest, listener ?? null, effectiveConfig, false, cancelFlag ?? null, activeTokensHint, 'request_start');
+        // 必须在压缩前记下体积：compact() 成功后会重建请求并覆盖 lastRequestBytes。
+        const bytesBeforeCompact = context.lastRequestBytes;
+        const compacted = await this.sessionCompactionOrchestrator.compact(
+          sessionId, context, normalRequest, listener ?? null, effectiveConfig, false, cancelFlag ?? null,
+          activeTokensHint, 'request_start', false, bytesBeforeCompact);
+        // 本次请求体积已越线时，说明这一次压缩就承担了「体积压缩」名额：
+        // 同一次执行内 mid-loop 不再重复压（技术方案 §5.4）。
+        const triggerBytes = CompactionConfig.resolveEffectiveTriggerBytes(context.modelConfig, effectiveConfig);
+        if (compacted && triggerBytes > 0 && bytesBeforeCompact >= triggerBytes) {
+          context.payloadCompactionDone = true;
+        }
         context.preparedRequest = await this.buildNormalRequest(context);
       } catch (e) {
         if (e instanceof CompactionContextOverflowException
+          || e instanceof CompactionPayloadOverflowException
           || e instanceof CompactionCancelledException
           || e instanceof CompactionStateReloadException) {
           throw e;
@@ -580,7 +590,7 @@ export class HarnessService {
       );
       return await this.sessionCompactionOrchestrator.compact(
         sessionId, context, preparedRequest, listener, config,
-        false, null, activeTokensHint, 'manual', true);
+        false, null, activeTokensHint, 'manual', true, context.lastRequestBytes);
     } finally {
       await this.closeBoundCloudMcp(sessionId);
     }
@@ -671,13 +681,21 @@ export class HarnessService {
       merged.enabled = this.compactionConfig.enabled;
       merged.contextWindowTokens = this.compactionConfig.contextWindowTokens;
       merged.triggerRatio = this.compactionConfig.triggerRatio;
+      merged.triggerPayloadBytes = this.compactionConfig.triggerPayloadBytes;
       merged.maxSummaryTokens = this.compactionConfig.maxSummaryTokens;
       merged.loopMidwayCompact = this.compactionConfig.loopMidwayCompact;
       if (compactionNode.enabled != null) merged.enabled = Boolean(compactionNode.enabled);
       if (compactionNode.contextWindowTokens != null) merged.contextWindowTokens = Number(compactionNode.contextWindowTokens);
       if (compactionNode.triggerRatio != null) merged.triggerRatio = Number(compactionNode.triggerRatio);
+      if (compactionNode.triggerPayloadBytes != null) merged.triggerPayloadBytes = Number(compactionNode.triggerPayloadBytes);
       if (compactionNode.maxSummaryTokens != null) merged.maxSummaryTokens = Number(compactionNode.maxSummaryTokens);
       if (compactionNode.loopMidwayCompact != null) merged.loopMidwayCompact = Boolean(compactionNode.loopMidwayCompact);
+      // agent 级覆盖没有后台表单校验：triggerRatio=0 会让「tokens >= floor(window×0)」恒成立，
+      // 每个工具轮都触发一次压缩。这里与系统设置同口径收口，非法值退回全局默认。
+      if (!(merged.triggerRatio > 0 && merged.triggerRatio <= 1)) merged.triggerRatio = this.compactionConfig.triggerRatio;
+      if (!Number.isFinite(merged.triggerPayloadBytes) || merged.triggerPayloadBytes < 0) {
+        merged.triggerPayloadBytes = this.compactionConfig.triggerPayloadBytes;
+      }
       return merged;
     } catch (e) {
       harnessLog('warn', 'Failed to parse agent compaction config, using defaults', e);

@@ -341,11 +341,17 @@ describe('SystemSettingService', () => {
     }
   });
 
+  it('updateRejectsInvalidPayloadTriggerBytes', async () => {
+    vi.mocked(mapper.findByKey).mockResolvedValue(setting('harness.compaction.triggerPayloadBytes', '运行参数', 1));
+    await expect(service().update('harness.compaction.triggerPayloadBytes', '-1')).rejects.toThrow(/非负整数/);
+    await expect(service().update('harness.compaction.triggerPayloadBytes', 'abc')).rejects.toThrow(/非负整数/);
+  });
+
   it('getHarnessTuningConfigAppliesDefaults', async () => {
     vi.mocked(mapper.findByKey).mockResolvedValue(null);
     const cfg = await service().getHarnessTuningConfig();
     expect(cfg).toEqual({
-      compaction: { enabled: true, contextWindowTokens: 256000, triggerRatio: 0.8, maxSummaryTokens: 12000, loopMidwayCompact: true },
+      compaction: { enabled: true, contextWindowTokens: 256000, triggerRatio: 0.8, triggerPayloadBytes: 41943040, maxSummaryTokens: 12000, loopMidwayCompact: true },
       llm: { rateLimitMaxRetries: 10, rateLimitRetryDelaySeconds: 2, rateLimitMaxRetryDelaySeconds: 30, callTimeoutSeconds: 120, httpCallTimeoutSeconds: 180, streamIdleTimeoutSeconds: 300, anthropicAutoCache: true, anthropicCacheTtl: '5m' },
       webPage: { connectTimeout: 10000, readTimeout: 30000, maxRawBytes: 1048576, maxOutputLength: 50000, userAgent: 'Mozilla/5.0 (compatible; AgentWorkbench/1.0)' },
       shell: { maxSessionsPerConversation: 30, sessionIdleTimeoutMinutes: 30, sessionMaxLifetimeHours: 2 },

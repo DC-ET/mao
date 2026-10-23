@@ -323,11 +323,12 @@ const ALL_GROUPS = computed<GroupDef[]>(() => [
   {
     name: 'harness-compaction',
     title: '上下文压缩',
-    keys: ['harness.compaction.enabled', 'harness.compaction.contextWindowTokens', 'harness.compaction.triggerRatio', 'harness.compaction.maxSummaryTokens', 'harness.compaction.loopMidwayCompact'],
+    keys: ['harness.compaction.enabled', 'harness.compaction.contextWindowTokens', 'harness.compaction.triggerRatio', 'harness.compaction.triggerPayloadBytes', 'harness.compaction.maxSummaryTokens', 'harness.compaction.loopMidwayCompact'],
     fields: [
       { key: 'harness.compaction.enabled', label: '启用', type: 'switch', hint: '会话上下文自动压缩总开关' },
       { key: 'harness.compaction.contextWindowTokens', label: '上下文窗口 (tokens)', type: 'number', min: 1000, max: 10000000, hint: '默认 256000' },
       { key: 'harness.compaction.triggerRatio', label: '触发比例', hint: '0~1 之间的小数，默认 0.8' },
+      { key: 'harness.compaction.triggerPayloadBytes', label: '请求体体积阈值 (字节)', type: 'number', min: 0, max: 2000000000, hint: '默认 41943040（40 MiB）；0 表示关闭体积触发' },
       { key: 'harness.compaction.maxSummaryTokens', label: '摘要上限 (tokens)', type: 'number', min: 1000, max: 1000000, hint: '默认 12000' },
       { key: 'harness.compaction.loopMidwayCompact', label: '循环中途压缩', type: 'switch', hint: '默认开启' },
     ],

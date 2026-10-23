@@ -149,6 +149,11 @@ export interface LlmModelConfig {
   apiKey?: string;
   modelId?: string;
   contextWindowTokens?: number;
+  /**
+   * 供应商允许的请求体上限（字节）。用于推导会话压缩的体积触发阈值（上限 × 0.8）；
+   * 0/undefined 表示未知，回退全局阈值。
+   */
+  maxRequestBodyBytes?: number | null;
   supportsVision?: boolean;
   clientImpersonation?: ClientImpersonation;
   /** 每百万「非缓存」输入 token 价格（成本单位）。随模型解析链下发用于成本快照；缺失时落库侧走兜底价格缓存。 */

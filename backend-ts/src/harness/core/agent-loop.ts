@@ -9,7 +9,7 @@ import type { ActiveContextCalculator } from './active-context-calculator.js';
 import type { BackgroundTaskManager } from './background-task-manager.js';
 import type { BackgroundSubagentManager } from '../delegate/background-subagent-manager.js';
 import { CompactionConfig } from './compaction-config.js';
-import { CompactionCancelledException, CompactionContextOverflowException } from './compaction-service.js';
+import { CompactionCancelledException, CompactionContextOverflowException, CompactionPayloadOverflowException } from './compaction-service.js';
 import type { ContextManager } from './context-manager.js';
 import type { PromptEngine } from './prompt-engine.js';
 import type { SessionCompactionOrchestrator } from './session-compaction-orchestrator.js';
@@ -31,6 +31,13 @@ import type { Tool } from '../tool/tool.js';
 import type { ShellSessionManager } from '../shell/shell-session-manager.js';
 import type { McpClientManager } from '../mcp/mcp-client-manager.js';
 import { NoProgressGuard, NoProgressLoopException } from './no-progress-guard.js';
+
+/**
+ * 单次执行内「体积压缩」最多尝试次数（含成功那次）。
+ * compact() 在摘要不合规/CAS 未推进时返回 false 而不是抛错，若不设上限，
+ * 每个工具轮都会重试一次全量历史压缩（40MB × 轮数），成本随工具轮数放大。
+ */
+const MAX_PAYLOAD_COMPACTION_ATTEMPTS = 2;
 
 export interface MessagePersistenceCallback {
   onSaveAssistantMessage(
@@ -520,23 +527,58 @@ export class AgentLoop {
         }
         const loopConfig = context.compactionConfig;
         const midLoopAllowed = loopConfig != null
-          && loopConfig.enabled && loopConfig.loopMidwayCompact
+          && loopConfig.enabled
           && persistenceCallback != null
           && context.sessionId != null;
         if (midLoopAllowed && loopConfig) {
           try {
             const nextRequest = await this.promptEngine.buildRequest(context);
-            const nextRequestTokens = this.computeActiveTokens(context, nextRequest);
-            this.persistContextSnapshot(context, nextRequestTokens);
-            listener.onContextWindow?.(nextRequestTokens, context.lastPromptTokens > 0 ? context.lastPromptTokens : 0, context.contextManifest);
+            const nextRequestTokens = loopConfig.loopMidwayCompact ? this.computeActiveTokens(context, nextRequest) : 0;
+            const nextRequestBytes = context.lastRequestBytes;
+            if (loopConfig.loopMidwayCompact) {
+              // 快照落库与 context_window 事件只服务于「按 token 水位中途压缩」；
+              // 只开体积触发时不做这两件事，避免每个工具轮都写库 + 推 WS。
+              this.persistContextSnapshot(context, nextRequestTokens);
+              listener.onContextWindow?.(nextRequestTokens, context.lastPromptTokens > 0 ? context.lastPromptTokens : 0, context.contextManifest);
+            }
             const effectiveContextWindow = CompactionConfig.resolveEffectiveContextWindow(context.modelConfig, loopConfig);
-            if (nextRequestTokens >= effectiveContextWindow * loopConfig.triggerRatio) {
-              await this.sessionCompactionOrchestrator.compact(
-                context.sessionId!, context, nextRequest, listener, loopConfig, true, cancelFlag ?? null, nextRequestTokens, 'mid_loop');
-              context.preparedRequest = await this.promptEngine.buildRequest(context);
+            const effectiveTriggerBytes = CompactionConfig.resolveEffectiveTriggerBytes(context.modelConfig, loopConfig);
+            // 体积检查不受 loopMidwayCompact 限制（技术方案 2026-10-22 §5.5）：
+            // 该开关只控制“每个工具轮是否查 token 水位”，体积是防止上游 413 的硬保护。
+            // 同一次执行内体积压缩只做一次，避免“压缩后仍超 → 再压缩”的空转。
+            const trigger = CompactionConfig.shouldTrigger({
+              tokens: nextRequestTokens,
+              payloadBytes: context.payloadCompactionDone ? 0 : nextRequestBytes,
+              triggerWindowTokens: effectiveContextWindow,
+              effectiveTriggerBytes,
+              config: loopConfig,
+            });
+            const payloadAttempt = trigger === 'payload' || trigger === 'both';
+            if (trigger != null && payloadAttempt && context.payloadCompactionAttempts >= MAX_PAYLOAD_COMPACTION_ATTEMPTS) {
+              // 连续失败后不再每轮重试：否则每个工具轮都会追加一次 40MB 级历史压缩调用，
+              // 失败成本被工具轮数放大。告警只打一条，避免每轮刷日志。
+              if (!context.payloadCompactionCapLogged) {
+                context.payloadCompactionCapLogged = true;
+                harnessLog('warn', `Mid-loop payload compaction disabled after ${MAX_PAYLOAD_COMPACTION_ATTEMPTS} failed attempts:`
+                  + ` sessionId=${context.sessionId}, requestBytes=${nextRequestBytes}`);
+              }
+            } else if (trigger != null) {
+              // 先计数再调用：compact() 抛异常（413/5xx/超时）不会走到下面，
+              // 若在返回后才自增，异常路径永远不消耗名额 → 每个工具轮无限重试。
+              if (payloadAttempt) context.payloadCompactionAttempts += 1;
+              const compacted = await this.sessionCompactionOrchestrator.compact(
+                context.sessionId!, context, nextRequest, listener, loopConfig, true, cancelFlag ?? null,
+                nextRequestTokens, 'mid_loop', false, nextRequestBytes);
+              // 只有真正压缩成功才用掉「本次执行一次体积压缩」的名额：
+              // 空历史/摘要未过校验/CAS 未推进时 compact 返回 false，允许有限次重试。
+              if (compacted) {
+                if (payloadAttempt) context.payloadCompactionDone = true;
+                context.preparedRequest = await this.promptEngine.buildRequest(context);
+              }
             }
           } catch (e) {
-            if (e instanceof CompactionContextOverflowException || e instanceof CompactionStateReloadException) throw e;
+            if (e instanceof CompactionContextOverflowException || e instanceof CompactionPayloadOverflowException
+              || e instanceof CompactionStateReloadException) throw e;
             if (e instanceof CompactionCancelledException) {
               // 本轮已 closeRound 且消息/用量已落库，取消的只是压缩动作，不回滚用量
               cancelFlag?.set(true);
@@ -599,11 +641,12 @@ export class AgentLoop {
       listener.onContextWindow?.(manualTokens, context.lastPromptTokens > 0 ? context.lastPromptTokens : 0, context.contextManifest);
       await this.sessionCompactionOrchestrator.compact(
         context.sessionId, context, manualRequest, listener, loopConfig, true, cancelFlag,
-        manualTokens, 'manual', true);
+        manualTokens, 'manual', true, context.lastRequestBytes);
       context.preparedRequest = await this.promptEngine.buildRequest(context);
       return false;
     } catch (e) {
-      if (e instanceof CompactionContextOverflowException || e instanceof CompactionStateReloadException) throw e;
+      if (e instanceof CompactionContextOverflowException || e instanceof CompactionPayloadOverflowException
+        || e instanceof CompactionStateReloadException) throw e;
       if (e instanceof CompactionCancelledException) {
         cancelFlag?.set(true);
         return true;

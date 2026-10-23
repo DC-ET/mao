@@ -574,6 +574,80 @@ describe('HarnessService.buildContext and execute', () => {
     expect(ctx.tools.map((t) => t.getName())).toContain('send_wechat_image');
   });
 
+  it('buildContextMarksPayloadCompactionDoneWhenPreCompactionRequestWasOverThreshold', async () => {
+    const cfg = new CompactionConfig();
+    cfg.enabled = true;
+    cfg.triggerPayloadBytes = 1000;
+    // 真实 orchestrator 压缩成功会重建请求并覆盖 context.lastRequestBytes，
+    // 测试必须模拟这一点，否则「读压缩前值」被改回旧实现也会全绿。
+    const orchestrator = {
+      compact: vi.fn(async (_id: number, c: AgentExecutionContext) => {
+        c.lastRequestBytes = 100;
+        return true;
+      }),
+    };
+    const activeContext = { activeFromMessageSuffix: vi.fn(() => 100) };
+    const sessionHistoryLoader = {
+      loadHistoryAfterBoundary: vi.fn(async () => ({
+        snapshotMessageIds: [],
+        normalizedEntities: [],
+        persistedMessages: [{ role: 'user', content: 'x' }],
+      })),
+      applyHistory: vi.fn(),
+    };
+    const promptEngine = {
+      buildRequest: vi.fn(async (c: AgentExecutionContext) => {
+        c.lastRequestBytes = 2000;
+        return { messages: [{ role: 'system', content: 'sys' }], stream: true };
+      }),
+    };
+    const { service } = makeHarness({
+      compactionConfig: cfg, orchestrator, activeContext, sessionHistoryLoader, promptEngine,
+    });
+
+    const ctx = await service.buildContext(10);
+
+    expect(orchestrator.compact).toHaveBeenCalledTimes(1);
+    // 压缩前 2000 ≥ 阈值 1000 → 本次执行不再重复做体积压缩
+    expect(ctx.payloadCompactionDone).toBe(true);
+  });
+
+  it('buildContextDoesNotMarkPayloadCompactionWhenBelowThreshold', async () => {
+    const cfg = new CompactionConfig();
+    cfg.enabled = true;
+    cfg.triggerPayloadBytes = 3000;
+    const orchestrator = {
+      compact: vi.fn(async (_id: number, c: AgentExecutionContext) => {
+        c.lastRequestBytes = 100;
+        return true;
+      }),
+    };
+    const activeContext = { activeFromMessageSuffix: vi.fn(() => 100) };
+    const sessionHistoryLoader = {
+      loadHistoryAfterBoundary: vi.fn(async () => ({
+        snapshotMessageIds: [],
+        normalizedEntities: [],
+        persistedMessages: [{ role: 'user', content: 'x' }],
+      })),
+      applyHistory: vi.fn(),
+    };
+    const promptEngine = {
+      buildRequest: vi.fn(async (c: AgentExecutionContext) => {
+        c.lastRequestBytes = 500;
+        return { messages: [{ role: 'system', content: 'sys' }], stream: true };
+      }),
+    };
+    const { service } = makeHarness({
+      compactionConfig: cfg, orchestrator, activeContext, sessionHistoryLoader, promptEngine,
+    });
+
+    const ctx = await service.buildContext(10);
+
+    // token 触发（activeContext=100 / 窗口默认 256000×0.8 不会命中）→ 这里 compact 仍会被调用；
+    // 但压缩前体积 500 < 3000，不能占用「体积压缩」名额。
+    expect(ctx.payloadCompactionDone).toBe(false);
+  });
+
   it('buildContextToleratesInvalidSkillJsonAndCompactionJson', async () => {
     const { service, agentMapper } = makeHarness();
     agentMapper.selectById.mockResolvedValue({
