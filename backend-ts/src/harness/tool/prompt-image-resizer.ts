@@ -8,9 +8,9 @@ export const MAX_PATCHES = 2500;
 export const JPEG_QUALITY = 0.85;
 
 /** 写入侧压缩：超过该字节数才做有损压缩（技术方案 2026-10-22 §7.1）。 */
-export const STORE_COMPRESS_THRESHOLD_BYTES = 1.5 * 1024 * 1024;
+export const STORE_COMPRESS_THRESHOLD_BYTES = 1.5 * 1024 * 1024; // 1_572_864
 /** 写入侧压缩目标：单图 ≤1.2MB（必须小于触发阈值，否则会把图“压”得更大）。 */
-export const STORE_TARGET_BYTES = 1.2 * 1024 * 1024;
+export const STORE_TARGET_BYTES = Math.round(1.2 * 1024 * 1024); // 1_258_291，字节口径保持整数
 /** 质量控制档位：先降质量，再缩尺寸。 */
 export const STORE_QUALITY_STEPS = [80, 70, 60] as const;
 /** 质量降到底仍超目标时，每次缩小的比例。 */
