@@ -6,6 +6,16 @@ import { imageUrlFromPart } from '../session-vo.js';
 import { stripImageUrlLines } from '../util/image-url-annotation.js';
 import { queueWaitMsOf } from '../../openapi/open-api-call-log.logic.js';
 
+/** 轻量读取入站帧类型：鉴权窗口排队只关心是否为 auth，解析失败按未知类型处理。 */
+function peekFrameType(payload: string): string | null {
+  try {
+    const root = JSON.parse(payload) as { type?: unknown };
+    return typeof root?.type === 'string' ? root.type : null;
+  } catch {
+    return null;
+  }
+}
+
 /** user_message_saved 广播用的用户消息内容：text 提取自纯文本或 ContentPart，images 提取自图片 URL。 */
 export interface UserMessagePayload {
   content: string;
@@ -310,6 +320,15 @@ export class StreamingWsHandler {
   private readonly pendingCancels = new Map<number, number>();
   private readonly insertLocks = new Map<number, Promise<void>>();
   /**
+   * 鉴权进行中的连接：首帧 auth 的账号状态校验是异步查库，期间到达的业务帧
+   * （客户端 onopen 里 auth 与 subscribe 是同一 tick 连发的）必须排队，等 auth
+   * 注册完成后按序处理；否则会被判为未认证连接并 1003 关闭（客户端无限重连）。
+   * 只能串行化「鉴权窗口」，鉴权完成后的帧仍并发处理——cancel 这类帧依赖插队
+   * 打断在途 handler，不能被前一条消息阻塞。
+   */
+  private readonly authInFlight = new WeakSet<WsSocket>();
+  private readonly pendingInbound = new WeakMap<WsSocket, string[]>();
+  /**
    * autoConsume / 插队消费到的带来源队列行：sessionId → 回写绑定，执行终态后
    * `settleQueuedBinding` 按类据分发（定时任务回写 lastExecutionStatus、Webhook
    * 触发器回写连续失败计数）。对象身份即归属判定依据：finally 按「值未易主」清理。
@@ -354,6 +373,35 @@ export class StreamingWsHandler {
   }
 
   async handleTextMessage(session: WsSocket, payload: string): Promise<void> {
+    // 鉴权窗口内到达的帧先排队：auth 的账号校验是异步查库，并发处理会让紧随其后的
+    // subscribe 看到「尚未 register」的连接而被 1003 关闭（见 authInFlight 注释）。
+    if (this.authInFlight.has(session)) {
+      const queued = this.pendingInbound.get(session) ?? [];
+      queued.push(payload);
+      this.pendingInbound.set(session, queued);
+      return;
+    }
+    const type = peekFrameType(payload);
+    if (type === 'auth') {
+      this.authInFlight.add(session);
+      try {
+        await this.processTextMessage(session, payload);
+      } finally {
+        this.authInFlight.delete(session);
+      }
+      // auth 处理结束（注册成功或连接被关闭）后按到达顺序冲刷排队帧；
+      // 连接已关闭时后续帧会在 processTextMessage 的鉴权检查处早退。
+      const queued = this.pendingInbound.get(session);
+      this.pendingInbound.delete(session);
+      for (const frame of queued ?? []) {
+        await this.processTextMessage(session, frame);
+      }
+      return;
+    }
+    await this.processTextMessage(session, payload);
+  }
+
+  private async processTextMessage(session: WsSocket, payload: string): Promise<void> {
     if (!this.deps.registry.isConnectionAuthorized(session)) return;
     let root: Record<string, unknown>;
     try {

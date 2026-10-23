@@ -47,6 +47,8 @@ class FakeWebSocket {
   onerror: (() => void) | null = null
   readonly sent: Array<Record<string, unknown>> = []
   readonly url: string
+  /** 收到服务端 connected 鉴权确认帧（测试默认自动回，模拟正常服务端） */
+  autoAck = true
 
   constructor(url: string) {
     this.url = url
@@ -56,6 +58,11 @@ class FakeWebSocket {
   open() {
     this.readyState = FakeWebSocket.OPEN
     this.onopen?.()
+    if (this.autoAck) this.message({ type: 'connected', data: { userId: 7 } })
+  }
+
+  message(payload: Record<string, unknown>) {
+    this.onmessage?.({ target: this, data: JSON.stringify(payload) })
   }
 
   send(data: string) {
@@ -117,6 +124,27 @@ describe('useStreamWS reconnect', () => {
     expect(sockets).toHaveLength(3)
     sockets[2].open()
     await expect(connect()).resolves.toBeUndefined()
+  })
+
+  it('服务端未回 connected 确认帧前不置已连接，也不发送 subscribe', async () => {
+    const { connect, subscribe, connected } = useStreamWS()
+    const pending = connect()
+    sockets[0].autoAck = false
+    sockets[0].open()
+
+    expect(connected.value).toBe(false)
+    expect(sockets[0].sent.map(m => m.type)).toEqual(['auth'])
+
+    // 业务帧必须等鉴权确认：subscribe 在 ack 前不得落到 socket 上
+    const sub = subscribe('501')
+    expect(sockets[0].sent.map(m => m.type)).toEqual(['auth'])
+
+    sockets[0].message({ type: 'connected', data: { userId: 7 } })
+    await pending
+    await sub
+
+    expect(connected.value).toBe(true)
+    expect(sockets[0].sent.map(m => m.type)).toContain('subscribe')
   })
 
   it('心跳判死后 onclose 迟迟不触发（半开连接）时，兜底定时器强制重连', async () => {

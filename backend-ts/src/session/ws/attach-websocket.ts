@@ -38,6 +38,7 @@ export async function attachWebSocket(app: FastifyInstance, deps: AttachWebSocke
     socket.on('message', (raw: Buffer | string) => {
       lastActivity = Date.now();
       const text = typeof raw === 'string' ? raw : raw.toString('utf8');
+      // 处理顺序由 handler 内部按连接串行保证（首帧 auth 含异步查库），这里不 await 以免阻塞收包
       void deps.handler.handleTextMessage(wrapped, text);
     });
     socket.on('close', () => {

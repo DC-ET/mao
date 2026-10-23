@@ -40,6 +40,20 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null
 let lastServerMessageAt = 0
 const SERVER_SILENCE_TIMEOUT_MS = 30_000
+/**
+ * 服务端鉴权失败时主动关闭连接的 reason（见 streaming-ws-registry.closeConnection）。
+ * 这类关闭重试也不会成功，必须保持退避增长；token 刷新后重连会重新读取并使用新 token。
+ */
+const AUTH_CLOSE_REASONS = new Set([
+  'Not authenticated',
+  'Missing or invalid token',
+  'Account disabled',
+  'Authentication expired'
+])
+
+function isAuthRejection(event: CloseEvent): boolean {
+  return event?.code === 1003 && AUTH_CLOSE_REASONS.has(event.reason)
+}
 let intentionalClose = false
 let connectPromise: Promise<void> | null = null
 // 在途 connect() 的 settle 句柄与 socket 归属：与 connectPromise 同层级（模块级）。
@@ -142,7 +156,7 @@ const activeSkillSyncIds = new Map<number, string>()
 
 function sendOrQueueSkillSyncDone(data: { sessionId: number; success: boolean; error?: string }) {
   const payload = { ...data, syncId: activeSkillSyncIds.get(data.sessionId) }
-  if (ws?.readyState === WebSocket.OPEN) {
+  if (ws?.readyState === WebSocket.OPEN && connected.value) {
     ws.send(JSON.stringify({
       type: 'skill_sync_done',
       sessionId: payload.sessionId,
@@ -191,7 +205,9 @@ export function useStreamWS() {
   }
 
   function connect(): Promise<void> {
-    if (ws && ws.readyState === WebSocket.OPEN) {
+    // 只有「握手 + 服务端鉴权确认」都完成才算已连接：仅 OPEN 但尚未收到 connected 帧时，
+    // 业务帧会被服务端按未认证连接关闭，且此时 connectPromise 仍在途，必须继续等它。
+    if (ws && ws.readyState === WebSocket.OPEN && connected.value) {
       return Promise.resolve()
     }
     if (connectPromise) return connectPromise
@@ -213,59 +229,12 @@ export function useStreamWS() {
       socket.onopen = () => {
         // 已被更新的连接或 disconnect() 取代：本轮握手结果不再有效
         if (socket !== ws) return
-        connected.value = true
-        everConnected.value = true
-        reconnectDelay.value = 1000
-        connectPromise = null
-        pendingSettle = null
-        // 鉴权首帧：必须是新连接发出的第一条消息，先于任何 subscribe 等业务帧
+        // 鉴权首帧：必须是新连接发出的第一条消息，先于任何 subscribe 等业务帧。
+        // 此刻还不算「已连接」——等服务端 connected 确认帧（handleAuthenticated）后
+        // 才置 connected、重置退避并补订阅，避免业务帧与异步鉴权竞争。
         socket.send(JSON.stringify({ type: 'auth', token, client }))
-        // Re-subscribe all tracked sessions (main + open side tasks).
-        // Server-side subscriptions are tied to the previous socket and are lost on reconnect.
-        const toResubscribe = new Set(subscribedSessionIds)
-        if (sessionStore.activeSessionId) {
-          toResubscribe.add(String(sessionStore.activeSessionId))
-        }
-        for (const sid of toResubscribe) {
-          subscribedSessionIds.add(sid)
-          send({ type: 'subscribe', sessionId: Number(sid) })
-          refreshQueue(sid)
-        }
-        // Flush skill_sync_done that completed while WS was down (LOCAL skill sync race)
-        flushPendingSkillSyncDones()
-        // 聚焦数据已加载过：重连后静默重拉全量 ACTIVE，保证断线期间变化不丢失
-        if (sessionStore.focusLoaded) {
-          void sessionStore.fetchFocusSessions(true)
-        }
-        // 收件箱未读数重拉兜底（刻意不放进 focusLoaded 分支：聚焦列表未加载时徽标也要能更新）。
-        // inbox_updated 已在 CRITICAL_EVENT_TYPES，这里是双保险。
-        void inboxStore.fetchUnreadCount()
-        // Start heartbeat. Any server message proves the connection is alive; allow enough
-        // time for a delayed pong when the shared outbound queue is busy with stream events.
-        lastServerMessageAt = Date.now()
-        // 先清理可能残留的上一代心跳定时器（旧连接迟到事件或未触发 onclose 的场景）
-        stopHeartbeat()
-        heartbeatTimer = setInterval(() => {
-          if (ws?.readyState !== WebSocket.OPEN) return
-          if (Date.now() - lastServerMessageAt > SERVER_SILENCE_TIMEOUT_MS) {
-            const dying = ws
-            dying.close()
-            // 半开连接（合盖休眠/拔线无 RST）下 close() 的关闭帧可能永远得不到应答，
-            // onclose 要等 OS 级 TCP 超时（分钟级）才触发；3s 内未关闭则强制按断开处理。
-            // 迟到的 onclose 会因 event.target !== ws 走早退分支，不会重复重连。
-            setTimeout(() => {
-              if (ws !== dying) return
-              ws = null
-              connected.value = false
-              stopHeartbeat()
-              sessionStore.clearAllLlmRetry()
-              scheduleReconnect()
-            }, 3_000)
-            return
-          }
-          ws.send(JSON.stringify({ type: 'ping' }))
-        }, 5_000)
-        resolve()
+        // 心跳与静默判死从握手起生效：鉴权迟迟无响应时由 30s 静默兜底触发重连
+        startHeartbeat()
       }
 
       socket.onmessage = (event) => {
@@ -302,6 +271,11 @@ export function useStreamWS() {
         stopHeartbeat()
         // 断线后内存中的瞬时 LLM 重试状态已不可信，全部清理避免重连后残留过期提示
         sessionStore.clearAllLlmRetry()
+        if (!intentionalClose && isAuthRejection(event)) {
+          // 鉴权被拒：保留退避增长（不重置 reconnectDelay），避免 1s 一次的热循环；
+          // 每次重连都会重读 token，令牌刷新后自动恢复
+          console.warn(`[ws] authentication rejected by server: code=${event.code} reason=${event.reason}`)
+        }
         const settle = pendingSettle
         connectPromise = null
         pendingSettle = null
@@ -365,6 +339,76 @@ export function useStreamWS() {
     }
   }
 
+  /**
+   * 服务端确认首帧鉴权（connected 帧）：这一刻起连接才可收发业务帧。
+   * 重连退避也在此刻复位——鉴权被拒时退避持续增长，避免 1s 一次的热循环。
+   */
+  function handleAuthenticated() {
+    connected.value = true
+    everConnected.value = true
+    reconnectDelay.value = 1000
+    const settle = pendingSettle
+    connectPromise = null
+    pendingSettle = null
+    settle?.resolve()
+    // Re-subscribe all tracked sessions (main + open side tasks).
+    // Server-side subscriptions are tied to the previous socket and are lost on reconnect.
+    const toResubscribe = new Set(subscribedSessionIds)
+    if (sessionStore.activeSessionId) {
+      toResubscribe.add(String(sessionStore.activeSessionId))
+    }
+    for (const sid of toResubscribe) {
+      subscribedSessionIds.add(sid)
+      send({ type: 'subscribe', sessionId: Number(sid) })
+      refreshQueue(sid)
+    }
+    // Flush skill_sync_done that completed while WS was down (LOCAL skill sync race)
+    flushPendingSkillSyncDones()
+    // 聚焦数据已加载过：重连后静默重拉全量 ACTIVE，保证断线期间变化不丢失
+    if (sessionStore.focusLoaded) {
+      void sessionStore.fetchFocusSessions(true)
+    }
+    // 收件箱未读数重拉兜底（刻意不放进 focusLoaded 分支：聚焦列表未加载时徽标也要能更新）。
+    // inbox_updated 已在 CRITICAL_EVENT_TYPES，这里是双保险。
+    void inboxStore.fetchUnreadCount()
+  }
+
+  function startHeartbeat() {
+    // Any server message proves the connection is alive; allow enough time for a delayed
+    // pong when the shared outbound queue is busy with stream events.
+    lastServerMessageAt = Date.now()
+    // 先清理可能残留的上一代心跳定时器（旧连接迟到事件或未触发 onclose 的场景）
+    stopHeartbeat()
+    heartbeatTimer = setInterval(() => {
+      if (ws?.readyState !== WebSocket.OPEN) return
+      if (Date.now() - lastServerMessageAt > SERVER_SILENCE_TIMEOUT_MS) {
+        const dying = ws
+        dying.close()
+        // 半开连接（合盖休眠/拔线无 RST）下 close() 的关闭帧可能永远得不到应答，
+        // onclose 要等 OS 级 TCP 超时（分钟级）才触发；3s 内未关闭则强制按断开处理。
+        // 迟到的 onclose 会因 event.target !== ws 走早退分支，不会重复重连。
+        setTimeout(() => {
+          if (ws !== dying) return
+          ws = null
+          connected.value = false
+          stopHeartbeat()
+          sessionStore.clearAllLlmRetry()
+          // 鉴权/握手未完成就判死：必须同时结束在途 connect Promise，
+          // 否则后续 connect() 会直接返回这个永挂的旧 Promise，再也建不出新连接
+          if (connectPromise) {
+            connectPromise = null
+            const settle = pendingSettle
+            pendingSettle = null
+            settle?.reject(new Error('WebSocket handshake timeout'))
+          }
+          scheduleReconnect()
+        }, 3_000)
+        return
+      }
+      ws.send(JSON.stringify({ type: 'ping' }))
+    }, 5_000)
+  }
+
   function scheduleReconnect() {
     if (reconnectTimer) return
     reconnectTimer = setTimeout(() => {
@@ -383,17 +427,19 @@ export function useStreamWS() {
   }
 
   function send(msg: any) {
-    if (ws?.readyState === WebSocket.OPEN) {
+    // 只有服务端确认鉴权后的连接才允许发业务帧：鉴权未完成时服务端会按未认证关闭连接
+    if (ws?.readyState === WebSocket.OPEN && connected.value) {
       ws.send(JSON.stringify(msg))
     } else {
-      console.warn('[ws] send dropped (not open):', msg.type, 'readyState=' + ws?.readyState)
+      console.warn('[ws] send dropped (not authenticated):', msg.type, 'readyState=' + ws?.readyState)
     }
   }
 
   async function sendReliable(msg: any): Promise<boolean> {
     const trySend = (): boolean => {
       const socket = ws
-      if (socket?.readyState === WebSocket.OPEN) {
+      // 鉴权确认（connected 帧）前不发业务帧：否则服务端会按未认证连接关闭
+      if (socket?.readyState === WebSocket.OPEN && connected.value) {
         socket.send(JSON.stringify(msg))
         return true
       }
@@ -573,6 +619,8 @@ export function useStreamWS() {
 
     switch (type) {
       case 'connected':
+        // 首帧 auth 的服务端确认：此刻连接才可收发业务帧
+        handleAuthenticated()
         break
 
       case 'pong':

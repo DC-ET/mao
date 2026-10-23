@@ -42,7 +42,12 @@ class FakeWebSocket {
   readonly sent: Array<Record<string, unknown>> = []
   readonly url: string
   constructor(url: string) { this.url = url; sockets.push(this) }
-  open() { this.readyState = FakeWebSocket.OPEN; this.onopen?.() }
+  open() {
+    this.readyState = FakeWebSocket.OPEN
+    this.onopen?.()
+    // 首帧 auth 的服务端确认帧：useStreamWS 收到 connected 后才算连接可用
+    this.onmessage?.({ target: this, data: JSON.stringify({ type: 'connected', data: { userId: 7 } }) })
+  }
   send(data: string) { this.sent.push(JSON.parse(data)) }
   close() { this.readyState = FakeWebSocket.CLOSED; this.onclose?.({ target: this }) }
 }
