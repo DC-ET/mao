@@ -19,6 +19,7 @@
   - **用量分析首屏提速：总览「今日」0.90s → 约 0.2s，7 / 30 / 90 天 1.3–1.6s → 约 0.3s；用户 / Agent / 模型 / 会话 Tab 同量级下降**。管理后台登录后默认落在用量分析总览，一次请求约 20 条 SQL，两条慢路径把每个 Tab 都拖到 1s 以上：
     - **修复消息聚合的坏执行计划（「有时候慢」的根源）**：活跃用户与用户 / Agent / 模型的消息聚合，默认计划会以 session 为驱动、按 `idx_session` 逐会话回查 `message`，在 40 万行 / 2.1GB 的表上产生数十万次随机回表，且随统计信息在窗口间来回切换——昨日活跃用户实测 0.97–1.25s、30 天用户消息聚合 1.15s，而今日窗口只要 87ms。四处查询统一加 `JOIN_ORDER(m, s)`，固定为「先按时间窗扫 message、再按主键回查 session」：昨日活跃用户 966ms → 111ms、30 天 921ms → 490ms。
     - **新增 `V168` message 覆盖索引** `(created_at, deleted, token_count, session_id, model_id)`：窗口聚合不再回表读正文（实测索引区间扫描 7d 0.10s / 30d 0.18s / 90d 0.22s，原方案 0.38–0.56s），也不再因为扫 2.1GB 正文页把 buffer pool 里的热点数据挤出去。新索引以 `created_at` 为最左前缀，冗余的 `idx_created` 同迁移下线，减少热表写放大。
+    - **修复 `V168` 阻断后端启动的问题**：迁移脚本原先用 `DELIMITER` + 存储过程表达条件 DDL，但 TS 版 Flyway 是通过 mysql2 整段下发、不支持该客户端语法（历史 `DELIMITER` 迁移都是 Java Flyway 时代就已应用，故此前未暴露），升级到本版本的后端在迁移阶段即报 SQL 语法错并退出。现改为 `SET @ddl` + `PREPARE` 动态 SQL（与 `V080` 同范式），并对「索引已存在 / 旧索引不存在」两种状态幂等。
     - `StatisticsService.getOverview()` 的 7 条全表计数由串行改并行（约 130ms → 单条最慢的 ~73ms），返回字段不变，mao-cli 的 `analytics overview` 不受影响。
     - 环比窗口（已结束区间）聚合结果加进程内 5 分钟 TTL 缓存（上限 64 个窗口，按写入序淘汰）：所有 Tab 的 `previousTotals` 复用同一份，过去窗口最多滞后 5 分钟；本期窗口仍每次实时计算，刷新按钮语义不变。
   - **会话详情首屏瘦身：带截图的会话从 13.7MB 降到约 0.6MB（gzip 后 ~150KB）**。`GET /v1/admin/sessions/:id/messages?compact=true` 原先把工具产出图片的 base64 整包返回（实测 5 轮 327 条消息 13.7MB，其中 12.5MB 是 37 张 1800×1200 截图），服务端还要从 MySQL 搬 13.8MB：
