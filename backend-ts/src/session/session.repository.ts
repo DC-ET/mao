@@ -690,12 +690,24 @@ export class MessageRepository {
    *
    * created_at 一并带出：记录详情抽屉的「本轮工具」清单按 llm_call 时间窗近似归属
    * （技术方案 2026-10-22-run-trace-deep-dive §5.3），没有时钟就退化成全会话清单。
+   *
+   * `upperCreatedAtExclusive`（`llm_call.created_at` 原样字符串，可选）：只取 created_at
+   * 严格早于该时刻的助手消息。抽屉点开一次就要付一遍全量 JSON.parse 的成本，大会话下
+   * 随规模线性恶化，所以把窗口下推到 SQL；传 null 保持全会话扫描
+   * （run-trace.service 的归属判定用）。DATETIME(3) 的字典序与时间序一致，可直接比。
    */
-  selectAssistantToolCalls(sessionId: number): Promise<Array<Pick<Message, 'id' | 'createdAt' | 'toolCalls'>>> {
+  selectAssistantToolCalls(
+    sessionId: number,
+    upperCreatedAtExclusive?: string | null,
+  ): Promise<Array<Pick<Message, 'id' | 'createdAt' | 'toolCalls'>>> {
+    const upper = upperCreatedAtExclusive ?? null;
+    const where = upper == null
+      ? ''
+      : ' AND created_at < ?';
     return this.db.query<Pick<Message, 'id' | 'createdAt' | 'toolCalls'>>(
       `SELECT id, created_at AS createdAt, tool_calls AS toolCalls FROM \`message\`
-       WHERE session_id = ? AND ${notDeleted()} AND role = 'ASSISTANT' AND tool_calls IS NOT NULL ORDER BY id ASC`,
-      [sessionId],
+       WHERE session_id = ? AND ${notDeleted()} AND role = 'ASSISTANT' AND tool_calls IS NOT NULL${where} ORDER BY id ASC`,
+      upper == null ? [sessionId] : [sessionId, upper],
     );
   }
 

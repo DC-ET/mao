@@ -1,6 +1,5 @@
 import type { MessageRepository } from './session.repository.js';
 import type { LlmCallRepository, LlmCallRow } from '../usage/llm-call.repository.js';
-import { estimatedStartMs } from './run-window.js';
 import type { Message } from './types.js';
 import type { TraceCallMetaVO, TraceCallRecordVO, TraceToolRecordVO } from './session-vo.js';
 
@@ -12,9 +11,9 @@ import type { TraceCallMetaVO, TraceCallRecordVO, TraceToolRecordVO } from './se
  *
  * 归属口径：
  * - 工具记录按 tool_call_id 精确查（助手消息的 tool_calls + TOOL 消息行），配不上留 null；
- * - 配对 llm_call 用「助手消息 created_at → TOOL 消息 created_at」夹时间窗，取窗口内
- *   scene = 'agent' 的最后一条（与 buildRun 工具组挂轮同一「最后一条未占用候选」精神），
- *   窗口取不到即 null，不跨窗猜；
+ * - 配对 llm_call 用「本轮 llm_call 结束时刻之前」夹时间窗，取窗口内 scene = 'agent'
+ *   的最后一条（与 buildRun 工具组挂轮同一「最后一条未占用候选」精神），窗口取不到即
+ *   null，不跨窗猜。下界刻意开放，理由见 findCall 上方注释；
  * - 轮次记录的「本轮工具」是时间窗近似归属，仅用于抽屉内跳转链接，内容一律以
  *   buildToolRecord 的按 tool_call_id 精确查询为准。
  */
@@ -46,9 +45,14 @@ export class RunTraceRecordService {
       argumentsJson: declared?.argumentsJson ?? null,
       resultContent: toolMessage?.content ?? null,
       resultMetadata: toolMessage?.metadata ?? null,
-      // 配对窗口：声明该调用的助手消息 created_at → TOOL 消息 created_at。
-      // 缺任一侧时钟时不猜（窗口开放端由 selectBySessionWindow 的 null 语义承担）。
-      call: await this.findCall(sessionId, assistantMessage?.createdAt ?? null, toolMessage?.createdAt ?? null),    };
+      // 配对窗口：只设上界（TOOL 消息 created_at，排他），下界开放。
+      // llm_call.created_at 是「调用结束时刻」，恒早于本轮助手消息的落库时刻
+      // （流一结束就 record，之后才执行工具、才 persistToolRound），所以不能用
+      // 助手消息 created_at 当下界——那会把本轮的调用挡在窗外，配对恒为空。
+      // 下一轮的调用落库更晚（在本轮 TOOL 消息之后），上界即可把它排除。
+      // 缺 TOOL 消息时钟时不猜（上界开放端由 selectBySessionWindow 的 null 语义承担）。
+      call: await this.findCall(sessionId, toolMessage?.createdAt ?? null),
+    };
   }
 
   /**
@@ -63,31 +67,43 @@ export class RunTraceRecordService {
     return { call: toCallMeta(row), tools: await this.findRoundTools(sessionId, row) };
   }
 
-  /** 窗口内 scene = 'agent' 的最后一条调用；窗口任一端缺失即不配对（不跨窗猜）。 */
-  private async findCall(sessionId: number, startAt: string | null, endAt: string | null): Promise<TraceCallMetaVO | null> {
-    if (startAt == null || endAt == null) return null;
-    const rows = await this.llmCallRepo.selectBySessionWindow(sessionId, startAt, endAt);
+  /**
+   * 窗口内 scene = 'agent' 的最后一条调用；上界缺失即不配对（不猜）。
+   * 下界刻意开放：见 buildToolRecord 的配对窗口注释。
+   */
+  private async findCall(sessionId: number, endAtExclusive: string | null): Promise<TraceCallMetaVO | null> {
+    if (endAtExclusive == null) return null;
+    const rows = await this.llmCallRepo.selectBySessionWindow(sessionId, null, endAtExclusive);
     const agents = rows.filter((row) => row.scene === 'agent');
     const last = agents.length > 0 ? agents[agents.length - 1]! : null;
     return last != null ? toCallMeta(last) : null;
   }
 
   /**
-   * 「本轮工具」清单：created_at 落在 [llm_call.created_at − duration, llm_call.created_at]
-   * 内的现存助手消息声明的工具调用。近似归属只决定「列出哪些可点的链接」，不决定内容
-   * （点过去仍以 buildToolRecord 按 tool_call_id 的精确查询为准）。
-   * 窗口任一端不可估算（时钟缺失）时退化为全会话清单，不猜归属也不空列表误导。
+   * 「本轮工具」清单：本轮调用结束后、下一轮调用结束前落库的现存助手消息声明的工具调用。
+   *
+   * 归属口径说明：`llm_call.created_at` 是**调用结束时刻**，而本轮助手消息是在工具执行
+   * 完之后才落库的，所以本轮助手消息的 `created_at` **晚于** 本轮 `llm_call.created_at`
+   * （`C < A`，同 `run-trace.service.ts` 的 `notAfter(call.createdAt, message.createdAt)`）。
+   * 因此窗口上界不能取本轮自己的结束时刻——那会把本轮助手消息整个排除（清单恒空），
+   * 正是本方法曾经的缺陷。上界取**下一轮** llm_call 的结束时刻：本轮工具必然在那之前
+   * 落库，而下一轮助手消息要等下一轮工具跑完才落库，自然落在窗外。
+   *
+   * 下一轮不存在（本轮就是最后一轮）时上界开放，取到会话最新一条助手消息。
+   * 时钟缺失（created_at 不可用）时退化为全会话清单：不猜归属，也不空列表误导。
+   * 点过去仍以 buildToolRecord 按 tool_call_id 精确查询为准。
    */
   private async findRoundTools(
     sessionId: number,
     call: LlmCallRow,
   ): Promise<Array<{ toolCallId: string; name: string; target: string | null }>> {
-    const startMs = estimatedStartMs(call.createdAt, call.durationMs);
-    const endMs = startMs == null ? null : startMs + Math.max(0, call.durationMs ?? 0);
-    const rows = await this.messageRepo.selectAssistantToolCalls(sessionId);
+    // 同一会话的调用序列（created_at 升序）；找不到本轮就退化为全会话清单
+    const calls = await this.llmCallRepo.selectBySessionWindow(sessionId, null, null);
+    const index = call.id != null ? calls.findIndex((row) => row.id === call.id) : -1;
+    const next = index >= 0 ? calls[index + 1] : undefined;
+    const rows = await this.messageRepo.selectAssistantToolCalls(sessionId, next?.createdAt ?? null);
     const tools: Array<{ toolCallId: string; name: string; target: string | null }> = [];
     for (const row of rows) {
-      if (!inWindow(row.createdAt, startMs, endMs)) continue;
       for (const declared of parseToolCalls(row.toolCalls)) {
         tools.push({ toolCallId: declared.id, name: declared.name, target: targetOf(declared.name, declared.argumentsJson) });
       }
@@ -100,14 +116,6 @@ interface DeclaredToolCall {
   id: string;
   name: string;
   argumentsJson: string | null;
-}
-
-/** 窗口任一端缺失 → 全会话清单（不猜）；否则按估算起止的 epoch ms 比较。 */
-function inWindow(createdAt: string | null | undefined, startMs: number | null, endMs: number | null): boolean {
-  if (startMs == null || endMs == null || createdAt == null) return true;
-  const at = Date.parse(createdAt.replace(' ', 'T'));
-  if (Number.isNaN(at)) return true;
-  return at >= startMs && at <= endMs;
 }
 
 function findDeclaredCall(message: Message, toolCallId: string): DeclaredToolCall | null {

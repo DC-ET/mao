@@ -182,8 +182,11 @@ export const PromptImageResizer = {
 
     // 先做既有尺寸规整（保持原编码）；结果 ≤1.5MB 就原样使用，不做有损重编码。
     // 这样“仅因尺寸超限”的图仍保持 PNG 无损（与改造前行为一致）。
+    // 但规整产物必须同时不大于原图：resizeForPrompt 走 q85 JPEG / PNG 重编码，
+    // 对已是低质量编码的图会放大；只与阈值比会把放大后的结果写回，写侧体积反升
+    // （与下面循环末尾「压不小就别压大」的保护同口径）。
     const normalized = await this.resizeForPrompt(input, mimeHint);
-    if (normalized.bytes.length <= thresholdBytes) {
+    if (normalized.bytes.length <= thresholdBytes && normalized.bytes.length <= input.length) {
       return normalized;
     }
 
@@ -199,7 +202,9 @@ export const PromptImageResizer = {
         continue;
       }
       if (best == null || encoded.bytes.length < best.bytes.length) best = encoded;
-      if (encoded.bytes.length <= targetBytes) {
+      // 达到目标即收工，但同样不能比原图更大（低质量编码的图重编码后反而变大，
+      // 此时继续降质量 / 缩尺寸也压不回原图以下，交给下面的回落分支处理）。
+      if (encoded.bytes.length <= targetBytes && encoded.bytes.length < input.length) {
         return new PromptImageResult(encoded.bytes, outMime, encoded.width, encoded.height, true);
       }
     }
@@ -207,7 +212,8 @@ export const PromptImageResizer = {
       throw new Error(`Failed to encode image as ${outMime}`);
     }
     if (best.bytes.length >= input.length) {
-      // 极端图（小尺寸高质量 JPEG 等）压不小就别压大：保留原图，避免写侧体积反而上升。
+      // 极端图（小尺寸高质量 JPEG、低质量编码的大图等）压不小就别压大：
+      // 保留原图，避免写侧体积反而上升。
       harnessLog('warn', `Image cannot be compressed below original (${input.length}B -> ${best.bytes.length}B), keeping original`);
       return new PromptImageResult(input, mime, srcW, srcH, false);
     }

@@ -148,7 +148,7 @@
                 </span>
               </div>
               <div v-if="round.errorMessage" class="round-error">{{ round.errorMessage }}</div>
-              <div v-for="tool in round.tools" :key="toolKey(tool)" :id="rowAnchorId(run.runId, 'tool', toolAnchorKey(segment.kind, tool))" class="tool-row">
+              <div v-for="(tool, toolIndex) in round.tools" :key="toolKey(tool)" :id="rowAnchorId(run.runId, 'tool', toolAnchorKey(segment.kind, tool, toolIndex))" class="tool-row">
                 <span class="tool-status" :class="tool.status === 'ERROR' ? 'tool-error' : 'tool-ok'">
                   {{ tool.status === 'ERROR' ? '✕' : '✓' }}
                 </span>
@@ -168,7 +168,7 @@
             </div>
             <div v-if="segment.unplacedTools.length > 0" class="unplaced-tools">
               <div class="unplaced-label">未挂到轮</div>
-              <div v-for="tool in segment.unplacedTools" :key="toolKey(tool)" :id="rowAnchorId(run.runId, 'tool', toolAnchorKey(segment.kind, tool))" class="tool-row">
+              <div v-for="(tool, toolIndex) in segment.unplacedTools" :key="toolKey(tool)" :id="rowAnchorId(run.runId, 'tool', toolAnchorKey(segment.kind, tool, toolIndex))" class="tool-row">
                 <span class="tool-status" :class="tool.status === 'ERROR' ? 'tool-error' : 'tool-ok'">
                   {{ tool.status === 'ERROR' ? '✕' : '✓' }}
                 </span>
@@ -292,7 +292,7 @@ import { llmCallSceneLabel } from '../../utils/llmCallLabels'
 import { downloadTraceCsv, downloadTraceJson } from '../../utils/trace-export'
 import {
   decodingMs, formatClock, formatTokens, RUN_STATUS_META, runAttentionBadges, runStatus, summarizeRuns,
-  throughput, formatThroughput, toolSuccessRate,
+  throughput, formatThroughput, toolSuccessRate, toolAnchorKey as toolAnchorKeyOf,
 } from '../../utils/trace-display'
 import RunTraceTimeBand from './RunTraceTimeBand.vue'
 import RunTraceRecordDrawer from './RunTraceRecordDrawer.vue'
@@ -502,8 +502,9 @@ function toolDisplayName(name: string): string {
   return getToolDisplayName(name)
 }
 
+/** 工具行 :key 与条带定位 key 的唯一口径，实现在 utils/trace-display.ts（与条带节点同源）。 */
 function toolKey(tool: TraceTool): string {
-  return `${tool.toolCallId ?? ''}|${tool.target ?? ''}|${tool.name}`
+  return toolAnchorKeyOf(tool)
 }
 
 /**
@@ -514,9 +515,14 @@ function roundAnchorKey(segmentKind: string, seq: number): string {
   return `${segmentKind}:${seq}`
 }
 
-/** 工具行锚点 key：与条带节点 key 同口径（`${segment.kind}:${toolCallId ?? name}`） */
-function toolAnchorKey(segmentKind: string, tool: TraceTool): string {
-  return `${segmentKind}:${tool.toolCallId ?? tool.name}`
+/** 工具行锚点 key：与条带节点 key 同口径（`${segment.kind}:${toolAnchorKeyOf(tool)}|${ordinal}`）。
+ *  必须带段维度——编辑重发时 before_edit / current 两段可能含同一条工具调用；
+ *  序号 ordinal 与 runTimeNodes 的 toolOrdinal 严格同步（先 unplacedTools 再 rounds.tools），
+ *  否则点击色条会定位到别的行。
+ *  命名带 Of 后缀：本文件同时 import 了同名导出 toolAnchorKey，同名会遮蔽并在
+ *  toolKey() 里形成无限递归（import 版才是单参口径的那个）。 */
+function toolAnchorKey(segmentKind: string, tool: TraceTool, ordinal: number): string {
+  return `${segmentKind}:${toolAnchorKeyOf(tool)}|${ordinal}`
 }
 
 /**
@@ -643,6 +649,9 @@ async function exportCsv() {
   height: 100%;
   min-height: 0;
   background: var(--aw-canvas);
+  /* 记录详情抽屉 .record-drawer-layer 是 position: absolute，需要定位祖先做包含块；
+     否则包含块回落到初始包含块（视口），遮罩会铺满整个屏幕、抽屉右边缘贴屏幕右边。 */
+  position: relative;
 }
 
 .trace-toolbar {

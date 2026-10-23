@@ -9,17 +9,22 @@ import type { ContentPart } from '../../domain/types.js';
  */
 const IMAGE_URL_LINE_PREFIX = '[图片 ';
 
-/** 既有注入行：行首锚定 + 整行锚定，只剥自己生成的格式，不碰用户正文。 */
-const IMAGE_URL_LINE_PATTERN = /^\[图片 \d+\] \S+$/gm;
+/**
+ * 既有注入行：行首锚定 + 整行锚定，只剥自己生成的格式，不碰用户正文。
+ * 行尾容忍空白（空格 / 制表 / CR）：编辑框回传、CRLF 正文都会让注入行带行尾空白，
+ * `\S+$` 匹配不上就会漏剥 → 再追加一份 → 注入行翻倍（幂等被破坏）。
+ * `[ \t\r]*` 不含 `\n`，避免跨行吞掉后续正文。
+ */
+const IMAGE_URL_LINE_PATTERN = /^\[图片 \d+\] \S+[ \t\r]*$/gm;
 
 /** 正文与注入行之间的分隔：无正文时不产生前导空行。 */
 const TEXT_URL_SEPARATOR = '\n\n';
 
 /**
- * 剥离全部注入行，并收敛行尾多余空行（剥离后正文以单个换行结尾或为空）。
+ * 剥离全部注入行，并收敛行尾多余空行（含 CR，CRLF 正文剥离后不留裸 \r）。
  */
 export function stripImageUrlLines(text: string): string {
-  return text.replace(IMAGE_URL_LINE_PATTERN, '').replace(/\n+$/, '');
+  return text.replace(IMAGE_URL_LINE_PATTERN, '').replace(/[\r\n]+$/, '');
 }
 
 /**

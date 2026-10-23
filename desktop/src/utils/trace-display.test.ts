@@ -343,8 +343,8 @@ describe('runTimeNodes', () => {
     const nodes = runTimeNodes(run)
     expect(nodes.map((n) => n.key)).toEqual([
       'round:before_edit:1',
-      'tool:before_edit:call_unplaced',
-      'tool:before_edit:call_1',
+      'tool:before_edit:call_unplaced|a.txt|glob|0',
+      'tool:before_edit:call_1|a.txt|read_file|1',
       'round:current:2',
       'side:0',
     ])
@@ -375,7 +375,7 @@ describe('runTimeNodes', () => {
     })
     const keys = runTimeNodes(run).filter((n) => n.kind === 'tool').map((n) => n.key)
     expect(new Set(keys).size).toBe(keys.length)
-    expect(keys).toEqual(['tool:before_edit:glob', 'tool:current:glob'])
+    expect(keys).toEqual(['tool:before_edit:|a.txt|glob|0', 'tool:current:|a.txt|glob|1'])
   })
 
   it('工具 label 带段后缀：两段同名工具的 tooltip 也能分辨', () => {

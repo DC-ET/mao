@@ -7,13 +7,17 @@
  * 而乐观消息是用户原始正文，`user_message_saved` 帧丢失走 REST 兜底时只有剥离后才能判为同一条。
  */
 
-/** 既有注入行：行首锚定 + 整行锚定，只剥服务端生成的格式，不碰用户正文。 */
-const IMAGE_URL_LINE_PATTERN = /^\[图片 \d+\] \S+$/gm
+/**
+ * 既有注入行：行首锚定 + 整行锚定，只剥服务端生成的格式，不碰用户正文。
+ * 与后端 backend-ts/src/session/util/image-url-annotation.ts 逐字节一致：
+ * 行尾容忍空白（空格 / 制表 / CR），否则编辑回传带行尾空白时漏剥会破坏幂等比对。
+ */
+const IMAGE_URL_LINE_PATTERN = /^\[图片 \d+\] \S+[ \t\r]*$/gm
 
 /**
- * 剥离全部注入行，并收敛行尾多余空行（与后端 stripImageUrlLines 逐字节一致）。
+ * 剥离全部注入行，并收敛行尾多余空行（含 CR，与后端 stripImageUrlLines 逐字节一致）。
  * 对不含注入行的内容是恒等操作（`replace` 无匹配即原样返回），纯文本消息零影响。
  */
 export function stripImageUrlLines(text: string): string {
-  return text.replace(IMAGE_URL_LINE_PATTERN, '').replace(/\n+$/, '')
+  return text.replace(IMAGE_URL_LINE_PATTERN, '').replace(/[\r\n]+$/, '')
 }

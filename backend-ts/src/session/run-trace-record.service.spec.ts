@@ -67,7 +67,11 @@ function makeService(fixture: Fixture) {
       }
       return null;
     }),
-    selectAssistantToolCalls: vi.fn(async () => fixture.assistantToolCalls),
+    // 与 SQL 同口径：upperCreatedAtExclusive 非 null 时只取 created_at 严格早于它的行
+    selectAssistantToolCalls: vi.fn(async (_sid: number, upperCreatedAtExclusive?: string | null) =>
+      upperCreatedAtExclusive == null
+        ? fixture.assistantToolCalls
+        : fixture.assistantToolCalls.filter((r) => (r.createdAt ?? '') < upperCreatedAtExclusive)),
   } as unknown as MessageRepository;
   const llmCallRepo = {
     selectById: vi.fn(async (id: number) => fixture.calls.find((c) => c.id === id) ?? null),
@@ -84,8 +88,8 @@ describe('RunTraceRecordService.buildToolRecord', () => {
   it('配对成功：参数 / 结果原文 + TOOL metadata + llm_call 全量元信息', async () => {
     const { service } = makeService({
       toolMessages: [toolMessage(3, '2026-10-22 10:00:04.300', 'tc1', '{"content":"ok"}', '{"approvalMark":{"mode":"jev"}}')],
-      assistantMessages: [assistantMessage(2, '2026-10-22 10:00:00.000', [{ id: 'tc1', name: 'read_file', args: '{"path":"a.ts"}' }])],
-      assistantToolCalls: [{ id: 2, createdAt: '2026-10-22 10:00:00.000', toolCalls: JSON.stringify([{ id: 'tc1', function: { name: 'read_file', arguments: '{"path":"a.ts"}' } }]) }],
+      assistantMessages: [assistantMessage(2, '2026-10-22 10:00:04.900', [{ id: 'tc1', name: 'read_file', args: '{"path":"a.ts"}' }])],
+      assistantToolCalls: [{ id: 2, createdAt: '2026-10-22 10:00:04.900', toolCalls: JSON.stringify([{ id: 'tc1', function: { name: 'read_file', arguments: '{"path":"a.ts"}' } }]) }],
       calls: [call()],
     });
     const record = await service.buildToolRecord(1, 'tc1');
@@ -93,7 +97,8 @@ describe('RunTraceRecordService.buildToolRecord', () => {
     expect(record.argumentsJson).toBe('{"path":"a.ts"}');
     expect(record.resultContent).toBe('{"content":"ok"}');
     expect(record.resultMetadata).toBe('{"approvalMark":{"mode":"jev"}}');
-    // 配对窗口 = [助手消息 10:00:00.000, TOOL 消息 10:00:04.300)，该 agent 调用落在窗内
+    // 配对窗口 = (−∞, TOOL 消息 10:00:04.300)，下界刻意开放：
+    // 该 agent 调用结束于 10:00:04.200，早于本轮助手消息的落库时刻 10:00:04.900（C < A）
     expect(record.call).toMatchObject({
       llmCallId: 100, provider: 'anthropic', protocol: 'anthropic_messages', stream: true, effort: 'medium',
       scene: 'agent', modelName: 'step-5', retryCount: 1, firstTokenMs: 800, durationMs: 4200,
@@ -116,13 +121,13 @@ describe('RunTraceRecordService.buildToolRecord', () => {
     expect(llmCallRepo.selectBySessionWindow).not.toHaveBeenCalled();
   });
 
-  it('窗口内没有 agent 调用 → call 为 null（不跨窗猜）', async () => {
+  it('上界之后没有 agent 调用 → call 为 null（不跨窗猜）', async () => {
     const { service } = makeService({
       toolMessages: [toolMessage(3, '2026-10-22 10:00:04.300', 'tc1', '{"content":"ok"}')],
-      // 助手消息 10:00:00 声明调用，但唯一的 agent 调用结束于 09:00（早于窗口起点）
       assistantMessages: [assistantMessage(2, '2026-10-22 10:00:00.000', [{ id: 'tc1', name: 'shell', args: '{}' }])],
       assistantToolCalls: [],
-      calls: [call({ createdAt: '2026-10-22 09:00:04.200' })],
+      // 唯一的 agent 调用结束于 11:00，晚于 TOOL 消息的 10:00:04.300（上界排他）
+      calls: [call({ createdAt: '2026-10-22 11:00:04.200' })],
     });
     const record = await service.buildToolRecord(1, 'tc1');
     expect(record.resultContent).toBe('{"content":"ok"}');
@@ -182,17 +187,18 @@ describe('RunTraceRecordService.buildToolRecord', () => {
 });
 
 describe('RunTraceRecordService.buildCallRecord', () => {
-  it('llm_call 归属本会话 → 元信息 + 时间窗内的本轮工具', async () => {
+  it('llm_call 归属本会话 → 元信息 + 本轮工具', async () => {
     const { service } = makeService({
       toolMessages: [],
       assistantMessages: [],
       assistantToolCalls: [
-        { id: 2, createdAt: '2026-10-22 10:00:01.000', toolCalls: JSON.stringify([{ id: 'tc1', function: { name: 'read_file', arguments: '{"path":"a.ts"}' } }]) },
-        { id: 5, createdAt: '2026-10-22 10:00:03.000', toolCalls: JSON.stringify([{ id: 'tc2', function: { name: 'shell', arguments: '{"command":"ls"}' } }]) },
-        // 窗外（下一轮的助手消息）：不该进本轮清单
-        { id: 9, createdAt: '2026-10-22 10:05:00.000', toolCalls: JSON.stringify([{ id: 'tc3', function: { name: 'glob', arguments: '{"pattern":"*.ts"}' } }]) },
+        // 本轮助手消息：工具跑完后才落库，晚于本轮 llm_call 的 10:00:04.200
+        { id: 2, createdAt: '2026-10-22 10:00:04.900', toolCalls: JSON.stringify([{ id: 'tc1', function: { name: 'read_file', arguments: '{"path":"a.ts"}' } }]) },
+        { id: 5, createdAt: '2026-10-22 10:00:05.100', toolCalls: JSON.stringify([{ id: 'tc2', function: { name: 'shell', arguments: '{"command":"ls"}' } }]) },
+        // 下一轮的助手消息：晚于下一轮 llm_call 的 10:00:09.000，该被上界排除
+        { id: 9, createdAt: '2026-10-22 10:00:09.800', toolCalls: JSON.stringify([{ id: 'tc3', function: { name: 'glob', arguments: '{"pattern":"*.ts"}' } }]) },
       ],
-      calls: [call()],
+      calls: [call(), call({ id: 101, createdAt: '2026-10-22 10:00:09.000' })],
     });
     const record = await service.buildCallRecord(1, 100);
     expect(record.call?.llmCallId).toBe(100);

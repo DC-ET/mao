@@ -43,7 +43,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onUnmounted, ref } from 'vue'
 import type { RunTrace } from '../../types/trace'
 import { runTimeNodes, runTimeWindow, timeBandGeometry, TIME_BAND_LANES, type TimeBandNode } from '../../utils/trace-display'
 
@@ -126,6 +126,9 @@ function fmtMs(ms: number): string {
 
 function showTip(node: TimeBandNode, event: MouseEvent) {
   if (tipTimer != null) window.clearTimeout(tipTimer)
+  // 立即撤下上一个节点的 tooltip：色条 rect 之间移动不触发 svg 的 mouseleave，
+  // 不清 tip.value 的话旧内容会继续显示到新定时器触发（内容与鼠标所在色条不符）。
+  tip.value = null
   // 事件派发一结束 currentTarget 就被规范重置为 null，宿主元素与坐标必须在同步期取，
   // 不能留到 setTimeout 回调里读（异步读会抛 TypeError，tooltip 全程不显示）。
   const host = (event.currentTarget as SVGElement | null)?.ownerSVGElement?.parentElement ?? null
@@ -154,6 +157,14 @@ function hideTip() {
 }
 
 const tipStyle = computed(() => ({ left: `${tip.value?.left ?? 0}px` }))
+
+// 组件卸载（run 被收起 / 切会话）时撤掉未触发的 tooltip 定时器，
+// 否则回调会在组件销毁后写入已废弃的 ref（L-1）。
+onUnmounted(() => {
+  if (tipTimer != null) window.clearTimeout(tipTimer)
+  tipTimer = null
+  tip.value = null
+})
 </script>
 
 <style scoped>

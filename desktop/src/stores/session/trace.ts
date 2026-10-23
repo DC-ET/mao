@@ -59,6 +59,14 @@ export function createTraceModule() {
    */
   const traceRecords = ref<Map<string, Map<string, TraceLoadedRecord>>>(new Map())
 
+  /**
+   * 单会话记录详情的条数上限：记录正文可能很大（read_file 大文件 / shell 长输出），
+   * 而缓存只在删除会话 / 登出时清理，正常使用路径下无上界增长会让正文长期常驻。
+   * 按插入序淘汰最旧（Map 保持插入序，重写同 key 不改变既有位置）——记录详情是
+   * 「点开才拉、短期内可能反复看」的数据，LRU 的收益不足以换取复杂度。
+   */
+  const TRACE_RECORDS_CAP = 200
+
   watch(traceThresholds, (value) => {
     safeSetItem(THRESHOLDS_KEY, JSON.stringify(value))
   }, { deep: true })
@@ -114,10 +122,14 @@ export function createTraceModule() {
     traceHasMore.value.delete(sid)
     traceUnattributed.value.delete(sid)
     traceLoading.value.delete(sid)
+    // 记录详情缓存一并释放：切会话 / 重拉后旧记录不会再被点开，
+    // 而正文是敏感数据（读过的文件内容、命令输出），不该在轨迹清掉后继续常驻。
+    traceRecords.value.delete(sid)
     traceRuns.value = new Map(traceRuns.value)
     traceHasMore.value = new Map(traceHasMore.value)
     traceUnattributed.value = new Map(traceUnattributed.value)
     traceLoading.value = new Map(traceLoading.value)
+    traceRecords.value = new Map(traceRecords.value)
   }
 
   function liveKey(sessionId: string, executionId: string): string {
@@ -129,11 +141,16 @@ export function createTraceModule() {
     return traceRecords.value.get(String(sessionId))?.get(key) ?? null
   }
 
-  /** 记录详情缓存写入：同 key 覆盖（重拉后刷新）。 */
+  /** 记录详情缓存写入：同 key 覆盖（重拉后刷新）；超上限时淘汰最早写入的一条。 */
   function setTraceRecord(sessionId: string, key: string, record: TraceLoadedRecord) {
     const sid = String(sessionId)
     const bucket = traceRecords.value.get(sid) ?? new Map<string, TraceLoadedRecord>()
     bucket.set(key, record)
+    while (bucket.size > TRACE_RECORDS_CAP) {
+      const oldest = bucket.keys().next()
+      if (oldest.done === true) break
+      bucket.delete(oldest.value)
+    }
     traceRecords.value.set(sid, bucket)
     traceRecords.value = new Map(traceRecords.value)
   }

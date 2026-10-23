@@ -36,14 +36,26 @@ function findForbiddenKey(value: unknown, depth = 0): string | null {
 
 interface RequestOutcome { raw: string; }
 
-function parseOutcome(raw: string): { success: boolean; result?: unknown; error?: { code?: string; message?: string } } {
+/**
+ * 解析页面工具回传的 outcome JSON。保留全部顶层字段（透传给调用方覆盖/合并），
+ * 只挑出 success / result / error 三个判定字段。原先这里用白名单重建对象，
+ * 上游后续在 outcome 上加的字段（pageVersion、snapshotId…）会被静默吞掉。
+ */
+function parseOutcome(raw: string): {
+  success: boolean;
+  result?: unknown;
+  error?: { code?: string; message?: string };
+  extra?: Record<string, unknown>;
+} {
   try {
     const node = JSON.parse(raw) as Record<string, unknown>;
     if (node != null && typeof node === 'object') {
+      const { success: _s, result: _r, error: _e, ...extra } = node;
       return {
         success: node.success === true,
         result: node.result,
         error: node.error != null && typeof node.error === 'object' ? node.error as { code?: string; message?: string } : undefined,
+        extra,
       };
     }
   } catch { /* 非 JSON 结果原样返回 */ }
@@ -144,7 +156,15 @@ export class PageScreenshotTool extends PageToolBase {
     const mime = asText(shot.mime) ?? 'image/png';
     // 写入侧一次性压缩（技术方案 2026-10-22 §7.2）：截图同样 >1.5MB 才压，≤1.5MB 原样。
     const compressed = await compressScreenshot(dataUri, mime);
+    // 扁平透传而非白名单重建：上游（SDK / 桌面）后续在 result（viewport、
+    // deviceScaleFactor…）或 outcome（pageVersion、snapshotId…）上加字段都要能到模型与前端，
+    // 重建对象会静默吞掉且无日志。剔除两项：原始 dataUri（已被压缩后的 data_uri 取代，
+    // 双份 base64 会让请求体无谓翻倍）、outcome.result（已平铺）。
+    const { dataUri: _rawDataUri, ...shotFields } = shot;
+    const { result: _outcomeResult, ...outcomeFields } = outcome.extra ?? {};
     return toJson({
+      ...outcomeFields,
+      ...shotFields,
       media_type: 'image',
       mime: compressed?.mime ?? mime,
       path: 'page-screenshot.png',
@@ -152,8 +172,7 @@ export class PageScreenshotTool extends PageToolBase {
       width: compressed?.width ?? shot.width ?? null,
       height: compressed?.height ?? shot.height ?? null,
       masked: shot.masked === true,
-    });
-  }
+    });  }
 }
 
 /** 截图 data URI 的写入侧压缩；失败/无需压缩时返回 null（调用方回退原图）。 */

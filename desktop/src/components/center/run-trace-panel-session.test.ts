@@ -463,7 +463,7 @@ describe('RunTracePanel 时间条带与记录下钻', () => {
     expect(bandBars.at(-1)!.activeRunKey).toBe('21|round:current:1')
     // 轮次行锚点 id = trace-${sessionId}-run${runId}-round-${段}-${seq}
     expect(findAllByClass(root, 'round-row')[0]!.props.id).toBe('trace-11-run21-round-current:1')
-    // 工具行锚点 id = trace-${sessionId}-run${runId}-tool-${段}-${toolCallId ?? name}
+    // 工具行锚点 id = trace-${sessionId}-run${runId}-tool-${段}-${toolCallId}|${target}|${name}|段内序号
     store = {
       ...makeStore(),
       getTraceRuns: () => [makeTraceRun({
@@ -492,8 +492,8 @@ describe('RunTracePanel 时间条带与记录下钻', () => {
     // 编辑重发：两段各有一行，锚点带段维度，不重复
     const toolRows = findAllByClass(root2, 'tool-row')
     expect(toolRows.map((r) => r.props.id)).toEqual([
-      'trace-11-run23-tool-before_edit:call_old',
-      'trace-11-run23-tool-current:call_new',
+      'trace-11-run23-tool-before_edit:call_old|a.txt|read_file|0',
+      'trace-11-run23-tool-current:call_new|a.txt|read_file|0',
     ])
   })
 

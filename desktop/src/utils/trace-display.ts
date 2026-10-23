@@ -133,9 +133,12 @@ export function formatThroughput(round: Pick<TraceRound, 'durationMs' | 'firstTo
 
 export interface TimeBandNode {
   /**
-   * 定位 key：round 用 `round:${段}:${seq}`，工具用 `tool:${段}:${toolCallId ?? name}`，
+   * 定位 key：round 用 `round:${段}:${seq}`，工具用 `tool:${段}:${toolAnchorKey(tool)}`，
    * 旁路用 `side:${index}`。段维度必须有——编辑重发时 before_edit / current 两段
    * 各自从 1 编号，只用 seq 会撞 key 与行锚点；旁路调用不在任何段内，用 index 即可。
+   * 工具侧用 `toolCallId|target|name` 三元组（与面板行 :key 同口径）：用户手动文件写入
+   * / Git 操作这类未挂轮活动没有 tool_call_id，只用 name 会让同一 run 内两条同类活动
+   * 产生完全相同的 key（v-for 重复 key + 行锚点 id 重复 + 定位指到第一条行）。
    */
   key: string
   kind: 'round' | 'tool' | 'side'
@@ -150,9 +153,12 @@ export interface TimeBandNode {
  *  startedAtMs / durationMs 缺失的节点仍进数组（tooltip 说明与总数），但不画色条。
  *  key 与行锚点 id 必须一一对应且唯一：编辑重发时 before_edit / current 两段各自从 1
  *  编号，只用 seq 会撞 key（v-for 重复 key + getElementById 取到编辑前那一行），
- *  所以 round / tool 的 key 都带段维度；side 旁路调用不在任何段内，用 index 即可。 */
+ *  所以 round / tool 的 key 都带段维度；side 旁路调用不在任何段内，用 index 即可。
+ *  工具 key 复用 toolAnchorKey 口径（toolCallId|target|name），保证条带 key 与行锚点
+ *  id 严格同源——两处口径一旦分叉，点击色条就会定位到别的行。 */
 export function runTimeNodes(run: RunTrace): TimeBandNode[] {
   const nodes: TimeBandNode[] = [];
+  let toolOrdinal = 0;
   for (const segment of run.segments) {
     for (const round of segment.rounds) {
       nodes.push({
@@ -166,11 +172,11 @@ export function runTimeNodes(run: RunTrace): TimeBandNode[] {
       });
     }
     for (const tool of segment.unplacedTools) {
-      nodes.push(toolNode(tool, segment.kind));
+      nodes.push(toolNode(tool, segment.kind, toolOrdinal++));
     }
     for (const round of segment.rounds) {
       for (const tool of round.tools) {
-        nodes.push(toolNode(tool, segment.kind));
+        nodes.push(toolNode(tool, segment.kind, toolOrdinal++));
       }
     }
   }
@@ -188,9 +194,22 @@ export function runTimeNodes(run: RunTrace): TimeBandNode[] {
   return nodes;
 }
 
-function toolNode(tool: TraceTool, segmentKind: string): TimeBandNode {
+/**
+ * 工具在条带 key / 行锚点里的统一标识：`${toolCallId ?? ''}|${target ?? ''}|${name}`。
+ * 与 RunTracePanel.vue 的 toolKey() 逐字节同口径（该函数是行渲染 :key 的实现）。
+ * 只用 `toolCallId ?? name` 不够：用户手动文件写入 / Git 操作这类未挂轮活动
+ * （workspace-write.service.ts、git-write-operation.service.ts）detailJson 里没有
+ * tool_call_id，name 又取 activity.summary——同一 run 内两条同类活动的 key 会完全相同，
+ * 造成 v-for 重复 key、行锚点 id 重复、getElementById 定位指到第一条行。
+ * 调用方（行锚点与条带节点）各自追加段内序号，三元组仍相同时也保证唯一。
+ */
+export function toolAnchorKey(tool: TraceTool): string {
+  return `${tool.toolCallId ?? ''}|${tool.target ?? ''}|${tool.name}`
+}
+
+function toolNode(tool: TraceTool, segmentKind: string, ordinal: number): TimeBandNode {
   return {
-    key: `tool:${segmentKind}:${tool.toolCallId ?? tool.name}`,
+    key: `tool:${segmentKind}:${toolAnchorKey(tool)}|${ordinal}`,
     kind: 'tool',
     // 带段后缀：同一工具在编辑前 / 当前两段都被调用时，两条 tooltip 也能分辨
     label: `${toolDisplayNameForBand(tool.name)}（${segmentKind === 'before_edit' ? '编辑前' : '当前'}）`,
