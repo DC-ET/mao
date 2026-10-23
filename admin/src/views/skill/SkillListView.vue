@@ -133,7 +133,7 @@
             />
             <el-icon class="upload-icon"><UploadFilled /></el-icon>
             <div class="upload-text">拖动或点击上传到所选用户</div>
-            <div class="upload-hint">只写入所选用户的个人技能，不会成为系统技能，也不影响其他用户。同名技能会被覆盖，并在这些用户的所有智能体中生效。node_modules、.git、dist 等目录会跳过。</div>
+            <div class="upload-hint">只写入所选用户的个人技能，不会成为系统技能，也不影响其他用户。同名个人技能会被覆盖，并在这些用户的所有智能体中生效；与系统技能同名的技能会被拒绝。node_modules、.git、dist 等目录会跳过。</div>
           </div>
         </template>
       </template>
@@ -618,7 +618,7 @@ function assignTargetSummary(userIds: number[]) {
 async function confirmAssignUpload(userIds: number[]) {
   try {
     await ElMessageBox.confirm(
-      `将把技能写入以下用户的个人技能，不会成为系统技能，也不影响其他用户：${assignTargetSummary(userIds)}。同名个人技能会被覆盖，并在这些用户的所有智能体中生效。`,
+      `将把技能写入以下用户的个人技能，不会成为系统技能，也不影响其他用户：${assignTargetSummary(userIds)}。同名个人技能会被覆盖，并在这些用户的所有智能体中生效；与系统技能同名的技能会被拒绝。`,
       '添加到指定用户',
       { confirmButtonText: '上传', cancelButtonText: '取消', type: 'warning' },
     )

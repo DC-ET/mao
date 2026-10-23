@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
+import { noSystemSkillNames } from '../testing/system-skill-names.js';
 import { PathSandbox } from '../harness/safety/path-sandbox.js';
 import { SkillLoader } from '../harness/skill/skill-loader.js';
 import { McpSecretCipher } from '../harness/mcp/crypto/mcp-secret-cipher.js';
@@ -209,7 +210,7 @@ function buildFixture(): Fixture {
   mkdirSync(workspaceDir, { recursive: true });
 
   const skillLoader = new SkillLoader(new PathSandbox(workspaceDir), skillsDir, 0);
-  const userSkillService = new UserSkillService(userSkillsDir);
+  const userSkillService = new UserSkillService(userSkillsDir, noSystemSkillNames);
   const agentRepo = new MemoryAgentRepo();
   const experienceService = new AgentExperienceService(new MemoryExperienceRepo());
   const suggestedQuestionService = new AgentSuggestedQuestionService(new MemorySuggestedQuestionRepo());

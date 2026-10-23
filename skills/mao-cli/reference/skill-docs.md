@@ -65,7 +65,7 @@ mao skill-docs upload --dir ./skills-root
 | `--dir` | 是 | 路径 | 本地技能目录或技能根目录，规则与 `upload` 相同 |
 | `--user-ids` | 是 | 逗号分隔的用户 ID | 写入这些用户的个人技能，例如 `1,2` |
 
-`POST /admin/user-skills/upload`，multipart 字段 `userIds`（逗号分隔）与 `files`。需 `skill:write`。一次最多 100 个用户。用户必须已存在；同名个人技能会被覆盖，替换失败时保留该用户原来的技能。不会写入全局技能库，其他用户不受影响。这些用户的所有智能体会自动带上该技能；若与系统技能同名，仅这些用户改用这份个人技能。请求中断或文件数超限时整批不写入。管理后台上传还会跳过 `node_modules`、`.git`、`.svn`、`dist`、`__MACOSX`，并限制最多 500 个文件、单文件 20MB、总量 50MB。
+`POST /admin/user-skills/upload`，multipart 字段 `userIds`（逗号分隔）与 `files`。需 `skill:write`。一次最多 100 个用户。用户必须已存在；同名个人技能会被覆盖，替换失败时保留该用户原来的技能。与系统技能同名的技能整个请求被拒绝（409，一名用户都不写入）：技能身份取 `SKILL.md` frontmatter 的 `name`，个人技能会在会话里覆盖同名系统技能，故禁止上传；目录名与系统技能同名但 frontmatter 名不同不受限。不会写入全局技能库，其他用户不受影响。这些用户的所有智能体会自动带上该技能。请求中断或文件数超限时整批不写入。管理后台上传还会跳过 `node_modules`、`.git`、`.svn`、`dist`、`__MACOSX`，并限制最多 500 个文件、单文件 20MB、总量 50MB。
 
 成功 `data`：`skills` 为已导入技能名，`users` 为实际写入的用户（`id`、`username`、`displayName`）。
 
@@ -89,6 +89,7 @@ mao skill-docs delete --name my-skill
 
 - 上传无文件 / 无合法相对路径 → CLI 或服务端报错
 - `assign` 未指定用户、用户 ID 非法、用户不存在、上传中断或文件数超限 → 业务错误；中断和超限不会写入任何用户。多名用户中途失败时，message 会列出已经写成功的用户
+- `assign` 或用户技能上传与系统技能同名 → 409 整批拒绝，不写入任何用户
 - 删除不存在 → 业务错误 message（如 Skill not found）
 - 成功：`code===0`
 

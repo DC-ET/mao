@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import multipart from '@fastify/multipart';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { noSystemSkillNames } from '../testing/system-skill-names.js';
 import { describe, expect, it, vi } from 'vitest';
 import { useTmpDir } from '../testing/tmp-dir.js';
 import { handleError } from '../common/http-error.js';
@@ -25,7 +26,7 @@ describe('skill routes', () => {
     app.setErrorHandler(handleError);
     app.addHook('preHandler', (req, _r, done) => { req.userId = 7; done(); });
     registerSkillRoutes(app, {
-      userSkillService: new UserSkillService(userDir),
+      userSkillService: new UserSkillService(userDir, noSystemSkillNames),
       skillDocService: new SkillDocService(loader),
       skillSyncService: {
         writeSyncZip: vi.fn(async (_a, _s, out) => { out.end(); }),
@@ -74,7 +75,7 @@ describe('skill routes', () => {
     app.addHook('preHandler', (req, _r, done) => { req.userId = 7; done(); });
     const permissionService = { hasPermission: vi.fn(async () => true) };
     registerSkillRoutes(app, {
-      userSkillService: new UserSkillService(userDir),
+      userSkillService: new UserSkillService(userDir, noSystemSkillNames),
       skillDocService: new SkillDocService(loader),
       skillSyncService: {
         writeSyncZip: vi.fn(async (_a, _s, out) => { out.end(); }),
@@ -128,7 +129,7 @@ describe('skill routes', () => {
     app.setErrorHandler(handleError);
     app.addHook('preHandler', (req, _r, done) => { req.userId = 7; done(); });
     registerSkillRoutes(app, {
-      userSkillService: new UserSkillService(userDir),
+      userSkillService: new UserSkillService(userDir, noSystemSkillNames),
       skillDocService: new SkillDocService(loader),
       skillSyncService: {
         writeSyncZip: vi.fn(async (_a, _s, out) => { out.end(); }),
@@ -164,7 +165,7 @@ describe('skill routes', () => {
     app.setErrorHandler(handleError);
     app.addHook('preHandler', (req, _r, done) => { req.userId = 7; done(); });
     registerSkillRoutes(app, {
-      userSkillService: new UserSkillService(userDir),
+      userSkillService: new UserSkillService(userDir, noSystemSkillNames),
       skillDocService: new SkillDocService(loader),
       skillSyncService: {
         writeSyncZip: vi.fn(async (_a, _s, out) => { out.end(); }),
@@ -234,7 +235,7 @@ describe('skill routes', () => {
       [8, { id: 8, username: 'u8', displayName: 'U8' }],
     ]);
     registerSkillRoutes(app, {
-      userSkillService: new UserSkillService(userDir),
+      userSkillService: new UserSkillService(userDir, noSystemSkillNames),
       skillDocService: new SkillDocService(loader),
       skillSyncService: {
         writeSyncZip: vi.fn(async (_a, _s, out) => { out.end(); }),
@@ -354,7 +355,7 @@ describe('skill routes', () => {
     app.setErrorHandler(handleError);
     app.addHook('preHandler', (req, _r, done) => { req.userId = 1; done(); });
     registerSkillRoutes(app, {
-      userSkillService: new UserSkillService(userDir),
+      userSkillService: new UserSkillService(userDir, noSystemSkillNames),
       skillDocService: new SkillDocService(loader),
       skillSyncService: {
         writeSyncZip: vi.fn(async (_a, _s, out) => { out.end(); }),

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { BusinessException } from '../common/business-exception.js';
+import { noSystemSkillNames } from '../testing/system-skill-names.js';
 import { ErrorCode } from '../common/error-code.js';
 import { PathSandbox } from '../harness/safety/path-sandbox.js';
 import { SkillLoader } from '../harness/skill/skill-loader.js';
@@ -29,7 +30,7 @@ describe('SkillBundleService（mao-skill-bundle v1）', () => {
     mkdirSync(skillsDir, { recursive: true });
     mkdirSync(userSkillsDir, { recursive: true });
     skillLoader = new SkillLoader(new PathSandbox(join(root, 'ws')), skillsDir, 0);
-    userSkillService = new UserSkillService(userSkillsDir);
+    userSkillService = new UserSkillService(userSkillsDir, noSystemSkillNames);
     service = new SkillBundleService(skillLoader, userSkillService);
   });
 

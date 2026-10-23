@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { handleError } from '../common/http-error.js';
+import { noSystemSkillNames } from '../testing/system-skill-names.js';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { PathSandbox } from '../harness/safety/path-sandbox.js';
@@ -138,7 +139,7 @@ function buildFixture(): Fixture {
   mkdirSync(skillsDir, { recursive: true });
   mkdirSync(userSkillsDir, { recursive: true });
   const skillLoader = new SkillLoader(new PathSandbox(join(root, 'ws')), skillsDir, 0);
-  const userSkillService = new UserSkillService(userSkillsDir);
+  const userSkillService = new UserSkillService(userSkillsDir, noSystemSkillNames);
   const agentRows = new Map<number, Agent>();
   const agentRepo = {
     findById: async (id: number) => agentRows.get(id) ?? null,

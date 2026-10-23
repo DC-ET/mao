@@ -175,6 +175,14 @@
                 <div class="skill-card-header">
                   <div class="skill-name">
                     <span class="skill-name-text">{{ skill.name }}</span>
+                    <el-tooltip
+                      v-if="hasSystemNamesake(skill)"
+                      content="系统技能中已存在同名技能，禁止上传"
+                      :show-after="300"
+                      placement="top"
+                    >
+                      <el-tag size="small" type="warning" class="system-namesake-tag">系统已有同名</el-tag>
+                    </el-tooltip>
                   </div>
                   <div class="skill-actions">
                     <el-tooltip content="查看内容" :show-after="300" placement="top">
@@ -186,7 +194,7 @@
                     </el-tooltip>
                     <button
                       class="skill-upload-btn"
-                      :disabled="uploadingAll || uploading || uploadingFolder === skill.folderName"
+                      :disabled="uploadingAll || uploading || uploadingFolder === skill.folderName || hasSystemNamesake(skill)"
                       @click="uploadLocalSkill(skill)"
                     >
                       {{ uploadingFolder === skill.folderName ? '上传中...' : '上传' }}
@@ -250,7 +258,7 @@ interface LocalSkillDoc {
 
 const isElectron = typeof window !== 'undefined' && !!window.electronAPI?.listLocalSkills
 
-const activeTab = ref('uploaded')
+const activeTab = ref('system')
 const loading = ref(false)
 const localLoading = ref(false)
 const systemLoading = ref(false)
@@ -275,6 +283,60 @@ const uploadedNameSet = computed(() => {
   }
   return names
 })
+
+const systemSkillNameSet = computed(() => {
+  const names = new Set<string>()
+  for (const skill of systemSkills.value) {
+    names.add(skill.name)
+  }
+  return names
+})
+
+// 技能身份是 SKILL.md frontmatter 名（与后端用户技能寻址、SkillSync 合并同口径）：
+// 同名上传会被后端 409 拒绝——用户版本会在会话里顶掉系统预置版本
+function hasSystemNamesake(skill: LocalSkillDoc): boolean {
+  return systemSkillNameSet.value.has(skill.name)
+}
+
+/** 取 SKILL.md frontmatter 的 name（行锚定，避免 description 里的 '---' 误判为定界符）。 */
+function parseSkillMdName(content: string): string | null {
+  const lines = content.split('\n')
+  if (lines[0].trim() !== '---') return null
+  let end = -1
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i].trim() === '---') {
+      end = i
+      break
+    }
+  }
+  if (end === -1) return null
+  for (let i = 1; i < end; i++) {
+    const matched = lines[i].match(/^name:\s*(.+?)\s*$/)
+    if (matched) return matched[1].replace(/^["']|["']$/g, '')
+  }
+  return null
+}
+
+/** 上传前按 frontmatter 名预检系统同名（后端同规则 409），避免整批请求白跑一轮。 */
+async function findSystemNameConflicts(files: File[]): Promise<string[]> {
+  const systemNames = systemSkillNameSet.value
+  if (systemNames.size === 0) return []
+  const conflicts: string[] = []
+  const skillMdFiles = files.filter((file) => {
+    const relativePath = ((file as any).webkitRelativePath || file.name).replace(/\\/g, '/')
+    return /^[^/]+\/SKILL\.md$/.test(relativePath)
+  })
+  for (const file of skillMdFiles) {
+    let name: string | null = null
+    try {
+      name = parseSkillMdName(await file.text())
+    } catch {
+      continue
+    }
+    if (name && systemNames.has(name) && !conflicts.includes(name)) conflicts.push(name)
+  }
+  return conflicts
+}
 
 const pendingLocalSkills = computed(() => {
   return localSkills.value.filter((skill) => {
@@ -498,6 +560,10 @@ async function buildFilesForLocalSkill(skill: LocalSkillDoc): Promise<File[]> {
 
 async function uploadLocalSkill(skill: LocalSkillDoc) {
   if (!isElectron || uploading.value || uploadingAll.value || uploadingFolder.value) return
+  if (hasSystemNamesake(skill)) {
+    ElMessage.error(`技能「${skill.name}」与系统技能同名，禁止上传`)
+    return
+  }
 
   uploadingFolder.value = skill.folderName
   try {
@@ -516,12 +582,20 @@ async function uploadAllLocalSkills() {
   const skills = [...pendingLocalSkills.value]
   if (skills.length === 0) return
 
+  // 与系统技能同名的本地技能禁止上传：批量前先摘出，跳过项在汇总里说明，不与失败混在一起
+  const blocked = skills.filter((skill) => hasSystemNamesake(skill))
+  const uploadable = skills.filter((skill) => !hasSystemNamesake(skill))
+  if (uploadable.length === 0) {
+    ElMessage.error(`全部技能与系统技能同名，禁止上传：${blocked.map((skill) => skill.name).join('、')}`)
+    return
+  }
+
   uploadingAll.value = true
   const succeeded: string[] = []
   const failed: string[] = []
 
   try {
-    for (const skill of skills) {
+    for (const skill of uploadable) {
       try {
         const files = await buildFilesForLocalSkill(skill)
         const ok = await uploadFiles(files, { silentSuccess: true })
@@ -538,12 +612,15 @@ async function uploadAllLocalSkills() {
     await fetchSkills()
     await fetchLocalSkills()
 
+    const skippedTip = blocked.length > 0
+      ? `；已跳过 ${blocked.length} 个与系统技能同名的技能：${blocked.map((skill) => skill.name).join('、')}`
+      : ''
     if (succeeded.length === 0) {
-      ElMessage.error('全部上传失败')
+      ElMessage.error(`全部上传失败${skippedTip}`)
     } else if (failed.length > 0) {
-      ElMessage.warning(`已上传 ${succeeded.length} 个技能，失败：${failed.join(', ')}`)
+      ElMessage.warning(`已上传 ${succeeded.length} 个技能，失败：${failed.join(', ')}${skippedTip}`)
     } else {
-      ElMessage.success(`已全部上传 ${succeeded.length} 个技能`)
+      ElMessage.success(`已全部上传 ${succeeded.length} 个技能${skippedTip}`)
       activeTab.value = 'uploaded'
     }
   } catch (e: any) {
@@ -587,6 +664,12 @@ async function uploadFiles(files: File[], options?: { refreshLocal?: boolean; si
   }
   if (valid.length === 0) {
     ElMessage.error(excludedCount > 0 ? '所选内容中无可上传的文件（已排除 node_modules/.git 等目录）' : '未选择任何文件')
+    return false
+  }
+
+  const systemConflicts = await findSystemNameConflicts(valid)
+  if (systemConflicts.length > 0) {
+    ElMessage.error(`与系统技能同名，禁止上传：${systemConflicts.join('、')}。请修改 SKILL.md 的 name 字段后重试`)
     return false
   }
 
@@ -816,6 +899,12 @@ function formatBytes(bytes: number): string {
 }
 
 .system-tag {
+  flex-shrink: 0;
+  transform: scale(0.88);
+  transform-origin: left center;
+}
+
+.system-namesake-tag {
   flex-shrink: 0;
   transform: scale(0.88);
   transform-origin: left center;

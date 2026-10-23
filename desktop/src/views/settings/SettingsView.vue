@@ -40,7 +40,7 @@
           MCP 服务器
         </router-link>
         <router-link to="/settings/skills" class="settings-nav-item" active-class="active">
-          我的技能
+          Skills 技能
         </router-link>
         <router-link to="/settings/commands" class="settings-nav-item" active-class="active">
           我的指令

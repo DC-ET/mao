@@ -2,6 +2,7 @@ import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { useTmpDir } from '../testing/tmp-dir.js';
+import { noSystemSkillNames } from '../testing/system-skill-names.js';
 import { UserSkillService } from './user-skill.service.js';
 
 function skill(name: string, description: string, body: string): string {
@@ -11,7 +12,7 @@ function skill(name: string, description: string, body: string): string {
 describe('UserSkillService', () => {
   it('listsReadsUploadsAndDeletesUserSkills', async () => {
     const dir = useTmpDir('mao-uskill-');
-    const service = new UserSkillService(dir);
+    const service = new UserSkillService(dir, noSystemSkillNames);
     const existing = join(dir, '7', 'existing');
     mkdirSync(existing, { recursive: true });
     writeFileSync(join(existing, 'SKILL.md'), skill('existing', 'Existing', 'Body'));
@@ -51,7 +52,7 @@ describe('UserSkillService', () => {
 
   it('错位技能（目录名≠frontmatter 名）可查看/删除：按 frontmatter 名经 folderPath 寻址', async () => {
     const dir = useTmpDir('mao-uskill-mismatch-');
-    const service = new UserSkillService(dir);
+    const service = new UserSkillService(dir, noSystemSkillNames);
     const { existsSync } = await import('node:fs');
 
     // 上传通道即可构造：目录 holder、frontmatter 名 theirs（validateSkillGroup 不比对二者）
@@ -79,7 +80,7 @@ describe('UserSkillService', () => {
 
   it('按目录名传入仍兼容；不存在/非法名 → 404/400', async () => {
     const dir = useTmpDir('mao-uskill-mismatch-fallback-');
-    const service = new UserSkillService(dir);
+    const service = new UserSkillService(dir, noSystemSkillNames);
     const { existsSync } = await import('node:fs');
     mkdirSync(join(dir, '7', 'holder'), { recursive: true });
     writeFileSync(join(dir, '7', 'holder', 'SKILL.md'), skill('theirs', '错位技能', 'Body'));
@@ -98,7 +99,7 @@ describe('UserSkillService', () => {
 
   it('重名技能（两个目录同一 frontmatter 名）按名寻址失败闭合 409：不误删首个，可按 folderPath 精确删', async () => {
     const dir = useTmpDir('mao-uskill-dup-name-');
-    const service = new UserSkillService(dir);
+    const service = new UserSkillService(dir, noSystemSkillNames);
     const { existsSync } = await import('node:fs');
 
     // 上传通道即可构造：validateSkillGroup 只校验 SKILL.md 自身，不查 frontmatter 名重复
@@ -132,7 +133,7 @@ describe('UserSkillService', () => {
 
   it('folderPath 精确寻址不串用户、不串目录', async () => {
     const dir = useTmpDir('mao-uskill-folder-scope-');
-    const service = new UserSkillService(dir);
+    const service = new UserSkillService(dir, noSystemSkillNames);
     const { existsSync } = await import('node:fs');
     for (const [userId, folder] of [[7, 'aaa'], [8, 'aaa']] as const) {
       mkdirSync(join(dir, String(userId), folder), { recursive: true });
@@ -151,7 +152,7 @@ describe('UserSkillService', () => {
 
   it('restoresExecutableBitsForUploadedScripts', async () => {
     const dir = useTmpDir('mao-uskill-');
-    const service = new UserSkillService(dir);
+    const service = new UserSkillService(dir, noSystemSkillNames);
     const uploaded = service.uploadUserSkill(7, [
       { originalFilename: 'cli/SKILL.md', buffer: Buffer.from(skill('cli', 'CLI', 'Body')) },
       { originalFilename: 'cli/run.sh', buffer: Buffer.from('#!/bin/sh\necho hi') },
@@ -170,7 +171,7 @@ describe('UserSkillService', () => {
 
   it('returnsFailuresForInvalidUploadReadAndDeleteRequests', async () => {
     const dir = useTmpDir('mao-uskill-');
-    const service = new UserSkillService(dir);
+    const service = new UserSkillService(dir, noSystemSkillNames);
     expect(service.listUserSkills(7)).toEqual([]);
     expect(service.listAllUserSkills()).toEqual([]);
     expect(service.getUserSkill(7, 'missing').code).toBe(404);
@@ -190,7 +191,7 @@ describe('UserSkillService', () => {
 
   it('replacesSkillOnlyAfterStagingSucceeds', () => {
     const dir = useTmpDir('mao-uskill-');
-    const service = new UserSkillService(dir);
+    const service = new UserSkillService(dir, noSystemSkillNames);
     const folder = join(dir, '7', 'keep');
     mkdirSync(folder, { recursive: true });
     writeFileSync(join(folder, 'SKILL.md'), skill('keep', 'Keep', 'Old'));
@@ -213,11 +214,47 @@ describe('UserSkillService', () => {
     expect(service.listUserSkills(7).map((item) => item.name).sort()).toEqual(['keep', 'other']);
   });
 
+  it('上传与系统技能同名的技能被拒绝（409）：按 frontmatter 名判重，整批不落盘', async () => {
+    const dir = useTmpDir('mao-uskill-system-conflict-');
+    const service = new UserSkillService(dir, { getAllNames: () => ['mao-cli'] });
+    const { existsSync } = await import('node:fs');
+
+    // frontmatter 名与系统技能同名（目录名不同也拦：会话按 frontmatter 名合并，用户版本会顶掉系统版本）
+    const conflict = service.uploadUserSkill(7, [
+      { originalFilename: 'holder/SKILL.md', buffer: Buffer.from(skill('mao-cli', '冒名', 'Body')) },
+    ]);
+    expect(conflict.code).toBe(409);
+    expect(conflict.message).toContain('mao-cli');
+    expect(existsSync(join(dir, '7', 'holder'))).toBe(false);
+
+    // 目录名与系统技能同名但 frontmatter 名不同 → 不冲突，照常放行
+    const ok = service.uploadUserSkill(7, [
+      { originalFilename: 'mao-cli/SKILL.md', buffer: Buffer.from(skill('my-cli', '我的', 'Body')) },
+    ]);
+    expect(ok.code).toBe(0);
+    expect(existsSync(join(dir, '7', 'mao-cli', 'SKILL.md'))).toBe(true);
+
+    // 一批里有一个同名 → 整批拒绝，任何一个都不落盘
+    const batch = service.uploadUserSkill(7, [
+      { originalFilename: 'fine/SKILL.md', buffer: Buffer.from(skill('fine', 'Fine', 'Body')) },
+      { originalFilename: 'bad/SKILL.md', buffer: Buffer.from(skill('mao-cli', 'Bad', 'Body')) },
+    ]);
+    expect(batch.code).toBe(409);
+    expect(existsSync(join(dir, '7', 'fine'))).toBe(false);
+    expect(existsSync(join(dir, '7', 'bad'))).toBe(false);
+
+    // 无系统技能时不受限制
+    const noSystem = new UserSkillService(dir, noSystemSkillNames);
+    expect(noSystem.uploadUserSkill(7, [
+      { originalFilename: 'plain/SKILL.md', buffer: Buffer.from(skill('mao-cli', 'D', 'B')) },
+    ]).code).toBe(0);
+  });
+
   it.skipIf(typeof process.getuid === 'function' && process.getuid() === 0)(
     'keepsExistingSkillWhenReplaceCannotStart',
     () => {
       const dir = useTmpDir('mao-uskill-');
-      const service = new UserSkillService(dir);
+      const service = new UserSkillService(dir, noSystemSkillNames);
       const userDir = join(dir, '7');
       const folder = join(userDir, 'keep');
       mkdirSync(folder, { recursive: true });
@@ -240,7 +277,7 @@ describe('UserSkillService', () => {
 describe('UserSkillService.installUserSkillFiles（依赖一键补装）', () => {
   it('内存文件安装：写盘成功且隐藏路径段被过滤', async () => {
     const dir = useTmpDir('mao-uskill-install-');
-    const service = new UserSkillService(dir);
+    const service = new UserSkillService(dir, noSystemSkillNames);
     const { existsSync } = await import('node:fs');
 
     const installed = service.installUserSkillFiles(7, 'code-review', {
@@ -259,7 +296,7 @@ describe('UserSkillService.installUserSkillFiles（依赖一键补装）', () =>
 
   it('校验链：SKILL.md 缺失/结构非法/frontmatter 不一致/名称非法/路径穿越/超总量均拒绝且不落盘', async () => {
     const dir = useTmpDir('mao-uskill-install-bad-');
-    const service = new UserSkillService(dir);
+    const service = new UserSkillService(dir, noSystemSkillNames);
     const { existsSync } = await import('node:fs');
 
     expect(service.installUserSkillFiles(7, 'x', { 'refs/a.md': 'no SKILL.md' }).code).toBe(400);
@@ -276,7 +313,7 @@ describe('UserSkillService.installUserSkillFiles（依赖一键补装）', () =>
 
   it('目标同名目录已存在即拒绝覆盖：不替换、不触发暂存交换', async () => {
     const dir = useTmpDir('mao-uskill-install-reject-');
-    const service = new UserSkillService(dir);
+    const service = new UserSkillService(dir, noSystemSkillNames);
     const { existsSync } = await import('node:fs');
 
     // 自检按 frontmatter 名判缺失、写盘按目录名落盘："目录 A、frontmatter 名 B"的技能
@@ -287,6 +324,18 @@ describe('UserSkillService.installUserSkillFiles（依赖一键补装）', () =>
     expect(rejected.code).toBe(409);
     expect(rejected.message).toContain('拒绝覆盖');
     expect(readFileSync(join(dir, '7', 'dup', 'SKILL.md'), 'utf8')).toContain('Old');
+    expect(existsSync(join(dir, '.staging'))).toBe(false);
+  });
+
+  it('与系统技能同名拒绝安装（409）：补装同样写用户技能目录，会顶掉系统版本', async () => {
+    const dir = useTmpDir('mao-uskill-install-system-conflict-');
+    const service = new UserSkillService(dir, { getAllNames: () => ['mao-cli'] });
+    const { existsSync } = await import('node:fs');
+
+    const rejected = service.installUserSkillFiles(7, 'mao-cli', { 'SKILL.md': skill('mao-cli', 'D', 'B') });
+    expect(rejected.code).toBe(409);
+    expect(rejected.message).toContain('mao-cli');
+    expect(existsSync(join(dir, '7', 'mao-cli'))).toBe(false);
     expect(existsSync(join(dir, '.staging'))).toBe(false);
   });
 });

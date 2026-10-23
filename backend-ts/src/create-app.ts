@@ -561,7 +561,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     getConfig: () => settingService.getEcpConfig(),
   });
   const skillSync = new SkillSyncService(skillLoader, pathSandbox, runtimeResolver, userSkillsDir);
-  const userSkillService = new UserSkillService(userSkillsDir);
+  const userSkillService = new UserSkillService(userSkillsDir, skillLoader);
   const skillDocService = new SkillDocService(skillLoader);
   // 资产分发闭环 P3：mao-skill-bundle v1 导出/导入
   const skillBundleService = new SkillBundleService(skillLoader, userSkillService);

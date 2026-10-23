@@ -36,8 +36,16 @@ export interface SkillDocDetailVO {
 
 export type SkillResult<T> = { code: number; message: string; data?: T };
 
+/** 系统技能名来源（SkillLoader 已实现）：用户技能上传判重需知道系统预置了哪些名字。 */
+export interface SystemSkillNames {
+  getAllNames(): string[];
+}
+
 export class UserSkillService {
-  constructor(private readonly userSkillsDir: string) {}
+  constructor(
+    private readonly userSkillsDir: string,
+    private readonly systemSkills: SystemSkillNames,
+  ) {}
 
   listUserSkills(userId: number): SkillDocVO[] {
     const userDir = this.getUserSkillsDir(userId);
@@ -133,6 +141,10 @@ export class UserSkillService {
       const validationError = validateSkillGroup(skillName, group);
       if (validationError != null) return fail(400, validationError);
     }
+    const conflicts = this.findSystemNameConflicts(grouped);
+    if (conflicts.length > 0) {
+      return fail(409, `与系统技能同名，禁止上传：${conflicts.join('、')}。个人技能会覆盖同名系统技能，请修改 SKILL.md 的 name 字段后重试`);
+    }
     return this.commitSkillGroups(userId, grouped);
   }
 
@@ -147,6 +159,9 @@ export class UserSkillService {
     // skillName 来自 DB 的 agent.skillNames（不经过 bundle 解析），用作目录名前必须校验
     if (!isValidSkillName(skillName)) {
       return fail(400, `Invalid skill name: ${skillName}`);
+    }
+    if (this.systemSkills.getAllNames().includes(skillName)) {
+      return fail(409, `与系统技能同名，禁止上传：${skillName}。个人技能会覆盖同名系统技能，请改用其他名称`);
     }
     if (existsSync(join(this.getUserSkillsDir(userId), skillName))) {
       return fail(409, `同名技能目录已存在，拒绝覆盖：${skillName}`);
@@ -188,6 +203,28 @@ export class UserSkillService {
       return { code: committed.code, message: committed.message };
     }
     return { code: 0, message: 'success', data: skillName };
+  }
+
+  /**
+   * 按 SKILL.md frontmatter 名判重：技能身份是全链路统一的 frontmatter 名（列表展示、
+   * SkillSync 合并、运行时目录名都按它），会话合并时用户技能后置覆盖系统同名技能
+   * （SkillSyncService.syncToSession 的 merged）。放行同名上传会让用户版本静默顶掉
+   * 系统预置版本，且管理员后续更新系统技能对已上传同名技能的用户不生效。
+   * 目录名与系统技能同名但 frontmatter 名不同的上传不冲突，照常放行。
+   */
+  private findSystemNameConflicts(grouped: Map<string, UploadedSkillFile[]>): string[] {
+    const systemNames = new Set(this.systemSkills.getAllNames());
+    if (systemNames.size === 0) return [];
+    const conflicts: string[] = [];
+    for (const group of grouped.values()) {
+      const skillMd = group.find((file) => relativeAfterSkill(file.originalFilename) === 'SKILL.md');
+      if (skillMd == null) continue;
+      const frontName = parseSkillMdContent(skillMd.buffer.toString('utf8'))?.name?.trim();
+      if (frontName != null && systemNames.has(frontName) && !conflicts.includes(frontName)) {
+        conflicts.push(frontName);
+      }
+    }
+    return conflicts;
   }
 
   /** 暂存交换写盘（stage → swap → backup → 失败恢复），uploadUserSkill 与 installUserSkillFiles 共用。 */
