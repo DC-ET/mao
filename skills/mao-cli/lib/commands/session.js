@@ -31,7 +31,7 @@ const HELP = `用法:
   mao session promote-side-task --id <id>   将边路任务会话提升为主会话
 `;
 
-const PERMISSION_LEVELS = new Set(['READ_ONLY', 'READ_WRITE', 'SMART', 'FULL']);
+const PERMISSION_LEVELS = new Set(['READ_ONLY', 'READ_WRITE', 'SMART', 'PROXY', 'FULL']);
 const EXECUTION_MODES = new Set(['LOCAL', 'CLOUD']);
 const WORKSPACE_MODES = new Set(['new', 'existing', 'git']);
 
@@ -93,7 +93,7 @@ async function handle(ctx) {
       }
       const permissionLevel = optionalString(flags, 'permission-level');
       if (permissionLevel && !PERMISSION_LEVELS.has(permissionLevel)) {
-        throw createCliError('--permission-level 必须是 READ_ONLY|READ_WRITE|SMART|FULL');
+        throw createCliError('--permission-level 必须是 READ_ONLY|READ_WRITE|SMART|PROXY|FULL');
       }
       const workspaceMode = optionalString(flags, 'workspace-mode');
       if (workspaceMode && !WORKSPACE_MODES.has(workspaceMode)) {
@@ -149,7 +149,7 @@ async function handle(ctx) {
       if (projectKey !== undefined) body.projectKey = projectKey;
       if (permissionLevel !== undefined) {
         if (!PERMISSION_LEVELS.has(permissionLevel)) {
-          throw createCliError('--permission-level 必须是 READ_ONLY|READ_WRITE|SMART|FULL');
+          throw createCliError('--permission-level 必须是 READ_ONLY|READ_WRITE|SMART|PROXY|FULL');
         }
         body.permissionLevel = permissionLevel;
       }

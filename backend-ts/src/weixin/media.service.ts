@@ -54,10 +54,11 @@ export class WeixinMediaService {
 
   async downloadImage(imageItem: Record<string, unknown> | null | undefined): Promise<DownloadedMedia | null> {
     if (imageItem == null) return null;
-    let media = imageItem.media as Record<string, unknown> | undefined;
-    if (media == null) media = imageItem.thumb_media as Record<string, unknown> | undefined;
+    // 与 downloadFile 同口径：取第一个带合法 encrypt_query_param 的媒体节点，
+    // media 节点字段不完整时回退 thumb_media（media-crypto.ts 的 resolveMediaNode）。
+    const media = resolveMediaNode(imageItem);
     if (media == null) {
-      console.warn('图片消息缺少 media/thumb_media');
+      console.warn('图片消息缺少带 encrypt_query_param 的 media/thumb_media');
       return null;
     }
     const encryptQueryParam = textOrNull(media.encrypt_query_param);

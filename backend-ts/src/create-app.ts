@@ -838,7 +838,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     treeSignalPublisher, approvalRegistry, approvalRuleService, activityService,
     activityHeartbeat, todoMapper, backgroundSubagentManager, shellManager,
     skillSync, localSkills, localAgentsMd, mcpSync, routingMcpClient,
-    agentRepo, modelRepo, agentExecutor, budgetService, scheduledService,
+    agentRepo, modelRepo, userRepo, agentExecutor, budgetService, scheduledService,
     openTriggerSettle, openCallSettle,
   });
 

@@ -59,8 +59,12 @@ export function createSubagentModule() {
       ? list.filter(t => t.phase === 'RUNNING' || t.phase === 'WAITING_APPROVAL' || t.phase === 'CANCELLING')
       : list
     if (opts?.agentType) {
+      // agent_type 是类型判别：0 命中即「未绑定」，直接返回 null，
+      // 不得回退到其它类型的候选（否则 delegate 卡片会绑到别的子代理会话）。
+      // 下方 task 过滤的有意放宽保持不变（任务文案可能不一致）。
       const byType = candidates.filter(t => t.agentType === opts.agentType)
-      if (byType.length > 0) candidates = byType
+      if (byType.length === 0) return null
+      candidates = byType
     }
     if (opts?.task != null && opts.task !== '') {
       const byTask = candidates.filter(t => t.taskDescription === opts.task)

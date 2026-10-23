@@ -73,7 +73,13 @@ export class ReadFileTool extends BaseTool {
       // 不剥则模型会把首行 \uFEFF 复制进 old_string，CLOUD 下必然匹配失败。
       const allLines = splitLines(stripBom(readFileSync(filePath, 'utf8')));
       const totalLines = allLines.length;
-      const from = Math.min(offset, totalLines);
+      // offset 越界（> total_lines）显式报错而非钳到 EOF：静默钳制会返回「空 content + success」，
+      // 模型据此误判文件为空并用 write_file 整体覆写清空它（与本函数上方 offset/limit 取值校验同源）。
+      // offset == total_lines 仍是合法空尾窗口（分页终止判定用），边界不收紧。
+      if (offset > totalLines) {
+        return readError(`错误：offset 超出文件行数范围：offset=${offset}, total_lines=${totalLines}`);
+      }
+      const from = offset;
       const to = Math.min(from + limit, totalLines);
       let content = allLines.slice(from, to).join('\n');
       if (content.length > MAX_OUTPUT_LENGTH) {

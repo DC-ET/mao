@@ -38,10 +38,10 @@ export class RuntimeCleanupScheduler {
 
   start(): void {
     if (this.timer) return;
-    this.timer = setInterval(() => { void this.runCleanup(); }, this.properties.intervalMs);
+    this.timer = setInterval(() => { this.runCleanupSafely(); }, this.properties.intervalMs);
     harnessLog('info', `Runtime cleanup scheduler started (interval=${this.properties.intervalMs}ms, root=${this.runtimeRoot})`);
     // 启动时立刻跑一轮，避免首轮等待时间过长
-    void this.runCleanup();
+    this.runCleanupSafely();
   }
 
   stop(): void {
@@ -49,6 +49,16 @@ export class RuntimeCleanupScheduler {
       clearInterval(this.timer);
       this.timer = null;
     }
+  }
+
+  /**
+   * 无人 await 的调用点（定时回调、启动即跑）统一走这里：runCleanup 若再抛异常，
+   * 只落 warn 日志，不能变成 unhandledRejection 把进程带崩。
+   */
+  private runCleanupSafely(): void {
+    this.runCleanup().catch((e) => {
+      harnessLog('warn', `Runtime cleanup run failed: ${(e as Error).message}`);
+    });
   }
 
   async runCleanup(): Promise<RuntimeCleanupResult> {
@@ -61,11 +71,11 @@ export class RuntimeCleanupScheduler {
       const userDirs = this.safeReadDir(this.runtimeRoot);
       for (const userId of userDirs) {
         const userRoot = resolve(this.runtimeRoot, userId);
-        if (!statSync(userRoot).isDirectory()) continue;
+        if (!this.isDirectory(userRoot)) continue;
         const sessionDirs = this.safeReadDir(userRoot);
         for (const sessionId of sessionDirs) {
           const sessionRoot = resolve(userRoot, sessionId);
-          if (!statSync(sessionRoot).isDirectory()) continue;
+          if (!this.isDirectory(sessionRoot)) continue;
           if (this.properties.shellOutputMaxAgeDays > 0) {
             result.shellOutputRemoved += this.cleanupAgedFiles(join(sessionRoot, 'shellOutput'), 'sh-', '.out');
             result.webPageRemoved += this.cleanupAgedFiles(join(sessionRoot, 'webPages'), '', '.md');
@@ -113,6 +123,18 @@ export class RuntimeCleanupScheduler {
       rmSync(dir, { recursive: true, force: true });
     } catch (e) {
       harnessLog('warn', `Failed to remove skills dir ${dir}: ${(e as Error).message}`);
+    }
+  }
+
+  /**
+   * 目录判定带容错：悬空软链、条目被并发删除、权限不足等取不到 stat 时跳过该条目，
+   * 不让单个条目中断整轮扫描（与 cleanupAgedFiles / safeReadDir 同口径）。
+   */
+  private isDirectory(path: string): boolean {
+    try {
+      return statSync(path).isDirectory();
+    } catch {
+      return false;
     }
   }
 

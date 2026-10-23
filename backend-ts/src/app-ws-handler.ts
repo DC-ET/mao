@@ -25,6 +25,7 @@ import type { McpSyncService } from './harness/mcp/local/mcp-sync-service.js';
 import type { McpClientManager } from './harness/mcp/mcp-client-manager.js';
 import type { MysqlAgentRepository } from './agent/agent.repository.js';
 import type { MysqlLlmModelRepository } from './model/model.repository.js';
+import type { MysqlUserRepository } from './user/user.repository.js';
 import type { SessionTitleService } from './session/session-title.service.js';
 import type { HarnessService } from './harness/core/harness-service.js';
 import type { AgentLoop } from './harness/core/agent-loop.js';
@@ -63,6 +64,7 @@ export interface WsHandlerDeps {
   routingMcpClient: McpClientManager;
   agentRepo: MysqlAgentRepository;
   modelRepo: MysqlLlmModelRepository;
+  userRepo: MysqlUserRepository;
   agentExecutor: ReturnType<typeof createAgentExecutor>;
   budgetService: BudgetService;
   scheduledService: ScheduledTaskService;
@@ -77,7 +79,7 @@ export function assembleWsHandler(deps: WsHandlerDeps): StreamingWsHandler {
     treeSignalPublisher, approvalRegistry, approvalRuleService, activityService,
     activityHeartbeat, todoMapper, backgroundSubagentManager, shellManager,
     skillSync, localSkills, localAgentsMd, mcpSync, routingMcpClient,
-    agentRepo, modelRepo, agentExecutor, budgetService, scheduledService,
+    agentRepo, modelRepo, userRepo, agentExecutor, budgetService, scheduledService,
     openTriggerSettle, openCallSettle,
   } = deps;
 
@@ -112,6 +114,19 @@ export function assembleWsHandler(deps: WsHandlerDeps): StreamingWsHandler {
       selectDefault: () => modelRepo.findDefault(),
     },
     jwtService: jwt,
+    // 账号状态检查（BUG-C3）：WS 首帧 auth 与连接内换发都与 REST preHandler 同一口径——
+    // 停用/已删除账号的 token 不得建立或续期连接。WS 连接鉴权每连接仅一次，无需负缓存。
+    accountStatusChecker: async (userId: number) => {
+      let user: Awaited<ReturnType<typeof userRepo.findById>>;
+      try {
+        user = await userRepo.findById(userId);
+      } catch {
+        return true; // 查询异常不误伤：放行本次，下次再判
+      }
+      // findById 带 notDeleted()：null = 账号不存在/已删除，与刷新 token 口径一致（拒）
+      if (user == null) return false;
+      return !(user.status != null && user.status === 0);
+    },
     agentExecutor: (fn: () => Promise<void>) => agentExecutor.submit(fn),
     mcpSyncTimeoutSeconds: cfg.app.mcp.syncTimeoutSeconds,
     budgetGate: {

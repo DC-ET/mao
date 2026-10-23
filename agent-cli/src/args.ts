@@ -267,8 +267,19 @@ function optionalString(flags: Record<string, string | boolean>, name: string): 
   return typeof value === 'string' ? value : undefined;
 }
 
+/**
+ * 与 optionalString 同源，但空串/纯空白按「未下发」处理——对应 output-format 既有先例
+ * （见下方 outputFormatRaw 注释）：shell 里 `--xxx=$EMPTY`（变量未设置）与
+ * `--xxx=` 内联空值都很常见，`'' != null` 成立会让 parseEnum/positiveInt 直接抛错，
+ * 任何子命令都起不来。与 config-store 的 envBool / resolveConfig 空串口径一致。
+ */
+function optionalText(flags: Record<string, string | boolean>, name: string): string | undefined {
+  const value = optionalString(flags, name)?.trim();
+  return value ? value : undefined;
+}
+
 function positiveInt(flags: Record<string, string | boolean>, name: string): number | undefined {
-  const value = optionalString(flags, name);
+  const value = optionalText(flags, name);
   if (value === undefined) return undefined;
   const num = Number(value);
   if (!Number.isFinite(num) || !Number.isInteger(num) || num <= 0) {
@@ -312,6 +323,8 @@ function parseResume(flags: Record<string, string | boolean>): number | 'latest'
   const v = flags['resume'];
   if (v === undefined) return undefined;
   if (v === true) return 'latest';
+  // 空串/纯空白按「未下发」：与 optionalText 同口径，否则 Number('')===0 抛错
+  if (typeof v === 'string' && v.trim() === '') return undefined;
   const n = Number(v);
   if (!Number.isInteger(n) || n <= 0) {
     throw new CliError(`--resume 必须是正整数会话 id，收到: ${String(v)}`);
@@ -377,7 +390,7 @@ export function parseCliConfig(
   const outputFormat = outputFormatTrimmed
     ? parseEnum('output-format', outputFormatTrimmed, ['text', 'json', 'stream-json'] as const, 'text', lower)
     : undefined;
-  const permissionLevelRaw = optionalString(flags, 'permission-level');
+  const permissionLevelRaw = optionalText(flags, 'permission-level');
   const permissionLevel = permissionLevelRaw != null
     ? parseEnum('permission-level', permissionLevelRaw, ['READ_ONLY', 'READ_WRITE', 'SMART', 'PROXY', 'FULL'] as const, 'READ_WRITE', upper)
     : undefined;
@@ -396,11 +409,11 @@ export function parseCliConfig(
     }
   }
 
-  const onQuestionRaw = optionalString(flags, 'on-question');
+  const onQuestionRaw = optionalText(flags, 'on-question');
   let onQuestion = parseEnum('on-question', onQuestionRaw, ['ask', 'fail'] as const, 'ask', lower);
   if (!onQuestionRaw && (print || !stdoutIsTty)) onQuestion = 'fail';
 
-  const onApprovalRaw = optionalString(flags, 'on-approval');
+  const onApprovalRaw = optionalText(flags, 'on-approval');
   let onApproval = parseEnum('on-approval', onApprovalRaw, ['ask', 'fail'] as const, 'ask', lower);
   if (!onApprovalRaw && (print || !stdoutIsTty)) onApproval = 'fail';
 
@@ -433,7 +446,7 @@ export function parseCliConfig(
     gitBranch: optionalString(flags, 'git-branch'),
     permissionLevel,
     thinking: hasFlag(flags, 'thinking'),
-    ifRunning: parseEnum('if-running', optionalString(flags, 'if-running'), ['wait', 'cancel', 'fail'] as const, 'wait', lower),
+    ifRunning: parseEnum('if-running', optionalText(flags, 'if-running'), ['wait', 'cancel', 'fail'] as const, 'wait', lower),
     onQuestion,
     onQuestionExplicit: Boolean(onQuestionRaw),
     maxDurationSec: positiveInt(flags, 'max-duration'),

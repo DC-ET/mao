@@ -246,6 +246,20 @@ function readError(message: string): Record<string, unknown> {
   return { content: message, error: message, total_lines: 0 };
 }
 
+/**
+ * 解析 offset / limit：只接受有限且非负的整数，与云端 read-file-tool.ts parseLineIndex 同口径。
+ * 非法值（负数、非数字、空串）一律抛错，由 handleReadFile 的 catch 转成 readError——
+ * 带 error 键，下游据此判失败态。静默钳制会让模型拿到「空 content + success」，
+ * 误判文件为空后用 write_file 整体覆写清空它。
+ */
+function parseLineIndex(value: unknown, field: 'offset' | 'limit'): number {
+  const n = asInt(value, Number.NaN);
+  if (!Number.isInteger(n) || n < 0) {
+    throw new Error(`参数 ${field} 必须是非负整数，收到 ${JSON.stringify(value) ?? String(value)}`);
+  }
+  return n;
+}
+
 export function handleReadFile(args: Record<string, unknown>, workspace: string | undefined, sessionId: number): Record<string, unknown> {
   try {
     const filePath = extractFilePath(args);
@@ -265,10 +279,11 @@ export function handleReadFile(args: Record<string, unknown>, workspace: string 
     }
     const allLines = splitLines(stripBom(buffer.toString('utf8')));
     const totalLines = allLines.length;
-    const offset = Math.max(0, asInt(args.offset, 0));
-    // 与云端 read_file 同口径：limit 非法/空串时回落「读全文件」而非 0——
-    // 返回空 content 会让模型误判文件为空，进而在 write_file 里整体覆写清空它
-    const limit = args.limit != null ? Math.max(0, asInt(args.limit, Number.MAX_SAFE_INTEGER)) : Number.MAX_SAFE_INTEGER;
+    // offset/limit 校验而非静默钳制，与云端 read_file 的 parseLineIndex 同口径：
+    // 负数钳到 0 会返回「空 content + success」，让模型误判文件为空并在 write_file 里
+    // 整体覆写清空它；非法值显式报错，模型才知道入参非法可以重试。
+    const offset = args.offset != null ? parseLineIndex(args.offset, 'offset') : 0;
+    const limit = args.limit != null ? parseLineIndex(args.limit, 'limit') : Number.MAX_SAFE_INTEGER;
     const from = Math.min(offset, totalLines);
     const to = Math.min(from + limit, totalLines);
     let content = allLines.slice(from, to).join('\n');

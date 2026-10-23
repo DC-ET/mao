@@ -1612,8 +1612,9 @@ function buildEditContent(text: string | null, images: string[] | null): string 
   }
 }
 
+/** 终态口径与仓内其余定义一致（task-terminal.service.ts / streaming-ws-handler.ts）：IDLE 既非活跃也非终态。 */
 function isTerminalPhase(phase: string | null | undefined): boolean {
-  return phase === 'IDLE' || phase === 'COMPLETED' || phase === 'FAILED' || phase === 'CANCELLED';
+  return phase === 'COMPLETED' || phase === 'FAILED' || phase === 'CANCELLED';
 }
 
 function toIso(sql: string): string {

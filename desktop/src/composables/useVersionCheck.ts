@@ -96,10 +96,15 @@ async function checkVersion() {
     if (versionChanged || buildChanged) {
       hasUpdate.value = true
       newVersion.value = remoteVersion
+    } else {
+      // 远端回落到本地基线（如服务端回滚到本窗口正在运行的版本）：撤销更新提示
+      hasUpdate.value = false
+      newVersion.value = null
     }
-
-    writeStoredVersion({ version: remoteVersion, buildTime: remoteBuildTime })
-    currentVersion.value = remoteVersion
+    // 轮询不得改写基线（localStorage['app_version']）与 currentVersion：基线的语义是
+    // 「本窗口正在运行的版本」，只在页面加载/刷新时同步一次（见上方 baselineSynced 分支）。
+    // 若在此处用远端覆盖，其它仍跑旧版本的窗口会读到被推进的基线而不再收到提示，
+    // currentVersion 也会报出尚未安装的远端版本。
   } catch {
     // 网络不可用时静默忽略
   }

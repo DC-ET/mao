@@ -127,14 +127,15 @@ export function createTraceModule() {
   /**
    * 会话当前进行中的 executionId：崩溃恢复 / 重跑会换 executionId，
    * 面板据此只取本次执行的临时行，陈旧帧不画进当前 run。
-   * 同一会话同时只有一个执行在跑，取任一临时键即可。
+   * 残留键可能短暂存在（重连终态等路径清脏有先后），Map 按插入顺序迭代，
+   * 取最后一个匹配键 = 最新一次执行，避免面板钉在上一次执行的残留行上。
    */
   function getLiveExecutionId(sessionId: string): string | null {
     const prefix = `${String(sessionId)}|`
-    for (const key of liveRounds.value.keys()) {
+    for (const key of Array.from(liveRounds.value.keys()).reverse()) {
       if (key.startsWith(prefix)) return key.slice(prefix.length)
     }
-    for (const key of liveTools.value.keys()) {
+    for (const key of Array.from(liveTools.value.keys()).reverse()) {
       if (key.startsWith(prefix)) return key.slice(prefix.length)
     }
     return null

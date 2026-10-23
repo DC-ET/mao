@@ -104,7 +104,7 @@ mao session get --id 12
 | `--execution-mode` | 是 | 字符串 | `LOCAL` \| `CLOUD` | 执行模式 → `executionMode` |
 | `--title` | 否 | 字符串 | — | 标题 → `title` |
 | `--workspace` | 条件必填 | 字符串 | 本地绝对路径 | LOCAL 必填工作区路径 → `workspace` |
-| `--permission-level` | 否 | 字符串 | `READ_ONLY` \| `READ_WRITE` \| `SMART` \| `FULL` | 权限级别 → `permissionLevel` |
+| `--permission-level` | 否 | 字符串 | `READ_ONLY` \| `READ_WRITE` \| `SMART` \| `PROXY` \| `FULL` | 权限级别 → `permissionLevel` |
 | `--model-id` | 否 | 数字 | 模型主键 | → `modelId` |
 | `--workspace-mode` | 条件必填 | 字符串 | `new` \| `existing` \| `git` | CLOUD 必填 → `workspaceMode` |
 | `--cloud-project-key` | 条件必填 | 字符串 | — | `existing` 时必填 → `cloudProjectKey` |

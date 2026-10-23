@@ -164,7 +164,7 @@ emoji / CJK 按整字符删除；粘贴多行文本原样进入草稿。
 |------|------|
 | `--resume [sessionId]` | 恢复会话；省略 id 恢复最近更新的一个 |
 | `--continue` | 恢复本地记录的「上次使用会话」 |
-| `--permission-level <level>` | READ_ONLY\|READ_WRITE\|SMART\|FULL，写入会话；只影响 LOCAL 审批 |
+| `--permission-level <level>` | READ_ONLY\|READ_WRITE\|SMART\|PROXY\|FULL，写入会话；只影响 LOCAL 审批 |
 | `--if-running <wait\|cancel\|fail>` | 目标会话仍在跑时的策略，默认 wait |
 | `--on-question <ask\|fail>` | 遇到 `ask_user_questions`：TTY 默认 ask，打印/非 TTY 默认 fail |
 | `--max-duration <sec>` | 自己这次执行的墙钟上限；等占用方时超时只结束本地等待，不 cancel 对方；超时发 cancel 并以 124 退出 |
@@ -232,6 +232,7 @@ emoji / CJK 按整字符删除；粘贴多行文本原样进入草稿。
 | READ_ONLY | shell/write/edit/mcp 需审批 | **无影响** |
 | READ_WRITE | shell/mcp 需审批 | **无影响** |
 | SMART | mcp 恒审批；shell LLM 评估 | **无影响** |
+| PROXY | shell/mcp 由审批 LLM 带上下文拍板 | **无影响** |
 | FULL | 全部自动 | **无影响** |
 
 CLOUD 无工具审批；只读排障请用工具集受限的 Agent。

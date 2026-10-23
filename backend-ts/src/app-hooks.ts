@@ -1,7 +1,8 @@
 import { Transform } from 'node:stream';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { fail } from './common/result.js';
 import { ErrorCode } from './common/error-code.js';
+import { BusinessException } from './common/business-exception.js';
 import { redactCredentialQuery } from './common/structured-logger.js';
 import { sendJson, handleError } from './common/http-error.js';
 import { authenticateRequest, autoDisabledTokenBlocksRequest, isPublicPath } from './auth/jwt-hook.js';
@@ -12,6 +13,9 @@ import type { ApiTokenService } from './openapi/api-token.service.js';
 import type { OpenApiCallLogService } from './openapi/open-api-call-log.service.js';
 import type { AuditLogService } from './audit/audit.service.js';
 import type { MysqlUserRepository } from './user/user.repository.js';
+
+/** onResponse 写审计用：错误处理器暂存的业务失败原因（errorMessage）。 */
+type AuditedRequest = FastifyRequest & { auditErrorMessage?: string };
 
 export interface HookDeps {
   app: FastifyInstance;
@@ -40,6 +44,31 @@ const presentedMaoPrefix = (request: { headers: { authorization?: string | strin
 
 export function registerAppHooks(deps: HookDeps): void {
   const { app, jwt, apiTokenService, openCallLogHolder, auditService, userRepo, ssoExchangePath } = deps;
+
+  // 停用账号短 TTL 负缓存（BUG-C3）：命中「已确认停用」后短时间内不再打库，重新启用最多
+  // TTL 后生效；启用态不缓存——禁用即时生效，代价是活跃用户每请求一次状态查询，与下方
+  // onResponse 审计查用户的既有开销同量级。按 app 实例隔离（测试各自建 app 不互相污染）。
+  const disabledAccountCache = new Map<number, number>();
+  const DISABLED_ACCOUNT_CACHE_TTL_MS = 30_000;
+  const accountStatusChecker = async (userId: number): Promise<boolean> => {
+    const now = Date.now();
+    const expiry = disabledAccountCache.get(userId);
+    if (expiry !== undefined) {
+      if (expiry > now) return false;
+      disabledAccountCache.delete(userId);
+    }
+    let user: Awaited<ReturnType<typeof userRepo.findById>>;
+    try {
+      user = await userRepo.findById(userId);
+    } catch {
+      return true; // 查询异常不误伤：放行本次请求，下次再判
+    }
+    // findById 带 notDeleted()：null = 账号不存在/已删除，与刷新 token 口径一致（拒）
+    if (user == null) return false;
+    const disabled = user.status != null && user.status === 0;
+    if (disabled) disabledAccountCache.set(userId, now + DISABLED_ACCOUNT_CACHE_TTL_MS);
+    return !disabled;
+  };
 
   app.addHook('preParsing', async (request, _reply, payload) => {
     if (request.method !== 'POST' || !request.url.split('?')[0].replace(/^\/api/, '').startsWith(OPEN_HOOKS_PATH_PREFIX)) {
@@ -72,7 +101,7 @@ export function registerAppHooks(deps: HookDeps): void {
           sourceIp: request.ip,
         });
       },
-    }));
+    }), accountStatusChecker);
     if (auth.userId != null) request.userId = auth.userId;
     if (auth.tokenAutoDisabled && autoDisabledTokenBlocksRequest(request.method, request.url)) {
       sendJson(reply, 403, fail(ErrorCode.TOKEN_AUTO_DISABLED.code, ErrorCode.TOKEN_AUTO_DISABLED.message));
@@ -90,7 +119,15 @@ export function registerAppHooks(deps: HookDeps): void {
       return;
     }
   });
-  app.setErrorHandler(handleError);
+  app.setErrorHandler((err, request, reply) => {
+    // 业务失败按仓库约定也返回 HTTP 200（错误在响应体 code 上）：把失败原因暂存到
+    // request，onResponse 据此写审计的 errorMessage——否则审计只看状态码，失败操作
+    // 全部落库成 success=1、管理后台「错误」列恒为 '-'。
+    if (err instanceof BusinessException) {
+      (request as AuditedRequest).auditErrorMessage = err.message;
+    }
+    handleError(err, request, reply);
+  });
   app.addHook('onResponse', async (request, reply) => {
     const path = request.url.split('?')[0].replace(/^\/api/, '');
     const user = request.userId != null ? await userRepo.findById(request.userId).catch(() => null) : null;
@@ -102,6 +139,7 @@ export function registerAppHooks(deps: HookDeps): void {
       status: reply.statusCode,
       userId: request.userId,
       username: user?.username,
+      errorMessage: (request as AuditedRequest).auditErrorMessage,
     });
   });
 }

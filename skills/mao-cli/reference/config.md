@@ -94,7 +94,7 @@
 
 保存需 `settings:write` 权限；完整配置一次保存，非法值不会部分写入。升级需执行 V107 系统设置迁移；旧环境配置不导入，请在后台重新填写。关闭 SSO 后新换票被拒绝，不立即撤销已有 access，也不取消已受理任务。已开始换票请求使用其读取的配置快照。
 
-TLS 终止代理属于服务器基础设施，不是 SSO 业务设置：`TRUSTED_PROXY_ADDRESSES` 仍由部署环境配置，默认不信任代理；必须填直连 Mao 的代理精确 IP，如 `127.0.0.1,::1`，禁止通配符或任意来源转发头。
+TLS 终止代理属于服务器基础设施，不是 SSO 业务设置：`TRUSTED_PROXY_ADDRESSES` 仍由部署环境配置，默认不信任代理；必须填直连 Mao 的代理精确 IP，如 `127.0.0.1,::1`，禁止通配符或任意来源转发头。该策略同时约束终端（Web Shell）审计的 IP 记录：未配置可信代理时，客户端自带的 `X-Forwarded-For` / `X-Real-IP` 不再被采信，审计记录直连对端（反代）地址。
 
 域名白名单支持完整域名或上级域名：`example.com` 匹配 `example.com`、`a.example.com`、`b.example.com` 及更深子域，不匹配 `evilexample.com` 或 `example.com.evil.com`；`sso.example.com` 仅覆盖自身及其下级子域。所有匹配域名及其路径的身份校验信任由配置人员判定；不另做 DNS 私网地址过滤。不同校验地址必须属于同一员工身份体系，身份源仍为 `company_sso`，不会按 URL 创建新身份源。
 

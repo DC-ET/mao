@@ -114,6 +114,18 @@ function optionalBoolean(flags, name) {
   throw createCliError(`参数 --${name} 必须是 true/false`);
 }
 
+// 全局开关要认 --json=false / --raw=0 这类显式取假（Boolean('false') 曾恒为真）；
+// 裸 flag 后紧跟位置参数时 parseArgs 会把位置参数当值吞掉
+// （['--raw','session','list'] → flags.raw === 'session'），这类非布尔文本按「真」
+// 处理，保持原 Boolean() 口径，不抛错。
+function globalBool(flags, name) {
+  try {
+    return optionalBoolean(flags, name) ?? false;
+  } catch {
+    return true;
+  }
+}
+
 function parseCsv(value) {
   if (value === undefined || value === null || value === '') return undefined;
   return String(value)
@@ -136,8 +148,8 @@ function extractGlobalOptions(flags, { reserveBaseUrl = false } = {}) {
   return {
     baseUrl: reserveBaseUrl ? undefined : optionalString(flags, 'base-url'),
     token: optionalString(flags, 'token'),
-    json: Boolean(flags.json),
-    raw: Boolean(flags.raw),
+    json: globalBool(flags, 'json'),
+    raw: globalBool(flags, 'raw'),
     timeoutMs: optionalNumber(flags, 'timeout-ms'),
     help: hasHelp(flags),
   };

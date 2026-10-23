@@ -107,13 +107,14 @@ describe('handleReadFile', () => {
     expect(String(handleReadFile({ path: 'dir' }, ws, SESSION_ID).content)).toMatch(/不是普通文件/);
   });
 
-  // round 1 BUG-5：limit 非法/空串时必须回落「读全文件」而不是 0。
-  // 旧实现 Number(x) || 0 会把 "abc"/"" 变成 0，返回空 content 会让模型误判文件
-  // 为空，进而在 write_file 里整体覆写清空它。对齐云端 read_file 的 asInt 语义。
-  it('reads the whole file when limit is a non-numeric or empty string', () => {
+  // 口径变更（2026-10-22 BUG-C6 修复）：limit/offset 非法值（负数、非数字、空串）由
+  // 「回落读全文件 / 静默钳到 0」改为显式报错，与云端 read_file 的 parseLineIndex 同口径。
+  // 静默钳到 0 会返回「空 content + success」，让模型误判文件为空并在 write_file 里整体
+  // 覆写清空它；回落读全文件同样让模型基于错误结论继续操作，故显式报错让模型重试。
+  it('rejects a non-numeric or empty limit instead of falling back to the whole file', () => {
     fs.writeFileSync(path.join(ws, 'a.txt'), 'l1\nl2\nl3\n');
-    expect(handleReadFile({ path: 'a.txt', limit: 'abc' }, ws, SESSION_ID).content).toBe('l1\nl2\nl3');
-    expect(handleReadFile({ path: 'a.txt', limit: '' }, ws, SESSION_ID).content).toBe('l1\nl2\nl3');
+    expect(handleReadFile({ path: 'a.txt', limit: 'abc' }, ws, SESSION_ID).error).toMatch(/limit/);
+    expect(handleReadFile({ path: 'a.txt', limit: '' }, ws, SESSION_ID).error).toMatch(/limit/);
   });
 });
 

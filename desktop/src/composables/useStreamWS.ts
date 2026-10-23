@@ -942,6 +942,9 @@ export function useStreamWS() {
             sessionStore.setCompacting(sessionId, false)
             sessionStore.clearLlmRetry(sessionId)
             sessionStore.clearAskQuestions(sessionId)
+            // 轨迹 tab：与 session_status 终态分支对齐——重连补齐的终态同样要丢掉
+            // 临时轮 / 工具计时行，否则残留键会让轨迹面板显示上一次执行的内容
+            sessionStore.clearLiveState(sessionId)
             if (phase !== 'IDLE') clearActiveExecution(sessionId)
           } else if (data.thinking === true) {
             // 会话执行中恰好处于模型思考阶段：刷新/重连后恢复「思考中」，

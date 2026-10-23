@@ -64,16 +64,20 @@ export class TaskNotificationPreferenceService {
     const channelChanged = row != null && channel != null && channel !== row.channel;
     let ciphertext = row?.webhookCiphertext ?? null;
     if (channel === 'EMAIL') {
-      // EMAIL 分支：地址只取自用户表 email，每次保存重算密文（不继承旧密文——
-      // 钩子刷新失败过的用户保存同渠道偏好仍应拿到当前地址）。
-      if (enabled || channelChanged || !hasText(ciphertext)) {
+      // EMAIL 分支：仅「本次真正启用（enabled=true）或切换到 EMAIL 渠道」时才要求邮箱存在与
+      // SMTP 可用；关闭（enabled=false 且非切渠道）时保留旧密文直接落库。否则资料邮箱被清空的
+      // 用户（refreshEmailAddress 已把密文清空但 enabled 仍为 1）会被「请先填写邮箱」拦住，
+      // 永远关不掉邮件通知——与下方「enabled=true 时才校验渠道 + 密文齐备」的口径一致。
+      // 启用/切渠道时地址只取自用户表 email，每次保存重算密文（不继承旧密文——钩子刷新失败过的
+      // 用户保存同渠道偏好仍应拿到当前地址）。
+      if (enabled || channelChanged) {
         await this.assertEmailSmtpEnabled();
+        const email = await this.lookupEmail(userId);
+        if (!hasText(email)) {
+          throw new BusinessException(ErrorCode.PARAM_INVALID, '请先在个人资料中填写邮箱，再选择邮件通知');
+        }
+        ciphertext = this.cipher.encrypt(email!);
       }
-      const email = await this.lookupEmail(userId);
-      if (!hasText(email)) {
-        throw new BusinessException(ErrorCode.PARAM_INVALID, '请先在个人资料中填写邮箱，再选择邮件通知');
-      }
-      ciphertext = this.cipher.encrypt(email!);
     } else if (hasText(webhookUrl)) {
       if (channel == null) {
         throw new BusinessException(ErrorCode.PARAM_INVALID, '请选择通知渠道');
