@@ -44,7 +44,7 @@ async function run(ctx, subcommand, _rest, flags) {
   switch (subcommand) {
     case 'me': {
       const result = await get(ctx, '/llm-calls/me', common);
-      emitResult(ctx, result);
+      emitResult(result, { raw: ctx.raw });
       return;
     }
     case 'list': {
@@ -53,7 +53,7 @@ async function run(ctx, subcommand, _rest, flags) {
         userId: getNumber(flags, 'user-id'),
         agentId: getNumber(flags, 'agent-id'),
       }));
-      emitResult(ctx, result);
+      emitResult(result, { raw: ctx.raw });
       return;
     }
     default:

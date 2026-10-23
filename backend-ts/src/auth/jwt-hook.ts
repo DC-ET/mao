@@ -51,6 +51,12 @@ export function resolveToken(request: FastifyRequest): string | null {
 /** API Token 解析回调（create-app 注入；auth 域不反向依赖 openapi 域实现）。 */
 export type ApiTokenResolver = (plainToken: string) => Promise<TokenResolveResult>;
 
+/**
+ * 账号状态检查（app-hooks 注入；auth 域不反向依赖 user 仓储实现）。
+ * 返回 false = 停用/不存在，请求按未认证处理。
+ */
+export type AccountStatusChecker = (userId: number) => Promise<boolean>;
+
 export interface AuthenticationOutcome {
   userId: number | null;
   /** 命中自动停用：preHandler 回 403，而不是 401。 */
@@ -79,11 +85,16 @@ function bearerToken(request: FastifyRequest): string | null {
  * 正常 JWT 请求零额外查询；异步化（查库）不影响唯一调用点（preHandler 已为 async）。
  * API Token 仅 `/v1/open/**` 生效：落在其它端点上直接按未认证处理（401），
  * 避免泄露的 token 以该用户身份调用任意 REST 接口。
+ *
+ * JWT 路径在验签 + 过期之后追加账号状态校验（accountStatusChecker）：只验签不查状态时，
+ * 管理员禁用用户后其未过期 access token（默认 24h）仍可调用全部接口——登录 / 刷新 /
+ * 分享链接等入口都拒停用账号，这里补齐同一口径。停用判定的负缓存由注入方收敛开销。
  */
 export async function authenticateRequest(
   request: FastifyRequest,
   jwt: JwtService,
   apiTokenResolver?: ApiTokenResolver | null,
+  accountStatusChecker?: AccountStatusChecker | null,
 ): Promise<AuthenticationOutcome> {
   const anonymous = (patch: Partial<AuthenticationOutcome> = {}): AuthenticationOutcome => ({
     userId: null,
@@ -114,5 +125,9 @@ export async function authenticateRequest(
   if (!token || !jwt.validateAccessToken(token)) {
     return anonymous();
   }
-  return { userId: jwt.getUserIdFromToken(token), tokenAutoDisabled: false, resolverRejected: false };
+  const userId = jwt.getUserIdFromToken(token);
+  if (accountStatusChecker != null && !(await accountStatusChecker(userId))) {
+    return anonymous();
+  }
+  return { userId, tokenAutoDisabled: false, resolverRejected: false };
 }

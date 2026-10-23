@@ -118,8 +118,15 @@ export function getToolInputPreview(name: string, input?: Record<string, unknown
     case 'dingtalk_send_image':
       return typeof input.image === 'string' ? input.image : ''
     case 'page_inspect':
+      // 后端 PageInspectTool 入参只有 includeHidden（boolean，默认 false）
+      return typeof input.includeHidden === 'boolean'
+        ? (input.includeHidden ? '包含隐藏元素' : '仅可见元素')
+        : ''
     case 'page_observe':
+      // 后端 PageObserveTool 入参只有 snapshotId（string，可选）
+      return typeof input.snapshotId === 'string' ? input.snapshotId : ''
     case 'page_screenshot':
+      // 后端 PageScreenshotTool 入参 maskSensitive/reason：展示给用户看的是 reason
       return typeof input.reason === 'string' ? input.reason : ''
     case 'page_actions': {
       const actions = Array.isArray(input.actions) ? input.actions : []
@@ -156,6 +163,9 @@ export function getToolInputPreview(name: string, input?: Record<string, unknown
   if (typeof path === 'string') return path
   const query = input.query
   if (typeof query === 'string') return query
+  // open_web_page 等以 url 为必填入参的工具（后端 open-web-page-tool.ts schema：{ url }）
+  const url = input.url
+  if (typeof url === 'string') return url
   // delegate / spawn_subagent 工具：优先展示自定义标题，其次 agent_type + task 摘要。
   // 否则 inputPreview 恒为空，卡片在子代理执行期间一直显示"参数加载中..."
   const agentType = input.agent_type

@@ -187,6 +187,11 @@ export interface WsHandlerDeps {
     selectDefault(): Promise<LlmModel | null>;
   };
   jwtService: JwtService;
+  /**
+   * 账号状态检查（BUG-C3）：与 REST preHandler 同一口径——停用/已删除账号的 token
+   * 不得建立或续期 WS 连接。未注入时跳过（旧测试桩不受影响）。
+   */
+  accountStatusChecker?: ((userId: number) => Promise<boolean> | boolean) | null;
   agentExecutor: (fn: () => void | Promise<void>) => unknown;
   mcpSyncTimeoutSeconds?: number;
   /**
@@ -373,6 +378,11 @@ export class StreamingWsHandler {
         this.deps.registry.closeConnection(session, 'Missing or invalid token');
         return;
       }
+      // 只验签不查账号状态 → 停用账号的未过期 token 仍能建 WS 连接（与 REST preHandler 同一缺口，BUG-C3）
+      if (this.deps.accountStatusChecker != null && !(await this.deps.accountStatusChecker(metadata.userId))) {
+        this.deps.registry.closeConnection(session, 'Account disabled');
+        return;
+      }
       const clientType = this.normalizeClient(typeof root.client === 'string' ? root.client : undefined);
       // 页面操作能力声明：缺省/非布尔按 true（旧版 SDK 不发送该字段，行为与现状一致）。
       const pageEnabled = typeof root.pageEnabled === 'boolean' ? root.pageEnabled : true;
@@ -381,7 +391,7 @@ export class StreamingWsHandler {
       return;
     }
     if (type === 'auth_refresh') {
-      this.handleAuthRefresh(session, root);
+      await this.handleAuthRefresh(session, root);
       return;
     }
     try {
@@ -2251,7 +2261,7 @@ export class StreamingWsHandler {
     return session;
   }
 
-  private handleAuthRefresh(session: WsSocket, root: Record<string, unknown>): void {
+  private async handleAuthRefresh(session: WsSocket, root: Record<string, unknown>): Promise<void> {
     const { requestId, token } = root;
     if (typeof requestId !== 'string' || !requestId.trim() || requestId.length > 256
       || typeof token !== 'string' || !token) {
@@ -2264,8 +2274,16 @@ export class StreamingWsHandler {
       return;
     }
     const metadata = this.deps.jwtService.getAccessTokenMetadata(token);
-    if (!metadata || this.deps.jwtService.getTokenType(token) !== 'access'
-      || !this.deps.registry.refreshAuthentication(session, requestId, metadata)) {
+    if (!metadata || this.deps.jwtService.getTokenType(token) !== 'access') {
+      this.deps.registry.closeConnection(session, 'Invalid auth refresh');
+      return;
+    }
+    // 连接内换发的新 token 同样要过账号状态（BUG-C3）：停用后不得借续期留在流上
+    if (this.deps.accountStatusChecker != null && !(await this.deps.accountStatusChecker(metadata.userId))) {
+      this.deps.registry.closeConnection(session, 'Account disabled');
+      return;
+    }
+    if (!this.deps.registry.refreshAuthentication(session, requestId, metadata)) {
       this.deps.registry.closeConnection(session, 'Invalid auth refresh');
       return;
     }

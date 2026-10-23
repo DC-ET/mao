@@ -1,5 +1,6 @@
 import type { AuditLogService } from './audit.service.js';
 import type { AuditLog, AuditRecordInput } from './types.js';
+import { loadTrustedProxyAddresses } from '../config/trusted-proxy.js';
 
 const MAX_QUERY_LENGTH = 1024;
 const MAX_ERROR_LENGTH = 1024;
@@ -83,13 +84,42 @@ export function resolveObjectId(path: string | null | undefined): string | null 
   return null;
 }
 
+/**
+ * 终端审计 IP 解析：与 Fastify 的 trustProxy（create-app 装配 loadTrustedProxyAddresses）
+ * 保持同一口径——仅当对端地址是已配置的可信代理时才采信 X-Forwarded-For / X-Real-IP，
+ * 否则一律回落到直连对端地址：客户端自带的转发头不得写进审计（否则审计 IP 可任意伪造）。
+ */
 export function resolveIp(headers: Record<string, string | string[] | undefined>, remoteAddr?: string | null): string | undefined {
+  const peer = normalizeAddress(remoteAddr);
+  if (peer == null || !isTrustedProxyPeer(peer)) {
+    return remoteAddr ?? undefined;
+  }
   const forwarded = headerValue(headers, 'x-forwarded-for');
   if (forwarded && forwarded.trim()) {
     return forwarded.split(',')[0].trim();
   }
   const realIp = headerValue(headers, 'x-real-ip');
   return realIp && realIp.trim() ? realIp : (remoteAddr ?? undefined);
+}
+
+/** 归一化地址形态后再比对：IPv4-mapped IPv6（::ffff:127.0.0.1）按 IPv4 比对（与 proxy-addr 的信任编译同口径）。 */
+function normalizeAddress(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(trimmed);
+  return mapped ? mapped[1] : trimmed;
+}
+
+function isTrustedProxyPeer(peer: string): boolean {
+  let trusted: false | string[];
+  try {
+    trusted = loadTrustedProxyAddresses();
+  } catch {
+    // 配置非法时（启动时 create-app 已会抛出）按「无可信代理」处理：绝不采信客户端提供的转发头
+    return false;
+  }
+  if (trusted === false) return false;
+  return trusted.some((address) => normalizeAddress(address) === peer);
 }
 
 export async function recordAudit(service: AuditLogService, input: AuditRecordInput): Promise<void> {

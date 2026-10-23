@@ -1,5 +1,5 @@
 import { BaseTool } from '../tool.js';
-import { asText, errorJson, parseObject, toJson } from '../json.js';
+import { asInt, asText, errorJson, parseObject, toJson } from '../json.js';
 import type { SessionTodoMapper } from '../../todo/session-todo.mapper.js';
 import type { SessionTodo } from '../../todo/entity/session-todo.js';
 import { harnessLog } from '../../log.js';
@@ -184,8 +184,11 @@ export class TaskUpdateTool extends BaseTool {
       let transitionedToCompleted = false;
       const updatedSummaries: string[] = [];
       for (const item of items) {
-        const id = Number(item.id);
-        if (!Number.isFinite(id)) {
+        // id 必须为正整数（表 id 自增从 1 起，0 永不存在）：Number(null)/Number('')/Number([])
+        // 都是 0，能通过 Number.isFinite 校验，把「待办 #0」当成真实任务回报假成功。asInt 对
+        // null/''/非数字回落 0，配合 > 0 显式校验一并拒掉。
+        const id = asInt(item.id);
+        if (!(id > 0)) {
           return errorJson(`无效的待办事项 ID: ${item.id}`);
         }
         const newStatus = asText(item.status);
@@ -200,7 +203,9 @@ export class TaskUpdateTool extends BaseTool {
         // 空串视为未提供：白名单条件放行的 `''` 一旦写库，该任务会从 completed/inProgress
         // 统计与 allDone 判定中消失
         if (newStatus != null && newStatus !== '') fields.status = newStatus;
-        if (item.content != null) fields.content = asText(item.content);
+        // 与 TaskCreateTool:73 同口径：对象/数组 content 经 asText 得 null，写进 NOT NULL 列
+        // （session_todo.content）会让整条 UPDATE（含同语句的 status）回滚，兜底为空串
+        if (item.content != null) fields.content = asText(item.content) ?? '';
         if (item.description != null) fields.description = asText(item.description);
         if (item.active_form != null) fields.activeForm = asText(item.active_form);
         if (sessionId != null) await this.sessionTodoMapper.updateFields(id, sessionId, fields);
@@ -279,11 +284,22 @@ export class TaskDeleteTool extends BaseTool {
       const args = parseObject(argumentsJson);
       if (!args) return errorJson('无效的JSON参数');
       const items = Array.isArray(args.items) ? args.items as Record<string, unknown>[] : [];
+      // delete 只做逻辑删除且不返回命中行数：「已删除 N 个」若按入参条目计数，不存在的 id
+      // 也会被报成删除成功（假计数）。先取当前未删除事项，按会话内真实存在的 id 逐个判定，
+      // 命中才 delete + 计数；同一 id 重复入参只计第一次（逻辑删除后第二次命中 0 行）。
+      const before = sessionId != null ? await this.sessionTodoMapper.selectBySessionId(sessionId) : [];
+      const existingIds = new Set(before.map((t) => t.id));
       let count = 0;
       for (const item of items) {
-        const id = Number(item.id);
-        if (sessionId != null) await this.sessionTodoMapper.delete(id, sessionId);
-        count++;
+        const id = asInt(item.id);
+        if (!(id > 0)) {
+          return errorJson(`无效的待办事项 ID: ${item.id}`);
+        }
+        if (sessionId != null && existingIds.has(id)) {
+          existingIds.delete(id);
+          await this.sessionTodoMapper.delete(id, sessionId);
+          count++;
+        }
       }
       const todos = sessionId != null ? await this.sessionTodoMapper.selectBySessionId(sessionId) : [];
       return toJson({ todos, message: `已删除 ${count} 个事项` });
