@@ -71,7 +71,7 @@ export function serializeChatMessage(msg: ChatMessage, echoReasoningContent = fa
 
 // 仅 DeepSeek 系模型要求回传 reasoning_content；模型 ID 形如 deepseek-chat / deepseek-reasoner /
 // ds-v4-flash 等，覆盖 `deepseek` 子串与 `ds-` 前缀两种命名。
-function shouldEchoReasoningContent(modelId: string): boolean {
+export function shouldEchoReasoningContent(modelId: string): boolean {
   const id = modelId.toLowerCase();
   return id.includes('deepseek') || id.startsWith('ds-');
 }

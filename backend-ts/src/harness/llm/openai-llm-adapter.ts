@@ -2,9 +2,9 @@ import http from 'node:http';
 import https from 'node:https';
 import { URL } from 'node:url';
 import { ensureContentPresent } from '../core/message-history-normalizer.js';
-import { ImageFileSupport } from '../tool/image-file-support.js';
 import { PromptImageResizer } from '../tool/prompt-image-resizer.js';
 import { harnessLog } from '../log.js';
+import { remoteImageCache } from './remote-image-cache.js';
 import type {
   ChatCallback,
   ChatMessage,
@@ -571,17 +571,8 @@ export class OpenAiLlmAdapter implements LlmAdapter {
   }
 
   private async downloadAndEncode(imageUrl: string): Promise<string> {
-    const res = await fetch(imageUrl);
-    if (!res.ok) throw new Error(`HTTP ${res.status} when downloading image: ${imageUrl}`);
-    const bytes = Buffer.from(await res.arrayBuffer());
-    const declaredMime = res.headers.get('content-type')?.split(';')[0] ?? null;
-    const mimeType = ImageFileSupport.resolveImageMime(bytes, declaredMime, imageUrl);
-    if (!mimeType) {
-      throw new Error(`Downloaded content is not a supported image type: ${imageUrl} (Content-Type=${declaredMime})`);
-    }
-    const resized = await PromptImageResizer.tryResizeForPrompt(bytes, mimeType);
-    if (resized) return resized.toDataUri();
-    return `data:${mimeType};base64,${bytes.toString('base64')}`;
+    // 远程图片走进程内 LRU：首轮下载并压到 ≤1.2MB，后续命中不再下载/重编码。
+    return remoteImageCache.resolve(imageUrl);
   }
 
   /** 请求异常告警日志：带上完整请求体（base64 图片等敏感数据脱敏），错误在适配器只会走到一个出口，无需去重。 */

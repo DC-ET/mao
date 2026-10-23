@@ -15,6 +15,8 @@ import { applyDateChangeNotices, formatChineseWeekday } from './session-date-not
 import { applyNoProgressNotices } from './no-progress-notice.js';
 import { ToolMediaInjector } from './tool-media-injector.js';
 import { TokenEstimator } from './token-estimator.js';
+import { RequestSizeEstimator } from './request-size.js';
+import { CompactionConfig } from './compaction-config.js';
 import { buildHandoffUserContent } from './compaction-service.js';
 import type { ContextManifest, ContextSectionStat } from './context-manifest.js';
 import { observePrefix } from './prompt-prefix-monitor.js';
@@ -144,6 +146,7 @@ export class PromptEngine {
     private readonly workspaceRulesSnapshot: WorkspaceRulesSnapshotService | null = null,
     private readonly toolMediaInjector = new ToolMediaInjector(),
     private readonly tokenEstimator = new TokenEstimator(),
+    private readonly requestSizeEstimator = new RequestSizeEstimator(),
   ) {}
 
   async buildRequest(context: AgentExecutionContext): Promise<ChatRequest> {
@@ -486,7 +489,21 @@ export class PromptEngine {
     const memoryIds = (context.memories ?? [])
       .map((m) => m.id)
       .filter((id): id is number => id != null);
-    return { sections: stats, memoryIds, estimatedWindowTokens: this.resolveWindowTokens(context) };
+    // 请求体体积：与压缩判定同源（技术方案 2026-10-22 §4），随 manifest 下发/落库。
+    const requestBytes = this.requestSizeEstimator.estimate(request, context.modelConfig?.modelId);
+    context.lastRequestBytes = requestBytes;
+    const compaction = context.compactionConfig;
+    // enabled=false 时自动体积压缩已关闭，不再下发「触发上限」，避免 UI 显示一个永远不生效的门槛。
+    const payloadLimitBytes = compaction != null && compaction.enabled
+      ? CompactionConfig.resolveEffectiveTriggerBytes(context.modelConfig, compaction)
+      : 0;
+    return {
+      sections: stats,
+      memoryIds,
+      estimatedWindowTokens: this.resolveWindowTokens(context),
+      requestBytes,
+      payloadLimitBytes,
+    };
   }
 
   /** 生效窗口：模型 contextWindowTokens 优先，缺失回退压缩配置默认窗口，均无则 null。 */

@@ -69,6 +69,8 @@ export interface LlmModel {
   modelId?: string | null;
   clientImpersonation?: string | null;
   contextWindowTokens?: number | null;
+  /** 供应商请求体上限（字节）；null=未声明。用于推导压缩体积阈值。 */
+  maxRequestBodyBytes?: number | null;
   /** 每百万「非缓存」输入 token 价格（成本单位）。DECIMAL 列经 mysql2 读出为 string，计价前 parsePriceColumn 归一。 */
   priceInput?: string | number | null;
   priceCacheRead?: string | number | null;
@@ -304,6 +306,7 @@ export function llmModelToConfig(model: LlmModel): LlmModelConfig {
     apiKey: model.apiKey ?? undefined,
     modelId: model.modelId ?? undefined,
     contextWindowTokens: model.contextWindowTokens ?? undefined,
+    maxRequestBodyBytes: model.maxRequestBodyBytes ?? undefined,
     supportsVision: model.supportsVision === 1 || model.supportsVision === true,
     clientImpersonation: toClientImpersonation(model.clientImpersonation),
     // 价格随模型解析链下发（成本快照主路径，决策 8）；NULL 价归一为 undefined，

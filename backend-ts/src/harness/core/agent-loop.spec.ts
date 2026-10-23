@@ -871,6 +871,126 @@ describe('AgentLoop', () => {
     expect(sessionCompactionOrchestrator.compact).not.toHaveBeenCalled();
   });
 
+  it('midLoopPayloadCompactionRetriesOnLaterRoundWhenCompactionDidNotRun', async () => {
+    // compact() 返回 false（空历史/摘要未过校验/CAS 未推进）时不能占用「本次执行一次」的名额，
+    // 否则后续工具轮不再尝试，超大请求原样发出去仍然 413。
+    const ctx = contextWithMidLoopConfig(100, 0.9);
+    ctx.compactionConfig!.triggerPayloadBytes = 1000;
+    const l = listener();
+    const p = persistence();
+    promptEngine.buildRequest.mockImplementation(async (c: AgentExecutionContext) => {
+      c.lastRequestBytes = 2000;
+      return { messages: [], stream: true };
+    });
+    stubActiveContext(50);
+    backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
+    toolDispatcher.dispatchInvocation.mockResolvedValue(toolResult('{"ok":true}'));
+    sessionCompactionOrchestrator.compact.mockResolvedValue(false);
+    let call = 0;
+    llmAdapter.stream.mockImplementation(async (_r: unknown, _c: unknown, callback: StreamCallback) => {
+      if (call++ < 2) {
+        callback.onChunk(toolChunk({
+          id: 'call-' + call,
+          function: { name: 'read_file', arguments: '{"path":"a"}' },
+        }));
+        callback.onComplete({ promptTokens: 3, completionTokens: 2, totalTokens: 5 });
+      } else {
+        callback.onChunk(contentChunk(null, 'done'));
+        callback.onComplete({ promptTokens: 4, completionTokens: 1, totalTokens: 5 });
+      }
+    });
+    await agentLoop.execute(ctx, l, p);
+    expect(sessionCompactionOrchestrator.compact.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('midLoopPayloadCompactionStopsRetryingAfterAttemptCap', async () => {
+    // 摘要一直不合规 / CAS 不推进时不能每个工具轮都烧一次全量历史压缩（40MB × 轮数）。
+    const ctx = contextWithMidLoopConfig(100, 0.9);
+    ctx.compactionConfig!.triggerPayloadBytes = 1000;
+    const l = listener();
+    const p = persistence();
+    promptEngine.buildRequest.mockImplementation(async (c: AgentExecutionContext) => {
+      c.lastRequestBytes = 2000;
+      return { messages: [], stream: true };
+    });
+    stubActiveContext(50);
+    backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
+    toolDispatcher.dispatchInvocation.mockResolvedValue(toolResult('{"ok":true}'));
+    sessionCompactionOrchestrator.compact.mockResolvedValue(false);
+    let call = 0;
+    llmAdapter.stream.mockImplementation(async (_r: unknown, _c: unknown, callback: StreamCallback) => {
+      if (call++ < 4) {
+        callback.onChunk(toolChunk({
+          id: 'call-' + call,
+          function: { name: 'read_file', arguments: '{"path":"a"}' },
+        }));
+        callback.onComplete({ promptTokens: 3, completionTokens: 2, totalTokens: 5 });
+      } else {
+        callback.onChunk(contentChunk(null, 'done'));
+        callback.onComplete({ promptTokens: 4, completionTokens: 1, totalTokens: 5 });
+      }
+    });
+    await agentLoop.execute(ctx, l, p);
+    expect(sessionCompactionOrchestrator.compact.mock.calls.length).toBe(2);
+  });
+
+  it('midLoopPayloadCompactionCountsFailedAttemptsThatThrow', async () => {
+    // 413/5xx/超时是抛异常路径：计数必须在调用前自增，否则每个工具轮都会重试。
+    const ctx = contextWithMidLoopConfig(100, 0.9);
+    ctx.compactionConfig!.triggerPayloadBytes = 1000;
+    const l = listener();
+    const p = persistence();
+    promptEngine.buildRequest.mockImplementation(async (c: AgentExecutionContext) => {
+      c.lastRequestBytes = 2000;
+      return { messages: [], stream: true };
+    });
+    stubActiveContext(50);
+    backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
+    toolDispatcher.dispatchInvocation.mockResolvedValue(toolResult('{"ok":true}'));
+    sessionCompactionOrchestrator.compact.mockRejectedValue(new Error('LLM API returned 413'));
+    let call = 0;
+    llmAdapter.stream.mockImplementation(async (_r: unknown, _c: unknown, callback: StreamCallback) => {
+      if (call++ < 4) {
+        callback.onChunk(toolChunk({
+          id: 'call-' + call,
+          function: { name: 'read_file', arguments: '{"path":"a"}' },
+        }));
+        callback.onComplete({ promptTokens: 3, completionTokens: 2, totalTokens: 5 });
+      } else {
+        callback.onChunk(contentChunk(null, 'done'));
+        callback.onComplete({ promptTokens: 4, completionTokens: 1, totalTokens: 5 });
+      }
+    });
+    await agentLoop.execute(ctx, l, p);
+    expect(sessionCompactionOrchestrator.compact.mock.calls.length).toBe(2);
+  });
+
+  it('midLoopPayloadCheckSkipsSnapshotAndContextWindowWhenTokenCheckDisabled', async () => {
+    // loopMidwayCompact=false 只关 token 水位与快照/事件，体积硬保护仍要执行。
+    const ctx = contextWithMidLoopConfig(100, 0.9);
+    ctx.compactionConfig!.loopMidwayCompact = false;
+    ctx.compactionConfig!.triggerPayloadBytes = 1000;
+    const l = listener();
+    const p = persistence();
+    promptEngine.buildRequest.mockImplementation(async (c: AgentExecutionContext) => {
+      c.lastRequestBytes = 2000;
+      return { messages: [], stream: true };
+    });
+    stubActiveContext(80);
+    backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
+    toolDispatcher.dispatchInvocation.mockResolvedValue(toolResult('{"ok":true}'));
+    sessionCompactionOrchestrator.compact.mockResolvedValue(true);
+    stubToolThenDone();
+    await agentLoop.execute(ctx, l, p);
+    expect(sessionCompactionOrchestrator.compact).toHaveBeenCalled();
+    // 体积仍然按 lastRequestBytes 传入（硬保护生效）
+    expect(sessionCompactionOrchestrator.compact.mock.calls[0][10]).toBe(2000);
+    // 关掉 token 检查后 mid-loop 的 token 数为 0：不应再出现以 0 为水位的快照/事件
+    // （改造前这里会照常落库并推送，等于开关关不掉写库与 WS 开销）。
+    expect(sessionService.updateContextTokens).not.toHaveBeenCalledWith(11, 0, expect.anything());
+    expect(l.onContextWindow).not.toHaveBeenCalledWith(0, expect.anything(), expect.anything());
+  });
+
   it('retriesOnEmptyLlmResponseAndSucceedsOnSecondAttempt', async () => {
     const ctx = context();
     const l = listener();

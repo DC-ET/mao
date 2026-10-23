@@ -3,6 +3,7 @@ import type { Tool } from '../tool.js';
 import { asText, parseObject, toJson } from '../json.js';
 import type { EmbedPageToolRegistry } from '../../embed-page-tool-registry.js';
 import { harnessLog } from '../../log.js';
+import { PromptImageResizer } from '../prompt-image-resizer.js';
 
 /**
  * Agent 提供的页面工具参数绝不能携带 selector / XPath / 脚本 / 坐标。
@@ -141,15 +142,37 @@ export class PageScreenshotTool extends PageToolBase {
     const dataUri = asText(shot.dataUri);
     if (!dataUri || !dataUri.startsWith('data:image/')) return raw;
     const mime = asText(shot.mime) ?? 'image/png';
+    // 写入侧一次性压缩（技术方案 2026-10-22 §7.2）：截图同样 >1.5MB 才压，≤1.5MB 原样。
+    const compressed = await compressScreenshot(dataUri, mime);
     return toJson({
       media_type: 'image',
-      mime,
+      mime: compressed?.mime ?? mime,
       path: 'page-screenshot.png',
-      data_uri: dataUri,
-      width: shot.width ?? null,
-      height: shot.height ?? null,
+      data_uri: compressed?.dataUri ?? dataUri,
+      width: compressed?.width ?? shot.width ?? null,
+      height: compressed?.height ?? shot.height ?? null,
       masked: shot.masked === true,
     });
+  }
+}
+
+/** 截图 data URI 的写入侧压缩；失败/无需压缩时返回 null（调用方回退原图）。 */
+async function compressScreenshot(
+  dataUri: string,
+  declaredMime: string,
+): Promise<{ dataUri: string; mime: string; width: number; height: number } | null> {
+  try {
+    const comma = dataUri.indexOf(',');
+    if (comma < 0) return null;
+    const meta = dataUri.slice(5, comma);
+    if (!meta.includes('base64')) return null;
+    const bytes = Buffer.from(dataUri.slice(comma + 1), 'base64');
+    const resized = await PromptImageResizer.tryCompressForStore(bytes, declaredMime);
+    if (resized == null || !resized.resized) return null;
+    return { dataUri: resized.toDataUri(), mime: resized.mime, width: resized.width, height: resized.height };
+  } catch (e) {
+    harnessLog('warn', `Page screenshot compression failed: ${(e as Error).message}`);
+    return null;
   }
 }
 

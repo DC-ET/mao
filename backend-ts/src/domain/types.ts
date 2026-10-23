@@ -63,6 +63,7 @@ export interface LlmModel {
   isDefault?: number | null;
   supportsVision?: number | null;
   contextWindowTokens?: number | null;
+  maxRequestBodyBytes?: number | null;
   apiKey?: string | null;
   baseUrl?: string | null;
   modelId?: string | null;

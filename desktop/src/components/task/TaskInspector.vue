@@ -302,6 +302,9 @@
           <div v-if="waterLevelPct != null" class="ctx-capacity-foot">
             估算口径 · 与上方容量同口径合计
           </div>
+          <div v-if="requestBytes != null" class="ctx-capacity-foot">
+            请求体积 {{ formatPayloadBytes(requestBytes) }}<span v-if="payloadLimitBytes > 0"> · 触发上限 {{ formatPayloadBytes(payloadLimitBytes) }}</span>
+          </div>
         </div>
 
         <div class="ctx-block">
@@ -603,6 +606,14 @@ function openContextDrawer() {
 
 const contextManifest = computed(() => props.contextWindow?.manifest ?? null)
 const sectionStats = computed(() => contextManifest.value?.sections ?? [])
+/** 请求体体积（技术方案 2026-10-22）：与压缩触发同源，随 manifest 下发。 */
+const requestBytes = computed(() => contextManifest.value?.requestBytes ?? null)
+const payloadLimitBytes = computed(() => contextManifest.value?.payloadLimitBytes ?? 0)
+function formatPayloadBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 MB'
+  const mb = bytes / (1024 * 1024)
+  return mb >= 10 ? `${mb.toFixed(1)} MB` : `${mb.toFixed(2)} MB`
+}
 
 // 占比分母优先取 manifest 生效窗口，回退模型窗口 / contextWindow.maxTokens
 const effectiveWindowTokens = computed<number | null>(() =>

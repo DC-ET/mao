@@ -161,7 +161,7 @@ web_search 工具支持 Tavily / TinyFish 双实现，在管理后台「系统�
 
 ### Harness 调参（0.0.89 起迁移至管理后台，勿再改 yml）
 
-上下文压缩（`harness.compaction.*`：开关/上下文窗口/触发比例/摘要上限/循环中途压缩）、LLM 超时与限流重试（`harness.llm.*`）、Anthropic 协议前缀缓存（`harness.llm.anthropicAutoCache` 开关默认启用、`harness.llm.anthropicCacheTtl` 取值 `5m`/`1h` 默认 `5m`，重启后端生效）、网页抓取（`harness.webPage.*`：连接/读取超时、原始 HTML 字节上限、正文输出字符上限、User-Agent；`maxOutputLength` 默认 50000 字符，超出即截断并把完整正文落盘到会话 runtime 目录 `webPages/` 供 Agent 按需回读）、Shell 会话（`harness.shell.*`），已全部迁入管理后台「系统设置 → 集成配置」。均为启动时构建，**保存后需重启后端生效**；`application.yml` 不再读取这些键。Agent 级压缩覆盖（agent `configJson` 的 `compaction` 节点）优先于全局默认值。子代理执行无总时长限制（`harness.delegate.*` 已于 0.0.91 废弃）。
+上下文压缩（`harness.compaction.*`：开关/上下文窗口/触发比例/摘要上限/循环中途压缩/请求体体积阈值 `triggerPayloadBytes` 默认 41943040 字节、0 表示关闭体积触发）、LLM 超时与限流重试（`harness.llm.*`）、Anthropic 协议前缀缓存（`harness.llm.anthropicAutoCache` 开关默认启用、`harness.llm.anthropicCacheTtl` 取值 `5m`/`1h` 默认 `5m`，重启后端生效）、网页抓取（`harness.webPage.*`：连接/读取超时、原始 HTML 字节上限、正文输出字符上限、User-Agent；`maxOutputLength` 默认 50000 字符，超出即截断并把完整正文落盘到会话 runtime 目录 `webPages/` 供 Agent 按需回读）、Shell 会话（`harness.shell.*`），已全部迁入管理后台「系统设置 → 集成配置」。均为启动时构建，**保存后需重启后端生效**；`application.yml` 不再读取这些键。Agent 级压缩覆盖（agent `configJson` 的 `compaction` 节点）优先于全局默认值。子代理执行无总时长限制（`harness.delegate.*` 已于 0.0.91 废弃）。
 
 ### 运维清理调度器（0.0.76 新增）
 

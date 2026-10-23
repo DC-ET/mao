@@ -14,6 +14,11 @@ export interface LlmModel {
   modelType?: string | null;
   clientImpersonation?: string | null;
   contextWindowTokens?: number | null;
+  /**
+   * 供应商允许的请求体上限（字节）。用于推导会话压缩的体积触发阈值（上限 × 0.8）；
+   * null 表示未声明，回退全局阈值。
+   */
+  maxRequestBodyBytes?: number | null;
   /** 每百万「非缓存」输入 token 价格（成本单位）。DECIMAL 列经 mysql2 读出为 string，计价前经 parsePriceColumn 归一。 */
   priceInput?: string | number | null;
   /** 每百万缓存命中输入 token 价格（成本单位）。语义同 priceInput。 */

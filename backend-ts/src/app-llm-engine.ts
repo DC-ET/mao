@@ -111,6 +111,7 @@ export function assembleLlmEngine(deps: LlmEngineDeps): LlmEngineResult {
   compactionConfig.enabled = harnessTuning.compaction.enabled;
   compactionConfig.contextWindowTokens = harnessTuning.compaction.contextWindowTokens;
   compactionConfig.triggerRatio = harnessTuning.compaction.triggerRatio;
+  compactionConfig.triggerPayloadBytes = harnessTuning.compaction.triggerPayloadBytes;
   compactionConfig.maxSummaryTokens = harnessTuning.compaction.maxSummaryTokens;
   compactionConfig.loopMidwayCompact = harnessTuning.compaction.loopMidwayCompact;
   const historyLoader = new SessionHistoryLoader(sessionSvc as never, contextManager, compactionArchiveService);

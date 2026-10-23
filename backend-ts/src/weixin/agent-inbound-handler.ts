@@ -10,6 +10,8 @@ import { StorageException, type WeixinFileStorageService } from './file-storage.
 import type { WeixinSessionService } from './session.service.js';
 import { bindWeixinSessionPeer } from './session-peer.js';
 import { toWorkspaceRelative } from '../common/workspace-path.js';
+import { mapWithConcurrency } from '../common/concurrency.js';
+import { INBOUND_IMAGE_COMPRESS_CONCURRENCY, PromptImageResizer } from '../harness/tool/prompt-image-resizer.js';
 import type { InboundFile, WeixinInboundHandler, WeixinInboundMessageContext, WeixinReply } from './types.js';
 
 const DEFAULT_IMAGE_PROMPT = '请查看这张图片';
@@ -137,7 +139,7 @@ export class AgentWeixinInboundHandler implements WeixinInboundHandler {
       context.body = appendDownloadErrorNotice(context.body, allErrors);
     }
 
-    const messageContent = this.buildMessageContent(context, savedFilePaths, savedImagePaths, session.workspace ?? null);
+    const messageContent = await this.buildMessageContent(context, savedFilePaths, savedImagePaths, session.workspace ?? null);
     let savedMessage: Message;
     try {
       savedMessage = await this.deps.sessionService!.saveMessage(sessionId, 'USER', messageContent, null, null, null, 0, null);
@@ -393,7 +395,7 @@ export class AgentWeixinInboundHandler implements WeixinInboundHandler {
     }
   }
 
-  buildMessageContent(context: WeixinInboundMessageContext, filePaths: string[], imagePaths: string[], workspace: string | null): unknown {
+  async buildMessageContent(context: WeixinInboundMessageContext, filePaths: string[], imagePaths: string[], workspace: string | null): Promise<unknown> {
     const imageDataUris = context.imageDataUris;
     const hasImages = imageDataUris != null && imageDataUris.length > 0;
     const hasFiles = filePaths != null && filePaths.length > 0;
@@ -411,7 +413,7 @@ export class AgentWeixinInboundHandler implements WeixinInboundHandler {
         textParts.push(`图片已保存到会话工作区：${imagePaths.map((path) => toWorkspaceRelative(workspace, path)).join('、')}`);
       }
       parts.push({ type: 'text', text: textParts.join('\n') });
-      this.appendImageParts(parts, imageDataUris!);
+      await this.appendImageParts(parts, imageDataUris!);
       return parts;
     }
     if (hasFiles) return this.buildFileText(text, filePaths);
@@ -432,11 +434,15 @@ export class AgentWeixinInboundHandler implements WeixinInboundHandler {
     return sb.replace(/\n+$/, '');
   }
 
-  private appendImageParts(parts: ContentPart[], imageDataUris: string[]): void {
-    for (const dataUri of imageDataUris) {
-      if (dataUri == null || dataUri.trim() === '') continue;
-      parts.push({ type: 'image_url', imageUrl: { url: dataUri } });
-    }
+  private async appendImageParts(parts: ContentPart[], imageDataUris: string[]): Promise<void> {
+    // 入站图片写入前压一次：落盘原图不变，消息内 data URI 控制在 1.2MB 级（技术方案 2026-10-22 §7.1）。
+    // 有界并发（2）压缩，避免串行推迟入库、也避免多张大图同时解码顶爆内存。
+    const uris = await mapWithConcurrency(
+      imageDataUris.filter((dataUri) => dataUri != null && dataUri.trim() !== ''),
+      INBOUND_IMAGE_COMPRESS_CONCURRENCY,
+      (dataUri) => PromptImageResizer.compressDataUriForStore(dataUri),
+    );
+    for (const url of uris) parts.push({ type: 'image_url', imageUrl: { url } });
   }
 
   private saveInboundFiles(
