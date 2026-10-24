@@ -8,7 +8,7 @@ import { ScheduledTaskScheduler } from './schedule/scheduled-task.service.js';
 import { readActiveBackendPort, readDeployLock } from './harness/core/deploy-lock.js';
 import { WebhookDeliveryScheduler, DeliverySchedulerDbStore } from './notification/task/delivery.scheduler.js';
 import { userMessagePreviewOf } from './notification/task/user-message-preview.js';
-import { feishuSessionDetailUrl } from './feishu/progress-card.js';
+import { createSessionDetailUrlResolver } from './feishu/progress-card.js';
 import { OutboundDeliveryScheduler } from './openapi/outbound-delivery.scheduler.js';
 import { GenericHttpWebhookSender } from './openapi/generic-webhook-sender.js';
 import { InboxCleanupScheduler } from './inbox/inbox.cleanup.js';
@@ -53,15 +53,15 @@ export function assembleLifecycle(deps: LifecycleDeps): LifecycleResult {
     d.notifCipher,
     d.senderRegistry,
   );
+  const sessionDetailUrl = createSessionDetailUrlResolver({
+    getSiteBaseUrl: () => d.settingService.getSiteBaseUrl(),
+  });
   deliveryScheduler.setContextProvider({
     latestUserMessage: async (sessionId: number) => {
       const message = await d.sessionService.getLastUserMessage(sessionId);
       return userMessagePreviewOf(message?.content ?? null) || null;
     },
-    sessionDetailUrl: async (sessionId: number) => {
-      const ecp = await d.settingService.getEcpConfig();
-      return feishuSessionDetailUrl(ecp.desktopCallbackUrl, sessionId) ?? null;
-    },
+    sessionDetailUrl: async (sessionId: number) => (await sessionDetailUrl(sessionId)) ?? null,
   });
   deliveryScheduler.start();
   const outboundDeliveryScheduler = new OutboundDeliveryScheduler({

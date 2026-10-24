@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildFeishuProgressCard, feishuSessionDetailUrl, formatFeishuDuration, type FeishuSubagentSummary } from './progress-card.js';
+import { buildFeishuProgressCard, createSessionDetailUrlResolver, feishuSessionDetailUrl, formatFeishuDuration, type FeishuSubagentSummary } from './progress-card.js';
 
 type CardElement = {
   tag?: string;
@@ -205,6 +205,40 @@ describe('feishuSessionDetailUrl', () => {
     expect(feishuSessionDetailUrl('', 1)).toBeUndefined();
     expect(feishuSessionDetailUrl(null, 1)).toBeUndefined();
     expect(feishuSessionDetailUrl('not-a-url', 1)).toBeUndefined();
+  });
+});
+
+describe('createSessionDetailUrlResolver', () => {
+  it('优先用 site.baseUrl 推导深链', async () => {
+    const resolve = createSessionDetailUrlResolver({
+      getSiteBaseUrl: async () => 'https://mao.etarch.cn',
+    });
+    await expect(resolve(2245)).resolves.toBe('https://mao.etarch.cn/tasks/2245');
+  });
+
+  it('site.baseUrl 带路径时只取 origin', async () => {
+    const resolve = createSessionDetailUrlResolver({
+      getSiteBaseUrl: async () => 'https://mao.etarch.cn/api',
+    });
+    await expect(resolve(7)).resolves.toBe('https://mao.etarch.cn/tasks/7');
+  });
+
+  it('未配置 site.baseUrl 时由调用方回落 upload.baseUrl', async () => {
+    // getSiteBaseUrl() 已内含回落链（site.baseUrl → upload.baseUrl），此处验证空值传递时的行为
+    const resolve = createSessionDetailUrlResolver({ getSiteBaseUrl: async () => null });
+    await expect(resolve(7)).resolves.toBeUndefined();
+  });
+
+  it('getSiteBaseUrl 抛错时不渲染按钮', async () => {
+    const resolve = createSessionDetailUrlResolver({
+      getSiteBaseUrl: async () => { throw new Error('db down'); },
+    });
+    await expect(resolve(7)).resolves.toBeUndefined();
+  });
+
+  it('站点根不是合法 URL 时不渲染按钮', async () => {
+    const resolve = createSessionDetailUrlResolver({ getSiteBaseUrl: async () => 'mao.example.com' });
+    await expect(resolve(7)).resolves.toBeUndefined();
   });
 });
 

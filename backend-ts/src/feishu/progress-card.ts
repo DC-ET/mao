@@ -60,6 +60,28 @@ export function feishuSessionDetailUrl(webBase: string | null | undefined, sessi
   }
 }
 
+/** 深链站点根来源：可只提供 getSiteBaseUrl()（site.baseUrl → upload.baseUrl）。 */
+export interface SessionDetailUrlDeps {
+  getSiteBaseUrl(): Promise<string | null>;
+}
+
+/**
+ * 按站点根推导会话详情深链：优先 site.baseUrl（V169），留空回落 upload.baseUrl。
+ * ECP 的 desktopCallbackUrl 只是登录回调占位，即使 ECP 未启用也常有值，
+ * 直接取它会把链接指向 mao.example.com 这类假域名，故不再作为来源。
+ */
+export function createSessionDetailUrlResolver(deps: SessionDetailUrlDeps): (sessionId: number) => Promise<string | undefined> {
+  const { getSiteBaseUrl } = deps;
+  return async (sessionId: number): Promise<string | undefined> => {
+    try {
+      const siteBase = await getSiteBaseUrl();
+      return feishuSessionDetailUrl(siteBase, sessionId);
+    } catch {
+      return undefined;
+    }
+  };
+}
+
 /** 「会话详情」跳转按钮：open_url，与 ECP 引导卡同一交互形态。 */
 function sessionDetailButton(sessionDetailUrl: string): Record<string, unknown> {
   return {

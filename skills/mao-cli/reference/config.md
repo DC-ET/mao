@@ -73,6 +73,12 @@
 
 升级需执行 V111 迁移。`mao-cli` 本期不提供浏览器飞书登录，仅 Web/管理后台/Electron 入口。设计见 `docs/plan/2026-09-14-ecp-native-login-technical-design.md`。
 
+### 站点根地址（网页深链）
+
+管理后台「系统设置 → 集成配置 → 站点」维护，配置键 `site.baseUrl`，保存后即时生效。飞书 / 钉钉卡片里的「会话详情」按钮等网页深链用它的 origin 拼 `/tasks/{id}`；留空则回落上传基础地址 `upload.baseUrl`，两者都空时不渲染按钮。
+
+不要用 ECP 的「桌面回调 URL」充当站点根：该字段即使 ECP 整体关闭也保留占位值 `https://mao.example.com/...`，直接取它会让深链指向打不开的假域名（0.0.341 起深链已改用本配置）。
+
 ### 公司 SSO（Web Embed SDK）
 
 此集成在管理后台「系统设置 → 集成配置 → 公司 SSO」维护，默认关闭。配置以单条 `auth.companySso.config` JSON 保存在系统设置中，保存后对新换票请求及预检即时生效，无需重启；不再读取或自动导入 `SSO_*` 环境变量。业务系统仍在 `MaoChat.init` 的 `auth.checkUrl` 指定校验地址，校验协议仍为公司 checkToken 协议。

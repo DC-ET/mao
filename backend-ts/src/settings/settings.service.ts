@@ -46,6 +46,8 @@ export const FEISHU_APP_SECRET_KEY = 'auth.feishu.appSecret';
 export const FEISHU_REDIRECT_URI_KEY = 'auth.feishu.redirectUri';
 export const UPLOAD_STORAGE_MODE_KEY = 'upload.storageMode';
 export const UPLOAD_BASE_URL_KEY = 'upload.baseUrl';
+/** 站点根 URL（V169）：IM 卡片「会话详情」等网页深链的 origin 来源。留空回落 upload.baseUrl。 */
+export const SITE_BASE_URL_KEY = 'site.baseUrl';
 export const FILE_MAX_SIZE_MB_KEY = 'file.maxSizeMb';
 export const TAVILY_API_KEY_KEY = 'tools.tavilyApiKey';
 export const TINYFISH_API_KEY_KEY = 'tools.tinyfishApiKey';
@@ -345,6 +347,17 @@ export class SystemSettingService {
     const maxSizeMb = parsePositiveInt(maxSizeRaw) ?? DEFAULT_FILE_MAX_SIZE_MB;
     const storageMode = storageModeRaw === 'oss' ? 'oss' : 'local';
     return { storageMode, baseUrl, maxSizeMb };
+  }
+
+  /**
+   * 网页深链用的站点根（site.baseUrl，V169）：IM 卡片「会话详情」等链接的 origin 来源。
+   * 留空回落上传基础地址——两者都空时返回 null，调用方据此不渲染深链按钮。
+   */
+  async getSiteBaseUrl(): Promise<string | null> {
+    const site = (await this.getText(SITE_BASE_URL_KEY)).trim();
+    if (site !== '') return site;
+    const upload = (await this.getText(UPLOAD_BASE_URL_KEY)).trim();
+    return upload === '' ? null : upload;
   }
 
   async getTavilyConfig(): Promise<TavilySettings> {
@@ -875,6 +888,9 @@ export class SystemSettingService {
     }
     if (key === UPLOAD_BASE_URL_KEY && !/^https?:\/\//i.test(value!)) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '上传基础地址必须以 http:// 或 https:// 开头');
+    }
+    if (key === SITE_BASE_URL_KEY && !/^https?:\/\//i.test(value!)) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '站点根地址必须以 http:// 或 https:// 开头');
     }
   }
 

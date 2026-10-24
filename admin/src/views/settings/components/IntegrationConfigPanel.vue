@@ -242,6 +242,21 @@ const ALL_GROUPS = computed<GroupDef[]>(() => [
     ],
   },
   {
+    name: 'site',
+    title: '站点',
+    keys: ['site.baseUrl'],
+    fields: [
+      {
+        key: 'site.baseUrl',
+        label: '站点根地址',
+        placeholder: 'https://mao.example.com',
+        hint: 'IM 卡片「会话详情」等网页深链的域名来源；留空回落「上传基础地址」',
+        pattern: /^https?:\/\//,
+        patternMessage: '需以 http:// 或 https:// 开头',
+      },
+    ],
+  },
+  {
     name: 'oss',
     title: 'OSS 对象存储',
     keys: ['oss.region', 'oss.accessKeyId', 'oss.accessKeySecret', 'oss.bucket', 'oss.sts.regionId', 'oss.sts.endpoint', 'oss.sts.accessKeyId', 'oss.sts.accessKeySecret', 'oss.sts.roleArn', 'oss.sts.roleSessionName', 'oss.sts.expire', 'oss.sts.maxSizeMb'],

@@ -248,7 +248,7 @@ const AGENT_SELECT_KEYS = new Set(['weixin.agentId', 'embed.agentId'])
 const INTEGRATION_KEYS = new Set([
   'auth.ldap.enabled', 'auth.ldap.url', 'auth.ldap.baseDn', 'auth.ldap.userDn', 'auth.ldap.password', 'auth.ldap.userSearchBase',
   'auth.feishu.enabled', 'auth.feishu.appId', 'auth.feishu.appSecret', 'auth.feishu.redirectUri',
-  'upload.storageMode', 'upload.baseUrl', 'file.maxSizeMb',
+  'upload.storageMode', 'upload.baseUrl', 'file.maxSizeMb', 'site.baseUrl',
   'tools.webSearchProvider', 'tools.tavilyApiKey', 'tools.tinyfishApiKey',
   'oss.region', 'oss.accessKeyId', 'oss.accessKeySecret', 'oss.bucket',
   'oss.sts.regionId', 'oss.sts.endpoint', 'oss.sts.accessKeyId', 'oss.sts.accessKeySecret',
@@ -267,6 +267,7 @@ const INTEGRATION_LABELS: Record<string, string> = {
   ldap: 'LDAP 认证',
   feishu: '飞书 OAuth 登录',
   upload: '上传配置',
+  site: '站点',
   oss: 'OSS 对象存储',
   agent: 'Agent 运行',
   'harness-llm': 'LLM 超时与重试',
@@ -295,6 +296,7 @@ const TOC_GROUPS: Array<{ label: string; sections: Array<{ kind: 'company-sso' |
     label: '文件与存储',
     sections: [
       { kind: 'integration', name: 'upload' },
+      { kind: 'integration', name: 'site' },
       { kind: 'integration', name: 'oss' },
     ],
   },

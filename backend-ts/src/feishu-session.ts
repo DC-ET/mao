@@ -11,7 +11,7 @@ import type { MysqlFeishuMessageRepository } from './feishu/message.repository.j
 import type { EcpAuthService } from './auth/ecp-auth.service.js';
 import type { MysqlEcpSessionRepository } from './auth/ecp-session.repository.js';
 import type { SystemSettingService } from './settings/settings.service.js';
-import { feishuSessionDetailUrl } from './feishu/progress-card.js';
+import { createSessionDetailUrlResolver } from './feishu/progress-card.js';
 import { senderName } from './feishu/message.service.js';
 import { hasUsableEcpSession } from './auth/ecp-session.repository.js';
 import { senderUnionIdOf } from './feishu/ecp-inbound-gate.js';
@@ -83,14 +83,9 @@ export interface FeishuSessionUrlDeps {
 export function createFeishuSessionUrlHelper(deps: FeishuSessionUrlDeps) {
   const { settingService } = deps;
 
-  return async (sessionId: number): Promise<string | undefined> => {
-    try {
-      const ecp = await settingService.getEcpConfig();
-      return feishuSessionDetailUrl(ecp.desktopCallbackUrl, sessionId);
-    } catch {
-      return undefined;
-    }
-  };
+  return createSessionDetailUrlResolver({
+    getSiteBaseUrl: () => settingService.getSiteBaseUrl(),
+  });
 }
 
 // ========== 话题会话 ==========

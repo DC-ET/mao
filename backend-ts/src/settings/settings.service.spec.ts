@@ -296,6 +296,34 @@ describe('SystemSettingService', () => {
     expect(cfg).toEqual({ storageMode: 'local', baseUrl: '', maxSizeMb: 1024 });
   });
 
+  it('getSiteBaseUrlPrefersSiteSetting', async () => {
+    vi.mocked(mapper.findByKey).mockImplementation(async (key: string) => (
+      key === 'site.baseUrl'
+        ? { id: 1, settingKey: key, category: '集成配置', value: 'https://mao.etarch.cn', editable: 1 }
+        : null
+    ));
+    await expect(service().getSiteBaseUrl()).resolves.toBe('https://mao.etarch.cn');
+  });
+
+  it('getSiteBaseUrlFallsBackToUploadBaseUrl', async () => {
+    vi.mocked(mapper.findByKey).mockImplementation(async (key: string) => (
+      key === 'upload.baseUrl'
+        ? { id: 1, settingKey: key, category: '集成配置', value: 'https://mao.etarch.cn', editable: 1 }
+        : null
+    ));
+    await expect(service().getSiteBaseUrl()).resolves.toBe('https://mao.etarch.cn');
+  });
+
+  it('getSiteBaseUrlReturnsNullWhenBothUnset', async () => {
+    vi.mocked(mapper.findByKey).mockResolvedValue(null);
+    await expect(service().getSiteBaseUrl()).resolves.toBeNull();
+  });
+
+  it('updateRejectsSiteBaseUrlWithoutScheme', async () => {
+    vi.mocked(mapper.findByKey).mockResolvedValue(setting('site.baseUrl', '集成配置', 1));
+    await expect(service().update('site.baseUrl', 'mao.example.com')).rejects.toThrow(/http/);
+  });
+
   it('getAgentRuntimeConfigAppliesDefaults', async () => {
     vi.mocked(mapper.findByKey).mockResolvedValue(null);
     const cfg = await service().getAgentRuntimeConfig();

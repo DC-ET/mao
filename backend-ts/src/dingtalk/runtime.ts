@@ -6,7 +6,7 @@ import { decryptAesGcm } from '../crypto/aes-gcm.js';
 import type { JwtService } from '../crypto/jwt.service.js';
 import type { Db } from '../db/db.js';
 import { chatFilesDirOf, resolveChatFileTarget } from '../feishu/chat-files.js';
-import { feishuSessionDetailUrl } from '../feishu/progress-card.js';
+import { createSessionDetailUrlResolver } from '../feishu/progress-card.js';
 import type { FeishuCardProgress } from '../feishu/card-progress-listener.js';
 import { countCompletedAgentRounds } from '../feishu/card-progress-listener.js';
 import type { AgentLoop } from '../harness/core/agent-loop.js';
@@ -84,7 +84,7 @@ export function createDingtalkRuntime(deps: {
   agentService: AgentService;
   modelService: ModelService;
   userRepo: { findById(id: number): Promise<{ id?: number } | null> };
-  settingService: { getEcpConfig(): Promise<{ desktopCallbackUrl?: string | null }> };
+  settingService: { getSiteBaseUrl(): Promise<string | null> };
   taskTerminal: { finishExecution(sessionId: number, userId: number, phase: string, executionId: string, failureReason?: string): Promise<void> };
   activityService: unknown;
   activityHeartbeat: unknown;
@@ -133,14 +133,9 @@ export function createDingtalkRuntime(deps: {
     return { bot, secret: decryptAesGcm(bot.clientSecret, deps.config.appSecretKey, '钉钉Bot clientSecret解密失败') };
   };
 
-  const sessionDetailUrl = async (sessionId: number): Promise<string | undefined> => {
-    try {
-      const ecp = await deps.settingService.getEcpConfig();
-      return feishuSessionDetailUrl(ecp.desktopCallbackUrl, sessionId);
-    } catch {
-      return undefined;
-    }
-  };
+  const sessionDetailUrl = createSessionDetailUrlResolver({
+    getSiteBaseUrl: () => deps.settingService.getSiteBaseUrl(),
+  });
 
   const templateOf = (bot: DingtalkBot, kind: 'progress' | 'queue'): string | null => {
     const row = kind === 'progress' ? bot.progressCardTemplateId : bot.queueCardTemplateId;
