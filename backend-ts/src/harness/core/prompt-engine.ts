@@ -56,6 +56,19 @@ const CITATION_CONTRACT = `## 引用规范
 [^n^] 只有句末插标记这一种用法：回复里不要出现任何 URL，不要写 \`[^n^]: 链接\` 形式的脚注定义行，也不要在文末自行罗列「来源 / 参考资料」列表——来源列表由系统按标记自动生成，自己写只会重复。
 `;
 
+/**
+ * 团队经验库路标（技术方案 2026-10-24 §3.6）：渐进式发现的唯一提示词成本。
+ * 固定文案，不含任何动态内容（前缀缓存前提）；索引与正文只在 Agent 主动检索时进入上下文。
+ * 路径 团队经验/ 为 ExperienceMountService 挂载的工作区符号链接名，两侧常量须同步修改。
+ */
+const EXPERIENCE_LIBRARY_HINT = `## 团队经验库
+
+工作区内 \`团队经验/\` 目录是本 Agent 的团队共享经验库（跨会话、跨成员积累）：
+- 接手复杂或陌生任务前，先在 \`团队经验/INDEX.md\` 中按关键词检索（grep），命中后读取对应子文档全文再动手。
+- 经过多轮探索解决重要问题、且经验可复用时，新建 \`团队经验/YYYY-MM-DD-主题.md\` 沉淀；文件首部用 frontmatter 记录 title / keywords / summary / applicable / last_verified。\`INDEX.md\` 由系统自动生成，不要手改。
+- 发现库中经验过时或有误，直接修正该子文档并更新 last_verified。
+- 项目专属知识仍写工作区知识索引，只有跨项目可复用的经验才进团队经验库。`;
+
 /** Embed 网页浮窗通道基座：与具体业务角色无关，有 page_* 工具时注入。 */
 const EMBED_PAGE_AGENT_HINTS = `## 页面上下文与可见范围
 
@@ -118,6 +131,7 @@ function isBenignCommandName(name: string): boolean {
  */
 const INJECTED_SECTION_KEYS = new Set([
   'experiences',      // 最佳实践经验（命中经验库）
+  'experience-library', // 团队经验库路标（Agent 开关启用且 CLOUD；见 experienceLibraryHint）
   'memories',         // 长期记忆（可治理：会话开关 / 设置页）
   'skills',           // 技能（构成标签；提示词标题仍是「可用技能」）
   'workspace-rules',  // 工作区规则（AGENTS.md，可治理）
@@ -345,6 +359,11 @@ export class PromptEngine {
       }
       text += '\n';
       sections.push({ key: 'experiences', label: '最佳实践经验', text, count });
+    }
+    // 团队经验库路标（技术方案 2026-10-24 §3.6）：紧跟最佳实践经验，memories 之前。
+    // 固定文案零动态内容——不随经验数量膨胀，系统提示只留一句「路标」。
+    if (context.experienceLibrary != null) {
+      sections.push({ key: 'experience-library', label: '团队经验库', text: EXPERIENCE_LIBRARY_HINT + '\n' });
     }
     const memoriesText = this.longTermMemoriesHint(context);
     if (memoriesText.length > 0) {

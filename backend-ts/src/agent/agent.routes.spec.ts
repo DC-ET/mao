@@ -97,11 +97,12 @@ describe('CRUD routes', () => {
     expect((await app.inject({
       method: 'POST', url: '/v1/agents', payload: { name: 'A', systemPrompt: 'p', avatarUrl: agent.avatarUrl },
     })).json().data.avatarUrl).toBe(agent.avatarUrl);
-    expect(agentService.createAgent.mock.calls[0]?.at(-2)).toBe(agent.avatarUrl);
+    expect(agentService.createAgent.mock.calls[0]?.at(-3)).toBe(agent.avatarUrl);
+    expect(agentService.createAgent.mock.calls[0]?.at(-1)).toBeUndefined();
     expect((await app.inject({
       method: 'PUT', url: '/v1/agents/1', payload: { name: 'B', avatarUrl: null },
     })).statusCode).toBe(200);
-    expect(agentService.updateAgent.mock.calls[0]?.at(-2)).toBeNull();
+    expect(agentService.updateAgent.mock.calls[0]?.at(-3)).toBeNull();
     expect((await app.inject({ method: 'DELETE', url: '/v1/agents/1' })).statusCode).toBe(200);
     expect((await app.inject({ method: 'GET', url: '/v1/agents/1/experiences' })).statusCode).toBe(200);
     expect((await app.inject({
@@ -141,7 +142,7 @@ describe('CRUD routes', () => {
       const cleared = await app.inject({ method: 'PUT', url: '/v1/agents/1', payload: { mcpServerIds: [] } });
       expect(cleared.statusCode).toBe(200);
       expect(agentService.updateAgent).toHaveBeenCalledWith(
-        7, 1, undefined, undefined, undefined, undefined, [], undefined, null, null, undefined, undefined, undefined, undefined,
+        7, 1, undefined, undefined, undefined, undefined, [], undefined, null, null, undefined, undefined, undefined, undefined, undefined,
       );
       expect(mcpServerValidator.validateForAgent).not.toHaveBeenCalled();
 

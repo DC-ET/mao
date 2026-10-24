@@ -330,6 +330,12 @@ export class HarnessService {
     context.projectKey = session.projectKey;
     context.systemPrompt = agent.systemPrompt;
     context.experiences = await this.experienceService.listEnabledContents(agent.id!);
+    // 团队经验库路标（技术方案 2026-10-24 §3.6）：仅 Agent 开关启用且 CLOUD 会话注入。
+    // LOCAL 的文件工具跑在用户本机，够不到服务器共享目录，注入路标只会引导 Agent 撞墙。
+    context.experienceLibrary = (agent.experienceLibraryEnabled ?? 1) === 1
+      && executionMode.toUpperCase() === 'CLOUD'
+      ? { agentId: agent.id! }
+      : null;
     // 长期记忆注入（技术方案 5.2）：整段独立 try-catch——查询失败仅记 warn、memories 置 null，
     // 不阻断会话启动。注意降级逻辑与技能同步的 CLOUD 分支 try-catch 无关，勿对齐那个样板。
     context.memories = await this.loadMemories(session);

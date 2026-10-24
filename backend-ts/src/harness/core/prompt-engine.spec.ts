@@ -422,6 +422,61 @@ describe('PromptEngine long-term memories', () => {
   });
 });
 
+describe('PromptEngine experience library', () => {
+  function engine() {
+    return new PromptEngine(
+      { hasSkill: () => false, getAllNames: () => [], getAllDocuments: () => [] } as never,
+      { getWorkspaceRoot: () => '/ws' } as never,
+      RuntimeDataResolver.forTest('/tmp/rt', '/tmp/home'),
+      { getByUserIdAndName: async () => null } as never,
+      { getUserSkillDocuments: () => [] } as never,
+    );
+  }
+
+  function context(overrides: Partial<AgentExecutionContext> = {}): AgentExecutionContext {
+    const ctx = new AgentExecutionContext();
+    ctx.executionMode = 'CLOUD';
+    ctx.workspace = '/ws';
+    ctx.experiences = ['经验一'];
+    ctx.tools = [tool('read_file')];
+    Object.assign(ctx, overrides);
+    return ctx;
+  }
+
+  it('injectsFixedPointerSectionBetweenExperiencesAndMemories', async () => {
+    const ctx = context({
+      experienceLibrary: { agentId: 1 },
+      memories: [{ scope: 'USER', projectKey: null, content: '输出报告用中文' }],
+    });
+    const request = await engine().buildRequest(ctx);
+    const system = request.messages[0].content as string;
+    expect(system).toContain('## 团队经验库');
+    expect(system).toContain('团队经验/INDEX.md');
+    expect(system).toContain('YYYY-MM-DD-主题.md');
+    const expIdx = system.indexOf('## 最佳实践经验');
+    const libIdx = system.indexOf('## 团队经验库');
+    const memIdx = system.indexOf('## 长期记忆');
+    expect(libIdx).toBeGreaterThan(expIdx);
+    expect(libIdx).toBeLessThan(memIdx);
+    // 注入型分节：manifest 可见（与 experiences/memories 同口径）
+    expect(ctx.contextManifest!.sections.map((s) => s.key)).toContain('experience-library');
+  });
+
+  it('nullExperienceLibraryProducesNoSectionAndStablePrefix', async () => {
+    // 路标是固定文案：开关切换只增删该节，前后其余分节文本逐字节不变
+    const withLib = await engine().buildRequest(context({ experienceLibrary: { agentId: 1 } }));
+    const withoutLib = await engine().buildRequest(context());
+    const sysWith = withLib.messages[0].content as string;
+    const sysWithout = withoutLib.messages[0].content as string;
+    expect(sysWith).toContain('## 团队经验库');
+    expect(sysWithout).not.toContain('## 团队经验库');
+    const start = sysWith.indexOf('## 团队经验库');
+    const nextSection = sysWith.indexOf('\n## ', start);
+    expect(nextSection).toBeGreaterThan(start);
+    expect(sysWithout).toBe(sysWith.slice(0, start) + sysWith.slice(nextSection + 1));
+  });
+});
+
 describe('PromptEngine context manifest', () => {
   function engine() {
     return new PromptEngine(

@@ -9,7 +9,11 @@ import { withFileLock } from './file-write-lock.js';
 import { applyEol, detectEol, stripBom, toLf } from './file-eol.js';
 
 export class EditFileTool extends BaseTool {
-  constructor(private readonly pathSandbox: PathSandbox) {
+  constructor(
+    private readonly pathSandbox: PathSandbox,
+    /** 落盘成功回调（团队经验库索引刷新，技术方案 2026-10-24 §3.5）：回调自身过滤路径，失败不影响编辑结果。 */
+    private readonly onFileChanged?: (absPath: string) => void,
+  ) {
     super();
   }
 
@@ -84,6 +88,7 @@ export class EditFileTool extends BaseTool {
           });
         }
         writeFileSync(filePath, applyEol(match.updated, eol));
+        this.notifyFileChanged(filePath);
         const lineDelta = FileChangeDiffUtil.computeLineDelta(content, match.updated);
         return toJson({
           success: true,
@@ -100,6 +105,15 @@ export class EditFileTool extends BaseTool {
     } catch (e) {
       harnessLog('error', 'EditFileTool execution failed', e);
       return toJson({ success: false, replacements: 0, error: (e as Error).message });
+    }
+  }
+
+  private notifyFileChanged(filePath: string): void {
+    if (this.onFileChanged == null) return;
+    try {
+      this.onFileChanged(filePath);
+    } catch (e) {
+      harnessLog('warn', `EditFileTool onFileChanged callback failed: ${(e as Error).message}`);
     }
   }
 }

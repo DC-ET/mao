@@ -109,6 +109,8 @@ import { registerAdminEnvVariableRoutes, registerEnvVariableRoutes } from './env
 import { registerAdminHttpToolRoutes } from './http-tool/http-tool-admin.routes.js';
 import { registerAgentAvatarRoutes } from './agent/agent-avatar.js';
 import { registerAgentRoutes } from './agent/agent.routes.js';
+import { registerAgentExperienceLibraryRoutes } from './agent/agent-experience-library.routes.js';
+import type { ExperienceIndexService } from './harness/experience/experience-index.service.js';
 import { registerAgentBundleRoutes } from './agent/agent-bundle.routes.js';
 import { registerModelRoutes } from './model/model.routes.js';
 import { registerSystemSettingRoutes } from './settings/settings.routes.js';
@@ -183,6 +185,7 @@ export interface RouteDeps {
   fileService: FileService;
   agentService: AgentService;
   experienceService: AgentExperienceService;
+  experienceIndexService: ExperienceIndexService;
   suggestedQuestionService: AgentSuggestedQuestionService;
   agentBundleService: AgentBundleService;
   mcpValidator: McpServerValidatorImpl;
@@ -321,7 +324,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
     gitCredentials, envVariableService, sessionRepo,
     httpToolService, httpApiExecutor, httpToolStatsStore,
     httpToolValidator,
-    fileService, agentService, experienceService, suggestedQuestionService,
+    fileService, agentService, experienceService, experienceIndexService, suggestedQuestionService,
     agentBundleService, mcpValidator,
     modelService,
     settingService, activateContainerRuntime, runtimeModeResolver,
@@ -402,6 +405,9 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
       agentService, experienceService, suggestedQuestionService, userRepo, mcpServerValidator: mcpValidator,
       httpToolValidator,
       permissionService,
+    });
+    registerAgentExperienceLibraryRoutes(api, {
+      agentService, experienceIndexService, permissionService,
     });
     registerAgentBundleRoutes(api, { agentBundleService, permissionService, registryConfig: settingService });
     registerModelRoutes(api, { modelService, permissionService });

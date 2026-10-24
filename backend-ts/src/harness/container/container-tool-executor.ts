@@ -12,6 +12,7 @@ import { GlobSearchTool } from '../tool/impl/glob-search-tool.js';
 import { GrepSearchTool } from '../tool/impl/grep-search-tool.js';
 import type { Tool } from '../tool/tool.js';
 import { harnessLog } from '../log.js';
+import { ExperienceIndexService, EXPERIENCE_ROOT_SUBDIR } from '../experience/experience-index.service.js';
 import type { RuntimeEnvelope } from './runtime-channel-protocol.js';
 
 /** 容器内允许根清单（技术方案 §5.5）。 */
@@ -62,9 +63,9 @@ export class ContainerToolExecutor {
     // 图片产物（generate_image/edit_image 落盘）在宿主机按 {uploadDir}/{uid} 隔离后
     // 同名挂入容器，容器内 read_file 等按同一允许根放行
     this.pathSandbox.addAllowedRoot(path.join(roots.uploadDir, u));
-    // 公共共享目录（共享目录方案 §4.2）：唯一跨用户共享的允许根（/tmp 宿主机侧按
-    // {tmpDir}/{userId} 收窄，仍属每用户）——内容对全员公开且挂载为 ro，放行整根；
-    // 写操作由 ro 挂载以 EROFS 拒绝，沙箱层不引入 ro 概念
+    // 公共共享目录（共享目录方案 §4.2 + 团队经验库方案 2026-10-24）：唯一跨用户共享的
+    // 允许根（/tmp 宿主机侧按 {tmpDir}/{userId} 收窄，仍属每用户）。经验库 rw 挂载后
+    // 容器内可读写；管理员投放内容靠信任 + 宿主快照兜底
     this.pathSandbox.addAllowedRoot(roots.shareDir);
     this.pathSandbox.addAllowedRoot('/tmp');
     this.outputManager = new OutputManager();
@@ -99,8 +100,10 @@ export class ContainerToolExecutor {
     for (const tool of [
       shellTool,
       new ReadFileTool(this.pathSandbox),
-      new WriteFileTool(this.pathSandbox),
-      new EditFileTool(this.pathSandbox),
+      // 经验库索引刷新回调（技术方案 2026-10-24 §3.5/§3.7）：容器内进程直接刷共享目录，
+      // 与宿主侧同一套陈旧判定 + 原子写，最终一致
+      new WriteFileTool(this.pathSandbox, this.experienceRefreshCallback(roots.shareDir)),
+      new EditFileTool(this.pathSandbox, this.experienceRefreshCallback(roots.shareDir)),
       new GlobSearchTool(this.pathSandbox),
       new GrepSearchTool(this.pathSandbox),
     ]) {
@@ -112,6 +115,11 @@ export class ContainerToolExecutor {
 
   get activeShellSessions(): number {
     return this.shellManager.getActiveSessionCount();
+  }
+
+  private experienceRefreshCallback(shareDir: string): (absPath: string) => void {
+    const indexService = new ExperienceIndexService(path.join(shareDir, EXPERIENCE_ROOT_SUBDIR));
+    return (absPath: string) => indexService.refreshIfUnderRoot(absPath);
   }
 
   get unfinishedBackgroundTasks(): number {

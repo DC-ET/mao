@@ -206,6 +206,8 @@ export interface AgentRef {
   defaultModelId?: number | null;
   /** 0-停用；缺省或 1 为启用 */
   enabled?: number | null;
+  /** 团队经验库开关（V169）：0-不挂载不注入；缺省或 1 为启用 */
+  experienceLibraryEnabled?: number | null;
 }
 
 export interface LlmModelRef {

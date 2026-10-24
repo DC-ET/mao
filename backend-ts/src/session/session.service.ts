@@ -25,6 +25,7 @@ import type { EnvironmentInfoProvider } from '../harness/core/environment-info.j
 import { MessageHistoryNormalizer, MISSING_TOOL_RESULT_PLACEHOLDER } from '../harness/core/message-history-normalizer.js';
 import { CloudWorkspaceResolver } from '../harness/safety/cloud-workspace-resolver.js';
 import type { PathSandbox } from '../harness/safety/path-sandbox.js';
+import type { ExperienceMountService } from '../harness/experience/experience-mount.service.js';
 import { fromString as permissionFromString } from './permission-level.js';
 import { isFeishuChannelSession } from '../harness/tool/feishu-channel-tool.js';
 import { isDingtalkChannelSession } from '../harness/tool/dingtalk-channel-tool.js';
@@ -83,6 +84,8 @@ export class SessionService {
     private readonly onSessionDeleted?: (sessionId: number) => Promise<void> | void,
     /** 会话删除时物理删其会话级审批放行规则（V135 级联）。 */
     private readonly deleteSessionApprovalRules?: (sessionId: number) => Promise<void>,
+    /** 团队经验库挂载（技术方案 2026-10-24 §3.3）：CLOUD 会话创建时同步 团队经验 符号链接。可选注入。 */
+    private readonly experienceMount?: ExperienceMountService | null,
   ) {}
 
   /** 同一会话的 context token / manifest 写入按调用顺序串行，避免并发 UPDATE 把旧快照写回去。 */
@@ -179,9 +182,30 @@ export class SessionService {
         session.osVersion = env.osVersion;
         await this.sessionRepo.updateById(session);
       }
+      await this.mountExperienceLibrary(session);
     }
 
     return session;
+  }
+
+  /**
+   * 团队经验库挂载（技术方案 2026-10-24 §3.3）：按 Agent 开关同步工作区符号链接。
+   * 整体降级：挂载失败只记日志——链接缺失损失的是经验检索能力，不应阻断建会话。
+   */
+  private async mountExperienceLibrary(session: Session): Promise<void> {
+    if (this.experienceMount == null || session.agentId == null) return;
+    if (session.workspace == null || session.workspace.length === 0) return;
+    try {
+      const agent = await this.agentLookup.findById(session.agentId);
+      if (agent == null) return;
+      this.experienceMount.syncForSession(
+        session.workspace,
+        session.agentId,
+        (agent.experienceLibraryEnabled ?? 1) === 1,
+      );
+    } catch (e) {
+      console.error(`Failed to mount experience library for session ${session.id}:`, e);
+    }
   }
 
   private async initializeCloudWorkspace(

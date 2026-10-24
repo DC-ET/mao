@@ -1,0 +1,166 @@
+import { existsSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
+import { useTmpDir } from '../../testing/tmp-dir.js';
+import { parseExperienceFrontmatter } from './experience-frontmatter.js';
+import {
+  ExperienceIndexService,
+  EXPERIENCE_INDEX_FILE,
+  isValidExperienceFileName,
+} from './experience-index.service.js';
+
+const DOC_A = `---
+title: MySQL 死锁排查实录
+keywords: mysql, 死锁, innodb
+summary: 三步定位法
+applicable: MySQL 8
+last_verified: 2026-10-24
+---
+
+正文`;
+const DOC_B = `---
+title: 飞书卡片回滚
+keywords: 飞书
+---
+
+正文`;
+
+function emptyFields() {
+  return { title: '', keywords: '', summary: '', applicable: '', lastVerified: '' };
+}
+
+describe('parseExperienceFrontmatter', () => {
+  it('parses standard fields and tolerates missing ones', () => {
+    const full = parseExperienceFrontmatter(DOC_A);
+    expect(full).toMatchObject({
+      title: 'MySQL 死锁排查实录',
+      keywords: 'mysql, 死锁, innodb',
+      summary: '三步定位法',
+      applicable: 'MySQL 8',
+      lastVerified: '2026-10-24',
+    });
+    const partial = parseExperienceFrontmatter(DOC_B);
+    expect(partial.title).toBe('飞书卡片回滚');
+    expect(partial.lastVerified).toBe('');
+    expect(partial.summary).toBe('');
+  });
+
+  it('returns empty fields for missing, broken or non-object frontmatter', () => {
+    expect(parseExperienceFrontmatter('no frontmatter')).toEqual(emptyFields());
+    expect(parseExperienceFrontmatter('---\n{{{broken\n---\nbody').title).toBe('');
+    expect(parseExperienceFrontmatter('---\n- a\n- b\n---\nbody').title).toBe('');
+  });
+
+  it('keeps inline --- inside values from cutting the block', () => {
+    const parsed = parseExperienceFrontmatter('---\ntitle: 步骤 --- 详细\n---\nbody');
+    expect(parsed.title).toBe('步骤 --- 详细');
+  });
+
+  it('accepts lastVerified alias and flattens multi-line values', () => {
+    const parsed = parseExperienceFrontmatter('---\ntitle: T\nlastVerified: 2026-10-01\nsummary: |\n  第一行\n  第二行\n---\n');
+    expect(parsed.lastVerified).toBe('2026-10-01');
+    expect(parsed.summary).toBe('第一行 第二行');
+  });
+});
+
+describe('isValidExperienceFileName', () => {
+  it('accepts dated markdown basenames and rejects traversal or non-md names', () => {
+    expect(isValidExperienceFileName('2026-10-24-mysql-deadlock.md')).toBe(true);
+    expect(isValidExperienceFileName('2026-10-24-死锁排查.md')).toBe(true);
+    expect(isValidExperienceFileName('../escape.md')).toBe(false);
+    expect(isValidExperienceFileName('a/b.md')).toBe(false);
+    expect(isValidExperienceFileName('a\\b.md')).toBe(false);
+    expect(isValidExperienceFileName('notes.txt')).toBe(false);
+    expect(isValidExperienceFileName('')).toBe(false);
+  });
+});
+
+describe('ExperienceIndexService', () => {
+  it('bootstraps an empty library with a header-only INDEX.md', () => {
+    const root = useTmpDir('exp-root-');
+    const svc = new ExperienceIndexService(join(root, 'agent-experience'));
+    const dir = svc.dirFor(3);
+    svc.ensureFresh(dir);
+    const index = readFileSync(join(dir, EXPERIENCE_INDEX_FILE), 'utf8');
+    expect(index).toContain('请勿手改');
+    expect(index).toContain('<!-- count: 0 -->');
+  });
+
+  it('generates sorted single-line index entries and refreshes on newer docs', () => {
+    const root = useTmpDir('exp-root-');
+    const svc = new ExperienceIndexService(root);
+    const dir = svc.dirFor(5);
+    svc.ensureFresh(dir);
+    writeFileSync(join(dir, '2026-10-20-feishu-rollback.md'), DOC_B);
+    writeFileSync(join(dir, '2026-10-24-mysql-deadlock.md'), DOC_A);
+    svc.ensureFresh(dir);
+    let index = readFileSync(join(dir, EXPERIENCE_INDEX_FILE), 'utf8');
+    expect(index).toContain('<!-- count: 2 -->');
+    // 文件名倒序：新日期在前
+    expect(index.indexOf('2026-10-24-mysql-deadlock.md')).toBeLessThan(index.indexOf('2026-10-20-feishu-rollback.md'));
+    expect(index).toContain('MySQL 死锁排查实录 | mysql, 死锁, innodb | 三步定位法 | 验证 2026-10-24');
+    // 缺失字段占位
+    expect(index).toContain('飞书卡片回滚 | 飞书 | — | —');
+
+    // 索引新于全部子文档：不重建（内容原样，mtime 未被动过）
+    const before = readFileSync(join(dir, EXPERIENCE_INDEX_FILE), 'utf8');
+    svc.ensureFresh(dir);
+    expect(readFileSync(join(dir, EXPERIENCE_INDEX_FILE), 'utf8')).toBe(before);
+
+    // shell 旁路写入（未触发回调）：索引陈旧，ensureFresh 自愈
+    writeFileSync(join(dir, '2026-10-25-new-one.md'), '---\ntitle: 新经验\n---\n');
+    utimesSync(join(dir, EXPERIENCE_INDEX_FILE), new Date('2026-01-01'), new Date('2026-01-01'));
+    svc.ensureFresh(dir);
+    index = readFileSync(join(dir, EXPERIENCE_INDEX_FILE), 'utf8');
+    expect(index).toContain('<!-- count: 3 -->');
+    expect(index).toContain('2026-10-25-new-one.md');
+  });
+
+  it('tolerates malformed docs without dropping them from the index', () => {
+    const root = useTmpDir('exp-root-');
+    const svc = new ExperienceIndexService(root);
+    const dir = svc.dirFor(7);
+    svc.ensureFresh(dir);
+    writeFileSync(join(dir, '2026-10-24-broken.md'), '---\n{{{bad yaml\n---\nbody');
+    svc.ensureFresh(dir);
+    const index = readFileSync(join(dir, EXPERIENCE_INDEX_FILE), 'utf8');
+    expect(index).toContain('2026-10-24-broken.md');
+    // 无 title 回落文件名做标题列
+    const line = index.split('\n').find((l) => l.includes('2026-10-24-broken.md'))!;
+    expect(line).toContain('2026-10-24-broken.md | 2026-10-24-broken.md');
+  });
+
+  it('writeDoc/deleteDoc keep index in sync and enforce guards', () => {
+    const root = useTmpDir('exp-root-');
+    const svc = new ExperienceIndexService(root);
+    const dir = svc.dirFor(9);
+    svc.writeDoc(dir, '2026-10-24-a.md', DOC_A);
+    expect(readFileSync(join(dir, EXPERIENCE_INDEX_FILE), 'utf8')).toContain('2026-10-24-a.md');
+    expect(svc.readDoc(dir, '2026-10-24-a.md')).toBe(DOC_A);
+    expect(svc.readDoc(dir, 'missing.md')).toBeNull();
+
+    svc.deleteDoc(dir, '2026-10-24-a.md');
+    expect(readFileSync(join(dir, EXPERIENCE_INDEX_FILE), 'utf8')).toContain('<!-- count: 0 -->');
+    // 幂等删除
+    expect(() => svc.deleteDoc(dir, '2026-10-24-a.md')).not.toThrow();
+
+    expect(() => svc.writeDoc(dir, '../escape.md', 'x')).toThrow();
+    expect(() => svc.writeDoc(dir, 'INDEX.md', 'x')).toThrow(/INDEX/);
+    expect(() => svc.deleteDoc(dir, 'INDEX.md')).toThrow(/INDEX/);
+    expect(() => svc.writeDoc(dir, 'big.md', 'x'.repeat(1024 * 1024 + 1))).toThrow(/大小上限/);
+  });
+
+  it('refreshIfUnderRoot only refreshes the matching numeric agent dir', () => {
+    const root = useTmpDir('exp-root-');
+    const svc = new ExperienceIndexService(root);
+    const dir = svc.dirFor(11);
+    svc.refreshIfUnderRoot(join(root, '11', '2026-10-24-x.md'));
+    expect(readFileSync(join(dir, EXPERIENCE_INDEX_FILE), 'utf8')).toContain('count: 0');
+
+    // 经验根之外 / 非数字首段：静默跳过，不建目录
+    svc.refreshIfUnderRoot(join(root, 'elsewhere', 'a.md'));
+    svc.refreshIfUnderRoot(join(root, 'README.md'));
+    expect(existsSync(join(root, 'elsewhere'))).toBe(false);
+    expect(existsSync(join(root, 'README.md'))).toBe(false);
+  });
+});

@@ -52,6 +52,8 @@ export interface Agent {
   mcpServerIds?: string | null;
   httpToolIds?: string | null;
   defaultModelId?: number | null;
+  /** 团队经验库开关（V169）：0-不注入路标；缺省或 1 为启用 */
+  experienceLibraryEnabled?: number | null;
   compactionEnabled?: number | boolean | null;
   compactionContextWindowTokens?: number | null;
   compactionTriggerRatio?: number | null;

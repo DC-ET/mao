@@ -73,6 +73,7 @@ export class MysqlAgentRepository implements AgentRepository {
         isDefault: agent.isDefault ?? 0,
         enabled: agent.enabled ?? 1,
         clientVisible: agent.clientVisible ?? 1,
+        experienceLibraryEnabled: agent.experienceLibraryEnabled ?? 1,
         deleted: 0,
       });
       await tx.insert('agent_prompt_versions', {
@@ -106,6 +107,7 @@ export class MysqlAgentRepository implements AgentRepository {
         defaultModelId: agent.defaultModelId ?? null,
         isDefault: agent.isDefault,
         clientVisible: agent.clientVisible ?? 1,
+        experienceLibraryEnabled: agent.experienceLibraryEnabled ?? 1,
       });
       if (agent.systemPrompt !== current.systemPrompt) {
         await this.appendPromptVersion(tx, agent.id!, agent.systemPrompt, operatorId, null);
@@ -152,6 +154,10 @@ export class MysqlAgentRepository implements AgentRepository {
 
   async updateEnabled(id: number, enabled: number): Promise<void> {
     await this.db.updateById('agent', id, { enabled });
+  }
+
+  async updateExperienceLibraryEnabled(id: number, experienceLibraryEnabled: number): Promise<void> {
+    await this.db.updateById('agent', id, { experienceLibraryEnabled });
   }
 
   async clearDefaultFlag(): Promise<void> {

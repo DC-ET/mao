@@ -47,6 +47,7 @@ interface CreateAgentRequest {
   isDefault?: number | null;
   defaultModelId?: number | null;
   clientVisible?: boolean | null;
+  experienceLibraryEnabled?: boolean | null;
 }
 
 interface UpdateAgentRequest {
@@ -62,6 +63,7 @@ interface UpdateAgentRequest {
   isDefault?: number | null;
   defaultModelId?: number | null;
   clientVisible?: boolean | null;
+  experienceLibraryEnabled?: boolean | null;
 }
 
 interface ExperienceRequest {
@@ -127,6 +129,7 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
       body.defaultModelId,
       body.avatarUrl,
       body.clientVisible,
+      body.experienceLibraryEnabled,
     );
     return sendOk(reply, await toVO(agent, agentService, userRepo));
   });
@@ -162,6 +165,7 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
       body.defaultModelId,
       body.avatarUrl,
       body.clientVisible,
+      body.experienceLibraryEnabled,
     );
     return sendOk(reply, await toVO(agent, agentService, userRepo));
   });
@@ -299,6 +303,7 @@ async function toVO(agent: Agent, agentService: AgentService, userRepo: UserRepo
     isDefault: agent.isDefault != null && agent.isDefault === 1,
     enabled: agent.enabled !== 0,
     clientVisible: agent.clientVisible !== 0,
+    experienceLibraryEnabled: agent.experienceLibraryEnabled !== 0,
     defaultModelId: agent.defaultModelId ?? null,
     createdAt: agent.createdAt ?? null,
     experiences: [],

@@ -42,7 +42,7 @@ export interface MountPlannerRoots {
   uploadDir: string;
   /** rw 项：每用户 /tmp 持久根，{tmpDir}/{userId} 映射到容器 /tmp。 */
   tmpDir: string;
-  /** ro 项：公共共享目录（管理员宿主机投放，全员只读，容器内路径与宿主机一致）。 */
+  /** rw 项：公共共享目录（管理员投放 + Agent 团队经验库 agent-experience/，容器内路径与宿主机一致）。 */
   shareDir: string;
 }
 
@@ -89,9 +89,11 @@ export class ContainerMountPlanner {
       // 跨 stop/重建保留；3077 语义由 assertSafe 统一 chmod 1777。
       { hostPath: this.under(this.roots.tmpDir, u), containerPath: '/tmp', mode: 'rw', purpose: 'tmp' },
       { hostPath: this.under(this.roots.distDir, ''), containerPath: this.under(this.roots.distDir, ''), mode: 'ro', purpose: 'dist' },
-      // 公共共享目录：管理员宿主机投放，全员只读（容器内路径与宿主机一致，决策 15）。
-      // 写保护由 ro 挂载以 EROFS 强制，沙箱层不引入 ro 概念。
-      { hostPath: this.under(this.roots.shareDir, ''), containerPath: this.under(this.roots.shareDir, ''), mode: 'ro', purpose: 'share' },
+      // 公共共享目录（容器内路径与宿主机一致，决策 15）：Agent 团队经验库
+      // （agent-experience/ 子目录）由 Agent 会话读写沉淀（技术方案 2026-10-24 D10），
+      // 整根 rw；管理员投放内容的防误删从 ro 挂载退化为信任 + 快照兜底。
+      // 注意 mode 参与挂载指纹：ro→rw 变更会触发存量容器自动重建。
+      { hostPath: this.under(this.roots.shareDir, ''), containerPath: this.under(this.roots.shareDir, ''), mode: 'rw', purpose: 'share' },
       // 平台技能：全局可写（产品要求，容器内可安装/更新共享技能）。
       // 注意这是全员共享目录，容器内 root 可修改会影响其他用户加载的技能，
       // 个人技能仍写 userSkillsDir/{userId}。
@@ -207,13 +209,16 @@ export class ContainerMountPlanner {
         throw new MountPlanError(`mount ${mount.purpose}: host path ${host} is not under any registered data root`);
       }
       if (!ro && !mount.sessionWorkspace) {
-        // 平台技能根是唯一的共享 rw 例外（产品要求容器内可安装/更新共享技能），
+        // 平台技能根是共享 rw 例外之一（产品要求容器内可安装/更新共享技能），
         // 且必须恰为登记的 skillsDir 根，不能借 purpose 放宽到其它共享路径。
         const isPlatformSkillsRoot = mount.purpose === 'skills' && host === path.resolve(this.roots.skillsDir);
+        // 共享目录整根 rw 例外（团队经验库方案 2026-10-24 D10）：agent-experience/ 经验库
+        // 需容器内写入；同样必须恰为登记的 shareDir 根，防借 purpose 扩大到子路径外。
+        const isSharedShareRoot = mount.purpose === 'share' && host === path.resolve(this.roots.shareDir);
         // rw 项必须含 userId 尾段/中间段，拒绝把整个数据根或上级挂进容器。
         // 通道会话工作区（sessionWorkspace）按 {account}/{leaf} 结构性豁免 + 私聊
         // 叶子归属校验（planSessionWorkspace），并由调用方按数据库 user_id 过滤保证
-        if (!isPlatformSkillsRoot) {
+        if (!isPlatformSkillsRoot && !isSharedShareRoot) {
           const rel = path.relative(owningRoot, host);
           if (!this.containsUserSegment(rel, u)) {
             throw new MountPlanError(`mount ${mount.purpose}: rw path ${host} must contain /${u}/ segment (got relative '${rel}')`);

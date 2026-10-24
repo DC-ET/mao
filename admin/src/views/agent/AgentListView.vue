@@ -91,13 +91,14 @@
           <template #default="{ row }">{{ row.experiences?.length || 0 }}</template>
         </el-table-column>
         <el-table-column prop="createdAt" label="创建时间" width="178" :formatter="formatDateTimeColumn" />
-        <el-table-column label="操作" width="430" fixed="right">
+        <el-table-column label="操作" width="486" fixed="right">
           <template #default="{ row }">
             <div v-if="canWrite" class="row-actions">
               <el-button type="primary" link size="small" @click="handleCopy(row)">复制</el-button>
               <el-button type="primary" link size="small" @click="handleEdit(row)">编辑</el-button>
               <el-button type="primary" link size="small" @click="handleExport(row)">导出</el-button>
               <el-button type="primary" link size="small" @click="historyAgent = row">提示词版本</el-button>
+              <el-button type="primary" link size="small" @click="experienceAgent = row">经验库</el-button>
               <el-tooltip v-if="row.isDefault && row.enabled !== false" content="默认 Agent 不可停用" placement="top">
                 <span class="disabled-btn-wrap">
                   <el-button type="danger" link size="small" disabled>停用</el-button>
@@ -148,6 +149,7 @@
               <el-button type="primary" link @click="handleEdit(row)">编辑</el-button>
               <el-button type="primary" link @click="handleExport(row)">导出</el-button>
               <el-button type="primary" link @click="historyAgent = row">提示词版本</el-button>
+              <el-button type="primary" link @click="experienceAgent = row">经验库</el-button>
               <el-tooltip v-if="row.isDefault && row.enabled !== false" content="默认 Agent 不可停用" placement="top">
                 <span class="disabled-btn-wrap">
                   <el-button type="danger" link disabled>停用</el-button>
@@ -188,6 +190,15 @@
       :agent-name="historyAgent.name"
       @close="historyAgent = null"
       @restored="refreshAgentData"
+    />
+    <AgentExperienceLibraryDialog
+      v-if="experienceAgent"
+      :agent-id="experienceAgent.id"
+      :agent-name="experienceAgent.name"
+      :initial-enabled="experienceAgent.experienceLibraryEnabled !== false"
+      :can-write="canWrite"
+      @close="experienceAgent = null"
+      @toggle-enabled="(v) => { if (experienceAgent) experienceAgent.experienceLibraryEnabled = v }"
     />
     <AgentFormDialog
       v-if="dialogVisible"
@@ -258,10 +269,12 @@ import { useAuthStore } from '../../stores/auth'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
 import AgentFormDialog from './AgentFormDialog.vue'
 import AgentPromptHistoryDialog from './AgentPromptHistoryDialog.vue'
+import AgentExperienceLibraryDialog from './AgentExperienceLibraryDialog.vue'
 import AgentExportDialog from './AgentExportDialog.vue'
 import AgentImportDialog from './AgentImportDialog.vue'
 
 const historyAgent = ref<{ id: number; name: string } | null>(null)
+const experienceAgent = ref<{ id: number; name: string; experienceLibraryEnabled?: boolean } | null>(null)
 const exportAgent = ref<{ id: number; name: string; skillNames?: string[] | null } | null>(null)
 const importVisible = ref(false)
 const importInitialUrl = ref<string | undefined>(undefined)

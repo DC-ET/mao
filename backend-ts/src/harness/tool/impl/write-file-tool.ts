@@ -10,7 +10,11 @@ import { withFileLock } from './file-write-lock.js';
 import { applyEol, detectEol, stripBom } from './file-eol.js';
 
 export class WriteFileTool extends BaseTool {
-  constructor(private readonly pathSandbox: PathSandbox) {
+  constructor(
+    private readonly pathSandbox: PathSandbox,
+    /** 落盘成功回调（团队经验库索引刷新，技术方案 2026-10-24 §3.5）：回调自身过滤路径，失败不影响写结果。 */
+    private readonly onFileChanged?: (absPath: string) => void,
+  ) {
     super();
   }
 
@@ -57,6 +61,7 @@ export class WriteFileTool extends BaseTool {
         const parent = path.dirname(filePath);
         if (parent && !existsSync(parent)) mkdirSync(parent, { recursive: true });
         writeFileSync(filePath, toWrite);
+        this.notifyFileChanged(filePath);
         const newLineCount = splitLines(content).length;
         const lineDelta = fileExisted
           ? FileChangeDiffUtil.computeLineDelta(beforeContent, content)
@@ -77,6 +82,15 @@ export class WriteFileTool extends BaseTool {
     } catch (e) {
       harnessLog('error', 'WriteFileTool execution failed', e);
       return toJson({ success: false, bytes_written: 0, error: (e as Error).message });
+    }
+  }
+
+  private notifyFileChanged(filePath: string): void {
+    if (this.onFileChanged == null) return;
+    try {
+      this.onFileChanged(filePath);
+    } catch (e) {
+      harnessLog('warn', `WriteFileTool onFileChanged callback failed: ${(e as Error).message}`);
     }
   }
 }

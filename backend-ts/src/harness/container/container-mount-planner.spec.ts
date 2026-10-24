@@ -26,8 +26,8 @@ describe('container mount planner', () => {
     for (const dir of Object.values(roots(base))) mkdirSync(dir, { recursive: true });
     const planner = new ContainerMountPlanner(roots(base));
     const mounts = planner.plan(7);
-    // 除平台技能根外，每条 rw 挂载都只含 user=7 的路径
-    for (const m of mounts.filter((x) => x.mode === 'rw' && x.purpose !== 'skills')) {
+    // 除平台技能根与共享目录根（团队经验库 rw，2026-10-24）外，每条 rw 挂载都只含 user=7 的路径
+    for (const m of mounts.filter((x) => x.mode === 'rw' && x.purpose !== 'skills' && x.purpose !== 'share')) {
       expect(m.hostPath).toContain('/7');
       expect(m.hostPath.startsWith(base)).toBe(true);
     }
@@ -85,17 +85,21 @@ describe('container mount planner', () => {
     expect(planner.standardMountsFingerprint(8)).not.toBe(fp);
   });
 
-  it('mountsShareDirReadOnly', () => {
-    // 共享目录方案 §4.1：share 以 ro 挂载，容器内路径与宿主机逐字节一致，
-    // hostPath 恰为 shareDir 根自身（ro 豁免 userId 段规则）
+  it('mountsShareDirReadWrite', () => {
+    // 团队经验库方案 2026-10-24 D10：share 由 ro 改 rw（agent-experience/ 子目录需容器内写入）。
+    // 容器内路径与宿主机逐字节一致；防误删从 ro 挂载退化为信任 + 宿主快照兜底。
+    // mode 参与指纹（fingerprintTracksStandardMountPlan 的序列化含 mode），ro→rw 上线即触发存量容器重建。
     const base = useTmpDir('mao-mount-share-');
     for (const dir of Object.values(roots(base))) mkdirSync(dir, { recursive: true });
     const planner = new ContainerMountPlanner(roots(base));
     const share = planner.plan(7).find((m) => m.purpose === 'share');
     expect(share).toBeDefined();
-    expect(share!.mode).toBe('ro');
+    expect(share!.mode).toBe('rw');
     expect(share!.hostPath).toBe(join(base, 'share'));
     expect(share!.containerPath).toBe(share!.hostPath);
+    // 同一 roots 把 share 拨回 ro 的指纹必须不同：ro→rw 变更可被指纹感知
+    const roVariant = planner.plan(7).map((m) => (m.purpose === 'share' ? { ...m, mode: 'ro' as const } : m));
+    expect(planner.fingerprintOf(roVariant)).not.toBe(planner.standardMountsFingerprint(7));
   });
 
   it('shareDirMissingIsTolerated', () => {

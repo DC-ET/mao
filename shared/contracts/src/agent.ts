@@ -33,6 +33,8 @@ export interface AgentVO {
   enabled?: boolean;
   /** false = 客户端「新建会话」的智能体列表不展示；不影响已绑定会话与按 agentId 指定的入口 */
   clientVisible?: boolean;
+  /** false = 不启用团队经验库（不挂载 团队经验/、不注入路标节）；true = CLOUD 会话挂载并注入 */
+  experienceLibraryEnabled?: boolean;
   /** Agent 默认模型 ID：会话未显式选模型时的优先回退（null=未配置，再回退全局默认模型） */
   defaultModelId?: number | null;
   skillNames?: string[];

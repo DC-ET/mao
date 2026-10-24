@@ -19,6 +19,8 @@ export interface Agent {
   enabled?: number | null;
   /** 1-客户端新建会话可选 0-仅管理端可见；缺省视为可见 */
   clientVisible?: number | null;
+  /** 1-启用团队经验库（挂载 团队经验/ 并注入路标节）0-停用；缺省视为启用（V169） */
+  experienceLibraryEnabled?: number | null;
   deleted?: number;
   createdAt?: string | null;
   updatedAt?: string | null;
@@ -74,6 +76,7 @@ export interface AgentRepository {
   updateById(agent: Agent, operatorId: number, writePrompt: boolean): Promise<void>;
   deleteById(id: number): Promise<void>;
   updateEnabled(id: number, enabled: number): Promise<void>;
+  updateExperienceLibraryEnabled(id: number, experienceLibraryEnabled: number): Promise<void>;
   clearDefaultFlag(): Promise<void>;
   removeSkillName(skillName: string): Promise<number>;
   listPromptVersions(agentId: number): Promise<AgentPromptVersion[]>;

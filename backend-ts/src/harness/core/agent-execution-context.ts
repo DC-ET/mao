@@ -21,6 +21,11 @@ export class AgentExecutionContext {
   projectKey?: string | null;
   systemPrompt?: string | null;
   experiences: string[] = [];
+  /**
+   * 团队经验库（技术方案 2026-10-24）：Agent 开关启用且 CLOUD 会话时非 null，
+   * 提示词据此渲染「团队经验库」路标节（非 null 必渲染；null 零输出，前缀缓存前提）。
+   */
+  experienceLibrary: { agentId: number } | null = null;
   /** 跨会话长期记忆（查询失败降级为 null，不产生注入段落）。 */
   memories: MemoryHint[] | null = null;
   agentName?: string | null;

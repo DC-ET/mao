@@ -75,6 +75,7 @@ import { createMcpReadOnlyLookup } from './harness/mcp/workingset/mcp-read-only-
 import { CompactionSignalBus } from './harness/core/compaction-signal-bus.js';
 import { AgentLoop } from './harness/core/agent-loop.js';
 import { HarnessService } from './harness/core/harness-service.js';
+import type { ExperienceIndexService } from './harness/experience/experience-index.service.js';
 import { readFeishuDocMarkdown } from './feishu/doc-reader.js';
 import { downloadFeishuMediaBuffer } from './feishu-media.js';
 import { fetchFeishuMessageDetail } from './feishu/message-detail.js';
@@ -161,6 +162,8 @@ export interface HarnessEngineDeps {
   activityHeartbeat: SessionActivityHeartbeat;
   memoryService: MemoryService;
   wsRegistry: any;
+  /** 团队经验库索引服务（技术方案 2026-10-24）：write_file/edit_file 落盘回调刷新索引。可选注入。 */
+  experienceIndexService?: ExperienceIndexService | null;
 }
 
 export interface HarnessEngineResult {
@@ -194,6 +197,9 @@ export function assembleHarnessEngine(deps: HarnessEngineDeps): HarnessEngineRes
     runtimeDataResolver: d.runtimeResolver,
     imageModelLookup: d.modelService,
     uploadDir,
+    onFileChanged: d.experienceIndexService != null
+      ? (absPath: string) => d.experienceIndexService!.refreshIfUnderRoot(absPath)
+      : undefined,
     getUploadBaseUrl: async () => (await d.settingService.getUploadConfig()).baseUrl,
     uploadContextPath: apiPrefix,
     weixinToolSupport: d.wechatBridges.toolSupport,

@@ -276,6 +276,23 @@ describe('WriteFileTool', () => {
     expect(result.success).toBe(true);
     expect(readFileSync(join(dir, 'legacy.txt'), 'utf8')).toBe('\uFEFFnew\r\nline\r\n');
   });
+
+  it('invokes onFileChanged after a successful write and survives callback failures', async () => {
+    const dir = tmp();
+    const seen: string[] = [];
+    const tool = new WriteFileTool(new PathSandbox(dir), (absPath) => { seen.push(absPath); });
+    const ok = JSON.parse(await tool.execute(JSON.stringify({ path: 'a.md', content: 'x' })));
+    expect(ok.success).toBe(true);
+    expect(seen).toHaveLength(1);
+    // 回调抛错不影响写结果（索引刷新失败不该让工具报错）
+    const boom = new WriteFileTool(new PathSandbox(dir), () => { throw new Error('callback boom'); });
+    const still = JSON.parse(await boom.execute(JSON.stringify({ path: 'b.md', content: 'x' })));
+    expect(still.success).toBe(true);
+    expect(readFileSync(join(dir, 'b.md'), 'utf8')).toBe('x');
+    // 无回调时行为与改造前一致
+    const plain = JSON.parse(await new WriteFileTool(new PathSandbox(dir)).execute(JSON.stringify({ path: 'c.md', content: 'x' })));
+    expect(plain.success).toBe(true);
+  });
 });
 
 describe('EditFileTool', () => {
@@ -316,6 +333,24 @@ describe('EditFileTool', () => {
     })));
     expect(result.success).toBe(true);
     expect(readFileSync(join(dir, 'a.txt'), 'utf8')).toBe('\uFEFFalpha\r\nnew\r\nbeta\r\n');
+  });
+
+  it('invokes onFileChanged only after a successful edit', async () => {
+    const dir = tmp();
+    writeFileSync(join(dir, 'a.md'), 'alpha\nold\nbeta\n');
+    const seen: string[] = [];
+    const tool = new EditFileTool(new PathSandbox(dir), (absPath) => { seen.push(absPath); });
+    const ok = JSON.parse(await tool.execute(JSON.stringify({
+      path: 'a.md', old_string: 'old', new_string: 'new',
+    })));
+    expect(ok.success).toBe(true);
+    expect(seen).toHaveLength(1);
+    // 匹配失败：不写盘也不回调
+    const failed = JSON.parse(await tool.execute(JSON.stringify({
+      path: 'a.md', old_string: 'nope', new_string: 'x',
+    })));
+    expect(failed.success).toBe(false);
+    expect(seen).toHaveLength(1);
   });
 
   it('rejectsAmbiguousMatchWithoutReplaceAllAndLeavesFileUnchanged', async () => {

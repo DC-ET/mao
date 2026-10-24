@@ -4,7 +4,7 @@ import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import { mkdirSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fastifyLoggerOptions, redactCredentialQuery } from './common/structured-logger.js';
 import { sendJson, sendOk, handleError } from './common/http-error.js';
 import { loadConfig, type AppConfig } from './config/app-config.js';
@@ -118,6 +118,8 @@ import { AgentLoop } from './harness/core/agent-loop.js';
 import { HarnessService } from './harness/core/harness-service.js';
 import { WorkspaceRulesSnapshotRepository } from './harness/core/workspace-rules-snapshot.repository.js';
 import { WorkspaceRulesSnapshotService } from './harness/core/workspace-rules-snapshot.service.js';
+import { ExperienceIndexService, EXPERIENCE_ROOT_SUBDIR } from './harness/experience/experience-index.service.js';
+import { ExperienceMountService } from './harness/experience/experience-mount.service.js';
 import { CompactionSignalBus } from './harness/core/compaction-signal-bus.js';
 import { BackgroundTaskManager } from './harness/core/background-task-manager.js';
 import { readActiveBackendPort, readDeployLock } from './harness/core/deploy-lock.js';
@@ -452,6 +454,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const runtimeRoot = cfg.app.harness.runtimeDir;
   // 放行 runtime 目录，使 Agent 工具（读文件/Shell/Grep/Glob 等）可访问会话 runtime 下的上传文件。
   pathSandbox.addAllowedRoot(runtimeRoot);
+  // 团队经验库（技术方案 2026-10-24 §3.7）：工作区符号链接 团队经验 -> <shareDir>/agent-experience/<agentId>，
+  // 链接目标命中允许根才不会被沙箱当作路径逃逸拦截（容器严格模式同款放行见 container-tool-executor）。
+  pathSandbox.addAllowedRoot(shareDir);
   const sessionRepo = new SessionRepository(db);
   const messageRepo = new MessageRepository(db);
   // run 轨迹读模型：零新表，读时聚合消息 / llm_call / session_activity / 压缩事件。
@@ -501,6 +506,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   // onSessionDeleted 钩子在下面就要直接引用它（技术方案 §4.6 评审补充）。
   const workspaceRulesSnapshotRepo = new WorkspaceRulesSnapshotRepository(db);
   const workspaceRulesSnapshotService = new WorkspaceRulesSnapshotService(workspaceRulesSnapshotRepo);
+  // 团队经验库（技术方案 2026-10-24）：索引/挂载服务，纯文件系统无 DB 依赖。
+  const experienceIndexService = new ExperienceIndexService(join(shareDir, EXPERIENCE_ROOT_SUBDIR));
+  const experienceMountService = new ExperienceMountService(experienceIndexService);
   const sessionService = new SessionService(
     sessionRepo, messageRepo, fileChangeRepo,
     {
@@ -521,6 +529,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       await workspaceRulesSnapshotService.deleteBySessionId(sessionId);
     },
     (sessionId) => approvalRuleRepo.deleteBySessionId(sessionId),
+    experienceMountService,
   );
   const sessionSvc = sessionService as never;
   const sessionMap = sessionRepo as never;
@@ -795,6 +804,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     inboxService, skillLoader, skillSync, localSkills, localAgentsMd, agentRepo,
     experienceService, modelRepo, fileChangeRepo, envInfo, db, mcpSync, mcpLoadModeResolver,
     activityHeartbeat, memoryService, wsRegistry,
+    experienceIndexService,
   });
   const { toolRegistry, toolDispatcher, compactionSignalBus, agentLoop, harness } = harnessEngine;
 
@@ -876,7 +886,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     authService, feishu, ecpAuth, userService, userRepo, permissionService,
     gitCredentials, envVariableService, sessionRepo,
     httpToolService, httpApiExecutor, httpToolStatsStore,
-    fileService, agentService, experienceService, suggestedQuestionService,
+    fileService, agentService, experienceService, experienceIndexService, suggestedQuestionService,
     agentBundleService, mcpValidator, httpToolValidator,
     modelService,
     settingService, activateContainerRuntime, runtimeModeResolver,

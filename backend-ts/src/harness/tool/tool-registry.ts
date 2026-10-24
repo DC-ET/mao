@@ -123,6 +123,12 @@ export interface DefaultToolRegistryDeps {
   httpToolService?: HttpApiToolServicePort | null;
   httpApiExecutor?: HttpApiExecutor | null;
   agentMapper?: AgentMapper | null;
+  /**
+   * 文件落盘成功回调（团队经验库索引刷新，技术方案 2026-10-24 §3.5 触发点 2）：
+   * 注入给 write_file / edit_file。回调自身判断路径是否位于经验根下，非经验文件零开销。
+   * 未注入时（精简装配/单测）两工具行为与改造前完全一致。
+   */
+  onFileChanged?: (absPath: string) => void;
 }
 
 /** Instantiates and registers all built-in tools (mirrors Spring Tool bean auto-registration). */
@@ -130,8 +136,8 @@ export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRe
   const tools: Tool[] = [
     new AskUserQuestionsTool(),
     new ReadFileTool(deps.pathSandbox),
-    new WriteFileTool(deps.pathSandbox),
-    new EditFileTool(deps.pathSandbox),
+    new WriteFileTool(deps.pathSandbox, deps.onFileChanged),
+    new EditFileTool(deps.pathSandbox, deps.onFileChanged),
     new GlobSearchTool(deps.pathSandbox),
     new GrepSearchTool(deps.pathSandbox),
     new ShellSessionTool(

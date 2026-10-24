@@ -63,6 +63,7 @@ export class AgentService {
     defaultModelId: number | null | undefined,
     avatarUrl?: string | null,
     clientVisible?: boolean | null,
+    experienceLibraryEnabled?: boolean | null,
   ): Promise<Agent> {
     validateAgentAvatarUrl(avatarUrl);
     const clientVisibleFlag = clientVisible === false ? 0 : 1;
@@ -83,6 +84,7 @@ export class AgentService {
       isDefault: isDefault != null ? isDefault : 0,
       enabled: 1,
       clientVisible: clientVisibleFlag,
+      experienceLibraryEnabled: experienceLibraryEnabled === false ? 0 : 1,
     };
     if (skillNames != null && skillNames.length > 0) {
       agent.skillNames = JSON.stringify(skillNames);
@@ -120,6 +122,7 @@ export class AgentService {
     defaultModelId: number | null | undefined,
     avatarUrl?: string | null,
     clientVisible?: boolean | null,
+    experienceLibraryEnabled?: boolean | null,
   ): Promise<Agent> {
     validateAgentAvatarUrl(avatarUrl);
     const agent = await this.getAgent(id);
@@ -150,6 +153,9 @@ export class AgentService {
     }
     if (clientVisible != null) {
       agent.clientVisible = nextClientVisible;
+    }
+    if (experienceLibraryEnabled != null) {
+      agent.experienceLibraryEnabled = experienceLibraryEnabled ? 1 : 0;
     }
     if (isDefault != null) {
       if (isDefault === 1) {
@@ -188,6 +194,17 @@ export class AgentService {
     if ((agent.enabled ?? 1) !== next) {
       await this.agentRepo.updateEnabled(id, next);
       agent.enabled = next;
+    }
+    return agent;
+  }
+
+  /** 团队经验库开关（技术方案 2026-10-24）：只改标记位，挂载/注入在各自装配点按位判定。 */
+  async setExperienceLibraryEnabled(id: number, enabled: boolean): Promise<Agent> {
+    const agent = await this.getAgent(id);
+    const next = enabled ? 1 : 0;
+    if ((agent.experienceLibraryEnabled ?? 1) !== next) {
+      await this.agentRepo.updateExperienceLibraryEnabled(id, next);
+      agent.experienceLibraryEnabled = next;
     }
     return agent;
   }
