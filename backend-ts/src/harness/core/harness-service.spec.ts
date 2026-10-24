@@ -337,7 +337,7 @@ describe('HarnessService.buildContext and execute', () => {
     const { service } = makeHarness({ experienceMount: { syncForSession } });
     const ctx = await service.buildContext(10);
     expect(ctx.experienceLibrary).toEqual({ agentId: 2 });
-    expect(syncForSession).toHaveBeenCalledWith('/ws', 2, true);
+    expect(syncForSession).toHaveBeenCalledWith('/ws', 2, true, false);
 
     // LOCAL 会话：不注入路标、不补挂（本地文件工具够不到服务器共享目录）
     syncForSession.mockClear();

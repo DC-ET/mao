@@ -211,4 +211,21 @@ describe('ExperienceIndexService', () => {
     expect(docs[0].title).toBe('大文档');
     expect(docs[0].sizeBytes).toBeGreaterThan(200 * 1024);
   });
+
+  it('matches the real path even when the configured root itself sits behind a symlink', () => {
+    // 回归（round-02 N1）：经验根配置路径含符号链接祖先（如 /tmp → /private/tmp）时，
+    // realpath 回退得到的全解析路径与词法根失配——须双根（词法 + realpath）比对
+    const base = useTmpDir('exp-alias-');
+    const realRoot = join(base, 'real-agent-experience');
+    const aliasRoot = join(base, 'alias-agent-experience');
+    mkdirSync(realRoot, { recursive: true });
+    symlinkSync(realRoot, aliasRoot, 'dir');
+    const svc = new ExperienceIndexService(aliasRoot);
+    // 经真实路径写入子文档，回调也收到真实路径（另一侧是词法路径的情形已由链接用例覆盖）
+    const docPath = join(realRoot, '23', '2026-10-24-x.md');
+    mkdirSync(join(realRoot, '23'), { recursive: true });
+    writeFileSync(docPath, '---\ntitle: X\n---\n');
+    svc.refreshIfUnderRoot(docPath);
+    expect(readFileSync(join(aliasRoot, '23', EXPERIENCE_INDEX_FILE), 'utf8')).toContain('2026-10-24-x.md');
+  });
 });

@@ -81,4 +81,21 @@ describe('ExperienceMountService', () => {
     // 链接被删，库内容完好（锁死 rmSync 不跟随符号链接的行为依赖）
     expect(existsSync(join(root, '9', '2026-10-24-x.md'))).toBe(true);
   });
+
+  it('refreshIndex=false short-circuits when the link is already correct, full-mounts when missing', () => {
+    const { base, root, mountService, workspace } = setup();
+    // 首次挂载（会话创建路径），再人为把索引改陈旧
+    mountService.syncForSession(workspace, 31, true);
+    const staleIndex = '# stale\n<!-- count: 99 -->\n';
+    writeFileSync(join(root, '31', 'INDEX.md'), staleIndex);
+    // 每轮兜底：链接正确 → 短路，不扫库刷索引（陈旧内容原样保留）
+    mountService.syncForSession(workspace, 31, true, false);
+    expect(readFileSync(join(root, '31', 'INDEX.md'), 'utf8')).toBe(staleIndex);
+    // 链接缺失（存量会话首遇）→ 完整挂载：索引被重建
+    rmSync(join(workspace, MOUNT));
+    writeFileSync(join(root, '31', '2026-10-24-a.md'), '---\ntitle: A\n---\n');
+    mountService.syncForSession(workspace, 31, true, false);
+    expect(readFileSync(join(root, '31', 'INDEX.md'), 'utf8')).toContain('2026-10-24-a.md');
+    expect(lstatSync(join(workspace, MOUNT)).isSymbolicLink()).toBe(true);
+  });
 });

@@ -32,10 +32,13 @@ export interface ExperienceDocMeta extends ExperienceFrontmatter {
  */
 export class ExperienceIndexService {
   private readonly root: string;
+  /** 根的 realpath（配置路径自身含符号链接祖先时与词法根不同，双根比对同 PathSandbox.addAllowedRoot）。 */
+  private readonly rootReal: string;
 
   /** @param experienceRoot 经验根绝对路径（<shareDir>/agent-experience）。 */
   constructor(experienceRoot: string) {
     this.root = path.resolve(experienceRoot);
+    this.rootReal = realPathOrSelf(this.root);
   }
 
   getRoot(): string {
@@ -128,20 +131,29 @@ export class ExperienceIndexService {
   refreshIfUnderRoot(absPath: string): void {
     try {
       let resolved = path.resolve(absPath);
-      if (!isUnder(resolved, this.root)) {
+      let matchedRoot = this.matchRoot(resolved);
+      if (matchedRoot == null) {
         try {
           resolved = realpathSync(resolved);
         } catch {
           return;
         }
-        if (!isUnder(resolved, this.root)) return;
+        matchedRoot = this.matchRoot(resolved);
+        if (matchedRoot == null) return;
       }
-      const firstSegment = path.relative(this.root, resolved).split(path.sep)[0];
+      const firstSegment = path.relative(matchedRoot, resolved).split(path.sep)[0];
       if (firstSegment == null || firstSegment === '' || !/^\d+$/.test(firstSegment)) return;
       this.ensureFresh(path.join(this.root, firstSegment));
     } catch (e) {
       harnessLog('warn', `experience index refresh failed for ${absPath}: ${(e as Error).message}`);
     }
+  }
+
+  /** 词法根或 realpath 根任一命中即视为在经验根下；都不命中返回 null。 */
+  private matchRoot(resolved: string): string | null {
+    if (isUnder(resolved, this.root)) return this.root;
+    if (isUnder(resolved, this.rootReal)) return this.rootReal;
+    return null;
   }
 
   private scanDocs(agentDir: string): (ExperienceDocMeta & { mtimeMs: number })[] {
@@ -224,6 +236,15 @@ function readHead(filePath: string, size: number): string {
     return buf.subarray(0, bytesRead).toString('utf8');
   } finally {
     closeSync(fd);
+  }
+}
+
+/** realpath，路径不存在时回退原值（同 path-sandbox 的 realPathOrSelf 口径）。 */
+function realPathOrSelf(target: string): string {
+  try {
+    return realpathSync(target);
+  } catch {
+    return target;
   }
 }
 

@@ -101,7 +101,7 @@ export class HarnessService {
      * 覆盖升级前存量 CLOUD 会话（有路标无链接，Agent 首写会建出真实目录）。
      * 未注入时不补挂，行为与仅会话创建时挂载一致。
      */
-    private readonly experienceMount?: { syncForSession(workspace: string, agentId: number, enabled: boolean): void } | null,
+    private readonly experienceMount?: { syncForSession(workspace: string, agentId: number, enabled: boolean, refreshIndex?: boolean): void } | null,
   ) {}
 
   prepareMessage(_sessionId: number, _userContent: unknown): string {
@@ -344,11 +344,12 @@ export class HarnessService {
       : null;
     // 挂载兜底：升级前创建的存量 CLOUD 会话没走过 createSession 的挂载逻辑，
     // 若只注入路标不补链接，Agent 首次写入会在工作区建出真实目录（经验入假库且
-    // 永久阻塞后续挂载）。syncForSession 幂等，每轮补挂代价仅一次 lstat。
+    // 永久阻塞后续挂载）。refreshIndex=false：链接已正确时短路（lstat+readlink），
+    // 不在每轮 LLM 请求里全量扫库；链接缺失/错指才走完整挂载（含索引引导）。
     // 注意此处 context.workspace 尚未赋值（在下方 environmentInfo 之后统一装配），用 session.workspace。
     if (context.experienceLibrary != null && hasText(session.workspace)) {
       try {
-        this.experienceMount?.syncForSession(session.workspace!, context.experienceLibrary.agentId, true);
+        this.experienceMount?.syncForSession(session.workspace!, context.experienceLibrary.agentId, true, false);
       } catch (e) {
         harnessLog('warn', `experience mount backstop failed for session ${sessionId}: ${(e as Error).message}`);
       }

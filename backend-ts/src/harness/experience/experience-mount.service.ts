@@ -18,18 +18,24 @@ export class ExperienceMountService {
 
   /**
    * 会话创建时同步挂载。enabled=false：移除残留链接即返回（保证关开关后不再暴露）。
-   * 失败由调用方（SessionService）降级记日志，不阻断会话创建。
+   * 失败由调用方（SessionService / HarnessService）降级记日志，不阻断会话创建。
+   *
+   * refreshIndex=false（buildContext 每轮兜底用）：链接已正确指向时只做 lstat/readlink
+   * 两次系统调用即返回，不扫库目录刷索引——每轮 LLM 请求都会路过这里，全量扫描无谓；
+   * 链接缺失/指向错误（存量会话首遇）时走完整挂载（含索引引导）。
    */
-  syncForSession(workspace: string, agentId: number, enabled: boolean): void {
+  syncForSession(workspace: string, agentId: number, enabled: boolean, refreshIndex = true): void {
     const linkPath = path.join(workspace, EXPERIENCE_MOUNT_NAME);
     if (!enabled) {
       removeSymlinkIfPresent(linkPath);
       return;
     }
+    const target = this.indexService.dirFor(agentId);
+    if (!refreshIndex && isCorrectSymlink(target, linkPath)) return;
     // 先建库目录并刷新索引（空库引导出带表头的 INDEX.md），再挂链接——
     // Agent 挂载瞬间看到的 INDEX.md 一定是合法内容
-    this.indexService.ensureFresh(this.indexService.dirFor(agentId));
-    ensureDirSymlink(this.indexService.dirFor(agentId), linkPath);
+    this.indexService.ensureFresh(target);
+    ensureDirSymlink(target, linkPath);
     appendGitLocalExclude(workspace);
   }
 }
@@ -42,6 +48,18 @@ function removeSymlinkIfPresent(linkPath: string): void {
     }
   } catch {
     // 不存在即无残留
+  }
+}
+
+/** 链接存在且指向 target：轻量判定（lstat + readlink），供每轮兜底短路。 */
+function isCorrectSymlink(target: string, linkPath: string): boolean {
+  try {
+    const st = lstatSync(linkPath);
+    if (!st.isSymbolicLink()) return false;
+    const current = readlinkSync(linkPath);
+    return path.resolve(path.dirname(linkPath), current) === path.resolve(target);
+  } catch {
+    return false;
   }
 }
 
@@ -61,8 +79,7 @@ function ensureDirSymlink(target: string, linkPath: string): void {
     harnessLog('warn', `experience mount skipped: ${linkPath} exists and is not a symlink`);
     return;
   }
-  const current = readlinkSync(linkPath);
-  if (path.resolve(path.dirname(linkPath), current) === path.resolve(target)) return;
+  if (isCorrectSymlink(target, linkPath)) return;
   unlinkSync(linkPath);
   symlinkSync(target, linkPath, 'dir');
 }
