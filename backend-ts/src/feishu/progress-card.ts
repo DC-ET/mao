@@ -66,7 +66,7 @@ export interface SessionDetailUrlDeps {
 }
 
 /**
- * 按站点根推导会话详情深链：优先 site.baseUrl（V169），留空回落 upload.baseUrl。
+ * 按站点根推导会话详情深链：优先 site.baseUrl（V170），留空回落 upload.baseUrl。
  * ECP 的 desktopCallbackUrl 只是登录回调占位，即使 ECP 未启用也常有值，
  * 直接取它会把链接指向 mao.example.com 这类假域名，故不再作为来源。
  */

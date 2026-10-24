@@ -46,7 +46,7 @@ export const FEISHU_APP_SECRET_KEY = 'auth.feishu.appSecret';
 export const FEISHU_REDIRECT_URI_KEY = 'auth.feishu.redirectUri';
 export const UPLOAD_STORAGE_MODE_KEY = 'upload.storageMode';
 export const UPLOAD_BASE_URL_KEY = 'upload.baseUrl';
-/** 站点根 URL（V169）：IM 卡片「会话详情」等网页深链的 origin 来源。留空回落 upload.baseUrl。 */
+/** 站点根 URL（V170）：IM 卡片「会话详情」等网页深链的 origin 来源。留空回落 upload.baseUrl。 */
 export const SITE_BASE_URL_KEY = 'site.baseUrl';
 export const FILE_MAX_SIZE_MB_KEY = 'file.maxSizeMb';
 export const TAVILY_API_KEY_KEY = 'tools.tavilyApiKey';
@@ -350,7 +350,7 @@ export class SystemSettingService {
   }
 
   /**
-   * 网页深链用的站点根（site.baseUrl，V169）：IM 卡片「会话详情」等链接的 origin 来源。
+   * 网页深链用的站点根（site.baseUrl，V170）：IM 卡片「会话详情」等链接的 origin 来源。
    * 留空回落上传基础地址——两者都空时返回 null，调用方据此不渲染深链按钮。
    */
   async getSiteBaseUrl(): Promise<string | null> {
