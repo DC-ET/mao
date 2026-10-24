@@ -1,7 +1,8 @@
-import type { FeishuCardActionEvent, FeishuCardActionPort, FeishuCardActionResponse, FeishuCardActionValue, FeishuAskCardActionValue, FeishuProgressCardActionValue } from './types.js';
+import type { FeishuCardActionEvent, FeishuCardActionPort, FeishuCardActionResponse, FeishuCardActionValue, FeishuAskCardActionValue, FeishuEcpAuthCardActionValue, FeishuProgressCardActionValue } from './types.js';
 import { mapFeishuAskAnswers } from './ask-answers.js';
 import type { FeishuPendingAsk } from './ask-form-store.js';
 import { buildFeishuProgressCard } from './progress-card.js';
+import { buildFeishuAuthGuideCard, type FeishuUnauthorizedGuide } from './ecp-inbound-gate.js';
 
 /** 排队卡片终态/中间态 PATCH 内容构建（可选「会话详情」跳转按钮）。 */
 function buildQueueCardText(bold: string, body: string, sessionDetailUrl?: string): Record<string, unknown> {
@@ -126,13 +127,27 @@ export class FeishuCardActionService {
     completeAsk?: (sessionId: number, requestId: string, resultJson: string) => boolean;
     /** complete 成功后通知已连接的桌面/网页收起提问面板，并刷新会话树。 */
     notifyAskAnswered?: (sessionId: number, requestId: string) => void;
+    /**
+     * 绑定卡「重新获取链接」：按被点卡片找回原入站消息并换发新的 ECP 授权链接。
+     * ok=false 时把 message 作为 toast 提示给用户。
+     */
+    renewAuthLink?: (params: { botId: number; cardMessageId: string; sender: string }) => Promise<{
+      ok: boolean;
+      authUrl?: string;
+      guide?: FeishuUnauthorizedGuide;
+      message?: string;
+    }>;
   }) {}
 
-  async handle(raw: unknown, _accountId: string): Promise<FeishuCardActionResponse | undefined> {
+  async handle(raw: unknown, accountId: string): Promise<FeishuCardActionResponse | undefined> {
     const event = unwrapCardActionEvent(raw);
     const action = this.parseActionValue(event.action?.value);
     if (action == null) return undefined;
     const cardMessageIdForLog = event.context?.open_message_id ?? event.open_message_id ?? 'null';
+    if (action.kind === 'feishu_ecp_auth') {
+      console.info(`飞书卡片动作 ecp_auth.${action.act}, openMessageId=${cardMessageIdForLog}`);
+      return this.handleEcpAuthRenew(event, action, accountId);
+    }
     if (action.kind === 'feishu_progress') {
       console.info(`飞书卡片动作 progress.${action.act}, sessionId=${action.sessionId}, openMessageId=${cardMessageIdForLog}`);
       if (action.act === 'retry') return this.handleProgressRetry(event, action);
@@ -158,6 +173,32 @@ export class FeishuCardActionService {
     if (action.act === 'cancel') return this.handleCancel(row);
     console.warn(`飞书排队卡片未知动作, act=${String(action.act)}, queueId=${action.queueId}`);
     return undefined;
+  }
+
+  /** 绑定卡「重新获取链接」：仅卡片原发送者可点；成功时回调带回新卡片，链接 3 分钟内有效。 */
+  private async handleEcpAuthRenew(
+    event: FeishuCardActionEvent,
+    action: FeishuEcpAuthCardActionValue,
+    accountId: string,
+  ): Promise<FeishuCardActionResponse | undefined> {
+    const operatorOpenId = event.operator?.open_id;
+    if (operatorOpenId == null || operatorOpenId !== action.sender) {
+      return { toast: { type: 'error', content: '仅消息发送者可操作' } };
+    }
+    const cardMessageId = event.context?.open_message_id ?? event.open_message_id;
+    if (cardMessageId == null) {
+      return { toast: { type: 'info', content: '卡片已失效，请在飞书里重新发送一条消息' } };
+    }
+    const renew = this.options.renewAuthLink;
+    if (renew == null) return { toast: { type: 'info', content: '暂时无法获取新的授权链接' } };
+    const result = await renew({ botId: Number(accountId), cardMessageId, sender: action.sender });
+    if (!result.ok || result.authUrl == null || result.authUrl.trim() === '' || result.guide == null) {
+      return { toast: { type: 'info', content: result.message ?? '获取新的授权链接失败，请稍后重试' } };
+    }
+    return {
+      toast: { type: 'success', content: '已重新获取授权链接（3 分钟内有效）' },
+      card: { type: 'raw', data: buildFeishuAuthGuideCard(result.guide, result.authUrl, { sender: action.sender }) },
+    };
   }
 
   /** 进度卡「取消任务」：点击者须为触发任务的原发送者；取消成功后回调带回终态卡片，避免客户端还原为「正在处理」。 */
@@ -407,6 +448,12 @@ export class FeishuCardActionService {
       if (typeof requestId !== 'string' || requestId === '') return null;
       if (obj.act !== 'submit') return null;
       return { kind: 'feishu_ask', act: 'submit', sessionId, sender, requestId };
+    }
+    if (obj.kind === 'feishu_ecp_auth') {
+      const sender = obj.sender;
+      if (typeof sender !== 'string' || sender === '') return null;
+      if (obj.act !== 'renew') return null;
+      return { kind: 'feishu_ecp_auth', act: 'renew', sender };
     }
     if (obj.kind !== 'feishu_queue') return null;
     const queueId = Number(obj.queueId);

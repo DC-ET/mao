@@ -31,6 +31,12 @@ function makeService(overrides: {
   refreshProgress?: (sessionId: number) => void | Promise<unknown>;
   completeAsk?: (sessionId: number, requestId: string, resultJson: string) => boolean;
   notifyAskAnswered?: (sessionId: number, requestId: string) => void;
+  renewAuthLink?: (params: { botId: number; cardMessageId: string; sender: string }) => Promise<{
+    ok: boolean;
+    authUrl?: string;
+    guide?: { title: string; body: string; buttonLabel: string };
+    message?: string;
+  }>;
 } = {}) {
   const queuePort: FeishuCardActionPort = {
     findByCardMessageId: vi.fn(async () => null),
@@ -54,6 +60,7 @@ function makeService(overrides: {
     ...(overrides.refreshProgress != null ? { refreshProgress: overrides.refreshProgress } : {}),
     ...(overrides.completeAsk != null ? { completeAsk: overrides.completeAsk } : {}),
     ...(overrides.notifyAskAnswered != null ? { notifyAskAnswered: overrides.notifyAskAnswered } : {}),
+    ...(overrides.renewAuthLink != null ? { renewAuthLink: overrides.renewAuthLink } : {}),
   });
 }
 
@@ -727,5 +734,44 @@ describe('FeishuCardActionService ask form', () => {
     expect(refreshCalled).toBe(true);
     release();
     await gate;
+  });
+});
+
+describe('FeishuCardActionService · 绑定卡重新获取链接', () => {
+  const guide = {
+    title: '新用户绑定',
+    body: '请先点击下方按钮完成用户绑定（3分钟内有效）。',
+    buttonLabel: '点我绑定',
+  };
+
+  it('拒绝非原发送者的点击', async () => {
+    const renewAuthLink = vi.fn(async () => ({ ok: true, authUrl: 'https://ecp/new', guide }));
+    const service = makeService({ renewAuthLink });
+    const res = await service.handle(
+      makeEvent({ kind: 'feishu_ecp_auth', act: 'renew', sender: 'ou_1' }, 'ou_other'),
+      '1',
+    );
+    expect(res).toEqual({ toast: { type: 'error', content: '仅消息发送者可操作' } });
+    expect(renewAuthLink).not.toHaveBeenCalled();
+  });
+
+  it('回调带回新链接卡片，并保留重新获取按钮', async () => {
+    const renewAuthLink = vi.fn(async () => ({ ok: true, authUrl: 'https://ecp/new', guide }));
+    const service = makeService({ renewAuthLink });
+    const res = await service.handle(makeEvent({ kind: 'feishu_ecp_auth', act: 'renew', sender: 'ou_1' }), '9');
+    expect(renewAuthLink).toHaveBeenCalledWith({ botId: 9, cardMessageId: 'cm_1', sender: 'ou_1' });
+    expect(res?.toast).toEqual({ type: 'success', content: '已重新获取授权链接（3 分钟内有效）' });
+    const json = JSON.stringify(res);
+    expect(json).toContain('https://ecp/new');
+    expect(json).toContain('重新获取链接');
+    expect(json).toContain('feishu_ecp_auth');
+  });
+
+  it('失败时只回 toast 提示', async () => {
+    const service = makeService({
+      renewAuthLink: vi.fn(async () => ({ ok: false, message: '这张卡片已失效，请在飞书里重新发送一条消息' })),
+    });
+    const res = await service.handle(makeEvent({ kind: 'feishu_ecp_auth', act: 'renew', sender: 'ou_1' }), '1');
+    expect(res).toEqual({ toast: { type: 'info', content: '这张卡片已失效，请在飞书里重新发送一条消息' } });
   });
 });

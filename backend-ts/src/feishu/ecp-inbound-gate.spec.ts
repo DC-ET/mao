@@ -282,3 +282,23 @@ describe('completeFeishuPendingAfterEcp', () => {
     expect(result).toBe('identity-mismatch');
   });
 });
+
+describe('buildFeishuAuthGuideCard · 重新获取链接按钮', () => {
+  it('未提供 sender 时不渲染换链接按钮', () => {
+    const card = buildFeishuAuthGuideCard(feishuUnauthorizedGuide(true, 'p2p'), 'https://ecp.example/auth');
+    expect(JSON.stringify(card)).not.toContain('重新获取链接');
+  });
+
+  it('提供 sender 时渲染回调按钮并带上发送者', () => {
+    const card = buildFeishuAuthGuideCard(
+      feishuUnauthorizedGuide(true, 'p2p'),
+      'https://ecp.example/auth',
+      { sender: 'ou_1' },
+    );
+    const json = JSON.stringify(card);
+    expect(json).toContain('重新获取链接');
+    expect(json).toContain('"kind":"feishu_ecp_auth"');
+    expect(json).toContain('"sender":"ou_1"');
+    expect(json).toContain('链接过期后点「重新获取链接」即可换一张新的。');
+  });
+});

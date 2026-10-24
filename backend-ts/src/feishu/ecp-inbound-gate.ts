@@ -38,8 +38,54 @@ export function feishuUnauthorizedFallbackText(guide: FeishuUnauthorizedGuide): 
 }
 
 /** 飞书卡片 JSON 2.0：正文 + 跳转按钮，避免把超长授权 URL 写进文本被客户端截断。 */
-export function buildFeishuAuthGuideCard(guide: FeishuUnauthorizedGuide, authUrl: string): Record<string, unknown> {
+export function buildFeishuAuthGuideCard(
+  guide: FeishuUnauthorizedGuide,
+  authUrl: string,
+  renew?: { sender: string },
+): Record<string, unknown> {
   const url = authUrl.trim();
+  const columns: Array<Record<string, unknown>> = [{
+    tag: 'column', width: 'auto', vertical_align: 'top',
+    elements: [{
+      tag: 'button',
+      text: { tag: 'plain_text', content: guide.buttonLabel },
+      type: 'primary',
+      size: 'sm',
+      behaviors: [{
+        type: 'open_url',
+        default_url: url,
+        pc_url: url,
+        ios_url: url,
+        android_url: url,
+      }],
+    }],
+  }];
+  const sender = renew?.sender?.trim() ?? '';
+  if (sender !== '') {
+    columns.push({
+      tag: 'column', width: 'auto', vertical_align: 'top',
+      elements: [{
+        tag: 'button',
+        text: { tag: 'plain_text', content: '重新获取链接' },
+        type: 'default',
+        size: 'sm',
+        behaviors: [{
+          type: 'callback',
+          value: { kind: 'feishu_ecp_auth', act: 'renew', sender },
+        }],
+      }],
+    });
+  }
+  const elements: Array<Record<string, unknown>> = [
+    { tag: 'markdown', content: guide.body },
+    {
+      tag: 'column_set', flex_mode: 'flow', background_style: 'default',
+      columns,
+    },
+  ];
+  if (sender !== '') {
+    elements.push({ tag: 'markdown', content: '链接过期后点「重新获取链接」即可换一张新的。' });
+  }
   return {
     schema: '2.0',
     config: { update_multi: true },
@@ -47,28 +93,7 @@ export function buildFeishuAuthGuideCard(guide: FeishuUnauthorizedGuide, authUrl
     body: {
       direction: 'vertical',
       padding: '12px 12px 12px 12px',
-      elements: [
-        { tag: 'markdown', content: guide.body },
-        {
-          tag: 'column_set', flex_mode: 'flow', background_style: 'default',
-          columns: [{
-            tag: 'column', width: 'auto', vertical_align: 'top',
-            elements: [{
-              tag: 'button',
-              text: { tag: 'plain_text', content: guide.buttonLabel },
-              type: 'primary',
-              size: 'sm',
-              behaviors: [{
-                type: 'open_url',
-                default_url: url,
-                pc_url: url,
-                ios_url: url,
-                android_url: url,
-              }],
-            }],
-          }],
-        },
-      ],
+      elements,
     },
   };
 }

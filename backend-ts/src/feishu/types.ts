@@ -78,7 +78,7 @@ export interface FeishuQueuePayload {
 }
 
 /** 卡片按钮回调动作值。 */
-export type FeishuCardActionValue = FeishuQueueCardActionValue | FeishuProgressCardActionValue | FeishuAskCardActionValue;
+export type FeishuCardActionValue = FeishuQueueCardActionValue | FeishuProgressCardActionValue | FeishuAskCardActionValue | FeishuEcpAuthCardActionValue;
 
 /** 排队卡片按钮动作值。 */
 export interface FeishuQueueCardActionValue {
@@ -102,6 +102,16 @@ export interface FeishuAskCardActionValue {
   sessionId: number;
   sender: string;
   requestId: string;
+}
+
+/**
+ * ECP 绑定引导卡「重新获取链接」按钮。sender 为收到卡片的原发送者 open_id，
+ * 用于限制只有本人能换链接（换出来的链接仍绑定到该发送者的飞书身份）。
+ */
+export interface FeishuEcpAuthCardActionValue {
+  kind: 'feishu_ecp_auth';
+  act: 'renew';
+  sender: string;
 }
 
 /** 飞书卡片按钮回调事件（SDK RawCardActionEvent 精简版）。 */

@@ -72,8 +72,24 @@ export class MysqlFeishuPendingBindingRepository {
     }));
   }
 
-  async claim(state: string): Promise<FeishuPendingBindingMessage | null> {
+  /**
+   * 按卡片消息 ID 取最近一条待完成绑定记录（「重新获取链接」用）。
+   * 同一条卡片可能因多次换链接存在多行，取 id 最大的一行。
+   */
+  async findByCardMessageId(cardMessageId: string): Promise<FeishuPendingBindingMessage | null> {
     const row = await this.db.queryOne<Record<string, unknown>>(
+      "SELECT * FROM feishu_pending_binding_message WHERE card_message_id = ? AND status = 'SENT' ORDER BY id DESC LIMIT 1",
+      [cardMessageId],
+    );
+    if (row == null) return null;
+    return {
+      id: Number(row.id), state: String(row.state), appId: Number(row.appId), messageId: String(row.messageId),
+      cardMessageId: row.cardMessageId == null ? null : String(row.cardMessageId),
+      event: JSON.parse(String(row.eventJson)) as FeishuNormalizedMessage, status: String(row.status),
+    };
+  }
+
+  async claim(state: string): Promise<FeishuPendingBindingMessage | null> {    const row = await this.db.queryOne<Record<string, unknown>>(
       "SELECT * FROM feishu_pending_binding_message WHERE state = ? AND (status = 'SENT' OR (status = 'CLAIMED' AND updated_at < DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 10 MINUTE))) LIMIT 1", [state],
     );
     if (row == null) return null;

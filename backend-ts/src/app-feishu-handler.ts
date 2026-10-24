@@ -40,7 +40,7 @@ import { createResolveQuotedMessageHelper } from './feishu-session.js';
 import { createResolveMessageTextHelper } from './feishu-media.js';
 import { createResolveUserIdHelper } from './feishu-session.js';
 import { createAuthorizeSenderHelper } from './feishu-session.js';
-import { createSendUnauthorizedCardHelper } from './feishu-cards.js';
+import { createRenewAuthLinkHelper, createSendUnauthorizedCardHelper } from './feishu-cards.js';
 import { createUnauthorizedTextHelper } from './feishu-cards.js';
 import { FeishuCardActionService } from './feishu/card-action.service.js';
 import { persistFeishuCancelIfIdle } from './feishu/cancel-running.js';
@@ -390,6 +390,9 @@ export function assembleFeishuHandler(deps: FeishuHandlerDeps): FeishuHandlerRes
   ctx.pendingBindingProcessor = feishuInboundProcessor;
   const feishuCardActionService = new FeishuCardActionService({
     queuePort: feishuTaskQueue,
+    renewAuthLink: createRenewAuthLinkHelper({
+      ecpAuth: d.ecpAuth, feishu: d.feishu, pendingBindingMessages: d.pendingBindingMessages,
+    }),
     interrupt: (sessionId: number) => feishuInboundHandler.interrupt(sessionId),
     interruptAndDrain: (sessionId: number) => feishuInboundHandler.interruptAndDrain(sessionId),
     cancelRunning: async (sessionId: number) => {

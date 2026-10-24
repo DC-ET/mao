@@ -20,6 +20,7 @@ import {
   feishuUnauthorizedFallbackText,
   persistFeishuPendingAuth,
   startFeishuChannelAuthLink,
+  type FeishuUnauthorizedGuide,
 } from './feishu/ecp-inbound-gate.js';
 import { parseSqlTimeMs } from './app-utils.js';
 
@@ -310,7 +311,7 @@ export function createSendUnauthorizedCardHelper(deps: SendUnauthorizedCardDeps)
     );
     const ecpEnabled = await ecpAuth.isEnabled();
     const guide = feishuUnauthorizedGuide(ecpEnabled, event.chatType);
-    const card = buildFeishuAuthGuideCard(guide, auth.authUrl);
+    const card = buildFeishuAuthGuideCard(guide, auth.authUrl, event.senderId != null ? { sender: event.senderId } : undefined);
     const data = { msg_type: 'interactive' as const, content: JSON.stringify(card) };
     let response;
     try {
@@ -337,6 +338,70 @@ export function createSendUnauthorizedCardHelper(deps: SendUnauthorizedCardDeps)
       }
     }
     return true;
+  };
+}
+
+// ========== 重新获取授权链接 ==========
+
+export interface RenewAuthLinkDeps {
+  ecpAuth: EcpAuthService;
+  feishu: FeishuAuthService;
+  pendingBindingMessages: MysqlFeishuPendingBindingRepository;
+}
+
+export interface RenewAuthLinkResult {
+  ok: boolean;
+  authUrl?: string;
+  guide?: FeishuUnauthorizedGuide;
+  message?: string;
+}
+
+/**
+ * 绑定卡「重新获取链接」：原链接 3 分钟内有效，过期后由用户主动换一张。
+ * 沿用原卡片记录里的入站消息（state → appId/messageId/event），换链接后原消息仍会被重放。
+ */
+export function createRenewAuthLinkHelper(deps: RenewAuthLinkDeps) {
+  const { ecpAuth, feishu, pendingBindingMessages } = deps;
+  return async (params: { botId: number; cardMessageId: string; sender: string }): Promise<RenewAuthLinkResult> => {
+    const pending = await pendingBindingMessages.findByCardMessageId(params.cardMessageId);
+    if (pending == null) {
+      return { ok: false, message: '这张卡片已失效，请在飞书里重新发送一条消息' };
+    }
+    const pendingSender = pending.event.senderId ?? '';
+    if (pendingSender !== '' && pendingSender !== params.sender) {
+      return { ok: false, message: '仅消息发送者可操作' };
+    }
+    let link: { authUrl: string; state: string } | null = null;
+    try {
+      link = await startFeishuChannelAuthLink({
+        ecpEnabled: await ecpAuth.isEnabled(),
+        feishuEnabled: await feishu.isEnabled(),
+        startEcp: () => ecpAuth.startFeishuLogin('channel'),
+        startFeishu: () => feishu.getQrCodeUrl(),
+      });
+    } catch (error) {
+      console.error('飞书绑定卡重新获取授权链接失败', error);
+      return { ok: false, message: '获取新的授权链接失败，请稍后重试' };
+    }
+    if (link == null || link.authUrl.trim() === '') {
+      return { ok: false, message: '当前未开启飞书登录，请联系管理员' };
+    }
+    // 旧链接作废：旧记录标记失败，避免重启恢复时把同一条消息再重放一次。
+    try {
+      await pendingBindingMessages.fail(pending.state);
+    } catch (error) {
+      console.warn(`飞书绑定卡换链接后作废旧记录失败, state=${pending.state}`, error);
+    }
+    await pendingBindingMessages.insert({
+      state: link.state,
+      appId: pending.appId,
+      messageId: pending.messageId,
+      event: pending.event,
+      cardMessageId: params.cardMessageId,
+    });
+    await pendingBindingMessages.setCardMessageId(link.state, params.cardMessageId);
+    const guide = feishuUnauthorizedGuide(await ecpAuth.isEnabled(), pending.event.chatType);
+    return { ok: true, authUrl: link.authUrl, guide };
   };
 }
 
