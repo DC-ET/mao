@@ -17,7 +17,7 @@ function pendingRow(overrides: Record<string, unknown> = {}) {
 function setup(options: { row?: Record<string, unknown> | null; startThrows?: boolean } = {}) {
   const pendingBindingMessages = {
     findByCardMessageId: vi.fn(async () => (options.row === undefined ? pendingRow() : options.row)),
-    fail: vi.fn(async () => undefined),
+    failOthersForCard: vi.fn(async () => undefined),
     insert: vi.fn(async () => undefined),
     setCardMessageId: vi.fn(async () => undefined),
   };
@@ -48,7 +48,7 @@ describe('createRenewAuthLinkHelper', () => {
     expect(result.authUrl).toBe('https://ecp.example/new');
     expect(result.guide?.title).toBe('新用户绑定');
     expect(ecpAuth.startFeishuLogin).toHaveBeenCalledWith('channel');
-    expect(pendingBindingMessages.fail).toHaveBeenCalledWith('s1');
+    expect(pendingBindingMessages.failOthersForCard).toHaveBeenCalledWith('cm_1', 's2');
     expect(pendingBindingMessages.insert).toHaveBeenCalledWith({
       state: 's2',
       appId: 3,
@@ -80,7 +80,7 @@ describe('createRenewAuthLinkHelper', () => {
     const result = await renew({ botId: 3, cardMessageId: 'cm_1', sender: 'ou_1' });
     expect(result.ok).toBe(false);
     expect(result.message).toContain('获取新的授权链接失败');
-    expect(pendingBindingMessages.fail).not.toHaveBeenCalled();
+    expect(pendingBindingMessages.failOthersForCard).not.toHaveBeenCalled();
     expect(pendingBindingMessages.insert).not.toHaveBeenCalled();
   });
 });

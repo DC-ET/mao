@@ -386,12 +386,7 @@ export function createRenewAuthLinkHelper(deps: RenewAuthLinkDeps) {
     if (link == null || link.authUrl.trim() === '') {
       return { ok: false, message: '当前未开启飞书登录，请联系管理员' };
     }
-    // 旧链接作废：旧记录标记失败，避免重启恢复时把同一条消息再重放一次。
-    try {
-      await pendingBindingMessages.fail(pending.state);
-    } catch (error) {
-      console.warn(`飞书绑定卡换链接后作废旧记录失败, state=${pending.state}`, error);
-    }
+    // 旧链接作废：同一张卡片上其它待完成记录全部标记失败，避免重启恢复时把同一条消息再重放一次。
     await pendingBindingMessages.insert({
       state: link.state,
       appId: pending.appId,
@@ -400,6 +395,7 @@ export function createRenewAuthLinkHelper(deps: RenewAuthLinkDeps) {
       cardMessageId: params.cardMessageId,
     });
     await pendingBindingMessages.setCardMessageId(link.state, params.cardMessageId);
+    await pendingBindingMessages.failOthersForCard(params.cardMessageId, link.state);
     const guide = feishuUnauthorizedGuide(await ecpAuth.isEnabled(), pending.event.chatType);
     return { ok: true, authUrl: link.authUrl, guide };
   };

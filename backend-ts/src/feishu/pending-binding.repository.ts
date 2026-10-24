@@ -73,6 +73,17 @@ export class MysqlFeishuPendingBindingRepository {
   }
 
   /**
+   * 作废同一张卡片上的其它待完成绑定记录（「重新获取链接」用）。
+   * 卡片被换过多次链接时，旧状态对应的行必须失败，否则重启恢复会把同一条消息重复重放。
+   */
+  async failOthersForCard(cardMessageId: string, keepState: string): Promise<void> {
+    await this.db.execute(
+      "UPDATE feishu_pending_binding_message SET status = 'FAILED' WHERE card_message_id = ? AND state <> ? AND status IN ('PENDING', 'SENT')",
+      [cardMessageId, keepState],
+    );
+  }
+
+  /**
    * 按卡片消息 ID 取最近一条待完成绑定记录（「重新获取链接」用）。
    * 同一条卡片可能因多次换链接存在多行，取 id 最大的一行。
    */
