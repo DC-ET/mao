@@ -297,6 +297,10 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
    * 覆写会把分叉来源（Tab hover）清掉。
    */
   function openSideTaskTab(sideSessionId: number, title: string, opts: SideTaskEntryOptions = {}) {
+    // 检查器 / 左侧列表重开曾关闭的边路任务时清「用户曾关闭」记录，否则退出重开
+    // 后 restoreSideTaskTabs 会因 closed 标记把 Tab 再次藏掉（搜索入口
+    // openSideTaskTabFor 一直有此清理，此处补齐同一语义）。占位（<=0）内部自会跳过。
+    if (sideSessionId > 0) unmarkSideTaskClosed(currentSessionId.value, sideSessionId)
     const state = getSessionState()
     const existing = findSideTaskTab(state, sideSessionId)
     if (existing) {

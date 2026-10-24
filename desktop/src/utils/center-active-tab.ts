@@ -43,6 +43,31 @@ export function persistActiveTab(parentSessionId: string, tab: PersistedActiveTa
 }
 
 /**
+ * 冷启动点名还原目标（边路任务口径）：持久化激活态指向某个边路任务、且它仍在
+ * 递归列表里时，给出要单独补建的 ID 集合；目标已删除（不在列表）或激活态不是
+ * side_task 时返回 undefined，调用方维持「仅直接子级」口径。
+ * 把 loadSession 里「读激活态 → 对递归列表点名」的接线收成纯函数，便于单测。
+ */
+export function resolveSideTaskRestoreIds(
+  persisted: PersistedActiveTab | null,
+  sideTasks: ReadonlyArray<{ id: number }>,
+): Set<number> | undefined {
+  const anchor = persisted?.sideSessionId
+  if (!persisted || persisted.type !== 'side_task' || anchor == null) return undefined
+  return sideTasks.some((st) => st.id === anchor) ? new Set([anchor]) : undefined
+}
+
+/** 同 resolveSideTaskRestoreIds，子代理 Tab 口径：返回要补建的子代理会话 ID，无点名目标为 null。 */
+export function resolveSubagentRestoreId(
+  persisted: PersistedActiveTab | null,
+  subagents: ReadonlyArray<{ id: number }>,
+): number | null {
+  const anchor = persisted?.sideSessionId
+  if (!persisted || persisted.type !== 'subagent' || anchor == null) return null
+  return subagents.some((sa) => sa.id === anchor) ? anchor : null
+}
+
+/**
  * 登出/换号时清除全部激活态记录：key 不含用户维度（sessionId 是服务端自增数字），
  * 同机换号后 ID 碰撞会激活新账号下的同 ID Tab。
  */

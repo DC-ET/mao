@@ -2,6 +2,7 @@ import { nextTick, ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { openSideTaskTabFor, removeSessionTabsFor, resetCenterTabs, resetNewTaskTabs, useCenterTabs } from './useCenterTabs'
+import { getClosedSideTaskIds } from '../utils/side-task-tabs'
 import { getPersistedActiveTab } from '../utils/center-active-tab'
 
 vi.mock('../stores/session', () => ({
@@ -412,6 +413,42 @@ describe('激活 Tab 持久化与恢复', () => {
 
     expect(restored.tabs.value.some(t => t.sideSessionId === 13)).toBe(false)
     expect(restored.activeTabId.value).toBe('chat')
+  })
+
+  // 回归：子代理 Tab 的激活态此前一直有持久化，但冷启动没有任何重建入口，
+  // restoreActiveTab 永远匹配不到目标，上次停在子代理 Tab 时退出重开只能回落主会话。
+  it('子代理 Tab 冷启动点名重建后自动激活回去', async () => {
+    const tabs = setup()
+    tabs.openSubagentTab(5, '调研')
+    await nextTick()
+    expect(persistedTab(activeTabKeyFor(SESSION_ID))).toBe('5')
+
+    resetCenterTabs()
+    const restored = setup()
+    restored.restoreSubagentTabs(SESSION_ID, [{ id: 5, title: '调研' }], { openAll: true })
+    restored.restoreActiveTab(SESSION_ID)
+
+    expect(restored.activeTabId.value).toBe('subagent:5')
+  })
+
+  // 回归：检查器重开曾关闭的边路任务时此前不清「用户曾关闭」标记（只有搜索入口清），
+  // 导致「关掉 → 边栏重开 → 退出重开」后 Tab 又消失。
+  it('重开曾关闭的边路任务 Tab 时清掉 closed 标记，刷新后仍能还原', async () => {
+    const tabs = setup()
+    openSideTaskTabFor(SESSION_ID, 7, '边路任务')
+    tabs.closeTab('side:7')
+    await nextTick()
+    expect(getClosedSideTaskIds(SESSION_ID).has(7)).toBe(true)
+
+    tabs.openSideTaskTab(7, '边路任务')
+    await nextTick()
+    expect(getClosedSideTaskIds(SESSION_ID).has(7)).toBe(false)
+
+    resetCenterTabs()
+    const restored = setup()
+    restored.restoreSideTaskTabs(SESSION_ID, [{ id: 7, title: '边路任务', parentSessionId: 42 }])
+    restored.restoreActiveTab(SESSION_ID)
+    expect(restored.tabs.value.some(t => t.type === 'side_task' && t.sideSessionId === 7)).toBe(true)
   })
 })
 

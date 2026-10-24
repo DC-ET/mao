@@ -82,7 +82,7 @@ import { persistedContextWindow } from '../../stores/session/context-window'
 import { useDraftStore } from '../../stores/draft'
 import { usePanelLayout } from '../../composables/usePanelLayout'
 import { resetNewTaskTabs, useCenterTabs } from '../../composables/useCenterTabs'
-import { getPersistedActiveTab } from '../../utils/center-active-tab'
+import { getPersistedActiveTab, resolveSideTaskRestoreIds, resolveSubagentRestoreId } from '../../utils/center-active-tab'
 import { useWorkspaceFileProvider } from '../../composables/workspace-file-provider'
 import { useWorkspaceGitProvider } from '../../composables/workspace-git-provider'
 import { useTaskPanelPrefs } from '../../composables/useTaskPanelPrefs'
@@ -240,7 +240,7 @@ function handleAddFileToChat(filePath: string) {
 
 // Center tabs
 const activeSessionIdRef = computed(() => sessionStore.activeSessionId ?? '')
-const { tabs, activeTab, activeTabId, openFileTab, openDiffTab, closeTab, closeAllFileTabs, closeOtherTabs, activateTab, openSideTaskTab, setSideTaskFork, openSubagentTab, openTraceTab, openFileManagerTab, updateSideTaskTab, restoreSideTaskTabs, restoreTraceTab, restoreActiveTab, applyWorkspacePathChange } = useCenterTabs(activeSessionIdRef)
+const { tabs, activeTab, activeTabId, openFileTab, openDiffTab, closeTab, closeAllFileTabs, closeOtherTabs, activateTab, openSideTaskTab, setSideTaskFork, openSubagentTab, openTraceTab, openFileManagerTab, updateSideTaskTab, restoreSideTaskTabs, restoreSubagentTabs, restoreTraceTab, restoreActiveTab, applyWorkspacePathChange } = useCenterTabs(activeSessionIdRef)
 
 // Derived state
 const sessionId = computed(() => sessionIdParam.value)
@@ -970,6 +970,8 @@ async function loadSession(sid: string) {
   }
 
   // Restore open side task tabs (excluding user-closed ones)
+  // 激活态读一次，边路任务与子代理两个还原块共用（两者都按 sideSessionId 锚定）
+  const persistedActive = getPersistedActiveTab(sid)
   try {
     // recursive=1：检查器平铺主会话全部后代边路任务；Tab 恢复过滤回直接子级口径
     const res = await api.get(`/sessions/${sid}/side-tasks`, { params: { recursive: 1 } })
@@ -992,10 +994,7 @@ async function loadSession(sid: string) {
     // 唯一例外是「上次正停在其上」的那个（持久化激活态指向它）：不重建的话
     // restoreActiveTab 找不到目标，退出重开只能停在主会话，还得手动点一次边栏标题。
     // 传全量 items（带 parentSessionId），由 restoreSideTaskTabs 自己按口径过滤。
-    const persistedActive = getPersistedActiveTab(sid)
-    const restoreIds = persistedActive?.sideSessionId != null
-      ? new Set(items.filter((st) => st.id === persistedActive.sideSessionId).map((st) => st.id))
-      : undefined
+    const restoreIds = resolveSideTaskRestoreIds(persistedActive, items)
     if (items.length > 0) {
       restoreSideTaskTabs(
         sid,
@@ -1033,6 +1032,15 @@ async function loadSession(sid: string) {
         }))
       : []
     sessionStore.setSubagents(sid, items)
+    // 上次正停在某个子代理 Tab：点名补建那一个并还原激活，否则 restoreActiveTab
+    // 找不到目标、退出重开只能停在主会话。其余子代理仍不自动重建（避免刷新刷屏），
+    // 与深层边路任务的点名还原同一口径（restoreSubagentTabs 首个生产调用方）。
+    const subagentId = resolveSubagentRestoreId(persistedActive, items)
+    const namedSubagent = subagentId != null ? items.find((sa) => sa.id === subagentId) : undefined
+    if (namedSubagent) {
+      restoreSubagentTabs(sid, [{ id: namedSubagent.id, title: namedSubagent.title || '子代理' }], { openAll: true })
+      restoreActiveTab(sid)
+    }
   } catch (e) {
     console.warn('[subagent] Failed to load subagent list:', e)
     sessionStore.setSubagents(sid, [])
