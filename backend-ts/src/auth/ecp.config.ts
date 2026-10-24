@@ -2,7 +2,7 @@ import { hasText } from '../common/case.js';
 
 export const ECP_CONFIG_KEY = 'auth.ecp.config';
 
-export type EcpCallbackTarget = 'desktop' | 'admin';
+export type EcpCallbackTarget = 'desktop' | 'admin' | 'channel';
 
 export interface EcpConfig {
   enabled: boolean;
@@ -12,6 +12,11 @@ export interface EcpConfig {
   timeoutMs: number;
   desktopCallbackUrl: string;
   adminCallbackUrl: string;
+  /**
+   * 飞书通道「点我绑定」的公网回调地址（服务端渲染页，不依赖前端工程）。
+   * 留空时回落到 desktopCallbackUrl，即仍走内网回调页。
+   */
+  channelCallbackUrl: string;
   /** 飞书应用 App ID；非空时 CLOUD shell 注入 lark-cli 凭证。存量配置可缺失。 */
   larkAppId: string;
 }
@@ -25,6 +30,7 @@ export function defaultEcpConfig(): EcpConfig {
     timeoutMs: 10000,
     desktopCallbackUrl: 'https://mao.example.com/auth/ecp/feishu-callback',
     adminCallbackUrl: 'https://mao.example.com/admin/auth/ecp/feishu-callback',
+    channelCallbackUrl: '',
     larkAppId: '',
   };
 }
@@ -50,7 +56,7 @@ export function validateEcpConfig(value: unknown): EcpConfig {
     throw new Error('配置必须为 JSON 对象');
   }
   const config = value as Record<string, unknown>;
-  const fields = new Set(['enabled', 'appCode', 'baseUrl', 'loginVariant', 'timeoutMs', 'desktopCallbackUrl', 'adminCallbackUrl', 'larkAppId']);
+  const fields = new Set(['enabled', 'appCode', 'baseUrl', 'loginVariant', 'timeoutMs', 'desktopCallbackUrl', 'adminCallbackUrl', 'channelCallbackUrl', 'larkAppId']);
   const unknownFields = Object.keys(config).filter((key) => !fields.has(key));
   if (unknownFields.length) throw new Error(`配置包含未知字段：${unknownFields.join('、')}`);
   if (typeof config.enabled !== 'boolean') throw new Error('enabled 必须为 boolean');
@@ -70,6 +76,11 @@ export function validateEcpConfig(value: unknown): EcpConfig {
   const baseUrl = validateHttpsUrl(config.baseUrl, 'baseUrl').replace(/\/$/, '');
   const desktopCallbackUrl = validateHttpsUrl(config.desktopCallbackUrl, 'desktopCallbackUrl');
   const adminCallbackUrl = validateHttpsUrl(config.adminCallbackUrl, 'adminCallbackUrl');
+  const channelCallbackUrlRaw = config.channelCallbackUrl ?? '';
+  if (typeof channelCallbackUrlRaw !== 'string') throw new Error('channelCallbackUrl 必须为字符串');
+  const channelCallbackUrl = hasText(channelCallbackUrlRaw)
+    ? validateHttpsUrl(channelCallbackUrlRaw.trim(), 'channelCallbackUrl')
+    : '';
   return {
     enabled: config.enabled,
     appCode: config.appCode.trim(),
@@ -78,6 +89,7 @@ export function validateEcpConfig(value: unknown): EcpConfig {
     timeoutMs: config.timeoutMs,
     desktopCallbackUrl,
     adminCallbackUrl,
+    channelCallbackUrl,
     larkAppId: larkAppIdRaw.trim(),
   };
 }
@@ -94,5 +106,7 @@ export function parseEcpConfig(raw: string | null | undefined): EcpConfig {
 }
 
 export function callbackUrlForTarget(config: EcpConfig, target: EcpCallbackTarget): string {
-  return target === 'admin' ? config.adminCallbackUrl : config.desktopCallbackUrl;
+  if (target === 'admin') return config.adminCallbackUrl;
+  if (target === 'channel' && hasText(config.channelCallbackUrl)) return config.channelCallbackUrl;
+  return config.desktopCallbackUrl;
 }

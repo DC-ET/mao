@@ -36,6 +36,10 @@
           <el-input v-model="model.adminCallbackUrl" />
           <div class="field-hint">须在 ECP 登记；管理后台飞书回调。</div>
         </el-form-item>
+        <el-form-item label="通道公网回调 URL">
+          <el-input v-model="model.channelCallbackUrl" placeholder="https://apihub-test.danchuangglobal.com/api/mao/v1/auth/ecp/feishu/channel-callback" />
+          <div class="field-hint">飞书通道「点我绑定」用；须在 ECP 登记。留空则沿用桌面回调 URL，此时外网（无内网/VPN）用户点卡片会卡在回调页。</div>
+        </el-form-item>
         <el-form-item label="lark App ID">
           <el-input v-model="model.larkAppId" placeholder="cli_xxxx" />
           <div class="field-hint">开启 ECP 后，Agent shell 注入 LARKSUITE_CLI_APP_ID 与用户飞书 UAT，供 lark-cli 使用；须与 ECP 换票返回的 UAT 属同一飞书应用。留空则不注入。</div>

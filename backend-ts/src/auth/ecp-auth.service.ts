@@ -16,6 +16,7 @@ import {
   type EcpOauthState, type EcpOauthStateRepository,
 } from './ecp-oauth.repository.js';
 import type { MysqlEcpSessionRepository } from './ecp-session.repository.js';
+import type { EcpChannelCallbackOutcome } from './ecp-channel-callback-page.js';
 
 const ECP_PROCESSING = 'PROCESSING';
 const STATE_EXPIRES_SECONDS = 300;
@@ -108,6 +109,27 @@ export class EcpAuthService {
       if (e instanceof BusinessException) throw e;
       console.error('ECP OAuth callback failed', e);
       throw new EcpError(`ECP 飞书登录失败: ${message}`);
+    }
+  }
+
+  /**
+   * 飞书通道绑定回调：服务端完成换票、绑定与待处理消息重放，把结果转成页面文案。
+   * 该链路只用于完成绑定，不签发 JWT，也不写 cookie。
+   */
+  async completeChannelCallback(
+    state: string | undefined,
+    code: string | undefined,
+  ): Promise<EcpChannelCallbackOutcome> {
+    if (!hasText(state) || !hasText(code)) {
+      return { ok: false, message: '回调参数不完整（缺少 state 或 code）。' };
+    }
+    try {
+      const user = await this.completeStateWithCode(state, code);
+      const displayName = (user.displayName ?? '').trim();
+      const email = (user.email ?? '').trim();
+      return { ok: true, message: displayName !== '' ? displayName : email };
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : String(error) };
     }
   }
 

@@ -69,6 +69,7 @@
 | loginVariant | PARTNER | 飞书授权变体，联调可调 |
 | 桌面回调 URL | `https://mao.example.com/auth/ecp/feishu-callback` | 须与对外站点同源，并在 ECP 登记 |
 | 管理后台回调 URL | `https://mao.example.com/admin/auth/ecp/feishu-callback` | 同上 |
+| 通道公网回调 URL | 空 | 飞书通道「点我绑定」用，须在 ECP 登记；留空回落桌面回调 URL，此时外网（无内网/VPN）用户点卡片会卡在回调页 |
 
 升级需执行 V111 迁移。`mao-cli` 本期不提供浏览器飞书登录，仅 Web/管理后台/Electron 入口。设计见 `docs/plan/2026-09-14-ecp-native-login-technical-design.md`。
 

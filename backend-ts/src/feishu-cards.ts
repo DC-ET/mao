@@ -293,7 +293,9 @@ export function createSendUnauthorizedCardHelper(deps: SendUnauthorizedCardDeps)
       auth = await startFeishuChannelAuthLink({
         ecpEnabled: await ecpAuth.isEnabled(),
         feishuEnabled: await feishu.isEnabled(),
-        startEcp: () => ecpAuth.startFeishuLogin('desktop'),
+        // 飞书通道用 channel 回调：外网用户点卡片也能落到公网可访问的服务端渲染页；
+        // 未配置 channelCallbackUrl 时自动回落到 desktopCallbackUrl，行为与旧版一致。
+        startEcp: () => ecpAuth.startFeishuLogin('channel'),
         startFeishu: () => feishu.getQrCodeUrl(),
       });
     } catch (error) {

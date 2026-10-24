@@ -108,4 +108,63 @@ describe('EcpAuthService', () => {
       expect.objectContaining({ status: ECP_SUCCESS, userId: 42 }),
     );
   });
+
+  it('rejects channel callback without state or code', async () => {
+    const service = new EcpAuthService(
+      {} as UserRepository,
+      {} as never,
+      {} as never,
+      {} as never,
+      jwt,
+      { buildLoginResult: vi.fn() },
+      async () => ({ ...defaultEcpConfig(), enabled: true }),
+      { createFeishuAuthorization: vi.fn(), createSessionFromFeishuCallback: vi.fn() },
+    );
+    expect(await service.completeChannelCallback(undefined, 'code')).toEqual({
+      ok: false,
+      message: '回调参数不完整（缺少 state 或 code）。',
+    });
+    expect(await service.completeChannelCallback('state', ' ')).toEqual({
+      ok: false,
+      message: '回调参数不完整（缺少 state 或 code）。',
+    });
+  });
+
+  it('returns the bound account as the channel callback message', async () => {
+    const stateRepo = {
+      insert: vi.fn(),
+      findByState: vi.fn(async () => ({
+        state: 'state-c',
+        callbackTarget: 'channel' as const,
+        status: ECP_PENDING,
+        expiresAt: '2099-01-01 00:00:00',
+      })),
+      updateByState: vi.fn(async () => 1),
+      consumeSuccess: vi.fn(),
+      claimPending: vi.fn(async () => 1),
+    };
+    const service = new EcpAuthService(
+      { updateById: vi.fn() } as unknown as UserRepository,
+      stateRepo,
+      {
+        resolve: vi.fn(async () => ({
+          user: { id: 7, username: 'u7', displayName: '杨佳毅', email: 'yangjiayi@accesscorporate.com.cn', status: 1, deleted: 0 } as User,
+          action: 'existing' as const,
+        })),
+      } as never,
+      { upsert: vi.fn(), encryptToken: vi.fn(() => 'enc') } as never,
+      jwt,
+      { buildLoginResult: vi.fn() },
+      async () => ({ ...defaultEcpConfig(), enabled: true }),
+      {
+        createFeishuAuthorization: vi.fn(),
+        createSessionFromFeishuCallback: vi.fn(async () => ({
+          sessionToken: 'token',
+          expiresAt: new Date('2099-01-01T00:00:00Z'),
+          user: { email: 'yangjiayi@accesscorporate.com.cn', displayName: '杨佳毅' },
+        })),
+      },
+    );
+    expect(await service.completeChannelCallback('state-c', 'code-c')).toEqual({ ok: true, message: '杨佳毅' });
+  });
 });

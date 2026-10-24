@@ -8,6 +8,7 @@ export interface EcpConfig {
   timeoutMs: number
   desktopCallbackUrl: string
   adminCallbackUrl: string
+  channelCallbackUrl: string
   larkAppId: string
 }
 
@@ -20,6 +21,7 @@ export function defaultEcpConfig(): EcpConfig {
     timeoutMs: 10000,
     desktopCallbackUrl: 'https://mao.example.com/auth/ecp/feishu-callback',
     adminCallbackUrl: 'https://mao.example.com/admin/auth/ecp/feishu-callback',
+    channelCallbackUrl: '',
     larkAppId: '',
   }
 }
@@ -29,7 +31,7 @@ export function validateEcpConfig(value: unknown): EcpConfig {
     throw new Error('配置必须为 JSON 对象')
   }
   const config = value as Record<string, unknown>
-  const fields = new Set(['enabled', 'appCode', 'baseUrl', 'loginVariant', 'timeoutMs', 'desktopCallbackUrl', 'adminCallbackUrl', 'larkAppId'])
+  const fields = new Set(['enabled', 'appCode', 'baseUrl', 'loginVariant', 'timeoutMs', 'desktopCallbackUrl', 'adminCallbackUrl', 'channelCallbackUrl', 'larkAppId'])
   const unknownFields = Object.keys(config).filter((key) => !fields.has(key))
   if (unknownFields.length) throw new Error(`配置包含未知字段：${unknownFields.join('、')}`)
   if (typeof config.enabled !== 'boolean') throw new Error('enabled 必须为 boolean')
@@ -45,6 +47,11 @@ export function validateEcpConfig(value: unknown): EcpConfig {
   if (typeof config.adminCallbackUrl !== 'string' || !/^https:\/\//i.test(config.adminCallbackUrl)) {
     throw new Error('adminCallbackUrl 必须为 HTTPS URL')
   }
+  const channelCallbackUrlRaw = config.channelCallbackUrl ?? ''
+  if (typeof channelCallbackUrlRaw !== 'string') throw new Error('channelCallbackUrl 必须为字符串')
+  if (channelCallbackUrlRaw.trim() !== '' && !/^https:\/\//i.test(channelCallbackUrlRaw.trim())) {
+    throw new Error('channelCallbackUrl 必须为 HTTPS URL')
+  }
   const larkAppIdRaw = config.larkAppId ?? ''
   if (typeof larkAppIdRaw !== 'string' || larkAppIdRaw.length > 128) {
     throw new Error('larkAppId 必须是不超过 128 字符的字符串')
@@ -57,6 +64,7 @@ export function validateEcpConfig(value: unknown): EcpConfig {
     timeoutMs: config.timeoutMs,
     desktopCallbackUrl: config.desktopCallbackUrl.trim(),
     adminCallbackUrl: config.adminCallbackUrl.trim(),
+    channelCallbackUrl: channelCallbackUrlRaw.trim(),
     larkAppId: larkAppIdRaw.trim(),
   }
 }

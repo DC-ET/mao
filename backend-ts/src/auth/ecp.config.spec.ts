@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { defaultEcpConfig, parseEcpConfig, validateEcpConfig } from './ecp.config.js';
+import { callbackUrlForTarget, defaultEcpConfig, parseEcpConfig, validateEcpConfig } from './ecp.config.js';
 
 describe('ecp.config', () => {
   it('parses default config', () => {
@@ -32,5 +32,29 @@ describe('ecp.config', () => {
 
   it('rejects unknown fields', () => {
     expect(() => validateEcpConfig({ ...defaultEcpConfig(), extra: true })).toThrow(/未知字段/);
+  });
+
+  it('accepts legacy JSON without channelCallbackUrl', () => {
+    const legacy = { ...defaultEcpConfig() } as Record<string, unknown>;
+    delete legacy.channelCallbackUrl;
+    expect(validateEcpConfig(legacy).channelCallbackUrl).toBe('');
+  });
+
+  it('validates channelCallbackUrl as an https url', () => {
+    const url = 'https://apihub-test.danchuangglobal.com/api/mao/v1/auth/ecp/feishu/channel-callback';
+    expect(validateEcpConfig({ ...defaultEcpConfig(), channelCallbackUrl: url }).channelCallbackUrl).toBe(url);
+    expect(() => validateEcpConfig({ ...defaultEcpConfig(), channelCallbackUrl: 'http://apihub-test/cb' })).toThrow(/channelCallbackUrl/);
+  });
+
+  it('falls back to the desktop callback when the channel url is empty', () => {
+    const cfg = defaultEcpConfig();
+    expect(callbackUrlForTarget(cfg, 'channel')).toBe(cfg.desktopCallbackUrl);
+    const withChannel = {
+      ...cfg,
+      channelCallbackUrl: 'https://apihub-test.danchuangglobal.com/api/mao/v1/auth/ecp/feishu/channel-callback',
+    };
+    expect(callbackUrlForTarget(withChannel, 'channel')).toBe(withChannel.channelCallbackUrl);
+    expect(callbackUrlForTarget(withChannel, 'desktop')).toBe(cfg.desktopCallbackUrl);
+    expect(callbackUrlForTarget(withChannel, 'admin')).toBe(cfg.adminCallbackUrl);
   });
 });

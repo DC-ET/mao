@@ -6,6 +6,7 @@ import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import type { EcpAuthService } from './ecp-auth.service.js';
 import type { EcpCallbackTarget } from './ecp.config.js';
+import { renderEcpChannelCallbackPage } from './ecp-channel-callback-page.js';
 
 export function registerEcpAuthRoutes(app: FastifyInstance, ecp: EcpAuthService): void {
   app.post('/v1/auth/ecp/feishu/start', async (request, reply) => {
@@ -25,6 +26,21 @@ export function registerEcpAuthRoutes(app: FastifyInstance, ecp: EcpAuthService)
   app.get('/v1/auth/ecp/feishu/status', async (request, reply) => {
     const state = (request.query as { state?: string }).state ?? '';
     return sendOk(reply, await ecp.getLoginStatus(state));
+  });
+
+  /**
+   * 飞书通道「点我绑定」的公网落点：ECP 换票后直接 302 到这里。
+   * 由网关（apihub）暴露到公网，返回 HTML，不依赖桌面端 SPA，也不签发登录凭证。
+   */
+  app.get('/v1/auth/ecp/feishu/channel-callback', async (request, reply) => {
+    const query = request.query as { state?: string; code?: string };
+    const outcome = await ecp.completeChannelCallback(query.state, query.code);
+    return reply
+      .header('Cache-Control', 'no-store')
+      .header('Referrer-Policy', 'no-referrer')
+      .header('X-Robots-Tag', 'noindex')
+      .type('text/html; charset=utf-8')
+      .send(renderEcpChannelCallbackPage(outcome));
   });
 }
 

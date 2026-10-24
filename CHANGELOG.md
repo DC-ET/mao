@@ -13,6 +13,14 @@
 
 发版前在顶部新增 `## 版本 (日期)` 条目；前端部署 Web 后安卓/Electron 刷新即可；仅安卓原生壳变更时 `cd android && bash build-apk.sh`。
 
+## 0.0.339 (2026-10-24)
+
+- **后端**
+  - **飞书通道「点我绑定」支持在公司网络外完成**。此前 ECP 换票后回调到 `https://mao.acg.team/auth/ecp/feishu-callback`（内网地址），不在内网 / 未连 VPN 的用户点完飞书授权后页面一直卡住。新增服务端渲染的公网回调页 `GET /api/v1/auth/ecp/feishu/channel-callback`（由网关 apihub 暴露）：服务端完成换票、按邮箱对齐账号、绑定飞书身份并重放原消息，返回一张「绑定成功，可以回到飞书」的 HTML 页。该页不下发 JWT、不写 cookie，错误文案做 HTML 转义，`no-store` + `noindex`；桌面端登录与「会话详情」链接仍走原回调地址不变。
+  - ECP 配置新增 `channelCallbackUrl`（留空回落 `desktopCallbackUrl`），飞书通道引导卡改用该地址发起 ECP 授权。
+- **管理后台**
+  - ECP 飞书登录面板新增「通道公网回调 URL」，须在 ECP App Config → Login Integration 登记同一地址。
+
 ## 0.0.338 (2026-10-23)
 
 - **后端**
