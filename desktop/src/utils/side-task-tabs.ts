@@ -61,4 +61,6 @@ export interface SideTaskSummary {
   title: string
   modelId?: number
   phase?: string
+  /** 直接父会话 ID：区分「本会话的直接子级」与「深层后代」（递归平铺口径） */
+  parentSessionId?: number
 }

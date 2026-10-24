@@ -484,15 +484,29 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
 
   /**
    * 从后端恢复未关闭的边路任务 Tab（页面刷新后调用）。
+   *
+   * 默认只恢复 parentSessionId 指向本会话的直接子级：深层任务的 Tab 刷新后不自动
+   * 重建（会话树上可能有多个，全刷出来会刷屏），从检查器列表重新打开。
+   * restoreIds 显式指定要恢复的 ID 集合，用于「上次正停在其上」的深层任务：
+   * 它不在直接子级里，不重建的话 restoreActiveTab 永远找不到目标，用户退出重开
+   * 后只能停在主会话，再手动从边栏点一次（见 restoreActiveTab 的配对逻辑）。
    */
-  function restoreSideTaskTabs(parentSessionId: string, sideTasks: SideTaskSummary[]) {
+  function restoreSideTaskTabs(
+    parentSessionId: string,
+    sideTasks: SideTaskSummary[],
+    opts?: { restoreIds?: Set<number> },
+  ) {
     if (!parentSessionId || sideTasks.length === 0) return
     const closed = getClosedSideTaskIds(parentSessionId)
+    const restoreIds = opts?.restoreIds
     const state = sessionTabsMap.value.get(parentSessionId) ?? { tabs: [], activeTabId: 'chat' }
     let changed = false
 
     for (const st of sideTasks) {
       if (closed.has(st.id)) continue
+      // 直接子级默认恢复；深层后代仅在显式点名时恢复
+      const isDirectChild = String(st.parentSessionId ?? parentSessionId) === String(parentSessionId)
+      if (!isDirectChild && !restoreIds?.has(st.id)) continue
       const id = 'side:' + st.id
       const existing = state.tabs.find(t => t.id === id || t.sideSessionId === st.id)
       if (existing) {

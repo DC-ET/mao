@@ -82,6 +82,7 @@ import { persistedContextWindow } from '../../stores/session/context-window'
 import { useDraftStore } from '../../stores/draft'
 import { usePanelLayout } from '../../composables/usePanelLayout'
 import { resetNewTaskTabs, useCenterTabs } from '../../composables/useCenterTabs'
+import { getPersistedActiveTab } from '../../utils/center-active-tab'
 import { useWorkspaceFileProvider } from '../../composables/workspace-file-provider'
 import { useWorkspaceGitProvider } from '../../composables/workspace-git-provider'
 import { useTaskPanelPrefs } from '../../composables/useTaskPanelPrefs'
@@ -987,10 +988,20 @@ async function loadSession(sid: string) {
         }))
       : []
     sessionStore.setSideTasks(sid, items)
-    // Tab 恢复维持直接子级口径：深层任务的 Tab 刷新后不自动重建，从检查器列表重新打开
-    const directChildren = items.filter((st) => String(st.parentSessionId ?? sid) === String(sid))
-    if (directChildren.length > 0) {
-      restoreSideTaskTabs(sid, directChildren.map((st) => ({ id: st.id, title: st.title || '任务' })))
+    // Tab 恢复维持直接子级口径：深层任务的 Tab 刷新后不自动重建，从检查器列表重新打开。
+    // 唯一例外是「上次正停在其上」的那个（持久化激活态指向它）：不重建的话
+    // restoreActiveTab 找不到目标，退出重开只能停在主会话，还得手动点一次边栏标题。
+    // 传全量 items（带 parentSessionId），由 restoreSideTaskTabs 自己按口径过滤。
+    const persistedActive = getPersistedActiveTab(sid)
+    const restoreIds = persistedActive?.sideSessionId != null
+      ? new Set(items.filter((st) => st.id === persistedActive.sideSessionId).map((st) => st.id))
+      : undefined
+    if (items.length > 0) {
+      restoreSideTaskTabs(
+        sid,
+        items.map((st) => ({ id: st.id, title: st.title || '任务', parentSessionId: st.parentSessionId })),
+        { restoreIds },
+      )
       // Tab 重建完再还原激活态：上次停在边路任务 / 子代理 Tab 时，刷新后直接回到那个 Tab
       restoreActiveTab(sid)
     }

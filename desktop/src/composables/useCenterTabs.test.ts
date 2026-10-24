@@ -2,6 +2,7 @@ import { nextTick, ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { openSideTaskTabFor, removeSessionTabsFor, resetCenterTabs, resetNewTaskTabs, useCenterTabs } from './useCenterTabs'
+import { getPersistedActiveTab } from '../utils/center-active-tab'
 
 vi.mock('../stores/session', () => ({
   useSessionStore: () => ({
@@ -333,10 +334,84 @@ describe('激活 Tab 持久化与恢复', () => {
     restored.restoreActiveTab(SESSION_ID)
     // 文件 Tab 由用户本次操作重新打开，刷新重建前恢复动作应保持 chat
     expect(restored.activeTabId.value).toBe('chat')
-
     restored.openFileTab('/ws/a.ts', 'a.ts')
     await nextTick()
     expect(restored.activeTabId.value).toBe('file:/ws/a.ts')
+  })
+
+  // 回归：深层边路任务（从边路会话 fork 出来的二级及更深任务）冷启动后不回原 Tab。
+  // restoreSideTaskTabs 只重建直接子级，而持久化激活态指向深层任务时匹配不到目标，
+  // restoreActiveTab 静默返回，用户退出重开只能停在主会话再手动点一次边栏标题。
+  it('深层边路任务：显式 restoreIds 时重建并还原激活，退出重开直接回到该 Tab', async () => {
+    const tabs = setup()
+    // 7 是直接子级，13 是 7 的深层后代（父会话是 7，不是主会话 42）
+    tabs.openSideTaskTab(7, '整理文档')
+    tabs.openSideTaskTab(13, '深层排查', { sourceSessionId: 7 })
+    await nextTick()
+    expect(persistedTab(activeTabKeyFor(SESSION_ID))).toBe('13')
+
+    // 冷启动：内存态清空，localStorage 保留
+    resetCenterTabs()
+    const restored = setup()
+    await nextTick()
+
+    const descendants = [
+      { id: 7, title: '整理文档', parentSessionId: 42 },
+      { id: 13, title: '深层排查', parentSessionId: 7 },
+    ]
+    const persistedActive = getPersistedActiveTab(SESSION_ID)
+    const restoreIds = persistedActive?.sideSessionId != null
+      ? new Set(descendants.filter(st => st.id === persistedActive.sideSessionId).map(st => st.id))
+      : undefined
+
+    // 传全量递归列表，由 restoreSideTaskTabs 自己按直接子级 + restoreIds 过滤
+    restored.restoreSideTaskTabs(SESSION_ID, descendants, { restoreIds })
+    restored.restoreActiveTab(SESSION_ID)
+
+    expect(restored.activeTabId.value).toBe('side:13')
+  })
+
+  it('深层边路任务：无持久化激活态时不重建（维持直接子级口径，不刷屏）', async () => {
+    resetCenterTabs()
+    const restored = setup()
+    await nextTick()
+
+    // 上次停在主会话：localStorage 无记录，深层任务不应被重建出来
+    restored.restoreSideTaskTabs(SESSION_ID, [
+      { id: 7, title: '整理文档', parentSessionId: 42 },
+      { id: 13, title: '深层排查', parentSessionId: 7 },
+    ])
+    restored.restoreActiveTab(SESSION_ID)
+
+    expect(restored.tabs.value.some(t => t.type === 'side_task' && t.sideSessionId === 13)).toBe(false)
+    expect(restored.activeTabId.value).toBe('chat')
+  })
+
+  it('深层边路任务：目标已被用户关闭时不重建，激活态留在 chat', async () => {
+    const tabs = setup()
+    tabs.openSideTaskTab(13, '深层排查', { sourceSessionId: 7 })
+    await nextTick()
+    expect(persistedTab(activeTabKeyFor(SESSION_ID))).toBe('13')
+
+    // 用户关掉了这个深层 Tab：closed 标记优先于激活态还原
+    tabs.closeTab('side:13')
+    await nextTick()
+
+    resetCenterTabs()
+    const restored = setup()
+    await nextTick()
+    restored.restoreSideTaskTabs(
+      SESSION_ID,
+      [
+        { id: 7, title: '整理文档', parentSessionId: 42 },
+        { id: 13, title: '深层排查', parentSessionId: 7 },
+      ],
+      { restoreIds: new Set([13]) },
+    )
+    restored.restoreActiveTab(SESSION_ID)
+
+    expect(restored.tabs.value.some(t => t.sideSessionId === 13)).toBe(false)
+    expect(restored.activeTabId.value).toBe('chat')
   })
 })
 
