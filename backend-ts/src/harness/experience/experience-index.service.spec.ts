@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { useTmpDir } from '../../testing/tmp-dir.js';
@@ -229,5 +229,61 @@ describe('ExperienceIndexService', () => {
     writeFileSync(docPath, '---\ntitle: X\n---\n');
     svc.refreshIfUnderRoot(docPath);
     expect(readFileSync(join(aliasRoot, '23', EXPERIENCE_INDEX_FILE), 'utf8')).toContain('2026-10-24-x.md');
+  });
+
+  it('rejects symlinked doc files so container-created links cannot escape the library', () => {
+    // share 改 rw 后容器内 shell 可在库内建链（ro 时代建不出来）：admin 读/写经链接
+    // 会穿透到宿主任意路径——读视为不存在、写拒绝、扫描不收录
+    const base = useTmpDir('exp-link-guard-');
+    const svc = new ExperienceIndexService(join(base, 'agent-experience'));
+    const dir = svc.dirFor(29);
+    svc.ensureFresh(dir);
+    const outside = join(base, 'secret.md');
+    writeFileSync(outside, 'secret');
+    symlinkSync(outside, join(dir, '2026-10-24-link.md'));
+
+    expect(svc.listDocs(dir)).toHaveLength(0);
+    expect(svc.readDoc(dir, '2026-10-24-link.md')).toBeNull();
+    expect(() => svc.writeDoc(dir, '2026-10-24-link.md', 'evil')).toThrow(/符号链接/);
+    expect(readFileSync(outside, 'utf8')).toBe('secret');
+  });
+
+  it('refuses a library dir that was replaced by a symlink instead of writing through it', () => {
+    const base = useTmpDir('exp-dir-guard-');
+    const svc = new ExperienceIndexService(join(base, 'agent-experience'));
+    const dir = svc.dirFor(31);
+    svc.ensureFresh(dir);
+    const outsideDir = join(base, 'outside');
+    mkdirSync(outsideDir, { recursive: true });
+    const victim = join(outsideDir, '2026-10-24-v.md');
+    writeFileSync(victim, 'data');
+    rmSync(dir, { recursive: true });
+    symlinkSync(outsideDir, dir, 'dir');
+
+    expect(() => svc.ensureFresh(dir)).toThrow(/符号链接/);
+    expect(() => svc.writeDoc(dir, '2026-10-24-x.md', 'x')).toThrow(/符号链接/);
+    expect(() => svc.deleteDoc(dir, '2026-10-24-v.md')).toThrow(/符号链接/);
+    // 未穿透：宿主目标目录没有被写入索引，也没有被删除
+    expect(existsSync(join(outsideDir, EXPERIENCE_INDEX_FILE))).toBe(false);
+    expect(existsSync(victim)).toBe(true);
+  });
+
+  it('cleans a pre-existing INDEX.md.tmp symlink before the atomic write', () => {
+    // 原子写先清残留再落盘：预置 .tmp 符号链接不会被写穿，最终索引仍是常规文件
+    const base = useTmpDir('exp-tmp-guard-');
+    const svc = new ExperienceIndexService(join(base, 'agent-experience'));
+    const dir = svc.dirFor(32);
+    svc.ensureFresh(dir);
+    const outside = join(base, 'cron-target.md');
+    writeFileSync(outside, 'orig');
+    rmSync(join(dir, EXPERIENCE_INDEX_FILE));
+    symlinkSync(outside, join(dir, `${EXPERIENCE_INDEX_FILE}.tmp`));
+
+    svc.rebuild(dir);
+
+    expect(lstatSync(join(dir, EXPERIENCE_INDEX_FILE)).isSymbolicLink()).toBe(false);
+    expect(readFileSync(join(dir, EXPERIENCE_INDEX_FILE), 'utf8')).toContain('count: 0');
+    expect(readFileSync(outside, 'utf8')).toBe('orig');
+    expect(existsSync(join(dir, `${EXPERIENCE_INDEX_FILE}.tmp`))).toBe(false);
   });
 });

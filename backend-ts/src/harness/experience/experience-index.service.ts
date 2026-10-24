@@ -1,4 +1,4 @@
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { harnessLog } from '../log.js';
 import { isUnder } from '../safety/path-sandbox.js';
@@ -59,9 +59,7 @@ export class ExperienceIndexService {
    * 与实际子文档数不符（删除——mtime 比对对删除恒真，必须靠 count 兜住）。
    */
   ensureFresh(agentDir: string): void {
-    if (!existsSync(agentDir)) {
-      mkdirSync(agentDir, { recursive: true });
-    }
+    this.ensureRealDir(agentDir);
     const indexPath = path.join(agentDir, EXPERIENCE_INDEX_FILE);
     if (existsSync(indexPath)) {
       const docs = this.scanDocs(agentDir);
@@ -86,11 +84,11 @@ export class ExperienceIndexService {
       .map(({ mtimeMs, ...meta }) => meta);
   }
 
-  /** 读单篇子文档；不存在返回 null。 */
+  /** 读单篇子文档；不存在返回 null。符号链接（含指向存在的目标）一律视为不存在。 */
   readDoc(agentDir: string, fileName: string): string | null {
     if (!isValidExperienceFileName(fileName)) return null;
     const filePath = path.join(agentDir, fileName);
-    if (!existsSync(filePath)) return null;
+    if (isSymlinkFile(filePath) || !existsSync(filePath)) return null;
     return readFileSync(filePath, 'utf8');
   }
 
@@ -103,10 +101,12 @@ export class ExperienceIndexService {
     if (bytes > EXPERIENCE_MAX_DOC_BYTES) {
       throw new Error(`经验文档超过大小上限 ${EXPERIENCE_MAX_DOC_BYTES} 字节`);
     }
-    if (!existsSync(agentDir)) {
-      mkdirSync(agentDir, { recursive: true });
+    this.ensureRealDir(agentDir);
+    const filePath = path.join(agentDir, fileName);
+    if (isSymlinkFile(filePath)) {
+      throw new Error(`经验文档不能是符号链接: ${fileName}`);
     }
-    writeFileSync(path.join(agentDir, fileName), content);
+    writeFileSync(filePath, content);
     this.ensureFresh(agentDir);
     return bytes;
   }
@@ -116,6 +116,7 @@ export class ExperienceIndexService {
     if (!isValidExperienceFileName(fileName) || isIndexFileName(fileName)) {
       throw new Error(`非法经验文件名: ${fileName}`);
     }
+    this.ensureRealDir(agentDir);
     const filePath = path.join(agentDir, fileName);
     if (existsSync(filePath)) {
       unlinkSync(filePath);
@@ -172,6 +173,21 @@ export class ExperienceIndexService {
     return this.rootRealCache;
   }
 
+  /**
+   * 建库目录（不存在则创建）；已存在但实为符号链接时拒绝。
+   * share 改 rw 后容器内 shell 可在库目录位置建链（此前 ro 挂载建不出来），
+   * 宿主侧所有读写必须不穿透符号链接离开共享目录。
+   */
+  private ensureRealDir(agentDir: string): void {
+    if (!existsSync(agentDir)) {
+      mkdirSync(agentDir, { recursive: true });
+      return;
+    }
+    if (lstatSync(agentDir).isSymbolicLink()) {
+      throw new Error(`经验库目录不应是符号链接: ${agentDir}`);
+    }
+  }
+
   private scanDocs(agentDir: string): (ExperienceDocMeta & { mtimeMs: number })[] {
     if (!existsSync(agentDir)) return [];
     const out: (ExperienceDocMeta & { mtimeMs: number })[] = [];
@@ -210,6 +226,12 @@ export class ExperienceIndexService {
     ];
     const indexPath = path.join(agentDir, EXPERIENCE_INDEX_FILE);
     const tmpPath = indexPath + '.tmp';
+    // 先清残留（可能是库内被预置的符号链接）：写穿 .tmp 链接等于向宿主任意路径写索引内容
+    try {
+      unlinkSync(tmpPath);
+    } catch {
+      // 不存在即无残留
+    }
     writeFileSync(tmpPath, lines.join('\n'));
     // 原子替换：并发重建 last-wins，读者不会看到半截索引
     renameSync(tmpPath, indexPath);
@@ -239,6 +261,15 @@ function readIndexCount(indexContent: string): number | null {
 /** 索引文件名比对：大小写不敏感（Agent 写 index.md 不产生并列垃圾文件）。 */
 function isIndexFileName(fileName: string): boolean {
   return fileName.toLowerCase() === EXPERIENCE_INDEX_FILE.toLowerCase();
+}
+
+/** lstat 判定符号链接（不跟随目标）；路径不存在返回 false。 */
+function isSymlinkFile(filePath: string): boolean {
+  try {
+    return lstatSync(filePath).isSymbolicLink();
+  } catch {
+    return false;
+  }
 }
 
 /** 只读文件头部（frontmatter 所在处），至多 64KB。 */
