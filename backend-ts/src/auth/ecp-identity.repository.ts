@@ -40,6 +40,7 @@ export class EcpIdentityRepository {
           if (binding.subject !== subject) {
             await tx.updateById('user_external_identity', binding.id, { subject, emailAtBinding: identity.email });
           }
+          await this.attachEarliestProvider(tx, user);
           return { user, action: 'existing' };
         }
       } else {
@@ -49,6 +50,7 @@ export class EcpIdentityRepository {
         if (binding) {
           user = (await tx.queryOne<User>('SELECT * FROM `user` WHERE id = ? FOR UPDATE', [binding.userId]))!;
           this.assertActive(user);
+          await this.attachEarliestProvider(tx, user);
           return { user, action: 'existing' };
         }
         const role = await tx.queryOne<{ id: number }>('SELECT id FROM role WHERE code = ? AND deleted = 0 FOR UPDATE', ['USER']);
@@ -65,8 +67,23 @@ export class EcpIdentityRepository {
         await tx.insert('user_role', { userId: user.id, roleId: role.id });
       }
       await tx.insert('user_external_identity', { provider: 'ecp', subject, userId: user.id, emailAtBinding: identity.email });
+      await this.attachEarliestProvider(tx, user);
       return { user, action: matches.length ? 'bound' : 'created' };
     });
+  }
+
+  /**
+   * 补齐账号来源判定所需的 `external_provider`：与 user.repository 的派生列同口径（取最早绑定）。
+   * ECP 换票的用户行来自裸 `SELECT *`，不带该列时 UserService.resolveAuthSource 会兜底成 LDAP，
+   * 与 /auth/me（findById 带派生列）的 ECP 结论相反。
+   */
+  private async attachEarliestProvider(tx: Db, user: User): Promise<void> {
+    if (user.id == null) return;
+    const row = await tx.queryOne<{ provider: string | null }>(
+      'SELECT provider FROM user_external_identity WHERE user_id = ? ORDER BY id LIMIT 1',
+      [user.id],
+    );
+    user.externalProvider = row?.provider ?? null;
   }
 
   private assertActive(user: User | null): void {

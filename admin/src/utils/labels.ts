@@ -9,10 +9,11 @@ const PHASE_LABELS: Record<string, string> = {
   IDLE: '空闲',
   RUNNING: '运行中',
   RESUMING: '恢复中',
+  WAITING_APPROVAL: '待审批',
+  CANCELLING: '取消中',
   COMPLETED: '已完成',
   FAILED: '失败',
-  CANCELLED: '已取消',
-  WAITING_APPROVAL: '待审批'
+  CANCELLED: '已取消'
 }
 
 const SESSION_STATUS_LABELS: Record<string, string> = {

@@ -5,6 +5,10 @@ import { ok } from '../common/result.js';
 import type { JwtService } from '../crypto/jwt.service.js';
 import type { AdminAnalyticsService } from './admin-analytics.service.js';
 import type { MemoryPageVO, MemoryScope, MemoryStatus } from '../memory/types.js';
+import { ACTIVE_PHASES } from '../session/util/session-group-key.js';
+
+/** 运行监控默认视图：全部活跃相位 + 异常终态（CANCELLING 与 ACTIVE_PHASES 同源，避免手写清单漂移）。 */
+const RUNTIME_DEFAULT_PHASES = [...ACTIVE_PHASES, 'FAILED', 'CANCELLED'].join(',');
 
 export interface AdminSessionLister {
   listSessionsForAdmin(
@@ -145,7 +149,7 @@ export function registerAdminRuntimeRoutes(app: FastifyInstance, deps: AdminRout
     const page = Number(q.page ?? 1);
     const size = Number(q.size ?? 20);
     const runtimePhase = !q.phase || q.phase.trim() === ''
-      ? 'RUNNING,RESUMING,WAITING_APPROVAL,FAILED,CANCELLED'
+      ? RUNTIME_DEFAULT_PHASES
       : q.phase;
     if (!deps.sessionLister) {
       sendJson(reply, 200, ok({ records: [], total: 0, page, size }));

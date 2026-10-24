@@ -197,8 +197,13 @@ export class LlmCallRepository {
       params.push(filter.agentId);
     }
     if (filter.modelId != null) {
-      where.push('model_id = ?');
-      params.push(filter.modelId);
+      // 与模型维度聚合的 COALESCE(model_id, 0) 同口径：0 代表「未关联模型」= NULL 行。
+      if (filter.modelId === 0) {
+        where.push('model_id IS NULL');
+      } else {
+        where.push('model_id = ?');
+        params.push(filter.modelId);
+      }
     }
     if (filter.scene != null && filter.scene.trim() !== '') {
       where.push('scene = ?');

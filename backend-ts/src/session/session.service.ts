@@ -198,10 +198,13 @@ export class SessionService {
       GitUrlParser.validate(gitCloneUrl);
       const slug = GitUrlParser.extractSlug(gitCloneUrl);
       const projectPath = CloudWorkspaceResolver.resolveProjectWorkspace(this.pathSandbox, userId, slug);
+      // 项目工作区按 (userId, slug) 共享，不是本次会话独占：clone 失败只允许清理本次新建的目录，
+      // 已有内容的目录必须原样保留（clone 进非空目录必然失败，删掉会毁掉上一条会话的整个仓库）。
+      const projectExisted = existsSync(projectPath);
       this.ensureWorkspaceDirectory(projectPath);
       const result = await this.gitOperationService.clone(gitCloneUrl, gitBranch, projectPath, userId, session.id ?? null);
       if (!result.success) {
-        this.deleteWorkspaceDirectory(projectPath);
+        if (!projectExisted) this.deleteWorkspaceDirectory(projectPath);
         throw new BusinessException(ErrorCode.GIT_CLONE_FAILED, result.error ?? ErrorCode.GIT_CLONE_FAILED.message);
       }
       session.workspace = projectPath;

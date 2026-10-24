@@ -5,6 +5,9 @@ const TOOL_RESULT_LIMIT = 4000;
 /** 单个参数字段超过该长度才截断，避免小文件写入被裁掉。 */
 const ARG_FIELD_LIMIT = 8000;
 const ARG_KEEP = 1500;
+/** 失败态嗅探窗口：头部覆盖 exit_code 在前的真实 shell 载荷，尾部兼容旧形状。 */
+const TOOL_ERROR_HEAD_CHARS = 512;
+const TOOL_ERROR_TAIL_CHARS = 500;
 
 export function compactAdminTranscript(messages: Message[]): Message[] {
   return messages.map((message) => {
@@ -111,10 +114,20 @@ function shrinkArgumentJson(raw: string): string {
 /**
  * 只看结果的头尾，避免把文件正文里的 "error" 误判成失败。
  * 截断后客户端仍用这段前缀识别失败，不会把失败调用画成成功。
+ *
+ * 头尾都要看：shell 工具的真实载荷把 exit_code 放在第一个键（shell-session-tool.ts
+ * formatResult），只扫尾部会让「失败 + 输出超长」的调用在 compact 后丢掉失败态。
+ * exit_code 允许负数（超时/被 kill 为 -1），只排除 0。
  */
 function isToolError(text: string): boolean {
   if (text.startsWith('Tool execution failed')) return true;
-  if (/^\s*\{\s*"error"\s*:/.test(text)) return true;
-  if (/^\s*\{\s*"success"\s*:\s*false\b/.test(text)) return true;
-  return /"exit_code"\s*:\s*(?!0(?:\D|$))\d+/.test(text.slice(-500));
+  const head = text.slice(0, TOOL_ERROR_HEAD_CHARS);
+  if (/^\s*\{\s*"error"\s*:/.test(head)) return true;
+  if (/^\s*\{\s*"success"\s*:\s*false\b/.test(head)) return true;
+  const exitCode = /"exit_code"\s*:\s*(-?\d+)/;
+  for (const segment of [head, text.slice(-TOOL_ERROR_TAIL_CHARS)]) {
+    const matched = exitCode.exec(segment);
+    if (matched != null && Number(matched[1]) !== 0) return true;
+  }
+  return false;
 }

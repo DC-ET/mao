@@ -76,7 +76,7 @@
 | `periodTotals` | 窗口内合计：`sessions` / `messages` / `chatTokens` / `backgroundTokens` / `totalTokens` / `backgroundCalls` / `activeUsers` / `completedSessions` / `failedSessions` / `totalCost` / `promptTokens` / `cachedTokens` / `cacheHitRate`（后三项 llm_call 口径，缓存命中率分母为 0 时为 null） |
 | `previousTotals` | 上一等长窗口同口径（含 `cacheHitRate`） |
 | `spark[]` | Token 日走势：`date` / `totalTokens` |
-| `phaseDistribution[]` | 窗口内创建会话的阶段分布（固定 7 阶段，无数据为 0） |
+| `phaseDistribution[]` | 窗口内创建会话的阶段分布（固定 8 阶段：IDLE / RUNNING / RESUMING / WAITING_APPROVAL / CANCELLING / COMPLETED / FAILED / CANCELLED，无数据为 0；未知 phase 追加在末尾，保证合计等于 `periodTotals.sessions`） |
 | `insights[]` | 规则洞察：`level`（info/warn）/ `text` / 可选 `path` |
 
 ### trends
@@ -93,7 +93,7 @@
 |------|------|
 | `modelStats[]` | `modelId` / `modelName` / `provider` / `status` / `isDefault` / `sessionCount` / `messageCount` / `chatTokens` / `backgroundTokens` / `totalTokens`（含 llm_call 调用 Token）/ `backgroundCalls` / `contextWindowTokens`，以及质量列：`callCount` / `callFailCount` / `callCancelledCount` / `callSuccessRate` / `callTokens` / `promptTokens` / `cachedTokens` / `cacheHitRate` / `avgFirstTokenMs` / `avgDurationMs` / `retryCallCount`，以及成本列 `cost`（成本单位）。按 Token 合计降序；窗口内完全未被调用的模型不返回 |
 | `periodTotals` | `{ totalTokens, totalCost }`（模型明细合计） |
-| `sceneStats[]` | `{ key, callCount, failCount, cancelledCount, callTokens }`，默认全部模型；可传 `modelId` 按模型过滤 |
+| `sceneStats[]` | `{ key, callCount, failCount, cancelledCount, callTokens }`，默认全部模型；可传 `modelId` 按模型过滤（`0` = 未关联模型，按 `model_id IS NULL` 命中） |
 | `protocolStats[]` | 同上，按 `llm_call.protocol` 分组 |
 | `excludeConnectivity` | 是否排除了 `connectivity_test`（默认 true） |
 
@@ -116,7 +116,7 @@
 
 | 字段 | 说明 |
 |------|------|
-| `phaseDistribution[]` | 窗口内创建会话 phase 分布 |
+| `phaseDistribution[]` | 窗口内创建会话 phase 分布（8 阶段，含 `CANCELLING`） |
 | `sessionTypes[]` | `{ sessionType, count }`：NORMAL / SUBAGENT / SIDE_TASK |
 | `executionModes[]` | `{ executionMode, count }`：CLOUD / LOCAL |
 | `livePhases[]` | 实时 phase 快照（全表，不随周期变） |

@@ -156,6 +156,7 @@ import { formatDateTime } from '../../utils/datetime'
 import { executionModeLabel, phaseLabel, sessionTypeTag } from '../../utils/labels'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import { mapApiMessagesToChat } from './utils/chatMessage'
+import { mergeLatestPage } from './utils/messagePageMerge'
 import type { ChatMessage } from './types/chat'
 import MessageGroup from './components/MessageGroup.vue'
 import WorkspaceFileDialog from './components/WorkspaceFileDialog.vue'
@@ -399,30 +400,6 @@ function mergeMessages(olderMessages: ChatMessage[], currentMessages: ChatMessag
   return olderMessages.concat(currentMessages.filter(msg => !seen.has(msg.id)))
 }
 
-/** 最近 rounds 轮（按 user 消息切轮）在列表中的起始下标；不足 rounds 轮返回 0 */
-function recentTurnsStartIndex(list: ChatMessage[], rounds: number): number {
-  let seen = 0
-  for (let i = list.length - 1; i >= 0; i--) {
-    if (list[i].role !== 'user') continue
-    seen += 1
-    if (seen === rounds) return i
-  }
-  return 0
-}
-
-/** 静默刷新只替换最近 N 轮，保留「加载更多」拉到的更早历史，避免视野跳走 */
-function mergeLatestPage(latest: ChatMessage[], rounds: number = ROUND_LIMIT): ChatMessage[] {
-  const current = messages.value
-  // 最新页为空（会话刚建/接口返回异常）不清空已有内容，避免页面突然空白
-  if (latest.length === 0) return current
-  if (current.length === 0) return latest
-  const start = recentTurnsStartIndex(current, rounds)
-  if (start <= 0) return latest
-  const kept = current.slice(0, start)
-  const keptIds = new Set(kept.map(msg => msg.id))
-  return kept.concat(latest.filter(msg => !keptIds.has(msg.id)))
-}
-
 /** 循环 beforeMessageId 拉全量消息（含工具调用、思考过程），导出 JSON 文件留存证据 */
 async function exportMessages() {
   const id = route.params.id
@@ -525,7 +502,7 @@ async function refreshSessionSilently(): Promise<void> {
     if (seq !== latestFetchSeq) return
     sessionInfo.value = (sessionRes as { data?: unknown }).data
     const data = (messagesRes as { data?: unknown }).data as { messages?: Array<Record<string, unknown>> } | undefined
-    messages.value = mergeLatestPage(mapApiMessagesToChat(data?.messages || [], String(id)), POLL_ROUND_LIMIT)
+    messages.value = mergeLatestPage(messages.value, mapApiMessagesToChat(data?.messages || [], String(id)))
     if (stickToBottom) await scrollChatToBottom()
   } catch {
     // 静默刷新失败不打扰用户，下一轮自动重试

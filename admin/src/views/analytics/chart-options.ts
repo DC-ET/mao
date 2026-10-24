@@ -80,6 +80,7 @@ export const PHASE_COLORS: Record<string, string> = {
   RUNNING: '#0066cc',
   RESUMING: '#5ac8fa',
   WAITING_APPROVAL: '#b25000',
+  CANCELLING: '#ff9f0a',
   COMPLETED: '#34c759',
   FAILED: '#d70015',
   CANCELLED: '#8e8e93'

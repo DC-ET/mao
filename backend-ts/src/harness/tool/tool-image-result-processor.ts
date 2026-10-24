@@ -32,7 +32,9 @@ export const ToolImageResultProcessor = {
       if (!supportsVision) {
         const errorContent = VISION_ERROR_TEMPLATE.replace('%s', filePath.trim() === '' ? '未知文件' : filePath);
         return {
-          sanitizedContent: JSON.stringify({ content: errorContent, total_lines: 0 }),
+          // 与 read-file-tool 的 readError 同形：必须带 error 键，normalizeToolResult 才会判失败态，
+          // 否则 UI、审计与统计会把「模型不支持视觉」的读图失败记成成功。
+          sanitizedContent: JSON.stringify({ content: errorContent, error: errorContent, total_lines: 0 }),
           attachment: null,
           metadataJson: null,
           preview: null,

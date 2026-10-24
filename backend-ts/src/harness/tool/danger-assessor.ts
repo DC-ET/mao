@@ -54,16 +54,23 @@ export class DangerAssessor {
 
   private parseVerdict(response: ChatResponse, command: string): DangerResult {
     const verdict = String(response.choices?.[0]?.message?.content ?? '').trim();
-    const upper = verdict.toUpperCase();
-    if (upper.startsWith('DANGEROUS')) {
-      const reason = verdict.length > 'DANGEROUS:'.length
-        ? verdict.slice('DANGEROUS:'.length).trim()
+    const firstLine = verdict.split('\n')[0]?.trim() ?? '';
+    const upper = firstLine.toUpperCase();
+    if (/^DANGEROUS\b/.test(upper)) {
+      const reason = firstLine.length > 'DANGEROUS:'.length
+        ? firstLine.slice('DANGEROUS:'.length).trim()
         : '该命令被安全分类器判定为高危操作';
       harnessLog('info', `Danger assessment for command [${command}]: DANGEROUS — ${reason}`);
       return { dangerous: true, reason };
     }
-    harnessLog('info', `Danger assessment for command [${command}]: SAFE`);
-    return { dangerous: false, reason: null };
+    // fail-closed：只有明确回答 SAFE 才免审批。空响应、拒答、格式幻觉都不能当成放行依据——
+    // 与 catch 分支（评估服务异常 → DANGEROUS）和 ProxyApprover（不可解析 → 转人工）同口径。
+    if (/^SAFE\b/.test(upper)) {
+      harnessLog('info', `Danger assessment for command [${command}]: SAFE`);
+      return { dangerous: false, reason: null };
+    }
+    harnessLog('warn', `Danger assessment for command [${command}]: unparseable verdict, defaulting to DANGEROUS`);
+    return { dangerous: true, reason: '安全评估输出不可解析，默认需要审批' };
   }
 
   private extractCommand(argumentsJson: string): string {

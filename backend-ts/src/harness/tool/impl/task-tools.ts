@@ -1,5 +1,5 @@
 import { BaseTool } from '../tool.js';
-import { asInt, asText, errorJson, parseObject, toJson } from '../json.js';
+import { asIntStrict, asText, errorJson, parseObject, toJson } from '../json.js';
 import type { SessionTodoMapper } from '../../todo/session-todo.mapper.js';
 import type { SessionTodo } from '../../todo/entity/session-todo.js';
 import { harnessLog } from '../../log.js';
@@ -55,10 +55,16 @@ export class TaskCreateTool extends BaseTool {
     try {
       const args = parseObject(argumentsJson);
       if (!args) return errorJson('无效的JSON参数');
-      const items = Array.isArray(args.items) ? args.items : [];
+      // 非数组（模型把数组字符串化 / 传单个对象）必须报错：当成空数组会返回「已创建 0 个」
+      // 外加「任务已创建」的引导语，normalizeToolResult 看不到 error 键就会判成功。
+      if (!Array.isArray(args.items)) {
+        return errorJson(`items 必须是数组，收到 ${args.items == null ? String(args.items) : typeof args.items}`);
+      }
+      const items = args.items as Record<string, unknown>[];
+      if (items.length === 0) return errorJson('items 不能为空');
       let nextSort = sessionId != null ? (await this.sessionTodoMapper.selectMaxSortOrder(sessionId)) + 1 : 0;
       let count = 0;
-      for (const item of items as Record<string, unknown>[]) {
+      for (const item of items) {
         // 与 task_update 同一白名单口径；空串视为未提供（参数抖动防御），归一到 pending
         const requested = asText(item.status);
         const status = requested != null && requested !== '' ? requested : 'pending';
@@ -185,9 +191,9 @@ export class TaskUpdateTool extends BaseTool {
       const updatedSummaries: string[] = [];
       for (const item of items) {
         // id 必须为正整数（表 id 自增从 1 起，0 永不存在）：Number(null)/Number('')/Number([])
-        // 都是 0，能通过 Number.isFinite 校验，把「待办 #0」当成真实任务回报假成功。asInt 对
-        // null/''/非数字回落 0，配合 > 0 显式校验一并拒掉。
-        const id = asInt(item.id);
+        // 都是 0，能通过 Number.isFinite 校验，把「待办 #0」当成真实任务回报假成功。asIntStrict 对
+        // null/''/非数字/小数回落 0，配合 > 0 显式校验一并拒掉。
+        const id = asIntStrict(item.id);
         if (!(id > 0)) {
           return errorJson(`无效的待办事项 ID: ${item.id}`);
         }
@@ -291,7 +297,8 @@ export class TaskDeleteTool extends BaseTool {
       const existingIds = new Set(before.map((t) => t.id));
       let count = 0;
       for (const item of items) {
-        const id = asInt(item.id);
+        // 与 update 同口径：严格整数，1.9 不得被截断成 #1。
+        const id = asIntStrict(item.id);
         if (!(id > 0)) {
           return errorJson(`无效的待办事项 ID: ${item.id}`);
         }

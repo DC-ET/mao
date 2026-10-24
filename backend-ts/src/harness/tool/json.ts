@@ -30,6 +30,23 @@ export function asInt(value: unknown, fallback = 0): number {
   return fallback;
 }
 
+/**
+ * 严格整数解析：只接受「本身就是整数」的 number 或纯整数字符串。
+ * 与 asInt 的区别是不做 Math.trunc——小数/负小数必须落 fallback，否则
+ * `asInt(1.9)` 会被当成 1、`asInt(-0.5)` 会得到 -0 并绕过 `n < 0` 校验。
+ */
+export function asIntStrict(value: unknown, fallback = 0): number {
+  if (typeof value === 'number' && Number.isSafeInteger(value)) return value;
+  if (typeof value === 'string') {
+    const text = value.trim();
+    if (/^-?\d+$/.test(text)) {
+      const n = Number(text);
+      if (Number.isSafeInteger(n)) return n;
+    }
+  }
+  return fallback;
+}
+
 export function asBool(value: unknown, fallback = false): boolean {
   if (typeof value === 'boolean') return value;
   if (typeof value === 'number' && Number.isFinite(value)) return value !== 0;

@@ -13,7 +13,7 @@
 | 运行态会话列表 | `runtime sessions` |
 
 与 `session list` 的区别：未传 `--phase` 时，服务端默认聚焦  
-`RUNNING,RESUMING,WAITING_APPROVAL,FAILED,CANCELLED`。
+`RUNNING,RESUMING,WAITING_APPROVAL,CANCELLING,FAILED,CANCELLED`（活跃相位来自 `ACTIVE_PHASES`）。
 
 ## 命令：runtime sessions
 

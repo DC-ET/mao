@@ -3,6 +3,7 @@ import { notDeleted } from '../db/db.js';
 import type { Agent, LlmModel, UserRow } from '../domain/types.js';
 import { addDaysYmd, formatDateTime, shanghaiYmd } from '../common/json.js';
 import { CANCELLED_SQL, NOT_CANCELLED_SQL } from '../common/llm-cancel.js';
+import { ACTIVE_PHASES } from '../session/util/session-group-key.js';
 import type { StatisticsService } from '../statistics/statistics.service.js';
 
 /** 统计窗口：闭区间日期 + 半开时间区间 [startAt, endAtExclusive)，避免 23:59:59 边界丢数据。 */
@@ -374,8 +375,13 @@ export class AdminAnalyticsDbStore implements AdminAnalyticsStore {
       clauses.push(`scene != 'connectivity_test'`);
     }
     if (opts?.modelId != null) {
-      clauses.push('model_id = ?');
-      params.push(opts.modelId);
+      // 聚合口径把 NULL 归并为 id=0（「未关联模型」），筛选必须同口径：NULL 不能用 = 0 命中。
+      if (opts.modelId === 0) {
+        clauses.push('model_id IS NULL');
+      } else {
+        clauses.push('model_id = ?');
+        params.push(opts.modelId);
+      }
     }
     if (opts?.successOnly) {
       clauses.push('success = 1');
@@ -711,9 +717,23 @@ export class AdminAnalyticsDbStore implements AdminAnalyticsStore {
   }
 }
 
-const PHASES = ['IDLE', 'RUNNING', 'RESUMING', 'WAITING_APPROVAL', 'COMPLETED', 'FAILED', 'CANCELLED'];
+/** 阶段展示顺序：活跃相位与 session-group-key 的 ACTIVE_PHASES 同源（含 CANCELLING），再接终态。 */
+const PHASES = ['IDLE', ...ACTIVE_PHASES, 'COMPLETED', 'FAILED', 'CANCELLED'];
 const RANK_LIMIT = 20;
 const MAX_SCOPE_LIMIT = 100;
+
+/**
+ * 阶段分布必须覆盖 store 返回的每个 phase：未知 phase 追加在末尾，
+ * 保证「分布合计 == 会话总数」这条不变量在新增相位时不会被硬编码列表打破。
+ */
+function phaseDistributionOf(phases: Map<string, number>): Array<{ phase: string; count: number }> {
+  const rows = PHASES.map((phase) => ({ phase, count: phases.get(phase) ?? 0 }));
+  const known = new Set<string>(PHASES);
+  for (const [phase, count] of phases) {
+    if (!known.has(phase)) rows.push({ phase, count });
+  }
+  return rows;
+}
 
 /**
  * 强制 message 驱动、按主键回查 session（MySQL 8 优化器提示；5.7 会当普通注释忽略）。
@@ -804,7 +824,7 @@ export class AdminAnalyticsService {
       },
       previousTotals,
       trends,
-      phaseDistribution: PHASES.map((phase) => ({ phase, count: periodPhases.get(phase) ?? 0 })),
+      phaseDistribution: phaseDistributionOf(periodPhases),
       agentStats,
       userActivity,
       modelStats,
@@ -853,7 +873,7 @@ export class AdminAnalyticsService {
         date: String(row.date),
         totalTokens: toNumber(row.totalTokens),
       })),
-      phaseDistribution: PHASES.map((phase) => ({ phase, count: periodPhases.get(phase) ?? 0 })),
+      phaseDistribution: phaseDistributionOf(periodPhases),
       insights: buildOverviewInsights(periodTotals, previousTotals),
     };
   }
@@ -1077,14 +1097,14 @@ export class AdminAnalyticsService {
     const sessions = [...periodPhases.values()].reduce((sum, count) => sum + count, 0);
     return {
       period: this.periodMeta(range, previous),
-      phaseDistribution: PHASES.map((phase) => ({ phase, count: periodPhases.get(phase) ?? 0 })),
+      phaseDistribution: phaseDistributionOf(periodPhases),
       sessionTypes: typeRows
         .filter((row) => toNumber(row.count) > 0)
         .map((row) => ({ sessionType: String(row.key), count: toNumber(row.count) })),
       executionModes: modeRows
         .filter((row) => toNumber(row.count) > 0)
         .map((row) => ({ executionMode: String(row.key), count: toNumber(row.count) })),
-      livePhases: PHASES.map((phase) => ({ phase, count: livePhases.get(phase) ?? 0 })),
+      livePhases: phaseDistributionOf(livePhases),
       periodTotals: { sessions, activeUsers, completedSessions, failedSessions },
       previousTotals,
       callQuality: {

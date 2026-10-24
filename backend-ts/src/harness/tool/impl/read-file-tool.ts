@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { BaseTool } from '../tool.js';
-import { asInt, asText, parseObject, toJson } from '../json.js';
+import { asIntStrict, asText, parseObject, toJson } from '../json.js';
 import { ImageFileSupport } from '../image-file-support.js';
 import { PromptImageResizer } from '../prompt-image-resizer.js';
 import type { PathSandbox } from '../../safety/path-sandbox.js';
@@ -155,7 +155,8 @@ function readError(message: string): string {
  * 由 executeWithWorkspace 的 catch 转成 readError——带 error 键，下游据此判失败态。
  */
 function parseLineIndex(value: unknown, field: 'offset' | 'limit'): number {
-  const n = asInt(value, Number.NaN);
+  // 严格整数：asInt 会 Math.trunc，1.5 会被当成 1、-0.5 会得到 -0 并绕过 n < 0。
+  const n = asIntStrict(value, Number.NaN);
   if (!Number.isInteger(n) || n < 0) {
     throw new Error(`参数 ${field} 必须是非负整数，收到 ${JSON.stringify(value) ?? String(value)}`);
   }
