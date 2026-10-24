@@ -87,7 +87,7 @@ export function registerAgentExperienceLibraryRoutes(app: FastifyInstance, deps:
     const { agentDir } = await requireAgentDir(pathId(request));
     const body = bodyOf<SaveDocRequest>(request);
     const fileName = requireDocFileName(body.fileName);
-    if (fileName === 'INDEX.md') {
+    if (fileName.toLowerCase() === 'index.md') {
       throw new BusinessException(ErrorCode.PARAM_INVALID, 'INDEX.md 由系统自动生成，不能直接编辑');
     }
     if (body.content == null || typeof body.content !== 'string') {
@@ -106,7 +106,7 @@ export function registerAgentExperienceLibraryRoutes(app: FastifyInstance, deps:
     await requireAgentWrite(request);
     const { agentDir } = await requireAgentDir(pathId(request));
     const fileName = requireDocFileName((request.query as Record<string, unknown>).file);
-    if (fileName === 'INDEX.md') {
+    if (fileName.toLowerCase() === 'index.md') {
       throw new BusinessException(ErrorCode.PARAM_INVALID, 'INDEX.md 由系统自动生成，不能删除');
     }
     try {

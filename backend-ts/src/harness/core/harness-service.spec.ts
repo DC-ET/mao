@@ -276,6 +276,7 @@ function makeHarness(overrides: Record<string, unknown> = {}) {
     deps.memoryInjection ?? null,
     deps.mcpLoadModeResolver ?? null,
     deps.httpToolService ?? null,
+    deps.experienceMount ?? null,
   );
   return { service, ...deps };
 }
@@ -328,6 +329,44 @@ describe('HarnessService.buildContext and execute', () => {
     });
     missingModel.llmModelMapper.selectDefault.mockResolvedValue(null);
     await expect(missingModel.service.buildContext(10)).rejects.toBeInstanceOf(BusinessException);
+  });
+
+  it('experienceLibraryMountBackstopRunsPerBuildContextAndGatesOnModeAndSwitch', async () => {
+    // buildContext 每轮幂等补挂（存量会话兜底）：CLOUD + 开关启用 → 注入路标并补挂
+    const syncForSession = vi.fn();
+    const { service } = makeHarness({ experienceMount: { syncForSession } });
+    const ctx = await service.buildContext(10);
+    expect(ctx.experienceLibrary).toEqual({ agentId: 2 });
+    expect(syncForSession).toHaveBeenCalledWith('/ws', 2, true);
+
+    // LOCAL 会话：不注入路标、不补挂（本地文件工具够不到服务器共享目录）
+    syncForSession.mockClear();
+    (service['sessionMapper'].selectById as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 10, userId: 7, agentId: 2, executionMode: 'LOCAL',
+      projectKey: 'proj', workspace: '/ws', permissionLevel: 'READ_WRITE', modelId: 3,
+    });
+    const localCtx = await service.buildContext(10);
+    expect(localCtx.experienceLibrary).toBeNull();
+    expect(syncForSession).not.toHaveBeenCalled();
+
+    // Agent 关闭开关：即使 CLOUD 也不注入、不补挂
+    (service['sessionMapper'].selectById as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 10, userId: 7, agentId: 2, executionMode: 'CLOUD',
+      projectKey: 'proj', workspace: '/ws', permissionLevel: 'READ_WRITE', modelId: 3,
+    });
+    (service['agentMapper'].selectById as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 2, name: 'Coder', systemPrompt: 'You are a coder', experienceLibraryEnabled: 0,
+    });
+    const disabledCtx = await service.buildContext(10);
+    expect(disabledCtx.experienceLibrary).toBeNull();
+    expect(syncForSession).not.toHaveBeenCalled();
+
+    // 补挂抛错不阻断上下文构建（降级记日志）
+    (service['agentMapper'].selectById as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 2, name: 'Coder', systemPrompt: 'You are a coder',
+    });
+    syncForSession.mockImplementation(() => { throw new Error('mount boom'); });
+    await expect(service.buildContext(10)).resolves.toBeTruthy();
   });
 
   it('modelResolutionPrefersAgentDefaultForSessionsWithoutExplicitModel', async () => {

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { useTmpDir } from '../../testing/tmp-dir.js';
@@ -162,5 +162,53 @@ describe('ExperienceIndexService', () => {
     svc.refreshIfUnderRoot(join(root, 'README.md'));
     expect(existsSync(join(root, 'elsewhere'))).toBe(false);
     expect(existsSync(join(root, 'README.md'))).toBe(false);
+  });
+
+  it('refreshIfUnderRoot follows workspace symlink paths (write-tool callback gets lexical path)', () => {
+    // 回归（round-01 Bug 1）：写工具回调收到 <workspace>/团队经验/x.md 词法路径，
+    // 不在经验根词法前缀下——必须 realpath 后命中 <root>/<agentId>/ 才刷新索引
+    const base = useTmpDir('exp-link-');
+    const root = join(base, 'agent-experience');
+    const svc = new ExperienceIndexService(root);
+    svc.ensureFresh(svc.dirFor(21));
+    const workspace = join(base, 'ws');
+    mkdirSync(workspace, { recursive: true });
+    symlinkSync(svc.dirFor(21), join(workspace, '团队经验'), 'dir');
+    // Agent 经链接写入子文档（文件真实落在库目录，路径仍是工作区词法路径）
+    writeFileSync(join(workspace, '团队经验', '2026-10-24-via-link.md'), '---\ntitle: 链接写入\n---\n');
+    expect(readFileSync(join(svc.dirFor(21), EXPERIENCE_INDEX_FILE), 'utf8')).toContain('count: 0');
+    svc.refreshIfUnderRoot(join(workspace, '团队经验', '2026-10-24-via-link.md'));
+    expect(readFileSync(join(svc.dirFor(21), EXPERIENCE_INDEX_FILE), 'utf8')).toContain('2026-10-24-via-link.md');
+    // 不存在的词法路径（并发删除）静默跳过不抛错
+    expect(() => svc.refreshIfUnderRoot(join(workspace, '团队经验', 'gone.md'))).not.toThrow();
+  });
+
+  it('rejects index.md in any letter case so no parallel junk file gets indexed', () => {
+    // 回归（round-01 轻微）：小写 index.md 曾绕过字面比对，产生并列垃圾文件还被收录
+    const root = useTmpDir('exp-root-');
+    const svc = new ExperienceIndexService(root);
+    const dir = svc.dirFor(13);
+    svc.ensureFresh(dir);
+    expect(() => svc.writeDoc(dir, 'index.md', 'x')).toThrow();
+    expect(() => svc.writeDoc(dir, 'INDEX.MD', 'x')).toThrow();
+    expect(() => svc.deleteDoc(dir, 'index.md')).toThrow();
+    // 旁路落盘的小写 index.md 不进索引
+    writeFileSync(join(dir, 'index.md'), 'junk');
+    svc.rebuild(dir);
+    expect(readFileSync(join(dir, EXPERIENCE_INDEX_FILE), 'utf8')).toContain('count: 0');
+    expect(svc.listDocs(dir)).toHaveLength(0);
+  });
+
+  it('scans frontmatter from the file head only, so oversized docs do not stall the scan', () => {
+    const root = useTmpDir('exp-root-');
+    const svc = new ExperienceIndexService(root);
+    const dir = svc.dirFor(17);
+    svc.ensureFresh(dir);
+    const body = 'x'.repeat(200 * 1024);
+    writeFileSync(join(dir, '2026-10-24-huge.md'), `---\ntitle: 大文档\nkeywords: huge\n---\n${body}`);
+    const docs = svc.listDocs(dir);
+    expect(docs).toHaveLength(1);
+    expect(docs[0].title).toBe('大文档');
+    expect(docs[0].sizeBytes).toBeGreaterThan(200 * 1024);
   });
 });

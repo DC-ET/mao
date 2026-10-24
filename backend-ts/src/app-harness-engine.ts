@@ -164,6 +164,8 @@ export interface HarnessEngineDeps {
   wsRegistry: any;
   /** 团队经验库索引服务（技术方案 2026-10-24）：write_file/edit_file 落盘回调刷新索引。可选注入。 */
   experienceIndexService?: ExperienceIndexService | null;
+  /** 团队经验库挂载服务：buildContext 每轮幂等补挂（存量会话兜底）。可选注入。 */
+  experienceMountService?: { syncForSession(workspace: string, agentId: number, enabled: boolean): void } | null;
 }
 
 export interface HarnessEngineResult {
@@ -329,6 +331,7 @@ export function assembleHarnessEngine(deps: HarnessEngineDeps): HarnessEngineRes
     d.memoryService,
     d.mcpLoadModeResolver,
     d.httpToolService,
+    d.experienceMountService ?? null,
   );
   d.holder.harness = harness;
 

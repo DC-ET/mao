@@ -805,6 +805,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     experienceService, modelRepo, fileChangeRepo, envInfo, db, mcpSync, mcpLoadModeResolver,
     activityHeartbeat, memoryService, wsRegistry,
     experienceIndexService,
+    experienceMountService,
   });
   const { toolRegistry, toolDispatcher, compactionSignalBus, agentLoop, harness } = harnessEngine;
 

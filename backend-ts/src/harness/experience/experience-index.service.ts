@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { harnessLog } from '../log.js';
 import { isUnder } from '../safety/path-sandbox.js';
@@ -90,7 +90,7 @@ export class ExperienceIndexService {
 
   /** 写（upsert）单篇子文档并刷新索引。返回写盘字节数。INDEX.md 禁写（只由重建生成）。 */
   writeDoc(agentDir: string, fileName: string, content: string): number {
-    if (!isValidExperienceFileName(fileName) || fileName === EXPERIENCE_INDEX_FILE) {
+    if (!isValidExperienceFileName(fileName) || isIndexFileName(fileName)) {
       throw new Error(`非法经验文件名: ${fileName}`);
     }
     const bytes = Buffer.byteLength(content, 'utf8');
@@ -107,7 +107,7 @@ export class ExperienceIndexService {
 
   /** 删除单篇子文档并刷新索引；INDEX.md 禁删（只由重建生成）。不存在视为已删，幂等。 */
   deleteDoc(agentDir: string, fileName: string): void {
-    if (!isValidExperienceFileName(fileName) || fileName === EXPERIENCE_INDEX_FILE) {
+    if (!isValidExperienceFileName(fileName) || isIndexFileName(fileName)) {
       throw new Error(`非法经验文件名: ${fileName}`);
     }
     const filePath = path.join(agentDir, fileName);
@@ -120,11 +120,22 @@ export class ExperienceIndexService {
   /**
    * 写工具落盘回调入口（技术方案 §3.5 触发点 2）：路径位于经验根下时，
    * 刷新对应 Agent 库目录的索引。任何失败只记日志——索引刷新失败不应让写工具报错。
+   *
+   * 写工具回调拿到的是 resolveLenient 的词法路径：Agent 经工作区符号链接 团队经验/
+   * 写入时路径不在经验根词法前缀下，须 realpath（链接目标即 <root>/<agentId>/...）
+   * 后再判定；路径不存在（已被并发删除）静默跳过。
    */
   refreshIfUnderRoot(absPath: string): void {
     try {
-      const resolved = path.resolve(absPath);
-      if (!isUnder(resolved, this.root)) return;
+      let resolved = path.resolve(absPath);
+      if (!isUnder(resolved, this.root)) {
+        try {
+          resolved = realpathSync(resolved);
+        } catch {
+          return;
+        }
+        if (!isUnder(resolved, this.root)) return;
+      }
       const firstSegment = path.relative(this.root, resolved).split(path.sep)[0];
       if (firstSegment == null || firstSegment === '' || !/^\d+$/.test(firstSegment)) return;
       this.ensureFresh(path.join(this.root, firstSegment));
@@ -138,12 +149,13 @@ export class ExperienceIndexService {
     const out: (ExperienceDocMeta & { mtimeMs: number })[] = [];
     for (const entry of readdirSync(agentDir, { withFileTypes: true })) {
       if (!entry.isFile()) continue;
-      if (entry.name === EXPERIENCE_INDEX_FILE) continue;
+      if (isIndexFileName(entry.name)) continue;
       if (!entry.name.toLowerCase().endsWith('.md')) continue;
       const filePath = path.join(agentDir, entry.name);
       try {
         const st = statSync(filePath);
-        const content = readFileSync(filePath, 'utf8');
+        // frontmatter 只在文件头：只读头部 64KB，shell 误写的超大文件不拖垮整库扫描
+        const content = readHead(filePath, st.size);
         out.push({
           fileName: entry.name,
           ...parseExperienceFrontmatter(content),
@@ -194,6 +206,25 @@ function clip(text: string): string {
 function readIndexCount(indexContent: string): number | null {
   const match = /<!-- count: (\d+) -->/.exec(indexContent);
   return match ? Number(match[1]) : null;
+}
+
+/** 索引文件名比对：大小写不敏感（Agent 写 index.md 不产生并列垃圾文件）。 */
+function isIndexFileName(fileName: string): boolean {
+  return fileName.toLowerCase() === EXPERIENCE_INDEX_FILE.toLowerCase();
+}
+
+/** 只读文件头部（frontmatter 所在处），至多 64KB。 */
+function readHead(filePath: string, size: number): string {
+  const length = Math.min(size, 64 * 1024);
+  if (length <= 0) return '';
+  const fd = openSync(filePath, 'r');
+  try {
+    const buf = Buffer.alloc(length);
+    const bytesRead = readSync(fd, buf, 0, length, 0);
+    return buf.subarray(0, bytesRead).toString('utf8');
+  } finally {
+    closeSync(fd);
+  }
 }
 
 /**

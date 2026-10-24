@@ -97,14 +97,16 @@ describe('agent experience library routes', () => {
   it('rejects traversal, non-md names and INDEX.md writes', async () => {
     const { app } = makeApp(true);
     try {
-      for (const file of ['../escape.md', 'a/b.md', 'notes.txt', 'INDEX.md']) {
+      for (const file of ['../escape.md', 'a/b.md', 'notes.txt', 'INDEX.md', 'index.md', 'INDEX.MD']) {
         const res = await app.inject({
           method: 'PUT', url: '/v1/agents/1/experience-library/docs/content',
           payload: { fileName: file, content: 'x' },
         });
         expect(res.json().code).not.toBe(0);
       }
-      expect((await app.inject({ method: 'DELETE', url: '/v1/agents/1/experience-library/docs?file=INDEX.md' })).json().code).not.toBe(0);
+      for (const file of ['INDEX.md', 'index.md']) {
+        expect((await app.inject({ method: 'DELETE', url: `/v1/agents/1/experience-library/docs?file=${encodeURIComponent(file)}` })).json().code).not.toBe(0);
+      }
     } finally {
       await app.close();
     }
