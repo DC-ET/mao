@@ -213,14 +213,16 @@ describe('ExperienceIndexService', () => {
   });
 
   it('matches the real path even when the configured root itself sits behind a symlink', () => {
-    // 回归（round-02 N1）：经验根配置路径含符号链接祖先（如 /tmp → /private/tmp）时，
-    // realpath 回退得到的全解析路径与词法根失配——须双根（词法 + realpath）比对
+    // 回归（round-02 N1 + round-03 R3-1）：经验根配置路径含符号链接祖先（如 /tmp → /private/tmp）
+    // 时，realpath 得到的全解析路径与词法根失配——须双根（词法 + realpath）比对；且根是懒创建的，
+    // 服务构造先于根存在（首启时序），realpath 缓存必须懒解析而非构造时回退词法串
     const base = useTmpDir('exp-alias-');
     const realRoot = join(base, 'real-agent-experience');
     const aliasRoot = join(base, 'alias-agent-experience');
+    // 首启时序：服务构造在前，根（含别名链接）尚未创建
+    const svc = new ExperienceIndexService(aliasRoot);
     mkdirSync(realRoot, { recursive: true });
     symlinkSync(realRoot, aliasRoot, 'dir');
-    const svc = new ExperienceIndexService(aliasRoot);
     // 经真实路径写入子文档，回调也收到真实路径（另一侧是词法路径的情形已由链接用例覆盖）
     const docPath = join(realRoot, '23', '2026-10-24-x.md');
     mkdirSync(join(realRoot, '23'), { recursive: true });
