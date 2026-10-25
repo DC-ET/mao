@@ -3,7 +3,7 @@
     <el-icon class="is-loading"><Loading /></el-icon>
   </div>
   <div v-else-if="groupedSessions.length === 0" class="panel-empty">
-    暂无任务
+    {{ emptyHint }}
   </div>
   <template v-else>
     <div
@@ -177,11 +177,24 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { Loading, Plus, Delete, Check, Close, Cloudy, PartlyCloudy, Folder, FolderOpened, EditPen, ArrowDown, ArrowRight, ChatDotRound, Monitor } from '@element-plus/icons-vue'
 import type { Session } from '../../stores/session'
+import { useReadinessStore } from '../../stores/readiness'
 import { groupIconKind } from '../../utils/cloud-project'
 import feishuLogo from '../../assets/feishu-logo.svg'
 import weixinLogo from '../../assets/weixin-logo.png'
+
+const readinessStore = useReadinessStore()
+
+/** 空态按根因分流（首次成功体验）：数据未拉到时回退默认文案。 */
+const emptyHint = computed(() => {
+  const r = readinessStore.readiness
+  if (!readinessStore.loaded || r == null) return '暂无任务'
+  if (r.modelsConfigured === 0) return '实例尚未配置模型，请联系管理员'
+  if (r.agentsEnabled === 0) return '暂无可用智能体，请联系管理员创建'
+  return '暂无任务'
+})
 
 defineProps<{
   loading: boolean

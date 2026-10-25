@@ -52,6 +52,8 @@
 
       <TabBar v-if="!isMobile" />
 
+      <ReadinessBanner :refresh-key="readinessRefreshKey" @change-password="changePasswordVisible = true" />
+
       <el-main class="layout-main">
         <div class="layout-content">
           <router-view v-slot="{ Component, route: viewRoute }">
@@ -85,6 +87,7 @@ import { useEmbedChat } from '../composables/useEmbedChat'
 import { homeTitle, pickHomePath } from '../utils/home'
 import TabBar from './TabBar.vue'
 import SideMenu from './SideMenu.vue'
+import ReadinessBanner from './ReadinessBanner.vue'
 import ChangePasswordDialog from '../views/user/ChangePasswordDialog.vue'
 
 const SIDEBAR_KEY = 'admin-sidebar-collapsed'
@@ -141,6 +144,12 @@ watch(route, (newRoute) => {
 }, { immediate: true })
 
 const changePasswordVisible = ref(false)
+// 改密弹窗关闭后触发就绪横幅重查（无论是否保存成功，多查一次无害）
+const readinessRefreshKey = ref(0)
+
+watch(changePasswordVisible, (visible, prev) => {
+  if (!visible && prev) readinessRefreshKey.value += 1
+})
 
 const canWrite = computed(() => authStore.hasPermission('user:write'))
 

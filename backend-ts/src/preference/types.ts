@@ -45,3 +45,18 @@ export interface UserTaskPanelPreferenceRepository {
   /** 带版本号的增量更新：version 不匹配时返回 false（并发写被检测出来，不再静默覆盖）。 */
   updateByUserId(row: UserTaskPanelPreference): Promise<boolean>;
 }
+
+export interface UserOnboardingPreference {
+  userId: number;
+  completedAt?: string | Date | null;
+  /** 1=中途跳过（完成语义，不再打扰）；0=三步走完。 */
+  skipped?: number | null;
+  chosenAgentId?: number | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface UserOnboardingPreferenceRepository {
+  findByUserId(userId: number): Promise<UserOnboardingPreference | null>;
+  insert(row: UserOnboardingPreference): Promise<void>;
+}

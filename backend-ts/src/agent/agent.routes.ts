@@ -12,6 +12,7 @@ import type { AgentExperienceService } from './agent-experience.service.js';
 import { suggestedQuestionInputOf } from './agent-suggested-question.service.js';
 import type { AgentSuggestedQuestionService } from './agent-suggested-question.service.js';
 import type { AgentService } from './agent.service.js';
+import { AGENT_TEMPLATES } from './agent-templates.js';
 import type {
   Agent,
   AgentExperience,
@@ -96,6 +97,12 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
     const agents = await agentService.listAgents(userId, keyword, includeDisabled, scope === 'client');
     const voList = await Promise.all(agents.map((agent) => toVO(agent, agentService, userRepo)));
     return sendOk(reply, voList);
+  });
+
+  /** 入门 Agent 模板（只读代码常量，登录即可取；管理后台「从模板开始」消费）。 */
+  app.get('/v1/agent-templates', async (request, reply) => {
+    requireUserId(request);
+    return sendOk(reply, AGENT_TEMPLATES);
   });
 
   app.get('/v1/agents/:id', async (request, reply) => {

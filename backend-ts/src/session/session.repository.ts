@@ -108,6 +108,15 @@ export class SessionRepository {
     return this.db.queryOne<Session>(`SELECT * FROM \`session\` WHERE id = ? AND ${notDeleted()}`, [id]);
   }
 
+  /** 该用户是否存在任意会话历史（readiness 存量用户静默判定用）。 */
+  async existsByUserId(userId: number): Promise<boolean> {
+    const row = await this.db.queryOne<{ one: number }>(
+      `SELECT 1 AS one FROM \`session\` WHERE user_id = ? AND ${notDeleted()} LIMIT 1`,
+      [userId],
+    );
+    return row != null;
+  }
+
   findByIdForUpdate(id: number): Promise<Session | null> {
     return this.db.queryOne<Session>(`SELECT * FROM \`session\` WHERE id = ? AND ${notDeleted()} FOR UPDATE`, [id]);
   }

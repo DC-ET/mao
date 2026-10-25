@@ -117,6 +117,9 @@ import { registerSystemSettingRoutes } from './settings/settings.routes.js';
 import { registerEmbedRoutes } from './embed/embed.routes.js';
 import { registerCommandRoutes } from './command/command.routes.js';
 import { registerPreferenceRoutes } from './preference/preference.routes.js';
+import type { UserOnboardingPreferenceRepository } from './preference/types.js';
+import { ReadinessService } from './settings/readiness.service.js';
+import { registerReadinessRoutes } from './settings/readiness.routes.js';
 import { registerToolRoutes } from './tool/tool.routes.js';
 import { registerAuditLogRoutes } from './audit/audit.routes.js';
 import { registerLlmCallRoutes } from './usage/llm-call.routes.js';
@@ -208,6 +211,7 @@ export interface RouteDeps {
   // preference
   weixinPref: UserWeixinPreferenceService;
   taskPanelPref: UserTaskPanelPreferenceService;
+  onboardingPrefRepo: UserOnboardingPreferenceRepository;
 
   // tool
   restToolService: ToolService;
@@ -434,6 +438,14 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
       taskPanelPreferenceService: taskPanelPref,
       weixinVoiceReplyDefault: cfg.weixin.bot.voiceReply,
     });
+    const readinessService = new ReadinessService({
+      userLookup: { findById: (id) => userRepo.findById(id) },
+      modelsConfiguredCount: () => modelRepo.countEnabledWithApiKey(),
+      agentsEnabledCount: async () => (await agentRepo.selectList(null, false)).length,
+      sessionHistory: sessionRepo,
+      onboardingPreference: deps.onboardingPrefRepo,
+    });
+    registerReadinessRoutes(api, { readinessService, permissionService });
     registerToolRoutes(api, { toolService: restToolService });
     registerAuditLogRoutes(api, { auditLogService: auditService, permissionService });
     registerLlmCallRoutes(api, { llmCallService, permissionService });

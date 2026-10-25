@@ -69,6 +69,19 @@
       @open-git-diff="handleOpenGitDiff"
       @open-manager="openFileManagerTab"
     />
+
+    <!-- 首启向导 / 环境未就绪降级页：仅对新用户（PENDING）出现，存量用户零打扰 -->
+    <ReadinessPending
+      v-if="readinessPendingVisible"
+      :reason="readinessPendingReason"
+      @retry="readinessStore.fetch(true)"
+    />
+    <OnboardingOverlay
+      v-else-if="onboardingVisible"
+      :agents="agentStore.agents"
+      @complete="handleOnboardingComplete"
+      @skip="handleOnboardingSkip"
+    />
   </div>
 </template>
 
@@ -99,6 +112,9 @@ import TaskIndexPanel from '../../components/task/TaskIndexPanel.vue'
 import TaskInspector from '../../components/task/TaskInspector.vue'
 import CenterTabBar from '../../components/center/CenterTabBar.vue'
 import CenterTabContainer from '../../components/center/CenterTabContainer.vue'
+import OnboardingOverlay from '../../components/onboarding/OnboardingOverlay.vue'
+import ReadinessPending from '../../components/onboarding/ReadinessPending.vue'
+import { useReadinessStore } from '../../stores/readiness'
 
 const route = useRoute()
 const router = useRouter()
@@ -203,6 +219,75 @@ function syncChatState(state: {
 
 provide('syncChatState', syncChatState)
 provide('chatFocusInput', chatFocusInput)
+// 向导「开始任务」把示例文案填进新建态 Composer 的通道（与 chatFocusInput 同一注入惯例）
+const chatPrefillInput = ref<((text: string) => void) | null>(null)
+provide('chatPrefillInput', chatPrefillInput)
+
+// ── 首启向导（首次成功体验）───────────────────────────────────────────────
+const readinessStore = useReadinessStore()
+
+/** 仅新用户（PENDING）可见：模型或 Agent 未配置时先看降级提示页，不弹向导。 */
+const readinessPendingVisible = computed(() => {
+  const r = readinessStore.readiness
+  return readinessStore.loaded && r != null && r.onboarding === 'PENDING'
+    && (r.modelsConfigured === 0 || r.agentsEnabled === 0)
+})
+const readinessPendingReason = computed<'models' | 'agents'>(() => {
+  const r = readinessStore.readiness
+  return r != null && r.modelsConfigured === 0 ? 'models' : 'agents'
+})
+const onboardingVisible = computed(() => {
+  const r = readinessStore.readiness
+  return readinessStore.loaded && r != null && r.onboarding === 'PENDING'
+    && r.modelsConfigured > 0 && r.agentsEnabled > 0
+})
+
+/** 完成语义一旦成立不再出现（无重进入口）；存量用户（AUTO_DONE）由服务端判定，天然不弹。 */
+async function handleOnboardingComplete(payload: { chosenAgentId: string | null; sampleText: string }) {
+  try {
+    await readinessStore.completeOnboarding({
+      chosenAgentId: payload.chosenAgentId != null ? Number(payload.chosenAgentId) : null,
+    })
+  } catch {
+    // 完成标记写失败：覆盖层保持显示（store 未翻转），用户可再点一次；不做预填避免重复插入
+    return
+  }
+  await startSampleTask(payload)
+}
+
+async function handleOnboardingSkip() {
+  try {
+    await readinessStore.completeOnboarding({ skipped: true })
+  } catch {
+    // 忽略：跳过失败时覆盖层仍在，用户可再点一次跳过
+  }
+}
+
+/** 向导结束后的起步路径：进新建态并预填示例文案（草稿机制 + 聚焦），发送仍由用户手点。 */
+async function startSampleTask(payload: { chosenAgentId: string | null; sampleText: string }) {
+  const text = payload.sampleText.trim()
+  if (!isNewTaskMode.value) {
+    // 先写草稿再进新建态：ChatInput 挂载时 restoreDraft('new') 自动带上
+    if (text) {
+      draftStore.setDraft('new', { html: `<p>${escapeHtml(text)}</p>`, text, files: [] })
+    }
+    await navigateToNewTask(payload.chosenAgentId ? { agentId: payload.chosenAgentId, executionMode: 'CLOUD' } : undefined)
+    await nextTick()
+  } else if (text) {
+    // 已在新建态：编辑器已挂载且为空（覆盖层挡住了输入），直接程序化插入
+    chatPrefillInput.value?.(text)
+  }
+  await nextTick()
+  chatFocusInput.value?.()
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
 
 // Chat input registration for file tree context menu
 // 按 tab 维度注册输入框 handle：主会话 key='chat'，边路任务 key=tabId（如 'side:123'）。
@@ -1221,6 +1306,8 @@ watch(getRouteWatchState, async (state, prev) => {
 })
 
 onMounted(async () => {
+  // 首启向导判定：就绪数据与任务索引并行拉取，先到先渲染
+  void readinessStore.fetch()
   if (!await loadTaskIndex()) return
   await resolveInitialRoute()
 })

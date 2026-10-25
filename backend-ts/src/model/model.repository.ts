@@ -168,6 +168,14 @@ export class MysqlLlmModelRepository implements LlmModelRepository {
     );
     return Number(row?.cnt ?? 0);
   }
+
+  /** 启用且配置了 API Key 的模型数：readiness 就绪判定用（0 = 实例还没法对话）。 */
+  async countEnabledWithApiKey(): Promise<number> {
+    const row = await this.db.queryOne<{ cnt: number }>(
+      `SELECT COUNT(*) AS cnt FROM llm_model WHERE status = 1 AND api_key IS NOT NULL AND api_key <> '' AND ${notDeleted()}`,
+    );
+    return Number(row?.cnt ?? 0);
+  }
 }
 
 export class MysqlSessionModelRepository implements SessionModelRepository {
