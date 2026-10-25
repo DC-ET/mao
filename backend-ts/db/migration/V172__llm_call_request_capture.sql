@@ -1,4 +1,4 @@
--- V171: llm_call 请求构成采集（技术方案 2026-10-25-run-trace-content-and-prompt §5.1）。
+-- V172: llm_call 请求构成采集（技术方案 2026-10-25-run-trace-content-and-prompt §5.1）。
 -- 消费方 RecordingLlmAdapter：从 ChatRequest 读全部 role=system 消息 join 成 system_prompt
 --（应用层截断 262144 字符，尾带「…[已截断，原长 N 字符]」标记），tools_json 存
 -- request.tools 顺序的工具名清单（JSON 字符串数组）。运行轨迹记录详情抽屉的

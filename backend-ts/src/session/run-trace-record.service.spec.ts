@@ -353,7 +353,7 @@ describe('RunTraceRecordService.buildCallRecord 本轮回复（技术方案 2026
     expect(messageRepo.selectAssistantMessagesBetween).not.toHaveBeenCalled();
   });
 
-  it('toCallMeta 透出 system_prompt / tools_json（请求构成采集 V171）', async () => {
+  it('toCallMeta 透出 system_prompt / tools_json（请求构成采集 V172）', async () => {
     const { service } = makeService({
       toolMessages: [],
       assistantMessages: [],

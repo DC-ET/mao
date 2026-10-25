@@ -769,7 +769,7 @@ export interface TraceCallMetaVO {
   cacheCreationTokens: number;
   costMicros: number | null;
   createdAt: string | null;
-  /** 请求构成采集（V171）：系统提示词原文（截断带标记）；NULL = 未记录（历史行 / 无 system 消息） */
+  /** 请求构成采集（V172）：系统提示词原文（截断带标记）；NULL = 未记录（历史行 / 无 system 消息） */
   systemPrompt: string | null;
   /** 请求的工具名清单（JSON 字符串数组）；NULL = 未记录（历史行 / 无工具） */
   toolsJson: string | null;

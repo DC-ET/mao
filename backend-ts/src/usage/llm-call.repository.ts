@@ -2,7 +2,7 @@ import type { Db } from '../db/db.js';
 import { CANCELLED_SQL, NOT_CANCELLED_SQL } from '../common/llm-cancel.js';
 
 /**
- * 轻列清单：除 system_prompt / tools_json（V171 请求构成采集，单行最坏 ~256K 字符）外的
+ * 轻列清单：除 system_prompt / tools_json（V172 请求构成采集，单行最坏 ~256K 字符）外的
  * 全部业务列。列表（list）与轨迹窗口查询（selectBySessionWindow）只走轻列——大字段只随
  * 记录详情的 selectById 按需读取（技术方案 2026-10-25-run-trace-content-and-prompt §5.7 /
  * 2026-10-22-run-trace-deep-dive 决策 9 的防膨胀口径），否则每页列表与每次开轨迹面板都会
@@ -41,7 +41,7 @@ export interface LlmCallRow {
   firstTokenMs?: number | null;
   durationMs?: number | null;
   retryCount?: number | null;
-  /** 请求构成采集（V171）：系统提示词原文（截断带标记）；历史行 / 无 system 消息为 NULL。 */
+  /** 请求构成采集（V172）：系统提示词原文（截断带标记）；历史行 / 无 system 消息为 NULL。 */
   systemPrompt?: string | null;
   /** 请求的工具名清单（JSON 字符串数组）；历史行 / 无工具为 NULL。 */
   toolsJson?: string | null;
