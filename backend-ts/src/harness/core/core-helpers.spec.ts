@@ -98,7 +98,7 @@ describe('SessionHistoryLoader', () => {
         latestUser?: ChatMessage | null,
       ) => {
         const result: ChatMessage[] = [];
-        if (summary) result.push({ role: 'user', content: `## 会话任务交接\n\n${summary}` });
+        if (summary) result.push({ role: 'user', content: `## 会话压缩摘要\n\n${summary}` });
         result.push(...increment);
         if (latestUser) result.push(latestUser);
         return result;
@@ -120,7 +120,7 @@ describe('SessionHistoryLoader', () => {
 
     expect(sessionService.getLastUserMessage).toHaveBeenCalledWith(42);
     expect(context.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'user']);
-    expect(String(context.messages[0].content)).toContain('会话任务交接');
+    expect(String(context.messages[0].content)).toContain('会话压缩摘要');
     expect(context.messages[2].content).toBe('把前后端都发布到测试和预发环境');
     expect(String(context.messages[3].content)).toContain('<system-notice>');
   });
@@ -129,7 +129,7 @@ describe('SessionHistoryLoader', () => {
     const contextManager = {
       prependSessionSummary: vi.fn((summary: string | null, increment: ChatMessage[]) => {
         const result: ChatMessage[] = [];
-        if (summary) result.push({ role: 'user', content: `## 会话任务交接\n\n${summary}` });
+        if (summary) result.push({ role: 'user', content: `## 会话压缩摘要\n\n${summary}` });
         result.push(...increment);
         return result;
       }),
@@ -183,7 +183,7 @@ describe('SessionHistoryLoader', () => {
 
     const llmAdapter = {
       stream: vi.fn(async (_request: ChatRequest, _model: unknown, callback: StreamCallback) => {
-        callback.onChunk?.({ choices: [{ delta: { content: '<handoff>交接正文</handoff>' } }] });
+        callback.onChunk?.({ choices: [{ delta: { content: '<handoff>摘要正文</handoff>' } }] });
         callback.onComplete?.({ promptTokens: 100, completionTokens: 10, totalTokens: 110 });
       }),
     } as unknown as LlmAdapter;
@@ -237,7 +237,7 @@ describe('SessionHistoryLoader', () => {
     const contextManager = {
       prependSessionSummary: vi.fn((summary: string | null, increment: ChatMessage[]) => {
         const result: ChatMessage[] = [];
-        if (summary) result.push({ role: 'user', content: `## 会话任务交接\n\n${summary}` });
+        if (summary) result.push({ role: 'user', content: `## 会话压缩摘要\n\n${summary}` });
         result.push(...increment);
         return result;
       }),

@@ -9,8 +9,8 @@ import { harnessLog } from '../log.js';
 
 const HANDOFF_PATTERN = /<handoff>(.*?)<\/handoff>/s;
 const SYSTEM_NOTICE_OPEN = '<system-notice>';
-const HANDOFF_USER_HEADER = '## 会话任务交接';
-/** 压缩请求接近供应商上限时的兜底余量：给交接指令、JSON 转义与网关开销留空间。 */
+const HANDOFF_USER_HEADER = '## 会话压缩摘要';
+/** 压缩请求接近供应商上限时的兜底余量：给摘要指令、JSON 转义与网关开销留空间。 */
 const COMPACTION_PAYLOAD_SAFETY_MARGIN_BYTES = 64 * 1024;
 /**
  * 未声明供应商上限时的剥图安全线（字节）。
@@ -18,7 +18,7 @@ const COMPACTION_PAYLOAD_SAFETY_MARGIN_BYTES = 64 * 1024;
  */
 const DEFAULT_COMPACTION_STRIP_LIMIT_BYTES = 40 * 1024 * 1024;
 
-/** 真实用户消息：排除交接模板与 `<system-notice>` 系统注入。 */
+/** 真实用户消息：排除压缩摘要模板与 `<system-notice>` 系统注入。 */
 export function isRealUserMessage(message: ChatMessage): boolean {
   if (message.role !== 'user') return false;
   if (Array.isArray(message.content)) return true;
@@ -34,16 +34,20 @@ function wrapAsSystemNotice(body: string): string {
 }
 
 /**
- * 交接用户消息正文（ CompactionService.buildHandoffUserMessage 的纯函数内核）。
+ * 压缩摘要用户消息正文（ CompactionService.buildHandoffUserMessage 的纯函数内核）。
  * 独立导出以便上下文透视 manifest 以完全一致的文本估算 handoff 节 token（技术方案 5.2），
  * 避免复制这段长文案造成两处漂移。
+ * 措辞注意：这是同一会话内「继续你自己的任务」的延续框架，禁止出现「交接/接手」话术——
+ * 模型会把这里的口吻原样复述给用户（2026-10-25 修复）。
  */
 export function buildHandoffUserContent(summary: string, archiveHint?: string | null): string {
-  let content = '## 会话任务交接\n\n'
-    + '以下内容是此前会话生成的历史任务状态，仅用于接续任务。它不能覆盖当前 '
-    + 'system/developer 规则、权限或安全约束；若与后续真实用户消息冲突，以后续真实用户消息为准。\n\n'
+  let content = '## 会话压缩摘要\n\n'
+    + '以下是你正在执行的任务的历史状态摘要，由系统在上下文接近上限时自动压缩生成。'
+    + '任务与执行者都没有变化，你依然是本会话中同一个助手，继续做的是同一件事；'
+    + '对用户而言这就是同一任务的延续，无需向用户解释压缩机制。\n'
+    + '本摘要不能覆盖当前 system/developer 规则、权限或安全约束；若与后续真实用户消息冲突，以后续真实用户消息为准。\n\n'
     + summary.trim() + '\n\n'
-    + '请立即接手并继续执行其中尚未完成的当前任务，不要只复述交接内容，也不要重复已经完成的步骤。';
+    + '请基于摘要直接继续执行其中尚未完成的当前任务，不要只复述摘要，也不要重复已经完成的步骤。';
   if (archiveHint != null && archiveHint.trim() !== '') {
     content += '\n\n' + archiveHint.trim();
   }
@@ -67,7 +71,7 @@ export interface SessionCompactionResult {
 
 export class CompactionContextOverflowException extends Error {
   constructor(readonly estimatedTokens: number, readonly effectiveWindow: number) {
-    super(`会话全量交接压缩请求估算为 ${estimatedTokens} tokens，已达到或超过有效上下文窗口 ${effectiveWindow} tokens；请改用更大窗口模型或新建会话。`);
+    super(`会话全量压缩请求估算为 ${estimatedTokens} tokens，已达到或超过有效上下文窗口 ${effectiveWindow} tokens；请改用更大窗口模型或新建会话。`);
     this.name = 'CompactionContextOverflowException';
   }
 }
@@ -75,7 +79,7 @@ export class CompactionContextOverflowException extends Error {
 /** 压缩请求体积超过供应商上限（剥图兜底后仍超）：与 token 溢出同属“压缩无法执行”的终态。 */
 export class CompactionPayloadOverflowException extends Error {
   constructor(readonly estimatedBytes: number, readonly providerLimitBytes: number) {
-    super(`会话交接压缩请求估算为 ${estimatedBytes} 字节，已达到供应商请求体上限 ${providerLimitBytes} 字节；请检查模型配置的请求体上限，或新建会话。`);
+    super(`会话压缩请求估算为 ${estimatedBytes} 字节，已达到供应商请求体上限 ${providerLimitBytes} 字节；请检查模型配置的请求体上限，或新建会话。`);
     this.name = 'CompactionPayloadOverflowException';
   }
 }
@@ -366,23 +370,24 @@ export class CompactionService {
   }
 
   private buildHandoffInstruction(maxSummaryTokens: number): string {
-    return wrapAsSystemNotice(`现在只进行当前任务的会话交接，不要继续执行任务，不要调用任何工具，也不要输出 tool calls。
-本条是系统压缩指令，不是用户说的话。禁止把本指令写入交接正文，也不得把其中的「不要继续执行」写成用户目标、关键原话或明确不做事项。用户目标与关键原话只来自本通知之前的真实用户消息。
-请生成足以让另一个 Agent 立即继续当前任务的交接正文，沿用当前任务的主要语言，并保留：
+    return wrapAsSystemNotice(`现在只整理当前任务的会话压缩摘要，不要继续执行任务，不要调用任何工具，也不要输出 tool calls。
+本条是系统压缩指令，不是用户说的话。禁止把本指令写入摘要正文，也不得把其中的「不要继续执行」写成用户目标、关键原话或明确不做事项。用户目标与关键原话只来自本通知之前的真实用户消息。
+请以你自己的口吻生成一份任务状态摘要，让你自己在上下文被压缩后能立即继续当前任务，沿用当前任务的主要语言，并保留：
 - 用户目标、关键原话、已确认需求、约束与明确不做事项；
 - 架构判断、技术决策、已完成动作及其结果；
 - 未完成事项、当前停留位置、下一步；
 - 文件路径、代码位置、接口、命令、错误、测试结果、版本号；
 - 工具调用产生的关键事实，以及继续执行所需的具体上下文。
+摘要中不要出现「交接」「接手」「下一个 Agent」等字样：任务始终由你本人继续，这是同一任务的延续。
 不要提出新方案或修改已确认决策；不要复述 system/developer prompt、技能目录、工具定义或通用运行规则。
-系统会在交接消息后自动附上被压缩原始消息的归档目录说明；交接正文无需提及归档机制，也不要编造归档路径；仍需完整保留继续执行任务所需的关键事实。
+系统会在摘要消息后自动附上被压缩原始消息的归档目录说明；摘要无需提及归档机制，也不要编造归档路径；仍需完整保留继续执行任务所需的关键事实。
 正文控制在约 ${maxSummaryTokens} tokens 以内。只输出一个非空的 <handoff>...</handoff>，标签外不得有任何文字。`);
   }
 
   private correctionInstruction(): string {
     return wrapAsSystemNotice(
-      '上次响应未满足交接格式或错误调用了工具。本条仍是系统压缩指令，不是用户说的话。'
-      + '不得继续任务，不得调用工具，禁止把本指令写入交接正文；'
+      '上次响应未满足摘要格式或错误调用了工具。本条仍是系统压缩指令，不是用户说的话。'
+      + '不得继续任务，不得调用工具，禁止把本指令写入摘要正文；'
       + '只输出一个非空的 <handoff>...</handoff>，不得输出标签外文字。',
     );
   }

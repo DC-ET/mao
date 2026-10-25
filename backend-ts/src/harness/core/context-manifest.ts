@@ -3,7 +3,7 @@
  * 事件推送，并落在会话上供刷新后回放。只存当次请求的快照，禁止按当前消息事后重建（决策 1）。
  */
 
-/** 系统提示 / 消息 / 交接摘要的单个分节统计。tokens 为 TokenEstimator 字节估算口径。 */
+/** 系统提示 / 消息 / 压缩摘要的单个分节统计。tokens 为 TokenEstimator 字节估算口径。 */
 export interface ContextSectionStat {
   key: string;
   label: string;

@@ -7,7 +7,7 @@ export interface CapacitySection {
 
 /**
  * 构成明细按字节估算的比例，分摊到实际容量上。
- * 容量用模型真实占用，不改小去迁就估算。交接摘要已含在会话消息中，不参与合计。
+ * 容量用模型真实占用，不改小去迁就估算。压缩摘要已含在会话消息中，不参与合计。
  * 四舍五入的余数补给最大的一节，参与合计的分节之和严格等于容量。
  */
 export function scaleSectionsToCapacity<T extends CapacitySection>(sections: T[], capacity: number): T[] {

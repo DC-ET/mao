@@ -3,7 +3,7 @@ import type { LlmModelConfig } from '../llm/chat-request.js';
 /** 压缩触发原因（`manual` 只用于事件/日志标注，不由 shouldTrigger 返回）。 */
 export type CompactionTriggerReason = 'tokens' | 'payload' | 'both';
 
-/** 供应商请求体上限缺省时，触发阈值取上限的 80%（留 20% 给交接指令与 JSON 转义）。 */
+/** 供应商请求体上限缺省时，触发阈值取上限的 80%（留 20% 给摘要指令与 JSON 转义）。 */
 const PROVIDER_LIMIT_TRIGGER_RATIO = 0.8;
 
 export class CompactionConfig {
