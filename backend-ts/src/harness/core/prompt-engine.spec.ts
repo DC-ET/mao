@@ -88,6 +88,11 @@ describe('PromptEngine', () => {
     expect(system).toContain('CLOUD 云端模式');
     expect(system).toContain('可用技能');
     expect(system).toContain('**java**');
+    // 技能白名单声明（防跨租户误用）：正面清单 + 边界 + 原因 + 替代出口，且目录项只留文件路径
+    expect(system).toContain('你只能使用下方明确列出的技能');
+    expect(system).toContain('由用户决定是否调整配置');
+    expect(system).toContain('\n  文件：`');
+    expect(system).not.toContain('\n  目录：`');
     expect(system).toContain('任务管理');
     expect(system).toContain('子代理委派');
     expect(system).toContain('default');

@@ -404,6 +404,12 @@ export class PromptEngine {
         text += '以下技能可用。每个技能都是一份知识文档，用于指导你在特定场景下高效使用工具。\n';
         text += '技能副本位于会话运行时目录（不在用户项目目录内）。\n';
         text += '如需阅读某个技能的完整内容，请使用 `read_file` 工具读取下方列出的文件路径。\n\n';
+        // 技能白名单是提示层约束（执行层不设防），声明须带原因与替代出口，缺任一模型遵守率明显下降
+        text += '你只能使用下方明确列出的技能：不要为了寻找更多技能而列举或搜索文件系统'
+          + '（如搜索 SKILL.md、列出技能目录的父目录），也不要使用从其他途径得知的技能名'
+          + '——环境中还存在未对你开放的技能（可能属于其他租户），误用会错误修改他人数据。\n'
+          + '如果任务需要某个未列出的技能，请直接告知用户该技能未对你开放，由用户决定是否调整配置；'
+          + '不要自行寻找替代或绕过。\n\n';
         text += catalog + '\n\n';
         sections.push({ key: 'skills', label: '技能', text, count: skillNames.length });
       }
@@ -609,15 +615,13 @@ export class PromptEngine {
       if (doc?.description) description = doc.description;
       sb += `- **${name}**：${description}`;
       const localFolderName = localUnsyncedFolders.get(name);
+      // 只给 SKILL.md 文件路径，不单独列目录行：减少技能目录布局暴露（目录可由文件路径一步推出）
       if (localFolderName) {
-        sb += `\n  目录：\`${this.runtimeDataResolver.formatLocalUnsyncedSkillsDir(localFolderName)}\``;
         sb += `\n  文件：\`${this.runtimeDataResolver.formatLocalUnsyncedSkillsPath(localFolderName)}\``;
         sb += '\n  （本地未同步：该技能仅存在于用户本地电脑，仅可用于当前本地任务；若需在云端模式任务中使用，用户需先在技能管理中上传）';
       } else if (isLocal && sessionId != null) {
-        sb += `\n  目录：\`${this.runtimeDataResolver.formatLocalSkillsDir(sessionId, name)}\``;
         sb += `\n  文件：\`${this.runtimeDataResolver.formatLocalSkillsPath(sessionId, name)}\``;
       } else if (userId != null && sessionId != null) {
-        sb += `\n  目录：\`${this.runtimeDataResolver.formatCloudSkillsDir(userId, sessionId, name)}\``;
         sb += `\n  文件：\`${this.runtimeDataResolver.formatCloudSkillsPath(userId, sessionId, name)}\``;
       }
       sb += '\n';
