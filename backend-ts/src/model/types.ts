@@ -66,6 +66,8 @@ export interface LlmModelRepository {
   clearDefaultFlag(): Promise<void>;
   /** 除 id 外启用中的 text 模型数（与 findDefault 的 model_type = 'text' 口径一致）。 */
   countActiveTextExcept(id: number): Promise<number>;
+  /** 启用且配置了 API Key 的 text 模型数（readiness 就绪判定，口径同 findDefault）。 */
+  countEnabledWithApiKey(): Promise<number>;
 }
 
 export interface SessionModelRepository {

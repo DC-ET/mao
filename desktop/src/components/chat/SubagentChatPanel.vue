@@ -49,10 +49,11 @@
 
     <div class="readonly-footer">
       <ExecutionErrorBanner
-      :message="executionError"
-      :can-retry="!sending && !retrying"
-      @retry="handleRetryExecution"
-    />
+        :message="executionError"
+        :can-retry="!sending && !retrying"
+        :session-id="sid"
+        @retry="handleRetryExecution"
+      />
       <p class="readonly-hint">子代理由主会话委派，不可在此追问或单独停止。可在主会话点击停止以取消。</p>
     </div>
 

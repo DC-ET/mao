@@ -154,6 +154,7 @@
       <ExecutionErrorBanner
         :message="executionError"
         :can-retry="!agentRunning"
+        :session-id="sessionId ?? ''"
         @retry="handleRetry"
       />
 
@@ -256,6 +257,7 @@ type SyncChatStateFn = (state: {
 }) => void
 const syncChatState = inject<SyncChatStateFn>('syncChatState')!
 const chatFocusInput = inject<Ref<(() => void) | null>>('chatFocusInput')!
+const chatPrefillInput = inject<Ref<((text: string) => void) | null> | null>('chatPrefillInput', null)
 const openSideTask = inject<
   ((contextMode?: SideTaskContextMode, fork?: { messageId: string; label: string }) => void) | undefined
 >('openSideTask', undefined)
@@ -353,6 +355,10 @@ watch(newTaskGitBranch, (val) => { gitBranch.value = val })
 
 // Provide focusInput to TaskView
 chatFocusInput.value = () => chatInputRef.value?.focusInput()
+// Provide prefill to TaskView（首启向导「开始任务」把示例文案填进新建态 Composer）
+if (chatPrefillInput) {
+  chatPrefillInput.value = (text: string) => chatInputRef.value?.insertText?.(text)
+}
 
 // Sync state to TaskView via non-reactive callback (called explicitly, not via watchers)
 function syncToTaskView() {

@@ -1,5 +1,7 @@
 import type { Db } from '../db/db.js';
 import type {
+  UserOnboardingPreference,
+  UserOnboardingPreferenceRepository,
   UserTaskPanelPreference,
   UserTaskPanelPreferenceRepository,
   UserWeixinPreference,
@@ -64,5 +66,25 @@ export class MysqlUserTaskPanelPreferenceRepository implements UserTaskPanelPref
       [row.groupOrder, row.collapsedGroups, row.groupAliases ?? '{}', expectedVersion + 1, row.userId, expectedVersion],
     );
     return result.affectedRows === 1;
+  }
+}
+
+export class MysqlUserOnboardingPreferenceRepository implements UserOnboardingPreferenceRepository {
+  constructor(private readonly db: Db) {}
+
+  findByUserId(userId: number): Promise<UserOnboardingPreference | null> {
+    return this.db.queryOne<UserOnboardingPreference>(
+      'SELECT * FROM user_onboarding_preference WHERE user_id = ?',
+      [userId],
+    );
+  }
+
+  async insert(row: UserOnboardingPreference): Promise<void> {
+    await this.db.insert('user_onboarding_preference', {
+      userId: row.userId,
+      completedAt: row.completedAt ?? null,
+      skipped: row.skipped ?? 0,
+      chosenAgentId: row.chosenAgentId ?? null,
+    });
   }
 }

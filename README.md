@@ -121,7 +121,7 @@ Electron LOCAL（本机目录与工具审批）：`cd desktop && npm run dev:ele
 1. 准备 Linux、Node 22+、Nginx、MySQL 8，克隆到 `/opt/mao`，创建 `/opt/mao-data`
 2. 构建 backend、admin、desktop，写好 `backend-ts/.env`（JWT、数据库、数据目录）
 3. 启动后端，配置 Nginx + HTTPS（桌面 `/`、管理后台 `/admin/`、API `/api/`）
-4. 登录管理后台，**立刻改掉默认密码**，再配真实模型 Key
+4. 登录管理后台，**立刻改掉默认密码**，再配真实模型 Key——顶栏的就绪横幅会逐项提醒这三步，全绿即就绪
 
 完整步骤与升级见 [deploy.md](skills/mao-cli/reference/deploy.md)，环境变量见 [config.md](skills/mao-cli/reference/config.md)。
 

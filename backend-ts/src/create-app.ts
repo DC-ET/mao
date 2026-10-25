@@ -56,6 +56,7 @@ import { runSettingsBootstrap } from './settings/settings-bootstrap.js';
 import { MysqlUserCommandRepository } from './command/command.repository.js';
 import { UserCommandService } from './command/command.service.js';
 import {
+  MysqlUserOnboardingPreferenceRepository,
   MysqlUserTaskPanelPreferenceRepository,
   MysqlUserWeixinPreferenceRepository,
 } from './preference/preference.repository.js';
@@ -449,6 +450,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   );
   const weixinPref = new UserWeixinPreferenceService(new MysqlUserWeixinPreferenceRepository(db));
   const taskPanelPref = new UserTaskPanelPreferenceService(new MysqlUserTaskPanelPreferenceRepository(db));
+  const onboardingPrefRepo = new MysqlUserOnboardingPreferenceRepository(db);
 
   const pathSandbox = new PathSandbox(cfg.app.harness.workspaceRoot);
   const runtimeRoot = cfg.app.harness.runtimeDir;
@@ -892,7 +894,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     modelService,
     settingService, activateContainerRuntime, runtimeModeResolver,
     commandService, commandRepo, skillLoader, skillSync,
-    weixinPref, taskPanelPref,
+    weixinPref, taskPanelPref, onboardingPrefRepo,
     restToolService,
     auditService,
     llmCallService,

@@ -193,6 +193,46 @@
 3. **组合关系**：没有词典，解析没有锚点；没有解析，学习没有「当时理解成什么」；没有学习，词典只能靠人猜。建议顺序：业务词典（先录推单/佣金/出货额）→ 模糊指令解析（P1 先做只读+写确认）→ 术语学习（先做事件与观测，再做候选审批）。
 4. **安全边界**：`推单` 这类写操作必须在解析卡与回答里显式标注，未确认不得执行；既有工具审批、权限、沙箱一律不绕过。三份都只存结构化术语/槽位/决策，不存用户原文。
 
+## 第十四批（2026-10-25）
+
+背景：第十一至十三批（共 9 件）连续三批全部驳回后，「补链路缺口」「执行形态」「长期学习」「业务语义」四条路均已探过且暂不推进。本批换轴：不再从既有链路找增量，而是把 Mao 从「自家五端的工作台」升级为「平台」——**对外协议**（任何 AI 客户端可用）、**向下扩边界**（任何机器可执行）、**向上放创造权**（任何用户可造 Agent）。三件互不依赖、分属三个域（协议端点 / 执行边界 / 用户侧资产），全部避开已否决方向（RAG / Evals / 多 Agent DAG / 计划门 / 出网边界 / 备份恢复 / 数据保留 / 模型容灾 / 检查点回滚 / 技能蒸馏 / 工作区模板 / 人工接管 / 模型对照台 / Git 工具链 / 任务模板 / 团队知识层 / 结构化卡片 / 执行中引导 / 批量任务 / 交付物中心 / 改进闭环 / 经验资产化 / 能力体检 / 业务词典三件套）与 README 贡献边界，且都建立在既有设施上（openapi 三件套、agent-cli local 执行栈与 WS 长连接、提示词版本 / 经验 / bundle）。
+
+**评审结果（2026-10-25）：三项均驳回，存档勿再评审。** 平台扩张方向（对外协议 / 执行边界 / 创造权下放）整体不采，下一批收回「让已经在用的人和团队用得更顺」，见第十五批。
+
+| 提案 | 文档 | 一句话 | 规模 |
+|---|---|---|---|
+| MCP Server 输出 | [2026-10-25-mcp-server-out.md](2026-10-25-mcp-server-out.md)（已否决，存档） | 新增 `/api/v1/mcp` Streamable HTTP 端点，把开启暴露的 Agent 映射为 MCP 工具（鉴权 / 排队 / 预算 / 流水全复用开放 API），Claude Desktop / Cursor 等任何 AI 客户端直接调团队 Agent | 中 |
+| 执行节点注册 | [2026-10-25-execution-nodes.md](2026-10-25-execution-nodes.md)（已否决，存档） | `mao-agent --register` 以节点凭据常驻连接，LOCAL 从「挂着桌面端的那台电脑」泛化为「我的任意机器」（公司工作站 / NAS / VPS），会话与定时任务绑定节点执行 | 中~大 |
+| 用户自建 Agent | [2026-10-25-user-created-agents.md](2026-10-25-user-created-agents.md)（已否决，存档） | 普通用户创建私有 Agent（模型可选池 + MCP/工具引用制 + 本人预算兜底），用顺了经 bundle 提交为团队 Agent——创造权下放，治理口子仍握在管理员 | 中 |
+
+排期注意（存档，不再执行）：
+
+1. **迁移编号（已作废，不占号）**：三件各需一个迁移（MCP 暴露列 / `execution_node` + `session.node_id` / agent 归属列），当前最新 V170；已否决不占号，按实际实施顺序顺延。
+2. **相邻收敛点**：MCP 输出只读 openapi 执行链路不动 `task-terminal.service.ts`；执行节点动 `streaming-ws-registry` / `streaming-ws-handler` 的路由维度，必须先补「node_id NULL 走现状」的回归护栏（`event-filter.ts` 注释记录的多端互扰场景是现成用例）；用户自建 Agent 的可见性过滤必须收口到 agent repository 单一方法，防读路径漏网。
+3. **三处同改清单**：用户自建 Agent 的收件箱新 kind `AGENT_PUBLISH_REQUEST` 按规范同改 `@mao/contracts` InboxKind、`backend-ts/src/inbox/types.ts`、桌面抽屉图标与偏好；MCP 输出不新增工具（不触 `tool-result-summarizer.ts` / `toolDisplay.ts`），但 call-log source 扩 `MCP` 需同步调用中心筛选。
+4. **安全评审**：MCP 输出（新对外协议端点）与执行节点（节点凭据 = 在用户机器上执行命令）两件各需一次安全评审，不合并。
+
+## 第十五批（2026-10-25）
+
+背景：第十四批（平台化三件：MCP 输出 / 执行节点 / 用户自建 Agent）当日驳回后，方向收回「**让已经在用的人和团队用得更顺**」。本批从日常使用的三个断点入手，共同主题是「**焊平断点**」：**配置断点**（定时任务早就能在对话里一句话建好，哨兵还得切去设置页抄参数——同一页面下两件事能力不对称）、**人员断点**（会话 / 定时任务 / 哨兵全部以人为锚，人休假离职时没有任何交接机制，磨合好的会话上下文是最不可交接的资产）、**上手断点**（自托管的流失发生在部署后的前 10 分钟：默认密码没改、模型 Key 没配、不知道让 Agent 干什么，全无机制兜底）。三件互不依赖、全部零 / 低迁移、不碰执行内核，均避开已否决方向与 README 贡献边界。
+
+**评审结果（2026-10-25）：哨兵对话内配置、会话移交驳回（存档勿再评审）；首次成功体验方向认可，已细化技术方案待评审**，见 [../plan/2026-10-25-first-run-onboarding-technical-design.md](../plan/2026-10-25-first-run-onboarding-technical-design.md)（含 8 项待确认决策）。
+
+| 提案 | 文档 | 一句话 | 规模 |
+|---|---|---|---|
+| 信号哨兵对话内配置 | [2026-10-25-signal-watcher-tools.md](2026-10-25-signal-watcher-tools.md)（已否决，存档） | 补齐 `create/list/update/delete_signal_watcher` 工具组（与定时任务工具组对称，零迁移零服务端改动），「盯住这个接口变了叫我」从一句配置教程变成一句话当场建好 | 小~中 |
+| 会话移交 | [2026-10-25-session-handover.md](2026-10-25-session-handover.md)（已否决，存档） | 终态会话整体移交（消息历史 + 绑定的定时任务 / 哨兵 + 边路记录）给同实例另一用户，双向确认 + 审计，人员变动不断链 | 小~中 |
+| 首次成功体验 | [2026-10-25-first-run-onboarding.md](2026-10-25-first-run-onboarding.md)（**已细化，技术方案待评审**：[../plan/2026-10-25-first-run-onboarding-technical-design.md](../plan/2026-10-25-first-run-onboarding-technical-design.md)；V171 一表，readiness 只读端点 + admin 全局横幅 + desktop 三步向导 + 入门模板） | 管理员三步就绪清单（改密 / 配模型 / 建 Agent，全可直跳）+ 用户三步向导（选 Agent / 边界图解 / 发第一条示例任务）+ 入门 Agent 模板，把激活漏斗最大的洞补上 | 小~中 |
+
+排期注意（1、2 已否决，条目作废；以下仅剩第 3 件）：
+
+1. **迁移编号**：`V171__user_onboarding_preference.sql`（一表）；存量用户免打扰走运行时判定（无会话历史且无 preference 记录才弹向导），不回填。
+2. **契约**：`ReadinessVO` 下沉 `@mao/contracts`（desktop + admin 双端消费）。
+3. **相邻收敛点**：纯增量（一个只读端点 + 一个幂等写 + 覆盖层组件），不动 router、登录守卫、`task-terminal.service.ts`；向导覆盖层需补「不影响 CenterTabs 冷启动还原」断言。
+4. **文档同步**：CHANGELOG 三节（backend-ts / admin / 前端）+ README「怎么用」+ install.md / deploy.md 上线检查与产品内清单互相指向。
+
+
+
 ## 已评估、明确不做
 
 以下各项已复审定案，**不再重启、不再提案**（存档文档已标否决，勿再评审）：
@@ -220,6 +260,11 @@
 - **经验资产化**：2026-10-24 评审：不采用（同上，方向校准为业务语义理解）。存档：[2026-10-24-experience-lifecycle.md](2026-10-24-experience-lifecycle.md)。
 - **能力体检**：2026-10-24 评审：不采用（同上，方向校准为业务语义理解）。存档：[2026-10-24-capability-health.md](2026-10-24-capability-health.md)。
 - **业务词典 / 模糊指令解析 / 术语学习**：2026-10-24 评审：三项均驳回，本期不进入实施（业务语义理解方向值得继续深思，但设计尚未定稿）。存档：[2026-10-24-business-glossary.md](2026-10-24-business-glossary.md)、[2026-10-24-intent-resolution.md](2026-10-24-intent-resolution.md)、[2026-10-24-term-learning.md](2026-10-24-term-learning.md)。
+- **MCP Server 输出（Agent 暴露为 MCP 工具）**：2026-10-25 评审：不采用（平台扩张方向整体不采）。存档：[2026-10-25-mcp-server-out.md](2026-10-25-mcp-server-out.md)。
+- **执行节点注册（LOCAL 多机泛化）**：2026-10-25 评审：不采用（同上）。存档：[2026-10-25-execution-nodes.md](2026-10-25-execution-nodes.md)。
+- **用户自建 Agent（创造权下放）**：2026-10-25 评审：不采用（同上）。存档：[2026-10-25-user-created-agents.md](2026-10-25-user-created-agents.md)。
+- **信号哨兵对话内配置（watcher 工具组）**：2026-10-25 评审：不采用。存档：[2026-10-25-signal-watcher-tools.md](2026-10-25-signal-watcher-tools.md)。
+- **会话移交（人员变动的会话交接）**：2026-10-25 评审：不采用。存档：[2026-10-25-session-handover.md](2026-10-25-session-handover.md)。
 
 ## 已排除的方向（与产品定位或约束冲突）
 

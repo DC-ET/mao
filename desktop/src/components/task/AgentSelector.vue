@@ -35,7 +35,7 @@
           <span>加载失败</span>
           <button class="retry-btn" type="button" @click.stop="agentStore.fetchAgents()">重试</button>
         </div>
-        <div v-else-if="filteredAgents.length === 0" class="empty-agents">暂无可用智能体</div>
+        <div v-else-if="filteredAgents.length === 0" class="empty-agents">{{ emptyAgentsHint }}</div>
       </div>
     </div>
   </div>
@@ -45,6 +45,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { ArrowDown } from '@element-plus/icons-vue'
 import { useAgentStore, type Agent } from '../../stores/agent'
+import { useReadinessStore } from '../../stores/readiness'
 import { resolveAvatarUrl } from '../../utils/avatar'
 
 const props = defineProps<{
@@ -56,7 +57,15 @@ const emit = defineEmits<{
 }>()
 
 const agentStore = useAgentStore()
+const readinessStore = useReadinessStore()
 const collapsed = ref(false)
+
+/** 空态按根因分流（首次成功体验）：模型未配时给出明确指引而非笼统的「暂无」。 */
+const emptyAgentsHint = computed(() => {
+  const r = readinessStore.readiness
+  if (readinessStore.loaded && r != null && r.modelsConfigured === 0) return '实例尚未配置模型，请联系管理员'
+  return '暂无可用智能体'
+})
 
 const filteredAgents = computed(() => agentStore.agents)
 
