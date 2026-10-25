@@ -1,5 +1,13 @@
 # 代码审查报告：feature/first-run-onboarding（首次成功体验）
 
+> **第二轮复审结论（2026-10-25，HEAD=eeee8bab）**：上述 3 个确认 bug 与 4 条低风险观察已全部修复并验证通过——
+> Bug 1/2 用本报告附录 A/B 的原始复现用例重跑均转为通过（新建态与非新建态（任务索引竞态）两条路径的 `newTaskAgentId` 均正确落值；「下一步」按钮未选择时已禁用；向导空列表区分加载中/没有可选）；
+> Bug 3 冲突标记已清除（`JSON.parse` 通过）；`countEnabledWithApiKey` 已加 `model_type='text'`（V063 该列 NOT NULL DEFAULT 'text'，无 NULL 口径风险）；`completeOnboarding` 已加撞主键重查兜底并附并发回归用例（readiness spec 13/13 通过）；admin 模板下拉失败显示「暂无可用模板」。
+> 回归：backend-ts 4975 测试、desktop 840 单测全绿；desktop/admin `npm run build` 均通过。**第二轮未发现新 bug。**
+> 残留微瑕疵（不构成 bug，仅记录）：admin 模板列表一次加载失败后不再自动重试（重新进入页面可重试）；向导内 Agent 列表拉取失败与「确实没有」共用同一条提示文案（仍可跳过引导）。
+> 以下为第一轮报告原文（其中「当前代码下断言失败」等表述为第一轮时点状态）。
+
+
 - 审查对象：`feature/first-run-onboarding` 相对 `main` 的变更（ee79ae76 + 928d1415），涉及 backend-ts、admin、desktop、shared/contracts 与文档
 - 审查日期：2026-10-25
 - 审查方式：全量 diff 走读 + 关键链路代码追踪；每个确认的 bug 均以可运行的测试用例复现（临时 spec，验证后未留在工作区，内容附于下文）
