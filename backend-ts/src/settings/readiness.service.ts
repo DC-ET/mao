@@ -43,16 +43,23 @@ export class ReadinessService {
   /**
    * 向导完成 / 跳过落库。幂等：已有记录（任何状态）不覆盖——
    * 完成语义一旦成立就不可回退，避免多端 / 重复提交把已完成用户拉回向导。
+   * 并发双击兜底：user_id 是主键，撞唯一键时重查一次，有记录即视为已完成。
    */
   async completeOnboarding(userId: number, input: { chosenAgentId?: number | null; skipped?: boolean }): Promise<void> {
     const existing = await this.deps.onboardingPreference.findByUserId(userId);
     if (existing != null) return;
-    await this.deps.onboardingPreference.insert({
-      userId,
-      completedAt: input.skipped ? null : new Date(),
-      skipped: input.skipped ? 1 : 0,
-      chosenAgentId: input.chosenAgentId ?? null,
-    });
+    try {
+      await this.deps.onboardingPreference.insert({
+        userId,
+        completedAt: input.skipped ? null : new Date(),
+        skipped: input.skipped ? 1 : 0,
+        chosenAgentId: input.chosenAgentId ?? null,
+      });
+    } catch (error) {
+      const after = await this.deps.onboardingPreference.findByUserId(userId).catch(() => null);
+      if (after != null) return;
+      throw error;
+    }
   }
 
   private async isDefaultAdminPasswordChanged(): Promise<boolean> {

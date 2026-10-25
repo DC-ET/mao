@@ -15,7 +15,9 @@
                   <el-dropdown-item v-for="tpl in templates" :key="tpl.slug" :command="tpl">
                     {{ tpl.name }} — {{ tpl.description }}
                   </el-dropdown-item>
-                  <el-dropdown-item v-if="templates.length === 0" disabled>加载中…</el-dropdown-item>
+                  <el-dropdown-item v-if="templates.length === 0" disabled>
+                    {{ templatesLoaded ? '暂无可用模板' : '加载中…' }}
+                  </el-dropdown-item>
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
@@ -399,15 +401,18 @@ interface AgentTemplateItem {
 }
 
 const templates = ref<AgentTemplateItem[]>([])
+const templatesLoaded = ref(false)
 
 /** 下拉首次展开时懒加载模板（GET /v1/agent-templates，登录即可，无需权限码）。 */
 async function loadTemplatesOnce(open: boolean) {
-  if (!open || templates.value.length > 0) return
+  if (!open || templatesLoaded.value) return
   try {
     const { data } = await api.get('/agent-templates')
     templates.value = (data ?? []) as AgentTemplateItem[]
+    templatesLoaded.value = true
   } catch {
-    templates.value = []
+    // 失败也置已加载：下拉显示「暂无可用模板」，避免永远停在「加载中…」
+    templatesLoaded.value = true
   }
 }
 

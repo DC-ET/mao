@@ -148,4 +148,23 @@ describe('readiness routes', () => {
     await app.inject({ method: 'PUT', url: '/api/v1/readiness/onboarding', payload: { chosenAgentId: 'abc' } });
     expect(onboardingRepo.rows.get(7)?.chosenAgentId).toBeNull();
   });
+
+  it('completeOnboarding 并发双击撞主键：重查有记录则吞掉冲突不抛错；仍无记录则原样抛出', async () => {
+    const { service, onboardingRepo } = fakeService();
+    // 第一次调用：insert 抛主键冲突，但并发写方的行已可见 → 幂等成功
+    onboardingRepo.insert.mockImplementationOnce(async (row: UserOnboardingPreference) => {
+      onboardingRepo.rows.set(row.userId, { ...row, skipped: 0, chosenAgentId: 999 });
+      throw new Error('Duplicate entry');
+    });
+    await expect(service.completeOnboarding(7, { chosenAgentId: 5 })).resolves.toBeUndefined();
+    expect(onboardingRepo.rows.get(7)?.chosenAgentId).toBe(999);
+
+    // 第二次调用：insert 抛错且重查仍无记录 → 原样抛出
+    onboardingRepo.insert.mockImplementationOnce(async () => {
+      throw new Error('Duplicate entry');
+    });
+    onboardingRepo.rows.delete(7);
+    onboardingRepo.findByUserId.mockImplementation(async () => null);
+    await expect(service.completeOnboarding(7, { chosenAgentId: 5 })).rejects.toThrow('Duplicate entry');
+  });
 });

@@ -79,6 +79,7 @@
     <OnboardingOverlay
       v-else-if="onboardingVisible"
       :agents="agentStore.agents"
+      :agents-loading="agentStore.loading"
       @complete="handleOnboardingComplete"
       @skip="handleOnboardingSkip"
     />
@@ -266,6 +267,11 @@ async function handleOnboardingSkip() {
 /** 向导结束后的起步路径：进新建态并预填示例文案（草稿机制 + 聚焦），发送仍由用户手点。 */
 async function startSampleTask(payload: { chosenAgentId: string | null; sampleText: string }) {
   const text = payload.sampleText.trim()
+  // 向导所选 Agent 必须落到 newTaskAgentId：首条消息发送以它为准（两条路径都要设，
+  // 已在新建态时尤其如此——挂载时 enterNewTaskMode 已把它预置成默认 Agent）
+  if (payload.chosenAgentId) {
+    newTaskAgentId.value = payload.chosenAgentId
+  }
   if (!isNewTaskMode.value) {
     // 先写草稿再进新建态：ChatInput 挂载时 restoreDraft('new') 自动带上
     if (text) {

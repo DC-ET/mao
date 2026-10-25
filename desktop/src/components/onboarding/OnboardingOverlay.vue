@@ -28,7 +28,9 @@
             <span class="agent-desc">{{ agent.description || 'AI Agent' }}</span>
           </button>
         </div>
-        <div v-if="agents.length === 0" class="agent-empty">智能体列表加载中，请稍候…</div>
+        <div v-if="agents.length === 0" class="agent-empty">
+          {{ agentsLoading ? '智能体列表加载中，请稍候…' : '没有可选的智能体：请让管理员创建 Agent 并开启「客户端可见」后重试' }}
+        </div>
       </section>
 
       <!-- 步骤 2：执行边界图解 -->
@@ -75,7 +77,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { api } from '../../api'
 import { resolveAvatarUrl } from '../../utils/avatar'
 import type { Agent } from '../../stores/agent'
@@ -83,6 +85,8 @@ import type { SuggestedQuestionVO } from '@mao/contracts'
 
 const props = defineProps<{
   agents: Agent[]
+  /** TaskView 挂载时正在拉取 Agent 列表：区分「加载中」与「真的没有」。 */
+  agentsLoading?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -97,7 +101,7 @@ const selectedAgentId = ref<string | null>(null)
 const suggestedQuestions = ref<string[]>([])
 const sampleText = ref('')
 
-const selectedAgent = () => props.agents.find((agent) => String(agent.id) === String(selectedAgentId.value)) ?? null
+const selectedAgent = computed(() => props.agents.find((agent) => String(agent.id) === String(selectedAgentId.value)) ?? null)
 
 function selectAgent(agent: Agent) {
   selectedAgentId.value = String(agent.id)
