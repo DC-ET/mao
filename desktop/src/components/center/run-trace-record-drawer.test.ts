@@ -313,17 +313,17 @@ describe('RunTraceRecordDrawer', () => {
     expect(flatText(root)).toContain('prompt:你是运维助手|tools:["read_file","shell"]')
   })
 
-  it('回复 tab 两种空态分开：时钟缺失 vs 未落库', async () => {
+  it('回复 tab 两种空态分开：时钟缺失 vs 未落库 / 编辑清理 / 中断', async () => {
     // 时钟缺失：call.created_at 为 null → 「暂无法定位」
     const { root } = await mountDrawerRef({ kind: 'call', llmCallId: 102 })
     expect(flatText(root)).toContain('该轮回复暂无法定位（本轮调用缺少时间戳）')
-    expect(flatText(root)).not.toContain('未落库')
+    expect(flatText(root)).not.toContain('不可见')
 
-    // 有时间戳但窗口内没有落库回复 → 「未落库（崩溃恢复 / 中断）」
+    // 有时间戳但窗口内没有落库回复（含编辑重发软删清理的场景）→ 合并空态文案
     cache.set('call:101', { kind: 'call', data: { ...callRecord, messages: [] } })
     const target = { value: { kind: 'call', llmCallId: 101 } as TraceDrawerTarget }
     const root2 = await mountDrawer(target)
-    expect(flatText(root2)).toContain('该轮回复未落库（崩溃恢复 / 中断）')
+    expect(flatText(root2)).toContain('该轮回复不可见（未落库 / 被编辑重发清理 / 执行中断）')
   })
 
   it('target 变化时重新拉取：轮次抽屉跳工具抽屉要换成工具记录并复位 tab', async () => {

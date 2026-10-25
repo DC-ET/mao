@@ -1,6 +1,20 @@
 import type { Db } from '../db/db.js';
 import { CANCELLED_SQL, NOT_CANCELLED_SQL } from '../common/llm-cancel.js';
 
+/**
+ * 轻列清单：除 system_prompt / tools_json（V171 请求构成采集，单行最坏 ~256K 字符）外的
+ * 全部业务列。列表（list）与轨迹窗口查询（selectBySessionWindow）只走轻列——大字段只随
+ * 记录详情的 selectById 按需读取（技术方案 2026-10-25-run-trace-content-and-prompt §5.7 /
+ * 2026-10-22-run-trace-deep-dive 决策 9 的防膨胀口径），否则每页列表与每次开轨迹面板都会
+ * 把全会话提示词全文拉进内存。db 层统一做 snake→camel 映射，无需逐列别名。
+ */
+const LLM_CALL_LIGHT_COLUMNS = [
+  'id', 'user_id', 'session_id', 'agent_id', 'model_id', 'model_name', 'provider', 'provider_model_id',
+  'scene', 'stream', 'effort', 'protocol', 'prompt_tokens', 'completion_tokens', 'cached_tokens',
+  'cache_creation_tokens', 'total_tokens', 'cost_micros', 'success', 'error_message',
+  'first_token_ms', 'duration_ms', 'retry_count', 'created_at',
+].join(', ');
+
 export interface LlmCallRow {
   id?: number;
   userId?: number | null;
@@ -237,7 +251,7 @@ export class LlmCallRepository {
       params,
     );
     const records = await this.db.query<LlmCallRow>(
-      `SELECT * FROM llm_call WHERE ${whereSql} ORDER BY id DESC LIMIT ? OFFSET ?`,
+      `SELECT ${LLM_CALL_LIGHT_COLUMNS} FROM llm_call WHERE ${whereSql} ORDER BY id DESC LIMIT ? OFFSET ?`,
       [...params, size, offset],
     );
     return { records, total: Number(totalRow?.c ?? 0) };
@@ -261,7 +275,7 @@ export class LlmCallRepository {
       params.push(endAtExclusive);
     }
     return this.db.query<LlmCallRow>(
-      `SELECT * FROM llm_call WHERE ${conditions.join(' AND ')} ORDER BY created_at ASC, id ASC`,
+      `SELECT ${LLM_CALL_LIGHT_COLUMNS} FROM llm_call WHERE ${conditions.join(' AND ')} ORDER BY created_at ASC, id ASC`,
       params,
     );
   }

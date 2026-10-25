@@ -436,3 +436,20 @@ describe('RunTraceRecordService.buildMessageRecord（技术方案 2026-10-25 §5
     expect(messageRepo.selectMessageById).not.toHaveBeenCalled();
   });
 });
+
+describe('RunTraceRecordService.buildToolRecord 请求构成走全行（评审 R1-1）', () => {
+  it('窗口查询是轻列后，配对仍经 selectById 取全行：system_prompt / tools_json 有值', async () => {
+    const { service, llmCallRepo } = makeService({
+      toolMessages: [toolMessage(3, '2026-10-22 10:00:04.300', 'tc1', '{"ok":true}')],
+      assistantMessages: [assistantMessage(2, '2026-10-22 10:00:04.900', [{ id: 'tc1', name: 'read_file', args: '{}' }])],
+      assistantToolCalls: [{ id: 2, createdAt: '2026-10-22 10:00:04.900', toolCalls: JSON.stringify([{ id: 'tc1', function: { name: 'read_file', arguments: '{}' } }]) }],
+      // 窗口 mock 返回的是轻列行（selectBySessionWindow 不带请求构成字段）
+      calls: [call()],
+    });
+    const record = await service.buildToolRecord(1, 'tc1');
+    expect(record.call?.llmCallId).toBe(100);
+    expect(record.call?.systemPrompt).toBeNull();
+    // 配对到 id 后必须经 selectById 补全行（mock 的 selectById 返回同一夹具行）
+    expect(llmCallRepo.selectById).toHaveBeenCalledWith(100);
+  });
+});

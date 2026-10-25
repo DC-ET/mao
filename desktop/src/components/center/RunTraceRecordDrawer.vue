@@ -275,11 +275,13 @@ function formatTokensLabel(tokens: number): string {
 
 /* ===== 轮次抽屉空态区分 ===== */
 
-/** 回复 tab 空态：调用行缺时间戳 → 无法定位；有时间戳但没有落库回复 → 崩溃恢复 / 中断。 */
+/** 回复 tab 空态：调用行缺时间戳 → 无法定位；有时间戳但没有落库回复 → 未落库 /
+ *  编辑重发清理（editMessageAndTruncate 软删旧 run 的回复，编辑前段轮次仍可点进抽屉）/
+ *  执行中断。窗口查询查不到软删行，三种原因前端不可区分，文案如实合并。 */
 const replyEmptyText = computed(() => {
   if (record.value?.kind !== 'call') return ''
   if (record.value.data.call?.createdAt == null) return '该轮回复暂无法定位（本轮调用缺少时间戳）'
-  return '该轮回复未落库（崩溃恢复 / 中断）'
+  return '该轮回复不可见（未落库 / 被编辑重发清理 / 执行中断）'
 })
 </script>
 

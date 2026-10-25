@@ -107,13 +107,18 @@ export class RunTraceRecordService {
   /**
    * 窗口内 scene = 'agent' 的最后一条调用；上界缺失即不配对（不猜）。
    * 下界刻意开放：见 buildToolRecord 的配对窗口注释。
+   * 窗口查询是轻列（system_prompt / tools_json 不在其中，防膨胀）：配对到 id 后按主键
+   * 取全行，工具抽屉的「请求构成」tab 才有数据；全行归属再校验一次，防越权。
    */
   private async findCall(sessionId: number, endAtExclusive: string | null): Promise<TraceCallMetaVO | null> {
     if (endAtExclusive == null) return null;
     const rows = await this.llmCallRepo.selectBySessionWindow(sessionId, null, endAtExclusive);
     const agents = rows.filter((row) => row.scene === 'agent');
     const last = agents.length > 0 ? agents[agents.length - 1]! : null;
-    return last != null ? toCallMeta(last) : null;
+    if (last?.id == null) return null;
+    const full = await this.llmCallRepo.selectById(last.id);
+    if (full == null || full.sessionId == null || full.sessionId !== sessionId) return null;
+    return toCallMeta(full);
   }
 
   /**

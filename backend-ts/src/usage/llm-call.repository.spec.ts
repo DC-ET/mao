@@ -178,3 +178,38 @@ describe('LlmCallRepository.selectById', () => {
     expect(emptyOne.mock.calls[0]?.[1]).toEqual([999]);
   });
 });
+
+describe('LlmCallRepository 大字段不泄入列表与窗口查询（技术方案 2026-10-25 §5.7 / 评审 R1-1）', () => {
+  function buildCapture() {
+    const query = vi.fn(async () => [] as Record<string, unknown>[]);
+    const queryOne = vi.fn(async () => null as Record<string, unknown> | null);
+    const repo = new LlmCallRepository({ query, queryOne } as never);
+    return { repo, query, queryOne };
+  }
+
+  it('list 只查轻列：SQL 不含 system_prompt / tools_json，不再 SELECT *', async () => {
+    const { repo, query } = buildCapture();
+    await repo.list(1, 20, { userId: 7 });
+    const [sql] = query.mock.calls[0] as [string, unknown[]];
+    expect(sql).not.toContain('SELECT *');
+    expect(sql).not.toContain('system_prompt');
+    expect(sql).not.toContain('tools_json');
+    expect(sql).toContain('created_at');
+  });
+
+  it('selectBySessionWindow 只查轻列：轨迹窗口不会把全会话提示词拉进内存', async () => {
+    const { repo, query } = buildCapture();
+    await repo.selectBySessionWindow(1, null, null);
+    const [sql] = query.mock.calls[0] as [string, unknown[]];
+    expect(sql).not.toContain('SELECT *');
+    expect(sql).not.toContain('system_prompt');
+    expect(sql).not.toContain('tools_json');
+  });
+
+  it('selectById 保留全列：记录详情的请求构成字段只有这条路出得来', async () => {
+    const { repo, queryOne } = buildCapture();
+    await repo.selectById(9);
+    const [sql] = queryOne.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain('SELECT *');
+  });
+});
