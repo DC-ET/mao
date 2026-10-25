@@ -92,6 +92,18 @@
             <span class="context-badge is-readonly">{{ `上下文 ${contextDisplay}` }}</span>
           </el-tooltip>
         </div>
+        <!-- 会话 ID：排障时向管理员提供精确会话；跟随当前展示对象（主会话 / 边路 / 子代理） -->
+        <el-tooltip
+          v-if="sessionId"
+          content="复制会话 ID，反馈问题时提供给管理员"
+          placement="top"
+          :show-after="300"
+        >
+          <button type="button" class="session-id-row" @click="copySessionId">
+            <span class="session-id-text">会话 #{{ sessionId }}</span>
+            <el-icon :size="12" class="session-id-copy-icon"><DocumentCopy /></el-icon>
+          </button>
+        </el-tooltip>
       </div>
 
       <div v-if="agentId || agentName" class="inspector-section agent-section">
@@ -909,6 +921,17 @@ function copyWorkspace() {
   }
 }
 
+/** 复制当前展示会话（主会话 / 边路 / 子代理跟随 Tab）的 ID，供用户反馈问题时提供给管理员 */
+async function copySessionId() {
+  if (!props.sessionId) return
+  const ok = await copyText(props.sessionId)
+  if (ok) {
+    ElMessage.success('会话 ID 已复制')
+  } else {
+    ElMessage.error('复制失败，请手动记录会话 ID')
+  }
+}
+
 function formatTokenCompact(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return '--'
   if (value < 1000) return `${Math.round(value)}`
@@ -1195,6 +1218,39 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   gap: 8px;
   margin-bottom: 8px;
   flex-wrap: wrap;
+}
+
+/* 会话 ID 行：整行可点复制（触屏无 hover，不能只靠悬浮按钮），小字弱化不抢标题 */
+.session-id-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 0 8px;
+  padding: 1px 4px 1px 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: var(--aw-text-caption);
+  font-family: inherit;
+  color: var(--aw-ink-muted-48);
+}
+
+.session-id-row:hover {
+  color: var(--aw-ink-muted-80);
+}
+
+.session-id-text {
+  font-variant-numeric: tabular-nums;
+}
+
+.session-id-copy-icon {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.session-id-row:hover .session-id-copy-icon,
+.session-id-row:focus-visible .session-id-copy-icon {
+  opacity: 1;
 }
 
 .task-workspace-row {

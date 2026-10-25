@@ -107,6 +107,7 @@
       <ExecutionErrorBanner
         :message="executionError"
         :can-retry="!sending && hasRealSession"
+        :session-id="realSessionId > 0 ? String(realSessionId) : ''"
         @retry="handleRetryExecution"
       />
 

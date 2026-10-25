@@ -14,20 +14,44 @@
     >
       重试
     </el-button>
+    <!-- 排障锚点：用户看到报错时最直觉的反馈入口，一键复制会话 ID 给管理员 -->
+    <el-button
+      v-if="sessionId"
+      class="copy-id-button"
+      size="small"
+      @click="copySessionId"
+    >
+      复制会话 ID
+    </el-button>
   </div>
 </template>
 
 <script setup lang="ts">
 import { WarningFilled } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
+import { copyText } from '../../utils/clipboard'
 
-defineProps<{
+const props = defineProps<{
   message: string | null
   canRetry?: boolean
+  /** 出错会话的 ID：有值才显示「复制会话 ID」按钮（新建未落库等无会话场景不显示） */
+  sessionId?: string
 }>()
 
 const emit = defineEmits<{
   retry: []
 }>()
+
+async function copySessionId() {
+  const sid = props.sessionId
+  if (!sid) return
+  const ok = await copyText(sid)
+  if (ok) {
+    ElMessage.success('会话 ID 已复制')
+  } else {
+    ElMessage.error('复制失败，请手动记录会话 ID')
+  }
+}
 </script>
 
 <style scoped>
@@ -72,5 +96,11 @@ const emit = defineEmits<{
 
 .retry-button {
   margin-top: 10px;
+}
+
+/* 单独出现时自身撑开上边距；与重试并排时交给 el-button 相邻规则，避免叠加缩进 */
+.copy-id-button {
+  margin-top: 10px;
+  margin-left: 8px;
 }
 </style>

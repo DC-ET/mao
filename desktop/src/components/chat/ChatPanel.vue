@@ -154,6 +154,7 @@
       <ExecutionErrorBanner
         :message="executionError"
         :can-retry="!agentRunning"
+        :session-id="sessionId ?? ''"
         @retry="handleRetry"
       />
 

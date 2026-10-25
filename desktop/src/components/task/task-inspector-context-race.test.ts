@@ -3,7 +3,7 @@
 // 覆盖：摘要懒加载的迟到响应不得跨会话回填；记忆条数相同的会话切换仍要重拉 snippet；
 // 上下文入口从检查器页签改为任务信息区的徽标 + 详情抽屉（抽屉随之懒加载、切会话自动收起）；
 // 运行轨迹入口改为点任务状态徽标（不再有独立「轨迹」按钮；主会话 / 边路 / 子代理视图均可点，
-// 各自打开对应会话的轨迹）。
+// 各自打开对应会话的轨迹）；头部会话 ID 行（0.0.346）展示 + 点击复制 + 无会话不渲染。
 import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import * as Vue from 'vue'
@@ -63,6 +63,7 @@ vi.mock('../../stores/session', () => {
 vi.mock('../../composables/useStreamWS', () => ({
   useStreamWS: () => ({ compactNow: vi.fn(async () => true) }),
 }))
+vi.mock('../../utils/clipboard', () => ({ copyText: vi.fn(async () => true) }))
 vi.mock('../../composables/useGitStatus', () => ({
   useGitStatus: () => ({
     loading: ref(false), error: ref(null), status: ref(null), files: ref([]),
@@ -114,6 +115,8 @@ vi.mock('./GitChangeList.vue', () => ({ default: { render: () => null } }))
 vi.mock('../file-browser/FileTree.vue', () => ({ default: { render: () => null } }))
 
 import TaskInspector from './TaskInspector.vue'
+import { ElMessage } from 'element-plus'
+import { copyText } from '../../utils/clipboard'
 import type { ContextWindowInfo } from '../../types/chat'
 
 const descriptor = parse(readFileSync(new URL('./TaskInspector.vue', import.meta.url), 'utf8')).descriptor
@@ -271,6 +274,7 @@ function mountInspector(
     clickEnvVars: () => clickWhere(el => subtreeText(el).trim() === '环境变量', 'env vars entry'),
     clickStatusBadge: (label = '已完成') => clickWhere(el => subtreeText(el).includes(label), 'status badge'),
     clickSummaryToggle: () => clickWhere(el => String(el.props.class ?? '').includes('ctx-summary-toggle'), 'summary toggle'),
+    clickSessionId: () => clickWhere(el => subtreeText(el).includes('会话 #'), 'session id row'),
     buttonTexts: () => findAll(el => el.tag === 'button').map(el => subtreeText(el)),
     pageText: () => subtreeText(root),
   }
@@ -486,5 +490,46 @@ describe('TaskInspector 环境变量入口：工作区区块的行式按钮（0.
     m.clickEnvVars()
     await flush()
     expect(m.pageText()).toContain('ENV-DRAWER-OPEN:22:/ws')
+  })
+})
+
+describe('TaskInspector 会话 ID 行：展示与复制（0.0.346）', () => {
+  beforeEach(() => {
+    vi.mocked(copyText).mockClear()
+    vi.mocked(ElMessage.success).mockClear()
+    vi.mocked(ElMessage.error).mockClear()
+  })
+
+  it('头部显示「会话 #<id>」，点击整行复制该 ID 并提示成功', async () => {
+    const m = mountInspector([])
+    await flush()
+    expect(m.pageText()).toContain('会话 #11')
+
+    m.clickSessionId()
+    await flush()
+    expect(copyText).toHaveBeenCalledWith('11')
+    expect(ElMessage.success).toHaveBeenCalledWith('会话 ID 已复制')
+  })
+
+  it('边路 / 子代理视图同样渲染：跟随展示对象的 sessionId prop', async () => {
+    const m = mountInspector([], { viewType: 'subagent' })
+    await flush()
+    expect(m.pageText()).toContain('会话 #11')
+  })
+
+  it('复制失败降级提示错误，不弹成功', async () => {
+    vi.mocked(copyText).mockResolvedValueOnce(false)
+    const m = mountInspector([])
+    m.clickSessionId()
+    await flush()
+    expect(ElMessage.error).toHaveBeenCalledWith('复制失败，请手动记录会话 ID')
+    expect(ElMessage.success).not.toHaveBeenCalled()
+  })
+
+  it('新建态无会话 id 时不渲染该行，避免用户抄走无效 ID', async () => {
+    const m = mountInspector([])
+    m.sid.value = ''
+    await flush()
+    expect(m.pageText()).not.toContain('会话 #')
   })
 })
