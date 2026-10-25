@@ -1,7 +1,7 @@
 # 首次成功体验（就绪清单 + 首启向导）技术方案
 
 > 版本：v1.0（2026-10-25）
-> 状态：待技术评审（提案见 [../proposals/2026-10-25-first-run-onboarding.md](../proposals/2026-10-25-first-run-onboarding.md)；第十五批另两件已否决存档）
+> 状态：已实施（2026-10-25；§0 决策按「推荐」列落定，并经评审确认：向导为一次性体验、不设重进入口）（提案见 [../proposals/2026-10-25-first-run-onboarding.md](../proposals/2026-10-25-first-run-onboarding.md)；第十五批另两件已否决存档）
 
 ## 0. 待确认决策（评审逐条定）
 
