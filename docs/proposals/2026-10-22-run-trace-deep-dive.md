@@ -1,6 +1,6 @@
 # 提案：运行轨迹深度下钻（Run Trace Deep Dive）—— 借鉴 deepseek-harness Trajectory，把摘要看板升级为执行调试器
 
-- 状态：待评审（2026-10-22）
+- 状态：P1 已实施（2026-10-22，0.0.336/0.0.337：时间概览条带 / 记录详情抽屉 / 计时补全 / CSV provider 列，技术方案见 [docs/plan/2026-10-22-run-trace-deep-dive-technical-design.md](../plan/2026-10-22-run-trace-deep-dive-technical-design.md)）；剩余项中「消息内容下钻 + 请求构成记录」（§3.3 扩展与 §3.6）已出技术方案待实施：[docs/plan/2026-10-25-run-trace-content-and-prompt-technical-design.md](../plan/2026-10-25-run-trace-content-and-prompt-technical-design.md)，搜索（§3.4）与拖选聚焦仍待排期
 - 日期：2026-10-22
 - 提案总览：见 `docs/proposals/README.md`
 - 外部参照：[deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)（MIT）的 Trajectory 视图（`packages/client/ui-trajectory`，注册进对话视图环、与 Chat 平级的标签页）
