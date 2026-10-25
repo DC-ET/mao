@@ -77,6 +77,8 @@ function makeService(calls: LlmCallRow[], assistant: Message | null, tool: Messa
     selectToolMessageByCallId: vi.fn(async () => tool),
     selectAssistantByToolCallId: vi.fn(async () => assistant),
     selectAssistantToolCalls: vi.fn(async () => (assistant != null ? [assistant] : [])),
+    // 本轮回复窗口查询（技术方案 2026-10-25）：本文件只验证调用配对方向，回复恒为空
+    selectAssistantMessagesBetween: vi.fn(async () => []),
   } as unknown as MessageRepository;
   const llmCallRepo = {
     selectById: vi.fn(async (id: number) => calls.find((c) => c.id === id) ?? null),

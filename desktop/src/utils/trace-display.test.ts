@@ -12,6 +12,7 @@ import {
   runTimeNodes,
   runTimeWindow,
   timeBandGeometry,
+  messageContentSummary,
   type TimeBandNode,
 } from './trace-display'
 import type { RunTrace, TraceRound, TraceTool } from '../types/trace'
@@ -484,5 +485,55 @@ describe('timeBandGeometry', () => {
     const b = timeBandGeometry(node({ key: 'tool:b', kind: 'tool', startedAtMs: 2500, durationMs: 2000 }), window, 100)!
     expect(b.x).toBeGreaterThan(a.x)
     expect(b.x).toBeLessThan(a.x + a.width)
+  })
+})
+
+describe('messageContentSummary', () => {
+  it('普通文本原样返回，非多模态', () => {
+    expect(messageContentSummary('提交推送')).toEqual({ text: '提交推送', attachments: null, multimodal: false })
+  })
+
+  it('null / 空串返回空文本', () => {
+    expect(messageContentSummary(null)).toEqual({ text: '', attachments: null, multimodal: false })
+    expect(messageContentSummary('')).toEqual({ text: '', attachments: null, multimodal: false })
+  })
+
+  it('多模态数组：合并 text 分片、计数图片', () => {
+    const content = JSON.stringify([
+      { type: 'text', text: '看看这个' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,a' } },
+      { type: 'text', text: '再看看那个' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,b' } },
+    ])
+    const summary = messageContentSummary(content)
+    expect(summary.multimodal).toBe(true)
+    expect(summary.text).toBe('看看这个\n再看看那个')
+    expect(summary.attachments).toBe('图片 ×2')
+  })
+
+  it('多模态数组无 text 分片时文本为空串但附件计数保留', () => {
+    const content = JSON.stringify([{ type: 'image_url', image_url: { url: 'x' } }])
+    const summary = messageContentSummary(content)
+    expect(summary.text).toBe('')
+    expect(summary.attachments).toBe('图片 ×1')
+  })
+
+  it('用户原样发送的 JSON 数组文本不是多模态（0.0.335 清空陷阱）', () => {
+    const summary = messageContentSummary('["任务","失败"]')
+    expect(summary.multimodal).toBe(false)
+    expect(summary.text).toBe('["任务","失败"]')
+  })
+
+  it('元素类型超出 text / image_url 的数组按原文展示', () => {
+    const content = JSON.stringify([{ type: 'file', path: 'a.txt' }])
+    const summary = messageContentSummary(content)
+    expect(summary.multimodal).toBe(false)
+    expect(summary.text).toBe(content)
+  })
+
+  it('非法 JSON 按原文展示', () => {
+    const summary = messageContentSummary('[{"type":"text"')
+    expect(summary.multimodal).toBe(false)
+    expect(summary.text).toBe('[{"type":"text"')
   })
 })

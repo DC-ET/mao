@@ -156,6 +156,10 @@ export interface TraceCallMeta {
   cacheCreationTokens: number
   costMicros: number | null
   createdAt: string | null
+  /** 请求构成采集（V171）：系统提示词原文（截断带标记）；null = 未记录（历史行 / 无 system 消息） */
+  systemPrompt: string | null
+  /** 请求的工具名清单（JSON 字符串数组）；null = 未记录（历史行 / 无工具） */
+  toolsJson: string | null
 }
 
 /** 工具记录详情：参数 / 结果原文 + 配对的调用元信息。 */
@@ -168,21 +172,48 @@ export interface TraceToolRecord {
   call: TraceCallMeta | null
 }
 
-/** 轮次记录详情：调用元信息 + 本轮工具清单（供抽屉内跳转）。 */
+/** 轮次记录详情里的单条助手消息（通常一条；崩溃恢复 / 时钟缺失为零条）。 */
+export interface TraceRoundMessage {
+  messageId: number
+  content: string | null
+  thinkingContent: string | null
+  tokenCount: number | null
+  createdAt: string | null
+}
+
+/** 轮次记录详情：调用元信息 + 本轮工具清单（供抽屉内跳转）+ 本轮回复快照。 */
 export interface TraceCallRecord {
   call: TraceCallMeta | null
   tools: Array<{ toolCallId: string; name: string; target: string | null }>
+  messages: TraceRoundMessage[]
+}
+
+/** 单条消息详情（用户消息抽屉）：主键直查，无窗口推导。 */
+export interface TraceMessageRecord {
+  messageId: number
+  role: string | null
+  /** 原文；多模态数组时为 JSON 分片数组原样，前端合并文本分片 + 附件计数 */
+  content: string | null
+  thinkingContent: string | null
+  tokenCount: number | null
+  createdAt: string | null
+  updatedAt: string | null
+  /** 编辑重发的更新时刻；与 createdAt 相同视为未编辑 */
+  edited: boolean
 }
 
 /**
- * 记录详情抽屉的打开目标：工具抽屉按 toolCallId，轮次抽屉按 llmCallId。
- * 二者 key 语义不同（一个查 message 表、一个查 llm_call 表），后端按端点分流。
+ * 记录详情抽屉的打开目标：工具抽屉按 toolCallId，轮次抽屉按 llmCallId，
+ * 消息抽屉按 messageId（= run 锚点 id）。
+ * 三者 key 语义不同（两个查 message 表、一个查 llm_call 表），后端按端点分流。
  */
 export type TraceDrawerTarget =
   | { kind: 'tool'; toolCallId: string }
   | { kind: 'call'; llmCallId: number }
+  | { kind: 'message'; messageId: number }
 
 /** 抽屉里已加载的记录：带 kind 判别（与 store 缓存同型，缓存命中后直接渲染）。 */
 export type TraceLoadedRecord =
   | { kind: 'tool'; data: TraceToolRecord }
   | { kind: 'call'; data: TraceCallRecord }
+  | { kind: 'message'; data: TraceMessageRecord }

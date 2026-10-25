@@ -769,6 +769,10 @@ export interface TraceCallMetaVO {
   cacheCreationTokens: number;
   costMicros: number | null;
   createdAt: string | null;
+  /** 请求构成采集（V171）：系统提示词原文（截断带标记）；NULL = 未记录（历史行 / 无 system 消息） */
+  systemPrompt: string | null;
+  /** 请求的工具名清单（JSON 字符串数组）；NULL = 未记录（历史行 / 无工具） */
+  toolsJson: string | null;
 }
 
 /** 工具记录详情：参数 / 结果原文 + 配对的调用元信息。 */
@@ -789,4 +793,30 @@ export interface TraceCallRecordVO {
   call: TraceCallMetaVO | null;
   /** toolCallId + 名称 + 目标摘要；近似归属仅用于跳转链接，内容以按 tool_call_id 的精确查询为准 */
   tools: Array<{ toolCallId: string; name: string; target: string | null }>;
+  /**
+   * 本轮窗口内的助手消息（含正文与思考），按 id 升序。窗口推导与 tools 同一语义
+   * （本轮调用结束时刻含同刻 → 下一轮 agent 调用结束时刻排他；最后一轮上界开放）。
+   * 通常一条；崩溃恢复 / 时钟缺失可能为零条，前端区分空态提示，不出假数据。
+   */
+  messages: Array<{
+    messageId: number;
+    content: string | null;
+    thinkingContent: string | null;
+    tokenCount: number | null;
+    createdAt: string | null;
+  }>;
+}
+
+/** 单条消息详情（用户消息抽屉等）：主键直查，无窗口推导。 */
+export interface TraceMessageRecordVO {
+  messageId: number;
+  role: string | null;
+  /** 原文；多模态数组时为 JSON 分片数组原样，前端合并文本分片 + 附件计数 */
+  content: string | null;
+  thinkingContent: string | null;
+  tokenCount: number | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+  /** 编辑重发的更新时刻；与 createdAt 相同视为未编辑 */
+  edited: boolean;
 }

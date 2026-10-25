@@ -63,6 +63,8 @@ function makeService(rows: Array<{ id: number; createdAt: string | null; toolCal
   const messageRepo = {
     selectToolMessageByCallId: vi.fn(async () => null),
     selectAssistantByToolCallId: vi.fn(async () => null),
+    // 本轮回复窗口查询（技术方案 2026-10-25）：本文件只验证工具归属，回复恒为空
+    selectAssistantMessagesBetween: vi.fn(async () => []),
     // 与 SQL 同口径：lower 含、upper 不含；任一侧 null 表示该侧开放
     selectAssistantToolCalls: vi.fn(async (
       _sid: number,

@@ -625,6 +625,17 @@ describe('RunTracePanel 时间条带与记录下钻', () => {
     expect(drawerOpened).toEqual([{ kind: 'tool', sessionId: '11', target: { kind: 'tool', toolCallId: 'call_x' } }])
   })
 
+  it('点 run 摘要行消息预览开消息抽屉（kind=message，messageId=runId）', async () => {
+    const root = await mountPanel()
+    const previews = findAllByClass(root, 'run-preview-clickable')
+    expect(previews).toHaveLength(1)
+    ;(previews[0]!.props.onClick as (e: { stopPropagation: () => void }) => void)({ stopPropagation: () => {} })
+    await flush()
+    // run 锚点 id 就是 runId：messageId 必须等于 fixture 的 runId（本组为 21）
+    expect(drawerOpened).toEqual([{ kind: 'message', sessionId: '11', target: { kind: 'message', messageId: 21 } }])
+    expect(findAllByClass(root, 'drawer-stub')).toHaveLength(1)
+  })
+
   it('未归属组不画条带（没有 run 上下文）', async () => {
     store = {
       ...makeStore(),

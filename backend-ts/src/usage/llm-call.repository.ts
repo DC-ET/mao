@@ -27,6 +27,10 @@ export interface LlmCallRow {
   firstTokenMs?: number | null;
   durationMs?: number | null;
   retryCount?: number | null;
+  /** 请求构成采集（V171）：系统提示词原文（截断带标记）；历史行 / 无 system 消息为 NULL。 */
+  systemPrompt?: string | null;
+  /** 请求的工具名清单（JSON 字符串数组）；历史行 / 无工具为 NULL。 */
+  toolsJson?: string | null;
   createdAt?: string | null;
 }
 
@@ -174,6 +178,8 @@ export class LlmCallRepository {
       firstTokenMs: row.firstTokenMs ?? null,
       durationMs: row.durationMs ?? 0,
       retryCount: row.retryCount ?? 0,
+      systemPrompt: row.systemPrompt ?? null,
+      toolsJson: row.toolsJson ?? null,
     });
   }
 

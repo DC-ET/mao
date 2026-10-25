@@ -11,6 +11,10 @@ interface Fixture {
   assistantMessages: Message[];
   /** 全会话助手消息声明的工具调用（含 created_at） */
   assistantToolCalls: Array<{ id: number; createdAt: string | null; toolCalls: string | null }>;
+  /** 窗口内助手消息（含正文 / 思考）：轮次抽屉「回复」用 */
+  assistantWindowMessages?: Array<Pick<Message, 'id' | 'content' | 'thinkingContent' | 'tokenCount' | 'createdAt'>>;
+  /** 全会话消息（按 id 直查）：消息抽屉用 */
+  messagesById?: Message[];
   calls: LlmCallRow[];
 }
 
@@ -49,6 +53,8 @@ function call(over: Partial<LlmCallRow> = {}): LlmCallRow {
     firstTokenMs: 800,
     durationMs: 4200,
     retryCount: 1,
+    systemPrompt: null,
+    toolsJson: null,
     createdAt: '2026-10-22 10:00:04.200',
     ...over,
   };
@@ -67,6 +73,18 @@ function makeService(fixture: Fixture) {
       }
       return null;
     }),
+    // 与 SQL 同口径：lower 含、upper 不含；任一侧 null 表示该侧开放
+    selectAssistantMessagesBetween: vi.fn(async (
+      _sid: number,
+      lowerCreatedAtInclusive?: string | null,
+      upperCreatedAtExclusive?: string | null,
+    ) => (fixture.assistantWindowMessages ?? []).filter((m) => {
+      const createdAt = m.createdAt ?? '';
+      return (lowerCreatedAtInclusive == null || createdAt >= lowerCreatedAtInclusive)
+        && (upperCreatedAtExclusive == null || createdAt < upperCreatedAtExclusive);
+    })),
+    selectMessageById: vi.fn(async (_sid: number, messageId: number) =>
+      (fixture.messagesById ?? []).find((m) => m.id === messageId) ?? null),
     // 与 SQL 同口径：lower 含、upper 不含；任一侧 null 表示该侧开放
     selectAssistantToolCalls: vi.fn(async (
       _sid: number,
@@ -219,19 +237,19 @@ describe('RunTraceRecordService.buildCallRecord', () => {
       assistantToolCalls: [{ id: 2, createdAt: '2026-10-22 10:00:01.000', toolCalls: JSON.stringify([{ id: 'tc1', function: { name: 'shell', arguments: '{}' } }]) }],
       calls: [call({ sessionId: 2 })],
     });
-    expect(await service.buildCallRecord(1, 100)).toEqual({ call: null, tools: [] });
+    expect(await service.buildCallRecord(1, 100)).toEqual({ call: null, tools: [], messages: [] });
   });
 
   it('llm_call 不存在 → 空态 VO', async () => {
     const { service } = makeService({ toolMessages: [], assistantMessages: [], assistantToolCalls: [], calls: [] });
-    expect(await service.buildCallRecord(1, 999)).toEqual({ call: null, tools: [] });
+    expect(await service.buildCallRecord(1, 999)).toEqual({ call: null, tools: [], messages: [] });
   });
 
   it('llmCallId 非正整数（0 / 负数 / 小数）→ 空态 VO，不发查询', async () => {
     const { service, llmCallRepo } = makeService({ toolMessages: [], assistantMessages: [], assistantToolCalls: [], calls: [] });
-    expect(await service.buildCallRecord(1, 0)).toEqual({ call: null, tools: [] });
-    expect(await service.buildCallRecord(1, -5)).toEqual({ call: null, tools: [] });
-    expect(await service.buildCallRecord(1, 1.5)).toEqual({ call: null, tools: [] });
+    expect(await service.buildCallRecord(1, 0)).toEqual({ call: null, tools: [], messages: [] });
+    expect(await service.buildCallRecord(1, -5)).toEqual({ call: null, tools: [], messages: [] });
+    expect(await service.buildCallRecord(1, 1.5)).toEqual({ call: null, tools: [], messages: [] });
     expect(llmCallRepo.selectById).not.toHaveBeenCalled();
   });
 
@@ -239,7 +257,7 @@ describe('RunTraceRecordService.buildCallRecord', () => {
     const { service } = makeService({
       toolMessages: [], assistantMessages: [], assistantToolCalls: [], calls: [call({ sessionId: null })],
     });
-    expect(await service.buildCallRecord(1, 100)).toEqual({ call: null, tools: [] });
+    expect(await service.buildCallRecord(1, 100)).toEqual({ call: null, tools: [], messages: [] });
   });
 
   it('窗口不可估算（createdAt 或 durationMs 缺失）→ 退化为全会话清单，不空列表误导', async () => {
@@ -269,5 +287,152 @@ describe('RunTraceRecordService.buildCallRecord', () => {
     });
     const record = await service.buildCallRecord(1, 100);
     expect(record.tools.map((t) => t.toolCallId)).toEqual(['tc4']);
+  });
+});
+
+describe('RunTraceRecordService.buildCallRecord 本轮回复（技术方案 2026-10-25 §5.3）', () => {
+  it('窗口内的助手消息进 messages（含正文与思考），下一轮的被上界排除', async () => {
+    const { service } = makeService({
+      toolMessages: [],
+      assistantMessages: [],
+      assistantToolCalls: [],
+      assistantWindowMessages: [
+        // 本轮回复：工具跑完后落库，晚于本轮 llm_call 的 10:00:04.200
+        { id: 2, content: '回复A', thinkingContent: '思考A', tokenCount: 88, createdAt: '2026-10-22 10:00:04.900' },
+        // 下一轮回复：晚于下一轮 llm_call 的 10:00:09.000，被上界排除
+        { id: 9, content: '回复B', thinkingContent: null, tokenCount: 10, createdAt: '2026-10-22 10:00:09.800' },
+      ],
+      calls: [call(), call({ id: 101, createdAt: '2026-10-22 10:00:09.000' })],
+    });
+    const record = await service.buildCallRecord(1, 100);
+    expect(record.messages).toHaveLength(1);
+    expect(record.messages[0]).toEqual({
+      messageId: 2, content: '回复A', thinkingContent: '思考A', tokenCount: 88, createdAt: '2026-10-22 10:00:04.900',
+    });
+  });
+
+  it('最后一轮上界开放：之后落库的回复仍然算本轮（中断收尾）', async () => {
+    const { service } = makeService({
+      toolMessages: [],
+      assistantMessages: [],
+      assistantToolCalls: [],
+      assistantWindowMessages: [
+        { id: 2, content: '最后回复', thinkingContent: null, tokenCount: 5, createdAt: '2026-10-22 10:00:04.900' },
+      ],
+      calls: [call()],
+    });
+    const record = await service.buildCallRecord(1, 100);
+    expect(record.messages.map((m) => m.messageId)).toEqual([2]);
+  });
+
+  it('崩溃恢复：调用已落库、窗口内没有助手消息 → messages 空数组（不猜）', async () => {
+    const { service } = makeService({
+      toolMessages: [],
+      assistantMessages: [],
+      assistantToolCalls: [],
+      assistantWindowMessages: [],
+      calls: [call()],
+    });
+    const record = await service.buildCallRecord(1, 100);
+    expect(record.messages).toEqual([]);
+  });
+
+  it('本轮调用时钟缺失 → messages 空数组且不发窗口查询（与工具的全会话清单兜底不同）', async () => {
+    const { service, messageRepo } = makeService({
+      toolMessages: [],
+      assistantMessages: [],
+      assistantToolCalls: [],
+      assistantWindowMessages: [
+        { id: 2, content: '任意回复', thinkingContent: null, tokenCount: 1, createdAt: '2026-10-22 10:00:01.000' },
+      ],
+      calls: [call({ createdAt: null })],
+    });
+    const record = await service.buildCallRecord(1, 100);
+    // 工具清单退化为全会话（「列出可点链接」），回复绝不能全 会话——那是错误内容
+    expect(record.messages).toEqual([]);
+    expect(messageRepo.selectAssistantMessagesBetween).not.toHaveBeenCalled();
+  });
+
+  it('toCallMeta 透出 system_prompt / tools_json（请求构成采集 V171）', async () => {
+    const { service } = makeService({
+      toolMessages: [],
+      assistantMessages: [],
+      assistantToolCalls: [],
+      calls: [call({ systemPrompt: '你是运维助手', toolsJson: '["shell"]' })],
+    });
+    const record = await service.buildCallRecord(1, 100);
+    expect(record.call?.systemPrompt).toBe('你是运维助手');
+    expect(record.call?.toolsJson).toBe('["shell"]');
+  });
+
+  it('id 为 null 的窗口行被过滤，不产出 messageId: 0 的假行', async () => {
+    const { service } = makeService({
+      toolMessages: [],
+      assistantMessages: [],
+      assistantToolCalls: [],
+      assistantWindowMessages: [
+        { id: null, content: '坏行', thinkingContent: null, tokenCount: null, createdAt: '2026-10-22 10:00:04.900' },
+        { id: 3, content: '好行', thinkingContent: null, tokenCount: null, createdAt: '2026-10-22 10:00:05.000' },
+      ],
+      calls: [call()],
+    });
+    const record = await service.buildCallRecord(1, 100);
+    expect(record.messages.map((m) => m.messageId)).toEqual([3]);
+  });
+});
+
+describe('RunTraceRecordService.buildMessageRecord（技术方案 2026-10-25 §5.3）', () => {
+  function userMessage(over: Partial<Message> = {}): Message {
+    return {
+      id: 55, sessionId: 1, role: 'USER', content: '原始内容', thinkingContent: null,
+      tokenCount: 12, createdAt: '2026-10-22 10:00:00.000', updatedAt: '2026-10-22 10:00:00.000',
+      ...over,
+    } as Message;
+  }
+
+  it('命中：原文 / 思考 / token / 时钟全带出，未编辑', async () => {
+    const { service } = makeService({
+      toolMessages: [], assistantMessages: [], assistantToolCalls: [],
+      messagesById: [userMessage()],
+    });
+    expect(await service.buildMessageRecord(1, 55)).toEqual({
+      messageId: 55, role: 'USER', content: '原始内容', thinkingContent: null,
+      tokenCount: 12, createdAt: '2026-10-22 10:00:00.000',
+      updatedAt: '2026-10-22 10:00:00.000', edited: false,
+    });
+  });
+
+  it('编辑重发：updated_at 晚于 created_at → edited 为 true', async () => {
+    const { service } = makeService({
+      toolMessages: [], assistantMessages: [], assistantToolCalls: [],
+      messagesById: [userMessage({ content: '编辑后', updatedAt: '2026-10-22 10:05:00.000' })],
+    });
+    const record = await service.buildMessageRecord(1, 55);
+    expect(record.edited).toBe(true);
+    expect(record.content).toBe('编辑后');
+  });
+
+  it('updated_at 为 null（历史行）→ edited 为 false，不出错', async () => {
+    const { service } = makeService({
+      toolMessages: [], assistantMessages: [], assistantToolCalls: [],
+      messagesById: [userMessage({ updatedAt: null })],
+    });
+    expect((await service.buildMessageRecord(1, 55)).edited).toBe(false);
+  });
+
+  it('消息不存在 → 空态 VO（messageId 原样带回），不抛错', async () => {
+    const { service } = makeService({ toolMessages: [], assistantMessages: [], assistantToolCalls: [] });
+    expect(await service.buildMessageRecord(1, 404)).toEqual({
+      messageId: 404, role: null, content: null, thinkingContent: null,
+      tokenCount: null, createdAt: null, updatedAt: null, edited: false,
+    });
+  });
+
+  it('messageId 非正整数 → 空态 VO，不发查询', async () => {
+    const { service, messageRepo } = makeService({ toolMessages: [], assistantMessages: [], assistantToolCalls: [] });
+    expect((await service.buildMessageRecord(1, 0)).messageId).toBe(0);
+    expect((await service.buildMessageRecord(1, -5)).messageId).toBe(-5);
+    expect((await service.buildMessageRecord(1, 1.5)).messageId).toBe(1.5);
+    expect(messageRepo.selectMessageById).not.toHaveBeenCalled();
   });
 });

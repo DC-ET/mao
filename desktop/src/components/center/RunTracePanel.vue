@@ -99,7 +99,13 @@
               <WarningFilled v-else />
             </el-icon>
           </span>
-          <span class="run-preview" :title="run.userMessagePreview">{{ run.userMessagePreview || '(空消息)' }}</span>
+          <!-- 消息预览可点（stopPropagation 防触发卡片折叠）：run 锚点 id 就是 runId，
+               打开该条用户消息的完整原文抽屉（技术方案 2026-10-25 §5.6） -->
+          <span
+            class="run-preview run-preview-clickable"
+            title="点击查看完整消息"
+            @click.stop="openMessageRecord(run.runId)"
+          >{{ run.userMessagePreview || '(空消息)' }}</span>
           <span class="run-metrics">
             <span>耗时 {{ formatMs(run.totals.wallClockMs) }}</span>
             <span>{{ formatTokens(tokenTotal(run)) }} tokens</span>
@@ -591,6 +597,11 @@ function openCallRecord(llmCallId: number) {
   drawerTarget.value = { kind: 'call', llmCallId }
 }
 
+/** run 锚点 id 就是 runId（run-trace.service 的归属口径）：按主键直查该条用户消息。 */
+function openMessageRecord(runId: number) {
+  drawerTarget.value = { kind: 'message', messageId: runId }
+}
+
 /** 摘要条按最高严重度描边：失败红，重试与中断黄，慢与贵中性色。 */
 function runSeverity(run: RunTrace): 'error' | 'warn' | 'info' | 'none' {
   const rounds = run.segments.flatMap((s) => s.rounds)
@@ -909,6 +920,17 @@ async function exportCsv() {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 可点的消息预览：悬停亮起 + 下划虚线暗示可点，不抢摘要行其余信息 */
+.run-preview-clickable {
+  cursor: pointer;
+}
+
+.run-preview-clickable:hover {
+  color: var(--aw-primary);
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
 }
 
 .run-metrics {

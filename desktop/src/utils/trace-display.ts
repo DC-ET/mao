@@ -119,6 +119,49 @@ export function throughput(round: Pick<TraceRound, 'durationMs' | 'firstTokenMs'
   return round.completionTokens / (decode / 1000)
 }
 
+/* ------------------------------------------------------------------ *
+ * 消息内容展示摘要（消息抽屉用，技术方案 2026-10-25-run-trace-content-and-prompt §5.6）。
+ * 与后端 previewOf / isMultimodalContentParts 同口径：数组且每个元素都是
+ * {type: 'text'|'image_url'} 对象才算多模态分片——用户原样发送的 ["a","b"] 这类
+ * JSON 数组文本不是多模态，按原文展示（0.0.335 修过的清空陷阱，勿放宽）。
+ * ------------------------------------------------------------------ */
+
+export interface MessageContentSummary {
+  /** 主展示文本：普通文本原样；多模态取 text 分片按序以换行拼接 */
+  text: string
+  /** 多模态附件摘要（如「图片 ×2」）；非多模态 / 无附件为 null */
+  attachments: string | null
+  /** 是否多模态分片数组（决定抽屉是否显示附件计数与「格式化 / 原样」切换语义） */
+  multimodal: boolean
+}
+
+function isMultimodalParts(parsed: unknown): parsed is Array<Record<string, unknown>> {
+  if (!Array.isArray(parsed) || parsed.length === 0) return false
+  return parsed.every((part) => {
+    if (part == null || typeof part !== 'object' || Array.isArray(part)) return false
+    const map = part as Record<string, unknown>
+    return map.type === 'text' || map.type === 'image_url'
+  })
+}
+
+export function messageContentSummary(content: string | null): MessageContentSummary {
+  if (content == null || content.trim() === '') return { text: '', attachments: null, multimodal: false }
+  try {
+    const parsed: unknown = JSON.parse(content)
+    if (isMultimodalParts(parsed)) {
+      const texts: string[] = []
+      let images = 0
+      for (const part of parsed) {
+        if (part.type === 'text' && typeof part.text === 'string' && part.text !== '') texts.push(part.text)
+        else if (part.type === 'image_url') images++
+      }
+      return { text: texts.join('\n'), attachments: images > 0 ? `图片 ×${images}` : null, multimodal: true }
+    }
+  } catch { /* 非 JSON 数组按原文 */ }
+  return { text: content, attachments: null, multimodal: false }
+}
+
+
 /** 吞吐量展示：1 位小数 + 单位；null → 「—」。 */
 export function formatThroughput(round: Pick<TraceRound, 'durationMs' | 'firstTokenMs' | 'completionTokens'>): string {
   const value = throughput(round)

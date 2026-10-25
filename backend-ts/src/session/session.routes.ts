@@ -582,6 +582,17 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     return sendOk(reply, await deps.runTraceRecordService.buildCallRecord(id, safe));
   });
 
+  // run 轨迹单条消息详情（技术方案 2026-10-25-run-trace-content-and-prompt §5.4）：
+  // 用户消息抽屉按 messageId（= run 锚点 id）主键直查，空态口径与上面两个端点一致。
+  app.get('/v1/sessions/:id/trace/records/message/:messageId', async (request, reply) => {
+    const userId = requireUserId(request);
+    const id = pathId(request);
+    await requireSessionOwner(userId, id);
+    const messageId = Number(pathParam(request, 'messageId'));
+    const safe = Number.isSafeInteger(messageId) && messageId > 0 ? messageId : 0;
+    return sendOk(reply, await deps.runTraceRecordService.buildMessageRecord(id, safe));
+  });
+
   app.get('/v1/sessions/:id/todos', async (request, reply) => {
     const userId = requireUserId(request);
     const id = pathId(request);

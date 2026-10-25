@@ -448,3 +448,44 @@ describe('LlmCallService 列表项取消派生（/v1/llm-calls、/v1/admin/llm-c
     expect(repo.list).toHaveBeenCalledWith(1, 20, expect.objectContaining({ userId: 7, cancelled: true }));
   });
 });
+
+describe('LlmCallService 请求构成透传（技术方案 2026-10-25-run-trace-content-and-prompt §5.2）', () => {
+  const CONFIG = { id: 3, name: 'M', provider: 'p', modelId: 'gpt', baseUrl: 'http://x', apiKey: 'k', priceInput: 2, priceCacheRead: 1, priceCacheWrite: 2, priceOutput: 8 };
+  const USAGE = { promptTokens: 1000, completionTokens: 200, totalTokens: 1200, promptTokensDetails: { cachedTokens: 400 } };
+
+  function buildSelf() {
+    const repo = { insert: vi.fn(async () => 1), list: vi.fn(async () => ({ records: [], total: 0 })) };
+    const service = new LlmCallService(repo as never, undefined, undefined, undefined);
+    return { service, repo };
+  }
+
+  it('systemPrompt / toolsJson 原样透传到 insert；缺省时落 NULL', async () => {
+    const { service, repo } = buildSelf();
+    await LlmCallContext.runAsync({ scene: 'agent', userId: 7, sessionId: 8, agentId: 9 }, async () => {
+      await service.record({
+        modelConfig: CONFIG,
+        stream: true,
+        usage: USAGE,
+        success: true,
+        durationMs: 10,
+        costMicros: 3200,
+        systemPrompt: '你是运维助手',
+        toolsJson: '["shell"]',
+      });
+      await service.record({
+        modelConfig: CONFIG,
+        stream: true,
+        usage: USAGE,
+        success: true,
+        durationMs: 10,
+        costMicros: 3200,
+      });
+    });
+    const calls = repo.insert.mock.calls as Array<[Record<string, unknown>]>;
+    expect(calls[0]![0].systemPrompt).toBe('你是运维助手');
+    expect(calls[0]![0].toolsJson).toBe('["shell"]');
+    // 未采集（旧调用方 / 旁路未接）→ NULL，不伪造空串
+    expect(calls[1]![0].systemPrompt).toBeNull();
+    expect(calls[1]![0].toolsJson).toBeNull();
+  });
+});

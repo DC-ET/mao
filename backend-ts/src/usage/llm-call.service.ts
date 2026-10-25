@@ -41,6 +41,10 @@ export interface LlmCallRecordInput {
   retryCount?: number;
   /** 调用方已按配置快照算好的成本（主路径）。undefined = 未计算，走兜底价格缓存。 */
   costMicros?: number | null;
+  /** 请求构成采集（技术方案 2026-10-25-run-trace-content-and-prompt §5.2）：系统提示词原文，超上限已截断。null = 无 system 消息 / 未采集。 */
+  systemPrompt?: string | null;
+  /** 请求的工具名清单（JSON 字符串数组，request.tools 顺序）。null = 无工具 / 未采集。 */
+  toolsJson?: string | null;
 }
 
 export interface LlmCallListItem extends LlmCallRow {
@@ -276,6 +280,8 @@ export class LlmCallService {
         firstTokenMs: input.firstTokenMs ?? null,
         durationMs: input.durationMs,
         retryCount: input.retryCount ?? 0,
+        systemPrompt: input.systemPrompt ?? null,
+        toolsJson: input.toolsJson ?? null,
       });
     } catch (e) {
       console.warn(`[llm-call] failed to persist call record: ${(e as Error).message}`);

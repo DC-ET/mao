@@ -766,6 +766,44 @@ export class MessageRepository {
     );
   }
 
+  /**
+   * 窗口内的助手消息，含正文与思考（轮次抽屉「回复」tab 用，技术方案
+   * 2026-10-25-run-trace-content-and-prompt §5.3）。窗口语义与 selectAssistantToolCalls
+   * 完全一致：下界含同刻（本轮助手消息在工具跑完后落库，必然晚于本轮 llm_call 结束
+   * 时刻），上界排他（下一轮 agent 调用的结束时刻）；任一侧 null 表示该侧开放
+   * （最后一轮 / 时钟缺失由调用方决定传法）。id 升序，通常一条，重试 / 补发可能多条。
+   */
+  selectAssistantMessagesBetween(
+    sessionId: number,
+    lowerCreatedAtInclusive: string | null,
+    upperCreatedAtExclusive: string | null,
+  ): Promise<Array<Pick<Message, 'id' | 'content' | 'thinkingContent' | 'tokenCount' | 'createdAt'>>> {
+    const conditions: string[] = [];
+    const params: unknown[] = [sessionId];
+    if (lowerCreatedAtInclusive != null) {
+      conditions.push('created_at >= ?');
+      params.push(lowerCreatedAtInclusive);
+    }
+    if (upperCreatedAtExclusive != null) {
+      conditions.push('created_at < ?');
+      params.push(upperCreatedAtExclusive);
+    }
+    const where = conditions.length === 0 ? '' : ` AND ${conditions.join(' AND ')}`;
+    return this.db.query<Pick<Message, 'id' | 'content' | 'thinkingContent' | 'tokenCount' | 'createdAt'>>(
+      `SELECT id, content, thinking_content AS thinkingContent, token_count AS tokenCount, created_at AS createdAt
+       FROM \`message\` WHERE session_id = ? AND ${notDeleted()} AND role = 'ASSISTANT'${where} ORDER BY id ASC`,
+      params,
+    );
+  }
+
+  /** 按 id 取单条消息（用户消息抽屉用，技术方案 2026-10-25 §5.3）：会话内主键直查，跨会话查不到即空。 */
+  selectMessageById(sessionId: number, messageId: number): Promise<Message | null> {
+    return this.db.queryOne<Message>(
+      `SELECT * FROM \`message\` WHERE session_id = ? AND ${notDeleted()} AND id = ? LIMIT 1`,
+      [sessionId, messageId],
+    );
+  }
+
   selectRange(
     sessionId: number,
     startId: number,

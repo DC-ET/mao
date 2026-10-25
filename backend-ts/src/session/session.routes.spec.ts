@@ -108,7 +108,11 @@ describe('session and admin routes', () => {
       buildToolRecord: vi.fn(async (sessionId: number, toolCallId: string) => ({
         toolCallId, toolName: null, argumentsJson: null, resultContent: null, resultMetadata: null, call: null,
       })),
-      buildCallRecord: vi.fn(async () => ({ call: null, tools: [] as unknown[] })),
+      buildCallRecord: vi.fn(async () => ({ call: null, tools: [] as unknown[], messages: [] })),
+      buildMessageRecord: vi.fn(async (_sessionId: number, messageId: number) => ({
+        messageId, role: 'USER', content: '消息原文', thinkingContent: null,
+        tokenCount: 12, createdAt: '2026-10-22 10:00:00', updatedAt: '2026-10-22 10:00:00', edited: false,
+      })),
     };
     registerSessionRoutes(fastify, {
       sessionService,
@@ -857,6 +861,27 @@ describe('session and admin routes', () => {
     const listed = JSON.parse((await fastify.inject({ method: 'GET', url: '/v1/admin/sessions' })).body);
     expect(listed.code).toBe(1002);
     expect(vi.mocked(sessionService.listSessionsForAdmin)).not.toHaveBeenCalled();
+    await fastify.close();
+  });
+
+  // 消息详情端点（技术方案 2026-10-25-run-trace-content-and-prompt §5.4）：
+  // 主键直查，非法参数走空态 VO（200）；归属复用 requireSessionOwner。
+  it('GET /trace/records/message/:messageId 透传正整数 messageId；非正整数走空态（service 收到 0）', async () => {
+    const { fastify, runTraceRecordService } = await app();
+    const ok = await fastify.inject({ method: 'GET', url: '/v1/sessions/1/trace/records/message/55' });
+    expect(ok.statusCode).toBe(200);
+    expect(JSON.parse(ok.body).code).toBe(0);
+    expect(JSON.parse(ok.body).data.messageId).toBe(55);
+    expect(runTraceRecordService.buildMessageRecord).toHaveBeenCalledWith(1, 55);
+
+    for (const bad of ['0', '-5', 'abc', '1.5']) {
+      vi.mocked(runTraceRecordService.buildMessageRecord).mockClear();
+      const res = await fastify.inject({ method: 'GET', url: `/v1/sessions/1/trace/records/message/${bad}` });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body).code).toBe(0);
+      expect(runTraceRecordService.buildMessageRecord).toHaveBeenCalledWith(1, 0);
+    }
+
     await fastify.close();
   });
 });

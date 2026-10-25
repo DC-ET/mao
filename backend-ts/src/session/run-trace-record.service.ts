@@ -1,21 +1,24 @@
 import type { MessageRepository } from './session.repository.js';
 import type { LlmCallRepository, LlmCallRow } from '../usage/llm-call.repository.js';
 import type { Message } from './types.js';
-import type { TraceCallMetaVO, TraceCallRecordVO, TraceToolRecordVO } from './session-vo.js';
+import type { TraceCallMetaVO, TraceCallRecordVO, TraceMessageRecordVO, TraceToolRecordVO } from './session-vo.js';
 
 /**
- * 运行轨迹记录详情读模型（技术方案 2026-10-22-run-trace-deep-dive §5.3）。
+ * 运行轨迹记录详情读模型（技术方案 2026-10-22-run-trace-deep-dive §5.3 与
+ * 2026-10-25-run-trace-content-and-prompt §5.3）。
  *
- * 轨迹主 VO 不带正文（防载荷膨胀）：工具行 / 轮次行的参数、结果、完整计时与请求元信息
- * 由本 service 按需查询。只读，不写任何表。
+ * 轨迹主 VO 不带正文（防载荷膨胀）：工具行 / 轮次行的参数、结果、回复、思考、完整计时
+ * 与请求元信息由本 service 按需查询。只读，不写任何表。
  *
  * 归属口径：
  * - 工具记录按 tool_call_id 精确查（助手消息的 tool_calls + TOOL 消息行），配不上留 null；
  * - 配对 llm_call 用「本轮 llm_call 结束时刻之前」夹时间窗，取窗口内 scene = 'agent'
  *   的最后一条（与 buildRun 工具组挂轮同一「最后一条未占用候选」精神），窗口取不到即
  *   null，不跨窗猜。下界刻意开放，理由见 findCall 上方注释；
- * - 轮次记录的「本轮工具」是时间窗近似归属，仅用于抽屉内跳转链接，内容一律以
- *   buildToolRecord 的按 tool_call_id 精确查询为准。
+ * - 轮次记录的「本轮工具」与「本轮回复」是同一时间窗的近似归属（buildCallRecord 里
+ *   一次算出 next），仅用于抽屉内展示 / 跳转链接；工具内容一律以 buildToolRecord 的
+ *   按 tool_call_id 精确查询为准；
+ * - 单条消息详情（buildMessageRecord）主键直查，无窗口推导。
  */
 
 /** 路由层已 requireSessionOwner；此处按「视为不存在」处理跨会话读，不抛错、不泄露存在性。 */
@@ -56,15 +59,49 @@ export class RunTraceRecordService {
   }
 
   /**
-   * 轮次记录详情：llm_call 全量元信息 + 该轮已声明且现存于会话内的工具（供抽屉内跳转）。
+   * 轮次记录详情：llm_call 全量元信息 + 该轮已声明且现存于会话内的工具（供抽屉内跳转）
+   * + 该轮窗口内的助手消息（回复与思考）。
    * llm_call 不存在、或 sessionId 与路径会话不一致 → 空态 VO（防越权读他人会话的调用行）。
    */
   async buildCallRecord(sessionId: number, llmCallId: number): Promise<TraceCallRecordVO> {
-    const empty: TraceCallRecordVO = { call: null, tools: [] };
+    const empty: TraceCallRecordVO = { call: null, tools: [], messages: [] };
     if (!Number.isInteger(llmCallId) || llmCallId <= 0) return empty;
     const row = await this.llmCallRepo.selectById(llmCallId);
     if (row == null || row.sessionId == null || row.sessionId !== sessionId) return empty;
-    return { call: toCallMeta(row), tools: await this.findRoundTools(sessionId, row) };
+    // 同一会话的调用序列（created_at 升序）：「本轮工具」与「本轮回复」共享的窗口上界用它推导
+    const calls = await this.llmCallRepo.selectBySessionWindow(sessionId, null, null);
+    const index = row.id != null ? calls.findIndex((candidate) => candidate.id === row.id) : -1;
+    const next = index >= 0 ? calls.slice(index + 1).find((candidate) => candidate.scene === 'agent') : undefined;
+    const [tools, messages] = await Promise.all([
+      this.findRoundTools(sessionId, row, next),
+      this.findRoundMessages(sessionId, row, next),
+    ]);
+    return { call: toCallMeta(row), tools, messages };
+  }
+
+  /**
+   * 单条消息详情（用户消息抽屉等）：主键直查，无窗口推导。
+   * 行不存在 / 跨会话 → 空态 VO（messageId 原样带回、其余 null），不抛错、不泄露存在性。
+   */
+  async buildMessageRecord(sessionId: number, messageId: number): Promise<TraceMessageRecordVO> {
+    const empty: TraceMessageRecordVO = {
+      messageId, role: null, content: null, thinkingContent: null,
+      tokenCount: null, createdAt: null, updatedAt: null, edited: false,
+    };
+    if (!Number.isInteger(messageId) || messageId <= 0) return empty;
+    const row = await this.messageRepo.selectMessageById(sessionId, messageId);
+    if (row == null) return empty;
+    return {
+      messageId,
+      role: row.role ?? null,
+      content: row.content ?? null,
+      thinkingContent: row.thinkingContent ?? null,
+      tokenCount: row.tokenCount ?? null,
+      createdAt: row.createdAt ?? null,
+      updatedAt: row.updatedAt ?? null,
+      // 编辑重发：锚点被更新过 → updated_at 晚于 created_at；同刻视为未编辑
+      edited: row.updatedAt != null && row.updatedAt !== row.createdAt,
+    };
   }
 
   /**
@@ -97,11 +134,8 @@ export class RunTraceRecordService {
   private async findRoundTools(
     sessionId: number,
     call: LlmCallRow,
+    next: LlmCallRow | undefined,
   ): Promise<Array<{ toolCallId: string; name: string; target: string | null }>> {
-    // 同一会话的调用序列（created_at 升序）；找不到本轮就退化为全会话清单
-    const calls = await this.llmCallRepo.selectBySessionWindow(sessionId, null, null);
-    const index = call.id != null ? calls.findIndex((row) => row.id === call.id) : -1;
-    const next = index >= 0 ? calls.slice(index + 1).find((row) => row.scene === 'agent') : undefined;
     const rows = await this.messageRepo.selectAssistantToolCalls(
       sessionId,
       next?.createdAt ?? null,
@@ -114,6 +148,34 @@ export class RunTraceRecordService {
       }
     }
     return tools;
+  }
+
+  /**
+   * 「本轮回复」：本轮窗口内的助手消息（正文 + 思考），窗口与 findRoundTools 同语义。
+   * 时钟缺失时返回空数组而非全会话清单——回复是「这一轮的产物」，全会话清单是错误内容；
+   * 空数组配抽屉的「时钟缺失」空态提示，比误导诚实。崩溃恢复（调用已落库、回复没落库）
+   * 同样得到空数组，抽屉据此区分空态文案。
+   */
+  private async findRoundMessages(
+    sessionId: number,
+    call: LlmCallRow,
+    next: LlmCallRow | undefined,
+  ): Promise<TraceCallRecordVO['messages']> {
+    if (call.createdAt == null) return [];
+    const rows = await this.messageRepo.selectAssistantMessagesBetween(
+      sessionId,
+      call.createdAt,
+      next?.createdAt ?? null,
+    );
+    return rows
+      .filter((row): row is typeof row & { id: number } => row.id != null)
+      .map((row) => ({
+        messageId: row.id,
+        content: row.content ?? null,
+        thinkingContent: row.thinkingContent ?? null,
+        tokenCount: row.tokenCount ?? null,
+        createdAt: row.createdAt ?? null,
+      }));
   }
 }
 
@@ -200,5 +262,7 @@ function toCallMeta(call: LlmCallRow): TraceCallMetaVO {
     cacheCreationTokens: call.cacheCreationTokens ?? 0,
     costMicros: call.costMicros ?? null,
     createdAt: call.createdAt ?? null,
+    systemPrompt: call.systemPrompt ?? null,
+    toolsJson: call.toolsJson ?? null,
   };
 }
