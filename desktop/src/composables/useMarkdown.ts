@@ -6,6 +6,12 @@ import { isExternalMarkdownLink } from '../utils/markdown-link'
 import { ensureCodeCopyDelegation } from '../utils/codeCopy'
 import { ensureExternalLinkDelegation } from '../utils/externalLink'
 import { renderCitationMarkers, stripCitationDefinitions } from '../utils/citationMarkers'
+import { encodeBase64Utf8 } from '../utils/base64'
+import { buildMermaidPlaceholder, isMermaidFence, MERMAID_SOURCE_CAP } from '../utils/mermaid-renderer'
+import { mathExtension } from '../utils/math-extension'
+import { ensureKatex } from '../utils/katex-loader'
+import { renderMarkdownTable } from '../utils/markdown-table'
+import { ensureTableCopyDelegation } from '../utils/tableCopy'
 
 function escapeHtml(text: string): string {
   return text
@@ -27,7 +33,7 @@ function escapeText(text: string): string {
 }
 
 function encodeCodeForCopy(text: string): string {
-  return btoa(unescape(encodeURIComponent(text)))
+  return encodeBase64Utf8(text)
 }
 
 /** 放行 http(s)/mailto 与无协议的相对路径、锚点；只拦截 javascript:/data: 等显式危险协议。 */
@@ -46,6 +52,8 @@ function isSafeHref(href: string): boolean {
  */
 export function createMarked(isDark: boolean, citeMap?: Record<number, number>): Marked {
   const marked = new Marked({ breaks: false })
+  // 数学公式扩展（katex 懒加载，未加载时 renderer 回落原文；见 math-extension.ts）
+  marked.use(mathExtension())
   // renderer 方法在 marked 内部以 Renderer 实例为 this 调用，parse 前 marked 会把
   // parser 挂到该实例上——默认 text / link renderer 就是这样调 this.parser.parseInline
   // 的（Marked 实例自身没有 parser.parseInline，调它会 TypeError）。
@@ -70,6 +78,13 @@ export function createMarked(isDark: boolean, citeMap?: Record<number, number>):
       if (token.type !== 'code') return
       const rawCode = token.text
       const language = monacoLangFromFence(token.lang)
+      // Mermaid 围栏：产占位（初始内容即原代码块，可复制），SVG 渲染由 MarkdownContent
+      // 的 DOM 后处理完成（mermaid-renderer.ts）——超长源码保留普通代码块形态不渲染。
+      if (isMermaidFence(token.lang) && rawCode.length <= MERMAID_SOURCE_CAP) {
+        token.escaped = true
+        token.text = buildMermaidPlaceholder(rawCode, isDark)
+        return
+      }
       const highlighted = await colorizeCode(rawCode, language, isDark)
       token.escaped = true
       token.text = `<pre class="code-block" data-code="${encodeCodeForCopy(rawCode)}"><div class="code-block-header"><span class="code-lang">${escapeHtml(language)}</span><button class="code-copy-btn" type="button">复制</button></div>${highlighted}</pre>`
@@ -81,6 +96,10 @@ export function createMarked(isDark: boolean, citeMap?: Record<number, number>):
       },
       code({ text }) {
         return text
+      },
+      // 表格包裹层 + 复制工具条（交互走 tableCopy 的 document 级委托）
+      table(token: Tokens.Table) {
+        return renderMarkdownTable(token, (cells) => parseInline.call(this, cells))
       },
       // 引用标记（回复引用溯源）：[^n^] → 可点击上标。带子 token 的 text（紧凑
       // 列表项等）走默认 parseInline 保住嵌套加粗/链接；叶子 text 先按 marked
@@ -118,6 +137,9 @@ export function createMarked(isDark: boolean, citeMap?: Record<number, number>):
 // 复制按钮走事件委托（utils/codeCopy），sanitize 保持默认严格白名单，不放行事件属性
 const SANITIZE_OPTIONS = { ADD_ATTR: ['target'] }
 
+// 公式懒加载的廉价预检（配 math-extension 的定界形态；含 $$ 跨行块与 $...$ 行内）
+const MATH_HINT_RE = /\$\$[\s\S]+?\$\$|\$[^\n$]+?\$/
+
 // Marked 实例按「主题 + citeMap」复用：实例只持有配置（renderer/walkTokens），parse 状态是
 // 每次调用独立的；流式期间每个气泡每次内容变化都渲染一次，新建实例是纯浪费。
 // citeMap 进缓存键：同一条消息流式刷新期间映射不变，实例可命中。
@@ -151,6 +173,13 @@ export async function renderMarkdown(
   if (!text) return ''
   ensureCodeCopyDelegation()
   ensureExternalLinkDelegation()
+  ensureTableCopyDelegation()
+  // 疑似含公式才加载 KaTeX（库 + CSS/字体独立 chunk，无公式消息零加载，G1）；
+  // hint 正则是 math-extension 全部匹配形态的超集（只会多载、不会漏载），
+  // 加载失败静默回落原文。注意：不能用 text.includes('$')——财务消息会整包加载 katex。
+  if (MATH_HINT_RE.test(text)) {
+    await ensureKatex().catch(() => {})
+  }
   const result = await getMarked(isDark, citeMap).parse(text)
   if (typeof result !== 'string') return escapeHtml(text)
   // 统一消毒：防御各 renderer 之外的残留注入面

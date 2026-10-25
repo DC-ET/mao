@@ -19,7 +19,8 @@ function decodeCode(el: HTMLElement): string | null {
   }
 }
 
-function copyWithFallback(text: string) {
+/** 剪贴板写入（clipboard API 优先，execCommand 兜底）；tableCopy 复用。 */
+export function copyWithFallback(text: string) {
   if (navigator.clipboard?.writeText) {
     navigator.clipboard.writeText(text).catch(() => copyFallback(text))
     return

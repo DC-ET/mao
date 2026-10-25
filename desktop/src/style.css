@@ -586,3 +586,89 @@ pre code {
 .message-bubble.user {
   margin-bottom: 20px;
 }
+
+/* ============================================
+   Markdown 富渲染（技术方案 2026-10-25-message-rendering）：
+   Mermaid 图 / 公式 / 表格工具条。markdown-body 分散在聊天、文件预览、
+   轨迹、技能、分享页等多个组件，因此样式放全局而非任一组件内。
+   ============================================ */
+
+/* Mermaid：占位（初始为代码块）渲染成功后替换为图 + 「查看源码」折叠 */
+.markdown-body .mermaid-block {
+  margin: 8px 0;
+}
+
+.markdown-body .mermaid-block .mermaid-figure {
+  overflow-x: auto;
+  text-align: center;
+}
+
+.markdown-body .mermaid-block .mermaid-figure svg {
+  max-width: 100%;
+  height: auto;
+  background: transparent;
+}
+
+.markdown-body .mermaid-block details.mermaid-source {
+  margin-top: 4px;
+}
+
+.markdown-body .mermaid-block details.mermaid-source summary {
+  display: inline-block;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.6;
+  opacity: 0.65;
+  user-select: none;
+}
+
+.markdown-body .mermaid-block details.mermaid-source summary:hover {
+  opacity: 1;
+}
+
+/* KaTeX：超宽公式横向滚动，不撑破气泡 */
+.markdown-body .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 0;
+}
+
+/* 表格复制工具条：hover / 键盘聚焦时出现 */
+.markdown-body .md-table-wrap {
+  position: relative;
+  overflow-x: auto;
+  margin: 8px 0;
+}
+
+.markdown-body .md-table-toolbar {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 1;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.markdown-body .md-table-wrap:hover .md-table-toolbar,
+.markdown-body .md-table-wrap:focus-within .md-table-toolbar {
+  opacity: 1;
+}
+
+.markdown-body .md-table-toolbar .table-copy-btn {
+  font-size: 12px;
+  line-height: 1;
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--el-border-color);
+  background: var(--el-bg-color);
+  color: var(--el-text-color-regular);
+  cursor: pointer;
+}
+
+.markdown-body .md-table-toolbar .table-copy-btn:hover {
+  color: var(--el-color-primary);
+  border-color: var(--el-color-primary-light-5);
+}
+
