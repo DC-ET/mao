@@ -54,7 +54,7 @@ export class CompactionArchiveService {
   }
 
   /**
-   * 构建注入交接消息末尾的归档指引；不满足注入条件（LOCAL / 缺少 uid/sid / 无归档文件）时返回 null。
+   * 构建注入压缩摘要消息末尾的归档指引；不满足注入条件（LOCAL / 缺少 uid/sid / 无归档文件）时返回 null。
    */
   buildArchiveHint(
     executionMode: string | null | undefined,
@@ -71,7 +71,7 @@ export class CompactionArchiveService {
       '- 每行一个 JSON 对象，字段：id、role、content、toolCallId、toolCalls、metadata、tokenCount、modelId、createdAt（不含 thinkingContent）；'
         + '内联图片 base64 已替换为占位符，原图路径见 metadata 内 attachments 的 path 字段（通常为工作区相对路径）。',
       '',
-      '当本交接内容缺少你需要的细节（历史用户原话、文件路径、命令输出、错误信息、已确认决策依据等）时，'
+      '当摘要缺少你需要的细节（历史用户原话、文件路径、命令输出、错误信息、已确认决策依据等）时，'
         + '用 read_file（支持 offset/limit 分页）、grep_search 或 shell 工具检索上述目录回读原始消息，不要凭摘要猜测或臆造细节。',
     ].join('\n');
   }

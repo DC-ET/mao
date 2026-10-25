@@ -498,12 +498,12 @@ export class PromptEngine {
     }
     const summary = context.sessionSummary;
     if (summary != null && summary.trim() !== '') {
-      // 交接摘要是 messages[0] 的 user 消息，已计入 messages 节；此处仅作独立提示行，
+      // 压缩摘要是 messages[0] 的 user 消息，已计入 messages 节；此处仅作独立提示行，
       // token 仍按同一文本估算（与 messages 口径重叠是有意的：摘要值得单独看见）。
       const handoffTokens = this.tokenEstimator.estimateMessages([
         { role: 'user', content: buildHandoffUserContent(summary) },
       ]);
-      stats.push({ key: 'handoff', label: '交接摘要', tokens: handoffTokens });
+      stats.push({ key: 'handoff', label: '压缩摘要', tokens: handoffTokens });
     }
     const memoryIds = (context.memories ?? [])
       .map((m) => m.id)

@@ -27,7 +27,7 @@ describe('persistedContextWindow', () => {
     const scaled = scaleSectionsToCapacity([
       { key: 'messages', label: '会话消息', tokens: 64000 },
       { key: 'tool-definitions', label: '系统工具', tokens: 8800 },
-      { key: 'handoff', label: '交接摘要', tokens: 5000 },
+      { key: 'handoff', label: '压缩摘要', tokens: 5000 },
     ], 87000)
     const additive = scaled.filter((section) => section.key !== 'handoff')
     expect(additive.reduce((acc, section) => acc + section.tokens, 0)).toBe(87000)

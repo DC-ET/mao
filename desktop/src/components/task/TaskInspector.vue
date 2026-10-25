@@ -323,7 +323,7 @@
           <div class="ctx-block-title ctx-row">
             <span>上下文构成</span>
             <el-tooltip
-              content="各节按字节估算的比例，分摊到上方的实际容量，所以合计相等。交接摘要已包含在会话消息中，单独列出但不重复计入"
+              content="各节按字节估算的比例，分摊到上方的实际容量，所以合计相等。压缩摘要已包含在会话消息中，单独列出但不重复计入"
               placement="top"
             >
               <span class="ctx-help">?</span>

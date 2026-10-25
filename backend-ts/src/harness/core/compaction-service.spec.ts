@@ -91,7 +91,7 @@ describe('CompactionService', () => {
   it('hintAboveThresholdTriggersDespiteUnderestimating', async () => {
     // 模拟估算器显著低估真实用量（如中文场景）：estimator=100，但锚点真实 usage=900 ≥ 800 阈值
     tokenEstimator.estimateRequestTokens.mockReturnValue(100);
-    streamHandoff('交接正文', usage(50, null, 20));
+    streamHandoff('摘要正文', usage(50, null, 20));
     const result = await service.compactSession(7, 0, persisted(), [1, 2, 3], normalRequest(), model, config(), null, null, 900);
     expect(result).not.toBeNull();
     expect(result!.beforeRequestTokens).toBe(900);
@@ -100,7 +100,7 @@ describe('CompactionService', () => {
 
   it('triggerUsesSessionWindowWhenCompactionModelWindowIsLarger', async () => {
     tokenEstimator.estimateRequestTokens.mockReturnValue(100);
-    streamHandoff('交接正文', usage(1, null, 1));
+    streamHandoff('摘要正文', usage(1, null, 1));
     const cfg = config();
     cfg.contextWindowTokens = 32000;
     const compactionModel = { modelId: 'huge', contextWindowTokens: 1_000_000 };
@@ -147,7 +147,7 @@ describe('CompactionService', () => {
     const originalMessages = [...(normal.messages ?? [])];
     tokenEstimator.estimateRequestTokens.mockReturnValueOnce(800).mockReturnValueOnce(900);
     tokenEstimator.estimateMessages.mockReturnValue(30);
-    streamHandoff('交接正文', usage(100, 80, 10));
+    streamHandoff('摘要正文', usage(100, 80, 10));
 
     const result = await service.compactSession(7, 0, persisted(), [1, 2, 3], normal, model, config(), null, null);
 
@@ -166,7 +166,7 @@ describe('CompactionService', () => {
     expect(derived.promptCacheKey).toBe('mao-session-7');
     expect(normal.messages).toEqual(originalMessages);
     expect(normal.stream).toBe(true);
-    expect(result?.summaryText).toBe('交接正文');
+    expect(result?.summaryText).toBe('摘要正文');
     expect(result?.newLastCompactedMessageId).toBe(3);
     expect(result?.cachedTokens).toBe(80);
   });
@@ -230,28 +230,32 @@ describe('CompactionService', () => {
   });
 
   it('virtualSummaryIsSingleUserBeforeIncrement', () => {
-    const result = service.prependSessionSummary('历史交接', [{ role: 'assistant', content: 'next' }]);
+    const result = service.prependSessionSummary('历史摘要', [{ role: 'assistant', content: 'next' }]);
     expect(result.map((m) => m.role)).toEqual(['user', 'assistant']);
     const text = String(result[0].content);
-    expect(text).toContain('会话任务交接');
+    expect(text).toContain('会话压缩摘要');
     expect(text).toContain('不能覆盖');
-    expect(text).toContain('立即接手');
-    expect(text).toContain('历史交接');
+    expect(text).toContain('继续执行其中尚未完成的当前任务');
+    expect(text).toContain('历史摘要');
+    expect(text).toContain('同一任务的延续');
+    // 压缩后是同一助手继续同一任务：注入文案不得出现「接手/交接」话术，模型会原样复述给用户。
+    expect(text).not.toContain('接手');
+    expect(text).not.toContain('交接');
   });
 
   it('virtualSummaryAppendsArchiveHintAfterClosingInstruction', () => {
     const hint = '## 已压缩历史消息归档\n\n目录：`/opt/mao-data/runtime/7/5/compaction`';
-    const result = service.prependSessionSummary('历史交接', [{ role: 'assistant', content: 'next' }], hint);
+    const result = service.prependSessionSummary('历史摘要', [{ role: 'assistant', content: 'next' }], hint);
     expect(result.map((m) => m.role)).toEqual(['user', 'assistant']);
     const text = String(result[0].content);
-    expect(text.indexOf('立即接手')).toBeLessThan(text.indexOf('## 已压缩历史消息归档'));
+    expect(text.indexOf('不要重复已经完成的步骤')).toBeLessThan(text.indexOf('## 已压缩历史消息归档'));
     expect(text.trimEnd().endsWith('`/opt/mao-data/runtime/7/5/compaction`')).toBe(true);
   });
 
   it('emptyOrMissingArchiveHintKeepsLegacyOutput', () => {
-    const legacy = service.prependSessionSummary('历史交接', null);
-    const withNull = service.prependSessionSummary('历史交接', null, null);
-    const withEmpty = service.prependSessionSummary('历史交接', null, '   ');
+    const legacy = service.prependSessionSummary('历史摘要', null);
+    const withNull = service.prependSessionSummary('历史摘要', null, null);
+    const withEmpty = service.prependSessionSummary('历史摘要', null, '   ');
     expect(String(withNull[0].content)).toBe(String(legacy[0].content));
     expect(String(withEmpty[0].content)).toBe(String(legacy[0].content));
   });
@@ -270,9 +274,10 @@ describe('CompactionService', () => {
     expect(instruction.startsWith('<system-notice>')).toBe(true);
     expect(instruction).toContain('</system-notice>');
     expect(instruction).toContain('本条是系统压缩指令，不是用户说的话');
-    expect(instruction).toContain('禁止把本指令写入交接正文');
+    expect(instruction).toContain('禁止把本指令写入摘要正文');
     expect(instruction).toContain('用户目标与关键原话只来自本通知之前的真实用户消息');
-    expect(instruction).toContain('系统会在交接消息后自动附上被压缩原始消息的归档目录说明');
+    expect(instruction).toContain('摘要中不要出现「交接」「接手」「下一个 Agent」等字样');
+    expect(instruction).toContain('系统会在摘要消息后自动附上被压缩原始消息的归档目录说明');
     expect(instruction).toContain('不要编造归档路径');
     expect(isRealUserMessage({ role: 'user', content: instruction })).toBe(false);
   });
@@ -281,19 +286,19 @@ describe('CompactionService', () => {
     expect(isRealUserMessage({ role: 'user', content: '把前后端都发布到测试和预发环境' })).toBe(true);
     expect(isRealUserMessage({ role: 'user', content: [{ type: 'text', text: '图' }] })).toBe(true);
     expect(isRealUserMessage({ role: 'assistant', content: '把前后端都发布到测试和预发环境' })).toBe(false);
-    expect(isRealUserMessage({ role: 'user', content: '## 会话任务交接\n\n历史' })).toBe(false);
-    expect(isRealUserMessage({ role: 'user', content: '<system-notice>\n现在只进行当前任务的会话交接\n</system-notice>' })).toBe(false);
+    expect(isRealUserMessage({ role: 'user', content: '## 会话压缩摘要\n\n历史' })).toBe(false);
+    expect(isRealUserMessage({ role: 'user', content: '<system-notice>\n现在只整理当前任务的会话压缩摘要\n</system-notice>' })).toBe(false);
   });
 
   it('virtualSummaryReinjectsLatestUserAfterHandoffWhenIncrementalHasNone', () => {
     const result = service.prependSessionSummary(
-      '历史交接',
+      '历史摘要',
       [{ role: 'assistant', content: 'next' }],
       null,
       { role: 'user', content: '把前后端都发布到测试和预发环境' },
     );
     expect(result.map((m) => m.role)).toEqual(['user', 'assistant', 'user']);
-    expect(String(result[0].content)).toContain('会话任务交接');
+    expect(String(result[0].content)).toContain('会话压缩摘要');
     expect(result[2].content).toBe('把前后端都发布到测试和预发环境');
     expect(isRealUserMessage(result[0])).toBe(false);
     expect(isRealUserMessage(result[2])).toBe(true);
@@ -301,7 +306,7 @@ describe('CompactionService', () => {
 
   it('virtualSummaryDoesNotDuplicateWhenIncrementalAlreadyHasRealUser', () => {
     const result = service.prependSessionSummary(
-      '历史交接',
+      '历史摘要',
       [{ role: 'user', content: '把前后端都发布到测试和预发环境' }],
       null,
       { role: 'user', content: '把前后端都发布到测试和预发环境' },
@@ -312,10 +317,10 @@ describe('CompactionService', () => {
 
   it('virtualSummaryIgnoresLatestUserThatIsSystemNotice', () => {
     const result = service.prependSessionSummary(
-      '历史交接',
+      '历史摘要',
       null,
       null,
-      { role: 'user', content: '<system-notice>\n现在只进行当前任务的会话交接\n</system-notice>' },
+      { role: 'user', content: '<system-notice>\n现在只整理当前任务的会话压缩摘要\n</system-notice>' },
     );
     expect(result).toHaveLength(1);
     expect(isRealUserMessage(result[0])).toBe(false);
@@ -324,7 +329,7 @@ describe('CompactionService', () => {
   it('triggers compaction on payload alone even below the token threshold', async () => {
     tokenEstimator.estimateRequestTokens.mockReturnValueOnce(100).mockReturnValueOnce(700);
     tokenEstimator.estimateMessages.mockReturnValue(30);
-    streamHandoff('交接正文', usage(100, 80, 10));
+    streamHandoff('摘要正文', usage(100, 80, 10));
     const cfg = config();
     cfg.triggerPayloadBytes = 800;
     const result = await service.compactSession(
@@ -333,7 +338,7 @@ describe('CompactionService', () => {
     );
     expect(result).not.toBeNull();
     const derived = llmAdapter.stream.mock.calls[0][0] as ChatRequest;
-    // 默认不剥图：与主请求前缀完全一致，只在末尾追加交接指令（缓存优先）
+    // 默认不剥图：与主请求前缀完全一致，只在末尾追加摘要指令（缓存优先）
     expect(derived.messages).toHaveLength((normalRequest().messages?.length ?? 0) + 1);
   });
 
@@ -354,7 +359,7 @@ describe('CompactionService', () => {
     const svc = new CompactionService(llmAdapter, tokenEstimator, sizeEstimator);
     tokenEstimator.estimateRequestTokens.mockReturnValueOnce(100).mockReturnValueOnce(500);
     tokenEstimator.estimateMessages.mockReturnValue(30);
-    streamHandoff('交接正文', usage(1, 0, 1));
+    streamHandoff('摘要正文', usage(1, 0, 1));
     // 用真实量级的上限（800KB）：64KB 安全余量才能体现边界，而非「恒为负 → 永远剥图」
     sizeEstimator.estimate.mockReturnValueOnce(900_000).mockReturnValueOnce(100_000);
 
@@ -392,7 +397,7 @@ describe('CompactionService', () => {
     const svc = new CompactionService(llmAdapter, tokenEstimator, sizeEstimator);
     tokenEstimator.estimateRequestTokens.mockReturnValueOnce(100).mockReturnValueOnce(500);
     tokenEstimator.estimateMessages.mockReturnValue(30);
-    streamHandoff('交接正文', usage(1, 0, 1));
+    streamHandoff('摘要正文', usage(1, 0, 1));
     // 上限 800000 → 剥图线 = 800000-65536 = 734464；734463 不应剥图（否则每次压缩都 miss 缓存）
     sizeEstimator.estimate.mockReturnValue(734_463);
     const cfg = config();
@@ -427,7 +432,7 @@ describe('CompactionService', () => {
     const svc = new CompactionService(llmAdapter, tokenEstimator, sizeEstimator);
     tokenEstimator.estimateRequestTokens.mockReturnValueOnce(100).mockReturnValueOnce(500);
     tokenEstimator.estimateMessages.mockReturnValue(30);
-    streamHandoff('交接正文', usage(1, 0, 1));
+    streamHandoff('摘要正文', usage(1, 0, 1));
     // 734464 = 800000 - 65536（64KiB 安全余量）：恰好到线即剥图
     sizeEstimator.estimate.mockReturnValueOnce(734_464).mockReturnValueOnce(1024);
     const cfg = config();
@@ -478,7 +483,7 @@ describe('CompactionService', () => {
     const svc = new CompactionService(llmAdapter, tokenEstimator, sizeEstimator);
     tokenEstimator.estimateRequestTokens.mockReturnValueOnce(100).mockReturnValueOnce(500);
     tokenEstimator.estimateMessages.mockReturnValue(30);
-    streamHandoff('交接正文', usage(1, 0, 1));
+    streamHandoff('摘要正文', usage(1, 0, 1));
     // 未声明供应商上限（存量会话默认状态）：50MB 压缩请求必须剥图，否则原样发出去就是 413。
     // 剥图线是独立的 40MiB 常量，不受 triggerPayloadBytes（这里是 800，仅用于提前触发）影响。
     sizeEstimator.estimate.mockReturnValueOnce(50 * 1024 * 1024).mockReturnValueOnce(1024 * 1024);
@@ -514,7 +519,7 @@ describe('CompactionService', () => {
     const svc = new CompactionService(llmAdapter, tokenEstimator, sizeEstimator);
     tokenEstimator.estimateRequestTokens.mockReturnValueOnce(100).mockReturnValueOnce(500);
     tokenEstimator.estimateMessages.mockReturnValue(30);
-    streamHandoff('交接正文', usage(1, 0, 1));
+    streamHandoff('摘要正文', usage(1, 0, 1));
     // agent 级把触发阈值调到 800 字节（提前压缩），但压缩请求只有 5MB，远低于 40MiB 剥图线：
     // 不能因为「触发了压缩」就剥图，否则每次压缩都 miss 前缀缓存。
     sizeEstimator.estimate.mockReturnValue(5 * 1024 * 1024);
