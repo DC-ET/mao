@@ -1,7 +1,17 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import ElementPlus from 'element-plus'
-import * as ElementPlusIconsVue from '@element-plus/icons-vue'
+import {
+  Aim, ArrowDown, ArrowLeft, ArrowRight, Bell, BellFilled, CaretBottom, CaretTop,
+  ChatDotRound, ChatLineSquare, Check, CircleCheck, CircleClose, Clock, Close, CloseBold,
+  Cloudy, Connection, CopyDocument, Delete, Document, DocumentAdd, DocumentCopy, Download,
+  Edit, EditPen, Files, Finished, Folder, FolderAdd, FolderChecked, FolderOpened, Grid,
+  Hide, InfoFilled, Link, List, Loading, Lock, Message, Monitor, Moon, Odometer,
+  Opportunity, PartlyCloudy, Picture, Plus, Position, Reading, Refresh, RefreshLeft,
+  RefreshRight, Scissor, Search, Select, Setting, Share, Sort, Sunny, Sunrise,
+  SwitchButton, Tickets, TrendCharts, Upload, User, VideoPause, VideoPlay, View,
+  WarningFilled, ZoomIn, ZoomOut,
+} from '@element-plus/icons-vue'
 import 'element-plus/dist/index.css'
 import 'element-plus/theme-chalk/dark/css-vars.css'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
@@ -36,8 +46,20 @@ async function bootstrap() {
 
   const app = createApp(App)
 
-  // Register all Element Plus icons
-  for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
+  // 仅注册模板标签 / 字符串 icon 属性实际用到的图标（与 admin 同一按需口径）；
+  // 局部 import 的图标不受影响。全量注册会让整套图标库（293 个）进主包
+  const globalIcons = {
+    Aim, ArrowDown, ArrowLeft, ArrowRight, Bell, BellFilled, CaretBottom, CaretTop,
+    ChatDotRound, ChatLineSquare, Check, CircleCheck, CircleClose, Clock, Close, CloseBold,
+    Cloudy, Connection, CopyDocument, Delete, Document, DocumentAdd, DocumentCopy, Download,
+    Edit, EditPen, Files, Finished, Folder, FolderAdd, FolderChecked, FolderOpened, Grid,
+    Hide, InfoFilled, Link, List, Loading, Lock, Message, Monitor, Moon, Odometer,
+    Opportunity, PartlyCloudy, Picture, Plus, Position, Reading, Refresh, RefreshLeft,
+    RefreshRight, Scissor, Search, Select, Setting, Share, Sort, Sunny, Sunrise,
+    SwitchButton, Tickets, TrendCharts, Upload, User, VideoPause, VideoPlay, View,
+    WarningFilled, ZoomIn, ZoomOut,
+  }
+  for (const [key, component] of Object.entries(globalIcons)) {
     app.component(key, component)
   }
 

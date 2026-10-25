@@ -309,6 +309,29 @@ function handleDigestOpenUsage() {
   color: #529b2e;
 }
 
+/* 暗色主题：文字换 Element Plus 暗色色板的亮色口径（与 QuickCommandTag 的暗色适配同款），
+   亮色定义的深色文字压在暗底上对比度不足 */
+:root[data-theme="dark"] .kind-task_completed,
+:root[data-theme="dark"] .kind-daily_digest {
+  background: rgba(103, 194, 58, 0.16);
+  color: #95d475;
+}
+
+:root[data-theme="dark"] .kind-task_failed {
+  background: rgba(245, 108, 108, 0.16);
+  color: #f89898;
+}
+
+:root[data-theme="dark"] .kind-question_pending {
+  background: rgba(230, 162, 60, 0.18);
+  color: #eebe77;
+}
+
+:root[data-theme="dark"] .kind-approval_pending {
+  background: rgba(64, 158, 255, 0.18);
+  color: #79bbff;
+}
+
 .inbox-body {
   flex: 1 1 auto;
   min-width: 0;

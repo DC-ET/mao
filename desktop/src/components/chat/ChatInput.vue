@@ -567,7 +567,21 @@ const editor = useEditor({
             handledFile = true
           }
         }
-        if (handledFile) return true
+        if (handledFile) {
+          // 图文混排粘贴（网页 / Office 复制「文字 + 截图」）：文件已入待发列表，
+          // 但 text/plain 不能跟着丢——返回 true 会跳过 TipTap 默认粘贴，需手动按行插入
+          const pastedText = event.clipboardData?.getData('text/plain')
+          const view = editor.value?.view
+          if (pastedText && view) {
+            const { state } = view
+            const paragraphs = pastedText
+              .split(/\r?\n/)
+              .map(line => state.schema.nodes.paragraph.create(null, line ? state.schema.text(line) : undefined))
+            const tr = state.tr.replaceSelection(new Slice(Fragment.fromArray(paragraphs), 1, 1))
+            view.dispatch(tr.scrollIntoView())
+          }
+          return true
+        }
       }
       // Handle text paste — convert @{...}@, ${...}$, #{...}# patterns to editor nodes
       const text = event.clipboardData?.getData('text/plain')

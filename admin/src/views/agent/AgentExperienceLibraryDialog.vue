@@ -43,7 +43,7 @@
       <el-table-column prop="updatedAt" label="更新时间" width="170" :formatter="formatDateTimeColumn" />
       <el-table-column label="操作" width="110" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" size="small" :disabled="!canWrite" @click="startEdit(row)">编辑</el-button>
+          <el-button link type="primary" size="small" :disabled="!canWrite" :loading="openingDocFile === row.fileName" @click="startEdit(row)">编辑</el-button>
           <el-button link type="danger" size="small" :disabled="!canWrite" @click="removeDoc(row)">删除</el-button>
         </template>
         <template #empty>暂无经验文档；Agent 完成复杂任务后会自行沉淀，也可在此新建</template>
@@ -115,6 +115,8 @@ const loading = ref(false)
 const toggling = ref(false)
 const rebuilding = ref(false)
 const saving = ref(false)
+/** 正在拉取内容的文档文件名：行内「编辑」按钮转 loading，防慢网下误以为点击无效而连点 */
+const openingDocFile = ref('')
 const editing = ref<{ fileName: string; content: string; existing: boolean } | null>(null)
 
 function formatSize(bytes: number): string {
@@ -131,7 +133,7 @@ async function load() {
     docs.value = data.docs
     indexContent.value = data.indexContent
   } catch {
-    ElMessage.error('加载经验库失败')
+    // api 拦截器已弹错误提示（本地再弹会双重 toast）
   } finally {
     loading.value = false
   }
@@ -152,11 +154,12 @@ async function toggleEnabled(next: string | number | boolean) {
 }
 
 function startCreate() {
-  const today = new Date().toISOString().slice(0, 10)
-  editing.value = { fileName: `${today}-.md`, content: '', existing: false }
+  // 空文件名 + placeholder 指引格式；预填残缺占位名（如「2026-10-24-.md」）曾被原样保存入库
+  editing.value = { fileName: '', content: '', existing: false }
 }
 
 async function startEdit(row: ExperienceDoc) {
+  openingDocFile.value = row.fileName
   try {
     const { data } = await api.get<{ fileName: string; content: string }>(
       `/agents/${props.agentId}/experience-library/docs/content`,
@@ -164,16 +167,34 @@ async function startEdit(row: ExperienceDoc) {
     )
     editing.value = { fileName: data.fileName, content: data.content, existing: true }
   } catch {
-    ElMessage.error('读取经验文档失败')
+    // api 拦截器已弹错误提示
+  } finally {
+    openingDocFile.value = ''
   }
 }
 
 async function saveDoc() {
   if (!editing.value) return
   const fileName = editing.value.fileName.trim()
+  if (!fileName) {
+    ElMessage.warning('请输入文件名')
+    return
+  }
   if (!fileName.endsWith('.md') || fileName.includes('/') || fileName.includes('\\') || fileName.includes('..')) {
     ElMessage.warning('文件名必须是 .md 结尾且不含路径')
     return
+  }
+  // 新建撞名 = 整文件静默覆盖共享文档（后端 PUT 无条件 upsert）：必须先确认
+  if (!editing.value.existing && docs.value.some(d => d.fileName === fileName)) {
+    try {
+      await ElMessageBox.confirm(
+        `文件「${fileName}」已存在，保存将覆盖原文档且不可恢复，确定继续吗？`,
+        '覆盖确认',
+        { type: 'warning' },
+      )
+    } catch {
+      return
+    }
   }
   saving.value = true
   try {
