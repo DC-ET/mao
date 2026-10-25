@@ -97,6 +97,7 @@
             v-else-if="seg.type === 'text'"
             :content="seg.content"
             :cite-map="citeMap"
+            :streaming="isAssistantRunning"
             body-class="assistant-text markdown-body"
           />
           <ToolCallGroup
@@ -113,6 +114,7 @@
           v-if="message.content && !isBackgroundNotice"
           :content="message.content"
           :cite-map="citeMap"
+          :streaming="isAssistantRunning"
           body-class="assistant-text markdown-body"
         />
         <div v-if="visibleToolCalls.length > 0" class="tool-calls">
