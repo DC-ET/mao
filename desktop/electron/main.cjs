@@ -25,6 +25,9 @@ if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
   app.on('second-instance', () => {
+    // app ready 前禁止创建 BrowserWindow（真实 Electron 会抛未捕获异常）：未就绪时直接返回，
+    // whenReady 链会把主窗建出来，不会漏掉「唤起」语义
+    if (!app.isReady()) return
     const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : createWindow()
     if (!win || win.isDestroyed()) return
     if (win.isMinimized()) win.restore()
@@ -38,6 +41,8 @@ let mainWindow = null
 let appTray = null
 /** before-quit 已触发：close 事件不再拦截为隐藏，保证退出路径全量清理 */
 let quitting = false
+/** 当前已注册的全局快捷键（换键时精确注销旧键；app 退出时随进程销毁） */
+let currentShortcutAccel = null
 let currentWorkspace = ''
 /** @type {Map<string, (approved: boolean) => void>} */
 const pendingApprovals = new Map()
@@ -1250,6 +1255,15 @@ function createWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null
   })
+
+  // 托盘菜单文案（显示/隐藏主窗）随窗口显示态刷新。挂在 createWindow 里而非 initTray：
+  // 退出模式下关窗会销毁窗口，activate/second-instance 重建的新窗口同样需要这些监听，
+  // 否则文案停留在旧状态，用户按文案点击会做出与意图相反的动作。
+  const refreshTray = () => appTray?.refresh()
+  mainWindow.on('show', refreshTray)
+  mainWindow.on('hide', refreshTray)
+  mainWindow.on('minimize', refreshTray)
+  mainWindow.on('restore', refreshTray)
 }
 
 // ========== P2/P3 桌面壳：托盘 / 通知 / 角标 / 偏好 / 快捷键 ==========
@@ -1292,12 +1306,6 @@ function initTray() {
       app.quit()
     },
   })
-  // 窗口显示态变化时刷新托盘菜单文案（显示/隐藏主窗）
-  const refresh = () => appTray?.refresh()
-  mainWindow?.on('show', refresh)
-  mainWindow?.on('hide', refresh)
-  mainWindow?.on('minimize', refresh)
-  mainWindow?.on('restore', refresh)
 }
 
 /**
@@ -1306,13 +1314,24 @@ function initTray() {
  * @param {string | null} accel
  * @returns {{ ok: true } | { ok: false, error: string }}
  */
+/**
+ * 全局快捷键（P3，默认 Alt+Shift+M，可改可关）：触发时窗口可见且聚焦则隐藏，否则唤起。
+ * 换键顺序必须是「先注册新键、成功后再摘旧键」：反过来会在新键注册失败时把旧键也弄丢
+ * （unregisterAll 先清空），而偏好文件与设置页仍显示旧键，快捷键静默失效到重启。
+ * @param {string | null} accel
+ * @returns {{ ok: true } | { ok: false, error: string }}
+ */
 function applyGlobalShortcut(accel) {
-  try {
-    globalShortcut.unregisterAll()
-  } catch (e) {
-    console.warn('[shortcut] unregisterAll failed:', e?.message)
+  if (!accel) {
+    // 关闭：只摘当前已注册的那个键，不影响（也不存在的）其他注册项
+    try {
+      if (currentShortcutAccel) globalShortcut.unregister(currentShortcutAccel)
+    } catch (e) {
+      console.warn('[shortcut] unregister failed:', e?.message)
+    }
+    currentShortcutAccel = null
+    return { ok: true }
   }
-  if (!accel) return { ok: true }
   try {
     const registered = globalShortcut.register(accel, () => {
       const win = mainWindow
@@ -1327,8 +1346,17 @@ function applyGlobalShortcut(accel) {
       appTray?.refresh()
     })
     if (!registered) {
+      // 新键没注册上：旧键原样保持生效，偏好不写，UI 与实际状态一致
       return { ok: false, error: '快捷键注册失败，可能已被其他程序占用' }
     }
+    if (currentShortcutAccel && currentShortcutAccel !== accel) {
+      try {
+        globalShortcut.unregister(currentShortcutAccel)
+      } catch (e) {
+        console.warn('[shortcut] unregister old accel failed:', e?.message)
+      }
+    }
+    currentShortcutAccel = accel
     return { ok: true }
   } catch (e) {
     return { ok: false, error: `快捷键格式无效：${e?.message || ''}` }
@@ -1424,7 +1452,7 @@ ipcMain.handle('desktop-prefs-set', (event, patch) => {
 
 ipcMain.handle('desktop-shortcut-set', (event, accel) => {
   const next = accel == null ? null : String(accel).trim()
-  if (next !== null && next === '') {
+  if (next === '') {
     return { ok: false, error: '快捷键不能为空（关闭请传 null）' }
   }
   const applied = applyGlobalShortcut(next)
