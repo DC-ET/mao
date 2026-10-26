@@ -804,7 +804,6 @@ describe('SessionService session group filtering', () => {
       workspace: '/data/workspace/projects/proj',
       project_key: null, projectKey: null,
       source: null,
-      is_pinned: 0, isPinned: 0,
       updated_at: '2026-10-13 10:00:00', updatedAt: '2026-10-13 10:00:00',
     };
     const merged = { ...base, ...over };

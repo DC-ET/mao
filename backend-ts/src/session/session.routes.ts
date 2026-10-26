@@ -328,20 +328,6 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     return sendOk(reply, vos[0]);
   });
 
-  app.put('/v1/sessions/:id/pin', async (request, reply) => {
-    const userId = requireUserId(request);
-    await requireSessionOwner(userId, pathId(request));
-    await sessionService.togglePin(pathId(request));
-    return sendOk(reply);
-  });
-
-  app.put('/v1/sessions/:id/favorite', async (request, reply) => {
-    const userId = requireUserId(request);
-    await requireSessionOwner(userId, pathId(request));
-    await sessionService.toggleFavorite(pathId(request));
-    return sendOk(reply);
-  });
-
   app.put('/v1/sessions/:id/archive', async (request, reply) => {
     const userId = requireUserId(request);
     await requireSessionOwner(userId, pathId(request));

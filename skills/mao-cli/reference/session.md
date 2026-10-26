@@ -2,7 +2,7 @@
 
 ## 模块职责
 
-管理会话**元数据**：创建 LOCAL/CLOUD 会话、查询、分组分页、更新标题/摘要/权限/模型、置顶/收藏/归档/已读、看板、云端项目、边路任务与子智能体列表。管理员检索全站会话见 [admin-session.md](admin-session.md)。
+管理会话**元数据**：创建 LOCAL/CLOUD 会话、查询、分组分页、更新标题/摘要/权限/模型、归档/已读、看板、云端项目、边路任务与子智能体列表。管理员检索全站会话见 [admin-session.md](admin-session.md)。
 
 ## 明确不包含
 
@@ -20,8 +20,6 @@
 | 更新元数据 | `session update` |
 | 删除 | `session delete` |
 | 标记已读 | `session mark-read` |
-| 切换置顶 | `session pin` |
-| 切换收藏 | `session favorite` |
 | 归档 | `session archive` |
 | 看板 | `session dashboard` |
 | 云端项目列表 | `session cloud-projects` |
@@ -178,13 +176,11 @@ mao session delete --id 12
 
 ---
 
-## 命令：mao session mark-read / pin / favorite / archive
+## 命令：mao session mark-read / archive
 
 ### 用途
 
 - `mark-read`：标记已读（`PUT /sessions/{id}/read`）
-- `pin`：切换置顶（`PUT /sessions/{id}/pin`）
-- `favorite`：切换收藏（`PUT /sessions/{id}/favorite`）
 - `archive`：归档（`PUT /sessions/{id}/archive`）
 
 ### 参数说明
@@ -196,8 +192,6 @@ mao session delete --id 12
 ### 示例
 
 ```bash
-mao session pin --id 12
-mao session favorite --id 12
 mao session archive --id 12
 mao session mark-read --id 12
 ```

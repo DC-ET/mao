@@ -7,8 +7,6 @@ export interface Session {
   agentId?: number | null;
   title?: string | null;
   status?: string | null;
-  isPinned?: number | null;
-  isFavorite?: number | null;
   executionMode?: string | null;
   workspace?: string | null;
   permissionLevel?: string | null;

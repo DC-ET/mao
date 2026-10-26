@@ -133,8 +133,6 @@ export class SessionService {
       shellPath: shellPath ?? null,
       osVersion: osVersion ?? null,
       modelId: parseEntityId(modelId),
-      isPinned: 0,
-      isFavorite: 0,
       phase: 'IDLE',
       elapsedMs: 0,
       sessionType: 'NORMAL',
@@ -272,7 +270,7 @@ export class SessionService {
 
   async listSessions(userId: number, keyword?: string | null, status?: string | null): Promise<Session[]> {
     const { whereSql, params } = this.baseSessionListQuery(userId, keyword, status);
-    return this.sessionRepo.list(whereSql, params, 'ORDER BY is_pinned DESC, updated_at DESC, id DESC');
+    return this.sessionRepo.list(whereSql, params, 'ORDER BY updated_at DESC, id DESC');
   }
 
   async listSessionGroups(userId: number, keyword: string | null | undefined, status: string | null | undefined, previewLimit: number): Promise<SessionGroupBucket[]> {
@@ -332,7 +330,7 @@ export class SessionService {
       ? 'ORDER BY updated_at DESC, id DESC'
       // 活跃相位与 ACTIVE_PHASES（isActivePhase / 侧边栏组预览 / dashboard）同一口径，含 CANCELLING；
       // 漏列会把取消中的会话当空闲排到后面，与组预览排序互相打架。
-      : `ORDER BY CASE WHEN phase IN (${ACTIVE_PHASE_SQL_LIST}) THEN 0 ELSE 1 END, is_pinned DESC, updated_at DESC, id DESC`;
+      : `ORDER BY CASE WHEN phase IN (${ACTIVE_PHASE_SQL_LIST}) THEN 0 ELSE 1 END, updated_at DESC, id DESC`;
     const items = await this.sessionRepo.list(
       whereSql,
       params,
@@ -667,8 +665,6 @@ export class SessionService {
         agentId: source.agentId,
         title: source.title ?? '未命名会话',
         status: 'ACTIVE',
-        isPinned: 0,
-        isFavorite: 0,
         executionMode: source.executionMode,
         workspace: source.workspace,
         permissionLevel: source.permissionLevel,
@@ -1000,18 +996,6 @@ export class SessionService {
     }
     const agents = await this.agentLookup.findByIds(ids);
     return new Map(agents.map((a) => [parseEntityId(a.id) ?? a.id, a]));
-  }
-
-  async togglePin(id: number): Promise<void> {
-    const session = await this.getSession(id);
-    const isPinned = session.isPinned != null && session.isPinned === 1 ? 0 : 1;
-    await this.sessionRepo.updateFields(id, { isPinned });
-  }
-
-  async toggleFavorite(id: number): Promise<void> {
-    const session = await this.getSession(id);
-    const isFavorite = session.isFavorite != null && session.isFavorite === 1 ? 0 : 1;
-    await this.sessionRepo.updateFields(id, { isFavorite });
   }
 
   async archiveSession(id: number): Promise<void> {

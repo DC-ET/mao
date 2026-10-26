@@ -70,8 +70,8 @@ describe('SessionGroupKey', () => {
   });
 
   it('compareSessions_activeFirst', () => {
-    const running: Session = { id: 1, userId: 1, phase: 'RUNNING', isPinned: 0 };
-    const idle: Session = { id: 2, userId: 1, phase: 'IDLE', isPinned: 1 };
+    const running: Session = { id: 1, userId: 1, phase: 'RUNNING' };
+    const idle: Session = { id: 2, userId: 1, phase: 'IDLE' };
     expect(SessionGroupKey.compareSessions(running, idle)).toBeLessThan(0);
   });
 
@@ -82,11 +82,11 @@ describe('SessionGroupKey', () => {
     expect(SessionGroupKey.compareSessions(older, newer)).toBeGreaterThan(0);
   });
 
-  it('compareSessions_archivedIgnoresPhaseAndPin', () => {
-    const failedNewest: Session = { id: 1, userId: 1, status: 'ARCHIVED', phase: 'FAILED', isPinned: 0, updatedAt: '2026-08-09T10:00' };
-    const pinnedCompleted: Session = { id: 2, userId: 1, status: 'ARCHIVED', phase: 'COMPLETED', isPinned: 1, updatedAt: '2026-08-07T10:00' };
-    const runningMid: Session = { id: 3, userId: 1, status: 'ARCHIVED', phase: 'RUNNING', isPinned: 0, updatedAt: '2026-08-08T10:00' };
-    const list = [pinnedCompleted, runningMid, failedNewest].sort(SessionGroupKey.compareSessions);
+  it('compareSessions_archivedIgnoresPhase', () => {
+    const failedNewest: Session = { id: 1, userId: 1, status: 'ARCHIVED', phase: 'FAILED', updatedAt: '2026-08-09T10:00' };
+    const completed: Session = { id: 2, userId: 1, status: 'ARCHIVED', phase: 'COMPLETED', updatedAt: '2026-08-07T10:00' };
+    const runningMid: Session = { id: 3, userId: 1, status: 'ARCHIVED', phase: 'RUNNING', updatedAt: '2026-08-08T10:00' };
+    const list = [completed, runningMid, failedNewest].sort(SessionGroupKey.compareSessions);
     expect(list.map((s) => s.id)).toEqual([1, 3, 2]);
   });
 

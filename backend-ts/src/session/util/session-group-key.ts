@@ -255,11 +255,6 @@ export function compareSessions(a: Session, b: Session): number {
   if (aActive !== bActive) {
     return aActive ? -1 : 1;
   }
-  const aPin = a.isPinned != null && a.isPinned === 1 ? 1 : 0;
-  const bPin = b.isPinned != null && b.isPinned === 1 ? 1 : 0;
-  if (aPin !== bPin) {
-    return bPin - aPin;
-  }
   return compareByUpdatedDesc(a, b);
 }
 

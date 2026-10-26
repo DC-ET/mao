@@ -30,11 +30,10 @@ export async function cmdLs(
 
 function formatRow(s: SessionVO, width: number, lastSessionId?: number): string {
   const id = String(s.id ?? '').padStart(width);
-  const pin = s.isPinned ? '*' : ' ';
   const last = s.id != null && s.id === lastSessionId ? 'last' : '    ';
   const phase = (s.phase ?? 'IDLE').padEnd(10);
   const agent = (s.agentName ?? '').slice(0, 16).padEnd(16);
   const title = (s.title ?? '未命名会话').replace(/\s+/g, ' ').slice(0, 40);
   const updated = formatRelativeTime(s.updatedAt) || (s.updatedAt ?? '');
-  return `${pin}${id}  ${last}  ${phase}  ${agent}  ${title}  ${updated}`;
+  return `${id}  ${last}  ${phase}  ${agent}  ${title}  ${updated}`;
 }

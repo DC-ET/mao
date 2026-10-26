@@ -52,7 +52,7 @@
 
 1. 登录：`mao auth login`；云端/微信 shell 已注入 `MAO_TOKEN` 则跳过
 2. 上下文：`mao agent list`、`mao model list-active`，必要时 `mao session create`
-3. 会话元数据：`session update|pin|favorite|archive|mark-read`
+3. 会话元数据：`session update|archive|mark-read`
 4. 偏好：`pref` 任务面板/通知
 5. 诊断：`file workspace-*`、`file workspace-git-*`
 6. 个人：`skill`、`command`、`quick-command`
@@ -73,5 +73,5 @@
 | 需求 | 工具 |
 |------|------|
 | 与 Agent 多轮对话、工具循环 | mao-agent |
-| 查会话列表、改 pin、管用户、配模型 | mao (mao-cli) |
+| 查会话列表、管用户、配模型 | mao (mao-cli) |
 | 云端 Agent 在 shell 里调 API | mao（`MAO_TOKEN` 自动注入） |

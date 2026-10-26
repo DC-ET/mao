@@ -27,8 +27,6 @@ export interface SessionVO {
   agentName?: string;
   title?: string | null;
   status?: string | null;
-  isPinned?: boolean;
-  isFavorite?: boolean;
   executionMode?: string | null;
   workspace?: string | null;
   source?: string | null;
@@ -189,8 +187,6 @@ export function toSessionVO(
     agentId: session.agentId,
     title: session.title,
     status: session.status,
-    isPinned: session.isPinned != null && session.isPinned === 1,
-    isFavorite: session.isFavorite != null && session.isFavorite === 1,
     executionMode: session.executionMode,
     workspace: session.workspace,
     source: session.source ?? 'web',
