@@ -251,6 +251,26 @@
 4. **文档同步**：实施时按节写 CHANGELOG（前端 / 桌面 Electron 小节）+ mao-cli `reference/desktop.md`、`reference/electron.md` 对应更新；Electron 冒烟清单进 CONTRIBUTING。
 5. **实施顺序建议**：会话导航的拆除清理（favorite / pin 移除，可先行合入）→ 会话导航 P1（过滤 + 批量归档）→ 渲染 P1 → Electron P1，三件 P1 合计约一周量级，可各自由独立会话并行。
 
+## 第十七批（2026-10-26）
+
+背景：第十六批（回复渲染 / 会话列表导航 / Electron 壳补完）落定后，延续「**让已经在用的人和团队用得更顺**」方向，对 backend-ts 全部路由与六端（admin / desktop / android / agent-cli / mao-cli / sdk/embed）消费方做逐一比对摸底，得出三个共同主题为「**把已建成的能力接上插座、把黑盒翻给用户看**」的方向：**文件预览**停在四种格式，而 Agent 高频产出（CSV 报表 / 压缩包 / 音视频）全部不可读；**定时任务编辑**后端 / admin / mao-cli 三处就绪，日常入口桌面端却只能启停删除；**预算**执行链路完整运行但全部长在 admin 域，用户被拦时无从自查。三件互不依赖、全部零 / 近零迁移、不碰执行内核。均避开已否决方向（结构化回复卡片 / 交付物中心 / 任务模板 / 执行节点 / 会话移交等）与 README 贡献边界。
+
+**评审结果（2026-10-26）：三件均已细化、技术方案待评审。**
+
+| 提案 | 文档 | 一句话 | 规模 |
+|---|---|---|---|
+| 工作区文件预览完整度 | [2026-10-26-workspace-file-preview.md](2026-10-26-workspace-file-preview.md)（**已细化**，技术方案待评审：[../plan/2026-10-26-workspace-file-preview-technical-design.md](../plan/2026-10-26-workspace-file-preview-technical-design.md)，含 §6 全量冲突清单；方案对提案有三处范围修正：XLSX 库定 exceljs、`.tar/.gz` 收窄不做、DOCX 列 P2 伸展项） | CSV 表格化 / ZIP 包内浏览 / XLSX / DOCX / 音视频播放——0.0.350 回复渲染的同一条主线延伸到落盘文件，Agent 的成果不再以「二进制文件」面对 | 小~中 |
+| 定时任务编辑下沉 | [2026-10-26-scheduled-task-editing.md](2026-10-26-scheduled-task-editing.md)（**已细化，技术方案待评审**：[../plan/2026-10-26-scheduled-task-editing-technical-design.md](../plan/2026-10-26-scheduled-task-editing-technical-design.md)，含 §0 八项待确认决策与 §7 十八条冲突风险表；方案对提案有两处修正：admin 其实已在用 cron-preview、一次性任务允许改 Cron 配 mismatch 警告） | 接通后端已就绪的 PUT 全字段与 cron-preview 端点，桌面端从「只能启停删」到「改得动、输不错」；顺带修正 cron-preview 错位的权限门 | 小 |
+| 个人用量预算可见 | [2026-10-26-user-budget-visibility.md](2026-10-26-user-budget-visibility.md)（**已细化，技术方案待评审**：[../plan/2026-10-26-user-budget-visibility-technical-design.md](../plan/2026-10-26-user-budget-visibility-technical-design.md)，含 §0 十二项待确认决策与 §7 C1–C15 全量冲突风险表；零迁移、执行链路零改动、admin / mao-cli / agent-cli 零改动） | 只读端点 + 用量抽屉「预算」Tab + 收件箱预算提醒跳转，额度 / 已用 / 重置日翻给用户看，被拦时自查而非提工单 | 小~中 |
+
+排期注意：
+
+1. **迁移编号**：三件均零迁移，不占号（当前最新 V173）。
+2. **三处同改清单**：三件均不新增内置工具、不新增 LLM 调用场景、不新增收件箱 kind（`BUDGET_WARN` 既有），不触发既有「三处同改」规范；预算 VO 按规范下沉 `@mao/contracts`（仅新增类型，不动既有联合）。
+3. **相邻收敛点**：三件均不动 `task-terminal.service.ts` / AgentLoop / prompt-engine；文件预览不动渲染主链白名单（新解析输出仍过既有 DOMPurify / 表格组件通道）；预算只读端点与 usage 域同范式，消耗计算复用 `getPeriodSpend` 单一口径，不新造统计口径。
+4. **体积护栏**：文件预览新增解析库（表格 / SheetJS / JSZip / mammoth）全部动态 chunk，扩充 `check-main-chunk` 断言（0.0.350 先例），不含新格式的会话首屏零增长。
+5. **文档同步**：实施时按节写 CHANGELOG（前端 / 后端小节）+ mao-cli `reference/desktop.md`（定时任务编辑、预算 Tab）与用量 / 预算口径文档更新。
+
 ## 已评估、明确不做
 
 以下各项已复审定案，**不再重启、不再提案**（存档文档已标否决，勿再评审）：
