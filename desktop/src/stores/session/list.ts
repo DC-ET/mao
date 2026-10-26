@@ -129,6 +129,8 @@ export function createSessionListModule(ctx: {
    * 只要期间发生过一次重建（无论重建是在它发起前已在飞、还是发起后才开始），该 offset
    * 一律过期，响应到达时比对代次不符即整条丢弃，不并入、不覆盖组元数据。改过滤词、
    * 手动刷新、恢复归档都会重建；请求失败不重建，在飞的合法分页不受影响。
+   * 与之互补：归档 / 删除 / 新建走 bumpGroupMetaForSession 增量改 loadedCount（不重建、
+   * 不动代次），由 loadMoreInGroup 响应回来时复核该组 loadedCount 是否变过一并兜底。
    */
   let standardListEpoch = 0
 
@@ -193,13 +195,20 @@ export function createSessionListModule(ctx: {
     // 请求发起时的重建代次：期间发生过 fetchSessions（改过滤词 / 手动刷新 / 恢复归档）
     // 则本响应过期，整条丢弃，不并入、不覆盖组元数据
     const epoch = standardListEpoch
+    // 请求发起时该分组的已加载窗口条数：归档 / 删除 / 新建走 bumpGroupMetaForSession
+    // 增量改 loadedCount（不 bump 代次），服务端列表同时少 / 多一条，旧 offset 会整页
+    // 偏移、跳过一条会话（第三轮审查附带发现）——响应回来复核，变过即同口径丢弃
+    const loadedCountAtRequest = meta?.loadedCount
     loadingMoreGroups.value = new Set(loadingMoreGroups.value).add(key)
     try {
       const { data } = await api.get('/sessions', {
         // 与 fetchSessions 同一 keyword：服务端按同一关键词分页，本地 offset（= 服务端已返回条数）天然自洽（C1）
         params: { groupKey: key, offset, limit, keyword: listKeyword.value || undefined }
       })
+      // 代次不符（重建落地）或该组已加载窗口在飞期间被增量改过（归档 / 删除 / 新建）：
+      // offset 一律过期，整条丢弃，用户再点一次即按新口径取页
       if (epoch !== standardListEpoch) return false
+      if (groupMeta.value.get(key)?.loadedCount !== loadedCountAtRequest) return false
       const items: Session[] = (data?.items || []).map(normalizeSession)
       if (items.length === 0) {
         if (meta) {

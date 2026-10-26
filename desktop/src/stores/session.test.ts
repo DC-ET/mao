@@ -1178,6 +1178,42 @@ describe('session store 标题过滤（listKeyword 单一状态源）', () => {
 
     expect(store.standardSessionIds).toEqual(all.slice(0, 40))
   })
+
+  it('在飞分页期间归档已加载窗口内的一条：旧 offset 的页整条丢弃，不跳条', async () => {
+    const store = useSessionStore()
+    const all = Array.from({ length: 60 }, (_, i) => String(i + 1))
+
+    // 1) 首屏预览 20 条，hasMore=true
+    mockGet.mockResolvedValueOnce(preview(all.slice(0, 20), 60, true))
+    await store.fetchSessions()
+    expect(store.standardSessionIds).toEqual(all.slice(0, 20))
+    expect(store.getGroupMeta(KEY)?.loadedCount).toBe(20)
+
+    // 2) 点「展开更多」：offset=20，请求在飞
+    let releaseLoadMore: (value: any) => void = () => {}
+    mockGet.mockImplementationOnce(() => new Promise((resolve) => { releaseLoadMore = resolve }) as any)
+    const loadMorePromise = store.loadMoreInGroup(KEY)
+    expect(mockGet.mock.calls[1][1]?.params?.offset).toBe(20)
+
+    // 3) 在飞期间归档已加载窗口内的第 5 条（C5：loadedCount 20→19，投影移除该条）。
+    //    归档走 bumpGroupMetaForSession 增量改元数据，不重建、不 bump 代次
+    mockPut.mockResolvedValueOnce({ data: {} })
+    await store.archiveSession('5')
+    expect(store.getGroupMeta(KEY)?.loadedCount).toBe(19)
+    expect(store.standardSessionIds.length).toBe(19)
+
+    // 4) 分页响应到达：服务端该组此刻也少了一条，offset=20 落到第 22 条起——
+    //    不拦截就会跳过第 21 条、把第 41 条提前并入，列表出现空洞
+    const serverListAfterArchive = all.filter(id => id !== '5')
+    releaseLoadMore(page(serverListAfterArchive.slice(20, 40), 59, false))
+    await loadMorePromise
+
+    // 整条丢弃：列表保持归档后的 19 条（不漏条不重条），hasMore 仍为 true，
+    // 用户再点一次即按新 offset(19) 取到正确的第 20-39 条
+    expect(store.standardSessionIds).toEqual(all.slice(0, 20).filter(id => id !== '5'))
+    expect(store.getGroupMeta(KEY)?.loadedCount).toBe(19)
+    expect(store.getGroupMeta(KEY)?.hasMore).toBe(true)
+  })
 })
 
 describe('session store 批量归档（archiveSessions）', () => {
