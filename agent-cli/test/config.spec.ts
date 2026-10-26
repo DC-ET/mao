@@ -15,10 +15,10 @@ describe('normalizeBaseUrl', () => {
 });
 
 describe('pickLatestSession', () => {
-  it('re-sorts by updatedAt so pinned sessions do not win', () => {
+  it('re-sorts by updatedAt rather than trusting the incoming order', () => {
     const list: SessionVO[] = [
-      { id: 1, isPinned: true, updatedAt: '2026-01-01T00:00:00', status: 'ACTIVE' },
-      { id: 2, isPinned: false, updatedAt: '2026-08-01T00:00:00', status: 'ACTIVE' },
+      { id: 1, updatedAt: '2026-01-01T00:00:00', status: 'ACTIVE' },
+      { id: 2, updatedAt: '2026-08-01T00:00:00', status: 'ACTIVE' },
     ];
     expect(pickLatestSession(list)?.id).toBe(2);
   });
