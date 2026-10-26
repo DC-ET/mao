@@ -128,4 +128,35 @@ describe('admin permission gates', () => {
     expect(listAll).toHaveBeenCalled();
     await allowed.close();
   });
+
+  it('lets any authenticated user preview cron without scheduled-task:read', async () => {
+    const jwt = {
+      validateAccessToken: () => true,
+      getUserIdFromToken: () => 7,
+    };
+    const previewCron = vi.fn(() => ({ valid: true, oneShot: false, nextFireTimes: ['2026-10-27 09:00:00'], message: null }));
+
+    // 默认角色用户：一个 scheduled-task 权限码都没有（V001/V121 的口径）
+    const app = Fastify();
+    app.setErrorHandler(handleError);
+    registerScheduledTaskRoutes(app, {
+      jwt: jwt as never,
+      service: { previewCron } as never,
+      permission: { hasPermission: async () => false } as never,
+    });
+    const ok = JSON.parse((await app.inject({
+      method: 'POST', url: '/v1/scheduled-tasks/cron-preview',
+      headers: { authorization: 'Bearer t' },
+      payload: { expression: '0 0 9 * * ?', count: 3 },
+    })).body);
+    expect(ok.code).toBe(0);
+    expect(previewCron).toHaveBeenCalledWith('0 0 9 * * ?', 3);
+    const anon = JSON.parse((await app.inject({
+      method: 'POST', url: '/v1/scheduled-tasks/cron-preview',
+      payload: { expression: '0 0 9 * * ?' },
+    })).body);
+    expect(anon.code).toBe(1001);
+    expect(previewCron).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
 });

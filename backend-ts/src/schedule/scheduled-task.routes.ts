@@ -54,12 +54,11 @@ export function registerScheduledTaskRoutes(app: FastifyInstance, deps: Schedule
   /**
    * Cron 表达式预览：只读语义，用同一套解析（含 Spring `?` 兼容）与同一时区算未来触发时间。
    * 非法表达式返回 ok + valid:false，不抛异常——编辑过程中输到一半属预期状态，不该弹全局错误。
+   * 纯计算端点（不触碰任何数据）：登录即可用。原 scheduled-task:read 门是「跨用户读」语义，
+   * 会把默认角色用户挡在桌面端编辑预览之外（该端点本就为「编辑过程中输到一半」设计）。
    */
   app.post('/v1/scheduled-tasks/cron-preview', async (req, reply) => {
-    const userId = requireUserId(req, deps.jwt);
-    if (deps.permission && !(await hasPermission(userId, READ_PERMISSION))) {
-      throw new BusinessException(ErrorCode.FORBIDDEN);
-    }
+    requireUserId(req, deps.jwt);
     const body = (req.body ?? {}) as { expression?: unknown; count?: unknown };
     if (typeof body.expression !== 'string') {
       throw new BusinessException(ErrorCode.PARAM_INVALID, 'expression 必须为字符串');

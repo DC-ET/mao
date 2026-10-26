@@ -1,5 +1,6 @@
 import { computed, ref } from 'vue'
 import { api } from '../api'
+import type { ScheduledTaskEditFields } from '../utils/scheduledTaskEdit'
 
 export interface ScheduledTask {
   id: number
@@ -10,11 +11,13 @@ export interface ScheduledTask {
   prompt: string
   cronExpression: string
   status: string
+  once?: number | null
   lastFireTime: string | null
   lastExecutionStatus: string | null
   nextFireTime: string | null
   fireCount: number
-  finished: boolean
+  /** 后端 TINYINT（0/1）经 mysql2 直出为 number，勿按布尔声明——严格比较会漏判 */
+  finished: number
   finishedAt: string | null
   consecutiveFailures?: number
   retryMax?: number
@@ -102,6 +105,36 @@ export function useScheduledTasks() {
     }
   }
 
+  /**
+   * 任务详情：对话框打开时拉取，用于对抗多写入方竞态（Agent 的 update_scheduled_task
+   * 与面板编辑可能改同一任务，列表数据可能已过时）。失败返回 null，由调用方决定提示。
+   */
+  async function fetchTaskDetail(id: number): Promise<ScheduledTask | null> {
+    try {
+      const { data } = await api.get(`/scheduled-tasks/${id}`)
+      return data
+    } catch {
+      // interceptor handles toast
+      return null
+    }
+  }
+
+  /**
+   * 全字段保存（编辑对话框）。载荷由 utils/scheduledTaskEdit.buildUpdatePayload 构造，
+   * 刻意不含 status：误传 status:'ACTIVE' 会触发后端 enabling 跃迁清零连续失败计数。
+   * 成功后以响应体整体替换列表行（保持与其它列同样的不可变更换），返回最新任务。
+   */
+  async function updateTask(id: number, fields: ScheduledTaskEditFields): Promise<ScheduledTask | null> {
+    try {
+      const { data } = await api.put(`/scheduled-tasks/${id}`, fields)
+      tasks.value = tasks.value.map(t => (t.id === id ? data : t))
+      return data
+    } catch {
+      // interceptor handles toast
+      return null
+    }
+  }
+
   function formatNextFire(time: string | null): string {
     if (!time) return '-'
     try {
@@ -115,17 +148,6 @@ export function useScheduledTasks() {
     } catch {
       return time
     }
-  }
-
-  function policyHint(task: ScheduledTask): string | null {
-    const parts: string[] = []
-    const retryMax = task.retryMax ?? 2
-    const interval = task.retryIntervalMinutes ?? 5
-    const missed = task.missedPolicy ?? 'RUN_ONCE'
-    if (retryMax !== 2) parts.push(retryMax === 0 ? '失败不重试' : `重试 ${retryMax} 次`)
-    if (interval !== 5) parts.push(`间隔 ${interval} 分`)
-    if (missed !== 'RUN_ONCE') parts.push('错过不补')
-    return parts.length > 0 ? parts.join(' · ') : null
   }
 
   function runBadge(run: ScheduledTaskRun): string {
@@ -196,13 +218,14 @@ export function useScheduledTasks() {
     fetchTasks,
     toggleStatus,
     deleteTask,
+    fetchTaskDetail,
+    updateTask,
     formatNextFire,
     formatFinishedAt,
     statusLabel,
     runsByTask,
     runsLoading,
     fetchRuns,
-    policyHint,
     runBadge,
     formatDuration,
     formatCost
