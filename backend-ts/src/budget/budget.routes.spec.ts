@@ -8,6 +8,7 @@ describe('budget routes', () => {
   function build(granted: string[]) {
     const hasPermission = vi.fn(async (_userId: number, code: string) => granted.includes(code));
     const list = vi.fn(async () => [{ id: 1, scope: 'GLOBAL', limitType: 'COST', limitValue: 100_000_000, action: 'BLOCK', enabled: 1 }]);
+    const myBudgets = vi.fn(async () => ({ items: [] }));
     const create = vi.fn(async (input: Record<string, unknown>) => ({ id: 42, ...input }));
     const update = vi.fn(async (id: number, input: Record<string, unknown>) => ({ id, ...input }));
     const remove = vi.fn(async () => undefined);
@@ -15,10 +16,10 @@ describe('budget routes', () => {
     app.setErrorHandler(handleError);
     app.addHook('preHandler', (req, _r, done) => { req.userId = 7; done(); });
     registerBudgetRoutes(app, {
-      budgetService: { list, create, update, remove } as unknown as BudgetService,
+      budgetService: { list, myBudgets, create, update, remove } as unknown as BudgetService,
       permissionService: { hasPermission },
     });
-    return { app, hasPermission, list, create, update, remove };
+    return { app, hasPermission, list, myBudgets, create, update, remove };
   }
 
   it('budget:read 缺失 → 403，且不触达 service', async () => {
@@ -88,5 +89,34 @@ describe('budget routes', () => {
     const res = await app.inject({ method: 'GET', url: '/v1/admin/budgets' });
     expect(res.statusCode).toBeGreaterThanOrEqual(400);
     expect(h.list).not.toHaveBeenCalled();
+  });
+
+  it('GET /v1/me/budgets：无任何权限码也 200（不加权限码，决策 1），以当前 userId 调 service', async () => {
+    const h = build([]);
+    const res = await h.app.inject({ method: 'GET', url: '/v1/me/budgets' });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).code).toBe(0);
+    expect(h.myBudgets).toHaveBeenCalledWith(7);
+    expect(h.hasPermission).not.toHaveBeenCalled();
+  });
+
+  it('GET /v1/me/budgets：未认证 → 401，不触达 service', async () => {
+    const app = Fastify();
+    app.setErrorHandler(handleError);
+    const myBudgets = vi.fn();
+    registerBudgetRoutes(app, {
+      budgetService: { myBudgets } as unknown as BudgetService,
+      permissionService: { hasPermission: vi.fn() },
+    });
+    const res = await app.inject({ method: 'GET', url: '/v1/me/budgets' });
+    expect(res.statusCode).toBe(401);
+    expect(JSON.parse(res.body).code).toBe(1001); // UNAUTHORIZED
+    expect(myBudgets).not.toHaveBeenCalled();
+  });
+
+  it('me 端点与 admin 端点同文件注册互不影响（对照：admin 仍 403）', async () => {
+    const h = build(['budget:write']);
+    expect((await h.app.inject({ method: 'GET', url: '/v1/admin/budgets' })).statusCode).toBe(403);
+    expect((await h.app.inject({ method: 'GET', url: '/v1/me/budgets' })).statusCode).toBe(200);
   });
 });

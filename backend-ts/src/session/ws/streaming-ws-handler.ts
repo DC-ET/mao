@@ -233,6 +233,14 @@ export function budgetBlockMessage(block: BudgetBlockInfo): string {
   return `本月${scopeLabel}预算已超限：当期消耗 ${block.spend.toLocaleString('zh-CN')} / 上限 ${block.limitValue.toLocaleString('zh-CN')}（${block.limitType === 'COST' ? '成本' : 'Token'} 口径），新任务已被拒绝。请调整预算或联系管理员`;
 }
 
+/**
+ * 预算 BLOCK 错误事件数据：带 code 让客户端区分「预算被拦」与运行期错误
+ * （P3 横幅「查看我的预算」跳转，技术方案 §5.7；与 sideRejection 同型）。
+ */
+function budgetRejection(block: BudgetBlockInfo): { message: string; code: string } {
+  return { message: budgetBlockMessage(block), code: 'budget_exceeded' };
+}
+
 function cancelFlag(): { get(): boolean; set(v: boolean): void } {
   let v = false;
   return { get: () => v, set: (n) => { v = n; } };
@@ -599,7 +607,7 @@ export class StreamingWsHandler {
         : null;
       if (budgetBlock) {
         if (claimAlreadyHeld) await requeueIfClaimed();
-        this.deps.registry.send(userId, wsEvent('error', sessionId, { message: budgetBlockMessage(budgetBlock) }));
+        this.deps.registry.send(userId, wsEvent('error', sessionId, budgetRejection(budgetBlock)));
         return;
       }
     }
@@ -948,7 +956,7 @@ export class StreamingWsHandler {
         : null;
       if (budgetBlock) {
         this.executionClaims.delete(sessionId);
-        this.deps.registry.send(userId, wsEvent('error', sessionId, { message: budgetBlockMessage(budgetBlock) }));
+        this.deps.registry.send(userId, wsEvent('error', sessionId, budgetRejection(budgetBlock)));
         return;
       }
     }
@@ -1920,7 +1928,7 @@ export class StreamingWsHandler {
                 console.warn(`Failed to record budget queue-blocked notice for session ${sessionId}: ${(e as Error).message}`);
               });
               await compensate('budget_blocked', new Error(budgetBlockMessage(budgetBlock)));
-              this.deps.registry.send(userId, wsEvent('error', sessionId, { message: budgetBlockMessage(budgetBlock) }));
+              this.deps.registry.send(userId, wsEvent('error', sessionId, budgetRejection(budgetBlock)));
               return;
             }
           }

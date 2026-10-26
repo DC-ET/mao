@@ -155,6 +155,8 @@ describe('StreamingWsHandler 预算 BLOCK 闸门（§5.7）', () => {
     expect(errors).toHaveLength(1);
     expect(errors[0].sessionId).toBe(11);
     expect((errors[0].data as { message: string }).message).toContain('本月全局预算已超限');
+    // code 让客户端区分「预算被拦」与运行期错误（P3 横幅跳转，§5.7）
+    expect((errors[0].data as { code?: string }).code).toBe('budget_exceeded');
     // 未落库、未执行、未订阅——BLOCK 后重试不会撞 session_already_running
     expect(h.sessionService.saveMessage).not.toHaveBeenCalled();
     expect(h.harnessService.executeFromEvent).not.toHaveBeenCalled();
@@ -201,6 +203,7 @@ describe('StreamingWsHandler 预算 BLOCK 闸门（§5.7）', () => {
     const errors = errorEvents(h.registry);
     expect(errors).toHaveLength(1);
     expect((errors[0].data as { message: string }).message).toContain('本月全局预算已超限');
+    expect((errors[0].data as { code?: string }).code).toBe('budget_exceeded');
   });
 
   it('编辑重发 BLOCK 后同一会话可再次编辑（占位未残留）', async () => {
@@ -235,6 +238,7 @@ describe('StreamingWsHandler 预算 BLOCK 闸门（§5.7）', () => {
     const errors = errorEvents(h.registry);
     expect(errors).toHaveLength(1);
     expect((errors[0].data as { message: string }).message).toContain('本月全局预算已超限');
+    expect((errors[0].data as { code?: string }).code).toBe('budget_exceeded');
     // 占位已释放：队列后续仍可被消费（不会永久卡在 claimed 状态）
     expect(h.handler.hasExecutionClaim(11)).toBe(false);
   });

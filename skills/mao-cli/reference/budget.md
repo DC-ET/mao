@@ -26,6 +26,12 @@
 
 BLOCK 的准入点有 5 个：WebSocket 手动发送、消息编辑重发、排队消息自动消费、定时任务直接执行、开放 API / 入站 Webhook 触发。子代理与边路任务跟随主会话的判定结果（不单独判）。被拦截的排队消息会重新入队并通知一次；被拦截的定时任务标记为失败，但不影响下一档期照常执行。
 
+### 用户可见性（0.0.355 起）
+
+普通用户在桌面「我的用量」抽屉的「预算」Tab 查看与自己相关的生效预算：**全局预算 + 分配给本人的用户级预算**，不含他人用户级与 Agent 级预算，也不需要 `budget:read` 权限（登录即可）。接口 `GET /v1/me/budgets`，字段 `id` / `scope` / `periodSpend` / `limitValue` / `limitType` / `action` / `status` / `period` / `resetAt`。与管理后台列表不同，该接口的 `COST` 行把上限与消耗都归一成**成本单位**（`limitValue` 除以 1e6），前端直接可除；`status` 由「当期消耗 ≥ 上限」派生：BLOCK 行越线为 `BLOCKED`、WARN 行越线为 `WARNED`、否则 `NORMAL`。只读，不参与判定（判定仍走后端准入逻辑）。
+
+入口联动：收件箱里的 `BUDGET_WARN` 站内信点击后跳到该 Tab；任务被 BLOCK 时错误横幅带「查看我的预算」按钮，同样跳到该 Tab。详见 [desktop.md](desktop.md)。
+
 ## 命令选择
 
 | 场景 | 命令 |

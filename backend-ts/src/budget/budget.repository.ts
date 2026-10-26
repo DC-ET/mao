@@ -59,6 +59,19 @@ export class BudgetRepository {
     return this.db.queryOne<UsageBudgetRow>('SELECT * FROM usage_budget WHERE id = ?', [id]);
   }
 
+  /**
+   * 对本人生效的启用中预算（用户面 GET /v1/me/budgets）：GLOBAL 全部 + scope_id=本人的 USER 行。
+   * AGENT 行不进用户面（决策 2/3）；disabled 行不返回。排序 id 升序，service 侧再按 scope 定序。
+   */
+  async listApplicableToUser(userId: number): Promise<UsageBudgetRow[]> {
+    return this.db.query<UsageBudgetRow>(
+      `SELECT * FROM usage_budget
+       WHERE enabled = 1 AND (scope = 'GLOBAL' OR (scope = 'USER' AND scope_id = ?))
+       ORDER BY id ASC`,
+      [userId],
+    );
+  }
+
   async insert(row: UsageBudgetRow): Promise<number> {
     return this.db.insert('usage_budget', {
       scope: row.scope,

@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { requireRequestPermission, sendOk } from '../common/http-error.js';
+import { requireRequestPermission, requireUserId, sendOk } from '../common/http-error.js';
 import { bodyOf, pathId } from '../common/request.js';
 import type { BudgetService } from './budget.service.js';
 
@@ -18,6 +18,12 @@ interface BudgetUpsertRequest {
 }
 
 export function registerBudgetRoutes(app: FastifyInstance, deps: BudgetRouteDeps): void {
+  // 对本人生效的用量预算（GLOBAL + 本人 USER scope）。仅需登录，不加权限码（决策 1/2）。
+  app.get('/v1/me/budgets', async (request, reply) => {
+    const userId = requireUserId(request);
+    return sendOk(reply, await deps.budgetService.myBudgets(userId));
+  });
+
   app.get('/v1/admin/budgets', async (request, reply) => {
     await requireRequestPermission(deps.permissionService, request, 'budget:read');
     return sendOk(reply, await deps.budgetService.list());

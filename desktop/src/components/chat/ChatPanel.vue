@@ -15,7 +15,9 @@
           v-if="executionError"
           :message="executionError"
           :can-retry="!agentRunning"
+          :action-label="budgetBlocked ? '查看我的预算' : undefined"
           @retry="handleRetry"
+          @action="openBudgetDrawer"
         />
         <ChatInput
           ref="chatInputRef"
@@ -186,7 +188,9 @@
         :message="executionError"
         :can-retry="!agentRunning"
         :session-id="sessionId ?? ''"
+        :action-label="budgetBlocked ? '查看我的预算' : undefined"
         @retry="handleRetry"
+        @action="openBudgetDrawer"
       />
 
       <ChatInput
@@ -538,6 +542,33 @@ const activePendingQuestions = computed(() => sessionStore.activePendingQuestion
 
 const executionError = computed(() => sessionStore.activeExecutionError)
 
+/**
+ * 预算 BLOCK（技术方案 §5.7）：useStreamWS 收到 code=budget_exceeded 的 error 帧后派发
+ * budget_blocked 窗口事件。仅当事件归属当前会话时置位，给错误横幅加「查看我的预算」跳转。
+ * 复位只发生在错误消失（重试/新一轮执行清掉 executionError）或切换会话时——不能监听
+ * executionError 的每次变化：budget_blocked 先于 setExecutionError 同步派发，watcher 在
+ * 之后微任务运行，无条件复位会把刚置位的标志清掉。
+ */
+const budgetBlocked = ref(false)
+
+function handleBudgetBlocked(e: Event) {
+  const detail = (e as CustomEvent<{ sessionId?: number | string }>).detail
+  if (detail?.sessionId != null && String(detail.sessionId) !== String(sessionId.value ?? '')) return
+  budgetBlocked.value = true
+}
+
+watch(executionError, (v) => {
+  if (!v) budgetBlocked.value = false
+})
+
+watch(sessionId, () => {
+  budgetBlocked.value = false
+})
+
+function openBudgetDrawer() {
+  window.dispatchEvent(new CustomEvent('open_usage_drawer', { detail: { tab: 'budget' } }))
+}
+
 const ACTIVE_PHASES: TaskPhase[] = ['RUNNING', 'RESUMING', 'WAITING_APPROVAL', 'CANCELLING']
 const agentRunning = computed(() => {
   const phase = sessionId.value ? sessionStore.getSessionPhase(sessionId.value) : null
@@ -594,6 +625,7 @@ watch(messagesContainer, (el, oldEl) => {
 
 onMounted(async () => {
   window.addEventListener('mao:markdown-rendered', handleMarkdownRendered)
+  window.addEventListener('budget_blocked', handleBudgetBlocked)
   window.addEventListener('resize', syncMobileViewport, { passive: true })
   window.visualViewport?.addEventListener('resize', syncKeyboardOpen, { passive: true })
   syncKeyboardOpen()
@@ -622,6 +654,7 @@ onUnmounted(() => {
   cleanup()
   // 恢复期可能注册的渲染监听与收尾定时器一并清理
   window.removeEventListener('mao:markdown-rendered', handleMarkdownRendered)
+  window.removeEventListener('budget_blocked', handleBudgetBlocked)
   window.removeEventListener('resize', syncMobileViewport)
   window.visualViewport?.removeEventListener('resize', syncKeyboardOpen)
   disposeScroll()

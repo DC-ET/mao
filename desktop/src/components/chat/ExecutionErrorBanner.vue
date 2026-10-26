@@ -23,6 +23,15 @@
     >
       复制会话 ID
     </el-button>
+    <!-- 可选行动按钮（P3 预算被拦：「查看我的预算」跳用量抽屉预算 Tab） -->
+    <el-button
+      v-if="actionLabel"
+      class="action-button"
+      size="small"
+      @click="emit('action')"
+    >
+      {{ actionLabel }}
+    </el-button>
   </div>
 </template>
 
@@ -36,10 +45,13 @@ const props = defineProps<{
   canRetry?: boolean
   /** 出错会话的 ID：有值才显示「复制会话 ID」按钮（新建未落库等无会话场景不显示） */
   sessionId?: string
+  /** 可选行动按钮文案（如预算被拦时的「查看我的预算」）；不传不渲染 */
+  actionLabel?: string
 }>()
 
 const emit = defineEmits<{
   retry: []
+  action: []
 }>()
 
 async function copySessionId() {
@@ -100,6 +112,11 @@ async function copySessionId() {
 
 /* 单独出现时自身撑开上边距；与重试并排时交给 el-button 相邻规则，避免叠加缩进 */
 .copy-id-button {
+  margin-top: 10px;
+  margin-left: 8px;
+}
+
+.action-button {
   margin-top: 10px;
   margin-left: 8px;
 }
