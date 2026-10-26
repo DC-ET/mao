@@ -235,21 +235,21 @@
 
 背景：第十五批把方向校准为「**让已经在用的人和团队用得更顺**」（首次成功体验已实施，0.0.347）。本批延续该方向，聚焦**日常使用的完整度与体验**，从代码现状摸底得出三类事实：**产出与阅读的错位**（Agent 天天产出 mermaid / 公式 / 表格，三端源码零渲染命中，用户只能复制到外部工具看图）、**半截子功能**（后端 pin / favorite / 列表 keyword 过滤全部就绪且排序已生效，desktop 零调用零入口）、**桌面壳的最后一块**（LOCAL 递不了文件、关窗即与任务失联，而 CLOUD 反而能传）。三件互不依赖，全部零迁移、零或近零后端改动，不碰执行内核。全部避开已否决方向（结构化回复卡片 / 会话移交 / 执行节点注册 / 安卓推送等）与 README 贡献边界。
 
-**评审结果：回复渲染完整度先行实施（0.0.350，技术方案见 [../plan/2026-10-25-message-rendering-technical-design.md](../plan/2026-10-25-message-rendering-technical-design.md)）；另两件待评审。**
+**评审结果：回复渲染完整度先行实施（0.0.350，技术方案见 [../plan/2026-10-25-message-rendering-technical-design.md](../plan/2026-10-25-message-rendering-technical-design.md)）；会话列表与长会话导航已评审定稿（v1.1：favorite / pin 整体移除，P1 收敛为 keyword 过滤 + 批量归档，技术方案见 [../plan/2026-10-26-session-list-navigation-technical-design.md](../plan/2026-10-26-session-list-navigation-technical-design.md)，含 C1–C15 全量冲突清单）；Electron 壳补完待评审。**
 
 | 提案 | 文档 | 一句话 | 规模 |
 |---|---|---|---|
 | 回复渲染完整度 | [2026-10-25-message-rendering.md](2026-10-25-message-rendering.md)（**已实施**，技术方案见 [../plan/2026-10-25-message-rendering-technical-design.md](../plan/2026-10-25-message-rendering-technical-design.md)，含 §6 全量冲突清单） | Mermaid 图 / KaTeX 公式 / 表格复制——Agent 产出的结构化内容不再以源码形态阅读；零协议零后端，与已否决的「结构化回复卡片」划清边界 | 小~中 |
-| 会话列表与长会话导航 | [2026-10-25-session-list-navigation.md](2026-10-25-session-list-navigation.md)（待评审） | 接通后端已就绪的置顶 / 列表过滤，补批量归档与轮次目录、只看回复——会话排得开、找得回；纯前端消费既有端点 | 小~中 |
-| Electron 壳补完 | [2026-10-25-electron-shell-completeness.md](2026-10-25-electron-shell-completeness.md)（待评审） | LOCAL 附件拷入工作区（文件不出本机）+ 托盘 / 主进程原生通知 / 角标 / 全局快捷键 / 开机自启——窗口一关不再与任务失联 | 小~中 |
+| 会话列表与长会话导航 | [2026-10-25-session-list-navigation.md](2026-10-25-session-list-navigation.md)（**已评审定稿 v1.1**，技术方案见 [../plan/2026-10-26-session-list-navigation-technical-design.md](../plan/2026-10-26-session-list-navigation-technical-design.md)，含 C1–C15 全量冲突清单） | 接通后端已就绪的标题过滤，补批量归档与轮次目录、只看回复；收藏与置顶两个半截子功能整体移除——会话找得回、排得开 | 小~中 |
+| Electron 壳补完 | [2026-10-25-electron-shell-completeness.md](2026-10-25-electron-shell-completeness.md)（方向已认可，已细化，技术方案待评审：[../plan/2026-10-26-electron-shell-completeness-technical-design.md](../plan/2026-10-26-electron-shell-completeness-technical-design.md)，含 §7 全量冲突清单） | LOCAL 附件拷入工作区（文件不出本机）+ 托盘 / 主进程原生通知 / 角标 / 全局快捷键 / 开机自启——窗口一关不再与任务失联 | 小~中 |
 
 排期注意：
 
-1. **迁移编号**：三件均零迁移，不占号。
+1. **迁移编号**：会话列表与长会话导航占 V173（drop `is_favorite` / `is_pinned`，favorite / pin 整体移除）；另两件零迁移，不占号。
 2. **三处同改清单**：本批不新增内置工具、不新增 LLM 调用场景、不新增收件箱 kind，均不触发既有「三处同改」规范。
 3. **相邻收敛点**：三件均不动 `task-terminal.service.ts` / AgentLoop / prompt-engine；会话导航复用 `locateMessageId` 既有定位机制，与全文检索跳转共用回归口径；Electron 附件的 git exclude 复用团队经验库（0.0.342）同机制。
 4. **文档同步**：实施时按节写 CHANGELOG（前端 / 桌面 Electron 小节）+ mao-cli `reference/desktop.md`、`reference/electron.md` 对应更新；Electron 冒烟清单进 CONTRIBUTING。
-5. **实施顺序建议**：会话导航 P1（半截子收口，2-3 人日见效最快）→ 渲染 P1 → Electron P1，三件 P1 合计约一周量级，可各自由独立会话并行。
+5. **实施顺序建议**：会话导航的拆除清理（favorite / pin 移除，可先行合入）→ 会话导航 P1（过滤 + 批量归档）→ 渲染 P1 → Electron P1，三件 P1 合计约一周量级，可各自由独立会话并行。
 
 ## 已评估、明确不做
 

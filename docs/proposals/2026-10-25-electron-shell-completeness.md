@@ -2,7 +2,7 @@
 
 > LOCAL 用户把 Mao 当本机干活工具，但 Electron 壳停在了「能干活」：文件递不进对话、关窗就与任务失联、没有常驻入口。执行边界越「近」（LOCAL），能力反而越窄（CLOUD 能传文件，LOCAL 不能）——桌面应用的基本盘缺了一角。
 
-- 状态：待评审（第十六批）
+- 状态：方向已认可（2026-10-26），已细化技术方案待评审：[docs/plan/2026-10-26-electron-shell-completeness-technical-design.md](../plan/2026-10-26-electron-shell-completeness-technical-design.md)
 - 日期：2026-10-25
 - 提案总览：见 [docs/proposals/README.md](README.md)
 - 规模：小~中（P1 约 2-3 人日、P2 约 2-3 人日、P3 约 1-2 人日；纯 desktop/electron 层，零后端零迁移）
