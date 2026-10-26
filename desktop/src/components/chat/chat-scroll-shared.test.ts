@@ -54,6 +54,17 @@ describe('对话区自动滚动共用 useChatScroll', () => {
     }
   })
 
+  it('「只看回复」开关不无条件暂停跟随：仅用户已上滑看历史时才暂停', () => {
+    const body = fnBody(chatPanel, 'function toggleReplyOnly()')
+    // 剥掉注释再断言：注释里写着历史背景，会把「守卫之外不得出现 pauseFollow」误判为通过
+    const code = body.replace(/\/\/[^\n]*/g, '')
+    // 跟随中开关只切过滤态：内容塌陷/展开由 ResizeObserver → scheduleFollow 自然写底
+    expect(code).toContain('if (userScrolledUp.value) pauseFollow()')
+    // 守卫之外不得再出现 pauseFollow：无条件暂停会把「跟随中」永久打成「上滑中」，
+    // 之后新输出不再滚动，只能手动点「回到最新」
+    expect(code.replace('if (userScrolledUp.value) pauseFollow()', '')).not.toContain('pauseFollow')
+  })
+
   it('边路发送链路（首发 / 普通 / 入队）都恢复跟随并补定位', () => {
     const send = fnBody(sidePanel, 'async function handleChatSend(')
     // 发送即跟随：入口先复位，尾部与入队分支各补一次定位

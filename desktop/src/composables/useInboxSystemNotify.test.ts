@@ -39,8 +39,12 @@ const desktopBadge = vi.fn(async (count: number) => {
   badgeCalls.push(count)
   return { ok: true }
 })
+/** 主进程待派发队列：桥接就绪后拉取（默认无积存） */
+const mockConsumePending = vi.fn(async (): Promise<{ itemId: number; sessionId: number } | null> => null)
+const mockAckClick = vi.fn(async () => ({ ok: true }))
 
 function installElectronApi() {
+  mockConsumePending.mockResolvedValue(null)
   ;(globalThis as any).window = {
     focus: vi.fn(),
     electronAPI: {
@@ -50,6 +54,8 @@ function installElectronApi() {
         clickHandlers.push(cb)
         return () => {}
       },
+      consumePendingDesktopNotificationClick: mockConsumePending,
+      ackDesktopNotificationClick: mockAckClick,
     },
   }
 }
@@ -72,7 +78,8 @@ Object.defineProperty(globalThis, 'document', {
 
 const mockFetchSession = vi.fn()
 const mockSetActiveSession = vi.fn()
-const mockRouterPush = vi.fn()
+// 真实 router.push 返回 Promise（同路由重复跳转以 NavigationFailure 拒绝）：mock 必须保真
+const mockRouterPush = vi.fn(async () => undefined)
 
 vi.mock('../stores/session', () => ({
   useSessionStore: () => ({
@@ -90,6 +97,7 @@ const {
   primeInboxSystemNotify,
   notifyInboxSystemUpdate,
   resetInboxSystemNotifyForTest,
+  setupDesktopNotifyBridge,
 } = await import('./useInboxSystemNotify')
 const { useInboxStore } = await import('../stores/inbox')
 
@@ -422,5 +430,71 @@ describe('useInboxSystemNotify', () => {
       await notifyInboxSystemUpdate()
       expect(notifyCalls.map((c) => c.title)).toEqual(['任务 3'])
     })
+  })
+})
+
+describe('通知点击桥接的待派发队列（修复：点击早于监听注册时跳转丢失）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    notifyCalls.length = 0
+    badgeCalls.length = 0
+    clickHandlers.length = 0
+    hasFocus = true
+    hidden = false
+    installElectronApi()
+    resetInboxSystemNotifyForTest()
+  })
+
+  it('桥接就绪即拉取主进程积存的点击深链并跳转对应会话', async () => {
+    // 应用刚启动/窗口重建/页面加载中点击的通知：主进程立即派发时渲染层还没有监听，
+    // 事件已丢；桥接注册时必须主动 consume 待派发队列兜底
+    mockConsumePending.mockResolvedValue({ itemId: 3, sessionId: 77 })
+    mockFetchSession.mockResolvedValue({ id: '77' })
+
+    setupDesktopNotifyBridge()
+
+    await vi.waitFor(() => {
+      expect(mockConsumePending).toHaveBeenCalled()
+    })
+    await vi.waitFor(() => {
+      expect(mockRouterPush).toHaveBeenCalledWith('/tasks/77')
+    })
+    expect(mockFetchSession).toHaveBeenCalledWith('77')
+    expect(mockSetActiveSession).toHaveBeenCalledWith('77')
+  })
+
+  it('无积存点击时不跳转', async () => {
+    mockConsumePending.mockResolvedValue(null)
+    mockFetchSession.mockResolvedValue({ id: '77' })
+
+    setupDesktopNotifyBridge()
+
+    await vi.waitFor(() => {
+      expect(mockConsumePending).toHaveBeenCalled()
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(mockRouterPush).not.toHaveBeenCalled()
+  })
+
+  it('收到立即派发的点击后回执 ack：页面重载后不会拿陈旧深链重复跳转', async () => {
+    mockFetchSession.mockResolvedValue({ id: '77' })
+
+    setupDesktopNotifyBridge()
+    clickHandlers[clickHandlers.length - 1]({ itemId: 2, sessionId: 77 })
+
+    await vi.waitFor(() => {
+      expect(mockAckClick).toHaveBeenCalled()
+    })
+    await vi.waitFor(() => {
+      expect(mockRouterPush).toHaveBeenCalledWith('/tasks/77')
+    })
+  })
+
+  it('桥接注册幂等：重复调用只挂一个点击监听', () => {
+    setupDesktopNotifyBridge()
+    setupDesktopNotifyBridge()
+    expect(clickHandlers).toHaveLength(1)
+    expect(mockConsumePending).toHaveBeenCalledTimes(1)
   })
 })

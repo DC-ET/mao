@@ -371,6 +371,10 @@ async function loadMoreMessages() {
   const container = scrollHost()
   const previousScrollHeight = container?.scrollHeight || 0
   const previousScrollTop = container?.scrollTop || 0
+  // keep-alive 复用下「在飞加载更多」与「切到别的会话」会并发：必须按 fetchDetail
+  // 同款的 seq 守卫落地，否则旧会话的响应会 prepend 进新会话的消息列表（跨会话串页），
+  // 游标也会被旧会话的 id 空间覆写，后续加载更多撞 beforeMessageId 归属校验报错。
+  const seq = ++latestFetchSeq
   loadingMore.value = true
   try {
     const { data } = await api.get(`/admin/sessions/${id}/messages`, {
@@ -380,10 +384,11 @@ async function loadMoreMessages() {
         beforeMessageId: nextBeforeMessageId.value
       }
     })
+    if (seq !== latestFetchSeq || String(route.params.id) !== String(id)) return
     applyMessagePage(data, true)
     await keepChatViewport(previousScrollHeight, previousScrollTop)
   } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
-    loadingMore.value = false
+    if (seq === latestFetchSeq) loadingMore.value = false
   }
 }
 

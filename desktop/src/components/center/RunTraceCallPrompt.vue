@@ -10,7 +10,8 @@
           <span v-if="toolsNote" class="prompt-note">{{ toolsNote }}</span>
         </div>
         <div v-if="toolNames.length > 0" class="prompt-tools">
-          <span v-for="name in toolNames" :key="name" class="prompt-tool-chip">{{ name }}</span>
+          <!-- toolsJson 保序不去重：同一轮内多次调用同一工具会产生同名 chip，key 必须带 index -->
+          <span v-for="(name, index) in toolNames" :key="`${name}-${index}`" class="prompt-tool-chip">{{ name }}</span>
         </div>
         <pre v-else-if="toolsRaw != null" class="prompt-pre">{{ toolsRaw }}</pre>
       </div>

@@ -325,14 +325,21 @@ async function applyFilter(text: string) {
   sessionStore.setListKeyword(text)
   // 组内展开计数随列表内容重置，与手动刷新同口径
   expandedCounts.value = new Map()
-  if (props.listMode === 'focus') {
-    await loadFocus()
-  } else {
-    // 非 silent：让 loading 反馈过滤请求正在进行
-    await sessionStore.fetchSessions()
+  try {
+    if (props.listMode === 'focus') {
+      await loadFocus()
+    } else {
+      // 非 silent：让 loading 反馈过滤请求正在进行
+      await sessionStore.fetchSessions()
+    }
+  } catch {
+    // 请求失败时收口：提示用户 + 清勾选，避免 void 调用方 unhandled rejection、
+    // 图标 active 但列表还是旧数据、勾选集引用已过滤掉的会话
+    ElMessage.error('过滤任务列表失败，请稍后重试')
+  } finally {
+    // 过滤结果变化后，勾选态可能已不在可见列表里：清空避免「归档看不见的会话」
+    selectedIds.value = new Set()
   }
-  // 过滤结果变化后，勾选态可能已不在可见列表里：清空避免「归档看不见的会话」
-  selectedIds.value = new Set()
 }
 
 function clearFilter() {

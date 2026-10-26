@@ -18,6 +18,12 @@ const ATTACHMENTS_SUBDIR = 'attachments'
 const MAX_NAME_LENGTH = 100
 const FALLBACK_NAME = 'attachment'
 const DEFAULT_MAX_SIZE_MB = 100
+/**
+ * 主进程硬封顶：渲染层传入的 maxSizeMb 来自后端上传配置（默认 1024），
+ * 不封顶时一个接近 1GB 的附件会把主进程同步阻塞数十秒（应用「未响应」）。
+ * 异步拷贝解决阻塞后，此上限仅防病态配置（如 TB 级）放行超大文件。
+ */
+const MAIN_PROCESS_MAX_SIZE_MB = 512
 const UNIQUE_NAME_MAX_ATTEMPTS = 10000
 
 /** Windows 保留设备名（不分大小写；CON.txt 这类带扩展名的同样保留） */
@@ -159,8 +165,20 @@ function uniqueName(dir, name, deps = {}) {
 }
 
 /**
- * 拷贝单个附件到会话目录（LOCAL 懒拷贝的落点）。
- * 防御纵深：主进程侧重新 lstat（不跟随符号链接）复核类型与大小。
+ * 有效大小上限：主进程对渲染层传入值做硬封顶。
+ * @param {number} [maxSizeMb]
+ * @returns {number}
+ */
+function effectiveMaxSizeMb(maxSizeMb) {
+  const base = Number.isFinite(maxSizeMb) && maxSizeMb > 0
+    ? Number(maxSizeMb)
+    : DEFAULT_MAX_SIZE_MB
+  return Math.min(base, MAIN_PROCESS_MAX_SIZE_MB)
+}
+
+/**
+ * 校验 + 落点解析（同步、廉价）：lstat 复核类型与大小、解析目标路径、重名规避。
+ * 拷文件本身（唯一的重活）由调用方选择同步/异步执行。
  *
  * @param {{
  *   sourcePath: string,
@@ -170,14 +188,12 @@ function uniqueName(dir, name, deps = {}) {
  *   hostKey: string,
  *   fsImpl?: typeof fs,
  * }} params
- * @returns {{ ok: true, absolutePath: string } | { ok: false, error: string }}
+ * @returns {{ ok: true, sourcePath: string, dir: string, finalPath: string } | { ok: false, error: string }}
  */
-function copyLocalAttachment(params) {
+function prepareLocalAttachmentCopy(params) {
   const fsImpl = params.fsImpl || fs
   const sourcePath = typeof params.sourcePath === 'string' ? params.sourcePath : ''
-  const maxSizeMb = Number.isFinite(params.maxSizeMb) && params.maxSizeMb > 0
-    ? Number(params.maxSizeMb)
-    : DEFAULT_MAX_SIZE_MB
+  const maxSizeMb = effectiveMaxSizeMb(params.maxSizeMb)
 
   try {
     if (!sourcePath) return { ok: false, error: '文件路径无效' }
@@ -208,9 +224,62 @@ function copyLocalAttachment(params) {
     const dir = path.dirname(target)
     const finalName = uniqueName(dir, path.basename(target), { fsImpl })
     const finalPath = path.join(dir, finalName)
-    fsImpl.mkdirSync(dir, { recursive: true })
-    fsImpl.copyFileSync(sourcePath, finalPath)
-    return { ok: true, absolutePath: finalPath }
+    return { ok: true, sourcePath, dir, finalPath }
+  } catch (e) {
+    return { ok: false, error: e?.message || '拷贝失败' }
+  }
+}
+
+/**
+ * 拷贝单个附件到会话目录（LOCAL 懒拷贝的落点）。同步版，保留供测试与兼容调用。
+ * 防御纵深：主进程侧重新 lstat（不跟随符号链接）复核类型与大小。
+ *
+ * @param {{
+ *   sourcePath: string,
+ *   sessionId: number|string,
+ *   maxSizeMb?: number,
+ *   homeDir?: string,
+ *   hostKey: string,
+ *   fsImpl?: typeof fs,
+ * }} params
+ * @returns {{ ok: true, absolutePath: string } | { ok: false, error: string }}
+ */
+function copyLocalAttachment(params) {
+  const fsImpl = params.fsImpl || fs
+  const prepared = prepareLocalAttachmentCopy(params)
+  if (!prepared.ok) return prepared
+  try {
+    fsImpl.mkdirSync(prepared.dir, { recursive: true })
+    fsImpl.copyFileSync(prepared.sourcePath, prepared.finalPath)
+    return { ok: true, absolutePath: prepared.finalPath }
+  } catch (e) {
+    return { ok: false, error: e?.message || '拷贝失败' }
+  }
+}
+
+/**
+ * 异步版拷贝（IPC 默认路径）：大文件的 copyFile 不再阻塞主进程事件循环，
+ * 避免拖入大附件时整个应用卡死/「未响应」。校验逻辑与同步版完全一致。
+ *
+ * @param {{
+ *   sourcePath: string,
+ *   sessionId: number|string,
+ *   maxSizeMb?: number,
+ *   homeDir?: string,
+ *   hostKey: string,
+ *   fsImpl?: typeof fs,
+ * }} params
+ * @returns {Promise<{ ok: true, absolutePath: string } | { ok: false, error: string }>}
+ */
+async function copyLocalAttachmentAsync(params) {
+  const fsImpl = params.fsImpl || fs
+  const prepared = prepareLocalAttachmentCopy(params)
+  if (!prepared.ok) return prepared
+  try {
+    fsImpl.mkdirSync(prepared.dir, { recursive: true })
+    const promises = fsImpl.promises || fs.promises
+    await promises.copyFile(prepared.sourcePath, prepared.finalPath)
+    return { ok: true, absolutePath: prepared.finalPath }
   } catch (e) {
     return { ok: false, error: e?.message || '拷贝失败' }
   }
@@ -221,10 +290,13 @@ module.exports = {
   ATTACHMENTS_SUBDIR,
   MAX_NAME_LENGTH,
   DEFAULT_MAX_SIZE_MB,
+  MAIN_PROCESS_MAX_SIZE_MB,
   sanitizeAttachmentName,
   isValidHostKey,
   isValidSessionId,
   resolveAttachmentTarget,
   uniqueName,
+  prepareLocalAttachmentCopy,
   copyLocalAttachment,
+  copyLocalAttachmentAsync,
 }

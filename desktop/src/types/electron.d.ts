@@ -311,6 +311,10 @@ interface ElectronAPI {
   // Desktop shell (P2/P3)
   desktopNotify(payload: DesktopNotifyPayload): Promise<DesktopNotifyResult>
   onDesktopNotificationClick(callback: (data: DesktopNotificationClickPayload) => void): RemoveListener
+  /** 桥接就绪后拉取主进程积存的点击深链（无积存返回 null）；取出即清空 */
+  consumePendingDesktopNotificationClick(): Promise<DesktopNotificationClickPayload | null>
+  /** 已收到立即派发的点击深链：通知主进程清除待派发队列，防陈旧跳转 */
+  ackDesktopNotificationClick(): Promise<{ ok: boolean }>
   onDesktopNotifyResult(callback: (data: DesktopNotifyResultPayload) => void): RemoveListener
   desktopBadge(count: number): Promise<{ ok: boolean }>
   desktopPrefsGet(): Promise<DesktopPrefsGetResult>

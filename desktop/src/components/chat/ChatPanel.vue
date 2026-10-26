@@ -434,9 +434,11 @@ const historyAnchored = computed(() => sessionId.value != null && sessionStore.i
 const replyOnly = ref(false)
 
 function toggleReplyOnly() {
+  // 正在跟随时不暂停：内容塌陷/展开由 ResizeObserver → scheduleFollow 自然写底，
+  // 视野保持最新；上滑看历史时才显式暂停，避免塌陷钳制把视野拽走（C8）。
+  // 曾无条件 pauseFollow：开关一次就把「跟随中」永久变成「上滑中」，新输出不再滚动。
+  if (userScrolledUp.value) pauseFollow()
   replyOnly.value = !replyOnly.value
-  // 显式暂停跟随：内容塌陷会触发 ResizeObserver → scheduleFollow 抢位置（C8）
-  pauseFollow()
 }
 
 // 切换会话时复位：过滤态是「当前会话的阅读偏好」，不带到下一个会话

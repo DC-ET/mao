@@ -103,17 +103,22 @@ const sampleText = ref('')
 
 const selectedAgent = computed(() => props.agents.find((agent) => String(agent.id) === String(selectedAgentId.value)) ?? null)
 
+/** selectAgent 详情请求代际：连点两个智能体时，先发后到的响应不得覆写后选中的推荐问题 */
+let agentDetailSeq = 0
+
 function selectAgent(agent: Agent) {
   selectedAgentId.value = String(agent.id)
+  const seq = ++agentDetailSeq
   // 拉详情取推荐问题（列表 VO 不含），失败不阻塞——回退内置示例
   api.get(`/agents/${agent.id}`)
     .then(({ data }) => {
+      if (seq !== agentDetailSeq) return
       const questions = ((data?.suggestedQuestions ?? []) as SuggestedQuestionVO[])
         .map((item) => (item.content ?? '').trim())
         .filter(Boolean)
       suggestedQuestions.value = questions
     })
-    .catch(() => { suggestedQuestions.value = [] })
+    .catch(() => { if (seq === agentDetailSeq) suggestedQuestions.value = [] })
 }
 
 function next() {

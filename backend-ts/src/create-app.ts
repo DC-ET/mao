@@ -337,7 +337,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     undefined,
     async (user, state) => {
       if (user.id == null) return;
-      await completeFeishuPendingAfterEcp({
+      // 返回值透出重放结局：通道绑定回调据此分档渲染（不得把「重放失败」报成绑定成功）
+      return completeFeishuPendingAfterEcp({
         state,
         ecpUserId: user.id,
         claim: (s) => pendingBindingMessages.claim(s),

@@ -6,10 +6,17 @@
  * 目的是让外网（无内网/VPN）的飞书用户也能完成绑定。
  */
 
-export interface EcpChannelCallbackOutcome {
-  ok: boolean;
-  message: string;
-}
+/**
+ * 回调结局三档：
+ * - success：绑定与原消息重放都完成；
+ * - partial：账号绑定完成，但原消息未恢复（链接过期/被替换，或重放失败）——
+ *   不能报「绑定成功」让用户干等，也不能报「绑定未完成」否定已生效的绑定；
+ * - failed：换票/绑定本身失败（含飞书身份已属其它账号）。
+ */
+export type EcpChannelCallbackOutcome =
+  | { kind: 'success'; message: string }
+  | { kind: 'partial'; message: string }
+  | { kind: 'failed'; message: string };
 
 const PAGE_STYLE = `
   * { box-sizing: border-box; }
@@ -45,6 +52,7 @@ const PAGE_STYLE = `
     line-height: 1;
   }
   .badge.ok { background: #e8f7ee; color: #1f9d55; }
+  .badge.warn { background: #fdf3e3; color: #b26a00; }
   .badge.fail { background: #fdecec; color: #d93026; }
   h1 { font-size: 20px; margin: 0 0 12px; font-weight: 600; }
   p { font-size: 14px; line-height: 1.7; margin: 0; color: #4e5969; word-break: break-word; }
@@ -67,14 +75,19 @@ export function escapeHtml(value: string): string {
 }
 
 export function renderEcpChannelCallbackPage(outcome: EcpChannelCallbackOutcome): string {
-  const title = outcome.ok ? '绑定成功' : '绑定未完成';
-  const badge = outcome.ok ? '<div class="badge ok">✓</div>' : '<div class="badge fail">!</div>';
-  const body = outcome.ok
+  const title = outcome.kind === 'success'
+    ? '绑定成功'
+    : outcome.kind === 'partial' ? '绑定未完全成功' : '绑定未完成';
+  const badgeClass = outcome.kind === 'success' ? 'ok' : outcome.kind === 'partial' ? 'warn' : 'fail';
+  const badge = `<div class="badge ${badgeClass}">${outcome.kind === 'success' ? '✓' : '!'}</div>`;
+  const body = outcome.kind === 'success'
     ? `已完成飞书与 Mao 账号的绑定。${outcome.message === '' ? '' : `<br />账号：${escapeHtml(outcome.message)}`}`
     : escapeHtml(outcome.message);
-  const hint = outcome.ok
+  const hint = outcome.kind === 'success'
     ? '可以关闭此页面，回到飞书继续。刚才那条消息会自动继续处理；若 1 分钟内没有回应，请在飞书里重新发送一条消息。'
-    : '请回到飞书重新发送一条消息，获取新的绑定卡片（卡片 3 分钟内有效）。';
+    : outcome.kind === 'partial'
+      ? '账号绑定已生效，请回到飞书重新发送一条消息即可继续。'
+      : '请回到飞书重新发送一条消息，获取新的绑定卡片（卡片 3 分钟内有效）。';
   return `<!doctype html>
 <html lang="zh-CN">
 <head>

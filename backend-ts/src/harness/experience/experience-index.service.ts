@@ -15,6 +15,17 @@ export const EXPERIENCE_MAX_DOC_BYTES = 1024 * 1024;
 const MAX_FILE_NAME_LENGTH = 200;
 /** 索引行各字段展示上限：索引是检索入口不是正文，超长截断。 */
 const FIELD_MAX_CHARS = 120;
+/** 索引原子写的 tmp 名计数器：与 pid 共同保证进程内/跨进程唯一 */
+let indexTmpCounter = 0;
+
+/**
+ * 索引原子写的 tmp 路径：固定名曾让宿主进程与容器内进程（同一 agentId 库）互相
+ * 删除对方的 tmp（rename ENOENT 或半截内容被 rename 成正式索引）。进程唯一后缀
+ * 让并发重建互不干扰（last-wins 仍成立）。
+ */
+export function indexTmpPath(indexPath: string): string {
+  return `${indexPath}.${process.pid}-${++indexTmpCounter}.tmp`;
+}
 
 export interface ExperienceDocMeta extends ExperienceFrontmatter {
   fileName: string;
@@ -225,16 +236,29 @@ export class ExperienceIndexService {
       '',
     ];
     const indexPath = path.join(agentDir, EXPERIENCE_INDEX_FILE);
-    const tmpPath = indexPath + '.tmp';
-    // 先清残留（可能是库内被预置的符号链接）：写穿 .tmp 链接等于向宿主任意路径写索引内容
-    try {
-      unlinkSync(tmpPath);
-    } catch {
-      // 不存在即无残留
+    const tmpPath = indexTmpPath(indexPath);
+    // 先清残留：唯一路径上的预置符号链接（写穿等于向宿主任意路径写索引内容），
+    // 以及旧版固定名 INDEX.md.tmp 的历史残留（不再写入，但不留垃圾）
+    for (const stale of [tmpPath, indexPath + '.tmp']) {
+      try {
+        unlinkSync(stale);
+      } catch {
+        // 不存在即无残留
+      }
     }
     writeFileSync(tmpPath, lines.join('\n'));
     // 原子替换：并发重建 last-wins，读者不会看到半截索引
-    renameSync(tmpPath, indexPath);
+    try {
+      renameSync(tmpPath, indexPath);
+    } catch (e) {
+      // 失败时清掉本次 tmp，不在库里留垃圾文件（异常继续抛给调用方收口）
+      try {
+        unlinkSync(tmpPath);
+      } catch {
+        // 已消失更好
+      }
+      throw e;
+    }
   }
 }
 

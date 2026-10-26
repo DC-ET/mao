@@ -46,6 +46,13 @@ let currentShortcutAccel = null
 let currentWorkspace = ''
 /** @type {Map<string, (approved: boolean) => void>} */
 const pendingApprovals = new Map()
+/**
+ * 待派发的通知点击深链：点击时刻渲染层监听可能尚未注册（应用刚启动、
+ * 页面加载中、窗口重建），立即 send 会丢。这里总是留一份，由渲染层桥接
+ * 就绪后主动拉取（consume），收到后回执（ack）清除，防止页面重载后
+ * 拿陈旧点击重复跳转。did-finish-load 补发仅在「尚未被拉取」时执行。
+ */
+let pendingNotificationClick = null
 const terminalManager = new TerminalManager()
 terminalManager.setEnvProvider(buildShellEnv)
 
@@ -1389,9 +1396,11 @@ function applyAutoStart(enabled) {
   }
 }
 
-ipcMain.handle('local-copy-attachment', (event, payload) => {
-  // 落点由主进程推导（home + server host + sessionId），渲染层无法指定
-  return chatAttachment.copyLocalAttachment({
+ipcMain.handle('local-copy-attachment', async (event, payload) => {
+  // 落点由主进程推导（home + server host + sessionId），渲染层无法指定。
+  // 异步拷贝：大文件的 copyFile 不阻塞主进程事件循环（曾用同步 copyFileSync，
+  // 拖入接近上限的大附件会把整个应用卡死数十秒）。
+  return chatAttachment.copyLocalAttachmentAsync({
     sourcePath: payload?.sourcePath,
     sessionId: payload?.sessionId,
     maxSizeMb: payload?.maxSizeMb,
@@ -1413,20 +1422,28 @@ ipcMain.handle('desktop-notify', (event, payload) => {
       // 窗口隐藏到托盘时点击通知先唤起主窗，再把跳转事件交给渲染层。
       // 窗口已销毁（退出模式 + macOS 关窗后点旧通知）时重建：否则 sendToRenderer
       // 因 mainWindow 为 null 静默丢弃，用户点了通知却什么都没有。
+      // 无论走哪条路径都先入待派发队列：渲染层监听可能尚未注册（应用刚启动、
+      // 页面加载中、重建窗口的渲染进程是新的），立即 send 会丢，由渲染层桥接
+      // 就绪后主动 consume 兜底；did-finish-load 补发仅在尚未被拉取时执行。
+      const clickPayload = { itemId, sessionId }
+      pendingNotificationClick = clickPayload
       const win = mainWindow
       if (win && !win.isDestroyed()) {
         if (win.isMinimized()) win.restore()
         win.show()
         win.focus()
-        sendToRenderer('desktop-notification-click', { itemId, sessionId })
+        sendToRenderer('desktop-notification-click', clickPayload)
         return
       }
       const created = createWindow()
       // 新窗口的渲染层（Vue 应用 + ipcRenderer.on）要等页面加载完才就绪：同步发
-      // 跳转事件会丢（窗口能出来但不跳会话），等 did-finish-load 再补发
+      // 跳转事件会丢（窗口能出来但不跳会话），等 did-finish-load 再补发。
+      // 读队列与 send 同步完成，与 consume 不会交错：已被渲染层拉取时队列已空，跳过。
       if (created && !created.isDestroyed() && created.webContents) {
         created.webContents.once('did-finish-load', () => {
-          sendToRenderer('desktop-notification-click', { itemId, sessionId })
+          const pending = pendingNotificationClick
+          if (!pending) return
+          sendToRenderer('desktop-notification-click', pending)
         })
       }
     })
@@ -1441,6 +1458,21 @@ ipcMain.handle('desktop-notify', (event, payload) => {
     sendToRenderer('desktop-notify-result', { ok: false, error, tag })
     return { ok: false, error }
   }
+})
+
+ipcMain.handle('desktop-notification-click-consume', () => {
+  // 渲染层桥接就绪后主动拉取：点击时监听尚未注册（应用刚启动/页面加载中/窗口
+  // 重建）导致的丢失由这里兜底。取出即清空——拉取过的点击不重复派发。
+  const payload = pendingNotificationClick
+  pendingNotificationClick = null
+  return payload
+})
+
+ipcMain.handle('desktop-notification-click-ack', () => {
+  // 渲染层已收到立即派发的点击深链：清除待派发队列，防止页面重载后
+  // 桥接重新就绪时拿陈旧点击重复跳转。
+  pendingNotificationClick = null
+  return { ok: true }
 })
 
 ipcMain.handle('desktop-badge', (event, payload) => {

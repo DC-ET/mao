@@ -194,6 +194,30 @@ describe('MessageRepository', () => {
     expect(sql).toContain('deleted = 0');
     expect(params).toEqual([3, 'call_1']);
   });
+
+  // compact 补洞回归：页外补抓的 TOOL 行常带截图附件，走 SELECT * 会把 base64
+  // data_uri 带回管理端响应，抵消 compact 列表的体积优化（13.7MB → 0.6MB）。
+  it('selectToolMessagesByCallIds compactMedia 走紧凑列，默认仍全列', async () => {
+    const db = mockDb(null, []);
+    const repo = new MessageRepository(db as never);
+    expect(await repo.selectToolMessagesByCallIds(3, ['call_1'])).toEqual([]);
+    const [defaultSql, defaultParams] = db.query.mock.calls.at(-1) as [string, unknown[]];
+    expect(defaultSql).toContain('SELECT *');
+    expect(defaultSql).toContain("role = 'TOOL'");
+    expect(defaultSql).toContain('tool_call_id IN (?)');
+    expect(defaultParams).toEqual([3, 'call_1']);
+
+    await repo.selectToolMessagesByCallIds(3, ['call_1'], null, null, true);
+    const [compactSql, compactParams] = db.query.mock.calls.at(-1) as [string, unknown[]];
+    expect(compactSql).toContain('JSON_REMOVE(metadata');
+    expect(compactSql).toContain('thinking_content');
+    expect(compactSql).not.toContain('SELECT *');
+    expect(compactParams).toEqual([3, 'call_1']);
+
+    // 水位/来源过滤参数顺序不受 compact 影响
+    await repo.selectToolMessagesByCallIds(3, ['call_1', 'call_2'], 99, 7, true);
+    expect(db.query.mock.calls.at(-1)?.[1]).toEqual([3, 'call_1', 'call_2', 99, 7]);
+  });
 });
 
 describe('FileChangeRepository', () => {

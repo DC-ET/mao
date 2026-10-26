@@ -33,13 +33,14 @@ vi.mock('./ShareDialog.vue', () => ({ default: { name: 'ShareDialog', render() {
 const messageSuccess = vi.fn()
 const messageWarning = vi.fn()
 const messageInfo = vi.fn()
+const messageError = vi.fn()
 const messageBoxConfirm = vi.fn((_message: string) => new Promise<void>(() => {}))
 vi.mock('element-plus', () => ({
   ElMessage: {
     success: (...a: unknown[]) => messageSuccess(...a),
     warning: (...a: unknown[]) => messageWarning(...a),
     info: (...a: unknown[]) => messageInfo(...a),
-    error: vi.fn(),
+    error: (...a: unknown[]) => messageError(...a),
   },
   ElMessageBox: { confirm: (message: string) => messageBoxConfirm(message) },
 }))
@@ -172,6 +173,7 @@ beforeEach(() => {
   messageSuccess.mockClear()
   messageWarning.mockClear()
   messageInfo.mockClear()
+  messageError.mockClear()
   // 默认 confirm 永不 resolve（= 用户未确认）；需要「已确认」的用例用 mockImplementationOnce 覆盖
   messageBoxConfirm.mockReset()
   messageBoxConfirm.mockImplementation(() => new Promise<void>(() => {}))
@@ -249,6 +251,33 @@ describe('TaskIndexPanel 标题过滤交互', () => {
     await tick(350)
     expect(store.fetchFocusSessions).toHaveBeenCalled()
     expect(store.fetchSessions).not.toHaveBeenCalled()
+    app.unmount()
+  })
+
+  it('过滤请求失败有收口：报错提示 + 清勾选，不静默保留旧列表', async () => {
+    store.sessions = [row('1'), row('2')]
+    store.fetchSessions.mockImplementation(async () => { throw new Error('network down') })
+    const { host, app } = mountPanel()
+    await tick()
+    q(host, '.select-toggle-btn')!.click()
+    await tick()
+    rowEl(host, '1').click()
+    await tick()
+    expect(q(host, '.select-count')!.textContent).toContain('已选 1')
+
+    q(host, '.filter-toggle-btn')!.click()
+    await tick()
+    const input = q(host, '.panel-filter-input') as HTMLInputElement
+    input.value = '重构'
+    input.dispatchEvent(new Event('input'))
+    await tick(400)
+
+    expect(store.fetchSessions).toHaveBeenCalled()
+    // 收口一：用户看到失败提示，而不是图标 active 但列表纹丝不动
+    expect(messageError).toHaveBeenCalledWith('过滤任务列表失败，请稍后重试')
+    // 收口二：finally 清勾选——过滤结果已变，勾选集可能指向不可见会话，
+    // 继续留着会把「看不见的会话」批量归档掉
+    expect(q(host, '.select-count')!.textContent).toContain('已选 0')
     app.unmount()
   })
 })

@@ -12,6 +12,8 @@ const {
   resolveAttachmentTarget,
   uniqueName,
   copyLocalAttachment,
+  copyLocalAttachmentAsync,
+  MAIN_PROCESS_MAX_SIZE_MB,
 } = require('./chatAttachment.cjs')
 
 // ─── sanitizeAttachmentName ───
@@ -305,4 +307,84 @@ test('copyLocalAttachment maxSizeMb 非法时回落默认上限', (t) => {
     hostKey: 'host',
   })
   assert.equal(result.ok, true)
+})
+
+// ─── copyLocalAttachmentAsync（IPC 默认路径：异步拷贝 + 主进程大小封顶） ───
+
+test('copyLocalAttachmentAsync 成功：内容一致且落在会话目录', async (t) => {
+  const home = tempHome(t)
+  const src = path.join(home, 'src.txt')
+  fs.writeFileSync(src, 'async attachment')
+  const result = await copyLocalAttachmentAsync({
+    sourcePath: src,
+    sessionId: 12,
+    maxSizeMb: 10,
+    homeDir: home,
+    hostKey: 'mao.etarch.cn',
+  })
+  assert.equal(result.ok, true, JSON.stringify(result))
+  assert.equal(result.absolutePath, path.join(home, '.mao', 'attachments', 'mao.etarch.cn', '12', 'src.txt'))
+  assert.equal(fs.readFileSync(result.absolutePath, 'utf8'), 'async attachment')
+})
+
+test('copyLocalAttachmentAsync 主进程硬封顶：渲染层传入 1024 也不放行超限文件', async (t) => {
+  const home = tempHome(t)
+  // 稀疏文件：lstat.size 超限但不占真实磁盘
+  const big = path.join(home, 'huge.bin')
+  const fd = fs.openSync(big, 'w')
+  fs.ftruncateSync(fd, (MAIN_PROCESS_MAX_SIZE_MB + 100) * 1024 * 1024)
+  fs.closeSync(fd)
+  const result = await copyLocalAttachmentAsync({
+    sourcePath: big,
+    sessionId: 5,
+    maxSizeMb: 1024,
+    homeDir: home,
+    hostKey: 'host',
+  })
+  assert.equal(result.ok, false)
+  assert.match(result.error, new RegExp(`${MAIN_PROCESS_MAX_SIZE_MB}MB`))
+  // 校验失败不创建附件目录
+  assert.equal(fs.existsSync(path.join(home, '.mao', 'attachments')), false)
+})
+
+test('copyLocalAttachmentAsync 与同步版同口径：符号链接 / 空文件 / 会话非法均拒', async (t) => {
+  const home = tempHome(t)
+  const base = { sessionId: 9, maxSizeMb: 10, homeDir: home, hostKey: 'host' }
+  const real = path.join(home, 'real.txt')
+  fs.writeFileSync(real, 'real')
+  const link = path.join(home, 'link.txt')
+  fs.symlinkSync(real, link)
+  const linkResult = await copyLocalAttachmentAsync({ ...base, sourcePath: link })
+  assert.equal(linkResult.ok, false)
+  assert.match(linkResult.error, /符号链接/)
+  const empty = path.join(home, 'empty.txt')
+  fs.writeFileSync(empty, '')
+  const emptyResult = await copyLocalAttachmentAsync({ ...base, sourcePath: empty })
+  assert.equal(emptyResult.ok, false)
+  assert.match(emptyResult.error, /为空/)
+  const badSession = await copyLocalAttachmentAsync({ sourcePath: real, sessionId: '1/../../x', homeDir: home, hostKey: 'host' })
+  assert.equal(badSession.ok, false)
+  assert.match(badSession.error, /会话无效/)
+})
+
+test('copyLocalAttachmentAsync 拷贝过程失败返回 ok:false 不抛出', async (t) => {
+  const home = tempHome(t)
+  const src = path.join(home, 'x.txt')
+  fs.writeFileSync(src, 'x')
+  const fsImpl = {
+    ...fs,
+    promises: {
+      copyFile: async () => { throw new Error('disk full') },
+    },
+  }
+  const result = await copyLocalAttachmentAsync({
+    sourcePath: src,
+    sessionId: 1,
+    maxSizeMb: 10,
+    homeDir: home,
+    hostKey: 'host',
+    fsImpl,
+  })
+  assert.equal(result.ok, false)
+  assert.match(result.error, /disk full/)
 })

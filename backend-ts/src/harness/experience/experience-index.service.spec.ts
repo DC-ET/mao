@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { useTmpDir } from '../../testing/tmp-dir.js';
@@ -6,6 +6,7 @@ import { parseExperienceFrontmatter } from './experience-frontmatter.js';
 import {
   ExperienceIndexService,
   EXPERIENCE_INDEX_FILE,
+  indexTmpPath,
   isValidExperienceFileName,
 } from './experience-index.service.js';
 
@@ -285,5 +286,26 @@ describe('ExperienceIndexService', () => {
     expect(readFileSync(join(dir, EXPERIENCE_INDEX_FILE), 'utf8')).toContain('count: 0');
     expect(readFileSync(outside, 'utf8')).toBe('orig');
     expect(existsSync(join(dir, `${EXPERIENCE_INDEX_FILE}.tmp`))).toBe(false);
+  });
+
+  it('索引 tmp 名带进程唯一后缀：连续两次不重复，不同进程不碰撞', () => {
+    const first = indexTmpPath('/lib/INDEX.md');
+    const second = indexTmpPath('/lib/INDEX.md');
+    expect(first).not.toBe(second);
+    expect(first).toMatch(new RegExp(`^/lib/INDEX\\.md\\.${process.pid}-\\d+\\.tmp$`));
+    expect(second).toMatch(new RegExp(`^/lib/INDEX\\.md\\.${process.pid}-\\d+\\.tmp$`));
+  });
+
+  it('重建后库内不留任何 .tmp 残留（唯一名写坏也不积垃圾）', () => {
+    const root = useTmpDir('exp-tmp-leftover-');
+    const svc = new ExperienceIndexService(root);
+    const dir = svc.dirFor(33);
+    svc.ensureFresh(dir);
+    writeFileSync(join(dir, '2026-10-24-doc.md'), DOC_A);
+    svc.rebuild(dir);
+    svc.rebuild(dir);
+    svc.writeDoc(dir, '2026-10-25-doc.md', DOC_B);
+    expect(readdirSync(dir).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+    expect(readdirSync(dir).sort()).toEqual(['2026-10-24-doc.md', '2026-10-25-doc.md', EXPERIENCE_INDEX_FILE]);
   });
 });

@@ -358,3 +358,50 @@ test('基线：local-copy-attachment 落点由主进程推导（home + host + si
     fs.rmSync(fakeHome, { recursive: true, force: true })
   }
 })
+
+// ─── 通知点击深链的待派发队列（P2 修复：点击早于渲染层监听注册时跳转丢失） ───
+
+test('通知点击入待派发队列：窗口存活立即派发，consume 可取到，ack 后清空', async () => {
+  const h = await loadMain({})
+  await h.invoke('desktop-notify', { title: '任务完成', sessionId: 42, itemId: 2, tag: 'mao-inbox-9' })
+  h.state.notifications[0].emit('click')
+  const immediate = h.state.sent.filter((s) => s.channel === 'desktop-notification-click')
+  assert.equal(immediate.length, 1, '窗口存活时立即派发（低延迟路径）')
+  assert.deepEqual(immediate[0].data, { itemId: 2, sessionId: 42 })
+  // 渲染层监听可能尚未注册（应用刚启动/页面加载中）：主进程必须留有积存供就绪后拉取
+  assert.deepEqual(
+    await h.invoke('desktop-notification-click-consume'),
+    { itemId: 2, sessionId: 42 },
+    'consume 应取到积存的点击深链'
+  )
+  // 取出即清空，不重复派发
+  assert.equal(await h.invoke('desktop-notification-click-consume'), null)
+})
+
+test('ack 清除待派发队列：页面重载后桥接重新就绪不会拿陈旧点击重复跳转', async () => {
+  const h = await loadMain({})
+  await h.invoke('desktop-notify', { title: '任务完成', sessionId: 42 })
+  h.state.notifications[0].emit('click')
+  await h.invoke('desktop-notification-click-ack')
+  assert.equal(await h.invoke('desktop-notification-click-consume'), null)
+})
+
+test('窗口销毁后点击：consume 队列与 did-finish-load 补发互斥，不双重跳转', async () => {
+  const h = await loadMain({ prefs: { closeToTray: 'quit' }, platform: 'darwin' })
+  await h.invoke('desktop-notify', { title: '任务完成', sessionId: 42 })
+  h.win().close()
+  h.state.notifications[0].emit('click')
+  await h.tick()
+  assert.equal(h.win().isDestroyed(), false, '点击通知应重建窗口')
+  // 渲染层先就绪并拉取（页面加载慢、监听后注册的真实时序）
+  assert.deepEqual(
+    await h.invoke('desktop-notification-click-consume'),
+    { itemId: null, sessionId: 42 }
+  )
+  // 已被拉取：did-finish-load 不再补发，避免同一深链跳转两次
+  h.win().emitWebContents('did-finish-load')
+  assert.equal(
+    h.state.sent.filter((s) => s.channel === 'desktop-notification-click').length, 0,
+    '已被 consume 的点击不得再补发'
+  )
+})

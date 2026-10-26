@@ -77,11 +77,13 @@ export function primeInboxSystemNotify(items: InboxItem[]): void {
 }
 
 /**
- * 注册通知点击回传与 dock 角标联动（幂等，模块级单例）。
+ * 注册通知点击回传与 dock 角标联动（幂等，模块级单例）。由 useStreamWS 在 WS 连接
+ * 建立时调用（早于首条 inbox_updated）：点击时刻监听可能尚未注册（应用刚启动、
+ * 页面加载中、窗口重建），等首条收件箱事件再注册会丢掉这期间的点击。
  * 点击：主进程负责 show/focus 窗口，这里只做路由跳转（openSessionFromNotification 原样复用）。
  * 角标：收件箱未读数（服务端权威口径）→ macOS dock badge；0 清空；win/linux 主进程 no-op。
  */
-function ensureDesktopNotifyBridge(): void {
+export function setupDesktopNotifyBridge(): void {
   if (bridgeSetup) return
   const api = desktopNotifyApi()
   if (!api) return
@@ -91,8 +93,24 @@ function ensureDesktopNotifyBridge(): void {
     api.onDesktopNotificationClick((payload: { itemId?: number; sessionId?: number | null }) => {
       const sessionId = payload?.sessionId
       if (sessionId == null) return
+      // 本次跳转已由主进程立即派发兑现：回执清除待派发队列，防止页面重载后
+      // 桥接重新就绪时拿陈旧点击重复跳转
+      if (typeof api.ackDesktopNotificationClick === 'function') {
+        void api.ackDesktopNotificationClick().catch(() => undefined)
+      }
       void openSessionFromNotification(sessionId)
     })
+  }
+
+  // 桥接就绪后主动拉取主进程积存的点击深链：覆盖「点击早于监听注册」的丢失窗口
+  // （应用刚启动点通知中心里的旧通知、窗口重建后页面加载中的点击）。
+  if (typeof api.consumePendingDesktopNotificationClick === 'function') {
+    void api.consumePendingDesktopNotificationClick()
+      .then((payload: { itemId?: number; sessionId?: number | null } | null) => {
+        if (payload?.sessionId == null) return
+        void openSessionFromNotification(payload.sessionId)
+      })
+      .catch(() => undefined)
   }
 
   if (typeof api.desktopBadge === 'function') {
@@ -112,7 +130,7 @@ export async function notifyInboxSystemUpdate(): Promise<void> {
   const api = desktopNotifyApi()
   // 非 Electron（Web/安卓）：无主进程通知通道，整体不弹
   if (!api) return
-  ensureDesktopNotifyBridge()
+  setupDesktopNotifyBridge()
   if (!isInboxNotifyWindowHidden()) return
 
   const inboxStore = useInboxStore()
@@ -162,7 +180,9 @@ async function openSessionFromNotification(sessionId: number): Promise<void> {
   if (!session) return
   sessionStore.setActiveSession(String(sessionId))
   const { default: router } = await import('../router')
-  await router.push(`/tasks/${sessionId}`)
+  // 同一会话被重复派发（立即派发 + consume 拉取极端并发）时 push 同路由会以
+  // NavigationFailure 拒绝：吞掉避免 unhandled rejection，首次跳转已生效
+  await router.push(`/tasks/${sessionId}`).catch(() => undefined)
 }
 
 /** 测试辅助：重置模块级基线与桥接注册标记。 */

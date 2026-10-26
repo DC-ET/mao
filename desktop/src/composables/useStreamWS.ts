@@ -10,7 +10,7 @@ import { isAndroidCapacitor } from '../utils/capacitor'
 import { stripImageUrlLines } from '../utils/imageUrlAnnotation'
 import { isElectronClient } from '../utils/platform'
 import { updateSideTaskTabTitleFor } from './useCenterTabs'
-import { notifyInboxSystemUpdate } from './useInboxSystemNotify'
+import { notifyInboxSystemUpdate, setupDesktopNotifyBridge } from './useInboxSystemNotify'
 import { ensureDesktopShellBridgeFromWs } from './useDesktopShell'
 import type { SideTaskContextMode } from '../types/file-browser'
 
@@ -239,6 +239,10 @@ export function useStreamWS() {
         socket.send(JSON.stringify({ type: 'auth', token, client }))
         // 心跳与静默判死从握手起生效：鉴权迟迟无响应时由 30s 静默兜底触发重连
         startHeartbeat()
+        // 通知点击桥接尽早注册（幂等）：等首条 inbox_updated 再注册会丢掉这期间
+        // 对通知中心里旧通知的点击（主进程立即派发时渲染层还没有监听）。注册时
+        // 会顺带 consume 主进程积存的点击深链，覆盖本连接建立前的点击。
+        if (isElectronClient()) setupDesktopNotifyBridge()
       }
 
       socket.onmessage = (event) => {

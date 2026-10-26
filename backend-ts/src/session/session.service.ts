@@ -1216,6 +1216,7 @@ export class SessionService {
     const supplemented = await this.includeMissingToolResults(sessionId, raw, {
       maxMessageId,
       excludeSourceSessionId,
+      compactMedia,
     });
     const messages = (MessageHistoryNormalizer.normalizeEntities(supplemented, parseToolCallsJson) ?? supplemented) as Message[];
     const nextBeforeMessageId = messages.length === 0 ? null : messages[0].id ?? null;
@@ -1229,7 +1230,7 @@ export class SessionService {
   private async includeMissingToolResults(
     sessionId: number,
     raw: Message[],
-    options: { maxMessageId?: number | null; excludeSourceSessionId?: number | null },
+    options: { maxMessageId?: number | null; excludeSourceSessionId?: number | null; compactMedia?: boolean },
   ): Promise<Message[]> {
     const present = new Set<string>();
     for (const message of raw) {
@@ -1243,8 +1244,9 @@ export class SessionService {
       }
     }
     if (missing.length === 0) return raw;
+    // compactMedia 必须穿透到补抓查询：TOOL 行常带截图附件，走全列会把 base64 带回响应
     const extra = await this.messageRepo.selectToolMessagesByCallIds(
-      sessionId, missing, options.maxMessageId ?? null, options.excludeSourceSessionId ?? null,
+      sessionId, missing, options.maxMessageId ?? null, options.excludeSourceSessionId ?? null, options.compactMedia === true,
     );
     if (extra.length === 0) return raw;
     const seen = new Set(raw.map((message) => message.id));
@@ -1279,6 +1281,7 @@ export class SessionService {
       const supplemented = await this.includeMissingToolResults(sessionId, raw, {
         maxMessageId,
         excludeSourceSessionId,
+        compactMedia: options?.compactMedia,
       });
       const messages = (MessageHistoryNormalizer.normalizeEntities(supplemented, parseToolCallsJson) ?? supplemented) as Message[];
       const earlier = await this.messageRepo.hasMessageBefore(sessionId, aroundMessageId);

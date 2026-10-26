@@ -540,9 +540,29 @@ describe('TaskTerminalService', () => {
     ]);
 
     const page = await service.getMessagesByRounds(11, 5, 3);
-    expect(messageRepo.selectToolMessagesByCallIds).toHaveBeenCalledWith(11, ['c2'], null, null);
+    expect(messageRepo.selectToolMessagesByCallIds).toHaveBeenCalledWith(11, ['c2'], null, null, false);
     expect(page.messages.map((message) => message.id)).toEqual([1, 2, 13]);
     expect(page.messages[2].toolCallId).toBe('c2');
+  });
+
+  it('getMessagesByRounds compactMedia 透传到补抓查询（TOOL 行走紧凑列）', async () => {
+    const { service, messageRepo } = makeService();
+    messageRepo.findById.mockResolvedValue({ id: 3, sessionId: 11, role: 'USER' });
+    messageRepo.selectUserStarts.mockResolvedValue([{ id: 1, role: 'USER' }]);
+    messageRepo.selectRange.mockResolvedValue([
+      { id: 1, sessionId: 11, role: 'USER', content: 'q1' },
+      {
+        id: 2, sessionId: 11, role: 'ASSISTANT', content: 'a1',
+        toolCalls: JSON.stringify([{ id: 'c2', name: 'shell' }]),
+      },
+    ]);
+    messageRepo.selectToolMessagesByCallIds.mockResolvedValue([
+      { id: 13, sessionId: 11, role: 'TOOL', content: 'ok', toolCallId: 'c2' },
+    ]);
+
+    const page = await service.getMessagesByRounds(11, 5, 3, { compactMedia: true });
+    expect(messageRepo.selectToolMessagesByCallIds).toHaveBeenCalledWith(11, ['c2'], null, null, true);
+    expect(page.messages.map((message) => message.id)).toEqual([1, 2, 13]);
   });
 
   it('non-weixin channel terminal push keeps unread=true', async () => {

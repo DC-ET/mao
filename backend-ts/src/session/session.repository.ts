@@ -612,20 +612,24 @@ export class MessageRepository {
   /**
    * 页内助手声明了工具调用、但对应 TOOL 行的 id 落在页外（补写占位追加到当时的末尾）时，
    * 按 tool_call_id 把这些行取回来，交给归一化贴回助手后面。maxMessageId 用于分享水位 / 分叉切点。
+   * compactMedia：与 selectRange 同款的管理端紧凑投影——补抓的 TOOL 行常带截图附件，
+   * 走 `SELECT *` 会把 base64 data_uri 带回响应，抵消 compact 列表的体积优化。
    */
   selectToolMessagesByCallIds(
     sessionId: number,
     toolCallIds: string[],
     maxMessageId?: number | null,
     excludeSourceSessionId?: number | null,
+    compactMedia = false,
   ): Promise<Message[]> {
     if (toolCallIds.length === 0) return Promise.resolve([]);
     const placeholders = toolCallIds.map(() => '?').join(', ');
     const cap = maxMessageId == null ? '' : ' AND id <= ?';
     const capParams = maxMessageId == null ? [] : [maxMessageId];
     const src = sourceExcludeSql(excludeSourceSessionId);
+    const columns = compactMedia ? COMPACT_MESSAGE_COLUMNS : '*';
     return this.db.query<Message>(
-      `SELECT * FROM \`message\` WHERE session_id = ? AND ${notDeleted()} AND role = 'TOOL'
+      `SELECT ${columns} FROM \`message\` WHERE session_id = ? AND ${notDeleted()} AND role = 'TOOL'
         AND tool_call_id IN (${placeholders})${cap}${src.sql}
        ORDER BY id ASC`,
       [sessionId, ...toolCallIds, ...capParams, ...src.params],
