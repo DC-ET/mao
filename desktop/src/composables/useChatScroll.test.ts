@@ -460,3 +460,85 @@ describe('手势窗口与尺寸驱动', () => {
     expect(s.userScrolledUp.value).toBe(false)
   })
 })
+
+describe('回到顶部（scrollToTop）', () => {
+  it('定位到顶部并停止跟随；programmatic 记账不误触上滑分页', async () => {
+    const s = setup()
+    await settledAtBottom(s)
+
+    s.scrollToTop()
+    // 浏览器在 rAF 之前派发 scroll（HTML 规范：update the rendering 的 scroll 步骤
+    // 先于动画帧回调）：此刻 programmatic 仍为 true，handleScroll 必须早退——
+    // 不触发分页、不改判
+    await nextTick()
+    s.handleScroll()
+    expect(s.loadOlder).not.toHaveBeenCalled()
+    expect(s.userScrolledUp.value).toBe(true)
+
+    await frame()
+    expect(s.el.scrollTop).toBe(0)
+    // 回顶 = 显式「读历史」：停止跟随，流式内容变高也不跟底
+    expect(s.userScrolledUp.value).toBe(true)
+    // 后续流式内容变高也不跟底
+    s.el.scrollHeight = 2400
+    s.scrollToBottom()
+    await frameSettled()
+    expect(s.el.scrollTop).toBe(0)
+  })
+
+  it('回顶后用户主动下滑回底部恢复跟随', async () => {
+    const s = setup()
+    await settledAtBottom(s)
+
+    s.scrollToTop()
+    await frame()
+    expect(s.userScrolledUp.value).toBe(true)
+
+    // 下滑手势（只开手势窗口，不停跟随）+ 滚回底部附近
+    s.handleWheel({ deltaY: 100 } as WheelEvent)
+    s.el.scrollTop = 1500
+    s.handleScroll()
+    expect(s.userScrolledUp.value).toBe(false)
+    s.scrollToBottom()
+    await frameSettled()
+    expect(s.el.scrollTop).toBe(1500)
+  })
+})
+
+describe('「只看回复」内容塌陷', () => {
+  it('切换导致步骤整段隐藏、scrollTop 被钳制到新底部：恢复跟随，不误判上滑', async () => {
+    const s = setup()
+    await settledAtBottom(s)
+
+    // 用户上滑到历史中阅读
+    gestureUp(s)
+    s.el.scrollTop = 800
+    s.handleScroll()
+    expect(s.userScrolledUp.value).toBe(true)
+
+    // 开启「只看回复」：历史步骤隐藏，内容 2000→900，浏览器把 scrollTop 钳制到 400。
+    // ChatPanel 切换时已显式 pauseFollow，此处验证即便没有 pauseFollow，塌陷钳制
+    // 也不会被误判成用户上滑而永久关死跟随。
+    s.el.scrollHeight = 900
+    s.el.scrollTop = 400
+    s.handleScroll()
+    // 钳制后视口就在新的底部：塌陷是布局产物，恢复跟随
+    expect(s.userScrolledUp.value).toBe(false)
+  })
+
+  it('塌陷后视口离新底部仍远：保持上滑态，不误恢复跟随', async () => {
+    const s = setup()
+    await settledAtBottom(s)
+
+    gestureUp(s)
+    s.el.scrollTop = 300
+    s.handleScroll()
+    expect(s.userScrolledUp.value).toBe(true)
+
+    // 塌陷但视口仍在中部（下方还有更多内容）
+    s.el.scrollHeight = 1500
+    s.el.scrollTop = 200
+    s.handleScroll()
+    expect(s.userScrolledUp.value).toBe(true)
+  })
+})

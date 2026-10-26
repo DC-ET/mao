@@ -998,3 +998,165 @@ describe('session store 删除会话时清理记录详情缓存', () => {
     expect(store.getTraceRecord('7', 'tool:tc1')).not.toBeNull()
   })
 })
+
+describe('session store 标题过滤（listKeyword 单一状态源）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    // 重置 mock（含 mockResolvedValueOnce 队列，避免跨测试串扰）
+    mockGet.mockReset()
+    mockPut.mockReset()
+  })
+
+  /** 取某次 api.get 调用的 params（mock 层为 any 入参） */
+  function paramsOf(callIndex: number): Record<string, any> {
+    return mockGet.mock.calls[callIndex][1]?.params ?? {}
+  }
+
+  it('空 keyword 不传参数；setListKeyword 去空白后三条 fetch 路径统一带上', async () => {
+    const store = useSessionStore()
+    const groupsPayload = {
+      // hasMore: true：loadMoreInGroup 才会真正发请求（meta.hasMore 为 false 时直接返回）
+      data: { groups: [{ key: 'CLOUD:临时工作区', label: '临时工作区', total: 2, hasMore: true, sessions: [makeSession('1')] }] },
+    }
+
+    mockGet.mockResolvedValueOnce(groupsPayload)
+    await store.fetchSessions()
+    // 空串不传：与现状字节一致（axios 序列化丢弃 undefined）
+    expect(paramsOf(0).keyword).toBeUndefined()
+
+    store.setListKeyword('  重构  ')
+    expect(store.listKeyword).toBe('重构')
+
+    // fetchSessions（分组预览）
+    mockGet.mockResolvedValueOnce(groupsPayload)
+    await store.fetchSessions()
+    expect(paramsOf(1).keyword).toBe('重构')
+
+    // loadMoreInGroup（分组分页）：同一 keyword，offset 仍以服务端已返回条数为准
+    mockGet.mockResolvedValueOnce({ data: { items: [makeSession('2')], total: 2, hasMore: false } })
+    await store.loadMoreInGroup('CLOUD:临时工作区')
+    expect(paramsOf(2)).toEqual({ groupKey: 'CLOUD:临时工作区', offset: 1, limit: 20, keyword: '重构' })
+    expect(store.getGroupMeta('CLOUD:临时工作区')?.loadedCount).toBe(2)
+
+    // fetchFocusSessions（聚焦全量）：同一 keyword
+    mockGet.mockResolvedValueOnce({ data: [makeSession('1')] })
+    await store.fetchFocusSessions()
+    expect(paramsOf(3).keyword).toBe('重构')
+
+    // fetchArchivedSessions（已归档区）：固定 status=ARCHIVED，不参与标题过滤
+    mockGet.mockResolvedValueOnce({ data: { groups: [] } })
+    await store.fetchArchivedSessions()
+    expect(paramsOf(4).keyword).toBeUndefined()
+  })
+
+  it('reset 清空 listKeyword（登出/换号不残留旧账号的过滤条件）', () => {
+    const store = useSessionStore()
+    store.setListKeyword('x')
+    store.reset()
+    expect(store.listKeyword).toBe('')
+  })
+})
+
+describe('session store 批量归档（archiveSessions）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    mockGet.mockReset()
+    mockPut.mockReset()
+  })
+
+  async function setupStandard(sessions: Array<Record<string, any>>) {
+    const store = useSessionStore()
+    mockGet.mockResolvedValueOnce({
+      data: { groups: [{ key: 'CLOUD:临时工作区', label: '临时工作区', total: sessions.length, hasMore: false, sessions }] },
+    })
+    await store.fetchSessions()
+    return store
+  }
+
+  it('运行中四相位（RUNNING/WAITING_APPROVAL/CANCELLING/RESUMING）静默跳过并计数', async () => {
+    const store = await setupStandard([
+      makeSession('1', { phase: 'RUNNING' }),
+      makeSession('2', { phase: 'WAITING_APPROVAL' }),
+      makeSession('3', { phase: 'CANCELLING' }),
+      makeSession('4', { phase: 'RESUMING' }),
+      makeSession('5'),
+    ])
+    mockPut.mockResolvedValue({ data: undefined })
+
+    const result = await store.archiveSessions(['1', '2', '3', '4', '5'])
+
+    expect(result).toEqual({ archived: 1, skipped: 4 })
+    expect(mockPut).toHaveBeenCalledTimes(1)
+    expect(mockPut).toHaveBeenCalledWith('/sessions/5/archive')
+    expect(store.getSessionEntity('5')?.status).toBe('ARCHIVED')
+    expect(store.getSessionEntity('1')?.status).toBe('ACTIVE')
+    expect(store.standardSessionIds).toEqual(['1', '2', '3', '4'])
+    expect(store.archivedSessionIds).toEqual(['5'])
+  })
+
+  it('部分失败：成功者迁移、失败者保留原位（不预移除）', async () => {
+    const store = await setupStandard([makeSession('1'), makeSession('2'), makeSession('3')])
+    mockPut.mockImplementation(async (url: string) => {
+      if (url === '/sessions/2/archive') throw new Error('network')
+      return { data: undefined }
+    })
+
+    const result = await store.archiveSessions(['1', '2', '3'])
+
+    expect(result).toEqual({ archived: 2, skipped: 0 })
+    expect(store.getSessionEntity('2')?.status).toBe('ACTIVE')
+    expect(store.standardSessionIds).toEqual(['2'])
+    expect(store.archivedSessionIds).toEqual(['1', '3'])
+  })
+
+  it('组计数与 loadedCount 同步扣减（C5）；归档区只静默刷新一次（C3）', async () => {
+    const store = await setupStandard([makeSession('1'), makeSession('2')])
+    // 已归档区先加载一次：后续批量归档才触发静默刷新
+    mockGet.mockResolvedValueOnce({ data: { groups: [] } })
+    await store.fetchArchivedSessions()
+    const getCallsBefore = mockGet.mock.calls.length
+    mockPut.mockResolvedValue({ data: undefined })
+    mockGet.mockResolvedValue({
+      data: { groups: [{ key: 'CLOUD:临时工作区', label: 'x', total: 0, hasMore: false, sessions: [] }] },
+    })
+
+    await store.archiveSessions(['1', '2'])
+
+    expect(store.getGroupMeta('CLOUD:临时工作区')?.total).toBe(0)
+    // loadedCount 同步 -1：归档后「展开更多」offset 不漂移漏条
+    expect(store.getGroupMeta('CLOUD:临时工作区')?.loadedCount).toBe(0)
+    // 归档区一次静默刷新，不是 N 次
+    expect(mockGet.mock.calls.length).toBe(getCallsBefore + 1)
+  })
+
+  it('聚焦投影同步移除（跨模式投影一致）', async () => {
+    const store = useSessionStore()
+    mockGet.mockResolvedValueOnce({ data: { groups: [] } })
+    await store.fetchSessions()
+    mockGet.mockResolvedValueOnce({ data: [makeSession('1'), makeSession('2')] })
+    await store.fetchFocusSessions()
+    mockPut.mockResolvedValue({ data: undefined })
+
+    await store.archiveSessions(['1'])
+
+    expect(store.focusSessionIds).toEqual(['2'])
+    expect(store.archivedSessionIds).toEqual(['1'])
+  })
+
+  it('并发锁跳过的 id 既不计 archived 也不计 skipped（C14 口径）', async () => {
+    const store = await setupStandard([makeSession('1'), makeSession('2')])
+    let release: (() => void) | undefined
+    mockPut.mockImplementationOnce(() => new Promise(resolve => { release = () => resolve({ data: undefined }) }))
+    // 单条归档持有 '1' 的并发锁（api.put 悬停）
+    const single = store.archiveSession('1')
+    mockPut.mockResolvedValue({ data: undefined })
+
+    const result = await store.archiveSessions(['1', '2'])
+
+    expect(result).toEqual({ archived: 1, skipped: 0 })
+    release?.()
+    await single
+    expect(store.getSessionEntity('1')?.status).toBe('ARCHIVED')
+    expect(store.getSessionEntity('2')?.status).toBe('ARCHIVED')
+  })
+})

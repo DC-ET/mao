@@ -99,6 +99,15 @@ export function createSessionListModule(ctx: {
   /** 已归档区 / 聚焦数据是否已加载过（用于增量刷新与静默重拉判断） */
   const archivedLoaded = ref(false)
   const focusLoaded = ref(false)
+  /**
+   * 列表标题过滤关键词（内存态，不持久化：刷新即清，与全局搜索弹窗的一次性语义一致）。
+   * 单一状态源：三条 fetch 路径与 WS 重连静默重拉统一读取，防过滤被悄悄清掉（C2）。
+   */
+  const listKeyword = ref('')
+
+  function setListKeyword(kw: string) {
+    listKeyword.value = kw.trim()
+  }
 
   const activeSession = computed(() => {
     const id = activeSessionId.value
@@ -120,7 +129,7 @@ export function createSessionListModule(ctx: {
     if (!silent) loading.value = true
     try {
       const { data } = await api.get('/sessions/groups', {
-        params: { previewLimit: DEFAULT_GROUP_PREVIEW }
+        params: { previewLimit: DEFAULT_GROUP_PREVIEW, keyword: listKeyword.value || undefined }
       })
       if (seq !== fetchSessionsSeq) return
       const groups: any[] = data?.groups || []
@@ -173,7 +182,8 @@ export function createSessionListModule(ctx: {
     loadingMoreGroups.value = new Set(loadingMoreGroups.value).add(key)
     try {
       const { data } = await api.get('/sessions', {
-        params: { groupKey: key, offset, limit }
+        // 与 fetchSessions 同一 keyword：服务端按同一关键词分页，本地 offset（= 服务端已返回条数）天然自洽（C1）
+        params: { groupKey: key, offset, limit, keyword: listKeyword.value || undefined }
       })
       const items: Session[] = (data?.items || []).map(normalizeSession)
       if (items.length === 0) {
@@ -223,14 +233,23 @@ export function createSessionListModule(ctx: {
     return loadingMoreGroups.value.has(String(groupKey))
   }
 
-  function bumpGroupMetaForSession(session: Session, delta: number, archived = false) {
+  /**
+   * 组计数/已加载窗口计数调整。
+   * @param delta 组内总数增减（归档/删除 -1，新建 +1）
+   * @param archived 作用区：true=已归档区分组元数据，false=标准模式分组元数据
+   * @param loadedDelta 已加载窗口条数增减（C5）：组内已加载会话归档/删除后，
+   *   load-more 的 offset（loadedCount）须同步 -1，否则会跳过对应数量的会话漏条。
+   *   仅当目标会话确在该分组已加载窗口内（标准/归档投影成员）时传 -1。
+   */
+  function bumpGroupMetaForSession(session: Session, delta: number, archived = false, loadedDelta = 0) {
     const key = cloudGroupKey(session)
     const target = archived ? archivedGroupMeta : groupMeta
     const existing = target.value.get(key)
     if (existing) {
       target.value.set(key, {
         ...existing,
-        total: Math.max(0, existing.total + delta)
+        total: Math.max(0, existing.total + delta),
+        loadedCount: Math.max(0, (existing.loadedCount ?? 0) + loadedDelta)
       })
     } else if (delta > 0) {
       target.value.set(key, { label: key, total: 1, hasMore: false })
@@ -293,13 +312,15 @@ export function createSessionListModule(ctx: {
   async function archiveSession(id: string) {
     const sid = String(id)
     if (archivingIds.value.has(sid)) return
+    // 归档前快照投影成员：组内已加载窗口随之 -1（C5），聚焦模式会话不在标准窗口内则不减
+    const wasInStandardWindow = standardSessionIds.value.includes(sid)
     archivingIds.value = new Set(archivingIds.value).add(sid)
     try {
       await api.put(`/sessions/${sid}/archive`)
       const entity = sessionEntities.value.get(sid)
       if (entity) {
         upsertSessionEntity({ ...entity, status: 'ARCHIVED' })
-        bumpGroupMetaForSession(entity, -1)
+        bumpGroupMetaForSession(entity, -1, false, wasInStandardWindow ? -1 : 0)
       }
       // ACTIVE → ARCHIVED：从标准/聚焦投影移除，加入已归档投影
       standardSessionIds.value = standardSessionIds.value.filter(x => x !== sid)
@@ -318,6 +339,47 @@ export function createSessionListModule(ctx: {
       next.delete(sid)
       archivingIds.value = next
     }
+  }
+
+  /**
+   * 批量归档（标准模式多选）：过滤运行中/已归档 → 串行 PUT → 单次本地投影迁移 + 归档区一次静默刷新。
+   * 与单条 archiveSession 的语义差异（C14）：单条对 ACTIVE_PHASES 是「确认后可归档」，批量静默跳过并计数。
+   * 锁跳过者（archivingIds 占用，如与单条归档并发）既不计 archived 也不计 skipped——调用方 toast 口径以此为准。
+   */
+  async function archiveSessions(ids: string[]): Promise<{ archived: number; skipped: number }> {
+    const targets = ids.filter(id => {
+      const s = sessionEntities.value.get(id)
+      return s != null && s.status !== 'ARCHIVED' && !ACTIVE_PHASES.has(s.phase)
+    })
+    const skipped = ids.length - targets.length
+    const succeeded: string[] = []
+    // 循环前快照标准窗口成员：组内已加载会话归档后 loadedCount 同步 -1（C5，同单条口径）
+    const inStandardWindow = new Set(ids.filter(id => standardSessionIds.value.includes(id)))
+    for (const id of targets) {
+      if (archivingIds.value.has(id)) continue                 // 与单条归档共用并发锁
+      archivingIds.value = new Set(archivingIds.value).add(id)
+      try {
+        await api.put(`/sessions/${id}/archive`)
+        const entity = sessionEntities.value.get(id)
+        if (entity) {
+          upsertSessionEntity({ ...entity, status: 'ARCHIVED' })
+          bumpGroupMetaForSession(entity, -1, false, inStandardWindow.has(id) ? -1 : 0)
+        }
+        succeeded.push(id)
+      } catch { /* 单条失败：保留原位（不预移除原则） */ }
+      finally {
+        const next = new Set(archivingIds.value); next.delete(id)
+        archivingIds.value = next
+      }
+    }
+    if (succeeded.length > 0) {
+      const done = new Set(succeeded)
+      standardSessionIds.value = standardSessionIds.value.filter(x => !done.has(x))
+      focusSessionIds.value = focusSessionIds.value.filter(x => !done.has(x))
+      archivedSessionIds.value = [...succeeded, ...archivedSessionIds.value]
+      if (archivedLoaded.value) await fetchArchivedSessions(true)   // 一次，不是 N 次
+    }
+    return { archived: succeeded.length, skipped }
   }
 
   /** 恢复归档：API 成功后再移动本地，并静默刷新标准分组接口（服务端排序决定插入位置）。 */
@@ -392,7 +454,9 @@ export function createSessionListModule(ctx: {
     if (!silent) focusLoading.value = true
     try {
       const { data } = await api.get('/sessions', {
-        params: { status: 'ACTIVE' }
+        // 与 fetchSessions 同一 keyword（status=ACTIVE 分支同样走服务端 baseSessionListQuery）；
+        // WS 重连静默重拉也读这里，过滤不会被悄悄清掉（C2）
+        params: { status: 'ACTIVE', keyword: listKeyword.value || undefined }
       })
       if (seq !== fetchFocusSeq) return
       const items: Session[] = Array.isArray(data) ? data.map(normalizeSession) : []
@@ -517,6 +581,7 @@ export function createSessionListModule(ctx: {
     if (!existing && updates.executionMode && next.status !== 'ARCHIVED') {
       // Deep-link / loadSession for a session outside the current group preview：
       // 写入标准投影头部（原有行为），并登记分组元数据。已归档会话不进 ACTIVE 投影。
+      // 深链注入是显式导航：导航意图优先于列表标题过滤（keyword），不过滤、不因不匹配而剔除（C2）。
       if (!standardSessionIds.value.includes(sid)) {
         standardSessionIds.value = [sid, ...standardSessionIds.value]
       }
@@ -607,6 +672,9 @@ export function createSessionListModule(ctx: {
   async function deleteSession(id: string): Promise<boolean> {
     const sid = String(id)
     if (deletingIds.value.has(sid)) return false
+    // 删除前快照投影成员：已加载窗口计数同步 -1（C5，同归档口径）
+    const wasInStandardWindow = standardSessionIds.value.includes(sid)
+    const wasInArchivedWindow = archivedSessionIds.value.includes(sid)
     deletingIds.value = new Set(deletingIds.value).add(sid)
     try {
       const existing = sessionEntities.value.get(sid)
@@ -617,7 +685,8 @@ export function createSessionListModule(ctx: {
       sessionEntities.value.delete(sid)
       sessionEntities.value = new Map(sessionEntities.value)
       if (existing) {
-        bumpGroupMetaForSession(existing, -1, existing.status === 'ARCHIVED')
+        const archived = existing.status === 'ARCHIVED'
+        bumpGroupMetaForSession(existing, -1, archived, (archived ? wasInArchivedWindow : wasInStandardWindow) ? -1 : 0)
       }
       if (activeSessionId.value === sid) {
         activeSessionId.value = null
@@ -694,6 +763,8 @@ export function createSessionListModule(ctx: {
     loading.value = false
     archivedLoading.value = false
     focusLoading.value = false
+    // 登出/换号：过滤关键词是账号相关内存态，避免 B 账号的列表被 A 账号的过滤条件悄悄过滤
+    listKeyword.value = ''
     // 登出/换号：清掉持久化的最后查看会话，避免 B 账号冷启动去 fetch A 的会话
     forgetLastSession()
   }
@@ -715,6 +786,7 @@ export function createSessionListModule(ctx: {
     deletingIds,
     archivedLoaded,
     focusLoaded,
+    listKeyword,
     // computed
     sessions,
     archivedSessions,
@@ -722,6 +794,7 @@ export function createSessionListModule(ctx: {
     activeSession,
     // actions
     sessionsByAgent,
+    setListKeyword,
     fetchSessions,
     loadMoreInGroup,
     getGroupMeta,
@@ -732,6 +805,7 @@ export function createSessionListModule(ctx: {
     isArchiving,
     isDeleting,
     archiveSession,
+    archiveSessions,
     unarchiveSession,
     fetchArchivedSessions,
     fetchFocusSessions,

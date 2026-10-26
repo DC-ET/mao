@@ -1,6 +1,9 @@
 import { ref, computed, type Ref } from 'vue'
 import { normalizeMessageRole, type ChatMessage, type FileChange } from '../types/chat'
 import { parseDateTime } from '../utils/datetime'
+import { formatRelativeTime } from './useRelativeTime'
+import { stripInternalMarkers } from '../utils/internalMarkers'
+import { userVisibleText } from '../utils/imageUrlAnnotation'
 
 export interface MessageRound {
   userMessage: ChatMessage
@@ -170,6 +173,38 @@ export function resolveForkCutPoint(rounds: MessageRound[], messageId: string): 
     || candidate.collapsedSteps.some(step => step.id === messageId)
     || candidate.displaySteps.some(step => step.id === messageId))
   return round?.finalReply?.id ?? null
+}
+
+export interface RoundDirectoryRow {
+  /** 定位目标：该轮用户消息 id */
+  id: string
+  index: number
+  summary: string
+  time: string
+  steps: string
+}
+
+/**
+ * 轮次目录行数据：目录 = 已加载窗口索引（决策 7），调用方传 historyRounds
+ * （执行中轮不列）。摘要与 forkLabelOf 同款剥离，避免把 ${skill}$ 之类内部标记原文露出来。
+ */
+export function toRoundDirectoryRows(rounds: MessageRound[]): RoundDirectoryRow[] {
+  return rounds.map((round, idx) => {
+    const summary = stripInternalMarkers(userVisibleText(round.userMessage.content ?? ''))
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 16)
+    const steps = round.stepCount > 0
+      ? `${round.stepCount} 步${round.durationText ? ` · ${round.durationText}` : ''}`
+      : ''
+    return {
+      id: round.userMessage.id,
+      index: idx + 1,
+      summary,
+      time: formatRelativeTime(round.userMessage.createdAt),
+      steps,
+    }
+  })
 }
 
 /** 命中落在折叠步骤里时展开那一轮，否则气泡不在 DOM 中，无法滚动和高亮。 */

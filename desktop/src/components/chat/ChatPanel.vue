@@ -63,12 +63,33 @@
 
     <!-- 会话态 / 加载态：底部 Composer -->
     <template v-else>
+        <!-- .messages-wrap 提供轮次目录把手/浮层的定位宿主：absolute 直接挂 .messages 会随内容
+             滚走，且整条祖先链无定位祖先时回落视口（0.0.337 类 bug） -->
+        <div class="messages-wrap">
         <div class="messages" ref="messagesContainer" :aria-busy="historyLoading"
         @touchstart.passive="handleTouchStart" @touchmove.passive="handleTouchMove"
         @pointerdown="handlePointerDown">
-        <div v-if="historyAnchored" class="history-anchor-bar">
-          <span>正在查看较早的消息</span>
-          <button type="button" class="history-anchor-back" @click="backToLatest">回到最新</button>
+        <!-- 常驻 sticky 顶栏：「只看回复」开关 + 回到顶部 / 回到最新（后两者按各自可见条件出现） -->
+        <div v-if="sessionId && messages.length > 0" class="chat-sticky-bar">
+          <button
+            type="button"
+            class="sticky-bar-btn"
+            :class="{ active: replyOnly }"
+            title="只看回复"
+            aria-label="只看回复"
+            @click="toggleReplyOnly"
+          >
+            <el-icon :size="13"><Hide /></el-icon>
+            <span class="sticky-bar-btn-text">只看回复</span>
+          </button>
+          <span class="sticky-bar-spacer"></span>
+          <template v-if="historyAnchored">
+            <span class="sticky-bar-hint">正在查看较早的消息</span>
+            <button type="button" class="sticky-bar-link" @click="backToLatest">回到最新</button>
+          </template>
+          <button v-else-if="userScrolledUp" type="button" class="sticky-bar-link" title="回到顶部" aria-label="回到顶部" @click="scrollToTop">
+            <el-icon :size="12"><CaretTop /></el-icon>
+          </button>
         </div>
         <div v-if="historyLoading" class="history-loading"
           :class="{ 'empty-state': messages.length === 0 }" role="status" aria-live="polite">
@@ -100,6 +121,7 @@
           :dislike-enabled="true"
           :fork-enabled="true"
           :share-enabled="!!sessionId"
+          :reply-only="replyOnly"
           @edit="startEdit"
           @cancel-edit="cancelEdit"
           @confirm-edit="confirmEdit"
@@ -116,10 +138,19 @@
           </div>
           <div v-if="typingRetry?.attempt" class="typing-retry">
             <span class="typing-retry-spinner"></span>
-            <span>上游响应异常{{ typingRetry.statusCode ? `（HTTP ${typingRetry.statusCode}）` : '' }}，正在第 {{ typingRetry.attempt }}/{{ typingRetry.maxRetries }} 次重试，{{ typingRetry.delaySeconds }} 秒后继续…</span>
+              <span>上游响应异常{{ typingRetry.statusCode ? `（HTTP ${typingRetry.statusCode}）` : '' }}，正在第 {{ typingRetry.attempt }}/{{ typingRetry.maxRetries }} 次重试，{{ typingRetry.delaySeconds }} 秒后继续…</span>
           </div>
         </div>
-      </div>
+        </div>
+
+        <!-- 轮次目录：右缘浮动把手（小屏降级隐藏，决策 3 的移动端延伸） -->
+        <RoundDirectory
+          v-if="sessionId && !isMobileViewport"
+          :messages="messages"
+          :sending="agentRunning"
+          @locate="onRoundLocate"
+        />
+        </div>
 
       <QueuePanel
         @edit="handleQueueEdit"
@@ -205,7 +236,7 @@
 <script setup lang="ts">
 import { ref, computed, inject, provide, watch, nextTick, onActivated, onMounted, onUnmounted, type Ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ChatDotRound, Loading } from '@element-plus/icons-vue'
+import { CaretTop, ChatDotRound, Hide, Loading } from '@element-plus/icons-vue'
 import { useChat, normalizeMessageRole, type ChatMessage } from '../../composables/useChat'
 import { useChatScroll } from '../../composables/useChatScroll'
 import { useChatQueue } from '../../composables/useChatQueue'
@@ -226,6 +257,7 @@ import ShareDialog from '../task/ShareDialog.vue'
 import QuestionPanel from './QuestionPanel.vue'
 import ExecutionErrorBanner from './ExecutionErrorBanner.vue'
 import StarterPrompts from './StarterPrompts.vue'
+import RoundDirectory from './RoundDirectory.vue'
 import appIcon from '../../assets/app-icon-small.png'
 
 // Inject shared refs from TaskView
@@ -383,13 +415,13 @@ watch(pendingApprovals, () => syncToTaskView(), { deep: true })
 // Session restore — ChatPanel watches sessionStore.activeSessionId
 const messagesContainer = ref<HTMLElement>()
 const {
-  userScrolledUp, scrollToBottom, resumeFollow, pauseFollow, scrollToMessage, beginRestore, completeRestore,
+  userScrolledUp, scrollToBottom, resumeFollow, pauseFollow, scrollToMessage, scrollToTop, beginRestore, completeRestore,
   handleMarkdownRendered, handleWheel, handleTouchStart, handleTouchMove, handlePointerDown, handleKeyDown, handleScroll, cancelRestore, resetScrollBaseline, dispose: disposeScroll,
 } = useChatScroll(messagesContainer, {
   loadOlder: loadOlderMessages,
   canLoadOlder: () => sessionStore.activeMessageHasMore && !sessionStore.activeMessageLoadingOlder,
 })
-const { flashId } = useMessageLocate({
+const { flashId, flash } = useMessageLocate({
   sessionId: () => sessionId.value,
   container: messagesContainer,
   onLocate: pauseFollow,
@@ -397,6 +429,23 @@ const { flashId } = useMessageLocate({
 provide(LOCATE_FLASH_KEY, flashId)
 
 const historyAnchored = computed(() => sessionId.value != null && sessionStore.isHistoryAnchored(sessionId.value))
+
+/** 「只看回复」：隐藏工具卡片与思考块，保留对话主干与折叠摘要行；执行中轮不参与过滤（ChatRoundList 内实施） */
+const replyOnly = ref(false)
+
+function toggleReplyOnly() {
+  replyOnly.value = !replyOnly.value
+  // 显式暂停跟随：内容塌陷会触发 ResizeObserver → scheduleFollow 抢位置（C8）
+  pauseFollow()
+}
+
+// 切换会话时复位：过滤态是「当前会话的阅读偏好」，不带到下一个会话
+watch(sessionId, () => { replyOnly.value = false })
+
+/** 轮次目录定位：与全局搜索跳转同构（flash 内部含 pauseFollow 与 nextTick 滚动，展开由 ChatRoundList 的 flashId 监听完成） */
+function onRoundLocate(messageId: string) {
+  flash(messageId)
+}
 
 async function backToLatest() {
   const sid = sessionId.value
@@ -815,28 +864,81 @@ function handleNewTaskAgentChange(id: string | null) {
 </script>
 
 <style scoped>
-.history-anchor-bar {
+/* 轮次目录把手/浮层的定位宿主：absolute 挂滚动容器内会随内容滚走，
+   且 .chat-panel 整条祖先链无定位祖先，缺了它 absolute 回落视口（0.0.337 教训） */
+.messages-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 常驻 sticky 顶栏：「只看回复」开关常驻；回到最新（aroundMessageId 定位后）/
+   回到顶部（上滑后）按各自可见条件出现，横条本身不随两者隐没而抖动 */
+.chat-sticky-bar {
   position: sticky;
   top: 0;
   z-index: 2;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
   margin-bottom: 8px;
-  padding: 8px 12px;
+  padding: 6px 10px;
   border-radius: 8px;
   background: var(--aw-surface-hover, rgba(0, 0, 0, 0.04));
   color: var(--aw-ink-muted-80, #555);
   font-size: 13px;
 }
-.history-anchor-back {
+
+.sticky-bar-spacer {
+  flex: 1;
+}
+
+.sticky-bar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 2px 6px;
+  border-radius: var(--aw-radius-xs);
+  transition: background 0.15s, color 0.15s;
+}
+
+.sticky-bar-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--aw-ink);
+}
+
+.sticky-bar-btn.active {
+  color: var(--aw-accent, #409eff);
+}
+
+.sticky-bar-btn-text {
+  white-space: nowrap;
+}
+
+.sticky-bar-hint {
+  color: var(--aw-ink-muted-64, #666);
+  white-space: nowrap;
+}
+
+.sticky-bar-link {
+  display: inline-flex;
+  align-items: center;
   border: 0;
   background: transparent;
   color: var(--aw-accent, #409eff);
   cursor: pointer;
   font: inherit;
+  padding: 2px 4px;
+  white-space: nowrap;
 }
+
 .chat-panel {
   display: flex;
   flex-direction: column;

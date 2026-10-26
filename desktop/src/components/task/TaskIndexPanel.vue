@@ -5,6 +5,15 @@
         <span class="panel-title">任务</span>
         <div class="header-actions">
           <button
+            class="refresh-btn filter-toggle-btn"
+            :class="{ active: filterActive }"
+            @click="toggleFilter"
+            :title="filterActive ? '标题过滤中' : '按标题过滤'"
+            aria-label="按标题过滤"
+          >
+            <el-icon :size="14"><Search /></el-icon>
+          </button>
+          <button
             class="refresh-btn mode-toggle-btn"
             :class="{ active: listMode === 'focus' }"
             @click="toggleListMode"
@@ -16,6 +25,16 @@
               <Bell v-else />
             </el-icon>
           </button>
+          <button
+            v-if="listMode === 'standard'"
+            class="refresh-btn select-toggle-btn"
+            :class="{ active: selecting }"
+            @click="enterSelectMode"
+            title="多选归档"
+            aria-label="多选归档"
+          >
+            <el-icon :size="14"><Select /></el-icon>
+          </button>
           <button class="refresh-btn" @click="refreshSessions" :disabled="loading || focusLoading">
             <el-icon :size="14" :class="{ 'is-loading': loading || focusLoading }"><Refresh /></el-icon>
           </button>
@@ -23,6 +42,22 @@
             <el-icon :size="14"><Plus /></el-icon>
           </button>
         </div>
+      </div>
+      <!-- 标题过滤输入行：折叠态只留放大镜按钮，展开后 300ms 防抖调既有 keyword 参数 -->
+      <div v-if="filterOpen" class="panel-filter">
+        <el-icon class="panel-filter-icon" :size="13"><Search /></el-icon>
+        <input
+          ref="filterInputEl"
+          v-model="filterText"
+          class="panel-filter-input"
+          type="text"
+          placeholder="按标题过滤"
+          @input="onFilterInput"
+          @keydown="onFilterInputKeydown"
+        />
+        <button v-if="filterText" class="panel-filter-clear" title="清空过滤" aria-label="清空过滤" @click="clearFilter">
+          <el-icon :size="12"><Close /></el-icon>
+        </button>
       </div>
       <div class="panel-content">
         <template v-if="listMode === 'standard'">
@@ -39,6 +74,11 @@
             :editing-session-id="editingSessionId"
             v-model:editing-title="editingTitle"
             :DEFAULT_VISIBLE="DEFAULT_VISIBLE"
+            :filter-active="filterActive"
+            :selecting="selecting"
+            :selected-ids="selectedIds"
+            :toggle-select="toggleSelect"
+            :can-select="canSelect"
             :toggle-group="toggleGroup"
             :open-group-context-menu="openGroupContextMenu"
             :set-group-rename-input="setGroupRenameInput"
@@ -93,6 +133,7 @@
             :editing-session-id="editingSessionId"
             v-model:editing-title="editingTitle"
             :show-item-actions="showItemActions"
+            :filter-active="filterActive"
             :FOCUS_DEFAULT_VISIBLE="FOCUS_DEFAULT_VISIBLE"
             :FOCUS_EXPAND_STEP="FOCUS_EXPAND_STEP"
             v-model:focus-visible-count="focusVisibleCount"
@@ -145,6 +186,17 @@
           :start-delete="startDelete"
         />
       </div>
+
+      <!-- 多选批量操作条：挂在滚动区之外，避开 .resize-handle -->
+      <div v-if="selecting" class="select-action-bar">
+        <span class="select-count">已选 {{ selectedCount }}</span>
+        <button
+          class="select-archive-btn"
+          :disabled="selectedCount === 0 || batchArchiving"
+          @click="confirmBatchArchive"
+        >归档</button>
+        <button class="select-cancel-btn" :disabled="batchArchiving" @click="exitSelectMode">取消</button>
+      </div>
     </template>
     <div
       v-if="!collapsed"
@@ -157,6 +209,7 @@
     <TaskContextMenu
       :context-menu="contextMenu"
       :group-context-menu="groupContextMenu"
+      :select-mode="selecting"
       :menu-archive="menuArchive"
       :menu-unarchive="menuUnarchive"
       :menu-edit-title="menuEditTitle"
@@ -174,10 +227,10 @@
 
 <script setup lang="ts">
 import { computed, ref, reactive, watch, nextTick, onMounted, onUnmounted } from 'vue'
-import { Refresh, Plus, Bell, BellFilled } from '@element-plus/icons-vue'
+import { Refresh, Plus, Bell, BellFilled, Search, Select, Close } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
-import { useSessionStore, type Session, type TaskPhase } from '../../stores/session'
+import { useSessionStore, ACTIVE_PHASES, type Session, type TaskPhase } from '../../stores/session'
 import { useTerminal } from '../../composables/useTerminal'
 import { removeSessionTabsFor } from '../../composables/useCenterTabs'
 import { useTaskPanelPrefs } from '../../composables/useTaskPanelPrefs'
@@ -232,6 +285,137 @@ const focusError = ref(false)
 const historyCollapsed = ref(true)
 // 已归档区状态
 const archiveCollapsed = ref(true)
+
+// --- 标题过滤（P1）：折叠态放大镜入口，展开后 300ms 防抖；keyword 收敛在 store 单一状态源 ---
+const filterOpen = ref(false)
+const filterText = ref('')
+const filterInputEl = ref<HTMLInputElement | null>(null)
+let filterTimer: number | null = null
+const listKeyword = computed(() => sessionStore.listKeyword)
+const filterActive = computed(() => listKeyword.value.length > 0)
+
+function toggleFilter() {
+  filterOpen.value = !filterOpen.value
+  if (filterOpen.value) {
+    // 展开时回填当前生效的过滤词（图标上的 active 态可能来自上一次过滤）
+    filterText.value = listKeyword.value
+    nextTick(() => filterInputEl.value?.focus())
+  }
+}
+
+function onFilterInput() {
+  if (filterTimer != null) window.clearTimeout(filterTimer)
+  filterTimer = window.setTimeout(() => { void applyFilter(filterText.value) }, 300)
+}
+
+function onFilterInputKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    // 只收起输入行，保留已生效的过滤词（图标保持 active，再点可继续改）
+    e.stopPropagation()
+    filterOpen.value = false
+  } else if (e.key === 'Enter') {
+    e.preventDefault()
+    if (filterTimer != null) window.clearTimeout(filterTimer)
+    void applyFilter(filterText.value)
+  }
+}
+
+async function applyFilter(text: string) {
+  sessionStore.setListKeyword(text)
+  // 组内展开计数随列表内容重置，与手动刷新同口径
+  expandedCounts.value = new Map()
+  if (props.listMode === 'focus') {
+    await loadFocus()
+  } else {
+    // 非 silent：让 loading 反馈过滤请求正在进行
+    await sessionStore.fetchSessions()
+  }
+  // 过滤结果变化后，勾选态可能已不在可见列表里：清空避免「归档看不见的会话」
+  selectedIds.value = new Set()
+}
+
+function clearFilter() {
+  if (filterTimer != null) window.clearTimeout(filterTimer)
+  filterText.value = ''
+  void applyFilter('')
+}
+
+// 展开期间点输入行外部收起（保留已生效过滤词）
+function onFilterOutsideClick(e: MouseEvent) {
+  const target = e.target as Node | null
+  if (target && filterInputEl.value?.closest('.panel-filter')?.contains(target)) return
+  if (target && (target as HTMLElement).closest?.('.filter-toggle-btn')) return
+  filterOpen.value = false
+}
+watch(filterOpen, (isOpen) => {
+  if (isOpen) document.addEventListener('click', onFilterOutsideClick)
+  else document.removeEventListener('click', onFilterOutsideClick)
+})
+onUnmounted(() => {
+  if (filterTimer != null) window.clearTimeout(filterTimer)
+  document.removeEventListener('click', onFilterOutsideClick)
+})
+
+// --- 多选批量归档（P2，仅标准模式，决策 4）---
+const selecting = ref(false)
+const selectedIds = ref<Set<string>>(new Set())
+const batchArchiving = ref(false)
+const selectedCount = computed(() => selectedIds.value.size)
+
+function enterSelectMode() {
+  selecting.value = true
+  selectedIds.value = new Set()
+}
+
+function exitSelectMode() {
+  selecting.value = false
+  selectedIds.value = new Set()
+}
+
+function canSelect(session: Session): boolean {
+  // 与 archiveSessions 的 targets 过滤同口径：运行中（含 WAITING_APPROVAL / CANCELLING /
+  // RESUMING）与已归档不可批量归档。注意与单条归档的语义差异：单条对同集合是「确认后可归档」，
+  // 批量静默跳过（C14，确认弹窗文案已明示）。
+  return session.status !== 'ARCHIVED' && !ACTIVE_PHASES.has(session.phase)
+}
+
+function toggleSelect(session: Session) {
+  const sid = String(session.id)
+  if (!canSelect(session)) return
+  const next = new Set(selectedIds.value)
+  if (next.has(sid)) next.delete(sid)
+  else next.add(sid)
+  selectedIds.value = next
+}
+
+async function confirmBatchArchive() {
+  const ids = [...selectedIds.value]
+  if (ids.length === 0) return
+  try {
+    await ElMessageBox.confirm(
+      `确定归档选中的 ${ids.length} 个任务吗？运行中的任务将自动跳过。`,
+      '批量归档',
+      { confirmButtonText: '归档', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch {
+    return // 用户取消
+  }
+  batchArchiving.value = true
+  try {
+    const { archived, skipped } = await sessionStore.archiveSessions(ids)
+    if (archived > 0 && skipped > 0) ElMessage.success(`已归档 ${archived} 个，${skipped} 个跳过`)
+    else if (archived > 0) ElMessage.success(`已归档 ${archived} 个`)
+    else if (skipped > 0) ElMessage.warning(`已跳过 ${skipped} 个（运行中或已归档）`)
+    else ElMessage.info('没有可归档的任务')
+  } finally {
+    batchArchiving.value = false
+  }
+  exitSelectMode()
+}
+
+// 模式切换 / 面板收起时退出选择态：聚焦模式不开多选（决策 4），收起后面板不可见
+watch(() => props.listMode, () => { if (selecting.value) exitSelectMode() })
 
 // 右键菜单状态
 const contextMenu = reactive({
@@ -621,6 +805,11 @@ function onGlobalClick() {
 }
 function onGlobalKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
+    // 选择模式下 Esc 优先退出多选（过滤输入行的 Esc 已在输入处理器内 stopPropagation）
+    if (selecting.value) {
+      exitSelectMode()
+      return
+    }
     if (contextMenu.visible) closeContextMenu()
     if (groupContextMenu.visible) closeGroupContextMenu()
   }

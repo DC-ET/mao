@@ -240,7 +240,7 @@
 | 提案 | 文档 | 一句话 | 规模 |
 |---|---|---|---|
 | 回复渲染完整度 | [2026-10-25-message-rendering.md](2026-10-25-message-rendering.md)（**已实施**，技术方案见 [../plan/2026-10-25-message-rendering-technical-design.md](../plan/2026-10-25-message-rendering-technical-design.md)，含 §6 全量冲突清单） | Mermaid 图 / KaTeX 公式 / 表格复制——Agent 产出的结构化内容不再以源码形态阅读；零协议零后端，与已否决的「结构化回复卡片」划清边界 | 小~中 |
-| 会话列表与长会话导航 | [2026-10-25-session-list-navigation.md](2026-10-25-session-list-navigation.md)（**已评审定稿 v1.1**，技术方案见 [../plan/2026-10-26-session-list-navigation-technical-design.md](../plan/2026-10-26-session-list-navigation-technical-design.md)，含 C1–C15 全量冲突清单） | 接通后端已就绪的标题过滤，补批量归档与轮次目录、只看回复；收藏与置顶两个半截子功能整体移除——会话找得回、排得开 | 小~中 |
+| 会话列表与长会话导航 | [2026-10-25-session-list-navigation.md](2026-10-25-session-list-navigation.md)（**已转入实施**，0.0.351，技术方案见 [../plan/2026-10-26-session-list-navigation-technical-design.md](../plan/2026-10-26-session-list-navigation-technical-design.md)，含 C1–C15 全量冲突清单） | 接通后端已就绪的标题过滤，补批量归档与轮次目录、只看回复；收藏与置顶两个半截子功能整体移除——会话找得回、排得开 | 小~中 |
 | Electron 壳补完 | [2026-10-25-electron-shell-completeness.md](2026-10-25-electron-shell-completeness.md)（方向已认可，已细化，技术方案待评审：[../plan/2026-10-26-electron-shell-completeness-technical-design.md](../plan/2026-10-26-electron-shell-completeness-technical-design.md)，含 §7 全量冲突清单） | LOCAL 附件拷入工作区（文件不出本机）+ 托盘 / 主进程原生通知 / 角标 / 全局快捷键 / 开机自启——窗口一关不再与任务失联 | 小~中 |
 
 排期注意：
