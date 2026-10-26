@@ -14,7 +14,7 @@
 import { Document, Close } from '@element-plus/icons-vue'
 
 defineProps<{
-  pendingFiles: { file: File; previewUrl: string }[]
+  pendingFiles: { file: File; previewUrl: string; localPath?: string }[]
   disabled: boolean
   removeFile: (index: number) => void
 }>()

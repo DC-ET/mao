@@ -7,8 +7,11 @@ export interface DraftEntry {
   html: string
   /** 纯文本（用于空判断） */
   text: string
-  /** 待发图片/文件及其 blob 预览 URL（previewUrl '' 表示非图片）；所有权随草稿转移 */
-  files: Array<{ file: File; previewUrl: string }>
+  /**
+   * 待发图片/文件及其 blob 预览 URL（previewUrl '' 表示非图片）；所有权随草稿转移。
+   * localPath：LOCAL 模式非图片文件在本机的绝对路径（发送时拷贝到 ~/.mao/attachments）。
+   */
+  files: Array<{ file: File; previewUrl: string; localPath?: string }>
 }
 
 /** TipTap 空文档 getHTML() 的残留结构（空段落/空行），视为无内容 */

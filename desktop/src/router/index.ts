@@ -67,6 +67,11 @@ const routes: RouteRecordRaw[] = [
             component: () => import('../views/settings/ServerSettingsView.vue')
           },
           {
+            path: 'desktop',
+            name: 'DesktopSettings',
+            component: () => import('../views/settings/DesktopSettingsView.vue')
+          },
+          {
             path: 'git-credentials',
             name: 'GitCredentials',
             component: () => import('../views/settings/GitCredentialsView.vue')

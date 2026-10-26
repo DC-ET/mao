@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
-import { isCurrentChatSession, useChat } from './useChat'
+import { isCurrentChatSession, isAbsoluteFileRef, resolveFileRefPaths, useChat } from './useChat'
 import { api } from '../api'
 import { useSessionStore } from '../stores/session'
 
@@ -405,5 +405,49 @@ describe('stopExecution', () => {
     // 以 REST 落库版本为准，本地流式占位气泡不得留下重复副本
     expect(msgs[1].id).toBe('201')
     expect(msgs.filter(m => m.role === 'assistant')).toHaveLength(1)
+  })
+})
+
+describe('resolveFileRefPaths 绝对路径跳过（含 Windows 盘符）', () => {
+  const workspace = '/Users/me/project'
+
+  it('POSIX 绝对路径原样透过（服务端 runtime incoming / 本机 ~/.mao/attachments）', () => {
+    expect(resolveFileRefPaths('看 @{/opt/mao/runtime/x/a.txt}@', workspace))
+      .toBe('看 @{/opt/mao/runtime/x/a.txt}@')
+    expect(resolveFileRefPaths('@{/Users/me/.mao/attachments/host/12/a.txt}@', workspace))
+      .toBe('@{/Users/me/.mao/attachments/host/12/a.txt}@')
+  })
+
+  it('Windows 盘符绝对路径原样透过（LOCAL 附件拷贝落点，防拼坏引用）', () => {
+    // 反斜杠形态
+    expect(resolveFileRefPaths('看 @{C:\\Users\\me\\.mao\\attachments\\host\\12\\a.txt}@', workspace))
+      .toBe('看 @{C:\\Users\\me\\.mao\\attachments\\host\\12\\a.txt}@')
+    // 正斜杠形态
+    expect(resolveFileRefPaths('@{C:/Users/me/.mao/attachments/host/12/a.txt}@', workspace))
+      .toBe('@{C:/Users/me/.mao/attachments/host/12/a.txt}@')
+    // 小写盘符同样识别
+    expect(resolveFileRefPaths('@{d:\\data\\x.bin}@', workspace))
+      .toBe('@{d:\\data\\x.bin}@')
+  })
+
+  it('相对路径仍按 workspace 拼接（@ 手输引用）', () => {
+    expect(resolveFileRefPaths('看 @{src/a.txt}@', workspace)).toBe('看 @{/Users/me/project/src/a.txt}@')
+    expect(resolveFileRefPaths('@{./a.txt}@', workspace)).toBe('@{/Users/me/project/./a.txt}@')
+  })
+
+  it('无 @{} 或空 workspace 时原文返回', () => {
+    expect(resolveFileRefPaths('普通文本', workspace)).toBe('普通文本')
+    expect(resolveFileRefPaths('看 @{src/a.txt}@', '')).toBe('看 @{src/a.txt}@')
+  })
+
+  it('isAbsoluteFileRef 边界', () => {
+    expect(isAbsoluteFileRef('/x')).toBe(true)
+    expect(isAbsoluteFileRef('C:\\x')).toBe(true)
+    expect(isAbsoluteFileRef('c:/x')).toBe(true)
+    expect(isAbsoluteFileRef('relative/x')).toBe(false)
+    expect(isAbsoluteFileRef('./x')).toBe(false)
+    // 形似盘符但冒号后无斜杠（drive-relative 路径）：按相对路径处理
+    expect(isAbsoluteFileRef('Z:x')).toBe(false)
+    expect(isAbsoluteFileRef('C:x')).toBe(false)
   })
 })

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, dialog, Menu, nativeImage } = require('electron')
+const { app, BrowserWindow, ipcMain, shell, dialog, Menu, nativeImage, Tray, globalShortcut, Notification } = require('electron')
 const { join } = require('path')
 const { exec, spawn } = require('child_process')
 const fs = require('fs')
@@ -9,6 +9,9 @@ const { TerminalManager } = require('./terminalManager.cjs')
 const { createLocalShellRuntime, resolveShellProtocol } = require('./localShell.cjs')
 const promptImageResizer = require('./promptImageResizer.cjs')
 const serverConfigLib = require('./serverConfig.cjs')
+const chatAttachment = require('./chatAttachment.cjs')
+const desktopPrefsLib = require('./desktopPrefs.cjs')
+const { createTray } = require('./tray.cjs')
 
 
 app.setName('Mao')
@@ -16,7 +19,25 @@ app.setName('Mao')
 // 收件箱的 Electron 系统通知（P2）依赖它才能正常弹出并被任务栏正确归组。
 app.setAppUserModelId('cn.etarch.mao.desktop')
 
+// 单实例锁（P2 前置）：托盘常驻 / 开机自启 / dock 复活都要求同一时刻只有一个进程，
+// 否则多实例会争用 auth.json 等 userData 资源。第二个实例启动后唤起主窗再退出。
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : createWindow()
+    if (!win || win.isDestroyed()) return
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
+  })
+}
+
 let mainWindow = null
+/** 系统托盘实例（P2；app ready 后创建，退出时随进程销毁） */
+let appTray = null
+/** before-quit 已触发：close 事件不再拦截为隐藏，保证退出路径全量清理 */
+let quitting = false
 let currentWorkspace = ''
 /** @type {Map<string, (approved: boolean) => void>} */
 const pendingApprovals = new Map()
@@ -1210,14 +1231,221 @@ function createWindow() {
     return { action: 'deny' }
   })
 
+  // 关窗拦截（P2，默认托盘化）：quitting 旗标未置位且偏好为托盘时，红点/X/窗口菜单「关闭」
+  // 一律 hide 而非销毁——渲染层与 WS 存活，任务继续跑、通知照常可达。
+  // 退出路径（托盘菜单 / 应用菜单 role:quit / app.quit()）都先走 before-quit 置
+  // quitting=true，本拦截随之失效，窗口正常关闭并全量清理。
+  mainWindow.on('close', (e) => {
+    if (quitting) return
+    const prefs = desktopPrefsLib.readDesktopPrefs(app.getPath('userData'))
+    if (prefs.closeToTray !== 'tray') return
+    e.preventDefault()
+    mainWindow.hide()
+    if (!prefs.trayHintShown) {
+      sendToRenderer('tray-first-close-hint', {})
+      desktopPrefsLib.writeDesktopPrefs(app.getPath('userData'), { trayHintShown: true })
+    }
+  })
+
   mainWindow.on('closed', () => {
     mainWindow = null
   })
 }
 
+// ========== P2/P3 桌面壳：托盘 / 通知 / 角标 / 偏好 / 快捷键 ==========
+
+function readDesktopPrefs() {
+  return desktopPrefsLib.readDesktopPrefs(app.getPath('userData'))
+}
+
+function initTray() {
+  if (appTray) return
+  appTray = createTray({
+    isWindowVisible: () => !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible(),
+    onShowHide: () => {
+      const win = mainWindow
+      if (!win || win.isDestroyed()) {
+        createWindow()
+        return
+      }
+      if (win.isVisible()) {
+        win.hide()
+      } else {
+        if (win.isMinimized()) win.restore()
+        win.show()
+        win.focus()
+      }
+      appTray?.refresh()
+    },
+    onNewTask: () => {
+      // 渲染层复用「新建任务」既有入口（Home + newTask=1）；窗口不可见时先唤起
+      const win = mainWindow
+      if (win && !win.isDestroyed()) {
+        if (win.isMinimized()) win.restore()
+        win.show()
+        win.focus()
+      }
+      sendToRenderer('tray-new-task', {})
+    },
+    onQuit: () => {
+      // before-quit 置 quitting → close 不再拦截 → 全量清理后退出
+      app.quit()
+    },
+  })
+  // 窗口显示态变化时刷新托盘菜单文案（显示/隐藏主窗）
+  const refresh = () => appTray?.refresh()
+  mainWindow?.on('show', refresh)
+  mainWindow?.on('hide', refresh)
+  mainWindow?.on('minimize', refresh)
+  mainWindow?.on('restore', refresh)
+}
+
+/**
+ * 全局快捷键（P3，默认 Alt+Shift+M，可改可关）：触发时窗口可见且聚焦则隐藏，否则唤起。
+ * 注册失败（被其他程序占用 / 格式非法）回传设置页提示。
+ * @param {string | null} accel
+ * @returns {{ ok: true } | { ok: false, error: string }}
+ */
+function applyGlobalShortcut(accel) {
+  try {
+    globalShortcut.unregisterAll()
+  } catch (e) {
+    console.warn('[shortcut] unregisterAll failed:', e?.message)
+  }
+  if (!accel) return { ok: true }
+  try {
+    const registered = globalShortcut.register(accel, () => {
+      const win = mainWindow
+      if (!win || win.isDestroyed()) return
+      if (win.isVisible() && !win.isMinimized() && win.isFocused()) {
+        win.hide()
+      } else {
+        if (win.isMinimized()) win.restore()
+        win.show()
+        win.focus()
+      }
+      appTray?.refresh()
+    })
+    if (!registered) {
+      return { ok: false, error: '快捷键注册失败，可能已被其他程序占用' }
+    }
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: `快捷键格式无效：${e?.message || ''}` }
+  }
+}
+
+/**
+ * 开机自启（P3）：仅打包后客户端可写登录项（防 dev 的 electron 二进制误入登录项，决策 8）。
+ * openAsHidden 配合托盘模式：自启后驻留托盘不弹窗。
+ */
+function applyAutoStart(enabled) {
+  if (!app.isPackaged) {
+    return { ok: false, error: '开发模式下不支持开机自启，请使用打包后的客户端' }
+  }
+  try {
+    app.setLoginItemSettings({ openAtLogin: enabled === true, openAsHidden: true })
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: `设置开机自启失败：${e?.message || ''}` }
+  }
+}
+
+ipcMain.handle('local-copy-attachment', (event, payload) => {
+  // 落点由主进程推导（home + server host + sessionId），渲染层无法指定
+  return chatAttachment.copyLocalAttachment({
+    sourcePath: payload?.sourcePath,
+    sessionId: payload?.sessionId,
+    maxSizeMb: payload?.maxSizeMb,
+    homeDir: os.homedir(),
+    hostKey: getServerHostKey(),
+  })
+})
+
+ipcMain.handle('desktop-notify', (event, payload) => {
+  const title = String(payload?.title ?? '')
+  const body = String(payload?.body ?? '')
+  const tag = payload?.tag != null ? String(payload.tag) : undefined
+  const itemId = payload?.itemId ?? null
+  const sessionId = payload?.sessionId ?? null
+  if (!title) return { ok: false, error: '通知标题为空' }
+  try {
+    const notification = new Notification({ title, body, tag })
+    notification.on('click', () => {
+      // 窗口隐藏到托盘时点击通知先唤起主窗，再把跳转事件交给渲染层
+      const win = mainWindow
+      if (win && !win.isDestroyed()) {
+        if (win.isMinimized()) win.restore()
+        win.show()
+        win.focus()
+      }
+      sendToRenderer('desktop-notification-click', { itemId, sessionId })
+    })
+    notification.on('failed', () => {
+      console.warn('[notify] display failed:', title)
+      sendToRenderer('desktop-notify-result', { ok: false, error: '系统通知展示失败', tag })
+    })
+    notification.show()
+    return { ok: true }
+  } catch (e) {
+    const error = e?.message || '通知发送失败'
+    sendToRenderer('desktop-notify-result', { ok: false, error, tag })
+    return { ok: false, error }
+  }
+})
+
+ipcMain.handle('desktop-badge', (event, payload) => {
+  const count = Math.max(0, Math.floor(Number(payload?.count) || 0))
+  if (process.platform === 'darwin' && app.dock && typeof app.dock.setBadgeCount === 'function') {
+    app.dock.setBadgeCount(count)
+  }
+  // win/linux no-op（overlay 角标列为后续可选）
+  return { ok: true }
+})
+
+ipcMain.handle('desktop-prefs-get', () => {
+  return { ok: true, prefs: readDesktopPrefs(), packaged: app.isPackaged, platform: process.platform }
+})
+
+ipcMain.handle('desktop-prefs-set', (event, patch) => {
+  const next = patch && typeof patch === 'object' ? patch : {}
+  // dev 模式禁止开启自启：直接拒绝，不落盘（防打包前的误开启在打包后生效）
+  if (next.autoStart === true && !app.isPackaged) {
+    return { ok: false, error: '开发模式下不支持开机自启，请使用打包后的客户端' }
+  }
+  const result = desktopPrefsLib.writeDesktopPrefs(app.getPath('userData'), next)
+  let sideError = null
+  if ('autoStart' in next) {
+    const applied = applyAutoStart(result.prefs.autoStart)
+    if (!applied.ok) sideError = applied.error
+  }
+  return { ok: true, prefs: result.prefs, error: sideError || undefined }
+})
+
+ipcMain.handle('desktop-shortcut-set', (event, accel) => {
+  const next = accel == null ? null : String(accel).trim()
+  if (next !== null && next === '') {
+    return { ok: false, error: '快捷键不能为空（关闭请传 null）' }
+  }
+  const applied = applyGlobalShortcut(next)
+  if (!applied.ok) {
+    sendToRenderer('desktop-shortcut-failed', { accel: next, error: applied.error })
+    return { ok: false, error: applied.error }
+  }
+  const result = desktopPrefsLib.writeDesktopPrefs(app.getPath('userData'), { globalShortcut: next })
+  return { ok: true, prefs: result.prefs }
+})
+
 app.whenReady().then(() => {
   buildApplicationMenu()
   createWindow()
+  initTray()
+  // 快捷键按偏好注册（默认 Alt+Shift+M）；失败时回传提示
+  const shortcut = readDesktopPrefs().globalShortcut
+  const registered = applyGlobalShortcut(shortcut)
+  if (!registered.ok) {
+    sendToRenderer('desktop-shortcut-failed', { accel: shortcut, error: registered.error })
+  }
   if (app.isPackaged) {
     setTimeout(() => {
       checkForAppUpdate().catch((error) => {
@@ -1228,6 +1456,7 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
+  // 托盘模式下窗口是 hide 而非 close，不会触发本事件；仅「退出模式」下走原逻辑
   if (process.platform !== 'darwin') {
     app.quit()
   }
@@ -1236,10 +1465,21 @@ app.on('window-all-closed', () => {
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow()
+  } else if (mainWindow && !mainWindow.isDestroyed()) {
+    // 托盘化后红点关闭 = 隐藏：dock 点击应恢复而非新建窗口
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+    appTray?.refresh()
   }
 })
 
 app.on('before-quit', () => {
+  quitting = true
+  try {
+    globalShortcut.unregisterAll()
+  } catch (e) {
+    console.warn('[shortcut] unregisterAll on quit failed:', e?.message)
+  }
   terminalManager.killAll()
   localShell.closeAll()
   localShell.stopCleanup()

@@ -101,6 +101,28 @@ describe('guardUploadsBeforeSend（主会话 / 边路共用的上传防线）', 
     expect(ok).toBe(true)
     expect(el.confirm).not.toHaveBeenCalled()
   })
+
+  it('failureLabel=拷贝（LOCAL 附件）：文案随动作切换', async () => {
+    const ok = await guardUploadsBeforeSend({
+      imageCount: 0, imageUrls: [], fileCount: 1, uploadedFileCount: 0, resolvedText: '你好',
+      failureLabel: '拷贝',
+    })
+    expect(ok).toBe(false)
+    expect(el.error).toHaveBeenCalledWith('附件全部拷贝失败，已取消发送')
+  })
+
+  it('failureLabel=拷贝（LOCAL 附件）：部分失败二次确认文案同步切换', async () => {
+    const ok = await guardUploadsBeforeSend({
+      imageCount: 1, imageUrls: ['a.png'], fileCount: 2, uploadedFileCount: 1, resolvedText: '你好',
+      failureLabel: '拷贝',
+    })
+    expect(ok).toBe(true)
+    expect(el.confirm).toHaveBeenCalledWith(
+      '1 个附件拷贝失败，仍要发送其余内容吗？',
+      '部分附件处理失败',
+      expect.objectContaining({ confirmButtonText: '仍然发送' })
+    )
+  })
 })
 
 describe('waitForMessageSaved（发送后等待落库确认）', () => {

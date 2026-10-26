@@ -18,6 +18,14 @@
         >
           服务器
         </router-link>
+        <router-link
+          v-if="showDesktopNav"
+          to="/settings/desktop"
+          class="settings-nav-item"
+          active-class="active"
+        >
+          桌面
+        </router-link>
         <router-link to="/settings/git-credentials" class="settings-nav-item" active-class="active">
           Git 凭证
         </router-link>
@@ -73,6 +81,7 @@ import { isElectronClient } from '../../utils/platform'
 const sessionStore = useSessionStore()
 const router = useRouter()
 const showServerNav = computed(() => isElectronClient())
+const showDesktopNav = computed(() => isElectronClient())
 
 function goBack() {
   const active = sessionStore.activeSession
