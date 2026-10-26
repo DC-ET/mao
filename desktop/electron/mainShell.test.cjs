@@ -72,6 +72,45 @@ test('基线：activate 在窗口隐藏时恢复显示（托盘模式）', async
   assert.equal(h.trayMenuLabel(), '隐藏主窗')
 })
 
+// ─── Bug 4/5 回归：「窗口已销毁但应用仍在运行」（退出模式 + macOS）───
+
+test('回归4：退出模式关窗销毁后托盘文案翻「显示主窗」，点击重建且文案跟随', async () => {
+  const h = await loadMain({ prefs: { closeToTray: 'quit' }, platform: 'darwin' })
+  h.win().close()
+  assert.equal(h.win().isDestroyed(), true, '退出模式关窗即销毁')
+  assert.equal(
+    h.trayMenuLabel(), '显示主窗',
+    '窗口销毁后文案应翻为「显示主窗」（修复前停留在「隐藏主窗」，与动作相反）'
+  )
+  h.tray().click()
+  await h.tick() // 新窗口等 ready-to-show 才 show
+  assert.equal(h.win().isDestroyed(), false, '点击后重建窗口')
+  assert.equal(h.win().isVisible(), true)
+  assert.equal(h.trayMenuLabel(), '隐藏主窗')
+})
+
+test('回归5：窗口销毁后按全局快捷键重建窗口而非空转', async () => {
+  const h = await loadMain({ prefs: { closeToTray: 'quit' }, platform: 'darwin' })
+  h.win().close()
+  assert.equal(h.windows().filter((w) => !w.isDestroyed()).length, 0, '窗口已全部销毁')
+  h.state.shortcutRegs[0].cb()
+  await h.tick() // 新窗口等 ready-to-show 才 show
+  assert.equal(
+    h.windows().filter((w) => !w.isDestroyed()).length, 1,
+    '快捷键语义「否则唤起」：无窗口时应重建（修复前直接 return 空转）'
+  )
+  assert.equal(h.win().isVisible(), true)
+})
+
+test('对照组：托盘模式关窗只隐藏不销毁，文案与快捷键均正常', async () => {
+  const h = await loadMain({ prefs: { closeToTray: 'tray' }, platform: 'darwin' })
+  h.win().close()
+  assert.equal(h.win().isDestroyed(), false, '托盘模式关窗不销毁')
+  assert.equal(h.trayMenuLabel(), '显示主窗')
+  h.state.shortcutRegs[0].cb()
+  assert.equal(h.win().isVisible(), true, '隐藏态按快捷键唤起')
+})
+
 // ─── Bug 3 回归：快捷键换键失败时旧键保持生效 ───
 
 test('回归3：新快捷键注册失败时旧快捷键仍生效且偏好不写', async () => {
@@ -114,6 +153,15 @@ test('基线：清除快捷键后无键生效且偏好置空', async () => {
   assert.equal(ok.ok, true)
   assert.deepEqual(h.state.shortcutRegs, [])
   assert.equal(h.readPrefs().globalShortcut, null)
+})
+
+test('基线：重设为相同快捷键直接成功（不重复注册、不误报占用）', async () => {
+  const h = await loadMain({})
+  await h.invoke('desktop-shortcut-set', 'Ctrl+Alt+K')
+  const again = await h.invoke('desktop-shortcut-set', 'Ctrl+Alt+K')
+  assert.equal(again.ok, true)
+  assert.deepEqual(h.state.shortcutRegs.map((r) => r.accel), ['Ctrl+Alt+K'])
+  assert.equal(h.state.sent.filter((s) => s.channel === 'desktop-shortcut-failed').length, 0)
 })
 
 test('基线：快捷键回调——可见且聚焦时隐藏，否则唤起', async () => {

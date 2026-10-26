@@ -1259,11 +1259,14 @@ function createWindow() {
   // 托盘菜单文案（显示/隐藏主窗）随窗口显示态刷新。挂在 createWindow 里而非 initTray：
   // 退出模式下关窗会销毁窗口，activate/second-instance 重建的新窗口同样需要这些监听，
   // 否则文案停留在旧状态，用户按文案点击会做出与意图相反的动作。
+  // closed 也必须监听：退出模式关窗走销毁，此时 isWindowVisible() 因 mainWindow 置 null
+  // 返回 false，文案应翻为「显示主窗」（点击即重建），停在「隐藏主窗」会语义相反。
   const refreshTray = () => appTray?.refresh()
   mainWindow.on('show', refreshTray)
   mainWindow.on('hide', refreshTray)
   mainWindow.on('minimize', refreshTray)
   mainWindow.on('restore', refreshTray)
+  mainWindow.on('closed', refreshTray)
 }
 
 // ========== P2/P3 桌面壳：托盘 / 通知 / 角标 / 偏好 / 快捷键 ==========
@@ -1310,12 +1313,6 @@ function initTray() {
 
 /**
  * 全局快捷键（P3，默认 Alt+Shift+M，可改可关）：触发时窗口可见且聚焦则隐藏，否则唤起。
- * 注册失败（被其他程序占用 / 格式非法）回传设置页提示。
- * @param {string | null} accel
- * @returns {{ ok: true } | { ok: false, error: string }}
- */
-/**
- * 全局快捷键（P3，默认 Alt+Shift+M，可改可关）：触发时窗口可见且聚焦则隐藏，否则唤起。
  * 换键顺序必须是「先注册新键、成功后再摘旧键」：反过来会在新键注册失败时把旧键也弄丢
  * （unregisterAll 先清空），而偏好文件与设置页仍显示旧键，快捷键静默失效到重启。
  * @param {string | null} accel
@@ -1332,10 +1329,19 @@ function applyGlobalShortcut(accel) {
     currentShortcutAccel = null
     return { ok: true }
   }
+  // 与当前键相同：直接视为成功。Electron 对「重复注册同一 accelerator」的返回值有版本
+  // 差异，早退可消掉这层不确定，也避免误导性的「被其他程序占用」提示
+  if (currentShortcutAccel === accel) return { ok: true }
   try {
     const registered = globalShortcut.register(accel, () => {
       const win = mainWindow
-      if (!win || win.isDestroyed()) return
+      // 无窗口（退出模式关窗销毁后应用仍驻留）时重建：快捷键语义是「否则唤起」，
+      // 直接 return 会让仍显示「已启用」的快捷键完全失效
+      if (!win || win.isDestroyed()) {
+        createWindow()
+        appTray?.refresh()
+        return
+      }
       if (win.isVisible() && !win.isMinimized() && win.isFocused()) {
         win.hide()
       } else {
