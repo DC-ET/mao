@@ -19,6 +19,9 @@ export async function fetchSessionQueue(sessionId: string): Promise<void> {
  * 发送前的附件上传防线（主会话 / 边路任务共用）：
  * 全部失败 → 提示并阻断；部分失败 → 弹「仍然发送 / 取消」；最终内容为空 → 阻断。
  * 返回 true 才可继续发送。
+ *
+ * @param failureLabel 失败动作的文案（「上传」/「拷贝」）：LOCAL 附件是拷贝到本机目录，
+ *   CLOUD 是上传到服务端，提示用语随之区分。
  */
 export async function guardUploadsBeforeSend(params: {
   imageCount: number
@@ -26,19 +29,21 @@ export async function guardUploadsBeforeSend(params: {
   fileCount: number
   uploadedFileCount: number
   resolvedText: string
+  failureLabel?: string
 }): Promise<boolean> {
   const { imageCount, imageUrls, fileCount, uploadedFileCount, resolvedText } = params
+  const failureLabel = params.failureLabel || '上传'
   const total = imageCount + fileCount
   const succeeded = imageUrls.length + uploadedFileCount
   if (total > 0 && succeeded === 0) {
-    ElMessage.error('附件全部上传失败，已取消发送')
+    ElMessage.error(`附件全部${failureLabel}失败，已取消发送`)
     return false
   }
   if (succeeded < total) {
     try {
       await ElMessageBox.confirm(
-        `${total - succeeded} 个附件上传失败，仍要发送其余内容吗？`,
-        '部分附件上传失败',
+        `${total - succeeded} 个附件${failureLabel}失败，仍要发送其余内容吗？`,
+        '部分附件处理失败',
         { confirmButtonText: '仍然发送', cancelButtonText: '取消', type: 'warning' }
       )
     } catch {

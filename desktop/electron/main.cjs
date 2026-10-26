@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, dialog, Menu, nativeImage } = require('electron')
+const { app, BrowserWindow, ipcMain, shell, dialog, Menu, nativeImage, Tray, globalShortcut, Notification } = require('electron')
 const { join } = require('path')
 const { exec, spawn } = require('child_process')
 const fs = require('fs')
@@ -9,6 +9,9 @@ const { TerminalManager } = require('./terminalManager.cjs')
 const { createLocalShellRuntime, resolveShellProtocol } = require('./localShell.cjs')
 const promptImageResizer = require('./promptImageResizer.cjs')
 const serverConfigLib = require('./serverConfig.cjs')
+const chatAttachment = require('./chatAttachment.cjs')
+const desktopPrefsLib = require('./desktopPrefs.cjs')
+const { createTray } = require('./tray.cjs')
 
 
 app.setName('Mao')
@@ -16,7 +19,30 @@ app.setName('Mao')
 // 收件箱的 Electron 系统通知（P2）依赖它才能正常弹出并被任务栏正确归组。
 app.setAppUserModelId('cn.etarch.mao.desktop')
 
+// 单实例锁（P2 前置）：托盘常驻 / 开机自启 / dock 复活都要求同一时刻只有一个进程，
+// 否则多实例会争用 auth.json 等 userData 资源。第二个实例启动后唤起主窗再退出。
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    // app ready 前禁止创建 BrowserWindow（真实 Electron 会抛未捕获异常）：未就绪时直接返回，
+    // whenReady 链会把主窗建出来，不会漏掉「唤起」语义
+    if (!app.isReady()) return
+    const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : createWindow()
+    if (!win || win.isDestroyed()) return
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
+  })
+}
+
 let mainWindow = null
+/** 系统托盘实例（P2；app ready 后创建，退出时随进程销毁） */
+let appTray = null
+/** before-quit 已触发：close 事件不再拦截为隐藏，保证退出路径全量清理 */
+let quitting = false
+/** 当前已注册的全局快捷键（换键时精确注销旧键；app 退出时随进程销毁） */
+let currentShortcutAccel = null
 let currentWorkspace = ''
 /** @type {Map<string, (approved: boolean) => void>} */
 const pendingApprovals = new Map()
@@ -1210,14 +1236,265 @@ function createWindow() {
     return { action: 'deny' }
   })
 
+  // 关窗拦截（P2，默认托盘化）：quitting 旗标未置位且偏好为托盘时，红点/X/窗口菜单「关闭」
+  // 一律 hide 而非销毁——渲染层与 WS 存活，任务继续跑、通知照常可达。
+  // 退出路径（托盘菜单 / 应用菜单 role:quit / app.quit()）都先走 before-quit 置
+  // quitting=true，本拦截随之失效，窗口正常关闭并全量清理。
+  mainWindow.on('close', (e) => {
+    if (quitting) return
+    const prefs = desktopPrefsLib.readDesktopPrefs(app.getPath('userData'))
+    if (prefs.closeToTray !== 'tray') return
+    e.preventDefault()
+    mainWindow.hide()
+    if (!prefs.trayHintShown) {
+      sendToRenderer('tray-first-close-hint', {})
+      desktopPrefsLib.writeDesktopPrefs(app.getPath('userData'), { trayHintShown: true })
+    }
+  })
+
   mainWindow.on('closed', () => {
     mainWindow = null
   })
+
+  // 托盘菜单文案（显示/隐藏主窗）随窗口显示态刷新。挂在 createWindow 里而非 initTray：
+  // 退出模式下关窗会销毁窗口，activate/second-instance 重建的新窗口同样需要这些监听，
+  // 否则文案停留在旧状态，用户按文案点击会做出与意图相反的动作。
+  // closed 也必须监听：退出模式关窗走销毁，此时 isWindowVisible() 因 mainWindow 置 null
+  // 返回 false，文案应翻为「显示主窗」（点击即重建），停在「隐藏主窗」会语义相反。
+  const refreshTray = () => appTray?.refresh()
+  mainWindow.on('show', refreshTray)
+  mainWindow.on('hide', refreshTray)
+  mainWindow.on('minimize', refreshTray)
+  mainWindow.on('restore', refreshTray)
+  mainWindow.on('closed', refreshTray)
+
+  // 返回实例：调用方（second-instance / 通知 click 重建路径）需要拿到它来
+  // restore/show/focus 或挂加载回调，不能只靠 ready-to-show 兜底
+  return mainWindow
 }
+
+// ========== P2/P3 桌面壳：托盘 / 通知 / 角标 / 偏好 / 快捷键 ==========
+
+function readDesktopPrefs() {
+  return desktopPrefsLib.readDesktopPrefs(app.getPath('userData'))
+}
+
+function initTray() {
+  if (appTray) return
+  appTray = createTray({
+    isWindowVisible: () => !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible(),
+    onShowHide: () => {
+      const win = mainWindow
+      if (!win || win.isDestroyed()) {
+        createWindow()
+        return
+      }
+      if (win.isVisible()) {
+        win.hide()
+      } else {
+        if (win.isMinimized()) win.restore()
+        win.show()
+        win.focus()
+      }
+      appTray?.refresh()
+    },
+    onNewTask: () => {
+      // 渲染层复用「新建任务」既有入口（Home + newTask=1）；窗口不可见时先唤起
+      const win = mainWindow
+      if (win && !win.isDestroyed()) {
+        if (win.isMinimized()) win.restore()
+        win.show()
+        win.focus()
+      }
+      sendToRenderer('tray-new-task', {})
+    },
+    onQuit: () => {
+      // before-quit 置 quitting → close 不再拦截 → 全量清理后退出
+      app.quit()
+    },
+  })
+}
+
+/**
+ * 全局快捷键（P3，默认 Alt+Shift+M，可改可关）：触发时窗口可见且聚焦则隐藏，否则唤起。
+ * 换键顺序必须是「先注册新键、成功后再摘旧键」：反过来会在新键注册失败时把旧键也弄丢
+ * （unregisterAll 先清空），而偏好文件与设置页仍显示旧键，快捷键静默失效到重启。
+ * @param {string | null} accel
+ * @returns {{ ok: true } | { ok: false, error: string }}
+ */
+function applyGlobalShortcut(accel) {
+  if (!accel) {
+    // 关闭：只摘当前已注册的那个键，不影响（也不存在的）其他注册项
+    try {
+      if (currentShortcutAccel) globalShortcut.unregister(currentShortcutAccel)
+    } catch (e) {
+      console.warn('[shortcut] unregister failed:', e?.message)
+    }
+    currentShortcutAccel = null
+    return { ok: true }
+  }
+  // 与当前键相同：直接视为成功。Electron 对「重复注册同一 accelerator」的返回值有版本
+  // 差异，早退可消掉这层不确定，也避免误导性的「被其他程序占用」提示
+  if (currentShortcutAccel === accel) return { ok: true }
+  try {
+    const registered = globalShortcut.register(accel, () => {
+      const win = mainWindow
+      // 无窗口（退出模式关窗销毁后应用仍驻留）时重建：快捷键语义是「否则唤起」，
+      // 直接 return 会让仍显示「已启用」的快捷键完全失效
+      if (!win || win.isDestroyed()) {
+        createWindow()
+        appTray?.refresh()
+        return
+      }
+      if (win.isVisible() && !win.isMinimized() && win.isFocused()) {
+        win.hide()
+      } else {
+        if (win.isMinimized()) win.restore()
+        win.show()
+        win.focus()
+      }
+      appTray?.refresh()
+    })
+    if (!registered) {
+      // 新键没注册上：旧键原样保持生效，偏好不写，UI 与实际状态一致
+      return { ok: false, error: '快捷键注册失败，可能已被其他程序占用' }
+    }
+    if (currentShortcutAccel && currentShortcutAccel !== accel) {
+      try {
+        globalShortcut.unregister(currentShortcutAccel)
+      } catch (e) {
+        console.warn('[shortcut] unregister old accel failed:', e?.message)
+      }
+    }
+    currentShortcutAccel = accel
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: `快捷键格式无效：${e?.message || ''}` }
+  }
+}
+
+/**
+ * 开机自启（P3）：仅打包后客户端可写登录项（防 dev 的 electron 二进制误入登录项，决策 8）。
+ * openAsHidden 配合托盘模式：自启后驻留托盘不弹窗。
+ */
+function applyAutoStart(enabled) {
+  if (!app.isPackaged) {
+    return { ok: false, error: '开发模式下不支持开机自启，请使用打包后的客户端' }
+  }
+  try {
+    app.setLoginItemSettings({ openAtLogin: enabled === true, openAsHidden: true })
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: `设置开机自启失败：${e?.message || ''}` }
+  }
+}
+
+ipcMain.handle('local-copy-attachment', (event, payload) => {
+  // 落点由主进程推导（home + server host + sessionId），渲染层无法指定
+  return chatAttachment.copyLocalAttachment({
+    sourcePath: payload?.sourcePath,
+    sessionId: payload?.sessionId,
+    maxSizeMb: payload?.maxSizeMb,
+    homeDir: os.homedir(),
+    hostKey: getServerHostKey(),
+  })
+})
+
+ipcMain.handle('desktop-notify', (event, payload) => {
+  const title = String(payload?.title ?? '')
+  const body = String(payload?.body ?? '')
+  const tag = payload?.tag != null ? String(payload.tag) : undefined
+  const itemId = payload?.itemId ?? null
+  const sessionId = payload?.sessionId ?? null
+  if (!title) return { ok: false, error: '通知标题为空' }
+  try {
+    const notification = new Notification({ title, body, tag })
+    notification.on('click', () => {
+      // 窗口隐藏到托盘时点击通知先唤起主窗，再把跳转事件交给渲染层。
+      // 窗口已销毁（退出模式 + macOS 关窗后点旧通知）时重建：否则 sendToRenderer
+      // 因 mainWindow 为 null 静默丢弃，用户点了通知却什么都没有。
+      const win = mainWindow
+      if (win && !win.isDestroyed()) {
+        if (win.isMinimized()) win.restore()
+        win.show()
+        win.focus()
+        sendToRenderer('desktop-notification-click', { itemId, sessionId })
+        return
+      }
+      const created = createWindow()
+      // 新窗口的渲染层（Vue 应用 + ipcRenderer.on）要等页面加载完才就绪：同步发
+      // 跳转事件会丢（窗口能出来但不跳会话），等 did-finish-load 再补发
+      if (created && !created.isDestroyed() && created.webContents) {
+        created.webContents.once('did-finish-load', () => {
+          sendToRenderer('desktop-notification-click', { itemId, sessionId })
+        })
+      }
+    })
+    notification.on('failed', () => {
+      console.warn('[notify] display failed:', title)
+      sendToRenderer('desktop-notify-result', { ok: false, error: '系统通知展示失败', tag })
+    })
+    notification.show()
+    return { ok: true }
+  } catch (e) {
+    const error = e?.message || '通知发送失败'
+    sendToRenderer('desktop-notify-result', { ok: false, error, tag })
+    return { ok: false, error }
+  }
+})
+
+ipcMain.handle('desktop-badge', (event, payload) => {
+  const count = Math.max(0, Math.floor(Number(payload?.count) || 0))
+  if (process.platform === 'darwin' && app.dock && typeof app.dock.setBadgeCount === 'function') {
+    app.dock.setBadgeCount(count)
+  }
+  // win/linux no-op（overlay 角标列为后续可选）
+  return { ok: true }
+})
+
+ipcMain.handle('desktop-prefs-get', () => {
+  return { ok: true, prefs: readDesktopPrefs(), packaged: app.isPackaged, platform: process.platform }
+})
+
+ipcMain.handle('desktop-prefs-set', (event, patch) => {
+  const next = patch && typeof patch === 'object' ? patch : {}
+  // dev 模式禁止开启自启：直接拒绝，不落盘（防打包前的误开启在打包后生效）
+  if (next.autoStart === true && !app.isPackaged) {
+    return { ok: false, error: '开发模式下不支持开机自启，请使用打包后的客户端' }
+  }
+  const result = desktopPrefsLib.writeDesktopPrefs(app.getPath('userData'), next)
+  let sideError = null
+  if ('autoStart' in next) {
+    const applied = applyAutoStart(result.prefs.autoStart)
+    if (!applied.ok) sideError = applied.error
+  }
+  return { ok: true, prefs: result.prefs, error: sideError || undefined }
+})
+
+ipcMain.handle('desktop-shortcut-set', (event, accel) => {
+  const next = accel == null ? null : String(accel).trim()
+  if (next === '') {
+    return { ok: false, error: '快捷键不能为空（关闭请传 null）' }
+  }
+  const applied = applyGlobalShortcut(next)
+  if (!applied.ok) {
+    sendToRenderer('desktop-shortcut-failed', { accel: next, error: applied.error })
+    return { ok: false, error: applied.error }
+  }
+  const result = desktopPrefsLib.writeDesktopPrefs(app.getPath('userData'), { globalShortcut: next })
+  return { ok: true, prefs: result.prefs }
+})
 
 app.whenReady().then(() => {
   buildApplicationMenu()
   createWindow()
+  initTray()
+  // 快捷键按偏好注册（默认 Alt+Shift+M）；失败时回传提示
+  const shortcut = readDesktopPrefs().globalShortcut
+  const registered = applyGlobalShortcut(shortcut)
+  if (!registered.ok) {
+    sendToRenderer('desktop-shortcut-failed', { accel: shortcut, error: registered.error })
+  }
   if (app.isPackaged) {
     setTimeout(() => {
       checkForAppUpdate().catch((error) => {
@@ -1228,6 +1505,7 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
+  // 托盘模式下窗口是 hide 而非 close，不会触发本事件；仅「退出模式」下走原逻辑
   if (process.platform !== 'darwin') {
     app.quit()
   }
@@ -1236,10 +1514,24 @@ app.on('window-all-closed', () => {
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow()
+  } else if (mainWindow && !mainWindow.isDestroyed()) {
+    // 托盘化后红点关闭 = 隐藏：dock 点击应恢复而非新建窗口
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+    appTray?.refresh()
   }
 })
 
 app.on('before-quit', () => {
+  quitting = true
+  // 快捷键全部注销后同步清掉跟踪值：否则退出若被中止，之后「重设同一个键」会命中
+  // 同键早退而跳过 register，键保持未注册但 UI/偏好显示已启用
+  currentShortcutAccel = null
+  try {
+    globalShortcut.unregisterAll()
+  } catch (e) {
+    console.warn('[shortcut] unregisterAll on quit failed:', e?.message)
+  }
   terminalManager.killAll()
   localShell.closeAll()
   localShell.stopCleanup()

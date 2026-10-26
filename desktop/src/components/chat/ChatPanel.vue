@@ -206,7 +206,7 @@
 import { ref, computed, inject, provide, watch, nextTick, onActivated, onMounted, onUnmounted, type Ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ChatDotRound, Loading } from '@element-plus/icons-vue'
-import { useChat, normalizeMessageRole, type ChatMessage } from '../../composables/useChat'
+import { useChat, normalizeMessageRole, type ChatMessage, type PendingUploadFile } from '../../composables/useChat'
 import { useChatScroll } from '../../composables/useChatScroll'
 import { useChatQueue } from '../../composables/useChatQueue'
 import { LOCATE_FLASH_KEY, useMessageLocate } from '../../composables/useMessageLocate'
@@ -663,7 +663,7 @@ watch(sessionId, (newSid) => {
   }
 })
 
-async function handleSend(text: string, files: File[], pendingUploads?: File[]) {
+async function handleSend(text: string, files: File[], pendingUploads?: PendingUploadFile[]) {
   if (isNewTaskMode.value) {
     if (!newTaskAgentId.value) return
     agentId.value = newTaskAgentId.value

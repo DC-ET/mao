@@ -17,31 +17,49 @@ vi.mock('../api', () => ({
   saveInboxPreference: vi.fn(),
 }))
 
-// 单测跑在 node 环境：Notification / document / router 均需替身。
-const created: Array<{ title: string; body: string; tag?: string; onclick?: () => void }> = []
-let permissionState: NotificationPermission = 'granted'
-const requestPermission = vi.fn(async () => permissionState)
+// 单测跑在 node 环境：document / router 均需替身；投递通道替身为 window.electronAPI.desktopNotify。
+interface NotifyCall {
+  title: string
+  body: string
+  tag?: string
+  itemId?: number | null
+  sessionId?: number | null
+}
+const notifyCalls: NotifyCall[] = []
+const badgeCalls: number[] = []
+const clickHandlers: Array<(payload: { itemId?: number; sessionId?: number | null }) => void> = []
 let hasFocus = true
 let hidden = false
 
-class FakeNotification {
-  constructor(title: string, options?: { body?: string; tag?: string }) {
-    created.push({ title, body: options?.body ?? '', tag: options?.tag, onclick: undefined })
-    this.title = title
-  }
-  title: string
-  static get permission(): NotificationPermission {
-    return permissionState
-  }
-  static requestPermission = requestPermission
-  close = vi.fn()
-  set onclick(fn: () => void) {
-    const current = created[created.length - 1]
-    if (current) current.onclick = fn
+const desktopNotify = vi.fn(async (payload: NotifyCall) => {
+  notifyCalls.push(payload)
+  return { ok: true }
+})
+const desktopBadge = vi.fn(async (count: number) => {
+  badgeCalls.push(count)
+  return { ok: true }
+})
+
+function installElectronApi() {
+  ;(globalThis as any).window = {
+    focus: vi.fn(),
+    electronAPI: {
+      desktopNotify,
+      desktopBadge,
+      onDesktopNotificationClick: (cb: (payload: any) => void) => {
+        clickHandlers.push(cb)
+        return () => {}
+      },
+    },
   }
 }
 
-;(globalThis as any).Notification = FakeNotification
+function removeElectronApi() {
+  ;(globalThis as any).window = { focus: vi.fn() }
+}
+
+installElectronApi()
+
 Object.defineProperty(globalThis, 'document', {
   configurable: true,
   value: {
@@ -51,7 +69,6 @@ Object.defineProperty(globalThis, 'document', {
     hasFocus: () => hasFocus,
   },
 })
-;(globalThis as any).window = { focus: vi.fn() }
 
 const mockFetchSession = vi.fn()
 const mockSetActiveSession = vi.fn()
@@ -148,11 +165,12 @@ describe('useInboxSystemNotify', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
-    created.length = 0
-    permissionState = 'granted'
-    requestPermission.mockImplementation(async () => permissionState)
+    notifyCalls.length = 0
+    badgeCalls.length = 0
+    clickHandlers.length = 0
     hasFocus = true
     hidden = false
+    installElectronApi()
     resetInboxSystemNotifyForTest()
     drawerWatcherStop?.()
     drawerWatcherStop = null
@@ -188,7 +206,18 @@ describe('useInboxSystemNotify', () => {
   it('窗口聚焦时不弹通知，也不拉列表', async () => {
     await notifyInboxSystemUpdate()
     expect(mockFetchList).not.toHaveBeenCalled()
-    expect(created).toHaveLength(0)
+    expect(notifyCalls).toHaveLength(0)
+  })
+
+  it('非 Electron（无 electronAPI.desktopNotify）整体不弹：不拉列表、不报错', async () => {
+    removeElectronApi()
+    await seedList([makeItem(1)])
+    // seedList 自身的 fetchList 调用不计入：清掉调用记录后验证 notify 路径完全不触达
+    vi.clearAllMocks()
+    hasFocus = false
+    await expect(notifyInboxSystemUpdate()).resolves.toBeUndefined()
+    expect(mockFetchList).not.toHaveBeenCalled()
+    expect(notifyCalls).toHaveLength(0)
   })
 
   it('未建立基线时只播种不弹历史通知', async () => {
@@ -197,23 +226,25 @@ describe('useInboxSystemNotify', () => {
 
     await notifyInboxSystemUpdate()
 
-    expect(created).toHaveLength(0)
+    expect(notifyCalls).toHaveLength(0)
     // 基线已播种，随后的新增条目可正常弹
     mockFetchList.mockResolvedValue(makeList([makeItem(1), makeItem(2), makeItem(3)]))
     await notifyInboxSystemUpdate()
-    expect(created.map((c) => c.title)).toEqual(['任务 3'])
+    expect(notifyCalls.map((c) => c.title)).toEqual(['任务 3'])
   })
 
-  it('失焦且新增条目时逐条弹系统通知，带标题/摘要', async () => {
+  it('失焦且新增条目时逐条走主进程投递，带标题/摘要/tag/会话', async () => {
     await seedList([makeItem(1)])
     hasFocus = false
     mockFetchList.mockResolvedValue(makeList([makeItem(1), makeItem(2), makeItem(3)]))
 
     await notifyInboxSystemUpdate()
 
-    expect(created.map((c) => c.title)).toEqual(['任务 2', '任务 3'])
-    expect(created[0].body).toBe('摘要')
-    expect(created[0].tag).toBe('mao-inbox-2')
+    expect(notifyCalls.map((c) => c.title)).toEqual(['任务 2', '任务 3'])
+    expect(notifyCalls[0].body).toBe('摘要')
+    expect(notifyCalls[0].tag).toBe('mao-inbox-2')
+    expect(notifyCalls[0].itemId).toBe(2)
+    expect(notifyCalls[0].sessionId).toBe(42)
   })
 
   it('偏好关闭的 kind 不弹：默认关闭的 SUBAGENT_DONE 也不弹', async () => {
@@ -231,33 +262,7 @@ describe('useInboxSystemNotify', () => {
     await notifyInboxSystemUpdate()
 
     // 关闭的 TASK_COMPLETED / SUBAGENT_DONE 都不弹；开启的 QUESTION_PENDING 弹
-    expect(created.map((c) => c.title)).toEqual(['任务 3'])
-  })
-
-  it('requestPermission 返回 denied 时静默降级：不弹、不抛、不拉列表', async () => {
-    permissionState = 'denied'
-    await notifyInboxSystemUpdate()
-    expect(mockFetchList).not.toHaveBeenCalled()
-    expect(created).toHaveLength(0)
-
-    // 已播种基线后同样不弹不报
-    await seedList([makeItem(1)])
-    hasFocus = false
-    await expect(notifyInboxSystemUpdate()).resolves.toBeUndefined()
-    expect(created).toHaveLength(0)
-  })
-
-  it('requestPermission 需要用户手势时（prompt）确认 granted 后弹窗', async () => {
-    permissionState = 'default'
-    requestPermission.mockResolvedValue('granted')
-    await seedList([makeItem(1)])
-    hasFocus = false
-    mockFetchList.mockResolvedValue(makeList([makeItem(1), makeItem(2)]))
-
-    await notifyInboxSystemUpdate()
-
-    expect(requestPermission).toHaveBeenCalled()
-    expect(created.map((c) => c.title)).toEqual(['任务 2'])
+    expect(notifyCalls.map((c) => c.title)).toEqual(['任务 3'])
   })
 
   it('系统通知总开关关闭时不弹：与 kind 级开关相互独立', async () => {
@@ -270,18 +275,20 @@ describe('useInboxSystemNotify', () => {
 
     await notifyInboxSystemUpdate()
 
-    expect(created).toHaveLength(0)
+    expect(notifyCalls).toHaveLength(0)
   })
 
-  it('requestPermission 抛异常时静默降级', async () => {
+  it('主进程投递失败（invoke 抛错）时静默降级：不影响站内徽标、不抛出', async () => {
     await seedList([makeItem(1)])
     hasFocus = false
-    requestPermission.mockRejectedValue(new Error('denied by gesture'))
+    mockFetchList.mockResolvedValue(makeList([makeItem(1), makeItem(2)]))
+    desktopNotify.mockRejectedValueOnce(new Error('display failed'))
+
     await expect(notifyInboxSystemUpdate()).resolves.toBeUndefined()
-    expect(created).toHaveLength(0)
+    expect(notifyCalls).toHaveLength(0)
   })
 
-  it('点击通知聚焦窗口并跳转关联会话', async () => {
+  it('通知点击回传：主进程事件触发后跳转关联会话', async () => {
     await seedList([makeItem(1)])
     hasFocus = false
     mockFetchList.mockResolvedValue(
@@ -290,8 +297,10 @@ describe('useInboxSystemNotify', () => {
     mockFetchSession.mockResolvedValue({ id: '77' })
 
     await notifyInboxSystemUpdate()
-    expect(created).toHaveLength(1)
-    created[0].onclick?.()
+    expect(notifyCalls).toHaveLength(1)
+    // 桥接在首次投递时注册点击监听；触发回传事件
+    expect(clickHandlers.length).toBeGreaterThan(0)
+    clickHandlers[clickHandlers.length - 1]({ itemId: 2, sessionId: 77 })
 
     await vi.waitFor(() => {
       expect(mockSetActiveSession).toHaveBeenCalledWith('77')
@@ -299,14 +308,45 @@ describe('useInboxSystemNotify', () => {
     await vi.waitFor(() => {
       expect(mockRouterPush).toHaveBeenCalledWith('/tasks/77')
     })
-    expect((globalThis as any).window.focus).toHaveBeenCalled()
+  })
+
+  it('通知点击回传缺 sessionId 时不跳转', async () => {
+    await seedList([makeItem(1)])
+    hasFocus = false
+    mockFetchList.mockResolvedValue(makeList([makeItem(1), makeItem(2)]))
+
+    await notifyInboxSystemUpdate()
+    clickHandlers[clickHandlers.length - 1]({ itemId: 2, sessionId: null })
+
+    expect(mockSetActiveSession).not.toHaveBeenCalled()
+    expect(mockRouterPush).not.toHaveBeenCalled()
+  })
+
+  it('dock 角标跟随收件箱未读数（含立即同步一次）', async () => {
+    await seedList([makeItem(1), makeItem(2)])
+    hasFocus = false
+    // 首次投递时注册角标观察（immediate）：当前未读 2 立即同步
+    mockFetchList.mockResolvedValue(makeList([makeItem(1), makeItem(2), makeItem(3)]))
+    await notifyInboxSystemUpdate()
+    expect(badgeCalls[badgeCalls.length - 1]).toBe(2)
+
+    // 未读数变化 → 角标跟随
+    const store = useInboxStore()
+    store.setUnreadCount(5)
+    await nextTick()
+    expect(badgeCalls[badgeCalls.length - 1]).toBe(5)
+
+    // 登出清零语义：0 也透传（主进程清角标）
+    store.setUnreadCount(0)
+    await nextTick()
+    expect(badgeCalls[badgeCalls.length - 1]).toBe(0)
   })
 
   it('primeInboxSystemNotify 显式重置基线：清空后即使窗口失焦也不再弹', async () => {
     await seedList([makeItem(1), makeItem(2)])
     hasFocus = false
     await notifyInboxSystemUpdate()
-    expect(created).toHaveLength(0)
+    expect(notifyCalls).toHaveLength(0)
   })
 
   it('跨页新增不会被重复弹：同一条 id 只通知一次', async () => {
@@ -315,12 +355,12 @@ describe('useInboxSystemNotify', () => {
     hasFocus = false
     mockFetchList.mockResolvedValue(makeList([makeItem(3), makeItem(4)]))
     await notifyInboxSystemUpdate()
-    expect(created.map((c) => c.title)).toEqual(['任务 3', '任务 4'])
+    expect(notifyCalls.map((c) => c.title)).toEqual(['任务 3', '任务 4'])
 
     // 下一条推送里 3/4 已滑出第一页（只剩 5 与更早已读内容）：不得二次弹 3/4
     mockFetchList.mockResolvedValue(makeList([makeItem(5, { isRead: true }), makeItem(3), makeItem(4)]))
     await notifyInboxSystemUpdate()
-    expect(created.map((c) => c.title)).toEqual(['任务 3', '任务 4', '任务 5'])
+    expect(notifyCalls.map((c) => c.title)).toEqual(['任务 3', '任务 4', '任务 5'])
   })
 
   // ─── BUG-6 回归：diff 数据源与「打开抽屉播种」必须解耦 ───
@@ -339,7 +379,7 @@ describe('useInboxSystemNotify', () => {
 
       await notifyInboxSystemUpdate()
 
-      expect(created.map((c) => c.title)).toEqual(['任务 3', '任务 4'])
+      expect(notifyCalls.map((c) => c.title)).toEqual(['任务 3', '任务 4'])
     })
 
     it('从未打开过抽屉时，首帧 inbox_updated 只播种不弹历史通知，第二次才弹新增', async () => {
@@ -348,11 +388,11 @@ describe('useInboxSystemNotify', () => {
       hasFocus = false
 
       await notifyInboxSystemUpdate()
-      expect(created).toHaveLength(0)
+      expect(notifyCalls).toHaveLength(0)
 
       mockFetchList.mockResolvedValue(makeList([makeItem(1), makeItem(2), makeItem(3)]))
       await notifyInboxSystemUpdate()
-      expect(created.map((c) => c.title)).toEqual(['任务 3'])
+      expect(notifyCalls.map((c) => c.title)).toEqual(['任务 3'])
     })
 
     it('peek 拉取失败时静默结束：不清空基线、不弹通知、不抛错', async () => {
@@ -361,12 +401,12 @@ describe('useInboxSystemNotify', () => {
       mockFetchList.mockRejectedValue(new Error('network'))
 
       await expect(notifyInboxSystemUpdate()).resolves.toBeUndefined()
-      expect(created).toHaveLength(0)
+      expect(notifyCalls).toHaveLength(0)
 
       // 网络恢复后基线仍在（{1}），新增条目仍可正常弹
       mockFetchList.mockResolvedValue(makeList([makeItem(1), makeItem(2)]))
       await notifyInboxSystemUpdate()
-      expect(created.map((c) => c.title)).toEqual(['任务 2'])
+      expect(notifyCalls.map((c) => c.title)).toEqual(['任务 2'])
     })
 
     it('peek 返回空列表时也播种基线：不把「空 inbox」当成上次已知集合清空失败', async () => {
@@ -375,12 +415,12 @@ describe('useInboxSystemNotify', () => {
       // 用户把两条都删了 → 列表为空；这轮播种空基线，不弹任何通知
       mockFetchList.mockResolvedValue(makeList([]))
       await notifyInboxSystemUpdate()
-      expect(created).toHaveLength(0)
+      expect(notifyCalls).toHaveLength(0)
 
       // 新条目到来了：相对空基线是新增，正常弹
       mockFetchList.mockResolvedValue(makeList([makeItem(3)]))
       await notifyInboxSystemUpdate()
-      expect(created.map((c) => c.title)).toEqual(['任务 3'])
+      expect(notifyCalls.map((c) => c.title)).toEqual(['任务 3'])
     })
   })
 })

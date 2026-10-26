@@ -159,6 +159,7 @@ import { useDraftStore, type DraftEntry } from '../../stores/draft'
 import { api } from '../../api'
 import { cloudWorkspaceIndicator, extractGitRepoSlug, isHttpsGitUrl } from '../../utils/cloud-project'
 import { getUploadConfig } from '../../utils/storageMode'
+import type { LocalPendingFile } from '../../utils/chatLocalAttach'
 
 const props = withDefaults(defineProps<{
   disabled?: boolean
@@ -217,7 +218,7 @@ const props = withDefaults(defineProps<{
 })
 
 const emit = defineEmits<{
-  send: [text: string, files: File[], pendingUploads?: File[]]
+  send: [text: string, files: File[], pendingUploads?: LocalPendingFile[]]
   stop: []
   continue: []
   'update:permissionLevel': [level: string]
@@ -249,7 +250,7 @@ const unregisterChatInput = inject<(key: string) => void>('unregisterChatInput',
 
 // ===== State =====
 const draftStore = useDraftStore()
-const pendingFiles = ref<{ file: File; previewUrl: string }[]>([])
+const pendingFiles = ref<{ file: File; previewUrl: string; localPath?: string }[]>([])
 const draggingFile = ref(false)
 const editorContent = ref('')
 
@@ -733,7 +734,9 @@ function buildCurrentDraft(): DraftEntry {
   return {
     html,
     text: editorContent.value,
-    files: pendingFiles.value.map((item) => ({ file: item.file, previewUrl: item.previewUrl })),
+    // 浅拷贝整个条目：localPath（LOCAL 本机附件路径）随草稿保留，
+    // 切走再切回后发送仍能定位源文件
+    files: pendingFiles.value.map((item) => ({ ...item })),
   }
 }
 
@@ -973,17 +976,18 @@ function addPendingImage(file: File) {
   })
 }
 
-/** 非图片文件暂存到待发列表，发送时再上传（懒上传，无需预先创建会话）。 */
+/** 非图片文件暂存到待发列表，发送时再处理（CLOUD 懒上传 / LOCAL 懒拷贝，无需预先创建会话）。 */
 async function addPendingFile(file: File) {
-  if (props.executionMode === 'LOCAL') {
-    ElMessage.warning('本地模式不支持文件上传，请使用 @ 引用工作区文件')
+  if (props.executionMode === 'LOCAL' && !isElectronClient) {
+    ElMessage.warning('本地模式不支持文件上传，请使用桌面客户端')
     return
   }
   if (pendingFiles.value.length >= 10) {
     ElMessage.warning('最多上传 10 个附件')
     return
   }
-  const entry = { file, previewUrl: '' }
+  const isLocalMode = props.executionMode === 'LOCAL' && isElectronClient
+  const entry = { file, previewUrl: '', localPath: isLocalMode ? resolveLocalFilePath(file) : '' }
   pendingFiles.value.push(entry)
   const removeEntry = () => {
     const idx = pendingFiles.value.indexOf(entry)
@@ -998,7 +1002,32 @@ async function addPendingFile(file: File) {
   if (file.size === 0) {
     ElMessage.warning(`文件 ${file.name} 为空`)
     removeEntry()
+    return
   }
+  // LOCAL 模式首次暂存时明示拷贝语义：文件不进服务端，只落本机 Mao 目录
+  if (isLocalMode && pendingFiles.value.length === 1) {
+    ElMessage.info('文件将在发送时复制到本机 Mao 目录（~/.mao/attachments），不出本机')
+  }
+}
+
+/**
+ * 取文件在本机的绝对路径：Electron 28-31 用 File.path；32.0 起该字段被移除，
+ * 改走 preload 暴露的 webUtils.getPathForFile（compat 写法不变，升级只动 preload 一处）。
+ * 取不到时返回空串，发送时按「无法获取文件路径」报错。
+ */
+function resolveLocalFilePath(file: File): string {
+  const legacyPath = (file as File & { path?: string }).path
+  if (typeof legacyPath === 'string' && legacyPath) return legacyPath
+  const api = (window as any).electronAPI
+  if (api?.getPathForFile) {
+    try {
+      const resolved = api.getPathForFile(file)
+      return typeof resolved === 'string' ? resolved : ''
+    } catch {
+      return ''
+    }
+  }
+  return ''
 }
 
 /** 移除指定下标的待发条目（图片或文件）。 */
@@ -1057,9 +1086,11 @@ async function handleSend() {
     return
   }
 
-  // 图片之外的「文件」走懒上传：发送时由父组件 ensureSession 后再上传
+  // 图片之外的「文件」走懒处理：发送时由父组件 ensureSession 后再上传（CLOUD）或拷贝（LOCAL）
   const imageFiles = pendingFiles.value.filter((item) => item.file.type.startsWith('image/')).map((item) => item.file)
-  const pendingUploads = pendingFiles.value.filter((item) => !item.file.type.startsWith('image/')).map((item) => item.file)
+  const pendingUploads: LocalPendingFile[] = pendingFiles.value
+    .filter((item) => !item.file.type.startsWith('image/'))
+    .map((item) => ({ file: item.file, localPath: item.localPath ?? '' }))
   const text = editor.value.getText({ blockSeparator: '\n' }).trim()
   if (!text && imageFiles.length === 0 && pendingUploads.length === 0) return
 

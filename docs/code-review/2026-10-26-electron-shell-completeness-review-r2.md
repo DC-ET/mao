@@ -1,0 +1,163 @@
+# 代码审查报告（第 2 轮）：Electron 壳补完（0.0.351）修复复审
+
+> **第五轮复审结论（2026-10-26，HEAD=02578318，最终确认轮）：无 bug，可合并。** 第 4 轮残留观察已修复，两处改动均正确、未引入新问题：
+> - **改动 1（`createWindow()` 改为返回 `mainWindow`）**：走读全部 5 个调用点——`whenReady`(L1490)、`activate`(L1516)、托盘 `onShowHide`(L1289)、快捷键回调(L1345) 四处本就丢弃返回值，行为完全不变；`second-instance`(L31) 是唯一受益点。此前 `createWindow()` 无返回值，`const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : createWindow()` 在「窗口已销毁」场景实际拿到 `undefined`，被紧随的 `if (!win || win.isDestroyed()) return` 挡掉，`restore/show/focus` 三步全部跳过（窗口仅靠 `ready-to-show` 兜底露面，但不聚焦）。返回实例后该路径真正生效——**顺带修掉了一个自初始提交 `e02a726a` 起就存在、前四轮未发现的存量缺陷**。`createWindow()` 内的 `loadMainContent()` 无同步抛错风险（`loadURL`/`loadFile` 均返回 promise），故返回值恒为新窗口实例。
+> - **改动 2（`did-finish-load` 补发跳转事件）**：分支结构改为「窗口存在 → restore/show/focus + 即时发送 + `return`」/「窗口不存在或已销毁 → `createWindow()` + `webContents.once('did-finish-load')` 补发」，两条路径互斥，不会重复发送。时序安全：`loadURL`/`loadFile` 的 `did-finish-load` 由 IPC 异步派发，绝不会早于同步注册的 `once`，无竞态。**`loadURL` 失败回落 server-picker 的行为已专项验证**：`loadServerPicker()` 用**同一个** `mainWindow` 加载 picker 页（`main.cjs` L773–776），picker 加载完成后同样触发 `did-finish-load` → 补发到 picker 页（该页无监听者，事件被安全丢弃，不报错不悬挂，用户看到服务器设置页，语义正确）；`loadFile` 也失败则 `did-finish-load` 永不到达，事件不发，同样不悬挂。窗口在补发前被销毁：`mainWindow` 已被 `closed` 处理器置 `null`，`sendToRenderer` 静默跳过，安全。
+> - **反向验证**：把 `main.cjs` 换回 `bcffb7da`，本目录 `r5-fixes.test.cjs` 得 **5 pass / 5 fail**——失败的正是 A1（second-instance 重建后应 show/focus）、B1（did-finish-load 前不得提前发）、C1/C2（回落与双失败路径）、D1（二次点击）；换回 `02578318` 后 **10/10 全绿**。与修复说明精确对应，证明两处改动都是载荷性的，而非装饰。
+> - **正式回归**：`desktop/electron/mainShell.test.cjs` **28/28 全绿**，回归6 已含「did-finish-load 前不得发 / 之后补发且载荷为 `{itemId: null, sessionId: 42}`」的时序断言。
+> - **回归基线复现**：desktop vitest **916 passed / 103 文件全过**；`node --test electron` 111 例中 108 通过、1 跳过、2 失败为存量已知环境问题（`gitOperations.test.cjs:211` 本地全局 git 身份 `yangjiayi <yangjiayi@accesscorporate.com.cn>` 覆盖注入身份、`localShell.test.cjs:65` macOS `/private/var` 符号链接）；`npm run build` 通过。
+> - **前四轮探针复跑**：`main-shell-probes.test.cjs` 13/3、`fixes.test.cjs` 5/1、`notify-click.test.cjs` 0/1、`residual.test.cjs` 0/1——这 4 个文件里的失败用例全部是**钉在第 5 轮修复之前行为**上的断言（「点击通知后同步 send」），在最终 HEAD 上按预期失败，恰证明修复生效；已在这 4 个文件头部补「时间点说明」并指向现行行为。其余 8 个探针文件全绿。
+> - **残留观察（不阻塞合并，建议后续单独跟进）**：渲染层 `desktop-notification-click` 监听是**惰性注册**——唯一注册点 `useInboxSystemNotify.ts:115` 的 `ensureDesktopNotifyBridge()` 只被 `notifyInboxSystemUpdate()` 调用，后者只被 `useStreamWS.ts:804` 的 `inbox_updated` 分支调用；后端 `INBOX_UPDATED_EVENT` 仅在收件箱变化时广播（`backend-ts/src/inbox/inbox.service.ts:546`），WS 订阅时不发。因此「窗口存在」分支是自洽的（能弹出通知 ⇒ `notifyInboxSystemUpdate()` 已跑过 ⇒ 监听已注册）；但「窗口已销毁」分支重建的是**全新渲染进程**，`did-finish-load` 时刻 WS 尚未连接，监听尚未注册，补发的跳转事件仍会被丢弃——表现为「窗口能出来，但不跳会话」。**未列为 bug**：(1) 该惰性注册自初始提交 `e02a726a` 起原样存在，五轮修复均未触及，不是本轮引入的回归；(2) 触发面与第 4 轮残留观察相同（退出模式 + macOS + 窗口已销毁 + 点通知中心里的旧通知），且降级优雅（窗口正常出现，仅少了跳转）；(3) 彻底修复需把桥接注册从「首个 `inbox_updated`」提前到「应用启动 / WS 连接建立」，属渲染层设计调整，与本次 Electron 壳补完不是同一关注点。探针 `r5-lazy-bridge-probe.test.ts`（3 例）实证了该注册时机。
+> - **其余观察维持原级别**：观察 2（`app.dock` 守卫与 `process.platform === 'darwin'` 重复）、观察 5（`maxSizeMb` 由渲染层传入、主进程无上限兜底）、观察 6（IPv6 hostKey 存量）均未升级为 bug。
+> - **叠加稳定性**：第 1 轮 Bug 1/2/3、第 2 轮 Bug 4/5、第 3 轮观察 3/4、第 4 轮加固 1/2、第 5 轮改动 1/2 全部叠加后，正式回归 28/28 + vitest 916 全绿 + build 通过，无相互干扰。**建议合并前必须处理的事项：无。**
+>
+> 以下为第 2 轮报告原文（其头部含第 3、4 轮结论）。
+
+> **第四轮复审结论（2026-10-26，HEAD=bcffb7da）：无 bug，可合并。** 第 3 轮标注的两条观察级加固均已正确落实，未引入新问题：
+> - **加固 1（通知 click 回唤窗口）**：`else { createWindow() }` 与既有 `if (win && !win.isDestroyed())` 分支互斥关系正确——窗口存在时走 restore/show/focus 后 `sendToRenderer`（渲染层已启动，事件可达）；窗口不存在/已销毁时建窗。两者不会同时执行，`sendToRenderer` 在两条路径之后统一调用，逻辑自洽。
+> - **加固 2（`before-quit` 清 `currentShortcutAccel`）**：赋值置于 `unregisterAll()` 之前，不影响退出清理的任何一步（`quitting`、终端 kill、localShell 关闭、MCP 会话关闭均在其后照常执行）；且因 `before-quit` 无 `preventDefault`、close 处理器在 `quitting` 为 true 时直接放行，退出必然走完，该赋值在正常路径上无副作用，仅在「退出被中止」这一理论上才发挥作用。
+> - **反向验证**：把 `main.cjs` 换回 `3a9b3b2f`，`mainShell.test.cjs` 得 **26 pass / 2 fail**，失败的正是回归6、回归7；换回后 **28/28 全绿**。与加固说明一致。
+> - **残留观察（不阻塞合并）**：加固 1 的 `else` 分支里 `sendToRenderer('desktop-notification-click')` 紧跟 `createWindow()` 同步发出，而此刻新窗口连 `ready-to-show` 都未到（探针实证），渲染层 `ipcRenderer.on` 更不可能已注册——故该跳转事件在真实 Electron 下会丢失，表现为「窗口能出来，但跳转到对应会话不生效」。**未列为 bug**：触发面极窄（退出模式 + macOS + 窗口已销毁 + 点击通知中心里早已展示过的旧通知；通知只可能由渲染层经 IPC 触发，而渲染层随窗口销毁，故此状态下只可能点到旧通知），且相对加固前「完全空转」已是严格改善；彻底修复需「待派发深链」队列（等 `did-finish-load`/`dom-ready` 补发），属设计增强而非正确性修复。
+> - **第 3 轮其余观察维持原级别**：观察 2（`app.dock` 守卫与 `process.platform === 'darwin'` 重复， cosmetics）、观察 5（`maxSizeMb` 由渲染层传入、主进程无上限兜底，纵深防御缺口）、观察 6（IPv6 URL 产生含 `[`/`]`/`:` 的 hostKey 目录名，Windows 上 `mkdirSync` 会失败，**存量行为**——`resolveLocalRuntimeDir` 早已使用同一推导）均未升级为 bug。
+> - **回归**：desktop vitest 916 passed（103 文件）；`node --test electron/*.test.cjs` 111 例中 109 通过，2 个失败为存量已知环境问题（gitOperations 身份注入、localShell `/var` 符号链接）；`npm run build` 通过。前四轮全部探针（含残留观察）在最终 HEAD 上复跑均符合预期。
+>
+> 以下为第 2 轮报告原文。
+
+> **第三轮复审结论（2026-10-26，HEAD=3a9b3b2f）：无 bug。** 本报告 2 个 bug（Bug 4/5）已全部正确修复，且修复未引入新问题：
+> - **Bug 4**：`createWindow()` 的 `closed` 监听注册在 `mainWindow = null` 处理器**之后**（L1255–1257 先于 L1269），Electron 按注册序派发，故 `refreshTray` 读到 `mainWindow === null` → 文案正确翻「显示主窗」。已额外验证 3 轮反复销毁/重建、`second-instance` 重建、托盘退出路径均不受影响。
+> - **Bug 5**：快捷键回调改 `createWindow()` + `appTray?.refresh()`，与 `onShowHide`/`second-instance` 处理一致；重建后 toggle 语义完好，退出路径的 `before-quit` 清理不受新增 `closed` 刷新干扰。
+> - **观察 3/4 已落实**：重复 JSDoc 已删；同键早退 `currentShortcutAccel === accel` 经专项验证**不会误伤**「启动注册失败后再设同键」这条路径（此时 `currentShortcutAccel` 为 `null`，不会命中早退，键会真正注册）。
+> - **反向验证**：把 `main.cjs` 换回 `7ef48168`，`mainShell.test.cjs` 得 **23 pass / 3 fail**，失败的正是回归4、回归5、同键重设 3 条；换回后 **26/26 全绿**。与修复说明一致。
+> - **假通过风险**：26 例无新增风险；同键重设用例在修复前之所以失败，是因 harness 把「重复注册同一 accelerator」建模为允许（推入重复项）——真实 Electron 可能返回 false，但修复后的行为（不重复注册）在两种语义下都正确，故该用例对修复后行为是有效守护。
+> - **两条观察的重新认定（均维持观察级，未升级为 bug）**：
+>   1. **观察 1（退出模式+macOS 点击系统通知不回唤窗口）**：原判定「已告知的取舍」**理由需修正**——通知并非「不会到达」，`main.cjs` 只有一处 `new Notification`（L1407，位于 `desktop-notify` IPC handler 内），而该 IPC 只可能由渲染层触发，**渲染层随窗口一起销毁**，故窗口销毁后不可能产生新通知，只有通知中心里已展示过的旧通知仍可点击；点击时 `sendToRenderer` 因 `mainWindow` 为 `null` 静默丢弃事件，表现为完全空转。可达面仅限「通知已弹出 → 用户关窗 → 再点那条旧通知」，叠加设计文档「退出模式维持现状」的显式取舍，定为观察级。建议按 Bug 5 同款一行修复（click 里补窗口唤起）。
+>   2. **新增观察（同键早退与 `before-quit` 的交互）**：`before-quit` 的 `unregisterAll()` 不会重置 `currentShortcutAccel`，若退出被中止后用户重设同一个键，早退会跳过 `register()` 导致键保持未注册而 UI/偏好显示已启用。**但触发路径不可达**：`main.cjs` 无任何 `before-quit` `preventDefault`，close 处理器在 `quitting` 为 true 时直接放行，退出必然走完。属潜在健壮性缺口，建议在 `before-quit` 补 `currentShortcutAccel = null`。
+> 以下为第 2 轮报告原文。
+
+- 审查对象：`7ef48168`（fix: 修复 code review 第1轮 3 个桌面壳 bug）相对 `6a337bca` 的完整变更；重点核对第 1 轮 3 个 bug 的修复、修复本身是否引入新问题，以及全量复查是否遗漏
+- 审查日期：2026-10-26
+- 审查方式：修复 diff 逐行走读 + 假 electron 集成探针（复用并扩展 `desktop/electron/mainShellHarness.cjs`）+ 对正式回归测试做「修复前代码反向验证」
+- 结论：**第 1 轮 3 个 bug 全部正确修复，且修复未引入新问题**（快捷键换键的 6 条路径全部验证正确）。**第 2 轮新确认 2 个 bug（均为低）**，与第 1 轮 Bug 2 同属一个根因家族——「窗口已销毁」状态未处理；仅影响**退出模式 + macOS**这一非默认组合
+
+---
+
+## 一、第 1 轮 3 个 bug 的修复验证
+
+### Bug 1（中）second-instance 未 ready 建窗 —— 已修复
+
+- 修复：`main.cjs` L27–30 加 `if (!app.isReady()) return`，未就绪时直接返回，交由 `whenReady` 链建窗。
+- 走读判定：正确。`app.isReady()` 是 Electron 官方就绪判定；提前返回不丢语义——`whenReady().then()` 里本来就会 `createWindow()`，次实例的「唤起」意图由主实例就绪后的正常建窗满足。
+- 测试：正式回归 `mainShell.test.cjs` 用例 1（`assert.doesNotThrow` + 窗口数仍为 0）通过。
+
+### Bug 2（低）托盘文案失刷新 —— 已修复（但不完整，见 Bug 4）
+
+- 修复：`initTray()` 里的 4 条刷新监听（L1296–1300）删除，改到 `createWindow()` 末尾（L1258–1266）挂 `show`/`hide`/`minimize`/`restore` → `appTray?.refresh()`。
+- 走读判定：方向正确，每个新窗口都会挂监听，覆盖了「退出模式关窗销毁 → activate/second-instance 重建」这条路径。
+- 测试：正式回归用例 2 通过（退出模式关窗 → activate 重建 → minimize → 文案翻「显示主窗」→ 点击后翻回「隐藏主窗」，文案与动作一致）。
+- **但修复只覆盖了「窗口重建之后」**，没有覆盖「窗口已销毁、尚未重建」这个中间状态——见下方 Bug 4。
+
+### Bug 3（低）快捷键换键失败静默失效 —— 已修复，且换键路径经 6 条探针全量验证
+
+- 修复：`applyGlobalShortcut()` 重写为「先 `register` 新键，成功后再精确 `unregister` 旧键」，新增模块级 `currentShortcutAccel` 跟踪当前键；`desktop-shortcut-set` 的空串判断简化为 `if (next === '')`（`next` 只可能是 `null` 或 trim 后字符串，等价）。
+- 逐条路径验证（探针 `shortcut-paths.test.cjs`，A–F 共 6 条全部通过）：
+
+  | 路径 | 结果 |
+  | --- | --- |
+  | A. 换键失败后旧键保持 + 再换新键成功 | 失败时 `shortcutRegs` 仍为 `['Alt+Shift+M']`、偏好不写；随后换 `Ctrl+Alt+J` 成功且只留新键 |
+  | B. 偏好 `globalShortcut: null` 启动 | 不注册、不发 `desktop-shortcut-failed`；之后开启正常 |
+  | C. `before-quit` 的 `unregisterAll` 之后再改键 | `before-quit` 清空注册表后 `currentShortcutAccel` 虽陈旧，但再改键只注册新键、无误摘、无双注册 |
+  | D. 连续两次 `desktop-shortcut-set(null)` | 幂等，不报错 |
+  | E. 空串被拒 | `ok:false`，且不影响启动时已注册的默认键 |
+  | F. app ready 且窗口已销毁时 `second-instance` | 重建窗口并正确挂上刷新监听，文案跟随 |
+
+- 特别核对用户点名的两处交互：
+  - **`before-quit` 的 `unregisterAll()` 与 `currentShortcutAccel`**：`before-quit` 未重置 `currentShortcutAccel`。因 `main.cjs` 没有 `e.preventDefault()` 打断退出，退出路径必然走完，陈旧值不可达；即使退出被外部因素中止，后续改键也只是 `unregister` 一个已注销的键（no-op），不会误摘或双注册。探针 C 实证。**不构成 bug。**
+  - **启动时 `whenReady` 注册失败路径**：`currentShortcutAccel` 保持 `null`，`sendToRenderer('desktop-shortcut-failed')` 回传，之后用户改键正常。**不构成 bug。**
+- 测试：正式回归用例 3 通过（失败后旧键仍可用、偏好保持旧键、失败事件回传 1 次）。
+
+---
+
+## 二、第 2 轮新确认的 Bug
+
+两个 bug 共享同一根因：**「窗口已销毁但应用仍在运行」这个状态没有统一处理**。触发前提相同——`closeToTray: 'quit'`（退出模式，非默认）+ macOS。macOS 下 `window-all-closed` 不会退出应用（`main.cjs` L1458–1463 仅非 darwin 才 `app.quit()`），所以关窗后应用仍驻留 dock + 托盘，但 `mainWindow` 已被 `closed` 处理器置 `null`。
+
+> 对照组已验证：默认的托盘模式（`closeToTray: 'tray'`）下关窗只隐藏不销毁，文案与快捷键全部正常（`control-tray.test.cjs` 通过）。故以下两个 bug 的影响面严格限于「退出模式 + macOS」。
+
+### Bug 4（低）：窗口销毁后托盘菜单文案停留在「隐藏主窗」，与点击动作相反
+
+- 位置：`desktop/electron/main.cjs` `createWindow()` 刷新监听清单（L1262–1266）+ `tray.cjs` `refresh()`（L38–51）
+- 问题描述：Bug 2 的修复把刷新监听收进 `createWindow()`，挂的是 `show`/`hide`/`minimize`/`restore` 四个事件，**没有 `closed`**。退出模式下关窗走的是「销毁」而非「隐藏」：`close` 不被 `preventDefault` → 窗口销毁 → 触发 `closed`（无监听）→ 没有任何 `refresh()` 被调用。托盘菜单于是停留在窗口最后一次可见时构建的文案「隐藏主窗」。
+  而此时 `isWindowVisible()` 因 `mainWindow === null` 返回 `false`，正确文案应是「显示主窗」。用户按「隐藏主窗」点击，`onShowHide` 发现窗口已销毁 → `createWindow()` → **反而把窗口创建并显示出来**，与文案语义完全相反。文案会一直错到用户点击托盘/dock 让窗口重建为止。
+- 触发场景：macOS + 设置里把「关窗行为」切为「直接退出」→ 关闭窗口（红点 / Cmd+W）→ 应用驻留托盘 → 点开托盘菜单看到「隐藏主窗」（实际无窗可隐）。
+- 复现测试：`docs/code-review/repro/2026-10-26-electron-shell/destroyed-window.test.cjs` 用例 1。失败输出摘要：
+
+  ```
+  not ok 1 - 候选4：窗口销毁后托盘菜单文案停留在「隐藏主窗」（与点击动作相反）
+    error: 窗口销毁后文案应翻为「显示主窗」
+    '隐藏主窗' !== '显示主窗'
+    expected: '显示主窗'
+    actual:   '隐藏主窗'
+  ```
+
+- 修复方向：在 `createWindow()` 的监听清单里补 `mainWindow.on('closed', refreshTray)`（`closed` 时 `mainWindow` 尚未被置 null 也无妨，`refresh()` 读的是最新值）；或在 `onShowHide`/`activate`/`second-instance` 重建窗口后显式 `appTray?.refresh()`。
+- 严重程度：**低**
+
+### Bug 5（低）：窗口销毁后全局快捷键完全失效（无法唤起窗口）
+
+- 位置：`desktop/electron/main.cjs` `applyGlobalShortcut()` 回调首行（L1337–1338）
+- 问题描述：快捷键回调的守卫是 `const win = mainWindow; if (!win || win.isDestroyed()) return`。退出模式关窗销毁窗口后 `mainWindow` 为 `null`，回调直接返回——**什么都不做**。而快捷键本身仍处于注册状态（`before-quit` 未触发，不会注销），设置页也显示快捷键已启用。这与该函数文档注释声明的语义「触发时窗口可见且聚焦则隐藏，**否则唤起**」直接矛盾：无窗口时应当重建窗口，实际是空转。
+  此状态下用户没有任何快捷键途径恢复窗口，只能靠 dock 点击（`activate` → `getAllWindows()===0` → `createWindow`）或托盘点击。
+- 触发场景：同上（macOS + 退出模式 + 关窗后）→ 按 Alt+Shift+M（或用户自设键）→ 无任何反应。
+- 复现测试：`docs/code-review/repro/2026-10-26-electron-shell/destroyed-window.test.cjs` 用例 2。失败输出摘要：
+
+  ```
+  not ok 2 - 候选5：窗口销毁后按全局快捷键完全无效果（无法唤起窗口）
+    error: 按快捷键后应重建出可用窗口（设计语义「否则唤起」）
+    0 !== 1
+    expected: 1
+    actual:   0
+  ```
+
+- 修复方向：把 `return` 改为 `createWindow()`（与 `onShowHide`、`second-instance` 的既有处理一致），即无窗口时建窗再 focus。
+- 严重程度：**低**
+
+---
+
+## 三、低风险观察（未列为确认 bug，仅供加固参考）
+
+1. **退出模式 + macOS 下点击系统通知不回唤窗口**：`desktop-notify` 的 click 处理器（`main.cjs` L1374–1383）只 `sendToRenderer('desktop-notification-click')`，窗口已销毁时不会把窗口带出来，用户点了通知、路由跳了，但眼前没有窗口。**未列为 bug**：设置页切到退出模式时的确认弹窗已明示「系统通知将不再到达（应用未运行）」，设计文档亦写明「退出模式维持现状」，属已告知的取舍。探针见 `docs/code-review/repro/2026-10-26-electron-shell/main-shell-probes.test.cjs` 之外另测（`/tmp` 版 J 用例）。
+2. **第 1 轮观察 1（updater 重复检查）已排除**：`checkForAppUpdate()` 有 `updateCheckPromise` 去重（L669–685），重叠调用返回同一 Promise，不存在重复 `checkForUpdates()`。第 1 轮该条观察过于保守，现予更正。
+3. **`applyGlobalShortcut` 上方残留两块重复 JSDoc**（`main.cjs` L1311–1316 与 L1317–1323），修复时新增了第二块而未删旧块。纯注释冗余，无功能影响。
+4. **「重设成与当前相同的快捷键」的行为依赖 Electron 版本语义**：`applyGlobalShortcut` 在 `currentShortcutAccel === accel` 时仍会先 `register(accel)`。若 Electron 对「本进程已注册的同一 accelerator」返回 `false`，用户会看到一条误导性的「快捷键注册失败，可能已被其他程序占用」toast（旧键仍生效、偏好不写，无功能破坏）。harness 的假 `globalShortcut.register` 恒返回 `true`，无法在此环境证实真实 Electron 的返回值，故不列为 bug；建议修复时加 `if (currentShortcutAccel === accel) return { ok: true }` 早退，一举消掉版本依赖。
+5. **`maxSizeMb` 由渲染层传入、主进程未设上限兜底**（`chatAttachment.cjs` L178–180）：极端大的值会让超大文件被拷入 `~/.mao`。渲染层已先做 `checkFileSize` 预检，属纵深防御缺口而非可触发 bug。
+6. **`getServerHostKey()` 对 IPv6 服务器 URL 会产生含 `[`/`]`/`:` 的目录名**（`serverConfig.cjs` L93–101），在 Windows 上 `mkdirSync` 会失败。此为**存量行为**（`resolveLocalRuntimeDir` 早已使用同一推导），非本次引入，本次附件落点只是沿用了同一约定。
+
+---
+
+## 四、已验证无问题的关键链路（供合并决策参考）
+
+- **正式回归测试的真实保护力（反向验证）**：把 `main.cjs` 换回修复前版本（`git show e02a726a:desktop/electron/main.cjs`，置于同构目录 `/tmp/r2-reverse2/desktop/electron/` 并软链 `node_modules`），`mainShell.test.cjs` 结果 **19 pass / 3 fail**，失败的正是用例 1/2/3（三个 bug 回归）；换回修复后版本 **22 pass / 0 fail**。证明 22 例不是「假通过」，确实能抓住这三个 bug。
+- **P1 LOCAL 附件落点与安全**：`chatAttachment.cjs` 全量走读 + 既有 308 行单测——`sanitizeAttachmentName`（basename 化、控制字符、Windows 保留名、≤100 字截断、幂等）、`isValidHostKey`/`isValidSessionId` 强校验、`resolveAttachmentTarget` 的 home 相对断言、`uniqueName` 的 `-1/-2` 递增、`copyLocalAttachment` 全同步（`lstatSync` 拒目录/符号链接、空文件与大小校验）均正确；第 1 轮怀疑的并发拷贝 TOCTOU 竞态经证实不成立（同步函数 + 单实例锁，无交错窗口），结论记录在 `chatAttachment-race.test.cjs`。
+- **P1 渲染层分流**：`prepareAndSendMessage` / `enqueueMessage` / `SideChatPanel.handleChatSend` 三处 LOCAL/CLOUD 分流结构一致，均满足「会话落库后再处理附件 → `guardUploadsBeforeSend` 防线 → `resolveFileRefPaths` → 乐观 UI 与 WS 发送用同一份文本」；`failureLabel` 在 LOCAL 下传「拷贝」。`chat-shared-actions.test.ts` 有主/边路共用导出的守护。
+- **文件引用格式**：`@{绝对路径}@` 与后端既有约定完全一致（`prompt-engine.ts`、feishu/dingtalk 入站链路同格式）；`isAbsoluteFileRef` 同时认 POSIX `/` 与 Windows 盘符 `C:\`，Windows 落点不会被误当相对路径拼坏。
+- **通知桥接**：`useInboxSystemNotify.ts` 幂等注册（`bridgeSetup` 模块级单例）+ `resetInboxSystemNotifyForTest`；`peekInboxFirstPage` 与「打开抽屉播种」解耦，避免 diff 恒空；dock 角标 watch 随 `unreadCount` 权威值联动。
+- **偏好持久化**：`desktopPrefs.cjs` tmp+rename 原子写、逐字段 normalize 回退、坏 JSON 回落默认、`clearDesktopPrefsCache` 供测试隔离。
+- **回归**：`npm run test:unit` → vitest 916 passed（103 文件）；`node --test electron/*.test.cjs` → 105 例中 103 通过，2 个失败为**存量已知环境问题**（`gitOperations` 身份注入受本机全局 git 配置干扰、`localShell` 的 `/var`→`/private/var` 符号链接），与本次改动无关。
+
+---
+
+## 五、`mainShell.test.cjs` 假通过风险评估
+
+**总体风险：低。** 已逐项核对 harness 与真实 Electron 的语义一致性，并做了上述反向验证。 faithful 的点包括：ready 前建窗即抛同一错误、`close` 被 `preventDefault` 后不销毁、`isVisible()` 在最小化时为 false、`app.quit()` 先触发 `before-quit` 再关窗、`globalShortcut.unregister(accel)` 按 accel 精确移除、`getAllWindows()` 过滤已销毁窗口、`sendToRenderer` 只发 `mainWindow`。
+
+**已识别的一处分歧（不影响现有用例的保护力）**：假 `globalShortcut.register` 除 `failNext` 外恒返回 `true`，无法建模「同一 accelerator 已被本进程注册时 Electron 返回 false」。若主进程存在「重复注册同一键却误判 `false` 为失败」的缺陷，现有用例抓不到。当前 `main.cjs` 不存在此类缺陷（见观察 4 的版本依赖提示），故不影响结论；建议后续在 harness 里补一个「同键重复注册返回 false」的开关，把这条路径也纳入守护。
+
+**已识别的覆盖缺口（正是 Bug 4/5 的藏身处）**：22 例全部建立在「窗口存在」或「窗口已重建」的前提上，**没有任何一例覆盖「窗口已销毁且尚未重建」状态**。Bug 4（托盘文案）与 Bug 5（快捷键空转）都活在这个状态里，所以正式测试全绿而 bug 真实存在。建议修复后补 2 条用例（`quit` 模式 + `platform: 'darwin'` 下关窗销毁，分别断言托盘文案翻「显示主窗」、快捷键回调能重建窗口），并保留 `control-tray.test.cjs` 作为托盘模式对照组。
+
+---
+
+## 六、验证过程说明
+
+- 第 2 轮新增探针 3 个，已落在 `docs/code-review/repro/2026-10-26-electron-shell/`（`destroyed-window.test.cjs` = Bug 4/5 复现；`control-tray.test.cjs` = 托盘模式对照组；`shortcut-paths.test.cjs` = 快捷键 6 条换键路径 A–F + 托盘重建路径 G）。均通过 `require('<repo>/desktop/electron/mainShellHarness.cjs')` 复用正式 harness，可直接 `node --test` 运行。
+- 反向验证方法（可复现）：建同构目录 `<scratch>/desktop/electron/`，放入 `main.cjs` 同级全部 `.cjs` 与 `assets/`，软链 `desktop/node_modules`，再把 `main.cjs` 替换为 `git show e02a726a:desktop/electron/main.cjs`，运行 `node --test electron/mainShell.test.cjs` 得 19 pass / 3 fail。
+- 第 1 轮报告（`2026-10-26-electron-shell-completeness-review.md`）中的 3 个 bug 结论与复现文件保持有效；本报告为其第 2 轮复审结论。

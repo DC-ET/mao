@@ -1,7 +1,7 @@
 {
   "name": "desktop",
   "private": true,
-  "version": "0.0.348",
+  "version": "0.0.351",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -11,7 +11,7 @@
     "build": "vue-tsc -b && vite build && node scripts/check-main-chunk.mjs",
     "dist": "electron-builder",
     "preview": "vite preview",
-    "test:unit": "vitest run && node --test electron/gitOperations.test.cjs electron/localShell.test.cjs electron/serverConfig.test.cjs",
+    "test:unit": "vitest run && node --test 'electron/*.test.cjs'",
     "test:unit:watch": "vitest",
     "postinstall": "node ./node_modules/electron-rebuild/lib/src/cli.js -f -w node-pty"
   },

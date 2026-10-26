@@ -30,7 +30,7 @@ Mao 的**产品文档唯一正文**（可独立分发）+ **REST 操作 CLI**。
 | 飞书机器人通道（绑定 / 群聊@机器人 / 多机器人配置） | [reference/feishu-bot.md](reference/feishu-bot.md) |
 | 钉钉机器人通道（绑定 / 群聊@机器人 / 多机器人配置） | [reference/dingtalk-bot.md](reference/dingtalk-bot.md) |
 | 任务通知邮件渠道（SMTP 配置 / 用户选邮件推送） | [reference/settings.md](reference/settings.md#邮件通知配置notifyemail0.0.318-起) |
-| Electron LOCAL、工具审批、打包与自动更新 | [reference/electron.md](reference/electron.md) |
+| Electron LOCAL、工具审批、LOCAL 附件、托盘/通知/快捷键、打包与自动更新 | [reference/electron.md](reference/electron.md) |
 | 安卓壳、远程前端、APK OTA | [reference/android.md](reference/android.md) |
 | 终端对话客户端 mao-agent | [reference/mao-agent.md](reference/mao-agent.md) |
 | Web 页面嵌入对话浮窗（Embed SDK 接入，含管理后台内置浮窗助手） | [reference/embed-sdk.md](reference/embed-sdk.md)（设计细节见仓库 [docs/plan/2026-09-04-embed-sdk-technical-design.md](../../docs/plan/2026-09-04-embed-sdk-technical-design.md)；管理后台接入见 [docs/plan/2026-10-16-admin-embed-chat-technical-design.md](../../docs/plan/2026-10-16-admin-embed-chat-technical-design.md)） |

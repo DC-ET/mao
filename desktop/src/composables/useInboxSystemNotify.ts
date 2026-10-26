@@ -1,16 +1,18 @@
-import { onScopeDispose, ref } from 'vue'
+import { onScopeDispose, watch } from 'vue'
 import type { InboxItem, InboxKind, InboxPreference } from '@mao/contracts'
 import { useInboxStore } from '../stores/inbox'
 import { useSessionStore } from '../stores/session'
 
 /**
- * Electron 系统通知（P2）：窗口未聚焦 / 最小化时，把新增的收件箱条目弹成系统通知。
+ * Electron 系统通知（P2）：窗口未聚焦 / 最小化 / 隐藏到托盘时，把新增的收件箱条目弹成系统通知。
  *
  * 约束：
- * - 仅 Electron 生效（HTML5 Notification 在 Electron 下直接走系统通知，无需 IPC）；Web/安卓不弹。
- * - 触发条件 = `document.hidden || !document.hasFocus()`（hidden 覆盖最小化，hasFocus 覆盖可见但未聚焦）。
- * - `requestPermission()` 返回 denied 时静默降级：不弹窗、不报错，只保留站内徽标。
+ * - 仅 Electron 生效：投递走主进程 `desktop-notify` IPC（主进程 Notification 窗口销毁后仍可达），
+ *   Web/安卓没有 electronAPI，整体不弹（与改造前一致，无 web Notification 回退分支）。
+ * - 主进程通知不走 web permission：删除渲染层 requestPermissionOnce（系统授权由 OS 管）。
+ * - 触发条件 = `document.hidden || !document.hasFocus()`（hidden 覆盖最小化/隐藏到托盘，hasFocus 覆盖可见但未聚焦）。
  * - 事件只带权威 unreadCount，通知的标题/摘要由这里拉列表后 diff 得出（不做「事件携带内容」方案）。
+ * - 通知点击：主进程 `desktop-notification-click` 回传 {itemId, sessionId}，渲染层聚焦窗口并跳会话。
  */
 
 /**
@@ -21,10 +23,8 @@ import { useSessionStore } from '../stores/session'
 let knownIds = new Set<string>()
 let primed = false
 let notifiedIds = new Set<string>()
-
-const permission = ref<NotificationPermission>(
-  typeof Notification !== 'undefined' ? Notification.permission : 'denied'
-)
+/** 点击回传监听 + dock 角标观察的幂等注册标记 */
+let bridgeSetup = false
 
 export function isInboxKindEnabled(kind: InboxKind, preference: InboxPreference): boolean {
   switch (kind) {
@@ -59,24 +59,9 @@ export function isInboxNotifyWindowHidden(): boolean {
   return document.hidden || !document.hasFocus()
 }
 
-async function requestPermissionOnce(): Promise<boolean> {
-  if (typeof Notification === 'undefined') return false
-  if (Notification.permission === 'granted') {
-    permission.value = 'granted'
-    return true
-  }
-  if (Notification.permission === 'denied') {
-    permission.value = 'denied'
-    return false
-  }
-  try {
-    const result = await Notification.requestPermission()
-    permission.value = result
-    return result === 'granted'
-  } catch {
-    // macOS 首次调用可能因无用户手势被拒：静默降级，不弹窗不报错
-    return false
-  }
+function desktopNotifyApi() {
+  const api = (window as any).electronAPI
+  return api && typeof api.desktopNotify === 'function' ? api : null
 }
 
 /**
@@ -91,12 +76,44 @@ export function primeInboxSystemNotify(items: InboxItem[]): void {
   primed = true
 }
 
+/**
+ * 注册通知点击回传与 dock 角标联动（幂等，模块级单例）。
+ * 点击：主进程负责 show/focus 窗口，这里只做路由跳转（openSessionFromNotification 原样复用）。
+ * 角标：收件箱未读数（服务端权威口径）→ macOS dock badge；0 清空；win/linux 主进程 no-op。
+ */
+function ensureDesktopNotifyBridge(): void {
+  if (bridgeSetup) return
+  const api = desktopNotifyApi()
+  if (!api) return
+  bridgeSetup = true
+
+  if (typeof api.onDesktopNotificationClick === 'function') {
+    api.onDesktopNotificationClick((payload: { itemId?: number; sessionId?: number | null }) => {
+      const sessionId = payload?.sessionId
+      if (sessionId == null) return
+      void openSessionFromNotification(sessionId)
+    })
+  }
+
+  if (typeof api.desktopBadge === 'function') {
+    const inboxStore = useInboxStore()
+    watch(
+      () => inboxStore.unreadCount,
+      (count) => {
+        void api.desktopBadge(count)
+      },
+      { immediate: true }
+    )
+  }
+}
+
 /** 供 useStreamWS 的 `inbox_updated` 分支调用。 */
 export async function notifyInboxSystemUpdate(): Promise<void> {
-  if (typeof Notification === 'undefined') return
-  if (Notification.permission === 'denied') return
+  const api = desktopNotifyApi()
+  // 非 Electron（Web/安卓）：无主进程通知通道，整体不弹
+  if (!api) return
+  ensureDesktopNotifyBridge()
   if (!isInboxNotifyWindowHidden()) return
-  if (!(await requestPermissionOnce())) return
 
   const inboxStore = useInboxStore()
   // 尚未建立基线（用户还没打开过抽屉）：本轮只播种，不弹历史通知。
@@ -120,21 +137,19 @@ export async function notifyInboxSystemUpdate(): Promise<void> {
   for (const item of unseen) notifiedIds.add(String(item.id))
 
   // 系统通知总开关（与 kind 级开关独立，二者都要过）：用户关闭后一律不弹，
-  // 只保留站内徽标。放在 requestPermissionOnce 之后，避免为不弹通知的用户
-  // 无谓发起通知权限申请。
+  // 只保留站内徽标。
   if (!inboxStore.preference.systemNotifyEnabled) return
 
   const eligible = unseen.filter((item) => isInboxKindEnabled(item.kind, inboxStore.preference))
   for (const item of eligible) {
     try {
-      const notification = new Notification(item.title, { body: item.content ?? '', tag: `mao-inbox-${item.id}` })
-      notification.onclick = () => {
-        window.focus()
-        notification.close()
-        const sessionId = item.sessionId
-        if (sessionId == null) return
-        void openSessionFromNotification(sessionId)
-      }
+      await api.desktopNotify({
+        title: item.title,
+        body: item.content ?? '',
+        tag: `mao-inbox-${item.id}`,
+        itemId: item.id,
+        sessionId: item.sessionId ?? null,
+      })
     } catch {
       // 系统通知失败不影响站内徽标（降级路径）
     }
@@ -150,16 +165,16 @@ async function openSessionFromNotification(sessionId: number): Promise<void> {
   await router.push(`/tasks/${sessionId}`)
 }
 
-/** 测试辅助：重置模块级基线。 */
+/** 测试辅助：重置模块级基线与桥接注册标记。 */
 export function resetInboxSystemNotifyForTest(): void {
   knownIds = new Set<string>()
   notifiedIds = new Set<string>()
   primed = false
-  permission.value = typeof Notification !== 'undefined' ? Notification.permission : 'denied'
+  bridgeSetup = false
 }
 
 /** 组件侧入口：仅在 Electron 下有意义，Web/安卓直接空转。 */
 export function useInboxSystemNotify() {
   onScopeDispose(() => undefined)
-  return { permission, primeInboxSystemNotify, notifyInboxSystemUpdate }
+  return { primeInboxSystemNotify, notifyInboxSystemUpdate }
 }

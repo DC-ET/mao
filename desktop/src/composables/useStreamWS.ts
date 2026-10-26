@@ -11,6 +11,7 @@ import { stripImageUrlLines } from '../utils/imageUrlAnnotation'
 import { isElectronClient } from '../utils/platform'
 import { updateSideTaskTabTitleFor } from './useCenterTabs'
 import { notifyInboxSystemUpdate } from './useInboxSystemNotify'
+import { ensureDesktopShellBridgeFromWs } from './useDesktopShell'
 import type { SideTaskContextMode } from '../types/file-browser'
 
 /// <reference types="vite/client" />
@@ -195,6 +196,9 @@ function flushPendingSkillSyncDones() {
 export function useStreamWS() {
   const sessionStore = useSessionStore()
   const inboxStore = useInboxStore()
+
+  // 桌面壳事件桥接（托盘 / 快捷键失败提示）：幂等注册，登录后 WS 单例活跃即生效
+  if (isElectronClient()) ensureDesktopShellBridgeFromWs()
 
   // Listen for skill sync completion from main process (register once)
   if (!skillSyncListenerRegistered && isElectronClient()) {

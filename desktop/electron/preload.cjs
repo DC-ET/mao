@@ -130,5 +130,34 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('terminal:exit', handler)
       return () => ipcRenderer.removeListener('terminal:exit', handler)
     },
-  }
+  },
+
+  // LOCAL attachments (P1) — copy a machine-local file into ~/.mao/attachments/<host>/<sid>/
+  localCopyAttachment: (payload) => ipcRenderer.invoke('local-copy-attachment', payload),
+  // Electron 32.0 removes File.path; webUtils.getPathForFile (same version) replaces it.
+  // Implemented in the preload (a File object cannot cross structured-clone IPC); 28-31 keep
+  // using file.path and never call this. Renderer compat: file.path ?? electronAPI.getPathForFile(file).
+  getPathForFile: (file) => {
+    try {
+      const { webUtils } = require('electron')
+      if (webUtils && typeof webUtils.getPathForFile === 'function') {
+        return webUtils.getPathForFile(file) || ''
+      }
+    } catch {
+      // Electron < 32: webUtils missing — caller falls back to File.path
+    }
+    return ''
+  },
+
+  // Desktop shell (P2/P3) — main-process notification / badge / prefs / shortcut / tray
+  desktopNotify: (payload) => ipcRenderer.invoke('desktop-notify', payload),
+  onDesktopNotificationClick: (callback) => onIpc('desktop-notification-click', callback),
+  onDesktopNotifyResult: (callback) => onIpc('desktop-notify-result', callback),
+  desktopBadge: (count) => ipcRenderer.invoke('desktop-badge', { count }),
+  desktopPrefsGet: () => ipcRenderer.invoke('desktop-prefs-get'),
+  desktopPrefsSet: (patch) => ipcRenderer.invoke('desktop-prefs-set', patch),
+  desktopShortcutSet: (accel) => ipcRenderer.invoke('desktop-shortcut-set', accel),
+  onDesktopShortcutFailed: (callback) => onIpc('desktop-shortcut-failed', callback),
+  onTrayNewTask: (callback) => onIpc('tray-new-task', callback),
+  onTrayFirstCloseHint: (callback) => onIpc('tray-first-close-hint', callback),
 })

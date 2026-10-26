@@ -173,6 +173,8 @@ import { guardUploadsBeforeSend, waitForMessageSaved, awaitExecutionSettled, fin
 import { LOCATE_FLASH_KEY, useMessageLocate } from '../../composables/useMessageLocate'
 import { uploadImages } from '../../utils/imageUpload'
 import { uploadPendingFiles } from '../../utils/chatFileUpload'
+import { copyLocalPendingFiles } from '../../utils/chatLocalAttach'
+import type { PendingUploadFile } from '../../composables/useChat'
 import type { SideTaskContextMode } from '../../types/file-browser'
 import ChatRoundList from './ChatRoundList.vue'
 import ChatInput from './ChatInput.vue'
@@ -731,7 +733,7 @@ function handleModelSwitch(modelId: number) {
   }
 }
 
-async function handleChatSend(text: string, files: File[], pendingUploads?: File[]) {
+async function handleChatSend(text: string, files: File[], pendingUploads?: PendingUploadFile[]) {
   const trimmed = text.trim()
   if (!trimmed && (!files || files.length === 0) && (!pendingUploads || pendingUploads.length === 0)) return
 
@@ -758,12 +760,23 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
     const imageUrls = files.length > 0 ? await uploadImages(files, uploadSessionId) : []
 
     // Upload non-image files to runtime incoming (uses parent session ID for first side send)
+    // LOCAL + Electron 则拷贝到本机 ~/.mao/attachments（边路首发用来源会话 id，附件落来源会话目录）
     let resolvedText = trimmed
     let uploadedFileCount = 0
     if (pendingUploads && pendingUploads.length > 0 && uploadSessionId) {
-      const uploaded = await uploadPendingFiles(resolvedText, pendingUploads, uploadSessionId)
-      resolvedText = uploaded.text
-      uploadedFileCount = uploaded.uploadedCount
+      if (parentExecutionMode.value === 'LOCAL' && isElectron) {
+        const copied = await copyLocalPendingFiles(resolvedText, pendingUploads, uploadSessionId)
+        resolvedText = copied.text
+        uploadedFileCount = copied.copiedCount
+      } else {
+        const uploaded = await uploadPendingFiles(
+          resolvedText,
+          pendingUploads.map((item) => item.file),
+          uploadSessionId
+        )
+        resolvedText = uploaded.text
+        uploadedFileCount = uploaded.uploadedCount
+      }
     }
     // 与主会话同一道防线：全部失败阻断、部分失败二次确认、空内容拦截
     const canSend = await guardUploadsBeforeSend({
@@ -772,6 +785,7 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
       fileCount: pendingUploads?.length ?? 0,
       uploadedFileCount,
       resolvedText,
+      failureLabel: parentExecutionMode.value === 'LOCAL' && isElectron ? '拷贝' : undefined,
     })
     if (!canSend) return
 

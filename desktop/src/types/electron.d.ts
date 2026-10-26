@@ -139,6 +139,18 @@ interface GitOperationResult {
 
 type RemoveListener = () => void
 
+/** 桌面壳（P1/P2/P3）契约类型集中在 ./desktop.ts，这里用行内 import 引用（避免把本文件变成 module） */
+type LocalCopyAttachmentParams = import('./desktop').LocalCopyAttachmentParams
+type LocalCopyAttachmentResult = import('./desktop').LocalCopyAttachmentResult
+type DesktopNotifyPayload = import('./desktop').DesktopNotifyPayload
+type DesktopNotifyResult = import('./desktop').DesktopNotifyResult
+type DesktopNotificationClickPayload = import('./desktop').DesktopNotificationClickPayload
+type DesktopNotifyResultPayload = import('./desktop').DesktopNotifyResultPayload
+type DesktopPrefs = import('./desktop').DesktopPrefs
+type DesktopPrefsGetResult = import('./desktop').DesktopPrefsGetResult
+type DesktopPrefsSetResult = import('./desktop').DesktopPrefsSetResult
+type DesktopShortcutFailedPayload = import('./desktop').DesktopShortcutFailedPayload
+
 interface AppUpdateInfo {
   version?: string
   releaseName?: string
@@ -290,6 +302,23 @@ interface ElectronAPI {
     onData(callback: (payload: TerminalDataPayload) => void): () => void
     onExit(callback: (payload: TerminalExitPayload) => void): () => void
   }
+
+  // LOCAL attachments (P1)
+  localCopyAttachment(params: LocalCopyAttachmentParams): Promise<LocalCopyAttachmentResult>
+  /** Electron 32+ 的 webUtils.getPathForFile 兜底（28-31 恒走 File.path）；取不到返回空串 */
+  getPathForFile(file: File): string
+
+  // Desktop shell (P2/P3)
+  desktopNotify(payload: DesktopNotifyPayload): Promise<DesktopNotifyResult>
+  onDesktopNotificationClick(callback: (data: DesktopNotificationClickPayload) => void): RemoveListener
+  onDesktopNotifyResult(callback: (data: DesktopNotifyResultPayload) => void): RemoveListener
+  desktopBadge(count: number): Promise<{ ok: boolean }>
+  desktopPrefsGet(): Promise<DesktopPrefsGetResult>
+  desktopPrefsSet(patch: Partial<DesktopPrefs>): Promise<DesktopPrefsSetResult>
+  desktopShortcutSet(accel: string | null): Promise<DesktopPrefsSetResult>
+  onDesktopShortcutFailed(callback: (data: DesktopShortcutFailedPayload) => void): RemoveListener
+  onTrayNewTask(callback: () => void): RemoveListener
+  onTrayFirstCloseHint(callback: () => void): RemoveListener
 }
 
 declare interface Window {

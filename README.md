@@ -52,7 +52,7 @@ Mao 不是又一个 ChatGPT 套壳，也不是 Dify / n8n 那样的低代码工�
 | **工具与扩展** | Shell、文件、搜索、网页、文生图/改图、子代理委派；Skill + 全局/用户级 MCP。 |
 | **回复引用溯源** | 模型用联网搜索 / 打开网页作答时，正文说法旁出现可点击引用上标，回复末尾「来源」区列出本轮引用的网页标题与域名：点上标跳到对应来源，点条目在新标签页打开原网页。来源由服务端从真实工具结果构建白名单，模型编造或编号越界的标记自动失效，不会显示成无效上标。 |
 | **协作** | 边路任务、后台子代理（`default` / `explorer` / `worker` / `reviewer`）、定时任务、完成通知、会话只读分享与 JSONL 导出。 |
-| **任务收件箱** | 站内通知中心：任务完成 / 失败、提问待答、审批待办、子代理结果回传统一汇入顶栏铃铛，实时未读数，一键跳回会话；每日运营摘要（昨日任务 / 定时任务 / 哨兵 / 审批 / 成本 / 开放接口汇总，点开详情可逐项跳转）默认每天 09:30 送达，可在「消息通知」改时间或关闭；Electron 桌面端窗口失焦时补系统通知。 |
+| **任务收件箱** | 站内通知中心：任务完成 / 失败、提问待答、审批待办、子代理结果回传统一汇入顶栏铃铛，实时未读数，一键跳回会话；每日运营摘要（昨日任务 / 定时任务 / 哨兵 / 审批 / 成本 / 开放接口汇总，点开详情可逐项跳转）默认每天 09:30 送达，可在「消息通知」改时间或关闭；Electron 桌面端由主进程投递系统通知（窗口最小化 / 隐藏到托盘也可达，点击回到会话，macOS dock 角标跟随未读数）。 |
 | **开放接口** | API Token 远程触发 Agent 运行（`POST /api/v1/open/agents/:id/run`，异步 202，会话忙时自动排队）；入站 Webhook 触发器（HMAC-SHA256 验签，连续失败自动停用并通知）；出站事件订阅把任务完成 / 失败 / 提问待答推送到自建 HTTPS 端点（失败自动退避重试）。 |
 | **信号哨兵** | 按固定间隔探测外部 HTTP(S) 接口，判定值（内容哈希 / JSON 字段 / 状态码）变化时自动开一次 Agent 会话；连续失败自动停用并通知，探测地址禁私网。 |
 | **工作区** | 云端新建 / 复用 / Git HTTPS clone；文件树与 Git diff 浏览，CLOUD 可直接管理工作区文件（文件树增删改传，或「文件管理」页签整幅操作）；CLOUD 可开服务端交互终端。 |
@@ -150,7 +150,7 @@ mao agent list
 |------|------|
 | [管理后台](skills/mao-cli/reference/admin.md) | 模型、Agent、用户角色、Skill、MCP、审计、用量、预算 |
 | [桌面 Web](skills/mao-cli/reference/desktop.md) | 日常任务与对话（CLOUD） |
-| [Electron](skills/mao-cli/reference/electron.md) | LOCAL 本机工具、图形审批（需自行打包，无官方签名安装包） |
+| [Electron](skills/mao-cli/reference/electron.md) | LOCAL 本机工具、图形审批、LOCAL 附件、托盘 / 系统通知 / 全局快捷键（需自行打包，无官方签名安装包） |
 | [安卓](skills/mao-cli/reference/android.md) | Capacitor 壳远程加载 Web，仅 CLOUD |
 | [mao-agent](skills/mao-cli/reference/mao-agent.md) | 终端 REPL / CI（`-p`） |
 | [飞书机器人](skills/mao-cli/reference/feishu-bot.md) | 私聊或群里 @ 机器人 |

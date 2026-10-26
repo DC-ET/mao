@@ -27,10 +27,14 @@ export { normalizeMessageRole }
 
 import { uploadImages } from '../utils/imageUpload'
 import { uploadPendingFiles } from '../utils/chatFileUpload'
+import { copyLocalPendingFiles, type LocalPendingFile } from '../utils/chatLocalAttach'
 import { generateUUID } from '../utils/uuid'
 import { validateHttpsGitUrl } from '../utils/cloud-project'
 import { nowDateTime } from '../utils/datetime'
 import type { ApprovalHint } from '../components/chat/ApprovalStack.vue'
+
+/** 待发非图片文件：File + （LOCAL 模式）本机绝对路径。 */
+export type PendingUploadFile = LocalPendingFile
 
 export interface ApprovalItem {
   requestId: string
@@ -136,6 +140,16 @@ export function useToolApprovals() {
 const FILE_REF_PATTERN = /@\{([^}]+)\}@/g
 
 /**
+ * 判断文件引用是否已是绝对路径：POSIX（/opt/...，含服务端 runtime incoming）
+ * 或 Windows 盘符（C:\Users\...，LOCAL 本机附件拷贝落点）。
+ * CLOUD 时代服务端路径恒为 POSIX 所以没暴露；LOCAL 附件在 Windows 上
+ * 是盘符形态，只认 '/' 会把 `C:\...` 当相对路径拼坏引用。
+ */
+export function isAbsoluteFileRef(refPath: string): boolean {
+  return /^([a-zA-Z]:[\\/]|\/)/.test(refPath)
+}
+
+/**
  * 把消息中的文件引用相对路径改写为工作区绝对路径。
  * 必须在乐观 UI 插入与 WS 发送之前对同一份文本执行，
  * 保证用户气泡展示的内容与服务端实际收到/持久化的一致。
@@ -144,8 +158,8 @@ export function resolveFileRefPaths(text: string, workspace: string): string {
   if (!text.includes('@{') || !workspace) return text
   FILE_REF_PATTERN.lastIndex = 0
   return text.replace(FILE_REF_PATTERN, (_, relPath: string) => {
-    // Skip absolute paths (e.g. runtime incoming files uploaded via uploadPendingFiles)
-    if (relPath.startsWith('/')) return `@{${relPath}}@`
+    // Skip absolute paths (runtime incoming uploads / local machine attachments)
+    if (isAbsoluteFileRef(relPath)) return `@{${relPath}}@`
     const absPath = workspace.replace(/\/$/, '') + '/' + relPath.replace(/^\//, '')
     return `@{${absPath}}@`
   })
@@ -314,7 +328,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
    * 上传附件 → 连接 WS → 按需建会话 → 解析文本/收集本地技能 → 注册流式气泡 → WS 发送。
    * 任一步骤失败时统一清理（复位 sending、移除尾部空 assistant、提示、刷新会话）并返回 null。
    */
-  async function prepareAndSendMessage(text: string, files?: File[], pendingUploads?: File[]): Promise<string | null> {
+  async function prepareAndSendMessage(text: string, files?: File[], pendingUploads?: PendingUploadFile[]): Promise<string | null> {
     if ((!text && (!files || files.length === 0) && (!pendingUploads || pendingUploads.length === 0)) || sending.value) return null
     syncMissingSessionFromStore()
     const targetSessionId = sessionStore.activeSessionId
@@ -411,20 +425,32 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       const sid = sessionId.value!
       // 失败回滚的目标会话：此后即使用户切走也不跟着变
       rollbackSessionId = sid
-      // Upload non-image files to runtime incoming now that session exists
+      // 非图片文件在会话落库后处理：CLOUD 上传到 runtime incoming；
+      // LOCAL+Electron 拷贝到本机 ~/.mao/attachments（文件不出本机）
       let resolvedText = text || ''
       let uploadedFileCount = 0
       if (pendingUploads && pendingUploads.length > 0) {
-        const uploaded = await uploadPendingFiles(resolvedText, pendingUploads, sid)
-        resolvedText = uploaded.text
-        uploadedFileCount = uploaded.uploadedCount
+        if (executionMode.value === 'LOCAL' && isElectron) {
+          const copied = await copyLocalPendingFiles(resolvedText, pendingUploads, sid)
+          resolvedText = copied.text
+          uploadedFileCount = copied.copiedCount
+        } else {
+          const uploaded = await uploadPendingFiles(
+            resolvedText,
+            pendingUploads.map((item) => item.file),
+            sid
+          )
+          resolvedText = uploaded.text
+          uploadedFileCount = uploaded.uploadedCount
+        }
       }
       const canSend = await guardUploadsBeforeSend({
         imageCount: files?.length ?? 0,
         imageUrls,
         fileCount: pendingUploads?.length ?? 0,
         uploadedFileCount,
-        resolvedText
+        resolvedText,
+        failureLabel: executionMode.value === 'LOCAL' && isElectron ? '拷贝' : undefined,
       })
       if (!canSend) {
         sending.value = false
@@ -502,7 +528,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     }
   }
 
-  async function sendMessage(text: string, files?: File[], pendingUploads?: File[]) {
+  async function sendMessage(text: string, files?: File[], pendingUploads?: PendingUploadFile[]) {
     const sid = await prepareAndSendMessage(text, files, pendingUploads)
     if (!sid) return
 
@@ -552,7 +578,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
    * 发送消息并等待消息保存确认
    * @returns true 表示消息已发出（可清空输入框）；false 表示发送失败（保留输入以便重试）
    */
-  async function sendMessageAndWaitForSave(text: string, files?: File[], pendingUploads?: File[]): Promise<boolean> {
+  async function sendMessageAndWaitForSave(text: string, files?: File[], pendingUploads?: PendingUploadFile[]): Promise<boolean> {
     const sid = await prepareAndSendMessage(text, files, pendingUploads)
     if (!sid) return false
 
@@ -795,7 +821,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
 
   const { fetchQueue, insertQueueMessage, deleteQueueMessage, reorderQueueMessage } = useChatQueue(() => sessionId.value)
 
-  async function sendMessageWithQueue(text: string, files: File[], pendingUploads?: File[]): Promise<boolean> {
+  async function sendMessageWithQueue(text: string, files: File[], pendingUploads?: PendingUploadFile[]): Promise<boolean> {
     if (isActive.value) {
       return enqueueMessage(text, files, pendingUploads)
     }
@@ -803,7 +829,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     return true
   }
 
-  async function enqueueMessage(text: string, files: File[], pendingUploads?: File[]): Promise<boolean> {
+  async function enqueueMessage(text: string, files: File[], pendingUploads?: PendingUploadFile[]): Promise<boolean> {
     const sid = sessionId.value
     if (!sid || !requireCurrentSession(sid)) return false
     sessionStore.clearExecutionError(sid)
@@ -811,16 +837,27 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     let resolvedText = text
     let uploadedFileCount = 0
     if (pendingUploads && pendingUploads.length > 0) {
-      const uploaded = await uploadPendingFiles(resolvedText, pendingUploads, sid)
-      resolvedText = uploaded.text
-      uploadedFileCount = uploaded.uploadedCount
+      if (executionMode.value === 'LOCAL' && isElectron) {
+        const copied = await copyLocalPendingFiles(resolvedText, pendingUploads, sid)
+        resolvedText = copied.text
+        uploadedFileCount = copied.copiedCount
+      } else {
+        const uploaded = await uploadPendingFiles(
+          resolvedText,
+          pendingUploads.map((item) => item.file),
+          sid
+        )
+        resolvedText = uploaded.text
+        uploadedFileCount = uploaded.uploadedCount
+      }
     }
     const canEnqueue = await guardUploadsBeforeSend({
       imageCount: files.length,
       imageUrls,
       fileCount: pendingUploads?.length ?? 0,
       uploadedFileCount,
-      resolvedText
+      resolvedText,
+      failureLabel: executionMode.value === 'LOCAL' && isElectron ? '拷贝' : undefined,
     })
     if (!canEnqueue) return false
     resolvedText = resolveFileRefPaths(resolvedText, workspace.value)
