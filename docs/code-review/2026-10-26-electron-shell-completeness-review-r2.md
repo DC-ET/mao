@@ -1,5 +1,16 @@
 # 代码审查报告（第 2 轮）：Electron 壳补完（0.0.351）修复复审
 
+> **第三轮复审结论（2026-10-26，HEAD=3a9b3b2f）：无 bug。** 本报告 2 个 bug（Bug 4/5）已全部正确修复，且修复未引入新问题：
+> - **Bug 4**：`createWindow()` 的 `closed` 监听注册在 `mainWindow = null` 处理器**之后**（L1255–1257 先于 L1269），Electron 按注册序派发，故 `refreshTray` 读到 `mainWindow === null` → 文案正确翻「显示主窗」。已额外验证 3 轮反复销毁/重建、`second-instance` 重建、托盘退出路径均不受影响。
+> - **Bug 5**：快捷键回调改 `createWindow()` + `appTray?.refresh()`，与 `onShowHide`/`second-instance` 处理一致；重建后 toggle 语义完好，退出路径的 `before-quit` 清理不受新增 `closed` 刷新干扰。
+> - **观察 3/4 已落实**：重复 JSDoc 已删；同键早退 `currentShortcutAccel === accel` 经专项验证**不会误伤**「启动注册失败后再设同键」这条路径（此时 `currentShortcutAccel` 为 `null`，不会命中早退，键会真正注册）。
+> - **反向验证**：把 `main.cjs` 换回 `7ef48168`，`mainShell.test.cjs` 得 **23 pass / 3 fail**，失败的正是回归4、回归5、同键重设 3 条；换回后 **26/26 全绿**。与修复说明一致。
+> - **假通过风险**：26 例无新增风险；同键重设用例在修复前之所以失败，是因 harness 把「重复注册同一 accelerator」建模为允许（推入重复项）——真实 Electron 可能返回 false，但修复后的行为（不重复注册）在两种语义下都正确，故该用例对修复后行为是有效守护。
+> - **两条观察的重新认定（均维持观察级，未升级为 bug）**：
+>   1. **观察 1（退出模式+macOS 点击系统通知不回唤窗口）**：原判定「已告知的取舍」**理由需修正**——通知并非「不会到达」，`main.cjs` 只有一处 `new Notification`（L1407，位于 `desktop-notify` IPC handler 内），而该 IPC 只可能由渲染层触发，**渲染层随窗口一起销毁**，故窗口销毁后不可能产生新通知，只有通知中心里已展示过的旧通知仍可点击；点击时 `sendToRenderer` 因 `mainWindow` 为 `null` 静默丢弃事件，表现为完全空转。可达面仅限「通知已弹出 → 用户关窗 → 再点那条旧通知」，叠加设计文档「退出模式维持现状」的显式取舍，定为观察级。建议按 Bug 5 同款一行修复（click 里补窗口唤起）。
+>   2. **新增观察（同键早退与 `before-quit` 的交互）**：`before-quit` 的 `unregisterAll()` 不会重置 `currentShortcutAccel`，若退出被中止后用户重设同一个键，早退会跳过 `register()` 导致键保持未注册而 UI/偏好显示已启用。**但触发路径不可达**：`main.cjs` 无任何 `before-quit` `preventDefault`，close 处理器在 `quitting` 为 true 时直接放行，退出必然走完。属潜在健壮性缺口，建议在 `before-quit` 补 `currentShortcutAccel = null`。
+> 以下为第 2 轮报告原文。
+
 - 审查对象：`7ef48168`（fix: 修复 code review 第1轮 3 个桌面壳 bug）相对 `6a337bca` 的完整变更；重点核对第 1 轮 3 个 bug 的修复、修复本身是否引入新问题，以及全量复查是否遗漏
 - 审查日期：2026-10-26
 - 审查方式：修复 diff 逐行走读 + 假 electron 集成探针（复用并扩展 `desktop/electron/mainShellHarness.cjs`）+ 对正式回归测试做「修复前代码反向验证」

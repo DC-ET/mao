@@ -1,8 +1,20 @@
 'use strict'
 
 /**
- * main.cjs 桌面壳集成探针：对审查候选 bug 逐条复现。
+ * main.cjs 桌面壳集成探针（第 1 轮，HEAD=e02a726a 时点）：对审查候选 bug 逐条复现。
  * 每个用例要么通过（行为正确），要么以真实失败暴露 bug。
+ *
+ * ⚠️ 历史文件，勿以当前 HEAD 运行结果判断代码好坏。第 1 轮时（e02a726a）结果为
+ * 14 pass / 2 fail：候选2、候选3 失败即 Bug 2/3 的复现；候选1 以 assert.throws
+ * 正向断言「异常确实被抛出」来确认 Bug 1。
+ *
+ * 三轮修复后（HEAD=3a9b3b2f）本文件 3 个候选全部失败，这恰恰说明 3 个 bug 都已修好：
+ *   - 候选1 失败：app.isReady() 守卫生效，second-instance 不再抛异常（assert.throws 落空）；
+ *   - 候选2 失败：窗口销毁/重建后托盘文案现在会正确刷新（断言「应为显示主窗」成立，
+ *     但其末尾第 4 步仍按旧语义断言「点击后窗口应保持隐藏」，与修复后的正确行为冲突）；
+ *   - 候选3 失败：换键失败时旧键现在保持生效（断言「旧键应仍可用」成立，但偏好断言口径已变）。
+ * 修复后的守护请以正式回归 desktop/electron/mainShell.test.cjs（26 例）为准，
+ * 以及本目录下的 comprehensive.test.cjs（15 例，全绿）。
  */
 
 const test = require('node:test')

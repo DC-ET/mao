@@ -252,6 +252,36 @@ test('基线：通知 failed 事件回传失败结果', async () => {
   assert.equal(failed[0].data.ok, false)
 })
 
+test('回归6：窗口销毁后点击系统通知重建窗口（修复前 sendToRenderer 静默丢弃、完全空转）', async () => {
+  const h = await loadMain({ prefs: { closeToTray: 'quit' }, platform: 'darwin' })
+  await h.invoke('desktop-notify', { title: '任务完成', sessionId: 42, tag: 'mao-inbox-9' })
+  h.win().close()
+  assert.equal(h.win().isDestroyed(), true, '窗口已销毁')
+  h.state.notifications[0].emit('click')
+  await h.tick() // 新窗口等 ready-to-show 才 show
+  assert.equal(h.win().isDestroyed(), false, '点击通知应重建窗口')
+  assert.equal(h.win().isVisible(), true)
+  assert.equal(
+    h.state.sent.filter((s) => s.channel === 'desktop-notification-click').length, 1,
+    '跳转事件仍要回传渲染层'
+  )
+})
+
+test('回归7：before-quit 注销快捷键后清掉跟踪值，重设同一键能真正注册', async () => {
+  const h = await loadMain({})
+  assert.deepEqual(h.state.shortcutRegs.map((x) => x.accel), ['Alt+Shift+M'], '启动注册默认键')
+  // 模拟「退出被中止」：直接派发 before-quit（注销全部快捷键 + 清跟踪值）
+  h.emitApp('before-quit')
+  assert.deepEqual(h.state.shortcutRegs, [], 'before-quit 后快捷键已全部注销')
+  // 重设与启动时同一个键：必须真正 register，不能因同键早退而跳过
+  const r = await h.invoke('desktop-shortcut-set', 'Alt+Shift+M')
+  assert.equal(r.ok, true)
+  assert.deepEqual(
+    h.state.shortcutRegs.map((x) => x.accel), ['Alt+Shift+M'],
+    '退出中止后重设同一键应重新注册生效（修复前命中早退、键保持未注册）'
+  )
+})
+
 test('基线：角标仅 macOS 生效且计数归一化', async () => {
   const mac = await loadMain({ platform: 'darwin' })
   await mac.invoke('desktop-badge', { count: 3 })

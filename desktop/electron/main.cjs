@@ -1406,12 +1406,16 @@ ipcMain.handle('desktop-notify', (event, payload) => {
   try {
     const notification = new Notification({ title, body, tag })
     notification.on('click', () => {
-      // 窗口隐藏到托盘时点击通知先唤起主窗，再把跳转事件交给渲染层
+      // 窗口隐藏到托盘时点击通知先唤起主窗，再把跳转事件交给渲染层。
+      // 窗口已销毁（退出模式 + macOS 关窗后点旧通知）时重建：否则 sendToRenderer
+      // 因 mainWindow 为 null 静默丢弃，用户点了通知却什么都没有。
       const win = mainWindow
       if (win && !win.isDestroyed()) {
         if (win.isMinimized()) win.restore()
         win.show()
         win.focus()
+      } else {
+        createWindow()
       }
       sendToRenderer('desktop-notification-click', { itemId, sessionId })
     })
@@ -1509,6 +1513,9 @@ app.on('activate', () => {
 
 app.on('before-quit', () => {
   quitting = true
+  // 快捷键全部注销后同步清掉跟踪值：否则退出若被中止，之后「重设同一个键」会命中
+  // 同键早退而跳过 register，键保持未注册但 UI/偏好显示已启用
+  currentShortcutAccel = null
   try {
     globalShortcut.unregisterAll()
   } catch (e) {
