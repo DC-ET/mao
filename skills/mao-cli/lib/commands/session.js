@@ -21,8 +21,6 @@ const HELP = `用法:
   mao session update --id <id> [--title] [--summary] [--project-key] [--permission-level] [--model-id]
   mao session delete --id <id>
   mao session mark-read --id <id>
-  mao session pin --id <id>
-  mao session favorite --id <id>
   mao session archive --id <id>
   mao session dashboard
   mao session cloud-projects
@@ -170,18 +168,6 @@ async function handle(ctx) {
     case 'mark-read': {
       const id = requireNumber(flags, 'id', '会话 ID');
       const result = await request({ ...common, method: 'PUT', path: `/sessions/${id}/read` });
-      outputResult(result, globals);
-      return;
-    }
-    case 'pin': {
-      const id = requireNumber(flags, 'id', '会话 ID');
-      const result = await request({ ...common, method: 'PUT', path: `/sessions/${id}/pin` });
-      outputResult(result, globals);
-      return;
-    }
-    case 'favorite': {
-      const id = requireNumber(flags, 'id', '会话 ID');
-      const result = await request({ ...common, method: 'PUT', path: `/sessions/${id}/favorite` });
       outputResult(result, globals);
       return;
     }

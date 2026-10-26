@@ -96,5 +96,7 @@ export function useMessageLocate(options: {
     if (flashTimer != null) window.clearTimeout(flashTimer);
   });
 
-  return { flashId };
+  // flash 一并暴露：轮次目录等面板内定位与全局搜索跳转同构（onLocate → pauseFollow + nextTick 滚动 + 2s 自清），
+  // 勿在调用侧重造定时器
+  return { flashId, flash };
 }

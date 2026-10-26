@@ -99,21 +99,32 @@
           'confirming-delete': confirmingDeleteId === session.id,
           editing: editingSessionId === session.id
         }"
-        @click="selectSession(session)"
+        @click="selecting ? toggleSelect(session) : selectSession(session)"
         @contextmenu.prevent="openContextMenu($event, session, 'standard')"
       >
         <div class="session-item-main">
-          <span
-            v-if="hasPendingApproval(session.id)"
-            class="session-approval-dot"
-            title="有待审批的命令"
-          ></span>
-          <span
-            v-else-if="hasPendingQuestion(session.id)"
-            class="session-question-dot"
-            title="有待回答的问题"
-          ></span>
-          <span v-else class="session-phase-dot" :class="effectivePhaseClass(session)"></span>
+          <input
+            v-if="selecting"
+            type="checkbox"
+            class="session-select-checkbox"
+            :checked="selectedIds.has(String(session.id))"
+            :disabled="!canSelect(session)"
+            :title="canSelect(session) ? '' : '运行中或已归档的任务不能批量归档'"
+            @click.stop="toggleSelect(session)"
+          />
+          <template v-else>
+            <span
+              v-if="hasPendingApproval(session.id)"
+              class="session-approval-dot"
+              title="有待审批的命令"
+            ></span>
+            <span
+              v-else-if="hasPendingQuestion(session.id)"
+              class="session-question-dot"
+              title="有待回答的问题"
+            ></span>
+            <span v-else class="session-phase-dot" :class="effectivePhaseClass(session)"></span>
+          </template>
           <input
             v-if="editingSessionId === session.id"
             v-model="editingTitle"
@@ -129,7 +140,7 @@
           <span v-if="(session.unread || hasUnreadSideTask(session.id)) && String(session.id) !== String(activeSessionId)" class="session-unread-dot"></span>
           <span class="session-elapsed">{{ formatElapsed(session) }}</span>
         </div>
-        <div v-if="showItemActions" class="session-item-actions">
+        <div v-if="showItemActions && !selecting" class="session-item-actions">
           <template v-if="confirmingDeleteId === session.id">
             <button class="action-btn action-confirm" @click="confirmDelete($event, session.id)" title="确认删除" :disabled="isDeleting(session.id)">
               <el-icon :size="13"><Check /></el-icon>
@@ -189,6 +200,8 @@ const readinessStore = useReadinessStore()
 
 /** 空态按根因分流（首次成功体验）：数据未拉到时回退默认文案。 */
 const emptyHint = computed(() => {
+  // 标题过滤生效时的空结果用专属文案，不与「实例未配置」等根因提示混淆
+  if (props.filterActive) return '没有匹配的任务'
   const r = readinessStore.readiness
   if (!readinessStore.loaded || r == null) return '暂无任务'
   if (r.modelsConfigured === 0) return '实例尚未配置模型，请联系管理员'
@@ -196,7 +209,7 @@ const emptyHint = computed(() => {
   return '暂无任务'
 })
 
-defineProps<{
+const props = defineProps<{
   loading: boolean
   groupedSessions: { key: string; label: string; sessions: Session[] }[]
   dragOverIndex: number | null
@@ -209,6 +222,13 @@ defineProps<{
   editingSessionId: string | null
   editingTitle: string
   DEFAULT_VISIBLE: number
+  /** 标题过滤是否生效（空结果文案分流） */
+  filterActive: boolean
+  /** 多选选择模式：行首显示复选框、行点击 = 切换勾选 */
+  selecting: boolean
+  selectedIds: ReadonlySet<string>
+  toggleSelect: (session: Session) => void
+  canSelect: (session: Session) => boolean
   toggleGroup: (key: string) => void
   openGroupContextMenu: (e: MouseEvent, key: string) => void
   setGroupRenameInput: (key: string, el: unknown) => void

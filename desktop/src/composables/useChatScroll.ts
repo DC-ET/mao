@@ -303,6 +303,27 @@ export function useChatScroll(container: Ref<HTMLElement | undefined>, options: 
     })
   }
 
+  /**
+   * 显式「回到顶部」：与 scrollToMessage 同构的 programmatic 记账——handleScroll 对
+   * programmatic 早退，直接写 DOM 会绕开该保护，误触上滑分页或误判上滑。
+   * 回顶同属「用户要看那一屏」：停止跟随，否则流式内容增长会立刻把视野拽回底部。
+   */
+  function scrollToTop() {
+    stopFollowing()
+    const current = generation
+    void nextTick(() => {
+      if (disposed || current !== generation) return
+      const el = container.value
+      if (!el) return
+      programmatic = true
+      el.scrollTop = 0
+      syncBaseline(el)
+      requestAnimationFrame(() => {
+        if (current === generation) programmatic = false
+      })
+    })
+  }
+
   // --- 尺寸观察：容器（clientHeight）+ 内容直接子元素（内容高度）---
   function observeTargets() {
     if (!resizeObserver) return
@@ -349,7 +370,7 @@ export function useChatScroll(container: Ref<HTMLElement | undefined>, options: 
     cancelScheduledFollow()
   }
 
-  return { userScrolledUp, scrollToBottom, resumeFollow, pauseFollow: stopFollowing, scrollToMessage, beginRestore, completeRestore,
+  return { userScrolledUp, scrollToBottom, resumeFollow, pauseFollow: stopFollowing, scrollToMessage, scrollToTop, beginRestore, completeRestore,
     handleMarkdownRendered, handleWheel, handleTouchStart, handleTouchMove, handlePointerDown, handleKeyDown, handleScroll,
     cancelRestore, resetScrollBaseline, scheduleFollow, dispose }
 }

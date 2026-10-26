@@ -10,14 +10,13 @@ import type { SessionCompactionService } from './session-compaction.service.js';
 import type { SessionCompactionEventService } from './session-compaction-event.service.js';
 
 /**
- * BUGCHECK（审查新增，非产品代码）：分组展开页 listSessionsByGroup 的 ORDER BY
- * （session.service.ts:302-304）把活跃相位写成 3 个（'RUNNING','RESUMING',
- * 'WAITING_APPROVAL'），漏掉 CANCELLING；而侧边栏预览 compareSessions 用的
- * isActivePhase（session-group-key.ts:233-236，注释明确「组预览排序漏列会把取消中的
- * 会话当空闲排到后面」）和同文件 dashboard SQL（session.service.ts:1519，注释
- * 「运行中口径与 isActivePhase 一致，含 CANCELLING」）都是 4 相位口径。
- * 结果：取消中的会话在预览里排活跃档，展开后掉到空闲档，两视图排序互相矛盾。
- * 断言按「正确行为」书写，当前源码下失败即证明 BUG 真实存在。
+ * 排序护栏（2026-10-26 会话列表导航方案决策 2 改写）：
+ * 置顶（pin）整体移除后，三处排序口径统一为「活跃相位 > 更新时间 > id」。
+ * 本 spec 守护该口径：
+ * 1. 分组展开页 listSessionsByGroup 的 ORDER BY 活跃相位含 CANCELLING 四相位
+ *    （与 isActivePhase / 侧边栏组预览 / dashboard 同口径，漏列会让取消中的会话
+ *    在预览里排活跃档、展开后掉到空闲档，两视图排序互相矛盾）；
+ * 2. 预览比较器 compareSessions 按「活跃 > 时间」排序，置顶键已不存在。
  */
 function makeService() {
   const txDb = {
@@ -83,7 +82,7 @@ function makeService() {
   return { service, sessionRepo };
 }
 
-describe('BUGCHECK group page ORDER BY active phases', () => {
+describe('group page ORDER BY active phases', () => {
   it('sorts CANCELLING as an active phase, matching the sidebar preview', async () => {
     const { service, sessionRepo } = makeService();
     await service.listSessionsByGroup(7, CLOUD_TEMP, null, null, 0, 10);
@@ -95,9 +94,22 @@ describe('BUGCHECK group page ORDER BY active phases', () => {
     expect(sqlPhases).toEqual(activePhases);
   });
 
+  it('ORDER BY has no pin key after pin removal (active > updated_at only)', async () => {
+    const { service, sessionRepo } = makeService();
+    await service.listSessionsByGroup(7, CLOUD_TEMP, null, null, 0, 10);
+    const orderSql = vi.mocked(sessionRepo.list).mock.calls[0][2] as string;
+    expect(orderSql).not.toContain('is_pinned');
+  });
+
   it('preview comparator really puts a newer CANCELLING above an older RUNNING (control group)', () => {
-    const running = { id: 1, phase: 'RUNNING', updatedAt: '2026-10-16 10:00:00', isPinned: 0, status: 'ACTIVE' };
-    const cancelling = { id: 2, phase: 'CANCELLING', updatedAt: '2026-10-16 11:00:00', isPinned: 0, status: 'ACTIVE' };
+    const running = { id: 1, phase: 'RUNNING', updatedAt: '2026-10-16 10:00:00', status: 'ACTIVE' };
+    const cancelling = { id: 2, phase: 'CANCELLING', updatedAt: '2026-10-16 11:00:00', status: 'ACTIVE' };
     expect(compareSessions(cancelling as unknown as Session, running as unknown as Session)).toBeLessThan(0);
+  });
+
+  it('preview comparator falls back to updated_at desc among non-active phases', () => {
+    const olderIdle = { id: 1, phase: 'IDLE', updatedAt: '2026-10-16 10:00:00', status: 'ACTIVE' };
+    const newerIdle = { id: 2, phase: 'COMPLETED', updatedAt: '2026-10-16 11:00:00', status: 'ACTIVE' };
+    expect(compareSessions(newerIdle as unknown as Session, olderIdle as unknown as Session)).toBeLessThan(0);
   });
 });

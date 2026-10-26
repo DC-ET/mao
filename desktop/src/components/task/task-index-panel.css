@@ -71,6 +71,135 @@
   padding: 0 8px 8px;
 }
 
+/* --- 标题过滤输入行 --- */
+.task-index-panel .panel-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 8px 8px;
+  padding: 4px 8px;
+  border: 1px solid var(--aw-divider-soft);
+  border-radius: var(--aw-radius-xs);
+  background: var(--aw-surface-pearl);
+  flex-shrink: 0;
+}
+
+.task-index-panel .panel-filter-icon {
+  color: var(--aw-ink-muted-48);
+  flex-shrink: 0;
+}
+
+.task-index-panel .panel-filter-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  outline: none;
+  font-size: var(--aw-text-caption);
+  color: var(--aw-ink);
+}
+
+.task-index-panel .panel-filter-clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--aw-ink-muted-48);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.task-index-panel .panel-filter-clear:hover {
+  background: rgba(0, 0, 0, 0.08);
+  color: var(--aw-ink);
+}
+
+/* --- 多选批量归档 --- */
+.task-index-panel .session-select-checkbox {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  accent-color: var(--aw-primary);
+  cursor: pointer;
+}
+
+.task-index-panel .session-select-checkbox:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.task-index-panel .select-action-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--aw-divider-soft);
+  background: var(--aw-surface-pearl);
+  flex-shrink: 0;
+}
+
+.task-index-panel .select-count {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--aw-text-caption);
+  color: var(--aw-ink-muted-48);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-index-panel .select-archive-btn,
+.task-index-panel .select-cancel-btn {
+  border: 1px solid var(--aw-divider-soft);
+  border-radius: var(--aw-radius-xs);
+  height: var(--aw-btn-height);
+  padding: var(--aw-btn-padding);
+  font-size: var(--aw-text-fine);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.task-index-panel .select-archive-btn {
+  background: var(--aw-primary);
+  border-color: var(--aw-primary);
+  color: #fff;
+}
+
+.task-index-panel .select-archive-btn:hover:not(:disabled) {
+  background: var(--aw-primary-focus);
+}
+
+.task-index-panel .select-archive-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.task-index-panel .select-cancel-btn {
+  background: transparent;
+  color: var(--aw-ink-muted-48);
+}
+
+.task-index-panel .select-cancel-btn:hover:not(:disabled) {
+  color: var(--aw-ink);
+}
+
+.task-index-panel .select-cancel-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* 过滤 / 多选入口的激活态与模式切换同口径 */
+.task-index-panel .filter-toggle-btn.active,
+.task-index-panel .filter-toggle-btn.active:hover,
+.task-index-panel .select-toggle-btn.active,
+.task-index-panel .select-toggle-btn.active:hover {
+  color: var(--aw-primary);
+}
+
 .task-index-panel .panel-loading,.task-index-panel .panel-empty {
   display: flex;
   align-items: center;
@@ -632,6 +761,21 @@
 /* 选中（聚焦模式）时图标高亮为选中蓝；hover 保持同色避免闪烁 */
 .task-index-panel .mode-toggle-btn.active,.task-index-panel .mode-toggle-btn.active:hover {
   color: var(--aw-primary);
+}
+
+/* 窄面板（<200px，可拖至 120px；移动端默认 140px）：过滤 / 多选两个新入口加入后
+   header 已有 5 个图标按钮，等比缩小一档并隐藏装饰性标题，保证全部可见不裁切 */
+.task-index-panel.actions-hidden .panel-title {
+  display: none;
+}
+
+.task-index-panel.actions-hidden .header-actions {
+  gap: 1px;
+}
+
+.task-index-panel.actions-hidden .header-actions .refresh-btn {
+  width: 20px;
+  height: 20px;
 }
 
 /* --- 聚焦模式 --- */

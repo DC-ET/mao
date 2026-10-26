@@ -143,7 +143,7 @@ export const DEFAULT_GROUP_PAGE_SIZE = 20
 /**
  * 最后查看的会话 ID 持久化 key。
  * activeSessionId 仅存内存，刷新 / 冷启动（安卓 WebView 被回收后重开）后丢失，
- * 而侧栏排序（活跃任务优先 → 置顶 → updated_at）并不等于“最后查看”，
+ * 而侧栏排序（活跃任务优先 → updated_at）并不等于“最后查看”，
  * 因此用 localStorage 记录最后活跃会话，恢复时优先还原，失效再回退列表首项。
  */
 export const LAST_SESSION_KEY = 'mao_last_session_id'

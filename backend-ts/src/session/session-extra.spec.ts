@@ -96,15 +96,13 @@ describe('SessionService extra', () => {
   it('createSessionLocalKeepsWorkspaceAndToggles', async () => {
     const { service, sessionRepo } = makeService();
     vi.mocked(sessionRepo.findById).mockResolvedValue({
-      id: 11, userId: 7, isPinned: 0, isFavorite: 0, status: 'ACTIVE', phase: 'IDLE', lastPromptTokens: 3, contextAnchorMsgId: 8,
+      id: 11, userId: 7, status: 'ACTIVE', phase: 'IDLE', lastPromptTokens: 3, contextAnchorMsgId: 8,
     });
     const local = await service.createSession(7, 9, 't', 'LOCAL', '/Users/me/proj');
     expect(local.workspace).toBe('/Users/me/proj');
     expect(SessionService.deriveProjectKey('/Users/me/proj')).toBe('proj');
     expect(SessionService.deriveProjectKey(null)).toBeNull();
 
-    await service.togglePin(11);
-    await service.toggleFavorite(11);
     await service.archiveSession(11);
     await service.updateTitle(11, 'n');
     await service.updateSummary(11, 's');
@@ -222,8 +220,8 @@ describe('SessionService extra', () => {
   it('lists groups search messages rounds and cleanup', async () => {
     const { service, sessionRepo, messageRepo, fileChangeRepo, agentLookup } = makeService();
     sessionRepo.list.mockResolvedValue([
-      { id: 1, userId: 7, title: 'a', executionMode: 'CLOUD', workspace: null, sessionType: 'NORMAL', isPinned: 0, updatedAt: '2026-01-01 00:00:00' },
-      { id: 2, userId: 7, title: 'b', executionMode: 'LOCAL', workspace: '/tmp/p', sessionType: 'NORMAL', isPinned: 1, updatedAt: '2026-01-02 00:00:00' },
+      { id: 1, userId: 7, title: 'a', executionMode: 'CLOUD', workspace: null, sessionType: 'NORMAL', updatedAt: '2026-01-01 00:00:00' },
+      { id: 2, userId: 7, title: 'b', executionMode: 'LOCAL', workspace: '/tmp/p', sessionType: 'NORMAL', updatedAt: '2026-01-02 00:00:00' },
     ]);
     const groups = await service.listSessionGroups(7, 'a', 'ACTIVE', 1);
     expect(groups.length).toBeGreaterThan(0);

@@ -17,7 +17,13 @@
         <div class="context-menu-item" @click="menuShare">分享…</div>
         <div class="context-menu-item" @click="menuExportJsonl">导出 JSONL</div>
         <div class="context-menu-item" @click="menuEditTitle">编辑标题</div>
-        <div class="context-menu-item" @click="menuArchive">归档</div>
+        <!-- 多选模式下禁用单条归档入口：与底部批量操作条互斥，防两套归档语义混用（C13/C14） -->
+        <div
+          class="context-menu-item"
+          :class="{ disabled: selectMode }"
+          :title="selectMode ? '多选模式下请使用底部批量归档' : ''"
+          @click="!selectMode && menuArchive()"
+        >归档</div>
         <div class="context-menu-item danger" @click="menuDelete">删除</div>
       </template>
     </div>
@@ -52,6 +58,8 @@ defineProps<{
     y: number
     key: string
   }
+  /** 多选选择模式：单条「归档」入口禁用，避免与批量操作条混用 */
+  selectMode?: boolean
   menuArchive: () => void
   menuUnarchive: () => void
   menuEditTitle: () => void
@@ -98,6 +106,17 @@ defineProps<{
 
 .context-menu-item.danger:hover {
   background: #fee2e2;
+}
+
+/* 多选模式下禁用的菜单项：不可点、无 hover 高亮 */
+.context-menu-item.disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.context-menu-item.disabled:hover {
+  background: transparent;
+  color: var(--aw-ink, #1a1a1a);
 }
 
 [data-theme="dark"] .task-context-menu {

@@ -43,8 +43,6 @@ export interface SessionVO {
   agentName?: string;
   title?: string | null;
   status?: string | null;
-  isPinned?: boolean;
-  isFavorite?: boolean;
   executionMode?: string | null;
   workspace?: string | null;
   isGit?: boolean | null;
