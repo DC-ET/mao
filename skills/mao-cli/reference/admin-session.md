@@ -26,16 +26,18 @@
 | `--agent-id` | 否 | 整数 | — | Agent ID | `agentId` |
 | `--execution-mode` | 否 | 字符串 | — | 执行模式，如 `CLOUD`/`LOCAL` | `executionMode` |
 | `--phase` | 否 | 字符串 | — | 阶段，如 `IDLE`/`RUNNING` 等 | `phase` |
-| `--keyword` | 否 | 字符串 | — | 标题/摘要/消息内容关键词 | `keyword` |
+| `--keyword` | 否 | 字符串 | — | 标题/摘要/消息内容关键词（消息范围见 `--search-scope`） | `keyword` |
+| `--search-scope` | 否 | 字符串 | `conversation` | `conversation` 只搜对话双方消息；`all` 连工具输出/系统消息一起搜 | `messageScope` |
 | `--status` | 否 | 字符串 | — | 会话状态 | `status` |
 
 `GET /admin/sessions`
 
-关键词会同时匹配标题、摘要与消息正文（任意角色）。命消息时记录带 `matchSnippet`（命中片段），便于拿聊天记录反查会话。记录带 `sessionType`（`NORMAL`/`SIDE_TASK`/`SUBAGENT`）与 `parentSessionId`：管理后台列表「类型」列三种类型都着标签（边路任务橙色、子代理与主会话蓝色），悬停显示来源说明；`parentSessionId` 非空时指向父会话。
+关键词会同时匹配标题、摘要与消息正文。消息正文默认只搜对话双方（`USER`/`ASSISTANT`），命中片段 `matchSnippet` 同口径——工具输出、读到的文件内容、`ls` 文件名不再把会话顶上来；要反查工具输出里的词时加 `--search-scope all`（等同旧口径，含 `TOOL`/`SYSTEM`）。记录带 `sessionType`（`NORMAL`/`SIDE_TASK`/`SUBAGENT`）与 `parentSessionId`：管理后台列表「类型」列三种类型都着标签（边路任务橙色、子代理与主会话蓝色），悬停显示来源说明；`parentSessionId` 非空时指向父会话。
 
 ```bash
 mao admin-session list --user-id 1 --execution-mode LOCAL --page 1 --size 20
 mao admin-session list --keyword "登录页面报 500"
+mao admin-session list --keyword "P单" --search-scope all
 ```
 
 ## 命令：admin-session get

@@ -12,7 +12,24 @@
         <FilterPanel>
           <template #always>
             <el-form-item label="关键词">
-              <el-input v-model="filters.keyword" placeholder="标题/摘要/消息内容" clearable style="width: 200px" @keyup.enter="handleSearch" @clear="handleSearch" />
+              <el-input
+                v-model="filters.keyword"
+                :placeholder="filters.messageScope === 'ALL' ? '标题/摘要/消息内容' : '标题/摘要/对话消息'"
+                clearable
+                style="width: 200px"
+                @keyup.enter="handleSearch"
+                @clear="handleSearch"
+              />
+            </el-form-item>
+            <el-form-item label="搜索范围">
+              <el-select v-model="filters.messageScope" style="width: 180px">
+                <el-option
+                  v-for="opt in SEARCH_SCOPE_OPTIONS"
+                  :key="opt.value"
+                  :label="opt.label"
+                  :value="opt.value"
+                />
+              </el-select>
             </el-form-item>
             <el-form-item>
               <el-button type="primary" @click="handleSearch">查询</el-button>
@@ -212,6 +229,7 @@ import FilterPanel from '../../components/FilterPanel.vue'
 import {
   EXECUTION_MODE_OPTIONS,
   PHASE_OPTIONS,
+  SEARCH_SCOPE_OPTIONS,
   SESSION_STATUS_OPTIONS,
   executionModeLabel,
   phaseLabel,
@@ -235,7 +253,8 @@ const filters = reactive({
   executionMode: '' as string,
   phase: '' as string,
   status: '' as string,
-  keyword: '' as string
+  keyword: '' as string,
+  messageScope: 'CONVERSATION' as string
 })
 
 const userOptions = ref<Array<{ id: number; username: string; displayName: string }>>([])
@@ -249,6 +268,8 @@ function applyRouteQuery() {
   filters.phase = typeof q.phase === 'string' ? q.phase : ''
   filters.status = typeof q.status === 'string' ? q.status : ''
   filters.keyword = typeof q.keyword === 'string' ? q.keyword : ''
+  // 非法值回落到默认口径，避免地址栏拼错就查不到东西
+  filters.messageScope = q.messageScope === 'ALL' ? 'ALL' : 'CONVERSATION'
 }
 
 /** 上次已经写进筛选表单的 query。地址没变时只刷新列表，不冲掉表单里尚未写入 URL 的条件。 */
@@ -299,6 +320,8 @@ async function fetchSessions() {
     if (filters.phase) params.phase = filters.phase
     if (filters.status) params.status = filters.status
     if (filters.keyword) params.keyword = filters.keyword
+    // 默认口径由后端决定，只在放宽到全部消息时传参
+    if (filters.messageScope === 'ALL') params.messageScope = 'ALL'
 
     const { data } = await api.get('/admin/sessions', { params })
     if (seq !== fetchSessionsSeq) return
@@ -332,6 +355,7 @@ function handleReset() {
   filters.phase = ''
   filters.status = ''
   filters.keyword = ''
+  filters.messageScope = 'CONVERSATION'
   currentPage.value = 1
   fetchSessions()
 }

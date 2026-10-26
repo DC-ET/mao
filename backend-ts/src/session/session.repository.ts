@@ -2,7 +2,8 @@ import type { Db } from '../db/db.js';
 import { fulltextStopwordTableName, notDeleted } from '../db/db.js';
 import { toSnakeRow } from '../common/case.js';
 import { nowSql } from '../common/datetime.js';
-import { escapeLike } from './message-search.js';
+import { escapeLike, messageRoleClause } from './message-search.js';
+import type { MessageSearchScope } from './message-search.js';
 import type { FileChange, Message, Session, SessionGroupPage } from './types.js';
 
 export const SESSION_SOURCE_VALUES = ['web', 'embed'] as const;
@@ -943,10 +944,11 @@ export class MessageRepository {
     );
   }
 
-  /** 管理端关键词命中片段：每会话取第一条命中消息（任意角色）。 */
+  /** 管理端关键词命中片段：每会话取第一条命中消息（默认只认对话双方，ALL 含工具输出）。 */
   selectFirstMatchingMessages(
     sessionIds: number[],
     escapedKeyword: string,
+    messageScope: MessageSearchScope = 'CONVERSATION',
   ): Promise<Array<{ sessionId: number; content: string | null }>> {
     if (sessionIds.length === 0) {
       return Promise.resolve([]);
@@ -958,7 +960,7 @@ export class MessageRepository {
          SELECT m.session_id AS sessionId, m.content AS content,
                 ROW_NUMBER() OVER (PARTITION BY m.session_id ORDER BY m.id ASC) AS rn
          FROM message m
-         WHERE m.deleted = 0
+         WHERE m.deleted = 0${messageRoleClause(messageScope)}
            AND m.session_id IN (${placeholders})
            AND m.content LIKE CONCAT('%', ?, '%') ESCAPE '\\\\'
        ) t

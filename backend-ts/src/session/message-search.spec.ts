@@ -3,6 +3,7 @@ import {
   buildBooleanQuery,
   buildSnippet,
   isFulltextDegradeError,
+  normalizeMessageScope,
   normalizeSearchListParams,
   parseSearchTerms,
   prepareMessageSearch,
@@ -47,5 +48,14 @@ describe('message search query', () => {
     expect(snippet!.startsWith('…')).toBe(true);
     expect(snippet!.length).toBeLessThanOrEqual(200);
     expect(buildSnippet('[{"type":"image_url"}]', 'image_url', ['image_url'])).toContain('image_url');
+  });
+
+  it('normalizes message scope and rejects unknown values', () => {
+    expect(normalizeMessageScope(undefined)).toBe('CONVERSATION');
+    expect(normalizeMessageScope(' ')).toBe('CONVERSATION');
+    expect(normalizeMessageScope('all')).toBe('ALL');
+    expect(normalizeMessageScope(' Conversation ')).toBe('CONVERSATION');
+    // 拼错时直接报错，不静默放宽到「全部消息」把工具输出全捞回来
+    expect(() => normalizeMessageScope('TOOL')).toThrow();
   });
 });

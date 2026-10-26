@@ -82,6 +82,12 @@ export const EXECUTION_MODE_OPTIONS = [
   { label: '本地', value: 'LOCAL' }
 ]
 
+/** 管理端会话检索范围：默认只看对话双方，工具输出量大时按需放宽。 */
+export const SEARCH_SCOPE_OPTIONS = [
+  { label: '仅对话消息', value: 'CONVERSATION' },
+  { label: '全部消息（含工具输出）', value: 'ALL' }
+]
+
 export const PHASE_OPTIONS = [
   { label: '空闲', value: 'IDLE' },
   { label: '运行中', value: 'RUNNING' },

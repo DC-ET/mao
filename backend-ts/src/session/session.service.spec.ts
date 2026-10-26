@@ -754,6 +754,8 @@ describe('SessionService embed source', () => {
     // ngram(token_size=2) 索引不到单字，走 LIKE 才不漏召
     expect(String(call[2])).toContain('m.content LIKE');
     expect(String(call[2])).not.toContain('AGAINST');
+    // 降级路径同样只认对话双方，避免单字搜索被工具输出刷屏
+    expect(String(call[2])).toContain("m.role IN ('USER', 'ASSISTANT')");
     expect(call[3]).toEqual(['%的%', '%的%', '%的%', 'ACTIVE']);
   });
 
@@ -779,6 +781,40 @@ describe('SessionService embed source', () => {
     await service.listSessionsForAdmin(1, 10, null, null, null, null, '100%', null);
     const call = vi.mocked(sessionRepo.selectPage).mock.calls[0];
     expect(call[3]).toEqual(['%100\\%%', '%100\\%%', '"100%"', 'ACTIVE']);
+  });
+
+  it('admin list defaults to conversation-only message match', async () => {
+    const { service, sessionRepo, messageRepo } = makeService();
+    vi.mocked(sessionRepo.selectPage).mockResolvedValue({
+      records: [session(31, '排障会话', 'NORMAL', 9, '2026-08-07 10:00:00')],
+      total: 1,
+    });
+    await service.listSessionsForAdmin(1, 10, null, null, null, null, 'P单', null);
+    const call = vi.mocked(sessionRepo.selectPage).mock.calls[0];
+    expect(String(call[2])).toContain("m.role IN ('USER', 'ASSISTANT')");
+    // 片段查询与召回同口径，否则会出现「命中片段取自工具输出」
+    expect(messageRepo.selectFirstMatchingMessages).toHaveBeenCalledWith([31], 'P单', 'CONVERSATION');
+  });
+
+  it('admin list message scope ALL keeps tool output searchable', async () => {
+    const { service, sessionRepo, messageRepo } = makeService();
+    vi.mocked(sessionRepo.selectPage).mockResolvedValue({
+      records: [session(31, '排障会话', 'NORMAL', 9, '2026-08-07 10:00:00')],
+      total: 1,
+    });
+    await service.listSessionsForAdmin(1, 10, null, null, null, null, 'P单', null, 'all');
+    const call = vi.mocked(sessionRepo.selectPage).mock.calls[0];
+    expect(String(call[2])).not.toContain('m.role IN');
+    expect(String(call[2])).toContain('MATCH(m.content) AGAINST');
+    expect(messageRepo.selectFirstMatchingMessages).toHaveBeenCalledWith([31], 'P单', 'ALL');
+  });
+
+  it('admin list rejects unknown message scope', async () => {
+    const { service, sessionRepo } = makeService();
+    await expect(
+      service.listSessionsForAdmin(1, 10, null, null, null, null, 'P单', null, 'TOOL'),
+    ).rejects.toThrow('搜索范围不合法');
+    expect(sessionRepo.selectPage).not.toHaveBeenCalled();
   });
 });
 
