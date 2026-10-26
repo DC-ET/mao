@@ -1389,3 +1389,135 @@ describe('session store 批量归档（archiveSessions）', () => {
     expect(store.standardSessionIds).toEqual(['3', '4', '5'])
   })
 })
+
+describe('session store「展开更多」loadedCount 复核护栏的精确性', () => {
+  const KEY2 = 'LOCAL:/tmp/p'
+
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    mockGet.mockReset()
+    mockPut.mockReset()
+    mockDelete.mockReset()
+    mockPost.mockReset()
+  })
+
+  /** 多分组预览响应；LOCAL 组会话须带 workspace，否则 cloudGroupKey 推导不出该组键 */
+  function previewGroups(groups: Array<{ key: string; ids: string[]; total: number; hasMore: boolean; local?: boolean }>) {
+    return {
+      data: {
+        groups: groups.map(g => ({
+          key: g.key,
+          label: g.key,
+          total: g.total,
+          hasMore: g.hasMore,
+          sessions: g.ids.map(id => makeSession(id, g.local ? { executionMode: 'LOCAL', workspace: '/tmp/p' } : {})),
+        })),
+      },
+    }
+  }
+
+  /** 发起一个在飞的「展开更多」并返回释放句柄 */
+  function startLoadMore(groupKey: string) {
+    let release: (value: any) => void = () => {}
+    mockGet.mockImplementationOnce(() => new Promise((resolve) => { release = resolve }) as any)
+    const promise = useSessionStore().loadMoreInGroup(groupKey)
+    return { release, promise }
+  }
+
+  it('在飞期间删除已加载窗口内的一条：loadedCount 变过 → 旧 offset 的页整条丢弃，不跳条', async () => {
+    const store = useSessionStore()
+    const all = Array.from({ length: 60 }, (_, i) => String(i + 1))
+
+    mockGet.mockResolvedValueOnce(previewGroups([{ key: 'CLOUD:临时工作区', ids: all.slice(0, 20), total: 60, hasMore: true }]))
+    await store.fetchSessions()
+    expect(store.getGroupMeta('CLOUD:临时工作区')?.loadedCount).toBe(20)
+
+    const { release, promise } = startLoadMore('CLOUD:临时工作区')
+    expect((mockGet.mock.calls[1][1] as any)?.params?.offset).toBe(20)
+
+    // 删除（非归档）同样走 bumpGroupMetaForSession 扣 loadedCount：20 → 19
+    mockDelete.mockResolvedValueOnce({ data: {} })
+    await store.deleteSession('5')
+    expect(store.getGroupMeta('CLOUD:临时工作区')?.loadedCount).toBe(19)
+
+    release({ data: { items: all.filter(id => id !== '5').slice(20, 40).map(id => makeSession(id)), total: 59, hasMore: false } })
+    await expect(promise).resolves.toBe(false)
+
+    expect(store.standardSessionIds).toEqual(all.slice(0, 20).filter(id => id !== '5'))
+    expect(store.getGroupMeta('CLOUD:临时工作区')?.loadedCount).toBe(19)
+    expect(store.getGroupMeta('CLOUD:临时工作区')?.hasMore).toBe(true)
+  })
+
+  it('在飞期间另一个分组的元数据变化：本组 loadedCount 未变 → 分页正常并入（不误丢弃）', async () => {
+    const store = useSessionStore()
+    const all = Array.from({ length: 60 }, (_, i) => String(i + 1))
+    // 另一分组用 200+ 段，便于按 id 段过滤断言（标准投影是跨组扁平数组）
+    const other = Array.from({ length: 30 }, (_, i) => String(200 + i))
+
+    mockGet.mockResolvedValueOnce(previewGroups([
+      { key: 'CLOUD:临时工作区', ids: all.slice(0, 20), total: 60, hasMore: true },
+      { key: KEY2, ids: other.slice(0, 5), total: 30, hasMore: true, local: true },
+    ]))
+    await store.fetchSessions()
+    expect(store.getGroupMeta('CLOUD:临时工作区')?.loadedCount).toBe(20)
+
+    const { release, promise } = startLoadMore('CLOUD:临时工作区')
+
+    // 归档另一分组的一条：只动 KEY2 的 total/loadedCount
+    mockPut.mockResolvedValueOnce({ data: {} })
+    await store.archiveSession('201')
+    expect(store.getGroupMeta(KEY2)?.loadedCount).toBe(4)
+    expect(store.getGroupMeta('CLOUD:临时工作区')?.loadedCount).toBe(20)
+
+    release({ data: { items: all.slice(20, 40).map(id => makeSession(id)), total: 60, hasMore: true } })
+    await expect(promise).resolves.toBe(true)
+
+    // 本组 40 条全部在场（另一分组与会话不受影响）
+    const inThisGroup = store.standardSessionIds.filter(id => Number(id) < 100)
+    expect(inThisGroup).toEqual(all.slice(0, 40))
+    expect(store.getGroupMeta('CLOUD:临时工作区')?.loadedCount).toBe(40)
+  })
+
+  it('在飞期间同组新建会话（loadedCount 不变）：分页正常并入且不漏条', async () => {
+    const store = useSessionStore()
+    const all = Array.from({ length: 60 }, (_, i) => String(i + 1))
+
+    mockGet.mockResolvedValueOnce(previewGroups([{ key: 'CLOUD:临时工作区', ids: all.slice(0, 20), total: 60, hasMore: true }]))
+    await store.fetchSessions()
+
+    const { release, promise } = startLoadMore('CLOUD:临时工作区')
+
+    // 新建会话插入组内头部：total +1，loadedCount 不变（新建不计入已加载窗口）
+    mockPost.mockResolvedValueOnce({ data: makeSession('N') })
+    await store.createSession('1', 'CLOUD')
+    expect(store.getGroupMeta('CLOUD:临时工作区')?.loadedCount).toBe(20)
+    expect(store.standardSessionIds[0]).toBe('N')
+
+    // 服务端该组此刻为 [N,1..60]：offset=20 取到第 20..39 条（= 原 20..39）
+    release({ data: { items: all.slice(19, 39).map(id => makeSession(id)), total: 61, hasMore: true } })
+    await expect(promise).resolves.toBe(true)
+
+    // 并入后投影 = 服务端前 40 条（N + 1..39），1..39 一条不少
+    expect(store.standardSessionIds).toEqual(['N', ...all.slice(0, 39)])
+    expect(store.getGroupMeta('CLOUD:临时工作区')?.loadedCount).toBe(40)
+  })
+
+  it('在飞期间 reset()（登出/换号）：该组元数据被清空 → 分页丢弃，不往空列表注入旧账号会话', async () => {
+    const store = useSessionStore()
+    const all = Array.from({ length: 60 }, (_, i) => String(i + 1))
+
+    mockGet.mockResolvedValueOnce(previewGroups([{ key: 'CLOUD:临时工作区', ids: all.slice(0, 20), total: 60, hasMore: true }]))
+    await store.fetchSessions()
+
+    const { release, promise } = startLoadMore('CLOUD:临时工作区')
+
+    store.reset()
+    expect(store.getGroupMeta('CLOUD:临时工作区')).toBeUndefined()
+
+    release({ data: { items: all.slice(20, 40).map(id => makeSession(id)), total: 60, hasMore: false } })
+    await expect(promise).resolves.toBe(false)
+
+    expect(store.standardSessionIds).toEqual([])
+    expect(store.getGroupMeta('CLOUD:临时工作区')).toBeUndefined()
+  })
+})
