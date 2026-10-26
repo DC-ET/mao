@@ -116,6 +116,18 @@ describe('MessageRepository', () => {
     expect(db.query.mock.calls.at(-1)?.[1]).toEqual([1, '登录', '2026-10-01 00:00:00', '2026-10-02 00:00:00']);
   });
 
+  it('selectFirstMatchingMessages limits roles unless scope is ALL', async () => {
+    const db = mockDb(null, []);
+    const repo = new MessageRepository(db as never);
+    await repo.selectFirstMatchingMessages([1], 'k');
+    const defaultSql = String(db.query.mock.calls.at(-1)?.[0]);
+    expect(defaultSql).toContain("m.role IN ('USER', 'ASSISTANT')");
+    // 片段口径必须跟召回一致，否则 ALL 模式下片段会取自工具输出
+    await repo.selectFirstMatchingMessages([1], 'k', 'ALL');
+    const allSql = String(db.query.mock.calls.at(-1)?.[0]);
+    expect(allSql).not.toContain('m.role IN');
+  });
+
   it('selectFirstUserStamp takes the earliest non-deleted USER stamp', async () => {
     const db = mockDb({ id: 5, createdAt: '2026-10-12 23:50:11' }, [{ id: 5 }]);
     const repo = new MessageRepository(db as never);

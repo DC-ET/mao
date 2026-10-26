@@ -42,6 +42,26 @@ export function escapeLike(keyword: string): string {
   return keyword.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
 }
 
+/** 会话检索可命中的消息角色：CONVERSATION 只含对话双方，不受工具输出刷屏影响。 */
+export const CONVERSATION_MESSAGE_ROLES = ['USER', 'ASSISTANT'] as const;
+
+export type MessageSearchScope = 'CONVERSATION' | 'ALL';
+
+/** 空值按 CONVERSATION（默认口径）；非法值直接报错，避免静默放宽到全部消息。 */
+export function normalizeMessageScope(raw: string | null | undefined): MessageSearchScope {
+  const value = raw?.trim().toUpperCase();
+  if (value == null || value === '') return 'CONVERSATION';
+  if (value === 'CONVERSATION' || value === 'ALL') return value;
+  throw new BusinessException(ErrorCode.PARAM_INVALID, '搜索范围不合法');
+}
+
+/** 角色过滤 SQL 片段（含前导空格）：ALL 返回空串，即不限制角色。 */
+export function messageRoleClause(scope: MessageSearchScope, alias = 'm'): string {
+  if (scope === 'ALL') return '';
+  const roles = CONVERSATION_MESSAGE_ROLES.map((role) => `'${role}'`).join(', ');
+  return ` AND ${alias}.role IN (${roles})`;
+}
+
 export function isSearchFulltextEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   const raw = env.SEARCH_FULLTEXT_ENABLED;
   if (raw == null || raw === '') return true;

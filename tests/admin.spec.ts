@@ -291,7 +291,10 @@ test.describe('Session Management', () => {
   })
 
   test('should have filter form elements', async ({ page }) => {
-    await expect(page.locator('input[placeholder="标题/摘要/消息内容"]')).toBeVisible()
+    await expect(page.locator('input[placeholder="标题/摘要/对话消息"]')).toBeVisible()
+    // 默认只搜对话双方消息，工具输出不再刷屏；需要反查工具输出时切「全部消息」
+    await expect(page.locator('.search-form')).toContainText('搜索范围')
+    await expect(page.locator('.search-form')).toContainText('仅对话消息')
     await expect(page.locator('button:has-text("查询")')).toBeVisible()
     await expect(page.getByRole('button', { name: '重置', exact: true })).toBeVisible()
   })

@@ -12,8 +12,11 @@ import {
   indexOfIgnoreCase,
   isFulltextDegradeError,
   isSearchFulltextEnabled,
+  messageRoleClause,
+  normalizeMessageScope,
   normalizeSearchListParams,
   prepareMessageSearch,
+  type MessageSearchScope,
   type PreparedSearch,
   type SearchListParams,
 } from './message-search.js';
@@ -471,6 +474,7 @@ export class SessionService {
     phase?: string | null,
     keyword?: string | null,
     status?: string | null,
+    messageScope?: string | null,
   ): Promise<{ records: Session[]; total: number; current: number; size: number; matchSnippets: Record<number, string> }> {
     const clauses: string[] = [];
     const params: unknown[] = [];
@@ -497,10 +501,12 @@ export class SessionService {
       }
     }
     const trimmedKeyword = keyword != null ? keyword.trim() : '';
+    // 搜索范围决定消息正文是否含工具输出/系统消息：ALL 保留旧口径，默认只看对话双方。
+    const scope = normalizeMessageScope(messageScope);
     // 关键词命中消息正文优先走 ngram 全文索引：LIKE '%kw%' 对 23 万条 message 全表扫，
     // 实测 1~2s/次；FT 命中消息再 LEFT JOIN 回 session，可降到几十毫秒。
     // 单字符关键词 ngram(token_size=2) 索引不到，会漏召，仍走 LIKE 子查询。
-    const messageMatch = this.buildAdminMessageMatch(trimmedKeyword);
+    const messageMatch = this.buildAdminMessageMatch(trimmedKeyword, scope);
     if (messageMatch != null) {
       const [matchSql, ...matchParams] = messageMatch;
       clauses.push(`(title LIKE ? ESCAPE '\\\\' OR summary LIKE ? ESCAPE '\\\\' OR id IN (${matchSql}))`);
@@ -510,7 +516,7 @@ export class SessionService {
       clauses.push(
         `(title LIKE ? ESCAPE '\\\\' OR summary LIKE ? ESCAPE '\\\\' OR id IN (
           SELECT m.session_id FROM message m
-          WHERE m.deleted = 0 AND m.content LIKE CONCAT('%', ?, '%') ESCAPE '\\\\'
+          WHERE m.deleted = 0${messageRoleClause(scope)} AND m.content LIKE CONCAT('%', ?, '%') ESCAPE '\\\\'
         ))`,
       );
       params.push(`%${escapeLike(trimmedKeyword)}%`, `%${escapeLike(trimmedKeyword)}%`, `%${escapeLike(trimmedKeyword)}%`);
@@ -520,7 +526,7 @@ export class SessionService {
     const whereSql = clauses.length > 0 ? clauses.join(' AND ') : '1=1';
     // created_at 秒级精度：并列行补唯一 tiebreaker，保证深翻页不重复/丢行
     const result = await this.sessionRepo.selectPage(page, size, whereSql, params, 'ORDER BY created_at DESC, id DESC');
-    const matchSnippets = await this.loadAdminMatchSnippets(result.records, trimmedKeyword);
+    const matchSnippets = await this.loadAdminMatchSnippets(result.records, trimmedKeyword, scope);
     return { ...result, current: page, size, matchSnippets };
   }
 
@@ -528,7 +534,7 @@ export class SessionService {
    * 管理端关键词的消息正文匹配子查询。返回 [sql, ...params]，无法走全文索引时返回 null（调用方降级 LIKE）。
    * 全文索引建在 message.content 上（V146 ngram），命中消息的 session 经 DISTINCT 去重后用于 `id IN (...)`。
    */
-  private buildAdminMessageMatch(keyword: string): [string, ...unknown[]] | null {
+  private buildAdminMessageMatch(keyword: string, scope: MessageSearchScope): [string, ...unknown[]] | null {
     if (keyword.length === 0) return null;
     const prepared = prepareMessageSearch(keyword, this.searchFulltextEnabled());
     if (prepared.path !== 'FULLTEXT') return null;
@@ -536,12 +542,12 @@ export class SessionService {
     if (match.length === 0) return null;
     return [
       `SELECT m.session_id FROM message m
-       WHERE m.deleted = 0 AND MATCH(m.content) AGAINST (? IN BOOLEAN MODE)`,
+       WHERE m.deleted = 0${messageRoleClause(scope)} AND MATCH(m.content) AGAINST (? IN BOOLEAN MODE)`,
       match,
     ];
   }
 
-  private async loadAdminMatchSnippets(records: Session[], keyword: string): Promise<Record<number, string>> {
+  private async loadAdminMatchSnippets(records: Session[], keyword: string, scope: MessageSearchScope): Promise<Record<number, string>> {
     if (keyword.length === 0 || records.length === 0) {
       return {};
     }
@@ -549,7 +555,7 @@ export class SessionService {
     if (sessionIds.length === 0) {
       return {};
     }
-    const hits = await this.messageRepo.selectFirstMatchingMessages(sessionIds, escapeLike(keyword));
+    const hits = await this.messageRepo.selectFirstMatchingMessages(sessionIds, escapeLike(keyword), scope);
     const matchSnippets: Record<number, string> = {};
     for (const hit of hits) {
       const snippet = this.searchSnippet(hit.content ?? null, keyword);
