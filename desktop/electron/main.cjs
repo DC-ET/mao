@@ -1267,6 +1267,10 @@ function createWindow() {
   mainWindow.on('minimize', refreshTray)
   mainWindow.on('restore', refreshTray)
   mainWindow.on('closed', refreshTray)
+
+  // 返回实例：调用方（second-instance / 通知 click 重建路径）需要拿到它来
+  // restore/show/focus 或挂加载回调，不能只靠 ready-to-show 兜底
+  return mainWindow
 }
 
 // ========== P2/P3 桌面壳：托盘 / 通知 / 角标 / 偏好 / 快捷键 ==========
@@ -1414,10 +1418,17 @@ ipcMain.handle('desktop-notify', (event, payload) => {
         if (win.isMinimized()) win.restore()
         win.show()
         win.focus()
-      } else {
-        createWindow()
+        sendToRenderer('desktop-notification-click', { itemId, sessionId })
+        return
       }
-      sendToRenderer('desktop-notification-click', { itemId, sessionId })
+      const created = createWindow()
+      // 新窗口的渲染层（Vue 应用 + ipcRenderer.on）要等页面加载完才就绪：同步发
+      // 跳转事件会丢（窗口能出来但不跳会话），等 did-finish-load 再补发
+      if (created && !created.isDestroyed() && created.webContents) {
+        created.webContents.once('did-finish-load', () => {
+          sendToRenderer('desktop-notification-click', { itemId, sessionId })
+        })
+      }
     })
     notification.on('failed', () => {
       console.warn('[notify] display failed:', title)

@@ -1,5 +1,15 @@
 # 代码审查报告（第 2 轮）：Electron 壳补完（0.0.351）修复复审
 
+> **第四轮复审结论（2026-10-26，HEAD=bcffb7da）：无 bug，可合并。** 第 3 轮标注的两条观察级加固均已正确落实，未引入新问题：
+> - **加固 1（通知 click 回唤窗口）**：`else { createWindow() }` 与既有 `if (win && !win.isDestroyed())` 分支互斥关系正确——窗口存在时走 restore/show/focus 后 `sendToRenderer`（渲染层已启动，事件可达）；窗口不存在/已销毁时建窗。两者不会同时执行，`sendToRenderer` 在两条路径之后统一调用，逻辑自洽。
+> - **加固 2（`before-quit` 清 `currentShortcutAccel`）**：赋值置于 `unregisterAll()` 之前，不影响退出清理的任何一步（`quitting`、终端 kill、localShell 关闭、MCP 会话关闭均在其后照常执行）；且因 `before-quit` 无 `preventDefault`、close 处理器在 `quitting` 为 true 时直接放行，退出必然走完，该赋值在正常路径上无副作用，仅在「退出被中止」这一理论上才发挥作用。
+> - **反向验证**：把 `main.cjs` 换回 `3a9b3b2f`，`mainShell.test.cjs` 得 **26 pass / 2 fail**，失败的正是回归6、回归7；换回后 **28/28 全绿**。与加固说明一致。
+> - **残留观察（不阻塞合并）**：加固 1 的 `else` 分支里 `sendToRenderer('desktop-notification-click')` 紧跟 `createWindow()` 同步发出，而此刻新窗口连 `ready-to-show` 都未到（探针实证），渲染层 `ipcRenderer.on` 更不可能已注册——故该跳转事件在真实 Electron 下会丢失，表现为「窗口能出来，但跳转到对应会话不生效」。**未列为 bug**：触发面极窄（退出模式 + macOS + 窗口已销毁 + 点击通知中心里早已展示过的旧通知；通知只可能由渲染层经 IPC 触发，而渲染层随窗口销毁，故此状态下只可能点到旧通知），且相对加固前「完全空转」已是严格改善；彻底修复需「待派发深链」队列（等 `did-finish-load`/`dom-ready` 补发），属设计增强而非正确性修复。
+> - **第 3 轮其余观察维持原级别**：观察 2（`app.dock` 守卫与 `process.platform === 'darwin'` 重复， cosmetics）、观察 5（`maxSizeMb` 由渲染层传入、主进程无上限兜底，纵深防御缺口）、观察 6（IPv6 URL 产生含 `[`/`]`/`:` 的 hostKey 目录名，Windows 上 `mkdirSync` 会失败，**存量行为**——`resolveLocalRuntimeDir` 早已使用同一推导）均未升级为 bug。
+> - **回归**：desktop vitest 916 passed（103 文件）；`node --test electron/*.test.cjs` 111 例中 109 通过，2 个失败为存量已知环境问题（gitOperations 身份注入、localShell `/var` 符号链接）；`npm run build` 通过。前四轮全部探针（含残留观察）在最终 HEAD 上复跑均符合预期。
+>
+> 以下为第 2 轮报告原文。
+
 > **第三轮复审结论（2026-10-26，HEAD=3a9b3b2f）：无 bug。** 本报告 2 个 bug（Bug 4/5）已全部正确修复，且修复未引入新问题：
 > - **Bug 4**：`createWindow()` 的 `closed` 监听注册在 `mainWindow = null` 处理器**之后**（L1255–1257 先于 L1269），Electron 按注册序派发，故 `refreshTray` 读到 `mainWindow === null` → 文案正确翻「显示主窗」。已额外验证 3 轮反复销毁/重建、`second-instance` 重建、托盘退出路径均不受影响。
 > - **Bug 5**：快捷键回调改 `createWindow()` + `appTray?.refresh()`，与 `onShowHide`/`second-instance` 处理一致；重建后 toggle 语义完好，退出路径的 `before-quit` 清理不受新增 `closed` 刷新干扰。

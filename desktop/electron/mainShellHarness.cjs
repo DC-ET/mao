@@ -69,11 +69,16 @@ async function loadMain(options = {}) {
       this.visible = false
       this.minimized = false
       this.focused = false
+      this.webContentsOnce = {}
       this.webContents = {
         send: (channel, data) => state.sent.push({ channel, data, windowId: this.id }),
         setWindowOpenHandler: () => {},
         openDevTools: () => {},
         on: () => {},
+        // 真实 Electron 加载完成后发 did-finish-load；测试里手动 emitWebContents 触发
+        once: (ev, cb) => {
+          ;(this.webContentsOnce[ev] = this.webContentsOnce[ev] || []).push(cb)
+        },
       }
       state.windows.push(this)
       // 真实 Electron 在渲染就绪后发 ready-to-show
@@ -89,6 +94,11 @@ async function loadMain(options = {}) {
     }
     loadFile() { return Promise.resolve() }
     loadURL() { return Promise.resolve() }
+    /** 手动触发 webContents 的 once 事件（如 did-finish-load） */
+    emitWebContents(ev, ...args) {
+      for (const cb of (this.webContentsOnce[ev] || []).slice()) cb(...args)
+      this.webContentsOnce[ev] = []
+    }
     show() { this.visible = true; this.focused = false; this.emit('show') }
     hide() { this.visible = false; this.emit('hide') }
     minimize() { this.minimized = true; this.emit('minimize') }

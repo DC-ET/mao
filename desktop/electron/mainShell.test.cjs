@@ -252,7 +252,7 @@ test('基线：通知 failed 事件回传失败结果', async () => {
   assert.equal(failed[0].data.ok, false)
 })
 
-test('回归6：窗口销毁后点击系统通知重建窗口（修复前 sendToRenderer 静默丢弃、完全空转）', async () => {
+test('回归6：窗口销毁后点击系统通知重建窗口，跳转事件等页面加载后补发', async () => {
   const h = await loadMain({ prefs: { closeToTray: 'quit' }, platform: 'darwin' })
   await h.invoke('desktop-notify', { title: '任务完成', sessionId: 42, tag: 'mao-inbox-9' })
   h.win().close()
@@ -262,8 +262,18 @@ test('回归6：窗口销毁后点击系统通知重建窗口（修复前 sendTo
   assert.equal(h.win().isDestroyed(), false, '点击通知应重建窗口')
   assert.equal(h.win().isVisible(), true)
   assert.equal(
+    h.state.sent.filter((s) => s.channel === 'desktop-notification-click').length, 0,
+    '页面未加载完时同步发跳转会丢（渲染层 ipcRenderer.on 尚未注册），不得提前发'
+  )
+  // did-finish-load 后补发
+  h.win().emitWebContents('did-finish-load')
+  assert.equal(
     h.state.sent.filter((s) => s.channel === 'desktop-notification-click').length, 1,
-    '跳转事件仍要回传渲染层'
+    '加载完成后应补发跳转事件'
+  )
+  assert.deepEqual(
+    h.state.sent.find((s) => s.channel === 'desktop-notification-click').data,
+    { itemId: null, sessionId: 42 }
   )
 })
 
