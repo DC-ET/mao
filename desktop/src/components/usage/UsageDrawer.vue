@@ -62,6 +62,13 @@
       <el-tab-pane label="明细" name="detail">
         <UsageDetailTab :refresh-key="refreshKey" @close="visible = false" />
       </el-tab-pane>
+      <!--
+        预算 Tab 固定月度，不消费 range/dateRange（决策 7：两种周期语义混用比没有更糟）；
+        周期与重置日在 Tab 内自标，刷新走 refreshKey 令牌（C10 取舍 (a)）。
+      -->
+      <el-tab-pane label="预算" name="budget">
+        <UsageBudgetTab :refresh-key="refreshKey" />
+      </el-tab-pane>
     </el-tabs>
   </el-drawer>
 </template>
@@ -79,8 +86,16 @@ import { USAGE_PERIOD_OPTIONS, defaultCustomDateRange, usageDateRange } from './
 import UsageOverviewTab from './UsageOverviewTab.vue'
 import UsageTrendTab from './UsageTrendTab.vue'
 import UsageDetailTab from './UsageDetailTab.vue'
+import UsageBudgetTab from './UsageBudgetTab.vue'
 
-const props = defineProps<{ modelValue: boolean }>()
+const props = defineProps<{
+  modelValue: boolean
+  /**
+   * 跨组件打开请求（收件箱 BUDGET_WARN 跳转 / P3 横幅跳转）：带目标 Tab + nonce。
+   * nonce 自增保证连续两次同 Tab 跳转都触发（Vue watch 浅比较不认同值对象，C8）。
+   */
+  openRequest?: { tab: UsageTab; nonce: number } | null
+}>()
 const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>()
 
 const visible = computed({
@@ -96,7 +111,7 @@ function toCustomTuple(range: UsageDateRange): [string, string] {
   return [range.startDate, range.endDate]
 }
 
-type UsageTab = 'overview' | 'trend' | 'detail'
+export type UsageTab = 'overview' | 'trend' | 'detail' | 'budget'
 
 const range = ref<UsageRange>('today')
 const activeTab = ref<UsageTab>('overview')
@@ -130,6 +145,11 @@ async function fetchSummary() {
 /** 总览数据只在抽屉打开且停留在总览 Tab 时拉取；切周期/改自定义日期立即重拉。 */
 watch([visible, activeTab, range, dateRange], ([open, tab]) => {
   if (open && tab === 'overview') void fetchSummary()
+})
+
+/** 跨组件打开请求：按 detail.tab 切 Tab（openRequest 由 UsageBell 持有 nonce，同值也触发）。 */
+watch(() => props.openRequest, (req) => {
+  if (req?.tab) activeTab.value = req.tab
 })
 
 /** 自定义日期改动：只在上限/下限都合法时重拉（EP 允许中途出现半成品状态）。 */

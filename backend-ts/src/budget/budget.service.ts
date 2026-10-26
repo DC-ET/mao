@@ -1,6 +1,7 @@
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
-import type { BudgetRepository, BudgetListItem, UsageBudgetRow } from './budget.repository.js';
+import type { MyBudgetItemVO, MyBudgetsVO } from '@mao/contracts';
+import type { BudgetAction, BudgetLimitType, BudgetRepository, BudgetListItem, UsageBudgetRow } from './budget.repository.js';
 
 export type BudgetScope = 'GLOBAL' | 'USER' | 'AGENT';
 
@@ -59,6 +60,13 @@ export function currentPeriodLabel(now: Date = new Date()): string {
   const y = now.getFullYear();
   const m = String(now.getMonth() + 1).padStart(2, '0');
   return `${y}-${m}`;
+}
+
+/** 下次重置时间：服务器本地时区下月 1 日 00:00:00（与 monthStartLocal 同族）。 */
+export function nextMonthStartLocal(now: Date = new Date()): string {
+  const d = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  return `${d.getFullYear()}-${m}-01 00:00:00`;
 }
 
 /**
@@ -208,6 +216,37 @@ export class BudgetService {
       items.push(item);
     }
     return items;
+  }
+
+  /**
+   * 用户面（GET /v1/me/budgets）：对本人生效的启用中预算 + 当期消耗 + 派生状态。
+   * GLOBAL + 本人 USER 行（repo 过滤）；排序与 checkAdmission 同序（GLOBAL → USER，同 scope 内 id 升序）。
+   * 失败整抛（决策 9），不做 list() 的 safeSpend 式容错——个人视图部分数据缺失会误导。
+   */
+  async myBudgets(userId: number): Promise<MyBudgetsVO> {
+    const rows = (await this.repo.listApplicableToUser(userId))
+      .sort((a, b) => this.scopeOrder(a.scope) - this.scopeOrder(b.scope) || (a.id ?? 0) - (b.id ?? 0));
+    const period = currentPeriodLabel();
+    const resetAt = nextMonthStartLocal();
+    const items: MyBudgetItemVO[] = [];
+    for (const row of rows) {
+      const scope = row.scope as BudgetScope;
+      const limitType = row.limitType as BudgetLimitType;
+      const spend = this.displaySpend(limitType, await this.getPeriodSpend(scope, row.scopeId ?? null, limitType));
+      const limitValue = this.displaySpend(limitType, Number(row.limitValue));
+      items.push({
+        id: row.id!,
+        scope,
+        periodSpend: spend,
+        limitValue,
+        limitType,
+        action: row.action as BudgetAction,
+        status: spend >= limitValue ? (row.action === 'BLOCK' ? 'BLOCKED' : 'WARNED') : 'NORMAL',
+        period,
+        resetAt,
+      });
+    }
+    return { items };
   }
 
   async create(input: {

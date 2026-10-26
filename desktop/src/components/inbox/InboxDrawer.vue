@@ -96,6 +96,14 @@ async function handleItemClick(item: InboxItem) {
     digestItem.value = item
     return
   }
+  // 预算提醒无关联会话（sessionId 恒 null，inbox.service.ts:295）：跳用量抽屉「预算」Tab，
+  // 取代原来落到「该通知没有关联会话」的死端（决策 10）。
+  if (item.kind === 'BUDGET_WARN') {
+    visible.value = false
+    // 用量抽屉挂在顶栏 UsageBell 上（本地态），跨组件打开走 window 事件
+    window.dispatchEvent(new CustomEvent('open_usage_drawer', { detail: { tab: 'budget' } }))
+    return
+  }
   if (item.sessionId == null) {
     ElMessage.warning('该通知没有关联会话')
     return

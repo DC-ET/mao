@@ -359,6 +359,59 @@ describe('useStreamWS side session creation', () => {
   })
 })
 
+describe('useStreamWS budget blocked (0.0.355 P3)', () => {
+  it('code=budget_exceeded 的 error 帧：派发 budget_blocked（带当前 sessionId），相位仍翻 FAILED', async () => {
+    const { connect, subscribe } = useStreamWS()
+    const pending = connect()
+    sockets[0].open()
+    await pending
+    await subscribe('11')
+
+    const sessionStore = useSessionStore()
+    sessionStore.updateSessionPhase('11', 'RUNNING')
+    sessionStore.setActiveSession('11')
+    const events: CustomEvent[] = []
+    const listener = (e: Event) => events.push(e as CustomEvent)
+    window.addEventListener('budget_blocked', listener)
+
+    sockets[0].onmessage?.({
+      target: sockets[0],
+      data: JSON.stringify({
+        type: 'error',
+        sessionId: 11,
+        data: { message: '本月全局预算已超限：当期消耗 12 / 上限 10（成本 口径），新任务已被拒绝。请调整预算或联系管理员', code: 'budget_exceeded' },
+      }),
+    })
+    window.removeEventListener('budget_blocked', listener)
+
+    expect(events).toHaveLength(1)
+    expect(events[0].detail).toEqual({ sessionId: '11' })
+    // 错误态与相位语义不变：横幅照常展示（文案已含消耗/上限），只多一个跳转信号
+    expect(sessionStore.activeExecutionError).toContain('本月全局预算已超限')
+    expect(sessionStore.getSessionPhase('11')).toBe('FAILED')
+  })
+
+  it('普通 error 不派发 budget_blocked（回归：P3 不新增噪声事件）', async () => {
+    const { connect, subscribe } = useStreamWS()
+    const pending = connect()
+    sockets[0].open()
+    await pending
+    await subscribe('11')
+
+    const events: Event[] = []
+    const listener = (e: Event) => events.push(e)
+    window.addEventListener('budget_blocked', listener)
+
+    sockets[0].onmessage?.({
+      target: sockets[0],
+      data: JSON.stringify({ type: 'error', sessionId: 11, data: { message: 'boom' } }),
+    })
+    window.removeEventListener('budget_blocked', listener)
+
+    expect(events).toHaveLength(0)
+  })
+})
+
 describe('useStreamWS inbox_updated', () => {
   it('权威未读数写入 inbox store，非 Electron 不触发系统通知', async () => {
     const { useStreamWS } = (await import('./useStreamWS')) as any

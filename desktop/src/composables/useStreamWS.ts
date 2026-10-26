@@ -1209,6 +1209,13 @@ export function useStreamWS() {
             }))
             break
           }
+          // 预算 BLOCK（P3，技术方案 §5.7）：错误态 / FAILED 相位照常翻转（横幅文案已含消耗/上限），
+          // 只额外派发窗口事件，供 ChatPanel 给横幅加「查看我的预算」跳转——不改 store 与相位逻辑。
+          if (data?.code === 'budget_exceeded') {
+            window.dispatchEvent(new CustomEvent('budget_blocked', {
+              detail: { sessionId },
+            }))
+          }
           sessionStore.setExecutionError(sessionId, message)
           sessionStore.updateSessionPhase(sessionId, 'FAILED' as TaskPhase)
           sessionStore.updateSideTaskPhase(Number(sessionId), 'FAILED' as TaskPhase)

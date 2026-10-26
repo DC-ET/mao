@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { BudgetService, currentPeriodLabel, monthStartLocal } from './budget.service.js';
+import { BudgetService, currentPeriodLabel, monthStartLocal, nextMonthStartLocal } from './budget.service.js';
 import type { BudgetListItem, BudgetRepository, BudgetListFilter, UsageBudgetRow } from './budget.repository.js';
 
 interface HarnessOptions {
@@ -26,6 +26,9 @@ function makeHarness(options: HarnessOptions = {}) {
       return true;
     })),
     findById: vi.fn(async (id: number) => rows.find((r) => r.id === id) ?? null),
+    // 按 SQL 语义 mock：enabled=1 且（GLOBAL 或 scope_id=本人的 USER 行）
+    listApplicableToUser: vi.fn(async (userId: number) => rows.filter((r) =>
+      r.enabled === 1 && (r.scope === 'GLOBAL' || (r.scope === 'USER' && r.scopeId === userId)))),
     insert: vi.fn(async (r: UsageBudgetRow) => { r.id = 42; return 42; }),
     updateById: vi.fn(async () => undefined),
     deleteById: vi.fn(async () => undefined),
@@ -262,6 +265,99 @@ describe('周期标签', () => {
   it('currentPeriodLabel 为 yyyy-MM（跨周期重置去重维度）', () => {
     expect(currentPeriodLabel(new Date(2026, 0, 31, 23, 59))).toBe('2026-01');
     expect(currentPeriodLabel(new Date(2026, 11, 31, 12, 0))).toBe('2026-12');
+  });
+
+  it('nextMonthStartLocal 取本地时区下月 1 日 00:00:00（跨年）', () => {
+    expect(nextMonthStartLocal(new Date(2026, 2, 15, 23, 30))).toBe('2026-04-01 00:00:00');
+    expect(nextMonthStartLocal(new Date(2026, 11, 1, 0, 0, 1))).toBe('2027-01-01 00:00:00');
+  });
+});
+
+describe('BudgetService.myBudgets', () => {
+  it('GLOBAL + 本人 USER 双行返回，GLOBAL 在前（与 checkAdmission 同序）', async () => {
+    const h = makeHarness({ rows: [
+      row({ id: 30, scope: 'USER', scopeId: 7, action: 'WARN', limitValue: 200_000_000 }),
+      row({ id: 20, scope: 'GLOBAL', action: 'BLOCK', limitValue: 100_000_000 }),
+    ] });
+    h.spendStore.sumCostSince.mockResolvedValue(150_000_000);
+    const vo = await h.service.myBudgets(7);
+    expect(h.repo.listApplicableToUser).toHaveBeenCalledWith(7);
+    expect(vo.items.map((i) => [i.scope, i.id])).toEqual([['GLOBAL', 20], ['USER', 30]]);
+    // USER 行消耗按 scopeId=本人查询
+    expect(h.spendStore.sumCostSince).toHaveBeenCalledWith('USER', 7, expect.stringMatching(/^\d{4}-\d{2}-01 00:00:00$/));
+  });
+
+  it('他人 USER 行、AGENT 行、停用行不返回（repo SQL 语义）', async () => {
+    const h = makeHarness({ rows: [
+      row({ id: 1, scope: 'USER', scopeId: 8 }),
+      row({ id: 2, scope: 'GLOBAL', enabled: 0 }),
+      row({ id: 3, scope: 'GLOBAL', enabled: 1 }),
+      row({ id: 4, scope: 'AGENT', scopeId: 5 }),
+    ] });
+    const vo = await h.service.myBudgets(7);
+    expect(vo.items.map((i) => i.id)).toEqual([3]);
+  });
+
+  it('COST 行 periodSpend 与 limitValue 同为成本单位（微单位 ÷ 1e6，C1）', async () => {
+    const h = makeHarness({ rows: [row({ id: 1, limitValue: 100_000_000 })] });
+    h.spendStore.sumCostSince.mockResolvedValue(42_500_000);
+    const vo = await h.service.myBudgets(7);
+    expect(vo.items[0]).toMatchObject({ periodSpend: 42.5, limitValue: 100, limitType: 'COST' });
+    expect(h.spendStore.sumCostSince).toHaveBeenCalledWith('GLOBAL', null, expect.stringMatching(/^\d{4}-\d{2}-01 00:00:00$/));
+  });
+
+  it('TOKENS 行消耗与上限原值下发', async () => {
+    const h = makeHarness({ rows: [row({ id: 1, limitType: 'TOKENS', limitValue: 1_000_000 })] });
+    h.spendStore.sumTokensSince.mockResolvedValue(250_000);
+    const vo = await h.service.myBudgets(7);
+    expect(vo.items[0]).toMatchObject({ periodSpend: 250_000, limitValue: 1_000_000, limitType: 'TOKENS' });
+    expect(h.spendStore.sumCostSince).not.toHaveBeenCalled();
+  });
+
+  it('状态派生：BLOCK 越线 → BLOCKED；WARN 越线 → WARNED；未越线 → NORMAL；等于上限即越线', async () => {
+    const h = makeHarness({ rows: [
+      row({ id: 1, action: 'BLOCK', limitValue: 100_000_000 }),
+      row({ id: 2, action: 'WARN', limitValue: 100_000_000 }),
+      row({ id: 3, action: 'WARN', limitValue: 100_000_000 }),
+    ] });
+    h.spendStore.sumCostSince
+      .mockResolvedValueOnce(150_000_000)  // BLOCK 越线
+      .mockResolvedValueOnce(100_000_000)  // WARN 恰等于上限（>= 语义）
+      .mockResolvedValueOnce(99_999_999);  // 未越线
+    const vo = await h.service.myBudgets(7);
+    expect(vo.items.map((i) => i.status)).toEqual(['BLOCKED', 'WARNED', 'NORMAL']);
+  });
+
+  it('同 scope 多行按 id 升序（SQL ORDER BY id 之外 service 稳定重排）', async () => {
+    const h = makeHarness({ rows: [
+      row({ id: 9, scope: 'USER', scopeId: 7 }),
+      row({ id: 4, scope: 'USER', scopeId: 7 }),
+    ] });
+    const vo = await h.service.myBudgets(7);
+    expect(vo.items.map((i) => i.id)).toEqual([4, 9]);
+  });
+
+  it('消耗查询失败 → 整请求抛出（不做 list() 的 safeSpend 容错，决策 9）', async () => {
+    const h = makeHarness({ rows: [row({ id: 1 })] });
+    h.spendStore.sumCostSince.mockRejectedValue(new Error('db down'));
+    await expect(h.service.myBudgets(7)).rejects.toThrow('db down');
+  });
+
+  it('period / resetAt：本地时区当月标签与下月 1 日 00:00:00（跨年）', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 11, 15, 10, 0, 0)); // 2026-12-15 本地
+    try {
+      const h = makeHarness({ rows: [row({ id: 1 })] });
+      const vo = await h.service.myBudgets(7);
+      expect(vo.items[0]).toMatchObject({ period: '2026-12', resetAt: '2027-01-01 00:00:00' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('无生效预算 → 空 items（前端空态兜底）', async () => {
+    const h = makeHarness({ rows: [] });
+    await expect(h.service.myBudgets(7)).resolves.toEqual({ items: [] });
   });
 });
 

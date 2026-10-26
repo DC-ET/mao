@@ -944,6 +944,17 @@ export async function fetchMyLlmCalls(params: {
   return data
 }
 
+// ── 用量预算（/v1/me/budgets）─────────────────────────────────────────────
+
+export type { BudgetScope, BudgetLimitType, BudgetAction, BudgetStatus, MyBudgetItemVO, MyBudgetsVO } from '@mao/contracts'
+import type { MyBudgetsVO } from '@mao/contracts'
+
+/** 对我生效的用量预算（GLOBAL + 本人 USER scope；月度周期，服务器本地时区；单位两侧同口径）。 */
+export async function fetchMyBudgets(): Promise<MyBudgetsVO> {
+  const { data } = await api.get('/me/budgets')
+  return data
+}
+
 // ── 信号哨兵（/v1/signal-watchers）─────────────────────────────────────────
 
 export type { SignalCompareMode, SignalWatcherStatus } from '@mao/contracts'
