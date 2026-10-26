@@ -1,6 +1,6 @@
 # 代码审查报告：Electron 壳补完（LOCAL 附件 + 托盘/通知/快捷键/自启，0.0.351）
 
-> **第二轮复审结论（2026-10-26，HEAD=7ef48168）**：本报告 3 个 bug 已全部正确修复，且修复本身未引入新问题——快捷键换键的 6 条路径（含 `before-quit` 交互、`clearShortcut(null)`、启动注册失败）逐条探针验证通过。第 2 轮新确认 **2 个低危 bug**（Bug 4/5），与 Bug 2 同属「窗口已销毁状态未处理」这一根因家族，仅影响**退出模式 + macOS**（非默认组合）：窗口销毁后托盘文案停留在「隐藏主窗」（点击反而建窗）、全局快捷键空转无法唤起。另对正式回归 `mainShell.test.cjs` 做了修复前代码反向验证（19 pass / 3 fail，失败的正是三个 bug 回归），确认其非假通过，但指出其覆盖缺口恰好在「窗口已销毁」状态。详见 `2026-10-26-electron-shell-completeness-review-r2.md`。
+> **最终结论（2026-10-26，HEAD=02578318，第 5 轮收尾）：无 bug，可合并。** 本报告 3 个 bug 及后续各轮 bug/加固全部修复并经叠加验证（正式回归 28/28、vitest 916 全绿、build 通过）。各轮结论按时间倒序集中记录在 `2026-10-26-electron-shell-completeness-review-r2.md` 头部（第 5 → 第 2 轮）；复现探针在 `docs/code-review/repro/2026-10-26-electron-shell/`。
 > 以下为第一轮报告原文。
 
 - 审查对象：`electron-shell-completeness` 分支 commit `e02a726a`（父 `6a337bca`），涉及 desktop（electron 主进程 + 渲染层）与文档

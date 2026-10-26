@@ -1,5 +1,9 @@
 'use strict'
 /**
+ * ⚠ 时间点说明：本文件成文于 02578318 之前，其中断言「点击通知后同步 send 跳转事件」
+ *   的用例已被第 5 轮修复（02578318）改为 did-finish-load 补发，故在最终 HEAD 上按预期失败。
+ *   失败恰证明修复生效；现行行为见 desktop/electron/mainShell.test.cjs 回归6
+ *   与本目录 r5-fixes.test.cjs 的 B1/C1/C2/D1。
  * 第 3 轮复审探针（HEAD=3a9b3b2f）。
  *
  * 用例分三类，请勿混淆：
