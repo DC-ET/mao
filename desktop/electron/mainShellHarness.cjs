@@ -1,7 +1,7 @@
 'use strict'
 
 /**
- * main.cjs 集成测试 harness：用假 electron / electron-updater 模块（注入 require.cache）
+ * main.cjs 集成测试 harness：用假 electron / electron-updater / node-pty 模块（注入 require.cache）
  * 在纯 node 下加载真实的 desktop/electron/main.cjs，驱动其桌面壳逻辑
  * （托盘 / 通知 / 快捷键 / 自启 / 单实例锁 / 关窗拦截 / LOCAL 附件 IPC）。
  *
@@ -206,11 +206,23 @@ async function loadMain(options = {}) {
     },
   }
 
+  // ---- 假 node-pty ----
+  // node-pty 1.1.0 的 npm 包只带 darwin / win32 prebuild，CI（ubuntu + npm ci
+  // --ignore-scripts）下 require('node-pty') 直接抛错，会把 main.cjs 经
+  // terminalManager.cjs 的传递依赖拖垮。壳层测试不驱动真实终端，注入内存假实现。
+  const fakePtyProcess = () => ({
+    onData() {}, onExit() {},
+    write() {}, resize() {}, kill() {},
+  })
+  const fakeNodePty = { spawn: () => fakePtyProcess() }
+
   // 注入 require.cache，使 main.cjs 的 require('electron') 拿到假模块
   const electronPath = require.resolve('electron', { paths: [DESKTOP_DIR] })
   require.cache[electronPath] = { id: electronPath, filename: electronPath, loaded: true, exports: fakeElectron }
   const updaterPath = require.resolve('electron-updater', { paths: [DESKTOP_DIR] })
   require.cache[updaterPath] = { id: updaterPath, filename: updaterPath, loaded: true, exports: fakeUpdater }
+  const nodePtyPath = require.resolve('node-pty', { paths: [DESKTOP_DIR] })
+  require.cache[nodePtyPath] = { id: nodePtyPath, filename: nodePtyPath, loaded: true, exports: fakeNodePty }
 
   // 预置桌面偏好（在 main.cjs 读取之前落盘）
   if (options.prefs) {
