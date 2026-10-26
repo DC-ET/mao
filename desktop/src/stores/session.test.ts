@@ -1007,9 +1007,23 @@ describe('session store 标题过滤（listKeyword 单一状态源）', () => {
     mockPut.mockReset()
   })
 
+  const KEY = 'CLOUD:临时工作区'
+
   /** 取某次 api.get 调用的 params（mock 层为 any 入参） */
   function paramsOf(callIndex: number): Record<string, any> {
     return mockGet.mock.calls[callIndex][1]?.params ?? {}
+  }
+
+  /** 分组预览响应：sessions 为该组预览条数，hasMore 决定能否「展开更多」 */
+  function preview(ids: string[], total: number, hasMore: boolean) {
+    return {
+      data: { groups: [{ key: KEY, label: '临时工作区', total, hasMore, sessions: ids.map(id => makeSession(id)) }] },
+    }
+  }
+
+  /** 分组分页响应：/sessions 的 items 页 */
+  function page(ids: string[], total: number, hasMore: boolean) {
+    return { data: { items: ids.map(id => makeSession(id)), total, hasMore } }
   }
 
   it('空 keyword 不传参数；setListKeyword 去空白后三条 fetch 路径统一带上', async () => {
@@ -1090,6 +1104,79 @@ describe('session store 标题过滤（listKeyword 单一状态源）', () => {
     // 后续「展开更多」的 offset 会以旧口径为基准，把匹配新词的会话整段跳过
     const meta = store.getGroupMeta('CLOUD:临时工作区')
     expect({ total: meta?.total, loadedCount: meta?.loadedCount }).toEqual({ total: 1, loadedCount: 1 })
+  })
+
+  it('静默重建在飞期间点「展开更多」：重建落地后旧 offset 的分页响应整条丢弃', async () => {
+    const store = useSessionStore()
+    const all = Array.from({ length: 60 }, (_, i) => String(i + 1))
+
+    // 1) 首屏预览 20 条，hasMore=true
+    mockGet.mockResolvedValueOnce(preview(all.slice(0, 20), 60, true))
+    await store.fetchSessions()
+    expect(store.standardSessionIds).toEqual(all.slice(0, 20))
+
+    // 2) 先展开更多一次：已加载窗口 40 条
+    mockGet.mockResolvedValueOnce(page(all.slice(20, 40), 60, true))
+    await store.loadMoreInGroup(KEY)
+    expect(store.standardSessionIds).toEqual(all.slice(0, 40))
+    expect(store.getGroupMeta(KEY)?.loadedCount).toBe(40)
+
+    // 3) 恢复归档：PUT 成功后触发 fetchSessions(true) 静默重建（silent 不遮罩，
+    //    分组列表与「展开更多」在重建 RTT 窗口内仍可点）。重建请求在飞、先不返回
+    mockPut.mockResolvedValueOnce({ data: {} })
+    let releaseRebuild: (value: any) => void = () => {}
+    mockGet.mockImplementationOnce(() => new Promise((resolve) => { releaseRebuild = resolve }) as any)
+    const unarchivePromise = store.unarchiveSession('99')
+    await new Promise((r) => setTimeout(r, 0)) // 让协程走到 fetchSessions 的 api.get
+    // 调用序：0=首屏预览，1=第一次展开更多，2=恢复归档触发的静默重建
+    expect(mockGet).toHaveBeenCalledTimes(3)
+
+    // 4) 重建在飞期间点「展开更多」：offset 取旧 meta（40），此刻代次尚未递增
+    let releaseLoadMore: (value: any) => void = () => {}
+    mockGet.mockImplementationOnce(() => new Promise((resolve) => { releaseLoadMore = resolve }) as any)
+    const loadMorePromise = store.loadMoreInGroup(KEY)
+    expect(mockGet.mock.calls[3][1]?.params?.offset).toBe(40)
+
+    // 5) 重建先落地：列表回到 20 条预览，代次随重建落地递增
+    releaseRebuild(preview(all.slice(0, 20), 61, true))
+    await unarchivePromise
+    expect(store.standardSessionIds).toEqual(all.slice(0, 20))
+
+    // 6) 分页响应后到：代次已不匹配 → 整条丢弃，第 21-40 条不被这页 41-60 顶替
+    releaseLoadMore(page(all.slice(40, 60), 61, false))
+    await loadMorePromise
+
+    expect(store.standardSessionIds).toEqual(all.slice(0, 20))
+    // 组元数据保持重建后口径：若被旧响应覆盖，loadedCount 抬到 60 且 hasMore 置 false，
+    // 第 21-40 条从列表消失且不手动刷新就再也分页不回来
+    const meta = store.getGroupMeta(KEY)
+    expect({ total: meta?.total, loadedCount: meta?.loadedCount, hasMore: meta?.hasMore })
+      .toEqual({ total: 61, loadedCount: 20, hasMore: true })
+  })
+
+  it('重建请求失败（列表未重建）时，在飞的合法「展开更多」不被误丢弃', async () => {
+    const store = useSessionStore()
+    const all = Array.from({ length: 40 }, (_, i) => String(i + 1))
+
+    mockGet.mockResolvedValueOnce(preview(all.slice(0, 20), 40, true))
+    await store.fetchSessions()
+
+    // 展开更多在飞
+    let releaseLoadMore: (value: any) => void = () => {}
+    mockGet.mockImplementationOnce(() => new Promise((resolve) => { releaseLoadMore = resolve }) as any)
+    const loadMorePromise = store.loadMoreInGroup(KEY)
+
+    // 手动刷新失败：列表与 groupMeta 原样未动，代次也不得递增
+    mockGet.mockRejectedValueOnce(new Error('network'))
+    await expect(store.fetchSessions()).rejects.toThrow('network')
+    expect(store.standardSessionIds).toEqual(all.slice(0, 20))
+    expect(store.getGroupMeta(KEY)?.loadedCount).toBe(20)
+
+    // 在飞的分页响应此刻到达：offset 依然有效（列表没变），应正常追加
+    releaseLoadMore(page(all.slice(20, 40), 40, false))
+    await expect(loadMorePromise).resolves.toBe(true)
+
+    expect(store.standardSessionIds).toEqual(all.slice(0, 40))
   })
 })
 

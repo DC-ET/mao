@@ -73,8 +73,13 @@ const store = reactive({
   updateSessionTreeSignals: vi.fn(),
   isArchiving: vi.fn(() => false),
   isDeleting: vi.fn(() => false),
+  // 与真实 store 同口径：删除成功后从标准投影移除（sessions computed 随之缩短）
+  deleteSession: vi.fn(async (id: string) => {
+    store.sessions = store.sessions.filter((s: any) => String(s.id) !== String(id))
+    return true
+  }),
   archiveSession: vi.fn(async () => {}),
-  archiveSessions: vi.fn(async () => ({ archived: 0, skipped: 0 })),
+  archiveSessions: vi.fn(async (_ids: string[]) => ({ archived: 0, skipped: 0 })),
   unarchiveSession: vi.fn(async () => {}),
   sessionPendingApprovals: new Map(),
   sessionPendingQuestions: new Map(),
@@ -157,6 +162,11 @@ beforeEach(() => {
   store.setListKeyword.mockClear()
   store.fetchSessions.mockClear()
   store.fetchFocusSessions.mockClear()
+  store.deleteSession.mockClear()
+  store.deleteSession.mockImplementation(async (id: string) => {
+    store.sessions = store.sessions.filter((s: any) => String(s.id) !== String(id))
+    return true
+  })
   store.archiveSessions.mockClear()
   store.archiveSessions.mockImplementation(async () => ({ archived: 0, skipped: 0 }))
   messageSuccess.mockClear()
@@ -401,6 +411,44 @@ describe('TaskIndexPanel 右键菜单删除路径', () => {
     const confirmBtn = qa(host, '.session-item-actions .action-confirm')[0]
     expect(confirmBtn).toBeTruthy()
     expect(confirmBtn.getAttribute('title')).toBe('确认删除')
+    app.unmount()
+  })
+
+  it('选择态弹窗删除成功后同步剔除勾选集：计数不虚高、批量归档不误报「跳过」', async () => {
+    store.sessions = [row('1'), row('2'), row('3')]
+    // 与真实 store 同口径：按实体存在性过滤 targets，已删除的 id 计入 skipped
+    store.archiveSessions.mockImplementation(async (ids: string[]) => {
+      const targets = ids.filter(id => store.sessions.some((s: any) => String(s.id) === id))
+      return { archived: targets.length, skipped: ids.length - targets.length }
+    })
+    const { host, app } = mountPanel()
+    await tick()
+    q(host, '.select-toggle-btn')!.click()
+    await tick()
+    rowEl(host, '1').click()
+    rowEl(host, '2').click()
+    rowEl(host, '3').click()
+    await tick()
+    expect(q(host, '.select-count')!.textContent).toContain('已选 3')
+
+    // 选择态右键删除第 2 行：走确认弹窗，确认后删除成功
+    rowEl(host, '2').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+    await tick()
+    messageBoxConfirm.mockImplementationOnce(async () => {})
+    menuItem('删除')!.click()
+    await tick(10)
+
+    // 行消失，且勾选集同步剔除：界面上剩 2 行，计数必须是「已选 2」
+    expect(rowEl(host, '2')).toBeNull()
+    expect(q(host, '.select-count')!.textContent).toContain('已选 2')
+
+    // 再点批量归档：只传仍在勾选集的 id，不带着已删除的会话去计「跳过」
+    messageBoxConfirm.mockImplementationOnce(async () => {})
+    ;(q(host, '.select-archive-btn') as HTMLElement).click()
+    await tick(10)
+
+    expect(store.archiveSessions).toHaveBeenCalledWith(['1', '3'])
+    expect(messageSuccess).toHaveBeenCalledWith('已归档 2 个')
     app.unmount()
   })
 })

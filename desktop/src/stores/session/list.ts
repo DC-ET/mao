@@ -124,17 +124,16 @@ export function createSessionListModule(ctx: {
   let fetchArchivedSeq = 0
   let fetchFocusSeq = 0
   /**
-   * 标准分组列表的整体重建代次：fetchSessions 每次拉取分组时 +1（与 fetchSessionsSeq
-   * 同步递增）。「展开更多」是分页追加，晚于一次重建到达的响应必须整条丢弃——它带的
-   * 是旧 keyword / 旧 offset 口径，并入新列表会混入不匹配当前过滤词的会话，并用旧
-   * 口径覆盖组 loadedCount/total，使后续分页漏条。改过滤词（防抖 300ms 一次）即可
-   * 稳定触发该竞态，手动刷新 / 恢复归档同样覆盖。
+   * 标准分组列表的整体重建代次：fetchSessions **重建真正落地**时 +1（请求失败不重建、
+   * 代次不动）。「展开更多」是分页追加，其 offset 以发起时刻的组 loadedCount 为准——
+   * 只要期间发生过一次重建（无论重建是在它发起前已在飞、还是发起后才开始），该 offset
+   * 一律过期，响应到达时比对代次不符即整条丢弃，不并入、不覆盖组元数据。改过滤词、
+   * 手动刷新、恢复归档都会重建；请求失败不重建，在飞的合法分页不受影响。
    */
   let standardListEpoch = 0
 
   async function fetchSessions(silent = false) {
     const seq = ++fetchSessionsSeq
-    standardListEpoch++
     if (!silent) loading.value = true
     try {
       const { data } = await api.get('/sessions/groups', {
@@ -167,6 +166,9 @@ export function createSessionListModule(ctx: {
         }
       }
       // 刷新即重置为分组预览（丢弃先前 load-more 追加的页）
+      // 代次随重建落地递增：此后到达的在飞分页响应（offset 以重建前的 loadedCount
+      // 为准）一律过期，整条丢弃
+      standardListEpoch++
       standardSessionIds.value = ids
       groupMeta.value = meta
 

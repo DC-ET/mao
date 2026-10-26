@@ -686,6 +686,14 @@ async function deleteSessionViaDialog(sessionId: string) {
     ElMessage.error('删除失败，请稍后重试')
     return
   }
+  // 选择态下删掉的正是已勾选的行：同步剔除勾选集。否则计数虚高，再点批量归档会把
+  // 已删除会话传给 store，被 targets 过滤计成「跳过」，toast 口径莫名（与 applyFilter
+  // 清空勾选同源的同步，只是删除路径也要做）
+  if (selecting.value) {
+    const next = new Set(selectedIds.value)
+    next.delete(String(sessionId))
+    selectedIds.value = next
+  }
   // 删除成功后清理该会话的 Tab 状态，避免模块级 Map 无界增长 / 恢复归档时串出旧 Tab
   removeSessionTabsFor(sessionId)
   if (wasActive && sessionStore.sessions.length > 0) {

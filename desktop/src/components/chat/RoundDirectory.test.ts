@@ -82,13 +82,13 @@ describe('轮次目录浮层交互', () => {
     app.unmount()
   })
 
-  it('点把手自身（在 rootEl 内）不触发外部关闭，浮层保持打开', async () => {
+  it('把手上的 @click.stop 挡住 document 关闭处理器：再次点把手走 toggle 收起', async () => {
     const { host, app } = mount()
     const handle = q(host, '.round-directory-handle')!
     handle.click()
     await Promise.resolve()
     expect(q(host, '.round-directory-popover')).toBeTruthy()
-    // 再次点把手：toggle 收起（不经过 document 处理器）
+    // 再次点把手：事件不到 document，由 toggle 收起（不是被外部点击处理器关掉）
     handle.click()
     await Promise.resolve()
     expect(q(host, '.round-directory-popover')).toBeNull()
