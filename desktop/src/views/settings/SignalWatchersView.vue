@@ -73,7 +73,7 @@
     <el-dialog
       :model-value="dialogVisible"
       :title="editing ? '编辑哨兵' : '新建哨兵'"
-      width="620px"
+      width="min(620px, calc(100vw - 32px))"
       class="signal-dialog"
       @update:model-value="(val: boolean) => { if (!val) closeDialog() }"
     >
@@ -155,28 +155,42 @@
     </el-dialog>
 
     <!-- ── 轮询记录 ─────────────────────────────────────────────── -->
-    <el-drawer v-model="checksVisible" title="轮询记录" size="560px">
+    <!--
+      抽屉宽度必须随视口收缩：固定 560px 在 393px 安卓窄屏下左边缘落在 left=-167，
+      表格前两列（时间 / 状态码）被整体推出屏幕，用户只能看到右侧几列。
+      与 EnvVarsDrawer / UsageDrawer / InboxDrawer 同一口径：min(560px, 100vw - 32px)。
+    -->
+    <el-drawer v-model="checksVisible" title="轮询记录" size="min(560px, calc(100vw - 32px))">
       <div v-if="checksLoading" class="empty-state">加载中...</div>
       <div v-else-if="checks.rows.length === 0" class="empty-state">暂无轮询记录</div>
       <template v-else>
+        <!--
+          列宽按「手机上放得下前四列」定：抽屉内容区在 393px 视口实测只有 321px
+          （抽屉 = min(560, 100vw - 32) = 361，减两侧 20px padding）。
+          时间 128 + 状态码 56 + 结果 60 + 耗时 68 = 312px，全部落在这 321px 内，
+          手机上一屏能看到时间 / 状态码 / 结果 / 耗时这四列关键信息；
+          「触发/告警」「详情」两列靠表格自身横向滚动查看（表头与表体由 EP 同步）。
+          列宽必须在模板里声明：EP 的 table-layout:fixed 以 col 属性为准，
+          CSS 覆盖 col 宽度无效（实测 scrollWidth 不变）。
+        -->
         <el-table :data="checks.rows" size="small">
-          <el-table-column label="时间" width="150">
+          <el-table-column label="时间" width="128">
             <template #default="{ row }">{{ row.checkedAt ? formatTime(row.checkedAt) : '-' }}</template>
           </el-table-column>
-          <el-table-column label="状态码" width="80">
+          <el-table-column label="状态码" width="56">
             <template #default="{ row }">{{ row.httpStatus ?? '-' }}</template>
           </el-table-column>
-          <el-table-column label="结果" width="120">
+          <el-table-column label="结果" width="60">
             <template #default="{ row }">
               <span v-if="row.error" class="badge badge-danger">失败</span>
               <span v-else-if="row.changed === 1" class="badge badge-warn">变化</span>
               <span v-else class="badge badge-ok">未变</span>
             </template>
           </el-table-column>
-          <el-table-column label="耗时" width="80">
+          <el-table-column label="耗时" width="68">
             <template #default="{ row }">{{ row.durationMs != null ? `${row.durationMs}ms` : '-' }}</template>
           </el-table-column>
-          <el-table-column label="触发/告警" min-width="140">
+          <el-table-column label="触发/告警" min-width="120" show-overflow-tooltip>
             <template #default="{ row }">
               <a v-if="row.triggeredSessionId" class="session-link" @click="openSession(row.triggeredSessionId)">
                 会话 #{{ row.triggeredSessionId }}
@@ -184,7 +198,7 @@
               <span v-if="row.warning" class="warn-text">{{ warningLabel(row.warning) }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="详情" min-width="160">
+          <el-table-column label="详情" min-width="140" show-overflow-tooltip>
             <template #default="{ row }">
               <span class="error-text">{{ row.error || row.valueHash?.slice(0, 12) || '-' }}</span>
             </template>
@@ -204,7 +218,7 @@
     </el-drawer>
 
     <!-- ── 立即测试结果 ─────────────────────────────────────────── -->
-    <el-dialog v-model="testVisible" title="探针测试结果" width="520px" class="signal-dialog">
+    <el-dialog v-model="testVisible" title="探针测试结果" width="min(520px, calc(100vw - 32px))" class="signal-dialog">
       <div v-if="testResult" class="test-body">
         <p class="test-line">
           HTTP 状态：<b>{{ testResult.httpStatus ?? '未取得' }}</b>
@@ -785,6 +799,25 @@ onMounted(() => {
   display: flex;
   justify-content: flex-end;
   margin-top: 12px;
+}
+
+/*
+  窄屏：`prev, pager, next` 一串在轮询记录多的时候会超出抽屉内容区（同 UsageDetailTab
+  实测：393px 手机上内容区仅 321px）。改为左对齐 + 容器内横向滚动，页码再多也点得到，
+  不会把分页条推出屏幕。桌面端保持右对齐。
+*/
+@media (max-width: 768px) {
+  .pager {
+    justify-content: flex-start;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .pager::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 .session-link {
