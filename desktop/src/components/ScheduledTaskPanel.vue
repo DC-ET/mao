@@ -53,9 +53,14 @@
               </span>
               <span class="fire-count"> (已触发 {{ task.fireCount }} 次)</span>
             </div>
-            <div v-if="policyHint(task)" class="task-policy">{{ policyHint(task) }}</div>
             <div v-if="task.status === 'PAUSED' && (task.consecutiveFailures ?? 0) > 0" class="task-policy">
               连续失败 {{ task.consecutiveFailures }} 次
+            </div>
+            <div class="task-policy">
+              <template v-for="(chip, index) in chipsOf(task)" :key="index">
+                <span v-if="index > 0" class="policy-sep">·</span>
+                <span :class="{ 'policy-default': chip.isDefault }">{{ chip.text }}</span>
+              </template>
             </div>
             <button type="button" class="runs-toggle" @click="toggleRuns(task.id)">
               {{ openRuns[task.id] ? '收起最近运行' : '最近运行' }}
@@ -86,7 +91,8 @@
               :disabled="task.finished || togglingIds.has(task.id)"
               @change="toggleStatus(task)"
             />
-            <el-popconfirm title="确认删除此定时任务？" @confirm="deleteTask(task.id)">
+            <button type="button" class="runs-toggle action-edit" @click="openEdit(task)">编辑</button>
+            <el-popconfirm title="确认删除此定时任务？" @confirm="removeTask(task.id)">
               <template #reference>
                 <el-button type="danger" link size="small">删除</el-button>
               </template>
@@ -95,6 +101,8 @@
         </div>
       </div>
     </template>
+
+    <ScheduledTaskEditDialog v-model="editVisible" :task="editingTask" @saved="onSaved" />
   </div>
 </template>
 
@@ -103,11 +111,14 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useScheduledTasks } from '../composables/useScheduledTasks'
+import type { ScheduledTask } from '../composables/useScheduledTasks'
+import { summarizeReliability, reactivatedAfterSave } from '../utils/scheduledTaskEdit'
+import ScheduledTaskEditDialog from './ScheduledTaskEditDialog.vue'
 import { useSessionStore } from '../stores/session'
 
 const {
   tasks, activeTasks, finishedTasks, loading, togglingIds, fetchTasks, toggleStatus, deleteTask,
-  formatNextFire, formatFinishedAt, statusLabel, runsByTask, runsLoading, fetchRuns, policyHint, runBadge, formatDuration, formatCost
+  formatNextFire, formatFinishedAt, statusLabel, runsByTask, runsLoading, fetchRuns, runBadge, formatDuration, formatCost
 } = useScheduledTasks()
 
 const activeTab = ref<'active' | 'finished'>('active')
@@ -115,6 +126,44 @@ const currentTasks = computed(() => activeTab.value === 'active' ? activeTasks.v
 const openRuns = reactive<Record<number, boolean>>({})
 const router = useRouter()
 const sessionStore = useSessionStore()
+
+/** 编辑中的任务：非空即对话框打开（v-model 收起时置空）。 */
+const editingTask = ref<ScheduledTask | null>(null)
+const editVisible = computed({
+  get: () => editingTask.value != null,
+  set: (value: boolean) => {
+    if (!value) editingTask.value = null
+  },
+})
+
+function openEdit(task: ScheduledTask) {
+  editingTask.value = task
+}
+
+/** 保存成功：完结任务被重新激活时切到「进行中」Tab，否则用户看不到它了。 */
+function onSaved(updated: ScheduledTask) {
+  const before = editingTask.value
+  if (before != null && reactivatedAfterSave(before, updated)) {
+    activeTab.value = 'active'
+    ElMessage.info('任务已重新激活，已切换到进行中')
+  }
+}
+
+/** 删除前先收起编辑对话框：任务没了还开着编辑框会对着已删除 id 保存（技术方案 §7 C13）。 */
+async function removeTask(id: number) {
+  if (editingTask.value?.id === id) editingTask.value = null
+  await deleteTask(id)
+}
+
+/** P3 行内配置：三项当前值始终可见，默认值弱化。语义在 utils/scheduledTaskEdit.summarizeReliability（已单测）。 */
+function chipsOf(task: ScheduledTask): Array<{ text: string; isDefault: boolean }> {
+  const summary = summarizeReliability(task)
+  return [
+    { text: summary.retryText, isDefault: summary.retryDefault },
+    { text: summary.intervalText, isDefault: summary.intervalDefault },
+    { text: summary.missedText, isDefault: summary.missedDefault },
+  ]
+}
 
 async function toggleRuns(taskId: number) {
   openRuns[taskId] = !openRuns[taskId]
@@ -258,6 +307,20 @@ onMounted(fetchTasks)
   color: var(--aw-ink-muted);
   font-size: 12px;
   cursor: pointer;
+}
+
+/* 行内编辑入口复用 runs-toggle 朴素按钮样式，仅去掉与 switch/删除不对齐的上边距 */
+.task-actions .runs-toggle.action-edit {
+  margin-top: 0;
+}
+
+.policy-sep {
+  margin: 0 6px;
+  color: var(--aw-ink-muted-40);
+}
+
+.policy-default {
+  color: var(--aw-ink-muted-40);
 }
 
 .runs {
