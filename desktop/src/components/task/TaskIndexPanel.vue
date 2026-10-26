@@ -544,8 +544,10 @@ function menuDelete() {
   const id = contextMenu.sessionId
   closeContextMenu()
   if (!id) return
-  // 窄面板（<200px）没有行内确认按钮宿主：改走确认弹窗完成删除
-  if (!showItemActions.value) {
+  // 窄面板（<200px）与多选态都没有行内确认按钮宿主（选择态下 .session-item-actions
+  // 整块隐藏）：改走确认弹窗完成删除。否则 confirmingDeleteId 写入后无可见承接，
+  // 右键删除静默失效，只能退出选择态后才「延迟出现」确认按钮
+  if (!showItemActions.value || selecting.value) {
     void deleteSessionViaDialog(id)
     return
   }

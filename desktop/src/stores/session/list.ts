@@ -123,9 +123,18 @@ export function createSessionListModule(ctx: {
   let fetchSessionsSeq = 0
   let fetchArchivedSeq = 0
   let fetchFocusSeq = 0
+  /**
+   * 标准分组列表的整体重建代次：fetchSessions 每次拉取分组时 +1（与 fetchSessionsSeq
+   * 同步递增）。「展开更多」是分页追加，晚于一次重建到达的响应必须整条丢弃——它带的
+   * 是旧 keyword / 旧 offset 口径，并入新列表会混入不匹配当前过滤词的会话，并用旧
+   * 口径覆盖组 loadedCount/total，使后续分页漏条。改过滤词（防抖 300ms 一次）即可
+   * 稳定触发该竞态，手动刷新 / 恢复归档同样覆盖。
+   */
+  let standardListEpoch = 0
 
   async function fetchSessions(silent = false) {
     const seq = ++fetchSessionsSeq
+    standardListEpoch++
     if (!silent) loading.value = true
     try {
       const { data } = await api.get('/sessions/groups', {
@@ -179,12 +188,16 @@ export function createSessionListModule(ctx: {
     // offset 必须以「服务端该分组已返回条数」为准，不能从本地投影反推：
     // 深链注入（updateSession）会把预览外的会话 unshift 进投影，使 offset 偏大漏会话。
     const offset = meta?.loadedCount ?? 0
+    // 请求发起时的重建代次：期间发生过 fetchSessions（改过滤词 / 手动刷新 / 恢复归档）
+    // 则本响应过期，整条丢弃，不并入、不覆盖组元数据
+    const epoch = standardListEpoch
     loadingMoreGroups.value = new Set(loadingMoreGroups.value).add(key)
     try {
       const { data } = await api.get('/sessions', {
         // 与 fetchSessions 同一 keyword：服务端按同一关键词分页，本地 offset（= 服务端已返回条数）天然自洽（C1）
         params: { groupKey: key, offset, limit, keyword: listKeyword.value || undefined }
       })
+      if (epoch !== standardListEpoch) return false
       const items: Session[] = (data?.items || []).map(normalizeSession)
       if (items.length === 0) {
         if (meta) {
@@ -377,7 +390,15 @@ export function createSessionListModule(ctx: {
       standardSessionIds.value = standardSessionIds.value.filter(x => !done.has(x))
       focusSessionIds.value = focusSessionIds.value.filter(x => !done.has(x))
       archivedSessionIds.value = [...succeeded, ...archivedSessionIds.value]
-      if (archivedLoaded.value) await fetchArchivedSessions(true)   // 一次，不是 N 次
+      if (archivedLoaded.value) {
+        try {
+          await fetchArchivedSessions(true)   // 一次，不是 N 次
+        } catch {
+          // 归档区静默刷新失败不影响归档结果（本地投影已迁移、服务端已落库）：
+          // 与单条 archiveSession 吞掉同一失败同口径，避免把刷新失败冒到调用方，
+          // 导致 toast 与退出选择态全部落空、用户重复点击
+        }
+      }
     }
     return { archived: succeeded.length, skipped }
   }
