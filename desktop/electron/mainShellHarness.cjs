@@ -14,6 +14,9 @@
  *   const h = await loadMain({ prefs: { closeToTray: 'tray' }, packaged: false })
  *   h.win().close()        // 触发关窗拦截
  *   h.trayMenuLabel()      // 读托盘菜单当前「显示/隐藏主窗」文案
+ *
+ * options.platform 会覆写 process.platform（见 applyPlatform），用于在 linux CI 上
+ * 验证 darwin / win32 专属分支（角标、window-all-closed、get-platform 等）。
  */
 
 const path = require('path')
@@ -23,6 +26,7 @@ const os = require('os')
 const ELECTRON_DIR = __dirname
 const DESKTOP_DIR = path.dirname(ELECTRON_DIR)
 const MAIN_PATH = path.join(ELECTRON_DIR, 'main.cjs')
+const REAL_PLATFORM = process.platform
 
 function purgeElectronModules() {
   for (const key of Object.keys(require.cache)) {
@@ -32,8 +36,22 @@ function purgeElectronModules() {
   }
 }
 
+/**
+ * main.cjs 多处平台门控（角标 / window-all-closed / get-platform / prefs-get）
+ * 直接读 process.platform，没有可注入的缝；CI 跑在 linux 上，需按 options.platform
+ * 覆写才能在非 macOS 开发机/CI 上验证 darwin / win32 分支。未传 platform 时还原真实值。
+ * 每个 electron/*.test.cjs 由 node --test 独立进程执行，覆写不会波及其他测试文件。
+ */
+function applyPlatform(platform) {
+  const next = platform || REAL_PLATFORM
+  if (next !== process.platform) {
+    Object.defineProperty(process, 'platform', { value: next, configurable: true })
+  }
+}
+
 async function loadMain(options = {}) {
   purgeElectronModules()
+  applyPlatform(options.platform)
 
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mao-main-harness-'))
   const state = {
