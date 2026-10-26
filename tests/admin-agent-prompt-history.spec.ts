@@ -37,30 +37,43 @@ async function setup(page: Page, canWrite = true) {
   return { rollbackCount: () => rollbackCount, failHistory: (value: boolean) => { failHistory = value } }
 }
 
+/** 入口已从列表行挪到编辑页：列表点「编辑」→「角色提示词」Tab →「提示词版本」。 */
+async function openPromptHistory(page: Page) {
+  await page.getByRole('button', { name: '编辑', exact: true }).first().click()
+  const formDialog = page.getByRole('dialog', { name: '编辑 Agent', exact: true })
+  await expect(formDialog).toBeVisible()
+  await formDialog.getByRole('tab', { name: '角色提示词', exact: true }).click()
+  await formDialog.getByRole('button', { name: '提示词版本', exact: true }).click()
+  return page.getByRole('dialog', { name: '版本测试 Agent · 系统提示词版本', exact: true })
+}
+
 test('prompt history previews safely and confirms rollback while retaining versions', async ({ page }) => {
   const state = await setup(page)
-  await page.getByRole('button', { name: '提示词版本', exact: true }).click()
-  const dialog = page.getByRole('dialog', { name: '版本测试 Agent · 系统提示词版本', exact: true })
+  const dialog = await openPromptHistory(page)
   await expect(dialog.getByRole('textbox')).toHaveValue('新提示词')
   await expect(dialog.getByRole('button', { name: '回滚到此版本' })).toBeDisabled()
   await dialog.getByRole('button', { name: '预览', exact: true }).nth(1).click()
   await expect(dialog.getByRole('textbox')).toHaveValue('原始提示词 <script>alert(1)</script>')
   await dialog.getByRole('button', { name: '回滚到此版本' }).click()
-  await page.getByRole('button', { name: '取消', exact: true }).click()
+  // 编辑弹窗此时仍打开，确认框按钮需按弹窗定位，避免与表单「取消」撞名
+  const confirmBox = page.getByRole('dialog', { name: '确认回滚', exact: true })
+  await confirmBox.getByRole('button', { name: '取消', exact: true }).click()
   expect(state.rollbackCount()).toBe(0)
   await dialog.getByRole('button', { name: '回滚到此版本' }).click()
-  await page.getByRole('button', { name: '确认回滚', exact: true }).click()
+  await confirmBox.getByRole('button', { name: '确认回滚', exact: true }).click()
   await expect(dialog.getByRole('button', { name: '预览', exact: true })).toHaveCount(3)
   await expect(dialog).toContainText('回滚自 v1')
   await expect(dialog.getByRole('textbox')).toHaveValue('原始提示词 <script>alert(1)</script>')
   expect(state.rollbackCount()).toBe(1)
+  // 回滚后编辑页的角色定义同步为历史版本内容
+  const formDialog = page.getByRole('dialog', { name: '编辑 Agent', exact: true })
+  await expect(formDialog.getByRole('textbox').first()).toHaveValue('原始提示词 <script>alert(1)</script>')
 })
 
 test('prompt history load failure can be retried', async ({ page }) => {
   const state = await setup(page)
   state.failHistory(true)
-  await page.getByRole('button', { name: '提示词版本', exact: true }).click()
-  const dialog = page.getByRole('dialog', { name: '版本测试 Agent · 系统提示词版本', exact: true })
+  const dialog = await openPromptHistory(page)
   await expect(dialog).toContainText('加载失败，请重试')
   await expect(dialog.getByRole('button', { name: '回滚到此版本' })).toBeDisabled()
   state.failHistory(false)
@@ -71,5 +84,6 @@ test('prompt history load failure can be retried', async ({ page }) => {
 test('read-only users cannot access prompt history actions', async ({ page }) => {
   await setup(page, false)
   await expect(page.getByText('版本测试 Agent', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '编辑', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: '提示词版本', exact: true })).toHaveCount(0)
 })

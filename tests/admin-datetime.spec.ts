@@ -37,6 +37,7 @@ async function setup(page: Page) {
     else if (path.endsWith('/users')) data = { records: [{ id: 2, username: '测试用户', authSource: 'LOCAL', status: 1, createdAt: iso, lastLoginAt: null }], total: 1 }
     else if (path.endsWith('/prompt-versions')) data = [{ id: 1, version: 1, systemPrompt: '提示词', createdAt: iso }]
     else if (path.endsWith('/agents')) data = [agent]
+    else if (path.endsWith('/agents/7')) data = agent
     else if (path.endsWith('/audit/logs')) data = { records: [{ id: 1, createdAt: iso, action: 'CREATE', success: 1 }], total: 1 }
     else if (path.endsWith('/scheduled-tasks/all')) data = { records: [{ id: 1, name: '时间任务', userId: 1, agentId: 7, status: 'ACTIVE', createdAt: iso, lastFireTime: null, nextFireTime: iso, finished: true, finishedAt: iso }], total: 1 }
     await route.fulfill({ json: { code: 0, message: 'ok', data } })
@@ -62,8 +63,13 @@ test.describe('后台时间展示', () => {
       if (path === 'users' || path === 'scheduled-tasks') await expect(rows.getByText('-', { exact: true }).first()).toBeVisible()
       if (path === 'scheduled-tasks') await expect(rows.locator('.el-tag', { hasText: '已完结' })).toHaveAttribute('title', `完结于 ${formatted}`)
       if (path === 'agents') {
-        await page.getByRole('button', { name: '提示词版本', exact: true }).click()
-        await expect(page.getByRole('dialog').getByText(formatted, { exact: true })).toBeVisible()
+        // 「提示词版本」入口在编辑页的「角色提示词」Tab 内
+        await page.getByRole('button', { name: '编辑', exact: true }).first().click()
+        const formDialog = page.getByRole('dialog', { name: '编辑 Agent', exact: true })
+        await expect(formDialog).toBeVisible()
+        await formDialog.getByRole('tab', { name: '角色提示词', exact: true }).click()
+        await formDialog.getByRole('button', { name: '提示词版本', exact: true }).click()
+        await expect(page.getByRole('dialog', { name: '时间 Agent · 系统提示词版本', exact: true }).getByText(formatted, { exact: true })).toBeVisible()
       }
     })
   }

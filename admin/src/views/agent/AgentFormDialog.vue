@@ -137,7 +137,11 @@
           :rows="15"
           placeholder="只需填写身份、业务目标与表达方式。页面规则、工具用法和安全边界由系统按会话通道注入。"
         />
-        <div class="form-hint">嵌入网页浮窗、桌面编程、微信等通道规则由系统注入，此处只写本 Agent 的角色与风格。若已写过页面上下文或工具纪律，可删掉重复段。保存后自动记录提示词版本，可在 Agent 列表的「提示词版本」中预览和回滚。</div>
+        <div class="form-hint">嵌入网页浮窗、桌面编程、微信等通道规则由系统注入，此处只写本 Agent 的角色与风格。若已写过页面上下文或工具纪律，可删掉重复段。保存后自动记录提示词版本。</div>
+        <div v-if="isEdit" class="prompt-history-entry">
+          <el-button type="primary" link size="small" @click="promptHistoryVisible = true">提示词版本</el-button>
+          <span class="prompt-history-entry-hint">预览历史版本，并可回滚（仅恢复系统提示词）</span>
+        </div>
       </el-form-item>
       </el-tab-pane>
       <el-tab-pane label="最佳实践" name="experience">
@@ -243,6 +247,13 @@
       </el-button>
     </template>
   </ResponsiveDialog>
+  <AgentPromptHistoryDialog
+    v-if="promptHistoryVisible && isEdit"
+    :agent-id="props.agentData?.id"
+    :agent-name="props.agentData?.name || form.name"
+    @close="promptHistoryVisible = false"
+    @restored="handlePromptRestored"
+  />
 </template>
 
 <script setup lang="ts">
@@ -253,6 +264,7 @@ import Sortable from 'sortablejs'
 import { api } from '../../api'
 import { resolveAgentAvatarUrl } from '../../utils/agent-avatar'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
+import AgentPromptHistoryDialog from './AgentPromptHistoryDialog.vue'
 
 interface ExperienceFormItem {
   _key: string
@@ -293,6 +305,7 @@ const submitButtonText = computed(() => (isEdit.value ? '保存' : '创建'))
 const submitting = ref(false)
 const uploading = ref(false)
 const activeTab = ref('basic')
+const promptHistoryVisible = ref(false)
 const formRef = ref<FormInstance>()
 const skillDocs = ref<any[]>([])
 const mcpServers = ref<any[]>([])
@@ -738,6 +751,18 @@ async function uploadAvatar(options: UploadRequestOptions) {
   }
 }
 
+async function handlePromptRestored() {
+  // 回滚只改系统提示词：拉回最新详情同步到当前表单，避免编辑页仍显示回滚前的旧文本
+  const agentId = props.agentData?.id
+  if (agentId) {
+    try {
+      const { data } = await api.get(`/agents/${agentId}`)
+      if (data?.systemPrompt) form.systemPrompt = data.systemPrompt
+    } catch { /* 拦截器已提示失败；保留当前编辑内容 */ }
+  }
+  emit('saved')
+}
+
 async function handleSubmit() {
   if (uploading.value || submitting.value) return
   const valid = await formRef.value?.validate().catch((fields) => {
@@ -962,6 +987,21 @@ async function handleSubmit() {
 
 .form-hint {
   margin-left: 12px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.prompt-history-entry {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 12px;
+  flex-basis: 100%;
+}
+.prompt-history-entry :deep(.el-button) {
+  margin-left: 0;
+}
+.prompt-history-entry-hint {
   color: var(--el-text-color-secondary);
   font-size: 12px;
 }
