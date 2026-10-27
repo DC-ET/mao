@@ -15,11 +15,16 @@
         <div class="trend-title">成本趋势<span class="trend-sub">{{ granularityLabel }}分桶</span></div>
         <BaseChart :option="costOption" :height="260" />
       </div>
+      <div class="trend-block">
+        <div class="trend-title">输出速度趋势<span class="trend-sub">{{ granularityLabel }}分桶</span></div>
+        <BaseChart :option="speedOption" :height="260" />
+      </div>
 
       <div class="trend-summary">
         <span>窗口调用 {{ formatNumber(series.totalCalls) }} 次</span>
         <span>Token {{ formatToken(series.totalTokens) }}</span>
         <span>成本 {{ formatCost(series.totalCost) }}</span>
+        <span v-if="series.avgTps != null">平均速度 {{ series.avgTps.toFixed(1) }} tok/s</span>
       </div>
     </template>
   </div>
@@ -140,6 +145,23 @@ const costOption = computed<ChartOption>(() => buildTrendLineOption({
   leftAxis: {
     name: '成本',
     format: (v) => formatCost(v),
+  },
+  isDark: isDark.value,
+}))
+
+/** 输出速度折线（tok/s，技术方案 2026-10-27-llm-output-speed §5.2）：
+ *  无可解码行的桶（全非流式）置 null，折线断开，不归零误导。 */
+const speedOption = computed<ChartOption>(() => buildTrendLineOption({
+  labels: series.value.labels,
+  lines: [{
+    name: '输出速度',
+    data: series.value.tps,
+    color: TREND_COLORS.speed,
+    tooltipFormat: (v) => `${v.toFixed(1)} tok/s`,
+  }],
+  leftAxis: {
+    name: 'tok/s',
+    format: (v) => v.toFixed(1),
   },
   isDark: isDark.value,
 }))

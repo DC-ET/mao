@@ -1,6 +1,6 @@
 /** 运行轨迹展示层纯函数：结果状态、关注点徽标、会话汇总、计时补全与时间条带几何。
  *  供 RunTracePanel 与单测共用；语义与后端 VO（session-vo.ts 的 RunTraceVO）对齐。 */
-import type { RunTrace, TraceRound, TraceTool } from '../types/trace'
+import type { RunTrace, TraceTool } from '../types/trace'
 import { getToolDisplayName } from './toolDisplay'
 import { llmCallSceneLabel } from './llmCallLabels'
 
@@ -102,22 +102,13 @@ export function formatTokens(tokens: number): string {
  * 计时补全（技术方案 2026-10-22-run-trace-deep-dive §5.7）
  * 解码耗时与吞吐量是纯派生量，不进 VO：同一数字两处真相会让「哪个对」变成问题。
  * 异常行（首字晚于结束、解码为 0）一律 null → 显示「—」，不出负数、不出 Infinity。
+ *
+ * 2026-10-27-llm-output-speed：实现下沉到 utils/throughput.ts，用量抽屉与分析页共用，
+ * 这里只做转发（RunTracePanel / RunTraceCallMetaTable 的 import 不变）。单测随实现搬到
+ * throughput.test.ts；trace-display.test.ts 只留轨迹自身的用例。
  * ------------------------------------------------------------------ */
 
-/** 解码耗时 = durationMs − firstTokenMs；首字缺失或晚于结束（时钟异常）时为 null。 */
-export function decodingMs(round: Pick<TraceRound, 'durationMs' | 'firstTokenMs'>): number | null {
-  if (round.firstTokenMs == null) return null
-  if (round.firstTokenMs > round.durationMs) return null
-  return round.durationMs - round.firstTokenMs
-}
-
-/** 吞吐量 = 输出 token ÷ 解码秒；解码不可算或为 0、输出为 0 时为 null（不显示 0 误导）。 */
-export function throughput(round: Pick<TraceRound, 'durationMs' | 'firstTokenMs' | 'completionTokens'>): number | null {
-  const decode = decodingMs(round)
-  if (decode == null || decode <= 0) return null
-  if (round.completionTokens <= 0) return null
-  return round.completionTokens / (decode / 1000)
-}
+export { decodingMs, throughput, formatThroughput, avgThroughput, formatAvgThroughput } from './throughput'
 
 /* ------------------------------------------------------------------ *
  * 消息内容展示摘要（消息抽屉用，技术方案 2026-10-25-run-trace-content-and-prompt §5.6）。
@@ -159,13 +150,6 @@ export function messageContentSummary(content: string | null): MessageContentSum
     }
   } catch { /* 非 JSON 数组按原文 */ }
   return { text: content, attachments: null, multimodal: false }
-}
-
-
-/** 吞吐量展示：1 位小数 + 单位；null → 「—」。 */
-export function formatThroughput(round: Pick<TraceRound, 'durationMs' | 'firstTokenMs' | 'completionTokens'>): string {
-  const value = throughput(round)
-  return value == null ? '—' : `${value.toFixed(1)} tok/s`
 }
 
 /* ------------------------------------------------------------------ *

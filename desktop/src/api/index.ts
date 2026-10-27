@@ -814,6 +814,10 @@ export interface UsageTotals {
   totalTokens: number
   /** 成本合计（成本单位 = 模型价格填写口径）；未配价的调用不计入，展示时按「—」处理 */
   cost: number
+  /** 可解码行的输出 token 合计（平均速度的分子；后端 /summary 补零，非空） */
+  decodeTokens: number
+  /** 可解码行的解码耗时合计（ms，= Σ(durationMs − firstTokenMs)；平均速度的分母 */
+  decodeMs: number
 }
 
 export interface UsageModelRow {
@@ -885,6 +889,10 @@ export interface UsageTrendBucket {
   cachedTokens: number
   totalTokens: number
   cost: number
+  /** 桶内可解码行的输出 token 合计（输出速度趋势的分子；无流式调用的桶为 0） */
+  decodeTokens: number
+  /** 桶内可解码行的解码耗时合计（ms，输出速度趋势的分母；无流式调用的桶为 0） */
+  decodeMs: number
 }
 
 export interface MyUsageTrends {

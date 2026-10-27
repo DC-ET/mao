@@ -22,6 +22,8 @@ describe('LlmCallRepository 用户维度聚合', () => {
       cachedTokens: '3000',
       totalTokens: '10000',
       cost: '1.5',
+      decodeTokens: '600',
+      decodeMs: '12000',
     });
     const row = await repo.aggregateSummary(7, WINDOW);
     expect(row).toEqual({
@@ -34,6 +36,8 @@ describe('LlmCallRepository 用户维度聚合', () => {
       cachedTokens: 3000,
       totalTokens: 10000,
       cost: 1.5,
+      decodeTokens: 600,
+      decodeMs: 12000,
     });
     const [sql, params] = queryOne.mock.calls[0] as [string, unknown[]];
     expect(sql).toContain('WHERE user_id = ? AND');
@@ -60,7 +64,28 @@ describe('LlmCallRepository 用户维度聚合', () => {
       cachedTokens: 0,
       totalTokens: 0,
       cost: 0,
+      decodeTokens: 0,
+      decodeMs: 0,
     });
+  });
+
+  it('解码聚合：只计可解码行（流式、解码 > 0、输出 > 0），与 desktop throughput 同口径', async () => {
+    const { repo, queryOne } = build([], null);
+    await repo.aggregateSummary(7, WINDOW);
+    const [sql] = queryOne.mock.calls[0] as [string, unknown[]];
+    // 分子：输出 token；非流式（first_token_ms NULL）、零输出、首字不早于结束（解码为 0）都不进
+    expect(sql).toContain('first_token_ms IS NOT NULL AND first_token_ms < duration_ms AND completion_tokens > 0');
+    expect(sql).toContain('THEN completion_tokens ELSE 0 END), 0) AS decodeTokens');
+    // 分母：解码耗时 = duration_ms − first_token_ms；两列条件必须一致，否则零输出行的耗时会单独进分母拉低均速
+    expect(sql).toContain('THEN duration_ms - first_token_ms ELSE 0 END), 0) AS decodeMs');
+    // 分子分母条件逐字相同：零输出 / 解码为 0 的行两列都不计
+    expect(sql.match(/first_token_ms IS NOT NULL AND first_token_ms < duration_ms AND completion_tokens > 0/g)).toHaveLength(2);
+
+    const trendDb = build([]);
+    await trendDb.repo.aggregateTrend(7, WINDOW, 'day');
+    const [trendSql] = trendDb.query.mock.calls[0] as [string, unknown[]];
+    expect(trendSql).toContain('AS decodeTokens');
+    expect(trendSql).toContain('AS decodeMs');
   });
 
   it('aggregateByModel：GROUP BY model_id 且 userId 注入；model_id 为 NULL 保留 null', async () => {
@@ -101,10 +126,10 @@ describe('LlmCallRepository 用户维度聚合', () => {
     expect(params).toEqual([7, '2026-10-04 00:00:00', '2026-10-11 00:00:00']);
   });
 
-  it('aggregateTrend：day 用 DATE()，hour 用 DATE_FORMAT 整点，均按桶升序；带 prompt/cached token', async () => {
-    const dayDb = build([{ bucket: '2026-10-10', callCount: '2', failCount: '0', cancelledCount: '1', promptTokens: '900', cachedTokens: '300', totalTokens: '20', cost: '0.1' }]);
+  it('aggregateTrend：day 用 DATE()，hour 用 DATE_FORMAT 整点，均按桶升序；带 prompt/cached token 与解码聚合', async () => {
+    const dayDb = build([{ bucket: '2026-10-10', callCount: '2', failCount: '0', cancelledCount: '1', promptTokens: '900', cachedTokens: '300', totalTokens: '20', cost: '0.1', decodeTokens: '150', decodeMs: '3000' }]);
     const dayRows = await dayDb.repo.aggregateTrend(7, WINDOW, 'day');
-    expect(dayRows).toEqual([{ bucket: '2026-10-10', callCount: 2, failCount: 0, cancelledCount: 1, promptTokens: 900, cachedTokens: 300, totalTokens: 20, cost: 0.1 }]);
+    expect(dayRows).toEqual([{ bucket: '2026-10-10', callCount: 2, failCount: 0, cancelledCount: 1, promptTokens: 900, cachedTokens: 300, totalTokens: 20, cost: 0.1, decodeTokens: 150, decodeMs: 3000 }]);
     const [daySql] = dayDb.query.mock.calls[0] as [string, unknown[]];
     expect(daySql).toContain('DATE(created_at)');
     expect(daySql).not.toContain('DATE_FORMAT');

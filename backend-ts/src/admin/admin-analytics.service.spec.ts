@@ -84,6 +84,8 @@ function buildStore() {
         firstTokenMsSum: 4000,
         firstTokenMsCount: 8,
         durationMsSum: 40000,
+        decodeTokensSum: 900,
+        decodeMsSum: 15000,
       },
     ]),
     selectLlmCallSceneStats: vi.fn(async () => [
@@ -104,9 +106,11 @@ function buildStore() {
       cachedTokens: 200,
       callTokens: 1500,
     })),
-    countLlmCallLatency: vi.fn(async (_range: unknown, column: string) => (column === 'first_token_ms' ? 8 : 10)),
-    selectLlmCallLatencyAtOffset: vi.fn(async (_range: unknown, column: string, offset: number) => {
-      if (column === 'first_token_ms') return offset <= 3 ? 300 : 2000
+    countLlmCallLatency: vi.fn(async (_range: unknown, metric: string) =>
+      metric === 'first_token_ms' ? 8 : metric === 'throughput' ? 5 : 10),
+    selectLlmCallLatencyAtOffset: vi.fn(async (_range: unknown, metric: string, offset: number) => {
+      if (metric === 'first_token_ms') return offset <= 3 ? 300 : 2000
+      if (metric === 'throughput') return offset <= 2 ? 40 : 80
       return offset <= 4 ? 2000 : 8000
     }),
   };
@@ -323,6 +327,8 @@ describe('AdminAnalyticsService', () => {
       cacheHitRate: 12.5,
       avgFirstTokenMs: 500,
       avgDurationMs: 5000,
+      // 吞吐均值 = 900 输出 ÷ 15s 解码 = 60.0（加权平均，不是各行 tps 的算术平均）
+      avgThroughput: 60,
     });
     // store 桩未返回 cost 行 → 成本合计 0
     expect(result.periodTotals).toEqual({ totalTokens: 490, totalCost: 0 });
@@ -331,6 +337,36 @@ describe('AdminAnalyticsService', () => {
     expect(result.userTokenTop).toEqual([
       expect.objectContaining({ userId: 1, displayName: 'Ada', totalTokens: 700 }),
     ]);
+  });
+
+  it('modelsScopeAvgThroughputNullWhenNoDecodableRows', async () => {
+    const statistics = { getOverview: vi.fn(async () => ({})) };
+    const store = buildStore();
+    // 窗口内全部调用零输出（流式中途失败）：SQL 侧 decodeTokensSum 为 0 而 decodeMsSum 可能 > 0
+    store.selectLlmCallStatsByModel = vi.fn(async () => [
+      {
+        id: 3,
+        callCount: 8,
+        successCount: 0,
+        failCount: 8,
+        retryCallCount: 0,
+        promptTokens: 800,
+        completionTokens: 0,
+        cachedTokens: 0,
+        callTokens: 800,
+        firstTokenMsSum: 4000,
+        firstTokenMsCount: 8,
+        durationMsSum: 40000,
+        decodeTokensSum: 0,
+        decodeMsSum: 15000,
+      },
+    ]);
+    const service = new AdminAnalyticsService(statistics as never, store as never);
+
+    const result = (await service.modelsScope(7)) as Record<string, any>;
+
+    // 不显示 0 tok/s 误导：与桌面端 avgThroughput 的零分子 null 同口径
+    expect(result.modelStats[0].avgThroughput).toBeNull();
   });
 
   it('usersScopeMergesLlmCallColumns', async () => {
@@ -416,6 +452,9 @@ describe('AdminAnalyticsService', () => {
       cacheHitRate: 20,
       firstTokenP50: 300,
       durationP95: 8000,
+      // 吞吐分位：5 个样本 → p50 取 offset 2 = 40，p95 取 offset 3 = 80
+      throughputP50: 40,
+      throughputP95: 80,
     });
     expect(result.failTop.byModel[0]).toMatchObject({ name: 'gpt', failCount: 1 });
     expect(result.failTop.byScene[0]).toMatchObject({ name: 'compaction', failCount: 1 });
@@ -643,6 +682,22 @@ describe('AdminAnalyticsDbStore', () => {
         expect(params).toContain('2026-01-08 00:00:00');
       }
     }
+  });
+
+  it('吞吐分位：ORDER BY 派生表达式，样本条件剔除不可解码行', async () => {
+    const db = { query: vi.fn(async () => []), queryOne: vi.fn(async () => ({ c: 0, v: null })) };
+    const store = new AdminAnalyticsDbStore(db as never);
+
+    await store.countLlmCallLatency(range, 'throughput');
+    expect(db.queryOne.mock.calls[0]?.[0]).toContain(
+      'first_token_ms IS NOT NULL AND first_token_ms < duration_ms AND completion_tokens > 0',
+    );
+
+    await store.selectLlmCallLatencyAtOffset(range, 'throughput', 2);
+    const [sql, params] = db.queryOne.mock.calls[1] as [string, unknown[]];
+    expect(sql).toContain('completion_tokens / ((duration_ms - first_token_ms) / 1000) AS v');
+    expect(sql).toContain('ORDER BY completion_tokens / ((duration_ms - first_token_ms) / 1000) ASC');
+    expect(params).toContain(2);
   });
 
   it('buildTrendBucketKeysStopsAtCurrentHourWhenWindowIncludesToday', () => {

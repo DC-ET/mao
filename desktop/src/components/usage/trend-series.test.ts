@@ -3,7 +3,7 @@ import type { UsageTrendBucket } from '../../api'
 import { buildTrendSeries, trendBucketLabel } from './trend-series'
 
 function bucket(partial: Partial<UsageTrendBucket>): UsageTrendBucket {
-  return { bucket: '2026-10-10', callCount: 0, failCount: 0, cancelledCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0, ...partial }
+  return { bucket: '2026-10-10', callCount: 0, failCount: 0, cancelledCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0, decodeTokens: 0, decodeMs: 0, ...partial }
 }
 
 describe('trend-series', () => {
@@ -65,5 +65,29 @@ describe('trend-series', () => {
       bucket({ bucket: '2026-10-10' }),
     ])
     expect(series.hitRates).toEqual([25, 33.3, null])
+  })
+
+  it('buildTrendSeries：tps 按桶内 Σ输出 ÷ Σ解码秒，无可解码行的桶断开（null）', () => {
+    const series = buildTrendSeries([
+      // 桶一：150 输出 ÷ 3s 解码 = 50 tok/s
+      bucket({ bucket: '2026-10-08', callCount: 2, decodeTokens: 150, decodeMs: 3000 }),
+      // 桶二：只有非流式调用（后端 decodeMs 补零）→ null，折线断开不画到 0
+      bucket({ bucket: '2026-10-09', callCount: 1 }),
+    ])
+    expect(series.tps).toEqual([50, null])
+  })
+
+  it('buildTrendSeries：avgTps 是窗口加权平均，全非流式窗口为 null', () => {
+    const series = buildTrendSeries([
+      bucket({ bucket: '2026-10-08', decodeTokens: 150, decodeMs: 3000 }),
+      bucket({ bucket: '2026-10-09', decodeTokens: 10, decodeMs: 1000 }),
+    ])
+    // (150 + 10) ÷ (3s + 1s) = 40，不是 50 与 10 的算术平均
+    expect(series.avgTps).toBe(40)
+
+    const nonStreamOnly = buildTrendSeries([
+      bucket({ bucket: '2026-10-08', callCount: 3 }),
+    ])
+    expect(nonStreamOnly.avgTps).toBeNull()
   })
 })

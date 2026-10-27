@@ -62,7 +62,7 @@
 
 `cancelled`（0/1，读时按 `errorMessage` 是否含 `Cancelled by user` 派生，历史行同样生效）：1 = 用户点「停止」取消，此时 `success` 仍为 0，但展示与统计都按「取消」而非「失败」计。
 
-`summary` 返回 `{ range, totals: { callCount, successCount, failCount, cancelledCount, promptTokens, completionTokens, cachedTokens, totalTokens, cost }, byModel[], byScene[], byAgent[] }`；`byModel[]` 行为 `{ modelId, modelName, callCount, failCount, cancelledCount, promptTokens, completionTokens, totalTokens, cost }`，`byScene[]` / `byAgent[]` 行为 `{ scene|agentId, agentName, callCount, failCount, cancelledCount, totalTokens, cost }`（`agentId`/`agentName` 为 null 分别表示无归属调用与已删 Agent）；`trends` 返回 `{ range, granularity, buckets: [{ bucket, callCount, failCount, cancelledCount, promptTokens, cachedTokens, totalTokens, cost }] }`。所有 `failCount` 均已剔除取消；「我的用量」抽屉的成功率分母 = 调用数 − 取消数。
+`summary` 返回 `{ range, totals: { callCount, successCount, failCount, cancelledCount, promptTokens, completionTokens, cachedTokens, totalTokens, cost, decodeTokens, decodeMs }, byModel[], byScene[], byAgent[] }`；`byModel[]` 行为 `{ modelId, modelName, callCount, failCount, cancelledCount, promptTokens, completionTokens, totalTokens, cost }`，`byScene[]` / `byAgent[]` 行为 `{ scene|agentId, agentName, callCount, failCount, cancelledCount, totalTokens, cost }`（`agentId`/`agentName` 为 null 分别表示无归属调用与已删 Agent）；`trends` 返回 `{ range, granularity, buckets: [{ bucket, callCount, failCount, cancelledCount, promptTokens, cachedTokens, totalTokens, cost, decodeTokens, decodeMs }] }`。所有 `failCount` 均已剔除取消；「我的用量」抽屉的成功率分母 = 调用数 − 取消数。`decodeTokens` / `decodeMs`（0.0.364 起）是输出速度的聚合原料：只累计「可解码」调用（流式且首字不晚于结束、有输出），前端按 `decodeTokens ÷ (decodeMs/1000)` 得窗口加权平均速度，历史数据同样可算。
 
 ## 示例
 

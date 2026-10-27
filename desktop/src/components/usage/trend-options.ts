@@ -1,11 +1,12 @@
 import { CHART_PALETTE, type ChartOption } from '../../utils/echarts'
 
-/** 三张趋势图取色：Token 蓝、请求数绿、缓存命中率紫、成本橙。 */
+/** 趋势图取色：Token 蓝、请求数绿、缓存命中率紫、成本橙、输出速度浅蓝。 */
 export const TREND_COLORS = {
   token: CHART_PALETTE[0],
   calls: CHART_PALETTE[1],
   cost: CHART_PALETTE[2],
   hitRate: CHART_PALETTE[3],
+  speed: CHART_PALETTE[4],
 } as const
 
 export interface TrendLine {

@@ -159,6 +159,7 @@ import { useRouter } from 'vue-router'
 import BaseChart from '../../../components/BaseChart.vue'
 import { phaseLabel, executionModeLabel } from '../../../utils/labels'
 import { llmCallSceneLabel, formatMs } from '../../../utils/llmCallLabels'
+import { formatTps } from '../../../utils/throughput'
 import { donutOption, formatCompact, formatNumber, phaseColor, phaseRankItems, type RankItem } from '../chart-options'
 import type { SessionsPayload } from '../types'
 
@@ -196,7 +197,9 @@ const qualityItems = computed(() => {
     { label: '首 token p50', value: formatMs(q.firstTokenP50) },
     { label: '首 token p95', value: formatMs(q.firstTokenP95) },
     { label: '总耗时 p50', value: formatMs(q.durationP50) },
-    { label: '总耗时 p95', value: formatMs(q.durationP95) }
+    { label: '总耗时 p95', value: formatMs(q.durationP95) },
+    { label: '吞吐 p50', value: formatTps(q.throughputP50) },
+    { label: '吞吐 p95', value: formatTps(q.throughputP95) }
   ]
 })
 
