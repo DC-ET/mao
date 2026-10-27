@@ -102,12 +102,16 @@ export const SVG_SANITIZE_OPTIONS = {
 const MERMAID_FONT_FAMILY =
   "'SF Pro Text', system-ui, -apple-system, 'Microsoft YaHei', 'PingFang SC', 'Hiragino Sans GB', sans-serif"
 
-function mermaidConfig(isDark: boolean) {
+export function mermaidConfig(isDark: boolean) {
   return {
     startOnLoad: false,
     securityLevel: 'strict' as const,
     theme: isDark ? ('dark' as const) : ('default' as const),
-    flowchart: { htmlLabels: false },
+    // 必须在顶层：mermaid 的 getEffectiveHtmlLabels 只认 config.htmlLabels，
+    // flow.htmlLabels 已废弃且不在 defaultConfig 里，传了也会被当成 undefined
+    // 回落 true —— 节点标签会变成 foreignObject，随后被 SVG_SANITIZE_OPTIONS
+    // 的 FORBID_TAGS 整块剥掉，图上只剩空框（2026-10-27 线上事故）。
+    htmlLabels: false,
     themeVariables: {
       background: 'transparent',
       fontFamily: MERMAID_FONT_FAMILY,
