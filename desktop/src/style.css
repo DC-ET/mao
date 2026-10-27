@@ -609,6 +609,102 @@ pre code {
   background: transparent;
 }
 
+/* 气泡里的图缩到容器宽后宽架构图字号只剩 4~5px，点图进全屏查看器读 */
+.markdown-body .mermaid-block .mermaid-figure {
+  cursor: zoom-in;
+}
+
+.markdown-body .mermaid-block .mermaid-figure:hover {
+  border-color: var(--aw-divider);
+}
+
+/* Mermaid 全屏查看器：mermaid-viewer.ts 建的 DOM，不经过 Vue 挂载 */
+.mermaid-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: none;
+}
+
+.mermaid-viewer.is-open {
+  display: block;
+}
+
+.mermaid-viewer-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.72);
+}
+
+.mermaid-viewer-panel {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  gap: 12px;
+}
+
+.mermaid-viewer-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mermaid-viewer-title {
+  color: #fff;
+  font-size: 13px;
+  line-height: 1.6;
+  opacity: 0.8;
+}
+
+.mermaid-viewer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mermaid-viewer-btn {
+  padding: 5px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: var(--aw-radius-pill);
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.6;
+  cursor: pointer;
+}
+
+.mermaid-viewer-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.mermaid-viewer-btn.is-active {
+  border-color: transparent;
+  background: #fff;
+  color: #1d1d1f;
+}
+
+.mermaid-viewer-stage {
+  flex: 1;
+  overflow: auto;
+  border-radius: var(--aw-radius-md);
+  background: var(--aw-surface);
+}
+
+.mermaid-viewer-canvas {
+  padding: 16px;
+  text-align: center;
+}
+
+.mermaid-viewer-canvas svg {
+  display: inline-block;
+  max-width: none;
+  height: auto;
+  background: transparent;
+}
+
 .markdown-body .mermaid-block details.mermaid-source {
   margin-top: 4px;
 }

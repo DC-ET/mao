@@ -12,6 +12,7 @@
 import DOMPurify from 'dompurify'
 import { decodeBase64Utf8, encodeBase64Utf8 } from './base64'
 import { themeName } from './monaco-loader'
+import { openMermaidViewer } from './mermaid-viewer'
 
 const MERMAID_LANGS = new Set(['mermaid', 'mmd'])
 
@@ -102,6 +103,17 @@ export const SVG_SANITIZE_OPTIONS = {
 const MERMAID_FONT_FAMILY =
   "'SF Pro Text', system-ui, -apple-system, 'Microsoft YaHei', 'PingFang SC', 'Hiragino Sans GB', sans-serif"
 
+/**
+ * journey 专供覆盖：mermaid 的 `.section-type-N { fill: <该段底色> }` 同时命中
+ * section 色块 rect 和 section 标题 text（两者共用 class），htmlLabels 关掉后标题
+ * 改走原生 <text>，颜色就成了它所在色块的底色——白字白底，标题消失。
+ * 这里用 `text.` 前缀把作用面收到 <text>：特异度 (0,1,1) 高于 mermaid 的
+ * (0,1,0)，无需 !important，且不会碰到色块。深色主题同样取 #333 之外的对比色。
+ * themeCSS 会被 mermaid 并进 SVG 内的 <style>，DOMPurify 的 ADD_TAGS 放行。
+ */
+const JOURNEY_SECTION_LABEL_CSS =
+  'text.journey-section{fill:var(--aw-ink);}'
+
 export function mermaidConfig(isDark: boolean) {
   return {
     startOnLoad: false,
@@ -111,7 +123,10 @@ export function mermaidConfig(isDark: boolean) {
     // flow.htmlLabels 已废弃且不在 defaultConfig 里，传了也会被当成 undefined
     // 回落 true —— 节点标签会变成 foreignObject，随后被 SVG_SANITIZE_OPTIONS
     // 的 FORBID_TAGS 整块剥掉，图上只剩空框（2026-10-27 线上事故）。
+    // 该键是全局的：classDiagram / stateDiagram / erDiagram / sequence /
+    // gantt / pie / mindmap 等图型一并生效（已逐型验证）。
     htmlLabels: false,
+    themeCSS: JOURNEY_SECTION_LABEL_CSS,
     themeVariables: {
       background: 'transparent',
       fontFamily: MERMAID_FONT_FAMILY,
@@ -180,6 +195,9 @@ function fillRendered(el: HTMLElement, svg: string): void {
   const figure = document.createElement('div')
   figure.className = 'mermaid-figure'
   figure.innerHTML = svg
+  // 气泡里图被 CSS 缩到容器宽，宽架构图的字号只剩 4~5px；点图进全屏查看器按原始尺寸看
+  figure.title = '点击查看大图'
+  figure.addEventListener('click', () => openMermaidViewer(svg))
   el.appendChild(figure)
   const details = document.createElement('details')
   details.className = 'mermaid-source'

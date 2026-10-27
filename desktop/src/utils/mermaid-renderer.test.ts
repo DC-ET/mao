@@ -79,6 +79,17 @@ describe('mermaidConfig', () => {
     expect(SVG_SANITIZE_OPTIONS.FORBID_TAGS).toContain('foreignObject')
     expect(SVG_SANITIZE_OPTIONS.FORBID_TAGS).toContain('script')
   })
+
+  it('themeCSS 覆盖 journey section 标题颜色，且只作用于 <text> 不碰色块', () => {
+    // mermaid 的 .section-type-N{fill:底色} 同时命中色块 rect 与标题 text，
+    // htmlLabels 关掉后标题颜色=所在色块底色，白字白底看不见。
+    // 必须带 text. 前缀把作用面收窄，否则色块颜色会被一起改掉。
+    const css = mermaidConfig(false).themeCSS
+    expect(css).toContain('text.journey-section')
+    expect(css).toMatch(/text\.journey-section\s*\{[^}]*fill\s*:/)
+    // 不能写成不带元素限定的 .journey-section（会连色块一起改）
+    expect(css).not.toMatch(/(^|[,{\s])\.journey-section\s*\{/)
+  })
 })
 
 describe('InsertionOrderCache', () => {
