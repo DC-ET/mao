@@ -26,7 +26,7 @@
         </div>
       </div>
 
-      <p class="cost-note">饼图按调用次数占比，悬浮可看该维度的调用数、Token 与成本。成本按模型价格填写口径估算，未配置价格的调用不计入成本。</p>
+      <p class="cost-note">饼图按调用次数占比，悬浮可看该维度的调用数、Token 与成本。成本按模型价格填写口径估算，未配置价格的调用不计入成本。「平均速度」= 窗口内输出 tokens ÷ 解码耗时（解码 = 总耗时 − 首字耗时），仅流式调用可解码，非流式调用不计入。</p>
     </template>
   </div>
 </template>
@@ -35,6 +35,7 @@
 import { computed } from 'vue'
 import type { MyUsageSummary } from '../../api'
 import { formatCost, formatNumber, formatPercent, formatToken } from '../../utils/usageFormat'
+import { formatAvgThroughput } from '../../utils/throughput'
 import { llmCallSceneLabel } from '../../utils/llmCallLabels'
 import { buildPieSlices } from './pie-series'
 import UsagePieChart from './UsagePieChart.vue'
@@ -98,6 +99,13 @@ const cards = computed(() => {
       label: '缓存命中率',
       value: formatPercent(t?.cachedTokens ?? 0, t?.promptTokens ?? 0),
       hint: t ? `命中 ${formatToken(t.cachedTokens)}` : '',
+    },
+    {
+      label: '平均速度',
+      // 加权平均 = Σ输出 tokens ÷ Σ解码耗时（技术方案 2026-10-27-llm-output-speed §5.1）；
+      // 全非流式窗口无可解码行 →「—」，不用总耗时兜底
+      value: t ? formatAvgThroughput(t) : '—',
+      hint: '输出 tokens ÷ 解码耗时',
     },
   ]
 })

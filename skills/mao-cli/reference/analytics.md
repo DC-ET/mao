@@ -43,6 +43,7 @@
 - 缓存命中率（0.0.292 起进总览 KPI 条）= `sum(llm_call.cached_tokens) / sum(llm_call.prompt_tokens)`，默认排除连通性自检；分母为 0（窗口内无调用）时接口给 null、界面显示 `-`；环比按百分点差（pp）展示，30% → 35% 是 ↑ 5pp 而不是 ↑ 17%
 - 调用结果三态（0.0.294 起）：`failCount` / `callFailCount` 只数**纯失败**，用户取消（`error_message` 含 `Cancelled by user`）单列 `cancelledCount` / `callCancelledCount`；`successRate` / `callSuccessRate` 分母为 `callCount - cancelledCount`（取消不是失败，也不是成功）。历史数据同样按此口径派生，无迁移
 - 成本口径（0.0.243 起）：所有 `cost` / `totalCost` 字段均为**成本单位**（与模型价格填写口径一致），后端为 `COALESCE(SUM(llm_call.cost_micros),0)/1e6`。模型未配价格、或价格缺一个方向时该次调用成本为 NULL、不计入合计（不按 0 计），因此「没配价格的模型」在成本口径下等于没有开销，不等于免费。`connectivity_test` 等 scene 默认排除（`excludeConnectivity=true`）。子代理与边路任务会话的成本同样计入所属用户 / Agent
+- 输出速度口径（0.0.364 起）：单次调用口径为「输出 tokens ÷ 解码耗时」（解码耗时 = `duration_ms - first_token_ms`），与桌面端「我的用量」明细列一致。`avgThroughput`（模型 Tab）是该模型窗口内加权平均（Σ输出 ÷ Σ解码秒），`throughputP50` / `throughputP95`（会话 Tab 质量项）是可解码调用的分位；非流式调用（`first_token_ms` 为空）、首字晚于结束、解码为 0 或输出为 0 的行一律不计入，窗口内没有可解码调用时显示「-」
 - 会话结局：窗口内**创建**的会话按 phase 分布；`livePhases` / `overview.runningSessions` 等为实时快照，不与窗口分布混算
 - 环比色约定：红=上升、绿=下降（纯方向口径，不区分指标的好坏）
 - 运行轨迹三个榜（`run-trace`）同为窗口内新增；前两个榜默认只统计 `scene=agent` 的轮（Agent 主循环），工具失败率全局按类型聚合、按比例排序（分母不同，直接比次数会让小样本工具霸榜）
@@ -91,7 +92,7 @@
 
 | 字段 | 说明 |
 |------|------|
-| `modelStats[]` | `modelId` / `modelName` / `provider` / `status` / `isDefault` / `sessionCount` / `messageCount` / `chatTokens` / `backgroundTokens` / `totalTokens`（含 llm_call 调用 Token）/ `backgroundCalls` / `contextWindowTokens`，以及质量列：`callCount` / `callFailCount` / `callCancelledCount` / `callSuccessRate` / `callTokens` / `promptTokens` / `cachedTokens` / `cacheHitRate` / `avgFirstTokenMs` / `avgDurationMs` / `retryCallCount`，以及成本列 `cost`（成本单位）。按 Token 合计降序；窗口内完全未被调用的模型不返回 |
+| `modelStats[]` | `modelId` / `modelName` / `provider` / `status` / `isDefault` / `sessionCount` / `messageCount` / `chatTokens` / `backgroundTokens` / `totalTokens`（含 llm_call 调用 Token）/ `backgroundCalls` / `contextWindowTokens`，以及质量列：`callCount` / `callFailCount` / `callCancelledCount` / `callSuccessRate` / `callTokens` / `promptTokens` / `cachedTokens` / `cacheHitRate` / `avgFirstTokenMs` / `avgDurationMs` / `avgThroughput`（0.0.364 起，输出速度加权平均，口径见下）/ `retryCallCount`，以及成本列 `cost`（成本单位）。按 Token 合计降序；窗口内完全未被调用的模型不返回 |
 | `periodTotals` | `{ totalTokens, totalCost }`（模型明细合计） |
 | `sceneStats[]` | `{ key, callCount, failCount, cancelledCount, callTokens }`，默认全部模型；可传 `modelId` 按模型过滤（`0` = 未关联模型，按 `model_id IS NULL` 命中） |
 | `protocolStats[]` | 同上，按 `llm_call.protocol` 分组 |
@@ -121,7 +122,7 @@
 | `executionModes[]` | `{ executionMode, count }`：CLOUD / LOCAL |
 | `livePhases[]` | 实时 phase 快照（全表，不随周期变） |
 | `periodTotals` | `{ sessions, activeUsers, completedSessions, failedSessions }` |
-| `callQuality` | `callCount` / `successCount` / `failCount` / `cancelledCount` / `retryCallCount` / `promptTokens` / `cachedTokens` / `callTokens` / `successRate` / `retryRatio` / `cacheHitRate` / `firstTokenP50` / `firstTokenP95` / `durationP50` / `durationP95` |
+| `callQuality` | `callCount` / `successCount` / `failCount` / `cancelledCount` / `retryCallCount` / `promptTokens` / `cachedTokens` / `callTokens` / `successRate` / `retryRatio` / `cacheHitRate` / `firstTokenP50` / `firstTokenP95` / `durationP50` / `durationP95` / `throughputP50` / `throughputP95`（0.0.364 起，输出速度分位，口径见下） |
 | `failTop` | `{ byModel[], byScene[] }`：失败次数 Top5，字段 `key` / `name` / `failCount` / `callCount` |
 
 ### trends（补充）

@@ -227,7 +227,7 @@ function ymdDiffDays(from: string, to: string): number {
   return Math.round((Date.UTC(y2, m2 - 1, d2) - Date.UTC(y1, m1 - 1, d1)) / 86_400_000);
 }
 
-const ZERO_TREND_BUCKET = { callCount: 0, failCount: 0, cancelledCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0 } as const;
+const ZERO_TREND_BUCKET = { callCount: 0, failCount: 0, cancelledCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0, decodeTokens: 0, decodeMs: 0 } as const;
 
 /** 聚合行按桶键回填到完整序列：缺失桶补零，前端无需再做日期运算（也无浏览器时区错位风险）。 */
 function fillTrendBuckets(rows: LlmCallTrendRow[], keys: string[]): LlmCallTrendRow[] {

@@ -160,6 +160,9 @@ export interface CallQualitySummary {
   firstTokenP95?: number | null
   durationP50?: number | null
   durationP95?: number | null
+  /** 吞吐 p50 / p95（tok/s，输出 tokens ÷ 解码耗时）；无可解码行（全非流式）时为 null */
+  throughputP50?: number | null
+  throughputP95?: number | null
 }
 
 export interface NamedCallStat {
@@ -203,6 +206,8 @@ export interface ModelStatRow {
   cacheHitRate?: number | null
   avgFirstTokenMs?: number | null
   avgDurationMs?: number | null
+  /** 窗口吞吐均值（tok/s，加权平均 = Σ输出 ÷ Σ解码秒）；无可解码行时为 null */
+  avgThroughput?: number | null
   retryCallCount?: number
 }
 

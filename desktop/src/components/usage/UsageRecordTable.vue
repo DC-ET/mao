@@ -27,6 +27,9 @@
     <el-table-column label="耗时" width="72" align="right">
       <template #default="{ row }">{{ formatMs(row.durationMs) }}</template>
     </el-table-column>
+    <el-table-column label="吞吐" width="84" align="right">
+      <template #default="{ row }">{{ formatThroughput(row) }}</template>
+    </el-table-column>
     <el-table-column label="结果" width="64">
       <template #default="{ row }">
         <el-tag size="small" :type="callResultTag(row).type">{{ callResultTag(row).label }}</el-tag>
@@ -48,6 +51,7 @@ import type { MyLlmCallRecord } from '../../api'
 import { formatDateTime } from '../../utils/datetime'
 import { formatCacheHit, formatToken } from '../../utils/usageFormat'
 import { formatMs, llmCallSceneLabel } from '../../utils/llmCallLabels'
+import { formatThroughput } from '../../utils/throughput'
 import { callResultTag } from './result-tag'
 
 defineProps<{

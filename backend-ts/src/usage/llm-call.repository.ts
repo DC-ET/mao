@@ -86,6 +86,10 @@ export interface LlmCallSummaryRow {
   totalTokens: number;
   /** 窗口内成本合计（成本单位 = 模型价格填写口径；未配价行 cost_micros 为 NULL，SUM 自动忽略）。 */
   cost: number;
+  /** 可解码行的输出 token 合计（吞吐均值的分子；技术方案 2026-10-27-llm-output-speed §5.1）。 */
+  decodeTokens: number;
+  /** 可解码行的解码耗时合计（ms，= Σ(duration_ms − first_token_ms)；吞吐均值的分母）。 */
+  decodeMs: number;
 }
 
 export interface LlmCallModelAggRow {
@@ -128,6 +132,10 @@ export interface LlmCallTrendRow {
   cachedTokens: number;
   totalTokens: number;
   cost: number;
+  /** 桶内可解码行的输出 token 合计（吞吐量趋势的分子；无流式调用的桶为 0）。 */
+  decodeTokens: number;
+  /** 桶内可解码行的解码耗时合计（ms，吞吐量趋势的分母；无流式调用的桶为 0）。 */
+  decodeMs: number;
 }
 
 function toNumber(value: unknown): number {
@@ -141,6 +149,19 @@ function trendBucketExpr(granularity: TrendGranularity): string {
     ? `DATE_FORMAT(created_at, '%Y-%m-%d %H:00')`
     : `DATE(created_at)`;
 }
+
+/**
+ * 解码聚合（技术方案 2026-10-27-llm-output-speed §5.1）：吞吐量 = 输出 tokens ÷ 解码耗时，
+ * 解码耗时 = duration_ms − first_token_ms。只统计「可解码行」——与 desktop utils/throughput.ts 的
+ * throughput() 逐条同口径：流式（first_token_ms 非空）、解码 > 0（first_token_ms 严格早于结束：
+ * 取等会把解码为 0 的行算成「瞬时出完」，其 tokens 进分子而耗时不进分母，单方面抬高均速）、
+ * 输出 > 0（失败行 completion_tokens 通常为 0，自然不进分子）。非流式调用两列都不计，
+ * 前端据此显示「—」，不用总耗时兜底（兜底会把 prefill 算进去，与流式行不可比）。
+ */
+const DECODE_AGGS = `COALESCE(SUM(CASE WHEN first_token_ms IS NOT NULL AND first_token_ms < duration_ms AND completion_tokens > 0
+                  THEN completion_tokens ELSE 0 END), 0) AS decodeTokens,
+       COALESCE(SUM(CASE WHEN first_token_ms IS NOT NULL AND first_token_ms < duration_ms AND completion_tokens > 0
+                  THEN duration_ms - first_token_ms ELSE 0 END), 0) AS decodeMs`;
 
 export class LlmCallRepository {
   constructor(private readonly db: Db) {}
@@ -300,7 +321,8 @@ export class LlmCallRepository {
               COALESCE(SUM(completion_tokens), 0) AS completionTokens,
               COALESCE(SUM(cached_tokens), 0) AS cachedTokens,
               COALESCE(SUM(total_tokens), 0) AS totalTokens,
-              COALESCE(SUM(cost_micros), 0) / 1000000 AS cost
+              COALESCE(SUM(cost_micros), 0) / 1000000 AS cost,
+              ${DECODE_AGGS}
        FROM llm_call
        WHERE user_id = ? AND ${sql}`,
       [userId, ...params],
@@ -315,6 +337,8 @@ export class LlmCallRepository {
       cachedTokens: toNumber(row?.cachedTokens),
       totalTokens: toNumber(row?.totalTokens),
       cost: toNumber(row?.cost),
+      decodeTokens: toNumber(row?.decodeTokens),
+      decodeMs: toNumber(row?.decodeMs),
     };
   }
 
@@ -417,7 +441,8 @@ export class LlmCallRepository {
               COALESCE(SUM(prompt_tokens), 0) AS promptTokens,
               COALESCE(SUM(cached_tokens), 0) AS cachedTokens,
               COALESCE(SUM(total_tokens), 0) AS totalTokens,
-              COALESCE(SUM(cost_micros), 0) / 1000000 AS cost
+              COALESCE(SUM(cost_micros), 0) / 1000000 AS cost,
+              ${DECODE_AGGS}
        FROM llm_call
        WHERE user_id = ? AND ${sql}
        GROUP BY ${bucket}
@@ -433,6 +458,8 @@ export class LlmCallRepository {
       cachedTokens: toNumber(r.cachedTokens),
       totalTokens: toNumber(r.totalTokens),
       cost: toNumber(r.cost),
+      decodeTokens: toNumber(r.decodeTokens),
+      decodeMs: toNumber(r.decodeMs),
     }));
   }
 }

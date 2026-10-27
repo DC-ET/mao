@@ -16,7 +16,7 @@
 | D1 | 速度口径 | **输出 tokens ÷ 解码耗时**，解码耗时 = `duration_ms − first_token_ms`。与 desktop 运行轨迹既有口径逐字节一致（`trace-display.ts` 的 `decodingMs` / `throughput`），不引入第二种算法 |
 | D2 | 存储 | **不新增列、不回填、不写存储过程**。`llm_call` 自 V113 建表即有 `completion_tokens` / `duration_ms` / `first_token_ms`，全部历史行可派生。若改存 `output_tps` 列，历史全 NULL 还要回填，纯属自找麻烦。trace-display 注释里「同一数字两处真相」的教训照办 |
 | D3 | 非流式调用 | **显示「—」，不用总耗时兜底**。`first_token_ms` 仅流式有值（`recording-llm-adapter.ts` 非流式分支不传），用 `duration_ms` 兜底会把 prefill 算进去，数字变慢且与流式行不可比 |
-| D4 | 聚合口径 | **加权平均**：`Σ可解码行输出 tokens ÷ Σ可解码行解码秒`。不是各行 tps 的算术平均（短行会被放大）。分子分母都只计「可解码行」：`first_token_ms` 非空、不晚于结束、输出 > 0 |
+| D4 | 聚合口径 | **加权平均**：`Σ可解码行输出 tokens ÷ Σ可解码行解码秒`。不是各行 tps 的算术平均（短行会被放大）。分子分母都只计「可解码行」，且与单行 `throughput()` 逐条同口径：`first_token_ms` 非空、**首字严格早于结束**（解码 > 0）、输出 > 0。取等（解码为 0）的行不能进——其 tokens 会单进分子而耗时不进分母，把均速抬高 |
 | D5 | 重试 | **不剔除**。`duration_ms` 是含适配器重试的墙钟（V113 注释与 repository 注释双证），重试过的行速度被低估。单行无法区分重试段，接受低估，tooltip 注明口径 |
 | D6 | 取消 / 失败行 | **照常计入**。取消行取消前确实产生了输出，`completion_tokens` 是部分量，解码差仍是合理近似；失败行 `completion_tokens` 通常为 0，自然不进分子 |
 | D7 | admin 吞吐分位 | **复用既有 latency percentile 模式**（`countLlmCallLatency` + `selectLlmCallLatencyAtOffset`，`ORDER BY … LIMIT offset`），把列参数泛化为 metric（列 / 表达式）。不加新索引——与 `duration_ms` 分位同等成本，窗口查询本就全表扫 |
@@ -157,13 +157,13 @@ script 加 `import { formatThroughput } from '../../utils/throughput'`。非流�
 **SQL 模式**（两处聚合共用，`llm-call.repository.ts`）：在 `aggregateSummary` 与 `aggregateTrend` 的 SELECT 里各加两项——
 
 ```sql
-COALESCE(SUM(CASE WHEN first_token_ms IS NOT NULL AND first_token_ms <= duration_ms AND completion_tokens > 0
+COALESCE(SUM(CASE WHEN first_token_ms IS NOT NULL AND first_token_ms < duration_ms AND completion_tokens > 0
                   THEN completion_tokens ELSE 0 END), 0) AS decodeTokens,
-COALESCE(SUM(CASE WHEN first_token_ms IS NOT NULL AND first_token_ms <= duration_ms
+COALESCE(SUM(CASE WHEN first_token_ms IS NOT NULL AND first_token_ms < duration_ms AND completion_tokens > 0
                   THEN duration_ms - first_token_ms ELSE 0 END), 0) AS decodeMs
 ```
 
-条件与 `decodingMs` / `throughput` 逐条对齐（D4）：不可解码行两列都不计，天然不影响加权平均。`decodeMs` 单位 ms，与 `duration_ms` 列一致。
+两列条件逐字相同、与单行 `throughput()` 逐条对齐（D4）：非流式（`first_token_ms` 为空）、解码为 0（首字不早于结束）、零输出的行两列都不计。零输出行的耗时若只进分母，会把窗口均速单方面拉低；解码为 0 行的 tokens 若只进分子，会把均速抬高——两列同条件即消除这两个偏差。`decodeMs` 单位 ms，与 `duration_ms` 列一致。
 
 **波及点**：
 
@@ -193,22 +193,23 @@ COALESCE(SUM(CASE WHEN first_token_ms IS NOT NULL AND first_token_ms <= duration
 
 - `buildTrendSeries` 加 `tps: Array<number | null>`（桶内 `decodeMs > 0` 才算，否则 null 折线断开——与 `hitRates` 同处理）与窗口合计 `avgTps`（`ΣdecodeTokens ÷ ΣdecodeMs`）。
 - `TrendSeries` 接口、`trend-series.test.ts` 补用例。
-- 新增第四个 trend-block「输出速度趋势」：单折线，`tooltipFormat` 输出一位小数 + ` tok/s`，左轴同名格式化；`TREND_COLORS` 加 `speed: CHART_PALETTE[4]`（`#5ac8fa`，调色板共 10 色未占用）。
+- 新增第四个 trend-block「输出速度趋势」：单折线，`tooltipFormat` 输出一位小数 + ` tok/s`（与另外三条折线 tooltip 带单位的惯例一致），左轴名 `tok/s`、刻度取一位小数裸数（同「请求数 / 成本」轴：单位放轴名，刻度不重复）；`TREND_COLORS` 加 `speed: CHART_PALETTE[4]`（`#5ac8fa`，调色板共 10 色未占用）。
 - 底部 `trend-summary` 汇总行加一项「平均速度 X tok/s」（`avgTps` 为 null 时不渲染该 span）。
 
 ### 5.3 后端：admin-analytics 模型均值与会话分位
 
 **模型均值**（`admin-analytics.service.ts`）：
 
-- `LlmCallModelRow` 加 `decodeTokens` / `decodeMs`（SQL 模式同 §5.1，加在 `selectLlmCallStatsByModel` 现有 `firstTokenMsSum` 一族旁边）。
-- models VO 组装处（约 1516–1520 行 `avgFirstTokenMs` / `avgDurationMs` 旁边）加：
+- `LlmCallModelRow` 加 `decodeTokens` / `decodeMs`（SQL 模式同 §5.1，加在 `selectLlmCallStatsByModel` 现有 `firstTokenMsSum` 一族旁边）。models VO 组装处（约 1516–1520 行 `avgFirstTokenMs` / `avgDurationMs` 旁边）加：
 
 ```ts
 const avgThroughput =
-  decodeMsSum > 0 ? Math.round((decodeTokensSum / (decodeMsSum / 1000)) * 10) / 10 : null
+  decodeMsSum > 0 && decodeTokensSum > 0
+    ? Math.round((decodeTokensSum / (decodeMsSum / 1000)) * 10) / 10
+    : null
 ```
 
-（一位小数，与桌面展示精度一致；无可解码行时为 null。）
+（一位小数，与桌面展示精度一致；零分子一并判 null——全零输出的窗口与无可解码行一样显示「—」，不出 0 tok/s 误导，与桌面 `avgThroughput` 同口径。）
 
 **会话分位**（`latencyPercentiles`，约 1122–1147 行）：把 store 的列参数泛化为 metric——
 
@@ -218,7 +219,7 @@ const LATENCY_METRICS = {
   first_token_ms: { expr: 'first_token_ms', where: 'first_token_ms IS NOT NULL AND first_token_ms > 0' },
   duration_ms:    { expr: 'duration_ms',    where: 'duration_ms IS NOT NULL AND duration_ms > 0' },
   throughput:     { expr: 'completion_tokens / ((duration_ms - first_token_ms) / 1000)',
-                    where: 'first_token_ms IS NOT NULL AND first_token_ms > 0 AND first_token_ms < duration_ms AND completion_tokens > 0' },
+                    where: 'first_token_ms IS NOT NULL AND first_token_ms < duration_ms AND completion_tokens > 0' },
 }
 ```
 

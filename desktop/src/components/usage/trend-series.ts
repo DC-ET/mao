@@ -1,5 +1,6 @@
 import type { UsageTrendBucket } from '../../api'
 import { pickTokenUnit, type TokenUnit } from '../../utils/usageFormat'
+import { avgThroughput } from '../../utils/throughput'
 
 export interface TrendSeries {
   /** 轴标签：day 桶为 MM-DD，hour 桶为 HH:00（今日/昨日的单日视图） */
@@ -12,9 +13,14 @@ export interface TrendSeries {
   cancels: number[]
   /** 缓存命中率趋势（%）：桶内 promptTokens 为 0（无调用）时置 null，折线断开不画到 0 */
   hitRates: Array<number | null>
+  /** 输出速度趋势（tok/s，技术方案 2026-10-27-llm-output-speed §5.2）：
+   *  桶内 decodeMs 为 0（无流式调用）时置 null，折线断开 */
+  tps: Array<number | null>
   totalTokens: number
   totalCost: number
   totalCalls: number
+  /** 窗口平均输出速度（tok/s，加权）：Σ输出 ÷ Σ解码秒；无可解码行时为 null */
+  avgTps: number | null
   /** Token 纵轴统一单位：按窗口峰值选取，坐标轴读数形如 50M / 100M / 1B */
   tokenUnit: TokenUnit | null
 }
@@ -37,12 +43,16 @@ export function buildTrendSeries(buckets: UsageTrendBucket[], granularity: 'day'
     fails: [],
     cancels: [],
     hitRates: [],
+    tps: [],
     totalTokens: 0,
     totalCost: 0,
     totalCalls: 0,
+    avgTps: null,
     tokenUnit: null,
   };
   let peak = 0;
+  let decodeTokens = 0;
+  let decodeMs = 0;
   for (const b of buckets) {
     series.labels.push(trendBucketLabel(b.bucket, granularity));
     series.tokens.push(b.totalTokens);
@@ -51,11 +61,15 @@ export function buildTrendSeries(buckets: UsageTrendBucket[], granularity: 'day'
     series.fails.push(b.failCount);
     series.cancels.push(b.cancelledCount);
     series.hitRates.push(hitRate(b));
+    series.tps.push(bucketTps(b));
     series.totalTokens += b.totalTokens;
     series.totalCost += b.cost;
     series.totalCalls += b.callCount;
+    decodeTokens += b.decodeTokens;
+    decodeMs += b.decodeMs;
     if (b.totalTokens > peak) peak = b.totalTokens;
   }
+  series.avgTps = avgThroughput({ decodeTokens, decodeMs });
   series.tokenUnit = pickTokenUnit(peak);
   return series;
 }
@@ -64,4 +78,9 @@ export function buildTrendSeries(buckets: UsageTrendBucket[], granularity: 'day'
 function hitRate(b: UsageTrendBucket): number | null {
   if (b.promptTokens <= 0) return null
   return Math.round((b.cachedTokens / b.promptTokens) * 1000) / 10
+}
+
+/** 桶内输出速度（tok/s）：无可解码行（decodeMs 为 0，如全非流式）时 null，折线断开。 */
+function bucketTps(b: UsageTrendBucket): number | null {
+  return avgThroughput({ decodeTokens: b.decodeTokens, decodeMs: b.decodeMs })
 }

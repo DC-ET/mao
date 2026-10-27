@@ -147,6 +147,9 @@
         <el-table-column label="耗时均值" width="100" align="right" class-name="hide-on-mobile">
           <template #default="{ row }">{{ msText(row.avgDurationMs) }}</template>
         </el-table-column>
+        <el-table-column label="吞吐均值" width="110" align="right" class-name="hide-on-mobile">
+          <template #default="{ row }">{{ tpsText(row.avgThroughput) }}</template>
+        </el-table-column>
         <el-table-column label="占比" min-width="120">
           <template #default="{ row }">
             <el-progress
@@ -169,6 +172,7 @@ import { useRouter } from 'vue-router'
 import BaseChart from '../../../components/BaseChart.vue'
 import { CHART_PALETTE } from '../../../utils/echarts'
 import { llmCallSceneLabel, formatMs } from '../../../utils/llmCallLabels'
+import { formatTps } from '../../../utils/throughput'
 import { donutOption, formatCost, formatNumber, formatTokens, topWithOthers, type RankItem } from '../chart-options'
 import { exportCsv } from '../utils/csv'
 import { percent } from '../composables/metrics'
@@ -243,6 +247,11 @@ function msText(value: unknown): string {
   return formatMs(value == null ? null : Number(value))
 }
 
+/** 吞吐均值（tok/s，后端加权平均）：null（全非流式窗口）显示「-」。 */
+function tpsText(value: unknown): string {
+  return formatTps(value == null ? null : Number(value))
+}
+
 function sceneLabel(scene: string): string {
   return llmCallSceneLabel(scene)
 }
@@ -250,7 +259,7 @@ function sceneLabel(scene: string): string {
 function exportRows() {
   exportCsv(
     `analytics-models-${new Date().toISOString().slice(0, 10)}.csv`,
-    ['模型', '供应商', '会话', '调用', '成功率', '对话 Token', '调用 Token', 'Token 合计', '成本', '缓存命中', '首 token 均值(ms)', '耗时均值(ms)'],
+    ['模型', '供应商', '会话', '调用', '成功率', '对话 Token', '调用 Token', 'Token 合计', '成本', '缓存命中', '首 token 均值(ms)', '耗时均值(ms)', '吞吐均值(tok/s)'],
     modelStats.value.map((row) => [
       row.modelName || '未命名',
       row.provider ?? '',
@@ -263,7 +272,8 @@ function exportRows() {
       row.cost ?? '',
       row.cacheHitRate == null ? '' : `${row.cacheHitRate}%`,
       row.avgFirstTokenMs == null ? '' : Math.round(Number(row.avgFirstTokenMs)),
-      row.avgDurationMs == null ? '' : Math.round(Number(row.avgDurationMs))
+      row.avgDurationMs == null ? '' : Math.round(Number(row.avgDurationMs)),
+      row.avgThroughput == null ? '' : Number(row.avgThroughput).toFixed(1)
     ])
   )
 }

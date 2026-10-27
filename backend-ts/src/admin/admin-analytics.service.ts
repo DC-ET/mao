@@ -79,6 +79,10 @@ export interface LlmCallModelRow {
   firstTokenMsSum: number;
   firstTokenMsCount: number;
   durationMsSum: number;
+  /** 可解码行的输出 token 合计（吞吐均值的分子；技术方案 2026-10-27-llm-output-speed §5.3） */
+  decodeTokensSum: number;
+  /** 可解码行的解码耗时合计（ms，= Σ(duration_ms − first_token_ms)；吞吐均值的分母） */
+  decodeMsSum: number;
 }
 
 export interface LlmCallDailyRow {
@@ -161,6 +165,24 @@ export interface LlmCallFilterOpts {
   successOnly?: boolean;
 }
 
+/**
+ * 延迟 / 吞吐分位指标（技术方案 2026-10-27-llm-output-speed §5.3）：前两个是列，
+ * throughput 是派生表达式——输出 tokens ÷ 解码秒，与 desktop utils/throughput.ts 同口径。
+ * 分位用 ORDER BY <expr> LIMIT offset 取第 N 个值，吞吐没有列可依，只能泛化成表达式。
+ */
+export type LlmCallLatencyMetric = 'first_token_ms' | 'duration_ms' | 'throughput';
+
+const LLM_CALL_LATENCY_METRICS: Record<LlmCallLatencyMetric, { expr: string; where: string }> = {
+  first_token_ms: { expr: 'first_token_ms', where: 'first_token_ms IS NOT NULL AND first_token_ms > 0' },
+  duration_ms: { expr: 'duration_ms', where: 'duration_ms IS NOT NULL AND duration_ms > 0' },
+  throughput: {
+    expr: 'completion_tokens / ((duration_ms - first_token_ms) / 1000)',
+    // 与 desktop utils/throughput.ts 的 throughput() 逐条同口径：非流式（first_token_ms 缺失）、
+    // 解码为 0（first_token_ms 不早于结束，除零会出 NULL）、零输出的行都不进样本
+    where: 'first_token_ms IS NOT NULL AND first_token_ms < duration_ms AND completion_tokens > 0',
+  },
+};
+
 export interface AdminAnalyticsStore {
   selectDailySessionCounts(range: AnalyticsRange, granularity?: TrendGranularity): Promise<DailySessionRow[]>;
   selectDailyMessageStats(range: AnalyticsRange, granularity?: TrendGranularity): Promise<DailyMessageRow[]>;
@@ -187,10 +209,10 @@ export interface AdminAnalyticsStore {
   selectLlmCallStatsByUser(range: AnalyticsRange, opts?: LlmCallFilterOpts): Promise<LlmCallDimRow[]>;
   selectLlmCallStatsByAgent(range: AnalyticsRange, opts?: LlmCallFilterOpts): Promise<LlmCallDimRow[]>;
   selectLlmCallQualitySummary(range: AnalyticsRange, opts?: LlmCallFilterOpts): Promise<LlmCallQualitySummary>;
-  countLlmCallLatency(range: AnalyticsRange, column: 'first_token_ms' | 'duration_ms', opts?: LlmCallFilterOpts): Promise<number>;
+  countLlmCallLatency(range: AnalyticsRange, metric: LlmCallLatencyMetric, opts?: LlmCallFilterOpts): Promise<number>;
   selectLlmCallLatencyAtOffset(
     range: AnalyticsRange,
-    column: 'first_token_ms' | 'duration_ms',
+    metric: LlmCallLatencyMetric,
     offset: number,
     opts?: LlmCallFilterOpts,
   ): Promise<number | null>;
@@ -428,7 +450,11 @@ export class AdminAnalyticsDbStore implements AdminAnalyticsStore {
               COALESCE(SUM(cost_micros), 0) / 1000000 AS cost,
               COALESCE(SUM(CASE WHEN first_token_ms IS NOT NULL THEN first_token_ms ELSE 0 END), 0) AS firstTokenMsSum,
               COALESCE(SUM(CASE WHEN first_token_ms IS NOT NULL THEN 1 ELSE 0 END), 0) AS firstTokenMsCount,
-              COALESCE(SUM(duration_ms), 0) AS durationMsSum
+              COALESCE(SUM(duration_ms), 0) AS durationMsSum,
+              COALESCE(SUM(CASE WHEN first_token_ms IS NOT NULL AND first_token_ms < duration_ms AND completion_tokens > 0
+                                THEN completion_tokens ELSE 0 END), 0) AS decodeTokensSum,
+              COALESCE(SUM(CASE WHEN first_token_ms IS NOT NULL AND first_token_ms < duration_ms AND completion_tokens > 0
+                                THEN duration_ms - first_token_ms ELSE 0 END), 0) AS decodeMsSum
        FROM llm_call
        WHERE ${sql}
        GROUP BY COALESCE(model_id, 0)`,
@@ -539,12 +565,13 @@ export class AdminAnalyticsDbStore implements AdminAnalyticsStore {
 
   async countLlmCallLatency(
     range: AnalyticsRange,
-    column: 'first_token_ms' | 'duration_ms',
+    metric: LlmCallLatencyMetric,
     opts?: LlmCallFilterOpts,
   ): Promise<number> {
     const { sql, params } = this.llmCallWhere(range, opts);
+    const { where } = LLM_CALL_LATENCY_METRICS[metric];
     const row = await this.db.queryOne<{ c: number }>(
-      `SELECT COUNT(*) AS c FROM llm_call WHERE ${sql} AND ${column} IS NOT NULL AND ${column} > 0`,
+      `SELECT COUNT(*) AS c FROM llm_call WHERE ${sql} AND ${where}`,
       params,
     );
     return toNumber(row?.c);
@@ -552,15 +579,16 @@ export class AdminAnalyticsDbStore implements AdminAnalyticsStore {
 
   async selectLlmCallLatencyAtOffset(
     range: AnalyticsRange,
-    column: 'first_token_ms' | 'duration_ms',
+    metric: LlmCallLatencyMetric,
     offset: number,
     opts?: LlmCallFilterOpts,
   ): Promise<number | null> {
     const { sql, params } = this.llmCallWhere(range, opts);
+    const { expr, where } = LLM_CALL_LATENCY_METRICS[metric];
     const row = await this.db.queryOne<{ v: number }>(
-      `SELECT ${column} AS v FROM llm_call
-       WHERE ${sql} AND ${column} IS NOT NULL AND ${column} > 0
-       ORDER BY ${column} ASC
+      `SELECT ${expr} AS v FROM llm_call
+       WHERE ${sql} AND ${where}
+       ORDER BY ${expr} ASC
        LIMIT 1 OFFSET ?`,
       [...params, Math.max(0, Math.trunc(offset) || 0)],
     );
@@ -1113,6 +1141,8 @@ export class AdminAnalyticsService {
         firstTokenP95: latency.firstTokenP95,
         durationP50: latency.durationP50,
         durationP95: latency.durationP95,
+        throughputP50: latency.throughputP50,
+        throughputP95: latency.throughputP95,
       },
       failTop,
       excludeConnectivity: callOpts.excludeConnectivity,
@@ -1127,23 +1157,28 @@ export class AdminAnalyticsService {
     firstTokenP95: number | null;
     durationP50: number | null;
     durationP95: number | null;
+    throughputP50: number | null;
+    throughputP95: number | null;
   }> {
-    const [ftCount, durCount] = await Promise.all([
+    const [ftCount, durCount, tpsCount] = await Promise.all([
       this.store.countLlmCallLatency(range, 'first_token_ms', callOpts),
       this.store.countLlmCallLatency(range, 'duration_ms', callOpts),
+      this.store.countLlmCallLatency(range, 'throughput', callOpts),
     ]);
-    const pick = async (column: 'first_token_ms' | 'duration_ms', count: number, p: number) => {
+    const pick = async (metric: LlmCallLatencyMetric, count: number, p: number) => {
       if (count <= 0) return null;
       const offset = Math.min(count - 1, Math.max(0, Math.floor((count - 1) * p)));
-      return this.store.selectLlmCallLatencyAtOffset(range, column, offset, callOpts);
+      return this.store.selectLlmCallLatencyAtOffset(range, metric, offset, callOpts);
     };
-    const [firstTokenP50, firstTokenP95, durationP50, durationP95] = await Promise.all([
+    const [firstTokenP50, firstTokenP95, durationP50, durationP95, throughputP50, throughputP95] = await Promise.all([
       pick('first_token_ms', ftCount, 0.5),
       pick('first_token_ms', ftCount, 0.95),
       pick('duration_ms', durCount, 0.5),
       pick('duration_ms', durCount, 0.95),
+      pick('throughput', tpsCount, 0.5),
+      pick('throughput', tpsCount, 0.95),
     ]);
-    return { firstTokenP50, firstTokenP95, durationP50, durationP95 };
+    return { firstTokenP50, firstTokenP95, durationP50, durationP95, throughputP50, throughputP95 };
   }
 
   private async failTopSlices(
@@ -1518,6 +1553,14 @@ export class AdminAnalyticsService {
           ? Math.round(toNumber(call?.firstTokenMsSum) / toNumber(call?.firstTokenMsCount))
           : null;
       const avgDurationMs = callCount > 0 ? Math.round(toNumber(call?.durationMsSum) / callCount) : null;
+      // 吞吐均值是加权平均：Σ可解码行输出 ÷ Σ可解码行解码秒（与桌面用量抽屉总览卡同口径）；
+      // 窗口内没有可解码行（全非流式 / 全零输出）时为 null，前端显示「—」，不显示 0 误导
+      const decodeTokensSum = toNumber(call?.decodeTokensSum);
+      const decodeMsSum = toNumber(call?.decodeMsSum);
+      const avgThroughput =
+        decodeMsSum > 0 && decodeTokensSum > 0
+          ? Math.round((decodeTokensSum / (decodeMsSum / 1000)) * 10) / 10
+          : null;
       rows.push({
         modelId,
         modelName: model?.name ?? (modelId === 0 ? '未关联模型' : `模型 ${modelId}`),
@@ -1547,6 +1590,7 @@ export class AdminAnalyticsService {
         cacheHitRate: promptTokens > 0 ? Math.round((cachedTokens / promptTokens) * 1000) / 10 : null,
         avgFirstTokenMs,
         avgDurationMs,
+        avgThroughput,
         retryCallCount: toNumber(call?.retryCallCount),
       });
     }

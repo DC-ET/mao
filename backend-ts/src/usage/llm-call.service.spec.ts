@@ -350,7 +350,8 @@ describe('LlmCallService 用户端用量汇总（/v1/llm-calls/me/summary|trends
     expect(day.buckets.map((b) => b.bucket)).toEqual([
       '2026-10-04', '2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08', '2026-10-09', '2026-10-10',
     ]);
-    expect(day.buckets.every((b) => b.callCount === 0 && b.totalTokens === 0 && b.cost === 0)).toBe(true);
+    // 零桶字段齐全：解码聚合两列（吞吐趋势的分子分母）也补零，前端按固定字段读
+    expect(day.buckets.every((b) => b.callCount === 0 && b.totalTokens === 0 && b.cost === 0 && b.decodeTokens === 0 && b.decodeMs === 0)).toBe(true);
     expect(repo.aggregateTrend).toHaveBeenCalledWith(
       7,
       expect.objectContaining({ startAt: '2026-10-04 00:00:00', endAtExclusive: '2026-10-11 00:00:00' }),
@@ -405,19 +406,19 @@ describe('LlmCallService 用户端用量汇总（/v1/llm-calls/me/summary|trends
       aggregateByModel: vi.fn(),
       aggregateByScene: vi.fn(),
       aggregateTrend: vi.fn(async () => [
-        { bucket: '2026-10-09', callCount: 3, failCount: 1, cancelledCount: 1, promptTokens: 200, cachedTokens: 80, totalTokens: 300, cost: 0.5 },
+        { bucket: '2026-10-09', callCount: 3, failCount: 1, cancelledCount: 1, promptTokens: 200, cachedTokens: 80, totalTokens: 300, cost: 0.5, decodeTokens: 150, decodeMs: 3000 },
       ]),
     };
     const service = new LlmCallService(repo as never);
     const day = await service.trendsForUser(7, 'last7');
     expect(day.buckets).toEqual([
-      { bucket: '2026-10-04', callCount: 0, failCount: 0, cancelledCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0 },
-      { bucket: '2026-10-05', callCount: 0, failCount: 0, cancelledCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0 },
-      { bucket: '2026-10-06', callCount: 0, failCount: 0, cancelledCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0 },
-      { bucket: '2026-10-07', callCount: 0, failCount: 0, cancelledCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0 },
-      { bucket: '2026-10-08', callCount: 0, failCount: 0, cancelledCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0 },
-      { bucket: '2026-10-09', callCount: 3, failCount: 1, cancelledCount: 1, promptTokens: 200, cachedTokens: 80, totalTokens: 300, cost: 0.5 },
-      { bucket: '2026-10-10', callCount: 0, failCount: 0, cancelledCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0 },
+      { bucket: '2026-10-04', callCount: 0, failCount: 0, cancelledCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0, decodeTokens: 0, decodeMs: 0 },
+      { bucket: '2026-10-05', callCount: 0, failCount: 0, cancelledCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0, decodeTokens: 0, decodeMs: 0 },
+      { bucket: '2026-10-06', callCount: 0, failCount: 0, cancelledCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0, decodeTokens: 0, decodeMs: 0 },
+      { bucket: '2026-10-07', callCount: 0, failCount: 0, cancelledCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0, decodeTokens: 0, decodeMs: 0 },
+      { bucket: '2026-10-08', callCount: 0, failCount: 0, cancelledCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0, decodeTokens: 0, decodeMs: 0 },
+      { bucket: '2026-10-09', callCount: 3, failCount: 1, cancelledCount: 1, promptTokens: 200, cachedTokens: 80, totalTokens: 300, cost: 0.5, decodeTokens: 150, decodeMs: 3000 },
+      { bucket: '2026-10-10', callCount: 0, failCount: 0, cancelledCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0, decodeTokens: 0, decodeMs: 0 },
     ]);
     vi.useRealTimers();
   });

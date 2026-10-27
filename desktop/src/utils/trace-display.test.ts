@@ -6,9 +6,6 @@ import {
   runStatus,
   summarizeRuns,
   toolSuccessRate,
-  decodingMs,
-  throughput,
-  formatThroughput,
   runTimeNodes,
   runTimeWindow,
   timeBandGeometry,
@@ -263,53 +260,7 @@ describe('formatTokens', () => {
   })
 })
 
-/* ---- 计时补全（技术方案 §5.7） ---- */
-
-describe('decodingMs', () => {
-  it('解码 = 总耗时 − 首字耗时', () => {
-    expect(decodingMs({ durationMs: 4200, firstTokenMs: 800 })).toBe(3400)
-  })
-
-  it('首字缺失（非流式调用）为 null，显示「—」', () => {
-    expect(decodingMs({ durationMs: 4200, firstTokenMs: null })).toBeNull()
-  })
-
-  it('首字晚于结束（时钟异常）为 null，不出负数', () => {
-    expect(decodingMs({ durationMs: 4200, firstTokenMs: 5000 })).toBeNull()
-  })
-
-  it('首字等于结束时解码为 0（真实 0，不是异常）', () => {
-    expect(decodingMs({ durationMs: 4200, firstTokenMs: 4200 })).toBe(0)
-  })
-})
-
-describe('throughput', () => {
-  it('吞吐 = 输出 tokens ÷ 解码秒', () => {
-    expect(throughput({ durationMs: 4200, firstTokenMs: 800, completionTokens: 170 })).toBe(50)
-  })
-
-  it('解码不可算时为 null', () => {
-    expect(throughput({ durationMs: 4200, firstTokenMs: null, completionTokens: 170 })).toBeNull()
-  })
-
-  it('解码为 0 时为 null，不显示 Infinity', () => {
-    expect(throughput({ durationMs: 4200, firstTokenMs: 4200, completionTokens: 170 })).toBeNull()
-  })
-
-  it('输出为 0 时为 null，不显示 0 tok/s 误导', () => {
-    expect(throughput({ durationMs: 4200, firstTokenMs: 800, completionTokens: 0 })).toBeNull()
-  })
-})
-
-describe('formatThroughput', () => {
-  it('取 1 位小数 + 单位', () => {
-    expect(formatThroughput({ durationMs: 4200, firstTokenMs: 800, completionTokens: 170 })).toBe('50.0 tok/s')
-  })
-
-  it('null 显示「—」', () => {
-    expect(formatThroughput({ durationMs: 4200, firstTokenMs: null, completionTokens: 170 })).toBe('—')
-  })
-})
+/* 计时补全 / 吞吐量用例已随实现迁到 throughput.test.ts（2026-10-27-llm-output-speed §3.1） */
 
 /* ---- 时间概览条带（技术方案 §5.5） ---- */
 
