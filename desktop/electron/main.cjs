@@ -12,6 +12,7 @@ const serverConfigLib = require('./serverConfig.cjs')
 const chatAttachment = require('./chatAttachment.cjs')
 const desktopPrefsLib = require('./desktopPrefs.cjs')
 const { createTray } = require('./tray.cjs')
+const { readFileBytes } = require('./localFileBytes.cjs')
 
 
 app.setName('Mao')
@@ -1917,6 +1918,18 @@ ipcMain.handle('local-read-file', async (event, { path: filePath, offset, limit 
     const end = limit ? Math.min(start + limit, totalLines) : totalLines
     const sliced = lines.slice(start, end).join('\n')
     return { content: sliced, total_lines: totalLines }
+  } catch (e) {
+    return { error: e.message }
+  }
+})
+
+// LOCAL 二进制字节读取（技术方案 §5.2）：zip / xlsx / docx / 媒体预览的取数通道。
+// 路径解析与 local-read-file 共用 resolveWorkspacePath；类型校验与大小上限在
+// localFileBytes.cjs（可单测）。文件全程不出本机，无任何上传语义。
+ipcMain.handle('local-read-bytes', async (event, { path: filePath }) => {
+  try {
+    const resolvedPath = resolveWorkspacePath(filePath)
+    return readFileBytes(resolvedPath)
   } catch (e) {
     return { error: e.message }
   }

@@ -22,6 +22,58 @@
       />
     </div>
 
+    <!-- CSV / TSV table view -->
+    <div v-else-if="state === 'csv'" class="file-content">
+      <CsvTableView
+        :file-path="props.filePath"
+        :content="content"
+        :truncated="truncated"
+        :provider="provider"
+        @refresh="loadFile"
+      />
+    </div>
+
+    <!-- ZIP browser -->
+    <div v-else-if="state === 'zip' && bytesData" class="file-content">
+      <ArchiveBrowser
+        :file-path="props.filePath"
+        :file-name="bytesData.name"
+        :bytes="bytesData.bytes"
+        :provider="provider"
+        @refresh="loadFile"
+      />
+    </div>
+
+    <!-- XLSX spreadsheet view -->
+    <div v-else-if="state === 'xlsx' && bytesData" class="file-content">
+      <SpreadsheetView
+        :file-path="props.filePath"
+        :bytes="bytesData.bytes"
+        :provider="provider"
+        @refresh="loadFile"
+      />
+    </div>
+
+    <!-- DOCX document preview -->
+    <div v-else-if="state === 'docx' && bytesData" class="file-content">
+      <DocxPreview
+        :file-path="props.filePath"
+        :bytes="bytesData.bytes"
+        :provider="provider"
+        @refresh="loadFile"
+      />
+    </div>
+
+    <!-- Audio / video player -->
+    <div v-else-if="state === 'media' && bytesData" class="file-content">
+      <MediaPlayer
+        :file-path="props.filePath"
+        :bytes="bytesData.bytes"
+        :provider="provider"
+        @refresh="loadFile"
+      />
+    </div>
+
     <!-- Binary file -->
     <div v-else-if="state === 'binary'" class="file-message">
       <p>二进制文件，无法预览</p>
@@ -63,11 +115,17 @@ import { ref, computed, onMounted, onUnmounted, watch, toRef } from 'vue'
 import { useMonacoViewer } from '../../composables/useMonacoViewer'
 import MarkdownContent from '../common/MarkdownContent.vue'
 import PdfViewer from './PdfViewer.vue'
+import CsvTableView from './CsvTableView.vue'
+import ArchiveBrowser from './ArchiveBrowser.vue'
+import SpreadsheetView from './SpreadsheetView.vue'
+import DocxPreview from './DocxPreview.vue'
+import MediaPlayer from './MediaPlayer.vue'
 import { useCenterTabs } from '../../composables/useCenterTabs'
 import { useSessionStore } from '../../stores/session'
 import { useTheme } from '../../utils/theme'
 import { isExternalMarkdownLink, resolveMarkdownLink } from '../../utils/markdown-link'
 import { openExternalUrl } from '../../utils/capacitor'
+import { resolvePreviewKind, sniffContainerKind } from '../../utils/file-preview-format'
 import type { WorkspaceFileProvider } from '../../composables/workspace-file-provider'
 import { Refresh } from '@element-plus/icons-vue'
 
@@ -80,13 +138,15 @@ const sessionStore = useSessionStore()
 const activeSessionIdRef = computed(() => sessionStore.activeSessionId ?? '')
 const { openFileTab } = useCenterTabs(activeSessionIdRef)
 
-type LoadState = 'loading' | 'ready' | 'error' | 'binary' | 'empty' | 'image' | 'pdf'
+type LoadState = 'loading' | 'ready' | 'error' | 'binary' | 'empty' | 'image' | 'pdf' | 'csv' | 'zip' | 'xlsx' | 'docx' | 'media'
 
 const state = ref<LoadState>('loading')
 const content = ref('')
 const imageDataUri = ref('')
 const pdfBlobUrl = ref('')
 const pdfFileName = ref('')
+/** 字节分支数据：zip / xlsx 共用，readFileBytes 成功后驻留，供 ArchiveBrowser / SpreadsheetView 消费（A1 早返回分支） */
+const bytesData = ref<{ bytes: Uint8Array; name: string } | null>(null)
 const monacoContainer = ref<HTMLElement>()
 const viewMode = ref<'source' | 'rendered'>('rendered')
 const { isDark } = useTheme()
@@ -164,24 +224,25 @@ function isPdfPath(filePath: string): boolean {
   return ext === 'pdf'
 }
 
-// PDF 预览请求序号：快速切换文件时丢弃过期响应，防止旧 PDF 覆盖当前标签内容
-let pdfPreviewSeq = 0
-// 文本/图片读取请求序号：与 PDF 同样的过期响应保护（切换会话/文件时防旧响应覆盖新内容）
+// 文件读取请求序号：路径切换 / 重载时丢弃过期响应，防止旧响应覆盖当前标签内容。
+// PDF 与文本/图片/新格式共用这一个序号——曾给 PDF 单开一个 pdfPreviewSeq，两个计数器
+// 在 loadFile 里对齐（pdfPreviewSeq = loadFileSeq）后又被 loadPdfPreview 各自 ++，
+// 序号碰撞让 PDF 的陈旧守卫失效：a.pdf 切到 b.zip 后迟到的 previewFile 会把界面
+// 持久覆盖回 a.pdf（review round2 #1，本次新分支放大了该既有缺陷的触发面）。
 let loadFileSeq = 0
 
 function isStaleLoad(seq: number): boolean {
   return seq !== loadFileSeq
 }
 
-async function loadPdfPreview() {
+async function loadPdfPreview(seq: number) {
   if (!props.provider?.previewFile) {
     state.value = 'error'
     errorMsg.value = '当前模式不支持 PDF 预览'
     return
   }
-  const seq = ++pdfPreviewSeq
   const result = await props.provider.previewFile(props.filePath)
-  if (seq !== pdfPreviewSeq) return
+  if (isStaleLoad(seq)) return
   if (result.error) {
     state.value = 'error'
     errorMsg.value = result.error
@@ -198,6 +259,29 @@ async function loadPdfPreview() {
   state.value = 'pdf'
 }
 
+async function loadBinaryPreview(seq: number, target: 'zip' | 'xlsx' | 'docx' | 'media') {
+  if (!props.provider?.readFileBytes) {
+    // project provider（新建态）无字节通道：明确降级，不做半吊子实现（技术方案 §5.2）
+    state.value = 'error'
+    errorMsg.value = '当前模式不支持预览该文件，请在会话工作区中打开'
+    return
+  }
+  const result = await props.provider.readFileBytes(props.filePath)
+  if (isStaleLoad(seq)) return
+  if (result.error) {
+    state.value = 'error'
+    errorMsg.value = result.error
+    return
+  }
+  if (!result.bytes || result.bytes.byteLength === 0) {
+    state.value = 'error'
+    errorMsg.value = '文件内容为空'
+    return
+  }
+  bytesData.value = { bytes: result.bytes, name: props.filePath.split(/[/\\]/).pop() || props.filePath }
+  state.value = target
+}
+
 async function loadFile() {
   if (!props.filePath) return
   if (!props.provider) {
@@ -207,16 +291,25 @@ async function loadFile() {
   }
   // 作废旧请求（PDF 与文本/图片共用序号：路径切换/重载时丢弃过期响应）
   const seq = ++loadFileSeq
-  pdfPreviewSeq = loadFileSeq
   state.value = 'loading'
   content.value = ''
   imageDataUri.value = ''
+  bytesData.value = null
   errorMsg.value = ''
   truncated.value = false
 
   try {
     if (isPdfPath(props.filePath)) {
-      await loadPdfPreview()
+      await loadPdfPreview(seq)
+      return
+    }
+
+    const kind = resolvePreviewKind(props.filePath)
+
+    // 二进制类新格式（zip / xlsx / docx / media）：扩展名命中即在 readFile
+    // 之前平行早返回，既有五条路径一行不动（技术方案 §6-A1）
+    if (kind === 'zip' || kind === 'xlsx' || kind === 'docx' || kind === 'media') {
+      await loadBinaryPreview(seq, kind)
       return
     }
 
@@ -242,6 +335,18 @@ async function loadFile() {
       return
     }
 
+    // sniff 兜底（技术方案 §5.1 / §6-B7）：无扩展名或扩展名撒谎的 zip / xlsx，
+    // LOCAL 的 readFile 能取到文本形式的 PK 魔数，改道字节分支；CLOUD 的 readFile
+    // 遇二进制直接报错走不到这里（已知不对称，记录在案）。
+    // 必须排在 binary 检查之前：真实 zip 本地文件头第 5 字节（version needed to
+    // extract）必为 0x00，先跑 isBinaryContent 会把所有真实压缩包判成二进制，
+    // 兜底 100% 不可达（review round1 #1 实测复现，原实现即此顺序）。
+    const sniffed = kind === null ? sniffContainerKind(result.content) : null
+    if (sniffed) {
+      await loadBinaryPreview(seq, sniffed)
+      return
+    }
+
     // Binary detection
     if (isBinaryContent(result.content)) {
       state.value = 'binary'
@@ -251,7 +356,8 @@ async function loadFile() {
     content.value = result.content
     totalLines.value = result.total_lines
     truncated.value = result.total_lines > 5000
-    state.value = 'ready'
+    // 文本类新格式（csv）只在 readFile 成功后的分支点改道表格渲染（技术方案 §6-A1）
+    state.value = kind === 'csv' ? 'csv' : 'ready'
   } catch (e: any) {
     if (isStaleLoad(seq)) return
     state.value = 'error'

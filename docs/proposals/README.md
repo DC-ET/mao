@@ -259,7 +259,7 @@
 
 | 提案 | 文档 | 一句话 | 规模 |
 |---|---|---|---|
-| 工作区文件预览完整度 | [2026-10-26-workspace-file-preview.md](2026-10-26-workspace-file-preview.md)（**已细化**，技术方案待评审：[../plan/2026-10-26-workspace-file-preview-technical-design.md](../plan/2026-10-26-workspace-file-preview-technical-design.md)，含 §6 全量冲突清单；方案对提案有三处范围修正：XLSX 库定 exceljs、`.tar/.gz` 收窄不做、DOCX 列 P2 伸展项） | CSV 表格化 / ZIP 包内浏览 / XLSX / DOCX / 音视频播放——0.0.350 回复渲染的同一条主线延伸到落盘文件，Agent 的成果不再以「二进制文件」面对 | 小~中 |
+| 工作区文件预览完整度 | [2026-10-26-workspace-file-preview.md](2026-10-26-workspace-file-preview.md)（**已转入实施**，0.0.354，技术方案见 [../plan/2026-10-26-workspace-file-preview-technical-design.md](../plan/2026-10-26-workspace-file-preview-technical-design.md)，含 §6 全量冲突清单与 §13 实现期评审修正；方案对提案有三处范围修正：XLSX 库定 exceljs、`.tar/.gz` 收窄不做、DOCX 列 P2 伸展项） | CSV 表格化 / ZIP 包内浏览 / XLSX / DOCX / 音视频播放——0.0.350 回复渲染的同一条主线延伸到落盘文件，Agent 的成果不再以「二进制文件」面对 | 小~中 |
 | 定时任务编辑下沉 | [2026-10-26-scheduled-task-editing.md](2026-10-26-scheduled-task-editing.md)（**已细化，技术方案待评审**：[../plan/2026-10-26-scheduled-task-editing-technical-design.md](../plan/2026-10-26-scheduled-task-editing-technical-design.md)，含 §0 八项待确认决策与 §7 十八条冲突风险表；方案对提案有两处修正：admin 其实已在用 cron-preview、一次性任务允许改 Cron 配 mismatch 警告） | 接通后端已就绪的 PUT 全字段与 cron-preview 端点，桌面端从「只能启停删」到「改得动、输不错」；顺带修正 cron-preview 错位的权限门 | 小 |
 | 个人用量预算可见 | [2026-10-26-user-budget-visibility.md](2026-10-26-user-budget-visibility.md)（**已细化，技术方案待评审**：[../plan/2026-10-26-user-budget-visibility-technical-design.md](../plan/2026-10-26-user-budget-visibility-technical-design.md)，含 §0 十二项待确认决策与 §7 C1–C15 全量冲突风险表；零迁移、执行链路零改动、admin / mao-cli / agent-cli 零改动） | 只读端点 + 用量抽屉「预算」Tab + 收件箱预算提醒跳转，额度 / 已用 / 重置日翻给用户看，被拦时自查而非提工单 | 小~中 |
 

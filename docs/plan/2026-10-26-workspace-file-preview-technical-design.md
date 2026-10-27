@@ -128,7 +128,10 @@ export function resolvePreviewKind(filePath: string): PreviewKind | null
 
 ```ts
 // WorkspaceFileProvider 新增可选方法（既有实现不破坏）
-readFileBytes?(relativePath: string): Promise<{ bytes?: ArrayBuffer; size?: number; error?: string }>
+// bytes 用 Uint8Array 而非 ArrayBuffer：JSZip / exceljs / Blob 构造 / atob 场景
+// 都要 TypedArray，ArrayBuffer 每次用都得再包一层，且与 IPC structured clone 的
+// Buffer（渲染进程侧即 Uint8Array）形状一致。
+readFileBytes?(relativePath: string): Promise<{ bytes?: Uint8Array; size?: number; error?: string }>
 ```
 
 - **local**（`workspace-file-provider.ts` + electron）：新增 IPC `local-read-bytes`。main.cjs 实现严格对齐 `localReadFile`（main.cjs:1896-1925）的安全口径：同一 `resolveWorkspacePath`、`lstatSync` 拒绝目录 / symlink、大小上限 `LOCAL_READ_BYTES_MAX = 64MB`，返回 Buffer（Electron IPC structured clone 原生支持，无需 base64）。preload.cjs 暴露 `localReadBytes`（紧邻 `localReadFile` :63）。
@@ -166,6 +169,7 @@ readFileBytes?(relativePath: string): Promise<{ bytes?: ArrayBuffer; size?: numb
 - 视图：sheet tab 切换 + 复用 §5.3 的表格网格（抽 `TableGrid.vue` 公共子组件：props = rows + 虚拟滚动阈值，CsvTableView 与 SpreadsheetView 共用）。
 - 上限：文件 `XLSX_MAX_BYTES`（20MB）、单 sheet `XLSX_MAX_ROWS_PER_SHEET`（5 万行）、总单元格 `XLSX_MAX_CELLS_TOTAL`（100 万）——任一超限提示「表格过大，请下载后查看」。
 - 依赖安全：决策 1；实施时 `npm audit` 留档。
+- **audit 留档（2026-10-26，desktop `npm audit`）**：引入 `exceljs@4.4.0` / `mammoth@1.13.0` / `jszip@3.10.2` 后总量 51（2 low / 7 moderate / 37 high / 5 critical），与引入前同量级——存量 50 条来自 vite / electron / tiptap / adm-zip 等既有依赖。新增仅 1 条 moderate：`exceljs >=3.5.0` 传递依赖 `uuid` 的 buffer bounds 检查（GHSA-w5hq-g745-h8pq，v3/v5/v6 提供 buf 时触发）；exceljs 全仓只用 `uuid.v4`（`lib/xlsx/xform/sheet/cf-ext/cf-rule-ext-xform.js`），不触达脆弱路径，且唯一修复是降级 exceljs@3.4.0（breaking，放弃）。判定：可接受，记录在案。mammoth / jszip 无 audit 记录。
 
 ### 5.6 DOCX（P2 伸展，`components/center/DocxPreview.vue`）
 
@@ -212,7 +216,7 @@ readFileBytes?(relativePath: string): Promise<{ bytes?: ArrayBuffer; size?: numb
 | B4 | 后端零改动论证 | §2.4 | `downloadFile` / `readPdfFile` 无格式限制；评审可核 |
 | B5 | adm-zip 已在 desktop 依赖中，误以为浏览器可用 | package.json:20 | Node 向库（Buffer/fs），浏览器不可用；选型 jszip（决策 2） |
 | B6 | fetch 鉴权模式与既有不一致 | downloadWorkspaceResource :397-428 | 复用同模式（Authorization 头 + token query 兜底） |
-| B7 | sniff 兜底只在 LOCAL 可达（CLOUD readFile 对二进制直接报错） | workspace-browse.service.ts:333-341 | 记录为已知不对称：CLOUD 下「无扩展名的 zip」保持现状错误态；Agent 产出的压缩包均有扩展名，实际影响近零 |
+| B7 | sniff 兜底只在 LOCAL 可达（CLOUD readFile 对二进制直接报错） | workspace-browse.service.ts:333-341 | 记录为已知不对称：CLOUD 下「无扩展名的 zip」保持现状错误态；Agent 产出的压缩包均有扩展名，实际影响近零。实现期修正：sniff 原被放在 `isBinaryContent` 之后，导致真实 zip（本地头第 5 字节必为 0x00）100% 落 binary 态、兜底永不生效；已按 §4 架构图挪回 binary 检查之前，并用真实 jszip STORED / DEFLATE 包回归（review round1 #1） |
 
 ### C. 性能与包体
 
@@ -329,3 +333,24 @@ P1 内部顺序：判定纯函数 + 单测 → `readFileBytes` 三端实现 + IP
 | mammoth 对复杂 docx 转换质量参差 | 中 | 决策 6 留的后路：直接不做 |
 | zip 炸弹新型构造绕过中央目录大小声明 | 低 | 三道防线 + 解压本身在渲染进程、单条目上限后仍可能吃内存——最坏情况是单个 tab OOM 崩溃，不影响主进程与其他 tab（渲染进程隔离）；可接受 |
 | FileViewer E2E 覆盖缺口（历史降级冒烟） | 中 | 纯函数 + jsdom dispatch 覆盖核心逻辑；真实渲染冒烟矩阵化 |
+
+## 13. 实现期评审修正（review round1）
+
+子代理 code review（`docs/code-review/2026-10-26-round1-workspace-file-preview.md`）报 5 个低严重度问题，全部已修复并补回归：
+
+| # | 问题 | 处理 |
+|---|---|---|
+| 1 | sniff 兜底被放在 binary 检查之后，对真实 zip 100% 不可达（§6-B7 行已回填） | 按 §4 架构图挪回 binary 之前；dispatch 测试改用含 NUL 的真实内容 + 真实 jszip STORED / DEFLATE 双包回归 |
+| 2 | ArchiveBrowser 条目解压失败只写 `errorMsg`，而它仅在整包 error 态渲染 → 点击损坏条目毫无反馈 | 新增 `entryError` 行内横幅（ready 态可见，不踢出条目列表），下次点击自动清除；真实损坏包回归 |
+| 3 | check-main-chunk 的 jszip 字面量与库产物差一个空格，该条守卫恒不命中 | 改为产物实际串 `Corrupted zip : CRC32 mismatch`（同串覆盖 exceljs 内置 jszip），并补 mammoth 独有串 |
+| 4 | §6-G2 ★红线要求的 mp4 / mov 编解码标注与播放失败兜底未落地 | 工具条常驻「依赖编解码支持，播放失败可点下载」；`<video|audio @error>` 落错误态 + 下载 / Finder 双出口 |
+| 5 | LOCAL（无 downloadFile）下 xlsx / docx 超上限、zip 被拒时降级态死路 | 抽出 `useShowInFinder` composable（MediaPlayer 与三个降级态共用），降级态补「在 Finder 中显示」出口 |
+
+round2 / round3（`docs/code-review/2026-10-26-round2-workspace-file-preview.md`、`-round3-`）复核上述修复全部有效且未引入回归，另修 2 个问题：
+
+| # | 问题 | 处理 |
+|---|---|---|
+| 6 | PDF 代际守卫竞态（既有缺陷，本次新分支放大触发面）：`loadPdfPreview` 单独 `++pdfPreviewSeq`，而 `loadFile` 又执行 `pdfPreviewSeq = loadFileSeq`，两个计数器序号碰撞使 PDF 的陈旧守卫失效——a.pdf 切到 b.zip 后迟到的 `previewFile` 会把界面持久覆盖回 a.pdf | 删掉 `pdfPreviewSeq`，`loadPdfPreview(seq)` 改为接收 `loadFile` 传下来的 seq，PDF 与文本/图片/新格式共用单一 `loadFileSeq` + `isStaleLoad`；新增「PDF 迟到时已切到 zip」回归（变异验证：去掉守卫即红） |
+| 7 | ArchiveBrowser / SpreadsheetView / DocxPreview 的刷新按钮走本地 `reload()`（重解析同一份内存字节），不符合 §5.8「emit 回 FileViewer 重走 dispatch」，LOCAL 外部改动文件后刷新拿不到磁盘新内容 | 三个组件刷新按钮改为 `$emit('refresh')` 并删除各自 `reload()`，与 CsvTableView / MediaPlayer 一致；各补一条「emit 生效且本地解析计数不增」回归 |
+
+round3 结论：无重大问题，可合入；round1 五处修复完好。

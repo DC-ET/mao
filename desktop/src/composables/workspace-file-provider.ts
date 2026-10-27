@@ -52,6 +52,13 @@ export interface PreviewFileResult {
   error?: string
 }
 
+/** 二进制字节读取结果（技术方案 §5.2）：zip / xlsx / docx / 媒体预览的取数通道。 */
+export interface ReadFileBytesResult {
+  bytes?: Uint8Array
+  size?: number
+  error?: string
+}
+
 export interface DownloadResult {
   ok: boolean
   error?: string
@@ -63,6 +70,12 @@ export interface WorkspaceFileProvider {
   readFile(relativePath: string, opts?: { offset?: number; limit?: number }): Promise<ReadFileResult>
   /** 预览 PDF：获取文件字节 Blob，交由前端 pdf.js 渲染。 */
   previewFile?(relativePath: string): Promise<PreviewFileResult>
+  /**
+   * 读取文件原始字节（技术方案 §5.2）：新增预览格式（zip / xlsx / docx / 媒体）的取数通道。
+   * local 经 Electron IPC（文件不出本机）；cloud 经 workspace-download（既有端点，零新增）；
+   * project provider 不实现——新建态无会话不可下载，由调用方降级提示。
+   */
+  readFileBytes?(relativePath: string): Promise<ReadFileBytesResult>
   /**
    * 按文件名搜索工作区文件（大小写不敏感子串匹配，仅文件不含目录）。
    * 一次调用返回全部匹配，避免前端逐层拉目录造成请求风暴。
@@ -166,6 +179,22 @@ export function createLocalProvider(workspace: string): WorkspaceFileProvider {
         return { error: e?.message || 'PDF 预览失败' }
       }
     },
+    async readFileBytes(relativePath: string): Promise<ReadFileBytesResult> {
+      try {
+        const result = await window.electronAPI.localReadBytes({
+          path: resolveWorkspaceFilePath(workspace, relativePath),
+        })
+        if (result.error) {
+          return { error: result.error }
+        }
+        if (!result.bytes || result.bytes.byteLength === 0) {
+          return { error: '文件内容为空' }
+        }
+        return { bytes: new Uint8Array(result.bytes), size: result.size ?? result.bytes.byteLength }
+      } catch (e: any) {
+        return { error: e?.message || '读取文件失败' }
+      }
+    },
     getAbsolutePath(relativePath: string) {
       return resolveWorkspaceFilePath(workspace, relativePath)
     },
@@ -186,6 +215,9 @@ export function createCloudProvider(sessionId: string): WorkspaceFileProvider {
         return { error: '会话未就绪' }
       },
       async previewFile() {
+        return { error: '会话未就绪' }
+      },
+      async readFileBytes() {
         return { error: '会话未就绪' }
       },
       async downloadFile() {
@@ -287,6 +319,25 @@ export function createCloudProvider(sessionId: string): WorkspaceFileProvider {
         return { blob }
       } catch (e: any) {
         return { error: e?.message || 'PDF 预览失败' }
+      }
+    },
+    async readFileBytes(relativePath: string): Promise<ReadFileBytesResult> {
+      try {
+        const token = getToken()
+        const url = `${API_BASE}/files/workspace-download?sessionId=${numericSessionId}&path=${encodeURIComponent(relativePath)}`
+        const resp = await fetch(url, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        })
+        if (!resp.ok) {
+          return { error: await extractDownloadError(resp) }
+        }
+        const buffer = await resp.arrayBuffer()
+        if (!buffer || buffer.byteLength === 0) {
+          return { error: '文件内容为空' }
+        }
+        return { bytes: new Uint8Array(buffer), size: buffer.byteLength }
+      } catch (e: any) {
+        return { error: e?.message || '读取文件失败' }
       }
     },
     getAbsolutePath(relativePath: string) {
