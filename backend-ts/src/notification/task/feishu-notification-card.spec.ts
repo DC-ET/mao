@@ -79,6 +79,21 @@ describe('buildTaskNotificationCard', () => {
     expect(markdownElementWith(card, '上游 502')).toBeDefined();
   });
 
+  it('marks pending approval with an orange header and a fixed hint that omits the command', () => {
+    const card = buildTaskNotificationCard({
+      phase: 'APPROVAL',
+      title: '整理仓库',
+      userMessage: '帮我清掉 build 目录',
+      failureReason: '不该出现',
+    });
+    expect((card.header as { template: string }).template).toBe('orange');
+    expect((card.header as { title: { content: string } }).title.content).toBe('Mao 审批通知');
+    expect(markdownElementWith(card, '等待你的审批')).toBeDefined();
+    expect(markdownElementWith(card, '有一条本地操作待你审批，请回到桌面端处理。')).toBeDefined();
+    expect(cardText(card)).not.toContain('执行失败');
+    expect(cardText(card)).not.toContain('不该出现');
+  });
+
   it('marks pending questions with an orange header and answering hint', () => {
     const card = buildTaskNotificationCard({ phase: 'ASK_USER', title: '精简 Termix 界面' });
     expect((card.header as { template: string }).template).toBe('orange');
@@ -161,5 +176,11 @@ describe('buildTaskNotificationText', () => {
     });
     expect(ask).toContain('Mao 提问通知');
     expect(ask).toContain('正在等待回答');
+
+    const approval = buildTaskNotificationText({
+      phase: 'APPROVAL', title: '任务D', now: new Date('2026-09-25T09:13:20+08:00'),
+    });
+    expect(approval).toBe('Mao 审批通知\n任务：任务D\n有一条本地操作待你审批，请回到桌面端处理\n时间：2026-09-25 09:13:20');
+    expect(approval).not.toContain('执行失败');
   });
 });

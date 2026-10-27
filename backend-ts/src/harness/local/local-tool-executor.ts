@@ -11,6 +11,16 @@ export interface ApprovalInboxRecorder {
   resolveApprovalPending(sessionId: number, requestId: string): Promise<void>;
 }
 
+/** 审批升级外推。窄接口，避免 harness 反向依赖通知实现。未注入时只写收件箱。 */
+export interface ApprovalEscalationDelivery {
+  id?: number;
+}
+
+export interface ApprovalEscalationNotifier {
+  prepare(sessionId: number, requestId: string): Promise<ApprovalEscalationDelivery | null>;
+  suppress(delivery: ApprovalEscalationDelivery | null): Promise<void>;
+}
+
 export class LocalToolExecutor {
   constructor(
     private readonly sessionRegistry: LocalToolSessionRegistry,
@@ -19,6 +29,13 @@ export class LocalToolExecutor {
     private readonly timeoutSeconds = 900,
     private readonly inboxRecorder?: ApprovalInboxRecorder | null,
   ) {}
+
+  private escalationNotifier: ApprovalEscalationNotifier | null = null;
+
+  /** 通知服务比本执行器晚装配，构造完成后再挂上。 */
+  setEscalationNotifier(notifier: ApprovalEscalationNotifier | null): void {
+    this.escalationNotifier = notifier;
+  }
 
   async execute(
     sessionId: number | null,
@@ -35,6 +52,7 @@ export class LocalToolExecutor {
     }
     let pending: { requestId: string | null; future: Promise<string> } | null = null;
     let approvalRegistered = false;
+    let escalation: ApprovalEscalationDelivery | null = null;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       pending = await this.sessionRegistry.sendToolRequest(
@@ -53,6 +71,23 @@ export class LocalToolExecutor {
         // LocalToolExecutor 无 userId 上下文）
         const requestId = pending.requestId;
         this.recordInbox(() => this.inboxRecorder?.recordApprovalPending(sessionId, requestId));
+        // 必须先把升级行插入再等待。fire-and-forget 时人可能在提交前就点了批准，finally 抑制会扑空。
+        if (this.escalationNotifier) {
+          try {
+            escalation = await this.escalationNotifier.prepare(sessionId, requestId);
+            // 插入期间人已经点过：登记被 handleToolApproval 同步摘掉，而命令还要跑很久，不能留到 finally。
+            if (escalation != null && !this.approvalRegistry.has(sessionId, requestId)) {
+              try {
+                await this.escalationNotifier.suppress(escalation);
+              } catch (suppressError) {
+                harnessLog('warn', `Failed to suppress approval escalation: sessionId=${sessionId}, requestId=${requestId}, error=${(suppressError as Error).message}`);
+              }
+            }
+          } catch (e) {
+            escalation = null;
+            harnessLog('warn', `Failed to prepare approval escalation: sessionId=${sessionId}, requestId=${requestId}, error=${(e as Error).message}`);
+          }
+        }
       }
       return await Promise.race([
         pending.future,
@@ -81,6 +116,15 @@ export class LocalToolExecutor {
         // 只挂这一处：handleToolApproval 的 unregister 不重复挂点，避免
         // 「已批准 → 命令仍在跑」窗口内双触发。
         const requestId = pending.requestId;
+        // 超时 / 断连 / 执行异常，以及审批帧丢失时的兜底。人已经点过时上面可能抑制过一次，重复调用看到终态会跳过。
+        // 收件箱仍只在这里置已读：它表示这次本地调用还没结束，升级通知表示人还没表态。
+        if (this.escalationNotifier && escalation) {
+          try {
+            await this.escalationNotifier.suppress(escalation);
+          } catch (e) {
+            harnessLog('warn', `Failed to suppress approval escalation: sessionId=${sessionId}, requestId=${requestId}, error=${(e as Error).message}`);
+          }
+        }
         this.recordInbox(() => this.inboxRecorder?.resolveApprovalPending(sessionId, requestId));
       }
     }

@@ -52,6 +52,10 @@ export interface WsHandlerDeps {
   treeSignalPublisher: SessionTreeSignalPublisher;
   approvalRegistry: ApprovalRegistry;
   approvalRuleService: ApprovalRuleService;
+  /** 用户对本地审批表态后抑制升级提醒。未注入时不外推。 */
+  approvalEscalationSuppressor?: {
+    suppressByRequest(sessionId: number, requestId: string): Promise<void>;
+  } | null;
   activityService: ActivityService;
   activityHeartbeat: SessionActivityHeartbeat;
   todoMapper: SessionTodoMapper;
@@ -76,7 +80,7 @@ export function assembleWsHandler(deps: WsHandlerDeps): StreamingWsHandler {
   const {
     cfg, jwt, wsRegistry, sessionTitleService, harnessService, agentLoop, compactionSignalBus, sessionService, taskTerminal,
     messageQueueService, embedPageToolRegistry, localToolSessions, askUserQuestionsRegistry,
-    treeSignalPublisher, approvalRegistry, approvalRuleService, activityService,
+    treeSignalPublisher, approvalRegistry, approvalRuleService, approvalEscalationSuppressor, activityService,
     activityHeartbeat, todoMapper, backgroundSubagentManager, shellManager,
     skillSync, localSkills, localAgentsMd, mcpSync, routingMcpClient,
     agentRepo, modelRepo, userRepo, agentExecutor, budgetService, scheduledService,
@@ -96,6 +100,7 @@ export function assembleWsHandler(deps: WsHandlerDeps): StreamingWsHandler {
     treeSignalPublisher,
     approvalRegistry,
     approvalRuleService,
+    approvalEscalationSuppressor,
     activityService,
     activityHeartbeat,
     sessionTodoMapper: todoMapper,

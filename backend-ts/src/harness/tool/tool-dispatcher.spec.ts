@@ -164,7 +164,7 @@ describe('ToolDispatcher', () => {
 
   it('askUserQuestionsOfflinePreparesWebhookNotificationAndSuppressesAfterAnswer', async () => {
     const notifier = {
-      prepareAskUser: vi.fn().mockResolvedValue({ id: 5 }),
+      prepareEscalation: vi.fn().mockResolvedValue({ id: 5 }),
       suppressPending: vi.fn().mockResolvedValue(undefined),
     };
     const offlineDispatcher = new ToolDispatcher(
@@ -180,7 +180,12 @@ describe('ToolDispatcher', () => {
       'ask_user_questions', '{"questions":[{"id":"q1"}]}', 'CLOUD', 7, 'workspace',
     );
     expect(result).toBe('{"answers":[{}]}');
-    expect(notifier.prepareAskUser).toHaveBeenCalledWith(7, 9, 'req-1', '任务A');
+    expect(notifier.prepareEscalation).toHaveBeenCalledWith({
+      session: expect.objectContaining({ userId: 9, title: '任务A' }),
+      phase: 'ASK_USER',
+      requestId: 'req-1',
+      delayMs: 0,
+    });
     expect(notifier.suppressPending).toHaveBeenCalledWith({ id: 5 });
     // 已回答：不广播取消事件
     expect(streamingWsRegistry.send).toHaveBeenCalledTimes(1);
@@ -188,7 +193,7 @@ describe('ToolDispatcher', () => {
 
   it('askUserQuestionsOfflineStillSuppressesWhenUnansweredAndNotifiesCancelled', async () => {
     const notifier = {
-      prepareAskUser: vi.fn().mockResolvedValue({ id: 6 }),
+      prepareEscalation: vi.fn().mockResolvedValue({ id: 6 }),
       suppressPending: vi.fn().mockResolvedValue(undefined),
     };
     const offlineDispatcher = new ToolDispatcher(
@@ -202,14 +207,46 @@ describe('ToolDispatcher', () => {
     askUserQuestionsRegistry.waitForAnswer.mockResolvedValue({ answered: false, cancelled: false, resultJson: '{"error":"timeout"}' });
     const result = await offlineDispatcher.dispatch('ask_user_questions', '{"questions":[{"id":"q1"}]}', 'CLOUD', 7, 'workspace');
     expect(result).toContain('timeout');
-    expect(notifier.prepareAskUser).toHaveBeenCalledWith(7, 9, 'req-2', '任务B');
+    expect(notifier.prepareEscalation).toHaveBeenCalledWith({
+      session: expect.objectContaining({ userId: 9, title: '任务B' }),
+      phase: 'ASK_USER',
+      requestId: 'req-2',
+      delayMs: 0,
+    });
     expect(notifier.suppressPending).toHaveBeenCalledWith({ id: 6 });
     expect(streamingWsRegistry.send).toHaveBeenCalledTimes(2);
   });
 
+  it('askUserQuestionsOnlineDelaysEscalationAndStillSuppressesAfterAnswer', async () => {
+    const notifier = {
+      prepareEscalation: vi.fn().mockResolvedValue({ id: 11 }),
+      suppressPending: vi.fn().mockResolvedValue(undefined),
+    };
+    const onlineDispatcher = new ToolDispatcher(
+      registry, localToolExecutor, dangerAssessor, sessionMapper, streamingWsRegistry,
+      askUserQuestionsRegistry, localToolSessionRegistry, treeSignalPublisher, null, notifier,
+    );
+    localToolSessionRegistry.getUserIdForSession.mockResolvedValue(9);
+    streamingWsRegistry.hasConnection.mockReturnValue(true);
+    askUserQuestionsRegistry.register.mockReturnValue('req-online');
+    sessionMapper.selectById.mockResolvedValue({ userId: 9, title: '在线任务' });
+    askUserQuestionsRegistry.waitForAnswer.mockResolvedValue({ answered: true, cancelled: false, resultJson: '{"answers":[{}]}' });
+    const result = await onlineDispatcher.dispatch(
+      'ask_user_questions', '{"questions":[{"id":"q1"}]}', 'CLOUD', 7, 'workspace',
+    );
+    expect(result).toBe('{"answers":[{}]}');
+    expect(notifier.prepareEscalation).toHaveBeenCalledWith({
+      session: expect.objectContaining({ userId: 9, title: '在线任务' }),
+      phase: 'ASK_USER',
+      requestId: 'req-online',
+      delayMs: 3 * 60 * 1000,
+    });
+    expect(notifier.suppressPending).toHaveBeenCalledWith({ id: 11 });
+  });
+
   it('askUserQuestionsOfflineContinuesToWaitWhenWebhookPreparationFails', async () => {
     const notifier = {
-      prepareAskUser: vi.fn().mockRejectedValue(new Error('db down')),
+      prepareEscalation: vi.fn().mockRejectedValue(new Error('db down')),
       suppressPending: vi.fn().mockResolvedValue(undefined),
     };
     const offlineDispatcher = new ToolDispatcher(
@@ -239,7 +276,7 @@ describe('ToolDispatcher', () => {
   }
 
   function dispatcherWithFeishu(feishuAsk: ReturnType<typeof feishuAskMount>, notifier?: {
-    prepareAskUser: ReturnType<typeof vi.fn>;
+    prepareEscalation: ReturnType<typeof vi.fn>;
     suppressPending: ReturnType<typeof vi.fn>;
   } | null) {
     return new ToolDispatcher(
@@ -284,7 +321,7 @@ describe('ToolDispatcher', () => {
 
   it('nonFeishuSessionStillPreparesTheOfflineWebhookWhenFeishuMountIsWired', async () => {
     const notifier = {
-      prepareAskUser: vi.fn().mockResolvedValue({ id: 8 }),
+      prepareEscalation: vi.fn().mockResolvedValue({ id: 8 }),
       suppressPending: vi.fn().mockResolvedValue(undefined),
     };
     const feishuAsk = feishuAskMount();
@@ -295,7 +332,12 @@ describe('ToolDispatcher', () => {
     askUserQuestionsRegistry.register.mockReturnValue('req-desktop');
     askUserQuestionsRegistry.waitForAnswer.mockResolvedValue({ answered: true, cancelled: false, resultJson: '{"answers":[]}' });
     await wired.dispatch('ask_user_questions', '{"questions":[{"id":"q1"}]}', 'CLOUD', 7, 'workspace');
-    expect(notifier.prepareAskUser).toHaveBeenCalledWith(7, 9, 'req-desktop', '桌面任务');
+    expect(notifier.prepareEscalation).toHaveBeenCalledWith({
+      session: expect.objectContaining({ userId: 9, title: '桌面任务' }),
+      phase: 'ASK_USER',
+      requestId: 'req-desktop',
+      delayMs: 0,
+    });
     expect(feishuAsk.mount).not.toHaveBeenCalled();
     expect(feishuAsk.clearRequest).not.toHaveBeenCalled();
   });
