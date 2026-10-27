@@ -83,6 +83,8 @@ function mountViewer() {
         filePath: 'src/a.py',
         provider: {
           readFile: async () => ({ content: 'print("old")\n', total_lines: 1 }),
+          listDirectory: async () => ({ entries: [], truncated: false }),
+          searchFiles: async () => ({ entries: [], truncated: false }),
         },
       })
     },

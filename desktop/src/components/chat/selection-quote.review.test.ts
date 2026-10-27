@@ -45,7 +45,11 @@ function mountChatInput(props: Record<string, unknown> = {}) {
   const inputRef = ref<{
     getPlainText: () => string
     clearInput: () => void
-    restoreContent: (text: string, files: File[]) => void
+    restoreContent: (
+      text: string,
+      files: File[],
+      quotes?: Array<{ id: string; text: string; truncated: boolean }>,
+    ) => void
     insertText: (text: string) => void
   } | null>(null)
   let handle: ChatHandle | null = null
