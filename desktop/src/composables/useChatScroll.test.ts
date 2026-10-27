@@ -461,50 +461,6 @@ describe('手势窗口与尺寸驱动', () => {
   })
 })
 
-describe('回到顶部（scrollToTop）', () => {
-  it('定位到顶部并停止跟随；programmatic 记账不误触上滑分页', async () => {
-    const s = setup()
-    await settledAtBottom(s)
-
-    s.scrollToTop()
-    // 浏览器在 rAF 之前派发 scroll（HTML 规范：update the rendering 的 scroll 步骤
-    // 先于动画帧回调）：此刻 programmatic 仍为 true，handleScroll 必须早退——
-    // 不触发分页、不改判
-    await nextTick()
-    s.handleScroll()
-    expect(s.loadOlder).not.toHaveBeenCalled()
-    expect(s.userScrolledUp.value).toBe(true)
-
-    await frame()
-    expect(s.el.scrollTop).toBe(0)
-    // 回顶 = 显式「读历史」：停止跟随，流式内容变高也不跟底
-    expect(s.userScrolledUp.value).toBe(true)
-    // 后续流式内容变高也不跟底
-    s.el.scrollHeight = 2400
-    s.scrollToBottom()
-    await frameSettled()
-    expect(s.el.scrollTop).toBe(0)
-  })
-
-  it('回顶后用户主动下滑回底部恢复跟随', async () => {
-    const s = setup()
-    await settledAtBottom(s)
-
-    s.scrollToTop()
-    await frame()
-    expect(s.userScrolledUp.value).toBe(true)
-
-    // 下滑手势（只开手势窗口，不停跟随）+ 滚回底部附近
-    s.handleWheel({ deltaY: 100 } as WheelEvent)
-    s.el.scrollTop = 1500
-    s.handleScroll()
-    expect(s.userScrolledUp.value).toBe(false)
-    s.scrollToBottom()
-    await frameSettled()
-    expect(s.el.scrollTop).toBe(1500)
-  })
-})
-
 describe('内容塌陷（折叠执行步骤）', () => {
   it('步骤整段隐藏、scrollTop 被钳制到新底部：恢复跟随，不误判上滑', async () => {
     const s = setup()

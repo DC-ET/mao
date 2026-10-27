@@ -71,18 +71,6 @@
         <div class="messages" ref="messagesContainer" :aria-busy="historyLoading"
         @touchstart.passive="handleTouchStart" @touchmove.passive="handleTouchMove"
         @pointerdown="handlePointerDown">
-        <!-- sticky 顶栏：回到最新（aroundMessageId 定位后）/ 回到顶部（上滑后），
-             按各自可见条件出现，两者都不满足时不占位 -->
-        <div v-if="sessionId && messages.length > 0 && (historyAnchored || userScrolledUp)" class="chat-sticky-bar">
-          <span class="sticky-bar-spacer"></span>
-          <template v-if="historyAnchored">
-            <span class="sticky-bar-hint">正在查看较早的消息</span>
-            <button type="button" class="sticky-bar-link" @click="backToLatest">回到最新</button>
-          </template>
-          <button v-else-if="userScrolledUp" type="button" class="sticky-bar-link" title="回到顶部" aria-label="回到顶部" @click="scrollToTop">
-            <el-icon :size="12"><CaretTop /></el-icon>
-          </button>
-        </div>
         <div v-if="historyLoading" class="history-loading"
           :class="{ 'empty-state': messages.length === 0 }" role="status" aria-live="polite">
           <el-icon :size="messages.length === 0 ? 28 : 16" class="is-loading" aria-hidden="true"><Loading /></el-icon>
@@ -229,7 +217,7 @@
 <script setup lang="ts">
 import { ref, computed, inject, provide, watch, nextTick, onActivated, onMounted, onUnmounted, type Ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { CaretTop, ChatDotRound, Loading } from '@element-plus/icons-vue'
+import { ChatDotRound, Loading } from '@element-plus/icons-vue'
 import { useChat, normalizeMessageRole, type ChatMessage, type PendingUploadFile } from '../../composables/useChat'
 import { useChatScroll } from '../../composables/useChatScroll'
 import { useChatQueue } from '../../composables/useChatQueue'
@@ -319,7 +307,6 @@ const {
   stopExecution,
   retryExecution,
   loadOlderMessages,
-  fetchMessages,
   newSession,
   restoreSession,
   confirmApproval,
@@ -408,7 +395,7 @@ watch(pendingApprovals, () => syncToTaskView(), { deep: true })
 // Session restore — ChatPanel watches sessionStore.activeSessionId
 const messagesContainer = ref<HTMLElement>()
 const {
-  userScrolledUp, scrollToBottom, resumeFollow, pauseFollow, scrollToMessage, scrollToTop, beginRestore, completeRestore,
+  userScrolledUp, scrollToBottom, pauseFollow, beginRestore, completeRestore,
   handleMarkdownRendered, handleWheel, handleTouchStart, handleTouchMove, handlePointerDown, handleKeyDown, handleScroll, cancelRestore, resetScrollBaseline, dispose: disposeScroll,
 } = useChatScroll(messagesContainer, {
   loadOlder: loadOlderMessages,
@@ -421,19 +408,9 @@ const { flashId, flash } = useMessageLocate({
 })
 provide(LOCATE_FLASH_KEY, flashId)
 
-const historyAnchored = computed(() => sessionId.value != null && sessionStore.isHistoryAnchored(sessionId.value))
-
 /** 轮次目录定位：与全局搜索跳转同构（flash 内部含 pauseFollow 与 nextTick 滚动，展开由 ChatRoundList 的 flashId 监听完成） */
 function onRoundLocate(messageId: string) {
   flash(messageId)
-}
-
-async function backToLatest() {
-  const sid = sessionId.value
-  if (!sid) return
-  await fetchMessages({ sessionId: sid, forceLatest: true })
-  scrollToMessage('')
-  resumeFollow()
 }
 
 let restoreGeneration = 0
@@ -882,43 +859,6 @@ function handleNewTaskAgentChange(id: string | null) {
   min-height: 0;
   display: flex;
   flex-direction: column;
-}
-
-/* sticky 顶栏：回到最新（aroundMessageId 定位后）/ 回到顶部（上滑后）出现时占位 */
-.chat-sticky-bar {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-  padding: 6px 10px;
-  border-radius: 8px;
-  background: var(--aw-surface-hover, rgba(0, 0, 0, 0.04));
-  color: var(--aw-ink-muted-80, #555);
-  font-size: 13px;
-}
-
-.sticky-bar-spacer {
-  flex: 1;
-}
-
-.sticky-bar-hint {
-  color: var(--aw-ink-muted-64, #666);
-  white-space: nowrap;
-}
-
-.sticky-bar-link {
-  display: inline-flex;
-  align-items: center;
-  border: 0;
-  background: transparent;
-  color: var(--aw-accent, #409eff);
-  cursor: pointer;
-  font: inherit;
-  padding: 2px 4px;
-  white-space: nowrap;
 }
 
 .chat-panel {
