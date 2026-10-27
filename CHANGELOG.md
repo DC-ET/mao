@@ -13,6 +13,12 @@
 
 发版前在顶部新增 `## 版本 (日期)` 条目；前端部署 Web 后安卓/Electron 刷新即可；仅安卓原生壳变更时 `cd android && bash build-apk.sh`。
 
+## 0.0.357 (2026-10-27)
+
+### 后端
+
+- **修复 V172 迁移 SQL 语法错误导致后端无法启动**：`V172__llm_call_request_capture.sql` 第 3 行注释写成 `--（应用层截断…`，MySQL 要求 `--` 后必须有空白字符才识别为注释，该行被当作 SQL 解析直接报 `You have an error in your SQL syntax`，Flyway 迁移失败、后端拒绝启动（蓝绿部署健康检查失败、切流中止，0.0.355 起新实例无法上线）。补上空格即可；从零部署的新实例两条迁移按顺序执行，已记录失败的实例需删除 `flyway_schema_history` 中 `success=0` 的 V172 行后重试（DDL 已回滚，`llm_call` 无残留列）。
+
 ## 0.0.356 (2026-10-27)
 
 ### 前端（桌面 / Web / 安卓）
