@@ -687,4 +687,31 @@ describe('RunTracePanel 时间条带与记录下钻', () => {
     expect(drawerOpened.at(-1)).toEqual({ kind: 'tool', sessionId: '11', target: { kind: 'tool', toolCallId: 'call_abc' } })
     expect(findAllByClass(root, 'drawer-stub')).toHaveLength(1)
   })
+
+  // 抽屉内点工具行是「下钻」：关掉工具详情要回到轮次详情，而不是把整条抽屉链一起
+  // 收掉（曾用单个 ref 存 target，close 直接置 null，用户被迫从轨迹列表重新下钻）。
+  it('下钻后关闭逐级回退：工具详情 → 轮次详情 → 再关才整体收起', async () => {
+    const root = await mountPanel()
+    ;(findAllByClass(root, 'run-summary')[0]!.props.onClick as () => void)()
+    await flush()
+    ;(findAllByClass(root, 'row-detail-btn')[0]!.props.onClick as () => void)()
+    await flush()
+    expect(drawerOpened.at(-1)).toEqual({ kind: 'call', sessionId: '11', target: { kind: 'call', llmCallId: 101 } })
+
+    // 轮次抽屉内点工具行 → 工具详情（压栈，抽屉实例复用）
+    ;(findAllByClass(root, 'drawer-stub')[0]!.props.onOpenTool as (id: string) => void)('call_abc')
+    await flush()
+    expect(drawerOpened.at(-1)).toEqual({ kind: 'tool', sessionId: '11', target: { kind: 'tool', toolCallId: 'call_abc' } })
+
+    // 关闭工具详情：回到轮次详情——抽屉还在，target 回到 call
+    ;(findAllByClass(root, 'drawer-stub')[0]!.props.onClose as () => void)()
+    await flush()
+    expect(findAllByClass(root, 'drawer-stub')).toHaveLength(1)
+    expect(drawerOpened.at(-1)).toEqual({ kind: 'call', sessionId: '11', target: { kind: 'call', llmCallId: 101 } })
+
+    // 再关一次：栈空，抽屉整体收起
+    ;(findAllByClass(root, 'drawer-stub')[0]!.props.onClose as () => void)()
+    await flush()
+    expect(findAllByClass(root, 'drawer-stub')).toHaveLength(0)
+  })
 })

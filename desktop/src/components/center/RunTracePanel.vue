@@ -282,13 +282,14 @@
     </div>
 
     <!-- 记录详情抽屉：面板内 absolute 定位，不挂全局侧边栏（el-drawer 的 append-to-body
-         会带出跨会话错配类问题，抽屉的 sessionId 上下文必须严格属于本面板） -->
+         会带出跨会话错配类问题，抽屉的 sessionId 上下文必须严格属于本面板）。
+         抽屉内下钻（轮次详情 → 工具详情）走抽屉栈，关闭只收当前一级 -->
     <RunTraceRecordDrawer
       v-if="drawerTarget != null"
       :session-id="props.sessionId"
       :target="drawerTarget"
-      @close="drawerTarget = null"
-      @open-tool="openToolRecord"
+      @close="closeDrawer"
+      @open-tool="openToolRecordFromDrawer"
     />
   </div>
 </template>
@@ -593,19 +594,35 @@ async function locateNode(runId: number, key: string) {
 }
 
 // ===== 记录详情抽屉 =====
-const drawerTarget = ref<TraceDrawerTarget | null>(null)
+/**
+ * 抽屉栈：轮次详情的「工具」tab 里点某条工具是下钻，关掉工具详情要回到轮次详情。
+ * 单个 ref 存不下这个层级——close 直接置 null 会把整条抽屉链一起收掉，用户被迫
+ * 从轨迹列表重新下钻。主面板入口（行内「详情」/「查看原文」）开新链，栈重置为
+ * 单元素；抽屉内下钻压栈；关闭（× / Esc / 遮罩同口径）弹出一级，栈空才整体卸载。
+ */
+const drawerStack = ref<TraceDrawerTarget[]>([])
+const drawerTarget = computed(() => drawerStack.value.at(-1) ?? null)
 
 function openToolRecord(toolCallId: string) {
-  drawerTarget.value = { kind: 'tool', toolCallId }
+  drawerStack.value = [{ kind: 'tool', toolCallId }]
 }
 
 function openCallRecord(llmCallId: number) {
-  drawerTarget.value = { kind: 'call', llmCallId }
+  drawerStack.value = [{ kind: 'call', llmCallId }]
 }
 
 /** run 锚点 id 就是 runId（run-trace.service 的归属口径）：按主键直查该条用户消息。 */
 function openMessageRecord(runId: number) {
-  drawerTarget.value = { kind: 'message', messageId: runId }
+  drawerStack.value = [{ kind: 'message', messageId: runId }]
+}
+
+/** 抽屉内下钻（轮次详情 → 工具详情）：压栈，关闭时一级级回退。 */
+function openToolRecordFromDrawer(toolCallId: string) {
+  drawerStack.value = [...drawerStack.value, { kind: 'tool', toolCallId }]
+}
+
+function closeDrawer() {
+  drawerStack.value = drawerStack.value.slice(0, -1)
 }
 
 /** 摘要条按最高严重度描边：失败红，重试与中断黄，慢与贵中性色。 */
