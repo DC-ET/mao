@@ -1,5 +1,6 @@
 import { Node, mergeAttributes } from '@tiptap/core'
 import { serializeFileRange, type FileRangeQuote } from '../../../utils/selection-quote'
+import { fileReferenceLabel } from '../../../utils/file-range-label'
 
 export interface FileReferenceOptions {
   HTMLAttributes: Record<string, any>
@@ -22,25 +23,6 @@ export interface FileReferenceAttrs {
   languageId?: string | null
   capturedChangeCount?: number | null
   stale?: string | null
-}
-
-function fileReferenceName(filePath: string): string {
-  if (!filePath) return ''
-  const parts = filePath.split(/[/\\]/)
-  return parts[parts.length - 1] || filePath
-}
-
-export function fileReferenceLabel(attrs: {
-  filePath?: string | null
-  lineStart?: number | null
-  lineEnd?: number | null
-  stale?: string | null
-}): string {
-  const name = fileReferenceName(attrs.filePath || '')
-  if (attrs.lineStart == null) return name
-  const end = attrs.lineEnd ?? attrs.lineStart
-  const ranged = end === attrs.lineStart ? `${name}:${attrs.lineStart}` : `${name}:${attrs.lineStart}-${end}`
-  return attrs.stale === '1' ? `${ranged} · 内容可能已变化` : ranged
 }
 
 function attrNumber(element: { getAttribute(name: string): string | null }, name: string): number | null {

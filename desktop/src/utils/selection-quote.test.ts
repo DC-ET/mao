@@ -1,8 +1,15 @@
+/**
+ * @vitest-environment jsdom
+ *
+ * 选区摘要在 Node 里是纯逻辑，表格摘要有真实 DOM 选区（plainTextFromRange），
+ * 整个文件跑 jsdom。
+ */
 import { describe, expect, it } from 'vitest'
 import {
   REPLY_QUOTE_MAX_CHARS,
   absorbFileRangeSuffix,
   capReplyQuote,
+  plainTextFromRange,
   serializeFileRange,
   serializeReplyQuotes,
   splitLeadingReplyQuotes,
@@ -106,5 +113,32 @@ describe('splitLeadingReplyQuotes', () => {
       quotes: ['a', 'b'],
       rest: '问题',
     })
+  })
+})
+
+describe('plainTextFromRange', () => {
+  function rangeOver(root: HTMLElement): Range {
+    const range = document.createRange()
+    range.setStart(root, 0)
+    range.setEnd(root, root.childNodes.length)
+    return range
+  }
+
+  it('表格行：单元格之间一个「 | 」，行尾不留', () => {
+    const table = document.createElement('table')
+    table.innerHTML = '<tr><td>甲</td><td>乙</td><td>丙</td></tr>'
+    expect(plainTextFromRange(rangeOver(table))).toBe('甲 | 乙 | 丙')
+  })
+
+  it('表头同样只留在单元格之间', () => {
+    const table = document.createElement('table')
+    table.innerHTML = '<tr><th>列一</th><th>列二</th></tr>'
+    expect(plainTextFromRange(rangeOver(table))).toBe('列一 | 列二')
+  })
+
+  it('多行表格按行换行', () => {
+    const table = document.createElement('table')
+    table.innerHTML = '<tr><td>a1</td><td>a2</td></tr><tr><td>b1</td><td>b2</td></tr>'
+    expect(plainTextFromRange(rangeOver(table))).toBe('a1 | a2\nb1 | b2')
   })
 })

@@ -56,6 +56,19 @@ describe('TitleGenerator', () => {
     const text = '@{src/a.py}@ 第 1-400 行（片段过长未内联，请按行号读取）\n请按行号看';
     expect(TitleGenerator.preprocessForTitle(text, new Map())).toBe('请按行号看');
   });
+
+  it('preprocessKeepsTextAfterUnclosedQuoteFence', () => {
+    // 畸形引用：行号行后面跟开围栏但没有合围栏。只丢行号行本身，
+    // 吞掉后面全部会让用户的真实问题从标题素材里消失，标题停在占位标题。
+    const text = '@{src/a.py}@ 第 1-3 行：\n```python\nprint(1)\n请解释这段';
+    expect(TitleGenerator.preprocessForTitle(text, new Map())).toBe('```python\nprint(1)\n请解释这段');
+  });
+
+  it('preprocessKeepsQuestionAfterUserOwnBareRangeLine', () => {
+    // 用户自己写了「第 3 行：」后接未闭合代码块：同样不能把问题吞掉
+    const text = '第 3 行：\n```js\nlet x = 1\n这个接口为什么慢';
+    expect(TitleGenerator.preprocessForTitle(text, new Map())).toBe('```js\nlet x = 1\n这个接口为什么慢');
+  });
 });
 
 describe('PermissionLevel', () => {

@@ -61,7 +61,11 @@
       <div v-if="replyQuotes.length" class="reply-quote-list">
         <div v-for="quote in replyQuotes" :key="quote.id" class="reply-quote-item">
           <span class="reply-quote-text">{{ summarizeQuote(quote.text) }}</span>
-          <button type="button" class="reply-quote-remove" :disabled="disabled" @click="removeReplyQuote(quote.id)">移除</button>
+          <button type="button" class="reply-quote-remove" :disabled="disabled" aria-label="移除引用" title="移除引用" @click="removeReplyQuote(quote.id)">
+            <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
+              <path d="M3 3l6 6M9 3L3 9" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+            </svg>
+          </button>
         </div>
       </div>
       <EditorContent :editor="editor" class="rich-editor" />
@@ -158,6 +162,7 @@ import ChatInputToolbar from './ChatInputToolbar.vue'
 import ChatMobileConfigRow from './ChatMobileConfigRow.vue'
 import { QuickCommandNode } from './tiptap/QuickCommandNode'
 import { FileReferenceNode } from './tiptap/FileReferenceNode'
+import { refreshFileQuoteStaleFlags } from './file-quote-stale'
 import type { Agent } from '../../stores/agent'
 import type { QuickCommand, QuickCommandsData } from '../../types/quick-command'
 import { useSessionStore, type CloudProject } from '../../stores/session'
@@ -172,6 +177,7 @@ import {
 } from '../../utils/selection-quote'
 import { cloudWorkspaceIndicator, extractGitRepoSlug, isHttpsGitUrl } from '../../utils/cloud-project'
 import { getUploadConfig } from '../../utils/storageMode'
+import { generateUUID } from '../../utils/uuid'
 import type { LocalPendingFile } from '../../utils/chatLocalAttach'
 
 const props = withDefaults(defineProps<{
@@ -1239,7 +1245,9 @@ function addReplyQuote(text: string) {
   const capped = capReplyQuote(text)
   if (!capped.text) return
   replyQuotes.value = [...replyQuotes.value, {
-    id: crypto.randomUUID(),
+    // generateUUID 而不是裸 crypto.randomUUID：后者要安全上下文，
+    // HTTP 部署下是 undefined，引用按钮会静默失效
+    id: generateUUID(),
     text: capped.text,
     truncated: capped.truncated,
   }]
@@ -1286,21 +1294,8 @@ function refreshFileQuoteStale() {
   const ed = editor.value
   if (!ed || ed.isDestroyed) return
   const workspace = props.workspace || ''
-  let tr = ed.state.tr
-  let changed = false
-  ed.state.doc.descendants((node, pos) => {
-    if (node.type.name !== 'fileReference' || node.attrs.lineStart == null) return
-    const current = workspace && sessionStore.fileQuoteRevision
-      ? sessionStore.fileQuoteRevision(workspace, node.attrs.filePath)
-      : 0
-    const captured = Number(node.attrs.capturedChangeCount ?? 0)
-    const stale = current > captured ? '1' : null
-    if ((node.attrs.stale ?? null) !== stale) {
-      tr = tr.setNodeMarkup(pos, undefined, { ...node.attrs, stale })
-      changed = true
-    }
-  })
-  if (changed) ed.view.dispatch(tr)
+  refreshFileQuoteStaleFlags(ed, (filePath) =>
+    workspace && sessionStore.fileQuoteRevision ? sessionStore.fileQuoteRevision(workspace, filePath) : 0)
 }
 
 watch(() => sessionStore.fileQuoteRevisions, () => refreshFileQuoteStale())

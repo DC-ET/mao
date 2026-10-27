@@ -32,7 +32,7 @@ export function formatThroughput(row: ThroughputInput): string {
   return value == null ? '-' : `${value.toFixed(1)} tok/s`
 }
 
-/** 聚合值展示（模型均值 / 会话分位由后端算好直接给数）：1 位小数 + 单位；null → 「—」。 */
+/** 聚合值展示（模型均值 / 会话分位由后端算好直接给数）：1 位小数 + 单位；null → 「-」。 */
 export function formatTps(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return '-'
   return `${value.toFixed(1)} tok/s`

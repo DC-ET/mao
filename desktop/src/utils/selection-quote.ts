@@ -296,8 +296,10 @@ function appendSelectionNode(node: Node, chunks: string[]): void {
   if (typeof el.matches === 'function' && el.matches(SKIP_SELECTION)) return
   const tag = el.tagName
   if (tag === 'TD' || tag === 'TH') {
+    // 分隔符只出现在单元格之间：行尾也跟一个的话，finishSelectionText 裁掉
+    // 尾空格后会留下一个孤零零的「 |」
+    if (isTableCell(el.previousElementSibling)) chunks.push(' | ')
     el.childNodes.forEach(child => appendSelectionNode(child, chunks))
-    chunks.push(' | ')
     return
   }
   if (tag === 'BR' || BLOCK_TAGS.has(tag)) {
@@ -306,6 +308,10 @@ function appendSelectionNode(node: Node, chunks: string[]): void {
     return
   }
   el.childNodes.forEach(child => appendSelectionNode(child, chunks))
+}
+
+function isTableCell(el: Element | null): boolean {
+  return !!el && (el.tagName === 'TD' || el.tagName === 'TH')
 }
 
 function finishSelectionText(raw: string): string {

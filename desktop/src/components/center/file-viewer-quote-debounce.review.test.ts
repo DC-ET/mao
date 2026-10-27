@@ -48,6 +48,7 @@ vi.mock('../../composables/useMonacoViewer', () => ({
       },
       onDidScrollChange: () => ({ dispose() {} }),
       onDidChangeModelContent: () => ({ dispose() {} }),
+      onDidChangeModel: () => ({ dispose() {} }),
       getModel: () => ({
         getLineCount: () => 1,
         getLineContent: () => 'print("old")',

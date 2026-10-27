@@ -6,7 +6,8 @@ import {
 
 /**
  * 在只读 Monaco 上注册一次「引用到对话」。
- * Diff 会反复 setModel，动作挂在编辑器上，不要每次换模型都再注册。
+ * Diff 会反复 setModel，动作挂在编辑器上，不要每次换模型都再注册；
+ * 但换模型必须清掉旧快照——见下面 onDidChangeModel 的注释。
  */
 export function attachMonacoQuote(options: {
   editor: MonacoEditor.IStandaloneCodeEditor
@@ -58,6 +59,13 @@ export function attachMonacoQuote(options: {
     snapshot = null
     button.style.display = 'none'
   })
+  // Diff 查看器换文件 / 切主题走 setModel，它不触发上面三个事件，
+  // 旧快照的行号在新模型上没有意义：按钮留着会按旧行号从新模型取内容
+  // （越界行取到空串），引出来的是错文件的内容或空片段。
+  const modelSub = editor.onDidChangeModel(() => {
+    snapshot = null
+    button.style.display = 'none'
+  })
 
   button.addEventListener('mousedown', (event) => {
     event.preventDefault()
@@ -76,6 +84,7 @@ export function attachMonacoQuote(options: {
     selectionSub.dispose()
     scrollSub.dispose()
     contentSub.dispose()
+    modelSub.dispose()
     action.dispose()
     button.remove()
   }

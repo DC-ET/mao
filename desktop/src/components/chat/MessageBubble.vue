@@ -179,7 +179,6 @@
           <el-icon :size="12"><CopyDocument /></el-icon>
           <span v-if="copied">已复制</span>
         </button>
-        <button v-if="showReplyQuote" class="copy-btn" type="button" @click="quoteWholeReply">引用</button>
         <el-popover
           v-if="showDislike"
           :visible="dislikePopoverVisible"
@@ -295,6 +294,7 @@ import { copyText } from '../../utils/clipboard'
 import { isActiveSessionPhase } from '../../utils/sessionPhase'
 import { useSessionStore } from '../../stores/session'
 import { LOCATE_FLASH_KEY } from '../../composables/useMessageLocate'
+import { subscribeReplyQuoteSelection } from '../../composables/replyQuoteSelectionBus'
 import {
   FEEDBACK_REASON_OPTIONS,
   isDislikeEligible,
@@ -672,10 +672,6 @@ function getToolCall(callId: string): ToolCall | undefined {
   return visibleToolCalls.value.find(c => c.id === callId)
 }
 
-const showReplyQuote = computed(() =>
-  !!quoteReplyToChat && role.value === 'assistant' && !isAssistantRunning.value && !props.isEditing,
-)
-
 function hideQuoteFloat() {
   quoteFloat.value = null
 }
@@ -710,16 +706,6 @@ function captureQuoteSelection() {
   quoteFloat.value = { top: Math.max(8, rect.top - 32), left: Math.max(8, rect.left), text }
 }
 
-function quoteWholeReply() {
-  if (!quoteReplyToChat) return
-  const texts = renderSegments.value
-    .filter((seg): seg is { type: 'text'; content: string } => seg.type === 'text' && !!seg.content)
-    .map(seg => seg.content)
-  const text = texts.length > 0 ? texts.join('\n\n') : (props.message.content || '')
-  if (text.trim()) quoteReplyToChat(text)
-  hideQuoteFloat()
-}
-
 function applyFloatQuote() {
   if (!quoteReplyToChat || !quoteFloat.value) return
   quoteReplyToChat(quoteFloat.value.text)
@@ -727,20 +713,12 @@ function applyFloatQuote() {
   window.getSelection()?.removeAllRanges()
 }
 
-function onQuoteKeyUp(event: KeyboardEvent) {
-  if (event.key === 'Escape') {
-    hideQuoteFloat()
-    return
-  }
-  if (event.key === 'Shift' || event.key.startsWith('Arrow')) captureQuoteSelection()
-}
-
-function onQuoteScroll() {
-  hideQuoteFloat()
-}
-
-function onQuotePointerDown(event: Event) {
-  const target = event.target
+/**
+ * 收起选区浮钮（总线的 dismiss 回调：按下 / 滚动 / 缩放 / Esc 都会走到）。
+ * 点在浮钮自身不能收——浮钮的 click 还没触发，收了就点不出引用。
+ */
+function dismissQuoteFloat(event?: Event) {
+  const target = event?.target
   if (target instanceof Element && target.closest('.selection-quote-float')) return
   hideQuoteFloat()
 }
@@ -779,22 +757,24 @@ function onDocumentClick(event: MouseEvent) {
   dislikePopoverVisible.value = false
 }
 
+let unsubscribeQuoteSelection: (() => void) | null = null
+
 onMounted(() => {
   document.addEventListener('click', onDocumentClick)
   if (!quoteReplyToChat) return
-  window.addEventListener('pointerup', captureQuoteSelection)
-  window.addEventListener('keyup', onQuoteKeyUp)
-  window.addEventListener('pointerdown', onQuotePointerDown, true)
-  window.addEventListener('scroll', onQuoteScroll, true)
-  window.addEventListener('resize', onQuoteScroll)
+  // 回复选区的窗口监听走共享总线：整条消息列表只挂一组，按选中所在气泡分发。
+  // 每条气泡各挂 5 个 listener 的话，长会话里每次 pointerup / scroll
+  // 都会在所有已挂载气泡里跑一遍选区判定。
+  unsubscribeQuoteSelection = subscribeReplyQuoteSelection({
+    root: () => rootEl.value,
+    refresh: captureQuoteSelection,
+    dismiss: dismissQuoteFloat,
+  })
 })
 onUnmounted(() => {
   document.removeEventListener('click', onDocumentClick)
-  window.removeEventListener('pointerup', captureQuoteSelection)
-  window.removeEventListener('keyup', onQuoteKeyUp)
-  window.removeEventListener('pointerdown', onQuotePointerDown, true)
-  window.removeEventListener('scroll', onQuoteScroll, true)
-  window.removeEventListener('resize', onQuoteScroll)
+  unsubscribeQuoteSelection?.()
+  unsubscribeQuoteSelection = null
 })
 
 watch(() => props.message.id, () => {

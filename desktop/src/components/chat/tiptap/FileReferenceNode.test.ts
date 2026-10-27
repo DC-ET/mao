@@ -4,7 +4,8 @@
 import { Editor } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import { describe, expect, it } from 'vitest'
-import { FileReferenceNode, fileReferenceLabel } from './FileReferenceNode'
+import { FileReferenceNode } from './FileReferenceNode'
+import { fileReferenceLabel } from '../../../utils/file-range-label'
 
 function editorWith(attrs: Record<string, unknown>): Editor {
   return new Editor({

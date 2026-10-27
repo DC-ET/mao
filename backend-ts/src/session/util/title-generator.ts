@@ -60,9 +60,12 @@ function stripSelectionQuoteArtifacts(text: string): string {
     }
     if (RANGE_COLON_LINE.test(line) && i + 1 < lines.length) {
       const open = openingFence(lines[i + 1]);
-      if (open) {
-        i += 2;
-        while (i < lines.length && !isClosingFence(lines[i], open)) i++;
+      const close = open ? findClosingFence(lines, i + 2, open) : -1;
+      // 只有找到合围栏才整段剥掉。找不到（畸形引用，或用户自己写了「第 N 行：」
+      // 后接未闭合代码块）时只丢行号行本身——把后面全部吞掉会让用户的真实问题
+      // 从标题素材里消失，标题永久停在占位标题（前端对未闭合围栏同样不吸收）。
+      if (close >= 0) {
+        i = close;
         continue;
       }
     }
@@ -70,6 +73,13 @@ function stripSelectionQuoteArtifacts(text: string): string {
   let start = 0;
   while (start < kept.length && (kept[start].trim() === '' || kept[start].startsWith('>'))) start++;
   return kept.slice(start).join('\n');
+}
+
+function findClosingFence(lines: string[], from: number, open: { char: string; len: number }): number {
+  for (let i = from; i < lines.length; i++) {
+    if (isClosingFence(lines[i], open)) return i;
+  }
+  return -1;
 }
 
 function openingFence(line: string): { char: string; len: number } | null {

@@ -470,6 +470,8 @@ async function doExportCsv() {
     const header = ['时间', '用户', '模型', '输入 Token', '输出 Token', '成本', '耗时(ms)', '吞吐(tok/s)', '缓存 Token', '缓存写 Token', '状态', '错误信息', '会话 ID', 'Agent ID']
     const lines = [header.map(csvCell).join(',')]
     for (const row of rows) {
+      // 吞吐与表格列同源同公式：不可解码行（非流式）留空
+      const tps = throughput(row)
       lines.push([
         row.createdAt,
         row.displayName || row.username || row.userId || '',
@@ -478,8 +480,7 @@ async function doExportCsv() {
         row.completionTokens || 0,
         row.costMicros == null ? '' : (row.costMicros / 1000000).toFixed(6),
         row.durationMs ?? '',
-        // 吞吐与表格列同源同公式：不可解码行（非流式）留空
-        throughput(row) == null ? '' : (throughput(row) as number).toFixed(1),
+        tps == null ? '' : tps.toFixed(1),
         row.cachedTokens || 0,
         row.cacheCreationTokens || 0,
         row.cancelled === 1 ? '取消' : (row.success === 1 ? '成功' : '失败'),

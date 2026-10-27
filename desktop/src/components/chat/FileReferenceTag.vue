@@ -14,6 +14,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { fileReferenceLabel } from '../../utils/file-range-label'
 
 const props = defineProps<{
   filePath: string
@@ -21,14 +22,8 @@ const props = defineProps<{
   lineEnd?: number
 }>()
 
-const label = computed(() => {
-  if (!props.filePath) return ''
-  const parts = props.filePath.replace(/\\/g, '/').split('/')
-  const name = parts[parts.length - 1] || props.filePath
-  if (props.lineStart == null) return name
-  const end = props.lineEnd ?? props.lineStart
-  return end === props.lineStart ? `${name}:${props.lineStart}` : `${name}:${props.lineStart}-${end}`
-})
+// 与 tiptap 节点渲染 HTML 共用同一份标签格式化（utils/file-range-label）
+const label = computed(() => fileReferenceLabel(props))
 </script>
 
 <style>
