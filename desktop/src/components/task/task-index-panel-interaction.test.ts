@@ -177,13 +177,18 @@ beforeEach(() => {
 })
 
 describe('TaskIndexPanel 多选批量归档交互', () => {
-  it('进入选择态渲染底部操作条；Esc 退出', async () => {
+  it('进入选择态渲染列表上方的操作条；Esc 退出', async () => {
     const { host, app } = mountPanel()
     expect(q(host, '.select-action-bar')).toBeNull()
     q(host, '.select-toggle-btn')!.click()
     await tick()
     expect(q(host, '.select-action-bar')).toBeTruthy()
     expect(q(host, '.select-count')!.textContent).toContain('已选 0')
+
+    // 操作条必须在滚动列表之前：长列表勾选后不必滚到底部才能归档
+    const bar = q(host, '.select-action-bar')!
+    const content = q(host, '.panel-content')!
+    expect(bar.compareDocumentPosition(content) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     await tick()
