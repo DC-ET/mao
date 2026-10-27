@@ -235,7 +235,8 @@ describe('useChatQueue', () => {
   it('撤回编辑：删除成功才回填输入框', async () => {
     const queue = useChatQueue(() => '30', () => input)
     await queue.handleQueueEdit({ id: 'q1', content: '原文', images: [] } as never)
-    expect(input.restoreContent).toHaveBeenCalledWith('原文', [])
+    // 第三个参数是回复引用：队列撤回传空数组，避免和正文里的引用块叠两份（0.0.363 起）
+    expect(input.restoreContent).toHaveBeenCalledWith('原文', [], [])
     expect(input.focusInput).toHaveBeenCalled()
   })
 
