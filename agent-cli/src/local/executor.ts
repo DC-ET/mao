@@ -161,7 +161,11 @@ export class LocalExecutor {
     }
     // shell 的每个动作（exec / write_stdin）都在 runtime 内单独过一次策略，这里不重复提问，
     // 否则同一条命令会被问两遍；硬门禁（信任 + 默认拒绝清单）已在上面的 deny 分支生效。
+    // 会在 runtime 里提问的 shell 不能在这里提前发 tool_approval：那一帧表示用户已经表态，
+    // 发早了服务端会立刻取消「3 分钟无人处理」的审批提醒，人还停在确认提示上。
     const delegatedToShell = toolName === 'shell';
+    const shellAction = typeof args.action === 'string' && args.action !== '' ? args.action : 'exec';
+    const shellPrompts = delegatedToShell && (shellAction === 'exec' || shellAction === 'write_stdin');
     if (decision.action === 'ask' && !delegatedToShell) {
       const choice = await this.ask(req, decision.reason);
       if (choice === 'always') recordAlwaysAllow(this.opts.policy, req);
@@ -171,11 +175,11 @@ export class LocalExecutor {
         this.opts.onApprovalDenied?.();
         return;
       }
-    } else if (needApproval || decision.action === 'ask') {
+    } else if ((needApproval || decision.action === 'ask') && !shellPrompts) {
       await this.opts.ws.sendReliable({ type: 'tool_approval', sessionId, requestId });
     }
 
-    const result = await this.runTool(toolName, args, sessionId, workspace, req);
+    const result = await this.runTool(toolName, args, sessionId, workspace, req, requestId);
     const payload = persistToolResult(sessionId, requestId, result);
     const sent = await this.opts.ws.sendReliable({ type: 'tool_result', sessionId, requestId, result: payload });
     if (!sent) {
@@ -194,10 +198,11 @@ export class LocalExecutor {
     sessionId: number,
     workspace: string,
     req: ApprovalRequest,
+    requestId: string,
   ): Promise<Record<string, unknown>> {
     switch (toolName) {
       case 'shell':
-        return this.runShell(args, sessionId, workspace, req);
+        return this.runShell(args, sessionId, workspace, req, requestId);
       case 'read_file':
         return handleReadFile(args, workspace, sessionId);
       case 'write_file':
@@ -232,31 +237,43 @@ export class LocalExecutor {
     sessionId: number,
     workspace: string,
     req: ApprovalRequest,
+    requestId: string,
   ): Promise<Record<string, unknown>> {
     if (!this.shell) this.shell = createCliShellRuntime();
     return this.shell.handle(args, {
       conversationId: sessionId,
       workspace,
       needApproval: true,
-      approve: (description) => this.approveShellText(req, description),
+      approve: (description) => this.approveShellText(req, description, sessionId, requestId),
     });
   }
 
-  private async approveShellText(req: ApprovalRequest, description: string): Promise<boolean> {
+  private async approveShellText(
+    req: ApprovalRequest,
+    description: string,
+    sessionId: number,
+    requestId: string,
+  ): Promise<boolean> {
     const stepReq: ApprovalRequest = {
       ...req,
       args: { ...req.args, command: description },
       description,
     };
     const decision = evaluateApproval(stepReq, this.opts.policy);
-    if (decision.action === 'allow') return true;
+    if (decision.action === 'allow') {
+      await this.opts.ws.sendReliable({ type: 'tool_approval', sessionId, requestId });
+      return true;
+    }
     if (decision.action === 'deny') {
       process.stderr.write(`${decision.reason}\n`);
       if (decision.exitApproval) this.opts.onApprovalDenied?.();
+      await this.opts.ws.sendReliable({ type: 'tool_approval', sessionId, requestId });
       return false;
     }
     const choice = await this.ask(stepReq, decision.reason);
     if (choice === 'always') recordAlwaysAllow(this.opts.policy, stepReq);
+    // 用户已经作答之后才告诉服务端。命令还没开始，长命令不会在同意之后再被提醒。
+    await this.opts.ws.sendReliable({ type: 'tool_approval', sessionId, requestId });
     if (choice === 'deny') {
       this.opts.onApprovalDenied?.();
       return false;

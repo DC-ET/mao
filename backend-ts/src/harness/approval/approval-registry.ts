@@ -62,6 +62,12 @@ export class ApprovalRegistry {
     return hint;
   }
 
+  /** 这一条审批是否还挂着。插入升级行之后用来判断人是否已经在插入期间点过。 */
+  has(sessionId: number | null, requestId: string | null): boolean {
+    if (sessionId == null || requestId == null) return false;
+    return this.pending.get(sessionId)?.has(requestId) ?? false;
+  }
+
   countForSession(sessionId: number | null): number {
     if (sessionId == null) return 0;
     return this.pending.get(sessionId)?.size ?? 0;

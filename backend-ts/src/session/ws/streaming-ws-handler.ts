@@ -147,6 +147,13 @@ export interface WsHandlerDeps {
   approvalRuleService?: {
     createSessionRuleFromAlwaysAllow(userId: number, sessionId: number, hint: ApprovalHint): Promise<void>;
   } | null;
+  /**
+   * 用户点了执行或拒绝后，按 approval:{sessionId}:{requestId} 抑制尚未发出的升级提醒。
+   * 未注入时不外推。失败不得影响审批帧本身。
+   */
+  approvalEscalationSuppressor?: {
+    suppressByRequest(sessionId: number, requestId: string): Promise<void>;
+  } | null;
   activityService: WsListenerDeps['activityService'];
   activityHeartbeat: { touch(sessionId: number): void; clear(sessionId: number): void };
   sessionTodoMapper: {
@@ -1033,6 +1040,14 @@ export class StreamingWsHandler {
     }
     await Promise.resolve(this.deps.approvalRegistry.unregister(sessionId, requestId));
     await Promise.resolve(this.deps.treeSignalPublisher.publishForSession(sessionId));
+    // 批准后命令还要跑。抑制必须发生在这一帧，不能等 tool_result，否则长命令会在人已经点过之后仍被提醒。
+    if (this.deps.approvalEscalationSuppressor) {
+      try {
+        await this.deps.approvalEscalationSuppressor.suppressByRequest(sessionId, requestId);
+      } catch (e) {
+        console.warn(`Failed to suppress approval escalation: sessionId=${sessionId}, requestId=${requestId}, error=${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
   }
 
   private async handlePageToolResult(session: WsSocket, userId: number, root: Record<string, unknown>): Promise<void> {

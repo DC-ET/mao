@@ -199,6 +199,7 @@ import { registerAppHooks } from './app-hooks.js';
 import { assembleContainerRuntime } from './app-container-runtime.js';
 import { assembleLlmEngine } from './app-llm-engine.js';
 import { assembleNotificationServices } from './app-notification-services.js';
+import { PENDING_ESCALATION_DELAY_MS } from './notification/task/delivery.service.js';
 import { assembleOpenApiServices } from './app-openapi-services.js';
 import { assembleWeixinServices } from './app-weixin-services.js';
 import { assembleFeishuHandler } from './app-feishu-handler.js';
@@ -751,6 +752,18 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     modelRepo, llmAdapter, notifCipher,
   });
   const { senderRegistry, notifPref, weixinWebhookFallback, deliveryService, memoryRepo, memoryService, memoryExtraction, messageCitationService } = notifServices;
+  localToolExecutor.setEscalationNotifier({
+    prepare: async (sessionId, requestId) => {
+      const session = await sessionMap.selectById(sessionId);
+      return deliveryService.prepareEscalation({
+        session,
+        phase: 'APPROVAL',
+        requestId,
+        delayMs: PENDING_ESCALATION_DELAY_MS,
+      });
+    },
+    suppress: (delivery) => deliveryService.suppressPending(delivery),
+  });
 
   const weixinInboundMessagesRef: { current: any } = { current: null };
   const sessionServices = assembleSessionServices({
@@ -856,6 +869,10 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     cfg, jwt, wsRegistry, sessionTitleService, harnessService: harness, agentLoop, compactionSignalBus, sessionService, taskTerminal,
     messageQueueService, embedPageToolRegistry, localToolSessions, askUserQuestionsRegistry,
     treeSignalPublisher, approvalRegistry, approvalRuleService, activityService,
+    approvalEscalationSuppressor: {
+      suppressByRequest: (sessionId, requestId) =>
+        deliveryService.suppressByEventKey(`approval:${sessionId}:${requestId}`),
+    },
     activityHeartbeat, todoMapper, backgroundSubagentManager, shellManager,
     skillSync, localSkills, localAgentsMd, mcpSync, routingMcpClient,
     agentRepo, modelRepo, userRepo, agentExecutor, budgetService, scheduledService,

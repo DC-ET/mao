@@ -2012,7 +2012,9 @@ describe('StreamingWsHandler tool_approval.alwaysAllow（V135）', () => {
 
   const createSessionRuleFromAlwaysAllow = vi.fn(async () => undefined);
 
-  function buildHandler() {
+  function buildHandler(extra: {
+    approvalEscalationSuppressor?: { suppressByRequest: ReturnType<typeof vi.fn> };
+  } = {}) {
     return new StreamingWsHandler({
       registry, titleService, harnessService, sessionService, taskTerminalService, messageQueueService,
       localToolSessionRegistry, askUserQuestionsRegistry, embedPageToolRegistry, treeSignalPublisher, approvalRegistry,
@@ -2020,8 +2022,44 @@ describe('StreamingWsHandler tool_approval.alwaysAllow（V135）', () => {
       activityService, activityHeartbeat, sessionTodoMapper, agentLoop, shellSessionManager, skillSyncService,
       localSkillRegistry, localAgentsMdRegistry, mcpSyncService, mcpClientManager, agentMapper,
       llmModelMapper, jwtService, agentExecutor: (fn) => executor.submit(fn),
+      ...extra,
     } as unknown as WsHandlerDeps);
   }
+
+  it('toolApprovalSuppressesEscalationBeforeTheToolResult', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('LOCAL', 'WAITING_APPROVAL'));
+    const suppressByRequest = vi.fn(async () => undefined);
+    await buildHandler({ approvalEscalationSuppressor: { suppressByRequest } }).handleTextMessage(ws, JSON.stringify({
+      type: 'tool_approval', sessionId: 11, requestId: 'req-esc', approved: true,
+    }));
+    expect(suppressByRequest).toHaveBeenCalledWith(11, 'req-esc');
+    expect(localToolSessionRegistry.completeToolRequest).not.toHaveBeenCalled();
+    expect(approvalRegistry.unregister).toHaveBeenCalledWith(11, 'req-esc');
+  });
+
+  it('deniedApprovalAlsoSuppressesEscalation', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('LOCAL', 'WAITING_APPROVAL'));
+    const suppressByRequest = vi.fn(async () => undefined);
+    await buildHandler({ approvalEscalationSuppressor: { suppressByRequest } }).handleTextMessage(ws, JSON.stringify({
+      type: 'tool_approval', sessionId: 11, requestId: 'req-deny', approved: false,
+    }));
+    expect(suppressByRequest).toHaveBeenCalledWith(11, 'req-deny');
+  });
+
+  it('escalationSuppressFailureDoesNotBlockUnregister', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('LOCAL', 'WAITING_APPROVAL'));
+    const suppressByRequest = vi.fn(async () => { throw new Error('db down'); });
+    await buildHandler({ approvalEscalationSuppressor: { suppressByRequest } }).handleTextMessage(ws, JSON.stringify({
+      type: 'tool_approval', sessionId: 11, requestId: 'req-err', approved: true,
+    }));
+    expect(approvalRegistry.unregister).toHaveBeenCalledWith(11, 'req-err');
+  });
 
   it('approvedAlwaysAllowConsumesHintAndCreatesSessionRule', async () => {
     vi.clearAllMocks();

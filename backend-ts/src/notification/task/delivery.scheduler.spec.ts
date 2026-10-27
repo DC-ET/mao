@@ -277,6 +277,41 @@ describe('WebhookDeliveryScheduler', () => {
     );
   });
 
+  it('deliverApprovalRendersApprovalCopyInsteadOfFailure', async () => {
+    const delivery = {
+      id: 12, userId: 1, channel: 'DINGTALK', webhookCiphertext: 'enc',
+      titleSnapshot: '任务审批', terminalPhase: 'APPROVAL', status: DeliveryStatus.PENDING, attemptCount: 0,
+    };
+    const store = {
+      recoverInterrupted: vi.fn(async () => undefined),
+      listDue: vi.fn(async () => [delivery]),
+      claim: vi.fn(async () => true),
+      countPending: vi.fn(async () => 0),
+      updateById: vi.fn(async () => undefined),
+      deleteHistory: vi.fn(async () => undefined),
+    };
+    const send = vi.fn(async () => webhookSuccess(200, 'ok'));
+    const executed: Promise<void>[] = [];
+    const scheduler = new WebhookDeliveryScheduler(
+      store as never,
+      { workerDelayMs: 1000, batchSize: 10, maxAttempts: 3 },
+      { decrypt: vi.fn(() => 'https://hook') } as never,
+      { get: vi.fn(() => ({ send })) } as never,
+      undefined,
+      (fn: () => void) => { executed.push(fn() as unknown as Promise<void>); },
+    );
+    await scheduler.dispatchDueDeliveries();
+    await Promise.all(executed);
+    const message = send.mock.calls[0][1] as { text: string; card?: Record<string, unknown> };
+    expect(message.text.startsWith('Mao 审批通知')).toBe(true);
+    expect(message.text).toContain('有一条本地操作待你审批，请回到桌面端处理');
+    expect(message.text).not.toContain('执行失败');
+    const card = JSON.stringify(message.card);
+    expect(card).toContain('Mao 审批通知');
+    expect(card).toContain('等待你的审批');
+    expect(card).not.toContain('执行失败');
+  });
+
   it('cardCarriesLatestUserMessageAndSessionDetailButton', async () => {
     const delivery = {
       id: 11, userId: 1, sessionId: 42, channel: 'FEISHU', webhookCiphertext: 'enc',

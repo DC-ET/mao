@@ -237,6 +237,40 @@ describe('LocalExecutor', () => {
     sendReliable: async (p: object) => { sent.push(p); return true; },
   } as unknown as WsClient);
 
+  it('shell 需要用户确认时，必须先提问再发 tool_approval', async () => {
+    vi.spyOn(trust, 'isWorkspaceTrusted').mockReturnValue(true);
+    const order: string[] = [];
+    const exec = new LocalExecutor({
+      ws: {
+        sendReliable: async (payload: { type?: string }) => {
+          if (payload.type === 'tool_approval') order.push('tool_approval');
+          return true;
+        },
+      } as unknown as WsClient,
+      getToken: async () => null,
+      baseUrl: 'https://mao.etarch.cn/api',
+      workspace: os.tmpdir(),
+      policy: policy({ onApproval: 'ask', stdoutIsTty: true, stdinIsTty: true }),
+      askApproval: async () => {
+        order.push('ask');
+        return 'deny';
+      },
+    });
+    await exec.handleEvent({
+      type: 'tool_execute',
+      sessionId: 21,
+      data: {
+        requestId: 'shell-ask',
+        toolName: 'shell',
+        arguments: JSON.stringify({ command: 'echo hi' }),
+        workspace: os.tmpdir(),
+        needApproval: true,
+      },
+    });
+    expect(order).toContain('ask');
+    expect(order.indexOf('ask')).toBeLessThan(order.indexOf('tool_approval'));
+  });
+
   it('unknown tools return via tool_result and denials send tool_approval + tool_error', async () => {
     vi.spyOn(trust, 'isWorkspaceTrusted').mockReturnValue(true);
     const sent: object[] = [];

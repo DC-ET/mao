@@ -325,9 +325,10 @@ export class WebhookDeliveryScheduler {
   }
 }
 
-/** 投递相位映射：非 COMPLETED / ASK_USER 的终态按失败渲染（与改造前语义一致）。 */
+/** 投递相位映射：非 COMPLETED / ASK_USER / APPROVAL 的终态按失败渲染（与改造前语义一致）。 */
 function phaseOfDelivery(terminalPhase: string | null | undefined): TaskNotificationPhase {
   if (terminalPhase === 'ASK_USER') return 'ASK_USER';
+  if (terminalPhase === 'APPROVAL') return 'APPROVAL';
   if (terminalPhase === 'COMPLETED') return 'COMPLETED';
   return 'FAILED';
 }

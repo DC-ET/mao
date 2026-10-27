@@ -23,6 +23,7 @@ import { permissionLevelFromString, type PermissionLevel } from './permission-le
 import type { BackgroundTaskManager } from '../core/background-task-manager.js';
 import { parseObject } from './json.js';
 import type { TaskNotificationDelivery } from '../../notification/task/types.js';
+import { PENDING_ESCALATION_DELAY_MS } from '../../notification/task/delivery.service.js';
 import { LLM_CALL_SCENES, LlmCallContext } from '../../usage/llm-call-context.js';
 import type { DockerToolRouter } from '../container/docker-tool-router.js';
 import { isDockerOnlyTool } from '../container/docker-tool-router.js';
@@ -41,9 +42,14 @@ export interface FeishuAskMount {
   clearRequest(sessionId: number, requestId: string): void;
 }
 
-/** 用户离线时 ask_user_questions 的 Webhook 通知能力（由 notification/task 提供）。 */
+/** 提问（以及同一服务上的审批）等待外推。运行时传入 TaskNotificationDeliveryService。 */
 export interface AskUserOfflineNotifier {
-  prepareAskUser(sessionId: number, userId: number, requestId: string, title: string | null): Promise<TaskNotificationDelivery | null>;
+  prepareEscalation(input: {
+    session: Session | null;
+    phase: 'ASK_USER' | 'APPROVAL';
+    requestId: string;
+    delayMs: number;
+  }): Promise<TaskNotificationDelivery | null>;
   suppressPending(delivery: TaskNotificationDelivery | null): Promise<void>;
 }
 
@@ -461,20 +467,23 @@ export class ToolDispatcher {
         harnessLog('warn', `Failed to mount feishu ask form: sessionId=${sessionId}, error=${(e as Error).message}`);
       }
     }
-    // 用户离线且没挂上飞书表单：复用任务通知的 Webhook 提醒用户回来回答。
-    // 进度卡已经带上表单时不再发，避免用户在飞书里就能答还被叫去网页。
-    let offlineDelivery: TaskNotificationDelivery | null = null;
-    if (!userOnline && !formMounted && sessionId != null && this.askUserOfflineNotifier) {
+    // 没挂上飞书表单：复用任务通知提醒用户回来回答。
+    // 离线下一轮即发；桌面仍连接则等 3 分钟。进度卡已经带上表单时不再发，避免用户在飞书里就能答还被叫去网页。
+    let pendingDelivery: TaskNotificationDelivery | null = null;
+    if (!formMounted && sessionId != null && this.askUserOfflineNotifier) {
       session ??= await this.sessionMapper.selectById(sessionId);
+      const delayMs = userOnline ? PENDING_ESCALATION_DELAY_MS : 0;
       try {
-        offlineDelivery = await this.askUserOfflineNotifier.prepareAskUser(sessionId, userId, requestId, session?.title ?? null);
+        pendingDelivery = await this.askUserOfflineNotifier.prepareEscalation({
+          session, phase: 'ASK_USER', requestId, delayMs,
+        });
       } catch (e) {
         harnessLog('warn', `Failed to prepare ask_user webhook notification: sessionId=${sessionId}, error=${(e as Error).message}`);
       }
     }
     const result = await waiting;
-    if (offlineDelivery) {
-      const deliveryToSuppress = offlineDelivery;
+    if (pendingDelivery) {
+      const deliveryToSuppress = pendingDelivery;
       try {
         await this.askUserOfflineNotifier?.suppressPending(deliveryToSuppress);
       } catch (e) {
