@@ -1,8 +1,8 @@
 import { formatDateTime } from '../../common/json.js';
 import { hasText } from '../../common/case.js';
 
-/** 通知相位：终态 COMPLETED / FAILED，或等待用户作答 ASK_USER。 */
-export type TaskNotificationPhase = 'COMPLETED' | 'FAILED' | 'ASK_USER';
+/** 通知相位：终态 COMPLETED / FAILED，等待作答 ASK_USER，或等待本地审批 APPROVAL。 */
+export type TaskNotificationPhase = 'COMPLETED' | 'FAILED' | 'ASK_USER' | 'APPROVAL';
 
 /** 卡片内任务标题与用户消息的展示上限，超出截断并加省略号。 */
 export const NOTIFICATION_TITLE_MAX_CHARS = 80;
@@ -23,7 +23,7 @@ export interface TaskNotificationContentInput {
 
 interface PhaseMeta {
   header: string;
-  /** 卡片头部配色：成功绿、失败红、待作答橙。 */
+  /** 卡片头部配色：成功绿、失败红、待处理橙。 */
   template: 'green' | 'red' | 'orange';
   status: string;
 }
@@ -32,6 +32,7 @@ const PHASE_META: Record<TaskNotificationPhase, PhaseMeta> = {
   COMPLETED: { header: 'Mao 任务完成通知', template: 'green', status: '✅ 已完成' },
   FAILED: { header: 'Mao 任务失败通知', template: 'red', status: '❌ 执行失败' },
   ASK_USER: { header: 'Mao 提问通知', template: 'orange', status: '❓ 等待你的回复' },
+  APPROVAL: { header: 'Mao 审批通知', template: 'orange', status: '⏳ 等待你的审批' },
 };
 
 /**
@@ -68,6 +69,9 @@ export function buildTaskNotificationCard(input: TaskNotificationContentInput): 
   }
   if (input.phase === 'ASK_USER') {
     elements.push(markdownElement('Agent 向你发起了提问，请到会话页面作答。'));
+  }
+  if (input.phase === 'APPROVAL') {
+    elements.push(markdownElement('有一条本地操作待你审批，请回到桌面端处理。'));
   }
   elements.push({ tag: 'hr' });
   // 时间行用 markdown 渲染：note 是 1.0 独有元素，2.0 会整体拒绝（飞书返回 code 11246，
@@ -145,6 +149,10 @@ export function buildTaskNotificationText(input: TaskNotificationContentInput): 
   const time = formatDateTime(input.now ?? new Date());
   if (input.phase === 'ASK_USER') {
     return `Mao 提问通知\n任务：${input.title}\nAgent 向你发起了提问，正在等待回答\n请回到对话页面查看并回复\n时间：${time}`;
+  }
+  // 必须在失败回退之前认出审批。否则钉钉文本和邮件主题会写成「执行失败」。
+  if (input.phase === 'APPROVAL') {
+    return `Mao 审批通知\n任务：${input.title}\n有一条本地操作待你审批，请回到桌面端处理\n时间：${time}`;
   }
   const result = input.phase === 'COMPLETED' ? '已完成' : '执行失败';
   let content = `${input.phase === 'COMPLETED' ? 'Mao 任务完成通知' : 'Mao 任务失败通知'}\n任务：${input.title}\n结果：${result}\n时间：${time}`;

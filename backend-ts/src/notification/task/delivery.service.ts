@@ -14,7 +14,12 @@ export interface DeliveryStore {
     expectedStatus: string,
     row: Partial<TaskNotificationDelivery>,
   ): Promise<boolean>;
+  /** 按幂等键取行。审批帧抑制拿不到内存里的 delivery 对象时用。 */
+  findByEventKey?(eventKey: string): Promise<TaskNotificationDelivery | null>;
 }
+
+/** 桌面端仍连接、人未处理时，过这么久再外推。固定值，不进偏好表、不进系统设置。 */
+export const PENDING_ESCALATION_DELAY_MS = 3 * 60 * 1000;
 
 export interface QueueLister {
   listPending(sessionId: number): Promise<MessageQueueItem[]>;
@@ -94,45 +99,74 @@ export class TaskNotificationDeliveryService {
     }
   }
 
-  /** 用户离线时的 ask_user_questions 通知：直接 PENDING，由调度器发送（离线时不存在 WS 抑制窗口）。 */
-  async prepareAskUser(sessionId: number, userId: number, requestId: string, title: string | null): Promise<TaskNotificationDelivery | null> {
-    const preference = await this.preferenceService.findEnabled(userId);
+  /**
+   * 审批或提问还在等人时的外推。直接写 PENDING，延迟由 nextRetryAt 承担，调度器到点再发。
+   * 不看队列：当时就在等人，队列里有没有下一条与「这轮是否结束」无关。
+   */
+  async prepareEscalation(input: {
+    session: Session | null;
+    phase: 'ASK_USER' | 'APPROVAL';
+    requestId: string;
+    delayMs: number;
+  }): Promise<TaskNotificationDelivery | null> {
+    const { session, phase, requestId, delayMs } = input;
+    if (session == null || session.id == null || session.userId == null) {
+      return null;
+    }
+    // 提问工具不进子代理；审批不跳过——子会话的本地命令审批挂在父用户的桌面端。
+    if (phase === 'ASK_USER' && session.sessionType === 'SUBAGENT') {
+      return null;
+    }
+    if (session.projectKey === WEIXIN_PROJECT_KEY) {
+      console.debug(`Skipping task notification for weixin session: sessionId=${session.id}`);
+      return null;
+    }
+    const preference = await this.preferenceService.findEnabled(session.userId);
     if (preference == null) {
       return null;
     }
+    const eventKey = phase === 'ASK_USER'
+      ? `ask-user:${session.id}:${requestId}`
+      : `approval:${session.id}:${requestId}`;
     const delivery: TaskNotificationDelivery = {
-      eventKey: `ask-user:${sessionId}:${requestId}`,
-      userId,
-      sessionId,
+      eventKey,
+      userId: session.userId,
+      sessionId: session.id,
       executionId: requestId.slice(0, 64),
-      terminalPhase: 'ASK_USER',
+      terminalPhase: phase,
       channel: preference.channel!,
       webhookCiphertext: preference.webhookCiphertext!,
-      titleSnapshot: this.normalizeTitle(title),
+      titleSnapshot: this.normalizeTitle(session.title),
       status: DeliveryStatus.PENDING,
       attemptCount: 0,
-      nextRetryAt: formatDateTime(new Date()),
+      nextRetryAt: formatDateTime(new Date(Date.now() + delayMs)),
     };
     try {
       delivery.id = await this.store.insert(delivery);
-      this.metrics.created(delivery.channel!, 'ASK_USER');
+      this.metrics.created(delivery.channel!, phase);
       return delivery;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.includes('Duplicate') || msg.includes('ER_DUP_ENTRY')) {
-        console.info(`Task notification delivery already exists: eventKey=${delivery.eventKey}`);
+        console.info(`Task notification delivery already exists: eventKey=${eventKey}`);
         return null;
       }
       throw e;
     }
   }
 
+  /** 审批帧只带 sessionId + requestId，按 eventKey 找到行再走 suppressPending。查不到就返回。 */
+  async suppressByEventKey(eventKey: string): Promise<void> {
+    if (!this.store.findByEventKey) return;
+    const row = await this.store.findByEventKey(eventKey);
+    await this.suppressPending(row);
+  }
+
   /**
-   * 问题已回答/取消/超时后，抑制仍未发出的提问通知。
+   * 人已经处理（作答 / 取消 / 超时 / 批准 / 拒绝）后，抑制仍未发出的升级通知。
    *
-   * 提问的抑制窗口不是 0，而是「insert → 用户作答/超时」的整个等待期（最长可达
-   * ask_user_questions 的 15 分钟超时）。调度器随时可能已把该行 claim 成 SENDING，
-   * 因此与 resolveWebSocket 一样需要 SENDING 兜底 CAS，否则已失效的提问仍会被 webhook 发出。
+   * 抑制窗口是「insert → 处理或超时」的整个等待期（最长可达 15 分钟）。调度器随时可能已把该行
+   * claim 成 SENDING，因此与 resolveWebSocket 一样需要 SENDING 兜底 CAS，否则已失效的提醒仍会被发出。
    */
   async suppressPending(delivery: TaskNotificationDelivery | null): Promise<void> {
     if (delivery?.id == null) {
@@ -161,7 +195,7 @@ export class TaskNotificationDeliveryService {
     });
     if (!late) {
       // 已 SUCCEEDED / FAILED 等终态：抑制无意义，也不该改状态。
-      console.info(`Task notification ${delivery.id}: ask_user suppression skipped (already in a terminal state)`);
+      console.info(`Task notification ${delivery.id}: suppression skipped (already in a terminal state)`);
     }
   }
 

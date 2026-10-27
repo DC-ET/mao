@@ -26,6 +26,13 @@ export class DeliveryDbStore implements DeliveryStore {
     return this.db.insert('task_notification_delivery', row);
   }
 
+  findByEventKey(eventKey: string): Promise<TaskNotificationDelivery | null> {
+    return this.db.queryOne(
+      'SELECT * FROM task_notification_delivery WHERE event_key = ?',
+      [eventKey],
+    );
+  }
+
   updateById(row: Partial<TaskNotificationDelivery> & { id: number }): Promise<void> {
     return this.db.updateById('task_notification_delivery', row.id, row);
   }

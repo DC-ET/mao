@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { TaskNotificationDeliveryService } from './delivery.service.js';
+import { PENDING_ESCALATION_DELAY_MS, TaskNotificationDeliveryService } from './delivery.service.js';
 import type { DeliveryStore, QueueLister, TaskNotificationMetrics } from './delivery.service.js';
 import type { TaskNotificationPreferenceService } from './preference.service.js';
 import { WEIXIN_PROJECT_KEY } from '../../domain/types.js';
@@ -46,30 +46,140 @@ describe('TaskNotificationDeliveryService', () => {
     expect(store.insert).not.toHaveBeenCalled();
   });
 
-  it('createsPendingAskUserDeliveryForEnabledUser', async () => {
-    const askStore: DeliveryStore = { insert: vi.fn(async () => 1), updateById: vi.fn(), updateIfStatus: vi.fn(async () => true) };
-    const askMetrics = { created: vi.fn(), suppressedByWebSocket: vi.fn(), sent: vi.fn(), retried: vi.fn(), pending: vi.fn() } as TaskNotificationMetrics;
-    const askService = new TaskNotificationDeliveryService(askStore, preferenceService, queueService, askMetrics);
+  function shanghaiMs(text: string): number {
+    return new Date(text.replace(' ', 'T') + '+08:00').getTime();
+  }
+
+  function enabledPreference() {
     vi.mocked(preferenceService.findEnabled).mockResolvedValue({
       userId: 7, channel: 'DINGTALK', webhookCiphertext: 'encrypted', enabled: 1,
     });
-    const result = await askService.prepareAskUser(10, 7, 'req-uuid-1', '任务标题');
+  }
+
+  it('createsPendingAskUserEscalationForEnabledUser', async () => {
+    const askStore: DeliveryStore = { insert: vi.fn(async () => 1), updateById: vi.fn(), updateIfStatus: vi.fn(async () => true) };
+    const askMetrics = { created: vi.fn(), suppressedByWebSocket: vi.fn(), sent: vi.fn(), retried: vi.fn(), pending: vi.fn() } as TaskNotificationMetrics;
+    const askService = new TaskNotificationDeliveryService(askStore, preferenceService, queueService, askMetrics);
+    enabledPreference();
+    const before = Date.now();
+    const result = await askService.prepareEscalation({
+      session: session('NORMAL'), phase: 'ASK_USER', requestId: 'req-uuid-1', delayMs: 0,
+    });
     expect(result).not.toBeNull();
     const inserted = vi.mocked(askStore.insert).mock.calls[0][0];
     expect(inserted.eventKey).toBe('ask-user:10:req-uuid-1');
     expect(inserted.terminalPhase).toBe('ASK_USER');
     expect(inserted.status).toBe('PENDING');
     expect(inserted.titleSnapshot).toBe('任务标题');
+    expect(inserted.executionId).toBe('req-uuid-1');
+    expect(Math.abs(shanghaiMs(inserted.nextRetryAt!) - before)).toBeLessThan(2000);
     expect(askMetrics.created).toHaveBeenCalledWith('DINGTALK', 'ASK_USER');
   });
 
-  it('skipsAskUserDeliveryWhenPreferenceMissing', async () => {
-    const skipStore: DeliveryStore = { insert: vi.fn(async () => 1), updateById: vi.fn() };
-    const skipService = new TaskNotificationDeliveryService(skipStore, preferenceService, queueService, metrics);
+  it('delaysApprovalEscalationByThreeMinutes', async () => {
+    const askStore: DeliveryStore = { insert: vi.fn(async () => 1), updateById: vi.fn() };
+    const askMetrics = { created: vi.fn(), suppressedByWebSocket: vi.fn(), sent: vi.fn(), retried: vi.fn(), pending: vi.fn() } as TaskNotificationMetrics;
+    const askService = new TaskNotificationDeliveryService(askStore, preferenceService, queueService, askMetrics);
+    enabledPreference();
+    const before = Date.now();
+    const result = await askService.prepareEscalation({
+      session: session('NORMAL'), phase: 'APPROVAL', requestId: 'req-approval', delayMs: PENDING_ESCALATION_DELAY_MS,
+    });
+    expect(result).not.toBeNull();
+    const inserted = vi.mocked(askStore.insert).mock.calls[0][0];
+    expect(inserted.eventKey).toBe('approval:10:req-approval');
+    expect(inserted.terminalPhase).toBe('APPROVAL');
+    expect(inserted.status).toBe('PENDING');
+    expect(Math.abs(shanghaiMs(inserted.nextRetryAt!) - (before + PENDING_ESCALATION_DELAY_MS))).toBeLessThan(2000);
+    expect(askMetrics.created).toHaveBeenCalledWith('DINGTALK', 'APPROVAL');
+  });
+
+  it('escalationSkipsAskUserOnSubagentButStillWritesApproval', async () => {
+    const askStore: DeliveryStore = { insert: vi.fn(async () => 1), updateById: vi.fn() };
+    const askService = new TaskNotificationDeliveryService(askStore, preferenceService, queueService, metrics);
+    enabledPreference();
+    expect(await askService.prepareEscalation({
+      session: session('SUBAGENT'), phase: 'ASK_USER', requestId: 'q', delayMs: 0,
+    })).toBeNull();
+    const approval = await askService.prepareEscalation({
+      session: session('SUBAGENT'), phase: 'APPROVAL', requestId: 'a', delayMs: PENDING_ESCALATION_DELAY_MS,
+    });
+    expect(approval).not.toBeNull();
+    expect(vi.mocked(askStore.insert).mock.calls[0][0].userId).toBe(7);
+    expect(vi.mocked(askStore.insert).mock.calls[0][0].eventKey).toBe('approval:10:a');
+  });
+
+  it('escalationSkipsWeixinNullSessionAndDisabledPreference', async () => {
+    const askStore: DeliveryStore = { insert: vi.fn(async () => 1), updateById: vi.fn() };
+    const askService = new TaskNotificationDeliveryService(askStore, preferenceService, queueService, metrics);
+    enabledPreference();
+    const weixin = session('NORMAL');
+    weixin.projectKey = WEIXIN_PROJECT_KEY;
+    expect(await askService.prepareEscalation({
+      session: weixin, phase: 'APPROVAL', requestId: 'w', delayMs: 0,
+    })).toBeNull();
+    expect(await askService.prepareEscalation({
+      session: null, phase: 'ASK_USER', requestId: 'n', delayMs: 0,
+    })).toBeNull();
+    expect(await askService.prepareEscalation({
+      session: { id: 10, title: 'x' }, phase: 'APPROVAL', requestId: 'u', delayMs: 0,
+    })).toBeNull();
     vi.mocked(preferenceService.findEnabled).mockResolvedValue(null);
-    const result = await skipService.prepareAskUser(10, 7, 'req-uuid-2', '任务标题');
-    expect(result).toBeNull();
-    expect(skipStore.insert).not.toHaveBeenCalled();
+    expect(await askService.prepareEscalation({
+      session: session('NORMAL'), phase: 'ASK_USER', requestId: 'off', delayMs: 0,
+    })).toBeNull();
+    expect(askStore.insert).not.toHaveBeenCalled();
+  });
+
+  it('escalationDoesNotReadTheMessageQueue', async () => {
+    const askStore: DeliveryStore = { insert: vi.fn(async () => 1), updateById: vi.fn() };
+    const throwingQueue: QueueLister = { listPending: vi.fn(async () => { throw new Error('should not read queue'); }) };
+    const askService = new TaskNotificationDeliveryService(askStore, preferenceService, throwingQueue, metrics);
+    enabledPreference();
+    const result = await askService.prepareEscalation({
+      session: session('NORMAL'), phase: 'APPROVAL', requestId: 'q', delayMs: 0,
+    });
+    expect(result).not.toBeNull();
+    expect(throwingQueue.listPending).not.toHaveBeenCalled();
+  });
+
+  it('escalationDuplicateEventKeyReturnsNull', async () => {
+    const askStore: DeliveryStore = {
+      insert: vi.fn(async () => { throw new Error("Duplicate entry 'approval:10:same' for key 'uk_task_notification_event'"); }),
+      updateById: vi.fn(),
+    };
+    const askService = new TaskNotificationDeliveryService(askStore, preferenceService, queueService, metrics);
+    enabledPreference();
+    await expect(askService.prepareEscalation({
+      session: session('NORMAL'), phase: 'APPROVAL', requestId: 'same', delayMs: 0,
+    })).resolves.toBeNull();
+  });
+
+  it('suppressByEventKeyReusesPendingSuppression', async () => {
+    const askStore: DeliveryStore = {
+      insert: vi.fn(async () => 1),
+      updateById: vi.fn(),
+      updateIfStatus: vi.fn(async () => true),
+      findByEventKey: vi.fn(async () => ({ id: 21, eventKey: 'approval:10:rid', status: 'PENDING' })),
+    };
+    const askService = new TaskNotificationDeliveryService(askStore, preferenceService, queueService, metrics);
+    await askService.suppressByEventKey('approval:10:rid');
+    expect(askStore.updateIfStatus).toHaveBeenCalledWith(21, 'PENDING', {
+      status: 'SUPPRESSED_WS',
+      nextRetryAt: null,
+    });
+  });
+
+  it('suppressByEventKeyNoopsWhenRowMissing', async () => {
+    const askStore: DeliveryStore = {
+      insert: vi.fn(async () => 1),
+      updateById: vi.fn(),
+      updateIfStatus: vi.fn(async () => true),
+      findByEventKey: vi.fn(async () => null),
+    };
+    const askService = new TaskNotificationDeliveryService(askStore, preferenceService, queueService, metrics);
+    await expect(askService.suppressByEventKey('approval:10:missing')).resolves.toBeUndefined();
+    expect(askStore.updateIfStatus).not.toHaveBeenCalled();
   });
 
   it('suppressesPendingAskUserDeliveryViaStatusCas', async () => {

@@ -8,6 +8,7 @@ describe('LocalToolExecutor', () => {
   const approvalRegistry = {
     register: vi.fn(),
     unregister: vi.fn(),
+    has: vi.fn(() => true),
   } as unknown as ApprovalRegistry & Record<string, ReturnType<typeof vi.fn>>;
   const treeSignalPublisher = { publishForSession: vi.fn() } as unknown as SessionTreeSignalPublisher & { publishForSession: ReturnType<typeof vi.fn> };
 
@@ -191,6 +192,120 @@ describe('LocalToolExecutor', () => {
     await expect(executor(null).execute(7, 'shell', '{}', 'workspace', true, 'reason'))
       .resolves.toBe('{"ok":true}');
     expect(approvalRegistry.register).toHaveBeenCalledWith(7, 'req-inbox');
+  });
+
+  describe('审批升级外推', () => {
+    function registryWith(requestId: string, future: Promise<string>) {
+      return {
+        isConnected: vi.fn().mockResolvedValue(true),
+        sendToolRequest: vi.fn().mockResolvedValue({ requestId, future }),
+        completeToolRequestError: vi.fn(),
+      } as unknown as LocalToolSessionRegistry;
+    }
+
+    it('需要审批时在 register 之后、结果返回之前 await prepare，finally 再抑制', async () => {
+      vi.clearAllMocks();
+      const order: string[] = [];
+      approvalRegistry.register.mockImplementation(async () => { order.push('register'); });
+      approvalRegistry.has.mockImplementation(() => true);
+      let resolveResult!: (value: string) => void;
+      const future = new Promise<string>((resolve) => { resolveResult = resolve; });
+      const notifier = {
+        prepare: vi.fn(async () => { order.push('prepare'); return { id: 3 }; }),
+        suppress: vi.fn(async () => undefined),
+      };
+      const exec = new LocalToolExecutor(
+        registryWith('req-esc', future), approvalRegistry, treeSignalPublisher, 900,
+      );
+      exec.setEscalationNotifier(notifier);
+      const pending = exec.execute(7, 'shell', '{}', 'workspace', true, 'reason');
+      await vi.waitFor(() => expect(notifier.prepare).toHaveBeenCalledWith(7, 'req-esc'));
+      expect(order.indexOf('register')).toBeLessThan(order.indexOf('prepare'));
+      expect(notifier.suppress).not.toHaveBeenCalled();
+      resolveResult('{"ok":true}');
+      await pending;
+      expect(notifier.suppress).toHaveBeenCalledWith({ id: 3 });
+      approvalRegistry.register.mockReset();
+    });
+
+    it('插入返回时审批已摘掉则立刻抑制，不等工具结果', async () => {
+      vi.clearAllMocks();
+      approvalRegistry.has.mockImplementation(() => false);
+      let commandFinished = false;
+      let resolveResult!: (value: string) => void;
+      const future = new Promise<string>((resolve) => { resolveResult = resolve; });
+      const notifier = {
+        prepare: vi.fn(async () => ({ id: 4 })),
+        suppress: vi.fn(async () => { expect(commandFinished).toBe(false); }),
+      };
+      const exec = new LocalToolExecutor(
+        registryWith('req-early', future), approvalRegistry, treeSignalPublisher, 900,
+      );
+      exec.setEscalationNotifier(notifier);
+      const pending = exec.execute(7, 'shell', '{}', 'workspace', true, 'reason');
+      await vi.waitFor(() => expect(notifier.suppress).toHaveBeenCalledTimes(1));
+      expect(notifier.suppress).toHaveBeenCalledWith({ id: 4 });
+      commandFinished = true;
+      resolveResult('{"ok":true}');
+      await pending;
+      expect(notifier.suppress).toHaveBeenCalledTimes(2);
+      approvalRegistry.has.mockImplementation(() => true);
+    });
+
+    it('超时且无人表态时由 finally 抑制', async () => {
+      vi.clearAllMocks();
+      approvalRegistry.has.mockImplementation(() => true);
+      const notifier = {
+        prepare: vi.fn(async () => ({ id: 5 })),
+        suppress: vi.fn(async () => undefined),
+      };
+      const exec = new LocalToolExecutor(
+        registryWith('req-timeout-esc', new Promise(() => {})), approvalRegistry, treeSignalPublisher, 1,
+      );
+      exec.setEscalationNotifier(notifier);
+      const result = await exec.execute(7, 'shell', '{}', 'workspace', true, null);
+      expect(result).toContain('timed out');
+      expect(notifier.suppress).toHaveBeenCalledTimes(1);
+      expect(notifier.suppress).toHaveBeenCalledWith({ id: 5 });
+    });
+
+    it('prepare 抛错时工具结果仍返回且不 suppress', async () => {
+      vi.clearAllMocks();
+      const notifier = {
+        prepare: vi.fn(async () => { throw new Error('db down'); }),
+        suppress: vi.fn(async () => undefined),
+      };
+      const exec = new LocalToolExecutor(
+        registryWith('req-fail', Promise.resolve('{"ok":true}')), approvalRegistry, treeSignalPublisher, 900,
+      );
+      exec.setEscalationNotifier(notifier);
+      await expect(exec.execute(7, 'shell', '{}', 'workspace', true, 'reason')).resolves.toBe('{"ok":true}');
+      expect(notifier.suppress).not.toHaveBeenCalled();
+    });
+
+    it('不需要审批时不 prepare', async () => {
+      vi.clearAllMocks();
+      const notifier = {
+        prepare: vi.fn(async () => ({ id: 6 })),
+        suppress: vi.fn(async () => undefined),
+      };
+      const exec = new LocalToolExecutor(
+        registryWith('req-free', Promise.resolve('{"ok":true}')), approvalRegistry, treeSignalPublisher, 900,
+      );
+      exec.setEscalationNotifier(notifier);
+      await exec.execute(7, 'shell', '{}', 'workspace', false, null);
+      expect(notifier.prepare).not.toHaveBeenCalled();
+      expect(notifier.suppress).not.toHaveBeenCalled();
+    });
+
+    it('未注入 notifier 时不碰外推', async () => {
+      vi.clearAllMocks();
+      const exec = new LocalToolExecutor(
+        registryWith('req-none', Promise.resolve('{"ok":true}')), approvalRegistry, treeSignalPublisher, 900,
+      );
+      await expect(exec.execute(7, 'shell', '{}', 'workspace', true, 'reason')).resolves.toBe('{"ok":true}');
+      expect(approvalRegistry.has).not.toHaveBeenCalled();
+    });
   });
 
   it('approvalHint 随 sendToolRequest 与 registry.register 透传（V135）', async () => {
