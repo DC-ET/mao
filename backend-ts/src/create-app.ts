@@ -754,7 +754,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const { senderRegistry, notifPref, weixinWebhookFallback, deliveryService, memoryRepo, memoryService, memoryExtraction, messageCitationService } = notifServices;
   localToolExecutor.setEscalationNotifier({
     prepare: async (sessionId, requestId) => {
-      const session = await sessionMap.selectById(sessionId);
+      const session = await sessionRepo.findById(sessionId) as never;
       return deliveryService.prepareEscalation({
         session,
         phase: 'APPROVAL',
