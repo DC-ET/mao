@@ -71,19 +71,9 @@
         <div class="messages" ref="messagesContainer" :aria-busy="historyLoading"
         @touchstart.passive="handleTouchStart" @touchmove.passive="handleTouchMove"
         @pointerdown="handlePointerDown">
-        <!-- 常驻 sticky 顶栏：「只看回复」开关 + 回到顶部 / 回到最新（后两者按各自可见条件出现） -->
-        <div v-if="sessionId && messages.length > 0" class="chat-sticky-bar">
-          <button
-            type="button"
-            class="sticky-bar-btn"
-            :class="{ active: replyOnly }"
-            title="只看回复"
-            aria-label="只看回复"
-            @click="toggleReplyOnly"
-          >
-            <el-icon :size="13"><Hide /></el-icon>
-            <span class="sticky-bar-btn-text">只看回复</span>
-          </button>
+        <!-- sticky 顶栏：回到最新（aroundMessageId 定位后）/ 回到顶部（上滑后），
+             按各自可见条件出现，两者都不满足时不占位 -->
+        <div v-if="sessionId && messages.length > 0 && (historyAnchored || userScrolledUp)" class="chat-sticky-bar">
           <span class="sticky-bar-spacer"></span>
           <template v-if="historyAnchored">
             <span class="sticky-bar-hint">正在查看较早的消息</span>
@@ -123,7 +113,6 @@
           :dislike-enabled="true"
           :fork-enabled="true"
           :share-enabled="!!sessionId"
-          :reply-only="replyOnly"
           @edit="startEdit"
           @cancel-edit="cancelEdit"
           @confirm-edit="confirmEdit"
@@ -240,7 +229,7 @@
 <script setup lang="ts">
 import { ref, computed, inject, provide, watch, nextTick, onActivated, onMounted, onUnmounted, type Ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { CaretTop, ChatDotRound, Hide, Loading } from '@element-plus/icons-vue'
+import { CaretTop, ChatDotRound, Loading } from '@element-plus/icons-vue'
 import { useChat, normalizeMessageRole, type ChatMessage, type PendingUploadFile } from '../../composables/useChat'
 import { useChatScroll } from '../../composables/useChatScroll'
 import { useChatQueue } from '../../composables/useChatQueue'
@@ -433,20 +422,6 @@ const { flashId, flash } = useMessageLocate({
 provide(LOCATE_FLASH_KEY, flashId)
 
 const historyAnchored = computed(() => sessionId.value != null && sessionStore.isHistoryAnchored(sessionId.value))
-
-/** 「只看回复」：隐藏工具卡片与思考块，保留对话主干与折叠摘要行；执行中轮不参与过滤（ChatRoundList 内实施） */
-const replyOnly = ref(false)
-
-function toggleReplyOnly() {
-  // 正在跟随时不暂停：内容塌陷/展开由 ResizeObserver → scheduleFollow 自然写底，
-  // 视野保持最新；上滑看历史时才显式暂停，避免塌陷钳制把视野拽走（C8）。
-  // 曾无条件 pauseFollow：开关一次就把「跟随中」永久变成「上滑中」，新输出不再滚动。
-  if (userScrolledUp.value) pauseFollow()
-  replyOnly.value = !replyOnly.value
-}
-
-// 切换会话时复位：过滤态是「当前会话的阅读偏好」，不带到下一个会话
-watch(sessionId, () => { replyOnly.value = false })
 
 /** 轮次目录定位：与全局搜索跳转同构（flash 内部含 pauseFollow 与 nextTick 滚动，展开由 ChatRoundList 的 flashId 监听完成） */
 function onRoundLocate(messageId: string) {
@@ -909,8 +884,7 @@ function handleNewTaskAgentChange(id: string | null) {
   flex-direction: column;
 }
 
-/* 常驻 sticky 顶栏：「只看回复」开关常驻；回到最新（aroundMessageId 定位后）/
-   回到顶部（上滑后）按各自可见条件出现，横条本身不随两者隐没而抖动 */
+/* sticky 顶栏：回到最新（aroundMessageId 定位后）/ 回到顶部（上滑后）出现时占位 */
 .chat-sticky-bar {
   position: sticky;
   top: 0;
@@ -928,33 +902,6 @@ function handleNewTaskAgentChange(id: string | null) {
 
 .sticky-bar-spacer {
   flex: 1;
-}
-
-.sticky-bar-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  font: inherit;
-  padding: 2px 6px;
-  border-radius: var(--aw-radius-xs);
-  transition: background 0.15s, color 0.15s;
-}
-
-.sticky-bar-btn:hover {
-  background: rgba(0, 0, 0, 0.06);
-  color: var(--aw-ink);
-}
-
-.sticky-bar-btn.active {
-  color: var(--aw-accent, #409eff);
-}
-
-.sticky-bar-btn-text {
-  white-space: nowrap;
 }
 
 .sticky-bar-hint {

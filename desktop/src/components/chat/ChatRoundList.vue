@@ -30,7 +30,7 @@
           <el-icon class="steps-expand-icon" :class="{ expanded: roundsExpanded[round.userMessage.id] }"><ArrowDown /></el-icon>
           <span>已执行 {{ round.stepCount }} 个步骤，任务耗时 {{ round.durationText }}</span>
         </div>
-        <div v-if="roundsExpanded[round.userMessage.id] && !replyOnly" class="steps-detail">
+        <div v-if="roundsExpanded[round.userMessage.id]" class="steps-detail">
           <template v-for="step in round.displaySteps" :key="step.id">
             <MessageBubble
               :message="step"
@@ -71,7 +71,6 @@
         :hide-thinking="true"
         :hide-file-changes="true"
         :hide-subagent-process="hideSubagentProcess"
-        :hide-tool-calls="replyOnly"
       />
       <FileChangePanel
         v-if="showFileChangePanel && round.fileChanges.length > 0"
@@ -98,10 +97,9 @@
         @fork="handleFork"
         @share="$emit('share')"
         :show-time="true"
-        :hide-thinking="hideThinking || replyOnly"
+        :hide-thinking="hideThinking"
         :hide-file-changes="true"
         :hide-subagent-process="hideSubagentProcess"
-        :hide-tool-calls="replyOnly"
       />
       <FileChangePanel
         v-if="showFileChangePanel && round.fileChanges.length > 0"
@@ -166,9 +164,8 @@
         :dislike-enabled="dislikeEnabled"
         :show-time="msg.role === 'user' || (msg.role === 'assistant' && idx < messages.length - 1)"
         :show-copy="showUserCopy && msg.role === 'user'"
-        :hide-thinking="hideThinking || replyOnly"
+        :hide-thinking="hideThinking"
         :hide-subagent-process="hideSubagentProcess"
-        :hide-tool-calls="replyOnly"
         :is-last="idx === messages.length - 1"
         :can-edit="canEditMessage?.(msg) ?? false"
         :is-editing="editingMessageId === msg.id"
@@ -220,14 +217,11 @@ const props = withDefaults(defineProps<{
   showFileChangePanel?: boolean
   /** 分享页只在最终回复上保留复制按钮 */
   showUserCopy?: boolean
-  /** 「只看回复」：隐藏工具卡片与思考块，保留对话主干与折叠摘要行；执行中轮不参与过滤 */
-  replyOnly?: boolean
 }>(), {
   hideThinking: false,
   hideSubagentProcess: false,
   showFileChangePanel: true,
   showUserCopy: true,
-  replyOnly: false,
 })
 
 const emit = defineEmits<{

@@ -318,8 +318,6 @@ const props = withDefaults(defineProps<{
   shareEnabled?: boolean
   /** 只读分享页隐藏 delegate「查看过程」（无会话上下文，点击无效果） */
   hideSubagentProcess?: boolean
-  /** 「只看回复」：隐藏工具卡片（轮次以工具段结尾时，最终回复内嵌的 toolCalls 无其他 prop 可遮） */
-  hideToolCalls?: boolean
 }>(), {
   showCopy: true,
   isLast: false,
@@ -331,8 +329,7 @@ const props = withDefaults(defineProps<{
   dislikeEnabled: false,
   forkEnabled: false,
   shareEnabled: false,
-  hideSubagentProcess: false,
-  hideToolCalls: false
+  hideSubagentProcess: false
 })
 
 const emit = defineEmits<{
@@ -424,7 +421,7 @@ const noticeExpanded = ref(false)
 const HIDDEN_TOOL_NAMES = new Set(['todo', 'task_list', 'task_create', 'task_update', 'task_delete'])
 
 const visibleToolCalls = computed(() =>
-  props.hideToolCalls ? [] : (props.message.toolCalls?.filter(tc => !HIDDEN_TOOL_NAMES.has(tc.name)) || [])
+  props.message.toolCalls?.filter(tc => !HIDDEN_TOOL_NAMES.has(tc.name)) || []
 )
 
 // 会话级活动 phase：首轮 LLM 即被限流时无任何流式/思考事件，
@@ -538,8 +535,7 @@ const timelineSegments = computed((): MessageSegment[] => {
   if (isBackgroundNotice.value) return []
   if (props.message.segments?.length) {
     return props.message.segments.filter(seg =>
-      seg.type === 'text' || (!props.hideThinking && seg.type === 'thinking')
-      || (seg.type === 'tool' && !props.hideToolCalls && !!visibleToolCalls.value.find(tc => tc.id === seg.callId))
+      seg.type === 'text' || (!props.hideThinking && seg.type === 'thinking') || (seg.type === 'tool' && !!visibleToolCalls.value.find(tc => tc.id === seg.callId))
     )
   }
   if (visibleToolCalls.value.length || props.message.content?.trim()) {

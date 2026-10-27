@@ -999,7 +999,7 @@ describe('session store 删除会话时清理记录详情缓存', () => {
   })
 })
 
-describe('session store 标题过滤（listKeyword 单一状态源）', () => {
+describe('session store 列表重建与「展开更多」竞态护栏', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     // 重置 mock（含 mockResolvedValueOnce 队列，避免跨测试串扰）
@@ -1008,11 +1008,6 @@ describe('session store 标题过滤（listKeyword 单一状态源）', () => {
   })
 
   const KEY = 'CLOUD:临时工作区'
-
-  /** 取某次 api.get 调用的 params（mock 层为 any 入参） */
-  function paramsOf(callIndex: number): Record<string, any> {
-    return mockGet.mock.calls[callIndex][1]?.params ?? {}
-  }
 
   /** 分组预览响应：sessions 为该组预览条数，hasMore 决定能否「展开更多」 */
   function preview(ids: string[], total: number, hasMore: boolean) {
@@ -1026,54 +1021,10 @@ describe('session store 标题过滤（listKeyword 单一状态源）', () => {
     return { data: { items: ids.map(id => makeSession(id)), total, hasMore } }
   }
 
-  it('空 keyword 不传参数；setListKeyword 去空白后三条 fetch 路径统一带上', async () => {
-    const store = useSessionStore()
-    const groupsPayload = {
-      // hasMore: true：loadMoreInGroup 才会真正发请求（meta.hasMore 为 false 时直接返回）
-      data: { groups: [{ key: 'CLOUD:临时工作区', label: '临时工作区', total: 2, hasMore: true, sessions: [makeSession('1')] }] },
-    }
-
-    mockGet.mockResolvedValueOnce(groupsPayload)
-    await store.fetchSessions()
-    // 空串不传：与现状字节一致（axios 序列化丢弃 undefined）
-    expect(paramsOf(0).keyword).toBeUndefined()
-
-    store.setListKeyword('  重构  ')
-    expect(store.listKeyword).toBe('重构')
-
-    // fetchSessions（分组预览）
-    mockGet.mockResolvedValueOnce(groupsPayload)
-    await store.fetchSessions()
-    expect(paramsOf(1).keyword).toBe('重构')
-
-    // loadMoreInGroup（分组分页）：同一 keyword，offset 仍以服务端已返回条数为准
-    mockGet.mockResolvedValueOnce({ data: { items: [makeSession('2')], total: 2, hasMore: false } })
-    await store.loadMoreInGroup('CLOUD:临时工作区')
-    expect(paramsOf(2)).toEqual({ groupKey: 'CLOUD:临时工作区', offset: 1, limit: 20, keyword: '重构' })
-    expect(store.getGroupMeta('CLOUD:临时工作区')?.loadedCount).toBe(2)
-
-    // fetchFocusSessions（聚焦全量）：同一 keyword
-    mockGet.mockResolvedValueOnce({ data: [makeSession('1')] })
-    await store.fetchFocusSessions()
-    expect(paramsOf(3).keyword).toBe('重构')
-
-    // fetchArchivedSessions（已归档区）：固定 status=ARCHIVED，不参与标题过滤
-    mockGet.mockResolvedValueOnce({ data: { groups: [] } })
-    await store.fetchArchivedSessions()
-    expect(paramsOf(4).keyword).toBeUndefined()
-  })
-
-  it('reset 清空 listKeyword（登出/换号不残留旧账号的过滤条件）', () => {
-    const store = useSessionStore()
-    store.setListKeyword('x')
-    store.reset()
-    expect(store.listKeyword).toBe('')
-  })
-
-  it('在飞的「展开更多」响应晚于一次列表重建到达时整条丢弃（过滤竞态护栏）', async () => {
+  it('在飞的「展开更多」响应晚于一次列表重建到达时整条丢弃（重建竞态护栏）', async () => {
     const store = useSessionStore()
 
-    // 1) keyword='a'：预览 [1,2]，hasMore=true（可展开更多）
+    // 1) 首屏预览 [1,2]，hasMore=true（可展开更多）
     mockGet.mockResolvedValueOnce({
       data: { groups: [{ key: 'CLOUD:临时工作区', label: '临时工作区', total: 4, hasMore: true, sessions: [makeSession('1'), makeSession('2')] }] },
     })
@@ -1086,22 +1037,21 @@ describe('session store 标题过滤（listKeyword 单一状态源）', () => {
     mockGet.mockImplementationOnce(() => loadMorePending as any)
     const loadMorePromise = store.loadMoreInGroup('CLOUD:临时工作区')
 
-    // 3) 用户改过滤词 → fetchSessions 先把分组预览换成只匹配新词的结果 [3]
-    store.setListKeyword('b')
+    // 3) 一次列表重建（如手动刷新）→ fetchSessions 先把分组预览换成新结果 [3]
     mockGet.mockResolvedValueOnce({
       data: { groups: [{ key: 'CLOUD:临时工作区', label: '临时工作区', total: 1, hasMore: false, sessions: [makeSession('3')] }] },
     })
     await store.fetchSessions()
     expect(store.standardSessionIds).toEqual(['3'])
 
-    // 4) 旧 keyword 的展开更多响应此刻到达：不得并入、不得覆盖组元数据
+    // 4) 重建前发出的展开更多响应此刻到达：不得并入、不得覆盖组元数据
     releaseLoadMore({ data: { items: [makeSession('5'), makeSession('6')], total: 4, hasMore: false } })
     await loadMorePromise
 
-    // 过滤后的列表仍只含匹配新词的会话
+    // 重建后的列表仍只含新结果的会话
     expect(store.standardSessionIds).toEqual(['3'])
-    // 组元数据保持新过滤视图的口径：loadedCount/total 若被旧响应覆盖，
-    // 后续「展开更多」的 offset 会以旧口径为基准，把匹配新词的会话整段跳过
+    // 组元数据保持重建后视图的口径：loadedCount/total 若被旧响应覆盖，
+    // 后续「展开更多」的 offset 会以旧口径为基准，把新视图的会话整段跳过
     const meta = store.getGroupMeta('CLOUD:临时工作区')
     expect({ total: meta?.total, loadedCount: meta?.loadedCount }).toEqual({ total: 1, loadedCount: 1 })
   })

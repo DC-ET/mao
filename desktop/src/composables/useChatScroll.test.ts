@@ -505,8 +505,8 @@ describe('回到顶部（scrollToTop）', () => {
   })
 })
 
-describe('「只看回复」内容塌陷', () => {
-  it('切换导致步骤整段隐藏、scrollTop 被钳制到新底部：恢复跟随，不误判上滑', async () => {
+describe('内容塌陷（折叠执行步骤）', () => {
+  it('步骤整段隐藏、scrollTop 被钳制到新底部：恢复跟随，不误判上滑', async () => {
     const s = setup()
     await settledAtBottom(s)
 
@@ -516,9 +516,8 @@ describe('「只看回复」内容塌陷', () => {
     s.handleScroll()
     expect(s.userScrolledUp.value).toBe(true)
 
-    // 开启「只看回复」：历史步骤隐藏，内容 2000→900，浏览器把 scrollTop 钳制到 400。
-    // ChatPanel 切换时已显式 pauseFollow，此处验证即便没有 pauseFollow，塌陷钳制
-    // 也不会被误判成用户上滑而永久关死跟随。
+    // 折叠历史步骤：内容 2000→900，浏览器把 scrollTop 钳制到 400。
+    // 验证即便没有显式 pauseFollow，塌陷钳制也不会被误判成用户上滑而永久关死跟随。
     s.el.scrollHeight = 900
     s.el.scrollTop = 400
     s.handleScroll()
