@@ -99,13 +99,9 @@
               <WarningFilled v-else />
             </el-icon>
           </span>
-          <!-- 消息预览可点（stopPropagation 防触发卡片折叠）：run 锚点 id 就是 runId，
-               打开该条用户消息的完整原文抽屉（技术方案 2026-10-25 §5.6） -->
-          <span
-            class="run-preview run-preview-clickable"
-            title="点击查看完整消息"
-            @click.stop="openMessageRecord(run.runId)"
-          >{{ run.userMessagePreview || '(空消息)' }}</span>
+          <!-- 消息预览不带自己的点击入口：整行（含任务名）只做展开 / 收起切换；
+               完整原文入口在展开区顶部「查看原文」（预览曾独占点击并把 toggle 拦掉） -->
+          <span class="run-preview">{{ run.userMessagePreview || '(空消息)' }}</span>
           <span class="run-metrics">
             <span>耗时 {{ formatMs(run.totals.wallClockMs) }}</span>
             <span>{{ formatTokens(tokenTotal(run)) }} tokens</span>
@@ -122,6 +118,16 @@
             :active-run-key="activeBandKey"
             @locate="(key: string) => locateNode(run.runId, key)"
           />
+          <!-- 消息原文入口：run 锚点 id 就是 runId，按主键直查该条用户消息。
+               常驻可见——摘要行的点击已让位给展开切换，这里是唯一入口 -->
+          <div class="run-origin-row">
+            <button
+              type="button"
+              class="run-origin-btn"
+              title="查看该任务的用户消息完整原文"
+              @click="openMessageRecord(run.runId)"
+            >查看原文</button>
+          </div>
           <div v-for="segment in run.segments" :key="segment.kind" class="trace-segment">
             <div class="segment-label">{{ segment.kind === 'before_edit' ? '编辑前' : '当前' }}</div>
             <div v-for="round in segment.rounds" :key="`${segment.kind}-${round.seq}`" :id="rowAnchorId(run.runId, 'round', roundAnchorKey(segment.kind, round.seq))" class="round-row">
@@ -922,15 +928,32 @@ async function exportCsv() {
   text-overflow: ellipsis;
 }
 
-/* 可点的消息预览：悬停亮起 + 下划虚线暗示可点，不抢摘要行其余信息 */
-.run-preview-clickable {
-  cursor: pointer;
+/* 消息原文入口：展开区常驻小按钮（抽屉的唯一入口，不能只悬停可见），
+   配色与下钻按钮同系但默认可见、带淡描边 */
+.run-origin-row {
+  display: flex;
+  justify-content: flex-end;
+  padding: 2px 0;
 }
 
-.run-preview-clickable:hover {
+.run-origin-btn {
+  flex-shrink: 0;
+  font-size: var(--aw-text-micro);
+  font-family: var(--aw-font-text);
+  height: 16px;
+  padding: 0 5px;
+  border-radius: var(--aw-radius-xs);
+  border: 1px solid var(--aw-divider-soft);
+  background: transparent;
+  color: var(--aw-ink-muted-40);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.run-origin-btn:hover {
   color: var(--aw-primary);
-  text-decoration: underline dotted;
-  text-underline-offset: 2px;
+  border-color: var(--aw-primary-line);
+  background: var(--aw-primary-hover);
 }
 
 .run-metrics {

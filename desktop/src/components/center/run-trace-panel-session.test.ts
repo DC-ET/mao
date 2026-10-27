@@ -625,11 +625,27 @@ describe('RunTracePanel 时间条带与记录下钻', () => {
     expect(drawerOpened).toEqual([{ kind: 'tool', sessionId: '11', target: { kind: 'tool', toolCallId: 'call_x' } }])
   })
 
-  it('点 run 摘要行消息预览开消息抽屉（kind=message，messageId=runId）', async () => {
+  // 0.0.346 曾把消息预览做成独占点击（stopPropagation 拦下行的展开切换），而预览是行内
+  // 最宽元素，点任务名只能开抽屉、展不开轮次明细。回归：预览不带自己的点击入口，
+  // 点摘要行任意处（含任务名）只切换展开；完整原文入口收进展开区「查看原文」。
+  it('点 run 摘要行（含消息预览）只切换展开，不开消息抽屉', async () => {
     const root = await mountPanel()
-    const previews = findAllByClass(root, 'run-preview-clickable')
+    const previews = findAllByClass(root, 'run-preview')
     expect(previews).toHaveLength(1)
-    ;(previews[0]!.props.onClick as (e: { stopPropagation: () => void }) => void)({ stopPropagation: () => {} })
+    expect(previews[0]!.props.onClick).toBeUndefined()
+    ;(findAllByClass(root, 'run-summary')[0]!.props.onClick as () => void)()
+    await flush()
+    expect(drawerOpened).toHaveLength(0)
+    expect(findAllByClass(root, 'run-detail')).toHaveLength(1)
+  })
+
+  it('点展开区「查看原文」开消息抽屉（kind=message，messageId=runId）', async () => {
+    const root = await mountPanel()
+    ;(findAllByClass(root, 'run-summary')[0]!.props.onClick as () => void)()
+    await flush()
+    const originBtns = findAllByClass(root, 'run-origin-btn')
+    expect(originBtns).toHaveLength(1)
+    ;(originBtns[0]!.props.onClick as () => void)()
     await flush()
     // run 锚点 id 就是 runId：messageId 必须等于 fixture 的 runId（本组为 21）
     expect(drawerOpened).toEqual([{ kind: 'message', sessionId: '11', target: { kind: 'message', messageId: 21 } }])
