@@ -4,6 +4,7 @@ import { registerSignalWatcherRoutes, toInput } from './watcher.routes.js';
 import { WatcherService } from './watcher.service.js';
 import { SignalSecretCipher } from './signal-cipher.js';
 import { executeProbe } from './probe-client.js';
+import { handleError } from '../common/http-error.js';
 import type { SignalWatcher, SignalWatcherCheck } from './types.js';
 import type { MysqlSignalCheckRepository, MysqlSignalWatcherRepository } from './signal.repository.js';
 
@@ -36,14 +37,16 @@ function watcher(overrides: Partial<SignalWatcher> = {}): SignalWatcher {
     lastCheckedAt: null,
     lastChangedAt: null,
     consecutiveFailures: 0,
+    triggerMode: 'NEW_SESSION',
+    reuseSessionId: null,
     createdAt: null,
     updatedAt: null,
     ...overrides,
   };
 }
 
-function makeHarness(seed: SignalWatcher) {
-  const watchers = new Map<number, SignalWatcher>([[1, seed]]);
+function makeHarness(seed: SignalWatcher, extra: SignalWatcher[] = []) {
+  const watchers = new Map<number, SignalWatcher>([[seed.id!, seed], ...extra.map((w) => [w.id!, w] as [number, SignalWatcher])]);
   const checks: SignalWatcherCheck[] = [];
   const cipher = new SignalSecretCipher(SECRET);
   const watcherRepo = {
@@ -58,7 +61,6 @@ function makeHarness(seed: SignalWatcher) {
       return row != null && row.userId === userId ? row : null;
     }),
     listByUser: vi.fn(async (userId: number) => [...watchers.values()].filter((w) => w.userId === userId)),
-    countByUser: vi.fn(async (userId: number) => [...watchers.values()].filter((w) => w.userId === userId).length),
     listForAdmin: vi.fn(async () => ({ rows: [...watchers.values()], total: watchers.size })),
     update: vi.fn(async (id: number, _userId: number, patch: Partial<SignalWatcher>) => {
       const row = watchers.get(id);
@@ -91,8 +93,12 @@ function makeHarness(seed: SignalWatcher) {
     cipher,
     openRun: { run: vi.fn(async () => ({ sessionId: 9, messageId: 1, queued: false })) } as never,
     probe: { execute: executeProbe },
+    getSession: vi.fn(async () => null),
   });
   const app = Fastify();
+  // 与生产同款错误处理：业务失败（BusinessException）按仓库约定返回 HTTP 200，
+  // 错误码/原因在响应体 code/message 上。不挂就是裸 500，断言不出真实口径。
+  app.setErrorHandler(handleError);
   // 登录态守卫注入 userId（requireJwtIdentity 读 req.userId）
   app.addHook('onRequest', async (req) => { (req as { userId?: number }).userId = 7; });
   registerSignalWatcherRoutes(app, { service });
@@ -132,6 +138,141 @@ describe('toInput 键存在性判定', () => {
   it('headers 为非对象时报参数错误', () => {
     expect(() => toInput({ headers: 'x' as unknown })).toThrow(/headers 必须为对象/);
     expect(() => toInput({ headers: [] as unknown })).toThrow(/headers 必须为对象/);
+  });
+
+  it('解析 triggerMode；缺省为 undefined（服务层归一化为 NEW_SESSION）', () => {
+    expect(toInput({ triggerMode: 'REUSE_SESSION' }).triggerMode).toBe('REUSE_SESSION');
+    expect(toInput({ triggerMode: 'new_session' }).triggerMode).toBe('new_session');
+    expect(toInput({}).triggerMode).toBeUndefined();
+  });
+
+  it('解析 copyFrom：正整数放行，0/负数/小数/非数字拒绝', () => {
+    expect(toInput({ copyFrom: 5 }).copyFrom).toBe(5);
+    expect(toInput({ copyFrom: '7' }).copyFrom).toBe(7);
+    expect(toInput({}).copyFrom).toBeUndefined();
+    expect(() => toInput({ copyFrom: 0 })).toThrow(/copyFrom 必须为正整数/);
+    expect(() => toInput({ copyFrom: -1 })).toThrow(/copyFrom 必须为正整数/);
+    expect(() => toInput({ copyFrom: 1.5 })).toThrow(/copyFrom 必须为正整数/);
+    expect(() => toInput({ copyFrom: 'abc' })).toThrow(/copyFrom 必须为正整数/);
+  });
+
+  it('reuseSessionId 刻意不解析（指针系统维护，防伪造指向他人生效中的会话）', () => {
+    const input = toInput({ reuseSessionId: 42 });
+    expect('reuseSessionId' in input).toBe(false);
+  });
+});
+
+/** 仓库约定：业务失败返回 HTTP 200，错误码/原因在响应体上。 */
+function failureOf(res: { json: () => unknown }): { code: number; message: string } {
+  const body = res.json() as { code: number; message: string };
+  expect(body.code).not.toBe(0);
+  return body;
+}
+
+describe('POST /v1/signal-watchers 复制（copyFrom）链路', () => {
+  const copyPayload = {
+    name: 'src 副本',
+    agentId: 3,
+    url: 'https://example.com/api',
+    method: 'POST',
+    promptTemplate: 'changed {diff}',
+    intervalMinutes: 15,
+    compareMode: 'HASH',
+    headers: { Authorization: '******' },
+  };
+
+  it('copyFrom 非本人 → 拒绝，不落库', async () => {
+    const cipher = new SignalSecretCipher(SECRET);
+    const h = makeHarness(watcher(), [
+      watcher({
+        id: 2, userId: 999, method: 'POST',
+        headersJson: cipher.encrypt(JSON.stringify({ Authorization: 'Bearer OTHER' })),
+        body: cipher.encrypt('{"a":1}'),
+      }),
+    ]);
+    const res = await h.app.inject({ method: 'POST', url: '/v1/signal-watchers', payload: { ...copyPayload, copyFrom: 2 } });
+    expect(failureOf(res).message).toContain('哨兵不存在');
+    expect(h.watchers.size).toBe(2);
+  });
+
+  it('copyFrom 不存在 → 拒绝，不落库', async () => {
+    const h = makeHarness(watcher());
+    const res = await h.app.inject({ method: 'POST', url: '/v1/signal-watchers', payload: { ...copyPayload, copyFrom: 777 } });
+    expect(failureOf(res).message).toContain('哨兵不存在');
+    expect(h.watchers.size).toBe(1);
+  });
+
+  it('copyFrom 本人：掩码敏感头与 body 从源行解密继承，副本 ACTIVE、基线空、指针空', async () => {
+    const cipher = new SignalSecretCipher(SECRET);
+    const h = makeHarness(watcher(), [
+      watcher({
+        id: 2, method: 'POST',
+        headersJson: cipher.encrypt(JSON.stringify({ Authorization: 'Bearer SECRET' })),
+        body: cipher.encrypt('{"k":"v"}'),
+        triggerMode: 'REUSE_SESSION',
+        reuseSessionId: 42,
+      }),
+    ]);
+    // 刻意不带 body 键：空=沿用源体（技术方案 §3.6.3）
+    const res = await h.app.inject({ method: 'POST', url: '/v1/signal-watchers', payload: { ...copyPayload, copyFrom: 2 } });
+    expect(res.statusCode).toBe(200);
+    const created = h.watchers.get(3)!;
+    expect(created.name).toBe('src 副本');
+    expect(JSON.parse(h.cipher.decrypt(created.headersJson!))).toEqual({ Authorization: 'Bearer SECRET' });
+    expect(h.cipher.decrypt(created.body!)).toBe('{"k":"v"}');
+    expect(created.status).toBe('ACTIVE');
+    expect(created.lastValueHash).toBeNull();
+    expect(created.triggerMode).toBe('NEW_SESSION');
+    expect(created.reuseSessionId).toBeNull();
+    // 响应视图也不得泄露明文
+    expect(JSON.stringify(res.json())).not.toContain('Bearer SECRET');
+  });
+
+  it('copyFrom 本人 + 删光请求头行（headers: {}）→ 无请求头', async () => {
+    const cipher = new SignalSecretCipher(SECRET);
+    const h = makeHarness(watcher(), [
+      watcher({
+        id: 2, method: 'POST',
+        headersJson: cipher.encrypt(JSON.stringify({ Authorization: 'Bearer SECRET' })),
+        body: cipher.encrypt('{"k":"v"}'),
+      }),
+    ]);
+    const res = await h.app.inject({
+      method: 'POST', url: '/v1/signal-watchers',
+      payload: { ...copyPayload, headers: {}, body: '{"k":"v"}', copyFrom: 2 },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(h.watchers.get(3)!.headersJson).toBeNull();
+  });
+
+  it('掩码键被改名后保存被拒并提示重填（不把 ****** 当凭据落库）', async () => {
+    const cipher = new SignalSecretCipher(SECRET);
+    const h = makeHarness(watcher(), [
+      watcher({
+        id: 2, method: 'POST',
+        headersJson: cipher.encrypt(JSON.stringify({ Authorization: 'Bearer SECRET' })),
+        body: cipher.encrypt('{"k":"v"}'),
+      }),
+    ]);
+    const res = await h.app.inject({
+      method: 'POST', url: '/v1/signal-watchers',
+      payload: { ...copyPayload, headers: { 'X-Api-Key': '******' }, copyFrom: 2 },
+    });
+    expect(failureOf(res).message).toContain('需要填写新的值');
+    expect(h.watchers.size).toBe(2);
+  });
+
+  it('POST 复制态 body 留空（键未下发）但源行也无 body → 拒绝（请求体必填）', async () => {
+    const cipher = new SignalSecretCipher(SECRET);
+    const h = makeHarness(watcher(), [
+      watcher({
+        id: 2, method: 'POST',
+        headersJson: cipher.encrypt(JSON.stringify({ Authorization: 'Bearer SECRET' })),
+        body: null,
+      }),
+    ]);
+    const res = await h.app.inject({ method: 'POST', url: '/v1/signal-watchers', payload: { ...copyPayload, copyFrom: 2 } });
+    expect(failureOf(res).message).toContain('请求体');
   });
 });
 

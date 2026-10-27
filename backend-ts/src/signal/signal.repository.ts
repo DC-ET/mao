@@ -31,6 +31,8 @@ export class MysqlSignalWatcherRepository {
       lastCheckedAt: watcher.lastCheckedAt,
       lastChangedAt: watcher.lastChangedAt,
       consecutiveFailures: watcher.consecutiveFailures,
+      triggerMode: watcher.triggerMode,
+      reuseSessionId: watcher.reuseSessionId,
     });
   }
 
@@ -51,14 +53,6 @@ export class MysqlSignalWatcherRepository {
       'SELECT * FROM signal_watcher WHERE user_id = ? ORDER BY id DESC',
       [userId],
     );
-  }
-
-  async countByUser(userId: number): Promise<number> {
-    const row = await this.db.queryOne<{ c: number }>(
-      'SELECT COUNT(*) AS c FROM signal_watcher WHERE user_id = ?',
-      [userId],
-    );
-    return Number(row?.c ?? 0);
   }
 
   /** 管理后台分页（可按状态/属主/判定模式筛选）。 */
@@ -111,6 +105,8 @@ export class MysqlSignalWatcherRepository {
     if (patch.lastValueHash !== undefined) row.lastValueHash = patch.lastValueHash;
     if (patch.lastChangedAt !== undefined) row.lastChangedAt = patch.lastChangedAt;
     if (patch.consecutiveFailures !== undefined) row.consecutiveFailures = patch.consecutiveFailures;
+    if (patch.triggerMode !== undefined) row.triggerMode = patch.triggerMode;
+    if (patch.reuseSessionId !== undefined) row.reuseSessionId = patch.reuseSessionId;
     const keys = Object.keys(row);
     if (keys.length === 0) return Promise.resolve(false);
     return this.updateByIds(id, userId, row);

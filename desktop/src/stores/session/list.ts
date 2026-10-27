@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
 import { api } from '../../api'
 import { useDraftStore } from '../draft'
-import { cloudGroupKey } from '../../utils/cloud-project'
+import { cloudGroupKey, formatCloudGroupLabel } from '../../utils/cloud-project'
 import { sortByFocusPriority, sessionToFocusCandidate } from '../../utils/focusSort'
 import { normalizeId, normalizeSession, persistLastSession, LAST_SESSION_KEY, ACTIVE_PHASES, DEFAULT_GROUP_PREVIEW, DEFAULT_GROUP_PAGE_SIZE } from './types'
 import type { Session, SessionEnvironmentInfo, SessionGroupMeta, CloudProject, TaskPhase } from './types'
@@ -606,8 +606,10 @@ export function createSessionListModule(ctx: {
       }
       const key = cloudGroupKey(next)
       if (!groupMeta.value.has(key)) {
-        // 服务端列表尚未为该分组分页过；注入的这条不计入 loadedCount
-        groupMeta.value.set(key, { label: key, total: 1, hasMore: false, loadedCount: 0 })
+        // 服务端列表尚未为该分组分页过；注入的这条不计入 loadedCount。
+        // label 走推导名而不是裸 key：SIGNAL 这类系统分组（如从收件箱/轮询记录深链点入）
+        // 会在服务端分页赶上之前闪一下原始 key。
+        groupMeta.value.set(key, { label: formatCloudGroupLabel(key, next), total: 1, hasMore: false, loadedCount: 0 })
         groupMeta.value = new Map(groupMeta.value)
       }
     }

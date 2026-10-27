@@ -23,6 +23,8 @@ function watcher(id: number, overrides: Partial<SignalWatcher> = {}): SignalWatc
     lastCheckedAt: null,
     lastChangedAt: null,
     consecutiveFailures: 0,
+    triggerMode: 'NEW_SESSION',
+    reuseSessionId: null,
     ...overrides,
   };
 }

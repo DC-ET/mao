@@ -218,6 +218,16 @@ describe('TaskTerminalService 收件箱写入', () => {
     expect(h.inbox.recordTaskTerminal).not.toHaveBeenCalled();
   });
 
+  it('signal 哨兵会话仍写收件箱（D1：只排未读，保留收件箱与外发）', async () => {
+    const h = build({ source: 'signal', projectKey: null, workspace: null });
+    await h.terminal.finishExecution(11, 7, 'COMPLETED', 'exec-1');
+    await flush(h);
+    expect(h.inbox.recordTaskTerminal).toHaveBeenCalledTimes(1);
+    expect(h.inbox.recordTaskTerminal).toHaveBeenCalledWith(expect.objectContaining({
+      userId: 7, sessionId: 11, phase: 'COMPLETED', source: 'MANUAL',
+    }));
+  });
+
   it('未注入 inboxRecorder 时行为与改造前一致（零影响）', async () => {
     const sessionService = {
       getSession: vi.fn(async () => session()),

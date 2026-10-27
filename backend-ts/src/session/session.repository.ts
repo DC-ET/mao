@@ -6,11 +6,24 @@ import { escapeLike, messageRoleClause } from './message-search.js';
 import type { MessageSearchScope } from './message-search.js';
 import type { FileChange, Message, Session, SessionGroupPage } from './types.js';
 
-export const SESSION_SOURCE_VALUES = ['web', 'embed'] as const;
+// 'signal' 只能由哨兵触发经 openRun 产生：POST /v1/sessions 的路由层白名单是显式
+// ['web','embed']（不读本数组），用户不能手工建 signal 会话（防伪造分组归属）。
+export const SESSION_SOURCE_VALUES = ['web', 'embed', 'signal'] as const;
 export type SessionSource = (typeof SESSION_SOURCE_VALUES)[number];
 
 export const isSessionSource = (value: unknown): value is SessionSource =>
   typeof value === 'string' && (SESSION_SOURCE_VALUES as readonly string[]).includes(value);
+
+/**
+ * 用户可手工创建/设置的会话来源：仅 web/embed。
+ * 'signal' 等系统来源只能由哨兵触发经 openRun 产生，用户入口（POST /v1/sessions、
+ * PUT /v1/sessions/:id/source）一律走本守卫，不读 SESSION_SOURCE_VALUES——
+ * 否则加了系统来源后用户可手工把会话挪进对应分组（防伪造分组归属）。
+ */
+export const USER_SETTABLE_SESSION_SOURCES = ['web', 'embed'] as const satisfies readonly SessionSource[];
+
+export const isUserSettableSessionSource = (value: unknown): value is 'web' | 'embed' =>
+  typeof value === 'string' && (USER_SETTABLE_SESSION_SOURCES as readonly string[]).includes(value);
 
 export interface MessageSearchSqlFilter {
   mode: 'FULLTEXT' | 'LIKE';

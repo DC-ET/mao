@@ -34,7 +34,13 @@ function makeHarness(options: { agentEnabled?: number | null; agentFound?: boole
     getSession: vi.fn(async () => session()),
     updatePhase: vi.fn(async () => undefined),
     saveMessage: vi.fn(async () => message(101)),
-    createSession: vi.fn(async (_userId: number, _agentId: number, _title: string | null, executionMode: string | null | undefined) => session({ id: 99, executionMode: executionMode ?? 'CLOUD' })),
+    // 位置签名镜像 SessionService.createSession 的 16 参（装配层 as unknown as 强转，
+    // 两边不一致编译期不报警）：第 4 参 executionMode、第 16 参 source 是本次断言重点。
+    // domain/types.ts 的 Session 没有 source 字段，回传行只取 executionMode。
+    createSession: vi.fn(async (...args: unknown[]) => {
+      const executionMode = args[3] as string | null | undefined;
+      return session({ id: 99, executionMode: executionMode ?? 'CLOUD' });
+    }),
   };
   const enqueue = vi.fn(async () => undefined);
   const finishExecution = vi.fn(async () => undefined);
@@ -125,7 +131,31 @@ describe('OpenRunService（P1/P2 共用执行流）', () => {
     const h = makeHarness();
     const result = await h.service.run({ userId: 7, agentId: 5, message: 'go', source: 'API' });
     expect(result.sessionId).toBe(99);
-    expect(h.sessionService.createSession).toHaveBeenCalledWith(7, 5, null, 'CLOUD');
+    // 16 个位置参数逐个钉死：装配层是 as unknown as 强转，接口与真实签名不一致编译期
+    // 不报警，错位会把 source 静默写进 workspace/gitCloneUrl（技术方案 §7 第 3 行）。
+    expect(h.sessionService.createSession).toHaveBeenCalledWith(
+      7, 5, null, 'CLOUD',
+      undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, undefined, undefined,
+      undefined,
+    );
+  });
+
+  it('未指定会话 + source=SIGNAL：第 16 参落 signal（哨兵会话进独立分组）', async () => {
+    const h = makeHarness();
+    await h.service.run({ userId: 7, agentId: 5, message: 'go', source: 'SIGNAL' });
+    const args = h.sessionService.createSession.mock.calls[0]!;
+    expect(args).toHaveLength(16);
+    expect(args[15]).toBe('signal');
+    // 前 15 参与 API 路完全一致（只有 source 不同）
+    expect(args.slice(0, 15)).toEqual([7, 5, null, 'CLOUD', undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined]);
+  });
+
+  it('未指定会话 + source=WEBHOOK：第 16 参为 undefined（来源仍落默认 web）', async () => {
+    const h = makeHarness();
+    await h.service.run({ userId: 7, agentId: 5, message: 'go', source: 'WEBHOOK', triggerId: 3 });
+    const args = h.sessionService.createSession.mock.calls[0]!;
+    expect(args[15]).toBeUndefined();
   });
 
   it('saveMessage 失败：回滚 phase 到 IDLE 且异常上抛', async () => {

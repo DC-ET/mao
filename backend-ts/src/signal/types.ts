@@ -1,5 +1,6 @@
 import type {
   SignalCompareMode,
+  SignalTriggerMode,
   SignalWatcherStatus,
   SignalWatcherWarning,
 } from '@mao/contracts';
@@ -28,6 +29,10 @@ export interface SignalWatcher {
   lastCheckedAt: string | null;
   lastChangedAt: string | null;
   consecutiveFailures: number;
+  /** 触发方式（V174）：NEW_SESSION=每次新建，REUSE_SESSION=复用本哨兵自己的会话。 */
+  triggerMode: SignalTriggerMode;
+  /** REUSE_SESSION 模式当前复用的会话 id（系统维护，NULL=尚未自建）。 */
+  reuseSessionId: number | null;
   createdAt?: string | null;
   updatedAt?: string | null;
 }
@@ -53,10 +58,19 @@ export type { SignalCompareMode };
 /** 哨兵状态：ACTIVE 轮询中 / PAUSED 用户暂停 / DISABLED 连续失败自动停用。 */
 export type { SignalWatcherStatus };
 
+/** 触发方式（V174）：每次新建会话 / 复用本哨兵自己的会话。 */
+export type { SignalTriggerMode };
+
 export const SIGNAL_COMPARE_MODES = ['HASH', 'JSON_FIELD', 'STATUS_CODE'] as const satisfies readonly SignalCompareMode[];
 
 export function isSignalCompareMode(value: unknown): value is SignalCompareMode {
   return typeof value === 'string' && (SIGNAL_COMPARE_MODES as readonly string[]).includes(value);
+}
+
+export const SIGNAL_TRIGGER_MODES = ['NEW_SESSION', 'REUSE_SESSION'] as const satisfies readonly SignalTriggerMode[];
+
+export function isSignalTriggerMode(value: unknown): value is SignalTriggerMode {
+  return typeof value === 'string' && (SIGNAL_TRIGGER_MODES as readonly string[]).includes(value);
 }
 
 export const SIGNAL_WATCHER_STATUSES = ['ACTIVE', 'PAUSED', 'DISABLED'] as const satisfies readonly SignalWatcherStatus[];

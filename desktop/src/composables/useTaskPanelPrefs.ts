@@ -3,7 +3,7 @@ import type { InternalAxiosRequestConfig } from 'axios'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { getToken } from '../utils/auth-storage'
-import { isEmbedGroupKey } from '../utils/cloud-project'
+import { isEmbedGroupKey, SIGNAL_GROUP_KEY } from '../utils/cloud-project'
 import { safeRemoveItem } from '../utils/safe-storage'
 
 const LEGACY_ORDER_KEY = 'task-group-order'
@@ -328,6 +328,9 @@ export function useTaskPanelPrefs() {
       if (isEmbedGroupKey(a.key) !== isEmbedGroupKey(b.key)) return isEmbedGroupKey(a.key) ? -1 : 1
       if (a.key.startsWith('CLOUD:') && !b.key.startsWith('CLOUD:')) return -1
       if (!a.key.startsWith('CLOUD:') && b.key.startsWith('CLOUD:')) return 1
+      // 信号哨兵分组排最后：与 TaskIndexPanel.groupedSessions、后端 compareKeys 同规则
+      if (a.key === SIGNAL_GROUP_KEY) return b.key === SIGNAL_GROUP_KEY ? 0 : 1
+      if (b.key === SIGNAL_GROUP_KEY) return -1
       return a.key.localeCompare(b.key)
     })
 

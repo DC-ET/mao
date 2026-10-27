@@ -676,6 +676,29 @@ describe('session and admin routes', () => {
       method: 'POST', url: '/v1/sessions', payload: { title: 't', source: 'mobile' },
     })).body);
     expect(bad.code).toBe(2001);
+    // 系统来源 signal 只能由哨兵触发经 openRun 产生：用户手工入口一律拒绝
+    // （否则可把会话伪造进「信号哨兵」分组）
+    const forged = JSON.parse((await fastify.inject({
+      method: 'POST', url: '/v1/sessions', payload: { title: 't', agentId: 9, source: 'signal' },
+    })).body);
+    expect(forged.code).toBe(2001);
+    expect(vi.mocked(sessionService.createSession).mock.calls).toHaveLength(1);
+    await fastify.close();
+  });
+
+  it('PUT /v1/sessions/:id/source 只接受 web/embed，拒绝 signal', async () => {
+    const { fastify, sessionService } = await app();
+    const ok = JSON.parse((await fastify.inject({
+      method: 'PUT', url: '/v1/sessions/1/source', payload: { source: 'embed' },
+    })).body);
+    expect(ok.code).toBe(0);
+    for (const source of ['signal', 'mobile']) {
+      const bad = JSON.parse((await fastify.inject({
+        method: 'PUT', url: '/v1/sessions/1/source', payload: { source },
+      })).body);
+      expect(bad.code, `source=${source} 应被拒`).toBe(2001);
+    }
+    expect(vi.mocked(sessionService.markSessionSource).mock.calls).toHaveLength(1);
     await fastify.close();
   });
 

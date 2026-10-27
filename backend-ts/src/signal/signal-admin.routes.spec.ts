@@ -23,6 +23,8 @@ function watcher(overrides: Partial<SignalWatcher> = {}): SignalWatcher {
     lastCheckedAt: null,
     lastChangedAt: null,
     consecutiveFailures: 0,
+    triggerMode: 'NEW_SESSION',
+    reuseSessionId: null,
     createdAt: null,
     updatedAt: null,
     ...overrides,

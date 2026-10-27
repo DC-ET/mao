@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { applyFilter, CLOUD_TEMP, compareKeys, EMBED_PREFIX, formatLabel, of, ofMode } from './session-group-key.js';
+import {
+  applyFilter,
+  CLOUD_TEMP,
+  compareKeys,
+  EMBED_PREFIX,
+  formatLabel,
+  LOCAL_UNSET,
+  of,
+  ofMode,
+  SIGNAL_GROUP_KEY,
+} from './session-group-key.js';
 
 describe('session group key', () => {
   it('groups Feishu chat workspaces by their persistent workspace path', () => {
@@ -67,7 +77,49 @@ describe('session group key', () => {
     expect(() => applyFilter(EMBED_PREFIX)).toThrow();
     const temp = applyFilter(CLOUD_TEMP);
     expect(temp.clauses.some((c) => c.includes('source'))).toBe(true);
-    expect(temp.params).toContain('embed');
+    // 排除走字面量 NOT IN（与 testing/sql-where.ts 求值器对齐），不再占 params 位
+    expect(temp.params).not.toContain('embed');
+    expect(temp.clauses.find((c) => c.includes('source'))).toContain("'embed'");
+  });
+
+  it('routes signal sessions to a dedicated group regardless of workspace/agent/mode', () => {
+    // 哨兵会话实际形态：CLOUD + workspace NULL（openRun 建会话不传 workspace）
+    expect(of({ source: 'signal', agentId: 3, executionMode: 'CLOUD', workspace: null })).toBe(SIGNAL_GROUP_KEY);
+    // 即使工作区是共享项目路径，source 优先级最高（不隔离会混进置顶的「临时工作区」）
+    expect(of({ source: 'signal', agentId: 3, executionMode: 'CLOUD', workspace: '/opt/mao-data/workspace/1/projects/demo' })).toBe(SIGNAL_GROUP_KEY);
+    // 与执行模式彻底解耦
+    expect(of({ source: 'signal', agentId: 3, executionMode: 'LOCAL', workspace: '/ws' })).toBe(SIGNAL_GROUP_KEY);
+    // 一个用户的全部哨兵会话进同一组：不带 agentId
+    expect(of({ source: 'signal', agentId: 9, executionMode: 'CLOUD', workspace: null })).toBe(SIGNAL_GROUP_KEY);
+    // 其他来源不受影响
+    expect(of({ source: 'web', agentId: 3, executionMode: 'CLOUD', workspace: null })).toBe(CLOUD_TEMP);
+    expect(of({ source: 'embed', agentId: 3, executionMode: 'CLOUD', workspace: null })).toBe('EMBED:3');
+  });
+
+  it('labels the signal group and sorts it after every other group', () => {
+    expect(formatLabel(SIGNAL_GROUP_KEY)).toBe('信号哨兵');
+    // 信号分组不带 agentId，传 agentName 也不得改变文案
+    expect(formatLabel(SIGNAL_GROUP_KEY, 'Coder')).toBe('信号哨兵');
+    expect(compareKeys(SIGNAL_GROUP_KEY, SIGNAL_GROUP_KEY)).toBe(0);
+    expect(compareKeys(SIGNAL_GROUP_KEY, CLOUD_TEMP)).toBeGreaterThan(0);
+    expect(compareKeys(SIGNAL_GROUP_KEY, 'EMBED:7')).toBeGreaterThan(0);
+    expect(compareKeys(SIGNAL_GROUP_KEY, 'LOCAL:/ws')).toBeGreaterThan(0);
+    expect(compareKeys(CLOUD_TEMP, SIGNAL_GROUP_KEY)).toBeLessThan(0);
+  });
+
+  it('filters the signal group by source and keeps signal out of the four mode/workspace buckets', () => {
+    expect(applyFilter(SIGNAL_GROUP_KEY)).toEqual({ clauses: ['source = ?'], params: ['signal'] });
+    // 四个「模式 + 工作区」桶必须排除 embed 与 signal：of() 优先分流这两类会话，
+    // 不排除会让同一条会话在分组预览里只出现一次、展开后却多出一条（分页偏移错乱）。
+    for (const key of [LOCAL_UNSET, 'LOCAL:/ws', CLOUD_TEMP, 'CLOUD:/opt/mao-data/workspace/1/projects/demo']) {
+      const filter = applyFilter(key);
+      const sourceClause = filter.clauses.find((c) => c.includes('source'));
+      expect(sourceClause, `桶 ${key} 缺少 source 排除`).toBeDefined();
+      expect(sourceClause).toContain("'embed'");
+      expect(sourceClause).toContain("'signal'");
+      expect(filter.params).not.toContain('embed');
+      expect(filter.params).not.toContain('signal');
+    }
   });
 
   it('applyFilter accepts every group key that of() can produce for embed sessions', () => {

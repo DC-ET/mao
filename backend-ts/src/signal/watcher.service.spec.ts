@@ -7,12 +7,12 @@ import type { MysqlSignalCheckRepository, MysqlSignalWatcherRepository } from '.
 import { SignalSecretCipher } from './signal-cipher.js';
 import type { ProbeResult } from './probe-client.js';
 import {
-  MAX_WATCHERS_PER_USER,
   WATCHER_DISABLE_AFTER_FAILURES,
   WATCHER_MAX_TRIGGERS_PER_HOUR,
   WatcherService,
   type WatcherDisableNotifier,
   type WatcherInput,
+  type WatcherSessionLookup,
 } from './watcher.service.js';
 
 const SECRET = 'test-signal-secret';
@@ -45,6 +45,8 @@ function watcher(overrides: Partial<SignalWatcher> = {}): SignalWatcher {
     lastCheckedAt: null,
     lastChangedAt: null,
     consecutiveFailures: 0,
+    triggerMode: 'NEW_SESSION',
+    reuseSessionId: null,
     createdAt: null,
     updatedAt: null,
     ...overrides,
@@ -66,27 +68,41 @@ function probeResult(overrides: Partial<ProbeResult> = {}): ProbeResult {
 interface Harness {
   service: WatcherService;
   watchers: Map<number, SignalWatcher>;
+  sessions: Map<number, WatcherSessionLookup>;
   checks: SignalWatcherCheck[];
   probeExecute: ReturnType<typeof vi.fn>;
   openRun: { run: ReturnType<typeof vi.fn> };
   notify: ReturnType<typeof vi.fn>;
   markChecked: ReturnType<typeof vi.fn>;
   recordFailure: ReturnType<typeof vi.fn>;
+  getSession: ReturnType<typeof vi.fn>;
   nextCheckId: { value: number };
 }
 
 function harness(options: {
   watcher?: SignalWatcher;
   probe?: () => Promise<ProbeResult> | ProbeResult;
+  /** 复用指针预检可见的会话；缺省给一条「本人 + CLOUD + agent 3」的可用会话（id=42）。 */
+  sessions?: WatcherSessionLookup[];
+  /** 覆盖 getSession 行为，用于复刻生产 wiring（行不存在时抛 SESSION_NOT_FOUND）。 */
+  getSession?: (id: number) => Promise<WatcherSessionLookup | null>;
 } = {}): Harness {
   const watchers = new Map<number, SignalWatcher>();
   const initial = options.watcher ?? watcher();
   watchers.set(initial.id!, initial);
+  const sessions = new Map<number, WatcherSessionLookup>();
+  for (const s of options.sessions ?? [{ id: 42, userId: 7, sessionType: null, executionMode: 'CLOUD', agentId: 3 }]) {
+    sessions.set(s.id!, s);
+  }
   const checks: SignalWatcherCheck[] = [];
   const nextCheckId = { value: 100 };
 
   const probeExecute = vi.fn(async () => (options.probe ? options.probe() : probeResult()));
   const openRun = { run: vi.fn(async () => ({ sessionId: 42, messageId: 1, queued: false, terminalPhase: 'COMPLETED' as const })) };
+  // 复用指针预检：读不到返回 null（等同会话已删）
+  const getSession = options.getSession
+    ? vi.fn(options.getSession)
+    : vi.fn(async (id: number) => sessions.get(id) ?? null);
   const notify = vi.fn(async () => undefined);
   // 与真实 SQL 语义一致：只在「库内值仍等于本次传入的快照值」时才清零，
   // 库内被并发失败推高时保留原值（BUG-N/BUG-G 的真实行为）。
@@ -127,7 +143,6 @@ function harness(options: {
       return row != null && row.userId === userId ? row : null;
     }),
     listByUser: vi.fn(async (userId: number) => [...watchers.values()].filter((w) => w.userId === userId)),
-    countByUser: vi.fn(async (userId: number) => [...watchers.values()].filter((w) => w.userId === userId).length),
     listForAdmin: vi.fn(async () => ({ rows: [...watchers.values()], total: watchers.size })),
     update: vi.fn(async (id: number, _userId: number, patch: Partial<SignalWatcher>) => {
       const row = watchers.get(id);
@@ -193,9 +208,10 @@ function harness(options: {
     openRun: openRun as never,
     probe: { execute: probeExecute as never },
     disableNotifier: { notifyWatcherDisabled: notify } satisfies WatcherDisableNotifier,
+    getSession,
   });
 
-  return { service, watchers, checks, probeExecute, openRun, notify, markChecked, recordFailure, nextCheckId };
+  return { service, watchers, sessions, checks, probeExecute, openRun, notify, markChecked, recordFailure, getSession, nextCheckId };
 }
 
 const baseInput: WatcherInput = {
@@ -225,15 +241,13 @@ describe('WatcherService CRUD', () => {
     expect(stored.lastValueHash).toBeNull();
   });
 
-  it('rejects more than the per-user cap', async () => {
-    const watchers = new Map<number, SignalWatcher>();
-    for (let i = 1; i <= MAX_WATCHERS_PER_USER; i += 1) {
-      watchers.set(i, watcher({ id: i, name: `w${i}` }));
+  it('creates watchers without a per-user cap (上限已取消)', async () => {
+    // 决策：取消 MAX_WATCHERS_PER_USER；这里锁定「第 21 个也放行」不回归
+    const h = harness();
+    for (let i = 2; i <= 21; i += 1) {
+      await h.service.create(7, { ...baseInput, name: `w${i}` });
     }
-    const h = harness({ watcher: watcher({ id: 999 }) });
-    h.watchers.clear();
-    for (const [id, row] of watchers) h.watchers.set(id, row);
-    await expect(h.service.create(7, baseInput)).rejects.toThrow(/最多/);
+    expect([...h.watchers.values()].filter((w) => w.userId === 7)).toHaveLength(21);
   });
 
   it('validates url, interval, mode, path and template', async () => {
@@ -331,7 +345,7 @@ describe('WatcherService.runCheck', () => {
     expect(arg.source).toBe('SIGNAL');
     expect(arg.userId).toBe(7);
     expect(arg.agentId).toBe(3);
-    expect(arg.sessionId).toBeUndefined();
+    expect(arg.sessionId).toBeNull();
     expect(String(arg.message)).toContain('new-body');
     expect(String(arg.message)).toContain('old-body');
     expect(h.checks[0]!.changed).toBe(1);
@@ -877,5 +891,324 @@ describe('归一化后无变化的编辑不得清基线', () => {
     const h = harness({ watcher: watcher({ url: 'https://example.com/api', lastValueHash: 'abc' }) });
     await h.service.update(7, 1, { url: 'https://example.org/api' });
     expect(h.watchers.get(1)!.lastValueHash).toBeNull();
+  });
+});
+
+describe('WatcherService 触发方式（D8 模型 B：复用自己的会话）', () => {
+  const changed = { lastValueHash: 'different', lastValueSnippet: 'old' } as const;
+  const newBody = { body: 'new-body', bodyBytes: Buffer.from('new-body', 'utf8') } as const;
+
+  it('create 默认 NEW_SESSION，指针恒为空', async () => {
+    const h = harness();
+    const view = await h.service.create(7, baseInput);
+    expect(view.triggerMode).toBe('NEW_SESSION');
+    expect(view.reuseSessionId).toBeNull();
+    expect(h.watchers.get(view.id)!.triggerMode).toBe('NEW_SESSION');
+    expect(h.watchers.get(view.id)!.reuseSessionId).toBeNull();
+  });
+
+  it('rejects an unknown trigger mode and normalizes case', async () => {
+    const h = harness();
+    await expect(h.service.create(7, { ...baseInput, triggerMode: 'NOPE' })).rejects.toThrow(/触发方式/);
+    const view = await h.service.create(7, { ...baseInput, name: 'w2', triggerMode: 'reuse_session' });
+    expect(view.triggerMode).toBe('REUSE_SESSION');
+  });
+
+  it('NEW_SESSION 全程不收 sessionId，也不做指针预检', async () => {
+    const h = harness({ watcher: watcher({ ...changed }), probe: () => probeResult(newBody) });
+    await h.service.runCheck(1);
+    expect(h.openRun.run.mock.calls[0]![0].sessionId).toBeNull();
+    expect(h.getSession).not.toHaveBeenCalled();
+    expect(h.watchers.get(1)!.reuseSessionId).toBeNull();
+    // 再造一次变化：确认第二次触发同样不带 sessionId
+    h.watchers.get(1)!.lastValueHash = 'different3';
+    await h.service.runCheck(1);
+    expect(h.openRun.run).toHaveBeenCalledTimes(2);
+    expect(h.openRun.run.mock.calls[1]![0].sessionId).toBeNull();
+    expect(h.watchers.get(1)!.reuseSessionId).toBeNull();
+  });
+
+  it('REUSE_SESSION 首触不传 sessionId，成功后把新会话回写为指针', async () => {
+    const h = harness({ watcher: watcher({ triggerMode: 'REUSE_SESSION', ...changed }), probe: () => probeResult(newBody) });
+    await h.service.runCheck(1);
+    expect(h.openRun.run.mock.calls[0]![0].sessionId).toBeNull();
+    expect(h.watchers.get(1)!.reuseSessionId).toBe(42);
+    // 同一轮只回写一次
+    expect(h.watchers.get(1)!.reuseSessionId).toBe(42);
+  });
+
+  it('REUSE_SESSION 次触传指针 sessionId（复用同一会话）', async () => {
+    const h = harness({ watcher: watcher({ triggerMode: 'REUSE_SESSION', reuseSessionId: 42, ...changed }), probe: () => probeResult(newBody) });
+    await h.service.runCheck(1);
+    expect(h.getSession).toHaveBeenCalledWith(42);
+    expect(h.openRun.run.mock.calls[0]![0].sessionId).toBe(42);
+    // 已有指针时不重复回写
+    expect(h.watchers.get(1)!.reuseSessionId).toBe(42);
+  });
+
+  it('REUSE_SESSION 轮询记录 triggeredSessionId 相同（复用同一会话）', async () => {
+    const h = harness({ watcher: watcher({ triggerMode: 'REUSE_SESSION', reuseSessionId: 42, ...changed }), probe: () => probeResult(newBody) });
+    await h.service.runCheck(1);
+    // 造第二次变化：直接改库内 hash 快照（update 不提供该入参）
+    h.watchers.get(1)!.lastValueHash = 'different2';
+    await h.service.runCheck(1);
+    const triggered = h.checks.filter((c) => c.triggeredSessionId != null);
+    expect(triggered.length).toBeGreaterThanOrEqual(1);
+    expect(new Set(triggered.map((c) => c.triggeredSessionId))).toEqual(new Set([42]));
+  });
+
+  const invalidPointerCases: Array<[string, WatcherSessionLookup[]]> = [
+    ['会话已删（getSession 返回 null）', []],
+    ['会话非本人', [{ id: 42, userId: 8, sessionType: null, executionMode: 'CLOUD', agentId: 3 }]],
+    ['会话属于其他 Agent', [{ id: 42, userId: 7, sessionType: null, executionMode: 'CLOUD', agentId: 99 }]],
+    ['会话是 SUBAGENT', [{ id: 42, userId: 7, sessionType: 'SUBAGENT', executionMode: 'CLOUD', agentId: 3 }]],
+    ['会话是 SIDE_TASK', [{ id: 42, userId: 7, sessionType: 'SIDE_TASK', executionMode: 'CLOUD', agentId: 3 }]],
+    ['会话是 LOCAL', [{ id: 42, userId: 7, sessionType: null, executionMode: 'LOCAL', agentId: 3 }]],
+    ['会话已归档', [{ id: 42, userId: 7, sessionType: null, executionMode: 'CLOUD', agentId: 3, status: 'ARCHIVED' }]],
+  ];
+
+  it.each(invalidPointerCases)('指针失效（%s）时清指针走新建且不计连败', async (_label, sessions) => {
+    const h = harness({
+      watcher: watcher({ triggerMode: 'REUSE_SESSION', reuseSessionId: 42, ...changed }),
+      sessions,
+      probe: () => probeResult(newBody),
+    });
+    await h.service.runCheck(1);
+    expect(h.openRun.run.mock.calls[0]![0].sessionId).toBeNull();
+    // 自建后回写指针（openRun 返回的 sessionId=42）
+    expect(h.watchers.get(1)!.reuseSessionId).toBe(42);
+    expect(h.recordFailure).not.toHaveBeenCalled();
+    expect(h.checks[0]!.triggeredSessionId).toBe(42);
+  });
+
+  /**
+   * 回归（code review 01 的 Bug 1）：SessionService.getSession 在行不存在（含软删）时
+   * 抛 BusinessException(SESSION_NOT_FOUND) 而不是返回 null，装配层
+   * app-openapi-services.ts 直接把它传给 deps.getSession。早年 isReusableSession 只按
+   * null 分支判失效，异常被 runCheck 的 try 吞成「触发失败」：用户删掉复用的会话后
+   * ① openRun 根本不被调用，变化被静默吞掉；② 白烧连败，5 次后自动停用并通知；
+   * ③ 清指针代码在异常点之后永不可达，指针一直是已删 id，每轮重复。这里按生产
+   * wiring 的真实语义（抛异常）钉死正确行为。
+   */
+  it('生产 wiring 回归：getSession 抛 SESSION_NOT_FOUND 判指针失效——清指针、照常触发、不计连败', async () => {
+    const h = harness({
+      watcher: watcher({ triggerMode: 'REUSE_SESSION', reuseSessionId: 42, ...changed }),
+      getSession: async () => { throw new BusinessException(ErrorCode.SESSION_NOT_FOUND); },
+      probe: () => probeResult(newBody),
+    });
+    await h.service.runCheck(1);
+    expect(h.getSession).toHaveBeenCalledWith(42);
+    expect(h.openRun.run.mock.calls[0]![0].sessionId).toBeNull();
+    // 自建的新会话回写成指针（openRun 返回 42）
+    expect(h.watchers.get(1)!.reuseSessionId).toBe(42);
+    expect(h.recordFailure).not.toHaveBeenCalled();
+    expect(h.checks[0]!.error).toBeNull();
+    expect(h.checks[0]!.changed).toBe(1);
+    expect(h.checks[0]!.triggeredSessionId).toBe(42);
+  });
+
+  it('生产 wiring 回归：失效重建后的下一次变化复用新会话（不再每轮新建）', async () => {
+    // 第一轮指针 42 已删（抛 SESSION_NOT_FOUND）→ 失效重建并回写；
+    // 第二轮指针已是回写后的会话，预检放行 → 传 sessionId 复用。
+    let pointerDeleted = true;
+    const h = harness({
+      watcher: watcher({ triggerMode: 'REUSE_SESSION', reuseSessionId: 42, ...changed }),
+      getSession: async (id) => {
+        if (id === 42 && pointerDeleted) {
+          pointerDeleted = false;
+          throw new BusinessException(ErrorCode.SESSION_NOT_FOUND);
+        }
+        return { id, userId: 7, sessionType: null, executionMode: 'CLOUD', agentId: 3 };
+      },
+      probe: () => probeResult(newBody),
+    });
+    await h.service.runCheck(1);
+    h.watchers.get(1)!.lastValueHash = 'different-2';
+    await h.service.runCheck(1);
+    expect(h.openRun.run).toHaveBeenCalledTimes(2);
+    expect(h.openRun.run.mock.calls[0]![0].sessionId).toBeNull();
+    expect(h.openRun.run.mock.calls[1]![0].sessionId).toBe(42);
+    expect(h.recordFailure).not.toHaveBeenCalled();
+  });
+
+  it('getSession 抛非「会话不存在」异常时仍记触发失败，不误判指针失效', async () => {
+    // 库瞬断等未知异常不能当成「指针失效」：那会静默丢掉原会话另起一个。
+    const h = harness({
+      watcher: watcher({ triggerMode: 'REUSE_SESSION', reuseSessionId: 42, ...changed }),
+      getSession: async () => { throw new BusinessException(ErrorCode.INTERNAL_ERROR, 'db down'); },
+      probe: () => probeResult(newBody),
+    });
+    await h.service.runCheck(1);
+    expect(h.openRun.run).not.toHaveBeenCalled();
+    expect(h.recordFailure).toHaveBeenCalledTimes(1);
+    expect(h.checks[0]!.triggeredSessionId).toBeNull();
+    // 没有证据表明指针失效：保持原值，等下次预检
+    expect(h.watchers.get(1)!.reuseSessionId).toBe(42);
+  });
+
+  it('切出复用模式（REUSE→NEW）即清指针', async () => {
+    const h = harness({ watcher: watcher({ triggerMode: 'REUSE_SESSION', reuseSessionId: 42, lastValueHash: 'abc' }) });
+    await h.service.update(7, 1, { triggerMode: 'NEW_SESSION' });
+    expect(h.watchers.get(1)!.triggerMode).toBe('NEW_SESSION');
+    expect(h.watchers.get(1)!.reuseSessionId).toBeNull();
+  });
+
+  it('「切到新建再切回」往返即手动重置指针（NEW→REUSE 不复活旧指针）', async () => {
+    const h = harness({ watcher: watcher({ triggerMode: 'REUSE_SESSION', reuseSessionId: 42, lastValueHash: 'abc' }) });
+    await h.service.update(7, 1, { triggerMode: 'NEW_SESSION' });
+    await h.service.update(7, 1, { triggerMode: 'REUSE_SESSION' });
+    expect(h.watchers.get(1)!.triggerMode).toBe('REUSE_SESSION');
+    expect(h.watchers.get(1)!.reuseSessionId).toBeNull();
+  });
+
+  it('改 agentId 清指针（旧指针指向的会话属于旧 Agent，openRun 会拒绝）', async () => {
+    const h = harness({ watcher: watcher({ triggerMode: 'REUSE_SESSION', reuseSessionId: 42, lastValueHash: 'abc' }) });
+    await h.service.update(7, 1, { agentId: 9 });
+    expect(h.watchers.get(1)!.agentId).toBe(9);
+    expect(h.watchers.get(1)!.reuseSessionId).toBeNull();
+  });
+
+  it('复用模式下改无关字段不清指针（回归）', async () => {
+    const h = harness({ watcher: watcher({ triggerMode: 'REUSE_SESSION', reuseSessionId: 42, lastValueHash: 'abc' }) });
+    await h.service.update(7, 1, { name: 'renamed' });
+    expect(h.watchers.get(1)!.reuseSessionId).toBe(42);
+  });
+
+  it('复用模式编辑时未下发 triggerMode 则沿用原值（回归）', async () => {
+    const h = harness({ watcher: watcher({ triggerMode: 'REUSE_SESSION', reuseSessionId: 42, lastValueHash: 'abc' }) });
+    await h.service.update(7, 1, { promptTemplate: 'other {diff}' });
+    expect(h.watchers.get(1)!.triggerMode).toBe('REUSE_SESSION');
+    expect(h.watchers.get(1)!.reuseSessionId).toBe(42);
+  });
+});
+
+describe('WatcherService.create 复制继承（copyFrom）', () => {
+  const cipher = makeCipher();
+  const sourceHeaders = { Authorization: 'Bearer SECRET', Accept: 'application/json' };
+
+  function sourceWatcher(overrides: Partial<SignalWatcher> = {}): SignalWatcher {
+    return watcher({
+      id: 50,
+      name: 'src',
+      method: 'POST',
+      headersJson: cipher.encrypt(JSON.stringify(sourceHeaders)),
+      body: cipher.encrypt('{"k":"v"}'),
+      triggerMode: 'REUSE_SESSION',
+      reuseSessionId: 42,
+      ...overrides,
+    });
+  }
+
+  it('掩码敏感头 + 未下发 body → 从源行解密继承，基线为空、ACTIVE、指针不继承', async () => {
+    const h = harness({ watcher: sourceWatcher() });
+    const view = await h.service.create(7, {
+      ...baseInput,
+      body: undefined, // 键未下发 = 沿用源行（前端复制态不预填 body 明文）
+      name: 'src 副本',
+      method: 'POST',
+      headers: { Authorization: '******', Accept: 'application/json' },
+      copyFrom: 50,
+    });
+    const stored = h.watchers.get(view.id)!;
+    // 密文解密后与源行一致（不是掩码、也不是新值）
+    expect(JSON.parse(cipher.decrypt(stored.headersJson!))).toEqual(sourceHeaders);
+    expect(cipher.decrypt(stored.body!)).toBe('{"k":"v"}');
+    // D7：副本 ACTIVE、基线置空；D8：指针不继承（每个哨兵复用自己的会话）
+    expect(stored.status).toBe('ACTIVE');
+    expect(stored.lastValueHash).toBeNull();
+    expect(stored.triggerMode).toBe('NEW_SESSION');
+    expect(stored.reuseSessionId).toBeNull();
+  });
+
+  it('改名后的掩码键报错，不把 ****** 当凭据落库', async () => {
+    const h = harness({ watcher: sourceWatcher() });
+    await expect(h.service.create(7, {
+      ...baseInput,
+      method: 'POST',
+      headers: { 'X-Api-Key': '******' },
+      copyFrom: 50,
+    })).rejects.toThrow('请求头 X-Api-Key 需要填写新的值');
+    // 源行未被污染
+    expect(JSON.parse(cipher.decrypt(h.watchers.get(50)!.headersJson!))).toEqual(sourceHeaders);
+  });
+
+  it('body 显式下发新值时覆盖继承值', async () => {
+    const h = harness({ watcher: sourceWatcher() });
+    const view = await h.service.create(7, {
+      ...baseInput,
+      method: 'POST',
+      headers: { Authorization: 'Bearer SECRET', Accept: 'application/json' },
+      body: '{"k":"new"}',
+      copyFrom: 50,
+    });
+    expect(cipher.decrypt(h.watchers.get(view.id)!.body!)).toBe('{"k":"new"}');
+  });
+
+  it('删光请求头行 = 无请求头（归一化为 null）', async () => {
+    const h = harness({ watcher: sourceWatcher() });
+    const view = await h.service.create(7, {
+      ...baseInput,
+      method: 'POST',
+      headers: {},
+      body: '{"k":"v"}',
+      copyFrom: 50,
+    });
+    expect(h.watchers.get(view.id)!.headersJson).toBeNull();
+  });
+
+  it('源行也无 body 时继承 null，由 POST 必填校验拦住', async () => {
+    const h = harness({ watcher: sourceWatcher({ body: null }) });
+    await expect(h.service.create(7, {
+      ...baseInput,
+      method: 'POST',
+      headers: { Authorization: 'Bearer SECRET' },
+      copyFrom: 50,
+    })).rejects.toThrow(/请求体/);
+  });
+
+  it('GET 复制不继承 body（body 只对 POST 有意义）', async () => {
+    const h = harness({ watcher: sourceWatcher() });
+    const view = await h.service.create(7, {
+      ...baseInput,
+      method: 'GET',
+      headers: { Authorization: 'Bearer SECRET', Accept: 'application/json' },
+      copyFrom: 50,
+    });
+    expect(h.watchers.get(view.id)!.body).toBeNull();
+  });
+
+  it('copyFrom 非本人 / 不存在均拒绝', async () => {
+    const h = harness({ watcher: sourceWatcher() });
+    await expect(h.service.create(999, { ...baseInput, copyFrom: 50 })).rejects.toThrow(/哨兵不存在/);
+    await expect(h.service.create(7, { ...baseInput, copyFrom: 777 })).rejects.toThrow(/哨兵不存在/);
+    // 拒绝时不得留下任何新行
+    expect(h.watchers.size).toBe(1);
+  });
+
+  it('create 无 copyFrom 时行为零变化（回归：不下发 headers/body 即 null）', async () => {
+    const h = harness({ watcher: sourceWatcher() });
+    const view = await h.service.create(7, { ...baseInput, name: 'plain' });
+    const stored = h.watchers.get(view.id)!;
+    expect(stored.headersJson).toBeNull();
+    expect(stored.body).toBeNull();
+    expect(stored.triggerMode).toBe('NEW_SESSION');
+  });
+
+  it('复制态其余字段随请求体原样下发（含 triggerMode）', async () => {
+    const h = harness({ watcher: sourceWatcher() });
+    const view = await h.service.create(7, {
+      ...baseInput,
+      body: undefined,
+      name: 'src 副本',
+      method: 'POST',
+      intervalMinutes: 30,
+      triggerMode: 'REUSE_SESSION',
+      headers: { Authorization: 'Bearer SECRET', Accept: 'application/json' },
+      copyFrom: 50,
+    });
+    const stored = h.watchers.get(view.id)!;
+    expect(stored.intervalMinutes).toBe(30);
+    expect(stored.triggerMode).toBe('REUSE_SESSION');
+    expect(stored.reuseSessionId).toBeNull();
   });
 });

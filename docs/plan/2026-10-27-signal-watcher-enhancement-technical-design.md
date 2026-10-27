@@ -120,7 +120,9 @@ if (fresh.triggerMode === 'REUSE_SESSION' && fresh.reuseSessionId == null && out
 }
 ```
 
-`isReusableSession(watcher, sessionId)`：经新增 dep `getSession`（装配传 `sessionService.getSession`）校验会话存在、本人所有、非 `SUBAGENT`/`SIDE_TASK`、`CLOUD`、`agentId` 与哨兵一致；任一不满足返回 false。一次 SELECT 的成本换取「指针失效不烧连败、不触发停用」。
+`isReusableSession(watcher, sessionId)`：经新增 dep `getSession`（装配传 `sessionService.getSession`）校验会话存在、本人所有、非 `SUBAGENT`/`SIDE_TASK`、`CLOUD`、非 `ARCHIVED`、`agentId` 与哨兵一致；任一不满足返回 false。一次 SELECT 的成本换取「指针失效不烧连败、不触发停用」。
+
+> 实施修正（code review 01）：`SessionService.getSession` 在行不存在（含软删）时**抛** `BusinessException(SESSION_NOT_FOUND)` 而不是返回 null，装配层直接透传。`isReusableSession` 必须自己 catch 这一种异常并判失效——否则异常会被 runCheck 的 try 吞成「触发失败」：用户删掉复用的会话后变化被静默吞掉、白烧连败直到自动停用，且清指针代码在异常点之后永不可达。其它异常（如库瞬断）继续上抛记失败，不误判指针失效。已补按生产 wiring 真实语义（抛异常）的回归用例。
 
 运行期其余约束由 `openRun` 现成兜底（锁内重读、busy 自动入队返回 `queued:true` 不计失败）。
 
@@ -150,7 +152,7 @@ if (fresh.triggerMode === 'REUSE_SESSION' && fresh.reuseSessionId == null && out
 
 #### 3.3.2 分组 key：`SIGNAL`（无参数）
 
-与 `EMBED:` 同级的 source 驱动 key，不带 agentId——一个用户的全部哨兵会话进同一组。展示名「信号哨兵」、图标 Satellite（D4 确认）。
+与 `EMBED:` 同级的 source 驱动 key，不带 agentId——一个用户的全部哨兵会话进同一组。展示名「信号哨兵」、图标 Satellite（D4 确认；实施修正：`@element-plus/icons-vue@2.3.2` 无 Satellite 导出，改用语义最接近的 AlarmClock）。
 
 后端 `backend-ts/src/session/util/session-group-key.ts` 四处同改：
 
@@ -167,7 +169,7 @@ if (fresh.triggerMode === 'REUSE_SESSION' && fresh.reuseSessionId == null && out
 |---|---|
 | `cloudGroupKey()`（:80-103） | embed 分支之后加 `if (session.source === 'signal') return SIGNAL_GROUP_KEY` |
 | `formatCloudGroupLabel()`（:111-153） | SIGNAL → `'信号哨兵'`（不加分支会裸奔显示 key） |
-| `groupIconKind()`（:33-43） | 加 `'signal'` 分支；`GroupIconKind` 联合（:19）加成员；`TaskSessionGroupList.vue:26-56` 模板加图标分支（Satellite，D4 确认） |
+| `groupIconKind()`（:33-43） | 加 `'signal'` 分支；`GroupIconKind` 联合（:19）加成员；`TaskSessionGroupList.vue:26-56` 模板加图标分支（AlarmClock，Satellite 在 icons-vue@2.3.2 不存在） |
 | — | 新增导出 `SIGNAL_GROUP_KEY` / `isSignalGroupKey`（照 `EMBED_GROUP_PREFIX` 范式） |
 
 排序三处同改（漏一处则后端组序与前端不一致）：

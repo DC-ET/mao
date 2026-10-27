@@ -38,6 +38,14 @@ export function toInput(body: Record<string, unknown>): Partial<WatcherInput> {
       headers = parsed;
     }
   }
+  let copyFrom: number | undefined;
+  if (body.copyFrom != null) {
+    const n = Number(body.copyFrom);
+    if (!Number.isInteger(n) || n <= 0) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, 'copyFrom 必须为正整数');
+    }
+    copyFrom = n;
+  }
   return {
     name: typeof body.name === 'string' ? body.name : undefined,
     agentId: body.agentId == null ? undefined : Number(body.agentId),
@@ -51,6 +59,10 @@ export function toInput(body: Record<string, unknown>): Partial<WatcherInput> {
     compareMode: typeof body.compareMode === 'string' ? body.compareMode : undefined,
     jsonPath: 'jsonPath' in body ? (typeof body.jsonPath === 'string' ? body.jsonPath : null) : undefined,
     promptTemplate: typeof body.promptTemplate === 'string' ? body.promptTemplate : undefined,
+    triggerMode: typeof body.triggerMode === 'string' ? body.triggerMode : undefined,
+    // 复制源哨兵 id（仅 create 消费）：敏感请求头/body 由后端从源行解密继承。
+    // reuseSessionId 刻意不解析——指针系统维护，防伪造指向他人生效中的会话。
+    copyFrom,
   };
 }
 

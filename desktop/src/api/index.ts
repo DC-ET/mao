@@ -957,8 +957,8 @@ export async function fetchMyBudgets(): Promise<MyBudgetsVO> {
 
 // ── 信号哨兵（/v1/signal-watchers）─────────────────────────────────────────
 
-export type { SignalCompareMode, SignalWatcherStatus } from '@mao/contracts'
-import type { SignalCompareMode, SignalWatcherStatus } from '@mao/contracts'
+export type { SignalCompareMode, SignalTriggerMode, SignalWatcherStatus } from '@mao/contracts'
+import type { SignalCompareMode, SignalTriggerMode, SignalWatcherStatus } from '@mao/contracts'
 
 export interface SignalWatcherView {
   id: number
@@ -975,6 +975,10 @@ export interface SignalWatcherView {
   jsonPath: string | null
   promptTemplate: string
   status: SignalWatcherStatus
+  /** 触发方式：NEW_SESSION=每次新建会话，REUSE_SESSION=复用自己的会话。 */
+  triggerMode: SignalTriggerMode
+  /** REUSE_SESSION 模式当前复用的会话 id（只读；指针由系统维护，不接受提交）。 */
+  reuseSessionId: number | null
   lastValueHash: string | null
   lastCheckedAt: string | null
   lastChangedAt: string | null
@@ -1024,6 +1028,13 @@ export interface SignalWatcherInput {
   compareMode: SignalCompareMode
   jsonPath?: string | null
   promptTemplate: string
+  /** 触发方式；缺省 = NEW_SESSION（保持现状语义）。 */
+  triggerMode?: SignalTriggerMode
+  /**
+   * 复制源哨兵 id（仅新建生效）：敏感请求头与请求体由后端从源行解密继承，
+   * 前端不下发明文。reuseSessionId 刻意不在入参里——指针系统维护。
+   */
+  copyFrom?: number
 }
 
 export async function listSignalWatchers(): Promise<SignalWatcherView[]> {

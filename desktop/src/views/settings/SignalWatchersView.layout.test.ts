@@ -89,3 +89,108 @@ describe('信号哨兵轮询记录抽屉移动端布局', () => {
     expect(block).toContain('@current-change')
   })
 })
+
+// ── 触发方式 + 复制（D8 模型 B / D9）─────────────────────────────────
+// 这几点都会直接改变用户可感知的行为：20 个上限取消、复用自己的会话、复制继承敏感字段，
+// 且「复用会话」指针是服务端维护的（用户不选会话），所以一并锁在源码级断言里。
+describe('信号哨兵触发方式与复制', () => {
+  /** 取 <script setup> 段，避免匹配到模板注释里的同名文案。 */
+  function scriptBlock(): string {
+    const at = src.indexOf('<script setup')
+    expect(at, '未找到 <script setup>').toBeGreaterThan(-1)
+    return src.slice(at, src.indexOf('</script>', at))
+  }
+
+  /** 取新建/编辑对话框这一段（触发方式单选组在这里）。 */
+  function dialogBlock(): string {
+    const at = src.indexOf('<el-dialog')
+    expect(at, '未找到 <el-dialog>').toBeGreaterThan(-1)
+    return src.slice(at, src.indexOf('</el-dialog>', at))
+  }
+
+  it('表单提供触发方式单选：每次新建会话 / 复用会话', () => {
+    const block = dialogBlock()
+    expect(block).toContain('label="触发方式"')
+    expect(block).toContain('v-model="form.triggerMode"')
+    expect(block).toContain('value="NEW_SESSION"')
+    expect(block).toContain('value="REUSE_SESSION"')
+  })
+
+  it('列表卡片展示触发方式角标（不点开对话框也能看出差别）', () => {
+    expect(src).toContain('{{ triggerModeLabel(watcher.triggerMode) }}')
+  })
+
+  it('表单不出现会话选择器：复用指针由服务端维护，用户不选会话', () => {
+    // 前端只下发 triggerMode；reuse_session_id 只在路由层之后由服务端写，
+    // 一旦露出选择器，用户就会以为能指定任意会话（跨用户/跨 Agent 越权面）。
+    // 注意：轮询记录抽屉里的「会话 #id」跳转链接不在此列（只读展示）。
+    const fn = scriptBlock().slice(
+      scriptBlock().indexOf('const form = reactive'),
+      scriptBlock().indexOf('const checksVisible')
+    )
+    expect(fn).not.toContain('reuseSessionId')
+    expect(fn).not.toContain('sessionId')
+    expect(dialogBlock()).not.toMatch(/选择会话|指定会话/)
+  })
+
+  it('20 个上限已取消：不引入上限常量、不渲染哨兵数量上限、不禁用新建按钮', () => {
+    expect(src).not.toContain('MAX_WATCHERS')
+    // 「上限 64KB」是请求体长度提示，与哨兵数量无关，不在此断言范围
+    expect(src).not.toMatch(/哨兵.{0,6}上限|上限.{0,6}哨兵|最多.{0,4}个哨兵/)
+    // 新建按钮不能带 :disabled
+    const btnAt = src.indexOf('openCreateDialog')
+    expect(src.slice(btnAt, src.indexOf('>', btnAt))).not.toContain('disabled')
+  })
+
+  it('列表提供复制按钮（tooltip 说明敏感字段自动继承）', () => {
+    expect(src).toContain('openCopyDialog(watcher)')
+    expect(src).toContain('复制（预填新建，敏感请求头与请求体自动继承）')
+  })
+
+  it('复制不调任何写 API：只预填表单后打开新建对话框', () => {
+    // 复制是纯前端预填：不能顺手 create/update，否则用户点一下就被迫产生一条哨兵
+    const fn = scriptBlock().slice(
+      scriptBlock().indexOf('function openCopyDialog'),
+      scriptBlock().indexOf('function openEditDialog')
+    )
+    expect(fn).not.toMatch(/createSignalWatcher|updateSignalWatcher|api\.(post|put)/)
+    expect(fn).toContain('copyFormFromView')
+    expect(fn).toContain('copyingFromId.value = watcher.id')
+    expect(fn).toContain('dialogVisible.value = true')
+    expect(fn).toContain('editing.value = false')
+  })
+
+  it('复制态对话框有专属标题与继承提示', () => {
+    expect(src).toContain("copyingFromId != null ? '复制哨兵' : '新建哨兵'")
+    expect(src).toContain('v-if="copyingFromId != null"')
+    expect(src).toContain('敏感请求头与请求体保存时自动从源哨兵继承')
+  })
+
+  it('复制态随 payload 下发 copyFrom，提示文案与新建态区分', () => {
+    const fn = scriptBlock().slice(
+      scriptBlock().indexOf('async function submitForm'),
+      scriptBlock().indexOf('async function toggleStatus')
+    )
+    expect(fn).toContain('copyingFromId.value ?? undefined')
+    expect(fn).toContain("'哨兵已复制'")
+  })
+
+  it('复制态 POST 请求体留空可提交（留空=沿用源请求体）', () => {
+    // 复制过来的哨兵若是 POST，前端拿不到明文请求体；此时不能再拿「必填」卡住保存
+    const fn = scriptBlock().slice(
+      scriptBlock().indexOf('const canSubmit'),
+      scriptBlock().indexOf('async function submitForm')
+    )
+    expect(fn).toContain('copyingFromId.value == null')
+    expect(fn).toContain('form.method === \'POST\'')
+  })
+
+  it('复制态请求体占位符说明沿用语义，编辑态说明留空不修改', () => {
+    const fn = scriptBlock().slice(
+      scriptBlock().indexOf('const bodyPlaceholder'),
+      scriptBlock().indexOf('const canSubmit')
+    )
+    expect(fn).toContain('留空沿用源哨兵的请求体')
+    expect(fn).toContain('留空不修改')
+  })
+})

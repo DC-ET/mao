@@ -3,6 +3,7 @@ import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import type { Message, Session } from '../domain/types.js';
 import type { TaskNotifySource } from '../session/task-terminal.service.js';
+import type { SessionSource } from '../session/session.repository.js';
 import { withSessionLock } from '../schedule/scheduled-task.service.js';
 import { isActivePhase } from '../session/session-vo.js';
 import type { MessageQueueSource } from '../session/types.js';
@@ -16,7 +17,30 @@ export interface OpenRunDeps {
     getSession(id: number): Promise<Session | null>;
     updatePhase(sessionId: number, phase: string): Promise<void>;
     saveMessage(sessionId: number, role: string, content: unknown, a: null, b: null, c: null, d: number, e: null): Promise<Message>;
-    createSession(userId: number, agentId: number, title: string | null | undefined, executionMode: string | null | undefined): Promise<Session>;
+    /**
+     * 位置签名必须与 SessionService.createSession（session.service.ts:97-114）逐位一致：
+     * 装配层是 `sessionService as unknown as OpenRunDeps['sessionService']` 强转，
+     * 两边不一致编译期不报警，调用处数错位参会把 source 静默写进 workspace/gitCloneUrl。
+     * source 是第 16 个位置参数，中间 11 个位置传 undefined。
+     */
+    createSession(
+      userId: number,
+      agentId: number | null | undefined,
+      title: string | null | undefined,
+      executionMode?: string | null,
+      workspace?: string | null,
+      permissionLevel?: string | null,
+      isGit?: boolean | null,
+      platform?: string | null,
+      shellPath?: string | null,
+      osVersion?: string | null,
+      modelId?: number | null,
+      cloudProjectKey?: string | null,
+      workspaceMode?: string | null,
+      gitCloneUrl?: string | null,
+      gitBranch?: string | null,
+      source?: SessionSource | null,
+    ): Promise<Session>;
   };
   messageQueueService: {
     enqueue(sessionId: number, userId: number, content: string, images: string | null, scheduledTaskId?: number | null, source?: MessageQueueSource | null, openTriggerId?: number | null, openCallLogId?: number | null): Promise<unknown>;
@@ -117,8 +141,29 @@ export class OpenRunService {
       }
       session = loaded;
     } else {
-      // 显式 CLOUD（不依赖 createSession 默认值）；权限档位/工作区留空走默认
-      session = await this.deps.sessionService.createSession(input.userId, agent.id, null, 'CLOUD');
+      // 显式 CLOUD（不依赖 createSession 默认值）；权限档位/工作区留空走默认。
+      // source 是 createSession 的第 16 个位置参数，中间 11 个位置全部显式传 undefined
+      // （装配层 as unknown as 强转，接口与真实签名不一致编译期不报警，错位=静默丢 source）。
+      // 映射只对 SIGNAL 生效：API/WEBHOOK 两条路共用此调用点，来源仍落默认 'web'；
+      // 'signal' 让哨兵会话进独立分组（技术方案 2026-10-27 §3.3.1）。
+      session = await this.deps.sessionService.createSession(
+        input.userId,
+        agent.id,
+        null,
+        'CLOUD',
+        undefined, // workspace
+        undefined, // permissionLevel
+        undefined, // isGit
+        undefined, // platform
+        undefined, // shellPath
+        undefined, // osVersion
+        undefined, // modelId
+        undefined, // cloudProjectKey
+        undefined, // workspaceMode
+        undefined, // gitCloneUrl
+        undefined, // gitBranch
+        input.source === 'SIGNAL' ? 'signal' : undefined,
+      );
     }
     const sessionId = session.id;
     if (sessionId == null) {

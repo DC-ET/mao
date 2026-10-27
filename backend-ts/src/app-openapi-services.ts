@@ -123,6 +123,8 @@ export function assembleOpenApiServices(deps: OpenApiServicesDeps): OpenApiServi
     checkRepo: signalCheckRepo,
     cipher: signalCipher,
     openRun: openRunService,
+    // 复用指针有效性预检（技术方案 2026-10-27 §3.2.3）
+    getSession: (id) => sessionService.getSession(id),
     disableNotifier: {
       notifyWatcherDisabled: async (input) => {
         await inboxService.recordWatcherDisabled(input);

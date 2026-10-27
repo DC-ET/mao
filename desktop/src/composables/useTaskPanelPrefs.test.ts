@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useTaskPanelPrefs } from './useTaskPanelPrefs'
+import { SIGNAL_GROUP_KEY } from '../utils/cloud-project'
 import { api } from '../api'
 import { ElMessage } from 'element-plus'
 import { getToken } from '../utils/auth-storage'
@@ -35,6 +36,26 @@ describe('onDragEnd 分组拖拽排序', () => {
     const prefs = useTaskPanelPrefs()
     prefs.onDragEnd(3, 1, KEYS)
     expect(prefs.groupOrder.value).toEqual(['A', 'D', 'B', 'C', 'E'])
+  })
+})
+
+describe('sortGroups 未排序分组的兜底顺序', () => {
+  it('信号哨兵分组排在最后（CLOUD/非 CLOUD 之后、字典序之前）', () => {
+    const prefs = useTaskPanelPrefs()
+    const sorted = prefs.sortGroups([
+      { key: SIGNAL_GROUP_KEY },
+      { key: 'LOCAL:/Users/me/code' },
+      { key: 'CLOUD:/opt/mao-data/workspace/1/projects/demo' },
+      { key: 'EMBED:7' },
+      { key: 'CLOUD:临时工作区' }
+    ])
+    expect(sorted.map((g) => g.key)).toEqual([
+      'CLOUD:临时工作区',
+      'EMBED:7',
+      'CLOUD:/opt/mao-data/workspace/1/projects/demo',
+      'LOCAL:/Users/me/code',
+      SIGNAL_GROUP_KEY
+    ])
   })
 })
 
