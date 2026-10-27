@@ -1252,6 +1252,7 @@ function addReplyQuote(text: string) {
     truncated: capped.truncated,
   }]
   saveDraft(props.draftKey)
+  focusInput()
 }
 
 function removeReplyQuote(id: string) {
