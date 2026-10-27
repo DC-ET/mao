@@ -2,7 +2,7 @@
 
 > 0.0.350 让回复里的 mermaid / 公式 / 表格不再以源码形态阅读；同一时期，Agent 落盘的文件仍停在「四种格式能看、其余一律二进制」：数据分析任务交出的 CSV 报表按纯文本摊开、XLSX 根本打不开、录屏和压缩包只能下载后找外部工具。成果审阅的最后一公里，断在文件预览。
 
-- 状态：已细化，技术方案待评审（第十七批）：[docs/plan/2026-10-26-workspace-file-preview-technical-design.md](../plan/2026-10-26-workspace-file-preview-technical-design.md)（含 §6 全量冲突清单；技术方案对提案有三处范围修正：XLSX 库定 exceljs、`.tar/.gz` 收窄为不做、DOCX 列 P2 伸展项）
+- 状态：已转入实施（0.0.354，第十七批）：[docs/plan/2026-10-26-workspace-file-preview-technical-design.md](../plan/2026-10-26-workspace-file-preview-technical-design.md)（含 §6 全量冲突清单与 §13 实现期评审修正；技术方案对提案有三处范围修正：XLSX 库定 exceljs、`.tar/.gz` 收窄为不做、DOCX 列 P2 伸展项）
 - 日期：2026-10-26
 - 提案总览见 [docs/proposals/README.md](README.md)
 - 规模：小~中（P1 约 2-3 人日、P2 约 1-2 人日、P3 约 1-2 人日；零迁移，P3 零新端点）

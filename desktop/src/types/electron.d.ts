@@ -274,6 +274,8 @@ interface ElectronAPI {
 
   toolExecute(toolName: string, args: any, requestId: string, workspace: string, sessionId: string, needApproval: boolean, dangerReason?: string): Promise<any>
   localReadFile(args: any): Promise<any>
+  /** LOCAL 二进制字节读取（技术方案 §5.2）：zip / xlsx / docx / 媒体预览取数，返回 Buffer（结构化克隆为 Uint8Array）。 */
+  localReadBytes(args: { path: string }): Promise<{ bytes?: Uint8Array; size?: number; error?: string }>
   localWriteFile(args: any): Promise<any>
   localEditFile(args: any): Promise<any>
   listWorkspaceFiles(workspace: string, filter?: string, limit?: number): Promise<WorkspaceFile[]>
