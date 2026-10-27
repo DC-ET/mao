@@ -34,6 +34,19 @@
           </button>
         </div>
       </div>
+
+      <!-- 多选批量操作条：置于列表上方，长列表勾选后不必滚到底部才能归档。
+           仍在滚动区之外（flex-shrink:0），不被 .resize-handle 影响。 -->
+      <div v-if="selecting" class="select-action-bar">
+        <span class="select-count">已选 {{ selectedCount }}</span>
+        <button
+          class="select-archive-btn"
+          :disabled="selectedCount === 0 || batchArchiving"
+          @click="confirmBatchArchive"
+        >归档</button>
+        <button class="select-cancel-btn" :disabled="batchArchiving" @click="exitSelectMode">取消</button>
+      </div>
+
       <div class="panel-content">
         <template v-if="listMode === 'standard'">
           <TaskSessionGroupList
@@ -158,17 +171,6 @@
           :start-edit="startEdit"
           :start-delete="startDelete"
         />
-      </div>
-
-      <!-- 多选批量操作条：挂在滚动区之外，避开 .resize-handle -->
-      <div v-if="selecting" class="select-action-bar">
-        <span class="select-count">已选 {{ selectedCount }}</span>
-        <button
-          class="select-archive-btn"
-          :disabled="selectedCount === 0 || batchArchiving"
-          @click="confirmBatchArchive"
-        >归档</button>
-        <button class="select-cancel-btn" :disabled="batchArchiving" @click="exitSelectMode">取消</button>
       </div>
     </template>
     <div

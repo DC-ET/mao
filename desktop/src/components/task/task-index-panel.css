@@ -85,12 +85,14 @@
   opacity: 0.4;
 }
 
+/* 多选批量操作条：固定在列表上方（长列表勾选后不必滚到底部），
+   分隔线画在下边缘，与下方滚动列表相接。 */
 .task-index-panel .select-action-bar {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  border-top: 1px solid var(--aw-divider-soft);
+  border-bottom: 1px solid var(--aw-divider-soft);
   background: var(--aw-surface-pearl);
   flex-shrink: 0;
 }
@@ -589,6 +591,24 @@
   .task-index-panel .resize-handle:hover::before,.task-index-panel .resize-handle:active::before {
     width: 8px;
     height: 72px;
+  }
+
+  /* 面板在该断点降到 140px：一行放不下「已选 N + 归档 + 取消」（两个按钮就占掉
+     约 92px）。计数改独立一行——否则 .select-count 的 flex:1 + min-width:0
+     会被压到 0 宽，文案整个不可见（实测 3px）。 */
+  .task-index-panel .select-action-bar {
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px;
+  }
+
+  .task-index-panel .select-count {
+    flex: 1 1 100%;
+  }
+
+  .task-index-panel .select-archive-btn,
+  .task-index-panel .select-cancel-btn {
+    padding: 5px 8px;
   }
 }
 
