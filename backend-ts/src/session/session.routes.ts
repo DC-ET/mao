@@ -7,7 +7,7 @@ import { requireUserId, sendOk } from '../common/http-error.js';
 import {
   bodyOf, collectEntityIds, idMapGet, parseEntityId, pathId, pathParam, queryOptBool, queryOptFloat, queryOptInt, queryOptStr,
 } from '../common/request.js';
-import { isSessionSource, type SessionSource } from './session.repository.js';
+import { isSessionSource, isUserSettableSessionSource, type SessionSource } from './session.repository.js';
 import { javaLocalDateTimeString } from '../common/datetime.js';
 import type { PathSandbox } from '../harness/safety/path-sandbox.js';
 import type { SessionService } from './session.service.js';
@@ -147,7 +147,9 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
   app.post('/v1/sessions', async (request, reply) => {
     const userId = requireUserId(request);
     const body = bodyOf<CreateSessionRequest>(request);
-    if (body.source != null && !isSessionSource(body.source)) {
+    // 用户可手工建的来源仅 web/embed：显式白名单，不跟 SESSION_SOURCE_VALUES 联动——
+    // 'signal' 等系统来源只能由哨兵触发经 openRun 产生（防伪造分组归属，技术方案 §3.3.1）。
+    if (body.source != null && !isUserSettableSessionSource(body.source)) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, "source 仅允许 'web' / 'embed'");
     }
     assertOwnedSessionWorkspace(deps.pathSandbox, userId, body.executionMode, body.workspace);
@@ -320,7 +322,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     const userId = requireUserId(request);
     await requireSessionOwner(userId, pathId(request));
     const body = bodyOf<{ source?: string | null }>(request);
-    if (body.source == null || !isSessionSource(body.source)) {
+    if (body.source == null || !isUserSettableSessionSource(body.source)) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, "source 仅允许 'web' / 'embed'");
     }
     const session = await sessionService.markSessionSource(pathId(request), userId, body.source);

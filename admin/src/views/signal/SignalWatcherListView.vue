@@ -43,6 +43,9 @@
       <el-table-column label="判定模式" width="110">
         <template #default="{ row }">{{ compareModeLabel(row.compareMode) }}</template>
       </el-table-column>
+      <el-table-column label="触发方式" width="120">
+        <template #default="{ row }">{{ triggerModeLabel(row.triggerMode) }}</template>
+      </el-table-column>
       <el-table-column label="状态" width="90">
         <template #default="{ row }">
           <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
@@ -79,7 +82,7 @@
 import { onActivated, onMounted, reactive, ref } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 import { api } from '../../api'
-import type { SignalCompareMode, SignalWatcherStatus } from '@mao/contracts'
+import type { SignalCompareMode, SignalTriggerMode, SignalWatcherStatus } from '@mao/contracts'
 import { formatDateTime } from '../../utils/datetime'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
 
@@ -92,6 +95,7 @@ interface WatcherRow {
   method: string
   intervalMinutes: number
   compareMode: SignalCompareMode
+  triggerMode: SignalTriggerMode
   status: SignalWatcherStatus
   lastCheckedAt: string | null
   lastChangedAt: string | null
@@ -112,6 +116,11 @@ const COMPARE_MODE_LABELS: Record<SignalCompareMode, string> = {
   HASH: '内容哈希',
   JSON_FIELD: 'JSON 字段',
   STATUS_CODE: '状态码'
+}
+
+const TRIGGER_MODE_LABELS: Record<SignalTriggerMode, string> = {
+  NEW_SESSION: '每次新建会话',
+  REUSE_SESSION: '复用会话'
 }
 
 const STATUS_TAGS: Record<SignalWatcherStatus, 'success' | 'warning' | 'danger'> = {
@@ -137,6 +146,10 @@ function statusLabel(status: SignalWatcherStatus): string {
 
 function compareModeLabel(mode: SignalCompareMode): string {
   return COMPARE_MODE_LABELS[mode] ?? mode
+}
+
+function triggerModeLabel(mode: SignalTriggerMode): string {
+  return TRIGGER_MODE_LABELS[mode] ?? mode
 }
 
 function statusTagType(status: SignalWatcherStatus): 'success' | 'warning' | 'danger' | 'info' {

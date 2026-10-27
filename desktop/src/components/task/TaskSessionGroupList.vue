@@ -48,6 +48,9 @@
             <el-icon v-else-if="groupIconKind(group.key, group.sessions) === 'embed'" :size="13">
               <Monitor />
             </el-icon>
+            <el-icon v-else-if="groupIconKind(group.key, group.sessions) === 'signal'" :size="13">
+              <AlarmClock />
+            </el-icon>
             <el-icon v-else :size="13">
               <PartlyCloudy v-if="groupIconKind(group.key, group.sessions) === 'cloud' && !isGroupCollapsed(group.key)" />
               <Cloudy v-else-if="groupIconKind(group.key, group.sessions) === 'cloud'" />
@@ -189,7 +192,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Loading, Plus, Delete, Check, Close, Cloudy, PartlyCloudy, Folder, FolderOpened, EditPen, ArrowDown, ArrowRight, ChatDotRound, Monitor } from '@element-plus/icons-vue'
+import { Loading, Plus, Delete, Check, Close, Cloudy, PartlyCloudy, Folder, FolderOpened, EditPen, ArrowDown, ArrowRight, ChatDotRound, Monitor, AlarmClock } from '@element-plus/icons-vue'
 import type { Session } from '../../stores/session'
 import { useReadinessStore } from '../../stores/readiness'
 import { groupIconKind } from '../../utils/cloud-project'

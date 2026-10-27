@@ -150,7 +150,7 @@ if (fresh.triggerMode === 'REUSE_SESSION' && fresh.reuseSessionId == null && out
 
 #### 3.3.2 分组 key：`SIGNAL`（无参数）
 
-与 `EMBED:` 同级的 source 驱动 key，不带 agentId——一个用户的全部哨兵会话进同一组。展示名「信号哨兵」、图标 Satellite（D4 确认）。
+与 `EMBED:` 同级的 source 驱动 key，不带 agentId——一个用户的全部哨兵会话进同一组。展示名「信号哨兵」、图标 Satellite（D4 确认；实施修正：`@element-plus/icons-vue@2.3.2` 无 Satellite 导出，改用语义最接近的 AlarmClock）。
 
 后端 `backend-ts/src/session/util/session-group-key.ts` 四处同改：
 
@@ -167,7 +167,7 @@ if (fresh.triggerMode === 'REUSE_SESSION' && fresh.reuseSessionId == null && out
 |---|---|
 | `cloudGroupKey()`（:80-103） | embed 分支之后加 `if (session.source === 'signal') return SIGNAL_GROUP_KEY` |
 | `formatCloudGroupLabel()`（:111-153） | SIGNAL → `'信号哨兵'`（不加分支会裸奔显示 key） |
-| `groupIconKind()`（:33-43） | 加 `'signal'` 分支；`GroupIconKind` 联合（:19）加成员；`TaskSessionGroupList.vue:26-56` 模板加图标分支（Satellite，D4 确认） |
+| `groupIconKind()`（:33-43） | 加 `'signal'` 分支；`GroupIconKind` 联合（:19）加成员；`TaskSessionGroupList.vue:26-56` 模板加图标分支（AlarmClock，Satellite 在 icons-vue@2.3.2 不存在） |
 | — | 新增导出 `SIGNAL_GROUP_KEY` / `isSignalGroupKey`（照 `EMBED_GROUP_PREFIX` 范式） |
 
 排序三处同改（漏一处则后端组序与前端不一致）：

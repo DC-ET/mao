@@ -200,7 +200,7 @@ function mount() {
   app.mount(root as never)
   if (errors.length) throw errors[0]
 
-  const clickItem = (title: string) => {
+  const findItem = (title: string): StubEl => {
     const hit: StubEl[] = []
     const walk = (el: StubEl) => {
       if (el.tag === 'li' && subtreeText(el).includes(title)) hit.push(el)
@@ -209,11 +209,16 @@ function mount() {
     for (const c of root.children) if (!('text' in c)) walk(c)
     const el = hit[0]
     if (!el) throw new Error(`item not found: ${title}`)
+    return el
+  }
+  const clickItem = (title: string) => {
+    const el = findItem(title)
     const arr = handlers.get(el)?.get('onClick')
     if (!arr || !arr.length) throw new Error(`no click handler on: ${title}`)
     return arr[arr.length - 1]!()
   }
-  return { clickItem }
+  const itemText = (title: string) => subtreeText(findItem(title))
+  return { clickItem, itemText }
 }
 
 function item(overrides: Record<string, unknown>): Record<string, unknown> {
@@ -285,5 +290,24 @@ describe('InboxDrawer BUDGET_WARN 分支', () => {
     await flush()
     expect(captured.openUsageEvents).toEqual([])
     expect(captured.warnings).toEqual([])
+  })
+
+  it('信号哨兵来源：payload.source=SIGNAL 显示「信号哨兵」角标，点击仍跳关联会话', async () => {
+    // D1：哨兵会话排除未读但收件箱通知照发，这里锁死来源透传链路上的展示
+    captured.items = [item({ kind: 'TASK_COMPLETED', title: '哨兵通知', payload: { source: 'SIGNAL' } })]
+    const m = mount()
+    await flush()
+    expect(m.itemText('哨兵通知')).toContain('信号哨兵')
+    m.clickItem('哨兵通知')
+    await flush()
+    expect(captured.pushed).toEqual(['/tasks/42'])
+  })
+
+  it('未知来源不渲染角标（避免把 payload.source 直接当文案显示）', async () => {
+    captured.items = [item({ kind: 'TASK_COMPLETED', title: '任务完成', payload: { source: 'MOBILE' } })]
+    const m = mount()
+    await flush()
+    expect(m.itemText('任务完成')).not.toContain('MOBILE')
+    expect(m.itemText('任务完成')).not.toContain('信号哨兵')
   })
 })

@@ -73,6 +73,10 @@ describe('session group filter consistency', () => {
     { name: 'embed + LOCAL 工作区', row: row({ source: 'embed', execution_mode: 'LOCAL', workspace: '/Users/me/proj' }) },
     { name: 'embed + LOCAL 未设置', row: row({ source: 'embed', execution_mode: 'LOCAL', workspace: '' }) },
     { name: 'embed + agent_id 为空', row: row({ source: 'embed', agent_id: null }) },
+    // 信号哨兵会话：实际形态是 CLOUD + workspace NULL（openRun 建会话不传 workspace）；
+    // 另补一条 CLOUD + projects 工作区（历史数据/手动改过工作区的兜底形态）。
+    { name: 'signal + CLOUD 项目工作区', row: row({ source: 'signal' }) },
+    { name: 'signal + CLOUD 临时工作区', row: row({ source: 'signal', workspace: null }) },
   ];
 
   it('每个会话只命中 of() 指出的那一个分组', () => {
@@ -101,5 +105,18 @@ describe('session group filter consistency', () => {
       if (!filterMatches(ownKey, sessionRow)) leaks.push(`${name} 未落入自己的分组 ${ownKey}`);
     }
     expect(leaks, `embed 会话分组口径异常 ${leaks.length} 处:\n${leaks.join('\n')}`).toEqual([]);
+  });
+
+  it('signal 会话不落入任何模式/工作区分组，且必落入 SIGNAL 分组', () => {
+    const leaks: string[] = [];
+    for (const { name, row: sessionRow } of sessions) {
+      if (sessionRow.source !== 'signal') continue;
+      const workspaceKey = SessionGroupKey.ofMode(sessionRow.execution_mode as string, sessionRow.workspace as string | null);
+      if (filterMatches(workspaceKey, sessionRow)) leaks.push(`${name} 落入了模式/工作区分组 ${workspaceKey}`);
+      const ownKey = SessionGroupKey.of(sessionRow as never);
+      if (ownKey !== SessionGroupKey.SIGNAL_GROUP_KEY) leaks.push(`${name} 的 of() 产出不是 SIGNAL：${ownKey}`);
+      if (!filterMatches(ownKey, sessionRow)) leaks.push(`${name} 未落入自己的分组 ${ownKey}`);
+    }
+    expect(leaks, `signal 会话分组口径异常 ${leaks.length} 处:\n${leaks.join('\n')}`).toEqual([]);
   });
 });

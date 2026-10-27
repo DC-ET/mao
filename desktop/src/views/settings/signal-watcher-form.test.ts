@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildWatcherPayload, collectHeaders, headerPairsFromView, type HeaderPair, type SignalWatcherForm } from './signal-watcher-form'
+import { buildWatcherPayload, collectHeaders, copyFormFromView, headerPairsFromView, type HeaderPair, type SignalWatcherForm } from './signal-watcher-form'
 
 function pair(key: string, value: string, masked = false): HeaderPair {
   return { key, value, masked }
@@ -17,6 +17,7 @@ function form(partial: Partial<SignalWatcherForm> = {}): SignalWatcherForm {
     compareMode: 'HASH',
     jsonPath: '',
     promptTemplate: '值变了 {diff}',
+    triggerMode: 'NEW_SESSION',
     ...partial
   }
 }
@@ -114,5 +115,129 @@ describe('buildWatcherPayload', () => {
   it('JSON_FIELD：trim 后下发提取路径', () => {
     const payload = buildWatcherPayload(form({ compareMode: 'JSON_FIELD', jsonPath: ' data.items.0.price ' }), true)
     expect(payload.jsonPath).toBe('data.items.0.price')
+  })
+})
+
+describe('buildWatcherPayload 触发方式', () => {
+  it('新建态默认下发 NEW_SESSION', () => {
+    const payload = buildWatcherPayload(form(), false)
+    expect(payload.triggerMode).toBe('NEW_SESSION')
+  })
+
+  it('新建态选复用：下发 REUSE_SESSION', () => {
+    const payload = buildWatcherPayload(form({ triggerMode: 'REUSE_SESSION' }), false)
+    expect(payload.triggerMode).toBe('REUSE_SESSION')
+  })
+
+  it('编辑态未改动：下发回显值（与原值相同即幂等，后端同值不清指针）', () => {
+    const payload = buildWatcherPayload(form({ triggerMode: 'REUSE_SESSION' }), true)
+    expect(payload.triggerMode).toBe('REUSE_SESSION')
+  })
+
+  it('编辑态切到新建：下发 NEW_SESSION（后端据此清复用指针）', () => {
+    const payload = buildWatcherPayload(form({ triggerMode: 'NEW_SESSION' }), true)
+    expect(payload.triggerMode).toBe('NEW_SESSION')
+  })
+
+  it('reuseSessionId 永不下发（指针系统维护，入参里没有这个字段）', () => {
+    const payload = buildWatcherPayload(form({ triggerMode: 'REUSE_SESSION' }), true) as unknown as Record<string, unknown>
+    expect(payload).not.toHaveProperty('reuseSessionId')
+  })
+})
+
+describe('buildWatcherPayload 复制态（copyFrom）', () => {
+  it('下发 copyFrom；其余字段照常', () => {
+    const payload = buildWatcherPayload(form({ triggerMode: 'REUSE_SESSION' }), false, undefined, 42)
+    expect(payload.copyFrom).toBe(42)
+    expect(payload.triggerMode).toBe('REUSE_SESSION')
+  })
+
+  it('非复制态不下发 copyFrom', () => {
+    const payload = buildWatcherPayload(form(), false) as unknown as Record<string, unknown>
+    expect(payload).not.toHaveProperty('copyFrom')
+  })
+
+  it('复制态 POST 请求体留空：不下发 body 键（后端从源行解密继承）', () => {
+    const payload = buildWatcherPayload(
+      form({ method: 'POST', body: '', headers: [pair('Authorization', '', true)] }),
+      false, undefined, 42
+    ) as unknown as Record<string, unknown>
+    expect(payload).not.toHaveProperty('body')
+    // 掩码行照常下发，后端据此从源行还原真实凭据
+    expect(payload.headers).toEqual({ Authorization: '******' })
+  })
+
+  it('复制态 POST 请求体填了新值：照常下发（覆盖继承）', () => {
+    const payload = buildWatcherPayload(
+      form({ method: 'POST', body: '{"k":"new"}', headers: [pair('Authorization', '', true)] }),
+      false, undefined, 42
+    )
+    expect(payload.body).toBe('{"k":"new"}')
+  })
+
+  it('复制态删光请求头行：不下发 headers（= 不要请求头，不触发编辑态的显式清空）', () => {
+    const payload = buildWatcherPayload(
+      form({ method: 'POST', body: '{"k":1}', headers: [] }),
+      false, { Authorization: 'sk-1' }, 42
+    ) as unknown as Record<string, unknown>
+    expect(payload).not.toHaveProperty('headers')
+  })
+
+  it('复制态 GET：不下发 body（body 只对 POST 有意义）', () => {
+    const payload = buildWatcherPayload(form({ method: 'GET', body: '残留' }), false, undefined, 42) as unknown as Record<string, unknown>
+    expect(payload).not.toHaveProperty('body')
+  })
+})
+
+describe('copyFormFromView 复制预填', () => {
+  it('name 带「副本」后缀、非敏感字段原值、敏感头为掩码行、body 留空、triggerMode 随源', () => {
+    const view = {
+      id: 9,
+      name: '汇率',
+      agentId: 7,
+      url: 'https://example.com/api/rate',
+      method: 'POST',
+      headers: { Authorization: '******', 'X-Trace': '1' },
+      hasBody: true,
+      bodyLength: 14,
+      intervalMinutes: 30,
+      compareMode: 'HASH' as const,
+      jsonPath: null,
+      promptTemplate: '值变了 {diff}',
+      status: 'ACTIVE' as const,
+      triggerMode: 'REUSE_SESSION' as const,
+      reuseSessionId: 42,
+      lastValueHash: null,
+      lastCheckedAt: null,
+      lastChangedAt: null,
+      consecutiveFailures: 0,
+      createdAt: null
+    }
+    const copied = copyFormFromView(view)
+    expect(copied.name).toBe('汇率 副本')
+    expect(copied.agentId).toBe(7)
+    expect(copied.url).toBe('https://example.com/api/rate')
+    expect(copied.method).toBe('POST')
+    expect(copied.intervalMinutes).toBe(30)
+    expect(copied.compareMode).toBe('HASH')
+    expect(copied.promptTemplate).toBe('值变了 {diff}')
+    expect(copied.triggerMode).toBe('REUSE_SESSION')
+    // 敏感头是掩码行：留空即沿用源行原值；body 无明文可预填
+    expect(copied.headers).toEqual([
+      { key: 'Authorization', value: '', masked: true },
+      { key: 'X-Trace', value: '1', masked: false }
+    ])
+    expect(copied.body).toBe('')
+  })
+
+  it('源哨兵 triggerMode 缺省（老数据）时回落 NEW_SESSION', () => {
+    const view = {
+      id: 9, name: 'w', agentId: 7, url: 'https://example.com', method: 'GET',
+      headers: {}, hasBody: false, bodyLength: 0, intervalMinutes: 15,
+      compareMode: 'HASH' as const, jsonPath: null, promptTemplate: 'p',
+      status: 'ACTIVE' as const, lastValueHash: null, lastCheckedAt: null,
+      lastChangedAt: null, consecutiveFailures: 0, createdAt: null
+    } as Parameters<typeof copyFormFromView>[0]
+    expect(copyFormFromView(view).triggerMode).toBe('NEW_SESSION')
   })
 })

@@ -54,11 +54,12 @@ function subagentLabel(item: InboxItem): string | null {
   return null
 }
 
-/** 来源徽标（来源透传机制：payload.source）：定时任务 / Webhook / API。 */
+/** 来源徽标（来源透传机制：payload.source）：定时任务 / Webhook / API / 信号哨兵。 */
 const SOURCE_BADGES: Record<string, string> = {
   SCHEDULED: '定时任务',
   WEBHOOK: 'Webhook',
-  API: 'API'
+  API: 'API',
+  SIGNAL: '信号哨兵'
 }
 
 function sourceBadge(item: InboxItem): string | null {

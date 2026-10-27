@@ -11,12 +11,19 @@ export const WEIXIN_PROJECT_KEY = 'weixin-bot'
 /** Web 嵌入 SDK（source=embed）会话按 Agent 分组：EMBED:{agentId}，与后端 SessionGroupKey.EMBED_PREFIX 对齐。 */
 export const EMBED_GROUP_PREFIX = 'EMBED:'
 
+/** 信号哨兵会话（source=signal）独立分组：一个用户的全部哨兵会话进同一组，与后端 SIGNAL_GROUP_KEY 对齐。 */
+export const SIGNAL_GROUP_KEY = 'SIGNAL'
+
 export function isEmbedGroupKey(key: string): boolean {
   return key.startsWith(EMBED_GROUP_PREFIX)
 }
 
-/** 分组图标类型：飞书 / 微信 / 普通云端 / 网页嵌入 / 本地文件夹。 */
-export type GroupIconKind = 'feishu' | 'dingtalk' | 'weixin' | 'cloud' | 'embed' | 'folder'
+export function isSignalGroupKey(key: string): boolean {
+  return key === SIGNAL_GROUP_KEY
+}
+
+/** 分组图标类型：飞书 / 微信 / 普通云端 / 网页嵌入 / 本地文件夹 / 信号哨兵。 */
+export type GroupIconKind = 'feishu' | 'dingtalk' | 'weixin' | 'cloud' | 'embed' | 'folder' | 'signal'
 
 export function isFeishuGroupKey(key: string): boolean {
   return key.startsWith('FEISHU_PRIVATE:') || key.startsWith('FEISHU_GROUP:')
@@ -35,6 +42,7 @@ export function groupIconKind(
   sessions?: Pick<Session, 'projectKey'>[]
 ): GroupIconKind {
   if (isEmbedGroupKey(key)) return 'embed'
+  if (isSignalGroupKey(key)) return 'signal'
   if (isFeishuGroupKey(key)) return 'feishu'
   if (isDingtalkGroupKey(key)) return 'dingtalk'
   if (sessions?.some(isWeixinGroupSession)) return 'weixin'
@@ -81,6 +89,10 @@ export function cloudGroupKey(session: Pick<Session, 'executionMode' | 'workspac
   if (session.source === 'embed') {
     return `${EMBED_GROUP_PREFIX}${session.agentId ?? 'null'}`
   }
+  // 哨兵会话优先于模式/工作区分流：不隔离会混进置顶的「临时工作区」（与后端 of() 同序）
+  if (session.source === 'signal') {
+    return SIGNAL_GROUP_KEY
+  }
   if (session.executionMode !== 'CLOUD') {
     return session.workspace ? `LOCAL:${session.workspace}` : 'LOCAL:未设置'
   }
@@ -125,6 +137,8 @@ export function formatCloudGroupLabel(
   }
   if (key === 'CLOUD:临时工作区') return '临时工作区'
   if (isEmbedGroupKey(key)) return session?.agentName || '未知 Agent'
+  // 信号哨兵分组不带 agentId：固定文案，传 agentName 也不改变
+  if (isSignalGroupKey(key)) return '信号哨兵'
   if (key.startsWith('CLOUD:')) {
     const ws = key.substring(6)
     const parts = ws.replace(/\\/g, '/').split('/').filter(Boolean)

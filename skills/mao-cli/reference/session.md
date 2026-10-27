@@ -56,6 +56,8 @@ mao session list --group-key project:demo --offset 0 --limit 20
 
 获取桌面端任务侧栏使用的会话分组预览。
 
+分组 key 由服务端按工作区 / 来源派生；哨兵会话（来源 `signal`，见 [signal-watcher.md](signal-watcher.md)）归入独立分组 `SIGNAL`，展示名「信号哨兵」，排在各分组最后，且不计未读。
+
 ### 参数说明
 
 | 参数 | 必填 | 类型 | 含义 |

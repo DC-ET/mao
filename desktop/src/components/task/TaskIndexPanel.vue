@@ -210,7 +210,7 @@ import { useTerminal } from '../../composables/useTerminal'
 import { removeSessionTabsFor } from '../../composables/useCenterTabs'
 import { useTaskPanelPrefs } from '../../composables/useTaskPanelPrefs'
 import { useRelativeTime, formatRelativeTime } from '../../composables/useRelativeTime'
-import { cloudGroupKey, isEmbedGroupKey, isGroupRenameable, isSharedCloudProject, resolveGroupLabel } from '../../utils/cloud-project'
+import { cloudGroupKey, isEmbedGroupKey, isGroupRenameable, isSharedCloudProject, resolveGroupLabel, SIGNAL_GROUP_KEY } from '../../utils/cloud-project'
 import { planFocusReveal, planGroupReveal } from '../../utils/taskSidebarReveal'
 import { sessionToFocusCandidate, sortByFocusPriority, isHistoryEligible } from '../../utils/focusSort'
 import TaskSessionGroupList from './TaskSessionGroupList.vue'
@@ -971,6 +971,10 @@ const groupedSessions = computed(() => {
     if (isEmbedGroupKey(a) !== isEmbedGroupKey(b)) return isEmbedGroupKey(a) ? -1 : 1
     if (a.startsWith('CLOUD:') && !b.startsWith('CLOUD:')) return -1
     if (!a.startsWith('CLOUD:') && b.startsWith('CLOUD:')) return 1
+    // 信号哨兵分组排最后：与后端 SessionGroupKey.compareKeys 同规则（CLOUD/非 CLOUD 之后、
+    // 字典序之前），两端漂移会让用户看到的组顺序和后端分页顺序不一致
+    if (a === SIGNAL_GROUP_KEY) return b === SIGNAL_GROUP_KEY ? 0 : 1
+    if (b === SIGNAL_GROUP_KEY) return -1
     return a.localeCompare(b)
   })
 

@@ -127,12 +127,13 @@ export class TaskTerminalService {
     // 不影响任务完成事件链。
     await this.buildCitations(session, phase);
 
-    // 微信/飞书/钉钉通道会话由机器人等外部触发，终态不计未读，与 updatePhase 的 DB 写入保持一致
+    // 微信/飞书/钉钉通道会话与信号哨兵会话由机器触发，终态不计未读，与 updatePhase 的 DB 写入保持一致
     const statusData: Record<string, unknown> = {
       phase,
       unread: session.projectKey !== WEIXIN_PROJECT_KEY
         && !isFeishuChannelSession(session.projectKey, session.workspace)
-        && !isDingtalkChannelSession(session.projectKey, session.workspace),
+        && !isDingtalkChannelSession(session.projectKey, session.workspace)
+        && session.source !== 'signal',
     };
     if (executionId != null && executionId.trim() !== '') {
       statusData.executionId = executionId;

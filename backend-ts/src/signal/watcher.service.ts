@@ -2,8 +2,8 @@ import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { formatDateTime } from '../common/json.js';
 import type { OpenRunService } from '../openapi/open-run.service.js';
-import type { SignalWatcher, SignalWatcherCheck, SignalCompareMode, SignalWatcherStatus } from './types.js';
-import { isSignalCompareMode, isSignalWatcherStatus, SIGNAL_PROBE_METHODS, WATCHER_WARNING_TRIGGER_RATE_LIMITED } from './types.js';
+import type { SignalWatcher, SignalWatcherCheck, SignalCompareMode, SignalTriggerMode, SignalWatcherStatus } from './types.js';
+import { isSignalCompareMode, isSignalTriggerMode, isSignalWatcherStatus, SIGNAL_PROBE_METHODS, WATCHER_WARNING_TRIGGER_RATE_LIMITED } from './types.js';
 import type { MysqlSignalWatcherRepository, MysqlSignalCheckRepository } from './signal.repository.js';
 import type { SignalSecretCipher } from './signal-cipher.js';
 import { assertProbeHeaders, assertProbeUrl, isSensitiveProbeHeader, maskProbeHeaders, SECRET_MASK } from './probe-validate.js';
@@ -18,8 +18,6 @@ import {
 
 /** 连续失败自动停用阈值（决策 8，与 openapi/webhook-trigger 的 5 次对齐）。 */
 export const WATCHER_DISABLE_AFTER_FAILURES = 5;
-/** 每用户哨兵数量上限（对齐 MAX_TRIGGERS_PER_USER）。 */
-export const MAX_WATCHERS_PER_USER = 20;
 /** 触发频次上限：同一哨兵每小时最多 4 次（决策 7）。 */
 export const WATCHER_MAX_TRIGGERS_PER_HOUR = 4;
 /** 退避倍率上限（决策 10）。 */
@@ -42,12 +40,23 @@ export interface WatcherDisableNotifier {
   }): Promise<void>;
 }
 
+/** 复用指针预检用的最小会话形状（装配传 sessionService.getSession，结构兼容即可）。 */
+export interface WatcherSessionLookup {
+  id?: number;
+  userId: number;
+  sessionType?: string | null;
+  executionMode?: string | null;
+  agentId?: number | null;
+}
+
 export interface WatcherServiceDeps {
   watcherRepo: MysqlSignalWatcherRepository;
   checkRepo: MysqlSignalCheckRepository;
   cipher: SignalSecretCipher;
   openRun: OpenRunService;
   disableNotifier?: WatcherDisableNotifier | null;
+  /** 会话读取（复用指针有效性预检用；装配传 sessionService.getSession）。 */
+  getSession: (id: number) => Promise<WatcherSessionLookup | null>;
   /** 探针执行器（测试可注入假实现）。 */
   probe?: { execute: typeof executeProbe };
 }
@@ -59,11 +68,16 @@ export interface WatcherInput {
   url: string;
   method: string;
   headers: Record<string, string> | null;
-  body: string | null;
+  /** 可选：undefined=请求体键未下发（复制时=沿用源行），null=显式清空。 */
+  body?: string | null;
   intervalMinutes: number;
   compareMode: string;
   jsonPath: string | null;
   promptTemplate: string;
+  /** 触发方式（原始字符串，normalizeInput 白名单校验）；缺省=NEW_SESSION。 */
+  triggerMode?: string;
+  /** 复制源哨兵 id（仅 create 生效）：敏感请求头与 body 从源行解密继承。 */
+  copyFrom?: number | null;
 }
 
 /** 列表 / 详情回显视图（敏感值打码）。 */
@@ -85,6 +99,9 @@ export interface SignalWatcherView {
   lastCheckedAt: string | null;
   lastChangedAt: string | null;
   consecutiveFailures: number;
+  triggerMode: SignalTriggerMode;
+  /** REUSE_SESSION 模式当前复用的会话 id（只读展示；指针系统维护，不接受提交）。 */
+  reuseSessionId: number | null;
   createdAt: string | null;
 }
 
@@ -97,8 +114,13 @@ export interface WatcherTestResult {
   error: string | null;
 }
 
-/** 影响判定值的字段（决策 9：编辑这些字段要重置基线）。 */
-const AFFECTS_BASELINE: ReadonlyArray<keyof WatcherInput> = ['url', 'method', 'headers', 'body', 'compareMode', 'jsonPath'];
+/**
+ * 影响判定值的字段（决策 9：编辑这些字段要重置基线）。
+ * 收窄成显式字段联合而非 keyof WatcherInput：WatcherInput 还含 triggerMode/copyFrom
+ * 等归一化产物里没有对应键的字段，用 keyof 索引 normalized 会退化成 any。
+ */
+type BaselineAffectingField = 'url' | 'method' | 'headers' | 'body' | 'compareMode' | 'jsonPath';
+const AFFECTS_BASELINE: ReadonlyArray<BaselineAffectingField> = ['url', 'method', 'headers', 'body', 'compareMode', 'jsonPath'];
 
 export class WatcherService {
   constructor(private readonly deps: WatcherServiceDeps) {}
@@ -116,11 +138,13 @@ export class WatcherService {
   }
 
   async create(userId: number, input: WatcherInput): Promise<SignalWatcherView> {
-    const normalized = this.normalizeInput(input);
-    const count = await this.deps.watcherRepo.countByUser(userId);
-    if (count >= MAX_WATCHERS_PER_USER) {
-      throw new BusinessException(ErrorCode.PARAM_INVALID, `每用户最多 ${MAX_WATCHERS_PER_USER} 个哨兵，请先删除不用的哨兵`);
-    }
+    // 复制（copyFrom）：敏感请求头与 body 从源行解密继承。必须在 normalizeInput 之前——
+    // create 原首行即 normalizeInput，POST 缺 body 会先抛「POST 方法必须填写请求体」，
+    // 写在 normalize 之后的继承逻辑够不着（技术方案 2026-10-27 §3.6.3）。
+    const effective = input.copyFrom != null
+      ? await this.applyCopyInheritance(userId, input)
+      : input;
+    const normalized = this.normalizeInput(effective);
     const id = await this.deps.watcherRepo.insert({
       userId,
       agentId: normalized.agentId,
@@ -139,6 +163,10 @@ export class WatcherService {
       lastCheckedAt: null,
       lastChangedAt: null,
       consecutiveFailures: 0,
+      // 复用指针永远从空开始：复制不继承源哨兵的指针（模型 B：每个哨兵复用自己的会话，
+      // 副本首次触发时自建），用户也不能通过提交 reuseSessionId 指定（路由层不解析）。
+      triggerMode: normalized.triggerMode,
+      reuseSessionId: null,
     });
     return this.get(userId, id);
   }
@@ -162,6 +190,7 @@ export class WatcherService {
       compareMode: input.compareMode ?? existing.compareMode,
       jsonPath: input.jsonPath !== undefined ? input.jsonPath : existing.jsonPath,
       promptTemplate: input.promptTemplate ?? existing.promptTemplate,
+      triggerMode: input.triggerMode ?? existing.triggerMode,
     };
     const normalized = this.normalizeInput(merged);
     // 基线重置判定用「本次实际生效的值」而非原始入参：normalizeInput 会把
@@ -186,6 +215,14 @@ export class WatcherService {
       compareMode: normalized.compareMode,
       jsonPath: normalized.jsonPath,
       promptTemplate: normalized.promptTemplate,
+      triggerMode: normalized.triggerMode,
+      // 复用指针维护（D8 模型 B：指针系统维护，用户不选会话）：
+      // - 切出复用模式（含从复用切到新建）→ 清指针；「REUSE → NEW → REUSE」往返即手动重置入口；
+      // - agentId 变更 → 旧指针指向的会话属于旧 Agent，openRun 会以「只能触发该会话所属的
+      //   Agent」拒绝；清指针让下次触发自建，不进连败停用。
+      reuseSessionId: normalized.triggerMode === 'REUSE_SESSION' && normalized.agentId === existing.agentId
+        ? existing.reuseSessionId ?? null
+        : null,
     };
     if (resetBaseline) {
       patch.lastValueHash = null;
@@ -392,6 +429,10 @@ export class WatcherService {
 
     let sessionId: number | null = null;
     let failure: unknown = null;
+    // 预检后实际使用的指针（null=本次新建）：指针回写判据用它，不用 fresh.reuseSessionId——
+    // 后者在「指针刚被判失效并清库」时仍是旧 id，拿它判断会让新会话永不回写，
+    // 复用模式在指针失效一次后退化成每次新建。
+    let effectiveReuseId: number | null = null;
     try {
       const prompt = renderWatcherPrompt(watcher.promptTemplate, {
         url: watcher.url,
@@ -403,11 +444,21 @@ export class WatcherService {
           jsonPath: watcher.jsonPath,
         }),
       });
+      // 复用指针预检（技术方案 2026-10-27 §3.2.3）：会话被用户删/归档导致失效时
+      // 清指针走新建，不计入 consecutive_failures。用上面复读的 fresh 行而非函数
+      // 开头读的 watcher——探针在途 10~15 秒期间用户可能切 triggerMode / 清指针。
+      let reuseId = fresh.triggerMode === 'REUSE_SESSION' ? fresh.reuseSessionId : null;
+      if (reuseId != null && !(await this.isReusableSession(watcher, reuseId))) {
+        reuseId = null;
+        await this.deps.watcherRepo.update(watcher.id!, watcher.userId, { reuseSessionId: null });
+      }
+      effectiveReuseId = reuseId;
       const outcome = await this.deps.openRun.run({
         userId: watcher.userId,
         agentId: watcher.agentId,
         message: prompt,
         source: 'SIGNAL',
+        sessionId: reuseId, // null = 新建（NEW_SESSION 或复用模式首触）
       });
       sessionId = outcome.sessionId;
     } catch (e) {
@@ -416,6 +467,17 @@ export class WatcherService {
 
     if (sessionId != null) {
       await this.deps.checkRepo.markTriggered(checkId, sessionId);
+      // 复用模式指针回写：本次实际用的指针为空（首触，或指针刚被判失效清库）时，
+      // 把新建的会话 id 落为指针，之后每次复用。回写失败只告警——
+      // runCheck 的任何异常都不得向上抛出（调度器只负责单飞与线程池），且触发本身
+      // 已成功，不能因指针回写失败改判失败口径。
+      if (fresh.triggerMode === 'REUSE_SESSION' && effectiveReuseId == null) {
+        try {
+          await this.deps.watcherRepo.update(watcher.id!, watcher.userId, { reuseSessionId: sessionId });
+        } catch (e) {
+          console.warn(`[signal] failed to persist reuse session pointer, watcherId=${watcher.id}: ${errorMessage(e)}`);
+        }
+      }
       await this.deps.watcherRepo.markChecked(watcher.id, {
         lastValueHash: valueHash,
         lastValueSnippet: newText,
@@ -502,11 +564,13 @@ export class WatcherService {
     url: string;
     method: string;
     headers: Record<string, string> | null;
-    body: string | null;
+    /** 可选：undefined=未下发（复制时沿用源行解密值），null=显式清空。 */
+    body?: string | null;
     intervalMinutes: number;
     compareMode: SignalCompareMode;
     jsonPath: string | null;
     promptTemplate: string;
+    triggerMode: SignalTriggerMode;
   } {
     const name = (input.name ?? '').trim();
     if (name.length === 0 || name.length > 128) {
@@ -547,6 +611,11 @@ export class WatcherService {
     if (promptTemplate.length === 0 || promptTemplate.length > 2000) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '提示词模板需为 1~2000 字符');
     }
+    // 触发方式仅归一化校验；复用会话的选择权在系统（指针自动维护），没有「选会话」入参。
+    const triggerMode = (input.triggerMode ?? 'NEW_SESSION').trim().toUpperCase();
+    if (!isSignalTriggerMode(triggerMode)) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '触发方式仅支持 NEW_SESSION/REUSE_SESSION');
+    }
     return {
       name,
       agentId: input.agentId,
@@ -558,6 +627,7 @@ export class WatcherService {
       compareMode,
       jsonPath,
       promptTemplate,
+      triggerMode,
     };
   }
 
@@ -567,6 +637,45 @@ export class WatcherService {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '哨兵不存在');
     }
     return row;
+  }
+
+  /**
+   * 复制继承（技术方案 2026-10-27 §3.6.3）：从源哨兵行解密还原敏感值。
+   * 视图是脱敏的（敏感请求头打码、body 只回长度），纯前端复制必丢凭据，
+   * 因此敏感值一律走后端从源行解密继承，始终不落到前端、也不进任何新端点。
+   *
+   * - 掩码行（值等于 SECRET_MASK 的敏感键）→ 用源行解密 headers 还原；
+   *   键在源行不存在（用户改了键名）→ 抛「请求头 X 需要填写新的值」，强制重填；
+   * - body 未下发（undefined）且方法为 POST → 继承源行解密 body
+   *   （源行无 body 时继承 null，由 normalizeInput 的 POST 必填校验拦住）；
+   * - 其余字段（含 triggerMode）随请求体原样下发，reuseSessionId 不继承（create 置空）。
+   */
+  private async applyCopyInheritance(userId: number, input: WatcherInput): Promise<WatcherInput> {
+    const source = await this.requireOwned(userId, input.copyFrom!);
+    const storedHeaders = this.decryptHeaders(source.headersJson);
+    const headers = input.headers != null
+      ? this.restoreMaskedHeaders(input.headers, storedHeaders)
+      : null;
+    let body = input.body;
+    if (body === undefined && (input.method ?? 'GET').trim().toUpperCase() === 'POST') {
+      body = this.decryptBody(source.body);
+    }
+    return { ...input, headers, body };
+  }
+
+  /**
+   * 复用指针有效性预检（技术方案 2026-10-27 §3.2.3）：会话被用户删/归档导致失效时
+   * 清指针走新建，不计入 consecutive_failures。一次 SELECT 成本换「指针失效不烧连败、
+   * 不触发停用」。归属/主会话/CLOUD/agentId 一致性 openRun 会复读校验，这里只做
+   * 廉价的存在性预检（deleted 会话 findById 不返回，等同已删）。
+   */
+  private async isReusableSession(watcher: SignalWatcher, sessionId: number): Promise<boolean> {
+    const session = await this.deps.getSession(sessionId);
+    if (session == null || session.userId !== watcher.userId) return false;
+    if (session.sessionType === 'SUBAGENT' || session.sessionType === 'SIDE_TASK') return false;
+    if (session.executionMode === 'LOCAL') return false;
+    if (session.agentId !== watcher.agentId) return false;
+    return true;
   }
 
   private encryptHeaders(headers: Record<string, string> | null): string | null {
@@ -615,7 +724,8 @@ export class WatcherService {
     }
   }
 
-  private encryptBody(body: string | null): string | null {
+  /** 入参吃 undefined：WatcherInput.body 可选（键未下发=复制时沿用源行）。 */
+  private encryptBody(body: string | null | undefined): string | null {
     if (body == null) return null;
     return this.deps.cipher.encrypt(body);
   }
@@ -659,6 +769,8 @@ export class WatcherService {
       lastCheckedAt: row.lastCheckedAt,
       lastChangedAt: row.lastChangedAt,
       consecutiveFailures: Number(row.consecutiveFailures ?? 0),
+      triggerMode: row.triggerMode,
+      reuseSessionId: row.reuseSessionId ?? null,
       createdAt: row.createdAt ?? null,
     };
   }

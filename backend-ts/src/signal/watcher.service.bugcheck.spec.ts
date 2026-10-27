@@ -44,6 +44,8 @@ function watcher(overrides: Partial<SignalWatcher> = {}): SignalWatcher {
     lastCheckedAt: null,
     lastChangedAt: null,
     consecutiveFailures: 0,
+    triggerMode: 'NEW_SESSION',
+    reuseSessionId: null,
     createdAt: null,
     updatedAt: null,
     ...overrides,
@@ -136,6 +138,8 @@ function harness(initial: SignalWatcher, body = '{}'): Harness {
     cipher: new SignalSecretCipher(SECRET),
     openRun: openRun as never,
     probe: { execute: probeExecute as never },
+    // 复用指针预检依赖（本文件 fixture 均为 NEW_SESSION，不会被调用）
+    getSession: vi.fn(async () => null),
   });
 
   return { service, checks, markChecked, recordFailure };

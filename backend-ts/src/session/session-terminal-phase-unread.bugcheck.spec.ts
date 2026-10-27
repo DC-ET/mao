@@ -93,6 +93,26 @@ describe('SessionService.updatePhase 终态集合口径', () => {
     await service.updatePhase(1, 'COMPLETED');
     expect(lastFields()?.unread).toBeUndefined();
   });
+
+  it('signal 会话进入终态不置未读（哨兵会话机器触发，不进聚焦置顶）', async () => {
+    const { service, lastFields } = serviceWithSession(sessionWith({ phase: 'IDLE', startedAt: null, source: 'signal' }));
+    await service.updatePhase(1, 'COMPLETED');
+    expect(lastFields()?.unread).toBeUndefined();
+  });
+
+  it('signal 会话从 RUNNING 进入终态同样不置未读', async () => {
+    const { service, lastFields } = serviceWithSession(sessionWith({ phase: 'RUNNING', source: 'signal' }));
+    await service.updatePhase(1, 'COMPLETED');
+    expect(lastFields()?.unread).toBeUndefined();
+  });
+
+  it('对照：source=null / web 的普通会话终态仍置未读（不被 signal 排除误伤）', async () => {
+    for (const source of [null, 'web', 'embed']) {
+      const { service, lastFields } = serviceWithSession(sessionWith({ phase: 'IDLE', startedAt: null, source }));
+      await service.updatePhase(1, 'COMPLETED');
+      expect(lastFields()?.unread, `source=${source} 仍应置未读`).toBe(1);
+    }
+  });
 });
 
 /**
@@ -171,5 +191,14 @@ describe('TaskTerminalService 终态未读：DB 写入与 WS 广播一致', () =
       dbUnread: lastFields()?.unread,
       wsUnread: statusEvents[0]?.unread,
     }).toEqual({ dbUnread: 1, wsUnread: true });
+  });
+
+  it('signal 会话终态：DB 不写 unread、WS 广播 unread=false（两路口径一致）', async () => {
+    const { service, statusEvents, lastFields } = terminalHarness(sessionWith({ phase: 'IDLE', startedAt: null, source: 'signal' }));
+    await service.finishExecution(1, 7, 'COMPLETED', 'exec-1');
+    expect({
+      dbUnread: lastFields()?.unread,
+      wsUnread: statusEvents[0]?.unread,
+    }).toEqual({ dbUnread: undefined, wsUnread: false });
   });
 });

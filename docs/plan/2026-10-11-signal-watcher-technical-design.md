@@ -4,6 +4,7 @@
 > 日期：2026-10-11
 > 上游提案：[docs/proposals/2026-10-11-signal-watcher.md](../proposals/2026-10-11-signal-watcher.md)
 > 覆盖端：后端 backend-ts、桌面端 desktop、管理后台 admin
+> 后续增强（0.0.361，取消 20 个上限 / 复用会话 / 复制继承 / 「信号哨兵」独立分组）：[docs/plan/2026-10-27-signal-watcher-enhancement-technical-design.md](2026-10-27-signal-watcher-enhancement-technical-design.md)——本文中的「不复用会话（决策 5）」「每用户最多 20 个」两条已被该方案取代，其余规则仍有效
 
 ---
 

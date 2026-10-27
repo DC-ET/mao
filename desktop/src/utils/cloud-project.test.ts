@@ -1,5 +1,18 @@
 import { describe, expect, it } from 'vitest'
-import { cloudGroupKey, cloudWorkspaceIndicator, formatCloudGroupLabel, groupIconKind, isFeishuChatWorkspace, isFeishuGroupKey, isGroupRenameable, isWeixinGroupSession, resolveGroupLabel, workspaceTailLabel } from './cloud-project'
+import {
+  cloudGroupKey,
+  cloudWorkspaceIndicator,
+  formatCloudGroupLabel,
+  groupIconKind,
+  isFeishuChatWorkspace,
+  isFeishuGroupKey,
+  isGroupRenameable,
+  isSignalGroupKey,
+  isWeixinGroupSession,
+  resolveGroupLabel,
+  SIGNAL_GROUP_KEY,
+  workspaceTailLabel
+} from './cloud-project'
 
 const cloud = (workspace: string, extra: Partial<{ projectKey: string; agentId: string; source: string }> = {}) => ({ executionMode: 'CLOUD' as const, workspace, ...extra })
 
@@ -28,6 +41,21 @@ describe('cloudGroupKey', () => {
     expect(cloudGroupKey(cloud('/opt/mao-data/workspace/7/42', { source: 'embed', agentId: '7' }))).toBe('EMBED:7')
     expect(cloudGroupKey(cloud('/opt/mao-data/workspace/1/projects/demo', { source: 'embed', agentId: '7' }))).toBe('EMBED:7')
     expect(cloudGroupKey(cloud('/opt/mao-data/workspace/7/42', { source: 'web' }))).toBe('CLOUD:临时工作区')
+  })
+
+  it('routes signal sessions to the SIGNAL group regardless of workspace/agent', () => {
+    // 哨兵会话实际形态：CLOUD + workspace NULL（openRun 建会话不传 workspace）
+    expect(cloudGroupKey(cloud('', { source: 'signal', agentId: '3' }))).toBe(SIGNAL_GROUP_KEY)
+    expect(cloudGroupKey({ executionMode: 'CLOUD', workspace: undefined, source: 'signal' })).toBe(SIGNAL_GROUP_KEY)
+    // 即使落在共享项目工作区，source 优先级最高（不隔离会混进置顶的「临时工作区」）
+    expect(cloudGroupKey(cloud('/opt/mao-data/workspace/1/projects/demo', { source: 'signal' }))).toBe(SIGNAL_GROUP_KEY)
+    // 一个用户的全部哨兵会话进同一组：不带 agentId
+    expect(cloudGroupKey(cloud('', { source: 'signal', agentId: '9' }))).toBe(SIGNAL_GROUP_KEY)
+    // web 来源不受影响
+    expect(cloudGroupKey(cloud('', { source: 'web' }))).toBe('CLOUD:临时工作区')
+    expect(isSignalGroupKey(SIGNAL_GROUP_KEY)).toBe(true)
+    expect(isSignalGroupKey('EMBED:7')).toBe(false)
+    expect(isSignalGroupKey('CLOUD:临时工作区')).toBe(false)
   })
 })
 
@@ -59,6 +87,12 @@ describe('formatCloudGroupLabel', () => {
     expect(resolveGroupLabel('EMBED:7', {})).toBe('未知 Agent')
     expect(resolveGroupLabel('EMBED:7', { 'EMBED:7': '官网客服' })).toBe('官网客服')
   })
+
+  it('labels the signal sentinel group with fixed text, ignoring agent name and aliases', () => {
+    // 哨兵分组不带 agentId（一个用户的全部哨兵同组），不能复用 Agent 名当标签
+    expect(formatCloudGroupLabel(SIGNAL_GROUP_KEY, { agentName: 'Coder', title: '汇率' })).toBe('信号哨兵')
+    expect(formatCloudGroupLabel(SIGNAL_GROUP_KEY)).toBe('信号哨兵')
+  })
 })
 
 describe('groupIconKind', () => {
@@ -80,6 +114,7 @@ describe('groupIconKind', () => {
     expect(groupIconKind('CLOUD:临时工作区')).toBe('cloud')
     expect(groupIconKind('CLOUD:/opt/1/projects/mao', [{ projectKey: 'mao' }])).toBe('cloud')
     expect(groupIconKind('EMBED:7')).toBe('embed')
+    expect(groupIconKind(SIGNAL_GROUP_KEY)).toBe('signal')
     expect(groupIconKind('LOCAL:/Users/me/code')).toBe('folder')
     expect(groupIconKind('UNKNOWN_KEY')).toBe('folder')
   })
@@ -99,6 +134,7 @@ describe('isGroupRenameable', () => {
     expect(isGroupRenameable('FEISHU_GROUP:/ws/feishu-chat/1/oc_a')).toBe(true)
     expect(isGroupRenameable('DINGTALK_PRIVATE:7')).toBe(true)
     expect(isGroupRenameable('DINGTALK_GROUP:/ws/dingtalk-chat/1/p2p-x')).toBe(true)
+    expect(isGroupRenameable(SIGNAL_GROUP_KEY)).toBe(true)
   })
 
   it('rejects only empty keys', () => {
@@ -133,6 +169,12 @@ describe('resolveGroupLabel', () => {
     expect(
       resolveGroupLabel('DINGTALK_PRIVATE:7', { 'DINGTALK_PRIVATE:7': '报销助手' }, { agentName: 'Coder', title: 't' })
     ).toBe('报销助手')
+    expect(resolveGroupLabel(SIGNAL_GROUP_KEY, { SIGNAL: '监控' })).toBe('监控')
+  })
+
+  it('falls back to the fixed signal label when no alias hits', () => {
+    expect(resolveGroupLabel(SIGNAL_GROUP_KEY, {})).toBe('信号哨兵')
+    expect(resolveGroupLabel(SIGNAL_GROUP_KEY, { [SIGNAL_GROUP_KEY]: '   ' })).toBe('信号哨兵')
   })
 
   it('falls back to derived label for channel groups without alias', () => {

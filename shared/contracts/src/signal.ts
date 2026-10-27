@@ -2,7 +2,8 @@
  * 信号哨兵契约（前后端共用，desktop / admin 同步消费）。
  *
  * 判定模式与哨兵状态的联合类型放在这里，供两端汉化表以
- * `Record<SignalCompareMode, string>` / `Record<SignalWatcherStatus, string>`
+ * `Record<SignalCompareMode, string>` / `Record<SignalWatcherStatus, string>` /
+ * `Record<SignalTriggerMode, string>`
  * 声明——漏一项编译期即失败。
  *
  * 事实源是后端 `backend-ts/src/signal/types.ts`：那里持有运行时常量
@@ -15,6 +16,12 @@ export type SignalCompareMode = 'HASH' | 'JSON_FIELD' | 'STATUS_CODE';
 
 /** 哨兵状态：ACTIVE 轮询中 / PAUSED 用户暂停 / DISABLED 连续失败自动停用（系统终态）。 */
 export type SignalWatcherStatus = 'ACTIVE' | 'PAUSED' | 'DISABLED';
+
+/**
+ * 触发方式：NEW_SESSION=每次触发新建会话，REUSE_SESSION=复用本哨兵自己的会话。
+ * 复用指针（reuse_session_id）由系统维护：首次触发自动建会话并回写，用户不选择会话。
+ */
+export type SignalTriggerMode = 'NEW_SESSION' | 'REUSE_SESSION';
 
 /** 轮询记录里的非失败告警码：触发频次超限（照常触发，仅标记）。 */
 export type SignalWatcherWarning = 'TRIGGER_RATE_LIMITED';

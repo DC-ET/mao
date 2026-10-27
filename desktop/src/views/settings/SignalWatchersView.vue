@@ -13,13 +13,13 @@
         <div>
           <h2 class="card-title">哨兵列表</h2>
           <p class="card-desc">
-            连续失败 {{ DISABLE_AFTER_FAILURES }} 次会自动停用并站内通知；停用后需手动重新启用。每次触发都会新建一次 Agent 会话。
+            连续失败 {{ DISABLE_AFTER_FAILURES }} 次会自动停用并站内通知；停用后需手动重新启用。
+            触发方式为「复用会话」时会持续累积上下文，适合需要记住上次结论的场景。
           </p>
         </div>
-        <button v-if="watchers.length < MAX_WATCHERS" class="create-btn" @click="openCreateDialog">
+        <button class="create-btn" @click="openCreateDialog">
           <el-icon><Plus /></el-icon> 新建哨兵
         </button>
-        <span v-else class="limit-hint">已达单用户上限 {{ MAX_WATCHERS }} 个</span>
       </div>
       <div v-if="loading" class="empty-state">加载中...</div>
       <div v-else-if="watchers.length === 0" class="empty-state">暂无哨兵，点击右上角新建</div>
@@ -30,12 +30,16 @@
               {{ watcher.name }}
               <span class="badge" :class="statusClass(watcher.status)">{{ statusLabel(watcher.status) }}</span>
               <span class="badge badge-muted">{{ compareModeLabel(watcher.compareMode) }}</span>
+              <span class="badge badge-muted">{{ triggerModeLabel(watcher.triggerMode) }}</span>
             </div>
             <div class="item-actions">
               <el-tooltip content="立即测试探针" :show-after="300">
                 <button class="action-btn" :disabled="testingId === watcher.id" @click="runTest(watcher)">
                   <el-icon :size="14"><Aim /></el-icon>
                 </button>
+              </el-tooltip>
+              <el-tooltip content="复制（预填新建，敏感请求头与请求体自动继承）" :show-after="300">
+                <button class="action-btn" @click="openCopyDialog(watcher)"><el-icon :size="14"><CopyDocument /></el-icon></button>
               </el-tooltip>
               <el-tooltip content="轮询记录" :show-after="300">
                 <button class="action-btn" @click="openChecks(watcher)"><el-icon :size="14"><Tickets /></el-icon></button>
@@ -72,11 +76,19 @@
     <!-- ── 新建 / 编辑 ──────────────────────────────────────────── -->
     <el-dialog
       :model-value="dialogVisible"
-      :title="editing ? '编辑哨兵' : '新建哨兵'"
+      :title="editing ? '编辑哨兵' : copyingFromId != null ? '复制哨兵' : '新建哨兵'"
       width="min(620px, calc(100vw - 32px))"
       class="signal-dialog"
       @update:model-value="(val: boolean) => { if (!val) closeDialog() }"
     >
+      <el-alert
+        v-if="copyingFromId != null"
+        type="info"
+        :closable="false"
+        show-icon
+        title="复制态：敏感请求头与请求体保存时自动从源哨兵继承（留空即沿用），删除全部请求头行表示不要请求头。"
+        style="margin-bottom: 12px"
+      />
       <el-form label-width="92px" label-position="right">
         <el-form-item label="名称" required>
           <el-input v-model="form.name" maxlength="128" show-word-limit placeholder="例如：美元汇率变化" />
@@ -100,7 +112,7 @@
             v-model="form.body"
             type="textarea"
             :rows="3"
-            :placeholder="editing ? `留空不修改（当前已保存 ${form.bodyLength} 字符）` : 'POST 方法必填，上限 64KB'"
+            :placeholder="bodyPlaceholder"
           />
         </el-form-item>
         <el-form-item label="请求头">
@@ -133,6 +145,16 @@
         </el-form-item>
         <el-form-item v-if="form.compareMode === 'JSON_FIELD'" label="提取路径" required>
           <el-input v-model="form.jsonPath" placeholder="例如 data.list.0.price 或 $.data.price" />
+        </el-form-item>
+        <el-form-item label="触发方式" required>
+          <el-radio-group v-model="form.triggerMode">
+            <el-radio value="NEW_SESSION">每次新建会话</el-radio>
+            <el-radio value="REUSE_SESSION">复用会话</el-radio>
+          </el-radio-group>
+          <span class="field-hint">
+            「复用会话」首次触发自动创建本哨兵自己的会话，之后每次变化都接着聊；
+            切到「每次新建」再切回即可重置。会话被删或更换 Agent 后会自动重建。
+          </span>
         </el-form-item>
         <el-form-item label="提示词模板" required>
           <el-input
@@ -243,7 +265,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { Plus, Delete, Edit, Aim, Tickets, VideoPause, VideoPlay } from '@element-plus/icons-vue'
+import { Plus, Delete, Edit, Aim, Tickets, VideoPause, VideoPlay, CopyDocument } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import {
@@ -259,13 +281,15 @@ import {
   type SignalWatcherCheckPage,
   type SignalWatcherTestResult,
   type SignalCompareMode,
+  type SignalTriggerMode,
   type SignalWatcherStatus
 } from '../../api'
 import type { SignalWatcherWarning } from '@mao/contracts'
 import {
   DISABLE_AFTER_FAILURES,
-  MAX_WATCHERS,
+  TRIGGER_MODE_LABELS,
   buildWatcherPayload,
+  copyFormFromView,
   headerPairsFromView,
   type HeaderPair
 } from './signal-watcher-form'
@@ -287,6 +311,8 @@ const confirmDeleteId = ref<number | null>(null)
 const dialogVisible = ref(false)
 const editing = ref(false)
 const editingId = ref<number | null>(null)
+/** 复制态下的源哨兵 id（保存时随 payload 下发 copyFrom，敏感值由后端继承）。 */
+const copyingFromId = ref<number | null>(null)
 /** 编辑态下该哨兵当前已保存的请求头（用于「删光行 = 显式清空」的判定）。 */
 const originalHeaders = ref<Record<string, string> | null>(null)
 const submitting = ref(false)
@@ -302,7 +328,8 @@ const form = reactive({
   intervalMinutes: 30,
   compareMode: 'HASH' as SignalCompareMode,
   jsonPath: '',
-  promptTemplate: ''
+  promptTemplate: '',
+  triggerMode: 'NEW_SESSION' as SignalTriggerMode
 })
 
 const checksVisible = ref(false)
@@ -338,6 +365,10 @@ function statusClass(status: SignalWatcherStatus): string {
 
 function compareModeLabel(mode: SignalCompareMode): string {
   return COMPARE_MODE_LABELS[mode] ?? mode
+}
+
+function triggerModeLabel(mode: SignalTriggerMode): string {
+  return TRIGGER_MODE_LABELS[mode] ?? mode
 }
 
 function warningLabel(warning: SignalWatcherWarning): string {
@@ -381,12 +412,32 @@ function resetForm(): void {
   form.compareMode = 'HASH'
   form.jsonPath = ''
   form.promptTemplate = ''
+  form.triggerMode = 'NEW_SESSION'
 }
 
 function openCreateDialog(): void {
   resetForm()
   editing.value = false
   editingId.value = null
+  copyingFromId.value = null
+  originalHeaders.value = null
+  dialogVisible.value = true
+  if (agents.value.length === 0) void fetchAgents()
+}
+
+/**
+ * 复制（D9）：不调任何写 API，直接打开预填的新建对话框。
+ * 敏感请求头是掩码行、请求体留空——两者都由后端从源行解密继承，前端不碰明文。
+ */
+function openCopyDialog(watcher: SignalWatcherView): void {
+  const copied = copyFormFromView(watcher)
+  Object.assign(form, copied)
+  form.bodyLength = watcher.bodyLength
+  editing.value = false
+  editingId.value = null
+  copyingFromId.value = watcher.id
+  // 复制态按「编辑态」回显请求头（掩码行留空 = 沿用），但 originalHeaders 置空：
+  // 删光头行在复制态 = 不要请求头，不能触发「显式清空」下发 null。
   originalHeaders.value = null
   dialogVisible.value = true
   if (agents.value.length === 0) void fetchAgents()
@@ -396,6 +447,7 @@ function openEditDialog(watcher: SignalWatcherView): void {
   resetForm()
   editing.value = true
   editingId.value = watcher.id
+  copyingFromId.value = null
   originalHeaders.value = watcher.headers
   form.name = watcher.name
   form.agentId = watcher.agentId
@@ -406,6 +458,7 @@ function openEditDialog(watcher: SignalWatcherView): void {
   form.compareMode = watcher.compareMode
   form.jsonPath = watcher.jsonPath ?? ''
   form.promptTemplate = watcher.promptTemplate
+  form.triggerMode = watcher.triggerMode ?? 'NEW_SESSION'
   form.headers = headerPairsFromView(watcher.headers)
   dialogVisible.value = true
   if (agents.value.length === 0) void fetchAgents()
@@ -423,10 +476,19 @@ function removeHeaderRow(index: number): void {
   form.headers.splice(index, 1)
 }
 
+const bodyPlaceholder = computed(() => {
+  if (form.method !== 'POST') return ''
+  if (editing.value) return `留空不修改（当前已保存 ${form.bodyLength} 字符）`
+  // 复制态：body 无明文可预填，留空即沿用源哨兵的请求体
+  if (copyingFromId.value != null) return '留空沿用源哨兵的请求体，也可填写新的请求体'
+  return 'POST 方法必填，上限 64KB'
+})
+
 const canSubmit = computed(() => {
   if (form.name.trim() === '' || form.agentId == null) return false
   if (form.url.trim() === '') return false
-  if (form.method === 'POST' && !editing.value && form.body.trim() === '') return false
+  // 复制态请求体留空 = 沿用源体，不算未填
+  if (form.method === 'POST' && !editing.value && copyingFromId.value == null && form.body.trim() === '') return false
   if (form.compareMode === 'JSON_FIELD' && form.jsonPath.trim() === '') return false
   if (form.promptTemplate.trim() === '') return false
   return true
@@ -437,14 +499,20 @@ async function submitForm(): Promise<void> {
   submitting.value = true
   try {
     // 编辑态：未修改的敏感字段（请求体 / 提取路径）不下发，服务端按「留空不修改」保留原值；
-    // 新建态照常下发（undefined 由服务端 normalizeInput 的必填校验拦住）。
-    const payload = buildWatcherPayload(form, editing.value, originalHeaders.value ?? undefined)
+    // 新建态照常下发（undefined 由服务端 normalizeInput 的必填校验拦住）；
+    // 复制态：随 payload 带 copyFrom，敏感请求头与请求体由后端从源行解密继承。
+    const payload = buildWatcherPayload(
+      form,
+      editing.value,
+      originalHeaders.value ?? undefined,
+      copyingFromId.value ?? undefined
+    )
     if (editing && editingId.value != null) {
       await updateSignalWatcher(editingId.value, payload)
       ElMessage.success('哨兵已更新')
     } else {
       await createSignalWatcher(payload)
-      ElMessage.success('哨兵已创建')
+      ElMessage.success(copyingFromId.value != null ? '哨兵已复制' : '哨兵已创建')
     }
     dialogVisible.value = false
     await fetchWatchers()
@@ -600,12 +668,6 @@ onMounted(() => {
   font-size: var(--aw-text-fine);
   font-weight: 500;
   cursor: pointer;
-  flex-shrink: 0;
-}
-
-.limit-hint {
-  font-size: 12px;
-  color: var(--aw-ink-muted);
   flex-shrink: 0;
 }
 

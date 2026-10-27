@@ -4,6 +4,8 @@ export const CLOUD_TEMP = 'CLOUD:临时工作区';
 export const LOCAL_UNSET = 'LOCAL:未设置';
 /** Web 嵌入 SDK（source=embed）会话按 Agent 独立分组：EMBED:{agentId}，与工作区路径无关。 */
 export const EMBED_PREFIX = 'EMBED:';
+/** 信号哨兵会话（source=signal）独立分组：一个用户的全部哨兵会话进同一组，不带 agentId。 */
+export const SIGNAL_GROUP_KEY = 'SIGNAL';
 const FEISHU_GROUP_WORKSPACE = '/feishu-chat/';
 const FEISHU_PRIVATE_GROUP_PREFIX = 'FEISHU_PRIVATE:';
 const FEISHU_GROUP_PREFIX = 'FEISHU_GROUP:';
@@ -91,6 +93,11 @@ export function of(sessionOrMode: Session | string | null | undefined, workspace
     if (sessionOrMode.source === 'embed') {
       return `${EMBED_PREFIX}${sessionOrMode.agentId ?? 'null'}`;
     }
+    // 哨兵会话同样优先于模式/工作区分流：不隔离会混进置顶的「临时工作区」，
+    // 且 applyFilter 的四个模式/工作区桶必须同步排除（否则预览/展开条数不一致）。
+    if (sessionOrMode.source === 'signal') {
+      return SIGNAL_GROUP_KEY;
+    }
     return feishuGroupKey(sessionOrMode) ?? dingtalkGroupKey(sessionOrMode) ?? ofMode(sessionOrMode.executionMode, sessionOrMode.workspace);
   }
   return ofMode(sessionOrMode as string | null | undefined, workspace);
@@ -121,6 +128,9 @@ export function formatLabel(key: string, agentName?: string, groupName?: string)
   }
   if (CLOUD_TEMP === key) {
     return '临时工作区';
+  }
+  if (SIGNAL_GROUP_KEY === key) {
+    return '信号哨兵';
   }
   if (key.startsWith(EMBED_PREFIX)) {
     return agentName ?? '未知 Agent';
@@ -165,6 +175,9 @@ export function compareKeys(a: string, b: string): number {
   const bCloud = b.startsWith('CLOUD:');
   if (aCloud && !bCloud) return -1;
   if (!aCloud && bCloud) return 1;
+  // 信号哨兵分组排最后：所有既有规则之后、localeCompare 之前
+  if (a === SIGNAL_GROUP_KEY) return b === SIGNAL_GROUP_KEY ? 0 : 1;
+  if (b === SIGNAL_GROUP_KEY) return -1;
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
@@ -200,31 +213,39 @@ export function applyFilter(groupKey: string | null | undefined): GroupFilterSql
       params: ['embed', n],
     };
   }
-  // 以下三个「模式 + 工作区」桶必须排除 source=embed：of() 优先把 embed 会话分流到
-  // EMBED:<agentId>（与工作区路径无关），不排除会让同一条会话在分组预览里只出现一次、
-  // 展开后却多出一条（total 对不上、分页偏移错乱）。CLOUD:临时工作区 桶本就带此排除。
+  // 哨兵会话桶：of() 优先把 source=signal 分流到 SIGNAL（与工作区/Agent 无关）。
+  if (SIGNAL_GROUP_KEY === groupKey) {
+    return {
+      clauses: ['source = ?'],
+      params: ['signal'],
+    };
+  }
+  // 以下四个「模式 + 工作区」桶必须排除 source=embed 与 source=signal：of() 优先把这两类
+  // 会话分流到 EMBED:<agentId> / SIGNAL（与工作区路径无关），不排除会让同一条会话在分组
+  // 预览里只出现一次、展开后却多出一条（total 对不上、分页偏移错乱）。
+  // CLOUD:临时工作区 桶本就带此排除。字面量 NOT IN 与 testing/sql-where.ts 求值器对齐。
   if (LOCAL_UNSET === groupKey) {
     return {
-      clauses: ['execution_mode = ?', '(workspace IS NULL OR workspace = ?)', '(source IS NULL OR source != ?)'],
-      params: ['LOCAL', '', 'embed'],
+      clauses: ['execution_mode = ?', '(workspace IS NULL OR workspace = ?)', "(source IS NULL OR source NOT IN ('embed', 'signal'))"],
+      params: ['LOCAL', ''],
     };
   }
   if (groupKey.startsWith('LOCAL:')) {
     return {
-      clauses: ['execution_mode = ?', 'workspace = ?', '(source IS NULL OR source != ?)'],
-      params: ['LOCAL', groupKey.slice(6), 'embed'],
+      clauses: ['execution_mode = ?', 'workspace = ?', "(source IS NULL OR source NOT IN ('embed', 'signal'))"],
+      params: ['LOCAL', groupKey.slice(6)],
     };
   }
   if (CLOUD_TEMP === groupKey) {
     return {
-      clauses: ['execution_mode = ?', '(workspace IS NULL OR workspace = ? OR (workspace NOT LIKE ? AND workspace NOT LIKE ? AND workspace NOT LIKE ?))', '(source IS NULL OR source != ?)'],
-      params: ['CLOUD', '', '%/projects/%', '%/feishu-chat/%', '%/dingtalk-chat/%', 'embed'],
+      clauses: ['execution_mode = ?', '(workspace IS NULL OR workspace = ? OR (workspace NOT LIKE ? AND workspace NOT LIKE ? AND workspace NOT LIKE ?))', "(source IS NULL OR source NOT IN ('embed', 'signal'))"],
+      params: ['CLOUD', '', '%/projects/%', '%/feishu-chat/%', '%/dingtalk-chat/%'],
     };
   }
   if (groupKey.startsWith('CLOUD:')) {
     return {
-      clauses: ['execution_mode = ?', 'workspace = ?', '(source IS NULL OR source != ?)'],
-      params: ['CLOUD', groupKey.slice(6), 'embed'],
+      clauses: ['execution_mode = ?', 'workspace = ?', "(source IS NULL OR source NOT IN ('embed', 'signal'))"],
+      params: ['CLOUD', groupKey.slice(6)],
     };
   }
   throw new Error(`Invalid groupKey: ${groupKey}`);
@@ -282,6 +303,7 @@ export const SessionGroupKey = {
   CLOUD_TEMP,
   LOCAL_UNSET,
   EMBED_PREFIX,
+  SIGNAL_GROUP_KEY,
   of,
   feishuGroupKey,
   isFeishuGroupKey,
