@@ -24,7 +24,7 @@
             title="多选归档"
             aria-label="多选归档"
           >
-            <el-icon :size="14"><Select /></el-icon>
+            <el-icon :size="14"><Check /></el-icon>
           </button>
           <button class="refresh-btn" @click="refreshSessions" :disabled="loading || focusLoading">
             <el-icon :size="14" :class="{ 'is-loading': loading || focusLoading }"><Refresh /></el-icon>
@@ -200,7 +200,7 @@
 
 <script setup lang="ts">
 import { computed, ref, reactive, watch, nextTick, onMounted, onUnmounted } from 'vue'
-import { Refresh, Plus, Bell, BellFilled, Select } from '@element-plus/icons-vue'
+import { Refresh, Plus, Bell, BellFilled, Check } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { useSessionStore, ACTIVE_PHASES, type Session, type TaskPhase } from '../../stores/session'
