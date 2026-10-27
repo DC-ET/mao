@@ -1,7 +1,7 @@
-// mermaid-viewer 纯函数部分：自然尺寸读取与查看器复刻的 id 改写。
-// 全屏遮罩 / 模式切换依赖真实浏览器（requestAnimationFrame、clientWidth），不在 node 层测。
+// mermaid-viewer 纯函数部分：自然尺寸读取、查看器复刻的 id 改写、缩放档位推进。
+// 全屏遮罩 / 尺寸应用依赖真实浏览器（clientWidth、SVG 布局），不在 node 层测。
 import { describe, expect, it } from 'vitest'
-import { cloneSvgForViewer, readNaturalSize } from './mermaid-viewer'
+import { cloneSvgForViewer, nextZoomScale, readNaturalSize, ZOOM_LADDER } from './mermaid-viewer'
 
 // 贴近 mermaid 真实产物：根带 id 与内联 max-width，<style> 里是 #id 选择器，
 // 节点 id 形如 #id-flowchart-WSH-1（不能被动到）
@@ -55,5 +55,46 @@ describe('cloneSvgForViewer', () => {
   it('根 svg 没有 id 时原样返回', () => {
     const svg = '<svg viewBox="0 0 10 10"></svg>'
     expect(cloneSvgForViewer(svg)).toBe(svg)
+  })
+})
+
+describe('nextZoomScale', () => {
+  it('放大取严格更大的下一档', () => {
+    expect(nextZoomScale(0.5, 'in')).toBe(0.67)
+    expect(nextZoomScale(1, 'in')).toBe(1.5)
+    expect(nextZoomScale(0.75, 'in')).toBe(1)
+  })
+
+  it('缩小取严格更小的上一档', () => {
+    expect(nextZoomScale(0.5, 'out')).toBe(0.33)
+    expect(nextZoomScale(1, 'out')).toBe(0.75)
+    expect(nextZoomScale(0.67, 'out')).toBe(0.5)
+  })
+
+  it('档位两端返回 null（调用方据此禁用按钮）', () => {
+    expect(nextZoomScale(4, 'in')).toBeNull()
+    expect(nextZoomScale(0.05, 'out')).toBeNull()
+  })
+
+  it('fit 算出的非档位值也能正确落到相邻档', () => {
+    // 393px 窄屏看 3324px 宽图，fit ≈ 0.099，不在档位表里
+    expect(nextZoomScale(0.099, 'in')).toBe(0.1)
+    expect(nextZoomScale(0.099, 'out')).toBe(0.05)
+    // 桌面 fit ≈ 0.342
+    expect(nextZoomScale(0.342, 'in')).toBe(0.5)
+    expect(nextZoomScale(0.342, 'out')).toBe(0.33)
+  })
+
+  it('恰好落在档位上不重复返回自己', () => {
+    for (const s of ZOOM_LADDER) {
+      expect(nextZoomScale(s, 'in')).not.toBe(s)
+      expect(nextZoomScale(s, 'out')).not.toBe(s)
+    }
+  })
+
+  it('档位表严格递增', () => {
+    for (let i = 1; i < ZOOM_LADDER.length; i++) {
+      expect(ZOOM_LADDER[i]).toBeGreaterThan(ZOOM_LADDER[i - 1])
+    }
   })
 })

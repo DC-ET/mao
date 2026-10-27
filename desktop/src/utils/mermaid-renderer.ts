@@ -195,9 +195,21 @@ function fillRendered(el: HTMLElement, svg: string): void {
   const figure = document.createElement('div')
   figure.className = 'mermaid-figure'
   figure.innerHTML = svg
-  // 气泡里图被 CSS 缩到容器宽，宽架构图的字号只剩 4~5px；点图进全屏查看器按原始尺寸看
+  // 气泡里图被 CSS 缩到容器宽，宽架构图的字号只剩 4~5px；点图进全屏查看器按需缩放着看。
+  // 触屏没有 hover，光标与 title 提示都不可见，故另给一个常驻按钮作入口。
   figure.title = '点击查看大图'
   figure.addEventListener('click', () => openMermaidViewer(svg))
+  const expandBtn = document.createElement('button')
+  expandBtn.type = 'button'
+  expandBtn.className = 'mermaid-expand-btn'
+  expandBtn.textContent = '放大'
+  expandBtn.title = '查看大图'
+  expandBtn.setAttribute('aria-label', '查看大图')
+  expandBtn.addEventListener('click', (event) => {
+    event.stopPropagation()
+    openMermaidViewer(svg)
+  })
+  figure.appendChild(expandBtn)
   el.appendChild(figure)
   const details = document.createElement('details')
   details.className = 'mermaid-source'

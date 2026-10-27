@@ -598,9 +598,12 @@ pre code {
   margin: 8px 0;
 }
 
+/* 气泡里的图缩到容器宽后宽架构图字号只剩 4~5px，点图进全屏查看器读 */
 .markdown-body .mermaid-block .mermaid-figure {
+  position: relative;
   overflow-x: auto;
   text-align: center;
+  cursor: zoom-in;
 }
 
 .markdown-body .mermaid-block .mermaid-figure svg {
@@ -609,13 +612,37 @@ pre code {
   background: transparent;
 }
 
-/* 气泡里的图缩到容器宽后宽架构图字号只剩 4~5px，点图进全屏查看器读 */
-.markdown-body .mermaid-block .mermaid-figure {
-  cursor: zoom-in;
-}
-
 .markdown-body .mermaid-block .mermaid-figure:hover {
   border-color: var(--aw-divider);
+}
+
+/* 常驻放大入口：桌面 hover 才显，触屏无 hover 故常显（否则移动端完全没有入口） */
+.mermaid-expand-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 1;
+  padding: 3px 9px;
+  border: 1px solid var(--aw-divider);
+  border-radius: var(--aw-radius-pill);
+  background: var(--aw-surface-glass);
+  color: var(--aw-ink-muted-64);
+  font-size: 11px;
+  line-height: 1.5;
+  cursor: zoom-in;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.markdown-body .mermaid-block .mermaid-figure:hover .mermaid-expand-btn,
+.mermaid-expand-btn:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .mermaid-expand-btn {
+    opacity: 0.9;
+  }
 }
 
 /* Mermaid 全屏查看器：mermaid-viewer.ts 建的 DOM，不经过 Vue 挂载 */
@@ -650,19 +677,26 @@ pre code {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  min-width: 0;
 }
 
 .mermaid-viewer-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
   color: #fff;
   font-size: 13px;
   line-height: 1.6;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   opacity: 0.8;
 }
 
 .mermaid-viewer-actions {
   display: flex;
+  flex: none;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .mermaid-viewer-btn {
@@ -680,10 +714,32 @@ pre code {
   background: rgba(255, 255, 255, 0.2);
 }
 
+.mermaid-viewer-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.mermaid-viewer-btn:disabled:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
 .mermaid-viewer-btn.is-active {
   border-color: transparent;
   background: #fff;
   color: #1d1d1f;
+}
+
+/* 缩放档位按钮：－ / ＋ 用全角符号，窄屏比「缩小 / 放大」省一半宽度 */
+.mermaid-viewer-zoom {
+  padding: 5px 10px;
+}
+
+/* 当前百分比：同时是「回到 100%」的按钮 */
+.mermaid-viewer-scale {
+  min-width: 52px;
+  padding: 5px 8px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
 }
 
 .mermaid-viewer-stage {
