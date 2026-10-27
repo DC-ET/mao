@@ -1,6 +1,7 @@
 <template>
   <div
     :id="messageDomId"
+    ref="rootEl"
     :class="['message-bubble', role, { 'tool-only': isToolOnly, 'message-locate-flash': flashing }]"
     @click="onCitationSupClick"
   >
@@ -53,8 +54,11 @@
           />
         </div>
         <div class="user-text-content">
+          <div v-if="userReplyQuotes.length" class="user-reply-quotes">
+            <div v-for="(quote, qIdx) in userReplyQuotes" :key="`q-${qIdx}`" class="user-reply-quote">{{ summarizeQuote(quote) }}</div>
+          </div>
           <template v-for="(seg, idx) in userParsedSegments" :key="idx">
-            <FileReferenceTag v-if="seg.type === 'file'" :file-path="seg.filePath" />
+            <FileReferenceTag v-if="seg.type === 'file'" :file-path="seg.filePath" :line-start="seg.lineStart" :line-end="seg.lineEnd" />
             <QuickCommandTag v-else-if="seg.type !== 'text'" :type="seg.type" :name="seg.name" :content="seg.type === 'command' ? getCommandContent(seg.name) : undefined" />
             <span v-else>{{ seg.content }}</span>
           </template>
@@ -175,6 +179,7 @@
           <el-icon :size="12"><CopyDocument /></el-icon>
           <span v-if="copied">已复制</span>
         </button>
+        <button v-if="showReplyQuote" class="copy-btn" type="button" @click="quoteWholeReply">引用</button>
         <el-popover
           v-if="showDislike"
           :visible="dislikePopoverVisible"
@@ -246,6 +251,16 @@
       </div>
     </div>
   </div>
+  <Teleport to="body">
+    <button
+      v-if="quoteFloat"
+      type="button"
+      class="selection-quote-float"
+      :style="{ top: `${quoteFloat.top}px`, left: `${quoteFloat.left}px` }"
+      @mousedown.prevent
+      @click="applyFloatQuote"
+    >引用</button>
+  </Teleport>
 </template>
 
 <script lang="ts">
@@ -264,7 +279,6 @@ import ThinkingBlock from './ThinkingBlock.vue'
 import FileChangePanel from './FileChangePanel.vue'
 import QuickCommandTag from './QuickCommandTag.vue'
 import FileReferenceTag from './FileReferenceTag.vue'
-import { parseQuickCommandSegments } from '../../utils/quick-command-parser'
 import {
   normalizeMessageRole,
   type ChatMessage,
@@ -273,7 +287,8 @@ import {
 } from '../../composables/useChat'
 import { buildSegmentsFromContentAndTools, extractCitationsFromMetadata } from '../../utils/chatMessage'
 import { buildCiteMap, stripCitationMarkers } from '../../utils/citationMarkers'
-import { openExternalUrl } from '../../utils/capacitor'
+import { isAndroidCapacitor, openExternalUrl } from '../../utils/capacitor'
+import { plainTextFromRange, splitUserMessageForDisplay, summarizeQuote } from '../../utils/selection-quote'
 import type { Citation } from '../../types/chat'
 import { formatDateTime } from '../../utils/datetime'
 import { copyText } from '../../utils/clipboard'
@@ -347,6 +362,10 @@ const emit = defineEmits<{
 const editContent = ref(userVisibleText(props.message.content || ''))
 const editInput = ref<HTMLTextAreaElement>()
 const userCollapsed = ref(true)
+const copied = ref(false)
+const rootEl = ref<HTMLElement | null>(null)
+const quoteFloat = ref<{ top: number; left: number; text: string } | null>(null)
+const quoteReplyToChat = inject<((text: string) => void) | null>('quoteReplyToChat', null)
 
 watch(() => props.isEditing, async (editing) => {
   if (editing) {
@@ -612,7 +631,12 @@ function estimateUserVisualLines(content: string): number {
 
 const isUserLong = computed(() => {
   if (role.value !== 'user') return false
-  const content = userText.value
+  // 开头的回复引用折成一行摘要，不拿去撑开折叠。
+  const content = userParsedSegments.value.map(seg => {
+    if (seg.type === 'text') return seg.content
+    if (seg.type === 'file') return seg.filePath
+    return seg.name
+  }).join('')
   return content.length >= USER_COLLAPSE_MIN_CHARS
     && estimateUserVisualLines(content) > USER_COLLAPSE_LINES
 })
@@ -627,9 +651,11 @@ const userText = computed(() => userVisibleText(props.message.content || ''))
 /** footer / 复制等与角色无关的出口：用户走剥离口径，assistant 原样。 */
 const displayText = computed(() => role.value === 'user' ? userText.value : (props.message.content || ''))
 
+const userMessageParts = computed(() => splitUserMessageForDisplay(userText.value))
+const userReplyQuotes = computed(() => role.value === 'user' ? userMessageParts.value.quotes : [])
 const userParsedSegments = computed(() => {
   if (role.value !== 'user') return []
-  return parseQuickCommandSegments(userText.value)
+  return userMessageParts.value.segments
 })
 
 // Fetch commands when user messages with command tags are rendered
@@ -646,7 +672,78 @@ function getToolCall(callId: string): ToolCall | undefined {
   return visibleToolCalls.value.find(c => c.id === callId)
 }
 
-const copied = ref(false)
+const showReplyQuote = computed(() =>
+  !!quoteReplyToChat && role.value === 'assistant' && !isAssistantRunning.value && !props.isEditing,
+)
+
+function hideQuoteFloat() {
+  quoteFloat.value = null
+}
+
+function elementFromNode(node: Node | null): Element | null {
+  if (!node) return null
+  return node instanceof Element ? node : node.parentElement
+}
+
+function captureQuoteSelection() {
+  if (!quoteReplyToChat || isAndroidCapacitor() || role.value !== 'assistant' || isAssistantRunning.value) {
+    hideQuoteFloat()
+    return
+  }
+  const selection = window.getSelection()
+  if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+    hideQuoteFloat()
+    return
+  }
+  const anchorBody = elementFromNode(selection.anchorNode)?.closest('.markdown-body')
+  const focusBody = elementFromNode(selection.focusNode)?.closest('.markdown-body')
+  if (!anchorBody || anchorBody !== focusBody || !rootEl.value?.contains(anchorBody)) {
+    hideQuoteFloat()
+    return
+  }
+  const text = plainTextFromRange(selection.getRangeAt(0))
+  if (!text) {
+    hideQuoteFloat()
+    return
+  }
+  const rect = selection.getRangeAt(0).getBoundingClientRect()
+  quoteFloat.value = { top: Math.max(8, rect.top - 32), left: Math.max(8, rect.left), text }
+}
+
+function quoteWholeReply() {
+  if (!quoteReplyToChat) return
+  const texts = renderSegments.value
+    .filter((seg): seg is { type: 'text'; content: string } => seg.type === 'text' && !!seg.content)
+    .map(seg => seg.content)
+  const text = texts.length > 0 ? texts.join('\n\n') : (props.message.content || '')
+  if (text.trim()) quoteReplyToChat(text)
+  hideQuoteFloat()
+}
+
+function applyFloatQuote() {
+  if (!quoteReplyToChat || !quoteFloat.value) return
+  quoteReplyToChat(quoteFloat.value.text)
+  hideQuoteFloat()
+  window.getSelection()?.removeAllRanges()
+}
+
+function onQuoteKeyUp(event: KeyboardEvent) {
+  if (event.key === 'Escape') {
+    hideQuoteFloat()
+    return
+  }
+  if (event.key === 'Shift' || event.key.startsWith('Arrow')) captureQuoteSelection()
+}
+
+function onQuoteScroll() {
+  hideQuoteFloat()
+}
+
+function onQuotePointerDown(event: Event) {
+  const target = event.target
+  if (target instanceof Element && target.closest('.selection-quote-float')) return
+  hideQuoteFloat()
+}
 let copyTimer: ReturnType<typeof setTimeout> | null = null
 
 // ─── 点踩反馈 ───
@@ -682,8 +779,23 @@ function onDocumentClick(event: MouseEvent) {
   dislikePopoverVisible.value = false
 }
 
-onMounted(() => document.addEventListener('click', onDocumentClick))
-onUnmounted(() => document.removeEventListener('click', onDocumentClick))
+onMounted(() => {
+  document.addEventListener('click', onDocumentClick)
+  if (!quoteReplyToChat) return
+  window.addEventListener('pointerup', captureQuoteSelection)
+  window.addEventListener('keyup', onQuoteKeyUp)
+  window.addEventListener('pointerdown', onQuotePointerDown, true)
+  window.addEventListener('scroll', onQuoteScroll, true)
+  window.addEventListener('resize', onQuoteScroll)
+})
+onUnmounted(() => {
+  document.removeEventListener('click', onDocumentClick)
+  window.removeEventListener('pointerup', captureQuoteSelection)
+  window.removeEventListener('keyup', onQuoteKeyUp)
+  window.removeEventListener('pointerdown', onQuotePointerDown, true)
+  window.removeEventListener('scroll', onQuoteScroll, true)
+  window.removeEventListener('resize', onQuoteScroll)
+})
 
 watch(() => props.message.id, () => {
   dislikePopoverVisible.value = false
@@ -849,6 +961,36 @@ async function copyMessage() {
   -webkit-line-clamp: 10;
   line-clamp: 10;
   overflow: hidden;
+}
+
+.user-reply-quotes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.user-reply-quote {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--aw-ink-muted-64);
+  font-size: var(--aw-text-fine);
+}
+
+.selection-quote-float {
+  position: fixed;
+  z-index: 4000;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--aw-hairline, #ddd);
+  border-radius: 6px;
+  background: var(--aw-canvas, #fff);
+  color: var(--aw-ink, #222);
+  font-size: 12px;
+  line-height: 22px;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
 }
 
 .user-collapse-toggle {

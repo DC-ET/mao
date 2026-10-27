@@ -435,6 +435,12 @@ describe('resolveFileRefPaths 绝对路径跳过（含 Windows 盘符）', () =>
     expect(resolveFileRefPaths('@{./a.txt}@', workspace)).toBe('@{/Users/me/project/./a.txt}@')
   })
 
+  it('行区间引用只改标记里的路径，行号和片段原样留下', () => {
+    const raw = '@{src/a.py}@ 第 3-4 行：\n```python\nprint(1)\n```\n请解释'
+    expect(resolveFileRefPaths(raw, workspace))
+      .toBe('@{/Users/me/project/src/a.py}@ 第 3-4 行：\n```python\nprint(1)\n```\n请解释')
+  })
+
   it('无 @{} 或空 workspace 时原文返回', () => {
     expect(resolveFileRefPaths('普通文本', workspace)).toBe('普通文本')
     expect(resolveFileRefPaths('看 @{src/a.txt}@', '')).toBe('看 @{src/a.txt}@')

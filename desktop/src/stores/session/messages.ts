@@ -3,6 +3,7 @@ import type { ChatMessage, TodoItem, ContextWindowInfo, CompactionEvent, QueueMe
 import { appendTextDelta, appendThinkingDelta as appendThinkingDeltaUtil, appendToolCallStart as appendToolCallStartUtil, discardAbortedStreamTail } from '../../utils/chatMessage'
 import { stripImageUrlLines } from '../../utils/imageUrlAnnotation'
 import { nowDateTime } from '../../utils/datetime'
+import { toRelativeWorkspacePath } from '../../utils/workspace-path'
 import type { TaskPhase } from './types'
 import type { LlmRetryInfo } from './types'
 
@@ -77,6 +78,8 @@ export function createMessageRuntimeModule(ctx: {
   const sessionPendingApprovals = ref<Map<string, number>>(new Map())
   const sessionQueueMessages = ref<Map<string, QueueMessage[]>>(new Map())
   const sessionFileChanges = ref<Map<string, FileChange[]>>(new Map())
+  /** 工作区 → 相对路径 → 实时变更修订号。只在 appendFileChange 时递增。 */
+  const fileQuoteRevisions = ref<Map<string, Map<string, number>>>(new Map())
   const sessionPendingQuestions = ref<Map<string, PendingQuestion[]>>(new Map())
   const sessionExecutionErrors = ref<Map<string, string>>(new Map())
   const sessionMessageHasMore = ref<Map<string, boolean>>(new Map())
@@ -822,7 +825,7 @@ export function createMessageRuntimeModule(ctx: {
     sessionQueueMessages.value.delete(String(sessionId))
   }
 
-  function appendFileChange(sessionId: string, change: FileChange) {
+  function appendFileChange(sessionId: string, change: FileChange, workspace?: string | null) {
     const key = String(sessionId)
     const changes = sessionFileChanges.value.get(key) || []
     const existing = changes.find(c => c.path === change.path)
@@ -835,6 +838,22 @@ export function createMessageRuntimeModule(ctx: {
       changes.push({ ...change })
     }
     sessionFileChanges.value.set(key, [...changes])
+    if (workspace) bumpFileQuoteRevision(workspace, change.path)
+  }
+
+  function bumpFileQuoteRevision(workspace: string, rawPath: string): void {
+    const rel = toRelativeWorkspacePath(workspace, rawPath)
+    const outer = new Map(fileQuoteRevisions.value)
+    const inner = new Map(outer.get(workspace) ?? [])
+    inner.set(rel, (inner.get(rel) ?? 0) + 1)
+    outer.set(workspace, inner)
+    fileQuoteRevisions.value = outer
+  }
+
+  function fileQuoteRevision(workspace: string, rawPath: string): number {
+    if (!workspace || !rawPath) return 0
+    const rel = toRelativeWorkspacePath(workspace, rawPath)
+    return fileQuoteRevisions.value.get(workspace)?.get(rel) ?? 0
   }
 
   function mergeFileChangeDiff(target: FileChange, incoming: FileChange) {
@@ -967,6 +986,7 @@ export function createMessageRuntimeModule(ctx: {
     sessionLlmRetry.value = new Map()
     sessionPendingApprovals.value = new Map()
     sessionFileChanges.value = new Map()
+    fileQuoteRevisions.value = new Map()
     sessionQueueMessages.value = new Map()
     sessionPendingQuestions.value = new Map()
     sessionExecutionErrors.value = new Map()
@@ -995,6 +1015,7 @@ export function createMessageRuntimeModule(ctx: {
     sessionPendingApprovals,
     sessionQueueMessages,
     sessionFileChanges,
+    fileQuoteRevisions,
     sessionPendingQuestions,
     sessionExecutionErrors,
     sessionMessageHasMore,
@@ -1078,6 +1099,7 @@ export function createMessageRuntimeModule(ctx: {
     getQueueMessages,
     clearQueueMessages,
     appendFileChange,
+    fileQuoteRevision,
     setFileChanges,
     getFileChanges,
     clearFileChanges,

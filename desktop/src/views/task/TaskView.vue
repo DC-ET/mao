@@ -102,6 +102,7 @@ import { useWorkspaceGitProvider } from '../../composables/workspace-git-provide
 import { useTaskPanelPrefs } from '../../composables/useTaskPanelPrefs'
 import type { GitChangedFile } from '../../types/git'
 import type { FileChange } from '../../types/chat'
+import type { FileRangeQuotePayload } from '../../utils/selection-quote'
 import type { SideTaskContextMode } from '../../types/file-browser'
 import type { SideTaskEntryOptions } from '../../composables/useCenterTabs'
 import { getToken } from '../../utils/auth-storage'
@@ -301,6 +302,8 @@ function escapeHtml(text: string): string {
 // 若用单例覆盖式注册，后挂载的边路任务会把主会话 handle 顶掉，导致「添加到聊天」插错对话框。
 interface ChatInputHandle {
   insertFileReference: (filePath: string) => void
+  addReplyQuote: (text: string) => void
+  insertFileRangeQuote: (quote: FileRangeQuotePayload) => void
 }
 const chatInputHandles = ref<Record<string, ChatInputHandle>>({})
 function registerChatInput(key: string, handle: ChatInputHandle) {
@@ -316,18 +319,34 @@ provide('unregisterChatInput', unregisterChatInput)
 // 供聊天区深层组件（如文件变更面板右键菜单「添加到聊天」）复用，与右侧栏 add-file-to-chat 同一入口
 provide('addFileToChat', handleAddFileToChat)
 
-function handleAddFileToChat(filePath: string) {
-  // 优先插入当前激活 tab 的输入框（主会话 / 边路任务）
+function withChatInput(apply: (handle: ChatInputHandle) => void) {
   const tabId = activeTabId.value
   const handle = chatInputHandles.value[tabId]
   if (handle) {
-    nextTick(() => handle.insertFileReference(filePath))
+    nextTick(() => apply(handle))
     return
   }
-  // 当前 tab 无输入框（文件 / Diff / 子代理只读）：回退主会话
   activateTab('chat')
-  nextTick(() => chatInputHandles.value['chat']?.insertFileReference(filePath))
+  nextTick(() => {
+    const main = chatInputHandles.value['chat']
+    if (main) apply(main)
+  })
 }
+
+function handleAddFileToChat(filePath: string) {
+  withChatInput(handle => handle.insertFileReference(filePath))
+}
+
+function quoteReplyToChat(text: string) {
+  withChatInput(handle => handle.addReplyQuote(text))
+}
+
+function quoteFileRangeToChat(quote: FileRangeQuotePayload) {
+  withChatInput(handle => handle.insertFileRangeQuote(quote))
+}
+
+provide('quoteReplyToChat', quoteReplyToChat)
+provide('quoteFileRangeToChat', quoteFileRangeToChat)
 
 // Center tabs
 const activeSessionIdRef = computed(() => sessionStore.activeSessionId ?? '')

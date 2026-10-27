@@ -7,7 +7,7 @@
     popper-class="file-reference-tag-tip"
   >
     <span class="file-reference-tag">
-      📄 {{ fileName }}
+      📄 {{ label }}
     </span>
   </el-tooltip>
 </template>
@@ -17,12 +17,17 @@ import { computed } from 'vue'
 
 const props = defineProps<{
   filePath: string
+  lineStart?: number
+  lineEnd?: number
 }>()
 
-const fileName = computed(() => {
+const label = computed(() => {
   if (!props.filePath) return ''
   const parts = props.filePath.replace(/\\/g, '/').split('/')
-  return parts[parts.length - 1] || props.filePath
+  const name = parts[parts.length - 1] || props.filePath
+  if (props.lineStart == null) return name
+  const end = props.lineEnd ?? props.lineStart
+  return end === props.lineStart ? `${name}:${props.lineStart}` : `${name}:${props.lineStart}-${end}`
 })
 </script>
 

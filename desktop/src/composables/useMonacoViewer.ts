@@ -9,12 +9,17 @@ export function useMonacoViewer(options: {
   filePath: Ref<string>
   isDark: Ref<boolean>
   enabled: Ref<boolean>
+  /** 编辑器创建成功时传入实例，销毁时传入 null。主题切换和 setValue 不重复回调。 */
+  onEditor?: (editor: MonacoEditor.IStandaloneCodeEditor | null) => void
 }) {
   let editor: MonacoEditor.IStandaloneCodeEditor | null = null
 
   function disposeEditor(): void {
-    editor?.dispose()
+    if (!editor) return
+    const current = editor
     editor = null
+    options.onEditor?.(null)
+    current.dispose()
   }
 
   async function syncEditor(): Promise<void> {
@@ -65,6 +70,7 @@ export function useMonacoViewer(options: {
         renderValidationDecorations: 'off',
         unicodeHighlight: { ambiguousCharacters: false },
       })
+      options.onEditor?.(editor)
       return
     }
 

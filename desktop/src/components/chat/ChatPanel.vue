@@ -745,7 +745,11 @@ async function handleSend(text: string, files: File[], pendingUploads?: PendingU
         // 回填时按文件类型重建预览 URL，旧 blob URL 不再使用，先释放
         entry.files.forEach((item) => { if (item.previewUrl) URL.revokeObjectURL(item.previewUrl) })
         draftStore.clearDraft('new')
-        chatInputRef.value?.restoreContent(entry.text, entry.files.map((item) => item.file))
+        chatInputRef.value?.restoreContent(
+          entry.text,
+          entry.files.map((item) => item.file),
+          entry.quotes ?? [],
+        )
       }
     }
   } finally {

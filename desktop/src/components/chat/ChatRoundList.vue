@@ -190,8 +190,7 @@ import type { ChatMessage, CompactionEvent } from '../../types/chat'
 import { resolveForkCutPoint, useMessageRounds, expandRoundContainingMessage, type MessageRound } from '../../composables/useMessageRounds'
 import { LOCATE_FLASH_KEY } from '../../composables/useMessageLocate'
 import { formatDateTime } from '../../utils/datetime'
-import { stripInternalMarkers } from '../../utils/internalMarkers'
-import { userVisibleText } from '../../utils/imageUrlAnnotation'
+import { userAskExcerpt } from '../../utils/selection-quote'
 import MessageBubble from './MessageBubble.vue'
 import FileChangePanel from './FileChangePanel.vue'
 import CompactionMarker from './CompactionMarker.vue'
@@ -264,13 +263,10 @@ function markersInMessages(messages: ChatMessage[]): CompactionEvent[] {
   return (props.compactionEvents ?? []).filter(ev => ids.has(String(ev.boundaryMsgId)))
 }
 
-/** 分叉来源标签：该轮用户消息的时间 + 可见文本前 12 字（剥离内部标记，避免把 ${skill}$ 之类原文露出来）。 */
+/** 分叉来源标签：该轮用户消息的时间 + 真正问题的前 12 字（回复引用和行区间片段不占这 12 字）。 */
 function forkLabelOf(round: MessageRound): string {
   const time = formatDateTime(round.userMessage.createdAt)
-  const excerpt = stripInternalMarkers(userVisibleText(round.userMessage.content ?? ''))
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 12)
+  const excerpt = userAskExcerpt(round.userMessage.content ?? '').slice(0, 12)
   return excerpt ? `${time} · ${excerpt}` : time
 }
 

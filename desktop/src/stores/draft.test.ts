@@ -28,6 +28,18 @@ describe('draft store', () => {
     expect(store.getDraft('s:1')?.files.length).toBe(0)
   })
 
+  it('只有回复引用时不算空草稿', () => {
+    const store = useDraftStore()
+    store.setDraft('s:1', {
+      html: '<p></p>',
+      text: '',
+      files: [],
+      quotes: [{ id: 'q1', text: '引用的回复', truncated: false }],
+    })
+    expect(store.hasDraft('s:1')).toBe(true)
+    expect(store.getDraft('s:1')?.quotes).toEqual([{ id: 'q1', text: '引用的回复', truncated: false }])
+  })
+
   it('空内容写入时删除条目而非存储空壳', () => {
     const store = useDraftStore()
     store.setDraft('s:1', makeEntry('草稿'))

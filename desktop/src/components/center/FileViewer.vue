@@ -111,8 +111,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch, toRef } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, toRef, inject } from 'vue'
 import { useMonacoViewer } from '../../composables/useMonacoViewer'
+import { attachMonacoQuote } from '../../composables/useMonacoQuote'
+import type { FileRangeQuotePayload } from '../../utils/selection-quote'
+import { isAndroidCapacitor } from '../../utils/capacitor'
 import MarkdownContent from '../common/MarkdownContent.vue'
 import PdfViewer from './PdfViewer.vue'
 import CsvTableView from './CsvTableView.vue'
@@ -151,13 +154,16 @@ const monacoContainer = ref<HTMLElement>()
 const viewMode = ref<'source' | 'rendered'>('rendered')
 const { isDark } = useTheme()
 
-const activeFileChanges = computed(() => sessionStore.activeFileChanges)
+const quoteFileRangeToChat = inject<((quote: FileRangeQuotePayload) => void) | null>('quoteFileRangeToChat', null)
+let detachQuote: (() => void) | null = null
+/** 屏幕上这份内容对应的修订号。去抖重载完成前不跟着实时修订号走。 */
+const displayedQuoteRev = ref(0)
 
-const matchingChangeCount = computed(() => {
-  return activeFileChanges.value.filter(
-    change => change.path === props.filePath
-  ).length
-})
+function currentQuoteRev(): number {
+  const workspace = sessionStore.activeSession?.workspace || ''
+  if (!workspace || !sessionStore.fileQuoteRevision) return 0
+  return sessionStore.fileQuoteRevision(workspace, props.filePath)
+}
 
 const isMarkdown = computed(() => {
   const ext = props.filePath.split('.').pop()?.toLowerCase()
@@ -174,6 +180,17 @@ useMonacoViewer({
   filePath: toRef(props, 'filePath'),
   isDark,
   enabled: monacoEnabled,
+  onEditor(editor) {
+    detachQuote?.()
+    detachQuote = null
+    if (!editor || !quoteFileRangeToChat || isAndroidCapacitor()) return
+    detachQuote = attachMonacoQuote({
+      editor,
+      getFilePath: () => props.filePath,
+      getCapturedRevision: () => displayedQuoteRev.value,
+      onQuote: (quote) => quoteFileRangeToChat?.(quote),
+    })
+  },
 })
 
 async function handleMarkdownClick(e: MouseEvent) {
@@ -313,6 +330,7 @@ async function loadFile() {
       return
     }
 
+    const revisionAtRead = currentQuoteRev()
     const result = await props.provider.readFile(props.filePath, { limit: 5000 })
     if (isStaleLoad(seq)) return
 
@@ -356,6 +374,7 @@ async function loadFile() {
     content.value = result.content
     totalLines.value = result.total_lines
     truncated.value = result.total_lines > 5000
+    displayedQuoteRev.value = revisionAtRead
     // 文本类新格式（csv）只在 readFile 成功后的分支点改道表格渲染（技术方案 §6-A1）
     state.value = kind === 'csv' ? 'csv' : 'ready'
   } catch (e: any) {
@@ -379,13 +398,19 @@ watch(() => [props.filePath, props.provider] as const, () => {
   loadFile()
 })
 
-// Reload only when the current file gains new changes — not when path switches
-// (path change makes matchingChangeCount jump using the previous file's count as oldCount)
+// 同路径第二次编辑不会增加变更条数（appendFileChange 原地合并）。
+// 重载看工作区修订号，预览里下一次引用才能拿到新内容。
+const fileQuoteRev = computed(() => {
+  const workspace = sessionStore.activeSession?.workspace || ''
+  if (!workspace || !sessionStore.fileQuoteRevision) return 0
+  return sessionStore.fileQuoteRevision(workspace, props.filePath)
+})
+
 watch(
-  () => ({ path: props.filePath, count: matchingChangeCount.value }),
+  () => ({ path: props.filePath, rev: fileQuoteRev.value }),
   (curr, prev) => {
     if (!prev || curr.path !== prev.path) return
-    if (curr.count > prev.count) {
+    if (curr.rev > prev.rev) {
       if (changeDebounceTimer) clearTimeout(changeDebounceTimer)
       changeDebounceTimer = setTimeout(() => {
         loadFile()
@@ -395,6 +420,8 @@ watch(
 )
 
 onUnmounted(() => {
+  detachQuote?.()
+  detachQuote = null
   if (changeDebounceTimer) {
     clearTimeout(changeDebounceTimer)
     changeDebounceTimer = null
@@ -488,6 +515,7 @@ onUnmounted(() => {
 .monaco-container {
   width: 100%;
   height: 100%;
+  position: relative;
 }
 
 .file-scroll {

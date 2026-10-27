@@ -33,6 +33,29 @@ describe('TitleGenerator', () => {
   it('preprocessKeepsUnknownCommandMarker', () => {
     expect(TitleGenerator.preprocessForTitle('执行 #{missing}#', { known: 'value' })).toBe('执行 #{missing}#');
   });
+
+  it('preprocessDropsReplyQuotesAndOnlyTheQuoteFence', () => {
+    const quoted = [
+      '> 引用的回复',
+      '>',
+      '> 第二行',
+      '',
+      '@{src/a.py}@ 第 3-4 行：',
+      '```python',
+      'print(1)',
+      '```',
+      '请解释这段',
+      '```',
+      '用户自己的代码',
+      '```',
+    ].join('\n');
+    expect(TitleGenerator.preprocessForTitle(quoted, new Map())).toBe('请解释这段\n```\n用户自己的代码\n```');
+  });
+
+  it('preprocessDropsOverlongRangeLineWithoutTouchingLaterText', () => {
+    const text = '@{src/a.py}@ 第 1-400 行（片段过长未内联，请按行号读取）\n请按行号看';
+    expect(TitleGenerator.preprocessForTitle(text, new Map())).toBe('请按行号看');
+  });
 });
 
 describe('PermissionLevel', () => {

@@ -191,6 +191,7 @@ function ensureSideTaskReadWatch() {
 }
 
 export function useCenterTabs(activeSessionId: Ref<string | null>) {
+  const sessionStore = useSessionStore()
   // Sync currentSessionId with the provided ref
   watch(activeSessionId, (newId) => {
     const sid = newId ?? ''
@@ -258,6 +259,14 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     notifyTabsChanged()
   }
 
+  function quoteRevisionFor(path: string): number {
+    const workspace = sessionStore.getSessionEntity(currentSessionId.value)?.workspace
+      || sessionStore.activeSession?.workspace
+      || ''
+    if (!workspace) return 0
+    return sessionStore.fileQuoteRevision(workspace, path)
+  }
+
   function openDiffTab(change: FileChange, title?: string, opts?: { source?: 'tool' | 'git' }) {
     const state = getSessionState()
     const filePath = change.path
@@ -266,6 +275,7 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     const existing = state.tabs.find(t => t.id === idPrefix + filePath || (t.type === 'diff' && t.filePath === filePath && t.id.startsWith(idPrefix)))
     if (existing) {
       existing.fileChange = { ...change }
+      existing.quoteRevision = quoteRevisionFor(filePath)
       existing.title = title || existing.title
       state.activeTabId = existing.id
       notifyTabsChanged()
@@ -274,7 +284,14 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     const fileName = filePath.split(/[/\\]/).pop() || filePath
     const tabTitle = title || (source === 'git' ? `${fileName} (Git)` : `${fileName} (变更)`)
     const id = idPrefix + filePath
-    const newTab: Tab = { id, type: 'diff', title: tabTitle, filePath, fileChange: { ...change } }
+    const newTab: Tab = {
+      id,
+      type: 'diff',
+      title: tabTitle,
+      filePath,
+      fileChange: { ...change },
+      quoteRevision: quoteRevisionFor(filePath),
+    }
     state.tabs.push(newTab)
     state.activeTabId = id
     notifyTabsChanged()
@@ -450,7 +467,10 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
         tab.version = (tab.version ?? 0) + 1
       } else {
         tab.title = prefix === 'git-diff:' ? `${fileName} (Git)` : `${fileName} (变更)`
-        if (tab.fileChange) tab.fileChange = { ...tab.fileChange, path: next.path }
+        if (tab.fileChange) {
+          tab.fileChange = { ...tab.fileChange, path: next.path }
+          tab.quoteRevision = quoteRevisionFor(next.path)
+        }
       }
       if (state.activeTabId === oldId) state.activeTabId = tab.id
     }

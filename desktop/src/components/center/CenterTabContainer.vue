@@ -12,6 +12,8 @@
         v-else-if="activeTab?.type === 'diff' && activeTab.fileChange"
         :key="activeTabId"
         :change="activeTab.fileChange"
+        :quote-enabled="activeTabId.startsWith('diff:')"
+        :quote-revision="activeTab.quoteRevision ?? 0"
       />
       <SideChatPanel
         v-else-if="activeTab?.type === 'side_task' && activeTab.sideSessionId != null"

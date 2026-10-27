@@ -34,6 +34,8 @@ export interface Tab {
   title: string
   filePath?: string     // relative path within workspace
   fileChange?: FileChange
+  /** Diff 快照打开时的文件引用修订号。之后的实时变更不会改这份快照。 */
+  quoteRevision?: number
   version?: number      // increment on each re-open to force remount
   /** 边路任务 / 子代理子会话 ID（type === 'side_task' | 'subagent'） */
   sideSessionId?: number

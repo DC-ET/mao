@@ -12,6 +12,8 @@ export interface DraftEntry {
    * localPath：LOCAL 模式非图片文件在本机的绝对路径（发送时拷贝到 ~/.mao/attachments）。
    */
   files: Array<{ file: File; previewUrl: string; localPath?: string }>
+  /** 回复选区引用。旧草稿没有这个字段，恢复时当成空数组。 */
+  quotes?: Array<{ id: string; text: string; truncated: boolean }>
 }
 
 /** TipTap 空文档 getHTML() 的残留结构（空段落/空行），视为无内容 */
@@ -21,6 +23,7 @@ function isEmptyHtml(html: string): boolean {
 
 function isEmptyDraft(entry: DraftEntry): boolean {
   if (entry.files.length > 0) return false
+  if (entry.quotes && entry.quotes.length > 0) return false
   return !entry.text.trim() && isEmptyHtml(entry.html)
 }
 

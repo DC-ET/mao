@@ -8,7 +8,11 @@ import type { QueueMessage } from '../types/chat'
 /** 「撤回编辑」需要的最小输入框能力（ChatInput defineExpose 的子集） */
 export interface QueueEditTarget {
   hasDraft(): boolean
-  restoreContent(text: string, files: File[]): void
+  restoreContent(
+    text: string,
+    files: File[],
+    quotes?: Array<{ id: string; text: string; truncated: boolean }>,
+  ): void
   focusInput(): void
 }
 
@@ -91,7 +95,7 @@ export function useChatQueue(
     // 确认/取图期间面板可能切换输入框实例（主会话有居中态与 docked 两个 ChatInput），
     // 回填时重新取一次，拿不到再退回早退时捕获的实例
     const target = getInput?.() ?? input
-    target.restoreContent(msg.content, files)
+    target.restoreContent(msg.content, files, [])
     nextTick(() => target.focusInput())
   }
 
