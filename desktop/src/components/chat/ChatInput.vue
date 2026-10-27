@@ -58,6 +58,12 @@
         @select="handleFileReferenceSelect"
         @close="closeFilePanel"
       />
+      <div v-if="replyQuotes.length" class="reply-quote-list">
+        <div v-for="quote in replyQuotes" :key="quote.id" class="reply-quote-item">
+          <span class="reply-quote-text">{{ summarizeQuote(quote.text) }}</span>
+          <button type="button" class="reply-quote-remove" :disabled="disabled" @click="removeReplyQuote(quote.id)">移除</button>
+        </div>
+      </div>
       <EditorContent :editor="editor" class="rich-editor" />
     </div>
 
@@ -157,6 +163,13 @@ import type { QuickCommand, QuickCommandsData } from '../../types/quick-command'
 import { useSessionStore, type CloudProject } from '../../stores/session'
 import { useDraftStore, type DraftEntry } from '../../stores/draft'
 import { api } from '../../api'
+import {
+  capReplyQuote,
+  serializeReplyQuotes,
+  summarizeQuote,
+  type FileRangeQuotePayload,
+  type ReplyQuote,
+} from '../../utils/selection-quote'
 import { cloudWorkspaceIndicator, extractGitRepoSlug, isHttpsGitUrl } from '../../utils/cloud-project'
 import { getUploadConfig } from '../../utils/storageMode'
 import type { LocalPendingFile } from '../../utils/chatLocalAttach'
@@ -245,12 +258,17 @@ if (typeof window !== 'undefined') {
 }
 
 // Register with parent for file tree context menu "add to chat"
-const registerChatInput = inject<(key: string, handle: { insertFileReference: (filePath: string) => void }) => void>('registerChatInput', () => {})
+const registerChatInput = inject<(key: string, handle: {
+  insertFileReference: (filePath: string) => void
+  addReplyQuote: (text: string) => void
+  insertFileRangeQuote: (quote: FileRangeQuotePayload) => void
+}) => void>('registerChatInput', () => {})
 const unregisterChatInput = inject<(key: string) => void>('unregisterChatInput', () => {})
 
 // ===== State =====
 const draftStore = useDraftStore()
 const pendingFiles = ref<{ file: File; previewUrl: string; localPath?: string }[]>([])
+const replyQuotes = ref<ReplyQuote[]>([])
 const draggingFile = ref(false)
 const editorContent = ref('')
 
@@ -284,7 +302,7 @@ let fileSearchDebounce: ReturnType<typeof setTimeout> | null = null
 const canSend = computed(() => {
   if (props.disabled) return false
   if (props.waitingForSave) return false
-  if (!(editorContent.value.trim().length > 0 || pendingFiles.value.length > 0)) return false
+  if (!(editorContent.value.trim().length > 0 || pendingFiles.value.length > 0 || replyQuotes.value.length > 0)) return false
   if (props.isNewTask && !props.selectedAgentId) return false
   if (props.isNewTask && props.executionMode === 'CLOUD' && props.workspaceMode === 'git') {
     if (!isHttpsGitUrl(props.gitCloneUrl || '')) return false
@@ -734,9 +752,8 @@ function buildCurrentDraft(): DraftEntry {
   return {
     html,
     text: editorContent.value,
-    // 浅拷贝整个条目：localPath（LOCAL 本机附件路径）随草稿保留，
-    // 切走再切回后发送仍能定位源文件
     files: pendingFiles.value.map((item) => ({ ...item })),
+    quotes: replyQuotes.value.map(quote => ({ ...quote })),
   }
 }
 
@@ -758,11 +775,14 @@ function restoreDraft(key?: string | null) {
     editorContent.value = d.text
     // 浅拷贝隔离 store 快照：移除待发文件时的 splice/revoke 不影响草稿槽位
     pendingFiles.value = d.files.map((item) => ({ ...item }))
+    replyQuotes.value = (d.quotes ?? []).map(quote => ({ ...quote }))
   } else {
     editor.value.commands.clearContent()
     editorContent.value = ''
     pendingFiles.value = []
+    replyQuotes.value = []
   }
+  refreshFileQuoteStale()
 }
 
 watch(() => props.draftKey, (newKey, oldKey) => {
@@ -1091,7 +1111,8 @@ async function handleSend() {
   const pendingUploads: LocalPendingFile[] = pendingFiles.value
     .filter((item) => !item.file.type.startsWith('image/'))
     .map((item) => ({ file: item.file, localPath: item.localPath ?? '' }))
-  const text = editor.value.getText({ blockSeparator: '\n' }).trim()
+  const body = editor.value.getText({ blockSeparator: '\n' }).trim()
+  const text = `${serializeReplyQuotes(replyQuotes.value)}${body}`.trim()
   if (!text && imageFiles.length === 0 && pendingUploads.length === 0) return
 
   // 检查视觉能力：如果有图片但模型明确不支持视觉，提示用户
@@ -1210,6 +1231,41 @@ watch(dynamicPlaceholder, () => {
 
 
 function insertFileReference(filePath: string) {
+  insertFileNode({ filePath })
+}
+
+function addReplyQuote(text: string) {
+  if (props.disabled) return
+  const capped = capReplyQuote(text)
+  if (!capped.text) return
+  replyQuotes.value = [...replyQuotes.value, {
+    id: crypto.randomUUID(),
+    text: capped.text,
+    truncated: capped.truncated,
+  }]
+  saveDraft(props.draftKey)
+}
+
+function removeReplyQuote(id: string) {
+  replyQuotes.value = replyQuotes.value.filter(quote => quote.id !== id)
+  saveDraft(props.draftKey)
+}
+
+function insertFileRangeQuote(quote: FileRangeQuotePayload) {
+  if (props.disabled) return
+  insertFileNode({
+    filePath: quote.filePath,
+    lineStart: quote.lineStart,
+    lineEnd: quote.lineEnd,
+    snippet: quote.snippet,
+    languageId: quote.languageId || null,
+    capturedChangeCount: quote.capturedChangeCount,
+  })
+  refreshFileQuoteStale()
+  saveDraft(props.draftKey)
+}
+
+function insertFileNode(attrs: Record<string, unknown>) {
   if (!editor.value || props.disabled) return
   const ed = editor.value
   const { state, dispatch } = ed.view
@@ -1217,7 +1273,7 @@ function insertFileReference(filePath: string) {
   if (!nodeType) return
 
   const pos = state.selection.from
-  const node = nodeType.create({ filePath })
+  const node = nodeType.create(attrs)
   let tr = state.tr.insert(pos, node)
   const space = state.schema.text(' ')
   tr = tr.insert(pos + node.nodeSize, space)
@@ -1226,8 +1282,33 @@ function insertFileReference(filePath: string) {
   ed.commands.focus()
 }
 
+function refreshFileQuoteStale() {
+  const ed = editor.value
+  if (!ed || ed.isDestroyed) return
+  const workspace = props.workspace || ''
+  let tr = ed.state.tr
+  let changed = false
+  ed.state.doc.descendants((node, pos) => {
+    if (node.type.name !== 'fileReference' || node.attrs.lineStart == null) return
+    const current = workspace && sessionStore.fileQuoteRevision
+      ? sessionStore.fileQuoteRevision(workspace, node.attrs.filePath)
+      : 0
+    const captured = Number(node.attrs.capturedChangeCount ?? 0)
+    const stale = current > captured ? '1' : null
+    if ((node.attrs.stale ?? null) !== stale) {
+      tr = tr.setNodeMarkup(pos, undefined, { ...node.attrs, stale })
+      changed = true
+    }
+  })
+  if (changed) ed.view.dispatch(tr)
+}
+
+watch(() => sessionStore.fileQuoteRevisions, () => refreshFileQuoteStale())
+watch(() => props.workspace, () => refreshFileQuoteStale())
+
 function getPlainText(): string {
-  return editor.value?.getText({ blockSeparator: '\n' }).trim() ?? ''
+  const body = editor.value?.getText({ blockSeparator: '\n' }).trim() ?? ''
+  return `${serializeReplyQuotes(replyQuotes.value)}${body}`.trim()
 }
 
 function clearInput() {
@@ -1235,6 +1316,7 @@ function clearInput() {
     editor.value.commands.clearContent()
     editorContent.value = ''
   }
+  replyQuotes.value = []
   pendingFiles.value.forEach((item) => { if (item.previewUrl) URL.revokeObjectURL(item.previewUrl) })
   pendingFiles.value = []
   // 发送成功清空输入时同步清除对应草稿
@@ -1242,13 +1324,13 @@ function clearInput() {
 }
 
 onMounted(() => {
-  registerChatInput(props.registerKey, { insertFileReference })
+  registerChatInput(props.registerKey, { insertFileReference, addReplyQuote, insertFileRangeQuote })
   restoreDraft(props.draftKey)
 })
 
 /** 输入框是否有未发送内容（文本或附件），供队列消息撤回前检查草稿冲突。 */
 function hasDraft(): boolean {
-  return editorContent.value.trim().length > 0 || pendingFiles.value.length > 0
+  return editorContent.value.trim().length > 0 || pendingFiles.value.length > 0 || replyQuotes.value.length > 0
 }
 
 function escapeHtml(text: string): string {
@@ -1286,9 +1368,15 @@ function markedTextToEditorHtml(text: string): string {
     .join('')
 }
 
-/** 撤回回填：清空当前内容后写入文本与附件（图片重建预览 URL，非图片文件直接加入待发列表）。 */
-function restoreContent(text: string, files: File[]) {
+/** 撤回回填：清空当前内容后写入文本与附件。第三个参数省略时保留已有回复引用；传入数组则改成这组引用（队列撤回传空数组，避免和正文里的引用块叠两份）。 */
+function restoreContent(
+  text: string,
+  files: File[],
+  quotes?: Array<{ id: string; text: string; truncated: boolean }>,
+) {
+  const kept = (quotes ?? replyQuotes.value).map(quote => ({ ...quote }))
   clearInput()
+  replyQuotes.value = kept
   if (text) {
     editor.value?.commands.setContent(`<p>${markedTextToEditorHtml(text)}</p>`)
     editorContent.value = text

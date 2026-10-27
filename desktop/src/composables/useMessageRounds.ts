@@ -2,8 +2,7 @@ import { ref, computed, type Ref } from 'vue'
 import { normalizeMessageRole, type ChatMessage, type FileChange } from '../types/chat'
 import { parseDateTime } from '../utils/datetime'
 import { formatRelativeTime } from './useRelativeTime'
-import { stripInternalMarkers } from '../utils/internalMarkers'
-import { userVisibleText } from '../utils/imageUrlAnnotation'
+import { userAskExcerpt } from '../utils/selection-quote'
 
 export interface MessageRound {
   userMessage: ChatMessage
@@ -186,14 +185,11 @@ export interface RoundDirectoryRow {
 
 /**
  * 轮次目录行数据：目录 = 已加载窗口索引（决策 7），调用方传 historyRounds
- * （执行中轮不列）。摘要与 forkLabelOf 同款剥离，避免把 ${skill}$ 之类内部标记原文露出来。
+ * （执行中轮不列）。摘要只留用户真正的问题，回复引用和行区间片段不占这 16 字。
  */
 export function toRoundDirectoryRows(rounds: MessageRound[]): RoundDirectoryRow[] {
   return rounds.map((round, idx) => {
-    const summary = stripInternalMarkers(userVisibleText(round.userMessage.content ?? ''))
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 16)
+    const summary = userAskExcerpt(round.userMessage.content ?? '').slice(0, 16)
     const steps = round.stepCount > 0
       ? `${round.stepCount} 步${round.durationText ? ` · ${round.durationText}` : ''}`
       : ''

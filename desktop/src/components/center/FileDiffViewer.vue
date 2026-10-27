@@ -24,7 +24,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { editor as MonacoEditor } from 'monaco-editor'
 import type { FileChange } from '../../types/chat'
 import { applyMonacoTheme, loadMonaco, themeName } from '../../utils/monaco-loader'
@@ -34,11 +34,19 @@ import { useCenterTabs } from '../../composables/useCenterTabs'
 import { useSessionStore } from '../../stores/session'
 import MarkdownContent from '../common/MarkdownContent.vue'
 import { isExternalMarkdownLink, resolveMarkdownLink } from '../../utils/markdown-link'
-import { openExternalUrl } from '../../utils/capacitor'
+import { isAndroidCapacitor, openExternalUrl } from '../../utils/capacitor'
+import { attachMonacoQuote } from '../../composables/useMonacoQuote'
+import type { FileRangeQuotePayload } from '../../utils/selection-quote'
 
 const props = defineProps<{
   change: FileChange
+  /** 只有工具变更的 diff: Tab 为 true。Git Diff 不引用。 */
+  quoteEnabled?: boolean
+  /** 打开这份快照时记下的修订号，不是点击时的最新值。 */
+  quoteRevision?: number
 }>()
+
+const quoteFileRangeToChat = inject<((quote: FileRangeQuotePayload) => void) | null>('quoteFileRangeToChat', null)
 
 const sessionStore = useSessionStore()
 const activeSessionIdRef = computed(() => sessionStore.activeSessionId ?? '')
@@ -56,6 +64,7 @@ let originalModel: MonacoEditor.ITextModel | null = null
 let modifiedModel: MonacoEditor.ITextModel | null = null
 let patchModel: MonacoEditor.ITextModel | null = null
 let diffUpdateDisposable: { dispose: () => void } | null = null
+let detachQuote: (() => void) | null = null
 // 乱序保护：syncViewer 含多个 await（nextTick/loadMonaco/applyTheme），旧调用可能在
 // 新 change 生效后落地并覆盖模型，seq 检查确保只有最新一轮 sync 能写编辑器
 let syncSeq = 0
@@ -82,7 +91,23 @@ const showSource = computed(() => {
   return !showPreviewToggle.value || viewMode.value === 'source'
 })
 
+function detachQuoteAction() {
+  detachQuote?.()
+  detachQuote = null
+}
+
+function attachQuoteAction() {
+  if (detachQuote || !diffEditor || !props.quoteEnabled || isAndroidCapacitor() || !quoteFileRangeToChat) return
+  detachQuote = attachMonacoQuote({
+    editor: diffEditor.getModifiedEditor(),
+    getFilePath: () => props.change.path,
+    getCapturedRevision: () => props.quoteRevision ?? 0,
+    onQuote: (quote) => quoteFileRangeToChat?.(quote),
+  })
+}
+
 function disposeDiffEditor() {
+  detachQuoteAction()
   diffUpdateDisposable?.dispose()
   diffUpdateDisposable = null
   diffEditor?.dispose()
@@ -158,6 +183,7 @@ async function syncViewer() {
     originalModel = monaco.editor.createModel(props.change.beforeContent || '', language)
     modifiedModel = monaco.editor.createModel(props.change.afterContent || '', language)
     diffEditor.setModel({ original: originalModel, modified: modifiedModel })
+    attachQuoteAction()
 
     diffUpdateDisposable?.dispose()
     diffUpdateDisposable = diffEditor.onDidUpdateDiff(() => {
@@ -268,6 +294,7 @@ onBeforeUnmount(disposeAll)
   flex: 1;
   min-height: 0;
   width: 100%;
+  position: relative;
 }
 
 .patch-view {

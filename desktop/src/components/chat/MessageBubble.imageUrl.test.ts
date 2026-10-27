@@ -61,7 +61,7 @@ describe('MessageBubble user message display strips injected image url lines', (
     expect(loops).toHaveLength(1)
     // computed 定义在 script 里：确认它读的是剥离口径
     expect(script).toContain('const userText = computed(() => userVisibleText(props.message.content')
-    expect(script).toMatch(/const userParsedSegments = computed\(\(\) => \{[\s\S]*?parseQuickCommandSegments\(userText\.value\)/)
+    expect(script).toMatch(/splitUserMessageForDisplay\(userText\.value\)/)
   })
 
   it('「添加到我的指令」传剥离后的正文，而不是原始 content', () => {
@@ -84,11 +84,11 @@ describe('MessageBubble user message display strips injected image url lines', (
   })
 
   it('长文本折叠判定也按剥离后长度算（注入行不触发「展开全部」）', () => {
-    expect(script).toMatch(/const isUserLong = computed\(\(\) => \{[\s\S]*?const content = userText\.value/)
+    expect(script).toMatch(/const isUserLong = computed\(\(\) => \{[\s\S]*?userParsedSegments\.value/)
   })
 
   it('ChatRoundList 的分叉来源摘要同样剥离', () => {
     const roundSource = readFileSync(new URL('./ChatRoundList.vue', import.meta.url), 'utf8')
-    expect(roundSource).toContain('stripInternalMarkers(userVisibleText(round.userMessage.content')
+    expect(roundSource).toContain('userAskExcerpt(round.userMessage.content')
   })
 })

@@ -632,3 +632,44 @@
   cursor: not-allowed;
   pointer-events: none;
 }
+
+.reply-quote-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px 0;
+}
+
+.reply-quote-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--aw-ink) 5%, transparent);
+}
+
+.reply-quote-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--aw-ink-muted-64);
+  font-size: var(--aw-text-caption);
+}
+
+.reply-quote-remove {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--aw-ink-muted-48);
+  cursor: pointer;
+  font-size: var(--aw-text-fine);
+}
+
+.reply-quote-remove:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}

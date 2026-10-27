@@ -12,6 +12,7 @@ import { isElectronClient } from '../utils/platform'
 import { updateSideTaskTabTitleFor } from './useCenterTabs'
 import { notifyInboxSystemUpdate, setupDesktopNotifyBridge } from './useInboxSystemNotify'
 import { ensureDesktopShellBridgeFromWs } from './useDesktopShell'
+import { resolveFileChangeWorkspace } from '../utils/file-change-workspace'
 import type { SideTaskContextMode } from '../types/file-browser'
 
 /// <reference types="vite/client" />
@@ -687,6 +688,16 @@ export function useStreamWS() {
 
       case 'file_change':
         if (sessionId) {
+          const workspace = resolveFileChangeWorkspace(sessionId, {
+            getSession: (id) => sessionStore.getSessionEntity(id),
+            findSideTaskRootKey: (id) => sessionStore.findSideTaskRootKey(id),
+            findSubagentParentId: (id) => {
+              for (const [parentId, list] of sessionStore.subagentCache) {
+                if (list.some(item => item.id === id)) return parentId
+              }
+              return null
+            },
+          })
           sessionStore.appendFileChange(sessionId, {
             path: data.path,
             type: data.type,
@@ -699,7 +710,7 @@ export function useStreamWS() {
             patchContent: data.patch_content,
             patchTruncated: Boolean(data.patch_truncated),
             diffUnavailableReason: data.diff_unavailable_reason
-          })
+          }, workspace)
         }
         break
 

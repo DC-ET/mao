@@ -36,7 +36,8 @@
           <span class="queue-index">{{ index + 1 }}.</span>
           <span class="queue-text">
             <template v-for="(seg, segIdx) in item.segments" :key="segIdx">
-              <FileReferenceTag v-if="seg.type === 'file'" :file-path="seg.filePath" />
+              <span v-if="seg.type === 'quote'" class="queue-quote">{{ seg.content }}</span>
+              <FileReferenceTag v-else-if="seg.type === 'file'" :file-path="seg.filePath" :line-start="seg.lineStart" :line-end="seg.lineEnd" />
               <QuickCommandTag v-else-if="seg.type !== 'text'" :type="seg.type" :name="seg.name" />
               <template v-else>{{ seg.content }}</template>
             </template>
@@ -78,7 +79,8 @@
     <div v-else class="queue-collapsed">
       <span class="queue-text">
         <template v-for="(seg, segIdx) in queueView[0].segments" :key="segIdx">
-          <FileReferenceTag v-if="seg.type === 'file'" :file-path="seg.filePath" />
+          <span v-if="seg.type === 'quote'" class="queue-quote">{{ seg.content }}</span>
+          <FileReferenceTag v-else-if="seg.type === 'file'" :file-path="seg.filePath" :line-start="seg.lineStart" :line-end="seg.lineEnd" />
           <QuickCommandTag v-else-if="seg.type !== 'text'" :type="seg.type" :name="seg.name" />
           <template v-else>{{ seg.content }}</template>
         </template>
@@ -96,7 +98,7 @@ import { VueDraggable } from 'vue-draggable-plus'
 import type { SortableEvent } from 'vue-draggable-plus'
 import { useSessionStore } from '../../stores/session'
 import type { QueueMessage } from '../../types/chat'
-import { parseQuickCommandSegments, type ParsedSegment } from '../../utils/quick-command-parser'
+import { splitUserMessageForDisplay, summarizeQuote, type DisplaySegment } from '../../utils/selection-quote'
 import QuickCommandTag from './QuickCommandTag.vue'
 import FileReferenceTag from './FileReferenceTag.vue'
 
@@ -158,13 +160,22 @@ watch(activePhase, (phase) => {
   }
 })
 
-/** 队列行展示预算（字符数）：文本段按字符计入，Tag 段按名称长度计入，超出则截断。 */
+/** 队列行展示预算（字符数）：文本段按字符计入，Tag 段按名称长度计入，超出则截断。回复引用单独折成短标签，不占这段预算。 */
 const QUEUE_DISPLAY_BUDGET = 60
 
-function truncateSegments(content: string): { segments: ParsedSegment[]; truncated: boolean } {
-  const segments = parseQuickCommandSegments(content || '')
+type QueueSegment = DisplaySegment | { type: 'quote'; content: string }
+
+function fileTagLength(seg: Extract<DisplaySegment, { type: 'file' }>): number {
+  const name = seg.filePath.split(/[/\\]/).pop() || seg.filePath
+  if (seg.lineStart == null) return name.length
+  const end = seg.lineEnd ?? seg.lineStart
+  return (end === seg.lineStart ? `${name}:${seg.lineStart}` : `${name}:${seg.lineStart}-${end}`).length
+}
+
+function truncateSegments(content: string): { segments: QueueSegment[]; truncated: boolean } {
+  const { quotes, segments } = splitUserMessageForDisplay(content || '')
+  const out: QueueSegment[] = quotes.map(quote => ({ type: 'quote', content: summarizeQuote(quote, 24) }))
   let budget = QUEUE_DISPLAY_BUDGET
-  const out: ParsedSegment[] = []
   let truncated = false
   for (const seg of segments) {
     if (budget <= 0) {
@@ -180,9 +191,7 @@ function truncateSegments(content: string): { segments: ParsedSegment[]; truncat
       out.push(seg)
       budget -= seg.content.length
     } else {
-      const len = seg.type === 'file'
-        ? (seg.filePath.split('/').pop()?.length ?? seg.filePath.length)
-        : seg.name.length
+      const len = seg.type === 'file' ? fileTagLength(seg) : seg.name.length
       // 预算不足容纳整个 Tag 时不再展示，避免半个 Tag
       if (len >= budget) {
         truncated = true
@@ -198,7 +207,7 @@ function truncateSegments(content: string): { segments: ParsedSegment[]; truncat
 /** 队列行展示模型：以本地数组承载排序，拖拽先落本地、由服务端推送 queue_updated 后对齐。 */
 interface QueueViewItem {
   msg: QueueMessage
-  segments: ParsedSegment[]
+  segments: QueueSegment[]
   truncated: boolean
 }
 
@@ -379,6 +388,10 @@ async function handleDelete(queueId: string) {
 
 .queue-ellipsis {
   color: var(--aw-ink-muted-48);
+}
+
+.queue-quote {
+  color: var(--aw-ink-muted-64);
 }
 
 .queue-images {
