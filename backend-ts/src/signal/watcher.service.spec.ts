@@ -84,6 +84,8 @@ function harness(options: {
   probe?: () => Promise<ProbeResult> | ProbeResult;
   /** 复用指针预检可见的会话；缺省给一条「本人 + CLOUD + agent 3」的可用会话（id=42）。 */
   sessions?: WatcherSessionLookup[];
+  /** 覆盖 getSession 行为，用于复刻生产 wiring（行不存在时抛 SESSION_NOT_FOUND）。 */
+  getSession?: (id: number) => Promise<WatcherSessionLookup | null>;
 } = {}): Harness {
   const watchers = new Map<number, SignalWatcher>();
   const initial = options.watcher ?? watcher();
@@ -98,7 +100,9 @@ function harness(options: {
   const probeExecute = vi.fn(async () => (options.probe ? options.probe() : probeResult()));
   const openRun = { run: vi.fn(async () => ({ sessionId: 42, messageId: 1, queued: false, terminalPhase: 'COMPLETED' as const })) };
   // 复用指针预检：读不到返回 null（等同会话已删）
-  const getSession = vi.fn(async (id: number) => sessions.get(id) ?? null);
+  const getSession = options.getSession
+    ? vi.fn(options.getSession)
+    : vi.fn(async (id: number) => sessions.get(id) ?? null);
   const notify = vi.fn(async () => undefined);
   // 与真实 SQL 语义一致：只在「库内值仍等于本次传入的快照值」时才清零，
   // 库内被并发失败推高时保留原值（BUG-N/BUG-G 的真实行为）。
@@ -960,6 +964,7 @@ describe('WatcherService 触发方式（D8 模型 B：复用自己的会话）',
     ['会话是 SUBAGENT', [{ id: 42, userId: 7, sessionType: 'SUBAGENT', executionMode: 'CLOUD', agentId: 3 }]],
     ['会话是 SIDE_TASK', [{ id: 42, userId: 7, sessionType: 'SIDE_TASK', executionMode: 'CLOUD', agentId: 3 }]],
     ['会话是 LOCAL', [{ id: 42, userId: 7, sessionType: null, executionMode: 'LOCAL', agentId: 3 }]],
+    ['会话已归档', [{ id: 42, userId: 7, sessionType: null, executionMode: 'CLOUD', agentId: 3, status: 'ARCHIVED' }]],
   ];
 
   it.each(invalidPointerCases)('指针失效（%s）时清指针走新建且不计连败', async (_label, sessions) => {
@@ -974,6 +979,71 @@ describe('WatcherService 触发方式（D8 模型 B：复用自己的会话）',
     expect(h.watchers.get(1)!.reuseSessionId).toBe(42);
     expect(h.recordFailure).not.toHaveBeenCalled();
     expect(h.checks[0]!.triggeredSessionId).toBe(42);
+  });
+
+  /**
+   * 回归（code review 01 的 Bug 1）：SessionService.getSession 在行不存在（含软删）时
+   * 抛 BusinessException(SESSION_NOT_FOUND) 而不是返回 null，装配层
+   * app-openapi-services.ts 直接把它传给 deps.getSession。早年 isReusableSession 只按
+   * null 分支判失效，异常被 runCheck 的 try 吞成「触发失败」：用户删掉复用的会话后
+   * ① openRun 根本不被调用，变化被静默吞掉；② 白烧连败，5 次后自动停用并通知；
+   * ③ 清指针代码在异常点之后永不可达，指针一直是已删 id，每轮重复。这里按生产
+   * wiring 的真实语义（抛异常）钉死正确行为。
+   */
+  it('生产 wiring 回归：getSession 抛 SESSION_NOT_FOUND 判指针失效——清指针、照常触发、不计连败', async () => {
+    const h = harness({
+      watcher: watcher({ triggerMode: 'REUSE_SESSION', reuseSessionId: 42, ...changed }),
+      getSession: async () => { throw new BusinessException(ErrorCode.SESSION_NOT_FOUND); },
+      probe: () => probeResult(newBody),
+    });
+    await h.service.runCheck(1);
+    expect(h.getSession).toHaveBeenCalledWith(42);
+    expect(h.openRun.run.mock.calls[0]![0].sessionId).toBeNull();
+    // 自建的新会话回写成指针（openRun 返回 42）
+    expect(h.watchers.get(1)!.reuseSessionId).toBe(42);
+    expect(h.recordFailure).not.toHaveBeenCalled();
+    expect(h.checks[0]!.error).toBeNull();
+    expect(h.checks[0]!.changed).toBe(1);
+    expect(h.checks[0]!.triggeredSessionId).toBe(42);
+  });
+
+  it('生产 wiring 回归：失效重建后的下一次变化复用新会话（不再每轮新建）', async () => {
+    // 第一轮指针 42 已删（抛 SESSION_NOT_FOUND）→ 失效重建并回写；
+    // 第二轮指针已是回写后的会话，预检放行 → 传 sessionId 复用。
+    let pointerDeleted = true;
+    const h = harness({
+      watcher: watcher({ triggerMode: 'REUSE_SESSION', reuseSessionId: 42, ...changed }),
+      getSession: async (id) => {
+        if (id === 42 && pointerDeleted) {
+          pointerDeleted = false;
+          throw new BusinessException(ErrorCode.SESSION_NOT_FOUND);
+        }
+        return { id, userId: 7, sessionType: null, executionMode: 'CLOUD', agentId: 3 };
+      },
+      probe: () => probeResult(newBody),
+    });
+    await h.service.runCheck(1);
+    h.watchers.get(1)!.lastValueHash = 'different-2';
+    await h.service.runCheck(1);
+    expect(h.openRun.run).toHaveBeenCalledTimes(2);
+    expect(h.openRun.run.mock.calls[0]![0].sessionId).toBeNull();
+    expect(h.openRun.run.mock.calls[1]![0].sessionId).toBe(42);
+    expect(h.recordFailure).not.toHaveBeenCalled();
+  });
+
+  it('getSession 抛非「会话不存在」异常时仍记触发失败，不误判指针失效', async () => {
+    // 库瞬断等未知异常不能当成「指针失效」：那会静默丢掉原会话另起一个。
+    const h = harness({
+      watcher: watcher({ triggerMode: 'REUSE_SESSION', reuseSessionId: 42, ...changed }),
+      getSession: async () => { throw new BusinessException(ErrorCode.INTERNAL_ERROR, 'db down'); },
+      probe: () => probeResult(newBody),
+    });
+    await h.service.runCheck(1);
+    expect(h.openRun.run).not.toHaveBeenCalled();
+    expect(h.recordFailure).toHaveBeenCalledTimes(1);
+    expect(h.checks[0]!.triggeredSessionId).toBeNull();
+    // 没有证据表明指针失效：保持原值，等下次预检
+    expect(h.watchers.get(1)!.reuseSessionId).toBe(42);
   });
 
   it('切出复用模式（REUSE→NEW）即清指针', async () => {

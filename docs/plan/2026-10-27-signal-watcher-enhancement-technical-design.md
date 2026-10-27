@@ -120,7 +120,9 @@ if (fresh.triggerMode === 'REUSE_SESSION' && fresh.reuseSessionId == null && out
 }
 ```
 
-`isReusableSession(watcher, sessionId)`：经新增 dep `getSession`（装配传 `sessionService.getSession`）校验会话存在、本人所有、非 `SUBAGENT`/`SIDE_TASK`、`CLOUD`、`agentId` 与哨兵一致；任一不满足返回 false。一次 SELECT 的成本换取「指针失效不烧连败、不触发停用」。
+`isReusableSession(watcher, sessionId)`：经新增 dep `getSession`（装配传 `sessionService.getSession`）校验会话存在、本人所有、非 `SUBAGENT`/`SIDE_TASK`、`CLOUD`、非 `ARCHIVED`、`agentId` 与哨兵一致；任一不满足返回 false。一次 SELECT 的成本换取「指针失效不烧连败、不触发停用」。
+
+> 实施修正（code review 01）：`SessionService.getSession` 在行不存在（含软删）时**抛** `BusinessException(SESSION_NOT_FOUND)` 而不是返回 null，装配层直接透传。`isReusableSession` 必须自己 catch 这一种异常并判失效——否则异常会被 runCheck 的 try 吞成「触发失败」：用户删掉复用的会话后变化被静默吞掉、白烧连败直到自动停用，且清指针代码在异常点之后永不可达。其它异常（如库瞬断）继续上抛记失败，不误判指针失效。已补按生产 wiring 真实语义（抛异常）的回归用例。
 
 运行期其余约束由 `openRun` 现成兜底（锁内重读、busy 自动入队返回 `queued:true` 不计失败）。
 

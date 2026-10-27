@@ -47,6 +47,8 @@ export interface WatcherSessionLookup {
   sessionType?: string | null;
   executionMode?: string | null;
   agentId?: number | null;
+  /** 会话状态：ARCHIVED 的会话在任务面板「已归档」专区，用户侧看不到活动。 */
+  status?: string | null;
 }
 
 export interface WatcherServiceDeps {
@@ -55,7 +57,11 @@ export interface WatcherServiceDeps {
   cipher: SignalSecretCipher;
   openRun: OpenRunService;
   disableNotifier?: WatcherDisableNotifier | null;
-  /** 会话读取（复用指针有效性预检用；装配传 sessionService.getSession）。 */
+  /**
+   * 会话读取（复用指针有效性预检用；装配传 sessionService.getSession）。
+   * 生产实现在会话不存在时抛 BusinessException(SESSION_NOT_FOUND) 而非返回 null，
+   * isReusableSession 已自行兜住该异常，这里不要求调用方改写抛异常语义。
+   */
   getSession: (id: number) => Promise<WatcherSessionLookup | null>;
   /** 探针执行器（测试可注入假实现）。 */
   probe?: { execute: typeof executeProbe };
@@ -667,14 +673,30 @@ export class WatcherService {
    * 复用指针有效性预检（技术方案 2026-10-27 §3.2.3）：会话被用户删/归档导致失效时
    * 清指针走新建，不计入 consecutive_failures。一次 SELECT 成本换「指针失效不烧连败、
    * 不触发停用」。归属/主会话/CLOUD/agentId 一致性 openRun 会复读校验，这里只做
-   * 廉价的存在性预检（deleted 会话 findById 不返回，等同已删）。
+   * 廉价的存在性预检（deleted 会话 findById 不返回，等同已删；ARCHIVED 会话在
+   * 任务面板「已归档」专区，用户看不到活动，继续往里触发等于静默烧额度）。
+   *
+   * 注意 getSession 的生产实现（SessionService.getSession）在行不存在时**抛**
+   * BusinessException(SESSION_NOT_FOUND) 而不是返回 null——依赖类型里的 null 分支
+   * 在生产 wiring 下永不可达。这里必须自己兜住：否则异常会被 runCheck 的 try 吞成
+   * 「触发失败」，用户删掉复用的会话后变化被静默吞掉、还白烧连败直到自动停用，
+   * 且清指针的代码在异常点之后永不可达（指针一直是已删 id，每轮重复）。
    */
   private async isReusableSession(watcher: SignalWatcher, sessionId: number): Promise<boolean> {
-    const session = await this.deps.getSession(sessionId);
+    let session: WatcherSessionLookup | null;
+    try {
+      session = await this.deps.getSession(sessionId);
+    } catch (e) {
+      // 只把「会话不存在 / 已删」当指针失效；其它异常（如库瞬断）继续上抛，
+      // 由 runCheck 记成本次触发失败——不能把瞬断误判成指针失效而丢掉原会话。
+      if (e instanceof BusinessException && e.code === ErrorCode.SESSION_NOT_FOUND.code) return false;
+      throw e;
+    }
     if (session == null || session.userId !== watcher.userId) return false;
     if (session.sessionType === 'SUBAGENT' || session.sessionType === 'SIDE_TASK') return false;
     if (session.executionMode === 'LOCAL') return false;
     if (session.agentId !== watcher.agentId) return false;
+    if (session.status === 'ARCHIVED') return false;
     return true;
   }
 
