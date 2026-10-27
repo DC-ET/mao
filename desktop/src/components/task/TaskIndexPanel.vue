@@ -5,15 +5,6 @@
         <span class="panel-title">任务</span>
         <div class="header-actions">
           <button
-            class="refresh-btn filter-toggle-btn"
-            :class="{ active: filterActive }"
-            @click="toggleFilter"
-            :title="filterActive ? '标题过滤中' : '按标题过滤'"
-            aria-label="按标题过滤"
-          >
-            <el-icon :size="14"><Search /></el-icon>
-          </button>
-          <button
             class="refresh-btn mode-toggle-btn"
             :class="{ active: listMode === 'focus' }"
             @click="toggleListMode"
@@ -43,22 +34,6 @@
           </button>
         </div>
       </div>
-      <!-- 标题过滤输入行：折叠态只留放大镜按钮，展开后 300ms 防抖调既有 keyword 参数 -->
-      <div v-if="filterOpen" class="panel-filter">
-        <el-icon class="panel-filter-icon" :size="13"><Search /></el-icon>
-        <input
-          ref="filterInputEl"
-          v-model="filterText"
-          class="panel-filter-input"
-          type="text"
-          placeholder="按标题过滤"
-          @input="onFilterInput"
-          @keydown="onFilterInputKeydown"
-        />
-        <button v-if="filterText" class="panel-filter-clear" title="清空过滤" aria-label="清空过滤" @click="clearFilter">
-          <el-icon :size="12"><Close /></el-icon>
-        </button>
-      </div>
       <div class="panel-content">
         <template v-if="listMode === 'standard'">
           <TaskSessionGroupList
@@ -74,7 +49,6 @@
             :editing-session-id="editingSessionId"
             v-model:editing-title="editingTitle"
             :DEFAULT_VISIBLE="DEFAULT_VISIBLE"
-            :filter-active="filterActive"
             :selecting="selecting"
             :selected-ids="selectedIds"
             :toggle-select="toggleSelect"
@@ -133,7 +107,6 @@
             :editing-session-id="editingSessionId"
             v-model:editing-title="editingTitle"
             :show-item-actions="showItemActions"
-            :filter-active="filterActive"
             :FOCUS_DEFAULT_VISIBLE="FOCUS_DEFAULT_VISIBLE"
             :FOCUS_EXPAND_STEP="FOCUS_EXPAND_STEP"
             v-model:focus-visible-count="focusVisibleCount"
@@ -227,7 +200,7 @@
 
 <script setup lang="ts">
 import { computed, ref, reactive, watch, nextTick, onMounted, onUnmounted } from 'vue'
-import { Refresh, Plus, Bell, BellFilled, Search, Select, Close } from '@element-plus/icons-vue'
+import { Refresh, Plus, Bell, BellFilled, Select } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { useSessionStore, ACTIVE_PHASES, type Session, type TaskPhase } from '../../stores/session'
@@ -285,84 +258,6 @@ const focusError = ref(false)
 const historyCollapsed = ref(true)
 // 已归档区状态
 const archiveCollapsed = ref(true)
-
-// --- 标题过滤（P1）：折叠态放大镜入口，展开后 300ms 防抖；keyword 收敛在 store 单一状态源 ---
-const filterOpen = ref(false)
-const filterText = ref('')
-const filterInputEl = ref<HTMLInputElement | null>(null)
-let filterTimer: number | null = null
-const listKeyword = computed(() => sessionStore.listKeyword)
-const filterActive = computed(() => listKeyword.value.length > 0)
-
-function toggleFilter() {
-  filterOpen.value = !filterOpen.value
-  if (filterOpen.value) {
-    // 展开时回填当前生效的过滤词（图标上的 active 态可能来自上一次过滤）
-    filterText.value = listKeyword.value
-    nextTick(() => filterInputEl.value?.focus())
-  }
-}
-
-function onFilterInput() {
-  if (filterTimer != null) window.clearTimeout(filterTimer)
-  filterTimer = window.setTimeout(() => { void applyFilter(filterText.value) }, 300)
-}
-
-function onFilterInputKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape') {
-    e.preventDefault()
-    // 只收起输入行，保留已生效的过滤词（图标保持 active，再点可继续改）
-    e.stopPropagation()
-    filterOpen.value = false
-  } else if (e.key === 'Enter') {
-    e.preventDefault()
-    if (filterTimer != null) window.clearTimeout(filterTimer)
-    void applyFilter(filterText.value)
-  }
-}
-
-async function applyFilter(text: string) {
-  sessionStore.setListKeyword(text)
-  // 组内展开计数随列表内容重置，与手动刷新同口径
-  expandedCounts.value = new Map()
-  try {
-    if (props.listMode === 'focus') {
-      await loadFocus()
-    } else {
-      // 非 silent：让 loading 反馈过滤请求正在进行
-      await sessionStore.fetchSessions()
-    }
-  } catch {
-    // 请求失败时收口：提示用户 + 清勾选，避免 void 调用方 unhandled rejection、
-    // 图标 active 但列表还是旧数据、勾选集引用已过滤掉的会话
-    ElMessage.error('过滤任务列表失败，请稍后重试')
-  } finally {
-    // 过滤结果变化后，勾选态可能已不在可见列表里：清空避免「归档看不见的会话」
-    selectedIds.value = new Set()
-  }
-}
-
-function clearFilter() {
-  if (filterTimer != null) window.clearTimeout(filterTimer)
-  filterText.value = ''
-  void applyFilter('')
-}
-
-// 展开期间点输入行外部收起（保留已生效过滤词）
-function onFilterOutsideClick(e: MouseEvent) {
-  const target = e.target as Node | null
-  if (target && filterInputEl.value?.closest('.panel-filter')?.contains(target)) return
-  if (target && (target as HTMLElement).closest?.('.filter-toggle-btn')) return
-  filterOpen.value = false
-}
-watch(filterOpen, (isOpen) => {
-  if (isOpen) document.addEventListener('click', onFilterOutsideClick)
-  else document.removeEventListener('click', onFilterOutsideClick)
-})
-onUnmounted(() => {
-  if (filterTimer != null) window.clearTimeout(filterTimer)
-  document.removeEventListener('click', onFilterOutsideClick)
-})
 
 // --- 多选批量归档（P2，仅标准模式，决策 4）---
 const selecting = ref(false)

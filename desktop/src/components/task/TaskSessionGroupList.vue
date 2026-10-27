@@ -200,8 +200,6 @@ const readinessStore = useReadinessStore()
 
 /** 空态按根因分流（首次成功体验）：数据未拉到时回退默认文案。 */
 const emptyHint = computed(() => {
-  // 标题过滤生效时的空结果用专属文案，不与「实例未配置」等根因提示混淆
-  if (props.filterActive) return '没有匹配的任务'
   const r = readinessStore.readiness
   if (!readinessStore.loaded || r == null) return '暂无任务'
   if (r.modelsConfigured === 0) return '实例尚未配置模型，请联系管理员'
@@ -222,8 +220,6 @@ const props = defineProps<{
   editingSessionId: string | null
   editingTitle: string
   DEFAULT_VISIBLE: number
-  /** 标题过滤是否生效（空结果文案分流） */
-  filterActive: boolean
   /** 多选选择模式：行首显示复选框、行点击 = 切换勾选 */
   selecting: boolean
   selectedIds: ReadonlySet<string>

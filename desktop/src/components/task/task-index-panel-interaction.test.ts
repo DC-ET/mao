@@ -1,4 +1,4 @@
-// TaskIndexPanel 过滤 / 多选 / 右键菜单交互（jsdom 真实挂载 + mock 子组件与 store）。
+// TaskIndexPanel 多选 / 右键菜单交互（jsdom 真实挂载 + mock 子组件与 store）。
 // TaskSessionGroupList / TaskContextMenu 用真实组件：行点击、复选框禁用、右键菜单
 // 禁用态与删除路径都走真实渲染，只把重子组件（聚焦列表 / 归档区 / 分享弹窗）与
 // element-plus 消息组件 mock 掉。
@@ -62,8 +62,6 @@ const store = reactive({
   focusedSessions: [] as any[],
   archivedSessions: [] as any[],
   archivedGroupMeta: new Map(),
-  listKeyword: '',
-  setListKeyword: vi.fn((kw: string) => { store.listKeyword = kw.trim() }),
   fetchSessions: vi.fn(async () => {}),
   fetchFocusSessions: vi.fn(async () => {}),
   fetchArchivedSessions: vi.fn(async () => {}),
@@ -158,9 +156,7 @@ const menuItem = (text: string) =>
 
 beforeEach(() => {
   document.body.innerHTML = ''
-  store.listKeyword = ''
   store.sessions = []
-  store.setListKeyword.mockClear()
   store.fetchSessions.mockClear()
   store.fetchFocusSessions.mockClear()
   store.deleteSession.mockClear()
@@ -178,108 +174,6 @@ beforeEach(() => {
   messageBoxConfirm.mockReset()
   messageBoxConfirm.mockImplementation(() => new Promise<void>(() => {}))
   routerPush.mockClear()
-})
-
-describe('TaskIndexPanel 标题过滤交互', () => {
-  it('输入 300ms 防抖后调用 setListKeyword + fetchSessions；清空一键还原', async () => {
-    const { host, app } = mountPanel()
-    q(host, '.filter-toggle-btn')!.click()
-    await tick()
-    const input = q(host, '.panel-filter-input') as HTMLInputElement
-    expect(input).toBeTruthy()
-
-    input.value = '重构'
-    input.dispatchEvent(new Event('input'))
-    // 防抖未到：不请求
-    expect(store.setListKeyword).not.toHaveBeenCalled()
-    await tick(350)
-    expect(store.setListKeyword).toHaveBeenCalledWith('重构')
-    expect(store.fetchSessions).toHaveBeenCalledTimes(1)
-
-    // 清空：立即生效，不带 keyword 再拉一次
-    store.fetchSessions.mockClear()
-    q(host, '.panel-filter-clear')!.click()
-    await tick()
-    expect(store.setListKeyword).toHaveBeenLastCalledWith('')
-    expect(store.fetchSessions).toHaveBeenCalledTimes(1)
-    app.unmount()
-  })
-
-  it('Esc 只收起输入行，过滤词不清空、不重新请求', async () => {
-    const { host, app } = mountPanel()
-    q(host, '.filter-toggle-btn')!.click()
-    await tick()
-    const input = q(host, '.panel-filter-input') as HTMLInputElement
-    input.value = '登录'
-    input.dispatchEvent(new Event('input'))
-    await tick(350)
-    expect(store.setListKeyword).toHaveBeenCalledWith('登录')
-    store.setListKeyword.mockClear()
-
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
-    await tick()
-    expect(q(host, '.panel-filter-input')).toBeNull()
-    // 过滤词保留、不重新请求（图标保持 active，再点可继续改）
-    expect(store.setListKeyword).not.toHaveBeenCalled()
-    app.unmount()
-  })
-
-  it('Enter 立即生效并取消挂起的防抖', async () => {
-    const { host, app } = mountPanel()
-    q(host, '.filter-toggle-btn')!.click()
-    await tick()
-    const input = q(host, '.panel-filter-input') as HTMLInputElement
-    input.value = '回归'
-    input.dispatchEvent(new Event('input'))
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
-    await tick(10)
-    expect(store.setListKeyword).toHaveBeenCalledWith('回归')
-    // 防抖定时器已被清除：350ms 后不应重复请求
-    const calls = store.setListKeyword.mock.calls.length
-    await tick(400)
-    expect(store.setListKeyword.mock.calls.length).toBe(calls)
-    app.unmount()
-  })
-
-  it('聚焦模式下过滤走 fetchFocusSessions', async () => {
-    const { host, app } = mountPanel('focus')
-    q(host, '.filter-toggle-btn')!.click()
-    await tick()
-    const input = q(host, '.panel-filter-input') as HTMLInputElement
-    input.value = '回归'
-    input.dispatchEvent(new Event('input'))
-    await tick(350)
-    expect(store.fetchFocusSessions).toHaveBeenCalled()
-    expect(store.fetchSessions).not.toHaveBeenCalled()
-    app.unmount()
-  })
-
-  it('过滤请求失败有收口：报错提示 + 清勾选，不静默保留旧列表', async () => {
-    store.sessions = [row('1'), row('2')]
-    store.fetchSessions.mockImplementation(async () => { throw new Error('network down') })
-    const { host, app } = mountPanel()
-    await tick()
-    q(host, '.select-toggle-btn')!.click()
-    await tick()
-    rowEl(host, '1').click()
-    await tick()
-    expect(q(host, '.select-count')!.textContent).toContain('已选 1')
-
-    q(host, '.filter-toggle-btn')!.click()
-    await tick()
-    const input = q(host, '.panel-filter-input') as HTMLInputElement
-    input.value = '重构'
-    input.dispatchEvent(new Event('input'))
-    await tick(400)
-
-    expect(store.fetchSessions).toHaveBeenCalled()
-    // 收口一：用户看到失败提示，而不是图标 active 但列表纹丝不动
-    expect(messageError).toHaveBeenCalledWith('过滤任务列表失败，请稍后重试')
-    // 收口二：finally 清勾选——过滤结果已变，勾选集可能指向不可见会话，
-    // 继续留着会把「看不见的会话」批量归档掉
-    expect(q(host, '.select-count')!.textContent).toContain('已选 0')
-    app.unmount()
-  })
 })
 
 describe('TaskIndexPanel 多选批量归档交互', () => {

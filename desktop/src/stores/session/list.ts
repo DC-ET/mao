@@ -99,15 +99,6 @@ export function createSessionListModule(ctx: {
   /** 已归档区 / 聚焦数据是否已加载过（用于增量刷新与静默重拉判断） */
   const archivedLoaded = ref(false)
   const focusLoaded = ref(false)
-  /**
-   * 列表标题过滤关键词（内存态，不持久化：刷新即清，与全局搜索弹窗的一次性语义一致）。
-   * 单一状态源：三条 fetch 路径与 WS 重连静默重拉统一读取，防过滤被悄悄清掉（C2）。
-   */
-  const listKeyword = ref('')
-
-  function setListKeyword(kw: string) {
-    listKeyword.value = kw.trim()
-  }
 
   const activeSession = computed(() => {
     const id = activeSessionId.value
@@ -139,7 +130,7 @@ export function createSessionListModule(ctx: {
     if (!silent) loading.value = true
     try {
       const { data } = await api.get('/sessions/groups', {
-        params: { previewLimit: DEFAULT_GROUP_PREVIEW, keyword: listKeyword.value || undefined }
+        params: { previewLimit: DEFAULT_GROUP_PREVIEW }
       })
       if (seq !== fetchSessionsSeq) return
       const groups: any[] = data?.groups || []
@@ -202,8 +193,7 @@ export function createSessionListModule(ctx: {
     loadingMoreGroups.value = new Set(loadingMoreGroups.value).add(key)
     try {
       const { data } = await api.get('/sessions', {
-        // 与 fetchSessions 同一 keyword：服务端按同一关键词分页，本地 offset（= 服务端已返回条数）天然自洽（C1）
-        params: { groupKey: key, offset, limit, keyword: listKeyword.value || undefined }
+        params: { groupKey: key, offset, limit }
       })
       // 代次不符（重建落地）或该组已加载窗口在飞期间被增量改过（归档 / 删除 / 新建）：
       // offset 一律过期，整条丢弃，用户再点一次即按新口径取页
@@ -486,9 +476,7 @@ export function createSessionListModule(ctx: {
     if (!silent) focusLoading.value = true
     try {
       const { data } = await api.get('/sessions', {
-        // 与 fetchSessions 同一 keyword（status=ACTIVE 分支同样走服务端 baseSessionListQuery）；
-        // WS 重连静默重拉也读这里，过滤不会被悄悄清掉（C2）
-        params: { status: 'ACTIVE', keyword: listKeyword.value || undefined }
+        params: { status: 'ACTIVE' }
       })
       if (seq !== fetchFocusSeq) return
       const items: Session[] = Array.isArray(data) ? data.map(normalizeSession) : []
@@ -613,7 +601,6 @@ export function createSessionListModule(ctx: {
     if (!existing && updates.executionMode && next.status !== 'ARCHIVED') {
       // Deep-link / loadSession for a session outside the current group preview：
       // 写入标准投影头部（原有行为），并登记分组元数据。已归档会话不进 ACTIVE 投影。
-      // 深链注入是显式导航：导航意图优先于列表标题过滤（keyword），不过滤、不因不匹配而剔除（C2）。
       if (!standardSessionIds.value.includes(sid)) {
         standardSessionIds.value = [sid, ...standardSessionIds.value]
       }
@@ -795,8 +782,6 @@ export function createSessionListModule(ctx: {
     loading.value = false
     archivedLoading.value = false
     focusLoading.value = false
-    // 登出/换号：过滤关键词是账号相关内存态，避免 B 账号的列表被 A 账号的过滤条件悄悄过滤
-    listKeyword.value = ''
     // 登出/换号：清掉持久化的最后查看会话，避免 B 账号冷启动去 fetch A 的会话
     forgetLastSession()
   }
@@ -818,7 +803,6 @@ export function createSessionListModule(ctx: {
     deletingIds,
     archivedLoaded,
     focusLoaded,
-    listKeyword,
     // computed
     sessions,
     archivedSessions,
@@ -826,7 +810,6 @@ export function createSessionListModule(ctx: {
     activeSession,
     // actions
     sessionsByAgent,
-    setListKeyword,
     fetchSessions,
     loadMoreInGroup,
     getGroupMeta,

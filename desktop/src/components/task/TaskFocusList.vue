@@ -7,7 +7,7 @@
     <button class="retry-btn" @click="loadFocus()">重试</button>
   </div>
   <div v-else-if="focusedSessions.length === 0" class="panel-empty">
-    {{ filterActive ? '没有匹配的任务' : '暂无任务' }}
+    暂无任务
   </div>
   <template v-else>
     <div
@@ -159,8 +159,6 @@ defineProps<{
   editingSessionId: string | null
   editingTitle: string
   showItemActions: boolean
-  /** 标题过滤是否生效（空结果文案分流，与标准模式同口径） */
-  filterActive: boolean
   FOCUS_DEFAULT_VISIBLE: number
   FOCUS_EXPAND_STEP: number
   loadFocus: () => void

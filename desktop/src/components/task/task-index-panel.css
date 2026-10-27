@@ -71,53 +71,6 @@
   padding: 0 8px 8px;
 }
 
-/* --- 标题过滤输入行 --- */
-.task-index-panel .panel-filter {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 0 8px 8px;
-  padding: 4px 8px;
-  border: 1px solid var(--aw-divider-soft);
-  border-radius: var(--aw-radius-xs);
-  background: var(--aw-surface-pearl);
-  flex-shrink: 0;
-}
-
-.task-index-panel .panel-filter-icon {
-  color: var(--aw-ink-muted-48);
-  flex-shrink: 0;
-}
-
-.task-index-panel .panel-filter-input {
-  flex: 1;
-  min-width: 0;
-  border: 0;
-  background: transparent;
-  outline: none;
-  font-size: var(--aw-text-caption);
-  color: var(--aw-ink);
-}
-
-.task-index-panel .panel-filter-clear {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  border: 0;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--aw-ink-muted-48);
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
-.task-index-panel .panel-filter-clear:hover {
-  background: rgba(0, 0, 0, 0.08);
-  color: var(--aw-ink);
-}
-
 /* --- 多选批量归档 --- */
 .task-index-panel .session-select-checkbox {
   width: 14px;
@@ -192,9 +145,7 @@
   opacity: 0.5;
 }
 
-/* 过滤 / 多选入口的激活态与模式切换同口径 */
-.task-index-panel .filter-toggle-btn.active,
-.task-index-panel .filter-toggle-btn.active:hover,
+/* 多选入口的激活态与模式切换同口径 */
 .task-index-panel .select-toggle-btn.active,
 .task-index-panel .select-toggle-btn.active:hover {
   color: var(--aw-primary);

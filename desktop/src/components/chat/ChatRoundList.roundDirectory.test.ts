@@ -4,12 +4,10 @@ import { createSSRApp, h, ref } from 'vue'
 import { renderToString } from '@vue/server-renderer'
 import { createPinia } from 'pinia'
 import { describe, expect, it, vi } from 'vitest'
-import ChatRoundList from './ChatRoundList.vue'
-import MessageBubble from './MessageBubble.vue'
 import RoundDirectory from './RoundDirectory.vue'
 
-// MessageBubble → useSessionStore 链路在 import 期就会读 matchMedia（主题探测），
-// jsdom 未实现；vi.hoisted 保证补丁先于组件 import 求值。
+// 组件链路在 import 期会读 matchMedia（主题探测），jsdom 未实现；
+// vi.hoisted 保证补丁先于组件 import 求值。
 vi.hoisted(() => {
   if (typeof window !== 'undefined' && !window.matchMedia) {
     ;(window as any).matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} })
@@ -40,64 +38,6 @@ function twoRounds() {
 async function render(comp: unknown, props: Record<string, unknown>) {
   return renderToString(createSSRApp({ render: () => h(comp as any, props as any) }).use(createPinia()))
 }
-
-describe('只看回复（replyOnly）渲染分支', () => {
-  it('replyOnly=true：折叠摘要行与对话主干保留，最终回复内嵌工具卡片隐藏', async () => {
-    const html = await render(ChatRoundList, {
-      messages: twoRounds(),
-      sending: false,
-      sessionId: '1',
-      replyOnly: true,
-    })
-    // 折叠摘要行保留（决策 5）
-    expect(html).toContain('已执行 2 个步骤')
-    // 用户消息与最终回复气泡仍在 DOM 中
-    expect(html).toContain('id="msg-u1"')
-    expect(html).toContain('id="msg-a2"')
-    // 最终回复内嵌的工具卡片被隐藏（§11.2-6b 边缘路径）
-    expect(html).not.toContain('tool-call-group')
-  })
-
-  it('对照组 replyOnly=false：最终回复内嵌工具卡片渲染', async () => {
-    const html = await render(ChatRoundList, {
-      messages: twoRounds(),
-      sending: false,
-      sessionId: '1',
-      replyOnly: false,
-    })
-    expect(html).toContain('已执行 2 个步骤')
-    expect(html).toContain('tool-call-group')
-  })
-
-  it('MessageBubble.hideToolCalls：true 时不渲染工具卡片组，false 时渲染', async () => {
-    const message = msg('a1', 'assistant', {
-      content: '完成了',
-      toolCalls: [{ id: 'tc1', name: 'read_file', input: {}, status: 'success' }],
-      segments: [{ type: 'tool', callId: 'tc1' }, { type: 'text', content: '完成了' }],
-    })
-    const off = await render(MessageBubble, { message, sessionId: '1', isLast: true })
-    expect(off).toContain('tool-call-group')
-    const on = await render(MessageBubble, { message, sessionId: '1', isLast: true, hideToolCalls: true })
-    expect(on).not.toContain('tool-call-group')
-  })
-
-  it('replyOnly 下无步骤轮的思考块随 hideThinking 隐藏（§11.2-6a）', async () => {
-    const messages = [
-      msg('u1', 'user', { content: '问个问题' }),
-      msg('a1', 'assistant', {
-        content: '直接回答',
-        thinkingContent: '内心独白不应该出现',
-        segments: [
-          { type: 'thinking', content: '内心独白不应该出现' },
-          { type: 'text', content: '直接回答' },
-        ],
-      }),
-    ]
-    const html = await render(ChatRoundList, { messages, sending: false, sessionId: '1', replyOnly: true })
-    // 该轮无折叠步骤：finalReply 走 hideThinking || replyOnly 分支
-    expect(html).not.toContain('内心独白不应该出现')
-  })
-})
 
 describe('轮次目录（RoundDirectory）渲染条件', () => {
   it('有历史轮时渲染把手（浮层默认收起，行内容由 toRoundDirectoryRows 单测覆盖）', async () => {

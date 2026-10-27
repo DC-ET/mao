@@ -1,11 +1,11 @@
 import { test, expect, type Page } from '@playwright/test'
 
 /**
- * 会话列表与长会话导航（技术方案 2026-10-26-session-list-navigation-technical-design）：
- * P1 标题过滤 / P2 多选批量归档 / P3 轮次目录与只看回复。
+ * 多选批量归档与轮次目录（技术方案 2026-10-26-session-list-navigation-technical-design）：
+ * 标题过滤与「只看回复」两个入口已于 0.0.358 移除，本文件只覆盖保留的两项。
  *
  * 全部接口页面级 mock（desktop-visual project），不连隔离后端：只校验交互闭环，
- * 服务端口径（keyword 参数、ARCHIVED 过滤、排序）由 backend-ts 单测覆盖。
+ * 服务端口径（ARCHIVED 过滤、排序）由 backend-ts 单测覆盖。
  * 与 desktop.spec.ts 的 mockLoggedInDesktopApi 不共享：那里的 /sessions/groups 固定返空，
  * 扩它会影响既有搜索/定位用例；本文件自给自足，且批量归档全程 mock，不写种子库。
  */
@@ -72,14 +72,12 @@ function chatMessages(): Array<Record<string, unknown>> {
 }
 
 interface MockOptions {
-  /** 记录服务端实际收到的 keyword（解码后），用于验证三条 fetch 路径统一带上 */
-  keywordLog?: string[]
   /** 已归档会话 id 集合：PUT /archive 写入，/sessions/groups?status=ARCHIVED 读出 */
   archived?: Set<string>
 }
 
 async function mockApi(page: Page, options: MockOptions = {}) {
-  const { keywordLog, archived } = options
+  const { archived } = options
   await page.addInitScript(() => {
     localStorage.setItem('token', 'test-access-token')
   })
@@ -96,19 +94,14 @@ async function mockApi(page: Page, options: MockOptions = {}) {
     if (path.endsWith('/auth/features')) return fulfill({ feishuEnabled: false })
     if (path.endsWith('/users/me')) return fulfill({ id: 1, username: 'admin', displayName: 'Admin' })
     if (path === '/api/v1/sessions/groups') {
-      // 服务端口径模拟：keyword 走 title LIKE，status=ARCHIVED 只回归档桶
+      // 服务端口径模拟：status=ARCHIVED 只回归档桶
       if (params.get('status') === 'ARCHIVED') {
         const sessions = STANDARD_SESSIONS.filter(s => archived?.has(String(s.id)))
         return fulfill(sessions.length > 0
           ? { groups: [{ key: 'CLOUD:临时工作区', label: '临时工作区', total: sessions.length, hasMore: false, sessions }] }
           : { groups: [] })
       }
-      const keyword = params.get('keyword') || ''
-      if (keyword) keywordLog?.push(keyword)
-      const matched = STANDARD_SESSIONS.filter(s => s.title.includes(keyword))
-      return fulfill(matched.length > 0
-        ? { groups: [{ key: 'CLOUD:临时工作区', label: '临时工作区', total: matched.length, hasMore: false, sessions: matched }] }
-        : { groups: [] })
+      return fulfill({ groups: [{ key: 'CLOUD:临时工作区', label: '临时工作区', total: STANDARD_SESSIONS.length, hasMore: false, sessions: STANDARD_SESSIONS }] })
     }
     const archiveMatch = path.match(/^\/api\/v1\/sessions\/(\d+)\/archive$/)
     if (archiveMatch && method === 'PUT') {
@@ -139,41 +132,6 @@ async function openChatPanel(page: Page) {
   await page.goto(`/tasks/${SESSION_ID}`)
   await expect(page.locator('.chat-panel')).toBeVisible({ timeout: 15_000 })
 }
-
-test.describe('Desktop - 会话列表标题过滤', () => {
-  test('输入关键字后按 keyword 重新拉取分组，清空即还原', async ({ page }) => {
-    const keywordLog: string[] = []
-    await mockApi(page, { keywordLog })
-    await openTaskPanel(page)
-
-    await page.locator('.filter-toggle-btn').click()
-    await expect(page.locator('.panel-filter-input')).toBeFocused()
-
-    await page.locator('.panel-filter-input').fill('重构')
-    // 300ms 防抖后重新拉取：服务端只回匹配的一条
-    await expect(page.locator('.session-group .session-item')).toHaveCount(1)
-    await expect(page.locator('.session-group .session-title')).toHaveText('重构登录流程')
-    // 图标进入 active 态（过滤生效的可见反馈）
-    await expect(page.locator('.filter-toggle-btn')).toHaveClass(/active/)
-    expect(keywordLog).toContain('重构')
-
-    // 清空：还原全部三条，且不带 keyword 再拉一次
-    await page.locator('.panel-filter-clear').click()
-    await expect(page.locator('.session-group .session-item')).toHaveCount(3)
-    await expect(page.locator('.filter-toggle-btn')).not.toHaveClass(/active/)
-  })
-
-  test('无匹配时显示专属空态文案', async ({ page }) => {
-    await mockApi(page)
-    await openTaskPanel(page)
-
-    await page.locator('.filter-toggle-btn').click()
-    await page.locator('.panel-filter-input').fill('不存在的关键字')
-    await expect(page.locator('.session-group .session-item')).toHaveCount(0)
-    // 空态用专属文案（TaskSessionGroupList.emptyHint 的 filterActive 分支）
-    await expect(page.locator('.task-index-panel .panel-empty')).toHaveText('没有匹配的任务')
-  })
-})
 
 test.describe('Desktop - 多选批量归档', () => {
   test('运行中任务自动跳过，成功者迁入已归档区', async ({ page }) => {
@@ -255,26 +213,5 @@ test.describe('Desktop - 长会话导航', () => {
     await expect(page.locator('.message-bubble.message-locate-flash')).toContainText('把单元测试也补上')
     // 浮层点击后收起
     await expect(popover).toHaveCount(0)
-  })
-
-  test('只看回复：工具调用整段隐藏，关闭即还原', async ({ page }) => {
-    await mockApi(page)
-    await openChatPanel(page)
-
-    // 展开第一轮的折叠步骤：工具步骤 + 轮2 回复内嵌工具，共两处
-    await page.locator('.steps-summary').first().click()
-    await expect(page.locator('.tool-call-group')).toHaveCount(2)
-
-    const toggle = page.locator('.sticky-bar-btn')
-    await expect(toggle).toContainText('只看回复')
-    await toggle.click()
-    await expect(toggle).toHaveClass(/active/)
-    // 工具整段消失，但摘要行（已执行 N 个步骤）与回复正文仍在
-    await expect(page.locator('.tool-call-group')).toHaveCount(0)
-    await expect(page.locator('.steps-summary').first()).toContainText('已执行 1 个步骤')
-    await expect(page.locator('.assistant-text').first()).toContainText('第一轮完成：已读取登录模块')
-
-    await toggle.click()
-    await expect(page.locator('.tool-call-group')).toHaveCount(2)
   })
 })
