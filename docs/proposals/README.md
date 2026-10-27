@@ -271,6 +271,24 @@
 4. **体积护栏**：文件预览新增解析库（表格 / SheetJS / JSZip / mammoth）全部动态 chunk，扩充 `check-main-chunk` 断言（0.0.350 先例），不含新格式的会话首屏零增长。
 5. **文档同步**：实施时按节写 CHANGELOG（前端 / 后端小节）+ mao-cli `reference/desktop.md`（定时任务编辑、预算 Tab）与用量 / 预算口径文档更新。
 
+## 第十八批（2026-10-27）
+
+背景：第十七批（文件预览 / 定时任务编辑 / 预算可见）落地后，延续「**提升现有功能完整度与用户体验**」方向，从「人与 Agent 的交接点」摸底得出三个断点：**人不在时**（审批只进收件箱不外推，提问外推只看 WS 在线——桌面开着人走了等于没提醒，审批 15 分钟后超时白跑）、**记忆不可见**（自动收集、去重、注入都已就绪，但对话现场零露出：记了什么不告诉、想记一句要去设置页手抄、`originSessionId` 存了没展示）、**追问没有抓手**（引用只到整文件粒度，回复 / 文件行区间 / Diff / 终端选区都带不进输入框，飞书渠道反而有引用回复注入）。三件互不依赖，均避开已否决方向（人工接管 / 团队知识层 / 经验资产化 / 结构化卡片 / 执行中引导等）与 README 贡献边界。
+
+**评审结果（2026-10-27）：记忆就地可见驳回（存档勿再评审）；待办未响应升级通知已确认，只做未响应升级（P2 会话级开关、P3 收尾体验驳回），技术方案见 [../plan/2026-10-27-pending-escalation-notify-technical-design.md](../plan/2026-10-27-pending-escalation-notify-technical-design.md)；选区引用追问已确认，P3 终端引用驳回，技术方案见 [../plan/2026-10-27-selection-quote-technical-design.md](../plan/2026-10-27-selection-quote-technical-design.md)。**
+
+| 提案 | 文档 | 一句话 | 规模 |
+|---|---|---|---|
+| 待办未响应升级通知 | [2026-10-27-pending-escalation-notify.md](2026-10-27-pending-escalation-notify.md)（**已确认**，P2/P3 驳回，技术方案见 [../plan/2026-10-27-pending-escalation-notify-technical-design.md](../plan/2026-10-27-pending-escalation-notify-technical-design.md)：审批与提问 3 分钟无人处理即外推，固定延迟、零迁移、仅后端） | 审批 / 提问在 3 分钟内无人处理时，经已开启的飞书 / 钉钉 / 邮件提醒（不论桌面是否连着）——人走开了任务不白跑 | 小 |
+| 记忆就地可见 | [2026-10-27-memory-in-context.md](2026-10-27-memory-in-context.md)（已否决，存档） | 回复下「已记住 N 条」回执可就地编辑 / 忽略，消息与选区一键「记住这个」，记忆列表可跳回来源会话 | — |
+| 选区引用追问 | [2026-10-27-selection-quote.md](2026-10-27-selection-quote.md)（**已确认**，P3 终端引用驳回，技术方案见 [../plan/2026-10-27-selection-quote-technical-design.md](../plan/2026-10-27-selection-quote-technical-design.md)：回复选区与文件 / Diff 行区间引用，标记格式不变，片段上限 200 行 / 8KB） | 回复选区引用、文件 / Diff 行区间引用（`report.py:120-145` 带片段）——圈一段就能问 | 小~中 |
+
+排期注意（记忆就地可见已否决，相关条目作废）：
+
+1. **迁移编号**：未响应升级零迁移（P2 的 `session.notify_mode` 已驳回，不占 V175）；选区引用零迁移。记忆就地可见不占号。当前最新 V174。
+2. **三处同改清单**：均不新增内置工具、LLM 调用场景、收件箱 kind。未响应升级的 `APPROVAL` 相位只在后端卡片 / 文本渲染里加，管理后台没有投递流水页，契约不下沉。`memory_captured` WS 事件不作。
+3. **相邻收敛点**：未响应升级动 `local-tool-executor.ts` 审批 finally 与 `tool-dispatcher.ts` 提问外推分支，不动 `task-terminal.service.ts`；选区引用不改 `@{path}@` 正则（解析点仍只取出路径），后端只动标题预处理 `title-generator.ts`。记忆抽取服务不追加推送。
+
 ## 已评估、明确不做
 
 以下各项已复审定案，**不再重启、不再提案**（存档文档已标否决，勿再评审）：
@@ -303,6 +321,7 @@
 - **用户自建 Agent（创造权下放）**：2026-10-25 评审：不采用（同上）。存档：[2026-10-25-user-created-agents.md](2026-10-25-user-created-agents.md)。
 - **信号哨兵对话内配置（watcher 工具组）**：2026-10-25 评审：不采用。存档：[2026-10-25-signal-watcher-tools.md](2026-10-25-signal-watcher-tools.md)。
 - **会话移交（人员变动的会话交接）**：2026-10-25 评审：不采用。存档：[2026-10-25-session-handover.md](2026-10-25-session-handover.md)。
+- **记忆就地可见（对话内回执与「记住这个」）**：2026-10-27 评审：不采用。存档：[2026-10-27-memory-in-context.md](2026-10-27-memory-in-context.md)。
 
 ## 已排除的方向（与产品定位或约束冲突）
 
