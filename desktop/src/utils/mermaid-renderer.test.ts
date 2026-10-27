@@ -1,7 +1,14 @@
 // mermaid-renderer 纯函数部分：围栏判定、占位构造、缓存淘汰。
 // DOM 插入 / mermaid 渲染路径依赖真实浏览器（mermaid 需要 getBBox 等），不在 node 层测。
 import { describe, expect, it } from 'vitest'
-import { buildMermaidPlaceholder, InsertionOrderCache, isMermaidFence, MERMAID_SOURCE_CAP } from './mermaid-renderer'
+import {
+  buildMermaidPlaceholder,
+  InsertionOrderCache,
+  isMermaidFence,
+  mermaidConfig,
+  MERMAID_SOURCE_CAP,
+  SVG_SANITIZE_OPTIONS,
+} from './mermaid-renderer'
 import { decodeBase64Utf8 } from './base64'
 
 describe('isMermaidFence', () => {
@@ -45,6 +52,32 @@ describe('buildMermaidPlaceholder', () => {
 
   it('MERMAID_SOURCE_CAP 语义为字符数', () => {
     expect(MERMAID_SOURCE_CAP).toBe(64 * 1024)
+  })
+})
+
+// 回归：htmlLabels 必须写在顶层。写在 flowchart.htmlLabels 时 mermaid 的
+// getEffectiveHtmlLabels 只读 config.htmlLabels，undefined 会 ?? true 回落，
+// 节点标签全走 foreignObject，再被 SVG_SANITIZE_OPTIONS.FORBID_TAGS 整块剥掉，
+// 结果是图能画出来但每个节点都是空框（无报错，静默失败）。
+describe('mermaidConfig', () => {
+  it('htmlLabels:false 在顶层，且不依赖已废弃的 flowchart.htmlLabels', () => {
+    const cfg = mermaidConfig(false)
+    expect(cfg.htmlLabels).toBe(false)
+    // 顶层为 undefined 时 mermaid 回落 true，所以不能只写在 flowchart 下
+    expect('htmlLabels' in cfg).toBe(true)
+    expect((cfg as { flowchart?: { htmlLabels?: boolean } }).flowchart?.htmlLabels).toBeUndefined()
+  })
+
+  it('暗色主题切 dark，其余消毒相关项不变', () => {
+    expect(mermaidConfig(true).theme).toBe('dark')
+    expect(mermaidConfig(false).theme).toBe('default')
+    expect(mermaidConfig(true).securityLevel).toBe('strict')
+    expect(mermaidConfig(false).securityLevel).toBe('strict')
+  })
+
+  it('SVG 消毒仍禁止 foreignObject：htmlLabels 关掉后它是兜底防线', () => {
+    expect(SVG_SANITIZE_OPTIONS.FORBID_TAGS).toContain('foreignObject')
+    expect(SVG_SANITIZE_OPTIONS.FORBID_TAGS).toContain('script')
   })
 })
 
