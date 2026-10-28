@@ -18,6 +18,20 @@ const COMPACTION_PAYLOAD_SAFETY_MARGIN_BYTES = 64 * 1024;
  */
 const DEFAULT_COMPACTION_STRIP_LIMIT_BYTES = 40 * 1024 * 1024;
 
+/**
+ * 供应商把请求判为「太大」的拒绝：400（context length / token limit）或 413（请求体过大）。
+ * 各适配器的 StreamErrorEventException 未导出但形态一致（statusCode 属性 + 统一消息前缀），
+ * 非 2xx 分支抛的是不带 statusCode 的普通 Error，故按消息文本判定；限流与服务端错误不在此列。
+ */
+const PROVIDER_SIZE_REJECTION_PATTERN = /context[_ -]?length|context window|maximum context|maximum number of tokens|too long|too large|token limit|tokens? (exceed|limit|maximum)|request (body|entity) too large|payload too large/i;
+
+function isProviderSizeRejection(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const statusCode = (error as { statusCode?: number | null }).statusCode;
+  if (statusCode != null && statusCode !== 400 && statusCode !== 413) return false;
+  return PROVIDER_SIZE_REJECTION_PATTERN.test(error.message);
+}
+
 /** 真实用户消息：排除压缩摘要模板与 `<system-notice>` 系统注入。 */
 export function isRealUserMessage(message: ChatMessage): boolean {
   if (message.role !== 'user') return false;
@@ -69,6 +83,11 @@ export interface SessionCompactionResult {
   durationMs: number;
 }
 
+/**
+ * 压缩请求被供应商判定为过大（超上下文窗口）的终态。
+ * 估算超过配窗不再预检抛错——`contextWindowTokens` 是后台按模型维护的稳定区间而非供应商硬上限，
+ * 预检会把本可成功的压缩判死；改为先发请求，只有供应商真以体积类错误拒绝时才抛本异常。
+ */
 export class CompactionContextOverflowException extends Error {
   constructor(readonly estimatedTokens: number, readonly effectiveWindow: number) {
     super(`会话全量压缩请求估算为 ${estimatedTokens} tokens，已达到或超过有效上下文窗口 ${effectiveWindow} tokens；请改用更大窗口模型或新建会话。`);
@@ -164,9 +183,6 @@ export class CompactionService {
     const started = Date.now();
     let compactionRequest = this.deriveRequest(normalRequest, this.buildHandoffInstruction(config.maxSummaryTokens));
     const compactionRequestTokens = this.tokenEstimator.estimateRequestTokens(compactionRequest);
-    if (compactionRequestTokens >= overflowWindow) {
-      throw new CompactionContextOverflowException(compactionRequestTokens, overflowWindow);
-    }
     // 体积兜底（技术方案 2026-10-22 §6.4）：默认不剥图以复用主请求的前缀缓存；
     // 只有压缩请求贴近供应商上限时才剥图，保证压缩动作能执行（这一次会 miss 缓存）。
     // 未声明供应商上限时用独立安全线（40MiB）兜底：不能复用 triggerPayloadBytes——
@@ -198,16 +214,14 @@ export class CompactionService {
     }
 
     listener?.onCompactionStart?.('session', messages.length, measuredTokens);
-    harnessLog('info', `Session handoff compaction triggered: sessionId=${sessionId}, messages=${messages.length}`);
+    harnessLog('info', `Session handoff compaction triggered: sessionId=${sessionId}, messages=${messages.length}`
+      + `, requestEstimate=${compactionRequestTokens}, compactionWindow=${overflowWindow}`);
 
     try {
       let handoff = await this.invokeAndValidate(compactionRequest, modelConfig, cancelFlag, listener);
       if (handoff == null) {
+        // 纠正指令与首次请求同量级：首次已被供应商接受时，重试必然也能发，不再做二次预检。
         const retryRequest = this.deriveRequest(compactionRequest, this.correctionInstruction());
-        const retryTokens = this.tokenEstimator.estimateRequestTokens(retryRequest);
-        if (retryTokens >= overflowWindow) {
-          throw new CompactionContextOverflowException(retryTokens, overflowWindow);
-        }
         handoff = await this.invokeAndValidate(retryRequest, modelConfig, cancelFlag, listener);
       }
       if (handoff == null) {
@@ -224,6 +238,11 @@ export class CompactionService {
       return result;
     } catch (e) {
       listener?.onCompactionEnd?.('session', 0, 0, Date.now() - started);
+      if (isProviderSizeRejection(e)) {
+        harnessLog('warn', `Compaction request rejected by provider as too large: sessionId=${sessionId}`
+          + `, requestEstimate=${compactionRequestTokens}, compactionWindow=${overflowWindow}`, e);
+        throw new CompactionContextOverflowException(compactionRequestTokens, overflowWindow);
+      }
       throw e;
     }
   }

@@ -20,7 +20,8 @@ describe('CompactionService', () => {
   const model = { modelId: 'gpt-test', contextWindowTokens: 1000 };
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    // reset 而非 clear：未消费的 mockReturnValueOnce 会跨用例泄漏，把后续用例的估算序列整体错位
+    vi.resetAllMocks();
   });
 
   function config(): CompactionConfig {
@@ -80,6 +81,19 @@ describe('CompactionService', () => {
     streamRaw(`<handoff>${text}</handoff>`, u);
   }
 
+  function streamError(error: Error): void {
+    llmAdapter.stream.mockImplementationOnce(async (_request: ChatRequest, _model: unknown, callback: StreamCallback) => {
+      callback.onError(error);
+    });
+  }
+
+  function streamSizeRejection(statusCode: number, detail: string): void {
+    streamError(Object.assign(
+      new Error(`LLM stream reported error event (code ${statusCode}): ${detail}`),
+      { statusCode },
+    ));
+  }
+
   it('belowThresholdDoesNotCallLlm', async () => {
     tokenEstimator.estimateRequestTokens.mockReturnValue(799);
     const result = await service.compactSession(7, 0, persisted(), [1, 2, 3], normalRequest(), model, config(), null, null);
@@ -123,16 +137,18 @@ describe('CompactionService', () => {
     expect(llmAdapter.stream).not.toHaveBeenCalled();
   });
 
-  it('overflowGuardUsesTheCompactionModelWindow', async () => {
+  it('providerSizeRejectionReportsTheCompactionModelWindow', async () => {
     tokenEstimator.estimateRequestTokens.mockReturnValueOnce(100).mockReturnValueOnce(9000);
     const cfg = config();
     cfg.contextWindowTokens = 200000;
     const sessionModel = { modelId: 'session', contextWindowTokens: 200000 };
     const compactionModel = { modelId: 'small', contextWindowTokens: 8000 };
+    streamSizeRejection(400, 'prompt is too long: 200000 tokens > 8000 maximum');
     await expect(service.compactSession(
       7, 0, persisted(), [1, 2, 3], normalRequest(), compactionModel, cfg, null, null, 180000, false, sessionModel,
     )).rejects.toThrow(/8000 tokens/);
-    expect(llmAdapter.stream).not.toHaveBeenCalled();
+    // 估算超窗仍先尝试；被拒后终态文案里的窗口取压缩模型（8000）而非会话模型（200000）
+    expect(llmAdapter.stream).toHaveBeenCalledOnce();
   });
 
   it('hintBelowThresholdStillSkipsAndLogs', async () => {
@@ -206,15 +222,46 @@ describe('CompactionService', () => {
     expect(llmAdapter.stream).toHaveBeenCalledTimes(2);
   });
 
-  it('compactionRequestAtWindowFailsBeforeLlm', async () => {
+  it('estimateOverConfiguredWindowStillAttemptsLlm', async () => {
+    // 配窗是后台按模型维护的稳定区间而非供应商硬上限：估算超窗不再预检判死，先发请求让供应商裁决
     tokenEstimator.estimateRequestTokens.mockReturnValueOnce(800).mockReturnValueOnce(1000);
+    streamHandoff('摘要正文', usage(50, null, 20));
+    const result = await service.compactSession(7, 0, persisted(), [1, 2, 3], normalRequest(), model, config(), null, null);
+    expect(result).not.toBeNull();
+    expect(result!.summaryText).toBe('摘要正文');
+    expect(llmAdapter.stream).toHaveBeenCalledOnce();
+  });
+
+  it('providerSizeRejectionBecomesTerminalOverflow', async () => {
+    tokenEstimator.estimateRequestTokens.mockReturnValueOnce(800).mockReturnValueOnce(5000);
+    streamSizeRejection(400, 'This model\'s maximum context length is 1000 tokens');
     await expect(service.compactSession(7, 0, persisted(), [1, 2, 3], normalRequest(), model, config(), null, null))
       .rejects.toThrow(CompactionContextOverflowException);
-    tokenEstimator.estimateRequestTokens.mockReturnValueOnce(800).mockReturnValueOnce(1000);
+    expect(llmAdapter.stream).toHaveBeenCalledOnce();
+  });
+
+  it('providerNonSizeRejectionPropagatesUnchanged', async () => {
+    // 限流 / 参数类拒绝原样抛出：调用方按普通压缩失败继续用原请求，不升级成终态
+    tokenEstimator.estimateRequestTokens.mockReturnValueOnce(800).mockReturnValueOnce(5000);
+    streamSizeRejection(429, 'rate limit reached, please retry later');
     await expect(service.compactSession(7, 0, persisted(), [1, 2, 3], normalRequest(), model, config(), null, null))
-      .rejects.toThrow(/1000 tokens|新建会话/);
-    expect(llmAdapter.chat).not.toHaveBeenCalled();
-    expect(llmAdapter.stream).not.toHaveBeenCalled();
+      .rejects.toThrow(/rate limit reached/);
+    tokenEstimator.estimateRequestTokens.mockReturnValueOnce(800).mockReturnValueOnce(5000);
+    streamError(Object.assign(
+      new Error('LLM stream reported error event (code 400): invalid api key'),
+      { statusCode: 400 },
+    ));
+    await expect(service.compactSession(7, 0, persisted(), [1, 2, 3], normalRequest(), model, config(), null, null))
+      .rejects.toThrow(/invalid api key/);
+  });
+
+  it('correctionRetryAttemptsEvenWhenEstimateExceedsWindow', async () => {
+    tokenEstimator.estimateRequestTokens.mockReturnValueOnce(800).mockReturnValueOnce(1000).mockReturnValueOnce(1100);
+    streamRaw('missing');
+    streamHandoff('摘要正文', usage(50, null, 20));
+    const result = await service.compactSession(7, 0, persisted(), [1, 2, 3], normalRequest(), model, config(), null, null);
+    expect(result).not.toBeNull();
+    expect(llmAdapter.stream).toHaveBeenCalledTimes(2);
   });
 
   it('rejectsIncompletePhysicalPrefixAndSupportsCancel', async () => {
