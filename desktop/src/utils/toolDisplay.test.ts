@@ -7,7 +7,6 @@ const dingtalkCases = [
 ]
 
 const feishuCases = [
-  { name: 'feishu_read_doc', label: '读取飞书文档', key: 'link', value: 'https://example.feishu.cn/wiki/doc' },
   { name: 'feishu_download_file', label: '下载飞书文件', key: 'message_id', value: 'om_message' },
   { name: 'feishu_send_image', label: '发送飞书图片', key: 'image', value: 'images/photo.png' },
   { name: 'feishu_send_file', label: '发送飞书文件', key: 'file', value: '/workspace/report.pdf' },

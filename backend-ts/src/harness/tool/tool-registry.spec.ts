@@ -22,7 +22,6 @@ function deps(overrides: Partial<DefaultToolRegistryDeps> = {}): DefaultToolRegi
     weixinUploadService: {} as never,
     weixinSendService: {} as never,
     feishuToolSupport: {} as never,
-    feishuDocReader: {} as never,
     feishuMediaDownloader: {} as never,
     feishuGroupMediaLookup: {} as never,
     feishuMessageDetailFetcher: {} as never,

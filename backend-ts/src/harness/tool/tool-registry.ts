@@ -13,7 +13,7 @@ import type { RuntimeDataResolver } from '../runtime/runtime-data-resolver.js';
 import type { ImageModelLookup } from './impl/generate-image-tool.js';
 import type { WeixinMediaToolSupport, WeixinMediaUploadService, WeixinSendService } from './impl/wechat-tools.js';
 import type {
-  FeishuChannelToolSupport, FeishuDocReader, FeishuGroupMediaLookup, FeishuMediaDownloader, FeishuMessageDetailFetcher,
+  FeishuChannelToolSupport, FeishuGroupMediaLookup, FeishuMediaDownloader, FeishuMessageDetailFetcher,
   FeishuMediaSendSupport,
 } from './impl/feishu-tools.js';
 import type { AgentDefinitionRegistry } from '../delegate/agent-definition-registry.js';
@@ -43,7 +43,7 @@ import {
   CreateScheduledTaskTool, DeleteScheduledTaskTool, ListScheduledTasksTool, UpdateScheduledTaskTool,
 } from './impl/scheduled-task-tools.js';
 import { SendWechatFileTool, SendWechatImageTool } from './impl/wechat-tools.js';
-import { FeishuDownloadFileTool, ReadFeishuDocTool, SendFeishuFileTool, SendFeishuImageTool } from './impl/feishu-tools.js';
+import { FeishuDownloadFileTool, SendFeishuFileTool, SendFeishuImageTool } from './impl/feishu-tools.js';
 import { SendDingtalkFileTool, SendDingtalkImageTool, type DingtalkMediaSendSupport } from './impl/dingtalk-tools.js';
 import type { SendBytesSupport } from './impl/send-file-bytes.js';
 import { createPageTools } from './impl/page-tools.js';
@@ -89,7 +89,6 @@ export interface DefaultToolRegistryDeps {
   weixinUploadService: WeixinMediaUploadService;
   weixinSendService: WeixinSendService;
   feishuToolSupport: FeishuChannelToolSupport;
-  feishuDocReader: FeishuDocReader;
   feishuMediaDownloader: FeishuMediaDownloader;
   feishuGroupMediaLookup: FeishuGroupMediaLookup;
   feishuMessageDetailFetcher: FeishuMessageDetailFetcher;
@@ -169,7 +168,6 @@ export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRe
     new DeleteScheduledTaskTool(deps.scheduledTaskService),
     new SendWechatImageTool(deps.pathSandbox, deps.weixinToolSupport, deps.weixinUploadService, deps.weixinSendService, deps.sendBytesSupport),
     new SendWechatFileTool(deps.pathSandbox, deps.weixinToolSupport, deps.weixinUploadService, deps.weixinSendService, deps.sendBytesSupport),
-    new ReadFeishuDocTool(deps.feishuToolSupport, deps.feishuDocReader),
     new FeishuDownloadFileTool(deps.feishuToolSupport, deps.feishuGroupMediaLookup, deps.feishuMediaDownloader, deps.feishuMaxInboundFileBytes, deps.feishuMessageDetailFetcher),
     new SendFeishuImageTool(deps.pathSandbox, deps.feishuMediaSendSupport, deps.sendBytesSupport),
     new SendFeishuFileTool(deps.pathSandbox, deps.feishuMediaSendSupport, deps.sendBytesSupport),

@@ -152,7 +152,6 @@ export function summarize(toolName: string | null | undefined, argumentsJson: st
       return summarizeHttpCall(argumentsJson, result);
     case 'http_describe':
       return summarizeHttpDescribe(argumentsJson, result);
-    case 'feishu_read_doc':
     case 'feishu_download_file':
     case 'feishu_send_image':
     case 'feishu_send_file':
@@ -538,7 +537,6 @@ function summarizeDingtalkTool(toolName: string, argumentsJson: string | null | 
 function summarizeFeishuTool(toolName: string, argumentsJson: string | null | undefined, result: string | null | undefined): string {
   const node = asObj(parseJson(result));
   const labels: Record<string, string> = {
-    feishu_read_doc: '读取飞书文档',
     feishu_download_file: '下载飞书文件',
     feishu_send_image: '发送飞书图片',
     feishu_send_file: '发送飞书文件',
@@ -548,9 +546,6 @@ function summarizeFeishuTool(toolName: string, argumentsJson: string | null | un
 
   let detail = '';
   switch (toolName) {
-    case 'feishu_read_doc':
-      detail = formatUrl(extractJsonString(argumentsJson, 'link'));
-      break;
     case 'feishu_download_file':
       detail = truncateFilename(extractFilePath(result))
         || extractJsonString(argumentsJson, 'message_id') || '';
@@ -569,9 +564,6 @@ function summarizeFeishuTool(toolName: string, argumentsJson: string | null | un
   }
   const summary = detail ? `${label}: ${truncate(detail, 60)}` : label;
   if (node?.success === true) return `${summary} (成功)`;
-  if (toolName === 'feishu_read_doc' && typeof node?.content === 'string') {
-    return `${summary} (${node.content.length} 字符)`;
-  }
   return summary;
 }
 

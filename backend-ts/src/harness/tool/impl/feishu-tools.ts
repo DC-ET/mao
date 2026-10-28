@@ -28,10 +28,6 @@ const MAX_FEISHU_IMAGE_BYTES = 10 * 1024 * 1024;
 const MAX_FEISHU_FILE_BYTES = 30 * 1024 * 1024;
 const ALLOWED_FEISHU_IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 
-export interface FeishuDocReader {
-  readMarkdown(appId: string, link: string): Promise<string>;
-}
-
 export interface FeishuMediaDownloadResult {
   buffer: Buffer;
   contentType: string;
@@ -71,44 +67,6 @@ function imageExtensionOf(contentType: string): string {
 function extnameOf(name: string): string {
   const dot = name.lastIndexOf('.');
   return dot > 0 && dot < name.length - 1 ? name.slice(dot) : '';
-}
-
-export class ReadFeishuDocTool extends BaseTool implements FeishuChannelTool {
-  readonly feishuChannelTool = true as const;
-
-  constructor(private readonly support: FeishuChannelToolSupport, private readonly docReader: FeishuDocReader) { super(); }
-
-  getName(): string { return 'feishu_read_doc'; }
-  getDescription(): string {
-    return '读取飞书云文档正文（仅飞书通道会话可用）。传入飞书文档链接（支持 wiki / docx / base 类型，如 https://access.feishu.cn/wiki/xxx），返回 Markdown 格式正文。';
-  }
-  getInputSchema(): Record<string, unknown> {
-    return {
-      type: 'object',
-      properties: {
-        link: { type: 'string', description: '飞书云文档完整链接，如 https://access.feishu.cn/wiki/xxx' },
-      },
-      required: ['link'],
-    };
-  }
-  getOutputSchema(): Record<string, unknown> {
-    return { type: 'object', properties: { content: { type: 'string', description: '文档 Markdown 正文' } } };
-  }
-
-  protected override async executeWithUser(argumentsJson: string, sessionId: number | null, _userId: number | null, _workspace: string | null): Promise<string> {
-    try {
-      const args = parseObject(argumentsJson) ?? {};
-      const link = asText(args.link);
-      if (!link) return errorJson('缺少必填参数: link');
-      const appId = await this.support.resolveBotAppId(sessionId);
-      if (!appId) return errorJson('当前会话不是飞书通道会话，无法读取飞书文档');
-      const content = await this.docReader.readMarkdown(appId, link);
-      return toJson({ content });
-    } catch (e) {
-      harnessLog('warn', 'feishu_read_doc failed', e);
-      return errorJson((e as Error).message);
-    }
-  }
 }
 
 export class FeishuDownloadFileTool extends BaseTool implements FeishuChannelTool {

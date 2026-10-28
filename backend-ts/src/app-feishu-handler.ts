@@ -54,7 +54,6 @@ import { AnalyticsService, AnalyticsDbStore } from './analytics/analytics.servic
 import { StatisticsService, StatisticsDbStore } from './statistics/statistics.service.js';
 import { AdminAnalyticsService, AdminAnalyticsDbStore } from './admin/admin-analytics.service.js';
 import { McpServerValidatorImpl } from './agent/mcp-validator.js';
-import { readFeishuDocMarkdown } from './feishu/doc-reader.js';
 import { fetchFeishuMessageDetail } from './feishu/message-detail.js';
 import { sendFeishuFile, sendFeishuImage } from './feishu/media-sender.js';
 

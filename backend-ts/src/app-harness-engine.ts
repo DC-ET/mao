@@ -76,7 +76,6 @@ import { CompactionSignalBus } from './harness/core/compaction-signal-bus.js';
 import { AgentLoop } from './harness/core/agent-loop.js';
 import { HarnessService } from './harness/core/harness-service.js';
 import type { ExperienceIndexService } from './harness/experience/experience-index.service.js';
-import { readFeishuDocMarkdown } from './feishu/doc-reader.js';
 import { downloadFeishuMediaBuffer } from './feishu-media.js';
 import { fetchFeishuMessageDetail } from './feishu/message-detail.js';
 import { feishuSendTargetOf, sendFeishuFile, sendFeishuImage } from './feishu/media-sender.js';
@@ -212,13 +211,6 @@ export function assembleHarnessEngine(deps: HarnessEngineDeps): HarnessEngineRes
         if (sessionId == null) return null;
         const channel = await d.feishuMessageService.findSessionChannel(sessionId);
         return channel?.appId ?? null;
-      },
-    },
-    feishuDocReader: {
-      readMarkdown: async (appId: string, link: string) => {
-        const client = await d.getFeishuClient(Number(appId));
-        if (client == null) throw new Error(`飞书Bot不存在或未启用: ${appId}`);
-        return readFeishuDocMarkdown(client, link);
       },
     },
     feishuMediaDownloader: {

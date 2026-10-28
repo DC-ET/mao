@@ -288,7 +288,6 @@ describe('ToolResultSummarizer', () => {
 
   it('summarizesFeishuToolsUsingTheirActualSchemas', () => {
     expect(ToolResultSummarizer.summarize('feishu_download_file', '{"message_id":"om_123"}', '{"success":true,"path":"/workspace/chat-files/report.pdf"}')).toBe('下载飞书文件: chat-files/report.pdf (成功)');
-    expect(ToolResultSummarizer.summarize('feishu_read_doc', '{"link":"https://example.feishu.cn/docx/abc"}', '{"content":"# 标题"}')).toBe('读取飞书文档: example.feishu.cn/docx/abc (4 字符)');
     expect(ToolResultSummarizer.summarize('feishu_send_image', '{"image":"/tmp/chart.png"}', '{"success":true}')).toBe('发送飞书图片: tmp/chart.png (成功)');
     expect(ToolResultSummarizer.summarize('feishu_send_image', '{"image":"https://example.com/chart.png"}', '{"success":true}')).toBe('发送飞书图片: example.com/chart.png (成功)');
     expect(ToolResultSummarizer.summarize('feishu_send_file', '{"file":"/tmp/report.pdf","filename":"季度报告.pdf"}', '{"success":true}')).toBe('发送飞书文件: 季度报告.pdf (成功)');
@@ -301,7 +300,6 @@ describe('ToolResultSummarizer', () => {
   });
 
   it.each([
-    ['feishu_read_doc', '读取飞书文档'],
     ['feishu_download_file', '下载飞书文件'],
     ['feishu_send_image', '发送飞书图片'],
     ['feishu_send_file', '发送飞书文件'],
