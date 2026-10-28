@@ -23,6 +23,8 @@ export interface TrendPoint {
   avgDurationMs?: number | null
   /** 桶内平均首字耗时（ms，只算流式调用）；无流式调用为 null */
   avgFirstTokenMs?: number | null
+  /** 桶内每百万 Token 平均成本（成本单位）；无调用为 null */
+  costPerMTokens?: number | null
 }
 
 export interface RankItem {
@@ -240,22 +242,34 @@ export function tokenTrendOption(trends: TrendPoint[]): ChartOption {
   }
 }
 
-/** 成本趋势线（唯一口径 llm_call；单位与模型价格填写一致）。 */
+/** 成本趋势（唯一口径 llm_call）：左轴桶内成本合计，右轴每百万 Token 平均成本（虚线）。 */
 export function costTrendOption(trends: TrendPoint[]): ChartOption {
   const dates = trends.map((t) => t.date)
   const hourly = dates.some(isHourlyTrendDate)
   const zoom = trendDataZoom(trends.length, hourly)
   return {
-    color: [CHART_PALETTE[4]],
+    color: [CHART_PALETTE[4], CHART_PALETTE[2]],
     tooltip: {
-      trigger: 'axis' as const,
-      axisPointer: { type: 'line' as const }
+      trigger: 'axis',
+      axisPointer: { type: 'line' },
+      // 两条线同为成本单位但量级不同（合计 vs 每百万 Token），统一按成本格式化
+      formatter: (params: unknown) =>
+        unitTooltip(params as UnitTooltipParam[], dates, (_name, value) => formatCost(value))
     },
     legend: { top: 0, left: 'center' as const },
     grid: { ...baseGrid, bottom: zoom ? 28 : 4 },
     dataZoom: zoom,
     xAxis: { ...categoryAxis(dates), boundaryGap: false },
-    yAxis: valueAxis('成本', formatCost),
+    yAxis: [
+      valueAxis('成本', formatCost),
+      {
+        type: 'value' as const,
+        name: '每百万Token',
+        nameTextStyle: { color: AXIS_LABEL_COLOR(), fontSize: 11 },
+        axisLabel: { color: AXIS_LABEL_COLOR(), fontSize: 11, formatter: (value: number) => formatCost(value) },
+        splitLine: { show: false }
+      }
+    ],
     series: [
       {
         name: '成本',
@@ -264,6 +278,15 @@ export function costTrendOption(trends: TrendPoint[]): ChartOption {
         showSymbol: false,
         data: trends.map((t) => t.cost ?? 0),
         areaStyle: { opacity: 0.12 }
+      },
+      {
+        name: '每百万Token平均成本',
+        type: 'line',
+        yAxisIndex: 1,
+        smooth: true,
+        connectNulls: true,
+        lineStyle: { type: 'dashed' },
+        data: trends.map((t) => t.costPerMTokens)
       }
     ]
   }
@@ -284,7 +307,10 @@ export function qualityTrendOption(trends: TrendPoint[]): ChartOption {
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'line' },
-      formatter: (params: unknown) => qualityTooltip(params as QualityTooltipParam[], dates)
+      // 质量图混用两种单位：百分比系列原样带 %，耗时系列按 ms/s 折算，避免出现裸毫秒数
+      formatter: (params: unknown) =>
+        unitTooltip(params as UnitTooltipParam[], dates, (name, value) =>
+          name.endsWith('%') ? `${value}%` : formatMs(value))
     },
     legend: { top: 0, left: 'center' as const },
     grid: { left: 8, right: 8, top: 32, bottom: zoom ? 28 : 4, containLabel: true },
@@ -350,23 +376,29 @@ export function qualityTrendOption(trends: TrendPoint[]): ChartOption {
   }
 }
 
-interface QualityTooltipParam {
+interface UnitTooltipParam {
   dataIndex: number
   seriesName: string
   value: number | null
   marker: string
 }
 
-/** 质量图混用两种单位：百分比系列原样带 %，耗时系列按 ms/s 折算，避免 tooltip 里出现裸毫秒数。 */
-function qualityTooltip(params: QualityTooltipParam[], dates: string[]): string {
+/**
+ * 多单位趋势图的 tooltip 公共骨架：按系列名把值交给 formatValue 套单位
+ * （百分比带 %、耗时折算 ms/s、成本原样），null / 非有限值的系列不出现在 tooltip 里。
+ */
+function unitTooltip(
+  params: UnitTooltipParam[],
+  dates: string[],
+  formatValue: (seriesName: string, value: number) => string,
+): string {
   if (params.length === 0) return ''
   const date = dates[params[0].dataIndex] ?? ''
   const rows = params
     .filter((p) => p.value != null && Number.isFinite(Number(p.value)))
     .map((p) => {
       const value = Number(p.value)
-      const text = p.seriesName.endsWith('%') ? `${value}%` : formatMs(value)
-      return `${p.marker}${escapeHtml(p.seriesName)}<span style="float:right;margin-left:16px;font-weight:600">${text}</span>`
+      return `${p.marker}${escapeHtml(p.seriesName)}<span style="float:right;margin-left:16px;font-weight:600">${formatValue(p.seriesName, value)}</span>`
     })
     .join('<br/>')
   if (!rows) return escapeHtml(date)

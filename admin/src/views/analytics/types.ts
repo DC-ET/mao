@@ -101,6 +101,8 @@ export interface TrendPoint {
   avgDurationMs?: number | null
   /** 桶内平均首字耗时（ms）= Σfirst_token_ms ÷ 流式调用数；无流式调用为 null */
   avgFirstTokenMs?: number | null
+  /** 桶内每百万 Token 平均成本 = cost ÷ callTokens × 1e6；无调用为 null */
+  costPerMTokens?: number | null
 }
 
 export interface SparkPoint {

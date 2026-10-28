@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { formatCompact, formatCost, formatTokens, qualityTrendOption, type TrendPoint } from './chart-options'
+import {
+  costTrendOption,
+  formatCompact,
+  formatCost,
+  formatTokens,
+  qualityTrendOption,
+  type TrendPoint
+} from './chart-options'
 
 /**
  * Token 紧凑展示全站统一保留两位小数（0.0.302：从一位改为两位，覆盖图表与各 Tab）。
@@ -133,3 +140,66 @@ interface QualityOptionLike {
   yAxis: Array<{ max?: number; axisLabel: { formatter: unknown } }>
   tooltip: { formatter: (params: unknown) => string }
 }
+
+describe('costTrendOption', () => {
+  const trends: TrendPoint[] = [
+    {
+      date: '2026-10-27',
+      sessions: 1,
+      messages: 2,
+      chatTokens: 0,
+      backgroundTokens: 0,
+      totalTokens: 0,
+      backgroundCalls: 0,
+      cost: 3.2,
+      callTokens: 1500,
+      costPerMTokens: 2133.33,
+    },
+    {
+      date: '2026-10-28',
+      sessions: 0,
+      messages: 0,
+      chatTokens: 0,
+      backgroundTokens: 0,
+      totalTokens: 0,
+      backgroundCalls: 0,
+      cost: 0,
+      callTokens: 0,
+      costPerMTokens: null,
+    },
+  ]
+
+  it('两条线：成本合计走左轴，每百万 Token 平均成本挂右轴并用虚线区分', () => {
+    const option = costTrendOption(trends) as unknown as QualityOptionLike
+    const series = option.series
+    expect(series.map((s) => s.name)).toEqual(['成本', '每百万Token平均成本'])
+    expect(series[0].yAxisIndex == null).toBe(true)
+    expect(series[1].yAxisIndex).toBe(1)
+    expect(series[1].lineStyle?.type).toBe('dashed')
+    expect(series[1].data).toEqual([2133.33, null])
+    // 两条线量级不同（合计 vs 每百万 Token），左右轴都不设 max，各自自动缩放
+    const [left, right] = option.yAxis
+    expect(left.max).toBeUndefined()
+    expect(right.max).toBeUndefined()
+    expect((right.axisLabel.formatter as (v: number) => string)(2133.33)).toBe('2,133.3')
+  })
+
+  it('tooltip 按成本格式化：0 是有效值照常展示，无分母的 null 行不出现', () => {
+    const option = costTrendOption(trends) as unknown as QualityOptionLike
+    const html = option.tooltip.formatter([
+      { dataIndex: 0, seriesName: '成本', value: 3.2, marker: '<i></i>' },
+      { dataIndex: 0, seriesName: '每百万Token平均成本', value: 2133.33, marker: '<i></i>' },
+    ])
+    expect(html).toContain('3.2')
+    expect(html).toContain('2,133.3')
+    expect(html).toContain('2026-10-27')
+
+    // 成本 0（模型未配价格）是有效值；每百万 Token 分母为 0 时后端给 null，不出行
+    const nullOnly = option.tooltip.formatter([
+      { dataIndex: 1, seriesName: '成本', value: 0, marker: '<i></i>' },
+      { dataIndex: 1, seriesName: '每百万Token平均成本', value: null, marker: '<i></i>' },
+    ])
+    expect(nullOnly).toContain('2026-10-28')
+    expect(nullOnly).not.toContain('每百万Token平均成本')
+  })
+})

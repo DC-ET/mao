@@ -48,7 +48,7 @@
         <BaseChart :option="callTrendChartOption" :empty="!hasCalls" :height="260" />
       </el-card>
 
-      <el-card class="block span-2">
+      <el-card class="block">
         <template #header>
           <div class="card-header">
             <span class="chart-title">质量</span>
@@ -62,7 +62,7 @@
         <template #header>
           <div class="card-header">
             <span class="chart-title">成本</span>
-            <span class="card-hint">单位与模型价格填写一致（llm_call 口径）</span>
+            <span class="card-hint">桶内合计与每百万 Token 平均成本（llm_call 口径）</span>
           </div>
         </template>
         <BaseChart :option="costTrendChartOption" :empty="!hasCost" :height="260" />

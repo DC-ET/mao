@@ -1284,6 +1284,7 @@ export class AdminAnalyticsService {
       const firstTokSum = firstTokenMsSum.get(date) ?? 0;
       const firstTokCount = firstTokenMsCount.get(date) ?? 0;
       const durationSum = durationMsSum.get(date) ?? 0;
+      const bucketCost = callCost.get(date) ?? 0;
       rows.push({
         date,
         sessions: sessions.get(date) ?? 0,
@@ -1298,7 +1299,7 @@ export class AdminAnalyticsService {
         callTokens: callTok,
         promptTokens: prompt,
         cachedTokens: cached,
-        cost: callCost.get(date) ?? 0,
+        cost: bucketCost,
         // 取消不是失败：分母剔除取消，成功率不再被用户主动停止拉低
         callSuccessRate: calls - cancels > 0 ? Math.round(((calls - fails - cancels) / (calls - cancels)) * 1000) / 10 : null,
         cacheHitRate: prompt > 0 ? Math.round((cached / prompt) * 1000) / 10 : null,
@@ -1306,6 +1307,9 @@ export class AdminAnalyticsService {
         // 桶内无调用 / 无流式调用时为 null，前端断线不画 0
         avgFirstTokenMs: firstTokCount > 0 ? Math.round(firstTokSum / firstTokCount) : null,
         avgDurationMs: calls > 0 ? Math.round(durationSum / calls) : null,
+        // 每百万 Token 平均成本 = 桶内成本 ÷ 桶内 llm_call 调用 Token × 1e6（分母与成本同口径）；
+        // 无调用（分母 0）为 null，前端断线不画 0
+        costPerMTokens: callTok > 0 ? Math.round((bucketCost / callTok) * 1e6 * 100) / 100 : null,
       });
     }
     return rows;

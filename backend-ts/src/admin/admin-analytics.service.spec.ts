@@ -438,6 +438,22 @@ describe('AdminAnalyticsService', () => {
     expect(result.trends[0]).toMatchObject({ avgFirstTokenMs: null, avgDurationMs: null });
   });
 
+  it('trendsScope 每百万 Token 平均成本：按 llm_call Token 折算，无调用为 null', async () => {
+    const statistics = { getOverview: vi.fn(async () => ({})) };
+    const store = buildStore();
+    // 当天 3 次调用共 1500 Token、成本 3.2
+    store.selectDailyLlmCallStats = vi.fn(async () => [
+      { day: today, callCount: 3, failCount: 0, promptTokens: 1000, cachedTokens: 0, callTokens: 1500, cost: 3.2, firstTokenMsSum: 0, firstTokenMsCount: 0, durationMsSum: 600 },
+    ]);
+    const service = new AdminAnalyticsService(statistics as never, store as never);
+
+    const result = (await service.trendsScope(7)) as Record<string, any>;
+    // 3.2 / 1500 × 1e6 = 2133.33（分母为桶内 llm_call 调用 Token，与成本同口径）
+    expect(result.trends.at(-1)).toMatchObject({ costPerMTokens: 2133.33 });
+    // 补零桶无调用：分母为 0，不除出 Infinity
+    expect(result.trends[0]).toMatchObject({ costPerMTokens: null });
+  });
+
   it('sessionsScopeAddsCallQualityPanelAndFailTop', async () => {
     const statistics = { getOverview: vi.fn(async () => ({})) };
     const service = new AdminAnalyticsService(statistics as never, buildStore() as never);
