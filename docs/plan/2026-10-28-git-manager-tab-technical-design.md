@@ -44,14 +44,15 @@ Git 能力目前只有一个入口：任务页右侧边栏（`TaskInspector.vue`
 
 - 中央 Tab 渲染链路：`CenterTabContainer.vue` 以 `<KeepAlive :max="20">` + `activeTab.type` 分支渲染；props 已含 `sessionId` 与 `fileProvider`，Tab 数据是按会话存的模块级单例（`useCenterTabs.ts`）。Git Tab 需要新增 `gitProvider` prop 管道（文件管理器没有这道管道，因为文件面板只用 fileProvider）。
 - 侧边栏 Git Tab 的展示条件：`showGitTab`（`TaskInspector.vue`）要求 `props.gitProvider` 存在（即 LOCAL 有 Electron IPC 或 CLOUD 有 sessionId）。
-- `WorkspaceGitProvider` 的 CLOUD/LOCAL 工厂由 `useWorkspaceGitProvider(executionMode, workspace, sessionId)` 在 `TaskView.vue` L559 构造，已经以 `gitProvider` prop 传给 `TaskInspector`——大 Tab 复用同一实例即可，无第二数据源。
+- `WorkspaceGitProvider` 的 CLOUD/LOCAL 工厂由 `useWorkspaceGitProvider(executionMode, workspace, sessionId)` 在 `TaskView.vue` L578 构造，已经以 `gitProvider` prop 传给 `TaskInspector`——大 Tab 复用同一实例即可，无第二数据源。
 - CLOUD 只读 git 执行器：`workspace-git.service.ts` 的 `runGitOk(cwd, args)`（10s 超时、2 MiB stdout 上限、`core.quotepath=false`）；写执行器：`git-write-operation.service.ts` 的 `run(repo, args, extraEnv)`（60s 超时、仓库级互斥锁 `withRepoLock`、`credentialEnv` askpass）。
-- LOCAL 只读执行器：`gitStatus.cjs` 的 `runGit(cwd, args)`（60s 超时、2 MiB 上限）；写执行器：`gitOperations.cjs` 的 `run(cwd, args, options)` + `withWriteLock`（按仓库互斥）。
+- LOCAL 只读执行器：`gitStatus.cjs` 的 `runGit(cwd, args)`（60s 超时、2 MiB maxBuffer 上限）；写执行器：`gitOperations.cjs` 的 `runGit(cwd, args, options)`（options 仅支持 stdin `input`，非 extraEnv）+ `withWriteLock`（按仓库根互斥，进程内 Set）。两个 cjs 的 `execFile`/`spawn` 均统一带 `-c core.quotepath=false`。
 - 提交 diff 的三段式数据在 LOCAL 侧已有先例：`gitOperations.buildFileDiff(repoRoot, file)` 与后端的 `getFileDiff` 都实现了 before（`git show` / `HEAD:` 版本）+ after（工作区内容）+ 截断/二进制判定，本方案的单提交 diff 是同一模式的参数化（revision 从 `HEAD` 变为任意 `hash`）。
 - 文件管理器大 Tab 已确立入口范式：「文件」tab 工具栏按钮 + 摘要行可点击，`openFileManagerTab()` 单例 id `file-manager`。
 - `TaskInspector` 已通过 `defineExpose` 暴露 `revealInFileTree` / `refreshFileTree` 给 `TaskView`（`TaskInspectorInstance` 接口），本方案新增 Git 入口事件沿用同一中转模式。
 - file 域全部端点（含 Git commit/pull/push）零权限码，只靠 `requireUserId + requireOwnedSession`；本方案新增端点沿用该形态。
-- 迁移现状：最大 V141，本方案零 DDL（提交历史/分支/stash 全部是 git 仓库的实时数据，不落库）。
+- LOCAL 侧活动记录链路：desktop LOCAL provider 写操作成功后调 `/v1/files/workspace-git-activity` → 后端 `recordLocalActivity`，其操作白名单当前仅 `commit|pull|push`；新增 fetch/switch/stash 若也要落 `session_activity`（§2.1 目标 5），须同任务扩白名单（详见 §5.4）。
+- 迁移现状：最大 V174（`V174__signal_watcher_trigger_mode.sql`，下一个新迁移编 V175），本方案零 DDL（提交历史/分支/stash 全部是 git 仓库的实时数据，不落库）。
 
 ## 2. 需求描述
 
@@ -67,7 +68,7 @@ Git 能力目前只有一个入口：任务页右侧边栏（`TaskInspector.vue`
    - **显式 fetch**：独立的「获取远端更新」按钮（`fetch --prune`，不动工作区）。
 4. **双模式一致**：LOCAL（Electron）与 CLOUD 行为一致，UI 通过扩展后的 `WorkspaceGitProvider` 统一；LOCAL 拉取/推送/fetch 沿用本机 Git 凭证（credential helper / SSH Agent / 系统钥匙链），CLOUD 沿用用户 HTTPS Access Token + askpass。
 5. **安全边界不变**：所有 git 命令参数数组执行，禁止 shell 拼接；CLOUD 端点校验会话归属 + `PathSandbox` + `repoPath` 仅限一级子目录；仓库级写锁互斥；远端 URL 与错误输出脱敏；新增操作（fetch/切换分支/stash）落 `session_activity` 活动记录。
-6. **改动面**：desktop 纯前端 + Electron 新 IPC + 后端 8 个新端点 + 两个既有服务扩展；零 DDL、零新依赖、零权限码、不改 admin。
+6. **改动面**：desktop 纯前端 + Electron 新 IPC + 后端 9 个新端点 + 两个既有服务扩展；零 DDL、零新依赖、零权限码、不改 admin。
 
 ### 2.2 非目标（明确不做）
 
@@ -121,18 +122,18 @@ Git 能力目前只有一个入口：任务页右侧边栏（`TaskInspector.vue`
 
 ### 3.3 Git 命令约定（LOCAL / CLOUD 共用语义）
 
-所有命令在**仓库根**执行，一律 `git -c core.quotepath=false` + 参数数组，禁止 shell 拼接。只读命令沿用 `workspace-git.service.ts` 的 10s 超时 / 2 MiB stdout 上限；写命令沿用 `git-write-operation.service.ts` 的 60s 超时 / 仓库写锁。
+所有命令在**仓库根**执行，一律 `git -c core.quotepath=false` + 参数数组，禁止 shell 拼接。CLOUD 只读命令沿用 `workspace-git.service.ts` 的 10s 超时 / 2 MiB stdout 上限（stdout 与 stderr 共享额度）；CLOUD 写命令沿用 `git-write-operation.service.ts` 的 60s 超时 / 仓库写锁。LOCAL 两侧（`gitStatus.cjs` 只读 / `gitOperations.cjs` 写）均为 60s 超时 / 2 MiB 上限，命令语义与解析规则双端一致。
 
 | 用途 | 命令 | 解析要点 |
 |---|---|---|
 | 提交历史 | `git log --format=%H%x00%h%x00%s%x00%an%x00%aI%x00%D -n <limit> [--skip <offset>] [-- <path>]` | `%D` 为 refs 装饰（分支/tag）；NUL 分隔防标题含特殊字符；limit 默认 50、上限 200 |
-| 单提交文件清单 | `git show --name-status --format= <hash>` + `git show --numstat --format= <hash>` | 复用现有 `parseNameStatusLine` / `numstatNewPath`（rename 紧凑形态还原） |
-| 单提交单文件 diff | `git show <hash>:<path>`（before = `<hash>^:<path>`，根提交时 before 为空）+ 读工作区无意义——after 直接取 `git show <hash>:<path>` | before/after 均来自 git 对象，不读工作区；二进制判定与 `isBinaryString` 一致 |
-| 分支列表 | `git branch -vv`（本地）+ `git branch -r`（远端）+ `git rev-parse --abbrev-ref HEAD` | 本地分支解析 upstream 与 ahead/behind（`[ahead N, behind M]` 标记）；当前分支标记 `*` |
+| 单提交文件清单 | `git show --first-parent --name-status --format= <hash>` + `git show --first-parent --numstat --format= <hash>` | **merge 提交必须带 `--first-parent`**：默认 `git show` 对 merge 输出 combined diff，干净合并的文件清单为空（已实测验证），UI 会出现"无文件变更"的提交；复用现有 `parseNameStatusLine` / `numstatNewPath`（rename 紧凑形态还原） |
+| 单提交单文件 diff | before = `git show <hash>^:<path>`，after = `git show <hash>:<path>`（均来自 git 对象，不读工作区） | 该提交中**新增**的文件 before 为空、**删除**的文件 after 为空（`git show` 对不存在对象返回非零退出，按空内容处理，与现有 `showHeadContent` 失败返回 null 同语义——方案初稿只提了根提交，遗漏了增/删两种形态）；二进制判定与 `isBinaryString` 一致 |
+| 分支列表 | `git branch -vv`（本地）+ `git branch -r`（远端）+ `git rev-parse --abbrev-ref HEAD` | 本地分支 upstream 与 ahead/behind 在**同一个方括号**内，实际格式 `[origin/main: ahead 1, behind 2]`（也见 `[origin/main]` / `[origin/main: ahead 1]` 单计数形态）；当前分支标记 `*`；detached 行为 `* (HEAD detached at <hash>) <subject>`；`git branch -r` 须跳过 `origin/HEAD -> origin/main` 符号行；远端分支要展示最后提交需 `-vv`（其 upstream 列为空） |
 | stash 列表 | `git stash list --format=%gd%x00%gs%x00%aI` | `%gd` 为 `stash@{n}` 索引 |
 | 远端列表 | `git remote -v` | 取 name/url；**URL 返回前必须过 `CREDENTIAL_URL` 脱敏正则**（与 `sanitize()` 同规则） |
 | fetch | `git fetch --prune <remote>` | remote 选择复用 `selectRefreshRemote` 逻辑（upstream 优先 → origin → 唯一 remote）；凭证走 `credentialEnv` |
-| 切换分支 | 检测变更 → `git stash push --include-untracked -m mao-auto-switch-<uuid>` → `git switch <branch>`（远端分支：`git switch -c <branch> --track <remote>/<branch>`）→ 成功则 `git stash apply --index <oid>` + drop | 完全复用 pull 的 stash 生命周期（`findStashRef`/`restoreStash`）；恢复冲突保留现场 |
+| 切换分支 | 检测变更 → `git stash push --include-untracked -m mao-auto-switch-<uuid>` → `git switch <branch>`（远端分支：`git switch -c <branch> --track <remote>/<branch>`）→ 成功则 `git stash apply --index <oid>` + drop | 完全复用 pull 的 stash 生命周期（`findStashRef`/`restoreStash`）；恢复冲突保留现场；守卫只查 detached HEAD，**不要求配置 remote**（无远端本地仓库也应可切分支，不能直接复用含 remote 检查的 `requirePullPushState`，见 §5.4） |
 | stash 操作 | `git stash apply --index <ref>` / `git stash pop --index <ref>` / `git stash drop <ref>` | action 服务端白名单枚举 `apply \| pop \| drop`；ref 必须匹配 `^stash@\{\d+\}$` |
 
 ## 4. 关键决策（需求共识）
@@ -152,7 +153,7 @@ Git 能力目前只有一个入口：任务页右侧边栏（`TaskInspector.vue`
 | D9 | CLOUD 只读端点 | 扩展 `WorkspaceGitService`：`getLog` / `getCommitFiles` / `getCommitFileDiff` / `getBranches` / `getStashes` / `getRemotes`；命令白名单在服务内部 |
 | D10 | CLOUD 写端点 | 扩展 `GitWriteOperationService`：`fetchRemote` / `switchBranch` / `stashOp`；复用 `withRepoLock` + `credentialEnv` + 活动记录 |
 | D11 | 分支切换策略 | 自动 stash（`--include-untracked`，标识 `mao-auto-switch-<uuid>`）→ switch → 成功恢复（按对象 ID）；恢复冲突保留现场 + 提示；禁止 detached；远端分支自动建跟踪分支 |
-| D12 | LOCAL 实现 | `gitStatus.cjs` 加只读查询（log/branches/stashes/remotes/commitFiles/commitFileDiff）；`gitOperations.cjs` 加写操作（fetch/switchBranch/stashOp，复用 `withWriteLock` 与本机凭证）；`main.cjs` 注册 8 个 IPC；preload + `electron.d.ts` 同步 |
+| D12 | LOCAL 实现 | `gitStatus.cjs` 加只读查询（log/branches/stashes/remotes/commitFiles/commitFileDiff）；`gitOperations.cjs` 加写操作（fetch/switchBranch/stashOp，复用 `withWriteLock` 与本机凭证）；`main.cjs` 注册 9 个 IPC；preload + `electron.d.ts` 同步 |
 | D13 | 测试 | 后端两服务扩展补单测（临时 git 仓库 fixture）；前端补纯函数/composable 单测；手测清单随 PR；不新增 Playwright |
 
 ## 5. 详细设计
@@ -168,19 +169,20 @@ TaskView.vue（改：接入口事件、透传 gitProvider）
           ├─ 仓库下拉（多仓库模式；单仓库模式显示仓库名徽章）
           ├─ 仓库状态条：分支 / upstream / ahead-behind / detached 提示 / 远端状态 + 「获取远端更新」按钮
           ├─ 子导航：变更 | 历史 | 分支 | Stash
-          ├─ <GitChangesView>（变更视图：复用 GitChangeList 同构布局 + commit/pull/push 工具栏 + diff 预览）
+          ├─ <GitChangesView>（变更视图：直接复用 `components/task/GitChangeList.vue` 组件本身，见 §5.7，不新建包装组件）
           ├─ <GitHistoryView>（历史视图：列表 + 分页 + 点击展开文件清单）
           ├─ <GitBranchesView>（分支视图：本地/远端分组列表 + 切换按钮）
           └─ <GitStashView>（stash 视图：列表 + apply/pop/drop）
 ```
 
 - **打开**：`openGitTab()`（`useCenterTabs.ts` 新增）：会话内已有该 Tab 则直接激活，否则 push `{ id: 'git', type: 'git', title: 'Git' }` 并激活；按 `notifyTabsChanged` 现有收尾（含激活态落盘）。恢复激活态走 `restoreActiveTab` 现有按 id 匹配逻辑，刷新不重建（与 file/diff/trace 一致，非目标）。
-- **依赖获取**：`CenterTabContainer` 新增 `gitProvider` prop（`TaskView` 已有 `gitProvider` computed，L559，直接传）；面板拿 `sessionId` + `gitProvider` 两样。`executionMode` 不收——provider 工厂已按模式产出（LOCAL 无 Electron IPC 时 provider 为 null，入口不显示）。
+- **依赖获取**：`CenterTabContainer` 新增 `gitProvider` prop（`TaskView` 已有 `gitProvider` computed，L578，直接传）；面板拿 `sessionId` + `gitProvider` 两样。`executionMode` 不收——provider 工厂已按模式产出（LOCAL 无 Electron IPC 时 provider 为 null，入口不显示）。渲染分支必须带 `:key`（值为 `git-<sessionId>`，与 `FileManagerPanel` 的 `file-manager-<sessionId>` key 同款）：多会话同时开 Git Tab 时，无 key 的同一组件会被 KeepAlive 复用实例，sessionId prop 虽会更新，但内部状态（selectedRepoPath / logOffset / expandedCommit / 滚动位置）跨会话串扰；provider 变化 watch 重置（§5.8）只兜得住数据，兜不住交互态。
 - **事件出口**（与 `handleOpenGitDiff` 同模式，TaskView 中转）：
   - `open-git-diff`（变更视图，payload 与 `TaskInspector` 的 `open-git-diff` 完全一致：`{ file, repoPath }`）→ 复用 `TaskView.handleOpenGitDiff`；
   - `open-commit-diff`（历史视图，payload `{ hash, file, repoPath }`）→ `TaskView` 调 provider 新方法 `getCommitFileDiff` → 构造 `FileChange` → `openDiffTab(change, 'hash · 文件名 (Git)', { source: 'git' })`；
+    - **P2 硬前置**：`openDiffTab` 现签名 `(change, title?, opts?: { source?: 'tool' | 'git' })`，tab id 固定为 `git-diff:<change.path>`（`useCenterTabs.ts` L270 起）。直接复用会让提交 diff 与变更视图同路径 tab **互相覆盖**（同会话先看工作区 diff 再看提交 diff，后者顶掉前者），且不同提交的同路径文件互相顶掉。须先给 `openDiffTab` 增加 `idPrefix`（或 `idSuffix`）选项以生成 §7 承诺的 `git-commit-diff:<hash>:<path>`；该扩展不得改变现有 `git-diff:`/`diff:` id 规则（回归用例见 §8）。
   - `add-file-to-chat` → composer 插 `@{绝对路径}@`（TaskView 现有链路）。
-- **provider 扩展**：`WorkspaceGitProvider` 接口新增 8 个方法（§5.2），LOCAL/CLOUD 两个工厂各自实现；面板不感知模式。
+- **provider 扩展**：`WorkspaceGitProvider` 接口新增 9 个方法（§5.2），LOCAL/CLOUD 两个工厂各自实现；面板不感知模式。
 
 ### 5.2 Provider 接口扩展（`desktop/src/types/git.ts` + `workspace-git-provider.ts`）
 
@@ -228,16 +230,18 @@ export type GitStashAction = 'apply' | 'pop' | 'drop'
 `WorkspaceGitProvider` 新增（均带 `repoPath?` 尾参，多仓库模式下由面板固定 `selectedRepoPath`，与现有 `getStatus(repoPath)` 同模式）：
 
 ```ts
-getLog(opts?: { limit?: number; offset?: number; path?: string }): Promise<GitLogEntry[]>
-getCommitFiles(hash: string): Promise<GitCommitFilesResult>
-getCommitFileDiff(hash: string, relativePath: string): Promise<GitFileDiff>
-getBranches(): Promise<GitBranchInfo[]>
-getStashes(): Promise<GitStashEntry[]>
-getRemotes(): Promise<GitRemoteInfo[]>
-fetchRemote(): Promise<GitOperationResult>                       // operation: 'fetch'
-switchBranch(branch: string, opts?: { create?: boolean }): Promise<GitOperationResult>  // operation: 'switch'
-stashOp(action: GitStashAction, ref: string): Promise<GitOperationResult>               // operation: 'stash'
+getLog(opts?: { limit?: number; offset?: number; path?: string }, repoPath?: string): Promise<GitLogEntry[]>
+getCommitFiles(hash: string, repoPath?: string): Promise<GitCommitFilesResult>
+getCommitFileDiff(hash: string, relativePath: string, repoPath?: string): Promise<GitFileDiff>
+getBranches(repoPath?: string): Promise<GitBranchInfo[]>
+getStashes(repoPath?: string): Promise<GitStashEntry[]>
+getRemotes(repoPath?: string): Promise<GitRemoteInfo[]>
+fetchRemote(repoPath?: string): Promise<GitOperationResult>                       // operation: 'fetch'
+switchBranch(branch: string, opts?: { create?: boolean }, repoPath?: string): Promise<GitOperationResult>  // operation: 'switch'
+stashOp(action: GitStashAction, ref: string, repoPath?: string): Promise<GitOperationResult>               // operation: 'stash'
 ```
+
+（`repoPath?` 一律为尾参，与现有 `getStatus(repoPath?)` / `commit(repoPath?)` 等同模式；初稿中 `getCommitFileDiff`/`fetchRemote`/`switchBranch`/`stashOp` 漏写该参数，多仓库模式下写操作将无法固定 `selectedRepoPath`，特此补齐。）
 
 错误契约沿用 `GitOperationResult`（`{ success, operation, message?, error?, ... }`）；CLOUD 侧 BusinessException 由 provider 的 catch 转成 `failedOperation`（同现有 commit/pull/push 的 `failedOperation(operation, e)` 兜底）。`GitOperationType` 扩展为 `'commit' | 'pull' | 'push' | 'fetch' | 'switch' | 'stash'`。
 
@@ -248,8 +252,8 @@ stashOp(action: GitStashAction, ref: string): Promise<GitOperationResult>       
 | 方法 | 命令 | 返回 |
 |---|---|---|
 | `getLog(ws, repoPath, {limit, offset, path})` | `git log --format=… -n limit --skip offset [-- path]` | `GitLogEntryDTO[]`；limit 钳制 [1,200] 默认 50，offset ≥0；空仓库（无 HEAD）返回 `[]` 不报错 |
-| `getCommitFiles(ws, repoPath, hash)` | `git show --name-status --format=` + `--numstat --format=` | 复用 `parseNameStatusLine`/`numstatNewPath`/`collectChangedFiles` 同款合并逻辑；hash 服务端校验 `^[0-9a-f]{7,64}$` |
-| `getCommitFileDiff(ws, repoPath, hash, path)` | before = `git show <hash>^:<path>`（根提交/首版为空），after = `git show <hash>:<path>` | 复用 `GitFileDiffDTO` 契约与 `truncateText`/`isBinaryString`/`readTextLimited` 同款上限（5000 行 / 512 KiB）；路径沿用 `getFileDiff` 的 `..`/沙箱校验 |
+| `getCommitFiles(ws, repoPath, hash)` | `git show --first-parent --name-status --format=` + `--first-parent --numstat --format=` | 复用 `parseNameStatusLine`/`numstatNewPath`/`collectChangedFiles` 同款合并逻辑；hash 服务端校验 `^[0-9a-f]{7,64}$`；格式合法但 git 中不存在（或非 commit 对象）时 `runGitOk` 返回 null，映射 `PARAM_INVALID '提交不存在'`——不可返空列表（空列表与空提交无法区分） |
+| `getCommitFileDiff(ws, repoPath, hash, path)` | before = `git show <hash>^:<path>`，after = `git show <hash>:<path>` | 新增文件 before 为空、删除文件 after 为空（show 非零退出即空内容，同 `showHeadContent` 语义）；复用 `GitFileDiffDTO` 契约与 `truncateText`/`isBinaryString`/`readTextLimited` 同款上限（5000 行 / 512 KiB）；路径沿用 `getFileDiff` 的 `..`/沙箱校验 |
 | `getBranches(ws, repoPath)` | `git branch -vv` + `git branch -r` + `rev-parse --abbrev-ref HEAD` | `GitBranchInfoDTO[]`；解析 `*` 当前标记、`[origin/main]` upstream、`[ahead N, behind M]`；远端分支 `isRemote: true`（远端分支不解析 ahead/behind） |
 | `getStashes(ws, repoPath)` | `git stash list --format=%gd%x00%gs%x00%aI` | `GitStashEntryDTO[]`；`%gs` 已含 On branch 摘要 |
 | `getRemotes(ws, repoPath)` | `git remote -v` | `GitRemoteInfoDTO[]`；fetch/push URL 合并为一条；**URL 过 `CREDENTIAL_URL` 脱敏**（把 `git-write-operation.service.ts` 的脱敏正则导出共享或复制一份等价的，二选一，倾向抽到 `workspace-git.service.ts` 顶部常量） |
@@ -261,14 +265,16 @@ stashOp(action: GitStashAction, ref: string): Promise<GitOperationResult>       
 `backend-ts/src/file/git-write-operation.service.ts` 新增三个方法，全部走 `locked()`/`withRepoLock`（同仓库互斥）+ 活动记录：
 
 - `fetchRemote(session, repoPath)`：`remoteState` → `selectRefreshRemote`（复用现有私有方法，需提升可见性或抽为模块函数）→ 无 remote 返回 `remoteStatusError='仓库未配置远端'` 的 status 语义（与 `refreshRemoteStatus` 的无 remote 分支一致，但**不返回完整 status**，只返回 `GitOperationResult`）→ `run(repo, ['fetch','--prune',remote], await this.credentialEnv(session))` → 成功 `successResult('fetch', branch, '远端已更新')`，失败 `classify()` 脱敏。
-- `switchBranch(session, repoPath, branch, create?)`：`remoteState` → `requireNotDetached` → 有变更则 `stash push --include-untracked -m mao-auto-switch-<uuid>` + 记录 oid → 目标为本地分支直接 `git switch <branch>`；目标形如 `<remote>/<branch>` 或 `create=true` 时 `git switch -c <local> --track <remote>/<remote-branch>`（解析 `branch` 串：含 `/` 且前缀是已配置 remote 则视为远端跟踪创建）→ 失败：恢复 stash（复用 `restoreStash`）→ 成功：`restoreStash` 恢复；恢复冲突抛 `GitOperationException`（保留现场，消息含 stash 引用，同 pull 口径）。分支名服务端校验 `^[A-Za-z0-9._/-]+$` 且不含 `..`/`~`/`^`/`:`（git check-ref-format 子集）。
+- `switchBranch(session, repoPath, branch, create?)`：`remoteState` → detached-only 守卫（**不要求配置 remote**：无远端的纯本地仓库也应可切分支；现有 `requirePullPushState` 同时查 detached 与 remote 两项，直接复用会误拒无 remote 仓库，需按其样式抽一个只查 detached 的私有守卫）→ 有变更则 `stash push --include-untracked -m mao-auto-switch-<uuid>` + 记录 oid → 目标为本地分支直接 `git switch <branch>`；目标形如 `<remote>/<branch>` 或 `create=true` 时 `git switch -c <local> --track <remote>/<remote-branch>`（解析 `branch` 串：含 `/` 且前缀是已配置 remote 则视为远端跟踪创建）→ 失败：恢复 stash（复用 `restoreStash`）→ 成功：`restoreStash` 恢复；恢复冲突抛 `GitOperationException`（保留现场，消息含 stash 引用，同 pull 口径）。分支名服务端校验 `^[A-Za-z0-9._/-]+$` 且不含 `..`/`~`/`^`/`:`（git check-ref-format 子集）。注意 `git switch` 对"仅存在 `origin/x`"有 DWIM 自动建跟踪分支行为，但显式传 `origin/x` 会报错建议 `-c`，故保留显式 `-c --track` 路径，不依赖 DWIM。
 - `stashOp(session, repoPath, action, ref)`：action 白名单 `apply|pop|drop`；ref 校验 `^stash@\{\d+\}$`；`apply` → `git stash apply --index <ref>`，`pop` → `git stash pop --index <ref>`，`drop` → `git stash drop <ref>`；apply/pop 后检测冲突（复用 `hasConflicts`），有冲突返回 `success:false, conflict:true` + 保留现场的提示（不自动 reset）。
 
 活动记录类型：`GIT_FETCH` / `GIT_SWITCH` / `GIT_STASH`（`recordOperation` 的 `GIT_${operation.toUpperCase()}` 现有拼法自动适配）；detail 字段沿用现有结构（branch/stashRef/conflict/error）。
 
+- **LOCAL 侧活动记录（易漏链路）**：上述 `recordOperation` 只覆盖 CLOUD 路径。LOCAL 的写操作走 Electron IPC，活动记录靠 desktop provider 调 `/v1/files/workspace-git-activity` → 后端 `recordLocalActivity`，而该方法的操作白名单当前仅 `commit|pull|push`（`git-write-operation.service.ts` L186，其余值抛 `PARAM_INVALID 'Git 操作类型无效'`）。要满足 §2.1 目标 5（新操作落 `session_activity`），须同任务做两处改动：后端白名单扩为含 `fetch|switch|stash`；desktop LOCAL provider 的 `fetchRemote`/`switchBranch`/`stashOp` 成功后调 `recordLocalActivity`（与现有 commit 的调用同模式，`workspace-git-provider.ts` 内已有 `recordLocalActivity` 辅助）。漏改则 LOCAL 新操作在活动记录中不可见。
+
 ### 5.5 后端：REST 端点（`file.routes.ts`）
 
-全部 `requireUserId + requireOwnedSession`（file 域现行形态，无权限码），LOCAL 会话一律 `PARAM_INVALID '本地模式不支持服务端 Git 管理'`（同 write 端点族对 LOCAL 的拒绝样式），`repoPath` 只接受一级子目录名（`resolveRepoDir` 现有校验）。
+全部 `requireUserId + requireOwnedSession`（file 域现行形态，无权限码），`repoPath` 只接受一级子目录名（`resolveRepoDir` 现有校验）。LOCAL 会话一律 `PARAM_INVALID '本地模式不支持服务端 Git 管理'`——注意这是**新增的防御层**：现有 git 端点（status/commit/pull/push 等）并不拒绝 LOCAL 会话（无 `requireCloudWorkspace` 调用，LOCAL 走 provider 的 IPC 工厂，服务端拒绝只是防未来误调），文案沿用 write 端点族的 `本地模式不支持…` 样式。
 
 | 方法 | 路径 | 参数 | 服务方法 |
 |---|---|---|---|
@@ -282,7 +288,7 @@ stashOp(action: GitStashAction, ref: string): Promise<GitOperationResult>       
 | POST | `/v1/files/workspace-git-switch-branch` | sessionId, repoPath?, branch, create? | `gitWriteOperationService.switchBranch` |
 | POST | `/v1/files/workspace-git-stash` | sessionId, repoPath?, action, ref | `gitWriteOperationService.stashOp` |
 
-（8 个方法映射为 9 个端点：stash 列表 GET 与 stash 操作 POST 分开。）
+（9 个 provider 方法映射为 9 个端点：6 个只读 GET + 3 个写 POST，stash 列表 GET 与 stash 操作 POST 分开。）
 
 ### 5.6 Electron：LOCAL 实现
 
@@ -293,7 +299,7 @@ stashOp(action: GitStashAction, ref: string): Promise<GitOperationResult>       
 - `getGitCommitFileDiff(workspace, repoPath, hash, relativePath)`
 - `getGitBranches(workspace, repoPath)`
 - `getGitStashes(workspace, repoPath)`
-- `getGitRemotes(workspace, repoPath)`（URL 脱敏：复用/复制 `gitOperations.cjs` 的 `sanitizeError` 同款正则）
+- `getGitRemotes(workspace, repoPath)`（URL 脱敏：复用同文件已有的 `sanitizeRemoteError`——其正则覆盖任意 scheme 的 `user:pass@` / `user@`，比 `gitOperations.cjs` 的 `sanitizeError`（仅 http(s)）更宽，且就在只读侧；后端侧对应 `CREDENTIAL_URL` 正则 + token/password 掩码，方案为导出共享或复制等价常量）
 
 `desktop/electron/gitOperations.cjs` 新增导出（写，走 `withWriteLock` + 本机凭证 env）：
 
@@ -301,7 +307,7 @@ stashOp(action: GitStashAction, ref: string): Promise<GitOperationResult>       
 - `switchBranch(workspace, repoPath, branch, create)`：stash → switch → restore，套路与 `pull` 的 stash 生命周期逐行同构（`findStashRef`/`restoreStash`/`hasConflicts`）
 - `stashOp(workspace, repoPath, action, ref)`
 
-`main.cjs` 注册 8 个 IPC（`git-log`、`git-commit-files`、`git-commit-file-diff`、`git-branches`、`git-stashes`、`git-remotes`、`git-fetch`、`git-switch-branch`、`git-stash-op`——实际 9 个，与 REST 一一对应）；`preload.cjs` 暴露；`electron.d.ts` 补类型。`desktop/package.json` version +1（仓库规范：Electron 壳改动）。
+`main.cjs` 注册 9 个 IPC（`git-log`、`git-commit-files`、`git-commit-file-diff`、`git-branches`、`git-stashes`、`git-remotes`、`git-fetch`、`git-switch-branch`、`git-stash-op`，与 REST 一一对应）；`preload.cjs` 暴露；`electron.d.ts` 补类型。版本不手改 `desktop/package.json`——发版时按 AGENTS.md 规范用 `scripts/changelog-extract.sh <ver> --section 桌面 Electron ... sync-desktop` 同步。
 
 ### 5.7 前端：面板与视图组件
 
@@ -313,8 +319,12 @@ stashOp(action: GitStashAction, ref: string): Promise<GitOperationResult>       
 - 数据源：面板内组合 `useGitRepos(gitProviderRef)` + `useGitStatus(statusProviderRef)`（与 `TaskInspector` 的多仓库包装 provider 完全相同的代码模式：`statusProviderRef` 按 `selectedRepoPath` 包装），新增能力由面板内的轻量 composable 提供（见下）。
 - 事件出口：`open-git-diff` / `open-commit-diff` / `add-file-to-chat`。
 - 操作反馈：`ElMessage` 成功/失败 toast，文案与侧边栏 `runGitOperation` 完全一致（提交成功含短哈希与标题等）；所有写操作按钮旋转态 + 禁用态判定复用 `GitChangeList` 的 computed 规则。
+  - `runGitOperation` 现状是 `TaskInspector.vue` L578 的组件内私有函数（含 commit 消息生成/格式校验重试一次/失败终止、各操作 toast 文案）。大 Tab 需要同款逻辑，**建议抽为 `composables/useGitOperations.ts` 供两侧共用**（入参 provider + operation，返回运行态与结果），否则两处文案必然漂移；若决定不抽，须在 PR 中明确接受复制并在两处加互指注释。
 
 **`components/git/GitChangesView.vue`**（新）：变更视图。复用 `GitChangeList.vue` 的现有布局逻辑（变更树 + 工具栏 commit/pull/push/刷新 + 右键菜单）——实现方式二选一，倾向**直接复用 `GitChangeList.vue` 组件本身**（它已是纯 props/emits，无 TaskInspector 依赖），面板只补一个顶部操作栏（commit/pull/push/刷新 + 操作结果 toast）。这样侧边栏与大 Tab 共用同一变更树组件，零分叉。若实测 props 不足（如需要 `operation` 外部可控），最小化补 props，不改其内部逻辑。
+
+- 路径澄清：`GitChangeList.vue` / `GitChangeTreeNode.vue` / `GitContextMenu.vue` 实际位于 `components/task/`（`components/` 下没有 `git` 子目录，`components/git/` 是本方案新建目录）。跨目录 import 即可，**不移动原文件**——移动会牵动侧边栏 import 且无收益。
+- 移动端前提澄清：`GitChangeList` 现无任何窄宽适配（无 `el-dropdown` 收纳、无 media query，其唯一环境适配是 CLOUD 微信/安卓 WebView 的下载链接对话框）。§8 手测清单"与 `GitChangeList` 移动端口径一致"的前提不成立——大 Tab 操作按钮更多（仓库下拉 + fetch + 四子导航 + 各视图操作），窄宽收纳需新做（`el-dropdown` + `isAndroidCapacitor()`/窄宽 media query），或在手测清单中明确窄宽不承诺。
 
 **`components/git/GitHistoryView.vue`**（新）：历史视图。
 
@@ -381,6 +391,10 @@ P1 完成即可 build 通过并试用（此时大 Tab 与侧边栏等价）；P2
 - **远端 URL 脱敏遗漏**：URL 可能含 `user:token@host`。脱敏在服务端完成（CLOUD `getRemotes`、LOCAL `getGitRemotes` 双端实现），前端只消费脱敏结果；单测覆盖带凭证 URL fixture。
 - **CLOUD fetch 凭证**：复用 `credentialEnv`（askpass + 域名 Token 环境变量）；Token 不进命令参数/日志/响应（现有机制保证）；本机无对应域名 Token 时 fetch 失败走 `classify` 的「Git 认证失败或凭证缺失」。
 - **LOCAL 与 CLOUD 的解析一致性**：`git branch -vv` 的 ahead/behind 与 upstream 格式、`%D` refs 装饰、stash `%gs` 消息在双端用同一解析函数（`utils/git-manager.ts` 纯函数双端共享文本，Electron 侧 `cjs` 复制同款正则），单测用同一组 fixture 文本。
+- **Merge 提交的文件清单为空（已实测）**：默认 `git show --name-status --format= <merge>` 输出为空（干净合并无 combined diff，退出码 0），用户会看到"展开后无任何文件"的提交。方案已定 `--first-parent`（§3.3/§5.3），实施与测试勿省；`--numstat` 同样要带。
+- **提交 diff 的 tab id 覆盖（P2 硬前置）**：`openDiffTab` 现按 `git-diff:<path>` 建 id 且不感知 hash，不先扩展签名（`idPrefix`/`idSuffix` 选项）则提交 diff 与工作区 diff 互相覆盖、不同提交的同路径文件互相顶掉（§5.1）。
+- **无远端仓库切换分支被误拒**：现有 `requirePullPushState` 含"配置了 remote"检查，切分支若直接复用会拒掉纯本地仓库；须 detached-only 守卫（§5.4）。
+- **LOCAL 新操作不落活动记录**：`recordLocalActivity` 白名单仅 commit/pull/push，不同任务扩展则 LOCAL 侧 fetch/switch/stash 在活动记录中缺失（§5.4）。
 - **KeepAlive 逐出**：`:max="20"` 下极端多 Tab 会丢面板状态（同文件管理器，接受）。
 - **历史视图 diff 与工作区 diff 的心智**：中心 Diff Tab 标题带 hash 前缀（`a1b2c3d · 文件 (Git)`）区分于变更视图的 `文件 (Git)`；tab id 用 `git-commit-diff:<hash>:<path>` 隔离，避免与 `git-diff:` 互相覆盖（沿用 07-21 的 id 隔离思路）。
 - **开放问题：历史视图的 path 筛选**（只看某文件的提交历史）：参数已预留（`getLog({path})`），交互本期不做；若用户高频需要，在大 Tab 容器内加一个筛选框即可，后端零改动。
@@ -389,14 +403,14 @@ P1 完成即可 build 通过并试用（此时大 Tab 与侧边栏等价）；P2
 ## 8. 测试要点
 
 - **后端单测（vitest，`backend-ts npm test`）**：
-  - `workspace-git.service`：临时 git 仓库 fixture——log 解析（多提交/merge 提交/refs 装饰/根提交）、commit files（rename 紧凑形态 numstat 还原，复用既有 bugcheck 样例）、commit file diff（根提交 before 为空、二进制、截断、路径穿越拒绝）、branches（本地/远端/当前标记/upstream/ahead-behind 解析）、stashes 列表、remotes（含带凭证 URL 脱敏）、空仓库各方法不抛异常；
-  - `git-write-operation.service`：fetch 的 remote 选择（upstream 优先/origin/唯一 remote/无 remote 失败）、switchBranch（干净工作区直切、脏工作区自动 stash + 恢复、恢复冲突保留现场、远端分支创建跟踪、detached 拒绝、非法分支名拒绝）、stashOp（apply/pop/drop 白名单、ref 格式校验、apply 冲突返回 conflict）；
+  - `workspace-git.service`：临时 git 仓库 fixture——log 解析（多提交/merge 提交/refs 装饰/根提交）、commit files（**merge 提交带 `--first-parent` 时文件清单非空**、rename 紧凑形态 numstat 还原，复用既有 bugcheck 样例）、commit file diff（**该提交中新增文件 before 为空、删除文件 after 为空**、根提交 before 为空、二进制、截断、路径穿越拒绝、hash 不存在 `PARAM_INVALID`）、branches（本地/远端/当前标记/upstream/ahead-behind 解析、`origin/HEAD ->` 符号行跳过、detached 行）、stashes 列表、remotes（含带凭证 URL 脱敏）、空仓库各方法不抛异常；
+  - `git-write-operation.service`：fetch 的 remote 选择（upstream 优先/origin/唯一 remote/无 remote 失败）、switchBranch（干净工作区直切、脏工作区自动 stash + 恢复、恢复冲突保留现场、远端分支创建跟踪、detached 拒绝、非法分支名拒绝、**无 remote 的纯本地仓库可正常切换**）、stashOp（apply/pop/drop 白名单、ref 格式校验、apply 冲突返回 conflict）、**`recordLocalActivity` 白名单接受 fetch/switch/stash**；
   - `file.routes` spec：9 个新端点 401/越权会话/非法 repoPath 的拒绝路径（沿用现有 spec 风格）。
 - **Electron 单测（node test，`desktop/electron/*.test.cjs` 现模式）**：`gitOperations` 的 switchBranch/stashOp（stash 编排与冲突保留）；`gitStatus` 的 log/branches/stashes/remotes 解析（同一 fixture 文本与后端对跑）。
 - **前端单测（vitest，`desktop npm run test:unit`）**：
   - `utils/git-manager.ts`：`parseRefsDecorations`（HEAD -> /tag:/多段）、`parseBranchLine`（当前/upstream/ahead-behind/ detached）、`parseStashLine`、`sanitizeRemoteUrl`（带凭证/普通/ssh 三种）、`isValidBranchName`（合法/含 `..`/`~`/空格/首字符 `.`）、`isValidStashRef`；
   - `useGitManager`：视图切换、log 分页 offset 累加、竞态序号丢弃过期响应、展开提交缓存、provider 变化重置；
-  - `useCenterTabs` 既有用例回归：`openGitTab` 不破坏现有 open*/close*/restore*（同会话重复打开只激活不新建；关 Tab 后 activeTabId 回落规则不变）。
+  - `useCenterTabs` 既有用例回归：`openGitTab` 不破坏现有 open*/close*/restore*（同会话重复打开只激活不新建；关 Tab 后 activeTabId 回落规则不变）；`openDiffTab` 新增 `idPrefix` 选项后，现有 `git-diff:`/`diff:` id 与查重逻辑回归不变。
 - **手测清单（随 PR 描述）**：
   - LOCAL Electron git 项目：两入口打开大 Tab；仓库下拉（多仓库工作区）；变更视图与侧边栏一致（树/diff/commit/pull/push/右键菜单）；
   - 历史视图：列表/分页/展开文件清单/点文件开中心 Diff Tab（标题带 hash）；merge 提交与根提交的 diff 正确性（before 为空）；
@@ -408,14 +422,18 @@ P1 完成即可 build 通过并试用（此时大 Tab 与侧边栏等价）；P2
   - 切会话后面板数据重置（不出现旧仓库文件 + 新 repoPath 组合）；
   - 切走 Tab 再切回：视图/滚动/仓库选择恢复，状态条静默刷新；
   - detached HEAD 工作区：状态条警示、切换分支入口拒绝并提示；
-  - 安卓 WebView 窄宽下工具栏不溢出（按钮收进 `el-dropdown` 或图标化，与 `GitChangeList` 移动端口径一致）。
+  - 无 remote 的纯本地 git 仓库：切换分支正常（不被"仓库未配置远端"误拒）；
+  - merge 提交（构造一个 `--no-ff` 合并）：历史列表展开后文件清单非空、点文件 diff 正确（first-parent 口径）；
+  - 提交 diff 与工作区 diff 并存：同一会话先开工作区某文件的 diff，再开历史中该文件（含另一提交的同一文件）的 diff，三个 tab 同时存在不互相覆盖；
+  - LOCAL fetch/切换分支/stash 后：活动记录（Git 活动列表）出现对应条目（验证 `recordLocalActivity` 白名单已扩展）；
+  - 安卓 WebView 窄宽下工具栏不溢出（按钮收进 `el-dropdown` 或图标化——注意 `GitChangeList` 无现成移动端口径，此为新增适配，见 §5.7）。
 
 ## 9. 变更落点清单
 
 **backend-ts（改）**
 
 - `src/file/workspace-git.service.ts`：新增 `getLog` / `getCommitFiles` / `getCommitFileDiff` / `getBranches` / `getStashes` / `getRemotes`（+ 对应 DTO 接口）+ 脱敏常量；`workspace-git.service.spec.ts` 补解析与边界用例
-- `src/file/git-write-operation.service.ts`：新增 `fetchRemote` / `switchBranch` / `stashOp`（+ `selectRefreshRemote` 可见性调整）；`git-write-operation.service.spec.ts` 补用例
+- `src/file/git-write-operation.service.ts`：新增 `fetchRemote` / `switchBranch` / `stashOp`（+ `selectRefreshRemote` 可见性调整、+ detached-only 私有守卫，勿直接复用含 remote 检查的 `requirePullPushState`、+ `recordLocalActivity` 操作白名单扩展 `fetch|switch|stash`）；`git-write-operation.service.spec.ts` 补用例
 - `src/file/file.routes.ts`：注册 9 个端点；`file.routes.spec.ts` 补拒绝路径用例
 
 **desktop/electron（改）**
@@ -425,7 +443,7 @@ P1 完成即可 build 通过并试用（此时大 Tab 与侧边栏等价）；P2
 - `electron/main.cjs`：注册 9 个 IPC handler
 - `electron/preload.cjs`：暴露 9 个方法
 - `src/types/electron.d.ts`：补 9 个方法类型声明
-- `package.json`：version +1
+- `package.json`：版本不手改；发版时用 `scripts/changelog-extract.sh <ver> ... sync-desktop` 同步（AGENTS.md 规范）
 
 **desktop/src（新）**
 
@@ -434,6 +452,7 @@ P1 完成即可 build 通过并试用（此时大 Tab 与侧边栏等价）；P2
 - `components/git/GitBranchesView.vue`：分支视图
 - `components/git/GitStashView.vue`：stash 视图
 - `composables/useGitManager.ts` + `useGitManager.test.ts`
+- `composables/useGitOperations.ts`（从 `TaskInspector.vue` 的 `runGitOperation` 抽取，侧边栏与大 Tab 共用 commit/pull/push/fetch/switch/stash 的运行态与 toast 文案，避免两处漂移）
 - `utils/git-manager.ts` + `git-manager.test.ts`
 
 **desktop/src（改）**
@@ -441,7 +460,7 @@ P1 完成即可 build 通过并试用（此时大 Tab 与侧边栏等价）；P2
 - `types/git.ts`：新增 `GitLogEntry` / `GitBranchInfo` / `GitStashEntry` / `GitRemoteInfo` / `GitCommitFilesResult` / `GitStashAction`；`GitOperationType` 扩展为六成员
 - `composables/workspace-git-provider.ts`：`WorkspaceGitProvider` 接口加 8 方法；两个工厂实现（CLOUD 调 REST、LOCAL 调 IPC）
 - `types/file-browser.ts`：`Tab.type` union 加 `'git'`
-- `composables/useCenterTabs.ts`：新增 `openGitTab()`（单例 id `git`，已存在则激活）
+- `composables/useCenterTabs.ts`：新增 `openGitTab()`（单例 id `git`，已存在则激活）；`openDiffTab` 的 `opts` 扩展 `idPrefix`（或 `idSuffix`）选项以支持 `git-commit-diff:<hash>:<path>` 隔离 id，不改现有 `git-diff:`/`diff:` 规则
 - `components/center/CenterTabContainer.vue`：`git` 渲染分支 + `gitProvider` prop
 - `views/task/TaskView.vue`：接 TaskInspector 的 `open-git` 事件 → `openGitTab()`；`CenterTabContainer` 传 `gitProvider`；接面板 `open-git-diff`（复用 `handleOpenGitDiff`）/ `open-commit-diff`（新 handler）/ `add-file-to-chat`
 - `components/task/TaskInspector.vue`：工作区模块 Git 摘要行可点击（emit `open-git`，cursor + title 提示）；Git Tab 内容区顶部加「展开」按钮（emit `open-git`）；emits 声明加 `'open-git'`
