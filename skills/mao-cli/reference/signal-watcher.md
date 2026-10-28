@@ -46,6 +46,45 @@
 |------|------|------|
 | GET | `/v1/admin/signal-watchers` | 全站分页清单，筛选 `status` / `userId` / `compareMode`，需 `signal:read` 权限 |
 
+## CLI 用法（mao-cli）
+
+全部命令走用户级登录态（JWT），操作本人哨兵，不需要管理权限；`admin-list` 为管理端只读清单，需 `signal:read`。
+
+| 命令 | 端点 |
+|------|------|
+| `mao signal-watcher list` | GET `/v1/signal-watchers` |
+| `mao signal-watcher get --id <id>` | GET `/v1/signal-watchers/:id` |
+| `mao signal-watcher create ...` | POST `/v1/signal-watchers` |
+| `mao signal-watcher update --id <id> ...` | PUT `/v1/signal-watchers/:id` |
+| `mao signal-watcher delete --id <id>` | DELETE `/v1/signal-watchers/:id` |
+| `mao signal-watcher status --id <id> --status ACTIVE\|PAUSED` | POST `/v1/signal-watchers/:id/status` |
+| `mao signal-watcher checks --id <id> [--page N] [--size N]` | GET `/v1/signal-watchers/:id/checks` |
+| `mao signal-watcher test --id <id>` | POST `/v1/signal-watchers/:id/test` |
+| `mao signal-watcher admin-list [--page N] [--size N] [--status ...] [--user-id N] [--compare-mode ...]` | GET `/v1/admin/signal-watchers` |
+
+create 必填 `--name` / `--agent-id` / `--url` / `--prompt-template`；可选 `--method`（默认 GET）、`--headers`（JSON 对象或 `[{key,value}]` 数组）、`--body` / `--body-file`、`--interval`（默认 30）、`--compare-mode`（默认 HASH）、`--json-path`、`--trigger-mode`（默认 NEW_SESSION）、`--copy-from`。
+
+```bash
+# 新建：每 15 分钟探测库存接口，按 JSON 字段判定，变化时新建会话交给 Agent
+mao signal-watcher create --name '库存监控' --agent-id 3 \
+  --url 'https://api.example.com/stock' \
+  --compare-mode JSON_FIELD --json-path 'data.list.0.price' \
+  --interval 15 --prompt-template '库存价格变化：{diff}'
+
+# 复制已有哨兵：敏感请求头与请求体由后端从源行解密继承，CLI 不接触明文
+mao signal-watcher create --name '库存监控 副本' --agent-id 3 \
+  --url 'https://api.example.com/stock' --prompt-template '同上' --copy-from 12
+
+# 日常维护：改间隔 / 暂停 / 重新启用 / 轮询记录 / 立即试跑一次探针（不触发、不写库）
+mao signal-watcher update --id 12 --interval 60
+mao signal-watcher status --id 12 --status PAUSED
+mao signal-watcher status --id 12 --status ACTIVE
+mao signal-watcher checks --id 12 --page 1 --size 20
+mao signal-watcher test --id 12
+```
+
+update 为部分更新：未传的字段保持原值；`--headers '{}'`、`--body ''`、`--json-path ''` 是显式清空。回显中掩码为 `******` 的敏感请求头可原样回传，后端只对本次下发的键用库内原值替换，不会把掩码当凭据落库。create 时 GET 带 `--body`、POST 缺请求体、间隔越界、JSON_FIELD 缺 `--json-path`、禁改请求头（host 等）、URL 非 http/https 或内嵌凭据，均在本地直接报错，请求不会发出。
+
 ## 复用会话与复制（0.0.361）
 
 | 项 | 规则 |

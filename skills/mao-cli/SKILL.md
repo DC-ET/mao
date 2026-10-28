@@ -43,7 +43,7 @@ Mao 的**产品文档唯一正文**（可独立分发）+ **REST 操作 CLI**。
 
 - 登录并缓存 JWT；查询/配置用户、角色、Agent、模型（含价格）、Skill、会话元数据、文件诊断、定时任务、微信、MCP、审计等
 - 管理开放接口：API Token、入站 Webhook 触发器、出站事件订阅的 CRUD（见 [reference/open-api.md](reference/open-api.md)）
-- 管理信号哨兵：定时探测外部接口、变化触发 Agent 的 CRUD 与轮询记录（见 [reference/signal-watcher.md](reference/signal-watcher.md)）
+- 管理信号哨兵：定时探测外部接口、变化触发 Agent 的 CRUD / 启停 / 轮询记录 / 试运行，以及管理端只读清单 `admin-list`（需 `signal:read`，见 [reference/signal-watcher.md](reference/signal-watcher.md)）
 - 管理自定义 HTTP 工具：清单 / 新建 / 编辑 / 启停 / 删除 / 试运行与调用统计（需 `http_tool:read` / `http_tool:write`，见 [reference/http-tool.md](reference/http-tool.md)）
 - 管理用量预算：全局 / 用户 / Agent 月度预算，金额或 token 口径，超额提醒或拦截（见 [reference/budget.md](reference/budget.md)）
 - 脚本或 Agent 流程中以 JSON 消费上述 API

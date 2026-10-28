@@ -1,3 +1,8 @@
+## 0.0.370 (2026-10-28)
+
+### 终端 CLI（mao-cli）
+- **新增 `mao signal-watcher` 模块，信号哨兵可全程用 CLI 配置**：按间隔探测外部 HTTP(S) 接口、判定值变化触发 Agent 的哨兵，此前只能在桌面端「设置 → 信号哨兵」自助配置——mao-cli 的知识库自 0.0.276 起就登记了「管理信号哨兵」的 CRUD 能力，但命令模块始终没有实现，属于空头承诺。现补齐 `list` / `get` / `create` / `update` / `delete` / `status` / `checks` / `test` 八个本人命令与管理端只读的 `admin-list`（需 `signal:read`），请求体形状与后端 `/v1/signal-watchers` 对齐：create 必填 `--name` / `--agent-id` / `--url` / `--prompt-template`，`--method` / `--headers` / `--body` / `--interval` / `--compare-mode` / `--json-path` / `--trigger-mode` / `--copy-from` 可选并按桌面端口径补默认值（GET / 30 分钟 / HASH / 每次新建会话）。update 是部分更新，只提交显式传入的字段，`--headers '{}'` / `--body ''` / `--json-path ''` 即显式清空；改判定字段会重置基线、掩码 `******` 请求头可原样回传等口径与桌面端一致。枚举越界、POST 缺请求体、GET 带请求体、间隔越界、JSON_FIELD 缺路径、禁改请求头、URL 非 http/https 等参数问题在本地即给出可读报错，请求不会发出。附 31 条回归用例（`agent-cli/test/mao-cli-signal-watcher.spec.ts`）。
+
 ## 0.0.369 (2026-10-28)
 
 ### 前端（桌面 / Web / 安卓）
