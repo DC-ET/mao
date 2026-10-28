@@ -230,6 +230,105 @@ describeGit('GitWriteOperationService git', () => {
     await expect(service.recordLocalActivity(session(repo), { operation: 'noop', success: true })).rejects.toThrow();
   });
 
+  // ===== 两步提交（中央 Tab）：传入消息直接提交 + 只生成不提交 =====
+
+  async function setupChangedRepo(dir: string): Promise<string> {
+    const repo = join(dir, 'repo');
+    mkdirSync(repo, { recursive: true });
+    run(repo, 'git', 'init');
+    run(repo, 'git', 'config', 'user.name', 'Test');
+    run(repo, 'git', 'config', 'user.email', 'a@b.c');
+    writeFileSync(join(repo, 'base.txt'), 'base\n');
+    run(repo, 'git', 'add', '.');
+    run(repo, 'git', 'commit', '-m', 'init');
+    writeFileSync(join(repo, 'base.txt'), 'changed\n');
+    return repo;
+  }
+
+  it('commitsWithProvidedMessageSkippingGeneration', async () => {
+    const dir = useTmpDir('mao-gcommitmsg-');
+    const repo = await setupChangedRepo(dir);
+    const generate = vi.fn(async () => ({ message: 'feat: llm\n\n- llm body', title: 'feat: llm' }));
+    const workspace = new WorkspaceGitService(new PathSandbox(join(dir, 'sandbox')));
+    const service = new GitWriteOperationService(
+      workspace,
+      { generate } as unknown as GitCommitMessageService,
+      { getTokenMapByUser: vi.fn(async () => ({})) },
+      {} as RuntimeDataResolver,
+      { record: vi.fn() } as unknown as ActivityService,
+    );
+
+    // 用户自由格式的消息（非 Conventional Commits、多段正文）原样落库，不走 LLM
+    const message = 'wip 随手一改\n\n第二段：补充说明';
+    const result = await service.commit(session(repo), null, message);
+    expect(result.success).toBe(true);
+    expect(result.commitTitle).toBe('wip 随手一改');
+    expect(generate).not.toHaveBeenCalled();
+    // 单个 -m 传入：git 不会用空行拼接改写原文
+    expect(run(repo, 'git', 'log', '-1', '--pretty=%B').trim()).toBe(message);
+  });
+
+  it('rejectsBlankProvidedCommitMessage', async () => {
+    const dir = useTmpDir('mao-gcommitblank-');
+    const repo = await setupChangedRepo(dir);
+    const headBefore = run(repo, 'git', 'rev-parse', 'HEAD').trim();
+    const service = new GitWriteOperationService(
+      new WorkspaceGitService(new PathSandbox(join(dir, 'sandbox'))),
+      { generate: vi.fn() } as unknown as GitCommitMessageService,
+      { getTokenMapByUser: vi.fn(async () => ({})) },
+      {} as RuntimeDataResolver,
+      { record: vi.fn() } as unknown as ActivityService,
+    );
+
+    await expect(service.commit(session(repo), null, '   ')).rejects.toThrow('提交信息不能为空');
+    // 校验不过不产生提交
+    expect(run(repo, 'git', 'rev-parse', 'HEAD').trim()).toBe(headBefore);
+  });
+
+  it('generateCommitMessageGeneratesWithoutCommitting', async () => {
+    const dir = useTmpDir('mao-ggen-');
+    const repo = await setupChangedRepo(dir);
+    const headBefore = run(repo, 'git', 'rev-parse', 'HEAD').trim();
+    const generate = vi.fn(async () => ({ message: 'docs: 改文档\n\n- 更新 base.txt', title: 'docs: 改文档' }));
+    const workspace = new WorkspaceGitService(new PathSandbox(join(dir, 'sandbox')));
+    const service = new GitWriteOperationService(
+      workspace,
+      { generate } as unknown as GitCommitMessageService,
+      { getTokenMapByUser: vi.fn(async () => ({})) },
+      {} as RuntimeDataResolver,
+      { record: vi.fn() } as unknown as ActivityService,
+    );
+
+    const generated = await service.generateCommitMessage(session(repo), null);
+    expect(generated.title).toBe('docs: 改文档');
+    expect(generated.message).toBe('docs: 改文档\n\n- 更新 base.txt');
+    expect(generate).toHaveBeenCalled();
+    // 不落提交、变更仍在（等用户在输入框确认后再提交）
+    expect(run(repo, 'git', 'rev-parse', 'HEAD').trim()).toBe(headBefore);
+    expect((await workspace.changedFiles(repo)).size).toBe(1);
+  });
+
+  it('generateCommitMessageWithoutChangesFails', async () => {
+    const dir = useTmpDir('mao-ggenempty-');
+    const repo = join(dir, 'repo');
+    mkdirSync(repo, { recursive: true });
+    run(repo, 'git', 'init');
+    run(repo, 'git', 'config', 'user.name', 'Test');
+    run(repo, 'git', 'config', 'user.email', 'a@b.c');
+    writeFileSync(join(repo, 'base.txt'), 'base\n');
+    run(repo, 'git', 'add', '.');
+    run(repo, 'git', 'commit', '-m', 'init');
+    const service = new GitWriteOperationService(
+      new WorkspaceGitService(new PathSandbox(join(dir, 'sandbox'))),
+      { generate: vi.fn() } as unknown as GitCommitMessageService,
+      { getTokenMapByUser: vi.fn(async () => ({})) },
+      {} as RuntimeDataResolver,
+      { record: vi.fn() } as unknown as ActivityService,
+    );
+
+    await expect(service.generateCommitMessage(session(repo), null)).rejects.toThrow('没有待提交的变更');
+  });
+
   // ===== Git 管理器中央 Tab：写扩展 =====
 
   async function setupRemoteRepo(dir: string, name: string): Promise<{ repo: string; remote: string; branch: string }> {

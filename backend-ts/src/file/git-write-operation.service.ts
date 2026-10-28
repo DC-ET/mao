@@ -12,6 +12,7 @@ import {
   MAX_DIFF_BYTES,
   type CommitFile,
   type CommitGenerationInput,
+  type CommitMessage,
 } from './git-commit-message.service.js';
 import type { GitChangedFileDTO, GitStatusDTO, WorkspaceGitService } from './workspace-git.service.js';
 import { sanitizeCredentialUrl } from './workspace-git.service.js';
@@ -19,6 +20,8 @@ import { sanitizeCredentialUrl } from './workspace-git.service.js';
 const TIMEOUT_SECONDS = 60;
 const MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
 const MAX_ERROR_LENGTH = 500;
+/** 用户提交信息长度上限，与 Electron 侧 gitOperations.cjs 同口径（64KB）。 */
+const MAX_COMMIT_MESSAGE_BYTES = 64 * 1024;
 const SENSITIVE_NAME = /(^|\/)(\.env($|\.)|id_(rsa|dsa|ecdsa|ed25519)(\..*)?$)|(\.(pem|key|p12|pfx)$)|((^|\/)[^/]*(credential|credentials|secret|secrets|token)[^/]*$)/i;
 /** 分支名合法性（git check-ref-format 子集）：禁空白 ~^:?*[\]、'..'、'@{'、首尾 '/'、'//'、结尾 '.'、组件首 '.'、组件尾 '.lock' */
 const BRANCH_NAME_PATTERN = /^[A-Za-z0-9._/-]+$/;
@@ -89,11 +92,21 @@ export class GitWriteOperationService {
     private readonly activityService: ActivityService,
   ) {}
 
-  async commit(session: Session, repoPath?: string | null): Promise<GitOperationResult> {
+  /**
+   * 提交。传入 message 时直接用它（中央 Tab 两步提交的第二步，用户可在输入框编辑）；
+   * 不传走后端 LLM 生成（侧边栏一步提交的既有口径）。
+   */
+  async commit(session: Session, repoPath?: string | null, message?: string | null): Promise<GitOperationResult> {
     return this.locked(session, repoPath, 'commit', async (repo) => {
       const changes = await this.workspaceGitService.changedFiles(repo);
       if (changes.size === 0) throw new BusinessException(ErrorCode.PARAM_INVALID, '没有待提交的变更');
-      const generated = await this.commitMessageService.generate(session, await this.buildCommitInput(repo, changes));
+      let commitMessage: { normalized: string; title: string };
+      if (typeof message === 'string') {
+        commitMessage = validateCommitMessage(message);
+      } else {
+        const generated = await this.commitMessageService.generate(session, await this.buildCommitInput(repo, changes));
+        commitMessage = { normalized: generated.message, title: generated.title };
+      }
       const add = await this.run(repo, ['add', '-A'], {});
       requireSuccess(add, '暂存变更失败');
       const args: string[] = [];
@@ -101,15 +114,30 @@ export class GitWriteOperationService {
       const hasEmail = (await this.run(repo, ['config', '--get', 'user.email'], {})).success;
       if (!hasName) { args.push('-c', 'user.name=Mao Agent'); }
       if (!hasEmail) { args.push('-c', 'user.email=mao@etarch.cn'); }
-      args.push('commit', '--no-verify', '-m', generated.message);
+      // 整条消息作为单个 -m：拆成多个 -m 时 git 会用空行拼接，会改写用户原文
+      args.push('commit', '--no-verify', '-m', commitMessage.normalized);
       const commit = await this.run(repo, args, {});
       requireSuccess(commit, '提交失败');
       const hash = requireOutput(await this.run(repo, ['rev-parse', '--short', 'HEAD'], {}), '读取提交哈希失败');
       const branch = await this.branch(repo);
-      const result = successResult('commit', branch, `提交成功 ${hash}：${generated.title}`);
+      const result = successResult('commit', branch, `提交成功 ${hash}：${commitMessage.title}`);
       result.commitHash = hash;
-      result.commitTitle = generated.title;
+      result.commitTitle = commitMessage.title;
       return result;
+    });
+  }
+
+  /**
+   * 两步提交第一步（中央 Tab）：只生成提交信息，不做任何写操作。
+   * LOCAL 走 Electron 侧 buildCommitInput + /files/git-commit-message，CLOUD 在此服务端组装。
+   * 持仓库锁防止生成期间并发提交使消息过期；无变更时与 commit() 同口径报错。
+   */
+  async generateCommitMessage(session: Session, repoPath?: string | null): Promise<CommitMessage> {
+    const repo = await this.resolveRepository(session, repoPath);
+    return this.withRepoLock(repo, async () => {
+      const changes = await this.workspaceGitService.changedFiles(repo);
+      if (changes.size === 0) throw new BusinessException(ErrorCode.PARAM_INVALID, '没有待提交的变更');
+      return this.commitMessageService.generate(session, await this.buildCommitInput(repo, changes));
     });
   }
 
@@ -563,6 +591,24 @@ class GitOperationException extends Error {
 
 export function isSensitive(path: string | null | undefined): boolean {
   return path != null && SENSITIVE_NAME.test(path.replace(/\\/g, '/'));
+}
+
+/**
+ * 用户提供的提交信息校验（与 Electron 侧 validateCommitMessage 同口径）：
+ * 只查非空 / 长度 / 非法字符，不限定格式——中央 Tab 输入框允许自由编写。
+ */
+export function validateCommitMessage(message: unknown): { normalized: string; title: string } {
+  if (typeof message !== 'string' || message.trim().length === 0) {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, '提交信息不能为空');
+  }
+  if (Buffer.byteLength(message, 'utf8') > MAX_COMMIT_MESSAGE_BYTES) {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, '提交信息过长');
+  }
+  if (message.includes('\0')) {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, '提交信息包含非法字符');
+  }
+  const normalized = message.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+  return { normalized, title: normalized.split('\n')[0] };
 }
 
 function utf8Prefix(source: Buffer, max: number): string {

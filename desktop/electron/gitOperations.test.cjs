@@ -228,6 +228,25 @@ test('commit stages all changes, skips hooks and injects identity only for the c
   assert.equal(git(repo, ['status', '--porcelain']), '')
 })
 
+// 中央 Tab 两步提交：用户消息不再限定 Conventional Commits 格式，原样落库（单个 -m，git 不用空行拼接）
+test('commit accepts free-form message verbatim without format validation', async (t) => {
+  const repo = initRepo(t)
+  fs.writeFileSync(path.join(repo, 'note.txt'), 'note\n')
+  const message = '随手一改\n第二段：没有空行分隔\n也没有列表'
+  const result = await commit(repo, undefined, message)
+  assert.equal(result.success, true, result.error)
+  assert.equal(git(repo, ['log', '-1', '--pretty=%B']).trim(), message)
+  assert.equal(result.commitTitle, '随手一改')
+})
+
+test('commit rejects blank message', async (t) => {
+  const repo = initRepo(t)
+  fs.writeFileSync(path.join(repo, 'note.txt'), 'note\n')
+  const result = await commit(repo, undefined, '   ')
+  assert.equal(result.success, false)
+  assert.match(result.error, /提交信息不能为空/)
+})
+
 test('commit failure keeps add -A staging', async (t) => {
   const repo = initRepo(t)
   fs.writeFileSync(path.join(repo, 'file.txt'), 'changed\n')

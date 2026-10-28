@@ -3,12 +3,14 @@ import { ElMessage } from 'element-plus'
 import type { WorkspaceGitProvider } from './workspace-git-provider'
 import type { GitOperationResult, GitStashAction } from '../types/git'
 
-/** 写操作集合：commit/pull/push 侧边栏与大 Tab 共用；fetch/switch/stash 仅大 Tab。 */
-export type GitWriteOperation = 'commit' | 'pull' | 'push' | 'fetch' | 'switch' | 'stash'
+/** 写操作集合：commit/pull/push 侧边栏与大 Tab 共用；commit-with-message（两步提交第二步）/fetch/switch/stash 仅大 Tab。 */
+export type GitWriteOperation = 'commit' | 'pull' | 'push' | 'fetch' | 'switch' | 'stash' | 'commit-with-message'
 
 /** 各写操作的入参元组（与 WorkspaceGitProvider 对应方法的签名一致）。 */
 interface GitWriteOperationArgs {
   commit: [repoPath?: string]
+  /** 两步提交第二步（中央 Tab）：message 来自提交信息输入框，repoPath 多仓库模式才传。 */
+  'commit-with-message': [message: string, repoPath?: string]
   pull: [repoPath?: string]
   push: [repoPath?: string]
   fetch: [repoPath?: string]
@@ -18,6 +20,7 @@ interface GitWriteOperationArgs {
 
 const OPERATION_LABELS: Record<GitWriteOperation, string> = {
   commit: '提交',
+  'commit-with-message': '提交',
   pull: '拉取',
   push: '推送',
   fetch: '获取远端更新',
@@ -26,7 +29,7 @@ const OPERATION_LABELS: Record<GitWriteOperation, string> = {
 }
 
 function successMessage(operation: GitWriteOperation, result: GitOperationResult): string {
-  if (operation === 'commit' && result.commitHash && result.commitTitle) {
+  if ((operation === 'commit' || operation === 'commit-with-message') && result.commitHash && result.commitTitle) {
     return `提交成功 ${result.commitHash}：${result.commitTitle}`
   }
   return result.message || `${OPERATION_LABELS[operation]}成功`
@@ -52,6 +55,7 @@ export function useGitOperations(provider: Ref<WorkspaceGitProvider | null>) {
     try {
       let result: GitOperationResult
       if (op === 'commit') result = await p.commit(...(args as GitWriteOperationArgs['commit']))
+      else if (op === 'commit-with-message') result = await p.commitWithMessage(...(args as GitWriteOperationArgs['commit-with-message']))
       else if (op === 'pull') result = await p.pull(...(args as GitWriteOperationArgs['pull']))
       else if (op === 'push') result = await p.push(...(args as GitWriteOperationArgs['push']))
       else if (op === 'fetch') result = await p.fetchRemote(...(args as GitWriteOperationArgs['fetch']))

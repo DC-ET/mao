@@ -64,6 +64,7 @@ describe('file routes', () => {
       commit: vi.fn(async () => ({ success: true, operation: 'commit' })),
       pull: vi.fn(async () => ({ success: true, operation: 'pull' })),
       push: vi.fn(async () => ({ success: true, operation: 'push' })),
+      generateCommitMessage: vi.fn(async () => ({ title: 'feat: x', message: 'feat: x\n\n- y' })),
       recordLocalActivity: vi.fn(),
     } as unknown as GitWriteOperationService;
     const gitCommitMessageService = {
@@ -100,6 +101,10 @@ describe('file routes', () => {
     expect((await get('/v1/files/workspace-git-diff?sessionId=1&path=a')).data.path).toBe('a');
     expect((await post('/v1/files/workspace-git-refresh', { sessionId: 1 })).data.isGit).toBe(true);
     expect((await post('/v1/files/workspace-git-commit', { sessionId: 1 })).data.success).toBe(true);
+    // 两步提交（中央 Tab）：传入用户消息直接提交 + 只生成接口
+    expect((await post('/v1/files/workspace-git-commit', { sessionId: 1, message: 'wip 随手一改' })).data.success).toBe(true);
+    expect(vi.mocked(gitWriteOperationService.commit).mock.calls[1][2]).toBe('wip 随手一改');
+    expect((await post('/v1/files/workspace-git-commit-message', { sessionId: 1 })).data.title).toBe('feat: x');
     expect((await post('/v1/files/workspace-git-pull', { sessionId: 1 })).data.success).toBe(true);
     expect((await post('/v1/files/workspace-git-push', { sessionId: 1 })).data.success).toBe(true);
     expect((await post('/v1/files/git-commit-message', { sessionId: 1, changes: { files: [], diffBytes: 0 } })).data.title).toBe('feat: x');
@@ -289,6 +294,7 @@ describe('file routes', () => {
       ['/v1/files/workspace-git-fetch', { sessionId: 2 }],
       ['/v1/files/workspace-git-switch-branch', { sessionId: 2, branch: 'main' }],
       ['/v1/files/workspace-git-stash', { sessionId: 2, action: 'apply', ref: 'stash@{0}' }],
+      ['/v1/files/workspace-git-commit-message', { sessionId: 2 }],
     ] as const) {
       const body = await post(url, payload);
       expect(body.code).not.toBe(0);

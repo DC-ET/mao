@@ -3,6 +3,7 @@ import { api } from '../api'
 import type {
   GitBranchInfo,
   GitCommitFilesResult,
+  GitCommitMessage,
   GitFileDiff,
   GitLogEntry,
   GitOperationResult,
@@ -19,7 +20,12 @@ export interface WorkspaceGitProvider {
   getStatus(repoPath?: string): Promise<GitStatusResult>
   refreshStatus(repoPath?: string): Promise<GitStatusResult>
   getFileDiff(relativePath: string, repoPath?: string): Promise<GitFileDiff>
+  /** 一步提交（侧边栏）：生成提交信息与提交在 provider 内部一次完成。 */
   commit(repoPath?: string): Promise<GitOperationResult>
+  /** 两步提交第一步（中央 Tab）：只生成提交信息，不落提交。失败抛错，由调用方提示。 */
+  generateCommitMessage(repoPath?: string): Promise<GitCommitMessage>
+  /** 两步提交第二步（中央 Tab）：用输入框里的消息提交（用户可自由编辑，不限定格式）。 */
+  commitWithMessage(message: string, repoPath?: string): Promise<GitOperationResult>
   pull(repoPath?: string): Promise<GitOperationResult>
   push(repoPath?: string): Promise<GitOperationResult>
   /** 提交历史（分页）。读取失败抛错，由调用方按视图展示错误 + 重试。 */
@@ -195,6 +201,28 @@ export function createLocalGitProvider(workspace: string, sessionId: string): Wo
       await recordLocalActivity(numericSessionId, repoPath, result, started)
       return result
     },
+    async generateCommitMessage(repoPath?: string) {
+      // 一步提交 commit() 的前两段原样抽出：收集变更 → 后端 LLM 生成
+      const changes = await window.electronAPI.gitCommitInput(workspace, repoPath)
+      if (changes?.error) throw new Error(changes.error)
+      const { data } = await api.post('/files/git-commit-message', {
+        sessionId: numericSessionId,
+        changes,
+      }, { timeout: 150_000 })
+      return data
+    },
+    async commitWithMessage(message: string, repoPath?: string) {
+      // 一步提交 commit() 的第三段：gitCommit IPC 自带消息校验（非空 / 长度 / 非法字符）
+      const started = Date.now()
+      let result: GitOperationResult
+      try {
+        result = await window.electronAPI.gitCommit(workspace, repoPath, message)
+      } catch (e) {
+        result = failedOperation('commit', e)
+      }
+      await recordLocalActivity(numericSessionId, repoPath, result, started)
+      return result
+    },
     async pull(repoPath?: string) {
       const started = Date.now()
       let result: GitOperationResult
@@ -304,6 +332,8 @@ export function createCloudGitProvider(sessionId: string): WorkspaceGitProvider 
         }
       },
       async commit() { return failedOperation('commit', new Error('会话未就绪')) },
+      async generateCommitMessage() { throw new Error('会话未就绪') },
+      async commitWithMessage() { return failedOperation('commit', new Error('会话未就绪')) },
       async pull() { return failedOperation('pull', new Error('会话未就绪')) },
       async push() { return failedOperation('push', new Error('会话未就绪')) },
       async getLog() { throw new Error('会话未就绪') },
@@ -383,6 +413,27 @@ export function createCloudGitProvider(sessionId: string): WorkspaceGitProvider 
         const { data } = await api.post(
           '/files/workspace-git-commit',
           { sessionId: numericSessionId, repoPath },
+          { timeout: 150_000 },
+        )
+        return data
+      } catch (e) {
+        return failedOperation('commit', e)
+      }
+    },
+    async generateCommitMessage(repoPath?: string) {
+      // 服务端组装变更摘要（diff 载荷不下发前端），只生成不提交
+      const { data } = await api.post(
+        '/files/workspace-git-commit-message',
+        { sessionId: numericSessionId, repoPath },
+        { timeout: 150_000 },
+      )
+      return data
+    },
+    async commitWithMessage(message: string, repoPath?: string) {
+      try {
+        const { data } = await api.post(
+          '/files/workspace-git-commit',
+          { sessionId: numericSessionId, repoPath, message },
           { timeout: 150_000 },
         )
         return data

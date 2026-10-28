@@ -201,3 +201,82 @@ describe('createCloudGitProvider git manager methods', () => {
     }])
   })
 })
+
+// ===== 两步提交（中央 Tab）：generateCommitMessage / commitWithMessage =====
+
+describe('createLocalGitProvider two-step commit', () => {
+  beforeEach(() => {
+    vi.mocked(api.post).mockClear()
+    ;(globalThis as any).window = { electronAPI: {} }
+  })
+
+  it('generateCommitMessage 收集变更 + 调 LLM 接口返回消息，不触发提交', async () => {
+    const changes = { files: [{ path: 'a.txt', changeType: 'MODIFIED', insertions: 1, deletions: 0 }], diffBytes: 10, truncated: false }
+    const gitCommitInput = vi.fn(async () => changes)
+    const gitCommit = vi.fn()
+    ;(globalThis as any).window = { electronAPI: { gitCommitInput, gitCommit } }
+    vi.mocked(api.post).mockResolvedValue({ data: { title: 'feat: x', message: 'feat: x\n\n- y' } } as never)
+
+    const provider = createLocalGitProvider('/tmp/ws', '1')
+    const generated = await provider.generateCommitMessage('sub-repo')
+
+    expect(generated.message).toBe('feat: x\n\n- y')
+    expect(gitCommitInput).toHaveBeenCalledWith('/tmp/ws', 'sub-repo')
+    expect(vi.mocked(api.post).mock.calls[0]).toEqual(['/files/git-commit-message', {
+      sessionId: 1, changes,
+    }, { timeout: 150_000 }])
+    expect(gitCommit).not.toHaveBeenCalled()
+  })
+
+  it('generateCommitMessage 读取变更失败时抛具体原因（与一步提交同款透传）', async () => {
+    const gitCommitInput = vi.fn(async () => ({ error: '当前工作区不是 Git 仓库' }))
+    ;(globalThis as any).window = { electronAPI: { gitCommitInput } }
+
+    await expect(createLocalGitProvider('/tmp/ws', '1').generateCommitMessage()).rejects.toThrow('当前工作区不是 Git 仓库')
+  })
+
+  it('commitWithMessage 带用户消息调 IPC 并落 LOCAL 活动记录', async () => {
+    const gitCommit = vi.fn(async () => ({ success: true, operation: 'commit', commitHash: 'abc1234', commitTitle: 'wip 随手一改' }))
+    ;(globalThis as any).window = { electronAPI: { gitCommit } }
+
+    const result = await createLocalGitProvider('/tmp/ws', '7').commitWithMessage('wip 随手一改', 'sub-repo')
+
+    expect(result.success).toBe(true)
+    expect(gitCommit).toHaveBeenCalledWith('/tmp/ws', 'sub-repo', 'wip 随手一改')
+    expect(vi.mocked(api.post).mock.calls[0]?.[0]).toBe('/files/workspace-git-activity')
+  })
+})
+
+describe('createCloudGitProvider two-step commit', () => {
+  beforeEach(() => {
+    vi.mocked(api.get).mockClear()
+    vi.mocked(api.post).mockClear()
+  })
+
+  it('generateCommitMessage 走服务端组装端点（diff 载荷不下发前端）', async () => {
+    vi.mocked(api.post).mockResolvedValue({ data: { title: 'feat: x', message: 'feat: x\n\n- y' } } as never)
+
+    const generated = await createCloudGitProvider('7').generateCommitMessage('r')
+
+    expect(generated.title).toBe('feat: x')
+    expect(vi.mocked(api.post).mock.calls[0]).toEqual(['/files/workspace-git-commit-message', {
+      sessionId: 7, repoPath: 'r',
+    }, { timeout: 150_000 }])
+  })
+
+  it('commitWithMessage 把用户消息带进 commit 端点，失败转 failedOperation', async () => {
+    vi.mocked(api.post).mockResolvedValue({ data: { success: true, operation: 'commit', commitHash: 'h', commitTitle: 't' } } as never)
+
+    const result = await createCloudGitProvider('7').commitWithMessage('wip 随手一改', 'r')
+
+    expect(result.success).toBe(true)
+    expect(vi.mocked(api.post).mock.calls[0]).toEqual(['/files/workspace-git-commit', {
+      sessionId: 7, repoPath: 'r', message: 'wip 随手一改',
+    }, { timeout: 150_000 }])
+
+    vi.mocked(api.post).mockRejectedValue(new Error('提交信息不能为空'))
+    const failed = await createCloudGitProvider('7').commitWithMessage('   ', 'r')
+    expect(failed.success).toBe(false)
+    expect(failed.error).toBe('提交信息不能为空')
+  })
+})

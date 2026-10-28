@@ -231,9 +231,17 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
 
   app.post('/v1/files/workspace-git-commit', async (request, reply) => {
     const userId = requireUserId(request);
-    const body = bodyOf<{ sessionId?: number; repoPath?: string }>(request);
+    const body = bodyOf<{ sessionId?: number; repoPath?: string; message?: string }>(request);
     const session = await requireOwnedSession(userId, body.sessionId!);
-    return sendOk(reply, await gitWriteOperationService.commit(session, body.repoPath));
+    return sendOk(reply, await gitWriteOperationService.commit(session, body.repoPath, body.message));
+  });
+
+  // 两步提交（中央 Tab）第一步：只生成提交信息。CLOUD 专用——LOCAL 走 Electron 侧组装 + /files/git-commit-message
+  app.post('/v1/files/workspace-git-commit-message', async (request, reply) => {
+    const userId = requireUserId(request);
+    const body = bodyOf<{ sessionId?: number; repoPath?: string }>(request);
+    const session = await requireOwnedCloudGitSession(userId, body.sessionId!);
+    return sendOk(reply, await gitWriteOperationService.generateCommitMessage(session, body.repoPath));
   });
 
   app.post('/v1/files/workspace-git-pull', async (request, reply) => {

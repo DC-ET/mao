@@ -211,14 +211,7 @@ function validateCommitMessage(message) {
   if (Buffer.byteLength(message, 'utf8') > MAX_COMMIT_MESSAGE_BYTES) throw new Error('提交信息过长')
   if (message.includes('\0')) throw new Error('提交信息包含非法字符')
   const normalized = message.replace(/\r\n/g, '\n').trim()
-  const lines = normalized.split('\n')
-  if (!/^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-zA-Z0-9._/-]+\))?!?: .+/.test(lines[0])) {
-    throw new Error('提交标题格式不合法')
-  }
-  if (lines.length < 3 || lines[1] !== '' || lines.slice(2).filter(Boolean).some((line) => !line.startsWith('- '))) {
-    throw new Error('提交正文必须为空行后跟无序列表')
-  }
-  return { normalized, title: lines[0], body: lines.slice(2).join('\n') }
+  return { normalized, title: normalized.split('\n')[0] }
 }
 
 async function withWriteLock(workspace, repoPath, operation, callback) {
@@ -262,7 +255,8 @@ async function commit(workspace, repoPath, message) {
     const identityArgs = name.exitCode === 0 && name.stdout.trim() && email.exitCode === 0 && email.stdout.trim()
       ? []
       : ['-c', 'user.name=Mao Agent', '-c', 'user.email=mao@etarch.cn']
-    const result = await runGit(repoRoot, [...identityArgs, 'commit', '--no-verify', '-m', commitMessage.title, '-m', commitMessage.body])
+    // 整条消息作为单个 -m：拆成 title/body 两个 -m 时 git 会用空行拼接，会改写用户原文
+    const result = await runGit(repoRoot, [...identityArgs, 'commit', '--no-verify', '-m', commitMessage.normalized])
     if (result.exitCode !== 0) return operationError('commit', describeGitFailure(result, 'Git commit 失败'))
 
     const hash = await runGit(repoRoot, ['rev-parse', '--short', 'HEAD'])

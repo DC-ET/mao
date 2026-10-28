@@ -274,7 +274,7 @@
         :ahead-count="gitStatus?.aheadCount"
         :behind-count="gitStatus?.behindCount"
         :has-commits-to-push="gitStatus?.hasCommitsToPush"
-        :operation="gitOperation"
+        :operation="gitOperationDisplay"
         :execution-mode="executionMode"
         :workspace="workspace"
         :repo-path="multiRepoMode ? selectedRepoPath : undefined"
@@ -408,7 +408,7 @@ import { useModelContext } from '../../composables/useModelContext'
 import { useStreamWS } from '../../composables/useStreamWS'
 import { getSessionCompaction } from '../../api'
 import type { SessionCompactionSummary } from '../../api'
-import type { GitChangedFile } from '../../types/git'
+import type { GitChangedFile, GitOperationType } from '../../types/git'
 import { cloudWorkspaceIndicator } from '../../utils/cloud-project'
 import type { WorkspacePathChange } from '../../utils/workspace-tab-paths'
 import { copyText } from '../../utils/clipboard'
@@ -591,6 +591,13 @@ async function refreshAll(remote = true) {
 // 写操作的运行态与 toast 文案与中央 Git 管理器 Tab 共用同一 composable（文案不漂移）；
 // 刷新时机留在本组件：侧边栏刷新仓库列表 + 选中仓库状态
 const { operation: gitOperation, run: runGitOperationBase } = useGitOperations(statusProviderRef)
+
+// 侧边栏只有一步提交 / 拉取 / 推送三种在途态；commit-with-message 仅中央 Tab 两步提交使用
+const gitOperationDisplay = computed<GitOperationType | null>(() =>
+  gitOperation.value === 'commit' || gitOperation.value === 'pull' || gitOperation.value === 'push'
+    ? gitOperation.value
+    : null,
+)
 
 function runGitOperation(operation: 'commit' | 'pull' | 'push') {
   void runGitOperationBase(operation).then(() => refreshAll())

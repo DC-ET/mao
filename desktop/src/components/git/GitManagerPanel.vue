@@ -99,10 +99,17 @@
         :workspace="workspace"
         :repo-path="multiRepoMode ? selectedRepoPath : undefined"
         :provider="fileProvider"
+        two-step-commit
+        :commit-message="commitDraft"
+        :generating="generatingMessage"
+        :committing="operation === 'commit-with-message'"
         @refresh="handleRefreshAll"
         @commit="runOperation('commit')"
         @pull="runOperation('pull')"
         @push="runOperation('push')"
+        @update:commit-message="commitDraft = $event"
+        @generate-commit-message="handleGenerateCommitMessage"
+        @commit-with-message="handleCommitWithMessage"
         @open-diff="(file) => $emit('open-git-diff', file, multiRepoMode ? selectedRepoPath : undefined)"
         @add-file-to-chat="(path) => $emit('add-file-to-chat', path)"
       />
@@ -144,8 +151,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onActivated } from 'vue'
-import { ElTooltip } from 'element-plus'
+import { computed, onActivated, ref, watch } from 'vue'
+import { ElMessage, ElTooltip } from 'element-plus'
 import { Download } from '@element-plus/icons-vue'
 import GitChangeList from '../task/GitChangeList.vue'
 import GitHistoryView from './GitHistoryView.vue'
@@ -211,6 +218,8 @@ const statusProviderRef = computed<WorkspaceGitProvider | null>(() => {
       refreshStatus: () => p.refreshStatus(repoPath),
       getFileDiff: (relativePath: string) => p.getFileDiff(relativePath, repoPath),
       commit: () => p.commit(repoPath),
+      generateCommitMessage: () => p.generateCommitMessage(repoPath),
+      commitWithMessage: (message: string) => p.commitWithMessage(message, repoPath),
       pull: () => p.pull(repoPath),
       push: () => p.push(repoPath),
       getLog: (opts) => p.getLog(opts, repoPath),
@@ -313,6 +322,40 @@ function handleRepoSelect(path: string) {
 function runOperation(op: 'commit' | 'pull' | 'push') {
   void run(op).then(() => handleRefreshAll())
 }
+
+// ===== 两步提交（中央 Git 管理器）：LLM 生成 → 输入框编辑 → 提交 =====
+const commitDraft = ref('')
+const generatingMessage = ref(false)
+
+async function handleGenerateCommitMessage() {
+  const p = statusProviderRef.value
+  if (!p || generatingMessage.value) return
+  generatingMessage.value = true
+  try {
+    const generated = await p.generateCommitMessage(multiRepoMode.value ? selectedRepoPath.value : undefined)
+    // 生成期间切仓库：迟到的消息不写进新仓库的输入框
+    if (p !== statusProviderRef.value) return
+    commitDraft.value = generated.message
+  } catch (e: any) {
+    ElMessage.error(e?.message || '生成提交信息失败')
+  } finally {
+    generatingMessage.value = false
+  }
+}
+
+function handleCommitWithMessage() {
+  const message = commitDraft.value.trim()
+  if (!message) return
+  void run('commit-with-message', message).then((result) => {
+    if (result?.success) commitDraft.value = ''
+    void handleRefreshAll()
+  })
+}
+
+// 草稿属于当前仓库：切仓库 / 切会话后清空，防止把上一个仓库的提交信息提交到新仓库
+watch(statusProviderRef, () => {
+  commitDraft.value = ''
+})
 
 async function runFetch() {
   if (operation.value) return

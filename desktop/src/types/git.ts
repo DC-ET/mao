@@ -127,6 +127,12 @@ export interface GitCommitFilesResult {
 /** stash 操作类型（服务端 / Electron 侧白名单枚举）。 */
 export type GitStashAction = 'apply' | 'pop' | 'drop'
 
+/** LLM 生成的提交信息：title 为首行，message 为完整文本（两步提交第一步的产物）。 */
+export interface GitCommitMessage {
+  title: string
+  message: string
+}
+
 export type GitTreeNode =
   | {
       kind: 'dir'
