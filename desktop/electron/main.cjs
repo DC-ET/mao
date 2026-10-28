@@ -1078,8 +1078,8 @@ function isGitWorkspace(workspace) {
   return false
 }
 
-const { getGitStatus, refreshGitStatus, getGitFileDiff, listGitRepos } = require('./gitStatus.cjs')
-const { buildCommitInput, commit: gitCommit, pull: gitPull, push: gitPush } = require('./gitOperations.cjs')
+const { getGitStatus, refreshGitStatus, getGitFileDiff, listGitRepos, getGitLog, getGitCommitFiles, getGitCommitFileDiff, getGitBranches, getGitStashes, getGitRemotes } = require('./gitStatus.cjs')
+const { buildCommitInput, commit: gitCommit, pull: gitPull, push: gitPush, fetch: gitFetch, switchBranch: gitSwitchBranch, stashOp: gitStashOp } = require('./gitOperations.cjs')
 
 function loadMainContent() {
   if (process.env.NODE_ENV === 'development' && !app.isPackaged) {
@@ -1765,6 +1765,72 @@ ipcMain.handle('git-pull', async (_event, { workspace, repoPath } = {}) => {
 
 ipcMain.handle('git-push', async (_event, { workspace, repoPath } = {}) => {
   return gitPush(workspace || currentWorkspace, repoPath)
+})
+
+ipcMain.handle('git-log', async (_event, { workspace, repoPath, options } = {}) => {
+  try {
+    return await getGitLog(workspace || currentWorkspace, repoPath, options || {})
+  } catch (e) {
+    return { error: e.message || '读取提交历史失败' }
+  }
+})
+
+ipcMain.handle('git-commit-files', async (_event, { workspace, repoPath, hash } = {}) => {
+  try {
+    return await getGitCommitFiles(workspace || currentWorkspace, repoPath, hash)
+  } catch (e) {
+    return { error: e.message || '读取提交文件清单失败' }
+  }
+})
+
+ipcMain.handle('git-commit-file-diff', async (_event, { workspace, repoPath, hash, path: filePath, oldPath } = {}) => {
+  try {
+    return await getGitCommitFileDiff(workspace || currentWorkspace, repoPath, hash, filePath, oldPath)
+  } catch (e) {
+    return {
+      path: filePath || '',
+      changeType: 'MODIFIED',
+      beforeContent: '',
+      afterContent: '',
+      unavailableReason: e.message || '读取提交 diff 失败',
+    }
+  }
+})
+
+ipcMain.handle('git-branches', async (_event, { workspace, repoPath } = {}) => {
+  try {
+    return await getGitBranches(workspace || currentWorkspace, repoPath)
+  } catch (e) {
+    return { error: e.message || '读取分支列表失败' }
+  }
+})
+
+ipcMain.handle('git-stashes', async (_event, { workspace, repoPath } = {}) => {
+  try {
+    return await getGitStashes(workspace || currentWorkspace, repoPath)
+  } catch (e) {
+    return { error: e.message || '读取 stash 列表失败' }
+  }
+})
+
+ipcMain.handle('git-remotes', async (_event, { workspace, repoPath } = {}) => {
+  try {
+    return await getGitRemotes(workspace || currentWorkspace, repoPath)
+  } catch (e) {
+    return { error: e.message || '读取远端列表失败' }
+  }
+})
+
+ipcMain.handle('git-fetch', async (_event, { workspace, repoPath } = {}) => {
+  return gitFetch(workspace || currentWorkspace, repoPath)
+})
+
+ipcMain.handle('git-switch-branch', async (_event, { workspace, repoPath, branch, create } = {}) => {
+  return gitSwitchBranch(workspace || currentWorkspace, repoPath, branch, create === true)
+})
+
+ipcMain.handle('git-stash-op', async (_event, { workspace, repoPath, action, ref } = {}) => {
+  return gitStashOp(workspace || currentWorkspace, repoPath, action, ref)
 })
 
 ipcMain.handle('open-external', async (event, url) => {

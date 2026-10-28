@@ -65,11 +65,11 @@ export interface GitFileDiff {
   unavailableReason?: string
 }
 
-export type GitOperationType = 'commit' | 'pull' | 'push'
+export type GitOperationType = 'commit' | 'pull' | 'push' | 'fetch' | 'switch' | 'stash'
 
 export interface GitOperationResult {
   success: boolean
-  operation: GitOperationType
+  operation: GitOperationType | string
   message?: string
   error?: string
   branch?: string
@@ -78,6 +78,54 @@ export interface GitOperationResult {
   stashRef?: string
   conflict?: boolean
 }
+
+/** 提交历史条目（`git log --format=%H%x00%h%x00%s%x00%an%x00%aI%x00%D` 一行一提交）。 */
+export interface GitLogEntry {
+  hash: string
+  shortHash: string
+  title: string
+  author: string
+  /** ISO 8601（git %aI） */
+  date: string
+  /** 原始 %D refs 装饰串，如 'HEAD -> main, origin/main, tag: v1.0'；无装饰时缺省 */
+  refs?: string
+}
+
+/** 分支条目：本地分支（isRemote=false）或远端跟踪分支（isRemote=true）。 */
+export interface GitBranchInfo {
+  name: string
+  isCurrent: boolean
+  isRemote: boolean
+  upstream?: string
+  ahead?: number
+  behind?: number
+  lastCommitHash?: string
+  lastCommitTitle?: string
+}
+
+/** stash 条目：ref 形如 stash@{0}，message 含 On branch 摘要与 mao-auto-* 标识。 */
+export interface GitStashEntry {
+  ref: string
+  message: string
+  /** ISO 8601（git %aI） */
+  date: string
+}
+
+/** 远端条目：URL 已在服务端 / Electron 侧脱敏（user:token@ → ***@）。 */
+export interface GitRemoteInfo {
+  name: string
+  fetchUrl: string
+  pushUrl: string
+}
+
+/** 单次提交的文件变更清单结果。 */
+export interface GitCommitFilesResult {
+  hash: string
+  files: GitChangedFile[]
+}
+
+/** stash 操作类型（服务端 / Electron 侧白名单枚举）。 */
+export type GitStashAction = 'apply' | 'pop' | 'drop'
 
 export type GitTreeNode =
   | {

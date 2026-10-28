@@ -26,11 +26,16 @@
         :active-tab-id="activeTabId"
         :session-id="sessionIdForTabs"
         :file-provider="fileProvider"
+        :git-provider="gitProvider"
+        :execution-mode="executionMode"
+        :workspace="workspace"
         @open-file="handleOpenFile"
         @add-file-to-chat="handleAddFileToChat"
         @paths-changed="applyWorkspacePathChange"
         @tree-refresh="refreshFileTree"
         @locate-in-tree="revealInFileTree"
+        @open-git-diff="handleOpenGitDiff"
+        @open-commit-diff="handleOpenCommitDiff"
       />
     </div>
 
@@ -67,6 +72,7 @@
       @delete-side-task="handleDeleteSideTask"
       @promote-side-task="handlePromoteSideTask"
       @open-git-diff="handleOpenGitDiff"
+      @open-git="openGitTab"
       @open-manager="openFileManagerTab"
     />
 
@@ -350,7 +356,7 @@ provide('quoteFileRangeToChat', quoteFileRangeToChat)
 
 // Center tabs
 const activeSessionIdRef = computed(() => sessionStore.activeSessionId ?? '')
-const { tabs, activeTab, activeTabId, openFileTab, openDiffTab, closeTab, closeAllFileTabs, closeOtherTabs, activateTab, openSideTaskTab, setSideTaskFork, openSubagentTab, openTraceTab, openFileManagerTab, updateSideTaskTab, restoreSideTaskTabs, restoreSubagentTabs, restoreTraceTab, restoreActiveTab, applyWorkspacePathChange } = useCenterTabs(activeSessionIdRef)
+const { tabs, activeTab, activeTabId, openFileTab, openDiffTab, closeTab, closeAllFileTabs, closeOtherTabs, activateTab, openSideTaskTab, setSideTaskFork, openSubagentTab, openTraceTab, openFileManagerTab, openGitTab, updateSideTaskTab, restoreSideTaskTabs, restoreSubagentTabs, restoreTraceTab, restoreActiveTab, applyWorkspacePathChange } = useCenterTabs(activeSessionIdRef)
 
 // Derived state
 const sessionId = computed(() => sessionIdParam.value)
@@ -708,6 +714,46 @@ async function handleOpenGitDiff(file: GitChangedFile, repoPath?: string) {
     openDiffTab(change, `${repoPath} · ${fileName} (Git)`, { source: 'git' })
   } else {
     openDiffTab(change, `${fileName} (Git)`, { source: 'git' })
+  }
+}
+
+/**
+ * 历史视图的提交 diff：拉该提交对单文件的前后内容，落到独立 id 前缀的 diff Tab。
+ * idPrefix 用 `git-commit-diff:<hash>:`：与工作区变更的 `git-diff:<path>` 隔离，
+ * 不同提交的同路径文件也互不覆盖（技术方案 §5.1 P2 硬前置）。
+ */
+async function handleOpenCommitDiff(payload: { hash: string; file: GitChangedFile; repoPath?: string }) {
+  const provider = gitProvider.value
+  if (!provider) return
+  let diff
+  try {
+    // 改名提交的 before 取自父提交的旧路径：不传会把改名显示成「整份新增」
+    // （与同屏「改名」徽章矛盾）。只对 RENAMED 传 oldPath——复制文件的 before 本就是空
+    const oldPath = payload.file.changeType === 'RENAMED' ? payload.file.oldPath : undefined
+    diff = await provider.getCommitFileDiff(payload.hash, payload.file.path, payload.repoPath, oldPath)
+  } catch (e: any) {
+    ElMessage.error(e?.message || '读取提交文件内容失败')
+    return
+  }
+  const change: FileChange = {
+    path: diff.path,
+    type: diff.changeType,
+    linesAdded: payload.file.insertions ?? 0,
+    linesDeleted: payload.file.deletions ?? 0,
+    diffMode: diff.binary || diff.unavailableReason ? 'UNSUPPORTED' : 'SNAPSHOT',
+    beforeContent: diff.beforeContent,
+    afterContent: diff.afterContent,
+    diffUnavailableReason: diff.unavailableReason
+      || (diff.truncated ? '内容已截断，仅显示部分文本' : undefined),
+  }
+  const fileName = diff.path.split(/[/\\]/).pop() || diff.path
+  const shortHash = payload.hash.slice(0, 7)
+  const idPrefix = `git-commit-diff:${payload.hash}:`
+  if (payload.repoPath) {
+    change.path = `${payload.repoPath}/${diff.path}`
+    openDiffTab(change, `${shortHash} · ${payload.repoPath} · ${fileName} (Git)`, { source: 'git', idPrefix })
+  } else {
+    openDiffTab(change, `${shortHash} · ${fileName} (Git)`, { source: 'git', idPrefix })
   }
 }
 

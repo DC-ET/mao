@@ -14,12 +14,18 @@ import {
   type CommitGenerationInput,
 } from './git-commit-message.service.js';
 import type { GitChangedFileDTO, GitStatusDTO, WorkspaceGitService } from './workspace-git.service.js';
+import { sanitizeCredentialUrl } from './workspace-git.service.js';
 
 const TIMEOUT_SECONDS = 60;
 const MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
 const MAX_ERROR_LENGTH = 500;
 const SENSITIVE_NAME = /(^|\/)(\.env($|\.)|id_(rsa|dsa|ecdsa|ed25519)(\..*)?$)|(\.(pem|key|p12|pfx)$)|((^|\/)[^/]*(credential|credentials|secret|secrets|token)[^/]*$)/i;
-const CREDENTIAL_URL = /(https?:\/\/)([^/@\s]+@)/gi;
+/** 分支名合法性（git check-ref-format 子集）：禁空白 ~^:?*[\]、'..'、'@{'、首尾 '/'、'//'、结尾 '.'、组件首 '.'、组件尾 '.lock' */
+const BRANCH_NAME_PATTERN = /^[A-Za-z0-9._/-]+$/;
+const STASH_REF_PATTERN = /^stash@\{\d+\}$/;
+const STASH_ACTIONS = ['apply', 'pop', 'drop'];
+/** LOCAL 活动记录白名单：与 GitWriteOperationService 的写操作一一对应 */
+const LOCAL_ACTIVITY_OPERATIONS = ['commit', 'pull', 'push', 'fetch', 'switch', 'stash'];
 
 export const ASKPASS = `#!/bin/bash
 PROMPT="$1"
@@ -182,8 +188,98 @@ export class GitWriteOperationService {
     });
   }
 
+  /**
+   * 显式获取远端更新（fetch --prune，不动工作区）。
+   * remote 选择复用 pull/push 的 selectRefreshRemote（upstream 优先 → origin → 唯一 remote）；
+   * 无 remote 时报「仓库未配置远端」（与 refreshRemoteStatus 的无 remote 分支同语义）。
+   */
+  async fetchRemote(session: Session, repoPath?: string | null): Promise<GitOperationResult> {
+    return this.locked(session, repoPath, 'fetch', async (repo) => {
+      const state = await this.remoteState(repo);
+      const remote = await this.selectRefreshRemote(repo, state);
+      if (remote == null) {
+        throw new BusinessException(ErrorCode.PARAM_INVALID, state.remotes.length === 0
+          ? '仓库未配置远端'
+          : '存在多个远端且没有 origin，无法确认要获取的远端');
+      }
+      const fetch = await this.run(repo, ['fetch', '--prune', remote], await this.credentialEnv(session));
+      if (!fetch.success) {
+        throw new BusinessException(ErrorCode.INTERNAL_ERROR, classify(fetch, '获取远端更新失败'));
+      }
+      return successResult('fetch', state.branch, '远端已更新');
+    });
+  }
+
+  /**
+   * 切换分支（自动 stash + 切换后恢复，与 pull 的 stash 生命周期同构）。
+   * 守卫只查 detached HEAD，不要求配置 remote——无远端的纯本地仓库也应可切分支
+   * （requirePullPushState 同时查 detached 与 remote 两项，直接复用会误拒）。
+   * 目标形如 <remote>/<branch> 或 create=true 时建跟踪分支：
+   * git switch -c <local> --track <remote>/<remote-branch>（不依赖 DWIM）。
+   */
+  async switchBranch(session: Session, repoPath: string | null | undefined, branch: string, create?: boolean): Promise<GitOperationResult> {
+    return this.locked(session, repoPath, 'switch', async (repo) => {
+      const state = await this.remoteState(repo);
+      if (state.detached) throw new BusinessException(ErrorCode.PARAM_INVALID, 'detached HEAD，请先切换分支');
+      const target = resolveSwitchTarget(branch, create === true, state.remotes);
+      const operationId = randomUUID();
+      let stashOid: string | null = null;
+      let stashRef: string | null = null;
+      if (await this.hasChanges(repo)) {
+        const stash = await this.run(repo, ['stash', 'push', '--include-untracked', '-m', `mao-auto-switch-${operationId}`], {});
+        requireSuccess(stash, '自动 stash 创建失败');
+        stashOid = requireOutput(await this.run(repo, ['rev-parse', 'stash@{0}'], {}), '读取 stash 失败');
+        stashRef = await this.findStashRef(repo, stashOid);
+      }
+      const switched = await this.run(repo, target.args, {});
+      if (!switched.success) {
+        // 切换失败：先恢复 stash 保留现场（恢复冲突异常优先抛出，消息含 stash 引用，同 pull 口径）
+        if (stashOid != null) await this.restoreStash(repo, stashOid, stashRef);
+        throw new BusinessException(ErrorCode.INTERNAL_ERROR, classify(switched, '切换分支失败'));
+      }
+      if (stashOid != null) await this.restoreStash(repo, stashOid, stashRef);
+      return successResult('switch', target.localBranch, `已切换到分支 ${target.localBranch}`);
+    });
+  }
+
+  /**
+   * stash 操作（apply / pop / drop，白名单枚举）。
+   * apply/pop 后检测冲突：有冲突返回 success:false + conflict:true 并保留现场（不自动 reset）。
+   */
+  async stashOp(session: Session, repoPath: string | null | undefined, action: string, ref: string): Promise<GitOperationResult> {
+    return this.locked(session, repoPath, 'stash', async (repo) => {
+      if (!STASH_ACTIONS.includes(action)) {
+        throw new BusinessException(ErrorCode.PARAM_INVALID, 'stash 操作类型无效');
+      }
+      if (!STASH_REF_PATTERN.test(ref ?? '')) {
+        throw new BusinessException(ErrorCode.PARAM_INVALID, 'stash 引用无效');
+      }
+      let args: string[];
+      if (action === 'apply') args = ['stash', 'apply', '--index', ref];
+      else if (action === 'pop') args = ['stash', 'pop', '--index', ref];
+      else args = ['stash', 'drop', ref];
+      const result = await this.run(repo, args, {});
+      // apply/pop 冲突时 git 退出码为 1（预期内）：先判冲突走专用契约，再判真失败。
+      // 顺序反了会让冲突永远落进裸 git 错误分支，conflict 标记与「已保留现场」引导丢失
+      // （与 pull 冲突遗留的 mao-auto-pull-* stash 处理场景直接相关）。
+      if (action !== 'drop' && await this.hasConflicts(repo)) {
+        const failed = failedResult('stash', `stash ${action === 'apply' ? '应用' : '弹出'}产生冲突，已保留现场，请手动处理（${ref}）`);
+        failed.conflict = true;
+        failed.stashRef = ref;
+        return failed;
+      }
+      if (!result.success) {
+        throw new BusinessException(ErrorCode.INTERNAL_ERROR, classify(result, `stash ${action} 失败`));
+      }
+      const label = action === 'apply' ? '已应用' : action === 'pop' ? '已弹出' : '已丢弃';
+      const success = successResult('stash', await this.branch(repo), `${label} ${ref}`);
+      success.stashRef = ref;
+      return success;
+    });
+  }
+
   async recordLocalActivity(session: Session, request: LocalGitActivity | null): Promise<void> {
-    if (request == null || !['commit', 'pull', 'push'].includes(request.operation)) {
+    if (request == null || !LOCAL_ACTIVITY_OPERATIONS.includes(request.operation)) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, 'Git 操作类型无效');
     }
     const type = `GIT_${request.operation.toUpperCase()}`;
@@ -504,7 +600,7 @@ function classify(result: GitResult, fallback: string): string {
 
 function sanitize(value: string | null | undefined): string | null {
   if (value == null) return null;
-  const clean = value.replace(CREDENTIAL_URL, '$1***@').replace(/(token|password|authorization)[=: ]+[^\s]+/gi, '$1=***').trim();
+  const clean = sanitizeCredentialUrl(value).replace(/(token|password|authorization)[=: ]+[^\s]+/gi, '$1=***').trim();
   return limited(clean, MAX_ERROR_LENGTH);
 }
 
@@ -525,4 +621,40 @@ function successResult(operation: string, branch: string | null | undefined, mes
 
 function failedResult(operation: string, error: string): GitOperationResult {
   return { success: false, operation, error };
+}
+
+/**
+ * 解析切换分支目标：
+ * - 纯本地分支名 → git switch <branch>；
+ * - 形如 <remote>/<branch>（前缀是已配置 remote）或 create=true → git switch -c <local> --track <remote>/<branch>。
+ * 分支名合法性走 git check-ref-format 子集（与前端 utils/git-manager.ts 的 isValidBranchName 同规则）。
+ */
+export function resolveSwitchTarget(branch: string, create: boolean, remotes: string[]): { args: string[]; localBranch: string } {
+  const name = (branch ?? '').trim();
+  // 字符类已排除空白 ~^:?*[\] 等；下面是 check-ref-format 的结构性规则
+  const valid = name.length > 0
+    && name.length <= 200
+    && BRANCH_NAME_PATTERN.test(name)
+    && !name.includes('..')
+    && !name.includes('@{')
+    && name !== '@'
+    && !name.startsWith('/')
+    && !name.endsWith('/')
+    && !name.includes('//')
+    && !name.endsWith('.')
+    && name.split('/').every((part) => part.length > 0 && !part.startsWith('.') && !part.endsWith('.lock'));
+  if (!valid) {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, '分支名无效');
+  }
+  const slashIdx = name.indexOf('/');
+  const remotePrefix = slashIdx > 0 ? name.slice(0, slashIdx) : '';
+  const isRemoteRef = remotePrefix.length > 0 && remotes.includes(remotePrefix);
+  if (create || isRemoteRef) {
+    if (!isRemoteRef) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '仅支持从远端分支创建跟踪分支');
+    }
+    const local = name.slice(slashIdx + 1);
+    return { args: ['switch', '-c', local, '--track', name], localBranch: local };
+  }
+  return { args: ['switch', name], localBranch: name };
 }

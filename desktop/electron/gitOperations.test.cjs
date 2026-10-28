@@ -10,10 +10,14 @@ const {
   buildCommitInput,
   commit,
   fairlyTruncateDiffs,
+  fetch,
   getRemoteState,
   isSensitivePath,
   pull,
   push,
+  resolveSwitchTarget,
+  stashOp,
+  switchBranch,
 } = require('./gitOperations.cjs')
 
 function git(cwd, args, env = {}) {
@@ -268,4 +272,166 @@ test('push sets origin upstream and never needs force', async (t) => {
   const result = await push(repo)
   assert.equal(result.success, true, result.error)
   assert.equal(git(repo, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}']), 'origin/main')
+})
+
+test('switch target resolution covers local, remote and invalid names', () => {
+  assert.deepEqual(resolveSwitchTarget('main', false, ['origin']), { args: ['switch', 'main'], localBranch: 'main' })
+  assert.deepEqual(resolveSwitchTarget('origin/side', false, ['origin']), {
+    args: ['switch', '-c', 'side', '--track', 'origin/side'],
+    localBranch: 'side',
+  })
+  assert.deepEqual(resolveSwitchTarget('origin/side', true, ['origin']), {
+    args: ['switch', '-c', 'side', '--track', 'origin/side'],
+    localBranch: 'side',
+  })
+  // 未知前缀不是 remote 引用，按本地分支处理（让 git 报分支不存在，而不是误判成远端）
+  assert.deepEqual(resolveSwitchTarget('feature/x', false, ['origin']), { args: ['switch', 'feature/x'], localBranch: 'feature/x' })
+  for (const invalid of ['', ' ', '..', 'a..b', 'a@{1}', '@', '/a', 'a/', 'a//b', 'a.', '.hidden', 'x.lock', 'a b']) {
+    assert.throws(() => resolveSwitchTarget(invalid, false, ['origin']), /分支名无效/, invalid)
+  }
+  // create=true 但名字不是 remote 引用时明确拒绝，不回退到本地 switch
+  assert.throws(() => resolveSwitchTarget('side', true, []), /仅支持从远端分支创建跟踪分支/)
+})
+
+test('fetch prunes the remote without touching the worktree', async (t) => {
+  const { remote, seed, local } = setupTrackedRemote(t)
+  commitFile(seed, 'remote.txt', 'remote\n', 'remote update')
+  git(seed, ['push'])
+  git(seed, ['branch', 'gone-branch'])
+  git(seed, ['push', 'origin', 'gone-branch'])
+  git(local, ['fetch', 'origin'])
+  assert.ok(git(local, ['branch', '-r']).includes('origin/gone-branch'))
+  git(seed, ['push', 'origin', '--delete', 'gone-branch'])
+
+  const result = await fetch(local)
+  assert.equal(result.success, true, result.error)
+  assert.equal(result.operation, 'fetch')
+  assert.equal(result.branch, 'main')
+  assert.equal(git(local, ['status', '--porcelain']), '')
+  assert.equal(git(local, ['branch', '-r']).includes('origin/gone-branch'), false)
+  const status = await refreshGitStatus(local)
+  assert.equal(status.behindCount, 1)
+})
+
+test('fetch fails without a remote and when the remote is ambiguous', async (t) => {
+  const repo = initRepo(t)
+  const noRemote = await fetch(repo)
+  assert.equal(noRemote.success, false)
+  assert.match(noRemote.error, /未配置远端/)
+
+  // 两个都不叫 origin 的远端且无 upstream 跟踪时才判定歧义；有 origin 时优先 origin
+  git(repo, ['remote', 'add', 'upstream', createBareRemote(t)])
+  git(repo, ['remote', 'add', 'mirror', createBareRemote(t)])
+  const ambiguous = await fetch(repo)
+  assert.equal(ambiguous.success, false)
+  assert.match(ambiguous.error, /多个远端/)
+
+  git(repo, ['remote', 'add', 'origin', createBareRemote(t)])
+  const withOrigin = await fetch(repo)
+  assert.equal(withOrigin.success, true, withOrigin.error)
+})
+
+test('switch branch stashes local changes and restores them exactly', async (t) => {
+  const repo = initRepo(t)
+  git(repo, ['checkout', '-b', 'feature'])
+  commitFile(repo, 'feature.txt', 'feature\n', 'feat: feature file')
+  git(repo, ['checkout', 'main'])
+  fs.writeFileSync(path.join(repo, 'README.md'), 'local dirty\n')
+  fs.writeFileSync(path.join(repo, 'untracked.txt'), 'untracked\n')
+
+  const result = await switchBranch(repo, undefined, 'feature')
+  assert.equal(result.success, true, result.error)
+  assert.equal(result.operation, 'switch')
+  assert.equal(result.branch, 'feature')
+  assert.equal(fs.readFileSync(path.join(repo, 'README.md'), 'utf8'), 'local dirty\n')
+  assert.equal(fs.readFileSync(path.join(repo, 'untracked.txt'), 'utf8'), 'untracked\n')
+  assert.equal(fs.existsSync(path.join(repo, 'feature.txt')), true)
+  // 自动 stash 已恢复，stash 栈不留残留
+  assert.equal(git(repo, ['stash', 'list']), '')
+})
+
+test('switch branch creates a tracking branch from a remote ref', async (t) => {
+  const { seed, local } = setupTrackedRemote(t)
+  git(seed, ['checkout', '-b', 'side'])
+  commitFile(seed, 'side.txt', 'side\n', 'feat: side file')
+  git(seed, ['push', '-u', 'origin', 'side'])
+  git(local, ['fetch', 'origin'])
+
+  const result = await switchBranch(local, undefined, 'origin/side')
+  assert.equal(result.success, true, result.error)
+  assert.equal(result.branch, 'side')
+  assert.equal(git(local, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}']), 'origin/side')
+  assert.equal(fs.readFileSync(path.join(local, 'side.txt'), 'utf8'), 'side\n')
+})
+
+test('switch branch refuses detached head and invalid names', async (t) => {
+  const repo = initRepo(t)
+  git(repo, ['checkout', '--detach'])
+  const detached = await switchBranch(repo, undefined, 'main')
+  assert.equal(detached.success, false)
+  assert.match(detached.error, /detached HEAD/)
+
+  const fresh = initRepo(t)
+  const invalid = await switchBranch(fresh, undefined, 'bad..name')
+  assert.equal(invalid.success, false)
+  assert.match(invalid.error, /分支名无效/)
+  assert.equal(git(fresh, ['rev-parse', '--abbrev-ref', 'HEAD']), 'main')
+})
+
+test('stash apply pop drop round trip', async (t) => {
+  const repo = initRepo(t)
+  fs.writeFileSync(path.join(repo, 'README.md'), 'stashed\n')
+  git(repo, ['stash', 'push', '-m', 'wip'])
+
+  const applied = await stashOp(repo, undefined, 'apply', 'stash@{0}')
+  assert.equal(applied.success, true, applied.error)
+  assert.equal(applied.stashRef, 'stash@{0}')
+  assert.equal(fs.readFileSync(path.join(repo, 'README.md'), 'utf8'), 'stashed\n')
+  assert.equal(git(repo, ['stash', 'list']).includes('wip'), true)
+
+  git(repo, ['checkout', '--', 'README.md'])
+  const popped = await stashOp(repo, undefined, 'pop', 'stash@{0}')
+  assert.equal(popped.success, true, popped.error)
+  assert.equal(fs.readFileSync(path.join(repo, 'README.md'), 'utf8'), 'stashed\n')
+  assert.equal(git(repo, ['stash', 'list']), '')
+
+  fs.writeFileSync(path.join(repo, 'README.md'), 'again\n')
+  git(repo, ['stash', 'push', '-m', 'wip2'])
+  const dropped = await stashOp(repo, undefined, 'drop', 'stash@{0}')
+  assert.equal(dropped.success, true, dropped.error)
+  assert.equal(git(repo, ['stash', 'list']), '')
+  assert.equal(fs.readFileSync(path.join(repo, 'README.md'), 'utf8'), 'initial\n')
+})
+
+test('stash op apply conflict reports conflict and keeps the scene', async (t) => {
+  const repo = initRepo(t)
+  fs.writeFileSync(path.join(repo, 'README.md'), 'stashed change\n')
+  git(repo, ['stash', 'push', '-m', 'wip conflict'])
+  fs.writeFileSync(path.join(repo, 'README.md'), 'head change\n')
+  git(repo, ['add', '-A'])
+  git(repo, ['commit', '-m', 'diverge README'])
+
+  // git stash apply 冲突时退出码为 1：必须走冲突契约（conflict + 保留现场引导），
+  // 而不是裸 git 错误——否则契约里的 conflict/stashRef 全丢
+  const applied = await stashOp(repo, undefined, 'apply', 'stash@{0}')
+  assert.equal(applied.success, false)
+  assert.equal(applied.conflict, true)
+  assert.equal(applied.stashRef, 'stash@{0}')
+  assert.match(applied.error, /已保留现场/)
+  assert.match(applied.error, /stash@\{0\}/)
+  // 现场保留：stash 条目仍在，工作区留下冲突标记
+  assert.match(git(repo, ['stash', 'list']), /wip conflict/)
+  assert.match(git(repo, ['status', '--porcelain']), /UU README\.md/)
+})
+
+test('stash op rejects unknown actions and bad refs', async (t) => {
+  const repo = initRepo(t)
+  fs.writeFileSync(path.join(repo, 'README.md'), 'dirty\n')
+  git(repo, ['stash', 'push', '-m', 'wip'])
+  for (const [action, ref] of [['delete', 'stash@{0}'], ['apply', 'not-a-ref'], ['pop', 'stash@{99}']]) {
+    const result = await stashOp(repo, undefined, action, ref)
+    assert.equal(result.success, false, `${action} ${ref}`)
+  }
+  // 校验失败不动 stash 栈
+  assert.equal(git(repo, ['stash', 'list']).includes('wip'), true)
 })

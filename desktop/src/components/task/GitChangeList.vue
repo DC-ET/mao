@@ -30,6 +30,13 @@
         <button class="git-action-btn" :disabled="loading || !!operation" title="刷新" aria-label="刷新 Git 状态" @click="$emit('refresh')">
           <el-icon :size="14" :class="{ spinning: loading && !operation }"><Refresh /></el-icon>
         </button>
+        <el-tooltip v-if="showExpand" content="在中央 Tab 打开 Git 管理器" placement="top" :show-after="300">
+          <span>
+            <button class="git-action-btn" aria-label="打开 Git 管理器" @click="$emit('expand')">
+              <el-icon :size="14"><FullScreen /></el-icon>
+            </button>
+          </span>
+        </el-tooltip>
       </div>
     </div>
 
@@ -79,9 +86,9 @@
 
 <script setup lang="ts">
 import { computed, reactive, watch } from 'vue'
-import { Check, Download, Refresh, Upload } from '@element-plus/icons-vue'
+import { Check, Download, FullScreen, Refresh, Upload } from '@element-plus/icons-vue'
 import { ElTooltip, ElMessage } from 'element-plus'
-import type { GitChangedFile, GitTreeNode } from '../../types/git'
+import type { GitChangedFile, GitOperationType, GitTreeNode } from '../../types/git'
 import GitChangeTreeNode from './GitChangeTreeNode.vue'
 import GitContextMenu from './GitContextMenu.vue'
 import { copyText } from '../../utils/clipboard'
@@ -103,11 +110,13 @@ const props = defineProps<{
   aheadCount?: number
   behindCount?: number
   hasCommitsToPush?: boolean
-  operation?: 'commit' | 'pull' | 'push' | null
+  operation?: GitOperationType | null
   executionMode?: string
   workspace?: string
   repoPath?: string
   provider?: WorkspaceFileProvider | null
+  /** 侧边栏 Git 页签展示「展开到中央 Tab」按钮；中央大 Tab 自身不展示 */
+  showExpand?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -117,6 +126,7 @@ const emit = defineEmits<{
   push: []
   'open-diff': [file: GitChangedFile]
   'add-file-to-chat': [filePath: string]
+  expand: []
 }>()
 
 const canOpenInFinder = computed(() => typeof window !== 'undefined' && !!window.electronAPI?.showItemInFolder)

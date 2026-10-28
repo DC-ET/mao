@@ -232,4 +232,93 @@ describe('file routes', () => {
     expect(recorded).toHaveLength(0);
     await app.close();
   });
+
+  it('gitManagerEndpointsRejectLocalSessionsAndMissingParams', async () => {
+    const app = Fastify();
+    app.setErrorHandler(handleError);
+    app.addHook('preHandler', (req, _r, done) => {
+      req.userId = 7;
+      done();
+    });
+    const sessions = new Map<number, { id: number; userId: number; workspace: string; executionMode: string }>([
+      [1, { id: 1, userId: 7, workspace: '/tmp/ws-cloud', executionMode: 'CLOUD' }],
+      [2, { id: 2, userId: 7, workspace: '/tmp/ws-local', executionMode: 'LOCAL' }],
+    ]);
+    const sessionService = { getSession: vi.fn(async (id: number) => sessions.get(id)) } as unknown as SessionService;
+    const workspaceGitService = {
+      getLog: vi.fn(async () => [{ hash: 'h', shortHash: 'h', title: 't', author: 'a', date: 'd' }]),
+      getCommitFiles: vi.fn(async () => ({ hash: 'h', files: [] })),
+      getCommitFileDiff: vi.fn(async () => ({ path: 'a', changeType: 'MODIFIED', beforeContent: '', afterContent: '' })),
+      getBranches: vi.fn(async () => [{ name: 'main', isCurrent: true, isRemote: false }]),
+      getStashes: vi.fn(async () => [{ ref: 'stash@{0}', message: 'm', date: 'd' }]),
+      getRemotes: vi.fn(async () => [{ name: 'origin', fetchUrl: 'u', pushUrl: 'u' }]),
+    } as unknown as WorkspaceGitService;
+    const gitWriteOperationService = {
+      fetchRemote: vi.fn(async () => ({ success: true, operation: 'fetch', message: '远端已更新' })),
+      switchBranch: vi.fn(async () => ({ success: true, operation: 'switch', branch: 'main' })),
+      stashOp: vi.fn(async () => ({ success: true, operation: 'stash', message: '已应用 stash@{0}' })),
+    } as unknown as GitWriteOperationService;
+    registerFileRoutes(app, {
+      fileService: {} as FileService,
+      sessionService,
+      workspaceBrowseService: {} as WorkspaceBrowseService,
+      workspaceGitService,
+      gitCommitMessageService: {} as GitCommitMessageService,
+      gitWriteOperationService,
+      workspaceWriteService: {} as WorkspaceWriteService,
+      pathSandbox: { getWorkspaceRoot: () => '/tmp' } as PathSandbox,
+      runtimeDataResolver: new RuntimeDataResolver(useTmpDir('mao-route-gitmgr-'), '/tmp/home'),
+    });
+    const get = async (url: string) => JSON.parse((await app.inject({ method: 'GET', url })).body);
+    const post = async (url: string, payload: object) => JSON.parse((await app.inject({ method: 'POST', url, payload })).body);
+
+    // 新端点族只服务 CLOUD：LOCAL 会话一律拒绝（LOCAL 走 Electron IPC）
+    for (const url of [
+      '/v1/files/workspace-git-log?sessionId=2',
+      '/v1/files/workspace-git-commit?sessionId=2&hash=abc1234',
+      '/v1/files/workspace-git-commit-file-diff?sessionId=2&hash=abc1234&path=a',
+      '/v1/files/workspace-git-branches?sessionId=2',
+      '/v1/files/workspace-git-stashes?sessionId=2',
+      '/v1/files/workspace-git-remotes?sessionId=2',
+    ]) {
+      const body = await get(url);
+      expect(body.code).not.toBe(0);
+      expect(body.message).toContain('本地模式不支持');
+    }
+    for (const [url, payload] of [
+      ['/v1/files/workspace-git-fetch', { sessionId: 2 }],
+      ['/v1/files/workspace-git-switch-branch', { sessionId: 2, branch: 'main' }],
+      ['/v1/files/workspace-git-stash', { sessionId: 2, action: 'apply', ref: 'stash@{0}' }],
+    ] as const) {
+      const body = await post(url, payload);
+      expect(body.code).not.toBe(0);
+      expect(body.message).toContain('本地模式不支持');
+    }
+
+    // 缺 sessionId / 缺必填参数
+    expect((await get('/v1/files/workspace-git-log')).code).not.toBe(0);
+    expect((await get('/v1/files/workspace-git-commit?sessionId=1')).code).not.toBe(0);
+    expect((await get('/v1/files/workspace-git-commit-file-diff?sessionId=1&hash=abc1234')).code).not.toBe(0);
+    expect((await post('/v1/files/workspace-git-switch-branch', { sessionId: 1 })).code).not.toBe(0);
+    expect((await post('/v1/files/workspace-git-stash', { sessionId: 1, action: 'apply' })).code).not.toBe(0);
+    expect((await post('/v1/files/workspace-git-stash', { sessionId: 1, ref: 'stash@{0}' })).code).not.toBe(0);
+
+    // happy path：CLOUD 会话透传分页 / 哈希 / 分支 / stash 参数
+    expect((await get('/v1/files/workspace-git-log?sessionId=1&limit=20&offset=10')).data[0].hash).toBe('h');
+    expect(vi.mocked(workspaceGitService.getLog).mock.calls[0][2]).toEqual({ limit: 20, offset: 10, path: undefined });
+    expect((await get('/v1/files/workspace-git-commit?sessionId=1&hash=abc1234')).data.hash).toBe('h');
+    expect((await get('/v1/files/workspace-git-commit-file-diff?sessionId=1&hash=abc1234&path=a.txt')).data.path).toBe('a');
+    // 改名提交：oldPath 作为可选查询参数透传（before 取自父提交的旧路径）
+    expect((await get('/v1/files/workspace-git-commit-file-diff?sessionId=1&hash=abc1234&path=b.txt&oldPath=a.txt')).data.path).toBe('a');
+    expect(vi.mocked(workspaceGitService.getCommitFileDiff).mock.calls.at(-1)).toEqual([expect.anything(), undefined, 'abc1234', 'b.txt', 'a.txt']);
+    expect((await get('/v1/files/workspace-git-branches?sessionId=1')).data[0].name).toBe('main');
+    expect((await get('/v1/files/workspace-git-stashes?sessionId=1')).data[0].ref).toBe('stash@{0}');
+    expect((await get('/v1/files/workspace-git-remotes?sessionId=1')).data[0].name).toBe('origin');
+    expect((await post('/v1/files/workspace-git-fetch', { sessionId: 1 })).data.message).toBe('远端已更新');
+    expect((await post('/v1/files/workspace-git-switch-branch', { sessionId: 1, branch: 'main', create: true })).data.branch).toBe('main');
+    expect(vi.mocked(gitWriteOperationService.switchBranch).mock.calls[0][3]).toBe(true);
+    expect((await post('/v1/files/workspace-git-stash', { sessionId: 1, action: 'pop', ref: 'stash@{0}' })).data.message).toBe('已应用 stash@{0}');
+
+    await app.close();
+  });
 });

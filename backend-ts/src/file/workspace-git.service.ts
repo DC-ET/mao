@@ -72,6 +72,62 @@ export interface GitFileDiffDTO {
   unavailableReason?: string | null;
 }
 
+export interface GitLogEntryDTO {
+  hash: string;
+  shortHash: string;
+  title: string;
+  author: string;
+  /** ISO 8601（git %aI） */
+  date: string;
+  /** 原始 %D refs 装饰串；无装饰时缺省 */
+  refs?: string;
+}
+
+export interface GitBranchInfoDTO {
+  name: string;
+  isCurrent: boolean;
+  isRemote: boolean;
+  upstream?: string | null;
+  ahead?: number | null;
+  behind?: number | null;
+  lastCommitHash?: string | null;
+  lastCommitTitle?: string | null;
+}
+
+export interface GitStashEntryDTO {
+  ref: string;
+  message: string;
+  /** ISO 8601（git %aI） */
+  date: string;
+}
+
+export interface GitRemoteInfoDTO {
+  name: string;
+  /** 已脱敏（user:token@ → ***@） */
+  fetchUrl: string;
+  pushUrl: string;
+}
+
+export interface GitCommitFilesDTO {
+  hash: string;
+  files: GitChangedFileDTO[];
+}
+
+/** 远端 URL 脱敏（与 git-write-operation.service.ts 共用同一条正则，双侧导出一份）。 */
+const CREDENTIAL_URL = /(https?:\/\/)([^/@\s]+@)/gi;
+
+export function sanitizeCredentialUrl(url: string | null | undefined): string {
+  if (url == null) return '';
+  return url.replace(CREDENTIAL_URL, '$1***@');
+}
+
+/** 提交历史 hash 入参格式：7-64 位十六进制（短哈希或全哈希均可）。 */
+const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,64}$/;
+
+const LOG_FORMAT = '%H%x00%h%x00%s%x00%an%x00%aI%x00%D';
+const LOG_DEFAULT_LIMIT = 50;
+const LOG_MAX_LIMIT = 200;
+
 export class WorkspaceGitService {
   constructor(private readonly pathSandbox: PathSandbox) {}
 
@@ -260,6 +316,270 @@ export class WorkspaceGitService {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '当前工作区不是 Git 仓库');
     }
     const root = resolve(repoRoot.trim());
+    if (!isUnderReal(root, workspace)) {
+      throw new BusinessException(ErrorCode.FORBIDDEN, '路径访问被拒绝');
+    }
+    return root;
+  }
+
+  /**
+   * 提交历史（分页）。空仓库（无 HEAD）git log 失败，返回 [] 不报错。
+   * limit 钳制 [1,200] 默认 50；offset ≥ 0；path 可选（按文件过滤，本期前端未用）。
+   */
+  async getLog(
+    sessionWorkspace: string,
+    repoPath?: string | null,
+    opts?: { limit?: number; offset?: number; path?: string | null },
+  ): Promise<GitLogEntryDTO[]> {
+    const repoRoot = await this.resolveRepoRoot(sessionWorkspace, repoPath);
+    const limit = clampInt(opts?.limit, LOG_DEFAULT_LIMIT, 1, LOG_MAX_LIMIT);
+    const offset = clampInt(opts?.offset, 0, 0, Number.MAX_SAFE_INTEGER);
+    const args = ['log', `--format=${LOG_FORMAT}`, '-n', String(limit), '--skip', String(offset)];
+    const pathFilter = opts?.path?.trim();
+    if (pathFilter) args.push('--', pathFilter);
+    const out = await this.runGitOk(repoRoot, args);
+    if (out == null || out.trim().length === 0) return [];
+    const entries: GitLogEntryDTO[] = [];
+    for (const line of out.split('\n')) {
+      if (line.length === 0) continue;
+      const entry = parseLogLine(line);
+      if (entry) entries.push(entry);
+    }
+    return entries;
+  }
+
+  /**
+   * 单次提交的文件变更清单。merge 提交必须带 --first-parent：
+   * 默认 git show 对 merge 输出 combined diff，干净合并的文件清单为空。
+   * hash 格式合法但 git 中不存在（或非 commit 对象）时 runGitOk 返回 null，
+   * 映射 PARAM_INVALID——不可返空列表（空列表与空提交无法区分）。
+   */
+  async getCommitFiles(sessionWorkspace: string, repoPath: string | null | undefined, hash: string): Promise<GitCommitFilesDTO> {
+    const normalizedHash = (hash ?? '').trim().toLowerCase();
+    if (!COMMIT_HASH_PATTERN.test(normalizedHash)) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '提交不存在');
+    }
+    const repoRoot = await this.resolveRepoRoot(sessionWorkspace, repoPath);
+    const nameStatus = await this.runGitOk(repoRoot, ['show', '--first-parent', '--name-status', '--format=', normalizedHash]);
+    const numstat = await this.runGitOk(repoRoot, ['show', '--first-parent', '--numstat', '--format=', normalizedHash]);
+    if (nameStatus == null && numstat == null) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '提交不存在');
+    }
+    const files = new Map<string, GitChangedFileDTO>();
+    if (nameStatus != null && nameStatus.trim().length > 0) {
+      for (let line of nameStatus.split('\n')) {
+        line = line.trim();
+        if (line.length === 0) continue;
+        const file = parseNameStatusLine(line);
+        if (file) files.set(file.path, file);
+      }
+    }
+    if (numstat != null && numstat.trim().length > 0) {
+      for (let line of numstat.split('\n')) {
+        line = line.trim();
+        if (line.length === 0) continue;
+        const parts = line.split('\t');
+        if (parts.length < 3) continue;
+        const path = numstatNewPath(parts[parts.length - 1]);
+        const file = files.get(path);
+        if (!file) continue;
+        if (parts[0] === '-' || parts[1] === '-') {
+          file.binary = true;
+          file.insertions = 0;
+          file.deletions = 0;
+        } else {
+          file.insertions = parseIntSafe(parts[0]);
+          file.deletions = parseIntSafe(parts[1]);
+        }
+      }
+    }
+    return { hash: normalizedHash, files: [...files.values()] };
+  }
+
+  /**
+   * 单提交单文件 diff：before = `git show <hash>^:<oldPath ?? path>`，after = `git show <hash>:<path>`，
+   * 均取自 git 对象、不读工作区。改名提交必须传 oldPath（文件清单 R 行的旧路径）——
+   * 新路径在父提交中不存在，不传会把 before 判空、changeType 退化成 CREATED。
+   * 该提交中新增的文件 before 为空（根提交同理），删除的文件 after 为空
+   * （show 对不存在对象返回非零退出，按空内容处理）。
+   */
+  async getCommitFileDiff(
+    sessionWorkspace: string,
+    repoPath: string | null | undefined,
+    hash: string,
+    relativePath: string | null | undefined,
+    oldPath?: string | null,
+  ): Promise<GitFileDiffDTO> {
+    const normalizedHash = (hash ?? '').trim().toLowerCase();
+    if (!COMMIT_HASH_PATTERN.test(normalizedHash)) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '提交不存在');
+    }
+    if (relativePath == null || relativePath.trim().length === 0) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '文件路径不能为空');
+    }
+    const normalized = relativePath.replace(/\\/g, '/').replace(/^\.\//, '');
+    if (normalized.split('/').some((p) => p === '..')) {
+      throw new BusinessException(ErrorCode.FORBIDDEN, '路径访问被拒绝');
+    }
+    const beforePath = oldPath == null || oldPath.trim().length === 0
+      ? normalized
+      : oldPath.replace(/\\/g, '/').replace(/^\.\//, '');
+    if (beforePath.split('/').some((p) => p === '..')) {
+      throw new BusinessException(ErrorCode.FORBIDDEN, '路径访问被拒绝');
+    }
+    const repoRoot = await this.resolveRepoRoot(sessionWorkspace, repoPath);
+    const absolute = resolve(repoRoot, normalized);
+    if (!isUnder(absolute, repoRoot)) {
+      throw new BusinessException(ErrorCode.FORBIDDEN, '路径访问被拒绝');
+    }
+    const beforeRaw = await this.runGitOk(repoRoot, ['show', `${normalizedHash}^:${beforePath}`]);
+    const afterRaw = await this.runGitOk(repoRoot, ['show', `${normalizedHash}:${normalized}`]);
+    const changeType = beforeRaw == null && afterRaw != null
+      ? 'CREATED'
+      : beforeRaw != null && afterRaw == null
+        ? 'DELETED'
+        : beforePath !== normalized ? 'RENAMED' : 'MODIFIED';
+    const diff: GitFileDiffDTO = { path: normalized, changeType, beforeContent: '', afterContent: '' };
+    if (beforeRaw != null && isBinaryString(beforeRaw)) {
+      diff.binary = true;
+      diff.unavailableReason = '二进制文件，无法预览';
+      return diff;
+    }
+    if (afterRaw != null && isBinaryString(afterRaw)) {
+      diff.binary = true;
+      diff.unavailableReason = '二进制文件，无法预览';
+      return diff;
+    }
+    const beforeTrunc = truncateText(beforeRaw ?? '');
+    const afterTrunc = truncateText(afterRaw ?? '');
+    diff.beforeContent = beforeTrunc.content;
+    diff.afterContent = afterTrunc.content;
+    if (beforeTrunc.truncated || afterTrunc.truncated) diff.truncated = true;
+    return diff;
+  }
+
+  /**
+   * 分支列表：本地（git branch -vv，含 upstream 与 ahead/behind 方括号解析）
+   * + 远端（git branch -r -vv，其 upstream 列为空、不解析 ahead/behind）。
+   * 空仓库（未出生 HEAD）下 `git branch -vv` 没有任何输出，用 symbolic-ref 补一条
+   * 「即将出生的当前分支」，让分支视图不空白；lastCommitHash 留空。
+   */
+  async getBranches(sessionWorkspace: string, repoPath?: string | null): Promise<GitBranchInfoDTO[]> {
+    const repoRoot = await this.resolveRepoRoot(sessionWorkspace, repoPath);
+    const [localOut, remoteOut, headOut, unbornOut] = await Promise.all([
+      this.runGitOk(repoRoot, ['branch', '-vv']),
+      this.runGitOk(repoRoot, ['branch', '-r', '-vv']),
+      this.runGitOk(repoRoot, ['rev-parse', '--abbrev-ref', 'HEAD']),
+      this.runGitOk(repoRoot, ['symbolic-ref', '--short', 'HEAD']),
+    ]);
+    const currentBranch = headOut != null ? headOut.trim() : '';
+    const branches: GitBranchInfoDTO[] = [];
+    for (const line of (localOut ?? '').split('\n')) {
+      const parsed = parseBranchVvLine(line);
+      // detached 行形如 '* (HEAD detached at <hash>) <subject>'，不是分支，跳过
+      if (!parsed || parsed.name.startsWith('(')) continue;
+      branches.push({
+        name: parsed.name,
+        isCurrent: parsed.isCurrent || (currentBranch.length > 0 && currentBranch === parsed.name),
+        isRemote: false,
+        upstream: parsed.upstream ?? null,
+        ahead: parsed.ahead ?? null,
+        behind: parsed.behind ?? null,
+        lastCommitHash: parsed.lastCommitHash ?? null,
+        lastCommitTitle: parsed.lastCommitTitle ?? null,
+      });
+    }
+    if (branches.length === 0 && unbornOut != null) {
+      const unborn = unbornOut.trim();
+      if (unborn.length > 0) {
+        branches.push({
+          name: unborn,
+          isCurrent: true,
+          isRemote: false,
+          upstream: null,
+          ahead: null,
+          behind: null,
+          lastCommitHash: null,
+          lastCommitTitle: null,
+        });
+      }
+    }
+    for (const line of (remoteOut ?? '').split('\n')) {
+      // 跳过 origin/HEAD -> origin/main 符号行
+      if (line.includes('->')) continue;
+      const parsed = parseBranchVvLine(line);
+      if (!parsed || parsed.name.startsWith('(')) continue;
+      branches.push({
+        name: parsed.name,
+        isCurrent: false,
+        isRemote: true,
+        upstream: null,
+        ahead: null,
+        behind: null,
+        lastCommitHash: parsed.lastCommitHash ?? null,
+        lastCommitTitle: parsed.lastCommitTitle ?? null,
+      });
+    }
+    return branches;
+  }
+
+  /** stash 列表（%gd 索引 / %gs 消息 / %aI 时间）。 */
+  async getStashes(sessionWorkspace: string, repoPath?: string | null): Promise<GitStashEntryDTO[]> {
+    const repoRoot = await this.resolveRepoRoot(sessionWorkspace, repoPath);
+    const out = await this.runGitOk(repoRoot, ['stash', 'list', '--format=%gd%x00%gs%x00%aI']);
+    if (out == null || out.trim().length === 0) return [];
+    const entries: GitStashEntryDTO[] = [];
+    for (const line of out.split('\n')) {
+      if (line.length === 0) continue;
+      const parts = line.split('\0');
+      const ref = (parts[0] ?? '').trim();
+      if (ref.length === 0) continue;
+      entries.push({ ref, message: parts[1] ?? '', date: (parts[2] ?? '').trim() });
+    }
+    return entries;
+  }
+
+  /** 远端列表（fetch/push URL 合并为一条，URL 过 CREDENTIAL_URL 脱敏）。 */
+  async getRemotes(sessionWorkspace: string, repoPath?: string | null): Promise<GitRemoteInfoDTO[]> {
+    const repoRoot = await this.resolveRepoRoot(sessionWorkspace, repoPath);
+    const out = await this.runGitOk(repoRoot, ['remote', '-v']);
+    if (out == null || out.trim().length === 0) return [];
+    const merged = new Map<string, { fetch?: string; push?: string }>();
+    for (const line of out.split('\n')) {
+      const trimmed = line.trim();
+      if (trimmed.length === 0) continue;
+      const match = /^(\S+)\s+(\S+)\s+\((fetch|push)\)$/.exec(trimmed);
+      if (!match) continue;
+      const [, name, url, kind] = match;
+      const entry = merged.get(name) ?? {};
+      if (kind === 'fetch') entry.fetch = url;
+      else entry.push = url;
+      merged.set(name, entry);
+    }
+    const remotes: GitRemoteInfoDTO[] = [];
+    for (const [name, urls] of merged) {
+      remotes.push({
+        name,
+        fetchUrl: sanitizeCredentialUrl(urls.fetch ?? urls.push ?? ''),
+        pushUrl: sanitizeCredentialUrl(urls.push ?? urls.fetch ?? ''),
+      });
+    }
+    return remotes;
+  }
+
+  /**
+   * 只读方法的仓库根解析。与 resolveRepository（写路径）同样校验 workspace 包含关系：
+   * rev-parse --show-toplevel 可能跳出工作区（工作区本身位于某个 git 仓库内部时），
+   * 不校验会让这些方法作用到外层仓库、getCommitFileDiff 读到工作区之外的受控文件内容。
+   */
+  private async resolveRepoRoot(sessionWorkspace: string, repoPath?: string | null): Promise<string> {
+    const workspace = realPath(this.pathSandbox.getEffectiveWorkspaceRoot(sessionWorkspace));
+    const repoDir = this.resolveRepoDir(workspace, repoPath);
+    const repoRootStr = await this.runGitOk(repoDir, ['rev-parse', '--show-toplevel']);
+    if (repoRootStr == null) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '当前工作区不是 Git 仓库');
+    }
+    const root = resolve(repoRootStr.trim());
     if (!isUnderReal(root, workspace)) {
       throw new BusinessException(ErrorCode.FORBIDDEN, '路径访问被拒绝');
     }
@@ -502,6 +822,81 @@ function parseNameStatusLine(line: string): GitChangedFileDTO | null {
       file.path = parts[parts.length - 1].replace(/\\/g, '/');
   }
   return file;
+}
+
+/** 解析 `git log --format=%H%x00%h%x00%s%x00%an%x00%aI%x00%D` 的一行（NUL 分隔字段）。 */
+function parseLogLine(line: string): GitLogEntryDTO | null {
+  const parts = line.split('\0');
+  if (parts.length < 6) return null;
+  const [hash, shortHash, title, author, date, refs] = parts;
+  if (hash.trim().length === 0) return null;
+  const entry: GitLogEntryDTO = {
+    hash: hash.trim(),
+    shortHash: shortHash.trim(),
+    title,
+    author: author.trim(),
+    date: date.trim(),
+  };
+  if (refs.trim().length > 0) entry.refs = refs;
+  return entry;
+}
+
+/**
+ * 解析 `git branch -vv` 一行：
+ * `* main abc1234 [origin/main: ahead 1, behind 2] subject`
+ * `  main abc1234 [origin/main] subject` / `  main abc1234 subject`（无 upstream）
+ * detached 行 `* (HEAD detached at abc1234) def5678 subject` 的 name 以 '(' 开头，由调用方跳过。
+ * 空仓库未出生分支无 hash（`* main`），lastCommitHash 留空。
+ */
+function parseBranchVvLine(line: string): {
+  name: string;
+  isCurrent: boolean;
+  upstream?: string;
+  ahead?: number;
+  behind?: number;
+  lastCommitHash?: string;
+  lastCommitTitle?: string;
+} | null {
+  if (line.trim().length === 0) return null;
+  const isCurrent = line.startsWith('*');
+  let rest = line.replace(/^\*?\s+/, '');
+  const nameMatch = /^(\S+)\s*(.*)$/.exec(rest);
+  if (!nameMatch) return null;
+  const name = nameMatch[1];
+  rest = nameMatch[2];
+  const hashMatch = /^([0-9a-f]{7,64})\s*(.*)$/.exec(rest);
+  let lastCommitHash: string | undefined;
+  if (hashMatch) {
+    lastCommitHash = hashMatch[1];
+    rest = hashMatch[2];
+  }
+  let upstream: string | undefined;
+  let ahead: number | undefined;
+  let behind: number | undefined;
+  const bracketMatch = /^\[([^\]]*)\]\s*(.*)$/.exec(rest);
+  if (bracketMatch) {
+    const inside = bracketMatch[1];
+    rest = bracketMatch[2];
+    const colonIdx = inside.indexOf(':');
+    const upstreamPart = (colonIdx >= 0 ? inside.slice(0, colonIdx) : inside).trim();
+    // 'gone' 是方括号内的跟踪态（upstream 在远端已被 prune），upstream 名本身仍展示
+    // （与 git branch -vv 输出一致）；ahead/behind 只在明确给出时解析，gone 时自然留空
+    if (upstreamPart.length > 0 && upstreamPart !== 'gone') upstream = upstreamPart;
+    if (colonIdx >= 0) {
+      const aheadMatch = /ahead (\d+)/.exec(inside);
+      const behindMatch = /behind (\d+)/.exec(inside);
+      if (aheadMatch) ahead = parseIntSafe(aheadMatch[1]);
+      if (behindMatch) behind = parseIntSafe(behindMatch[1]);
+    }
+  }
+  const lastCommitTitle = rest.trim().length > 0 ? rest.trim() : undefined;
+  return { name, isCurrent, upstream, ahead, behind, lastCommitHash, lastCommitTitle };
+}
+
+function clampInt(value: number | undefined | null, fallback: number, min: number, max: number): number {
+  const n = value == null ? fallback : Math.floor(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
 }
 
 function readTextLimited(file: string): { content: string; truncated: boolean; binary: boolean } {

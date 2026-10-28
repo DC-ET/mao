@@ -58,6 +58,19 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
     return session;
   }
 
+  /**
+   * 新增 Git 管理端点（log/commit/branches/stashes/remotes/fetch/switch/stash）的会话守卫：
+   * 归属校验 + 拒绝 LOCAL 会话——LOCAL 走 Electron IPC provider，服务端拒绝只是防未来误调。
+   * 注意既有 git 端点（status/commit/pull/push 等）没有这层防御，此处是新增的防御层。
+   */
+  async function requireOwnedCloudGitSession(userId: number, sessionId: number): Promise<Session> {
+    const session = await requireOwnedSession(userId, sessionId);
+    if (session.executionMode === 'LOCAL') {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '本地模式不支持服务端 Git 管理');
+    }
+    return session;
+  }
+
   async function toVO(file: FileEntity) {
     const baseUrl = deps.getUploadBaseUrl != null ? await deps.getUploadBaseUrl() : null;
     const isIncoming = file.filePath != null && file.filePath.indexOf(`${sep}incoming${sep}`) >= 0;
@@ -250,6 +263,79 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
     const session = await requireOwnedSession(userId, body.sessionId!);
     await gitWriteOperationService.recordLocalActivity(session, body.result ?? null);
     return sendOk(reply);
+  });
+
+  app.get('/v1/files/workspace-git-log', async (request, reply) => {
+    const userId = requireUserId(request);
+    const session = await requireOwnedCloudGitSession(userId, requireQueryLong(request, 'sessionId'));
+    return sendOk(reply, await workspaceGitService.getLog(session.workspace!, queryOptStr(request, 'repoPath'), {
+      limit: queryOptInt(request, 'limit'),
+      offset: queryOptInt(request, 'offset'),
+      path: queryOptStr(request, 'path'),
+    }));
+  });
+
+  app.get('/v1/files/workspace-git-commit', async (request, reply) => {
+    const userId = requireUserId(request);
+    const session = await requireOwnedCloudGitSession(userId, requireQueryLong(request, 'sessionId'));
+    const hash = queryOptStr(request, 'hash');
+    if (hash == null) throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
+    return sendOk(reply, await workspaceGitService.getCommitFiles(session.workspace!, queryOptStr(request, 'repoPath'), hash));
+  });
+
+  app.get('/v1/files/workspace-git-commit-file-diff', async (request, reply) => {
+    const userId = requireUserId(request);
+    const session = await requireOwnedCloudGitSession(userId, requireQueryLong(request, 'sessionId'));
+    const hash = queryOptStr(request, 'hash');
+    if (hash == null) throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
+    const path = queryOptStr(request, 'path');
+    if (path == null) throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
+    return sendOk(reply, await workspaceGitService.getCommitFileDiff(session.workspace!, queryOptStr(request, 'repoPath'), hash, path, queryOptStr(request, 'oldPath')));
+  });
+
+  app.get('/v1/files/workspace-git-branches', async (request, reply) => {
+    const userId = requireUserId(request);
+    const session = await requireOwnedCloudGitSession(userId, requireQueryLong(request, 'sessionId'));
+    return sendOk(reply, await workspaceGitService.getBranches(session.workspace!, queryOptStr(request, 'repoPath')));
+  });
+
+  app.get('/v1/files/workspace-git-stashes', async (request, reply) => {
+    const userId = requireUserId(request);
+    const session = await requireOwnedCloudGitSession(userId, requireQueryLong(request, 'sessionId'));
+    return sendOk(reply, await workspaceGitService.getStashes(session.workspace!, queryOptStr(request, 'repoPath')));
+  });
+
+  app.get('/v1/files/workspace-git-remotes', async (request, reply) => {
+    const userId = requireUserId(request);
+    const session = await requireOwnedCloudGitSession(userId, requireQueryLong(request, 'sessionId'));
+    return sendOk(reply, await workspaceGitService.getRemotes(session.workspace!, queryOptStr(request, 'repoPath')));
+  });
+
+  app.post('/v1/files/workspace-git-fetch', async (request, reply) => {
+    const userId = requireUserId(request);
+    const body = bodyOf<{ sessionId?: number; repoPath?: string }>(request);
+    const session = await requireOwnedCloudGitSession(userId, body.sessionId!);
+    return sendOk(reply, await gitWriteOperationService.fetchRemote(session, body.repoPath));
+  });
+
+  app.post('/v1/files/workspace-git-switch-branch', async (request, reply) => {
+    const userId = requireUserId(request);
+    const body = bodyOf<{ sessionId?: number; repoPath?: string; branch?: string; create?: boolean }>(request);
+    const session = await requireOwnedCloudGitSession(userId, body.sessionId!);
+    if (body.branch == null || body.branch.trim().length === 0) {
+      throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
+    }
+    return sendOk(reply, await gitWriteOperationService.switchBranch(session, body.repoPath, body.branch, body.create === true));
+  });
+
+  app.post('/v1/files/workspace-git-stash', async (request, reply) => {
+    const userId = requireUserId(request);
+    const body = bodyOf<{ sessionId?: number; repoPath?: string; action?: string; ref?: string }>(request);
+    const session = await requireOwnedCloudGitSession(userId, body.sessionId!);
+    if (body.action == null || body.ref == null) {
+      throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
+    }
+    return sendOk(reply, await gitWriteOperationService.stashOp(session, body.repoPath, body.action, body.ref));
   });
 
   app.post('/v1/files/workspace-mkdir', async (request, reply) => {

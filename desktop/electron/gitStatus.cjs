@@ -161,10 +161,9 @@ async function collectChangedFiles(repoRoot) {
       if (!line) continue
       const parts = line.split('\t')
       if (parts.length < 3) continue
-      let filePath = parts[parts.length - 1].replace(/\\/g, '/')
-      if (filePath.includes(' => ')) {
-        filePath = filePath.slice(filePath.lastIndexOf(' => ') + 4).trim()
-      }
+      // 与后端 collectChangedFiles 同口径：numstat 的改名是紧凑形态（src/{a.txt => b.txt}），
+      // 简单切片会还原出带花括号的错键、丢合并，必须用 numstatNewPath 还原
+      const filePath = numstatNewPath(parts[parts.length - 1])
       const file = files.get(filePath)
       if (!file) continue
       if (parts[0] === '-' || parts[1] === '-') {
@@ -616,14 +615,388 @@ async function getGitFileDiff(workspace, repoPath, relativePath) {
   }
 }
 
+/**
+ * resolved 是否在 root 之内（含相等）。realpath 两侧都取，兼容 macOS /var → /private/var
+ * 这类符号链接（git 的 --show-toplevel 返回真实路径，而 workspace 可能是符号链接路径）。
+ */
+function isUnderDir(resolved, root) {
+  const rel = path.relative(root, resolved)
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))
+}
+
+function realPathOrSelf(target) {
+  try {
+    return fs.realpathSync(target)
+  } catch {
+    return target
+  }
+}
+
+/**
+ * Resolve the repo root for read-only queries. Throws when the workspace/repoPath
+ * is invalid or the target is not a git repository (IPC handlers surface the message).
+ * 与写路径 resolveRepository 同样校验 workspace 包含关系：rev-parse --show-toplevel
+ * 可能跳出工作区（工作区本身位于某个 git 仓库内部时），不校验会让只读方法作用到
+ * 外层仓库、getGitCommitFileDiff 读到工作区之外的受控文件内容。
+ * @param {string} workspace
+ * @param {string} [repoPath]
+ * @returns {Promise<string>}
+ */
+async function resolveRepoRoot(workspace, repoPath) {
+  if (!workspace) throw new Error('工作区无效')
+  const cwd = resolveRepoDir(workspace, repoPath)
+  const repoRootStr = await runGitOk(cwd, ['rev-parse', '--show-toplevel'])
+  if (!repoRootStr) throw new Error('当前工作区不是 Git 仓库')
+  const repoRoot = path.resolve(repoRootStr.trim())
+  const ws = path.resolve(workspace)
+  if (!isUnderDir(realPathOrSelf(repoRoot), realPathOrSelf(ws))) {
+    throw new Error('路径访问被拒绝')
+  }
+  return repoRoot
+}
+
+/**
+ * numstat 路径字段还原成完整新路径（与后端 numstatNewPath 同规则）：
+ * git 对检测到的改名输出紧凑形态 `old => new` 或 `prefix/{old => new}suffix`，
+ * name-status 的 R 行始终输出完整 old/new，必须还原才能键对齐。
+ */
+function numstatNewPath(raw) {
+  const value = String(raw || '').replace(/\\/g, '/').trim()
+  const arrow = value.lastIndexOf(' => ')
+  if (arrow < 0) return value
+  const braceStart = value.lastIndexOf('{', arrow)
+  const braceEnd = braceStart >= 0 ? value.indexOf('}', arrow) : -1
+  if (braceStart >= 0 && braceEnd > arrow) {
+    return value.slice(0, braceStart) + value.slice(arrow + 4, braceEnd) + value.slice(braceEnd + 1)
+  }
+  return value.slice(arrow + 4).trim()
+}
+
+function parseLogLine(line) {
+  const parts = line.split('\0')
+  if (parts.length < 6) return null
+  const [hash, shortHash, title, author, date, refs] = parts
+  if (!hash.trim()) return null
+  const entry = {
+    hash: hash.trim(),
+    shortHash: shortHash.trim(),
+    title,
+    author: author.trim(),
+    date: date.trim(),
+  }
+  if (refs && refs.trim()) entry.refs = refs
+  return entry
+}
+
+/**
+ * 解析 `git branch -vv` 一行（与后端 parseBranchVvLine 同规则）：
+ * `* main abc1234 [origin/main: ahead 1, behind 2] subject`
+ * detached 行 name 以 '(' 开头，由调用方跳过；空仓库未出生分支无 hash。
+ */
+function parseBranchVvLine(line) {
+  if (!line.trim()) return null
+  const isCurrent = line.startsWith('*')
+  let rest = line.replace(/^\*?\s+/, '')
+  const nameMatch = /^(\S+)\s*(.*)$/.exec(rest)
+  if (!nameMatch) return null
+  const name = nameMatch[1]
+  rest = nameMatch[2]
+  const hashMatch = /^([0-9a-f]{7,64})\s*(.*)$/.exec(rest)
+  let lastCommitHash
+  if (hashMatch) {
+    lastCommitHash = hashMatch[1]
+    rest = hashMatch[2]
+  }
+  let upstream
+  let ahead
+  let behind
+  const bracketMatch = /^\[([^\]]*)\]\s*(.*)$/.exec(rest)
+  if (bracketMatch) {
+    const inside = bracketMatch[1]
+    rest = bracketMatch[2]
+    const colonIdx = inside.indexOf(':')
+    const upstreamPart = (colonIdx >= 0 ? inside.slice(0, colonIdx) : inside).trim()
+    // 'gone' 是方括号内的跟踪态（upstream 在远端已被 prune），upstream 名本身仍展示
+    // （与 git branch -vv 输出一致）；ahead/behind 只在明确给出时解析，gone 时自然留空
+    if (upstreamPart && upstreamPart !== 'gone') upstream = upstreamPart
+    if (colonIdx >= 0) {
+      const aheadMatch = /ahead (\d+)/.exec(inside)
+      const behindMatch = /behind (\d+)/.exec(inside)
+      if (aheadMatch) ahead = parseInt(aheadMatch[1], 10)
+      if (behindMatch) behind = parseInt(behindMatch[1], 10)
+    }
+  }
+  const lastCommitTitle = rest.trim() || undefined
+  return { name, isCurrent, upstream, ahead, behind, lastCommitHash, lastCommitTitle }
+}
+
+function clampInt(value, fallback, min, max) {
+  const n = value == null ? fallback : Math.floor(value)
+  if (!Number.isFinite(n)) return fallback
+  return Math.min(max, Math.max(min, n))
+}
+
+/**
+ * 提交历史（分页，与后端 getLog 同命令同解析）。
+ * @param {string} workspace
+ * @param {string} [repoPath]
+ * @param {{limit?: number, offset?: number, path?: string}} [options]
+ * @returns {Promise<object[]>}
+ */
+async function getGitLog(workspace, repoPath, options = {}) {
+  const repoRoot = await resolveRepoRoot(workspace, repoPath)
+  const limit = clampInt(options.limit, 50, 1, 200)
+  const offset = clampInt(options.offset, 0, 0, Number.MAX_SAFE_INTEGER)
+  const args = ['log', '--format=%H%x00%h%x00%s%x00%an%x00%aI%x00%D', '-n', String(limit), '--skip', String(offset)]
+  if (options.path && String(options.path).trim()) args.push('--', String(options.path).trim())
+  const out = await runGitOk(repoRoot, args)
+  if (!out || !out.trim()) return []
+  const entries = []
+  for (const line of out.split('\n')) {
+    if (!line) continue
+    const entry = parseLogLine(line)
+    if (entry) entries.push(entry)
+  }
+  return entries
+}
+
+/**
+ * 单次提交的文件变更清单。merge 提交必须带 --first-parent（combined diff 干净合并清单为空）。
+ * @param {string} workspace
+ * @param {string} [repoPath]
+ * @param {string} hash
+ * @returns {Promise<{hash: string, files: object[]}>}
+ */
+async function getGitCommitFiles(workspace, repoPath, hash) {
+  const normalizedHash = String(hash || '').trim().toLowerCase()
+  if (!/^[0-9a-f]{7,64}$/.test(normalizedHash)) throw new Error('提交不存在')
+  const repoRoot = await resolveRepoRoot(workspace, repoPath)
+  const nameStatus = await runGitOk(repoRoot, ['show', '--first-parent', '--name-status', '--format=', normalizedHash])
+  const numstat = await runGitOk(repoRoot, ['show', '--first-parent', '--numstat', '--format=', normalizedHash])
+  if (nameStatus == null && numstat == null) throw new Error('提交不存在')
+  const files = new Map()
+  if (nameStatus && nameStatus.trim()) {
+    for (const raw of nameStatus.split('\n')) {
+      const line = raw.trim()
+      if (!line) continue
+      const file = parseNameStatusLine(line)
+      if (file) files.set(file.path, { insertions: 0, deletions: 0, ...file })
+    }
+  }
+  if (numstat && numstat.trim()) {
+    for (const raw of numstat.split('\n')) {
+      const line = raw.trim()
+      if (!line) continue
+      const parts = line.split('\t')
+      if (parts.length < 3) continue
+      const filePath = numstatNewPath(parts[parts.length - 1])
+      const file = files.get(filePath)
+      if (!file) continue
+      if (parts[0] === '-' || parts[1] === '-') {
+        file.binary = true
+        file.insertions = 0
+        file.deletions = 0
+      } else {
+        file.insertions = parseInt(parts[0], 10) || 0
+        file.deletions = parseInt(parts[1], 10) || 0
+      }
+    }
+  }
+  return { hash: normalizedHash, files: Array.from(files.values()) }
+}
+
+/**
+ * 单提交单文件 diff：before = `git show <hash>^:<oldPath ?? path>`，after = `git show <hash>:<path>`（均取自 git 对象）。
+ * 改名提交必须传 oldPath（文件清单 R 行的旧路径）——新路径在父提交中不存在，不传会把 before
+ * 判空、changeType 退化成 CREATED，与同屏文件清单的「改名」徽章自相矛盾。
+ * 新增文件 before 为空（根提交同理），删除文件 after 为空（show 非零退出即空内容）。
+ * @param {string} workspace
+ * @param {string} [repoPath]
+ * @param {string} hash
+ * @param {string} relativePath
+ * @param {string} [oldPath]
+ * @returns {Promise<object>}
+ */
+async function getGitCommitFileDiff(workspace, repoPath, hash, relativePath, oldPath) {
+  const normalizedHash = String(hash || '').trim().toLowerCase()
+  if (!/^[0-9a-f]{7,64}$/.test(normalizedHash)) {
+    return { path: relativePath || '', changeType: 'MODIFIED', beforeContent: '', afterContent: '', unavailableReason: '提交不存在' }
+  }
+  if (!relativePath || relativePath.replace(/\\/g, '/').split('/').includes('..')) {
+    return { path: relativePath || '', changeType: 'MODIFIED', beforeContent: '', afterContent: '', unavailableReason: '路径无效' }
+  }
+  const normalized = relativePath.replace(/\\/g, '/').replace(/^\.\//, '')
+  const beforePath = oldPath == null || String(oldPath).trim().length === 0
+    ? normalized
+    : String(oldPath).replace(/\\/g, '/').replace(/^\.\//, '')
+  if (beforePath.split('/').includes('..')) {
+    return { path: normalized, changeType: 'MODIFIED', beforeContent: '', afterContent: '', unavailableReason: '路径无效' }
+  }
+  let repoRoot
+  try {
+    repoRoot = await resolveRepoRoot(workspace, repoPath)
+  } catch (e) {
+    return { path: normalized, changeType: 'MODIFIED', beforeContent: '', afterContent: '', unavailableReason: e.message || '路径无效' }
+  }
+  const absolute = path.resolve(repoRoot, normalized)
+  if (!absolute.startsWith(repoRoot + path.sep) && absolute !== repoRoot) {
+    return { path: normalized, changeType: 'MODIFIED', beforeContent: '', afterContent: '', unavailableReason: '路径访问被拒绝' }
+  }
+  const before = await runGit(repoRoot, ['show', `${normalizedHash}^:${beforePath}`])
+  const after = await runGit(repoRoot, ['show', `${normalizedHash}:${normalized}`])
+  const beforeContent = before.exitCode === 0 ? before.stdout : null
+  const afterContent = after.exitCode === 0 ? after.stdout : null
+  const changeType = beforeContent == null && afterContent != null
+    ? 'CREATED'
+    : beforeContent != null && afterContent == null
+      ? 'DELETED'
+      : beforePath !== normalized ? 'RENAMED' : 'MODIFIED'
+  if (beforeContent != null && beforeContent.includes('\0')) {
+    return { path: normalized, changeType, beforeContent: '', afterContent: '', binary: true, unavailableReason: '二进制文件，无法预览' }
+  }
+  if (afterContent != null && afterContent.includes('\0')) {
+    return { path: normalized, changeType, beforeContent: '', afterContent: '', binary: true, unavailableReason: '二进制文件，无法预览' }
+  }
+  const beforeTrunc = truncateText(beforeContent == null ? '' : beforeContent)
+  const afterTrunc = truncateText(afterContent == null ? '' : afterContent)
+  return {
+    path: normalized,
+    changeType,
+    beforeContent: beforeTrunc.content,
+    afterContent: afterTrunc.content,
+    truncated: beforeTrunc.truncated || afterTrunc.truncated,
+  }
+}
+
+/**
+ * 分支列表：本地（git branch -vv）+ 远端（git branch -r -vv），与后端 getBranches 同解析。
+ * @param {string} workspace
+ * @param {string} [repoPath]
+ * @returns {Promise<object[]>}
+ */
+async function getGitBranches(workspace, repoPath) {
+  const repoRoot = await resolveRepoRoot(workspace, repoPath)
+  const [localOut, remoteOut, headOut, unbornOut] = await Promise.all([
+    runGitOk(repoRoot, ['branch', '-vv']),
+    runGitOk(repoRoot, ['branch', '-r', '-vv']),
+    runGitOk(repoRoot, ['rev-parse', '--abbrev-ref', 'HEAD']),
+    // 空仓库（未出生 HEAD）下 git branch -vv 无任何输出，用 symbolic-ref 补「即将出生的当前分支」
+    runGitOk(repoRoot, ['symbolic-ref', '--short', 'HEAD']),
+  ])
+  const currentBranch = headOut ? headOut.trim() : ''
+  const branches = []
+  for (const line of (localOut || '').split('\n')) {
+    const parsed = parseBranchVvLine(line)
+    // detached 行形如 '* (HEAD detached at <hash>) <subject>'，不是分支，跳过
+    if (!parsed || parsed.name.startsWith('(')) continue
+    branches.push({
+      name: parsed.name,
+      isCurrent: parsed.isCurrent || (currentBranch.length > 0 && currentBranch === parsed.name),
+      isRemote: false,
+      upstream: parsed.upstream,
+      ahead: parsed.ahead,
+      behind: parsed.behind,
+      lastCommitHash: parsed.lastCommitHash,
+      lastCommitTitle: parsed.lastCommitTitle,
+    })
+  }
+  if (branches.length === 0 && unbornOut && unbornOut.trim().length > 0) {
+    branches.push({
+      name: unbornOut.trim(),
+      isCurrent: true,
+      isRemote: false,
+      lastCommitHash: undefined,
+      lastCommitTitle: undefined,
+    })
+  }
+  for (const line of (remoteOut || '').split('\n')) {
+    // 跳过 origin/HEAD -> origin/main 符号行
+    if (line.includes('->')) continue
+    const parsed = parseBranchVvLine(line)
+    if (!parsed || parsed.name.startsWith('(')) continue
+    branches.push({
+      name: parsed.name,
+      isCurrent: false,
+      isRemote: true,
+      lastCommitHash: parsed.lastCommitHash,
+      lastCommitTitle: parsed.lastCommitTitle,
+    })
+  }
+  return branches
+}
+
+/**
+ * stash 列表（%gd 索引 / %gs 消息 / %aI 时间）。
+ * @param {string} workspace
+ * @param {string} [repoPath]
+ * @returns {Promise<object[]>}
+ */
+async function getGitStashes(workspace, repoPath) {
+  const repoRoot = await resolveRepoRoot(workspace, repoPath)
+  const out = await runGitOk(repoRoot, ['stash', 'list', '--format=%gd%x00%gs%x00%aI'])
+  if (!out || !out.trim()) return []
+  const entries = []
+  for (const line of out.split('\n')) {
+    if (!line) continue
+    const parts = line.split('\0')
+    const ref = (parts[0] || '').trim()
+    if (!ref) continue
+    entries.push({ ref, message: parts[1] || '', date: (parts[2] || '').trim() })
+  }
+  return entries
+}
+
+/**
+ * 远端列表（fetch/push URL 合并为一条；URL 过 sanitizeRemoteError 脱敏，与后端 CREDENTIAL_URL 同语义）。
+ * @param {string} workspace
+ * @param {string} [repoPath]
+ * @returns {Promise<object[]>}
+ */
+async function getGitRemotes(workspace, repoPath) {
+  const repoRoot = await resolveRepoRoot(workspace, repoPath)
+  const out = await runGitOk(repoRoot, ['remote', '-v'])
+  if (!out || !out.trim()) return []
+  const merged = new Map()
+  for (const line of out.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    const match = /^(\S+)\s+(\S+)\s+\((fetch|push)\)$/.exec(trimmed)
+    if (!match) continue
+    const [, name, url, kind] = match
+    const entry = merged.get(name) || {}
+    if (kind === 'fetch') entry.fetch = url
+    else entry.push = url
+    merged.set(name, entry)
+  }
+  const remotes = []
+  for (const [name, urls] of merged) {
+    remotes.push({
+      name,
+      fetchUrl: sanitizeRemoteError(urls.fetch || urls.push || ''),
+      pushUrl: sanitizeRemoteError(urls.push || urls.fetch || ''),
+    })
+  }
+  return remotes
+}
+
 module.exports = {
   EXCLUDED_REPO_DIRS,
   collectChangedFiles,
-  getGitStatus,
-  refreshGitStatus,
+  getGitBranches,
+  getGitCommitFileDiff,
+  getGitCommitFiles,
   getGitFileDiff,
+  getGitLog,
+  getGitRemotes,
+  getGitStashes,
+  getGitStatus,
   listGitRepos,
+  numstatNewPath,
+  parseBranchVvLine,
+  parseLogLine,
+  refreshGitStatus,
   resolveRepoDir,
+  resolveRepoRoot,
   sanitizeRemoteError,
   selectFetchRemote,
 }

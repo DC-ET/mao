@@ -141,7 +141,15 @@
           <el-icon class="workspace-icon"><Setting /></el-icon>
           <button class="env-vars-entry" type="button" @click="envDrawerVisible = true">环境变量</button>
         </div>
-        <div v-if="gitSummaryVisible" class="task-workspace-row git-summary-row">
+        <div
+          v-if="gitSummaryVisible"
+          class="task-workspace-row git-summary-row"
+          role="button"
+          tabindex="0"
+          title="打开 Git 管理器"
+          @click="openGitManager"
+          @keydown.enter="openGitManager"
+        >
           <el-icon class="workspace-icon"><Share /></el-icon>
           <span class="git-summary">
             <template v-if="multiRepoMode">
@@ -151,7 +159,7 @@
                   :key="repo.path"
                   class="git-repo-item"
                   :title="`查看 ${repo.name} 的变更`"
-                  @click="handleRepoClick(repo.path)"
+                  @click.stop="handleRepoClick(repo.path)"
                 >
                   <span class="git-repo-name">{{ repo.name }}</span>
                   <span class="git-repo-meta">
@@ -271,12 +279,14 @@
         :workspace="workspace"
         :repo-path="multiRepoMode ? selectedRepoPath : undefined"
         :provider="fileProvider"
+        :show-expand="true"
         @refresh="refreshAll"
         @commit="runGitOperation('commit')"
         @pull="runGitOperation('pull')"
         @push="runGitOperation('push')"
         @open-diff="handleOpenGitDiff"
         @add-file-to-chat="$emit('add-file-to-chat', $event)"
+        @expand="$emit('open-git')"
       />
     </div>
 
@@ -393,6 +403,7 @@ import type { WorkspaceFileProvider } from '../../composables/workspace-file-pro
 import type { WorkspaceGitProvider } from '../../composables/workspace-git-provider'
 import { useGitStatus } from '../../composables/useGitStatus'
 import { useGitRepos } from '../../composables/useGitRepos'
+import { useGitOperations } from '../../composables/useGitOperations'
 import { useModelContext } from '../../composables/useModelContext'
 import { useStreamWS } from '../../composables/useStreamWS'
 import { getSessionCompaction } from '../../api'
@@ -441,6 +452,7 @@ const emit = defineEmits<{
   'delete-side-task': [sideSessionId: number]
   'promote-side-task': [sideSessionId: number]
   'open-git-diff': [file: GitChangedFile, repoPath?: string]
+  'open-git': []
 }>()
 
 const sessionStore = useSessionStore()
@@ -496,19 +508,22 @@ const {
   selectRepo,
 } = useGitRepos(gitProviderRef)
 
-// 多仓库模式下按选中仓库包装 provider（单仓库直接透传）
+// 多仓库模式下按选中仓库包装 provider（单仓库直接透传）。
+// 用展开继承保留 WorkspaceGitProvider 全量方法，只覆写与选中仓库相关的几个，
+// 避免手写子集随接口扩展漏项（编译期不再报缺方法）。
 const statusProviderRef = computed<WorkspaceGitProvider | null>(() => {
   const p = gitProviderRef.value
   if (!p) return null
   if (multiRepoMode.value && selectedRepoPath.value) {
+    const repoPath = selectedRepoPath.value
     return {
-      getRepos: () => p.getRepos(),
-      getStatus: () => p.getStatus(selectedRepoPath.value),
-      refreshStatus: () => p.refreshStatus(selectedRepoPath.value),
-      getFileDiff: (relativePath: string) => p.getFileDiff(relativePath, selectedRepoPath.value),
-      commit: () => p.commit(selectedRepoPath.value),
-      pull: () => p.pull(selectedRepoPath.value),
-      push: () => p.push(selectedRepoPath.value),
+      ...p,
+      getStatus: () => p.getStatus(repoPath),
+      refreshStatus: () => p.refreshStatus(repoPath),
+      getFileDiff: (relativePath: string) => p.getFileDiff(relativePath, repoPath),
+      commit: () => p.commit(repoPath),
+      pull: () => p.pull(repoPath),
+      push: () => p.push(repoPath),
     }
   }
   return p
@@ -573,29 +588,12 @@ async function refreshAll(remote = true) {
   }
 }
 
-const gitOperation = ref<'commit' | 'pull' | 'push' | null>(null)
+// 写操作的运行态与 toast 文案与中央 Git 管理器 Tab 共用同一 composable（文案不漂移）；
+// 刷新时机留在本组件：侧边栏刷新仓库列表 + 选中仓库状态
+const { operation: gitOperation, run: runGitOperationBase } = useGitOperations(statusProviderRef)
 
-async function runGitOperation(operation: 'commit' | 'pull' | 'push') {
-  const provider = statusProviderRef.value
-  if (!provider || gitOperation.value) return
-  gitOperation.value = operation
-  try {
-    const result = await provider[operation]()
-    if (result.success) {
-      const message = operation === 'commit' && result.commitHash && result.commitTitle
-        ? `提交成功 ${result.commitHash}：${result.commitTitle}`
-        : result.message || `${operation === 'pull' ? '拉取' : '推送'}成功`
-      ElMessage.success(message)
-    } else {
-      ElMessage.error(result.error || 'Git 操作失败')
-    }
-  } catch (error) {
-    const err = error as Error & { toastShown?: boolean }
-    if (!err.toastShown) ElMessage.error(err.message || 'Git 操作失败')
-  } finally {
-    gitOperation.value = null
-    await refreshAll()
-  }
+function runGitOperation(operation: 'commit' | 'pull' | 'push') {
+  void runGitOperationBase(operation).then(() => refreshAll())
 }
 
 function handleRepoSelect(path: string) {
@@ -607,6 +605,11 @@ function handleRepoClick(path: string) {
   if (selectRepo(path)) {
     inspectorActiveTab.value = 'git'
   }
+}
+
+/** 摘要行 / Git 页签工具栏的「展开」入口：打开会话内的中央 Git 管理器 Tab（单例） */
+function openGitManager() {
+  emit('open-git')
 }
 
 // ===== 上下文透视抽屉（技术方案 5.2 / 5.3 / 5.5） =====
@@ -1293,6 +1296,22 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   line-height: 18px;
 }
 
+/* 摘要行是中央 Git 管理器 Tab 的入口：整行可点（键盘 enter 同效），hover 给可点反馈 */
+.git-summary-row {
+  cursor: pointer;
+  border-radius: var(--aw-radius-xs);
+  transition: background 0.15s;
+}
+
+.git-summary-row:hover {
+  background: var(--aw-canvas-parchment);
+}
+
+.git-summary-row:focus-visible {
+  outline: 1px solid var(--aw-primary);
+  outline-offset: -1px;
+}
+
 .git-repo-item {
   display: flex;
   flex-direction: column;
@@ -1660,6 +1679,10 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
 [data-theme="dark"] .workspace-copy-btn:hover {
   background: rgba(255, 255, 255, 0.06);
   color: var(--aw-primary);
+}
+
+[data-theme="dark"] .git-summary-row:hover {
+  background: rgba(255, 255, 255, 0.04);
 }
 
 [data-theme="dark"] .phase-badge-action:hover {

@@ -267,11 +267,13 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     return sessionStore.fileQuoteRevision(workspace, path)
   }
 
-  function openDiffTab(change: FileChange, title?: string, opts?: { source?: 'tool' | 'git' }) {
+  function openDiffTab(change: FileChange, title?: string, opts?: { source?: 'tool' | 'git'; idPrefix?: string }) {
     const state = getSessionState()
     const filePath = change.path
     const source = opts?.source || 'tool'
-    const idPrefix = source === 'git' ? 'git-diff:' : 'diff:'
+    // idPrefix 可由调用方整体接管（提交 diff 用 `git-commit-diff:<hash>:` 与工作区 diff 隔离，
+    // 避免同路径文件互相顶掉）；缺省时沿用 source 推导的现有规则，回归不变。
+    const idPrefix = opts?.idPrefix || (source === 'git' ? 'git-diff:' : 'diff:')
     const existing = state.tabs.find(t => t.id === idPrefix + filePath || (t.type === 'diff' && t.filePath === filePath && t.id.startsWith(idPrefix)))
     if (existing) {
       existing.fileChange = { ...change }
@@ -401,6 +403,23 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
   }
 
   /**
+   * 打开 Git 管理器 Tab（单例 id 'git'，每会话一个）。
+   * 已存在则直接激活；不随刷新重建（与 file/diff/trace 一致，恢复激活态匹配不到就留 chat）。
+   */
+  function openGitTab() {
+    const state = getSessionState()
+    const existing = state.tabs.find(t => t.type === 'git')
+    if (existing) {
+      state.activeTabId = existing.id
+      notifyTabsChanged()
+      return
+    }
+    state.tabs.push({ id: 'git', type: 'git', title: 'Git' })
+    state.activeTabId = 'git'
+    notifyTabsChanged()
+  }
+
+  /**
    * 打开子代理只读 Tab。如果已存在则直接激活。
    */
   function openSubagentTab(childSessionId: number, title: string) {
@@ -459,12 +478,22 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
       }
       const oldId = tab.id
       const fileName = next.path.split('/').pop() || next.path
-      const prefix = oldId.startsWith('git-diff:') ? 'git-diff:' : oldId.startsWith('diff:') ? 'diff:' : 'file:'
+      // 提交 diff 的 id 形如 git-commit-diff:<hash>:<path>：路径重定向后 hash 段不变，整体保留
+      const commitDiffMatch = /^git-commit-diff:([0-9a-f]+):/.exec(oldId)
+      const prefix = commitDiffMatch
+        ? `git-commit-diff:${commitDiffMatch[1]}:`
+        : oldId.startsWith('git-diff:') ? 'git-diff:' : oldId.startsWith('diff:') ? 'diff:' : 'file:'
       tab.filePath = next.path
       tab.id = prefix + next.path
       if (tab.type === 'file') {
         tab.title = fileName
         tab.version = (tab.version ?? 0) + 1
+      } else if (commitDiffMatch) {
+        tab.title = `${commitDiffMatch[1].slice(0, 7)} · ${fileName} (Git)`
+        if (tab.fileChange) {
+          tab.fileChange = { ...tab.fileChange, path: next.path }
+          tab.quoteRevision = quoteRevisionFor(next.path)
+        }
       } else {
         tab.title = prefix === 'git-diff:' ? `${fileName} (Git)` : `${fileName} (变更)`
         if (tab.fileChange) {
@@ -687,6 +716,7 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     openSubagentTab,
     openTraceTab,
     openFileManagerTab,
+    openGitTab,
     updateSideTaskTab,
     restoreSideTaskTabs,
     restoreSubagentTabs,

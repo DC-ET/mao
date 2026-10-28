@@ -2,13 +2,17 @@ const { execFile } = require('child_process')
 const crypto = require('crypto')
 const fs = require('fs')
 const path = require('path')
-const { resolveRepoDir, collectChangedFiles } = require('./gitStatus.cjs')
+const { resolveRepoDir, collectChangedFiles, selectFetchRemote } = require('./gitStatus.cjs')
 
 const GIT_TIMEOUT_MS = 60_000
 const MAX_GIT_OUTPUT_BYTES = 2 * 1024 * 1024
 const MAX_COMMIT_DIFF_BYTES = 200 * 1024
 const MAX_COMMIT_MESSAGE_BYTES = 64 * 1024
 const writeLocks = new Set()
+/** 分支名合法性（git check-ref-format 子集），与后端 resolveSwitchTarget / 前端 isValidBranchName 同规则 */
+const BRANCH_NAME_PATTERN = /^[A-Za-z0-9._/-]+$/
+const STASH_REF_PATTERN = /^stash@\{\d+\}$/
+const STASH_ACTIONS = ['apply', 'pop', 'drop']
 
 function runGit(cwd, args, options = {}) {
   return new Promise((resolve) => {
@@ -373,14 +377,158 @@ async function push(workspace, repoPath) {
   })
 }
 
+/**
+ * 解析切换分支目标（与后端 resolveSwitchTarget 同规则）：
+ * 纯本地分支名 → git switch <branch>；<remote>/<branch> 或 create=true →
+ * git switch -c <local> --track <remote>/<branch>（不依赖 git switch 的 DWIM）。
+ */
+function resolveSwitchTarget(branch, create, remotes) {
+  const name = String(branch || '').trim()
+  const valid = name.length > 0
+    && name.length <= 200
+    && BRANCH_NAME_PATTERN.test(name)
+    && !name.includes('..')
+    && !name.includes('@{')
+    && name !== '@'
+    && !name.startsWith('/')
+    && !name.endsWith('/')
+    && !name.includes('//')
+    && !name.endsWith('.')
+    && name.split('/').every((part) => part.length > 0 && !part.startsWith('.') && !part.endsWith('.lock'))
+  if (!valid) throw new Error('分支名无效')
+  const slashIdx = name.indexOf('/')
+  const remotePrefix = slashIdx > 0 ? name.slice(0, slashIdx) : ''
+  const isRemoteRef = remotePrefix.length > 0 && remotes.includes(remotePrefix)
+  if (create || isRemoteRef) {
+    if (!isRemoteRef) throw new Error('仅支持从远端分支创建跟踪分支')
+    const local = name.slice(slashIdx + 1)
+    return { args: ['switch', '-c', local, '--track', name], localBranch: local }
+  }
+  return { args: ['switch', name], localBranch: name }
+}
+
+/**
+ * 显式获取远端更新（fetch --prune，不动工作区）。
+ * remote 选择复用 gitStatus.cjs 的 selectFetchRemote（upstream 优先 → origin → 唯一 remote）。
+ * @param {string} workspace
+ * @param {string} [repoPath]
+ */
+async function fetch(workspace, repoPath) {
+  return withWriteLock(workspace, repoPath, 'fetch', async (repoRoot) => {
+    const state = await getRemoteState(repoRoot)
+    if (!state.hasRemote) return operationError('fetch', '仓库未配置远端')
+    const remote = selectFetchRemote(state)
+    if (!remote) {
+      return operationError('fetch', state.remotes.length > 1
+        ? '存在多个远端且无法确认要获取的远端'
+        : '未配置可同步的 Git 远端', { branch: state.branch })
+    }
+    const result = await runGit(repoRoot, ['fetch', '--prune', remote])
+    if (result.exitCode !== 0) return operationError('fetch', describeGitFailure(result, 'Git fetch 失败'), { branch: state.branch })
+    return { success: true, operation: 'fetch', message: '远端已更新', branch: state.branch }
+  })
+}
+
+/**
+ * 切换分支：stash → switch → 恢复，与 pull 的 stash 生命周期逐行同构。
+ * 守卫只查 detached HEAD，不要求配置 remote（无远端的纯本地仓库也应可切分支）。
+ * 切换失败或恢复冲突均保留现场，错误消息含 stash 引用。
+ * @param {string} workspace
+ * @param {string} [repoPath]
+ * @param {string} branch
+ * @param {boolean} [create]
+ */
+async function switchBranch(workspace, repoPath, branch, create) {
+  return withWriteLock(workspace, repoPath, 'switch', async (repoRoot) => {
+    const state = await getRemoteState(repoRoot)
+    if (state.detachedHead) return operationError('switch', 'detached HEAD 无法切换分支，请先切换分支')
+    let target
+    try {
+      target = resolveSwitchTarget(branch, create === true, state.remotes)
+    } catch (error) {
+      return operationError('switch', error.message || '分支名无效')
+    }
+
+    const dirty = await runGit(repoRoot, ['status', '--porcelain', '--untracked-files=all'])
+    if (dirty.exitCode !== 0) return operationError('switch', describeGitFailure(dirty, '读取 Git 状态失败'))
+    let stashId
+    let stashLabel
+    if (dirty.stdout.trim()) {
+      stashLabel = `mao-auto-switch-${crypto.randomUUID()}`
+      const before = await runGit(repoRoot, ['rev-parse', '--verify', '--quiet', 'refs/stash'])
+      const stash = await runGit(repoRoot, ['stash', 'push', '--include-untracked', '-m', stashLabel])
+      if (stash.exitCode !== 0) return operationError('switch', describeGitFailure(stash, '创建自动 stash 失败'))
+      const after = await runGit(repoRoot, ['rev-parse', '--verify', 'refs/stash'])
+      if (after.exitCode !== 0 || after.stdout.trim() === before.stdout.trim()) {
+        return operationError('switch', '创建自动 stash 失败，工作区可能在操作期间发生变化')
+      }
+      stashId = after.stdout.trim()
+    }
+
+    const switched = await runGit(repoRoot, target.args)
+    if (switched.exitCode !== 0) {
+      if (stashId) {
+        const restored = await restoreStash(repoRoot, stashId, stashLabel)
+        if (!restored.success) {
+          return operationError('switch', restored.error, { branch: state.branch, stashRef: stashId, conflict: restored.conflict })
+        }
+      }
+      return operationError('switch', describeGitFailure(switched, '切换分支失败'), { branch: state.branch, stashRef: stashId })
+    }
+    if (stashId) {
+      const restored = await restoreStash(repoRoot, stashId, stashLabel)
+      if (!restored.success) {
+        return operationError('switch', restored.error, { branch: state.branch, stashRef: stashId, conflict: restored.conflict })
+      }
+    }
+    return { success: true, operation: 'switch', message: `已切换到分支 ${target.localBranch}`, branch: target.localBranch }
+  })
+}
+
+/**
+ * stash 操作（apply / pop / drop，白名单枚举）。
+ * apply/pop 后检测冲突：有冲突返回 success:false + conflict:true 并保留现场（不自动 reset）。
+ * @param {string} workspace
+ * @param {string} [repoPath]
+ * @param {string} action
+ * @param {string} ref
+ */
+async function stashOp(workspace, repoPath, action, ref) {
+  return withWriteLock(workspace, repoPath, 'stash', async (repoRoot) => {
+    if (!STASH_ACTIONS.includes(action)) return operationError('stash', 'stash 操作类型无效')
+    if (!STASH_REF_PATTERN.test(String(ref || ''))) return operationError('stash', 'stash 引用无效')
+    let args
+    if (action === 'apply') args = ['stash', 'apply', '--index', ref]
+    else if (action === 'pop') args = ['stash', 'pop', '--index', ref]
+    else args = ['stash', 'drop', ref]
+    const result = await runGit(repoRoot, args)
+    // apply/pop 冲突时 git 退出码为 1（预期内）：先判冲突走专用契约，再判真失败，
+    // 否则冲突永远落进裸 git 错误分支，conflict 标记与「已保留现场」引导丢失
+    if (action !== 'drop' && await hasConflicts(repoRoot)) {
+      return operationError('stash', `stash ${action === 'apply' ? '应用' : '弹出'}产生冲突，已保留现场，请手动处理（${ref}）`, {
+        conflict: true,
+        stashRef: ref,
+      })
+    }
+    if (result.exitCode !== 0) return operationError('stash', describeGitFailure(result, `stash ${action} 失败`))
+    const state = await getRemoteState(repoRoot)
+    const label = action === 'apply' ? '已应用' : action === 'pop' ? '已弹出' : '已丢弃'
+    return { success: true, operation: 'stash', message: `${label} ${ref}`, branch: state.branch, stashRef: ref }
+  })
+}
+
 module.exports = {
   MAX_COMMIT_DIFF_BYTES,
   buildCommitInput,
   commit,
   fairlyTruncateDiffs,
+  fetch,
   getRemoteState,
   isSensitivePath,
   pull,
   push,
+  resolveSwitchTarget,
+  stashOp,
+  switchBranch,
   validateCommitMessage,
 }

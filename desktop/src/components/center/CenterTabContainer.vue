@@ -47,6 +47,19 @@
         @tree-refresh="emit('tree-refresh')"
         @locate-in-tree="emit('locate-in-tree', $event)"
       />
+      <!-- key 带会话 id：同 FileManagerPanel，多会话同时开 Git Tab 时避免内部状态跨会话串扰 -->
+      <GitManagerPanel
+        v-else-if="activeTab?.type === 'git'"
+        :key="`git-${props.sessionId}`"
+        :session-id="props.sessionId"
+        :git-provider="gitProvider ?? null"
+        :file-provider="fileProvider"
+        :execution-mode="executionMode"
+        :workspace="workspace"
+        @open-git-diff="(file, repoPath) => emit('open-git-diff', file, repoPath)"
+        @open-commit-diff="emit('open-commit-diff', $event)"
+        @add-file-to-chat="emit('add-file-to-chat', $event)"
+      />
     </KeepAlive>
   </div>
 </template>
@@ -60,15 +73,21 @@ import SideChatPanel from '../chat/SideChatPanel.vue'
 import SubagentChatPanel from '../chat/SubagentChatPanel.vue'
 import RunTracePanel from './RunTracePanel.vue'
 import FileManagerPanel from '../file-browser/FileManagerPanel.vue'
+import GitManagerPanel from '../git/GitManagerPanel.vue'
 import type { Tab } from '../../types/file-browser'
 import type { WorkspaceFileProvider } from '../../composables/workspace-file-provider'
+import type { WorkspaceGitProvider } from '../../composables/workspace-git-provider'
 import type { WorkspacePathChange } from '../../utils/workspace-tab-paths'
+import type { GitChangedFile } from '../../types/git'
 
 const props = defineProps<{
   tabs: Tab[]
   activeTabId: string
   sessionId: string
   fileProvider: WorkspaceFileProvider | null
+  gitProvider: WorkspaceGitProvider | null
+  executionMode?: string
+  workspace?: string
 }>()
 
 const emit = defineEmits<{
@@ -77,6 +96,8 @@ const emit = defineEmits<{
   'paths-changed': [change: WorkspacePathChange]
   'tree-refresh': []
   'locate-in-tree': [relPath: string]
+  'open-git-diff': [file: GitChangedFile, repoPath?: string]
+  'open-commit-diff': [payload: { hash: string; file: GitChangedFile; repoPath?: string }]
 }>()
 
 const activeTab = computed(() => {

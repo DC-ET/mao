@@ -9,6 +9,10 @@ vi.mock('../stores/session', () => ({
   useSessionStore: () => ({
     setViewingSideTask: vi.fn(),
     markSideTaskRead: vi.fn(async () => undefined),
+    // openDiffTab 的引用版本查询（quoteRevisionFor）：无会话实体时回落 0
+    getSessionEntity: vi.fn(() => null),
+    activeSession: null,
+    fileQuoteRevision: vi.fn(() => 0),
   }),
 }))
 
@@ -616,3 +620,93 @@ describe('轨迹 Tab：主会话与边路 / 子代理会话', () => {
 })
 
 
+
+describe('Git 管理器 Tab 与提交 diff 的 id 隔离', () => {
+  beforeEach(async () => {
+    setActivePinia(createPinia())
+    localStorage.clear()
+    resetCenterTabs()
+    removeSessionTabsFor(SESSION_ID)
+    await nextTick()
+  })
+
+  function change(path: string) {
+    return { path, type: 'MODIFIED' as const, linesAdded: 1, linesDeleted: 0, beforeContent: 'a\n', afterContent: 'b\n' }
+  }
+
+  it('openGitTab 用单例 id git，重复打开只激活不新建', async () => {
+    const tabs = setup()
+    tabs.openGitTab()
+    await nextTick()
+
+    const git = tabs.tabs.value.find(t => t.type === 'git')
+    expect(git?.id).toBe('git')
+    expect(git?.title).toBe('Git')
+    expect(tabs.activeTabId.value).toBe('git')
+    expect(persistedTab(activeTabKeyFor(SESSION_ID))).toBe('git')
+
+    tabs.openGitTab()
+    expect(tabs.tabs.value.filter(t => t.type === 'git').length).toBe(1)
+    expect(tabs.activeTabId.value).toBe('git')
+  })
+
+  it('openGitTab 与其他 Tab 并存，互不顶掉', async () => {
+    const tabs = setup()
+    tabs.openFileManagerTab()
+    tabs.openGitTab()
+    await nextTick()
+
+    expect(tabs.tabs.value.map(t => t.type).sort()).toEqual(['chat', 'file_manager', 'git'])
+    expect(tabs.activeTabId.value).toBe('git')
+  })
+
+  it('工作区 diff 与提交 diff 同路径不互相顶掉，不同提交的同路径文件也并存', async () => {
+    const tabs = setup()
+    // 变更视图（工作区 diff）：沿用 git-diff: 前缀
+    tabs.openDiffTab(change('src/a.ts'), 'a.ts (Git)', { source: 'git' })
+    // 历史视图同一路径、两个不同提交：idPrefix 带 hash
+    tabs.openDiffTab(change('src/a.ts'), 'abc1234 · a.ts (Git)', { source: 'git', idPrefix: 'git-commit-diff:abc1234:' })
+    tabs.openDiffTab(change('src/a.ts'), 'def5678 · a.ts (Git)', { source: 'git', idPrefix: 'git-commit-diff:def5678:' })
+    await nextTick()
+
+    const ids = tabs.tabs.value.filter(t => t.type === 'diff').map(t => t.id)
+    expect(ids).toEqual(['git-diff:src/a.ts', 'git-commit-diff:abc1234:src/a.ts', 'git-commit-diff:def5678:src/a.ts'])
+    // 最后一次打开的提交 diff 处于激活态
+    expect(tabs.activeTabId.value).toBe('git-commit-diff:def5678:src/a.ts')
+  })
+
+  it('提交 diff 重复打开同一提交同一文件只更新内容，不新建', async () => {
+    const tabs = setup()
+    tabs.openDiffTab(change('src/a.ts'), 'abc1234 · a.ts (Git)', { source: 'git', idPrefix: 'git-commit-diff:abc1234:' })
+    tabs.openDiffTab({ ...change('src/a.ts'), afterContent: 'c\n' }, 'abc1234 · a.ts (Git)', { source: 'git', idPrefix: 'git-commit-diff:abc1234:' })
+    await nextTick()
+
+    const diffs = tabs.tabs.value.filter(t => t.type === 'diff')
+    expect(diffs.length).toBe(1)
+    expect(diffs[0].fileChange?.afterContent).toBe('c\n')
+  })
+
+  it('openDiffTab 不传 idPrefix 时沿用 source 推导规则（回归）', async () => {
+    const tabs = setup()
+    tabs.openDiffTab(change('src/a.ts'), 'a.ts (Git)', { source: 'git' })
+    tabs.openDiffTab(change('src/b.ts'), 'b.ts (变更)')
+    await nextTick()
+
+    const ids = tabs.tabs.value.filter(t => t.type === 'diff').map(t => t.id)
+    expect(ids).toEqual(['git-diff:src/a.ts', 'diff:src/b.ts'])
+  })
+
+  it('工作区路径重定向：提交 diff 保留 hash 段，只改路径', async () => {
+    const tabs = setup()
+    tabs.openDiffTab(change('src/a.ts'), 'abc1234 · a.ts (Git)', { source: 'git', idPrefix: 'git-commit-diff:abc1234:' })
+    await nextTick()
+
+    tabs.applyWorkspacePathChange({ kind: 'move', from: 'src', to: 'lib' })
+    await nextTick()
+
+    const diff = tabs.tabs.value.find(t => t.type === 'diff')
+    expect(diff?.id).toBe('git-commit-diff:abc1234:lib/a.ts')
+    expect(diff?.filePath).toBe('lib/a.ts')
+    expect(diff?.title).toContain('abc1234')
+  })
+})

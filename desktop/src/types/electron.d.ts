@@ -127,7 +127,7 @@ interface GitStatusResult {
 
 interface GitOperationResult {
   success: boolean
-  operation: 'commit' | 'pull' | 'push'
+  operation: 'commit' | 'pull' | 'push' | 'fetch' | 'switch' | 'stash'
   message?: string
   error?: string
   branch?: string
@@ -136,6 +136,53 @@ interface GitOperationResult {
   stashRef?: string
   conflict?: boolean
 }
+
+interface GitLogEntry {
+  hash: string
+  shortHash: string
+  title: string
+  author: string
+  date: string
+  refs?: string
+}
+
+interface GitBranchInfo {
+  name: string
+  isCurrent: boolean
+  isRemote: boolean
+  upstream?: string
+  ahead?: number
+  behind?: number
+  lastCommitHash?: string
+  lastCommitTitle?: string
+}
+
+interface GitStashEntry {
+  ref: string
+  message: string
+  date: string
+}
+
+interface GitRemoteInfo {
+  name: string
+  fetchUrl: string
+  pushUrl: string
+}
+
+interface GitCommitFilesResult {
+  hash: string
+  files: Array<{
+    path: string
+    oldPath?: string
+    changeType: string
+    untracked?: boolean
+    insertions?: number
+    deletions?: number
+    binary?: boolean
+  }>
+}
+
+type GitStashAction = 'apply' | 'pop' | 'drop'
 
 type RemoveListener = () => void
 
@@ -254,6 +301,23 @@ interface ElectronAPI {
   gitCommit(workspace: string | undefined, repoPath: string | undefined, message: string): Promise<GitOperationResult>
   gitPull(workspace?: string, repoPath?: string): Promise<GitOperationResult>
   gitPush(workspace?: string, repoPath?: string): Promise<GitOperationResult>
+  gitLog(workspace: string | undefined, repoPath: string | undefined, options?: { limit?: number; offset?: number; path?: string }): Promise<GitLogEntry[] | { error: string }>
+  gitCommitFiles(workspace: string | undefined, repoPath: string | undefined, hash: string): Promise<GitCommitFilesResult | { error: string }>
+  gitCommitFileDiff(workspace: string | undefined, repoPath: string | undefined, hash: string, path: string, oldPath?: string): Promise<{
+    path: string
+    changeType: string
+    beforeContent: string
+    afterContent: string
+    truncated?: boolean
+    binary?: boolean
+    unavailableReason?: string
+  }>
+  gitBranches(workspace: string | undefined, repoPath: string | undefined): Promise<GitBranchInfo[] | { error: string }>
+  gitStashes(workspace: string | undefined, repoPath: string | undefined): Promise<GitStashEntry[] | { error: string }>
+  gitRemotes(workspace: string | undefined, repoPath: string | undefined): Promise<GitRemoteInfo[] | { error: string }>
+  gitFetch(workspace: string | undefined, repoPath: string | undefined): Promise<GitOperationResult>
+  gitSwitchBranch(workspace: string | undefined, repoPath: string | undefined, branch: string, create?: boolean): Promise<GitOperationResult>
+  gitStashOp(workspace: string | undefined, repoPath: string | undefined, action: GitStashAction, ref: string): Promise<GitOperationResult>
   checkForUpdate(): Promise<{ skipped?: boolean; reason?: string; updateInfo?: AppUpdateInfo | null }>
   installUpdate(): Promise<{ success: boolean; error?: string }>
   onUpdateChecking(callback: (data: { feedUrl?: string }) => void): RemoveListener

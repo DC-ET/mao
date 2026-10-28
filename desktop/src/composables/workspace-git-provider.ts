@@ -1,6 +1,17 @@
 import { computed, type Ref } from 'vue'
 import { api } from '../api'
-import type { GitFileDiff, GitOperationResult, GitReposResult, GitStatusResult } from '../types/git'
+import type {
+  GitBranchInfo,
+  GitCommitFilesResult,
+  GitFileDiff,
+  GitLogEntry,
+  GitOperationResult,
+  GitRemoteInfo,
+  GitReposResult,
+  GitStashAction,
+  GitStashEntry,
+  GitStatusResult,
+} from '../types/git'
 
 export interface WorkspaceGitProvider {
   /** 多仓库发现：工作区自身是否 git 仓库 + 一级子目录 git 仓库列表。 */
@@ -11,6 +22,22 @@ export interface WorkspaceGitProvider {
   commit(repoPath?: string): Promise<GitOperationResult>
   pull(repoPath?: string): Promise<GitOperationResult>
   push(repoPath?: string): Promise<GitOperationResult>
+  /** 提交历史（分页）。读取失败抛错，由调用方按视图展示错误 + 重试。 */
+  getLog(opts?: { limit?: number; offset?: number; path?: string }, repoPath?: string): Promise<GitLogEntry[]>
+  /** 单次提交的文件变更清单。hash 不存在时抛错（不可与空提交混淆）。 */
+  getCommitFiles(hash: string, repoPath?: string): Promise<GitCommitFilesResult>
+  /**
+   * 单提交单文件 diff（before/after 均取自 git 对象）。
+   * oldPath 传文件清单里的旧路径（改名行）：before 取 <hash>^:<oldPath>，
+   * 不传会把改名显示成「整份新增」。
+   */
+  getCommitFileDiff(hash: string, relativePath: string, repoPath?: string, oldPath?: string): Promise<GitFileDiff>
+  getBranches(repoPath?: string): Promise<GitBranchInfo[]>
+  getStashes(repoPath?: string): Promise<GitStashEntry[]>
+  getRemotes(repoPath?: string): Promise<GitRemoteInfo[]>
+  fetchRemote(repoPath?: string): Promise<GitOperationResult>
+  switchBranch(branch: string, opts?: { create?: boolean }, repoPath?: string): Promise<GitOperationResult>
+  stashOp(action: GitStashAction, ref: string, repoPath?: string): Promise<GitOperationResult>
 }
 
 function emptyStatus(error?: string): GitStatusResult {
@@ -77,12 +104,21 @@ function normalizeDiff(data: any, fallbackPath: string): GitFileDiff {
   }
 }
 
-function failedOperation(operation: 'commit' | 'pull' | 'push', error: unknown): GitOperationResult {
+function failedOperation(operation: 'commit' | 'pull' | 'push' | 'fetch' | 'switch' | 'stash', error: unknown): GitOperationResult {
   return {
     success: false,
     operation,
     error: error instanceof Error ? error.message : 'Git 操作失败',
   }
+}
+
+/** Electron 只读查询的失败契约：main.cjs catch 后返回 { error }，这里转成抛出让上层按视图展示。 */
+function unwrapIpcArray<T>(data: T[] | { error?: string } | undefined | null): T[] {
+  if (Array.isArray(data)) return data
+  if (data && typeof data === 'object' && 'error' in data && typeof (data as { error?: string }).error === 'string') {
+    throw new Error((data as { error: string }).error)
+  }
+  return []
 }
 
 async function recordLocalActivity(sessionId: number, repoPath: string | undefined, result: GitOperationResult, started: number) {
@@ -181,6 +217,67 @@ export function createLocalGitProvider(workspace: string, sessionId: string): Wo
       await recordLocalActivity(numericSessionId, repoPath, result, started)
       return result
     },
+    async getLog(opts?: { limit?: number; offset?: number; path?: string }, repoPath?: string) {
+      const data = await window.electronAPI.gitLog(workspace, repoPath, opts)
+      return unwrapIpcArray<GitLogEntry>(data)
+    },
+    async getCommitFiles(hash: string, repoPath?: string) {
+      const data = await window.electronAPI.gitCommitFiles(workspace, repoPath, hash)
+      if (data && typeof data === 'object' && 'error' in data && typeof (data as { error?: string }).error === 'string') {
+        throw new Error((data as { error: string }).error)
+      }
+      const result = data as GitCommitFilesResult
+      return { hash: result?.hash ?? hash, files: Array.isArray(result?.files) ? result.files : [] }
+    },
+    async getCommitFileDiff(hash: string, relativePath: string, repoPath?: string, oldPath?: string) {
+      const data = await window.electronAPI.gitCommitFileDiff(workspace, repoPath, hash, relativePath, oldPath)
+      return normalizeDiff(data, relativePath)
+    },
+    async getBranches(repoPath?: string) {
+      const data = await window.electronAPI.gitBranches(workspace, repoPath)
+      return unwrapIpcArray<GitBranchInfo>(data)
+    },
+    async getStashes(repoPath?: string) {
+      const data = await window.electronAPI.gitStashes(workspace, repoPath)
+      return unwrapIpcArray<GitStashEntry>(data)
+    },
+    async getRemotes(repoPath?: string) {
+      const data = await window.electronAPI.gitRemotes(workspace, repoPath)
+      return unwrapIpcArray<GitRemoteInfo>(data)
+    },
+    async fetchRemote(repoPath?: string) {
+      const started = Date.now()
+      let result: GitOperationResult
+      try {
+        result = await window.electronAPI.gitFetch(workspace, repoPath)
+      } catch (e) {
+        result = failedOperation('fetch', e)
+      }
+      await recordLocalActivity(numericSessionId, repoPath, result, started)
+      return result
+    },
+    async switchBranch(branch: string, opts?: { create?: boolean }, repoPath?: string) {
+      const started = Date.now()
+      let result: GitOperationResult
+      try {
+        result = await window.electronAPI.gitSwitchBranch(workspace, repoPath, branch, opts?.create === true)
+      } catch (e) {
+        result = failedOperation('switch', e)
+      }
+      await recordLocalActivity(numericSessionId, repoPath, result, started)
+      return result
+    },
+    async stashOp(action: GitStashAction, ref: string, repoPath?: string) {
+      const started = Date.now()
+      let result: GitOperationResult
+      try {
+        result = await window.electronAPI.gitStashOp(workspace, repoPath, action, ref)
+      } catch (e) {
+        result = failedOperation('stash', e)
+      }
+      await recordLocalActivity(numericSessionId, repoPath, result, started)
+      return result
+    },
   }
 }
 
@@ -209,6 +306,23 @@ export function createCloudGitProvider(sessionId: string): WorkspaceGitProvider 
       async commit() { return failedOperation('commit', new Error('会话未就绪')) },
       async pull() { return failedOperation('pull', new Error('会话未就绪')) },
       async push() { return failedOperation('push', new Error('会话未就绪')) },
+      async getLog() { throw new Error('会话未就绪') },
+      async getCommitFiles() { throw new Error('会话未就绪') },
+      async getCommitFileDiff(relativePath: string) {
+        return {
+          path: relativePath,
+          changeType: 'MODIFIED',
+          beforeContent: '',
+          afterContent: '',
+          unavailableReason: '会话未就绪',
+        }
+      },
+      async getBranches() { throw new Error('会话未就绪') },
+      async getStashes() { throw new Error('会话未就绪') },
+      async getRemotes() { throw new Error('会话未就绪') },
+      async fetchRemote() { return failedOperation('fetch', new Error('会话未就绪')) },
+      async switchBranch() { return failedOperation('switch', new Error('会话未就绪')) },
+      async stashOp() { return failedOperation('stash', new Error('会话未就绪')) },
     }
   }
 
@@ -290,6 +404,80 @@ export function createCloudGitProvider(sessionId: string): WorkspaceGitProvider 
         return data
       } catch (e) {
         return failedOperation('push', e)
+      }
+    },
+    async getLog(opts?: { limit?: number; offset?: number; path?: string }, repoPath?: string) {
+      const { data } = await api.get('/files/workspace-git-log', {
+        params: { sessionId: numericSessionId, repoPath, limit: opts?.limit, offset: opts?.offset, path: opts?.path },
+      })
+      return Array.isArray(data) ? data : []
+    },
+    async getCommitFiles(hash: string, repoPath?: string) {
+      const { data } = await api.get('/files/workspace-git-commit', {
+        params: { sessionId: numericSessionId, repoPath, hash },
+      })
+      return { hash: data?.hash ?? hash, files: Array.isArray(data?.files) ? data.files : [] }
+    },
+    async getCommitFileDiff(hash: string, relativePath: string, repoPath?: string, oldPath?: string) {
+      try {
+        const { data } = await api.get('/files/workspace-git-commit-file-diff', {
+          params: { sessionId: numericSessionId, repoPath, hash, path: relativePath, oldPath },
+        })
+        return normalizeDiff(data, relativePath)
+      } catch (e: any) {
+        return {
+          path: relativePath,
+          changeType: 'MODIFIED',
+          beforeContent: '',
+          afterContent: '',
+          unavailableReason: e?.message || '读取提交 diff 失败',
+        }
+      }
+    },
+    async getBranches(repoPath?: string) {
+      const { data } = await api.get('/files/workspace-git-branches', {
+        params: { sessionId: numericSessionId, repoPath },
+      })
+      return Array.isArray(data) ? data : []
+    },
+    async getStashes(repoPath?: string) {
+      const { data } = await api.get('/files/workspace-git-stashes', {
+        params: { sessionId: numericSessionId, repoPath },
+      })
+      return Array.isArray(data) ? data : []
+    },
+    async getRemotes(repoPath?: string) {
+      const { data } = await api.get('/files/workspace-git-remotes', {
+        params: { sessionId: numericSessionId, repoPath },
+      })
+      return Array.isArray(data) ? data : []
+    },
+    async fetchRemote(repoPath?: string) {
+      try {
+        const { data } = await api.post('/files/workspace-git-fetch', { sessionId: numericSessionId, repoPath })
+        return data
+      } catch (e) {
+        return failedOperation('fetch', e)
+      }
+    },
+    async switchBranch(branch: string, opts?: { create?: boolean }, repoPath?: string) {
+      try {
+        const { data } = await api.post('/files/workspace-git-switch-branch', {
+          sessionId: numericSessionId, repoPath, branch, create: opts?.create === true,
+        })
+        return data
+      } catch (e) {
+        return failedOperation('switch', e)
+      }
+    },
+    async stashOp(action: GitStashAction, ref: string, repoPath?: string) {
+      try {
+        const { data } = await api.post('/files/workspace-git-stash', {
+          sessionId: numericSessionId, repoPath, action, ref,
+        })
+        return data
+      } catch (e) {
+        return failedOperation('stash', e)
       }
     },
   }
