@@ -42,8 +42,12 @@
         </span>
       </template>
       <el-tooltip v-if="gitStatus?.isGit" placement="top" :show-after="300" :content="remoteBadgeTooltip">
-        <span class="git-remote-badge" :class="gitStatus.remoteStatusAvailable ? 'is-ok' : 'is-bad'" @mouseenter="ensureRemotes">
-          {{ gitStatus.remoteStatusAvailable ? '远端可用' : (gitStatus.remoteStatusError || '远端不可用') }}
+        <span
+          class="git-remote-badge"
+          :class="remoteBadgeState"
+          @mouseenter="ensureRemotes"
+        >
+          {{ remoteBadgeText }}
         </span>
       </el-tooltip>
       <div class="git-status-actions">
@@ -179,6 +183,12 @@ const views: Array<{ id: GitManagerView; label: string }> = [
 
 const gitProviderRef = computed(() => props.gitProvider ?? null)
 const gitEnabled = computed(() => !!props.gitProvider)
+/**
+ * 大 Tab 打开即确认远端状态（多一次 fetch --prune）：否则首屏永远停在未确认态，
+ * 徽标误报「远端不可用」、ahead/behind 仍是本地缓存值。
+ * fetch 失败时本地状态照常展示，徽标给出真实失败原因（不改用户数据）。
+ */
+const confirmRemote = computed(() => true)
 
 const {
   repos,
@@ -222,9 +232,10 @@ const {
   error: gitError,
   status: gitStatus,
   files: gitFiles,
-  refresh: refreshGit,
+  remoteLoading: gitRemoteLoading,
   refreshRemote: refreshGitRemote,
-} = useGitStatus(statusProviderRef, { enabled: gitEnabled })
+  refreshWithRemoteConfirmation: refreshGitWithRemote,
+} = useGitStatus(statusProviderRef, { enabled: gitEnabled, confirmRemote })
 
 const manager = useGitManager(statusProviderRef)
 const {
@@ -256,11 +267,32 @@ const repoName = computed(() => {
 const remoteBadgeTooltip = computed(() => {
   const status = gitStatus.value
   if (!status) return ''
-  if (!status.remoteStatusAvailable) return status.remoteStatusError || '远端状态不可用'
+  if (!status.remoteStatusAvailable) {
+    // 首屏确认在途（fetch 尚未返回）：这是「还没问过远端」，不是故障
+    if (gitRemoteLoading.value && !status.remoteStatusError) return '正在确认远端状态（fetch --prune）…'
+    return status.remoteStatusError || '远端状态不可用'
+  }
   if (remotes.value.length === 0) return '远端状态可用'
   return remotes.value
     .map((r) => `${r.name}\nfetch: ${sanitizeRemoteUrl(r.fetchUrl)}\npush: ${sanitizeRemoteUrl(r.pushUrl)}`)
     .join('\n\n')
+})
+
+/** 徽标三态：确认中（中性）> 可用（绿）> 不可用（橙，带真实原因）。 */
+const remoteBadgeState = computed(() => {
+  const status = gitStatus.value
+  if (!status) return 'is-bad'
+  if (status.remoteStatusAvailable) return 'is-ok'
+  if (gitRemoteLoading.value && !status.remoteStatusError) return 'is-pending'
+  return 'is-bad'
+})
+
+const remoteBadgeText = computed(() => {
+  const status = gitStatus.value
+  if (!status) return '远端不可用'
+  if (status.remoteStatusAvailable) return '远端可用'
+  if (gitRemoteLoading.value && !status.remoteStatusError) return '确认远端中…'
+  return status.remoteStatusError || '远端不可用'
 })
 
 function ensureRemotes() {
@@ -312,9 +344,9 @@ const fetchDisabledReason = computed(() => {
   return ''
 })
 
-// Tab 切走再切回时 KeepAlive 保活：静默刷一次状态条（只读远端状态，不打断列表滚动）
+// Tab 切走再切回时 KeepAlive 保活：本地状态刷一次，再确认远端（只读状态条，不打断列表滚动）
 onActivated(() => {
-  if (gitEnabled.value) void refreshGit()
+  if (gitEnabled.value) void refreshGitWithRemote()
 })
 </script>
 
@@ -506,6 +538,12 @@ onActivated(() => {
 .git-remote-badge.is-ok {
   background: rgba(52, 199, 89, 0.1);
   color: var(--aw-success);
+}
+
+/* 确认中：中性色，区别于「不可用」的警示色 */
+.git-remote-badge.is-pending {
+  background: var(--aw-fill-subtle, rgba(120, 120, 128, 0.12));
+  color: var(--aw-text-secondary, #8e8e93);
 }
 
 .git-remote-badge.is-bad {

@@ -4,6 +4,7 @@
 - **工作区 Git 管理器新增 9 个接口**：`workspace-git-log`（提交历史分页，可按路径过滤）、`workspace-git-commit`（单提交文件清单，merge 提交按 first-parent 统计）、`workspace-git-commit-file-diff`（单提交单文件前后全文）、`workspace-git-branches`（本地 / 远端分支、upstream、ahead / behind，空仓库兜底显示未出生分支）、`workspace-git-stashes`、`workspace-git-remotes`（fetch / push URL 合并为一条并脱敏凭证），以及写操作 `workspace-git-fetch`（fetch --prune，不动工作区）、`workspace-git-switch-branch`（切换前自动 stash、切换后恢复，恢复失败保留现场并给出 stash 引用）、`workspace-git-stash`（apply / pop / drop，产生冲突时保留现场不自动 reset）。全部按 sessionId + 可选 repoPath 定位仓库，LOCAL 会话一律拒绝，未新增权限码、无表结构变更。
 
 ### 前端（桌面 / Web / 安卓）
+- **修复 Git 管理器 Tab 首次打开误报「远端状态不可用」**：首屏只发只读状态查询，`remoteStatusAvailable` 恒为 false 且不带失败原因，徽标只能回落到默认文案「远端不可用」（实际只是还没向远端确认过），领先 / 落后数也停在本地缓存值。现在打开 Tab（切走再切回、切仓库同样）在本地状态出来后自动补一次远端确认（`fetch --prune`）：确认期间徽标显示中性的「确认远端中…」，成功后变「远端可用」并显示最新 ahead/behind，失败则保留本地状态并给出真实原因（凭证失效 / 网络不通等）。非 git 目录与本地状态读取失败都不发确认请求；确认在途时切换会话或仓库，迟到的结果按序号丢弃，不会串写到新仓库。
 - **新增中央 Tab「Git 管理器」**：会话中心区打开「Git」页签（一个会话一个单例页签，与文件 / diff / 文件管理器页签共存），把常用 Git 操作收进变更 / 历史 / 分支 / Stash 四个子视图——变更清单可直接提交 / 拉取 / 推送并打开工作区 diff；历史按 50 条一页滚动加载，展开某条提交看它的文件清单，点文件打开「单提交 diff」页签（页签 id 带提交 hash，同一路径的不同提交可以同时打开对照，重命名 / 移动工作区路径后仍指向同一提交）；分支分组展示本地 / 远端（含 upstream、领先 / 落后计数与最近提交），点本地分支切换（有本地改动时自动 stash 并在切换后恢复）、点远端分支创建跟踪分支；Stash 可应用 / 弹出 / 丢弃（丢弃有二次确认）。多仓库工作区用顶部仓库下拉切换，状态栏显示当前分支、detached HEAD 警告、upstream 与领先 / 落后数、远端徽标（悬停显示脱敏后的 URL），「获取」按钮拉取远端更新、不可用时按钮上直接说明原因（未配置远端 / 多个远端无法确认等）。入口两处：任务检查器的 Git 摘要行点击、变更清单工具栏的展开按钮。
 
 ### 桌面 Electron
