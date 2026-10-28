@@ -6,30 +6,33 @@
         <span v-if="!loading" class="git-count">{{ files.length }}</span>
       </div>
       <div class="git-toolbar-actions">
-        <el-tooltip :content="commitDisabledReason || '提交代码'" placement="top" :show-after="300">
-          <span>
-            <button class="git-action-btn" :disabled="!!commitDisabledReason" aria-label="提交代码" @click="$emit('commit')">
-              <el-icon :size="14" :class="{ spinning: operation === 'commit' }"><Check /></el-icon>
-            </button>
-          </span>
-        </el-tooltip>
-        <el-tooltip :content="pullDisabledReason || '拉取代码'" placement="top" :show-after="300">
-          <span>
-            <button class="git-action-btn" :disabled="!!pullDisabledReason" aria-label="拉取代码" @click="$emit('pull')">
-              <el-icon :size="14" :class="{ spinning: operation === 'pull' }"><Download /></el-icon>
-            </button>
-          </span>
-        </el-tooltip>
-        <el-tooltip :content="pushDisabledReason || '推送代码'" placement="top" :show-after="300">
-          <span>
-            <button class="git-action-btn" :disabled="!!pushDisabledReason" aria-label="推送代码" @click="$emit('push')">
-              <el-icon :size="14" :class="{ spinning: operation === 'push' }"><Upload /></el-icon>
-            </button>
-          </span>
-        </el-tooltip>
-        <button class="git-action-btn" :disabled="loading || !!operation" title="刷新" aria-label="刷新 Git 状态" @click="$emit('refresh')">
-          <el-icon :size="14" :class="{ spinning: loading && !operation }"><Refresh /></el-icon>
-        </button>
+        <!-- 窄视口 + 检查器上下文（有展开入口）时只留展开按钮，操作移师中央 Git 管理器 -->
+        <template v-if="!showExpand || !isMobileDevice()">
+          <el-tooltip v-if="!twoStepCommit" :content="commitDisabledReason || '提交代码'" placement="top" :show-after="300">
+            <span>
+              <button class="git-action-btn" :disabled="!!commitDisabledReason" aria-label="提交代码" @click="$emit('commit')">
+                <el-icon :size="14" :class="{ spinning: operation === 'commit' }"><Check /></el-icon>
+              </button>
+            </span>
+          </el-tooltip>
+          <el-tooltip :content="pullDisabledReason || '拉取代码'" placement="top" :show-after="300">
+            <span>
+              <button class="git-action-btn" :disabled="!!pullDisabledReason" aria-label="拉取代码" @click="$emit('pull')">
+                <el-icon :size="14" :class="{ spinning: operation === 'pull' }"><Download /></el-icon>
+              </button>
+            </span>
+          </el-tooltip>
+          <el-tooltip :content="pushDisabledReason || '推送代码'" placement="top" :show-after="300">
+            <span>
+              <button class="git-action-btn" :disabled="!!pushDisabledReason" aria-label="推送代码" @click="$emit('push')">
+                <el-icon :size="14" :class="{ spinning: operation === 'push' }"><Upload /></el-icon>
+              </button>
+            </span>
+          </el-tooltip>
+          <button class="git-action-btn" :disabled="loading || !!operation" title="刷新" aria-label="刷新 Git 状态" @click="$emit('refresh')">
+            <el-icon :size="14" :class="{ spinning: loading && !operation }"><Refresh /></el-icon>
+          </button>
+        </template>
         <el-tooltip v-if="showExpand" content="在中央 Tab 打开 Git 管理器" placement="top" :show-after="300">
           <span>
             <button class="git-action-btn" aria-label="打开 Git 管理器" @click="$emit('expand')">
@@ -38,6 +41,30 @@
           </span>
         </el-tooltip>
       </div>
+    </div>
+
+    <!-- 两步提交（中央 Git 管理器）：提交信息输入框 + LLM 生成 + 提交按钮，替代工具栏的一步 ✓ -->
+    <div v-if="twoStepCommit && !error && files.length > 0" class="git-commit-box">
+      <div class="git-commit-input-row">
+        <textarea
+          class="git-commit-input"
+          :value="commitMessage"
+          rows="3"
+          placeholder="提交信息（可用右侧按钮让 LLM 生成，之后可自由编辑）"
+          @input="emit('update:commit-message', ($event.target as HTMLTextAreaElement).value)"
+        />
+        <el-tooltip :content="generateDisabledReason || 'LLM 生成提交信息'" placement="top" :show-after="300">
+          <span>
+            <button class="git-commit-generate" :disabled="!!generateDisabledReason" aria-label="生成提交信息" @click="emit('generate-commit-message')">
+              <el-icon :size="14" :class="{ spinning: generating }"><MagicStick /></el-icon>
+            </button>
+          </span>
+        </el-tooltip>
+      </div>
+      <button class="git-commit-submit" :disabled="!!commitWithMessageDisabledReason" @click="emit('commit-with-message')">
+        <el-icon :size="14" :class="{ spinning: committing }"><Check /></el-icon>
+        提交
+      </button>
     </div>
 
     <div v-if="error" class="git-state git-error">
@@ -86,7 +113,7 @@
 
 <script setup lang="ts">
 import { computed, reactive, watch } from 'vue'
-import { Check, Download, FullScreen, Refresh, Upload } from '@element-plus/icons-vue'
+import { Check, Download, FullScreen, MagicStick, Refresh, Upload } from '@element-plus/icons-vue'
 import { ElTooltip, ElMessage } from 'element-plus'
 import type { GitChangedFile, GitOperationType, GitTreeNode } from '../../types/git'
 import GitChangeTreeNode from './GitChangeTreeNode.vue'
@@ -96,6 +123,7 @@ import type { WorkspaceFileProvider } from '../../composables/workspace-file-pro
 import DownloadLinkDialog from '../common/DownloadLinkDialog.vue'
 import { isWechatBrowser } from '../../utils/user-agent'
 import { isAndroidCapacitor } from '../../utils/capacitor'
+import { isMobileDevice } from '../../composables/usePanelLayout'
 
 const props = defineProps<{
   files: GitChangedFile[]
@@ -117,6 +145,14 @@ const props = defineProps<{
   provider?: WorkspaceFileProvider | null
   /** 侧边栏 Git 页签展示「展开到中央 Tab」按钮；中央大 Tab 自身不展示 */
   showExpand?: boolean
+  /** 中央 Git 管理器两步提交：显示提交信息框并隐藏工具栏 ✓；侧边栏不传，保持一步提交 */
+  twoStepCommit?: boolean
+  /** 提交信息输入框内容（草稿由父级持有，切仓库 / 提交成功后清空） */
+  commitMessage?: string
+  /** LLM 生成提交信息中（✨ 旋转态） */
+  generating?: boolean
+  /** 两步提交进行中（提交按钮旋转态） */
+  committing?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -124,6 +160,9 @@ const emit = defineEmits<{
   commit: []
   pull: []
   push: []
+  'update:commit-message': [message: string]
+  'generate-commit-message': []
+  'commit-with-message': []
   'open-diff': [file: GitChangedFile]
   'add-file-to-chat': [filePath: string]
   expand: []
@@ -233,6 +272,29 @@ const commitDisabledReason = computed(() => {
   if (props.loading) return '正在读取 Git 状态'
   if (props.error) return 'Git 状态不可用'
   if (props.files.length === 0) return '没有待提交的变更'
+  return ''
+})
+
+/** ✨ 生成：没有可生成的变更时按钮上直接说明原因 */
+const generateDisabledReason = computed(() => {
+  if (props.generating) return '正在生成提交信息…'
+  if (props.committing) return '提交进行中'
+  if (props.operation) return 'Git 操作进行中'
+  if (props.loading) return '正在读取 Git 状态'
+  if (props.error) return 'Git 状态不可用'
+  if (props.files.length === 0) return '没有待提交的变更'
+  return ''
+})
+
+/** 提交按钮：输入框为空时禁用（消息内容不限定格式，只查非空） */
+const commitWithMessageDisabledReason = computed(() => {
+  if (props.committing) return '提交进行中'
+  if (props.generating) return '正在生成提交信息…'
+  if (props.operation) return 'Git 操作进行中'
+  if (props.loading) return '正在读取 Git 状态'
+  if (props.error) return 'Git 状态不可用'
+  if (props.files.length === 0) return '没有待提交的变更'
+  if (!(props.commitMessage ?? '').trim()) return '请先填写提交信息'
   return ''
 })
 
@@ -464,6 +526,88 @@ function buildGitTree(files: GitChangedFile[]): GitTreeNode[] {
   to { transform: rotate(360deg); }
 }
 
+.git-commit-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--aw-divider-soft);
+  flex-shrink: 0;
+}
+
+.git-commit-input-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.git-commit-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 58px;
+  padding: 6px 8px;
+  border: 1px solid var(--aw-hairline);
+  border-radius: var(--aw-radius-sm);
+  background: var(--aw-surface-pearl);
+  color: var(--aw-ink);
+  font-family: var(--aw-font-mono);
+  font-size: var(--aw-text-fine);
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.git-commit-input:focus {
+  outline: none;
+  border-color: var(--aw-primary);
+}
+
+.git-commit-generate {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--aw-btn-height);
+  height: var(--aw-btn-height);
+  border: 1px solid var(--aw-divider-soft);
+  border-radius: var(--aw-radius-sm);
+  background: transparent;
+  color: var(--aw-ink-muted-48);
+  cursor: pointer;
+}
+
+.git-commit-generate:hover:not(:disabled) {
+  background: var(--aw-primary-hover);
+  color: var(--aw-primary);
+}
+
+.git-commit-generate:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+.git-commit-submit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: none;
+  border-radius: var(--aw-radius-sm);
+  background: var(--aw-primary);
+  color: var(--aw-on-primary);
+  font-size: var(--aw-text-caption);
+  cursor: pointer;
+}
+
+.git-commit-submit:hover:not(:disabled) {
+  filter: brightness(0.95);
+}
+
+.git-commit-submit:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .git-state {
   padding: 24px 16px;
   text-align: center;
@@ -496,6 +640,10 @@ function buildGitTree(files: GitChangedFile[]): GitTreeNode[] {
 }
 
 [data-theme="dark"] .git-toolbar {
+  border-bottom-color: var(--aw-hairline);
+}
+
+[data-theme="dark"] .git-commit-box {
   border-bottom-color: var(--aw-hairline);
 }
 

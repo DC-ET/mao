@@ -18,6 +18,7 @@
       <el-icon v-else-if="tab.type === 'chat' || tab.type === 'side_task' || tab.type === 'subagent'" class="tab-icon"><ChatDotRound /></el-icon>
       <el-icon v-else-if="tab.type === 'diff'" class="tab-icon"><DocumentCopy /></el-icon>
       <el-icon v-else-if="tab.type === 'trace'" class="tab-icon"><TrendCharts /></el-icon>
+      <el-icon v-else-if="tab.type === 'git'" class="tab-icon"><Share /></el-icon>
       <el-icon v-else class="tab-icon"><Document /></el-icon>
       <el-tooltip v-if="tab.filePath" :content="tab.filePath" placement="bottom" :show-after="300">
         <span class="tab-title">{{ tab.title }}</span>
@@ -60,7 +61,7 @@
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
-import { ChatDotRound, Document, DocumentCopy, Close, TrendCharts } from '@element-plus/icons-vue'
+import { ChatDotRound, Document, DocumentCopy, Close, Share, TrendCharts } from '@element-plus/icons-vue'
 import type { Tab } from '../../types/file-browser'
 import { shouldDismissContextMenuForScroll } from '../../utils/contextMenuDismiss'
 import { useAgentStore } from '../../stores/agent'
