@@ -6,15 +6,14 @@
       <button :class="['mode-btn', { active: viewMode === 'source' }]" @click="viewMode = 'source'">源码</button>
     </div>
 
-    <div v-if="mode === 'SNAPSHOT' && showSource" ref="diffContainer" class="monaco-diff-container"></div>
-    <div v-else-if="mode === 'SNAPSHOT' && !showSource" class="preview-container" @click="handleMarkdownClick">
+    <div v-if="mode === 'SNAPSHOT' && !showSource" class="preview-container" @click="handleMarkdownClick">
       <MarkdownContent :content="change.afterContent || ''" body-class="markdown-body" />
     </div>
 
-    <div v-else-if="mode === 'PATCH'" class="patch-view">
-      <div v-if="change.patchTruncated" class="diff-notice">Patch 已截断，仅显示前 256 KiB</div>
-      <div ref="patchContainer" class="monaco-patch-container"></div>
-    </div>
+    <template v-else-if="mode !== 'UNSUPPORTED'">
+      <div v-if="mode === 'PATCH' && change.patchTruncated" class="diff-notice">Patch 已截断，仅显示前 256 KiB</div>
+      <div ref="diffContainer" class="monaco-diff-container"></div>
+    </template>
 
     <div v-else class="diff-message">
       <p>{{ unavailableText }}</p>
@@ -27,7 +26,7 @@
 import { computed, inject, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { editor as MonacoEditor } from 'monaco-editor'
 import type { FileChange } from '../../types/chat'
-import { applyMonacoTheme, loadMonaco, themeName } from '../../utils/monaco-loader'
+import { applyMonacoTheme, loadMonaco, themeName, type MonacoModule } from '../../utils/monaco-loader'
 import { monacoLangFromExtension } from '../../utils/monaco-lang'
 import { useTheme } from '../../utils/theme'
 import { useCenterTabs } from '../../composables/useCenterTabs'
@@ -36,6 +35,7 @@ import MarkdownContent from '../common/MarkdownContent.vue'
 import { isExternalMarkdownLink, resolveMarkdownLink } from '../../utils/markdown-link'
 import { isAndroidCapacitor, openExternalUrl } from '../../utils/capacitor'
 import { attachMonacoQuote } from '../../composables/useMonacoQuote'
+import { buildPatchDiffModels } from '../../utils/unified-patch'
 import type { FileRangeQuotePayload } from '../../utils/selection-quote'
 
 const props = defineProps<{
@@ -56,13 +56,10 @@ const { isDark } = useTheme()
 const viewMode = ref<'preview' | 'source'>('preview')
 
 const diffContainer = ref<HTMLElement>()
-const patchContainer = ref<HTMLElement>()
 
 let diffEditor: MonacoEditor.IStandaloneDiffEditor | null = null
-let patchEditor: MonacoEditor.IStandaloneCodeEditor | null = null
 let originalModel: MonacoEditor.ITextModel | null = null
 let modifiedModel: MonacoEditor.ITextModel | null = null
-let patchModel: MonacoEditor.ITextModel | null = null
 let diffUpdateDisposable: { dispose: () => void } | null = null
 let detachQuote: (() => void) | null = null
 // 乱序保护：syncViewer 含多个 await（nextTick/loadMonaco/applyTheme），旧调用可能在
@@ -130,16 +127,45 @@ function revealFirstDiffChange() {
   }
 }
 
-function disposePatchEditor() {
-  patchEditor?.dispose()
-  patchEditor = null
-  patchModel?.dispose()
-  patchModel = null
+function ensureDiffEditor(monaco: MonacoModule): MonacoEditor.IStandaloneDiffEditor {
+  if (!diffEditor) {
+    diffEditor = monaco.editor.createDiffEditor(diffContainer.value!, {
+      theme: themeName(isDark.value),
+      readOnly: true,
+      domReadOnly: true,
+      renderSideBySide: true,
+      automaticLayout: true,
+      minimap: { enabled: false },
+      scrollBeyondLastLine: false,
+      fontSize: 14,
+      lineHeight: 20,
+      fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, 'SF Mono', Menlo, Monaco, monospace",
+      renderLineHighlight: 'none',
+      overviewRulerLanes: 2,
+      contextmenu: true,
+      unicodeHighlight: { ambiguousCharacters: false },
+    })
+  }
+  return diffEditor
 }
 
-function disposeAll() {
-  disposeDiffEditor()
-  disposePatchEditor()
+function setDiffModels(monaco: MonacoModule, original: string, modified: string, language: string) {
+  const editor = ensureDiffEditor(monaco)
+  originalModel?.dispose()
+  modifiedModel?.dispose()
+  originalModel = monaco.editor.createModel(original, language)
+  modifiedModel = monaco.editor.createModel(modified, language)
+  editor.setModel({ original: originalModel, modified: modifiedModel })
+  attachQuoteAction()
+
+  diffUpdateDisposable?.dispose()
+  diffUpdateDisposable = editor.onDidUpdateDiff(() => {
+    revealFirstDiffChange()
+    diffUpdateDisposable?.dispose()
+    diffUpdateDisposable = null
+  })
+  // Diff may already be ready synchronously for small files
+  revealFirstDiffChange()
 }
 
 async function syncViewer() {
@@ -152,80 +178,32 @@ async function syncViewer() {
   if (seq !== syncSeq) return
 
   if (mode.value === 'SNAPSHOT') {
-    disposePatchEditor()
     // 容器不在 DOM 中 = 当前是 Markdown 预览模式（v-if 拆掉了容器）：
     // 必须销毁已有编辑器，否则来回切换预览/源码会残留 Monaco 实例
     if (!diffContainer.value) {
       disposeDiffEditor()
       return
     }
-    const language = monacoLangFromExtension(props.change.path)
-    if (!diffEditor) {
-      diffEditor = monaco.editor.createDiffEditor(diffContainer.value, {
-        theme: themeName(isDark.value),
-        readOnly: true,
-        domReadOnly: true,
-        renderSideBySide: true,
-        automaticLayout: true,
-        minimap: { enabled: false },
-        scrollBeyondLastLine: false,
-        fontSize: 14,
-        lineHeight: 20,
-        fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, 'SF Mono', Menlo, Monaco, monospace",
-        renderLineHighlight: 'none',
-        overviewRulerLanes: 2,
-        contextmenu: true,
-        unicodeHighlight: { ambiguousCharacters: false },
-      })
-    }
-    originalModel?.dispose()
-    modifiedModel?.dispose()
-    originalModel = monaco.editor.createModel(props.change.beforeContent || '', language)
-    modifiedModel = monaco.editor.createModel(props.change.afterContent || '', language)
-    diffEditor.setModel({ original: originalModel, modified: modifiedModel })
-    attachQuoteAction()
-
-    diffUpdateDisposable?.dispose()
-    diffUpdateDisposable = diffEditor.onDidUpdateDiff(() => {
-      revealFirstDiffChange()
-      diffUpdateDisposable?.dispose()
-      diffUpdateDisposable = null
-    })
-    // Diff may already be ready synchronously for small files
-    revealFirstDiffChange()
+    setDiffModels(
+      monaco,
+      props.change.beforeContent || '',
+      props.change.afterContent || '',
+      monacoLangFromExtension(props.change.path),
+    )
     return
   }
 
   if (mode.value === 'PATCH') {
-    disposeDiffEditor()
-    if (!patchContainer.value) return
-    const value = props.change.patchContent || ''
-    if (!patchEditor) {
-      patchModel = monaco.editor.createModel(value, 'diff')
-      patchEditor = monaco.editor.create(patchContainer.value, {
-        model: patchModel,
-        theme: themeName(isDark.value),
-        readOnly: true,
-        domReadOnly: true,
-        minimap: { enabled: false },
-        scrollBeyondLastLine: false,
-        fontSize: 14,
-        lineHeight: 20,
-        fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, 'SF Mono', Menlo, Monaco, monospace",
-        lineNumbers: 'on',
-        automaticLayout: true,
-        renderLineHighlight: 'none',
-        overviewRulerLanes: 0,
-        contextmenu: true,
-        unicodeHighlight: { ambiguousCharacters: false },
-      })
-    } else if (patchModel && patchModel.getValue() !== value) {
-      patchModel.setValue(value)
-    }
+    if (!diffContainer.value) return
+    // patch 只有变更 hunk：按 @@ 头把增删行摆回真实行号、未变更区填空行，
+    // 模型行号即文件行号，行号 / 引用 / 首处变更跳转都与 SNAPSHOT 一致。
+    // 文件多大都只承载 hunk 内的真实行，渲染成本与文件大小无关。
+    const { original, modified } = buildPatchDiffModels(props.change.patchContent || '')
+    setDiffModels(monaco, original, modified, monacoLangFromExtension(props.change.path))
     return
   }
 
-  disposeAll()
+  disposeDiffEditor()
 }
 
 function openCurrentFile() {
@@ -275,7 +253,7 @@ watch(
   { deep: true, flush: 'post', immediate: true },
 )
 
-onBeforeUnmount(disposeAll)
+onBeforeUnmount(disposeDiffEditor)
 </script>
 
 <style scoped>
@@ -289,19 +267,11 @@ onBeforeUnmount(disposeAll)
   position: relative;
 }
 
-.monaco-diff-container,
-.monaco-patch-container {
+.monaco-diff-container {
   flex: 1;
   min-height: 0;
   width: 100%;
   position: relative;
-}
-
-.patch-view {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
 }
 
 .diff-notice {

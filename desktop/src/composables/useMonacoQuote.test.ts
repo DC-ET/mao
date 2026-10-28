@@ -131,4 +131,20 @@ describe('attachMonacoQuote', () => {
       snippet: 'import os\n',
     }))
   })
+
+  it('全空行选区不产出引用（PATCH 模式未变更区是填充空行）', () => {
+    const fake = fakeEditor()
+    const onQuote = vi.fn()
+    detach = attachMonacoQuote({
+      editor: fake.editor,
+      getFilePath: () => 'big.log',
+      getCapturedRevision: () => 0,
+      onQuote,
+    })
+    // LINES[1] 是空行
+    fake.select(2, 2)
+    fake.fire('selection')
+    fake.button()?.click()
+    expect(onQuote).not.toHaveBeenCalled()
+  })
 })

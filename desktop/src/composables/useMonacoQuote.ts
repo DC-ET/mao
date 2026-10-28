@@ -148,6 +148,8 @@ function buildQuote(
   const parts: string[] = []
   for (let line = range.start; line <= range.end; line++) parts.push(model.getLineContent(line))
   const text = parts.join('\n')
+  // PATCH 模式未变更区是填充空行：全空选区引用出来没有意义
+  if (text.trim() === '') return null
   return {
     filePath,
     lineStart: range.start,

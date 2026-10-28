@@ -1,6 +1,6 @@
 import { ensureMonacoEnvironment } from './monaco-env'
 
-type MonacoModule = typeof import('monaco-editor')
+export type MonacoModule = typeof import('monaco-editor')
 
 let monacoModule: MonacoModule | null = null
 let themesDefined = false
