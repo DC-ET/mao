@@ -17,7 +17,6 @@ import type { DockerSendBytesBridge } from './harness/container/read-bytes-bridg
 import type { DingtalkMediaSendSupport } from './harness/tool/impl/dingtalk-tools.js';
 import type { AgentDefinitionRegistry } from './harness/delegate/agent-definition-registry.js';
 import type { SubagentExecutionMapper } from './harness/delegate/subagent-execution.mapper.js';
-import type { SubagentInvocationService } from './harness/delegate/subagent-invocation.service.js';
 import type { LocalToolSessionRegistry } from './harness/local/local-tool-session-registry.js';
 import type { SubAgentVisibilityService } from './harness/delegate/subagent-visibility-service.js';
 import type { BackgroundSubagentManager } from './harness/delegate/background-subagent-manager.js';
@@ -110,7 +109,6 @@ export interface HarnessEngineDeps {
   definitionRegistry: AgentDefinitionRegistry;
   holder: { harness?: HarnessService; loop?: AgentLoop };
   subagentMapper: SubagentExecutionMapper;
-  subagentInvocation: SubagentInvocationService;
   localToolSessions: LocalToolSessionRegistry;
   visibility: SubAgentVisibilityService;
   backgroundSubagentManager: BackgroundSubagentManager;
@@ -273,7 +271,6 @@ export function assembleHarnessEngine(deps: HarnessEngineDeps): HarnessEngineRes
     get harnessService() { return d.holder.harness!; },
     get agentLoop() { return d.holder.loop!; },
     subagentExecutionMapper: d.subagentMapper,
-    subagentInvocationService: d.subagentInvocation,
     localToolSessionRegistry: d.localToolSessions,
     visibilityService: d.visibility,
     backgroundSubagentManager: d.backgroundSubagentManager,

@@ -809,7 +809,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     userRepo, ecpInjector, larkUatInjector, settingService, runtimeResolver, modelService,
     wechatBridges, feishuMessageService, feishuMessageRepository, getFeishuClient,
     sendBytesBridge, dingtalkMediaHolder, definitionRegistry, holder, subagentMapper,
-    subagentInvocation, localToolSessions, visibility, backgroundSubagentManager,
+    localToolSessions, visibility, backgroundSubagentManager,
     messageRepo, compactionSvc, embedPageToolRegistry, mcpToolsRegistry, routingMcpClient,
     httpToolService, httpApiExecutor, llmAdapter, promptEngine, contextManager,
     compactionService, compactionArchiveService, compactionConfig, historyLoader,

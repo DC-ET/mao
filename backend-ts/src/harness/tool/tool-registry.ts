@@ -20,7 +20,6 @@ import type { AgentDefinitionRegistry } from '../delegate/agent-definition-regis
 import type { HarnessService } from '../core/harness-service.js';
 import type { AgentLoop } from '../core/agent-loop.js';
 import type { SubagentExecutionMapper } from '../delegate/subagent-execution.mapper.js';
-import type { SubagentInvocationService } from '../delegate/subagent-invocation.service.js';
 import type { LocalToolSessionRegistry } from '../local/local-tool-session-registry.js';
 import type { SubAgentVisibilityService } from '../delegate/subagent-visibility-service.js';
 import type { BackgroundSubagentManager } from '../delegate/background-subagent-manager.js';
@@ -101,7 +100,6 @@ export interface DefaultToolRegistryDeps {
   harnessService: HarnessService;
   agentLoop: AgentLoop;
   subagentExecutionMapper: SubagentExecutionMapper;
-  subagentInvocationService?: SubagentInvocationService;
   localToolSessionRegistry: LocalToolSessionRegistry;
   visibilityService: SubAgentVisibilityService;
   backgroundSubagentManager: BackgroundSubagentManager;

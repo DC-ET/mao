@@ -1033,7 +1033,7 @@ export class BackgroundSubagentManager {
     const ctx = await this.deps.harnessService().buildContext(childSession.id!);
     if (definition.systemPromptOverride) ctx.systemPrompt = definition.systemPromptOverride;
     ctx.agentName = definition.name + '-agent';
-    const excluded = new Set(['delegate', 'delegate_followup', ...BACKGROUND_SUBAGENT_TOOLS, ...SUBAGENT_EXCLUDED_TOOLS, ...(definition.excludedToolNames ?? [])]);
+    const excluded = new Set([...BACKGROUND_SUBAGENT_TOOLS, ...SUBAGENT_EXCLUDED_TOOLS, ...(definition.excludedToolNames ?? [])]);
     const allowed = definition.allowedToolNames;
     ctx.tools = ctx.tools.filter((t) => {
       if (excluded.has(t.getName())) return false;

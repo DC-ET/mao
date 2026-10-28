@@ -1,3 +1,10 @@
+## 0.0.374 (2026-10-28)
+
+### 后端
+- **移除已废弃的子代理工具 `delegate` / `delegate_followup` 及配套代码**：二者早已不在注册表中（后台子代理 `spawn_subagent` 系列上线后停用），本次删除实现、测试与残留装配（含 `SubagentInvocationService.createDelegate`、工具注册表死依赖、子代理上下文排除集合中的旧名）。
+- **修复「会话轨迹」子代理会话链接对新工具失效**：轨迹页收集子代理链接的识别集合原先只含旧工具名，`spawn_subagent` / `subagent_followup` 产生的委派不会显示子代理会话链接；现将新旧工具名一并识别（旧名保留以兼容历史会话）。
+- 说明：`delegate` / `delegate_followup` 的中文展示映射与结果摘要分支保留，老会话历史仍正常显示；旧版同步委派（invocationType=DELEGATE）只存在于历史数据，其恢复补记录逻辑保持不变。
+
 ## 0.0.373 (2026-10-28)
 
 ### 后端

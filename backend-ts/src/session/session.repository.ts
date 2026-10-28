@@ -341,7 +341,7 @@ export class SessionRepository {
     return Number(result.affectedRows ?? 0);
   }
 
-  /** Matches DelegateFollowupTool Java CAS: phase <> 'RUNNING' OR phase IS NULL. */
+  /** 子代理追问的 CAS 语义：phase <> 'RUNNING' OR phase IS NULL。 */
   claimRunningIfIdle(sessionId: number): Promise<number> {
     return this.updateWhere(
       { phase: 'RUNNING' },

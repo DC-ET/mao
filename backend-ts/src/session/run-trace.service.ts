@@ -89,7 +89,8 @@ interface RunInput {
 }
 
 const AGENT_SCENE = 'agent';
-const DELEGATE_TOOLS = new Set(['delegate', 'delegate_followup']);
+/** 委派类工具：delegate / delegate_followup 为旧版（仅历史会话出现），spawn_subagent / subagent_followup 为现役后台子代理。 */
+const DELEGATE_TOOLS = new Set(['delegate', 'delegate_followup', 'spawn_subagent', 'subagent_followup']);
 
 export class RunTraceService {
   constructor(

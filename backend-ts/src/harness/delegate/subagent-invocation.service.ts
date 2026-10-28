@@ -8,12 +8,6 @@ import { SubagentExecutionMapper } from './subagent-execution.mapper.js';
 export class SubagentInvocationService {
   constructor(private readonly db: Db) {}
 
-  async createDelegate(
-    parent: Session, agentType: string, task: string, title: string, parentToolCallId: string,
-  ): Promise<{ child: Session; execution: SubagentExecution }> {
-    return this.create(parent, agentType, task, title, parentToolCallId, 'DELEGATE');
-  }
-
   async createBackground(
     parent: Session, agentType: string, task: string, title: string, parentToolCallId: string,
   ): Promise<{ child: Session; execution: SubagentExecution }> {
