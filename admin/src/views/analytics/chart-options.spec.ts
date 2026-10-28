@@ -5,6 +5,7 @@ import {
   formatCost,
   formatTokens,
   qualityTrendOption,
+  trafficTrendOption,
   type TrendPoint
 } from './chart-options'
 
@@ -140,6 +141,56 @@ interface QualityOptionLike {
   yAxis: Array<{ max?: number; axisLabel: { formatter: unknown } }>
   tooltip: { formatter: (params: unknown) => string }
 }
+
+describe('trafficTrendOption', () => {
+  const trends: TrendPoint[] = [
+    {
+      date: '2026-10-27T09:00:00',
+      sessions: 1,
+      messages: 180,
+      chatTokens: 0,
+      backgroundTokens: 0,
+      totalTokens: 0,
+      backgroundCalls: 0
+    },
+    {
+      date: '2026-10-27T10:00:00',
+      sessions: 0,
+      messages: 40,
+      chatTokens: 0,
+      backgroundTokens: 0,
+      totalTokens: 0,
+      backgroundCalls: 0
+    }
+  ]
+
+  it('会话走左轴实线，消息走右轴虚线，两轴都不设 max 各自缩放', () => {
+    const option = trafficTrendOption(trends) as unknown as QualityOptionLike
+    const series = option.series
+    expect(series.map((s) => s.name)).toEqual(['会话', '消息'])
+    expect(series[0].yAxisIndex == null).toBe(true)
+    expect(series[0].lineStyle?.type).toBeUndefined()
+    expect(series[1].yAxisIndex).toBe(1)
+    expect(series[1].lineStyle?.type).toBe('dashed')
+    expect(series[0].data).toEqual([1, 0])
+    expect(series[1].data).toEqual([180, 40])
+    // 量级差一个数量级时同轴会互相压扁，左右轴都不设 max，按各自量级自动缩放
+    const [left, right] = option.yAxis
+    expect(left.max).toBeUndefined()
+    expect(right.max).toBeUndefined()
+  })
+
+  it('tooltip 两行都给原始计数值', () => {
+    const option = trafficTrendOption(trends) as unknown as QualityOptionLike
+    const html = option.tooltip.formatter([
+      { dataIndex: 0, seriesName: '会话', value: 1, marker: '<i></i>' },
+      { dataIndex: 0, seriesName: '消息', value: 180, marker: '<i></i>' }
+    ])
+    expect(html).toContain('2026-10-27T09:00:00')
+    expect(html).toContain('会话')
+    expect(html).toContain('180')
+  })
+})
 
 describe('costTrendOption', () => {
   const trends: TrendPoint[] = [

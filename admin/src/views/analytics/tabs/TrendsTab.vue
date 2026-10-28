@@ -13,19 +13,10 @@
         <template #header>
           <div class="card-header">
             <span class="chart-title">流量</span>
-            <span class="card-hint">会话与消息分图展示，避免双轴误读</span>
+            <span class="card-hint">会话（左轴）与消息（右轴，虚线），量级差大时双轴各自缩放</span>
           </div>
         </template>
-        <el-row :gutter="16">
-          <el-col :xs="24" :md="12">
-            <div class="mini-title">会话</div>
-            <BaseChart :option="sessionTrendOption" :empty="!hasTraffic" :height="260" />
-          </el-col>
-          <el-col :xs="24" :md="12">
-            <div class="mini-title">消息</div>
-            <BaseChart :option="messageTrendOption" :empty="!hasTraffic" :height="260" />
-          </el-col>
-        </el-row>
+        <BaseChart :option="trafficTrendChartOption" :empty="!hasTraffic" :height="260" />
       </el-card>
 
       <el-card class="block">
@@ -116,8 +107,8 @@ import {
   formatCost,
   isHourlyTrendDate,
   qualityTrendOption,
-  seriesTrendOption,
   tokenTrendOption,
+  trafficTrendOption,
   trendCategoryLabels,
   trendDataZoom,
   type TrendPoint
@@ -155,12 +146,7 @@ const hasQuality = computed(() =>
   )
 )
 
-const sessionTrendOption = computed(() =>
-  seriesTrendOption(trends.value, [{ key: 'sessions', name: '会话', color: CHART_PALETTE[0] }])
-)
-const messageTrendOption = computed(() =>
-  seriesTrendOption(trends.value, [{ key: 'messages', name: '消息', color: CHART_PALETTE[1] }])
-)
+const trafficTrendChartOption = computed(() => trafficTrendOption(trends.value))
 const tokenTrendChartOption = computed(() => tokenTrendOption(trends.value))
 const hasCost = computed(() => trends.value.some((t) => (t.cost || 0) > 0))
 const costTrendChartOption = computed(() => costTrendOption(trends.value))
@@ -267,12 +253,6 @@ export default { name: 'TrendsTab' }
   font-size: 12px;
   color: var(--mao-muted);
   margin-bottom: 0;
-}
-
-.mini-title {
-  font-size: 13px;
-  color: var(--mao-muted);
-  margin-bottom: 4px;
 }
 
 .quality-strip {
