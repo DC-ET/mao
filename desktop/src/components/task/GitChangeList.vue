@@ -50,11 +50,11 @@
           class="git-commit-input"
           :value="commitMessage"
           rows="3"
-          placeholder="提交信息（可用右侧按钮让 LLM 生成，之后可自由编辑）"
+          placeholder="提交信息（可用左上角按钮让 LLM 生成，之后可自由编辑）"
           @input="emit('update:commit-message', ($event.target as HTMLTextAreaElement).value)"
         />
         <el-tooltip :content="generateDisabledReason || 'LLM 生成提交信息'" placement="top" :show-after="300">
-          <span>
+          <span class="git-commit-generate-wrap">
             <button class="git-commit-generate" :disabled="!!generateDisabledReason" aria-label="生成提交信息" @click="emit('generate-commit-message')">
               <el-icon :size="14" :class="{ spinning: generating }"><MagicStick /></el-icon>
             </button>
@@ -538,6 +538,7 @@ function buildGitTree(files: GitChangedFile[]): GitTreeNode[] {
 }
 
 .git-commit-input-row {
+  position: relative;
   display: flex;
   align-items: flex-start;
   gap: 6px;
@@ -547,7 +548,7 @@ function buildGitTree(files: GitChangedFile[]): GitTreeNode[] {
   flex: 1;
   min-width: 0;
   min-height: 58px;
-  padding: 6px 8px;
+  padding: 38px 8px 6px; /* 顶部为框内左上角悬浮的 ✨ 按钮预留 */
   border: 1px solid var(--aw-hairline);
   border-radius: var(--aw-radius-sm);
   background: var(--aw-surface-pearl);
@@ -563,6 +564,15 @@ function buildGitTree(files: GitChangedFile[]): GitTreeNode[] {
   border-color: var(--aw-primary);
 }
 
+/* tooltip 以 span 为锚点：绝对定位加在包裹层上，避免锚点漂到输入框右缘 */
+.git-commit-generate-wrap {
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  z-index: 1;
+  display: inline-flex;
+}
+
 .git-commit-generate {
   flex-shrink: 0;
   display: inline-flex;
@@ -572,7 +582,7 @@ function buildGitTree(files: GitChangedFile[]): GitTreeNode[] {
   height: var(--aw-btn-height);
   border: 1px solid var(--aw-divider-soft);
   border-radius: var(--aw-radius-sm);
-  background: transparent;
+  background: var(--aw-surface-pearl);
   color: var(--aw-ink-muted-48);
   cursor: pointer;
 }
