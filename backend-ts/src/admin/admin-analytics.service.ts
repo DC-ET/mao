@@ -94,6 +94,11 @@ export interface LlmCallDailyRow {
   cachedTokens: number;
   callTokens: number;
   cost: number;
+  /** 流式行首字耗时合计（ms）与非空行数：平均首字耗时 = sum / count，口径同模型页 */
+  firstTokenMsSum: number;
+  firstTokenMsCount: number;
+  /** 全部调用总耗时合计（ms）：平均总耗时 = sum / callCount */
+  durationMsSum: number;
 }
 
 export interface LlmCallNamedRow {
@@ -426,7 +431,10 @@ export class AdminAnalyticsDbStore implements AdminAnalyticsStore {
               COALESCE(SUM(prompt_tokens), 0) AS promptTokens,
               COALESCE(SUM(cached_tokens), 0) AS cachedTokens,
               COALESCE(SUM(total_tokens), 0) AS callTokens,
-              COALESCE(SUM(cost_micros), 0) / 1000000 AS cost
+              COALESCE(SUM(cost_micros), 0) / 1000000 AS cost,
+              COALESCE(SUM(CASE WHEN first_token_ms IS NOT NULL THEN first_token_ms ELSE 0 END), 0) AS firstTokenMsSum,
+              COALESCE(SUM(CASE WHEN first_token_ms IS NOT NULL THEN 1 ELSE 0 END), 0) AS firstTokenMsCount,
+              COALESCE(SUM(duration_ms), 0) AS durationMsSum
        FROM llm_call
        WHERE ${sql}
        GROUP BY ${bucket}`,
@@ -1259,6 +1267,9 @@ export class AdminAnalyticsService {
     const cachedTokens = bucketMap(callRows, (r) => r.day, (r) => r.cachedTokens, granularity);
     // 成本唯一口径 = llm_call（决策 13）；chat/background 的 message/llm_usage 无成本列，不参与
     const callCost = bucketMap(callRows, (r) => r.day, (r) => r.cost, granularity);
+    const firstTokenMsSum = bucketMap(callRows, (r) => r.day, (r) => r.firstTokenMsSum, granularity);
+    const firstTokenMsCount = bucketMap(callRows, (r) => r.day, (r) => r.firstTokenMsCount, granularity);
+    const durationMsSum = bucketMap(callRows, (r) => r.day, (r) => r.durationMsSum, granularity);
 
     const rows: Array<Record<string, unknown>> = [];
     for (const date of buildTrendBucketKeys(range, granularity)) {
@@ -1270,6 +1281,9 @@ export class AdminAnalyticsService {
       const callTok = callTokens.get(date) ?? 0;
       const prompt = promptTokens.get(date) ?? 0;
       const cached = cachedTokens.get(date) ?? 0;
+      const firstTokSum = firstTokenMsSum.get(date) ?? 0;
+      const firstTokCount = firstTokenMsCount.get(date) ?? 0;
+      const durationSum = durationMsSum.get(date) ?? 0;
       rows.push({
         date,
         sessions: sessions.get(date) ?? 0,
@@ -1288,6 +1302,10 @@ export class AdminAnalyticsService {
         // 取消不是失败：分母剔除取消，成功率不再被用户主动停止拉低
         callSuccessRate: calls - cancels > 0 ? Math.round(((calls - fails - cancels) / (calls - cancels)) * 1000) / 10 : null,
         cacheHitRate: prompt > 0 ? Math.round((cached / prompt) * 1000) / 10 : null,
+        // 平均耗时口径与模型页一致：首字均值只统计流式行（first_token_ms 非空），总耗时分母为全部调用；
+        // 桶内无调用 / 无流式调用时为 null，前端断线不画 0
+        avgFirstTokenMs: firstTokCount > 0 ? Math.round(firstTokSum / firstTokCount) : null,
+        avgDurationMs: calls > 0 ? Math.round(durationSum / calls) : null,
       });
     }
     return rows;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatCompact, formatCost, formatTokens } from './chart-options'
+import { formatCompact, formatCost, formatTokens, qualityTrendOption, type TrendPoint } from './chart-options'
 
 /**
  * Token 紧凑展示全站统一保留两位小数（0.0.302：从一位改为两位，覆盖图表与各 Tab）。
@@ -58,3 +58,78 @@ describe('formatCost', () => {
     expect(formatCost(Number.NaN)).toBe('-')
   })
 })
+
+describe('qualityTrendOption', () => {
+  const trends: TrendPoint[] = [
+    {
+      date: '2026-10-27',
+      sessions: 1,
+      messages: 2,
+      chatTokens: 0,
+      backgroundTokens: 0,
+      totalTokens: 0,
+      backgroundCalls: 0,
+      callSuccessRate: 100,
+      cacheHitRate: 10,
+      avgDurationMs: 4000,
+      avgFirstTokenMs: 800,
+    },
+    {
+      date: '2026-10-28',
+      sessions: 0,
+      messages: 0,
+      chatTokens: 0,
+      backgroundTokens: 0,
+      totalTokens: 0,
+      backgroundCalls: 0,
+      callSuccessRate: null,
+      cacheHitRate: null,
+      avgDurationMs: null,
+      avgFirstTokenMs: null,
+    },
+  ]
+
+  it('四条线：百分比走左轴，平均耗时挂右轴并用虚线区分单位', () => {
+    const option = qualityTrendOption(trends) as unknown as QualityOptionLike
+    const series = option.series
+    expect(series.map((s) => s.name)).toEqual(['成功率%', '缓存命中率%', '平均总耗时', '平均首字耗时'])
+    // 前两条挂默认左轴，后两条显式 yAxisIndex=1；右轴不设 max，按 ms 量级自动缩放
+    expect(series.slice(0, 2).every((s) => s.yAxisIndex == null)).toBe(true)
+    expect(series.slice(2).every((s) => s.yAxisIndex === 1 && s.lineStyle?.type === 'dashed')).toBe(true)
+    expect(series[2].data).toEqual([4000, null])
+    expect(series[3].data).toEqual([800, null])
+    const [left, right] = option.yAxis
+    expect(left.max).toBe(100)
+    expect(left.axisLabel.formatter).toBe('{value}%')
+    expect(right.max).toBeUndefined()
+    expect((right.axisLabel.formatter as (v: number) => string)(2500)).toBe('2.50s')
+  })
+
+  it('tooltip 按系列给单位：百分比带 %、耗时折算 ms/s，null 行不出现', () => {
+    const option = qualityTrendOption(trends) as unknown as QualityOptionLike
+    const html = option.tooltip.formatter([
+      { dataIndex: 0, seriesName: '成功率%', value: 100, marker: '<i></i>' },
+      { dataIndex: 0, seriesName: '缓存命中率%', value: 10, marker: '<i></i>' },
+      { dataIndex: 0, seriesName: '平均总耗时', value: 4000, marker: '<i></i>' },
+      { dataIndex: 0, seriesName: '平均首字耗时', value: 800, marker: '<i></i>' },
+    ])
+    expect(html).toContain('100%')
+    expect(html).toContain('10%')
+    expect(html).toContain('4.00s')
+    expect(html).toContain('800ms')
+    expect(html).toContain('2026-10-27')
+
+    // 整桶无调用（全 null）时只剩日期，不渲染空行
+    const nullOnly = option.tooltip.formatter([
+      { dataIndex: 1, seriesName: '成功率%', value: null, marker: '<i></i>' },
+      { dataIndex: 1, seriesName: '平均总耗时', value: null, marker: '<i></i>' },
+    ])
+    expect(nullOnly).toBe('2026-10-28')
+  })
+})
+
+interface QualityOptionLike {
+  series: Array<{ name: string; yAxisIndex?: number; lineStyle?: { type?: string }; data: unknown[] }>
+  yAxis: Array<{ max?: number; axisLabel: { formatter: unknown } }>
+  tooltip: { formatter: (params: unknown) => string }
+}

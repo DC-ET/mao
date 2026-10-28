@@ -68,6 +68,9 @@ function buildStore() {
         promptTokens: 1000,
         cachedTokens: 200,
         callTokens: 1500,
+        firstTokenMsSum: 9000,
+        firstTokenMsCount: 8,
+        durationMsSum: 50000,
       },
     ]),
     selectLlmCallStatsByModel: vi.fn(async () => [
@@ -412,9 +415,27 @@ describe('AdminAnalyticsService', () => {
       callTokens: 1500,
       callSuccessRate: 90,
       cacheHitRate: 20,
+      // 平均耗时：首字 = 9000/8（只算流式行），总耗时 = 50000/10（全部调用）
+      avgFirstTokenMs: 1125,
+      avgDurationMs: 5000,
     });
     expect(result.periodTotals).toMatchObject({ callCount: 10, callFailCount: 1, callTokens: 1500 });
     expect(result.callQuality).toMatchObject({ successRate: 90, cacheHitRate: 20, retryRatio: 20 });
+  });
+
+  it('trendsScope 平均耗时：无流式行首字为 null，无调用补零桶整体为 null', async () => {
+    const statistics = { getOverview: vi.fn(async () => ({})) };
+    const store = buildStore();
+    // 当天 3 次调用全是非流式（first_token_ms 缺失），首字均值无从计算
+    store.selectDailyLlmCallStats = vi.fn(async () => [
+      { day: today, callCount: 3, failCount: 0, promptTokens: 30, cachedTokens: 0, callTokens: 30, firstTokenMsSum: 0, firstTokenMsCount: 0, durationMsSum: 600 },
+    ]);
+    const service = new AdminAnalyticsService(statistics as never, store as never);
+
+    const result = (await service.trendsScope(7)) as Record<string, any>;
+    expect(result.trends.at(-1)).toMatchObject({ avgFirstTokenMs: null, avgDurationMs: 200 });
+    // 补零桶（无调用）两个均值都是 null，前端断线而不是画 0
+    expect(result.trends[0]).toMatchObject({ avgFirstTokenMs: null, avgDurationMs: null });
   });
 
   it('sessionsScopeAddsCallQualityPanelAndFailTop', async () => {
@@ -475,7 +496,7 @@ describe('AdminAnalyticsService', () => {
       callTokens: 1500,
     }));
     store.selectDailyLlmCallStats = vi.fn(async () => [
-      { day: today, callCount: 10, failCount: 1, cancelledCount: 2, promptTokens: 1000, cachedTokens: 0, callTokens: 1500 },
+      { day: today, callCount: 10, failCount: 1, cancelledCount: 2, promptTokens: 1000, cachedTokens: 0, callTokens: 1500, firstTokenMsSum: 0, firstTokenMsCount: 0, durationMsSum: 30000 },
     ]);
     store.selectLlmCallStatsByModel = vi.fn(async () => [
       {
@@ -735,7 +756,7 @@ describe('AdminAnalyticsDbStore', () => {
     store.selectDailyMessageStats = vi.fn(async () => [{ day: hourKey, count: 8, tokens: 800 }]);
     store.selectDailyUsageStats = vi.fn(async () => [{ day: hourKey, totalTokens: 200, callCount: 3 }]);
     store.selectDailyLlmCallStats = vi.fn(async () => [
-      { day: hourKey, callCount: 10, failCount: 1, promptTokens: 1000, cachedTokens: 200, callTokens: 1500 },
+      { day: hourKey, callCount: 10, failCount: 1, promptTokens: 1000, cachedTokens: 200, callTokens: 1500, firstTokenMsSum: 9000, firstTokenMsCount: 8, durationMsSum: 50000 },
     ]);
     const service = new AdminAnalyticsService(statistics as never, store as never);
 
@@ -808,7 +829,7 @@ describe('AdminAnalyticsService 成本聚合（§5.2 / 决策 13：成本唯一�
     return {
       ...base,
       selectDailyLlmCallStats: vi.fn(async () => [
-        { day: today, callCount: 10, failCount: 1, promptTokens: 1000, cachedTokens: 200, callTokens: 1500, cost: 3.2 },
+        { day: today, callCount: 10, failCount: 1, promptTokens: 1000, cachedTokens: 200, callTokens: 1500, cost: 3.2, firstTokenMsSum: 9000, firstTokenMsCount: 8, durationMsSum: 50000 },
       ]),
       selectLlmCallStatsByModel: vi.fn(async () => [
         {
@@ -861,7 +882,7 @@ describe('AdminAnalyticsService 成本聚合（§5.2 / 决策 13：成本唯一�
   it('成本缺列（NULL 行）时归一为 0，不产出 NaN', async () => {
     const service = new AdminAnalyticsService({ getOverview: vi.fn(async () => ({})) } as never, buildCostStore({
       selectDailyLlmCallStats: vi.fn(async () => [
-        { day: today, callCount: 1, failCount: 0, promptTokens: 10, cachedTokens: 0, callTokens: 10, cost: null },
+        { day: today, callCount: 1, failCount: 0, promptTokens: 10, cachedTokens: 0, callTokens: 10, cost: null, firstTokenMsSum: 0, firstTokenMsCount: 0, durationMsSum: 120 },
       ]),
       selectLlmCallQualitySummary: vi.fn(async () => ({
         callCount: 1, successCount: 1, failCount: 0, retryCallCount: 0,

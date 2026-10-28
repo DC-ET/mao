@@ -11,7 +11,7 @@
 | 命令 | 对应管理后台 | 说明 |
 |------|--------------|------|
 | `analytics overview` | 总览 Tab | 运行态（实时/窗口）+ 窗口合计 + 环比 + Token spark + 构成与规则洞察 |
-| `analytics trends` | 趋势 Tab | 按天或按小时的序列（会话/消息/Token/后台调用）；`--granularity hour\|day`，默认 day |
+| `analytics trends` | 趋势 Tab | 按天或按小时的序列（会话/消息/Token/后台调用/调用质量/平均耗时）；`--granularity hour\|day`，默认 day |
 | `analytics models` | 模型 Tab | 模型用量聚合 |
 | `analytics users` | 用户 Tab | 用户活跃排行/明细，支持 `--limit` |
 | `analytics agents` | Agent Tab | Agent 排行，支持 `--limit` |
@@ -44,6 +44,7 @@
 - 调用结果三态（0.0.294 起）：`failCount` / `callFailCount` 只数**纯失败**，用户取消（`error_message` 含 `Cancelled by user`）单列 `cancelledCount` / `callCancelledCount`；`successRate` / `callSuccessRate` 分母为 `callCount - cancelledCount`（取消不是失败，也不是成功）。历史数据同样按此口径派生，无迁移
 - 成本口径（0.0.243 起）：所有 `cost` / `totalCost` 字段均为**成本单位**（与模型价格填写口径一致），后端为 `COALESCE(SUM(llm_call.cost_micros),0)/1e6`。模型未配价格、或价格缺一个方向时该次调用成本为 NULL、不计入合计（不按 0 计），因此「没配价格的模型」在成本口径下等于没有开销，不等于免费。`connectivity_test` 等 scene 默认排除（`excludeConnectivity=true`）。子代理与边路任务会话的成本同样计入所属用户 / Agent
 - 输出速度口径（0.0.364 起）：单次调用口径为「输出 tokens ÷ 解码耗时」（解码耗时 = `duration_ms - first_token_ms`），与桌面端「我的用量」明细列一致。`avgThroughput`（模型 Tab）是该模型窗口内加权平均（Σ输出 ÷ Σ解码秒），`throughputP50` / `throughputP95`（会话 Tab 质量项）是可解码调用的分位；非流式调用（`first_token_ms` 为空）、首字晚于结束、解码为 0 或输出为 0 的行一律不计入，窗口内没有可解码调用时显示「-」
+- 平均耗时口径（0.0.371 起）：趋势桶（`trends[]`）的 `avgDurationMs` = Σ`llm_call.duration_ms` ÷ 桶内调用数（含取消，与模型页「耗时均值」同口径），`avgFirstTokenMs` = Σ`llm_call.first_token_ms` ÷ 桶内流式调用数（非流式调用没有首字输出，不进分子也不进分母）。桶内无调用时两个字段均为 null，桶内无流式调用时只有 `avgFirstTokenMs` 为 null；管理后台质量图把这两条线与成功率 / 缓存命中率画在一起（百分比走左轴、耗时走右轴 ms），null 断线不画 0
 - 会话结局：窗口内**创建**的会话按 phase 分布；`livePhases` / `overview.runningSessions` 等为实时快照，不与窗口分布混算
 - 环比色约定：红=上升、绿=下降（纯方向口径，不区分指标的好坏）
 - 运行轨迹三个榜（`run-trace`）同为窗口内新增；前两个榜默认只统计 `scene=agent` 的轮（Agent 主循环），工具失败率全局按类型聚合、按比例排序（分母不同，直接比次数会让小样本工具霸榜）
@@ -85,7 +86,7 @@
 | 字段 | 说明 |
 |------|------|
 | `granularity` | `day` 或 `hour`。`date` 在 day 下为 `YYYY-MM-DD`，在 hour 下为 `YYYY-MM-DD HH:00` |
-| `trends[]` | 按粒度补零：`date` / `sessions` / `messages` / `chatTokens` / `backgroundTokens` / `totalTokens` / `backgroundCalls` / `cost` |
+| `trends[]` | 按粒度补零：`date` / `sessions` / `messages` / `chatTokens` / `backgroundTokens` / `totalTokens` / `backgroundCalls`，以及 llm_call 列 `callCount` / `callFailCount` / `callCancelledCount` / `callTokens` / `promptTokens` / `cachedTokens` / `cost` / `callSuccessRate` / `cacheHitRate` / `avgDurationMs` / `avgFirstTokenMs`（后两项为平均总耗时 / 平均首字耗时，单位 ms，口径见下） |
 | `periodTotals` / `previousTotals` | 同 overview 口径 |
 
 ### models

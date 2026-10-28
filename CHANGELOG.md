@@ -2,6 +2,10 @@
 
 ### 后端
 - **工作区 Git 管理器新增 9 个接口**：`workspace-git-log`（提交历史分页，可按路径过滤）、`workspace-git-commit`（单提交文件清单，merge 提交按 first-parent 统计）、`workspace-git-commit-file-diff`（单提交单文件前后全文）、`workspace-git-branches`（本地 / 远端分支、upstream、ahead / behind，空仓库兜底显示未出生分支）、`workspace-git-stashes`、`workspace-git-remotes`（fetch / push URL 合并为一条并脱敏凭证），以及写操作 `workspace-git-fetch`（fetch --prune，不动工作区）、`workspace-git-switch-branch`（切换前自动 stash、切换后恢复，恢复失败保留现场并给出 stash 引用）、`workspace-git-stash`（apply / pop / drop，产生冲突时保留现场不自动 reset）。全部按 sessionId + 可选 repoPath 定位仓库，LOCAL 会话一律拒绝，未新增权限码、无表结构变更。
+- **用量分析趋势接口新增平均耗时序列**：`/v1/admin/analytics/trends` 的每个趋势桶（按天 / 按小时）新增 `avgDurationMs`（平均总耗时 = Σ`llm_call.duration_ms` ÷ 桶内调用数）与 `avgFirstTokenMs`（平均首字耗时 = Σ`llm_call.first_token_ms` ÷ 桶内流式调用数），口径与模型页「耗时均值 / 首 token 均值」逐条一致；桶内无调用时两个值均为 null，桶内无流式调用（全非流式）时只有首字均值为 null，供前端断线而不是画 0。
+
+### 管理后台
+- **用量分析「质量」图新增两条平均耗时线**：平均总耗时（每次 LLM API 请求总耗时的均值）与平均首字耗时（每次请求首字输出耗时的均值，仅统计流式调用）画进质量图——成功率 / 缓存命中率继续走左轴百分比，两条耗时线走右轴 ms 并以虚线区分；tooltip 按系列给单位（百分比带 %、耗时按 ms/s 折算），无调用 / 无流式调用的桶断线不画 0。
 
 ### 前端（桌面 / Web / 安卓）
 - **修复 Git 管理器 Tab 首次打开误报「远端状态不可用」**：首屏只发只读状态查询，`remoteStatusAvailable` 恒为 false 且不带失败原因，徽标只能回落到默认文案「远端不可用」（实际只是还没向远端确认过），领先 / 落后数也停在本地缓存值。现在打开 Tab（切走再切回、切仓库同样）在本地状态出来后自动补一次远端确认（`fetch --prune`）：确认期间徽标显示中性的「确认远端中…」，成功后变「远端可用」并显示最新 ahead/behind，失败则保留本地状态并给出真实原因（凭证失效 / 网络不通等）。非 git 目录与本地状态读取失败都不发确认请求；确认在途时切换会话或仓库，迟到的结果按序号丢弃，不会串写到新仓库。

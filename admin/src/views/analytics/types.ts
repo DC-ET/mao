@@ -97,6 +97,10 @@ export interface TrendPoint {
   cost?: number
   callSuccessRate?: number | null
   cacheHitRate?: number | null
+  /** 桶内平均总耗时（ms）= Σduration_ms ÷ 调用数；无调用为 null */
+  avgDurationMs?: number | null
+  /** 桶内平均首字耗时（ms）= Σfirst_token_ms ÷ 流式调用数；无流式调用为 null */
+  avgFirstTokenMs?: number | null
 }
 
 export interface SparkPoint {

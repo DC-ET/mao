@@ -1,5 +1,6 @@
 import { CHART_PALETTE, type ChartOption } from '../../utils/echarts'
 import { phaseLabel } from '../../utils/labels'
+import { formatMs } from '../../utils/llmCallLabels'
 
 export interface TrendPoint {
   date: string
@@ -18,6 +19,10 @@ export interface TrendPoint {
   cost?: number
   callSuccessRate?: number | null
   cacheHitRate?: number | null
+  /** 桶内平均总耗时（ms）；无调用为 null */
+  avgDurationMs?: number | null
+  /** 桶内平均首字耗时（ms，只算流式调用）；无流式调用为 null */
+  avgFirstTokenMs?: number | null
 }
 
 export interface RankItem {
@@ -262,6 +267,110 @@ export function costTrendOption(trends: TrendPoint[]): ChartOption {
       }
     ]
   }
+}
+
+/**
+ * 质量趋势：成功率 / 缓存命中率走左轴百分比，平均总耗时 / 平均首字耗时走右轴 ms（虚线）。
+ * 两条耗时线来自 llm_call 的 duration_ms / first_token_ms 聚合（口径同模型页）：
+ * 桶内无调用或无流式调用时为 null，断线而不是画 0。
+ */
+export function qualityTrendOption(trends: TrendPoint[]): ChartOption {
+  const dates = trends.map((t) => t.date)
+  const hourly = dates.some(isHourlyTrendDate)
+  const zoom = trendDataZoom(trends.length, hourly)
+  return {
+    // 左轴百分比（绿 / 蓝）与右轴耗时（橙 / 紫）分组配色，耗时线用虚线区分单位
+    color: [CHART_PALETTE[1], CHART_PALETTE[4], CHART_PALETTE[2], CHART_PALETTE[3]],
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'line' },
+      formatter: (params: unknown) => qualityTooltip(params as QualityTooltipParam[], dates)
+    },
+    legend: { top: 0, left: 'center' as const },
+    grid: { left: 8, right: 8, top: 32, bottom: zoom ? 28 : 4, containLabel: true },
+    dataZoom: zoom,
+    xAxis: {
+      type: 'category' as const,
+      data: trendCategoryLabels(dates),
+      boundaryGap: false,
+      axisTick: { show: false },
+      axisLabel: { color: AXIS_LABEL_COLOR(), fontSize: 11, hideOverlap: true }
+    },
+    yAxis: [
+      {
+        type: 'value' as const,
+        max: 100,
+        name: '百分比',
+        nameTextStyle: { color: AXIS_LABEL_COLOR(), fontSize: 11 },
+        axisLabel: { color: AXIS_LABEL_COLOR(), fontSize: 11, formatter: '{value}%' },
+        splitLine: { lineStyle: { color: SPLIT_LINE_COLOR() } }
+      },
+      {
+        type: 'value' as const,
+        name: '耗时',
+        nameTextStyle: { color: AXIS_LABEL_COLOR(), fontSize: 11 },
+        axisLabel: { color: AXIS_LABEL_COLOR(), fontSize: 11, formatter: (value: number) => formatMs(value) },
+        splitLine: { show: false }
+      }
+    ],
+    series: [
+      {
+        name: '成功率%',
+        type: 'line',
+        smooth: true,
+        connectNulls: true,
+        data: trends.map((t) => t.callSuccessRate)
+      },
+      {
+        name: '缓存命中率%',
+        type: 'line',
+        smooth: true,
+        connectNulls: true,
+        data: trends.map((t) => t.cacheHitRate)
+      },
+      {
+        name: '平均总耗时',
+        type: 'line',
+        yAxisIndex: 1,
+        smooth: true,
+        connectNulls: true,
+        lineStyle: { type: 'dashed' },
+        data: trends.map((t) => t.avgDurationMs)
+      },
+      {
+        name: '平均首字耗时',
+        type: 'line',
+        yAxisIndex: 1,
+        smooth: true,
+        connectNulls: true,
+        lineStyle: { type: 'dashed' },
+        data: trends.map((t) => t.avgFirstTokenMs)
+      }
+    ]
+  }
+}
+
+interface QualityTooltipParam {
+  dataIndex: number
+  seriesName: string
+  value: number | null
+  marker: string
+}
+
+/** 质量图混用两种单位：百分比系列原样带 %，耗时系列按 ms/s 折算，避免 tooltip 里出现裸毫秒数。 */
+function qualityTooltip(params: QualityTooltipParam[], dates: string[]): string {
+  if (params.length === 0) return ''
+  const date = dates[params[0].dataIndex] ?? ''
+  const rows = params
+    .filter((p) => p.value != null && Number.isFinite(Number(p.value)))
+    .map((p) => {
+      const value = Number(p.value)
+      const text = p.seriesName.endsWith('%') ? `${value}%` : formatMs(value)
+      return `${p.marker}${escapeHtml(p.seriesName)}<span style="float:right;margin-left:16px;font-weight:600">${text}</span>`
+    })
+    .join('<br/>')
+  if (!rows) return escapeHtml(date)
+  return `<div style="min-width:150px"><div style="margin-bottom:4px;color:#6e6e73">${escapeHtml(date)}</div>${rows}</div>`
 }
 
 interface TooltipParam {

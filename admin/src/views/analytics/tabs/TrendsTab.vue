@@ -52,7 +52,7 @@
         <template #header>
           <div class="card-header">
             <span class="chart-title">质量</span>
-            <span class="card-hint">成功率与缓存命中率（百分比轴）</span>
+            <span class="card-hint">成功率、缓存命中率（左轴 %）与平均耗时（右轴 ms，虚线）</span>
           </div>
         </template>
         <BaseChart :option="qualityTrendChartOption" :empty="!hasQuality" :height="260" />
@@ -115,6 +115,7 @@ import {
   formatNumber,
   formatCost,
   isHourlyTrendDate,
+  qualityTrendOption,
   seriesTrendOption,
   tokenTrendOption,
   trendCategoryLabels,
@@ -145,7 +146,13 @@ const hasTraffic = computed(() => trends.value.some((t) => t.sessions > 0 || t.m
 const hasTokens = computed(() => trends.value.some((t) => t.totalTokens > 0))
 const hasCalls = computed(() => trends.value.some((t) => (t.callCount || 0) > 0 || (t.callFailCount || 0) > 0))
 const hasQuality = computed(() =>
-  trends.value.some((t) => t.callSuccessRate != null || t.cacheHitRate != null)
+  trends.value.some(
+    (t) =>
+      t.callSuccessRate != null ||
+      t.cacheHitRate != null ||
+      t.avgDurationMs != null ||
+      t.avgFirstTokenMs != null
+  )
 )
 
 const sessionTrendOption = computed(() =>
@@ -197,47 +204,7 @@ const callTrendChartOption = computed(() => {
   }
 })
 
-const qualityTrendChartOption = computed(() => {
-  const dates = trends.value.map((t) => t.date)
-  const hourly = dates.some(isHourlyTrendDate)
-  const zoom = trendDataZoom(trends.value.length, hourly)
-  return {
-    color: [CHART_PALETTE[1], CHART_PALETTE[4]],
-    tooltip: { trigger: 'axis' as const },
-    legend: { top: 0, left: 'center' as const },
-    grid: { left: 8, right: 8, top: 32, bottom: zoom ? 28 : 4, containLabel: true },
-    dataZoom: zoom,
-    xAxis: {
-      type: 'category' as const,
-      data: trendCategoryLabels(dates),
-      boundaryGap: false,
-      axisTick: { show: false },
-      axisLabel: { color: AXIS_MUTED, fontSize: 11, hideOverlap: true }
-    },
-    yAxis: {
-      type: 'value' as const,
-      max: 100,
-      axisLabel: { color: AXIS_MUTED, fontSize: 11, formatter: '{value}%' },
-      splitLine: { lineStyle: { color: SPLIT_MUTED } }
-    },
-    series: [
-      {
-        name: '成功率%',
-        type: 'line' as const,
-        smooth: true,
-        connectNulls: true,
-        data: trends.value.map((t) => t.callSuccessRate)
-      },
-      {
-        name: '缓存命中率%',
-        type: 'line' as const,
-        smooth: true,
-        connectNulls: true,
-        data: trends.value.map((t) => t.cacheHitRate)
-      }
-    ]
-  }
-})
+const qualityTrendChartOption = computed(() => qualityTrendOption(trends.value))
 
 const AXIS_MUTED = '#6e6e73'
 const SPLIT_MUTED = 'rgba(0, 0, 0, 0.06)'
