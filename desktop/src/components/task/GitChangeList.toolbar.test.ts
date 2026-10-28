@@ -1,5 +1,6 @@
 // GitChangeList 工具栏移动端紧凑化回归（jsdom 真实挂载，mock 重子组件与 element-plus）。
-// 覆盖三态：桌面全量按钮 / 窄视口检查器上下文只留「展开」入口 / 窄视口中央管理器不全空。
+// 覆盖四态：桌面全量按钮 / 窄视口检查器上下文只留「展开」入口 / 窄视口中央管理器不全空 /
+// 中央管理器 hideRefresh 时工具栏 ↻ 隐藏（0.0.373：刷新入口合并到 GitManagerPanel 顶部状态条）。
 // @vitest-environment jsdom
 import { h } from 'vue'
 import { createApp } from 'vue'
@@ -78,6 +79,16 @@ describe('GitChangeList 工具栏按钮可见性', () => {
       expect(btn(host, label), label).not.toBeNull()
     }
     expect(btn(host, '打开 Git 管理器')).toBeNull()
+    app.unmount()
+  })
+
+  it('中央 Git 管理器（hideRefresh）：工具栏 ↻ 隐藏，提交 / 拉取 / 推送保留', () => {
+    mobile.value = false
+    const { host, app } = mountList({ hideRefresh: true })
+    expect(btn(host, '刷新 Git 状态')).toBeNull()
+    for (const label of ['提交代码', '拉取代码', '推送代码']) {
+      expect(btn(host, label), label).not.toBeNull()
+    }
     app.unmount()
   })
 })

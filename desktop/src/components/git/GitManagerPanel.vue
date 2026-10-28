@@ -27,7 +27,7 @@
       <span class="git-repo-badge" :title="repoName">{{ repoName }}</span>
     </div>
 
-    <!-- 仓库状态条：分支 / upstream / ahead-behind / 远端状态 + 获取远端更新 -->
+    <!-- 仓库状态条：分支 / upstream / ahead-behind / 远端状态 + 刷新（有远端时顺带 fetch --prune） -->
     <div class="git-status-bar">
       <span v-if="gitStatus?.detachedHead" class="git-status-branch is-detached" title="detached HEAD：当前不在任何分支上，提交前请先切换分支">
         {{ gitStatus.branch || 'HEAD' }}
@@ -52,13 +52,13 @@
       </el-tooltip>
       <div class="git-status-actions">
         <button
-          class="git-fetch-btn"
-          :disabled="fetchDisabledReason !== ''"
-          :title="fetchDisabledReason || '获取远端更新（fetch --prune）'"
-          @click="runFetch"
+          class="git-refresh-btn"
+          :disabled="refreshDisabledReason !== ''"
+          :title="refreshDisabledReason || refreshTitle"
+          aria-label="刷新 Git 状态"
+          @click="handleRefreshAndFetch"
         >
-          <el-icon :size="12" :class="{ spinning: operation === 'fetch' }"><Download /></el-icon>
-          获取远端更新
+          <el-icon :size="14" :class="{ spinning: gitLoading || operation === 'fetch' }"><Refresh /></el-icon>
         </button>
       </div>
     </div>
@@ -100,6 +100,7 @@
         :repo-path="multiRepoMode ? selectedRepoPath : undefined"
         :provider="fileProvider"
         two-step-commit
+        hide-refresh
         :commit-message="commitDraft"
         :generating="generatingMessage"
         :committing="operation === 'commit-with-message'"
@@ -153,7 +154,7 @@
 <script setup lang="ts">
 import { computed, onActivated, ref, watch } from 'vue'
 import { ElMessage, ElTooltip } from 'element-plus'
-import { Download } from '@element-plus/icons-vue'
+import { Refresh } from '@element-plus/icons-vue'
 import GitChangeList from '../task/GitChangeList.vue'
 import GitHistoryView from './GitHistoryView.vue'
 import GitBranchesView from './GitBranchesView.vue'
@@ -357,9 +358,16 @@ watch(statusProviderRef, () => {
   commitDraft.value = ''
 })
 
-async function runFetch() {
+/**
+ * 顶部刷新（合并原「获取远端更新」与工具栏 ↻）：
+ * 有远端时先显式 fetch --prune（toast + 活动审计），再全量刷新各面板；
+ * 未配置远端的仓库退化为纯本地刷新，与工具栏 ↻ 的原有行为一致。
+ */
+async function handleRefreshAndFetch() {
   if (operation.value) return
-  await run('fetch')
+  if (gitStatus.value?.hasRemote) {
+    await run('fetch')
+  }
   await handleRefreshAll()
 }
 
@@ -379,11 +387,14 @@ function handleOpenCommitDiff(payload: { hash: string; file: GitChangedFile }) {
   })
 }
 
-const fetchDisabledReason = computed(() => {
+const refreshTitle = computed(() =>
+  gitStatus.value?.hasRemote ? '刷新并获取远端更新（fetch --prune）' : '刷新 Git 状态',
+)
+
+const refreshDisabledReason = computed(() => {
   if (operation.value) return 'Git 操作进行中'
   if (gitLoading.value) return '正在读取 Git 状态'
   if (!gitStatus.value?.isGit) return '当前目录不是 Git 仓库'
-  if (!gitStatus.value.hasRemote) return '仓库未配置远端'
   return ''
 })
 
@@ -599,25 +610,26 @@ onActivated(() => {
   flex-shrink: 0;
 }
 
-.git-fetch-btn {
+.git-refresh-btn {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 3px 9px;
-  border: 1px solid var(--aw-divider-soft);
-  border-radius: var(--aw-radius-sm);
+  justify-content: center;
+  width: var(--aw-btn-height);
+  height: var(--aw-btn-height);
+  border: none;
+  border-radius: var(--aw-radius-xs);
   background: transparent;
-  color: var(--aw-primary);
-  font-size: var(--aw-text-fine);
+  color: var(--aw-ink-muted-48);
   cursor: pointer;
 }
 
-.git-fetch-btn:hover:not(:disabled) {
-  background: var(--aw-primary-hover);
+.git-refresh-btn:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--aw-primary);
 }
 
-.git-fetch-btn:disabled {
-  opacity: 0.4;
+.git-refresh-btn:disabled {
+  opacity: 0.38;
   cursor: default;
 }
 
@@ -698,6 +710,10 @@ onActivated(() => {
 }
 
 [data-theme="dark"] .git-repo-badge {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+[data-theme="dark"] .git-refresh-btn:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.06);
 }
 </style>

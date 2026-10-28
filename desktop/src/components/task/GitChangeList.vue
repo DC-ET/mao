@@ -29,7 +29,7 @@
               </button>
             </span>
           </el-tooltip>
-          <button class="git-action-btn" :disabled="loading || !!operation" title="刷新" aria-label="刷新 Git 状态" @click="$emit('refresh')">
+          <button v-if="!hideRefresh" class="git-action-btn" :disabled="loading || !!operation" title="刷新" aria-label="刷新 Git 状态" @click="$emit('refresh')">
             <el-icon :size="14" :class="{ spinning: loading && !operation }"><Refresh /></el-icon>
           </button>
         </template>
@@ -145,6 +145,8 @@ const props = defineProps<{
   provider?: WorkspaceFileProvider | null
   /** 侧边栏 Git 页签展示「展开到中央 Tab」按钮；中央大 Tab 自身不展示 */
   showExpand?: boolean
+  /** 中央 Git 管理器：顶部状态条已有刷新入口（含 fetch），工具栏 ↻ 隐藏避免重复；侧边栏不传，默认展示 */
+  hideRefresh?: boolean
   /** 中央 Git 管理器两步提交：显示提交信息框并隐藏工具栏 ✓；侧边栏不传，保持一步提交 */
   twoStepCommit?: boolean
   /** 提交信息输入框内容（草稿由父级持有，切仓库 / 提交成功后清空） */
