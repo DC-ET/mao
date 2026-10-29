@@ -123,7 +123,7 @@ const props = defineProps<{
   branches: GitBranchInfo[]
   branchesLoading: boolean
   branchesError: string
-  /** 基准分支（空串 = 未选）；两槽都不预选、不联动，由用户自行选择 */
+  /** 基准分支（空串 = 未选）；进入视图默认预选「当前分支 upstream → 当前分支」（仅空槽填充），可随时改选、不联动 */
   compareBase: string
   /** 目标分支（空串 = 未选）；分支行「对比」入口只会预填本槽 */
   compareTarget: string

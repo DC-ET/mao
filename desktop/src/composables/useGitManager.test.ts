@@ -385,6 +385,66 @@ describe('useGitManager 分支对比', () => {
     expect(calls.compareBranches).toBe(1)
   });
 
+  it('进入对比视图默认预选「当前分支 upstream → 当前分支」并自动对比', async () => {
+    const { provider, calls } = fakeProvider({
+      async getBranches() {
+        calls.getBranches++
+        return [
+          { name: 'main', isCurrent: true, isRemote: false, upstream: 'origin/main' },
+          { name: 'feature', isCurrent: false, isRemote: false },
+          { name: 'origin/main', isCurrent: false, isRemote: true },
+          { name: 'origin/feature', isCurrent: false, isRemote: true },
+        ]
+      },
+    } as unknown as Partial<WorkspaceGitProvider>)
+    const manager = useGitManager(ref(provider))
+
+    manager.activeView.value = 'compare'
+    for (let i = 0; i < 6; i++) await nextTick()
+    expect(manager.compareBase.value).toBe('origin/main')
+    expect(manager.compareTarget.value).toBe('main')
+    expect(calls.compareBranches).toBe(1)
+    expect(manager.compareResult.value?.base).toBe('origin/main')
+  });
+
+  it('当前分支无 upstream 时基准退回远端同名跟踪分支', async () => {
+    const { provider, calls } = fakeProvider({
+      async getBranches() {
+        calls.getBranches++
+        return [
+          { name: 'main', isCurrent: true, isRemote: false },
+          { name: 'github/main', isCurrent: false, isRemote: true },
+        ]
+      },
+    } as unknown as Partial<WorkspaceGitProvider>)
+    const manager = useGitManager(ref(provider))
+
+    manager.activeView.value = 'compare'
+    for (let i = 0; i < 6; i++) await nextTick()
+    expect(manager.compareBase.value).toBe('github/main')
+    expect(manager.compareTarget.value).toBe('main')
+    expect(calls.compareBranches).toBe(1)
+  });
+
+  it('默认预选不覆盖用户已选：分支行预填 / 手选基准均保持原值', async () => {
+    const { provider } = fakeProvider({
+      async getBranches() {
+        return [
+          { name: 'main', isCurrent: true, isRemote: false, upstream: 'origin/main' },
+          { name: 'origin/main', isCurrent: false, isRemote: true },
+        ]
+      },
+    } as unknown as Partial<WorkspaceGitProvider>)
+    const manager = useGitManager(ref(provider))
+
+    manager.compareBase.value = 'origin/feature'
+    manager.compareTarget.value = 'feature'
+    manager.activeView.value = 'compare'
+    for (let i = 0; i < 6; i++) await nextTick()
+    expect(manager.compareBase.value).toBe('origin/feature')
+    expect(manager.compareTarget.value).toBe('feature')
+  });
+
   it('已加载过对比后 refreshLoadedViews 触发重算；未加载过不请求', async () => {
     const { provider, calls } = fakeProvider()
     const manager = useGitManager(ref(provider))

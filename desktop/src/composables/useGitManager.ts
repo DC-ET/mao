@@ -97,6 +97,25 @@ export function useGitManager(provider: Ref<WorkspaceGitProvider | null>) {
     compareLoaded.value = false
   }
 
+  /**
+   * 对比视图默认预选：目标 = 当前分支，基准 = 当前分支的 upstream（如 `origin/main`；
+   * 无 upstream 时退回已存在的 `origin/<当前分支>` 或任一远端同名跟踪分支）。
+   * 只在字段为空时填充——用户已选 / 已交换 / 手动清空的选择不被覆盖；
+   * 进入对比视图（分支已加载）与分支列表加载完成（对比视图进行中）时各调一次。
+   */
+  function applyCompareDefaults() {
+    const current = branches.value.find((branch) => branch.isCurrent && !branch.isRemote)
+    if (!current) return
+    if (!compareTarget.value) compareTarget.value = current.name
+    if (!compareBase.value) {
+      const remoteNames = new Set(branches.value.filter((branch) => branch.isRemote).map((branch) => branch.name))
+      const candidates = [current.upstream, `origin/${current.name}`]
+      const matched = candidates.find((name) => name != null && remoteNames.has(name))
+        ?? Array.from(remoteNames).find((name) => name.endsWith(`/${current.name}`))
+      if (matched != null) compareBase.value = matched
+    }
+  }
+
   async function loadLog(reset: boolean) {
     const p = provider.value
     if (!p) return
@@ -169,6 +188,8 @@ export function useGitManager(provider: Ref<WorkspaceGitProvider | null>) {
       if (seq !== branchesSeq) return
       branches.value = list
       branchesLoaded.value = true
+      // 对比视图进行中：分支列表到位后补默认预选（目标 = 当前分支，基准 = 其 upstream）
+      if (activeView.value === 'compare') applyCompareDefaults()
     } catch (e: any) {
       if (seq !== branchesSeq) return
       branchesError.value = e?.message || '读取分支列表失败'
@@ -265,8 +286,12 @@ export function useGitManager(provider: Ref<WorkspaceGitProvider | null>) {
     if (activeView.value === 'history' && !historyLoaded.value && !logLoading.value) void loadLog(true)
     if (activeView.value === 'branches' && !branchesLoaded.value && !branchesLoading.value) void loadBranches()
     if (activeView.value === 'stash' && !stashesLoaded.value && !stashesLoading.value) void loadStashes()
-    // 对比视图的分支下拉选项来自 branches：loadBranches 自身无守卫，这里必须显式判已加载 / 加载中
-    if (activeView.value === 'compare' && !branchesLoaded.value && !branchesLoading.value) void loadBranches()
+    // 对比视图的分支下拉选项来自 branches：loadBranches 自身无守卫，这里必须显式判已加载 / 加载中；
+    // 已加载时补一次默认预选（未加载时由 loadBranches 完成回调补）；预选后 watch 触发自动对比
+    if (activeView.value === 'compare') {
+      if (!branchesLoaded.value && !branchesLoading.value) void loadBranches()
+      else if (branchesLoaded.value) applyCompareDefaults()
+    }
   }
 
   watch(activeView, () => {
