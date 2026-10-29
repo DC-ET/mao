@@ -3,6 +3,7 @@ import { requireRequestPermission } from '../common/http-error.js';
 import { sendJson } from '../common/http-error.js';
 import { ok } from '../common/result.js';
 import type { JwtService } from '../crypto/jwt.service.js';
+import { parseAnalyticsRange, resolveAnalyticsRange } from './analytics-range.js';
 import type { AdminAnalyticsService } from './admin-analytics.service.js';
 import type { MemoryPageVO, MemoryScope, MemoryStatus } from '../memory/types.js';
 import { ACTIVE_PHASES } from '../session/util/session-group-key.js';
@@ -46,6 +47,11 @@ export interface AdminRouteDeps {
 }
 
 interface AnalyticsQueryRaw {
+  /** 语义统计周期（管理后台周期选择器）：今日/昨日/本周/上周/本月/上月/自定义 */
+  range?: string;
+  /** 自定义区间起止日（YYYY-MM-DD，闭区间），仅 range=custom 时生效 */
+  start?: string;
+  end?: string;
   days?: string;
   endOffset?: string;
   limit?: string;
@@ -60,8 +66,12 @@ function parseAnalyticsQuery(raw: AnalyticsQueryRaw): {
   excludeConnectivity: boolean;
   modelId: number | null;
 } {
-  const days = Number(raw.days ?? 30);
-  const endOffset = Number(raw.endOffset ?? 0);
+  // 语义周期优先解析成 (days, endOffset)；缺省/非法回落原始参数（mao-cli 兼容口径）
+  const range = parseAnalyticsRange(raw.range);
+  const window =
+    range != null ? resolveAnalyticsRange(range, { start: raw.start, end: raw.end }) : null;
+  const days = Number(window?.days ?? raw.days ?? 30);
+  const endOffset = Number(window?.endOffset ?? raw.endOffset ?? 0);
   const limit = Number(raw.limit ?? 20);
   const modelIdRaw = raw.modelId == null || raw.modelId === '' ? null : Number(raw.modelId);
   return {

@@ -104,6 +104,87 @@ test.describe('Analytics Homepage', () => {
     await expect(page).toHaveURL(/grain=day/)
     await expect(grain.locator('.el-segmented__item.is-selected')).toHaveText('天')
   })
+
+  // 统计周期选择器：弹层预设（日历周期 / 滚动窗口）+ 自定义区间内联日期条
+  test('should switch calendar period from the picker panel', async ({ page }) => {
+    const periodText = page.locator('.page-toolbar .period-text')
+    await expect(periodText).toBeVisible({ timeout: 10_000 })
+
+    await page.locator('.period-trigger').click()
+    const panel = page.locator('.period-picker-popper')
+    await expect(panel).toBeVisible()
+    await expect(panel.locator('.period-group-title')).toHaveText(['日历周期', '最近'])
+    await expect(panel.locator('.period-chip')).toHaveCount(10)
+
+    // 本周：触发器文案、URL 与工具栏摘要一起换
+    await panel.locator('.period-chip', { hasText: '本周' }).click()
+    await expect(panel).toBeHidden()
+    await expect(page).toHaveURL(/period=week/)
+    await expect(page.locator('.period-trigger-label')).toHaveText('本周')
+    await expect(periodText).toContainText('本周')
+
+    // 上周 / 本月 / 上月同样走 URL 语义周期
+    for (const [label, value] of [
+      ['上周', 'lastWeek'],
+      ['本月', 'month'],
+      ['上月', 'lastMonth']
+    ] as const) {
+      await page.locator('.period-trigger').click()
+      await panel.locator('.period-chip', { hasText: label }).click()
+      await expect(page).toHaveURL(new RegExp(`period=${value}`))
+      await expect(page.locator('.period-trigger-label')).toHaveText(label)
+    }
+  })
+
+  test('should apply a custom date range inline', async ({ page }) => {
+    await expect(page.locator('.page-toolbar .period-text')).toBeVisible({ timeout: 10_000 })
+
+    await page.locator('.period-trigger').click()
+    await page.locator('.period-picker-popper .period-custom-entry').click()
+
+    // 自定义周期：内联两个日期选择器 + URL 带起止日
+    await expect(page).toHaveURL(/period=custom/)
+    await expect(page).toHaveURL(/start=\d{4}-\d{2}-\d{2}/)
+    await expect(page).toHaveURL(/end=\d{4}-\d{2}-\d{2}/)
+    await expect(page.locator('.period-trigger-label')).toHaveText('自定义')
+    const pickers = page.locator('.toolbar-actions .period-date')
+    await expect(pickers).toHaveCount(2)
+
+    // 改起点：面板里最早的可选日期（必不是当前选中的起点），URL 的 start 跟着变
+    const startBefore = new URL(page.url()).searchParams.get('start')!
+    await pickers.nth(0).click()
+    await page.locator('.el-picker-panel td.available:not(.selected)').first().click()
+    await expect(page).not.toHaveURL(new RegExp(`start=${startBefore}`))
+    await expect(page).toHaveURL(/period=custom/)
+  })
+
+  test('should restore period from the URL', async ({ page }) => {
+    // 分享链接：语义周期与自定义区间都能还原（自定义区间按今天推算，避免硬编码日期过期）
+    const pad = (n: number) => String(n).padStart(2, '0')
+    const ymd = (offset: number) => {
+      const d = new Date()
+      d.setDate(d.getDate() + offset)
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+    }
+    const customStart = ymd(-40)
+    const customEnd = ymd(-20)
+
+    await page.goto('/admin/analytics?period=lastWeek')
+    await expect(page.locator('.period-trigger-label')).toHaveText('上周')
+    await expect(page.locator('.page-toolbar .period-text')).toContainText('上周')
+
+    await page.goto(`/admin/analytics?period=custom&start=${customStart}&end=${customEnd}`)
+    await expect(page.locator('.period-trigger-label')).toHaveText('自定义')
+    const pickers = page.locator('.toolbar-actions .period-date')
+    await expect(pickers).toHaveCount(2)
+    await expect(pickers.nth(0).locator('input')).toHaveValue(customStart)
+    await expect(pickers.nth(1).locator('input')).toHaveValue(customEnd)
+    await expect(page.locator('.page-toolbar .period-text')).toContainText(`${customStart} ~ ${customEnd}`)
+
+    // 旧链接 days=7 仍按滚动窗口还原
+    await page.goto('/admin/analytics?days=7')
+    await expect(page.locator('.period-trigger-label')).toHaveText('近 7 天')
+  })
 })
 
 // ─────────────────────────────────────────────────────────

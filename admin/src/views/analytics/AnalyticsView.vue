@@ -16,7 +16,12 @@
       </div>
       <div class="toolbar-actions">
         <span class="toolbar-label">统计周期</span>
-        <el-segmented v-model="period" :options="periodOptions" @change="handlePeriodChange" />
+        <PeriodPicker
+          :model-value="period"
+          :custom-range="customRange"
+          @select="handlePeriodSelect"
+          @custom="handleCustomRange"
+        />
         <template v-if="activeTab === 'run-trace'">
           <span class="toolbar-label">排行维度</span>
           <el-segmented v-model="runTraceDimension" :options="runTraceDimensionOptions" @change="handleRunTraceDimensionChange" />
@@ -108,11 +113,13 @@ import { useRoute, useRouter } from 'vue-router'
 import { InfoFilled, Refresh } from '@element-plus/icons-vue'
 import { invalidateAnalytics, useScopeQuery } from './composables/useScopeQuery'
 import {
-  PERIOD_OPTIONS,
   buildAnalyticsQuery,
+  customRangeFromQuery,
   defaultTrendGrain,
   normalizeTrendGrain,
+  periodFallbackText,
   periodFromQueryValue,
+  periodPrefixLabel,
   periodToQueryValue,
   type TrendGrain
 } from './composables/useAnalyticsPeriod'
@@ -120,6 +127,7 @@ import { formatDateTime } from '../../utils/datetime'
 
 import type {
   AgentsPayload,
+  CustomPeriodRange,
   ModelsPayload,
   OverviewPayload,
   PeriodValue,
@@ -139,6 +147,7 @@ import RunTraceTab from './tabs/RunTraceTab.vue'
 import TabEmpty from './tabs/TabEmpty.vue'
 import TabError from './tabs/TabError.vue'
 import OverviewEmpty from './tabs/OverviewEmpty.vue'
+import PeriodPicker from './PeriodPicker.vue'
 
 const TABS = [
   { label: '总览', value: 'overview' },
@@ -164,8 +173,11 @@ const EMPTY_COPY: Record<Exclude<TabId, 'overview'>, { title: string; hint: stri
 const route = useRoute()
 const router = useRouter()
 
-const period = ref<PeriodValue>(periodFromQueryValue(route.query.period ?? route.query.days ?? 'today'))
-const grain = ref<TrendGrain>(normalizeTrendGrain(route.query.grain, period.value))
+const period = ref<PeriodValue>(
+  periodFromQueryValue(route.query.period ?? route.query.days ?? 'today', route.query.start, route.query.end)
+)
+const customRange = ref<CustomPeriodRange>(customRangeFromQuery(route.query.start, route.query.end))
+const grain = ref<TrendGrain>(normalizeTrendGrain(route.query.grain, period.value, customRange.value))
 const activeTab = ref<TabId>(normalizeTab(route.query.tab))
 const sceneModelId = ref<number | undefined>(
   route.query.modelId != null && route.query.modelId !== '' ? Number(route.query.modelId) : undefined
@@ -174,7 +186,6 @@ const sceneModelId = ref<number | undefined>(
 const includeConnectivity = ref(route.query.conn !== '0')
 /** 运行轨迹榜的排行维度：Agent / 用户，走 URL（rtScope）供分享与刷新还原 */
 const runTraceDimension = ref<RunTraceDimension>(route.query.rtScope === 'user' ? 'user' : 'agent')
-const periodOptions = PERIOD_OPTIONS
 /** 0=关闭；仅内存态，不持久化，保证默认关闭 */
 const AUTO_REFRESH_OPTIONS = [
   { label: '关闭', value: 0 },
@@ -231,11 +242,11 @@ const fetchedAtText = computed(() =>
 const periodText = computed(() => {
   const meta = (activeScope.value.data.value as { period?: { start: string; end: string; days: number } } | null)
     ?.period
-  if (meta) return `${meta.start} ~ ${meta.end}（${meta.days} 天）`
-  const { days, endOffset } = buildAnalyticsQuery(period.value)
-  if (days === 1 && endOffset === 0) return '今日 00:00 起'
-  if (days === 1 && endOffset === 1) return '昨日 00:00 起'
-  return `近 ${days} 天`
+  if (meta) {
+    const prefix = periodPrefixLabel(period.value)
+    return `${prefix ? `${prefix} ` : ''}${meta.start} ~ ${meta.end}（${meta.days} 天）`
+  }
+  return periodFallbackText(period.value, customRange.value)
 })
 
 const previousText = computed(() => {
@@ -287,7 +298,7 @@ function normalizeTab(raw: unknown): TabId {
 function currentQuery() {
   const needsLimit = activeTab.value === 'users' || activeTab.value === 'agents'
   // 后端 scope 上限 100：用户/Agent 明细尽量拉满，减少 Top 20 截断
-  const query = buildAnalyticsQuery(period.value, needsLimit ? 100 : undefined)
+  const query = buildAnalyticsQuery(period.value, customRange.value, needsLimit ? 100 : undefined)
   // 连通性开关仅属于模型 Tab；其余 Tab 不传该参数，走后端默认口径（排除连通性测试），
   // 避免模型页的勾选状态静默改变其他 Tab 的质量指标
   if (activeTab.value === 'models') {
@@ -311,12 +322,15 @@ async function loadActive(force = false) {
   await activeScope.value.fetchScope(currentQuery(), force)
 }
 
-/** tab/period/grain/conn/modelId/rtScope 以 URL query 为唯一数据源，同步出去供分享与刷新还原 */
+/** tab/period/自定义区间/grain/conn/modelId/rtScope 以 URL query 为唯一数据源，同步出去供分享与刷新还原 */
 function syncUrl() {
   const nextTab = activeTab.value
   const nextPeriod = periodToQueryValue(period.value)
   const nextGrain = grain.value
   const nextConn = includeConnectivity.value ? null : '0'
+  // 自定义区间只在自定义周期进 URL，其余周期带上会污染分享链接
+  const nextStart = period.value === 'custom' ? customRange.value.start : null
+  const nextEnd = period.value === 'custom' ? customRange.value.end : null
   const nextModelId =
     nextTab === 'models' && sceneModelId.value != null && Number.isFinite(sceneModelId.value)
       ? String(sceneModelId.value)
@@ -329,7 +343,9 @@ function syncUrl() {
     (route.query.grain ?? null) === nextGrain &&
     (route.query.conn ?? null) === nextConn &&
     (route.query.modelId ?? null) === nextModelId &&
-    (route.query.rtScope ?? null) === nextRtScope
+    (route.query.rtScope ?? null) === nextRtScope &&
+    (route.query.start ?? null) === nextStart &&
+    (route.query.end ?? null) === nextEnd
   ) {
     return
   }
@@ -339,6 +355,8 @@ function syncUrl() {
     period: nextPeriod
   }
   delete query.view
+  // 旧链接的 days 已被 period 取代，同步时清掉避免两个参数并存
+  delete query.days
   query.grain = nextGrain
   if (nextConn != null) {
     query.conn = nextConn
@@ -355,6 +373,13 @@ function syncUrl() {
   } else {
     delete query.rtScope
   }
+  if (nextStart != null && nextEnd != null) {
+    query.start = nextStart
+    query.end = nextEnd
+  } else {
+    delete query.start
+    delete query.end
+  }
   router.replace({ query })
 }
 
@@ -365,11 +390,23 @@ function handleTabChange() {
   void loadActive(false)
 }
 
-function handlePeriodChange() {
-  grain.value = defaultTrendGrain(period.value)
+/** 换周期统一入口：粒度按新窗口重推、缓存作废、URL 同步后强刷。 */
+function applyPeriodChange() {
+  grain.value = defaultTrendGrain(period.value, customRange.value)
   invalidateAnalytics()
   syncUrl()
   void loadActive(true)
+}
+
+function handlePeriodSelect(value: PeriodValue) {
+  period.value = value
+  applyPeriodChange()
+}
+
+function handleCustomRange(range: CustomPeriodRange) {
+  period.value = 'custom'
+  customRange.value = range
+  applyPeriodChange()
 }
 
 function handleGrainChange(value: TrendGrain) {
@@ -413,7 +450,7 @@ onBeforeUnmount(stopAutoRefresh)
 
 function relaxPeriod() {
   period.value = 7
-  handlePeriodChange()
+  applyPeriodChange()
 }
 
 function handleSceneModelChange(modelId: number | undefined) {
@@ -441,11 +478,25 @@ function handleRunTraceDimensionChange(value: RunTraceDimension) {
 
 watch(
   () =>
-    [route.query.tab, route.query.period, route.query.grain, route.query.conn, route.query.modelId, route.query.rtScope] as const,
-  ([tabValue, periodValue, grainValue, connValue, modelIdValue, rtScopeValue]) => {
+    [
+      route.query.tab,
+      route.query.period,
+      // 旧链接用 days 表示滚动窗口，与 period 同等参与还原
+      route.query.days,
+      route.query.grain,
+      route.query.conn,
+      route.query.modelId,
+      route.query.rtScope,
+      route.query.start,
+      route.query.end
+    ] as const,
+  ([tabValue, periodValue, daysValue, grainValue, connValue, modelIdValue, rtScopeValue, startValue, endValue]) => {
     const nextTab = normalizeTab(tabValue)
-    const nextPeriod = periodFromQueryValue(periodValue ?? 'today')
-    const nextGrain = normalizeTrendGrain(grainValue, nextPeriod)
+    const nextPeriod = periodFromQueryValue(periodValue ?? daysValue ?? 'today', startValue, endValue)
+    // 只有自定义周期才从 URL 还原区间：其他周期保留内存里的自定义区间，切回去还是用户选过的那段
+    const nextCustom =
+      nextPeriod === 'custom' ? customRangeFromQuery(startValue, endValue) : customRange.value
+    const nextGrain = normalizeTrendGrain(grainValue, nextPeriod, nextCustom)
     const nextIncludeConn = connValue !== '0'
     const nextModelId =
       modelIdValue != null && modelIdValue !== '' && Number.isFinite(Number(modelIdValue))
@@ -453,6 +504,7 @@ watch(
         : undefined
     const nextRtScope: RunTraceDimension = rtScopeValue === 'user' ? 'user' : 'agent'
     const periodChanged = nextPeriod !== period.value
+    const customChanged = nextCustom.start !== customRange.value.start || nextCustom.end !== customRange.value.end
     const grainChanged = nextGrain !== grain.value
     const connChanged = nextIncludeConn !== includeConnectivity.value
     const modelChanged = nextModelId !== sceneModelId.value
@@ -462,6 +514,7 @@ watch(
       period.value = nextPeriod
       invalidateAnalytics()
     }
+    if (customChanged) customRange.value = nextCustom
     if (grainChanged) grain.value = nextGrain
     if (connChanged) {
       includeConnectivity.value = nextIncludeConn
@@ -481,6 +534,7 @@ watch(
 
     if (
       periodChanged ||
+      customChanged ||
       (grainChanged && nextTab === 'trends') ||
       (modelChanged && nextTab === 'models') ||
       (connChanged && nextTab === 'models') ||
@@ -563,6 +617,9 @@ watch(
   align-items: center;
   gap: 12px;
   flex-shrink: 0;
+  /* 窄屏或选中自定义区间时整体换行，避免周期控件把工具栏撑出横向滚动 */
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .toolbar-label {

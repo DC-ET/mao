@@ -125,3 +125,24 @@ for (const width of WIDTHS) {
     }
   })
 }
+
+// 自定义周期会在工具栏内联多出两个日期选择器（各 132px），窄屏最容易被撑出横向滚动。
+for (const width of [360, 390]) {
+  test(`custom period controls fit at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 })
+    await openOverview(page)
+
+    await page.locator('.period-trigger').click()
+    await page.locator('.period-picker-popper .period-custom-entry').click()
+    const pickers = page.locator('.toolbar-actions .period-date')
+    await expect(pickers).toHaveCount(2)
+    await page.waitForTimeout(300)
+
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
+    for (let i = 0; i < 2; i++) {
+      const box = (await pickers.nth(i).boundingBox())!
+      expect(box.x, `第 ${i + 1} 个日期选择器左溢出`).toBeGreaterThanOrEqual(0)
+      expect(box.x + box.width, `第 ${i + 1} 个日期选择器右溢出`).toBeLessThanOrEqual(width + 0.5)
+    }
+  })
+}

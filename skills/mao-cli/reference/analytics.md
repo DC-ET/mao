@@ -28,6 +28,19 @@
 | `--limit` | 否 | 整数 | 20 | 仅 `users` / `agents`：排行条数，服务端 clamp 到 1–100 | `limit` |
 | `--granularity` | 否 | `hour` \| `day` | `day` | 仅 `trends`：横轴粒度。`hour` 为 Asia/Shanghai 整点；窗口含今天时停在当前整点 | `granularity` |
 
+### 语义统计周期（0.0.375 起）
+
+管理后台「用量分析」的周期选择器除滚动窗口外还提供日历周期（本周 / 上周 / 本月 / 上月）与自定义区间；CLI 用同一组可选入参，仍可继续用 `--days` / `--end-offset`（不传 `--range` 时行为完全不变）。
+
+| 参数 | 必填 | 类型 | 默认 | 含义 | 后端字段 |
+|------|------|------|------|------|----------|
+| `--range` | 否 | 字符串 | 无 | 语义周期：`today` / `yesterday` / `week` / `lastWeek` / `month` / `lastMonth` / `custom`；服务端按 Asia/Shanghai 日历（周一为一周起点）解析成 `days` + `endOffset`。与 `--days` / `--end-offset` 二选一（同时给会报错，服务端以 `range` 为准） | `range` |
+| `--start` / `--end` | 否 | `YYYY-MM-DD` | 无 | 仅 `--range custom`：自定义闭区间；跨度上限 90 天（与 `days` clamp 一致），结束日不晚于今天、不早于 365 天前（与 `endOffset` clamp 一致），超限由服务端 clamp | `start` / `end` |
+
+- 日历周期口径：`week` = 本周一至今，`lastWeek` = 上周一至上周日（整 7 天），`month` = 本月 1 日至今，`lastMonth` = 上月整月（`custom` 为任意闭区间）
+- 环比窗口仍是紧邻的上一个等长窗口（如 `lastMonth` 为 30 天时，环比是它前面 30 天），响应里的 `period.previousStart` / `previousEnd` 给出确切日期
+- 例：`mao analytics overview --range lastMonth`、`mao analytics trends --range week --granularity hour`、`mao analytics users --range custom --start 2026-10-01 --end 2026-10-15`
+
 ### 统计口径
 
 - 默认窗口以「今天」结尾，取最近 `days` 天；`--end-offset 1 --days 1` 即「昨日」
@@ -97,7 +110,7 @@
 | `modelStats[]` | `modelId` / `modelName` / `provider` / `status` / `isDefault` / `sessionCount` / `messageCount` / `chatTokens` / `backgroundTokens` / `totalTokens`（含 llm_call 调用 Token）/ `backgroundCalls` / `contextWindowTokens`，以及质量列：`callCount` / `callFailCount` / `callCancelledCount` / `callSuccessRate` / `callTokens` / `promptTokens` / `cachedTokens` / `cacheHitRate` / `avgFirstTokenMs` / `avgDurationMs` / `avgThroughput`（0.0.364 起，输出速度加权平均，口径见下）/ `retryCallCount`，以及成本列 `cost`（成本单位）。按 Token 合计降序；窗口内完全未被调用的模型不返回 |
 | `periodTotals` | `{ totalTokens, totalCost }`（模型明细合计） |
 | `sceneStats[]` | `{ key, callCount, failCount, cancelledCount, callTokens }`，默认全部模型；可传 `modelId` 按模型过滤（`0` = 未关联模型，按 `model_id IS NULL` 命中） |
-| `protocolStats[]` | 同上，按 `llm_call.protocol` 分组 |
+| `protocolStats[]` | 同上，按 `llm_call.protocol` 分组；空串归一到 `openai-compatible`（与 `llm_model.api_protocol` 同语义，见迁移 V091），NULL 归 `unknown` |
 | `excludeConnectivity` | 是否排除了 `connectivity_test`（默认 true） |
 
 可选查询参数：`excludeConnectivity=true|false`、`modelId`。

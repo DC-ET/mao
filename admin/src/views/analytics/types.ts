@@ -41,11 +41,24 @@ export interface RunTracePayload {
   toolFailureRates: RunTraceToolFailureRow[]
 }
 
-export type PeriodValue = number | 'today' | 'yesterday'
+/**
+ * 统计周期：滚动天数（3 / 7 / 30 / 90）、今日 / 昨日、日历周期（本周 / 上周 / 本月 / 上月）、
+ * 以及自定义区间（custom，起止日见 CustomPeriodRange）。
+ */
+export type PeriodValue =
+  | number
+  | 'today'
+  | 'yesterday'
+  | 'week'
+  | 'lastWeek'
+  | 'month'
+  | 'lastMonth'
+  | 'custom'
 
-export interface AnalyticsPeriod {
-  days: number
-  endOffset: number
+/** 自定义统计周期：闭区间日历日（YYYY-MM-DD），时区口径与后端一致（Asia/Shanghai）。 */
+export interface CustomPeriodRange {
+  start: string
+  end: string
 }
 
 export interface AnalyticsPeriodMeta {
@@ -304,8 +317,11 @@ export interface SessionsPayload {
 }
 
 export interface AnalyticsQuery {
-  days: number
-  endOffset: number
+  /** 语义统计周期：后端据此解析窗口（见 backend-ts/src/admin/analytics-range.ts） */
+  range: PeriodValue
+  /** 自定义区间起止日，仅 range=custom 时下发 */
+  start?: string
+  end?: string
   limit?: number
   modelId?: number
   excludeConnectivity?: boolean
