@@ -721,6 +721,22 @@ describe('AdminAnalyticsDbStore', () => {
     }
   });
 
+  it('协议分布：空串归一到 openai-compatible、NULL 归一到 unknown', async () => {
+    const db = { query: vi.fn(async () => []), queryOne: vi.fn(async () => ({ c: 0 })) };
+    const store = new AdminAnalyticsDbStore(db as never);
+
+    await store.selectLlmCallProtocolStats(range);
+
+    const sql = (db.query.mock.calls[0] as unknown[])[0] as string;
+    // COALESCE 只兜 NULL：存量行 protocol=''（=OpenAI 兼容，见迁移 V091）会漏成空 key，协议分布渲染空白
+    expect(sql).toContain(
+      `CASE WHEN protocol IS NULL THEN 'unknown' WHEN TRIM(protocol) = '' THEN 'openai-compatible' ELSE protocol END`,
+    );
+    expect(sql).not.toContain('COALESCE(protocol');
+    // SELECT 与 GROUP BY 复用同一表达式：两处各写一遍会随改动漂移，分组口径与展示 key 对不上
+    expect(sql.match(/GROUP BY CASE WHEN protocol IS NULL/g)).toHaveLength(1);
+  });
+
   it('吞吐分位：ORDER BY 派生表达式，样本条件剔除不可解码行', async () => {
     const db = { query: vi.fn(async () => []), queryOne: vi.fn(async () => ({ c: 0, v: null })) };
     const store = new AdminAnalyticsDbStore(db as never);

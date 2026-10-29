@@ -211,7 +211,7 @@
         <el-descriptions-item label="模型">{{ currentRecord.modelName || '-' }}</el-descriptions-item>
         <el-descriptions-item label="供应商">{{ currentRecord.provider || '-' }}</el-descriptions-item>
         <el-descriptions-item label="上游模型 ID" :span="2">{{ currentRecord.providerModelId || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="协议">{{ currentRecord.protocol || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="协议">{{ llmCallProtocolLabel(currentRecord.protocol) }}</el-descriptions-item>
         <el-descriptions-item label="推理强度">{{ currentRecord.effort || '-' }}</el-descriptions-item>
         <el-descriptions-item label="流式">{{ currentRecord.stream === 1 ? '是' : '否' }}</el-descriptions-item>
         <el-descriptions-item label="重试">{{ currentRecord.retryCount ?? 0 }}</el-descriptions-item>
@@ -242,7 +242,7 @@ import { useBreakpoint } from '../../composables/useBreakpoint'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
 import FilterPanel from '../../components/FilterPanel.vue'
-import { LLM_CALL_SCENE_OPTIONS, llmCallSceneLabel, formatMs, formatCost } from '../../utils/llmCallLabels'
+import { LLM_CALL_SCENE_OPTIONS, llmCallSceneLabel, llmCallProtocolLabel, formatMs, formatCost } from '../../utils/llmCallLabels'
 import { formatThroughput, throughput } from '../../utils/throughput'
 
 const route = useRoute()

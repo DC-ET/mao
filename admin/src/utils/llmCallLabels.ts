@@ -1,4 +1,4 @@
-import type { LlmCallScene } from '@mao/contracts'
+import type { ApiProtocol, LlmCallScene } from '@mao/contracts'
 
 /**
  * 场景中文名。键类型是契约联合 `LlmCallScene`，**漏一项编译期即失败**——
@@ -29,6 +29,29 @@ export const LLM_CALL_SCENE_OPTIONS: ReadonlyArray<{ value: LlmCallScene; label:
 export function llmCallSceneLabel(scene?: string | null): string {
   if (!scene) return '未知'
   return SCENE_LABELS[scene as LlmCallScene] ?? scene
+}
+
+/**
+ * 协议中文名。键类型是契约联合 `ApiProtocol`（外加后端 NULL 归一的 `unknown`），漏一项编译期即失败。
+ *
+ * 与 desktop 的 `src/utils/llmCallLabels.ts` 保持同一份文案：llm_call.protocol 两端都展示。
+ */
+const PROTOCOL_LABELS: Record<ApiProtocol | 'unknown', string> = {
+  'openai-compatible': 'OpenAI 兼容',
+  anthropic: 'Anthropic',
+  'openai-responses': 'OpenAI Responses',
+  unknown: '未知',
+}
+
+/**
+ * 协议中文名：空串（含纯空白）= OpenAI 兼容，与 llm_model.api_protocol 同语义（见迁移 V091）；
+ * NULL/未记录与后端聚合口径一致归「未知」。未知 code（含历史脏值）回落原文，不吞掉信息。
+ */
+export function llmCallProtocolLabel(protocol?: string | null): string {
+  if (protocol == null) return PROTOCOL_LABELS.unknown
+  const code = protocol.trim().toLowerCase()
+  if (!code) return PROTOCOL_LABELS['openai-compatible']
+  return PROTOCOL_LABELS[code as ApiProtocol | 'unknown'] ?? protocol
 }
 
 /** 成本展示：与模型价格填写单位一致，最多保留 3 位小数（小金额不丢精度）。 */

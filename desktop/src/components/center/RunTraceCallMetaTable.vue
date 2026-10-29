@@ -11,7 +11,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { llmCallSceneLabel } from '../../utils/llmCallLabels'
+import { llmCallSceneLabel, llmCallProtocolLabel } from '../../utils/llmCallLabels'
 import { decodingMs, formatThroughput } from '../../utils/trace-display'
 import type { TraceCallMeta } from '../../types/trace'
 
@@ -32,7 +32,7 @@ const rows = computed(() => {
   return [
     { label: '请求编号', value: c.llmCallId == null ? '—' : `#${c.llmCallId}` },
     { label: 'provider', value: c.provider ?? '—' },
-    { label: 'protocol', value: c.protocol ?? '—' },
+    { label: 'protocol', value: llmCallProtocolLabel(c.protocol) },
     { label: 'stream', value: c.stream == null ? '—' : (c.stream ? '流式' : '非流式') },
     { label: 'effort', value: c.effort ?? '—' },
     { label: 'scene', value: c.scene == null ? '—' : llmCallSceneLabel(c.scene) },

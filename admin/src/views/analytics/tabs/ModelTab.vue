@@ -75,7 +75,7 @@
           </template>
           <div class="dist-rows">
             <div v-for="item in protocolRows" :key="item.key" class="dist-row">
-              <span class="name">{{ item.key }}</span>
+              <span class="name">{{ llmCallProtocolLabel(item.key) }}</span>
               <span class="tokens">{{ formatTokens(item.callTokens) }}</span>
               <span class="meta">{{ formatNumber(item.callCount) }} 次</span>
             </div>
@@ -171,7 +171,7 @@ import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import BaseChart from '../../../components/BaseChart.vue'
 import { CHART_PALETTE } from '../../../utils/echarts'
-import { llmCallSceneLabel, formatMs } from '../../../utils/llmCallLabels'
+import { llmCallSceneLabel, llmCallProtocolLabel, formatMs } from '../../../utils/llmCallLabels'
 import { formatTps } from '../../../utils/throughput'
 import { donutOption, formatCost, formatNumber, formatTokens, topWithOthers, type RankItem } from '../chart-options'
 import { exportCsv } from '../utils/csv'

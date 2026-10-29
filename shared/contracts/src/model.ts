@@ -5,6 +5,13 @@
  */
 export type ClientImpersonation = 'none' | 'codex' | 'claude_code';
 
+/**
+ * API 协议 code，与 `llm_model.api_protocol` / `llm_call.protocol` 同取值。
+ * 注意空串是第三种写法：存量数据用 '' 表示 OpenAI 兼容（见迁移 V091），
+ * 入库原样保留，由聚合 SQL 与展示侧汉化表按此语义归一；联合内只声明显式 code。
+ */
+export type ApiProtocol = 'openai-compatible' | 'anthropic' | 'openai-responses';
+
 export interface ModelVO {
   id?: number;
   name?: string;

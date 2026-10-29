@@ -487,15 +487,18 @@ export class AdminAnalyticsDbStore implements AdminAnalyticsStore {
 
   selectLlmCallProtocolStats(range: AnalyticsRange, opts?: LlmCallFilterOpts): Promise<LlmCallNamedRow[]> {
     const { sql, params } = this.llmCallWhere(range, opts);
+    // protocol 空串 = OpenAI 兼容（与 llm_model.api_protocol 同语义，见迁移 V091），COALESCE 只兜 NULL 兜不住空串；
+    // 分组表达式在 SELECT 与 GROUP BY 复用同一常量，避免两处漂移。
+    const protocolKey = `CASE WHEN protocol IS NULL THEN 'unknown' WHEN TRIM(protocol) = '' THEN 'openai-compatible' ELSE protocol END`;
     return this.db.query(
-      `SELECT COALESCE(protocol, 'unknown') AS \`key\`,
+      `SELECT ${protocolKey} AS \`key\`,
               COUNT(*) AS callCount,
               COALESCE(SUM(CASE WHEN success = 0 AND ${NOT_CANCELLED_SQL} THEN 1 ELSE 0 END), 0) AS failCount,
               COALESCE(SUM(CASE WHEN ${CANCELLED_SQL} THEN 1 ELSE 0 END), 0) AS cancelledCount,
               COALESCE(SUM(total_tokens), 0) AS callTokens
        FROM llm_call
        WHERE ${sql}
-       GROUP BY COALESCE(protocol, 'unknown')`,
+       GROUP BY ${protocolKey}`,
       params,
     );
   }
