@@ -5,6 +5,11 @@ const fs = require('fs')
 const path = require('path')
 
 const GIT_TIMEOUT_MS = 60_000
+/** 测试可用 MAO_TEST_GIT_TIMEOUT_MS 覆盖以缩短挂起类用例的等待时间（小于 1s 视为无效）。 */
+function gitTimeoutMs() {
+  const override = Number(process.env.MAO_TEST_GIT_TIMEOUT_MS)
+  return Number.isFinite(override) && override >= 1000 ? override : GIT_TIMEOUT_MS
+}
 const MAX_STDOUT_BYTES = 2 * 1024 * 1024
 const MAX_DIFF_LINES = 5000
 const MAX_DIFF_BYTES = 512 * 1024
@@ -28,7 +33,7 @@ function runGit(cwd, args) {
         cwd,
         encoding: 'utf8',
         maxBuffer: MAX_STDOUT_BYTES,
-        timeout: GIT_TIMEOUT_MS,
+        timeout: gitTimeoutMs(),
         killSignal: 'SIGKILL',
         env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
       },
@@ -477,8 +482,8 @@ function selectFetchRemote(status) {
 }
 
 /**
- * Fetch the confirmed remote before calculating divergence from the configured upstream.
- * Fetch failures preserve the already collected local status.
+ * Fetch every remote in parallel (one git process per remote) before calculating divergence
+ * from the configured upstream. Fetch failures preserve the already collected local status.
  * @param {string} workspace
  * @param {string} [repoPath]
  */
@@ -486,57 +491,74 @@ async function refreshGitStatus(workspace, repoPath) {
   const status = await getGitStatus(workspace, repoPath)
   if (!status.isGit) return status
 
-  const remote = selectFetchRemote(status)
-  if (!remote) {
-    return {
-      ...status,
-      remoteStatusError: status.remotes.length > 1
-        ? '存在多个远端且无法确认要同步的远端'
-        : '未配置可同步的 Git 远端',
-    }
+  if (status.remotes.length === 0) {
+    return { ...status, remoteStatusError: '未配置可同步的 Git 远端' }
   }
 
-  const fetchResult = await runGit(status.repoRoot, ['fetch', '--prune', remote])
-  if (fetchResult.exitCode !== 0) {
-    return {
-      ...status,
-      remoteStatusError: fetchResult.timedOut
-        ? 'Git fetch 超过 60 秒，已终止'
-        : sanitizeRemoteError(fetchResult.stderr || fetchResult.stdout) || 'Git fetch 失败',
+  // 并行 fetch 全部远端（每个远端一个独立子进程、各自 60s 超时）：任意多个远端挂起时
+  // 总等待以单个远端的超时为上界（串行会叠成 N×60s）；单个远端挂起/失败不影响其余远端，
+  // 失败/超时天然归属到具体远端，无需解析 git 的本地化错误输出。
+  const results = await Promise.all(status.remotes.map(async (remote) => ({
+    remote,
+    result: await runGit(status.repoRoot, ['fetch', '--prune', remote]),
+  })))
+  const failures = results.filter((entry) => entry.result.exitCode !== 0)
+  let partialError = null
+  if (failures.length > 0) {
+    if (failures.length === status.remotes.length) {
+      const first = failures[0]
+      return {
+        ...status,
+        remoteStatusError: failures.length === 1
+          ? (first.result.timedOut
+            ? `Git fetch 超过 ${Math.round(gitTimeoutMs() / 1000)} 秒，已终止`
+            : sanitizeRemoteError(first.result.stderr || first.result.stdout) || '获取远端更新失败')
+          : `全部远端获取失败：${failures.map((f) => f.remote).join('、')}`,
+      }
     }
+    partialError = `部分远端获取失败：${failures.map((f) => f.remote).join('、')}（其余远端已更新）`
   }
 
   const refreshedStatus = await getGitStatus(workspace, repoPath)
   if (!refreshedStatus.isGit) return refreshedStatus
+  // 部分远端失败：其余远端已更新，附加提示但不覆盖读取状态失败的原因
+  const withPartial = (extra) => (partialError == null || extra.remoteStatusError != null
+    ? extra
+    : { ...extra, remoteStatusError: partialError })
 
   if (!refreshedStatus.hasHead) {
-    return { ...refreshedStatus, remoteStatusAvailable: true, hasCommitsToPush: false }
+    return withPartial({ ...refreshedStatus, remoteStatusAvailable: true, hasCommitsToPush: false })
   }
+  // 参照远端：仅用于「无 upstream 时」与远端同名分支比较；多远端且无法确定时为 null
+  const referenceRemote = selectFetchRemote(refreshedStatus)
   if (!refreshedStatus.upstream) {
-    const remoteBranch = `refs/remotes/${remote}/${refreshedStatus.branch}`
+    if (!referenceRemote) {
+      return withPartial({ ...refreshedStatus, remoteStatusAvailable: true, hasCommitsToPush: false })
+    }
+    const remoteBranch = `refs/remotes/${referenceRemote}/${refreshedStatus.branch}`
     const exists = await runGit(refreshedStatus.repoRoot, ['rev-parse', '--verify', '--quiet', remoteBranch])
     if (exists.exitCode !== 0) {
-      return { ...refreshedStatus, remoteStatusAvailable: true, hasCommitsToPush: true }
+      return withPartial({ ...refreshedStatus, remoteStatusAvailable: true, hasCommitsToPush: true })
     }
     const comparison = await runGit(refreshedStatus.repoRoot, ['rev-list', '--left-right', '--count', `HEAD...${remoteBranch}`])
     const [ahead] = comparison.stdout.trim().split(/\s+/).map((value) => parseInt(value, 10))
     if (comparison.exitCode !== 0 || !Number.isFinite(ahead)) {
-      return { ...refreshedStatus, remoteStatusError: '读取 Git 远端状态失败' }
+      return withPartial({ ...refreshedStatus, remoteStatusError: '读取 Git 远端状态失败' })
     }
-    return { ...refreshedStatus, remoteStatusAvailable: true, hasCommitsToPush: ahead > 0 }
+    return withPartial({ ...refreshedStatus, remoteStatusAvailable: true, hasCommitsToPush: ahead > 0 })
   }
   const divergence = await runGit(refreshedStatus.repoRoot, ['rev-list', '--left-right', '--count', 'HEAD...@{upstream}'])
   if (divergence.exitCode !== 0) {
-    return {
+    return withPartial({
       ...refreshedStatus,
       remoteStatusError: sanitizeRemoteError(divergence.stderr || divergence.stdout) || '读取 Git 远端状态失败',
-    }
+    })
   }
   const [aheadCount, behindCount] = divergence.stdout.trim().split(/\s+/).map((value) => parseInt(value, 10))
   if (!Number.isFinite(aheadCount) || !Number.isFinite(behindCount)) {
-    return { ...refreshedStatus, remoteStatusError: '读取 Git 远端状态失败' }
+    return withPartial({ ...refreshedStatus, remoteStatusError: '读取 Git 远端状态失败' })
   }
-  return { ...refreshedStatus, remoteStatusAvailable: true, aheadCount, behindCount, hasCommitsToPush: aheadCount > 0 }
+  return withPartial({ ...refreshedStatus, remoteStatusAvailable: true, aheadCount, behindCount, hasCommitsToPush: aheadCount > 0 })
 }
 
 /**

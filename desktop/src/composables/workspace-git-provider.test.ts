@@ -200,6 +200,21 @@ describe('createCloudGitProvider git manager methods', () => {
       sessionId: 7, repoPath: 'r', branch: 'bad..name', create: false,
     }])
   })
+
+  it('refreshStatus / fetchRemote 用 150s 超时预算调用（须大于后端单远端 60s 预算）', async () => {
+    vi.mocked(api.post).mockResolvedValue({ data: {} } as never)
+    const provider = createCloudGitProvider('7')
+
+    await provider.refreshStatus('r')
+    await provider.fetchRemote('r')
+
+    expect(vi.mocked(api.post).mock.calls[0]).toEqual(['/files/workspace-git-refresh', {
+      sessionId: 7, repoPath: 'r',
+    }, { timeout: 150_000 }])
+    expect(vi.mocked(api.post).mock.calls[1]).toEqual(['/files/workspace-git-fetch', {
+      sessionId: 7, repoPath: 'r',
+    }, { timeout: 150_000 }])
+  })
 })
 
 // ===== 两步提交（中央 Tab）：generateCommitMessage / commitWithMessage =====

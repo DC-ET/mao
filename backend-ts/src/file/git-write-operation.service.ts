@@ -30,6 +30,12 @@ const STASH_ACTIONS = ['apply', 'pop', 'drop'];
 /** LOCAL 活动记录白名单：与 GitWriteOperationService 的写操作一一对应 */
 const LOCAL_ACTIVITY_OPERATIONS = ['commit', 'pull', 'push', 'fetch', 'switch', 'stash'];
 
+/** git 子进程超时（毫秒）。MAO_TEST_GIT_TIMEOUT_MS 仅供测试缩短挂起类用例的等待时间（小于 1s 视为无效）。 */
+function gitTimeoutMs(): number {
+  const override = Number(process.env.MAO_TEST_GIT_TIMEOUT_MS);
+  return Number.isFinite(override) && override >= 1000 ? override : TIMEOUT_SECONDS * 1000;
+}
+
 export const ASKPASS = `#!/bin/bash
 PROMPT="$1"
 if echo "$PROMPT" | grep -qi 'username'; then
@@ -145,25 +151,33 @@ export class GitWriteOperationService {
     const repo = await this.resolveRepository(session, repoPath);
     return this.withRepoLock(repo, async () => {
       const state = await this.remoteState(repo);
-      const remote = await this.selectRefreshRemote(repo, state);
-      if (remote == null) {
+      if (state.remotes.length === 0) {
         const status = await this.workspaceGitService.getStatus(session.workspace!, repoPath);
         status.remoteStatusAvailable = false;
-        status.remoteStatusError = state.remotes.length === 0
-          ? '仓库未配置远端'
-          : '存在多个远端且没有 origin，无法确认远端状态';
+        status.remoteStatusError = '仓库未配置远端';
         return status;
       }
-      const fetch = await this.run(repo, ['fetch', '--prune', remote], await this.credentialEnv(session));
+      const env = await this.credentialEnv(session);
+      const failures = await this.fetchAllRemotes(repo, state.remotes, env);
       const status = await this.workspaceGitService.getStatus(session.workspace!, repoPath);
-      if (fetch.success) {
+      if (failures.length === 0) {
         status.remoteStatusAvailable = true;
         status.remoteStatusError = undefined;
-        status.hasCommitsToPush = await this.hasCommitsToPush(repo, status, remote);
+      } else if (failures.length < state.remotes.length) {
+        status.remoteStatusAvailable = true;
+        status.remoteStatusError = `部分远端获取失败：${failures.map((f) => f.remote).join('、')}（其余远端已更新）`;
       } else {
         status.remoteStatusAvailable = false;
-        status.remoteStatusError = classify(fetch, '远端状态刷新失败');
+        status.remoteStatusError = failures.length === 1
+          ? classify(failures[0].result, '获取远端更新失败')
+          : `全部远端获取失败：${failures.map((f) => f.remote).join('、')}`;
+        return status;
       }
+      // 参照远端只用于「无 upstream 时」判断是否有提交要推（推送入口的禁用依据）
+      const referenceRemote = await this.selectRefreshRemote(repo, state);
+      status.hasCommitsToPush = referenceRemote == null
+        ? false
+        : await this.hasCommitsToPush(repo, status, referenceRemote);
       return status;
     });
   }
@@ -217,22 +231,27 @@ export class GitWriteOperationService {
   }
 
   /**
-   * 显式获取远端更新（fetch --prune，不动工作区）。
-   * remote 选择复用 pull/push 的 selectRefreshRemote（upstream 优先 → origin → 唯一 remote）；
-   * 无 remote 时报「仓库未配置远端」（与 refreshRemoteStatus 的无 remote 分支同语义）。
+   * 显式获取远端更新（并行执行逐远端 fetch --prune，不动工作区）。
+   * 每个远端一个独立子进程并行执行：单个远端挂起不会阻断其余远端，总等待以单个远端的
+   * 超时为上界；失败天然归属到具体远端（无需解析输出）；
+   * 部分失败按成功提示，全部失败才报错；无 remote 时报「仓库未配置远端」
+   * （与 refreshRemoteStatus 的无 remote 分支同语义）。
    */
   async fetchRemote(session: Session, repoPath?: string | null): Promise<GitOperationResult> {
     return this.locked(session, repoPath, 'fetch', async (repo) => {
       const state = await this.remoteState(repo);
-      const remote = await this.selectRefreshRemote(repo, state);
-      if (remote == null) {
-        throw new BusinessException(ErrorCode.PARAM_INVALID, state.remotes.length === 0
-          ? '仓库未配置远端'
-          : '存在多个远端且没有 origin，无法确认要获取的远端');
+      if (state.remotes.length === 0) {
+        throw new BusinessException(ErrorCode.PARAM_INVALID, '仓库未配置远端');
       }
-      const fetch = await this.run(repo, ['fetch', '--prune', remote], await this.credentialEnv(session));
-      if (!fetch.success) {
-        throw new BusinessException(ErrorCode.INTERNAL_ERROR, classify(fetch, '获取远端更新失败'));
+      const env = await this.credentialEnv(session);
+      const failures = await this.fetchAllRemotes(repo, state.remotes, env);
+      if (failures.length === state.remotes.length) {
+        throw new BusinessException(ErrorCode.INTERNAL_ERROR, failures.length === 1
+          ? classify(failures[0].result, '获取远端更新失败')
+          : `全部远端获取失败：${failures.map((f) => f.remote).join('、')}`);
+      }
+      if (failures.length > 0) {
+        return successResult('fetch', state.branch, `部分远端已更新（${failures.map((f) => f.remote).join('、')} 获取失败）`);
       }
       return successResult('fetch', state.branch, '远端已更新');
     });
@@ -497,6 +516,20 @@ export class GitWriteOperationService {
     }
   }
 
+  /**
+   * 并行 fetch 全部远端：每个远端一个独立子进程、各自 60s 超时；返回失败项（保持传入 remotes 的顺序），
+   * 供 refreshRemoteStatus / fetchRemote 共用。任意多个远端挂起时总等待以单个远端的超时为上界
+   * （串行会叠成 N×60s 并全程占住仓库锁）；单个远端挂起/失败不影响其余远端，
+   * 失败/超时天然归属到具体远端，无需解析 git 的输出文本。
+   */
+  private async fetchAllRemotes(repo: string, remotes: string[], env: Record<string, string>): Promise<Array<{ remote: string; result: GitResult }>> {
+    const results = await Promise.all(remotes.map(async (remote) => ({
+      remote,
+      result: await this.run(repo, ['fetch', '--prune', remote], env),
+    })));
+    return results.filter((entry) => !entry.result.success);
+  }
+
   private run(repo: string, args: string[], extraEnv: Record<string, string>): Promise<GitResult> {
     return new Promise((resolveP) => {
       const child = spawn('git', ['-c', 'core.quotepath=false', ...args], {
@@ -514,10 +547,11 @@ export class GitWriteOperationService {
       };
       child.stdout?.on('data', onData);
       child.stderr?.on('data', onData);
+      const timeoutMs = gitTimeoutMs();
       const timer = setTimeout(() => {
         child.kill('SIGKILL');
-        resolveP({ exitCode: 124, output: 'Git 子进程 60 秒超时', success: false });
-      }, TIMEOUT_SECONDS * 1000);
+        resolveP({ exitCode: 124, output: `Git 子进程 ${Math.round(timeoutMs / 1000)} 秒超时`, success: false });
+      }, timeoutMs);
       child.on('error', () => {
         clearTimeout(timer);
         resolveP({ exitCode: 127, output: 'Git 子进程执行失败', success: false });
@@ -632,7 +666,7 @@ function requireSuccess(result: GitResult, message: string): void {
 
 function classify(result: GitResult, fallback: string): string {
   const lower = result.output.toLowerCase();
-  if (result.exitCode === 124) return 'Git 子进程 60 秒超时';
+  if (result.exitCode === 124) return result.output.trim() || `Git 子进程 ${Math.round(gitTimeoutMs() / 1000)} 秒超时`;
   if (lower.includes('index.lock')) return 'Git index lock 被其他进程占用';
   if (lower.includes('authentication failed') || lower.includes('could not read username') || lower.includes('permission denied')) {
     return 'Git 认证失败或凭证缺失';

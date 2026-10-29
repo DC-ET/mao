@@ -421,10 +421,12 @@ export function createCloudGitProvider(sessionId: string): WorkspaceGitProvider 
     },
     async refreshStatus(repoPath?: string) {
       try {
-        const { data } = await api.post('/files/workspace-git-refresh', {
-          sessionId: numericSessionId,
-          repoPath,
-        })
+        // 刷新会并行获取全部远端，最坏等待以单个远端的 60s 超时为界；150s 客户端预算须大于该后端预算
+        const { data } = await api.post(
+          '/files/workspace-git-refresh',
+          { sessionId: numericSessionId, repoPath },
+          { timeout: 150_000 },
+        )
         return normalizeStatus(data)
       } catch (e: any) {
         return emptyStatus(e?.message || '刷新 Git 远端状态失败')
@@ -571,7 +573,12 @@ export function createCloudGitProvider(sessionId: string): WorkspaceGitProvider 
     },
     async fetchRemote(repoPath?: string) {
       try {
-        const { data } = await api.post('/files/workspace-git-fetch', { sessionId: numericSessionId, repoPath })
+        // 获取会并行拉取全部远端，最坏等待以单个远端的 60s 超时为界；150s 客户端预算须大于该后端预算
+        const { data } = await api.post(
+          '/files/workspace-git-fetch',
+          { sessionId: numericSessionId, repoPath },
+          { timeout: 150_000 },
+        )
         return data
       } catch (e) {
         return failedOperation('fetch', e)

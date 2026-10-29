@@ -2,6 +2,7 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 const { execFileSync } = require('child_process')
 const fs = require('fs')
+const http = require('node:http')
 const os = require('os')
 const path = require('path')
 const { EXCLUDED_REPO_DIRS, getGitStatus, listGitRepos, refreshGitStatus } = require('./gitStatus.cjs')
@@ -47,6 +48,40 @@ function createBareRemote(t) {
   const remote = tempDir(t)
   git(remote, ['init', '--bare'])
   return remote
+}
+
+/** 启动一个「接受连接但永不响应」的本地 HTTP 服务，模拟挂起远端。 */
+function startHangingRemote(t) {
+  const sockets = new Set()
+  const server = http.createServer(() => {
+    // 永不响应：请求一直挂起，直到 git 子进程被超时杀掉
+  })
+  server.on('connection', (socket) => {
+    sockets.add(socket)
+    socket.on('close', () => sockets.delete(socket))
+  })
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      t.after(() => {
+        for (const socket of sockets) socket.destroy()
+        server.close()
+      })
+      const { port } = server.address()
+      resolve(`http://127.0.0.1:${port}/repo.git`)
+    })
+  })
+}
+
+/** 回调执行期间用 MAO_TEST_GIT_TIMEOUT_MS 缩短 git 子进程超时，避免挂起用例等满 60s。 */
+async function withGitTimeout(ms, fn) {
+  const previous = process.env.MAO_TEST_GIT_TIMEOUT_MS
+  process.env.MAO_TEST_GIT_TIMEOUT_MS = String(ms)
+  try {
+    return await fn()
+  } finally {
+    if (previous === undefined) delete process.env.MAO_TEST_GIT_TIMEOUT_MS
+    else process.env.MAO_TEST_GIT_TIMEOUT_MS = previous
+  }
 }
 
 test('repo discovery excludes tool-managed git directories', async (t) => {
@@ -332,22 +367,88 @@ test('fetch prunes the remote without touching the worktree', async (t) => {
   assert.equal(status.behindCount, 1)
 })
 
-test('fetch fails without a remote and when the remote is ambiguous', async (t) => {
+test('fetch fails without a remote and fetches every remote otherwise', async (t) => {
   const repo = initRepo(t)
   const noRemote = await fetch(repo)
   assert.equal(noRemote.success, false)
   assert.match(noRemote.error, /未配置远端/)
 
-  // 两个都不叫 origin 的远端且无 upstream 跟踪时才判定歧义；有 origin 时优先 origin
-  git(repo, ['remote', 'add', 'upstream', createBareRemote(t)])
-  git(repo, ['remote', 'add', 'mirror', createBareRemote(t)])
-  const ambiguous = await fetch(repo)
-  assert.equal(ambiguous.success, false)
-  assert.match(ambiguous.error, /多个远端/)
+  // 多个远端（含非 origin）：全部获取，不再判定歧义
+  const upstream = createBareRemote(t)
+  const mirror = createBareRemote(t)
+  git(repo, ['remote', 'add', 'upstream', upstream])
+  git(repo, ['remote', 'add', 'mirror', mirror])
+  git(repo, ['push', '-q', 'upstream', 'main'])
+  git(repo, ['push', '-q', 'mirror', 'main'])
 
-  git(repo, ['remote', 'add', 'origin', createBareRemote(t)])
-  const withOrigin = await fetch(repo)
-  assert.equal(withOrigin.success, true, withOrigin.error)
+  // 两个待获取的推进：upstream 一个提交、mirror 另一个提交（从同一克隆分别推送）
+  const seed = tempDir(t)
+  git(seed, ['clone', '-q', '-b', 'main', upstream, 'work'])
+  const work = path.join(seed, 'work')
+  git(work, ['config', 'user.name', 'Other'])
+  git(work, ['config', 'user.email', 'other@example.com'])
+  fs.writeFileSync(path.join(work, 'upstream.txt'), 'upstream\n')
+  git(work, ['add', '-A'])
+  git(work, ['commit', '-m', 'advance upstream'])
+  git(work, ['push', '-q', 'origin', 'main'])
+  fs.writeFileSync(path.join(work, 'mirror.txt'), 'mirror\n')
+  git(work, ['add', '-A'])
+  git(work, ['commit', '-m', 'advance mirror'])
+  git(work, ['push', '-q', mirror, 'main'])
+
+  const result = await fetch(repo)
+  assert.equal(result.success, true, result.error)
+  assert.equal(result.message, '远端已更新')
+  // 两个远端跟踪引用都更新：全部远端（含非 origin）都执行了 fetch
+  assert.equal(git(repo, ['rev-parse', 'upstream/main']), git(upstream, ['rev-parse', 'main']))
+  assert.equal(git(repo, ['rev-parse', 'mirror/main']), git(mirror, ['rev-parse', 'main']))
+})
+
+test('fetch reports partial failure when one remote is unreachable', async (t) => {
+  const repo = initRepo(t)
+  const good = createBareRemote(t)
+  git(repo, ['remote', 'add', 'good', good])
+  git(repo, ['push', '-q', 'good', 'main'])
+  git(repo, ['remote', 'add', 'broken', 'http://user:secret@127.0.0.1:1/repo.git'])
+
+  const result = await fetch(repo)
+  assert.equal(result.success, true, result.error)
+  assert.match(result.message, /部分远端已更新/)
+  assert.match(result.message, /broken/)
+  assert.equal(result.message.includes('user:secret'), false)
+})
+
+test('fetch reports a single hanging remote with the timeout message', async (t) => {
+  const repo = initRepo(t)
+  git(repo, ['remote', 'add', 'only-hang', await startHangingRemote(t)])
+
+  const result = await withGitTimeout(2000, () => fetch(repo))
+  assert.equal(result.success, false)
+  assert.equal(result.error, 'Git 操作超过 2 秒，已终止')
+})
+
+test('fetch names every remote when all remotes fail', async (t) => {
+  const repo = initRepo(t)
+  git(repo, ['remote', 'add', 'alpha', 'http://127.0.0.1:1/alpha.git'])
+  git(repo, ['remote', 'add', 'beta', 'http://127.0.0.1:1/beta.git'])
+
+  const result = await fetch(repo)
+  assert.equal(result.success, false)
+  assert.equal(result.error, '全部远端获取失败：alpha、beta')
+})
+
+test('fetch fetches hanging remotes in parallel within a single timeout budget', async (t) => {
+  const repo = initRepo(t)
+  const url = await startHangingRemote(t)
+  for (const name of ['h1', 'h2', 'h3']) git(repo, ['remote', 'add', name, url])
+
+  const started = Date.now()
+  const result = await withGitTimeout(2000, () => fetch(repo))
+  const elapsed = Date.now() - started
+  // 3 个挂起远端并行获取：总等待 ≍ 单个远端预算（串行会叠成 ~3 倍）
+  assert.ok(elapsed < 4000, `elapsed=${elapsed}ms`)
+  assert.equal(result.success, false)
+  assert.equal(result.error, '全部远端获取失败：h1、h2、h3')
 })
 
 test('switch branch stashes local changes and restores them exactly', async (t) => {

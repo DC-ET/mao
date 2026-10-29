@@ -2,6 +2,7 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 const { execFileSync } = require('child_process')
 const fs = require('fs')
+const http = require('node:http')
 const os = require('os')
 const path = require('path')
 const {
@@ -18,6 +19,7 @@ const {
   numstatNewPath,
   parseBranchVvLine,
   parseLogLine,
+  refreshGitStatus,
   resolveRepoDir,
   resolveRepoRoot,
 } = require('./gitStatus.cjs')
@@ -49,6 +51,46 @@ function commitFile(repo, fileName, content, message) {
   fs.writeFileSync(path.join(repo, fileName), content)
   git(repo, ['add', '-A'])
   git(repo, ['commit', '-m', message])
+}
+
+function createBareRemote(t) {
+  const dir = tempDir(t)
+  git(dir, ['init', '--bare'])
+  return dir
+}
+
+/** 启动一个「接受连接但永不响应」的本地 HTTP 服务，模拟挂起远端。 */
+function startHangingRemote(t) {
+  const sockets = new Set()
+  const server = http.createServer(() => {
+    // 永不响应：请求一直挂起，直到 git 子进程被超时杀掉
+  })
+  server.on('connection', (socket) => {
+    sockets.add(socket)
+    socket.on('close', () => sockets.delete(socket))
+  })
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      t.after(() => {
+        for (const socket of sockets) socket.destroy()
+        server.close()
+      })
+      const { port } = server.address()
+      resolve(`http://127.0.0.1:${port}/repo.git`)
+    })
+  })
+}
+
+/** 回调执行期间用 MAO_TEST_GIT_TIMEOUT_MS 缩短 git 子进程超时，避免挂起用例等满 60s。 */
+async function withGitTimeout(ms, fn) {
+  const previous = process.env.MAO_TEST_GIT_TIMEOUT_MS
+  process.env.MAO_TEST_GIT_TIMEOUT_MS = String(ms)
+  try {
+    return await fn()
+  } finally {
+    if (previous === undefined) delete process.env.MAO_TEST_GIT_TIMEOUT_MS
+    else process.env.MAO_TEST_GIT_TIMEOUT_MS = previous
+  }
 }
 
 test('log parses commits with refs, clamps limit and honours path filter', async (t) => {
@@ -803,4 +845,77 @@ test('branch compare file diff truncates >2MiB files instead of returning an emp
   assert.equal(diff.beforeContent[0], 'a')
   assert.equal(diff.afterContent[0], 'b')
   assert.equal(diff.unavailableReason, undefined)
+})
+
+test('refreshGitStatus fetches every remote including non-origin ones', async (t) => {
+  const repo = initRepo(t)
+  const alpha = createBareRemote(t)
+  const beta = createBareRemote(t)
+  git(repo, ['remote', 'add', 'alpha', alpha])
+  git(repo, ['remote', 'add', 'beta', beta])
+  const branch = git(repo, ['rev-parse', '--abbrev-ref', 'HEAD'])
+  git(repo, ['push', '-q', 'alpha', branch])
+  git(repo, ['push', '-q', 'beta', branch])
+
+  // 两个远端各自推进一个提交（从 alpha 克隆后分别推送）
+  const seed = tempDir(t)
+  git(seed, ['clone', '-q', '-b', branch, alpha, 'work'])
+  const work = path.join(seed, 'work')
+  git(work, ['config', 'user.name', 'Other'])
+  git(work, ['config', 'user.email', 'other@example.com'])
+  fs.writeFileSync(path.join(work, 'a.txt'), 'a\n')
+  git(work, ['add', '-A'])
+  git(work, ['commit', '-m', 'a'])
+  git(work, ['push', '-q', 'origin', branch])
+  fs.writeFileSync(path.join(work, 'b.txt'), 'b\n')
+  git(work, ['add', '-A'])
+  git(work, ['commit', '-m', 'b'])
+  git(work, ['push', '-q', beta, branch])
+
+  const status = await refreshGitStatus(repo)
+  assert.equal(status.remoteStatusAvailable, true)
+  // 两个非 origin 远端且无 upstream：参照远端无法确定，hasCommitsToPush 按 false
+  assert.equal(status.hasCommitsToPush, false)
+  assert.equal(git(repo, ['rev-parse', `alpha/${branch}`]), git(alpha, ['rev-parse', branch]))
+  assert.equal(git(repo, ['rev-parse', `beta/${branch}`]), git(beta, ['rev-parse', branch]))
+})
+
+test('refreshGitStatus keeps fetching other remotes when one hangs', async (t) => {
+  const repo = initRepo(t)
+  const good = createBareRemote(t)
+  const branch = git(repo, ['rev-parse', '--abbrev-ref', 'HEAD'])
+  git(repo, ['remote', 'add', 'aaa-hang', await startHangingRemote(t)])
+  git(repo, ['remote', 'add', 'zzz-good', good])
+  git(repo, ['push', '-q', 'zzz-good', branch])
+
+  const status = await withGitTimeout(2000, () => refreshGitStatus(repo))
+  assert.equal(status.remoteStatusAvailable, true)
+  assert.match(status.remoteStatusError, /部分远端获取失败/)
+  assert.match(status.remoteStatusError, /aaa-hang/)
+  assert.equal(status.remoteStatusError.includes('zzz-good'), false)
+  // 挂起远端超时不影响其余远端：zzz-good 的跟踪引用更新到远端实际 sha
+  assert.equal(git(repo, ['rev-parse', `zzz-good/${branch}`]), git(good, ['rev-parse', branch]))
+})
+
+test('refreshGitStatus names every hanging remote and bounds the total wait', async (t) => {
+  const repo = initRepo(t)
+  const url = await startHangingRemote(t)
+  for (const name of ['h1', 'h2', 'h3']) git(repo, ['remote', 'add', name, url])
+
+  const started = Date.now()
+  const status = await withGitTimeout(2000, () => refreshGitStatus(repo))
+  const elapsed = Date.now() - started
+  // 3 个挂起远端并行获取：总等待 ≍ 单个远端预算（串行会叠成 ~3 倍）
+  assert.ok(elapsed < 4000, `elapsed=${elapsed}ms`)
+  assert.equal(status.remoteStatusAvailable, false)
+  assert.equal(status.remoteStatusError, '全部远端获取失败：h1、h2、h3')
+})
+
+test('refreshGitStatus reports the timeout message for a single hanging remote', async (t) => {
+  const repo = initRepo(t)
+  git(repo, ['remote', 'add', 'only-hang', await startHangingRemote(t)])
+
+  const status = await withGitTimeout(2000, () => refreshGitStatus(repo))
+  assert.equal(status.remoteStatusAvailable, false)
+  assert.equal(status.remoteStatusError, 'Git fetch 超过 2 秒，已终止')
 })

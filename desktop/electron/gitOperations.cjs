@@ -2,9 +2,14 @@ const { execFile } = require('child_process')
 const crypto = require('crypto')
 const fs = require('fs')
 const path = require('path')
-const { resolveRepoDir, collectChangedFiles, selectFetchRemote } = require('./gitStatus.cjs')
+const { resolveRepoDir, collectChangedFiles } = require('./gitStatus.cjs')
 
 const GIT_TIMEOUT_MS = 60_000
+/** 测试可用 MAO_TEST_GIT_TIMEOUT_MS 覆盖以缩短挂起类用例的等待时间（小于 1s 视为无效）。 */
+function gitTimeoutMs() {
+  const override = Number(process.env.MAO_TEST_GIT_TIMEOUT_MS)
+  return Number.isFinite(override) && override >= 1000 ? override : GIT_TIMEOUT_MS
+}
 const MAX_GIT_OUTPUT_BYTES = 2 * 1024 * 1024
 const MAX_COMMIT_DIFF_BYTES = 200 * 1024
 const MAX_COMMIT_MESSAGE_BYTES = 64 * 1024
@@ -26,7 +31,7 @@ function runGit(cwd, args, options = {}) {
       cwd,
       encoding: 'utf8',
       maxBuffer: MAX_GIT_OUTPUT_BYTES,
-      timeout: GIT_TIMEOUT_MS,
+      timeout: gitTimeoutMs(),
       killSignal: 'SIGKILL',
       env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
     }, (error, stdout, stderr) => {
@@ -54,7 +59,7 @@ function operationError(operation, message, extra = {}) {
 }
 
 function describeGitFailure(result, fallback) {
-  if (result.timedOut) return 'Git 操作超过 60 秒，已终止'
+  if (result.timedOut) return `Git 操作超过 ${Math.round(gitTimeoutMs() / 1000)} 秒，已终止`
   const detail = sanitizeError(result.stderr || result.stdout)
   if (/index\.lock|another git process/i.test(detail)) return 'Git index lock 被其他进程占用'
   if (/authentication failed|could not read username|permission denied \(publickey\)|terminal prompts disabled/i.test(detail)) {
@@ -402,8 +407,9 @@ function resolveSwitchTarget(branch, create, remotes) {
 }
 
 /**
- * 显式获取远端更新（fetch --prune，不动工作区）。
- * remote 选择复用 gitStatus.cjs 的 selectFetchRemote（upstream 优先 → origin → 唯一 remote）。
+ * 显式获取远端更新（并行执行逐远端 fetch --prune，不动工作区）。
+ * 获取全部远端：多远端仓库下非 upstream 远端的数据不再停留在旧状态；每个远端一个
+ * 独立子进程并行执行，单个挂起不阻断其余远端，总等待以单个远端超时（60s）为界。
  * @param {string} workspace
  * @param {string} [repoPath]
  */
@@ -411,14 +417,27 @@ async function fetch(workspace, repoPath) {
   return withWriteLock(workspace, repoPath, 'fetch', async (repoRoot) => {
     const state = await getRemoteState(repoRoot)
     if (!state.hasRemote) return operationError('fetch', '仓库未配置远端')
-    const remote = selectFetchRemote(state)
-    if (!remote) {
-      return operationError('fetch', state.remotes.length > 1
-        ? '存在多个远端且无法确认要获取的远端'
-        : '未配置可同步的 Git 远端', { branch: state.branch })
+    // 并行 fetch 全部远端（每个远端一个独立子进程、各自 60s 超时）：任意多个远端挂起时
+    // 总耗时以单个远端超时为上界（串行会叠成 N×60s）；单个远端挂起/失败不影响其余远端，
+    // 失败也天然归属到具体远端（无需解析 git 输出）。部分失败按成功提示，全部失败才报错。
+    const results = await Promise.all(state.remotes.map(async (remote) => ({
+      remote,
+      result: await runGit(repoRoot, ['fetch', '--prune', remote]),
+    })))
+    const failures = results.filter((entry) => entry.result.exitCode !== 0)
+    if (failures.length === state.remotes.length) {
+      return operationError('fetch', failures.length === 1
+        ? describeGitFailure(failures[0].result, '获取远端更新失败')
+        : `全部远端获取失败：${failures.map((f) => f.remote).join('、')}`, { branch: state.branch })
     }
-    const result = await runGit(repoRoot, ['fetch', '--prune', remote])
-    if (result.exitCode !== 0) return operationError('fetch', describeGitFailure(result, 'Git fetch 失败'), { branch: state.branch })
+    if (failures.length > 0) {
+      return {
+        success: true,
+        operation: 'fetch',
+        message: `部分远端已更新（${failures.map((f) => f.remote).join('、')} 获取失败）`,
+        branch: state.branch,
+      }
+    }
     return { success: true, operation: 'fetch', message: '远端已更新', branch: state.branch }
   })
 }

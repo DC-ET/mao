@@ -1,6 +1,8 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createServer } from 'node:http';
+import type { Socket } from 'node:net';
 import { describe, expect, it, vi } from 'vitest';
 import { useTmpDir } from '../testing/tmp-dir.js';
 import { PathSandbox } from '../harness/safety/path-sandbox.js';
@@ -38,6 +40,43 @@ function newService(dir: string, repo: string): GitWriteOperationService {
     {} as RuntimeDataResolver,
     { record: vi.fn() } as unknown as ActivityService,
   );
+}
+
+/** 启动一个「接受连接但永不响应」的本地 HTTP 服务，模拟挂起远端。 */
+function startHangingRemote(): Promise<{ url: string; close: () => void }> {
+  return new Promise((resolveP) => {
+    const sockets = new Set<Socket>();
+    const server = createServer(() => {
+      // 永不响应：请求一直挂起，直到 git 子进程被超时杀掉
+    });
+    server.on('connection', (socket) => {
+      sockets.add(socket);
+      socket.on('close', () => sockets.delete(socket));
+    });
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      const port = typeof address === 'object' && address != null ? address.port : 0;
+      resolveP({
+        url: `http://127.0.0.1:${port}/repo.git`,
+        close: () => {
+          for (const socket of sockets) socket.destroy();
+          server.close();
+        },
+      });
+    });
+  });
+}
+
+/** 回调执行期间用 MAO_TEST_GIT_TIMEOUT_MS 缩短 git 子进程超时，避免挂起用例等满 60s。 */
+async function withGitTimeoutMs<T>(ms: number, fn: () => Promise<T>): Promise<T> {
+  const previous = process.env.MAO_TEST_GIT_TIMEOUT_MS;
+  process.env.MAO_TEST_GIT_TIMEOUT_MS = String(ms);
+  try {
+    return await fn();
+  } finally {
+    if (previous == null) delete process.env.MAO_TEST_GIT_TIMEOUT_MS;
+    else process.env.MAO_TEST_GIT_TIMEOUT_MS = previous;
+  }
 }
 
 const describeGit = gitAvailable() ? describe : describe.skip;
@@ -136,8 +175,8 @@ describeGit('GitWriteOperationService git', () => {
     expect(status.hasHead).toBe(true);
   });
 
-  it('refreshPrefersUpstreamRemoteOverOrigin', async () => {
-    const dir = useTmpDir('mao-gup-');
+  it('refreshReportsPartialFailureWhenOneRemoteIsUnreachable', async () => {
+    const dir = useTmpDir('mao-gpartial-');
     const upstream = join(dir, 'upstream.git');
     run(dir, 'git', 'init', '--bare', upstream);
     const repo = join(dir, 'upstream-refresh');
@@ -151,11 +190,15 @@ describeGit('GitWriteOperationService git', () => {
     const branch = run(repo, 'git', 'rev-parse', '--abbrev-ref', 'HEAD').trim();
     run(repo, 'git', 'remote', 'add', 'upstream', upstream);
     run(repo, 'git', 'push', '-u', 'upstream', branch);
-    run(repo, 'git', 'remote', 'add', 'origin', 'https://invalid:secret@example.invalid/repo.git');
+    // 第二个远端不可达（本地关闭端口，毫秒级失败，避开 *.invalid 代理慢路径）：
+    // 逐远端 fetch 会尝试它并失败，但 upstream 已成功，按「部分失败」提示而非整体失败。
+    run(repo, 'git', 'remote', 'add', 'origin', 'http://user:secret@127.0.0.1:1/repo.git');
 
     const status = await newService(dir, repo).refreshRemoteStatus(session(repo), null);
     expect(status.remoteStatusAvailable).toBe(true);
-    expect(status.remoteStatusError ?? null).toBeNull();
+    expect(status.remoteStatusError).toContain('部分远端获取失败');
+    expect(status.remoteStatusError).toContain('origin');
+    expect(status.remoteStatusError).not.toContain('user:secret');
   });
 
   it('refreshFailureReturnsLocalStatusAndSanitizedError', async () => {
@@ -182,7 +225,7 @@ describeGit('GitWriteOperationService git', () => {
     expect(status.remoteStatusError).not.toContain('user:secret');
   });
 
-  it('multipleRemotesWithoutOriginCannotBeConfirmed', async () => {
+  it('multipleRemotesAreAllFetched', async () => {
     const dir = useTmpDir('mao-gmulti-');
     const repo = join(dir, 'multi-remote');
     mkdirSync(repo, { recursive: true });
@@ -192,13 +235,105 @@ describeGit('GitWriteOperationService git', () => {
     writeFileSync(join(repo, 'base.txt'), 'base\n');
     run(repo, 'git', 'add', '.');
     run(repo, 'git', 'commit', '-m', 'init');
-    run(repo, 'git', 'remote', 'add', 'alpha', join(dir, 'alpha.git'));
-    run(repo, 'git', 'remote', 'add', 'beta', join(dir, 'beta.git'));
+    const branch = run(repo, 'git', 'rev-parse', '--abbrev-ref', 'HEAD').trim();
+
+    // 两个都不叫 origin 的真实远端：都要被获取（不再有「无法确认远端」的判定）
+    const alpha = join(dir, 'alpha.git');
+    const beta = join(dir, 'beta.git');
+    run(dir, 'git', 'init', '--bare', alpha);
+    run(dir, 'git', 'init', '--bare', beta);
+    run(repo, 'git', 'remote', 'add', 'alpha', alpha);
+    run(repo, 'git', 'remote', 'add', 'beta', beta);
+    run(repo, 'git', 'push', 'alpha', branch);
+    run(repo, 'git', 'push', 'beta', branch);
+
+    const status = await newService(dir, repo).refreshRemoteStatus(session(repo), null);
+    expect(status.remoteStatusAvailable).toBe(true);
+    expect(status.remoteStatusError ?? null).toBeNull();
+    expect(run(repo, 'git', 'rev-parse', `alpha/${branch}`).trim())
+      .toBe(run(alpha, 'git', 'rev-parse', branch).trim());
+    expect(run(repo, 'git', 'rev-parse', `beta/${branch}`).trim())
+      .toBe(run(beta, 'git', 'rev-parse', branch).trim());
+  });
+
+  it('refreshMarksRemoteUnavailableWhenEveryRemoteFails', async () => {
+    const dir = useTmpDir('mao-gmulti-fail-');
+    const repo = join(dir, 'multi-remote-fail');
+    mkdirSync(repo, { recursive: true });
+    run(repo, 'git', 'init');
+    run(repo, 'git', 'config', 'user.name', 'Test');
+    run(repo, 'git', 'config', 'user.email', 'a@b.c');
+    writeFileSync(join(repo, 'base.txt'), 'base\n');
+    run(repo, 'git', 'add', '.');
+    run(repo, 'git', 'commit', '-m', 'init');
+    run(repo, 'git', 'remote', 'add', 'alpha', join(dir, 'alpha-missing.git'));
+    run(repo, 'git', 'remote', 'add', 'beta', join(dir, 'beta-missing.git'));
 
     const status = await newService(dir, repo).refreshRemoteStatus(session(repo), null);
     expect(status.remoteStatusAvailable).toBe(false);
-    expect(status.remoteStatusError).toContain('多个远端');
+    // 多远端全失败：文案只列远端名（单失败才带 classify 的细分原因）
+    expect(status.remoteStatusError).toBe('全部远端获取失败：alpha、beta');
   });
+
+  it('refreshKeepsOtherRemotesWhenOneRemoteHangs', async () => {
+    const dir = useTmpDir('mao-ghang-');
+    const good = join(dir, 'good.git');
+    run(dir, 'git', 'init', '--bare', good);
+    const repo = join(dir, 'hang-repo');
+    mkdirSync(repo, { recursive: true });
+    run(repo, 'git', 'init');
+    run(repo, 'git', 'config', 'user.name', 'Test');
+    run(repo, 'git', 'config', 'user.email', 'a@b.c');
+    writeFileSync(join(repo, 'base.txt'), 'base\n');
+    run(repo, 'git', 'add', '.');
+    run(repo, 'git', 'commit', '-m', 'init');
+    const branch = run(repo, 'git', 'rev-parse', '--abbrev-ref', 'HEAD').trim();
+    const hang = await startHangingRemote();
+    try {
+      // 挂起远端排在字典序前面（先被尝试），锁住「挂起远端不阻断其余远端」的语义
+      run(repo, 'git', 'remote', 'add', 'aaa-hang', hang.url);
+      run(repo, 'git', 'remote', 'add', 'zzz-good', good);
+      run(repo, 'git', 'push', 'zzz-good', branch);
+
+      const status = await withGitTimeoutMs(2000, () => newService(dir, repo).refreshRemoteStatus(session(repo), null));
+      expect(status.remoteStatusAvailable).toBe(true);
+      expect(status.remoteStatusError).toContain('部分远端获取失败');
+      expect(status.remoteStatusError).toContain('aaa-hang');
+      expect(status.remoteStatusError).not.toContain('zzz-good');
+      // 挂起远端超时不影响其余远端：zzz-good 的跟踪引用更新到远端实际 sha
+      expect(run(repo, 'git', 'rev-parse', `zzz-good/${branch}`).trim())
+        .toBe(run(good, 'git', 'rev-parse', branch).trim());
+    } finally {
+      hang.close();
+    }
+  }, 15_000);
+
+  it('refreshFetchesHangingRemotesInParallelWithinSingleTimeoutBudget', async () => {
+    const dir = useTmpDir('mao-ghang-multi-');
+    const repo = join(dir, 'hang-multi-repo');
+    mkdirSync(repo, { recursive: true });
+    run(repo, 'git', 'init');
+    run(repo, 'git', 'config', 'user.name', 'Test');
+    run(repo, 'git', 'config', 'user.email', 'a@b.c');
+    writeFileSync(join(repo, 'base.txt'), 'base\n');
+    run(repo, 'git', 'add', '.');
+    run(repo, 'git', 'commit', '-m', 'init');
+    const hang = await startHangingRemote();
+    try {
+      for (const name of ['h1', 'h2', 'h3']) {
+        run(repo, 'git', 'remote', 'add', name, hang.url);
+      }
+      const started = Date.now();
+      const status = await withGitTimeoutMs(2000, () => newService(dir, repo).refreshRemoteStatus(session(repo), null));
+      const elapsed = Date.now() - started;
+      // 3 个挂起远端并行获取：总等待 ≍ 单个远端预算（串行会叠成 ~3 倍）
+      expect(elapsed).toBeLessThan(4000);
+      expect(status.remoteStatusAvailable).toBe(false);
+      expect(status.remoteStatusError).toBe('全部远端获取失败：h1、h2、h3');
+    } finally {
+      hang.close();
+    }
+  }, 15_000);
 
   it('commits local changes and records local activity', async () => {
     const dir = useTmpDir('mao-gcommit-');
@@ -371,6 +506,99 @@ describeGit('GitWriteOperationService git', () => {
     expect(status.behindCount).toBe(1);
     expect(branch).toBeTruthy();
   });
+
+  it('fetchRemoteFetchesEveryRemote', async () => {
+    const dir = useTmpDir('mao-gfetch-all-');
+    const repo = join(dir, 'fetch-all-repo');
+    mkdirSync(repo, { recursive: true });
+    run(repo, 'git', 'init');
+    run(repo, 'git', 'config', 'user.name', 'Test');
+    run(repo, 'git', 'config', 'user.email', 'a@b.c');
+    writeFileSync(join(repo, 'base.txt'), 'base\n');
+    run(repo, 'git', 'add', '.');
+    run(repo, 'git', 'commit', '-m', 'init');
+    const branch = run(repo, 'git', 'rev-parse', '--abbrev-ref', 'HEAD').trim();
+
+    const alpha = join(dir, 'alpha.git');
+    const beta = join(dir, 'beta.git');
+    run(dir, 'git', 'init', '--bare', alpha);
+    run(dir, 'git', 'init', '--bare', beta);
+    run(repo, 'git', 'remote', 'add', 'alpha', alpha);
+    run(repo, 'git', 'remote', 'add', 'beta', beta);
+    run(repo, 'git', 'push', 'alpha', branch);
+    run(repo, 'git', 'push', 'beta', branch);
+    // 两个远端各自推进一个提交（从 alpha 克隆后分别推送）
+    const seed = join(dir, 'seed');
+    run(dir, 'git', 'clone', '-b', branch, alpha, seed);
+    run(seed, 'git', 'config', 'user.name', 'Other');
+    run(seed, 'git', 'config', 'user.email', 'other@example.com');
+    writeFileSync(join(seed, 'a.txt'), 'a\n');
+    run(seed, 'git', 'add', '.');
+    run(seed, 'git', 'commit', '-m', 'a');
+    run(seed, 'git', 'push');
+    writeFileSync(join(seed, 'b.txt'), 'b\n');
+    run(seed, 'git', 'add', '.');
+    run(seed, 'git', 'commit', '-m', 'b');
+    run(seed, 'git', 'push', beta, branch);
+
+    const result = await newService(dir, repo).fetchRemote(session(repo), null);
+    expect(result.success).toBe(true);
+    expect(result.message).toBe('远端已更新');
+    // 两个远端跟踪引用都更新：全部远端（含非 upstream）都执行了 fetch
+    expect(run(repo, 'git', 'rev-parse', `alpha/${branch}`).trim())
+      .toBe(run(alpha, 'git', 'rev-parse', branch).trim());
+    expect(run(repo, 'git', 'rev-parse', `beta/${branch}`).trim())
+      .toBe(run(beta, 'git', 'rev-parse', branch).trim());
+  });
+
+  it('fetchRemoteReportsPartialFailureWhenOneRemoteIsUnreachable', async () => {
+    const dir = useTmpDir('mao-gfetch-partial-');
+    const repo = join(dir, 'fetch-partial-repo');
+    mkdirSync(repo, { recursive: true });
+    run(repo, 'git', 'init');
+    run(repo, 'git', 'config', 'user.name', 'Test');
+    run(repo, 'git', 'config', 'user.email', 'a@b.c');
+    writeFileSync(join(repo, 'base.txt'), 'base\n');
+    run(repo, 'git', 'add', '.');
+    run(repo, 'git', 'commit', '-m', 'init');
+    const branch = run(repo, 'git', 'rev-parse', '--abbrev-ref', 'HEAD').trim();
+    const good = join(dir, 'good.git');
+    run(dir, 'git', 'init', '--bare', good);
+    run(repo, 'git', 'remote', 'add', 'good', good);
+    run(repo, 'git', 'push', 'good', branch);
+    run(repo, 'git', 'remote', 'add', 'broken', 'http://user:secret@127.0.0.1:1/repo.git');
+
+    const result = await newService(dir, repo).fetchRemote(session(repo), null);
+    expect(result.success).toBe(true);
+    expect(result.message).toContain('部分远端已更新');
+    expect(result.message).toContain('broken');
+    expect(result.message).not.toContain('user:secret');
+  });
+
+  it('fetchRemoteFetchesHangingRemotesInParallelWithinSingleTimeoutBudget', async () => {
+    const dir = useTmpDir('mao-gfetch-hang-');
+    const repo = join(dir, 'fetch-hang-repo');
+    mkdirSync(repo, { recursive: true });
+    run(repo, 'git', 'init');
+    run(repo, 'git', 'config', 'user.name', 'Test');
+    run(repo, 'git', 'config', 'user.email', 'a@b.c');
+    writeFileSync(join(repo, 'base.txt'), 'base\n');
+    run(repo, 'git', 'add', '.');
+    run(repo, 'git', 'commit', '-m', 'init');
+    const hang = await startHangingRemote();
+    try {
+      for (const name of ['h1', 'h2', 'h3']) {
+        run(repo, 'git', 'remote', 'add', name, hang.url);
+      }
+      const started = Date.now();
+      await expect(withGitTimeoutMs(2000, () => newService(dir, repo).fetchRemote(session(repo), null)))
+        .rejects.toThrow('全部远端获取失败：h1、h2、h3');
+      // 3 个挂起远端并行获取：总等待 ≍ 单个远端预算（串行会叠成 ~3 倍）
+      expect(Date.now() - started).toBeLessThan(4000);
+    } finally {
+      hang.close();
+    }
+  }, 15_000);
 
   it('fetchRemoteWithoutRemoteFails', async () => {
     const dir = useTmpDir('mao-gfetch-none-');
