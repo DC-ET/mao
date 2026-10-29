@@ -46,7 +46,7 @@ function loadModule(calls: RequestCall[]): SignalModule {
   const cmdPath = path.join(LIB, 'commands', 'signal-watcher.js');
   delete req.cache[httpPath];
   delete req.cache[cmdPath];
-  const http = req(httpPath) as { request: (o: unknown) => Promise<unknown> };
+  const http = req(httpPath) as { request: (o: RequestCall) => Promise<unknown> };
   http.request = async (opts: RequestCall) => {
     calls.push(opts);
     return { code: 0, message: 'ok', data: { id: 1 } };

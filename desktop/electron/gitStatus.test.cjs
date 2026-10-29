@@ -261,6 +261,9 @@ test('branches parse local and remote entries with ahead/behind', async (t) => {
   const seed = initRepo(t)
   git(seed, ['remote', 'add', 'origin', remote])
   git(seed, ['push', '-u', 'origin', 'main'])
+  // bare 仓的 HEAD 默认落在 init.defaultBranch 上（CI runner 未配置时是 master），
+  // 不显式指到 main 的话 clone 会拿到未出生分支，本地 main 不存在
+  git(remote, ['symbolic-ref', 'HEAD', 'refs/heads/main'])
   const local = tempDir(t)
   git(local, ['clone', remote, '.'])
   git(local, ['config', 'user.name', 'Local'])
