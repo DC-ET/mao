@@ -50,7 +50,7 @@
           class="git-commit-input"
           :value="commitMessage"
           rows="3"
-          placeholder="提交信息（可用左上角按钮让 LLM 生成，之后可自由编辑）"
+          placeholder="提交信息（可用右上角按钮让 LLM 生成，之后可自由编辑）"
           @input="emit('update:commit-message', ($event.target as HTMLTextAreaElement).value)"
         />
         <el-tooltip :content="generateDisabledReason || 'LLM 生成提交信息'" placement="top" :show-after="300">
@@ -568,7 +568,7 @@ function buildGitTree(files: GitChangedFile[]): GitTreeNode[] {
 .git-commit-generate-wrap {
   position: absolute;
   top: 6px;
-  left: 8px;
+  right: 8px;
   z-index: 1;
   display: inline-flex;
 }
