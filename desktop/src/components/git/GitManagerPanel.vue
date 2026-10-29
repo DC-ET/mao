@@ -155,9 +155,26 @@
         :switching="operation === 'switch'"
         @retry="loadBranches"
         @switch="handleSwitchBranch"
+        @compare="handleCompareBranch"
+      />
+      <GitCompareView
+        v-else-if="activeView === 'compare'"
+        :branches="branches"
+        :branches-loading="branchesLoading"
+        :branches-error="branchesError"
+        :compare-base="compareBase"
+        :compare-target="compareTarget"
+        :compare-result="compareResult"
+        :compare-loading="compareLoading"
+        :compare-error="compareError"
+        @update:compare-base="compareBase = $event"
+        @update:compare-target="compareTarget = $event"
+        @retry="loadCompare"
+        @retry-branches="loadBranches"
+        @open-diff="handleOpenBranchDiff"
       />
       <GitStashView
-        v-else
+        v-else-if="activeView === 'stash'"
         :stashes="stashes"
         :loading="stashesLoading"
         :error="stashesError"
@@ -177,6 +194,7 @@ import GitChangeList from '../task/GitChangeList.vue'
 import GitHistoryView from './GitHistoryView.vue'
 import GitBranchesView from './GitBranchesView.vue'
 import GitStashView from './GitStashView.vue'
+import GitCompareView from './GitCompareView.vue'
 import type { WorkspaceGitProvider } from '../../composables/workspace-git-provider'
 import type { WorkspaceFileProvider } from '../../composables/workspace-file-provider'
 import type { GitChangedFile, GitStashAction } from '../../types/git'
@@ -197,6 +215,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   'open-git-diff': [file: GitChangedFile, repoPath?: string]
   'open-commit-diff': [payload: { hash: string; file: GitChangedFile; repoPath?: string }]
+  'open-branch-diff': [payload: { base: string; target: string; file: GitChangedFile; repoPath?: string }]
   'add-file-to-chat': [filePath: string]
 }>()
 
@@ -205,6 +224,7 @@ const views: Array<{ id: GitManagerView; label: string }> = [
   { id: 'history', label: '历史' },
   { id: 'branches', label: '分支' },
   { id: 'stash', label: 'Stash' },
+  { id: 'compare', label: '对比' },
 ]
 
 const gitProviderRef = computed(() => props.gitProvider ?? null)
@@ -245,6 +265,8 @@ const statusProviderRef = computed<WorkspaceGitProvider | null>(() => {
       getLog: (opts) => p.getLog(opts, repoPath),
       getCommitFiles: (hash: string) => p.getCommitFiles(hash, repoPath),
       getCommitFileDiff: (hash: string, relativePath: string, _oldPath?: string) => p.getCommitFileDiff(hash, relativePath, repoPath, _oldPath),
+      compareBranches: (base: string, target: string) => p.compareBranches(base, target, repoPath),
+      compareBranchFileDiff: (base: string, target: string, relativePath: string, _oldPath?: string) => p.compareBranchFileDiff(base, target, relativePath, repoPath, _oldPath),
       getBranches: () => p.getBranches(repoPath),
       getStashes: () => p.getStashes(repoPath),
       getRemotes: () => p.getRemotes(repoPath),
@@ -272,6 +294,7 @@ const {
   expandedCommit, commitFiles, commitFilesLoading,
   loadMoreLog, retryLog, toggleCommit,
   branches, branchesLoading, branchesError, loadBranches,
+  compareBase, compareTarget, compareResult, compareLoading, compareError, loadCompare,
   stashes, stashesLoading, stashesError, loadStashes,
   remotes, loadRemotes, refreshLoadedViews,
 } = manager
@@ -401,6 +424,22 @@ function handleStashOp(action: GitStashAction, ref: string) {
 function handleOpenCommitDiff(payload: { hash: string; file: GitChangedFile }) {
   emit('open-commit-diff', {
     hash: payload.hash,
+    file: payload.file,
+    repoPath: multiRepoMode.value ? selectedRepoPath.value : undefined,
+  })
+}
+
+/** 分支行「对比」：切到对比视图并把该分支预填到目标槽（基准槽不动：不填、也不清空已有值） */
+function handleCompareBranch(name: string) {
+  compareTarget.value = name
+  activeView.value = 'compare'
+}
+
+/** 分支对比的单文件 diff：补 repoPath 后交给 TaskView 打开中心 Diff Tab */
+function handleOpenBranchDiff(payload: { base: string; target: string; file: GitChangedFile }) {
+  emit('open-branch-diff', {
+    base: payload.base,
+    target: payload.target,
     file: payload.file,
     repoPath: multiRepoMode.value ? selectedRepoPath.value : undefined,
   })

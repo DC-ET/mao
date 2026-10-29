@@ -29,6 +29,12 @@
             :disabled="branch.isCurrent || switching"
             @click="$emit('switch', branch.name, false)"
           >{{ branch.isCurrent ? '当前' : '切换' }}</button>
+          <button
+            class="git-branch-switch git-branch-compare"
+            :disabled="switching"
+            :title="`对比 ${branch.name}`"
+            @click="$emit('compare', branch.name)"
+          >对比</button>
         </div>
       </div>
       <div v-if="remoteBranches.length > 0" class="git-branch-group">
@@ -42,6 +48,12 @@
             </span>
           </div>
           <button class="git-branch-switch" :disabled="switching" @click="$emit('switch', branch.name, true)">跟踪并切换</button>
+          <button
+            class="git-branch-switch git-branch-compare"
+            :disabled="switching"
+            :title="`对比 ${branch.name}`"
+            @click="$emit('compare', branch.name)"
+          >对比</button>
         </div>
       </div>
     </template>
@@ -63,6 +75,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   retry: []
   switch: [name: string, create: boolean]
+  compare: [name: string]
 }>()
 
 const localBranches = computed(() => props.branches.filter((b) => !b.isRemote))
@@ -215,6 +228,11 @@ const remoteBranches = computed(() => props.branches.filter((b) => b.isRemote))
 .git-branch-switch:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+/* 「对比」为只读入口：紧跟切换按钮，与切换同款次级样式 */
+.git-branch-compare {
+  margin-left: 6px;
 }
 
 [data-theme="dark"] .git-branch-row {

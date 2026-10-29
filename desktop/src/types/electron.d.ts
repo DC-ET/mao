@@ -312,6 +312,29 @@ interface ElectronAPI {
     binary?: boolean
     unavailableReason?: string
   }>
+  gitBranchCompare(workspace: string | undefined, repoPath: string | undefined, base: string, target: string): Promise<{
+    base: string
+    target: string
+    aheadCount: number
+    behindCount: number
+    files: Array<{
+      path: string
+      oldPath?: string
+      changeType: string
+      insertions: number
+      deletions: number
+      binary?: boolean
+    }>
+  } | { error: string }>
+  gitBranchCompareFileDiff(workspace: string | undefined, repoPath: string | undefined, base: string, target: string, path: string, oldPath?: string): Promise<{
+    path: string
+    changeType: string
+    beforeContent: string
+    afterContent: string
+    truncated?: boolean
+    binary?: boolean
+    unavailableReason?: string
+  }>
   gitBranches(workspace: string | undefined, repoPath: string | undefined): Promise<GitBranchInfo[] | { error: string }>
   gitStashes(workspace: string | undefined, repoPath: string | undefined): Promise<GitStashEntry[] | { error: string }>
   gitRemotes(workspace: string | undefined, repoPath: string | undefined): Promise<GitRemoteInfo[] | { error: string }>

@@ -124,7 +124,7 @@ import DownloadLinkDialog from '../common/DownloadLinkDialog.vue'
 import { isWechatBrowser } from '../../utils/user-agent'
 import { isAndroidCapacitor } from '../../utils/capacitor'
 import { isMobileDevice } from '../../composables/usePanelLayout'
-import { gitPullDisabledReason, gitPushDisabledReason } from '../../utils/git-manager'
+import { buildGitTree, collectDirPaths, gitPullDisabledReason, gitPushDisabledReason } from '../../utils/git-manager'
 
 const props = defineProps<{
   files: GitChangedFile[]
@@ -328,112 +328,7 @@ function toggleDir(path: string) {
   else collapsed.add(path)
 }
 
-function collectDirPaths(nodes: GitTreeNode[], out: Set<string>) {
-  for (const node of nodes) {
-    if (node.kind === 'dir') {
-      out.add(node.path)
-      collectDirPaths(node.children, out)
-    }
-  }
-}
-
-function buildGitTree(files: GitChangedFile[]): GitTreeNode[] {
-  type MutableDir = {
-    kind: 'dir'
-    name: string
-    path: string
-    dirs: Map<string, MutableDir>
-    files: Map<string, GitChangedFile>
-  }
-
-  const root: MutableDir = {
-    kind: 'dir',
-    name: '',
-    path: '',
-    dirs: new Map(),
-    files: new Map(),
-  }
-
-  const sorted = [...files].sort((a, b) => a.path.localeCompare(b.path))
-
-  for (const file of sorted) {
-    const parts = file.path.split('/').filter(Boolean)
-    if (parts.length === 0) continue
-
-    let current = root
-    for (let i = 0; i < parts.length - 1; i++) {
-      const name = parts[i]
-      const dirPath = parts.slice(0, i + 1).join('/')
-      let child = current.dirs.get(name)
-      if (!child) {
-        child = {
-          kind: 'dir',
-          name,
-          path: dirPath,
-          dirs: new Map(),
-          files: new Map(),
-        }
-        current.dirs.set(name, child)
-      }
-      current = child
-    }
-
-    const fileName = parts[parts.length - 1]
-    current.files.set(fileName, file)
-  }
-
-  function finalize(dir: MutableDir): GitTreeNode {
-    const children: GitTreeNode[] = []
-
-    const dirNames = [...dir.dirs.keys()].sort((a, b) => a.localeCompare(b))
-    for (const name of dirNames) {
-      children.push(finalize(dir.dirs.get(name)!))
-    }
-
-    const fileNames = [...dir.files.keys()].sort((a, b) => a.localeCompare(b))
-    for (const name of fileNames) {
-      const file = dir.files.get(name)!
-      children.push({
-        kind: 'file',
-        name,
-        path: file.path,
-        file,
-      })
-    }
-
-    return {
-      kind: 'dir',
-      name: dir.name,
-      path: dir.path,
-      children: compressChildren(children),
-    }
-  }
-
-  /** Merge single-child directory chains into package-style names: a/b/c */
-  function compressChildren(nodes: GitTreeNode[]): GitTreeNode[] {
-    return nodes.map((node) => {
-      if (node.kind !== 'dir') return node
-      let current = node
-      const parts = [current.name]
-      while (
-        current.children.length === 1
-        && current.children[0].kind === 'dir'
-      ) {
-        current = current.children[0]
-        parts.push(current.name)
-      }
-      return {
-        kind: 'dir' as const,
-        name: parts.filter(Boolean).join('/'),
-        path: current.path,
-        children: compressChildren(current.children),
-      }
-    })
-  }
-
-  const tree = finalize(root)
-  return tree.kind === 'dir' ? tree.children : []
-}
+// buildGitTree / collectDirPaths 已下沉至 utils/git-manager.ts（与分支对比视图共用同一树实现）。
 </script>
 
 <style scoped>

@@ -1,9 +1,10 @@
 import { ref, watch, type Ref } from 'vue'
 import type { WorkspaceGitProvider } from './workspace-git-provider'
-import type { GitBranchInfo, GitChangedFile, GitLogEntry, GitRemoteInfo, GitStashEntry } from '../types/git'
+import type { GitBranchCompareResult, GitBranchInfo, GitChangedFile, GitLogEntry, GitRemoteInfo, GitStashEntry } from '../types/git'
+import { isValidBranchName } from '../utils/git-manager'
 
-/** 子导航视图：变更视图由 GitChangeList 承载（面板直接组合），其余三个由本 composable 供数。 */
-export type GitManagerView = 'changes' | 'history' | 'branches' | 'stash'
+/** 子导航视图：变更视图由 GitChangeList 承载（面板直接组合），其余四个由本 composable 供数。 */
+export type GitManagerView = 'changes' | 'history' | 'branches' | 'stash' | 'compare'
 
 const LOG_PAGE_SIZE = 50
 
@@ -50,6 +51,16 @@ export function useGitManager(provider: Ref<WorkspaceGitProvider | null>) {
   const remotesLoaded = ref(false)
   let remotesSeq = 0
 
+  // ===== 分支对比 =====
+  const compareBase = ref('')
+  const compareTarget = ref('')
+  const compareResult = ref<GitBranchCompareResult | null>(null)
+  const compareLoading = ref(false)
+  const compareError = ref('')
+  const compareLoaded = ref(false)
+  // 竞态防护：在途请求迟到不得写进新选择的结果；必须是 composable 闭包内序号（非模块级）
+  let compareSeq = 0
+
   function resetAll() {
     logSeq++
     // commitFiles 这路同样要序号防护：在途的「提交文件清单」请求迟到会写进新仓库缓存，
@@ -77,6 +88,13 @@ export function useGitManager(provider: Ref<WorkspaceGitProvider | null>) {
     remotesSeq++
     remotes.value = []
     remotesLoaded.value = false
+    compareSeq++
+    compareBase.value = ''
+    compareTarget.value = ''
+    compareResult.value = null
+    compareLoading.value = false
+    compareError.value = ''
+    compareLoaded.value = false
   }
 
   async function loadLog(reset: boolean) {
@@ -159,6 +177,41 @@ export function useGitManager(provider: Ref<WorkspaceGitProvider | null>) {
     }
   }
 
+  /**
+   * 分支对比：两侧选满且不相同才请求（相同由 UI 拦截，这里双保险）。
+   * 必须内部吞错（写进 compareError、不向外抛）——refreshLoadedViews 会挂在
+   * handleRefreshAll（无 catch）的 Promise.all 链上，抛错会变成未处理 rejection 并打断刷新链。
+   */
+  async function loadCompare() {
+    const p = provider.value
+    if (!p) return
+    if (!compareBase.value || !compareTarget.value || compareBase.value === compareTarget.value) return
+    // 前端预检双保险（方案 §5.6）：非法分支名不发请求，文案与服务端一致；
+    // 同时作废在途请求（否则迟到响应会写回已失效的选择）。
+    if (!isValidBranchName(compareBase.value) || !isValidBranchName(compareTarget.value)) {
+      compareSeq++
+      compareResult.value = null
+      compareLoaded.value = false
+      compareLoading.value = false
+      compareError.value = '分支不存在'
+      return
+    }
+    const seq = ++compareSeq
+    compareLoading.value = true
+    compareError.value = ''
+    try {
+      const result = await p.compareBranches(compareBase.value, compareTarget.value)
+      if (seq !== compareSeq) return
+      compareResult.value = result
+      compareLoaded.value = true
+    } catch (e: any) {
+      if (seq !== compareSeq) return
+      compareError.value = e?.message || '读取分支对比失败'
+    } finally {
+      if (seq === compareSeq) compareLoading.value = false
+    }
+  }
+
   async function loadStashes() {
     const p = provider.value
     if (!p) return
@@ -201,6 +254,7 @@ export function useGitManager(provider: Ref<WorkspaceGitProvider | null>) {
     const tasks: Promise<void>[] = []
     if (historyLoaded.value) tasks.push(loadLog(true))
     if (branchesLoaded.value) tasks.push(loadBranches())
+    if (compareLoaded.value) tasks.push(loadCompare())
     if (stashesLoaded.value) tasks.push(loadStashes())
     if (remotesLoaded.value) tasks.push(loadRemotes(true))
     await Promise.all(tasks)
@@ -211,10 +265,17 @@ export function useGitManager(provider: Ref<WorkspaceGitProvider | null>) {
     if (activeView.value === 'history' && !historyLoaded.value && !logLoading.value) void loadLog(true)
     if (activeView.value === 'branches' && !branchesLoaded.value && !branchesLoading.value) void loadBranches()
     if (activeView.value === 'stash' && !stashesLoaded.value && !stashesLoading.value) void loadStashes()
+    // 对比视图的分支下拉选项来自 branches：loadBranches 自身无守卫，这里必须显式判已加载 / 加载中
+    if (activeView.value === 'compare' && !branchesLoaded.value && !branchesLoading.value) void loadBranches()
   }
 
   watch(activeView, () => {
     loadActiveView()
+  })
+
+  // 任一侧选择变化即重新对比；未选满 / 两侧相同时 loadCompare 内部直接返回（不发请求）
+  watch([compareBase, compareTarget], () => {
+    void loadCompare()
   })
 
   // provider 代表工作区 / 仓库身份：变化时丢弃全部面板数据，防新旧数据串扰；
@@ -243,6 +304,12 @@ export function useGitManager(provider: Ref<WorkspaceGitProvider | null>) {
     branchesLoading,
     branchesError,
     loadBranches,
+    compareBase,
+    compareTarget,
+    compareResult,
+    compareLoading,
+    compareError,
+    loadCompare,
     stashes,
     stashesLoading,
     stashesError,

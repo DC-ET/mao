@@ -257,6 +257,8 @@ describe('file routes', () => {
       getBranches: vi.fn(async () => [{ name: 'main', isCurrent: true, isRemote: false }]),
       getStashes: vi.fn(async () => [{ ref: 'stash@{0}', message: 'm', date: 'd' }]),
       getRemotes: vi.fn(async () => [{ name: 'origin', fetchUrl: 'u', pushUrl: 'u' }]),
+      compareBranches: vi.fn(async () => ({ base: 'main', target: 'feature', aheadCount: 1, behindCount: 0, files: [] })),
+      compareBranchFileDiff: vi.fn(async () => ({ path: 'a', changeType: 'MODIFIED', beforeContent: '', afterContent: '' })),
     } as unknown as WorkspaceGitService;
     const gitWriteOperationService = {
       fetchRemote: vi.fn(async () => ({ success: true, operation: 'fetch', message: '远端已更新' })),
@@ -285,6 +287,8 @@ describe('file routes', () => {
       '/v1/files/workspace-git-branches?sessionId=2',
       '/v1/files/workspace-git-stashes?sessionId=2',
       '/v1/files/workspace-git-remotes?sessionId=2',
+      '/v1/files/workspace-git-branch-compare?sessionId=2&base=main&target=feature',
+      '/v1/files/workspace-git-branch-compare-file-diff?sessionId=2&base=main&target=feature&path=a',
     ]) {
       const body = await get(url);
       expect(body.code).not.toBe(0);
@@ -305,6 +309,13 @@ describe('file routes', () => {
     expect((await get('/v1/files/workspace-git-log')).code).not.toBe(0);
     expect((await get('/v1/files/workspace-git-commit?sessionId=1')).code).not.toBe(0);
     expect((await get('/v1/files/workspace-git-commit-file-diff?sessionId=1&hash=abc1234')).code).not.toBe(0);
+    // 分支对比：base / target / path 逐个必填
+    expect((await get('/v1/files/workspace-git-branch-compare?sessionId=1&base=main')).code).not.toBe(0);
+    expect((await get('/v1/files/workspace-git-branch-compare?sessionId=1&target=feature')).code).not.toBe(0);
+    expect((await get('/v1/files/workspace-git-branch-compare?sessionId=1')).code).not.toBe(0);
+    expect((await get('/v1/files/workspace-git-branch-compare-file-diff?sessionId=1&base=main&target=feature')).code).not.toBe(0);
+    expect((await get('/v1/files/workspace-git-branch-compare-file-diff?sessionId=1&base=main&path=a')).code).not.toBe(0);
+    expect((await get('/v1/files/workspace-git-branch-compare-file-diff?sessionId=1&target=feature&path=a')).code).not.toBe(0);
     expect((await post('/v1/files/workspace-git-switch-branch', { sessionId: 1 })).code).not.toBe(0);
     expect((await post('/v1/files/workspace-git-stash', { sessionId: 1, action: 'apply' })).code).not.toBe(0);
     expect((await post('/v1/files/workspace-git-stash', { sessionId: 1, ref: 'stash@{0}' })).code).not.toBe(0);
@@ -318,6 +329,14 @@ describe('file routes', () => {
     expect((await get('/v1/files/workspace-git-commit-file-diff?sessionId=1&hash=abc1234&path=b.txt&oldPath=a.txt')).data.path).toBe('a');
     expect(vi.mocked(workspaceGitService.getCommitFileDiff).mock.calls.at(-1)).toEqual([expect.anything(), undefined, 'abc1234', 'b.txt', 'a.txt']);
     expect((await get('/v1/files/workspace-git-branches?sessionId=1')).data[0].name).toBe('main');
+    // 分支对比：base / target / repoPath 透传（repoPath 只接受一级子目录名，服务内部校验）
+    expect((await get('/v1/files/workspace-git-branch-compare?sessionId=1&base=main&target=feature&repoPath=demo')).data.aheadCount).toBe(1);
+    expect(vi.mocked(workspaceGitService.compareBranches).mock.calls.at(-1)).toEqual([expect.anything(), 'demo', 'main', 'feature']);
+    // 单文件 diff：path 必填、oldPath 可选（rename 行传旧路径，before 取 merge-base 的旧路径）
+    expect((await get('/v1/files/workspace-git-branch-compare-file-diff?sessionId=1&base=main&target=feature&path=b.txt')).data.path).toBe('a');
+    expect(vi.mocked(workspaceGitService.compareBranchFileDiff).mock.calls.at(-1)).toEqual([expect.anything(), undefined, 'main', 'feature', 'b.txt', undefined]);
+    expect((await get('/v1/files/workspace-git-branch-compare-file-diff?sessionId=1&base=main&target=feature&path=b.txt&oldPath=a.txt')).code).toBe(0);
+    expect(vi.mocked(workspaceGitService.compareBranchFileDiff).mock.calls.at(-1)).toEqual([expect.anything(), undefined, 'main', 'feature', 'b.txt', 'a.txt']);
     expect((await get('/v1/files/workspace-git-stashes?sessionId=1')).data[0].ref).toBe('stash@{0}');
     expect((await get('/v1/files/workspace-git-remotes?sessionId=1')).data[0].name).toBe('origin');
     expect((await post('/v1/files/workspace-git-fetch', { sessionId: 1 })).data.message).toBe('远端已更新');

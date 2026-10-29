@@ -1078,7 +1078,7 @@ function isGitWorkspace(workspace) {
   return false
 }
 
-const { getGitStatus, refreshGitStatus, getGitFileDiff, listGitRepos, getGitLog, getGitCommitFiles, getGitCommitFileDiff, getGitBranches, getGitStashes, getGitRemotes } = require('./gitStatus.cjs')
+const { getGitStatus, refreshGitStatus, getGitFileDiff, listGitRepos, getGitLog, getGitCommitFiles, getGitCommitFileDiff, getGitBranchCompare, getGitBranchCompareFileDiff, getGitBranches, getGitStashes, getGitRemotes } = require('./gitStatus.cjs')
 const { buildCommitInput, commit: gitCommit, pull: gitPull, push: gitPush, fetch: gitFetch, switchBranch: gitSwitchBranch, stashOp: gitStashOp } = require('./gitOperations.cjs')
 
 function loadMainContent() {
@@ -1793,6 +1793,31 @@ ipcMain.handle('git-commit-file-diff', async (_event, { workspace, repoPath, has
       beforeContent: '',
       afterContent: '',
       unavailableReason: e.message || '读取提交 diff 失败',
+    }
+  }
+})
+
+// 分支对比：失败形状同 git-commit-files（对象形态的 { error }，由 provider 侧解包后抛错），
+// 因为「ref 不存在 / 无共同祖先 / 对比失败」都必须与「两分支无差异（files: []）」可区分
+ipcMain.handle('git-branch-compare', async (_event, { workspace, repoPath, base, target } = {}) => {
+  try {
+    return await getGitBranchCompare(workspace || currentWorkspace, repoPath, base, target)
+  } catch (e) {
+    return { error: e.message || '读取分支对比失败' }
+  }
+})
+
+// 分支对比单文件 diff：失败形状同 git-commit-file-diff（降级 diff 对象，不抛）
+ipcMain.handle('git-branch-compare-file-diff', async (_event, { workspace, repoPath, base, target, path: filePath, oldPath } = {}) => {
+  try {
+    return await getGitBranchCompareFileDiff(workspace || currentWorkspace, repoPath, base, target, filePath, oldPath)
+  } catch (e) {
+    return {
+      path: filePath || '',
+      changeType: 'MODIFIED',
+      beforeContent: '',
+      afterContent: '',
+      unavailableReason: e.message || '读取分支 diff 失败',
     }
   }
 })

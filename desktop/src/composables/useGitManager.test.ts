@@ -9,7 +9,7 @@ function logEntry(hash: string, title: string): GitLogEntry {
 }
 
 function fakeProvider(overrides: Partial<WorkspaceGitProvider> = {}) {
-  const calls = { getLog: 0, getCommitFiles: 0, getBranches: 0, getStashes: 0, getRemotes: 0 }
+  const calls = { getLog: 0, getCommitFiles: 0, getBranches: 0, getStashes: 0, getRemotes: 0, compareBranches: 0 }
   const provider = {
     getRepos: vi.fn(async () => ({ isRootGit: true, repos: [] })),
     getStatus: vi.fn(async () => ({ isGit: true } as never)),
@@ -29,6 +29,16 @@ function fakeProvider(overrides: Partial<WorkspaceGitProvider> = {}) {
     },
     getCommitFileDiff: vi.fn(),
     async getBranches() { calls.getBranches++; return [{ name: 'main', isCurrent: true, isRemote: false }] },
+    async compareBranches(base: string, target: string) {
+      calls.compareBranches++
+      return {
+        base,
+        target,
+        aheadCount: 1,
+        behindCount: 0,
+        files: [{ path: `${target}.txt`, changeType: 'MODIFIED', insertions: 1, deletions: 0 }],
+      }
+    },
     async getStashes() { calls.getStashes++; return [{ ref: 'stash@{0}', message: 'wip', date: '2026-10-28T10:00:00+08:00' }] },
     async getRemotes() { calls.getRemotes++; return [{ name: 'origin', fetchUrl: 'u', pushUrl: 'u' }] },
     fetchRemote: vi.fn(), switchBranch: vi.fn(), stashOp: vi.fn(),
@@ -318,5 +328,156 @@ describe('useGitManager', () => {
     releaseSlow!()
     await nextTick(); await nextTick()
     expect(manager.logEntries.value.map((e) => e.title)).toEqual(['fast'])
+  });
+});
+
+describe('useGitManager 分支对比', () => {
+  it('两侧选满且不相同才请求；相同 / 缺一 / 未选不请求', async () => {
+    const { provider, calls } = fakeProvider()
+    const manager = useGitManager(ref(provider))
+
+    manager.compareBase.value = 'main'
+    await nextTick(); await nextTick()
+    expect(calls.compareBranches).toBe(0)
+
+    // 两侧相同：UI 拦截，composable 双保险不发请求
+    manager.compareTarget.value = 'main'
+    await nextTick(); await nextTick()
+    expect(calls.compareBranches).toBe(0)
+
+    manager.compareTarget.value = 'feature'
+    await nextTick(); await nextTick()
+    expect(calls.compareBranches).toBe(1)
+    expect(manager.compareResult.value?.target).toBe('feature')
+
+    // 任一侧变更即重新对比
+    manager.compareBase.value = 'origin/main'
+    await nextTick(); await nextTick()
+    expect(calls.compareBranches).toBe(2)
+  });
+
+  it('切到对比视图懒加载分支列表，且有守卫不重复请求', async () => {
+    const { provider, calls } = fakeProvider()
+    const manager = useGitManager(ref(provider))
+
+    manager.activeView.value = 'compare'
+    await nextTick(); await nextTick()
+    expect(calls.getBranches).toBe(1)
+
+    manager.activeView.value = 'branches'
+    manager.activeView.value = 'compare'
+    await nextTick(); await nextTick()
+    expect(calls.getBranches).toBe(1)
+  });
+
+  it('分支行预填：只写目标槽时不自动请求，补选基准才请求', async () => {
+    const { provider, calls } = fakeProvider()
+    const manager = useGitManager(ref(provider))
+
+    manager.compareTarget.value = 'feature'
+    manager.activeView.value = 'compare'
+    await nextTick(); await nextTick()
+    expect(calls.compareBranches).toBe(0)
+    expect(manager.compareBase.value).toBe('')
+
+    manager.compareBase.value = 'main'
+    await nextTick(); await nextTick()
+    expect(calls.compareBranches).toBe(1)
+  });
+
+  it('已加载过对比后 refreshLoadedViews 触发重算；未加载过不请求', async () => {
+    const { provider, calls } = fakeProvider()
+    const manager = useGitManager(ref(provider))
+
+    await manager.refreshLoadedViews()
+    expect(calls.compareBranches).toBe(0)
+
+    manager.compareBase.value = 'a'
+    manager.compareTarget.value = 'b'
+    await nextTick(); await nextTick()
+    expect(calls.compareBranches).toBe(1)
+
+    await manager.refreshLoadedViews()
+    expect(calls.compareBranches).toBe(2)
+  });
+
+  it('对比失败写入 compareError 且刷新链不 reject（loadCompare 内部吞错）', async () => {
+    let fail = false
+    const { provider } = fakeProvider({
+      compareBranches: vi.fn(async (base: string, target: string) => {
+        if (fail) throw new Error('对比失败，请重试')
+        return { base, target, aheadCount: 0, behindCount: 0, files: [] }
+      }),
+    } as unknown as Partial<WorkspaceGitProvider>)
+    const manager = useGitManager(ref(provider))
+    manager.compareBase.value = 'a'
+    manager.compareTarget.value = 'b'
+    await nextTick(); await nextTick()
+    expect(manager.compareError.value).toBe('')
+    expect(manager.compareResult.value).not.toBeNull()
+
+    fail = true
+    await expect(manager.refreshLoadedViews()).resolves.toBeUndefined()
+    expect(manager.compareError.value).toBe('对比失败，请重试')
+  });
+
+  it('provider 变化（切仓库 / 切会话）清空对比选择与结果', async () => {
+    const first = fakeProvider()
+    const providerRef = ref<WorkspaceGitProvider | null>(first.provider)
+    const manager = useGitManager(providerRef)
+    manager.compareBase.value = 'a'
+    manager.compareTarget.value = 'b'
+    await nextTick(); await nextTick()
+    expect(manager.compareResult.value).not.toBeNull()
+
+    const second = fakeProvider()
+    providerRef.value = second.provider
+    await nextTick(); await nextTick()
+    expect(manager.compareBase.value).toBe('')
+    expect(manager.compareTarget.value).toBe('')
+    expect(manager.compareResult.value).toBeNull()
+    expect(second.calls.compareBranches).toBe(0)
+  });
+
+  it('在途对比响应迟到被竞态序号丢弃，不覆盖新选择的结果', async () => {
+    let releaseSlow: ((value: any) => void) | null = null
+    const slow = new Promise((resolve) => { releaseSlow = resolve as (value: any) => void })
+    let calls = 0
+    const { provider } = fakeProvider({
+      compareBranches: vi.fn(async (base: string, target: string) => {
+        calls++
+        if (calls === 1) return slow as any
+        return { base, target, aheadCount: 0, behindCount: 0, files: [{ path: 'new.txt', changeType: 'MODIFIED', insertions: 0, deletions: 0 }] }
+      }),
+    } as unknown as Partial<WorkspaceGitProvider>)
+    const manager = useGitManager(ref(provider))
+
+    manager.compareBase.value = 'a'
+    manager.compareTarget.value = 'b'
+    await nextTick(); await nextTick()
+    // 在途时换目标分支：旧响应迟到不得写入新选择的结果
+    manager.compareTarget.value = 'c'
+    await nextTick(); await nextTick()
+    releaseSlow!({ base: 'a', target: 'b', aheadCount: 9, behindCount: 9, files: [{ path: 'old.txt', changeType: 'MODIFIED', insertions: 9, deletions: 9 }] })
+    await nextTick(); await nextTick()
+    expect(manager.compareResult.value?.files[0]?.path).toBe('new.txt')
+  });
+
+  it('非法分支名不发请求：前端预检拦截并提示分支不存在', async () => {
+    const { provider, calls } = fakeProvider()
+    const manager = useGitManager(ref(provider))
+
+    manager.compareBase.value = '-x'
+    manager.compareTarget.value = 'feature'
+    await nextTick(); await nextTick()
+    expect(calls.compareBranches).toBe(0)
+    expect(manager.compareError.value).toBe('分支不存在')
+    expect(manager.compareResult.value).toBeNull()
+
+    // 换成合法分支后恢复正常请求，并清掉预检错误
+    manager.compareBase.value = 'main'
+    await nextTick(); await nextTick()
+    expect(calls.compareBranches).toBe(1)
+    expect(manager.compareError.value).toBe('')
   });
 });

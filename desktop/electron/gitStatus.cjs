@@ -38,11 +38,15 @@ function runGit(cwd, args) {
           stdout: stdout || '',
           stderr: stderr || '',
           timedOut: Boolean(err && (err.killed || err.code === 'ETIMEDOUT')),
+          // execFile maxBuffer 溢出（2 MiB）以 ERR_CHILD_PROCESS_STDIO_MAXBUFFER 终结，
+          // 但回调仍带预算内的已收集 stdout：读大文件内容的调用方按「成功 + 截断」处理
+          // （见 getGitBranchCompareFileDiff），避免静默退化成空内容。
+          overflowed: Boolean(err && err.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'),
         })
       },
     )
     child.on('error', (error) => {
-      finish({ exitCode: 127, stdout: '', stderr: error.message || '', timedOut: false })
+      finish({ exitCode: 127, stdout: '', stderr: error.message || '', timedOut: false, overflowed: false })
     })
   })
 }
@@ -869,6 +873,240 @@ async function getGitCommitFileDiff(workspace, repoPath, hash, relativePath, old
 }
 
 /**
+ * 分支名合法性（git check-ref-format 子集，只读侧的安全边界）。
+ *
+ * 规则与后端只读侧 `backend-ts/src/file/workspace-git.service.ts` 的同名实现互指（同一份规则
+ * 双端各一份，fixture 对跑；本文件是 .cjs、无法 import TS 工具模块）：字符类
+ * `^[A-Za-z0-9._/][A-Za-z0-9._/-]*$`（首字符白名单里没有 `-`，杜绝 `-x` 被 git 当选项——
+ * spawn 参数数组不过 shell 挡不住这一层）、长度 ≤ 200、非 `@`、无 `..`、无 `@{`、
+ * 不以 `/` 开头或结尾、无 `//`、不以 `.` 结尾、每个 `/` 组件非空且不以 `.` 开头、不以 `.lock` 结尾。
+ *
+ * 注意：本规则**严于**写侧的 `BRANCH_NAME_PATTERN`（`git-write-operation.service.ts`）与前端
+ * `desktop/src/utils/git-manager.ts` 的 isValidBranchName——那两处字符类以 `+` 收尾、首字符并不拒 `-`
+ * （实测 `-x` 可通过），本方案只读侧用更严正则，勿照抄现状。字符类仍窄于 check-ref-format
+ * （如 `+` 合法但被拒），与写侧同款的已知限制，下拉选分支时属于可忽略极端。
+ * @param {string} name
+ * @returns {boolean}
+ */
+function isValidBranchName(name) {
+  const value = String(name == null ? '' : name)
+  if (!value || value.length > 200) return false
+  if (!/^[A-Za-z0-9._/][A-Za-z0-9._/-]*$/.test(value)) return false
+  if (value === '@') return false
+  if (value.includes('..') || value.includes('@{')) return false
+  if (value.startsWith('/') || value.endsWith('/') || value.includes('//') || value.endsWith('.')) return false
+  return value.split('/').every((part) => part.length > 0 && !part.startsWith('.') && !part.endsWith('.lock'))
+}
+
+/**
+ * 分支名 → 对象 sha（**显式 ref 路径 + 两段式**解析，杜绝同名 tag 遮蔽分支）。
+ *
+ * 为什么不能用 `rev-parse --verify <name>`：git 的 refname 解析顺序是
+ * `<name>` → `refs/<name>` → `refs/tags/<name>` → `refs/heads/<name>` → `refs/remotes/<name>`，
+ * **tag 先于 heads**。仓库里存在与分支同名的 tag 时，`--verify <name>` / `merge-base <name> ...` /
+ * `diff <name>...<name>` 实际比的是 tag——用户下拉里选的是分支、结果比的却是 tag，是静默错误
+ * （且 git 还会往 stderr 打 `refname 'x' is ambiguous` 警告）。故这里先按 `refs/heads/<name>`（本地分支）
+ * 显式取，失败再试 `refs/remotes/<name>`（下拉里的 `origin/x` 远端跟踪分支形态；
+ * 两段都是完整 ref 路径，同名 tag 不可能命中）。
+ *
+ * 两段都失败 → 返回 null（调用方按各自契约映射「分支不存在」：compare 抛错、file-diff 返回降级对象）。
+ * 输出必须是对象 id（40 位 SHA-1 / 64 位 SHA-256 的 hex）；取不到（空输出 / 非 hex）同样视为未解析，
+ * 因为后续命令一律用 sha 拼接，拿脏字符串进参数数组就是另一类静默错误。
+ * @param {string} repoRoot
+ * @param {string} name
+ * @returns {Promise<string|null>}
+ */
+async function resolveBranchSha(repoRoot, name) {
+  for (const ref of [`refs/heads/${name}`, `refs/remotes/${name}`]) {
+    const result = await runGit(repoRoot, ['rev-parse', '--verify', ref])
+    if (result.exitCode !== 0) continue
+    const sha = result.stdout.trim()
+    if (/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(sha)) return sha
+  }
+  return null
+}
+
+/**
+ * 两个分支间的变更文件清单 + 目标分支相对基准的领先/落后提交数（三点 `<base>...<target>` 语义，
+ * 即「目标分支相对基准独有的变更」）。命令序列与后端 `compareBranches` 完全同口径：
+ * ① 两个分支名各自两段式解析成 sha（`refs/heads/` → `refs/remotes/`，见 resolveBranchSha）
+ * ② merge-base（显式判定共同祖先）③ rev-list --left-right --count ④ diff --name-status ⑤ diff --numstat，
+ * ②–⑤ 一律传解析出的 sha（不再传分支名，故同名 tag 的 `refname 'x' is ambiguous` 从根上不会出现）。
+ *
+ * 两处易错点：
+ * - **失败 ≠ 空差异**：`git diff A...B` 无差异时输出为空且退出码 0，与「ref 不存在」必须可区分，
+ *   故先解析 ref 再 diff（顺序不可颠倒），且 merge-base / rev-list / diff 一律走 `runGit` 读 `exitCode`；
+ *   `runGitOk` 把非零 / 超时 / maxBuffer 溢出统一折成 null，会把这些失败误报成「没有差异」。
+ * - **无共同祖先只能由 merge-base 判定**：unrelated histories 下 `rev-list --left-right --count` 仍成功、
+ *   `git diff A...B` 报 `fatal: ... no merge base`，不能靠后两者推断。
+ *
+ * 抛错形态与 `getGitCommitFiles` 一致（`Error`，main.cjs 的 catch 转成 `{ error }`）。
+ * 返回的 `base` / `target` 是用户传入的原始分支名（sha 只用于命令，不出现在结果里）。
+ * @param {string} workspace
+ * @param {string} [repoPath]
+ * @param {string} base 基准分支
+ * @param {string} target 目标分支
+ * @returns {Promise<{base: string, target: string, aheadCount: number, behindCount: number, files: object[]}>}
+ */
+async function getGitBranchCompare(workspace, repoPath, base, target) {
+  const baseRef = String(base == null ? '' : base).trim()
+  const targetRef = String(target == null ? '' : target).trim()
+  // 分支名不合法与 ref 不存在同样映射「分支不存在」（与后端 PARAM_INVALID 文案一致）
+  if (!isValidBranchName(baseRef) || !isValidBranchName(targetRef)) throw new Error('分支不存在')
+  const repoRoot = await resolveRepoRoot(workspace, repoPath)
+  // 分支名 → sha 用显式 ref 路径两段式解析（见 resolveBranchSha：同名 tag 会遮蔽分支），
+  // 两段都失败 → 与 ref 不存在同文案；随后所有 git 命令一律用 sha，不再出现分支名歧义
+  const baseSha = await resolveBranchSha(repoRoot, baseRef)
+  if (!baseSha) throw new Error('分支不存在')
+  const targetSha = await resolveBranchSha(repoRoot, targetRef)
+  if (!targetSha) throw new Error('分支不存在')
+  const mergeBase = await runGit(repoRoot, ['merge-base', baseSha, targetSha])
+  // runGit 的 timeout 走 kill 分支、err.code 非数字，exitCode 会被折成 1，与「无共同祖先」撞码，
+  // 故先按中性失败拦下（真超时不应冒充业务语义）
+  if (mergeBase.timedOut) throw new Error('对比失败，请重试')
+  if (mergeBase.exitCode === 1) throw new Error('两个分支没有共同祖先，无法对比')
+  if (mergeBase.exitCode !== 0) throw new Error('对比失败，请重试')
+  const counts = await runGit(repoRoot, ['rev-list', '--left-right', '--count', `${baseSha}...${targetSha}`])
+  if (counts.exitCode !== 0) throw new Error('对比失败，请重试')
+  // 输出 `left\tright`：left = 基准独有（目标落后数），right = 目标独有（目标领先数）
+  const countParts = counts.stdout.trim().split(/\s+/)
+  const behindCount = parseInt(countParts[0], 10) || 0
+  const aheadCount = parseInt(countParts[1], 10) || 0
+  const nameStatus = await runGit(repoRoot, ['diff', '--name-status', `${baseSha}...${targetSha}`])
+  if (nameStatus.exitCode !== 0) throw new Error('对比失败，请重试')
+  const numstat = await runGit(repoRoot, ['diff', '--numstat', `${baseSha}...${targetSha}`])
+  if (numstat.exitCode !== 0) throw new Error('对比失败，请重试')
+  // 以下合并逻辑逐行复刻 getGitCommitFiles（差异仅在命令：`show <hash>` → `diff <base>...<target>`）：
+  // name-status 建 Map（rename 键为新路径）→ numstat 用 numstatNewPath 还原后回填行数 → `-` 判二进制
+  const files = new Map()
+  if (nameStatus.stdout && nameStatus.stdout.trim()) {
+    for (const raw of nameStatus.stdout.split('\n')) {
+      const line = raw.trim()
+      if (!line) continue
+      const file = parseNameStatusLine(line)
+      if (file) files.set(file.path, { insertions: 0, deletions: 0, ...file })
+    }
+  }
+  if (numstat.stdout && numstat.stdout.trim()) {
+    for (const raw of numstat.stdout.split('\n')) {
+      const line = raw.trim()
+      if (!line) continue
+      const parts = line.split('\t')
+      if (parts.length < 3) continue
+      // numstat 的改名是紧凑形态（src/{a.txt => b.txt}），必须用 numstatNewPath 还原才能与 name-status 键对齐
+      const filePath = numstatNewPath(parts[parts.length - 1])
+      const file = files.get(filePath)
+      if (!file) continue
+      if (parts[0] === '-' || parts[1] === '-') {
+        file.binary = true
+        file.insertions = 0
+        file.deletions = 0
+      } else {
+        file.insertions = parseInt(parts[0], 10) || 0
+        file.deletions = parseInt(parts[1], 10) || 0
+      }
+    }
+  }
+  return { base: baseRef, target: targetRef, aheadCount, behindCount, files: Array.from(files.values()) }
+}
+
+/**
+ * 分支对比的单文件 diff：before = `git show <merge-base>:<oldPath ?? path>`，after = `git show <target-sha>:<path>`
+ * （均取自 git 对象、不读工作区，与 `getGitCommitFileDiff` 同结构，只把 `<hash>^:` / `<hash>:` 换成
+ * `<merge-base>:` / `<target 分支的 sha>:`）。两个分支名先用 resolveBranchSha 两段式解析成 sha
+ * （显式 `refs/heads/` → `refs/remotes/`，同名 tag 不会遮蔽分支），merge-base 与两次 show 都传 sha。
+ *
+ * 为什么 before 取 merge-base 而非 `<base>`：文件清单是三点 diff（merge-base → target），
+ * before 取 `<base>` 会退化成「base tip → target tip」两点 diff——双方分叉且都改同一文件时，
+ * 基准分支的独有改动会被显示成删除，与汇总条 / 清单自相矛盾。取 merge-base 后内容与
+ * `git diff <base>...<target> -- <path>` 完全一致，rename 的 oldPath（merge-base 树中的旧路径）也必然存在。
+ *
+ * 失败语义按 `getGitCommitFileDiff` 现状复刻：输入类失败（非法分支名 / 路径 `..` / 越界）返回带
+ * `unavailableReason` 的降级对象、不 throw；对象缺失（show 非零退出）不算错误——before 缺失按空内容
+ * 处理、由 CREATED/DELETED 推导表达；二进制 → `unavailableReason`；超限 → `truncated`。
+ * 无共同祖先（merge-base exit 1）→ `unavailableReason: '两个分支没有共同祖先，无法对比'`，
+ * 其它 git 失败 → `'对比失败，请重试'`。返回的 `path` 恒为新路径（调用方用它生成 tab id / 标题）。
+ * @param {string} workspace
+ * @param {string} [repoPath]
+ * @param {string} base 基准分支
+ * @param {string} target 目标分支
+ * @param {string} relativePath 新路径（文件清单的 path）
+ * @param {string} [oldPath] rename 行的旧路径（文件清单的 oldPath）
+ * @returns {Promise<object>}
+ */
+async function getGitBranchCompareFileDiff(workspace, repoPath, base, target, relativePath, oldPath) {
+  const baseRef = String(base == null ? '' : base).trim()
+  const targetRef = String(target == null ? '' : target).trim()
+  const degraded = (reason, degradedPath) => ({
+    path: degradedPath,
+    changeType: 'MODIFIED',
+    beforeContent: '',
+    afterContent: '',
+    unavailableReason: reason,
+  })
+  if (!isValidBranchName(baseRef) || !isValidBranchName(targetRef)) {
+    return degraded('分支不存在', relativePath || '')
+  }
+  if (!relativePath || relativePath.replace(/\\/g, '/').split('/').includes('..')) {
+    return degraded('路径无效', relativePath || '')
+  }
+  const normalized = relativePath.replace(/\\/g, '/').replace(/^\.\//, '')
+  const beforePath = oldPath == null || String(oldPath).trim().length === 0
+    ? normalized
+    : String(oldPath).replace(/\\/g, '/').replace(/^\.\//, '')
+  if (beforePath.split('/').includes('..')) {
+    return degraded('路径无效', normalized)
+  }
+  let repoRoot
+  try {
+    repoRoot = await resolveRepoRoot(workspace, repoPath)
+  } catch (e) {
+    return degraded(e.message || '路径无效', normalized)
+  }
+  const absolute = path.resolve(repoRoot, normalized)
+  if (!absolute.startsWith(repoRoot + path.sep) && absolute !== repoRoot) {
+    return degraded('路径访问被拒绝', normalized)
+  }
+  // 显式 ref 路径两段式解析（见 resolveBranchSha：同名 tag 会遮蔽分支），后续命令一律用 sha
+  const baseSha = await resolveBranchSha(repoRoot, baseRef)
+  if (!baseSha) return degraded('分支不存在', normalized)
+  const targetSha = await resolveBranchSha(repoRoot, targetRef)
+  if (!targetSha) return degraded('分支不存在', normalized)
+  const mergeBase = await runGit(repoRoot, ['merge-base', baseSha, targetSha])
+  if (mergeBase.timedOut) return degraded('对比失败，请重试', normalized)
+  if (mergeBase.exitCode === 1) return degraded('两个分支没有共同祖先，无法对比', normalized)
+  if (mergeBase.exitCode !== 0) return degraded('对比失败，请重试', normalized)
+  const mergeBaseSha = mergeBase.stdout.trim()
+  const before = await runGit(repoRoot, ['show', `${mergeBaseSha}:${beforePath}`])
+  const after = await runGit(repoRoot, ['show', `${targetSha}:${normalized}`])
+  // >2 MiB 大文件：runGit 因 maxBuffer 溢出返回 overflowed（stdout 是预算内已收集的 2 MiB），
+  // 按「成功 + 截断」继续交给 truncateText，与 CLOUD（runGitRaw 保留预算内输出 → truncated）
+  // 行为一致（方案 §5.5 / §2.1）；否则会静默退化成空 diff、且不标记 truncated。
+  const beforeContent = before.exitCode === 0 || before.overflowed ? before.stdout : null
+  const afterContent = after.exitCode === 0 || after.overflowed ? after.stdout : null
+  const changeType = beforeContent == null && afterContent != null
+    ? 'CREATED'
+    : beforeContent != null && afterContent == null
+      ? 'DELETED'
+      : beforePath !== normalized ? 'RENAMED' : 'MODIFIED'
+  if (beforeContent != null && beforeContent.includes('\0')) {
+    return { path: normalized, changeType, beforeContent: '', afterContent: '', binary: true, unavailableReason: '二进制文件，无法预览' }
+  }
+  if (afterContent != null && afterContent.includes('\0')) {
+    return { path: normalized, changeType, beforeContent: '', afterContent: '', binary: true, unavailableReason: '二进制文件，无法预览' }
+  }
+  const beforeTrunc = truncateText(beforeContent == null ? '' : beforeContent)
+  const afterTrunc = truncateText(afterContent == null ? '' : afterContent)
+  return {
+    path: normalized,
+    changeType,
+    beforeContent: beforeTrunc.content,
+    afterContent: afterTrunc.content,
+    truncated: beforeTrunc.truncated || afterTrunc.truncated,
+  }
+}
+
+/**
  * 分支列表：本地（git branch -vv）+ 远端（git branch -r -vv），与后端 getBranches 同解析。
  * @param {string} workspace
  * @param {string} [repoPath]
@@ -983,6 +1221,8 @@ module.exports = {
   EXCLUDED_REPO_DIRS,
   collectChangedFiles,
   getGitBranches,
+  getGitBranchCompare,
+  getGitBranchCompareFileDiff,
   getGitCommitFileDiff,
   getGitCommitFiles,
   getGitFileDiff,
@@ -990,6 +1230,7 @@ module.exports = {
   getGitRemotes,
   getGitStashes,
   getGitStatus,
+  isValidBranchName,
   listGitRepos,
   numstatNewPath,
   parseBranchVvLine,

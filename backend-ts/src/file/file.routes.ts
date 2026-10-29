@@ -319,6 +319,30 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
     return sendOk(reply, await workspaceGitService.getRemotes(session.workspace!, queryOptStr(request, 'repoPath')));
   });
 
+  app.get('/v1/files/workspace-git-branch-compare', async (request, reply) => {
+    const userId = requireUserId(request);
+    const session = await requireOwnedCloudGitSession(userId, requireQueryLong(request, 'sessionId'));
+    const base = queryOptStr(request, 'base');
+    if (base == null) throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
+    const target = queryOptStr(request, 'target');
+    if (target == null) throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
+    return sendOk(reply, await workspaceGitService.compareBranches(session.workspace!, queryOptStr(request, 'repoPath'), base, target));
+  });
+
+  app.get('/v1/files/workspace-git-branch-compare-file-diff', async (request, reply) => {
+    const userId = requireUserId(request);
+    const session = await requireOwnedCloudGitSession(userId, requireQueryLong(request, 'sessionId'));
+    const base = queryOptStr(request, 'base');
+    if (base == null) throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
+    const target = queryOptStr(request, 'target');
+    if (target == null) throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
+    const path = queryOptStr(request, 'path');
+    if (path == null) throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
+    return sendOk(reply, await workspaceGitService.compareBranchFileDiff(
+      session.workspace!, queryOptStr(request, 'repoPath'), base, target, path, queryOptStr(request, 'oldPath'),
+    ));
+  });
+
   app.post('/v1/files/workspace-git-fetch', async (request, reply) => {
     const userId = requireUserId(request);
     const body = bodyOf<{ sessionId?: number; repoPath?: string }>(request);

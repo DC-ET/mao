@@ -113,6 +113,20 @@ export interface GitCommitFilesDTO {
   files: GitChangedFileDTO[];
 }
 
+/**
+ * 分支对比结果：两点 `<base>...<target>`（三点语义，merge-base 起点）的变更文件清单
+ * + 目标分支相对基准的领先/落后提交数。
+ */
+export interface GitBranchCompareDTO {
+  base: string;
+  target: string;
+  /** 目标分支独有的提交数（rev-list --left-right --count <base>...<target> 的 right 段） */
+  aheadCount: number;
+  /** 基准分支独有的提交数（同命令 left 段；等价于 rev-list --count <target>..<base>） */
+  behindCount: number;
+  files: GitChangedFileDTO[];
+}
+
 /** 远端 URL 脱敏（与 git-write-operation.service.ts 共用同一条正则，双侧导出一份）。 */
 const CREDENTIAL_URL = /(https?:\/\/)([^/@\s]+@)/gi;
 
@@ -123,6 +137,29 @@ export function sanitizeCredentialUrl(url: string | null | undefined): string {
 
 /** 提交历史 hash 入参格式：7-64 位十六进制（短哈希或全哈希均可）。 */
 const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,64}$/;
+
+/**
+ * 分支对比的分支 / ref 名合法性（git check-ref-format 子集）。
+ * 字符类首字符排除 `-`：参数数组不过 shell，但 `-` 开头仍会被 git 当选项（option 注入），
+ * 故严于 git-write-operation.service.ts 的 BRANCH_NAME_PATTERN（`^[A-Za-z0-9._/-]+$`，
+ * `-` 位于字符类尾部是字面量、首字符并不拒绝 `-`，实测 `-x` 能通过其校验）。
+ * 只读侧不依赖写服务的导出面，此处独立定义、勿照抄写侧的宽松正则；
+ * `-x` 经 porcelain 无法创建，收紧不误伤任何真实分支。
+ */
+const BRANCH_REF_PATTERN = /^[A-Za-z0-9._/][A-Za-z0-9._/-]*$/;
+
+/**
+ * 分支 / ref 名是否合法：字符类 + check-ref-format 的结构性规则
+ * （禁 `..` / `@{` / `//`、首尾 `/`、结尾 `.`、组件首 `.`、组件尾 `.lock`、长度 1..200、不为 `@`）。
+ */
+export function isValidBranchRefName(name: string): boolean {
+  if (name.length < 1 || name.length > 200) return false;
+  if (!BRANCH_REF_PATTERN.test(name)) return false;
+  if (name === '@') return false;
+  if (name.includes('..') || name.includes('@{') || name.includes('//')) return false;
+  if (name.startsWith('/') || name.endsWith('/') || name.endsWith('.')) return false;
+  return name.split('/').every((part) => part.length > 0 && !part.startsWith('.') && !part.endsWith('.lock'));
+}
 
 const LOG_FORMAT = '%H%x00%h%x00%s%x00%an%x00%aI%x00%D';
 const LOG_DEFAULT_LIMIT = 50;
@@ -459,6 +496,184 @@ export class WorkspaceGitService {
   }
 
   /**
+   * 分支对比（三点 `<base>...<target>`）：目标分支相对基准独有的变更文件清单
+   * + 目标分支领先/落后提交数。语义同 GitHub PR——只列目标侧独有的变更，
+   * 基准侧独有的提交不计入差异。base/target 由用户自选（本地 / 远端分支均可）。
+   * 分支名先解析成提交 sha（显式 `refs/heads/` → `refs/remotes/` 两段式，见 resolveBranchSha），
+   * 后续命令一律用 sha：裸 ref 名会走 git 的 refname 解析顺序，而 refs/tags/ 优先于 refs/heads/——
+   * 仓库里存在与分支同名的 tag 时，用户在下拉里选的是分支、实际比对的却是 tag（静默错误）。
+   * 先解析 ref 再跑 diff：`git diff A...B` 无差异时输出为空且退出码 0，
+   * 与「ref 不存在」必须可区分（顺序不可颠倒，也不可用 diff 退出码推断 ref 存在性）。
+   * merge-base 用模块导出的 runGitRaw 读退出码——runGitOk 把一切非零退出统一折成 null，
+   * 无法区分「无共同祖先（exitCode 1）」与超时 124 / spawn 失败 127 / 无效 ref 128，
+   * 而实测无共同祖先场景 rev-list 仍成功，故该判定必须前移到 merge-base 的退出码上。
+   */
+  async compareBranches(
+    sessionWorkspace: string,
+    repoPath: string | null | undefined,
+    base: string,
+    target: string,
+  ): Promise<GitBranchCompareDTO> {
+    const baseRef = (base ?? '').trim();
+    const targetRef = (target ?? '').trim();
+    if (!isValidBranchRefName(baseRef) || !isValidBranchRefName(targetRef)) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '分支不存在');
+    }
+    const repoRoot = await this.resolveRepoRoot(sessionWorkspace, repoPath);
+    const [baseSha, targetSha] = await Promise.all([
+      this.resolveBranchSha(repoRoot, baseRef),
+      this.resolveBranchSha(repoRoot, targetRef),
+    ]);
+    const mergeBase = await runGitRaw(repoRoot, ['merge-base', baseSha, targetSha], GIT_TIMEOUT_SECONDS * 1000);
+    if (mergeBase.exitCode === 1) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '两个分支没有共同祖先，无法对比');
+    }
+    if (mergeBase.exitCode !== 0 || firstObjectId(mergeBase.stdout) == null) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '对比失败，请重试');
+    }
+    const counts = await this.runGitOk(repoRoot, ['rev-list', '--left-right', '--count', `${baseSha}...${targetSha}`]);
+    if (counts == null) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '对比失败，请重试');
+    }
+    // 只认最后一行纯数字计数：runGitRaw 把 stderr 并入 stdout，criss-cross 历史的
+    // `warning: ... multiple merge bases, using <sha>` 会混在首行，按首个空白字段切分
+    // 会把 warning 的单词当成计数
+    const countsLine = counts
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => /^\d+\s+\d+$/.test(line))
+      .pop();
+    if (countsLine == null) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '对比失败，请重试');
+    }
+    // left = 基准独有（目标落后数）、right = 目标独有（目标领先数）
+    const [behindRaw, aheadRaw] = countsLine.split(/\s+/);
+    const [numstat, nameStatus] = await Promise.all([
+      this.runGitOk(repoRoot, ['diff', '--numstat', `${baseSha}...${targetSha}`]),
+      this.runGitOk(repoRoot, ['diff', '--name-status', `${baseSha}...${targetSha}`]),
+    ]);
+    // 空串是合法结果（两个分支无差异，target 落后于 base 时同样为空），只有执行失败才报错
+    if (numstat == null || nameStatus == null) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '对比失败，请重试');
+    }
+    const files = new Map<string, GitChangedFileDTO>();
+    if (nameStatus.trim().length > 0) {
+      for (let line of nameStatus.split('\n')) {
+        line = line.trim();
+        if (line.length === 0) continue;
+        const file = parseNameStatusLine(line);
+        if (file) files.set(file.path, file);
+      }
+    }
+    if (numstat.trim().length > 0) {
+      for (let line of numstat.split('\n')) {
+        line = line.trim();
+        if (line.length === 0) continue;
+        const parts = line.split('\t');
+        if (parts.length < 3) continue;
+        const path = numstatNewPath(parts[parts.length - 1]);
+        const file = files.get(path);
+        if (!file) continue;
+        if (parts[0] === '-' || parts[1] === '-') {
+          file.binary = true;
+          file.insertions = 0;
+          file.deletions = 0;
+        } else {
+          file.insertions = parseIntSafe(parts[0]);
+          file.deletions = parseIntSafe(parts[1]);
+        }
+      }
+    }
+    return {
+      base: baseRef,
+      target: targetRef,
+      aheadCount: parseIntSafe(aheadRaw ?? ''),
+      behindCount: parseIntSafe(behindRaw ?? ''),
+      files: [...files.values()],
+    };
+  }
+
+  /**
+   * 分支对比单文件 diff（三点语义下的双 ref show）：
+   * before = `git show <merge-base>:<oldPath ?? path>`，after = `git show <target>:<path>`，
+   * 均取自 git 对象、不读工作区。两个分支先按显式 ref 路径解析成 sha（见 resolveBranchSha），
+   * show 的对象端都用 sha——同名 tag 不会遮蔽分支，也不会把 ambiguity warning 混进内容首行。
+   * before 端取 merge-base 而非 base 本身（否则退化成
+   * 「base tip → target tip」两点 diff，把基准分支独有的改动显示成删除，与三点清单自相矛盾）；
+   * rename 必须传 oldPath（清单 R 行的旧路径）——oldPath 即 merge-base 树中的旧路径、必然存在，
+   * 不传会把改名显示成「整份新增」。对象不存在不是错误：merge-base 中不存在 → before 空（CREATED）、
+   * target 中不存在 → after 空（DELETED）。返回的 path 恒为新路径。
+   */
+  async compareBranchFileDiff(
+    sessionWorkspace: string,
+    repoPath: string | null | undefined,
+    base: string,
+    target: string,
+    relativePath: string | null | undefined,
+    oldPath?: string | null,
+  ): Promise<GitFileDiffDTO> {
+    const baseRef = (base ?? '').trim();
+    const targetRef = (target ?? '').trim();
+    if (!isValidBranchRefName(baseRef) || !isValidBranchRefName(targetRef)) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '分支不存在');
+    }
+    if (relativePath == null || relativePath.trim().length === 0) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '文件路径不能为空');
+    }
+    const normalized = relativePath.replace(/\\/g, '/').replace(/^\.\//, '');
+    if (normalized.split('/').some((p) => p === '..')) {
+      throw new BusinessException(ErrorCode.FORBIDDEN, '路径访问被拒绝');
+    }
+    const beforePath = oldPath == null || oldPath.trim().length === 0
+      ? normalized
+      : oldPath.replace(/\\/g, '/').replace(/^\.\//, '');
+    if (beforePath.split('/').some((p) => p === '..')) {
+      throw new BusinessException(ErrorCode.FORBIDDEN, '路径访问被拒绝');
+    }
+    const repoRoot = await this.resolveRepoRoot(sessionWorkspace, repoPath);
+    const absolute = resolve(repoRoot, normalized);
+    if (!isUnder(absolute, repoRoot)) {
+      throw new BusinessException(ErrorCode.FORBIDDEN, '路径访问被拒绝');
+    }
+    const [baseSha, targetSha] = await Promise.all([
+      this.resolveBranchSha(repoRoot, baseRef),
+      this.resolveBranchSha(repoRoot, targetRef),
+    ]);
+    const mergeBase = await runGitRaw(repoRoot, ['merge-base', baseSha, targetSha], GIT_TIMEOUT_SECONDS * 1000);
+    if (mergeBase.exitCode === 1) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '两个分支没有共同祖先，无法对比');
+    }
+    const mergeBaseHash = firstObjectId(mergeBase.stdout);
+    if (mergeBase.exitCode !== 0 || mergeBaseHash == null) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '对比失败，请重试');
+    }
+    const beforeRaw = await this.runGitOk(repoRoot, ['show', `${mergeBaseHash}:${beforePath}`]);
+    const afterRaw = await this.runGitOk(repoRoot, ['show', `${targetSha}:${normalized}`]);
+    const changeType = beforeRaw == null && afterRaw != null
+      ? 'CREATED'
+      : beforeRaw != null && afterRaw == null
+        ? 'DELETED'
+        : beforePath !== normalized ? 'RENAMED' : 'MODIFIED';
+    const diff: GitFileDiffDTO = { path: normalized, changeType, beforeContent: '', afterContent: '' };
+    if (beforeRaw != null && isBinaryString(beforeRaw)) {
+      diff.binary = true;
+      diff.unavailableReason = '二进制文件，无法预览';
+      return diff;
+    }
+    if (afterRaw != null && isBinaryString(afterRaw)) {
+      diff.binary = true;
+      diff.unavailableReason = '二进制文件，无法预览';
+      return diff;
+    }
+    const beforeTrunc = truncateText(beforeRaw ?? '');
+    const afterTrunc = truncateText(afterRaw ?? '');
+    diff.beforeContent = beforeTrunc.content;
+    diff.afterContent = afterTrunc.content;
+    if (beforeTrunc.truncated || afterTrunc.truncated) diff.truncated = true;
+    return diff;
+  }
+
+  /**
    * 分支列表：本地（git branch -vv，含 upstream 与 ahead/behind 方括号解析）
    * + 远端（git branch -r -vv，其 upstream 列为空、不解析 ahead/behind）。
    * 空仓库（未出生 HEAD）下 `git branch -vv` 没有任何输出，用 symbolic-ref 补一条
@@ -584,6 +799,24 @@ export class WorkspaceGitService {
       throw new BusinessException(ErrorCode.FORBIDDEN, '路径访问被拒绝');
     }
     return root;
+  }
+
+  /**
+   * 分支名 → 提交对象 id 的显式解析（两段式：本地分支 → 远端跟踪分支）。
+   * 必须带 `refs/heads/` / `refs/remotes/` 前缀：裸名会走 git 的 refname 解析顺序，
+   * 而 refs/tags/ 优先于 refs/heads/（实测同名时裸名解析到 tag 且 stderr 打
+   * `warning: refname 'x' is ambiguous.`）——用户在下拉里选的是分支、实际比对的却是
+   * 同名 tag 指向的对象，属静默错误；显式 ref 路径把语义钉死在分支上。
+   * verify 成功却取不到对象 id 属异常（正常输出即 40/64 位 sha），一并按「分支不存在」处理。
+   */
+  private async resolveBranchSha(repoRoot: string, name: string): Promise<string> {
+    for (const prefix of ['refs/heads/', 'refs/remotes/']) {
+      const resolved = await this.runGitOk(repoRoot, ['rev-parse', '--verify', `${prefix}${name}`]);
+      if (resolved == null) continue;
+      const sha = firstObjectId(resolved);
+      if (sha != null) return sha;
+    }
+    throw new BusinessException(ErrorCode.PARAM_INVALID, '分支不存在');
   }
 
   changedFiles(repoRoot: string): Promise<Map<string, GitChangedFileDTO>> {
@@ -957,6 +1190,20 @@ function countLines(content: string): number {
 function parseIntSafe(s: string): number {
   const n = Number.parseInt(s.trim(), 10);
   return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * 从 runGitRaw 的输出里取出对象 id。runGitRaw 把 stdout+stderr 合并进同一流，
+ * 故输出可能带前置警告行：criss-cross 历史（多个最佳共同祖先）下 `git diff A...B`
+ * 会打 `warning: ... multiple merge bases, using <sha>`，`git merge-base` 也可能多行输出。
+ * 只认第一行形如对象 id 的内容（40 位 SHA-1 / 64 位 SHA-256），其余（警告、空行）跳过。
+ */
+export function firstObjectId(output: string): string | null {
+  for (const line of output.split('\n')) {
+    const candidate = line.trim();
+    if (/^[0-9a-f]{40}([0-9a-f]{24})?$/.test(candidate)) return candidate;
+  }
+  return null;
 }
 
 function realPath(p: string): string {

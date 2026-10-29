@@ -280,3 +280,76 @@ describe('createCloudGitProvider two-step commit', () => {
     expect(failed.error).toBe('提交信息不能为空')
   })
 })
+
+// ===== 分支对比：compareBranches / compareBranchFileDiff（LOCAL IPC / CLOUD REST） =====
+
+describe('compareBranches / compareBranchFileDiff', () => {
+  beforeEach(() => {
+    vi.mocked(api.get).mockReset()
+    ;(globalThis as any).window = { electronAPI: {} }
+  })
+
+  it('CLOUD：compareBranches 透传 base/target/repoPath 并归一化结果', async () => {
+    vi.mocked(api.get).mockResolvedValueOnce({
+      code: 0,
+      data: { base: 'main', target: 'feature', aheadCount: 2, behindCount: 1, files: [{ path: 'x.ts' }] },
+    } as never)
+    const provider = createCloudGitProvider('7')
+    const result = await provider.compareBranches('main', 'feature', 'sub')
+
+    expect(vi.mocked(api.get).mock.calls[0]).toEqual(['/files/workspace-git-branch-compare', {
+      params: { sessionId: 7, repoPath: 'sub', base: 'main', target: 'feature' },
+    }])
+    expect(result.aheadCount).toBe(2)
+    expect(result.behindCount).toBe(1)
+    expect(result.files.length).toBe(1)
+  })
+
+  it('CLOUD：compareBranches 失败直接抛错（不可降级成空列表）', async () => {
+    vi.mocked(api.get).mockRejectedValueOnce(new Error('两个分支没有共同祖先，无法对比'))
+    const provider = createCloudGitProvider('7')
+    await expect(provider.compareBranches('a', 'b')).rejects.toThrow('两个分支没有共同祖先，无法对比')
+  })
+
+  it('CLOUD：compareBranchFileDiff 透传参数并在失败时返回降级对象', async () => {
+    vi.mocked(api.get).mockRejectedValueOnce(new Error('读取分支对比 diff 失败'))
+    const provider = createCloudGitProvider('7')
+    const diff = await provider.compareBranchFileDiff('main', 'feature', 'src/b.ts', 'sub', 'src/a.ts')
+
+    expect(vi.mocked(api.get).mock.calls[0]).toEqual(['/files/workspace-git-branch-compare-file-diff', {
+      params: { sessionId: 7, repoPath: 'sub', base: 'main', target: 'feature', path: 'src/b.ts', oldPath: 'src/a.ts' },
+    }])
+    expect(diff.beforeContent).toBe('')
+    expect(diff.unavailableReason).toBe('读取分支对比 diff 失败')
+  })
+
+  it('LOCAL：compareBranches 解包对象结果，{ error } 时抛错', async () => {
+    const gitBranchCompare = vi.fn(async () => ({ base: 'a', target: 'b', aheadCount: 1, behindCount: 0, files: [] }))
+    ;(globalThis as any).window = { electronAPI: { gitBranchCompare } }
+    const provider = createLocalGitProvider('/tmp/ws', '1')
+    const result = await provider.compareBranches('a', 'b', 'sub')
+    expect(gitBranchCompare).toHaveBeenCalledWith('/tmp/ws', 'sub', 'a', 'b')
+    expect(result.aheadCount).toBe(1)
+
+    const failing = vi.fn(async () => ({ error: '分支不存在' }))
+    ;(globalThis as any).window = { electronAPI: { gitBranchCompare: failing } }
+    await expect(createLocalGitProvider('/tmp/ws', '1').compareBranches('a', 'b')).rejects.toThrow('分支不存在')
+  })
+
+  it('LOCAL：compareBranchFileDiff 透传 oldPath 并归一化结果', async () => {
+    const gitBranchCompareFileDiff = vi.fn(async () => ({
+      path: 'src/b.ts',
+      changeType: 'RENAMED',
+      beforeContent: 'old',
+      afterContent: 'new',
+      truncated: true,
+    }))
+    ;(globalThis as any).window = { electronAPI: { gitBranchCompareFileDiff } }
+    const provider = createLocalGitProvider('/tmp/ws', '1')
+    const diff = await provider.compareBranchFileDiff('main', 'feature', 'src/b.ts', 'sub', 'src/a.ts')
+
+    expect(gitBranchCompareFileDiff).toHaveBeenCalledWith('/tmp/ws', 'sub', 'main', 'feature', 'src/b.ts', 'src/a.ts')
+    expect(diff.changeType).toBe('RENAMED')
+    expect(diff.truncated).toBe(true)
+  })
+})

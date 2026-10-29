@@ -1,4 +1,5 @@
 import { parseDateTime, formatDateTime } from './datetime'
+import type { GitChangedFile, GitTreeNode } from '../types/git'
 
 /**
  * Git 管理器（中央大 Tab）的纯函数工具：refs 装饰解析、git branch -vv 行解析、
@@ -135,12 +136,14 @@ export function sanitizeRemoteUrl(url: string): string {
 }
 
 /**
- * 分支名合法性（git check-ref-format 子集，与后端 resolveSwitchTarget 同规则）：
- * 禁空白 ~^:?*[\]、'..'、'@{'、首尾 '/'、'//'、结尾 '.'、组件首 '.'、组件尾 '.lock'。
+ * 分支名合法性（git check-ref-format 子集）：
+ * 字符类首字符排除 `-`（防 option 注入；check-ref-format 同样拒绝 `-` 开头，后端只读侧
+ * isValidBranchRefName 同规则），另禁空白 ~^:?*[\]、'..'、'@{'、首尾 '/'、'//'、结尾 '.'、
+ * 组件首 '.'、组件尾 '.lock'。写侧 switch 的现有校验（后端 resolveSwitchTarget）仍更宽松。
  */
 export function isValidBranchName(name: string): boolean {
   if (!name || name.length > 200) return false
-  if (!/^[A-Za-z0-9._/-]+$/.test(name)) return false
+  if (!/^[A-Za-z0-9._/][A-Za-z0-9._/-]*$/.test(name)) return false
   if (name.includes('..') || name.includes('@{') || name === '@') return false
   if (name.startsWith('/') || name.endsWith('/') || name.includes('//') || name.endsWith('.')) return false
   return name.split('/').every((part) => part.length > 0 && !part.startsWith('.') && !part.endsWith('.lock'))
@@ -197,4 +200,117 @@ export function gitPushDisabledReason(state: GitSyncState): string {
   if (!state.hasHead || state.hasCommitsToPush === false) return '没有可推送的提交'
   if (state.hasCommitsToPush !== true) return '无法确认可推送状态'
   return ''
+}
+
+/** 收集树中全部目录路径（折叠态集合清理用）。 */
+export function collectDirPaths(nodes: GitTreeNode[], out: Set<string>) {
+  for (const node of nodes) {
+    if (node.kind === 'dir') {
+      out.add(node.path)
+      collectDirPaths(node.children, out)
+    }
+  }
+}
+
+/**
+ * 变更文件清单 → 目录分组树（变更视图与分支对比视图共用同一实现）。
+ * 目录 / 文件各自按名称排序；单链目录压缩为 `a/b/c` 包名样式；rename 行按新路径建树
+ * （旧路径只作为 file.oldPath 展示，不参与树路径）。
+ */
+export function buildGitTree(files: GitChangedFile[]): GitTreeNode[] {
+  type MutableDir = {
+    kind: 'dir'
+    name: string
+    path: string
+    dirs: Map<string, MutableDir>
+    files: Map<string, GitChangedFile>
+  }
+
+  const root: MutableDir = {
+    kind: 'dir',
+    name: '',
+    path: '',
+    dirs: new Map(),
+    files: new Map(),
+  }
+
+  const sorted = [...files].sort((a, b) => a.path.localeCompare(b.path))
+
+  for (const file of sorted) {
+    const parts = file.path.split('/').filter(Boolean)
+    if (parts.length === 0) continue
+
+    let current = root
+    for (let i = 0; i < parts.length - 1; i++) {
+      const name = parts[i]
+      const dirPath = parts.slice(0, i + 1).join('/')
+      let child = current.dirs.get(name)
+      if (!child) {
+        child = {
+          kind: 'dir',
+          name,
+          path: dirPath,
+          dirs: new Map(),
+          files: new Map(),
+        }
+        current.dirs.set(name, child)
+      }
+      current = child
+    }
+
+    const fileName = parts[parts.length - 1]
+    current.files.set(fileName, file)
+  }
+
+  function finalize(dir: MutableDir): GitTreeNode {
+    const children: GitTreeNode[] = []
+
+    const dirNames = [...dir.dirs.keys()].sort((a, b) => a.localeCompare(b))
+    for (const name of dirNames) {
+      children.push(finalize(dir.dirs.get(name)!))
+    }
+
+    const fileNames = [...dir.files.keys()].sort((a, b) => a.localeCompare(b))
+    for (const name of fileNames) {
+      const file = dir.files.get(name)!
+      children.push({
+        kind: 'file',
+        name,
+        path: file.path,
+        file,
+      })
+    }
+
+    return {
+      kind: 'dir',
+      name: dir.name,
+      path: dir.path,
+      children: compressChildren(children),
+    }
+  }
+
+  /** Merge single-child directory chains into package-style names: a/b/c */
+  function compressChildren(nodes: GitTreeNode[]): GitTreeNode[] {
+    return nodes.map((node) => {
+      if (node.kind !== 'dir') return node
+      let current = node
+      const parts = [current.name]
+      while (
+        current.children.length === 1
+        && current.children[0].kind === 'dir'
+      ) {
+        current = current.children[0]
+        parts.push(current.name)
+      }
+      return {
+        kind: 'dir' as const,
+        name: parts.filter(Boolean).join('/'),
+        path: current.path,
+        children: compressChildren(current.children),
+      }
+    })
+  }
+
+  const tree = finalize(root)
+  return tree.kind === 'dir' ? tree.children : []
 }

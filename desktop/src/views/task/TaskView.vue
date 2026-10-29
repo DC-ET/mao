@@ -36,6 +36,7 @@
         @locate-in-tree="revealInFileTree"
         @open-git-diff="handleOpenGitDiff"
         @open-commit-diff="handleOpenCommitDiff"
+        @open-branch-diff="handleOpenBranchDiff"
       />
     </div>
 
@@ -754,6 +755,46 @@ async function handleOpenCommitDiff(payload: { hash: string; file: GitChangedFil
     openDiffTab(change, `${shortHash} · ${payload.repoPath} · ${fileName} (Git)`, { source: 'git', idPrefix })
   } else {
     openDiffTab(change, `${shortHash} · ${fileName} (Git)`, { source: 'git', idPrefix })
+  }
+}
+
+/**
+ * 分支对比的单文件 diff：内容由 provider 按「merge-base → target」三点语义取（before 取
+ * merge-base，与文件清单一致），落到独立 id 前缀的 diff Tab。
+ * idPrefix 用 `git-branch-diff:<base>...<target>:`：与工作区变更 `git-diff:` / 提交
+ * `git-commit-diff:` 隔离，交换基准与目标后也不会互相覆盖。
+ */
+async function handleOpenBranchDiff(payload: { base: string; target: string; file: GitChangedFile; repoPath?: string }) {
+  const provider = gitProvider.value
+  if (!provider) return
+  let diff
+  try {
+    // 改名行的 before 取 merge-base 树中的旧路径：不传会把改名显示成「整份新增」
+    const oldPath = payload.file.changeType === 'RENAMED' ? payload.file.oldPath : undefined
+    diff = await provider.compareBranchFileDiff(payload.base, payload.target, payload.file.path, payload.repoPath, oldPath)
+  } catch (e: any) {
+    ElMessage.error(e?.message || '读取分支对比文件内容失败')
+    return
+  }
+  const change: FileChange = {
+    path: diff.path,
+    type: diff.changeType,
+    linesAdded: payload.file.insertions ?? 0,
+    linesDeleted: payload.file.deletions ?? 0,
+    diffMode: diff.binary || diff.unavailableReason ? 'UNSUPPORTED' : 'SNAPSHOT',
+    beforeContent: diff.beforeContent,
+    afterContent: diff.afterContent,
+    diffUnavailableReason: diff.unavailableReason
+      || (diff.truncated ? '内容已截断，仅显示部分文本' : undefined),
+  }
+  const fileName = diff.path.split(/[/\\]/).pop() || diff.path
+  const range = `${payload.base}...${payload.target}`
+  const idPrefix = `git-branch-diff:${range}:`
+  if (payload.repoPath) {
+    change.path = `${payload.repoPath}/${diff.path}`
+    openDiffTab(change, `${range} · ${payload.repoPath} · ${fileName} (Git)`, { source: 'git', idPrefix })
+  } else {
+    openDiffTab(change, `${range} · ${fileName} (Git)`, { source: 'git', idPrefix })
   }
 }
 

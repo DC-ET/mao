@@ -6,7 +6,7 @@
 //   原 fetch 按钮在该场景禁用，合并后不能丢失这个入口）；
 // - 非 git 仓库：按钮禁用并直接在 title 说明原因。
 // @vitest-environment jsdom
-import { createApp, h } from 'vue'
+import { createApp, h, nextTick } from 'vue'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
 const state = vi.hoisted(() => ({
@@ -39,6 +39,10 @@ vi.mock('../task/GitChangeList.vue', () => ({ default: { name: 'GitChangeList', 
 vi.mock('./GitHistoryView.vue', () => ({ default: { name: 'GitHistoryView', render() { return null } } }))
 vi.mock('./GitBranchesView.vue', () => ({ default: { name: 'GitBranchesView', render() { return null } } }))
 vi.mock('./GitStashView.vue', () => ({ default: { name: 'GitStashView', render() { return null } } }))
+vi.mock('./GitCompareView.vue', async () => {
+  const { h } = await import('vue')
+  return { default: { name: 'GitCompareView', render() { return h('div', { class: 'git-compare-stub' }) } } }
+})
 
 // ---- mock composables：真实实现返回 ref，mock 也要用真 ref（异步工厂里取 vue）----
 vi.mock('../../composables/useGitRepos', async () => {
@@ -75,11 +79,14 @@ vi.mock('../../composables/useGitManager', async () => {
   const { ref } = await import('vue')
   return {
     useGitManager: () => ({
-      activeView: 'changes',
+      // 真实实现里 activeView 是 ref：子导航点击会赋值，mock 也必须是 ref
+      activeView: ref('changes'),
       logEntries: [], logLoading: false, logError: '', logExhausted: false,
       expandedCommit: null, commitFiles: [], commitFilesLoading: false,
       loadMoreLog: async () => {}, retryLog: async () => {}, toggleCommit: async () => {},
       branches: [], branchesLoading: false, branchesError: '', loadBranches: async () => {},
+      compareBase: ref(''), compareTarget: ref(''), compareResult: ref(null),
+      compareLoading: ref(false), compareError: ref(''), loadCompare: async () => {},
       stashes: [], stashesLoading: false, stashesError: '', loadStashes: async () => {},
       remotes: ref([]), loadRemotes: async () => {},
       refreshLoadedViews: async () => { state.refreshLoadedViewsCalls += 1 },
@@ -267,6 +274,22 @@ describe('GitManagerPanel 顶部拉取 / 推送按钮', () => {
     const refresh = refreshBtn(host)!
     expect(refresh.disabled).toBe(true)
     expect(refresh.title).toBe('当前目录不是 Git 仓库')
+    app.unmount()
+  })
+})
+
+// 对比视图入口（0.0.376）：子导航第五项「对比」，点击切到 GitCompareView。
+describe('GitManagerPanel 对比视图入口', () => {
+  it('子导航含第五项「对比」，点击切到对比视图', async () => {
+    const { host, app } = mountPanel()
+    const labels = [...host.querySelectorAll('.git-subnav-btn')].map(b => (b.textContent || '').trim())
+    expect(labels).toEqual(['变更', '历史', '分支', 'Stash', '对比'])
+
+    const compareBtn = [...host.querySelectorAll('.git-subnav-btn')]
+      .find(b => (b.textContent || '').trim() === '对比') as HTMLButtonElement
+    compareBtn.click()
+    await nextTick()
+    expect(host.querySelector('.git-compare-stub')).not.toBeNull()
     app.unmount()
   })
 })

@@ -39,6 +39,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   gitLog: (workspace, repoPath, options) => ipcRenderer.invoke('git-log', { workspace, repoPath, options }),
   gitCommitFiles: (workspace, repoPath, hash) => ipcRenderer.invoke('git-commit-files', { workspace, repoPath, hash }),
   gitCommitFileDiff: (workspace, repoPath, hash, path, oldPath) => ipcRenderer.invoke('git-commit-file-diff', { workspace, repoPath, hash, path, oldPath }),
+  gitBranchCompare: (workspace, repoPath, base, target) => ipcRenderer.invoke('git-branch-compare', { workspace, repoPath, base, target }),
+  gitBranchCompareFileDiff: (workspace, repoPath, base, target, path, oldPath) => ipcRenderer.invoke('git-branch-compare-file-diff', { workspace, repoPath, base, target, path, oldPath }),
   gitBranches: (workspace, repoPath) => ipcRenderer.invoke('git-branches', { workspace, repoPath }),
   gitStashes: (workspace, repoPath) => ipcRenderer.invoke('git-stashes', { workspace, repoPath }),
   gitRemotes: (workspace, repoPath) => ipcRenderer.invoke('git-remotes', { workspace, repoPath }),

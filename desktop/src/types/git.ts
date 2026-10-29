@@ -124,6 +124,21 @@ export interface GitCommitFilesResult {
   files: GitChangedFile[]
 }
 
+/**
+ * 分支对比结果：文件清单 + 目标分支相对基准的领先 / 落后提交数。
+ * 语义为三点 diff（`git diff <base>...<target>`，即 merge-base → target）：
+ * 文件清单与「目标分支独有的变更」一致，基准分支独有的改动不在其中。
+ */
+export interface GitBranchCompareResult {
+  base: string
+  target: string
+  /** 目标分支独有的提交数（rev-list --left-right --count base...target 的 right 段） */
+  aheadCount: number
+  /** 基准分支独有的提交数（同命令 left 段；等价于 rev-list --count target..base） */
+  behindCount: number
+  files: GitChangedFile[]
+}
+
 /** stash 操作类型（服务端 / Electron 侧白名单枚举）。 */
 export type GitStashAction = 'apply' | 'pop' | 'drop'
 

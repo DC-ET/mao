@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildGitTree,
+  collectDirPaths,
   formatRelativeTime,
   gitPullDisabledReason,
   gitPushDisabledReason,
@@ -11,6 +13,7 @@ import {
   parseStashLine,
   sanitizeRemoteUrl,
 } from './git-manager'
+import type { GitChangedFile } from '../types/git'
 
 describe('parseRefsDecorations', () => {
   it('拆分 HEAD -> main、远端与 tag 并分类', () => {
@@ -141,7 +144,7 @@ describe('isValidBranchName', () => {
   })
 
   it('拒绝 git check-ref-format 明令禁止的形态', () => {
-    for (const name of ['', 'a..b', 'a b', 'a~1', 'a^b', 'a:b', 'a?b', 'a[b', 'a\\b', '/a', 'a/', 'a//b', 'a.', '.a', 'a.lock', 'a@{1', '@']) {
+    for (const name of ['', 'a..b', 'a b', 'a~1', 'a^b', 'a:b', 'a?b', 'a[b', 'a\\b', '/a', 'a/', 'a//b', 'a.', '.a', 'a.lock', 'a@{1', '@', '-x', '-']) {
       expect(isValidBranchName(name)).toBe(false)
     }
     expect(isValidBranchName('x'.repeat(201))).toBe(false)
@@ -230,5 +233,62 @@ describe('gitPushDisabledReason', () => {
 
   it('共用原因优先于 push 专属原因', () => {
     expect(gitPushDisabledReason({ ...ready, operation: 'pull', hasCommitsToPush: false })).toBe('Git 操作进行中')
+  })
+})
+
+describe('buildGitTree / collectDirPaths（变更视图与分支对比视图共用）', () => {
+  const file = (path: string): GitChangedFile => ({ path, changeType: 'MODIFIED', insertions: 1, deletions: 0 })
+
+  it('空清单返回 []', () => {
+    expect(buildGitTree([])).toEqual([])
+    expect(buildGitTree([{ path: '', changeType: 'MODIFIED', insertions: 0, deletions: 0 }])).toEqual([])
+  })
+
+  it('目录在前、文件在后，各自按名称排序', () => {
+    const tree = buildGitTree([file('b.txt'), file('a.txt'), file('src/x.ts')])
+    expect(tree.map((n) => `${n.kind}:${n.name}`)).toEqual(['dir:src', 'file:a.txt', 'file:b.txt'])
+  })
+
+  it('嵌套目录按层级展开，非单链不压缩', () => {
+    const tree = buildGitTree([file('src/components/git/A.vue'), file('src/utils/b.ts')])
+    const src = tree[0]
+    expect(src.kind).toBe('dir')
+    if (src.kind !== 'dir') return
+    expect(src.path).toBe('src')
+    expect(src.children.map((c) => c.name)).toEqual(['components/git', 'utils'])
+  })
+
+  it('单链目录压缩为 a/b/c 包名样式', () => {
+    const tree = buildGitTree([file('a/b/c/only.ts')])
+    expect(tree).toHaveLength(1)
+    const node = tree[0]
+    expect(node.kind).toBe('dir')
+    if (node.kind !== 'dir') return
+    expect(node.name).toBe('a/b/c')
+    expect(node.path).toBe('a/b/c')
+    expect(node.children).toHaveLength(1)
+    expect(node.children[0].kind).toBe('file')
+  })
+
+  it('rename 行按新路径建树，旧路径只作为 file.oldPath 展示', () => {
+    const renamed: GitChangedFile = { path: 'src/new.ts', oldPath: 'src/old.ts', changeType: 'RENAMED', insertions: 2, deletions: 1 }
+    const tree = buildGitTree([renamed])
+    const dir = tree[0]
+    expect(dir.kind).toBe('dir')
+    if (dir.kind !== 'dir') return
+    expect(dir.name).toBe('src')
+    const leaf = dir.children[0]
+    expect(leaf.kind).toBe('file')
+    if (leaf.kind !== 'file') return
+    expect(leaf.path).toBe('src/new.ts')
+    expect(leaf.file.oldPath).toBe('src/old.ts')
+  })
+
+  it('collectDirPaths 收集可折叠目录节点', () => {
+    const tree = buildGitTree([file('a/b/c/x.ts'), file('d/y.ts')])
+    const out = new Set<string>()
+    collectDirPaths(tree, out)
+    expect(out.has('a/b/c')).toBe(true)
+    expect(out.has('d')).toBe(true)
   })
 })

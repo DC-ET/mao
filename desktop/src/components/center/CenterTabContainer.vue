@@ -58,6 +58,7 @@
         :workspace="workspace"
         @open-git-diff="(file, repoPath) => emit('open-git-diff', file, repoPath)"
         @open-commit-diff="emit('open-commit-diff', $event)"
+        @open-branch-diff="emit('open-branch-diff', $event)"
         @add-file-to-chat="emit('add-file-to-chat', $event)"
       />
     </KeepAlive>
@@ -98,6 +99,7 @@ const emit = defineEmits<{
   'locate-in-tree': [relPath: string]
   'open-git-diff': [file: GitChangedFile, repoPath?: string]
   'open-commit-diff': [payload: { hash: string; file: GitChangedFile; repoPath?: string }]
+  'open-branch-diff': [payload: { base: string; target: string; file: GitChangedFile; repoPath?: string }]
 }>()
 
 const activeTab = computed(() => {

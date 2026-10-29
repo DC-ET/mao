@@ -1,6 +1,7 @@
 import { computed, type Ref } from 'vue'
 import { api } from '../api'
 import type {
+  GitBranchCompareResult,
   GitBranchInfo,
   GitCommitFilesResult,
   GitCommitMessage,
@@ -38,6 +39,14 @@ export interface WorkspaceGitProvider {
    * 不传会把改名显示成「整份新增」。
    */
   getCommitFileDiff(hash: string, relativePath: string, repoPath?: string, oldPath?: string): Promise<GitFileDiff>
+  /** 两个分支间的变更文件清单 + 领先/落后提交数（三点语义 base...target）。ref 不存在时抛错，不可与「无差异」的空列表混淆。 */
+  compareBranches(base: string, target: string, repoPath?: string): Promise<GitBranchCompareResult>
+  /**
+   * 分支对比单文件 diff（before/after 均取自 git 对象；before 取 merge-base）。
+   * oldPath 传文件清单里的旧路径（rename 行）：不传会把改名显示成「整份新增」。
+   * 返回的 path 恒为新路径（调用方用它生成 diff Tab 的 id / 标题）。
+   */
+  compareBranchFileDiff(base: string, target: string, relativePath: string, repoPath?: string, oldPath?: string): Promise<GitFileDiff>
   getBranches(repoPath?: string): Promise<GitBranchInfo[]>
   getStashes(repoPath?: string): Promise<GitStashEntry[]>
   getRemotes(repoPath?: string): Promise<GitRemoteInfo[]>
@@ -261,6 +270,25 @@ export function createLocalGitProvider(workspace: string, sessionId: string): Wo
       const data = await window.electronAPI.gitCommitFileDiff(workspace, repoPath, hash, relativePath, oldPath)
       return normalizeDiff(data, relativePath)
     },
+    async compareBranches(base: string, target: string, repoPath?: string) {
+      const data = await window.electronAPI.gitBranchCompare(workspace, repoPath, base, target)
+      // 与 getCommitFiles 同款：数组形态走 unwrapIpcArray，对象形态在这里判 error 后抛
+      if (data && typeof data === 'object' && 'error' in data && typeof (data as { error?: string }).error === 'string') {
+        throw new Error((data as { error: string }).error)
+      }
+      const result = data as GitBranchCompareResult | undefined
+      return {
+        base: result?.base ?? base,
+        target: result?.target ?? target,
+        aheadCount: result?.aheadCount ?? 0,
+        behindCount: result?.behindCount ?? 0,
+        files: Array.isArray(result?.files) ? result.files : [],
+      }
+    },
+    async compareBranchFileDiff(base: string, target: string, relativePath: string, repoPath?: string, oldPath?: string) {
+      const data = await window.electronAPI.gitBranchCompareFileDiff(workspace, repoPath, base, target, relativePath, oldPath)
+      return normalizeDiff(data, relativePath)
+    },
     async getBranches(repoPath?: string) {
       const data = await window.electronAPI.gitBranches(workspace, repoPath)
       return unwrapIpcArray<GitBranchInfo>(data)
@@ -339,6 +367,16 @@ export function createCloudGitProvider(sessionId: string): WorkspaceGitProvider 
       async getLog() { throw new Error('会话未就绪') },
       async getCommitFiles() { throw new Error('会话未就绪') },
       async getCommitFileDiff(relativePath: string) {
+        return {
+          path: relativePath,
+          changeType: 'MODIFIED',
+          beforeContent: '',
+          afterContent: '',
+          unavailableReason: '会话未就绪',
+        }
+      },
+      async compareBranches() { throw new Error('会话未就绪') },
+      async compareBranchFileDiff(relativePath: string) {
         return {
           path: relativePath,
           changeType: 'MODIFIED',
@@ -482,6 +520,34 @@ export function createCloudGitProvider(sessionId: string): WorkspaceGitProvider 
           beforeContent: '',
           afterContent: '',
           unavailableReason: e?.message || '读取提交 diff 失败',
+        }
+      }
+    },
+    async compareBranches(base: string, target: string, repoPath?: string) {
+      const { data } = await api.get('/files/workspace-git-branch-compare', {
+        params: { sessionId: numericSessionId, repoPath, base, target },
+      })
+      return {
+        base: data?.base ?? base,
+        target: data?.target ?? target,
+        aheadCount: data?.aheadCount ?? 0,
+        behindCount: data?.behindCount ?? 0,
+        files: Array.isArray(data?.files) ? data.files : [],
+      }
+    },
+    async compareBranchFileDiff(base: string, target: string, relativePath: string, repoPath?: string, oldPath?: string) {
+      try {
+        const { data } = await api.get('/files/workspace-git-branch-compare-file-diff', {
+          params: { sessionId: numericSessionId, repoPath, base, target, path: relativePath, oldPath },
+        })
+        return normalizeDiff(data, relativePath)
+      } catch (e: any) {
+        return {
+          path: relativePath,
+          changeType: 'MODIFIED',
+          beforeContent: '',
+          afterContent: '',
+          unavailableReason: e?.message || '读取分支对比 diff 失败',
         }
       }
     },
