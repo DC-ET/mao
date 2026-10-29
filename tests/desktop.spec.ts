@@ -1277,3 +1277,62 @@ test.describe('Desktop Inbox', () => {
     expect(overflow).toBeLessThanOrEqual(0)
   })
 })
+
+// ─────────────────────────────────────────────────────────
+// Desktop - 我的用量抽屉：统计周期（弹层式选择器）
+// ─────────────────────────────────────────────────────────
+test.describe('Usage Drawer - 统计周期', () => {
+  test('弹层分组选择周期，请求按 range 语义下发', async ({ page }) => {
+    await mockLoggedInDesktopApi(page)
+    await page.goto('/')
+    await page.waitForSelector('.top-nav', { timeout: 15_000 })
+    await page.locator('.usage-bell').click()
+    const drawer = page.locator('.usage-drawer')
+    await expect(drawer).toBeVisible()
+
+    // 打开弹层：「日历周期 / 最近」两组平铺，自定义区间入口收在底部
+    await drawer.locator('.period-trigger').click()
+    const panel = page.locator('.usage-period-picker-popper')
+    await expect(panel).toBeVisible()
+    await expect(panel.locator('.period-group-title')).toHaveText(['日历周期', '最近'])
+    await expect(panel.locator('.period-chip')).toHaveCount(8)
+    await expect(panel.locator('.period-custom-entry')).toContainText('自定义区间')
+
+    // 选「本周」：弹层收起，摘要请求带 range=week（窗口由服务端按上海日历解析）。
+    // 请求监听要先于点击挂上，否则请求在 expect 轮询间隙就发完了
+    const weekRequest = page.waitForRequest(req => new URL(req.url()).searchParams.get('range') === 'week')
+    await panel.locator('.period-chip', { hasText: '本周' }).click()
+    await weekRequest
+    await expect(panel).toBeHidden()
+    await expect(drawer.locator('.period-trigger-label')).toHaveText('本周')
+  })
+
+  test('自定义区间内联两个日期选择器，改起点后按 custom + 新起止日重拉', async ({ page }) => {
+    await mockLoggedInDesktopApi(page)
+    await page.goto('/')
+    await page.waitForSelector('.top-nav', { timeout: 15_000 })
+    await page.locator('.usage-bell').click()
+    const drawer = page.locator('.usage-drawer')
+    await expect(drawer).toBeVisible()
+
+    await drawer.locator('.period-trigger').click()
+    // 自定义区间：抽屉头部内联出现起止两个日期选择器，请求带 range=custom + 起止日
+    const customRequest = page.waitForRequest(req => new URL(req.url()).searchParams.get('range') === 'custom')
+    await page.locator('.usage-period-picker-popper .period-custom-entry').click()
+    const first = await customRequest
+    await expect(drawer.locator('.period-date')).toHaveCount(2)
+    const firstStart = new URL(first.url()).searchParams.get('startDate')
+    expect(firstStart).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    expect(new URL(first.url()).searchParams.get('endDate')).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+
+    // 起点改成今天（区间收敛成一天），请求按新起止日重拉
+    const nextRequest = page.waitForRequest(
+      req => new URL(req.url()).searchParams.get('range') === 'custom'
+        && new URL(req.url()).searchParams.get('startDate') !== firstStart
+    )
+    await drawer.locator('.period-date').first().locator('input').click()
+    // 两个日期选择器的面板都会挂在 DOM 里（未展开的靠父级 display:none 隐藏），必须限定可见的那个
+    await page.locator('.el-picker-panel:visible td.available.today').first().click()
+    await nextRequest
+  })
+})
