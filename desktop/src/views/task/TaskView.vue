@@ -60,6 +60,7 @@
       :view-type="inspectorViewType"
       :model-id="inspectorModelId"
       :list-mode="listMode"
+      :show-reopen="showReopen"
       @toggle-panel="toggleRight"
       @todo-update="handleTodoUpdate"
       @rename="handleRename"
@@ -75,7 +76,11 @@
       @open-git-diff="handleOpenGitDiff"
       @open-git="openGitTab"
       @open-manager="openFileManagerTab"
+      @reopen-agent="handleOpenReopenDialog"
     />
+
+    <!-- 用其他 Agent 重开：同工作区新建 + 接手说明 + 旧会话归档（技术方案 2026-10-29 §4.4） -->
+    <AgentReopenDialog ref="reopenDialogRef" @reopened="handleReopened" />
 
     <!-- 首启向导 / 环境未就绪降级页：仅对新用户（PENDING）出现，存量用户零打扰 -->
     <ReadinessPending
@@ -98,7 +103,7 @@ import { ref, computed, provide, onMounted, onUnmounted, watch, nextTick } from 
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAgentStore } from '../../stores/agent'
-import { useSessionStore, type TaskPhase, type SubagentItem } from '../../stores/session'
+import { useSessionStore, ACTIVE_PHASES, type TaskPhase, type SubagentItem } from '../../stores/session'
 import { persistedContextWindow } from '../../stores/session/context-window'
 import { useDraftStore } from '../../stores/draft'
 import { usePanelLayout } from '../../composables/usePanelLayout'
@@ -119,6 +124,7 @@ import { resolveInspectorTarget, type InspectorTarget, type InspectorViewType } 
 import { api } from '../../api'
 import TaskIndexPanel from '../../components/task/TaskIndexPanel.vue'
 import TaskInspector from '../../components/task/TaskInspector.vue'
+import AgentReopenDialog from '../../components/task/AgentReopenDialog.vue'
 import CenterTabBar from '../../components/center/CenterTabBar.vue'
 import CenterTabContainer from '../../components/center/CenterTabContainer.vue'
 import OnboardingOverlay from '../../components/onboarding/OnboardingOverlay.vue'
@@ -684,6 +690,44 @@ interface TaskInspectorInstance {
   refreshFileTree(): void
 }
 const inspectorRef = ref<TaskInspectorInstance | null>(null)
+
+const reopenDialogRef = ref<InstanceType<typeof AgentReopenDialog> | null>(null)
+
+function handleOpenReopenDialog() {
+  const sid = inspectorSessionId.value
+  if (sid == null || isNewTaskMode.value) return
+  reopenDialogRef.value?.open(String(sid), agentId.value || null)
+}
+
+/**
+ * 「用其他 Agent 重开」入口可见性（技术方案 2026-10-29 §4.4-1）：
+ * 仅 CLOUD 主会话、非活跃相位（含等待审批/取消中）、未归档时显示。
+ */
+const showReopen = computed(() => {
+  if (isNewTaskMode.value || inspectorViewType.value !== 'chat') return false
+  if (executionMode.value !== 'CLOUD') return false
+  if (ACTIVE_PHASES.has(currentPhase.value)) return false
+  const session = sessionStore.activeSession
+  if (!session) return false
+  return session.status !== 'ARCHIVED'
+})
+
+function handleReopened(payload: { sessionId: number; handoverNote: string | null }) {
+  // 接手说明预填进新会话输入框（可编辑、不自动发送）；失败时提示可空手起
+  if (payload.handoverNote) {
+    const html = payload.handoverNote
+      .split(/\n+/)
+      .map(line => line.trim())
+      .filter(Boolean)
+      .map(line => `<p>${escapeHtml(line)}</p>`)
+      .join('')
+    draftStore.setDraft(`s:${payload.sessionId}`, { html, text: payload.handoverNote, files: [] })
+  } else {
+    ElMessage.warning('接手说明生成失败，可直接描述需求')
+  }
+  void sessionStore.fetchSessions(true)
+  void router.push(`/tasks/${payload.sessionId}`)
+}
 
 function refreshFileTree() {
   inspectorRef.value?.refreshFileTree()

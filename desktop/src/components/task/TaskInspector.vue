@@ -114,6 +114,10 @@
           size="lg"
           show-description
         />
+        <button v-if="showReopen" type="button" class="agent-reopen-btn" @click="emit('reopen-agent')">
+          <el-icon :size="12"><RefreshRight /></el-icon>
+          用其他 Agent 重开
+        </button>
       </div>
 
       <div v-if="workspace || showEnvVarsEntry" class="inspector-section">
@@ -387,7 +391,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
-import { FolderOpened, DocumentCopy, Share, Setting } from '@element-plus/icons-vue'
+import { FolderOpened, DocumentCopy, Share, Setting, RefreshRight } from '@element-plus/icons-vue'
 import { ElMessage, ElTooltip } from 'element-plus'
 import TodoChecklist from './TodoChecklist.vue'
 import AgentBadge from '../agent/AgentBadge.vue'
@@ -436,6 +440,8 @@ const props = defineProps<{
   viewType?: 'chat' | 'side_task' | 'subagent'
   /** 当前展示会话的模型 id（上下文占比分母优先使用，缺失回退主会话模型） */
   modelId?: number
+  /** 是否显示「用其他 Agent 重开」入口（CLOUD + 非活跃相位 + 未归档，由 TaskView 判定） */
+  showReopen?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -453,6 +459,7 @@ const emit = defineEmits<{
   'promote-side-task': [sideSessionId: number]
   'open-git-diff': [file: GitChangedFile, repoPath?: string]
   'open-git': []
+  'reopen-agent': []
 }>()
 
 const sessionStore = useSessionStore()
@@ -1112,6 +1119,23 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   -webkit-box-orient: vertical;
   overflow: hidden;
   white-space: normal;
+}
+
+.agent-reopen-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 2px 0;
+  border: none;
+  background: transparent;
+  color: var(--aw-primary);
+  font-size: var(--aw-text-fine);
+  cursor: pointer;
+}
+
+.agent-reopen-btn:hover {
+  text-decoration: underline;
 }
 
 .resize-handle {

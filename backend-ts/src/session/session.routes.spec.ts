@@ -69,6 +69,8 @@ describe('session and admin routes', () => {
       updatePermissionLevel: vi.fn(),
       updateMemoryInjectionDisabled: vi.fn(),
       updateModelId: vi.fn(),
+      updateSessionAgent: vi.fn(),
+      assertAgentSwitchable: vi.fn(),
       getMessagesByRounds: vi.fn(async () => ({ messages: [], hasMore: false, nextBeforeMessageId: null })),
       getFileChangesByMessageIds: vi.fn(async () => new Map()),
       getFileChangeSummariesByMessageIds: vi.fn(async () => new Map()),
@@ -112,6 +114,7 @@ describe('session and admin routes', () => {
     };
     registerSessionRoutes(fastify, {
       sessionService,
+      agentHandoverService: { generateHandoverNote: vi.fn(async () => '接手说明') },
       agentLookup,
       modelLookup,
       activityService: { listBySession: vi.fn(async () => []) } as unknown as ActivityService,

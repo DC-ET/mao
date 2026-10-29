@@ -20,6 +20,7 @@ const SCENE_LABELS: Record<LlmCallScene, string> = {
   feishu_summarize: '飞书摘要',
   connectivity_test: '连通性测试',
   memory_extract: '记忆抽取',
+  agent_handover_summary: '接手说明生成',
   unknown: '未知',
 }
 

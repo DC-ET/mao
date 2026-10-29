@@ -97,6 +97,8 @@
       :dir-name="dirName"
       :permission-level="permissionLevel"
       :model-id="modelId"
+      :agent-id="agentId"
+      :agent-name="agentName"
       :waiting-for-save="waitingForSave"
       :loading="loading"
       :can-send="canSend"
@@ -117,6 +119,7 @@
       @update:permission-level="$event => emit('update:permissionLevel', $event)"
       @update:model-id="id => emit('update:modelId', id)"
       @select:model="(id, modelIdStr) => emit('select:model', id, modelIdStr)"
+      @select:agent="id => emit('select:agent', id)"
     />
 
     <!-- 移动居中态：智能体/工作区配置条（输入与操作行下方，不占工具条横向空间） -->
@@ -192,6 +195,9 @@ const props = withDefaults(defineProps<{
   executionMode?: string
   modelId?: number
   modelSupportsVision?: boolean
+  /** 当前会话绑定的 Agent：会话态用于工具条切换入口；新建任务 / 边路任务不传即隐藏 */
+  agentId?: string | null
+  agentName?: string | null
   placeholder?: string
   permissionLevel?: string
   isNewTask?: boolean
@@ -248,6 +254,7 @@ const emit = defineEmits<{
   'update:selectedAgentId': [id: string | null]
   'update:modelId': [modelId: number]
   'select:model': [modelId: number, modelIdStr: string]
+  'select:agent': [agentId: string]
   'update:workspaceMode': [mode: string]
   'update:gitCloneUrl': [url: string]
   'update:gitBranch': [branch: string]

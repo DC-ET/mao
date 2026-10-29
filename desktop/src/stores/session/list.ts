@@ -686,6 +686,16 @@ export function createSessionListModule(ctx: {
     }
   }
 
+  async function updateSessionAgent(id: string, agentId: number) {
+    const { data } = await api.patch(`/sessions/${id}`, { agentId })
+    if (data) {
+      updateSession(id, {
+        agentId: normalizeId(data.agentId),
+        agentName: data.agentName
+      })
+    }
+  }
+
   function isDeleting(id: string): boolean {
     return deletingIds.value.has(String(id))
   }
@@ -839,6 +849,7 @@ export function createSessionListModule(ctx: {
     getSessionPhase,
     renameSession,
     updateSessionModel,
+    updateSessionAgent,
     deleteSession,
     markAsRead,
     applyRuntimeStatus,

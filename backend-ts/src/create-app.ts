@@ -73,6 +73,7 @@ import { SessionCompactionEventService } from './session/session-compaction-even
 import { GitOperationService } from './session/git-operation.service.js';
 import { SessionService } from './session/session.service.js';
 import { SessionTitleService } from './session/session-title.service.js';
+import { AgentHandoverService } from './session/agent-handover.service.js';
 import { ActivityService } from './session/activity.service.js';
 import { RunTraceService } from './session/run-trace.service.js';
 import { RunTraceRecordService } from './session/run-trace-record.service.js';
@@ -839,6 +840,16 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     (fn) => agentExecutor.submit(fn),
   );
 
+  const agentHandoverService = new AgentHandoverService(
+    messageRepo,
+    llmAdapter,
+    {
+      selectById: (id: number) => modelRepo.findById(id),
+      selectDefault: () => modelRepo.findDefault(),
+    },
+    { getValue: (key: string) => settingService.getValue(key) },
+  );
+
   const usageService = new LlmUsageService(new LlmUsageRepository(db));
   const gitCommitMsg = new GitCommitMessageService(llmAdapter as never, harness as never, usageService, { getValue: (key: string) => settingService.getValue(key) });
   const gitWrite = new GitWriteOperationService(
@@ -917,6 +928,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     auditService,
     llmCallService,
     sessionService, activityService, messageQueueService,
+    agentHandoverService,
     agentRepo, modelRepo, todoRepo, pathSandbox, subagentExecutionRepo,
     sessionCompactionEventService, sessionCompactionService, runTraceService, runTraceRecordService,
     approvalRegistry, askUserQuestionsRegistry, inFlightToolRegistry, treeSignalPublisher,

@@ -1508,6 +1508,26 @@ export class SessionService {
     await this.sessionRepo.updateFields(sessionId, { modelId });
   }
 
+  /** 会话绑定 Agent 的目标校验（切换 / 重开共用）：存在 + 启用 + 客户端可选，口径与新建会话一致。 */
+  async assertAgentSwitchable(agentId: number): Promise<void> {
+    const agent = await this.agentLookup.findById(agentId);
+    if (agent == null) {
+      throw new BusinessException(ErrorCode.AGENT_NOT_FOUND);
+    }
+    if (agent.enabled === 0) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '该 Agent 已停用');
+    }
+    if (agent.clientVisible === 0) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '该 Agent 不对客户端开放');
+    }
+  }
+
+  async updateSessionAgent(sessionId: number, agentId: number): Promise<void> {
+    await this.getSession(sessionId);
+    await this.assertAgentSwitchable(agentId);
+    await this.sessionRepo.updateFields(sessionId, { agentId });
+  }
+
   async updateContextTokens(sessionId: number, contextTokens: number, manifestJson?: string | null): Promise<void> {
     const prev = this.contextTokenWrites.get(sessionId) ?? Promise.resolve();
     const run = prev.catch(() => undefined).then(async () => {

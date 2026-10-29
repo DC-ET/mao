@@ -204,6 +204,8 @@ export interface AgentRef {
   defaultModelId?: number | null;
   /** 0-停用；缺省或 1 为启用 */
   enabled?: number | null;
+  /** 0-仅管理端可见（客户端新建会话列表与切换不可选）；缺省或 1 为开放 */
+  clientVisible?: number | null;
   /** 团队经验库开关（V169）：0-不挂载不注入；缺省或 1 为启用 */
   experienceLibraryEnabled?: number | null;
 }
