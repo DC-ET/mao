@@ -289,6 +289,23 @@
 2. **三处同改清单**：均不新增内置工具、LLM 调用场景、收件箱 kind。未响应升级的 `APPROVAL` 相位只在后端卡片 / 文本渲染里加，管理后台没有投递流水页，契约不下沉。`memory_captured` WS 事件不作。
 3. **相邻收敛点**：未响应升级动 `local-tool-executor.ts` 审批 finally 与 `tool-dispatcher.ts` 提问外推分支，不动 `task-terminal.service.ts`；选区引用不改 `@{path}@` 正则（解析点仍只取出路径），后端只动标题预处理 `title-generator.ts`。记忆抽取服务不追加推送。
 
+## 第十九批（2026-10-29）
+
+背景：第十八批（审批升级通知 / 选区引用）落定后，延续「**提升现有功能完整度与用户体验**」方向，本轮从三处「底子已打好但只接了一半」的半截子入手：**会话与 Agent 的关系**（模型能换 Agent 不能换，2026-10-20 方案明确遗留的 P2，且 `buildContext` 每轮重读 agentId、执行内核零改动即可生效）、**会话来源**（V109 的 source 列 / 创建参数 / 过滤参数 / 联合索引全部就绪，但飞书 / 钉钉 / 微信 / 开放接口建的会话一律混标 `web`，CHANGELOG 自承「浮窗会话混在会话管理列表无法筛选」）、**工作区资产面**（文件直管与 Git 管理器覆盖了「工作区内部」，「我的所有工作区」只有一次同步 readdir 的目录名平铺，无占用 / 无关联 / 无清理）。三件互不依赖、全部零迁移、不碰执行内核。均避开已否决方向（会话移交 / 任务模板 / 工作区模板 / 数据保留 / 备份恢复 / 记忆就地可见等）与 README 贡献边界。
+
+| 提案 | 文档 | 一句话 | 规模 |
+|---|---|---|---|
+| 会话内切换 Agent | [2026-10-29-in-session-agent-switch.md](2026-10-29-in-session-agent-switch.md)（**已细化，技术方案待评审**：[../plan/2026-10-29-in-session-agent-switch-technical-design.md](../plan/2026-10-29-in-session-agent-switch-technical-design.md)，7 项决策定案） | `PATCH` 补 `agentId` + 与模型切换同构的 UI，选错 Agent 不用重开会话；P2「以正确 Agent 重开」复用同一工作区与接手说明 | 小~中 |
+| 会话来源全链路标记 | [2026-10-29-session-source-lineage.md](2026-10-29-session-source-lineage.md)（**已细化，技术方案待评审**：[../plan/2026-10-29-session-source-lineage-technical-design.md](../plan/2026-10-29-session-source-lineage-technical-design.md)，7 项决策定案） | source 闭集扩宽 + 4 个写入点各传一行，admin 会话管理补来源列与筛选——渠道用量从「目录名巧合」变成可查询的事实标签 | 小 |
+| 工作区总览与生命周期 | [2026-10-29-workspace-overview-lifecycle.md](2026-10-29-workspace-overview-lifecycle.md)（**已细化，技术方案待评审**：[../plan/2026-10-29-workspace-overview-lifecycle-technical-design.md](../plan/2026-10-29-workspace-overview-lifecycle-technical-design.md)，11 项决策定案） | 中央页签看全部工作区的大小 / 关联会话 / 最近使用，无进行中引用可强确认删除——自托管磁盘从只进不出到用户可自理 | 中 |
+
+排期注意：
+
+1. **迁移编号**：三件均零迁移，不占号。
+2. **三处同改清单**：会话来源的 `SessionSource` 闭集扩宽须按 AGENTS.md 规范下沉 `@mao/contracts` 并用 `Record<SessionSource, string>` 汉化表吃编译期穷尽；不新增内置工具、LLM 调用场景、收件箱 kind。
+3. **相邻收敛点**：切换 Agent 复用既有 PATCH 与每轮重读语义，刻意不动 `AgentLoop` / `task-terminal.service.ts`；来源标记只改传参值不改 `createSession` 位置签名（`open-run.service.ts:21-26` 的逐位一致护栏）；工作区总览不动既有 `cloud-projects` 端点（新建任务下拉零回归）。
+4. **实施顺序建议**：三件可完全并行；来源标记最小（约 2 人日）可先行，切换 Agent 次之，工作区总览最后。
+
 ## 已评估、明确不做
 
 以下各项已复审定案，**不再重启、不再提案**（存档文档已标否决，勿再评审）：
