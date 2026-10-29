@@ -579,11 +579,13 @@ function createLocalShellRuntime(options = {}) {
     }
   }
 
-  /** cd 等协议命令：输出不落盘，也不参与 keep_session 判定。 */
+  /** cd 等协议命令：输出不落盘，也不参与 keep_session 判定。回显退出码供调用方判定 cd 失败。 */
   async function executeWithMarker(session, command, timeoutMs) {
     const marker = newMarker()
     session.beginCommand(marker, true, false)
-    session.writeStdin(command + '\n' + protocol.markerEcho(marker) + '\n')
+    // 与云端 executeWithMarker 同口径补 $?（PowerShell 先清 $LASTEXITCODE，cmdlet 失败才报得出 1）
+    const prelude = protocol.isPowerShell ? '$LASTEXITCODE = 0\n' : ''
+    session.writeStdin(prelude + command + '\n' + protocol.commandDone(marker) + '\n')
     return readUntilMarker(session, marker, timeoutMs)
   }
 
@@ -719,7 +721,17 @@ function createLocalShellRuntime(options = {}) {
     }
     injectToken(session)
     if (workdirArg && workdir) {
-      await executeWithMarker(session, protocol.chdir(workdir), WORKDIR_TIMEOUT_MS)
+      // 与云端 handleExec 同口径：cd 结果必须判定——失败/超时都不得让命令静默落在旧目录里执行
+      const cd = await executeWithMarker(session, protocol.chdir(workdir), WORKDIR_TIMEOUT_MS)
+      if (!cd.completed) {
+        // cd 超时：会话里残留未结束的协议命令、状态未知，关闭回收，
+        // 避免残留 pending 被后续命令覆盖后把 cd 输出写进别人的 output_file
+        removeSession(session.sessionId)
+        return { error: `工作目录切换超时：${workdir}` }
+      }
+      if (cd.exitCode != null && cd.exitCode != 0) {
+        return { error: `工作目录切换失败：${workdir}${cd.output.trim() ? '：' + cd.output.trim() : ''}` }
+      }
     }
     const marker = newMarker()
     if (args.async === true) {
@@ -809,6 +821,9 @@ function createLocalShellRuntime(options = {}) {
     writeCommand(session, input, marker, true, false)
     const result = await readUntilMarker(session, marker, yieldTimeMs, waitFor)
     const currentWorkdir = await resolveCurrentWorkdir(session, result)
+    // 与 exec / pending 分支一致：输入含 exit 让 bash 退出时必须回收会话，
+    // 否则返回文案说「会话已关闭」而死会话仍占着会话数配额（云端同分支已修，同口径）
+    settleSession(session, result, true)
     return formatExecResult(session, result, currentWorkdir)
   }
 

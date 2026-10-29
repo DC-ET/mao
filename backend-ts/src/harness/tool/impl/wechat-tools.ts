@@ -110,7 +110,8 @@ export class SendWechatFileTool extends BaseTool implements WeixinChannelTool {
       const account = await this.toolSupport.resolveAccount(sessionId, userId);
       if (!account) return errorJson('微信账号未绑定或尚未建立会话');
       const bytes = await loadSendFileBytes(file, this.pathSandbox, this.sendBytesSupport ?? null, { userId, sessionId, workspace }, MAX_FILE_BYTES);
-      const fileName = asText(args.filename) ?? file.split(/[\\/]/).pop() ?? 'file';
+      // || 而非 ??：asText('') 返回空串（非 null），?? 不兜底空串会把空文件名发给微信协议层
+      const fileName = asText(args.filename) || file.split(/[\\/]/).pop() || 'file';
       const uploaded = await this.uploadService.uploadFile(account.accountId, account.wxUserId, bytes, fileName, 'application/octet-stream');
       const ok = await this.sendService.sendFile(account.accountId, account.wxUserId, uploaded.mediaId, fileName);
       return toJson({ success: ok });

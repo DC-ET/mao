@@ -389,7 +389,9 @@ export class ShellSessionTool extends BaseTool {
       const result = await this.outputManager.readUntilMarker(session, livePending.marker, yieldTimeMs, waitFor);
       const workdirNow = await this.resolveCurrentWorkdir(session, result);
       const payload = this.formatResult(session, result, workdirNow);
-      this.settleSession(session, result, pending.keepSession);
+      // 与续读同源用 livePending：锁等待期间命令可能已被替换，过期快照的 keepSession
+      // 会把新命令方要保留的会话错误关闭（write_stdin 路径 line 331 同口径）
+      this.settleSession(session, result, livePending.keepSession);
       return toJson(payload);
     } finally {
       releaseCommand();

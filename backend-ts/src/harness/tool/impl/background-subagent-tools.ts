@@ -1,5 +1,5 @@
 import { BaseTool } from '../tool.js';
-import { asText, errorJson, parseObject, toJson } from '../json.js';
+import { asInt, asIntStrict, asText, errorJson, parseObject, toJson } from '../json.js';
 import type { AtomicBoolean } from '../../atomic-boolean.js';
 import type { BackgroundSubagentManager } from '../../delegate/background-subagent-manager.js';
 import { BUILTIN_AGENT_TYPES, normalizeAgentType, type AgentDefinitionRegistry } from '../../delegate/agent-definition-registry.js';
@@ -178,13 +178,17 @@ export class CancelSubagentTool extends BaseTool {
     if (sessionId == null) return errorJson('缺少会话 ID');
     const args = parseObject(argumentsJson);
     if (!args || args.task_id == null) return errorJson('缺少必填参数: task_id');
-    const taskId = Number(args.task_id);
-    if (!Number.isInteger(taskId)) return errorJson('参数 task_id 必须是整数');
+    // Number('')/Number(false)/Number([]) 都是 0、Number([5]) 是 5，能通过 isInteger 校验，
+    // 把类型混淆入参当真实任务 id 去取消；asIntStrict 只接受本身就是整数的 number 或纯整数字符串
+    const taskId = asIntStrict(args.task_id, 0);
+    if (!(taskId > 0)) return errorJson('参数 task_id 必须是整数');
     return toJson(await this.manager.cancel(sessionId, taskId));
   }
 }
 
 const DEFAULT_WAIT_SUBAGENTS_TIMEOUT_SECONDS = 30 * 60;
+/** 等待上界：有限大数（如 1e308）× 1000 会溢出为 Infinity，必须在换算后钳制，否则 waitForAll 的 deadline 永不到期。 */
+const MAX_WAIT_SUBAGENTS_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 
 export class WaitSubagentsTool extends BaseTool {
   constructor(
@@ -211,13 +215,15 @@ export class WaitSubagentsTool extends BaseTool {
     if (sessionId == null) return errorJson('缺少会话 ID');
     const args = parseObject(argumentsJson);
     const rawTimeoutSeconds = args && args.timeout_seconds != null ? args.timeout_seconds : DEFAULT_WAIT_SUBAGENTS_TIMEOUT_SECONDS;
-    const timeoutSeconds = Number(rawTimeoutSeconds);
+    // asInt 对 ''/非数字回落默认值：裸 Number('') = 0 会把「未提供」变成 0ms 即刻假超时；负数仍显式拒绝
+    const timeoutSeconds = asInt(rawTimeoutSeconds, DEFAULT_WAIT_SUBAGENTS_TIMEOUT_SECONDS);
     if (!Number.isFinite(timeoutSeconds) || timeoutSeconds < 0) return errorJson('参数 timeout_seconds 必须是非负数字');
 
     const waitResult = await this.manager.waitForAll(
       sessionId,
       this.getCancelFlag?.(sessionId) ?? null,
-      timeoutSeconds * 1000,
+      // 有限大数 × 1000 溢出为 Infinity 时 deadline 永不到期，工具会无限阻塞整个 agent 循环
+      Math.min(timeoutSeconds * 1000, MAX_WAIT_SUBAGENTS_TIMEOUT_MS),
     );
     const results = await this.manager.consumeResults(sessionId);
     const list = Object.values(results).map((raw) => {
