@@ -1,32 +1,34 @@
 <template>
   <div class="user-tab">
-    <el-card class="block">
-      <template #header>
-        <div class="card-header">
-          <span>用户活跃排行</span>
-          <span class="card-hint">按窗口内消息数 Top 10</span>
-        </div>
-      </template>
-      <BaseChart
-        :option="rankBarOption(messageItems, CHART_PALETTE[1])"
-        :empty="messageItems.length === 0"
-        :height="Math.max(200, messageItems.length * 34 + 32)"
-      />
-    </el-card>
+    <div class="chart-grid">
+      <el-card class="block">
+        <template #header>
+          <div class="card-header">
+            <span>用户活跃排行</span>
+            <span class="card-hint">按窗口内消息数 Top 10</span>
+          </div>
+        </template>
+        <BaseChart
+          :option="rankBarOption(messageItems, CHART_PALETTE[1])"
+          :empty="messageItems.length === 0"
+          :height="Math.max(200, messageItems.length * 34 + 32)"
+        />
+      </el-card>
 
-    <el-card class="block">
-      <template #header>
-        <div class="card-header">
-          <span>用户 Token 排行</span>
-          <el-button type="primary" link @click="go('/users')">用户管理</el-button>
-        </div>
-      </template>
-      <BaseChart
-        :option="rankBarOption(tokenItems, CHART_PALETTE[0], formatTokens)"
-        :empty="tokenItems.length === 0"
-        :height="Math.max(200, tokenItems.length * 34 + 32)"
-      />
-    </el-card>
+      <el-card class="block">
+        <template #header>
+          <div class="card-header">
+            <span>用户 Token 排行</span>
+            <el-button type="primary" link @click="go('/users')">用户管理</el-button>
+          </div>
+        </template>
+        <BaseChart
+          :option="rankBarOption(tokenItems, CHART_PALETTE[0], formatTokens)"
+          :empty="tokenItems.length === 0"
+          :height="Math.max(200, tokenItems.length * 34 + 32)"
+        />
+      </el-card>
+    </div>
 
     <el-card class="block">
       <template #header>
@@ -148,6 +150,17 @@ export default { name: 'UserTab' }
 </script>
 
 <style scoped>
+.chart-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.chart-grid > .block {
+  margin-bottom: 0;
+}
+
 .block {
   margin-bottom: 16px;
 }
@@ -187,5 +200,11 @@ export default { name: 'UserTab' }
   outline: 2px solid var(--mao-accent);
   outline-offset: 2px;
   border-radius: 2px;
+}
+
+@media (max-width: 768px) {
+  .chart-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
