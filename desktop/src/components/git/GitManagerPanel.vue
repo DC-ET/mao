@@ -27,7 +27,7 @@
       <span class="git-repo-badge" :title="repoName">{{ repoName }}</span>
     </div>
 
-    <!-- 仓库状态条：分支 / upstream / ahead-behind / 远端状态 + 刷新（有远端时顺带 fetch --prune） -->
+    <!-- 仓库状态条：分支 / upstream / ahead-behind / 远端状态 + 拉取 / 推送 / 刷新（有远端时顺带 fetch --prune） -->
     <div class="git-status-bar">
       <span v-if="gitStatus?.detachedHead" class="git-status-branch is-detached" title="detached HEAD：当前不在任何分支上，提交前请先切换分支">
         {{ gitStatus.branch || 'HEAD' }}
@@ -50,9 +50,26 @@
           {{ remoteBadgeText }}
         </span>
       </el-tooltip>
+      <!-- 同步操作统一收敛到状态条：拉取 / 推送 / 刷新（含 fetch），变更工具栏不再重复放 -->
       <div class="git-status-actions">
+        <template v-if="gitStatus?.isGit">
+          <el-tooltip :content="pullDisabledReason || '拉取代码'" placement="top" :show-after="300">
+            <span>
+              <button class="git-status-btn" :disabled="!!pullDisabledReason" aria-label="拉取代码" @click="runOperation('pull')">
+                <el-icon :size="14" :class="{ spinning: operation === 'pull' }"><Download /></el-icon>
+              </button>
+            </span>
+          </el-tooltip>
+          <el-tooltip :content="pushDisabledReason || '推送代码'" placement="top" :show-after="300">
+            <span>
+              <button class="git-status-btn" :disabled="!!pushDisabledReason" aria-label="推送代码" @click="runOperation('push')">
+                <el-icon :size="14" :class="{ spinning: operation === 'push' }"><Upload /></el-icon>
+              </button>
+            </span>
+          </el-tooltip>
+        </template>
         <button
-          class="git-refresh-btn"
+          class="git-status-btn"
           :disabled="refreshDisabledReason !== ''"
           :title="refreshDisabledReason || refreshTitle"
           aria-label="刷新 Git 状态"
@@ -101,6 +118,7 @@
         :provider="fileProvider"
         two-step-commit
         hide-refresh
+        hide-sync
         :commit-message="commitDraft"
         :generating="generatingMessage"
         :committing="operation === 'commit-with-message'"
@@ -154,7 +172,7 @@
 <script setup lang="ts">
 import { computed, onActivated, ref, watch } from 'vue'
 import { ElMessage, ElTooltip } from 'element-plus'
-import { Refresh } from '@element-plus/icons-vue'
+import { Download, Refresh, Upload } from '@element-plus/icons-vue'
 import GitChangeList from '../task/GitChangeList.vue'
 import GitHistoryView from './GitHistoryView.vue'
 import GitBranchesView from './GitBranchesView.vue'
@@ -166,7 +184,7 @@ import { useGitRepos } from '../../composables/useGitRepos'
 import { useGitStatus } from '../../composables/useGitStatus'
 import { useGitManager, type GitManagerView } from '../../composables/useGitManager'
 import { useGitOperations } from '../../composables/useGitOperations'
-import { sanitizeRemoteUrl } from '../../utils/git-manager'
+import { sanitizeRemoteUrl, gitPullDisabledReason, gitPushDisabledReason, type GitSyncState } from '../../utils/git-manager'
 
 const props = defineProps<{
   sessionId: string
@@ -399,6 +417,24 @@ const refreshDisabledReason = computed(() => {
   return ''
 })
 
+/** 状态条拉取 / 推送的禁用判定输入（与侧边栏变更工具栏同一口径） */
+const syncState = computed<GitSyncState>(() => ({
+  operation: operation.value,
+  loading: gitLoading.value,
+  error: gitError.value,
+  detachedHead: gitStatus.value?.detachedHead,
+  hasRemote: gitStatus.value?.hasRemote,
+  remoteStatusAvailable: gitStatus.value?.remoteStatusAvailable,
+  remoteStatusError: gitStatus.value?.remoteStatusError,
+  upstream: gitStatus.value?.upstream,
+  behindCount: gitStatus.value?.behindCount,
+  hasHead: gitStatus.value?.hasHead,
+  hasCommitsToPush: gitStatus.value?.hasCommitsToPush,
+}))
+
+const pullDisabledReason = computed(() => gitPullDisabledReason(syncState.value))
+const pushDisabledReason = computed(() => gitPushDisabledReason(syncState.value))
+
 // Tab 切走再切回时 KeepAlive 保活：本地状态刷一次，再确认远端（只读状态条，不打断列表滚动）
 onActivated(() => {
   if (gitEnabled.value) void refreshGitWithRemote()
@@ -578,7 +614,9 @@ onActivated(() => {
 .git-behind { color: var(--aw-diff-del); }
 
 .git-remote-badge {
-  flex-shrink: 0;
+  /* 可压缩：状态条右侧有三个图标按钮，窄视口下徽标让位（省略号 + tooltip 仍能看全）而非整行溢出 */
+  flex-shrink: 1;
+  min-width: 0;
   max-width: 180px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -609,9 +647,13 @@ onActivated(() => {
 .git-status-actions {
   margin-left: auto;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
 }
 
-.git-refresh-btn {
+/* 状态条上的图标按钮（拉取 / 推送 / 刷新）共用外观 */
+.git-status-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -624,12 +666,12 @@ onActivated(() => {
   cursor: pointer;
 }
 
-.git-refresh-btn:hover:not(:disabled) {
+.git-status-btn:hover:not(:disabled) {
   background: rgba(0, 0, 0, 0.06);
   color: var(--aw-primary);
 }
 
-.git-refresh-btn:disabled {
+.git-status-btn:disabled {
   opacity: 0.38;
   cursor: default;
 }
@@ -714,7 +756,7 @@ onActivated(() => {
   background: rgba(255, 255, 255, 0.06);
 }
 
-[data-theme="dark"] .git-refresh-btn:hover:not(:disabled) {
+[data-theme="dark"] .git-status-btn:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.06);
 }
 </style>

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   formatRelativeTime,
+  gitPullDisabledReason,
+  gitPushDisabledReason,
+  gitSyncDisabledReason,
   isValidBranchName,
   isValidStashRef,
   parseBranchLine,
@@ -153,5 +156,79 @@ describe('isValidStashRef', () => {
     expect(isValidStashRef('stash@{0')).toBe(false)
     expect(isValidStashRef('refs/stash')).toBe(false)
     expect(isValidStashRef('')).toBe(false)
+  })
+})
+
+// pull / push 禁用原因：侧边栏变更工具栏与中央 Git 管理器顶部状态条共用（0.0.376 入口上移后不再各写一份）。
+describe('gitSyncDisabledReason', () => {
+  const ready = {
+    hasRemote: true,
+    remoteStatusAvailable: true,
+  }
+
+  it('远端就绪且无占用：可点', () => {
+    expect(gitSyncDisabledReason(ready)).toBe('')
+    expect(gitSyncDisabledReason({})).toBe('仓库未配置远端')
+  })
+
+  it('按优先级给出第一处不满足的原因', () => {
+    expect(gitSyncDisabledReason({ ...ready, operation: 'commit' })).toBe('Git 操作进行中')
+    expect(gitSyncDisabledReason({ ...ready, operation: 'fetch' })).toBe('Git 操作进行中')
+    expect(gitSyncDisabledReason({ ...ready, loading: true })).toBe('正在读取 Git 状态')
+    expect(gitSyncDisabledReason({ ...ready, error: 'boom' })).toBe('Git 状态不可用')
+    expect(gitSyncDisabledReason({ ...ready, detachedHead: true })).toBe('detached HEAD，请先切换分支')
+    expect(gitSyncDisabledReason({ remoteStatusAvailable: true })).toBe('仓库未配置远端')
+  })
+
+  it('远端状态未确认：优先展示真实失败原因', () => {
+    expect(gitSyncDisabledReason({ ...ready, remoteStatusAvailable: false, remoteStatusError: 'fetch 失败' }))
+      .toBe('fetch 失败')
+    expect(gitSyncDisabledReason({ ...ready, remoteStatusAvailable: false })).toBe('请刷新以确认远端状态')
+  })
+})
+
+describe('gitPullDisabledReason', () => {
+  const ready = {
+    hasRemote: true,
+    remoteStatusAvailable: true,
+    upstream: 'origin/main',
+    behindCount: 2,
+  }
+
+  it('有 upstream 且落后：可点', () => {
+    expect(gitPullDisabledReason(ready)).toBe('')
+  })
+
+  it('无 upstream / 无落后提交时禁用', () => {
+    expect(gitPullDisabledReason({ ...ready, upstream: undefined })).toBe('当前分支未配置 upstream')
+    expect(gitPullDisabledReason({ ...ready, behindCount: 0 })).toBe('没有可拉取的更新')
+    expect(gitPullDisabledReason({ ...ready, behindCount: undefined })).toBe('没有可拉取的更新')
+  })
+
+  it('共用原因优先于 pull 专属原因', () => {
+    expect(gitPullDisabledReason({ ...ready, operation: 'push', behindCount: 0 })).toBe('Git 操作进行中')
+  })
+})
+
+describe('gitPushDisabledReason', () => {
+  const ready = {
+    hasRemote: true,
+    remoteStatusAvailable: true,
+    hasHead: true,
+    hasCommitsToPush: true,
+  }
+
+  it('有 HEAD 且确认可推送：可点', () => {
+    expect(gitPushDisabledReason(ready)).toBe('')
+  })
+
+  it('空仓库 / 无提交可推 / 状态未确认时禁用', () => {
+    expect(gitPushDisabledReason({ ...ready, hasHead: false })).toBe('没有可推送的提交')
+    expect(gitPushDisabledReason({ ...ready, hasCommitsToPush: false })).toBe('没有可推送的提交')
+    expect(gitPushDisabledReason({ ...ready, hasCommitsToPush: undefined })).toBe('无法确认可推送状态')
+  })
+
+  it('共用原因优先于 push 专属原因', () => {
+    expect(gitPushDisabledReason({ ...ready, operation: 'pull', hasCommitsToPush: false })).toBe('Git 操作进行中')
   })
 })

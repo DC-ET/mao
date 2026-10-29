@@ -18,12 +18,20 @@ const state = vi.hoisted(() => ({
   refreshLoadedViewsCalls: 0,
   isRootGit: false,
   multiRepoMode: false,
+  tooltips: [] as string[],
 }))
 
-// element-plus 只桩到本组件用到的两件：ElMessage（toast）、ElTooltip（透传渲染）
+// element-plus 只桩到本组件用到的两件：ElMessage（toast）、ElTooltip（透传渲染，content 收集到 state.tooltips）
 vi.mock('element-plus', () => ({
   ElMessage: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
-  ElTooltip: { name: 'ElTooltip', setup(_: unknown, { slots }: any) { return () => slots.default?.() ?? null } },
+  ElTooltip: {
+    name: 'ElTooltip',
+    props: ['content'],
+    setup(props: any, { slots }: any) {
+      state.tooltips.push(props?.content ?? '')
+      return () => slots.default?.() ?? null
+    },
+  },
 }))
 
 // ---- mock 子视图（断言只关心状态条按钮）----
@@ -63,18 +71,21 @@ vi.mock('../../composables/useGitStatus', async () => {
   }
 })
 
-vi.mock('../../composables/useGitManager', () => ({
-  useGitManager: () => ({
-    activeView: 'changes',
-    logEntries: [], logLoading: false, logError: '', logExhausted: false,
-    expandedCommit: null, commitFiles: [], commitFilesLoading: false,
-    loadMoreLog: async () => {}, retryLog: async () => {}, toggleCommit: async () => {},
-    branches: [], branchesLoading: false, branchesError: '', loadBranches: async () => {},
-    stashes: [], stashesLoading: false, stashesError: '', loadStashes: async () => {},
-    remotes: [], loadRemotes: async () => {},
-    refreshLoadedViews: async () => { state.refreshLoadedViewsCalls += 1 },
-  }),
-}))
+vi.mock('../../composables/useGitManager', async () => {
+  const { ref } = await import('vue')
+  return {
+    useGitManager: () => ({
+      activeView: 'changes',
+      logEntries: [], logLoading: false, logError: '', logExhausted: false,
+      expandedCommit: null, commitFiles: [], commitFilesLoading: false,
+      loadMoreLog: async () => {}, retryLog: async () => {}, toggleCommit: async () => {},
+      branches: [], branchesLoading: false, branchesError: '', loadBranches: async () => {},
+      stashes: [], stashesLoading: false, stashesError: '', loadStashes: async () => {},
+      remotes: ref([]), loadRemotes: async () => {},
+      refreshLoadedViews: async () => { state.refreshLoadedViewsCalls += 1 },
+    }),
+  }
+})
 
 vi.mock('../../composables/useGitOperations', async () => {
   const { ref } = await import('vue')
@@ -101,8 +112,10 @@ function mountPanel() {
   return { host, app }
 }
 
-const refreshBtn = (host: HTMLElement) =>
-  host.querySelector('button.git-refresh-btn') as HTMLButtonElement | null
+const statusBtn = (host: HTMLElement, label: string) =>
+  host.querySelector(`button.git-status-btn[aria-label="${label}"]`) as HTMLButtonElement | null
+
+const refreshBtn = (host: HTMLElement) => statusBtn(host, '刷新 Git 状态')
 
 /** 点击后链路是多段 await（fetch → 仓库列表 → 远端状态 → 视图），多轮宏任务排空 */
 const settle = async () => {
@@ -119,6 +132,7 @@ beforeEach(() => {
   state.refreshLoadedViewsCalls = 0
   state.isRootGit = false
   state.multiRepoMode = false
+  state.tooltips = []
 })
 
 describe('GitManagerPanel 顶部刷新按钮', () => {
@@ -182,6 +196,77 @@ describe('GitManagerPanel 仓库区显隐', () => {
     const { host, app } = mountPanel()
     expect(host.querySelector('.git-repo-select-row')).not.toBeNull()
     expect(host.querySelector('.git-repo-badge-row')).toBeNull()
+    app.unmount()
+  })
+})
+
+// 同步入口上移回归（0.0.376）：拉取 / 推送从变更工具栏收敛到顶部状态条，与 ↻ 并排，
+// 禁用原因与侧边栏工具栏同一口径（utils/git-manager 的 gitPull/gitPushDisabledReason）。
+describe('GitManagerPanel 顶部拉取 / 推送按钮', () => {
+  const fullStatus = {
+    isGit: true,
+    branch: 'main',
+    hasRemote: true,
+    remoteStatusAvailable: true,
+    upstream: 'origin/main',
+    behindCount: 2,
+    hasHead: true,
+    hasCommitsToPush: true,
+  }
+
+  it('状态条上拉取 / 推送 / 刷新三个图标按钮并排，均在 git 仓库时渲染', () => {
+    state.status = { ...fullStatus }
+    const { host, app } = mountPanel()
+    const labels = [...host.querySelectorAll('.git-status-actions button')].map((b) => b.getAttribute('aria-label'))
+    expect(labels).toEqual(['拉取代码', '推送代码', '刷新 Git 状态'])
+    app.unmount()
+  })
+
+  it('点击拉取 / 推送触发对应写操作，并带一次全量刷新', async () => {
+    state.status = { ...fullStatus }
+    const { host, app } = mountPanel()
+    statusBtn(host, '拉取代码')!.click()
+    await settle()
+    statusBtn(host, '推送代码')!.click()
+    await settle()
+    expect(state.calls).toEqual(['pull', 'push'])
+    expect(state.refreshReposCalls).toBe(2)
+    expect(state.refreshLoadedViewsCalls).toBe(2)
+    app.unmount()
+  })
+
+  it('没有可拉取更新 / 无可推送提交时按钮禁用并说明原因', () => {
+    state.status = { ...fullStatus, behindCount: 0, hasCommitsToPush: false }
+    const { host, app } = mountPanel()
+    const pull = statusBtn(host, '拉取代码')!
+    const push = statusBtn(host, '推送代码')!
+    expect(pull.disabled).toBe(true)
+    expect(push.disabled).toBe(true)
+    expect(state.tooltips).toContain('没有可拉取的更新')
+    expect(state.tooltips).toContain('没有可推送的提交')
+    app.unmount()
+  })
+
+  it('未配置 upstream / 远端状态未确认时按钮禁用并说明原因', () => {
+    state.status = { ...fullStatus, upstream: undefined, remoteStatusAvailable: false, remoteStatusError: 'fetch 失败' }
+    const { host, app } = mountPanel()
+    const pull = statusBtn(host, '拉取代码')!
+    const push = statusBtn(host, '推送代码')!
+    expect(pull.disabled).toBe(true)
+    expect(push.disabled).toBe(true)
+    expect(state.tooltips).toContain('fetch 失败')
+    app.unmount()
+  })
+
+  it('非 git 仓库：同步按钮不渲染，刷新按钮仍在并禁用说明原因', () => {
+    state.status = { isGit: false }
+    const { host, app } = mountPanel()
+    for (const label of ['拉取代码', '推送代码']) {
+      expect(statusBtn(host, label), label).toBeNull()
+    }
+    const refresh = refreshBtn(host)!
+    expect(refresh.disabled).toBe(true)
+    expect(refresh.title).toBe('当前目录不是 Git 仓库')
     app.unmount()
   })
 })

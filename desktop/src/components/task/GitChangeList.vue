@@ -15,14 +15,14 @@
               </button>
             </span>
           </el-tooltip>
-          <el-tooltip :content="pullDisabledReason || '拉取代码'" placement="top" :show-after="300">
+          <el-tooltip v-if="!hideSync" :content="pullDisabledReason || '拉取代码'" placement="top" :show-after="300">
             <span>
               <button class="git-action-btn" :disabled="!!pullDisabledReason" aria-label="拉取代码" @click="$emit('pull')">
                 <el-icon :size="14" :class="{ spinning: operation === 'pull' }"><Download /></el-icon>
               </button>
             </span>
           </el-tooltip>
-          <el-tooltip :content="pushDisabledReason || '推送代码'" placement="top" :show-after="300">
+          <el-tooltip v-if="!hideSync" :content="pushDisabledReason || '推送代码'" placement="top" :show-after="300">
             <span>
               <button class="git-action-btn" :disabled="!!pushDisabledReason" aria-label="推送代码" @click="$emit('push')">
                 <el-icon :size="14" :class="{ spinning: operation === 'push' }"><Upload /></el-icon>
@@ -124,6 +124,7 @@ import DownloadLinkDialog from '../common/DownloadLinkDialog.vue'
 import { isWechatBrowser } from '../../utils/user-agent'
 import { isAndroidCapacitor } from '../../utils/capacitor'
 import { isMobileDevice } from '../../composables/usePanelLayout'
+import { gitPullDisabledReason, gitPushDisabledReason } from '../../utils/git-manager'
 
 const props = defineProps<{
   files: GitChangedFile[]
@@ -147,6 +148,8 @@ const props = defineProps<{
   showExpand?: boolean
   /** 中央 Git 管理器：顶部状态条已有刷新入口（含 fetch），工具栏 ↻ 隐藏避免重复；侧边栏不传，默认展示 */
   hideRefresh?: boolean
+  /** 中央 Git 管理器：拉取 / 推送已上移到顶部状态条，工具栏不再重复；侧边栏不传，默认展示 */
+  hideSync?: boolean
   /** 中央 Git 管理器两步提交：显示提交信息框并隐藏工具栏 ✓；侧边栏不传，保持一步提交 */
   twoStepCommit?: boolean
   /** 提交信息输入框内容（草稿由父级持有，切仓库 / 提交成功后清空） */
@@ -300,31 +303,9 @@ const commitWithMessageDisabledReason = computed(() => {
   return ''
 })
 
-function commonSyncDisabledReason() {
-  if (props.operation) return 'Git 操作进行中'
-  if (props.loading) return '正在读取 Git 状态'
-  if (props.error) return 'Git 状态不可用'
-  if (props.detachedHead) return 'detached HEAD，请先切换分支'
-  if (!props.hasRemote) return '仓库未配置远端'
-  if (!props.remoteStatusAvailable) return props.remoteStatusError || '请刷新以确认远端状态'
-  return ''
-}
-
-const pullDisabledReason = computed(() => {
-  const common = commonSyncDisabledReason()
-  if (common) return common
-  if (!props.upstream) return '当前分支未配置 upstream'
-  if ((props.behindCount ?? 0) === 0) return '没有可拉取的更新'
-  return ''
-})
-
-const pushDisabledReason = computed(() => {
-  const common = commonSyncDisabledReason()
-  if (common) return common
-  if (!props.hasHead || props.hasCommitsToPush === false) return '没有可推送的提交'
-  if (props.hasCommitsToPush !== true) return '无法确认可推送状态'
-  return ''
-})
+/** 拉取 / 推送禁用原因与中央 Git 管理器顶部状态条同一口径（utils/git-manager），避免两处漂移 */
+const pullDisabledReason = computed(() => gitPullDisabledReason(props))
+const pushDisabledReason = computed(() => gitPushDisabledReason(props))
 
 /** Paths of collapsed directories (default: all expanded) */
 const collapsed = reactive(new Set<string>())

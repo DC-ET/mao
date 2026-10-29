@@ -150,3 +150,51 @@ export function isValidBranchName(name: string): boolean {
 export function isValidStashRef(ref: string): boolean {
   return /^stash@\{\d+\}$/.test(ref)
 }
+
+/**
+ * pull / push 入口的禁用判定输入（侧边栏变更工具栏与中央 Git 管理器顶部状态条共用同一口径）。
+ * 字段全部可选：调用方按自己手里的仓库状态填空，缺省按「不满足」处理。
+ */
+export interface GitSyncState {
+  /** 任意 Git 写操作在途（含 fetch / switch / stash）：同步入口一律禁用 */
+  operation?: string | null
+  loading?: boolean
+  error?: string
+  detachedHead?: boolean
+  hasRemote?: boolean
+  remoteStatusAvailable?: boolean
+  remoteStatusError?: string
+  upstream?: string
+  behindCount?: number
+  hasHead?: boolean
+  hasCommitsToPush?: boolean
+}
+
+/** pull / push 共用的禁用原因；返回空串表示可点。 */
+export function gitSyncDisabledReason(state: GitSyncState): string {
+  if (state.operation) return 'Git 操作进行中'
+  if (state.loading) return '正在读取 Git 状态'
+  if (state.error) return 'Git 状态不可用'
+  if (state.detachedHead) return 'detached HEAD，请先切换分支'
+  if (!state.hasRemote) return '仓库未配置远端'
+  if (!state.remoteStatusAvailable) return state.remoteStatusError || '请刷新以确认远端状态'
+  return ''
+}
+
+/** 拉取：共用条件之外还需 upstream 且确有落后提交。 */
+export function gitPullDisabledReason(state: GitSyncState): string {
+  const common = gitSyncDisabledReason(state)
+  if (common) return common
+  if (!state.upstream) return '当前分支未配置 upstream'
+  if ((state.behindCount ?? 0) === 0) return '没有可拉取的更新'
+  return ''
+}
+
+/** 推送：共用条件之外还需有 HEAD 且已确认存在可推送提交（三态，未确认时禁）。 */
+export function gitPushDisabledReason(state: GitSyncState): string {
+  const common = gitSyncDisabledReason(state)
+  if (common) return common
+  if (!state.hasHead || state.hasCommitsToPush === false) return '没有可推送的提交'
+  if (state.hasCommitsToPush !== true) return '无法确认可推送状态'
+  return ''
+}
