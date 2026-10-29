@@ -30,7 +30,7 @@
         <el-tag v-if="task.finished" type="info" size="small">
           {{ task.finishedAt ? `完结于 ${formatDateTime(task.finishedAt)}` : '已完结' }}
         </el-tag>
-        <span v-else class="text-muted">进行中</span>
+        <el-tag v-else type="success" size="small" title="未完结，任务持续有效">进行中</el-tag>
       </el-descriptions-item>
       <el-descriptions-item label="上次执行">
         <el-tag v-if="task.lastExecutionStatus" :type="execStatusTagType(task.lastExecutionStatus)" size="small">

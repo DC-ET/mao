@@ -86,7 +86,7 @@
             >
               已完结
             </el-tag>
-            <span v-else class="text-muted">进行中</span>
+            <el-tag v-else type="success" size="small" title="未完结，任务持续有效">进行中</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="lastExecutionStatus" label="上次执行" width="100">
