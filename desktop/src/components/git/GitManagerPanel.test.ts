@@ -16,6 +16,8 @@ const state = vi.hoisted(() => ({
   refreshReposCalls: 0,
   refreshRemoteCalls: 0,
   refreshLoadedViewsCalls: 0,
+  isRootGit: false,
+  multiRepoMode: false,
 }))
 
 // element-plus 只桩到本组件用到的两件：ElMessage（toast）、ElTooltip（透传渲染）
@@ -36,7 +38,8 @@ vi.mock('../../composables/useGitRepos', async () => {
   return {
     useGitRepos: () => ({
       repos: ref([]),
-      multiRepoMode: ref(false),
+      isRootGit: ref(state.isRootGit),
+      multiRepoMode: ref(state.multiRepoMode),
       selectedRepoPath: ref(''),
       selectedRepo: ref(null),
       refresh: async () => { state.refreshReposCalls += 1 },
@@ -114,6 +117,8 @@ beforeEach(() => {
   state.refreshReposCalls = 0
   state.refreshRemoteCalls = 0
   state.refreshLoadedViewsCalls = 0
+  state.isRootGit = false
+  state.multiRepoMode = false
 })
 
 describe('GitManagerPanel 顶部刷新按钮', () => {
@@ -155,6 +160,28 @@ describe('GitManagerPanel 顶部刷新按钮', () => {
     const btn = refreshBtn(host)!
     expect(btn.disabled).toBe(true)
     expect(btn.title).toBe('当前目录不是 Git 仓库')
+    app.unmount()
+  })
+})
+
+// 仓库区显隐回归（0.0.375）：工作区自身即 git 仓库时（isRootGit，后端不再扫子目录），
+// 它是唯一仓库，顶部徽章只是重复工作区名——整行不渲染；仅多仓库工作区
+// （工作区非 git、一级子目录含 git 仓库）才渲染仓库下拉选择器。
+describe('GitManagerPanel 仓库区显隐', () => {
+  it('工作区自身即 git 仓库：不渲染仓库徽章行', () => {
+    state.status = { isGit: true, branch: 'main', hasRemote: true, repoRoot: '/ws/mao' }
+    state.isRootGit = true
+    const { host, app } = mountPanel()
+    expect(host.querySelector('.git-repo-badge-row')).toBeNull()
+    app.unmount()
+  })
+
+  it('多仓库工作区：仍渲染仓库下拉选择行', () => {
+    state.status = { isGit: true, branch: 'dev', hasRemote: true }
+    state.multiRepoMode = true
+    const { host, app } = mountPanel()
+    expect(host.querySelector('.git-repo-select-row')).not.toBeNull()
+    expect(host.querySelector('.git-repo-badge-row')).toBeNull()
     app.unmount()
   })
 })

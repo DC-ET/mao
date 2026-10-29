@@ -1,6 +1,6 @@
 <template>
   <div class="git-manager-panel">
-    <!-- 仓库区：多仓库模式下拉选择（与侧边栏同款），单仓库显示徽章 -->
+    <!-- 仓库区：多仓库模式下拉选择（与侧边栏同款）；工作区自身即 git 仓库时无需任何入口（仅此一个仓库，徽章只是重复工作区名） -->
     <div v-if="multiRepoMode" class="git-repo-select-row">
       <el-select
         :model-value="selectedRepoPath"
@@ -23,7 +23,7 @@
         </el-option>
       </el-select>
     </div>
-    <div v-else-if="repoName" class="git-repo-badge-row">
+    <div v-else-if="repoName && !isRootGit" class="git-repo-badge-row">
       <span class="git-repo-badge" :title="repoName">{{ repoName }}</span>
     </div>
 
@@ -200,6 +200,7 @@ const confirmRemote = computed(() => true)
 
 const {
   repos,
+  isRootGit,
   multiRepoMode,
   selectedRepoPath,
   selectedRepo,
