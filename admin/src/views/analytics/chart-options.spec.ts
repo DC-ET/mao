@@ -5,6 +5,7 @@ import {
   formatCost,
   formatTokens,
   qualityTrendOption,
+  tokenCallTrendOption,
   trafficTrendOption,
   type TrendPoint
 } from './chart-options'
@@ -252,5 +253,66 @@ describe('costTrendOption', () => {
     ])
     expect(nullOnly).toContain('2026-10-28')
     expect(nullOnly).not.toContain('每百万Token平均成本')
+  })
+})
+
+describe('tokenCallTrendOption', () => {
+  const trends: TrendPoint[] = [
+    {
+      date: '2026-10-27T09:00:00',
+      sessions: 1,
+      messages: 180,
+      chatTokens: 2_000_000,
+      backgroundTokens: 500_000,
+      totalTokens: 2_500_000,
+      backgroundCalls: 2,
+      callCount: 120,
+      callFailCount: 3,
+    },
+    {
+      date: '2026-10-27T10:00:00',
+      sessions: 0,
+      messages: 40,
+      chatTokens: 0,
+      backgroundTokens: 0,
+      totalTokens: 0,
+      backgroundCalls: 0,
+      callCount: 0,
+      callFailCount: 0,
+    },
+  ]
+
+  it('四条系列：Token 堆叠柱走左轴，调用次数柱与失败次数虚线走右轴', () => {
+    const option = tokenCallTrendOption(trends) as unknown as QualityOptionLike
+    const series = option.series
+    expect(series.map((s) => s.name)).toEqual(['对话 Token', '后台 Token', '调用次数', '失败次数'])
+    // 前两条 Token 堆叠柱挂默认左轴；调用次数柱与失败次数挂右轴，失败次数虚线区分
+    expect(series.slice(0, 2).every((s) => s.yAxisIndex == null)).toBe(true)
+    expect(series[2].yAxisIndex).toBe(1)
+    expect(series[3].yAxisIndex).toBe(1)
+    expect(series[3].lineStyle?.type).toBe('dashed')
+    expect(series[0].data).toEqual([2_000_000, 0])
+    expect(series[1].data).toEqual([500_000, 0])
+    expect(series[2].data).toEqual([120, 0])
+    expect(series[3].data).toEqual([3, 0])
+    // Token 与次数量级差多个数量级，左右轴都不设 max，各自自动缩放
+    const [left, right] = option.yAxis
+    expect(left.max).toBeUndefined()
+    expect(right.max).toBeUndefined()
+  })
+
+  it('tooltip 按系列给单位：Token 紧凑展示，次数千分位', () => {
+    const option = tokenCallTrendOption(trends) as unknown as QualityOptionLike
+    const html = option.tooltip.formatter([
+      { dataIndex: 0, seriesName: '对话 Token', value: 2_000_000, marker: '<i></i>' },
+      { dataIndex: 0, seriesName: '后台 Token', value: 500_000, marker: '<i></i>' },
+      { dataIndex: 0, seriesName: '调用次数', value: 120, marker: '<i></i>' },
+      { dataIndex: 0, seriesName: '失败次数', value: 3, marker: '<i></i>' },
+    ])
+    expect(html).toContain('2026-10-27T09:00:00')
+    expect(html).toContain('2.00M')
+    expect(html).toContain('500.00K')
+    expect(html).toContain('120')
+    expect(html).toContain('3')
   })
 })

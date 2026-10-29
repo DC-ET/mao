@@ -253,6 +253,65 @@ export function tokenTrendOption(trends: TrendPoint[]): ChartOption {
   }
 }
 
+/**
+ * Token 与调用合并图：对话 / 后台 Token 堆叠柱走左轴，调用次数（柱）与失败次数（虚线）走右轴。
+ * Token 与次数量级差多个数量级，双轴各自自动缩放；tooltip 按系列套单位（Token 紧凑 / 次数千分位）。
+ */
+export function tokenCallTrendOption(trends: TrendPoint[]): ChartOption {
+  const dates = trends.map((t) => t.date)
+  const hourly = dates.some(isHourlyTrendDate)
+  const zoom = trendDataZoom(trends.length, hourly)
+  return {
+    // 左轴 Token（蓝 / 橙）与右轴次数（绿 / 红）分组配色，失败次数用虚线区分单位
+    color: [CHART_PALETTE[0], CHART_PALETTE[2], CHART_PALETTE[1], CHART_PALETTE[5]],
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      formatter: (params: unknown) =>
+        unitTooltip(params as UnitTooltipParam[], dates, (name, value) =>
+          name.includes('Token') ? formatTokens(value) : formatNumber(value))
+    },
+    legend: trendLegend,
+    grid: { ...baseGrid, bottom: zoom ? 28 : 4 },
+    dataZoom: zoom,
+    xAxis: { ...categoryAxis(dates), boundaryGap: true },
+    yAxis: [valueAxis('Token', formatTokens), { ...valueAxis('次数'), splitLine: { show: false } }],
+    series: [
+      {
+        name: '对话 Token',
+        type: 'bar',
+        stack: 'token',
+        barMaxWidth: 26,
+        data: trends.map((t) => t.chatTokens)
+      },
+      {
+        name: '后台 Token',
+        type: 'bar',
+        stack: 'token',
+        barMaxWidth: 26,
+        itemStyle: { borderRadius: [3, 3, 0, 0] },
+        data: trends.map((t) => t.backgroundTokens)
+      },
+      {
+        name: '调用次数',
+        type: 'bar',
+        yAxisIndex: 1,
+        barMaxWidth: 26,
+        data: trends.map((t) => t.callCount || 0)
+      },
+      {
+        name: '失败次数',
+        type: 'line',
+        yAxisIndex: 1,
+        smooth: true,
+        symbolSize: 6,
+        lineStyle: { type: 'dashed' },
+        data: trends.map((t) => t.callFailCount || 0)
+      }
+    ]
+  }
+}
+
 /** 成本趋势（唯一口径 llm_call）：左轴桶内成本合计，右轴每百万 Token 平均成本（虚线）。 */
 export function costTrendOption(trends: TrendPoint[]): ChartOption {
   const dates = trends.map((t) => t.date)

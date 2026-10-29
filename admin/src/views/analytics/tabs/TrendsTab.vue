@@ -9,7 +9,7 @@
       />
     </div>
     <div class="chart-grid">
-      <el-card class="block span-2">
+      <el-card class="block">
         <template #header>
           <div class="card-header">
             <span class="chart-title">流量</span>
@@ -22,21 +22,11 @@
       <el-card class="block">
         <template #header>
           <div class="card-header">
-            <span class="chart-title">Token</span>
-            <span class="card-hint">对话 Token + 后台调用 Token</span>
+            <span class="chart-title">Token 与调用</span>
+            <span class="card-hint">对话 / 后台 Token（左轴，堆叠）与调用次数、失败次数（右轴，虚线）</span>
           </div>
         </template>
-        <BaseChart :option="tokenTrendChartOption" :empty="!hasTokens" :height="260" />
-      </el-card>
-
-      <el-card class="block">
-        <template #header>
-          <div class="card-header">
-            <span class="chart-title">调用</span>
-            <span class="card-hint">次数与失败次数，默认排除连通性测试</span>
-          </div>
-        </template>
-        <BaseChart :option="callTrendChartOption" :empty="!hasCalls" :height="260" />
+        <BaseChart :option="tokenCallTrendChartOption" :empty="!hasTokens && !hasCalls" :height="260" />
       </el-card>
 
       <el-card class="block">
@@ -100,17 +90,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import BaseChart from '../../../components/BaseChart.vue'
-import { CHART_PALETTE } from '../../../utils/echarts'
 import {
   costTrendOption,
   formatNumber,
   formatCost,
-  isHourlyTrendDate,
   qualityTrendOption,
-  tokenTrendOption,
+  tokenCallTrendOption,
   trafficTrendOption,
-  trendCategoryLabels,
-  trendDataZoom,
   type TrendPoint
 } from '../chart-options'
 import type { TrendGrain } from '../composables/useAnalyticsPeriod'
@@ -147,53 +133,11 @@ const hasQuality = computed(() =>
 )
 
 const trafficTrendChartOption = computed(() => trafficTrendOption(trends.value))
-const tokenTrendChartOption = computed(() => tokenTrendOption(trends.value))
+const tokenCallTrendChartOption = computed(() => tokenCallTrendOption(trends.value))
 const hasCost = computed(() => trends.value.some((t) => (t.cost || 0) > 0))
 const costTrendChartOption = computed(() => costTrendOption(trends.value))
 
-const callTrendChartOption = computed(() => {
-  const dates = trends.value.map((t) => t.date)
-  const hourly = dates.some(isHourlyTrendDate)
-  const zoom = trendDataZoom(trends.value.length, hourly)
-  return {
-    color: [CHART_PALETTE[0], CHART_PALETTE[5]],
-    tooltip: { trigger: 'axis' as const },
-    legend: { top: 0, left: 'center' as const },
-    grid: { left: 8, right: 8, top: 32, bottom: zoom ? 28 : 4, containLabel: true },
-    dataZoom: zoom,
-    xAxis: {
-      type: 'category' as const,
-      data: trendCategoryLabels(dates),
-      axisTick: { show: false },
-      axisLabel: { color: AXIS_MUTED, fontSize: 11, hideOverlap: true }
-    },
-    yAxis: {
-      type: 'value' as const,
-      axisLabel: { color: AXIS_MUTED, fontSize: 11 },
-      splitLine: { lineStyle: { color: SPLIT_MUTED } }
-    },
-    series: [
-      {
-        name: '调用次数',
-        type: 'bar' as const,
-        barMaxWidth: 22,
-        data: trends.value.map((t) => t.callCount || 0)
-      },
-      {
-        name: '失败次数',
-        type: 'line' as const,
-        smooth: true,
-        symbolSize: 6,
-        data: trends.value.map((t) => t.callFailCount || 0)
-      }
-    ]
-  }
-})
-
 const qualityTrendChartOption = computed(() => qualityTrendOption(trends.value))
-
-const AXIS_MUTED = '#6e6e73'
-const SPLIT_MUTED = 'rgba(0, 0, 0, 0.06)'
 
 function rateText(value: unknown): string {
   return value == null ? '-' : `${value}%`
@@ -223,10 +167,6 @@ export default { name: 'TrendsTab' }
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
   margin-bottom: 16px;
-}
-
-.chart-grid > .span-2 {
-  grid-column: 1 / -1;
 }
 
 .block {
