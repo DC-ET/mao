@@ -39,10 +39,10 @@ export interface WorkspaceGitProvider {
    * 不传会把改名显示成「整份新增」。
    */
   getCommitFileDiff(hash: string, relativePath: string, repoPath?: string, oldPath?: string): Promise<GitFileDiff>
-  /** 两个分支间的变更文件清单 + 领先/落后提交数（三点语义 base...target）。ref 不存在时抛错，不可与「无差异」的空列表混淆。 */
+  /** 两个分支的当前内容差异清单（两点 `base → target`）+ 领先/落后提交数。ref 不存在时抛错，不可与「无差异」的空列表混淆。 */
   compareBranches(base: string, target: string, repoPath?: string): Promise<GitBranchCompareResult>
   /**
-   * 分支对比单文件 diff（before/after 均取自 git 对象；before 取 merge-base）。
+   * 分支对比单文件 diff（before/after 均取自 git 对象；before 取 base tip）。
    * oldPath 传文件清单里的旧路径（rename 行）：不传会把改名显示成「整份新增」。
    * 返回的 path 恒为新路径（调用方用它生成 diff Tab 的 id / 标题）。
    */

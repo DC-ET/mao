@@ -399,7 +399,7 @@ test('repo resolution rejects non-git workspaces and escaping repo paths', async
   assert.throws(() => resolveRepoDir(workspace, 'missing'), /路径访问被拒绝/)
 })
 
-test('branch compare counts diverged commits and lists changed files', async (t) => {
+test('branch compare counts diverged commits and lists both sides of the two-point diff', async (t) => {
   const repo = initRepo(t)
   git(repo, ['checkout', '-b', 'feature'])
   commitFile(repo, 'f1.txt', 'one\n', 'feat: add f1')
@@ -410,26 +410,52 @@ test('branch compare counts diverged commits and lists changed files', async (t)
   const result = await getGitBranchCompare(repo, undefined, 'main', 'feature')
   assert.equal(result.base, 'main')
   assert.equal(result.target, 'feature')
-  // rev-list --left-right --count main...feature 的 right = 目标独有（领先 2），left = 基准独有（落后 1）
+  // 计数仍是 rev-list --left-right --count main...feature 的 right = 目标独有（领先 2），left = 基准独有（落后 1）
   assert.equal(result.aheadCount, 2)
   assert.equal(result.behindCount, 1)
-  assert.deepEqual(result.files.map((file) => file.path).sort(), ['f1.txt', 'f2.txt'])
-  assert.equal(result.files.every((file) => file.changeType === 'CREATED'), true)
-  assert.deepEqual(result.files.map((file) => [file.insertions, file.deletions]), [[1, 0], [1, 0]])
+  // 清单是两点 diff（两棵树直接比较）：目标侧新增 A + 基准侧独有文件以反向删除 D 出现，两侧都要在
+  const byPath = new Map(result.files.map((file) => [file.path, file]))
+  assert.deepEqual([...byPath.keys()].sort(), ['f1.txt', 'f2.txt', 'main-only.txt'])
+  assert.equal(byPath.get('f1.txt').changeType, 'CREATED')
+  assert.equal(byPath.get('f2.txt').changeType, 'CREATED')
+  assert.equal(byPath.get('main-only.txt').changeType, 'DELETED')
+  assert.deepEqual([byPath.get('f1.txt').insertions, byPath.get('f1.txt').deletions], [1, 0])
+  assert.deepEqual([byPath.get('main-only.txt').insertions, byPath.get('main-only.txt').deletions], [0, 1])
 })
 
-test('branch compare returns an empty list when the branches have no differences', async (t) => {
+test('branch compare lists the base side when the target is fully behind', async (t) => {
   const repo = initRepo(t)
   const fork = git(repo, ['rev-parse', 'HEAD'])
   commitFile(repo, 'later.txt', 'later\n', 'feat: later')
   git(repo, ['branch', 'behind', fork])
 
-  // target 落后于 base：diff 空输出、退出码 0 → 合法空列表（不得与「分支不存在」混淆，故 verify 在前）
+  // 核心动机：target 完全落后时三点 diff 恒为空、用户看不到任何差异；
+  // 两点 diff 必须列出基准侧的全部变更（基准有、目标无 → 反向删除）
   const behind = await getGitBranchCompare(repo, undefined, 'main', 'behind')
   assert.equal(behind.aheadCount, 0)
   assert.equal(behind.behindCount, 1)
-  assert.deepEqual(behind.files, [])
+  assert.deepEqual(behind.files.map((file) => [file.path, file.changeType]), [['later.txt', 'DELETED']])
+  assert.deepEqual([behind.files[0].insertions, behind.files[0].deletions], [0, 1])
 
+  // 方向反转（落后分支当基准）：同一文件变回新增，计数与清单同时翻转
+  const reversed = await getGitBranchCompare(repo, undefined, 'behind', 'main')
+  assert.equal(reversed.aheadCount, 1)
+  assert.equal(reversed.behindCount, 0)
+  assert.deepEqual(reversed.files.map((file) => [file.path, file.changeType]), [['later.txt', 'CREATED']])
+})
+
+test('branch compare returns an empty list when both branches hold the same content', async (t) => {
+  const repo = initRepo(t)
+  commitFile(repo, 'later.txt', 'later\n', 'feat: later')
+  git(repo, ['branch', 'twin'])
+
+  // 两分支同一提交（不同分支名）：diff 空输出、退出码 0 → 合法空列表
+  const twin = await getGitBranchCompare(repo, undefined, 'main', 'twin')
+  assert.equal(twin.aheadCount, 0)
+  assert.equal(twin.behindCount, 0)
+  assert.deepEqual(twin.files, [])
+
+  // 同一分支自比同样为空列表；「执行失败」仍抛错（见 ref 不存在用例），两者不可混淆
   const same = await getGitBranchCompare(repo, undefined, 'main', 'main')
   assert.equal(same.aheadCount, 0)
   assert.equal(same.behindCount, 0)
@@ -504,16 +530,29 @@ test('branch compare rejects missing refs and invalid branch names', async (t) =
   assert.deepEqual(result.files, [])
 })
 
-test('branch compare reports unrelated histories instead of an empty list', async (t) => {
+test('branch compare handles unrelated histories with the two-point diff', async (t) => {
   const repo = initRepo(t)
   git(repo, ['checkout', '--orphan', 'orphan'])
   git(repo, ['rm', '-rf', '.'])
   commitFile(repo, 'orphan.txt', 'orphan\n', 'orphan root')
 
-  // 实测该场景 rev-list 仍成功、git diff A...B 报 no merge base，故共同祖先必须由 merge-base 显式判定
+  // 两点语义不需要共同祖先：rev-list 的集合运算与两棵树 diff 都正常，不再有 merge-base 判定步骤
   assert.equal(git(repo, ['rev-list', '--left-right', '--count', 'main...orphan']), '1\t1')
-  await assert.rejects(() => getGitBranchCompare(repo, undefined, 'main', 'orphan'), /两个分支没有共同祖先，无法对比/)
-  await assert.rejects(() => getGitBranchCompare(repo, undefined, 'orphan', 'main'), /两个分支没有共同祖先，无法对比/)
+  const forward = await getGitBranchCompare(repo, undefined, 'main', 'orphan')
+  assert.equal(forward.aheadCount, 1)
+  assert.equal(forward.behindCount, 1)
+  assert.deepEqual(
+    forward.files.map((file) => [file.path, file.changeType]).sort(),
+    [['README.md', 'DELETED'], ['orphan.txt', 'CREATED']],
+  )
+
+  const backward = await getGitBranchCompare(repo, undefined, 'orphan', 'main')
+  assert.equal(backward.aheadCount, 1)
+  assert.equal(backward.behindCount, 1)
+  assert.deepEqual(
+    backward.files.map((file) => [file.path, file.changeType]).sort(),
+    [['README.md', 'CREATED'], ['orphan.txt', 'DELETED']],
+  )
 })
 
 test('branch compare on an unborn repository rejects instead of reporting no differences', async (t) => {
@@ -567,7 +606,7 @@ test('branch compare file diff covers modified, created and deleted files', asyn
   assert.equal(modified.afterContent, 'changed\n')
 })
 
-test('branch compare file diff reads renamed files from the merge-base old path', async (t) => {
+test('branch compare file diff reads renamed files from the base side old path', async (t) => {
   const repo = initRepo(t)
   fs.mkdirSync(path.join(repo, 'src'))
   fs.writeFileSync(path.join(repo, 'src', 'a.txt'), 'old content\n')
@@ -579,12 +618,12 @@ test('branch compare file diff reads renamed files from the merge-base old path'
   git(repo, ['add', '-A'])
   git(repo, ['commit', '-m', 'rename and edit'])
 
-  // 不传 oldPath：新路径在 merge-base 树里不存在，before 取空、退化成 CREATED（旧缺陷）
+  // 不传 oldPath：新路径在 base 树里不存在，before 取空、退化成 CREATED（旧缺陷）
   const naive = await getGitBranchCompareFileDiff(repo, undefined, 'main', 'feature', 'src/b.txt')
   assert.equal(naive.changeType, 'CREATED')
   assert.equal(naive.beforeContent, '')
 
-  // 传 oldPath（文件清单 R 行的旧路径）：before 取自 merge-base 的旧路径，changeType 对齐「改名」
+  // 传 oldPath（清单 R 行的旧路径 = base 侧路径）：before 取自 base tip 的旧路径，changeType 对齐「改名」
   const renamed = await getGitBranchCompareFileDiff(repo, undefined, 'main', 'feature', 'src/b.txt', 'src/a.txt')
   assert.equal(renamed.path, 'src/b.txt')
   assert.equal(renamed.changeType, 'RENAMED')
@@ -592,7 +631,7 @@ test('branch compare file diff reads renamed files from the merge-base old path'
   assert.equal(renamed.afterContent, 'new content\n')
 })
 
-test('branch compare file diff keeps the before side on the merge base', async (t) => {
+test('branch compare file diff takes the before side from the base tip', async (t) => {
   const repo = initRepo(t)
   commitFile(repo, 'f.txt', 'base\n', 'feat: add f.txt')
   git(repo, ['checkout', '-b', 'feature'])
@@ -600,20 +639,19 @@ test('branch compare file diff keeps the before side on the merge base', async (
   git(repo, ['checkout', 'main'])
   commitFile(repo, 'f.txt', 'main\n', 'feat: main edits f.txt')
 
-  // 双方分叉且都改同一文件：before 必须是 merge-base 内容（'base\n'）。若取 `<base>`（main tip），
-  // 基准分支的独有改动会被显示成删除，与三点清单 / 汇总条自相矛盾（D13）
+  // 双方分叉且都改同一文件：清单是两点 diff（base tip → target tip），before 必须取 base 分支 tip（'main\n'）。
+  // 基准侧的独有改动因此以反向修改出现（diff 从 'main' 变回 'feature'），属两点语义固有行为
   const diff = await getGitBranchCompareFileDiff(repo, undefined, 'main', 'feature', 'f.txt')
   assert.equal(diff.changeType, 'MODIFIED')
-  assert.equal(diff.beforeContent, 'base\n')
+  assert.equal(diff.beforeContent, 'main\n')
   assert.equal(diff.afterContent, 'feature\n')
-  // 与终端 `git diff main...feature -- f.txt` 同内容：只有 base → feature 的改动
-  const terminal = git(repo, ['diff', 'main...feature', '--', 'f.txt'])
-  assert.ok(terminal.includes('-base'), terminal)
-  assert.ok(terminal.includes('+feature'), terminal)
-  assert.ok(!terminal.includes('main'), terminal)
+  // 与终端 `git diff main feature -- f.txt` 完全同内容：只有 base tip → target tip 的改动
+  const terminal = git(repo, ['diff', 'main', 'feature', '--', 'f.txt'])
+  const hunks = terminal.split('\n').filter((line) => /^[-+]/.test(line) && !line.startsWith('---') && !line.startsWith('+++'))
+  assert.deepEqual(hunks, ['-main', '+feature'])
 })
 
-test('branch compare file diff keeps renames renamed when the base deleted the old path', async (t) => {
+test('branch compare file diff degrades a rename when the base side dropped the old path', async (t) => {
   const repo = initRepo(t)
   fs.mkdirSync(path.join(repo, 'src'))
   fs.writeFileSync(path.join(repo, 'src', 'a.txt'), 'old content\n')
@@ -628,10 +666,14 @@ test('branch compare file diff keeps renames renamed when the base deleted the o
   git(repo, ['rm', '-q', 'src/a.txt'])
   git(repo, ['commit', '-m', 'drop src/a.txt on main'])
 
-  // 基准侧已删除该旧路径：before 仍取 merge-base（旧路径必然存在），不退化成 CREATED
+  // base 侧已删除该旧路径：两点语义下 before 只能取 base tip（已无该路径）→ 取空、退化成 CREATED。
+  // 属固有行为：两棵树里 base 根本没有 src/a.txt，清单本身只会给出 A src/b.txt（不带 oldPath）
+  const files = await getGitBranchCompare(repo, undefined, 'main', 'feature')
+  assert.deepEqual(files.files.map((file) => [file.path, file.changeType]), [['src/b.txt', 'CREATED']])
+
   const diff = await getGitBranchCompareFileDiff(repo, undefined, 'main', 'feature', 'src/b.txt', 'src/a.txt')
-  assert.equal(diff.changeType, 'RENAMED')
-  assert.equal(diff.beforeContent, 'old content\n')
+  assert.equal(diff.changeType, 'CREATED')
+  assert.equal(diff.beforeContent, '')
   assert.equal(diff.afterContent, 'new content\n')
 })
 
@@ -653,16 +695,26 @@ test('branch compare file diff degrades binary files', async (t) => {
   assert.equal(diff.afterContent, '')
 })
 
-test('branch compare file diff degrades on unrelated histories and bad inputs', async (t) => {
+test('branch compare file diff covers unrelated histories and bad inputs', async (t) => {
   const repo = initRepo(t)
   git(repo, ['checkout', '--orphan', 'orphan'])
   git(repo, ['rm', '-rf', '.'])
   commitFile(repo, 'orphan.txt', 'orphan\n', 'orphan root')
 
+  // 两点语义没有 merge-base 步骤：unrelated histories 也能正常取 before/after；
+  // before 取 base tip，base 树里没有该路径 → 取空、由 CREATED 表达
   const unrelated = await getGitBranchCompareFileDiff(repo, undefined, 'main', 'orphan', 'orphan.txt')
   assert.equal(unrelated.path, 'orphan.txt')
-  assert.equal(unrelated.changeType, 'MODIFIED')
-  assert.equal(unrelated.unavailableReason, '两个分支没有共同祖先，无法对比')
+  assert.equal(unrelated.changeType, 'CREATED')
+  assert.equal(unrelated.beforeContent, '')
+  assert.equal(unrelated.afterContent, 'orphan\n')
+  assert.equal(unrelated.unavailableReason, undefined)
+
+  // 反向：README.md 只存在于 base 侧 → before 有内容、target 侧取不到 → DELETED
+  const reversed = await getGitBranchCompareFileDiff(repo, undefined, 'main', 'orphan', 'README.md')
+  assert.equal(reversed.changeType, 'DELETED')
+  assert.equal(reversed.beforeContent, 'initial\n')
+  assert.equal(reversed.afterContent, '')
 
   const missingRef = await getGitBranchCompareFileDiff(repo, undefined, 'main', 'nope', 'orphan.txt')
   assert.equal(missingRef.unavailableReason, '分支不存在')
@@ -694,18 +746,18 @@ test('branch compare resolves branch refs even when a same-named tag shadows the
   assert.equal(git(repo, ['rev-parse', '--verify', 'origin/feature']), fork)
 
   const result = await getGitBranchCompare(repo, undefined, 'main', 'feature')
-  // 返回原始分支名；计数与清单等于两条分支 ref 的对比（tag 指向的提交不参与）
+  // 返回原始分支名；计数与清单等于两条分支 ref 的两点对比（tag 指向的提交不参与）
   assert.equal(result.base, 'main')
   assert.equal(result.target, 'feature')
   assert.equal(result.aheadCount, 1)
   assert.equal(result.behindCount, 1)
-  assert.deepEqual(result.files.map((file) => [file.path, file.changeType]), [['f.txt', 'CREATED']])
+  assert.deepEqual(result.files.map((file) => [file.path, file.changeType]).sort(), [['f.txt', 'CREATED'], ['m.txt', 'DELETED']])
 
   // 第二段 refs/remotes/ 同样不被同名 tag 遮蔽（下拉里的远端跟踪分支形态）
   const remoteSide = await getGitBranchCompare(repo, undefined, 'main', 'origin/feature')
   assert.equal(remoteSide.aheadCount, 1)
   assert.equal(remoteSide.behindCount, 1)
-  assert.deepEqual(remoteSide.files.map((file) => file.path), ['f.txt'])
+  assert.deepEqual(remoteSide.files.map((file) => file.path).sort(), ['f.txt', 'm.txt'])
 
   // 只有 tag、没有同名分支的名字不是合法端点（对比端点仅限分支）
   git(repo, ['tag', 'release-only', fork])
@@ -723,15 +775,15 @@ test('branch compare file diff takes the target branch, not a same-named tag', a
   git(repo, ['checkout', 'main'])
   commitFile(repo, 'f.txt', 'main\n', 'feat: main edits f.txt')
   const mainTip = git(repo, ['rev-parse', 'refs/heads/main'])
-  // tag 指向 main tip：旧实现会把它当 target 与 merge-base，导致 before/after 都是 main 的内容
+  // tag 指向 main tip：裸名字会解析到 tag，before/after 会双双变成 main 的内容
   git(repo, ['tag', 'feature', mainTip])
   assert.equal(git(repo, ['rev-parse', '--verify', 'feature']), mainTip)
 
   const diff = await getGitBranchCompareFileDiff(repo, undefined, 'main', 'feature', 'f.txt')
   assert.equal(diff.path, 'f.txt')
   assert.equal(diff.changeType, 'MODIFIED')
-  // before 取两条分支 ref 的 merge-base，after 取 feature 分支内容——都不受同名 tag 影响
-  assert.equal(diff.beforeContent, 'base\n')
+  // before 取 base 分支 tip（两点语义）、after 取 feature 分支 tip —— 都不受同名 tag 影响
+  assert.equal(diff.beforeContent, 'main\n')
   assert.equal(diff.afterContent, 'feature\n')
 })
 

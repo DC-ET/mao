@@ -81,7 +81,12 @@
       <div v-else-if="!compareResult" class="git-state">加载中…</div>
       <template v-else>
         <div class="git-compare-summary">
-          <span class="git-compare-ahead">↑{{ compareResult.aheadCount }} 目标分支领先</span>
+          <span class="git-compare-direction">
+            <span class="git-compare-ref">{{ compareResult.base }}</span>
+            <span class="git-compare-arrow">→</span>
+            <span class="git-compare-ref">{{ compareResult.target }}</span>
+          </span>
+          <span class="git-compare-ahead">↑{{ compareResult.aheadCount }} 领先</span>
           <span class="git-compare-behind">↓{{ compareResult.behindCount }} 落后</span>
           <span>{{ compareResult.files.length }} 个文件</span>
           <span class="git-compare-lines">
@@ -89,7 +94,7 @@
             <span class="del">-{{ totalDeletions }}</span>
           </span>
         </div>
-        <div v-if="compareResult.files.length === 0" class="git-state">两个分支没有差异</div>
+        <div v-if="compareResult.files.length === 0" class="git-state">两个分支当前内容完全一致</div>
         <div v-else class="git-compare-tree">
           <GitChangeTreeNode
             v-for="node in treeRoots"
@@ -97,6 +102,7 @@
             :node="node"
             :depth="0"
             :collapsed="collapsed"
+            deleted-tag="仅基准分支"
             @toggle="toggleDir"
             @open-diff="handleOpenDiff"
           />
@@ -285,6 +291,22 @@ function handleOpenDiff(file: GitChangedFile) {
 
 .git-compare-ahead {
   color: var(--aw-diff-add);
+}
+
+.git-compare-direction {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--aw-font-mono);
+  color: var(--aw-ink);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-compare-arrow {
+  color: var(--aw-ink-muted-48);
 }
 
 .git-compare-behind {

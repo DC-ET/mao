@@ -903,8 +903,8 @@ function isValidBranchName(name) {
  *
  * 为什么不能用 `rev-parse --verify <name>`：git 的 refname 解析顺序是
  * `<name>` → `refs/<name>` → `refs/tags/<name>` → `refs/heads/<name>` → `refs/remotes/<name>`，
- * **tag 先于 heads**。仓库里存在与分支同名的 tag 时，`--verify <name>` / `merge-base <name> ...` /
- * `diff <name>...<name>` 实际比的是 tag——用户下拉里选的是分支、结果比的却是 tag，是静默错误
+ * **tag 先于 heads**。仓库里存在与分支同名的 tag 时，`--verify <name>` / `diff <name> <name>` 这类
+ * 裸名字比较实际比的是 tag——用户下拉里选的是分支、结果比的却是 tag，是静默错误
  * （且 git 还会往 stderr 打 `refname 'x' is ambiguous` 警告）。故这里先按 `refs/heads/<name>`（本地分支）
  * 显式取，失败再试 `refs/remotes/<name>`（下拉里的 `origin/x` 远端跟踪分支形态；
  * 两段都是完整 ref 路径，同名 tag 不可能命中）。
@@ -927,18 +927,26 @@ async function resolveBranchSha(repoRoot, name) {
 }
 
 /**
- * 两个分支间的变更文件清单 + 目标分支相对基准的领先/落后提交数（三点 `<base>...<target>` 语义，
- * 即「目标分支相对基准独有的变更」）。命令序列与后端 `compareBranches` 完全同口径：
+ * 两个分支**当前内容**的全部差异（两点 `<base> <target>` 语义，方向 base → target）
+ * + 目标分支相对基准的领先/落后提交数。命令序列：
  * ① 两个分支名各自两段式解析成 sha（`refs/heads/` → `refs/remotes/`，见 resolveBranchSha）
- * ② merge-base（显式判定共同祖先）③ rev-list --left-right --count ④ diff --name-status ⑤ diff --numstat，
- * ②–⑤ 一律传解析出的 sha（不再传分支名，故同名 tag 的 `refname 'x' is ambiguous` 从根上不会出现）。
+ * ② rev-list --left-right --count ③ diff --name-status ④ diff --numstat，
+ * ②–④ 一律传解析出的 sha（不再传分支名，故同名 tag 的 `refname 'x' is ambiguous` 从根上不会出现）。
+ *
+ * 为什么清单是两点而非三点 `<base>...<target>`：三点只列「目标相对 merge-base 的独有改动」，
+ * 目标完全落后 / 双方分叉时基准侧独有的改动会整体消失（用户看不到反向差异）。
+ * 两点直接比较两棵树：base 有而 target 无 → D、target 有而 base 无 → A、内容不同 → M，
+ * 基准侧独有改动以反向修改/删除的形式出现，属固有行为、不做排除。
+ * 计数仍用 `rev-list --left-right --count <base>...<target>`（left = base 独有 = behind、
+ * right = target 独有 = ahead），与清单口径不同是刻意的：计数答「差几个提交」、清单答「内容差在哪」。
+ * 两点 diff 与上述 rev-list 对 unrelated histories 同样可用，故不再调用 merge-base、也不再判「无共同祖先」。
  *
  * 两处易错点：
- * - **失败 ≠ 空差异**：`git diff A...B` 无差异时输出为空且退出码 0，与「ref 不存在」必须可区分，
- *   故先解析 ref 再 diff（顺序不可颠倒），且 merge-base / rev-list / diff 一律走 `runGit` 读 `exitCode`；
+ * - **失败 ≠ 空差异**：`git diff A B` 无差异时输出为空且退出码 0，与「ref 不存在」必须可区分，
+ *   故先解析 ref 再 diff（顺序不可颠倒），且 rev-list / diff 一律走 `runGit` 读 `exitCode`；
  *   `runGitOk` 把非零 / 超时 / maxBuffer 溢出统一折成 null，会把这些失败误报成「没有差异」。
- * - **无共同祖先只能由 merge-base 判定**：unrelated histories 下 `rev-list --left-right --count` 仍成功、
- *   `git diff A...B` 报 `fatal: ... no merge base`，不能靠后两者推断。
+ * - **rev-list 的 `...` 不是三点 diff**：`rev-list --left-right --count A...B` 只做可达性集合运算，
+ *   无共同祖先也能成功（有别于 `git diff A...B` 的 `fatal: ... no merge base` 报错）。
  *
  * 抛错形态与 `getGitCommitFiles` 一致（`Error`，main.cjs 的 catch 转成 `{ error }`）。
  * 返回的 `base` / `target` 是用户传入的原始分支名（sha 只用于命令，不出现在结果里）。
@@ -960,23 +968,19 @@ async function getGitBranchCompare(workspace, repoPath, base, target) {
   if (!baseSha) throw new Error('分支不存在')
   const targetSha = await resolveBranchSha(repoRoot, targetRef)
   if (!targetSha) throw new Error('分支不存在')
-  const mergeBase = await runGit(repoRoot, ['merge-base', baseSha, targetSha])
-  // runGit 的 timeout 走 kill 分支、err.code 非数字，exitCode 会被折成 1，与「无共同祖先」撞码，
-  // 故先按中性失败拦下（真超时不应冒充业务语义）
-  if (mergeBase.timedOut) throw new Error('对比失败，请重试')
-  if (mergeBase.exitCode === 1) throw new Error('两个分支没有共同祖先，无法对比')
-  if (mergeBase.exitCode !== 0) throw new Error('对比失败，请重试')
+  // 计数仍是三点集合运算：left = 基准独有（目标落后数），right = 目标独有（目标领先数）
   const counts = await runGit(repoRoot, ['rev-list', '--left-right', '--count', `${baseSha}...${targetSha}`])
   if (counts.exitCode !== 0) throw new Error('对比失败，请重试')
-  // 输出 `left\tright`：left = 基准独有（目标落后数），right = 目标独有（目标领先数）
+  // 输出 `left\tright`
   const countParts = counts.stdout.trim().split(/\s+/)
   const behindCount = parseInt(countParts[0], 10) || 0
   const aheadCount = parseInt(countParts[1], 10) || 0
-  const nameStatus = await runGit(repoRoot, ['diff', '--name-status', `${baseSha}...${targetSha}`])
+  // 清单是两点 diff：两个 sha 空格分隔（**不是** `<a>...<b>`），base 侧独有改动以 D / 反向 M 出现
+  const nameStatus = await runGit(repoRoot, ['diff', '--name-status', baseSha, targetSha])
   if (nameStatus.exitCode !== 0) throw new Error('对比失败，请重试')
-  const numstat = await runGit(repoRoot, ['diff', '--numstat', `${baseSha}...${targetSha}`])
+  const numstat = await runGit(repoRoot, ['diff', '--numstat', baseSha, targetSha])
   if (numstat.exitCode !== 0) throw new Error('对比失败，请重试')
-  // 以下合并逻辑逐行复刻 getGitCommitFiles（差异仅在命令：`show <hash>` → `diff <base>...<target>`）：
+  // 以下合并逻辑逐行复刻 getGitCommitFiles（差异仅在命令：`show <hash>` → `diff <base> <target>`）：
   // name-status 建 Map（rename 键为新路径）→ numstat 用 numstatNewPath 还原后回填行数 → `-` 判二进制
   const files = new Map()
   if (nameStatus.stdout && nameStatus.stdout.trim()) {
@@ -1011,27 +1015,26 @@ async function getGitBranchCompare(workspace, repoPath, base, target) {
 }
 
 /**
- * 分支对比的单文件 diff：before = `git show <merge-base>:<oldPath ?? path>`，after = `git show <target-sha>:<path>`
- * （均取自 git 对象、不读工作区，与 `getGitCommitFileDiff` 同结构，只把 `<hash>^:` / `<hash>:` 换成
- * `<merge-base>:` / `<target 分支的 sha>:`）。两个分支名先用 resolveBranchSha 两段式解析成 sha
- * （显式 `refs/heads/` → `refs/remotes/`，同名 tag 不会遮蔽分支），merge-base 与两次 show 都传 sha。
+ * 分支对比的单文件 diff：before = `git show <baseSha>:<oldPath ?? path>`（**base tip**，不再是 merge-base），
+ * after = `git show <targetSha>:<path>`（均取自 git 对象、不读工作区；与 `getGitCommitFileDiff` 同结构，
+ * 只把 `<hash>^:` / `<hash>:` 换成 `<base 分支的 sha>:` / `<target 分支的 sha>:`）。两个分支名先用
+ * resolveBranchSha 两段式解析成 sha（显式 `refs/heads/` → `refs/remotes/`，同名 tag 不会遮蔽分支）。
  *
- * 为什么 before 取 merge-base 而非 `<base>`：文件清单是三点 diff（merge-base → target），
- * before 取 `<base>` 会退化成「base tip → target tip」两点 diff——双方分叉且都改同一文件时，
- * 基准分支的独有改动会被显示成删除，与汇总条 / 清单自相矛盾。取 merge-base 后内容与
- * `git diff <base>...<target> -- <path>` 完全一致，rename 的 oldPath（merge-base 树中的旧路径）也必然存在。
+ * before 取 base tip 与文件清单的两点 diff 同口径：双方分叉且都改同一文件时，before 是基准分支的内容、
+ * 基准侧的独有改动会以反向修改/删除的形式出现在同一个 tab 里，与清单自洽（不再需要 merge-base）。
+ * rename 的 oldPath 是 base 侧旧路径（清单 R 行的旧路径）；base 侧已无该路径时 before 取空、
+ * 退化成 CREATED——两棵树直接比较的固有结果（该场景清单本身只会给出 A 新路径，不会带 oldPath）。
  *
  * 失败语义按 `getGitCommitFileDiff` 现状复刻：输入类失败（非法分支名 / 路径 `..` / 越界）返回带
  * `unavailableReason` 的降级对象、不 throw；对象缺失（show 非零退出）不算错误——before 缺失按空内容
- * 处理、由 CREATED/DELETED 推导表达；二进制 → `unavailableReason`；超限 → `truncated`。
- * 无共同祖先（merge-base exit 1）→ `unavailableReason: '两个分支没有共同祖先，无法对比'`，
- * 其它 git 失败 → `'对比失败，请重试'`。返回的 `path` 恒为新路径（调用方用它生成 tab id / 标题）。
+ * 处理、由 CREATED/DELETED 推导表达；二进制 → `unavailableReason`；超限 → `truncated`；
+ * 真超时（非 maxBuffer 溢出）→ `'对比失败，请重试'`。返回的 `path` 恒为新路径（调用方用它生成 tab id / 标题）。
  * @param {string} workspace
  * @param {string} [repoPath]
  * @param {string} base 基准分支
  * @param {string} target 目标分支
  * @param {string} relativePath 新路径（文件清单的 path）
- * @param {string} [oldPath] rename 行的旧路径（文件清单的 oldPath）
+ * @param {string} [oldPath] rename 行的旧路径（base 侧旧路径）
  * @returns {Promise<object>}
  */
 async function getGitBranchCompareFileDiff(workspace, repoPath, base, target, relativePath, oldPath) {
@@ -1072,13 +1075,15 @@ async function getGitBranchCompareFileDiff(workspace, repoPath, base, target, re
   if (!baseSha) return degraded('分支不存在', normalized)
   const targetSha = await resolveBranchSha(repoRoot, targetRef)
   if (!targetSha) return degraded('分支不存在', normalized)
-  const mergeBase = await runGit(repoRoot, ['merge-base', baseSha, targetSha])
-  if (mergeBase.timedOut) return degraded('对比失败，请重试', normalized)
-  if (mergeBase.exitCode === 1) return degraded('两个分支没有共同祖先，无法对比', normalized)
-  if (mergeBase.exitCode !== 0) return degraded('对比失败，请重试', normalized)
-  const mergeBaseSha = mergeBase.stdout.trim()
-  const before = await runGit(repoRoot, ['show', `${mergeBaseSha}:${beforePath}`])
+  // 两点语义：before 取 base tip、after 取 target tip（不再有 merge-base 步骤）
+  const before = await runGit(repoRoot, ['show', `${baseSha}:${beforePath}`])
   const after = await runGit(repoRoot, ['show', `${targetSha}:${normalized}`])
+  // 真超时 ≠「文件不存在」：runGit 的 timeout 走 kill 分支、err.code 非数字，exitCode 会被折成 1，
+  // 与 show 失败（对象缺失）撞码，不能静默渲染成空 diff；maxBuffer 溢出（overflowed，stdout 是预算内
+  // 已收集内容）不属于超时，走下面的「成功 + 截断」分支，故显式排除。
+  if ((before.timedOut && !before.overflowed) || (after.timedOut && !after.overflowed)) {
+    return degraded('对比失败，请重试', normalized)
+  }
   // >2 MiB 大文件：runGit 因 maxBuffer 溢出返回 overflowed（stdout 是预算内已收集的 2 MiB），
   // 按「成功 + 截断」继续交给 truncateText，与 CLOUD（runGitRaw 保留预算内输出 → truncated）
   // 行为一致（方案 §5.5 / §2.1）；否则会静默退化成空 diff、且不标记 truncated。

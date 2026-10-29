@@ -25,6 +25,10 @@
       </span>
 
       <span class="git-node-name">{{ node.name }}</span>
+      <span
+        v-if="node.kind === 'file' && node.file.changeType === 'DELETED' && deletedTag"
+        class="git-file-tag"
+      >{{ deletedTag }}</span>
       <span v-if="node.kind === 'file' && node.file.oldPath" class="git-file-old">
         {{ node.file.oldPath }}
       </span>
@@ -45,6 +49,7 @@
         :node="child"
         :depth="depth + 1"
         :collapsed="collapsed"
+        :deleted-tag="deletedTag"
         @toggle="$emit('toggle', $event)"
         @open-diff="$emit('open-diff', $event)"
         @contextmenu="$emit('contextmenu', $event)"
@@ -62,6 +67,11 @@ const props = defineProps<{
   node: GitTreeNode
   depth: number
   collapsed: Set<string>
+  /**
+   * 仅基准分支存在的文件（`changeType === 'DELETED'`）的附加标记文案。
+   * 两点分支对比视图传「仅基准分支」；其它视图（变更 / 提交 diff）不传，行为不变。
+   */
+  deletedTag?: string
 }>()
 
 const emit = defineEmits<{
@@ -178,6 +188,19 @@ function typeClass(type: string) {
   font-size: var(--aw-text-caption);
   color: var(--aw-ink);
   line-height: 18px;
+  white-space: nowrap;
+}
+
+.git-file-tag {
+  flex-shrink: 0;
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 10px;
+  line-height: 14px;
+  color: var(--aw-ink-muted-48);
+  background: var(--aw-surface-pearl);
+  box-shadow: 0 0 0 1px var(--aw-hairline) inset;
   white-space: nowrap;
 }
 

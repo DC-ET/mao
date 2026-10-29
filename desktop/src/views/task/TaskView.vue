@@ -759,9 +759,9 @@ async function handleOpenCommitDiff(payload: { hash: string; file: GitChangedFil
 }
 
 /**
- * 分支对比的单文件 diff：内容由 provider 按「merge-base → target」三点语义取（before 取
- * merge-base，与文件清单一致），落到独立 id 前缀的 diff Tab。
- * idPrefix 用 `git-branch-diff:<base>...<target>:`：与工作区变更 `git-diff:` / 提交
+ * 分支对比的单文件 diff：内容由 provider 按「base → target」两点语义取（before 取
+ * base 侧、after 取 target 侧，与文件清单同源同向），落到独立 id 前缀的 diff Tab。
+ * idPrefix 用 `git-branch-diff:<base>-><target>:`：与工作区变更 `git-diff:` / 提交
  * `git-commit-diff:` 隔离，交换基准与目标后也不会互相覆盖。
  */
 async function handleOpenBranchDiff(payload: { base: string; target: string; file: GitChangedFile; repoPath?: string }) {
@@ -769,7 +769,7 @@ async function handleOpenBranchDiff(payload: { base: string; target: string; fil
   if (!provider) return
   let diff
   try {
-    // 改名行的 before 取 merge-base 树中的旧路径：不传会把改名显示成「整份新增」
+    // 改名行的 before 取 base 侧旧路径：不传会把改名显示成「整份新增」
     const oldPath = payload.file.changeType === 'RENAMED' ? payload.file.oldPath : undefined
     diff = await provider.compareBranchFileDiff(payload.base, payload.target, payload.file.path, payload.repoPath, oldPath)
   } catch (e: any) {
@@ -788,13 +788,13 @@ async function handleOpenBranchDiff(payload: { base: string; target: string; fil
       || (diff.truncated ? '内容已截断，仅显示部分文本' : undefined),
   }
   const fileName = diff.path.split(/[/\\]/).pop() || diff.path
-  const range = `${payload.base}...${payload.target}`
-  const idPrefix = `git-branch-diff:${range}:`
+  const rangeLabel = `${payload.base} → ${payload.target}`
+  const idPrefix = `git-branch-diff:${payload.base}->${payload.target}:`
   if (payload.repoPath) {
     change.path = `${payload.repoPath}/${diff.path}`
-    openDiffTab(change, `${range} · ${payload.repoPath} · ${fileName} (Git)`, { source: 'git', idPrefix })
+    openDiffTab(change, `${rangeLabel} · ${payload.repoPath} · ${fileName} (Git)`, { source: 'git', idPrefix })
   } else {
-    openDiffTab(change, `${range} · ${fileName} (Git)`, { source: 'git', idPrefix })
+    openDiffTab(change, `${rangeLabel} · ${fileName} (Git)`, { source: 'git', idPrefix })
   }
 }
 

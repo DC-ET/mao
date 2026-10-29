@@ -714,30 +714,30 @@ describe('Git 管理器 Tab 与提交 diff 的 id 隔离', () => {
     const tabs = setup()
     tabs.openDiffTab(change('src/a.ts'), 'a.ts (Git)', { source: 'git' })
     tabs.openDiffTab(change('src/a.ts'), 'abc1234 · a.ts (Git)', { source: 'git', idPrefix: 'git-commit-diff:abc1234:' })
-    tabs.openDiffTab(change('src/a.ts'), 'main...feature · a.ts (Git)', { source: 'git', idPrefix: 'git-branch-diff:main...feature:' })
+    tabs.openDiffTab(change('src/a.ts'), 'main → feature · a.ts (Git)', { source: 'git', idPrefix: 'git-branch-diff:main->feature:' })
     await nextTick()
 
     const ids = tabs.tabs.value.filter(t => t.type === 'diff').map(t => t.id)
     expect(ids).toEqual([
       'git-diff:src/a.ts',
       'git-commit-diff:abc1234:src/a.ts',
-      'git-branch-diff:main...feature:src/a.ts',
+      'git-branch-diff:main->feature:src/a.ts',
     ])
-    expect(tabs.activeTabId.value).toBe('git-branch-diff:main...feature:src/a.ts')
+    expect(tabs.activeTabId.value).toBe('git-branch-diff:main->feature:src/a.ts')
   })
 
-  it('工作区路径重定向：分支对比 diff 保留 base...target 段，标题不退化成「变更」', async () => {
+  it('工作区路径重定向：分支对比 diff 保留 base->target 段，标题不退化成「变更」', async () => {
     const tabs = setup()
-    tabs.openDiffTab(change('src/a.ts'), 'main...feature · a.ts (Git)', { source: 'git', idPrefix: 'git-branch-diff:main...feature:' })
+    tabs.openDiffTab(change('src/a.ts'), 'main → feature · a.ts (Git)', { source: 'git', idPrefix: 'git-branch-diff:main->feature:' })
     await nextTick()
 
     tabs.applyWorkspacePathChange({ kind: 'move', from: 'src', to: 'lib' })
     await nextTick()
 
     const diff = tabs.tabs.value.find(t => t.type === 'diff')
-    expect(diff?.id).toBe('git-branch-diff:main...feature:lib/a.ts')
+    expect(diff?.id).toBe('git-branch-diff:main->feature:lib/a.ts')
     expect(diff?.filePath).toBe('lib/a.ts')
-    expect(diff?.title).toBe('main...feature · a.ts (Git)')
+    expect(diff?.title).toBe('main → feature · a.ts (Git)')
     expect(diff?.fileChange?.path).toBe('lib/a.ts')
   })
 })

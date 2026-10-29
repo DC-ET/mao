@@ -401,59 +401,114 @@ describeGit('WorkspaceGitService', () => {
     expect(branch).toBeTruthy();
   });
 
-  // ===== Git 管理器中央 Tab：分支对比（只读，三点 <base>...<target>）=====
+  // ===== Git 管理器中央 Tab：分支对比（只读，两点 <base> <target>）=====
 
-  it('compareBranchesCountsAheadBehindAndListsTargetOnlyFiles', async () => {
-    const { service, repo, branch } = await setupRepo();
-    run(repo, 'git', 'checkout', '-q', '-b', 'feature');
-    writeFileSync(join(repo, 'feature.txt'), 'feature\n');
-    run(repo, 'git', 'add', 'feature.txt');
-    run(repo, 'git', 'commit', '-m', 'feature work');
-    run(repo, 'git', 'checkout', '-q', branch);
-    writeFileSync(join(repo, 'base.txt'), 'base\n');
-    run(repo, 'git', 'add', 'base.txt');
+  it('compareBranchesListsBothSidesUnderTwoPointSemantics', async () => {
+    const { service, repo } = await setupRepo();
+    // 种子提交含 f.txt / m.txt，两个分支从这里分叉
+    writeFileSync(join(repo, 'f.txt'), 'f\n');
+    writeFileSync(join(repo, 'm.txt'), 'm\n');
+    run(repo, 'git', 'add', '.');
+    run(repo, 'git', 'commit', '-m', 'seed');
+    run(repo, 'git', 'branch', 'cmp-base');
+    run(repo, 'git', 'checkout', '-q', '-b', 'cmp-target');
+    writeFileSync(join(repo, 'f.txt'), 'f changed\n');
+    writeFileSync(join(repo, 'n.txt'), 'n\n');
+    run(repo, 'git', 'add', '-A');
+    run(repo, 'git', 'commit', '-m', 'target work');
+    run(repo, 'git', 'checkout', '-q', 'cmp-base');
+    writeFileSync(join(repo, 'm.txt'), 'm changed\n');
+    run(repo, 'git', 'add', '-A');
     run(repo, 'git', 'commit', '-m', 'base work');
 
-    const result = await service.compareBranches(repo, null, branch, 'feature');
-    expect(result.base).toBe(branch);
-    expect(result.target).toBe('feature');
-    // rev-list --left-right --count 的 left = 基准独有（behindCount）、right = 目标独有（aheadCount）
+    // 计数仍是三点 rev-list：left = 基准独有（behindCount）、right = 目标独有（aheadCount）
+    const result = await service.compareBranches(repo, null, 'cmp-base', 'cmp-target');
+    expect(result.base).toBe('cmp-base');
+    expect(result.target).toBe('cmp-target');
     expect(result.behindCount).toBe(1);
     expect(result.aheadCount).toBe(1);
-    // 三点语义：只列目标侧独有的变更，基准侧独有的 base.txt 不算差异
-    expect(result.files.map((f) => f.path)).toEqual(['feature.txt']);
-    expect(result.files[0].changeType).toBe('CREATED');
-    expect(result.files[0].insertions).toBe(1);
-    expect(result.files[0].deletions).toBe(0);
+    // 两点语义：两棵树全部差异都列出，基准侧独有的 m.txt 以「反向修改」形式出现
+    expect(result.files.map((f) => f.path)).toEqual(['f.txt', 'm.txt', 'n.txt']);
+    const modified = result.files.find((f) => f.path === 'f.txt')!;
+    expect(modified.changeType).toBe('MODIFIED');
+    expect(modified.insertions).toBe(1);
+    expect(modified.deletions).toBe(1);
+    const baseSideModified = result.files.find((f) => f.path === 'm.txt')!;
+    expect(baseSideModified.changeType).toBe('MODIFIED');
+    expect(baseSideModified.insertions).toBe(1);
+    expect(baseSideModified.deletions).toBe(1);
+    const added = result.files.find((f) => f.path === 'n.txt')!;
+    expect(added.changeType).toBe('CREATED');
+    expect(added.insertions).toBe(1);
+    expect(added.deletions).toBe(0);
 
-    // 反过来对比：目标侧变成 base.txt
-    const reversed = await service.compareBranches(repo, null, 'feature', branch);
+    // 反向对比：方向翻转，n.txt 变成删除，两处修改仍在（方向互换）
+    const reversed = await service.compareBranches(repo, null, 'cmp-target', 'cmp-base');
     expect(reversed.aheadCount).toBe(1);
     expect(reversed.behindCount).toBe(1);
-    expect(reversed.files.map((f) => f.path)).toEqual(['base.txt']);
+    expect(reversed.files.map((f) => f.path)).toEqual(['f.txt', 'm.txt', 'n.txt']);
+    expect(reversed.files.find((f) => f.path === 'n.txt')!.changeType).toBe('DELETED');
+    expect(reversed.files.find((f) => f.path === 'f.txt')!.changeType).toBe('MODIFIED');
   });
 
-  it('compareBranchesReturnsEmptyListWhenThereIsNoDifference', async () => {
+  it('compareBranchesListsBaseSideChangesWhenTargetIsBehind', async () => {
     const { service, repo, branch } = await setupRepo();
-    // target 落后于 base（target 恰为 base 的祖先）：diff 输出为空且退出码 0，是合法空列表而非错误
+    // target 恰为 base 的祖先：base 领先 2 个提交
     run(repo, 'git', 'branch', 'behind-branch');
-    writeFileSync(join(repo, 'ahead.txt'), 'ahead\n');
-    run(repo, 'git', 'add', 'ahead.txt');
-    run(repo, 'git', 'commit', '-m', 'ahead');
+    writeFileSync(join(repo, 'ahead1.txt'), 'ahead1\n');
+    run(repo, 'git', 'add', 'ahead1.txt');
+    run(repo, 'git', 'commit', '-m', 'ahead1');
+    writeFileSync(join(repo, 'ahead2.txt'), 'ahead2\n');
+    run(repo, 'git', 'add', 'ahead2.txt');
+    run(repo, 'git', 'commit', '-m', 'ahead2');
 
     const behind = await service.compareBranches(repo, null, branch, 'behind-branch');
-    expect(behind.files).toEqual([]);
     expect(behind.aheadCount).toBe(0);
-    expect(behind.behindCount).toBe(1);
+    expect(behind.behindCount).toBe(2);
+    // 两点语义（本次改造的核心动机）：清单不再是空，base 侧全部变更以反向「删除」列出
+    expect(behind.files.map((f) => f.path)).toEqual(['ahead1.txt', 'ahead2.txt']);
+    expect(behind.files.map((f) => f.changeType)).toEqual(['DELETED', 'DELETED']);
+    // 反向删除的行数来自 numstat，与清单按键合并（漏合并会恒显 +0/-0）
+    expect(behind.files.find((f) => f.path === 'ahead1.txt')!.deletions).toBe(1);
+    // 反向对比同一组文件变成新增
+    const forward = await service.compareBranches(repo, null, 'behind-branch', branch);
+    expect(forward.files.map((f) => f.changeType)).toEqual(['CREATED', 'CREATED']);
+    expect(forward.aheadCount).toBe(2);
+    expect(forward.behindCount).toBe(0);
+  });
 
-    // 同一分支自比：恒无差异
-    const same = await service.compareBranches(repo, null, branch, branch);
+  it('compareBranchesReturnsEmptyListWhenBothTreesAreIdentical', async () => {
+    const { service, repo, branch } = await setupRepo();
+    // 两分支指向同一提交：空输出是合法结果（不是执行失败），也不报错
+    run(repo, 'git', 'branch', 'same-tip');
+    const same = await service.compareBranches(repo, null, branch, 'same-tip');
     expect(same.files).toEqual([]);
     expect(same.aheadCount).toBe(0);
     expect(same.behindCount).toBe(0);
+
+    // 同一分支自比：恒无差异
+    const self = await service.compareBranches(repo, null, branch, branch);
+    expect(self.files).toEqual([]);
+    expect(self.aheadCount).toBe(0);
+    expect(self.behindCount).toBe(0);
+
+    // 提交历史不同但两棵树内容一致（加一个文件再删掉）：清单仍为空——比的是树，不是历史
+    run(repo, 'git', 'checkout', '-q', '-b', 'same-tree');
+    writeFileSync(join(repo, 'tmp.txt'), 'tmp\n');
+    run(repo, 'git', 'add', 'tmp.txt');
+    run(repo, 'git', 'commit', '-m', 'add tmp');
+    run(repo, 'git', 'rm', '-q', 'tmp.txt');
+    run(repo, 'git', 'commit', '-m', 'remove tmp');
+    const sameTree = await service.compareBranches(repo, null, branch, 'same-tree');
+    expect(sameTree.files).toEqual([]);
+    expect(sameTree.aheadCount).toBe(2);
+    expect(sameTree.behindCount).toBe(0);
   });
 
-  /** 改名 numstat 形态复现夹具：基准分支停在 oldRel→newRel 改名之前，返回 { service, repo, branch }。 */
+  /**
+   * 改名 numstat 形态复现夹具：基准分支停在 oldRel→newRel 改名之前，返回 { service, repo, branch }。
+   * 两点 diff 下 compare-base 是 branch 的祖先，rename 检测同样生效（git diff 默认开 rename 检测）。
+   */
   async function setupRenameCompare(oldRel: string, newRel: string, expectedNumstatFragment: string) {
     const { service, repo, branch } = await setupRepo();
     mkdirSync(join(repo, oldRel, '..'), { recursive: true });
@@ -467,7 +522,7 @@ describeGit('WorkspaceGitService', () => {
     run(repo, 'git', 'add', '-A');
     run(repo, 'git', 'commit', '-m', `rename ${oldRel} to ${newRel}`);
     // 夹具自检：git 对该形态确实输出预期的紧凑路径（否则用例失去复现前提）
-    const numstat = run(repo, 'git', 'diff', '--numstat', `compare-base...${branch}`);
+    const numstat = run(repo, 'git', 'diff', '--numstat', 'compare-base', branch);
     expect(numstat, `git numstat for ${oldRel} => ${newRel}`).toContain(expectedNumstatFragment);
     return { service, repo, branch };
   }
@@ -554,15 +609,21 @@ describeGit('WorkspaceGitService', () => {
     await expectBusinessError(service.compareBranches(unborn, null, 'main', 'master'), '分支不存在');
   });
 
-  it('compareBranchesRejectsUnrelatedHistories', async () => {
+  it('compareBranchesAcceptsUnrelatedHistories', async () => {
     const { service, repo, branch } = await setupRepo();
     run(repo, 'git', 'checkout', '-q', '--orphan', 'orphan');
     run(repo, 'git', 'rm', '-rf', '-q', '.');
     writeFileSync(join(repo, 'orphan.txt'), 'orphan\n');
     run(repo, 'git', 'add', 'orphan.txt');
     run(repo, 'git', 'commit', '-m', 'orphan root');
-    // 无共同祖先：实测 rev-list 仍成功、git diff A...B 报 no merge base，判定只能落在 merge-base 退出码 1
-    await expectBusinessError(service.compareBranches(repo, null, branch, 'orphan'), '两个分支没有共同祖先，无法对比');
+
+    // 无共同祖先：两点 diff 直接比较两棵树，照常出结果（不再有「没有共同祖先，无法对比」）
+    const result = await service.compareBranches(repo, null, branch, 'orphan');
+    expect(result.aheadCount).toBe(1);
+    expect(result.behindCount).toBe(1);
+    // base 侧 README.md 在 target 中不存在 → DELETED；target 侧 orphan.txt → CREATED
+    expect(result.files.map((f) => f.path)).toEqual(['README.md', 'orphan.txt']);
+    expect(result.files.map((f) => f.changeType)).toEqual(['DELETED', 'CREATED']);
   });
 
   it('compareBranchFileDiffCoversModifiedCreatedAndDeleted', async () => {
@@ -584,7 +645,7 @@ describeGit('WorkspaceGitService', () => {
     expect(modified.beforeContent).toBe('before\n');
     expect(modified.afterContent).toBe('after\n');
 
-    // merge-base 中不存在 → before 空（show 非零退出按空内容处理，不是错误）
+    // base 中不存在 → before 空（show 非零退出按空内容处理，不是错误）
     const created = await service.compareBranchFileDiff(repo, null, 'compare-base', branch, 'add.txt');
     expect(created.changeType).toBe('CREATED');
     expect(created.beforeContent).toBe('');
@@ -597,7 +658,7 @@ describeGit('WorkspaceGitService', () => {
     expect(deleted.afterContent).toBe('');
   });
 
-  it('compareBranchFileDiffReadsRenamedFileFromMergeBaseOldPath', async () => {
+  it('compareBranchFileDiffReadsRenamedFileFromBaseTipOldPath', async () => {
     const { service, repo, branch } = await setupRepo();
     mkdirSync(join(repo, 'src'), { recursive: true });
     writeFileSync(join(repo, 'src', 'a.txt'), 'old content\n');
@@ -609,12 +670,12 @@ describeGit('WorkspaceGitService', () => {
     run(repo, 'git', 'add', '-A');
     run(repo, 'git', 'commit', '-m', 'rename and edit');
 
-    // 不传 oldPath：新路径在 merge-base 树中不存在，before 取空、退化成 CREATED（退化契约）
+    // 不传 oldPath：新路径在 base 树中不存在，before 取空、退化成 CREATED（退化契约）
     const naive = await service.compareBranchFileDiff(repo, null, 'compare-base', branch, 'src/b.txt');
     expect(naive.changeType).toBe('CREATED');
     expect(naive.beforeContent).toBe('');
 
-    // 传 oldPath（清单 R 行的旧路径）：before 取 merge-base 的旧路径，changeType 对齐「改名」
+    // 传 oldPath（清单 R 行的旧路径，即 base 侧旧路径）：before 取 base tip 的旧路径，changeType 对齐「改名」
     const renamed = await service.compareBranchFileDiff(repo, null, 'compare-base', branch, 'src/b.txt', 'src/a.txt');
     expect(renamed.path).toBe('src/b.txt'); // 返回的 path 恒为新路径
     expect(renamed.changeType).toBe('RENAMED');
@@ -622,7 +683,7 @@ describeGit('WorkspaceGitService', () => {
     expect(renamed.afterContent).toBe('new content\n');
   });
 
-  it('compareBranchFileDiffTakesBeforeSideFromMergeBaseWhenBothSidesChangeTheFile', async () => {
+  it('compareBranchFileDiffTakesBeforeSideFromBaseTipWhenBothSidesChangeTheFile', async () => {
     const { service, repo, branch } = await setupRepo();
     run(repo, 'git', 'branch', 'compare-base');
     run(repo, 'git', 'checkout', '-q', 'compare-base');
@@ -635,25 +696,24 @@ describeGit('WorkspaceGitService', () => {
     run(repo, 'git', 'commit', '-m', 'target edit');
 
     const diff = await service.compareBranchFileDiff(repo, null, 'compare-base', branch, 'README.md');
-    // before 端取 merge-base 而非 base tip：内容必须等于 git show <merge-base>:<file>
-    const mergeBase = run(repo, 'git', 'merge-base', 'compare-base', branch).trim();
-    expect(diff.beforeContent).toBe(run(repo, 'git', 'show', `${mergeBase}:README.md`));
-    expect(diff.beforeContent).toBe('hello\n');
-    // 基准分支独有的改动不得混进 before（否则与三点清单自相矛盾）
-    expect(diff.beforeContent).not.toContain('base');
+    // before 端取 base tip（不是 merge-base）：内容必须等于 git show <base>:<file>，
+    // 基准分支独有的改动照实出现在 before 侧（两点语义）
+    expect(diff.beforeContent).toBe(run(repo, 'git', 'show', `compare-base:README.md`));
+    expect(diff.beforeContent).toBe('hello\nbase\n');
+    expect(diff.beforeContent).toContain('base');
     expect(diff.afterContent).toBe('hello\ntarget\n');
-    // 三点清单同样只列目标侧独有的 README.md
+    // 两点清单同样列出该文件的「base → target」差异
     const list = await service.compareBranches(repo, null, 'compare-base', branch);
     expect(list.files.map((f) => f.path)).toEqual(['README.md']);
   });
 
-  it('compareBranchFileDiffKeepsRenameWhenBaseSideDeletedTheOldPath', async () => {
+  it('compareBranchFileDiffFallsBackToCreatedWhenBaseSideLacksOldPath', async () => {
     const { service, repo, branch } = await setupRepo();
     writeFileSync(join(repo, 'alpha.txt'), 'alpha content\n');
     run(repo, 'git', 'add', '.');
     run(repo, 'git', 'commit', '-m', 'add alpha');
     run(repo, 'git', 'branch', 'compare-base');
-    // 基准侧删掉旧路径：before 端若误取 <base>，show 会落空、退化成 CREATED
+    // 基准侧删掉旧路径：两点语义下 base 树里没有 alpha.txt，git 无从把它认成 beta.txt 的前身
     run(repo, 'git', 'checkout', '-q', 'compare-base');
     run(repo, 'git', 'rm', '-q', 'alpha.txt');
     run(repo, 'git', 'commit', '-m', 'base removes alpha');
@@ -662,16 +722,17 @@ describeGit('WorkspaceGitService', () => {
     run(repo, 'git', 'add', '-A');
     run(repo, 'git', 'commit', '-m', 'target renames alpha');
 
-    // 三点清单与单文件 diff 的「改名」徽章必须一致
+    // 两点清单：base 侧没有旧路径，改名退化成新增（A beta.txt，不再有 RENAMED）
     const list = await service.compareBranches(repo, null, 'compare-base', branch);
     expect(list.files).toHaveLength(1);
-    expect(list.files[0].changeType).toBe('RENAMED');
+    expect(list.files[0].changeType).toBe('CREATED');
     expect(list.files[0].path).toBe('beta.txt');
-    expect(list.files[0].oldPath).toBe('alpha.txt');
 
+    // 单文件 diff 同口径：传 oldPath 也取不到 base 树里的旧路径，before 空 → CREATED
     const diff = await service.compareBranchFileDiff(repo, null, 'compare-base', branch, 'beta.txt', 'alpha.txt');
-    expect(diff.changeType).toBe('RENAMED');
-    expect(diff.beforeContent).toBe('alpha content\n');
+    expect(diff.path).toBe('beta.txt');
+    expect(diff.changeType).toBe('CREATED');
+    expect(diff.beforeContent).toBe('');
     expect(diff.afterContent).toBe('alpha content\n');
   });
 
@@ -711,23 +772,31 @@ describeGit('WorkspaceGitService', () => {
     await expectBusinessError(service.compareBranchFileDiff(dir, null, '-x', branch, 'README.md'), '分支不存在');
   });
 
-  it('compareBranchFileDiffRejectsUnrelatedHistories', async () => {
+  it('compareBranchFileDiffAcceptsUnrelatedHistories', async () => {
     const { service, repo, branch } = await setupRepo();
     run(repo, 'git', 'checkout', '-q', '--orphan', 'orphan');
     run(repo, 'git', 'rm', '-rf', '-q', '.');
     writeFileSync(join(repo, 'orphan.txt'), 'orphan\n');
     run(repo, 'git', 'add', 'orphan.txt');
     run(repo, 'git', 'commit', '-m', 'orphan root');
-    await expectBusinessError(
-      service.compareBranchFileDiff(repo, null, branch, 'orphan', 'orphan.txt'),
-      '两个分支没有共同祖先，无法对比',
-    );
+
+    // 无共同祖先同样可比：base 树里没有 orphan.txt → before 空（CREATED，不是错误）
+    const created = await service.compareBranchFileDiff(repo, null, branch, 'orphan', 'orphan.txt');
+    expect(created.changeType).toBe('CREATED');
+    expect(created.beforeContent).toBe('');
+    expect(created.afterContent).toBe('orphan\n');
+
+    // 反向：base 有 README.md 而 target 无 → DELETED，before 取 base tip 内容
+    const deleted = await service.compareBranchFileDiff(repo, null, branch, 'orphan', 'README.md');
+    expect(deleted.changeType).toBe('DELETED');
+    expect(deleted.beforeContent).toBe('hello\n');
+    expect(deleted.afterContent).toBe('');
   });
 
   it('compareIgnoresSameNamedTagWhenResolvingBranchRefs', async () => {
     const { service, repo, branch } = await setupRepo();
     // 第三个提交 D：与 seed / target 都分叉（从 init 拉出）且不含 mod.txt，
-    // 供两个同名 tag 指向它——若实现用裸 ref 名，会连 merge-base / show 都落到 D 上
+    // 供两个同名 tag 指向它——若实现用裸 ref 名，会连 diff / show 都落到 D 上
     run(repo, 'git', 'checkout', '-q', '-b', 'cmp-other');
     writeFileSync(join(repo, 'other.txt'), 'other\n');
     run(repo, 'git', 'add', 'other.txt');
@@ -764,7 +833,7 @@ describeGit('WorkspaceGitService', () => {
     expect(result.files[0].insertions).toBe(1);
     expect(result.files[0].deletions).toBe(1);
 
-    // 单文件 diff 同样取分支内容：被 tag 遮蔽时 merge-base 成为 D，before/after 都会落空
+    // 单文件 diff 同样取分支内容：被 tag 遮蔽时 base/target 都成 D，before/after 都会落空
     const diff = await service.compareBranchFileDiff(repo, null, 'cmp-base', 'cmp-target', 'mod.txt');
     expect(diff.changeType).toBe('MODIFIED');
     expect(diff.beforeContent).toBe('before\n');
@@ -791,7 +860,7 @@ describeGit('WorkspaceGitService', () => {
   });
 
   it('firstObjectIdSkipsWarningLinesInMergedOutput', () => {
-    // runGitRaw 合并 stdout+stderr：criss-cross 的 multiple merge bases 警告会混在首行
+    // runGitRaw 合并 stdout+stderr：refname 歧义 / criss-cross 的 multiple merge bases 警告会混在首行
     const sha1 = 'a'.repeat(40);
     const sha256 = 'b'.repeat(64);
     expect(firstObjectId(`${sha1}\n`)).toBe(sha1);

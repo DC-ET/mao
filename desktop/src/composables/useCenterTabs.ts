@@ -480,14 +480,14 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
       const fileName = next.path.split('/').pop() || next.path
       // 提交 diff 的 id 形如 git-commit-diff:<hash>:<path>：路径重定向后 hash 段不变，整体保留
       const commitDiffMatch = /^git-commit-diff:([0-9a-f]+):/.exec(oldId)
-      // 分支对比 diff 的 id 形如 git-branch-diff:<base>...<target>:<path>：base/target 段整体保留。
-      // branch 名不允许 ':' 与 '..'，按首个 '...' 解析无歧义；不加这一支会被改写成 file: 前缀，
+      // 分支对比 diff 的 id 形如 git-branch-diff:<base>-><target>:<path>：base/target 段整体保留。
+      // branch 名不允许 ':' 与 '>'，按 '->' 解析无歧义；不加这一支会被改写成 file: 前缀，
       // id 与 type 的约定被破坏、对比语义丢失。
-      const branchDiffMatch = /^git-branch-diff:([^:]+)\.\.\.([^:]+):/.exec(oldId)
+      const branchDiffMatch = /^git-branch-diff:([^:]+)->([^:]+):/.exec(oldId)
       const prefix = commitDiffMatch
         ? `git-commit-diff:${commitDiffMatch[1]}:`
         : branchDiffMatch
-          ? `git-branch-diff:${branchDiffMatch[1]}...${branchDiffMatch[2]}:`
+          ? `git-branch-diff:${branchDiffMatch[1]}->${branchDiffMatch[2]}:`
           : oldId.startsWith('git-diff:') ? 'git-diff:' : oldId.startsWith('diff:') ? 'diff:' : 'file:'
       tab.filePath = next.path
       tab.id = prefix + next.path
@@ -501,7 +501,7 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
           tab.quoteRevision = quoteRevisionFor(next.path)
         }
       } else if (branchDiffMatch) {
-        tab.title = `${branchDiffMatch[1]}...${branchDiffMatch[2]} · ${fileName} (Git)`
+        tab.title = `${branchDiffMatch[1]} → ${branchDiffMatch[2]} · ${fileName} (Git)`
         if (tab.fileChange) {
           tab.fileChange = { ...tab.fileChange, path: next.path }
           tab.quoteRevision = quoteRevisionFor(next.path)

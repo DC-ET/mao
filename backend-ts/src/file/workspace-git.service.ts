@@ -114,8 +114,8 @@ export interface GitCommitFilesDTO {
 }
 
 /**
- * 分支对比结果：两点 `<base>...<target>`（三点语义，merge-base 起点）的变更文件清单
- * + 目标分支相对基准的领先/落后提交数。
+ * 分支对比结果：两点 `<base> <target>` 的变更文件清单（`git diff <base> <target>`，
+ * 即两棵树当前内容的全部差异，方向 base → target）+ 目标分支相对基准的领先/落后提交数。
  */
 export interface GitBranchCompareDTO {
   base: string;
@@ -124,6 +124,11 @@ export interface GitBranchCompareDTO {
   aheadCount: number;
   /** 基准分支独有的提交数（同命令 left 段；等价于 rev-list --count <target>..<base>） */
   behindCount: number;
+  /**
+   * base → target 的两点差异（不是「目标分支相对基准的合并结果」）：
+   * base 有而 target 无 → DELETED（含基准侧独有的新增被反向显示为删除）、
+   * target 有而 base 无 → CREATED、两边内容不同 → MODIFIED。
+   */
   files: GitChangedFileDTO[];
 }
 
@@ -496,17 +501,20 @@ export class WorkspaceGitService {
   }
 
   /**
-   * 分支对比（三点 `<base>...<target>`）：目标分支相对基准独有的变更文件清单
-   * + 目标分支领先/落后提交数。语义同 GitHub PR——只列目标侧独有的变更，
-   * 基准侧独有的提交不计入差异。base/target 由用户自选（本地 / 远端分支均可）。
+   * 分支对比（两点 `<base> <target>`）：两棵树当前内容的全部差异清单
+   * + 目标分支领先/落后提交数。语义即 `git diff <base> <target>`——与「目标分支相对基准的
+   * 合并结果」无关：基准侧独有的改动同样计入差异，以「反向修改 / 删除」形式出现
+   * （base 有而 target 无 → D），这是两点语义的固有行为、不是缺陷。
+   * 计数仍用三点 `rev-list --left-right --count <base>...<target>`（各自独有的提交数，
+   * 与清单不同源：清单比的是树，计数比的是历史）。
+   * base/target 由用户自选（本地 / 远端分支均可）。
    * 分支名先解析成提交 sha（显式 `refs/heads/` → `refs/remotes/` 两段式，见 resolveBranchSha），
    * 后续命令一律用 sha：裸 ref 名会走 git 的 refname 解析顺序，而 refs/tags/ 优先于 refs/heads/——
    * 仓库里存在与分支同名的 tag 时，用户在下拉里选的是分支、实际比对的却是 tag（静默错误）。
-   * 先解析 ref 再跑 diff：`git diff A...B` 无差异时输出为空且退出码 0，
+   * 先解析 ref 再跑 diff：`git diff A B` 无差异时输出为空且退出码 0，
    * 与「ref 不存在」必须可区分（顺序不可颠倒，也不可用 diff 退出码推断 ref 存在性）。
-   * merge-base 用模块导出的 runGitRaw 读退出码——runGitOk 把一切非零退出统一折成 null，
-   * 无法区分「无共同祖先（exitCode 1）」与超时 124 / spawn 失败 127 / 无效 ref 128，
-   * 而实测无共同祖先场景 rev-list 仍成功，故该判定必须前移到 merge-base 的退出码上。
+   * 不走 merge-base：两点 diff 直接比较两棵树，对无共同祖先（unrelated histories）同样成立，
+   * 故没有「没有共同祖先，无法对比」这一错误分支。
    */
   async compareBranches(
     sessionWorkspace: string,
@@ -524,13 +532,6 @@ export class WorkspaceGitService {
       this.resolveBranchSha(repoRoot, baseRef),
       this.resolveBranchSha(repoRoot, targetRef),
     ]);
-    const mergeBase = await runGitRaw(repoRoot, ['merge-base', baseSha, targetSha], GIT_TIMEOUT_SECONDS * 1000);
-    if (mergeBase.exitCode === 1) {
-      throw new BusinessException(ErrorCode.PARAM_INVALID, '两个分支没有共同祖先，无法对比');
-    }
-    if (mergeBase.exitCode !== 0 || firstObjectId(mergeBase.stdout) == null) {
-      throw new BusinessException(ErrorCode.PARAM_INVALID, '对比失败，请重试');
-    }
     const counts = await this.runGitOk(repoRoot, ['rev-list', '--left-right', '--count', `${baseSha}...${targetSha}`]);
     if (counts == null) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '对比失败，请重试');
@@ -548,11 +549,13 @@ export class WorkspaceGitService {
     }
     // left = 基准独有（目标落后数）、right = 目标独有（目标领先数）
     const [behindRaw, aheadRaw] = countsLine.split(/\s+/);
+    // 两点 diff：两个 sha 用空格分隔，等价 `git diff <base> <target>`（勿写成 `<a>...<b>` 的三点形态）
     const [numstat, nameStatus] = await Promise.all([
-      this.runGitOk(repoRoot, ['diff', '--numstat', `${baseSha}...${targetSha}`]),
-      this.runGitOk(repoRoot, ['diff', '--name-status', `${baseSha}...${targetSha}`]),
+      this.runGitOk(repoRoot, ['diff', '--numstat', baseSha, targetSha]),
+      this.runGitOk(repoRoot, ['diff', '--name-status', baseSha, targetSha]),
     ]);
-    // 空串是合法结果（两个分支无差异，target 落后于 base 时同样为空），只有执行失败才报错
+    // 空串是合法结果（两棵树内容完全一致），只有执行失败才报错；
+    // target 落后于 base 时清单不为空——base 侧独有的变更会以反向 D 形式列出
     if (numstat == null || nameStatus == null) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '对比失败，请重试');
     }
@@ -594,15 +597,16 @@ export class WorkspaceGitService {
   }
 
   /**
-   * 分支对比单文件 diff（三点语义下的双 ref show）：
-   * before = `git show <merge-base>:<oldPath ?? path>`，after = `git show <target>:<path>`，
-   * 均取自 git 对象、不读工作区。两个分支先按显式 ref 路径解析成 sha（见 resolveBranchSha），
-   * show 的对象端都用 sha——同名 tag 不会遮蔽分支，也不会把 ambiguity warning 混进内容首行。
-   * before 端取 merge-base 而非 base 本身（否则退化成
-   * 「base tip → target tip」两点 diff，把基准分支独有的改动显示成删除，与三点清单自相矛盾）；
-   * rename 必须传 oldPath（清单 R 行的旧路径）——oldPath 即 merge-base 树中的旧路径、必然存在，
-   * 不传会把改名显示成「整份新增」。对象不存在不是错误：merge-base 中不存在 → before 空（CREATED）、
-   * target 中不存在 → after 空（DELETED）。返回的 path 恒为新路径。
+   * 分支对比单文件 diff（两点语义下的双 ref show）：
+   * before = `git show <base>:<oldPath ?? path>`（**base tip，不是 merge-base**），
+   * after = `git show <target>:<path>`，均取自 git 对象、不读工作区。
+   * 两个分支先按显式 ref 路径解析成 sha（见 resolveBranchSha），show 的对象端都用 sha——
+   * 同名 tag 不会遮蔽分支，也不会把 ambiguity warning 混进内容首行。
+   * rename 必须传 oldPath（清单 R 行的旧路径，即 base 侧旧路径）——base tip 中该对象存在时
+   * before 取到改名前的旧内容；不传（或 base 侧无该路径）会把改名显示成「整份新增」。
+   * 对象不存在不是错误：base 中不存在 → before 空（CREATED）、target 中不存在 → after 空（DELETED）。
+   * 不走 merge-base：无关历史的两个分支同样能按两棵树直接比（无「没有共同祖先」错误）。
+   * 返回的 path 恒为新路径。
    */
   async compareBranchFileDiff(
     sessionWorkspace: string,
@@ -639,34 +643,36 @@ export class WorkspaceGitService {
       this.resolveBranchSha(repoRoot, baseRef),
       this.resolveBranchSha(repoRoot, targetRef),
     ]);
-    const mergeBase = await runGitRaw(repoRoot, ['merge-base', baseSha, targetSha], GIT_TIMEOUT_SECONDS * 1000);
-    if (mergeBase.exitCode === 1) {
-      throw new BusinessException(ErrorCode.PARAM_INVALID, '两个分支没有共同祖先，无法对比');
-    }
-    const mergeBaseHash = firstObjectId(mergeBase.stdout);
-    if (mergeBase.exitCode !== 0 || mergeBaseHash == null) {
+    // 真超时必须与「对象缺失」区分：runGitOk 把一切非零退出（含超时 124）折成 null，
+    // 超时会静默渲染成「没有任何改动」的空 diff；这里用 runGitRaw 读 timedOut，
+    // 超时按「对比失败，请重试」抛错，其余非零仍按对象缺失处理（CREATED/DELETED 语义）。
+    const [beforeRaw, afterRaw] = await Promise.all([
+      runGitRaw(repoRoot, ['show', `${baseSha}:${beforePath}`], GIT_TIMEOUT_SECONDS * 1000),
+      runGitRaw(repoRoot, ['show', `${targetSha}:${normalized}`], GIT_TIMEOUT_SECONDS * 1000),
+    ]);
+    if (beforeRaw.timedOut || afterRaw.timedOut) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '对比失败，请重试');
     }
-    const beforeRaw = await this.runGitOk(repoRoot, ['show', `${mergeBaseHash}:${beforePath}`]);
-    const afterRaw = await this.runGitOk(repoRoot, ['show', `${targetSha}:${normalized}`]);
-    const changeType = beforeRaw == null && afterRaw != null
+    const beforeText = beforeRaw.exitCode === 0 ? beforeRaw.stdout : null;
+    const afterText = afterRaw.exitCode === 0 ? afterRaw.stdout : null;
+    const changeType = beforeText == null && afterText != null
       ? 'CREATED'
-      : beforeRaw != null && afterRaw == null
+      : beforeText != null && afterText == null
         ? 'DELETED'
         : beforePath !== normalized ? 'RENAMED' : 'MODIFIED';
     const diff: GitFileDiffDTO = { path: normalized, changeType, beforeContent: '', afterContent: '' };
-    if (beforeRaw != null && isBinaryString(beforeRaw)) {
+    if (beforeText != null && isBinaryString(beforeText)) {
       diff.binary = true;
       diff.unavailableReason = '二进制文件，无法预览';
       return diff;
     }
-    if (afterRaw != null && isBinaryString(afterRaw)) {
+    if (afterText != null && isBinaryString(afterText)) {
       diff.binary = true;
       diff.unavailableReason = '二进制文件，无法预览';
       return diff;
     }
-    const beforeTrunc = truncateText(beforeRaw ?? '');
-    const afterTrunc = truncateText(afterRaw ?? '');
+    const beforeTrunc = truncateText(beforeText ?? '');
+    const afterTrunc = truncateText(afterText ?? '');
     diff.beforeContent = beforeTrunc.content;
     diff.afterContent = afterTrunc.content;
     if (beforeTrunc.truncated || afterTrunc.truncated) diff.truncated = true;
@@ -1194,8 +1200,8 @@ function parseIntSafe(s: string): number {
 
 /**
  * 从 runGitRaw 的输出里取出对象 id。runGitRaw 把 stdout+stderr 合并进同一流，
- * 故输出可能带前置警告行：criss-cross 历史（多个最佳共同祖先）下 `git diff A...B`
- * 会打 `warning: ... multiple merge bases, using <sha>`，`git merge-base` 也可能多行输出。
+ * 故输出可能带前置警告行：refname 有歧义时 git 会先打 `warning: refname 'x' is ambiguous.`，
+ * criss-cross 历史下 rev-list 也会打 multiple merge bases 警告。
  * 只认第一行形如对象 id 的内容（40 位 SHA-1 / 64 位 SHA-256），其余（警告、空行）跳过。
  */
 export function firstObjectId(output: string): string | null {

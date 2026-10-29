@@ -125,9 +125,10 @@ export interface GitCommitFilesResult {
 }
 
 /**
- * 分支对比结果：文件清单 + 目标分支相对基准的领先 / 落后提交数。
- * 语义为三点 diff（`git diff <base>...<target>`，即 merge-base → target）：
- * 文件清单与「目标分支独有的变更」一致，基准分支独有的改动不在其中。
+ * 分支对比结果：`base → target` 两点差异的文件清单 + 两侧独有提交数。
+ * 语义为两点 diff（`git diff <base> <target>`，直接比较两棵树的当前内容）：
+ * 清单包含两侧全部差异；基准分支独有的改动会以「删除（D）/ 反向修改」形式出现，
+ * 属两点语义的固有方向性（UI 用方向标注与「仅基准分支」标记承接）。
  */
 export interface GitBranchCompareResult {
   base: string
