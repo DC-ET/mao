@@ -67,6 +67,7 @@ describe('WeixinSessionService', () => {
       1, 5, expect.any(String), expect.any(String),
       null, expect.any(String), false, expect.any(String), expect.any(String), expect.any(String),
       3, expect.any(String), expect.any(String), null, null,
+      'weixin',
     );
   });
 

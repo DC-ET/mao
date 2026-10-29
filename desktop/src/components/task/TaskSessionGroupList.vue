@@ -140,6 +140,32 @@
         </div>
         <div class="session-item-meta">
           <span v-if="session.running || session.treeRunning || hasActiveSideTask(session.id)" class="session-spinner"></span>
+          <span
+            v-if="sourceBadge(session)"
+            class="session-source-badge"
+            :title="sourceBadge(session)!.label"
+          >
+            <img
+              v-if="sourceBadge(session)!.kind === 'feishu'"
+              :src="feishuLogo"
+              width="11"
+              height="11"
+              alt=""
+              draggable="false"
+            />
+            <img
+              v-else-if="sourceBadge(session)!.kind === 'weixin'"
+              :src="weixinLogo"
+              width="11"
+              height="11"
+              alt=""
+              draggable="false"
+            />
+            <el-icon v-else-if="sourceBadge(session)!.kind === 'dingtalk'" :size="11"><ChatDotRound /></el-icon>
+            <el-icon v-else-if="sourceBadge(session)!.kind === 'embed'" :size="11"><Monitor /></el-icon>
+            <el-icon v-else-if="sourceBadge(session)!.kind === 'signal'" :size="11"><AlarmClock /></el-icon>
+            <el-icon v-else :size="11"><Connection /></el-icon>
+          </span>
           <span v-if="(session.unread || hasUnreadSideTask(session.id)) && String(session.id) !== String(activeSessionId)" class="session-unread-dot"></span>
           <span class="session-elapsed">{{ formatElapsed(session) }}</span>
         </div>
@@ -192,14 +218,26 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Loading, Plus, Delete, Check, Close, Cloudy, PartlyCloudy, Folder, FolderOpened, EditPen, ArrowDown, ArrowRight, ChatDotRound, Monitor, AlarmClock } from '@element-plus/icons-vue'
+import { Loading, Plus, Delete, Check, Close, Cloudy, PartlyCloudy, Folder, FolderOpened, EditPen, ArrowDown, ArrowRight, ChatDotRound, Monitor, AlarmClock, Connection } from '@element-plus/icons-vue'
 import type { Session } from '../../stores/session'
 import { useReadinessStore } from '../../stores/readiness'
 import { groupIconKind } from '../../utils/cloud-project'
+import { SESSION_SOURCE_LABELS } from '../../utils/sessionSourceLabels'
 import feishuLogo from '../../assets/feishu-logo.svg'
 import weixinLogo from '../../assets/weixin-logo.png'
 
 const readinessStore = useReadinessStore()
+
+/**
+ * 条目来源徽标（技术方案 2026-10-29 §2.1-5）：非 'web' 来源显示渠道小图标 +
+ * 中文 tooltip。统一规则不特判——信号哨兵组内条目也带徽标（冗余可接受，规则简单优先）。
+ */
+function sourceBadge(session: Session): { kind: string; label: string } | null {
+  const source = session.source
+  if (!source || source === 'web') return null
+  return { kind: source, label: SESSION_SOURCE_LABELS[source as keyof typeof SESSION_SOURCE_LABELS] ?? source }
+}
+
 
 /** 空态按根因分流（首次成功体验）：数据未拉到时回退默认文案。 */
 const emptyHint = computed(() => {

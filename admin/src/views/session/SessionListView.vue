@@ -71,6 +71,11 @@
               />
             </el-select>
           </el-form-item>
+          <el-form-item label="来源">
+            <el-select v-model="filters.source" placeholder="全部" clearable style="width: 130px">
+              <el-option v-for="opt in SESSION_SOURCE_OPTIONS" :key="opt.value" :label="opt.label" :value="opt.value" />
+            </el-select>
+          </el-form-item>
         </FilterPanel>
       </el-form>
 
@@ -101,6 +106,13 @@
           <template #default="{ row }">
             <el-tag :type="row.executionMode === 'CLOUD' ? 'primary' : 'warning'" size="small">
               {{ executionModeLabel(row.executionMode) }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="source" label="来源" width="100">
+          <template #default="{ row }">
+            <el-tag :type="sessionSourceTagType(row.source)" size="small">
+              {{ sessionSourceLabel(row.source) }}
             </el-tag>
           </template>
         </el-table-column>
@@ -169,6 +181,12 @@
             </el-tag>
           </div>
           <div class="mobile-card-row">
+            <span class="mobile-card-label">来源</span>
+            <el-tag :type="sessionSourceTagType(row.source)" size="small">
+              {{ sessionSourceLabel(row.source) }}
+            </el-tag>
+          </div>
+          <div class="mobile-card-row">
             <span class="mobile-card-label">类型</span>
             <el-tag :type="sessionTypeTag(row.sessionType).type" size="small">
               {{ sessionTypeTag(row.sessionType).label }}
@@ -222,6 +240,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
 import { formatDateTime, formatDateTimeColumn } from '../../utils/datetime'
+import { SESSION_SOURCE_OPTIONS, sessionSourceLabel, sessionSourceTagType } from '../../utils/sessionSourceLabels'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import { useAuthStore } from '../../stores/auth'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
@@ -253,6 +272,7 @@ const filters = reactive({
   executionMode: '' as string,
   phase: '' as string,
   status: '' as string,
+  source: '' as string,
   keyword: '' as string,
   messageScope: 'CONVERSATION' as string
 })
@@ -267,6 +287,7 @@ function applyRouteQuery() {
   filters.executionMode = typeof q.executionMode === 'string' ? q.executionMode : ''
   filters.phase = typeof q.phase === 'string' ? q.phase : ''
   filters.status = typeof q.status === 'string' ? q.status : ''
+  filters.source = typeof q.source === 'string' ? q.source : ''
   filters.keyword = typeof q.keyword === 'string' ? q.keyword : ''
   // 非法值回落到默认口径，避免地址栏拼错就查不到东西
   filters.messageScope = q.messageScope === 'ALL' ? 'ALL' : 'CONVERSATION'
@@ -319,6 +340,7 @@ async function fetchSessions() {
     if (filters.executionMode) params.executionMode = filters.executionMode
     if (filters.phase) params.phase = filters.phase
     if (filters.status) params.status = filters.status
+    if (filters.source) params.source = filters.source
     if (filters.keyword) params.keyword = filters.keyword
     // 默认口径由后端决定，只在放宽到全部消息时传参
     if (filters.messageScope === 'ALL') params.messageScope = 'ALL'
@@ -354,6 +376,7 @@ function handleReset() {
   filters.executionMode = ''
   filters.phase = ''
   filters.status = ''
+  filters.source = ''
   filters.keyword = ''
   filters.messageScope = 'CONVERSATION'
   currentPage.value = 1

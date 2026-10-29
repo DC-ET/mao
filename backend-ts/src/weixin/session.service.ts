@@ -73,6 +73,7 @@ export class WeixinSessionService {
         'new',
         null,
         null,
+        'weixin',
       );
     });
   }

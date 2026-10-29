@@ -8,7 +8,11 @@ import type { FileChange, Message, Session, SessionGroupPage } from './types.js'
 
 // 'signal' 只能由哨兵触发经 openRun 产生：POST /v1/sessions 的路由层白名单是显式
 // ['web','embed']（不读本数组），用户不能手工建 signal 会话（防伪造分组归属）。
-export const SESSION_SOURCE_VALUES = ['web', 'embed', 'signal'] as const;
+// 系统来源（feishu/dingtalk/weixin/openapi）由各通道创建会话的内部调用方写入；
+// 契约联合在 shared/contracts/src/session.ts 的 SessionSource，两端须逐值一致。
+export const SESSION_SOURCE_VALUES = [
+  'web', 'embed', 'feishu', 'dingtalk', 'weixin', 'signal', 'openapi',
+] as const;
 export type SessionSource = (typeof SESSION_SOURCE_VALUES)[number];
 
 export const isSessionSource = (value: unknown): value is SessionSource =>

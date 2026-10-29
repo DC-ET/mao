@@ -144,8 +144,8 @@ export class OpenRunService {
       // 显式 CLOUD（不依赖 createSession 默认值）；权限档位/工作区留空走默认。
       // source 是 createSession 的第 16 个位置参数，中间 11 个位置全部显式传 undefined
       // （装配层 as unknown as 强转，接口与真实签名不一致编译期不报警，错位=静默丢 source）。
-      // 映射只对 SIGNAL 生效：API/WEBHOOK 两条路共用此调用点，来源仍落默认 'web'；
-      // 'signal' 让哨兵会话进独立分组（技术方案 2026-10-27 §3.3.1）。
+      // 映射：SIGNAL → 'signal'（独立分组，技术方案 2026-10-27 §3.3.1）；
+      // API/WEBHOOK 共用此调用点，统一落 'openapi'（技术方案 2026-10-29 §2.1-2），不再回落 'web'。
       session = await this.deps.sessionService.createSession(
         input.userId,
         agent.id,
@@ -162,7 +162,7 @@ export class OpenRunService {
         undefined, // workspaceMode
         undefined, // gitCloneUrl
         undefined, // gitBranch
-        input.source === 'SIGNAL' ? 'signal' : undefined,
+        input.source === 'SIGNAL' ? 'signal' : 'openapi',
       );
     }
     const sessionId = session.id;

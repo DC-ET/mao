@@ -35,3 +35,13 @@ export interface MessageSearchResult {
   size: number;
   path: 'FULLTEXT' | 'LIKE';
 }
+
+/**
+ * 会话来源（事实标签，不是授权依据）：与后端 `SESSION_SOURCE_VALUES`
+ * （backend-ts/src/session/session.repository.ts）逐值一致——
+ * 两端汉化表用 `Record<SessionSource, string>` 声明，漏项编译期即失败。
+ * 'web'/'embed' 是用户可设值；'feishu'/'dingtalk'/'weixin'/'signal'/'openapi'
+ * 只能由各通道创建会话的内部调用方写入（防伪造分组归属）。
+ */
+export type SessionSource = 'web' | 'embed' | 'feishu' | 'dingtalk' | 'weixin' | 'signal' | 'openapi';
+

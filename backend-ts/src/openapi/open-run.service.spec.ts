@@ -133,11 +133,12 @@ describe('OpenRunService（P1/P2 共用执行流）', () => {
     expect(result.sessionId).toBe(99);
     // 16 个位置参数逐个钉死：装配层是 as unknown as 强转，接口与真实签名不一致编译期
     // 不报警，错位会把 source 静默写进 workspace/gitCloneUrl（技术方案 §7 第 3 行）。
+    // API 触发的新会话落 'openapi'（技术方案 2026-10-29 §2.1-2），不再回落默认 'web'。
     expect(h.sessionService.createSession).toHaveBeenCalledWith(
       7, 5, null, 'CLOUD',
       undefined, undefined, undefined, undefined, undefined, undefined,
       undefined, undefined, undefined, undefined, undefined,
-      undefined,
+      'openapi',
     );
   });
 
@@ -151,11 +152,20 @@ describe('OpenRunService（P1/P2 共用执行流）', () => {
     expect(args.slice(0, 15)).toEqual([7, 5, null, 'CLOUD', undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined]);
   });
 
-  it('未指定会话 + source=WEBHOOK：第 16 参为 undefined（来源仍落默认 web）', async () => {
+  it('未指定会话 + source=WEBHOOK：第 16 参落 openapi（与 API 同为开放接口触发）', async () => {
     const h = makeHarness();
     await h.service.run({ userId: 7, agentId: 5, message: 'go', source: 'WEBHOOK', triggerId: 3 });
     const args = h.sessionService.createSession.mock.calls[0]!;
-    expect(args[15]).toBeUndefined();
+    expect(args[15]).toBe('openapi');
+  });
+
+  it('复用既有会话（sessionId 指定）时不改写原 source', async () => {
+    const h = makeHarness();
+    const existing = session({ id: 11, source: 'feishu' });
+    h.sessionService.getSession.mockResolvedValue(existing);
+    await h.service.run({ userId: 7, agentId: 5, message: 'go', sessionId: 11, source: 'API' });
+    // 复用路径不新建会话：原 source（'feishu'）保持创建时的值
+    expect(h.sessionService.createSession).not.toHaveBeenCalled();
   });
 
   it('saveMessage 失败：回滚 phase 到 IDLE 且异常上抛', async () => {

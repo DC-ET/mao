@@ -1,3 +1,15 @@
+## 0.0.381 (2026-10-30)
+
+### 后端
+- **会话来源全链路标记**：`SESSION_SOURCE_VALUES` 闭集扩为 `web / embed / feishu / dingtalk / weixin / signal / openapi` 七值（`VARCHAR(16)` 容纳，零迁移），四个写入点补齐真实来源——飞书（p2p 与群聊共用 factory）、钉钉、微信建会话各落对应渠道值，开放接口触发的 API / WEBHOOK 新会话由回落 `'web'` 改落 `'openapi'`（哨兵仍落 `'signal'`；复用既有会话时不改写原 source）。来源是事实标签不是授权依据：`USER_SETTABLE_SESSION_SOURCES` 白名单与 `markSessionSource` 的 embed-only 守卫原样不动，用户入口永远伪造不了系统来源；分组逻辑不改用 source（`SessionGroupKey.of` 对新值无分支、自然落回既有路径 / 模式启发式，落桶与扩宽前一致）。
+- **管理后台会话管理按来源筛选**：`/v1/admin/sessions` 新增 `source` 等值过滤参数（非法值宽松忽略），`toAdminSessionVO` 输出 `source`（缺省归 `'web'`）；`SessionSource` 联合类型下沉 `@mao/contracts`，两端汉化表用 `Record<SessionSource, string>` 吃编译期穷尽。存量数据不回填：V109 前 / 通道接入标记时期的历史会话一律是 `'web'`，筛选口径为「按创建时来源」。
+
+### 管理后台
+- 会话列表新增「来源」列（中文标签 tag：Web / 浮窗 Embed / 飞书 / 钉钉 / 微信 / 信号哨兵 / 开放接口，web 用灰色不做强调）与顶部来源筛选下拉；移动端卡片同步展示来源；会话详情信息卡新增「来源」行。
+
+### 前端（桌面 / Web / 安卓）
+- 任务面板分组列表条目对非 `web` 来源的会话显示渠道小徽标（飞书 / 微信用品牌图、钉钉 / Embed / 哨兵 / 开放接口用对应图标）+ 中文 tooltip，统一规则不特判——信号哨兵组内条目同样带徽标；数据来自既有 `SessionVO.source`，零后端改动。
+
 ## 0.0.380 (2026-10-30)
 
 ### 后端

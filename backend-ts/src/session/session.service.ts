@@ -38,7 +38,7 @@ import { isDingtalkChannelSession } from '../harness/tool/dingtalk-channel-tool.
 import type { GitOperationService } from './git-operation.service.js';
 import type { SessionCompactionService } from './session-compaction.service.js';
 import type { SessionCompactionEventService } from './session-compaction-event.service.js';
-import { FileChangeRepository, MessageRepository, SessionRepository, type SessionListFilter, type SessionSource } from './session.repository.js';
+import { FileChangeRepository, isSessionSource, MessageRepository, SessionRepository, type SessionListFilter, type SessionSource } from './session.repository.js';
 import { SessionTodoRepository } from './activity.repository.js';
 import type {
   AgentLookup,
@@ -478,12 +478,19 @@ export class SessionService {
     keyword?: string | null,
     status?: string | null,
     messageScope?: string | null,
+    source?: string | null,
   ): Promise<{ records: Session[]; total: number; current: number; size: number; matchSnippets: Record<number, string> }> {
     const clauses: string[] = [];
     const params: unknown[] = [];
     if (userId != null) {
       clauses.push('user_id = ?');
       params.push(userId);
+    }
+    // admin 侧来源筛选按「创建时来源」等值过滤；闭集外的非法值宽松忽略、不过滤（§4.1-6 定案），
+    // 避免 `?source=Feishu` 这类手拼值命中 0 行被误读为「该来源没有会话」
+    if (source != null && isSessionSource(source)) {
+      clauses.push('source = ?');
+      params.push(source);
     }
     if (agentId != null) {
       clauses.push('agent_id = ?');

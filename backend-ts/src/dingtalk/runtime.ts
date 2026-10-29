@@ -118,7 +118,7 @@ export function createDingtalkRuntime(deps: {
         user.id, agent.id, isGroup ? '钉钉群聊' : '钉钉会话', 'CLOUD', workspace, 'FULL', false,
         'linux', '/bin/bash', 'Linux', model?.id ?? null,
         isGroup ? groupProjectKey(accountId, context.conversationId) : privateProjectKey(accountId, user.id),
-        'new', null, null,
+        'new', null, null, 'dingtalk',
       );
       return { sessionId: session.id!, ownerUserId: user.id, workspace: session.workspace };
     },

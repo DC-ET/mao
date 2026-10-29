@@ -458,6 +458,23 @@
   letter-spacing: -0.1px;
 }
 
+/* 非 web 来源徽标（飞书/钉钉/微信/开放接口/embed/signal）：条目行内小图标 */
+.task-index-panel .session-source-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 13px;
+  height: 13px;
+  color: var(--aw-ink-muted-48);
+}
+
+.task-index-panel .session-source-badge img {
+  display: block;
+  object-fit: cover;
+  border-radius: 2px;
+}
+
 .task-index-panel .session-item-actions {
   position: absolute;
   right: 8px;

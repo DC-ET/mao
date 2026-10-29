@@ -71,6 +71,8 @@ export interface AdminSessionVO {
   title?: string | null;
   status?: string | null;
   executionMode?: string | null;
+  /** 会话来源（创建时落库的事实标签，技术方案 2026-10-29 §4.1-8）。 */
+  source?: string | null;
   /** 会话类型：NORMAL=主会话、SIDE_TASK=边路任务、SUBAGENT=子代理。 */
   sessionType?: string | null;
   /** 边路 / 子代理会话的父会话 ID；主会话为 null。 */
@@ -262,6 +264,7 @@ export function toAdminSessionVO(
     title: session.title,
     status: session.status,
     executionMode: session.executionMode,
+    source: session.source ?? 'web',
     sessionType: session.sessionType ?? null,
     parentSessionId: session.parentSessionId ?? null,
     phase: visiblePhase(session.phase),

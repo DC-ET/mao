@@ -76,7 +76,7 @@ export function assembleFeishuMessaging(deps: FeishuMessagingDeps): FeishuMessag
           user.id, agent.id, title, 'CLOUD', workspace, 'FULL', false,
           'linux', '/bin/bash', 'Linux', model?.id ?? null,
           isGroup ? `feishu-chat-${accountId}-${context.chatId}` : `feishu-${accountId}-private-${user.id}`,
-          'new', null, null,
+          'new', null, null, 'feishu',
         );
         return { sessionId: session.id!, ownerUserId: user.id, workspace: session.workspace };
       },

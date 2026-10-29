@@ -66,6 +66,11 @@
               {{ executionModeLabel(sessionInfo.executionMode) }}
             </el-tag>
           </el-descriptions-item>
+          <el-descriptions-item label="来源">
+            <el-tag :type="sessionSourceTagType(sessionInfo.source)" size="small">
+              {{ sessionSourceLabel(sessionInfo.source) }}
+            </el-tag>
+          </el-descriptions-item>
           <el-descriptions-item label="类型">
             <el-tag :type="sessionTypeTag(sessionInfo.sessionType).type" size="small">
               {{ sessionTypeTag(sessionInfo.sessionType).label }}
@@ -154,6 +159,7 @@ import { api } from '../../api'
 import { downloadBlob } from '../../utils/download'
 import { formatDateTime } from '../../utils/datetime'
 import { executionModeLabel, phaseLabel, sessionTypeTag } from '../../utils/labels'
+import { sessionSourceLabel, sessionSourceTagType } from '../../utils/sessionSourceLabels'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import { mapApiMessagesToChat } from './utils/chatMessage'
 import { mergeLatestPage } from './utils/messagePageMerge'
