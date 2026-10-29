@@ -136,6 +136,8 @@ export function summarize(toolName: string | null | undefined, argumentsJson: st
       return summarizeWebSearch(argumentsJson, result);
     case 'open_web_page':
       return summarizeOpenWebPage(argumentsJson, result);
+    case 'dump_user_messages':
+      return summarizeDumpUserMessages(argumentsJson, result);
     case 'generate_image':
       return summarizeGenerateImage(argumentsJson, result);
     case 'edit_image':
@@ -411,6 +413,25 @@ function summarizeOpenWebPage(argumentsJson: string | null | undefined, result: 
   const title = has(node, 'title') ? String(node.title) : '';
   const truncated = node.truncated === true;
   return `打开网页${title ? ` ${truncate(title, 30)}` : ''}${truncated ? ' (内容已截断)' : ''}`;
+}
+
+/**
+ * dump_user_messages：按 files 里「成功写入」的条数摘要（失败条目不冒充成功）；
+ * 全部失败时如实显示失败数。
+ */
+function summarizeDumpUserMessages(argumentsJson: string | null | undefined, result: string | null | undefined): string {
+  const recentCount = extractJsonInteger(argumentsJson, 'recentCount');
+  const fallback = `导出用户消息${recentCount != null ? ` (最近 ${recentCount} 条)` : ''}`;
+  if (result == null) return fallback;
+  const node = asObj(parseJson(result));
+  if (!node) return fallback;
+  if (has(node, 'error')) return `导出用户消息 (失败: ${truncate(String(node.error), 40)})`;
+  if (!Array.isArray(node.files)) return fallback;
+  const entries = node.files.filter((item) => item != null && typeof item === 'object' && !Array.isArray(item)) as Record<string, unknown>[];
+  const ok = entries.filter((item) => item.path != null && String(item.path).trim() !== '').length;
+  const failed = entries.length - ok;
+  if (entries.length === 0) return fallback;
+  return `导出 ${ok} 条用户消息为文件${failed > 0 ? `（${failed} 条失败）` : ''}`;
 }
 
 function summarizeGenerateImage(argumentsJson: string | null | undefined, result: string | null | undefined): string {

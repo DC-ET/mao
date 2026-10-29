@@ -894,6 +894,24 @@ export class MessageRepository {
   }
 
   /**
+   * 按 id 倒序取最近 N 条用户消息（可传 beforeId 游标继续向前取更早的一批）。
+   * 「真实用户消息」判定（排除压缩摘要与 `<system-notice>` 注入）含内容前缀规则，
+   * 由调用方在内存过滤后决定是否继续向前扫描。
+   */
+  selectRecentUserMessages(sessionId: number, limit: number, beforeId: number | null = null): Promise<Message[]> {
+    if (beforeId != null) {
+      return this.db.query<Message>(
+        `SELECT * FROM \`message\` WHERE session_id = ? AND role = 'USER' AND ${notDeleted()} AND id < ? ORDER BY id DESC LIMIT ?`,
+        [sessionId, beforeId, limit],
+      );
+    }
+    return this.db.query<Message>(
+      `SELECT * FROM \`message\` WHERE session_id = ? AND role = 'USER' AND ${notDeleted()} ORDER BY id DESC LIMIT ?`,
+      [sessionId, limit],
+    );
+  }
+
+  /**
    * 会话首条（id 最小）现存用户消息的时钟戳（技术方案 2026-10-12 §4）：系统提示 current-date
    * 节的日期锚点。首条被软删后下一轮自动切到下一条，无需持久化锚点。
    */

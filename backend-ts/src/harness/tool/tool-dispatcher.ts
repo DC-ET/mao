@@ -68,6 +68,9 @@ const SERVER_ONLY_TOOLS = new Set([
   'create_scheduled_task', 'update_scheduled_task', 'list_scheduled_tasks', 'delete_scheduled_task',
   'spawn_subagent', 'subagent_followup', 'check_subagent', 'cancel_subagent', 'wait_subagents',
   'web_search', 'open_web_page', 'generate_image', 'edit_image',
+  // 用户消息文件化（技术方案 2026-10-29）：两种模式都由服务端读消息并决定落点，
+  // LOCAL 会话的落盘再经 LocalToolExecutor 委托桌面端 write_local_text_file。
+  'dump_user_messages',
   'send_wechat_image', 'send_wechat_file',
   // mcp_describe 是纯本地查询（读会话缓存清单），两种执行模式都不进 LOCAL 委托分支。
   'mcp_describe',

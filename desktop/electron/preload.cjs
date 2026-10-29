@@ -146,6 +146,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // LOCAL attachments (P1) — copy a machine-local file into ~/.mao/attachments/<host>/<sid>/
   localCopyAttachment: (payload) => ipcRenderer.invoke('local-copy-attachment', payload),
+  // LOCAL text dump — Agent 的 dump_user_messages 经服务端委托走 tool-execute；本桥为备用入口。
+  localWriteTextFile: (payload) => ipcRenderer.invoke('local-write-text-file', payload),
   // Electron 32.0 removes File.path; webUtils.getPathForFile (same version) replaces it.
   // Implemented in the preload (a File object cannot cross structured-clone IPC); 28-31 keep
   // using file.path and never call this. Renderer compat: file.path ?? electronAPI.getPathForFile(file).

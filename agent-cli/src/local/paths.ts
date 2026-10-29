@@ -22,6 +22,15 @@ export function resolveShellOutputDir(sessionId: number): string {
   return path.join(resolveRuntimeDir(sessionId), 'shellOutput');
 }
 
+/**
+ * 用户消息原文落盘目录（dump_user_messages 的 LOCAL 落点）：
+ * 与 skills/、shellOutput/ 并列，落在会话 runtime 内；Agent 的 read_file /
+ * grep_search 支持绝对路径，shell 也能直接读取。
+ */
+export function resolveUserMessagesDir(sessionId: number): string {
+  return path.join(resolveRuntimeDir(sessionId), 'userMessages');
+}
+
 export function formatRuntimeDisplay(sessionId: number, ...segments: string[]): string {
   return ['~/.mao/agent-cli/runtime', String(sessionId), ...segments].join('/');
 }

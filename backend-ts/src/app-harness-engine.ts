@@ -272,6 +272,7 @@ export function assembleHarnessEngine(deps: HarnessEngineDeps): HarnessEngineRes
     get agentLoop() { return d.holder.loop!; },
     subagentExecutionMapper: d.subagentMapper,
     localToolSessionRegistry: d.localToolSessions,
+    localToolExecutor: d.localToolExecutor,
     visibilityService: d.visibility,
     backgroundSubagentManager: d.backgroundSubagentManager,
     messageMapper: d.messageRepo as never,

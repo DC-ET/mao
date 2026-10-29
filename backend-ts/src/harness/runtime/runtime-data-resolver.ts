@@ -42,6 +42,14 @@ export class RuntimeDataResolver {
     return path.join(this.resolveSessionRuntimeDir(userId, sessionId), 'webPages');
   }
 
+  /**
+   * 用户消息原文落盘目录：dump_user_messages 把最近 N 条用户消息写成文件，
+   * 供 Agent 用 read_file / grep_search / shell 精确处理，避免复述长数据。
+   */
+  resolveUserMessagesDir(userId: number, sessionId: number): string {
+    return path.join(this.resolveSessionRuntimeDir(userId, sessionId), 'userMessages');
+  }
+
   resolveIncomingDir(userId: number, sessionId: number): string {
     return path.join(this.resolveSessionRuntimeDir(userId, sessionId), 'incoming');
   }

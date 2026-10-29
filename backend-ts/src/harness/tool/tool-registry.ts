@@ -21,6 +21,7 @@ import type { HarnessService } from '../core/harness-service.js';
 import type { AgentLoop } from '../core/agent-loop.js';
 import type { SubagentExecutionMapper } from '../delegate/subagent-execution.mapper.js';
 import type { LocalToolSessionRegistry } from '../local/local-tool-session-registry.js';
+import type { LocalToolExecutor } from '../local/local-tool-executor.js';
 import type { SubAgentVisibilityService } from '../delegate/subagent-visibility-service.js';
 import type { BackgroundSubagentManager } from '../delegate/background-subagent-manager.js';
 import {
@@ -35,6 +36,7 @@ import { GrepSearchTool } from './impl/grep-search-tool.js';
 import { ShellSessionTool, type ShellEcpInjector, type ShellLarkUatInjector, type ShellTokenIssuer, type ShellUserLookup } from './impl/shell-session-tool.js';
 import { WebSearchTool } from './impl/web-search-tool.js';
 import { OpenWebPageTool } from './impl/open-web-page-tool.js';
+import { DumpUserMessagesTool } from './impl/dump-user-messages-tool.js';
 import { GenerateImageTool } from './impl/generate-image-tool.js';
 import { EditImageTool } from './impl/edit-image-tool.js';
 import { TaskCreateTool, TaskDeleteTool, TaskListTool, TaskUpdateTool } from './impl/task-tools.js';
@@ -101,6 +103,8 @@ export interface DefaultToolRegistryDeps {
   agentLoop: AgentLoop;
   subagentExecutionMapper: SubagentExecutionMapper;
   localToolSessionRegistry: LocalToolSessionRegistry;
+  /** LOCAL 工具委托入口（dump_user_messages 的 LOCAL 落盘经它走 WS 委托桌面端）。 */
+  localToolExecutor: LocalToolExecutor;
   visibilityService: SubAgentVisibilityService;
   backgroundSubagentManager: BackgroundSubagentManager;
   messageMapper: MessageMapper;
@@ -153,6 +157,12 @@ export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRe
         const session = await deps.sessionMapper.selectById(sessionId);
         return session?.executionMode === 'LOCAL';
       },
+    ),
+    new DumpUserMessagesTool(
+      deps.sessionService,
+      deps.runtimeDataResolver,
+      deps.localToolExecutor,
+      deps.sessionMapper,
     ),
     new GenerateImageTool(deps.imageModelLookup, deps.uploadDir, deps.getUploadBaseUrl ?? (async () => ''), deps.uploadContextPath),
     new EditImageTool(deps.imageModelLookup, deps.pathSandbox, deps.uploadDir, deps.getUploadBaseUrl ?? (async () => ''), deps.sendBytesSupport, deps.uploadContextPath),

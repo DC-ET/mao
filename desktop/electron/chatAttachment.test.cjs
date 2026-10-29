@@ -13,6 +13,7 @@ const {
   uniqueName,
   copyLocalAttachment,
   copyLocalAttachmentAsync,
+  writeLocalTextFileAsync,
   MAIN_PROCESS_MAX_SIZE_MB,
 } = require('./chatAttachment.cjs')
 
@@ -387,4 +388,116 @@ test('copyLocalAttachmentAsync 拷贝过程失败返回 ok:false 不抛出', asy
   })
   assert.equal(result.ok, false)
   assert.match(result.error, /disk full/)
+})
+
+// ─── writeLocalTextFileAsync（dump_user_messages 的 LOCAL 落点） ───
+
+test('writeLocalTextFileAsync 成功：落在会话附件目录并返回本机绝对路径与字节数', async (t) => {
+  const home = tempHome(t)
+  const content = '14084181,14084183,14084185'
+  const result = await writeLocalTextFileAsync({
+    fileName: 'user-message-1042.txt',
+    content,
+    sessionId: 9,
+    homeDir: home,
+    hostKey: 'mao.etarch.cn',
+  })
+  assert.equal(result.ok, true, JSON.stringify(result))
+  const expected = path.join(home, '.mao', 'attachments', 'mao.etarch.cn', '9', 'user-message-1042.txt')
+  assert.equal(result.absolutePath, expected)
+  assert.equal(result.bytes, Buffer.byteLength(content, 'utf8'))
+  assert.equal(fs.readFileSync(expected, 'utf8'), content)
+})
+
+test('writeLocalTextFileAsync dedupe=false（dump 幂等）：重复写入覆盖同一文件，不产生 -1 副本', async (t) => {
+  const home = tempHome(t)
+  const base = { fileName: 'user-message-7.txt', sessionId: 3, homeDir: home, hostKey: 'host', dedupe: false }
+  const first = await writeLocalTextFileAsync({ ...base, content: 'v1' })
+  const second = await writeLocalTextFileAsync({ ...base, content: 'v2' })
+  assert.equal(first.ok, true, JSON.stringify(first))
+  assert.equal(second.ok, true, JSON.stringify(second))
+  assert.equal(second.absolutePath, first.absolutePath)
+  const dir = path.join(home, '.mao', 'attachments', 'host', '3')
+  assert.deepEqual(fs.readdirSync(dir), ['user-message-7.txt'])
+  assert.equal(fs.readFileSync(first.absolutePath, 'utf8'), 'v2')
+})
+
+test('writeLocalTextFileAsync 默认同名避重（粘贴附件语义）：追加 -1 副本，不覆盖已有引用', async (t) => {
+  const home = tempHome(t)
+  const base = { fileName: 'pasted-text-1.txt', sessionId: 3, homeDir: home, hostKey: 'host' }
+  const first = await writeLocalTextFileAsync({ ...base, content: 'first batch' })
+  const second = await writeLocalTextFileAsync({ ...base, content: 'second batch' })
+  assert.equal(first.ok, true, JSON.stringify(first))
+  assert.equal(second.ok, true, JSON.stringify(second))
+  assert.notEqual(second.absolutePath, first.absolutePath)
+  const dir = path.join(home, '.mao', 'attachments', 'host', '3')
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['pasted-text-1-1.txt', 'pasted-text-1.txt'])
+  assert.equal(fs.readFileSync(first.absolutePath, 'utf8'), 'first batch')
+  assert.equal(fs.readFileSync(second.absolutePath, 'utf8'), 'second batch')
+})
+
+test('writeLocalTextFileAsync 会话非法 / hostKey 非法 / 文件名缺失 / 内容非字符串均拒且不建目录', async (t) => {
+  const home = tempHome(t)
+  const base = { fileName: 'a.txt', content: 'x', sessionId: 1, homeDir: home, hostKey: 'host' }
+  const badSession = await writeLocalTextFileAsync({ ...base, sessionId: '1/../../x' })
+  assert.equal(badSession.ok, false)
+  assert.match(badSession.error, /会话无效/)
+  const badHost = await writeLocalTextFileAsync({ ...base, hostKey: '../escape' })
+  assert.equal(badHost.ok, false)
+  assert.match(badHost.error, /服务器标识/)
+  const noName = await writeLocalTextFileAsync({ ...base, fileName: undefined })
+  assert.equal(noName.ok, false)
+  assert.match(noName.error, /文件名无效/)
+  const badContent = await writeLocalTextFileAsync({ ...base, content: null })
+  assert.equal(badContent.ok, false)
+  assert.match(badContent.error, /文本内容无效/)
+  assert.equal(fs.existsSync(path.join(home, '.mao')), false)
+})
+
+test('writeLocalTextFileAsync 穿越文件名被 sanitize 后仍落在会话目录内', async (t) => {
+  const home = tempHome(t)
+  const result = await writeLocalTextFileAsync({
+    fileName: '../../user-message-9.txt',
+    content: 'x',
+    sessionId: 4,
+    homeDir: home,
+    hostKey: 'host',
+  })
+  assert.equal(result.ok, true, JSON.stringify(result))
+  const rel = path.relative(home, result.absolutePath)
+  assert.equal(rel, path.join('.mao', 'attachments', 'host', '4', 'user-message-9.txt'))
+})
+
+test('writeLocalTextFileAsync 超过大小上限时拒绝', async (t) => {
+  const home = tempHome(t)
+  const result = await writeLocalTextFileAsync({
+    fileName: 'big.txt',
+    content: 'x'.repeat(2000),
+    sessionId: 5,
+    maxSizeMb: 0.001,
+    homeDir: home,
+    hostKey: 'host',
+  })
+  assert.equal(result.ok, false)
+  assert.match(result.error, /超过/)
+})
+
+test('writeLocalTextFileAsync 写盘失败返回 ok:false 不抛出', async (t) => {
+  const home = tempHome(t)
+  const fsImpl = {
+    ...fs,
+    promises: {
+      writeFile: async () => { throw new Error('read-only file system') },
+    },
+  }
+  const result = await writeLocalTextFileAsync({
+    fileName: 'a.txt',
+    content: 'x',
+    sessionId: 1,
+    homeDir: home,
+    hostKey: 'host',
+    fsImpl,
+  })
+  assert.equal(result.ok, false)
+  assert.match(result.error, /read-only file system/)
 })

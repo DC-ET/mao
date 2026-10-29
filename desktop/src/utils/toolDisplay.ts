@@ -19,6 +19,7 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   wait_subagents: '等待后台子代理',
   web_search: '网页搜索',
   open_web_page: '打开网页',
+  dump_user_messages: '导出用户消息',
   generate_image: '生成图片',
   edit_image: '编辑图片',
   feishu_download_file: '下载飞书文件',
@@ -139,6 +140,11 @@ export function getToolInputPreview(name: string, input?: Record<string, unknown
       return typeof input.to === 'string' ? `滚动到 ${input.to}` : ''
     case 'page_wait':
       return typeof input.ms === 'number' ? `等待 ${input.ms}ms` : ''
+    case 'dump_user_messages': {
+      const raw = input.recentCount
+      const count = typeof raw === 'number' ? raw : Number(raw)
+      return Number.isFinite(count) && count > 0 ? `最近 ${count} 条` : ''
+    }
     case 'page_click':
     case 'page_focus':
     case 'page_check':

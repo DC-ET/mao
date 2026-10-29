@@ -1,3 +1,21 @@
+## 0.0.378 (2026-10-29)
+
+### 后端
+- **新增内置工具 `dump_user_messages`：把本会话最近 N 条用户消息原文落成文件**。用户在输入框粘贴成百上千个 ID 这类「大批量精确数据」时，模型必须复述这批数据才能交给工具处理，而 8-9 位长数字串正是生成的高频出错区（漏位 / 错位 / 幻觉），压缩触发后摘要还会把列表退化成「14084181–14084253 等连续 ID」丢掉精度。新工具按消息 id 把原文逐条写成文件（`user-message-{消息id}.txt`），Agent 拿到绝对路径后用 `read_file`（支持 offset/limit 分页）、`grep_search` 或 shell 脚本精确处理，全程不需要复述原文；参数只有 `recentCount`（默认 1、上限 10），同一消息重复导出覆盖同一文件（幂等）。工具**不会**把原始消息从上下文移除，只额外提供一份文件副本。CLOUD 落盘到会话 runtime 的 `userMessages/` 目录（与 `webPages/`、`compaction/` 并列，Agent 的读文件 / 搜索 / shell 无需额外放行）；LOCAL 会话经 WS 委托桌面端写到本机 `~/.mao/attachments/{host}/{sessionId}/`，桌面端未连接或单条失败时如实返回 `error`、其余消息继续导出。工具进 `SERVER_ONLY_TOOLS`：两种执行模式都由服务端读消息并决定落点。
+- **`SessionService.getRecentUserMessages(sessionId, limit)`**：按 id 倒序取最近 N 条「真实用户消息」后翻转为正序返回，口径与压缩 / 无进展判定共用 `isRealUserMessage`（排除压缩摘要 handoff 与 `<system-notice>` 系统注入）；非真实行被过滤时按游标继续向前扫描，保证「最近 N 条」不缩水。
+- **`RuntimeDataResolver.resolveUserMessagesDir`**：新增 `runtime/{userId}/{sessionId}/userMessages` 路径解析。
+- **工具展示三处同步**：`tool-result-summarizer` 新增结果摘要（按实际写出的文件数，失败条目不冒充成功；全失败时显示「未能导出」）；`no-progress-notice` 固化「文件路径不是易变字段」结论并补用例（同一消息重复导出路径稳定、不同消息算真实进展）；`desktop/src/utils/toolDisplay.ts` 新增中文名「导出用户消息」与 `recentCount` 参数预览。
+
+### 前端（桌面 / Web / 安卓）
+- **输入框粘贴超长文本自动转附件**：粘贴纯文本达到 2000 字符（典型：从 Excel 复制的上千个 ID）时，文本不再插入编辑器，而是静默生成 `pasted-text-N.txt` 待发附件（输入框下方多出一个附件 chip，输入框保持原状、不写任何提示语），发送时最终消息形态为「用户指令 + `@{绝对路径}@`」：CLOUD 走既有上传链路；LOCAL 下这类附件没有本机源文件，发送时把内容交给主进程写入会话附件目录（`~/.mao/attachments/<host>/<会话id>/`，同名自动追加 `-1`，不覆盖已有附件），与普通附件同形态引用。此前这类粘贴只能整段进入消息正文，Agent 处理时既要复述数据、又会被压缩丢精度。判断顺序为先看长度再看 `@{...}@` / `${...}$` / `#{...}#` marker 语法——超长文本即使含 marker 也整体转文件；图文混排粘贴行为不变；附件位已满（10 个）或浏览器打开 LOCAL 会话时不丢弃用户文本，回落为直接插入并提示。粘贴附件序号跨输入框实例连续（新建任务首条发出后输入框重建也不会重名），阈值与附件上限各抽成常量。
+- 工具卡片新增 `dump_user_messages` 的中文名与参数预览（最近 N 条）。
+
+### 桌面 Electron
+- **新增 LOCAL 文本落盘工具 `write_local_text_file`**：写到 `~/.mao/attachments/{host}/{sessionId}/`，复用附件路径解析（basename 化、host / session 强校验、home 相对断言）与异步写盘；同名处理分两种语义——`dump_user_messages` 委托的文件名由消息 id 决定、覆盖同一文件（幂等），渲染层粘贴转出的 `pasted-text-N.txt` 则与普通附件一致自动追加 `-1`/`-2` 副本，避免同会话多段粘贴互相覆盖、让历史消息引用静默指向新内容；失败以 `{ error }` 回传、不抛异常。同时暴露 `local-write-text-file` IPC 与 `electronAPI.localWriteTextFile` 备用入口。
+
+### 终端 CLI（mao-agent）
+- **`mao-agent --local` 支持 `dump_user_messages` 的落盘委托（`write_local_text_file`）**：此前 LOCAL CLI 会话调用该工具会逐条失败（`Unknown tool: write_local_text_file`），长用户消息文件化只在桌面端可用。现在本地执行器新增该工具：把服务端下发的用户消息原文写到 `~/.mao/agent-cli/runtime/<sessionId>/userMessages/user-message-<消息id>.txt`，文件名 basename 化并限制长度、内容按 100MB 封顶、同名按消息 id 幂等覆盖（与桌面端 dump 语义一致），回传本机绝对路径；落点固定在会话 runtime 目录内（服务端下发 `needApproval=false`，不弹审批），Agent 拿到的路径可直接用 `read_file` / `grep_search` / shell 读取。
+
 ## 0.0.377 (2026-10-29)
 
 ### 前端（桌面 / Web / 安卓）

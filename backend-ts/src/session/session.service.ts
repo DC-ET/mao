@@ -24,8 +24,11 @@ import type { MessageSearchHitRow, MessageSearchSqlFilter } from './session.repo
 
 export { buildSnippet, indexOfIgnoreCase };
 import { collectEntityIds, parseEntityId } from '../common/request.js';
+import { isMultimodalContentParts } from '../common/multimodal-content.js';
 import type { EnvironmentInfoProvider } from '../harness/core/environment-info.js';
 import { MessageHistoryNormalizer, MISSING_TOOL_RESULT_PLACEHOLDER } from '../harness/core/message-history-normalizer.js';
+import { isRealUserMessage } from '../harness/core/compaction-service.js';
+import type { ChatMessage } from '../harness/llm/chat-request.js';
 import { CloudWorkspaceResolver } from '../harness/safety/cloud-workspace-resolver.js';
 import type { PathSandbox } from '../harness/safety/path-sandbox.js';
 import type { ExperienceMountService } from '../harness/experience/experience-mount.service.js';
@@ -61,6 +64,8 @@ import { stripCitationMarkers } from './util/citation-markers.js';
 import { WEIXIN_PROJECT_KEY } from '../domain/types.js';
 
 const SEARCH_RESULT_LIMIT = 20;
+/** dump_user_messages 的扫描批次：非真实用户消息被过滤时按此粒度继续向前翻。 */
+const RECENT_USER_MESSAGE_SCAN_BATCH = 50;
 /** 写入会话工作区的 runtime 临时目录/文件前缀，会话删除时一并清理。 */
 const RUNTIME_WORKSPACE_PREFIX = 'mao-runtime-';
 
@@ -1549,6 +1554,33 @@ export class SessionService {
     return this.messageRepo.selectLastUserMessage(sessionId);
   }
 
+  /**
+   * 最近 N 条「真实用户消息」（id 倒序取、正序返回）：dump_user_messages 工具的数据源。
+   *
+   * 「真实」口径与压缩 / 无进展判定共用 isRealUserMessage（排除压缩摘要 handoff 与
+   * `<system-notice>` 系统注入）。非真实行（极小概率）被过滤时继续按游标向前扫描，
+   * 保证「最近 N 条」口径不缩水；扫到会话首条用户消息为止。
+   */
+  async getRecentUserMessages(sessionId: number, limit: number): Promise<Message[]> {
+    const wanted = Math.max(1, Math.trunc(limit));
+    const picked: Message[] = [];
+    let beforeId: number | null = null;
+    while (picked.length < wanted) {
+      const batch = await this.messageRepo.selectRecentUserMessages(
+        sessionId, RECENT_USER_MESSAGE_SCAN_BATCH, beforeId,
+      );
+      if (batch.length === 0) break;
+      for (const row of batch) {
+        if (isRealUserMessage(toRealUserMessageProbe(row))) picked.push(row);
+        if (picked.length >= wanted) break;
+      }
+      const lastId = batch[batch.length - 1]?.id ?? null;
+      if (lastId == null || batch.length < RECENT_USER_MESSAGE_SCAN_BATCH) break;
+      beforeId = lastId;
+    }
+    return picked.reverse();
+  }
+
   /** 会话首条现存用户消息（id 最小）：系统提示日期锚点，跨天不重算（技术方案 2026-10-12 §5.1）。 */
   getFirstUserStamp(sessionId: number): Promise<Pick<Message, 'id' | 'createdAt'> | null> {
     return this.messageRepo.selectFirstUserStamp(sessionId);
@@ -1677,6 +1709,30 @@ function parseToolCallsJson(json: string): Array<{ id?: string }> {
   } catch {
     return [];
   }
+}
+
+/**
+ * DB 消息行 → isRealUserMessage 判定所需的最小 ChatMessage：role 小写化，
+ * 多模态 JSON 数组还原为 content parts（与 session-history-loader 同款结构判定，
+ * 避免把用户发的裸 JSON 数组误当多模态内容）。
+ */
+function toRealUserMessageProbe(message: Message): ChatMessage {
+  return {
+    role: String(message.role ?? '').toLowerCase(),
+    content: parseStoredContentForProbe(message.content),
+  };
+}
+
+function parseStoredContentForProbe(content: string | null | undefined): unknown {
+  if (content == null) return '';
+  if (!content.trim().startsWith('[')) return content;
+  try {
+    const parsed = JSON.parse(content.trim()) as unknown;
+    if (isMultimodalContentParts(parsed)) return parsed;
+  } catch {
+    // 非 JSON 文本：按原文处理
+  }
+  return content;
 }
 
 /**

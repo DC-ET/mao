@@ -23,6 +23,10 @@ describe('getToolDisplayName', () => {
     expect(getToolDisplayName('delegate')).toBe('委派子代理')
     expect(getToolDisplayName('custom_tool')).toBe('custom_tool')
   })
+
+  it('dump_user_messages 展示中文名', () => {
+    expect(getToolDisplayName('dump_user_messages')).toBe('导出用户消息')
+  })
 })
 
 describe('getToolInputPreview', () => {
@@ -51,6 +55,14 @@ describe('getToolInputPreview', () => {
 
   it('不会将飞书专用字段应用于其他工具', () => {
     expect(getToolInputPreview('custom_tool', { link: 'link', message_id: 'om_id', image: 'a.png', file: 'a.pdf', filename: '报告.pdf' })).toBe('')
+  })
+
+  it('dump_user_messages 预览导出的消息条数（缺省或非正数不展示）', () => {
+    expect(getToolInputPreview('dump_user_messages', { recentCount: 3 })).toBe('最近 3 条')
+    expect(getToolInputPreview('dump_user_messages', { recentCount: '2' })).toBe('最近 2 条')
+    for (const invalid of [undefined, null, '', 'abc', 0, -1, {}]) {
+      expect(getToolInputPreview('dump_user_messages', { recentCount: invalid })).toBe('')
+    }
   })
 
   it.each([

@@ -4,7 +4,7 @@ import { getUploadConfig } from './storageMode'
 /** LOCAL 暂存的非图片文件：File 对象 + 主进程可读的绝对路径（Electron 拖拽/选择时取得）。 */
 export interface LocalPendingFile {
   file: File
-  /** 源文件在本机的绝对路径；空串表示取不到路径（无法拷贝） */
+  /** 源文件在本机的绝对路径；空串表示取不到本机源文件（文本走内容内联写入，其余无法拷贝） */
   localPath: string
 }
 
@@ -41,7 +41,16 @@ export async function copyLocalPendingFiles(
       continue
     }
     if (!item.localPath) {
-      ElMessage.error(`文件 ${item.file.name} 加入失败：无法获取文件路径`)
+      // 无本机源路径的文本文件（输入框粘贴超长文本转出的内存 File）：发送时把内容交给
+      // 主进程写进会话附件目录，拿到路径后与普通附件同形态引用；写不了再沿用原有报错。
+      const inline = await writeInlineTextAttachment(api, item.file, sessionId, maxSizeMb)
+      if (inline == null) {
+        ElMessage.error(`文件 ${item.file.name} 加入失败：无法获取文件路径`)
+      } else if (inline.ok) {
+        refs.push(`@{${inline.absolutePath}}@`)
+      } else {
+        ElMessage.error(`文件 ${item.file.name} ${inline.error || '写入失败'}`)
+      }
       continue
     }
     try {
@@ -61,6 +70,36 @@ export async function copyLocalPendingFiles(
   }
   if (refs.length === 0) return { text, copiedCount: 0 }
   return { text: text ? `${text}\n${refs.join(' ')}` : refs.join(' '), copiedCount: refs.length }
+}
+
+/**
+ * 「只有内存内容、没有本机源文件」的文本附件落盘（输入框粘贴超长文本转出的
+ * `pasted-text-N.txt`）：主进程写到 `~/.mao/attachments/<host>/<sid>/`，返回本机
+ * 绝对路径。非文本文件、或客户端没有对应桥（旧版桌面端）时返回 null，
+ * 由调用方沿用「无法获取文件路径」的既有报错。
+ */
+async function writeInlineTextAttachment(
+  api: any,
+  file: File,
+  sessionId: string,
+  maxSizeMb: number | undefined
+): Promise<{ ok: true; absolutePath: string } | { ok: false; error?: string } | null> {
+  const writeTextFile = api?.localWriteTextFile
+  if (typeof writeTextFile !== 'function') return null
+  if (!file.type.startsWith('text/')) return null
+  try {
+    const content = await file.text()
+    const result = await writeTextFile({
+      fileName: file.name,
+      content,
+      sessionId: Number(sessionId),
+      maxSizeMb,
+    })
+    if (result?.ok && result.absolutePath) return { ok: true, absolutePath: result.absolutePath }
+    return { ok: false, error: result?.error }
+  } catch {
+    return { ok: false, error: '写入失败' }
+  }
 }
 
 /** 与 CLOUD 同口径的大小上限（后端上传配置）；取不到时传 undefined，由主进程回落默认值。 */

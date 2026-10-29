@@ -90,6 +90,7 @@ function makeService() {
     logicalDeleteAfter: vi.fn(),
     updateById: vi.fn(),
     selectLastUserMessage: vi.fn(),
+    selectRecentUserMessages: vi.fn(async () => []),
     selectValidBoundaryMessage: vi.fn(),
   } as unknown as MessageRepository;
   const agentLookup = {
@@ -931,5 +932,53 @@ describe('SessionService fork cut point', () => {
 
     vi.mocked(messageRepo.selectValidBoundaryMessage).mockResolvedValue(null);
     expect(await service.findOwnedMessage(20, 78)).toBeNull();
+  });
+});
+
+describe('SessionService getRecentUserMessages', () => {
+  it('倒序查询、内存过滤非真实用户消息（系统注入 / 空内容）后正序返回', async () => {
+    const { service, messageRepo } = makeService();
+    vi.mocked(messageRepo.selectRecentUserMessages).mockResolvedValue([
+      { id: 30, sessionId: 20, role: 'USER', content: '<system-notice>\n第 5 轮提醒\n</system-notice>' },
+      { id: 29, sessionId: 20, role: 'USER', content: '真正的用户消息 B' },
+      { id: 28, sessionId: 20, role: 'USER', content: '   ' },
+      { id: 27, sessionId: 20, role: 'USER', content: '[{"type":"text","text":"多模态用户消息 A"}]' },
+    ]);
+    const rows = await service.getRecentUserMessages(20, 2);
+
+    // 30 / 28 被过滤；27（多模态数组）与 29 都是真实用户消息，返回时翻转为正序
+    expect(rows.map((row) => row.id)).toEqual([27, 29]);
+    expect(messageRepo.selectRecentUserMessages).toHaveBeenCalledTimes(1);
+    expect(messageRepo.selectRecentUserMessages).toHaveBeenCalledWith(20, 50, null);
+  });
+
+  it('非真实消息占满一批时按游标继续向前扫描，保证凑满 limit 条', async () => {
+    const { service, messageRepo } = makeService();
+    const noise = Array.from({ length: 50 }, (_, i) => ({ id: 1000 - i, sessionId: 20, role: 'USER', content: null }));
+    vi.mocked(messageRepo.selectRecentUserMessages)
+      .mockResolvedValueOnce(noise)
+      .mockResolvedValueOnce([{ id: 900, sessionId: 20, role: 'USER', content: 'target' }]);
+
+    const rows = await service.getRecentUserMessages(20, 1);
+
+    expect(rows.map((row) => row.id)).toEqual([900]);
+    expect(messageRepo.selectRecentUserMessages).toHaveBeenNthCalledWith(1, 20, 50, null);
+    expect(messageRepo.selectRecentUserMessages).toHaveBeenNthCalledWith(2, 20, 50, 951);
+  });
+
+  it('limit 下限收敛为 1，负数不会返回空', async () => {
+    const { service, messageRepo } = makeService();
+    vi.mocked(messageRepo.selectRecentUserMessages).mockResolvedValue([
+      { id: 2, sessionId: 20, role: 'USER', content: 'b' },
+      { id: 1, sessionId: 20, role: 'USER', content: 'a' },
+    ]);
+    const rows = await service.getRecentUserMessages(20, -3);
+    expect(rows.map((row) => row.id)).toEqual([2]);
+  });
+
+  it('没有用户消息时返回空数组', async () => {
+    const { service, messageRepo } = makeService();
+    vi.mocked(messageRepo.selectRecentUserMessages).mockResolvedValue([]);
+    expect(await service.getRecentUserMessages(20, 1)).toEqual([]);
   });
 });

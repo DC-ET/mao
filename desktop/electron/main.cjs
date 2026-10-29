@@ -1410,6 +1410,11 @@ ipcMain.handle('local-copy-attachment', async (event, payload) => {
   })
 })
 
+ipcMain.handle('local-write-text-file', async (event, payload) => {
+  // 备用入口（渲染层直接写本机文本；粘贴转出的附件也走这里）：同名避重，不覆盖已有附件。
+  return handleLocalWriteTextFile(payload, payload?.sessionId, true)
+})
+
 ipcMain.handle('desktop-notify', (event, payload) => {
   const title = String(payload?.title ?? '')
   const body = String(payload?.body ?? '')
@@ -2397,6 +2402,9 @@ async function executeToolByName(toolName, parsedArgs, sessionId, workspace, nee
       return await handleLocalGlobSearch(parsedArgs, workspace, sessionId)
     case 'grep_search':
       return await handleLocalGrepSearch(parsedArgs, workspace, sessionId)
+    case 'write_local_text_file':
+      // dump_user_messages 委托：文件名由消息 id 决定，重复导出覆盖同一文件（幂等，dedupe=false）。
+      return await handleLocalWriteTextFile(parsedArgs, sessionId, false)
     default: {
       const mcp = parseMcpToolName(toolName)
       if (mcp) {
@@ -2642,6 +2650,30 @@ async function handleLocalEditFile(args, workspace, sessionId, needApproval, req
   } catch (e) {
     return { error: e.message }
   }
+}
+
+/**
+ * LOCAL 文本落盘（dump_user_messages 的委托入口 与 渲染层粘贴附件两个来源）：
+ * 把文本写到 `~/.mao/attachments/<hostKey>/<sessionId>/<fileName>`，返回本机绝对路径。
+ * 落点由主进程推导（home + server host + sessionId），渲染层/服务端无法指定；
+ * 写入失败不抛异常，以 { error } 形态回传（与其它 LOCAL 工具一致）。
+ *
+ * @param {object} args { fileName, content, maxSizeMb }
+ * @param {number|string} sessionId 会话 ID
+ * @param {boolean} dedupe 同名避重：true 追加 -1/-2 副本（粘贴附件），false 覆盖（dump 幂等）
+ */
+async function handleLocalWriteTextFile(args, sessionId, dedupe) {
+  const result = await chatAttachment.writeLocalTextFileAsync({
+    fileName: args?.fileName,
+    content: args?.content,
+    maxSizeMb: args?.maxSizeMb,
+    sessionId,
+    dedupe,
+    homeDir: os.homedir(),
+    hostKey: getServerHostKey(),
+  })
+  if (!result.ok) return { error: result.error }
+  return { success: true, path: result.absolutePath, bytes_written: result.bytes }
 }
 
 // --- glob_search / grep_search ---

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { assertNotSymlink, resolvePathLenient } from '../sandbox';
+import { resolveUserMessagesDir } from '../paths';
 import { withFileLock } from './file-write-lock';
 import { asInt } from './params';
 
@@ -13,6 +14,10 @@ const IMAGE_EXT: Record<string, string> = {
 };
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_TEXT_BYTES = 8 * 1024 * 1024;
+/** dump_user_messages 委托的单条消息文件大小上限（原文量级 KB~百 KB，仅防病态输入）。 */
+const MAX_USER_MESSAGE_FILE_BYTES = 100 * 1024 * 1024;
+/** 用户消息文件名长度上限（桌面端附件名同为 100）。 */
+const USER_MESSAGE_FILE_NAME_MAX = 100;
 const MAX_OUTPUT_LENGTH = 50000;
 const BINARY_SNIFF_BYTES = 8192;
 const PRIVATE_DIFF_FIELD = 'file_change_diff';
@@ -329,6 +334,55 @@ export async function handleWriteFile(args: Record<string, unknown>, workspace: 
     });
   } catch (e) {
     return { success: false, error: sandboxError(e) };
+  }
+}
+
+/**
+ * 文件名净化：basename 化（剥 `../` 与子目录）、剥控制字符与首尾点/空格。
+ * 与服务端「user-message-{id}.txt」约定一致，返回 null 表示不可用。
+ */
+export function sanitizeUserMessageFileName(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const base = path.basename(raw.trim());
+  // eslint-disable-next-line no-control-regex
+  const cleaned = base.replace(/[\u0000-\u001f\u007f]/g, '').replace(/^\.+/, '').replace(/[. ]+$/, '');
+  if (!cleaned || cleaned.length > USER_MESSAGE_FILE_NAME_MAX) return null;
+  return cleaned;
+}
+
+/**
+ * 服务端内置工具 dump_user_messages 的 LOCAL 落盘入口（对应桌面端 write_local_text_file）：
+ * 把用户消息原文写到 `~/.mao/agent-cli/runtime/<sessionId>/userMessages/<fileName>`，
+ * 返回本机绝对路径。文件名由服务端按消息 id 生成，重复导出覆盖同一文件（幂等）；
+ * 落点固定在会话 runtime 目录内，不接受任意路径（无审批也不会写出界）。
+ */
+export async function handleWriteLocalTextFile(
+  args: Record<string, unknown>,
+  sessionId: number,
+): Promise<Record<string, unknown>> {
+  try {
+    if (!Number.isInteger(sessionId) || sessionId <= 0) return { error: '会话无效，无法确定落盘目录' };
+    const fileName = sanitizeUserMessageFileName(args.fileName);
+    if (!fileName) return { error: '文件名无效' };
+    if (typeof args.content !== 'string') return { error: '文本内容无效' };
+    const content = args.content;
+    const bytes = Buffer.byteLength(content, 'utf8');
+    if (bytes > MAX_USER_MESSAGE_FILE_BYTES) {
+      return { error: `文本超过 ${MAX_USER_MESSAGE_FILE_BYTES / (1024 * 1024)}MB 限制` };
+    }
+    const dir = resolveUserMessagesDir(sessionId);
+    const target = path.join(dir, fileName);
+    // sanitize 已剥分隔符；join 后再断言不出界（双保险）
+    const rel = path.relative(dir, target);
+    if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) return { error: '文件名无效' };
+    return await withFileLock(target, () => {
+      assertNotSymlink(target, fileName);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(target, content, 'utf8');
+      return { success: true, path: target, bytes_written: bytes };
+    });
+  } catch (e) {
+    return { error: sandboxError(e) };
   }
 }
 

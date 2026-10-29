@@ -127,6 +127,19 @@ describe('no-progress-notice', () => {
       });
       expect(resultDigest(call('plain text\n\n'))).toBe(resultDigest(call('plain text')));
     });
+
+    it('keeps dump_user_messages file paths in the signature (idempotent re-export, stable identity)', () => {
+      // 路径由 messageId 决定、同会话同消息幂等不变，故不列入 VOLATILE_RESULT_KEYS：
+      // 重复导出同一消息不得被当成「新进展」，导出另一条消息必须是真实进展。
+      const call = (value: unknown): Parameters<typeof resultDigest>[0] => ({
+        toolName: 'dump_user_messages', argumentsJson: '{"recentCount":1}', resultContent: JSON.stringify(value),
+      });
+      const base = { files: [{ messageId: 42, path: '/runtime/7/9/userMessages/user-message-42.txt', bytes: 120 }], count: 1 };
+      const reordered = { count: 1, files: [{ bytes: 120, path: '/runtime/7/9/userMessages/user-message-42.txt', messageId: 42 }] };
+      expect(resultDigest(call(reordered))).toBe(resultDigest(call(base)));
+      const other = { files: [{ messageId: 43, path: '/runtime/7/9/userMessages/user-message-43.txt', bytes: 120 }], count: 1 };
+      expect(resultDigest(call(other))).not.toBe(resultDigest(call(base)));
+    });
   });
 
   describe('exemptions', () => {

@@ -179,6 +179,7 @@ import { cloudWorkspaceIndicator, extractGitRepoSlug, isHttpsGitUrl } from '../.
 import { getUploadConfig } from '../../utils/storageMode'
 import { generateUUID } from '../../utils/uuid'
 import type { LocalPendingFile } from '../../utils/chatLocalAttach'
+import { MAX_PENDING_ATTACHMENTS, createPastedTextFile, nextPastedTextSeq, planPastedText } from './pasted-text-file'
 
 const props = withDefaults(defineProps<{
   disabled?: boolean
@@ -575,7 +576,7 @@ const editor = useEditor({
           if (item.type.startsWith('image/')) {
             const file = item.getAsFile()
             if (!file) continue
-            if (pendingFiles.value.length >= 10) {
+            if (pendingFiles.value.length >= MAX_PENDING_ATTACHMENTS) {
               // 每次粘贴只提示一次超限，剩余图片逐张计数提示会刷屏
               if (!warnedImageLimit) {
                 ElMessage.warning('最多上传 10 个附件，超出部分已忽略')
@@ -608,8 +609,26 @@ const editor = useEditor({
           return true
         }
       }
-      // Handle text paste — convert @{...}@, ${...}$, #{...}# patterns to editor nodes
+      // 超长纯文本粘贴：静默转待发附件（文件化），不插入编辑器 —— 大批量精确数据
+      // （如 1000+ 个 ID）让模型复述必然出错、压缩还会丢精度，转成文件后由 Agent 用
+      // read_file（分页）/ grep_search / shell 精确处理。先判长度再判 marker 语法：
+      // 超长文本即使含 @{...}@ 也整体转文件（含 marker 的长文本更应走文件通道）。
       const text = event.clipboardData?.getData('text/plain')
+      const pastePlan = planPastedText(text, pendingFiles.value.length)
+      if (pastePlan.kind === 'limit-reached') {
+        // 附件位已满：不能把用户粘贴的长文本丢掉，回落到普通粘贴（插入编辑器）
+        ElMessage.warning('最多上传 10 个附件，超长文本已改为直接插入输入框')
+      } else if (pastePlan.kind === 'convert' && typeof text === 'string') {
+        if (props.executionMode === 'LOCAL' && !isElectronClient) {
+          // 本地模式不支持附件（与 addPendingFile 同口径）：不拦截粘贴，回落普通插入
+          ElMessage.warning('本地模式不支持文件上传，请使用桌面客户端')
+        } else {
+          event.preventDefault()
+          void addPendingFile(createPastedTextFile(text, nextPastedTextSeq()))
+          return true
+        }
+      }
+      // Handle text paste — convert @{...}@, ${...}$, #{...}# patterns to editor nodes
       if (text && /(?:@\{[^}]+\}@|\$\{[^}]+\}\$|#\{[^}]+\}#)/.test(text)) {
         event.preventDefault()
         const view = editor.value?.view
@@ -986,7 +1005,7 @@ async function checkFileSize(file: File): Promise<{ ok: boolean; limitMb: number
 }
 
 function addPendingImage(file: File) {
-  if (pendingFiles.value.length >= 10) {
+  if (pendingFiles.value.length >= MAX_PENDING_ATTACHMENTS) {
     ElMessage.warning('最多上传 10 个附件')
     return
   }
@@ -1008,7 +1027,7 @@ async function addPendingFile(file: File) {
     ElMessage.warning('本地模式不支持文件上传，请使用桌面客户端')
     return
   }
-  if (pendingFiles.value.length >= 10) {
+  if (pendingFiles.value.length >= MAX_PENDING_ATTACHMENTS) {
     ElMessage.warning('最多上传 10 个附件')
     return
   }

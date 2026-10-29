@@ -10,7 +10,7 @@ import {
 } from './approval';
 import { isWorkspaceWithin } from './sandbox';
 import { persistToolResult } from './truncate';
-import { handleEditFile, handleReadFile, handleWriteFile } from './tools/files';
+import { handleEditFile, handleReadFile, handleWriteFile, handleWriteLocalTextFile } from './tools/files';
 import { handleGlobSearch, handleGrepSearch } from './tools/search';
 import { createCliShellRuntime, type LocalShellRuntime } from './tools/shell';
 import { McpManager, parseMcpToolName, type McpServerSpec } from './tools/mcp';
@@ -213,6 +213,10 @@ export class LocalExecutor {
         return handleGlobSearch(args, workspace, sessionId);
       case 'grep_search':
         return handleGrepSearch(args, workspace, sessionId);
+      case 'write_local_text_file':
+        // 服务端 dump_user_messages 委托：把消息原文写进会话 runtime 的 userMessages/ 目录
+        // （无审批：落点固定为 Mao 自管目录，服务端下发时 needApproval=false）。
+        return handleWriteLocalTextFile(args, sessionId);
       default: {
         const mcp = parseMcpToolName(toolName);
         if (mcp) {

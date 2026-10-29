@@ -204,7 +204,7 @@ emoji / CJK 按整字符删除；粘贴多行文本原样进入草稿。
 | `~/.mao/auth.json` | JWT（与 `mao` CLI 共用，0600） |
 | `~/.mao/agent-cli/config.json` | 用户配置：baseUrl、默认 Agent/模型、`permissionLevel`、`outputFormat`、界面偏好、`trustedWorkspaces`（0600） |
 | `~/.mao/agent-cli/history` | 输入历史，最近 200 条（0600） |
-| `~/.mao/agent-cli/runtime/` | 每会话运行期文件（仅在工具结果超 900KB 时落盘，0600），保留最近 20 个会话、7 天 |
+| `~/.mao/agent-cli/runtime/` | 每会话运行期文件（超 900KB 的工具结果、`userMessages/` 下 dump 出的用户消息原文等，0600），保留最近 20 个会话、7 天 |
 | `<项目>/.mao/agent.json` | 项目级配置，向上找到 git 根为止 |
 
 配置优先级：命令行 > 环境变量 > 项目配置 > 用户配置 > 内置默认。旧版 `~/.mao-cli` / `~/.mao-user-cli` / `~/.mao-admin-cli` 下的 `auth.json` 首次使用时自动迁移到 `~/.mao/auth.json`。
@@ -217,6 +217,7 @@ emoji / CJK 按整字符删除；粘贴多行文本原样进入草稿。
 - **路径规则（与云端一致，宽松解析）**：`read_file` / `write_file` / `edit_file` 与 `glob_search` / `grep_search` 的搜索根都用相对路径按工作区解析、绝对路径直达任意位置；符号链接目标一律拒绝（`拒绝操作符号链接`），同路径并行写按绝对路径串行化
 - **本地 shell 的 `workdir` 仍受边界约束**：必须落在已信任工作区或本会话 runtime 目录内，`../` 越界、边界外的绝对路径、指向外部的符号链接一律拒绝
 - **同文件并行写串行化**：同一轮对同一路径的 `write_file` / `edit_file` 按绝对路径排队，避免后写者基于旧内容覆盖先写者
+- **用户消息文件化（`dump_user_messages`）**：服务端调用该工具时委托本机写 `~/.mao/agent-cli/runtime/<sessionId>/userMessages/user-message-<消息id>.txt`（同名覆盖、按消息 id 幂等；落点固定在会话 runtime 内，无需审批），返回的绝对路径可直接用 `read_file` / `grep_search` 或 shell 读取
 - **写回保留原文件行尾**：已有文件的 CRLF / BOM 会在 `write_file` / `edit_file` 时保留（云端工具同样如此）；新建文件按模型给出的 LF 写入
 - **工作区以本地为权威**：服务端下发的 workspace 只能等于本地工作区或位于其内部，否则该次工具调用直接失败（`拒绝服务端下发的工作区 ...`）
 - **shell 内不注入 token**：子进程环境只有登录 shell 的 PATH 加 `TERM=dumb` / `PS1=''`，不含 `MAO_TOKEN` / `MAO_REFRESH_TOKEN`。要在 shell 工具里调 `mao` / `mao-agent`，需先 `mao login`（读 `~/.mao/auth.json`）。这与桌面 Electron（会注入 token）是有意差异

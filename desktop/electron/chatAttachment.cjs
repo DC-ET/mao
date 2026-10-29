@@ -285,6 +285,54 @@ async function copyLocalAttachmentAsync(params) {
   }
 }
 
+/**
+ * 文本落盘（dump_user_messages / 粘贴附件转文件）：把文本写到
+ * `~/.mao/attachments/<hostKey>/<sessionId>/<fileName>`，返回本机绝对路径。
+ *
+ * 同名处理由 `dedupe` 决定（缺省 true，与附件拷贝同语义：追加 `-1`、`-2` 副本）：
+ * 渲染层粘贴转出的 `pasted-text-N.txt` 必须避重，否则同会话第二段长文本会覆盖第一段，
+ * 让历史消息里的 `@{...pasted-text-1.txt}@` 静默指向新内容；`dump_user_messages`
+ * 的文件名由消息 id 决定，显式传 `dedupe:false` 保持按 id 幂等覆盖。
+ * 落点仍走 resolveAttachmentTarget 的 sanitize + host/session 强校验 + home 相对断言。
+ *
+ * @param {{
+ *   fileName: string,
+ *   content: string,
+ *   sessionId: number|string,
+ *   maxSizeMb?: number,
+ *   dedupe?: boolean,
+ *   homeDir?: string,
+ *   hostKey: string,
+ *   fsImpl?: typeof fs,
+ * }} params
+ * @returns {Promise<{ ok: true, absolutePath: string, bytes: number } | { ok: false, error: string }>}
+ */
+async function writeLocalTextFileAsync(params) {
+  const fsImpl = params.fsImpl || fs
+  try {
+    if (typeof params.fileName !== 'string' || params.fileName.trim() === '') {
+      return { ok: false, error: '文件名无效' }
+    }
+    if (typeof params.content !== 'string') return { ok: false, error: '文本内容无效' }
+    const maxSizeMb = effectiveMaxSizeMb(params.maxSizeMb)
+    const bytes = Buffer.byteLength(params.content, 'utf8')
+    if (bytes > maxSizeMb * 1024 * 1024) {
+      return { ok: false, error: `文本超过 ${maxSizeMb}MB 限制` }
+    }
+    const dedupe = params.dedupe !== false
+    const target = resolveAttachmentTarget(params.homeDir, params.hostKey, params.sessionId, params.fileName, { fsImpl })
+    const dir = path.dirname(target)
+    fsImpl.mkdirSync(dir, { recursive: true })
+    const finalName = dedupe ? uniqueName(dir, path.basename(target), { fsImpl }) : path.basename(target)
+    const finalPath = path.join(dir, finalName)
+    const promises = fsImpl.promises || fs.promises
+    await promises.writeFile(finalPath, params.content, 'utf8')
+    return { ok: true, absolutePath: finalPath, bytes }
+  } catch (e) {
+    return { ok: false, error: e?.message || '写入失败' }
+  }
+}
+
 module.exports = {
   ATTACHMENTS_DIR_NAME,
   ATTACHMENTS_SUBDIR,
@@ -299,4 +347,5 @@ module.exports = {
   prepareLocalAttachmentCopy,
   copyLocalAttachment,
   copyLocalAttachmentAsync,
+  writeLocalTextFileAsync,
 }

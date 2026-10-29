@@ -9,6 +9,7 @@ vi.mock('./storageMode', () => storageMode)
 import { copyLocalPendingFiles, type LocalPendingFile } from './chatLocalAttach'
 
 const localCopyAttachment = vi.fn()
+const localWriteTextFile = vi.fn()
 
 function makeFile(name: string): File {
   return new File([`content-${name}`], name, { type: 'application/octet-stream' })
@@ -20,7 +21,7 @@ function makePending(name: string, localPath = `/tmp/src/${name}`): LocalPending
 
 function installElectronApi(present = true) {
   if (present) {
-    ;(globalThis as any).window = { electronAPI: { localCopyAttachment } }
+    ;(globalThis as any).window = { electronAPI: { localCopyAttachment, localWriteTextFile } }
   } else {
     ;(globalThis as any).window = {}
   }
@@ -88,11 +89,49 @@ describe('copyLocalPendingFiles（LOCAL 懒拷贝到 ~/.mao/attachments）', () 
     expect(el.error).toHaveBeenCalledWith('文件 a.txt 拷贝失败')
   })
 
-  it('localPath 为空（取不到路径）：按加入失败提示', async () => {
+  it('localPath 为空（取不到路径）且非文本：按加入失败提示', async () => {
     const result = await copyLocalPendingFiles('', [makePending('a.txt', '')], '3')
     expect(result.copiedCount).toBe(0)
     expect(localCopyAttachment).not.toHaveBeenCalled()
+    expect(localWriteTextFile).not.toHaveBeenCalled()
     expect(el.error).toHaveBeenCalledWith('文件 a.txt 加入失败：无法获取文件路径')
+  })
+
+  it('无本机路径的文本附件：发送时内联写入会话附件目录并追加引用（粘贴转出的 pasted-text-N.txt）', async () => {
+    localWriteTextFile.mockResolvedValue({
+      ok: true,
+      absolutePath: '/home/u/.mao/attachments/host/3/pasted-text-1.txt',
+    })
+    const file = new File(['14084181,14084183'], 'pasted-text-1.txt', { type: 'text/plain' })
+    const result = await copyLocalPendingFiles('统计这些 ID', [{ file, localPath: '' }], '3')
+
+    expect(localWriteTextFile).toHaveBeenCalledWith({
+      fileName: 'pasted-text-1.txt',
+      content: '14084181,14084183',
+      sessionId: 3,
+      maxSizeMb: 50,
+    })
+    expect(localCopyAttachment).not.toHaveBeenCalled()
+    expect(result.copiedCount).toBe(1)
+    expect(result.text).toBe('统计这些 ID\n@{/home/u/.mao/attachments/host/3/pasted-text-1.txt}@')
+  })
+
+  it('无本机路径的文本附件写入失败：提示主进程返回的错误', async () => {
+    localWriteTextFile.mockResolvedValue({ ok: false, error: '文本超过 100MB 限制' })
+    const file = new File(['x'], 'pasted-text-2.txt', { type: 'text/plain' })
+    const result = await copyLocalPendingFiles('', [{ file, localPath: '' }], '3')
+
+    expect(result.copiedCount).toBe(0)
+    expect(el.error).toHaveBeenCalledWith('文件 pasted-text-2.txt 文本超过 100MB 限制')
+  })
+
+  it('旧版客户端没有 localWriteTextFile 桥：文本附件仍按「无法获取文件路径」提示', async () => {
+    ;(globalThis as any).window = { electronAPI: { localCopyAttachment } }
+    const file = new File(['x'], 'pasted-text-3.txt', { type: 'text/plain' })
+    const result = await copyLocalPendingFiles('', [{ file, localPath: '' }], '3')
+
+    expect(result.copiedCount).toBe(0)
+    expect(el.error).toHaveBeenCalledWith('文件 pasted-text-3.txt 加入失败：无法获取文件路径')
   })
 
   it('非 Electron（无 electronAPI）：逐个提示不支持', async () => {

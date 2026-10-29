@@ -112,6 +112,13 @@
 
 `open_web_page` 抓取的正文超过 `harness.webPage.maxOutputLength`（默认 50000 字符）时只返回前 50000 字符，并在返回 JSON 里带 `truncated: true`、`full_content_file`（完整正文的落盘文件路径）和 `message`（回读指引）。Agent 需要被截断的部分时应使用 `read_file`（支持 `offset`/`limit` 分页）或 `grep_search` 读取该文件，不要重新抓取同一网页。落盘位置为会话 runtime 目录下的 `webPages/<url-slug>.md`，仅 CLOUD 会话；LOCAL 会话、缺少 userId/sessionId 或写盘失败时不会落盘，此时被截断部分本次不可恢复，工具返回里会明确说明。
 
+## 长用户消息（文件化，0.0.378 起）
+
+大批量精确数据（如上万个用户 ID）不适合让模型复述，压缩也会丢失精度。两条通道把原文变成文件：
+
+- 桌面输入框粘贴 ≥2000 字符的纯文本时自动转为 `pasted-text-N.txt` 待发附件（不进编辑器，静默转换；附件位已满时回落为直接插入并提示）；
+- 其他渠道（手动输入、飞书/钉钉入站、定时任务）或未达阈值的消息，Agent 可调用内置工具 `dump_user_messages`（参数仅 `recentCount`，默认 1、上限 10）把最近 N 条用户消息原文逐条落盘，返回 `files: [{messageId, path, bytes}]`。CLOUD 落点 `runtime/<uid>/<sid>/userMessages/user-message-<消息id>.txt`；LOCAL 桌面端经内部工具写到本机 `~/.mao/attachments/<host>/<sid>/`，`mao-agent --local` 写到本机 `~/.mao/agent-cli/runtime/<sessionId>/userMessages/`。同一消息重复导出覆盖同一文件；工具**不移除**上下文里的原始消息。
+
 ## mao-cli / mao-agent
 
 | 问题 | 处理 |

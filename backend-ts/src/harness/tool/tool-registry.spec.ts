@@ -32,6 +32,7 @@ function deps(overrides: Partial<DefaultToolRegistryDeps> = {}): DefaultToolRegi
     harnessService: {} as never,
     agentLoop: {} as never,
     localToolSessionRegistry: {} as never,
+    localToolExecutor: {} as never,
     visibilityService: {} as never,
     backgroundSubagentManager: {} as never,
     messageMapper: {} as never,
