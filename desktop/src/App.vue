@@ -3,16 +3,13 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, nextTick } from 'vue'
+import { onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { dismissSplash, dismissSplashAfterPaint } from './utils/splash'
-import { installExitFullScreenOnEscape } from './utils/exitFullScreenOnEscape'
 
 const router = useRouter()
-let detachExitFullScreen: (() => void) | undefined
 
 onMounted(async () => {
-  detachExitFullScreen = installExitFullScreenOnEscape()
   // 兜底：异常情况下最多 10 秒后强制移除 Splash
   window.setTimeout(() => dismissSplash(), 10_000)
 
@@ -20,10 +17,6 @@ onMounted(async () => {
   await router.isReady()
   await nextTick()
   dismissSplashAfterPaint()
-})
-
-onUnmounted(() => {
-  detachExitFullScreen?.()
 })
 </script>
 

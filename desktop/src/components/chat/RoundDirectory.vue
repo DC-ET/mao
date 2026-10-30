@@ -81,7 +81,6 @@ function onDocumentClick(e: MouseEvent) {
 }
 function onDocumentKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape' && open.value) {
-    e.preventDefault()
     e.stopPropagation()
     open.value = false
   }

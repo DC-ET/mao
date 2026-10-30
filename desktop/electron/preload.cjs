@@ -58,7 +58,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   minimizeWindow: () => ipcRenderer.invoke('window-minimize'),
   maximizeWindow: () => ipcRenderer.invoke('window-maximize'),
   closeWindow: () => ipcRenderer.invoke('window-close'),
-  exitFullScreen: () => ipcRenderer.invoke('window-exit-fullscreen'),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
   openFeishuAuthWindow: (authUrl, callbackPath) => ipcRenderer.invoke('open-feishu-auth-window', { authUrl, callbackPath }),
   selectDirectory: () => ipcRenderer.invoke('select-directory'),

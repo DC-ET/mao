@@ -1694,13 +1694,6 @@ ipcMain.handle('window-close', () => {
   }
 })
 
-// macOS 系统全屏（绿灯进入的那个 Space）不响应 Esc。渲染进程确认没有弹层占用后再调用。
-ipcMain.handle('window-exit-fullscreen', () => {
-  const win = mainWindow
-  if (!win || win.isDestroyed() || !win.isFullScreen()) return
-  win.setFullScreen(false)
-})
-
 // ========== Original IPC handlers ==========
 
 ipcMain.handle('get-app-version', () => {

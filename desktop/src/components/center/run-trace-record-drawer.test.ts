@@ -424,11 +424,7 @@ describe('RunTraceRecordDrawer', () => {
     expect(keydownListeners).toHaveLength(1)
 
     // Esc
-    keydownListeners[0]!({
-      key: 'Escape',
-      preventDefault: () => {},
-      stopPropagation: () => {},
-    } as unknown as KeyboardEvent)
+    keydownListeners[0]!({ key: 'Escape', stopPropagation: () => {} } as unknown as KeyboardEvent)
     // 遮罩
     ;(findAllByClass(root, 'record-drawer-mask')[0]!.props.onClick as () => void)()
     // ×

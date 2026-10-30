@@ -242,7 +242,6 @@ watch(recordKey, () => {
 
 function onKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape') {
-    event.preventDefault()
     event.stopPropagation()
     emit('close')
   }
