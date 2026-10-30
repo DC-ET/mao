@@ -35,6 +35,25 @@
 - **输入框工具条新增智能体切换器**：模型选择器旁显示当前 Agent 名称（可搜索弹层、头像 + 名称，与模型切换同构交互），选择后确认弹层写明模型跟随口径与「Skill / MCP / 经验库 / 子代理预设自下一轮起按新 Agent 配置，会话级审批放行规则保留」；运行中可切、不打断当前轮，成功后检查器身份分区即时刷新。仅会话态显示（按会话是否绑定 Agent 判定），新建任务态与边路任务不渲染。
 - **检查器「用其他 Agent 重开」**：「智能体」分区新增入口（仅 CLOUD 主会话、非活跃相位、未归档时显示），弹层选择接手 Agent（排除当前值）并提示「同工作区新建 + 旧会话归档、聊天记录不复制」；成功后刷新列表、跳转新会话并把接手说明预填进输入框（可编辑、不自动发送），生成失败（null）时提示「接手说明生成失败，可直接描述需求」。
 
+## 0.0.379 (2026-10-30)
+
+### 后端
+- **修复后台任务结果注入产生非法 JSON**：`BackgroundTaskManager.normalizeResult` 对 output 的限长预算（MAX-400）未计入 `JSON.stringify` 的转义膨胀（引号/反斜杠/换行逐字符 +1），引号密集的构建日志、JSON 转储类输出会触发外层二次截断，在字符串值中间切断产出非法 JSON，并连带丢掉 `output_file` / `current_workdir` 尾部字段（模型失去完整日志的读取入口）。改为按整体序列化长度收敛 output 预算（倍减直至整体不超限），结果恒为合法 JSON。
+- **修复 `shell` 工具 `await_async` 使用过期会话快照**：拿锁等待期间命令可能已被并行调用方替换，`settleSession` 却仍用锁前快照的 `keepSession`，会把新命令方要保留的会话错误关闭（丢失 cwd、环境变量等状态）。改为与 `write_stdin` 路径同口径使用锁后实时值。
+- **`wait_subagents` 超时参数加固**：`timeout_seconds` 传空串不再被 `Number('')=0` 变成 0ms 即刻假超时（回落默认 30 分钟），非数字字符串回落默认、负数仍报错；换算毫秒后钳制 24h 上界，杜绝 `1e308 × 1000 = Infinity` 让等待 deadline 永不到期、工具无限阻塞整个 agent 循环。
+- **`cancel_subagent` 的 `task_id` 改严格整数校验**：`Number('')/Number(false)/Number([]) = 0`、`Number([5]) = 5` 不再通过 `isInteger` 校验，空串/布尔/数组一律报「必须是整数」，杜绝把类型混淆入参当真实任务 id 去取消子代理。
+- **`update_scheduled_task` / `delete_scheduled_task` 的 `task_id` 改严格整数校验**（与 task 工具同口径）：`null`/空串不再被当成任务 #0 查询后回传误导性的「任务不存在」，直接报「缺少必填参数」。
+- **`TokenEstimator.contentToString` 与序列化器对齐**：content part 的 `type` 字段可选，凡带 `text` 的 part 都会发给模型，token 估算不再要求 `type === 'text'`（消除与 `serializeContentPart` 的口径分叉隐患）。
+- **`send_wechat_file` 的 `filename` 空串兜底**：`??` 不处理空串，显式传 `filename: ''` 会把空文件名发给微信协议层导致发送失败；改用 `||` 链兜底回落到文件名推导与 `'file'`。
+
+### 桌面 Electron
+- **LOCAL shell 会话 `cd` 失败不再静默**：`workdir` 指向不存在目录（或 cd 超时）时，此前协议 cd 的结果被完全忽略，命令照常在旧工作目录里执行并以 `exit_code: 0` 假成功返回，模型完全无感知。现在与云端同口径：cd 失败报「工作目录切换失败」、超时关闭会话并报「工作目录切换超时」，命令绝不在错误目录里静默执行；协议命令（cd/pwd）回显退出码以支持该判定（PowerShell 先清 `$LASTEXITCODE`）。
+- **`write_stdin` 触发 bash 退出后立即回收死会话**：输入含 `exit`/`exec` 使 bash 退出时，此前死会话留在会话表里继续占用每会话 30 个的配额（最长 60s 后才被周期清理兜底），与返回文案「会话已关闭」自相矛盾。现在与云端同分支同口径立即回收。
+
+### 终端 CLI（mao-agent）
+- **`read_file` 的 `offset`/`limit` 改严格整数解析**（与云端 `read-file-tool` 同口径）：此前用会 `Math.trunc` 的宽解析，`offset: 1.9` 在云端报错、在本地静默按 1 读，同一份模型参数两种执行模式结果不同；`-0.5` 还会变成 `-0` 绕过负数校验。新增与云端同语义的 `asIntStrict` 并替换。
+- 同步桌面端 localShell 的两处修复（cd 判定、死会话回收）到 `vendor/localShell.cjs`（两份副本保持逐字节一致）。
+
 ## 0.0.378 (2026-10-29)
 
 ### 后端

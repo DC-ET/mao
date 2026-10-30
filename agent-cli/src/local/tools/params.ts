@@ -13,3 +13,20 @@ export function asInt(value: unknown, fallback: number): number {
   }
   return fallback;
 }
+
+/**
+ * 严格整数解析：只接受「本身就是整数」的 number 或纯整数字符串（与云端 json.ts asIntStrict 同语义）。
+ * 与 asInt 的区别是不做 Math.trunc——小数/负小数必须落 fallback，否则 `asInt(1.9)` 会被当成 1、
+ * `asInt(-0.5)` 会得到 -0 并绕过 `n < 0` 校验，造成与云端 read_file 的口径分叉。
+ */
+export function asIntStrict(value: unknown, fallback: number): number {
+  if (typeof value === 'number' && Number.isSafeInteger(value)) return value;
+  if (typeof value === 'string') {
+    const text = value.trim();
+    if (/^-?\d+$/.test(text)) {
+      const n = Number(text);
+      if (Number.isSafeInteger(n)) return n;
+    }
+  }
+  return fallback;
+}

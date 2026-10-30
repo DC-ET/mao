@@ -1,5 +1,5 @@
 import { BaseTool } from '../tool.js';
-import { asText, errorJson, parseObject, toJson } from '../json.js';
+import { asIntStrict, asText, errorJson, parseObject, toJson } from '../json.js';
 import type { SessionService } from '../../deps.js';
 import { harnessLog } from '../../log.js';
 import type { ScheduledTask, ScheduledTaskService } from '../../../schedule/scheduled-task.service.js';
@@ -163,8 +163,10 @@ export class UpdateScheduledTaskTool extends BaseTool {
   protected async executeWithUser(argumentsJson: string, _sessionId: number | null, userId: number | null): Promise<string> {
     try {
       const args = parseObject(argumentsJson) ?? {};
-      const taskId = Number(args.task_id);
-      if (!Number.isFinite(taskId)) return errorJson('缺少必填参数: task_id');
+      // Number(null)/Number('')/Number([]) 都是 0，能通过 isFinite 校验把「任务 #0」当真实任务查询，
+      // 回传误导性的「任务不存在」；asIntStrict 只接受本身就是整数的 number 或纯整数字符串
+      const taskId = asIntStrict(args.task_id, 0);
+      if (!(taskId > 0)) return errorJson('缺少必填参数: task_id');
       if (userId == null) return errorJson('无法获取当前用户信息');
       const reliability = reliabilityFromArgs(args);
       const once = typeof args.once === 'boolean' ? args.once : null;
@@ -198,8 +200,9 @@ export class DeleteScheduledTaskTool extends BaseTool {
   protected async executeWithUser(argumentsJson: string, _sessionId: number | null, userId: number | null): Promise<string> {
     try {
       const args = parseObject(argumentsJson) ?? {};
-      const taskId = Number(args.task_id);
-      if (!Number.isFinite(taskId)) return errorJson('缺少必填参数: task_id');
+      // 与 update 同口径：严格整数，Number(null)/Number('') 的 0 不得当真实任务 id 查询
+      const taskId = asIntStrict(args.task_id, 0);
+      if (!(taskId > 0)) return errorJson('缺少必填参数: task_id');
       if (userId == null) return errorJson('无法获取当前用户信息');
       await this.scheduledTaskService.deleteTask(taskId, userId);
       return toJson({ success: true, task_id: taskId });

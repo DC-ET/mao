@@ -86,7 +86,8 @@ export class TokenEstimator {
       for (const item of content) {
         if (item && typeof item === 'object') {
           const o = item as Record<string, unknown>;
-          if (o.type === 'text' && o.text != null) sb += String(o.text);
+          // 与 serializeContentPart 同口径：type 可选，凡带 text 的 part 都会发给模型，估算须一并计入
+          if (o.text != null) sb += String(o.text);
         }
       }
       return sb;

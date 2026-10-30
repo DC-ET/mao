@@ -135,18 +135,24 @@ export class BackgroundTaskManager {
     const parsed = parseObject(raw);
     let text: string;
     if (parsed != null && typeof parsed.output === 'string') {
-      // output 截断预留 JSON 头部与 error 字段开销，保证重组后的完整 JSON 不再触发整体二次截断
-      const budget = MAX_RESULT_LENGTH - 400;
       // 白名单重建会静默丢掉 truncated/output_file/current_workdir/shellExited 等字段：
       // 模型会把被裁掉尾段的构建日志当成完整输出，也失去完整日志的读取入口，
       // 甚至继续 await_async 一个已退出的死会话。这里展开全部字段，只对 output 限长。
       const payload: Record<string, unknown> = { ...parsed };
       const output = payload.output as string;
-      payload.output = output.length > budget ? output.slice(0, budget) + '... [truncated]' : output;
       // message/error 可能来自本地 shell 的任意输出，仍保留长度上限
       if (typeof payload.message === 'string') payload.message = payload.message.slice(0, 300);
       if (payload.error != null) payload.error = String(payload.error).slice(0, 100);
-      text = JSON.stringify(payload, null, 2);
+      // output 截断必须转义感知：JSON.stringify 对引号/反斜杠/换行逐字符膨胀（控制字符最多 ×6），
+      // 固定预算会被引号密集输出击穿，二次截断在字符串值中间切断产出非法 JSON、连带丢掉
+      // output_file/current_workdir。按整体序列化长度收敛 output 预算，保证结果恒为合法 JSON。
+      let budget = MAX_RESULT_LENGTH - 400;
+      for (;;) {
+        payload.output = output.length > budget ? output.slice(0, budget) + '... [truncated]' : output;
+        text = JSON.stringify(payload, null, 2);
+        if (text.length <= MAX_RESULT_LENGTH || budget <= 0) break;
+        budget = Math.floor(budget / 2);
+      }
     } else {
       text = raw;
     }

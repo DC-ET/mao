@@ -3,7 +3,7 @@ import path from 'node:path';
 import { assertNotSymlink, resolvePathLenient } from '../sandbox';
 import { resolveUserMessagesDir } from '../paths';
 import { withFileLock } from './file-write-lock';
-import { asInt } from './params';
+import { asIntStrict } from './params';
 
 const IMAGE_EXT: Record<string, string> = {
   '.png': 'image/png',
@@ -253,12 +253,14 @@ function readError(message: string): Record<string, unknown> {
 
 /**
  * 解析 offset / limit：只接受有限且非负的整数，与云端 read-file-tool.ts parseLineIndex 同口径。
- * 非法值（负数、非数字、空串）一律抛错，由 handleReadFile 的 catch 转成 readError——
+ * 必须用 asIntStrict（严格整数）而非 asInt：asInt 会 Math.trunc，1.9 会被当成 1、-0.5 会得到 -0
+ * 并绕过 n < 0 校验，同一份模型参数在 LOCAL 与 CLOUD 得到不同结果。
+ * 非法值（负数、非数字、小数、空串）一律抛错，由 handleReadFile 的 catch 转成 readError——
  * 带 error 键，下游据此判失败态。静默钳制会让模型拿到「空 content + success」，
  * 误判文件为空后用 write_file 整体覆写清空它。
  */
 function parseLineIndex(value: unknown, field: 'offset' | 'limit'): number {
-  const n = asInt(value, Number.NaN);
+  const n = asIntStrict(value, Number.NaN);
   if (!Number.isInteger(n) || n < 0) {
     throw new Error(`参数 ${field} 必须是非负整数，收到 ${JSON.stringify(value) ?? String(value)}`);
   }
