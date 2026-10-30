@@ -392,7 +392,7 @@ FROM message WHERE deleted = 0;
 
 `MAO_CLOUD_RUNTIME=docker` 启用用户运行时容器隔离：该用户的 CLOUD 会话中，shell、文件工具（read/write/edit/glob/grep）、MCP stdio、云端终端在每用户独立 Docker 容器内执行，容器内只挂载该用户自己的数据目录，跨用户数据不可读；MySQL / JWT secret / LLM key / 平台级 IM appSecret 不进容器，用户级凭据（Git token、MAO_TOKEN 等）由宿主机每次派发时下发。`MAO_CLOUD_RUNTIME=host`（默认）行为与历史版本完全一致。
 
-**全局开关也可在管理后台切换**：系统设置 → 平台与运维 → 运行环境 → 「用户运行时模式」。DB 值（`system_setting.runtime.mode`，V160）优先于 `MAO_CLOUD_RUNTIME`，保存后无需重启、5 秒内生效；切到 `docker` 时后端先执行容器预检（Docker 可用 + 镜像存在 + socket 根目录可写），预检失败直接拒绝保存并返回原因，不会出现「配置已是 docker 但机器上跑不起来」。`MAO_CLOUD_RUNTIME` 从此只作为缺省值（DB 行缺失 / 值非法 / 查询失败时使用）。
+**全局开关也可在管理后台切换**：系统设置 → 平台与运维 → 运行环境 → 「用户运行时模式」。DB 值（`system_setting.runtime.mode`，V160）优先于 `MAO_CLOUD_RUNTIME`，保存后无需重启、5 秒内生效；切到 `docker` 时后端先执行容器预检（Docker 可用 + 镜像存在 + socket 根目录可写 + **用当前 dist 在镜像内实际加载一次 runtime-agent 与 sharp / node-pty**），预检失败直接拒绝保存并返回原因，不会出现「配置已是 docker 但机器上跑不起来」。`MAO_CLOUD_RUNTIME` 从此只作为缺省值（DB 行缺失 / 值非法 / 查询失败时使用）。
 
 ### 前置条件
 
@@ -404,6 +404,8 @@ FROM message WHERE deleted = 0;
    ```
 
    版本从 `backend-ts/package.json` 读取。**宿主机 Node 升级后必须同步重建镜像**，否则容器内读图（sharp）与终端（node-pty）静默失败。
+
+   **镜像依赖集必须覆盖 `runtime-agent` 的 import 闭包**（当前为 `sharp` / `node-pty` / `@modelcontextprotocol/sdk` / `minimatch` / `yaml`）：容器只挂载宿主机 `dist`（代码），第三方包全部来自镜像的 `node_modules`。backend-ts 新增进入该闭包的 npm 包后，必须同步加进 `Dockerfile.runtime` 并重建镜像，否则容器内 agent 启动即 `ERR_MODULE_NOT_FOUND` 退出，表现为每个用户的任务等满 15 秒后报「容器运行时通道连接超时」（0.0.379 前的 `yaml` 缺失即此形态）。0.0.379 起预检会用当前 dist 在镜像里实际加载一次 agent，漏依赖会直接拒绝切换并提示重建镜像。
 3. **数据目录**：`/opt/mao-data/runtime/channels`（socket 根）与 `/opt/mao-data/deps`（持久依赖）需存在且后端进程可写（首次启动预检会校验，不满足直接启动失败，不静默降级）。
 4. **上传目录**：图片产物（`generate_image` / `edit_image`）落 `{FILE_UPLOAD_DIR}/{userId}/`（宿主机按用户隔离、同名挂入容器），外网经 Nginx `^~ /uploads/` 与 `^~ /api/uploads/` 两个前缀访问；按用户隔离后请确认 Nginx 配置含这两个 location（见上文 Nginx 片段），否则图片类 `file.url` 会被扩展名正则 location 吞掉变 404。
 5. **公共共享目录**：`/opt/mao-data/share`（`MAO_SHARE_DIR` 可覆盖）由后端启动自动创建，无需手工准备。管理员向其中投放文件后，全体 CLOUD 用户的 Agent 即可读取；其 `agent-experience/` 子目录为 **Agent 团队经验库**（0.0.342 起，按 Agent 分库 `<agentId>/`，Agent 会话可读写沉淀经验，管理后台可维护）。**0.0.342 起容器模式该目录改为 rw 挂载**（经验库需容器内写入；挂载 mode 参与容器指纹，升级后存量容器自动重建），管理员投放内容的防误删从挂载层退化为信任 + 备份兜底。投放即时生效（目录级挂载，新增/修改文件无需重启或重建容器）；建议属主与后端运行用户一致、权限 755。**共享即公开**：请勿向该目录投放敏感内容。目录不计入任何用户配额，占满磁盘影响全体服务，建议纳入 `df` 监控；经验库为 Agent 自动写入且整根可写，建议每日快照兜底（示例：`0 3 * * * tar -czf /opt/mao-data/backup/share-$(date +\%F).tgz -C /opt/mao-data share && find /opt/mao-data/backup -name 'share-*.tgz' -mtime +14 -delete`）。

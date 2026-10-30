@@ -19,15 +19,17 @@ SHARP_VERSION="$(node -e "console.log(require('${ROOT_DIR}/backend-ts/package.js
 NODE_PTY_VERSION="$(node -e "console.log(require('${ROOT_DIR}/backend-ts/package.json').dependencies['node-pty'] || 'latest')")"
 MCP_SDK_VERSION="$(node -e "console.log(require('${ROOT_DIR}/backend-ts/package.json').dependencies['@modelcontextprotocol/sdk'] || 'latest')")"
 MINIMATCH_VERSION="$(node -e "console.log(require('${ROOT_DIR}/backend-ts/package.json').dependencies.minimatch || 'latest')")"
+YAML_VERSION="$(node -e "console.log(require('${ROOT_DIR}/backend-ts/package.json').dependencies.yaml || 'latest')")"
 # Debian 源：默认官方源；访问不了 deb.debian.org 的构建机可传 APT_MIRROR=mirrors.aliyun.com
 APT_MIRROR="${APT_MIRROR:-deb.debian.org}"
-echo "构建 ${IMAGE}:${TAG}（sharp=${SHARP_VERSION}, node-pty=${NODE_PTY_VERSION}, mcp-sdk=${MCP_SDK_VERSION}, minimatch=${MINIMATCH_VERSION}, apt=${APT_MIRROR}）"
+echo "构建 ${IMAGE}:${TAG}（sharp=${SHARP_VERSION}, node-pty=${NODE_PTY_VERSION}, mcp-sdk=${MCP_SDK_VERSION}, minimatch=${MINIMATCH_VERSION}, yaml=${YAML_VERSION}, apt=${APT_MIRROR}）"
 
 docker build \
   --build-arg SHARP_VERSION="${SHARP_VERSION}" \
   --build-arg NODE_PTY_VERSION="${NODE_PTY_VERSION}" \
   --build-arg MCP_SDK_VERSION="${MCP_SDK_VERSION}" \
   --build-arg MINIMATCH_VERSION="${MINIMATCH_VERSION}" \
+  --build-arg YAML_VERSION="${YAML_VERSION}" \
   --build-arg APT_MIRROR="${APT_MIRROR}" \
   -f "${ROOT_DIR}/Dockerfile.runtime" \
   -t "${IMAGE}:${TAG}" \

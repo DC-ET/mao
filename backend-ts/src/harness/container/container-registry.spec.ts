@@ -690,4 +690,41 @@ describe('container registry', () => {
     const lastRm = log.map((l) => l.startsWith('rm -f')).lastIndexOf(true);
     expect(lastRm).toBeLessThan(lastRun);
   });
+
+  it('precheckRunsDistLoadSmokeAgainstImage', async () => {
+    // 切 docker 前的加载冒烟：镜像只带固定依赖集、dist 只挂代码，必须实际加载一次
+    // runtime-agent 才能发现「镜像缺 dist 新依赖」
+    const base = useTmpDir('mao-registry-precheck-');
+    mkdirSync(join(base, 'channels'), { recursive: true });
+    mkdirSync(join(base, 'dist'), { recursive: true });
+    const log: string[] = [];
+    const { registry } = makeRegistry(base, log);
+    await registry.precheck();
+    const smoke = log.find((l) => l.startsWith('run --rm'));
+    expect(smoke).toBeDefined();
+    expect(smoke).toContain(`-v ${join(base, 'dist')}:${join(base, 'dist')}:ro`);
+    expect(smoke).toContain(join(base, 'dist', 'harness', 'container', 'runtime-agent.js'));
+  });
+
+  it('precheckRejectsImageThatCannotLoadDistAgent', async () => {
+    // 2026-10-30 事故回归：镜像缺 dist 新增依赖（yaml）时容器内 agent 启动即崩，
+    // 只会表现为每用户 15s 连接超时。precheck 必须在切模式时就拒绝并给出重建镜像提示
+    const base = useTmpDir('mao-registry-precheck-dep-');
+    mkdirSync(join(base, 'channels'), { recursive: true });
+    mkdirSync(join(base, 'dist'), { recursive: true });
+    const log: string[] = [];
+    const docker: DockerCli = {
+      async run(args) {
+        log.push(args.join(' '));
+        if (args[0] === 'version') return '27.0.0\n';
+        if (args[0] === 'images') return 'mao-runtime:latest\n';
+        if (args[0] === 'run') throw new Error("Cannot find package 'yaml'");
+        return 'ok\n';
+      },
+    };
+    const { registry } = makeRegistry(base, log, {}, docker);
+    const error = await registry.precheck().then(() => null, (e: unknown) => e as Error);
+    expect(error?.message).toContain('无法加载当前 dist 的 runtime-agent');
+    expect(error?.message).toContain('build-runtime-image.sh');
+  });
 });

@@ -45,6 +45,8 @@
 - **`update_scheduled_task` / `delete_scheduled_task` 的 `task_id` 改严格整数校验**（与 task 工具同口径）：`null`/空串不再被当成任务 #0 查询后回传误导性的「任务不存在」，直接报「缺少必填参数」。
 - **`TokenEstimator.contentToString` 与序列化器对齐**：content part 的 `type` 字段可选，凡带 `text` 的 part 都会发给模型，token 估算不再要求 `type === 'text'`（消除与 `serializeContentPart` 的口径分叉隐患）。
 - **`send_wechat_file` 的 `filename` 空串兜底**：`??` 不处理空串，显式传 `filename: ''` 会把空文件名发给微信协议层导致发送失败；改用 `||` 链兜底回落到文件名推导与 `'file'`。
+- **修复 Docker 运行模式下工具调用全部失败**：团队经验库（0.0.342）让容器侧 `runtime-agent` 的依赖闭包里多了 `yaml`，而运行时镜像 `mao-runtime:latest` 只带固定依赖集、未随代码同步重建——容器内 agent 启动即 `ERR_MODULE_NOT_FOUND` 退出，表现为每个用户的任务等满 15 秒后报「容器运行时通道连接超时」。已把 `yaml` 补进镜像构建链（`Dockerfile.runtime` + `scripts/build-runtime-image.sh`，版本跟随 `backend-ts/package.json` 读取）。
+- **`ContainerRegistry.precheck()` 新增「镜像 + 当前 dist」加载冒烟**：切 docker 前用当前 dist 在镜像里实际加载一次 runtime-agent 与 sharp / node-pty（只加载、不启动 agent），发现新增 npm 依赖或 Node 升级后漏重建镜像时，后台保存「系统设置 → 运行环境」直接以明确错误拒绝并提示重建镜像命令，不再等到用户任务逐个超时。
 
 ### 桌面 Electron
 - **LOCAL shell 会话 `cd` 失败不再静默**：`workdir` 指向不存在目录（或 cd 超时）时，此前协议 cd 的结果被完全忽略，命令照常在旧工作目录里执行并以 `exit_code: 0` 假成功返回，模型完全无感知。现在与云端同口径：cd 失败报「工作目录切换失败」、超时关闭会话并报「工作目录切换超时」，命令绝不在错误目录里静默执行；协议命令（cd/pwd）回显退出码以支持该判定（PowerShell 先清 `$LASTEXITCODE`）。

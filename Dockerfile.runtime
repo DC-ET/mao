@@ -5,6 +5,10 @@
 # 宿主机 Node 升级后必须同步重建本镜像（scripts/build-runtime-image.sh），否则容器内
 # 读图/pty 静默失败。
 #
+# 依赖清单 = runtime-agent 的 import 闭包里用到的全部第三方包（dist 只挂代码、不带
+# node_modules）。backend-ts 新增进入该闭包的 npm 包时必须同步加到这里并重建镜像，
+# 否则容器内 agent 启动即 ERR_MODULE_NOT_FOUND（表现为每用户任务连接超时）。
+#
 # 构建：bash scripts/build-runtime-image.sh（自动从 backend-ts/package.json 读取版本）
 FROM node:22-bookworm-slim
 
@@ -12,6 +16,7 @@ ARG SHARP_VERSION=latest
 ARG NODE_PTY_VERSION=latest
 ARG MCP_SDK_VERSION=latest
 ARG MINIMATCH_VERSION=latest
+ARG YAML_VERSION=latest
 # Debian 源：默认官方源；构建机访问 deb.debian.org 受限时传
 # --build-arg APT_MIRROR=mirrors.aliyun.com（build-runtime-image.sh 读同名环境变量）。
 ARG APT_MIRROR=deb.debian.org
@@ -29,7 +34,7 @@ RUN mkdir -p /opt/mao/backend-ts \
   && cd /opt/mao/backend-ts \
   && npm init -y >/dev/null \
   && npm pkg set type=module \
-  && npm install --no-audit --no-fund "sharp@${SHARP_VERSION}" "node-pty@${NODE_PTY_VERSION}" "@modelcontextprotocol/sdk@${MCP_SDK_VERSION}" "minimatch@${MINIMATCH_VERSION}" \
+  && npm install --no-audit --no-fund "sharp@${SHARP_VERSION}" "node-pty@${NODE_PTY_VERSION}" "@modelcontextprotocol/sdk@${MCP_SDK_VERSION}" "minimatch@${MINIMATCH_VERSION}" "yaml@${YAML_VERSION}" \
   && npm cache clean --force
 
 # 默认以 root 运行（决策 2：容器内 root，隔离靠挂载清单）

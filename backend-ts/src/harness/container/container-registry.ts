@@ -158,7 +158,43 @@ export class ContainerRegistry {
     if (!existsSync(c.channelDir) || !isWritable(c.channelDir)) {
       throw new ContainerStartError(`socket 根目录不可写: ${c.channelDir}`);
     }
+    // 依赖冒烟（2026-10-30 事故回归）：容器侧 agent 的第三方依赖全部来自镜像的
+    // node_modules、代码来自宿主机只读挂载的 dist。backend-ts 新增 npm 依赖（如团队经验库
+    // 引入的 yaml）后若镜像未重建，容器内 agent 启动即 ERR_MODULE_NOT_FOUND 退出，表现为
+    // 每个用户工具调用等满 startTimeoutMs 后报「容器运行时通道连接超时」。这里用当前 dist
+    // 实际加载一次，把「镜像与 dist 依赖不匹配」拦在切模式（后台保存 runtime.mode）之前。
+    await this.assertImageLoadsRuntimeAgent();
     harnessLog('info', `[container] precheck OK: image=${c.image}`);
+  }
+
+  /**
+   * 镜像 + 当前 dist 的加载冒烟（precheck 调用）。
+   * - 只加载不运行：node -e 下 process.argv[1] 为空，runtime-agent 的 isMainModule 判定为
+   *   false，不会真的启动 agent；
+   * - sharp / node-pty 一并加载：两者是镜像里的 native 模块，宿主机 Node 升级后漏重建
+   *   镜像会导致容器内读图/pty 静默失败（§4），这里提前显性暴露；
+   * - 工作目录取 dist 的父目录：镜像把 backend-ts 的 node_modules 装在该层（见
+   *   Dockerfile.runtime），bare import 才能命中。
+   */
+  private async assertImageLoadsRuntimeAgent(): Promise<void> {
+    const c = this.opts.config.container;
+    const distDir = path.resolve(c.distDir);
+    const agentEntry = `file://${distDir}/harness/container/runtime-agent.js`;
+    const code = `Promise.all([import('${agentEntry}'), import('sharp'), import('node-pty')])`
+      + `.catch((e) => { console.error('[precheck]', (e && e.message) || e); process.exit(1); });`;
+    try {
+      await this.docker.run([
+        'run', '--rm',
+        '-w', path.dirname(distDir),
+        '-v', `${distDir}:${distDir}:ro`,
+        c.image,
+        'node', '-e', code,
+      ], 60_000);
+    } catch (e) {
+      throw new ContainerStartError(
+        `运行时镜像 ${c.image} 无法加载当前 dist 的 runtime-agent（容器内依赖与代码不匹配，通常是有新增 npm 依赖或 Node 版本升级后未重建镜像；请执行 scripts/build-runtime-image.sh 后重试）: ${(e as Error).message}`,
+      );
+    }
   }
 
   getEntry(userId: number): ContainerEntry | undefined {
