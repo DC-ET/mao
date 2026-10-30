@@ -121,7 +121,7 @@ import type { SideTaskContextMode } from '../../types/file-browser'
 import type { SideTaskEntryOptions } from '../../composables/useCenterTabs'
 import { getToken } from '../../utils/auth-storage'
 import { nowDateTime } from '../../utils/datetime'
-import { cloudProjectKeyForNewTask } from '../../utils/cloud-project'
+import { cloudProjectKeyForNewTask, newTaskWorkspacePrefill } from '../../utils/cloud-project'
 import { resolveInspectorTarget, type InspectorTarget, type InspectorViewType } from '../../utils/inspector-target'
 import { api, fetchWorkspaceOverview } from '../../api'
 import TaskIndexPanel from '../../components/task/TaskIndexPanel.vue'
@@ -371,10 +371,10 @@ const { tabs, activeTab, activeTabId, openFileTab, openDiffTab, closeTab, closeA
 /** 总览页签「用于新任务」：项目目录带 cloudProjectKey（下拉/复用链路同形态），临时 / 其他目录直接预填路径 */
 function handleUseForNewTask(entry: WorkspaceOverviewEntry) {
   if (entry.kind === 'project') {
-    void navigateToNewTask({ executionMode: 'CLOUD', workspace: entry.path, cloudProjectKey: entry.name })
+    void navigateToNewTask({ executionMode: 'CLOUD', workspace: entry.path, reuseWorkspace: true, cloudProjectKey: entry.name })
     return
   }
-  void navigateToNewTask({ executionMode: 'CLOUD', workspace: entry.path })
+  void navigateToNewTask({ executionMode: 'CLOUD', workspace: entry.path, reuseWorkspace: true })
 }
 
 /** 新建任务下拉富化：overview 按 path 合并大小 / 会话数到 cloud-projects 条目（仅 kind='project' 有对应目录）。 */
@@ -1005,6 +1005,9 @@ type NewTaskDefaults = {
   agentId?: string | null
   executionMode?: string
   workspace?: string
+  /** 显式复用该工作区（总览「用于新任务」）：只有带此标记时 CLOUD 才预填 workspace，
+   *  其余入口（上次查看的会话、分组新建、路由直开）的 workspace 只对 LOCAL 生效 */
+  reuseWorkspace?: boolean
   cloudProjectKey?: string
   permissionLevel?: string
   modelId?: number
@@ -1044,6 +1047,7 @@ function getRouteNewTaskDefaults(): NewTaskDefaults {
     agentId: getQueryString('agentId') || null,
     executionMode: getQueryString('mode') || 'CLOUD',
     workspace: getQueryString('workspace') || '',
+    reuseWorkspace: getQueryString('reuse') === '1',
     cloudProjectKey: getQueryString('cloudProjectKey') || '',
     permissionLevel: getQueryString('permissionLevel') || 'READ_ONLY',
     modelId: Number.isFinite(modelId) && modelId > 0 ? modelId : undefined
@@ -1055,6 +1059,7 @@ function buildNewTaskRoute(defaults?: NewTaskDefaults | null) {
   if (defaults?.agentId) query.agentId = String(defaults.agentId)
   if (defaults?.executionMode) query.mode = normalizeNewTaskMode(defaults.executionMode)
   if (defaults?.workspace) query.workspace = defaults.workspace
+  if (defaults?.reuseWorkspace) query.reuse = '1'
   if (defaults?.cloudProjectKey) query.cloudProjectKey = defaults.cloudProjectKey
   if (defaults?.permissionLevel) query.permissionLevel = defaults.permissionLevel
   if (defaults?.modelId) query.modelId = String(defaults.modelId)
@@ -1073,6 +1078,7 @@ async function resolveNewTaskDefaults(defaults?: NewTaskDefaults | null): Promis
     agentId: defaults?.agentId || null,
     executionMode: defaults?.executionMode || 'CLOUD',
     workspace: defaults?.workspace,
+    reuseWorkspace: defaults?.reuseWorkspace,
     cloudProjectKey: defaults?.cloudProjectKey,
     permissionLevel: defaults?.permissionLevel || 'READ_ONLY',
     modelId: defaults?.modelId
@@ -1109,9 +1115,9 @@ async function enterNewTaskMode(defaults?: NewTaskDefaults | null) {
   }
   // 工作区/项目选择一并同步复位：isNewTaskMode 随路由立即转真，若等 await 之后再写，
   // 窗口内回写 watch 会用上一个新建态草稿的残留值建文件 provider，闪一下旧文件树。
-  // CLOUD 也保留显式 workspace：总览「用于新任务」对临时/其他目录带入绝对路径
-  // （后端 POST /v1/sessions 支持 CLOUD + 本人根下绝对 workspace），常规新建态为 ''。
-  newTaskWorkspace.value = defaults?.workspace || ''
+  // CLOUD 只在「显式复用」（总览「用于新任务」带 reuseWorkspace 标记）时预填
+  // workspace；其余入口一律 ''，新建会话由后端自动建目录。
+  newTaskWorkspace.value = newTaskWorkspacePrefill(earlyMode, defaults) || ''
   newTaskCloudProjectKey.value = earlyMode === 'CLOUD' ? (defaults?.cloudProjectKey || '') : ''
   // 进入新建态一律从干净工作台开始：作废上次新建态遗留的中心 Tab（见 resetNewTaskTabs）
   resetNewTaskTabs()
@@ -1125,7 +1131,7 @@ async function enterNewTaskMode(defaults?: NewTaskDefaults | null) {
   const mode = normalizeNewTaskMode(resolved.executionMode)
   newTaskAgentId.value = resolved.agentId ? String(resolved.agentId) : null
   newTaskMode.value = mode
-  newTaskWorkspace.value = resolved.workspace || ''
+  newTaskWorkspace.value = newTaskWorkspacePrefill(mode, resolved) || ''
   newTaskCloudProjectKey.value = mode === 'CLOUD' ? (resolved.cloudProjectKey || '') : ''
   newTaskWorkspaceMode.value = 'new'
   newTaskGitCloneUrl.value = ''

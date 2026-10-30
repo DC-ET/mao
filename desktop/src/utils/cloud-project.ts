@@ -85,6 +85,21 @@ export function cloudProjectKeyForNewTask(
   return session.projectKey
 }
 
+/**
+ * 新建态要预填的工作区路径（技术方案 2026-10-29「用于新任务」）：
+ * LOCAL 沿用所选目录；CLOUD 仅在「显式复用」（总览行操作带入 reuseWorkspace 标记）时
+ * 才预填绝对路径——后端 POST /v1/sessions 接受 CLOUD + 本人根下绝对 workspace 并复用它。
+ * 其余入口（上次查看的会话回退、分组新建、路由直开）一律不预填，新建会话由后端自动建目录。
+ */
+export function newTaskWorkspacePrefill(
+  executionMode: string,
+  defaults: { workspace?: string; reuseWorkspace?: boolean } | null | undefined
+): string {
+  if (!defaults?.workspace) return ''
+  if (executionMode === 'LOCAL') return defaults.workspace
+  return defaults.reuseWorkspace ? defaults.workspace : ''
+}
+
 export function cloudGroupKey(session: Pick<Session, 'executionMode' | 'workspace'> & Partial<Pick<Session, 'projectKey' | 'agentId' | 'source'>>): string {
   if (session.source === 'embed') {
     return `${EMBED_GROUP_PREFIX}${session.agentId ?? 'null'}`

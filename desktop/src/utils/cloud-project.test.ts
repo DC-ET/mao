@@ -9,6 +9,7 @@ import {
   isGroupRenameable,
   isSignalGroupKey,
   isWeixinGroupSession,
+  newTaskWorkspacePrefill,
   resolveGroupLabel,
   SIGNAL_GROUP_KEY,
   workspaceTailLabel
@@ -212,5 +213,28 @@ describe('cloudWorkspaceIndicator', () => {  it('shows stable workspace path lab
 
   it('still shows temp workspace for unrelated workspaces', () => {
     expect(cloudWorkspaceIndicator('CLOUD', '/opt/mao-data/workspace/2/sessions/xx', undefined)).toBe('临时工作区')
+  })
+})
+
+describe('newTaskWorkspacePrefill（新建态工作区预填口径）', () => {
+  it('LOCAL 沿用所选目录（有无复用标记都预填）', () => {
+    expect(newTaskWorkspacePrefill('LOCAL', { workspace: '/Users/x/p' })).toBe('/Users/x/p')
+    expect(newTaskWorkspacePrefill('LOCAL', { workspace: '/Users/x/p', reuseWorkspace: true })).toBe('/Users/x/p')
+  })
+
+  it('CLOUD 仅显式复用（reuseWorkspace）时预填绝对路径', () => {
+    expect(newTaskWorkspacePrefill('CLOUD', { workspace: '/root/7/123', reuseWorkspace: true })).toBe('/root/7/123')
+  })
+
+  it('CLOUD 无复用标记不预填：上次查看的会话 / 分组新建 / 路由直开都走自动建目录', () => {
+    // 回归：lastViewedSession 回退会带上次 CLOUD 会话的 workspace，不得复用成新任务工作区
+    expect(newTaskWorkspacePrefill('CLOUD', { workspace: '/root/7/5' })).toBe('')
+    expect(newTaskWorkspacePrefill('CLOUD', { workspace: '/root/7/5', reuseWorkspace: false })).toBe('')
+  })
+
+  it('无 workspace 一律空串', () => {
+    expect(newTaskWorkspacePrefill('LOCAL', {})).toBe('')
+    expect(newTaskWorkspacePrefill('CLOUD', { reuseWorkspace: true })).toBe('')
+    expect(newTaskWorkspacePrefill('CLOUD', null)).toBe('')
   })
 })
