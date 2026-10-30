@@ -46,7 +46,7 @@
       <el-table-column label="操作" width="250" fixed="right">
         <template #default="{ row }">
           <el-button type="primary" link size="small" @click="emit('open-file-manager', row)">文件管理</el-button>
-          <el-button type="primary" link size="small" @click="emit('use-for-new-task', row)">用于新任务</el-button>
+          <el-button type="primary" link size="small" @click="emit('use-for-new-task', row)">新任务</el-button>
           <el-button type="danger" link size="small" @click="openDelete(row)">删除</el-button>
         </template>
       </el-table-column>
@@ -111,7 +111,7 @@ import { formatDateTime } from '../../utils/datetime'
 import type { WorkspaceKind, WorkspaceOverviewEntry } from '../../types/workspace-overview'
 
 const emit = defineEmits<{
-  /** 「用于新任务」：TaskView 负责按条目类别预填新建任务的工作区 */
+  /** 「新任务」：TaskView 负责按条目类别预填新建任务的工作区 */
   'use-for-new-task': [entry: WorkspaceOverviewEntry]
   /** 「文件管理」：打开该目录自己的文件管理页签 */
   'open-file-manager': [entry: WorkspaceOverviewEntry]
