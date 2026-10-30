@@ -399,7 +399,9 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
           const sessionData = await sessionStore.createSession(
             agentId.value,
             executionMode.value,
-            executionMode.value === 'LOCAL' ? workspace.value || undefined : undefined,
+            // CLOUD 常规新建态 workspace 为 ''（→ undefined，走后端自动建目录）；
+            // 总览「用于新任务」带入的显式目录同样要传到后端（本地模式一直是这个口径）
+            workspace.value || undefined,
             environmentInfo,
             selectedModelId?.value,
             permissionLevel?.value,

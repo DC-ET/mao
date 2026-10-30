@@ -48,7 +48,13 @@
         <span>{{ workspace ? dirName : '选择工作目录' }}</span>
       </div>
       <div v-if="executionMode === 'CLOUD'" class="cloud-workspace-detail">
-        <template v-if="workspaceMode === 'existing'">
+        <!-- 总览「用于新任务」带入的显式目录（临时/其他工作区）：只读展示，改动工作区来源即让位 -->
+        <div v-if="explicitWorkspace" class="cloud-workspace-fixed">
+          <el-icon :size="13"><FolderOpened /></el-icon>
+          <span class="cloud-workspace-fixed-name" :title="explicitWorkspace">{{ dirName || explicitWorkspace }}</span>
+          <el-tag size="small" round>复用</el-tag>
+        </div>
+        <template v-else-if="workspaceMode === 'existing'">
           <el-select
             :model-value="cloudProjectKey"
             placeholder="选择工作区"
@@ -62,7 +68,14 @@
               :key="p.name"
               :label="p.name"
               :value="p.name"
-            />
+            >
+              <div class="cloud-project-option">
+                <span class="cloud-project-option-name">{{ p.name }}</span>
+                <span v-if="p.sizeBytes != null || p.activeSessions != null" class="cloud-project-option-sub">
+                  {{ cloudProjectSubtitle(p) }}
+                </span>
+              </div>
+            </el-option>
           </el-select>
         </template>
         <template v-else-if="workspaceMode === 'git'">
@@ -92,11 +105,13 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { Cloudy, Monitor, WarningFilled, FolderOpened } from '@element-plus/icons-vue'
 import AgentSelector from '../task/AgentSelector.vue'
 import type { CloudProject } from '../../stores/session'
+import { formatSize } from '../../utils/file-manager'
 
-defineProps<{
+const props = defineProps<{
   isNewTask: boolean
   layout: 'centered' | 'docked'
   isTouchDevice: boolean
@@ -117,7 +132,60 @@ defineProps<{
   selectWorkspace: () => void
 }>()
 
+/** 新建态带入的显式工作区（总览「用于新任务」）：无 cloudProjectKey 时以只读条目展示，
+ *  有项目键时仍走「现有工作区」下拉（路径与 projects/{key} 一致，下拉才是可控入口） */
+const explicitWorkspace = computed(() =>
+  props.executionMode === 'CLOUD' && props.workspace && !props.cloudProjectKey ? props.workspace : '')
+
+/** 「复用已有工作区」条目副标题：大小 + 会话数（overview 富化字段缺省时不显示副标题） */
+function cloudProjectSubtitle(p: CloudProject): string {
+  const parts: string[] = []
+  if (p.sizeBytes != null) parts.push(formatSize(p.sizeBytes))
+  if (p.activeSessions != null || p.archivedSessions != null) {
+    parts.push(`进行中 ${p.activeSessions ?? 0} · 归档 ${p.archivedSessions ?? 0}`)
+  }
+  return parts.join(' · ')
+}
+
 const emit = defineEmits<{
   'update:selectedAgentId': [id: string | null]
 }>()
 </script>
+
+<style scoped>
+.cloud-workspace-fixed {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: var(--aw-radius-pill);
+  background: var(--aw-canvas-parchment);
+  color: var(--aw-ink);
+  font-size: var(--aw-text-fine);
+}
+
+.cloud-workspace-fixed-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cloud-project-option {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.cloud-project-option-name {
+  font-size: var(--aw-text-caption);
+}
+
+.cloud-project-option-sub {
+  font-size: var(--aw-text-micro);
+  color: var(--aw-ink-muted-48);
+}
+</style>

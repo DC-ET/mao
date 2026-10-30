@@ -420,6 +420,23 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
   }
 
   /**
+   * 打开「我的工作区」总览 Tab（单例 id 'workspace'，技术方案 2026-10-29 §2.1-3）。
+   * 注册方式与 git tab 完全一致：不随刷新重建，恢复匹配不到就留 chat。
+   */
+  function openWorkspaceOverviewTab() {
+    const state = getSessionState()
+    const existing = state.tabs.find(t => t.type === 'workspace_overview')
+    if (existing) {
+      state.activeTabId = existing.id
+      notifyTabsChanged()
+      return
+    }
+    state.tabs.push({ id: 'workspace', type: 'workspace_overview', title: '我的工作区' })
+    state.activeTabId = 'workspace'
+    notifyTabsChanged()
+  }
+
+  /**
    * 打开子代理只读 Tab。如果已存在则直接激活。
    */
   function openSubagentTab(childSessionId: number, title: string) {
@@ -729,6 +746,7 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     openTraceTab,
     openFileManagerTab,
     openGitTab,
+    openWorkspaceOverviewTab,
     updateSideTaskTab,
     restoreSideTaskTabs,
     restoreSubagentTabs,

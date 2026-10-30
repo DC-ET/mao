@@ -5,6 +5,7 @@ import { redirectToLogin } from '../utils/login-redirect'
 import { useAuthStore } from '../stores/auth'
 import { getRefreshToken, getToken, setTokens } from '../utils/auth-storage'
 import type { MessageSearchResult } from '../types/chat'
+import type { WorkspaceOverviewResult, WorkspaceReference } from '../types/workspace-overview'
 
 /** 强制下线：动态引入 router（避免模块加载期创建路由，破坏 Node 环境单测）。 */
 async function forceRelogin(): Promise<void> {
@@ -533,6 +534,31 @@ export async function saveMemorySettings(autoCaptureEnabled: boolean): Promise<v
 export async function listMemoryProjects(): Promise<string[]> {
   const { data } = await api.get('/memory/projects')
   return data?.projects ?? []
+}
+
+// ─── 工作区总览与生命周期（技术方案 2026-10-29） ───
+
+export async function fetchWorkspaceOverview(): Promise<WorkspaceOverviewResult> {
+  const { data } = await api.get('/files/workspace-overview')
+  return data ?? { entries: [], error: null }
+}
+
+export async function refreshWorkspaceOverview(path?: string | null): Promise<void> {
+  await api.post('/files/workspace-overview/refresh', { path: path ?? null })
+}
+
+/** 删除确认弹层取活跃引用清单；路径非法时后端回 400 信封（拦截器 toast），此处返回空清单 */
+export async function fetchWorkspaceReferences(path: string): Promise<WorkspaceReference[]> {
+  try {
+    const { data } = await api.get('/files/workspace-overview/references', { params: { path } })
+    return data ?? []
+  } catch {
+    return []
+  }
+}
+
+export async function deleteWorkspaceByPath(path: string): Promise<void> {
+  await api.delete('/files/workspace-overview', { data: { path } })
 }
 
 // ─── 审批放行规则（LOCAL 工具审批 allowlist） ───

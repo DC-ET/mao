@@ -61,6 +61,11 @@
         @open-branch-diff="emit('open-branch-diff', $event)"
         @add-file-to-chat="emit('add-file-to-chat', $event)"
       />
+      <!-- 我的工作区：全局资产视图，不随会话切换（key 固定） -->
+      <WorkspaceOverviewPanel
+        v-else-if="activeTab?.type === 'workspace_overview'"
+        @use-for-new-task="emit('use-for-new-task', $event)"
+      />
     </KeepAlive>
   </div>
 </template>
@@ -75,11 +80,13 @@ import SubagentChatPanel from '../chat/SubagentChatPanel.vue'
 import RunTracePanel from './RunTracePanel.vue'
 import FileManagerPanel from '../file-browser/FileManagerPanel.vue'
 import GitManagerPanel from '../git/GitManagerPanel.vue'
+import WorkspaceOverviewPanel from '../workspace/WorkspaceOverviewPanel.vue'
 import type { Tab } from '../../types/file-browser'
 import type { WorkspaceFileProvider } from '../../composables/workspace-file-provider'
 import type { WorkspaceGitProvider } from '../../composables/workspace-git-provider'
 import type { WorkspacePathChange } from '../../utils/workspace-tab-paths'
 import type { GitChangedFile } from '../../types/git'
+import type { WorkspaceOverviewEntry } from '../../types/workspace-overview'
 
 const props = defineProps<{
   tabs: Tab[]
@@ -100,6 +107,7 @@ const emit = defineEmits<{
   'open-git-diff': [file: GitChangedFile, repoPath?: string]
   'open-commit-diff': [payload: { hash: string; file: GitChangedFile; repoPath?: string }]
   'open-branch-diff': [payload: { base: string; target: string; file: GitChangedFile; repoPath?: string }]
+  'use-for-new-task': [entry: WorkspaceOverviewEntry]
 }>()
 
 const activeTab = computed(() => {

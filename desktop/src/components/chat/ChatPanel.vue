@@ -845,9 +845,10 @@ async function handlePermissionLevelChange(level: string) {
 
 function handleNewTaskModeChange(mode: string) {
   newTaskMode.value = mode as 'CLOUD' | 'LOCAL'
-  if (mode === 'CLOUD') {
-    newTaskWorkspace.value = ''
-  } else {
+  // 模式互斥：本地目录与云端工作区来源各只对自己模式有意义，切换即清空对面选择
+  //（CLOUD 带入的显式工作区是服务器路径，不能留作本地目录候选；反之本地路径也不能用于 CLOUD）
+  newTaskWorkspace.value = ''
+  if (mode !== 'CLOUD') {
     newTaskCloudProjectKey.value = ''
   }
 }
@@ -858,9 +859,16 @@ function handleNewTaskWorkspaceChange(ws: string) {
 
 function handleNewTaskCloudProjectKeyChange(key: string) {
   newTaskCloudProjectKey.value = key
+  // 手动选 / 填项目即放弃总览带入的显式目录：后端按 cloudProjectKey 解析
+  // projects/{key}，显式路径若仍在会优先生效，与界面选择不符
+  newTaskWorkspace.value = ''
 }
 
 function handleNewTaskWorkspaceModeChange(mode: string) {
+  if (mode !== newTaskWorkspaceMode.value) {
+    // 主动切换工作区来源同样让位：否则旧显式路径仍优先生成会话
+    newTaskWorkspace.value = ''
+  }
   newTaskWorkspaceMode.value = mode
   if (mode === 'git') {
     newTaskCloudProjectKey.value = ''

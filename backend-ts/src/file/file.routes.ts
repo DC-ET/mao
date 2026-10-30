@@ -20,6 +20,7 @@ import type { WorkspaceGitService } from './workspace-git.service.js';
 import type { GitCommitMessageService } from './git-commit-message.service.js';
 import type { GitWriteOperationService, LocalGitActivity } from './git-write-operation.service.js';
 import type { WorkspaceWriteService } from './workspace-write.service.js';
+import type { WorkspaceOverviewService } from './workspace-overview.service.js';
 
 export interface FileRouteDeps {
   fileService: FileService;
@@ -29,6 +30,7 @@ export interface FileRouteDeps {
   gitCommitMessageService: GitCommitMessageService;
   gitWriteOperationService: GitWriteOperationService;
   workspaceWriteService: WorkspaceWriteService;
+  workspaceOverviewService: WorkspaceOverviewService;
   pathSandbox: PathSandbox;
   getUploadBaseUrl?: () => Promise<string | null>;
   runtimeDataResolver?: RuntimeDataResolver;
@@ -37,7 +39,7 @@ export interface FileRouteDeps {
 export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): void {
   const {
     fileService, sessionService, workspaceBrowseService, workspaceGitService,
-    gitCommitMessageService, gitWriteOperationService, workspaceWriteService, pathSandbox,
+    gitCommitMessageService, gitWriteOperationService, workspaceWriteService, workspaceOverviewService, pathSandbox,
   } = deps;
 
   function requireCloudWorkspace(session: Session): string {
@@ -416,6 +418,57 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
     const force = queryOptStr(request, 'force') === 'true';
     const data = await workspaceWriteService.delete(session.id!, requireCloudWorkspace(session), path, { force });
     return sendOk(reply, data);
+  });
+
+  // ─── 工作区总览与生命周期（技术方案 2026-10-29）：登录态即可，无会话上下文 ───
+
+  app.get('/v1/files/workspace-overview', async (request, reply) => {
+    const userId = requireUserId(request);
+    const { entries, error } = await workspaceOverviewService.listOverview(userId);
+    return sendOk(reply, { entries, error });
+  });
+
+  // 删除确认弹层取活跃引用清单（D4③：失败信封无 data 字段，409 无法携带结构化清单，
+  // 故清单由弹层打开时预先拉取）
+  app.get('/v1/files/workspace-overview/references', async (request, reply) => {
+    const userId = requireUserId(request);
+    const path = queryOptStr(request, 'path');
+    if (path == null) throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
+    const resolved = workspaceOverviewService.resolveDeletablePath(userId, path);
+    if ('error' in resolved) {
+      sendJson(reply, 200, fail(400, resolved.message));
+      return;
+    }
+    const references = await workspaceOverviewService.listActiveReferences(userId, resolved.path);
+    return sendOk(reply, references);
+  });
+
+  app.post('/v1/files/workspace-overview/refresh', async (request, reply) => {
+    const userId = requireUserId(request);
+    const body = bodyOf<{ path?: string | null }>(request);
+    await workspaceOverviewService.refresh(userId, body.path ?? null);
+    return sendOk(reply);
+  });
+
+  app.delete('/v1/files/workspace-overview', async (request, reply) => {
+    const userId = requireUserId(request);
+    const body = bodyOf<{ path?: string | null }>(request);
+    if (body.path == null || body.path.length === 0) {
+      throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
+    }
+    const resolved = workspaceOverviewService.resolveDeletablePath(userId, body.path);
+    if ('error' in resolved) {
+      sendJson(reply, 200, fail(400, resolved.message));
+      return;
+    }
+    // 活跃相位会话引用拒绝删除（D4③）；清单已由弹层展示，这里只带原因
+    const references = await workspaceOverviewService.listActiveReferences(userId, resolved.path);
+    if (references.length > 0) {
+      sendJson(reply, 200, fail(409, '存在进行中的会话引用，无法删除'));
+      return;
+    }
+    await workspaceOverviewService.deleteWorkspace(userId, resolved.path);
+    return sendOk(reply);
   });
 
   app.post('/v1/files/workspace-copy', async (request, reply) => {

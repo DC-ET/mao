@@ -1,9 +1,11 @@
 import type { Db } from '../db/db.js';
 import { fulltextStopwordTableName, notDeleted } from '../db/db.js';
+import { sep } from 'node:path';
 import { toSnakeRow } from '../common/case.js';
 import { nowSql } from '../common/datetime.js';
 import { escapeLike, messageRoleClause } from './message-search.js';
 import type { MessageSearchScope } from './message-search.js';
+import { ACTIVE_PHASE_SQL_LIST } from './util/session-group-key.js';
 import type { FileChange, Message, Session, SessionGroupPage } from './types.js';
 
 // 'signal' 只能由哨兵触发经 openRun 产生：POST /v1/sessions 的路由层白名单是显式
@@ -517,6 +519,46 @@ export class SessionRepository {
       params,
     );
     return num(rows[0]?.cnt);
+  }
+
+  /**
+   * 按工作区绝对路径聚合会话使用情况（工作区总览，技术方案 2026-10-29 §3 D7）：
+   * 一次分组查询出每个 workspace 的总会话数 / 活跃相位数（ACTIVE_PHASE_SQL_LIST
+   * 唯一口径派生）/ 归档数 / 最近使用时间；JS 侧由调用方按目录前缀归并。
+   */
+  async aggregateWorkspaceUsage(userId: number): Promise<Map<string, { total: number; active: number; archived: number; lastUsedAt: string | null }>> {
+    const rows = await this.db.query<{ workspace: string; total: number; active: number; archived: number; lastUsedAt: string | null }>(
+      `SELECT workspace,
+              COUNT(*) AS total,
+              SUM(CASE WHEN phase IN (${ACTIVE_PHASE_SQL_LIST}) THEN 1 ELSE 0 END) AS active,
+              SUM(CASE WHEN status = 'ARCHIVED' THEN 1 ELSE 0 END) AS archived,
+              MAX(updated_at) AS lastUsedAt
+       FROM \`session\`
+       WHERE user_id = ? AND workspace IS NOT NULL AND deleted = 0
+       GROUP BY workspace`,
+      [userId],
+    );
+    const map = new Map<string, { total: number; active: number; archived: number; lastUsedAt: string | null }>();
+    for (const row of rows) {
+      map.set(row.workspace, {
+        total: Number(row.total),
+        active: Number(row.active),
+        archived: Number(row.archived),
+        lastUsedAt: row.lastUsedAt,
+      });
+    }
+    return map;
+  }
+
+  /** 目录的进行中引用清单（删除守卫 D4③ 与确认弹层共用）：workspace 精确或前缀命中活跃相位会话。 */
+  async listActiveWorkspaceReferences(userId: number, path: string): Promise<Array<{ id: number; title: string | null; phase: string | null }>> {
+    const rows = await this.db.query<{ id: number; title: string | null; phase: string | null }>(
+      `SELECT id, title, phase FROM \`session\`
+       WHERE user_id = ? AND deleted = 0 AND phase IN (${ACTIVE_PHASE_SQL_LIST})
+         AND (workspace = ? OR workspace LIKE CONCAT(?, '%') ESCAPE '\\\\')`,
+      [userId, path, escapeLike(path + sep)],
+    );
+    return rows;
   }
 }
 

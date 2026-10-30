@@ -24,6 +24,10 @@ export interface CloudProject {
   name: string
   path: string
   isGit: boolean
+  /** 富化展示字段（工作区总览端点合并而来，失败时缺省=渲染纯目录名，技术方案 2026-10-29 §2.1-4） */
+  sizeBytes?: number | null
+  activeSessions?: number | null
+  archivedSessions?: number | null
 }
 
 export interface Session {

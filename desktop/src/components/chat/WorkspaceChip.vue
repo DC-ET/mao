@@ -123,7 +123,7 @@
 import { ref, computed } from 'vue'
 import { ArrowDown, Cloudy, FolderOpened, Monitor, WarningFilled } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { cloudWorkspaceIndicator, extractGitRepoSlug } from '../../utils/cloud-project'
+import { cloudWorkspaceIndicator, extractGitRepoSlug, workspaceTailLabel } from '../../utils/cloud-project'
 import WorkspaceConfigFields from './WorkspaceConfigFields.vue'
 
 const props = withDefaults(defineProps<{
@@ -167,6 +167,11 @@ const displayLabel = computed(() => {
     if (!props.workspace) return '选择目录'
     const parts = props.workspace.replace(/\\/g, '/').split('/').filter(Boolean)
     return parts[parts.length - 1] || props.workspace
+  }
+  // 新建态带入的显式工作区（总览「用于新任务」）：展示目录名。cloudWorkspaceIndicator
+  // 对非 projects 路径只会给泛称「临时工作区」，区分不出具体目录
+  if (props.isNewTask && props.workspace) {
+    return workspaceTailLabel(props.workspace)
   }
   if (props.workspaceMode === 'git') {
     return extractGitRepoSlug(props.gitCloneUrl || '') || (props.gitCloneUrl ? 'Git 仓库' : 'Git 地址')

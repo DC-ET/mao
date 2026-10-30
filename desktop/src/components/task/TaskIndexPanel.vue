@@ -26,6 +26,14 @@
           >
             <el-icon :size="14"><Check /></el-icon>
           </button>
+          <button
+            class="refresh-btn"
+            @click="$emit('openWorkspaceOverview')"
+            title="我的工作区"
+            aria-label="我的工作区"
+          >
+            <el-icon :size="14"><FolderOpened /></el-icon>
+          </button>
           <button class="refresh-btn" @click="refreshSessions" :disabled="loading || focusLoading">
             <el-icon :size="14" :class="{ 'is-loading': loading || focusLoading }"><Refresh /></el-icon>
           </button>
@@ -202,7 +210,7 @@
 
 <script setup lang="ts">
 import { computed, ref, reactive, watch, nextTick, onMounted, onUnmounted } from 'vue'
-import { Refresh, Plus, Bell, BellFilled, Check } from '@element-plus/icons-vue'
+import { Refresh, Plus, Bell, BellFilled, Check, FolderOpened } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { useSessionStore, ACTIVE_PHASES, type Session, type TaskPhase } from '../../stores/session'
@@ -231,6 +239,8 @@ const emit = defineEmits<{
   newTask: []
   'update:listMode': [mode: 'standard' | 'focus']
   newTaskFromGroup: [payload: { agentId: string; executionMode: string; workspace?: string; cloudProjectKey?: string; permissionLevel?: string; modelId?: number }]
+  /** 打开「我的工作区」中央页签（技术方案 2026-10-29 §2.1-3） */
+  openWorkspaceOverview: []
 }>()
 
 const router = useRouter()

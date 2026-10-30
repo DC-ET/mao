@@ -536,6 +536,11 @@ export function createSessionListModule(ctx: {
       payload.workspace = workspace || undefined
     } else if (executionMode === 'CLOUD') {
       payload.workspaceMode = workspaceMode || 'new'
+      // 显式工作区（总览「用于新任务」带入的临时/其他目录）：后端优先用它、不再自动
+      // 建新目录。git 克隆模式互斥不传；cloudProjectKey 与显式路径同时存在时后端以路径为准。
+      if (workspace && workspaceMode !== 'git') {
+        payload.workspace = workspace
+      }
       if (workspaceMode === 'git' && gitCloneUrl) {
         payload.gitCloneUrl = gitCloneUrl
         if (gitBranch) payload.gitBranch = gitBranch

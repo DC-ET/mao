@@ -80,6 +80,11 @@ export class WorkspaceBrowseService {
 
   listDirectory(sessionWorkspace: string, relativeDir: string | null | undefined): DirectoryListingDTO {
     const workspaceRoot = this.pathSandbox.getEffectiveWorkspaceRoot(sessionWorkspace);
+    // 工作区根整体缺失（如被用户从工作区总览删除）在严格解析之前给出可理解文案——
+    // StrictPathResolver 对缺失根抛 SecurityException「路径访问被拒绝」，用户无法理解（§4.1-4）
+    if (!existsSync(sessionWorkspace)) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '工作区目录不存在（可能已被删除）');
+    }
     const dir = this.normalizeRelativeDir(relativeDir);
     const dirPath = this.resolvePath(dir, sessionWorkspace);
     if (!existsSync(dirPath)) {

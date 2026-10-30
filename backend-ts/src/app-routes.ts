@@ -134,6 +134,7 @@ import { registerAdminSessionRoutes } from './session/admin-session.routes.js';
 import { registerAdminSessionFilesRoutes } from './session/admin-session-files.routes.js';
 import { registerTerminalRoutes } from './session/terminal.routes.js';
 import { WorkspaceWriteService } from './file/workspace-write.service.js';
+import { WorkspaceOverviewService } from './file/workspace-overview.service.js';
 import { registerFileRoutes } from './file/file.routes.js';
 import { registerOssRoutes } from './oss/oss.routes.js';
 import { registerSkillBundleRoutes } from './skill/skill-bundle.routes.js';
@@ -534,10 +535,12 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
       userLookup: { findById: (id: number) => userRepo.findById(id) as Promise<{ username: string } | null> },
     });
     const workspaceWrite = new WorkspaceWriteService(pathSandbox, activityService);
+    const workspaceOverviewService = new WorkspaceOverviewService(pathSandbox, sessionRepo);
     registerFileRoutes(api, {
       fileService, sessionService, workspaceBrowseService: workspaceBrowse,
       workspaceGitService: workspaceGit, gitCommitMessageService: gitCommitMsg,
-      gitWriteOperationService: gitWrite, workspaceWriteService: workspaceWrite, pathSandbox,
+      gitWriteOperationService: gitWrite, workspaceWriteService: workspaceWrite,
+      workspaceOverviewService, pathSandbox,
       getUploadBaseUrl: async () => (await settingService.getUploadConfig()).baseUrl,
       runtimeDataResolver: runtimeResolver,
     });

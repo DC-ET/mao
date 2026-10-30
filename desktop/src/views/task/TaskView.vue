@@ -7,6 +7,7 @@
       @toggle="panelCollapsed = !panelCollapsed"
       @new-task="handleNewTask"
       @new-task-from-group="handleNewTaskFromGroup"
+      @open-workspace-overview="openWorkspaceOverviewTab"
     />
 
     <div class="task-container">
@@ -37,6 +38,7 @@
         @open-git-diff="handleOpenGitDiff"
         @open-commit-diff="handleOpenCommitDiff"
         @open-branch-diff="handleOpenBranchDiff"
+        @use-for-new-task="handleUseForNewTask"
       />
     </div>
 
@@ -121,10 +123,11 @@ import { getToken } from '../../utils/auth-storage'
 import { nowDateTime } from '../../utils/datetime'
 import { cloudProjectKeyForNewTask } from '../../utils/cloud-project'
 import { resolveInspectorTarget, type InspectorTarget, type InspectorViewType } from '../../utils/inspector-target'
-import { api } from '../../api'
+import { api, fetchWorkspaceOverview } from '../../api'
 import TaskIndexPanel from '../../components/task/TaskIndexPanel.vue'
 import TaskInspector from '../../components/task/TaskInspector.vue'
 import AgentReopenDialog from '../../components/task/AgentReopenDialog.vue'
+import type { WorkspaceOverviewEntry } from '../../types/workspace-overview'
 import CenterTabBar from '../../components/center/CenterTabBar.vue'
 import CenterTabContainer from '../../components/center/CenterTabContainer.vue'
 import OnboardingOverlay from '../../components/onboarding/OnboardingOverlay.vue'
@@ -363,7 +366,30 @@ provide('quoteFileRangeToChat', quoteFileRangeToChat)
 
 // Center tabs
 const activeSessionIdRef = computed(() => sessionStore.activeSessionId ?? '')
-const { tabs, activeTab, activeTabId, openFileTab, openDiffTab, closeTab, closeAllFileTabs, closeOtherTabs, activateTab, openSideTaskTab, setSideTaskFork, openSubagentTab, openTraceTab, openFileManagerTab, openGitTab, updateSideTaskTab, restoreSideTaskTabs, restoreSubagentTabs, restoreTraceTab, restoreActiveTab, applyWorkspacePathChange } = useCenterTabs(activeSessionIdRef)
+const { tabs, activeTab, activeTabId, openFileTab, openDiffTab, closeTab, closeAllFileTabs, closeOtherTabs, activateTab, openSideTaskTab, setSideTaskFork, openSubagentTab, openTraceTab, openFileManagerTab, openGitTab, openWorkspaceOverviewTab, updateSideTaskTab, restoreSideTaskTabs, restoreSubagentTabs, restoreTraceTab, restoreActiveTab, applyWorkspacePathChange } = useCenterTabs(activeSessionIdRef)
+
+/** 总览页签「用于新任务」：项目目录带 cloudProjectKey（下拉/复用链路同形态），临时 / 其他目录直接预填路径 */
+function handleUseForNewTask(entry: WorkspaceOverviewEntry) {
+  if (entry.kind === 'project') {
+    void navigateToNewTask({ executionMode: 'CLOUD', workspace: entry.path, cloudProjectKey: entry.name })
+    return
+  }
+  void navigateToNewTask({ executionMode: 'CLOUD', workspace: entry.path })
+}
+
+/** 新建任务下拉富化：overview 按 path 合并大小 / 会话数到 cloud-projects 条目（仅 kind='project' 有对应目录）。 */
+async function enrichCloudProjectsWithOverview(generation: number) {
+  try {
+    const result = await fetchWorkspaceOverview()
+    if (generation !== newTaskModeGeneration) return
+    const byPath = new Map((result.entries ?? []).map(e => [e.path, e]))
+    newTaskCloudProjects.value = newTaskCloudProjects.value.map(p => {
+      const info = byPath.get(p.path)
+      if (info == null) return p
+      return { ...p, sizeBytes: info.sizeBytes, activeSessions: info.activeSessions, archivedSessions: info.archivedSessions }
+    })
+  } catch { /* 静默回落纯目录名 */ }
+}
 
 // Derived state
 const sessionId = computed(() => sessionIdParam.value)
@@ -1082,8 +1108,10 @@ async function enterNewTaskMode(defaults?: NewTaskDefaults | null) {
     executionMode.value = earlyMode
   }
   // 工作区/项目选择一并同步复位：isNewTaskMode 随路由立即转真，若等 await 之后再写，
-  // 窗口内回写 watch 会用上一个新建态草稿的残留值建文件 provider，闪一下旧文件树
-  newTaskWorkspace.value = earlyMode === 'LOCAL' ? (defaults?.workspace || '') : ''
+  // 窗口内回写 watch 会用上一个新建态草稿的残留值建文件 provider，闪一下旧文件树。
+  // CLOUD 也保留显式 workspace：总览「用于新任务」对临时/其他目录带入绝对路径
+  // （后端 POST /v1/sessions 支持 CLOUD + 本人根下绝对 workspace），常规新建态为 ''。
+  newTaskWorkspace.value = defaults?.workspace || ''
   newTaskCloudProjectKey.value = earlyMode === 'CLOUD' ? (defaults?.cloudProjectKey || '') : ''
   // 进入新建态一律从干净工作台开始：作废上次新建态遗留的中心 Tab（见 resetNewTaskTabs）
   resetNewTaskTabs()
@@ -1097,7 +1125,7 @@ async function enterNewTaskMode(defaults?: NewTaskDefaults | null) {
   const mode = normalizeNewTaskMode(resolved.executionMode)
   newTaskAgentId.value = resolved.agentId ? String(resolved.agentId) : null
   newTaskMode.value = mode
-  newTaskWorkspace.value = mode === 'LOCAL' ? (resolved.workspace || '') : ''
+  newTaskWorkspace.value = resolved.workspace || ''
   newTaskCloudProjectKey.value = mode === 'CLOUD' ? (resolved.cloudProjectKey || '') : ''
   newTaskWorkspaceMode.value = 'new'
   newTaskGitCloneUrl.value = ''
@@ -1106,9 +1134,13 @@ async function enterNewTaskMode(defaults?: NewTaskDefaults | null) {
   sessionStore.fetchCloudProjects().then(projects => {
     if (generation === newTaskModeGeneration) {
       newTaskCloudProjects.value = projects
-      if (projects.length > 0) {
+      // 带入了显式工作区（总览「用于新任务」）时不抢默认模式：existing 下拉没有
+      // 对应条目，会让配置区显示与将要创建的工作区不符
+      if (projects.length > 0 && !newTaskWorkspace.value) {
         newTaskWorkspaceMode.value = 'existing'
       }
+      // 下拉富化（技术方案 2026-10-29 §2.1-4）：按 path 合并大小 / 会话数；失败静默回落纯目录名
+      void enrichCloudProjectsWithOverview(generation)
     }
   })
   permissionLevel.value = resolved.permissionLevel || 'READ_ONLY'
