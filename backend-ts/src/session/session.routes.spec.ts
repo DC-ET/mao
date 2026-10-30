@@ -360,6 +360,7 @@ describe('session and admin routes', () => {
     const body = JSON.parse(res.body);
     expect(body.data).toHaveLength(1);
     expect(body.data[0].id).toBe(30);
+    expect(body.data[0].agentId).toBe(9);
     expect(body.data[0].parentSessionId).toBe(20);
     expect(body.data[0].permissionLevel).toBe('READ_ONLY');
     expect(sessionService.listDescendantSideTaskSessions).toHaveBeenCalledWith(1, 7);
@@ -447,6 +448,7 @@ describe('session and admin routes', () => {
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body);
     expect(body.data[0].id).toBe(20);
+    expect(body.data[0].agentId).toBe(9);
     expect(sessionService.listDescendantSideTaskSessions).not.toHaveBeenCalled();
     await fastify.close();
   });

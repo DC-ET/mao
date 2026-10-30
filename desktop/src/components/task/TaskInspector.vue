@@ -472,8 +472,10 @@ const emit = defineEmits<{
 
 const sessionStore = useSessionStore()
 
-/** 主会话才能换智能体；边路任务与子代理的身份只读。 */
-const canSwitchAgent = computed(() => props.viewType === 'chat' && !!props.agentId)
+/** 主会话和当前边路任务可以换智能体；子代理只读。 */
+const canSwitchAgent = computed(() =>
+  (props.viewType === 'chat' || props.viewType === 'side_task') && !!props.agentId,
+)
 
 // Get current session's modelId — 子会话场景优先使用 TaskView 传入的 modelId
 const currentModelId = computed(() => {

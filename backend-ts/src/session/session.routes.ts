@@ -393,6 +393,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     return sendOk(reply, sideTasks.map((s) => ({
       id: s.id,
       title: s.title,
+      agentId: s.agentId ?? null,
       modelId: s.modelId,
       parentSessionId: s.parentSessionId,
       permissionLevel: s.permissionLevel,

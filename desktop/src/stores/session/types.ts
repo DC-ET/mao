@@ -96,6 +96,9 @@ export interface SessionRuntimeStatus {
 export interface SideTaskItem {
   id: number
   title: string
+  /** 这条边路任务自己的智能体；与主会话独立，切换只改这一条 */
+  agentId?: string
+  agentName?: string
   modelId?: number
   /** 直接父会话 id（recursive 平铺列表里区分直接子级与深层后代：父 id = 主会话 id 即直接子级） */
   parentSessionId?: number

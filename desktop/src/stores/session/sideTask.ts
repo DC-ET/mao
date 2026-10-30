@@ -10,6 +10,8 @@ export function createSideTaskModule(ctx: {
 
   // Side task list cache keyed by parentSessionId
   const sideTaskCache = ref<Map<string, SideTaskItem[]>>(new Map())
+  /** 本地改过智能体的次数。列表刷新若在这次修改之前发出，响应不得把旧绑定盖回来。 */
+  const agentRevision = new Map<number, number>()
 
   function setSideTasks(parentSessionId: string, tasks: SideTaskItem[]) {
     // unread / pending 以服务端为准（服务端 DB 是未读权威；本地已读在 markSideTaskRead API 成功后清除）
@@ -18,24 +20,42 @@ export function createSideTaskModule(ctx: {
   }
 
   async function refreshSideTasks(parentSessionId: string) {
+    const revisionAtRequest = new Map(agentRevision)
     try {
       // recursive=1：主会话口径平铺全部后代边路任务（含深层）；parentSessionId 用于区分直接子级与深层后代
       const { data } = await api.get(`/sessions/${parentSessionId}/side-tasks`, { params: { recursive: 1 } })
+      const prevById = new Map(
+        (sideTaskCache.value.get(String(parentSessionId)) ?? []).map(t => [t.id, t]),
+      )
       const items: SideTaskItem[] = Array.isArray(data)
-        ? data.map((st: any) => ({
-            id: st.id,
-            title: st.title || '任务',
-            modelId: st.modelId,
-            parentSessionId: st.parentSessionId,
-            permissionLevel: st.permissionLevel,
-            phase: (st.phase || 'IDLE') as TaskPhase,
-            createdAt: st.createdAt,
-            updatedAt: st.updatedAt,
-            startedAt: st.startedAt,
-            unread: st.unread,
-            pendingApprovalCount: st.pendingApprovalCount,
-            pendingQuestionCount: st.pendingQuestionCount,
-          }))
+        ? data.map((st: any) => {
+            const prev = prevById.get(st.id)
+            const localChanged = (agentRevision.get(st.id) ?? 0) !== (revisionAtRequest.get(st.id) ?? 0)
+            // 列表只带 agentId。名称在补拉或切换时写入；刷新时同一 id 保留已有名称，换了人则丢掉旧名。
+            // 请求发出后本地又切过的，以本地为准。
+            const agentId = localChanged
+              ? prev?.agentId
+              : (st.agentId != null && st.agentId !== '' ? String(st.agentId) : prev?.agentId)
+            const agentName = localChanged
+              ? prev?.agentName
+              : (prev && prev.agentId === agentId ? prev.agentName : undefined)
+            return {
+              id: st.id,
+              title: st.title || '任务',
+              agentId,
+              agentName,
+              modelId: st.modelId,
+              parentSessionId: st.parentSessionId,
+              permissionLevel: st.permissionLevel,
+              phase: (st.phase || 'IDLE') as TaskPhase,
+              createdAt: st.createdAt,
+              updatedAt: st.updatedAt,
+              startedAt: st.startedAt,
+              unread: st.unread,
+              pendingApprovalCount: st.pendingApprovalCount,
+              pendingQuestionCount: st.pendingQuestionCount,
+            }
+          })
         : []
       setSideTasks(parentSessionId, items)
     } catch {
@@ -46,8 +66,18 @@ export function createSideTaskModule(ctx: {
   function addSideTask(parentSessionId: string, task: SideTaskItem) {
     const key = String(parentSessionId)
     const list = sideTaskCache.value.get(key) ?? []
+    const existing = list.find(t => t.id === task.id)
+    // 搜索跳转等只带标题的补写不能清掉已经记下的智能体。
+    const merged: SideTaskItem = existing
+      ? {
+          ...existing,
+          ...task,
+          agentId: task.agentId ?? existing.agentId,
+          agentName: task.agentName ?? existing.agentName,
+        }
+      : task
     const filtered = list.filter(t => t.id !== task.id)
-    sideTaskCache.value.set(key, [task, ...filtered])
+    sideTaskCache.value.set(key, [merged, ...filtered])
     sideTaskCache.value = new Map(sideTaskCache.value)
   }
 
@@ -96,6 +126,21 @@ export function createSideTaskModule(ctx: {
         list[idx].unread = false
         sideTaskCache.value = new Map(sideTaskCache.value)
       }
+      break
+    }
+  }
+
+  /** 只改这一条边路任务的智能体，不碰主会话和其他边路任务。 */
+  function updateSideTaskAgent(sideSessionId: number, agentId: string, agentName?: string) {
+    for (const [, list] of sideTaskCache.value) {
+      const item = list.find(t => t.id === sideSessionId)
+      if (!item) continue
+      const changed = item.agentId !== agentId
+      item.agentId = agentId
+      if (agentName) item.agentName = agentName
+      else if (changed) item.agentName = undefined
+      if (changed) agentRevision.set(sideSessionId, (agentRevision.get(sideSessionId) ?? 0) + 1)
+      sideTaskCache.value = new Map(sideTaskCache.value)
       break
     }
   }
@@ -175,6 +220,7 @@ export function createSideTaskModule(ctx: {
 
   function reset() {
     sideTaskCache.value = new Map()
+    agentRevision.clear()
   }
 
   return {
@@ -185,6 +231,7 @@ export function createSideTaskModule(ctx: {
     updateSideTaskPhase,
     updateSideTaskUnread,
     markSideTaskRead,
+    updateSideTaskAgent,
     updateSideTaskTitle,
     syncSideTaskPendingCount,
     reconcileSideTaskPendingCounts,

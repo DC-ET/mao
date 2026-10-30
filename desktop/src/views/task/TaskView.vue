@@ -48,8 +48,8 @@
       :side-tasks="sideTasks"
       :subagents="subagents"
       :title="inspectorTitle"
-      :agent-id="isNewTaskMode ? null : (agentId || null)"
-      :agent-name="agentName"
+      :agent-id="inspectorAgentId"
+      :agent-name="inspectorAgentName"
       :workspace="workspace"
       :project-key="projectKey"
       :execution-mode="executionMode"
@@ -483,6 +483,27 @@ const inspectorContextWindow = computed(() => {
   return inspectorViewType.value === 'subagent' ? null : contextWindow.value
 })
 
+// 右侧边栏智能体：边路任务展示自己的绑定，主会话与子代理视图仍用主会话的。
+// 子代理不提供切换，这里不改它的展示来源。
+const inspectorAgentId = computed(() => {
+  if (isNewTaskMode.value) return null
+  if (inspectorViewType.value === 'side_task') {
+    const sid = inspectorSubSessionId.value
+    const item = sid != null ? sideTasks.value.find(t => t.id === sid) : undefined
+    return item?.agentId || null
+  }
+  return agentId.value || null
+})
+const inspectorAgentName = computed(() => {
+  if (isNewTaskMode.value) return ''
+  if (inspectorViewType.value === 'side_task') {
+    const sid = inspectorSubSessionId.value
+    const item = sid != null ? sideTasks.value.find(t => t.id === sid) : undefined
+    return item?.agentName || ''
+  }
+  return agentName.value
+})
+
 // 右侧边栏模型：子会话优先使用自己的 modelId，避免上下文是否已回填影响模型解析。
 const inspectorModelId = computed<number | undefined>(() => {
   if (inspectorViewType.value === 'chat') return undefined
@@ -516,6 +537,10 @@ function ensureInspectorMeta(sid: string, viewType: 'side_task' | 'subagent', pa
   const existing = pendingInspectorMeta.get(sid)
   if (existing) return existing
   const p = (async () => {
+    const numAtRequest = Number(sid)
+    const agentAtRequest = viewType === 'side_task'
+      ? sessionStore.getSideTasks(parentId).find(t => t.id === numAtRequest)?.agentId
+      : undefined
     try {
       const { data: meta } = await api.get(`/sessions/${sid}`)
       // 补拉可能读到执行启动前的旧 phase（IDLE）：WS 已登记实时 phase 时不得回退，
@@ -540,6 +565,17 @@ function ensureInspectorMeta(sid: string, viewType: 'side_task' | 'subagent', pa
             meta.title || cur?.title || '任务',
             meta.modelId
           )
+        }
+        if (meta?.agentId != null) {
+          // 请求在途时用户可能已经切过智能体，迟到的详情不能把新绑定盖回去。
+          const agentNow = sessionStore.getSideTasks(parentId).find(t => t.id === num)?.agentId
+          if (agentNow === agentAtRequest) {
+            sessionStore.updateSideTaskAgent(
+              num,
+              String(meta.agentId),
+              typeof meta.agentName === 'string' ? meta.agentName : undefined,
+            )
+          }
         }
       } else {
         sessionStore.updateSubagentMeta(num, {
@@ -642,11 +678,16 @@ function handleSideSessionCreated(e: Event) {
   const mainKey = String(activeSessionIdRef.value || '')
   const belongsToCurrentTree = evtParent === mainKey || placeholder != null
   if (mainKey && belongsToCurrentTree) {
+    // 服务端复制的是来源会话当时的智能体。来源是主会话用主会话的，来源是边路则用那一条的。
+    const sourceIsMain = evtParent === mainKey
+    const sourceSide = sourceIsMain ? undefined : sessionStore.getSideTasks(mainKey).find(t => String(t.id) === evtParent)
+    const sourceAgentId = sourceIsMain ? (agentId.value || undefined) : sourceSide?.agentId
     sessionStore.addSideTask(mainKey, {
       id: detail.sideSessionId,
       title: title || detail.title || '任务',
       phase: 'RUNNING',
       createdAt: new Date().toISOString(),
+      ...(sourceAgentId ? { agentId: sourceAgentId, agentName: sourceIsMain ? (agentName.value || undefined) : sourceSide?.agentName } : {}),
     })
   }
 }
@@ -712,8 +753,13 @@ interface TaskInspectorInstance {
 }
 const inspectorRef = ref<TaskInspectorInstance | null>(null)
 
-/** 点右侧智能体信息切换：确认后下一轮生效，聊天留在当前会话。 */
+/** 点右侧智能体信息切换：确认后下一轮生效，聊天留在当前会话。边路任务只改这一条。 */
 async function handleAgentSwitch(nextAgentId: string) {
+  if (inspectorViewType.value === 'side_task') {
+    await switchSideTaskAgent(nextAgentId)
+    return
+  }
+  if (inspectorViewType.value !== 'chat') return
   const session = sessionStore.activeSession
   if (!session || String(session.agentId) === String(nextAgentId)) return
   const agent = agentStore.agents.find(a => String(a.id) === String(nextAgentId))
@@ -721,14 +767,9 @@ async function handleAgentSwitch(nextAgentId: string) {
     ? '会话已显式选择模型，切换后模型保持不变'
     : '会话未显式选模型，切换后自动跟随新智能体的默认模型'
   try {
-    await ElMessageBox.confirm(
-      h('div', { class: 'agent-switch-confirm' }, [
-        h('p', { style: 'margin: 0 0 8px' }, `确认切换到智能体「${agent?.name ?? nextAgentId}」？`),
-        h('p', { style: 'margin: 0 0 4px; color: var(--aw-ink-muted-80); font-size: 13px' }, modelNote),
-        h('p', { style: 'margin: 0; color: var(--aw-ink-muted-80); font-size: 13px' }, 'Skill / MCP / 经验库 / 子代理预设自下一轮起按新智能体配置，会话级审批放行规则保留。'),
-      ]),
-      '切换智能体',
-      { confirmButtonText: '切换', cancelButtonText: '取消', type: 'warning' },
+    await confirmAgentSwitch(
+      `确认切换到智能体「${agent?.name ?? nextAgentId}」？`,
+      [modelNote, 'Skill / MCP / 经验库 / 子代理预设自下一轮起按新智能体配置，会话级审批放行规则保留。'],
     )
   } catch {
     return
@@ -742,6 +783,56 @@ async function handleAgentSwitch(nextAgentId: string) {
   } catch {
     ElMessage.error('智能体切换失败，请重试')
   }
+}
+
+async function switchSideTaskAgent(nextAgentId: string) {
+  const sid = inspectorSubSessionId.value
+  if (sid == null) return
+  const item = sideTasks.value.find(t => t.id === sid)
+  if (item?.agentId && String(item.agentId) === String(nextAgentId)) return
+  const agent = agentStore.agents.find(a => String(a.id) === String(nextAgentId))
+  const modelNote = item?.modelId != null
+    ? '这条边路任务已显式选择模型，切换后模型保持不变'
+    : '这条边路任务若已显式选择模型，切换后保持不变；否则跟随新智能体的默认模型'
+  try {
+    await confirmAgentSwitch(
+      `确认把当前边路任务切换到智能体「${agent?.name ?? nextAgentId}」？`,
+      [
+        '只影响这一条边路任务，下一轮生效。主会话和其他边路任务不变。',
+        modelNote,
+        'Skill / MCP / 经验库 / 子代理预设自下一轮起按新智能体配置，这条边路任务的审批放行规则保留。',
+      ],
+    )
+  } catch {
+    return
+  }
+  try {
+    await sessionStore.updateSessionAgent(String(sid), Number(nextAgentId))
+    const updated = sessionStore.getSessionEntity(String(sid))
+    sessionStore.updateSideTaskAgent(
+      sid,
+      String(updated?.agentId ?? nextAgentId),
+      updated?.agentName ?? agent?.name,
+    )
+    ElMessage.success(`这条边路任务已切换到「${agent?.name ?? nextAgentId}」，下一轮生效`)
+  } catch {
+    ElMessage.error('智能体切换失败，请重试')
+  }
+}
+
+function confirmAgentSwitch(title: string, notes: string[]) {
+  return ElMessageBox.confirm(
+    h('div', { class: 'agent-switch-confirm' }, [
+      h('p', { style: 'margin: 0 0 8px' }, title),
+      ...notes.map((note, index) => h('p', {
+        style: index === notes.length - 1
+          ? 'margin: 0; color: var(--aw-ink-muted-80); font-size: 13px'
+          : 'margin: 0 0 4px; color: var(--aw-ink-muted-80); font-size: 13px',
+      }, note)),
+    ]),
+    '切换智能体',
+    { confirmButtonText: '切换', cancelButtonText: '取消', type: 'warning' },
+  )
 }
 
 function refreshFileTree() {

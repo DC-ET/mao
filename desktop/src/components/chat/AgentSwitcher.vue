@@ -82,9 +82,10 @@ function handleSelect(agent: Agent) {
 <style scoped>
 .agent-switch-trigger {
   display: flex;
+  justify-content: flex-start;
   width: 100%;
   margin: 0;
-  padding: 4px 6px;
+  padding: 4px 6px 4px 0;
   border: none;
   border-radius: var(--aw-radius-sm);
   background: transparent;

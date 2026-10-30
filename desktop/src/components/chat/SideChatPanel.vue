@@ -580,12 +580,29 @@ watch(
 async function loadSideSessionMeta() {
   if (!hasRealSession.value) return
   const sid = realSessionId.value
+  const rootKey = sessionStore.findSideTaskRootKey(sid)
+  const agentAtRequest = rootKey
+    ? sessionStore.getSideTasks(rootKey).find(t => t.id === sid)?.agentId
+    : undefined
   try {
     const { data } = await api.get(`/sessions/${sid}`)
     // 同一 Tab 可能在请求返回前被指派给另一个边路会话。迟到响应不得把来源会话的 phase 写进去。
     if (realSessionId.value !== sid) return
     if (data?.modelId != null) {
       sideModelId.value = sideModelId.value ?? data.modelId
+    }
+    if (data?.agentId != null) {
+      const rootNow = sessionStore.findSideTaskRootKey(sid)
+      const agentNow = rootNow
+        ? sessionStore.getSideTasks(rootNow).find(t => t.id === sid)?.agentId
+        : undefined
+      if (agentNow === agentAtRequest) {
+        sessionStore.updateSideTaskAgent(
+          sid,
+          String(data.agentId),
+          typeof data.agentName === 'string' ? data.agentName : undefined,
+        )
+      }
     }
     if (data?.phase) {
       // 补拉可能读到执行启动前的旧 phase（IDLE）：WS 已登记实时 phase 时不得回退，

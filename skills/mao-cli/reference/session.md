@@ -250,7 +250,7 @@ mao session cloud-projects
 
 ### 返回结果
 
-元素含 `id`、`title`、`modelId`、`phase`、`createdAt`。
+元素含 `id`、`title`、`agentId`、`modelId`、`phase`、`createdAt`。`agentId` 是这条边路任务自己的智能体，与主会话独立。
 
 ### 示例
 

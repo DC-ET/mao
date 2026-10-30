@@ -938,6 +938,56 @@ describe('session store 边路任务待处理计数同步', () => {
     expect(store.getSideTasks('1')[0].pendingApprovalCount).toBe(0)
   })
 
+  it('边路任务列表记下自己的 agentId，刷新时保留已有名称且不碰到其他条', async () => {
+    const store = useSessionStore()
+    mockGet.mockResolvedValueOnce({
+      data: [
+        makeSideTask({ id: 11, agentId: 3 }),
+        makeSideTask({ id: 12, agentId: 4, title: '另一条' }),
+      ],
+    })
+    await store.refreshSideTasks('1')
+    expect(store.getSideTasks('1').map(t => t.agentId)).toEqual(['3', '4'])
+
+    store.updateSideTaskAgent(11, '3', '原名')
+    store.updateSideTaskAgent(11, '8', '新人')
+    expect(store.getSideTasks('1').find(t => t.id === 12)?.agentId).toBe('4')
+    expect(store.getSideTasks('1').find(t => t.id === 11)).toMatchObject({ agentId: '8', agentName: '新人' })
+
+    mockGet.mockResolvedValueOnce({
+      data: [
+        makeSideTask({ id: 11, agentId: 8 }),
+        makeSideTask({ id: 12, agentId: 4, title: '另一条' }),
+      ],
+    })
+    await store.refreshSideTasks('1')
+    expect(store.getSideTasks('1').find(t => t.id === 11)?.agentName).toBe('新人')
+    expect(store.getSideTasks('1').find(t => t.id === 12)?.agentId).toBe('4')
+
+    store.addSideTask('1', makeSideTask({ id: 11, title: '改标题' }))
+    expect(store.getSideTasks('1').find(t => t.id === 11)).toMatchObject({
+      title: '改标题',
+      agentId: '8',
+      agentName: '新人',
+    })
+  })
+
+  it('列表刷新在途时切了智能体，迟到的旧列表不盖回', async () => {
+    const store = useSessionStore()
+    store.setSideTasks('1', [makeSideTask({ id: 11, agentId: '3', agentName: '原名', title: '旧标题' })])
+    let release: (value: { data: unknown }) => void = () => {}
+    mockGet.mockReturnValueOnce(new Promise(resolve => { release = resolve }))
+    const pending = store.refreshSideTasks('1')
+    store.updateSideTaskAgent(11, '8', '新人')
+    release({ data: [makeSideTask({ id: 11, agentId: 3, title: '新标题' })] })
+    await pending
+    expect(store.getSideTasks('1')[0]).toMatchObject({
+      title: '新标题',
+      agentId: '8',
+      agentName: '新人',
+    })
+  })
+
   it('REST 返回的数字队列 id 灌入后变成字符串', () => {
     const store = useSessionStore()
     store.setQueueMessages('11', [
