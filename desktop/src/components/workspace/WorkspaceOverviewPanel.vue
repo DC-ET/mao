@@ -256,6 +256,10 @@ async function refreshAll() {
 async function refreshOne(row: WorkspaceOverviewEntry) {
   try {
     await refreshWorkspaceOverview(row.path)
+    // 作废在途 load：其旧快照会覆盖下面刚置的 pending，且它自己的
+    // schedulePendingRequery 会取消这里刚排的重查计时器——服务端已重算成功，
+    // 新大小却永不显示（审查 BUG-6）
+    loadGeneration++
     row.sizeState = 'pending'
     row.sizeBytes = null
     schedulePendingRequery()

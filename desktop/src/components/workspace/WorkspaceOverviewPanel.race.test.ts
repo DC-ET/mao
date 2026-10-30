@@ -58,6 +58,9 @@ const flushMacro = () => new Promise(r => setTimeout(r, 0))
 
 interface SetupState {
   load: () => Promise<void>
+  refreshOne: (row: unknown) => Promise<void>
+  /** 注：setupState 里 ref 是解包后暴露的，entries 直接就是数组 */
+  entries: Array<Record<string, unknown>>
   openDelete: (e: unknown) => void
   deleteState: {
     visible: boolean
@@ -220,5 +223,38 @@ describe('WorkspaceOverviewPanel 竞态回归', () => {
     await Promise.all([first, second])
 
     expect(host.textContent).not.toContain('aaa')
+  })
+
+  it('BUG-6：行内刷新后在途 load 的旧快照不得覆盖 pending，重算后的大小要能显示', async () => {
+    vi.useFakeTimers()
+    api.fetchOverview.mockResolvedValue({ entries: [entry('aaa', { sizeState: 'ready', sizeBytes: 1024 })], error: null })
+    await mount(flushMicro)
+    expect(host.textContent).toContain('1.0 KB')
+
+    // 切页签触发的 load 在途（暂不 resolve）
+    const staleLoad = deferred<{ entries: unknown[]; error: null }>()
+    api.fetchOverview.mockImplementationOnce(() => staleLoad.promise)
+    const pendingLoad = setupState.load()
+    await flushMicro()
+
+    // 行内「重新统计」：POST 成功后置 pending 并排 3s 重查
+    const requery = deferred<{ entries: unknown[]; error: null }>()
+    api.fetchOverview.mockImplementationOnce(() => requery.promise)
+    const row = setupState.entries.find(e => e.name === 'aaa')!
+    void setupState.refreshOne(row)
+    await flushMicro()
+    expect(host.textContent).toContain('统计中')
+
+    // 在途 load 的旧快照后到：不得把 pending 覆盖回旧大小，也不得取消重查计时器
+    staleLoad.resolve({ entries: [entry('aaa', { sizeState: 'ready', sizeBytes: 1024 })], error: null })
+    await flushMicro()
+    expect(host.textContent).toContain('统计中')
+
+    // 3s 重查返回服务端重算的新大小
+    await vi.advanceTimersByTimeAsync(3000)
+    requery.resolve({ entries: [entry('aaa', { sizeState: 'ready', sizeBytes: 4096 })], error: null })
+    await flushMicro()
+    expect(host.textContent).toContain('4.0 KB')
+    await pendingLoad
   })
 })
