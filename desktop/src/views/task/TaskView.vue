@@ -77,6 +77,7 @@
       @open-git-diff="handleOpenGitDiff"
       @open-git="openGitTab"
       @open-manager="openFileManagerTab"
+      @select-agent="handleAgentSwitch"
     />
 
     <!-- 首启向导 / 环境未就绪降级页：仅对新用户（PENDING）出现，存量用户零打扰 -->
@@ -96,7 +97,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, provide, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, computed, provide, onMounted, onUnmounted, watch, nextTick, h } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAgentStore } from '../../stores/agent'
@@ -710,6 +711,38 @@ interface TaskInspectorInstance {
   refreshFileTree(): void
 }
 const inspectorRef = ref<TaskInspectorInstance | null>(null)
+
+/** 点右侧智能体信息切换：确认后下一轮生效，聊天留在当前会话。 */
+async function handleAgentSwitch(nextAgentId: string) {
+  const session = sessionStore.activeSession
+  if (!session || String(session.agentId) === String(nextAgentId)) return
+  const agent = agentStore.agents.find(a => String(a.id) === String(nextAgentId))
+  const modelNote = session.modelId != null
+    ? '会话已显式选择模型，切换后模型保持不变'
+    : '会话未显式选模型，切换后自动跟随新智能体的默认模型'
+  try {
+    await ElMessageBox.confirm(
+      h('div', { class: 'agent-switch-confirm' }, [
+        h('p', { style: 'margin: 0 0 8px' }, `确认切换到智能体「${agent?.name ?? nextAgentId}」？`),
+        h('p', { style: 'margin: 0 0 4px; color: var(--aw-ink-muted-80); font-size: 13px' }, modelNote),
+        h('p', { style: 'margin: 0; color: var(--aw-ink-muted-80); font-size: 13px' }, 'Skill / MCP / 经验库 / 子代理预设自下一轮起按新智能体配置，会话级审批放行规则保留。'),
+      ]),
+      '切换智能体',
+      { confirmButtonText: '切换', cancelButtonText: '取消', type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  try {
+    await sessionStore.updateSessionAgent(String(session.id), Number(nextAgentId))
+    const updated = sessionStore.activeSession
+    if (updated?.agentId) agentId.value = String(updated.agentId)
+    if (updated?.agentName) agentName.value = updated.agentName
+    ElMessage.success(`已切换到「${agent?.name ?? nextAgentId}」，下一轮生效`)
+  } catch {
+    ElMessage.error('智能体切换失败，请重试')
+  }
+}
 
 function refreshFileTree() {
   inspectorRef.value?.refreshFileTree()

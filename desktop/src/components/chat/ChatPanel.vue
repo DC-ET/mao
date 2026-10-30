@@ -183,8 +183,6 @@
         :execution-mode="isNewTaskMode ? newTaskMode : executionMode"
         :model-id="isNewTaskMode ? newTaskModelId : currentSession?.modelId"
         :model-supports-vision="currentModelSupportsVision"
-        :agent-id="isNewTaskMode ? null : currentSession?.agentId ?? null"
-        :agent-name="isNewTaskMode ? null : currentSession?.agentName ?? null"
         :permission-level="permissionLevel"
         :is-new-task="isNewTaskMode"
         :selected-agent-id="newTaskAgentId"
@@ -205,7 +203,6 @@
         @update:selected-agent-id="handleNewTaskAgentChange"
         @update:model-id="handleModelSwitch"
         @select:model="handleModelSelect"
-        @select:agent="handleAgentSwitch"
         @update:workspace-mode="handleNewTaskWorkspaceModeChange"
         @update:git-clone-url="handleNewTaskGitCloneUrlChange"
         @update:git-branch="handleNewTaskGitBranchChange"
@@ -218,7 +215,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, inject, provide, watch, nextTick, onActivated, onMounted, onUnmounted, h, type Ref } from 'vue'
+import { ref, computed, inject, provide, watch, nextTick, onActivated, onMounted, onUnmounted, type Ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ChatDotRound, Loading } from '@element-plus/icons-vue'
 import { useChat, normalizeMessageRole, type ChatMessage, type PendingUploadFile } from '../../composables/useChat'
@@ -229,7 +226,7 @@ import { useAgentStore } from '../../stores/agent'
 import { useSessionStore, type TaskPhase } from '../../stores/session'
 import { useDraftStore } from '../../stores/draft'
 import { api } from '../../api'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import type { QuestionAnswer } from '../../types/chat'
 import type { SideTaskContextMode } from '../../types/file-browser'
 import ChatRoundList from './ChatRoundList.vue'
@@ -791,35 +788,6 @@ async function handleModelSwitch(modelId: number) {
       newTaskModelId.value = prevModelId
       ElMessage.error('模型切换失败，请重试')
     }
-  }
-}
-
-/** 会话内切换 Agent（技术方案 2026-10-29 §4.2）：确认弹层说明模型跟随口径与保留项，下一轮生效。 */
-async function handleAgentSwitch(agentId: string) {
-  const session = sessionStore.activeSession
-  if (!session || String(session.agentId) === String(agentId)) return
-  const agent = agentStore.agents.find(a => String(a.id) === String(agentId))
-  const modelNote = session.modelId != null
-    ? '会话已显式选择模型，切换后模型保持不变'
-    : '会话未显式选模型，切换后自动跟随新智能体的默认模型'
-  try {
-    await ElMessageBox.confirm(
-      h('div', { class: 'agent-switch-confirm' }, [
-        h('p', { style: 'margin: 0 0 8px' }, `确认切换到智能体「${agent?.name ?? agentId}」？`),
-        h('p', { style: 'margin: 0 0 4px; color: var(--aw-ink-muted-80); font-size: 13px' }, modelNote),
-        h('p', { style: 'margin: 0; color: var(--aw-ink-muted-80); font-size: 13px' }, 'Skill / MCP / 经验库 / 子代理预设自下一轮起按新智能体配置，会话级审批放行规则保留。'),
-      ]),
-      '切换智能体',
-      { confirmButtonText: '切换', cancelButtonText: '取消', type: 'warning' },
-    )
-  } catch {
-    return
-  }
-  try {
-    await sessionStore.updateSessionAgent(String(session.id), Number(agentId))
-    ElMessage.success(`已切换到「${agent?.name ?? agentId}」，下一轮生效`)
-  } catch {
-    ElMessage.error('智能体切换失败，请重试')
   }
 }
 

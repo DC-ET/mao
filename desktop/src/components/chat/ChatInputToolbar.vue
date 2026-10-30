@@ -63,14 +63,6 @@
       />
     </div>
     <div class="toolbar-right">
-      <!-- 会话内切换 Agent：与模型选择器同位同构；无会话（新建任务）或边路任务不传 agentId 即隐藏 -->
-      <AgentSwitcher
-        v-if="agentId"
-        :agent-id="agentId"
-        :agent-name="agentName"
-        :compact="isMobileViewport && layout === 'centered'"
-        @select="id => emit('select:agent', id)"
-      />
       <ModelSelector
         :model-id="modelId"
         :compact="isMobileViewport && layout === 'centered'"
@@ -127,7 +119,6 @@ import PermissionLevelSwitcher from './PermissionLevelSwitcher.vue'
 import AgentChip from './AgentChip.vue'
 import WorkspaceChip from './WorkspaceChip.vue'
 import ModelSelector from './ModelSelector.vue'
-import AgentSwitcher from './AgentSwitcher.vue'
 import type { CloudProject } from '../../stores/session'
 
 defineProps<{
@@ -148,8 +139,6 @@ defineProps<{
   dirName: string
   permissionLevel: string
   modelId?: number
-  agentId?: string | null
-  agentName?: string | null
   waitingForSave: boolean
   loading: boolean
   canSend: boolean
@@ -173,6 +162,5 @@ const emit = defineEmits<{
   'update:permissionLevel': [level: string]
   'update:modelId': [modelId: number]
   'select:model': [modelId: number, modelIdStr: string]
-  'select:agent': [agentId: string]
 }>()
 </script>

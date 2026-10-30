@@ -3,13 +3,13 @@
     ref="popoverRef"
     trigger="click"
     :width="300"
-    placement="top-end"
+    placement="left-start"
     @before-enter="ensureAgents"
   >
     <template #reference>
-      <span class="agent-name clickable" :class="{ compact }" :title="displayName || '切换智能体'">
-        {{ label }}
-      </span>
+      <button type="button" class="agent-switch-trigger" title="切换智能体">
+        <slot />
+      </button>
     </template>
     <div class="agent-switcher">
       <el-input v-model="filter" size="small" placeholder="搜索智能体" clearable class="agent-filter" />
@@ -44,9 +44,6 @@ import { resolveAvatarUrl } from '../../utils/avatar'
 
 const props = defineProps<{
   agentId?: string | null
-  agentName?: string | null
-  /** 窄屏紧凑展示：与 ModelSelector 的 compact 同语义 */
-  compact?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -56,14 +53,6 @@ const emit = defineEmits<{
 const popoverRef = ref()
 const agentStore = useAgentStore()
 const filter = ref('')
-
-const displayName = computed(() => {
-  if (props.agentName) return props.agentName
-  if (!props.agentId) return ''
-  return agentStore.agents.find(a => String(a.id) === String(props.agentId))?.name || ''
-})
-
-const label = computed(() => displayName.value || '切换智能体')
 
 const filteredAgents = computed(() => {
   const q = filter.value.trim().toLowerCase()
@@ -91,29 +80,21 @@ function handleSelect(agent: Agent) {
 </script>
 
 <style scoped>
-.agent-name {
-  font-size: var(--aw-text-fine);
-  color: var(--aw-ink-muted-80);
-  font-weight: 500;
-  user-select: none;
-}
-
-.agent-name.clickable {
+.agent-switch-trigger {
+  display: flex;
+  width: 100%;
+  margin: 0;
+  padding: 4px 6px;
+  border: none;
+  border-radius: var(--aw-radius-sm);
+  background: transparent;
+  color: inherit;
   cursor: pointer;
-  padding: 2px 8px;
-  border-radius: var(--aw-radius-xs);
-  transition: background 0.15s;
+  text-align: left;
 }
 
-.agent-name.clickable:hover {
+.agent-switch-trigger:hover {
   background: var(--aw-canvas-parchment);
-}
-
-.agent-name.compact {
-  max-width: 120px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .agent-switcher {

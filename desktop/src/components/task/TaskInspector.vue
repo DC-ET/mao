@@ -108,7 +108,20 @@
 
       <div v-if="agentId || agentName" class="inspector-section agent-section">
         <h4 class="section-title">智能体</h4>
+        <AgentSwitcher
+          v-if="canSwitchAgent"
+          :agent-id="agentId"
+          @select="id => emit('select-agent', id)"
+        >
+          <AgentBadge
+            :agent-id="agentId || null"
+            :agent-name="agentName"
+            size="lg"
+            show-description
+          />
+        </AgentSwitcher>
         <AgentBadge
+          v-else
           :agent-id="agentId || null"
           :agent-name="agentName"
           size="lg"
@@ -391,6 +404,7 @@ import { FolderOpened, DocumentCopy, Share, Setting } from '@element-plus/icons-
 import { ElMessage, ElTooltip } from 'element-plus'
 import TodoChecklist from './TodoChecklist.vue'
 import AgentBadge from '../agent/AgentBadge.vue'
+import AgentSwitcher from '../chat/AgentSwitcher.vue'
 import SideTaskList from './SideTaskList.vue'
 import SubagentList from './SubagentList.vue'
 import GitChangeList from './GitChangeList.vue'
@@ -453,9 +467,13 @@ const emit = defineEmits<{
   'promote-side-task': [sideSessionId: number]
   'open-git-diff': [file: GitChangedFile, repoPath?: string]
   'open-git': []
+  'select-agent': [agentId: string]
 }>()
 
 const sessionStore = useSessionStore()
+
+/** 主会话才能换智能体；边路任务与子代理的身份只读。 */
+const canSwitchAgent = computed(() => props.viewType === 'chat' && !!props.agentId)
 
 // Get current session's modelId — 子会话场景优先使用 TaskView 传入的 modelId
 const currentModelId = computed(() => {
