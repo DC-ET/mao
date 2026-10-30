@@ -195,6 +195,29 @@ test('基线：托盘提示只发一次（二次关窗不再提示）', async ()
   assert.equal(h.state.sent.filter((s) => s.channel === 'tray-first-close-hint').length, 1)
 })
 
+test('回归：托盘模式下重启安装先放行关窗，窗口被销毁而不是藏起来', async () => {
+  const h = await loadMain({ prefs: { closeToTray: 'tray' }, platform: 'darwin' })
+  // 不在启动时置 packaged，避免 whenReady 里 3 秒后的自动检查拖住事件循环
+  h.state.packaged = true
+  await h.invoke('check-for-update')
+  h.emitUpdater('update-downloaded', { version: '9.9.9' })
+  const result = await h.invoke('install-update')
+  assert.equal(result.success, true)
+  assert.equal(h.state.quitAndInstallCalls, 1)
+  assert.equal(h.win().isDestroyed(), true, 'quitAndInstall 先关窗时不得被收成托盘隐藏')
+  assert.equal(h.state.sent.filter((s) => s.channel === 'tray-first-close-hint').length, 0)
+})
+
+test('未下载完成时重启安装不放行关窗', async () => {
+  const h = await loadMain({ prefs: { closeToTray: 'tray' }, platform: 'darwin' })
+  const result = await h.invoke('install-update')
+  assert.equal(result.success, false)
+  assert.equal(h.state.quitAndInstallCalls, 0)
+  h.win().close()
+  assert.equal(h.win().isDestroyed(), false)
+  assert.equal(h.win().isVisible(), false)
+})
+
 test('基线：托盘退出走 app.quit + before-quit 全量清理', async () => {
   const h = await loadMain({})
   h.tray().menuTemplate.find((i) => i.label === '退出').click()

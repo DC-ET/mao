@@ -63,6 +63,9 @@ async function loadMain(options = {}) {
     shortcutRegs: [],
     unregisterAllCalls: 0,
     quitCalls: 0,
+    quitAndInstallCalls: 0,
+    packaged: options.packaged === true,
+    updaterHandlers: {},
     loginItemSettings: [],
     sent: [], // sendToRenderer 记录
     badgeCounts: [],
@@ -162,7 +165,7 @@ async function loadMain(options = {}) {
         ? new Promise(() => {})
         : Promise.resolve().then(() => { state.appReady = true })),
       getPath: (k) => (k === 'userData' ? userDataDir : os.tmpdir()),
-      isPackaged: options.packaged === true,
+      get isPackaged() { return state.packaged },
       isReady: () => state.appReady,
       quit: () => {
         state.quitCalls++
@@ -218,7 +221,18 @@ async function loadMain(options = {}) {
 
   const fakeUpdater = {
     autoUpdater: {
-      on() {}, setFeedURL() {}, quitAndInstall() {},
+      on(ev, cb) {
+        (state.updaterHandlers[ev] = state.updaterHandlers[ev] || []).push(cb)
+      },
+      setFeedURL() {},
+      // 真实 Electron autoUpdater.quitAndInstall：先对所有窗口发 close，全部关掉之后才 before-quit。
+      // 任一 close 被 preventDefault，退出取消（托盘拦截会把窗口藏起来，安装不会开始）。
+      quitAndInstall() {
+        state.quitAndInstallCalls++
+        for (const w of state.windows.filter((x) => !x.destroyed)) w.close()
+        if (state.windows.some((w) => !w.destroyed)) return
+        for (const cb of (state.appHandlers['before-quit'] || []).slice()) cb()
+      },
       autoDownload: false, autoInstallOnAppQuit: false,
       checkForUpdates: async () => null,
     },
@@ -263,6 +277,9 @@ async function loadMain(options = {}) {
     windows: () => state.windows,
     invoke: (channel, ...args) => state.ipcHandlers[channel](null, ...args),
     emitApp: (ev, ...args) => { for (const cb of (state.appHandlers[ev] || []).slice()) cb(...args) },
+    emitUpdater: (ev, ...args) => {
+      for (const cb of (state.updaterHandlers[ev] || []).slice()) cb(...args)
+    },
     tick: async () => { await new Promise((r) => setImmediate(r)) },
     failNextShortcutRegistration: () => { state.shortcutFailNext = true },
     trayMenuLabel: () => {

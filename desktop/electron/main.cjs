@@ -422,6 +422,9 @@ function installDownloadedUpdate() {
   if (!updateDownloaded) {
     return { success: false, error: 'Update has not been downloaded yet.' }
   }
+  // macOS 的 quitAndInstall 先关窗、后发 before-quit。默认「关窗收托盘」会在
+  // quitting 仍为 false 时把 close 变成 hide，退出被取消，安装不会开始。
+  quitting = true
   autoUpdater.quitAndInstall(false, true)
   return { success: true }
 }
