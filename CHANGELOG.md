@@ -1,3 +1,9 @@
+## 0.0.379 (2026-10-30)
+
+### 后端
+- **修复 Docker 运行模式下工具调用全部失败**：团队经验库（0.0.342）让容器侧 `runtime-agent` 的依赖闭包里多了 `yaml`，而运行时镜像 `mao-runtime:latest` 只带固定依赖集、未随代码同步重建——容器内 agent 启动即 `ERR_MODULE_NOT_FOUND` 退出，表现为每个用户的任务等满 15 秒后报「容器运行时通道连接超时」。已把 `yaml` 补进镜像构建链（`Dockerfile.runtime` + `scripts/build-runtime-image.sh`，版本跟随 `backend-ts/package.json` 读取）。
+- **`ContainerRegistry.precheck()` 新增「镜像 + 当前 dist」加载冒烟**：切 docker 前用当前 dist 在镜像里实际加载一次 runtime-agent 与 sharp / node-pty（只加载、不启动 agent），发现新增 npm 依赖或 Node 升级后漏重建镜像时，后台保存「系统设置 → 运行环境」直接以明确错误拒绝并提示重建镜像命令，不再等到用户任务逐个超时。
+
 ## 0.0.378 (2026-10-29)
 
 ### 后端
