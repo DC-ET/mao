@@ -94,6 +94,27 @@ export function resetCenterTabs() {
 }
 
 /**
+ * 打开「我的工作区」总览 Tab。供顶栏等脱离 TaskView 的入口使用。
+ * sessionKey 缺省用当前会话；皆空时落到新建态占位键。
+ */
+export function openWorkspaceOverviewTabFor(sessionKey?: string) {
+  const key = sessionKey || currentSessionId.value || NEW_TASK_TABS_KEY
+  let state = sessionTabsMap.value.get(key)
+  if (!state) {
+    state = { tabs: [], activeTabId: 'chat' }
+    sessionTabsMap.value.set(key, state)
+  }
+  const existing = state.tabs.find(t => t.type === 'workspace_overview')
+  if (existing) {
+    state.activeTabId = existing.id
+  } else {
+    state.tabs.push({ id: 'workspace', type: 'workspace_overview', title: '我的工作区' })
+    state.activeTabId = 'workspace'
+  }
+  notifyTabsChanged(key)
+}
+
+/**
  * 作废新建态（占位键）的 Tab 状态。
  * 占位条目写在模块级单例里、没有会话 id 可依，只增不删会在「新建态 → 会话 → 新建态」
  * 之间原样复用：重进新建态时复活上次新建态的文件页签并保持激活，中央区停在陈旧
@@ -424,16 +445,7 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
    * 注册方式与 git tab 完全一致：不随刷新重建，恢复匹配不到就留 chat。
    */
   function openWorkspaceOverviewTab() {
-    const state = getSessionState()
-    const existing = state.tabs.find(t => t.type === 'workspace_overview')
-    if (existing) {
-      state.activeTabId = existing.id
-      notifyTabsChanged()
-      return
-    }
-    state.tabs.push({ id: 'workspace', type: 'workspace_overview', title: '我的工作区' })
-    state.activeTabId = 'workspace'
-    notifyTabsChanged()
+    openWorkspaceOverviewTabFor()
   }
 
   /**

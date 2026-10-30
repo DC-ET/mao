@@ -1,7 +1,7 @@
 <template>
   <div class="workspace-overview-panel">
     <div class="overview-toolbar">
-      <span class="overview-hint">机器人通道工作区不在本人目录内，不在本页签范围</span>
+      <span class="overview-hint">临时工作区不在此列表。机器人通道工作区不在本人目录内，也不在此页签</span>
       <div class="overview-toolbar-actions">
         <el-button size="small" :loading="refreshing" @click="refreshAll">
           <el-icon v-if="!refreshing" :size="13"><Refresh /></el-icon>
@@ -166,7 +166,7 @@ const canConfirmDelete = computed(() => {
 })
 
 const sortedEntries = computed(() => {
-  const list = [...entries.value]
+  const list = entries.value.filter(entry => entry.kind !== 'temp')
   const dir = sortOrder.value === 'ascending' ? 1 : -1
   list.sort((a, b) => {
     if (sortKey.value === 'name') return a.name.localeCompare(b.name) * dir

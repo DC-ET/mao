@@ -2,6 +2,11 @@
   <nav class="top-nav">
     <div class="nav-left" :class="{ 'is-mac': reserveTrafficLightInset }">
       <div class="nav-left-actions">
+        <el-tooltip content="我的工作区" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
+          <div class="theme-toggle" role="button" aria-label="我的工作区" @click="openMyWorkspaces">
+            <el-icon :size="16"><FolderOpened /></el-icon>
+          </div>
+        </el-tooltip>
         <el-tooltip v-if="isSettingsRoute" content="返回工作台" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
           <div class="theme-toggle" role="button" aria-label="返回工作台" @click="goBackFromSettings">
             <el-icon :size="16"><ArrowLeft /></el-icon>
@@ -115,7 +120,7 @@
     <InboxDrawer v-model="inboxDrawerVisible" />
   </nav>
 </template><script setup lang="ts">
-import { ArrowLeft, ChatLineSquare, Reading, Refresh, Setting, SwitchButton, User } from '@element-plus/icons-vue'
+import { ArrowLeft, ChatLineSquare, FolderOpened, Reading, Refresh, Setting, SwitchButton, User } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -127,6 +132,7 @@ import { useVersionCheck } from '../../composables/useVersionCheck'
 import { readScreenFillingWindow, reserveMacTrafficLightInset as shouldReserveMacTrafficLightInset } from '../../utils/macTrafficLightInset'
 import { isElectronClient } from '../../utils/platform'
 import { goBackToWorkbench } from '../../utils/workbench-nav'
+import { openWorkspaceOverviewTabFor } from '../../composables/useCenterTabs'
 import SessionSearchPopover from '../search/SessionSearchPopover.vue'
 import UsageBell from '../usage/UsageBell.vue'
 import CommandManagerDrawer from '../command/CommandManagerDrawer.vue'
@@ -219,6 +225,17 @@ const updateTooltip = computed(() => {
 function goBackFromSettings() {
   const active = sessionStore.activeSession
   goBackToWorkbench(router, active?.id ?? sessionStore.sessions[0]?.id)
+}
+
+function openMyWorkspaces() {
+  const onWorkbench = route.name === 'Home' || route.name === 'Task'
+  if (onWorkbench) {
+    openWorkspaceOverviewTabFor()
+    return
+  }
+  const sessionId = sessionStore.activeSession?.id ?? sessionStore.sessions[0]?.id
+  openWorkspaceOverviewTabFor(sessionId ? String(sessionId) : undefined)
+  goBackToWorkbench(router, sessionId)
 }
 
 onMounted(() => {
