@@ -60,7 +60,7 @@
         placeholder="搜索整个工作区"
         clearable
         :prefix-icon="Search"
-        @keydown.esc="searchQuery = ''"
+        @keydown.esc.prevent="searchQuery = ''"
       />
     </div>
 
@@ -656,8 +656,13 @@ function onKeydown(e: KeyboardEvent) {
     return
   }
   if (e.key === 'Escape') {
-    if (creating.value || renamingPath.value) cancelDraft()
-    else if (searchQuery.value) searchQuery.value = ''
+    if (creating.value || renamingPath.value) {
+      e.preventDefault()
+      cancelDraft()
+    } else if (searchQuery.value) {
+      e.preventDefault()
+      searchQuery.value = ''
+    }
     return
   }
   if (e.key === 'Enter') {

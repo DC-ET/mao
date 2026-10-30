@@ -135,7 +135,9 @@ function closeViewer(): void {
 }
 
 function handleKeyDown(event: KeyboardEvent): void {
-  if (event.key === 'Escape') closeViewer()
+  if (event.key !== 'Escape') return
+  event.preventDefault()
+  closeViewer()
 }
 
 function buildButton(label: string, className: string, onClick: () => void): HTMLButtonElement {

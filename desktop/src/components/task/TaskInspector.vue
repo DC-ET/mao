@@ -39,7 +39,7 @@
               v-model="editingTitle"
               class="task-title-input"
               @keydown.enter="confirmEdit"
-              @keydown.escape="cancelEdit"
+              @keydown.escape.prevent="cancelEdit"
               @blur="confirmEdit"
             />
             <div v-else class="task-title-row">

@@ -25,7 +25,7 @@
           v-model="editingTitle"
           class="side-task-title-input"
           @keydown.enter="confirmEdit(task)"
-          @keydown.escape="cancelEdit"
+          @keydown.escape.prevent="cancelEdit"
           @click.stop
           @blur="onEditBlur(task)"
         />

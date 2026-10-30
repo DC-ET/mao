@@ -311,6 +311,7 @@ function onPanelKeydown(e: KeyboardEvent) {
       void handleJump(row.group, row.hit)
     }
   } else if (e.key === 'Escape') {
+    e.preventDefault()
     isOpen.value = false
   }
 }

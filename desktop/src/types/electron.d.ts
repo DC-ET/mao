@@ -352,6 +352,8 @@ interface ElectronAPI {
   minimizeWindow(): Promise<void>
   maximizeWindow(): Promise<void>
   closeWindow(): Promise<void>
+  /** 退出系统全屏（macOS 绿灯）。未处于全屏时主进程直接返回。 */
+  exitFullScreen(): Promise<void>
   openExternal(url: string): Promise<void>
   openFeishuAuthWindow(authUrl: string, callbackPath?: string): Promise<{ state: string; code?: string }>
   selectDirectory(): Promise<string | null>

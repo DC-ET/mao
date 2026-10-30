@@ -728,12 +728,16 @@ function onGlobalClick() {
   if (groupContextMenu.visible) closeGroupContextMenu()
 }
 function onGlobalKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape') {
-    // 选择模式下 Esc 优先退出多选（过滤输入行的 Esc 已在输入处理器内 stopPropagation）
-    if (selecting.value) {
-      exitSelectMode()
-      return
-    }
+  if (e.key !== 'Escape') return
+  // 选择模式下 Esc 优先退出多选（过滤输入行的 Esc 已在输入处理器内 stopPropagation）。
+  // preventDefault 把这一下标成已消费，全屏退出监听才不会把它当成「退出全屏」。
+  if (selecting.value) {
+    e.preventDefault()
+    exitSelectMode()
+    return
+  }
+  if (contextMenu.visible || groupContextMenu.visible) {
+    e.preventDefault()
     if (contextMenu.visible) closeContextMenu()
     if (groupContextMenu.visible) closeGroupContextMenu()
   }
