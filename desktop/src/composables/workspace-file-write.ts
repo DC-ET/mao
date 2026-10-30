@@ -97,46 +97,51 @@ function flagsOf(flags: Flags): { force?: boolean; overwrite?: boolean } {
   }
 }
 
-export function mkdirWorkspace(sessionId: number, path: string) {
+/** 有 workspacePath 时写该目录，不再带 sessionId，避免落到当前会话工作区。 */
+function scopeFields(sessionId: number, workspacePath?: string): { sessionId?: number; workspacePath?: string } {
+  return workspacePath ? { workspacePath } : { sessionId }
+}
+
+export function mkdirWorkspace(sessionId: number, path: string, workspacePath?: string) {
   return withPrompts('mkdir', async (flags) => {
-    const res = await api.post('/files/workspace-mkdir', { sessionId, path, ...flagsOf(flags) }, writeConfig())
+    const res = await api.post('/files/workspace-mkdir', { ...scopeFields(sessionId, workspacePath), path, ...flagsOf(flags) }, writeConfig())
     return res.data as WriteResult
   })
 }
 
-export function writeWorkspaceFile(sessionId: number, path: string, content = '') {
+export function writeWorkspaceFile(sessionId: number, path: string, content = '', workspacePath?: string) {
   return withPrompts('write', async (flags) => {
-    const res = await api.post('/files/workspace-write', { sessionId, path, content, ...flagsOf(flags) }, writeConfig())
+    const res = await api.post('/files/workspace-write', { ...scopeFields(sessionId, workspacePath), path, content, ...flagsOf(flags) }, writeConfig())
     return res.data as WriteResult
   })
 }
 
-export function renameWorkspacePath(sessionId: number, path: string, newName: string) {
+export function renameWorkspacePath(sessionId: number, path: string, newName: string, workspacePath?: string) {
   return withPrompts('rename', async (flags) => {
-    const res = await api.post('/files/workspace-rename', { sessionId, path, newName, ...flagsOf(flags) }, writeConfig())
+    const res = await api.post('/files/workspace-rename', { ...scopeFields(sessionId, workspacePath), path, newName, ...flagsOf(flags) }, writeConfig())
     return res.data as WriteResult
   })
 }
 
-export function moveWorkspacePath(sessionId: number, from: string, to: string) {
+export function moveWorkspacePath(sessionId: number, from: string, to: string, workspacePath?: string) {
   return withPrompts('move', async (flags) => {
-    const res = await api.post('/files/workspace-move', { sessionId, from, to, ...flagsOf(flags) }, writeConfig())
+    const res = await api.post('/files/workspace-move', { ...scopeFields(sessionId, workspacePath), from, to, ...flagsOf(flags) }, writeConfig())
     return res.data as WriteResult
   })
 }
 
-export function copyWorkspacePath(sessionId: number, from: string, to: string) {
+export function copyWorkspacePath(sessionId: number, from: string, to: string, workspacePath?: string) {
   return withPrompts('copy', async (flags) => {
-    const res = await api.post('/files/workspace-copy', { sessionId, from, to, ...flagsOf(flags) }, writeConfig())
+    const res = await api.post('/files/workspace-copy', { ...scopeFields(sessionId, workspacePath), from, to, ...flagsOf(flags) }, writeConfig())
     return res.data as WriteResult
   })
 }
 
-export function deleteWorkspacePath(sessionId: number, path: string) {
+export function deleteWorkspacePath(sessionId: number, path: string, workspacePath?: string) {
   return withPrompts('delete', async (flags) => {
     const res = await api.delete('/files/workspace-delete', {
       ...writeConfig(),
-      params: { sessionId, path, ...(flags.force ? { force: 'true' } : {}) },
+      params: { ...scopeFields(sessionId, workspacePath), path, ...(flags.force ? { force: 'true' } : {}) },
     })
     return res.data as WriteResult
   })
@@ -147,9 +152,10 @@ export function uploadWorkspace(
   dir: string,
   items: UploadItem[],
   onProgress?: (progress: UploadProgress) => void,
+  workspacePath?: string,
 ) {
   const label = items.length === 1 ? items[0].relativePath : `${items.length} 个文件`
-  return withPrompts('upload', (flags) => sendUpload(sessionId, dir, items, label, flags, onProgress))
+  return withPrompts('upload', (flags) => sendUpload(sessionId, dir, items, label, flags, onProgress, workspacePath))
 }
 
 function sendUpload(
@@ -159,6 +165,7 @@ function sendUpload(
   label: string,
   flags: Flags,
   onProgress?: (progress: UploadProgress) => void,
+  workspacePath?: string,
 ): Promise<WriteResult> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
@@ -193,7 +200,8 @@ function sendUpload(
       reject(err)
     }
     const form = new FormData()
-    form.append('sessionId', String(sessionId))
+    if (workspacePath) form.append('workspacePath', workspacePath)
+    else form.append('sessionId', String(sessionId))
     form.append('dir', dir || '.')
     if (flags.force) form.append('force', 'true')
     if (flags.overwrite) form.append('overwrite', 'true')

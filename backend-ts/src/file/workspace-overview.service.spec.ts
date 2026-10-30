@@ -17,13 +17,6 @@ function makeService(root: string, usage: UsageMap = new Map()) {
   return { service, repo };
 }
 
-async function waitSizeQueue(service: WorkspaceOverviewService): Promise<void> {
-  const inflight = (service as unknown as { sizeInFlight: Map<string, Promise<void>> }).sizeInFlight;
-  while (inflight.size > 0) {
-    await Promise.all([...inflight.values()]);
-  }
-}
-
 describe('WorkspaceOverviewService.listOverview', () => {
   it('enumerates three kinds, skips symlinks and hides projects container', async () => {
     const root = useTmpDir('ws-ov-');
@@ -45,6 +38,8 @@ describe('WorkspaceOverviewService.listOverview', () => {
     const demo = entries.find(e => e.name === 'demo')!;
     expect(demo.isGit).toBe(true);
     expect(demo.path).toBe(join(userRoot, 'projects', 'demo'));
+    expect(demo.sizeBytes).toBeNull();
+    expect(demo.sizeState).toBe('ready');
   });
 
   it('merges session usage by directory prefix (exact + nested)', async () => {
@@ -70,60 +65,15 @@ describe('WorkspaceOverviewService.listOverview', () => {
     expect(otherEntry.activeSessions).toBe(0);
   });
 
-  it('marks uncached sizes pending then ready after background compute; symlink files not counted', async () => {
+  it('does not walk directories to compute size', async () => {
     const root = useTmpDir('ws-ov-');
     const userRoot = join(root, '7');
     mkdirSync(join(userRoot, '42'), { recursive: true });
     writeFileSync(join(userRoot, '42', 'a.txt'), 'x'.repeat(10));
-    symlinkSync(join(userRoot, '42', 'a.txt'), join(userRoot, '42', 'link.txt'));
     const { service } = makeService(root);
-    const first = await service.listOverview(7);
-    expect(first.entries[0]!.sizeState).toBe('pending');
-    await waitSizeQueue(service);
-    const second = await service.listOverview(7);
-    expect(second.entries[0]!.sizeState).toBe('ready');
-    // 符号链接文件不计入大小（只统计真实文件 10 字节）
-    expect(second.entries[0]!.sizeBytes).toBe(10);
-  });
-
-  it('refresh invalidates cache and recomputes', async () => {
-    const root = useTmpDir('ws-ov-');
-    const userRoot = join(root, '7');
-    mkdirSync(join(userRoot, '42'), { recursive: true });
-    writeFileSync(join(userRoot, '42', 'a.txt'), 'x'.repeat(5));
-    const { service } = makeService(root);
-    await service.listOverview(7);
-    await waitSizeQueue(service);
-    const cached = await service.listOverview(7);
-    expect(cached.entries[0]!.sizeState).toBe('ready');
-    await service.refresh(7, join(userRoot, '42'));
-    await waitSizeQueue(service);
-    const after = await service.listOverview(7);
-    expect(after.entries[0]!.sizeBytes).toBe(5);
-  });
-
-  it('TTL 过期后再次打开总览会重算并得到新大小（worker 不能把过期条目当缓存跳过）', async () => {
-    const root = useTmpDir('ws-ov-');
-    const userRoot = join(root, '7');
-    mkdirSync(join(userRoot, '42'), { recursive: true });
-    writeFileSync(join(userRoot, '42', 'a.txt'), 'x'.repeat(5));
-    const { service } = makeService(root);
-    await service.listOverview(7);
-    await waitSizeQueue(service);
-    const first = await service.listOverview(7);
-    expect(first.entries[0]!.sizeState).toBe('ready');
-
-    // 模拟 10 分钟后缓存过期，且目录内容已变化
-    const cache = (service as unknown as { sizeCache: Map<string, { at: number }> }).sizeCache;
-    cache.get(`7:${join(userRoot, '42')}`)!.at = Date.now() - 11 * 60 * 1000;
-    writeFileSync(join(userRoot, '42', 'b.txt'), 'y'.repeat(20));
-
-    const second = await service.listOverview(7);
-    expect(second.entries[0]!.sizeState).toBe('pending');
-    await waitSizeQueue(service);
-    const third = await service.listOverview(7);
-    expect(third.entries[0]!.sizeState).toBe('ready');
-    expect(third.entries[0]!.sizeBytes).toBe(25);
+    const { entries } = await service.listOverview(7);
+    expect(entries[0]!.sizeBytes).toBeNull();
+    expect(entries[0]!.sizeState).toBe('ready');
   });
 
   it('refresh 拒绝本人根之外的路径（越界不可触发任意目录遍历）', async () => {
@@ -134,23 +84,7 @@ describe('WorkspaceOverviewService.listOverview', () => {
     await expect(service.refresh(7, '/etc')).rejects.toThrow('只能操作本人工作区根目录下的目录');
     // 本人根内路径放行
     await expect(service.refresh(7, join(root, '7', 'nope'))).resolves.toBeUndefined();
-  });
-
-  it('walk 超过深度上限标 timeout（30 层嵌套）', async () => {
-    const root = useTmpDir('ws-ov-');
-    const userRoot = join(root, '7');
-    let deep = join(userRoot, '42');
-    mkdirSync(deep, { recursive: true });
-    for (let i = 0; i < 30; i++) {
-      deep = join(deep, `lvl${i}`);
-    }
-    mkdirSync(deep, { recursive: true });
-    writeFileSync(join(deep, 'leaf.txt'), 'x');
-    const { service } = makeService(root);
-    await service.listOverview(7);
-    await waitSizeQueue(service);
-    const { entries } = await service.listOverview(7);
-    expect(entries[0]!.sizeState).toBe('timeout');
+    await expect(service.refresh(7)).resolves.toBeUndefined();
   });
 
   it('missing user root returns empty without error', async () => {

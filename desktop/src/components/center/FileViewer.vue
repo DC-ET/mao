@@ -135,6 +135,8 @@ import { Refresh } from '@element-plus/icons-vue'
 const props = defineProps<{
   filePath: string
   provider: WorkspaceFileProvider | null
+  /** 从某个工作区目录的文件管理打开时，后续相对链接仍落在这个目录。 */
+  workspaceRoot?: string
 }>()
 
 const sessionStore = useSessionStore()
@@ -213,7 +215,7 @@ async function handleMarkdownClick(e: MouseEvent) {
   if (!resolvedPath) return
 
   const title = resolvedPath.split(/[/\\]/).pop() || resolvedPath
-  openFileTab(resolvedPath, title)
+  openFileTab(resolvedPath, title, props.workspaceRoot)
 }
 
 const totalLines = ref(0)

@@ -6,7 +6,7 @@
     @keydown="onKeydown"
   >
     <div class="fm-header">
-      <span class="fm-title">文件管理</span>
+      <span class="fm-title">{{ workspaceTitle }}</span>
       <div class="fm-header-actions">
         <el-radio-group :model-value="viewMode" size="small" @update:model-value="setViewMode">
           <el-radio-button value="grid" title="图标视图"><el-icon><Grid /></el-icon></el-radio-button>
@@ -237,6 +237,8 @@ import FileManagerContextMenu from './FileManagerContextMenu.vue'
 const props = defineProps<{
   sessionId: string
   provider: WorkspaceFileProvider | null
+  /** 工作区总览打开时的目录绝对路径。有值时读写都落在这个目录，而不是当前会话。 */
+  workspaceRoot?: string
 }>()
 
 const emit = defineEmits<{
@@ -260,7 +262,17 @@ const {
 } = fm
 
 const clipboard = useFileClipboard()
-const canPaste = computed(() => clipboard.matches(numericSessionId.value))
+const clipScope = computed(() => (props.workspaceRoot ? `ws:${props.workspaceRoot}` : ''))
+const canPaste = computed(() => clipboard.matches(numericSessionId.value, clipScope.value || undefined))
+const workspaceTitle = computed(() => {
+  const root = props.workspaceRoot
+  if (!root) return '文件管理'
+  const name = root.split(/[/\\]/).filter(Boolean).pop()
+  return name ? `文件管理 · ${name}` : '文件管理'
+})
+function ownedRoot(): string | undefined {
+  return props.workspaceRoot
+}
 const clipboardCount = computed(() => (canPaste.value ? clipboard.current?.paths.length ?? 0 : 0))
 
 const rootEl = ref<HTMLDivElement>()
@@ -287,7 +299,7 @@ function ctxTargetDir(): string {
 }
 
 function ensureWritable(): boolean {
-  if (numericSessionId.value > 0) return true
+  if (props.workspaceRoot || numericSessionId.value > 0) return true
   ElMessage.warning('会话未就绪，暂不能操作文件')
   return false
 }
@@ -324,9 +336,9 @@ async function commitCreate(name: string) {
   cancelDraft()
   try {
     if (draft.kind === 'dir') {
-      await mkdirWorkspace(numericSessionId.value, path)
+      await mkdirWorkspace(numericSessionId.value, path, ownedRoot())
     } else {
-      const result = await writeWorkspaceFile(numericSessionId.value, path, '')
+      const result = await writeWorkspaceFile(numericSessionId.value, path, '', ownedRoot())
       emit('open-file', { path: result.path, title: name })
     }
   } catch {
@@ -345,7 +357,7 @@ async function commitRename(path: string, name: string) {
   if (!ensureWritable()) return
   cancelDraft()
   try {
-    const result = await renameWorkspacePath(numericSessionId.value, path, name)
+    const result = await renameWorkspacePath(numericSessionId.value, path, name, ownedRoot())
     emit('paths-changed', { kind: 'move', from: path, to: result.path })
   } catch {
     return
@@ -380,7 +392,7 @@ async function handleDelete() {
   const deleted: string[] = []
   for (const entry of targets) {
     try {
-      await deleteWorkspacePath(numericSessionId.value, entry.path)
+      await deleteWorkspacePath(numericSessionId.value, entry.path, ownedRoot())
       deleted.push(entry.path)
     } catch {
       break // 用户取消强制或出错：中止剩余项，已删的照实校正
@@ -398,13 +410,17 @@ async function handleDelete() {
 function handleClipboard(op: 'cut' | 'copy') {
   const paths = selectedList.value
   if (paths.length === 0) return
-  clipboard.set(op, numericSessionId.value, paths)
+  clipboard.set(op, numericSessionId.value, paths, clipScope.value || undefined)
 }
 
 async function handlePaste() {
   const clip = clipboard.current
-  if (!clip || clip.sessionId !== numericSessionId.value || clip.paths.length === 0) {
-    ElMessage.warning('剪贴板为空或不能跨会话粘贴')
+  const scope = clipScope.value
+  const sameScope = scope
+    ? clip?.scope === scope
+    : clip != null && clip.scope == null && clip.sessionId === numericSessionId.value
+  if (!clip || !sameScope || clip.paths.length === 0) {
+    ElMessage.warning(scope ? '剪贴板为空或不能跨工作区粘贴' : '剪贴板为空或不能跨会话粘贴')
     return
   }
   if (!ensureWritable()) return
@@ -422,10 +438,10 @@ async function handlePaste() {
   try {
     for (const src of targets) {
       if (clip.op === 'cut') {
-        const result = await moveWorkspacePath(numericSessionId.value, src, dest)
+        const result = await moveWorkspacePath(numericSessionId.value, src, dest, ownedRoot())
         emit('paths-changed', { kind: 'move', from: src, to: result.path })
       } else {
-        await copyWorkspacePath(numericSessionId.value, src, dest)
+        await copyWorkspacePath(numericSessionId.value, src, dest, ownedRoot())
       }
     }
     // 全部完成后才清剪切板：中途失败（用户取消强制/覆盖）时保留剩余项，与侧边栏 pasteClipboard 一致
@@ -455,7 +471,7 @@ async function moveSourcesTo(sources: string[], dir: string, dirIsCurrent = fals
   const dest = dir || '.'
   for (const src of movable) {
     try {
-      const result = await moveWorkspacePath(numericSessionId.value, src, dest)
+      const result = await moveWorkspacePath(numericSessionId.value, src, dest, ownedRoot())
       emit('paths-changed', { kind: 'move', from: src, to: result.path })
     } catch {
       break
@@ -526,7 +542,7 @@ async function handleFiles(items: UploadItem[], dir: string) {
   try {
     await uploadWorkspace(numericSessionId.value, dir, items, (p) => {
       uploadProgress.value = p
-    })
+    }, ownedRoot())
     ok = true
   } catch {
     // 3044/3045 的询问面板与错误 toast 已由 withPrompts 处理

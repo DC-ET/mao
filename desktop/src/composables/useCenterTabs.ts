@@ -261,10 +261,13 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
   // 完成事件据此判断是否标未读（不再以父会话激活推断已读）。
   ensureSideTaskReadWatch()
 
-  function openFileTab(filePath: string, title: string) {
+  function openFileTab(filePath: string, title: string, workspaceRoot?: string) {
     const state = getSessionState()
-    // Check if tab already exists
-    const existing = state.tabs.find(t => t.type === 'file' && t.filePath === filePath)
+    const root = workspaceRoot || undefined
+    // 同一相对路径在不同工作区里是不同文件，不能互相顶掉
+    const existing = state.tabs.find(t =>
+      t.type === 'file' && t.filePath === filePath && (t.workspaceRoot || undefined) === root,
+    )
     if (existing) {
       // Increment version to force remount, ensuring latest file content is loaded
       existing.version = (existing.version ?? 0) + 1
@@ -272,9 +275,8 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
       notifyTabsChanged()
       return
     }
-    // Use relative path as id (from title which is the filename, but filePath for uniqueness)
-    const id = 'file:' + filePath
-    const newTab: Tab = { id, type: 'file', title, filePath, version: 0 }
+    const id = root ? `file:${root}:${filePath}` : 'file:' + filePath
+    const newTab: Tab = { id, type: 'file', title, filePath, version: 0, ...(root ? { workspaceRoot: root } : {}) }
     state.tabs.push(newTab)
     state.activeTabId = id
     notifyTabsChanged()
@@ -412,7 +414,8 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
    */
   function openFileManagerTab() {
     const state = getSessionState()
-    const existing = state.tabs.find(t => t.type === 'file_manager')
+    // 只认会话自己的文件管理。总览打开的是带 workspaceRoot 的另一批页签，不能被这次打开顶掉。
+    const existing = state.tabs.find(t => t.id === 'file-manager')
     if (existing) {
       state.activeTabId = existing.id
       notifyTabsChanged()
@@ -420,6 +423,27 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     }
     state.tabs.push({ id: 'file-manager', type: 'file_manager', title: '文件管理' })
     state.activeTabId = 'file-manager'
+    notifyTabsChanged()
+  }
+
+  /** 打开某个工作区目录自己的文件管理页签（每个目录一个，与当前会话的文件管理并存）。 */
+  function openWorkspaceFileManagerTab(entry: { path: string; name: string }) {
+    if (!entry.path) return
+    const state = getSessionState()
+    const id = 'fm:' + entry.path
+    const existing = state.tabs.find(t => t.id === id)
+    if (existing) {
+      state.activeTabId = existing.id
+      notifyTabsChanged()
+      return
+    }
+    state.tabs.push({
+      id,
+      type: 'file_manager',
+      title: `文件 · ${entry.name}`,
+      workspaceRoot: entry.path,
+    })
+    state.activeTabId = id
     notifyTabsChanged()
   }
 
@@ -757,6 +781,7 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     openSubagentTab,
     openTraceTab,
     openFileManagerTab,
+    openWorkspaceFileManagerTab,
     openGitTab,
     openWorkspaceOverviewTab,
     updateSideTaskTab,

@@ -1,20 +1,13 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
-import { lstat, readdir, rm } from 'node:fs/promises';
+import { rm } from 'node:fs/promises';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import type { SessionRepository } from '../session/session.repository.js';
 
 export type WorkspaceKind = 'temp' | 'project' | 'other';
+/** 大小不再统计。字段保留给旧客户端：恒为 ready + null，避免它们把 pending 当成还要轮询。 */
 export type SizeState = 'ready' | 'pending' | 'timeout' | 'failed';
-
-/** 大小统计条目上限：超过即停（标 timeout），防深目录打爆磁盘 IO（技术方案 2026-10-29 §2.1-2）。 */
-const WALK_MAX_DEPTH = 24;
-const WALK_MAX_ENTRIES = 200_000;
-const WALK_TIMEOUT_MS = 30_000;
-/** 目录间并发（技术方案 §2.1-2）。 */
-const SIZE_CONCURRENCY = 4;
-const SIZE_TTL_MS = 10 * 60 * 1000;
 
 export interface WorkspaceOverviewEntry {
   name: string;
@@ -36,17 +29,8 @@ export interface WorkspaceReference {
 
 export type WorkspacePathError = 'out-of-scope' | 'container' | 'missing';
 
-interface SizeCacheValue {
-  bytes: number;
-  state: 'ready' | 'timeout' | 'failed';
-  at: number;
-}
-
-/** 路径校验 / 大小统计 / 删除的总览服务（技术方案 2026-10-29 §4.1-1）。 */
+/** 路径校验与删除的总览服务。目录大小不再统计。 */
 export class WorkspaceOverviewService {
-  /** key = `${userId}:${path}`；仅缓存终态（ready/timeout/failed），pending 由 in-flight Promise 表达。 */
-  private readonly sizeCache = new Map<string, SizeCacheValue>();
-  private readonly sizeInFlight = new Map<string, Promise<void>>();
   /** per-path 删除互斥（防双击并发删，D6）。 */
   private readonly deleting = new Set<string>();
 
@@ -62,7 +46,7 @@ export class WorkspaceOverviewService {
     return resolve(this.pathSandbox.getWorkspaceRoot(), String(userId));
   }
 
-  /** 枚举本人根下一级目录（projects/ 展开其子目录），合并大小缓存与会话聚合成资产视图。 */
+  /** 枚举本人根下一级目录（projects/ 展开其子目录），合并会话聚合成资产视图。不遍历目录算大小。 */
   async listOverview(userId: number): Promise<{ entries: WorkspaceOverviewEntry[]; error: string | null }> {
     const userRoot = this.userRoot(userId);
     if (!existsSync(userRoot)) {
@@ -106,8 +90,6 @@ export class WorkspaceOverviewService {
       const kind: WorkspaceKind = /^\d+$/.test(item.name) ? 'temp' : 'other';
       entries.push(this.buildEntry(userId, join(userRoot, item.name), item.name, kind, usage));
     }
-    // 首屏未命中缓存的目录触发后台计算，队列按最近使用降序（D11：优先填用户正看到的行）
-    this.scheduleSizeCompute(userId, entries);
     return { entries, error: null };
   }
 
@@ -130,130 +112,29 @@ export class WorkspaceOverviewService {
         lastUsedAt = stat.lastUsedAt;
       }
     }
-    const cached = this.sizeCache.get(`${userId}:${path}`);
-    const fresh = cached != null && Date.now() - cached.at < SIZE_TTL_MS;
     return {
       name,
       path,
       kind,
       isGit: existsSync(join(path, '.git')),
-      sizeBytes: fresh ? cached!.bytes : null,
-      sizeState: fresh ? cached!.state : 'pending',
+      sizeBytes: null,
+      sizeState: 'ready',
       activeSessions,
       archivedSessions,
       lastUsedAt,
     };
   }
 
-  /** 未命中新鲜缓存的目录进入后台计算队列；同一目录的重复触发被 in-flight 表去重。 */
-  scheduleSizeCompute(userId: number, entries: WorkspaceOverviewEntry[]): void {
-    const now = Date.now();
-    const todo = entries
-      .filter(e => {
-        const key = `${userId}:${e.path}`;
-        const cached = this.sizeCache.get(key);
-        // 过期（TTL 外）的旧值也视为未命中：只展示 pending 直到重算完成
-        return (cached == null || now - cached.at >= SIZE_TTL_MS) && !this.sizeInFlight.has(key);
-      })
-      // 按最近使用降序入队（D11），未使用过的排最后
-      .sort((a, b) => (b.lastUsedAt ?? '').localeCompare(a.lastUsedAt ?? ''))
-      .map(e => e.path);
-    void this.runSizeQueue(userId, todo);
-  }
-
-  private async runSizeQueue(userId: number, paths: string[]): Promise<void> {
-    let cursor = 0;
-    const workers = Array.from({ length: Math.min(SIZE_CONCURRENCY, paths.length) }, async () => {
-      while (cursor < paths.length) {
-        const path = paths[cursor++]!;
-        const key = `${userId}:${path}`;
-        // 只跳过「新鲜」缓存与在途任务：TTL 外的旧值仍在 Map 里，若按「有缓存即跳过」
-        // 判重，scheduleSizeCompute 送入的过期条目会被全部跳过，大小列永久停在 pending
-        const cached = this.sizeCache.get(key);
-        const fresh = cached != null && Date.now() - cached.at < SIZE_TTL_MS;
-        if (fresh || this.sizeInFlight.has(key)) continue;
-        const task = this.computeSize(path)
-          .then(result => {
-            this.sizeCache.set(key, { ...result, at: Date.now() });
-          })
-          .catch((e) => {
-            console.warn(`[workspace-overview] size walk failed ${path}:`, e);
-            this.sizeCache.set(key, { bytes: 0, state: 'failed', at: Date.now() });
-          })
-          .finally(() => {
-            this.sizeInFlight.delete(key);
-          });
-        this.sizeInFlight.set(key, task);
-        await task;
-      }
-    });
-    await Promise.all(workers);
-  }
-
-  /** 单目录 walk：深度 / 条目 / 超时三重上限，符号链接 lstat 识别后跳过（永不跟随）。 */
-  private async computeSize(path: string): Promise<{ bytes: number; state: 'ready' | 'timeout' | 'failed' }> {
-    const deadline = Date.now() + WALK_TIMEOUT_MS;
-    let entries = 0;
-    let timedOut = false;
-
-    const walk = async (dir: string, depth: number): Promise<number> => {
-      if (depth > WALK_MAX_DEPTH || Date.now() > deadline) {
-        timedOut = true;
-        return 0;
-      }
-      let dirBytes = 0;
-      const children = await readdir(dir, { withFileTypes: true });
-      for (const child of children) {
-        if (++entries > WALK_MAX_ENTRIES) {
-          timedOut = true;
-          break;
-        }
-        if (child.isSymbolicLink()) continue;
-        const full = join(dir, child.name);
-        if (child.isDirectory()) {
-          dirBytes += await walk(full, depth + 1);
-        } else if (child.isFile()) {
-          // symlink 已跳过；其余非目录非普通文件（fifo 等）不计
-          const st = await lstat(full).catch(() => null);
-          if (st?.isFile()) dirBytes += st.size;
-        }
-        if (timedOut) break;
-      }
-      return dirBytes;
-    };
-
-    try {
-      const st = await lstat(path).catch(() => null);
-      if (st == null || !st.isDirectory()) {
-        return { bytes: 0, state: 'failed' };
-      }
-      const bytes = await walk(path, 1);
-      return timedOut ? { bytes, state: 'timeout' } : { bytes, state: 'ready' };
-    } catch (e) {
-      console.warn(`[workspace-overview] walk error ${path}:`, e);
-      return { bytes: 0, state: 'failed' };
-    }
-  }
-
-  /** 失效缓存并后台重算（顶部「刷新」/ 行内刷新）：立即返回，客户端按 pending → 3s 重查感知结果。 */
+  /**
+   * 旧客户端的「刷新大小」。不再遍历目录。
+   * 带 path 时仍做本人根校验，避免把这个入口留成任意路径探针。
+   */
   async refresh(userId: number, path?: string | null): Promise<void> {
-    if (path != null) {
-      // 单目录刷新同样受本人根 scope 约束：否则任意登录用户可借此遍历服务器上
-      // 任意目录（大小结果不进总览响应，但磁盘 IO 与超时负担是真实的）
-      const scoped = this.resolveWithinUserRoot(userId, path);
-      if ('error' in scoped) {
-        throw new BusinessException(ErrorCode.PARAM_INVALID, scoped.message);
-      }
-      const target = scoped.path;
-      this.sizeCache.delete(`${userId}:${target}`);
-      void this.runSizeQueue(userId, [target]);
-      return;
+    if (path == null) return;
+    const scoped = this.resolveWithinUserRoot(userId, path);
+    if ('error' in scoped) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, scoped.message);
     }
-    for (const key of [...this.sizeCache.keys()]) {
-      if (key.startsWith(`${userId}:`)) this.sizeCache.delete(key);
-    }
-    // listOverview 自身会对全部未命中目录触发后台计算
-    await this.listOverview(userId);
   }
 
   /**
@@ -302,15 +183,14 @@ export class WorkspaceOverviewService {
     return this.sessionRepo.listActiveWorkspaceReferences(userId, resolvedPath);
   }
 
-  /** 物理删除（D6：recursive + force:false，进程内 per-path 互斥），完成后失效大小缓存。 */
-  async deleteWorkspace(userId: number, resolvedPath: string): Promise<void> {
+  /** 物理删除（D6：recursive + force:false，进程内 per-path 互斥）。 */
+  async deleteWorkspace(_userId: number, resolvedPath: string): Promise<void> {
     if (this.deleting.has(resolvedPath)) {
       throw new Error('该目录正在删除中');
     }
     this.deleting.add(resolvedPath);
     try {
       await rm(resolvedPath, { recursive: true, force: false });
-      this.sizeCache.delete(`${userId}:${resolvedPath}`);
     } catch (e) {
       // 校验与删除间目录已被移除（并发 / 重复点击重试）：视为已删除，不报错
       if ((e as { code?: string }).code === 'ENOENT') return;

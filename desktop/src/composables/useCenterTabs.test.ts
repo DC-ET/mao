@@ -660,6 +660,27 @@ describe('Git 管理器 Tab 与提交 diff 的 id 隔离', () => {
     expect(tabs.activeTabId.value).toBe('git')
   })
 
+  it('工作区文件管理与会话文件管理并存，同目录重复打开只激活', async () => {
+    const tabs = setup()
+    tabs.openFileManagerTab()
+    tabs.openWorkspaceFileManagerTab({ path: '/root/7/projects/mao', name: 'mao' })
+    tabs.openWorkspaceFileManagerTab({ path: '/root/7/weixin-bot', name: 'weixin-bot' })
+    await nextTick()
+
+    const managers = tabs.tabs.value.filter(t => t.type === 'file_manager')
+    expect(managers.map(t => t.id).sort()).toEqual(['file-manager', 'fm:/root/7/projects/mao', 'fm:/root/7/weixin-bot'])
+    expect(managers.find(t => t.id === 'fm:/root/7/projects/mao')?.workspaceRoot).toBe('/root/7/projects/mao')
+    expect(tabs.activeTabId.value).toBe('fm:/root/7/weixin-bot')
+
+    tabs.openFileManagerTab()
+    expect(tabs.activeTabId.value).toBe('file-manager')
+    expect(tabs.tabs.value.filter(t => t.type === 'file_manager')).toHaveLength(3)
+
+    tabs.openWorkspaceFileManagerTab({ path: '/root/7/projects/mao', name: 'mao' })
+    expect(tabs.tabs.value.filter(t => t.type === 'file_manager')).toHaveLength(3)
+    expect(tabs.activeTabId.value).toBe('fm:/root/7/projects/mao')
+  })
+
   it('工作区 diff 与提交 diff 同路径不互相顶掉，不同提交的同路径文件也并存', async () => {
     const tabs = setup()
     // 变更视图（工作区 diff）：沿用 git-diff: 前缀

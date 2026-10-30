@@ -38,6 +38,7 @@
         @open-commit-diff="handleOpenCommitDiff"
         @open-branch-diff="handleOpenBranchDiff"
         @use-for-new-task="handleUseForNewTask"
+        @open-file-manager="openWorkspaceFileManagerTab"
       />
     </div>
 
@@ -360,7 +361,7 @@ provide('quoteFileRangeToChat', quoteFileRangeToChat)
 
 // Center tabs
 const activeSessionIdRef = computed(() => sessionStore.activeSessionId ?? '')
-const { tabs, activeTab, activeTabId, openFileTab, openDiffTab, closeTab, closeAllFileTabs, closeOtherTabs, activateTab, openSideTaskTab, setSideTaskFork, openSubagentTab, openTraceTab, openFileManagerTab, openGitTab, updateSideTaskTab, restoreSideTaskTabs, restoreSubagentTabs, restoreTraceTab, restoreActiveTab, applyWorkspacePathChange } = useCenterTabs(activeSessionIdRef)
+const { tabs, activeTab, activeTabId, openFileTab, openDiffTab, closeTab, closeAllFileTabs, closeOtherTabs, activateTab, openSideTaskTab, setSideTaskFork, openSubagentTab, openTraceTab, openFileManagerTab, openWorkspaceFileManagerTab, openGitTab, updateSideTaskTab, restoreSideTaskTabs, restoreSubagentTabs, restoreTraceTab, restoreActiveTab, applyWorkspacePathChange } = useCenterTabs(activeSessionIdRef)
 
 /** 总览页签「用于新任务」：项目目录带 cloudProjectKey（下拉/复用链路同形态），临时 / 其他目录直接预填路径 */
 function handleUseForNewTask(entry: WorkspaceOverviewEntry) {
@@ -741,8 +742,8 @@ function handleSubagentSessionCreated(e: Event) {
 }
 
 // Open file from TaskInspector's file tree
-function handleOpenFile(payload: { path: string; title: string }) {
-  openFileTab(payload.path, payload.title)
+function handleOpenFile(payload: { path: string; title: string; workspaceRoot?: string }) {
+  openFileTab(payload.path, payload.title, payload.workspaceRoot)
 }
 
 /** 右侧边栏实例：文件管理器写操作后刷新文件树、定位目标路径 */

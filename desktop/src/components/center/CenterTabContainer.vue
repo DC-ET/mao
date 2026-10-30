@@ -6,7 +6,8 @@
         v-else-if="activeTab?.type === 'file'"
         :key="`${activeTabId}-${activeTab?.version ?? 0}`"
         :file-path="activeTab.filePath || ''"
-        :provider="fileProvider"
+        :provider="activeProvider"
+        :workspace-root="activeTab.workspaceRoot"
       />
       <FileDiffViewer
         v-else-if="activeTab?.type === 'diff' && activeTab.fileChange"
@@ -38,14 +39,15 @@
       <!-- key 带会话 id：KeepAlive 下同 id 分支会跨会话复用实例，按会话分 key 让切换会话即换新面板 -->
       <FileManagerPanel
         v-else-if="activeTab?.type === 'file_manager'"
-        :key="`file-manager-${props.sessionId}`"
-        :session-id="props.sessionId"
-        :provider="fileProvider"
-        @open-file="emit('open-file', $event)"
-        @add-file-to-chat="emit('add-file-to-chat', $event)"
-        @paths-changed="emit('paths-changed', $event)"
-        @tree-refresh="emit('tree-refresh')"
-        @locate-in-tree="emit('locate-in-tree', $event)"
+        :key="`file-manager-${props.sessionId}-${activeTab.workspaceRoot ?? 'session'}`"
+        :session-id="activeTab.workspaceRoot ? '' : props.sessionId"
+        :workspace-root="activeTab.workspaceRoot"
+        :provider="activeProvider"
+        @open-file="onOpenFile"
+        @add-file-to-chat="onAddFileToChat"
+        @paths-changed="onPathsChanged"
+        @tree-refresh="onTreeRefresh"
+        @locate-in-tree="onLocateInTree"
       />
       <!-- key 带会话 id：同 FileManagerPanel，多会话同时开 Git Tab 时避免内部状态跨会话串扰 -->
       <GitManagerPanel
@@ -65,6 +67,7 @@
       <WorkspaceOverviewPanel
         v-else-if="activeTab?.type === 'workspace_overview'"
         @use-for-new-task="emit('use-for-new-task', $event)"
+        @open-file-manager="emit('open-file-manager', $event)"
       />
     </KeepAlive>
   </div>
@@ -72,6 +75,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { createOwnedWorkspaceProvider } from '../../composables/workspace-file-provider'
 import ChatPanel from '../chat/ChatPanel.vue'
 import FileViewer from './FileViewer.vue'
 import FileDiffViewer from './FileDiffViewer.vue'
@@ -99,7 +103,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  'open-file': [payload: { path: string; title: string }]
+  'open-file': [payload: { path: string; title: string; workspaceRoot?: string }]
   'add-file-to-chat': [filePath: string]
   'paths-changed': [change: WorkspacePathChange]
   'tree-refresh': []
@@ -108,12 +112,56 @@ const emit = defineEmits<{
   'open-commit-diff': [payload: { hash: string; file: GitChangedFile; repoPath?: string }]
   'open-branch-diff': [payload: { base: string; target: string; file: GitChangedFile; repoPath?: string }]
   'use-for-new-task': [entry: WorkspaceOverviewEntry]
+  'open-file-manager': [entry: WorkspaceOverviewEntry]
 }>()
 
 const activeTab = computed(() => {
   if (props.activeTabId === 'chat') return null
   return props.tabs.find(t => t.id === props.activeTabId) || null
 })
+
+const ownedProviders = new Map<string, WorkspaceFileProvider>()
+
+const activeProvider = computed(() => {
+  const root = activeTab.value?.workspaceRoot
+  if (!root) return props.fileProvider
+  let provider = ownedProviders.get(root)
+  if (!provider) {
+    provider = createOwnedWorkspaceProvider(root)
+    ownedProviders.set(root, provider)
+  }
+  return provider
+})
+
+/** 总览打开的目录不是当前会话工作区时，不要改当前会话的文件树和已打开文件。 */
+function affectsCurrentSession(tab: Tab | null): boolean {
+  if (!tab?.workspaceRoot) return true
+  return tab.workspaceRoot === props.workspace
+}
+
+function onOpenFile(payload: { path: string; title: string }) {
+  emit('open-file', { ...payload, workspaceRoot: activeTab.value?.workspaceRoot })
+}
+
+function onAddFileToChat(filePath: string) {
+  if (!affectsCurrentSession(activeTab.value)) return
+  emit('add-file-to-chat', filePath)
+}
+
+function onPathsChanged(change: WorkspacePathChange) {
+  if (!affectsCurrentSession(activeTab.value)) return
+  emit('paths-changed', change)
+}
+
+function onTreeRefresh() {
+  if (!affectsCurrentSession(activeTab.value)) return
+  emit('tree-refresh')
+}
+
+function onLocateInTree(relPath: string) {
+  if (!affectsCurrentSession(activeTab.value)) return
+  emit('locate-in-tree', relPath)
+}
 </script>
 
 <style scoped>

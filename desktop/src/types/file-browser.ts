@@ -51,6 +51,11 @@ export interface Tab {
    * 同时用于 side_session_created 事件的占位精确匹配，防止跨会话错配。
    */
   sourceSessionId?: number
+  /**
+   * 工作区总览打开的文件管理，以及从那里打开的文件：该目录的绝对路径。
+   * 缺省表示当前会话工作区。
+   */
+  workspaceRoot?: string
 }
 
 export interface SessionTabState {

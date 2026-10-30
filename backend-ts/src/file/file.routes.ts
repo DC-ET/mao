@@ -61,6 +61,41 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
   }
 
   /**
+   * 写操作的工作区：有 workspacePath 时落到本人根下的总览目录（文件管理页签），
+   * 否则落到会话工作区。两者都给时以 workspacePath 为准，避免页签写到当前会话。
+   */
+  async function requireWriteWorkspace(
+    userId: number,
+    sessionId: number | null | undefined,
+    workspacePath: string | null | undefined,
+  ): Promise<{ sessionId: number; workspace: string }> {
+    if (workspacePath != null && workspacePath.trim().length > 0) {
+      const resolved = workspaceOverviewService.resolveDeletablePath(userId, workspacePath);
+      if ('error' in resolved) {
+        throw new BusinessException(ErrorCode.PARAM_INVALID, resolved.message);
+      }
+      return { sessionId: 0, workspace: resolved.path };
+    }
+    if (sessionId == null || !Number.isFinite(sessionId)) {
+      throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
+    }
+    const session = await requireOwnedSession(userId, sessionId);
+    return { sessionId: session.id!, workspace: requireCloudWorkspace(session) };
+  }
+
+  /** 总览行打开的文件管理：root 必须是本人根下可删除的那一级目录。 */
+  function resolveOwnedWorkspace(userId: number, raw: string | null | undefined): string {
+    if (raw == null || raw.trim().length === 0) {
+      throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
+    }
+    const resolved = workspaceOverviewService.resolveDeletablePath(userId, raw);
+    if ('error' in resolved) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, resolved.message);
+    }
+    return resolved.path;
+  }
+
+  /**
    * 新增 Git 管理端点（log/commit/branches/stashes/remotes/fetch/switch/stash）的会话守卫：
    * 归属校验 + 拒绝 LOCAL 会话——LOCAL 走 Electron IPC provider，服务端拒绝只是防未来误调。
    * 注意既有 git 端点（status/commit/pull/push 等）没有这层防御，此处是新增的防御层。
@@ -374,49 +409,51 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
 
   app.post('/v1/files/workspace-mkdir', async (request, reply) => {
     const userId = requireUserId(request);
-    const body = bodyOf<{ sessionId?: number; path?: string; force?: boolean }>(request);
-    const session = await requireOwnedSession(userId, body.sessionId!);
-    const data = await workspaceWriteService.mkdir(session.id!, requireCloudWorkspace(session), body.path ?? '', { force: body.force });
+    const body = bodyOf<{ sessionId?: number; workspacePath?: string; path?: string; force?: boolean }>(request);
+    const target = await requireWriteWorkspace(userId, body.sessionId, body.workspacePath);
+    const data = await workspaceWriteService.mkdir(target.sessionId, target.workspace, body.path ?? '', { force: body.force });
     return sendOk(reply, data);
   });
 
   app.post('/v1/files/workspace-write', async (request, reply) => {
     const userId = requireUserId(request);
-    const body = bodyOf<{ sessionId?: number; path?: string; content?: string; overwrite?: boolean; force?: boolean }>(request);
-    const session = await requireOwnedSession(userId, body.sessionId!);
+    const body = bodyOf<{ sessionId?: number; workspacePath?: string; path?: string; content?: string; overwrite?: boolean; force?: boolean }>(request);
+    const target = await requireWriteWorkspace(userId, body.sessionId, body.workspacePath);
     const data = await workspaceWriteService.write(
-      session.id!, requireCloudWorkspace(session), body.path ?? '', body.content, { overwrite: body.overwrite, force: body.force },
+      target.sessionId, target.workspace, body.path ?? '', body.content, { overwrite: body.overwrite, force: body.force },
     );
     return sendOk(reply, data);
   });
 
   app.post('/v1/files/workspace-rename', async (request, reply) => {
     const userId = requireUserId(request);
-    const body = bodyOf<{ sessionId?: number; path?: string; newName?: string; force?: boolean }>(request);
-    const session = await requireOwnedSession(userId, body.sessionId!);
+    const body = bodyOf<{ sessionId?: number; workspacePath?: string; path?: string; newName?: string; force?: boolean }>(request);
+    const target = await requireWriteWorkspace(userId, body.sessionId, body.workspacePath);
     const data = await workspaceWriteService.rename(
-      session.id!, requireCloudWorkspace(session), body.path ?? '', body.newName ?? '', { force: body.force },
+      target.sessionId, target.workspace, body.path ?? '', body.newName ?? '', { force: body.force },
     );
     return sendOk(reply, data);
   });
 
   app.post('/v1/files/workspace-move', async (request, reply) => {
     const userId = requireUserId(request);
-    const body = bodyOf<{ sessionId?: number; from?: string; to?: string; force?: boolean }>(request);
-    const session = await requireOwnedSession(userId, body.sessionId!);
+    const body = bodyOf<{ sessionId?: number; workspacePath?: string; from?: string; to?: string; force?: boolean }>(request);
+    const target = await requireWriteWorkspace(userId, body.sessionId, body.workspacePath);
     const data = await workspaceWriteService.move(
-      session.id!, requireCloudWorkspace(session), body.from ?? '', body.to ?? '', { force: body.force },
+      target.sessionId, target.workspace, body.from ?? '', body.to ?? '', { force: body.force },
     );
     return sendOk(reply, data);
   });
 
   app.delete('/v1/files/workspace-delete', async (request, reply) => {
     const userId = requireUserId(request);
-    const session = await requireOwnedSession(userId, requireQueryLong(request, 'sessionId'));
+    const workspacePath = queryOptStr(request, 'workspacePath');
+    const sessionId = workspacePath ? null : requireQueryLong(request, 'sessionId');
     const path = queryOptStr(request, 'path');
     if (path == null) throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
+    const target = await requireWriteWorkspace(userId, sessionId, workspacePath);
     const force = queryOptStr(request, 'force') === 'true';
-    const data = await workspaceWriteService.delete(session.id!, requireCloudWorkspace(session), path, { force });
+    const data = await workspaceWriteService.delete(target.sessionId, target.workspace, path, { force });
     return sendOk(reply, data);
   });
 
@@ -473,10 +510,10 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
 
   app.post('/v1/files/workspace-copy', async (request, reply) => {
     const userId = requireUserId(request);
-    const body = bodyOf<{ sessionId?: number; from?: string; to?: string; overwrite?: boolean; force?: boolean }>(request);
-    const session = await requireOwnedSession(userId, body.sessionId!);
+    const body = bodyOf<{ sessionId?: number; workspacePath?: string; from?: string; to?: string; overwrite?: boolean; force?: boolean }>(request);
+    const target = await requireWriteWorkspace(userId, body.sessionId, body.workspacePath);
     const data = await workspaceWriteService.copy(
-      session.id!, requireCloudWorkspace(session), body.from ?? '', body.to ?? '', { overwrite: body.overwrite, force: body.force },
+      target.sessionId, target.workspace, body.from ?? '', body.to ?? '', { overwrite: body.overwrite, force: body.force },
     );
     return sendOk(reply, data);
   });
@@ -484,9 +521,9 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
   app.post('/v1/files/workspace-upload', async (request, reply) => {
     const userId = requireUserId(request);
     const upload = await readWorkspaceUpload(request);
-    const session = await requireOwnedSession(userId, upload.sessionId);
+    const target = await requireWriteWorkspace(userId, upload.sessionId, upload.workspacePath);
     const data = await workspaceWriteService.upload(
-      session.id!, requireCloudWorkspace(session), upload.dir, upload.files, { overwrite: upload.overwrite, force: upload.force },
+      target.sessionId, target.workspace, upload.dir, upload.files, { overwrite: upload.overwrite, force: upload.force },
     );
     return sendOk(reply, data);
   });
@@ -571,6 +608,74 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
     return sendFile(reply, result.path, result.fileName, 'application/pdf', result.size, 'inline');
   });
 
+  // 工作区总览「文件管理」：按本人根下的目录浏览，不依赖当前会话。
+  app.get('/v1/files/owned-directory', async (request, reply) => {
+    const userId = requireUserId(request);
+    const root = resolveOwnedWorkspace(userId, queryOptStr(request, 'root'));
+    return sendOk(reply, workspaceBrowseService.listDirectory(root, queryOptStr(request, 'dir')));
+  });
+
+  app.get('/v1/files/owned-read', async (request, reply) => {
+    const userId = requireUserId(request);
+    const path = queryOptStr(request, 'path');
+    if (path == null) throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
+    const root = resolveOwnedWorkspace(userId, queryOptStr(request, 'root'));
+    return sendOk(reply, await workspaceBrowseService.readFile(
+      root, path, queryOptInt(request, 'offset') ?? 0, queryOptInt(request, 'limit') ?? 5000,
+    ));
+  });
+
+  app.get('/v1/files/owned-search', async (request, reply) => {
+    const userId = requireUserId(request);
+    const pattern = queryOptStr(request, 'pattern');
+    if (pattern == null || pattern.trim().length === 0) {
+      throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
+    }
+    if (pattern.length > 100) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '搜索关键词过长');
+    }
+    const root = resolveOwnedWorkspace(userId, queryOptStr(request, 'root'));
+    return sendOk(reply, workspaceBrowseService.searchFiles(root, pattern, queryOptInt(request, 'limit') ?? 100));
+  });
+
+  app.get('/v1/files/owned-download', async (request, reply) => {
+    const userId = requireUserId(request);
+    const path = queryOptStr(request, 'path');
+    if (path == null) throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
+    const root = resolveOwnedWorkspace(userId, queryOptStr(request, 'root'));
+    const result = workspaceBrowseService.downloadFile(root, path);
+    const mediaType = mimeLookup(result.path) || 'application/octet-stream';
+    return sendFile(reply, result.path, result.fileName, mediaType, result.size, 'attachment');
+  });
+
+  app.get('/v1/files/owned-preview', async (request, reply) => {
+    const userId = requireUserId(request);
+    const path = queryOptStr(request, 'path');
+    if (path == null) throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
+    const root = resolveOwnedWorkspace(userId, queryOptStr(request, 'root'));
+    const result = workspaceBrowseService.readPdfFile(root, path);
+    return sendFile(reply, result.path, result.fileName, 'application/pdf', result.size, 'inline');
+  });
+
+  app.get('/v1/files/owned-download-zip', async (request, reply) => {
+    const userId = requireUserId(request);
+    const path = queryOptStr(request, 'path');
+    if (path == null) throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
+    const root = resolveOwnedWorkspace(userId, queryOptStr(request, 'root'));
+    const result = await workspaceBrowseService.zipDirectory(root, path);
+    const stream = createReadStream(result.zipPath);
+    const cleanup = () => {
+      try { unlinkSync(result.zipPath); } catch { /* 临时 zip 已不在 */ }
+    };
+    stream.on('close', cleanup);
+    stream.on('error', cleanup);
+    reply
+      .header('Content-Disposition', contentDisposition('attachment', result.fileName))
+      .type('application/zip')
+      .header('Content-Length', String(result.size));
+    return reply.send(stream);
+  });
+
   app.get('/v1/files', async (request, reply) => {
     const userId = requireUserId(request);
     const sessionId = queryOptInt(request, 'sessionId') ?? null;
@@ -648,7 +753,8 @@ function sendFile(
 }
 
 async function readWorkspaceUpload(request: FastifyRequest): Promise<{
-  sessionId: number;
+  sessionId: number | null;
+  workspacePath: string | null;
   dir: string;
   overwrite: boolean;
   force: boolean;
@@ -656,6 +762,7 @@ async function readWorkspaceUpload(request: FastifyRequest): Promise<{
 }> {
   const parts = request.parts();
   let sessionId: number | null = null;
+  let workspacePath: string | null = null;
   let dir = '.';
   let overwrite = false;
   let force = false;
@@ -670,6 +777,8 @@ async function readWorkspaceUpload(request: FastifyRequest): Promise<{
     } else if (part.fieldname === 'sessionId' && part.value != null && String(part.value).length > 0) {
       const n = Number(part.value);
       sessionId = Number.isFinite(n) ? n : null;
+    } else if (part.fieldname === 'workspacePath' && part.value != null && String(part.value).length > 0) {
+      workspacePath = String(part.value);
     } else if (part.fieldname === 'dir' && part.value != null) {
       const text = String(part.value);
       dir = text.length > 0 ? text : '.';
@@ -681,13 +790,13 @@ async function readWorkspaceUpload(request: FastifyRequest): Promise<{
       force = String(part.value) === 'true';
     }
   }
-  if (sessionId == null) {
+  if (sessionId == null && (workspacePath == null || workspacePath.length === 0)) {
     throw new BusinessException(ErrorCode.PARAM_INVALID, '缺少必要参数: sessionId');
   }
   if (files.length === 0) {
     throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
   }
-  return { sessionId, dir, overwrite, force, files };
+  return { sessionId, workspacePath, dir, overwrite, force, files };
 }
 
 async function readUpload(request: FastifyRequest): Promise<{

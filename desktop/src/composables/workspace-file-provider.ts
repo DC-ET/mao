@@ -445,15 +445,121 @@ function dataUriToBlob(dataUri: string, mime: string): Blob {
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:9080/api/v1'
 
+function mapCloudEntries(entries: CloudDirectoryEntry[] | undefined): DirectoryEntry[] {
+  return (entries ?? []).map(({ mtimeMs, ...rest }) => ({
+    ...rest,
+    ...(typeof mtimeMs === 'number' ? { mtime: mtimeMs } : {}),
+  }))
+}
+
+/**
+ * 工作区总览打开的文件管理：root 是本人根下的那一级目录，读写都不走当前会话。
+ */
+export function createOwnedWorkspaceProvider(root: string): WorkspaceFileProvider {
+  let workspaceRoot = root
+  const withRoot = <T extends { workspaceRoot?: string }>(result: T): T => {
+    if (result.workspaceRoot) workspaceRoot = result.workspaceRoot
+    return result
+  }
+  const identity = `root=${encodeURIComponent(root)}`
+  return {
+    async listDirectory(relativeDir: string) {
+      try {
+        const { data } = await api.get('/files/owned-directory', {
+          params: { root, dir: relativeDir || undefined },
+        })
+        return withRoot({
+          entries: mapCloudEntries(data?.entries),
+          truncated: data?.truncated ?? false,
+          ...(typeof data?.workspaceRoot === 'string' ? { workspaceRoot: data.workspaceRoot } : {}),
+        })
+      } catch (e: any) {
+        return { error: e.message || '读取目录失败' }
+      }
+    },
+    async readFile(relativePath: string, opts?: { offset?: number; limit?: number }) {
+      try {
+        const { data } = await api.get('/files/owned-read', {
+          params: { root, path: relativePath, offset: opts?.offset ?? 0, limit: opts?.limit ?? 5000 },
+        })
+        return {
+          content: data?.content ?? '',
+          total_lines: data?.total_lines ?? 0,
+          media_type: data?.media_type,
+          mime: data?.mime,
+          data_uri: data?.data_uri,
+        }
+      } catch (e: any) {
+        return { content: '', total_lines: 0, error: e.message || '读取文件失败' }
+      }
+    },
+    async searchFiles(pattern: string, limit = 100) {
+      try {
+        const { data } = await api.get('/files/owned-search', {
+          params: { root, pattern, limit },
+        })
+        return withRoot({
+          entries: mapCloudEntries(data?.entries),
+          truncated: data?.truncated ?? false,
+          ...(typeof data?.workspaceRoot === 'string' ? { workspaceRoot: data.workspaceRoot } : {}),
+        })
+      } catch (e: any) {
+        return { error: e.message || '搜索失败' }
+      }
+    },
+    downloadFile(relativePath: string, suggestedName: string) {
+      return downloadWorkspaceResource('/files/owned-download', 0, relativePath, suggestedName, identity)
+    },
+    downloadDirectory(relativePath: string, suggestedName: string) {
+      return downloadWorkspaceResource('/files/owned-download-zip', 0, relativePath, suggestedName, identity)
+    },
+    async previewFile(relativePath: string) {
+      try {
+        const token = getToken()
+        const url = `${API_BASE}/files/owned-preview?${identity}&path=${encodeURIComponent(relativePath)}`
+        const resp = await fetch(url, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        })
+        if (!resp.ok) return { error: await extractDownloadError(resp) }
+        const blob = await resp.blob()
+        if (!blob || blob.size === 0) return { error: 'PDF 内容为空' }
+        return { blob }
+      } catch (e: any) {
+        return { error: e?.message || 'PDF 预览失败' }
+      }
+    },
+    async readFileBytes(relativePath: string): Promise<ReadFileBytesResult> {
+      try {
+        const token = getToken()
+        const url = `${API_BASE}/files/owned-download?${identity}&path=${encodeURIComponent(relativePath)}`
+        const resp = await fetch(url, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        })
+        if (!resp.ok) return { error: await extractDownloadError(resp) }
+        const buffer = await resp.arrayBuffer()
+        if (!buffer || buffer.byteLength === 0) return { error: '文件内容为空' }
+        return { bytes: new Uint8Array(buffer), size: buffer.byteLength }
+      } catch (e: any) {
+        return { error: e?.message || '读取文件失败' }
+      }
+    },
+    getAbsolutePath(relativePath: string) {
+      return resolveWorkspaceFilePath(workspaceRoot, relativePath)
+    },
+  }
+}
+
 async function downloadWorkspaceResource(
   endpoint: string,
   sessionId: number,
   relativePath: string,
   suggestedName: string,
+  identityQuery?: string,
 ): Promise<DownloadResult> {
   const token = getToken()
   const authQuery = token ? `&token=${encodeURIComponent(token)}` : ''
-  const url = `${API_BASE}${endpoint}?sessionId=${sessionId}&path=${encodeURIComponent(relativePath)}${authQuery}`
+  const identity = identityQuery ?? `sessionId=${sessionId}`
+  const url = `${API_BASE}${endpoint}?${identity}&path=${encodeURIComponent(relativePath)}${authQuery}`
   try {
     const resp = await fetch(url, {
       headers: token ? { Authorization: `Bearer ${token}` } : undefined,

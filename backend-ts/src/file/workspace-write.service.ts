@@ -438,6 +438,8 @@ export class WorkspaceWriteService {
   }
 
   private async record(sessionId: number, target: string, op: string, force: boolean | undefined): Promise<void> {
+    // 工作区总览打开的文件管理没有会话，不往 activity 表写 session_id=0 的孤儿行
+    if (sessionId <= 0) return;
     const detail: { actor: 'user'; op: string; force?: true } = { actor: 'user', op };
     if (force) detail.force = true;
     await this.activityService.record(

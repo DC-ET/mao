@@ -238,6 +238,55 @@ describe('file routes', () => {
     await app.close();
   });
 
+  it('workspacePath mkdir writes that owned directory and rejects paths outside the user root', async () => {
+    const { mkdirSync: mk, existsSync: ex } = await import('node:fs');
+    const { join: jn } = await import('node:path');
+    const { PathSandbox: Sandbox } = await import('../harness/safety/path-sandbox.js');
+    const { WorkspaceWriteService: WriteService } = await import('./workspace-write.service.js');
+    const { WorkspaceOverviewService } = await import('./workspace-overview.service.js');
+    const app = Fastify();
+    app.setErrorHandler(handleError);
+    await app.register(multipart);
+    app.addHook('preHandler', (req, _r, done) => {
+      req.userId = 7;
+      done();
+    });
+    const root = useTmpDir('mao-owned-write-');
+    const owned = jn(root, '7', 'proj');
+    mk(owned, { recursive: true });
+    const overview = new WorkspaceOverviewService(new Sandbox(root), {
+      aggregateWorkspaceUsage: async () => new Map(),
+      listActiveWorkspaceReferences: async () => [],
+    } as never);
+    const write = new WriteService(new Sandbox(root), { record: vi.fn(async () => ({})) } as never);
+    registerFileRoutes(app, {
+      fileService: {} as FileService,
+      sessionService: { getSession: vi.fn() } as unknown as SessionService,
+      workspaceBrowseService: {} as WorkspaceBrowseService,
+      workspaceGitService: {} as WorkspaceGitService,
+      gitCommitMessageService: {} as GitCommitMessageService,
+      gitWriteOperationService: {} as GitWriteOperationService,
+      workspaceWriteService: write,
+      workspaceOverviewService: overview,
+      pathSandbox: new Sandbox(root),
+    });
+    const ok = await app.inject({
+      method: 'POST',
+      url: '/v1/files/workspace-mkdir',
+      payload: { workspacePath: owned, path: 'nested' },
+    });
+    expect(JSON.parse(ok.body).code).toBe(0);
+    expect(ex(jn(owned, 'nested'))).toBe(true);
+    const denied = await app.inject({
+      method: 'POST',
+      url: '/v1/files/workspace-mkdir',
+      payload: { workspacePath: '/etc', path: 'x' },
+    });
+    expect(JSON.parse(denied.body).code).not.toBe(0);
+    expect(ex('/etc/x')).toBe(false);
+    await app.close();
+  });
+
   it('gitManagerEndpointsRejectLocalSessionsAndMissingParams', async () => {
     const app = Fastify();
     app.setErrorHandler(handleError);
