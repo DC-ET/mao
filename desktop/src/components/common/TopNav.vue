@@ -1,6 +1,6 @@
 <template>
   <nav class="top-nav">
-    <div class="nav-left" :class="{ 'is-mac': isMacPlatform }">
+    <div class="nav-left" :class="{ 'is-mac': reserveTrafficLightInset }">
       <div class="nav-left-actions">
         <el-tooltip v-if="isSettingsRoute" content="返回工作台" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
           <div class="theme-toggle" role="button" aria-label="返回工作台" @click="goBackFromSettings">
@@ -124,6 +124,7 @@ import { useSessionStore } from '../../stores/session'
 import { useTerminal } from '../../composables/useTerminal'
 import { usePanelLayout, isMobileDevice } from '../../composables/usePanelLayout'
 import { useVersionCheck } from '../../composables/useVersionCheck'
+import { readScreenFillingWindow, reserveMacTrafficLightInset as shouldReserveMacTrafficLightInset } from '../../utils/macTrafficLightInset'
 import { isElectronClient } from '../../utils/platform'
 import { goBackToWorkbench } from '../../utils/workbench-nav'
 import SessionSearchPopover from '../search/SessionSearchPopover.vue'
@@ -131,8 +132,15 @@ import UsageBell from '../usage/UsageBell.vue'
 import CommandManagerDrawer from '../command/CommandManagerDrawer.vue'
 import InboxDrawer from '../inbox/InboxDrawer.vue'
 
-// macOS 红绿灯按钮需要为标题栏预留空间；Web/Win/Linux 无此需求
+// macOS 窗口态红绿灯盖住左上角，需要预留；全屏后系统收起红绿灯，按钮贴左（与移动端一致）。
+// 原生全屏不走 Fullscreen API，用内容区是否铺满整屏判断。
 const isMacPlatform = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform || '')
+const screenFilling = ref(readScreenFillingWindow())
+const reserveTrafficLightInset = computed(() => shouldReserveMacTrafficLightInset(isMacPlatform, screenFilling.value))
+
+function syncScreenFilling() {
+  screenFilling.value = readScreenFillingWindow()
+}
 
 const searchPopoverRef = ref()
 const commandsDrawerVisible = ref(false)
@@ -217,12 +225,15 @@ onMounted(() => {
   startPolling()
   startAppUpdater()
   document.addEventListener('keydown', handleSearchShortcut)
+  syncScreenFilling()
+  window.addEventListener('resize', syncScreenFilling)
 })
 
 onUnmounted(() => {
   stopPolling()
   stopAppUpdater()
   document.removeEventListener('keydown', handleSearchShortcut)
+  window.removeEventListener('resize', syncScreenFilling)
 })
 
 /** Ctrl/Cmd+K：打开/关闭会话搜索浮窗；Ctrl/Cmd+`：打开/关闭终端（常驻注册，不随页面切换失效）。 */
@@ -384,7 +395,7 @@ async function handleCommand(command: string) {
   -webkit-app-region: no-drag;
 }
 
-/* 仅 macOS 有红绿灯按钮，需要预留标题栏空间 */
+/* 仅 macOS 窗口态为红绿灯预留；全屏时去掉 is-mac，按钮贴左 */
 .nav-left.is-mac {
   padding-left: 78px;
 }
