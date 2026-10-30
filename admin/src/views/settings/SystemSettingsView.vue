@@ -206,7 +206,6 @@
                             <el-tag v-else type="danger" size="small" closable @close="unmarkSecretClear(row.settingKey)">将清除</el-tag>
                           </template>
                         </el-input>
-                        <div v-if="row.settingKey === 'bundle.registry.accessToken' && row.value" class="field-hint">当前 token：{{ row.value }}</div>
                         <div v-if="isCidrAllowlistSetting(row.settingKey) && cidrAllowlistError(plainModel[row.settingKey])" class="field-error">
                           {{ cidrAllowlistError(plainModel[row.settingKey]) }}
                         </div>
@@ -344,7 +343,6 @@ const TOC_GROUPS: Array<{ label: string; sections: Array<{ kind: 'company-sso' |
   {
     label: '平台与运维',
     sections: [
-      { kind: 'category', name: 'Agent 资产' },
       { kind: 'category', name: '分享' },
       { kind: 'category', name: '审计' },
       { kind: 'category', name: '运行环境' },

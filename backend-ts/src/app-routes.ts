@@ -17,7 +17,6 @@ import type { FileService } from './file/file.service.js';
 import type { AgentService } from './agent/agent.service.js';
 import type { AgentExperienceService } from './agent/agent-experience.service.js';
 import type { AgentSuggestedQuestionService } from './agent/agent-suggested-question.service.js';
-import type { AgentBundleService } from './agent/agent-bundle.service.js';
 import type { McpServerValidatorImpl } from './agent/mcp-validator.js';
 import type { HttpToolValidatorImpl } from './http-tool/http-tool-validator.js';
 import type { ModelService } from './model/model.service.js';
@@ -111,7 +110,6 @@ import { registerAgentAvatarRoutes } from './agent/agent-avatar.js';
 import { registerAgentRoutes } from './agent/agent.routes.js';
 import { registerAgentExperienceLibraryRoutes } from './agent/agent-experience-library.routes.js';
 import type { ExperienceIndexService } from './harness/experience/experience-index.service.js';
-import { registerAgentBundleRoutes } from './agent/agent-bundle.routes.js';
 import { registerModelRoutes } from './model/model.routes.js';
 import { registerSystemSettingRoutes } from './settings/settings.routes.js';
 import { registerEmbedRoutes } from './embed/embed.routes.js';
@@ -191,7 +189,6 @@ export interface RouteDeps {
   experienceService: AgentExperienceService;
   experienceIndexService: ExperienceIndexService;
   suggestedQuestionService: AgentSuggestedQuestionService;
-  agentBundleService: AgentBundleService;
   mcpValidator: McpServerValidatorImpl;
   httpToolValidator: HttpToolValidatorImpl;
 
@@ -330,7 +327,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
     httpToolService, httpApiExecutor, httpToolStatsStore,
     httpToolValidator,
     fileService, agentService, experienceService, experienceIndexService, suggestedQuestionService,
-    agentBundleService, mcpValidator,
+    mcpValidator,
     modelService,
     settingService, activateContainerRuntime, runtimeModeResolver,
     commandService, commandRepo, skillLoader, skillSync,
@@ -414,7 +411,6 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
     registerAgentExperienceLibraryRoutes(api, {
       agentService, experienceIndexService, permissionService,
     });
-    registerAgentBundleRoutes(api, { agentBundleService, permissionService, registryConfig: settingService });
     registerModelRoutes(api, { modelService, permissionService });
     registerSystemSettingRoutes(api, {
       systemSettingService: settingService,

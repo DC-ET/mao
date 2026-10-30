@@ -5,14 +5,6 @@
         <div class="card-header">
           <span>Agent 列表</span>
           <div v-if="canWrite" class="header-actions">
-            <el-button @click="openImport()">
-              <el-icon><Upload /></el-icon>
-              导入
-            </el-button>
-            <el-button :loading="checkingUpdates" @click="handleCheckUpdates">
-              <el-icon><Refresh /></el-icon>
-              检查更新
-            </el-button>
             <el-button type="primary" @click="handleCreate">
               <el-icon><Plus /></el-icon>
               创建 Agent
@@ -63,9 +55,6 @@
             <div class="agent-identity">
               <el-avatar :size="32" :src="resolveAgentAvatarUrl(row.avatarUrl)" shape="square">{{ row.name?.slice(0, 1) || 'A' }}</el-avatar>
               <span class="agent-name" :title="row.name">{{ row.name }}</span>
-              <el-tooltip content="远端来源有更新，可重新导入生成新副本（旧 Agent 保留）" placement="top">
-                <el-tag v-if="remoteChanged(row.id)" type="warning" size="small">远端有更新</el-tag>
-              </el-tooltip>
               <el-tag v-if="row.isDefault" type="warning" size="small">默认</el-tag>
             </div>
           </template>
@@ -91,12 +80,11 @@
           <template #default="{ row }">{{ row.experiences?.length || 0 }}</template>
         </el-table-column>
         <el-table-column prop="createdAt" label="创建时间" width="178" :formatter="formatDateTimeColumn" />
-        <el-table-column label="操作" width="420" fixed="right">
+        <el-table-column label="操作" width="360" fixed="right">
           <template #default="{ row }">
             <div v-if="canWrite" class="row-actions">
               <el-button type="primary" link size="small" @click="handleCopy(row)">复制</el-button>
               <el-button type="primary" link size="small" @click="handleEdit(row)">编辑</el-button>
-              <el-button type="primary" link size="small" @click="handleExport(row)">导出</el-button>
               <el-button type="primary" link size="small" @click="experienceAgent = row">经验库</el-button>
               <el-tooltip v-if="row.isDefault && row.enabled !== false" content="默认 Agent 不可停用" placement="top">
                 <span class="disabled-btn-wrap">
@@ -127,7 +115,6 @@
           <div class="mobile-card-head">
             <el-avatar :size="32" :src="resolveAgentAvatarUrl(row.avatarUrl)" shape="square">{{ row.name?.slice(0, 1) || 'A' }}</el-avatar>
             <span class="mobile-card-title">{{ row.name }}</span>
-            <el-tag v-if="remoteChanged(row.id)" type="warning" size="small">远端有更新</el-tag>
             <el-tag v-if="row.isDefault" type="warning" size="small">默认</el-tag>
             <el-tag :type="row.enabled === false ? 'info' : 'success'" size="small">
               {{ row.enabled === false ? '停用' : '启用' }}
@@ -146,7 +133,6 @@
             <template v-if="canWrite">
               <el-button type="primary" link @click="handleCopy(row)">复制</el-button>
               <el-button type="primary" link @click="handleEdit(row)">编辑</el-button>
-              <el-button type="primary" link @click="handleExport(row)">导出</el-button>
               <el-button type="primary" link @click="experienceAgent = row">经验库</el-button>
               <el-tooltip v-if="row.isDefault && row.enabled !== false" content="默认 Agent 不可停用" placement="top">
                 <span class="disabled-btn-wrap">
@@ -199,59 +185,13 @@
       @update:visible="dialogVisible = $event"
       @saved="refreshAgentData"
     />
-    <AgentExportDialog
-      v-if="exportAgent"
-      :agent="exportAgent"
-      @close="exportAgent = null"
-    />
-    <AgentImportDialog
-      v-if="importVisible"
-      :initial-url="importInitialUrl"
-      @close="importVisible = false"
-      @saved="refreshAgentData"
-    />
-    <el-dialog v-model="updatesVisible" title="检查更新" width="720px">
-      <el-table :data="updateItems" size="small" border v-loading="checkingUpdates">
-        <template #empty>
-          <el-empty description="点击「检查更新」拉取远端状态" :image-size="60" />
-        </template>
-        <el-table-column prop="agentId" label="ID" width="64" />
-        <el-table-column prop="sourceUrl" label="远端来源" min-width="220" show-overflow-tooltip />
-        <el-table-column label="远端变更" width="90">
-          <template #default="{ row }">
-            <el-tag :type="row.error ? 'danger' : row.changed ? 'warning' : 'success'" size="small">
-              {{ row.error ? '错误' : row.changed ? '有更新' : '无变更' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="本地已改动" width="96">
-          <template #default="{ row }">
-            <el-tag v-if="row.localEdited" type="warning" size="small">已漂移</el-tag>
-            <span v-else>-</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="error" label="说明" min-width="160" show-overflow-tooltip />
-        <el-table-column label="操作" width="100" fixed="right">
-          <template #default="{ row }">
-            <el-button
-              v-if="row.changed && row.sourceUrl"
-              type="primary"
-              link
-              size="small"
-              @click="reimportFromUrl(row)"
-            >重新导入</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-      <div class="updates-tip">应用更新 = 重新走导入预检并生成新副本，旧 Agent 原样保留；标「已漂移」表示本地提示词与导入时快照不一致。</div>
-    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, onActivated, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Refresh, Upload } from '@element-plus/icons-vue'
+import { Plus } from '@element-plus/icons-vue'
 import { api } from '../../api'
 import { resolveAgentAvatarUrl } from '../../utils/agent-avatar'
 import { formatDateTimeColumn } from '../../utils/datetime'
@@ -260,26 +200,8 @@ import { useAuthStore } from '../../stores/auth'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
 import AgentFormDialog from './AgentFormDialog.vue'
 import AgentExperienceLibraryDialog from './AgentExperienceLibraryDialog.vue'
-import AgentExportDialog from './AgentExportDialog.vue'
-import AgentImportDialog from './AgentImportDialog.vue'
 
 const experienceAgent = ref<{ id: number; name: string; experienceLibraryEnabled?: boolean } | null>(null)
-const exportAgent = ref<{ id: number; name: string; skillNames?: string[] | null } | null>(null)
-const importVisible = ref(false)
-const importInitialUrl = ref<string | undefined>(undefined)
-// 检查更新（agent_import_origin 基线：URL 导入时记录的来源与内容 hash）
-interface CheckUpdateItem {
-  agentId: number
-  sourceUrl: string | null
-  originHash: string | null
-  remoteHash: string | null
-  changed: boolean
-  localEdited: boolean
-  error?: string
-}
-const updatesVisible = ref(false)
-const checkingUpdates = ref(false)
-const updateItems = ref<CheckUpdateItem[]>([])
 
 const { isMobile } = useBreakpoint()
 
@@ -368,40 +290,6 @@ function handleCreate() {
 async function loadAgentDetail(id: number) {
   const { data } = await api.get(`/agents/${id}`)
   return data
-}
-
-function handleExport(row: any) {
-  exportAgent.value = { id: row.id, name: row.name, skillNames: row.skillNames ?? [] }
-}
-
-function remoteChanged(agentId: number): boolean {
-  return updateItems.value.some((item) => item.agentId === agentId && item.changed && !item.error)
-}
-
-async function handleCheckUpdates() {
-  if (checkingUpdates.value) return
-  checkingUpdates.value = true
-  updatesVisible.value = true
-  try {
-    const { data } = await api.post<CheckUpdateItem[]>('/agent-bundle/check-updates', {})
-    updateItems.value = data ?? []
-  } catch {
-    // 拦截器已提示
-  } finally {
-    checkingUpdates.value = false
-  }
-}
-
-function reimportFromUrl(row: CheckUpdateItem) {
-  if (!row.sourceUrl) return
-  importInitialUrl.value = row.sourceUrl
-  importVisible.value = true
-  updatesVisible.value = false
-}
-
-function openImport(url?: string) {
-  importInitialUrl.value = url
-  importVisible.value = true
 }
 
 async function handleCopy(row: any) {
@@ -550,11 +438,5 @@ onActivated(() => {
 .pagination {
   margin-top: 20px;
   justify-content: flex-end;
-}
-
-.updates-tip {
-  margin-top: 10px;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
 }
 </style>

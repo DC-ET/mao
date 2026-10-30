@@ -1,5 +1,5 @@
 /**
- * mao-skill-bundle v1（技能独立搬运格式，见 docs/guides/agent-bundle-format.md）。
+ * mao-skill-bundle v1（技能独立搬运格式，见 docs/guides/skill-bundle-format.md）。
  * 约束对齐 agent bundle inline 技能：文本文件、隐藏路径段丢弃、路径穿越拒绝、SKILL.md 校验。
  * bundle 是半可信输入：导入端对所有字段做服务端校验，不信任导出端。
  */

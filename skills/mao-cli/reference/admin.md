@@ -206,7 +206,7 @@ CLI：`mao http-tool list|enabled|stats|create|update|delete|set-enabled|test`�
 - **模型任务**（各功能的默认模型，留空则跟随会话/系统默认）：会话（`session.titleModelId` 标题生成）、代码（`git.commitMessageModelId` Git 提交信息）、记忆（`memory.extractionModelId` 记忆自动抽取）
 - **工具与终端**：网络工具（Tavily / TinyFish 搜索实现切换与各自 API Key，0.0.83 新增双实现）、网页抓取、Shell 会话、云端终端、审批（审批模型与 Jev 前置决策；「测试连接」用当前表单探测 Jev 端点与 API Key，可未保存）、自定义 HTTP 工具（`tools.http.privateAllowlist` 内网放行 CIDR 清单，见 [http-tool.md](http-tool.md)）
 - **通知与消息**：任务通知（0.0.88 迁入，即时生效）、微信（`weixin.agentId` / `weixin.modelId` 微信通道 Agent 与模型）
-- **平台与运维**：Agent 资产（Bundle registry 只读端点开关与访问令牌）、分享（匿名分享链接开关）、审计（日志保留天数）、运行环境（工作区与 Skill 目录，只读展示）
+- **平台与运维**：分享（匿名分享链接开关）、审计（日志保留天数）、运行环境（工作区与 Skill 目录，只读展示）
 
 读写需 `settings:read` / `settings:write` 权限；页面左侧目录按上述分两级展示（默认折叠为分组标题行，点击分组或滚动到该组内容时自动展开），可快速跳转分组；滚动右侧配置时目录固定不跟随页面滚走。CLI：`mao settings list|set`（见 [settings.md](settings.md)）。
 

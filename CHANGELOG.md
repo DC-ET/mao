@@ -1,3 +1,14 @@
+## 0.0.389 (2026-10-30)
+
+### 管理后台
+- **移除 Agent 导入、导出与检查更新**：Agent 列表不再提供这三个入口，系统设置不再有 Bundle registry 开关。
+
+### 后端
+- **移除 Agent Bundle**：删除文件导入、URL 导入、registry 拉取与检查更新接口，以及 `agent_import_origin` 表（V175）。技能独立 Bundle（`mao-skill-bundle`）保留。
+
+### 终端 CLI（mao-cli）
+- **移除 `mao agent export` / `mao agent import`**。
+
 ## 0.0.388 (2026-10-30)
 
 ### 管理后台

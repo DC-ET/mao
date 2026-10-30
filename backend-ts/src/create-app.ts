@@ -41,8 +41,6 @@ import { MysqlAgentExperienceRepository, MysqlAgentRepository, MysqlAgentSuggest
 import { AgentExperienceService } from './agent/agent-experience.service.js';
 import { AgentSuggestedQuestionService } from './agent/agent-suggested-question.service.js';
 import { AgentService } from './agent/agent.service.js';
-import { AgentBundleService } from './agent/agent-bundle.service.js';
-import { AgentImportOriginRepository } from './agent/agent-import-origin.repository.js';
 import { McpServerValidatorImpl, MysqlMcpServerLookup } from './agent/mcp-validator.js';
 import { MysqlLlmModelRepository, MysqlSessionModelRepository } from './model/model.repository.js';
 import { OpenAiChatClient } from './model/llm-chat.client.js';
@@ -595,14 +593,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   });
   const { feishuMessageRepository, feishuMessageService, getFeishuClient, getFeishuChatTitle, sendFeishuText } = feishuMessaging;
 
-  // Agent 资产化：bundle 导出/导入（P1）+ registry/URL 导入/检查更新（P2 分发闭环）
   const mcpServerLookup = new MysqlMcpServerLookup(db);
-  const agentImportOriginRepo = new AgentImportOriginRepository(db);
-  const agentBundleService = new AgentBundleService(
-    agentRepo, experienceService, suggestedQuestionService, skillLoader, userSkillService,
-    mcpServerService, mcpMapper, mcpCipher,
-    agentImportOriginRepo,
-  );
   const llmEngine = assembleLlmEngine({
     harnessTuning, llmCallService, skillLoader, pathSandbox, runtimeResolver,
     commandService, skillSync, workspaceRulesSnapshotService, sessionSvc,
@@ -908,7 +899,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     gitCredentials, envVariableService, sessionRepo,
     httpToolService, httpApiExecutor, httpToolStatsStore,
     fileService, agentService, experienceService, experienceIndexService, suggestedQuestionService,
-    agentBundleService, mcpValidator, httpToolValidator,
+    mcpValidator, httpToolValidator,
     modelService,
     settingService, activateContainerRuntime, runtimeModeResolver,
     commandService, commandRepo, skillLoader, skillSync,
