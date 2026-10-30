@@ -11,7 +11,6 @@ import { isSessionSource, isUserSettableSessionSource, type SessionSource } from
 import { javaLocalDateTimeString } from '../common/datetime.js';
 import type { PathSandbox } from '../harness/safety/path-sandbox.js';
 import type { SessionService } from './session.service.js';
-import type { AgentHandoverService } from './agent-handover.service.js';
 import type { ActivityService } from './activity.service.js';
 import type { MessageQueueService } from './message-queue.service.js';
 import type { SessionCompactionEventService } from './session-compaction-event.service.js';
@@ -47,7 +46,6 @@ import {
 
 export interface SessionRouteDeps {
   sessionService: SessionService;
-  agentHandoverService: AgentHandoverService;
   agentLookup: AgentLookup;
   modelLookup: LlmModelLookup;
   activityService: ActivityService;
@@ -92,15 +90,11 @@ interface UpdateSessionRequest {
   agentId?: number | null;
 }
 
-interface ReopenWithAgentRequest {
-  agentId?: number | null;
-}
-
 export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDeps): void {
   const approvalRegistry = deps.approvalRegistry ?? emptyApprovalRegistry();
   const questionRegistry = deps.askUserQuestionsRegistry ?? emptyQuestionRegistry();
   const treeSignalPublisher = deps.treeSignalPublisher ?? noopTreePublisher();
-  const { sessionService, agentHandoverService, agentLookup, modelLookup } = deps;
+  const { sessionService, agentLookup, modelLookup } = deps;
 
   async function requireSessionOwner(userId: number, sessionId: number): Promise<Session> {
     const session = await sessionService.getSession(sessionId);
@@ -383,31 +377,6 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     const updated = await sessionService.getSession(id);
     const vos = await enrichSessions([updated]);
     return sendOk(reply, vos[0]);
-  });
-
-  // 用其他 Agent 重开（技术方案 2026-10-29 §4.3）：同工作区新建会话 + 接手说明 + 旧会话归档。
-  // workspace 来自旧会话（创建时已过归属校验），内部可信调用不经 assertOwnedSessionWorkspace。
-  app.post('/v1/sessions/:id/reopen-with-agent', async (request, reply) => {
-    const userId = requireUserId(request);
-    const id = pathId(request);
-    const session = await requireSessionOwner(userId, id);
-    if ((session.executionMode ?? 'CLOUD') !== 'CLOUD') {
-      throw new BusinessException(ErrorCode.PARAM_INVALID, '仅 CLOUD 会话支持用其他 Agent 重开');
-    }
-    const body = bodyOf<ReopenWithAgentRequest>(request);
-    const agentId = parseEntityId(body.agentId);
-    if (agentId == null) throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
-    await sessionService.assertAgentSwitchable(agentId);
-    // Session.isGit 由 TINYINT 列读回，可能是 0/1：归一为 boolean 再进 createSession
-    const isGit = session.isGit == null ? undefined : session.isGit === true || session.isGit === 1;
-    const created = await sessionService.createSession(
-      userId, agentId, '未命名会话', 'CLOUD', session.workspace, session.permissionLevel,
-      isGit, undefined, undefined, undefined, session.modelId, session.projectKey,
-      'existing', undefined, undefined, 'web',
-    );
-    const handoverNote = await agentHandoverService.generateHandoverNote(session);
-    await sessionService.archiveSession(id);
-    return sendOk(reply, { sessionId: created.id!, handoverNote });
   });
 
   app.get('/v1/sessions/:id/side-tasks', async (request, reply) => {

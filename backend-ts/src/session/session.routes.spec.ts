@@ -114,7 +114,6 @@ describe('session and admin routes', () => {
     };
     registerSessionRoutes(fastify, {
       sessionService,
-      agentHandoverService: { generateHandoverNote: vi.fn(async () => '接手说明') },
       agentLookup,
       modelLookup,
       activityService: { listBySession: vi.fn(async () => []) } as unknown as ActivityService,

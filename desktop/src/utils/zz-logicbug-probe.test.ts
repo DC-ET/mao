@@ -28,7 +28,6 @@ const CONTRACT_SCENES = [
   'feishu_summarize',
   'connectivity_test',
   'memory_extract',
-  'agent_handover_summary',
   'unknown',
 ] as const
 

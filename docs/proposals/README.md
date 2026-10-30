@@ -295,7 +295,7 @@
 
 | 提案 | 文档 | 一句话 | 规模 |
 |---|---|---|---|
-| 会话内切换 Agent | [2026-10-29-in-session-agent-switch.md](2026-10-29-in-session-agent-switch.md)（**已细化，技术方案待评审**：[../plan/2026-10-29-in-session-agent-switch-technical-design.md](../plan/2026-10-29-in-session-agent-switch-technical-design.md)，7 项决策定案） | `PATCH` 补 `agentId` + 与模型切换同构的 UI，选错 Agent 不用重开会话；P2「以正确 Agent 重开」复用同一工作区与接手说明 | 小~中 |
+| 会话内切换 Agent | [2026-10-29-in-session-agent-switch.md](2026-10-29-in-session-agent-switch.md)（**已细化，技术方案待评审**：[../plan/2026-10-29-in-session-agent-switch-technical-design.md](../plan/2026-10-29-in-session-agent-switch-technical-design.md)，7 项决策定案；P2「用其他 Agent 重开」已于 0.0.383 移除） | `PATCH` 补 `agentId` + 与模型切换同构的 UI，选错 Agent 不用重开会话 | 小~中 |
 | 会话来源全链路标记 | [2026-10-29-session-source-lineage.md](2026-10-29-session-source-lineage.md)（**已细化，技术方案待评审**：[../plan/2026-10-29-session-source-lineage-technical-design.md](../plan/2026-10-29-session-source-lineage-technical-design.md)，7 项决策定案） | source 闭集扩宽 + 4 个写入点各传一行，admin 会话管理补来源列与筛选——渠道用量从「目录名巧合」变成可查询的事实标签 | 小 |
 | 工作区总览与生命周期 | [2026-10-29-workspace-overview-lifecycle.md](2026-10-29-workspace-overview-lifecycle.md)（**已细化，技术方案待评审**：[../plan/2026-10-29-workspace-overview-lifecycle-technical-design.md](../plan/2026-10-29-workspace-overview-lifecycle-technical-design.md)，11 项决策定案） | 中央页签看全部工作区的大小 / 关联会话 / 最近使用，无进行中引用可强确认删除——自托管磁盘从只进不出到用户可自理 | 中 |
 

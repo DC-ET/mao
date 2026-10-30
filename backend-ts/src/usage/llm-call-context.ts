@@ -21,7 +21,6 @@ export const LLM_CALL_SCENES = {
   FEISHU_SUMMARIZE: 'feishu_summarize',
   CONNECTIVITY_TEST: 'connectivity_test',
   MEMORY_EXTRACT: 'memory_extract',
-  AGENT_HANDOVER_SUMMARY: 'agent_handover_summary',
   UNKNOWN: 'unknown',
 } as const satisfies Record<string, LlmCallScene>;
 

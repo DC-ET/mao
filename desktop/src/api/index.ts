@@ -826,17 +826,6 @@ export async function revokeSessionShare(sessionId: string): Promise<void> {
   await api.delete(`/sessions/${sessionId}/share`)
 }
 
-/** 用其他 Agent 重开：同工作区新建会话 + 接手说明（生成失败为 null），旧会话归档。 */
-export async function reopenSessionWithAgent(
-  sessionId: string,
-  agentId: number,
-): Promise<{ sessionId: number; handoverNote: string | null }> {
-  // 端点同步等接手说明生成（服务端 LLM 上限 30s + 建会话/归档），全局 30s 超时必杀：
-  // 放宽到 60s，避免客户端先超时、用户重试造成重复建会话
-  const { data } = await api.post(`/sessions/${sessionId}/reopen-with-agent`, { agentId }, { timeout: 60000 })
-  return data
-}
-
 // ─── 我的用量（顶栏抽屉：总览 / 趋势 / 明细） ───
 
 export interface UsageTotals {

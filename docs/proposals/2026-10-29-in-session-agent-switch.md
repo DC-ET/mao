@@ -2,7 +2,7 @@
 
 > 会话与模型的解耦（V036）早已落地：模型选错了，检查器里换一个，下一轮生效。但 Agent 没有同等待遇——用户对着一个「数据分析 Agent」问了三轮之后发现该找「运维 Agent」，唯一的出路是新建任务、重选 Agent、把背景重讲一遍，旧会话连同它积累的上下文一起作废。这不是新能力，是 2026-10-20 技术方案里明确「留待后续」的 P2（[2026-10-20-session-agent-identity-visibility-technical-design.md §2.2](../plan/2026-10-20-session-agent-identity-visibility-technical-design.md)），后端至今未接。
 
-- 状态：**已细化，技术方案待评审**（[../plan/2026-10-29-in-session-agent-switch-technical-design.md](../plan/2026-10-29-in-session-agent-switch-technical-design.md)，7 项决策已定案；方案对提案有两处收窄：切换提示不做模型面注入与消息流标记（D4）、P2 重开仅限 CLOUD 会话）
+- 状态：**已细化，技术方案待评审**（[../plan/2026-10-29-in-session-agent-switch-technical-design.md](../plan/2026-10-29-in-session-agent-switch-technical-design.md)，7 项决策已定案；方案对提案有两处收窄：切换提示不做模型面注入与消息流标记（D4）、P2 重开仅限 CLOUD 会话）。P2「用其他 Agent 重开」已于 0.0.383 移除，会话内切换保留。
 - 日期：2026-10-29
 - 提案总览见 [docs/proposals/README.md](README.md)
 - 规模：小~中（P1 约 2~3 人日；P2 约 1~2 人日。零迁移）

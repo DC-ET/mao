@@ -125,7 +125,6 @@ import { registerAuditLogRoutes } from './audit/audit.routes.js';
 import { registerLlmCallRoutes } from './usage/llm-call.routes.js';
 import { registerUploadRoutes } from './config/upload.routes.js';
 import { registerSessionRoutes } from './session/session.routes.js';
-import type { AgentHandoverService } from './session/agent-handover.service.js';
 import { registerSessionShareRoutes } from './session/session-share.routes.js';
 import { MysqlSessionShareRepository } from './session/session-share.repository.js';
 import { SessionShareService } from './session/session-share.service.js';
@@ -226,7 +225,6 @@ export interface RouteDeps {
 
   // session
   sessionService: SessionService;
-  agentHandoverService: AgentHandoverService;
   activityService: ActivityService;
   messageQueueService: MessageQueueService;
   agentRepo: MysqlAgentRepository;
@@ -340,7 +338,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
     restToolService,
     auditService,
     llmCallService,
-    sessionService, activityService, messageQueueService, agentHandoverService,
+    sessionService, activityService, messageQueueService,
     agentRepo, modelRepo, todoRepo, pathSandbox, subagentExecutionRepo,
     sessionCompactionEventService, sessionCompactionService, runTraceService, runTraceRecordService,
     approvalRegistry, askUserQuestionsRegistry, inFlightToolRegistry, treeSignalPublisher,
@@ -455,7 +453,6 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
     registerUploadRoutes(api, () => settingService.getUploadConfig());
     registerSessionRoutes(api, {
       sessionService, activityService, messageQueueService,
-      agentHandoverService,
       agentLookup: {
         findById: (id: number) => agentRepo.findById(id),
         findByIds: (ids: number[]) => agentRepo.findByIds(ids),
