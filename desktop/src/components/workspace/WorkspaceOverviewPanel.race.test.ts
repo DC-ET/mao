@@ -57,6 +57,7 @@ const flushMicro = () => vi.advanceTimersByTimeAsync(0)
 const flushMacro = () => new Promise(r => setTimeout(r, 0))
 
 interface SetupState {
+  load: () => Promise<void>
   openDelete: (e: unknown) => void
   deleteState: {
     visible: boolean
@@ -195,5 +196,29 @@ describe('WorkspaceOverviewPanel 竞态回归', () => {
     // B 的弹层必须保持无引用（确认按钮可点）
     expect(setupState.deleteState.entry?.name).toBe('bbb')
     expect(setupState.deleteState.references).toEqual([])
+  })
+
+  it('BUG-5：并发 load 中先发的旧响应后到，不得覆盖更新的列表', async () => {
+    // onMounted + onActivated 在 KeepAlive 首挂时叠加触发两个并发 load
+    api.fetchOverview.mockResolvedValueOnce({ entries: [entry('aaa')], error: null })
+    await mount()
+
+    const stale = deferred<{ entries: unknown[]; error: null }>()
+    const fresh = deferred<{ entries: unknown[]; error: null }>()
+    api.fetchOverview.mockImplementationOnce(() => stale.promise)
+    api.fetchOverview.mockImplementationOnce(() => fresh.promise)
+    // 切走再切回页签：onActivated 再发起一次 load（两个 load 并发在途）
+    const first = setupState.load()
+    const second = setupState.load()
+    await flushMacro()
+
+    // 新 load 先返回（aaa 已删除），旧 load 后返回（仍含 aaa）
+    fresh.resolve({ entries: [], error: null })
+    await flushMacro()
+    stale.resolve({ entries: [entry('aaa')], error: null })
+    await flushMacro()
+    await Promise.all([first, second])
+
+    expect(host.textContent).not.toContain('aaa')
   })
 })

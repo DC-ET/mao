@@ -144,6 +144,8 @@ const sortOrder = ref<'ascending' | 'descending'>('descending')
 let requeryTimer: ReturnType<typeof setTimeout> | null = null
 /** pending 重查代际：load / refresh / delete 写入新数据时 +1，作废在途的过期重查响应 */
 let requeryGeneration = 0
+/** load 自身代际：KeepAlive 下 onMounted + onActivated 会叠加触发并发 load，旧响应后到即丢弃 */
+let loadGeneration = 0
 /** 删除弹层引用清单代际：弹层重开即 +1，丢弃属于上一个目录的在途响应 */
 let referencesGeneration = 0
 
@@ -195,18 +197,23 @@ function onSortChange({ prop, order }: { prop: string; order: 'ascending' | 'des
 }
 
 async function load() {
-  loading.value = true
+  const generation = ++loadGeneration
   // 作废在途的 pending 重查：其响应是旧数据，落地会把本次结果覆盖回旧值
   invalidatePendingRequery()
+  loading.value = true
   try {
     const result = await fetchWorkspaceOverview()
+    // KeepAlive 下 onMounted 与 onActivated 会叠加触发多次并发 load（切页签再触发一次）：
+    // 先发的 load 后返回时，其旧快照不得覆盖更新的列表（已删目录会复活）
+    if (generation !== loadGeneration) return
     entries.value = result.entries ?? []
     overviewError.value = result.error ?? null
     schedulePendingRequery()
   } catch {
     // 拦截器已提示；总览保持旧数据
   } finally {
-    loading.value = false
+    // 只有最新一代负责收 loading：旧响应回来时新一轮可能仍在途
+    if (generation === loadGeneration) loading.value = false
   }
 }
 
