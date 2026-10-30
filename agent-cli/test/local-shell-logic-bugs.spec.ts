@@ -11,7 +11,7 @@ import { createRequire } from 'node:module';
 import { afterEach, describe, expect, it } from 'vitest';
 import { handleReadFile } from '../src/local/tools/files';
 
-const require = createRequire(import.meta.url);
+const require = createRequire(__filename);
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const { createLocalShellRuntime } = require('../vendor/localShell.cjs') as {
   createLocalShellRuntime: (opts?: Record<string, unknown>) => LocalShellRuntime;
