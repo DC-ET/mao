@@ -5,22 +5,6 @@
         <div class="card-header">
           <span>Agent 列表</span>
           <div v-if="canWrite" class="header-actions">
-            <el-dropdown @command="handleCreateFromTemplate" @visible-change="loadTemplatesOnce">
-              <el-button>
-                <el-icon><MagicStick /></el-icon>
-                从模板开始
-              </el-button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item v-for="tpl in templates" :key="tpl.slug" :command="tpl">
-                    {{ tpl.name }} — {{ tpl.description }}
-                  </el-dropdown-item>
-                  <el-dropdown-item v-if="templates.length === 0" disabled>
-                    {{ templatesLoaded ? '暂无可用模板' : '加载中…' }}
-                  </el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
             <el-button @click="openImport()">
               <el-icon><Upload /></el-icon>
               导入
@@ -267,7 +251,7 @@
 <script setup lang="ts">
 import { computed, ref, onActivated, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { MagicStick, Plus, Refresh, Upload } from '@element-plus/icons-vue'
+import { Plus, Refresh, Upload } from '@element-plus/icons-vue'
 import { api } from '../../api'
 import { resolveAgentAvatarUrl } from '../../utils/agent-avatar'
 import { formatDateTimeColumn } from '../../utils/datetime'
@@ -378,43 +362,6 @@ function handleSizeChange() {
 function handleCreate() {
   dialogMode.value = 'create'
   currentAgent.value = null
-  dialogVisible.value = true
-}
-
-interface AgentTemplateItem {
-  slug: string
-  name: string
-  description: string
-  systemPrompt: string
-  suggestedQuestions: string[]
-}
-
-const templates = ref<AgentTemplateItem[]>([])
-const templatesLoaded = ref(false)
-
-/** 下拉首次展开时懒加载模板（GET /v1/agent-templates，登录即可，无需权限码）。 */
-async function loadTemplatesOnce(open: boolean) {
-  if (!open || templatesLoaded.value) return
-  try {
-    const { data } = await api.get('/agent-templates')
-    templates.value = (data ?? []) as AgentTemplateItem[]
-    templatesLoaded.value = true
-  } catch {
-    // 失败也置已加载：下拉显示「暂无可用模板」，避免永远停在「加载中…」
-    templatesLoaded.value = true
-  }
-}
-
-/** 从模板创建：以 create 模式打开表单并预填（可改后保存，落库后即普通 Agent）。 */
-function handleCreateFromTemplate(tpl: AgentTemplateItem) {
-  dialogMode.value = 'create'
-  currentAgent.value = {
-    name: tpl.name,
-    description: tpl.description,
-    systemPrompt: tpl.systemPrompt,
-    suggestedQuestions: tpl.suggestedQuestions.map((content, index) => ({ content, sortOrder: index })),
-    clientVisible: true,
-  }
   dialogVisible.value = true
 }
 

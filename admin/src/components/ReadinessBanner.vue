@@ -29,7 +29,7 @@
           @click="go('/agents')"
         >
           <el-icon><Avatar /></el-icon>
-          创建第一个 Agent（可从入门模板开始）
+          创建第一个 Agent
         </button>
       </template>
       <span v-else class="banner-item item-muted">检查中…</span>
