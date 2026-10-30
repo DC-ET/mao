@@ -59,8 +59,9 @@ const flushMacro = () => new Promise(r => setTimeout(r, 0))
 interface SetupState {
   load: () => Promise<void>
   refreshOne: (row: unknown) => Promise<void>
-  /** 注：setupState 里 ref 是解包后暴露的，entries 直接就是数组 */
+  /** 注：setupState 里 ref 是解包后暴露的，entries 直接就是数组、loading 直接是布尔 */
   entries: Array<Record<string, unknown>>
+  loading: boolean
   openDelete: (e: unknown) => void
   deleteState: {
     visible: boolean
@@ -256,5 +257,78 @@ describe('WorkspaceOverviewPanel 竞态回归', () => {
     await flushMicro()
     expect(host.textContent).toContain('4.0 KB')
     await pendingLoad
+  })
+
+  it('BUG-7a：行内刷新作废在途 load 后，loading 遮罩仍要收敛（行内按钮保持可点）', async () => {
+    vi.useFakeTimers()
+    api.fetchOverview.mockResolvedValue({ entries: [entry('aaa', { sizeState: 'ready', sizeBytes: 1024 })], error: null })
+    await mount(flushMicro)
+
+    // 点「刷新」：POST 先回，随后 load 在途
+    const postAll = deferred<void>()
+    api.refreshOverview.mockImplementationOnce(() => postAll.promise)
+    const refreshBtn = [...host.querySelectorAll('button')].find(b => b.textContent?.includes('刷新'))!
+    refreshBtn.click()
+    await flushMicro()
+    // 先把 load 的响应挂起，再放行 POST：load 发起后在途
+    const staleLoad = deferred<{ entries: unknown[]; error: null }>()
+    api.fetchOverview.mockImplementationOnce(() => staleLoad.promise)
+    postAll.resolve()
+    await flushMicro()
+    expect(setupState.loading).toBe(true)
+
+    // 紧接着点失败行重试：POST 回 → 作废在途 load（其响应将被丢弃）
+    const requery = deferred<{ entries: unknown[]; error: null }>()
+    api.fetchOverview.mockImplementationOnce(() => requery.promise)
+    const postOne = deferred<void>()
+    api.refreshOverview.mockImplementationOnce(() => postOne.promise)
+    void setupState.refreshOne(setupState.entries.find(e => e.name === 'aaa')!)
+    await flushMicro()
+    postOne.resolve()
+    await flushMicro()
+
+    // 被作废的在途 load 后到：loading 必须收敛（否则遮罩一直盖住行内按钮）
+    staleLoad.resolve({ entries: [entry('aaa', { sizeState: 'ready', sizeBytes: 1024 })], error: null })
+    await flushMicro()
+    expect(setupState.loading).toBe(false)
+
+    // 且重算结果仍能通过重查显示
+    await vi.advanceTimersByTimeAsync(3000)
+    requery.resolve({ entries: [entry('aaa', { sizeState: 'ready', sizeBytes: 4096 })], error: null })
+    await flushMicro()
+    expect(host.textContent).toContain('4.0 KB')
+  })
+
+  it('BUG-7b：load 先于重试 POST 落地时，pending 要写在当前行上并能排到重查', async () => {
+    vi.useFakeTimers()
+    api.fetchOverview.mockResolvedValue({ entries: [entry('aaa', { sizeState: 'ready', sizeBytes: 1024 })], error: null })
+    await mount(flushMicro)
+
+    // 重试 POST 在途；期间一次 load 先落地并用新对象替换 entries
+    const postOne = deferred<void>()
+    api.refreshOverview.mockImplementationOnce(() => postOne.promise)
+    const staleRow = setupState.entries.find(e => e.name === 'aaa')!
+    void setupState.refreshOne(staleRow)
+    await flushMicro()
+
+    const landed = deferred<{ entries: unknown[]; error: null }>()
+    api.fetchOverview.mockImplementationOnce(() => landed.promise)
+    const pendingLoad = setupState.load()
+    await flushMicro()
+    landed.resolve({ entries: [entry('aaa', { sizeState: 'ready', sizeBytes: 1024 })], error: null })
+    await flushMicro()
+    await pendingLoad
+
+    // 重试 POST 此时才回：pending 必须落到当前行（而非已脱离列表的旧行对象）
+    const requery = deferred<{ entries: unknown[]; error: null }>()
+    api.fetchOverview.mockImplementationOnce(() => requery.promise)
+    postOne.resolve()
+    await flushMicro()
+    expect(host.textContent).toContain('统计中')
+
+    await vi.advanceTimersByTimeAsync(3000)
+    requery.resolve({ entries: [entry('aaa', { sizeState: 'ready', sizeBytes: 4096 })], error: null })
+    await flushMicro()
+    expect(host.textContent).toContain('4.0 KB')
   })
 })

@@ -146,6 +146,8 @@ let requeryTimer: ReturnType<typeof setTimeout> | null = null
 let requeryGeneration = 0
 /** load 自身代际：KeepAlive 下 onMounted + onActivated 会叠加触发并发 load，旧响应后到即丢弃 */
 let loadGeneration = 0
+/** 在途 load 计数：loading 收敛按它算，被更新代际作废的 load 也要收尾（审查 BUG-7a） */
+let loadInFlight = 0
 /** 删除弹层引用清单代际：弹层重开即 +1，丢弃属于上一个目录的在途响应 */
 let referencesGeneration = 0
 
@@ -198,6 +200,7 @@ function onSortChange({ prop, order }: { prop: string; order: 'ascending' | 'des
 
 async function load() {
   const generation = ++loadGeneration
+  loadInFlight++
   // 作废在途的 pending 重查：其响应是旧数据，落地会把本次结果覆盖回旧值
   invalidatePendingRequery()
   loading.value = true
@@ -212,8 +215,10 @@ async function load() {
   } catch {
     // 拦截器已提示；总览保持旧数据
   } finally {
-    // 只有最新一代负责收 loading：旧响应回来时新一轮可能仍在途
-    if (generation === loadGeneration) loading.value = false
+    // loading 收敛按在途计数而非代际：被更新代际作废的 load 也必须收尾，
+    // 否则行内刷新 bump 代际后遮罩永不消失、行内按钮全点不动（审查 BUG-7a）
+    loadInFlight--
+    if (loadInFlight <= 0) loading.value = false
   }
 }
 
@@ -260,8 +265,11 @@ async function refreshOne(row: WorkspaceOverviewEntry) {
     // schedulePendingRequery 会取消这里刚排的重查计时器——服务端已重算成功，
     // 新大小却永不显示（审查 BUG-6）
     loadGeneration++
-    row.sizeState = 'pending'
-    row.sizeBytes = null
+    // load 可能已先行落地并用新对象替换 entries：按 path 取当前行，
+    // 否则 pending 写在已脱离列表的旧行对象上、重查也排不出来（审查 BUG-7b）
+    const current = entries.value.find(e => e.path === row.path) ?? row
+    current.sizeState = 'pending'
+    current.sizeBytes = null
     schedulePendingRequery()
   } catch { /* 拦截器已提示 */ }
 }
