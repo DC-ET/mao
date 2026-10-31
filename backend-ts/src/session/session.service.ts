@@ -534,8 +534,9 @@ export class SessionService {
     clauses.push('status = ?');
     params.push(status != null && status.length > 0 ? status : 'ACTIVE');
     const whereSql = clauses.length > 0 ? clauses.join(' AND ') : '1=1';
-    // created_at 秒级精度：并列行补唯一 tiebreaker，保证深翻页不重复/丢行
-    const result = await this.sessionRepo.selectPage(page, size, whereSql, params, 'ORDER BY created_at DESC, id DESC');
+    // 按最后活动倒序（最近有动作的浮到最前；未产生过活动的 NULL 由 MySQL 归底）；
+    // last_activity_at 秒级精度：并列行补唯一 tiebreaker，保证深翻页不重复/丢行
+    const result = await this.sessionRepo.selectPage(page, size, whereSql, params, 'ORDER BY last_activity_at DESC, id DESC');
     const matchSnippets = await this.loadAdminMatchSnippets(result.records, trimmedKeyword, scope);
     return { ...result, current: page, size, matchSnippets };
   }

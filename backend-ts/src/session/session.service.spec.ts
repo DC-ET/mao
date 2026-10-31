@@ -674,6 +674,13 @@ describe('SessionService embed source', () => {
     expect(result.items[0].source).toBe('embed');
   });
 
+  it('admin list orders by last activity desc with id tiebreaker', async () => {
+    const { service, sessionRepo } = makeService();
+    await service.listSessionsForAdmin(1, 10, null, null, null, null, null, null);
+    const call = vi.mocked(sessionRepo.selectPage).mock.calls[0];
+    expect(String(call[4])).toBe('ORDER BY last_activity_at DESC, id DESC');
+  });
+
   it('admin list matches message content and returns match snippets', async () => {
     const { service, sessionRepo, messageRepo } = makeService();
     vi.mocked(sessionRepo.selectPage).mockResolvedValue({

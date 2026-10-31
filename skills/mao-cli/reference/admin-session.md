@@ -32,6 +32,8 @@
 
 `GET /admin/sessions`
 
+列表按最后活动时间倒序（`last_activity_at DESC, id DESC`；从未产生活动的会话排在末尾，0.0.380 起）。
+
 关键词会同时匹配标题、摘要与消息正文。消息正文默认只搜对话双方（`USER`/`ASSISTANT`），命中片段 `matchSnippet` 同口径——工具输出、读到的文件内容、`ls` 文件名不再把会话顶上来；要反查工具输出里的词时加 `--search-scope all`（等同旧口径，含 `TOOL`/`SYSTEM`）。记录带 `sessionType`（`NORMAL`/`SIDE_TASK`/`SUBAGENT`）与 `parentSessionId`：管理后台列表「类型」列三种类型都着标签（边路任务橙色、子代理与主会话蓝色），悬停显示来源说明；`parentSessionId` 非空时指向父会话。
 
 ```bash
