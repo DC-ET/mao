@@ -619,6 +619,9 @@ export class ContainerRegistry {
     // 容器域名解析注入（技术方案 §4.5）：本次 docker run 固化的条目集合，
     // 同时用于 args 与 entry.hostsFingerprint（保证"注入值"与"指纹"同源）。
     const hostsInjection = await this.resolveHostsForInjection();
+    // HOME 取 userHome 挂载的容器路径（与挂载清单同一事实源：配置含相对路径/.. 时也不会
+    // 与真实挂载点漂移）；该挂载由 planner 的标准挂载清单保证存在
+    const userHomeMount = mounts.find((m) => m.purpose === 'userHome');
     const args = [
       'run', '-d',
       '--name', name,
@@ -637,6 +640,9 @@ export class ContainerRegistry {
       '-e', `MAO_WORKSPACE_ROOT=${this.opts.workspaceRoot}`,
       '-e', `MAO_RUNTIME_DIR=${this.opts.runtimeDir}`,
       '-e', `MAO_USER_HOME_DIR=${this.opts.userHomeDir}`,
+      // HOME 对齐用户数据目录（与宿主机模式一致）：npm/.npmrc、pip 缓存、git/.m2 等用户级
+      // 配置直接读持久挂载；Java 的 user.home 由 runtime-agent 启动时同步 /etc/passwd 兜住
+      '-e', `HOME=${userHomeMount?.containerPath ?? path.posix.join(this.opts.userHomeDir, String(userId))}`,
       '-e', `MAO_USER_SKILLS_DIR=${this.opts.userSkillsDir}`,
       '-e', `MAO_UPLOAD_DIR=${this.opts.uploadDir}`,
       '-e', `MAO_SHARE_DIR=${this.opts.shareDir}`,

@@ -1,5 +1,5 @@
 import { connect, type Socket } from 'node:net';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -309,6 +309,41 @@ export class RuntimeAgent {
   }
 }
 
+/**
+ * 容器初始化：把 /etc/passwd 中 root 的 home 对齐到注入的 HOME（用户数据目录）。
+ *
+ * 为什么需要：Java 在 Linux 上经 getpwuid 取 user.home（不认 $HOME 环境变量），不对齐则
+ * Maven / Gradle 的 ~/.m2、~/.gradle 落在容器内 /root（容器重建即丢），也读不到用户目录下
+ * 挂载的 settings.xml 与本地仓库。幂等；返回是否发生修改，IO 异常由调用方兜底。
+ *
+ * 写入走「同目录临时文件 + rename」原子替换：passwd 被半写/清空会让容器内 su/id 与 Java 的
+ * getpwuid 一并异常，且下次启动读到无 root 行的残缺文件会静默跳过、无法自愈。
+ */
+export function alignPasswdHome(passwdPath: string, home: string): boolean {
+  const raw = readFileSync(passwdPath, 'utf8');
+  let changed = false;
+  let foundRoot = false;
+  const next = raw.split('\n').map((line) => {
+    const parts = line.split(':');
+    if (parts[0] !== 'root' || parts.length < 7) return line;
+    foundRoot = true;
+    if (parts[5] === home) return line;
+    parts[5] = home;
+    changed = true;
+    return parts.join(':');
+  });
+  if (!foundRoot) {
+    console.warn(`[runtime-agent] /etc/passwd 中未找到 root 行，跳过 HOME 对齐（${passwdPath}）`);
+    return false;
+  }
+  if (changed) {
+    const tmpPath = `${passwdPath}.mao-tmp`;
+    writeFileSync(tmpPath, next.join('\n'));
+    renameSync(tmpPath, passwdPath);
+  }
+  return changed;
+}
+
 // 仅作为容器入口脚本直接执行时运行；被 import（宿主机单测驱动）时不自动启动
 function isMainModule(): boolean {
   const entry = process.argv[1];
@@ -327,6 +362,20 @@ if (isMainModule()) {
   if (!Number.isFinite(userId) || userId <= 0) {
     console.error('[runtime-agent] missing MAO_CONTAINER_USER_ID');
     process.exit(1);
+  }
+  // 容器 HOME 对齐（容器创建参数 -e HOME={userHomeDir}/{userId}）：npm/pip/git 等直接读 $HOME；
+  // Java 经 getpwuid 取 user.home，需要 /etc/passwd 同步。失败仅告警，不阻塞 agent 启动。
+  // 放在 userId 校验之后：以「容器内 agent」硬依赖作为执行前提，避免该脚本被其它方式
+  // 拉起时误改所在机器的 /etc/passwd。
+  const home = process.env.HOME;
+  if (home && home !== '/root') {
+    try {
+      if (alignPasswdHome('/etc/passwd', home)) {
+        console.log(`[runtime-agent] /etc/passwd root home aligned to ${home}`);
+      }
+    } catch (e) {
+      console.error('[runtime-agent] align /etc/passwd failed (non-fatal):', (e as Error).message);
+    }
   }
   const agent = new RuntimeAgent(socketPath, token, userId);
   void agent.run().catch((e) => {

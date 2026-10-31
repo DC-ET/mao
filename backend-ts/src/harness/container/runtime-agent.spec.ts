@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { RuntimeChannelServer, type RuntimeStatus } from './runtime-channel-server.js';
-import { RuntimeAgent } from './runtime-agent.js';
+import { alignPasswdHome, RuntimeAgent } from './runtime-agent.js';
 import { ContainerMcpBridge } from './container-mcp-bridge.js';
 import { PathSandbox } from '../safety/path-sandbox.js';
 import type { ContainerPty, ContainerPtyFactory } from './pty-hub.js';
@@ -190,5 +190,47 @@ describe('runtime agent channel behavior', () => {
       agent.dispose();
       spy.mockRestore();
     }
+  });
+});
+
+describe('alignPasswdHome（容器 HOME 对齐）', () => {
+  it('alignsRootHomeAndIsIdempotent', () => {
+    const base = useTmpDir('mao-passwd-');
+    const file = join(base, 'passwd');
+    writeFileSync(
+      file,
+      'root:x:0:0:root:/root:/bin/bash\n'
+      + 'daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin\n',
+    );
+    expect(alignPasswdHome(file, '/opt/mao-data/users/7')).toBe(true);
+    const updated = readFileSync(file, 'utf8');
+    expect(updated).toContain('root:x:0:0:root:/opt/mao-data/users/7:/bin/bash');
+    // 非 root 行不受影响
+    expect(updated).toContain('daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin');
+    // 幂等：已对齐时不再改动
+    expect(alignPasswdHome(file, '/opt/mao-data/users/7')).toBe(false);
+  });
+
+  it('keepsMalformedLinesAndReturnsFalseWithoutRoot', () => {
+    const base = useTmpDir('mao-passwd-edge-');
+    const file = join(base, 'passwd');
+    // 无 root 行 + 畸形行（字段数 < 7）+ 空行：内容原样保留、返回 false
+    const original = 'daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin\nbroken\n\n';
+    writeFileSync(file, original);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      expect(alignPasswdHome(file, '/opt/mao-data/users/7')).toBe(false);
+      expect(readFileSync(file, 'utf8')).toBe(original);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('preservesMissingTrailingNewline', () => {
+    const base = useTmpDir('mao-passwd-nonl-');
+    const file = join(base, 'passwd');
+    writeFileSync(file, 'root:x:0:0:root:/root:/bin/bash');
+    expect(alignPasswdHome(file, '/opt/mao-data/users/7')).toBe(true);
+    expect(readFileSync(file, 'utf8')).toBe('root:x:0:0:root:/opt/mao-data/users/7:/bin/bash');
   });
 });

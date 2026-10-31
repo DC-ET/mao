@@ -1,3 +1,11 @@
+## 0.0.392 (2026-10-31)
+
+### 后端
+- **容器模式 HOME 对齐用户数据目录（与宿主机模式一致）**：创建容器时注入 `HOME=/opt/mao-data/users/{userId}`，容器内 npm（`.npmrc`）、pip 缓存、git（`.gitconfig`）等用户级配置直接读持久挂载的用户目录，容器重建不丢；Java 在 Linux 上经 getpwuid 取 `user.home`（不认 `$HOME`），runtime-agent 启动入口将 `/etc/passwd` 中 root 的 home 幂等对齐（仅告警、不阻塞启动），Maven / Gradle 的 `~/.m2`、`~/.gradle` 随之落到用户目录——挂载的 `settings.xml`（私服 mirror）与本地仓库缓存直接生效。存量容器重建后生效。
+
+### 部署
+- 如需在容器内跑 Java 构建，可在运行时镜像预装 `openjdk-17-jdk-headless` + `maven`；本部署的 overlay 定制层已包含（见 `docs/plan/2026-10-31-runtime-image-preinstall-chrome-lark-cli.md`）。
+
 ## 0.0.391 (2026-10-31)
 
 ### 后端

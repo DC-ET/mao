@@ -96,6 +96,8 @@ describe('container registry', () => {
     expect(runArgs).toContain(`-e MAO_WORKSPACE_ROOT=${join(base, 'workspace')}`);
     expect(runArgs).toContain(`-e MAO_RUNTIME_DIR=${join(base, 'runtime')}`);
     expect(runArgs).toContain(`-e MAO_USER_HOME_DIR=${join(base, 'users')}`);
+    // HOME 对齐用户数据目录：容器内 HOME 与宿主机模式一致，用户级 .npmrc/.m2/.gitconfig 生效
+    expect(runArgs).toContain(`-e HOME=${join(base, 'users', '7')}`);
     expect(runArgs).toContain(`-e MAO_USER_SKILLS_DIR=${join(base, 'userskills')}`);
     // 图片产物上传根（按用户挂 {uploadDir}/{userId}，nginx /uploads/ 静态出口同源）
     expect(runArgs).toContain(`-e MAO_UPLOAD_DIR=${join(base, 'uploads')}`);
