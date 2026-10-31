@@ -14,7 +14,7 @@ import { useTmpDir } from '../../testing/tmp-dir.js';
  * 用真实 RuntimeChannelServer + 真实 RuntimeAgent 打通 Unix socket，
  * 断言连接稳定性、pty_open ack、mcp_connect envelope 透传。
  */
-const ROOT_ENV_KEYS = ['MAO_WORKSPACE_ROOT', 'MAO_RUNTIME_DIR', 'MAO_USER_HOME_DIR', 'MAO_USER_SKILLS_DIR', 'MAO_SHARE_DIR'];
+const ROOT_ENV_KEYS = ['MAO_WORKSPACE_ROOT', 'MAO_RUNTIME_DIR', 'MAO_USER_HOME_DIR', 'MAO_USER_SKILLS_DIR', 'MAO_SKILLS_DIR', 'MAO_SHARE_DIR'];
 
 function envelopeOf(workspace: string): RuntimeEnvelope {
   return {
@@ -186,6 +186,28 @@ describe('runtime agent channel behavior', () => {
     const agent = new RuntimeAgent('/tmp/mao-probe.sock', 'probe-token', 7);
     try {
       expect(registered).toContain('/opt/mao-data/share');
+    } finally {
+      agent.dispose();
+      spy.mockRestore();
+    }
+  });
+
+  it('defaultsSkillsDirWhenEnvUnset', () => {
+    // 2026-10-31 回归：会话技能以符号链接指向平台技能目录（SkillSyncService），容器内
+    // 文件工具必须把 skillsDir 登记为允许根，否则 strict 的符号链接逃逸检测会把读
+    // SKILL.md 判成越界。此处用 addAllowedRoot 探针断言接线（不触碰真实文件系统）
+    const base = useTmpDir('mao-agent-skills-default-');
+    process.env.MAO_WORKSPACE_ROOT = join(base, 'workspace');
+    process.env.MAO_RUNTIME_DIR = join(base, 'runtime');
+    process.env.MAO_USER_HOME_DIR = join(base, 'users');
+    process.env.MAO_USER_SKILLS_DIR = join(base, 'userskills');
+    delete process.env.MAO_SKILLS_DIR;
+    const registered: string[] = [];
+    const spy = vi.spyOn(PathSandbox.prototype, 'addAllowedRoot')
+      .mockImplementation((root: string) => { registered.push(root); });
+    const agent = new RuntimeAgent('/tmp/mao-probe-skills.sock', 'probe-token', 7);
+    try {
+      expect(registered).toContain('/opt/mao-data/skills');
     } finally {
       agent.dispose();
       spy.mockRestore();

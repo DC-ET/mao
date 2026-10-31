@@ -1,3 +1,9 @@
+## 0.0.393 (2026-10-31)
+
+### 后端
+- **修复 Docker 模式读会话技能被判「符号链接逃逸」**：会话技能自 0.0.205（66c77a36）起以符号链接挂载（`{runtimeDir}/{userId}/{sessionId}/skills/{name}` → 技能源目录），平台技能的目标根是宿主机 `skillsDir`（`/opt/mao-data/skills`）；而容器内文件工具的沙箱允许根只登记了每用户目录 + share + `/tmp`，strict 模式的符号链接逃逸检测因此把 `read_file` 读 `SKILL.md` 判成越界，返回 `Path escape attempt (symlink): .../skills/{name}/SKILL.md`。宿主机模式（宽松解析、不校验符号链接）不受影响，切换 `runtime.mode=docker` 后首次暴露。修复：`ContainerRoots` 增加 `skillsDir`，容器创建时注入 `MAO_SKILLS_DIR`，runtime-agent 经 `resolveRoots()` 读取并由 `ContainerToolExecutor` 登记为允许根——该目录本就以 rw 挂进容器（产品要求容器内可安装/更新共享技能），工具层放行与挂载口径一致，不扩大隔离边界；指向 `skillsDir` 之外的符号链接仍按逃逸拒绝。影响 `read_file` / `write_file` / `edit_file` / `glob_search` / `grep_search` 与外部发送的容器读字节。存量容器需重启（runtime-agent 常驻，dist 更新不热加载）。
+- 补回归用例：容器内读会话技能符号链接（read_file / read_bytes / write_file 放行 + 指向外部的链接仍拒绝）、容器创建参数含 `MAO_SKILLS_DIR`、未设置该 env 时 `resolveRoots` 回落 `/opt/mao-data/skills` 并登记为允许根。
+
 ## 0.0.392 (2026-10-31)
 
 ### 后端

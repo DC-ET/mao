@@ -39,9 +39,10 @@ function resolveRoots(): ContainerRoots {
   const runtimeDir = process.env.MAO_RUNTIME_DIR ?? '/opt/mao-data/runtime';
   const userHomeDir = process.env.MAO_USER_HOME_DIR ?? '/opt/mao-data/users';
   const userSkillsDir = process.env.MAO_USER_SKILLS_DIR ?? '/opt/mao-data/userskills';
+  const skillsDir = process.env.MAO_SKILLS_DIR ?? '/opt/mao-data/skills';
   const uploadDir = process.env.MAO_UPLOAD_DIR ?? '/opt/mao-data/uploads';
   const shareDir = process.env.MAO_SHARE_DIR ?? '/opt/mao-data/share';
-  return { workspaceRoot, runtimeDir, userHomeDir, userSkillsDir, uploadDir, shareDir };
+  return { workspaceRoot, runtimeDir, userHomeDir, userSkillsDir, skillsDir, uploadDir, shareDir };
 }
 
 function readToken(socketPath: string): string {

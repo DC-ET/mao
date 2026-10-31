@@ -99,6 +99,9 @@ describe('container registry', () => {
     // HOME 对齐用户数据目录：容器内 HOME 与宿主机模式一致，用户级 .npmrc/.m2/.gitconfig 生效
     expect(runArgs).toContain(`-e HOME=${join(base, 'users', '7')}`);
     expect(runArgs).toContain(`-e MAO_USER_SKILLS_DIR=${join(base, 'userskills')}`);
+    // 平台技能目录：会话技能符号链接的目标根，容器内文件工具据此登记沙箱允许根
+    // （2026-10-31 回归：不注入时容器内读 SKILL.md 被判符号链接逃逸）
+    expect(runArgs).toContain(`-e MAO_SKILLS_DIR=${join(base, 'skills')}`);
     // 图片产物上传根（按用户挂 {uploadDir}/{userId}，nginx /uploads/ 静态出口同源）
     expect(runArgs).toContain(`-e MAO_UPLOAD_DIR=${join(base, 'uploads')}`);
     expect(runArgs).toContain(`${join(base, 'uploads', '7')}:${join(base, 'uploads', '7')}:rw`);

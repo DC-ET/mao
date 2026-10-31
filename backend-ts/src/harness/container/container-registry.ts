@@ -644,6 +644,9 @@ export class ContainerRegistry {
       // 配置直接读持久挂载；Java 的 user.home 由 runtime-agent 启动时同步 /etc/passwd 兜住
       '-e', `HOME=${userHomeMount?.containerPath ?? path.posix.join(this.opts.userHomeDir, String(userId))}`,
       '-e', `MAO_USER_SKILLS_DIR=${this.opts.userSkillsDir}`,
+      // 平台技能目录：会话技能符号链接的目标根，容器内文件工具据此登记沙箱允许根
+      // （2026-10-31 回归：不注入时容器内读 SKILL.md 被判符号链接逃逸）
+      '-e', `MAO_SKILLS_DIR=${this.opts.skillsDir}`,
       '-e', `MAO_UPLOAD_DIR=${this.opts.uploadDir}`,
       '-e', `MAO_SHARE_DIR=${this.opts.shareDir}`,
       ...this.planner.toDockerArgs(mounts),

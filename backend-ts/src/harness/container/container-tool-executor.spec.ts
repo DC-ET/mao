@@ -44,7 +44,7 @@ describe('container tool executor', () => {
     writeFileSync(join(userWorkspace, 'a.txt'), 'hello container');
     writeFileSync(join(otherUser, 'secret.txt'), 'foreign');
 
-    const executor = new ContainerToolExecutor({ workspaceRoot, runtimeDir, userHomeDir, userSkillsDir, uploadDir: join(base, 'uploads'), shareDir: join(base, 'share') }, USER_ID);
+    const executor = new ContainerToolExecutor({ workspaceRoot, runtimeDir, userHomeDir, userSkillsDir, skillsDir: join(base, 'skills'), uploadDir: join(base, 'uploads'), shareDir: join(base, 'share') }, USER_ID);
 
     // read_file 工作区相对路径
     const read = await executor.handleToolCall('read_file', JSON.stringify({ path: 'a.txt' }), envelopeOf(userWorkspace));
@@ -81,7 +81,7 @@ describe('container tool executor', () => {
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, 'secret.txt'), 'foreign');
     }
-    const executor = new ContainerToolExecutor({ workspaceRoot, runtimeDir, userHomeDir, userSkillsDir, uploadDir: join(base, 'uploads'), shareDir: join(base, 'share') }, USER_ID);
+    const executor = new ContainerToolExecutor({ workspaceRoot, runtimeDir, userHomeDir, userSkillsDir, skillsDir: join(base, 'skills'), uploadDir: join(base, 'uploads'), shareDir: join(base, 'share') }, USER_ID);
     const env = envelopeOf(userWorkspace);
 
     for (const path of [
@@ -112,6 +112,7 @@ describe('container tool executor', () => {
       runtimeDir: join(base, 'runtime'),
       userHomeDir: join(base, 'users'),
       userSkillsDir: join(base, 'userskills'),
+      skillsDir: join(base, 'skills'),
       uploadDir: join(base, 'uploads'),
       shareDir: join(base, 'share'),
     }, USER_ID);
@@ -154,6 +155,7 @@ describe('container tool executor', () => {
       runtimeDir: join(base, 'runtime'),
       userHomeDir: join(base, 'users'),
       userSkillsDir: join(base, 'userskills'),
+      skillsDir: join(base, 'skills'),
       uploadDir,
       shareDir,
     }, USER_ID);
@@ -190,6 +192,7 @@ describe('container tool executor', () => {
       runtimeDir: join(base, 'runtime'),
       userHomeDir: join(base, 'users'),
       userSkillsDir: join(base, 'userskills'),
+      skillsDir: join(base, 'skills'),
       uploadDir: join(base, 'uploads'),
       shareDir,
     }, USER_ID);
@@ -203,6 +206,51 @@ describe('container tool executor', () => {
     expect(bytes.ok).toBe(true);
     // share 内指向外部的 symlink 被逃逸检测拒绝
     const escape = await executor.handleToolCall('read_file', JSON.stringify({ path: join(shareDir, 'escape.txt') }), env);
+    expect(JSON.parse(escape).error).toBeDefined();
+  });
+
+  it('readsSessionSkillSymlinkUnderSkillsRoot', async () => {
+    // 2026-10-31 回归（线上 docker 模式首例）：会话技能是
+    // {runtimeDir}/{u}/{s}/skills/{name} -> skillsDir/{name} 的符号链接（SkillSyncService），
+    // skillsDir 未登记为允许根时 strict 的符号链接逃逸检测会把读 SKILL.md 判成越界
+    const base = useTmpDir('mao-exec-skills-');
+    const workspaceRoot = join(base, 'workspace');
+    const runtimeDir = join(base, 'runtime');
+    const userWorkspace = join(workspaceRoot, '7');
+    const skillsDir = join(base, 'skills');
+    const skillDir = join(skillsDir, 'bigdata-cli');
+    const sessionSkillsDir = join(runtimeDir, '7', '11', 'skills');
+    const outside = join(base, 'outside');
+    mkdirSync(userWorkspace, { recursive: true });
+    mkdirSync(skillDir, { recursive: true });
+    mkdirSync(sessionSkillsDir, { recursive: true });
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(skillDir, 'SKILL.md'), '---\nname: bigdata-cli\n---\nbody');
+    writeFileSync(join(outside, 'secret.txt'), 'secret');
+    symlinkSync(skillDir, join(sessionSkillsDir, 'bigdata-cli'), 'dir');
+    symlinkSync(outside, join(sessionSkillsDir, 'leak'), 'dir');
+    const executor = new ContainerToolExecutor({
+      workspaceRoot,
+      runtimeDir,
+      userHomeDir: join(base, 'users'),
+      userSkillsDir: join(base, 'userskills'),
+      skillsDir,
+      uploadDir: join(base, 'uploads'),
+      shareDir: join(base, 'share'),
+    }, USER_ID);
+    const env = envelopeOf(userWorkspace);
+
+    // read_file / read_bytes 同口径放行（技能 SKILL.md 在系统提示词里就是这条绝对路径）
+    const read = await executor.handleToolCall('read_file', JSON.stringify({ path: join(sessionSkillsDir, 'bigdata-cli', 'SKILL.md') }), env);
+    expect(JSON.parse(read).content).toContain('name: bigdata-cli');
+    const bytes = executor.handleReadBytes(join(sessionSkillsDir, 'bigdata-cli', 'SKILL.md'), 1000, env);
+    expect(bytes.ok).toBe(true);
+    // 平台技能目录 rw 挂载的产品要求：容器内可更新共享技能
+    const write = await executor.handleToolCall('write_file', JSON.stringify({ path: join(sessionSkillsDir, 'bigdata-cli', 'notes.md'), content: 'x' }), env);
+    expect(JSON.parse(write).success).toBe(true);
+
+    // 只放行 skillsDir 目标：指向别处的会话技能链接仍按符号链接逃逸拒绝
+    const escape = await executor.handleToolCall('read_file', JSON.stringify({ path: join(sessionSkillsDir, 'leak', 'secret.txt') }), env);
     expect(JSON.parse(escape).error).toBeDefined();
   });
 
@@ -222,6 +270,7 @@ describe('container tool executor', () => {
       runtimeDir: join(base, 'runtime'),
       userHomeDir: join(base, 'users'),
       userSkillsDir: join(base, 'userskills'),
+      skillsDir: join(base, 'skills'),
       uploadDir: join(base, 'uploads'),
       shareDir,
     }, USER_ID);
@@ -245,6 +294,7 @@ describe('container tool executor', () => {
       runtimeDir: join(base, 'runtime'),
       userHomeDir: join(base, 'users'),
       userSkillsDir: join(base, 'userskills'),
+      skillsDir: join(base, 'skills'),
       uploadDir: join(base, 'uploads'),
       shareDir: join(base, 'share'),
     }, USER_ID);
@@ -269,6 +319,7 @@ describe('container tool executor', () => {
       runtimeDir: join(base, 'runtime'),
       userHomeDir: join(base, 'users'),
       userSkillsDir: join(base, 'userskills'),
+      skillsDir: join(base, 'skills'),
       uploadDir: join(base, 'uploads'),
       shareDir: join(base, 'share'),
     }, USER_ID);
@@ -289,6 +340,7 @@ describe('container tool executor', () => {
       runtimeDir: join(base, 'runtime'),
       userHomeDir: join(base, 'users'),
       userSkillsDir: join(base, 'userskills'),
+      skillsDir: join(base, 'skills'),
       uploadDir: join(base, 'uploads'),
       shareDir: join(base, 'share'),
     }, USER_ID);
@@ -323,6 +375,7 @@ describe('container tool executor', () => {
       runtimeDir: join(base, 'runtime'),
       userHomeDir: join(base, 'users'),
       userSkillsDir: join(base, 'userskills'),
+      skillsDir: join(base, 'skills'),
       uploadDir: join(base, 'uploads'),
       shareDir: join(base, 'share'),
     }, USER_ID);
@@ -353,6 +406,7 @@ describe('container tool executor', () => {
       runtimeDir: join(base, 'runtime'),
       userHomeDir: join(base, 'users'),
       userSkillsDir: join(base, 'userskills'),
+      skillsDir: join(base, 'skills'),
       uploadDir: join(base, 'uploads'),
       shareDir: join(base, 'share'),
     }, USER_ID);
