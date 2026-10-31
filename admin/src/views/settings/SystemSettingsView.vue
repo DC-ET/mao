@@ -62,6 +62,16 @@
                 v-else-if="section.kind === 'shell-env'"
                 :can-write="canWrite"
               />
+              <ContainerHostsPanel
+                v-else-if="section.kind === 'container-hosts'"
+                :can-write="canWrite"
+                :inherit-row="containerInheritRow"
+                :extra-hosts-row="containerExtraHostsRow"
+                @saved="fetchSettings"
+              />
+              <ContainerRebuildPanel
+                v-else-if="section.kind === 'container-rebuild'"
+              />
               <template v-else-if="section.kind === 'integration'">
                 <el-alert
                   v-if="section.name === firstIntegrationName"
@@ -233,6 +243,8 @@ import IntegrationConfigPanel from './components/IntegrationConfigPanel.vue'
 import CompanySsoConfigPanel from './components/CompanySsoConfigPanel.vue'
 import EcpConfigPanel from './components/EcpConfigPanel.vue'
 import ShellEnvVarsPanel from './components/ShellEnvVarsPanel.vue'
+import ContainerHostsPanel from './components/ContainerHostsPanel.vue'
+import ContainerRebuildPanel from './components/ContainerRebuildPanel.vue'
 import { COMPANY_SSO_KEY } from './companySsoConfig'
 import { ECP_CONFIG_KEY } from './ecpConfig'
 import { cidrAllowlistError } from './cidrAllowlist'
@@ -279,7 +291,7 @@ const INTEGRATION_LABELS: Record<string, string> = {
 }
 
 /** 目录分组声明：右侧卡片渲染顺序与目录一致。integration=集成配置组，category=后端 system_setting 分类；后端新增的未声明分类兜底归入「其他」。 */
-const TOC_GROUPS: Array<{ label: string; sections: Array<{ kind: 'company-sso' | 'ecp' | 'shell-env' | 'integration' | 'category'; name: string }> }> = [
+const TOC_GROUPS: Array<{ label: string; sections: Array<{ kind: 'company-sso' | 'ecp' | 'shell-env' | 'container-hosts' | 'container-rebuild' | 'integration' | 'category'; name: string }> }> = [
   {
     label: '登录认证',
     sections: [
@@ -346,6 +358,9 @@ const TOC_GROUPS: Array<{ label: string; sections: Array<{ kind: 'company-sso' |
       { kind: 'category', name: '分享' },
       { kind: 'category', name: '审计' },
       { kind: 'category', name: '运行环境' },
+      // 容器域名解析注入（V176）：宿主机 hosts 继承 + 自定义规则；下方为容器管理（列表/重建）
+      { kind: 'container-hosts', name: 'container-hosts' },
+      { kind: 'container-rebuild', name: 'container-rebuild' },
     ],
   },
 ]
@@ -355,7 +370,14 @@ const settingsLoaded = ref(false)
 const settings = ref<any[]>([])
 const companySsoRow = computed(() => settings.value.find((item) => item.settingKey === COMPANY_SSO_KEY))
 const ecpRow = computed(() => settings.value.find((item) => item.settingKey === ECP_CONFIG_KEY))
-const SPECIAL_KEYS = new Set([...INTEGRATION_KEYS, COMPANY_SSO_KEY, ECP_CONFIG_KEY])
+/** 容器域名解析（V176）：走 ContainerHostsPanel 专属面板，不在「运行环境」分类里重复渲染。 */
+const CONTAINER_INHERIT_KEY = 'runtime.container.inheritHostHosts'
+const CONTAINER_EXTRA_HOSTS_KEY = 'runtime.container.extraHosts'
+const SPECIAL_KEYS = new Set([
+  ...INTEGRATION_KEYS, COMPANY_SSO_KEY, ECP_CONFIG_KEY, CONTAINER_INHERIT_KEY, CONTAINER_EXTRA_HOSTS_KEY,
+])
+const containerInheritRow = computed(() => settings.value.find((item) => item.settingKey === CONTAINER_INHERIT_KEY))
+const containerExtraHostsRow = computed(() => settings.value.find((item) => item.settingKey === CONTAINER_EXTRA_HOSTS_KEY))
 const agents = ref<any[]>([])
 const models = ref<any[]>([])
 const activeSection = ref('')
@@ -622,7 +644,7 @@ const settingsByCategory = computed(() => {
 interface TocSection {
   id: string
   label: string
-  kind: 'company-sso' | 'ecp' | 'shell-env' | 'integration' | 'category'
+  kind: 'company-sso' | 'ecp' | 'shell-env' | 'container-hosts' | 'container-rebuild' | 'integration' | 'category'
   name: string
 }
 
@@ -663,7 +685,11 @@ const tocGroups = computed<TocGroup[]>(() => {
               ? 'ECP 飞书登录'
               : decl.kind === 'shell-env'
                 ? 'Shell 环境变量'
-                : decl.name,
+                : decl.kind === 'container-hosts'
+                  ? '容器域名解析'
+                  : decl.kind === 'container-rebuild'
+                    ? '容器管理'
+                    : decl.name,
       })
     }
     if (sections.length > 0) groups.push({ label: group.label, sections })

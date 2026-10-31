@@ -4,6 +4,9 @@ import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { hasText } from '../common/case.js';
 import { cidrOverlapsHardDeniedNet, isValidCidr, parseCidrList } from '../common/ssrf.js';
+import {
+  CONTAINER_EXTRA_HOSTS_KEY, CONTAINER_INHERIT_HOST_HOSTS_KEY, parseExtraHostsValue,
+} from '../common/container-hosts.js';
 import { decryptAesGcm, encryptAesGcmNonNull } from '../crypto/aes-gcm.js';
 import type {
   AgentLookup, AgentRuntimeSettings, EmailSmtpSettings, FeishuOAuthSettings, HarnessTuningSettings, LdapSettings, ModelLookup,
@@ -815,6 +818,19 @@ export class SystemSettingService {
         throw new BusinessException(
           ErrorCode.PARAM_INVALID,
           `内网放行清单不允许包含环回（127.0.0.0/8）或云元数据（169.254.169.254）网段：${hardDenied.slice(0, 3).join('、')}`,
+        );
+      }
+      return;
+    }
+    if (key === CONTAINER_INHERIT_HOST_HOSTS_KEY && !/^(true|false)$/i.test(value!.trim())) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '容器域名解析继承开关必须为 true 或 false');
+    }
+    if (key === CONTAINER_EXTRA_HOSTS_KEY) {
+      const parsed = parseExtraHostsValue(value);
+      if (!parsed.ok) {
+        throw new BusinessException(
+          ErrorCode.PARAM_INVALID,
+          `容器域名解析规则不合法：${parsed.errors.slice(0, 3).join('；')}`,
         );
       }
       return;

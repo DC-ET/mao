@@ -6,6 +6,8 @@ import { harnessLog } from '../log.js';
 import type { CloudRuntimeConfig } from '../../config/app-config.js';
 import { ContainerMountPlanner, type ContainerMount } from './container-mount-planner.js';
 import { isChannelWorkspace } from './channel-workspace.js';
+import { containerHostsFingerprint, EMPTY_CONTAINER_HOSTS_FINGERPRINT } from '../../common/container-hosts.js';
+import type { ContainerHostsResolution } from './container-hosts-resolver.js';
 import type { RuntimeStatus } from './runtime-channel-server.js';
 
 /**
@@ -50,6 +52,47 @@ export interface ContainerEntry {
    * 缺省（升级过渡的旧条目 / 测试手工构造）视为漂移，自然自愈一次。
    */
   mountFingerprint?: string;
+  /**
+   * 本次 docker run 固化的 /etc/hosts 注入指纹（容器域名解析注入方案）：
+   * `docker start` 复用旧容器不会更新 --add-host，宿主机 hosts / 后台规则变化后
+   * 指纹漂移时 ensureRunning 主动回收重建（与 mountFingerprint 同机制）。
+   * 缺省（升级前旧条目）：仅当当前期望条目非空时按漂移处理，避免无配置机器全量重建。
+   */
+  hostsFingerprint?: string;
+}
+
+/** 容器重建操作结果（管理后台「重建容器」）。 */
+export type ContainerRecycleStatus = 'rebuilt' | 'none' | 'skipped-busy' | 'failed';
+
+export interface ContainerRecycleResult {
+  userId: number;
+  status: ContainerRecycleStatus;
+  /** status='failed' 时的错误摘要。 */
+  error?: string;
+}
+
+/** 在册容器摘要（管理后台「容器管理」列表）。 */
+export interface ContainerEntrySummary {
+  userId: number;
+  containerName: string;
+  state: 'running' | 'stopped';
+  busy: boolean;
+  startedAtMs: number;
+  lastUsedAtMs: number;
+}
+
+/** 管理后台容器运维依赖（窄接口，路由层用，不暴露生命周期内部细节）。 */
+export interface ContainerOps {
+  listEntries(): ContainerEntrySummary[];
+  /** 重建单个用户容器；none=当前无在册容器（下次使用时按新配置创建）。 */
+  recycleUser(userId: number, opts?: { force?: boolean }): Promise<ContainerRecycleResult>;
+}
+
+/** 容器是否处于忙碌状态（有活跃 shell / 在途任务 / 已连接终端）。 */
+function isBusy(entry: ContainerEntry): boolean {
+  return entry.inContainer.shellSessions > 0
+    || entry.inContainer.pendingTasks > 0
+    || entry.inContainer.attachedTerminals > 0;
 }
 
 export interface DockerCli {
@@ -102,6 +145,14 @@ export interface ContainerRegistryOptions {
    * 实现必须按数据库 user_id 过滤（归属校验），不得返回其他用户的工作区。
    */
   sessionWorkspacesOf?(userId: number): Promise<string[]>;
+  /**
+   * 当前应注入容器的 /etc/hosts 条目（容器域名解析注入方案）。
+   * 创建容器时逐条转 `--add-host host:ip` 并固化指纹；未注入或返回空数组时
+   * 行为与旧版一致（不追加任何参数）。解析内部已降级，异常由本层兜底。
+   * `degraded=true`（读库/读文件失败）时结果不完整：注入用可用子集，
+   * 但漂移判定必须跳过（见 hostsInjectionDrifted），避免瞬时故障误重建存量容器。
+   */
+  resolveHostsInjection?(): Promise<ContainerHostsResolution>;
 }
 
 const IDLE_CHECK_INTERVAL_MS = 60_000;
@@ -201,6 +252,43 @@ export class ContainerRegistry {
     return this.entries.get(userId);
   }
 
+  /** 在册容器摘要（管理后台「容器管理」列表；creating 中间态不列出）。 */
+  listEntries(): ContainerEntrySummary[] {
+    return [...this.entries.values()]
+      .filter((entry) => entry.state === 'running' || entry.state === 'stopped')
+      .map((entry) => ({
+        userId: entry.userId,
+        containerName: entry.containerName,
+        state: entry.state as 'running' | 'stopped',
+        busy: isBusy(entry),
+        startedAtMs: entry.startedAtMs,
+        lastUsedAtMs: entry.lastUsedAtMs,
+      }))
+      .sort((a, b) => a.userId - b.userId);
+  }
+
+  /**
+   * 重建单个用户容器（管理后台「重建容器」）：
+   * - 无在册条目 → none（下次使用时按最新配置创建）；
+   * - 忙碌且未强制 → skipped-busy（保护在跑任务）；
+   * - 其余复用 rebuildEntry（停 → rm → docker run），重建后自动带上最新 hosts 注入；
+   * - 失败不抛出，返回 failed + 错误摘要（供批量场景逐条汇报）。
+   * 与自动重建共用 per-user 串行锁，不会并发互相摧毁。
+   */
+  async recycleUser(userId: number, opts: { force?: boolean } = {}): Promise<ContainerRecycleResult> {
+    return this.withUserLock(userId, async () => {
+      const entry = this.entries.get(userId);
+      if (entry == null) return { userId, status: 'none' as const };
+      if (!opts.force && isBusy(entry)) return { userId, status: 'skipped-busy' as const };
+      try {
+        await this.rebuildEntry(entry, entry.sessionWorkspaces);
+        return { userId, status: 'rebuilt' as const };
+      } catch (e) {
+        return { userId, status: 'failed' as const, error: (e as Error).message };
+      }
+    });
+  }
+
   /**
    * ensureRunning：不存在则创建并等待就绪；stopped 则 start；running 直接复用。
    * 全程按用户串行（见类注释），requiredWorkspace 的挂载检查与必要的重建都在锁内
@@ -225,8 +313,8 @@ export class ContainerRegistry {
     if (entry.state === 'running' && !entry.connectionDead) {
       // 挂载计划漂移（planner 变更，如新增 uploads 挂载）：docker start/复用都不会
       // 补上新挂载，只能重建。指纹缺省（旧条目/测试构造）同样按漂移处理，自愈一次
-      if (this.mountPlanDrifted(entry, userId)) {
-        harnessLog('warn', `[container] recreating container for user=${userId} (mount plan changed)`);
+      if (this.mountPlanDrifted(entry, userId) || await this.hostsInjectionDrifted(entry)) {
+        harnessLog('warn', `[container] recreating container for user=${userId} (mount plan or hosts injection changed)`);
         return this.ensureWorkspaceMounted(
           await this.rebuildEntry(entry, entry.sessionWorkspaces),
           requiredWorkspace,
@@ -243,8 +331,8 @@ export class ContainerRegistry {
         ...await this.sessionWorkspaces(userId),
         ...(requiredWorkspace ? [path.resolve(requiredWorkspace)] : []),
       ].filter((p) => isChannelWorkspace(p, this.opts.workspaceRoot));
-      if (this.hasUnmountedWorkspace(entry, desired) || this.mountPlanDrifted(entry, userId)) {
-        harnessLog('warn', `[container] recreating container for user=${userId} (new session workspaces or mount plan changed while stopped)`);
+      if (this.hasUnmountedWorkspace(entry, desired) || this.mountPlanDrifted(entry, userId) || await this.hostsInjectionDrifted(entry)) {
+        harnessLog('warn', `[container] recreating container for user=${userId} (new session workspaces, mount plan or hosts injection changed while stopped)`);
         return this.ensureWorkspaceMounted(
           await this.rebuildEntry(entry, [...entry.sessionWorkspaces, ...desired]),
           requiredWorkspace,
@@ -325,6 +413,44 @@ export class ContainerRegistry {
    */
   private mountPlanDrifted(entry: ContainerEntry, userId: number): boolean {
     return entry.mountFingerprint !== this.planner.standardMountsFingerprint(userId);
+  }
+
+  /**
+   * /etc/hosts 注入是否已漂移（条目固化指纹 ≠ 当前解析结果）。docker run 时注入参数
+   * 定型，docker start/复用不会更新 --add-host：宿主机 hosts / 后台规则变化后只能重建。
+   * 缺省指纹（升级前旧条目）仅当当前期望条目非空时按漂移处理，避免未启用该功能的
+   * 机器把全部存量容器无谓重建一次。
+   */
+  private async hostsInjectionDrifted(entry: ContainerEntry): Promise<boolean> {
+    const expected = await this.currentHostsFingerprint();
+    // 解析降级 / 异常（null）：本次不做漂移判定——瞬时读库/读文件失败不得把存量容器误重建
+    if (expected == null) return false;
+    if (entry.hostsFingerprint === expected) return false;
+    if (entry.hostsFingerprint == null && expected === EMPTY_CONTAINER_HOSTS_FINGERPRINT) return false;
+    return true;
+  }
+
+  /** 当前期望注入指纹；未注入/解析降级/异常返回 null（表示"不可判定"）。 */
+  private async currentHostsFingerprint(): Promise<string | null> {
+    if (!this.opts.resolveHostsInjection) return EMPTY_CONTAINER_HOSTS_FINGERPRINT;
+    try {
+      const resolution = await this.opts.resolveHostsInjection();
+      if (resolution.degraded) return null;
+      return containerHostsFingerprint(resolution.entries);
+    } catch {
+      return null;
+    }
+  }
+
+  /** 创建容器前解析应注入条目；未注入返回空、异常按"降级"（注入空、跳漂移判定）。 */
+  private async resolveHostsForInjection(): Promise<ContainerHostsResolution> {
+    if (!this.opts.resolveHostsInjection) return { entries: [], degraded: false };
+    try {
+      return await this.opts.resolveHostsInjection();
+    } catch (e) {
+      harnessLog('warn', `[container] resolve hosts injection failed: ${(e as Error).message}`);
+      return { entries: [], degraded: true };
+    }
   }
 
   /**
@@ -490,6 +616,9 @@ export class ContainerRegistry {
     // 先 listen 再 run：容器 agent 启动即连 socket，宿主机没监听时只会无限重连
     const socketPath = await this.opts.ensureChannelListening(userId);
     const channelToken = this.opts.issueChannelToken(userId);
+    // 容器域名解析注入（技术方案 §4.5）：本次 docker run 固化的条目集合，
+    // 同时用于 args 与 entry.hostsFingerprint（保证"注入值"与"指纹"同源）。
+    const hostsInjection = await this.resolveHostsForInjection();
     const args = [
       'run', '-d',
       '--name', name,
@@ -499,6 +628,8 @@ export class ContainerRegistry {
       '--cpus', String(c.cpus),
       '--pids-limit', String(c.pidsLimit),
       '--network', c.network,
+      // 容器域名解析注入：宿主机 hosts 继承 + 后台自定义规则，逐条 --add-host host:ip
+      ...hostsInjection.entries.flatMap((entry) => ['--add-host', `${entry.host}:${entry.ip}`]),
       // /tmp 由 planner 按 {tmpDir}/{userId} 挂载（持久化，跨重建保留），不再使用 --tmpfs。
       // 容器 agent 硬依赖：userId 缺失即 exit(1)；roots 显式注入避免容器内出现第二套路径真相
       '-e', `MAO_CONTAINER_USER_ID=${userId}`,
@@ -568,6 +699,7 @@ export class ContainerRegistry {
     entry.mountedPaths = new Set(mounts.map((m) => m.hostPath));
     entry.sessionWorkspaces = sessionWorkspaces;
     entry.mountFingerprint = mountFingerprint;
+    entry.hostsFingerprint = containerHostsFingerprint(hostsInjection.entries);
     // 新容器（含原地重建）内没有任何 shell/pty/在途任务：忙计数清零，避免旧容器的
     // 陈旧 runtime_status 把 idle 回收挡在门外（新 agent 握手后会补报真实状态）
     entry.inContainer = { shellSessions: 0, pendingTasks: 0, attachedTerminals: 0 };

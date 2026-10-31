@@ -91,6 +91,10 @@ import type { StreamingWsHandler } from './session/ws/streaming-ws-handler.js';
 import type { TerminalWsHandler } from './harness/terminal/terminal-ws-handler.js';
 import type { RuntimeModeResolver } from './harness/container/runtime-mode.js';
 import { validateRuntimeModeSave, RUNTIME_MODE_SETTING_KEY } from './harness/container/runtime-mode.js';
+import type { ContainerHostsResolver } from './harness/container/container-hosts-resolver.js';
+import type { ContainerOps } from './harness/container/container-registry.js';
+import { registerAdminContainerRoutes } from './harness/container/container-admin.routes.js';
+import { CONTAINER_EXTRA_HOSTS_KEY, CONTAINER_INHERIT_HOST_HOSTS_KEY } from './common/container-hosts.js';
 
 import { sendOk } from './common/http-error.js';
 import { registerAuthRoutes } from './auth/auth.routes.js';
@@ -199,6 +203,10 @@ export interface RouteDeps {
   settingService: SystemSettingService;
   activateContainerRuntime: () => Promise<void>;
   runtimeModeResolver: RuntimeModeResolver;
+  /** 容器 /etc/hosts 注入配置解析器（后台预览 + 保存后缓存失效）；未注入时预览接口不注册。 */
+  containerHostsResolver?: ContainerHostsResolver;
+  /** 容器运维（列表 / 单用户重建）；未注入时不注册容器管理接口。 */
+  containerOps?: ContainerOps;
 
   // command
   commandService: UserCommandService;
@@ -329,7 +337,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
     fileService, agentService, experienceService, experienceIndexService, suggestedQuestionService,
     mcpValidator,
     modelService,
-    settingService, activateContainerRuntime, runtimeModeResolver,
+    settingService, activateContainerRuntime, runtimeModeResolver, containerHostsResolver, containerOps,
     commandService, commandRepo, skillLoader, skillSync,
     weixinPref, taskPanelPref,
     restToolService,
@@ -386,7 +394,10 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
         queryString: JSON.stringify({ requestId: event.requestId, provider: event.provider, durationMs: event.durationMs }),
       });
     });
-    registerUserRoutes(api, userService, userRepo, permissionService);
+    registerUserRoutes(api, userService, userRepo, permissionService, containerOps);
+    if (containerOps) {
+      registerAdminContainerRoutes(api, { containerOps, permissionService });
+    }
     registerPermissionRoutes(api, permissionService);
     registerGitCredentialRoutes(api, gitCredentials);
     registerAdminGitCredentialRoutes(api, { gitCredentialService: gitCredentials, permissionService });
@@ -416,11 +427,18 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
       systemSettingService: settingService,
       permissionService,
       adminEmailLookup: { findEmailById: (userId) => userRepo.findEmailById(userId) },
+      containerHostsPreview: containerHostsResolver
+        ? () => containerHostsResolver.preview()
+        : undefined,
       beforeSave: async (items) => {
         await validateRuntimeModeSave(items, activateContainerRuntime);
       },
       afterSave: (keys) => {
         if (keys.includes(RUNTIME_MODE_SETTING_KEY)) runtimeModeResolver.invalidate();
+        if (containerHostsResolver
+          && keys.some((key) => key === CONTAINER_INHERIT_HOST_HOSTS_KEY || key === CONTAINER_EXTRA_HOSTS_KEY)) {
+          containerHostsResolver.invalidate();
+        }
       },
     });
     registerEmbedRoutes(api, { systemSettingService: settingService, agentService });

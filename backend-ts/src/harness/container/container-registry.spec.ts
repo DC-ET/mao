@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ContainerRegistry, type DockerCli } from './container-registry.js';
+import { containerHostsFingerprint } from '../../common/container-hosts.js';
 import { useTmpDir } from '../../testing/tmp-dir.js';
 
 function fakeDocker(log: string[]): DockerCli {
@@ -726,5 +727,181 @@ describe('container registry', () => {
     const error = await registry.precheck().then(() => null, (e: unknown) => e as Error);
     expect(error?.message).toContain('无法加载当前 dist 的 runtime-agent');
     expect(error?.message).toContain('build-runtime-image.sh');
+  });
+
+  it('injectsContainerHostsEntriesIntoDockerRun', async () => {
+    // 容器域名解析注入（V176）：宿主机继承 + 后台自定义规则逐条转 --add-host
+    const base = useTmpDir('mao-registry-hosts-');
+    for (const d of ['workspace', 'users', 'runtime', 'userskills', 'skills', 'channels', 'dist', 'deps']) {
+      mkdirSync(join(base, d), { recursive: true });
+    }
+    const log: string[] = [];
+    const entries = [
+      { host: 'prometheus.acg.team', ip: '10.70.21.57', source: 'hosts-file' as const },
+      { host: 'a.internal', ip: '10.0.0.9', source: 'custom' as const },
+    ];
+    const { registry } = makeRegistry(base, log, { resolveHostsInjection: async () => ({ entries, degraded: false }) });
+    await registry.ensureRunning(7);
+    const runArgs = log.find((line) => line.startsWith('run -d'))!;
+    expect(runArgs).toContain('--add-host prometheus.acg.team:10.70.21.57');
+    expect(runArgs).toContain('--add-host a.internal:10.0.0.9');
+    expect(registry.getEntry(7)!.hostsFingerprint).toBe(containerHostsFingerprint(entries));
+  });
+
+  it('omitsAddHostArgsWhenNoEntries', async () => {
+    const base = useTmpDir('mao-registry-hosts-empty-');
+    for (const d of ['workspace', 'users', 'runtime', 'userskills', 'skills', 'channels', 'dist', 'deps']) {
+      mkdirSync(join(base, d), { recursive: true });
+    }
+    const log: string[] = [];
+    const { registry } = makeRegistry(base, log, { resolveHostsInjection: async () => ({ entries: [], degraded: false }) });
+    await registry.ensureRunning(7);
+    const runArgs = log.find((line) => line.startsWith('run -d'))!;
+    expect(runArgs).not.toContain('--add-host');
+    expect(registry.getEntry(7)!.hostsFingerprint).toBe(containerHostsFingerprint([]));
+  });
+
+  it('recreatesContainerWhenHostsInjectionDrifts', async () => {
+    // 宿主 hosts / 后台规则变化 → 指纹漂移 → 复用路径主动重建一次（docker start 不会更新 --add-host）
+    const base = useTmpDir('mao-registry-hosts-drift-');
+    for (const d of ['workspace', 'users', 'runtime', 'userskills', 'skills', 'channels', 'dist', 'deps']) {
+      mkdirSync(join(base, d), { recursive: true });
+    }
+    const log: string[] = [];
+    let entries = [{ host: 'prometheus.acg.team', ip: '10.70.21.57', source: 'hosts-file' as const }];
+    const { registry } = makeRegistry(base, log, { resolveHostsInjection: async () => ({ entries, degraded: false }) });
+    await registry.ensureRunning(7);
+    entries = [{ host: 'prometheus.acg.team', ip: '192.168.10.10', source: 'custom' as const }];
+    log.length = 0;
+    const entry = await registry.ensureRunning(7);
+    expect(entry.state).toBe('running');
+    expect(dockerOps(log)).toEqual(['stop -t', 'rm -f', 'run -d']);
+    expect(log.find((line) => line.startsWith('run -d'))).toContain('--add-host prometheus.acg.team:192.168.10.10');
+    // 一次性行为：指纹一致后零 docker 动作
+    log.length = 0;
+    await registry.ensureRunning(7);
+    expect(dockerOps(log)).toEqual([]);
+  });
+
+  it('keepsLegacyEntryWithoutFingerprintWhenNothingToInject', async () => {
+    // 升级过渡：旧条目无指纹，但当前期望为空 → 不做无谓重建
+    const base = useTmpDir('mao-registry-hosts-legacy-');
+    for (const d of ['workspace', 'users', 'runtime', 'userskills', 'skills', 'channels', 'dist', 'deps']) {
+      mkdirSync(join(base, d), { recursive: true });
+    }
+    const log: string[] = [];
+    const { registry } = makeRegistry(base, log);
+    await registry.ensureRunning(7);
+    delete registry.getEntry(7)!.hostsFingerprint;
+    log.length = 0;
+    await registry.ensureRunning(7);
+    expect(dockerOps(log)).toEqual([]);
+  });
+
+  it('recreatesLegacyEntryWithoutFingerprintWhenEntriesExpected', async () => {
+    // 升级过渡：旧条目无指纹且当前期望非空 → 重建一次让注入生效
+    const base = useTmpDir('mao-registry-hosts-legacy-entries-');
+    for (const d of ['workspace', 'users', 'runtime', 'userskills', 'skills', 'channels', 'dist', 'deps']) {
+      mkdirSync(join(base, d), { recursive: true });
+    }
+    const log: string[] = [];
+    const entries = [{ host: 'a.internal', ip: '10.0.0.9', source: 'custom' as const }];
+    const { registry } = makeRegistry(base, log, { resolveHostsInjection: async () => ({ entries, degraded: false }) });
+    await registry.ensureRunning(7);
+    delete registry.getEntry(7)!.hostsFingerprint;
+    log.length = 0;
+    await registry.ensureRunning(7);
+    expect(dockerOps(log)).toEqual(['stop -t', 'rm -f', 'run -d']);
+    expect(registry.getEntry(7)!.hostsFingerprint).toBe(containerHostsFingerprint(entries));
+  });
+
+  it('doesNotRecreateContainerWhenHostsResolutionDegraded', async () => {
+    // 瞬时故障（读库/读文件失败）导致解析降级时，不得据降级结果判定漂移，
+    // 否则一次 DB 抖动就会把存量容器整机重建（中断 shell/终端/在途任务）
+    const base = useTmpDir('mao-registry-hosts-degraded-');
+    for (const d of ['workspace', 'users', 'runtime', 'userskills', 'skills', 'channels', 'dist', 'deps']) {
+      mkdirSync(join(base, d), { recursive: true });
+    }
+    const log: string[] = [];
+    let entries = [{ host: 'a.internal', ip: '10.0.0.9', source: 'custom' as const }];
+    let degraded = false;
+    const { registry } = makeRegistry(base, log, { resolveHostsInjection: async () => ({ entries, degraded }) });
+    await registry.ensureRunning(7);
+
+    // 降级窗口：结果为空但不可信 → 不重建
+    degraded = true;
+    entries = [];
+    log.length = 0;
+    await registry.ensureRunning(7);
+    expect(dockerOps(log)).toEqual([]);
+
+    // 恢复正常且与原配置一致 → 仍不重建
+    degraded = false;
+    entries = [{ host: 'a.internal', ip: '10.0.0.9', source: 'custom' as const }];
+    log.length = 0;
+    await registry.ensureRunning(7);
+    expect(dockerOps(log)).toEqual([]);
+
+    // 真实配置变化 → 重建一次
+    entries = [{ host: 'a.internal', ip: '10.0.0.10', source: 'custom' as const }];
+    log.length = 0;
+    await registry.ensureRunning(7);
+    expect(dockerOps(log)).toEqual(['stop -t', 'rm -f', 'run -d']);
+  });
+
+  it('recycleUserHandlesNoneBusyForcedAndFailure', async () => {
+    const base = useTmpDir('mao-registry-recycle-user-');
+    for (const d of ['workspace', 'users', 'runtime', 'userskills', 'skills', 'channels', 'dist', 'deps']) {
+      mkdirSync(join(base, d), { recursive: true });
+    }
+    const log: string[] = [];
+    const inner = fakeDocker(log);
+    let failNextRun = false;
+    const docker: DockerCli = {
+      async run(args) {
+        if (failNextRun && args[0] === 'run' && args[1] === '-d') {
+          failNextRun = false;
+          throw new Error('docker run -d failed: no space left on device');
+        }
+        return inner.run(args);
+      },
+    };
+    const { registry } = makeRegistry(base, log, {}, docker);
+    // 无在册容器
+    expect((await registry.recycleUser(7)).status).toBe('none');
+
+    await registry.ensureRunning(7);
+    registry.reportRuntimeStatus(7, { shellSessions: 1, pendingTasks: 0, attachedTerminals: 0 });
+    expect((await registry.recycleUser(7)).status).toBe('skipped-busy');
+
+    log.length = 0;
+    const rebuilt = await registry.recycleUser(7, { force: true });
+    expect(rebuilt).toEqual({ userId: 7, status: 'rebuilt' });
+    expect(dockerOps(log)).toEqual(['stop -t', 'rm -f', 'run -d']);
+
+    // 失败不抛出，返回 failed + 错误摘要
+    registry.reportRuntimeStatus(7, { shellSessions: 0, pendingTasks: 0, attachedTerminals: 0 });
+    failNextRun = true;
+    const failed = await registry.recycleUser(7, { force: true });
+    expect(failed.status).toBe('failed');
+    expect(failed.error).toContain('no space left');
+  });
+
+  it('listsRegisteredContainersWithBusyFlag', async () => {
+    const base = useTmpDir('mao-registry-list-');
+    for (const d of ['workspace', 'users', 'runtime', 'userskills', 'skills', 'channels', 'dist', 'deps']) {
+      mkdirSync(join(base, d), { recursive: true });
+    }
+    const log: string[] = [];
+    const { registry } = makeRegistry(base, log);
+    expect(registry.listEntries()).toEqual([]);
+    await registry.ensureRunning(7);
+    const [summary] = registry.listEntries();
+    expect(summary).toMatchObject({
+      userId: 7, containerName: 'mao-user-7', state: 'running', busy: false,
+    });
+    expect(summary!.startedAtMs).toBeGreaterThan(0);
+    registry.reportRuntimeStatus(7, { shellSessions: 0, pendingTasks: 2, attachedTerminals: 0 });
+    expect(registry.listEntries()[0]!.busy).toBe(true);
   });
 });

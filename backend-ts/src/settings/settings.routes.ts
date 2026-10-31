@@ -23,6 +23,16 @@ export interface SystemSettingRouteDeps {
   beforeSave?: (items: Array<{ key: string; value: string | null }>) => Promise<void>;
   /** 保存成功后回调（例如失效运行时模式解析缓存，让后台切换立即生效）。 */
   afterSave?: (keys: string[]) => void;
+  /**
+   * 容器域名解析预览（Docker 模式）：返回生效条目（宿主继承 ∪ 自定义，含来源标记）。
+   * 由 ContainerHostsResolver.preview 提供；未注入时不注册该接口。
+   */
+  containerHostsPreview?: () => Promise<{
+    inheritEnabled: boolean;
+    hostsFilePath: string;
+    hostsFileError: string | null;
+    entries: Array<{ host: string; ip: string; source: 'hosts-file' | 'custom' }>;
+  }>;
 }
 
 interface UpdateSettingRequest {
@@ -44,6 +54,16 @@ export function registerSystemSettingRoutes(app: FastifyInstance, deps: SystemSe
     await requirePermission(permissionService, userId, 'settings:read');
     return sendOk(reply, await systemSettingService.list(queryOptStr(request, 'category') ?? null));
   });
+
+  // 容器域名解析生效条目预览（管理后台「运行环境」面板只读展示）。
+  // 仅 settings:read；未注入 resolver（如纯 host 部署的测试环境）时接口不存在。
+  if (deps.containerHostsPreview) {
+    app.get('/v1/system-settings/container-hosts/preview', async (request, reply) => {
+      const userId = requireUserId(request);
+      await requirePermission(permissionService, userId, 'settings:read');
+      return sendOk(reply, await deps.containerHostsPreview!());
+    });
+  }
 
   app.put('/v1/system-settings/batch', async (request, reply) => {
     const userId = requireUserId(request);

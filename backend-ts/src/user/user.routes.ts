@@ -7,12 +7,15 @@ import { javaLocalDateTimeString } from '../common/datetime.js';
 import type { PermissionService } from '../permission/permission.service.js';
 import type { User, UserRepository } from './types.js';
 import { UserService } from './user.service.js';
+import type { ContainerOps } from '../harness/container/container-registry.js';
 
 export function registerUserRoutes(
   app: FastifyInstance,
   userService: UserService,
   userRepo: UserRepository,
   permissionService: PermissionService,
+  /** 容器运维（Docker 模式）：未注入时不注册「重建容器」接口（host-only 部署保持一致）。 */
+  containerOps?: ContainerOps,
 ): void {
   app.get('/v1/users/me', async (request, reply) => {
     const userId = requireUserId(request);
@@ -112,6 +115,19 @@ export function registerUserRoutes(
     await userService.updateUserStatus(pathId(request), body.status, currentUserId);
     return sendOk(reply);
   });
+
+  // 单用户容器重建（Docker 模式，容器域名解析注入方案 §4.11）：
+  // 立即把该用户容器按最新配置重建（停→rm→docker run），跳过"下次使用时惰性重建"的等待。
+  // 权限 container:manage；异常不抛出（recycleUser 返回 failed + 错误摘要），便于后台逐条展示。
+  if (containerOps) {
+    app.post('/v1/users/:id/container/recycle', async (request, reply) => {
+      const currentUserId = requireUserId(request);
+      await requirePermission(permissionService, currentUserId, 'container:manage');
+      const body = bodyOf<{ force?: boolean }>(request);
+      const result = await containerOps.recycleUser(pathId(request), { force: body.force === true });
+      return sendOk(reply, result);
+    });
+  }
 }
 
 async function toUserInfoVO(user: User, permissionService: PermissionService) {

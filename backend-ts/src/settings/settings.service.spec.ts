@@ -45,6 +45,19 @@ describe('SystemSettingService', () => {
     await expect(service().update('audit.retentionDays', '0')).rejects.toThrow(/正整数/);
   });
 
+  it('updateValidatesContainerHostsSettings', async () => {
+    // 容器域名解析（V176）：继承开关只接受 true/false；自定义规则走 JSON + 保留段校验
+    vi.mocked(mapper.findByKey).mockResolvedValue(setting('runtime.container.inheritHostHosts', '运行环境', 1));
+    await expect(service().update('runtime.container.inheritHostHosts', 'yes')).rejects.toThrow(/true 或 false/);
+
+    const extra = setting('runtime.container.extraHosts', '运行环境', 1);
+    vi.mocked(mapper.findByKey).mockResolvedValue(extra);
+    await expect(service().update('runtime.container.extraHosts', '[{"host":"a.com","ip":"127.0.0.1"}]'))
+      .rejects.toThrow(/容器域名解析规则不合法/);
+    const updated = await service().update('runtime.container.extraHosts', '[{"host":"A.com.","ip":"10.0.0.1"}]');
+    expect(updated.value).toBe('[{"host":"A.com.","ip":"10.0.0.1"}]');
+  });
+
   it('updatePersistsEditableSetting', async () => {
     const row = setting('audit.retentionDays', '审计', 1);
     vi.mocked(mapper.findByKey).mockResolvedValue(row);

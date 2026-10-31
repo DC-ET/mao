@@ -29,6 +29,11 @@
         <el-descriptions-item label="最后登录">{{ formatDateTime(user.lastLoginAt) || '-' }}</el-descriptions-item>
       </el-descriptions>
 
+      <div v-if="canManageContainer" class="drawer-actions">
+        <el-button type="warning" size="small" :loading="recycling" @click="recycleContainer">重建容器</el-button>
+        <span class="action-hint">重建会「停 → 删 → 重新创建」该用户容器，中断容器内正在执行的任务（仅 Docker 模式）</span>
+      </div>
+
       <el-tabs v-model="activeTab" class="detail-tabs">
         <!-- 会话 -->
         <el-tab-pane label="会话" name="sessions">
@@ -233,6 +238,35 @@ const activeTab = ref('sessions')
 // 结果默认展示的「会话」Tab 几乎从不显示骨架，其余在途 Tab 也提前失去 spinner。
 const loadingTabs = reactive<Record<string, boolean>>({})
 const canWrite = computed(() => authStore.hasPermission('user:write'))
+/** 容器重建（Docker 模式，V177）：独立权限 container:manage，默认仅管理员角色。 */
+const canManageContainer = computed(() => authStore.hasPermission('container:manage'))
+const recycling = ref(false)
+
+async function recycleContainer() {
+  if (!props.user) return
+  try {
+    await ElMessageBox.confirm(
+      `将重建用户「${props.user.displayName || props.user.username}」的容器（停 → 删 → 重新创建），会中断容器内正在执行的 shell / 终端 / 任务。确定继续？`,
+      '重建容器',
+      { confirmButtonText: '重建', cancelButtonText: '取消', type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  recycling.value = true
+  try {
+    const { data } = await api.post(`/users/${props.user.id}/container/recycle`, {})
+    const status = data?.status as string | undefined
+    if (status === 'rebuilt') ElMessage.success('容器已重建')
+    else if (status === 'none') ElMessage.info('该用户当前没有在册容器，下次使用时按最新配置创建')
+    else if (status === 'skipped-busy') ElMessage.warning('容器内有正在运行的任务，已跳过；可在「系统设置 → 容器管理」勾选强制重建')
+    else ElMessage.error(`重建失败：${data?.error || '未知错误'}`)
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.message || e?.message || '重建失败')
+  } finally {
+    recycling.value = false
+  }
+}
 
 const drawerTitle = computed(() =>
   props.user ? `用户详情 - ${props.user.displayName || props.user.username}` : '用户详情'
@@ -421,6 +455,18 @@ function goSession(row: any) {
 <style scoped>
 .user-summary {
   margin-bottom: 16px;
+}
+
+.drawer-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: -4px 0 14px;
+}
+
+.action-hint {
+  font-size: 12px;
+  color: var(--mao-muted);
 }
 
 .role-tag {

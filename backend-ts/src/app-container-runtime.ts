@@ -13,6 +13,7 @@ import type { ShellEcpInjector, ShellLarkUatInjector } from './harness/tool/impl
 
 import { RuntimeChannelServer } from './harness/container/runtime-channel-server.js';
 import { ContainerRegistry } from './harness/container/container-registry.js';
+import { ContainerHostsResolver } from './harness/container/container-hosts-resolver.js';
 import { RuntimeModeResolver } from './harness/container/runtime-mode.js';
 import { SessionEnvelopeBuilder, buildDepsEnv } from './harness/container/session-envelope-builder.js';
 import { DockerToolRouter } from './harness/container/docker-tool-router.js';
@@ -48,6 +49,8 @@ export interface ContainerRuntimeResult {
   containerChannelHolder: { registry: ContainerRegistry | null };
   channelServer: RuntimeChannelServer;
   containerRegistry: ContainerRegistry;
+  /** 容器 /etc/hosts 注入配置解析器（后台预览与保存后缓存失效共用）。 */
+  containerHostsResolver: ContainerHostsResolver;
   runtimeModeResolver: RuntimeModeResolver;
   activateContainerRuntime: () => Promise<void>;
   envelopeBuilder: SessionEnvelopeBuilder;
@@ -66,6 +69,11 @@ export async function assembleContainerRuntime(deps: ContainerRuntimeDeps): Prom
 
   const cloudRuntimeCfg = cfg.app.cloudRuntime;
   const containerChannelHolder: { registry: ContainerRegistry | null } = { registry: null };
+  // 容器 /etc/hosts 注入配置解析器（Docker 模式）：宿主机 hosts 继承 + 后台自定义规则。
+  // 供 ContainerRegistry 创建参数、后台预览接口、保存设置后缓存失效共用同一实例。
+  const containerHostsResolver = new ContainerHostsResolver({
+    systemSettingService: { getValue: (key) => settingService.getValue(key) },
+  });
   const channelServer = new RuntimeChannelServer({
     channelDir: cloudRuntimeCfg.container.channelDir,
     tokenOf: (userId): string => channelServer.issueToken(userId),
@@ -81,6 +89,8 @@ export async function assembleContainerRuntime(deps: ContainerRuntimeDeps): Prom
     skillsDir: cfg.app.harness.skillsDir,
     uploadDir,
     shareDir,
+    // 容器域名解析注入：宿主机 /etc/hosts 继承 + 后台自定义规则（Docker 模式）
+    resolveHostsInjection: () => containerHostsResolver.resolveWithMeta(),
     ensureChannelListening: async (userId) => channelServer.ensureListening(userId),
     issueChannelToken: (userId) => channelServer.issueToken(userId),
     waitSocketReady: async (userId, timeoutMs) => {
@@ -192,6 +202,7 @@ export async function assembleContainerRuntime(deps: ContainerRuntimeDeps): Prom
     containerChannelHolder,
     channelServer,
     containerRegistry,
+    containerHostsResolver,
     runtimeModeResolver,
     activateContainerRuntime,
     envelopeBuilder,
