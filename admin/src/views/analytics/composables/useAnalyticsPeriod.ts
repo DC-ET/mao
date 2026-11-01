@@ -220,7 +220,9 @@ export function buildAnalyticsQuery(
   custom?: CustomPeriodRange,
   limit?: number
 ): AnalyticsQuery {
-  const base: AnalyticsQuery = { range: value }
+  // 滚动窗口（近 N 天）走后端既有的 days 口径：range 白名单只认语义周期，
+  // 把数字塞进 range 会被静默回落成默认 30 天（0.0.375 的回归）。
+  const base: AnalyticsQuery = typeof value === 'number' ? { days: value } : { range: value }
   // 只有自定义周期才带起止日：其他周期多带会干扰后端窗口解析
   if (value === 'custom' && custom && isValidYmd(custom.start) && isValidYmd(custom.end)) {
     base.start = custom.start
@@ -232,5 +234,5 @@ export function buildAnalyticsQuery(
 /** 缓存键含周期语义；换周期自然 miss，force 由调用方先 invalidate。
  * scene / scope 也进键：运行轨迹榜换口径或换维度必须重新拉取。 */
 export function periodKey(scope: string, query: AnalyticsQuery): string {
-  return `${scope}|${query.range}|${query.start ?? ''}|${query.end ?? ''}|${query.limit ?? ''}|${query.modelId ?? ''}|${query.excludeConnectivity ?? ''}|${query.granularity ?? ''}|${query.scene ?? ''}|${query.scope ?? ''}`
+  return `${scope}|${query.range ?? ''}|${query.days ?? ''}|${query.start ?? ''}|${query.end ?? ''}|${query.limit ?? ''}|${query.modelId ?? ''}|${query.excludeConnectivity ?? ''}|${query.granularity ?? ''}|${query.scene ?? ''}|${query.scope ?? ''}`
 }

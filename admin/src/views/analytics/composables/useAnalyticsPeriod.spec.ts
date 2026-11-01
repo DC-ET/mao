@@ -152,7 +152,10 @@ describe('URL 映射', () => {
 describe('buildAnalyticsQuery / periodKey', () => {
   it('只有自定义周期才带起止日', () => {
     expect(buildAnalyticsQuery('week')).toEqual({ range: 'week' })
-    expect(buildAnalyticsQuery(7)).toEqual({ range: 7 })
+    // 滚动窗口走后端 days 口径：range 白名单不含数字，传 range=7 会被回落成 30 天
+    expect(buildAnalyticsQuery(3)).toEqual({ days: 3 })
+    expect(buildAnalyticsQuery(7)).toEqual({ days: 7 })
+    expect(buildAnalyticsQuery(30)).toEqual({ days: 30 })
     expect(buildAnalyticsQuery('custom', custom('2026-10-01', '2026-10-15'))).toEqual({
       range: 'custom',
       start: '2026-10-01',
@@ -168,16 +171,19 @@ describe('buildAnalyticsQuery / periodKey', () => {
   })
 
   it('缓存键区分周期与自定义区间，其他周期不因区间变化 miss', () => {
-    // 键 = scope|range|start|end|limit|modelId|excludeConnectivity|granularity|scene|scope
-    expect(periodKey('overview', buildAnalyticsQuery('week'))).toBe('overview|week||||||||')
+    // 键 = scope|range|days|start|end|limit|modelId|excludeConnectivity|granularity|scene|scope
+    expect(periodKey('overview', buildAnalyticsQuery('week'))).toBe('overview|week' + '|'.repeat(9))
     const customA = periodKey('overview', buildAnalyticsQuery('custom', custom('2026-10-01', '2026-10-15')))
     const customB = periodKey('overview', buildAnalyticsQuery('custom', custom('2026-10-02', '2026-10-15')))
-    expect(customA).toBe('overview|custom|2026-10-01|2026-10-15||||||')
+    expect(customA).toBe('overview|custom||2026-10-01|2026-10-15' + '|'.repeat(6))
     expect(customA).not.toBe(customB)
     // 非自定义周期即使内存里留着自定义区间，键也不带区间
     expect(periodKey('overview', buildAnalyticsQuery('today', custom('2026-10-01', '2026-10-15')))).toBe(
-      'overview|today||||||||'
+      'overview|today' + '|'.repeat(9)
     )
+    // 滚动窗口天数必须进键，否则切 3/7/30 天会命中同一份缓存
+    expect(periodKey('overview', buildAnalyticsQuery(7))).toBe('overview||7' + '|'.repeat(8))
+    expect(periodKey('overview', buildAnalyticsQuery(3))).not.toBe(periodKey('overview', buildAnalyticsQuery(7)))
   })
 })
 

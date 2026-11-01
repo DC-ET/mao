@@ -316,9 +316,14 @@ export interface SessionsPayload {
   excludeConnectivity?: boolean
 }
 
+/** 语义统计周期：后端 range 白名单只认这些值（见 backend-ts/src/admin/analytics-range.ts）。 */
+export type SemanticPeriod = Exclude<PeriodValue, number>
+
 export interface AnalyticsQuery {
   /** 语义统计周期：后端据此解析窗口（见 backend-ts/src/admin/analytics-range.ts） */
-  range: PeriodValue
+  range?: SemanticPeriod
+  /** 滚动窗口天数（近 N 天）：后端既有的 days 口径，与 range 二者只传一个 */
+  days?: number
   /** 自定义区间起止日，仅 range=custom 时下发 */
   start?: string
   end?: string
