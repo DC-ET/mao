@@ -54,13 +54,20 @@ describe('runtime agent channel behavior', () => {
     vi.restoreAllMocks();
   });
 
-  async function startAgent(base: string, statuses: RuntimeStatus[], ptyFactory?: ContainerPtyFactory) {
+  async function startAgent(
+    base: string,
+    statuses: RuntimeStatus[],
+    ptyFactory?: ContainerPtyFactory,
+    agentBuild?: string | null,
+    hellos?: Array<{ build: string | null }>,
+  ) {
     const channelDir = join(base, 'channels');
     mkdirSync(channelDir, { recursive: true });
     server = new RuntimeChannelServer({
       channelDir,
       tokenOf: () => 'probe-token',
       onRuntimeStatus: (_userId, status) => statuses.push(status),
+      ...(hellos ? { onAgentHello: (_userId, info) => hellos.push(info) } : {}),
     });
     process.env.MAO_WORKSPACE_ROOT = join(base, 'workspace');
     process.env.MAO_RUNTIME_DIR = join(base, 'runtime');
@@ -68,7 +75,7 @@ describe('runtime agent channel behavior', () => {
     process.env.MAO_USER_SKILLS_DIR = join(base, 'userskills');
     process.env.MAO_SHARE_DIR = join(base, 'share');
     const socketPath = await server.ensureListening(7);
-    agent = new RuntimeAgent(socketPath, 'probe-token', 7, ptyFactory);
+    agent = new RuntimeAgent(socketPath, 'probe-token', 7, ptyFactory, agentBuild ?? null);
     void agent.run();
     await vi.waitFor(() => expect(server!.getConnection(7)).not.toBeNull(), { timeout: 5000 });
     return server!.getConnection(7)!;
@@ -99,6 +106,27 @@ describe('runtime agent channel behavior', () => {
     // 就绪后立即补报一次 runtime_status（idle 忙等保护不等下一个 10s 周期）
     expect(statuses.length).toBeGreaterThanOrEqual(1);
     expect(statuses[0]).toEqual({ shellSessions: 0, pendingTasks: 0, attachedTerminals: 0 });
+  });
+
+  it('reportsRuntimeBuildIdInHello', async () => {
+    // V178 回归：容器内代码版本上报——agent 读 manifest（此处注入），hello 携带 build，
+    // 宿主机 onAgentHello 收到原值（ContainerRegistry 据此做漂移判定）
+    const base = useTmpDir('mao-agent-build-');
+    mkdirSync(join(base, 'workspace', '7'), { recursive: true });
+    const statuses: RuntimeStatus[] = [];
+    const hellos: Array<{ build: string | null }> = [];
+    await startAgent(base, statuses, undefined, 'build-abc123', hellos);
+    expect(hellos[0]).toEqual({ build: 'build-abc123' });
+  });
+
+  it('reportsNullBuildWhenAgentHasNoManifest', async () => {
+    // 旧 agent / manifest 缺失：hello 不带 build → 宿主收到 null（unknown 按漂移处理，one-shot 自愈）
+    const base = useTmpDir('mao-agent-build-none-');
+    mkdirSync(join(base, 'workspace', '7'), { recursive: true });
+    const statuses: RuntimeStatus[] = [];
+    const hellos: Array<{ build: string | null }> = [];
+    await startAgent(base, statuses, undefined, null, hellos);
+    expect(hellos[0]).toEqual({ build: null });
   });
 
   it('acksPtyOpenWithPid', async () => {

@@ -63,6 +63,22 @@ function dockerOps(log: string[]): string[] {
     .map((l) => l.split(' ').slice(0, 2).join(' '));
 }
 
+/** 写入 dist 的 runtime-build.json（ContainerRegistry 构造时读取；= 本实例加载的代码版本）。 */
+function writeRuntimeBuild(base: string, buildId: string): void {
+  const dir = join(base, 'dist', 'harness', 'container');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'runtime-build.json'), JSON.stringify({ schema: 1, buildId, fileCount: 1 }));
+}
+
+/** 建好标准目录的临时 base（多数用例的固定开场）。 */
+function makeBase(prefix: string): string {
+  const base = useTmpDir(prefix);
+  for (const d of ['workspace', 'users', 'runtime', 'userskills', 'skills', 'channels', 'dist', 'deps']) {
+    mkdirSync(join(base, d), { recursive: true });
+  }
+  return base;
+}
+
 describe('container registry', () => {
   it('createsContainerWithResourceLimitsAndMounts', async () => {
     const base = useTmpDir('mao-registry-');
@@ -908,5 +924,141 @@ describe('container registry', () => {
     expect(summary!.startedAtMs).toBeGreaterThan(0);
     registry.reportRuntimeStatus(7, { shellSessions: 0, pendingTasks: 2, attachedTerminals: 0 });
     expect(registry.listEntries()[0]!.busy).toBe(true);
+  });
+
+  // —— 容器内代码版本漂移自动收敛（V178，技术方案 §3.4/§3.5） ——
+
+  it('restartsIdleContainerWhenRuntimeBuildDrifts', async () => {
+    const base = makeBase('mao-registry-build-');
+    writeRuntimeBuild(base, 'host-1');
+    const log: string[] = [];
+    const { registry } = makeRegistry(base, log);
+    await registry.ensureRunning(7);
+    // 容器 agent 上报旧版本 → 空闲时自动重启进程（stop + start，不 rm/run 重建）
+    registry.reportAgentHello(7, 'old-1');
+    expect(registry.listEntries()[0]).toMatchObject({
+      runtimeBuild: 'old-1', hostRuntimeBuild: 'host-1', pendingUpgrade: true,
+    });
+    log.length = 0;
+    const restarted = await registry.ensureRunning(7);
+    expect(restarted.state).toBe('running');
+    expect(dockerOps(log)).toEqual(['stop -t']);
+    expect(log.filter((line) => line.startsWith('start mao-user-7')).length).toBe(1);
+    // 重启后 agent 上报新版本 → 一致，不再动作
+    registry.reportAgentHello(7, 'host-1');
+    expect(registry.listEntries()[0]!.pendingUpgrade).toBe(false);
+    log.length = 0;
+    await registry.ensureRunning(7);
+    expect(dockerOps(log)).toEqual([]);
+    expect(log.some((line) => line.startsWith('start mao-user-7'))).toBe(false);
+  });
+
+  it('defersRuntimeBuildUpgradeWhileBusy', async () => {
+    const base = makeBase('mao-registry-build-busy-');
+    writeRuntimeBuild(base, 'host-1');
+    const log: string[] = [];
+    const { registry } = makeRegistry(base, log);
+    await registry.ensureRunning(7);
+    registry.reportAgentHello(7, 'old-1');
+    registry.reportRuntimeStatus(7, { shellSessions: 1, pendingTasks: 0, attachedTerminals: 0 });
+    log.length = 0;
+    await registry.ensureRunning(7);
+    // 忙碌：不打断在跑任务，零 docker 操作
+    expect(dockerOps(log)).toEqual([]);
+    expect(log.some((line) => line.startsWith('start mao-user-7'))).toBe(false);
+    // 解除忙碌 → 下一次调用收敛
+    registry.reportRuntimeStatus(7, { shellSessions: 0, pendingTasks: 0, attachedTerminals: 0 });
+    await registry.ensureRunning(7);
+    expect(dockerOps(log)).toEqual(['stop -t']);
+    expect(log.filter((line) => line.startsWith('start mao-user-7')).length).toBe(1);
+  });
+
+  it('skipsRuntimeBuildUpgradeWhenDisabledOrDraining', async () => {
+    const disabledBase = makeBase('mao-registry-build-off-');
+    writeRuntimeBuild(disabledBase, 'host-1');
+    const disabledLog: string[] = [];
+    const disabled = makeRegistry(disabledBase, disabledLog, { autoUpgradeEnabled: async () => false });
+    await disabled.registry.ensureRunning(7);
+    disabled.registry.reportAgentHello(7, 'old-1');
+    disabledLog.length = 0;
+    await disabled.registry.ensureRunning(7);
+    expect(dockerOps(disabledLog)).toEqual([]);
+    expect(disabledLog.some((line) => line.startsWith('start mao-user-7'))).toBe(false);
+
+    const drainingBase = makeBase('mao-registry-build-drain-');
+    writeRuntimeBuild(drainingBase, 'host-1');
+    const drainingLog: string[] = [];
+    const draining = makeRegistry(drainingBase, drainingLog, { isDraining: () => true });
+    await draining.registry.ensureRunning(7);
+    draining.registry.reportAgentHello(7, 'old-1');
+    drainingLog.length = 0;
+    await draining.registry.ensureRunning(7);
+    expect(dockerOps(drainingLog)).toEqual([]);
+    expect(drainingLog.some((line) => line.startsWith('start mao-user-7'))).toBe(false);
+  });
+
+  it('attemptsRuntimeBuildUpgradeOnlyOncePerHostBuild', async () => {
+    const base = makeBase('mao-registry-build-once-');
+    writeRuntimeBuild(base, 'host-1');
+    const log: string[] = [];
+    const { registry } = makeRegistry(base, log);
+    await registry.ensureRunning(7);
+    registry.reportAgentHello(7, 'old-1');
+    log.length = 0;
+    await registry.ensureRunning(7);
+    expect(dockerOps(log)).toEqual(['stop -t']);
+    // 模拟「重启后仍上报旧版本」（蓝绿过渡：旧实例缓存旧 build）→ 不得重复重启形成风暴
+    registry.reportAgentHello(7, 'old-1');
+    log.length = 0;
+    await registry.ensureRunning(7);
+    expect(dockerOps(log)).toEqual([]);
+    expect(log.some((line) => line.startsWith('start mao-user-7'))).toBe(false);
+  });
+
+  it('startsStoppedContainerWithoutExtraRestartWhenRuntimeBuildDrifts', async () => {
+    const base = makeBase('mao-registry-build-stopped-');
+    writeRuntimeBuild(base, 'host-1');
+    const log: string[] = [];
+    const { registry } = makeRegistry(base, log);
+    await registry.ensureRunning(7);
+    registry.reportAgentHello(7, 'old-1');
+    // 模拟 idle 回收后的 stopped 条目：docker start 本身即进程重启，无需额外 stop/restart
+    (registry.getEntry(7) as { state: string }).state = 'stopped';
+    log.length = 0;
+    const again = await registry.ensureRunning(7);
+    expect(again.state).toBe('running');
+    expect(dockerOps(log)).toEqual([]);
+    expect(log.filter((line) => line.startsWith('start mao-user-7')).length).toBe(1);
+  });
+
+  it('rebuildsInsteadOfRestartingWhenMountPlanDriftsTogether', async () => {
+    const base = makeBase('mao-registry-build-mount-');
+    writeRuntimeBuild(base, 'host-1');
+    const log: string[] = [];
+    const { registry } = makeRegistry(base, log);
+    await registry.ensureRunning(7);
+    registry.reportAgentHello(7, 'old-1');
+    // 挂载漂移优先（能力缺失 > 代码新鲜度）：走重建而非重启
+    (registry.getEntry(7) as { mountFingerprint?: string }).mountFingerprint = 'stale-fingerprint';
+    log.length = 0;
+    await registry.ensureRunning(7);
+    expect(dockerOps(log)).toEqual(['stop -t', 'rm -f', 'run -d']);
+    expect(log.some((line) => line.startsWith('start mao-user-7'))).toBe(false);
+  });
+
+  it('keepsLegacyBehaviorWhenHostManifestMissing', async () => {
+    // manifest 缺失（dev / 手工构建）：检查整体关闭，不因 agent 上报值产生任何动作
+    const base = makeBase('mao-registry-build-nomanifest-');
+    const log: string[] = [];
+    const { registry } = makeRegistry(base, log);
+    await registry.ensureRunning(7);
+    registry.reportAgentHello(7, 'whatever');
+    log.length = 0;
+    await registry.ensureRunning(7);
+    expect(dockerOps(log)).toEqual([]);
+    expect(log.some((line) => line.startsWith('start mao-user-7'))).toBe(false);
+    const summary = registry.listEntries()[0]!;
+    expect(summary.hostRuntimeBuild).toBeNull();
+    expect(summary.pendingUpgrade).toBe(false);
   });
 });

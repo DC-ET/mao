@@ -64,7 +64,7 @@ export type RuntimeRequestFrame =
 
 /** 容器 → 宿主机帧。result 类帧与请求帧按 id 配对。 */
 export type RuntimeResponseFrame =
-  | { v: number; type: 'hello'; userId: number; token: string }
+  | { v: number; type: 'hello'; userId: number; token: string; /** 容器内运行时闭包版本（runtime-build.json；旧 agent 可能缺省）。 */ build?: string }
   | { v: number; type: 'hello_result' }
   | { v: number; type: 'tool_result'; id: string; ok: boolean; result: string | null; error?: string; durationMs: number }
   | { v: number; type: 'read_bytes_result'; id: string; ok: boolean; base64?: string; error?: string }

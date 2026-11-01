@@ -9,6 +9,7 @@ import { isChannelWorkspace } from './channel-workspace.js';
 import { containerHostsFingerprint, EMPTY_CONTAINER_HOSTS_FINGERPRINT } from '../../common/container-hosts.js';
 import type { ContainerHostsResolution } from './container-hosts-resolver.js';
 import type { RuntimeStatus } from './runtime-channel-server.js';
+import { readRuntimeBuildManifest } from './runtime-build.js';
 
 /**
  * 容器生命周期注册表（宿主机单例，技术方案 §5.2）。
@@ -59,6 +60,16 @@ export interface ContainerEntry {
    * 缺省（升级前旧条目）：仅当当前期望条目非空时按漂移处理，避免无配置机器全量重建。
    */
   hostsFingerprint?: string;
+  /**
+   * 容器内 agent 最近一次 hello 上报的运行时闭包版本（runtime-build.json 的 buildId）。
+   * undefined = unknown（旧 agent 未上报 / 尚未连上）：按漂移处理，one-shot 自愈。
+   */
+  runtimeBuild?: string;
+  /**
+   * 已为哪个宿主机 runtime build 尝试过自动重启（防环）：同一（容器 × host build）只动作一次，
+   * 避免蓝绿过渡期「旧实例缓存旧 build ↔ 容器已升到新 build」反复重启。
+   */
+  upgradeTargetBuild?: string;
 }
 
 /** 容器重建操作结果（管理后台「重建容器」）。 */
@@ -79,6 +90,12 @@ export interface ContainerEntrySummary {
   busy: boolean;
   startedAtMs: number;
   lastUsedAtMs: number;
+  /** 容器内 agent 上报的运行时版本；null = 旧 agent 未上报 / 未连接。 */
+  runtimeBuild: string | null;
+  /** 本实例加载的运行时版本；null = dist manifest 缺失（自动升级检查关闭）。 */
+  hostRuntimeBuild: string | null;
+  /** 代码漂移待收敛（running 且两者不一致）。 */
+  pendingUpgrade: boolean;
 }
 
 /** 管理后台容器运维依赖（窄接口，路由层用，不暴露生命周期内部细节）。 */
@@ -140,6 +157,16 @@ export interface ContainerRegistryOptions {
   /** 停止前发 shutdown 帧让容器收尾（§5.3.1 对策 3）。返回 false 表示容器无响应。 */
   requestShutdown(userId: number): Promise<boolean>;
   /**
+   * 自动升级总开关（system_setting.runtime.container.autoUpgrade）：返回 false 时跳过自动重启，
+   * 仅记录日志。未注入按开启处理（测试 / 旧装配零改动）。
+   */
+  autoUpgradeEnabled?: () => Promise<boolean>;
+  /**
+   * 本实例是否处于蓝绿排空（draining）：true 时跳过自动重启，交给承接流量的实例执行。
+   * 未注入按 false（非蓝绿部署）。
+   */
+  isDraining?: () => boolean;
+  /**
    * 该用户当前会话使用的工作区绝对路径（N-2）。创建/重建容器时把越出每用户根的
    * 通道会话工作区一并挂入；返回空数组或未注入时行为与旧版一致。
    * 实现必须按数据库 user_id 过滤（归属校验），不得返回其他用户的工作区。
@@ -164,6 +191,16 @@ export class ContainerRegistry {
   /** 持锁上下文：识别同一异步上下文内的重入（requestShutdown 回调里触发 ensureRunning），避免自死锁。 */
   private readonly lockContext = new AsyncLocalStorage<Set<number>>();
   private readonly planner: ContainerMountPlanner;
+  /**
+   * 本实例加载的容器运行时闭包版本（dist/harness/container/runtime-build.json 的 buildId）。
+   * null = manifest 缺失（LOCAL/dev / 异常部署）：build 漂移检查整体关闭，不误伤。
+   */
+  private readonly hostRuntimeBuild: string | null;
+  /**
+   * 每用户最近一次 agent hello 上报的代码版本。独立于条目保存：新容器创建过程中
+   * （条目登记前）到达的首个 hello 也要接住，否则首调会被误判 unknown 漂移多重启一次。
+   */
+  private readonly lastAgentBuild = new Map<number, string | null>();
   private idleTimer: NodeJS.Timeout | null = null;
   /** 每用户 /tmp 过期清理节流（24h 一次，容器创建 / idle 巡检触发）。 */
   private lastTmpCleanupAtMs = 0;
@@ -186,6 +223,10 @@ export class ContainerRegistry {
       tmpDir: c.tmpDir,
       shareDir: opts.shareDir,
     });
+    this.hostRuntimeBuild = readRuntimeBuildManifest(path.join(c.distDir, 'harness', 'container'))?.buildId ?? null;
+    if (this.hostRuntimeBuild == null) {
+      harnessLog('warn', '[container] dist runtime-build.json missing; runtime build drift auto-upgrade disabled');
+    }
   }
 
   static containerName(userId: number): string {
@@ -263,6 +304,11 @@ export class ContainerRegistry {
         busy: isBusy(entry),
         startedAtMs: entry.startedAtMs,
         lastUsedAtMs: entry.lastUsedAtMs,
+        runtimeBuild: entry.runtimeBuild ?? null,
+        hostRuntimeBuild: this.hostRuntimeBuild,
+        pendingUpgrade: entry.state === 'running'
+          && this.hostRuntimeBuild != null
+          && entry.runtimeBuild !== this.hostRuntimeBuild,
       }))
       .sort((a, b) => a.userId - b.userId);
   }
@@ -319,6 +365,10 @@ export class ContainerRegistry {
           await this.rebuildEntry(entry, entry.sessionWorkspaces),
           requiredWorkspace,
         );
+      }
+      // 容器内代码版本漂移（技术方案 §3.4）：代码新鲜度问题，空闲时才重启进程（不重建容器）
+      if (this.runtimeBuildDrifted(entry) && await this.applyRuntimeBuildUpgrade(entry)) {
+        return this.ensureWorkspaceMounted(entry, requiredWorkspace);
       }
       entry.lastUsedAtMs = Date.now();
       return this.ensureWorkspaceMounted(entry, requiredWorkspace);
@@ -416,6 +466,48 @@ export class ContainerRegistry {
   }
 
   /**
+   * 容器内代码版本是否漂移：agent 上报的闭包指纹 ≠ 本实例 dist manifest。
+   * unknown（旧 agent 未上报）同样视为漂移 → one-shot 自愈一次；manifest 缺失时检查关闭。
+   */
+  private runtimeBuildDrifted(entry: ContainerEntry): boolean {
+    return this.hostRuntimeBuild != null && entry.runtimeBuild !== this.hostRuntimeBuild;
+  }
+
+  /**
+   * 处理容器内代码漂移（技术方案 §3.4/§3.5）：重启容器进程加载新 dist（不重建，保挂载/env/容器名）。
+   * 返回 true 表示已执行重启。守卫顺序：one-shot → 总开关 → 蓝绿 draining → 忙碌延后。
+   */
+  private async applyRuntimeBuildUpgrade(entry: ContainerEntry): Promise<boolean> {
+    const host = this.hostRuntimeBuild;
+    if (host == null) return false;
+    const agent = entry.runtimeBuild ?? 'unknown';
+    if (entry.upgradeTargetBuild === host) {
+      // 已为当前 host build 尝试过（蓝绿过渡 / 重启后仍不一致）：不重复重启，防风暴
+      harnessLog('info', `[container] runtime build drift: user=${entry.userId} agent=${agent} host=${host} action=skipped-persisted`);
+      return false;
+    }
+    if (this.opts.autoUpgradeEnabled != null && !(await this.opts.autoUpgradeEnabled())) {
+      harnessLog('info', `[container] runtime build drift: user=${entry.userId} agent=${agent} host=${host} action=skipped-disabled`);
+      return false;
+    }
+    if (this.opts.isDraining?.() === true) {
+      harnessLog('info', `[container] runtime build drift: user=${entry.userId} agent=${agent} host=${host} action=skipped-draining`);
+      return false;
+    }
+    if (isBusy(entry)) {
+      harnessLog('info', `[container] runtime build drift: user=${entry.userId} agent=${agent} host=${host} action=deferred-busy`);
+      return false;
+    }
+    entry.upgradeTargetBuild = host;
+    harnessLog('info', `[container] runtime build drift: user=${entry.userId} agent=${agent} host=${host} action=restart`);
+    // 复用停-起语义（优雅 shutdown 帧 + waitSocketReady + 失败 cleanupFailedStart），不用裸 docker restart
+    await this.stopContainer(entry, { force: false });
+    await this.dockerStart(entry);
+    entry.lastUsedAtMs = Date.now();
+    return true;
+  }
+
+  /**
    * /etc/hosts 注入是否已漂移（条目固化指纹 ≠ 当前解析结果）。docker run 时注入参数
    * 定型，docker start/复用不会更新 --add-host：宿主机 hosts / 后台规则变化后只能重建。
    * 缺省指纹（升级前旧条目）仅当当前期望条目非空时按漂移处理，避免未启用该功能的
@@ -503,6 +595,13 @@ export class ContainerRegistry {
   reportRuntimeStatus(userId: number, status: RuntimeStatus): void {
     const entry = this.entries.get(userId);
     if (entry) entry.inContainer = status;
+  }
+
+  /** 容器 agent hello 上报的运行时闭包版本（旧 agent 传 null → 记为 unknown，按漂移处理）。 */
+  reportAgentHello(userId: number, build: string | null): void {
+    this.lastAgentBuild.set(userId, build);
+    const entry = this.entries.get(userId);
+    if (entry) entry.runtimeBuild = build ?? undefined;
   }
 
   startIdleLoop(): void {
@@ -713,6 +812,10 @@ export class ContainerRegistry {
     // 陈旧 runtime_status 把 idle 回收挡在门外（新 agent 握手后会补报真实状态）
     entry.inContainer = { shellSessions: 0, pendingTasks: 0, attachedTerminals: 0 };
     entry.generation += 1;
+    // 接住创建过程中（条目登记前）到达的首个 hello：否则新容器首调会被误判 unknown 漂移多重启一次
+    entry.runtimeBuild = this.lastAgentBuild.get(userId) ?? undefined;
+    // 新容器 = 新的一次收敛机会（防环标记只在同一容器 × 同一 host build 内有效）
+    entry.upgradeTargetBuild = undefined;
     this.entries.set(userId, entry);
     harnessLog('info', `[container] container ready: user=${userId}, name=${name}`);
     return entry;

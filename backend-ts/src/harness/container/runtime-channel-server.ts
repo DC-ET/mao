@@ -44,6 +44,11 @@ export interface RuntimeChannelServerOptions {
   tokenOf(userId: number): string | null;
   /** 容器周期上报的容器内活动状态（idle 判定依据，技术方案 §5.3.1）。 */
   onRuntimeStatus?(userId: number, status: RuntimeStatus): void;
+  /**
+   * 容器 agent 握手（hello）时回调，携带其运行时闭包版本（runtime-build.json 的 buildId；
+   * 旧 agent 缺省 / 字段缺失时为 null）。宿主机据此记录容器内代码版本（ContainerRegistry.reportAgentHello）。
+   */
+  onAgentHello?(userId: number, info: { build: string | null }): void;
   /** 连接断开（心跳超时/对端关闭）时回调，宿主机据此标记容器异常。 */
   onConnectionDead?(userId: number): void;
 }
@@ -157,6 +162,10 @@ export class RuntimeChannelServer {
         socket.destroy();
         return;
       }
+      // 容器内代码版本上报（可选字段）：旧 agent 缺省传 null，由宿主机按「unknown」处理
+      this.opts.onAgentHello?.(userId, {
+        build: typeof frame.build === 'string' && frame.build !== '' ? frame.build : null,
+      });
       socket.write(encodeFrame({ v: 1, type: 'hello_result' }));
       clearTimeout(timer);
       let connection: ConnectionImpl | null = null;

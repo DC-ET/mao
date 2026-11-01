@@ -92,6 +92,8 @@ import type { TerminalWsHandler } from './harness/terminal/terminal-ws-handler.j
 import type { RuntimeModeResolver } from './harness/container/runtime-mode.js';
 import { validateRuntimeModeSave, RUNTIME_MODE_SETTING_KEY } from './harness/container/runtime-mode.js';
 import type { ContainerHostsResolver } from './harness/container/container-hosts-resolver.js';
+import type { ContainerAutoUpgradeResolver } from './harness/container/container-auto-upgrade.js';
+import { CONTAINER_AUTO_UPGRADE_SETTING_KEY } from './common/container-auto-upgrade.js';
 import type { ContainerOps } from './harness/container/container-registry.js';
 import { registerAdminContainerRoutes } from './harness/container/container-admin.routes.js';
 import { CONTAINER_EXTRA_HOSTS_KEY, CONTAINER_INHERIT_HOST_HOSTS_KEY } from './common/container-hosts.js';
@@ -205,6 +207,8 @@ export interface RouteDeps {
   runtimeModeResolver: RuntimeModeResolver;
   /** 容器 /etc/hosts 注入配置解析器（后台预览 + 保存后缓存失效）；未注入时预览接口不注册。 */
   containerHostsResolver?: ContainerHostsResolver;
+  /** 容器自动升级总开关解析器（V178）：保存后失效缓存，后台切换即时生效。 */
+  containerAutoUpgradeResolver?: ContainerAutoUpgradeResolver;
   /** 容器运维（列表 / 单用户重建）；未注入时不注册容器管理接口。 */
   containerOps?: ContainerOps;
 
@@ -337,7 +341,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
     fileService, agentService, experienceService, experienceIndexService, suggestedQuestionService,
     mcpValidator,
     modelService,
-    settingService, activateContainerRuntime, runtimeModeResolver, containerHostsResolver, containerOps,
+    settingService, activateContainerRuntime, runtimeModeResolver, containerHostsResolver, containerAutoUpgradeResolver, containerOps,
     commandService, commandRepo, skillLoader, skillSync,
     weixinPref, taskPanelPref,
     restToolService,
@@ -438,6 +442,10 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
         if (containerHostsResolver
           && keys.some((key) => key === CONTAINER_INHERIT_HOST_HOSTS_KEY || key === CONTAINER_EXTRA_HOSTS_KEY)) {
           containerHostsResolver.invalidate();
+        }
+        // 容器自动升级总开关（V178）：保存后立即生效，无需等 5s TTL
+        if (containerAutoUpgradeResolver && keys.includes(CONTAINER_AUTO_UPGRADE_SETTING_KEY)) {
+          containerAutoUpgradeResolver.invalidate();
         }
       },
     });

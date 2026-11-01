@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
  */
 const CONTAINER_MODULES = [
   'runtime-agent.ts',
+  'runtime-build.ts',
   'container-tool-executor.ts',
   'container-mcp-bridge.ts',
   'pty-hub.ts',

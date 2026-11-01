@@ -1,7 +1,7 @@
 # 容器运行时版本漂移自动收敛（闭包哈希 + 懒重启）技术方案
 
-> 版本：v1.1（2026-10-31 评审回填）
-> 状态：已评审（2026-10-31）：四个开放问题已有结论（见 §10），按结论回填本文；未开发，待排期
+> 版本：v1.1（2026-10-31 评审回填；2026-11-01 实施记录见 §11）
+> 状态：已评审（2026-10-31），已开发完成（2026-11-01，0.0.394，见 §11 实施记录），待发布
 > 关联：[2026-10-14-user-runtime-container-isolation-design.md](2026-10-14-user-runtime-container-isolation-design.md)（挂载清单即安全边界、指纹机制先例）、[2026-10-31-container-hosts-injection.md](2026-10-31-container-hosts-injection.md)（`hostsFingerprint` 先例）、CHANGELOG 0.0.393（修复「容器内读会话技能被判符号链接逃逸」时暴露：容器内代码不随后端发布生效，必须人工重启容器）
 > 一句话：给容器内运行时（`runtime-agent.js` 的 import 闭包）算一个**闭包指纹**，agent 握手时上报；宿主机在用户下次调工具时比对，漂移且容器空闲就**自动重启容器进程**（不重建、不打断在跑任务），把「发版后容器跑旧代码」从人工操作收敛成懒自愈。
 
@@ -232,7 +232,8 @@ tsc 产出 dist           agent 读 runtime-build.json   ensureRunning 比对：
 | `backend-ts/package.json` | `build` 串联后置步骤 |
 | `backend-ts/db/migration/V178__container_runtime_auto_upgrade.sql` | 新增：插入 `runtime.container.autoUpgrade` 设置项（默认 true） |
 | `backend-ts/src/harness/container/runtime-build.ts` | 新增：manifest 读取 + 闭包遍历（宿主/容器共享） |
-| `backend-ts/src/harness/container/container-auto-upgrade.ts` | 新增：总开关 key + 解析器（TTL 缓存 + invalidate） |
+| `backend-ts/src/common/container-auto-upgrade.ts` | 新增：总开关 key + 值解析 / 校验（settings 与 harness 共用） |
+| `backend-ts/src/harness/container/container-auto-upgrade.ts` | 新增：开关解析器（TTL 缓存 + invalidate） |
 | `backend-ts/src/harness/container/runtime-agent.ts` | 读 manifest；hello 携带 build |
 | `backend-ts/src/harness/container/runtime-channel-protocol.ts` | hello 帧可选 `build` 字段 |
 | `backend-ts/src/harness/container/runtime-channel-server.ts` | `onAgentHello` 钩子 |
@@ -262,5 +263,15 @@ tsc 产出 dist           agent 读 runtime-build.json   ensureRunning 比对：
 | 2 | 存量容器 unknown（旧 agent 不报 build） | **视为漂移**，one-shot 自愈一次（每容器最多重启一次） | §3.4、§5-1 |
 | 3 | 管理后台展示是否本期 | **本期含前端**：容器管理面板加自动升级开关、代码/后台版本列与「待升级」徽标 | §3.6、§8 |
 | 4 | 自动重启是否通知用户 | **不通知**：静默处理，靠日志与后台观察 | §5、§7 |
+
+## 11. 实施记录（2026-11-01，0.0.394）
+
+按本文实现，落地细节与偏差记录：
+
+1. **开关常量分层**：`runtime.container.autoUpgrade` 的 key / 值解析放在 `src/common/container-auto-upgrade.ts`（settings 保存校验与 harness 解析共用），解析器 `ContainerAutoUpgradeResolver` 在 `src/harness/container/container-auto-upgrade.ts` —— 与 V176 container-hosts 的 common/harness 分层一致，避免 settings 域反向依赖 harness。
+2. **注释内 import 防护**：闭包遍历前先 strip 注释（tsc 输出保留注释，文档注释里的 import 样式文本会误报 unresolved import）。
+3. **接住首个 hello**：新容器创建过程中条目尚未登记时到达的 hello 写入 registry 的 `lastAgentBuild`（按用户），条目登记后回填 `entry.runtimeBuild`；重建时重置 one-shot 标记 —— 否则新容器首调会被误判 unknown 漂移、白重启一次。
+4. **构建链**：`npm run build` = `tsc && node scripts/emit-container-runtime-build.mjs`；`start:dev`（tsx）不产出 manifest → 检查自动关闭（判定为可接受降级）。连续两次构建 buildId 相同（幂等已验证）。
+5. **测试**：新增 `runtime-build.spec.ts` / `container-auto-upgrade.spec.ts`，扩充 registry / agent / protocol / settings spec（§6 全量落地）；后端全量 5208 例通过、`npm run build` 与 admin 构建通过。`tests/admin-settings-cards.spec.ts` 新增容器管理面板结构断言（需在线管理后台执行，本次未本地运行）。
 
 

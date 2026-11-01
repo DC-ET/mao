@@ -1,3 +1,18 @@
+## 0.0.394 (2026-11-01)
+
+### 后端
+- **容器内代码版本漂移自动收敛（Docker 模式）**：容器内 `runtime-agent` 是常驻进程、`dist` 无热加载，此前发版后容器仍跑旧代码，需人工 `docker restart` / 后台重建（0.0.393 的技能符号链接修复即因此需要人工重启才生效）。现在：① 构建期新增闭包指纹——`npm run build` 在 tsc 之后遍历 `runtime-agent.js` 的静态相对 import 闭包，生成 `dist/harness/container/runtime-build.json`（内容哈希，`generatedAt` 不参与哈希，同源重建幂等）；② 容器 agent 启动时读取该 manifest，`hello` 帧新增可选 `build` 字段上报（协议 v1 不变、旧宿主松校验忽略）；③ 宿主机 `ContainerRegistry` 读取同一份 manifest 作为「本实例加载的代码版本」，在 `ensureRunning`（用户下次调工具）时懒比对：代码漂移且容器空闲 → 自动重启进程（`stop` + `start`，保留容器/挂载/env/容器名，不重建）；忙碌则只记日志（`deferred-busy`），下次再判；挂载 / hosts 漂移仍走重建（正确性优先）。
+- **防环与守卫**：每（容器 × host build）只自动尝试一次（蓝绿过渡期旧实例缓存旧 build 时不会反复重启）；draining 实例跳过自动升级（由承接流量的实例执行）；`dist` 无 manifest（LOCAL/dev / 异常部署）时检查整体关闭；旧 agent 不报 build 视为 unknown → one-shot 自愈（首次发布后各存量容器在空闲时自动重启一次完成切换，无需人工）。
+- **新增总开关**：`system_setting.runtime.container.autoUpgrade`（V178 迁移，默认 `true`，后台「系统设置 → 运行环境 → 容器管理」可切换；保存后即时生效，5s TTL + 保存失效双保险）。关闭只停用自动重启，人工「重建容器」入口不变；缺行/非法值/读库失败一律回落 `true`。
+- 新增单测：闭包指纹（确定性 / 仅闭包内容变化 / 注释内 import 不误判 / manifest 读取降级）、开关解析与 TTL、hello 上报（含旧 agent 无 build）、registry 漂移收敛矩阵（空闲重启 / 忙碌延后 / 开关关闭 / draining / one-shot / stopped 仅 start / 挂载漂移优先重建 / manifest 缺失零动作）、设置值域校验。
+
+### 管理后台
+- **「系统设置 → 运行环境 → 容器管理」新增自动升级开关**：「发版后自动重启空闲容器以收敛代码版本」。
+- **容器列表新增三列**：「代码版本」（容器 agent 上报，未上报显示「待上报」）、「后台版本」（本实例 dist 版本，manifest 缺失显示「未启用」）、「升级」（漂移时显示「待升级」徽标，一致显示「一致」）。
+
+### 部署
+- `npm run build` 自动生成 manifest，无需额外步骤；本次发布后存量容器会在各自「空闲 + 下次使用」时自动重启一次收敛（每容器一次，不是发版风暴），无需人工重启容器。
+
 ## 0.0.393 (2026-10-31)
 
 ### 后端

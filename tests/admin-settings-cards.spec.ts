@@ -42,6 +42,19 @@ test('plain categories render as card forms', async ({ page }) => {
   await expect(envCard.locator('.el-select')).toHaveCount(1)
 })
 
+test('container manage panel exposes auto upgrade switch and build columns', async ({ page }) => {
+  // V178：容器管理面板新增自动升级总开关 + 代码/后台版本列（列表数据依赖运行环境，这里只断言结构）
+  await login(page)
+  await page.goto('/admin/settings')
+  await page.waitForSelector('.settings-layout', { timeout: 10_000 })
+
+  const card = page.locator('#setting-group-container-rebuild')
+  await card.scrollIntoViewIfNeeded()
+  await expect(card.locator('.switch-label')).toContainText('自动重启空闲容器')
+  await expect(card.locator('.el-table__header th', { hasText: '代码版本' })).toHaveCount(1)
+  await expect(card.locator('.el-table__header th', { hasText: '后台版本' })).toHaveCount(1)
+})
+
 test('category card batch save round-trip', async ({ page }) => {
   await login(page)
   await page.goto('/admin/settings')

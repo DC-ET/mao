@@ -15,6 +15,8 @@ import { RuntimeChannelServer } from './harness/container/runtime-channel-server
 import { ContainerRegistry } from './harness/container/container-registry.js';
 import { ContainerHostsResolver } from './harness/container/container-hosts-resolver.js';
 import { RuntimeModeResolver } from './harness/container/runtime-mode.js';
+import { ContainerAutoUpgradeResolver } from './harness/container/container-auto-upgrade.js';
+import { isDrainingInstance } from './harness/core/deploy-lock.js';
 import { SessionEnvelopeBuilder, buildDepsEnv } from './harness/container/session-envelope-builder.js';
 import { DockerToolRouter } from './harness/container/docker-tool-router.js';
 import { DockerSendBytesBridge } from './harness/container/read-bytes-bridge.js';
@@ -52,6 +54,8 @@ export interface ContainerRuntimeResult {
   /** 容器 /etc/hosts 注入配置解析器（后台预览与保存后缓存失效共用）。 */
   containerHostsResolver: ContainerHostsResolver;
   runtimeModeResolver: RuntimeModeResolver;
+  /** 容器自动升级总开关解析器（V178）：保存设置后由 app-routes 失效缓存。 */
+  containerAutoUpgradeResolver: ContainerAutoUpgradeResolver;
   activateContainerRuntime: () => Promise<void>;
   envelopeBuilder: SessionEnvelopeBuilder;
   dockerRouter: DockerToolRouter;
@@ -74,11 +78,16 @@ export async function assembleContainerRuntime(deps: ContainerRuntimeDeps): Prom
   const containerHostsResolver = new ContainerHostsResolver({
     systemSettingService: { getValue: (key) => settingService.getValue(key) },
   });
+  // 容器自动升级总开关（V178）：后台保存后由 app-routes 的 afterSave 失效缓存（即时生效）
+  const containerAutoUpgradeResolver = new ContainerAutoUpgradeResolver({
+    systemSettingService: { getValue: (key) => settingService.getValue(key) },
+  });
   const channelServer = new RuntimeChannelServer({
     channelDir: cloudRuntimeCfg.container.channelDir,
     tokenOf: (userId): string => channelServer.issueToken(userId),
     onConnectionDead: (userId) => containerChannelHolder.registry?.markConnectionDead(userId),
     onRuntimeStatus: (userId, status) => containerChannelHolder.registry?.reportRuntimeStatus(userId, status),
+    onAgentHello: (userId, info) => containerChannelHolder.registry?.reportAgentHello(userId, info.build),
   });
   const containerRegistry = new ContainerRegistry({
     config: cloudRuntimeCfg,
@@ -105,6 +114,9 @@ export async function assembleContainerRuntime(deps: ContainerRuntimeDeps): Prom
       const conn = channelServer.getConnection(userId);
       return conn ? conn.requestShutdown(5000) : false;
     },
+    // 容器内代码漂移自动收敛（技术方案 §3.4/§3.5）：总开关 + 蓝绿 draining 守卫
+    autoUpgradeEnabled: () => containerAutoUpgradeResolver.resolve(),
+    isDraining: () => isDrainingInstance(cfg.app.harness.runtimeDir, cfg.server.port),
     sessionWorkspacesOf: async (userId) => {
       const all = await sessionRepo.listWorkspacesByUser(userId).catch((e) => {
         console.debug(`Session workspace lookup skipped for user ${userId}: ${(e as Error).message}`);
@@ -204,6 +216,7 @@ export async function assembleContainerRuntime(deps: ContainerRuntimeDeps): Prom
     containerRegistry,
     containerHostsResolver,
     runtimeModeResolver,
+    containerAutoUpgradeResolver,
     activateContainerRuntime,
     envelopeBuilder,
     dockerRouter,

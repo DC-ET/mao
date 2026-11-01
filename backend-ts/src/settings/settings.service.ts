@@ -7,6 +7,9 @@ import { cidrOverlapsHardDeniedNet, isValidCidr, parseCidrList } from '../common
 import {
   CONTAINER_EXTRA_HOSTS_KEY, CONTAINER_INHERIT_HOST_HOSTS_KEY, parseExtraHostsValue,
 } from '../common/container-hosts.js';
+import {
+  CONTAINER_AUTO_UPGRADE_SETTING_KEY, isContainerAutoUpgradeValueValid,
+} from '../common/container-auto-upgrade.js';
 import { decryptAesGcm, encryptAesGcmNonNull } from '../crypto/aes-gcm.js';
 import type {
   AgentLookup, AgentRuntimeSettings, EmailSmtpSettings, FeishuOAuthSettings, HarnessTuningSettings, LdapSettings, ModelLookup,
@@ -824,6 +827,9 @@ export class SystemSettingService {
     }
     if (key === CONTAINER_INHERIT_HOST_HOSTS_KEY && !/^(true|false)$/i.test(value!.trim())) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '容器域名解析继承开关必须为 true 或 false');
+    }
+    if (key === CONTAINER_AUTO_UPGRADE_SETTING_KEY && !isContainerAutoUpgradeValueValid(value)) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '容器自动升级开关必须为 true 或 false');
     }
     if (key === CONTAINER_EXTRA_HOSTS_KEY) {
       const parsed = parseExtraHostsValue(value);

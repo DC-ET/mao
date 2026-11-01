@@ -620,7 +620,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     envVariableService, uploadDir, userSkillsDir, shareDir, mcpClient, activityHeartbeat,
     ecpInjector, larkUatInjector,
   });
-  const { cloudRuntimeCfg, containerChannelHolder, channelServer, containerRegistry, containerHostsResolver, runtimeModeResolver, activateContainerRuntime, envelopeBuilder, dockerRouter, sendBytesBridge, mcpRuntimeProbe, routingMcpClient, ptyChannelHubs, ptyHubGeneration, containerPtyFactory, bootRuntimeMode } = containerRuntime;
+  const { cloudRuntimeCfg, containerChannelHolder, channelServer, containerRegistry, containerHostsResolver, runtimeModeResolver, containerAutoUpgradeResolver, activateContainerRuntime, envelopeBuilder, dockerRouter, sendBytesBridge, mcpRuntimeProbe, routingMcpClient, ptyChannelHubs, ptyHubGeneration, containerPtyFactory, bootRuntimeMode } = containerRuntime;
 
   const terminalManager = new TerminalManager({
     pathSandbox,
@@ -901,7 +901,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     fileService, agentService, experienceService, experienceIndexService, suggestedQuestionService,
     mcpValidator, httpToolValidator,
     modelService,
-    settingService, activateContainerRuntime, runtimeModeResolver, containerHostsResolver, containerOps: containerRegistry,
+    settingService, activateContainerRuntime, runtimeModeResolver, containerHostsResolver, containerAutoUpgradeResolver, containerOps: containerRegistry,
     commandService, commandRepo, skillLoader, skillSync,
     weixinPref, taskPanelPref, onboardingPrefRepo,
     restToolService,

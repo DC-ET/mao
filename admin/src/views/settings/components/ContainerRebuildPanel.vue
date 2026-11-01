@@ -26,6 +26,16 @@
         class="config-tip"
       />
 
+      <div class="switch-row">
+        <span class="switch-label">发版后自动重启空闲容器以收敛代码版本（不重建容器、不打断在跑任务）</span>
+        <el-switch
+          :model-value="autoUpgrade"
+          :disabled="!canWriteSettings || savingUpgrade"
+          :loading="savingUpgrade"
+          @change="saveAutoUpgrade"
+        />
+      </div>
+
       <el-progress
         v-if="rebuilding"
         :percentage="progressPercent"
@@ -48,6 +58,27 @@
         <el-table-column label="忙碌" width="90">
           <template #default="{ row }">
             <el-tag v-if="row.busy" type="warning" size="small">有任务</el-tag>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="代码版本" width="110">
+          <template #default="{ row }">
+            <span v-if="row.runtimeBuild" class="mono">{{ row.runtimeBuild }}</span>
+            <el-tooltip v-else content="容器 agent 尚未上报版本：旧版容器会在空闲时自动重启收敛" placement="top">
+              <span class="muted">待上报</span>
+            </el-tooltip>
+          </template>
+        </el-table-column>
+        <el-table-column label="后台版本" width="110">
+          <template #default="{ row }">
+            <span v-if="row.hostRuntimeBuild" class="mono">{{ row.hostRuntimeBuild }}</span>
+            <span v-else class="muted">未启用</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="升级" width="90">
+          <template #default="{ row }">
+            <el-tag v-if="row.pendingUpgrade" type="warning" size="small">待升级</el-tag>
+            <el-tag v-else-if="row.runtimeBuild && row.hostRuntimeBuild" type="success" size="small">一致</el-tag>
             <span v-else>-</span>
           </template>
         </el-table-column>
@@ -86,10 +117,48 @@ interface ContainerRow {
   busy: boolean
   startedAtMs: number
   lastUsedAtMs: number
+  /** 容器内 agent 上报的运行时版本；null = 旧 agent 未上报 / 未连接。 */
+  runtimeBuild: string | null
+  /** 本实例加载的运行时版本；null = dist manifest 缺失（自动升级检查关闭）。 */
+  hostRuntimeBuild: string | null
+  /** 代码漂移待收敛（running 且两者不一致）。 */
+  pendingUpgrade: boolean
 }
 
 const authStore = useAuthStore()
 const canManage = computed(() => authStore.hasPermission('container:manage'))
+const canWriteSettings = computed(() => authStore.hasPermission('settings:write'))
+
+const AUTO_UPGRADE_KEY = 'runtime.container.autoUpgrade'
+const autoUpgrade = ref(true)
+const savingUpgrade = ref(false)
+
+async function fetchAutoUpgrade() {
+  // 开关值来自系统设置（settings:read）；无读权限时不请求（仅展示、不误报错）
+  if (!canWriteSettings.value && !authStore.hasPermission('settings:read')) return
+  try {
+    const { data } = await api.get('/system-settings')
+    const row = (Array.isArray(data) ? data : []).find(
+      (item: { settingKey?: string }) => item?.settingKey === AUTO_UPGRADE_KEY,
+    )
+    autoUpgrade.value = String(row?.value ?? 'true').trim().toLowerCase() !== 'false'
+  } catch { /* 拦截器已提示失败 */ }
+}
+
+async function saveAutoUpgrade(next: string | number | boolean) {
+  const value = next === true ? 'true' : 'false'
+  savingUpgrade.value = true
+  try {
+    await api.put(`/system-settings/${AUTO_UPGRADE_KEY}`, { value })
+    autoUpgrade.value = value === 'true'
+    ElMessage.success(value === 'true' ? '已开启容器自动升级' : '已关闭容器自动升级')
+  } catch {
+    // 保存失败：回读实际值，避免开关停在错误状态
+    void fetchAutoUpgrade()
+  } finally {
+    savingUpgrade.value = false
+  }
+}
 
 const rows = ref<ContainerRow[]>([])
 const loading = ref(false)
@@ -201,6 +270,7 @@ async function rebuildAll() {
 
 onMounted(() => {
   void fetchRows()
+  void fetchAutoUpgrade()
 })
 </script>
 
@@ -209,7 +279,11 @@ onMounted(() => {
 .group-title { font-weight: 600; }
 .header-actions { display: flex; align-items: center; gap: 12px; }
 .config-tip { margin-bottom: 12px; }
+.switch-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.switch-label { font-size: 13px; color: var(--el-text-color-regular); }
 .progress { margin-bottom: 10px; }
 .result-summary { font-size: 13px; color: var(--el-text-color-regular); margin-bottom: 10px; }
+.mono { font-family: var(--el-font-family-mono, monospace); font-size: 12px; }
+.muted { color: var(--el-text-color-secondary); font-size: 12px; }
 </style>
 

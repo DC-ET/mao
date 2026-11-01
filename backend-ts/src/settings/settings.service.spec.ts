@@ -58,6 +58,14 @@ describe('SystemSettingService', () => {
     expect(updated.value).toBe('[{"host":"A.com.","ip":"10.0.0.1"}]');
   });
 
+  it('updateValidatesContainerAutoUpgradeSwitch', async () => {
+    // 容器自动升级总开关（V178）：只接受 true / false
+    vi.mocked(mapper.findByKey).mockResolvedValue(setting('runtime.container.autoUpgrade', '运行环境', 1));
+    await expect(service().update('runtime.container.autoUpgrade', 'yes')).rejects.toThrow(/容器自动升级开关/);
+    const updated = await service().update('runtime.container.autoUpgrade', 'false');
+    expect(updated.value).toBe('false');
+  });
+
   it('updatePersistsEditableSetting', async () => {
     const row = setting('audit.retentionDays', '审计', 1);
     vi.mocked(mapper.findByKey).mockResolvedValue(row);

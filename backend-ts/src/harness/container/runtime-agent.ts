@@ -9,6 +9,7 @@ import {
 import { ContainerToolExecutor, type ContainerRoots } from './container-tool-executor.js';
 import { ContainerMcpBridge } from './container-mcp-bridge.js';
 import { PtyHub, type ContainerPtyFactory } from './pty-hub.js';
+import { loadRuntimeBuildId } from './runtime-build.js';
 
 /**
  * 容器内常驻 runtime agent（技术方案 §5.5）。
@@ -58,6 +59,8 @@ export class RuntimeAgent {
   private readonly executor: ContainerToolExecutor;
   private readonly mcpBridge: ContainerMcpBridge;
   private readonly ptyHub: PtyHub;
+  /** 容器内运行时闭包版本：hello 帧上报，宿主机据此判断代码漂移（缺失则不上报）。 */
+  private readonly runtimeBuildId: string | null;
   private socket: Socket | null = null;
   private closedByShutdown = false;
   private reconnectAttempt = 0;
@@ -69,7 +72,13 @@ export class RuntimeAgent {
     private readonly userId: number,
     /** pty spawn 工厂（生产用 node-pty；宿主机单测注入 fake 验证 pty_open 往返）。 */
     private readonly ptyFactory?: ContainerPtyFactory,
+    /** 容器内代码版本（默认读模块同目录 runtime-build.json；测试可注入；null = 不上报）。 */
+    buildId: string | null = loadRuntimeBuildId(import.meta.url),
   ) {
+    this.runtimeBuildId = buildId;
+    if (this.runtimeBuildId == null) {
+      console.warn('[runtime-agent] runtime-build.json missing next to module; build id will not be reported');
+    }
     this.executor = new ContainerToolExecutor(resolveRoots(), this.userId);
     this.mcpBridge = new ContainerMcpBridge();
     this.ptyHub = new PtyHub({
@@ -150,8 +159,11 @@ export class RuntimeAgent {
           this.socket.destroy();
         }
         this.socket = socket;
-        // hello：token 认证（宿主机校验失败会立即断开）
-        socket.write(encodeFrame({ v: 1, type: 'hello', userId: this.userId, token: this.token }));
+        // hello：token 认证（宿主机校验失败会立即断开）+ 容器内代码版本上报（旧宿主忽略未知字段）
+        socket.write(encodeFrame({
+          v: 1, type: 'hello', userId: this.userId, token: this.token,
+          ...(this.runtimeBuildId != null ? { build: this.runtimeBuildId } : {}),
+        }));
         handshakeTimer = setTimeout(() => fail(new Error('hello handshake timeout')), HANDSHAKE_TIMEOUT_MS);
         handshakeTimer.unref?.();
       });
