@@ -1,3 +1,9 @@
+## 0.0.395 (2026-11-01)
+
+### 后端
+- **修复 Docker 模式容器时区为 UTC**：运行时镜像（`node:22-bookworm-slim`）默认 `Etc/UTC`，创建容器时也未注入时区，容器内 `date`、脚本时间戳、Node 本地时间、`git commit` 全部按 UTC 落——比北京时间慢 8 小时，北京时间 00:00–08:00 时段日期还会显示为前一天；与后端全站 `Asia/Shanghai` 口径（日志时间戳、系统提示「当前日期」、Cron 调度）不一致，Agent 自查时间时自相矛盾。现在 `runtime-agent` 启动时对齐容器时区：① 进程内设置 `TZ=Asia/Shanghai`（优先级最高、立即生效，覆盖 agent 自身与其派生的 shell / pty / MCP 子进程）；② 幂等对齐 `/etc/localtime` 符号链接与 `/etc/timezone`（临时文件 + rename 原子替换），使 `docker exec` 等非 agent 派生进程同样正确。tzdata 随镜像已存在，不依赖挂载宿主机文件；对齐失败仅告警、不阻塞 agent 启动。存量容器在下一次代码漂移懒重启（0.0.394 机制）时自动收敛，无需人工重建。
+- 新增单测：时区对齐幂等（localtime 链接 + timezone 内容）、普通文件 localtime 替换为符号链接、zoneinfo 缺失时零改动降级。
+
 ## 0.0.394 (2026-11-01)
 
 ### 后端

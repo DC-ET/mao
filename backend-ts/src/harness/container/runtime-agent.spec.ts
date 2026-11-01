@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { RuntimeChannelServer, type RuntimeStatus } from './runtime-channel-server.js';
-import { alignPasswdHome, RuntimeAgent } from './runtime-agent.js';
+import { alignContainerTimeZone, alignPasswdHome, RuntimeAgent } from './runtime-agent.js';
 import { ContainerMcpBridge } from './container-mcp-bridge.js';
 import { PathSandbox } from '../safety/path-sandbox.js';
 import type { ContainerPty, ContainerPtyFactory } from './pty-hub.js';
@@ -282,5 +282,59 @@ describe('alignPasswdHome（容器 HOME 对齐）', () => {
     writeFileSync(file, 'root:x:0:0:root:/root:/bin/bash');
     expect(alignPasswdHome(file, '/opt/mao-data/users/7')).toBe(true);
     expect(readFileSync(file, 'utf8')).toBe('root:x:0:0:root:/opt/mao-data/users/7:/bin/bash');
+  });
+});
+
+describe('alignContainerTimeZone（容器时区对齐）', () => {
+  it('relinksLocaltimeAndWritesTimezoneIdempotently', () => {
+    const base = useTmpDir('mao-tz-');
+    const zoneinfoDir = join(base, 'zoneinfo');
+    const zoneinfoPath = join(zoneinfoDir, 'Asia', 'Shanghai');
+    mkdirSync(join(zoneinfoDir, 'Asia'), { recursive: true });
+    writeFileSync(zoneinfoPath, 'TZif-fake');
+    const localtimePath = join(base, 'localtime');
+    const timezonePath = join(base, 'timezone');
+    writeFileSync(timezonePath, 'Etc/UTC\n');
+    const options = { localtimePath, timezonePath, zoneinfoDir };
+
+    expect(alignContainerTimeZone(options)).toBe(true);
+    expect(readlinkSync(localtimePath)).toBe(zoneinfoPath);
+    expect(readFileSync(timezonePath, 'utf8')).toBe('Asia/Shanghai\n');
+    // 幂等：已对齐时不重复改写
+    expect(alignContainerTimeZone(options)).toBe(false);
+  });
+
+  it('replacesPlainFileLocaltimeWithSymlink', () => {
+    const base = useTmpDir('mao-tz-file-');
+    const zoneinfoDir = join(base, 'zoneinfo');
+    const zoneinfoPath = join(zoneinfoDir, 'Asia', 'Shanghai');
+    mkdirSync(join(zoneinfoDir, 'Asia'), { recursive: true });
+    writeFileSync(zoneinfoPath, 'TZif-fake');
+    // 镜像 / 人工放置的普通文件 localtime：需替换为指向 zoneinfo 的符号链接
+    const localtimePath = join(base, 'localtime');
+    writeFileSync(localtimePath, 'Etc/UTC');
+    const timezonePath = join(base, 'timezone');
+
+    expect(alignContainerTimeZone({ localtimePath, timezonePath, zoneinfoDir })).toBe(true);
+    expect(lstatSync(localtimePath).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(localtimePath)).toBe(zoneinfoPath);
+    // /etc/timezone 缺失时按需创建
+    expect(readFileSync(timezonePath, 'utf8')).toBe('Asia/Shanghai\n');
+  });
+
+  it('skipsWhenZoneinfoMissing', () => {
+    const base = useTmpDir('mao-tz-missing-');
+    const localtimePath = join(base, 'localtime');
+    const timezonePath = join(base, 'timezone');
+    writeFileSync(timezonePath, 'Etc/UTC\n');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      expect(alignContainerTimeZone({ localtimePath, timezonePath, zoneinfoDir: join(base, 'zoneinfo') })).toBe(false);
+      // 任何文件都不被改动
+      expect(existsSync(localtimePath)).toBe(false);
+      expect(readFileSync(timezonePath, 'utf8')).toBe('Etc/UTC\n');
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

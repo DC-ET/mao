@@ -1,5 +1,5 @@
 import { connect, type Socket } from 'node:net';
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -22,6 +22,8 @@ const RECONNECT_BASE_MS = 500;
 const RECONNECT_MAX_MS = 15_000;
 /** 宿主机迟迟不回 hello_result 的兜底：超时销毁连接，交给 connectLoop 退避重连。 */
 const HANDSHAKE_TIMEOUT_MS = 15_000;
+/** 容器时区：与后端日志时间戳 / 系统提示「当前日期」/ Cron 调度等全站口径一致。 */
+const CONTAINER_TIME_ZONE = 'Asia/Shanghai';
 
 function parseArgs(argv: string[]): { socketPath: string } {
   let socketPath = process.env.MAO_CHANNEL_SOCKET ?? '';
@@ -323,6 +325,57 @@ export class RuntimeAgent {
 }
 
 /**
+ * 容器初始化：把容器时区对齐到 Asia/Shanghai（glibc 配置层：/etc/localtime + /etc/timezone）。
+ *
+ * 为什么需要：运行时镜像（node:22-bookworm-slim）默认 Etc/UTC，且创建容器时未注入时区，
+ * 容器内 date、脚本时间戳、Node 本地时间、git commit 全部按 UTC 落——比北京时间慢 8 小时，
+ * 北京时间 00:00–08:00 时段日期还会少一天；与后端全站 Asia/Shanghai 口径（日志时间戳、
+ * 系统提示「当前日期」、Cron 调度）打架，Agent 自查时间时自相矛盾。
+ *
+ * 对齐后容器内「之后启动」的所有进程（含 docker exec、非 agent 派生进程）都拿到正确时区；
+ * 已运行进程的时区缓存不随文件刷新，故入口处同时设置 process.env.TZ（优先级最高、立即
+ * 生效）兜住 agent 自身与其子进程。幂等；返回是否发生修改，异常由调用方兜底。
+ *
+ * 与 alignPasswdHome 同一防护前提：只在容器入口（isMainModule + MAO_CONTAINER_USER_ID
+ * 校验后）调用，避免该模块被其它方式拉起时误改所在机器的时区配置。
+ */
+export function alignContainerTimeZone(options: {
+  timeZone?: string;
+  localtimePath?: string;
+  timezonePath?: string;
+  zoneinfoDir?: string;
+} = {}): boolean {
+  const timeZone = options.timeZone ?? CONTAINER_TIME_ZONE;
+  const localtimePath = options.localtimePath ?? '/etc/localtime';
+  const timezonePath = options.timezonePath ?? '/etc/timezone';
+  const zoneinfoPath = path.join(options.zoneinfoDir ?? '/usr/share/zoneinfo', timeZone);
+  if (!existsSync(zoneinfoPath)) {
+    console.warn(`[runtime-agent] zoneinfo 不存在，跳过时区对齐（${zoneinfoPath}）`);
+    return false;
+  }
+  let changed = false;
+  // localtime 走「临时链接 + rename」原子替换：被半写会让容器内程序时区异常
+  const currentTarget = lstatSync(localtimePath, { throwIfNoEntry: false })?.isSymbolicLink()
+    ? readlinkSync(localtimePath)
+    : null;
+  if (currentTarget !== zoneinfoPath) {
+    const tmpPath = `${localtimePath}.mao-tmp`;
+    rmSync(tmpPath, { force: true });
+    symlinkSync(zoneinfoPath, tmpPath);
+    renameSync(tmpPath, localtimePath);
+    changed = true;
+  }
+  const currentTimeZone = existsSync(timezonePath) ? readFileSync(timezonePath, 'utf8').trim() : null;
+  if (currentTimeZone !== timeZone) {
+    const tmpPath = `${timezonePath}.mao-tmp`;
+    writeFileSync(tmpPath, `${timeZone}\n`);
+    renameSync(tmpPath, timezonePath);
+    changed = true;
+  }
+  return changed;
+}
+
+/**
  * 容器初始化：把 /etc/passwd 中 root 的 home 对齐到注入的 HOME（用户数据目录）。
  *
  * 为什么需要：Java 在 Linux 上经 getpwuid 取 user.home（不认 $HOME 环境变量），不对齐则
@@ -375,6 +428,17 @@ if (isMainModule()) {
   if (!Number.isFinite(userId) || userId <= 0) {
     console.error('[runtime-agent] missing MAO_CONTAINER_USER_ID');
     process.exit(1);
+  }
+  // 容器时区对齐（镜像默认 Etc/UTC）：process.env.TZ 优先级最高、立即生效（agent 自身与其
+  // 派生进程）；/etc/localtime + /etc/timezone 覆盖 agent 之外启动的进程（docker exec 等）。
+  // 失败仅告警，不阻塞 agent 启动。
+  process.env.TZ = CONTAINER_TIME_ZONE;
+  try {
+    if (alignContainerTimeZone()) {
+      console.log(`[runtime-agent] container timezone aligned to ${CONTAINER_TIME_ZONE}`);
+    }
+  } catch (e) {
+    console.error('[runtime-agent] align container timezone failed (non-fatal):', (e as Error).message);
   }
   // 容器 HOME 对齐（容器创建参数 -e HOME={userHomeDir}/{userId}）：npm/pip/git 等直接读 $HOME；
   // Java 经 getpwuid 取 user.home，需要 /etc/passwd 同步。失败仅告警，不阻塞 agent 启动。
