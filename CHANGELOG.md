@@ -1,3 +1,10 @@
+## 0.0.396 (2026-11-01)
+
+### 后端
+- **修复合并转发里的图片下载必失败（内置工具与预下载双链路）**：飞书合并转发的子消息 `message_id` 不是「真实消息」，用它调详情接口返回 `230002 Bot/User can NOT be out of the chat`、调资源接口返回 `234003 File not in msg`——展开预下载与 `feishu_download_file` 懒加载兜底都是这条路径，导致所有来自合并转发的图片 100% 下载失败，Agent 最终只剩文字可读。修复：合并转发展开时，图片预下载改用**投递到当前会话的顶层父消息 id** 作下载锚点（`MergeForwardImageRef.anchorMessageId`），落盘命名仍按子消息 id 保持唯一；嵌套合并转发统一用最外层父消息 id。经 bot 身份实测：父消息 id + 子消息 image_key 可正常下载（414,976 字节），子消息 id 必然失败。
+- **工具与日志透出飞书业务错误码**：飞书 SDK 对非 2xx 只抛 `Request failed with status code 400`，`feishu_download_file` 返回值与预下载日志里都看不到真正原因。新增 `describeFeishuApiError` / `wrapFeishuApiError`（`feishu-api-error.ts`），消息详情与资源下载两处统一把 `code/msg` 包进错误信息（如 `获取飞书消息失败: om_xxx (code=230002 msg=Bot/User can NOT be out of the chat.)`），识别不出业务码时保留原始错误。
+- 新增/更新单测：下载锚点与子消息分离（含 post 内嵌图、嵌套转发、去重、上限、并发场景的调用记录改为 `[anchor, child, imageKey, index]`）、详情接口错误透出业务码、非业务错误原样保留。
+
 ## 0.0.395 (2026-11-01)
 
 ### 后端

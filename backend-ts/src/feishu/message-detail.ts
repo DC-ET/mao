@@ -1,4 +1,5 @@
 import type * as Lark from '@larksuiteoapi/node-sdk';
+import { wrapFeishuApiError } from './feishu-api-error.js';
 
 /** 通过 im/v1/messages/{message_id} 拉取的消息详情（已归一化）。 */
 export interface FeishuMessageDetail {
@@ -28,11 +29,18 @@ interface RawFeishuMessage {
  * 拉取单条消息详情。用于引用/回复消息内容预取，以及下载工具在群消息日志未命中时的兜底。
  */
 export async function fetchFeishuMessageDetail(client: Lark.Client, messageId: string): Promise<FeishuMessageDetail | null> {
-  const response = await client.request<{ code?: number; msg?: string; data?: { items?: RawFeishuMessage[] } }>({
-    url: `/open-apis/im/v1/messages/${encodeURIComponent(messageId)}`,
-    method: 'GET',
-    params: { card_msg_content_type: 'user_card_content' },
-  });
+  let response: { code?: number; msg?: string; data?: { items?: RawFeishuMessage[] } };
+  try {
+    response = await client.request<{ code?: number; msg?: string; data?: { items?: RawFeishuMessage[] } }>({
+      url: `/open-apis/im/v1/messages/${encodeURIComponent(messageId)}`,
+      method: 'GET',
+      params: { card_msg_content_type: 'user_card_content' },
+    });
+  } catch (error) {
+    // 合并转发子消息会走到这里（如 230002 Bot/User can NOT be out of the chat）：把业务码带出来，
+    // 否则调用方只能看到「Request failed with status code 400」，无法判断原因。
+    throw wrapFeishuApiError(error, `获取飞书消息失败: ${messageId}`);
+  }
   if (Number(response.code ?? 0) !== 0) {
     throw new Error(`获取飞书消息失败: ${messageId}, msg: ${response.msg ?? JSON.stringify(response)}`);
   }

@@ -132,4 +132,24 @@ describe('fetchFeishuMessageDetail 卡片文本提取', () => {
     expect(detail?.text).toBe('[表情包 msg=om_card]');
     expect(detail?.fileKey).toBe('v3_0013m_abc');
   });
+
+  it('surfaces the Feishu business code instead of a bare HTTP 400', async () => {
+    const client = {
+      request: vi.fn(async () => {
+        throw Object.assign(new Error('Request failed with status code 400'), {
+          response: { status: 400, data: { code: 230002, msg: 'Bot/User can NOT be out of the chat.' } },
+        });
+      }),
+    } as unknown as Lark.Client;
+    await expect(fetchFeishuMessageDetail(client, 'om_child')).rejects.toThrow(
+      '获取飞书消息失败: om_child (code=230002 msg=Bot/User can NOT be out of the chat.)',
+    );
+  });
+
+  it('keeps the original error when no Feishu business code is present', async () => {
+    const client = {
+      request: vi.fn(async () => { throw new Error('socket hang up'); }),
+    } as unknown as Lark.Client;
+    await expect(fetchFeishuMessageDetail(client, 'om_child')).rejects.toThrow('socket hang up');
+  });
 });

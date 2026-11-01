@@ -9,6 +9,7 @@ import { batchResolveFeishuUserNames } from './feishu/sender-names.js';
 import { expandFeishuMergeForward } from './feishu/merge-forward.js';
 import { chatFilesDirOf, resolveChatFileTarget } from './feishu/chat-files.js';
 import { fetchFeishuMessageDetail } from './feishu/message-detail.js';
+import { wrapFeishuApiError } from './feishu/feishu-api-error.js';
 import type { FeishuNormalizedMessage } from './feishu/types.js';
 import type { MysqlFeishuBindingRepository } from './feishu/binding.repository.js';
 import type { MysqlFeishuMessageRepository } from './feishu/message.repository.js';
@@ -54,10 +55,16 @@ export async function downloadFeishuMediaBuffer(
   type: 'image' | 'file',
   maxBytes: number,
 ): Promise<{ buffer: Buffer; contentType: string }> {
-  const result = await client.im.v1.messageResource.get({
-    path: { message_id: messageId, file_key: fileKey },
-    params: { type },
-  });
+  let result: Awaited<ReturnType<typeof client.im.v1.messageResource.get>>;
+  try {
+    result = await client.im.v1.messageResource.get({
+      path: { message_id: messageId, file_key: fileKey },
+      params: { type },
+    });
+  } catch (error) {
+    // 资源接口同样只抛 HTTP 400：把业务码带出来（如 234003 File not in msg、230002 不在群），便于定位。
+    throw wrapFeishuApiError(error, `下载飞书资源失败: message=${messageId}, fileKey=${fileKey}`);
+  }
   const contentType = String((result as { headers?: Record<string, string> }).headers?.['content-type'] ?? 'application/octet-stream').split(';')[0].trim();
   const stream = result.getReadableStream();
   const chunks: Buffer[] = [];
@@ -98,7 +105,7 @@ export interface FeishuMediaHelper {
   expandMergeForward(accountId: string, messageId: string, workspace: string | null): Promise<string | null>;
   resolveQuotedWorkspace(accountId: string, event: FeishuNormalizedMessage): Promise<string | null>;
   downloadFeishuGroupImage(accountId: string, event: FeishuNormalizedMessage, imageKey: string, index?: number): Promise<string | null>;
-  downloadFeishuImageTo(accountId: string, workspace: string, messageId: string, imageKey: string, index?: number): Promise<string | null>;
+  downloadFeishuImageTo(accountId: string, workspace: string, messageId: string, imageKey: string, index?: number, nameMessageId?: string): Promise<string | null>;
   downloadFeishuGroupFile(accountId: string, event: FeishuNormalizedMessage): Promise<string | null>;
 }
 
@@ -163,7 +170,9 @@ export function createFeishuMediaHelper(deps: FeishuMediaHelperDeps): FeishuMedi
     }
   };
 
-  const downloadFeishuImageTo = async (accountId: string, workspace: string, messageId: string, imageKey: string, index = 0): Promise<string | null> => {
+  const downloadFeishuImageTo = async (
+    accountId: string, workspace: string, messageId: string, imageKey: string, index = 0, nameMessageId = messageId,
+  ): Promise<string | null> => {
     const client = await getFeishuClient(Number(accountId));
     if (client == null) return null;
     const maxBytes = Math.max(1, maxInboundFileMb) * 1024 * 1024;
@@ -172,7 +181,8 @@ export function createFeishuMediaHelper(deps: FeishuMediaHelperDeps): FeishuMedi
     const dir = chatFilesDirOf(workspace);
     mkdirSync(dir, { recursive: true });
     const ext = IMAGE_EXT_BY_CONTENT_TYPE[contentType] ?? '.jpg';
-    const target = resolve(dir, index > 0 ? `feishu-image-${messageId}-${index + 1}${ext}` : `feishu-image-${messageId}${ext}`);
+    // messageId 是下载锚点（合并转发子消息必须用父消息 id 才能下载）；nameMessageId 仅用于落盘命名，避免同名覆盖。
+    const target = resolve(dir, index > 0 ? `feishu-image-${nameMessageId}-${index + 1}${ext}` : `feishu-image-${nameMessageId}${ext}`);
     await writeFile(target, buffer);
     return target;
   };
@@ -184,9 +194,10 @@ export function createFeishuMediaHelper(deps: FeishuMediaHelperDeps): FeishuMedi
       return await expandFeishuMergeForward(client, messageId, {
         workspace,
         resolveUserNames: (openIds) => resolveFeishuUserNames(accountId, openIds),
-        downloadImage: async (childMessageId, imageKey, index) => {
+        downloadImage: async (ref) => {
           if (workspace == null || workspace === '') return null;
-          return downloadFeishuImageTo(accountId, workspace, childMessageId, imageKey, index);
+          // 合并转发子消息不能直接调资源接口，锚点固定用顶层父消息 id；文件命名仍按子消息 id 保持唯一。
+          return downloadFeishuImageTo(accountId, workspace, ref.anchorMessageId, ref.imageKey, ref.index, ref.childMessageId);
         },
       });
     } catch (error) {

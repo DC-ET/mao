@@ -68,10 +68,10 @@ const namesOf = (table: Record<string, string>) => async (ids: string[]) => {
 
 /** 预下载桩：默认每张图返回可预测路径，返回 null 模拟下载失败，可抛错模拟网络异常。 */
 function downloader(resolve: (imageKey: string) => string | null = (key) => `/ws/chat-files/${key}.png`) {
-  const calls: Array<[string, string, number]> = [];
-  const downloadImage = vi.fn(async (messageId: string, imageKey: string, index: number) => {
-    calls.push([messageId, imageKey, index]);
-    return resolve(imageKey);
+  const calls: Array<[string, string, string, number]> = [];
+  const downloadImage = vi.fn(async (ref: { anchorMessageId: string; childMessageId: string; imageKey: string; index: number }) => {
+    calls.push([ref.anchorMessageId, ref.childMessageId, ref.imageKey, ref.index]);
+    return resolve(ref.imageKey);
   });
   return { downloadImage, calls };
 }
@@ -461,7 +461,7 @@ describe('expandFeishuMergeForward', () => {
       '@{/ws/chat-files/img_x.png}@',
       '@{/ws/chat-files/img_y.png}@',
     ].join('\n'));
-    expect(calls).toEqual([['om_post', 'img_x', 0], ['om_post', 'img_y', 1]]);
+    expect(calls).toEqual([['om_post_img', 'om_post', 'img_x', 0], ['om_post_img', 'om_post', 'img_y', 1]]);
   });
 
   it('replaces a standalone image child placeholder with its downloaded path', async () => {
@@ -479,7 +479,7 @@ describe('expandFeishuMergeForward', () => {
       '【合并转发，共 1 条】',
       '[2026-10-08 09:12] 张三：[图片已保存: @{/ws/chat-files/img_x.png}@]',
     ].join('\n'));
-    expect(calls).toEqual([['om_img', 'img_x', 0]]);
+    expect(calls).toEqual([['om_img_only', 'om_img', 'img_x', 0]]);
   });
 
   it('keeps msg handles for lazy download when pre-download fails, throws or is capped', async () => {
@@ -506,11 +506,11 @@ describe('expandFeishuMergeForward', () => {
         resolveUserNames: namesOf({ ou_a: '张三', ou_b: '李四' }),
         downloadImage,
       });
-      expect(calls).toEqual([['om_img', 'img_gone', 0], ['om_post', 'img_broken', 0]]);
+      expect(calls).toEqual([['om_img_fail', 'om_img', 'img_gone', 0], ['om_img_fail', 'om_post', 'img_broken', 0]]);
       expect(text).toContain('张三：[图片 msg=om_img]');
       expect(text).toContain('李四：图在里面 [图片]');
       expect(text).toContain('[图片 msg=om_post]');
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining('messageId=om_post'));
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('child=om_post'));
     } finally {
       warn.mockRestore();
     }
@@ -530,7 +530,7 @@ describe('expandFeishuMergeForward', () => {
       downloadImage,
       maxImages: 2,
     });
-    expect(calls).toEqual([['om_img0', 'img_0', 0], ['om_img1', 'img_1', 0]]);
+    expect(calls).toEqual([['om_cap', 'om_img0', 'img_0', 0], ['om_cap', 'om_img1', 'img_1', 0]]);
     expect(text).toContain('张三：[图片已保存: @{/ws/chat-files/img_0.png}@]');
     expect(text).toContain('张三：[图片已保存: @{/ws/chat-files/img_1.png}@]');
     expect(text).toContain('张三：[图片 msg=om_img2]');
@@ -570,7 +570,7 @@ describe('expandFeishuMergeForward', () => {
       resolveUserNames: namesOf({ ou_a: '张三', ou_b: '李四' }),
       downloadImage,
     });
-    expect(calls).toEqual([['om_a', 'img_x', 0]]);
+    expect(calls).toEqual([['om_dup', 'om_a', 'img_x', 0]]);
     expect(text!.match(/图片已保存/g)).toHaveLength(2);
   });
 
@@ -592,7 +592,8 @@ describe('expandFeishuMergeForward', () => {
       resolveUserNames: namesOf({ ou_a: '张三', ou_d: '赵六' }),
       downloadImage,
     });
-    expect(calls).toEqual([['om_img', 'img_x', 0]]);
+    // 嵌套转发的图仍用最外层父消息 id 作下载锚点（顶层才是真实消息）。
+    expect(calls).toEqual([['om_1', 'om_img', 'img_x', 0]]);
     expect(text).toContain('  [2026-10-07 18:00] 赵六：[图片已保存: @{/ws/chat-files/img_x.png}@]');
   });
 
@@ -606,10 +607,10 @@ describe('expandFeishuMergeForward', () => {
     let release = (): void => undefined;
     const gate = new Promise<void>((resolve) => { release = resolve; });
     const started: string[] = [];
-    const downloadImage = vi.fn(async (_messageId: string, imageKey: string) => {
-      started.push(imageKey);
-      if (imageKey === 'img_0') await gate;
-      return `/ws/chat-files/${imageKey}.png`;
+    const downloadImage = vi.fn(async (ref: { imageKey: string }) => {
+      started.push(ref.imageKey);
+      if (ref.imageKey === 'img_0') await gate;
+      return `/ws/chat-files/${ref.imageKey}.png`;
     });
     const expanding = expandFeishuMergeForward(client, root, {
       workspace: null,

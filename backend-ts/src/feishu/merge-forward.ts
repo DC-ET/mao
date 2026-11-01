@@ -26,7 +26,7 @@ export interface ExpandMergeForwardOptions {
   /** 批量把 open_id 解析成姓名。失败或缺失时摘录退回 open_id，不让整包失败。 */
   resolveUserNames?: (openIds: string[]) => Promise<Map<string, string>>;
   /** 预下载转发内嵌图片到工作区，返回本地路径。缺失或失败时保留 msg 占位符走懒加载兜底。 */
-  downloadImage?: (messageId: string, imageKey: string, index: number) => Promise<string | null>;
+  downloadImage?: (ref: MergeForwardImageRef) => Promise<string | null>;
   /** 预下载图片数上限，默认 MAX_IMAGES。 */
   maxImages?: number;
 }
@@ -62,10 +62,17 @@ interface LoadResult {
   skipped: number;
 }
 
-interface ImageRef {
-  messageId: string;
+/**
+ * 一张待预下载的转发图片。锚点与子消息必须分开：飞书资源接口只认「真实消息」，合并转发子消息的
+ * message_id 调用会返回 234003 File not in msg，必须换成投递到当前会话的那条（顶层合并转发本体）。
+ */
+export interface MergeForwardImageRef {
+  /** 下载锚点：顶层合并转发本体的 message_id，调飞书资源接口时用它。 */
+  anchorMessageId: string;
+  /** 子消息 id：仅用于落盘命名与日志，不能用于调飞书接口。 */
+  childMessageId: string;
   imageKey: string;
-  /** 同一消息内的第几张图：仅用于多图 post 的落盘命名。 */
+  /** 同一子消息内的第几张图：仅用于多图 post 的落盘命名。 */
   index: number;
 }
 
@@ -82,7 +89,7 @@ export async function expandFeishuMergeForward(
   const loaded = await loadChildren(client, messageId, 1, seen, { left: MAX_MESSAGES });
   if (loaded == null) return null;
   const names = await lookupNames(messageId, loaded.nodes, options.resolveUserNames);
-  const images = await preloadImages(loaded.nodes, options);
+  const images = await preloadImages(loaded.nodes, options, messageId);
   const lines = renderNodes(loaded.nodes, loaded.total, '', names, images);
   if (loaded.skipped > 0) lines.push(`其余 ${loaded.skipped} 条未展开`);
   return spill(messageId, options.workspace, lines.join('\n'));
@@ -271,37 +278,41 @@ function renderNodeBody(node: ForwardNode, body: string, images: Map<string, str
   return `${body}\n${refs.join('\n')}`;
 }
 
-async function preloadImages(nodes: ForwardNode[], options: ExpandMergeForwardOptions): Promise<Map<string, string>> {
+async function preloadImages(
+  nodes: ForwardNode[],
+  options: ExpandMergeForwardOptions,
+  anchorMessageId: string,
+): Promise<Map<string, string>> {
   const images = new Map<string, string>();
   const download = options.downloadImage;
   if (download == null) return images;
-  const refs = collectImageRefs(nodes, [], new Set<string>());
+  const refs = collectImageRefs(nodes, anchorMessageId, [], new Set<string>());
   const limit = Math.max(0, options.maxImages ?? MAX_IMAGES);
   for (let start = 0; start < refs.length && start < limit; start += IMAGE_CONCURRENCY) {
     const chunk = refs.slice(start, Math.min(start + IMAGE_CONCURRENCY, limit));
     await Promise.all(chunk.map(async (ref) => {
       try {
-        const path = await download(ref.messageId, ref.imageKey, ref.index);
+        const path = await download(ref);
         if (path != null && path !== '') images.set(ref.imageKey, path);
       } catch (error) {
-        console.warn(`下载合并转发图片失败, messageId=${ref.messageId}: ${error instanceof Error ? error.message : String(error)}`);
+        console.warn(`下载合并转发图片失败, child=${ref.childMessageId}, anchor=${ref.anchorMessageId}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }));
   }
   return images;
 }
 
-function collectImageRefs(nodes: ForwardNode[], out: ImageRef[], seen: Set<string>): ImageRef[] {
+function collectImageRefs(nodes: ForwardNode[], anchorMessageId: string, out: MergeForwardImageRef[], seen: Set<string>): MergeForwardImageRef[] {
   for (const node of nodes) {
     if (!node.deleted) {
       // 同一张图被转发多次时只下载一次：image_key 全局唯一，按它去重。
       nodeImageKeys(node).forEach((imageKey, index) => {
         if (seen.has(imageKey)) return;
         seen.add(imageKey);
-        out.push({ messageId: node.messageId, imageKey, index });
+        out.push({ anchorMessageId, childMessageId: node.messageId, imageKey, index });
       });
     }
-    if (node.nested != null) collectImageRefs(node.nested, out, seen);
+    if (node.nested != null) collectImageRefs(node.nested, anchorMessageId, out, seen);
   }
   return out;
 }
