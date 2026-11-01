@@ -47,6 +47,18 @@ export interface FeishuMessageDetailFetcher {
   fetchMessageDetail(appId: string, messageId: string): Promise<{ fileKey: string | null; fileName: string | null; msgType: string } | null>;
 }
 
+/**
+ * 机器人没有该消息的阅读权限时（不在会话，或资源挂在合并转发子消息上），飞书返回 230002 / 234003，
+ * bot 身份无解；但当前用户自己的身份往往可见。失败信息里附上改用 lark-cli 的操作提示，
+ * 免得 Agent 只看到一串错误码就放弃或盲目重试。
+ */
+function withLarkCliFallbackHint(message: string): string {
+  if (!/230002|234003/.test(message)) return message;
+  return `${message}\n提示：机器人没有该消息的阅读权限（不在该会话，或该资源属于合并转发的子消息，code=230002/234003），bot 身份无法下载。`
+    + '可改用 lark-cli 以当前用户身份下载：lark-cli im +messages-mget --message-ids <消息ID> --download-resources'
+    + '（保存到 lark-im-resources/ 目录；合并转发的子消息请改用外层合并转发消息 ID，拿不到外层 ID 时可请用户重新发送该文件；前提是当前用户对该消息可见）。';
+}
+
 function sanitizeFileName(name: string | null | undefined, fallback: string): string {
   const raw = (name ?? '').trim();
   if (raw === '') return fallback;
@@ -134,7 +146,7 @@ export class FeishuDownloadFileTool extends BaseTool implements FeishuChannelToo
       return toJson({ success: true, path: target });
     } catch (e) {
       harnessLog('warn', 'feishu_download_file failed', e);
-      return errorJson((e as Error).message);
+      return errorJson(withLarkCliFallbackHint((e as Error).message));
     }
   }
 }

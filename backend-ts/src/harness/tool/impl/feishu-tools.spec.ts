@@ -114,6 +114,30 @@ describe('FeishuDownloadFileTool', () => {
     expect(download).not.toHaveBeenCalled();
   });
 
+  it('adds a lark-cli fallback hint when the bot cannot access the message (230002)', async () => {
+    const download = vi.fn(async () => {
+      throw new Error('下载飞书资源失败: message=om_child, fileKey=img_x (code=230002 msg=Bot/User can NOT be out of the chat.)');
+    });
+    const result = await makeTool({ download }).execute(JSON.stringify({ message_id: 'om_child' }), 9, 1, workspace);
+    const parsed = JSON.parse(result);
+    expect(parsed.error).toContain('code=230002');
+    expect(parsed.error).toContain('lark-cli im +messages-mget --message-ids <消息ID> --download-resources');
+  });
+
+  it('adds the same hint for a merge-forward child resource (234003)', async () => {
+    const download = vi.fn(async () => {
+      throw new Error('下载飞书资源失败: message=om_child, fileKey=file_x (code=234003 msg=File not in msg.)');
+    });
+    const result = await makeTool({ download }).execute(JSON.stringify({ message_id: 'om_child' }), 9, 1, workspace);
+    expect(JSON.parse(result).error).toContain('外层合并转发消息 ID');
+  });
+
+  it('keeps unrelated failures free of the lark-cli hint', async () => {
+    const download = vi.fn(async () => { throw new Error('socket hang up'); });
+    const result = await makeTool({ download }).execute(JSON.stringify({ message_id: 'om_x' }), 9, 1, workspace);
+    expect(JSON.parse(result).error).toBe('socket hang up');
+  });
+
   it('rejects when the session is not a feishu channel session', async () => {
     const result = await makeTool({ appId: null }).execute(JSON.stringify({ message_id: 'om_123' }), 9, 1, workspace);
     expect(JSON.parse(result).error).toContain('不是飞书通道会话');
