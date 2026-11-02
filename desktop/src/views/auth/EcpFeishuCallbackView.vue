@@ -34,9 +34,13 @@ async function completeLogin() {
   try {
     const { data } = await api.post('/auth/ecp/feishu/callback', { state, code })
     await authStore.applyLogin(data)
-    statusText.value = '登录成功，正在跳转…'
+    statusText.value = '登录成功，正在返回…'
     const target = safeRedirect(readRedirectQuery(route.query))
-    await router.replace(target)
+    // 从登录页弹出的授权窗口：关掉自己，原页面轮询到结果后进入。关不掉再在本页跳转。
+    window.close()
+    window.setTimeout(() => {
+      if (!window.closed) void router.replace(target)
+    }, 400)
   } catch (error: any) {
     statusText.value = '登录失败'
     ElMessage.error(error?.response?.data?.message || error?.message || '飞书登录失败')

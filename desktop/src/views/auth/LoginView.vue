@@ -134,8 +134,8 @@ import appIcon from '../../assets/app-icon-small.png'
 import feishuLogo from '../../assets/feishu-logo.svg'
 import { useTheme } from '../../utils/theme'
 import { readRedirectQuery, safeRedirect } from '../../utils/login-redirect'
-import { openExternalUrl } from '../../utils/capacitor'
-import { feishuPollPhase } from '../../utils/feishu-login-poll'
+import { isAndroidCapacitor, openExternalUrl } from '../../utils/capacitor'
+import { feishuPollPhase, openFeishuAuthPopup } from '../../utils/feishu-login-poll'
 import { safeRemoveItem, safeSetItem } from '../../utils/safe-storage'
 
 type LoginMode = 'password' | 'feishu'
@@ -172,6 +172,7 @@ const formRules: FormRules = {
 }
 
 let pollTimer: number | null = null
+let popupWatchTimer: number | null = null
 let polling = false
 let feishuState = ''
 /** 飞书轮询取消标志：返回密码登录/卸载时终止仍在进行的 pollFeishuResult 循环 */
@@ -269,8 +270,8 @@ async function startFeishuLogin(provider: FeishuProvider) {
         feishuStatusText.value = '授权窗口已关闭'
         backToPasswordLogin()
       }
-    } else {
-      // Web / 安卓: 新窗口打开飞书授权页，轮询状态
+    } else if (isAndroidCapacitor()) {
+      // 安卓壳交给系统浏览器，授权完成后由用户回到 App，原页面继续轮询
       feishuStatusText.value = '请在打开的飞书授权页面中完成登录'
       const opened = await openExternalUrl(authUrl)
       if (!opened) {
@@ -280,6 +281,18 @@ async function startFeishuLogin(provider: FeishuProvider) {
         return
       }
       startPolling(qr.pollInterval || 2)
+    } else {
+      // Web: 弹窗授权。回调页会关掉自己，焦点回到这个登录页。
+      feishuStatusText.value = '请在弹出的飞书窗口中完成登录'
+      const popup = openFeishuAuthPopup(authUrl)
+      if (!popup) {
+        feishuStatusText.value = '授权页面被浏览器拦截，请允许弹窗后重试'
+        ElMessage.error('授权页面被浏览器拦截，请允许弹窗后重试')
+        backToPasswordLogin()
+        return
+      }
+      watchFeishuPopup(popup)
+      startPolling(qr.pollInterval || 2)
     }
   } catch (error) {
     feishuStatusText.value = '飞书登录启动失败'
@@ -287,6 +300,35 @@ async function startFeishuLogin(provider: FeishuProvider) {
   } finally {
     feishuLoading.value = false
   }
+}
+
+function watchFeishuPopup(popup: Window) {
+  clearPopupWatch()
+  popupWatchTimer = window.setInterval(() => {
+    if (!popup.closed) return
+    clearPopupWatch()
+    void onFeishuPopupClosed()
+  }, 300)
+}
+
+function clearPopupWatch() {
+  if (popupWatchTimer) {
+    window.clearInterval(popupWatchTimer)
+    popupWatchTimer = null
+  }
+}
+
+/** 弹窗关掉后立刻问一次结果。还在换票就继续等；用户提前关掉且仍未开始，则回到密码登录。 */
+async function onFeishuPopupClosed() {
+  const deadline = Date.now() + 3000
+  while (polling && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  await checkFeishuStatus()
+  if (!feishuState || !pollTimer) return
+  if (feishuStatusText.value === '正在完成登录…' || feishuStatusText.value === '登录成功') return
+  feishuStatusText.value = '授权窗口已关闭'
+  backToPasswordLogin()
 }
 
 function startPolling(intervalSeconds: number) {
@@ -370,6 +412,7 @@ async function pollFeishuResult(state: string) {
 
 function backToPasswordLogin() {
   pollCancelled = true
+  clearPopupWatch()
   clearPollTimer()
   mode.value = 'password'
   feishuState = ''
@@ -397,6 +440,7 @@ function showError(error: unknown, fallback: string) {
 
 onBeforeUnmount(() => {
   pollCancelled = true
+  clearPopupWatch()
   clearPollTimer()
 })
 </script>

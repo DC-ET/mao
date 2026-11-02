@@ -143,5 +143,26 @@ describe('FeishuAuthService', () => {
     vi.mocked(stateRepo.findByState).mockResolvedValue(null);
     const html = await service.renderCallbackPage('missing', 'code');
     expect(html).toContain('登录失败');
+    expect(html).not.toContain('window.close()');
+  });
+
+  it('renderCallbackPageClosesPopupOnSuccess', async () => {
+    const http: FeishuHttp = {
+      postJson: vi.fn(async (url: string) => {
+        if (url.includes('app_access_token')) return { ok: true, json: { code: 0, app_access_token: 'app' } };
+        return { ok: true, json: { code: 0, data: { access_token: 'user' } } };
+      }),
+      getJson: vi.fn(async () => ({
+        ok: true,
+        json: { code: 0, data: { name: 'Li', email: 'li@example.com', user_id: 'fu-1', avatar_url: 'http://a' } },
+      })),
+    };
+    const { service, stateRepo } = makeService(http);
+    vi.mocked(stateRepo.findByState).mockResolvedValue({
+      state: 'st', status: FEISHU_PENDING, expiresAt: '2099-01-01 00:00:00',
+    });
+    const html = await service.renderCallbackPage('st', 'code-1');
+    expect(html).toContain('正在回到原来的页面');
+    expect(html).toContain('window.close()');
   });
 });

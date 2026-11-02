@@ -182,7 +182,7 @@ export class FeishuAuthService {
       } else {
         await this.onUserAuthenticated?.(user, undefined, state);
       }
-      return htmlPage('登录成功', '飞书授权已完成，请回到 Mao 客户端。', true);
+      return htmlPage('登录成功', '飞书授权已完成，正在回到原来的页面。', true);
     } catch (e) {
       const msg = e instanceof BusinessException ? e.message : '飞书登录失败';
       return htmlPage('登录失败', msg, false);
@@ -433,6 +433,9 @@ function uuidName(input: string): string {
 
 function htmlPage(title: string, message: string, success: boolean): string {
   const color = success ? '#16a34a' : '#dc2626';
+  // 登录页用 window.open 弹出的授权页在成功后关掉自己，浏览器会回到原来的标签。
+  // 失败页留着，让用户能看到原因。
+  const closeScript = success ? '<script>window.close()</script>' : '';
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -446,7 +449,7 @@ function htmlPage(title: string, message: string, success: boolean): string {
     p { margin: 0; line-height: 1.7; }
   </style>
 </head>
-<body><main><h1>${escapeHtml(title)}</h1><p>${escapeHtml(message)}</p></main></body>
+<body><main><h1>${escapeHtml(title)}</h1><p>${escapeHtml(message)}</p></main>${closeScript}</body>
 </html>`;
 }
 

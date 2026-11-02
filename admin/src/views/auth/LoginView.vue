@@ -148,8 +148,18 @@ async function startFeishuLogin(provider: 'mao' | 'ecp') {
       ? await api.post('/auth/ecp/feishu/start', { target: 'admin' }, { skipErrorToast: true })
       : await api.get('/auth/feishu/qrcode', { skipErrorToast: true })
     feishuState = data.state
-    feishuStatusText.value = '请在打开的飞书授权页面中完成登录'
-    window.open(data.authUrl || data.qrCodeUrl, '_blank', 'noopener,noreferrer')
+    feishuStatusText.value = '请在弹出的飞书窗口中完成登录'
+    const popup = window.open(data.authUrl || data.qrCodeUrl, 'mao-feishu-auth', 'popup,width=800,height=720')
+    if (!popup) {
+      feishuStatusText.value = '授权页面被浏览器拦截，请允许弹窗后重试'
+      ElMessage.error('授权页面被浏览器拦截，请允许弹窗后重试')
+      return
+    }
+    try {
+      popup.opener = null
+    } catch {
+      // 窗口已经打开
+    }
     startPolling(data.pollInterval || 2)
   } catch (error: any) {
     feishuStatusText.value = '飞书登录启动失败'

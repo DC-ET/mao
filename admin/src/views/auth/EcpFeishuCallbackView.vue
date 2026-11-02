@@ -36,8 +36,11 @@ async function completeLogin() {
     localStorage.setItem('token', data.accessToken)
     localStorage.setItem('refreshToken', data.refreshToken)
     await authStore.fetchUserInfo()
-    statusText.value = '登录成功，正在跳转…'
-    await router.replace('/')
+    statusText.value = '登录成功，正在返回…'
+    window.close()
+    window.setTimeout(() => {
+      if (!window.closed) void router.replace('/')
+    }, 400)
   } catch (error: any) {
     statusText.value = '登录失败'
     ElMessage.error(error?.response?.data?.message || error?.message || '飞书登录失败')
