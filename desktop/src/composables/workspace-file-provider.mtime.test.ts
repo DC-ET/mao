@@ -43,6 +43,22 @@ describe('createCloudProvider listDirectory mtime 映射', () => {
     expect(result.entries?.[0].mtime).toBeUndefined()
   })
 
+  it('把只读标记和 403 文案交给文件页', async () => {
+    vi.mocked(api.get).mockResolvedValueOnce({
+      data: { entries: [], truncated: false, readOnly: true, workspaceRoot: '/ws' },
+    })
+    const provider = createCloudProvider('42')
+    const listing = await provider.listDirectory('团队经验')
+    expect(listing.readOnly).toBe(true)
+
+    vi.mocked(api.get).mockRejectedValueOnce({
+      message: 'Request failed with status code 403',
+      response: { data: { message: '路径访问被拒绝' } },
+    })
+    const read = await provider.readFile('团队经验')
+    expect(read.error).toBe('路径访问被拒绝')
+  })
+
   it('按请求参数带上 sessionId 与 dir', async () => {
     vi.mocked(api.get).mockResolvedValue({ data: { entries: [] } })
     const provider = createCloudProvider('42')

@@ -23,7 +23,8 @@ export function useFileBrowser(provider: Ref<WorkspaceFileProvider | null>) {
       if (result.error) {
         treeData.value = [{ name: '', path: '', isDirectory: false, error: result.error }]
       } else {
-        treeData.value = (result.entries || []).map(entryToNode)
+        const inherited = result.readOnly === true
+        treeData.value = (result.entries || []).map((entry) => entryToNode(entry, inherited))
       }
     } catch (e: any) {
       if (seq !== rootRequestSeq) return
@@ -40,7 +41,8 @@ export function useFileBrowser(provider: Ref<WorkspaceFileProvider | null>) {
       if (result.error) {
         node.children = [{ name: '', path: node.path, isDirectory: false, error: result.error }]
       } else {
-        node.children = (result.entries || []).map(entryToNode)
+        const inherited = node.readOnly === true || result.readOnly === true
+        node.children = (result.entries || []).map((entry) => entryToNode(entry, inherited))
       }
     } catch (e: any) {
       node.children = [{ name: '', path: node.path, isDirectory: false, error: e.message }]
@@ -52,13 +54,13 @@ export function useFileBrowser(provider: Ref<WorkspaceFileProvider | null>) {
    * loading intermediate directories as needed.
    */
   async function compactSingleChildDirs(node: FileNode): Promise<void> {
-    if (!node.isDirectory || node.isSymlink || !node.children) return
+    if (!node.isDirectory || node.isSymlink || node.readOnly || !node.children) return
 
     while (node.children) {
       const kids: FileNode[] = node.children.filter((c) => !c.error)
       if (kids.length !== 1) break
       const only: FileNode = kids[0]
-      if (!only.isDirectory || only.isSymlink) break
+      if (!only.isDirectory || only.isSymlink || only.readOnly) break
 
       if (!only.children) {
         await loadChildren(only)
@@ -78,7 +80,7 @@ export function useFileBrowser(provider: Ref<WorkspaceFileProvider | null>) {
   }
 
   async function expandDir(node: FileNode) {
-    if (!provider.value || !node.isDirectory || node.isSymlink) return
+    if (!provider.value || !node.isDirectory) return
     if (node.expanded) {
       node.expanded = false
       expandedPaths.value.delete(node.path)
@@ -102,7 +104,7 @@ export function useFileBrowser(provider: Ref<WorkspaceFileProvider | null>) {
 
   /** Expand a directory without collapsing if already expanded. */
   async function forceExpand(node: FileNode) {
-    if (!provider.value || !node.isDirectory || node.isSymlink) return
+    if (!provider.value || !node.isDirectory) return
     if (!node.children) {
       node.children = []
       await loadChildren(node)
@@ -130,7 +132,8 @@ export function useFileBrowser(provider: Ref<WorkspaceFileProvider | null>) {
         treeData.value = [{ name: '', path: '', isDirectory: false, error: result.error }]
         return
       }
-      treeData.value = (result.entries || []).map(entryToNode)
+      const inherited = result.readOnly === true
+      treeData.value = (result.entries || []).map((entry) => entryToNode(entry, inherited))
       // 旧树已替换：清空展开集合，仅恢复本次刷新前已展开且仍存在的路径
       expandedPaths.value.clear()
     } catch (e: any) {
@@ -180,13 +183,18 @@ export function useFileBrowser(provider: Ref<WorkspaceFileProvider | null>) {
     }
   }
 
-  function entryToNode(entry: { name: string; path: string; isDirectory: boolean; size: number; isSymlink: boolean }): FileNode {
+  function entryToNode(
+    entry: { name: string; path: string; isDirectory: boolean; size: number; isSymlink: boolean },
+    inheritedReadOnly = false,
+  ): FileNode {
+    const readOnly = inheritedReadOnly || (entry.isDirectory && entry.isSymlink)
     return {
       name: entry.name,
       path: entry.path,
       isDirectory: entry.isDirectory,
       isSymlink: entry.isSymlink,
       size: entry.size,
+      ...(readOnly ? { readOnly: true } : {}),
     }
   }
 

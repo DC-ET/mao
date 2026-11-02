@@ -8,9 +8,11 @@
       @click="hide"
     >
       <template v-if="isMulti">
-        <div class="context-menu-item" @click="$emit('remove')"><el-icon><Delete /></el-icon><span>删除（{{ selectedCount }} 项）</span></div>
-        <div class="context-menu-item" @click="$emit('cut')"><el-icon><Scissor /></el-icon><span>剪切</span></div>
-        <div class="context-menu-item" @click="$emit('copy')"><el-icon><DocumentCopy /></el-icon><span>复制</span></div>
+        <template v-if="!writesLocked">
+          <div class="context-menu-item" @click="$emit('remove')"><el-icon><Delete /></el-icon><span>删除（{{ selectedCount }} 项）</span></div>
+          <div class="context-menu-item" @click="$emit('cut')"><el-icon><Scissor /></el-icon><span>剪切</span></div>
+          <div class="context-menu-item" @click="$emit('copy')"><el-icon><DocumentCopy /></el-icon><span>复制</span></div>
+        </template>
         <div class="context-menu-divider"></div>
         <div class="context-menu-item" @click="$emit('download')"><el-icon><Download /></el-icon><span>下载（{{ selectedCount }} 项）</span></div>
         <div class="context-menu-item" @click="$emit('copy-absolute')"><el-icon><DocumentCopy /></el-icon><span>复制绝对路径</span></div>
@@ -19,16 +21,18 @@
       </template>
       <template v-else-if="entry">
         <div class="context-menu-item" @click="$emit('open')"><el-icon><View /></el-icon><span>打开</span></div>
-        <template v-if="entry.isDirectory">
+        <template v-if="!writesLocked && entry.isDirectory">
           <div class="context-menu-item" @click="$emit('create-file')"><el-icon><DocumentAdd /></el-icon><span>新建文件</span></div>
           <div class="context-menu-item" @click="$emit('create-dir')"><el-icon><FolderAdd /></el-icon><span>新建文件夹</span></div>
           <div class="context-menu-item" @click="$emit('upload-here')"><el-icon><Upload /></el-icon><span>上传到此处</span></div>
         </template>
-        <div class="context-menu-item" @click="$emit('rename')"><el-icon><EditPen /></el-icon><span>重命名</span></div>
-        <div class="context-menu-item" @click="$emit('remove')"><el-icon><Delete /></el-icon><span>删除</span></div>
-        <div class="context-menu-item" @click="$emit('cut')"><el-icon><Scissor /></el-icon><span>剪切</span></div>
-        <div class="context-menu-item" @click="$emit('copy')"><el-icon><DocumentCopy /></el-icon><span>复制</span></div>
-        <div v-if="canPaste" class="context-menu-item" @click="$emit('paste')"><el-icon><CopyDocument /></el-icon><span>粘贴</span></div>
+        <template v-if="!writesLocked">
+          <div class="context-menu-item" @click="$emit('rename')"><el-icon><EditPen /></el-icon><span>重命名</span></div>
+          <div class="context-menu-item" @click="$emit('remove')"><el-icon><Delete /></el-icon><span>删除</span></div>
+          <div class="context-menu-item" @click="$emit('cut')"><el-icon><Scissor /></el-icon><span>剪切</span></div>
+          <div class="context-menu-item" @click="$emit('copy')"><el-icon><DocumentCopy /></el-icon><span>复制</span></div>
+          <div v-if="canPaste" class="context-menu-item" @click="$emit('paste')"><el-icon><CopyDocument /></el-icon><span>粘贴</span></div>
+        </template>
         <div class="context-menu-divider"></div>
         <div v-if="entry.isDirectory" class="context-menu-item" @click="$emit('download-zip')"><el-icon><Download /></el-icon><span>下载此目录（zip）</span></div>
         <div v-else class="context-menu-item" @click="$emit('download')"><el-icon><Download /></el-icon><span>下载此文件</span></div>
@@ -38,10 +42,12 @@
         <div class="context-menu-item" @click="$emit('locate')"><el-icon><Position /></el-icon><span>在文件树中显示</span></div>
       </template>
       <template v-else>
-        <div class="context-menu-item" @click="$emit('create-file')"><el-icon><DocumentAdd /></el-icon><span>新建文件</span></div>
-        <div class="context-menu-item" @click="$emit('create-dir')"><el-icon><FolderAdd /></el-icon><span>新建文件夹</span></div>
-        <div class="context-menu-item" @click="$emit('upload-here')"><el-icon><Upload /></el-icon><span>上传到此处</span></div>
-        <div v-if="canPaste" class="context-menu-item" @click="$emit('paste')"><el-icon><CopyDocument /></el-icon><span>粘贴</span></div>
+        <template v-if="!writesLocked">
+          <div class="context-menu-item" @click="$emit('create-file')"><el-icon><DocumentAdd /></el-icon><span>新建文件</span></div>
+          <div class="context-menu-item" @click="$emit('create-dir')"><el-icon><FolderAdd /></el-icon><span>新建文件夹</span></div>
+          <div class="context-menu-item" @click="$emit('upload-here')"><el-icon><Upload /></el-icon><span>上传到此处</span></div>
+          <div v-if="canPaste" class="context-menu-item" @click="$emit('paste')"><el-icon><CopyDocument /></el-icon><span>粘贴</span></div>
+        </template>
         <div class="context-menu-divider"></div>
         <div class="context-menu-item" @click="$emit('select-all')"><el-icon><Finished /></el-icon><span>全选</span></div>
       </template>
@@ -64,6 +70,7 @@ const props = defineProps<{
   entry: FileNode | null
   selectedCount: number
   canPaste: boolean
+  writesLocked?: boolean
 }>()
 
 const emit = defineEmits<{

@@ -100,7 +100,8 @@
         <div class="fm-empty">
           <el-icon :size="40"><FolderOpened /></el-icon>
           <p>空目录</p>
-          <p class="fm-empty-hint">拖拽文件到此处上传，或右键新建</p>
+          <p v-if="directoryReadOnly" class="fm-empty-hint">这个库还没有经验文档</p>
+          <p v-else class="fm-empty-hint">拖拽文件到此处上传，或右键新建</p>
         </div>
       </template>
       <template v-else>
@@ -111,6 +112,7 @@
           :renaming-path="renamingPath"
           :creating="creating"
           :drop-target-path="dropTargetPath"
+          :read-only="directoryReadOnly"
           @open="handleOpen"
           @contextmenu="openContextMenu"
           @toggle-select="onToggleSelect"
@@ -131,6 +133,7 @@
           :drop-target-path="dropTargetPath"
           :sort-by="sortBy"
           :sort-order="sortOrder"
+          :read-only="directoryReadOnly"
           @open="handleOpen"
           @contextmenu="openContextMenu"
           @toggle-select="onToggleSelect"
@@ -146,6 +149,8 @@
       </template>
     </div>
 
+    <div v-if="directoryReadOnly" class="fm-hint">团队经验库只读。内容由 Agent 写入，修改请到管理后台的 Agent 经验库。</div>
+
     <div v-if="uploadProgress" class="fm-upload-progress">
       <span>{{ uploadProgress.error ? `${uploadProgress.label}：${uploadProgress.error}` : uploadProgress.label }}</span>
       <el-progress :percentage="uploadProgress.percent" :status="uploadProgress.error ? 'exception' : undefined" />
@@ -158,11 +163,11 @@
         <template v-if="clipboardCount > 0"> · 剪贴板 {{ clipboardCount }} 项</template>
       </span>
       <div class="fm-status-actions">
-        <button class="fm-text-btn" @click="pickUpload(false)"><el-icon><Upload /></el-icon>上传文件</button>
-        <button class="fm-text-btn" @click="pickUpload(true)"><el-icon><FolderAdd /></el-icon>上传文件夹</button>
-        <button class="fm-text-btn" @click="beginCreate('file')"><el-icon><DocumentAdd /></el-icon>新建文件</button>
-        <button class="fm-text-btn" @click="beginCreate('dir')"><el-icon><FolderAdd /></el-icon>新建文件夹</button>
-        <button class="fm-text-btn" :disabled="selectedCount === 0" @click="handleDelete"><el-icon><Delete /></el-icon>删除</button>
+        <button v-if="!directoryReadOnly" class="fm-text-btn" @click="pickUpload(false)"><el-icon><Upload /></el-icon>上传文件</button>
+        <button v-if="!directoryReadOnly" class="fm-text-btn" @click="pickUpload(true)"><el-icon><FolderAdd /></el-icon>上传文件夹</button>
+        <button v-if="!directoryReadOnly" class="fm-text-btn" @click="beginCreate('file')"><el-icon><DocumentAdd /></el-icon>新建文件</button>
+        <button v-if="!directoryReadOnly" class="fm-text-btn" @click="beginCreate('dir')"><el-icon><FolderAdd /></el-icon>新建文件夹</button>
+        <button class="fm-text-btn" :disabled="selectedCount === 0 || experienceSelectionLocked" @click="handleDelete"><el-icon><Delete /></el-icon>删除</button>
         <button class="fm-text-btn" :disabled="selectedCount === 0" @click="handleDownload"><el-icon><Download /></el-icon>下载</button>
         <el-dropdown trigger="click" :disabled="selectedCount === 0" @command="onCopyPathCommand">
           <button class="fm-text-btn" :disabled="selectedCount === 0">
@@ -187,7 +192,8 @@
       :y="ctxMenu.y"
       :entry="ctxMenu.entry"
       :selected-count="selectedCount"
-      :can-paste="canPaste"
+      :can-paste="canPaste && !ctxWritesLocked"
+      :writes-locked="ctxWritesLocked"
       @hide="ctxMenu.visible = false"
       @open="handleCtxOpen"
       @create-file="beginCreate('file', ctxTargetDir())"
@@ -256,7 +262,7 @@ const {
   numericSessionId, currentDir, entries, loading, error, selectedCount, selectedList,
   viewMode, sortBy, sortOrder, sortedEntries, breadcrumbs, canGoBack, canGoForward,
   searchQuery, searchResults, searching, searchError, searchTruncated,
-  renamingPath, creating, dropTargetPath,
+  renamingPath, creating, dropTargetPath, directoryReadOnly,
   navigateTo, goBack, goForward, refresh, toggleSelect, selectAll, selectOnly,
   beginCreate, beginRename, cancelDraft, setSort, setViewMode, jumpToSearchResult,
 } = fm
@@ -275,6 +281,16 @@ function ownedRoot(): string | undefined {
 }
 const clipboardCount = computed(() => (canPaste.value ? clipboard.current?.paths.length ?? 0 : 0))
 
+/** 团队经验挂载点，或已经进入该库：文件管理不能改。 */
+function experienceLocked(entry: FileNode | null | undefined): boolean {
+  if (directoryReadOnly.value) return true
+  return !!(entry?.isSymlink && entry.isDirectory)
+}
+
+const experienceSelectionLocked = computed(() =>
+  directoryReadOnly.value || selectedEntries().some((entry) => experienceLocked(entry)),
+)
+
 const rootEl = ref<HTMLDivElement>()
 const fileInput = ref<HTMLInputElement>()
 const dirInput = ref<HTMLInputElement>()
@@ -282,6 +298,11 @@ const uploadDir = ref('')
 const uploadProgress = ref<UploadProgress | null>(null)
 const ctxMenu = reactive<{ visible: boolean; x: number; y: number; entry: FileNode | null }>({
   visible: false, x: 0, y: 0, entry: null,
+})
+const ctxWritesLocked = computed(() => {
+  if (directoryReadOnly.value) return true
+  if (ctxMenu.entry && experienceLocked(ctxMenu.entry)) return true
+  return selectedEntries().some((entry) => experienceLocked(entry)) && selectedCount.value > 1
 })
 
 onMounted(() => rootEl.value?.focus())
@@ -368,9 +389,16 @@ async function commitRename(path: string, name: string) {
 
 /* ---------- 删除 ---------- */
 
+function refuseExperienceWrite(targets: FileNode[] = []): boolean {
+  if (!directoryReadOnly.value && !targets.some((entry) => experienceLocked(entry))) return false
+  ElMessage.warning('团队经验库只读，不能在文件管理中修改')
+  return true
+}
+
 async function handleDelete() {
   const targets = selectedEntries()
   if (targets.length === 0) return
+  if (refuseExperienceWrite(targets)) return
   if (!ensureWritable()) return
   const lines = targets.map((e) => (e.isDirectory ? `${e.path}（目录，将删除其下所有内容）` : e.path))
   // 与侧边栏 touchesGit 同口径：任意层级的 .git 都算版本库，不止根目录那个
@@ -408,9 +436,10 @@ async function handleDelete() {
 /* ---------- 剪贴板 ---------- */
 
 function handleClipboard(op: 'cut' | 'copy') {
-  const paths = selectedList.value
-  if (paths.length === 0) return
-  clipboard.set(op, numericSessionId.value, paths, clipScope.value || undefined)
+  const targets = selectedEntries()
+  if (targets.length === 0) return
+  if (refuseExperienceWrite(targets)) return
+  clipboard.set(op, numericSessionId.value, targets.map((entry) => entry.path), clipScope.value || undefined)
 }
 
 async function handlePaste() {
@@ -423,6 +452,7 @@ async function handlePaste() {
     ElMessage.warning(scope ? '剪贴板为空或不能跨工作区粘贴' : '剪贴板为空或不能跨会话粘贴')
     return
   }
+  if (refuseExperienceWrite()) return
   if (!ensureWritable()) return
   const sources = dedupeMoveSources(clip.paths)
   // 后端 path-sandbox 拒收空串，根目录落点必须传 '.'（与 uploadWorkspace、侧边栏 pasteClipboard 同口径）
@@ -455,12 +485,17 @@ async function handlePaste() {
 
 /* ---------- 拖拽移动 ---------- */
 
-function onItemDragstart(_entry: FileNode, e: DragEvent) {
+function onItemDragstart(entry: FileNode, e: DragEvent) {
+  if (experienceLocked(entry)) {
+    e.preventDefault()
+    return
+  }
   if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
 }
 
 async function moveSourcesTo(sources: string[], dir: string, dirIsCurrent = false) {
   if (sources.length === 0) return
+  if (directoryReadOnly.value || experienceLocked(entries.value.find((entry) => entry.path === dir))) return
   if (!ensureWritable()) return
   // 落到当前目录时它不在自己的子列表里，只能做关系校验；落到可见文件夹才查表确认是目录
   const movable = sources.filter((src) =>
@@ -483,6 +518,7 @@ async function moveSourcesTo(sources: string[], dir: string, dirIsCurrent = fals
 
 function onFolderDrop(entry: FileNode, e: DragEvent) {
   dropTargetPath.value = ''
+  if (experienceLocked(entry)) return
   const paths = parseDragPaths(e.dataTransfer?.getData(DRAG_PATHS_MIME) ?? null)
   if (paths.length > 0) {
     void moveSourcesTo(paths, entry.path)
@@ -502,6 +538,7 @@ function onBodyDragOver(e: DragEvent) {
 
 function onBodyDrop(e: DragEvent) {
   dropTargetPath.value = ''
+  if (directoryReadOnly.value) return
   const paths = parseDragPaths(e.dataTransfer?.getData(DRAG_PATHS_MIME) ?? null)
   if (paths.length > 0) {
     void moveSourcesTo(paths, currentDir.value, true)
@@ -518,6 +555,10 @@ function onBodyDrop(e: DragEvent) {
 /* ---------- 上传 ---------- */
 
 function pickUpload(folder: boolean, dir: string = currentDir.value) {
+  if (directoryReadOnly.value || experienceLocked(entries.value.find((entry) => entry.path === dir))) {
+    ElMessage.warning('团队经验库只读，不能在文件管理中修改')
+    return
+  }
   uploadDir.value = dir
   if (folder) dirInput.value?.click()
   else fileInput.value?.click()
@@ -683,7 +724,7 @@ function onKeydown(e: KeyboardEvent) {
   }
   if (e.key === 'F2') {
     const first = selectedEntries()[0]
-    if (first) beginRename(first.path)
+    if (first && !refuseExperienceWrite([first])) beginRename(first.path)
     return
   }
   if (e.key === 'Delete') {

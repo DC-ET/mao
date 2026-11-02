@@ -8,12 +8,15 @@ import { requireRequestPermission, sendOk } from '../common/http-error.js';
 import { contentDisposition } from '../file/file.routes.js';
 import type { Session } from './types.js';
 import type { SessionService } from './session.service.js';
+import { experienceDirForSession } from '../harness/experience/experience-mount-path.js';
 import type { WorkspaceBrowseService } from '../file/workspace-browse.service.js';
 
 export interface AdminSessionFilesRouteDeps {
   sessionService: Pick<SessionService, 'getSession'>;
   workspaceBrowseService: WorkspaceBrowseService;
   permissionService: { hasPermission(userId: number, code: string): Promise<boolean> };
+  /** 会话 Agent 的经验库目录。不提供时「团队经验」仍按越界拒绝。 */
+  experienceDirForAgent?: (agentId: number) => string;
 }
 
 /**
@@ -40,10 +43,16 @@ export function registerAdminSessionFilesRoutes(app: FastifyInstance, deps: Admi
     return session;
   }
 
+  function experienceDirOf(session: Session): string | undefined {
+    return experienceDirForSession(session, deps.experienceDirForAgent);
+  }
+
   app.get('/v1/admin/sessions/:id/files/directory', async (request, reply) => {
     await requireRead(request);
     const session = await requireBrowsableSession(pathId(request));
-    return sendOk(reply, workspaceBrowseService.listDirectory(session.workspace!, queryOptStr(request, 'dir')));
+    return sendOk(reply, workspaceBrowseService.listDirectory(
+      session.workspace!, queryOptStr(request, 'dir'), experienceDirOf(session),
+    ));
   });
 
   app.get('/v1/admin/sessions/:id/files/search', async (request, reply) => {
@@ -56,7 +65,9 @@ export function registerAdminSessionFilesRoutes(app: FastifyInstance, deps: Admi
     if (pattern.length > 100) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '搜索关键词过长');
     }
-    return sendOk(reply, workspaceBrowseService.searchFiles(session.workspace!, pattern, queryOptInt(request, 'limit') ?? 100));
+    return sendOk(reply, workspaceBrowseService.searchFiles(
+      session.workspace!, pattern, queryOptInt(request, 'limit') ?? 100, experienceDirOf(session),
+    ));
   });
 
   app.get('/v1/admin/sessions/:id/files/read', async (request, reply) => {
@@ -68,6 +79,7 @@ export function registerAdminSessionFilesRoutes(app: FastifyInstance, deps: Admi
     }
     return sendOk(reply, await workspaceBrowseService.readFile(
       session.workspace!, path, queryOptInt(request, 'offset') ?? 0, queryOptInt(request, 'limit') ?? 5000,
+      experienceDirOf(session),
     ));
   });
 
@@ -78,7 +90,7 @@ export function registerAdminSessionFilesRoutes(app: FastifyInstance, deps: Admi
     if (path == null) {
       throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
     }
-    const result = workspaceBrowseService.readPdfFile(session.workspace!, path);
+    const result = workspaceBrowseService.readPdfFile(session.workspace!, path, experienceDirOf(session));
     return sendFileStream(reply, result.path, result.fileName, 'application/pdf', result.size, 'inline');
   });
 
@@ -89,7 +101,7 @@ export function registerAdminSessionFilesRoutes(app: FastifyInstance, deps: Admi
     if (path == null) {
       throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
     }
-    const result = workspaceBrowseService.downloadFile(session.workspace!, path);
+    const result = workspaceBrowseService.downloadFile(session.workspace!, path, experienceDirOf(session));
     const mediaType = mimeLookup(result.path) || 'application/octet-stream';
     return sendFileStream(reply, result.path, result.fileName, mediaType, result.size, 'attachment');
   });
@@ -98,7 +110,9 @@ export function registerAdminSessionFilesRoutes(app: FastifyInstance, deps: Admi
     await requireRead(request);
     const session = await requireBrowsableSession(pathId(request));
     // path 缺省 = 整个工作区：zipDirectory 的 normalizeRelativeDir 将 null 归一为 '.'
-    const result = await workspaceBrowseService.zipDirectory(session.workspace!, queryOptStr(request, 'path'));
+    const result = await workspaceBrowseService.zipDirectory(
+      session.workspace!, queryOptStr(request, 'path'), experienceDirOf(session),
+    );
     const stream = createReadStream(result.zipPath);
     const cleanup = () => {
       try { unlinkSync(result.zipPath); } catch (e) {

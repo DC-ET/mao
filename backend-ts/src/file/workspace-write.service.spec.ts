@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
+import { EXPERIENCE_READONLY_MESSAGE } from '../harness/experience/experience-mount-path.js';
 import { PathSandbox } from '../harness/safety/path-sandbox.js';
 import { withFileLock } from '../harness/tool/impl/file-write-lock.js';
 import type { ActivityService } from '../session/activity.service.js';
@@ -36,6 +37,24 @@ function codeOf(e: unknown): number {
 }
 
 describe('workspace write service', () => {
+  it('rejects mutations through the experience mount but keeps a real directory writable', async () => {
+    const { workspace, service } = setup();
+    const lib = useTmpDir('mao-exp-lib-');
+    writeFileSync(join(lib, 'INDEX.md'), 'index');
+    symlinkSync(lib, join(workspace, '团队经验'), 'dir');
+
+    const deleted = await service.delete(1, workspace, '团队经验').catch((e) => e);
+    expect(deleted).toMatchObject({ code: ErrorCode.FORBIDDEN.code, message: EXPERIENCE_READONLY_MESSAGE });
+    const written = await service.write(1, workspace, '团队经验/new.md', 'x').catch((e) => e);
+    expect(written).toMatchObject({ code: ErrorCode.FORBIDDEN.code, message: EXPERIENCE_READONLY_MESSAGE });
+    expect(lstatSync(join(workspace, '团队经验')).isSymbolicLink()).toBe(true);
+
+    rmSync(join(workspace, '团队经验'));
+    mkdirSync(join(workspace, '团队经验'));
+    await service.write(1, workspace, '团队经验/note.md', 'hello');
+    expect(readFileSync(join(workspace, '团队经验', 'note.md'), 'utf8')).toBe('hello');
+  });
+
   it('rejects path escape, allowed runtime roots, and symlinks that leave the workspace', async () => {
     const { sandbox, workspace, service, recorded } = setup();
     const runtime = useTmpDir('mao-ws-runtime-');

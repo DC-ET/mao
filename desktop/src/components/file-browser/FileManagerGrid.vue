@@ -9,7 +9,7 @@
         'is-drop-target': dropTargetPath === entry.path,
         'is-symlink': entry.isSymlink,
       }"
-      draggable="true"
+      :draggable="canDragEntry(entry)"
       @dragstart="onDragstart(entry, $event)"
       @dragover="onDragOver(entry, $event)"
       @dragleave="$emit('folder-dragleave')"
@@ -71,6 +71,7 @@ const props = defineProps<{
   renamingPath: string
   creating: { dir: string; kind: 'file' | 'dir' } | null
   dropTargetPath: string
+  readOnly?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -131,8 +132,13 @@ function onClick(entry: FileNode, e: MouseEvent) {
   emit('toggle-select', entry, { meta: e.metaKey || e.ctrlKey, shift: e.shiftKey })
 }
 
+function canDragEntry(entry: FileNode): boolean {
+  if (props.readOnly || (entry.isSymlink && entry.isDirectory)) return false
+  return true
+}
+
 function onDragstart(entry: FileNode, e: DragEvent) {
-  if (!e.dataTransfer) return
+  if (!canDragEntry(entry) || !e.dataTransfer) return
   const sources = effectiveDragSources(entry.path, props.selectedPaths)
   e.dataTransfer.setData(DRAG_PATHS_MIME, JSON.stringify(sources))
   e.dataTransfer.effectAllowed = 'move'
@@ -140,14 +146,14 @@ function onDragstart(entry: FileNode, e: DragEvent) {
 }
 
 function onDragOver(entry: FileNode, e: DragEvent) {
-  if (!entry.isDirectory || entry.isSymlink) return
+  if (props.readOnly || !entry.isDirectory || entry.isSymlink) return
   e.preventDefault()
   e.dataTransfer!.dropEffect = 'move'
   emit('folder-dragover', entry.path)
 }
 
 function onDrop(entry: FileNode, e: DragEvent) {
-  if (!entry.isDirectory || entry.isSymlink) return
+  if (props.readOnly || !entry.isDirectory || entry.isSymlink) return
   emit('folder-drop', entry, e)
 }
 

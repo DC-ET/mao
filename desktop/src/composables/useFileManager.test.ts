@@ -53,6 +53,29 @@ afterEach(() => {
 })
 
 describe('useFileManager navigation', () => {
+  it('tracks experience directory as read only', async () => {
+    const provider = ref<WorkspaceFileProvider>({
+      async listDirectory(dir: string): Promise<DirectoryResult> {
+        return dir === '团队经验'
+          ? { entries: [toEntry(node('INDEX.md', '团队经验/INDEX.md'))], readOnly: true }
+          : { entries: [toEntry(node('团队经验', '团队经验', { isDirectory: true, isSymlink: true }))] }
+      },
+      async readFile() {
+        return { content: '', total_lines: 0 }
+      },
+      async searchFiles() {
+        return { entries: [] }
+      },
+    })
+    const fm = useFileManager(provider, ref('42'))
+    await flush()
+    expect(fm.directoryReadOnly.value).toBe(false)
+    fm.navigateTo('团队经验')
+    await flush()
+    expect(fm.directoryReadOnly.value).toBe(true)
+    expect(fm.entries.value.map((e) => e.name)).toEqual(['INDEX.md'])
+  })
+
   it('loadsRootOnInit', async () => {
     const provider = ref(makeProvider({ '': [node('a.txt', 'a.txt')] }))
     const fm = useFileManager(provider, ref('42'))

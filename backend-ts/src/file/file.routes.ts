@@ -9,6 +9,7 @@ import { requireUserId, sendJson, sendOk } from '../common/http-error.js';
 import { bodyOf, pathId, queryOptInt, queryOptStr } from '../common/request.js';
 import { fail } from '../common/result.js';
 import { javaLocalDateTimeString } from '../common/datetime.js';
+import { experienceDirForSession } from '../harness/experience/experience-mount-path.js';
 import { isUnder, type PathSandbox } from '../harness/safety/path-sandbox.js';
 import { CloudWorkspaceResolver } from '../harness/safety/cloud-workspace-resolver.js';
 import type { RuntimeDataResolver } from '../harness/runtime/runtime-data-resolver.js';
@@ -34,6 +35,8 @@ export interface FileRouteDeps {
   pathSandbox: PathSandbox;
   getUploadBaseUrl?: () => Promise<string | null>;
   runtimeDataResolver?: RuntimeDataResolver;
+  /** 当前会话 Agent 的经验库目录。不提供时「团队经验」仍按越界拒绝。 */
+  experienceDirForAgent?: (agentId: number) => string;
 }
 
 export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): void {
@@ -58,6 +61,10 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
       throw new BusinessException(ErrorCode.PARAM_INVALID, '会话未配置工作区');
     }
     return session;
+  }
+
+  function experienceDirOf(session: Session): string | undefined {
+    return experienceDirForSession(session, deps.experienceDirForAgent);
   }
 
   /**
@@ -177,7 +184,9 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
   app.get('/v1/files/workspace-directory', async (request, reply) => {
     const userId = requireUserId(request);
     const session = await requireOwnedSession(userId, requireQueryLong(request, 'sessionId'));
-    return sendOk(reply, workspaceBrowseService.listDirectory(session.workspace!, queryOptStr(request, 'dir')));
+    return sendOk(reply, workspaceBrowseService.listDirectory(
+      session.workspace!, queryOptStr(request, 'dir'), experienceDirOf(session),
+    ));
   });
 
   app.get('/v1/files/workspace-search', async (request, reply) => {
@@ -190,7 +199,9 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
     if (pattern.length > 100) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '搜索关键词过长');
     }
-    return sendOk(reply, workspaceBrowseService.searchFiles(session.workspace!, pattern, queryOptInt(request, 'limit') ?? 100));
+    return sendOk(reply, workspaceBrowseService.searchFiles(
+      session.workspace!, pattern, queryOptInt(request, 'limit') ?? 100, experienceDirOf(session),
+    ));
   });
 
   app.get('/v1/files/workspace-read', async (request, reply) => {
@@ -200,6 +211,7 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
     if (path == null) throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
     return sendOk(reply, await workspaceBrowseService.readFile(
       session.workspace!, path, queryOptInt(request, 'offset') ?? 0, queryOptInt(request, 'limit') ?? 5000,
+      experienceDirOf(session),
     ));
   });
 
@@ -208,7 +220,7 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
     const session = await requireOwnedSession(userId, requireQueryLong(request, 'sessionId'));
     const path = queryOptStr(request, 'path');
     if (path == null) throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
-    const result = workspaceBrowseService.downloadFile(session.workspace!, path);
+    const result = workspaceBrowseService.downloadFile(session.workspace!, path, experienceDirOf(session));
     const mediaType = mimeLookup(result.path) || 'application/octet-stream';
     return sendFile(reply, result.path, result.fileName, mediaType, result.size, 'attachment');
   });
@@ -218,7 +230,7 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
     const session = await requireOwnedSession(userId, requireQueryLong(request, 'sessionId'));
     const path = queryOptStr(request, 'path');
     if (path == null) throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
-    const result = workspaceBrowseService.readPdfFile(session.workspace!, path);
+    const result = workspaceBrowseService.readPdfFile(session.workspace!, path, experienceDirOf(session));
     return sendFile(reply, result.path, result.fileName, 'application/pdf', result.size, 'inline');
   });
 
@@ -227,7 +239,7 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
     const session = await requireOwnedSession(userId, requireQueryLong(request, 'sessionId'));
     const path = queryOptStr(request, 'path');
     if (path == null) throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
-    const result = await workspaceBrowseService.zipDirectory(session.workspace!, path);
+    const result = await workspaceBrowseService.zipDirectory(session.workspace!, path, experienceDirOf(session));
     const stream = createReadStream(result.zipPath);
     const cleanup = () => {
       try { unlinkSync(result.zipPath); } catch (e) {

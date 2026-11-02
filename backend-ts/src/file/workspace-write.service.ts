@@ -4,6 +4,11 @@ import { randomUUID } from 'node:crypto';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
+import { EXPERIENCE_MOUNT_NAME } from '../harness/experience/experience-index.service.js';
+import {
+  EXPERIENCE_READONLY_MESSAGE,
+  isExperienceMountRelative,
+} from '../harness/experience/experience-mount-path.js';
 import {
   IllegalArgumentException,
   isUnder,
@@ -256,6 +261,21 @@ export class WorkspaceWriteService {
     throw e;
   }
 
+  /**
+   * 「团队经验」是指向共享库的符号链接时，文件管理不能改它，也不能顺着它写入。
+   * 同名真实目录（挂载被挡住的用户目录）仍按普通工作区文件处理。
+   */
+  private rejectExperienceMutation(userPath: string, workspace: string): void {
+    if (!isExperienceMountRelative(userPath)) return;
+    const link = join(resolve(workspace), EXPERIENCE_MOUNT_NAME);
+    try {
+      if (!lstatSync(link).isSymbolicLink()) return;
+    } catch {
+      return;
+    }
+    throw new BusinessException(ErrorCode.FORBIDDEN, EXPERIENCE_READONLY_MESSAGE);
+  }
+
   private displayPath(workspace: string, abs: string): string {
     const rel = relative(resolve(workspace), abs);
     if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) return abs;
@@ -263,6 +283,7 @@ export class WorkspaceWriteService {
   }
 
   private resolveWritable(userPath: string, workspace: string, keepSymlinkLeaf = false): ResolvedPath {
+    this.rejectExperienceMutation(userPath, workspace);
     const workspaceAbs = resolve(workspace);
     let workspaceReal: string;
     try {

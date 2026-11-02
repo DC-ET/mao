@@ -13,13 +13,13 @@
       @drop.prevent.stop="onDrop"
     >
       <el-icon v-if="node.isDirectory" class="node-expand-icon">
-        <ArrowDown v-if="node.expanded && !node.isSymlink" />
+        <ArrowDown v-if="node.expanded" />
         <ArrowRight v-else />
       </el-icon>
       <span v-else class="node-expand-icon-placeholder"></span>
 
       <el-icon class="node-icon">
-        <FolderOpened v-if="node.isDirectory && node.expanded && !node.isSymlink" />
+        <FolderOpened v-if="node.isDirectory && node.expanded" />
         <Folder v-else-if="node.isDirectory" />
         <Link v-else-if="node.isSymlink" />
         <Picture v-else-if="isImage" />
@@ -120,7 +120,7 @@ const selected = computed(() => props.selectedPaths?.includes(props.node.path) ?
 const dropActive = computed(() => !!props.canWrite && props.dropPath === props.node.path && !!props.node.isDirectory)
 const renaming = computed(() => props.renamePath === props.node.path)
 const creating = computed(() => props.createPath === props.node.path)
-const canDrag = computed(() => !!props.canWrite && !props.node.isSymlink && !renaming.value)
+const canDrag = computed(() => !!props.canWrite && !props.node.isSymlink && !props.node.readOnly && !renaming.value)
 const draftName = ref('')
 const editClosed = ref(false)
 const nameInput = ref<HTMLInputElement>()
@@ -173,7 +173,7 @@ function handleClick(event: MouseEvent) {
     emit('toggle-select', props.node.path)
     return
   }
-  if (props.node.isSymlink) return
+  if (props.node.isSymlink && !props.node.isDirectory) return
   // 列举失败的占位错误节点：点行不当作文件打开（它的 path 其实是目录），只走重试按钮
   if (props.node.error) return
   if (props.node.isDirectory) {
@@ -191,13 +191,13 @@ function onDragStart(event: DragEvent) {
 }
 
 function onDragOver(event: DragEvent) {
-  if (!props.canWrite || !props.node.isDirectory || props.node.isSymlink) return
+  if (!props.canWrite || !props.node.isDirectory || props.node.isSymlink || props.node.readOnly) return
   event.preventDefault()
   emit('drag-hover', props.node.path)
 }
 
 function onDrop(event: DragEvent) {
-  if (!props.canWrite || !props.node.isDirectory || props.node.isSymlink) return
+  if (!props.canWrite || !props.node.isDirectory || props.node.isSymlink || props.node.readOnly) return
   const raw = event.dataTransfer?.getData('application/x-mao-paths')
   if (raw) {
     try {
@@ -251,7 +251,7 @@ function onDrop(event: DragEvent) {
   padding: 0 4px;
 }
 
-.node-row.is-symlink {
+.node-row.is-symlink:not(.is-directory) {
   opacity: 0.5;
   cursor: default;
 }

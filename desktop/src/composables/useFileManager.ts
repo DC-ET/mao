@@ -44,6 +44,8 @@ export function useFileManager(provider: Ref<WorkspaceFileProvider | null>, sess
   const entries = ref<FileNode[]>([])
   const loading = ref(false)
   const error = ref('')
+  /** 当前目录是团队经验挂载，工具栏与右键不再提供写操作 */
+  const directoryReadOnly = ref(false)
   let listSeq = 0
 
   const selectedPaths = ref<Set<string>>(new Set())
@@ -88,6 +90,7 @@ export function useFileManager(provider: Ref<WorkspaceFileProvider | null>, sess
     if (!providerValue) {
       entries.value = []
       error.value = ''
+      directoryReadOnly.value = false
       return
     }
     const seq = ++listSeq
@@ -99,13 +102,16 @@ export function useFileManager(provider: Ref<WorkspaceFileProvider | null>, sess
       if (result.error) {
         entries.value = []
         error.value = result.error
+        directoryReadOnly.value = false
         return
       }
       entries.value = result.entries ?? []
+      directoryReadOnly.value = result.readOnly === true
     } catch (e: any) {
       if (seq !== listSeq) return
       entries.value = []
       error.value = e?.message || '加载失败'
+      directoryReadOnly.value = false
     } finally {
       if (seq === listSeq) loading.value = false
     }
@@ -306,6 +312,7 @@ export function useFileManager(provider: Ref<WorkspaceFileProvider | null>, sess
     entries,
     loading,
     error,
+    directoryReadOnly,
     selectedPaths,
     selectedCount,
     selectedList,

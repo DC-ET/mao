@@ -27,7 +27,7 @@
 与「最佳实践经验」（短条目、全量注入提示词）互补的**长经验渐进式发现**机制，按 Agent 一库（`agent.experienceLibraryEnabled`，V169 默认启用）：
 
 - 存放于共享目录 `<MAO_SHARE_DIR>/agent-experience/<agentId>/`：`INDEX.md`（系统自动生成的索引，勿手改）+ 若干 `YYYY-MM-DD-主题.md` 子文档（首部 frontmatter：`title` / `keywords` / `summary` / `applicable` / `last_verified`）。
-- 仅 CLOUD 会话生效：会话创建时工作区自动挂符号链接 `团队经验/`（git 工作区自动加入 `.git/info/exclude`），系统提示注入一小节固定路标——Agent 接手复杂任务先 grep 索引、命中再读子文档；多轮探索解决难题后自行写带日期的新子文档（write_file / edit_file 落盘后索引自动重建）。LOCAL 不挂载、不注入。
+- 仅 CLOUD 会话生效：会话创建时工作区自动挂符号链接 `团队经验/`（git 工作区自动加入 `.git/info/exclude`），系统提示注入一小节固定路标——Agent 接手复杂任务先 grep 索引、命中再读子文档；多轮探索解决难题后自行写带日期的新子文档（write_file / edit_file 落盘后索引自动重建）。LOCAL 不挂载、不注入。会话文件管理可只读打开这个目录（预览、搜索、下载）；新建、改名、删除、上传仍拒绝，避免从文件管理改到全体成员共享的库。
 - 管理后台「Agent 管理 → 经验库」维护：开关启用、浏览 / 新建 / 编辑 / 删除文档、强制重建索引、查看索引原文。REST（相对 `/api/v1`，读需登录、写需 `agent:write`；CLI 暂无子命令）：
   - `PATCH /agents/:id/experience-library` `{ enabled }`；`GET /agents/:id/experience-library/docs`（含 `docs` 元信息列表与 `indexContent`）
   - `GET|PUT /agents/:id/experience-library/docs/content?file=`（读 / upsert 单篇，PUT 传 JSON `{ fileName, content }`；单篇上限 1MB）；`DELETE /agents/:id/experience-library/docs?file=`（禁删 `INDEX.md`）；`POST /agents/:id/experience-library/index/rebuild`

@@ -28,6 +28,8 @@ export interface DirectoryResult {
   error?: string
   /** 服务端工作区绝对根路径：条目 path 相对它；CLOUD provider 据此实现 getAbsolutePath */
   workspaceRoot?: string
+  /** 当前目录是团队经验挂载，文件管理只读 */
+  readOnly?: boolean
 }
 
 export interface ReadFileResult {
@@ -45,6 +47,16 @@ export interface FileSearchResult {
   error?: string
   /** 同 DirectoryResult.workspaceRoot：搜索结果 path 的相对基准 */
   workspaceRoot?: string
+}
+
+function apiErrorMessage(error: unknown, fallback: string): string {
+  if (error && typeof error === 'object') {
+    const e = error as { message?: string; response?: { data?: { message?: string } } }
+    const server = e.response?.data?.message
+    if (typeof server === 'string' && server.trim()) return server
+    if (typeof e.message === 'string' && e.message.trim()) return e.message
+  }
+  return fallback
 }
 
 export interface PreviewFileResult {
@@ -176,7 +188,7 @@ export function createLocalProvider(workspace: string): WorkspaceFileProvider {
         }
         return { blob: dataUriToBlob(result.data_uri, result.mime || 'application/pdf') }
       } catch (e: any) {
-        return { error: e?.message || 'PDF 预览失败' }
+        return { error: apiErrorMessage(e, 'PDF 预览失败') }
       }
     },
     async readFileBytes(relativePath: string): Promise<ReadFileBytesResult> {
@@ -192,7 +204,7 @@ export function createLocalProvider(workspace: string): WorkspaceFileProvider {
         }
         return { bytes: new Uint8Array(result.bytes), size: result.size ?? result.bytes.byteLength }
       } catch (e: any) {
-        return { error: e?.message || '读取文件失败' }
+        return { error: apiErrorMessage(e, '读取文件失败') }
       }
     },
     getAbsolutePath(relativePath: string) {
@@ -255,10 +267,11 @@ export function createCloudProvider(sessionId: string): WorkspaceFileProvider {
             ...(typeof mtimeMs === 'number' ? { mtime: mtimeMs } : {}),
           })),
           truncated: data?.truncated ?? false,
+          ...(data?.readOnly === true ? { readOnly: true } : {}),
           ...(typeof data?.workspaceRoot === 'string' ? { workspaceRoot: data.workspaceRoot } : {}),
         })
       } catch (e: any) {
-        return { error: e.message || '读取目录失败' }
+        return { error: apiErrorMessage(e, '读取目录失败') }
       }
     },
     async readFile(relativePath: string, opts?: { offset?: number; limit?: number }) {
@@ -279,7 +292,7 @@ export function createCloudProvider(sessionId: string): WorkspaceFileProvider {
           data_uri: data?.data_uri,
         }
       } catch (e: any) {
-        return { content: '', total_lines: 0, error: e.message || '读取文件失败' }
+        return { content: '', total_lines: 0, error: apiErrorMessage(e, '读取文件失败') }
       }
     },
     async searchFiles(pattern: string, limit = 100) {
@@ -293,7 +306,7 @@ export function createCloudProvider(sessionId: string): WorkspaceFileProvider {
           ...(typeof data?.workspaceRoot === 'string' ? { workspaceRoot: data.workspaceRoot } : {}),
         })
       } catch (e: any) {
-        return { error: e.message || '搜索失败' }
+        return { error: apiErrorMessage(e, '搜索失败') }
       }
     },
     downloadFile(relativePath: string, suggestedName: string) {
@@ -318,7 +331,7 @@ export function createCloudProvider(sessionId: string): WorkspaceFileProvider {
         }
         return { blob }
       } catch (e: any) {
-        return { error: e?.message || 'PDF 预览失败' }
+        return { error: apiErrorMessage(e, 'PDF 预览失败') }
       }
     },
     async readFileBytes(relativePath: string): Promise<ReadFileBytesResult> {
@@ -337,7 +350,7 @@ export function createCloudProvider(sessionId: string): WorkspaceFileProvider {
         }
         return { bytes: new Uint8Array(buffer), size: buffer.byteLength }
       } catch (e: any) {
-        return { error: e?.message || '读取文件失败' }
+        return { error: apiErrorMessage(e, '读取文件失败') }
       }
     },
     getAbsolutePath(relativePath: string) {
@@ -366,10 +379,11 @@ export function createProjectProvider(projectKey: string): WorkspaceFileProvider
         return withRoot({
           entries: data?.entries ?? [],
           truncated: data?.truncated ?? false,
+          ...(data?.readOnly === true ? { readOnly: true } : {}),
           ...(typeof data?.workspaceRoot === 'string' ? { workspaceRoot: data.workspaceRoot } : {}),
         })
       } catch (e: any) {
-        return { error: e.message || '读取目录失败' }
+        return { error: apiErrorMessage(e, '读取目录失败') }
       }
     },
     async readFile(relativePath: string, opts?: { offset?: number; limit?: number }) {
@@ -390,7 +404,7 @@ export function createProjectProvider(projectKey: string): WorkspaceFileProvider
           data_uri: data?.data_uri,
         }
       } catch (e: any) {
-        return { content: '', total_lines: 0, error: e.message || '读取文件失败' }
+        return { content: '', total_lines: 0, error: apiErrorMessage(e, '读取文件失败') }
       }
     },
     async searchFiles(pattern: string, limit = 100) {
@@ -404,7 +418,7 @@ export function createProjectProvider(projectKey: string): WorkspaceFileProvider
           ...(typeof data?.workspaceRoot === 'string' ? { workspaceRoot: data.workspaceRoot } : {}),
         })
       } catch (e: any) {
-        return { error: e.message || '搜索失败' }
+        return { error: apiErrorMessage(e, '搜索失败') }
       }
     },
     async previewFile(relativePath: string) {
@@ -423,7 +437,7 @@ export function createProjectProvider(projectKey: string): WorkspaceFileProvider
         }
         return { blob }
       } catch (e: any) {
-        return { error: e?.message || 'PDF 预览失败' }
+        return { error: apiErrorMessage(e, 'PDF 预览失败') }
       }
     },
     getAbsolutePath(relativePath: string) {
@@ -471,10 +485,11 @@ export function createOwnedWorkspaceProvider(root: string): WorkspaceFileProvide
         return withRoot({
           entries: mapCloudEntries(data?.entries),
           truncated: data?.truncated ?? false,
+          ...(data?.readOnly === true ? { readOnly: true } : {}),
           ...(typeof data?.workspaceRoot === 'string' ? { workspaceRoot: data.workspaceRoot } : {}),
         })
       } catch (e: any) {
-        return { error: e.message || '读取目录失败' }
+        return { error: apiErrorMessage(e, '读取目录失败') }
       }
     },
     async readFile(relativePath: string, opts?: { offset?: number; limit?: number }) {
@@ -490,7 +505,7 @@ export function createOwnedWorkspaceProvider(root: string): WorkspaceFileProvide
           data_uri: data?.data_uri,
         }
       } catch (e: any) {
-        return { content: '', total_lines: 0, error: e.message || '读取文件失败' }
+        return { content: '', total_lines: 0, error: apiErrorMessage(e, '读取文件失败') }
       }
     },
     async searchFiles(pattern: string, limit = 100) {
@@ -504,7 +519,7 @@ export function createOwnedWorkspaceProvider(root: string): WorkspaceFileProvide
           ...(typeof data?.workspaceRoot === 'string' ? { workspaceRoot: data.workspaceRoot } : {}),
         })
       } catch (e: any) {
-        return { error: e.message || '搜索失败' }
+        return { error: apiErrorMessage(e, '搜索失败') }
       }
     },
     downloadFile(relativePath: string, suggestedName: string) {
@@ -525,7 +540,7 @@ export function createOwnedWorkspaceProvider(root: string): WorkspaceFileProvide
         if (!blob || blob.size === 0) return { error: 'PDF 内容为空' }
         return { blob }
       } catch (e: any) {
-        return { error: e?.message || 'PDF 预览失败' }
+        return { error: apiErrorMessage(e, 'PDF 预览失败') }
       }
     },
     async readFileBytes(relativePath: string): Promise<ReadFileBytesResult> {
@@ -540,7 +555,7 @@ export function createOwnedWorkspaceProvider(root: string): WorkspaceFileProvide
         if (!buffer || buffer.byteLength === 0) return { error: '文件内容为空' }
         return { bytes: new Uint8Array(buffer), size: buffer.byteLength }
       } catch (e: any) {
-        return { error: e?.message || '读取文件失败' }
+        return { error: apiErrorMessage(e, '读取文件失败') }
       }
     },
     getAbsolutePath(relativePath: string) {
@@ -580,7 +595,7 @@ async function downloadWorkspaceResource(
     triggerBrowserDownload(blob, fileName)
     return { ok: true, url }
   } catch (e: any) {
-    return { ok: false, error: e?.message || '下载失败', url }
+    return { ok: false, error: apiErrorMessage(e, '下载失败'), url }
   }
 }
 

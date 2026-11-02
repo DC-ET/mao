@@ -26,7 +26,7 @@ describe('file routes', () => {
       req.userId = Number(header) || 7;
       done();
     });
-    const session = { id: 1, userId: 7, workspace: '/tmp/ws' };
+    const session = { id: 1, userId: 7, workspace: '/tmp/ws', agentId: 9 };
     const fileService = {
       listFiles: vi.fn(async () => [
         { id: 1, originalName: 'a.txt', storedName: 'x.txt', filePath: '/tmp/x.txt', fileSize: 1, uploaderId: 7, sessionId: 1 },
@@ -83,6 +83,7 @@ describe('file routes', () => {
         mkdir: vi.fn(), write: vi.fn(), rename: vi.fn(), move: vi.fn(), delete: vi.fn(), copy: vi.fn(), upload: vi.fn(),
       } as unknown as WorkspaceWriteService,
       runtimeDataResolver,
+      experienceDirForAgent: (agentId: number) => `/share/agent-experience/${agentId}`,
     });
     const get = async (url: string) => JSON.parse((await app.inject({ method: 'GET', url })).body);
     const post = async (url: string, payload: object) => JSON.parse((await app.inject({ method: 'POST', url, payload })).body);
@@ -92,6 +93,7 @@ describe('file routes', () => {
     expect(fileListVo.data[0]?.originalName).toBe('a.txt');
     expect((await get('/v1/files/workspace-list?sessionId=1')).data.files).toHaveLength(1);
     expect((await get('/v1/files/workspace-directory?sessionId=1')).code).toBe(0);
+    expect(vi.mocked(workspaceBrowseService.listDirectory).mock.calls[0]?.[2]).toBe('/share/agent-experience/9');
     expect((await get('/v1/files/workspace-search?sessionId=1&pattern=a')).code).toBe(0);
     expect((await get('/v1/files/workspace-search?sessionId=1&pattern=a')).data.entries[0].name).toBe('a.txt');
     expect((await get('/v1/files/workspace-search?sessionId=1')).code).not.toBe(0);

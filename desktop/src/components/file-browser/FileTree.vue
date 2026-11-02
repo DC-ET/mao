@@ -132,7 +132,7 @@
       :show-copy-absolute="canCopyAbsolute"
       :is-directory="ctxMenu.node?.isDirectory ?? false"
       :show-open-in-finder="executionMode !== 'CLOUD' && canOpenInFinder"
-      :can-write="canWrite"
+      :can-write="ctxCanWrite"
       :can-paste="clipboard.matches(numericSessionId)"
       :has-node="!!ctxMenu.node"
       @hide="ctxMenu.visible = false"
@@ -249,6 +249,13 @@ const ctxMenu = reactive({
   x: 0,
   y: 0,
   node: null as FileNode | null,
+})
+
+const ctxCanWrite = computed(() => {
+  if (!canWrite.value) return false
+  const node = ctxMenu.node
+  if (!node) return true
+  return !(node.readOnly || (node.isSymlink && node.isDirectory))
 })
 
 function handleNodeContextmenu(payload: { node: FileNode; x: number; y: number }) {

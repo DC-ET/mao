@@ -9,6 +9,11 @@ import archiver from 'archiver';
 import sharp from 'sharp';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
+import { EXPERIENCE_MOUNT_NAME } from '../harness/experience/experience-index.service.js';
+import {
+  experienceMountPointsAt,
+  isExperienceMountRelative,
+} from '../harness/experience/experience-mount-path.js';
 import { ImageFileSupport } from '../harness/tool/image-file-support.js';
 import { PathSandbox, SecurityException } from '../harness/safety/path-sandbox.js';
 import { StrictPathResolver } from '../harness/safety/strict-path.js';
@@ -40,6 +45,8 @@ export interface DirectoryListingDTO {
   truncated: boolean;
   /** 工作区绝对根路径（服务端）：条目 path 是相对它的相对路径，供前端拼「复制绝对路径」 */
   workspaceRoot: string;
+  /** 当前目录是本会话的团队经验挂载：文件管理只读。缺省表示可写。 */
+  readOnly?: boolean;
 }
 
 export interface WorkspaceSearchDTO {
@@ -78,7 +85,11 @@ export class WorkspaceBrowseService {
     this.maxZipBytes = bytes;
   }
 
-  listDirectory(sessionWorkspace: string, relativeDir: string | null | undefined): DirectoryListingDTO {
+  listDirectory(
+    sessionWorkspace: string,
+    relativeDir: string | null | undefined,
+    experienceDir?: string | null,
+  ): DirectoryListingDTO {
     const workspaceRoot = this.pathSandbox.getEffectiveWorkspaceRoot(sessionWorkspace);
     // 工作区根整体缺失（如被用户从工作区总览删除）在严格解析之前给出可理解文案——
     // StrictPathResolver 对缺失根抛 SecurityException「路径访问被拒绝」，用户无法理解（§4.1-4）
@@ -86,7 +97,7 @@ export class WorkspaceBrowseService {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '工作区目录不存在（可能已被删除）');
     }
     const dir = this.normalizeRelativeDir(relativeDir);
-    const dirPath = this.resolvePath(dir, sessionWorkspace);
+    const dirPath = this.resolvePath(dir, sessionWorkspace, experienceDir);
     if (!existsSync(dirPath)) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '目录不存在');
     }
@@ -120,6 +131,9 @@ export class WorkspaceBrowseService {
         const lst = lstatSync(child);
         entry.isSymlink = lst.isSymbolicLink();
         entry.isDirectory = lst.isDirectory() && !entry.isSymlink;
+        if (this.isGrantedExperienceMount(entry, sessionWorkspace, experienceDir)) {
+          entry.isDirectory = true;
+        }
         entry.size = lst.size;
         entry.mtimeMs = lst.mtimeMs;
       } catch {
@@ -133,7 +147,8 @@ export class WorkspaceBrowseService {
       }
       return a.name.localeCompare(b.name, undefined, { sensitivity: 'accent' });
     });
-    return { entries, truncated, workspaceRoot };
+    const readOnly = this.isExperienceListing(dir, sessionWorkspace, experienceDir);
+    return { entries, truncated, workspaceRoot, ...(readOnly ? { readOnly: true } : {}) };
   }
 
   /**
@@ -141,7 +156,12 @@ export class WorkspaceBrowseService {
    * 有界遍历：跳过 .git/node_modules 与符号链接，目录数/深度/结果数均有上限，
    * 超限时返回 truncated=true，避免大工作区拖垮请求。
    */
-  searchFiles(sessionWorkspace: string, pattern: string, limit: number | null | undefined): WorkspaceSearchDTO {
+  searchFiles(
+    sessionWorkspace: string,
+    pattern: string,
+    limit: number | null | undefined,
+    experienceDir?: string | null,
+  ): WorkspaceSearchDTO {
     if (pattern == null || pattern.trim().length === 0) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '搜索关键词不能为空');
     }
@@ -179,7 +199,19 @@ export class WorkspaceBrowseService {
         } catch {
           continue;
         }
-        if (lst.isSymbolicLink()) continue;
+        if (lst.isSymbolicLink()) {
+          // 只跟随工作区根上、且确实指向本会话经验库的「团队经验」。库内其他链接仍跳过。
+          if (
+            cur.rel === ''
+            && e.name === EXPERIENCE_MOUNT_NAME
+            && experienceDir
+            && experienceMountPointsAt(sessionWorkspace, experienceDir)
+            && cur.depth < MAX_SEARCH_DEPTH
+          ) {
+            queue.push({ abs: join(cur.abs, e.name), rel: e.name, depth: cur.depth + 1 });
+          }
+          continue;
+        }
         if (lst.isDirectory()) {
           if (SEARCH_EXCLUDED_DIRS.has(e.name)) continue;
           if (cur.depth >= MAX_SEARCH_DEPTH) {
@@ -209,11 +241,11 @@ export class WorkspaceBrowseService {
     return { entries, truncated, workspaceRoot: rootPath };
   }
 
-  downloadFile(sessionWorkspace: string, relativePath: string | null | undefined): DownloadResult {
+  downloadFile(sessionWorkspace: string, relativePath: string | null | undefined, experienceDir?: string | null): DownloadResult {
     if (relativePath == null || relativePath.trim().length === 0) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '文件路径不能为空');
     }
-    const filePath = this.resolvePath(relativePath, sessionWorkspace);
+    const filePath = this.resolvePath(relativePath, sessionWorkspace, experienceDir);
     if (!existsSync(filePath)) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, `文件不存在：${relativePath}`);
     }
@@ -231,14 +263,14 @@ export class WorkspaceBrowseService {
     return { path: filePath, size, fileName: basename(filePath) };
   }
 
-  readPdfFile(sessionWorkspace: string, relativePath: string | null | undefined): DownloadResult {
+  readPdfFile(sessionWorkspace: string, relativePath: string | null | undefined, experienceDir?: string | null): DownloadResult {
     if (relativePath == null || relativePath.trim().length === 0) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '文件路径不能为空');
     }
     if (!relativePath.toLowerCase().endsWith('.pdf')) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '仅支持预览 .pdf 文件');
     }
-    const filePath = this.resolvePath(relativePath, sessionWorkspace);
+    const filePath = this.resolvePath(relativePath, sessionWorkspace, experienceDir);
     if (!existsSync(filePath)) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, `文件不存在：${relativePath}`);
     }
@@ -266,10 +298,10 @@ export class WorkspaceBrowseService {
     return { path: filePath, size, fileName: basename(filePath) };
   }
 
-  async zipDirectory(sessionWorkspace: string, relativeDir: string | null | undefined): Promise<ZipResult> {
+  async zipDirectory(sessionWorkspace: string, relativeDir: string | null | undefined, experienceDir?: string | null): Promise<ZipResult> {
     const workspaceRoot = this.pathSandbox.getEffectiveWorkspaceRoot(sessionWorkspace);
     const dir = this.normalizeRelativeDir(relativeDir);
-    const dirPath = this.resolvePath(dir, sessionWorkspace);
+    const dirPath = this.resolvePath(dir, sessionWorkspace, experienceDir);
     if (!existsSync(dirPath)) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '目录不存在');
     }
@@ -308,11 +340,17 @@ export class WorkspaceBrowseService {
     return { zipPath, size: zipSize, fileName: `${rootName}.zip` };
   }
 
-  async readFile(sessionWorkspace: string, relativePath: string | null | undefined, offset: number, limit: number): Promise<FileContentDTO> {
+  async readFile(
+    sessionWorkspace: string,
+    relativePath: string | null | undefined,
+    offset: number,
+    limit: number,
+    experienceDir?: string | null,
+  ): Promise<FileContentDTO> {
     if (relativePath == null || relativePath.trim().length === 0) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '文件路径不能为空');
     }
-    const filePath = this.resolvePath(relativePath, sessionWorkspace);
+    const filePath = this.resolvePath(relativePath, sessionWorkspace, experienceDir);
     if (!existsSync(filePath)) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, `文件不存在：${relativePath}`);
     }
@@ -417,12 +455,33 @@ export class WorkspaceBrowseService {
     return relativeDir;
   }
 
-  private resolvePath(userPath: string, sessionWorkspace: string): string {
+  /** 根上的「团队经验」链接确实指向这次放行的经验库时，目录列表把它标成可进入的目录。 */
+  private isGrantedExperienceMount(
+    entry: DirectoryEntryDTO,
+    sessionWorkspace: string,
+    experienceDir?: string | null,
+  ): boolean {
+    return entry.path === EXPERIENCE_MOUNT_NAME
+      && entry.isSymlink
+      && !!experienceDir
+      && experienceMountPointsAt(sessionWorkspace, experienceDir);
+  }
+
+  private isExperienceListing(relativeDir: string, sessionWorkspace: string, experienceDir?: string | null): boolean {
+    return !!experienceDir
+      && isExperienceMountRelative(relativeDir)
+      && experienceMountPointsAt(sessionWorkspace, experienceDir);
+  }
+
+  private resolvePath(userPath: string, sessionWorkspace: string, experienceDir?: string | null): string {
     try {
-      // 严格解析（技术方案 §5.9 越界收口）：REST 文件服务以会话工作区为唯一根，
-      // 相对穿越与越界绝对路径（含符号链接逃逸）一律拒绝。业务上前端只传
-      // 工作区内相对路径，收紧不影响正常使用。
-      return new StrictPathResolver(sessionWorkspace).resolve(userPath);
+      // 严格解析（技术方案 §5.9 越界收口）：REST 文件服务以会话工作区为唯一根。
+      // 唯一例外是当前会话的「团队经验」：链接目标必须正好落在该 Agent 的经验库内，
+      // 其他符号链接、其他 Agent 的库、共享目录其余部分仍然拒绝。
+      const extra = experienceDir && isExperienceMountRelative(userPath) && experienceMountPointsAt(sessionWorkspace, experienceDir)
+        ? [experienceDir]
+        : [];
+      return new StrictPathResolver(sessionWorkspace, extra).resolve(userPath);
     } catch (e) {
       if (e instanceof SecurityException) {
         throw new BusinessException(ErrorCode.FORBIDDEN, '路径访问被拒绝');

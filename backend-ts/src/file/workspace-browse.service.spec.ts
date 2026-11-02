@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync, rmSync } from 'node
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
+import { ErrorCode } from '../common/error-code.js';
 import { PathSandbox } from '../harness/safety/path-sandbox.js';
 import { WorkspaceBrowseService } from './workspace-browse.service.js';
 
@@ -125,5 +126,80 @@ describe('WorkspaceBrowseService.listDirectory', () => {
     // 子目录同样以工作区根为基准，不随 dir 参数漂移
     mkdirSync(join(ws, 'sub'));
     expect(service.listDirectory(ws, 'sub').workspaceRoot).toBe(resolve(ws));
+  });
+});
+
+describe('WorkspaceBrowseService experience mount', () => {
+  let cleanup: (() => void) | null = null;
+
+  function layout() {
+    const root = mkdtempSync(join(tmpdir(), 'mao-browse-exp-'));
+    cleanup = () => rmSync(root, { recursive: true, force: true });
+    const ws = join(root, 'ws');
+    const lib = join(root, 'share', 'agent-experience', '9');
+    const elsewhere = join(root, 'elsewhere');
+    mkdirSync(lib, { recursive: true });
+    mkdirSync(ws, { recursive: true });
+    mkdirSync(elsewhere, { recursive: true });
+    writeFileSync(join(lib, 'INDEX.md'), '# index\n');
+    writeFileSync(join(lib, '2026-11-02-note.md'), 'note body');
+    writeFileSync(join(elsewhere, 'secret.txt'), 'nope');
+    symlinkSync(lib, join(ws, '团队经验'), 'dir');
+    symlinkSync(elsewhere, join(ws, 'leak'), 'dir');
+    return { root, ws, lib, elsewhere, service: new WorkspaceBrowseService(new PathSandbox(root)) };
+  }
+
+  afterEach(() => {
+    cleanup?.();
+    cleanup = null;
+  });
+
+  it('listsReadsAndSearchesTheGrantedLibrary', async () => {
+    const { service, ws, lib } = layout();
+    const listing = service.listDirectory(ws, '', lib);
+    expect(listing.readOnly).toBeUndefined();
+    expect(listing.entries.find((e) => e.name === '团队经验')).toMatchObject({
+      isDirectory: true,
+      isSymlink: true,
+      path: '团队经验',
+    });
+
+    const inside = service.listDirectory(ws, '团队经验', lib);
+    expect(inside.readOnly).toBe(true);
+    expect(inside.entries.map((e) => e.name).sort()).toEqual(['2026-11-02-note.md', 'INDEX.md']);
+
+    const content = await service.readFile(ws, '团队经验/2026-11-02-note.md', 0, 20, lib);
+    expect(content.content).toBe('note body');
+
+    const found = service.searchFiles(ws, 'note', 20, lib);
+    expect(found.entries.map((e) => e.path)).toContain('团队经验/2026-11-02-note.md');
+    expect(found.entries.some((e) => e.path.startsWith('leak/'))).toBe(false);
+  });
+
+  it('rejectsOtherSymlinksAndARetargetedMount', async () => {
+    const { service, ws, lib, root } = layout();
+    await expect(service.readFile(ws, 'leak/secret.txt', 0, 10, lib))
+      .rejects.toMatchObject({ code: ErrorCode.FORBIDDEN.code });
+    await expect(service.readFile(ws, '团队经验/../../elsewhere/secret.txt', 0, 10, lib))
+      .rejects.toMatchObject({ code: ErrorCode.FORBIDDEN.code });
+
+    rmSync(join(ws, '团队经验'));
+    const hijacked = join(root, 'hijacked');
+    mkdirSync(hijacked);
+    writeFileSync(join(hijacked, 'x.md'), 'x');
+    symlinkSync(hijacked, join(ws, '团队经验'), 'dir');
+
+    await expect(service.readFile(ws, '团队经验/x.md', 0, 10, lib))
+      .rejects.toMatchObject({ code: ErrorCode.FORBIDDEN.code });
+    const listing = service.listDirectory(ws, '', lib);
+    expect(listing.entries.find((e) => e.name === '团队经验')?.isDirectory).toBe(false);
+  });
+
+  it('without a grant the mount stays forbidden', async () => {
+    const { service, ws } = layout();
+    await expect(service.readFile(ws, '团队经验/INDEX.md', 0, 10))
+      .rejects.toMatchObject({ code: ErrorCode.FORBIDDEN.code });
+    const listing = service.listDirectory(ws, '');
+    expect(listing.entries.find((e) => e.name === '团队经验')?.isDirectory).toBe(false);
   });
 });

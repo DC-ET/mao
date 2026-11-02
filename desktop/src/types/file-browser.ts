@@ -5,6 +5,8 @@ export interface FileNode {
   path: string          // relative to workspace
   isDirectory: boolean
   isSymlink?: boolean
+  /** 团队经验挂载及其内容：可浏览，不能在文件管理里改 */
+  readOnly?: boolean
   size?: number
   mtime?: number        // epoch ms；目录列表提供（本地 IPC 恒有，CLOUD 由后端 mtimeMs 提供），搜索接口不返回
   children?: FileNode[]

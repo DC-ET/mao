@@ -231,7 +231,8 @@ describe('formatters', () => {
 describe('iconKindOf', () => {
   it('classifiesByTypeAndExtension', () => {
     expect(iconKindOf('src', true)).toBe('folder')
-    expect(iconKindOf('link', true, true)).toBe('link')
+    expect(iconKindOf('link', true, true)).toBe('folder')
+    expect(iconKindOf('link.txt', false, true)).toBe('link')
     expect(iconKindOf('a.PNG', false)).toBe('image')
     expect(iconKindOf('a.txt', false)).toBe('doc')
     expect(iconKindOf('noext', false)).toBe('doc')

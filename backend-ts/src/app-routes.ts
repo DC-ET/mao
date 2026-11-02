@@ -543,10 +543,12 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
       askUserQuestionsRegistry,
       inFlightToolRegistry,
     });
+    const experienceDirForAgent = (agentId: number) => experienceIndexService.dirFor(agentId);
     registerAdminSessionFilesRoutes(api, {
       sessionService,
       workspaceBrowseService: workspaceBrowse,
       permissionService,
+      experienceDirForAgent,
     });
     registerTerminalRoutes(api, {
       terminalManager,
@@ -561,6 +563,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
       workspaceGitService: workspaceGit, gitCommitMessageService: gitCommitMsg,
       gitWriteOperationService: gitWrite, workspaceWriteService: workspaceWrite,
       workspaceOverviewService, pathSandbox,
+      experienceDirForAgent,
       getUploadBaseUrl: async () => (await settingService.getUploadConfig()).baseUrl,
       runtimeDataResolver: runtimeResolver,
     });
