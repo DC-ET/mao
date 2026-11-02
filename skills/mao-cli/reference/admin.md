@@ -113,7 +113,7 @@ CLI：全局目录 `mao skill-docs`；发给指定用户 `mao skill-docs assign 
 
 ECP、公司 SSO、飞书首次登录自动建号时，用户名取邮箱前缀（小写，非字母数字下划线转 `_`）；前缀被占用则追加 8 位稳定后缀，邮箱不可用时才退回 `sso_/ecp_/feishu_` + 身份 ID。
 
-公司 SSO 首次建号还会写入公司 checkToken 返回的可选 `claims.avatar`（合法头像地址才写）；已有账号后续换票不覆盖头像，头像仍可由用户本人在桌面端维护。
+公司 SSO 首次建号还会写入公司 checkToken 返回的可选 `claims.avatar`（合法头像地址才写）；已有账号后续换票不覆盖头像，头像仍可由用户本人在桌面端维护。ECP 飞书登录首次建号同样写入换票响应的可选 `data.user.avatar`。
 
 CLI：`mao user ...`（见 [user.md](user.md)）。
 

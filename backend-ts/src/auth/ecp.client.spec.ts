@@ -47,6 +47,35 @@ describe('EcpClient', () => {
     expect(session.user.email).toBe('a@example.com');
   });
 
+  it.each(['https://ecp.example.com/a.png', '/uploads/a.png'])('reads the optional user.avatar %s', async (avatar) => {
+    const http = {
+      request: vi.fn(async () => ({
+        status: 200,
+        json: {
+          code: 0,
+          data: { sessionToken: 'tok-1', expiresAt: Date.now() + 3600_000, user: { email: 'a@example.com', realName: 'Alice', avatar } },
+        },
+      })),
+    };
+    const session = await new EcpClient(http).createSessionFromFeishuCallback(config, 'code', 'state');
+    expect(session.user).toMatchObject({ email: 'a@example.com', avatarUrl: avatar });
+  });
+
+  it.each([undefined, '', '   ', 'javascript:alert(1)', 'data:text/html,x', 'https://ecp.example.com/a b.png', 'https://ecp.example.com/' + 'a'.repeat(600)])('ignores unusable user.avatar %s', async (avatar) => {
+    const http = {
+      request: vi.fn(async () => ({
+        status: 200,
+        json: {
+          code: 0,
+          data: { sessionToken: 'tok-1', expiresAt: Date.now() + 3600_000, user: { email: 'a@example.com', realName: 'Alice', avatar } },
+        },
+      })),
+    };
+    const session = await new EcpClient(http).createSessionFromFeishuCallback(config, 'code', 'state');
+    expect(session.user.avatarUrl).toBeUndefined();
+    expect(Object.hasOwn(session.user, 'avatarUrl')).toBe(false);
+  });
+
   it('renews a session when the response has no user info', async () => {
     // ECP renew 只换票，不返回 user；曾因复用登录解析而误报「缺少用户邮箱」
     const http = {
