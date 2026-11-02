@@ -26,7 +26,7 @@
         class="config-tip"
       />
 
-      <div class="switch-row">
+      <div :id="CONTAINER_AUTO_UPGRADE_FIELD_ID" class="setting-field switch-row">
         <span class="switch-label">发版后自动重启空闲容器以收敛代码版本（不重建容器、不打断在跑任务）</span>
         <el-switch
           :model-value="autoUpgrade"
@@ -108,6 +108,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../../api'
+import { CONTAINER_AUTO_UPGRADE_FIELD_ID } from '../settingsSearchCatalog'
 import { useAuthStore } from '../../../stores/auth'
 
 interface ContainerRow {

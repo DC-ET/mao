@@ -210,7 +210,7 @@ CLI：`mao http-tool list|enabled|stats|create|update|delete|set-enabled|test`�
 - **通知与消息**：任务通知（0.0.88 迁入，即时生效）、微信（`weixin.agentId` / `weixin.modelId` 微信通道 Agent 与模型）
 - **平台与运维**：分享（匿名分享链接开关）、审计（日志保留天数）、运行环境（工作区与 Skill 目录，只读展示）
 
-读写需 `settings:read` / `settings:write` 权限；页面左侧目录按上述分两级展示（默认折叠为分组标题行，点击分组或滚动到该组内容时自动展开），可快速跳转分组；滚动右侧配置时目录固定不跟随页面滚走。CLI：`mao settings list|set`（见 [settings.md](settings.md)）。
+读写需 `settings:read` / `settings:write` 权限。页面左侧目录按上述分两级展示（默认折叠为分组标题行，点击分组或滚动到该组内容时自动展开），可快速跳转分组；滚动右侧配置时目录固定不跟随页面滚走。不知道某一项在哪一组时，用页面顶部搜索：按中文名称、说明或配置 key（如「空闲超时」「smtp」「harness.shell」）匹配，结果标出「分组 / 卡片」，回车或点击后滚到该项并高亮。同名配置（例如 Shell 会话的「空闲超时」和云端终端的「空闲回收」）靠这条路径区分。CLI：`mao settings list|set`（见 [settings.md](settings.md)）。
 
 ## 浮窗助手（0.0.298 起）
 

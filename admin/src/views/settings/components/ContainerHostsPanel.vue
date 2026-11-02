@@ -16,7 +16,7 @@
         class="config-tip"
       />
 
-      <div class="switch-row">
+      <div :id="CONTAINER_INHERIT_FIELD_ID" class="setting-field switch-row">
         <span class="switch-label">自动继承宿主机 /etc/hosts</span>
         <el-switch
           :model-value="inheritEnabled"
@@ -39,6 +39,7 @@
 
       <el-divider />
 
+      <div :id="CONTAINER_EXTRA_HOSTS_FIELD_ID" class="setting-field">
       <div class="group-header">
         <span class="sub-title">自定义规则</span>
         <el-button type="primary" size="small" :disabled="!canWrite" @click="openCreate">新增规则</el-button>
@@ -55,6 +56,7 @@
         </el-table-column>
       </el-table>
       <div v-if="parseError" class="field-error">当前设置值无法解析（{{ parseError }}），保存新规则将覆盖原值。</div>
+      </div>
 
       <el-dialog
         v-model="dialogVisible"
@@ -93,6 +95,7 @@ import {
   stringifyContainerHosts,
   type ContainerHostEntry,
 } from '../containerHosts'
+import { CONTAINER_EXTRA_HOSTS_FIELD_ID, CONTAINER_INHERIT_FIELD_ID } from '../settingsSearchCatalog'
 
 const CONTAINER_INHERIT_KEY = 'runtime.container.inheritHostHosts'
 const CONTAINER_EXTRA_HOSTS_KEY = 'runtime.container.extraHosts'

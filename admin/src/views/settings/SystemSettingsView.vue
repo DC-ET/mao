@@ -5,7 +5,7 @@
         <div class="card-header">
           <div>
             <div class="card-title">系统设置</div>
-            <div class="card-hint">按分类编辑平台配置，点击左侧目录可快速跳转。</div>
+            <div class="card-hint">左侧目录按分组跳转。不知道配置在哪一组时，用搜索按名称或 key 定位。</div>
           </div>
           <el-button @click="fetchSettings">
             <el-icon><Refresh /></el-icon>
@@ -14,6 +14,7 @@
       </template>
 
       <div v-loading="loading" class="settings-layout">
+        <SettingsSearchBox :fields="locatorFields" :sections="locatorSections" @select="locateSetting" />
         <aside class="toc">
           <div class="toc-title">目录</div>
           <div class="toc-list">
@@ -119,11 +120,13 @@
                     </div>
                   </template>
                   <el-form label-position="top" class="group-form">
-                    <el-form-item
+                    <div
                       v-for="row in settingsByCategory[section.name]"
+                      :id="settingFieldId(row.settingKey)"
                       :key="row.settingKey"
-                      :label="row.description || row.settingKey"
+                      class="setting-field"
                     >
+                    <el-form-item :label="row.description || row.settingKey">
                       <div v-if="row.editable !== 1" class="field-readonly">{{ row.value || '未设置' }}</div>
                       <template v-else>
                         <el-switch
@@ -222,6 +225,7 @@
                         <div class="field-hint">{{ row.settingKey }}</div>
                       </template>
                     </el-form-item>
+                    </div>
                   </el-form>
                 </el-card>
               </section>
@@ -240,6 +244,10 @@ import { Refresh, ArrowRight } from '@element-plus/icons-vue'
 import { api } from '../../api'
 import { useAuthStore } from '../../stores/auth'
 import IntegrationConfigPanel from './components/IntegrationConfigPanel.vue'
+import SettingsSearchBox from './components/SettingsSearchBox.vue'
+import { INTEGRATION_GROUP_CATALOG } from './integrationFieldCatalog'
+import { buildSettingsLocatorFields, settingFieldId, type SearchHit } from './settingsLocator'
+import { PANEL_LOCATOR_FIELDS, SECTION_KEYWORDS } from './settingsSearchCatalog'
 import CompanySsoConfigPanel from './components/CompanySsoConfigPanel.vue'
 import EcpConfigPanel from './components/EcpConfigPanel.vue'
 import ShellEnvVarsPanel from './components/ShellEnvVarsPanel.vue'
@@ -373,8 +381,11 @@ const ecpRow = computed(() => settings.value.find((item) => item.settingKey === 
 /** 容器域名解析（V176）：走 ContainerHostsPanel 专属面板，不在「运行环境」分类里重复渲染。 */
 const CONTAINER_INHERIT_KEY = 'runtime.container.inheritHostHosts'
 const CONTAINER_EXTRA_HOSTS_KEY = 'runtime.container.extraHosts'
+/** 开关在「容器管理」面板，不进「运行环境」分类卡片（那里只能渲染成文本框）。 */
+const CONTAINER_AUTO_UPGRADE_KEY = 'runtime.container.autoUpgrade'
 const SPECIAL_KEYS = new Set([
   ...INTEGRATION_KEYS, COMPANY_SSO_KEY, ECP_CONFIG_KEY, CONTAINER_INHERIT_KEY, CONTAINER_EXTRA_HOSTS_KEY,
+  CONTAINER_AUTO_UPGRADE_KEY,
 ])
 const containerInheritRow = computed(() => settings.value.find((item) => item.settingKey === CONTAINER_INHERIT_KEY))
 const containerExtraHostsRow = computed(() => settings.value.find((item) => item.settingKey === CONTAINER_EXTRA_HOSTS_KEY))
@@ -704,6 +715,26 @@ const tocGroups = computed<TocGroup[]>(() => {
 /** 目录平铺条目：滚动跳转与高亮用。 */
 const toc = computed(() => tocGroups.value.flatMap((group) => group.sections))
 
+const locatorSections = computed(() =>
+  tocGroups.value.flatMap((group) =>
+    group.sections.map((section) => ({
+      id: section.id,
+      label: section.label,
+      group: group.label,
+      keywords: SECTION_KEYWORDS[section.id],
+    })),
+  ),
+)
+
+const locatorFields = computed(() =>
+  buildSettingsLocatorFields({
+    rows: settings.value,
+    integrationGroups: INTEGRATION_GROUP_CATALOG,
+    panelFields: PANEL_LOCATOR_FIELDS,
+    coveredKeys: SPECIAL_KEYS,
+  }),
+)
+
 const firstIntegrationName = computed(() => toc.value.find((section) => section.kind === 'integration')?.name ?? '')
 
 /** 手风琴：当前展开的分组 label。默认仅显示分组标题，滚动时自动跟随当前所在分组展开。 */
@@ -754,6 +785,27 @@ function scrollToSection(id: string) {
   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
+/** 程序滚动期间忽略交叉观察，避免目录高亮被中间经过的分组抢走。 */
+let locateLockUntil = 0
+let flashTimer = 0
+
+function locateSetting(hit: SearchHit) {
+  activeSection.value = hit.sectionId
+  const group = tocGroups.value.find((item) => item.sections.some((section) => section.id === hit.sectionId))
+  if (group) expandedGroup.value = group.label
+  locateLockUntil = Date.now() + 900
+  nextTick(() => {
+    const el = document.getElementById(hit.fieldId)
+    if (!el) return
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    document.querySelectorAll('.is-located').forEach((node) => node.classList.remove('is-located'))
+    el.classList.add('is-located')
+    window.clearTimeout(flashTimer)
+    flashTimer = window.setTimeout(() => el.classList.remove('is-located'), 2400)
+    ensureActiveItemVisible()
+  })
+}
+
 let observer: IntersectionObserver | null = null
 
 /** 监听各分组锚点进入可视区，高亮当前所在分组。 */
@@ -768,7 +820,7 @@ function setupObserver() {
       const visible = entries
         .filter((e) => e.isIntersecting)
         .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)
-      if (visible.length > 0) {
+      if (visible.length > 0 && Date.now() >= locateLockUntil) {
         activeSection.value = (visible[0].target as HTMLElement).id
       }
     },
@@ -780,6 +832,7 @@ function setupObserver() {
 onBeforeUnmount(() => {
   observer?.disconnect()
   observer = null
+  window.clearTimeout(flashTimer)
 })
 
 async function fetchAgents() {
@@ -886,9 +939,14 @@ onActivated(() => {
 }
 
 .settings-layout {
-  display: flex;
-  align-items: flex-start;
-  gap: 24px;
+  display: grid;
+  grid-template-columns: 168px minmax(0, 1fr);
+  grid-template-areas:
+    "toc search"
+    "toc content";
+  column-gap: 24px;
+  row-gap: 12px;
+  align-items: start;
 }
 
 /* Element Plus 卡片默认 overflow: hidden / body auto，会把 sticky 目录关在卡片内使其失效；
@@ -902,9 +960,9 @@ onActivated(() => {
 }
 
 .toc {
+  grid-area: toc;
   position: sticky;
   top: 12px;
-  flex-shrink: 0;
   width: 168px;
   max-height: calc(100vh - 200px);
   overflow-y: auto;
@@ -994,11 +1052,22 @@ onActivated(() => {
 }
 
 .settings-content {
-  flex: 1;
+  grid-area: content;
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 24px;
+}
+
+.settings-content :deep(.setting-field) {
+  scroll-margin-top: 72px;
+  border-radius: 8px;
+}
+
+.settings-content :deep(.is-located) {
+  outline: 2px solid var(--mao-accent);
+  outline-offset: 3px;
+  border-radius: 8px;
 }
 
 .setting-section {
@@ -1035,7 +1104,7 @@ onActivated(() => {
   margin-bottom: 16px;
 }
 
-.group-form :deep(.el-form-item:last-child) {
+.group-form :deep(.setting-field:last-child .el-form-item) {
   margin-bottom: 0;
 }
 
@@ -1061,8 +1130,12 @@ onActivated(() => {
 
 @media (max-width: 768px) {
   .settings-layout {
-    flex-direction: column;
-    gap: 16px;
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "search"
+      "toc"
+      "content";
+    row-gap: 16px;
   }
 
   .toc {
