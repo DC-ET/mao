@@ -43,5 +43,21 @@ export async function openExternalUrl(url: string): Promise<boolean> {
       // 插件不可用时落到 window.open 兜底
     }
   }
-  return !!window.open(url, '_blank', 'noopener')
+  return openWebWindow(url)
+}
+
+/**
+ * Web 新标签。`window.open(url, '_blank', 'noopener')` 按规范成功也返回 null，
+ * 和弹窗拦截无法区分，飞书登录会因此丢掉 state、停止轮询。
+ * 先拿到窗口引用，再立刻切断 opener，新页面脚本执行前已不能反向访问本页。
+ */
+function openWebWindow(url: string): boolean {
+  const opened = window.open(url, '_blank')
+  if (!opened) return false
+  try {
+    opened.opener = null
+  } catch {
+    // 个别环境禁止写 opener；窗口已经打开
+  }
+  return true
 }
