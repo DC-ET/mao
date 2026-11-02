@@ -81,6 +81,7 @@
       </el-table>
 
       <ResponsivePagination
+        class="pagination"
         v-model:current-page="currentPage"
         v-model:page-size="pageSize"
         :total="total"
@@ -771,6 +772,10 @@ onActivated(() => {
 </script>
 
 <style scoped>
+.pagination {
+  margin-top: 16px;
+  justify-content: flex-end;
+}
 .card-header,
 .header-actions {
   display: flex;

@@ -94,6 +94,7 @@
         <el-empty v-if="!loading && records.length === 0" description="暂无数据" />
       </div>
       <ResponsivePagination
+        class="pagination"
         v-model:current-page="currentPage"
         v-model:page-size="pageSize"
         :total="total"
@@ -403,6 +404,10 @@ onActivated(() => {
 </script>
 
 <style scoped>
+.pagination {
+  margin-top: 16px;
+  justify-content: flex-end;
+}
 .summary-row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
 .summary-item { display: flex; flex-direction: column; min-width: 120px; }
 .summary-item span { color: var(--el-text-color-secondary); font-size: 12px; }
