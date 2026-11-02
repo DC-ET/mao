@@ -84,6 +84,12 @@ watch(result, () => {
   activeIndex.value = 0
 })
 
+// 点结果时用 mousedown.prevent 保住输入框焦点，选中后 open 被关掉，但焦点还在，不会再触发 focus。
+// 继续打字时要靠内容变化把面板重新打开。
+watch(query, (value) => {
+  if (value.trim() !== '') open.value = true
+})
+
 watch(activeIndex, () => {
   nextTick(() => {
     const panel = rootRef.value?.querySelector('.search-panel')
