@@ -26,6 +26,7 @@
 | `--size` | 否 | 整数 | 20 | 每页条数 | `size` |
 | `--keyword` | 否 | 字符串 | — | 关键词（用户名/显示名等） | `keyword` |
 | `--status` | 否 | 整数 | — | `1` 启用 / `0` 禁用 | `status` |
+| `--role-id` | 否 | 正整数 | — | 只列出拥有该角色的用户 | `roleId` |
 
 ### 接口
 
@@ -35,6 +36,7 @@
 
 ```bash
 mao user list --page 1 --size 20 --keyword admin --status 1
+mao user list --role-id 1
 ```
 
 ## 命令：user get

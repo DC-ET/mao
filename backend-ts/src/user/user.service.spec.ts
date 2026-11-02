@@ -45,6 +45,17 @@ describe('UserService', () => {
     expect(userRepo.selectPage).toHaveBeenCalled();
   });
 
+  it('listUsersForwardsRoleIdAndRejectsNonPositive', async () => {
+    vi.mocked(userRepo.selectPage).mockClear();
+    vi.mocked(userRepo.selectPage).mockResolvedValue({ records: [], total: 0 });
+    await service.listUsers(2, 10, 'bob', 1, 'ECP', 4);
+    expect(userRepo.selectPage).toHaveBeenCalledWith(2, 10, 'bob', 1, 'ECP', 4);
+    await expect(service.listUsers(1, 10, undefined, undefined, undefined, 0)).rejects.toBeInstanceOf(BusinessException);
+    await expect(service.listUsers(1, 10, undefined, undefined, undefined, -3)).rejects.toBeInstanceOf(BusinessException);
+    await expect(service.listUsers(1, 10, undefined, undefined, undefined, 1.5)).rejects.toBeInstanceOf(BusinessException);
+    expect(userRepo.selectPage).toHaveBeenCalledTimes(1);
+  });
+
   it('getUserThrowsWhenMissing', async () => {
     vi.mocked(userRepo.findById).mockResolvedValue(null);
     await expect(service.getUser(99)).rejects.toBeInstanceOf(BusinessException);

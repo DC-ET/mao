@@ -130,7 +130,14 @@ export class MysqlUserRepository implements UserRepository {
     });
   }
 
-  async selectPage(page: number, size: number, keyword?: string, status?: number | null, authSource?: string | null): Promise<{ records: User[]; total: number }> {
+  async selectPage(
+    page: number,
+    size: number,
+    keyword?: string,
+    status?: number | null,
+    authSource?: string | null,
+    roleId?: number | null,
+  ): Promise<{ records: User[]; total: number }> {
     const where: string[] = [notDeleted()];
     const params: unknown[] = [];
     if (keyword && keyword.trim()) {
@@ -150,6 +157,11 @@ export class MysqlUserRepository implements UserRepository {
     }
     const authSourceSql = authSourceWhere(authSource);
     if (authSourceSql) where.push(authSourceSql);
+    // EXISTS 避免一个用户多个角色时 JOIN 把分页行放大。
+    if (roleId != null) {
+      where.push('EXISTS (SELECT 1 FROM user_role ur WHERE ur.user_id = `user`.id AND ur.role_id = ?)');
+      params.push(roleId);
+    }
     const whereSql = where.join(' AND ');
     const countRow = await this.db.queryOne<{ cnt: number }>(`SELECT COUNT(*) AS cnt FROM \`user\` WHERE ${whereSql}`, params);
     const total = Number(countRow?.cnt ?? 0);

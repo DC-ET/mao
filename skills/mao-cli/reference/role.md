@@ -2,7 +2,7 @@
 
 ## 用途
 
-管理角色、给角色赋权限点、列出全部权限点。用户绑角色见 `reference/user.md` 的 `user assign-roles`。
+管理角色、给角色赋权限点、列出全部权限点。用户绑角色见 `reference/user.md` 的 `user assign-roles`。查看某角色下有哪些用户：`mao user list --role-id <id>`（管理后台角色列表的「成员」是同一筛选）。
 
 ## 命令选择
 

@@ -1,6 +1,7 @@
 'use strict';
 
 const {
+  createCliError,
   requireFlag,
   requireNumber,
   getString,
@@ -16,7 +17,7 @@ function help() {
   return `user — 用户管理
 
 命令:
-  mao user list [--page] [--size] [--keyword] [--status]
+  mao user list [--page] [--size] [--keyword] [--status] [--role-id]
   mao user get --id ID
   mao user create --username --password [--display-name] [--email] [--role-ids 1,2] [--status 1]
   mao user update --id [--display-name] [--email] [--role-ids] [--status]
@@ -34,11 +35,16 @@ async function run(ctx, subcommand, _rest, flags) {
 
   switch (subcommand) {
     case 'list': {
+      const roleId = getNumber(flags, 'role-id');
+      if (roleId !== undefined && (!Number.isInteger(roleId) || roleId <= 0)) {
+        throw createCliError('--role-id 必须是正整数');
+      }
       const result = await get(ctx, '/users', pickDefined({
         page: getNumber(flags, 'page'),
         size: getNumber(flags, 'size'),
         keyword: getString(flags, 'keyword'),
         status: getNumber(flags, 'status'),
+        roleId,
       }));
       emitResult(result, { raw: ctx.raw });
       return;

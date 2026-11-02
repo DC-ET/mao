@@ -311,7 +311,6 @@ function handleEditRole(role: Role) {
 }
 
 function handleViewMembers(role: Role) {
-  // 后端 listUsers 暂不支持 roleId 参数，先传 query 表达筛选意图（评审 #7）
   router.push({ path: '/users', query: { roleId: String(role.id) } })
 }
 

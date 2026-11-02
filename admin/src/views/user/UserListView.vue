@@ -46,6 +46,23 @@
               <el-button @click="handleReset">重置</el-button>
             </el-form-item>
           </template>
+          <el-form-item label="角色">
+            <el-select
+              v-model="filters.roleId"
+              placeholder="全部"
+              clearable
+              filterable
+              style="width: 160px"
+              @change="handleRoleChange"
+            >
+              <el-option
+                v-for="role in rolesCache"
+                :key="role.id"
+                :label="role.name"
+                :value="role.id"
+              />
+            </el-select>
+          </el-form-item>
           <el-form-item label="账号类型">
             <el-select
               v-model="filters.authSource"
@@ -69,16 +86,6 @@
           </el-form-item>
         </FilterPanel>
       </el-form>
-
-      <el-alert
-        v-if="roleFilterName"
-        type="warning"
-        :closable="true"
-        show-icon
-        class="role-filter-alert"
-      >
-        按角色「{{ roleFilterName }}」筛选需要后端支持 roleId 查询参数（当前 listUsers 仅支持 keyword/status），已在评审文档 #6/#7 中记录；本页暂未做角色过滤。
-      </el-alert>
 
       <el-table v-if="!isMobile" :data="users" v-loading="loading" stripe @selection-change="handleSelectionChange">
         <template #empty>
@@ -262,8 +269,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onActivated, onMounted } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { ref, reactive, computed, onActivated, onMounted, watch } from 'vue'
+import { useRoute, useRouter, type LocationQuery } from 'vue-router'
 import { Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
@@ -292,7 +299,8 @@ const total = ref(0)
 const filters = reactive({
   keyword: '',
   status: undefined as number | undefined,
-  authSource: undefined as string | undefined
+  authSource: undefined as string | undefined,
+  roleId: null as number | null
 })
 
 /** 与后端 UserService.resolveAuthSource 的取值一一对应。 */
@@ -335,10 +343,9 @@ const resetAuthSource = ref<string | null>(null)
 const detailVisible = ref(false)
 const detailUser = ref<any | null>(null)
 
-/** route.query.roleId 仅作为筛选意图提示（后端 listUsers 不支持 roleId，评审文档 #6/#7 已记录） */
-const queryRoleId = ref<number | null>(null)
-const roleFilterName = ref('')
 const rolesCache = ref<Array<{ id: number; name: string }>>([])
+/** 已经按地址栏应用过的 roleId。keep-alive 的 key 不含 query，切回时用它判断要不要重拉。 */
+let appliedRoleKey = ''
 
 function isCurrentUser(row: any) {
   return row.id === authStore.user?.id
@@ -370,6 +377,7 @@ async function fetchUsers() {
       params.status = filters.status
     }
     if (filters.authSource) params.authSource = filters.authSource
+    if (filters.roleId != null) params.roleId = filters.roleId
 
     const { data } = await api.get('/users', { params })
     if (seq !== fetchUsersSeq) return
@@ -385,12 +393,29 @@ function handleSearch() {
   fetchUsers()
 }
 
+function queryWithoutRole(): LocationQuery {
+  const query: LocationQuery = { ...route.query }
+  delete query.roleId
+  return query
+}
+
+function handleRoleChange() {
+  if (filters.roleId == null || filters.roleId <= 0) filters.roleId = null
+  const key = filters.roleId != null ? String(filters.roleId) : ''
+  appliedRoleKey = key
+  const query = queryWithoutRole()
+  if (key) query.roleId = key
+  router.replace({ path: '/users', query })
+  currentPage.value = 1
+  fetchUsers()
+}
+
 function handleReset() {
   filters.keyword = ''
   filters.status = undefined
   filters.authSource = undefined
-  queryRoleId.value = null
-  roleFilterName.value = ''
+  filters.roleId = null
+  appliedRoleKey = ''
   if (route.query.roleId) {
     router.replace({ path: '/users' })
   }
@@ -506,39 +531,58 @@ async function handleToggleStatus(row: any) {
   }
 }
 
-// 支持 /users?roleId=x：后端暂不支持按角色过滤，仅解析意图给出提示
-async function applyRoleQuery() {
-  const roleIdRaw = route.query.roleId
-  if (roleIdRaw) {
-    const parsed = Number(roleIdRaw)
-    if (Number.isFinite(parsed) && parsed > 0) {
-      queryRoleId.value = parsed
-      if (!rolesCache.value.some((r) => r.id === parsed)) {
-        await fetchRolesOptions()
-      }
-      roleFilterName.value = rolesCache.value.find((r) => r.id === parsed)?.name || `#${parsed}`
-    } else {
-      router.replace({ path: '/users' })
+/** 把地址栏 roleId 写进筛选。非法值清掉参数。返回是否相对上次应用有变化。 */
+function syncRoleFromRoute(): boolean {
+  const raw = Array.isArray(route.query.roleId) ? route.query.roleId[0] : route.query.roleId
+  if (raw != null && raw !== '') {
+    const parsed = Number(raw)
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      filters.roleId = null
+      appliedRoleKey = ''
+      router.replace({ path: '/users', query: queryWithoutRole() })
+      return true
     }
-    return
+    const key = String(parsed)
+    if (key === appliedRoleKey && filters.roleId === parsed) return false
+    appliedRoleKey = key
+    filters.roleId = parsed
+    return true
   }
-  if (queryRoleId.value != null) {
-    queryRoleId.value = null
-    roleFilterName.value = ''
-  }
+  if (appliedRoleKey === '' && filters.roleId == null) return false
+  appliedRoleKey = ''
+  filters.roleId = null
+  return true
+}
+
+function applyRoleRouteChange() {
+  if (route.name !== 'Users') return
+  if (!syncRoleFromRoute()) return
+  currentPage.value = 1
+  fetchUsers()
 }
 
 onMounted(async () => {
-  await applyRoleQuery()
+  await fetchRolesOptions()
+  syncRoleFromRoute()
   if (!authStore.user) {
     await authStore.fetchUserInfo()
   }
   fetchUsers()
 })
 
-// keep-alive key 是 path 不含 query，切回时需重新解析 roleId
+// 同页 query 变化（侧边栏回到 /users、角色页「成员」）不会重建 keep-alive 实例。
+watch(() => route.fullPath, () => {
+  applyRoleRouteChange()
+})
+
+// keep-alive 首次挂载 onActivated 紧随 onMounted，跳过以免重复请求。
+let activatedOnce = false
 onActivated(() => {
-  void applyRoleQuery()
+  if (!activatedOnce) {
+    activatedOnce = true
+    return
+  }
+  applyRoleRouteChange()
 })
 </script>
 
@@ -557,10 +601,6 @@ onActivated(() => {
   display: flex;
   align-items: center;
   gap: 12px;
-}
-
-.role-filter-alert {
-  margin-bottom: 16px;
 }
 
 .role-tag {
