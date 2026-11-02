@@ -67,21 +67,27 @@
           <div class="feishu-actions">
             <el-button
               v-if="authStore.features.feishuEnabled"
-              class="feishu-entry"
-              plain
+              class="feishu-brand-btn"
+              type="primary"
               :loading="feishuLoading && activeFeishuProvider === 'mao'"
               @click="startFeishuLogin('mao')"
             >
+              <span class="feishu-brand-badge" aria-hidden="true">
+                <img :src="feishuLogo" alt="" width="16" height="16" />
+              </span>
               飞书登录
             </el-button>
             <el-button
               v-if="authStore.features.ecpEnabled"
-              class="feishu-entry"
-              plain
+              class="feishu-brand-btn"
+              type="primary"
               :loading="feishuLoading && activeFeishuProvider === 'ecp'"
               @click="startFeishuLogin('ecp')"
             >
-              ECP 飞书登录
+              <span class="feishu-brand-badge" aria-hidden="true">
+                <img :src="feishuLogo" alt="" width="16" height="16" />
+              </span>
+              飞书登入(ECP)
             </el-button>
           </div>
         </el-form-item>
@@ -92,10 +98,14 @@
         <p class="feishu-status">{{ feishuStatusText }}</p>
         <el-button
           type="primary"
+          class="feishu-brand-btn"
           :loading="feishuLoading"
           @click="startFeishuLogin(activeFeishuProvider)"
         >
-          {{ activeFeishuProvider === 'ecp' ? 'ECP 飞书登录' : '飞书登录' }}
+          <span class="feishu-brand-badge" aria-hidden="true">
+            <img :src="feishuLogo" alt="" width="16" height="16" />
+          </span>
+          {{ activeFeishuProvider === 'ecp' ? '飞书登入(ECP)' : '飞书登录' }}
         </el-button>
         <el-button class="password-entry" link @click="backToPasswordLogin">
           返回密码登录
@@ -114,6 +124,7 @@ import type { FormInstance, FormRules, InputInstance } from 'element-plus'
 import { api } from '../../api'
 import { useAuthStore } from '../../stores/auth'
 import appIcon from '../../assets/app-icon-small.png'
+import feishuLogo from '../../assets/feishu-logo.svg'
 import { useTheme } from '../../utils/theme'
 import { readRedirectQuery, safeRedirect } from '../../utils/login-redirect'
 import { openExternalUrl } from '../../utils/capacitor'
@@ -494,10 +505,8 @@ onBeforeUnmount(() => {
   width: 100%;
 }
 
-/* 登录页 CTA 保持醒目的大按钮：自设度量，优先级高于全站 small 统一规则 */
-.login-btn,
-.feishu-entry,
-.feishu-panel .el-button[type="primary"] {
+/* 登录页密码 CTA 保持醒目的大胶囊按钮：自设度量，优先级高于全站 small 统一规则 */
+.login-btn {
   width: 100%;
   margin: 0;
   border-radius: var(--aw-radius-pill) !important;
@@ -508,8 +517,57 @@ onBeforeUnmount(() => {
 }
 
 .login-btn:active,
-.feishu-entry:active {
+.feishu-brand-btn:active {
   transform: scale(0.95);
+}
+
+/* 飞书官方登录按钮：蓝底、白标、圆角矩形。OAuth 与 ECP 共用 */
+.feishu-brand-btn {
+  width: 100%;
+  margin: 0;
+  height: auto;
+  padding: 10px 22px;
+  border: none !important;
+  border-radius: 8px !important;
+  background: #3370ff !important;
+  color: #fff !important;
+  font-size: var(--aw-text-body);
+  font-weight: 400;
+  line-height: 22px;
+}
+
+.feishu-brand-btn:hover,
+.feishu-brand-btn:focus {
+  background: #4e83fd !important;
+  color: #fff !important;
+}
+
+.feishu-brand-btn:active {
+  background: #245bdb !important;
+  color: #fff !important;
+}
+
+.feishu-brand-btn :deep(> span) {
+  display: inline-flex;
+  align-items: center;
+}
+
+.feishu-brand-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-right: 8px;
+  border-radius: 5px;
+  background: #fff;
+  flex: none;
+}
+
+.feishu-brand-badge img {
+  width: 16px;
+  height: 16px;
+  display: block;
 }
 
 .feishu-panel {
