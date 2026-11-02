@@ -68,6 +68,13 @@
         >
           当前未开放登录方式，请联系管理员
         </p>
+        <div
+          v-if="authStore.features.passwordEnabled && (authStore.features.feishuEnabled || authStore.features.ecpEnabled)"
+          class="login-or"
+          role="separator"
+        >
+          <span>或</span>
+        </div>
         <el-form-item
           v-if="authStore.features.feishuEnabled || authStore.features.ecpEnabled"
           class="feishu-actions-item"
@@ -76,25 +83,19 @@
             <el-button
               v-if="authStore.features.feishuEnabled"
               class="feishu-brand-btn"
-              type="primary"
               :loading="feishuLoading && activeFeishuProvider === 'mao'"
               @click="startFeishuLogin('mao')"
             >
-              <span class="feishu-brand-badge" aria-hidden="true">
-                <img :src="feishuLogo" alt="" width="16" height="16" />
-              </span>
+              <img class="feishu-mark" :src="feishuLogo" alt="" width="18" height="18" />
               飞书登录
             </el-button>
             <el-button
               v-if="authStore.features.ecpEnabled"
               class="feishu-brand-btn"
-              type="primary"
               :loading="feishuLoading && activeFeishuProvider === 'ecp'"
               @click="startFeishuLogin('ecp')"
             >
-              <span class="feishu-brand-badge" aria-hidden="true">
-                <img :src="feishuLogo" alt="" width="16" height="16" />
-              </span>
+              <img class="feishu-mark" :src="feishuLogo" alt="" width="18" height="18" />
               飞书登录(ECP)
             </el-button>
           </div>
@@ -110,9 +111,7 @@
           :loading="feishuLoading"
           @click="startFeishuLogin(activeFeishuProvider)"
         >
-          <span class="feishu-brand-badge" aria-hidden="true">
-            <img :src="feishuLogo" alt="" width="16" height="16" />
-          </span>
+          <img class="feishu-mark" :src="feishuLogo" alt="" width="18" height="18" />
           {{ activeFeishuProvider === 'ecp' ? '飞书登录(ECP)' : '飞书登录' }}
         </el-button>
         <el-button class="password-entry" link @click="backToPasswordLogin">
@@ -407,9 +406,13 @@ onBeforeUnmount(() => {
   align-items: center;
   min-height: 100vh;
   min-height: 100dvh;
-  background: var(--aw-canvas);
+  background: var(--aw-canvas-parchment);
   padding: 16px;
   box-sizing: border-box;
+}
+
+[data-theme="dark"] .login-page {
+  background: var(--aw-canvas);
 }
 
 /* Electron 红绿灯避让 + 可拖拽顶栏；Web/安卓为透明占位 */
@@ -454,19 +457,24 @@ onBeforeUnmount(() => {
 .login-card {
   width: 380px;
   max-width: 100%;
-  padding: 40px 32px 24px;
+  padding: 36px 32px 28px;
   background: var(--aw-surface);
   border: 1px solid var(--aw-border);
   border-radius: var(--aw-radius-lg);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.06);
   box-sizing: border-box;
+}
+
+[data-theme="dark"] .login-card {
+  box-shadow: none;
 }
 
 .login-header {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 16px;
-  margin-bottom: 32px;
+  gap: 12px;
+  margin-bottom: 28px;
 }
 
 .login-logo-img {
@@ -486,11 +494,22 @@ onBeforeUnmount(() => {
 
 .login-form :deep(.el-input__wrapper) {
   border-radius: var(--aw-radius-pill);
-  padding: 4px 16px;
+  padding: 0 16px;
+  min-height: 44px;
+  background: var(--aw-canvas-parchment);
+  box-shadow: 0 0 0 1px var(--aw-border) inset;
+}
+
+[data-theme="dark"] .login-form :deep(.el-input__wrapper) {
+  background: var(--aw-canvas);
+}
+
+.login-form :deep(.el-input__wrapper.is-focus) {
+  box-shadow: 0 0 0 1px var(--aw-primary) inset;
 }
 
 .login-form :deep(.el-form-item) {
-  margin-bottom: 20px;
+  margin-bottom: 14px;
 }
 
 .remember-item {
@@ -503,56 +522,89 @@ onBeforeUnmount(() => {
 
 .feishu-actions-item {
   margin-bottom: 0 !important;
-  margin-top: 8px;
+}
+
+.login-or {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0 14px;
+  color: var(--aw-muted);
+  font-size: var(--aw-text-fine);
+  line-height: 1;
+}
+
+.login-or::before,
+.login-or::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--aw-divider);
 }
 
 .feishu-actions {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   width: 100%;
 }
 
-/* 登录页密码 CTA 保持醒目的大胶囊按钮：自设度量，优先级高于全站 small 统一规则 */
-.login-btn {
+/* 登录页按钮统一成 44px 胶囊。密码是唯一实心主按钮，飞书是线框次按钮。 */
+.login-btn,
+.feishu-brand-btn {
   width: 100%;
+  height: 44px;
   margin: 0;
+  padding: 0 18px;
   border-radius: var(--aw-radius-pill) !important;
-  font-size: var(--aw-text-body);
-  font-weight: 400;
-  padding: 11px 22px;
-  height: auto;
+  font-size: var(--aw-text-caption);
+  font-weight: 500;
+  letter-spacing: 0.01em;
 }
 
 .login-btn:active,
 .feishu-brand-btn:active {
-  transform: scale(0.95);
+  transform: none;
 }
 
-/* 飞书官方登录按钮：蓝底、白标、圆角矩形。OAuth 与 ECP 共用 */
-.feishu-brand-btn {
-  width: 100%;
-  margin: 0;
-  height: auto;
-  padding: 10px 22px;
+.login-btn {
   border: none !important;
-  border-radius: 8px !important;
-  background: #3370ff !important;
-  color: #fff !important;
-  font-size: var(--aw-text-body);
-  font-weight: 400;
-  line-height: 22px;
+  background: var(--aw-primary) !important;
+  color: var(--aw-on-primary) !important;
+}
+
+.login-btn:hover,
+.login-btn:focus {
+  background: var(--aw-primary-focus) !important;
+  color: var(--aw-on-primary) !important;
+}
+
+.feishu-brand-btn {
+  border: 1px solid var(--aw-border) !important;
+  background: var(--aw-surface) !important;
+  color: var(--aw-ink) !important;
 }
 
 .feishu-brand-btn:hover,
 .feishu-brand-btn:focus {
-  background: #4e83fd !important;
-  color: #fff !important;
+  border-color: var(--aw-ink-muted-40) !important;
+  background: var(--aw-canvas-parchment) !important;
+  color: var(--aw-ink) !important;
 }
 
-.feishu-brand-btn:active {
-  background: #245bdb !important;
-  color: #fff !important;
+[data-theme="dark"] .feishu-brand-btn {
+  background: var(--aw-canvas) !important;
+}
+
+[data-theme="dark"] .feishu-brand-btn:hover,
+[data-theme="dark"] .feishu-brand-btn:focus {
+  background: var(--aw-surface-hover) !important;
+}
+
+.login-btn:focus-visible,
+.feishu-brand-btn:focus-visible {
+  outline: 2px solid var(--aw-primary);
+  outline-offset: 2px;
 }
 
 .feishu-brand-btn :deep(> span) {
@@ -560,22 +612,12 @@ onBeforeUnmount(() => {
   align-items: center;
 }
 
-.feishu-brand-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
+.feishu-mark {
+  width: 18px;
+  height: 18px;
   margin-right: 8px;
-  border-radius: 5px;
-  background: #fff;
-  flex: none;
-}
-
-.feishu-brand-badge img {
-  width: 16px;
-  height: 16px;
   display: block;
+  flex: none;
 }
 
 .feishu-panel {
