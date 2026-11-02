@@ -50,6 +50,7 @@ describe('PermissionService', () => {
     countByRoleId: vi.fn(),
     countByUserAndRole: vi.fn(),
     deleteByUserId: vi.fn(),
+    deleteByUserAndRole: vi.fn(),
     insert: vi.fn(),
     updateUserStatus: vi.fn(),
     // 默认实现：直接以桩自身作为 tx 执行回调，保持 assignRoles 等既有路径语义
@@ -57,6 +58,7 @@ describe('PermissionService', () => {
   } as unknown as UserRoleRepository;
   const userRepo = {
     findById: vi.fn(),
+    findByIds: vi.fn(),
     updateFields: vi.fn(),
   } as unknown as UserRepository;
 
@@ -228,5 +230,110 @@ describe('PermissionService', () => {
     // 禁用自己仍然拒绝，不会因上面放行自助写入而被绕过
     await expect(service.updateUserStatusWithAdminGuard(10, 10, 0)).rejects.toBeInstanceOf(BusinessException);
     expect(userRepo.updateFields).toHaveBeenCalledTimes(2);
+  });
+
+  describe('addRoleUsers', () => {
+    it('rejects empty, malformed, oversized and duplicated ids', async () => {
+      vi.mocked(roleRepo.findById).mockResolvedValue(role(3, 'Ops', 'OPS'));
+      await expect(service.addRoleUsers(3, [])).rejects.toMatchObject({ code: 2001 });
+      await expect(service.addRoleUsers(3, [0, -1])).rejects.toMatchObject({ code: 2001 });
+      await expect(service.addRoleUsers(3, [1.5])).rejects.toMatchObject({ code: 2001 });
+      const tooMany = Array.from({ length: 101 }, (_, i) => i + 1);
+      await expect(service.addRoleUsers(3, tooMany)).rejects.toMatchObject({ code: 2001 });
+      expect(userRoleRepo.transaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects unknown role and missing users', async () => {
+      vi.mocked(roleRepo.findById).mockResolvedValue(null);
+      await expect(service.addRoleUsers(99, [1])).rejects.toMatchObject({ code: 3054 });
+      expect(userRepo.findByIds).not.toHaveBeenCalled();
+
+      vi.mocked(roleRepo.findById).mockResolvedValue(role(3, 'Ops', 'OPS'));
+      // 去重后 3 个 id，只查到 2 个用户 → 整体拒绝，不落任何绑定
+      vi.mocked(userRepo.findByIds).mockResolvedValue([
+        { id: 1, username: 'a' },
+        { id: 2, username: 'b' },
+      ]);
+      await expect(service.addRoleUsers(3, [1, 2, 3, 1])).rejects.toMatchObject({ code: 3014 });
+      expect(userRoleRepo.insert).not.toHaveBeenCalled();
+    });
+
+    it('inserts only unbound users inside a transaction and is idempotent', async () => {
+      vi.mocked(roleRepo.findById).mockResolvedValue(role(3, 'Ops', 'OPS'));
+      vi.mocked(userRepo.findByIds).mockResolvedValue([
+        { id: 1, username: 'a' },
+        { id: 2, username: 'b' },
+        { id: 3, username: 'c' },
+      ]);
+      // 用户 2 已在该角色下：重复添加跳过，不报错
+      vi.mocked(userRoleRepo.findByUserIds).mockResolvedValue([userRole(2, 3), userRole(2, 1)]);
+
+      const result = await service.addRoleUsers(3, [1, 2, 3]);
+
+      expect(result).toEqual({ added: 2 });
+      expect(userRoleRepo.transaction).toHaveBeenCalled();
+      expect(userRoleRepo.insert).toHaveBeenCalledTimes(2);
+      expect(userRoleRepo.insert).toHaveBeenCalledWith({ userId: 1, roleId: 3 });
+      expect(userRoleRepo.insert).toHaveBeenCalledWith({ userId: 3, roleId: 3 });
+
+      // 全部已绑定时 added 为 0，依旧不报错
+      vi.mocked(userRoleRepo.findByUserIds).mockResolvedValue([userRole(1, 3), userRole(2, 3), userRole(3, 3)]);
+      expect(await service.addRoleUsers(3, [1, 2, 3])).toEqual({ added: 0 });
+      expect(userRoleRepo.insert).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('removeRoleUsers', () => {
+    it('rejects empty, malformed ids and unknown role', async () => {
+      await expect(service.removeRoleUsers(3, [])).rejects.toMatchObject({ code: 2001 });
+      await expect(service.removeRoleUsers(3, ['x' as unknown as number])).rejects.toMatchObject({ code: 2001 });
+      vi.mocked(roleRepo.findById).mockResolvedValue(null);
+      await expect(service.removeRoleUsers(99, [1])).rejects.toMatchObject({ code: 3054 });
+      expect(userRoleRepo.findByRoleIdForUpdate).not.toHaveBeenCalled();
+    });
+
+    it('removes only bound users, skips the rest and is idempotent', async () => {
+      vi.mocked(roleRepo.findById).mockResolvedValue(role(3, 'Ops', 'OPS'));
+      vi.mocked(roleRepo.findByCode).mockResolvedValue(null);
+      // 10/11 已绑定、12 未绑定：只删交集
+      vi.mocked(userRoleRepo.findByRoleIdForUpdate!).mockResolvedValue([userRole(10, 3), userRole(11, 3)]);
+      const result = await service.removeRoleUsers(3, [10, 11, 12]);
+
+      expect(result).toEqual({ removed: 2 });
+      expect(userRoleRepo.deleteByUserAndRole).toHaveBeenCalledTimes(2);
+      expect(userRoleRepo.deleteByUserAndRole).toHaveBeenCalledWith(10, 3);
+      expect(userRoleRepo.deleteByUserAndRole).toHaveBeenCalledWith(11, 3);
+
+      // 再次移除同一批：绑定已不存在，removed 为 0 且不删
+      vi.mocked(userRoleRepo.findByRoleIdForUpdate!).mockResolvedValue([]);
+      expect(await service.removeRoleUsers(3, [10, 11])).toEqual({ removed: 0 });
+      expect(userRoleRepo.deleteByUserAndRole).toHaveBeenCalledTimes(2);
+    });
+
+    it('protects the last admin when removing members from the ADMIN role', async () => {
+      const admin = role(1, 'Admin', 'ADMIN');
+      vi.mocked(roleRepo.findById).mockResolvedValue(admin);
+      vi.mocked(roleRepo.findByCode).mockResolvedValue(admin);
+      vi.mocked(userRoleRepo.findByRoleIdForUpdate!).mockResolvedValue([userRole(10, 1)]);
+      vi.mocked(userRepo.findById).mockResolvedValue({ id: 10, username: 'a', status: 1 });
+
+      await expect(service.removeRoleUsers(1, [10])).rejects.toMatchObject({ code: 3017 });
+      expect(userRoleRepo.deleteByUserAndRole).not.toHaveBeenCalled();
+
+      // 还有另一名活跃管理员时放行；status=null 的外部账号同样算活跃
+      vi.mocked(userRoleRepo.findByRoleIdForUpdate!).mockResolvedValue([userRole(10, 1), userRole(20, 1)]);
+      vi.mocked(userRepo.findById).mockImplementation(async (id: number) => ({ id, username: 'a', status: id === 20 ? null : 1 }));
+      expect(await service.removeRoleUsers(1, [10])).toEqual({ removed: 1 });
+      expect(userRoleRepo.deleteByUserAndRole).toHaveBeenCalledWith(10, 1);
+    });
+
+    it('does not consult the last-admin guard for non-ADMIN roles', async () => {
+      vi.mocked(roleRepo.findById).mockResolvedValue(role(3, 'Ops', 'OPS'));
+      vi.mocked(roleRepo.findByCode).mockResolvedValue(null);
+      vi.mocked(userRoleRepo.findByRoleIdForUpdate!).mockResolvedValue([userRole(10, 3)]);
+      // 不桩 userRepo.findById：若误走管理员守卫会因 findById 返回 undefined 走进分支
+      expect(await service.removeRoleUsers(3, [10])).toEqual({ removed: 1 });
+      expect(userRoleRepo.deleteByUserAndRole).toHaveBeenCalledWith(10, 3);
+    });
   });
 });

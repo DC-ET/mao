@@ -17,6 +17,9 @@ export function isActiveAccount(status: number | null | undefined): boolean {
 }
 
 export class PermissionService {
+  /** 角色侧批量成员操作的单次上限，与 FeedbackService.MAX_BATCH_IDS 对齐。 */
+  static readonly MAX_BATCH_USERS = 100;
+
   constructor(
     private readonly roleRepo: RoleRepository,
     private readonly permissionRepo: PermissionRepository,
@@ -143,6 +146,83 @@ export class PermissionService {
         await tx.insert({ userId, roleId });
       }
     });
+  }
+
+  /**
+   * 角色侧批量添加成员（幂等）：返回实际新增数，已绑定的用户跳过不报错，
+   * 因此 added 可能小于 userIds.length。user_role 无外键，用户存在性必须自校验。
+   */
+  async addRoleUsers(roleId: number, userIds: number[]): Promise<{ added: number }> {
+    const ids = normalizeBatchUserIds(userIds);
+    const role = await this.roleRepo.findById(roleId);
+    if (!role) {
+      throw new BusinessException(ErrorCode.ROLE_NOT_FOUND);
+    }
+    const users = await this.userRepo.findByIds(ids);
+    if (users.length !== ids.length) {
+      throw new BusinessException(ErrorCode.USER_NOT_FOUND, '部分用户不存在或已删除');
+    }
+    const run = async (repo: UserRoleRepository): Promise<number> => {
+      // 已在事务内重取绑定：并发重复添加时以插入时刻的真实状态为准
+      const bound = new Set(
+        (await repo.findByUserIds(ids)).filter((ur) => ur.roleId === roleId).map((ur) => ur.userId),
+      );
+      let added = 0;
+      for (const userId of ids) {
+        if (bound.has(userId)) continue;
+        await repo.insert({ userId, roleId });
+        added += 1;
+      }
+      return added;
+    };
+    const added = this.userRoleRepo.transaction
+      ? await this.userRoleRepo.transaction(run)
+      : await run(this.userRoleRepo);
+    return { added };
+  }
+
+  /**
+   * 角色侧批量移除成员（幂等）：按「请求 ∩ 实际绑定」删除，返回实际移除数。
+   * 目标是 ADMIN 角色时带最后管理员守卫——移除后不得一个活跃管理员都不剩
+   * （与 changeRolesWithAdminGuard 同口径，锁绑定行后在同一事务内删除）。
+   */
+  async removeRoleUsers(roleId: number, userIds: number[]): Promise<{ removed: number }> {
+    const ids = normalizeBatchUserIds(userIds);
+    const role = await this.roleRepo.findById(roleId);
+    if (!role) {
+      throw new BusinessException(ErrorCode.ROLE_NOT_FOUND);
+    }
+    const run = async (repo: UserRoleRepository): Promise<number> => {
+      const bindings = repo.findByRoleIdForUpdate
+        ? await repo.findByRoleIdForUpdate(roleId)
+        : await repo.findByRoleId(roleId);
+      const requested = new Set(ids);
+      const removing = bindings.filter((b) => requested.has(b.userId));
+      if (removing.length === 0) {
+        return 0;
+      }
+      const adminRole = await this.getAdminRole();
+      if (adminRole && adminRole.id === roleId) {
+        const removingIds = new Set(removing.map((b) => b.userId));
+        let otherActive = 0;
+        for (const b of bindings) {
+          if (removingIds.has(b.userId)) continue;
+          const u = await this.userRepo.findById(b.userId);
+          if (u && isActiveAccount(u.status)) otherActive += 1;
+        }
+        if (otherActive === 0) {
+          throw new BusinessException(ErrorCode.CANNOT_REMOVE_LAST_ADMIN);
+        }
+      }
+      for (const b of removing) {
+        await repo.deleteByUserAndRole(b.userId, roleId);
+      }
+      return removing.length;
+    };
+    const removed = this.userRoleRepo.transaction
+      ? await this.userRoleRepo.transaction(run)
+      : await run(this.userRoleRepo);
+    return { removed };
   }
 
   async getUserRoleIds(userId: number): Promise<number[]> {
@@ -328,4 +408,29 @@ export class PermissionService {
     const permissions = await this.permissionRepo.findByIds(permIds);
     return permissions.map((p) => p.code);
   }
+}
+
+/**
+ * 批量用户 id 归一化：去重、过滤非正整数、超上限拒绝。
+ * 与 feedback 的 normalizeBatchIds 同口径——重复 id 会让「已绑定」判断与实际写入数对不上。
+ */
+function normalizeBatchUserIds(ids: number[]): number[] {
+  if (!Array.isArray(ids) || ids.length === 0) {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, '用户 ID 列表不能为空');
+  }
+  const unique: number[] = [];
+  const seen = new Set<number>();
+  for (const raw of ids) {
+    const id = Number(raw);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '用户 ID 无效');
+    }
+    if (seen.has(id)) continue;
+    seen.add(id);
+    unique.push(id);
+  }
+  if (unique.length > PermissionService.MAX_BATCH_USERS) {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, `单次最多操作 ${PermissionService.MAX_BATCH_USERS} 个用户`);
+  }
+  return unique;
 }

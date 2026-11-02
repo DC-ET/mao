@@ -132,6 +132,10 @@ export class MysqlUserRoleRepository implements UserRoleRepository {
     await this.db.execute('DELETE FROM user_role WHERE user_id = ?', [userId]);
   }
 
+  async deleteByUserAndRole(userId: number, roleId: number): Promise<void> {
+    await this.db.execute('DELETE FROM user_role WHERE user_id = ? AND role_id = ?', [userId, roleId]);
+  }
+
   async insert(row: UserRole): Promise<void> {
     await this.db.insert('user_role', { userId: row.userId, roleId: row.roleId });
   }

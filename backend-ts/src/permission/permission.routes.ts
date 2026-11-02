@@ -42,6 +42,24 @@ export function registerPermissionRoutes(app: FastifyInstance, permissionService
     return sendOk(reply);
   });
 
+  app.post('/v1/roles/:id/users', async (request, reply) => {
+    const userId = requireUserId(request);
+    await requirePermission(permissionService, userId, 'role:write');
+    const body = bodyOf<{ userIds?: number[] }>(request);
+    // 角色侧批量添加成员：幂等，已加入的用户跳过，返回实际新增数
+    const result = await permissionService.addRoleUsers(pathId(request), body.userIds ?? []);
+    return sendOk(reply, result);
+  });
+
+  app.delete('/v1/roles/:id/users', async (request, reply) => {
+    const userId = requireUserId(request);
+    await requirePermission(permissionService, userId, 'role:write');
+    const body = bodyOf<{ userIds?: number[] }>(request);
+    // 角色侧批量移除成员：幂等，未绑定的用户跳过；ADMIN 角色带最后管理员守卫
+    const result = await permissionService.removeRoleUsers(pathId(request), body.userIds ?? []);
+    return sendOk(reply, result);
+  });
+
   app.put('/v1/users/:id/roles', async (request, reply) => {
     const userId = requireUserId(request);
     await requirePermission(permissionService, userId, 'user:write');

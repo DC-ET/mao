@@ -462,6 +462,51 @@ test.describe('Governance Console', () => {
     await expect(page.locator('text=权限分配')).toBeVisible()
   })
 
+  test('should batch add and remove role members from the role page', async ({ page }) => {
+    await page.click('.sidebar-menu .el-menu-item:has-text("角色权限")')
+    await page.waitForURL(/\/roles$/)
+
+    // 「成员」按钮打开成员弹窗（0.0.407 起不再跳转用户管理）
+    const userRoleRow = page.locator('.el-table__row', { hasText: '普通用户' })
+    await userRoleRow.locator('button:has-text("成员")').click()
+    const dialog = page.locator('.el-dialog', { hasText: '管理成员' })
+    await expect(dialog).toBeVisible()
+    await expect(dialog.locator('.member-summary')).toContainText('当前成员')
+    const adminRow = dialog.locator('.el-table__row', { hasText: 'admin' })
+    await expect(adminRow).toBeVisible({ timeout: 10_000 })
+
+    // 自愈：上次运行若中断在添加后，先把 admin 移出恢复初始态
+    if (await adminRow.getByText('已加入').count()) {
+      await adminRow.locator('.el-checkbox').first().click()
+      await dialog.locator('button:has-text("移出角色")').click()
+      const recoverBox = page.getByRole('dialog', { name: '移出成员', exact: true })
+      await expect(recoverBox).toBeVisible()
+      await recoverBox.getByRole('button', { name: '移出', exact: true }).click()
+      await expect(page.locator('.el-message--success', { hasText: '已移除 1 人' })).toBeVisible()
+      await expect(adminRow.getByText('已加入')).toHaveCount(0)
+    }
+
+    // 添加：勾选 admin → 添加为成员 → 行内出现「已加入」，成员数同步 +1
+    await adminRow.locator('.el-checkbox').first().click()
+    await dialog.locator('button:has-text("添加为成员")').click()
+    await expect(page.locator('.el-message--success', { hasText: '已添加 1 人' })).toBeVisible()
+    await expect(adminRow.getByText('已加入')).toBeVisible()
+    await expect(dialog.locator('.member-summary strong')).toHaveText('1')
+
+    // 移除：勾选 admin → 移出角色 → 确认 → 「已加入」消失，成员数回到 0
+    await adminRow.locator('.el-checkbox').first().click()
+    await dialog.locator('button:has-text("移出角色")').click()
+    const confirmBox = page.getByRole('dialog', { name: '移出成员', exact: true })
+    await expect(confirmBox).toBeVisible()
+    await confirmBox.getByRole('button', { name: '移出', exact: true }).click()
+    await expect(page.locator('.el-message--success', { hasText: '已移除 1 人' })).toBeVisible()
+    await expect(adminRow.getByText('已加入')).toHaveCount(0)
+    await expect(dialog.locator('.member-summary strong')).toHaveText('0')
+
+    await dialog.locator('button:has-text("取消")').click()
+    await expect(dialog).toBeHidden()
+  })
+
   test('should render audit log page with filters', async ({ page }) => {
     await page.click('.sidebar-menu .el-menu-item:has-text("审计日志")')
     await page.waitForURL(/\/audit-logs$/)
