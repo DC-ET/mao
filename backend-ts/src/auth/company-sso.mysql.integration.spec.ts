@@ -10,7 +10,7 @@ import { CompanySsoIdentityRepository } from './company-sso-identity.repository.
 const socket = process.env.SSO_TEST_MYSQL_SOCKET;
 const database = `sso_test_${randomUUID().replaceAll('-', '')}`;
 const migration = (name: string) => readFileSync(new URL(`../../db/migration/${name}`, import.meta.url), 'utf8');
-const identity = (subject = '3089', email = 'Synthetic@example.test') => ({ subject, email, displayName: 'Synthetic', expiresAt: Date.now() + 3600000 });
+const identity = (subject = '3089', email = 'Synthetic@example.test') => ({ subject, email, displayName: 'Synthetic', expiresAt: Date.now() + 3600000, avatarUrl: 'https://sso.example.com/avatar.png' });
 
 describe.skipIf(!socket)('company SSO isolated MySQL integration', () => {
   let admin: mysql.Connection | undefined;
@@ -102,6 +102,19 @@ describe.skipIf(!socket)('company SSO isolated MySQL integration', () => {
     expect(await identities.resolve(identity('9999'))).toMatchObject({ action: 'existing', user: { id } });
     expect(await count('user_external_identity')).toBe(1);
     expect(await db.queryOne<{ subject: string }>('SELECT subject FROM user_external_identity')).toEqual({ subject: identity().email });
+  });
+
+  it('stores claims.avatar on provisioning but never on bind or later logins', async () => {
+    const created = await db.queryOne<{ id: number; avatarUrl: string | null }>('SELECT id, avatar_url AS avatarUrl FROM `user` WHERE id = ?', [(await identities.resolve(identity())).user.id!]);
+    expect(created!.avatarUrl).toBe('https://sso.example.com/avatar.png');
+    const localId = await createUser();
+    await db.insert('user_role', { userId: localId, roleId: 2 });
+    await db.insert('user_external_identity', { provider: 'company_sso', subject: identity().email, userId: localId, emailAtBinding: identity().email });
+    await db.updateById('user', localId, { avatarUrl: '/uploads/self.png' });
+    for (const avatarUrl of ['https://sso.example.com/other.png', undefined]) {
+      await expect(identities.resolve({ ...identity('7777'), avatarUrl })).resolves.toMatchObject({ action: 'existing', user: { id: localId } });
+      expect(await db.queryOne<{ avatarUrl: string | null }>('SELECT avatar_url AS avatarUrl FROM `user` WHERE id = ?', [localId])).toEqual({ avatarUrl: '/uploads/self.png' });
+    }
   });
 
   it.each(['disabled', 'deleted', 'duplicate'] as const)('refuses %s email without new users or bindings', async (kind) => {

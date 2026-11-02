@@ -113,6 +113,8 @@ TLS 终止代理属于服务器基础设施，不是 SSO 业务设置：`TRUSTED
 
 `auth.checkUrl` 必须为 HTTPS URL，不带用户名密码、片段或已有 `token` 查询参数；请求不跟随重定向。SDK 每次换票以 JSON `{checkUrl}` 传入地址，SSO Token 仍仅放在 Authorization Header。原 `SSO_CHECK_URL` 不再使用。
 
+公司 checkToken 的可信 claims 为 `id`、`email`、`realName`、`exp`，另有可选 `avatar`：合法值（http(s) 或 `/` 开头、无空白、≤512 字符）在首次自动建号时写入用户头像，缺失、为空或非法值忽略且不影响换票；已有账号的头像永不被覆盖。
+
 仅变更受信代理等启动配置时需重启。Nginx 必须覆盖 `X-Forwarded-Proto` 为 `$scheme` 并设置正确客户端转发链；后端监听端口须受防火墙保护。没有精确信任代理时，HTTP 后端不会因为来路提供 `X-Forwarded-Proto: https` 就接受 SSO 换票。
 
 每 IP 每分钟最多 60 次换票、每个已校验身份每分钟最多 20 次，计数为进程内；多副本必须在网关加聚合限流。换票响应不缓存，SDK Token 不持久化。当前官方协议不要求另加应用密钥；不要把用户 Token 写入 `.env`。
