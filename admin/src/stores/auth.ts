@@ -9,6 +9,8 @@ interface User {
   displayName: string
   email: string
   avatarUrl: string
+  /** 登录来源：LOCAL / LDAP / FEISHU / ECP / COMPANY_SSO（/v1/users/me 返回）。 */
+  authSource: string
   permissions?: string[]
   isAdmin?: boolean
 }

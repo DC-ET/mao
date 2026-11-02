@@ -6,13 +6,6 @@
     @update:model-value="$emit('update:visible', $event)"
     @close="$emit('update:visible', false)"
   >
-    <el-alert
-      type="info"
-      :closable="false"
-      show-icon
-      class="self-hint"
-      title="服务端未提供「校验旧密码」的自助改密接口，此处复用管理员重置密码接口直接设置新密码。"
-    />
     <el-form
       ref="formRef"
       :model="form"
@@ -20,6 +13,15 @@
       label-width="100px"
       label-position="right"
     >
+      <el-form-item label="当前密码" prop="oldPassword">
+        <el-input
+          v-model="form.oldPassword"
+          type="password"
+          show-password
+          autocomplete="current-password"
+          placeholder="输入当前密码"
+        />
+      </el-form-item>
       <el-form-item label="新密码" prop="newPassword">
         <el-input
           v-model="form.newPassword"
@@ -52,7 +54,6 @@ import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { api } from '../../api'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
-import { useAuthStore } from '../../stores/auth'
 
 const props = defineProps<{
   visible: boolean
@@ -62,15 +63,24 @@ const emit = defineEmits<{
   'update:visible': [value: boolean]
 }>()
 
-const authStore = useAuthStore()
 const submitting = ref(false)
 const formRef = ref<FormInstance>()
+// 与后端 user.service.ts PASSWORD_PATTERN 保持一致，保存前先做前端校验
 const passwordPattern = /^(?=.*[A-Za-z])(?=.*\d).{8,64}$/
 
 const form = reactive({
+  oldPassword: '',
   newPassword: '',
   confirmPassword: ''
 })
+
+function validateOldPassword(_rule: unknown, value: string, callback: (error?: Error) => void) {
+  if (!value) {
+    callback(new Error('请输入当前密码'))
+    return
+  }
+  callback()
+}
 
 function validatePassword(_rule: unknown, value: string, callback: (error?: Error) => void) {
   if (!value) {
@@ -79,6 +89,10 @@ function validatePassword(_rule: unknown, value: string, callback: (error?: Erro
   }
   if (!passwordPattern.test(value)) {
     callback(new Error('密码须 8-64 位，且包含字母和数字'))
+    return
+  }
+  if (value === form.oldPassword) {
+    callback(new Error('新密码不能与当前密码相同'))
     return
   }
   callback()
@@ -97,6 +111,7 @@ function validateConfirmPassword(_rule: unknown, value: string, callback: (error
 }
 
 const rules: FormRules = {
+  oldPassword: [{ validator: validateOldPassword, trigger: 'blur' }],
   newPassword: [{ validator: validatePassword, trigger: 'blur' }],
   confirmPassword: [{ validator: validateConfirmPassword, trigger: 'blur' }]
 }
@@ -105,6 +120,7 @@ watch(
   () => props.visible,
   (val) => {
     if (!val) return
+    form.oldPassword = ''
     form.newPassword = ''
     form.confirmPassword = ''
     formRef.value?.clearValidate()
@@ -112,17 +128,14 @@ watch(
 )
 
 async function handleSubmit() {
-  const userId = authStore.user?.id
-  if (!userId) {
-    ElMessage.error('用户信息未加载，请刷新页面后重试')
-    return
-  }
   const valid = await formRef.value?.validate().catch(() => false)
   if (!valid) return
 
   submitting.value = true
   try {
-    await api.put(`/users/${userId}/password`, {
+    // 自助改密接口：登录态即可（无需 user:write），服务端校验旧密码
+    await api.put('/users/me/password', {
+      oldPassword: form.oldPassword,
       newPassword: form.newPassword,
       confirmPassword: form.confirmPassword
     })
@@ -137,7 +150,4 @@ async function handleSubmit() {
 </script>
 
 <style scoped>
-.self-hint {
-  margin-bottom: 16px;
-}
 </style>

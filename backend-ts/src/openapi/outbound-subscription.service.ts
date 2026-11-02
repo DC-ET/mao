@@ -1,9 +1,11 @@
+import { randomUUID } from 'node:crypto';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { formatDateTime } from '../common/json.js';
 import type { WebhookSecretCipher } from '../notification/task/webhook-secret-cipher.js';
 import type { MysqlOutboundDeliveryRepository, MysqlOutboundSubscriptionRepository } from './openapi.repository.js';
-import { generateWebhookSecret } from './hmac.js';
+import { generateWebhookSecret, hmacSignature } from './hmac.js';
+import type { GenericHttpWebhookSender } from './generic-webhook-sender.js';
 import { isOutboundEvent, OUTBOUND_EVENTS, type OutboundEvent, type OutboundSubscriptionView } from './types.js';
 
 /** 每用户订阅数量上限。 */
@@ -39,6 +41,8 @@ export interface OutboundSubscriptionDeps {
   subscriptionRepo: MysqlOutboundSubscriptionRepository;
   deliveryRepo: MysqlOutboundDeliveryRepository;
   cipher: WebhookSecretCipher;
+  /** 通用 HTTP 出站发送器：与投递调度器共享同一实例（装配层注入）。 */
+  sender: GenericHttpWebhookSender;
 }
 
 export interface CreatedSubscription {
@@ -47,6 +51,14 @@ export interface CreatedSubscription {
   targetUrl: string;
   /** 明文 secret 仅此一次返回。 */
   plainSecret: string;
+}
+
+/** 测试投递同步返回（零写库）：durationMs 为 service 内计时（含 DNS/TLS）。 */
+export interface OutboundSubscriptionTestResult {
+  success: boolean;
+  httpStatus: number | null;
+  error: string | null;
+  durationMs: number;
 }
 
 /**
@@ -117,6 +129,49 @@ export class OutboundSubscriptionService {
       createdAt: row.createdAt ?? null,
       sentAt: row.sentAt ?? null,
     }));
+  }
+
+  /**
+   * 测试投递（POST /v1/open/subscriptions/:id/test）：用该订阅真实 secret 同步发送
+   * 一条带 test:true 标记的示例 payload，签名方案与调度器真实投递逐字节一致
+   * （同一 GenericHttpWebhookSender.send + hmacSignature）。零写库：不插
+   * outbound_delivery、不触发重试、不落审计（提案决策 2，与「发送测试通知」
+   * 「立即测试探针」同口径）。停用订阅同样可测（先验证连通再启用）。
+   */
+  async sendTest(userId: number, id: number): Promise<OutboundSubscriptionTestResult> {
+    const subscription = await this.deps.subscriptionRepo.findById(id);
+    // 非属主与不存在统一按「订阅不存在」拒绝，不泄露资源存在性
+    if (subscription == null || subscription.userId !== userId) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '订阅不存在');
+    }
+    if (subscription.secretCipher == null) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '订阅不存在');
+    }
+    const event = isOutboundEvent(subscription.event) ? subscription.event : 'task.completed';
+    const secret = this.deps.cipher.decrypt(subscription.secretCipher);
+    const payload = this.buildTestPayload(event, subscription.userId ?? userId);
+    const startedAt = Date.now();
+    const result = await this.deps.sender.send(subscription.targetUrl ?? '', secret, event, payload, hmacSignature);
+    return { success: result.success, httpStatus: result.httpStatus, error: result.error, durationMs: Date.now() - startedAt };
+  }
+
+  /**
+   * 测试 payload：字段结构与真实事件同构（见 dispatchTaskTerminal /
+   * dispatchQuestionPending / dispatchDigest），值全部为占位假数据，
+   * 统一附 test:true 供接收方与真实事件区分；真实投递链路不带该字段。
+   */
+  private buildTestPayload(event: OutboundEvent, userId: number): Record<string, unknown> {
+    const base = { event, test: true, sentAt: formatDateTime(new Date()) };
+    switch (event) {
+      case 'task.completed':
+        return { ...base, sessionId: 0, userId, executionId: null, phase: 'COMPLETED', title: '【Mao 测试】出站订阅连通性验证', failureReason: null, source: 'MANUAL' };
+      case 'task.failed':
+        return { ...base, sessionId: 0, userId, executionId: null, phase: 'FAILED', title: '【Mao 测试】出站订阅连通性验证', failureReason: '【Mao 测试】模拟任务失败', source: 'MANUAL' };
+      case 'question.pending':
+        return { ...base, sessionId: 0, userId, requestId: randomUUID() };
+      case 'digest.daily':
+        return { ...base, coveredDate: formatDateTime(new Date()).slice(0, 10), digest: { notice: '测试事件，不含真实数据' }, text: '【Mao 测试】出站订阅连通性验证' };
+    }
   }
 
   /**

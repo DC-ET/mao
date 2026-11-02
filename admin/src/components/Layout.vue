@@ -44,7 +44,8 @@
             </span>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item v-if="canWrite" command="change-password">修改密码</el-dropdown-item>
+                <!-- 自助改密：登录态即可（无需 user:write），仅本地密码账号展示（第三方登录在对应平台改密） -->
+                <el-dropdown-item v-if="isLocalUser" command="change-password">修改密码</el-dropdown-item>
                 <el-dropdown-item command="logout" divided>退出登录</el-dropdown-item>
               </el-dropdown-menu>
             </template>
@@ -156,6 +157,9 @@ watch(changePasswordVisible, (visible, prev) => {
 })
 
 const canWrite = computed(() => authStore.hasPermission('user:write'))
+
+/** 本地密码账号才可自助改密（第三方登录账号回各自平台改密，后端同口径兜底）。 */
+const isLocalUser = computed(() => authStore.user?.authSource === 'LOCAL')
 
 async function handleCommand(command: string) {
   if (command === 'logout') {

@@ -795,6 +795,31 @@ export async function listOutboundDeliveries(subscriptionId: number): Promise<Ou
   return data ?? []
 }
 
+/** 测试投递结果（零写库，仅同步返回）：error 已含「目标返回 4xx/5xx」或超时文案。 */
+export interface OutboundSubscriptionTestResult {
+  success: boolean
+  httpStatus: number | null
+  error: string | null
+  durationMs: number
+}
+
+export async function testOutboundSubscription(id: number): Promise<OutboundSubscriptionTestResult> {
+  const { data } = await api.post(`/open/subscriptions/${id}/test`)
+  return data
+}
+
+// ─── 自助改密（登录态即可，无需 user:write） ───
+
+export interface ChangeOwnPasswordPayload {
+  oldPassword: string
+  newPassword: string
+  confirmPassword: string
+}
+
+export async function changeOwnPassword(payload: ChangeOwnPasswordPayload): Promise<void> {
+  await api.put('/users/me/password', payload)
+}
+
 export interface SessionShareInfo {
   token: string
   messageWatermark: number

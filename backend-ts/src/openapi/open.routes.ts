@@ -278,6 +278,13 @@ export function registerOpenApiRoutes(app: FastifyInstance, deps: OpenApiRouteDe
     sendJson(reply, 200, ok(await deps.subscriptionService.listRecentDeliveries(userId, id)));
   });
 
+  // 测试投递：同步发一条 test:true 示例事件，零写库（不进 outbound_delivery / 审计）
+  app.post('/v1/open/subscriptions/:id/test', async (req, reply) => {
+    const userId = requireJwtIdentity(req);
+    const id = requirePositiveId((req.params as { id: string }).id);
+    sendJson(reply, 200, ok(await deps.subscriptionService.sendTest(userId, id)));
+  });
+
   app.delete('/v1/open/subscriptions/:id', async (req, reply) => {
     const userId = requireJwtIdentity(req);
     const id = requirePositiveId((req.params as { id: string }).id);

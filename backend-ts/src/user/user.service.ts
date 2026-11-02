@@ -171,6 +171,29 @@ export class UserService {
     await this.userRepo.updateById(user);
   }
 
+  /**
+   * 自助改密（PUT /v1/users/me/password）：登录态即可、无需 user:write，与管理员
+   * 重置（resetPassword）的区别在于校验旧密码且仅限本地密码账号（非本地账号
+   * 回各自平台改密，与 updateOwnProfile 的收窄口径一致）。仅更新 passwordHash，
+   * 不触碰 JWT——改密不踢出、不要求重新登录（提案决策 1，与代改密同口径）。
+   */
+  async changeOwnPassword(userId: number, oldPassword: string, newPassword: string): Promise<void> {
+    const user = await this.getUser(userId);
+    const currentHash = user.passwordHash;
+    if (!hasText(currentHash ?? undefined)) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '当前账号为第三方登录，不支持修改本地密码，请前往对应平台修改');
+    }
+    // hasText 前置短路，避免空值进 crypto 比较；旧密码错误文案不区分「为空/不匹配」
+    if (!hasText(oldPassword) || !(await this.passwordHasher.matches(oldPassword, currentHash ?? ''))) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '当前密码不正确');
+    }
+    if (newPassword === oldPassword) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '新密码不能与当前密码相同');
+    }
+    this.validatePassword(newPassword);
+    await this.userRepo.updateFields(userId, { passwordHash: await this.passwordHasher.hash(newPassword) });
+  }
+
   async updateOwnProfile(userId: number, displayName?: string | null, email?: string | null, avatarUrl?: string | null): Promise<void> {
     const user = await this.getUser(userId);
     const localUser = hasText(user.passwordHash ?? undefined);

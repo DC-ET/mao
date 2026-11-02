@@ -221,3 +221,75 @@ describe('UserService 邮箱变更通知钩子（V162 决策 2）', () => {
     expect(listenerSpy).not.toHaveBeenCalled();
   });
 });
+
+describe('UserService.changeOwnPassword（自助改密，登录态即可）', () => {
+  function changeService() {
+    const userRepo = {
+      findById: vi.fn(),
+      findByUsername: vi.fn(),
+      countByUsername: vi.fn(),
+      countByEmailExcept: vi.fn(),
+      insert: vi.fn(),
+      updateById: vi.fn(),
+      updateFields: vi.fn(),
+      selectPage: vi.fn(),
+    } as unknown as UserRepository;
+    const permissionService = {
+      assignRoles: vi.fn(), changeRolesWithAdminGuard: vi.fn(), assertCanChangeRoles: vi.fn(),
+      assertCanDisableUser: vi.fn(), updateUserStatusWithAdminGuard: vi.fn(),
+      batchGetUserRoles: vi.fn(), getUserRoles: vi.fn(),
+    } as unknown as PermissionService;
+    const hasher: PasswordHasher = { hash: vi.fn(async () => 'new-hash'), matches: vi.fn() };
+    const listenerSpy = vi.fn();
+    return { service: new UserService(userRepo, permissionService, hasher, listenerSpy), userRepo, hasher, listenerSpy };
+  }
+
+  it('本地账号：旧密码匹配后经 updateFields 仅更新 passwordHash，不触发邮箱钩子、不整行写', async () => {
+    const { service, userRepo, hasher, listenerSpy } = changeService();
+    vi.mocked(userRepo.findById).mockResolvedValue(user(7, 'alice', 'Alice', 'a@example.test', 'old-hash', 1));
+    vi.mocked(hasher.matches).mockResolvedValue(true);
+    await service.changeOwnPassword(7, 'OldPass1', 'NewPass2');
+    expect(hasher.matches).toHaveBeenCalledWith('OldPass1', 'old-hash');
+    expect(hasher.hash).toHaveBeenCalledWith('NewPass2');
+    expect(userRepo.updateFields).toHaveBeenCalledTimes(1);
+    expect(userRepo.updateFields).toHaveBeenCalledWith(7, { passwordHash: 'new-hash' });
+    expect(userRepo.updateById).not.toHaveBeenCalled();
+    expect(listenerSpy).not.toHaveBeenCalled();
+  });
+
+  it('旧密码不匹配或为空 → 「当前密码不正确」，且空值不进 crypto 比较、不写入', async () => {
+    const { service, userRepo, hasher } = changeService();
+    vi.mocked(userRepo.findById).mockResolvedValue(user(7, 'alice', 'Alice', null, 'old-hash', 1));
+    vi.mocked(hasher.matches).mockResolvedValue(false);
+    await expect(service.changeOwnPassword(7, 'WrongPass1', 'NewPass2')).rejects.toMatchObject({ code: 2001, message: '当前密码不正确' });
+    await expect(service.changeOwnPassword(7, '', 'NewPass2')).rejects.toMatchObject({ code: 2001, message: '当前密码不正确' });
+    expect(hasher.matches).toHaveBeenCalledTimes(1); // 空旧密码走 hasText 短路
+    expect(userRepo.updateFields).not.toHaveBeenCalled();
+  });
+
+  it('新密码与当前密码相同 → 「新密码不能与当前密码相同」', async () => {
+    const { service, userRepo, hasher } = changeService();
+    vi.mocked(userRepo.findById).mockResolvedValue(user(7, 'alice', 'Alice', null, 'SamePass1', 1));
+    vi.mocked(hasher.matches).mockResolvedValue(true);
+    await expect(service.changeOwnPassword(7, 'SamePass1', 'SamePass1')).rejects.toMatchObject({ code: 2001, message: '新密码不能与当前密码相同' });
+    expect(userRepo.updateFields).not.toHaveBeenCalled();
+  });
+
+  it('新密码不合规 → PASSWORD_INVALID（3019）', async () => {
+    const { service, userRepo, hasher } = changeService();
+    vi.mocked(userRepo.findById).mockResolvedValue(user(7, 'alice', 'Alice', null, 'OldPass1', 1));
+    vi.mocked(hasher.matches).mockResolvedValue(true);
+    await expect(service.changeOwnPassword(7, 'OldPass1', 'short')).rejects.toMatchObject({ code: 3019 });
+    await expect(service.changeOwnPassword(7, 'OldPass1', 'password')).rejects.toMatchObject({ code: 3019 });
+    expect(userRepo.updateFields).not.toHaveBeenCalled();
+  });
+
+  it('非本地账号（passwordHash 为空）→ 「第三方登录」明确拒绝，不做旧密码比较', async () => {
+    const { service, userRepo, hasher } = changeService();
+    vi.mocked(userRepo.findById).mockResolvedValue(user(7, 'ldap', 'Ldap', null, null, 1));
+    await expect(service.changeOwnPassword(7, 'OldPass1', 'NewPass2')).rejects.toMatchObject({ code: 2001, message: '当前账号为第三方登录，不支持修改本地密码，请前往对应平台修改' });
+    expect(hasher.matches).not.toHaveBeenCalled();
+    expect(userRepo.updateFields).not.toHaveBeenCalled();
+  });
+});
+
