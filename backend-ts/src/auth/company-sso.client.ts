@@ -7,6 +7,18 @@ export interface VerifiedSsoIdentity {
   email: string;
   displayName: string;
   expiresAt: number;
+  /** `claims.avatar` normalized; undefined when absent/blank/unusable. First-provision only. */
+  avatarUrl?: string;
+}
+
+/** Same contract as the self-service profile avatar (user.service.ts): no whitespace, bounded length. */
+const AVATAR_URL_PATTERN = /^(?=.{1,512}$)(?:https?:\/\/|\/)[^\s]+$/;
+
+/** Optional avatar claim: absent, blank or non-conforming values are ignored, never a login failure. */
+function normalizeAvatar(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const url = value.trim();
+  return AVATAR_URL_PATTERN.test(url) ? url : undefined;
 }
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -77,7 +89,11 @@ export class CompanySsoClient {
         || typeof claims.realName !== 'string' || !claims.realName.trim() || claims.realName.length > 128
         || typeof claims.exp !== 'number' || !Number.isSafeInteger(claims.exp) || !Number.isSafeInteger(claims.exp * 1000)) throw unavailable('contract');
       if (claims.exp * 1000 <= Date.now()) throw new CompanySsoError('invalid_token');
-      return { subject: claims.email, email: claims.email, displayName: claims.realName.trim(), expiresAt: claims.exp * 1000 };
+      const avatarUrl = normalizeAvatar(claims.avatar);
+      return {
+        subject: claims.email, email: claims.email, displayName: claims.realName.trim(), expiresAt: claims.exp * 1000,
+        ...(avatarUrl === undefined ? {} : { avatarUrl }),
+      };
     } catch (error) {
       if (error instanceof CompanySsoError) throw error;
       // Never propagate fetch errors: they may contain the credential-bearing URL.

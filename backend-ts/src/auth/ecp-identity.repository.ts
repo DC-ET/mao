@@ -63,6 +63,8 @@ export class EcpIdentityRepository {
           status: 1,
           deleted: 0,
         };
+        // 头像只在首次建号落一次；已有账号（bound / existing）一律不覆盖用户自行维护的头像。
+        if (identity.avatarUrl !== undefined) user.avatarUrl = identity.avatarUrl;
         user.id = await tx.insert('user', user);
         await tx.insert('user_role', { userId: user.id, roleId: role.id });
       }

@@ -5,6 +5,8 @@ import { EcpError } from './ecp.error.js';
 export interface EcpSessionUser {
   email: string;
   displayName: string;
+  /** `data.user.avatar` normalized; undefined when absent/blank/unusable. First-provision only. */
+  avatarUrl?: string;
 }
 
 export interface EcpSessionResult {
@@ -103,13 +105,27 @@ function parseExpiresAt(value: unknown): Date {
   throw new EcpError('ECP 响应缺少有效 expiresAt');
 }
 
+/** Same contract as the self-service profile avatar (user.service.ts): no whitespace, bounded length. */
+const AVATAR_URL_PATTERN = /^(?=.{1,512}$)(?:https?:\/\/|\/)[^\s]+$/;
+
+/** Optional avatar: absent, blank or non-conforming values are ignored, never a login failure. */
+function normalizeAvatar(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const url = value.trim();
+  return AVATAR_URL_PATTERN.test(url) ? url : undefined;
+}
+
 function parseUser(data: Record<string, unknown>): EcpSessionUser {
   const user = data.user;
   const userObj = user && typeof user === 'object' && !Array.isArray(user) ? user as Record<string, unknown> : data;
   const email = String(userObj.email ?? '').trim();
   if (!email) throw new EcpError('ECP 响应缺少用户邮箱');
   const displayName = String(userObj.realName ?? userObj.displayName ?? userObj.name ?? email).trim();
-  return { email, displayName };
+  const avatarUrl = normalizeAvatar(userObj.avatar);
+  return {
+    email, displayName,
+    ...(avatarUrl === undefined ? {} : { avatarUrl }),
+  };
 }
 
 /**

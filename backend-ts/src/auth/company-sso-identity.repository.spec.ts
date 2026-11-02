@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Db } from '../db/db.js';
 import { CompanySsoIdentityRepository } from './company-sso-identity.repository.js';
 
-const identity = { subject: '3089', email: 'Synthetic@example.test', displayName: 'Test', expiresAt: Date.now() + 3600000 };
+const identity = { subject: '3089', email: 'Synthetic@example.test', displayName: 'Test', expiresAt: Date.now() + 3600000, avatarUrl: 'https://sso.example.com/a.png' };
 const user = { id: 4, username: 'test', email: identity.email, status: 1, deleted: 0 };
 
 function setup(options: { binding?: boolean; matches?: object[]; boundUser?: object | null; other?: { id: number; subject: string } | boolean; failInsert?: boolean; role?: boolean } = {}) {
@@ -63,9 +63,31 @@ describe('CompanySsoIdentityRepository', () => {
     expect((await repo.resolve(identity)).action).toBe('created');
     expect(tx.insert.mock.calls.map(([table]) => table)).toEqual(['user', 'user_role', 'user_external_identity']);
     expect(tx.insert).toHaveBeenCalledWith('user_external_identity', expect.objectContaining({ subject: identity.email }));
-    expect(tx.insert).toHaveBeenCalledWith('user', expect.objectContaining({ username: 'synthetic' }));
+    expect(tx.insert).toHaveBeenCalledWith('user', expect.objectContaining({ username: 'synthetic', avatarUrl: identity.avatarUrl }));
     expect(state().committed).toBe(true);
     expect(tx.queryOne.mock.calls[0][0]).toContain('user_identity_write_lock');
+  });
+
+  it('omits the avatar column when claims carry none', async () => {
+    const { repo, tx } = setup();
+    await repo.resolve({ ...identity, avatarUrl: undefined });
+    expect(tx.insert).toHaveBeenCalledWith('user', expect.not.objectContaining({ avatarUrl: expect.anything() }));
+  });
+
+  it('writes claims.avatar only when provisioning a new account', async () => {
+    const { repo, tx } = setup();
+    await repo.resolve({ ...identity, avatarUrl: 'https://sso.example.com/a.png' });
+    expect(tx.insert).toHaveBeenCalledWith('user', expect.objectContaining({ avatarUrl: 'https://sso.example.com/a.png' }));
+  });
+
+  it('never overwrites an existing account avatar on bind or existing login', async () => {
+    const bound = setup({ matches: [user] });
+    await bound.repo.resolve({ ...identity, avatarUrl: 'https://sso.example.com/a.png' });
+    expect(bound.tx.insert).not.toHaveBeenCalledWith('user', expect.anything());
+    const existing = setup({ binding: true });
+    await existing.repo.resolve({ ...identity, avatarUrl: 'https://sso.example.com/a.png' });
+    expect(existing.tx.insert).not.toHaveBeenCalledWith('user', expect.anything());
+    expect(existing.tx.updateById).not.toHaveBeenCalled();
   });
 
   it('suffixes the email prefix username when it is already taken', async () => {

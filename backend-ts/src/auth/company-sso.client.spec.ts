@@ -47,6 +47,18 @@ describe('CompanySsoClient', () => {
     await expect(new CompanySsoClient(fetcher).verify('synthetic', checkUrl, config)).resolves.toMatchObject({ subject: 'Synthetic@example.test' });
   });
 
+  it.each(['https://example.com/avatar.png', '/uploads/avatar.png', 'https://cdn.example.test/a/b.png?size=2'])('reads the optional claims.avatar %s', async (avatar) => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response({ code: 0, success: true, data: { illegal: false, claims: { ...claims(), avatar } } }));
+    await expect(new CompanySsoClient(fetcher).verify('synthetic', checkUrl, config)).resolves.toMatchObject({ avatarUrl: avatar });
+  });
+
+  it.each([undefined, '', '   ', 'javascript:alert(1)', 'data:text/html,x', 'https://example.com/a b.png', 'https://example.com/' + 'a'.repeat(600)])('ignores unusable claims.avatar %s', async (avatar) => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response({ code: 0, success: true, data: { illegal: false, claims: { ...claims(), avatar } } }));
+    const identity = await new CompanySsoClient(fetcher).verify('synthetic', checkUrl, config);
+    expect(identity.avatarUrl).toBeUndefined();
+    expect(Object.hasOwn(identity, 'avatarUrl')).toBe(false);
+  });
+
   it('uses email as the stable subject across different company user ids', async () => {
     for (const id of [1, 9999]) {
       const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response({ code: 0, success: true, data: { illegal: false, claims: { ...claims(), id } } }));

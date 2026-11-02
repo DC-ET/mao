@@ -79,6 +79,8 @@
 
 升级需执行 V111 迁移。`mao-cli` 本期不提供浏览器飞书登录，仅 Web/管理后台/Electron 入口。设计见 `docs/plan/2026-09-14-ecp-native-login-technical-design.md`。
 
+ECP 换票响应的 `data.user` 含可选 `avatar`：合法头像地址（http(s) 或 `/` 开头、无空白、≤512 字符）在首次自动建号时写入用户头像，缺失、为空或非法值忽略且不影响换票；已有账号的头像永不被覆盖。renew 响应不含用户信息，与此无关。
+
 ### 站点根地址（网页深链）
 
 管理后台「系统设置 → 集成配置 → 站点」维护，配置键 `site.baseUrl`，保存后即时生效。飞书 / 钉钉卡片里的「会话详情」按钮等网页深链用它的 origin 拼 `/tasks/{id}`；留空则回落上传基础地址 `upload.baseUrl`，两者都空时不渲染按钮。
@@ -112,6 +114,8 @@ TLS 终止代理属于服务器基础设施，不是 SSO 业务设置：`TRUSTED
 域名白名单支持完整域名或上级域名：`example.com` 匹配 `example.com`、`a.example.com`、`b.example.com` 及更深子域，不匹配 `evilexample.com` 或 `example.com.evil.com`；`sso.example.com` 仅覆盖自身及其下级子域。所有匹配域名及其路径的身份校验信任由配置人员判定；不另做 DNS 私网地址过滤。不同校验地址必须属于同一员工身份体系，身份源仍为 `company_sso`，不会按 URL 创建新身份源。
 
 `auth.checkUrl` 必须为 HTTPS URL，不带用户名密码、片段或已有 `token` 查询参数；请求不跟随重定向。SDK 每次换票以 JSON `{checkUrl}` 传入地址，SSO Token 仍仅放在 Authorization Header。原 `SSO_CHECK_URL` 不再使用。
+
+公司 checkToken 的可信 claims 为 `id`、`email`、`realName`、`exp`，另有可选 `avatar`：合法值（http(s) 或 `/` 开头、无空白、≤512 字符）在首次自动建号时写入用户头像，缺失、为空或非法值忽略且不影响换票；已有账号的头像永不被覆盖。
 
 仅变更受信代理等启动配置时需重启。Nginx 必须覆盖 `X-Forwarded-Proto` 为 `$scheme` 并设置正确客户端转发链；后端监听端口须受防火墙保护。没有精确信任代理时，HTTP 后端不会因为来路提供 `X-Forwarded-Proto: https` 就接受 SSO 换票。
 
