@@ -135,6 +135,7 @@ import feishuLogo from '../../assets/feishu-logo.svg'
 import { useTheme } from '../../utils/theme'
 import { readRedirectQuery, safeRedirect } from '../../utils/login-redirect'
 import { openExternalUrl } from '../../utils/capacitor'
+import { feishuPollPhase } from '../../utils/feishu-login-poll'
 import { safeRemoveItem, safeSetItem } from '../../utils/safe-storage'
 
 type LoginMode = 'password' | 'feishu'
@@ -305,12 +306,14 @@ async function checkFeishuStatus() {
       ? await authStore.pollEcpFeishuLogin(feishuState)
       : await authStore.pollFeishuLogin(feishuState)
     feishuPollFailures = 0
-    if (result.status === 'PENDING') {
-      feishuStatusText.value = '等待飞书确认'
+    const phase = feishuPollPhase(result.status)
+    // 回调换票期间是 PROCESSING。把它当成结束会停掉轮询，页面停在「飞书登录未完成」。
+    if (phase === 'pending' || phase === 'processing') {
+      feishuStatusText.value = phase === 'processing' ? '正在完成登录…' : '等待飞书确认'
       return
     }
     clearPollTimer()
-    if (result.status === 'SUCCESS') {
+    if (phase === 'success') {
       feishuStatusText.value = '登录成功'
       feishuState = ''
       await finishLogin()

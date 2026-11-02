@@ -186,7 +186,9 @@ test.describe('Desktop App - Not Logged In', () => {
           message: 'success',
           data: statusCalls === 1
             ? { status: 'PENDING' }
-            : {
+            : statusCalls === 2
+              ? { status: 'PROCESSING' }
+              : {
                 status: 'SUCCESS',
                 login: {
                   accessToken: 'access',
