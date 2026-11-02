@@ -111,6 +111,11 @@ export interface SignalWatcherView {
   createdAt: string | null;
 }
 
+/** 管理后台详情视图：用户侧脱敏视图 + 属主 id（管理员跨用户查看）。 */
+export interface SignalWatcherAdminView extends SignalWatcherView {
+  userId: number;
+}
+
 export interface WatcherTestResult {
   httpStatus: number | null;
   durationMs: number;
@@ -268,6 +273,31 @@ export class WatcherService {
 
   async listChecks(userId: number, id: number, page: number, size: number): Promise<{ rows: SignalWatcherCheck[]; total: number }> {
     await this.requireOwned(userId, id);
+    const [rows, total] = await Promise.all([
+      this.deps.checkRepo.listByWatcher(id, page, size),
+      this.deps.checkRepo.countByWatcher(id),
+    ]);
+    return { rows, total };
+  }
+
+  // ── 管理后台（只读，跨用户）────────────────────────────────────────────────
+
+  /**
+   * 管理员查看任意哨兵详情。
+   * 脱敏口径与用户侧一致：敏感请求头打码、body 只回「是否配置 + 长度」，不下发明文。
+   */
+  async getForAdmin(id: number): Promise<SignalWatcherAdminView> {
+    const row = await this.requireExisting(id);
+    return { ...this.toView(row), userId: row.userId };
+  }
+
+  /** 管理员查看任意哨兵的轮询记录（分页，字段与用户侧一致）。 */
+  async listChecksForAdmin(
+    id: number,
+    page: number,
+    size: number,
+  ): Promise<{ rows: SignalWatcherCheck[]; total: number }> {
+    await this.requireExisting(id);
     const [rows, total] = await Promise.all([
       this.deps.checkRepo.listByWatcher(id, page, size),
       this.deps.checkRepo.countByWatcher(id),
@@ -639,6 +669,15 @@ export class WatcherService {
 
   private async requireOwned(userId: number, id: number): Promise<SignalWatcher> {
     const row = await this.deps.watcherRepo.findOwned(id, userId);
+    if (row == null) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '哨兵不存在');
+    }
+    return row;
+  }
+
+  /** 管理后台读取：不校验归属，仅确认哨兵存在。 */
+  private async requireExisting(id: number): Promise<SignalWatcher> {
+    const row = await this.deps.watcherRepo.findById(id);
     if (row == null) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '哨兵不存在');
     }

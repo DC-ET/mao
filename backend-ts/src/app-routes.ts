@@ -606,6 +606,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
     registerSignalWatcherRoutes(api, { service: watcherService });
     registerSignalAdminRoutes(api, {
       watcherRepo: signalWatcherRepo,
+      service: watcherService,
       permissionService,
       userLookup: {
         findByIds: async (ids: number[]) => (await userRepo.findByIds(ids)).map((u) => ({

@@ -81,6 +81,7 @@ describe('registerSignalAdminRoutes compareMode 入参', () => {
     const app = { get: vi.fn() };
     registerSignalAdminRoutes(app as never, {
       watcherRepo: { listForAdmin } as never,
+      service: {} as never,
       permissionService: { hasPermission: vi.fn(async () => true) } as never,
       userLookup: { findByIds: vi.fn(async () => [{ id: 7, username: 'u', displayName: 'U' }]) },
     });
@@ -99,5 +100,86 @@ describe('registerSignalAdminRoutes compareMode 入参', () => {
     listForAdmin.mockClear();
     await handler(req({ compareMode: 'NOT_A_MODE' }), reply);
     expect(listForAdmin).toHaveBeenCalledWith(1, 20, { status: null, userId: undefined, compareMode: null });
+  });
+});
+
+/** 造一个可走 sendOk 的 reply 桩（status → header → send 链式调用）。 */
+function makeReply() {
+  const reply: {
+    status: ReturnType<typeof vi.fn>;
+    header: ReturnType<typeof vi.fn>;
+    send: ReturnType<typeof vi.fn>;
+  } = {
+    status: vi.fn(() => reply),
+    header: vi.fn(() => reply),
+    send: vi.fn((payload: unknown) => payload),
+  };
+  return reply;
+}
+
+function routeHandler(app: { get: ReturnType<typeof vi.fn> }, path: string) {
+  const call = app.get.mock.calls.find((c: unknown[]) => c[0] === path);
+  if (!call) throw new Error(`未注册路由: ${path}`);
+  return call[1] as (req: unknown, reply: unknown) => Promise<unknown>;
+}
+
+/** sendJson 交给 reply.send 的是 Jackson 序列化后的字符串，这里反序列化便于断言。 */
+function parsePayload(raw: unknown): { data?: unknown } {
+  return JSON.parse(String(raw)) as { data?: unknown };
+}
+
+function setupAdminDetail() {
+  const getForAdmin = vi.fn(async () => ({
+    id: 5,
+    userId: 7,
+    name: 'w',
+    url: 'https://example.com/api',
+    method: 'GET',
+  }));
+  const listChecksForAdmin = vi.fn(async () => ({
+    rows: [{ id: 1, watcherId: 5, httpStatus: 200, changed: 1, triggeredSessionId: 42, error: null, durationMs: 8, warning: null }],
+    total: 1,
+  }));
+  const app = { get: vi.fn() };
+  registerSignalAdminRoutes(app as never, {
+    watcherRepo: { listForAdmin: vi.fn() } as never,
+    service: { getForAdmin, listChecksForAdmin } as never,
+    permissionService: { hasPermission: vi.fn(async () => true) } as never,
+    userLookup: { findByIds: vi.fn(async () => [{ id: 7, username: 'u', displayName: 'U' }]) },
+  });
+  return { app, getForAdmin, listChecksForAdmin };
+}
+
+describe('registerSignalAdminRoutes 详情与轮询记录', () => {
+  it('详情：读取任意哨兵并合入属主展示名', async () => {
+    const { app, getForAdmin } = setupAdminDetail();
+    const handler = routeHandler(app, '/v1/admin/signal-watchers/:id');
+    const payload = parsePayload(await handler({ userId: 1, params: { id: '5' } }, makeReply()));
+    expect(getForAdmin).toHaveBeenCalledWith(5);
+    expect(payload).toMatchObject({ data: { id: 5, userId: 7, username: 'U' } });
+  });
+
+  it('详情：非法 id 抛参数错误且不读服务', async () => {
+    const { app, getForAdmin } = setupAdminDetail();
+    const handler = routeHandler(app, '/v1/admin/signal-watchers/:id');
+    await expect(handler({ userId: 1, params: { id: '0' } }, makeReply())).rejects.toThrow('路径参数 id 必须为正整数');
+    expect(getForAdmin).not.toHaveBeenCalled();
+  });
+
+  it('轮询记录：透传 page/size 并按统一响应返回', async () => {
+    const { app, listChecksForAdmin } = setupAdminDetail();
+    const handler = routeHandler(app, '/v1/admin/signal-watchers/:id/checks');
+    const payload = parsePayload(await handler({ userId: 1, params: { id: '5' }, query: { page: '2', size: '50' } }, makeReply()));
+    expect(listChecksForAdmin).toHaveBeenCalledWith(5, 2, 50);
+    expect(payload).toMatchObject({ data: { total: 1, page: 2, size: 50 } });
+    const data = payload.data as { records: Array<Record<string, unknown>> };
+    expect(data.records[0]).toMatchObject({ watcherId: 5, triggeredSessionId: 42 });
+  });
+
+  it('轮询记录：size 超上限钳到 100', async () => {
+    const { app, listChecksForAdmin } = setupAdminDetail();
+    const handler = routeHandler(app, '/v1/admin/signal-watchers/:id/checks');
+    await handler({ userId: 1, params: { id: '5' }, query: { size: '500' } }, makeReply());
+    expect(listChecksForAdmin).toHaveBeenCalledWith(5, 1, 100);
   });
 });

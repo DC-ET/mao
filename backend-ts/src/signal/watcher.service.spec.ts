@@ -1212,3 +1212,44 @@ describe('WatcherService.create 复制继承（copyFrom）', () => {
     expect(stored.reuseSessionId).toBeNull();
   });
 });
+
+describe('WatcherService 管理后台只读', () => {
+  it('getForAdmin 跨用户返回脱敏详情 + userId', async () => {
+    const h = harness();
+    const created = await h.service.create(7, {
+      ...baseInput,
+      headers: { Authorization: 'Bearer t', Accept: 'application/json' },
+    });
+    const view = await h.service.getForAdmin(created.id);
+    expect(view.userId).toBe(7);
+    expect(view.headers.Authorization).toBe('******');
+    expect(view.headers.Accept).toBe('application/json');
+    expect(view.hasBody).toBe(false);
+  });
+
+  it('getForAdmin / listChecksForAdmin 对不存在的哨兵抛「哨兵不存在」', async () => {
+    const h = harness();
+    await expect(h.service.getForAdmin(999)).rejects.toThrow('哨兵不存在');
+    await expect(h.service.listChecksForAdmin(999, 1, 20)).rejects.toThrow('哨兵不存在');
+  });
+
+  it('listChecksForAdmin 跨用户分页读取轮询记录', async () => {
+    const h = harness();
+    const created = await h.service.create(7, { ...baseInput, name: 'admin-read' });
+    h.checks.push({
+      id: 1,
+      watcherId: created.id,
+      checkedAt: '2026-11-02 10:00:00',
+      httpStatus: 200,
+      valueHash: 'hash',
+      changed: 1,
+      triggeredSessionId: 42,
+      error: null,
+      durationMs: 5,
+      warning: null,
+    });
+    const page = await h.service.listChecksForAdmin(created.id, 1, 20);
+    expect(page.total).toBe(1);
+    expect(page.rows[0]).toMatchObject({ watcherId: created.id, triggeredSessionId: 42 });
+  });
+});
