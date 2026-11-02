@@ -268,6 +268,14 @@ export class AgentLoop {
           const toolCalls: ToolCall[] = [];
 
           const afterStream: Promise<unknown>[] = [];
+          // 旁路落库（context anchor / assistant 消息）失败只记日志、不向上抛：
+          // afterStream 要到 stream() 返回后才被 await，这期间任何一次失败都会被
+          // Node 判为 unhandledRejection（默认直接终止进程，2026-11-02 MySQL 瞬断事故）。
+          const trackAfterStream = (task: unknown): void => {
+            afterStream.push(Promise.resolve(task).catch((e) => {
+              harnessLog('warn', `Agent loop afterStream task failed for session ${sessionId}: ${e instanceof Error ? e.message : String(e)}`);
+            }));
+          };
           const callback: StreamCallback = {
             onChunk: (chunk: StreamChunk) => {
               const delta = chunk.choices?.[0]?.delta;
@@ -316,7 +324,7 @@ export class AgentLoop {
                   context.contextAnchorMsgId = anchorMsgId;
                   context.messagesCoveredByAnchor = messagesCoveredThisRound;
                   if (context.sessionId != null && anchorMsgId > 0) {
-                    afterStream.push(this.sessionService.updateContextAnchor(context.sessionId, promptTokens, anchorMsgId));
+                    trackAfterStream(this.sessionService.updateContextAnchor(context.sessionId, promptTokens, anchorMsgId));
                   }
                   this.persistContextSnapshot(context, promptTokens);
                   listener.onContextWindow?.(promptTokens, promptTokens, context.contextManifest);
@@ -330,7 +338,7 @@ export class AgentLoop {
                   context.pendingToolCalls = toolCalls;
                 }
                 if (toolCalls.length === 0 && persistenceCallback) {
-                  afterStream.push(Promise.resolve(persistenceCallback.onSaveAssistantMessage(content, thinkingContent, toolCalls, usage)));
+                  trackAfterStream(persistenceCallback.onSaveAssistantMessage(content, thinkingContent, toolCalls, usage));
                 } else {
                   pendingSave = content;
                   pendingThinking = thinkingContent;
