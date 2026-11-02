@@ -37,7 +37,9 @@
         <div class="header-right">
           <el-dropdown @command="handleCommand">
             <span class="user-info">
-              <el-avatar :size="28" icon="User" />
+              <el-avatar :size="28" :src="resolveAvatarUrl(authStore.user?.avatarUrl)">
+                <el-icon><User /></el-icon>
+              </el-avatar>
               <span v-if="!isMobile" class="username">{{ authStore.user?.displayName || '管理员' }}</span>
             </span>
             <template #dropdown>
@@ -80,11 +82,13 @@
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
+import { User } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
 import { useTabStore } from '../stores/tabs'
 import { useBreakpoint } from '../composables/useBreakpoint'
 import { useEmbedChat } from '../composables/useEmbedChat'
 import { homeTitle, pickHomePath } from '../utils/home'
+import { resolveAvatarUrl } from '../utils/avatar'
 import TabBar from './TabBar.vue'
 import SideMenu from './SideMenu.vue'
 import ReadinessBanner from './ReadinessBanner.vue'
