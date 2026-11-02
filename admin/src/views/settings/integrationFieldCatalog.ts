@@ -25,6 +25,19 @@ export interface IntegrationGroupSpec {
 
 export const INTEGRATION_GROUP_CATALOG: IntegrationGroupSpec[] = [
   {
+    name: 'password',
+    title: '账号密码登录',
+    keys: ['auth.password.enabled'],
+    fields: [
+      {
+        key: 'auth.password.enabled',
+        label: '启用账号密码登录',
+        type: 'switch',
+        hint: '默认开启。关闭后只影响桌面 / Web / 安卓和 mao auth login（含 LDAP）。管理后台登录页始终保留用户名密码，方便 admin 账号进入。已登录会话不受影响。关闭前须已启用飞书 OAuth（真实 App ID）或 ECP 飞书登录，否则桌面端将没有入口，无法保存。',
+      },
+    ],
+  },
+  {
     name: 'ldap',
     title: 'LDAP 认证',
     keys: ['auth.ldap.enabled', 'auth.ldap.url', 'auth.ldap.baseDn', 'auth.ldap.userDn', 'auth.ldap.password', 'auth.ldap.userSearchBase'],

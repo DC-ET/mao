@@ -40,6 +40,8 @@ export const JEV_ENDPOINT_KEY = 'approval.jev.endpoint';
 export const JEV_MODEL_KEY = 'approval.jev.model';
 export const JEV_API_KEY_KEY = 'approval.jev.apiKey';
 
+  /** 桌面端账号密码登录（含 LDAP）。缺省视为开启。管理后台登录不看这个开关。 */
+export const PASSWORD_LOGIN_ENABLED_KEY = 'auth.password.enabled';
 export const LDAP_ENABLED_KEY = 'auth.ldap.enabled';
 export const LDAP_URL_KEY = 'auth.ldap.url';
 export const LDAP_BASE_DN_KEY = 'auth.ldap.baseDn';
@@ -208,6 +210,15 @@ export class SystemSettingService {
    * 环境变量注入总开关（技术方案 §5.1）。行缺失或值非 false/0 一律视为开启：
    * 新能力默认可用；紧急停用必须显式写 false（与 getBool 未设置返回 false 的语义不同）。
    */
+  /**
+   * 桌面端账号密码登录是否开放。行缺失或空值视为开启。
+   * 显式 false / 0 才关闭；关闭后本地密码与 LDAP 不能走 POST /auth/login。管理后台不受影响。
+   */
+  async passwordLoginEnabled(): Promise<boolean> {
+    const raw = (await this.getText(PASSWORD_LOGIN_ENABLED_KEY, 'true')).trim().toLowerCase();
+    return raw !== 'false' && raw !== '0';
+  }
+
   async shellEnvVarsEnabled(): Promise<boolean> {
     const raw = (await this.getText(SHELL_ENV_VARS_ENABLED_KEY)).trim().toLowerCase();
     return raw !== 'false' && raw !== '0';
@@ -614,7 +625,13 @@ export class SystemSettingService {
       return JSON.stringify(config);
     }
     if (setting.settingKey === ECP_CONFIG_KEY) {
-      return JSON.stringify(this.parseEcpConfig(value));
+      const config = this.parseEcpConfig(value);
+      await this.assertInteractiveLoginRemains({
+        ecpEnabled: config.enabled,
+        ecpAppCode: config.appCode,
+        ecpBaseUrl: config.baseUrl,
+      });
+      return JSON.stringify(config);
     }
     if (setting.isSecret === 1) {
       if (value == null) {
@@ -734,7 +751,53 @@ export class SystemSettingService {
     return Number.isInteger(n) && n > 0 ? n : 10;
   }
 
+  /**
+   * 密码登录关掉之后，登录页必须还剩飞书 OAuth 或 ECP 之一。
+   * 飞书 OAuth 与登录按钮同一口径：开关打开且 App ID 不是占位值。
+   */
+  private async assertInteractiveLoginRemains(overrides: {
+    password?: boolean
+    feishuEnabled?: boolean
+    feishuAppId?: string
+    ecpEnabled?: boolean
+    ecpAppCode?: string
+    ecpBaseUrl?: string
+  } = {}): Promise<void> {
+    const passwordOn = overrides.password ?? await this.passwordLoginEnabled();
+    if (passwordOn) return;
+    const feishu = await this.getFeishuOAuthConfig();
+    const ecp = await this.getEcpConfig();
+    const feishuEnabled = overrides.feishuEnabled ?? feishu.enabled;
+    const feishuAppId = (overrides.feishuAppId ?? feishu.appId).trim();
+    const ecpEnabled = overrides.ecpEnabled ?? ecp.enabled;
+    const ecpAppCode = overrides.ecpAppCode ?? ecp.appCode;
+    const ecpBaseUrl = overrides.ecpBaseUrl ?? ecp.baseUrl;
+    const feishuOn = feishuEnabled && hasText(feishuAppId) && feishuAppId !== '1234567890';
+    const ecpOn = ecpEnabled && hasText(ecpAppCode) && hasText(ecpBaseUrl);
+    if (!feishuOn && !ecpOn) {
+      throw new BusinessException(
+        ErrorCode.PARAM_INVALID,
+        '至少保留一种登录方式。关闭账号密码登录前，请先启用飞书 OAuth（填写真实 App ID）或 ECP 飞书登录',
+      );
+    }
+  }
+
   private async validateValue(key: string, value: string | null | undefined): Promise<void> {
+    if (key === PASSWORD_LOGIN_ENABLED_KEY) {
+      if (!/^(true|false)$/i.test((value ?? '').trim())) {
+        throw new BusinessException(ErrorCode.PARAM_INVALID, '账号密码登录开关必须为 true 或 false');
+      }
+      if (/^false$/i.test(value!.trim())) {
+        await this.assertInteractiveLoginRemains({ password: false });
+      }
+      return;
+    }
+    if (key === FEISHU_ENABLED_KEY && /^(false|0)$/i.test((value ?? '').trim())) {
+      await this.assertInteractiveLoginRemains({ feishuEnabled: false });
+    }
+    if (key === FEISHU_APP_ID_KEY) {
+      await this.assertInteractiveLoginRemains({ feishuAppId: value ?? '' });
+    }
     if (key === WEIXIN_AGENT_ID_KEY || key === EMBED_AGENT_ID_KEY) {
       await this.validateAgentIdSetting(key, value, key === WEIXIN_AGENT_ID_KEY ? '微信智能体' : '浮窗助手');
       return;

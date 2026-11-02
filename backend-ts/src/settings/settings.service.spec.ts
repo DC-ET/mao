@@ -66,6 +66,26 @@ describe('SystemSettingService', () => {
     expect(updated.value).toBe('false');
   });
 
+  it('refuses to turn off password login when it is the only method', async () => {
+    const store = new Map<string, SystemSetting>();
+    const put = (key: string, value: string) => {
+      store.set(key, { id: 1, settingKey: key, category: '集成配置', value, editable: 1 });
+    };
+    vi.mocked(mapper.findByKey).mockImplementation(async (key: string) => store.get(key) ?? null);
+    put('auth.password.enabled', 'true');
+
+    await expect(service().update('auth.password.enabled', 'yes')).rejects.toThrow(/true 或 false/);
+    await expect(service().update('auth.password.enabled', 'false')).rejects.toThrow(/至少保留一种登录方式/);
+    expect(mapper.updateById).not.toHaveBeenCalled();
+
+    put('auth.feishu.enabled', 'true');
+    put('auth.feishu.appId', 'cli_real');
+    const updated = await service().update('auth.password.enabled', 'false');
+    expect(updated.value).toBe('false');
+
+    await expect(service().update('auth.feishu.enabled', 'false')).rejects.toThrow(/至少保留一种登录方式/);
+  });
+
   it('updatePersistsEditableSetting', async () => {
     const row = setting('audit.retentionDays', '审计', 1);
     vi.mocked(mapper.findByKey).mockResolvedValue(row);

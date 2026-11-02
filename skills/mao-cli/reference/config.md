@@ -57,6 +57,12 @@
 | `MAO_CONTAINER_*` | 否 | 容器模式参数：`MAO_CONTAINER_IDLE_MINUTES` / `MAO_CONTAINER_MAX_LIFETIME_HOURS` / `MAO_CONTAINER_MEMORY_MB` / `MAO_CONTAINER_CPUS` / `MAO_CONTAINER_PIDS_LIMIT` / `MAO_CONTAINER_IMAGE` / `MAO_CONTAINER_NETWORK` / `MAO_CONTAINER_CHANNEL_DIR` / `MAO_CONTAINER_DIST_DIR` / `MAO_CONTAINER_DEPS_DIR` / `MAO_CONTAINER_TMP_DIR`（默认 `/opt/mao-data/tmp`，按 `{tmpDir}/{userId}` 挂到容器 `/tmp`） / `MAO_CONTAINER_TMP_RETENTION_DAYS`（默认 7） / `MAO_CONTAINER_START_TIMEOUT_MS` |
 | `MAO_BLUE_GREEN_DRAIN_SEC` | 否 | 蓝绿切换后停旧实例延迟，默认 60s |
 
+### 账号密码登录
+
+管理后台「系统设置 → 登录认证 → 账号密码登录」维护，配置键 `auth.password.enabled`，默认开启，保存后即时生效。关闭后只影响桌面 / Web / 安卓：登录页不再显示用户名密码，`POST /v1/auth/login` 返回「账号密码登录已关闭」（本地密码和 LDAP 都走这个接口）。管理后台登录页始终保留用户名密码，`POST /v1/auth/admin/login` 不受该开关影响，给本地 admin 留入口。已经登录的会话仍可刷新令牌。
+
+关闭前必须已经启用飞书 OAuth（填写真实 App ID）或 ECP 飞书登录。密码登录已经关闭时，也不能再关掉最后一个飞书入口。升级需执行 V179 迁移；行缺失时仍视为开启。
+
 ### ECP 飞书登录（全站）
 
 管理后台「系统设置 → 集成配置 → ECP 飞书登录」维护，默认关闭。配置键 `auth.ecp.config`（JSON），保存后对新登录与 renew 即时生效。开启后**新增** ECP 飞书登录入口，不关闭密码、LDAP、Mao 飞书 OAuth 与公司 SSO 换票；仅经 ECP 飞书登录的用户会加密保存 ECP `sessionToken` 并在 12 小时内自动 renew，CLOUD shell 将会话票写入虚拟 HOME 的 `~/.config/com.access.accessone/` 供内部 CLI（如 `bigdata-cli`）读取 Bearer，并注入环境变量 `ECP_TOKEN`。开启后飞书机器人通道会额外检查发送者是否有未过期的 ECP 票，没有则发送橙色标题「新用户绑定」的卡片（正文「请先点击下方按钮完成用户绑定（3分钟内有效）。」，按钮「点我绑定」），即使飞书账号已经绑定。

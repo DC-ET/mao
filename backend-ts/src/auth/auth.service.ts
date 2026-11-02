@@ -13,9 +13,21 @@ export class AuthService {
     private readonly passwordHasher: PasswordHasher,
     private readonly ldapAuthService: LdapAuthService | null,
     private readonly permissionService?: PermissionService,
+    private readonly isPasswordLoginEnabled: () => Promise<boolean> = async () => true,
   ) {}
 
-  async login(username: string, password: string): Promise<LoginVO> {
+  passwordLoginEnabled(): Promise<boolean> {
+    return this.isPasswordLoginEnabled();
+  }
+
+  /**
+   * 管理后台登录不看「账号密码登录」开关，给本地 admin 留入口。
+   * 桌面 / Web / 安卓 / CLI 走默认路径，开关关闭时直接拒绝。
+   */
+  async login(username: string, password: string, options?: { ignorePasswordSwitch?: boolean }): Promise<LoginVO> {
+    if (!options?.ignorePasswordSwitch && !(await this.passwordLoginEnabled())) {
+      throw new BusinessException(ErrorCode.LOGIN_FAILED, '账号密码登录已关闭');
+    }
     const user = await this.userRepo.findByUsername(username);
     if (user && user.passwordHash && (await this.passwordHasher.matches(password, user.passwordHash))) {
       return this.buildLoginResult(user);

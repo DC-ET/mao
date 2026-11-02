@@ -297,7 +297,10 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   // 仅在资料更新的请求处理期被调用，不存在时序风险。
   const userService = new UserService(userRepo, permissionService, hasher, (userId, email) => notifPref.refreshEmailAddress(userId, email));
   const ldap = new LdapAuthService(userRepo, userRoleRepo, jwt, async () => (await settingService.getLdapConfig()));
-  const authService = new AuthService(userRepo, jwt, hasher, ldap, permissionService);
+  const authService = new AuthService(
+    userRepo, jwt, hasher, ldap, permissionService,
+    () => settingService.passwordLoginEnabled(),
+  );
   const earlyFeishuBinding = new MysqlFeishuBindingRepository(db);
   const pendingBindingMessages = new MysqlFeishuPendingBindingRepository(db);
   // pendingBindingProcessor / notifyFeishuPendingMismatch 已迁移到 ctx（延迟解引用）

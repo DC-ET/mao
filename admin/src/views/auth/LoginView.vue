@@ -42,12 +42,15 @@
         </el-form-item>
       </el-form>
 
-      <template v-if="ecpEnabled">
+      <template v-if="feishuEnabled || ecpEnabled">
         <div class="login-divider">或</div>
         <div class="feishu-panel">
           <p class="feishu-status">{{ feishuStatusText }}</p>
-          <el-button type="default" size="large" :loading="feishuLoading" style="width: 100%" @click="startFeishuLogin">
+          <el-button v-if="feishuEnabled" type="default" size="large" :loading="feishuLoading && activeProvider === 'mao'" @click="startFeishuLogin('mao')">
             飞书登录
+          </el-button>
+          <el-button v-if="ecpEnabled" type="default" size="large" :loading="feishuLoading && activeProvider === 'ecp'" @click="startFeishuLogin('ecp')">
+            飞书登录(ECP)
           </el-button>
         </div>
       </template>
@@ -71,7 +74,9 @@ const formRef = ref<FormInstance>()
 const loading = ref(false)
 const feishuLoading = ref(false)
 const feishuStatusText = ref('请使用飞书登录')
+const feishuEnabled = ref(false)
 const ecpEnabled = ref(false)
+const activeProvider = ref<'mao' | 'ecp'>('ecp')
 const rememberMe = ref(localStorage.getItem('rememberMe') === '1')
 const form = ref({
   username: localStorage.getItem('rememberedUsername') ?? '',
@@ -96,8 +101,10 @@ onMounted(async () => {
   document.title = '登录 · Mao 管理后台'
   try {
     const { data } = await api.get('/auth/features', { skipErrorToast: true })
+    feishuEnabled.value = Boolean(data?.feishuEnabled)
     ecpEnabled.value = Boolean(data?.ecpEnabled)
   } catch {
+    feishuEnabled.value = false
     ecpEnabled.value = false
   }
 })
@@ -129,12 +136,17 @@ async function handleLogin() {
   }
 }
 
-async function startFeishuLogin() {
-  if (!ecpEnabled.value || feishuLoading.value) return
+async function startFeishuLogin(provider: 'mao' | 'ecp') {
+  if (provider === 'mao' && !feishuEnabled.value) return
+  if (provider === 'ecp' && !ecpEnabled.value) return
+  if (feishuLoading.value) return
+  activeProvider.value = provider
   feishuLoading.value = true
   feishuStatusText.value = '正在打开飞书授权页面…'
   try {
-    const { data } = await api.post('/auth/ecp/feishu/start', { target: 'admin' }, { skipErrorToast: true })
+    const { data } = provider === 'ecp'
+      ? await api.post('/auth/ecp/feishu/start', { target: 'admin' }, { skipErrorToast: true })
+      : await api.get('/auth/feishu/qrcode', { skipErrorToast: true })
     feishuState = data.state
     feishuStatusText.value = '请在打开的飞书授权页面中完成登录'
     window.open(data.authUrl || data.qrCodeUrl, '_blank', 'noopener,noreferrer')
@@ -164,7 +176,8 @@ function clearPollTimer() {
 async function checkFeishuStatus() {
   if (!feishuState) return
   try {
-    const { data } = await api.get('/auth/ecp/feishu/status', { params: { state: feishuState }, skipErrorToast: true })
+    const statusPath = activeProvider.value === 'ecp' ? '/auth/ecp/feishu/status' : '/auth/feishu/status'
+    const { data } = await api.get(statusPath, { params: { state: feishuState }, skipErrorToast: true })
     if (data.status === 'PENDING') {
       feishuStatusText.value = '等待飞书确认'
       return
@@ -225,5 +238,14 @@ async function checkFeishuStatus() {
   margin-bottom: 16px;
   color: var(--el-text-color-regular);
   font-size: 13px;
+}
+
+.feishu-panel .el-button {
+  width: 100%;
+  margin-left: 0;
+}
+
+.feishu-panel .el-button + .el-button {
+  margin-top: 12px;
 }
 </style>

@@ -66,6 +66,24 @@ describe('AuthService', () => {
     await expect(service.login('ldap', 'bad')).rejects.toBeInstanceOf(BusinessException);
   });
 
+  it('loginRejectsWhenPasswordLoginDisabled', async () => {
+    const disabled = new AuthService(userRepo, jwtService, hasher, ldap, undefined, async () => false);
+    vi.mocked(userRepo.findByUsername).mockClear();
+    vi.mocked(hasher.matches).mockClear();
+    vi.mocked(ldap.isConfigured).mockClear();
+    await expect(disabled.login('alice', 'secret')).rejects.toThrow(/账号密码登录已关闭/);
+    expect(userRepo.findByUsername).not.toHaveBeenCalled();
+    expect(hasher.matches).not.toHaveBeenCalled();
+    expect(ldap.isConfigured).not.toHaveBeenCalled();
+
+    const u = user(1, 'admin', 'hash', 1);
+    vi.mocked(userRepo.findByUsername).mockResolvedValue(u);
+    vi.mocked(hasher.matches).mockResolvedValue(true);
+    const vo = await disabled.login('admin', 'secret', { ignorePasswordSwitch: true });
+    expect(vo.accessToken).toBe('access');
+    expect(userRepo.findByUsername).toHaveBeenCalledWith('admin');
+  });
+
   it('refreshTokenValidatesAndReturnsNewTokens', async () => {
     const u = user(3, 'bob', 'hash', 1);
     vi.mocked(jwtService.validateToken).mockReturnValue(true);

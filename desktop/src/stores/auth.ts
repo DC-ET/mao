@@ -42,6 +42,8 @@ export interface FeishuLoginStatus {
 }
 
 export interface AuthFeatures {
+  /** 缺省视为开启：旧接口没这个字段时仍显示用户名密码。 */
+  passwordEnabled: boolean
   feishuEnabled: boolean
   ecpEnabled: boolean
 }
@@ -49,7 +51,7 @@ export interface AuthFeatures {
 export const useAuthStore = defineStore('auth', () => {
   const token = ref<string | null>(getToken())
   const user = ref<User | null>(null)
-  const features = ref<AuthFeatures>({ feishuEnabled: false, ecpEnabled: false })
+  const features = ref<AuthFeatures>({ passwordEnabled: true, feishuEnabled: false, ecpEnabled: false })
 
   const permissions = computed(() => user.value?.permissions ?? [])
   const isAdmin = computed(() => Boolean(user.value?.isAdmin))
@@ -104,6 +106,7 @@ export const useAuthStore = defineStore('auth', () => {
   async function fetchAuthFeatures() {
     const { data } = await api.get('/auth/features')
     features.value = {
+      passwordEnabled: data?.passwordEnabled !== false,
       feishuEnabled: Boolean(data?.feishuEnabled),
       ecpEnabled: Boolean(data?.ecpEnabled),
     }

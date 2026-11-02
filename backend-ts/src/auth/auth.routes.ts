@@ -22,17 +22,18 @@ export function registerAuthRoutes(
     return sendOk(reply, await auth.login(body.username!, body.password!));
   });
 
-  /** 管理后台专用别名，与 `/v1/auth/login` 等价。 */
+  /** 管理后台登录。账号密码开关关闭时这里仍然可用，避免本地 admin 进不去。 */
   app.post('/v1/auth/admin/login', async (request, reply) => {
     const body = bodyOf<{ username?: string; password?: string }>(request);
     if (!hasText(body.username) || !hasText(body.password)) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '用户名不能为空');
     }
-    return sendOk(reply, await auth.login(body.username!, body.password!));
+    return sendOk(reply, await auth.login(body.username!, body.password!, { ignorePasswordSwitch: true }));
   });
 
   app.get('/v1/auth/features', async (_request, reply) => {
     return sendOk(reply, {
+      passwordEnabled: await auth.passwordLoginEnabled(),
       feishuEnabled: await feishu.isEnabled(),
       ecpEnabled: await ecp.isEnabled(),
     });

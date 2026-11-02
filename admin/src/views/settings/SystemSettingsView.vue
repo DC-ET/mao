@@ -265,6 +265,7 @@ const MODEL_SELECT_KEYS = new Set(['weixin.modelId', 'session.titleModelId', 'gi
 /** Agent 下拉 key：weixin.agentId / embed.agentId 共用同一 el-select + agents 数据源（留空回落默认 Agent）。 */
 const AGENT_SELECT_KEYS = new Set(['weixin.agentId', 'embed.agentId'])
 const INTEGRATION_KEYS = new Set([
+  'auth.password.enabled',
   'auth.ldap.enabled', 'auth.ldap.url', 'auth.ldap.baseDn', 'auth.ldap.userDn', 'auth.ldap.password', 'auth.ldap.userSearchBase',
   'auth.feishu.enabled', 'auth.feishu.appId', 'auth.feishu.appSecret', 'auth.feishu.redirectUri',
   'upload.storageMode', 'upload.baseUrl', 'file.maxSizeMb', 'site.baseUrl',
@@ -283,6 +284,7 @@ const INTEGRATION_KEYS = new Set([
 
 /** 集成组显示名：key 为 IntegrationConfigPanel 的 group name，锚点 id 为 `setting-group-${name}`。 */
 const INTEGRATION_LABELS: Record<string, string> = {
+  password: '账号密码登录',
   ldap: 'LDAP 认证',
   feishu: '飞书 OAuth 登录',
   upload: '上传配置',
@@ -303,6 +305,7 @@ const TOC_GROUPS: Array<{ label: string; sections: Array<{ kind: 'company-sso' |
   {
     label: '登录认证',
     sections: [
+      { kind: 'integration', name: 'password' },
       { kind: 'company-sso', name: 'company-sso' },
       { kind: 'ecp', name: 'ecp' },
       { kind: 'integration', name: 'ldap' },

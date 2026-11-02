@@ -25,6 +25,7 @@
         class="login-form"
         @submit.prevent="handleLogin"
       >
+        <template v-if="authStore.features.passwordEnabled">
         <el-form-item prop="username">
           <el-input
             ref="usernameInputRef"
@@ -60,6 +61,13 @@
             登录
           </el-button>
         </el-form-item>
+        </template>
+        <p
+          v-if="!authStore.features.passwordEnabled && !authStore.features.feishuEnabled && !authStore.features.ecpEnabled"
+          class="login-closed"
+        >
+          当前未开放登录方式，请联系管理员
+        </p>
         <el-form-item
           v-if="authStore.features.feishuEnabled || authStore.features.ecpEnabled"
           class="feishu-actions-item"
@@ -87,7 +95,7 @@
               <span class="feishu-brand-badge" aria-hidden="true">
                 <img :src="feishuLogo" alt="" width="16" height="16" />
               </span>
-              飞书登入(ECP)
+              飞书登录(ECP)
             </el-button>
           </div>
         </el-form-item>
@@ -105,7 +113,7 @@
           <span class="feishu-brand-badge" aria-hidden="true">
             <img :src="feishuLogo" alt="" width="16" height="16" />
           </span>
-          {{ activeFeishuProvider === 'ecp' ? '飞书登入(ECP)' : '飞书登录' }}
+          {{ activeFeishuProvider === 'ecp' ? '飞书登录(ECP)' : '飞书登录' }}
         </el-button>
         <el-button class="password-entry" link @click="backToPasswordLogin">
           返回密码登录
@@ -189,7 +197,7 @@ async function finishLogin() {
 }
 
 async function handleLogin() {
-  if (passwordLoading.value) return
+  if (!authStore.features.passwordEnabled || passwordLoading.value) return
   const valid = await formRef.value?.validate().catch(() => false)
   if (!valid) {
     await nextTick()
@@ -592,5 +600,13 @@ onBeforeUnmount(() => {
 
 .password-entry {
   padding: 0;
+}
+
+.login-closed {
+  margin: 0;
+  color: var(--aw-muted);
+  font-size: var(--aw-text-caption);
+  line-height: 22px;
+  text-align: center;
 }
 </style>
