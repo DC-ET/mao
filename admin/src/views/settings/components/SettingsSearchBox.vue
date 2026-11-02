@@ -134,13 +134,9 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .settings-search {
-  grid-area: search;
-  position: sticky;
-  top: 12px;
-  z-index: 6;
+  position: relative;
   width: 100%;
-  max-width: 640px;
-  background: var(--mao-surface);
+  min-width: 0;
 }
 
 .search-panel {

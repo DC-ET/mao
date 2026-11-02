@@ -3,18 +3,18 @@
     <el-card class="page-card">
       <template #header>
         <div class="card-header">
-          <div>
+          <div class="card-heading">
             <div class="card-title">系统设置</div>
-            <div class="card-hint">左侧目录按分组跳转。不知道配置在哪一组时，用搜索按名称或 key 定位。</div>
+            <div class="card-hint">按分组编辑。不知道在哪一组时，用搜索按名称或 key 定位。</div>
           </div>
-          <el-button @click="fetchSettings">
+          <SettingsSearchBox class="header-search" :fields="locatorFields" :sections="locatorSections" @select="locateSetting" />
+          <el-button class="header-refresh" @click="fetchSettings">
             <el-icon><Refresh /></el-icon>
           </el-button>
         </div>
       </template>
 
       <div v-loading="loading" class="settings-layout">
-        <SettingsSearchBox :fields="locatorFields" :sections="locatorSections" @select="locateSetting" />
         <aside class="toc">
           <div class="toc-title">目录</div>
           <div class="toc-list">
@@ -921,9 +921,23 @@ onActivated(() => {
 <style scoped>
 .card-header {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 12px;
+  align-items: center;
+  gap: 16px;
+}
+
+.card-heading {
+  flex-shrink: 0;
+}
+
+.header-search {
+  flex: 1;
+  min-width: 220px;
+  max-width: 420px;
+  margin-left: auto;
+}
+
+.header-refresh {
+  flex-shrink: 0;
 }
 
 .card-title {
@@ -941,11 +955,7 @@ onActivated(() => {
 .settings-layout {
   display: grid;
   grid-template-columns: 168px minmax(0, 1fr);
-  grid-template-areas:
-    "toc search"
-    "toc content";
   column-gap: 24px;
-  row-gap: 12px;
   align-items: start;
 }
 
@@ -955,12 +965,12 @@ onActivated(() => {
   overflow: visible;
 }
 
+.page-card > :deep(.el-card__header),
 .page-card > :deep(.el-card__body) {
   overflow: visible;
 }
 
 .toc {
-  grid-area: toc;
   position: sticky;
   top: 12px;
   width: 168px;
@@ -1052,7 +1062,6 @@ onActivated(() => {
 }
 
 .settings-content {
-  grid-area: content;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -1060,7 +1069,7 @@ onActivated(() => {
 }
 
 .settings-content :deep(.setting-field) {
-  scroll-margin-top: 72px;
+  scroll-margin-top: 16px;
   border-radius: 8px;
 }
 
@@ -1129,12 +1138,23 @@ onActivated(() => {
 }
 
 @media (max-width: 768px) {
+  .card-header {
+    flex-wrap: wrap;
+  }
+
+  .header-search {
+    order: 3;
+    flex: 1 1 100%;
+    max-width: none;
+    margin-left: 0;
+  }
+
+  .header-refresh {
+    margin-left: auto;
+  }
+
   .settings-layout {
     grid-template-columns: 1fr;
-    grid-template-areas:
-      "search"
-      "toc"
-      "content";
     row-gap: 16px;
   }
 
