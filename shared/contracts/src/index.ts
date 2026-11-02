@@ -35,6 +35,7 @@ export type { OnboardingState, ReadinessVO, OnboardingCompleteInput } from './re
 export type { BudgetScope, BudgetLimitType, BudgetAction, BudgetStatus, MyBudgetItemVO, MyBudgetsVO } from './budget';
 export type { AuditLog, AuditListFilter } from './audit';
 export type { MessageSearchGroup, MessageSearchHit, MessageSearchResult, SessionSource } from './session';
+export type { WorkspaceKind, WorkspaceChannel, WorkspaceChatType } from './workspace';
 export type {
   WsClientType,
   WsAuthFrame,

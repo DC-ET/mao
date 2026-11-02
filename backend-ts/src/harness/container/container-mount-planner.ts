@@ -2,7 +2,7 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, realpathSync } from 'node:
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { harnessLog } from '../log.js';
-import { channelWorkspaceRoots } from './channel-workspace.js';
+import { channelWorkspaceRoots, parseChannelWorkspace } from './channel-workspace.js';
 
 /**
  * 容器挂载清单（技术方案 §5.1）：隔离边界即挂载清单。
@@ -148,9 +148,8 @@ export class ContainerMountPlanner {
     if (!owning) {
       throw new MountPlanError(`mount sessionWorkspace: host path ${host} is not under any channel workspace root`);
     }
-    const rel = path.relative(owning, host);
-    const segments = rel.split(path.sep);
-    if (segments.length < 2) {
+    const ref = parseChannelWorkspace(host, this.roots.workspaceRoot);
+    if (ref == null) {
       throw new MountPlanError(`mount sessionWorkspace: ${host} must be a concrete {account}/{leaf} workspace under ${owning}`);
     }
     // 归属校验（N-5，纵深防御）：私聊工作区只允许挂进本人容器——飞书 private-{userId}、
@@ -159,10 +158,9 @@ export class ContainerMountPlanner {
     // （leaf 为 chatId / conversationId）按设计由同群多用户会话共享，不在此判定；
     // 用户自建会话的通道工作区入口已在建会话侧按归属收口（session.routes.ts），
     // 这里是不依赖上游永远正确的第二道
-    const privateLeaf = /^(?:private|p2p)-(\d+)$/.exec(segments[1]!);
-    if (privateLeaf && privateLeaf[1] !== String(userId)) {
+    if (ref.ownerUserId != null && ref.ownerUserId !== userId) {
       throw new MountPlanError(
-        `mount sessionWorkspace: private workspace ${segments[1]} does not belong to user ${userId}: ${host}`,
+        `mount sessionWorkspace: private workspace ${ref.leaf} does not belong to user ${userId}: ${host}`,
       );
     }
     return { hostPath: host, containerPath: host, mode: 'rw', purpose: 'sessionWorkspace', sessionWorkspace: true };

@@ -10,6 +10,7 @@ import {
 import { isSessionSource, isUserSettableSessionSource, type SessionSource } from './session.repository.js';
 import { javaLocalDateTimeString } from '../common/datetime.js';
 import type { PathSandbox } from '../harness/safety/path-sandbox.js';
+import { parseChannelWorkspace } from '../harness/container/channel-workspace.js';
 import type { SessionService } from './session.service.js';
 import type { ActivityService } from './activity.service.js';
 import type { MessageQueueService } from './message-queue.service.js';
@@ -60,6 +61,11 @@ export interface SessionRouteDeps {
   approvalRegistry?: ApprovalRegistry;
   askUserQuestionsRegistry?: AskUserQuestionsRegistry;
   treeSignalPublisher?: SessionTreeSignalPublisher;
+  /**
+   * 群聊通道工作区参与性判定（建会话守卫，技术方案 2026-11-02）：
+   * 用户自建会话允许落在参与过的飞书/钉钉群工作区；缺省时群工作区一律拒绝（fail-closed）。
+   */
+  existsSessionUnderWorkspace?: (userId: number, path: string) => Promise<boolean>;
 }
 
 interface CreateSessionRequest {
@@ -153,7 +159,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     if (body.source != null && !isUserSettableSessionSource(body.source)) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, "source 仅允许 'web' / 'embed'");
     }
-    assertOwnedSessionWorkspace(deps.pathSandbox, userId, body.executionMode, body.workspace);
+    await assertOwnedSessionWorkspace(deps.pathSandbox, userId, body.executionMode, body.workspace, deps.existsSessionUnderWorkspace);
     const session = await sessionService.createSession(
       userId, parseEntityId(body.agentId), body.title, body.executionMode, body.workspace,
       body.permissionLevel, body.isGit, body.platform, body.shell, body.osVersion,
@@ -643,23 +649,42 @@ const TOOL_CALL_ID_MAX_LENGTH = 128;
 
 /**
  * 建会话时 CLOUD 工作区的归属校验（N-5）：用户自建会话的工作区必须位于本人每用户
- * 工作区根之下。飞书/钉钉通道会话工作区（{workspaceRoot}/feishu-chat|dingtalk-chat/…）
- * 由入站消息上下文在内部创建（可信调用方直接调 SessionService，不经此 HTTP 入口），
- * 不接受用户指定。docker 模式下会话工作区会以 rw 挂进该用户的运行时容器，缺少这道
- * 校验可把其他用户的通道工作区（如飞书私聊 private-{userId}）挂进本人容器，
- * 构成跨用户读写。LOCAL 模式的工作区是宿主机本机项目目录，与此无关。
+ * 工作区根之下，或是受管机器人通道工作区（技术方案 2026-11-02）——本人私聊
+ * （private-{userId} / p2p-{userId}），或本人有会话参与过的群工作区。
+ * 飞书/钉钉入站通道会话仍由消息上下文在内部创建（可信调用方直接调 SessionService），
+ * 本函数只管用户经 HTTP 自建的场景。docker 模式下会话工作区会以 rw 挂进该用户的
+ * 运行时容器，缺少这道校验可把其他用户的通道工作区（如飞书私聊 private-{userId}）
+ * 挂进本人容器，构成跨用户读写；群工作区按设计多用户共享，参与性由调用方判定
+ * （与容器挂载侧 planSessionWorkspace 的私聊归属校验同口径）。LOCAL 模式的工作区
+ * 是宿主机本机项目目录，与此无关。
  */
-function assertOwnedSessionWorkspace(
+async function assertOwnedSessionWorkspace(
   pathSandbox: PathSandbox,
   userId: number,
   executionMode: string | null | undefined,
   workspace: string | null | undefined,
-): void {
+  existsSessionUnderWorkspace?: (userId: number, path: string) => Promise<boolean>,
+): Promise<void> {
   if (workspace == null || workspace.length === 0) return;
   // createSession 对 executionMode 的默认值是 CLOUD：未显式传时按 CLOUD 口径校验
   if ((executionMode ?? 'CLOUD') !== 'CLOUD') return;
   const userRoot = resolve(pathSandbox.getWorkspaceRoot(), String(userId));
   const target = resolve(workspace);
   if (target === userRoot || target.startsWith(userRoot + sep)) return;
-  throw new BusinessException(ErrorCode.PARAM_INVALID, 'workspace 必须位于本人工作区根目录之下');
+  const channel = parseChannelWorkspace(target, pathSandbox.getWorkspaceRoot());
+  if (channel == null) {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, 'workspace 必须位于本人工作区根目录之下');
+  }
+  if (channel.chatType === 'private') {
+    if (channel.ownerUserId !== userId) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, 'workspace 必须位于本人工作区根目录之下');
+    }
+    return;
+  }
+  // 群工作区：按设计多人共享（容器挂载侧同款不按 userId 拒绝），但用户自建入口
+  // 要求本人参与过；缺省判定函数时拒绝（fail-closed）
+  const participated = existsSessionUnderWorkspace == null ? false : await existsSessionUnderWorkspace(userId, target);
+  if (!participated) {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, 'workspace 必须位于本人工作区根目录或本人参与过的机器人通道工作区之下');
+  }
 }

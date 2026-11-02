@@ -560,6 +560,59 @@ export class SessionRepository {
     );
     return rows;
   }
+
+  /**
+   * 跨用户按工作区聚合（工作区总览·机器人通道，技术方案 2026-11-02）：
+   * 群聊通道工作区由同群多个 mao 用户的会话按设计共享，按 user_id 过滤会少计，
+   * 故对给定目录前缀集合（调用方已按可见性收窄）做不带用户过滤的同口径聚合。
+   * 前缀为空集合时跳过查询返回空 Map。
+   */
+  async aggregateWorkspaceUsageAnyUser(prefixes: string[]): Promise<Map<string, { total: number; active: number; archived: number; lastUsedAt: string | null }>> {
+    if (prefixes.length === 0) return new Map();
+    const clauses: string[] = [];
+    const params: Array<string> = [];
+    for (const prefix of prefixes) {
+      clauses.push('workspace = ?', `workspace LIKE CONCAT(?, '%') ESCAPE '\\\\'`);
+      params.push(prefix, escapeLike(prefix + sep));
+    }
+    const rows = await this.db.query<{ workspace: string; total: number; active: number; archived: number; lastUsedAt: string | null }>(
+      `SELECT workspace,
+              COUNT(*) AS total,
+              SUM(CASE WHEN phase IN (${ACTIVE_PHASE_SQL_LIST}) THEN 1 ELSE 0 END) AS active,
+              SUM(CASE WHEN status = 'ARCHIVED' THEN 1 ELSE 0 END) AS archived,
+              MAX(updated_at) AS lastUsedAt
+       FROM \`session\`
+       WHERE workspace IS NOT NULL AND deleted = 0 AND (${clauses.join(' OR ')})
+       GROUP BY workspace`,
+      params,
+    );
+    const map = new Map<string, { total: number; active: number; archived: number; lastUsedAt: string | null }>();
+    for (const row of rows) {
+      map.set(row.workspace, {
+        total: Number(row.total),
+        active: Number(row.active),
+        archived: Number(row.archived),
+        lastUsedAt: row.lastUsedAt,
+      });
+    }
+    return map;
+  }
+
+  /**
+   * 用户在指定工作区（精确或前缀命中）是否已有未删除会话（技术方案 2026-11-02）：
+   * 群聊通道工作区的「参与」判定——本人有会话（含归档）落在该目录才算受管，
+   * 未参与的群目录不出现在总览、也不能作为自建会话的工作区。
+   */
+  async existsSessionUnderWorkspace(userId: number, path: string): Promise<boolean> {
+    const row = await this.db.queryOne<{ id: number }>(
+      `SELECT id FROM \`session\`
+       WHERE user_id = ? AND deleted = 0
+         AND (workspace = ? OR workspace LIKE CONCAT(?, '%') ESCAPE '\\\\')
+       LIMIT 1`,
+      [userId, path, escapeLike(path + sep)],
+    );
+    return row != null;
+  }
 }
 
 /**

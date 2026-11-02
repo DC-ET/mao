@@ -61,8 +61,9 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
   }
 
   /**
-   * 写操作的工作区：有 workspacePath 时落到本人根下的总览目录（文件管理页签），
-   * 否则落到会话工作区。两者都给时以 workspacePath 为准，避免页签写到当前会话。
+   * 写操作的工作区：有 workspacePath 时落到总览「受管」目录（文件管理页签，
+   * 含受管机器人通道工作区），否则落到会话工作区。两者都给时以 workspacePath 为准，
+   * 避免页签写到当前会话。
    */
   async function requireWriteWorkspace(
     userId: number,
@@ -70,7 +71,7 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
     workspacePath: string | null | undefined,
   ): Promise<{ sessionId: number; workspace: string }> {
     if (workspacePath != null && workspacePath.trim().length > 0) {
-      const resolved = workspaceOverviewService.resolveDeletablePath(userId, workspacePath);
+      const resolved = await workspaceOverviewService.resolveManagedPath(userId, workspacePath);
       if ('error' in resolved) {
         throw new BusinessException(ErrorCode.PARAM_INVALID, resolved.message);
       }
@@ -83,12 +84,15 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
     return { sessionId: session.id!, workspace: requireCloudWorkspace(session) };
   }
 
-  /** 总览行打开的文件管理：root 必须是本人根下可删除的那一级目录。 */
-  function resolveOwnedWorkspace(userId: number, raw: string | null | undefined): string {
+  /**
+   * 总览行打开的文件管理：root 必须是受管目录——本人根下的一级 / projects 子目录，
+   * 或受管机器人通道工作区（本人私聊 / 参与过的群，技术方案 2026-11-02）。
+   */
+  async function resolveOwnedWorkspace(userId: number, raw: string | null | undefined): Promise<string> {
     if (raw == null || raw.trim().length === 0) {
       throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
     }
-    const resolved = workspaceOverviewService.resolveDeletablePath(userId, raw);
+    const resolved = await workspaceOverviewService.resolveManagedPath(userId, raw);
     if ('error' in resolved) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, resolved.message);
     }
@@ -466,12 +470,13 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
   });
 
   // 删除确认弹层取活跃引用清单（D4③：失败信封无 data 字段，409 无法携带结构化清单，
-  // 故清单由弹层打开时预先拉取）
+  // 故清单由弹层打开时预先拉取）。受管口径校验：群工作区删不掉（DELETE 侧 shared 拒绝），
+  // 但其引用清单仍可按参与关系查看
   app.get('/v1/files/workspace-overview/references', async (request, reply) => {
     const userId = requireUserId(request);
     const path = queryOptStr(request, 'path');
     if (path == null) throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
-    const resolved = workspaceOverviewService.resolveDeletablePath(userId, path);
+    const resolved = await workspaceOverviewService.resolveManagedPath(userId, path);
     if ('error' in resolved) {
       sendJson(reply, 200, fail(400, resolved.message));
       return;
@@ -611,7 +616,7 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
   // 工作区总览「文件管理」：按本人根下的目录浏览，不依赖当前会话。
   app.get('/v1/files/owned-directory', async (request, reply) => {
     const userId = requireUserId(request);
-    const root = resolveOwnedWorkspace(userId, queryOptStr(request, 'root'));
+    const root = await resolveOwnedWorkspace(userId, queryOptStr(request, 'root'));
     return sendOk(reply, workspaceBrowseService.listDirectory(root, queryOptStr(request, 'dir')));
   });
 
@@ -619,7 +624,7 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
     const userId = requireUserId(request);
     const path = queryOptStr(request, 'path');
     if (path == null) throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
-    const root = resolveOwnedWorkspace(userId, queryOptStr(request, 'root'));
+    const root = await resolveOwnedWorkspace(userId, queryOptStr(request, 'root'));
     return sendOk(reply, await workspaceBrowseService.readFile(
       root, path, queryOptInt(request, 'offset') ?? 0, queryOptInt(request, 'limit') ?? 5000,
     ));
@@ -634,7 +639,7 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
     if (pattern.length > 100) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '搜索关键词过长');
     }
-    const root = resolveOwnedWorkspace(userId, queryOptStr(request, 'root'));
+    const root = await resolveOwnedWorkspace(userId, queryOptStr(request, 'root'));
     return sendOk(reply, workspaceBrowseService.searchFiles(root, pattern, queryOptInt(request, 'limit') ?? 100));
   });
 
@@ -642,7 +647,7 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
     const userId = requireUserId(request);
     const path = queryOptStr(request, 'path');
     if (path == null) throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
-    const root = resolveOwnedWorkspace(userId, queryOptStr(request, 'root'));
+    const root = await resolveOwnedWorkspace(userId, queryOptStr(request, 'root'));
     const result = workspaceBrowseService.downloadFile(root, path);
     const mediaType = mimeLookup(result.path) || 'application/octet-stream';
     return sendFile(reply, result.path, result.fileName, mediaType, result.size, 'attachment');
@@ -652,7 +657,7 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
     const userId = requireUserId(request);
     const path = queryOptStr(request, 'path');
     if (path == null) throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
-    const root = resolveOwnedWorkspace(userId, queryOptStr(request, 'root'));
+    const root = await resolveOwnedWorkspace(userId, queryOptStr(request, 'root'));
     const result = workspaceBrowseService.readPdfFile(root, path);
     return sendFile(reply, result.path, result.fileName, 'application/pdf', result.size, 'inline');
   });
@@ -661,7 +666,7 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
     const userId = requireUserId(request);
     const path = queryOptStr(request, 'path');
     if (path == null) throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
-    const root = resolveOwnedWorkspace(userId, queryOptStr(request, 'root'));
+    const root = await resolveOwnedWorkspace(userId, queryOptStr(request, 'root'));
     const result = await workspaceBrowseService.zipDirectory(root, path);
     const stream = createReadStream(result.zipPath);
     const cleanup = () => {

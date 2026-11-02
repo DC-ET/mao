@@ -1,7 +1,7 @@
 <template>
   <div class="workspace-overview-panel">
     <div class="overview-toolbar">
-      <span class="overview-hint">临时工作区不在此列表。机器人通道工作区不在本人目录内，也不在此页签</span>
+      <span class="overview-hint">临时工作区不在此列表。机器人通道工作区仅显示本人参与过的群与本人私聊；群工作区为多人共享，不支持删除</span>
       <div class="overview-toolbar-actions">
         <el-button size="small" :loading="refreshing" @click="refreshAll">
           <el-icon v-if="!refreshing" :size="13"><Refresh /></el-icon>
@@ -22,7 +22,7 @@
       </template>
       <el-table-column prop="name" label="名称" min-width="200" sortable="custom" show-overflow-tooltip>
         <template #default="{ row }">
-          <span class="ws-name">{{ row.name }}</span>
+          <span class="ws-name">{{ displayName(row) }}</span>
           <el-tag v-if="row.isGit" size="small" type="info" class="ws-git-tag">Git</el-tag>
         </template>
       </el-table-column>
@@ -47,7 +47,16 @@
         <template #default="{ row }">
           <el-button type="primary" link size="small" @click="emit('open-file-manager', row)">文件管理</el-button>
           <el-button type="primary" link size="small" @click="emit('use-for-new-task', row)">新任务</el-button>
-          <el-button type="danger" link size="small" @click="openDelete(row)">删除</el-button>
+          <!-- 群聊工作区多人共享：物理删除会波及全群用户的历史会话文件，禁删 -->
+          <el-button
+            v-if="!isSharedGroup(row)"
+            type="danger" link size="small" @click="openDelete(row)"
+          >删除</el-button>
+          <el-button
+            v-else
+            type="danger" link size="small" disabled
+            title="群聊工作区为多人共享，暂不支持删除"
+          >删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -108,6 +117,7 @@ import {
   fetchWorkspaceReferences,
 } from '../../api'
 import { formatDateTime } from '../../utils/datetime'
+import { formatCloudGroupLabel } from '../../utils/cloud-project'
 import type { WorkspaceKind, WorkspaceOverviewEntry } from '../../types/workspace-overview'
 
 const emit = defineEmits<{
@@ -121,6 +131,7 @@ const KIND_LABELS: Record<WorkspaceKind, string> = {
   temp: '临时工作区',
   project: '项目',
   other: '其他',
+  channel: '机器人通道',
 }
 
 const entries = ref<WorkspaceOverviewEntry[]>([])
@@ -162,9 +173,24 @@ const sortedEntries = computed(() => {
 
 const emptyHint = computed(() => overviewError.value || '本人工作区根目录下暂无目录')
 
+/**
+ * 名称列展示：个人目录用目录名；机器人通道工作区用与左侧会话栏同源的合成标签
+ * （飞书群{botId}·{chatId} / 飞书私聊 / 钉钉群… / 钉钉私聊，见 formatCloudGroupLabel）。
+ */
+function displayName(entry: WorkspaceOverviewEntry): string {
+  if (entry.kind === 'channel') return formatCloudGroupLabel(`CLOUD:${entry.path}`)
+  return entry.name
+}
+
+/** 群聊通道工作区：多人共享，不提供删除。 */
+function isSharedGroup(entry: WorkspaceOverviewEntry): boolean {
+  return entry.kind === 'channel' && entry.chatType === 'group'
+}
+
 function kindTag(kind: WorkspaceKind): 'primary' | 'success' | 'info' | 'warning' {
   if (kind === 'project') return 'primary'
   if (kind === 'temp') return 'info'
+  if (kind === 'channel') return 'success'
   return 'warning'
 }
 

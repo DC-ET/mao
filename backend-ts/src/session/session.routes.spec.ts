@@ -37,7 +37,7 @@ function session(overrides: Record<string, unknown> = {}) {
 }
 
 describe('session and admin routes', () => {
-  async function app() {
+  async function app(options: { participated?: boolean } = {}) {
     const fastify = Fastify();
     fastify.setErrorHandler(handleError);
     fastify.addHook('preHandler', (req, _r, done) => {
@@ -130,6 +130,7 @@ describe('session and admin routes', () => {
       sessionCompactionService: compactionRecordService as unknown as SessionCompactionService,
       runTraceService: runTraceService as unknown as RunTraceService,
       runTraceRecordService: runTraceRecordService as unknown as RunTraceRecordService,
+      existsSessionUnderWorkspace: vi.fn(async () => options.participated ?? false),
     });
     registerAdminSessionRoutes(fastify, {
       sessionService,
@@ -903,5 +904,45 @@ describe('session and admin routes', () => {
     }
 
     await fastify.close();
+  });
+
+  // 建会话 CLOUD 工作区守卫（技术方案 2026-11-02）：本人根之外只放行受管机器人通道
+  // 工作区——本人私聊直接放行，群工作区需参与性判定；他人私聊 / 未参与群 / 无关路径拒绝。
+  it('POST /sessions 通道工作区守卫：本人私聊与参与群放行，他人私聊与未参与群拒绝', async () => {
+    const created = await app({ participated: true });
+    const { fastify, sessionService, root } = created;
+    const feishuGroup = join(root, 'feishu-chat', 'bot-1', 'oc_chat');
+    const ownPrivate = join(root, 'feishu-chat', 'bot-1', 'private-7');
+    const otherPrivate = join(root, 'feishu-chat', 'bot-1', 'private-8');
+    for (const dir of [feishuGroup, ownPrivate, otherPrivate]) mkdirSync(dir, { recursive: true });
+
+    const json = async (workspace: string) => {
+      const res = await fastify.inject({ method: 'POST', url: '/v1/sessions', payload: { title: 't', agentId: '9', workspace } });
+      return { status: res.statusCode, body: JSON.parse(res.body) };
+    };
+    // 参与过的群工作区：放行
+    expect((await json(feishuGroup)).body.code).toBe(0);
+    const call = vi.mocked(sessionService.createSession).mock.calls.at(-1)!;
+    expect(call[0]).toBe(7);
+    expect(call[4]).toBe(feishuGroup);
+    // 本人私聊工作区：放行
+    expect((await json(ownPrivate)).body.code).toBe(0);
+    await fastify.close();
+
+    const rejected = await app({ participated: false });
+    const jsonRejected = async (workspace: string) => {
+      const res = await rejected.fastify.inject({ method: 'POST', url: '/v1/sessions', payload: { title: 't', agentId: '9', workspace } });
+      return { status: res.statusCode, body: JSON.parse(res.body) };
+    };
+    // 未参与的群工作区：拒绝（200 信封 + PARAM_INVALID）
+    expect((await jsonRejected(feishuGroup)).body.code).toBe(2001);
+    // 他人私聊工作区：拒绝（N-5 归属）
+    expect((await jsonRejected(otherPrivate)).body.code).toBe(2001);
+    // 每用户根之外的无关路径：拒绝
+    expect((await jsonRejected('/etc')).body.code).toBe(2001);
+    expect(vi.mocked(rejected.sessionService.createSession)).not.toHaveBeenCalled();
+    // 本人根内目录：放行（现行为不回退）
+    expect((await jsonRejected(join(rejected.root, '7', 'my-ws'))).body.code).toBe(0);
+    await rejected.fastify.close();
   });
 });

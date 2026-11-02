@@ -8,10 +8,17 @@ import { SessionRepository } from '../session/session.repository.js';
 
 type UsageMap = Map<string, { total: number; active: number; archived: number; lastUsedAt: string | null }>;
 
-function makeService(root: string, usage: UsageMap = new Map()) {
+function makeService(root: string, usage: UsageMap = new Map(), overrides: {
+  userWorkspaces?: string[];
+  channelUsage?: UsageMap;
+  participated?: boolean;
+} = {}) {
   const repo = {
     aggregateWorkspaceUsage: vi.fn(async () => usage),
+    aggregateWorkspaceUsageAnyUser: vi.fn(async () => overrides.channelUsage ?? new Map()),
     listActiveWorkspaceReferences: vi.fn(async () => [] as Array<{ id: number; title: string | null; phase: string | null }>),
+    listWorkspacesByUser: vi.fn(async () => overrides.userWorkspaces ?? []),
+    existsSessionUnderWorkspace: vi.fn(async () => overrides.participated ?? false),
   };
   const service = new WorkspaceOverviewService(new PathSandbox(root), repo as never);
   return { service, repo };
@@ -96,6 +103,99 @@ describe('WorkspaceOverviewService.listOverview', () => {
   });
 });
 
+describe('WorkspaceOverviewService 机器人通道工作区（技术方案 2026-11-02）', () => {
+  function setupChannels(root: string) {
+    const feishuGroup = join(root, 'feishu-chat', 'bot-1', 'oc_chat');
+    const feishuPrivateOwn = join(root, 'feishu-chat', 'bot-1', 'private-7');
+    const feishuPrivateOther = join(root, 'feishu-chat', 'bot-1', 'private-8');
+    const dingtalkGroup = join(root, 'dingtalk-chat', 'bot-2', 'cid_group');
+    const dingtalkPrivateOwn = join(root, 'dingtalk-chat', 'bot-2', 'p2p-7');
+    for (const dir of [feishuGroup, feishuPrivateOwn, feishuPrivateOther, dingtalkGroup, dingtalkPrivateOwn]) {
+      mkdirSync(dir, { recursive: true });
+    }
+    return { feishuGroup, feishuPrivateOwn, feishuPrivateOther, dingtalkGroup, dingtalkPrivateOwn };
+  }
+
+  it('lists own private and participated group workspaces of both channels', async () => {
+    const root = useTmpDir('ws-ch-');
+    const { feishuGroup, feishuPrivateOwn, feishuPrivateOther, dingtalkGroup, dingtalkPrivateOwn } = setupChannels(root);
+    const { service } = makeService(root, new Map(), { userWorkspaces: [feishuGroup, dingtalkGroup] });
+    const { entries, error } = await service.listOverview(7);
+    expect(error).toBeNull();
+    const byPath = Object.fromEntries(entries.map(e => [e.path, e]));
+    expect(byPath[feishuPrivateOwn]).toMatchObject({
+      kind: 'channel', channel: 'feishu', chatType: 'private', accountId: 'bot-1', name: 'private-7',
+    });
+    expect(byPath[dingtalkPrivateOwn]).toMatchObject({
+      kind: 'channel', channel: 'dingtalk', chatType: 'private', accountId: 'bot-2', name: 'p2p-7',
+    });
+    expect(byPath[feishuGroup]).toMatchObject({ kind: 'channel', channel: 'feishu', chatType: 'group', name: 'oc_chat' });
+    expect(byPath[dingtalkGroup]).toMatchObject({ kind: 'channel', channel: 'dingtalk', chatType: 'group', name: 'cid_group' });
+    // 他人私聊工作区不可见
+    expect(byPath[feishuPrivateOther]).toBeUndefined();
+  });
+
+  it('hides group workspaces the user has not participated in', async () => {
+    const root = useTmpDir('ws-ch-');
+    const { feishuGroup, feishuPrivateOwn, dingtalkPrivateOwn } = setupChannels(root);
+    const { service, repo } = makeService(root, new Map(), { userWorkspaces: [] });
+    const { entries } = await service.listOverview(7);
+    expect(entries.find(e => e.path === feishuGroup)).toBeUndefined();
+    // 只剩本人私聊目录参与跨用户聚合，未参与的群目录不在其中
+    expect(repo.aggregateWorkspaceUsageAnyUser).toHaveBeenCalledWith([feishuPrivateOwn, dingtalkPrivateOwn]);
+  });
+
+  it('aggregates group workspace usage across users', async () => {
+    const root = useTmpDir('ws-ch-');
+    const { feishuGroup, feishuPrivateOther } = setupChannels(root);
+    const channelUsage: UsageMap = new Map([
+      [feishuGroup, { total: 4, active: 2, archived: 2, lastUsedAt: '2026-11-01 09:00:00' }],
+    ]);
+    const { service, repo } = makeService(root, new Map(), { userWorkspaces: [feishuGroup], channelUsage });
+    const { entries } = await service.listOverview(7);
+    const entry = entries.find(e => e.path === feishuGroup)!;
+    // 群目录按设计多人共享：计数走跨用户聚合（同群其他用户的会话也计入）
+    expect(entry.activeSessions).toBe(2);
+    expect(entry.archivedSessions).toBe(2);
+    expect(entry.lastUsedAt).toBe('2026-11-01 09:00:00');
+    const called = vi.mocked(repo.aggregateWorkspaceUsageAnyUser).mock.calls[0]![0];
+    expect(called).toContain(feishuGroup);
+    expect(called).not.toContain(feishuPrivateOther);
+  });
+
+  it('skips symlinks at channel account and leaf levels', async () => {
+    const root = useTmpDir('ws-ch-');
+    const { feishuGroup, dingtalkGroup } = setupChannels(root);
+    mkdirSync(join(root, 'outside'), { recursive: true });
+    symlinkSync(join(root, 'outside'), join(root, 'feishu-chat', 'bot-link'));
+    symlinkSync(join(root, 'outside'), join(feishuGroup, 'leaf-link'));
+    const { service } = makeService(root, new Map(), { userWorkspaces: [feishuGroup, dingtalkGroup] });
+    const { entries } = await service.listOverview(7);
+    expect(entries.filter(e => e.kind === 'channel').map(e => e.name).sort())
+      .toEqual(['cid_group', 'oc_chat', 'p2p-7', 'private-7']);
+  });
+
+  it('delete guard rejects shared group, accepts own private, rejects foreign private', () => {
+    const root = useTmpDir('ws-ch-');
+    const { feishuGroup, feishuPrivateOwn, feishuPrivateOther } = setupChannels(root);
+    const { service } = makeService(root);
+    expect(service.resolveDeletablePath(7, feishuGroup)).toMatchObject({ error: 'shared' });
+    expect(service.resolveDeletablePath(7, feishuPrivateOwn)).toEqual({ path: feishuPrivateOwn });
+    expect(service.resolveDeletablePath(7, feishuPrivateOther)).toMatchObject({ error: 'out-of-scope' });
+  });
+
+  it('managed guard allows participated group and own private, rejects strangers', async () => {
+    const root = useTmpDir('ws-ch-');
+    const { feishuGroup, feishuPrivateOwn, feishuPrivateOther } = setupChannels(root);
+    const { service } = makeService(root, new Map(), { participated: true });
+    expect(await service.resolveManagedPath(7, feishuGroup)).toEqual({ path: feishuGroup });
+    expect(await service.resolveManagedPath(7, feishuPrivateOwn)).toEqual({ path: feishuPrivateOwn });
+    expect(await service.resolveManagedPath(7, feishuPrivateOther)).toMatchObject({ error: 'out-of-scope' });
+    const { service: stranger } = makeService(root, new Map(), { participated: false });
+    expect(await stranger.resolveManagedPath(7, feishuGroup)).toMatchObject({ error: 'out-of-scope' });
+  });
+});
+
 describe('WorkspaceOverviewService.resolveDeletablePath / deleteWorkspace', () => {
   function setup() {
     const root = useTmpDir('ws-del-');
@@ -177,6 +277,37 @@ describe('SessionRepository workspace usage SQL（技术方案 §3 D7）', () =>
     expect(sql).toContain('ESCAPE');
     // LIKE 通配符被转义，路径字面量（含 %）不扩大匹配范围
     expect(params).toEqual([7, '/root/7/proj%ect', '/root/7/proj\\%ect/']);
+  });
+
+  it('aggregateWorkspaceUsageAnyUser builds per-prefix OR clauses without user filter', async () => {
+    const db = mockDb();
+    const repo = new SessionRepository(db as never);
+    // 空前缀集合不查库
+    expect(await repo.aggregateWorkspaceUsageAnyUser([])).toEqual(new Map());
+    expect(db.query).not.toHaveBeenCalled();
+    await repo.aggregateWorkspaceUsageAnyUser(['/root/feishu-chat/b/oc_a', '/root/dingtalk-chat/b/cid']);
+    const [sql, params] = vi.mocked(db.query).mock.calls[0]! as unknown as [string, unknown[]];
+    expect(sql).toContain('GROUP BY workspace');
+    // 群工作区多人共享：不能带 user_id 过滤，否则少计同群其他用户的会话
+    expect(sql).not.toContain('user_id');
+    expect(sql.match(/workspace = \?/g)?.length).toBe(2);
+    // LIKE 通配符（含 _）被转义，路径字面量不扩大匹配范围
+    expect(params).toEqual([
+      '/root/feishu-chat/b/oc_a', '/root/feishu-chat/b/oc\\_a/',
+      '/root/dingtalk-chat/b/cid', '/root/dingtalk-chat/b/cid/',
+    ]);
+  });
+
+  it('existsSessionUnderWorkspace limits to one row with escaped prefix', async () => {
+    const queryOne = vi.fn(async () => ({ id: 3 } as { id: number } | null));
+    const repo = new SessionRepository({ query: vi.fn(async () => []), queryOne } as never);
+    expect(await repo.existsSessionUnderWorkspace(7, '/root/feishu-chat/b/oc%x')).toBe(true);
+    const [sql, params] = vi.mocked(queryOne).mock.calls[0]! as unknown as [string, unknown[]];
+    expect(sql).toContain('LIMIT 1');
+    expect(sql).toContain('ESCAPE');
+    expect(params).toEqual([7, '/root/feishu-chat/b/oc%x', '/root/feishu-chat/b/oc\\%x/']);
+    queryOne.mockResolvedValueOnce(null);
+    expect(await repo.existsSessionUnderWorkspace(7, '/root/feishu-chat/b/oc_x')).toBe(false);
   });
 });
 

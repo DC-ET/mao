@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { join } from 'node:path';
-import { channelWorkspaceRoots, isChannelWorkspace, FEISHU_CHAT_DIR, DINGTALK_CHAT_DIR } from './channel-workspace.js';
+import { channelWorkspaceRoots, isChannelWorkspace, parseChannelWorkspace, FEISHU_CHAT_DIR, DINGTALK_CHAT_DIR } from './channel-workspace.js';
 
 /**
  * 通道会话工作区常量与判定（N-2）：宿主机生成侧（create-app / dingtalk/workspace.ts）
@@ -28,5 +28,34 @@ describe('channel workspace roots', () => {
     expect(isChannelWorkspace('/etc', root)).toBe(false);
     // 前缀巧合不是子目录
     expect(isChannelWorkspace(join(root, 'feishu-chat-evil', 'a', 'b'), root)).toBe(false);
+  });
+});
+
+describe('parseChannelWorkspace', () => {
+  const root = '/opt/mao-data/workspace';
+
+  it('parses concrete workspaces of both channels with chat type and owner', () => {
+    expect(parseChannelWorkspace(join(root, 'feishu-chat', 'bot-1', 'oc_chat'), root)).toEqual({
+      channel: 'feishu', accountId: 'bot-1', leaf: 'oc_chat', chatType: 'group', ownerUserId: null,
+    });
+    expect(parseChannelWorkspace(join(root, 'feishu-chat', 'bot-1', 'private-7'), root)).toEqual({
+      channel: 'feishu', accountId: 'bot-1', leaf: 'private-7', chatType: 'private', ownerUserId: 7,
+    });
+    expect(parseChannelWorkspace(join(root, 'dingtalk-chat', 'bot-2', 'p2p-9'), root)).toEqual({
+      channel: 'dingtalk', accountId: 'bot-2', leaf: 'p2p-9', chatType: 'private', ownerUserId: 9,
+    });
+    expect(parseChannelWorkspace(join(root, 'dingtalk-chat', 'bot-2', 'cid_group'), root)).toEqual({
+      channel: 'dingtalk', accountId: 'bot-2', leaf: 'cid_group', chatType: 'group', ownerUserId: null,
+    });
+  });
+
+  it('returns null for channel root, account level, user root and unrelated paths', () => {
+    expect(parseChannelWorkspace(join(root, 'feishu-chat'), root)).toBeNull();
+    expect(parseChannelWorkspace(join(root, 'feishu-chat', 'bot-1'), root)).toBeNull();
+    expect(parseChannelWorkspace(join(root, 'dingtalk-chat'), root)).toBeNull();
+    expect(parseChannelWorkspace(join(root, '7', '42'), root)).toBeNull();
+    expect(parseChannelWorkspace('/etc', root)).toBeNull();
+    // 前缀巧合不是子目录
+    expect(parseChannelWorkspace(join(root, 'feishu-chat-evil', 'a', 'b'), root)).toBeNull();
   });
 });

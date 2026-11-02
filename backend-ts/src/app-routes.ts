@@ -496,6 +496,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
       approvalRegistry,
       askUserQuestionsRegistry,
       treeSignalPublisher,
+      existsSessionUnderWorkspace: (userId: number, path: string) => sessionRepo.existsSessionUnderWorkspace(userId, path),
     });
     const sessionShareService = new SessionShareService(
       new MysqlSessionShareRepository(db),
