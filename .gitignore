@@ -42,6 +42,7 @@ android/android/gradle/wrapper/gradle-wrapper.jar
 
 .bash_profile
 .mao
+.zcode
 
 .claude/
 .cursor/
