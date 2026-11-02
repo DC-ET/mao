@@ -3,7 +3,7 @@
 > 在管理后台（`admin`）日常运维模型、Agent、Skills、MCP 服务器和自定义 HTTP 工具时，管理员最常遇到的不是「功能没有」，而是**对象之间的关联全是单向盲盒**：
 > 1. **删/停一个模型、MCP 或自定义工具前，不知道有哪些 Agent 正在用它**：`SkillListView.vue:162` 贴心地做了一列「关联 Agent」，但隔壁的**模型列表（`ModelListView`）**、**MCP 服务器列表（`McpServerListView`）**、**自定义 HTTP 工具列表（`HttpToolListView`）** 全都没有显示被哪些 Agent 关联——管理员停用一个旧模型或改一个自定义工具前，只能点开几十个 Agent 的编辑弹窗逐个翻；反过来在 **Agent 列表（`AgentListView`）** 里也只显示了 `Skills` 数量和 `经验数`，看不到每个 Agent 默认绑的是哪个模型、挂了几个 MCP 和自定义工具。
 > 2. **自定义 HTTP 工具不支持「一键复制」，且含敏感请求头时无法直接测试**：Agent、模型、信号哨兵都有「复制」按钮，唯独字段最多（URL + 多个 Header + 十几个参数定义 + Body 模板）的**自定义 HTTP 工具（`HttpToolListView.vue`）没有「复制」**，配同一内部网关下的第 2 个接口得把全套鉴权头和公共参数从头手敲一遍；更难受的是第 67 行：一旦工具配了 `Authorization` 等敏感请求头，列表上的「测试」按钮就被**直接禁用**（`disabled="hasSensitiveHeader(row)"`），提示「请从编辑填写真实值后测试」——管理员想验一下已保存的工具今天还通不通，居然得先去找回明文 Token 重填一遍才能测！
-- 状态：提案（待评审；2026-11-02 收窄：防凭据外带守卫、Agent 列表去对话两项不做）
+- 状态：已立项（技术方案见 [docs/plan/2026-11-03-admin-capability-linking-and-http-tool-ux-technical-design.md](../plan/2026-11-03-admin-capability-linking-and-http-tool-ux-technical-design.md)；2026-11-02 收窄：防凭据外带守卫、Agent 列表去对话两项不做）
 - 日期：2026-11-02
 - 提案总览见 [docs/proposals/README.md](README.md)
 - 规模：小~中（两项合计约 1.5~2 人日；**零数据库迁移**，不动执行内核）
