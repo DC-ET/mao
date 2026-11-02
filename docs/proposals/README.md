@@ -306,6 +306,22 @@
 3. **相邻收敛点**：切换 Agent 复用既有 PATCH 与每轮重读语义，刻意不动 `AgentLoop` / `task-terminal.service.ts`；来源标记只改传参值不改 `createSession` 位置签名（`open-run.service.ts:21-26` 的逐位一致护栏）；工作区总览不动既有 `cloud-projects` 端点（新建任务下拉零回归）。
 4. **实施顺序建议**：三件可完全并行；来源标记最小（约 2 人日）可先行，切换 Agent 次之，工作区总览最后。
 
+## 第二十批（2026-11-02）
+
+背景：第十九批（会话内切换 Agent / 会话来源全链路标记 / 工作区总览与生命周期）全部实施上线后，围绕「**提升现有功能完整度和用户体验，尽量避免对现有功能逻辑产生回归影响**」对代码现状做全盘摸底，从三处「**底层服务或技术方案早已就绪，但用户入口差最后一公里**」的断点切入：**定时任务**（0.0.354 补了编辑与 Cron 预览，但面板仍无「新建」按钮、无像信号哨兵那样的「立即执行」试跑入口，改完提示词只能改 Cron 等调度器捞）、**会话沉淀与长会话定位**（2026-10-06 方案定稿的「导出 Markdown」未落地，右键只有机器读的 JSONL；分享页与子代理无轮次目录，跨会话搜索无法限定「仅当前会话」）、**个人配置与资产管理打磨**（点「总是允许」生成的会话级审批规则在界面上完全隐形且无法撤销/提升；环境变量改句备注强制重填密文；长期记忆/快捷指令/审批规则无关键词搜索）。三件互不依赖、**全部零数据库迁移**、不碰 `AgentLoop` / `task-terminal.service.ts` 执行内核，严格避开全部已否决方向。
+
+| 提案 | 文档 | 一句话 | 规模 |
+|---|---|---|---|
+| 定时任务立即执行与新建向导补完 | [2026-11-02-scheduled-task-create-and-run-now.md](2026-11-02-scheduled-task-create-and-run-now.md)（待评审） | 补齐 `POST /v1/scheduled-tasks` 与 `:id/run`：面板可直接新建任务，编辑完提示词可一键「立即执行」试跑且不改写 `nextFireTime` / 不误完结一次性任务 | 小~中 |
+| 会话导出 Markdown 与长会话定位补完 | [2026-11-02-session-markdown-export-and-in-session-find.md](2026-11-02-session-markdown-export-and-in-session-find.md)（待评审） | 补齐 2026-10-06 方案遗留的 `.md` 可读导出（含分享页导出）+ 轮次目录内筛选与分享页/子代理挂载 + 搜索支持「仅当前会话」 | 小~中 |
+| 个人资产与配置体验补完 | [2026-11-02-personal-assets-ux-completeness.md](2026-11-02-personal-assets-ux-completeness.md)（待评审） | 会话级审批规则可见可撤可提升、环境变量编辑备注免重填密文（对齐 Git 凭证）、记忆/指令/规则列表补齐关键词搜索 | 小~中 |
+
+排期注意：
+
+1. **迁移编号**：三件均**零迁移**，不占 Flyway 版本号（当前最新 V180）。
+2. **三处同改清单**：三件均不新增内置工具、不新增 LLM 调用场景、不新增收件箱 kind，不触发既有「三处同改」规范。
+3. **相邻收敛点**：定时任务「立即执行」复用 `inFlight` 守卫与 `withSessionLock` 会话锁，但显式旁路 `nextFireTime` 推进、`once` 完结与 `consecutiveFailures` 累加，周期调度路径逐字节不变；Markdown 导出复用 `SessionExportService.loadAllMessages` 与 5MB 护栏；环境变量「留空不修改值」直接复用 `MysqlEnvVariableRepository.updateBy` 已有的 `patch.envValue !== undefined` 分支。
+
 ## 已评估、明确不做
 
 以下各项已复审定案，**不再重启、不再提案**（存档文档已标否决，勿再评审）：
