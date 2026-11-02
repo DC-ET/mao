@@ -106,7 +106,7 @@ describe('defaultTrendGrain / normalizeTrendGrain', () => {
     expect(defaultTrendGrain('week', undefined, '2026-10-29')).toBe('hour') // 4 天
     expect(defaultTrendGrain('week', undefined, '2026-11-01')).toBe('day') // 7 天
     expect(defaultTrendGrain('lastWeek')).toBe('day')
-    expect(defaultTrendGrain('month')).toBe('day')
+    expect(defaultTrendGrain('month', undefined, THU)).toBe('day')
     expect(defaultTrendGrain('lastMonth')).toBe('day')
     expect(defaultTrendGrain(7)).toBe('day')
     expect(defaultTrendGrain('custom', custom('2026-10-01', '2026-10-03'))).toBe('hour')
@@ -117,7 +117,7 @@ describe('defaultTrendGrain / normalizeTrendGrain', () => {
     expect(normalizeTrendGrain('day', 'today')).toBe('day')
     expect(normalizeTrendGrain('hour', 'month')).toBe('hour')
     expect(normalizeTrendGrain(undefined, 'today')).toBe('hour')
-    expect(normalizeTrendGrain('bogus', 'month')).toBe('day')
+    expect(normalizeTrendGrain('bogus', 'month', undefined, THU)).toBe('day')
   })
 })
 
@@ -139,8 +139,8 @@ describe('URL 映射', () => {
 
   it('customRangeFromQuery 非法回落默认区间（最近 7 天）', () => {
     expect(customRangeFromQuery('2026-10-01', '2026-10-15')).toEqual({ start: '2026-10-01', end: '2026-10-15' })
-    expect(customRangeFromQuery(undefined, undefined)).toEqual({ start: '2026-10-23', end: '2026-10-29' })
-    expect(customRangeFromQuery('2026-10-15', '2026-10-01')).toEqual({ start: '2026-10-23', end: '2026-10-29' })
+    expect(customRangeFromQuery(undefined, undefined, THU)).toEqual({ start: '2026-10-23', end: '2026-10-29' })
+    expect(customRangeFromQuery('2026-10-15', '2026-10-01', THU)).toEqual({ start: '2026-10-23', end: '2026-10-29' })
   })
 
   it('defaultCustomRange 跨月/跨年退回', () => {

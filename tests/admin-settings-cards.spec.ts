@@ -16,7 +16,7 @@ async function login(page: import('@playwright/test').Page) {
   await page.waitForSelector('.login-card', { timeout: 10_000 })
   await page.fill('input[placeholder="用户名"]', ADMIN_USER)
   await page.fill('input[placeholder="密码"]', ADMIN_PASS)
-  await page.click('button:has-text("登录")')
+  await page.getByRole('button', { name: '登录', exact: true }).click()
   await page.waitForURL(/\/admin\/analytics/, { timeout: 10_000 })
   await page.waitForSelector('.layout-container', { timeout: 10_000 })
 }

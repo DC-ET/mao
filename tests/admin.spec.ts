@@ -10,7 +10,7 @@ async function login(page: import('@playwright/test').Page) {
 
   await page.fill('input[placeholder="用户名"]', ADMIN_USER)
   await page.fill('input[placeholder="密码"]', ADMIN_PASS)
-  await page.click('button:has-text("登录")')
+  await page.getByRole('button', { name: '登录', exact: true }).click()
 
   // Wait for redirect to analytics homepage
   await page.waitForURL(/\/admin\/analytics/, { timeout: 10_000 })
@@ -27,7 +27,7 @@ test.describe('Login Page', () => {
     await expect(page.locator('.login-card h2')).toHaveText('Mao 管理后台')
     await expect(page.locator('input[placeholder="用户名"]')).toBeVisible()
     await expect(page.locator('input[placeholder="密码"]')).toBeVisible()
-    await expect(page.locator('button:has-text("登录")')).toBeVisible()
+    await expect(page.getByRole('button', { name: '登录', exact: true })).toBeVisible()
   })
 
   test('should login successfully and redirect to analytics homepage', async ({ page }) => {
@@ -42,14 +42,14 @@ test.describe('Login Page', () => {
     await page.goto('/admin/login')
     await page.fill('input[placeholder="用户名"]', 'admin')
     await page.fill('input[placeholder="密码"]', 'wrongpass')
-    await page.click('button:has-text("登录")')
+    await page.getByRole('button', { name: '登录', exact: true }).click()
     // Element Plus error message appears
     await expect(page.locator('.el-message--error').first()).toBeVisible({ timeout: 10_000 })
   })
 
   test('should not submit with empty fields', async ({ page }) => {
     await page.goto('/admin/login')
-    await page.click('button:has-text("登录")')
+    await page.getByRole('button', { name: '登录', exact: true }).click()
     // Should still be on login page, no redirect
     await expect(page).toHaveURL(/\/login/)
   })

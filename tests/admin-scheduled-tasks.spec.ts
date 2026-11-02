@@ -77,7 +77,7 @@ async function setup(page: Page, options: { permissions?: string[]; tasks?: type
   await page.waitForSelector('.login-card')
   await page.fill('input[placeholder="用户名"]', 'admin')
   await page.fill('input[placeholder="密码"]', 'admin123')
-  await page.click('button:has-text("登录")')
+  await page.getByRole('button', { name: '登录', exact: true }).click()
   await page.waitForURL(/\/admin\/analytics/)
   await page.goto('/admin/scheduled-tasks')
   await expect(page.locator('.el-table__body-wrapper').getByText('每日GMV')).toBeVisible()

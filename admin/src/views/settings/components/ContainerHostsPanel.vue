@@ -135,7 +135,9 @@ async function fetchPreview() {
   previewLoading.value = true
   try {
     const { data } = await api.get('/system-settings/container-hosts/preview')
-    previewEntries.value = data?.entries ?? []
+    // 只认数组：响应非预期为对象时（如网关/mock 返回数组），`data.entries` 会取到 Array.prototype.entries（函数），
+    // 传给 el-table 会渲染崩溃并触发全局「页面发生异常」提示。
+    previewEntries.value = Array.isArray(data?.entries) ? data.entries : []
     previewError.value = data?.hostsFileError ?? null
   } catch { /* 拦截器已提示失败 */ } finally {
     previewLoading.value = false

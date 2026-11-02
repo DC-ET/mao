@@ -177,9 +177,10 @@ export function defaultTrendGrain(
 export function normalizeTrendGrain(
   raw: unknown,
   value: PeriodValue,
-  custom?: CustomPeriodRange
+  custom?: CustomPeriodRange,
+  today?: string
 ): TrendGrain {
-  return raw === 'hour' || raw === 'day' ? raw : defaultTrendGrain(value, custom)
+  return raw === 'hour' || raw === 'day' ? raw : defaultTrendGrain(value, custom, today)
 }
 
 /** 自定义区间默认值：最近 7 天（与「近 7 天」同口径），切过去立刻有数据可看。 */
@@ -188,9 +189,9 @@ export function defaultCustomRange(today: string = todayYmd()): CustomPeriodRang
 }
 
 /** URL 上的自定义区间：两端都合法才认，否则回落默认区间（防手改链接）。 */
-export function customRangeFromQuery(start: unknown, end: unknown): CustomPeriodRange {
+export function customRangeFromQuery(start: unknown, end: unknown, today?: string): CustomPeriodRange {
   if (isValidYmd(start) && isValidYmd(end) && start <= end) return { start, end }
-  return defaultCustomRange()
+  return defaultCustomRange(today)
 }
 
 export function periodToQueryValue(value: PeriodValue): string {
