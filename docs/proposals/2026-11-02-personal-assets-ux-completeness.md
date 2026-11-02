@@ -5,7 +5,7 @@
 > 2. **给环境变量改句备注，必须把密码重输一遍**：`EnvVariablesView.vue` 与 `EnvVarsDrawer.vue` 编辑时强制要求重填 `envValue`（「重新输入变量值，留空无法保存」），而隔壁的 Git 凭证（`GitCredentialsView.vue`）、MCP 环境变量、信号哨兵请求头全都支持「**留空则保留原值**」——唯独环境变量想补个备注就得去翻密码本。
 > 3. **记忆、指令、审批规则攒到几十条后没有搜索框**：设置页的「长期记忆」「审批规则」「我的指令」以及工作区环境变量抽屉，目前只有分类 Tab，没有关键词搜索，条目一多只能一页页翻。
 
-- 状态：提案（待评审）
+- 状态：已立项（技术方案见 [docs/plan/2026-11-03-personal-assets-ux-completeness-technical-design.md](../plan/2026-11-03-personal-assets-ux-completeness-technical-design.md)；2026-11-02 两项决策已定案，见 §8）
 - 日期：2026-11-02
 - 提案总览见 [docs/proposals/README.md](README.md)
 - 规模：小~中（三项合计约 2~3 人日；**零迁移**，不动任何执行内核）
