@@ -33,7 +33,7 @@
 
 1. **P1 会话级审批规则可见、可撤、可提升**：
    - 后端：`DELETE /v1/approval-rules/:id` 放宽为允许删除本人名下的 `SESSION` 级规则（归属校验仍为 `row.userId === userId`）；新增 `POST /v1/approval-rules/:id/promote`（或复用创建接口）将某条 `SESSION` 级规则一键复制/提升为跨会话的 `USER` 级规则（幂等去重）。
-   - 前端：① 设置页 `ApprovalRulesView.vue` 增加「会话级规则」分组/切换（展示规则值、所属会话标题、命中次数，支持「删除（恢复审批）」与「提升为用户级规则」）；② LOCAL 会话右侧检查器（`TaskInspector`）或权限档位弹窗中，当本会话存在生效中的会话级放行规则时，显示「已放行 N 项」微标，点开可就地查看并一键撤销。
+   - 前端：设置页 `ApprovalRulesView.vue` 增加「会话级规则」二级 Tab/分组（展示规则值、所属会话标题、命中次数，支持「删除（恢复审批）」与「提升为用户级规则」）；入口只放在设置页，LOCAL 会话右侧不放入口（2026-11-02 决策，见 §8）。
 2. **P2 环境变量编辑支持「留空不修改值」**：
    - 后端：`EnvVariableService.buildPatch` 在 `input.envValue === undefined`（或未传）时不更新 `env_value` 列，仅当显式传入非空字符串时重新加密写入（与其他凭据页完全对齐：Git 凭证 `GitCredentialsView`、MCP 环境变量 `McpServersView`、信号哨兵请求头 `SignalWatchersView` 全部都是「留空保留原值」）。
    - 前端：`EnvVariablesView.vue` 与 `EnvVarsDrawer.vue` 在编辑态下，`envValue` 留空即可直接保存修改后的备注（`note`），占位文案统一为「留空则保留原值；输入新值则覆盖」。
@@ -62,9 +62,9 @@
 - **后端（`approval-rule.service.ts` & `approval-rule.repository.ts`）**：
   - `removeUserRule(userId, id)`：校验 `row.userId === userId` 即可物理删除（无论 `scope` 是 `'USER'` 还是 `'SESSION'`），让用户随时能撤回自己在会话里点过的「总是允许」。
   - `listUserRules`：当 `scope === 'SESSION'` 时，LEFT JOIN `session` 表顺带返回 `sessionTitle`（复用 `pageAdmin` 既有的 `LEFT JOIN session s ON s.id = r.session_id` 查询模式，不到 10 行 SQL），供设置页展示「来自会话：xxx」。
-- **前端（`ApprovalRulesView.vue` + LOCAL 会话检查器）**：
-  - 设置页顶部增加「用户级规则 / 会话级规则」切换（或同页分节）：会话级规则卡片显示所属会话名称（可点击跳回该会话）、规则值、放行次数，操作区提供「提升为全局（转为 USER 级）」与「删除（恢复每次审批）」。
-  - 在 LOCAL 会话的 `PermissionLevelSwitcher` 或 `TaskInspector` 中，若当前会话有 `SESSION` 规则，显示一个低调入口，点开即可一键撤销误点的放行规则。
+- **前端（`ApprovalRulesView.vue`，入口仅限设置页）**：
+  - 设置页顶部增加「用户级规则 / 会话级规则」二级 Tab 切换（或同页分节）：会话级规则卡片显示所属会话名称（可点击跳回该会话）、规则值、放行次数，操作区提供「提升为全局（转为 USER 级）」与「删除（恢复每次审批）」。
+  - 不在 LOCAL 会话右侧检查器（`TaskInspector` / `PermissionLevelSwitcher`）放入口——规则的事后管理（查看/删除/提升）统一收敛到「设置 → 审批规则」页，对话现场只保留审批卡本身（2026-11-02 决策，见 §8）。
 
 ### 4.2 P2：环境变量编辑免重填密文
 
@@ -102,7 +102,7 @@
 3. 长期记忆：`GET /v1/memory?keyword=vitest` 正确过滤，含 `%` / `_` 通配符的关键词正确转义不误匹配。
 4. 前端组件：指令管理与记忆列表输入关键词后列表即时收敛，清空后恢复。
 
-## 8. 待确认决策
+## 8. 决策记录
 
-1. 会话级审批规则的入口：只放在「设置 → 审批规则」页的二级 Tab（最简），还是同时在 LOCAL 会话右侧检查器里放一个快捷入口（推荐，在对话现场就能撤回刚才误点的「总是允许」）？
-2. 长期记忆卡片上展示后端已有的 `originSessionId`（`来源 #123` 跳转链接）：虽然 2026-10-27 否决了「记忆就地可见」整包提案，但仅在**设置页卡片**上把已落库字段渲染成链接是否认可？若不希望展示，可只保留设置页关键词搜索。
+1. **会话级审批规则的入口**：只放在「设置 → 审批规则」页的二级 Tab，LOCAL 会话右侧不放入口。规则的事后管理（查看/删除/提升）统一收敛在设置页，对话现场只保留审批卡本身。
+2. **记忆来源链接**：认可在**设置页卡片**上把已落库字段（`originSessionId`）渲染为 `来源 #123` 跳转链接——这不属于被否决的「记忆就地可见」（不在聊天气泡/选区做任何植入），仅是把已有字段在管理页内可视化。
