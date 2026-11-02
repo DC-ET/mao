@@ -77,6 +77,7 @@
               >
                 <span>{{ formatNextFire(run.fireTime) }}</span>
                 <span>{{ runBadge(run) }}</span>
+                <span v-if="run.attempt === 0">手动</span>
                 <span v-if="run.attempt > 1">第 {{ run.attempt }} 次尝试</span>
                 <span>{{ formatDuration(run.durationMs) }}</span>
                 <span>{{ formatCost(run.costMicros) }}</span>
@@ -92,6 +93,15 @@
               @change="toggleStatus(task)"
             />
             <button type="button" class="runs-toggle action-edit" @click="openEdit(task)">编辑</button>
+            <el-popconfirm
+              title="立即在绑定会话中执行一次？不会改变原有的下次触发计划"
+              width="270"
+              @confirm="runTask(task)"
+            >
+              <template #reference>
+                <el-button type="primary" link size="small" :loading="runningIds.has(task.id)">立即执行</el-button>
+              </template>
+            </el-popconfirm>
             <el-popconfirm title="确认删除此定时任务？" @confirm="removeTask(task.id)">
               <template #reference>
                 <el-button type="danger" link size="small">删除</el-button>
@@ -117,7 +127,7 @@ import ScheduledTaskEditDialog from './ScheduledTaskEditDialog.vue'
 import { useSessionStore } from '../stores/session'
 
 const {
-  tasks, activeTasks, finishedTasks, loading, togglingIds, fetchTasks, toggleStatus, deleteTask,
+  tasks, activeTasks, finishedTasks, loading, togglingIds, runningIds, fetchTasks, toggleStatus, runNow, deleteTask,
   formatNextFire, formatFinishedAt, statusLabel, runsByTask, runsLoading, fetchRuns, runBadge, formatDuration, formatCost
 } = useScheduledTasks()
 
@@ -153,6 +163,15 @@ function onSaved(updated: ScheduledTask) {
 async function removeTask(id: number) {
   if (editingTask.value?.id === id) editingTask.value = null
   await deleteTask(id)
+}
+
+/** 手动「立即执行」：触发成功后自动展开「最近运行」并刷新；1.5s 后补一次刷新兜底运行行落库延迟。 */
+async function runTask(task: ScheduledTask) {
+  if (!(await runNow(task))) return
+  ElMessage.success('已触发执行，结果可在「最近运行」查看')
+  openRuns[task.id] = true
+  await fetchRuns(task.id)
+  setTimeout(() => { if (openRuns[task.id]) void fetchRuns(task.id) }, 1500)
 }
 
 /** P3 行内配置：三项当前值始终可见，默认值弱化。语义在 utils/scheduledTaskEdit.summarizeReliability（已单测）。 */

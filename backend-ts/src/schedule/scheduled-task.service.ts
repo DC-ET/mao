@@ -67,6 +67,13 @@ export interface TaskFailureOutcome {
   paused: boolean;
 }
 
+/** 手动「立即执行」触发凭据：执行在后台异步进行，fireTime 为实际落行的触发时刻（同秒冲突时可能 +1~2s）。 */
+export interface ScheduledTaskManualRunResult {
+  taskId: number;
+  sessionId: number;
+  fireTime: string;
+}
+
 export interface ScheduledTaskListFilter {
   keyword?: string | null;
   userId?: number | null;
@@ -845,6 +852,191 @@ export class ScheduledTaskService {
   }
 
   /**
+   * 手动「立即执行」试跑入口（POST /v1/scheduled-tasks/:id/run）。
+   * 独立窄入口（技术方案 docs/plan/2026-11-03-scheduled-task-run-now-technical-design.md D1-D5），
+   * 与 executeTask 的关键差异：
+   * - 不推进 nextFireTime、不改写 finished/once；PAUSED / 已完结任务允许试跑且跑完保持原状态（D2/D5）；
+   * - 运行行 attempt=0 标记手动：finishRun 不重试、不计连续失败（D4）；
+   * - 会话忙直接报错不入队：settleQueuedExecution 只按 taskId 结算 oldestQueuedRun，零迁移下
+   *   无法区分手动行，绑定入队会让一次性任务被误完结 / 连续失败被误累计，不绑定则运行行永远
+   *   停在 QUEUED、24h 后被 reconcileStale 误标取消（D3）。
+   * 权限门在路由层：属主或 scheduled-task:write（allowNonOwner 旁路）。
+   */
+  async runNow(taskId: number, userId: number, opts?: { allowNonOwner?: boolean }): Promise<ScheduledTaskManualRunResult> {
+    const task = await this.getTaskOwnedByUser(taskId, userId, opts?.allowNonOwner);
+    if (task.sessionId == null) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '该任务未绑定会话，无法执行');
+    }
+    if (this.inFlight.has(task.id!)) {
+      throw new BusinessException(ErrorCode.SCHEDULED_TASK_RUNNING);
+    }
+    // 从此刻占住在飞直到执行核心结束（或提交失败），双击 / 并发点击在这里被拦
+    this.inFlight.add(task.id!);
+    let submitted = false;
+    let runId: number | null = null;
+    try {
+      // 会话忙预检（锁内 executeManualRun 还有复核）：试跑是交互动作，忙时明确报错优于静默排队
+      const session = await this.sessionService.getSession(task.sessionId);
+      if (session == null) {
+        throw new BusinessException(ErrorCode.PARAM_INVALID, '绑定会话已不存在，无法执行');
+      }
+      if (this.isSessionBusy?.(task.sessionId) === true || isActivePhase(session.phase)) {
+        throw new BusinessException(ErrorCode.SCHEDULED_TASK_RUNNING, '绑定会话正在执行中，请稍后再试');
+      }
+      const claimed = await this.claimManualRun(task.id!, task.sessionId, formatDateTime(new Date()), task.nextFireTime ?? null);
+      if (claimed == null) {
+        throw new BusinessException(ErrorCode.SCHEDULED_TASK_RUNNING, '触发过于频繁，请稍后再试');
+      }
+      runId = claimed.runId;
+      const fireTime = claimed.fireTime;
+      this.agentExecutor(async () => {
+        try {
+          await withSessionLock(task.sessionId!, async () => {
+            await this.executeManualRun(task, userId, runId);
+          });
+        } finally {
+          if (task.id != null) this.inFlight.delete(task.id);
+        }
+      });
+      submitted = true;
+      return { taskId: task.id!, sessionId: task.sessionId, fireTime };
+    } catch (e) {
+      if (isExecutorRejected(e)) {
+        // 执行池满：运行行标 FAILED（attempt=0 在 finishRun 内不会进重试链），向调用方报可读错误
+        await this.failOpenRun(runId, e);
+        throw new BusinessException(ErrorCode.INTERNAL_ERROR, '执行队列繁忙，请稍后重试');
+      }
+      throw e;
+    } finally {
+      if (!submitted && task.id != null) this.inFlight.delete(task.id);
+    }
+  }
+
+  /**
+   * runNow 的锁内执行核心：精简同构于 executeTask 锁内段。
+   * 收尾只写结果字段（lastFireTime / fireCount / lastExecutionStatus），
+   * 绝不写 nextFireTime / finished / finishedAt / once —— 手动试跑核心不变量（D5）。
+   */
+  private async executeManualRun(task: ScheduledTask, userId: number, runId: number | null): Promise<void> {
+    const executionId = randomUUID();
+    const ownerId = task.userId ?? userId;
+    let countThisRun = false;
+    let executionStarted = false;
+    let terminal: 'COMPLETED' | 'FAILED' | 'CANCELLED' = 'COMPLETED';
+    let startedAt: string | null = null;
+    let latestFireCount = task.fireCount ?? 0;
+    try {
+      // 拿到锁后重读最新任务：预检到拿锁之间可能已被编辑/删除
+      const latest = task.id != null ? await this.store.selectById(task.id) : null;
+      if (latest == null) {
+        // 任务已被删除：运行行标 FAILED 即可，无任务行可回写
+        await this.finishRun(runId, 'FAILED', { retryable: false, error: '任务已删除', task });
+        return;
+      }
+      latestFireCount = latest.fireCount ?? task.fireCount ?? 0;
+      const sessionId = task.sessionId!;
+      let loaded: Session | null;
+      try {
+        loaded = await this.sessionService.getSession(sessionId);
+      } catch (e) {
+        if (!(e instanceof BusinessException) || e.code !== ErrorCode.SESSION_NOT_FOUND.code) throw e;
+        loaded = null;
+      }
+      if (loaded == null) {
+        // 会话已删：FAILED 收口（与周期路径的差异点：不得把任务标完结）
+        countThisRun = true;
+        terminal = 'FAILED';
+        await this.finishRun(runId, 'FAILED', { retryable: false, error: '会话已删除', task: latest });
+        await this.markTaskResult(latest, 'FAILED');
+        return;
+      }
+      if (this.isSessionBusy?.(sessionId) === true || isActivePhase(loaded.phase)) {
+        // 预检后到拿锁前的竞态忙：取消本次试跑，不计 fireCount/lastFireTime
+        terminal = 'CANCELLED';
+        await this.finishRun(runId, 'CANCELLED', { retryable: false, error: '会话正忙，已取消本次试跑', task: latest });
+        await this.markTaskResult(latest, 'CANCELLED');
+        return;
+      }
+      // 预算 BLOCK（同 executeTask：子代理/边路跟随父会话准入结论，不单独检查）
+      if (this.budgetCheck != null && loaded.sessionType !== 'SUBAGENT' && loaded.sessionType !== 'SIDE_TASK') {
+        const blocked = await this.budgetCheck({ userId: loaded.userId ?? null, agentId: loaded.agentId ?? null });
+        if (blocked != null) {
+          countThisRun = true;
+          terminal = 'FAILED';
+          await this.finishRun(runId, 'FAILED', { retryable: false, error: '预算不足，执行被准入闸门阻止', task: latest });
+          await this.markTaskResult(latest, 'FAILED');
+          return;
+        }
+      }
+      const executionStartedAt = Date.now();
+      startedAt = formatDateTime(new Date(executionStartedAt));
+      await this.sessionService.updatePhase(sessionId, 'RUNNING');
+      executionStarted = true;
+      if (runId != null) await this.store.updateRun?.({ id: runId, status: 'RUNNING', startedAt });
+      let savedMessage: Message;
+      try {
+        savedMessage = await this.sessionService.saveMessage(sessionId, 'USER', buildScheduledPrompt(latest, latest.prompt ?? task.prompt!), null, null, null, 0, null);
+      } catch (saveError) {
+        await this.sessionService.updatePhase(sessionId, 'IDLE');
+        countThisRun = true;
+        terminal = 'FAILED';
+        await this.finishRun(runId, 'FAILED', { retryable: false, error: saveError instanceof Error ? saveError.message : String(saveError), startedAt, task: latest });
+        await this.markTaskResult(latest, 'FAILED');
+        return;
+      }
+      const messageId = savedMessage?.id ?? null;
+      if (runId != null && messageId != null) await this.store.updateRun?.({ id: runId, messageId });
+      if (this.liveExecution != null) {
+        await this.liveExecution(loaded, ownerId, executionId, savedMessage, executionStartedAt, task.id ?? null, 'SCHEDULED');
+        // liveExecution（runExecution）内部 catch 吞掉失败/取消并落终态后正常返回，
+        // 必须回读会话真实终态（同 executeTask）：FAILED/CANCELLED 时不得标 COMPLETED
+        const after = await this.sessionService.getSession(sessionId);
+        const actualPhase = after?.phase;
+        terminal = actualPhase === 'FAILED' || actualPhase === 'CANCELLED' ? actualPhase : 'COMPLETED';
+      } else {
+        // 遗留/测试路径（无 liveExecution）：显式传 SCHEDULED，收件箱来源与 executeTask 同口径
+        await this.harnessService.executeFromEvent(sessionId, executionId, {
+          onContentDelta() {},
+          onToolCallStart() {},
+          onToolCallResult() {},
+          onMessageEnd() {},
+          onError() {},
+        });
+        await this.taskTerminalService.finishExecution(sessionId, ownerId, 'COMPLETED', executionId, undefined, 'SCHEDULED');
+        terminal = 'COMPLETED';
+      }
+      countThisRun = true;
+      await this.finishRun(runId, terminal, {
+        retryable: false,
+        error: terminal === 'CANCELLED' ? '用户取消' : terminal === 'FAILED' ? '执行失败' : null,
+        messageId,
+        startedAt,
+        task: latest,
+      });
+      await this.markTaskResult(latest, terminal);
+      if (terminal === 'COMPLETED') {
+        await this.sendWeixinReplyIfApplicable(sessionId, ownerId);
+        await this.sendFeishuReplyIfApplicable(sessionId);
+      }
+    } catch (e) {
+      countThisRun = true;
+      terminal = 'FAILED';
+      // 仅真正进入执行阶段才落会话终态（同 executeTask 的 executionStarted 守卫，L-2）
+      if (executionStarted) {
+        try {
+          await this.taskTerminalService.finishExecution(task.sessionId!, ownerId, 'FAILED', executionId, e instanceof Error ? e.message : String(e));
+        } catch { /* ignore */ }
+      }
+      await this.finishRun(runId, 'FAILED', { retryable: false, error: e instanceof Error ? e.message : String(e), startedAt, task });
+      await this.markTaskResult(task, 'FAILED');
+    } finally {
+      if (!countThisRun) return;
+      const now = formatDateTime(new Date());
+      await this.store.updateById({ id: task.id!, lastFireTime: now, fireCount: latestFireCount + 1 });
+    }
+  }
+
+  /**
    * 未开跑就放弃本次触发时，把 nextFireTime 还回推进前的值。
    * 仅当库里仍是我们刚写下去的那一档时才还：用户随后又改过计划则保留他们的值。
    */
@@ -1098,8 +1290,9 @@ export class ScheduledTaskService {
         if (!isTrafficOwner || this.inFlight.has(run.taskId)) continue;
         const task = await this.store.selectById(run.taskId);
         if (task == null) continue;
-        const outcome = await this.finishRun(run.id, 'FAILED', { retryable: true, error: '启动前未开跑', task });
-        await this.parkOrFinishOnce(task, outcome.willRetry);
+        // 手动行（attempt=0）重启后标 FAILED 即可，不得进重试链
+        const outcome = await this.finishRun(run.id, 'FAILED', { retryable: run.attempt !== 0, error: '启动前未开跑', task });
+        await this.parkOrFinishOnce(run, task, outcome.willRetry);
         continue;
       }
       if (run.status === 'QUEUED') {
@@ -1121,8 +1314,8 @@ export class ScheduledTaskService {
     const run = started[0]!;
     const task = await this.store.selectById(run.taskId);
     if (task == null || run.id == null) return;
-    const outcome = await this.finishRun(run.id, phase, { retryable: phase === 'FAILED', task });
-    await this.parkOrFinishOnce(task, outcome.willRetry);
+    const outcome = await this.finishRun(run.id, phase, { retryable: phase === 'FAILED' && run.attempt !== 0, task });
+    await this.parkOrFinishOnce(run, task, outcome.willRetry);
   }
 
   async reconcileStale(now = new Date()): Promise<void> {
@@ -1168,13 +1361,13 @@ export class ScheduledTaskService {
     if (run.status === 'QUEUED') return;
     if (session == null) {
       const outcome = await this.finishRun(run.id, 'FAILED', { retryable: false, error: '会话已删除', task });
-      await this.parkOrFinishOnce(task, outcome.willRetry);
+      await this.parkOrFinishOnce(run, task, outcome.willRetry);
       return;
     }
     if (session.phase === 'RUNNING' || session.phase === 'RESUMING') return;
     if (session.phase === 'COMPLETED' || session.phase === 'FAILED' || session.phase === 'CANCELLED') {
-      const outcome = await this.finishRun(run.id, session.phase, { retryable: session.phase === 'FAILED', task });
-      await this.parkOrFinishOnce(task, outcome.willRetry);
+      const outcome = await this.finishRun(run.id, session.phase, { retryable: session.phase === 'FAILED' && run.attempt !== 0, task });
+      await this.parkOrFinishOnce(run, task, outcome.willRetry);
     }
   }
 
@@ -1205,8 +1398,13 @@ export class ScheduledTaskService {
     }
   }
 
-  /** 崩溃或启动收敛走不到 executeTask 的 finally，一次性任务的档期要在这里补上。 */
-  private async parkOrFinishOnce(task: ScheduledTask, willRetry: boolean): Promise<void> {
+  /**
+   * 崩溃或启动收敛走不到 executeTask 的 finally，一次性任务的档期要在这里补上。
+   * 手动「立即执行」运行行（attempt=0）不占用 cron 档期，收敛不得改写 finished/nextFireTime，
+   * 否则崩溃窗口内一次手动试跑会把一次性任务误标完结（技术方案 2026-11-03 D4）。
+   */
+  private async parkOrFinishOnce(run: ScheduledTaskRun, task: ScheduledTask, willRetry: boolean): Promise<void> {
+    if (run.attempt === 0) return;
     if (task.once !== 1 || task.id == null) return;
     const now = formatDateTime(new Date());
     if (willRetry) {
@@ -1263,6 +1461,32 @@ export class ScheduledTaskService {
     return { ok: false, runId: existing.id };
   }
 
+  /**
+   * 手动「立即执行」认领运行行：attempt=0 标记手动触发（与周期 attempt≥1 区分，D4）。
+   * 候选触发点预偏移避开 cron 档期那行（否则周期扫描会认领到手动行、丢失一次失败计数），
+   * 同秒唯一键冲突再 +1s 重试，至多 3 次；耗尽返回 null 由调用方报「触发过于频繁」。
+   */
+  private async claimManualRun(taskId: number, sessionId: number, fireTime: string, cronNextFireTime: string | null): Promise<{ runId: number | null; fireTime: string } | null> {
+    let candidate = fireTime !== cronNextFireTime ? fireTime : shiftSeconds(fireTime, 1);
+    if (this.store.selectRunByFire == null || this.store.insertRun == null) {
+      // 窄 fake 无运行记录能力（单测），与 claimRun 同口径放行
+      return { runId: null, fireTime: candidate };
+    }
+    for (let i = 0; i < 3; i++) {
+      const existing = await this.store.selectRunByFire(taskId, candidate);
+      if (existing == null) {
+        try {
+          const id = await this.store.insertRun({ taskId, fireTime: candidate, attempt: 0, status: 'RUNNING', sessionId, startedAt: null });
+          return { runId: id, fireTime: candidate };
+        } catch (e) {
+          if (!isDupKey(e)) throw e;
+        }
+      }
+      candidate = shiftSeconds(candidate, 1);
+    }
+    return null;
+  }
+
   private async failOpenRun(runId: number | null, error: unknown): Promise<boolean> {
     if (runId == null || this.store.selectRunById == null) return false;
     const run = await this.store.selectRunById(runId);
@@ -1289,8 +1513,11 @@ export class ScheduledTaskService {
     const retryMax = normalizeRetryMax(task.retryMax);
     const interval = normalizeRetryInterval(task.retryIntervalMinutes);
     const attempt = Number(run.attempt ?? 1);
+    // 手动「立即执行」行（runNow 写入 attempt=0）：不重试、不计连续失败——用户调试 prompt
+    // 报错几次不得把原本正常的启用任务自动暂停（技术方案 2026-11-03 D4）。
+    const manual = attempt === 0;
     const active = task.status === 'ACTIVE' && Number(task.finished ?? 0) !== 1;
-    const willRetry = phase === 'FAILED' && opts.retryable === true && active && attempt < 1 + retryMax;
+    const willRetry = !manual && phase === 'FAILED' && opts.retryable === true && active && attempt < 1 + retryMax;
     const finishedAt = formatDateTime(new Date());
     const startedAt = opts.startedAt ?? run.startedAt ?? null;
     const messageId = opts.messageId ?? run.messageId ?? null;
@@ -1324,7 +1551,7 @@ export class ScheduledTaskService {
     } catch (e) {
       console.error(`定时任务运行记录回写失败, runId=${runId}`, e);
     }
-    if (!willRetry && (phase === 'FAILED' || phase === 'COMPLETED') && task.id != null && this.store.recordTaskOutcome != null) {
+    if (!manual && !willRetry && (phase === 'FAILED' || phase === 'COMPLETED') && task.id != null && this.store.recordTaskOutcome != null) {
       try {
         const outcome = await this.store.recordTaskOutcome(task.id, phase, TASK_PAUSE_AFTER_FAILURES, finishedAt);
         if (outcome?.paused) {
@@ -1487,6 +1714,13 @@ function isDupKey(error: unknown): boolean {
 
 function parseShanghaiDateTime(value: string): Date {
   return new Date(value.replace(' ', 'T') + '+08:00');
+}
+
+/** 手动触发同秒冲突偏移：按 Asia/Shanghai 解析后 +n 秒回写（解析失败原样返回）。导出供单测。 */
+export function shiftSeconds(value: string, n: number): string {
+  const base = parseShanghaiDateTime(value);
+  if (Number.isNaN(base.getTime())) return value;
+  return formatDateTime(new Date(base.getTime() + n * 1000));
 }
 
 function elapsedMs(startedAt: string | null, finishedAt: string): number | null {
