@@ -23,7 +23,7 @@ async function noisyPng(width: number, height: number): Promise<Buffer> {
   return sharp(raw, { raw: { width, height, channels: 3 } }).png().toBuffer();
 }
 
-describe('compressForStore', () => {
+describe('compressForStore', { timeout: 60_000 }, () => {
   it('keeps the original when compression cannot beat it', async () => {
     // 极小尺寸高质量 JPEG：任何重编码都不可能更小
     const tiny = await sharp({

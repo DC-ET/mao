@@ -378,8 +378,11 @@ async function push(workspace, repoPath) {
 
 /**
  * 解析切换分支目标（与后端 resolveSwitchTarget 同规则）：
- * 纯本地分支名 → git switch <branch>；<remote>/<branch> 或 create=true →
- * git switch -c <local> --track <remote>/<branch>（不依赖 git switch 的 DWIM）。
+ * <remote>/<branch> → git switch -c <local> --track <remote>/<branch>（不依赖 git switch 的 DWIM）；
+ * create=true 且为普通分支名 → 基于当前 HEAD 新建本地分支 git switch -c <name>；
+ * 其余 → git switch <branch>。
+ * 本地新建路径的名字直接拼进 argv，首字符 `-` 会被 git 当 option 解析（option 注入），
+ * 且与前端 isValidBranchName 的首字符规则不一致，故显式拒绝；普通切换路径校验保持不动。
  */
 function resolveSwitchTarget(branch, create, remotes) {
   const name = String(branch || '').trim()
@@ -398,10 +401,13 @@ function resolveSwitchTarget(branch, create, remotes) {
   const slashIdx = name.indexOf('/')
   const remotePrefix = slashIdx > 0 ? name.slice(0, slashIdx) : ''
   const isRemoteRef = remotePrefix.length > 0 && remotes.includes(remotePrefix)
-  if (create || isRemoteRef) {
-    if (!isRemoteRef) throw new Error('仅支持从远端分支创建跟踪分支')
+  if (isRemoteRef) {
     const local = name.slice(slashIdx + 1)
     return { args: ['switch', '-c', local, '--track', name], localBranch: local }
+  }
+  if (create) {
+    if (name.startsWith('-')) throw new Error('分支名无效')
+    return { args: ['switch', '-c', name], localBranch: name }
   }
   return { args: ['switch', name], localBranch: name }
 }
@@ -485,6 +491,10 @@ async function switchBranch(workspace, repoPath, branch, create) {
         if (!restored.success) {
           return operationError('switch', restored.error, { branch: state.branch, stashRef: stashId, conflict: restored.conflict })
         }
+      }
+      // 同名本地分支已存在：git switch -c 非零退出兜底拦截，专判给出可读文案（不覆盖已有分支）
+      if (/already exists/i.test(String(switched.stderr || switched.stdout || ''))) {
+        return operationError('switch', '分支已存在，请换一个名字', { branch: state.branch, stashRef: stashId })
       }
       return operationError('switch', describeGitFailure(switched, '切换分支失败'), { branch: state.branch, stashRef: stashId })
     }

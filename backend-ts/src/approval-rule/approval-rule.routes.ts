@@ -92,6 +92,15 @@ export function registerApprovalRuleRoutes(
     auditAnd(request, 'DELETE', id, '');
     return sendOk(reply);
   });
+
+  // 会话级规则提升为用户级（复制语义；归一化复检 + denylist 拒绝 + 同值幂等去重）
+  app.post('/v1/approval-rules/:id/promote', async (request, reply) => {
+    const userId = requireUserId(request);
+    const id = requirePathId(request);
+    const vo = await approvalRuleService.promoteSessionRule(userId, id);
+    auditAnd(request, 'CREATE', vo.id, `promoted from session rule ${id}, ruleType=${vo.ruleType}, ruleValue=${vo.ruleValue}`);
+    return sendOk(reply, vo);
+  });
 }
 
 function requirePathId(request: FastifyRequest): number {

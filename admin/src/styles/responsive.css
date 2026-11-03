@@ -82,7 +82,6 @@
     overflow: hidden !important;
   }
 
-  .mobile-side-drawer .el-drawer .el-menu,
   .mobile-side-drawer .side-menu-wrap {
     background: var(--mao-surface) !important;
     border-right: none !important;

@@ -44,6 +44,8 @@ const tasks = ref<ScheduledTask[]>([])
 const loading = ref(false)
 /** 启停请求 in-flight 的任务 id 集合：el-switch 据此禁用/显示 loading，防连点且互不影响其他任务 */
 const togglingIds = ref<Set<number>>(new Set())
+/** 立即执行请求 in-flight 的任务 id 集合：按钮 loading/禁用防连点（与 togglingIds 同模式） */
+const runningIds = ref<Set<number>>(new Set())
 
 // 进行中 / 已完结 分组
 const activeTasks = computed(() => tasks.value.filter(t => !t.finished))
@@ -83,6 +85,28 @@ export function useScheduledTasks() {
 
   const runsByTask = ref<Record<number, ScheduledTaskRun[]>>({})
   const runsLoading = ref<Record<number, boolean>>({})
+
+  /**
+   * 手动「立即执行」试跑一次：不改下次触发计划、不完结一次性任务（后端语义）。
+   * 成功返回 true（后端同步返回触发凭据，执行异步进行）；失败由拦截器 toast，返回 false。
+   */
+  async function runNow(task: ScheduledTask): Promise<boolean> {
+    if (runningIds.value.has(task.id)) return false
+    const next = new Set(runningIds.value)
+    next.add(task.id)
+    runningIds.value = next
+    try {
+      await api.post(`/scheduled-tasks/${task.id}/run`)
+      return true
+    } catch {
+      // interceptor handles toast
+      return false
+    } finally {
+      const settled = new Set(runningIds.value)
+      settled.delete(task.id)
+      runningIds.value = settled
+    }
+  }
 
   async function fetchRuns(taskId: number) {
     runsLoading.value = { ...runsLoading.value, [taskId]: true }
@@ -215,8 +239,10 @@ export function useScheduledTasks() {
     finishedTasks,
     loading,
     togglingIds,
+    runningIds,
     fetchTasks,
     toggleStatus,
+    runNow,
     deleteTask,
     fetchTaskDetail,
     updateTask,

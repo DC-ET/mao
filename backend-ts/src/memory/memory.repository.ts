@@ -8,6 +8,11 @@ export function isDuplicateKeyError(e: unknown): boolean {
   return typeof e === 'object' && e != null && (e as { errno?: number }).errno === 1062;
 }
 
+/** 转义 LIKE 通配符（与 command.repository escapeLike 语义一致），配合 ESCAPE '\\' 反斜杠转义。 */
+function escapeLike(keyword: string): string {
+  return keyword.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+}
+
 export class MemoryRepository {
   constructor(private readonly db: Db) {}
 
@@ -189,6 +194,13 @@ export class MemoryRepository {
     if (query.status) {
       conditions.push('status = ?');
       params.push(query.status);
+    }
+    const keyword = typeof query.keyword === 'string' && query.keyword.trim() !== '' ? query.keyword.trim() : null;
+    if (keyword != null) {
+      // 关键词对 content / project_key 做包含匹配；通配符转义按字面匹配，强制走 user_id 索引（单用户 ACTIVE 上限 200）
+      conditions.push("(content LIKE CONCAT('%', ?, '%') ESCAPE '\\\\' OR project_key LIKE CONCAT('%', ?, '%') ESCAPE '\\\\')");
+      const escaped = escapeLike(keyword);
+      params.push(escaped, escaped);
     }
     return { where: conditions.join(' AND '), params };
   }

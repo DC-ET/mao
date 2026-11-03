@@ -47,7 +47,7 @@ npm run dist
 | 项 | 说明 |
 |----|------|
 | 配置存储 | Electron `userData/server-config.json`（站点根、更新源策略、是否允许 HTTP） |
-| 首次启动 | 未配置时展示本地服务器配置页，填写站点地址并保存 |
+| 首次启动 | 未配置时展示本地服务器配置页，预填 `https://mao.example.com`，确认或修改后保存 |
 | 配置入口 | 应用菜单「服务器设置…」；桌面端设置 →「服务器」 |
 | 环境变量 | `MAO_DESKTOP_SERVER_URL` 锁定站点（优先于配置文件）；`MAO_DESKTOP_UPDATE_URL` 覆盖更新源 |
 | 地址归一化 | 接受站点根、`/api`、`/api/v1`；无协议默认 `https://` |

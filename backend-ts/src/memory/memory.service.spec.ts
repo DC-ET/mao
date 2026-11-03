@@ -243,6 +243,27 @@ describe('MemoryService.remove and settings', () => {
   });
 });
 
+describe('MemoryService.list', () => {
+  // ── 关键词透传接缝回归（评审确认缺陷的修复回归：service 重建 filter 时丢弃 keyword，搜索全程无效） ──
+  it('passesKeywordThroughToPageAndCount', async () => {
+    const r = repo();
+    (r.page as ReturnType<typeof vi.fn>).mockResolvedValue([row()]);
+    const svc = new MemoryService(r, { listProjectKeyRows: async () => [] });
+    const page = await svc.list(7, { keyword: 'vitest', page: 2, pageSize: 10 });
+    expect(r.page).toHaveBeenCalledWith(expect.objectContaining({ keyword: 'vitest', page: 2, pageSize: 10 }));
+    expect(r.count).toHaveBeenCalledWith(expect.objectContaining({ keyword: 'vitest' }));
+    expect(page.total).toBe(0);
+  });
+
+  it('normalizesAbsentKeywordToNullForBothQueries', async () => {
+    const r = repo();
+    const svc = new MemoryService(r, { listProjectKeyRows: async () => [] });
+    await svc.list(7, { page: 1, pageSize: 20 });
+    expect(r.page).toHaveBeenLastCalledWith(expect.objectContaining({ keyword: null }));
+    expect(r.count).toHaveBeenLastCalledWith(expect.objectContaining({ keyword: null }));
+  });
+});
+
 describe('MemoryService.listProjectKeys', () => {
   it('dedupesAndExcludesRobotChannelKeys', async () => {
     const svc = new MemoryService(repo(), {

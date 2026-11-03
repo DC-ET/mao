@@ -29,8 +29,8 @@ export interface WorkspaceGitProvider {
   commitWithMessage(message: string, repoPath?: string): Promise<GitOperationResult>
   pull(repoPath?: string): Promise<GitOperationResult>
   push(repoPath?: string): Promise<GitOperationResult>
-  /** 提交历史（分页）。读取失败抛错，由调用方按视图展示错误 + 重试。 */
-  getLog(opts?: { limit?: number; offset?: number; path?: string }, repoPath?: string): Promise<GitLogEntry[]>
+  /** 提交历史（分页）。读取失败抛错，由调用方按视图展示错误 + 重试。path 按文件过滤；keyword 按提交信息字面搜索（大小写不敏感）。 */
+  getLog(opts?: { limit?: number; offset?: number; path?: string; keyword?: string }, repoPath?: string): Promise<GitLogEntry[]>
   /** 单次提交的文件变更清单。hash 不存在时抛错（不可与空提交混淆）。 */
   getCommitFiles(hash: string, repoPath?: string): Promise<GitCommitFilesResult>
   /**
@@ -254,7 +254,7 @@ export function createLocalGitProvider(workspace: string, sessionId: string): Wo
       await recordLocalActivity(numericSessionId, repoPath, result, started)
       return result
     },
-    async getLog(opts?: { limit?: number; offset?: number; path?: string }, repoPath?: string) {
+    async getLog(opts?: { limit?: number; offset?: number; path?: string; keyword?: string }, repoPath?: string) {
       const data = await window.electronAPI.gitLog(workspace, repoPath, opts)
       return unwrapIpcArray<GitLogEntry>(data)
     },
@@ -264,7 +264,11 @@ export function createLocalGitProvider(workspace: string, sessionId: string): Wo
         throw new Error((data as { error: string }).error)
       }
       const result = data as GitCommitFilesResult
-      return { hash: result?.hash ?? hash, files: Array.isArray(result?.files) ? result.files : [] }
+      return {
+        hash: result?.hash ?? hash,
+        files: Array.isArray(result?.files) ? result.files : [],
+        body: typeof result?.body === 'string' ? result.body : '',
+      }
     },
     async getCommitFileDiff(hash: string, relativePath: string, repoPath?: string, oldPath?: string) {
       const data = await window.electronAPI.gitCommitFileDiff(workspace, repoPath, hash, relativePath, oldPath)
@@ -497,9 +501,9 @@ export function createCloudGitProvider(sessionId: string): WorkspaceGitProvider 
         return failedOperation('push', e)
       }
     },
-    async getLog(opts?: { limit?: number; offset?: number; path?: string }, repoPath?: string) {
+    async getLog(opts?: { limit?: number; offset?: number; path?: string; keyword?: string }, repoPath?: string) {
       const { data } = await api.get('/files/workspace-git-log', {
-        params: { sessionId: numericSessionId, repoPath, limit: opts?.limit, offset: opts?.offset, path: opts?.path },
+        params: { sessionId: numericSessionId, repoPath, limit: opts?.limit, offset: opts?.offset, path: opts?.path, keyword: opts?.keyword },
       })
       return Array.isArray(data) ? data : []
     },
@@ -507,7 +511,11 @@ export function createCloudGitProvider(sessionId: string): WorkspaceGitProvider 
       const { data } = await api.get('/files/workspace-git-commit', {
         params: { sessionId: numericSessionId, repoPath, hash },
       })
-      return { hash: data?.hash ?? hash, files: Array.isArray(data?.files) ? data.files : [] }
+      return {
+        hash: data?.hash ?? hash,
+        files: Array.isArray(data?.files) ? data.files : [],
+        body: typeof data?.body === 'string' ? data.body : '',
+      }
     },
     async getCommitFileDiff(hash: string, relativePath: string, repoPath?: string, oldPath?: string) {
       try {

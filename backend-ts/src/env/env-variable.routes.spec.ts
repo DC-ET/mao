@@ -143,7 +143,7 @@ describe('env variable routes', () => {
     expect(removed.statusCode).toBe(200);
   });
 
-  it('rejects an update that omits the value instead of silently clearing it', async () => {
+  it('keeps the original cipher when the update omits the value (edit note without re-typing)', async () => {
     const { app, repo } = buildApp();
     const created = await app.inject({
       method: 'POST',
@@ -159,8 +159,9 @@ describe('env variable routes', () => {
       payload: { note: 'only note' },
     });
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({ code: 2001 });
+    expect(response.json()).toMatchObject({ code: 0 });
     expect(repo.users.find((row) => row.id === id)?.envValue).toBe(cipherBefore);
+    expect(repo.users.find((row) => row.id === id)?.note).toBe('only note');
   });
 
   it('lists workspace variables by normalized workspace path', async () => {

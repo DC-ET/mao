@@ -7,7 +7,7 @@ import { requireUserId, sendOk } from '../common/http-error.js';
 import {
   bodyOf, collectEntityIds, idMapGet, parseEntityId, pathId, pathParam, queryOptBool, queryOptFloat, queryOptInt, queryOptStr,
 } from '../common/request.js';
-import { isSessionSource, isUserSettableSessionSource, type SessionSource } from './session.repository.js';
+import { isClientDeclarableSessionSource, isSessionMarkSource, isSessionSource, type SessionSource } from './session.repository.js';
 import { javaLocalDateTimeString } from '../common/datetime.js';
 import type { PathSandbox } from '../harness/safety/path-sandbox.js';
 import { parseChannelWorkspace } from '../harness/container/channel-workspace.js';
@@ -154,10 +154,10 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
   app.post('/v1/sessions', async (request, reply) => {
     const userId = requireUserId(request);
     const body = bodyOf<CreateSessionRequest>(request);
-    // 用户可手工建的来源仅 web/embed：显式白名单，不跟 SESSION_SOURCE_VALUES 联动——
-    // 'signal' 等系统来源只能由哨兵触发经 openRun 产生（防伪造分组归属，技术方案 §3.3.1）。
-    if (body.source != null && !isUserSettableSessionSource(body.source)) {
-      throw new BusinessException(ErrorCode.PARAM_INVALID, "source 仅允许 'web' / 'embed'");
+    // 客户端可自报的来源：web/embed/desktop/cli/android（显式白名单，不跟 SESSION_SOURCE_VALUES
+    // 联动——'signal' 等系统来源只能由哨兵触发经 openRun 产生，防伪造分组归属，技术方案 §3.3.1）。
+    if (body.source != null && !isClientDeclarableSessionSource(body.source)) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, "source 仅允许 'web' / 'embed' / 'desktop' / 'cli' / 'android'");
     }
     await assertOwnedSessionWorkspace(deps.pathSandbox, userId, body.executionMode, body.workspace, deps.existsSessionUnderWorkspace);
     const session = await sessionService.createSession(
@@ -329,8 +329,10 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     const userId = requireUserId(request);
     await requireSessionOwner(userId, pathId(request));
     const body = bodyOf<{ source?: string | null }>(request);
-    if (body.source == null || !isUserSettableSessionSource(body.source)) {
-      throw new BusinessException(ErrorCode.PARAM_INVALID, "source 仅允许 'web' / 'embed'");
+    // PUT 仅用于 Embed SDK 惰性接管（source=embed 单向标记）：桌面/CLI/安卓没有
+    // 「把会话改判成某形态建的」合法流程，系统来源更不可设置。文案与 markSessionSource 一致。
+    if (body.source == null || !isSessionMarkSource(body.source)) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, "source 仅允许 'embed'");
     }
     const session = await sessionService.markSessionSource(pathId(request), userId, body.source);
     const vos = await enrichSessions([session]);

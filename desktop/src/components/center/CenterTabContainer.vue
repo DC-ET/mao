@@ -8,6 +8,7 @@
         :file-path="activeTab.filePath || ''"
         :provider="activeProvider"
         :workspace-root="activeTab.workspaceRoot"
+        @add-file-to-chat="onAddFileToChat"
       />
       <FileDiffViewer
         v-else-if="activeTab?.type === 'diff' && activeTab.fileChange"
@@ -62,6 +63,7 @@
         @open-commit-diff="emit('open-commit-diff', $event)"
         @open-branch-diff="emit('open-branch-diff', $event)"
         @add-file-to-chat="emit('add-file-to-chat', $event)"
+        @add-commit-to-chat="emit('add-commit-to-chat', $event)"
       />
       <!-- 我的工作区：全局资产视图，不随会话切换（key 固定） -->
       <WorkspaceOverviewPanel
@@ -105,6 +107,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   'open-file': [payload: { path: string; title: string; workspaceRoot?: string }]
   'add-file-to-chat': [filePath: string]
+  'add-commit-to-chat': [text: string]
   'paths-changed': [change: WorkspacePathChange]
   'tree-refresh': []
   'locate-in-tree': [relPath: string]

@@ -82,7 +82,7 @@
             v-model="form.envValue"
             type="password"
             show-password
-            :placeholder="isEditing ? '重新输入变量值（不回显，留空无法保存）' : '变量值'"
+            :placeholder="isEditing ? '留空则保留原值；输入新值则覆盖' : '变量值'"
           />
         </el-form-item>
         <el-form-item label="备注（选填）">
@@ -150,8 +150,8 @@ const canSubmit = computed(() => {
   if (submitting.value) return false
   if (!form.value.envKey.trim() || !KEY_PATTERN.test(form.value.envKey.trim())) return false
   if (isReservedKey(form.value.envKey.trim())) return false
-  // 编辑时值必须重填（服务端不回显，留空无法表达「不修改」）
-  if (!form.value.envValue) return false
+  // 编辑免重填：留空保留原值（服务端不回显，仅非空字符串才覆盖）；新建仍必填
+  if (!isEditing.value && !form.value.envValue) return false
   return true
 })
 
@@ -207,7 +207,8 @@ async function handleSubmit() {
   try {
     if (isEditing.value && editingId.value != null) {
       await api.put(`/user/env-variables/${editingId.value}`, {
-        envValue: form.value.envValue,
+        // 留空不下发 envValue：服务端保留原密文（与 Git 凭证「留空则不修改 Token」同口径）
+        envValue: form.value.envValue === '' ? undefined : form.value.envValue,
         note: form.value.note.trim()
       })
       ElMessage.success('变量已更新')

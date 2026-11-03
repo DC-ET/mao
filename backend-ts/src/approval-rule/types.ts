@@ -29,6 +29,8 @@ export interface ApprovalRuleVo {
   hitCount: number;
   lastHitAt: string | null;
   enabled: boolean;
+  /** 来源会话标题（listByUser LEFT JOIN session 带出；USER 级或 enrich 之外恒为 null）。 */
+  sessionTitle: string | null;
   createdAt: string;
   updatedAt: string;
 }

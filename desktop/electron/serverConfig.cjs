@@ -8,7 +8,7 @@
 const fs = require('fs')
 const path = require('path')
 
-const DEFAULT_SERVER_BASE_URL = 'https://mao.etarch.cn'
+const DEFAULT_SERVER_BASE_URL = 'https://mao.example.com'
 const CONFIG_VERSION = 1
 const UPDATE_MODES = ['follow-site', 'package-default', 'disabled']
 

@@ -1334,7 +1334,16 @@ test.describe('Usage Drawer - 统计周期', () => {
     )
     await drawer.locator('.period-date').first().locator('input').click()
     // 两个日期选择器的面板都会挂在 DOM 里（未展开的靠父级 display:none 隐藏），必须限定可见的那个
-    await page.locator('.el-picker-panel:visible td.available.today').first().click()
+    const visiblePanel = page.locator('.el-picker-panel:visible')
+    await expect(visiblePanel).toBeVisible()
+    // 面板定位在已选起点所在月：默认近 7 天区间的起点是「今天-6」，跨月时会停在上个月；
+    // 而「今天」只出现在今天所在月，先翻到下个月再点，避免跨月时 td.available.today 一直等不到而超时。
+    const todayCell = visiblePanel.locator('td.available.today')
+    if ((await todayCell.count()) === 0) {
+      await visiblePanel.locator('.el-picker-panel__icon-btn.arrow-right').click()
+      await expect(todayCell).toHaveCount(1)
+    }
+    await todayCell.first().click()
     await nextRequest
   })
 })

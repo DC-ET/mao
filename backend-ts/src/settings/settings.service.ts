@@ -96,6 +96,11 @@ export const NOTIFY_EMAIL_KEYS: readonly string[] = [
 
 export const SHARE_TOKEN_LINKS_ENABLED_KEY = 'share.tokenLinksEnabled';
 
+/** 管理后台侧边菜单隐藏列表（JSON 数组，元素为菜单路由路径）。缺行 / 空值 / 解析失败 = 全部显示。 */
+export const ADMIN_MENU_HIDDEN_KEY = 'admin.menu.hidden';
+/** 隐藏列表长度上限，防异常大值。 */
+const ADMIN_MENU_HIDDEN_MAX = 64;
+
 const HARNESS_COMPACTION_ENABLED_KEY = 'harness.compaction.enabled';
 const HARNESS_COMPACTION_CONTEXT_WINDOW_TOKENS_KEY = 'harness.compaction.contextWindowTokens';
 const HARNESS_COMPACTION_TRIGGER_RATIO_KEY = 'harness.compaction.triggerRatio';
@@ -388,6 +393,11 @@ export class SystemSettingService {
   /** 匿名分享链接（P3）：默认关闭。未配置或非 true/1 一律视为关闭。 */
   async shareTokenLinksEnabled(): Promise<boolean> {
     return this.getBool(SHARE_TOKEN_LINKS_ENABLED_KEY);
+  }
+
+  /** 管理后台菜单隐藏列表（部署级全局配置，缺省全部显示；坏数据按全部显示容错）。 */
+  async getAdminMenuHidden(): Promise<string[]> {
+    return parseAdminMenuHidden(await this.getValue(ADMIN_MENU_HIDDEN_KEY));
   }
 
   /** 全网搜索统一配置：provider 由后台「网络工具 → 搜索实现」切换，默认 tavily（向后兼容）。 */
@@ -783,6 +793,10 @@ export class SystemSettingService {
   }
 
   private async validateValue(key: string, value: string | null | undefined): Promise<void> {
+    if (key === ADMIN_MENU_HIDDEN_KEY) {
+      this.validateAdminMenuHidden(value);
+      return;
+    }
     if (key === PASSWORD_LOGIN_ENABLED_KEY) {
       if (!/^(true|false)$/i.test((value ?? '').trim())) {
         throw new BusinessException(ErrorCode.PARAM_INVALID, '账号密码登录开关必须为 true 或 false');
@@ -931,6 +945,43 @@ export class SystemSettingService {
   }
 
   /**
+   * 菜单隐藏列表形状校验：JSON 数组、元素为 / 开头的路由路径、去重后 ≤ ADMIN_MENU_HIDDEN_MAX 项、
+   * 禁止 /settings（配置入口自身被藏后管理员将无法通过界面恢复；后端拒收是防绕过前端的防御纵深）。
+   * 空值 / 空数组 = 恢复全部显示，放行。
+   */
+  private validateAdminMenuHidden(value: string | null | undefined): void {
+    const raw = (value ?? '').trim();
+    if (raw === '' || raw === '[]') return;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '菜单隐藏配置必须是 JSON 数组');
+    }
+    if (!Array.isArray(parsed)) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '菜单隐藏配置必须是 JSON 数组');
+    }
+    const seen = new Set<string>();
+    for (const item of parsed) {
+      if (typeof item !== 'string') {
+        throw new BusinessException(ErrorCode.PARAM_INVALID, '菜单隐藏配置的元素必须是以 / 开头的路由路径');
+      }
+      // 先 trim 再判定：读侧 parseAdminMenuHidden 会 trim，此处同步口径，防止 '/settings ' 之类的变体绕过。
+      const path = item.trim();
+      if (!path.startsWith('/')) {
+        throw new BusinessException(ErrorCode.PARAM_INVALID, '菜单隐藏配置的元素必须是以 / 开头的路由路径');
+      }
+      if (path === '/settings') {
+        throw new BusinessException(ErrorCode.PARAM_INVALID, '「系统设置」不可隐藏，否则将无法恢复菜单配置');
+      }
+      seen.add(path);
+    }
+    if (seen.size > ADMIN_MENU_HIDDEN_MAX) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, `菜单隐藏配置最多 ${ADMIN_MENU_HIDDEN_MAX} 项`);
+    }
+  }
+
+  /**
    * Agent ID 类配置（weixin.agentId / embed.agentId）保存校验：空值放行（回落默认 Agent 语义）；
    * 非数字 / Agent 不存在 / 新指向已停用 Agent 一律拒绝（值与存量相同则豁免，允许保存其他字段）。
    */
@@ -961,6 +1012,28 @@ function parseLongId(value: string): number | null {
   }
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
+/**
+ * 解析菜单隐藏列表：容错（坏 JSON / 非数组 / 非字符串元素 / 空白项全部忽略，重复项去重），永不抛错。
+ * 读取侧 fail-open：任何异常都按「全部显示」处理。
+ */
+export function parseAdminMenuHidden(raw: string | null | undefined): string[] {
+  if (raw == null || raw.trim() === '') return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const out: string[] = [];
+    for (const item of parsed) {
+      if (typeof item !== 'string') continue;
+      const path = item.trim();
+      if (path === '' || !path.startsWith('/') || out.includes(path)) continue;
+      out.push(path);
+    }
+    return out;
+  } catch {
+    return [];
+  }
 }
 
 function parsePositiveInt(value: string | null | undefined): number | null {

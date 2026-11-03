@@ -43,12 +43,6 @@ body {
   --el-button-hover-border-color: #0071e3;
 }
 
-.el-menu {
-  --el-menu-bg-color: var(--mao-surface);
-  --el-menu-hover-bg-color: var(--mao-canvas);
-  --el-menu-active-color: var(--mao-accent);
-}
-
 .mobile-card-list {
   display: flex;
   flex-direction: column;

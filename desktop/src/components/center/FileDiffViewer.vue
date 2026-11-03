@@ -1,9 +1,19 @@
 <template>
   <div class="file-diff-viewer">
-    <!-- View mode toggle for new files (preview/source) -->
-    <div v-if="showPreviewToggle" class="view-mode-toggle">
-      <button :class="['mode-btn', { active: viewMode === 'preview' }]" @click="viewMode = 'preview'">预览</button>
-      <button :class="['mode-btn', { active: viewMode === 'source' }]" @click="viewMode = 'source'">源码</button>
+    <!-- 单一右上浮动胶囊：预览/源码切换（仅新 Markdown 快照）+ 并排/行内切换 + 变更计数 + 跳转。
+         Markdown 预览态只显示切换组，diff 态显示全部，避免两个悬浮点重叠。 -->
+    <div v-if="mode !== 'UNSUPPORTED'" class="diff-capsule">
+      <template v-if="showPreviewToggle">
+        <button :class="['capsule-btn', { active: viewMode === 'preview' }]" @click="viewMode = 'preview'">预览</button>
+        <button :class="['capsule-btn', { active: viewMode === 'source' }]" @click="viewMode = 'source'">源码</button>
+      </template>
+      <template v-if="showSource">
+        <button :class="['capsule-btn', { active: !inlineMode }]" @click="toggleInline(false)">并排</button>
+        <button :class="['capsule-btn', { active: inlineMode }]" @click="toggleInline(true)">行内</button>
+        <span class="capsule-count">共 {{ hunkCount }} 处变更</span>
+        <button class="capsule-btn" :disabled="hunkCount === 0" title="上一处变更" @click="jumpHunk(-1)">↑</button>
+        <button class="capsule-btn" :disabled="hunkCount === 0" title="下一处变更" @click="jumpHunk(1)">↓</button>
+      </template>
     </div>
 
     <div v-if="mode === 'SNAPSHOT' && !showSource" class="preview-container" @click="handleMarkdownClick">
@@ -36,6 +46,7 @@ import { isExternalMarkdownLink, resolveMarkdownLink } from '../../utils/markdow
 import { isAndroidCapacitor, openExternalUrl } from '../../utils/capacitor'
 import { attachMonacoQuote } from '../../composables/useMonacoQuote'
 import { buildPatchDiffModels } from '../../utils/unified-patch'
+import { diffEditorLayoutOptions, nextHunkIndex, resolveInitialDiffInlineMode } from '../../utils/diff-view-mode'
 import type { FileRangeQuotePayload } from '../../utils/selection-quote'
 
 const props = defineProps<{
@@ -65,6 +76,33 @@ let detachQuote: (() => void) | null = null
 // 乱序保护：syncViewer 含多个 await（nextTick/loadMonaco/applyTheme），旧调用可能在
 // 新 change 生效后落地并覆盖模型，seq 检查确保只有最新一轮 sync 能写编辑器
 let syncSeq = 0
+
+// 并排/行内模式：有过切换以 localStorage 为准，否则按视口宽窄兜底（<640px 行内）
+const inlineMode = ref(resolveInitialDiffInlineMode(localStorage.getItem('aw-diff-inline'), window.innerWidth))
+const hunkCount = ref(0)
+// 跳转游标不渲染，不入响应式；每次换模型重置
+let hunkIndex = -1
+// 首处变更 reveal 只做一次（每次 setDiffModels 重置），常驻监听负责刷新变更计数
+let revealedFirst = false
+
+function toggleInline(inline: boolean) {
+  inlineMode.value = inline
+  localStorage.setItem('aw-diff-inline', inline ? '1' : '0')
+  diffEditor?.updateOptions(diffEditorLayoutOptions(inline))
+}
+
+function jumpHunk(delta: 1 | -1) {
+  if (!diffEditor) return
+  const changes = diffEditor.getLineChanges()
+  if (!changes?.length) return
+  hunkIndex = nextHunkIndex(hunkIndex, changes.length, delta)
+  const target = changes[hunkIndex]
+  if (target.modifiedStartLineNumber > 0) {
+    diffEditor.getModifiedEditor().revealLineInCenter(target.modifiedStartLineNumber)
+  } else if (target.originalStartLineNumber > 0) {
+    diffEditor.getOriginalEditor().revealLineInCenter(target.originalStartLineNumber)
+  }
+}
 
 const mode = computed(() => props.change.diffMode || 'UNSUPPORTED')
 const unavailableText = computed(() => {
@@ -133,7 +171,7 @@ function ensureDiffEditor(monaco: MonacoModule): MonacoEditor.IStandaloneDiffEdi
       theme: themeName(isDark.value),
       readOnly: true,
       domReadOnly: true,
-      renderSideBySide: true,
+      ...diffEditorLayoutOptions(inlineMode.value),
       automaticLayout: true,
       minimap: { enabled: false },
       scrollBeyondLastLine: false,
@@ -159,12 +197,18 @@ function setDiffModels(monaco: MonacoModule, original: string, modified: string,
   attachQuoteAction()
 
   diffUpdateDisposable?.dispose()
+  revealedFirst = false
+  hunkIndex = -1
+  // 常驻监听：每次 diff 更新刷新变更计数（胶囊「共 N 处变更」），首处 reveal 仅一次
   diffUpdateDisposable = editor.onDidUpdateDiff(() => {
-    revealFirstDiffChange()
-    diffUpdateDisposable?.dispose()
-    diffUpdateDisposable = null
+    hunkCount.value = editor.getLineChanges()?.length ?? 0
+    if (!revealedFirst) {
+      revealedFirst = true
+      revealFirstDiffChange()
+    }
   })
   // Diff may already be ready synchronously for small files
+  hunkCount.value = editor.getLineChanges()?.length ?? 0
   revealFirstDiffChange()
 }
 
@@ -312,36 +356,59 @@ onBeforeUnmount(disposeDiffEditor)
   background: var(--aw-primary-hover);
 }
 
-.view-mode-toggle {
+/* 右上浮动胶囊：紧凑半透明，悬浮不占文档流；right:12px 避开 Monaco 垂直滚动条轨道 */
+.diff-capsule {
   position: absolute;
   top: 8px;
-  right: 8px;
-  display: flex;
-  gap: 2px;
+  right: 12px;
   z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  background: var(--aw-surface);
+  border: 1px solid var(--aw-divider-soft);
+  border-radius: var(--aw-radius-xs);
+  backdrop-filter: blur(8px);
+  opacity: 0.85;
+  transition: opacity 0.15s;
 }
 
-.mode-btn {
+.diff-capsule:hover {
+  opacity: 1;
+}
+
+.capsule-btn {
   height: var(--aw-btn-height);
   padding: var(--aw-btn-padding);
   font-size: var(--aw-text-fine);
   color: var(--aw-ink-muted-48);
-  background: var(--aw-surface);
-  border: 1px solid var(--aw-divider-soft);
+  background: transparent;
+  border: none;
   border-radius: var(--aw-radius-xs);
   cursor: pointer;
   transition: all 0.15s;
-  backdrop-filter: blur(8px);
 }
 
-.mode-btn:hover {
+.capsule-btn:hover:not(:disabled) {
   color: var(--aw-ink);
 }
 
-.mode-btn.active {
+.capsule-btn.active {
   color: var(--aw-primary);
-  border-color: var(--aw-primary);
   background: var(--aw-primary-hover);
+}
+
+.capsule-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.capsule-count {
+  padding: 0 4px;
+  font-size: var(--aw-text-fine);
+  color: var(--aw-ink-muted-64);
+  white-space: nowrap;
 }
 
 .preview-container {

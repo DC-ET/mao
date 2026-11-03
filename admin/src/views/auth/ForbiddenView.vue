@@ -12,17 +12,26 @@
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../../stores/auth'
+import { useMenuStore } from '../../stores/menu'
 import { pickHomePath } from '../../utils/home'
 
 const router = useRouter()
 const authStore = useAuthStore()
+const menuStore = useMenuStore()
+
+function resolveHome() {
+  return pickHomePath(
+    (permission) => authStore.hasPermission(permission),
+    (index) => menuStore.isHidden(index)
+  )
+}
 
 function goHome() {
-  const path = pickHomePath((permission) => authStore.hasPermission(permission))
+  const path = resolveHome()
   if (path !== '/forbidden') router.push(path)
 }
 
-const canGoHome = computed(() => pickHomePath((permission) => authStore.hasPermission(permission)) !== '/forbidden')
+const canGoHome = computed(() => resolveHome() !== '/forbidden')
 </script>
 
 <style scoped>

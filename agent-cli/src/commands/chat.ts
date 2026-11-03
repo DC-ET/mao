@@ -312,6 +312,8 @@ async function resolveTargetSession(ctx: ChatContext): Promise<SessionVO> {
     agentId: agent.id,
     executionMode: local ? 'LOCAL' : 'CLOUD',
     permissionLevel: cfg.permissionLevel || resolved.permissionLevel,
+    // 终端 CLI 固定自报来源 'cli'：admin「来源」列可筛出 CLI 会话（技术方案 D11）。
+    source: 'cli',
   };
   if (modelId != null) req.modelId = modelId;
   if (workspace) req.workspace = workspace;

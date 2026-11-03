@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useSessionStore } from './session'
 import { api } from '../api'
@@ -62,5 +62,47 @@ describe('session store createSession CLOUD 显式工作区', () => {
     await store.createSession('1', 'LOCAL', '/Users/x/p')
     const [, payload] = mockPost.mock.calls[0] as [string, Record<string, unknown>]
     expect(payload.workspace).toBe('/Users/x/p')
+  })
+})
+
+/** 技术方案 2026-11-03：新建会话自报客户端形态来源（admin 按来源筛选）。 */
+describe('session store createSession 自报客户端形态来源', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    mockPost.mockReset()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  function payloadOf(): Record<string, unknown> {
+    const [, payload] = mockPost.mock.calls[0] as [string, Record<string, unknown>]
+    return payload
+  }
+
+  it('Electron 桌面壳 → desktop', async () => {
+    vi.stubGlobal('window', { electronAPI: {} })
+    const store = useSessionStore()
+    mockCreated()
+    await store.createSession('1', 'CLOUD')
+    expect(payloadOf().source).toBe('desktop')
+  })
+
+  it('安卓 Capacitor 壳 → android', async () => {
+    vi.stubGlobal('window', {
+      Capacitor: { isNativePlatform: () => true, getPlatform: () => 'android' },
+    })
+    const store = useSessionStore()
+    mockCreated()
+    await store.createSession('1', 'CLOUD')
+    expect(payloadOf().source).toBe('android')
+  })
+
+  it('浏览器（无 Electron / Capacitor 注入）→ web', async () => {
+    const store = useSessionStore()
+    mockCreated()
+    await store.createSession('1', 'CLOUD')
+    expect(payloadOf().source).toBe('web')
   })
 })

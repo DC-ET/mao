@@ -1,9 +1,11 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { SessionRunner, resolveModelId } from '../src/session/session-runner';
 import type { WsClient } from '../src/ws/ws-client';
 import type { RestClient } from '../src/rest/rest-client';
 import type { AskHandler, CliEvent, Renderer } from '../src/render/types';
-import type { SafeModelVO, SessionVO } from '../src/rest/types';
+import type { CreateSessionRequest, SafeModelVO, SessionVO } from '../src/rest/types';
 import type { WsEvent } from '../src/ws/event-types';
 
 class CollectingRenderer implements Renderer {
@@ -372,5 +374,40 @@ describe('resolveModelId', () => {
   it('returns the fallback id without a spec and undefined with neither', async () => {
     expect(await resolveModelId(modelRest(), undefined, 50)).toBe(50);
     expect(await resolveModelId(modelRest())).toBeUndefined();
+  });
+});
+
+describe('createAndAttach 来源自报（技术方案 2026-11-03 D11）', () => {
+  it('建会话 payload 追加 source: cli，默认值与调用方入参语义不变', async () => {
+    const ws = new FakeWs();
+    const renderer = new CollectingRenderer();
+    const calls: CreateSessionRequest[] = [];
+    const rest = {
+      markRead: async () => undefined,
+      createSession: async (req: CreateSessionRequest) => {
+        calls.push(req);
+        return { id: 11, phase: 'IDLE' } as SessionVO;
+      },
+    } as unknown as RestClient;
+    const runner = new SessionRunner({
+      rest, ws: ws as unknown as WsClient, renderer,
+      printMode: true, ifRunning: 'wait', onQuestion: 'fail', includeToolIo: true,
+    });
+    await runner.createAndAttach({ agentId: 3, executionMode: 'LOCAL', workspace: '/ws/x' });
+    expect(calls).toHaveLength(1);
+    // 来源显式自报为 cli（不依赖后端默认 web）
+    expect(calls[0]!.source).toBe('cli');
+    // 已有字段语义不被 source 追加破坏
+    expect(calls[0]!.executionMode).toBe('LOCAL');
+    expect(calls[0]!.permissionLevel).toBe('READ_WRITE');
+    expect(calls[0]!.agentId).toBe(3);
+    expect(calls[0]!.workspace).toBe('/ws/x');
+  });
+
+  it('chat.ts 建会话请求字面量携带 source: cli（源码级 tripwire）', () => {
+    // resolveTargetSession 未导出、深埋 cmdChat 流程，用字面量断言防漏改：
+    // 该处变化时本用例失败，提醒重新确认来源落位。
+    const chatTs = readFileSync(path.join(__dirname, '..', 'src', 'commands', 'chat.ts'), 'utf8');
+    expect(chatTs).toMatch(/const req: CreateSessionRequest = \{[^}]*source: 'cli',/);
   });
 });

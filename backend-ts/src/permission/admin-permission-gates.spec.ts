@@ -46,6 +46,55 @@ describe('admin permission gates', () => {
     await app.close();
   });
 
+  it('gates role member batch endpoints behind role:write', async () => {
+    const addRoleUsers = vi.fn(async () => ({ added: 2 }));
+    const removeRoleUsers = vi.fn(async () => ({ removed: 1 }));
+    const stubs = (hasPermission: ReturnType<typeof vi.fn>) => ({
+      hasPermission,
+      listRoles: async () => [],
+      getRolePermissionIds: async () => [],
+      countRoleUsers: async () => 0,
+      createRole: vi.fn(),
+      updateRole: async () => null,
+      listPermissions: async () => [],
+      assignPermissions: async () => undefined,
+      addRoleUsers,
+      removeRoleUsers,
+      changeRolesWithAdminGuard: async () => undefined,
+    });
+
+    // role:read 能看角色列表，但批量增删成员是 role:write
+    const readOnly = appWith(['role:read']);
+    registerPermissionRoutes(readOnly.app, stubs(readOnly.hasPermission) as never);
+    const blockedAdd = JSON.parse((await readOnly.app.inject({
+      method: 'POST', url: '/v1/roles/1/users', payload: { userIds: [2, 3] },
+    })).body);
+    expect(blockedAdd.code).toBe(1002);
+    const blockedRemove = JSON.parse((await readOnly.app.inject({
+      method: 'DELETE', url: '/v1/roles/1/users', payload: { userIds: [2] },
+    })).body);
+    expect(blockedRemove.code).toBe(1002);
+    expect(addRoleUsers).not.toHaveBeenCalled();
+    expect(removeRoleUsers).not.toHaveBeenCalled();
+    await readOnly.app.close();
+
+    const allowed = appWith(['role:write']);
+    registerPermissionRoutes(allowed.app, stubs(allowed.hasPermission) as never);
+    const added = JSON.parse((await allowed.app.inject({
+      method: 'POST', url: '/v1/roles/1/users', payload: { userIds: [2, 3] },
+    })).body);
+    expect(added.code).toBe(0);
+    expect(added.data).toEqual({ added: 2 });
+    expect(addRoleUsers).toHaveBeenCalledWith(1, [2, 3]);
+    const removed = JSON.parse((await allowed.app.inject({
+      method: 'DELETE', url: '/v1/roles/1/users', payload: { userIds: [2] },
+    })).body);
+    expect(removed.code).toBe(0);
+    expect(removed.data).toEqual({ removed: 1 });
+    expect(removeRoleUsers).toHaveBeenCalledWith(1, [2]);
+    await allowed.app.close();
+  });
+
   it('requires audit:read for audit logs', async () => {
     const denied = appWith([]);
     const list = vi.fn(async () => ({ records: [], total: 0, page: 1, size: 20 }));

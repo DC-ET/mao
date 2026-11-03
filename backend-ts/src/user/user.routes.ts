@@ -34,6 +34,18 @@ export function registerUserRoutes(
     return sendOk(reply, await toUserInfoVO(user!, permissionService));
   });
 
+  // 自助改密：登录态即可（不挂 requirePermission，无 user:write 的普通角色也可改自己的密码）；
+  // 两次输入一致性在路由层拒绝（与管理员重置路由同文案），旧密码校验在 service。
+  app.put('/v1/users/me/password', async (request, reply) => {
+    const userId = requireUserId(request);
+    const body = bodyOf<{ oldPassword?: string; newPassword?: string; confirmPassword?: string }>(request);
+    if (body.newPassword == null || body.newPassword !== body.confirmPassword) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '两次输入的密码不一致');
+    }
+    await userService.changeOwnPassword(userId, body.oldPassword ?? '', body.newPassword);
+    return sendOk(reply);
+  });
+
   app.get('/v1/users', async (request, reply) => {
     const userId = requireUserId(request);
     await requirePermission(permissionService, userId, 'user:read');

@@ -25,6 +25,32 @@ describe('MemoryRepository', () => {
     expect(params).toEqual([7, 'PROJECT', 'mao', 'ACTIVE', 10, 20]);
   });
 
+  it('pageKeywordFiltersContentOrProjectKeyWithEscapedWildcards', async () => {
+    const db = mockDb(null, [{ id: 1 }]);
+    const repo = new MemoryRepository(db as never);
+    await repo.page({ userId: 7, keyword: 'vitest', page: 1, pageSize: 20 });
+    const [sql, params] = (db.query as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(sql).toContain("content LIKE CONCAT('%', ?, '%') ESCAPE '\\\\'");
+    expect(sql).toContain("project_key LIKE CONCAT('%', ?, '%') ESCAPE '\\\\'");
+    expect(params).toEqual([7, 'vitest', 'vitest', 20, 0]);
+
+    // 通配符按字面匹配：100%_a\b 不展开为通配
+    await repo.page({ userId: 7, keyword: '100%_a\\b', page: 1, pageSize: 20 });
+    const [, escapedParams] = (db.query as ReturnType<typeof vi.fn>).mock.calls[1];
+    expect(escapedParams).toEqual([7, '100\\%\\_a\\\\b', '100\\%\\_a\\\\b', 20, 0]);
+
+    // 空 / 空串 keyword 不追加子句
+    await repo.page({ userId: 7, keyword: '   ', page: 1, pageSize: 20 });
+    const [emptySql, emptyParams] = (db.query as ReturnType<typeof vi.fn>).mock.calls[2];
+    expect(emptySql).not.toContain('LIKE');
+    expect(emptyParams).toEqual([7, 20, 0]);
+
+    // keyword 与 scope/status 叠加时占位符顺序正确
+    await repo.page({ userId: 7, scope: 'PROJECT', status: 'ACTIVE', keyword: 'k', page: 1, pageSize: 20 });
+    const [, comboParams] = (db.query as ReturnType<typeof vi.fn>).mock.calls[3];
+    expect(comboParams).toEqual([7, 'PROJECT', 'ACTIVE', 'k', 'k', 20, 0]);
+  });
+
   it('countActiveCountsOnlyActiveRows', async () => {
     const db = mockDb({ total: 5 });
     const repo = new MemoryRepository(db as never);

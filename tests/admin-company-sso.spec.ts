@@ -105,6 +105,7 @@ async function openSettings(page: Page, raw: string | null | undefined, canWrite
     let data: unknown = []
     if (path.endsWith('/auth/admin/login') || path.endsWith('/auth/login')) data = { accessToken: 'sso-test-token', refreshToken: 'sso-test-refresh' }
     if (path.endsWith('/users/me')) data = { id: 1, username: 'admin', isAdmin: true, permissions: ['analytics:read', 'settings:read', ...(canWrite ? ['settings:write'] : [])] }
+    if (path.endsWith('/system-settings/container-hosts/preview')) data = { entries: [], hostsFileError: null }
     if (path.endsWith('/system-settings')) data = raw === undefined ? [] : [{ settingKey: COMPANY_SSO_KEY, value: raw, editable, category: '认证' }]
     if (request.method() === 'PUT') {
       writes.push({ url: path, body: request.postDataJSON() })

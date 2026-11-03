@@ -10,7 +10,6 @@ import { WebhookDeliveryScheduler, DeliverySchedulerDbStore } from './notificati
 import { userMessagePreviewOf } from './notification/task/user-message-preview.js';
 import { createSessionDetailUrlResolver } from './feishu/progress-card.js';
 import { OutboundDeliveryScheduler } from './openapi/outbound-delivery.scheduler.js';
-import { GenericHttpWebhookSender } from './openapi/generic-webhook-sender.js';
 import { InboxCleanupScheduler } from './inbox/inbox.cleanup.js';
 import { ScheduledTaskRunCleanupScheduler } from './schedule/run-cleanup.js';
 import { EcpRenewScheduler } from './auth/ecp-renew.scheduler.js';
@@ -68,7 +67,8 @@ export function assembleLifecycle(deps: LifecycleDeps): LifecycleResult {
     deliveryRepo: d.outboundDeliveryRepo,
     subscriptionRepo: d.outboundSubscriptionRepo,
     cipher: d.notifCipher,
-    sender: new GenericHttpWebhookSender(),
+    // 共享单实例（create-app 构造）：订阅测试投递与调度器真实投递同用
+    sender: d.genericWebhookSender,
     auditRecorder: {
       recordDeliveryFailed: async (input: any) => {
         let userId: number | null = null;

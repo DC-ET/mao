@@ -8,6 +8,11 @@
 
     <!-- Image preview -->
     <div v-else-if="state === 'image'" class="file-message image-preview">
+      <div class="viewer-toolbar">
+        <button class="tool-btn" title="引用到对话" @click="emit('add-file-to-chat', props.filePath)">引用</button>
+        <button v-if="provider?.downloadFile" class="tool-btn" title="下载文件" @click="downloadFile">下载</button>
+        <button class="tool-btn" title="刷新" @click="loadFile">刷新</button>
+      </div>
       <img :src="imageDataUri" :alt="filePath" />
       <p class="image-meta">{{ content }}</p>
     </div>
@@ -86,13 +91,17 @@
 
     <!-- Content -->
     <div v-else-if="state === 'ready'" class="file-content">
-      <div v-if="isMarkdown" class="view-mode-toggle">
-        <button :class="['mode-btn', { active: viewMode === 'rendered' }]" @click="viewMode = 'rendered'">预览</button>
-        <button :class="['mode-btn', { active: viewMode === 'source' }]" @click="viewMode = 'source'">源码</button>
+      <div class="viewer-toolbar">
+        <template v-if="isMarkdown">
+          <button :class="['tool-btn', { active: viewMode === 'rendered' }]" @click="viewMode = 'rendered'">预览</button>
+          <button :class="['tool-btn', { active: viewMode === 'source' }]" @click="viewMode = 'source'">源码</button>
+        </template>
+        <button v-if="showSource" :class="['tool-btn', { active: wordWrapOn }]" title="自动换行" @click="toggleWordWrap">换行</button>
+        <button class="tool-btn" title="复制全文" @click="copyAll">复制</button>
+        <button class="tool-btn" title="引用到对话" @click="emit('add-file-to-chat', props.filePath)">引用</button>
+        <button v-if="provider?.downloadFile" class="tool-btn" title="下载文件" @click="downloadFile">下载</button>
+        <button class="tool-btn" title="刷新" @click="loadFile">刷新</button>
       </div>
-      <button class="refresh-btn" type="button" aria-label="刷新" @click="loadFile">
-        <el-icon :size="14"><Refresh /></el-icon>
-      </button>
       <div class="file-editor-area">
         <div
           v-show="showSource"
@@ -130,13 +139,18 @@ import { isExternalMarkdownLink, resolveMarkdownLink } from '../../utils/markdow
 import { openExternalUrl } from '../../utils/capacitor'
 import { resolvePreviewKind, sniffContainerKind } from '../../utils/file-preview-format'
 import type { WorkspaceFileProvider } from '../../composables/workspace-file-provider'
-import { Refresh } from '@element-plus/icons-vue'
+import { copyText } from '../../utils/clipboard'
+import { ElMessage } from 'element-plus'
 
 const props = defineProps<{
   filePath: string
   provider: WorkspaceFileProvider | null
   /** 从某个工作区目录的文件管理打开时，后续相对链接仍落在这个目录。 */
   workspaceRoot?: string
+}>()
+
+const emit = defineEmits<{
+  'add-file-to-chat': [filePath: string]
 }>()
 
 const sessionStore = useSessionStore()
@@ -176,12 +190,34 @@ const showSource = computed(() => !isMarkdown.value || viewMode.value === 'sourc
 
 const monacoEnabled = computed(() => state.value === 'ready' && showSource.value)
 
+// 自动换行偏好：localStorage 记忆，下次打开沿用（键名对齐 aw-theme-mode 的 aw- 前缀惯例）。
+// 经 globalThis 访问：node 环境测试（FileViewer.dispatch）无 localStorage，缺省按关闭处理。
+const wordWrapOn = ref(globalThis.localStorage?.getItem('aw-file-word-wrap') === '1')
+const wordWrapRef = computed(() => (wordWrapOn.value ? 'on' : 'off') as 'on' | 'off')
+
+function toggleWordWrap() {
+  wordWrapOn.value = !wordWrapOn.value
+  globalThis.localStorage?.setItem('aw-file-word-wrap', wordWrapOn.value ? '1' : '0')
+}
+
+async function copyAll() {
+  const ok = await copyText(content.value)
+  if (ok) ElMessage.success('已复制全文')
+  else ElMessage.error('复制失败，请手动选择复制')
+}
+
+async function downloadFile() {
+  const name = props.filePath.split(/[/\\]/).pop() || props.filePath
+  await props.provider?.downloadFile?.(props.filePath, name)
+}
+
 useMonacoViewer({
   container: monacoContainer,
   content,
   filePath: toRef(props, 'filePath'),
   isDark,
   enabled: monacoEnabled,
+  wordWrap: wordWrapRef,
   onEditor(editor) {
     detachQuote?.()
     detachQuote = null
@@ -460,6 +496,7 @@ onUnmounted(() => {
 }
 
 .image-preview {
+  position: relative;
   padding: 24px;
   gap: 12px;
 }
@@ -525,7 +562,7 @@ onUnmounted(() => {
   overflow: auto;
 }
 
-.view-mode-toggle {
+.viewer-toolbar {
   position: absolute;
   top: 8px;
   right: 8px;
@@ -534,36 +571,7 @@ onUnmounted(() => {
   z-index: 10;
 }
 
-.refresh-btn {
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  z-index: 10;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--aw-btn-height);
-  height: var(--aw-btn-height);
-  padding: 0;
-  background: var(--aw-surface);
-  border: 1px solid var(--aw-divider-soft);
-  border-radius: var(--aw-radius-xs);
-  cursor: pointer;
-  color: var(--aw-ink-muted-48);
-  transition: all 0.15s;
-  backdrop-filter: blur(8px);
-}
-
-.refresh-btn:hover {
-  color: var(--aw-ink);
-}
-
-.refresh-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.mode-btn {
+.tool-btn {
   height: var(--aw-btn-height);
   padding: var(--aw-btn-padding);
   font-size: var(--aw-text-fine);
@@ -576,11 +584,11 @@ onUnmounted(() => {
   backdrop-filter: blur(8px);
 }
 
-.mode-btn:hover {
+.tool-btn:hover {
   color: var(--aw-ink);
 }
 
-.mode-btn.active {
+.tool-btn.active {
   color: var(--aw-primary);
   border-color: var(--aw-primary);
   background: var(--aw-primary-hover);

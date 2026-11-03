@@ -15,9 +15,9 @@
 鉴权与边界要点：
 
 - **API Token**：`mao_` 前缀 + 48 位随机字符，sha256 落库；明文另以 AES-GCM 密文加密留存（密钥 `APP_OPENAPI_TOKEN_SECRET`，未配置回退内置默认密钥），属主可随时用 `open token reveal` 或桌面端「复制 Token」再次获取，不再限于创建时一次。2026-10-10 之前签发、未留密文的旧 Token 无法再取回明文，需吊销重签。scope 首期仅 `open:run`，只能在 `/v1/open/**` 端点使用（调用其它 REST 接口一律 401）。每人最多 20 个未吊销 Token，默认 90 天过期，吊销即时生效。轮换加密密钥后旧 Token 不能再复制明文（sha256 鉴权不受影响）。
-- **Webhook 触发器**：`pathToken` 决定公开 URL，`secret` 用于 HMAC-SHA256 签名（创建 / 轮换时只展示一次）。时间戳容忍 ±300 秒，签名基于原始请求体原文。不存在 / 已停用 / 验签失败统一返回 404 + `{code:3040,message:"not found"}`，不探测资源是否存在。连续 5 次执行失败自动停用，并在收件箱推送「触发器停用」。
+- **Webhook 触发器**：`pathToken` 决定公开 URL，`secret` 用于 HMAC-SHA256 签名（创建 / 轮换时只展示一次）。时间戳容忍 ±300 秒，签名基于原始请求体原文。不存在 / 已停用 / 验签失败统一返回 404 + `{code:3040,message:"not found"}`，不探测资源是否存在。连续 5 次执行失败自动停用，并在收件箱推送「触发器停用」。触发器支持就地编辑：`PUT /v1/open/triggers/:id` 可改 `name / agentId / sessionId`（`sessionId: null` 表示解绑回「每次新建会话」，不传 `sessionId` 表示不改），`pathToken`（URL）与 `secret` 保持不变、外部系统零改动；桌面端触发器卡片「编辑」按钮走同一接口（不携带 `enabled`，启用态原样保留）。
 - **run 端点**：恒返回 202 异步语义（`sessionId` / `messageId` / `queued`）；目标会话忙时消息自动进入待发送队列（`queued=true`）。指定 `sessionId` 时，会话必须属于路径上的同一个 Agent，不一致返回参数错误，不会改用会话里的另一个 Agent 执行。触发器绑定会话同样要求与触发器的 Agent 一致。限流：每 Token 60 次/分钟，超限 429 + `Retry-After`。
-- **出站订阅**：目标 URL 必须 HTTPS（禁止 userinfo 与 hash 片段）；请求带 `X-Mao-Event` / `X-Mao-Timestamp` / `X-Mao-Signature`；失败按 1 / 5 / 25 分钟退避重试，3 次后置 FAILED 保留记录，不无限重投。`GET /v1/open/subscriptions/:id/deliveries` 可查最近投递。
+- **出站订阅**：目标 URL 必须 HTTPS（禁止 userinfo 与 hash 片段）；请求带 `X-Mao-Event` / `X-Mao-Timestamp` / `X-Mao-Signature`；失败按 1 / 5 / 25 分钟退避重试，3 次后置 FAILED 保留记录，不无限重投。`GET /v1/open/subscriptions/:id/deliveries` 可查最近投递。`POST /v1/open/subscriptions/:id/test`（仅属主，停用订阅也可调）同步发送一条示例事件并返回 `{ success, httpStatus, error, durationMs }`：请求头与真实投递完全一致，payload 与真实事件同构且统一带 `test: true` 标记（接收方可据此区分测试事件），**不写入投递历史、不触发重试**；桌面端订阅卡片「测试投递」按钮同能力。
 
 ## 明确不包含
 
@@ -198,6 +198,7 @@ mao open calls get --id 100
 | hook 返回 404 + `not found` | 触发器不存在、已停用、或签名 / 时间戳不通过（统一措辞，不区分） |
 | hook 返回 429 | 该触发器限流；读 `Retry-After` 后重试 |
 | 收件箱出现「触发器停用」 | 连续 5 次执行失败，已自动停用；排除外部系统问题后重新启用 |
+| 订阅回调验签失败 / 想先验证连通性 | 用桌面端「测试投递」或 `POST /v1/open/subscriptions/:id/test` 立即验证（payload 带 `test: true`，接收方据此过滤测试事件）；再用 `open subscription deliveries` 看 `lastHttpStatus` / `lastError` |
 | 订阅一直重试 | 目标 URL 非 2xx；用 `open subscription deliveries --id <id>` 看 `lastHttpStatus` / `lastError` |
 
 相关文档：桌面端「设置 → 开放接口」页面（含内嵌「接口文档」卡片的查阅 / 下载 / 复制）；设计细节见仓库 `docs/plan/2026-10-05-open-api-webhook-technical-design.md`。

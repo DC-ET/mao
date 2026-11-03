@@ -211,6 +211,39 @@ describe('AgentLoop', () => {
     expect(persistFinished).toBe(true);
   });
 
+  it('keeps after-stream persistence failures from becoming unhandled rejections', async () => {
+    const ctx = context();
+    const l = listener();
+    const p = persistence();
+    promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
+    backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
+    stubActiveContext(42);
+    // 直接返回原生 rejected promise：vi.fn 的 mockRejectedValue 会被 tinyspy 挂 then，
+    // 在测试进程里不会产生 unhandledRejection，复现不了生产崩溃路径。
+    const originalUpdateAnchor = sessionService.updateContextAnchor;
+    (sessionService as unknown as { updateContextAnchor: () => Promise<void> }).updateContextAnchor =
+      () => Promise.reject(new Error('read ECONNRESET'));
+    // 流先正常结束（触发 afterStream），随后适配器抛错（跳过 Promise.all）
+    llmAdapter.stream.mockImplementation(async (_r: unknown, _c: unknown, callback: StreamCallback) => {
+      callback.onChunk(contentChunk(null, 'hello'));
+      callback.onComplete({ promptTokens: 10, completionTokens: 2, totalTokens: 12 });
+      throw new Error('read ECONNRESET');
+    });
+
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      await expect(agentLoop.execute(ctx, l, p)).rejects.toThrow();
+      // 给微任务一个窗口，让潜在 unhandledRejection 浮出来
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+      (sessionService as unknown as { updateContextAnchor: unknown }).updateContextAnchor = originalUpdateAnchor;
+    }
+    expect(unhandled).toEqual([]);
+  });
+
   it('executeDiscardsPartialOutputWhenStreamIsRetried', async () => {
     const ctx = context();
     const l = listener();

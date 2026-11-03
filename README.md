@@ -43,24 +43,26 @@ Mao 不是又一个 ChatGPT 套壳，也不是 Dify / n8n 那样的低代码工�
 
 ## 核心能力
 
-| | |
-|---|---|
-| **Harness 引擎** | Think-Act-Observe 循环、流式输出、上下文压缩、崩溃恢复；检查器上下文徽标展开「上下文详情」抽屉透视下一轮请求的容量与构成（容量进度条三段式色调 + 系统提示词 / 系统工具 / 消息 / 摘要 / 注入记忆等分节的估算 token 占比，构成合计与容量同口径），支持手动整理上下文与阅读压缩摘要全文；点检查器的任务状态徽标（执行中 / 已完成）打开「运行轨迹」Tab，顶部是会话总览（最近 N 次任务的成败分布、总耗时 / token / 成本、工具成功率），往下按 run 逐轮透视模型调用耗时 / 首字 / 重试 / token / 成本与轮内工具（含审批标记），每个 run 带开始时间与结果状态图标，重试 / 慢 / 贵 / 压缩等关注点与消息同行展示（轮级的重试 / 慢 / 贵也是彩色徽标，能指到具体哪一轮），执行中实时显示第几轮与工具已耗时，可导出 JSON / CSV；边路任务 / 子代理视图点徽标打开对应会话的轨迹，与主会话轨迹可同时对照（右侧边栏跟着轨迹所属会话走，主会话自身的轨迹保持主会话视角）；不是 LLM 网关。 |
-| **长期记忆** | 跨会话、跨 Agent 的个人记忆：任务完成后自动沉淀偏好与项目事实，也可在设置页「长期记忆」手工维护；后续会话自动注入，用户可查看、编辑、忽略、删除与关闭自动收集；单个会话可在检查器「上下文详情」抽屉查看本轮注入了哪些记忆并关闭该会话的注入（下次任务起生效）。 |
-| **CLOUD / LOCAL** | 云端在服务器执行；本地经 Electron 或 `mao-agent --local` 在本机执行，支持只读 / 读写 / 智能预审 / 替我审批 / 完全权限五档。CLOUD 可选每用户 Docker 容器隔离（默认关闭）：执行类工具与终端在该用户独立容器内运行，只挂载本人数据目录，跨用户数据不可读、平台凭据不进容器；全局开关在管理后台「系统设置 → 运行环境 → 用户运行时模式」切换（保存即生效，环境变量 `MAO_CLOUD_RUNTIME` 仅作缺省值），也可按用户覆盖。REST 文件服务与 MCP stdio 环境继承在两种模式下都做了越界收紧。 |
-| **多 Agent** | 角色提示词、Skill、MCP、经验、推荐问题；提示词可版本化与回滚。可在管理后台停用，停用后使用侧列表不再展示。每个 Agent 另有**团队经验库**：跨会话、跨成员共享的长经验沉淀在服务器共享目录，系统提示只注入一小节固定路标，Agent 接手复杂任务时先 grep 索引按需读取、多轮探索解决难题后自动写成带日期的子文档；索引由系统自动生成，管理后台可按 Agent 浏览、编辑、删除与开关；会话文件管理可只读打开工作区里的「团队经验」（仅 CLOUD 会话生效）。 |
-| **工具与扩展** | Shell、文件、搜索、网页、文生图/改图、子代理委派；Skill + 全局/用户级 MCP。 |
-| **回复引用溯源** | 模型用联网搜索 / 打开网页作答时，正文说法旁出现可点击引用上标，回复末尾「来源」区列出本轮引用的网页标题与域名：点上标跳到对应来源，点条目在新标签页打开原网页。来源由服务端从真实工具结果构建白名单，模型编造或编号越界的标记自动失效，不会显示成无效上标。 |
-| **协作** | 边路任务、后台子代理（`default` / `explorer` / `worker` / `reviewer`）、定时任务、完成通知、会话只读分享与 JSONL 导出；任务列表可多选批量归档，长会话用轮次目录定位历史轮次。 |
-| **任务收件箱** | 站内通知中心：任务完成 / 失败、提问待答、审批待办、子代理结果回传统一汇入顶栏铃铛，实时未读数，一键跳回会话；每日运营摘要（昨日任务 / 定时任务 / 哨兵 / 审批 / 成本 / 开放接口汇总，点开详情可逐项跳转）默认每天 09:30 送达，可在「消息通知」改时间或关闭；Electron 桌面端由主进程投递系统通知（窗口最小化 / 隐藏到托盘也可达，点击回到会话，macOS dock 角标跟随未读数）。 |
-| **开放接口** | API Token 远程触发 Agent 运行（`POST /api/v1/open/agents/:id/run`，异步 202，会话忙时自动排队）；入站 Webhook 触发器（HMAC-SHA256 验签，连续失败自动停用并通知）；出站事件订阅把任务完成 / 失败 / 提问待答推送到自建 HTTPS 端点（失败自动退避重试）。 |
-| **信号哨兵** | 按固定间隔探测外部 HTTP(S) 接口，判定值（内容哈希 / JSON 字段 / 状态码）变化时自动开一次 Agent 会话；可选「复用会话」让每次变化接着同一个会话聊（上下文持续累积）；支持一键复制（敏感请求头与请求体自动继承）；哨兵数量无上限；会话归入独立「信号哨兵」分组，不计未读但通知照常。连续失败自动停用并通知，探测地址禁私网。 |
-| **工作区** | 云端新建 / 复用 / Git HTTPS clone；文件树与 Git diff 浏览，CSV / zip / xlsx / docx / 音视频可直接预览阅读；CLOUD 可直接管理工作区文件（文件树增删改传，或「文件管理」页签整幅操作）；CLOUD 可开服务端交互终端；「Git 管理器」中央页签集中看变更 / 历史 / 分支 / Stash，可提交、拉取、推送、获取远端、切换分支（自动 stash 并恢复）。 |
-| **治理** | RBAC、管理 API 审计、[用量分析](skills/mao-cli/reference/analytics.md)（含成本口径）、[调用流水](skills/mao-cli/reference/llm-call.md)、[月度用量预算](skills/mao-cli/reference/budget.md)（全局 / 用户 / Agent，超额提醒或拦截，开放接口一并生效；用户在「我的用量」抽屉「预算」Tab 看与己相关的生效预算）；任务结果消息点踩反馈（管理后台汇总与明细）；本地账号 / LDAP / 飞书登录。 |
-| **多端** | 管理后台（右下角浮窗助手，见「通道」）、Web / Electron、安卓 APP（CLOUD）、终端 `mao-agent`、REST `mao-cli`。 |
-| **通道** | 飞书机器人、钉钉机器人、微信 Bot、页面 Embed SDK（可操作宿主页面；管理后台已内置接入，管理员登录即用，Agent 在「系统设置 → 集成配置」选择）。 |
+Mao 围绕「**让 Agent 真正下场干活，同时在团队内可管可控**」构建了四层核心能力：
 
-任意 [OpenAI 兼容](skills/mao-cli/reference/admin.md#模型管理) 模型均可接入。若你要的是画布编排或托管服务，更适合看 Dify、n8n；若要对齐 Codex 类编码助手但数据不出域，看 [与 Codex 的对比](skills/mao-cli/reference/project.md#与-openai-codex-对比)。
+### 1. 真正的 Agent Harness，而非聊天壳
+- **自主执行循环**：内置 Think-Act-Observe 引擎，原生配备 Shell、文件读写、联网搜索（带服务端白名单校验的网页引用溯源）、文生图/改图等工具。
+- **多任务并发拆解**：主对话之外可随时拉起**边路任务（Side Task）**，或委派后台**子代理**（`explorer` / `worker` / `reviewer`）并行调研、写码与审查。
+- **全链路白盒可观测**：自动上下文压缩与崩溃恢复；随时透视下一轮请求的上下文 Token 构成，或按轮次查看模型耗时、首字延迟、成本与工具调用的[运行轨迹](skills/mao-cli/reference/desktop.md#运行轨迹)。
+
+### 2. 双执行边界：CLOUD ⇄ LOCAL
+- **CLOUD（云端工作区）**：打开浏览器、手机或 IM 即可使用。支持工作区文件预览编辑、服务端交互式终端与可视化 [Git 管理器](skills/mao-cli/reference/git.md)；可选开启[每用户 Docker 容器隔离](skills/mao-cli/reference/runtime.md)，确保多租户数据与凭据边界安全。
+- **LOCAL（本机直连）**：通过 [Electron 桌面端](skills/mao-cli/reference/electron.md)或 [`mao-agent --local`](skills/mao-cli/reference/mao-agent.md) 直接读写本机目录、调用本地工具链，配备从「只读」到「完全权限」五档控制与高危操作审批。
+
+### 3. 活的记忆与能力组装
+- **双层经验沉淀**：既有跨会话自动提取偏好与项目事实的[个人长期记忆](skills/mao-cli/reference/memory.md)，也有按 Agent 跨成员共享、攻克难题后自动归档的[团队经验库](skills/mao-cli/reference/agent.md#团队经验库experience-library00342-起)。
+- **按需扩展边界**：每个 Agent 独立绑定提示词（支持版本化与回滚）、[Skill 技能包](skills/mao-cli/reference/skill.md)、全局/个人 [MCP 服务](skills/mao-cli/reference/mcp.md)与[自定义 HTTP 工具](skills/mao-cli/reference/http-tool.md)，配合系统/用户/工作区三级加密环境变量注入运行时。
+
+### 4. 自动化触发与团队治理
+- **主动干活与外部联动**：除交互对话外，支持 Cron [定时任务](skills/mao-cli/reference/scheduled-task.md)、监控外部接口异动自动拉起会话的[信号哨兵](skills/mao-cli/reference/signal-watcher.md)，以及供 CI/业务系统调用的[开放 API、入站 Webhook 与出站事件订阅](skills/mao-cli/reference/open-api.md)。任务结果、待审批项与每日运营摘要统一汇入[任务收件箱](skills/mao-cli/reference/inbox.md)。
+- **平台级治理**：支持任意 [OpenAI 兼容模型](skills/mao-cli/reference/model.md)；内建本地账号 / LDAP / 飞书登录、RBAC 角色权限、管理操作审计、[调用流水](skills/mao-cli/reference/llm-call.md)、[用量与成本分析](skills/mao-cli/reference/analytics.md)及[月度预算拦截](skills/mao-cli/reference/budget.md)；管理后台还可按部署场景隐藏不用的功能菜单（部署级全局生效，隐藏不影响访问权限）。
+
+> 对比选型：若你需要低代码画布编排或托管 SaaS，建议看 Dify、n8n；若你想对齐 Codex 类 Agent 能力且要求私有化与团队治理，可参考 [与 OpenAI Codex 的对比](skills/mao-cli/reference/project.md#与-openai-codex-对比)。
 
 ## 架构
 
@@ -72,24 +74,18 @@ Mao 不是又一个 ChatGPT 套壳，也不是 Dify / n8n 那样的低代码工�
 
 ## 怎么用
 
-日常路径很短：
-
 ```
-管理员：配模型 → 建 Agent → 开账号 / 配权限
-用户：选 Agent → 选 CLOUD 或 LOCAL → 选工作区 → 描述目标 → Agent 调工具做事
+管理员：配模型与预算 → 组装 Agent（提示词 / Skill / MCP / HTTP 工具） → 开账号与角色权限
+用  户：选 Agent → 选 CLOUD 或 LOCAL → 选工作区 → 交办目标（对话 / 定时 / 哨兵 / API）
 ```
 
-- **CLOUD**：浏览器、安卓、飞书、微信都能用；文件和命令跑在服务器工作区。
-- **LOCAL**：Electron 或 `mao-agent --local`；改的是你电脑上的目录，高风险操作可审批。
-- **拆活**：复杂任务用边路任务或子代理；重复劳动用定时任务，完成时钉钉 / 飞书 / 微信通知。
-- **不漏结果**：任务完成 / 失败、提问待答、审批待办、子代理回传都会进顶栏「任务收件箱」，点铃铛查看并一键跳回会话；可在「消息通知 → 站内收件箱」按类型开关。
-- **每日运营摘要**：默认每天 09:30 汇总昨天的任务成败、定时任务、哨兵触发、审批挂起、Token 成本与开放接口调用，写进收件箱（配了出站订阅可同步推送）；在「设置 → 消息通知 → 每日运营摘要」改推送时间、开关，或立即试发昨日摘要。
-- **开放接口**：在「设置 → 开放接口」签发 API Token 或用入站 Webhook 触发器把外部系统（CI、客服工单、自建脚本）接入 Agent；Token 明文加密留存，可随时用列表里的「复制 Token」再次获取；需要把结果推回自建系统时配出站事件订阅。页面顶部的「接口文档」卡片可查阅完整调用说明，或下载 / 复制 Markdown 交给外部系统。详见 [skills/mao-cli/reference/open-api.md](skills/mao-cli/reference/open-api.md)。
-- **信号哨兵**：在「设置 → 信号哨兵」盯一个外部接口（汇率、库存、发布状态、接口健康度），按间隔自动探测，判定值变化时自动开一次 Agent 会话处理；可暂停、可立即测试探针，失败自动退避、连续失败自动停用并站内提醒。触发方式可选「每次新建会话」或「复用会话」（接着同一个会话聊，适合需要记住上次结论的场景），也可基于已有哨兵一键复制。终端用户可用 `mao signal-watcher` 命令行完成同样的新建 / 修改 / 启停 / 轮询记录查询 / 探针试跑。哨兵产生的会话归入任务面板独立的「信号哨兵」分组，不计未读但通知照常。详见 [skills/mao-cli/reference/signal-watcher.md](skills/mao-cli/reference/signal-watcher.md)。
-- **自定义 HTTP 工具**：在「设置 → 我的工具」把自己的 HTTP 接口封装成 Agent 可调用的工具——填端点 URL、方法、参数、固定请求头（Token 等敏感值加密存储）即可；Agent 按需查询参数并调用，请求由服务端直连目标地址（**无审批确认**，只封装可信端点），保存前可先「测试调用」实调一次看原始响应。默认拒绝访问内网地址，需要时由管理员按网段放行。详见 [skills/mao-cli/reference/user-tool.md](skills/mao-cli/reference/user-tool.md)。
-- **环境变量**：设置 → 环境变量维护个人全局变量；右侧「任务」面板的工作区区块点「环境变量」查看当前会话生效变量（按来源分组）并维护当前工作区变量。优先级「工作区 > 用户全局 > 系统全局」，`PATH` / `HOME` / `MAO_TOKEN` 等平台保留键不可配置；值加密存储、保存后不回显，最多 5 秒对新命令生效（已打开的交互终端需重开）。管理员在系统设置 → Shell 环境变量下发全站变量。
+日常就三种核心工作方式：
 
-完整手册见 [USER_GUIDE.md](USER_GUIDE.md)。上线检查清单见 [business_process.md](skills/mao-cli/business_process.md)。
+1. **交互式攻坚**：云端任务在浏览器 / 手机 / IM 直接跑，本地代码库用 Electron 或 `mao-agent --local` 跑；复杂任务随时拆边路任务或交由子代理并行处理。
+2. **例行巡检与事件驱动**：用[定时任务](skills/mao-cli/reference/scheduled-task.md)处理日报与巡检，用[信号哨兵](skills/mao-cli/reference/signal-watcher.md)盯住外部接口变化自动触发 Agent；结果通过站内[任务收件箱](skills/mao-cli/reference/inbox.md)或飞书 / 钉钉 / 微信 / 邮件送达。
+3. **嵌入业务系统**：通过[开放接口与 Webhook](skills/mao-cli/reference/open-api.md) 把 Agent 编入 CI 或工单流，或用几行代码通过 [Embed SDK](skills/mao-cli/reference/embed-sdk.md) 把可操作宿主页面的助手浮窗嵌进内部后台。
+
+完整功能手册见 [USER_GUIDE.md](USER_GUIDE.md)，首次上线检查清单见 [business_process.md](skills/mao-cli/business_process.md)。
 
 ## 快速开始
 

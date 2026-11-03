@@ -150,4 +150,92 @@ describe('approval rule routes', () => {
       await app.close();
     }
   });
+
+  it('promoteCopiesSessionRuleToUserAndAuditsCreate', async () => {
+    const sessionRule = row({ id: 7, scope: 'SESSION', sessionId: 3, ruleType: 'SHELL_PREFIX', ruleValue: 'git push' });
+    const promoted = row({ id: 42, scope: 'USER', sessionId: null, ruleType: 'SHELL_PREFIX', ruleValue: 'git push' });
+    const findById = vi.fn().mockResolvedValueOnce(sessionRule).mockResolvedValueOnce(promoted);
+    const repo = {
+      listByUser: vi.fn(async () => []),
+      countByUser: vi.fn(async () => 0),
+      listEnabledForMatch: vi.fn(async () => []),
+      insert: vi.fn(async () => 42),
+      findById,
+      findBySessionAndValue: vi.fn(async () => null),
+      findByUserAndValue: vi.fn(async () => null),
+      updateEnabled: vi.fn(async () => undefined),
+      updateValue: vi.fn(async () => undefined),
+      deleteById: vi.fn(async () => undefined),
+      incrementHit: vi.fn(async () => undefined),
+      pageAdmin: vi.fn(async () => ({ records: [], total: 0, page: 1, size: 20 })),
+    };
+    const audit = vi.fn();
+    const app = Fastify();
+    app.setErrorHandler(handleError);
+    app.addHook('preHandler', (req, _r, done) => { req.userId = 7; done(); });
+    registerApprovalRuleRoutes(app, {
+      approvalRuleService: new ApprovalRuleService(repo as never, { getValue: vi.fn(async () => '') }, { getUserId: vi.fn(async () => 7) }),
+      audit,
+    });
+    try {
+      const res = JSON.parse((await app.inject({ method: 'POST', url: '/v1/approval-rules/7/promote' })).body);
+      expect(res.data.scope).toBe('USER');
+      expect(res.data.id).toBe(42);
+      expect(repo.insert).toHaveBeenCalledWith({ userId: 7, scope: 'USER', sessionId: null, ruleType: 'SHELL_PREFIX', ruleValue: 'git push' });
+      expect(audit).toHaveBeenCalledTimes(1);
+      expect(audit.mock.calls[0][0].action).toBe('CREATE');
+      expect(audit.mock.calls[0][0].objectId).toBe(42);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('promoteRejectsUserScopeOthersAndBadPathId', async () => {
+    const app = buildApp([]);
+    // buildApp 的 findById 默认 null：未提供 findByUserAndValue（不会被触达）
+    try {
+      // 无效路径 id → 3037（不进 service）
+      const badId = JSON.parse((await app.inject({ method: 'POST', url: '/v1/approval-rules/0/promote' })).body);
+      expect(badId.code).toBe(3037);
+      // id 不存在 → 3037
+      const missing = JSON.parse((await app.inject({ method: 'POST', url: '/v1/approval-rules/1/promote' })).body);
+      expect(missing.code).toBe(3037);
+    } finally {
+      await app.close();
+    }
+
+    // USER 级规则 → 2001「无需提升」；他人 SESSION 规则 → 3037
+    for (const [rule, expected] of [
+      [row({ scope: 'USER' }), 2001],
+      [row({ userId: 77, scope: 'SESSION', sessionId: 3 }), 3037],
+    ] as const) {
+      const repo = {
+        listByUser: vi.fn(async () => []),
+        countByUser: vi.fn(async () => 0),
+        listEnabledForMatch: vi.fn(async () => []),
+        insert: vi.fn(async () => 999),
+        findById: vi.fn(async () => rule),
+        findBySessionAndValue: vi.fn(async () => null),
+        findByUserAndValue: vi.fn(async () => null),
+        updateEnabled: vi.fn(async () => undefined),
+        updateValue: vi.fn(async () => undefined),
+        deleteById: vi.fn(async () => undefined),
+        incrementHit: vi.fn(async () => undefined),
+        pageAdmin: vi.fn(async () => ({ records: [], total: 0, page: 1, size: 20 })),
+      };
+      const scopedApp = Fastify();
+      scopedApp.setErrorHandler(handleError);
+      scopedApp.addHook('preHandler', (req, _r, done) => { req.userId = 7; done(); });
+      registerApprovalRuleRoutes(scopedApp, {
+        approvalRuleService: new ApprovalRuleService(repo as never, { getValue: vi.fn(async () => '') }, { getUserId: vi.fn(async () => 7) }),
+      });
+      try {
+        const res = JSON.parse((await scopedApp.inject({ method: 'POST', url: '/v1/approval-rules/1/promote' })).body);
+        expect(res.code).toBe(expected);
+        expect(repo.insert).not.toHaveBeenCalled();
+      } finally {
+        await scopedApp.close();
+      }
+    }
+  });
 });

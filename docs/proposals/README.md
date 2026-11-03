@@ -306,6 +306,25 @@
 3. **相邻收敛点**：切换 Agent 复用既有 PATCH 与每轮重读语义，刻意不动 `AgentLoop` / `task-terminal.service.ts`；来源标记只改传参值不改 `createSession` 位置签名（`open-run.service.ts:21-26` 的逐位一致护栏）；工作区总览不动既有 `cloud-projects` 端点（新建任务下拉零回归）。
 4. **实施顺序建议**：三件可完全并行；来源标记最小（约 2 人日）可先行，切换 Agent 次之，工作区总览最后。
 
+## 第二十批（2026-11-02）
+
+背景：第十九批（会话内切换 Agent / 会话来源全链路标记 / 工作区总览与生命周期）全部实施上线后，围绕「**提升现有功能完整度和用户体验，尽量避免对现有功能逻辑产生回归影响**」对代码现状做全盘摸底，从「**底层服务或技术方案早已就绪，但用户入口差最后一公里**」的断点切入产出提案。其中**会话导出 Markdown 与长会话定位补完已驳回（存档勿再评审）**，其余五件待评审；全部**零数据库迁移**、不碰 `AgentLoop` / `task-terminal.service.ts` 执行内核，严格避开全部已否决方向。
+
+| 提案 | 文档 | 一句话 | 规模 |
+|---|---|---|---|
+| 定时任务立即执行（试跑） | [2026-11-02-scheduled-task-run-now.md](2026-11-02-scheduled-task-run-now.md)（待评审；2026-11-02 范围收窄：只做手动触发执行，不做面板新建与管理后台按钮） | 补齐 `POST /v1/scheduled-tasks/:id/run` 与 `mao scheduled-task run`：编辑完提示词可一键「立即执行」试跑，不改写 `nextFireTime`、不误完结一次性任务、不累加连续失败 | 小 |
+| 会话导出 Markdown 与长会话定位补完 | [2026-11-02-session-markdown-export-and-in-session-find.md](2026-11-02-session-markdown-export-and-in-session-find.md)（已否决，存档） | 补齐 2026-10-06 方案遗留的 `.md` 可读导出（含分享页导出）+ 轮次目录内筛选与分享页/子代理挂载 + 搜索支持「仅当前会话」 | — |
+| 个人资产与配置体验补完 | [2026-11-02-personal-assets-ux-completeness.md](2026-11-02-personal-assets-ux-completeness.md)（待评审） | 会话级审批规则可见可撤可提升、环境变量编辑备注免重填密文（对齐 Git 凭证）、记忆/指令/规则列表补齐关键词搜索 | 小~中 |
+| 自助修改密码与开放接口体验补完 | [2026-11-02-self-service-password-and-openapi-polish.md](2026-11-02-self-service-password-and-openapi-polish.md)（待评审） | 补齐 `PUT /v1/users/me/password`（含旧密码校验，桌面端本地用户可自助改密、消除管理后台临时横幅）+ Webhook 触发器接通编辑表单 + 出站订阅一键发送测试事件 | 小~中 |
+| 工作区文件预览与 Git 细节打磨 | [2026-11-02-file-viewer-and-git-ux-polish.md](2026-11-02-file-viewer-and-git-ux-polish.md)（**已立项**，技术方案见 [../plan/2026-11-03-file-viewer-and-git-ux-polish-technical-design.md](../plan/2026-11-03-file-viewer-and-git-ux-polish-technical-design.md)，10 项决策定案） | Monaco 文件查看器补自动换行/下载/复制、Diff 查看器浮动胶囊支持「并排/行内」切换与变更处跳转、Git 历史展示提交正文、支持按文件路径与提交信息搜索并支持新建本地分支 | 小~中 |
+| 管理后台关联反查与自定义工具体验 | [2026-11-02-admin-capability-linking-and-http-tool-ux.md](2026-11-02-admin-capability-linking-and-http-tool-ux.md)（待评审） | 自定义 HTTP 工具支持含加密头直接测试与一键复制、Agent ⇄ 模型/MCP/工具双向关联展示 | 小~中 |
+
+排期注意：
+
+1. **迁移编号**：全部**零迁移**，不占 Flyway 版本号（当前最新 V180）。
+2. **三处同改清单**：均不新增内置工具、不新增 LLM 调用场景、不新增收件箱 kind，不触发既有「三处同改」规范。
+3. **相邻收敛点**：定时任务「立即执行」复用 `inFlight` 守卫与 `withSessionLock` 会话锁，但显式旁路 `nextFireTime` 推进、`once` 完结与 `consecutiveFailures` 累加，周期调度路径逐字节不变；环境变量「留空不修改值」直接复用 `MysqlEnvVariableRepository.updateBy` 已有的 `patch.envValue !== undefined` 分支。
+
 ## 已评估、明确不做
 
 以下各项已复审定案，**不再重启、不再提案**（存档文档已标否决，勿再评审）：

@@ -16,7 +16,7 @@ async function login(page: import('@playwright/test').Page) {
   await page.waitForSelector('.login-card', { timeout: 10_000 })
   await page.fill('input[placeholder="用户名"]', ADMIN_USER)
   await page.fill('input[placeholder="密码"]', ADMIN_PASS)
-  await page.click('button:has-text("登录")')
+  await page.getByRole('button', { name: '登录', exact: true }).click()
   await page.waitForURL(/\/admin\/analytics/, { timeout: 10_000 })
   await page.waitForSelector('.layout-container', { timeout: 10_000 })
 }
@@ -55,6 +55,17 @@ test('container manage panel exposes auto upgrade switch and build columns', asy
   await expect(card.locator('.el-table__header th', { hasText: '后台版本' })).toHaveCount(1)
 })
 
+/** 等 batch 接口返回后再断言，避免上一条「已保存」提示还在时回读赶在落库之前。 */
+async function saveCard(page: import('@playwright/test').Page, card: import('@playwright/test').Locator) {
+  const saved = page.waitForResponse(
+    (resp) => resp.url().includes('/system-settings/batch') && resp.request().method() === 'PUT',
+  )
+  await card.locator('button', { hasText: '保存' }).click()
+  const response = await saved
+  expect(response.ok()).toBeTruthy()
+  await expect(page.locator('.el-message', { hasText: '已保存' }).first()).toBeVisible({ timeout: 10_000 })
+}
+
 test('category card batch save round-trip', async ({ page }) => {
   await login(page)
   await page.goto('/admin/settings')
@@ -66,8 +77,7 @@ test('category card batch save round-trip', async ({ page }) => {
   expect(Number(original)).toBeGreaterThan(0)
 
   await input.fill('365')
-  await uiCard.locator('button', { hasText: '保存' }).click()
-  await expect(page.locator('.el-message', { hasText: '已保存' }).first()).toBeVisible({ timeout: 10_000 })
+  await saveCard(page, uiCard)
 
   const token = await page.evaluate(() => localStorage.getItem('token'))
   const read = async () => {
@@ -80,7 +90,6 @@ test('category card batch save round-trip', async ({ page }) => {
   expect(await read()).toBe('365')
 
   await input.fill(original)
-  await uiCard.locator('button', { hasText: '保存' }).click()
-  await expect(page.locator('.el-message', { hasText: '已保存' }).first()).toBeVisible({ timeout: 10_000 })
+  await saveCard(page, uiCard)
   expect(await read()).toBe(original)
 })

@@ -23,10 +23,18 @@ const AUDITED_PREFIXES = [
 const AUDITED_WRITE_PREFIXES = ['/v1/scheduled-tasks'];
 /** 读取型 POST（每次编辑击键都会调用的预览接口），审计它们只会淹没日志。 */
 const AUDITED_WRITE_EXCLUDES = ['/v1/scheduled-tasks/cron-preview'];
+/**
+ * 读取型豁免：菜单可见性由所有后台用户每次打开后台时调用（首屏必拉），
+ * 逐条留痕只会淹没审计日志；同一路径的写入（PUT）仍照常审计。
+ */
+const AUDITED_READ_EXCLUDES = ['/v1/system-settings/menu-visibility'];
 const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 export function shouldAudit(path: string | null | undefined, method?: string): boolean {
   if (path == null || path.startsWith('/v1/auth') || path.startsWith('/v1/audit/logs')) {
+    return false;
+  }
+  if (!WRITE_METHODS.has(method ?? '') && AUDITED_READ_EXCLUDES.includes(path)) {
     return false;
   }
   if (AUDITED_PREFIXES.some((prefix) => path.startsWith(prefix))) {

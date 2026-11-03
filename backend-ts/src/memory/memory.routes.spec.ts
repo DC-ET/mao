@@ -58,13 +58,19 @@ describe('memory routes', () => {
     expect(body.code).toBe(0);
     expect(body.data.records).toHaveLength(1);
     expect(body.data.total).toBe(1);
-    expect(service.list).toHaveBeenCalledWith(7, { scope: 'USER', projectKey: 'mao', status: 'ACTIVE', page: 2, pageSize: 10 });
+    expect(service.list).toHaveBeenCalledWith(7, { scope: 'USER', projectKey: 'mao', status: 'ACTIVE', keyword: null, page: 2, pageSize: 10 });
   });
 
   it('listDefaultsPaginationAndSkipsInvalidFilters', async () => {
     const app = buildApp(service);
     await app.inject({ method: 'GET', url: '/v1/memory?scope=BOGUS&status=X&page=-3&pageSize=9999' });
-    expect(service.list).toHaveBeenCalledWith(7, { scope: null, projectKey: null, status: null, page: 1, pageSize: 100 });
+    expect(service.list).toHaveBeenCalledWith(7, { scope: null, projectKey: null, status: null, keyword: null, page: 1, pageSize: 100 });
+  });
+
+  it('listPassesKeywordFilter', async () => {
+    const app = buildApp(service);
+    await app.inject({ method: 'GET', url: '/v1/memory?keyword=%20vitest%20' });
+    expect(service.list).toHaveBeenCalledWith(7, { scope: null, projectKey: null, status: null, keyword: 'vitest', page: 1, pageSize: 20 });
   });
 
   it('createDelegatesToService', async () => {

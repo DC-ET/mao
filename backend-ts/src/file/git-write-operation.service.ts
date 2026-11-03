@@ -261,8 +261,10 @@ export class GitWriteOperationService {
    * 切换分支（自动 stash + 切换后恢复，与 pull 的 stash 生命周期同构）。
    * 守卫只查 detached HEAD，不要求配置 remote——无远端的纯本地仓库也应可切分支
    * （requirePullPushState 同时查 detached 与 remote 两项，直接复用会误拒）。
-   * 目标形如 <remote>/<branch> 或 create=true 时建跟踪分支：
-   * git switch -c <local> --track <remote>/<remote-branch>（不依赖 DWIM）。
+   * 目标形如 <remote>/<branch> 或 create=true 且为远端 ref 时建跟踪分支：
+   * git switch -c <local> --track <remote>/<remote-branch>（不依赖 DWIM）；
+   * create=true 且为普通分支名时基于当前 HEAD 新建本地分支（git switch -c <name>），
+   * 与已有本地分支重名由 git 非零退出拦截，专判映射为「分支已存在」。
    */
   async switchBranch(session: Session, repoPath: string | null | undefined, branch: string, create?: boolean): Promise<GitOperationResult> {
     return this.locked(session, repoPath, 'switch', async (repo) => {
@@ -282,6 +284,10 @@ export class GitWriteOperationService {
       if (!switched.success) {
         // 切换失败：先恢复 stash 保留现场（恢复冲突异常优先抛出，消息含 stash 引用，同 pull 口径）
         if (stashOid != null) await this.restoreStash(repo, stashOid, stashRef);
+        // 同名本地分支已存在：git switch -c 非零退出兜底拦截，专判给出可读文案（不覆盖已有分支）
+        if (/already exists/i.test(switched.output)) {
+          throw new BusinessException(ErrorCode.PARAM_INVALID, '分支已存在，请换一个名字');
+        }
         throw new BusinessException(ErrorCode.INTERNAL_ERROR, classify(switched, '切换分支失败'));
       }
       if (stashOid != null) await this.restoreStash(repo, stashOid, stashRef);
@@ -705,9 +711,12 @@ function failedResult(operation: string, error: string): GitOperationResult {
 
 /**
  * 解析切换分支目标：
- * - 纯本地分支名 → git switch <branch>；
- * - 形如 <remote>/<branch>（前缀是已配置 remote）或 create=true → git switch -c <local> --track <remote>/<branch>。
+ * - 形如 <remote>/<branch>（前缀是已配置 remote）→ git switch -c <local> --track <remote>/<branch>；
+ * - create=true 且为普通分支名 → 基于当前 HEAD 新建本地分支 git switch -c <name>；
+ * - 其余 → git switch <branch>。
  * 分支名合法性走 git check-ref-format 子集（与前端 utils/git-manager.ts 的 isValidBranchName 同规则）。
+ * 本地新建路径的名字直接拼进 argv，首字符 `-` 会被 git 当 option 解析（option 注入），
+ * 且与前端 isValidBranchName 的首字符规则不一致，故显式拒绝；普通切换路径校验保持不动。
  */
 export function resolveSwitchTarget(branch: string, create: boolean, remotes: string[]): { args: string[]; localBranch: string } {
   const name = (branch ?? '').trim();
@@ -729,12 +738,15 @@ export function resolveSwitchTarget(branch: string, create: boolean, remotes: st
   const slashIdx = name.indexOf('/');
   const remotePrefix = slashIdx > 0 ? name.slice(0, slashIdx) : '';
   const isRemoteRef = remotePrefix.length > 0 && remotes.includes(remotePrefix);
-  if (create || isRemoteRef) {
-    if (!isRemoteRef) {
-      throw new BusinessException(ErrorCode.PARAM_INVALID, '仅支持从远端分支创建跟踪分支');
-    }
+  if (isRemoteRef) {
     const local = name.slice(slashIdx + 1);
     return { args: ['switch', '-c', local, '--track', name], localBranch: local };
+  }
+  if (create) {
+    if (name.startsWith('-')) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '分支名无效');
+    }
+    return { args: ['switch', '-c', name], localBranch: name };
   }
   return { args: ['switch', name], localBranch: name };
 }

@@ -49,6 +49,24 @@ describe('session group key', () => {
     expect(formatLabel('DINGTALK_GROUP:/opt/mao-data/workspace/dingtalk-chat/1/cidgroup', 'Coder', '项目群')).toBe('Coder:项目群');
   });
 
+  it('treats desktop / cli / android exactly like web for grouping (no dedicated branches)', () => {
+    // 技术方案 2026-11-03 D2：新来源值不引入专属分支，落桶与 web 逐项一致；
+    // applyFilter 的排除式只针对 embed / signal，新值必须仍落在同一模式/工作区桶里。
+    const cases = [
+      { executionMode: 'CLOUD', workspace: '/opt/mao-data/workspace/1/projects/demo' },
+      { executionMode: 'CLOUD', workspace: null },
+      { executionMode: 'LOCAL', workspace: '/Users/me/proj' },
+    ];
+    for (const base of cases) {
+      const webKey = of({ source: 'web', ...base });
+      for (const source of ['desktop', 'cli', 'android']) {
+        const key = of({ source, ...base });
+        expect(key, `${source}@${JSON.stringify(base)}`).toBe(webKey);
+        expect(applyFilter(key), `${source}@${JSON.stringify(base)}`).toEqual(applyFilter(webKey));
+      }
+    }
+  });
+
   it('routes embed sessions to a per-agent group regardless of workspace', () => {
     // SDK 会话工作区是 {workspaceRoot}/{userId}/{sessionId}，按旧规则会落进临时工作区
     expect(of({ source: 'embed', agentId: 7, executionMode: 'CLOUD', workspace: '/opt/mao-data/workspace/7/42' })).toBe('EMBED:7');

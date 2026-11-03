@@ -21,7 +21,7 @@ npm run dist    # Electron 打包（需自行处理代码签名）
 
 ## 自动更新
 
-桌面壳使用 `electron-updater` + `electron-builder` 的 generic provider。**通用安装包**在运行时配置服务器（首次启动配置页 / 菜单「服务器设置…」/ 设置 → 服务器），配置存于 Electron `userData/server-config.json`。可用环境变量：
+桌面壳使用 `electron-updater` + `electron-builder` 的 generic provider。**通用安装包**在运行时配置服务器（首次启动配置页 / 菜单「服务器设置…」/ 设置 → 服务器），配置存于 Electron `userData/server-config.json`。未配置且未设置环境变量时，默认站点为 `https://mao.example.com`。可用环境变量：
 
 - `MAO_DESKTOP_SERVER_URL` — 锁定站点根（优先于配置文件）
 - `MAO_DESKTOP_UPDATE_URL` — 覆盖自动更新源

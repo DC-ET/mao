@@ -43,9 +43,10 @@ describe('ApprovalRuleService', () => {
     repo = {
       listEnabledForMatch: vi.fn().mockResolvedValue([]),
       incrementHit: vi.fn().mockResolvedValue(undefined),
-      insert: vi.fn().mockResolvedValue(100),
-      findById: vi.fn(),
-      findBySessionAndValue: vi.fn().mockResolvedValue(null),
+    insert: vi.fn().mockResolvedValue(100),
+    findById: vi.fn(),
+    findBySessionAndValue: vi.fn().mockResolvedValue(null),
+    findByUserAndValue: vi.fn().mockResolvedValue(null),
       updateEnabled: vi.fn().mockResolvedValue(undefined),
       updateValue: vi.fn().mockResolvedValue(undefined),
       deleteById: vi.fn().mockResolvedValue(undefined),
@@ -328,5 +329,76 @@ describe('ApprovalRuleService', () => {
     const vo = await service.createUserRule(9, { ruleType: 'MCP_TOOL', ruleValue: 'mcp__' + 'a'.repeat(300) });
     expect(vo.ruleValue.length).toBe(200);
     expect(repo.insert).toHaveBeenCalledWith({ userId: 9, scope: 'USER', sessionId: null, ruleType: 'MCP_TOOL', ruleValue: 'mcp__' + 'a'.repeat(195) });
+  });
+
+  // ---------- 会话级规则管理（P1：可见 / 可撤 / 可提升） ----------
+
+  it('removeUserRuleDeletesOwnSessionAndUserRules', async () => {
+    // 本人名下即可删：撤回会话里点错的「总是允许」是核心诉求
+    repo.findById.mockResolvedValue(row({ scope: 'SESSION', sessionId: 7 }));
+    await expect(service.removeUserRule(9, 1)).resolves.toBeUndefined();
+    expect(repo.deleteById).toHaveBeenCalledWith(1);
+    repo.findById.mockResolvedValue(row({ scope: 'USER' }));
+    await expect(service.removeUserRule(9, 1)).resolves.toBeUndefined();
+    expect(repo.deleteById).toHaveBeenCalledTimes(2);
+  });
+
+  it('promoteSessionRuleCopiesToUserScopeAndKeepsSource', async () => {
+    repo.findById
+      .mockResolvedValueOnce(row({ scope: 'SESSION', sessionId: 7, ruleType: 'SHELL_PREFIX', ruleValue: 'git push' }))
+      .mockResolvedValueOnce(row({ id: 100, scope: 'USER', sessionId: null, ruleType: 'SHELL_PREFIX', ruleValue: 'git push' }));
+    const vo = await service.promoteSessionRule(9, 1);
+    expect(repo.insert).toHaveBeenCalledTimes(1);
+    expect(repo.insert).toHaveBeenCalledWith({ userId: 9, scope: 'USER', sessionId: null, ruleType: 'SHELL_PREFIX', ruleValue: 'git push' });
+    expect(repo.deleteById).not.toHaveBeenCalled(); // 复制语义：原会话级规则保留
+    expect(vo.scope).toBe('USER');
+    expect(vo.id).toBe(100);
+    expect(vo.sessionTitle).toBeNull();
+  });
+
+  it('promoteSessionRuleIsIdempotentOnSameValue', async () => {
+    repo.findById.mockResolvedValue(row({ scope: 'SESSION', sessionId: 7, ruleType: 'SHELL_PREFIX', ruleValue: 'git push' }));
+    repo.findByUserAndValue.mockResolvedValue(row({ id: 55, scope: 'USER', ruleValue: 'git push' }));
+    const vo = await service.promoteSessionRule(9, 1);
+    expect(repo.findByUserAndValue).toHaveBeenCalledWith(9, 'SHELL_PREFIX', 'git push');
+    expect(repo.insert).not.toHaveBeenCalled();
+    expect(vo.id).toBe(55);
+  });
+
+  it('promoteSessionRuleRejectsUserScopeOthersAndMissing', async () => {
+    repo.findById.mockResolvedValue(row({ scope: 'USER' }));
+    await expect(service.promoteSessionRule(9, 1)).rejects.toMatchObject({ code: 2001, message: '该规则已是用户级规则，无需提升' });
+    expect(repo.insert).not.toHaveBeenCalled();
+    repo.findById.mockResolvedValue(row({ userId: 77, scope: 'SESSION', sessionId: 7 }));
+    await expect(service.promoteSessionRule(9, 1)).rejects.toMatchObject({ code: 3037 });
+    repo.findById.mockResolvedValue(null);
+    await expect(service.promoteSessionRule(9, 999)).rejects.toMatchObject({ code: 3037 });
+    expect(repo.insert).not.toHaveBeenCalled();
+  });
+
+  it('promoteSessionRuleRejectsDenylistValue', async () => {
+    repo.findById.mockResolvedValue(row({ scope: 'SESSION', sessionId: 7, ruleType: 'SHELL_EXACT', ruleValue: 'rm x' }));
+    await expect(service.promoteSessionRule(9, 1)).rejects.toMatchObject({ code: 3038 });
+    expect(repo.insert).not.toHaveBeenCalled();
+  });
+
+  it('promoteSessionRuleNormalizesIdempotently', async () => {
+    // always-allow 落库值已归一化：重过 normalizeUserInput 幂等（git push → git push）
+    repo.findById
+      .mockResolvedValueOnce(row({ scope: 'SESSION', sessionId: 7, ruleType: 'SHELL_PREFIX', ruleValue: 'git push' }))
+      .mockResolvedValueOnce(row({ id: 100, scope: 'USER', ruleValue: 'git push' }));
+    await service.promoteSessionRule(9, 1);
+    expect(repo.insert).toHaveBeenCalledWith({ userId: 9, scope: 'USER', sessionId: null, ruleType: 'SHELL_PREFIX', ruleValue: 'git push' });
+  });
+
+  it('listUserRulesReturnsSessionTitleFromRepoRows', async () => {
+    repo.listByUser.mockResolvedValue([
+      { ...row({ id: 5, scope: 'SESSION', sessionId: 7 }), sessionTitle: 'CI 修复会话' },
+      row({ id: 6, scope: 'USER' }),
+    ]);
+    repo.countByUser.mockResolvedValue(2);
+    const page = await service.listUserRules(9, { scope: 'SESSION' });
+    expect(page.records[0].sessionTitle).toBe('CI 修复会话');
+    expect(page.records[1].sessionTitle).toBeNull();
   });
 });

@@ -8,7 +8,21 @@
     <div v-else-if="branches.length === 0" class="git-state">暂无分支</div>
     <template v-else>
       <div v-if="localBranches.length > 0" class="git-branch-group">
-        <div class="git-branch-group-head">本地分支 · {{ localBranches.length }}</div>
+        <div class="git-branch-group-head">
+          <span>本地分支 · {{ localBranches.length }}</span>
+          <button class="git-branch-create-btn" @click="createOpen = !createOpen">+ 新建分支</button>
+        </div>
+        <div v-if="createOpen" class="git-branch-create-row">
+          <input
+            v-model="createName"
+            class="git-branch-create-input"
+            placeholder="新分支名（基于当前 HEAD，如 feat/demo）"
+            @keyup.enter="confirmCreate"
+          />
+          <button class="git-branch-switch" :disabled="!canCreate || switching" @click="confirmCreate">创建</button>
+          <button class="git-branch-switch" @click="createOpen = false">取消</button>
+          <span v-if="createName && !canCreate" class="git-branch-create-error">分支名无效</span>
+        </div>
         <div v-for="branch in localBranches" :key="branch.name" class="git-branch-row">
           <div class="git-branch-main">
             <span class="git-branch-name" :class="{ current: branch.isCurrent }">
@@ -61,8 +75,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import type { GitBranchInfo } from '../../types/git'
+import { isValidBranchName } from '../../utils/git-manager'
 
 const props = defineProps<{
   branches: GitBranchInfo[]
@@ -76,10 +91,24 @@ const emit = defineEmits<{
   retry: []
   switch: [name: string, create: boolean]
   compare: [name: string]
+  'create-branch': [name: string]
 }>()
 
 const localBranches = computed(() => props.branches.filter((b) => !b.isRemote))
 const remoteBranches = computed(() => props.branches.filter((b) => b.isRemote))
+
+// 新建本地分支（基于当前 HEAD）：isValidBranchName 首字符类已排除 `-`，
+// 与后端 create 路径的首字符校验同规则；创建后立即收起输入行，失败提示走操作 toast
+const createOpen = ref(false)
+const createName = ref('')
+const canCreate = computed(() => isValidBranchName(createName.value.trim()))
+
+function confirmCreate() {
+  if (!canCreate.value) return
+  emit('create-branch', createName.value.trim())
+  createOpen.value = false
+  createName.value = ''
+}
 </script>
 
 <style scoped>
@@ -125,6 +154,53 @@ const remoteBranches = computed(() => props.branches.filter((b) => b.isRemote))
   text-transform: uppercase;
   color: var(--aw-ink-muted-48);
   background: var(--aw-surface);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.git-branch-create-btn {
+  border: none;
+  background: transparent;
+  color: var(--aw-primary);
+  cursor: pointer;
+  font-size: var(--aw-text-fine);
+  padding: 0 2px;
+}
+
+.git-branch-create-btn:hover {
+  text-decoration: underline;
+}
+
+.git-branch-create-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px 8px 18px;
+}
+
+.git-branch-create-input {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  font-size: var(--aw-text-caption);
+  font-family: var(--aw-font-mono);
+  color: var(--aw-ink);
+  background: var(--aw-surface);
+  border: 1px solid var(--aw-divider-soft);
+  border-radius: var(--aw-radius-xs);
+  outline: none;
+}
+
+.git-branch-create-input:focus {
+  border-color: var(--aw-primary);
+}
+
+.git-branch-create-error {
+  flex-shrink: 0;
+  font-size: var(--aw-text-fine);
+  color: var(--aw-danger);
 }
 
 .git-branch-row {

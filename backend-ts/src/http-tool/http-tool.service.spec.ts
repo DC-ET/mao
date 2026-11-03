@@ -3,8 +3,27 @@ import { HttpToolService } from './http-tool.service.js';
 import { HttpToolHeaderCipher } from './http-tool-cipher.js';
 import { ErrorCode } from '../common/error-code.js';
 import type {
-  HttpTool, HttpToolParam, HttpToolRepository,
+  HttpTool, HttpToolParam, HttpToolRepository, HttpToolSecretCipher,
 } from './types.js';
+
+/** 计数版 cipher：包裹真实实现，断言某条路径不触发加解密用。 */
+function spyCipher(): { calls: { encrypt: number; decrypt: number }; cipher: HttpToolSecretCipher } {
+  const calls = { encrypt: 0, decrypt: 0 };
+  const real = new HttpToolHeaderCipher('unit-test-secret');
+  return {
+    calls,
+    cipher: {
+      encrypt: (plaintext: string) => {
+        calls.encrypt++;
+        return real.encrypt(plaintext);
+      },
+      decrypt: (ciphertext: string) => {
+        calls.decrypt++;
+        return real.decrypt(ciphertext);
+      },
+    },
+  };
+}
 
 /** 内存版 repository：全局唯一 name，事务即顺序执行（回滚语义不在单测范围）。 */
 function fakeRepo(seed: HttpTool[] = []): HttpToolRepository & { tools: HttpTool[]; params: HttpToolParam[] } {
@@ -82,11 +101,11 @@ function seedTool(overrides: Partial<HttpTool> = {}): HttpTool {
   };
 }
 
-function makeService(options: { repo?: HttpToolRepository; builtins?: string[] } = {}) {
+function makeService(options: { repo?: HttpToolRepository; builtins?: string[]; cipher?: HttpToolSecretCipher } = {}) {
   const repo = options.repo ?? fakeRepo();
   const service = new HttpToolService({
     repo,
-    cipher: new HttpToolHeaderCipher('unit-test-secret'),
+    cipher: options.cipher ?? new HttpToolHeaderCipher('unit-test-secret'),
     builtinToolNames: () => options.builtins ?? ['read_file', 'shell'],
   });
   return { repo, service };
@@ -283,11 +302,119 @@ describe('HttpToolService execution resolution', () => {
 
   it('validates test drafts and rejects mask sentinel header values', async () => {
     const { service } = makeService();
-    const resolved = service.resolveDraftForExecution({ ...draft, name: 'draft_tool' });
+    const resolved = await service.resolveDraftForExecution({ ...draft, name: 'draft_tool' });
     expect(resolved.tool).toMatchObject({ name: 'draft_tool', method: 'GET' });
-    expect(() => service.resolveDraftForExecution({ ...draft, headers: { Authorization: '******' } }))
-      .toThrow();
-    expect(() => service.resolveDraftForExecution({ ...draft, url: 'ftp://x' })).toThrow();
+    await expect(service.resolveDraftForExecution({ ...draft, headers: { Authorization: '******' } }))
+      .rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
+    await expect(service.resolveDraftForExecution({ ...draft, url: 'ftp://x' })).rejects.toThrow();
+  });
+
+  it('resolves masked headers from the stored ciphertext when toolId is given', async () => {
+    const { service } = makeService();
+    const created = await service.create({
+      ...draft, headers: { Authorization: 'Bearer secret', 'X-Trace': 'abc' },
+    });
+    // 列表 / 编辑器随时可测：掩码敏感头从已存密文回填，非敏感头原样
+    const resolved = await service.resolveDraftForExecution(
+      { ...draft, headers: { Authorization: '******', 'X-Trace': 'abc' } },
+      created.id!,
+    );
+    expect(resolved.tool.headers).toEqual({ Authorization: 'Bearer secret', 'X-Trace': 'abc' });
+  });
+
+  it('rejects masked headers when toolId is missing, unknown or key-mismatched', async () => {
+    const { service } = makeService();
+    // 未传 toolId：保持「请填写真实值」口径
+    await expect(service.resolveDraftForExecution({ ...draft, headers: { Authorization: '******' } }))
+      .rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
+    // toolId 对应工具不存在
+    await expect(service.resolveDraftForExecution({ ...draft, headers: { Authorization: '******' } }, 99))
+      .rejects.toMatchObject({ code: ErrorCode.HTTP_TOOL_NOT_FOUND.code });
+    // 改键名后掩码无法对应到已存凭据
+    const created = await service.create({ ...draft, headers: { Authorization: 'Bearer secret' } });
+    await expect(service.resolveDraftForExecution(
+      { ...draft, headers: { 'X-Auth': '******' } }, created.id!,
+    )).rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
+  });
+
+  it('resolves masks on non-sensitive keys too and never encrypts during test resolution', async () => {
+    const spied = spyCipher();
+    const { service } = makeService({ cipher: spied.cipher });
+    const created = await service.create({ ...draft, headers: { 'X-Trace': 'plain-value' } });
+    const encryptsBefore = spied.calls.encrypt;
+    // 掩码判断先于键敏感性：非敏感键的掩码值同样从源回填（与 encodeHeaders 顺序一致）
+    const resolved = await service.resolveDraftForExecution(
+      { ...draft, headers: { 'X-Trace': '******' } }, created.id!,
+    );
+    expect(resolved.tool.headers).toEqual({ 'X-Trace': 'plain-value' });
+    // 执行形态要的是明文：回填路径不得经历加密
+    expect(spied.calls.encrypt).toBe(encryptsBefore);
+  });
+});
+
+describe('HttpToolService create with copyFromId', () => {
+  it('inherits the source ciphertext for masked headers', async () => {
+    const { service, repo } = makeService();
+    const source = await service.create({ ...draft, headers: { Authorization: 'Bearer secret' } });
+    const sourceStored = JSON.parse(
+      repo.tools.find((t) => t.id === source.id)!.headersJson!,
+    ) as Record<string, string>;
+    const vo = await service.create({
+      ...draft, name: 'weather_v2', displayName: '天气查询副本',
+      headers: { Authorization: '******' },
+      copyFromId: source.id!,
+    });
+    const copiedStored = JSON.parse(
+      repo.tools.find((t) => t.name === 'weather_v2')!.headersJson!,
+    ) as Record<string, string>;
+    // 与源工具同一密文（掩码沿用，不重新加密）
+    expect(copiedStored['Authorization']).toBe(sourceStored['Authorization']);
+    const cipher = new HttpToolHeaderCipher('unit-test-secret');
+    expect(cipher.decrypt(copiedStored['Authorization']!.slice('enc:'.length))).toBe('Bearer secret');
+    expect(vo.headers).toEqual([{ key: 'Authorization', value: '******', sensitive: true }]);
+  });
+
+  it('encrypts a fresh value when the copy provides a new plaintext', async () => {
+    const { service, repo } = makeService();
+    const source = await service.create({ ...draft, headers: { Authorization: 'Bearer secret' } });
+    await service.create({
+      ...draft, name: 'weather_v2', displayName: '天气查询副本',
+      headers: { Authorization: 'Bearer fresh' },
+      copyFromId: source.id!,
+    });
+    const stored = JSON.parse(
+      repo.tools.find((t) => t.name === 'weather_v2')!.headersJson!,
+    ) as Record<string, string>;
+    const sourceStored = JSON.parse(
+      repo.tools.find((t) => t.id === source.id)!.headersJson!,
+    ) as Record<string, string>;
+    expect(stored['Authorization']).not.toBe(sourceStored['Authorization']);
+    expect(new HttpToolHeaderCipher('unit-test-secret').decrypt(stored['Authorization']!.slice('enc:'.length)))
+      .toBe('Bearer fresh');
+  });
+
+  it('rejects a mask whose key is absent from the source tool and a missing source', async () => {
+    const { service } = makeService();
+    const source = await service.create({ ...draft, headers: { Authorization: 'Bearer secret' } });
+    await expect(service.create({
+      ...draft, name: 'weather_v2', displayName: '天气查询副本',
+      headers: { 'X-Auth': '******' },
+      copyFromId: source.id!,
+    })).rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
+    await expect(service.create({
+      ...draft, name: 'weather_v2', displayName: '天气查询副本',
+      headers: { Authorization: '******' },
+      copyFromId: 99,
+    })).rejects.toMatchObject({ code: ErrorCode.HTTP_TOOL_NOT_FOUND.code });
+  });
+
+  it('behaves as before when copyFromId is omitted', async () => {
+    const { service } = makeService();
+    // 掩码无解析源：拒绝保存（既有口径）
+    await expect(service.create({ ...draft, headers: { Authorization: '******' } }))
+      .rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
+    const vo = await service.create(draft);
+    expect(vo.headers).toEqual([]);
   });
 });
 

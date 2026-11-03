@@ -36,7 +36,7 @@ export interface EnvVariableInput {
 
 export interface EnvVariableUpdateInput {
   envKey?: string;
-  /** 必传：值不回显，无法表达「留空不改」；空串表示显式清空。 */
+  /** 可选：留空 / 未传保留原密文（编辑免重填，与 Git 凭证等凭据页口径一致）；仅非空字符串覆盖。 */
   envValue?: string;
   note?: string | null;
 }
@@ -333,14 +333,6 @@ export class EnvVariableService {
     return raw;
   }
 
-  /** 更新时值必传（不回显 → 无法表达「留空不改」）；空串是合法的显式清空。 */
-  private requireValueOnUpdate(value: string | null | undefined): string {
-    if (value == null) {
-      throw new BusinessException(ErrorCode.PARAM_INVALID, '变量值不能为空（不回显，无法留空不改）');
-    }
-    return this.validateValue(value);
-  }
-
   private normalizeNote(note: string | null | undefined): string | null {
     if (note == null) return null;
     const trimmed = String(note).trim();
@@ -385,7 +377,12 @@ export class EnvVariableService {
     input: EnvVariableUpdateInput,
     duplicate: { findDuplicate(envKey: string): Promise<EnvVariable | null> },
   ): Promise<EnvVariablePatch> {
-    const patch: EnvVariablePatch = { envValue: this.encrypt(this.requireValueOnUpdate(input.envValue)) };
+    const patch: EnvVariablePatch = {};
+    // 编辑免重填密文：未传 / null / 空串一律保留原密文（updateBy 对空 patch 直接跳过 SQL）；
+    // 仅显式非空字符串才重新加密覆盖。与 Git 凭证 / MCP 环境变量「留空则保留原值」完全统一。
+    if (input.envValue != null && input.envValue !== '') {
+      patch.envValue = this.encrypt(this.validateValue(input.envValue));
+    }
     if (input.envKey !== undefined) {
       const envKey = assertConfiguredEnvKey(input.envKey);
       if (envKey !== existing.envKey) {

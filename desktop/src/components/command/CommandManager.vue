@@ -1,9 +1,19 @@
 <template>
   <div class="command-manager">
-    <el-tabs v-model="activeTab" class="command-tabs">
-      <el-tab-pane label="我的指令" name="personal" />
-      <el-tab-pane label="系统指令" name="system" />
-    </el-tabs>
+    <div class="command-head">
+      <el-tabs v-model="activeTab" class="command-tabs">
+        <el-tab-pane label="我的指令" name="personal" />
+        <el-tab-pane label="系统指令" name="system" />
+      </el-tabs>
+      <el-input
+        v-model="commandKeyword"
+        class="command-search"
+        size="small"
+        placeholder="搜索指令"
+        clearable
+        :prefix-icon="Search"
+      />
+    </div>
 
     <p class="command-subtitle">
       {{ activeTab === 'personal' ? '创建和管理个人快捷指令。' : '查看系统预置的只读快捷指令。' }}
@@ -16,6 +26,7 @@
 
     <div class="command-list">
       <div v-if="loading" class="command-empty">加载中...</div>
+      <div v-else-if="displayedCommands.length === 0 && searching" class="command-empty">无匹配指令</div>
       <div v-else-if="displayedCommands.length === 0" class="command-empty">
         {{ activeTab === 'personal' ? '暂无个人指令' : '暂无系统指令' }}
       </div>
@@ -70,7 +81,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { Plus, Check, Close } from '@element-plus/icons-vue'
+import { Plus, Check, Close, Search } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../../api'
 import CommandEditDialog from './CommandEditDialog.vue'
@@ -89,7 +100,15 @@ const loading = ref(false)
 const activeTab = ref<'personal' | 'system'>('personal')
 const commands = ref<CommandItem[]>([])
 const systemCommands = ref<CommandItem[]>([])
-const displayedCommands = computed(() => activeTab.value === 'personal' ? commands.value : systemCommands.value)
+/** 关键词过滤：纯前端按 name + content 即时匹配（指令量级小，与管理后台系统指令列表同款做法）。 */
+const commandKeyword = ref('')
+const displayedCommands = computed(() => {
+  const source = activeTab.value === 'personal' ? commands.value : systemCommands.value
+  const kw = commandKeyword.value.trim().toLowerCase()
+  if (kw === '') return source
+  return source.filter((cmd) => `${cmd.name} ${cmd.content}`.toLowerCase().includes(kw))
+})
+const searching = computed(() => commandKeyword.value.trim() !== '')
 const deletingId = ref<number | null>(null)
 
 watch(activeTab, () => {
@@ -138,9 +157,12 @@ async function copyContent(cmd: CommandItem) {
 <style scoped>
 .command-manager {
   padding: 0 4px;
+  container-type: inline-size;
+  container-name: command-manager;
 }
 
-.command-tabs {
+.command-head {
+  position: relative;
   margin-bottom: 12px;
 }
 
@@ -150,12 +172,40 @@ async function copyContent(cmd: CommandItem) {
 
 .command-tabs :deep(.el-tabs__item) {
   font-size: 14px;
+  height: 40px;
+  line-height: 40px;
+}
+
+/* 页签文字不钻进右侧搜索框；底部分割线仍铺满整行。 */
+.command-tabs :deep(.el-tabs__nav-scroll) {
+  padding-right: 216px;
+}
+
+.command-search {
+  position: absolute;
+  top: 8px;
+  right: 0;
+  width: 200px;
+  z-index: 2;
 }
 
 .command-subtitle {
   font-size: 13px;
   color: var(--aw-ink-muted);
-  margin: 0 0 16px 0;
+  margin: 0 0 12px 0;
+}
+
+@container command-manager (max-width: 460px) {
+  .command-tabs :deep(.el-tabs__nav-scroll) {
+    padding-right: 0;
+  }
+
+  .command-search {
+    position: static;
+    display: flex;
+    width: 100%;
+    margin-top: 10px;
+  }
 }
 
 .create-btn {

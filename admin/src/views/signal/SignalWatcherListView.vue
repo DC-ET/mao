@@ -65,9 +65,15 @@
       <el-table-column label="创建时间" width="160">
         <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
       </el-table-column>
+      <el-table-column label="操作" width="90" fixed="right">
+        <template #default="{ row }">
+          <el-button link type="primary" @click="openDetail(row)">详情</el-button>
+        </template>
+      </el-table-column>
     </el-table>
 
     <ResponsivePagination
+      class="pagination"
       v-model:current-page="currentPage"
       v-model:page-size="pageSize"
       :total="total"
@@ -76,14 +82,119 @@
       @size-change="handleSizeChange"
     />
   </el-card>
+
+  <el-drawer
+    v-model="detailVisible"
+    :title="detailTitle"
+    :size="isMobile ? '100%' : '760px'"
+    destroy-on-close
+  >
+    <div v-loading="detailLoading" class="detail-body">
+      <el-tabs v-model="detailTab">
+        <el-tab-pane label="配置详情" name="config">
+          <el-descriptions v-if="detail" :column="isMobile ? 1 : 2" size="small" border>
+            <el-descriptions-item label="ID">{{ detail.id }}</el-descriptions-item>
+            <el-descriptions-item label="名称">{{ detail.name }}</el-descriptions-item>
+            <el-descriptions-item label="属主">{{ detail.username || `#${detail.userId}` }}</el-descriptions-item>
+            <el-descriptions-item label="状态">
+              <el-tag :type="statusTagType(detail.status)" size="small">{{ statusLabel(detail.status) }}</el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="Agent">{{ agentLabel(detail.agentId) }}</el-descriptions-item>
+            <el-descriptions-item label="轮询间隔">{{ detail.intervalMinutes }} 分钟</el-descriptions-item>
+            <el-descriptions-item label="判定模式">{{ compareModeLabel(detail.compareMode) }}</el-descriptions-item>
+            <el-descriptions-item label="触发方式">{{ triggerModeLabel(detail.triggerMode) }}</el-descriptions-item>
+            <el-descriptions-item label="探测地址" :span="isMobile ? 1 : 2">
+              <code class="probe-url">{{ detail.method }} {{ detail.url }}</code>
+            </el-descriptions-item>
+            <el-descriptions-item v-if="detail.compareMode === 'JSON_FIELD'" label="JSON 路径">
+              {{ detail.jsonPath || '-' }}
+            </el-descriptions-item>
+            <el-descriptions-item v-if="detail.triggerMode === 'REUSE_SESSION'" label="复用会话">
+              <el-button v-if="detail.reuseSessionId" link type="primary" @click="goSession(detail.reuseSessionId)">
+                #{{ detail.reuseSessionId }}
+              </el-button>
+              <span v-else>-</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="连续失败">
+              <span :class="{ 'fail-text': detail.consecutiveFailures > 0 }">{{ detail.consecutiveFailures }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="上次轮询">{{ formatDateTime(detail.lastCheckedAt) }}</el-descriptions-item>
+            <el-descriptions-item label="上次变化">{{ formatDateTime(detail.lastChangedAt) }}</el-descriptions-item>
+            <el-descriptions-item label="最近判定值">{{ detail.lastValueHash?.slice(0, 12) || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="创建时间">{{ formatDateTime(detail.createdAt) }}</el-descriptions-item>
+            <el-descriptions-item label="请求头" :span="isMobile ? 1 : 2">
+              <div v-if="headerEntries.length > 0" class="header-list">
+                <div v-for="[key, value] in headerEntries" :key="key"><code>{{ key }}</code>: {{ value }}</div>
+              </div>
+              <span v-else>-</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="请求体" :span="isMobile ? 1 : 2">
+              {{ detail.hasBody ? `已配置（${detail.bodyLength} 字符，不回显内容）` : '未配置' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="提示词模板" :span="isMobile ? 1 : 2">
+              <pre class="prompt-block">{{ detail.promptTemplate }}</pre>
+            </el-descriptions-item>
+          </el-descriptions>
+          <el-empty v-else-if="!detailLoading" description="加载失败" :image-size="48" />
+        </el-tab-pane>
+
+        <el-tab-pane :label="checksTotal > 0 ? `轮询记录（${checksTotal}）` : '轮询记录'" name="checks">
+          <el-table v-loading="checksLoading" :data="checks" size="small">
+            <template #empty><el-empty description="暂无轮询记录" :image-size="48" /></template>
+            <el-table-column label="时间" width="170">
+              <template #default="{ row }">{{ formatDateTime(row.checkedAt) }}</template>
+            </el-table-column>
+            <el-table-column label="状态码" width="80">
+              <template #default="{ row }">{{ row.httpStatus ?? '-' }}</template>
+            </el-table-column>
+            <el-table-column label="结果" width="80">
+              <template #default="{ row }">
+                <el-tag v-if="row.error" type="danger" size="small">失败</el-tag>
+                <el-tag v-else-if="row.changed === 1" type="warning" size="small">变化</el-tag>
+                <el-tag v-else type="success" size="small">未变</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="耗时" width="90">
+              <template #default="{ row }">{{ row.durationMs != null ? `${row.durationMs}ms` : '-' }}</template>
+            </el-table-column>
+            <el-table-column label="触发/告警" min-width="140" show-overflow-tooltip>
+              <template #default="{ row }">
+                <el-button v-if="row.triggeredSessionId" link type="primary" @click="goSession(row.triggeredSessionId)">
+                  会话 #{{ row.triggeredSessionId }}
+                </el-button>
+                <span v-if="row.warning" class="warn-text">{{ warningLabel(row.warning) }}</span>
+                <span v-if="!row.triggeredSessionId && !row.warning">-</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="详情" min-width="160" show-overflow-tooltip>
+              <template #default="{ row }">
+                <span :class="{ 'fail-text': row.error }">{{ row.error || row.valueHash?.slice(0, 12) || '-' }}</span>
+              </template>
+            </el-table-column>
+          </el-table>
+          <ResponsivePagination
+            v-if="checksTotal > 0"
+            class="pagination"
+            v-model:current-page="checksPage"
+            :page-size="CHECKS_PAGE_SIZE"
+            :total="checksTotal"
+            layout="total, prev, pager, next"
+            @current-change="handleChecksPageChange"
+          />
+        </el-tab-pane>
+      </el-tabs>
+    </div>
+  </el-drawer>
 </template>
 
 <script setup lang="ts">
-import { onActivated, onMounted, reactive, ref } from 'vue'
+import { computed, onActivated, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { Refresh } from '@element-plus/icons-vue'
 import { api } from '../../api'
-import type { SignalCompareMode, SignalTriggerMode, SignalWatcherStatus } from '@mao/contracts'
+import type { SignalCompareMode, SignalTriggerMode, SignalWatcherStatus, SignalWatcherWarning } from '@mao/contracts'
 import { formatDateTime } from '../../utils/datetime'
+import { useBreakpoint } from '../../composables/useBreakpoint'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
 
 interface WatcherRow {
@@ -101,6 +212,30 @@ interface WatcherRow {
   lastChangedAt: string | null
   consecutiveFailures: number
   createdAt: string | null
+}
+
+/** 详情接口返回：列表字段 + 完整配置（敏感值已脱敏）+ 属主展示名。 */
+interface WatcherDetail extends WatcherRow {
+  agentId: number
+  headers: Record<string, string>
+  hasBody: boolean
+  bodyLength: number
+  jsonPath: string | null
+  promptTemplate: string
+  lastValueHash: string | null
+  reuseSessionId: number | null
+}
+
+interface CheckRow {
+  id?: number
+  checkedAt: string | null
+  httpStatus: number | null
+  valueHash: string | null
+  changed: number
+  triggeredSessionId: number | null
+  error: string | null
+  durationMs: number | null
+  warning: SignalWatcherWarning | null
 }
 
 const statusOptions: readonly SignalWatcherStatus[] = ['ACTIVE', 'PAUSED', 'DISABLED']
@@ -139,6 +274,102 @@ const filters = reactive({
   userId: '',
   compareMode: ''
 })
+
+// ── 详情抽屉（配置详情 + 轮询记录，只读）────────────────────────────────────
+
+const WARNING_LABELS: Record<SignalWatcherWarning, string> = {
+  TRIGGER_RATE_LIMITED: '触发频次超限'
+}
+
+/** 轮询记录每页条数（与桌面端「轮询记录」保持一致）。 */
+const CHECKS_PAGE_SIZE = 20
+
+const router = useRouter()
+const { isMobile } = useBreakpoint()
+
+const detailVisible = ref(false)
+const detailLoading = ref(false)
+const detailTab = ref('config')
+const detail = ref<WatcherDetail | null>(null)
+const checks = ref<CheckRow[]>([])
+const checksTotal = ref(0)
+const checksPage = ref(1)
+const checksLoading = ref(false)
+const agentNames = ref<Record<number, string>>({})
+
+const headerEntries = computed(() => Object.entries(detail.value?.headers || {}))
+const detailTitle = computed(() => (detail.value ? `信号哨兵 · ${detail.value.name}` : '信号哨兵详情'))
+
+function warningLabel(warning: SignalWatcherWarning): string {
+  return WARNING_LABELS[warning] ?? warning
+}
+
+function agentLabel(agentId: number | null): string {
+  if (agentId == null) return '-'
+  const name = agentNames.value[agentId]
+  return name ? `${name}（#${agentId}）` : `#${agentId}`
+}
+
+function goSession(sessionId: number): void {
+  detailVisible.value = false
+  void router.push(`/sessions/${sessionId}`)
+}
+
+/** Agent 名称映射懒加载：取不到只回落成 #id，不影响详情本身。 */
+async function ensureAgentNames(): Promise<void> {
+  if (Object.keys(agentNames.value).length > 0) return
+  try {
+    const { data } = await api.get('/agents', { params: { includeDisabled: true } })
+    const map: Record<number, string> = {}
+    for (const agent of (data || []) as Array<{ id?: number; name?: string }>) {
+      if (agent?.id != null && agent.name) map[agent.id] = agent.name
+    }
+    agentNames.value = map
+  } catch { /* 拦截器已提示失败；保留数字 id 展示 */ }
+}
+
+async function loadDetail(id: number): Promise<void> {
+  detailLoading.value = true
+  try {
+    const { data } = await api.get(`/admin/signal-watchers/${id}`)
+    detail.value = data || null
+  } catch {
+    detail.value = null
+  } finally {
+    detailLoading.value = false
+  }
+}
+
+async function loadChecks(id: number): Promise<void> {
+  checksLoading.value = true
+  try {
+    const { data } = await api.get(`/admin/signal-watchers/${id}/checks`, {
+      params: { page: checksPage.value, size: CHECKS_PAGE_SIZE }
+    })
+    checks.value = data?.records || []
+    checksTotal.value = data?.total || 0
+  } catch {
+    checks.value = []
+    checksTotal.value = 0
+  } finally {
+    checksLoading.value = false
+  }
+}
+
+function handleChecksPageChange(): void {
+  if (detail.value) void loadChecks(detail.value.id)
+}
+
+async function openDetail(row: WatcherRow): Promise<void> {
+  detailVisible.value = true
+  detailTab.value = 'config'
+  detail.value = null
+  checks.value = []
+  checksTotal.value = 0
+  checksPage.value = 1
+  await Promise.all([loadDetail(row.id), loadChecks(row.id)])
+  void ensureAgentNames()
+}
 
 function statusLabel(status: SignalWatcherStatus): string {
   return STATUS_LABELS[status] ?? status
@@ -208,6 +439,10 @@ onActivated(() => {
 </script>
 
 <style scoped>
+.pagination {
+  margin-top: 16px;
+  justify-content: flex-end;
+}
 .card-header,
 .header-actions {
   display: flex;
@@ -219,5 +454,38 @@ onActivated(() => {
 .fail-text {
   color: var(--el-color-danger);
   font-weight: 600;
+}
+
+.warn-text {
+  color: var(--el-color-warning);
+  font-size: 12px;
+}
+
+/* ── 详情抽屉 ─────────────────────────────────────────────────────────── */
+
+.detail-body {
+  min-height: 200px;
+}
+
+.probe-url {
+  font-size: 12px;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+.header-list {
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+.prompt-block {
+  margin: 0;
+  padding: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: var(--el-fill-color-light);
+  border-radius: 4px;
 }
 </style>

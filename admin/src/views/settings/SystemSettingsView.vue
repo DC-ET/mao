@@ -52,6 +52,11 @@
                 :ready="settingsLoaded && !loading"
                 @saved="fetchSettings"
               />
+              <MenuVisibilityPanel
+                v-else-if="section.kind === 'menu-visibility'"
+                :can-write="canWrite"
+                @saved="fetchSettings"
+              />
               <EcpConfigPanel
                 v-else-if="section.kind === 'ecp'"
                 :row="ecpRow"
@@ -250,6 +255,7 @@ import { buildSettingsLocatorFields, settingFieldId, type SearchHit } from './se
 import { PANEL_LOCATOR_FIELDS, SECTION_KEYWORDS } from './settingsSearchCatalog'
 import CompanySsoConfigPanel from './components/CompanySsoConfigPanel.vue'
 import EcpConfigPanel from './components/EcpConfigPanel.vue'
+import MenuVisibilityPanel from './components/MenuVisibilityPanel.vue'
 import ShellEnvVarsPanel from './components/ShellEnvVarsPanel.vue'
 import ContainerHostsPanel from './components/ContainerHostsPanel.vue'
 import ContainerRebuildPanel from './components/ContainerRebuildPanel.vue'
@@ -301,7 +307,7 @@ const INTEGRATION_LABELS: Record<string, string> = {
 }
 
 /** 目录分组声明：右侧卡片渲染顺序与目录一致。integration=集成配置组，category=后端 system_setting 分类；后端新增的未声明分类兜底归入「其他」。 */
-const TOC_GROUPS: Array<{ label: string; sections: Array<{ kind: 'company-sso' | 'ecp' | 'shell-env' | 'container-hosts' | 'container-rebuild' | 'integration' | 'category'; name: string }> }> = [
+const TOC_GROUPS: Array<{ label: string; sections: Array<{ kind: 'company-sso' | 'ecp' | 'menu-visibility' | 'shell-env' | 'container-hosts' | 'container-rebuild' | 'integration' | 'category'; name: string }> }> = [
   {
     label: '登录认证',
     sections: [
@@ -366,6 +372,8 @@ const TOC_GROUPS: Array<{ label: string; sections: Array<{ kind: 'company-sso' |
   {
     label: '平台与运维',
     sections: [
+      // 菜单可见性：部署级隐藏不用的功能菜单（V182 admin.menu.hidden）
+      { kind: 'menu-visibility', name: 'menu-visibility' },
       { kind: 'category', name: '分享' },
       { kind: 'category', name: '审计' },
       { kind: 'category', name: '运行环境' },
@@ -386,9 +394,11 @@ const CONTAINER_INHERIT_KEY = 'runtime.container.inheritHostHosts'
 const CONTAINER_EXTRA_HOSTS_KEY = 'runtime.container.extraHosts'
 /** 开关在「容器管理」面板，不进「运行环境」分类卡片（那里只能渲染成文本框）。 */
 const CONTAINER_AUTO_UPGRADE_KEY = 'runtime.container.autoUpgrade'
+/** 菜单可见性（V182）：值是 JSON 数组，走 MenuVisibilityPanel 专属面板，不进分类卡片 /「其他」兜底 / 未保存检查。 */
+const ADMIN_MENU_HIDDEN_KEY = 'admin.menu.hidden'
 const SPECIAL_KEYS = new Set([
   ...INTEGRATION_KEYS, COMPANY_SSO_KEY, ECP_CONFIG_KEY, CONTAINER_INHERIT_KEY, CONTAINER_EXTRA_HOSTS_KEY,
-  CONTAINER_AUTO_UPGRADE_KEY,
+  CONTAINER_AUTO_UPGRADE_KEY, ADMIN_MENU_HIDDEN_KEY,
 ])
 const containerInheritRow = computed(() => settings.value.find((item) => item.settingKey === CONTAINER_INHERIT_KEY))
 const containerExtraHostsRow = computed(() => settings.value.find((item) => item.settingKey === CONTAINER_EXTRA_HOSTS_KEY))
@@ -658,7 +668,7 @@ const settingsByCategory = computed(() => {
 interface TocSection {
   id: string
   label: string
-  kind: 'company-sso' | 'ecp' | 'shell-env' | 'container-hosts' | 'container-rebuild' | 'integration' | 'category'
+  kind: 'company-sso' | 'ecp' | 'menu-visibility' | 'shell-env' | 'container-hosts' | 'container-rebuild' | 'integration' | 'category'
   name: string
 }
 
@@ -697,13 +707,15 @@ const tocGroups = computed<TocGroup[]>(() => {
             ? '公司 SSO'
             : decl.kind === 'ecp'
               ? 'ECP 飞书登录'
-              : decl.kind === 'shell-env'
-                ? 'Shell 环境变量'
-                : decl.kind === 'container-hosts'
-                  ? '容器域名解析'
-                  : decl.kind === 'container-rebuild'
-                    ? '容器管理'
-                    : decl.name,
+              : decl.kind === 'menu-visibility'
+                ? '菜单可见性'
+                : decl.kind === 'shell-env'
+                  ? 'Shell 环境变量'
+                  : decl.kind === 'container-hosts'
+                    ? '容器域名解析'
+                    : decl.kind === 'container-rebuild'
+                      ? '容器管理'
+                      : decl.name,
       })
     }
     if (sections.length > 0) groups.push({ label: group.label, sections })

@@ -1,7 +1,7 @@
 <template>
   <el-container class="layout-container">
     <el-aside v-if="!isMobile" :width="asideWidth" class="layout-aside">
-      <SideMenu :show-logo="true" :collapsed="collapsed" />
+      <SideMenu :show-logo="true" :collapsed="collapsed" @expand="collapsed = false" />
     </el-aside>
 
     <el-drawer
@@ -37,12 +37,15 @@
         <div class="header-right">
           <el-dropdown @command="handleCommand">
             <span class="user-info">
-              <el-avatar :size="28" icon="User" />
+              <el-avatar :size="28" :src="resolveAvatarUrl(authStore.user?.avatarUrl)">
+                <el-icon><User /></el-icon>
+              </el-avatar>
               <span v-if="!isMobile" class="username">{{ authStore.user?.displayName || '管理员' }}</span>
             </span>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item v-if="canWrite" command="change-password">修改密码</el-dropdown-item>
+                <!-- 自助改密：登录态即可（无需 user:write），仅本地密码账号展示（第三方登录在对应平台改密） -->
+                <el-dropdown-item v-if="isLocalUser" command="change-password">修改密码</el-dropdown-item>
                 <el-dropdown-item command="logout" divided>退出登录</el-dropdown-item>
               </el-dropdown-menu>
             </template>
@@ -80,11 +83,14 @@
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
+import { User } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
+import { useMenuStore } from '../stores/menu'
 import { useTabStore } from '../stores/tabs'
 import { useBreakpoint } from '../composables/useBreakpoint'
 import { useEmbedChat } from '../composables/useEmbedChat'
 import { homeTitle, pickHomePath } from '../utils/home'
+import { resolveAvatarUrl } from '../utils/avatar'
 import TabBar from './TabBar.vue'
 import SideMenu from './SideMenu.vue'
 import ReadinessBanner from './ReadinessBanner.vue'
@@ -95,6 +101,7 @@ const SIDEBAR_KEY = 'admin-sidebar-collapsed'
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
+const menuStore = useMenuStore()
 const tabStore = useTabStore()
 const { isMobile } = useBreakpoint()
 // 浮窗助手：Layout 仅在登录后路由树挂载，卸载（登出跳 /login）时自动销毁 SDK 实例
@@ -133,11 +140,20 @@ watch(isMobile, (mobile) => {
   if (!mobile) drawerVisible.value = false
 })
 
-watch(() => authStore.user, (user) => {
-  if (!user) return
-  const path = pickHomePath((permission) => authStore.hasPermission(permission))
-  tabStore.setHomePath(path, homeTitle(path))
-}, { immediate: true })
+// 登录用户或菜单可见性变化时重置不可关闭的首页签：跳过部署级隐藏的页面，
+// 保证 TabBar 首页签与「点 Logo / 返回首页」的落点一致（隐藏「用量分析」后首页签跟随下一次可见页）。
+watch(
+  [() => authStore.user, () => menuStore.hidden],
+  ([user]) => {
+    if (!user) return
+    const path = pickHomePath(
+      (permission) => authStore.hasPermission(permission),
+      (index) => menuStore.isHidden(index)
+    )
+    tabStore.setHomePath(path, homeTitle(path))
+  },
+  { immediate: true }
+)
 
 watch(route, (newRoute) => {
   tabStore.addTab(newRoute)
@@ -151,7 +167,8 @@ watch(changePasswordVisible, (visible, prev) => {
   if (!visible && prev) readinessRefreshKey.value += 1
 })
 
-const canWrite = computed(() => authStore.hasPermission('user:write'))
+/** 本地密码账号才可自助改密（第三方登录账号回各自平台改密，后端同口径兜底）。 */
+const isLocalUser = computed(() => authStore.user?.authSource === 'LOCAL')
 
 async function handleCommand(command: string) {
   if (command === 'logout') {

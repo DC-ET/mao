@@ -21,6 +21,14 @@ const {
   switchBranch,
 } = require('./gitOperations.cjs')
 
+// commit 只在「仓库和全局都没有 user.name/email」时用 -c 注入 Mao Agent，且不写回仓库配置。
+// 开发机的全局 git 身份会让这条断言读到真实姓名，这里把本文件的 git 限定在空配置上。
+const isolatedGitConfig = path.join(os.tmpdir(), `mao-git-isolated-${process.pid}.config`)
+fs.writeFileSync(isolatedGitConfig, '')
+process.env.GIT_CONFIG_GLOBAL = isolatedGitConfig
+process.env.GIT_CONFIG_SYSTEM = isolatedGitConfig
+process.on('exit', () => fs.rmSync(isolatedGitConfig, { force: true }))
+
 function git(cwd, args, env = {}) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, ...env } }).trim()
 }
@@ -343,8 +351,10 @@ test('switch target resolution covers local, remote and invalid names', () => {
   for (const invalid of ['', ' ', '..', 'a..b', 'a@{1}', '@', '/a', 'a/', 'a//b', 'a.', '.hidden', 'x.lock', 'a b']) {
     assert.throws(() => resolveSwitchTarget(invalid, false, ['origin']), /分支名无效/, invalid)
   }
-  // create=true 但名字不是 remote 引用时明确拒绝，不回退到本地 switch
-  assert.throws(() => resolveSwitchTarget('side', true, []), /仅支持从远端分支创建跟踪分支/)
+  // create=true 且为普通分支名：基于当前 HEAD 新建本地分支（git switch -c <name>）
+  assert.deepEqual(resolveSwitchTarget('side', true, []), { args: ['switch', '-c', 'side'], localBranch: 'side' })
+  // 本地新建路径的名字直接拼进 argv，首字符 `-` 会被 git 当 option 解析，显式拒绝
+  assert.throws(() => resolveSwitchTarget('-x', true, []), /分支名无效/)
 })
 
 test('fetch prunes the remote without touching the worktree', async (t) => {

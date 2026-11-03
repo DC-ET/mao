@@ -3,6 +3,7 @@ import { api } from '../../api'
 import { useDraftStore } from '../draft'
 import { cloudGroupKey, formatCloudGroupLabel } from '../../utils/cloud-project'
 import { sortByFocusPriority, sessionToFocusCandidate } from '../../utils/focusSort'
+import { clientSessionSource } from '../../utils/platform'
 import { normalizeId, normalizeSession, persistLastSession, LAST_SESSION_KEY, ACTIVE_PHASES, DEFAULT_GROUP_PREVIEW, DEFAULT_GROUP_PAGE_SIZE } from './types'
 import type { Session, SessionEnvironmentInfo, SessionGroupMeta, CloudProject, TaskPhase } from './types'
 import { persistedContextWindow } from './context-window'
@@ -525,6 +526,9 @@ export function createSessionListModule(ctx: {
     const payload: Record<string, unknown> = {
       agentId,
       executionMode,
+      // 客户端形态自报（桌面端 / 安卓 / 浏览器），管理后台按来源筛选；
+      // 后端 POST /v1/sessions 白名单校验（技术方案 2026-11-03 D3）。
+      source: clientSessionSource(),
       modelId: modelId || undefined,
       permissionLevel: permissionLevel || undefined,
       isGit: environmentInfo?.isGit,

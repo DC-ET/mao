@@ -77,6 +77,11 @@ describe('session group filter consistency', () => {
     // 另补一条 CLOUD + projects 工作区（历史数据/手动改过工作区的兜底形态）。
     { name: 'signal + CLOUD 项目工作区', row: row({ source: 'signal' }) },
     { name: 'signal + CLOUD 临时工作区', row: row({ source: 'signal', workspace: null }) },
+    // 客户端形态来源（技术方案 2026-11-03）：不命中 of() 任何专属分支，落桶与 web 同规则；
+    // 覆盖 CLOUD 项目 / CLOUD 临时 / LOCAL 三种工作区形态，守住「预览分组 == 展开过滤」不变量。
+    { name: 'desktop + CLOUD 项目工作区', row: row({ source: 'desktop' }) },
+    { name: 'cli + LOCAL 工作区', row: row({ source: 'cli', execution_mode: 'LOCAL', workspace: '/Users/me/proj' }) },
+    { name: 'android + CLOUD 临时工作区', row: row({ source: 'android', workspace: null }) },
   ];
 
   it('每个会话只命中 of() 指出的那一个分组', () => {

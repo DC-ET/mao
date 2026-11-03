@@ -140,12 +140,19 @@
         :exhausted="logExhausted"
         :expanded-commit="expandedCommit"
         :commit-files="commitFiles"
+        :commit-bodies="commitBodies"
         :commit-files-loading="commitFilesLoading"
         :remotes="remotes"
+        :path-filter="logPathFilter"
+        :keyword="logKeyword"
         @load-more="loadMoreLog"
         @retry="retryLog"
         @toggle-commit="toggleCommit"
         @open-commit-diff="handleOpenCommitDiff"
+        @update:path-filter="setLogFilters({ path: $event })"
+        @update:keyword="setLogFilters({ keyword: $event })"
+        @add-file-to-chat="(p) => $emit('add-file-to-chat', p)"
+        @add-commit-to-chat="(t) => $emit('add-commit-to-chat', t)"
       />
       <GitBranchesView
         v-else-if="activeView === 'branches'"
@@ -156,6 +163,7 @@
         @retry="loadBranches"
         @switch="handleSwitchBranch"
         @compare="handleCompareBranch"
+        @create-branch="handleCreateBranch"
       />
       <GitCompareView
         v-else-if="activeView === 'compare'"
@@ -217,6 +225,7 @@ const emit = defineEmits<{
   'open-commit-diff': [payload: { hash: string; file: GitChangedFile; repoPath?: string }]
   'open-branch-diff': [payload: { base: string; target: string; file: GitChangedFile; repoPath?: string }]
   'add-file-to-chat': [filePath: string]
+  'add-commit-to-chat': [text: string]
 }>()
 
 const views: Array<{ id: GitManagerView; label: string }> = [
@@ -291,7 +300,8 @@ const {
 const manager = useGitManager(statusProviderRef)
 const {
   activeView, logEntries, logLoading, logError, logExhausted,
-  expandedCommit, commitFiles, commitFilesLoading,
+  expandedCommit, commitFiles, commitBodies, commitFilesLoading,
+  logPathFilter, logKeyword, setLogFilters,
   loadMoreLog, retryLog, toggleCommit,
   branches, branchesLoading, branchesError, loadBranches,
   compareBase, compareTarget, compareResult, compareLoading, compareError, loadCompare,
@@ -415,6 +425,11 @@ async function handleRefreshAndFetch() {
 
 function handleSwitchBranch(name: string, create: boolean) {
   void run('switch', name, create ? { create: true } : undefined).then(() => handleRefreshAll())
+}
+
+/** 新建本地分支（基于当前 HEAD）：与「跟踪并切换」同走 switch/create 通道，成功后全量刷新。 */
+function handleCreateBranch(name: string) {
+  void run('switch', name, { create: true }).then(() => handleRefreshAll())
 }
 
 function handleStashOp(action: GitStashAction, ref: string) {

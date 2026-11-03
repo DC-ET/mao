@@ -180,6 +180,8 @@ interface GitCommitFilesResult {
     deletions?: number
     binary?: boolean
   }>
+  /** 提交正文：`git show -s --format=%B` 去除首行标题后的剩余部分（trim，空串表示无正文）。 */
+  body: string
 }
 
 type GitStashAction = 'apply' | 'pop' | 'drop'
@@ -301,7 +303,7 @@ interface ElectronAPI {
   gitCommit(workspace: string | undefined, repoPath: string | undefined, message: string): Promise<GitOperationResult>
   gitPull(workspace?: string, repoPath?: string): Promise<GitOperationResult>
   gitPush(workspace?: string, repoPath?: string): Promise<GitOperationResult>
-  gitLog(workspace: string | undefined, repoPath: string | undefined, options?: { limit?: number; offset?: number; path?: string }): Promise<GitLogEntry[] | { error: string }>
+  gitLog(workspace: string | undefined, repoPath: string | undefined, options?: { limit?: number; offset?: number; path?: string; keyword?: string }): Promise<GitLogEntry[] | { error: string }>
   gitCommitFiles(workspace: string | undefined, repoPath: string | undefined, hash: string): Promise<GitCommitFilesResult | { error: string }>
   gitCommitFileDiff(workspace: string | undefined, repoPath: string | undefined, hash: string, path: string, oldPath?: string): Promise<{
     path: string

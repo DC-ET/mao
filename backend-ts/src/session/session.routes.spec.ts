@@ -668,40 +668,43 @@ describe('session and admin routes', () => {
     await fastify.close();
   });
 
-  it('creates session with embed source and rejects invalid source', async () => {
+  it('creates session with client-declared source and rejects unknown/system source', async () => {
     const { fastify, sessionService } = await app();
-    const created = JSON.parse((await fastify.inject({
-      method: 'POST', url: '/v1/sessions', payload: { title: 't', agentId: 9, source: 'embed' },
-    })).body);
-    expect(created.code).toBe(0);
-    expect(created.data.source).toBe('web'); // mock 返回默认 session()，真实落库在 service 层测
-    const args = vi.mocked(sessionService.createSession).mock.calls[0];
-    expect(args[args.length - 1]).toBe('embed');
-    const bad = JSON.parse((await fastify.inject({
-      method: 'POST', url: '/v1/sessions', payload: { title: 't', source: 'mobile' },
-    })).body);
-    expect(bad.code).toBe(2001);
-    // 系统来源 signal 只能由哨兵触发经 openRun 产生：用户手工入口一律拒绝
-    // （否则可把会话伪造进「信号哨兵」分组）
-    const forged = JSON.parse((await fastify.inject({
-      method: 'POST', url: '/v1/sessions', payload: { title: 't', agentId: 9, source: 'signal' },
-    })).body);
-    expect(forged.code).toBe(2001);
-    expect(vi.mocked(sessionService.createSession).mock.calls).toHaveLength(1);
+    // 五个客户端可自报值全部放行，source 落在 createSession 的尾参（第 16 参）
+    for (const source of ['web', 'embed', 'desktop', 'cli', 'android']) {
+      const created = JSON.parse((await fastify.inject({
+        method: 'POST', url: '/v1/sessions', payload: { title: 't', agentId: 9, source },
+      })).body);
+      expect(created.code, `source=${source}`).toBe(0);
+    }
+    expect(vi.mocked(sessionService.createSession).mock.calls.map((args) => args[args.length - 1]))
+      .toEqual(['web', 'embed', 'desktop', 'cli', 'android']);
+    // 未知值 / 系统来源仍拒绝：系统来源只能由各通道内部调用方写入
+    // （否则可把会话伪造进「信号哨兵」等分组，防伪造分组归属）
+    for (const source of ['mobile', 'signal', 'feishu', 'dingtalk']) {
+      const bad = JSON.parse((await fastify.inject({
+        method: 'POST', url: '/v1/sessions', payload: { title: 't', agentId: 9, source },
+      })).body);
+      expect(bad.code, `source=${source} 应被拒`).toBe(2001);
+    }
+    expect(vi.mocked(sessionService.createSession).mock.calls).toHaveLength(5);
     await fastify.close();
   });
 
-  it('PUT /v1/sessions/:id/source 只接受 web/embed，拒绝 signal', async () => {
+  it('PUT /v1/sessions/:id/source 只接受 embed（Embed 惰性接管）', async () => {
     const { fastify, sessionService } = await app();
     const ok = JSON.parse((await fastify.inject({
       method: 'PUT', url: '/v1/sessions/1/source', payload: { source: 'embed' },
     })).body);
     expect(ok.code).toBe(0);
-    for (const source of ['signal', 'mobile']) {
+    expect(vi.mocked(sessionService.markSessionSource).mock.calls).toHaveLength(1);
+    // 无「把会话改判成桌面 / CLI / 安卓 / Web 建的」合法流程；系统来源更不可设置
+    for (const source of ['web', 'desktop', 'cli', 'android', 'signal', 'mobile']) {
       const bad = JSON.parse((await fastify.inject({
         method: 'PUT', url: '/v1/sessions/1/source', payload: { source },
       })).body);
       expect(bad.code, `source=${source} 应被拒`).toBe(2001);
+      expect(String(bad.message), `source=${source} 文案`).toContain("source 仅允许 'embed'");
     }
     expect(vi.mocked(sessionService.markSessionSource).mock.calls).toHaveLength(1);
     await fastify.close();

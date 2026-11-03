@@ -104,17 +104,20 @@
         <el-button type="primary" :loading="savingRole" @click="saveRole">保存</el-button>
       </template>
     </ResponsiveDialog>
+
+    <RoleMemberDialog v-model="memberDialogVisible" :role="memberRole" @changed="handleMembersChanged" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, reactive, ref, onActivated, onMounted, onUnmounted } from 'vue'
-import { onBeforeRouteLeave, useRouter } from 'vue-router'
+import { onBeforeRouteLeave } from 'vue-router'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
 import { useAuthStore } from '../../stores/auth'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
+import RoleMemberDialog from './RoleMemberDialog.vue'
 
 interface Role {
   id: number
@@ -141,8 +144,9 @@ const currentRole = ref<Role | null>(null)
 const dirtyPermissions = ref(false)
 const dialogVisible = ref(false)
 const dialogMode = ref<'create' | 'edit'>('create')
+const memberDialogVisible = ref(false)
+const memberRole = ref<Role | null>(null)
 const roleFormRef = ref<FormInstance>()
-const router = useRouter()
 const authStore = useAuthStore()
 const canWrite = computed(() => authStore.hasPermission('role:write'))
 const roleForm = reactive({
@@ -266,6 +270,20 @@ function selectRole(role: Role) {
   dirtyPermissions.value = false
 }
 
+/**
+ * 重拉角色列表后按当前选中角色找回最新对象。
+ * 权限有未保存修改时只替换标题对象，不清勾选状态（与保存角色时的旧行为一致）。
+ */
+async function refreshRoles() {
+  await fetchAll()
+  const id = currentRole.value?.id
+  if (id == null) return
+  const updated = roles.value.find((r) => r.id === id)
+  if (!updated) return
+  if (dirtyPermissions.value) currentRole.value = updated
+  else selectRole(updated)
+}
+
 /** 勾选变化置脏；row-click 切换角色时如有未保存修改先确认 */
 function onPermissionChange(next: number[]) {
   selectedPermissionIds.value = next
@@ -311,7 +329,17 @@ function handleEditRole(role: Role) {
 }
 
 function handleViewMembers(role: Role) {
-  router.push({ path: '/users', query: { roleId: String(role.id) } })
+  memberRole.value = role
+  memberDialogVisible.value = true
+}
+
+/** 弹窗内增删成员后：刷新角色列表的用户数，并同步弹窗拿到的角色对象。 */
+async function handleMembersChanged() {
+  await refreshRoles()
+  if (memberRole.value) {
+    const updated = roles.value.find((r) => r.id === memberRole.value!.id)
+    if (updated) memberRole.value = updated
+  }
 }
 
 async function saveRole() {
@@ -327,18 +355,8 @@ async function saveRole() {
       await api.put(`/roles/${roleForm.id}`, roleForm)
       ElMessage.success('角色已更新')
     }
-    const editedId = dialogMode.value === 'edit' ? roleForm.id : null
-    const preserveDirty = editedId != null && dirtyPermissions.value && currentRole.value?.id === editedId
     dialogVisible.value = false
-    await fetchAll()
-    if (editedId != null && currentRole.value?.id === editedId) {
-      const updated = roles.value.find((role) => role.id === editedId)
-      if (updated) {
-        // 权限勾选未保存时只刷新标题，避免 selectRole 清掉 dirty 状态
-        if (preserveDirty) currentRole.value = updated
-        else selectRole(updated)
-      }
-    }
+    await refreshRoles()
   } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
     savingRole.value = false
   }
@@ -354,10 +372,7 @@ async function savePermissions() {
     ElMessage.success('权限已保存')
     dirtyPermissions.value = false
     // Keep the current role selected and refresh so checkbox state stays in sync
-    const id = currentRole.value.id
-    await fetchAll()
-    const updated = roles.value.find(r => r.id === id)
-    if (updated) selectRole(updated)
+    await refreshRoles()
   } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
     savingPermissions.value = false
   }

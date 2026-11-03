@@ -176,6 +176,7 @@ import { FixedWindowRateLimiter } from './openapi/rate-limiter.js';
 import { OpenRunService, type OpenRunDeps } from './openapi/open-run.service.js';
 import { WebhookTriggerService, type WebhookTriggerDeps } from './openapi/webhook-trigger.service.js';
 import { OutboundSubscriptionService } from './openapi/outbound-subscription.service.js';
+import { GenericHttpWebhookSender } from './openapi/generic-webhook-sender.js';
 import { OPEN_HOOKS_PATH_PREFIX, registerOpenApiRoutes, type RawBodyRequest } from './openapi/open.routes.js';
 import { OpenApiCallLogService } from './openapi/open-api-call-log.service.js';
 import { MysqlHttpToolRepository } from './http-tool/http-tool.repository.js';
@@ -665,10 +666,13 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   // 可选回调接入同一收口（ask_user 派发点在工具层直调 recordQuestionPending）
   const outboundSubscriptionRepo = new MysqlOutboundSubscriptionRepository(db);
   const outboundDeliveryRepo = new MysqlOutboundDeliveryRepository(db);
+  // 通用出站发送器共享单实例：订阅服务（测试投递）与投递调度器（真实投递）同用
+  const genericWebhookSender = new GenericHttpWebhookSender();
   const outboundSubscriptionService = new OutboundSubscriptionService({
     subscriptionRepo: outboundSubscriptionRepo,
     deliveryRepo: outboundDeliveryRepo,
     cipher: notifCipher,
+    sender: genericWebhookSender,
   });
   const inboxRepo = new InboxRepository(db);
   const inboxService = new InboxService(
@@ -940,6 +944,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     app, db, cfg, ctx,
     scheduledStore, scheduledService, settingService, notifCipher, senderRegistry,
     sessionService, outboundDeliveryRepo, outboundSubscriptionRepo, auditService,
+    genericWebhookSender,
     agentExecutor, inboxCleanupStore, callLogService, callLogCleanup,
     ecpSessionRepo, weixinMonitor, feishuMonitor, dingtalk, pendingBindingMessages,
     shellManager, terminalManager, wsHandler, subagentMapper, sessionMap, sessionSvc,

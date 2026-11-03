@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { BusinessException } from '../common/business-exception.js';
-import { SystemSettingService } from './settings.service.js';
+import { ADMIN_MENU_HIDDEN_KEY, parseAdminMenuHidden, SystemSettingService } from './settings.service.js';
 import { encryptAesGcmNonNull } from '../crypto/aes-gcm.js';
 import type { AgentLookup, ModelLookup, SystemSetting, SystemSettingRepository } from './types.js';
 
@@ -785,5 +785,96 @@ describe('SystemSettingService 自定义 HTTP 工具设置项（V163）', () => 
     await expect(service().getPrivateAllowlistCidrs()).resolves.toEqual(['10.0.0.0/8']);
     vi.mocked(mapper.findByKey).mockResolvedValue(null);
     await expect(service().getPrivateAllowlistCidrs()).resolves.toEqual([]);
+  });
+});
+
+describe('SystemSettingService 菜单可见性（V182）', () => {
+  const mapper: SystemSettingRepository = {
+    list: vi.fn(),
+    findByKey: vi.fn(),
+    updateById: vi.fn(),
+    transaction: vi.fn(async (fn: (repo: SystemSettingRepository) => Promise<unknown>) => fn(mapper)),
+  };
+  const agentLookup: AgentLookup = { findById: vi.fn() };
+  const modelLookup: ModelLookup = { findById: vi.fn() };
+
+  function service(): SystemSettingService {
+    return new SystemSettingService(mapper, agentLookup, modelLookup, { workspaceRoot: '/ws', skillsDir: '/skills' });
+  }
+
+  function row(value: string | null): SystemSetting {
+    return { id: 1, settingKey: ADMIN_MENU_HIDDEN_KEY, category: '管理后台', value, editable: 1 };
+  }
+
+  beforeEach(() => {
+    vi.mocked(mapper.findByKey).mockReset();
+    vi.mocked(mapper.updateById).mockReset();
+  });
+
+  it('parseAdminMenuHidden：缺行 / 空值 / 坏数据一律按全部显示', () => {
+    expect(parseAdminMenuHidden(null)).toEqual([]);
+    expect(parseAdminMenuHidden(undefined)).toEqual([]);
+    expect(parseAdminMenuHidden('')).toEqual([]);
+    expect(parseAdminMenuHidden('   ')).toEqual([]);
+    expect(parseAdminMenuHidden('not-json')).toEqual([]);
+    expect(parseAdminMenuHidden('{}')).toEqual([]);
+    expect(parseAdminMenuHidden('"abc"')).toEqual([]);
+    expect(parseAdminMenuHidden('[1, true, null, { "a": 1 }]')).toEqual([]);
+  });
+
+  it('parseAdminMenuHidden：忽略空白项与非 / 开头项，去重并保序', () => {
+    expect(parseAdminMenuHidden('["/dingtalk-bots", "/openapi-calls", "/dingtalk-bots", "", "  ", "agents", 1]'))
+      .toEqual(['/dingtalk-bots', '/openapi-calls']);
+    expect(parseAdminMenuHidden('[" /sessions "]')).toEqual(['/sessions']);
+  });
+
+  it('getAdminMenuHidden：缺行 / 空值 / 坏 JSON 都返回空数组', async () => {
+    vi.mocked(mapper.findByKey).mockResolvedValue(null);
+    await expect(service().getAdminMenuHidden()).resolves.toEqual([]);
+    vi.mocked(mapper.findByKey).mockResolvedValue(row(''));
+    await expect(service().getAdminMenuHidden()).resolves.toEqual([]);
+    vi.mocked(mapper.findByKey).mockResolvedValue(row('oops'));
+    await expect(service().getAdminMenuHidden()).resolves.toEqual([]);
+  });
+
+  it('getAdminMenuHidden：返回合法隐藏列表', async () => {
+    vi.mocked(mapper.findByKey).mockResolvedValue(row('["/dingtalk-bots"]'));
+    await expect(service().getAdminMenuHidden()).resolves.toEqual(['/dingtalk-bots']);
+  });
+
+  it('update：接受 JSON 数组、空串与 []（恢复默认）', async () => {
+    vi.mocked(mapper.findByKey).mockResolvedValue(row('[]'));
+    await expect(service().update(ADMIN_MENU_HIDDEN_KEY, '["/dingtalk-bots","/openapi-calls"]'))
+      .resolves.toMatchObject({ value: '["/dingtalk-bots","/openapi-calls"]' });
+    await expect(service().update(ADMIN_MENU_HIDDEN_KEY, '[]')).resolves.toBeDefined();
+    await expect(service().update(ADMIN_MENU_HIDDEN_KEY, '')).resolves.toBeDefined();
+    await expect(service().update(ADMIN_MENU_HIDDEN_KEY, null)).resolves.toBeDefined();
+  });
+
+  it('update：拒绝非 JSON / 非数组 / 非字符串元素 / 非 / 开头元素', async () => {
+    vi.mocked(mapper.findByKey).mockResolvedValue(row('[]'));
+    await expect(service().update(ADMIN_MENU_HIDDEN_KEY, 'dingtalk')).rejects.toThrow(/JSON 数组/);
+    await expect(service().update(ADMIN_MENU_HIDDEN_KEY, '{}')).rejects.toThrow(/JSON 数组/);
+    await expect(service().update(ADMIN_MENU_HIDDEN_KEY, '[1]')).rejects.toThrow(/以 \/ 开头/);
+    await expect(service().update(ADMIN_MENU_HIDDEN_KEY, '["agents"]')).rejects.toThrow(/以 \/ 开头/);
+    expect(mapper.updateById).not.toHaveBeenCalled();
+  });
+
+  it('update：禁止隐藏「系统设置」（含前后空白变体）', async () => {
+    vi.mocked(mapper.findByKey).mockResolvedValue(row('[]'));
+    await expect(service().update(ADMIN_MENU_HIDDEN_KEY, '["/settings"]')).rejects.toThrow(/不可隐藏/);
+    await expect(service().update(ADMIN_MENU_HIDDEN_KEY, '[" /settings "]')).rejects.toThrow(/不可隐藏/);
+    await expect(service().update(ADMIN_MENU_HIDDEN_KEY, '["/settings "]')).rejects.toThrow(/不可隐藏/);
+    expect(mapper.updateById).not.toHaveBeenCalled();
+  });
+
+  it('update：最多 64 项（重复项去重后计数）', async () => {
+    vi.mocked(mapper.findByKey).mockResolvedValue(row('[]'));
+    const exactly64 = JSON.stringify(Array.from({ length: 64 }, (_, i) => `/menu-${i}`));
+    await expect(service().update(ADMIN_MENU_HIDDEN_KEY, exactly64)).resolves.toBeDefined();
+    const over65 = JSON.stringify([...Array.from({ length: 64 }, (_, i) => `/menu-${i}`), '/one-more']);
+    await expect(service().update(ADMIN_MENU_HIDDEN_KEY, over65)).rejects.toThrow(/最多 64 项/);
+    const duplicate65 = JSON.stringify(Array.from({ length: 65 }, () => '/same'));
+    await expect(service().update(ADMIN_MENU_HIDDEN_KEY, duplicate65)).resolves.toBeDefined();
   });
 });

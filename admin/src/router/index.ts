@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import { useMenuStore } from '../stores/menu'
 import { pickHomePath } from '../utils/home'
 import { chunkReloadTarget } from './chunk-reload'
 
@@ -222,10 +223,21 @@ router.beforeEach(async (to, _from, next) => {
       }
     }
     const permission = to.meta.permission as string | undefined
+    // 菜单可见性（部署级全局）：首屏进入时随用户信息一起加载，后续导航零请求；fail-open 不阻断导航。
+    const menuStore = useMenuStore()
+    if (!menuStore.loaded) await menuStore.fetch()
+    // 「/」与 404 兜底的静态 redirect 都会先解析成 /analytics：此时按首页降级链改落到首个可见有权限页，
+    // 避免隐藏「用量分析」后登录 / 访问根地址仍落在被隐藏页面。用户主动输入 /analytics 没有
+    // redirectedFrom，保持可达——隐藏 ≠ 收权（D8）。
+    if (to.path === '/analytics' && to.redirectedFrom && menuStore.isHidden('/analytics')) {
+      const home = pickHomePath((p) => authStore.hasPermission(p), (i) => menuStore.isHidden(i))
+      next(home)
+      return
+    }
     if (permission && !authStore.hasPermission(permission)) {
       // 登录后默认进用量分析。没有该读权限时落到其有权限的首个页面，避免一登录就无权限。
       if (to.path === '/analytics') {
-        const home = pickHomePath((p) => authStore.hasPermission(p))
+        const home = pickHomePath((p) => authStore.hasPermission(p), (i) => menuStore.isHidden(i))
         next(home === '/analytics' ? '/forbidden' : home)
         return
       }

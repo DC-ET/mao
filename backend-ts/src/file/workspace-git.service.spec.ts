@@ -207,6 +207,88 @@ describeGit('WorkspaceGitService', () => {
     expect(await service.getLog(unborn, null, {})).toEqual([]);
   });
 
+  // ===== 提交历史 keyword 搜索（--grep --fixed-strings -i）=====
+
+  /** 三个提交：fix: alpha bug（a-alpha.txt）/ feat: beta feature（b-beta.txt）/ fix: gamma issue（c-gamma.txt）。 */
+  async function setupKeywordRepo() {
+    const ctx = await setupRepo();
+    const commits: Array<[string, string]> = [
+      ['a-alpha.txt', 'fix: alpha bug'],
+      ['b-beta.txt', 'feat: beta feature'],
+      ['c-gamma.txt', 'fix: gamma issue'],
+    ];
+    for (const [name, message] of commits) {
+      writeFileSync(join(ctx.repo, name), `${name}\n`);
+      run(ctx.repo, 'git', 'add', name);
+      run(ctx.repo, 'git', 'commit', '-m', message);
+    }
+    return ctx;
+  }
+
+  it('getLogFiltersByCommitMessageKeyword', async () => {
+    const { service, repo } = await setupKeywordRepo();
+    const fixes = await service.getLog(repo, null, { keyword: 'fix' });
+    expect(fixes.map((e) => e.title).sort()).toEqual(['fix: alpha bug', 'fix: gamma issue']);
+    // -i：大小写不敏感
+    const upper = await service.getLog(repo, null, { keyword: 'FIX' });
+    expect(upper.length).toBe(2);
+  });
+
+  it('getLogKeywordCombinesWithPathFilter', async () => {
+    const { service, repo } = await setupKeywordRepo();
+    // --grep 与 -- <path> 天然 AND：message 命中且文件命中的提交才返回
+    const both = await service.getLog(repo, null, { keyword: 'fix', path: 'a-alpha.txt' });
+    expect(both.map((e) => e.title)).toEqual(['fix: alpha bug']);
+    const pathOnly = await service.getLog(repo, null, { keyword: 'feat', path: 'a-alpha.txt' });
+    expect(pathOnly).toEqual([]);
+  });
+
+  it('getLogKeywordMetaCharsMatchLiterally', async () => {
+    const { service, repo } = await setupKeywordRepo();
+    // --fixed-strings：正则元字符按字面匹配，git 不报错、不按正则解释
+    const literal = await service.getLog(repo, null, { keyword: 'fix:.*a' });
+    expect(literal).toEqual([]);
+    const plain = await service.getLog(repo, null, { keyword: 'fix: alpha' });
+    expect(plain.map((e) => e.title)).toEqual(['fix: alpha bug']);
+  });
+
+  it('getLogEmptyKeywordBehavesAsUnfiltered', async () => {
+    const { service, repo } = await setupKeywordRepo();
+    const baseline = await service.getLog(repo, null, {});
+    const blank = await service.getLog(repo, null, { keyword: '   ' });
+    expect(blank.map((e) => e.title)).toEqual(baseline.map((e) => e.title));
+    expect(baseline.length).toBe(4);
+  });
+
+  it('getLogKeywordTruncatedTo100Chars', async () => {
+    const { service, repo } = await setupKeywordRepo();
+    writeFileSync(join(repo, 'long.txt'), 'long\n');
+    run(repo, 'git', 'add', 'long.txt');
+    run(repo, 'git', 'commit', '-m', 'a'.repeat(120));
+    // 150 字符 keyword 截断到 100 后才能命中 120 字符消息（未截断的字面串不可能命中）
+    const entries = await service.getLog(repo, null, { keyword: 'a'.repeat(150) });
+    expect(entries.length).toBe(1);
+    expect(entries[0].title).toBe('a'.repeat(120));
+  });
+
+  it('getCommitFilesReturnsBodyWithoutSubject', async () => {
+    const { service, repo } = await setupRepo();
+    writeFileSync(join(repo, 'multi.txt'), 'multi\n');
+    run(repo, 'git', 'add', 'multi.txt');
+    run(repo, 'git', 'commit', '-m', 'multi subject', '-m', 'body line');
+    const multiHash = run(repo, 'git', 'rev-parse', 'HEAD').trim();
+    const multi = await service.getCommitFiles(repo, null, multiHash);
+    expect(multi.body).toBe('body line');
+    expect(multi.files.length).toBe(1);
+
+    writeFileSync(join(repo, 'single.txt'), 'single\n');
+    run(repo, 'git', 'add', 'single.txt');
+    run(repo, 'git', 'commit', '-m', 'single subject only');
+    const singleHash = run(repo, 'git', 'rev-parse', 'HEAD').trim();
+    const single = await service.getCommitFiles(repo, null, singleHash);
+    expect(single.body).toBe('');
+  });
+
   it('getCommitFilesRejectsUnknownHash', async () => {
     const { service, repo } = await setupRepo();
     // 格式合法但 git 中不存在：必须报错，不能返空列表（空列表与空提交无法区分）

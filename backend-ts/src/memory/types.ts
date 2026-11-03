@@ -59,6 +59,8 @@ export interface MemoryListQuery {
   scope?: MemoryScope | null;
   projectKey?: string | null;
   status?: MemoryStatus | null;
+  /** 关键词过滤：对 content / project_key 做 LIKE 包含匹配（通配符按字面转义）。 */
+  keyword?: string | null;
   page: number;
   pageSize: number;
 }

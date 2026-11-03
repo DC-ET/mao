@@ -1562,10 +1562,92 @@ describe('AgentFeishuInboundHandler p2p multi-session', () => {
       p2pSessionControl: control as never,
       titleGenerator,
     });
-    await handler.onMessage(makeContext({ threadId: 'omt_abc', messageId: 'om_root', parentId: null, text: '帮我看下线上这个报错' }));
+    await handler.onMessage(makeContext({ threadId: 'omt_abc', messageId: 'om_root', parentId: null, senderLabel: '杨佳毅', text: '帮我看下线上这个报错' }));
     await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(titleGenerator.generate).toHaveBeenCalledWith(10, '帮我看下线上这个报错');
+    // 群聊标题素材与 Agent 执行所见一致：带【用户消息】段的完整文本。
+    expect(titleGenerator.generate).toHaveBeenCalledWith(10, '【用户消息】\n杨佳毅：帮我看下线上这个报错');
     expect(control.finalizeNewSessionTitle).toHaveBeenCalledWith(10, '排查线上报错');
+  });
+
+  it('names a new thread session from the full composed message when the trigger is a bare mention', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const threadControl = {
+      findSession: vi.fn(async () => null),
+      getOrCreateSession: vi.fn(async () => ({ sessionId: 10, rootMessageId: 'om_root', workspace: '/ws/thread', executionUserId: 42 })),
+    };
+    const control = makeP2pControl();
+    const titleGenerator = { generate: vi.fn(async () => '表单技术方案开发') };
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      listenerFactory: async () => listener,
+      threadSessionControl: threadControl as never,
+      p2pSessionControl: control as never,
+      titleGenerator,
+    });
+    // 群里先发长任务描述（未 @机器人，只进群消息日志），再发裸 @梁子 触发：
+    // 标题若只喂 context.text（@梁子）会生成「提及梁子」，必须带上【群内最近消息】。
+    await handler.onMessage(makeContext({
+      threadId: 'omt_abc', messageId: 'om_root', parentId: null, senderLabel: '杨佳毅',
+      text: '@梁子',
+      groupContext: '[2026-11-03 11:19:59] 杨佳毅：@docs/plan/2026-11-03-session-source-client-form-technical-design.md开始开发，需求较复杂，不要遗漏任何细节。',
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const generated = titleGenerator.generate.mock.calls[0]?.[1] as string;
+    expect(generated).toContain('【群内最近消息】\n[2026-11-03 11:19:59] 杨佳毅：@docs/plan/2026-11-03-session-source-client-form-technical-design.md开始开发');
+    expect(generated).toContain('【用户消息】\n杨佳毅：@梁子');
+    expect(control.finalizeNewSessionTitle).toHaveBeenCalledWith(10, '表单技术方案开发');
+  });
+
+  it('trims the user text inside the composed title input', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const threadControl = {
+      findSession: vi.fn(async () => null),
+      getOrCreateSession: vi.fn(async () => ({ sessionId: 10, rootMessageId: 'om_root', workspace: '/ws/thread', executionUserId: 42 })),
+    };
+    const control = makeP2pControl();
+    const titleGenerator = { generate: vi.fn(async () => '表单技术方案开发') };
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      listenerFactory: async () => listener,
+      threadSessionControl: threadControl as never,
+      p2pSessionControl: control as never,
+      titleGenerator,
+    });
+    // 用户消息带首尾空白：标题素材里的文本段与群上下文段都必须 trim
+    // （重构前 scheduleNewSessionTitle 传的就是 context.text.trim()）。
+    await handler.onMessage(makeContext({
+      threadId: 'omt_abc', messageId: 'om_root', parentId: null, senderLabel: '杨佳毅',
+      text: '  @梁子\n',
+      groupContext: '  [11:19:59] 杨佳毅：开始开发表单技术方案  ',
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(titleGenerator.generate).toHaveBeenCalledWith(10,
+      '【群内最近消息】\n[11:19:59] 杨佳毅：开始开发表单技术方案\n\n【用户消息】\n杨佳毅：@梁子');
+  });
+
+  it('passes the trimmed user text to the title generator in p2p (pre-refactor behavior)', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const control = makeP2pControl();
+    const titleGenerator = { generate: vi.fn(async () => '整理需求文档') };
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      listenerFactory: async () => listener,
+      p2pSessionControl: control as never,
+      titleGenerator,
+    });
+    await handler.onMessage(makeP2pContext({ text: '  帮我把这份需求文档整理成任务拆解\n', messageId: 'om_first' }));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    // p2p 无段前缀：标题素材恰好等于 trim 后的用户文本，与重构前逐字一致。
+    expect(titleGenerator.generate).toHaveBeenCalledWith(7, '帮我把这份需求文档整理成任务拆解');
   });
 
   it('ingests a thread file without executing', async () => {

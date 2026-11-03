@@ -76,8 +76,12 @@
 
       <div class="profile-actions">
         <el-button type="primary" :loading="saving" @click="save">保存</el-button>
+        <!-- 自助改密：仅本地密码账号可见（第三方登录账号在对应平台改密） -->
+        <el-button v-if="isLocalUser" @click="passwordDialogVisible = true">修改密码</el-button>
       </div>
     </div>
+
+    <ChangePasswordDialog :visible="passwordDialogVisible" @update:visible="passwordDialogVisible = $event" />
   </div>
 </template>
 
@@ -90,6 +94,9 @@ import { api } from '../../api'
 import { useAuthStore } from '../../stores/auth'
 import { uploadImages } from '../../utils/imageUpload'
 import { useTheme, type ThemeMode } from '../../utils/theme'
+import ChangePasswordDialog from './ChangePasswordDialog.vue'
+
+const passwordDialogVisible = ref(false)
 
 const MAX_SIZE = 5 * 1024 * 1024
 

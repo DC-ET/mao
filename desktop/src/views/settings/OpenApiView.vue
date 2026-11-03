@@ -120,6 +120,9 @@
               <span v-if="trigger.consecutiveFailures > 0" class="badge badge-warn">连续失败 {{ trigger.consecutiveFailures }}</span>
             </div>
             <div class="item-actions">
+              <el-tooltip content="编辑" :show-after="300">
+                <button class="action-btn" @click="openEditTrigger(trigger)"><el-icon :size="14"><Edit /></el-icon></button>
+              </el-tooltip>
               <el-tooltip content="调用记录" :show-after="300">
                 <button class="action-btn" @click="showCalls({ triggerId: trigger.id, title: trigger.name })"><el-icon :size="14"><Tickets /></el-icon></button>
               </el-tooltip>
@@ -167,6 +170,9 @@
               <span v-else class="badge badge-danger">已停用</span>
             </div>
             <div class="item-actions">
+              <el-tooltip content="测试投递" :show-after="300">
+                <button class="action-btn" :disabled="testingId === sub.id" @click="testDelivery(sub)"><el-icon :size="14"><Promotion /></el-icon></button>
+              </el-tooltip>
               <el-tooltip content="最近投递" :show-after="300">
                 <button class="action-btn" @click="showDeliveries(sub)"><el-icon :size="14"><Clock /></el-icon></button>
               </el-tooltip>
@@ -207,8 +213,8 @@
       </template>
     </el-dialog>
 
-    <!-- 新建触发器 -->
-    <el-dialog v-model="triggerDialogVisible" title="新建 Webhook 触发器" width="440px" class="open-api-dialog" append-to-body @closed="resetTriggerForm">
+    <!-- 新建 / 编辑触发器（编辑复用同表单，pathToken 与 Secret 不变） -->
+    <el-dialog v-model="triggerDialogVisible" :title="editingTriggerId != null ? '编辑 Webhook 触发器' : '新建 Webhook 触发器'" width="440px" class="open-api-dialog" append-to-body @closed="resetTriggerForm">
       <el-form label-position="top">
         <el-form-item label="名称">
           <el-input v-model="triggerForm.name" placeholder="如：CI 失败分析" maxlength="128" />
@@ -236,7 +242,7 @@
       <template #footer>
         <button class="dialog-btn dialog-btn-cancel" @click="triggerDialogVisible = false">取消</button>
         <button class="dialog-btn dialog-btn-confirm" :disabled="!canCreateTrigger || submitting" @click="submitTrigger">
-          {{ submitting ? '创建中…' : '创建' }}
+          {{ submitting ? (editingTriggerId != null ? '保存中…' : '创建中…') : (editingTriggerId != null ? '保存' : '创建') }}
         </button>
       </template>
     </el-dialog>
@@ -358,7 +364,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { Plus, Delete, RefreshRight, VideoPause, VideoPlay, Clock, CopyDocument, Tickets, Reading, Download } from '@element-plus/icons-vue'
+import { Plus, Delete, Edit, RefreshRight, VideoPause, VideoPlay, Clock, CopyDocument, Tickets, Reading, Download, Promotion } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import {
@@ -366,7 +372,7 @@ import {
   listApiTokens, issueApiToken, revealApiToken, revokeApiToken, setTokenLogFullBody, reEnableToken,
   listWebhookTriggers, createWebhookTrigger, updateWebhookTrigger, deleteWebhookTrigger, rotateWebhookTriggerSecret,
   listOutboundSubscriptions, createOutboundSubscription, setOutboundSubscriptionEnabled, deleteOutboundSubscription,
-  listOutboundDeliveries, listOpenApiCalls,
+  listOutboundDeliveries, listOpenApiCalls, testOutboundSubscription,
   type ApiTokenView, type WebhookTriggerView, type OutboundSubscriptionView, type OutboundDeliveryView, type OpenApiCallView
 } from '../../api'
 import { copyText as copyToClipboard } from '../../utils/clipboard'
@@ -400,6 +406,10 @@ const secretDialogVisible = ref(false)
 const deliveriesDialogVisible = ref(false)
 const deliveriesLoading = ref(false)
 const deliveries = ref<OutboundDeliveryView[]>([])
+/** 编辑态：非 null 表示触发器对话框处于编辑模式（复用新建对话框）。 */
+const editingTriggerId = ref<number | null>(null)
+/** 测试投递进行中的订阅 id（按钮级 loading，防连点）。 */
+const testingId = ref<number | null>(null)
 
 const tokenForm = ref({ name: '', scopes: ['open:run'] as string[] })
 const triggerForm = ref<{ name: string; agentId: number | null; sessionId: number | null }>({ name: '', agentId: null, sessionId: null })
@@ -653,12 +663,34 @@ function openTriggerDialog(): void {
 
 function resetTriggerForm(): void {
   triggerForm.value = { name: '', agentId: null, sessionId: null }
+  editingTriggerId.value = null
+}
+
+/** 编辑触发器：回填当前值；绑定会话塞入下拉保证回显；pathToken 与 Secret 不变、启用态不在表单内。 */
+function openEditTrigger(trigger: WebhookTriggerView): void {
+  editingTriggerId.value = trigger.id
+  triggerForm.value = { name: trigger.name, agentId: trigger.agentId, sessionId: trigger.sessionId }
+  sessionOptions.value = trigger.sessionId != null ? [{ id: trigger.sessionId, title: `#${trigger.sessionId}` }] : []
+  if (agents.value.length === 0) void fetchAgents()
+  triggerDialogVisible.value = true
 }
 
 async function submitTrigger(): Promise<void> {
   if (!canCreateTrigger.value || submitting.value) return
   submitting.value = true
   try {
+    if (editingTriggerId.value != null) {
+      // 编辑：不传 enabled（启用态原样保留）；sessionId 显式传 null 表示解绑回「每次新建会话」
+      await updateWebhookTrigger(editingTriggerId.value, {
+        name: triggerForm.value.name.trim(),
+        agentId: triggerForm.value.agentId!,
+        sessionId: triggerForm.value.sessionId ?? null
+      })
+      triggerDialogVisible.value = false
+      ElMessage.success('触发器已更新')
+      await fetchTriggers()
+      return
+    }
     const created = await createWebhookTrigger({
       name: triggerForm.value.name.trim(),
       agentId: triggerForm.value.agentId!,
@@ -751,6 +783,24 @@ async function toggleSubscription(sub: OutboundSubscriptionView): Promise<void> 
     await fetchSubscriptions()
   } catch {
     // handled by interceptor
+  }
+}
+
+/** 测试投递：用真实 Secret 同步发一条 test:true 示例事件，一秒验证签名与连通性（不写投递历史）。 */
+async function testDelivery(sub: OutboundSubscriptionView): Promise<void> {
+  if (testingId.value != null) return
+  testingId.value = sub.id
+  try {
+    const result = await testOutboundSubscription(sub.id)
+    if (result.success) {
+      ElMessage.success(`测试成功（HTTP ${result.httpStatus ?? 200}，${result.durationMs}ms）`)
+    } else {
+      ElMessage.error(`测试失败：${result.error ?? '目标不可达'}`)
+    }
+  } catch {
+    // handled by interceptor
+  } finally {
+    testingId.value = null
   }
 }
 

@@ -111,6 +111,8 @@ export interface GitRemoteInfoDTO {
 export interface GitCommitFilesDTO {
   hash: string;
   files: GitChangedFileDTO[];
+  /** 提交正文：`git show -s --format=%B` 去除首行标题后的剩余部分（trim，空串表示无正文）。 */
+  body: string;
 }
 
 /**
@@ -366,17 +368,22 @@ export class WorkspaceGitService {
 
   /**
    * 提交历史（分页）。空仓库（无 HEAD）git log 失败，返回 [] 不报错。
-   * limit 钳制 [1,200] 默认 50；offset ≥ 0；path 可选（按文件过滤，本期前端未用）。
+   * limit 钳制 [1,200] 默认 50；offset ≥ 0；path 可选（按文件过滤）；
+   * keyword 可选（提交信息 `--grep` 字面匹配：--fixed-strings 不解释正则元字符、
+   * -i 大小写不敏感，trim 后截断 100 字符，空值不产生参数）。
    */
   async getLog(
     sessionWorkspace: string,
     repoPath?: string | null,
-    opts?: { limit?: number; offset?: number; path?: string | null },
+    opts?: { limit?: number; offset?: number; path?: string | null; keyword?: string | null },
   ): Promise<GitLogEntryDTO[]> {
     const repoRoot = await this.resolveRepoRoot(sessionWorkspace, repoPath);
     const limit = clampInt(opts?.limit, LOG_DEFAULT_LIMIT, 1, LOG_MAX_LIMIT);
     const offset = clampInt(opts?.offset, 0, 0, Number.MAX_SAFE_INTEGER);
     const args = ['log', `--format=${LOG_FORMAT}`, '-n', String(limit), '--skip', String(offset)];
+    // keyword 组必须插在 `--` 之前；与 `-- <path>` 天然 AND 组合。
+    const keyword = opts?.keyword?.trim().slice(0, 100);
+    if (keyword) args.push(`--grep=${keyword}`, '--fixed-strings', '-i');
     const pathFilter = opts?.path?.trim();
     if (pathFilter) args.push('--', pathFilter);
     const out = await this.runGitOk(repoRoot, args);
@@ -435,7 +442,19 @@ export class WorkspaceGitService {
         }
       }
     }
-    return { hash: normalizedHash, files: [...files.values()] };
+    const body = await this.extractCommitBody(repoRoot, normalizedHash);
+    return { hash: normalizedHash, files: [...files.values()], body };
+  }
+
+  /**
+   * 提交正文：`git show -s --format=%B` 去除首行标题后的剩余部分（trim）。
+   * 单行标题的提交 slice(1) 为空数组、trim 后为空串；读取失败（合法 hash 但
+   * 对象读取异常）按无正文处理，不影响文件清单。
+   */
+  private async extractCommitBody(repoRoot: string, hash: string): Promise<string> {
+    const message = await this.runGitOk(repoRoot, ['show', '-s', '--format=%B', hash]);
+    if (message == null) return '';
+    return message.split('\n').slice(1).join('\n').trim();
   }
 
   /**

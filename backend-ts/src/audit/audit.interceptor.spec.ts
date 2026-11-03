@@ -23,6 +23,13 @@ describe('audit interceptor', () => {
     expect(shouldAudit('/v1/scheduled-tasks/cron-preview', 'POST')).toBe(false);
   });
 
+  it('菜单可见性读取不写日志（首屏必拉），其它系统设置读取与写入仍照常审计', () => {
+    expect(shouldAudit('/v1/system-settings/menu-visibility', 'GET')).toBe(false);
+    expect(shouldAudit('/v1/system-settings', 'GET')).toBe(true);
+    expect(shouldAudit('/v1/system-settings/admin.menu.hidden', 'PUT')).toBe(true);
+    expect(shouldAudit('/v1/system-settings/admin.menu.hidden', 'GET')).toBe(true);
+  });
+
   it('resolveActionAndObjectFields', () => {
     expect(resolveAction('POST')).toBe('CREATE');
     expect(resolveAction('PUT')).toBe('UPDATE');
