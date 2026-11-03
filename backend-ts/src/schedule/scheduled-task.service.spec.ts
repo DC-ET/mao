@@ -1355,11 +1355,21 @@ describe('ScheduledTaskService runNow（手动立即执行）', () => {
     expect(res.taskId).toBe(1);
   });
 
-  it('绑定会话不存在报参数错误且不落运行行', async () => {
+  it('绑定会话不存在报参数错误且不落运行行（null 与抛 3002 两种契约同口径）', async () => {
     const store = runNowStore(ACTIVE_TASK);
     const { svc } = runNowService(store, { session: null });
     await expect(svc.runNow(1, 7)).rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
     expect(store.insertRun).not.toHaveBeenCalled();
+
+    // 生产契约：getSession 对已删会话抛 BusinessException(SESSION_NOT_FOUND) 而非返回 null（round1 C1）
+    const store2 = runNowStore(ACTIVE_TASK);
+    const wrap2 = runNowService(store2, {});
+    wrap2.stubs.getSession.mockRejectedValue(new BusinessException(ErrorCode.SESSION_NOT_FOUND));
+    await expect(wrap2.svc.runNow(1, 7)).rejects.toMatchObject({
+      code: ErrorCode.PARAM_INVALID.code,
+      message: '绑定会话已不存在，无法执行',
+    });
+    expect(store2.insertRun).not.toHaveBeenCalled();
   });
 
   it('锁内任务已删除：运行行标 FAILED（任务已删除），无任务行回写', async () => {
@@ -1427,6 +1437,27 @@ describe('ScheduledTaskService runNow（手动立即执行）', () => {
       await ran();
       expect(res.fireTime).toBe('2026-11-03 10:00:01');
       expect(vi.mocked(store.insertRun).mock.calls[0][0].fireTime).toBe('2026-11-03 10:00:01');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('同秒冲突偏移后仍避开 cron 档期，绝不把手动行插到下一档上（round1 C2 回归）', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-03T10:00:00+08:00'));
+    try {
+      // cron 每秒一跳，下一档 = 10:00:01；首候选 10:00:00 被既有行占用。
+      // 修复前：+1s 直接落 10:00:01（cron 档期）→ 扫描器到点撞 COMPLETED 手动行 → 任务永久停摆。
+      const store = runNowStore({ ...ACTIVE_TASK, cronExpression: '* * * * * *', nextFireTime: '2026-11-03 10:00:01' }, {
+        selectRunByFire: vi.fn()
+          .mockResolvedValueOnce({ id: 9, taskId: 1, fireTime: '2026-11-03 10:00:00', attempt: 1, status: 'COMPLETED', sessionId: 11 })
+          .mockResolvedValue(null),
+      });
+      const { svc, ran } = runNowService(store, { live: vi.fn(async () => undefined) });
+      const res = await svc.runNow(1, 7);
+      await ran();
+      expect(res.fireTime).toBe('2026-11-03 10:00:02');
+      expect(vi.mocked(store.insertRun).mock.calls[0][0].fireTime).toBe('2026-11-03 10:00:02');
     } finally {
       vi.useRealTimers();
     }

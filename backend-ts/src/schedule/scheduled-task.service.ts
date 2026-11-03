@@ -875,8 +875,16 @@ export class ScheduledTaskService {
     let submitted = false;
     let runId: number | null = null;
     try {
-      // 会话忙预检（锁内 executeManualRun 还有复核）：试跑是交互动作，忙时明确报错优于静默排队
-      const session = await this.sessionService.getSession(task.sessionId);
+      // 会话忙预检（锁内 executeManualRun 还有复核），顺带提前暴露会话已删。
+      // getSession 生产契约对已删会话抛 BusinessException(SESSION_NOT_FOUND) 而非返回 null，
+      // 与锁内路径同口径 catch：否则用户拿到泛化 3002，下面的设计文案永不可达（round1 C1）。
+      let session: Session | null;
+      try {
+        session = await this.sessionService.getSession(task.sessionId);
+      } catch (e) {
+        if (!(e instanceof BusinessException) || e.code !== ErrorCode.SESSION_NOT_FOUND.code) throw e;
+        session = null;
+      }
       if (session == null) {
         throw new BusinessException(ErrorCode.PARAM_INVALID, '绑定会话已不存在，无法执行');
       }
@@ -1463,11 +1471,14 @@ export class ScheduledTaskService {
 
   /**
    * 手动「立即执行」认领运行行：attempt=0 标记手动触发（与周期 attempt≥1 区分，D4）。
-   * 候选触发点预偏移避开 cron 档期那行（否则周期扫描会认领到手动行、丢失一次失败计数），
-   * 同秒唯一键冲突再 +1s 重试，至多 3 次；耗尽返回 null 由调用方报「触发过于频繁」。
+   * 每个候选触发点（含 +1s 冲突偏移后的）都必须避开 cron 档期那行：否则手动行会占住档期，
+   * 扫描器到点 claimRun 撞 COMPLETED 手动行后还原档期，该任务每轮扫描空转、永久停摆（round1 C2）。
+   * 同秒唯一键冲突 +1s 重试，至多 3 次；耗尽返回 null 由调用方报「触发过于频繁」。
    */
   private async claimManualRun(taskId: number, sessionId: number, fireTime: string, cronNextFireTime: string | null): Promise<{ runId: number | null; fireTime: string } | null> {
-    let candidate = fireTime !== cronNextFireTime ? fireTime : shiftSeconds(fireTime, 1);
+    const skipCronSlot = (t: string): string =>
+      cronNextFireTime != null && t === cronNextFireTime ? shiftSeconds(t, 1) : t;
+    let candidate = skipCronSlot(fireTime);
     if (this.store.selectRunByFire == null || this.store.insertRun == null) {
       // 窄 fake 无运行记录能力（单测），与 claimRun 同口径放行
       return { runId: null, fireTime: candidate };
@@ -1482,7 +1493,7 @@ export class ScheduledTaskService {
           if (!isDupKey(e)) throw e;
         }
       }
-      candidate = shiftSeconds(candidate, 1);
+      candidate = skipCronSlot(shiftSeconds(candidate, 1));
     }
     return null;
   }
