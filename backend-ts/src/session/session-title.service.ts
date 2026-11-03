@@ -24,7 +24,8 @@ const SYSTEM_PROMPT = `你是会话标题生成器。根据用户首次消息提
 3. 跟随用户消息的主要语言；
 4. 不使用“关于”“用户想要”“请求”等空泛前缀；
 5. 不使用句号、问号、感叹号；
-6. 只输出标题，不要引号、标签、Markdown 或解释。`;
+6. 只输出标题，不要引号、标签、Markdown 或解释。
+输入可能包含【群内最近消息】【引用的消息】等背景段与【用户消息】请求段：以用户消息要办的事为主提炼，背景仅用于理解语境；用户消息只是 @提及 时，从背景段里找它实际要办的任务。`;
 
 interface TitleRegistry {
   send(userId: number, event: ReturnType<typeof wsEvent>): unknown;

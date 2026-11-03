@@ -77,6 +77,30 @@ export function isNewSessionCommand(text: string | null | undefined): boolean {
   return /^[-—]{3,}$/u.test((text ?? '').trim());
 }
 
+/**
+ * 组装入站消息的纯文本部分（不含媒体下载）：群上下文 + 引用 + 用户消息按段拼接。
+ * Agent 执行（buildMessage）与新会话标题命名共用同一份「完整消息」——
+ * 群聊触发常是裸 @提及（context.text 只有 @机器人），真正的任务在【群内最近消息】里，
+ * 标题若只喂 context.text 会退化成「提及xxx」这类无信息量标题。
+ * trim 契约：groupContext/quotedContext 在函数内 trim；context.text 原样拼接
+ * （buildMessage 保持既有行为，不对 Agent 输入做额外处理），调用方需要 trim 自行先裁好再传入。
+ */
+function composePromptText(context: FeishuInboundContext): string {
+  const isGroup = context.chatType === 'group';
+  const senderLabel = context.senderLabel?.trim() || '未知用户';
+  const sections: string[] = [];
+  const groupContext = context.groupContext?.trim();
+  if (isGroup && groupContext != null && groupContext !== '') sections.push(`【群内最近消息】\n${groupContext}`);
+  const quoted = context.quotedContext?.trim();
+  if (quoted != null && quoted !== '') sections.push(`【引用的消息】\n${quoted}`);
+  if (isGroup) {
+    sections.push(`【用户消息】\n${senderLabel}：${context.text}`);
+  } else {
+    sections.push(context.text);
+  }
+  return sections.join('\n\n');
+}
+
 const NEW_SESSION_CONFIRM_TEXT = '已开启新会话，后续消息将在新的上下文中处理。';
 const SWITCH_SESSION_CONFIRM_TEXT = '已切换到该消息所在的会话，后续消息将以该会话上下文为准。';
 const NEW_SESSION_FAILED_TEXT = '开启新会话失败，请稍后再试。';
@@ -429,18 +453,21 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
    * 新会话首条消息命名：LLM 生成短标题（失败由生成方降级本地启发式），经持久化待命名标志应用。
    * 异步执行、不阻塞 Agent：标题在首条消息执行期间更新，进度卡片不依赖标题。
    * 待命名标志门禁保证仅新建会话触发，已命名会话的后续消息不再打 LLM。
+   * 标题素材取 composePromptText 的完整消息（群上下文 + 引用 + 用户消息），与 Agent 执行所见一致；
+   * 用户消息文本先 trim 再入素材（与重构前直接传 context.text.trim() 的行为一致），
+   * 群上下文/引用段的 trim 由 composePromptText 负责。buildMessage 仍用原始 text，Agent 输入不受影响。
    */
   private scheduleNewSessionTitle(sessionId: number, context: FeishuInboundContext): void {
     const control = this.options.p2pSessionControl;
     const finalize = control?.finalizeNewSessionTitle;
     if (control == null || finalize == null) return;
-    const text = context.text?.trim() ?? '';
-    if (text === '') return;
+    if ((context.text?.trim() ?? '') === '') return;
+    const promptText = composePromptText({ ...context, text: context.text?.trim() ?? '' });
     void (async () => {
       try {
         if (control.isAwaitingFirstMessageTitle != null
           && !(await control.isAwaitingFirstMessageTitle(sessionId))) return;
-        const title = await this.options.titleGenerator?.generate(sessionId, text);
+        const title = await this.options.titleGenerator?.generate(sessionId, promptText);
         if (title == null || title === '') return;
         if (await finalize(sessionId, title)) {
           console.info(`飞书新会话命名, sessionId=${sessionId}, title=${title}`);
@@ -745,19 +772,7 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
   // ─── 内部：消息构建（不变） ───────────────────────────────────────
 
   private async buildMessage(context: FeishuInboundContext, workspace: string | null): Promise<string | FeishuContentPart[]> {
-    const isGroup = context.chatType === 'group';
-    const senderLabel = context.senderLabel?.trim() || '未知用户';
-    const sections: string[] = [];
-    const groupContext = context.groupContext?.trim();
-    if (isGroup && groupContext != null && groupContext !== '') sections.push(`【群内最近消息】\n${groupContext}`);
-    const quoted = context.quotedContext?.trim();
-    if (quoted != null && quoted !== '') sections.push(`【引用的消息】\n${quoted}`);
-    if (isGroup) {
-      sections.push(`【用户消息】\n${senderLabel}：${context.text}`);
-    } else {
-      sections.push(context.text);
-    }
-    const text = sections.join('\n\n');
+    const text = composePromptText(context);
     const media = await this.options.downloadMedia?.(context, workspace) ?? null;
     if (media == null) return text;
     return this.composeContent(text, media, workspace);
