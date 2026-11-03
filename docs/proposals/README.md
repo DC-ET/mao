@@ -316,7 +316,7 @@
 | 会话导出 Markdown 与长会话定位补完 | [2026-11-02-session-markdown-export-and-in-session-find.md](2026-11-02-session-markdown-export-and-in-session-find.md)（已否决，存档） | 补齐 2026-10-06 方案遗留的 `.md` 可读导出（含分享页导出）+ 轮次目录内筛选与分享页/子代理挂载 + 搜索支持「仅当前会话」 | — |
 | 个人资产与配置体验补完 | [2026-11-02-personal-assets-ux-completeness.md](2026-11-02-personal-assets-ux-completeness.md)（待评审） | 会话级审批规则可见可撤可提升、环境变量编辑备注免重填密文（对齐 Git 凭证）、记忆/指令/规则列表补齐关键词搜索 | 小~中 |
 | 自助修改密码与开放接口体验补完 | [2026-11-02-self-service-password-and-openapi-polish.md](2026-11-02-self-service-password-and-openapi-polish.md)（待评审） | 补齐 `PUT /v1/users/me/password`（含旧密码校验，桌面端本地用户可自助改密、消除管理后台临时横幅）+ Webhook 触发器接通编辑表单 + 出站订阅一键发送测试事件 | 小~中 |
-| 工作区文件预览与 Git 细节打磨 | [2026-11-02-file-viewer-and-git-ux-polish.md](2026-11-02-file-viewer-and-git-ux-polish.md)（待评审） | Monaco 文件查看器补自动换行/下载/复制、Diff 查看器浮动胶囊支持「并排/行内」切换与变更处跳转、Git 历史展示提交正文、支持按文件路径与提交信息搜索并支持新建本地分支 | 小~中 |
+| 工作区文件预览与 Git 细节打磨 | [2026-11-02-file-viewer-and-git-ux-polish.md](2026-11-02-file-viewer-and-git-ux-polish.md)（**已立项**，技术方案见 [../plan/2026-11-03-file-viewer-and-git-ux-polish-technical-design.md](../plan/2026-11-03-file-viewer-and-git-ux-polish-technical-design.md)，10 项决策定案） | Monaco 文件查看器补自动换行/下载/复制、Diff 查看器浮动胶囊支持「并排/行内」切换与变更处跳转、Git 历史展示提交正文、支持按文件路径与提交信息搜索并支持新建本地分支 | 小~中 |
 | 管理后台关联反查与自定义工具体验 | [2026-11-02-admin-capability-linking-and-http-tool-ux.md](2026-11-02-admin-capability-linking-and-http-tool-ux.md)（待评审） | 自定义 HTTP 工具支持含加密头直接测试与一键复制、Agent ⇄ 模型/MCP/工具双向关联展示 | 小~中 |
 
 排期注意：
