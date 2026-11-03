@@ -64,6 +64,7 @@ export function registerMemoryRoutes(app: FastifyInstance, deps: MemoryRouteDeps
       scope: parseScopeFilter(query.scope),
       projectKey: typeof query.projectKey === 'string' && query.projectKey.trim() !== '' ? query.projectKey.trim() : null,
       status: parseStatusFilter(query.status),
+      keyword: typeof query.keyword === 'string' && query.keyword.trim() !== '' ? query.keyword.trim() : null,
       page: parsePage(query.page),
       pageSize: parsePageSize(query.pageSize),
     };

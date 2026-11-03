@@ -15,7 +15,7 @@ import {
   normalizeShellCommand,
   tokenizeCommand,
 } from './approval-rule-normalize.js';
-import type { ApprovalRuleRepository } from './approval-rule.repository.js';
+import type { ApprovalRuleListRow, ApprovalRuleRepository } from './approval-rule.repository.js';
 import type { ApprovalRuleAdminFilter, ApprovalRuleAdminPage, ApprovalRuleRow, ApprovalRuleScope, ApprovalRuleType, ApprovalRuleVo } from './types.js';
 
 const MCP_TOOL_PREFIX = 'mcp__';
@@ -185,7 +185,7 @@ export class ApprovalRuleService implements ApprovalRuleFacade {
 
   // ---------- 用户级 CRUD（设置页） ----------
 
-  private toVo(row: ApprovalRuleRow): ApprovalRuleVo {
+  private toVo(row: ApprovalRuleListRow): ApprovalRuleVo {
     return {
       id: row.id,
       scope: row.scope,
@@ -195,6 +195,7 @@ export class ApprovalRuleService implements ApprovalRuleFacade {
       hitCount: Number(row.hitCount ?? 0),
       lastHitAt: row.lastHitAt,
       enabled: row.enabled === 1,
+      sessionTitle: row.sessionTitle ?? null,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
@@ -273,7 +274,7 @@ export class ApprovalRuleService implements ApprovalRuleFacade {
     return this.toVo(row);
   }
 
-  /** 他人规则 / SESSION 规则一律 404（不暴露存在性；SESSION 规则不经此路由管理）。 */
+  /** 他人规则一律 404（不暴露存在性）；PATCH 编辑仅限 USER 级（会话级规则值由 always-allow 生成，设置页不可编辑）。 */
   private async findOwnedUserRule(userId: number, id: number): Promise<ApprovalRuleRow> {
     const row = await this.repo.findById(id);
     if (!row || row.userId !== userId || row.scope !== 'USER') {
@@ -302,8 +303,36 @@ export class ApprovalRuleService implements ApprovalRuleFacade {
   }
 
   async removeUserRule(userId: number, id: number): Promise<void> {
-    await this.findOwnedUserRule(userId, id);
+    // 本人名下即可删（USER / SESSION 皆可）：撤回会话里点错的「总是允许」是设置页核心诉求；
+    // 规则只在派发进审批前匹配一次，删除只让下一次同类命令重新弹卡，不影响在途请求
+    const row = await this.repo.findById(id);
+    if (!row || row.userId !== userId) {
+      throw new BusinessException(ErrorCode.APPROVAL_RULE_NOT_FOUND);
+    }
     await this.repo.deleteById(id);
+  }
+
+  /**
+   * 会话级规则提升为用户级（复制语义）：不删原 SESSION 规则（保留命中统计与该会话行为），
+   * 同值 USER 规则幂等去重；重过归一化（对已归一化值幂等，防御历史脏数据）与 denylist 拒绝。
+   */
+  async promoteSessionRule(userId: number, id: number): Promise<ApprovalRuleVo> {
+    const row = await this.repo.findById(id);
+    if (!row || row.userId !== userId) {
+      throw new BusinessException(ErrorCode.APPROVAL_RULE_NOT_FOUND);
+    }
+    if (row.scope !== 'SESSION') {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '该规则已是用户级规则，无需提升');
+    }
+    const { ruleType, ruleValue } = await this.normalizeUserInput(row.ruleType, row.ruleValue);
+    const existing = await this.repo.findByUserAndValue(userId, ruleType, ruleValue);
+    if (existing) {
+      return this.toVo(existing);
+    }
+    const created = await this.repo.insert({ userId, scope: 'USER', sessionId: null, ruleType, ruleValue });
+    const newRow = await this.repo.findById(created);
+    if (!newRow) throw new BusinessException(ErrorCode.INTERNAL_ERROR, '审批规则提升失败');
+    return this.toVo(newRow);
   }
 
   // ---------- admin 只读清单 ----------

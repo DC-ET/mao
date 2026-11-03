@@ -186,15 +186,28 @@ describe('EnvVariableService', () => {
     );
   });
 
-  it('requires value on update but allows explicit empty value', async () => {
+  it('keeps original value when envValue is omitted or empty on update', async () => {
+    const { service } = newService();
+    const created = await service.createUser(1, { envKey: 'X', envValue: 'v', note: 'n' });
+    // 只改备注、不传 envValue：原密文保留，解密值不变（编辑免重填）
+    await service.updateUser(1, created.id!, { note: 'only-note' });
+    expect(await service.resolveForSession(1, null)).toEqual({ X: 'v' });
+    // envValue 显式空串同样保留原值（环境变量无「空值」配置需求，需停用直接删除）
+    await service.updateUser(1, created.id!, { envValue: '' });
+    expect(await service.resolveForSession(1, null)).toEqual({ X: 'v' });
+    // null 亦保留原值
+    await service.updateUser(1, created.id!, { envValue: null as unknown as string });
+    expect(await service.resolveForSession(1, null)).toEqual({ X: 'v' });
+    // 备注更新已生效
+    const listed = await service.listUser(1);
+    expect(listed[0]!.note).toBe('only-note');
+  });
+
+  it('overwrites value only when a non-empty string is provided on update', async () => {
     const { service } = newService();
     const created = await service.createUser(1, { envKey: 'X', envValue: 'v' });
-    await expectCode(
-      service.updateUser(1, created.id!, { envValue: undefined as unknown as string }),
-      ErrorCode.PARAM_INVALID.code,
-    );
-    await service.updateUser(1, created.id!, { envValue: '' });
-    expect(await service.resolveForSession(1, null)).toEqual({ X: '' });
+    await service.updateUser(1, created.id!, { envValue: 'v2' });
+    expect(await service.resolveForSession(1, null)).toEqual({ X: 'v2' });
   });
 
   it('merges layers with workspace > user > system', async () => {

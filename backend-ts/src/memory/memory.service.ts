@@ -75,7 +75,13 @@ export class MemoryService {
   ) {}
 
   async list(userId: number, query: MemoryListQuery): Promise<MemoryPageVO> {
-    const filter = { userId, scope: query.scope ?? null, projectKey: query.projectKey ?? null, status: query.status ?? null };
+    const filter = {
+      userId,
+      scope: query.scope ?? null,
+      projectKey: query.projectKey ?? null,
+      status: query.status ?? null,
+      keyword: query.keyword ?? null,
+    };
     const [rows, total] = await Promise.all([
       this.memoryRepo.page({ ...filter, page: query.page, pageSize: query.pageSize }),
       this.memoryRepo.count({ ...filter, page: query.page, pageSize: query.pageSize }),

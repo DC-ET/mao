@@ -1,6 +1,9 @@
 import type { Db } from '../db/db.js';
 import type { ApprovalRuleAdminFilter, ApprovalRuleAdminPage, ApprovalRuleAdminRow, ApprovalRuleRow, ApprovalRuleScope, ApprovalRuleType } from './types.js';
 
+/** 设置页清单行：规则行 + 来源会话标题（SESSION 级展示「来自会话：xxx」用）。 */
+export type ApprovalRuleListRow = ApprovalRuleRow & { sessionTitle?: string | null };
+
 export class ApprovalRuleRepository {
   constructor(private readonly db: Db) {}
 
@@ -32,6 +35,14 @@ export class ApprovalRuleRepository {
     );
   }
 
+  /** 用户级规则幂等查重（提升为用户级时同值去重，表无唯一键，靠应用层保证恰好一条）。 */
+  findByUserAndValue(userId: number, ruleType: ApprovalRuleType, ruleValue: string): Promise<ApprovalRuleRow | null> {
+    return this.db.queryOne<ApprovalRuleRow>(
+      'SELECT * FROM `approval_rule` WHERE user_id = ? AND scope = \'USER\' AND rule_type = ? AND rule_value = ? LIMIT 1',
+      [userId, ruleType, ruleValue],
+    );
+  }
+
   /**
    * 匹配查询：该执行用户的启用规则（本会话的 SESSION 规则 + 全部 USER 规则）。
    * 一次拉取内存匹配——规则数量级小，避免逐类型多查。
@@ -49,21 +60,25 @@ export class ApprovalRuleRepository {
     );
   }
 
-  listByUser(userId: number, scope: ApprovalRuleScope | null, ruleType: ApprovalRuleType | null, limit: number, offset: number): Promise<ApprovalRuleRow[]> {
+  listByUser(userId: number, scope: ApprovalRuleScope | null, ruleType: ApprovalRuleType | null, limit: number, offset: number): Promise<ApprovalRuleListRow[]> {
     const params: unknown[] = [userId];
     let filterClause = '';
     if (scope != null) {
-      filterClause += ' AND scope = ?';
+      filterClause += ' AND r.scope = ?';
       params.push(scope);
     }
     if (ruleType != null) {
-      filterClause += ' AND rule_type = ?';
+      filterClause += ' AND r.rule_type = ?';
       params.push(ruleType);
     }
     params.push(limit, offset);
-    return this.db.query<ApprovalRuleRow>(
-      // 按命中次数降序：设置页暴露「养大了的规则」（§8 风险对策）
-      `SELECT * FROM \`approval_rule\` WHERE user_id = ?${filterClause} ORDER BY hit_count DESC, id DESC LIMIT ? OFFSET ?`,
+    return this.db.query<ApprovalRuleListRow>(
+      // 按命中次数降序：设置页暴露「养大了的规则」（§8 风险对策）；LEFT JOIN 会话带出标题（复用 pageAdmin 同款）
+      `SELECT r.*, s.title AS sessionTitle
+       FROM \`approval_rule\` r
+       LEFT JOIN \`session\` s ON s.id = r.session_id
+       WHERE r.user_id = ?${filterClause}
+       ORDER BY r.hit_count DESC, r.id DESC LIMIT ? OFFSET ?`,
       params,
     );
   }

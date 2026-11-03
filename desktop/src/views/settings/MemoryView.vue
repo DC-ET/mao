@@ -30,6 +30,14 @@
           {{ tab.label }}
         </button>
       </div>
+      <el-input
+        v-model="keyword"
+        class="memory-search"
+        placeholder="搜索记忆内容或项目"
+        clearable
+        :prefix-icon="Search"
+        @input="handleKeywordInput"
+      />
       <el-select v-model="statusFilter" class="status-select" @change="reload">
         <el-option label="生效中" value="ACTIVE" />
         <el-option label="已忽略" value="DISMISSED" />
@@ -38,6 +46,7 @@
     </div>
 
     <div v-if="loading" class="empty-state">加载中...</div>
+    <div v-else-if="items.length === 0 && keyword.trim() !== ''" class="empty-state">无匹配记忆</div>
     <div v-else-if="items.length === 0" class="empty-state">
       暂无记忆，可通过任务对话自动沉淀，或点击上方按钮手动添加
     </div>
@@ -49,6 +58,7 @@
             {{ item.scope === 'PROJECT' ? `项目:${item.projectKey}` : '用户' }}
           </span>
           <span class="meta-badge source-badge">{{ item.source === 'AUTO' ? '自动' : '手动' }}</span>
+          <a v-if="item.originSessionId != null" class="origin-link" title="跳回来源会话" @click="openOrigin(item.originSessionId)">来源 #{{ item.originSessionId }}</a>
           <span class="memory-time">更新于 {{ formatTime(item.updatedAt) }}</span>
           <div class="memory-actions">
             <template v-if="deletingId === item.id">
@@ -126,9 +136,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import { Plus } from '@element-plus/icons-vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { Plus, Search } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
+import { useRouter } from 'vue-router'
 import {
   listMemories,
   createMemory,
@@ -137,10 +148,13 @@ import {
   getMemorySettings,
   saveMemorySettings,
   listMemoryProjects,
+  getSession,
   type MemoryItem,
   type MemoryScope,
   type MemoryStatus
 } from '../../api'
+
+const router = useRouter()
 
 const MEMORY_CONTENT_MAX = 500
 
@@ -155,6 +169,9 @@ const switchSaving = ref(false)
 
 const scopeFilter = ref<MemoryScope | ''>('')
 const statusFilter = ref<MemoryStatus | ''>('ACTIVE')
+/** 关键词：服务端过滤（content / project_key LIKE），300ms 防抖。 */
+const keyword = ref('')
+let keywordTimer: ReturnType<typeof setTimeout> | null = null
 
 const scopeTabs: Array<{ value: MemoryScope | ''; label: string }> = [
   { value: '', label: '全部' },
@@ -193,7 +210,8 @@ async function fetchList() {
       page: page.value,
       pageSize: pageSize.value,
       scope: scopeFilter.value === '' ? null : scopeFilter.value,
-      status: statusFilter.value === '' ? null : statusFilter.value
+      status: statusFilter.value === '' ? null : statusFilter.value,
+      keyword: keyword.value.trim() === '' ? null : keyword.value.trim()
     })
     items.value = result.records ?? []
     total.value = result.total ?? 0
@@ -201,6 +219,25 @@ async function fetchList() {
     // 错误提示由拦截器统一处理
   } finally {
     loading.value = false
+  }
+}
+
+/** 搜索框输入：300ms 防抖后回到第 1 页重新拉取（服务端过滤）。 */
+function handleKeywordInput() {
+  if (keywordTimer != null) clearTimeout(keywordTimer)
+  keywordTimer = setTimeout(() => {
+    keywordTimer = null
+    reload()
+  }, 300)
+}
+
+/** 来源会话跳转：先探测存在（已删/非本人 toast），再跳回会话。 */
+async function openOrigin(sessionId: number) {
+  try {
+    await getSession(sessionId)
+    void router.push(`/tasks/${sessionId}`)
+  } catch {
+    ElMessage.warning('来源会话已删除')
   }
 }
 
@@ -319,6 +356,13 @@ onMounted(() => {
   void loadSettings()
   void fetchList()
 })
+
+onBeforeUnmount(() => {
+  if (keywordTimer != null) {
+    clearTimeout(keywordTimer)
+    keywordTimer = null
+  }
+})
 </script>
 
 <style scoped>
@@ -387,6 +431,24 @@ onMounted(() => {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 12px;
+}
+
+.memory-search {
+  flex: 1;
+  max-width: 220px;
+  margin: 0 10px;
+}
+
+.origin-link {
+  font-size: 12px;
+  color: var(--aw-primary);
+  cursor: pointer;
+  text-decoration: none;
+  flex-shrink: 0;
+}
+
+.origin-link:hover {
+  text-decoration: underline;
 }
 
 .scope-tabs {

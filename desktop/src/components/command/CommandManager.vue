@@ -14,8 +14,17 @@
       新建指令
     </button>
 
+    <el-input
+      v-model="commandKeyword"
+      class="command-search"
+      placeholder="搜索指令"
+      clearable
+      :prefix-icon="Search"
+    />
+
     <div class="command-list">
       <div v-if="loading" class="command-empty">加载中...</div>
+      <div v-else-if="displayedCommands.length === 0 && searching" class="command-empty">无匹配指令</div>
       <div v-else-if="displayedCommands.length === 0" class="command-empty">
         {{ activeTab === 'personal' ? '暂无个人指令' : '暂无系统指令' }}
       </div>
@@ -70,7 +79,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { Plus, Check, Close } from '@element-plus/icons-vue'
+import { Plus, Check, Close, Search } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../../api'
 import CommandEditDialog from './CommandEditDialog.vue'
@@ -89,7 +98,15 @@ const loading = ref(false)
 const activeTab = ref<'personal' | 'system'>('personal')
 const commands = ref<CommandItem[]>([])
 const systemCommands = ref<CommandItem[]>([])
-const displayedCommands = computed(() => activeTab.value === 'personal' ? commands.value : systemCommands.value)
+/** 关键词过滤：纯前端按 name + content 即时匹配（指令量级小，与管理后台系统指令列表同款做法）。 */
+const commandKeyword = ref('')
+const displayedCommands = computed(() => {
+  const source = activeTab.value === 'personal' ? commands.value : systemCommands.value
+  const kw = commandKeyword.value.trim().toLowerCase()
+  if (kw === '') return source
+  return source.filter((cmd) => `${cmd.name} ${cmd.content}`.toLowerCase().includes(kw))
+})
+const searching = computed(() => commandKeyword.value.trim() !== '')
 const deletingId = ref<number | null>(null)
 
 watch(activeTab, () => {
@@ -156,6 +173,11 @@ async function copyContent(cmd: CommandItem) {
   font-size: 13px;
   color: var(--aw-ink-muted);
   margin: 0 0 16px 0;
+}
+
+.command-search {
+  max-width: 260px;
+  margin-bottom: 12px;
 }
 
 .create-btn {

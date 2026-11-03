@@ -483,10 +483,18 @@ export interface MemoryListParams {
   scope?: MemoryScope | null
   projectKey?: string | null
   status?: MemoryStatus | null
+  /** 关键词：服务端对 content / project_key 做包含匹配（通配符按字面转义） */
+  keyword?: string | null
 }
 
 export async function listMemories(params: MemoryListParams = {}): Promise<MemoryPage> {
   const { data } = await api.get('/memory', { params })
+  return data
+}
+
+/** 会话存在性探测 + 跳转前校验（仅属主可见；不存在/非本人抛业务错误）。 */
+export async function getSession(sessionId: number): Promise<unknown> {
+  const { data } = await api.get(`/sessions/${sessionId}`)
   return data
 }
 
@@ -575,6 +583,8 @@ export interface ApprovalRule {
   hitCount: number
   lastHitAt: string | null
   enabled: boolean
+  /** 来源会话标题（scope=SESSION 时由后端 LEFT JOIN session 带出；USER 级为 null）。 */
+  sessionTitle?: string | null
   createdAt?: string | null
   updatedAt?: string | null
 }
@@ -587,6 +597,8 @@ export interface ApprovalRulePage {
 export async function listApprovalRules(params: {
   page?: number
   pageSize?: number
+  /** 级别筛选：USER（默认）/ SESSION；设置页二级 Tab 走此参数 */
+  scope?: ApprovalRuleScope | null
   /** 类型筛选（服务端过滤，保证 tab 翻页口径一致）；空 = 全部 */
   ruleType?: ApprovalRuleType | null
 } = {}): Promise<ApprovalRulePage> {
@@ -597,6 +609,12 @@ export async function listApprovalRules(params: {
 /** 创建用户级规则；服务端归一化（SHELL_PREFIX 取前两 token）并在响应中返回归一化后的值 */
 export async function createApprovalRule(payload: { ruleType: ApprovalRuleType; ruleValue: string }): Promise<ApprovalRule> {
   const { data } = await api.post('/approval-rules', payload)
+  return data
+}
+
+/** 会话级规则提升为用户级（复制语义：原会话级规则保留；同值幂等去重） */
+export async function promoteApprovalRule(id: number): Promise<ApprovalRule> {
+  const { data } = await api.post(`/approval-rules/${id}/promote`)
   return data
 }
 

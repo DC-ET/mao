@@ -4,8 +4,14 @@
       <h1 class="page-title">审批规则</h1>
       <p class="page-desc">
         本地任务的工具审批支持「总是允许」：在审批卡片上选择后，同会话内命中该模式的后续调用将自动放行。
-        这里是跨会话生效的用户级规则，规则按命中次数排序，命中次数即实际省掉的审批次数。含受保护命令（如 rm、sudo）的命令永远不会被规则放行。
+        用户级规则跨会话生效；会话内点过的「总是允许」可在「会话级规则」中查看、提升为用户级或删除（恢复审批）。
+        规则按命中次数排序，命中次数即实际省掉的审批次数。含受保护命令（如 rm、sudo）的命令永远不会被规则放行。
       </p>
+    </div>
+
+    <div class="scope-tabs">
+      <button class="scope-tab" :class="{ active: scopeFilter === 'USER' }" @click="changeScope('USER')">用户级规则</button>
+      <button class="scope-tab" :class="{ active: scopeFilter === 'SESSION' }" @click="changeScope('SESSION')">会话级规则</button>
     </div>
 
     <div class="rules-toolbar">
@@ -20,46 +26,85 @@
           {{ tab.label }}
         </button>
       </div>
-      <button class="create-btn" @click="openCreateDialog">
+      <el-input
+        v-model="keyword"
+        class="rules-search"
+        placeholder="搜索规则值"
+        clearable
+        :prefix-icon="Search"
+      />
+      <button v-if="scopeFilter === 'USER'" class="create-btn" @click="openCreateDialog">
         <el-icon><Plus /></el-icon>
         新增规则
       </button>
     </div>
 
     <div v-if="loading" class="empty-state">加载中...</div>
-    <div v-else-if="items.length === 0" class="empty-state">
+    <div v-else-if="visibleItems.length === 0 && searching" class="empty-state">无匹配规则</div>
+    <div v-else-if="visibleItems.length === 0 && scopeFilter === 'SESSION'" class="empty-state">
+      暂无会话级规则，可在审批卡片点击「总是允许」创建
+    </div>
+    <div v-else-if="visibleItems.length === 0" class="empty-state">
       暂无用户级规则，可在审批卡片点击「总是允许」创建会话级规则，或在此手动添加
     </div>
     <div v-else class="rules-list">
-      <div v-for="item in items" :key="item.id" class="rule-card" :class="{ disabled: !item.enabled }">
-        <div class="rule-main">
-          <span class="rule-type-badge" :class="`type-${item.ruleType.toLowerCase()}`">{{ typeLabel(item.ruleType) }}</span>
-          <code class="rule-value">{{ item.ruleValue }}</code>
-        </div>
-        <div class="rule-meta">
-          <span class="meta-item">放行 {{ item.hitCount }} 次</span>
-          <span class="meta-item">最近命中 {{ formatTime(item.lastHitAt) }}</span>
-          <div class="rule-actions">
-            <el-switch
-              :model-value="item.enabled"
-              size="small"
-              @change="(v: string | number | boolean) => toggleEnabled(item, v === true)"
-            />
-            <template v-if="deletingId === item.id">
-              <button class="action-text action-text-danger" @click="confirmDelete(item)">确认删除</button>
-              <button class="action-text" @click="deletingId = null">取消</button>
-            </template>
-            <template v-else>
-              <button class="action-text" @click="openEditDialog(item)">编辑</button>
-              <button class="action-text action-text-danger" @click="deletingId = item.id">删除</button>
-            </template>
+      <template v-for="item in visibleItems" :key="item.id">
+        <!-- 会话级规则卡片：来自会话可点击跳转，支持提升 / 删除（无编辑与启停） -->
+        <div v-if="item.scope === 'SESSION'" class="rule-card">
+          <div class="rule-main">
+            <span class="rule-type-badge" :class="`type-${item.ruleType.toLowerCase()}`">{{ typeLabel(item.ruleType) }}</span>
+            <code class="rule-value">{{ item.ruleValue }}</code>
+            <span class="session-badge">会话级</span>
+          </div>
+          <div class="rule-meta">
+            <span class="meta-item">来自会话：<a class="session-link" title="跳回该会话" @click="openSession(item.sessionId)">{{ item.sessionTitle || `#${item.sessionId}` }}</a></span>
+            <span class="meta-item">放行 {{ item.hitCount }} 次</span>
+            <span class="meta-item">最近命中 {{ formatTime(item.lastHitAt) }}</span>
+            <div class="rule-actions">
+              <template v-if="deletingId === item.id">
+                <button class="action-text action-text-danger" @click="confirmDelete(item)">确认删除</button>
+                <button class="action-text" @click="deletingId = null">取消</button>
+              </template>
+              <template v-else>
+                <button class="action-text" :disabled="promotingId === item.id" @click="promote(item)">
+                  {{ promotingId === item.id ? '提升中…' : '提升为用户级' }}
+                </button>
+                <button class="action-text action-text-danger" @click="deletingId = item.id">删除</button>
+              </template>
+            </div>
           </div>
         </div>
-      </div>
+        <!-- 用户级规则卡片 -->
+        <div v-else class="rule-card" :class="{ disabled: !item.enabled }">
+          <div class="rule-main">
+            <span class="rule-type-badge" :class="`type-${item.ruleType.toLowerCase()}`">{{ typeLabel(item.ruleType) }}</span>
+            <code class="rule-value">{{ item.ruleValue }}</code>
+          </div>
+          <div class="rule-meta">
+            <span class="meta-item">放行 {{ item.hitCount }} 次</span>
+            <span class="meta-item">最近命中 {{ formatTime(item.lastHitAt) }}</span>
+            <div class="rule-actions">
+              <el-switch
+                :model-value="item.enabled"
+                size="small"
+                @change="(v: string | number | boolean) => toggleEnabled(item, v === true)"
+              />
+              <template v-if="deletingId === item.id">
+                <button class="action-text action-text-danger" @click="confirmDelete(item)">确认删除</button>
+                <button class="action-text" @click="deletingId = null">取消</button>
+              </template>
+              <template v-else>
+                <button class="action-text" @click="openEditDialog(item)">编辑</button>
+                <button class="action-text action-text-danger" @click="deletingId = item.id">删除</button>
+              </template>
+            </div>
+          </div>
+        </div>
+      </template>
     </div>
 
     <el-pagination
-      v-if="total > pageSize"
+      v-if="!searching && total > pageSize"
       v-model:current-page="page"
       class="rules-pagination"
       layout="prev, pager, next"
@@ -111,24 +156,36 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import { Plus } from '@element-plus/icons-vue'
+import { ref, computed, watch, onMounted } from 'vue'
+import { Plus, Search } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
+import { useRouter } from 'vue-router'
 import {
   listApprovalRules,
   createApprovalRule,
   updateApprovalRule,
   deleteApprovalRule,
+  promoteApprovalRule,
+  getSession,
   type ApprovalRule,
+  type ApprovalRuleScope,
   type ApprovalRuleType
 } from '../../api'
 import { previewRuleValue } from '../../utils/approvalRulePreview'
+
+const router = useRouter()
 
 const loading = ref(false)
 const items = ref<ApprovalRule[]>([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
+
+/** 顶层级别 Tab：USER（跨会话）/ SESSION（本会话 always-allow 落的规则）。 */
+const scopeFilter = ref<ApprovalRuleScope>('USER')
+/** 关键词：纯前端过滤（非空时单次拉取前 100 条再按 ruleValue 包含匹配）。 */
+const keyword = ref('')
+const promotingId = ref<number | null>(null)
 
 const typeFilter = ref<ApprovalRuleType | ''>('')
 
@@ -181,13 +238,23 @@ function formatTime(value?: string | null) {
   return String(value).replace('T', ' ').slice(0, 16)
 }
 
+const searchKeyword = computed(() => keyword.value.trim().toLowerCase())
+/** 搜索态：非空时按前 100 条拉取 + 前端包含匹配（规则量级小；超过 100 条用类型 Tab 收窄）。 */
+const searching = computed(() => searchKeyword.value !== '')
+const visibleItems = computed(() => {
+  if (!searching.value) return items.value
+  return items.value.filter((item) => item.ruleValue.toLowerCase().includes(searchKeyword.value))
+})
+
 async function fetchList() {
   loading.value = true
   try {
-    // 类型 tab 走服务端过滤：分页/total/空态都以当前类型为准，不受「只看了当前一页」影响
+    // 类型 Tab 走服务端过滤：分页/total/空态都以当前类型为准，不受「只看了当前一页」影响；
+    // 搜索态一次拉取前 100 条（后端 pageSize 上限），交给 visibleItems 前端过滤并隐藏分页
     const result = await listApprovalRules({
-      page: page.value,
-      pageSize: pageSize.value,
+      page: searching.value ? 1 : page.value,
+      pageSize: searching.value ? 100 : pageSize.value,
+      scope: scopeFilter.value,
       ruleType: typeFilter.value === '' ? null : typeFilter.value
     })
     items.value = result.records ?? []
@@ -199,8 +266,26 @@ async function fetchList() {
   }
 }
 
+// 进入 / 退出搜索态时切换拉取策略（页码恢复第 1 页）；搜索中输入只触发前端过滤，不重复请求
+let lastSearchActive = false
+watch(keyword, (value) => {
+  const active = value.trim() !== ''
+  if (active === lastSearchActive) return
+  lastSearchActive = active
+  page.value = 1
+  void fetchList()
+})
+
 function reload() {
   page.value = 1
+  void fetchList()
+}
+
+function changeScope(value: ApprovalRuleScope) {
+  if (scopeFilter.value === value) return
+  scopeFilter.value = value
+  page.value = 1
+  deletingId.value = null
   void fetchList()
 }
 
@@ -267,12 +352,37 @@ async function toggleEnabled(item: ApprovalRule, enabled: boolean) {
   }
 }
 
+/** 会话级规则提升为用户级（复制语义：原会话级规则保留，同值幂等）。 */
+async function promote(item: ApprovalRule) {
+  if (promotingId.value != null) return
+  promotingId.value = item.id
+  try {
+    await promoteApprovalRule(item.id)
+    ElMessage.success('已提升为用户级规则')
+  } catch {
+    // 错误提示由拦截器统一处理（denylist 拒绝等）
+  } finally {
+    promotingId.value = null
+  }
+}
+
+/** 来源会话跳转：先探测存在（已删/非本人 toast），再跳回会话。 */
+async function openSession(sessionId: number | null) {
+  if (sessionId == null) return
+  try {
+    await getSession(sessionId)
+    void router.push(`/tasks/${sessionId}`)
+  } catch {
+    ElMessage.warning('来源会话已删除')
+  }
+}
+
 async function confirmDelete(item: ApprovalRule) {
   try {
     await deleteApprovalRule(item.id)
-    ElMessage.success('已删除')
+    ElMessage.success(item.scope === 'SESSION' ? '已删除，该命令将恢复审批' : '已删除')
     deletingId.value = null
-    if (items.value.length === 1 && page.value > 1) {
+    if (!searching.value && items.value.length === 1 && page.value > 1) {
       page.value -= 1
     }
     await fetchList()
@@ -342,6 +452,67 @@ onMounted(() => {
   color: var(--aw-primary);
   background: var(--aw-accent-bg);
   font-weight: 500;
+}
+
+.scope-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.scope-tab {
+  padding: 5px 14px;
+  border: 1px solid var(--aw-divider-soft);
+  border-radius: var(--aw-radius-xs);
+  background: transparent;
+  color: var(--aw-ink-muted);
+  font-size: 13px;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+
+.scope-tab:hover {
+  color: var(--aw-ink);
+  background: var(--aw-surface-hover);
+}
+
+.scope-tab.active {
+  color: var(--aw-primary);
+  border-color: var(--aw-primary);
+  background: var(--aw-accent-bg);
+  font-weight: 500;
+}
+
+.rules-search {
+  flex: 1;
+  max-width: 240px;
+}
+
+.session-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.6;
+  background: var(--aw-surface-hover);
+  color: var(--aw-ink-muted);
+  flex-shrink: 0;
+}
+
+.session-link {
+  color: var(--aw-primary);
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.session-link:hover {
+  text-decoration: underline;
+}
+
+.action-text:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .create-btn {
