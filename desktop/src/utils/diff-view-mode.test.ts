@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { nextHunkIndex, resolveInitialDiffInlineMode } from './diff-view-mode'
+import { diffEditorLayoutOptions, nextHunkIndex, resolveInitialDiffInlineMode } from './diff-view-mode'
 
 describe('resolveInitialDiffInlineMode', () => {
   it('stored value wins over viewport width', () => {
@@ -18,6 +18,22 @@ describe('resolveInitialDiffInlineMode', () => {
 
   it('treats unknown stored value as not-inline', () => {
     expect(resolveInitialDiffInlineMode('whatever', 1280)).toBe(false)
+  })
+})
+
+describe('diffEditorLayoutOptions', () => {
+  it('honors side-by-side even when the pane is narrower than Monaco 900px fallback', () => {
+    expect(diffEditorLayoutOptions(false)).toEqual({
+      renderSideBySide: true,
+      useInlineViewWhenSpaceIsLimited: false,
+    })
+  })
+
+  it('honors inline mode', () => {
+    expect(diffEditorLayoutOptions(true)).toEqual({
+      renderSideBySide: false,
+      useInlineViewWhenSpaceIsLimited: false,
+    })
   })
 })
 

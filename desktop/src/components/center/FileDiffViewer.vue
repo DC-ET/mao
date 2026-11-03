@@ -46,7 +46,7 @@ import { isExternalMarkdownLink, resolveMarkdownLink } from '../../utils/markdow
 import { isAndroidCapacitor, openExternalUrl } from '../../utils/capacitor'
 import { attachMonacoQuote } from '../../composables/useMonacoQuote'
 import { buildPatchDiffModels } from '../../utils/unified-patch'
-import { nextHunkIndex, resolveInitialDiffInlineMode } from '../../utils/diff-view-mode'
+import { diffEditorLayoutOptions, nextHunkIndex, resolveInitialDiffInlineMode } from '../../utils/diff-view-mode'
 import type { FileRangeQuotePayload } from '../../utils/selection-quote'
 
 const props = defineProps<{
@@ -88,7 +88,7 @@ let revealedFirst = false
 function toggleInline(inline: boolean) {
   inlineMode.value = inline
   localStorage.setItem('aw-diff-inline', inline ? '1' : '0')
-  diffEditor?.updateOptions({ renderSideBySide: !inline })
+  diffEditor?.updateOptions(diffEditorLayoutOptions(inline))
 }
 
 function jumpHunk(delta: 1 | -1) {
@@ -171,7 +171,7 @@ function ensureDiffEditor(monaco: MonacoModule): MonacoEditor.IStandaloneDiffEdi
       theme: themeName(isDark.value),
       readOnly: true,
       domReadOnly: true,
-      renderSideBySide: !inlineMode.value,
+      ...diffEditorLayoutOptions(inlineMode.value),
       automaticLayout: true,
       minimap: { enabled: false },
       scrollBeyondLastLine: false,
