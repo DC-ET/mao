@@ -131,7 +131,9 @@ harness:
 ```
 
 - `app-config.ts`：`harness.skillViewsDir` 默认 `'./skill-views'`，类型声明与 `skillsDir` 并列；
-- 生产 `.env`（gitignore，部署时补）：`SKILL_VIEWS_DIR=/opt/mao-data/skill-views`；
+- 生产 `.env`（gitignore，**部署前必须人工补**，见 §5.2 第 ① 项）：`SKILL_VIEWS_DIR=/opt/mao-data/skill-views`。
+  不配置会回落到 `./skill-views`（相对后端 cwd，即 `/data/mao/backend-ts/skill-views`）：功能可跑，但偏离 `/opt/mao-data` 数据目录约定（漏备份/漏监控、`git status` 出现未跟踪目录），且容器挂载路径随之漂移；
+- 视图目录本身由后端首次物化时自动创建；如需提前纳入监控/备份，可 `mkdir -p /opt/mao-data/skill-views`；
 - `runtime-data-resolver.ts`：新增 `resolveUserSkillViewsDir(userId)` 与 `resolveSkillViewDir(userId, skillName)`。
 
 ### 4.2 视图物化（新增 `SkillViewService`）
@@ -268,26 +270,56 @@ class SkillViewService {
 | 全局 npm CLI 链接 | 指向源目录（持久） | 不受影响；重新安装后指向视图（持久） |
 | 视图目录 | 不存在 | 首次执行时按需物化 |
 
-### 5.2 推荐：凌晨窗口操作步骤
+### 5.2 部署人工操作清单（推荐凌晨窗口执行）
 
-前置检查（部署前 30 分钟）：
+本次改造部署时**需要人工执行的操作**总表：
 
-1. 确认无运行中会话：`session.phase IN ('RUNNING','WAITING_APPROVAL','RESUMING','CANCELLING')` 为空；
-2. 检查定时任务（`scheduled_task`）是否有 cron 落在窗口内，有则临时停用或顺延；
-3. 抽样确认会话技能全部是软链：`find /opt/mao-data/runtime -maxdepth 4 -type l -path '*/skills/*' | wc -l`。
+| 时机 | 操作 | 是否必须 | 说明 |
+|---|---|---|---|
+| 部署前 | ① 生产 `.env` 补 `SKILL_VIEWS_DIR=/opt/mao-data/skill-views` | ✅ 必须 | 见 §4.1；漏补会回落 `./skill-views` |
+| 部署前 | ② 确认无运行中会话；定时任务 cron 不落在窗口内 | ✅ 必须 | 检查命令见下 |
+| 部署前 | ③ 抽样确认存量会话技能全部是软链（留档） | 推荐 | 防止回滚窗口期误操作 |
+| 部署 | ④ `cd /data && bash deploy-mao.sh` | ✅ 必须 | 本次无前端改动，可用 `--backend-only` 缩短窗口 |
+| 部署后 | ⑤ 重建存量容器 | 推荐 | 管理后台「系统设置 → 容器管理 → 重建全部」（默认跳过有任务的容器，可勾选「包括正在运行任务的容器」）；不主动重建也会在用户下次调工具时懒重建 |
+| 部署后 | ⑥ 清空存量会话 skills 目录（只删软链） | 可选 | 命令见下；加速迁移彻底性 |
+| 部署后 | ⑦ 预热验证 | ✅ 必须 | 步骤见下 |
+| 部署后 | ⑧ 观察日志 ≥30 分钟 | ✅ 必须 | 日志目录 `/opt/mao/backend-ts/logs` |
+| 异常时 | ⑨ 回滚 | 预案 | 见 §5.4 |
 
-切换步骤：
+**② 前置检查命令**：
 
-1. **部署**：`cd /data && bash deploy-mao.sh`（拉代码 → 构建 → 后端蓝绿重启）；
-2. **重建存量容器**（可选，主动）：`docker rm -f mao-user-<id>` 按需重建；不主动也会在用户下次调工具时懒重建；
-3. **清空存量会话技能目录**（可选，推荐）：只删软链，不动源：
-   ```bash
-   ls -la /opt/mao-data/runtime/*/*/skills | head        # 抽样确认全是软链
-   find /opt/mao-data/runtime -maxdepth 4 -type d -name skills -path '*/[0-9]*/[0-9]*/skills' -exec rm -rf {} +
-   ```
-   下次执行时按新逻辑重建（避免"旧链接指向源"的残留期）；
-4. **预热验证**：各跑一个 host 会话与 docker 会话，执行 §7.2 的检查项；
-5. **观察日志**：`[skill-view]`、`Failed to sync skill`、`EROFS`、容器挂载审计日志（`[container-mount]`）。
+```bash
+# 无运行中会话（查管理后台会话列表或 DB；phase 不应出现下列值）
+# RUNNING / WAITING_APPROVAL / RESUMING / CANCELLING
+# 定时任务窗口：检查 scheduled_task 的 cron 是否落在发布窗口
+# 抽样确认软链：
+find /opt/mao-data/runtime -maxdepth 4 -type l -path '*/skills/*' | wc -l   # 与 §5.1 的 828 条量级对照
+```
+
+**⑥ 清空存量会话技能目录**（只删软链，不动源）：
+
+```bash
+ls -la /opt/mao-data/runtime/*/*/skills | head        # 抽样确认全是软链
+find /opt/mao-data/runtime -maxdepth 4 -type d -name skills -path '*/[0-9]*/[0-9]*/skills' -exec rm -rf {} +
+```
+
+下次执行时按新逻辑重建（避免"旧链接指向源"的残留期）。
+
+**⑦ 预热验证**（用测试账号触发一次会话执行）：
+
+1. 物化产物：`ls /opt/mao-data/skill-views/<userId>/` 已生成对应技能与 `.meta/`；
+2. docker 模式（当前生产）：对在跑容器执行 §7.2 第 1~3 项（源不可见 / 视图只读 / `SKILL.md` 可读）；
+3. CLI：在会话中对任一技能执行 `npm install . -g` 后运行 `<cli> --help`；
+4. 清理回归：删除该会话 `skills` 目录后确认 CLI 仍可用（§7.2 第 5 项）。
+
+**⑧ 观察要点**：`[skill-view]` 物化日志、`Failed to sync skill`、`EROFS` 误报、`[container-mount]` 挂载审计、容器重建日志；新数据根 `/opt/mao-data/skill-views` 纳入既有磁盘监控与备份策略。
+
+**系统自动完成、无需人工**（对照用，避免多余操作）：
+
+- `deploy-mao.sh` 内的技能源同步（rsync `mao-cli` → `/opt/mao-data/skills`）；
+- 视图物化与存量会话软链迁移（首次/下次执行时自动，`linkSkill` 比较目标后重建）；
+- 容器懒重建判定（挂载指纹比对，`ensureRunning` 时自动）；
+- 蓝绿切换（`restart.sh`）；容器内代码漂移收敛（`0.0.394`，容器未主动重建时生效）。
 
 ### 5.3 不选凌晨（在线发布）的差异
 
@@ -318,6 +350,7 @@ class SkillViewService {
 | `backend-ts/src/harness/runtime/runtime-cleanup-scheduler.ts` | 增加 `.tmp` 残留清理（>1h，可选） |
 | `backend-ts/src/config/app-config.ts` | `harness.skillViewsDir` 类型与默认值 |
 | `backend-ts/config/application.yml` | `skill-views-dir: ${SKILL_VIEWS_DIR:./skill-views}` |
+| `backend-ts/.gitignore` | 增加 `skill-views/`（兜底：未配置 `SKILL_VIEWS_DIR` 时不污染工作区） |
 | `backend-ts/src/app-container-runtime.ts` | 向 `ContainerRegistry` 传 `skillViewsDir` |
 | `backend-ts/src/create-app.ts` | 实例化并注入 `SkillViewService` |
 | 单测 | `skill-view.service.spec.ts`（新增）+ 现有 5 个 spec 更新（见 §7.1） |
