@@ -352,7 +352,11 @@ function capabilitySummary(row: any): string {
   const skills = Array.isArray(row.skillNames) ? row.skillNames.length : 0
   const mcp = Array.isArray(row.mcpServerIds) ? row.mcpServerIds.length : 0
   const tools = Array.isArray(row.httpToolIds) ? row.httpToolIds.length : 0
-  return `技能 ${skills} · MCP ${mcp} · 工具 ${tools}`
+  const parts: string[] = []
+  if (skills > 0) parts.push(`技能 ${skills}`)
+  if (mcp > 0) parts.push(`MCP ${mcp}`)
+  if (tools > 0) parts.push(`工具 ${tools}`)
+  return parts.length > 0 ? parts.join(' · ') : '—'
 }
 
 /**
