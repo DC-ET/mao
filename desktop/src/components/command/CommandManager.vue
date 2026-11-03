@@ -1,9 +1,19 @@
 <template>
   <div class="command-manager">
-    <el-tabs v-model="activeTab" class="command-tabs">
-      <el-tab-pane label="我的指令" name="personal" />
-      <el-tab-pane label="系统指令" name="system" />
-    </el-tabs>
+    <div class="command-head">
+      <el-tabs v-model="activeTab" class="command-tabs">
+        <el-tab-pane label="我的指令" name="personal" />
+        <el-tab-pane label="系统指令" name="system" />
+      </el-tabs>
+      <el-input
+        v-model="commandKeyword"
+        class="command-search"
+        size="small"
+        placeholder="搜索指令"
+        clearable
+        :prefix-icon="Search"
+      />
+    </div>
 
     <p class="command-subtitle">
       {{ activeTab === 'personal' ? '创建和管理个人快捷指令。' : '查看系统预置的只读快捷指令。' }}
@@ -13,14 +23,6 @@
       <el-icon><Plus /></el-icon>
       新建指令
     </button>
-
-    <el-input
-      v-model="commandKeyword"
-      class="command-search"
-      placeholder="搜索指令"
-      clearable
-      :prefix-icon="Search"
-    />
 
     <div class="command-list">
       <div v-if="loading" class="command-empty">加载中...</div>
@@ -155,9 +157,12 @@ async function copyContent(cmd: CommandItem) {
 <style scoped>
 .command-manager {
   padding: 0 4px;
+  container-type: inline-size;
+  container-name: command-manager;
 }
 
-.command-tabs {
+.command-head {
+  position: relative;
   margin-bottom: 12px;
 }
 
@@ -167,17 +172,40 @@ async function copyContent(cmd: CommandItem) {
 
 .command-tabs :deep(.el-tabs__item) {
   font-size: 14px;
+  height: 40px;
+  line-height: 40px;
+}
+
+/* 页签文字不钻进右侧搜索框；底部分割线仍铺满整行。 */
+.command-tabs :deep(.el-tabs__nav-scroll) {
+  padding-right: 216px;
+}
+
+.command-search {
+  position: absolute;
+  top: 8px;
+  right: 0;
+  width: 200px;
+  z-index: 2;
 }
 
 .command-subtitle {
   font-size: 13px;
   color: var(--aw-ink-muted);
-  margin: 0 0 16px 0;
+  margin: 0 0 12px 0;
 }
 
-.command-search {
-  max-width: 260px;
-  margin-bottom: 12px;
+@container command-manager (max-width: 460px) {
+  .command-tabs :deep(.el-tabs__nav-scroll) {
+    padding-right: 0;
+  }
+
+  .command-search {
+    position: static;
+    display: flex;
+    width: 100%;
+    margin-top: 10px;
+  }
 }
 
 .create-btn {
