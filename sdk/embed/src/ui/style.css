@@ -67,11 +67,12 @@
 }
 
 /* ── launcher ── */
+/* 入口按钮 28px（原 56px 的 50%）：图标满铺按钮，随按钮同比缩小 */
 .mao-launcher {
   position: fixed;
   bottom: 24px;
-  width: 56px;
-  height: 56px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   border-radius: 50%;
   background: linear-gradient(145deg, rgba(255, 255, 255, 0.12), transparent 55%, rgba(0, 0, 0, 0.08)), var(--mao-primary);
@@ -91,7 +92,7 @@
 .mao-launcher::before {
   content: '';
   position: absolute;
-  inset: 4px;
+  inset: 2px;
   border-radius: inherit;
   border: 1px solid currentColor;
   opacity: 0.12;
@@ -118,20 +119,20 @@
 .mao-agent-avatar { display: block; width: 100%; height: 100%; border-radius: inherit; object-fit: cover; }
 .mao-launcher__dot {
   position: absolute;
-  top: 3px;
-  right: 3px;
-  width: 12px;
-  height: 12px;
+  top: 2px;
+  right: 2px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: var(--mao-danger);
-  border: 2px solid #fff;
+  border: 1px solid #fff;
 }
 /* 运行指示环画在按钮外侧，颜色取主色（宿主页多为浅底，白色环会消失） */
 .mao-launcher__spinner {
   position: absolute;
-  inset: -5px;
+  inset: -3px;
   border-radius: 50%;
-  border: 2.5px solid transparent;
+  border: 2px solid transparent;
   border-top-color: var(--mao-primary-ink);
   opacity: 0.55;
   animation: mao-spin 0.9s linear infinite;
@@ -1052,10 +1053,11 @@
 }
 
 /* 窄屏（手机）触控尺寸：只放大点击目标，不改布局与字号。
-   44px 是 iOS/Android 的推荐最小触控边长；桌面端保持紧凑。 */
+   44px 是 iOS/Android 的推荐最小触控边长；浮窗入口按钮随桌面端同比减半为 26px
+   （原 52px 的 50%），其余控件仍按触控推荐尺寸放大。 */
 @media (max-width: 480px) {
   .mao-panel { bottom: 84px; }
-  .mao-launcher { width: 52px; height: 52px; bottom: 20px; }
+  .mao-launcher { width: 26px; height: 26px; bottom: 20px; }
   .mao-launcher[data-pos='right'] { right: 16px; }
   .mao-launcher[data-pos='left'] { left: 16px; }
   .mao-panel[data-pos='right'] { right: 16px; }
