@@ -8,6 +8,7 @@ import type { Agent } from '../deps.js';
 import type { PathSandbox } from '../safety/path-sandbox.js';
 import type { RuntimeDataResolver } from '../runtime/runtime-data-resolver.js';
 import type { SkillLoader } from './skill-loader.js';
+import type { SkillViewService } from './skill-view.service.js';
 import { isValidSkillName, parseSkillMdContent, type SkillDocument } from './skill-md.js';
 
 export class SkillSyncService {
@@ -18,6 +19,7 @@ export class SkillSyncService {
     private readonly pathSandbox: PathSandbox,
     private readonly runtimeDataResolver: RuntimeDataResolver,
     private readonly userSkillsDir: string,
+    private readonly skillViewService: SkillViewService,
   ) {}
 
   async syncToSession(agent: Agent, userId: number | null, sessionId: number | null): Promise<void> {
@@ -30,12 +32,14 @@ export class SkillSyncService {
     for (const [name, doc] of Object.entries(this.loadUserSkillDocs(userId))) {
       if (doc.folderPath) userSkillFolders.set(name, doc.folderPath);
     }
-    const merged = new Map<string, string>();
+    // 系统技能与用户技能统一进 merged（用户技能同名覆盖系统技能），链接目标分开：
+    // 系统技能 → 用户级只读视图（skill-views/{u}/{name}）；用户技能 → userskills/{u}/{name}
+    const merged = new Map<string, { folder: string; system: boolean }>();
     for (const name of systemNames) {
       const folder = this.skillLoader.getSkillFolder(name);
-      if (folder) merged.set(name, folder);
+      if (folder) merged.set(name, { folder, system: true });
     }
-    for (const [k, v] of userSkillFolders) merged.set(k, v);
+    for (const [k, v] of userSkillFolders) merged.set(k, { folder: v, system: false });
     if (merged.size === 0) return;
 
     const runtimeDir = this.runtimeDataResolver.resolveSessionRuntimeDir(userId, sessionId);
@@ -44,7 +48,7 @@ export class SkillSyncService {
     mkdirSync(skillsDir, { recursive: true });
     const state = this.getSyncState(agent.id, sessionId);
     const toRemove = new Set(state.keys());
-    for (const [skillName, sourceFolder] of merged) {
+    for (const [skillName, entry] of merged) {
       toRemove.delete(skillName);
       const targetFolder = path.join(skillsDir, skillName);
       try {
@@ -53,11 +57,30 @@ export class SkillSyncService {
           continue;
         }
         assertInside(skillsDir, targetFolder);
-        linkSkill(sourceFolder, targetFolder);
-        // 链接指向源目录，内容始终最新，无需记录 mtime；state 仅用于追踪本会话已挂载的技能名
+        let linkSource = entry.folder;
+        if (entry.system) {
+          // 系统技能先物化「用户级只读视图」，链接指向视图（路径稳定，源永进不了容器）
+          const viewPath = await this.skillViewService.ensureView(userId, skillName, entry.folder);
+          if (viewPath == null) {
+            // 源已下线：清掉残留链接，避免指向不存在视图的悬空（视图已由 ensureView 清理）
+            removeSkillLink(targetFolder);
+            state.delete(skillName);
+            continue;
+          }
+          linkSource = viewPath;
+        }
+        linkSkill(linkSource, targetFolder);
+        // 链接指向视图 / 用户技能目录；源更新由下一轮 sync 重建视图后即时可读，
+        // state 仅用于追踪本会话已挂载的技能名
         state.set(skillName, 0);
         harnessLog('info', `Linked skill ${skillName} to ${targetFolder}`);
       } catch (e) {
+        // 物化失败降级（技术方案 §4.3）：该技能本轮不挂载（删除已有链接）并告警，
+        // 避免「指向不存在视图」的悬空；下一轮 sync 会重新尝试
+        try {
+          removeSkillLink(targetFolder);
+        } catch { /* 链接清理失败不影响其余技能 */ }
+        state.delete(skillName);
         harnessLog('error', `Failed to sync skill ${skillName} to session runtime: ${(e as Error).message}`);
       }
     }

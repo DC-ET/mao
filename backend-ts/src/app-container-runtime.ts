@@ -96,6 +96,7 @@ export async function assembleContainerRuntime(deps: ContainerRuntimeDeps): Prom
     runtimeDir: cfg.app.harness.runtimeDir,
     userSkillsDir,
     skillsDir: cfg.app.harness.skillsDir,
+    skillViewsDir: cfg.app.harness.skillViewsDir,
     uploadDir,
     shareDir,
     // 容器域名解析注入：宿主机 /etc/hosts 继承 + 后台自定义规则（Docker 模式）

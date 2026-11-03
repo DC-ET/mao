@@ -36,8 +36,17 @@ export interface MountPlannerRoots {
   channelDir: string;
   /** 只读项：后端 dist（runtime agent 代码）。 */
   distDir: string;
-  /** rw 项：平台共享技能目录（按产品要求容器内可写）。 */
+  /**
+   * 平台共享技能源：技能视图（skillViewsDir）的拷贝来源。
+   * 技术方案 2026-11-03 G1/G2：该目录不再挂载进容器（源对容器不可见、不可写），
+   * 仅保留为登记根参与挂载清单校验（父目录防护等）。
+   */
   skillsDir: string;
+  /**
+   * 技能视图根：容器内按用户挂 {skillViewsDir}/{userId}（ro）。
+   * 视图是用户级只读技能副本，会话技能软链指向这里（SkillSyncService）。
+   */
+  skillViewsDir: string;
   /** rw 项：图片产物上传根（FILE_UPLOAD_DIR），按用户挂 {uploadDir}/{userId}。 */
   uploadDir: string;
   /** rw 项：每用户 /tmp 持久根，{tmpDir}/{userId} 映射到容器 /tmp。 */
@@ -94,10 +103,10 @@ export class ContainerMountPlanner {
       // 整根 rw；管理员投放内容的防误删从 ro 挂载退化为信任 + 快照兜底。
       // 注意 mode 参与挂载指纹：ro→rw 变更会触发存量容器自动重建。
       { hostPath: this.under(this.roots.shareDir, ''), containerPath: this.under(this.roots.shareDir, ''), mode: 'rw', purpose: 'share' },
-      // 平台技能：全局可写（产品要求，容器内可安装/更新共享技能）。
-      // 注意这是全员共享目录，容器内 root 可修改会影响其他用户加载的技能，
-      // 个人技能仍写 userSkillsDir/{userId}。
-      { hostPath: this.under(this.roots.skillsDir, ''), containerPath: this.under(this.roots.skillsDir, ''), mode: 'rw', purpose: 'skills' },
+      // 技能视图（技术方案 2026-11-03 §4.4）：系统技能的用户级只读副本，会话软链指向这里；
+      // 源目录（skillsDir）整体不再进容器（G1：容器内不可见 / G2：只读）。
+      // 注意 mode 参与挂载指纹：rw→ro 变更会触发存量容器自动重建。
+      { hostPath: this.under(this.roots.skillViewsDir, u), containerPath: this.under(this.roots.skillViewsDir, u), mode: 'ro', purpose: 'skillViews' },
     ];
     for (const workspace of extraWorkspaces) {
       const mount = this.planSessionWorkspace(workspace, userId);
@@ -113,8 +122,11 @@ export class ContainerMountPlanner {
    * shareDir 独立性校验（共享目录方案 §4.1 等式盲区）：shareDir 若等于某个按用户
    * 收窄的登记根、或位于其下（如误配为 workspaceRoot 自身或 {workspaceRoot}/7），
    * 现有 assertSafe 规则全部放行——这些根按 {root}/{userId} 挂载，容器路径不重复；
-   * 父目录防护对等式 continue 跳过——整棵每用户数据会以 ro 挂进所有容器，构成跨用户
-   * 可读。放在 plan() 而非构造器：host 模式不起容器，不应因误配在启动时炸掉。
+   * 父目录防护对等式 continue 跳过——整棵每用户数据会以只读/可写挂进所有容器，构成跨用户
+   * 可读/可写。技能根（skillsDir / skillViewsDir）同理：视图根含全部用户子目录，
+   * 等值误配会把所有用户的授权技能整棵挂进每个容器；技能源等值误配等于把「永不进容器」
+   * 的共享源重新挂进去（skills 挂载移除后不再有重复容器路径兜底，须显式拒绝）。
+   * 放在 plan() 而非构造器：host 模式不起容器，不应因误配在启动时炸掉。
    */
   private assertShareDirIndependent(): void {
     const share = path.resolve(this.roots.shareDir);
@@ -122,6 +134,7 @@ export class ContainerMountPlanner {
       this.roots.workspaceRoot, this.roots.runtimeDir, this.roots.userHomeDir,
       this.roots.userSkillsDir, this.roots.uploadDir, this.roots.channelDir,
       this.roots.depsDir, this.roots.tmpDir,
+      this.roots.skillViewsDir, this.roots.skillsDir,
     ].map((r) => path.resolve(r));
     for (const root of perUserRoots) {
       if (share === root || share.startsWith(root + path.sep)) {
@@ -170,7 +183,6 @@ export class ContainerMountPlanner {
    * 校验规则（技术方案 §5.1）：
    * - 每条源路径必须位于已登记数据根之下（或 ro 项等于其根自身）；
    * - rw 项的源路径必须以 /{userId} 结尾或包含 /{userId}/ 段，拒绝任何上级目录；
-   *   唯一例外是平台技能根（purpose=skills，按产品要求全局可写）；
    * - dist 只读，不得被覆写为 rw；
    * - 源路径不得是另一个已登记数据根的父目录（如挂 /opt/mao-data 整体）；
    * - 符号链接源路径 realpath 后仍必须在登记根内（防链接逃逸）；
@@ -178,10 +190,19 @@ export class ContainerMountPlanner {
    */
   assertSafe(mounts: ContainerMount[], userId: number): void {
     const u = String(userId);
+    // 技能视图根与 shareDir 互不包含（技术方案 2026-11-03 §4.4 评审修订）：share 整根 rw
+    // 与视图根嵌套会产生挂载语义歧义（同一视图目录既被 ro 精确挂载、其父又被 rw 粗粒度打通）。
+    // 正向（shareDir 位于视图根之内/相等）由 assertShareDirIndependent 拦截，这里显式补齐反向。
+    const shareRoot = path.resolve(this.roots.shareDir);
+    const viewsRoot = path.resolve(this.roots.skillViewsDir);
+    if (viewsRoot === shareRoot || viewsRoot.startsWith(shareRoot + path.sep)) {
+      throw new MountPlanError(`skillViewsDir ${viewsRoot} must not be or under shareDir ${shareRoot}`);
+    }
     const registeredRoots = [
       this.roots.userHomeDir, this.roots.runtimeDir, this.roots.workspaceRoot,
       this.roots.depsDir, this.roots.userSkillsDir, this.roots.channelDir,
-      this.roots.distDir, this.roots.skillsDir, this.roots.uploadDir, this.roots.tmpDir,
+      this.roots.distDir, this.roots.skillsDir, this.roots.skillViewsDir,
+      this.roots.uploadDir, this.roots.tmpDir,
       this.roots.shareDir,
     ].map((r) => path.resolve(r));
 
@@ -207,16 +228,14 @@ export class ContainerMountPlanner {
         throw new MountPlanError(`mount ${mount.purpose}: host path ${host} is not under any registered data root`);
       }
       if (!ro && !mount.sessionWorkspace) {
-        // 平台技能根是共享 rw 例外之一（产品要求容器内可安装/更新共享技能），
-        // 且必须恰为登记的 skillsDir 根，不能借 purpose 放宽到其它共享路径。
-        const isPlatformSkillsRoot = mount.purpose === 'skills' && host === path.resolve(this.roots.skillsDir);
         // 共享目录整根 rw 例外（团队经验库方案 2026-10-24 D10）：agent-experience/ 经验库
-        // 需容器内写入；同样必须恰为登记的 shareDir 根，防借 purpose 扩大到子路径外。
+        // 需容器内写入；必须恰为登记的 shareDir 根，防借 purpose 扩大到子路径外。
+        // （原「平台技能根 rw 例外」随技能视图改造删除：不再存在全局可写共享技能根。）
         const isSharedShareRoot = mount.purpose === 'share' && host === path.resolve(this.roots.shareDir);
         // rw 项必须含 userId 尾段/中间段，拒绝把整个数据根或上级挂进容器。
         // 通道会话工作区（sessionWorkspace）按 {account}/{leaf} 结构性豁免 + 私聊
         // 叶子归属校验（planSessionWorkspace），并由调用方按数据库 user_id 过滤保证
-        if (!isPlatformSkillsRoot && !isSharedShareRoot) {
+        if (!isSharedShareRoot) {
           const rel = path.relative(owningRoot, host);
           if (!this.containsUserSegment(rel, u)) {
             throw new MountPlanError(`mount ${mount.purpose}: rw path ${host} must contain /${u}/ segment (got relative '${rel}')`);

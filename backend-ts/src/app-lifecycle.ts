@@ -130,6 +130,7 @@ export function assembleLifecycle(deps: LifecycleDeps): LifecycleResult {
     cfg.app.harness.runtimeDir,
     cfg.app.harness.cleanup,
     (_userId: number, sessionId: number) => d.wsHandler.hasExecutionClaim(sessionId),
+    cfg.app.harness.skillViewsDir,
   );
   runtimeCleanup.start();
   const subagentExecutionRecovery = new SubagentExecutionRecoveryService(

@@ -144,6 +144,8 @@ export interface ContainerRegistryOptions {
   runtimeDir: string;
   userSkillsDir: string;
   skillsDir: string;
+  /** 技能视图根（SKILL_VIEWS_DIR）：容器内按用户 ro 挂 {skillViewsDir}/{userId}。 */
+  skillViewsDir: string;
   /** 图片产物上传根（FILE_UPLOAD_DIR）：按用户挂 {uploadDir}/{userId} 并注入容器 env。 */
   uploadDir: string;
   /** 公共共享目录（共享目录方案 §4.3）：ro 挂载进每用户容器并注入容器 env。 */
@@ -219,6 +221,7 @@ export class ContainerRegistry {
       channelDir: c.channelDir,
       distDir: c.distDir,
       skillsDir: opts.skillsDir,
+      skillViewsDir: opts.skillViewsDir,
       uploadDir: opts.uploadDir,
       tmpDir: c.tmpDir,
       shareDir: opts.shareDir,
@@ -743,9 +746,11 @@ export class ContainerRegistry {
       // 配置直接读持久挂载；Java 的 user.home 由 runtime-agent 启动时同步 /etc/passwd 兜住
       '-e', `HOME=${userHomeMount?.containerPath ?? path.posix.join(this.opts.userHomeDir, String(userId))}`,
       '-e', `MAO_USER_SKILLS_DIR=${this.opts.userSkillsDir}`,
-      // 平台技能目录：会话技能符号链接的目标根，容器内文件工具据此登记沙箱允许根
-      // （2026-10-31 回归：不注入时容器内读 SKILL.md 被判符号链接逃逸）
-      '-e', `MAO_SKILLS_DIR=${this.opts.skillsDir}`,
+      // 技能视图根：会话技能符号链接的目标根（SkillSyncService 指向 {skillViewsDir}/{u}/{name}），
+      // 容器内文件工具据此登记沙箱允许根（技术方案 2026-11-03 §4.5）。
+      // 注入前 path.resolve：与 planner 挂载路径（path.resolve 后的宿主路径）同一解析基准，
+      // 配置为相对值时容器内（cwd=/）也能命中真实挂载点（round-1 review I-1）
+      '-e', `MAO_SKILL_VIEWS_DIR=${path.resolve(this.opts.skillViewsDir)}`,
       '-e', `MAO_UPLOAD_DIR=${this.opts.uploadDir}`,
       '-e', `MAO_SHARE_DIR=${this.opts.shareDir}`,
       ...this.planner.toDockerArgs(mounts),

@@ -94,6 +94,7 @@ import { SkillBundleService } from './skill/skill-bundle.service.js';
 import { UserSkillService } from './skill/user-skill.service.js';
 import { SkillDocService } from './skill/skill-doc.service.js';
 import { SkillSyncService } from './harness/skill/skill-sync-service.js';
+import { SkillViewService } from './harness/skill/skill-view.service.js';
 import { SkillLoader } from './harness/skill/skill-loader.js';
 import { ScheduledTaskDbStore } from './schedule/scheduled-task.store.js';
 import { AnalyticsDbStore, AnalyticsService } from './analytics/analytics.service.js';
@@ -496,7 +497,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const sessionCompactionService = new SessionCompactionService(compactionRepo, messageRepo, sessionRepo);
   const sessionCompactionEventService = new SessionCompactionEventService(new SessionCompactionEventRepository(db));
   const envInfo = new EnvironmentInfoProvider();
-  const runtimeResolver = new RuntimeDataResolver(cfg.app.harness.runtimeDir, cfg.app.harness.userHomeDir);
+  const runtimeResolver = new RuntimeDataResolver(cfg.app.harness.runtimeDir, cfg.app.harness.userHomeDir, cfg.app.harness.skillViewsDir);
   const gitOps = new GitOperationService(gitLookup, runtimeResolver);
   const todoMapper = new SessionTodoMapper(db);
   const todoRepo = new SessionTodoRepository(db);
@@ -575,7 +576,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     ecpClient: new EcpClient(),
     getConfig: () => settingService.getEcpConfig(),
   });
-  const skillSync = new SkillSyncService(skillLoader, pathSandbox, runtimeResolver, userSkillsDir);
+  const skillViewService = new SkillViewService(cfg.app.harness.skillViewsDir);
+  const skillSync = new SkillSyncService(skillLoader, pathSandbox, runtimeResolver, userSkillsDir, skillViewService);
   const userSkillService = new UserSkillService(userSkillsDir, skillLoader);
   const skillDocService = new SkillDocService(skillLoader);
   // 资产分发闭环 P3：mao-skill-bundle v1 导出/导入

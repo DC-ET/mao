@@ -41,6 +41,15 @@ describe('BUG-C1 空串环境变量顶掉 ${VAR:default} 的默认值', () => {
     });
   });
 
+  it('SKILL_VIEWS_DIR= 空串时不应把 skill-views-dir 解析成空路径', () => {
+    // 技术方案 2026-11-03：技能视图根与 skills-dir 同口径，空串按未设置处理
+    withEnv({ SKILL_VIEWS_DIR: '' }, () => {
+      const cfg = loadConfig();
+      expect(cfg.app.harness.skillViewsDir).not.toBe('');
+      expect(cfg.app.harness.skillViewsDir).toBe('./skill-views');
+    });
+  });
+
   it('WORKSPACE_ROOT= 空串时不应把 workspace-root 解析成空路径', () => {
     withEnv({ WORKSPACE_ROOT: '' }, () => {
       const cfg = loadConfig();

@@ -71,6 +71,7 @@ app:
     runtime-dir: ${MAO_RUNTIME_DIR:/opt/mao-data/runtime}
     user-home-dir: ${MAO_USER_HOME_DIR:/opt/mao-data/users}
     skills-dir: ${SKILLS_DIR:./skills}
+    skill-views-dir: ${SKILL_VIEWS_DIR:./skill-views}
     user-skills-dir: ${USER_SKILLS_DIR:}
     share-dir: ${MAO_SHARE_DIR:/opt/mao-data/share}
   mcp:

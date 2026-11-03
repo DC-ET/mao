@@ -110,6 +110,12 @@ export interface AppConfig {
       localToolTimeoutSeconds: number;
       embedPageToolTimeoutSeconds: number;
       skillsDir: string;
+      /**
+       * 技能视图根（MAO 容器技能挂载收口，技术方案 2026-11-03 §4.1）：
+       * 系统技能按用户物化的只读副本根，容器内按用户 ro 挂载；
+       * 不配置时回落 ./skill-views（功能可跑，但偏离 /opt/mao-data 数据目录约定）。
+       */
+      skillViewsDir: string;
       userSkillsDir: string;
       skillsCacheSeconds: number;
       /** 公共共享目录（MAO_SHARE_DIR）：管理员宿主机投放，全员只读。 */
@@ -247,6 +253,7 @@ const DEFAULTS: AppConfig = {
       // 需覆盖 per_action 逐次确认窗口（SDK 确认超时 120s），否则用户确认后动作仍会执行但结果无人接收。
       embedPageToolTimeoutSeconds: 180,
       skillsDir: './skills',
+      skillViewsDir: './skill-views',
       userSkillsDir: join(process.env.HOME ?? '/tmp', '.mao/data/userskills'),
       skillsCacheSeconds: 300,
       shareDir: '/opt/mao-data/share',

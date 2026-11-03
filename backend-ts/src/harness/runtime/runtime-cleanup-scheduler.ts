@@ -1,6 +1,7 @@
 import { readdirSync, statSync, existsSync, rmSync, unlinkSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { harnessLog } from '../log.js';
+import { cleanupStaleSkillViewTmp } from '../skill/skill-view.service.js';
 
 export interface RuntimeCleanupProperties {
   /** 运行扫描间隔（毫秒）。 */
@@ -34,6 +35,11 @@ export class RuntimeCleanupScheduler {
     private readonly properties: RuntimeCleanupProperties,
     /** 可选的活跃会话判定：返回 true 时跳过该会话的 skills 清理，避免清理正在运行会话的依赖。 */
     private readonly isSessionActive?: (userId: number, sessionId: number) => boolean | Promise<boolean>,
+    /**
+     * 技能视图根（SKILL_VIEWS_DIR，可省略）：提供时每轮清理顺带删除 .tmp 暂存区
+     * 超过 1 小时的物化残留（技术方案 2026-11-03 §4.7）。
+     */
+    private readonly skillViewsDir?: string,
   ) {}
 
   start(): void {
@@ -68,6 +74,15 @@ export class RuntimeCleanupScheduler {
     this.running = true;
     try {
       const result: RuntimeCleanupResult = { shellOutputRemoved: 0, skillsRemoved: 0, webPageRemoved: 0 };
+      // 技能视图暂存区残留（>1h）：物化进程崩溃 / 蓝绿并发留下的 stage 与 .old 目录
+      if (this.skillViewsDir != null) {
+        try {
+          const removed = cleanupStaleSkillViewTmp(this.skillViewsDir);
+          if (removed > 0) harnessLog('info', `Runtime cleanup: removed ${removed} stale skill-view tmp entries`);
+        } catch (e) {
+          harnessLog('warn', `Runtime cleanup: skill-view tmp cleanup failed: ${(e as Error).message}`);
+        }
+      }
       const userDirs = this.safeReadDir(this.runtimeRoot);
       for (const userId of userDirs) {
         const userRoot = resolve(this.runtimeRoot, userId);

@@ -22,7 +22,8 @@
 |------|------|
 | `/opt/mao` | Git 仓库（源码 + dist + node_modules + `.env`） |
 | `/opt/mao-data/workspace` | Agent 工作区（`WORKSPACE_ROOT`） |
-| `/opt/mao-data/skills` | 平台技能（`SKILLS_DIR`） |
+| `/opt/mao-data/skills` | 平台技能源（`SKILLS_DIR`）：**容器内不可见**，容器内的技能操作路径一律用会话技能目录（系统提示中每个技能的 `Folder:` 路径，如 `/opt/mao-data/runtime/<uid>/<sid>/skills/<name>`） |
+| `/opt/mao-data/skill-views` | 技能视图（`SKILL_VIEWS_DIR`）：平台技能按用户物化的只读副本，容器内按用户 ro 挂载；会话技能软链指向这里，源更新在下次会话执行时重建视图生效 |
 | `/opt/mao-data/userskills` | 用户技能（`USER_SKILLS_DIR`） |
 | `/opt/mao-data/uploads` | 上传与 APK OTA（`FILE_UPLOAD_DIR`） |
 | `/opt/mao-data/users` | CLOUD 用户 HOME（`MAO_USER_HOME_DIR`） |
@@ -48,7 +49,8 @@
 | `APP_SIGNAL_SECRET` | 哨兵时建议 | 信号哨兵请求头 / 请求体加密。未配置时回退内置默认密钥，生产建议显式设置；轮换后已存哨兵需重新填写请求头与请求体 |
 | `APP_USER_TOOL_SECRET` | 自定义工具时建议 | 自定义 HTTP 工具请求头敏感值加密。未配置时回退内置默认密钥，生产建议显式设置；轮换后已存工具的敏感请求头需重新填写 |
 | `WORKSPACE_ROOT` | **是** | 工作区根 |
-| `SKILLS_DIR` / `USER_SKILLS_DIR` | **是** | 技能目录 |
+| `SKILLS_DIR` / `USER_SKILLS_DIR` | **是** | 技能目录（平台技能源 / 用户技能） |
+| `SKILL_VIEWS_DIR` | 否（docker 模式生产须配，见 [deploy.md](deploy.md)） | 技能视图根（平台技能的用户级只读副本），默认 `./skill-views`；生产配 `/opt/mao-data/skill-views`（纳入备份/监控）；漏配功能可用，但视图落在后端 cwd 下 |
 | `FILE_UPLOAD_DIR` | **是** | 本地上传目录 |
 | `MAO_RUNTIME_DIR` | 否 | 运行时目录 |
 | `MAO_USER_HOME_DIR` | 否 | CLOUD 用户 HOME |

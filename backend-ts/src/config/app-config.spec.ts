@@ -190,6 +190,41 @@ describe('自定义 HTTP 工具加密密钥环境变量', () => {
   });
 });
 
+describe('技能视图根配置（SKILL_VIEWS_DIR）', () => {
+  const ENV_KEYS = ['SKILL_VIEWS_DIR'];
+
+  function withEnv(env: Record<string, string | undefined>, fn: () => void): void {
+    const prev: Record<string, string | undefined> = {};
+    for (const key of ENV_KEYS) {
+      prev[key] = process.env[key];
+      if (env[key] === undefined) delete process.env[key];
+      else process.env[key] = env[key];
+    }
+    try {
+      resetConfigCache();
+      fn();
+    } finally {
+      for (const key of ENV_KEYS) {
+        if (prev[key] === undefined) delete process.env[key];
+        else process.env[key] = prev[key];
+      }
+      resetConfigCache();
+    }
+  }
+
+  it('未配置时回落 ./skill-views（功能可跑，部署应显式指向 /opt/mao-data/skill-views）', () => {
+    withEnv({}, () => {
+      expect(loadConfig().app.harness.skillViewsDir).toBe('./skill-views');
+    });
+  });
+
+  it('SKILL_VIEWS_DIR 覆盖默认值', () => {
+    withEnv({ SKILL_VIEWS_DIR: '/opt/mao-data/skill-views' }, () => {
+      expect(loadConfig().app.harness.skillViewsDir).toBe('/opt/mao-data/skill-views');
+    });
+  });
+});
+
 describe('flyway files', () => {
   it('contains the current migration set', () => {
     const tsDir = join(process.cwd(), 'db/migration');

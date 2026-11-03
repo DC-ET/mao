@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { ContainerRegistry, type DockerCli } from './container-registry.js';
 import { containerHostsFingerprint } from '../../common/container-hosts.js';
 import { useTmpDir } from '../../testing/tmp-dir.js';
@@ -40,6 +40,7 @@ function makeRegistry(
     runtimeDir: join(base, 'runtime'),
     userSkillsDir: join(base, 'userskills'),
     skillsDir: join(base, 'skills'),
+    skillViewsDir: join(base, 'skill-views'),
     uploadDir: join(base, 'uploads'),
     shareDir: join(base, 'share'),
     // 宿主机先 listen 再 docker run（BUG-2 回归）：listen/token 回调先于 run 发生
@@ -115,9 +116,12 @@ describe('container registry', () => {
     // HOME 对齐用户数据目录：容器内 HOME 与宿主机模式一致，用户级 .npmrc/.m2/.gitconfig 生效
     expect(runArgs).toContain(`-e HOME=${join(base, 'users', '7')}`);
     expect(runArgs).toContain(`-e MAO_USER_SKILLS_DIR=${join(base, 'userskills')}`);
-    // 平台技能目录：会话技能符号链接的目标根，容器内文件工具据此登记沙箱允许根
-    // （2026-10-31 回归：不注入时容器内读 SKILL.md 被判符号链接逃逸）
-    expect(runArgs).toContain(`-e MAO_SKILLS_DIR=${join(base, 'skills')}`);
+    // 技能视图根：会话技能符号链接的目标根；容器内按用户 ro 挂载（技术方案 2026-11-03）
+    expect(runArgs).toContain(`-e MAO_SKILL_VIEWS_DIR=${join(base, 'skill-views')}`);
+    expect(runArgs).toContain(`${join(base, 'skill-views', '7')}:${join(base, 'skill-views', '7')}:ro`);
+    // 旧平台技能根（全局 rw）不再注入、不再挂载（G1/G2：技能源对容器不可见）
+    expect(runArgs).not.toContain('MAO_SKILLS_DIR');
+    expect(runArgs).not.toContain(`${join(base, 'skills')}:`);
     // 图片产物上传根（按用户挂 {uploadDir}/{userId}，nginx /uploads/ 静态出口同源）
     expect(runArgs).toContain(`-e MAO_UPLOAD_DIR=${join(base, 'uploads')}`);
     expect(runArgs).toContain(`${join(base, 'uploads', '7')}:${join(base, 'uploads', '7')}:rw`);
@@ -138,6 +142,42 @@ describe('container registry', () => {
     const again = await registry.ensureRunning(7);
     expect(again.containerName).toBe(entry.containerName);
     expect(log.filter((line) => line.startsWith('run -d')).length).toBe(1);
+  });
+
+  it('resolvesRelativeSkillViewsDirInContainerEnv', async () => {
+    // round-1 review I-1 回归：skillViewsDir 为相对值时，容器 env 必须注入 resolve 后的绝对路径，
+    // 与 planner 的宿主挂载路径同一解析基准——否则容器内（cwd=/）按容器 cwd 解析出的沙箱允许根
+    // 与真实挂载点错位，读任何技能文件被判「符号链接逃逸」。
+    const base = makeBase('mao-registry-views-rel-');
+    const log: string[] = [];
+    const { registry } = makeRegistry(base, log, { skillViewsDir: './skill-views' });
+    await registry.ensureRunning(7);
+    const runArgs = log.find((line) => line.startsWith('run -d'))!;
+    const absolute = resolve('./skill-views');
+    expect(runArgs).toContain(`-e MAO_SKILL_VIEWS_DIR=${absolute}`);
+    // env 与挂载源逐字节一致
+    expect(runArgs).toContain(`${join(absolute, '7')}:${join(absolute, '7')}:ro`);
+  });
+
+  it('appliesSkillViewsEnvOnFirstRebuildOfLegacyEntry', async () => {
+    // 评审修订 §4.4/§7.1：env 不在挂载指纹内，升级后的存量容器靠「挂载指纹变化」重建一次，
+    // 新 env（MAO_SKILL_VIEWS_DIR）随之生效；旧 env（MAO_SKILLS_DIR）不再出现
+    const base = makeBase('mao-registry-legacy-env-');
+    const log: string[] = [];
+    const { registry } = makeRegistry(base, log);
+    await registry.ensureRunning(7);
+    // 模拟旧版本固化的条目（无挂载指纹）：首次复用按漂移处理，自愈重建一次
+    delete registry.getEntry(7)!.mountFingerprint;
+    log.length = 0;
+    await registry.ensureRunning(7);
+    expect(dockerOps(log)).toEqual(['stop -t', 'rm -f', 'run -d']);
+    const runArgs = log.find((line) => line.startsWith('run -d'))!;
+    expect(runArgs).toContain(`-e MAO_SKILL_VIEWS_DIR=${join(base, 'skill-views')}`);
+    expect(runArgs).not.toContain('MAO_SKILLS_DIR');
+    // 一次性行为：指纹一致后零 docker 动作
+    log.length = 0;
+    await registry.ensureRunning(7);
+    expect(dockerOps(log)).toEqual([]);
   });
 
   it('doesNotPoisonEntryWhenSocketNeverReady', async () => {
@@ -427,6 +467,7 @@ describe('container registry', () => {
       runtimeDir: join(base, 'runtime'),
       userSkillsDir: join(base, 'userskills'),
       skillsDir: join(base, 'skills'),
+      skillViewsDir: join(base, 'skill-views'),
       uploadDir: join(base, 'uploads'),
       shareDir: join(base, 'share'),
       ensureChannelListening: async () => join(base, 'channels', '7', 'runtime.sock'),

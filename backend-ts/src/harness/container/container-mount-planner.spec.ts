@@ -14,6 +14,7 @@ function roots(base: string) {
     channelDir: join(base, 'runtime', 'channels'),
     distDir: join(base, 'mao', 'backend-ts', 'dist'),
     skillsDir: join(base, 'mao', 'data', 'skills'),
+    skillViewsDir: join(base, 'mao', 'data', 'skill-views'),
     uploadDir: join(base, 'uploads'),
     tmpDir: join(base, 'tmp'),
     shareDir: join(base, 'share'),
@@ -26,14 +27,20 @@ describe('container mount planner', () => {
     for (const dir of Object.values(roots(base))) mkdirSync(dir, { recursive: true });
     const planner = new ContainerMountPlanner(roots(base));
     const mounts = planner.plan(7);
-    // 除平台技能根与共享目录根（团队经验库 rw，2026-10-24）外，每条 rw 挂载都只含 user=7 的路径
-    for (const m of mounts.filter((x) => x.mode === 'rw' && x.purpose !== 'skills' && x.purpose !== 'share')) {
+    // 除共享目录根（团队经验库 rw，2026-10-24）外，每条 rw 挂载都只含 user=7 的路径
+    for (const m of mounts.filter((x) => x.mode === 'rw' && x.purpose !== 'share')) {
       expect(m.hostPath).toContain('/7');
       expect(m.hostPath.startsWith(base)).toBe(true);
     }
-    // dist 只读；平台技能根按产品要求可写
+    // dist 只读
     expect(mounts.find((m) => m.purpose === 'dist')?.mode).toBe('ro');
-    expect(mounts.find((m) => m.purpose === 'skills')?.mode).toBe('rw');
+    // 技能视图（2026-11-03）：按用户只读挂载；源目录（skills）不再挂载
+    const skillViews = mounts.find((m) => m.purpose === 'skillViews');
+    expect(skillViews?.mode).toBe('ro');
+    expect(skillViews?.hostPath).toBe(join(base, 'mao', 'data', 'skill-views', '7'));
+    expect(skillViews?.containerPath).toBe(skillViews?.hostPath);
+    expect(mounts.find((m) => m.purpose === 'skills')).toBeUndefined();
+    expect(mounts.some((m) => m.hostPath === join(base, 'mao', 'data', 'skills'))).toBe(false);
     // 除每用户 /tmp 的路径映射外，容器内路径与宿主机逐字节一致（决策 15）
     for (const m of mounts.filter((x) => x.purpose !== 'tmp')) expect(m.containerPath).toBe(m.hostPath);
     // /tmp 持久化：宿主 {tmpDir}/{userId} -> 容器 /tmp，rw
@@ -45,6 +52,15 @@ describe('container mount planner', () => {
     // 不包含其他用户尾段
     expect(JSON.stringify(mounts)).not.toContain('/users/8');
     expect(JSON.stringify(mounts)).not.toContain('/runtime/8');
+  });
+
+  it('toleratesMissingSkillViewsDir', () => {
+    // ro 项不强制创建：视图由后端首次物化生成（docker -v 对缺失源自动建空目录兜底）
+    const base = useTmpDir('mao-mount-views-miss-');
+    for (const dir of Object.values(roots(base))) mkdirSync(dir, { recursive: true });
+    const planner = new ContainerMountPlanner({ ...roots(base), skillViewsDir: join(base, 'no-such-views') });
+    const mounts = planner.plan(7);
+    expect(mounts.find((m) => m.purpose === 'skillViews')?.hostPath).toBe(join(base, 'no-such-views', '7'));
   });
 
   it('mountsUploadsPerUserAndRejectsFlatRoot', () => {
@@ -81,6 +97,9 @@ describe('container mount planner', () => {
     // share 配置变化同样进指纹（上线后既有容器指纹漂移即回收重建补齐挂载）
     const movedShare = new ContainerMountPlanner({ ...roots(base), shareDir: join(base, 'share2') });
     expect(movedShare.standardMountsFingerprint(7)).not.toBe(fp);
+    // 技能视图根变化进指纹（2026-11-03：skills 挂载 → skillViews ro 挂载，存量容器自动重建一次）
+    const movedViews = new ContainerMountPlanner({ ...roots(base), skillViewsDir: join(base, 'views2') });
+    expect(movedViews.standardMountsFingerprint(7)).not.toBe(fp);
     // 不同用户的标准计划不同（uid 段进清单）
     expect(planner.standardMountsFingerprint(8)).not.toBe(fp);
   });
@@ -113,11 +132,22 @@ describe('container mount planner', () => {
   });
 
   it('rejectsShareDirAsParentOfRoot', () => {
-    // shareDir 误配为某登记根的父目录（如 /opt/mao-data）→ assertSafe 父目录防护 fail-fast
+    // shareDir 误配为某登记根的父目录（如 /opt/mao-data）→ fail-fast。
+    // 评审修订 §4.4 后，skillViewsDir 位于 shareDir 之下的场景命中断言专用报错（互不包含）。
     const base = useTmpDir('mao-mount-share-parent-');
     for (const dir of Object.values(roots(base))) mkdirSync(dir, { recursive: true });
     const planner = new ContainerMountPlanner({ ...roots(base), shareDir: base });
-    expect(() => planner.plan(7)).toThrow(MountPlanError);
+    expect(() => planner.plan(7)).toThrow(/must not be or under shareDir|is a parent of registered root/);
+  });
+
+  it('rejectsShareDirContainingSkillViewsDir', () => {
+    // 评审修订 §4.4：skillViewsDir 与 shareDir 互不包含——shareDir 为视图根父目录时，
+    // 视图根会同时被 share 整根 rw 覆盖、又被 ro 精确挂载，产生挂载语义歧义
+    const base = useTmpDir('mao-mount-share-views-parent-');
+    for (const dir of Object.values(roots(base))) mkdirSync(dir, { recursive: true });
+    const r = roots(base);
+    const planner = new ContainerMountPlanner({ ...r, shareDir: join(base, 'share'), skillViewsDir: join(base, 'share', 'views') });
+    expect(() => planner.plan(7)).toThrow(/must not be or under shareDir/);
   });
 
   it('rejectsShareDirEqualToPerUserRoot', () => {
@@ -144,15 +174,28 @@ describe('container mount planner', () => {
   });
 
   it('rejectsShareDirEqualToDistOrSkills', () => {
-    // 设计 §4.1：shareDir 等于 distDir/skillsDir 时容器内路径重复（两条 ro/rw 条目
-    // 指向同一容器路径），assertSafe 重复容器路径检测拒绝
+    // 设计 §4.1：shareDir 等于 distDir 时容器内路径重复（两条 ro/rw 条目指向同一容器路径），
+    // assertSafe 重复容器路径检测拒绝；技能根场景改由独立性检查显式拒绝（skills 挂载移除后
+    // 不再有重复容器路径兜底，见下个用例）
     const base = useTmpDir('mao-mount-share-dup-');
     for (const dir of Object.values(roots(base))) mkdirSync(dir, { recursive: true });
     const r = roots(base);
     expect(() => new ContainerMountPlanner({ ...r, shareDir: r.distDir }).plan(7))
       .toThrow(/duplicate container path/);
     expect(() => new ContainerMountPlanner({ ...r, shareDir: r.skillsDir }).plan(7))
-      .toThrow(/duplicate container path/);
+      .toThrow(/must not be or under per-user data root/);
+  });
+
+  it('rejectsShareDirOverSkillRoots', () => {
+    // 技能视图根含全部用户子目录：等值/位于其下会把所有用户的授权技能整棵挂进每个容器；
+    // 技能源等值则把「永不进容器」的共享源重新挂进去——两者都必须 fail-fast
+    const base = useTmpDir('mao-mount-share-skills-');
+    for (const dir of Object.values(roots(base))) mkdirSync(dir, { recursive: true });
+    const r = roots(base);
+    expect(() => new ContainerMountPlanner({ ...r, shareDir: r.skillViewsDir }).plan(7))
+      .toThrow(/must not be or under per-user data root/);
+    expect(() => new ContainerMountPlanner({ ...r, shareDir: join(r.skillViewsDir, '7') }).plan(7))
+      .toThrow(/must not be or under per-user data root/);
   });
 
   it('rejectsParentDirectoryMounts', () => {
@@ -176,6 +219,20 @@ describe('container mount planner', () => {
     expect(() => planner.assertSafe([
       { hostPath: join(base, 'users', 'shared'), containerPath: join(base, 'users', 'shared'), mode: 'rw', purpose: 'bad' },
     ], 7)).toThrow(/must contain/);
+  });
+
+  it('skillsRootNoLongerHasRwException', () => {
+    // 2026-11-03 技术方案 §4.4：删除 isPlatformSkillsRoot 例外——不再存在全局可写共享技能根，
+    // 技能源（skillsDir）既不能被 rw 挂进容器，也不产生任何挂载
+    const base = useTmpDir('mao-mount-skills-rw-');
+    for (const dir of Object.values(roots(base))) mkdirSync(dir, { recursive: true });
+    const planner = new ContainerMountPlanner(roots(base));
+    const skillsDir = join(base, 'mao', 'data', 'skills');
+    expect(() => planner.assertSafe([
+      { hostPath: skillsDir, containerPath: skillsDir, mode: 'rw', purpose: 'skills' },
+    ], 7)).toThrow(/must contain/);
+    // ro 挂载技能源也不再出现在标准清单里（源对容器完全不可见）
+    expect(planner.plan(7).some((m) => m.hostPath === skillsDir)).toBe(false);
   });
 
   it('rejectsSymlinkEscapeAndForeignUserPaths', () => {

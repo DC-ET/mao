@@ -21,10 +21,11 @@ export interface ContainerRoots {
   runtimeDir: string;
   userHomeDir: string;
   userSkillsDir: string;
-  /** 平台技能目录（宿主机 skillsDir）：会话技能符号链接的目标根（skill-sync-service），
-   * 容器内同名 rw 挂载；必须登记为文件工具允许根，否则 strict 的符号链接校验会把
-   * 读 {runtimeDir}/{u}/{s}/skills/{name}/SKILL.md 判成逃逸。 */
-  skillsDir: string;
+  /** 技能视图根（宿主机 skillViewsDir）：会话技能符号链接的目标根（skill-sync-service），
+   * 容器内按用户 ro 挂载 {skillViewsDir}/{userId}；按用户登记为文件工具允许根，否则
+   * strict 的符号链接校验会把读 {runtimeDir}/{u}/{s}/skills/{name}/SKILL.md 判成逃逸。
+   * 源目录（skillsDir）不进容器，也不再是任何链接的目标。 */
+  skillViewsDir: string;
   /** 图片产物上传根：容器内放行 {uploadDir}/{userId}（宿主同名挂载）。 */
   uploadDir: string;
   /** 公共共享目录（共享目录方案 §4.2）：唯一跨用户共享的允许根——内容对全员公开且
@@ -64,12 +65,12 @@ export class ContainerToolExecutor {
     this.pathSandbox.addAllowedRoot(path.join(roots.runtimeDir, u));
     this.pathSandbox.addAllowedRoot(path.join(roots.userHomeDir, u));
     this.pathSandbox.addAllowedRoot(path.join(roots.userSkillsDir, u));
-    // 平台技能目录（2026-10-31 回归）：会话技能是 {runtimeDir}/{u}/{s}/skills/{name} ->
-    // skillsDir/{name} 的符号链接（SkillSyncService），strict 的符号链接逃逸检测要求链接
-    // 目标落在允许根内，不登记则该目录下的 SKILL.md 经 read_file / write_file / glob /
-    // grep / read_bytes 全部被拒。该目录本就以 rw 挂进容器（产品要求容器内可安装/更新
-    // 共享技能），工具层放行与挂载口径一致，不扩大隔离边界
-    this.pathSandbox.addAllowedRoot(roots.skillsDir);
+    // 技能视图（技术方案 2026-11-03 §4.5）：会话技能是 {runtimeDir}/{u}/{s}/skills/{name} ->
+    // {skillViewsDir}/{u}/{name} 的符号链接（SkillSyncService），strict 的符号链接逃逸检测
+    // 要求链接目标落在允许根内，不登记则该目录下的 SKILL.md 经 read_file / write_file /
+    // glob / grep / read_bytes 全部被拒。按用户收窄登记 {skillViewsDir}/{u}，与容器内
+    // ro 挂载口径一致（写操作由 ro 挂载以 EROFS 拒绝，不扩大隔离边界）。
+    this.pathSandbox.addAllowedRoot(path.join(roots.skillViewsDir, u));
     // 图片产物（generate_image/edit_image 落盘）在宿主机按 {uploadDir}/{uid} 隔离后
     // 同名挂入容器，容器内 read_file 等按同一允许根放行
     this.pathSandbox.addAllowedRoot(path.join(roots.uploadDir, u));

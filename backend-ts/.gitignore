@@ -8,3 +8,4 @@ config/application-local.yml
 *.pid
 .env.e2e
 .e2e-data/
+skill-views/
