@@ -89,6 +89,11 @@
             {{ row.contextWindowTokens ? row.contextWindowTokens.toLocaleString() : '-' }}
           </template>
         </el-table-column>
+        <el-table-column label="关联 Agent" width="110" align="right">
+          <template #default="{ row }">
+            <RelatedAgentsPopover :agents="agentsByModel(row.id)" />
+          </template>
+        </el-table-column>
         <el-table-column label="操作" width="260" fixed="right">
           <template #default="{ row }">
             <template v-if="canWrite">
@@ -245,10 +250,14 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { CircleCheckFilled, CircleCloseFilled, Picture } from '@element-plus/icons-vue'
 import { api } from '../../api'
 import { useBreakpoint } from '../../composables/useBreakpoint'
+import { useAgentRelations } from '../../composables/useAgentRelations'
 import { useAuthStore } from '../../stores/auth'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
+import RelatedAgentsPopover from '../../components/RelatedAgentsPopover.vue'
 import FilterPanel from '../../components/FilterPanel.vue'
 import ModelFormDialog from './ModelFormDialog.vue'
+
+const { agentsByModel, load: loadAgentRelations } = useAgentRelations()
 
 const { isMobile } = useBreakpoint()
 
@@ -514,6 +523,7 @@ async function handleToggleStatus(row: any) {
 onMounted(() => {
   fetchProviderOptions()
   fetchModels()
+  void loadAgentRelations()
 })
 
 let firstActivation = true
@@ -523,6 +533,7 @@ onActivated(() => {
     return
   }
   fetchModels()
+  void loadAgentRelations()
 })
 </script>
 

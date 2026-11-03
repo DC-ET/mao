@@ -57,16 +57,18 @@
           </template>
         </el-table-column>
         <el-table-column prop="timeoutMs" label="超时(ms)" width="100" />
+        <el-table-column label="关联 Agent" width="110" align="right">
+          <template #default="{ row }">
+            <RelatedAgentsPopover :agents="agentsByHttpTool(row.id)" />
+          </template>
+        </el-table-column>
         <el-table-column label="更新时间" width="170">
           <template #default="{ row }">{{ formatDateTime(row.updatedAt) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="220" fixed="right">
+        <el-table-column label="操作" width="260" fixed="right">
           <template #default="{ row }">
-            <el-tooltip :content="cardTestTooltip(row)" :show-after="300">
-              <span>
-                <el-button link type="primary" size="small" :disabled="hasSensitiveHeader(row)" @click="openTestDrawer(row)">测试</el-button>
-              </span>
-            </el-tooltip>
+            <el-button link type="primary" size="small" @click="openTestDrawer(row)">测试</el-button>
+            <el-button link type="primary" size="small" @click="openCopyDialog(row)">复制</el-button>
             <el-button link type="primary" size="small" @click="toggleEnabled(row)">
               {{ row.enabled ? '停用' : '启用' }}
             </el-button>
@@ -128,7 +130,7 @@
 
     <el-dialog
       v-model="dialogVisible"
-      :title="isEditing ? '编辑自定义工具' : '新建自定义工具'"
+      :title="dialogTitle"
       width="720px"
       append-to-body
       @closed="resetForm"
@@ -260,8 +262,11 @@
       <p class="test-hint">
         使用当前草稿实调一次（不落库），SSRF 判定与 Agent 正式调用完全一致。
       </p>
-      <el-alert v-if="hasMaskedHeader" type="warning" :closable="false" class="test-mask-hint">
-        草稿含已加密的敏感请求头：试运行需要真实值，请回到编辑器填写后再测试。
+      <el-alert v-if="hasMaskedHeader && testToolId != null" type="info" :closable="false" class="test-mask-hint">
+        草稿含掩码敏感请求头：将自动沿用该工具已保存的密文实调。
+      </el-alert>
+      <el-alert v-else-if="hasMaskedHeader" type="warning" :closable="false" class="test-mask-hint">
+        新建草稿的敏感请求头只有掩码：请填写真实值后再测试。
       </el-alert>
       <el-form :model="testValues" label-position="top">
         <el-form-item
@@ -283,8 +288,8 @@
       <div class="test-actions">
         <el-button
           type="primary"
-          :disabled="testing || hasMaskedHeader"
-          :title="hasMaskedHeader ? '请先回填敏感请求头的真实值' : ''"
+          :disabled="testing || (hasMaskedHeader && testToolId == null)"
+          :title="hasMaskedHeader && testToolId == null ? '新建草稿的敏感请求头需填写真实值' : ''"
           :loading="testing"
           @click="runTest"
         >
@@ -311,6 +316,8 @@ import { ElMessage } from 'element-plus'
 import { api } from '../../api'
 import { formatDateTime } from '../../utils/datetime'
 import { HEADER_VALUE_MASK, isSensitiveHeaderKey } from '../../utils/httpTool'
+import { useAgentRelations } from '../../composables/useAgentRelations'
+import RelatedAgentsPopover from '../../components/RelatedAgentsPopover.vue'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
 
 const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'] as const
@@ -386,9 +393,16 @@ const statsSlug = ref('')
 const dialogVisible = ref(false)
 const isEditing = ref(false)
 const editingId = ref<number | null>(null)
+/** 复制继承源（openCopyDialog 置位）：保存时作为 copyFromId 传给后端继承密文。 */
+const copySourceId = ref<number | null>(null)
 const submitting = ref(false)
 const nameError = ref('')
 const urlError = ref('')
+
+const dialogTitle = computed(() => {
+  if (isEditing.value) return '编辑自定义工具'
+  return copySourceId.value != null ? '复制自定义工具' : '新建自定义工具'
+})
 
 const emptyForm = () => ({
   name: '',
@@ -411,22 +425,18 @@ const testing = ref(false)
 const testResult = ref<TestResult | null>(null)
 const testValues = ref<Record<string, unknown>>({})
 const testForm = ref({ name: '', displayName: '', params: [] as ParamRow[] })
+/**
+ * 掩码敏感头的解析源：列表行测试 = row.id；编辑弹窗 = editingId；复制弹窗 = copySourceId；
+ * 新建空表单无解析源（null，掩码头仍禁测）。「从哪继承就从哪测」。
+ */
+const testToolId = ref<number | null>(null)
 
-/** 草稿含未回显的敏感请求头（掩码值）：执行内核拒掩码，试运行前需回填真实值。 */
+const { agentsByHttpTool, load: loadAgentRelations } = useAgentRelations()
+
+/** 草稿含未回显的敏感请求头（掩码值）：有解析源时后端自动沿用已存密文，无源时需回填真实值。 */
 const hasMaskedHeader = computed(() =>
   form.value.headers.some((row) => isSensitiveHeaderKey(row.key) && row.value === HEADER_VALUE_MASK)
 )
-
-/** 已存工具是否带加密请求头：列表 VO 只回显掩码，直接试运行必然被内核拒绝。 */
-function hasSensitiveHeader(item: HttpToolRow) {
-  return item.headers.some((header) => isSensitiveHeaderKey(header.key))
-}
-
-function cardTestTooltip(item: HttpToolRow) {
-  return hasSensitiveHeader(item)
-    ? '该工具含加密请求头，请从「编辑」填写真实值后在编辑器内测试'
-    : '测试调用'
-}
 
 function methodClass(method: string): string {
   const upper = (method || '').toUpperCase()
@@ -610,9 +620,43 @@ function toPayload(includeArguments?: Record<string, unknown>) {
 function openCreateDialog() {
   isEditing.value = false
   editingId.value = null
+  copySourceId.value = null
   form.value = emptyForm()
   nameError.value = ''
   urlError.value = ''
+  dialogVisible.value = true
+}
+
+/** 复制：预填新建弹窗（名称 _copy 后缀、展示名 副本 后缀），掩码头原样保留由 copyFromId 继承。 */
+function openCopyDialog(item: HttpToolRow) {
+  isEditing.value = false
+  editingId.value = null
+  copySourceId.value = item.id
+  const copyName = item.name.length + '_copy'.length <= 64
+    ? `${item.name}_copy`
+    : `${item.name.slice(0, 64 - '_copy'.length)}_copy`
+  form.value = {
+    name: copyName,
+    displayName: `${item.displayName}副本`.slice(0, 128),
+    description: item.description,
+    method: item.method,
+    url: item.url,
+    headers: item.headers.map((header) => ({ key: header.key, value: header.value })),
+    bodyTemplate: item.bodyTemplate ?? '',
+    readOnly: item.readOnly,
+    timeoutMs: item.timeoutMs,
+    enabled: item.enabled,
+    params: item.params.map((param) => ({
+      name: param.name,
+      label: param.label,
+      type: param.type,
+      required: param.required,
+      defaultValue: param.defaultValue ?? '',
+    })),
+  }
+  nameError.value = ''
+  urlError.value = ''
+  validateName()
   dialogVisible.value = true
 }
 
@@ -647,6 +691,7 @@ function resetForm() {
   form.value = emptyForm()
   isEditing.value = false
   editingId.value = null
+  copySourceId.value = null
   nameError.value = ''
   urlError.value = ''
 }
@@ -659,8 +704,9 @@ async function handleSubmit() {
       await api.put(`/admin/http-tools/${editingId.value}`, toPayload())
       ElMessage.success('工具已更新')
     } else {
-      await api.post('/admin/http-tools', toPayload())
-      ElMessage.success('工具已创建')
+      await api.post('/admin/http-tools', { ...toPayload(), copyFromId: copySourceId.value ?? undefined })
+      ElMessage.success(copySourceId.value != null ? '工具已复制' : '工具已创建')
+      copySourceId.value = null
     }
     dialogVisible.value = false
     await loadRecords()
@@ -692,7 +738,8 @@ async function toggleEnabled(item: HttpToolRow) {
 }
 
 function openTestDrawer(item: HttpToolRow) {
-  // 已保存的工具：直接用落库定义试运行（不经过编辑器草稿）
+  // 已保存的工具：直接用落库定义试运行（掩码头由 toolId 沿用已存密文，不经过编辑器草稿）
+  testToolId.value = item.id
   form.value = {
     name: item.name,
     displayName: item.displayName,
@@ -718,6 +765,10 @@ function openTestDrawer(item: HttpToolRow) {
 
 function openTestFromDialog() {
   if (!canSave.value) return
+  // 编辑弹窗沿用已存工具密文；复制弹窗沿用源工具密文（与保存时 copyFromId 同一解析源）
+  testToolId.value = isEditing.value && editingId.value != null
+    ? editingId.value
+    : copySourceId.value
   syncTestFormFromCurrent()
   testVisible.value = true
 }
@@ -747,12 +798,16 @@ function resetTest() {
   testValues.value = {}
   testResult.value = null
   testForm.value = { name: '', displayName: '', params: [] }
+  testToolId.value = null
 }
 
 async function runTest() {
   testing.value = true
   try {
-    const { data } = await api.post('/admin/http-tools/test', toPayload(testValues.value))
+    const { data } = await api.post('/admin/http-tools/test', {
+      ...toPayload(testValues.value),
+      toolId: testToolId.value ?? undefined,
+    })
     testResult.value = data
   } catch {
     // handled by interceptor
@@ -764,10 +819,12 @@ async function runTest() {
 onMounted(() => {
   void loadRecords()
   void loadStats()
+  void loadAgentRelations()
 })
 
 onActivated(() => {
   void loadStats()
+  void loadAgentRelations()
 })
 </script>
 

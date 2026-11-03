@@ -30,6 +30,18 @@
             <el-option label="停用" value="disabled" />
           </el-select>
         </el-form-item>
+        <el-form-item label="默认模型">
+          <el-select
+            v-model="modelFilter"
+            clearable
+            filterable
+            placeholder="全部"
+            style="width: 200px"
+            @change="handleModelFilter"
+          >
+            <el-option v-for="model in modelOptions" :key="model.id" :label="model.name" :value="model.id" />
+          </el-select>
+        </el-form-item>
         <el-form-item>
           <el-button type="primary" @click="handleSearch">查询</el-button>
         </el-form-item>
@@ -60,6 +72,12 @@
           </template>
         </el-table-column>
         <el-table-column prop="description" label="描述" min-width="160" show-overflow-tooltip />
+        <el-table-column label="默认模型" width="140" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span v-if="row.defaultModelId == null" class="muted-text">跟随全局默认</span>
+            <span v-else>{{ resolveModelName(row.defaultModelId) }}</span>
+          </template>
+        </el-table-column>
         <el-table-column label="状态" width="150">
           <template #default="{ row }">
             <el-tag :type="row.enabled === false ? 'info' : 'success'" size="small">
@@ -73,8 +91,17 @@
         <el-table-column label="创建人" width="120" show-overflow-tooltip class-name="hide-on-mobile" label-class-name="hide-on-mobile">
           <template #default="{ row }">{{ row.creatorName || '-' }}</template>
         </el-table-column>
-        <el-table-column label="Skills" width="84" align="right">
-          <template #default="{ row }">{{ row.skillNames?.length || 0 }}</template>
+        <el-table-column label="能力概览" width="170">
+          <template #default="{ row }">
+            <el-tooltip placement="top">
+              <template #content>
+                <div>技能：{{ capabilityText(row.skillNames) }}</div>
+                <div>MCP：{{ capabilityText(resolveNames(row.mcpServerIds, mcpNameById)) }}</div>
+                <div>自定义工具：{{ capabilityText(resolveNames(row.httpToolIds, toolNameById)) }}</div>
+              </template>
+              <span>{{ capabilitySummary(row) }}</span>
+            </el-tooltip>
+          </template>
         </el-table-column>
         <el-table-column label="经验数" width="84" align="right">
           <template #default="{ row }">{{ row.experiences?.length || 0 }}</template>
@@ -126,8 +153,13 @@
             <span>{{ row.description || '-' }}</span>
           </div>
           <div class="mobile-card-row">
-            <span class="mobile-card-label">Skills</span>
-            <span>{{ row.skillNames?.length || 0 }}</span>
+            <span class="mobile-card-label">默认模型</span>
+            <span v-if="row.defaultModelId == null" class="muted-text">跟随全局默认</span>
+            <span v-else>{{ resolveModelName(row.defaultModelId) }}</span>
+          </div>
+          <div class="mobile-card-row">
+            <span class="mobile-card-label">能力概览</span>
+            <span>{{ capabilitySummary(row) }}</span>
           </div>
           <div class="mobile-card-actions">
             <template v-if="canWrite">
@@ -189,7 +221,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onActivated, onMounted } from 'vue'
+import { computed, ref, onActivated, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { api } from '../../api'
@@ -205,6 +238,8 @@ const experienceAgent = ref<{ id: number; name: string; experienceLibraryEnabled
 
 const { isMobile } = useBreakpoint()
 
+const route = useRoute()
+
 const loading = ref(false)
 const loadingDetail = ref(false)
 const allAgents = ref<any[]>([])
@@ -212,6 +247,12 @@ const allAgents = ref<any[]>([])
 const visibilityAgents = ref<any[]>([])
 const searchQuery = ref('')
 const statusFilter = ref('')
+/**
+ * 按默认模型筛选（纯前端，agent 列表本就全量拉取）。
+ * 注意 element-plus clearable select 清空时置 undefined 而非 ''，两种空值都要放行。
+ */
+const modelFilter = ref<number | '' | undefined>('')
+const modelOptions = ref<Array<{ id: number; name: string }>>([])
 const currentPage = ref(1)
 const pageSize = ref(10)
 const dialogVisible = ref(false)
@@ -219,6 +260,10 @@ const currentAgent = ref<any>(null)
 const dialogMode = ref<'create' | 'edit' | 'copy'>('create')
 const authStore = useAuthStore()
 const canWrite = computed(() => authStore.hasPermission('agent:write'))
+
+/** 资源名映射（能力概览 tooltip 用）：含停用行，未命中 id 以 #id 兜底。 */
+const mcpNameById = ref<Map<number, string>>(new Map())
+const toolNameById = ref<Map<number, string>>(new Map())
 
 /** 全量视角（不受搜索/状态筛选影响）：全部 Agent 都被设为客户端不可见时给出提示。 */
 const allClientHidden = computed(
@@ -258,9 +303,14 @@ function refreshAgentData() {
 }
 
 const matchedAgents = computed(() => {
-  if (statusFilter.value === 'enabled') return allAgents.value.filter((row) => row.enabled !== false)
-  if (statusFilter.value === 'disabled') return allAgents.value.filter((row) => row.enabled === false)
-  return allAgents.value
+  let rows = allAgents.value
+  if (statusFilter.value === 'enabled') rows = rows.filter((row) => row.enabled !== false)
+  else if (statusFilter.value === 'disabled') rows = rows.filter((row) => row.enabled === false)
+  // undefined（clearable 清空）与 '' 同为「不过滤」；VO 的 defaultModelId 只会是 number | null
+  if (modelFilter.value != null && modelFilter.value !== '') {
+    rows = rows.filter((row) => row.defaultModelId === modelFilter.value)
+  }
+  return rows
 })
 const total = computed(() => matchedAgents.value.length)
 const filteredAgents = computed(() => {
@@ -275,6 +325,62 @@ function handleSearch() {
 
 function handleStatusFilter() {
   currentPage.value = 1
+}
+
+function handleModelFilter() {
+  currentPage.value = 1
+}
+
+/** 默认模型列：启用模型显示名称；指向已停用 / 已删除模型时以 #id 兜底。 */
+function resolveModelName(modelId: number): string {
+  const found = modelOptions.value.find((model) => model.id === modelId)
+  return found ? found.name : `#${modelId}（已停用）`
+}
+
+function resolveNames(ids: unknown, map: Map<number, string>): string[] {
+  if (!Array.isArray(ids)) return []
+  return ids
+    .filter((id): id is number => Number.isInteger(id) && (id as number) > 0)
+    .map((id) => map.get(id) ?? `#${id}`)
+}
+
+function capabilityText(names: string[]): string {
+  return names.length > 0 ? names.join('、') : '—'
+}
+
+function capabilitySummary(row: any): string {
+  const skills = Array.isArray(row.skillNames) ? row.skillNames.length : 0
+  const mcp = Array.isArray(row.mcpServerIds) ? row.mcpServerIds.length : 0
+  const tools = Array.isArray(row.httpToolIds) ? row.httpToolIds.length : 0
+  return `技能 ${skills} · MCP ${mcp} · 工具 ${tools}`
+}
+
+/**
+ * 名称字典（fail-soft）：/models/active（默认模型列与筛选下拉）、
+ * /mcp-servers 全量（含停用）、/admin/http-tools 第 1 页 size=100（含停用；
+ * 超 100 个工具的极端场景以 #id 兜底）。任一失败置空 Map，不阻塞主列表。
+ */
+async function loadNameDictionaries() {
+  const [modelsRes, mcpRes, toolsRes] = await Promise.all([
+    api.get('/models/active').catch(() => null),
+    api.get('/mcp-servers').catch(() => null),
+    api.get('/admin/http-tools', { params: { page: 1, size: 100 } }).catch(() => null),
+  ])
+  const modelRows = Array.isArray(modelsRes?.data) ? modelsRes.data : []
+  modelOptions.value = modelRows
+    .filter((row: any) => Number.isInteger(row?.id))
+    .map((row: any) => ({ id: Number(row.id), name: String(row.name ?? `#${row.id}`) }))
+  mcpNameById.value = toNameMap(mcpRes?.data)
+  toolNameById.value = toNameMap(toolsRes?.data?.records)
+}
+
+function toNameMap(rows: unknown): Map<number, string> {
+  const map = new Map<number, string>()
+  if (!Array.isArray(rows)) return map
+  for (const row of rows as Array<Record<string, unknown>>) {
+    if (Number.isInteger(row?.id)) map.set(Number(row.id), String(row?.displayName ?? row?.name ?? `#${row.id}`))
+  }
+  return map
 }
 
 function handleSizeChange() {
@@ -353,7 +459,20 @@ async function handleDelete(row: any) {
   }
 }
 
+// 支持 RelatedAgentsPopover 的 ?keyword= 直跳预填（popover 点名 → 过滤后的列表页）。
+// watch 而非只在 onMounted 读：Agent 页被 Layout 的 keep-alive 缓存，从其它页面带
+// query 复活时只走路由变化、不走 onMounted；immediate 覆盖首次挂载。空 query 不清空
+// 用户已输入的搜索词。
+watch(() => route.query.keyword, (kw) => {
+  if (typeof kw === 'string' && kw.trim() !== '') {
+    searchQuery.value = kw.trim()
+    currentPage.value = 1
+    fetchAgents()
+  }
+}, { immediate: true })
+
 onMounted(() => {
+  void loadNameDictionaries()
   refreshAgentData()
 })
 
@@ -363,6 +482,7 @@ onActivated(() => {
     firstActivation = false
     return
   }
+  void loadNameDictionaries()
   refreshAgentData()
 })
 </script>
@@ -423,6 +543,10 @@ onActivated(() => {
   margin-left: 12px;
 }
 .op-muted {
+  color: var(--el-text-color-secondary);
+}
+
+.muted-text {
   color: var(--el-text-color-secondary);
 }
 

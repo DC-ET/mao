@@ -159,8 +159,10 @@
             <el-tag v-else type="success" size="small">可用</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="关联 Agent" width="110" align="right" class-name="hide-on-mobile" label-class-name="hide-on-mobile">
-          <template #default="{ row }">{{ relatedAgentCount(row.name) }}</template>
+        <el-table-column label="关联 Agent" width="120" align="right" class-name="hide-on-mobile" label-class-name="hide-on-mobile">
+          <template #default="{ row }">
+            <RelatedAgentsPopover :agents="agentsBySkill(row.name)" />
+          </template>
         </el-table-column>
         <el-table-column prop="folderPath" label="路径" min-width="250" show-overflow-tooltip class-name="hide-on-mobile" label-class-name="hide-on-mobile" />
         <el-table-column label="操作" width="160" fixed="right">
@@ -312,18 +314,20 @@ import { UploadFilled } from '@element-plus/icons-vue'
 import { api } from '../../api'
 import { useAuthStore } from '../../stores/auth'
 import { useBreakpoint } from '../../composables/useBreakpoint'
+import { useAgentRelations } from '../../composables/useAgentRelations'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
+import RelatedAgentsPopover from '../../components/RelatedAgentsPopover.vue'
 
 const { isMobile } = useBreakpoint()
 const authStore = useAuthStore()
 const canWrite = computed(() => authStore.hasPermission('skill:write'))
+const { agentsBySkill, load: loadAgentRelations } = useAgentRelations()
 
 const activeTab = ref<'system' | 'personal'>('system')
 const loading = ref(false)
 const skillDocs = ref<any[]>([])
 const personalSkills = ref<any[]>([])
-const agents = ref<any[]>([])
 const keyword = ref('')
 const filterUserId = ref<number | null>(null)
 const currentPage = ref(1)
@@ -339,12 +343,8 @@ const assignUserIds = ref<number[]>([])
 async function fetchSkillDocs() {
   loading.value = true
   try {
-    const [{ data }, agentRes] = await Promise.all([
-      api.get('/skill-docs'),
-      api.get('/agents', { params: { includeDisabled: true } })
-    ])
+    const { data } = await api.get('/skill-docs')
     skillDocs.value = data || []
-    agents.value = agentRes.data || []
   } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
     loading.value = false
   }
@@ -452,10 +452,6 @@ function userOptionLabel(user: { id: number; username?: string | null; displayNa
     return `${user.displayName}（${user.username}）`
   }
   return name
-}
-
-function relatedAgentCount(skillName: string) {
-  return agents.value.filter(agent => (agent.skillNames || []).includes(skillName)).length
 }
 
 function isSkillAvailable(row: { filePath?: string; folderPath?: string }) {
@@ -739,7 +735,10 @@ async function handleDelete(row: any) {
   }
 }
 
-onMounted(fetchActiveTab)
+onMounted(() => {
+  void fetchActiveTab()
+  void loadAgentRelations()
+})
 
 let firstActivation = true
 onActivated(() => {
@@ -748,6 +747,7 @@ onActivated(() => {
     return
   }
   void fetchActiveTab()
+  void loadAgentRelations()
 })
 </script>
 

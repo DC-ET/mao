@@ -103,6 +103,7 @@ export function registerAdminHttpToolRoutes(app: FastifyInstance, deps: AdminHtt
   app.post('/v1/admin/http-tools/test', async (request, reply) => {
     await requireRequestPermission(permissionService, request, 'http_tool:write');
     const body = bodyOf<Record<string, unknown>>(request);
+    const toolId = optionalPositiveInt(body, 'toolId');
     const draft = toDraft(body);
     const inner = body.arguments;
     let argumentsJson: string;
@@ -113,7 +114,8 @@ export function registerAdminHttpToolRoutes(app: FastifyInstance, deps: AdminHtt
     } else {
       throw new BusinessException(ErrorCode.PARAM_INVALID, 'arguments 必须是 JSON 对象（无参工具可省略）');
     }
-    const resolved = service.resolveDraftForExecution(draft);
+    // toolId：掩码请求头从该已存工具沿用密文（与 update 保存同源），测试响应不含请求头
+    const resolved = await service.resolveDraftForExecution(draft, toolId);
     const startedAt = Date.now();
     const result = await httpApiExecutor.execute(resolved.tool, resolved.params, argumentsJson);
     const durationMs = Date.now() - startedAt;
@@ -138,6 +140,17 @@ function requireId(request: FastifyRequest): number {
     throw new BusinessException(ErrorCode.PARAM_INVALID, 'ID 无效');
   }
   return id;
+}
+
+/** body 可选正整数字段（toolId / copyFromId 共用）：未传 → undefined，非法 → 400。 */
+function optionalPositiveInt(body: Record<string, unknown>, key: string): number | undefined {
+  const raw = body[key];
+  if (raw == null) return undefined;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n <= 0) {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, `${key} 无效`);
+  }
+  return n;
 }
 
 function str(value: unknown): string {
@@ -199,5 +212,6 @@ function toDraft(body: Record<string, unknown>): HttpToolDraft {
     timeoutMs: body.timeoutMs == null ? undefined : Number(body.timeoutMs),
     enabled: body.enabled == null ? undefined : Boolean(body.enabled),
     params: toParamsInput(body.params),
+    copyFromId: optionalPositiveInt(body, 'copyFromId'),
   };
 }

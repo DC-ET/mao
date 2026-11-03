@@ -72,7 +72,9 @@ export class HttpToolService {
     if (existing != null) {
       throw new BusinessException(ErrorCode.HTTP_TOOL_NAME_DUPLICATE, '同名工具已存在，请更换工具名');
     }
-    const headersJson = encodeHeaders(normalized.headers ?? {}, null, this.deps.cipher);
+    // 复制继承（copyFromId）：掩码头从源工具已存密文解析，与 update() 共用 encodeHeaders 语义。
+    const previousStored = await this.resolveCopySourceStored(draft.copyFromId);
+    const headersJson = encodeHeaders(normalized.headers ?? {}, previousStored, this.deps.cipher);
     const tool: HttpTool = {
       name: normalized.name,
       displayName: normalized.displayName,
@@ -185,16 +187,14 @@ export class HttpToolService {
     return { tool, params };
   }
 
-  /** 试运行：草稿校验后直接构造可执行定义（不落库、不查启用态）。 */
-  resolveDraftForExecution(draft: HttpToolDraft): ResolvedHttpToolExecution {
+  /**
+   * 试运行：草稿校验后直接构造可执行定义（不落库、不查启用态）。
+   * `toolId`：已存工具 id——掩码请求头从该工具已存密文解密回填（列表 / 编辑器随时可测，
+   * 不必重填真实值）；未传时掩码仍拒绝（新建草稿无解析源）。
+   */
+  async resolveDraftForExecution(draft: HttpToolDraft, toolId?: number): Promise<ResolvedHttpToolExecution> {
     const normalized = this.validateDraft(draft, 1);
-    const headers: Record<string, string> = {};
-    for (const [key, value] of Object.entries(normalized.headers ?? {})) {
-      if (value === HEADER_VALUE_MASK) {
-        throw new BusinessException(ErrorCode.PARAM_INVALID, `请求头 ${key} 不允许提交掩码值，请填写真实值或清空`);
-      }
-      headers[key] = value;
-    }
+    const headers = await this.resolveDraftHeaders(normalized.headers ?? {}, toolId);
     return {
       tool: {
         name: normalized.name,
@@ -210,6 +210,57 @@ export class HttpToolService {
   }
 
   // ── 内部 ──────────────────────────────────────────────────────────────
+
+  /** 复制继承源：copyFromId 对应工具的已存请求头（存储形态）；未传返回 null，源不存在抛错。 */
+  private async resolveCopySourceStored(copyFromId: number | undefined): Promise<Record<string, string> | null> {
+    if (copyFromId == null) return null;
+    const source = await this.deps.repo.findById(copyFromId);
+    if (source == null) {
+      throw new BusinessException(ErrorCode.HTTP_TOOL_NOT_FOUND, '源工具不存在');
+    }
+    return parseStoredHeaders(source.headersJson);
+  }
+
+  /**
+   * 草稿头 → 执行形态明文。掩码值（HEADER_VALUE_MASK）是「沿用已存值」语义：
+   * 传了 toolId → 从该工具存储形态解析（敏感 enc: 键解密，其余明文直用），与 update()
+   * 保存时的 encodeHeaders 掩码口径一致；未传 toolId 保持拒绝。掩码判断在键敏感性
+   * 判断之前（与 encodeHeaders 相同顺序，改键名不会把掩码当凭据）。
+   */
+  private async resolveDraftHeaders(
+    headers: Record<string, string>,
+    toolId?: number,
+  ): Promise<Record<string, string>> {
+    let stored: Record<string, string> | null = null;
+    if (toolId != null) {
+      const tool = await this.deps.repo.findById(toolId);
+      if (tool == null) {
+        throw new BusinessException(ErrorCode.HTTP_TOOL_NOT_FOUND, '自定义工具不存在，无法沿用已存密文');
+      }
+      stored = parseStoredHeaders(tool.headersJson);
+    }
+    const result: Record<string, string> = {};
+    for (const [key, value] of Object.entries(headers)) {
+      if (value !== HEADER_VALUE_MASK) {
+        result[key] = value;
+        continue;
+      }
+      if (toolId == null) {
+        throw new BusinessException(ErrorCode.PARAM_INVALID, `请求头 ${key} 不允许提交掩码值，请填写真实值或清空`);
+      }
+      const previous = stored?.[key];
+      if (previous == null || previous === '') {
+        throw new BusinessException(
+          ErrorCode.PARAM_INVALID,
+          `请求头 ${key} 提交的是掩码值，无法对应到已保存的凭据，请填写真实值后重试`,
+        );
+      }
+      result[key] = isSensitiveHeaderKey(key) && previous.startsWith(ENC_PREFIX)
+        ? this.deps.cipher.decrypt(previous.slice(ENC_PREFIX.length))
+        : previous;
+    }
+    return result;
+  }
 
   /** 取「该 Agent 关联 + 启用」的工具定义；未关联 / 已停用 / 名称不存在都返回 null。 */
   private async findEnabledForAgent(agent: Pick<Agent, 'httpToolIds'>, name: string): Promise<HttpTool | null> {

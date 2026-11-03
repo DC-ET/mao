@@ -148,6 +148,11 @@ export interface HttpToolDraft {
   timeoutMs?: number;
   enabled?: boolean;
   params?: HttpToolParamInput[];
+  /**
+   * 复制继承源（仅 create 消费，update 忽略）：掩码头从该工具已存 headersJson 解析，
+   * 与 update() 共用 encodeHeaders 的掩码语义（信号哨兵 copyFrom 同构）。
+   */
+  copyFromId?: number;
 }
 
 /** 试运行入参：完整草稿 + 本次 arguments（不落库）。 */
