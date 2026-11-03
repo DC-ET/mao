@@ -27,11 +27,14 @@ export const ECP_FIELD_IDS = {
 export const CONTAINER_INHERIT_FIELD_ID = settingFieldId('runtime.container.inheritHostHosts')
 export const CONTAINER_EXTRA_HOSTS_FIELD_ID = settingFieldId('runtime.container.extraHosts')
 export const CONTAINER_AUTO_UPGRADE_FIELD_ID = settingFieldId('runtime.container.autoUpgrade')
+/** 菜单可见性面板的定位锚点（面板本身的滚动目标 id）。 */
+export const MENU_VISIBILITY_FIELD_ID = settingFieldId('admin.menu.hidden')
 
 const SSO_SECTION = 'setting-group-company-sso'
 const ECP_SECTION = 'setting-group-ecp'
 const HOSTS_SECTION = 'setting-group-container-hosts'
 const REBUILD_SECTION = 'setting-group-container-rebuild'
+const MENU_VISIBILITY_SECTION = 'setting-group-menu-visibility'
 
 /**
  * 专属面板里的控件。这些项要么不在 system_setting 里逐条存在（JSON 子字段），
@@ -73,12 +76,20 @@ export const PANEL_LOCATOR_FIELDS: LocatorField[] = [
     key: 'runtime.container.autoUpgrade',
     detail: '代码版本漂移 自动升级 不重建容器',
   },
+  {
+    fieldId: MENU_VISIBILITY_FIELD_ID,
+    sectionId: MENU_VISIBILITY_SECTION,
+    label: '菜单可见性',
+    key: 'admin.menu.hidden',
+    detail: '隐藏菜单 侧边栏显示开关 部署级 全部显示',
+  },
 ]
 
 /** 分组卡片本身可被搜到的补充词。控件级命中仍走 PANEL_LOCATOR_FIELDS。 */
 export const SECTION_KEYWORDS: Record<string, string> = {
   'setting-group-shell-env': '系统环境变量 变量名 envKey 全站变量',
   'setting-group-container-rebuild': '重建容器 Docker',
+  [MENU_VISIBILITY_SECTION]: '菜单可见性 隐藏菜单 侧边栏显示开关 恢复默认',
   [SSO_SECTION]: COMPANY_SSO_KEY,
   [ECP_SECTION]: ECP_CONFIG_KEY,
 }

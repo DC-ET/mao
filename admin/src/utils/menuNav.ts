@@ -115,6 +115,18 @@ export function filterMenuGroups(groups: MenuGroupDef[], query: string): MenuGro
     .filter(group => group.items.length > 0)
 }
 
+/**
+ * 按部署级隐藏配置过滤菜单：命中 index 的项移除，变空的组整组剔除。
+ * 未知 index 静默忽略（菜单删改后旧配置不报错）；空数组原样返回。
+ */
+export function applyMenuVisibility(groups: MenuGroupDef[], hidden: readonly string[]): MenuGroupDef[] {
+  if (hidden.length === 0) return groups
+  const hiddenSet = new Set(hidden)
+  return groups
+    .map(group => ({ ...group, items: group.items.filter(item => !hiddenSet.has(item.index)) }))
+    .filter(group => group.items.length > 0)
+}
+
 export interface HighlightSegment {
   text: string
   hit: boolean

@@ -117,8 +117,10 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowDown, CircleCloseFilled, Search } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
+import { useMenuStore } from '../stores/menu'
 import { pickHomePath } from '../utils/home'
 import {
+  applyMenuVisibility,
   filterMenuGroups,
   flattenMenuItems,
   highlightSegments,
@@ -141,6 +143,7 @@ const emit = defineEmits<{
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
+const menuStore = useMenuStore()
 
 const logoSrc = `${import.meta.env.BASE_URL}app-icon-small.png`
 
@@ -228,10 +231,15 @@ function canSee(item: MenuItemDef) {
   return !item.permission || authStore.hasPermission(item.permission)
 }
 
+// 权限过滤之上再叠加部署级可见性过滤（applyMenuVisibility 内部已剔除变空的分组）：
+// 侧栏 / 抽屉 / ⌘K 搜索 / 键盘导航全部从 visibleGroups 派生，一处过滤全端生效。
 const visibleGroups = computed(() =>
-  menuGroups
-    .map(group => ({ ...group, items: group.items.filter(canSee) }))
-    .filter(group => group.items.length > 0)
+  applyMenuVisibility(
+    menuGroups
+      .map(group => ({ ...group, items: group.items.filter(canSee) }))
+      .filter(group => group.items.length > 0),
+    menuStore.hidden
+  )
 )
 
 const displayedGroups = computed(() =>
@@ -303,7 +311,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onGlobalKeydown))
 
 // ── 导航 ────────────────────────────────────────────────────────
 function goHome() {
-  const path = pickHomePath((permission) => authStore.hasPermission(permission))
+  const path = pickHomePath(
+    (permission) => authStore.hasPermission(permission),
+    (index) => menuStore.isHidden(index)
+  )
   router.push(path === '/forbidden' ? '/login' : path)
   emit('select')
 }

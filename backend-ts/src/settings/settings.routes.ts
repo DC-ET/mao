@@ -55,6 +55,13 @@ export function registerSystemSettingRoutes(app: FastifyInstance, deps: SystemSe
     return sendOk(reply, await systemSettingService.list(queryOptStr(request, 'category') ?? null));
   });
 
+  // 管理后台菜单可见性（部署级全局配置）：仅要求登录，不要求 settings:read——
+  // 没有设置读权限的运营角色也要按部署配置过滤侧栏菜单。只暴露隐藏路径列表，不透出其它配置值。
+  app.get('/v1/system-settings/menu-visibility', async (request, reply) => {
+    requireUserId(request);
+    return sendOk(reply, { hidden: await systemSettingService.getAdminMenuHidden() });
+  });
+
   // 容器域名解析生效条目预览（管理后台「运行环境」面板只读展示）。
   // 仅 settings:read；未注入 resolver（如纯 host 部署的测试环境）时接口不存在。
   if (deps.containerHostsPreview) {
