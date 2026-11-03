@@ -6,7 +6,6 @@ export interface RelatedAgent {
   id: number
   name: string
   enabled: boolean
-  defaultModelId: number | null
   skillNames: string[]
   mcpServerIds: number[]
   httpToolIds: number[]
@@ -20,7 +19,7 @@ function parseIdList(raw: unknown): number[] {
 
 /**
  * 「资源 → 引用它的 Agent」反向索引（技术方案 2026-11-03 §4.3）：
- * 拉一次全量 Agent 列表内存聚合，供模型 / MCP / 自定义工具 / Skill 列表的
+ * 拉一次全量 Agent 列表内存聚合，供 MCP / 自定义工具 / Skill 列表的
  * 「关联 Agent」列复用。fail-soft：无 agent:read 权限或请求失败时置空数组，
  * 关联列显 0，不阻塞页面主数据。
  */
@@ -40,7 +39,6 @@ export function useAgentRelations() {
           id: Number(row?.id),
           name: typeof row?.name === 'string' ? row.name : '',
           enabled: row?.enabled !== false,
-          defaultModelId: row?.defaultModelId == null ? null : Number(row.defaultModelId),
           skillNames: Array.isArray(row?.skillNames) ? (row.skillNames as string[]) : [],
           mcpServerIds: parseIdList(row?.mcpServerIds),
           httpToolIds: parseIdList(row?.httpToolIds),
@@ -51,11 +49,6 @@ export function useAgentRelations() {
     } finally {
       if (current === seq) loading.value = false
     }
-  }
-
-  /** 引用指定默认模型的 Agent（AgentListView 之外的模型反查入口）。 */
-  function agentsByModel(modelId: number): RelatedAgent[] {
-    return agents.value.filter((agent) => agent.defaultModelId === modelId)
   }
 
   function agentsByMcpServer(serverId: number): RelatedAgent[] {
@@ -70,5 +63,5 @@ export function useAgentRelations() {
     return agents.value.filter((agent) => agent.skillNames.includes(skillName))
   }
 
-  return { agents, loading, load, agentsByModel, agentsByMcpServer, agentsByHttpTool, agentsBySkill }
+  return { agents, loading, load, agentsByMcpServer, agentsByHttpTool, agentsBySkill }
 }
