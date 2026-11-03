@@ -156,8 +156,6 @@ watch(changePasswordVisible, (visible, prev) => {
   if (!visible && prev) readinessRefreshKey.value += 1
 })
 
-const canWrite = computed(() => authStore.hasPermission('user:write'))
-
 /** 本地密码账号才可自助改密（第三方登录账号回各自平台改密，后端同口径兜底）。 */
 const isLocalUser = computed(() => authStore.user?.authSource === 'LOCAL')
 
