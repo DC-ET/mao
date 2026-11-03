@@ -180,6 +180,8 @@ interface GitCommitFilesResult {
     deletions?: number
     binary?: boolean
   }>
+  /** 提交正文：`git show -s --format=%B` 去除首行标题后的剩余部分（trim，空串表示无正文）。 */
+  body: string
 }
 
 type GitStashAction = 'apply' | 'pop' | 'drop'
