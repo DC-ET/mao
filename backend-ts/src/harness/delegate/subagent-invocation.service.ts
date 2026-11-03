@@ -42,6 +42,8 @@ export class SubagentInvocationService {
         projectKey: parent.projectKey,
         parentSessionId: parent.id,
         sessionType: 'SUBAGENT',
+        // 子代理继承父会话来源：admin 按来源筛选时与父保持一致（技术方案 D8）。
+        source: parent.source,
       };
       child.id = await tx.insert('session', child);
       const execution: SubagentExecution = {

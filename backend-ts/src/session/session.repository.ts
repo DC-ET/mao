@@ -5,31 +5,51 @@ import { toSnakeRow } from '../common/case.js';
 import { nowSql } from '../common/datetime.js';
 import { escapeLike, messageRoleClause } from './message-search.js';
 import type { MessageSearchScope } from './message-search.js';
+import type { SessionSource as ContractSessionSource } from '@mao/contracts';
 import { ACTIVE_PHASE_SQL_LIST } from './util/session-group-key.js';
 import type { FileChange, Message, Session, SessionGroupPage } from './types.js';
 
-// 'signal' 只能由哨兵触发经 openRun 产生：POST /v1/sessions 的路由层白名单是显式
-// ['web','embed']（不读本数组），用户不能手工建 signal 会话（防伪造分组归属）。
-// 系统来源（feishu/dingtalk/weixin/openapi）由各通道创建会话的内部调用方写入；
-// 契约联合在 shared/contracts/src/session.ts 的 SessionSource，两端须逐值一致。
+// 来源语义（事实标签，非授权依据）：
+// - 'web'：浏览器访问（桌面 / Web / 移动浏览器曾共用；本期起桌面壳自报 desktop、安卓壳自报
+//   android、mao-agent 自报 cli，'web' 口径收窄为浏览器）；
+// - 'desktop' / 'android'：桌面 Electron / 安卓 Capacitor 壳自报；
+// - 'cli'：mao-agent 自报（与 WS 握手的 client='cli' 同名）；
+// - 'embed'：Embed SDK 惰性接管（PUT /v1/sessions/:id/source 唯一可设值）；
+// - 'feishu'/'dingtalk'/'weixin'/'signal'/'openapi'：系统来源，只能由各通道创建会话的内部
+//   调用方写入，用户入口（POST /v1/sessions、PUT /v1/sessions/:id/source）一律走显式白名单
+//   守卫，不读本数组——否则用户可手工把会话挪进对应分组（防伪造分组归属，'signal' 是典型）。
+// 闭集与契约 shared/contracts/src/session.ts 的 SessionSource 双向对齐：
+// satisfies 守住「本数组 ⊆ 契约」、_AssertExhaustive 守住「契约 ⊆ 本数组」，漏一端即 tsc 失败。
 export const SESSION_SOURCE_VALUES = [
-  'web', 'embed', 'feishu', 'dingtalk', 'weixin', 'signal', 'openapi',
-] as const;
+  'web', 'embed', 'desktop', 'cli', 'android', 'feishu', 'dingtalk', 'weixin', 'signal', 'openapi',
+] as const satisfies readonly ContractSessionSource[];
 export type SessionSource = (typeof SESSION_SOURCE_VALUES)[number];
+
+/** 契约里的每个来源都必须在本闭集有对应值：编译期即失败（对齐 llm-call-context.ts 范式）。 */
+type _AssertExhaustive = Exclude<ContractSessionSource, SessionSource> extends never ? true : never;
+const _exhaustive: _AssertExhaustive = true;
+void _exhaustive;
 
 export const isSessionSource = (value: unknown): value is SessionSource =>
   typeof value === 'string' && (SESSION_SOURCE_VALUES as readonly string[]).includes(value);
 
 /**
- * 用户可手工创建/设置的会话来源：仅 web/embed。
- * 'signal' 等系统来源只能由哨兵触发经 openRun 产生，用户入口（POST /v1/sessions、
- * PUT /v1/sessions/:id/source）一律走本守卫，不读 SESSION_SOURCE_VALUES——
- * 否则加了系统来源后用户可手工把会话挪进对应分组（防伪造分组归属）。
+ * 客户端可自报的会话来源（POST /v1/sessions 的 source 白名单）：五个客户端形态值。
+ * 系统来源不在列——只能由哨兵 / 各通道内部调用方写入（防伪造分组归属）。
  */
-export const USER_SETTABLE_SESSION_SOURCES = ['web', 'embed'] as const satisfies readonly SessionSource[];
+export const CLIENT_DECLARABLE_SESSION_SOURCES = ['web', 'embed', 'desktop', 'cli', 'android'] as const satisfies readonly SessionSource[];
 
-export const isUserSettableSessionSource = (value: unknown): value is 'web' | 'embed' =>
-  typeof value === 'string' && (USER_SETTABLE_SESSION_SOURCES as readonly string[]).includes(value);
+export const isClientDeclarableSessionSource = (value: unknown): value is (typeof CLIENT_DECLARABLE_SESSION_SOURCES)[number] =>
+  typeof value === 'string' && (CLIENT_DECLARABLE_SESSION_SOURCES as readonly string[]).includes(value);
+
+/**
+ * PUT /v1/sessions/:id/source 可设置的来源：仅 embed（Embed SDK 惰性接管专用）。
+ * 没有「把会话改判成桌面 / CLI / 安卓建的」合法流程；'signal' 等系统来源更不可由用户设置。
+ */
+export const SESSION_MARK_SOURCES = ['embed'] as const satisfies readonly SessionSource[];
+
+export const isSessionMarkSource = (value: unknown): value is 'embed' =>
+  typeof value === 'string' && (SESSION_MARK_SOURCES as readonly string[]).includes(value);
 
 export interface MessageSearchSqlFilter {
   mode: 'FULLTEXT' | 'LIKE';

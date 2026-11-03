@@ -1154,6 +1154,8 @@ export class StreamingWsHandler {
       modelId: resolvedModelId ?? undefined, isGit: parentSession.isGit, platform: parentSession.platform,
       shellPath: parentSession.shellPath, osVersion: parentSession.osVersion, status: 'ACTIVE',
       parentSessionId, sessionType: 'SIDE_TASK', title: '任务',
+      // 边路任务继承父会话来源：admin 按来源筛「桌面端任务」时不应漏掉整棵子树（D8）。
+      source: parentSession.source,
     };
     await this.deps.sessionService.save(sideSession);
     const sideSessionId = sideSession.id!;

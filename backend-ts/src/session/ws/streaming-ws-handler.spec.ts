@@ -534,6 +534,7 @@ describe('StreamingWsHandler', () => {
     vi.clearAllMocks();
     registry.getUserId.mockReturnValue(7);
     const parent = sideParentSession('CLOUD', 'COMPLETED');
+    parent.source = 'cli';
     sessionService.getSession.mockResolvedValue(parent);
     sessionService.save.mockImplementation(async (s: Session) => { s.id = 13; });
     sessionService.saveMessage.mockResolvedValue(message(99, 'USER'));
@@ -551,6 +552,8 @@ describe('StreamingWsHandler', () => {
     expect(saved.executionMode).toBe('CLOUD');
     expect(saved.workspace).toBe('/tmp/parent-ws');
     expect(saved.permissionLevel).toBe('READ_WRITE');
+    // 边路继承父来源（D8）：不能落列默认 web，否则 admin 按来源筛父会话时漏掉整棵子树
+    expect(saved.source).toBe('cli');
     // 创建事件与订阅按来源边路会话为键
     expect(registry.send).toHaveBeenCalledWith(7, expect.objectContaining({
       type: 'side_session_created', sessionId: 11,

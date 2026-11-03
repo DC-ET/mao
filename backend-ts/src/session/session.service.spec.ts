@@ -179,6 +179,7 @@ describe('SessionService archive', () => {
       permissionLevel: 'READ_WRITE',
       modelId: 3,
       projectKey: 'demo',
+      source: 'desktop',
     });
     vi.mocked(sessionRepo.list).mockResolvedValue([]);
 
@@ -188,7 +189,25 @@ describe('SessionService archive', () => {
     expect(promoted.sessionType).toBe('NORMAL');
     expect(promoted.parentSessionId).toBeNull();
     expect(promoted.projectKey).toBe('demo');
+    // 提升继承源会话来源（D8），其余字段不串位（projectKey / 模式在上面已断言）
+    expect(promoted.source).toBe('desktop');
     expect(sessionRepo.transaction).toHaveBeenCalled();
+  });
+
+  it('createSession 落列：未传 source 落 web，传 cli 落 cli', async () => {
+    const { service, sessionRepo, agentLookup } = makeService();
+    const lookup = agentLookup as unknown as { findById: (id: number) => Promise<{ id: number; enabled: number }> };
+    lookup.findById = vi.fn(async () => ({ id: 5, enabled: 1 }));
+
+    const def = await service.createSession(7, 5, 't', 'LOCAL', '/tmp/ws');
+    expect(def.source).toBe('web');
+    expect(sessionRepo.insert).toHaveBeenLastCalledWith(expect.objectContaining({ source: 'web' }));
+
+    const cli = await service.createSession(
+      7, 5, 't', 'LOCAL', '/tmp/ws', null, null, null, null, null, null, null, null, null, null, 'cli',
+    );
+    expect(cli.source).toBe('cli');
+    expect(sessionRepo.insert).toHaveBeenLastCalledWith(expect.objectContaining({ source: 'cli' }));
   });
 
   it('derivesProjectKeyWhenPromotingLegacySideTaskWithoutProjectKey', async () => {

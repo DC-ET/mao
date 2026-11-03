@@ -39,9 +39,12 @@ export interface MessageSearchResult {
 /**
  * 会话来源（事实标签，不是授权依据）：与后端 `SESSION_SOURCE_VALUES`
  * （backend-ts/src/session/session.repository.ts）逐值一致——
- * 两端汉化表用 `Record<SessionSource, string>` 声明，漏项编译期即失败。
- * 'web'/'embed' 是用户可设值；'feishu'/'dingtalk'/'weixin'/'signal'/'openapi'
- * 只能由各通道创建会话的内部调用方写入（防伪造分组归属）。
+ * 两端汉化表用 `Record<SessionSource, string>` 声明，漏项编译期即失败；
+ * 后端闭集另有 `satisfies` + `_AssertExhaustive` 双向断言，漏一端即 tsc 失败。
+ * 客户端可自报值：'web'（浏览器）/ 'embed'（Embed SDK）/ 'desktop'（桌面 Electron）/
+ * 'cli'（mao-agent）/ 'android'（安卓 Capacitor 壳）；
+ * 'feishu'/'dingtalk'/'weixin'/'signal'/'openapi' 只能由各通道创建会话的内部调用方写入
+ * （防伪造分组归属）。
  */
-export type SessionSource = 'web' | 'embed' | 'feishu' | 'dingtalk' | 'weixin' | 'signal' | 'openapi';
+export type SessionSource = 'web' | 'embed' | 'desktop' | 'cli' | 'android' | 'feishu' | 'dingtalk' | 'weixin' | 'signal' | 'openapi';
 

@@ -6,9 +6,8 @@ import { api } from '../api'
 import { getToken } from '../utils/auth-storage'
 import { nowDateTime } from '../utils/datetime'
 import { mapCompactionEvents } from '../utils/chatMessage'
-import { isAndroidCapacitor } from '../utils/capacitor'
 import { stripImageUrlLines } from '../utils/imageUrlAnnotation'
-import { isElectronClient } from '../utils/platform'
+import { clientKind, isElectronClient } from '../utils/platform'
 import { updateSideTaskTabTitleFor } from './useCenterTabs'
 import { notifyInboxSystemUpdate, setupDesktopNotifyBridge } from './useInboxSystemNotify'
 import { ensureDesktopShellBridgeFromWs } from './useDesktopShell'
@@ -221,7 +220,7 @@ export function useStreamWS() {
     const token = getToken()
     if (!token) return Promise.reject(new Error('No token'))
 
-    const client = isAndroidCapacitor() ? 'android' : (isElectronClient() ? 'electron' : 'browser')
+    const client = clientKind()
     // token 不进握手 URL（避免被代理/日志记录），改为连接成功后的首帧 auth 消息
     const url = `${wsBase}/ws/stream?client=${client}`
     // 局部引用：disconnect() 将模块级 ws 置空后，迟到回调仍能安全访问自身 socket

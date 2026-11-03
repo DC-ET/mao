@@ -23,6 +23,23 @@ function setup(child: Session | null = {
 const parent: Session = { id: 10, userId: 7, modelId: 3 };
 const clearSql = 'UPDATE session_todo SET deleted = 1 WHERE session_id = ? AND deleted = 0';
 
+describe('SubagentInvocationService 来源继承', () => {
+  it('子代理会话继承父会话来源，其余继承字段不串位（D8）', async () => {
+    const { service } = setup();
+    const parentWithSource: Session = {
+      id: 10, userId: 7, modelId: 3, source: 'desktop',
+      executionMode: 'LOCAL', workspace: '/Users/me/proj', projectKey: 'proj', permissionLevel: 'READ_WRITE',
+    };
+    const result = await service.createBackground(parentWithSource, 'worker', 'task', '子任务', 'tc-source');
+    expect(result.child.source).toBe('desktop');
+    expect(result.child.executionMode).toBe('LOCAL');
+    expect(result.child.workspace).toBe('/Users/me/proj');
+    expect(result.child.projectKey).toBe('proj');
+    expect(result.child.parentSessionId).toBe(10);
+    expect(result.child.sessionType).toBe('SUBAGENT');
+  });
+});
+
 describe('SubagentInvocationService followup todos', () => {
   it.each([undefined, '上一轮已中断，按新要求执行'])('clears only child todos within the new-round transaction (%s)', async (notice) => {
     const { connection, service } = setup();

@@ -17,6 +17,8 @@ export interface Session {
   platform?: string | null;
   shellPath?: string | null;
   osVersion?: string | null;
+  /** 会话来源（web / embed / desktop / cli / android / 系统来源），派生会话继承父会话。 */
+  source?: string | null;
   createdAt?: string | null;
   updatedAt?: string | null;
 }

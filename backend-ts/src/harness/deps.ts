@@ -24,6 +24,8 @@ export interface Session {
   lastActivityAt?: string | null;
   lastPromptTokens?: number | null;
   contextAnchorMsgId?: number | null;
+  /** 会话来源（web / embed / desktop / cli / android / 系统来源），子代理继承父会话。 */
+  source?: string | null;
 }
 
 export interface Message {

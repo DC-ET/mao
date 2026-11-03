@@ -123,6 +123,8 @@ export class SessionRunner {
       executionMode: 'CLOUD',
       permissionLevel: 'READ_WRITE',
       ...req,
+      // CLI 只有一种客户端形态：在默认值与调用方入参之后统一覆写来源（技术方案 D11）。
+      source: 'cli',
     });
     await this.attach(session);
     return session;

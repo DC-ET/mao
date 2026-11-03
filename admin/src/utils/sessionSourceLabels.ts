@@ -8,6 +8,9 @@ import type { SessionSource } from '@mao/contracts'
 export const SESSION_SOURCE_LABELS: Record<SessionSource, string> = {
   web: 'Web',
   embed: '浮窗 Embed',
+  desktop: '桌面端',
+  cli: '终端 CLI',
+  android: '安卓',
   feishu: '飞书',
   dingtalk: '钉钉',
   weixin: '微信',
@@ -19,6 +22,9 @@ export const SESSION_SOURCE_LABELS: Record<SessionSource, string> = {
 export const SESSION_SOURCE_TAG_TYPES: Record<SessionSource, 'primary' | 'success' | 'warning' | 'danger' | 'info'> = {
   web: 'info',
   embed: 'warning',
+  desktop: 'primary',
+  cli: 'info',
+  android: 'success',
   feishu: 'primary',
   dingtalk: 'success',
   weixin: 'primary',

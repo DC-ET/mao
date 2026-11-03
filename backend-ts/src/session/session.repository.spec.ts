@@ -55,6 +55,15 @@ describe('SessionRepository', () => {
     await repo.selectMessageSearchCandidates(1, 'kw');
     expect(db.query).toHaveBeenCalled();
   });
+
+  it('insert 落列：未声明来源落 web，客户端自报值原样落库', async () => {
+    const db = mockDb();
+    const repo = new SessionRepository(db as never);
+    await repo.insert({ userId: 1, title: 't' } as never);
+    expect(db.insert).toHaveBeenCalledWith('session', expect.objectContaining({ source: 'web' }));
+    await repo.insert({ userId: 1, title: 't', source: 'cli' } as never);
+    expect(db.insert).toHaveBeenLastCalledWith('session', expect.objectContaining({ source: 'cli' }));
+  });
 });
 
 describe('MessageRepository', () => {

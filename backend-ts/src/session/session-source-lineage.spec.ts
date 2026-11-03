@@ -3,6 +3,14 @@ import { WeixinSessionService } from '../weixin/session.service.js';
 import { SessionGroupKey } from './util/session-group-key.js';
 import { toAdminSessionVO } from './session-vo.js';
 import { SessionService } from './session.service.js';
+import {
+  CLIENT_DECLARABLE_SESSION_SOURCES,
+  SESSION_MARK_SOURCES,
+  SESSION_SOURCE_VALUES,
+  isClientDeclarableSessionSource,
+  isSessionMarkSource,
+  isSessionSource,
+} from './session.repository.js';
 import type { FileChangeRepository, MessageRepository, SessionRepository } from './session.repository.js';
 import type { AgentLookup, Session } from './types.js';
 import type { PathSandbox } from '../harness/safety/path-sandbox.js';
@@ -10,6 +18,36 @@ import type { EnvironmentInfoProvider } from '../harness/core/environment-info.j
 import type { GitOperationService } from './git-operation.service.js';
 import type { SessionCompactionService } from './session-compaction.service.js';
 import type { SessionCompactionEventService } from './session-compaction-event.service.js';
+
+describe('会话来源闭集与入口白名单（技术方案 2026-11-03 §2.1）', () => {
+  it('闭集为十值，顺序与契约一致，接受三个客户端形态值', () => {
+    expect([...SESSION_SOURCE_VALUES]).toEqual([
+      'web', 'embed', 'desktop', 'cli', 'android', 'feishu', 'dingtalk', 'weixin', 'signal', 'openapi',
+    ]);
+    for (const source of SESSION_SOURCE_VALUES) expect(isSessionSource(source), source).toBe(true);
+    expect(isSessionSource('mobile')).toBe(false);
+    expect(isSessionSource(null)).toBe(false);
+    expect(isSessionSource(undefined)).toBe(false);
+  });
+
+  it('POST /v1/sessions 白名单为五个客户端形态值，系统来源不可自报', () => {
+    expect([...CLIENT_DECLARABLE_SESSION_SOURCES]).toEqual(['web', 'embed', 'desktop', 'cli', 'android']);
+    for (const source of ['web', 'embed', 'desktop', 'cli', 'android']) {
+      expect(isClientDeclarableSessionSource(source), source).toBe(true);
+    }
+    for (const source of ['feishu', 'dingtalk', 'weixin', 'signal', 'openapi', 'mobile', '', null]) {
+      expect(isClientDeclarableSessionSource(source), String(source)).toBe(false);
+    }
+  });
+
+  it('PUT /v1/sessions/:id/source 仅允许 embed（D6）', () => {
+    expect([...SESSION_MARK_SOURCES]).toEqual(['embed']);
+    expect(isSessionMarkSource('embed')).toBe(true);
+    for (const source of ['web', 'desktop', 'cli', 'android', 'feishu', 'dingtalk', 'weixin', 'signal', 'openapi', 'mobile', null]) {
+      expect(isSessionMarkSource(source), String(source)).toBe(false);
+    }
+  });
+});
 
 describe('会话来源写入点（技术方案 2026-10-29 §2.1）', () => {
   it('微信建会话：第 16 参落 weixin 且不与其他尾参串位', async () => {
@@ -64,6 +102,21 @@ describe('分组键对七个来源的落桶与扩宽前一致（技术方案 §6
     // openapi / weixin 与 web 落桶一致（普通 CLOUD 工作区按模式/路径归桶）
     expect(SessionGroupKey.of(withSource('openapi', '/root/projects/demo'))).toBe(SessionGroupKey.of(withSource('web', '/root/projects/demo')));
     expect(SessionGroupKey.of(withSource('weixin', '/root/projects/demo'))).toBe(SessionGroupKey.of(withSource('web', '/root/projects/demo')));
+  });
+
+  it('desktop / cli / android 与 web 落桶逐项一致（D2 回归）', () => {
+    const cases = [
+      { executionMode: 'CLOUD', workspace: '/root/projects/demo' },
+      { executionMode: 'CLOUD', workspace: null },
+      { executionMode: 'LOCAL', workspace: '/Users/me/proj' },
+    ];
+    for (const base of cases) {
+      const web = { id: 1, userId: 7, source: 'web', ...base } as Session;
+      const webKey = SessionGroupKey.of(web);
+      for (const source of ['desktop', 'cli', 'android']) {
+        expect(SessionGroupKey.of({ ...web, source } as Session), `${source}@${JSON.stringify(base)}`).toBe(webKey);
+      }
+    }
   });
 });
 
@@ -124,6 +177,8 @@ describe('admin 会话来源（技术方案 §4.1-6/7、§4.1-8）', () => {
     const base = { id: 1, userId: 7, title: 't', status: 'ACTIVE', executionMode: 'CLOUD' } as Session;
     const withSource = toAdminSessionVO({ ...base, source: 'dingtalk' } as Session, new Map(), new Map(), new Map());
     expect(withSource.source).toBe('dingtalk');
+    const cli = toAdminSessionVO({ ...base, source: 'cli' } as Session, new Map(), new Map(), new Map());
+    expect(cli.source).toBe('cli');
     const noSource = toAdminSessionVO(base, new Map(), new Map(), new Map());
     expect(noSource.source).toBe('web');
   });
