@@ -50,6 +50,17 @@ test('settings integration panel renders with masked secrets and feishu test pas
   await expect(page.locator('.el-message', { hasText: '连接成功' })).toBeVisible({ timeout: 15_000 })
 })
 
+/** 等 batch 接口返回后再断言。上一次的「已保存」提示还在时，toBeVisible 会立刻通过，回读会赶在第二次保存落库之前。 */
+async function saveCard(page: import('@playwright/test').Page, card: import('@playwright/test').Locator) {
+  const saved = page.waitForResponse(
+    (resp) => resp.url().includes('/system-settings/batch') && resp.request().method() === 'PUT',
+  )
+  await card.locator('button', { hasText: '保存' }).click()
+  const response = await saved
+  expect(response.ok()).toBeTruthy()
+  await expect(page.locator('.el-message', { hasText: '已保存' }).first()).toBeVisible({ timeout: 10_000 })
+}
+
 test('settings batch save round-trip persists and restores value', async ({ page }) => {
   await login(page)
   await page.goto('/admin/settings')
@@ -62,8 +73,7 @@ test('settings batch save round-trip persists and restores value', async ({ page
 
   // 改动并保存
   await sessionInput.fill(`${original}-x`)
-  await ossCard.locator('button', { hasText: '保存' }).click()
-  await expect(page.locator('.el-message', { hasText: '已保存' }).first()).toBeVisible({ timeout: 10_000 })
+  await saveCard(page, ossCard)
 
   // 回读确认
   const resp = await page.request.get('/api/v1/system-settings', {
@@ -75,8 +85,7 @@ test('settings batch save round-trip persists and restores value', async ({ page
 
   // 还原
   await sessionInput.fill(original)
-  await ossCard.locator('button', { hasText: '保存' }).click()
-  await expect(page.locator('.el-message', { hasText: '已保存' }).first()).toBeVisible({ timeout: 10_000 })
+  await saveCard(page, ossCard)
   const resp2 = await page.request.get('/api/v1/system-settings', {
     headers: { Authorization: `Bearer ${await page.evaluate(() => localStorage.getItem('token'))}` },
   })

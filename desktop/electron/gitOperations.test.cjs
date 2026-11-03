@@ -21,6 +21,14 @@ const {
   switchBranch,
 } = require('./gitOperations.cjs')
 
+// commit 只在「仓库和全局都没有 user.name/email」时用 -c 注入 Mao Agent，且不写回仓库配置。
+// 开发机的全局 git 身份会让这条断言读到真实姓名，这里把本文件的 git 限定在空配置上。
+const isolatedGitConfig = path.join(os.tmpdir(), `mao-git-isolated-${process.pid}.config`)
+fs.writeFileSync(isolatedGitConfig, '')
+process.env.GIT_CONFIG_GLOBAL = isolatedGitConfig
+process.env.GIT_CONFIG_SYSTEM = isolatedGitConfig
+process.on('exit', () => fs.rmSync(isolatedGitConfig, { force: true }))
+
 function git(cwd, args, env = {}) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, ...env } }).trim()
 }

@@ -71,12 +71,13 @@ test('keep_session reuses cwd after cd and refreshes current_workdir', async (t)
     { conversationId: 12, workspace: dir, needApproval: false },
   )
   assert.equal(first.exit_code, 0)
-  assert.equal(first.current_workdir, sub)
+  // macOS 上 /var → /private/var，shell 的 pwd 返回解析后的真实路径。
+  assert.equal(fs.realpathSync(first.current_workdir), fs.realpathSync(sub))
   const second = await runtime.handle(
     { command: 'pwd', keep_session: true, session_id: 'sh-keep' },
     { conversationId: 12, workspace: dir, needApproval: false },
   )
-  assert.equal(second.output.trim().split('\n').pop(), sub)
+  assert.equal(fs.realpathSync(second.output.trim().split('\n').pop()), fs.realpathSync(sub))
   const listed = await runtime.handle({ action: 'list' }, { conversationId: 12 })
   assert.equal(listed.sessions.length, 1)
   assert.equal(listed.sessions[0].session_id, 'sh-keep')

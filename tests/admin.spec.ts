@@ -207,7 +207,7 @@ test.describe('Agent Management', () => {
     const table = page.locator('.el-table')
     await expect(table).toBeVisible()
     // Table should have column headers
-    await expect(table.locator('thead th')).toContainText(['ID', '名称', '描述', '创建人', 'Skills', '经验数', '创建时间', '操作'])
+    await expect(table.locator('thead th')).toContainText(['ID', '名称', '描述', '默认模型', '状态', '创建人', '能力概览', '经验数', '创建时间', '操作'])
   })
 
   test('should show agent data rows', async ({ page }) => {

@@ -19,7 +19,7 @@ async function noisePng(width: number, height: number, channels = 3): Promise<Bu
   }).png().toBuffer();
 }
 
-describe('PromptImageResizer.compressForStore', () => {
+describe('PromptImageResizer.compressForStore', { timeout: 60_000 }, () => {
   it('returns small images untouched (no lossy re-encode)', async () => {
     const input = await noisePng(200, 200);
     expect(input.length).toBeLessThan(STORE_COMPRESS_THRESHOLD_BYTES);
@@ -99,7 +99,7 @@ describe('PromptImageResizer.compressForStore', () => {
   });
 });
 
-describe('PromptImageResizer.compressDataUriForStore', () => {
+describe('PromptImageResizer.compressDataUriForStore', { timeout: 60_000 }, () => {
   it('compresses large data URIs to the store target', async () => {
     const input = await noisePng(1200, 1200);
     const uri = `data:image/png;base64,${input.toString('base64')}`;

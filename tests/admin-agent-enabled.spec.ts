@@ -62,7 +62,7 @@ test('admin can disable an agent and filter by status', async ({ page }) => {
   }])
   await expect(table.locator('tr', { hasText: '代码助手' }).getByText('停用', { exact: true })).toBeVisible()
 
-  await page.locator('.search-form .el-select').click()
+  await page.locator('.search-form .el-form-item').filter({ hasText: '状态' }).locator('.el-select').click()
   await page.locator('.el-select-dropdown:visible').getByText('停用', { exact: true }).click()
   await expect(table.getByText('代码助手', { exact: true })).toBeVisible()
   await expect(table.getByText('旧助手', { exact: true })).toBeVisible()
