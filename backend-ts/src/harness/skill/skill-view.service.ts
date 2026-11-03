@@ -137,14 +137,19 @@ export class SkillViewService {
       }
     }
     // 3) 原子换入：路径不变，既有会话软链与 npm bin 链接继续有效
+    //    竞态②命中（他人先换入）时视为「本轮物化未生效」：视图归胜者，meta 也必须保留
+    //    胜者的（跳过步骤 5）——若仍写本方指纹，而胜者内容是另一个源状态（如部署 rsync
+    //    落在两次拷贝之间），下次 sync 会把胜者的旧内容错误地短路钉死（评审 round-3 I-1）
+    let installed = true;
     try {
       renameSync(stageDir, viewDir);
     } catch (e) {
       const code = (e as NodeJS.ErrnoException).code;
       // 蓝绿并发（评审修订 §4.2 竞态②）：另一实例先换入（目标已存在且非空）→ 视为成功，
-      // 丢弃自己的暂存与旧版；内容同源，最终视图必是完整新版
+      // 丢弃自己的暂存与旧版；内容同源时视图必为完整新版，不同源时由下一轮 sync 自愈
       if ((code === 'ENOTEMPTY' || code === 'EEXIST') && lstatSync(viewDir, { throwIfNoEntry: false }) != null) {
-        harnessLog('warn', `[skill-view] concurrent materialization detected for ${skillName}, keeping the winner's view`);
+        installed = false;
+        harnessLog('warn', `[skill-view] concurrent materialization detected for ${skillName}, keeping the winner's view and meta`);
         rmSync(stageDir, { recursive: true, force: true });
         if (hadOld) {
           try {
@@ -174,15 +179,18 @@ export class SkillViewService {
         harnessLog('warn', `[skill-view] failed to remove old view ${oldDir}: ${(e as Error).message}`);
       }
     }
-    // 5) 写 meta（先写 tmp 再 rename 覆盖）：换入完成后才落盘，避免「meta 新 / 内容旧」的错误短路
-    try {
-      const tmpMeta = `${metaFile}.tmp`;
-      writeFileSync(tmpMeta, `${JSON.stringify({ source, fingerprint, syncedAt: new Date().toISOString() }, null, 2)}\n`);
-      renameSync(tmpMeta, metaFile);
-    } catch (e) {
-      harnessLog('warn', `[skill-view] meta write failed for ${skillName}: ${(e as Error).message}`);
+    // 5) 写 meta（先写 tmp 再 rename 覆盖）：换入完成后才落盘，避免「meta 新 / 内容旧」的错误短路；
+    //    竞态②命中（installed=false）时跳过：meta 必须与视图内容天然配对（保留胜者的 meta）
+    if (installed) {
+      try {
+        const tmpMeta = `${metaFile}.tmp`;
+        writeFileSync(tmpMeta, `${JSON.stringify({ source, fingerprint, syncedAt: new Date().toISOString() }, null, 2)}\n`);
+        renameSync(tmpMeta, metaFile);
+      } catch (e) {
+        harnessLog('warn', `[skill-view] meta write failed for ${skillName}: ${(e as Error).message}`);
+      }
+      harnessLog('info', `[skill-view] materialized user=${userId} skill=${skillName} fingerprint=${fingerprint} -> ${viewDir}`);
     }
-    harnessLog('info', `[skill-view] materialized user=${userId} skill=${skillName} fingerprint=${fingerprint} -> ${viewDir}`);
   }
 
   private removeView(viewDir: string, metaFile: string): void {
