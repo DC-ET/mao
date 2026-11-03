@@ -4,7 +4,10 @@
       <template #header>
         <div class="group-header">
           <span class="group-title">菜单可见性</span>
-          <span class="group-hint">部署级全局生效，所有账号一致</span>
+          <div class="header-actions">
+            <el-button size="small" :disabled="!canWrite || draft.size === 0" @click="restoreDefault">恢复默认（全部显示）</el-button>
+            <el-button type="primary" size="small" :disabled="!canWrite || !dirty" :loading="saving" @click="save">保存</el-button>
+          </div>
         </div>
       </template>
 
@@ -12,7 +15,7 @@
         type="info"
         :closable="false"
         show-icon
-        title="隐藏仅影响侧边栏菜单展示，不影响访问权限；被隐藏页面的路由与权限校验不变，仍可通过网址直接访问。如需收回访问权限，请使用「角色权限」。"
+        title="部署级全局生效，所有账号一致。隐藏仅影响侧边栏菜单展示，不影响访问权限；被隐藏页面的路由与权限校验不变，仍可通过网址直接访问。如需收回访问权限，请使用「角色权限」。"
         class="config-tip"
       />
 
@@ -40,11 +43,6 @@
             </div>
           </div>
         </div>
-      </div>
-
-      <div class="panel-actions">
-        <el-button :disabled="!canWrite || draft.size === 0" @click="restoreDefault">恢复默认（全部显示）</el-button>
-        <el-button type="primary" :disabled="!canWrite || !dirty" :loading="saving" @click="save">保存</el-button>
       </div>
     </el-card>
   </section>
@@ -153,7 +151,7 @@ async function save() {
 <style scoped>
 .group-header { display: flex; align-items: center; justify-content: space-between; }
 .group-title { font-weight: 600; }
-.group-hint { font-size: 12px; color: var(--mao-muted); }
+.header-actions { display: flex; align-items: center; gap: 12px; }
 .config-tip { margin-bottom: 12px; }
 .menu-visibility-body { display: flex; flex-direction: column; gap: 14px; }
 .menu-group { border: 1px solid var(--mao-border); border-radius: 8px; padding: 10px 14px 12px; }
@@ -167,5 +165,4 @@ async function save() {
 .menu-row-index { font-size: 12px; color: var(--mao-muted); font-family: var(--el-font-family-mono, monospace); }
 .menu-row-control { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .menu-row-hint { font-size: 12px; color: var(--mao-muted); }
-.panel-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--mao-border); }
 </style>
