@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatDateTime, mpPage, omitNull, shanghaiYmd, toJacksonJson } from './json.js';
+import { addDaysYmd, formatDateTime, isValidYmd, mpPage, omitNull, shanghaiYmd, toJacksonJson } from './json.js';
 
 describe('json', () => {
   it('omits null fields like Jackson NON_NULL', () => {
@@ -10,6 +10,16 @@ describe('json', () => {
   it('formats dates in Asia/Shanghai', () => {
     const date = new Date('2026-08-13T05:00:00.000Z');
     expect(formatDateTime(date)).toBe('2026-08-13 13:00:00');
+  });
+
+  it('rejects calendar dates that only look like YYYY-MM-DD', () => {
+    expect(isValidYmd('2026-02-28')).toBe(true);
+    expect(isValidYmd('2024-02-29')).toBe(true);
+    expect(isValidYmd('2026-02-29')).toBe(false);
+    expect(isValidYmd('2026-02-31')).toBe(false);
+    expect(isValidYmd('2026-13-01')).toBe(false);
+    expect(addDaysYmd('2026-02-28', 1)).toBe('2026-03-01');
+    expect(() => addDaysYmd('2026-02-31', 1)).toThrow(/非法日期/);
   });
 
   it('shanghaiYmd uses Asia/Shanghai calendar day not UTC', () => {

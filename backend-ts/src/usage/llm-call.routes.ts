@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { requireRequestPermission, requireUserId, sendOk } from '../common/http-error.js';
-import { addDaysYmd } from '../common/json.js';
+import { addDaysYmd, isValidYmd } from '../common/json.js';
 import { queryInt, queryOptBool, queryOptInt, queryOptStr } from '../common/request.js';
 import type { PermissionService } from '../permission/permission.service.js';
 import { parseUsageRange, type LlmCallService, type UsageDateRange } from './llm-call.service.js';
@@ -18,8 +18,8 @@ export interface LlmCallRouteDeps {
  */
 function parseDateRange(startDate?: string, endDate?: string): { startAt?: string; endAtExclusive?: string } {
   return {
-    startAt: startDate ? `${startDate} 00:00:00` : undefined,
-    endAtExclusive: endDate ? `${addDaysYmd(endDate, 1)} 00:00:00` : undefined,
+    startAt: startDate != null && isValidYmd(startDate) ? `${startDate} 00:00:00` : undefined,
+    endAtExclusive: endDate != null && isValidYmd(endDate) ? `${addDaysYmd(endDate, 1)} 00:00:00` : undefined,
   };
 }
 
@@ -35,8 +35,7 @@ function parseGranularity(value?: string): TrendGranularity {
  */
 function parseUsageDateRange(range: string | undefined, startDate?: string, endDate?: string): UsageDateRange | undefined {
   if (range !== 'custom') return undefined;
-  const valid = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v);
-  if (!startDate || !endDate || !valid(startDate) || !valid(endDate)) return undefined;
+  if (!startDate || !endDate || !isValidYmd(startDate) || !isValidYmd(endDate)) return undefined;
   return startDate <= endDate ? { startDate, endDate } : { startDate: endDate, endDate: startDate };
 }
 

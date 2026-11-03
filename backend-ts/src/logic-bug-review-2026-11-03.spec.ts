@@ -26,16 +26,12 @@ import { registerLlmCallRoutes } from './usage/llm-call.routes.js';
 /**
  * 2026-11-03 逻辑 BUG 审查的验证用例（对应 docs/code-review/2026-11-03-logic-bug-review.md）。
  *
- * 每个用例按「正确行为」书写，用 it.fails 固化为 expected-failure：
- * - 现在跑：用例体断言失败 → it.fails 视为通过（证明 BUG 真实存在）；
- * - 修复后：用例体断言通过 → it.fails 转为失败，提醒把 `const bugIt = it.fails`
- *   改回 `it`，让这些用例变成常驻回归。
- * 临时去掉 .fails 即可在输出里看到 N 条真实失败（报告里贴的就是这份输出）。
+ * 每个用例按「正确行为」书写。对应缺陷已修复，这些断言是常驻回归。
  *
  * 原 BUG-8（numstat ` => `）/ BUG-10（truncated 误报）/ BUG-11（空文件行数）经复核
  * 缺陷真实但修复价值不高，已移出报告正榜（见文档「已核查并排除」），用例同步删除。
  */
-const bugIt = it.fails;
+const bugIt = it;
 
 const SECRET = 'review-secret';
 
@@ -220,13 +216,16 @@ function makeSignalHarness(overrides: Partial<SignalWatcher> = {}): SignalHarnes
     )),
     markChecked: vi.fn(async (
       _id: number,
-      patch: { lastValueHash: string | null; lastValueSnippet: string | null; lastChangedAt: string | null; consecutiveFailures: number },
+      patch: { lastValueHash: string | null; lastValueSnippet: string | null; lastChangedAt: string | null; consecutiveFailures: number; resetFailures?: boolean },
     ) => {
       row.lastValueHash = patch.lastValueHash;
       row.lastValueSnippet = patch.lastValueSnippet;
       row.lastChangedAt = patch.lastChangedAt;
       row.lastCheckedAt = formatDateTime(new Date());
-      if (row.consecutiveFailures === patch.consecutiveFailures) row.consecutiveFailures = 0;
+      // 与 markChecked SQL 同义：resetFailures=false 时不碰连败（触发失败路径）
+      if (patch.resetFailures !== false && row.consecutiveFailures === patch.consecutiveFailures) {
+        row.consecutiveFailures = 0;
+      }
     }),
     recordFailure: vi.fn(async (_id: number, _backoffMinutes: number, threshold: number) => {
       if (row.status !== 'ACTIVE') return null;

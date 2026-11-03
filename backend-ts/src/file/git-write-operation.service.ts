@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
+import { utf8Prefix } from '../common/utf8.js';
 import type { RuntimeDataResolver } from '../harness/runtime/runtime-data-resolver.js';
 import type { ActivityService } from '../session/activity.service.js';
 import type { GitCredentialLookup, Session } from '../session/types.js';
@@ -649,12 +650,6 @@ export function validateCommitMessage(message: unknown): { normalized: string; t
   }
   const normalized = message.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
   return { normalized, title: normalized.split('\n')[0] };
-}
-
-function utf8Prefix(source: Buffer, max: number): string {
-  let end = Math.min(source.length, Math.max(max, 0));
-  while (end > 0 && (source[end - 1] & 0xc0) === 0x80) end--;
-  return source.subarray(0, end).toString('utf8');
 }
 
 function output(result: GitResult): string | null {

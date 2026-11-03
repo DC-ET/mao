@@ -20,7 +20,7 @@ export class CreateScheduledTaskTool extends BaseTool {
       properties: {
         name: { type: 'string', description: '任务名称，如\'新股申购检查\'' },
         prompt: { type: 'string', description: '触发时执行的任务本体：只描述要做的具体工作与输出要求，不要包含执行频率或调度措辞（频率由 cron_expression 控制）；也不要在其中要求创建/修改定时任务或做结束后的轮询检查。' },
-        cron_expression: { type: 'string', description: 'Spring cron 表达式（6位：秒 分 时 日 月 周），控制执行频率。' },
+        cron_expression: { type: 'string', description: 'cron 表达式，控制执行频率。推荐 Spring 6 位（秒 分 时 日 月 周）；标准 5 位（分 时 日 月 周，秒按 0）同样接受。固定月+日且周为通配时，不传 once 也会判成一次性。算不出下次触发时间（如 2 月 30 日）会拒绝创建。' },
         once: { type: 'boolean', description: '是否一次性任务（执行一次后自动完结）。固定某月某日的提醒类任务应传 true；不传时按 cron 形态自动判定。' },
         retry_max: { type: 'integer', description: '失败后最多再试几次（不含首次）。0 表示不重试，默认 2，最大 5。' },
         retry_interval_minutes: { type: 'integer', description: '失败重试的固定间隔（分钟）。默认 5，范围 1-60。' },
@@ -46,7 +46,8 @@ export class CreateScheduledTaskTool extends BaseTool {
 - 如果触发时用户正在对话，任务消息会自动排队，等当前对话结束后执行
 
 ### cron 表达式规则
-- 格式：秒 分 时 日 月 周（Spring 6位 cron）
+- 格式：秒 分 时 日 月 周（Spring 6位 cron）。标准 5 位（分 时 日 月 周）也接受，秒按 0；「0 8 15 8 *」与「0 0 8 15 8 ?」是同一触发点，都会自动判成一次性
+- 算不出下次触发时间的表达式（如 2 月 30 日的 0 0 0 30 2 *）会拒绝创建
 - "每天早上9点" → "0 0 9 * * ?"
 - "每30分钟" → "0 */30 * * * ?"
 - "工作日早上9点" → "0 0 9 * * MON-FRI"

@@ -62,12 +62,36 @@ describe('markChecked 失败计数条件清零（BUG-G 回归）', () => {
     });
     const update = h.calls.find((c) => c.sql.includes('last_value_hash = ?'));
     expect(update).toBeDefined();
-    expect(update!.sql).toContain('consecutive_failures = IF(consecutive_failures = ?, 0, consecutive_failures)');
-    // 参数顺序：hash, snippet, changedAt, lastCheckedAt(now), 本次读到的失败数, id
+    expect(update!.sql).toContain('consecutive_failures = IF(? = 0, consecutive_failures, IF(consecutive_failures = ?, 0, consecutive_failures))');
+    // 参数顺序：hash, snippet, changedAt, lastCheckedAt(now), resetFlag(默认 1), 本次读到的失败数, id
     expect(update!.params[0]).toBe('abc');
     expect(update!.params[1]).toBe('OLD');
+    expect(update!.params[4]).toBe(1);
+    expect(update!.params[5]).toBe(0);
+    expect(update!.params[6]).toBe(1);
+  });
+
+  it('resetFailures=false 时不写清零条件（触发失败路径要接着 +1）', async () => {
+    const h = capture();
+    await h.repo.markChecked(1, {
+      lastValueHash: 'abc',
+      lastValueSnippet: null,
+      lastChangedAt: null,
+      consecutiveFailures: 3,
+      resetFailures: false,
+    });
+    const update = h.calls.find((c) => c.sql.includes('last_value_hash = ?'));
     expect(update!.params[4]).toBe(0);
-    expect(update!.params[5]).toBe(1);
+    expect(update!.params[5]).toBe(3);
+  });
+
+  it('update 可以清空 last_checked_at（重新启用时清退避）', async () => {
+    const h = capture();
+    await h.repo.update(1, 7, { status: 'ACTIVE', lastCheckedAt: null, consecutiveFailures: 0 });
+    const update = h.calls.find((c) => c.sql.includes('UPDATE signal_watcher SET'));
+    expect(update).toBeDefined();
+    expect(update!.sql).toContain('last_checked_at = ?');
+    expect(update!.params).toContain(null);
   });
 
   it('不再无条件覆盖（LEAST 取小等价于恒写 0，已废弃）', async () => {

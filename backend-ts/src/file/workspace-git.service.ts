@@ -3,6 +3,7 @@ import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, r
 import { basename, join, resolve } from 'node:path';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
+import { utf8Prefix } from '../common/utf8.js';
 import { isUnder, PathSandbox, SecurityException } from '../harness/safety/path-sandbox.js';
 
 const GIT_TIMEOUT_SECONDS = 10;
@@ -1190,9 +1191,7 @@ function truncateText(content: string | null): { content: string; truncated: boo
   }
   const bytes = Buffer.from(content, 'utf8');
   if (bytes.length > MAX_DIFF_BYTES) {
-    let end = MAX_DIFF_BYTES;
-    while (end > 0 && (bytes[end - 1] & 0xc0) === 0x80) end--;
-    content = bytes.subarray(0, end).toString('utf8');
+    content = utf8Prefix(bytes, MAX_DIFF_BYTES);
     truncated = true;
   }
   return { content, truncated };

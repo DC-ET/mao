@@ -74,14 +74,14 @@ function harness(initial: SignalWatcher, body = '{}'): Harness {
     durationMs: 5,
   }));
   const openRun = { run: vi.fn(async () => ({ sessionId: 42, messageId: 1, queued: false, terminalPhase: 'COMPLETED' as const })) };
-  const markChecked = vi.fn(async (id: number, patch: { lastValueHash: string | null; lastValueSnippet: string | null; lastChangedAt: string | null; consecutiveFailures: number }) => {
+  const markChecked = vi.fn(async (id: number, patch: { lastValueHash: string | null; lastValueSnippet: string | null; lastChangedAt: string | null; consecutiveFailures: number; resetFailures?: boolean }) => {
     const row = watchers.get(id);
     if (row == null) return;
     row.lastValueHash = patch.lastValueHash;
     row.lastValueSnippet = patch.lastValueSnippet;
     row.lastChangedAt = patch.lastChangedAt;
-    // 与真实 SQL 一致：仅当库内值仍等于本次读到的快照值时才清零
-    if (row.consecutiveFailures === patch.consecutiveFailures) row.consecutiveFailures = 0;
+    // 与真实 SQL 一致：仅当库内值仍等于本次读到的快照值时才清零；触发失败路径传 resetFailures=false
+    if (patch.resetFailures !== false && row.consecutiveFailures === patch.consecutiveFailures) row.consecutiveFailures = 0;
   });
   // 与真实 SQL 语义一致：失败状态放独立槽位，不改调用方持有的更新前快照。
   const recordFailure = vi.fn(async (id: number, _backoff: number, _threshold: number) => {

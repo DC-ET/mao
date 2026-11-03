@@ -106,13 +106,13 @@ function harness(options: {
   const notify = vi.fn(async () => undefined);
   // 与真实 SQL 语义一致：只在「库内值仍等于本次传入的快照值」时才清零，
   // 库内被并发失败推高时保留原值（BUG-N/BUG-G 的真实行为）。
-  const markChecked = vi.fn(async (id: number, patch: { lastValueHash: string | null; lastValueSnippet: string | null; lastChangedAt: string | null; consecutiveFailures: number }) => {
+  const markChecked = vi.fn(async (id: number, patch: { lastValueHash: string | null; lastValueSnippet: string | null; lastChangedAt: string | null; consecutiveFailures: number; resetFailures?: boolean }) => {
     const row = watchers.get(id);
     if (row == null) return;
     row.lastValueHash = patch.lastValueHash;
     row.lastValueSnippet = patch.lastValueSnippet;
     row.lastChangedAt = patch.lastChangedAt;
-    if (row.consecutiveFailures === patch.consecutiveFailures) row.consecutiveFailures = 0;
+    if (patch.resetFailures !== false && row.consecutiveFailures === patch.consecutiveFailures) row.consecutiveFailures = 0;
   });
   // 真实 recordFailure 是「单条 UPDATE 后重新读行」：失败状态放在独立槽位，
   // 且绝不改调用方持有的更新前快照（否则「是否刚从 ACTIVE 变 DISABLED」判定失效）。

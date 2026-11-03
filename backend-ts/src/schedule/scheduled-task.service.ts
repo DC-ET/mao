@@ -161,13 +161,18 @@ export function normalizeSpringCron(expression: string): string {
 /**
  * 判断 cron 是否为一次性任务：固定了「日」与「月」且「周」为通配（如 `0 0 8 15 8 ?`）。
  * 这类表达式下一次触发永远在明年同一天，任务实际只会执行一次。
+ *
+ * croner 同时接受 6 段（秒 分 时 日 月 周）和标准 5 段（分 时 日 月 周）。
+ * 5 段先补秒位 0，再与 6 段用同一套字段判定，避免 `0 8 15 8 *` 与 `0 0 8 15 8 ?`
+ * 被当成不同任务。
  */
 export function isOneShotCron(expression: string): boolean {
   const parts = expression.trim().replace(/\s+/g, ' ').split(' ');
-  if (parts.length !== 6) return false;
-  const [sec, min, hour, dom, month, dow] = parts;
-  const fixed = (p: string) => /^\d+$/.test(p);
-  const any = (p: string) => p === '*' || p === '?';
+  const fields = parts.length === 5 ? ['0', ...parts] : parts;
+  if (fields.length !== 6) return false;
+  const [sec, min, hour, dom, month, dow] = fields;
+  const fixed = (p: string | undefined) => p != null && /^\d+$/.test(p);
+  const any = (p: string | undefined) => p === '*' || p === '?';
   // 秒/分/时/日/月全部固定、周为通配，才会只触发一次
   return fixed(sec) && fixed(min) && fixed(hour) && fixed(dom) && fixed(month) && any(dow);
 }
@@ -398,12 +403,13 @@ export class ScheduledTaskService {
     const validName = normalizeTaskName(name);
     const validPrompt = normalizeTaskPrompt(prompt);
     this.parseCron(cronExpression);
+    const nextFireTime = this.requireNextFireTime(cronExpression);
     const task: ScheduledTask = {
       userId, agentId, sessionId, name: validName, prompt: validPrompt, cronExpression,
       // 显式 once 优先；未指定时按 cron 形态自动判定（固定月+日视为一次性）
       once: once != null ? (once ? 1 : 0) : (isOneShotCron(cronExpression) ? 1 : 0),
       status: 'ACTIVE', fireCount: 0,
-      nextFireTime: this.calculateNextFireTime(cronExpression),
+      nextFireTime,
       ...this.reliabilityPatch(reliability),
     };
     task.id = await this.store.insert(task);
@@ -422,14 +428,18 @@ export class ScheduledTaskService {
       }
       task.status = status;
     }
-    // 待重试的一次性任务不得重开档期：这条不变量对**所有**保存路径生效——带 cron 原样保存、
-    // 只改 status 从 PAUSED 重新启用、agent 工具只回传 status 都算。判据必须提到分支外面：
-    // 只看 cronExpression 分支的守门会被 reactivate 绕开（重试到期前 listDue 与
-    // listDueRetries 同时命中同一任务，而 claimRun 按 (task_id, fire_time) 查重
-    // 挡不住两个不同 fire_time 的入口，一次性任务被重复执行）。
+    // 还有未结算的一次性工作（待重试，或已入队尚未执行）时不得重开档期。
+    // 这条不变量对所有保存路径生效——带 cron 原样保存、只改 status 从 PAUSED 重新启用、
+    // agent 工具只回传 status 都算。判据必须提到分支外面：只看 cron 分支的守门会被
+    // reactivate 绕开。重试到期前 listDue 与 listDueRetries 会同时命中；QUEUED 则是
+    // 队列里已有一条待执行消息，再排一档会让同一一次性任务跑两次。claimRun 按
+    // (task_id, fire_time) 查重，挡不住两个不同 fire_time 的入口。
     // 显式把 once 改成 0 时不拦：task.once 已被置 0，重试成功后仍需要下一档。
-    const pendingOnceRetry = task.once === 1 && task.id != null
-      && (await this.store.hasPendingRetry?.(task.id)) === true;
+    const pendingOnceWork = task.once === 1 && task.id != null
+      && (
+        (await this.store.hasPendingRetry?.(task.id)) === true
+        || (await this.store.oldestQueuedRun?.(task.id)) != null
+      );
     if (cronExpression != null) {
       this.parseCron(cronExpression);
       const sameSchedule = normalizeSpringCron(cronExpression) === normalizeSpringCron(task.cronExpression ?? '');
@@ -437,31 +447,27 @@ export class ScheduledTaskService {
       // 未显式指定 once 时，换 cron 后按新形态重判一次性属性。
       // 存量行的 once 是 0/1 而不是 null，不能再要求 task.once == null。
       if (once == null && !sameSchedule) task.once = isOneShotCron(cronExpression) ? 1 : 0;
-      // 管理端保存会原样带上当前 cron。仍是一次性且还在等重试时，下一档必须保持为空。
+      // 管理端保存会原样带上当前 cron。仍是一次性且还有未结算工作时，下一档必须保持为空。
       // 关掉一次性之后要按循环任务重算下一档，否则重试成功后没有档期。
-      if (!(sameSchedule && pendingOnceRetry)) {
-        const next = this.calculateNextFireTime(cronExpression);
+      if (!(sameSchedule && pendingOnceWork)) {
+        const next = this.requireNextFireTime(cronExpression);
         task.nextFireTime = next;
-        if (next != null) {
-          task.finished = 0;
-          task.finishedAt = null;
-        }
+        task.finished = 0;
+        task.finishedAt = null;
       }
     }
     // 已完结任务的 nextFireTime 为空。只改名称/提示词不得把它拉起来；
     // 显式改 once，或把状态设回 ACTIVE，才按当前 cron 重新排期。
-    // pendingOnceRetry 时同样不排：重试入口（listDueRetries）才是这一档的唯一驱动，
-    // 否则重试到期前会被 listDue 提前命中，与重试入口重复执行同一任务。
-    const reactivate = cronExpression == null && !pendingOnceRetry
+    // pendingOnceWork 时同样不排：未结算的那一档才是唯一驱动，
+    // 否则会被 listDue 提前命中，与重试或队列入口重复执行同一任务。
+    const reactivate = cronExpression == null && !pendingOnceWork
       && task.status === 'ACTIVE' && task.nextFireTime == null
       && (once != null || status === 'ACTIVE');
     if (reactivate) {
-      const next = this.calculateNextFireTime(task.cronExpression!);
+      const next = this.requireNextFireTime(task.cronExpression!);
       task.nextFireTime = next;
-      if (next != null) {
-        task.finished = 0;
-        task.finishedAt = null;
-      }
+      task.finished = 0;
+      task.finishedAt = null;
     }
     const reliability = this.reliabilityPatch(opts);
     if (reliability.retryMax != null) task.retryMax = reliability.retryMax;
@@ -1076,6 +1082,19 @@ export class ScheduledTaskService {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * 创建/更新落库前的档期校验，与 `buildCronPreview` 的 valid=false 对齐：
+   * croner 能解析但 `nextRun()` 为空（如 2 月 30 日）时拒绝，避免留下
+   * ACTIVE 且 nextFireTime 永远为空、调度与补偿都捞不到的死任务。
+   */
+  private requireNextFireTime(cronExpression: string): string {
+    const next = this.calculateNextFireTime(cronExpression);
+    if (next == null) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '该表达式没有可计算的下次触发时间');
+    }
+    return next;
   }
 
   private parseCron(cronExpression: string): void {

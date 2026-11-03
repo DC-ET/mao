@@ -30,9 +30,26 @@ export function shanghaiYmd(date: Date = new Date()): string {
   return formatDateTime(date).slice(0, 10);
 }
 
+/**
+ * 真实公历日：形状是 YYYY-MM-DD，且解析后的年月日与输入一致。
+ * `2026-02-31` / 非闰年 `2026-02-29` / `2026-13-01` 都会被拒绝，
+ * 避免非法字面量进入 SQL 或被 `Date.UTC` 溢出到别的日子。
+ */
+export function isValidYmd(ymd: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return false;
+  const year = Number(ymd.slice(0, 4));
+  const month = Number(ymd.slice(5, 7));
+  const day = Number(ymd.slice(8, 10));
+  const dt = new Date(Date.UTC(year, month - 1, day));
+  return dt.getUTCFullYear() === year && dt.getUTCMonth() === month - 1 && dt.getUTCDate() === day;
+}
+
 export function addDaysYmd(ymd: string, days: number): string {
+  if (!isValidYmd(ymd) || !Number.isFinite(days)) {
+    throw new Error(`非法日期: ${ymd}`);
+  }
   const [y, m, d] = ymd.split('-').map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d + days));
+  const dt = new Date(Date.UTC(y!, m! - 1, d! + days));
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${dt.getUTCFullYear()}-${pad(dt.getUTCMonth() + 1)}-${pad(dt.getUTCDate())}`;
 }

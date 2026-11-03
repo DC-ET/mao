@@ -279,6 +279,8 @@ describe('ScheduledTaskService', () => {
 
   it('detects one-shot cron shapes', () => {
     expect(isOneShotCron('0 0 8 15 8 ?')).toBe(true);
+    expect(isOneShotCron('0 8 15 8 *')).toBe(true);
+    expect(isOneShotCron('0 9 * * *')).toBe(false);
     expect(isOneShotCron('23 0 18 13 8 *')).toBe(true);
     expect(isOneShotCron('0 0 9 * * ?')).toBe(false);
     expect(isOneShotCron('0 0 10 ? * MON-FRI')).toBe(false);

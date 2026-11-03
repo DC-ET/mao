@@ -9,6 +9,7 @@ import archiver from 'archiver';
 import sharp from 'sharp';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
+import { utf8Prefix } from '../common/utf8.js';
 import { EXPERIENCE_MOUNT_NAME } from '../harness/experience/experience-index.service.js';
 import {
   experienceMountPointsAt,
@@ -392,9 +393,7 @@ export class WorkspaceBrowseService {
     let content = allLines.slice(from, to).join('\n');
     const bytes = Buffer.from(content, 'utf8');
     if (bytes.length > MAX_CONTENT_BYTES) {
-      let end = MAX_CONTENT_BYTES;
-      while (end > 0 && (bytes[end - 1] & 0xc0) === 0x80) end--;
-      content = bytes.subarray(0, end).toString('utf8');
+      content = utf8Prefix(bytes, MAX_CONTENT_BYTES);
     }
     return { content, total_lines: totalLines };
   }

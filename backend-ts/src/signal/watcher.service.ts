@@ -239,6 +239,9 @@ export class WatcherService {
       patch.lastValueHash = null;
       patch.lastValueSnippet = null;
       patch.lastChangedAt = null;
+      // 失败退避会把 last_checked_at 写成未来时刻。只清哈希不清这个时刻，
+      // 改完判定字段后 listDue 仍要等完退避（日更最长约 17 天）才重建基线。
+      patch.lastCheckedAt = null;
     }
     await this.deps.watcherRepo.update(id, userId, patch);
     return this.get(userId, id);
@@ -254,6 +257,10 @@ export class WatcherService {
   /**
    * 启停：ACTIVE ↔ PAUSED 手动互切；DISABLED → ACTIVE 时清零失败并重置基线。
    * DISABLED 是系统终态，不可由用户直接设置（入参类型已收窄，此处兜底防 as-never 调用）。
+   *
+   * 重新启用必须清掉 last_checked_at：第 5 次失败的退避会把它写成未来
+   * （间隔 × 16），listDue 还要再等一个间隔才会到期。日更哨兵修复后启用，
+   * 最长约 17 天不轮询。PAUSED → ACTIVE 时只在该时刻仍处于未来才清。
    */
   async setStatus(userId: number, id: number, status: 'ACTIVE' | 'PAUSED'): Promise<SignalWatcherView> {
     if (status !== 'ACTIVE' && status !== 'PAUSED') {
@@ -266,6 +273,9 @@ export class WatcherService {
       patch.lastValueHash = null;
       patch.lastValueSnippet = null;
       patch.lastChangedAt = null;
+      patch.lastCheckedAt = null;
+    } else if (status === 'ACTIVE' && existing.status === 'PAUSED' && isFutureCheckedAt(existing.lastCheckedAt)) {
+      patch.lastCheckedAt = null;
     }
     await this.deps.watcherRepo.update(id, userId, patch);
     return this.get(userId, id);
@@ -308,8 +318,8 @@ export class WatcherService {
   /** 立即执行一次探针并返回判定预览：不触发、不写库。 */
   async test(userId: number, id: number): Promise<WatcherTestResult> {
     const watcher = await this.requireOwned(userId, id);
-    const headers = this.decryptHeaders(watcher.headersJson);
-    const body = this.decryptBody(watcher.body);
+    const headers = this.decryptHeadersStrict(watcher.headersJson);
+    const body = this.decryptBodyStrict(watcher.body);
     const probe = this.deps.probe ?? { execute: executeProbe };
     const result = await probe.execute({
       url: watcher.url,
@@ -366,8 +376,8 @@ export class WatcherService {
     let headers: Record<string, string>;
     let body: string | null;
     try {
-      headers = this.decryptHeaders(watcher.headersJson);
-      body = this.decryptBody(watcher.body);
+      headers = this.decryptHeadersStrict(watcher.headersJson);
+      body = this.decryptBodyStrict(watcher.body);
       assertProbeUrl(watcher.url);
     } catch (e) {
       await this.recordFailure(watcher, e);
@@ -528,12 +538,15 @@ export class WatcherService {
     // 传 checkId 复用已落的行：该轮已 markChanged，若另起一行，用户会看到一条「变化」加一条
     // 「失败」两行自相矛盾的记录。同时把基线 hash 推进到本次读到的值——否则目标值不变时
     // 下一轮仍判为「变化」，每轮都重新发起一次 Agent 运行（退避期内重复触发 N 次）。
+    // resetFailures 必须为 false：markChecked 默认在「库内值 == 传入快照」时把连败清零，
+    // 紧接着 recordFailure 再 +1，连败会永远停在 1，到不了自动停用阈值。
     await this.markCheckError(checkId, failure);
     await this.deps.watcherRepo.markChecked(watcher.id, {
       lastValueHash: valueHash,
       lastValueSnippet: newText,
       lastChangedAt: watcher.lastChangedAt,
       consecutiveFailures: watcher.consecutiveFailures ?? 0,
+      resetFailures: false,
     });
     await this.recordFailure(watcher, failure, result.httpStatus, result.durationMs, checkId);
   }
@@ -770,19 +783,29 @@ export class WatcherService {
     return result;
   }
 
+  /**
+   * 展示 / 比对路径：解密失败吞成空请求头，避免密钥轮换后列表和编辑页打不开。
+   * 执行路径必须用 {@link decryptHeadersStrict}，否则会丢掉 Authorization 照发探针。
+   */
   private decryptHeaders(ciphertext: string | null): Record<string, string> {
-    if (ciphertext == null || ciphertext === '') return {};
     try {
-      const parsed = JSON.parse(this.deps.cipher.decrypt(ciphertext)) as unknown;
-      if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-      const result: Record<string, string> = {};
-      for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
-        result[key] = typeof value === 'string' ? value : String(value ?? '');
-      }
-      return result;
+      return this.decryptHeadersStrict(ciphertext);
     } catch {
       return {};
     }
+  }
+
+  private decryptHeadersStrict(ciphertext: string | null): Record<string, string> {
+    if (ciphertext == null || ciphertext === '') return {};
+    const parsed = JSON.parse(this.deps.cipher.decrypt(ciphertext)) as unknown;
+    if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '哨兵凭据解密失败');
+    }
+    const result: Record<string, string> = {};
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      result[key] = typeof value === 'string' ? value : String(value ?? '');
+    }
+    return result;
   }
 
   /** 入参吃 undefined：WatcherInput.body 可选（键未下发=复制时沿用源行）。 */
@@ -791,13 +814,18 @@ export class WatcherService {
     return this.deps.cipher.encrypt(body);
   }
 
+  /** 展示路径容错；执行路径用 {@link decryptBodyStrict}。 */
   private decryptBody(ciphertext: string | null): string | null {
-    if (ciphertext == null || ciphertext === '') return null;
     try {
-      return this.deps.cipher.decrypt(ciphertext);
+      return this.decryptBodyStrict(ciphertext);
     } catch {
       return null;
     }
+  }
+
+  private decryptBodyStrict(ciphertext: string | null): string | null {
+    if (ciphertext == null || ciphertext === '') return null;
+    return this.deps.cipher.decrypt(ciphertext);
   }
 
   /** 供 existingRaw 比对用的公开包装（私有方法的窄暴露）。 */
@@ -861,6 +889,12 @@ function existingRaw(existing: SignalWatcher, field: keyof WatcherInput, service
     case 'jsonPath': return existing.jsonPath;
     default: return undefined;
   }
+}
+
+/** 退避把 last_checked_at 写成未来时刻时，字典序比较即可（库内是 `YYYY-MM-DD HH:mm:ss`）。 */
+function isFutureCheckedAt(value: string | null): boolean {
+  if (value == null || value === '') return false;
+  return value > formatDateTime(new Date());
 }
 
 function errorMessage(error: unknown): string {
