@@ -1,4 +1,4 @@
-import { ref, watch, type Ref } from 'vue'
+import { onScopeDispose, ref, watch, type Ref } from 'vue'
 import type { WorkspaceGitProvider } from './workspace-git-provider'
 import type { GitBranchCompareResult, GitBranchInfo, GitChangedFile, GitLogEntry, GitRemoteInfo, GitStashEntry } from '../types/git'
 import { isValidBranchName } from '../utils/git-manager'
@@ -28,7 +28,13 @@ export function useGitManager(provider: Ref<WorkspaceGitProvider | null>) {
   const historyLoaded = ref(false)
   const expandedCommit = ref<string | null>(null)
   const commitFiles = ref(new Map<string, GitChangedFile[]>())
+  /** 提交正文缓存（%B 去首行标题，与 commitFiles 同 hash 键、同一次请求带回）。 */
+  const commitBodies = ref(new Map<string, string>())
   const commitFilesLoading = ref(false)
+  /** 历史筛选：path 按文件过滤（后端既有参数），keyword 按提交信息字面搜索。空串 = 不筛选。 */
+  const logPathFilter = ref('')
+  const logKeyword = ref('')
+  let filterDebounce: ReturnType<typeof setTimeout> | null = null
   let logSeq = 0
   let commitFilesSeq = 0
 
@@ -74,6 +80,15 @@ export function useGitManager(provider: Ref<WorkspaceGitProvider | null>) {
     historyLoaded.value = false
     expandedCommit.value = null
     commitFiles.value = new Map()
+    // 正文缓存与筛选条件随仓库身份一并丢弃：新仓库沿用旧仓库的过滤条件会看到
+    // 「没有提交」的困惑空态，正文缓存同理会命中旧仓库的 hash
+    commitBodies.value = new Map()
+    logPathFilter.value = ''
+    logKeyword.value = ''
+    if (filterDebounce) {
+      clearTimeout(filterDebounce)
+      filterDebounce = null
+    }
     commitFilesLoading.value = false
     branchesSeq++
     branches.value = []
@@ -126,6 +141,8 @@ export function useGitManager(provider: Ref<WorkspaceGitProvider | null>) {
       const entries = await p.getLog({
         limit: LOG_PAGE_SIZE,
         offset: reset ? 0 : logOffset.value,
+        path: logPathFilter.value.trim() || undefined,
+        keyword: logKeyword.value.trim() || undefined,
       })
       if (seq !== logSeq) return
       logEntries.value = reset ? entries : [...logEntries.value, ...entries]
@@ -139,6 +156,21 @@ export function useGitManager(provider: Ref<WorkspaceGitProvider | null>) {
       if (seq === logSeq) logLoading.value = false
     }
   }
+
+  /** 历史筛选：立即同步输入值，300ms 防抖后重置分页查询（「加载更多」走 loadLog(false) 自动沿用当前筛选）。 */
+  function setLogFilters(patch: { path?: string; keyword?: string }) {
+    if (patch.path != null) logPathFilter.value = patch.path
+    if (patch.keyword != null) logKeyword.value = patch.keyword
+    if (filterDebounce) clearTimeout(filterDebounce)
+    filterDebounce = setTimeout(() => {
+      filterDebounce = null
+      void loadLog(true)
+    }, 300)
+  }
+
+  onScopeDispose(() => {
+    if (filterDebounce) clearTimeout(filterDebounce)
+  })
 
   function loadMoreLog() {
     if (logLoading.value || logExhausted.value) return
@@ -167,6 +199,10 @@ export function useGitManager(provider: Ref<WorkspaceGitProvider | null>) {
       const next = new Map(commitFiles.value)
       next.set(hash, result.files)
       commitFiles.value = next
+      // 正文与文件清单同一次请求带回；失败/缺省按空串处理（不渲染正文块）
+      const nextBodies = new Map(commitBodies.value)
+      nextBodies.set(hash, result.body ?? '')
+      commitBodies.value = nextBodies
     } catch (e: any) {
       if (seq !== commitFilesSeq) return
       // 拉取失败：收起展开态并让列表行可再次点击重试
@@ -321,7 +357,11 @@ export function useGitManager(provider: Ref<WorkspaceGitProvider | null>) {
     logExhausted,
     expandedCommit,
     commitFiles,
+    commitBodies,
     commitFilesLoading,
+    logPathFilter,
+    logKeyword,
+    setLogFilters,
     loadMoreLog,
     retryLog,
     toggleCommit,

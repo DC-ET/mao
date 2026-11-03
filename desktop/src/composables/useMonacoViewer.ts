@@ -9,6 +9,8 @@ export function useMonacoViewer(options: {
   filePath: Ref<string>
   isDark: Ref<boolean>
   enabled: Ref<boolean>
+  /** 自动换行开关：变化时 updateOptions 实时生效；不传保持 'off'（既有调用方行为不变）。 */
+  wordWrap?: Ref<'on' | 'off'>
   /** 编辑器创建成功时传入实例，销毁时传入 null。主题切换和 setValue 不重复回调。 */
   onEditor?: (editor: MonacoEditor.IStandaloneCodeEditor | null) => void
 }) {
@@ -50,7 +52,7 @@ export function useMonacoViewer(options: {
         lineHeight: 20,
         fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, 'SF Mono', Menlo, Monaco, monospace",
         lineNumbers: 'on',
-        wordWrap: 'off',
+        wordWrap: options.wordWrap?.value ?? 'off',
         automaticLayout: true,
         renderLineHighlight: 'none',
         glyphMargin: false,
@@ -98,6 +100,10 @@ export function useMonacoViewer(options: {
       editor.updateOptions({ theme: themeName(options.isDark.value) })
       void monaco
     }
+  })
+
+  watch(() => options.wordWrap?.value, (v) => {
+    if (v != null) editor?.updateOptions({ wordWrap: v })
   })
 
   onBeforeUnmount(disposeEditor)
