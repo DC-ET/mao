@@ -1,5 +1,22 @@
 <template>
   <div class="git-history-view">
+    <!-- 筛选条：路径过滤（后端既有参数）+ 提交信息搜索（keyword）；空仓库且无筛选时不渲染 -->
+    <div v-if="entries.length > 0 || pathFilter || keyword" class="git-history-filters">
+      <input
+        class="git-filter-input"
+        :value="pathFilter"
+        maxlength="200"
+        placeholder="按文件路径筛选（如 src/app.ts）"
+        @input="$emit('update:pathFilter', ($event.target as HTMLInputElement).value)"
+      />
+      <input
+        class="git-filter-input"
+        :value="keyword"
+        maxlength="100"
+        placeholder="按提交信息搜索"
+        @input="$emit('update:keyword', ($event.target as HTMLInputElement).value)"
+      />
+    </div>
     <div v-if="error && entries.length === 0" class="git-state git-error">
       <p>{{ error }}</p>
       <button class="git-retry" @click="$emit('retry')">重试</button>
@@ -31,8 +48,13 @@
             <span class="git-log-author">{{ entry.author }}</span>
             <span class="git-log-date" :title="entry.date">{{ formatRelativeTime(entry.date) }}</span>
           </span>
+          <span class="git-log-quote" title="添加到对话" @click.stop="$emit('add-commit-to-chat', `提交 ${entry.shortHash}（${entry.title || '无标题'}）`)">
+            <el-icon :size="12"><ChatDotRound /></el-icon>
+          </span>
         </div>
         <div v-if="expandedCommit === entry.hash" class="git-commit-files">
+          <!-- 提交正文（%B 去首行标题）：展开时才随文件清单带回，无正文不渲染 -->
+          <pre v-if="commitBodies?.get(entry.hash)" class="git-commit-body">{{ commitBodies.get(entry.hash) }}</pre>
           <div v-if="commitFilesLoading && !commitFiles?.get(entry.hash)" class="git-commit-files-state">读取文件清单…</div>
           <template v-else-if="commitFiles?.get(entry.hash)">
             <div
@@ -46,6 +68,9 @@
               <span class="git-commit-file-stat">
                 <span v-if="file.insertions" class="git-add">+{{ file.insertions }}</span>
                 <span v-if="file.deletions" class="git-del">-{{ file.deletions }}</span>
+              </span>
+              <span class="git-log-quote" title="添加到对话" @click.stop="$emit('add-file-to-chat', file.path)">
+                <el-icon :size="12"><ChatDotRound /></el-icon>
               </span>
             </div>
           </template>
@@ -64,7 +89,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { ArrowDown, ArrowRight } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowRight, ChatDotRound } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import type { GitChangedFile, GitLogEntry, GitRemoteInfo } from '../../types/git'
 import { formatRelativeTime, parseRefsDecorations, type RefDecoration } from '../../utils/git-manager'
@@ -77,8 +102,12 @@ const props = defineProps<{
   exhausted?: boolean
   expandedCommit?: string | null
   commitFiles?: Map<string, GitChangedFile[]>
+  /** 提交正文缓存（%B 去首行标题，空串 = 无正文不渲染）。 */
+  commitBodies?: Map<string, string>
   commitFilesLoading?: boolean
   remotes?: GitRemoteInfo[]
+  pathFilter?: string
+  keyword?: string
 }>()
 
 const emit = defineEmits<{
@@ -86,6 +115,10 @@ const emit = defineEmits<{
   retry: []
   'toggle-commit': [hash: string]
   'open-commit-diff': [payload: { hash: string; file: GitChangedFile }]
+  'update:pathFilter': [value: string]
+  'update:keyword': [value: string]
+  'add-file-to-chat': [path: string]
+  'add-commit-to-chat': [text: string]
 }>()
 
 const remoteNames = computed(() => (props.remotes ?? []).map((r) => r.name))
@@ -348,5 +381,75 @@ function badgeClass(type: string): string {
 
 [data-theme="dark"] .git-log-ref.is-remote {
   background: rgba(255, 255, 255, 0.06);
+}
+
+.git-history-filters {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--aw-divider-soft);
+}
+
+.git-filter-input {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 8px;
+  font-size: var(--aw-text-caption);
+  color: var(--aw-ink);
+  background: var(--aw-surface);
+  border: 1px solid var(--aw-divider-soft);
+  border-radius: var(--aw-radius-xs);
+  outline: none;
+}
+
+.git-filter-input:focus {
+  border-color: var(--aw-primary);
+}
+
+.git-filter-input::placeholder {
+  color: var(--aw-ink-muted-48);
+}
+
+/* 行级「添加到对话」：hover 显现，不改变行高与布局 */
+.git-log-quote {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--aw-radius-xs);
+  color: var(--aw-ink-muted-48);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 0.15s, color 0.15s;
+}
+
+.git-log-main:hover .git-log-quote,
+.git-commit-file:hover .git-log-quote {
+  opacity: 1;
+}
+
+.git-log-quote:hover {
+  color: var(--aw-primary);
+}
+
+.git-commit-body {
+  margin: 6px 0;
+  padding: 8px 10px;
+  border-radius: var(--aw-radius-xs);
+  background: var(--aw-surface);
+  border: 1px solid var(--aw-divider-soft);
+  font-family: var(--aw-font-mono);
+  font-size: var(--aw-text-fine);
+  color: var(--aw-ink-muted-80);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+[data-theme="dark"] .git-commit-body {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: var(--aw-hairline);
 }
 </style>

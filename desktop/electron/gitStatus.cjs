@@ -766,7 +766,7 @@ function clampInt(value, fallback, min, max) {
  * 提交历史（分页，与后端 getLog 同命令同解析）。
  * @param {string} workspace
  * @param {string} [repoPath]
- * @param {{limit?: number, offset?: number, path?: string}} [options]
+ * @param {{limit?: number, offset?: number, path?: string, keyword?: string}} [options]
  * @returns {Promise<object[]>}
  */
 async function getGitLog(workspace, repoPath, options = {}) {
@@ -774,6 +774,10 @@ async function getGitLog(workspace, repoPath, options = {}) {
   const limit = clampInt(options.limit, 50, 1, 200)
   const offset = clampInt(options.offset, 0, 0, Number.MAX_SAFE_INTEGER)
   const args = ['log', '--format=%H%x00%h%x00%s%x00%an%x00%aI%x00%D', '-n', String(limit), '--skip', String(offset)]
+  // 提交信息关键词：--fixed-strings 字面匹配（正则元字符不解释）、-i 大小写不敏感，
+  // trim 后截断 100 字符，空值不产生参数；keyword 组必须插在 `--` 之前。
+  const keyword = options.keyword ? String(options.keyword).trim().slice(0, 100) : ''
+  if (keyword) args.push(`--grep=${keyword}`, '--fixed-strings', '-i')
   if (options.path && String(options.path).trim()) args.push('--', String(options.path).trim())
   const out = await runGitOk(repoRoot, args)
   if (!out || !out.trim()) return []
@@ -791,7 +795,7 @@ async function getGitLog(workspace, repoPath, options = {}) {
  * @param {string} workspace
  * @param {string} [repoPath]
  * @param {string} hash
- * @returns {Promise<{hash: string, files: object[]}>}
+ * @returns {Promise<{hash: string, files: object[], body: string}>}
  */
 async function getGitCommitFiles(workspace, repoPath, hash) {
   const normalizedHash = String(hash || '').trim().toLowerCase()
@@ -828,7 +832,10 @@ async function getGitCommitFiles(workspace, repoPath, hash) {
       }
     }
   }
-  return { hash: normalizedHash, files: Array.from(files.values()) }
+  // 提交正文：%B 去除首行标题后的剩余部分（trim，空串表示无正文），与后端 getCommitFiles 同解析
+  const message = await runGitOk(repoRoot, ['show', '-s', '--format=%B', normalizedHash])
+  const body = message == null ? '' : message.split('\n').slice(1).join('\n').trim()
+  return { hash: normalizedHash, files: Array.from(files.values()), body }
 }
 
 /**

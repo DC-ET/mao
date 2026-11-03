@@ -540,4 +540,99 @@ describe('useGitManager 分支对比', () => {
     expect(calls.compareBranches).toBe(1)
     expect(manager.compareError.value).toBe('')
   });
+
+  // ===== 历史筛选（path / keyword）与提交正文缓存 =====
+
+  function recordingLogProvider(pages: Array<number>) {
+    const seen: Array<{ limit?: number; offset?: number; path?: string; keyword?: string }> = []
+    let call = 0
+    const { provider } = fakeProvider({
+      getLog: vi.fn(async (opts?: { limit?: number; offset?: number; path?: string; keyword?: string }) => {
+        seen.push({ ...(opts ?? {}) })
+        const count = pages[Math.min(call, pages.length - 1)] ?? 0
+        call++
+        return Array.from({ length: count }, (_, i) => logEntry(`hash${call}-${i}`, `c${call}-${i}`))
+      }),
+    } as unknown as Partial<WorkspaceGitProvider>)
+    return { provider, seen }
+  }
+
+  it('setLogFilters 防抖合并并携带 path/keyword 重置分页', async () => {
+    vi.useFakeTimers()
+    try {
+      const { provider, seen } = recordingLogProvider([50])
+      const manager = useGitManager(ref(provider))
+      manager.activeView.value = 'history'
+      await vi.advanceTimersByTimeAsync(0)
+      expect(seen.length).toBe(1)
+      expect(seen[0]).toMatchObject({ limit: 50, offset: 0 })
+
+      manager.setLogFilters({ keyword: 'fix' })
+      manager.setLogFilters({ keyword: 'fix', path: 'src/app.ts' })
+      await vi.advanceTimersByTimeAsync(299)
+      expect(seen.length).toBe(1) // 300ms 内合并：只触发一次
+      await vi.advanceTimersByTimeAsync(1)
+      expect(seen.length).toBe(2)
+      expect(seen[1]).toMatchObject({ limit: 50, offset: 0, path: 'src/app.ts', keyword: 'fix' })
+    } finally {
+      vi.useRealTimers()
+    }
+  });
+
+  it('加载更多沿用当前筛选且 offset 取自重置后的列表长度', async () => {
+    vi.useFakeTimers()
+    try {
+      // 每页 50 条（不满页会置 exhausted、loadMoreLog 直接返回），最后一页 3 条验证追加
+      const { provider, seen } = recordingLogProvider([50, 50, 3])
+      const manager = useGitManager(ref(provider))
+      manager.activeView.value = 'history'
+      await vi.advanceTimersByTimeAsync(0)
+      manager.setLogFilters({ keyword: 'fix' })
+      await vi.runAllTimersAsync()
+      expect(seen.length).toBe(2)
+      expect(seen[1]).toMatchObject({ offset: 0, keyword: 'fix' })
+
+      manager.loadMoreLog()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(seen.length).toBe(3)
+      // 筛选重置后列表 50 条：追加页 offset = 50，keyword 沿用
+      expect(seen[2]).toMatchObject({ limit: 50, offset: 50, keyword: 'fix' })
+    } finally {
+      vi.useRealTimers()
+    }
+  });
+
+  it('toggleCommit 缓存提交正文（body 缺省按空串）', async () => {
+    const { provider } = fakeProvider({
+      getCommitFiles: vi.fn(async (hash: string) => ({ hash, files: [], body: 'body text' })),
+    } as unknown as Partial<WorkspaceGitProvider>)
+    const manager = useGitManager(ref(provider))
+
+    await manager.toggleCommit('hash0')
+    expect(manager.commitBodies.value.get('hash0')).toBe('body text')
+
+    const { provider: provider2 } = fakeProvider({
+      getCommitFiles: vi.fn(async (hash: string) => ({ hash, files: [] })),
+    } as unknown as Partial<WorkspaceGitProvider>)
+    const manager2 = useGitManager(ref(provider2))
+    await manager2.toggleCommit('hash0')
+    expect(manager2.commitBodies.value.get('hash0')).toBe('')
+  });
+
+  it('provider 变化清空筛选条件与提交正文缓存（并取消在途防抖）', async () => {
+    const { provider } = fakeProvider()
+    const p = ref<WorkspaceGitProvider | null>(provider)
+    const manager = useGitManager(p)
+    manager.activeView.value = 'history'
+    await nextTick(); await nextTick()
+
+    manager.setLogFilters({ keyword: 'fix', path: 'a.txt' })
+    manager.commitBodies.value = new Map([['hash0', 'stale body']])
+    p.value = fakeProvider().provider
+    await nextTick(); await nextTick()
+
+    expect(manager.logKeyword.value).toBe('')
+    expect(manager.logPathFilter.value).toBe('')
+    expect(manager.commitBodies.value.size).toBe(0)
+  });
 });

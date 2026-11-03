@@ -343,8 +343,10 @@ test('switch target resolution covers local, remote and invalid names', () => {
   for (const invalid of ['', ' ', '..', 'a..b', 'a@{1}', '@', '/a', 'a/', 'a//b', 'a.', '.hidden', 'x.lock', 'a b']) {
     assert.throws(() => resolveSwitchTarget(invalid, false, ['origin']), /分支名无效/, invalid)
   }
-  // create=true 但名字不是 remote 引用时明确拒绝，不回退到本地 switch
-  assert.throws(() => resolveSwitchTarget('side', true, []), /仅支持从远端分支创建跟踪分支/)
+  // create=true 且为普通分支名：基于当前 HEAD 新建本地分支（git switch -c <name>）
+  assert.deepEqual(resolveSwitchTarget('side', true, []), { args: ['switch', '-c', 'side'], localBranch: 'side' })
+  // 本地新建路径的名字直接拼进 argv，首字符 `-` 会被 git 当 option 解析，显式拒绝
+  assert.throws(() => resolveSwitchTarget('-x', true, []), /分支名无效/)
 })
 
 test('fetch prunes the remote without touching the worktree', async (t) => {

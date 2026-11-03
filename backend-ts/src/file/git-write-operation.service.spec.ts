@@ -10,7 +10,8 @@ import type { RuntimeDataResolver } from '../harness/runtime/runtime-data-resolv
 import type { ActivityService } from '../session/activity.service.js';
 import type { GitCredentialLookup, Session } from '../session/types.js';
 import { GitCommitMessageService, MAX_DIFF_BYTES } from './git-commit-message.service.js';
-import { GitWriteOperationService } from './git-write-operation.service.js';
+import { GitWriteOperationService, resolveSwitchTarget } from './git-write-operation.service.js';
+import { BusinessException } from '../common/business-exception.js';
 import { WorkspaceGitService } from './workspace-git.service.js';
 
 function gitAvailable(): boolean {
@@ -671,6 +672,62 @@ describeGit('GitWriteOperationService git', () => {
       .rejects.toThrow('分支名无效');
     await expect(newService(dir, repo).switchBranch(session(repo), null, 'no-such-branch'))
       .rejects.toThrow();
+  });
+
+  // ===== 新建本地分支（create=true + 普通分支名，基于当前 HEAD）=====
+
+  describe('resolveSwitchTarget', () => {
+    it('createsLocalBranchFromHead', () => {
+      expect(resolveSwitchTarget('feat/demo', true, [])).toEqual({ args: ['switch', '-c', 'feat/demo'], localBranch: 'feat/demo' });
+    });
+
+    it('keepsTrackingBehaviorForRemoteRefs', () => {
+      // create 与否均建跟踪分支（原行为逐位保留）
+      expect(resolveSwitchTarget('origin/main', true, ['origin']))
+        .toEqual({ args: ['switch', '-c', 'main', '--track', 'origin/main'], localBranch: 'main' });
+      expect(resolveSwitchTarget('origin/main', false, ['origin']))
+        .toEqual({ args: ['switch', '-c', 'main', '--track', 'origin/main'], localBranch: 'main' });
+    });
+
+    it('keepsPlainSwitchUnchanged', () => {
+      expect(resolveSwitchTarget('main', false, [])).toEqual({ args: ['switch', 'main'], localBranch: 'main' });
+    });
+
+    it('rejectsLeadingDashOnCreate', () => {
+      // 本地新建的名字直接拼进 argv，首字符 `-` 会被 git 当 option 解析，create 路径显式拒绝
+      let caught: unknown = null;
+      try {
+        resolveSwitchTarget('-x', true, []);
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught).toBeInstanceOf(BusinessException);
+      expect((caught as BusinessException).message).toBe('分支名无效');
+    });
+  });
+
+  it('switchBranchCreatesLocalBranchFromHead', async () => {
+    const dir = useTmpDir('mao-gswitch-local-');
+    const { repo } = await setupRemoteRepo(dir, 'local-create-repo');
+
+    const result = await newService(dir, repo).switchBranch(session(repo), null, 'feat/demo', true);
+    expect(result.success).toBe(true);
+    expect(result.message).toBe('已切换到分支 feat/demo');
+    expect(run(repo, 'git', 'rev-parse', '--abbrev-ref', 'HEAD').trim()).toBe('feat/demo');
+    // 分支真实存在（git rev-parse --verify 非零退出会抛错）
+    expect(run(repo, 'git', 'rev-parse', '--verify', 'refs/heads/feat/demo')).toBeTruthy();
+  });
+
+  it('switchBranchRejectsDuplicateLocalBranch', async () => {
+    const dir = useTmpDir('mao-gswitch-dup-');
+    const { repo } = await setupRemoteRepo(dir, 'dup-repo');
+    const service = newService(dir, repo);
+    await service.switchBranch(session(repo), null, 'feat/demo', true);
+
+    // 同名分支：git switch -c 非零退出兜底拦截，专判映射为可读文案，不覆盖已有分支
+    await expect(service.switchBranch(session(repo), null, 'feat/demo', true))
+      .rejects.toThrow('分支已存在，请换一个名字');
+    expect(run(repo, 'git', 'rev-parse', '--abbrev-ref', 'HEAD').trim()).toBe('feat/demo');
   });
 
   it('stashOpApplyPopDropRoundTrip', async () => {

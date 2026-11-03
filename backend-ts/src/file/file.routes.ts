@@ -333,6 +333,7 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
       limit: queryOptInt(request, 'limit'),
       offset: queryOptInt(request, 'offset'),
       path: queryOptStr(request, 'path'),
+      keyword: queryOptStr(request, 'keyword'),
     }));
   });
 
