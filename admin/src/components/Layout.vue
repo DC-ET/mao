@@ -1,7 +1,7 @@
 <template>
   <el-container class="layout-container">
     <el-aside v-if="!isMobile" :width="asideWidth" class="layout-aside">
-      <SideMenu :show-logo="true" :collapsed="collapsed" />
+      <SideMenu :show-logo="true" :collapsed="collapsed" @expand="collapsed = false" />
     </el-aside>
 
     <el-drawer

@@ -193,7 +193,7 @@ test.describe('Analytics Homepage', () => {
 test.describe('Agent Management', () => {
   test.beforeEach(async ({ page }) => {
     await login(page)
-    await page.click('.sidebar-menu .el-menu-item:has-text("Agent 管理")')
+    await page.click('.sidebar-menu .menu-item:has-text("Agent 管理")')
     await page.waitForSelector('.agent-list', { timeout: 10_000 })
   })
 
@@ -236,7 +236,7 @@ test.describe('Agent Management', () => {
 test.describe('Model Management', () => {
   test.beforeEach(async ({ page }) => {
     await login(page)
-    await page.click('.sidebar-menu .el-menu-item:has-text("模型管理")')
+    await page.click('.sidebar-menu .menu-item:has-text("模型管理")')
     await page.waitForSelector('.model-list', { timeout: 10_000 })
   })
 
@@ -278,7 +278,7 @@ test.describe('Model Management', () => {
 test.describe('User Management', () => {
   test.beforeEach(async ({ page }) => {
     await login(page)
-    await page.click('.sidebar-menu .el-menu-item:has-text("用户管理")')
+    await page.click('.sidebar-menu .menu-item:has-text("用户管理")')
     await page.waitForSelector('.user-list', { timeout: 10_000 })
   })
 
@@ -314,7 +314,7 @@ test.describe('User Management', () => {
 test.describe('Skills Management', () => {
   test.beforeEach(async ({ page }) => {
     await login(page)
-    await page.click('.sidebar-menu .el-menu-item:has-text("Skills 管理")')
+    await page.click('.sidebar-menu .menu-item:has-text("Skills 管理")')
     await page.waitForSelector('.skill-list', { timeout: 10_000 })
   })
 
@@ -353,7 +353,7 @@ test.describe('Skills Management', () => {
 test.describe('Session Management', () => {
   test.beforeEach(async ({ page }) => {
     await login(page)
-    await page.click('.sidebar-menu .el-menu-item:has-text("会话管理")')
+    await page.click('.sidebar-menu .menu-item:has-text("会话管理")')
     await page.waitForSelector('.session-list', { timeout: 10_000 })
   })
 
@@ -405,11 +405,11 @@ test.describe('Sidebar Navigation', () => {
   })
 
   test('should show grouped sidebar sections', async ({ page }) => {
-    await expect(page.locator('.el-menu-item-group__title')).toContainText(['能力', '运行', '安全', '系统'])
+    await expect(page.locator('.sidebar-menu .group-head .group-label')).toContainText(['能力', '运行', '安全', '系统'])
   })
 
   test('should place feishu bot above skills and commands below', async ({ page }) => {
-    const labels = (await page.locator('.sidebar-menu .el-menu-item').allTextContents())
+    const labels = (await page.locator('.sidebar-menu .menu-item').allTextContents())
       .map(text => text.replace(/\s+/g, ' ').trim())
     const skillIdx = labels.findIndex(text => text.includes('Skills 管理'))
     const feishuIdx = labels.findIndex(text => text.includes('飞书机器人'))
@@ -438,12 +438,55 @@ test.describe('Sidebar Navigation', () => {
     ]
 
     for (const item of navItems) {
-      await page.click(`.sidebar-menu .el-menu-item:has-text("${item.label}")`)
+      await page.click(`.sidebar-menu .menu-item:has-text("${item.label}")`)
       // Wait for route change
       await page.waitForURL(item.url, { timeout: 10_000 })
       // The active menu item indicator should be visible
       await expect(page.locator('.sidebar-menu .is-active')).toContainText(item.label)
     }
+  })
+
+  test('should filter menu via search box and navigate with Enter', async ({ page }) => {
+    const search = page.locator('.menu-search-input')
+    await expect(search).toBeVisible()
+    await search.fill('模型')
+    const items = page.locator('.sidebar-menu .menu-item')
+    await expect(items).toHaveCount(1)
+    await expect(items.first()).toContainText('模型管理')
+    // 命中文字高亮
+    await expect(page.locator('.sidebar-menu .menu-hit')).toHaveText('模型')
+    await search.press('Enter')
+    await page.waitForURL(/\/models$/, { timeout: 10_000 })
+    // 跳转后搜索词清空，菜单恢复完整列表
+    await expect(search).toHaveValue('')
+    await expect(items).toHaveCount(22)
+  })
+
+  test('should show empty state when search has no match', async ({ page }) => {
+    await page.locator('.menu-search-input').fill('不存在的关键词xyz')
+    await expect(page.locator('.menu-empty')).toContainText('未找到')
+    await page.locator('.menu-empty-clear').click()
+    await expect(page.locator('.menu-search-input')).toHaveValue('')
+    await expect(page.locator('.sidebar-menu .menu-item').first()).toBeVisible()
+  })
+
+  test('should collapse and expand a menu group', async ({ page }) => {
+    const head = page.locator('.sidebar-menu .group-head', { hasText: '安全' })
+    const body = page.locator('.sidebar-menu .group-body').filter({
+      has: page.locator('.menu-item', { hasText: '用户管理' })
+    })
+    await head.click()
+    await expect(head).toHaveAttribute('aria-expanded', 'false')
+    // 折叠后分组体高度收为 0（等待过渡动画结束）
+    await expect.poll(async () => (await body.boundingBox())?.height ?? -1).toBe(0)
+    await head.click()
+    await expect(head).toHaveAttribute('aria-expanded', 'true')
+    await expect.poll(async () => (await body.boundingBox())?.height ?? -1).toBeGreaterThan(0)
+  })
+
+  test('should focus menu search with Ctrl+K', async ({ page }) => {
+    await page.keyboard.press('Control+k')
+    await expect(page.locator('.menu-search-input')).toBeFocused()
   })
 })
 
@@ -456,14 +499,14 @@ test.describe('Governance Console', () => {
   })
 
   test('should render role permission page', async ({ page }) => {
-    await page.click('.sidebar-menu .el-menu-item:has-text("角色权限")')
+    await page.click('.sidebar-menu .menu-item:has-text("角色权限")')
     await page.waitForURL(/\/roles$/)
     await expect(page.locator('text=角色列表')).toBeVisible({ timeout: 10_000 })
     await expect(page.locator('text=权限分配')).toBeVisible()
   })
 
   test('should batch add and remove role members from the role page', async ({ page }) => {
-    await page.click('.sidebar-menu .el-menu-item:has-text("角色权限")')
+    await page.click('.sidebar-menu .menu-item:has-text("角色权限")')
     await page.waitForURL(/\/roles$/)
 
     // 「成员」按钮打开成员弹窗（0.0.407 起不再跳转用户管理）
@@ -508,7 +551,7 @@ test.describe('Governance Console', () => {
   })
 
   test('should render audit log page with filters', async ({ page }) => {
-    await page.click('.sidebar-menu .el-menu-item:has-text("审计日志")')
+    await page.click('.sidebar-menu .menu-item:has-text("审计日志")')
     await page.waitForURL(/\/audit-logs$/)
     await expect(page.locator('.audit-log')).toBeVisible({ timeout: 10_000 })
     await expect(page.locator('button:has-text("查询")')).toBeVisible()
@@ -517,7 +560,7 @@ test.describe('Governance Console', () => {
   test('should render analytics homepage and settings pages', async ({ page }) => {
     await expect(page.getByText('统计周期', { exact: true })).toBeVisible({ timeout: 10_000 })
 
-    await page.click('.sidebar-menu .el-menu-item:has-text("系统设置")')
+    await page.click('.sidebar-menu .menu-item:has-text("系统设置")')
     await page.waitForURL(/\/settings$/)
     await expect(page.locator('.system-settings')).toBeVisible({ timeout: 10_000 })
     await expect(page.locator('.group-card').first()).toBeVisible()
@@ -534,9 +577,9 @@ test.describe('Tab Bar', () => {
 
   test('should show tabs when navigating between pages', async ({ page }) => {
     // Open a few pages
-    await page.click('.sidebar-menu .el-menu-item:has-text("Agent 管理")')
+    await page.click('.sidebar-menu .menu-item:has-text("Agent 管理")')
     await page.waitForURL(/\/agents$/)
-    await page.click('.sidebar-menu .el-menu-item:has-text("模型管理")')
+    await page.click('.sidebar-menu .menu-item:has-text("模型管理")')
     await page.waitForURL(/\/models$/)
 
     // Tab bar should have multiple tabs
@@ -546,7 +589,7 @@ test.describe('Tab Bar', () => {
   })
 
   test('should switch pages by clicking tabs', async ({ page }) => {
-    await page.click('.sidebar-menu .el-menu-item:has-text("Agent 管理")')
+    await page.click('.sidebar-menu .menu-item:has-text("Agent 管理")')
     await page.waitForURL(/\/agents$/)
 
     // Click analytics homepage tab to go back
