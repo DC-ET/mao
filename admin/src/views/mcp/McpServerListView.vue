@@ -63,6 +63,11 @@
             </el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="关联 Agent" width="110" align="right">
+          <template #default="{ row }">
+            <RelatedAgentsPopover :agents="agentsByMcpServer(row.id)" />
+          </template>
+        </el-table-column>
         <el-table-column v-if="canWrite" label="操作" width="300" fixed="right">
           <template #default="{ row }">
             <!-- 用户私有服务器仅提供治理操作（停用/启用/删除），不展示配置 -->
@@ -325,13 +330,16 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
 import { useAuthStore } from '../../stores/auth'
 import { useBreakpoint } from '../../composables/useBreakpoint'
+import { useAgentRelations } from '../../composables/useAgentRelations'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
 import FilterPanel from '../../components/FilterPanel.vue'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
+import RelatedAgentsPopover from '../../components/RelatedAgentsPopover.vue'
 
 const { isMobile } = useBreakpoint()
 const authStore = useAuthStore()
 const canWrite = computed(() => authStore.hasPermission('mcp:write'))
+const { agentsByMcpServer, load: loadAgentRelations } = useAgentRelations()
 
 interface EnvItem {
   key: string
@@ -590,6 +598,7 @@ async function openTools(row: any) {
 
 onMounted(() => {
   loadData()
+  void loadAgentRelations()
 })
 
 onUnmounted(() => {
@@ -606,6 +615,7 @@ onActivated(() => {
     return
   }
   loadData()
+  void loadAgentRelations()
 })
 </script>
 
