@@ -17,7 +17,7 @@
 import { ref, computed } from 'vue'
 import { Search, ArrowDown } from '@element-plus/icons-vue'
 import type { ToolCall } from '../types/chat'
-import { toolCallLabel, toolDisplayName } from '../utils/toolDisplay'
+import { toolCallLabel, getToolDisplayName } from '../utils/toolDisplay'
 import ToolCallCard from './ToolCallCard.vue'
 
 const props = defineProps<{ toolCalls: ToolCall[] }>()
@@ -36,7 +36,7 @@ const groupSummary = computed(() => {
 
   const parts: string[] = []
   for (const [name, count] of toolCounts) {
-    const displayName = toolDisplayName(name)
+    const displayName = getToolDisplayName(name)
     parts.push(count > 1 ? `${count}次${displayName}` : displayName)
   }
 
