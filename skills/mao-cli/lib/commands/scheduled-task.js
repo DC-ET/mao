@@ -17,12 +17,15 @@ const HELP = `用法:
   mao scheduled-task get --id <id>
   mao scheduled-task update --id <id> [--name] [--prompt] [--cron-expression] [--status ACTIVE|PAUSED] [--retry-max 0-5] [--retry-interval-minutes 1-60] [--missed-policy RUN_ONCE|SKIP]
   mao scheduled-task runs --id <id> [--limit 1-50]
+  mao scheduled-task run --id <id>
   mao scheduled-task delete --id <id>
 
 说明:
   创建定时任务当前由 Agent 内置工具 create_scheduled_task 完成，用户 REST API 暂未暴露 create。
   list-all 需 session:read 权限；筛选参数与管理后台一致。
-  update/delete 他人任务需 scheduled-task:write 权限（本人任务不受限）；任务名称 ≤200 字符、提示词 ≤10000 字符。
+  update/delete/run 他人任务需 scheduled-task:write 权限（本人任务不受限）；任务名称 ≤200 字符、提示词 ≤10000 字符。
+  run 立即执行一次：不改下次触发计划、不完结一次性任务、不计连续失败；PAUSED/已完结任务也可试跑。
+  任务正在执行中或绑定会话正忙时，run 会报错提示稍后再试。
 `;
 
 const STATUSES = new Set(['ACTIVE', 'PAUSED']);
@@ -143,6 +146,12 @@ async function handle(ctx) {
         query.limit = String(limit);
       }
       const result = await request({ ...common, method: 'GET', path: `/scheduled-tasks/${id}/runs`, query });
+      outputResult(result, globals);
+      return;
+    }
+    case 'run': {
+      const id = requireNumber(flags, 'id', '定时任务 ID');
+      const result = await request({ ...common, method: 'POST', path: `/scheduled-tasks/${id}/run` });
       outputResult(result, globals);
       return;
     }

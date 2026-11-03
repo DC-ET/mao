@@ -96,3 +96,37 @@ describe('useScheduledTasks.updateTask / fetchTaskDetail', () => {
     expect(await fetchTaskDetail(1)).toBeNull()
   })
 })
+
+// 手动「立即执行」（docs/plan/2026-11-03-scheduled-task-run-now-technical-design.md §7.2）：
+// 锁 runningIds 防重入 + 成功/失败返回值 + 请求路径正确。
+describe('useScheduledTasks.runNow', () => {
+  it('成功返回 true 且请求 POST /scheduled-tasks/:id/run，结束后清 runningIds', async () => {
+    vi.mocked(api.post).mockResolvedValueOnce({ code: 0, data: {} } as never)
+    const { runNow, runningIds } = useScheduledTasks()
+    await expect(runNow(BASE_TASK)).resolves.toBe(true)
+    expect(api.post).toHaveBeenCalledWith('/scheduled-tasks/1/run')
+    expect(runningIds.value.has(1)).toBe(false)
+  })
+
+  it('失败返回 false（拦截器已 toast，不再重复提示）', async () => {
+    vi.mocked(api.post).mockRejectedValueOnce(new Error('该定时任务正在执行中，请稍后再试'))
+    const { runNow, runningIds } = useScheduledTasks()
+    await expect(runNow(BASE_TASK)).resolves.toBe(false)
+    expect(runningIds.value.has(1)).toBe(false)
+  })
+
+  it('同一任务进行中重复调用直接返回 false，不发第二次请求', async () => {
+    vi.mocked(api.post).mockClear()
+    let release!: () => void
+    const hang = new Promise<void>((resolve) => { release = resolve })
+    vi.mocked(api.post).mockReturnValueOnce(hang as never)
+    const { runNow, runningIds } = useScheduledTasks()
+    const first = runNow(BASE_TASK)
+    expect(await runNow(BASE_TASK)).toBe(false)
+    expect(api.post).toHaveBeenCalledTimes(1)
+    expect(runningIds.value.has(1)).toBe(true)
+    release()
+    await expect(first).resolves.toBe(true)
+    expect(runningIds.value.has(1)).toBe(false)
+  })
+})

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
-import { isOneShotCron, normalizeSpringCron, ScheduledTaskScheduler, ScheduledTaskService, type ScheduledTaskStore } from './scheduled-task.service.js';
+import { isOneShotCron, normalizeSpringCron, ScheduledTaskScheduler, ScheduledTaskService, shiftSeconds, type ScheduledTaskStore } from './scheduled-task.service.js';
 
 describe('ScheduledTaskService', () => {
   const store: ScheduledTaskStore = {
@@ -1173,6 +1173,332 @@ describe('ScheduledTaskService 预算 BLOCK 闸门（§5.7）', () => {
     await svc.executeTask({ id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', prompt: 'hello', fireCount: 0 } as never);
     await ran;
     expect(pusher).toHaveBeenCalledWith(11, '截止时间是 11 月 30 日，详见通知。');
+  });
+});
+
+// 手动「立即执行」（docs/plan/2026-11-03-scheduled-task-run-now-technical-design.md §7.1）。
+// 核心不变量：runNow 全链路不得出现 nextFireTime / finished / finishedAt / once / status /
+// consecutiveFailures 写键；手动行 attempt=0：不重试、不计连续失败。
+describe('ScheduledTaskService runNow（手动立即执行）', () => {
+  /** 带运行记录方法的 store fake：每个用例全新 vi.fn，互不串扰。 */
+  function runNowStore(task: Record<string, unknown> | null, overrides: Record<string, unknown> = {}) {
+    return {
+      insert: vi.fn(),
+      updateById: vi.fn(),
+      deleteById: vi.fn(),
+      selectById: vi.fn(async () => task),
+      listByUser: vi.fn(async () => []),
+      listAll: vi.fn(async () => ({ records: [], total: 0 })),
+      listDue: vi.fn(async () => []),
+      selectRunById: vi.fn(async () => ({ id: 501, taskId: 1, fireTime: '2026-11-03 10:00:00', attempt: 0, status: 'RUNNING', sessionId: 11, startedAt: null })),
+      selectRunByFire: vi.fn(async () => null),
+      insertRun: vi.fn(async () => 501),
+      updateRun: vi.fn(),
+      ...overrides,
+    } as unknown as ScheduledTaskStore & Record<string, ReturnType<typeof vi.fn>>;
+  }
+
+  function runNowService(store: ScheduledTaskStore, opts: { live?: unknown; busy?: boolean | (() => boolean); session?: unknown; budget?: unknown } = {}) {
+    let ran: Promise<void> | null = null;
+    const localStubs = {
+      getSession: vi.fn(async () => ('session' in opts
+        ? opts.session
+        : { id: 11, phase: 'IDLE', sessionType: 'MAIN', userId: 7, agentId: 5 })),
+      updatePhase: vi.fn(),
+      saveMessage: vi.fn(async () => ({ id: 88, content: 'hello' })),
+      getMessages: vi.fn(async () => []),
+    };
+    const busy = typeof opts.busy === 'function' ? opts.busy : opts.busy ? () => true : null;
+    const svc = new ScheduledTaskService(
+      store, localStubs as never, { enqueue: vi.fn() }, { executeFromEvent: vi.fn(async () => undefined) },
+      { finishExecution: vi.fn() }, { sendText: vi.fn() } as never,
+      { findByUserId: vi.fn(async () => null) } as never, { findByAccountId: vi.fn(async () => []) } as never,
+      (fn) => { ran = Promise.resolve().then(fn); },
+      (opts.live ?? null) as never,
+      busy as never,
+      (opts.budget ?? null) as never,
+    );
+    return { svc, ran: () => ran as unknown as Promise<void>, stubs: localStubs };
+  }
+
+  const ACTIVE_TASK = {
+    id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', status: 'ACTIVE', name: 'daily',
+    prompt: 'hello', fireCount: 3, nextFireTime: '2030-01-01 00:00:00',
+  };
+  /** 收尾不变量：任务行任何 patch 都不得携带档期/完结/状态键。 */
+  const FORBIDDEN_KEYS = ['nextFireTime', 'finished', 'finishedAt', 'once', 'status', 'consecutiveFailures'];
+
+  it('正常循环任务试跑：attempt=0 落行、结果字段回写、不碰档期、不计连续失败', async () => {
+    const live = vi.fn(async () => undefined);
+    const outcome = vi.fn(async () => ({ consecutiveFailures: 1, paused: false }));
+    const store = runNowStore(ACTIVE_TASK, { recordTaskOutcome: outcome });
+    const { svc, ran } = runNowService(store, { live });
+    const res = await svc.runNow(1, 7);
+    expect(res.taskId).toBe(1);
+    expect(res.sessionId).toBe(11);
+    expect(res.fireTime).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+    await ran();
+    const inserted = vi.mocked(store.insertRun).mock.calls[0][0];
+    expect(inserted).toMatchObject({ taskId: 1, sessionId: 11, attempt: 0, status: 'RUNNING' });
+    const runPatches = vi.mocked(store.updateRun).mock.calls.map(([r]) => r);
+    expect(runPatches.some((r) => r.status === 'COMPLETED')).toBe(true);
+    const persisted = vi.mocked(store.updateById).mock.calls.map(([row]) => row);
+    expect(persisted.length).toBeGreaterThan(0);
+    const merged = Object.assign({}, ...persisted);
+    expect(merged.fireCount).toBe(4);
+    expect(merged.lastFireTime).toBeTruthy();
+    expect(merged.lastExecutionStatus).toBe('COMPLETED');
+    for (const key of FORBIDDEN_KEYS) {
+      expect(persisted.every((row) => !(key in row))).toBe(true);
+    }
+    expect(outcome).not.toHaveBeenCalled();
+  });
+
+  it('一次性任务试跑后 finished 仍为 0 且 nextFireTime 逐字符不变（提案点名锁死）', async () => {
+    const store = runNowStore({
+      id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 1 1 *', status: 'ACTIVE', once: 1,
+      prompt: 'hello', fireCount: 0, nextFireTime: '2027-01-01 09:00:00',
+    });
+    const { svc, ran } = runNowService(store, { live: vi.fn(async () => undefined) });
+    await svc.runNow(1, 7);
+    await ran();
+    const persisted = vi.mocked(store.updateById).mock.calls.map(([row]) => row);
+    expect(persisted.length).toBeGreaterThan(0);
+    expect(persisted.every((row) => !('finished' in row) && !('nextFireTime' in row))).toBe(true);
+    const runPatches = vi.mocked(store.updateRun).mock.calls.map(([r]) => r);
+    expect(runPatches.some((r) => r.status === 'COMPLETED')).toBe(true);
+  });
+
+  it('PAUSED 任务试跑后仍 PAUSED（任何 patch 不含 status 键）', async () => {
+    const store = runNowStore({ ...ACTIVE_TASK, status: 'PAUSED' });
+    const { svc, ran } = runNowService(store, { live: vi.fn(async () => undefined) });
+    await svc.runNow(1, 7);
+    await ran();
+    const persisted = vi.mocked(store.updateById).mock.calls.map(([row]) => row);
+    expect(persisted.every((row) => !('status' in row))).toBe(true);
+    const runPatches = vi.mocked(store.updateRun).mock.calls.map(([r]) => r);
+    expect(runPatches.some((r) => r.status === 'COMPLETED')).toBe(true);
+  });
+
+  it('已完结（finished=1）任务试跑后不复活', async () => {
+    const store = runNowStore({ ...ACTIVE_TASK, finished: 1, finishedAt: '2026-11-01 09:00:00', nextFireTime: null });
+    const { svc, ran } = runNowService(store, { live: vi.fn(async () => undefined) });
+    await svc.runNow(1, 7);
+    await ran();
+    const persisted = vi.mocked(store.updateById).mock.calls.map(([row]) => row);
+    for (const key of FORBIDDEN_KEYS) {
+      expect(persisted.every((row) => !(key in row))).toBe(true);
+    }
+  });
+
+  it('执行失败不重试、不计连续失败（nextRetryAt 为 null、recordTaskOutcome 零调用）', async () => {
+    const live = vi.fn(async () => undefined);
+    const outcome = vi.fn(async () => ({ consecutiveFailures: 1, paused: false }));
+    // FAILED 不是活跃相位：预检/锁内复核都放行，回读终态即 FAILED
+    const store = runNowStore(ACTIVE_TASK, { recordTaskOutcome: outcome });
+    const { svc, ran } = runNowService(store, { live, session: { id: 11, phase: 'FAILED', sessionType: 'MAIN', userId: 7, agentId: 5 } });
+    await svc.runNow(1, 7);
+    await ran();
+    const runPatches = vi.mocked(store.updateRun).mock.calls.map(([r]) => r);
+    const failed = runPatches.find((r) => r.status === 'FAILED');
+    expect(failed).toBeTruthy();
+    expect(failed?.nextRetryAt).toBeNull();
+    expect(outcome).not.toHaveBeenCalled();
+  });
+
+  it('在飞中第二次 runNow 报 3055 且不落运行行', async () => {
+    let release!: () => void;
+    const hang = new Promise<void>((r) => { release = r; });
+    const live = vi.fn(async () => hang);
+    const store = runNowStore(ACTIVE_TASK);
+    const { svc, ran } = runNowService(store, { live });
+    await svc.runNow(1, 7);
+    await vi.waitFor(() => expect(live).toHaveBeenCalledTimes(1));
+    await expect(svc.runNow(1, 7)).rejects.toMatchObject({ code: ErrorCode.SCHEDULED_TASK_RUNNING.code });
+    expect(store.insertRun).toHaveBeenCalledTimes(1);
+    release();
+    await ran();
+  });
+
+  it('会话忙时预检拒绝（3055），认领前即失败不落运行行', async () => {
+    const store = runNowStore(ACTIVE_TASK);
+    const { svc } = runNowService(store, { busy: true });
+    await expect(svc.runNow(1, 7)).rejects.toMatchObject({
+      code: ErrorCode.SCHEDULED_TASK_RUNNING.code,
+      message: '绑定会话正在执行中，请稍后再试',
+    });
+    expect(store.insertRun).not.toHaveBeenCalled();
+    expect(store.updateRun).not.toHaveBeenCalled();
+  });
+
+  it('锁内复核竞态忙：CANCELLED 收口、不计 fireCount/lastFireTime', async () => {
+    let busy = false;
+    const live = vi.fn(async () => undefined);
+    const store = runNowStore({ ...ACTIVE_TASK, fireCount: 2 });
+    const { svc, ran } = runNowService(store, { busy: () => busy, live });
+    await svc.runNow(1, 7);
+    busy = true; // 核心已在锁内 selectById 挂起，复核命中忙
+    await ran();
+    expect(live).not.toHaveBeenCalled();
+    const runPatches = vi.mocked(store.updateRun).mock.calls.map(([r]) => r);
+    expect(runPatches.some((r) => r.status === 'CANCELLED')).toBe(true);
+    const persisted = vi.mocked(store.updateById).mock.calls.map(([row]) => row);
+    expect(persisted.some((row) => 'fireCount' in row || 'lastFireTime' in row)).toBe(false);
+    expect(persisted.some((row) => row.lastExecutionStatus === 'CANCELLED')).toBe(true);
+  });
+
+  it('他人任务无权限拒绝（3026）；allowNonOwner 管理员旁路放行', async () => {
+    const store = runNowStore({ ...ACTIVE_TASK, userId: 9 });
+    const { svc } = runNowService(store, { live: vi.fn(async () => undefined) });
+    await expect(svc.runNow(1, 7)).rejects.toMatchObject({ code: ErrorCode.SCHEDULED_TASK_ACCESS_DENIED.code });
+    const res = await svc.runNow(1, 7, { allowNonOwner: true });
+    expect(res.taskId).toBe(1);
+  });
+
+  it('绑定会话不存在报参数错误且不落运行行（null 与抛 3002 两种契约同口径）', async () => {
+    const store = runNowStore(ACTIVE_TASK);
+    const { svc } = runNowService(store, { session: null });
+    await expect(svc.runNow(1, 7)).rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
+    expect(store.insertRun).not.toHaveBeenCalled();
+
+    // 生产契约：getSession 对已删会话抛 BusinessException(SESSION_NOT_FOUND) 而非返回 null（round1 C1）
+    const store2 = runNowStore(ACTIVE_TASK);
+    const wrap2 = runNowService(store2, {});
+    wrap2.stubs.getSession.mockRejectedValue(new BusinessException(ErrorCode.SESSION_NOT_FOUND));
+    await expect(wrap2.svc.runNow(1, 7)).rejects.toMatchObject({
+      code: ErrorCode.PARAM_INVALID.code,
+      message: '绑定会话已不存在，无法执行',
+    });
+    expect(store2.insertRun).not.toHaveBeenCalled();
+  });
+
+  it('锁内任务已删除：运行行标 FAILED（任务已删除），无任务行回写', async () => {
+    const store = runNowStore(ACTIVE_TASK, {
+      selectById: vi.fn()
+        .mockResolvedValueOnce(ACTIVE_TASK) // getTaskOwnedByUser 预检时任务还在
+        .mockResolvedValue(null), // 拿锁后已被删除
+    });
+    const { svc, ran } = runNowService(store, { live: vi.fn(async () => undefined) });
+    await svc.runNow(1, 7);
+    await ran();
+    const runPatches = vi.mocked(store.updateRun).mock.calls.map(([r]) => r);
+    const failed = runPatches.find((r) => r.status === 'FAILED');
+    expect(failed).toBeTruthy();
+    expect(failed?.errorSummary).toBe('任务已删除');
+    expect(store.updateById).not.toHaveBeenCalled();
+  });
+
+  it('预算 BLOCK：FAILED 收口、不执行、不计连续失败、不碰档期', async () => {
+    const live = vi.fn(async () => undefined);
+    const outcome = vi.fn(async () => ({ consecutiveFailures: 1, paused: false }));
+    const budget = vi.fn(async () => ({ message: '超出预算' }));
+    const store = runNowStore(ACTIVE_TASK, { recordTaskOutcome: outcome });
+    const { svc, ran } = runNowService(store, { live, budget });
+    await svc.runNow(1, 7);
+    await ran();
+    expect(live).not.toHaveBeenCalled();
+    const runPatches = vi.mocked(store.updateRun).mock.calls.map(([r]) => r);
+    expect(runPatches.some((r) => r.status === 'FAILED')).toBe(true);
+    const persisted = vi.mocked(store.updateById).mock.calls.map(([row]) => row);
+    expect(persisted.some((row) => row.lastExecutionStatus === 'FAILED')).toBe(true);
+    for (const key of FORBIDDEN_KEYS) {
+      expect(persisted.every((row) => !(key in row))).toBe(true);
+    }
+    expect(outcome).not.toHaveBeenCalled();
+  });
+
+  it('claimManualRun 预偏移：触发点等于 cron 档期时 +1s，绝不占用周期档期行', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-03T10:00:00+08:00'));
+    try {
+      const store = runNowStore({ ...ACTIVE_TASK, nextFireTime: '2026-11-03 10:00:00' });
+      const { svc, ran } = runNowService(store, { live: vi.fn(async () => undefined) });
+      const res = await svc.runNow(1, 7);
+      await ran();
+      expect(res.fireTime).toBe('2026-11-03 10:00:01');
+      expect(vi.mocked(store.insertRun).mock.calls[0][0].fireTime).toBe('2026-11-03 10:00:01');
+      expect(vi.mocked(store.insertRun).mock.calls[0][0].attempt).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('同秒唯一键冲突时 +1s 重试认领', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-03T10:00:00+08:00'));
+    try {
+      const store = runNowStore({ ...ACTIVE_TASK, nextFireTime: null }, {
+        selectRunByFire: vi.fn()
+          .mockResolvedValueOnce({ id: 9, taskId: 1, fireTime: '2026-11-03 10:00:00', attempt: 1, status: 'COMPLETED', sessionId: 11 })
+          .mockResolvedValue(null),
+      });
+      const { svc, ran } = runNowService(store, { live: vi.fn(async () => undefined) });
+      const res = await svc.runNow(1, 7);
+      await ran();
+      expect(res.fireTime).toBe('2026-11-03 10:00:01');
+      expect(vi.mocked(store.insertRun).mock.calls[0][0].fireTime).toBe('2026-11-03 10:00:01');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('同秒冲突偏移后仍避开 cron 档期，绝不把手动行插到下一档上（round1 C2 回归）', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-03T10:00:00+08:00'));
+    try {
+      // cron 每秒一跳，下一档 = 10:00:01；首候选 10:00:00 被既有行占用。
+      // 修复前：+1s 直接落 10:00:01（cron 档期）→ 扫描器到点撞 COMPLETED 手动行 → 任务永久停摆。
+      const store = runNowStore({ ...ACTIVE_TASK, cronExpression: '* * * * * *', nextFireTime: '2026-11-03 10:00:01' }, {
+        selectRunByFire: vi.fn()
+          .mockResolvedValueOnce({ id: 9, taskId: 1, fireTime: '2026-11-03 10:00:00', attempt: 1, status: 'COMPLETED', sessionId: 11 })
+          .mockResolvedValue(null),
+      });
+      const { svc, ran } = runNowService(store, { live: vi.fn(async () => undefined) });
+      const res = await svc.runNow(1, 7);
+      await ran();
+      expect(res.fireTime).toBe('2026-11-03 10:00:02');
+      expect(vi.mocked(store.insertRun).mock.calls[0][0].fireTime).toBe('2026-11-03 10:00:02');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('触发点连续冲突 3 次后报「触发过于频繁」', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-03T10:00:00+08:00'));
+    try {
+      const store = runNowStore({ ...ACTIVE_TASK, nextFireTime: null }, {
+        selectRunByFire: vi.fn(async () => ({ id: 9, taskId: 1, fireTime: 'x', attempt: 1, status: 'COMPLETED', sessionId: 11 })),
+      });
+      const { svc } = runNowService(store, { live: vi.fn(async () => undefined) });
+      await expect(svc.runNow(1, 7)).rejects.toMatchObject({ code: ErrorCode.SCHEDULED_TASK_RUNNING.code });
+      expect(store.insertRun).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('启动收敛不误完结手动行：attempt=0 的 RUNNING 未开跑行只标 FAILED', async () => {
+    const manualRun = { id: 501, taskId: 1, fireTime: '2026-11-03 10:00:00', attempt: 0, status: 'RUNNING', sessionId: 11, startedAt: null };
+    const store = runNowStore(
+      { ...ACTIVE_TASK, once: 1, cronExpression: '0 0 9 1 1 *', nextFireTime: '2027-01-01 09:00:00' },
+      {
+        listOpenRuns: vi.fn(async () => [manualRun]),
+        selectRunById: vi.fn(async () => manualRun),
+      },
+    );
+    const { svc } = runNowService(store);
+    await svc.reconcileOnStartup(true);
+    const runPatches = vi.mocked(store.updateRun).mock.calls.map(([r]) => r);
+    expect(runPatches.some((r) => r.id === 501 && r.status === 'FAILED' && r.nextRetryAt === null)).toBe(true);
+    // 一次性任务不被补完结：updateById 零调用
+    expect(store.updateById).not.toHaveBeenCalled();
+  });
+
+  it('shiftSeconds 按上海时区跨日偏移', () => {
+    expect(shiftSeconds('2026-11-03 23:59:59', 2)).toBe('2026-11-04 00:00:01');
+    expect(shiftSeconds('2026-11-03 10:00:00', 1)).toBe('2026-11-03 10:00:01');
+    expect(shiftSeconds('bad-date', 1)).toBe('bad-date');
   });
 });
 

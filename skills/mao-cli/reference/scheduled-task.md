@@ -2,7 +2,7 @@
 
 ## 模块职责
 
-查询和维护定时任务：列表、详情、更新名称/提示词/cron/状态/一次性开关、删除。默认仅操作当前用户任务；持 `scheduled-task:read` 的管理端可跨用户查看（`list-all` / 详情），持 `scheduled-task:write` 的管理端可跨用户更新/删除/启停。
+查询、维护和手动试跑定时任务：列表、详情、更新名称/提示词/cron/状态/一次性开关、立即执行、删除。默认仅操作当前用户任务；持 `scheduled-task:read` 的管理端可跨用户查看（`list-all` / 详情），持 `scheduled-task:write` 的管理端可跨用户更新/删除/启停/立即执行。
 
 任务名称上限 200 字符，提示词上限 10000 字符，均不允许为空（服务端校验，超限返回参数错误）。
 
@@ -22,6 +22,7 @@
 | 全量列表（跨用户） | `scheduled-task list-all` |
 | 查看详情 | `scheduled-task get` |
 | 更新任务 | `scheduled-task update` |
+| 立即试跑一次 | `scheduled-task run` |
 | 删除任务 | `scheduled-task delete` |
 
 ---
@@ -155,6 +156,40 @@ mao scheduled-task runs --id 3 --limit 10 --json
 ```bash
 mao scheduled-task delete --id 3
 ```
+
+## 命令：mao scheduled-task run
+
+### 用途
+
+手动「立即执行」：在绑定会话中立即试跑一次任务，改完提示词当场验证，不必把 Cron 改到一分钟后等调度器扫描。典型流程：`update` 改提示词 → `run` 试跑 → `runs` 看结果。
+
+### 语义（与 cron 周期触发的差异）
+
+- 不改变 `nextFireTime`（下次触发计划原样保留）；
+- 一次性任务试跑后不会被打上已完结，真正到点的档期照常触发；
+- 失败不自动重试，也不累计连续失败（不会因调试报错把任务自动暂停）；
+- `PAUSED` / 已完结（`finished=1`）的任务也允许试跑，跑完保持原状态；
+- 运行记录照常写入（运行行 `attempt=0` 标记手动触发），`runs` 里可见并可跳回会话。
+
+### 参数说明
+
+| 参数 | 必填 | 类型 | 含义 |
+|------|------|------|------|
+| `--id` | 是 | 数字 | 定时任务 ID |
+
+### 示例
+
+```bash
+mao scheduled-task run --id 3 --json
+```
+
+返回 `{ taskId, sessionId, fireTime }`（`fireTime` 为本次运行行的触发时刻）；执行异步进行，随后用 `runs --id 3` 查看进度与结果。
+
+### 错误场景
+
+- 任务正在执行中（在飞）或绑定会话正忙：code `3055`「该定时任务正在执行中，请稍后再试」/「绑定会话正在执行中，请稍后再试」；
+- 他人任务且无 `scheduled-task:write`：code `3026`；
+- 任务不存在：code `3025`。
 
 ---
 

@@ -77,6 +77,9 @@ export const ErrorCode = {
   /** 角色侧成员管理：角色不存在（含已软删）。 */
   ROLE_NOT_FOUND: { code: 3054, message: '角色不存在' },
 
+  /** 定时任务手动「立即执行」在飞 / 会话忙冲突（HTTP 200 业务信封）。 */
+  SCHEDULED_TASK_RUNNING: { code: 3055, message: '该定时任务正在执行中，请稍后再试' },
+
   /** 用量预算 BLOCK 超线：message 动态携带 scope/当期消耗/上限（技术方案 §5.7）。 */
   BUDGET_EXCEEDED: { code: 3041, message: '用量预算已超限' },
 

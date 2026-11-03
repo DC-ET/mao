@@ -107,6 +107,16 @@ export function registerScheduledTaskRoutes(app: FastifyInstance, deps: Schedule
     })));
   });
 
+  // 手动「立即执行」：属主或 scheduled-task:write（与 PUT/DELETE 同门）。执行异步进行，
+  // 同步返回触发凭据 { taskId, sessionId, fireTime }；不改写计划档期 / 不完结一次性任务 / 不计连续失败，
+  // 详见 docs/plan/2026-11-03-scheduled-task-run-now-technical-design.md。
+  app.post('/v1/scheduled-tasks/:id/run', async (req, reply) => {
+    const userId = requireUserId(req, deps.jwt);
+    const id = Number((req.params as { id: string }).id);
+    const allowNonOwner = await hasPermission(userId, WRITE_PERMISSION);
+    sendJson(reply, 200, ok(await deps.service.runNow(id, userId, { allowNonOwner })));
+  });
+
   app.get('/v1/scheduled-tasks/:id/runs', async (req, reply) => {
     const userId = requireUserId(req, deps.jwt);
     const id = Number((req.params as { id: string }).id);
