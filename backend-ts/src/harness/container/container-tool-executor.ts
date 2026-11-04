@@ -51,6 +51,13 @@ export class ContainerToolExecutor {
   private readonly tools = new Map<string, Tool>();
   /** 当前请求的 envelope（单用户容器：userId 恒定，凭据按次刷新）。 */
   private currentEnvelope: RuntimeEnvelope | null = null;
+  /**
+   * 在途工具调用计数：envelope 只在「本批所有并行调用都结束」后才清空。
+   * 旧实现每个调用 finally 无条件清空——先完成的快工具（read_file 等）会把仍在执行中
+   * 的 shell 调用所需的 envelope 清掉，导致其创建/刷新会话时 depsEnv / token 注入
+   * 间歇性丢失（2026-11-04 修复：容器内已安装的 CLI 偶发 command not found）。
+   */
+  private envelopeRef = 0;
 
   constructor(
     roots: ContainerRoots,
@@ -150,17 +157,24 @@ export class ContainerToolExecutor {
       return JSON.stringify({ error: `工具 ${tool} 不在容器内执行器支持列表中` });
     }
     this.currentEnvelope = envelope;
+    this.envelopeRef += 1;
     try {
       return await instance.execute(argsJson, envelope.sessionId, envelope.userId, envelope.workspace);
     } finally {
-      // envelope 只在请求内存活，用完即清（§5.4：不落盘、不写入子进程环境）
-      this.currentEnvelope = null;
+      // envelope 只在请求内存活，用完即清（§5.4：不落盘、不写入子进程环境）；
+      // 并行批次内须等其他在途调用结束再清，否则早完成的工具会清掉在途工具仍需的 envelope。
+      this.envelopeRef -= 1;
+      if (this.envelopeRef <= 0) {
+        this.envelopeRef = 0;
+        this.currentEnvelope = null;
+      }
     }
   }
 
   /** 外部发送工具的容器读字节（§5.8）：严格 sandbox 校验 + 大小上限。 */
   handleReadBytes(filePath: string, maxBytes: number, envelope: RuntimeEnvelope): { ok: true; base64: string } | { ok: false; error: string } {
     this.currentEnvelope = envelope;
+    this.envelopeRef += 1;
     try {
       // 与 read_file 同口径（容器内 strict）：相对路径按 workspace 解析；绝对路径只放行允许根
       const sandbox = this.pathSandbox;
@@ -179,7 +193,12 @@ export class ContainerToolExecutor {
     } catch (e) {
       return { ok: false, error: (e as Error).message };
     } finally {
-      this.currentEnvelope = null;
+      // 与 handleToolCall 同口径：并行调用共享 envelope，最后一个结束才清
+      this.envelopeRef -= 1;
+      if (this.envelopeRef <= 0) {
+        this.envelopeRef = 0;
+        this.currentEnvelope = null;
+      }
     }
   }
 

@@ -435,6 +435,50 @@ describe('container tool executor', () => {
     }
     expect(counts).toEqual([1, 1, 1, 1, 1, 1]);
   });
+
+  it('keepsEnvelopeAvailableToParallelInFlightCalls', async () => {
+    // 回归（2026-11-04）：并行工具调用时，先完成的工具不得清掉在途调用仍在读取的 envelope。
+    // 旧实现用单一字段 + finally 无条件清空：read_file 这类快工具先完成会把共享 envelope 清掉，
+    // 并行中的 shell 调用随后创建/刷新会话时读到 null → depsEnv 丢失（PATH 无 deps bin），
+    // 表现为容器内已安装的 CLI 间歇性 `command not found`。
+    const base = useTmpDir('mao-exec-parallel-env-');
+    const workspaceRoot = join(base, 'workspace');
+    const depsUserDir = join(base, 'deps', String(USER_ID));
+    const userWorkspace = join(workspaceRoot, String(USER_ID), 'proj');
+    mkdirSync(userWorkspace, { recursive: true });
+    const probeFile = join(userWorkspace, 'probe.txt');
+    writeFileSync(probeFile, 'hello');
+    const executor = new ContainerToolExecutor({
+      workspaceRoot,
+      runtimeDir: join(base, 'runtime'),
+      userHomeDir: join(base, 'users'),
+      userSkillsDir: join(base, 'userskills'),
+      skillViewsDir: join(base, 'skill-views'),
+      uploadDir: join(base, 'uploads'),
+      shareDir: join(base, 'share'),
+    }, USER_ID);
+    const depsEnv = {
+      NPM_CONFIG_PREFIX: join(depsUserDir, 'npm'),
+      PIP_TARGET: join(depsUserDir, 'py'),
+      PIP_BREAK_SYSTEM_PACKAGES: '1',
+      MAO_DEPS_BIN: join(depsUserDir, 'npm', 'bin'),
+    };
+    // 同批两次调用：shell 慢（执行链多处 await），read_file 快（同步读文件）。
+    // 旧实现中 read_file 的 finally 会清空共享 envelope，shell 随后取 depsEnv 得到 null。
+    const [readResult, shellResult] = await Promise.all([
+      executor.handleToolCall('read_file', JSON.stringify({ path: probeFile }), envelopeOf(userWorkspace, 11, depsEnv)),
+      executor.handleToolCall('shell', JSON.stringify({
+        action: 'exec',
+        command: 'echo "BIN=[$MAO_DEPS_BIN] PATH=[$PATH]"',
+        yield_time_ms: 8000,
+      }), envelopeOf(userWorkspace, 11, depsEnv)),
+    ]);
+    expect(JSON.parse(readResult).content).toBe('hello');
+    const parsed = JSON.parse(shellResult);
+    expect(parsed.error).toBeUndefined();
+    expect(parsed.output).toContain(`BIN=[${depsEnv.MAO_DEPS_BIN}]`);
+    expect(parsed.output).toContain(`PATH=[${depsEnv.MAO_DEPS_BIN}:`);
+  });
 });
 
 function otherHome(userHomeDir: string): string {

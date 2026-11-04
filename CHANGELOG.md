@@ -1,3 +1,8 @@
+## 0.0.426 (2026-11-04)
+
+### 后端
+- **容器模式并行工具调用不再提前清空请求信封（envelope）**：`container-tool-executor` 的 `currentEnvelope` 增加在途调用引用计数，同一批并行工具调用全部结束后才清空（`handleReadBytes` 同口径）。修复前每次调用结束都无条件清空——同批先完成的快工具（`read_file` 等）会把仍在执行中的 `shell` 调用所需的 envelope 清掉，导致其创建/刷新会话时读不到 `depsEnv`：PATH 缺 `deps/{uid}/npm/bin`，容器内**已安装的 CLI 间歇性 `command not found`**；`MAO_TOKEN` / ECP / larkUat 注入同源偶发丢失。仅容器模式受影响（host 模式 depsEnv 为纯函数、无共享状态）；存量容器在用户下次调用工具时按既有 build drift 机制自动重启进程后生效，无需人工重建。
+
 ## 0.0.425 (2026-11-03)
 
 ### 后端
