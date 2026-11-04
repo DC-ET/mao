@@ -37,15 +37,10 @@
             </el-select>
           </el-form-item>
           <el-form-item label="状态">
-            <el-select v-model="filters.status" placeholder="全部" clearable style="width: 120px" @change="handleSearch">
+            <el-select v-model="filters.state" placeholder="全部" clearable style="width: 120px" @change="handleSearch">
               <el-option label="启用" value="ACTIVE" />
               <el-option label="暂停" value="PAUSED" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="完结">
-            <el-select v-model="filters.finished" placeholder="全部" clearable style="width: 120px" @change="handleSearch">
-              <el-option label="进行中" :value="false" />
-              <el-option label="已完结" :value="true" />
+              <el-option label="已完结" value="FINISHED" />
             </el-select>
           </el-form-item>
         </FilterPanel>
@@ -69,24 +64,11 @@
             <el-tag v-if="row.once" type="warning" size="small" style="margin-left: 4px">一次</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="status" label="状态" width="90">
+        <el-table-column label="状态" width="90">
           <template #default="{ row }">
-            <el-tag :type="row.status === 'ACTIVE' ? 'success' : 'info'" size="small">
-              {{ row.status === 'ACTIVE' ? '启用' : '暂停' }}
+            <el-tag :type="taskStateTag(row).type" size="small" :title="taskStateTag(row).title">
+              {{ taskStateTag(row).label }}
             </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="finished" label="完结" width="90">
-          <template #default="{ row }">
-            <el-tag
-              v-if="row.finished"
-              type="info"
-              size="small"
-              :title="row.finishedAt ? `完结于 ${formatDateTime(row.finishedAt)}` : '已完结'"
-            >
-              已完结
-            </el-tag>
-            <el-tag v-else type="success" size="small" title="未完结，任务持续有效">进行中</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="lastExecutionStatus" label="上次执行" width="100">
@@ -134,8 +116,8 @@
         <el-card v-for="row in tasks" :key="row.id" shadow="hover">
           <div class="mobile-card-head">
             <span class="mobile-card-title">{{ row.name }}</span>
-            <el-tag :type="row.status === 'ACTIVE' ? 'success' : 'info'" size="small">
-              {{ row.status === 'ACTIVE' ? '启用' : '暂停' }}
+            <el-tag :type="taskStateTag(row).type" size="small" :title="taskStateTag(row).title">
+              {{ taskStateTag(row).label }}
             </el-tag>
           </div>
           <div class="mobile-card-row">
@@ -228,7 +210,7 @@ import ResponsivePagination from '../../components/ResponsivePagination.vue'
 import FilterPanel from '../../components/FilterPanel.vue'
 import ScheduledTaskDetailDialog from './ScheduledTaskDetailDialog.vue'
 import ScheduledTaskFormDialog from './ScheduledTaskFormDialog.vue'
-import { execStatusLabel as statusLabel, execStatusTagType as statusTagType } from './task-display'
+import { execStatusLabel as statusLabel, execStatusTagType as statusTagType, taskStateTag } from './task-display'
 import type { ScheduledTaskRow } from './types'
 
 const { isMobile } = useBreakpoint()
@@ -264,12 +246,12 @@ const agentNames = ref<Record<number, string>>({})
 const userOptions = ref<Array<{ id: number; username?: string; displayName?: string }>>([])
 const agentOptions = ref<Array<{ id: number; name?: string }>>([])
 
+/** 合并后的状态筛选：ACTIVE=启用且未完结；PAUSED=暂停且未完结；FINISHED=已完结（不论启/停）。 */
 const filters = reactive({
   keyword: '',
   userId: null as number | null,
   agentId: null as number | null,
-  status: '' as string,
-  finished: null as boolean | null
+  state: '' as '' | 'ACTIVE' | 'PAUSED' | 'FINISHED'
 })
 
 function userName(id: number) {
@@ -318,8 +300,12 @@ async function fetchTasks() {
     if (filters.keyword.trim()) params.keyword = filters.keyword.trim()
     if (filters.userId != null) params.userId = filters.userId
     if (filters.agentId != null) params.agentId = filters.agentId
-    if (filters.status) params.status = filters.status
-    if (filters.finished != null) params.finished = filters.finished
+    if (filters.state === 'ACTIVE' || filters.state === 'PAUSED') {
+      params.status = filters.state
+      params.finished = false
+    } else if (filters.state === 'FINISHED') {
+      params.finished = true
+    }
     const { data } = await api.get('/scheduled-tasks/all', { params })
     if (seq !== fetchTasksSeq) return
     tasks.value = data.records
@@ -370,8 +356,7 @@ function handleReset() {
   filters.keyword = ''
   filters.userId = null
   filters.agentId = null
-  filters.status = ''
-  filters.finished = null
+  filters.state = ''
   pageNum.value = 1
   fetchTasks()
 }
