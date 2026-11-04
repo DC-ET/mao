@@ -319,7 +319,10 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
       let retryRuntimeUserId: number | null = null;
       try {
         retryRuntimeUserId = (await this.options.sessionService.getLastRuntimeUserId?.(sessionId)) ?? null;
-      } catch { /* 读取失败回落 owner，与崩溃恢复同源语义 */ }
+      } catch (e) {
+        // 读取失败回落 owner（与崩溃恢复同源语义），但留痕：否则「身份漂移」在故障时静默复现。
+        console.warn(`飞书重试读取运行身份失败，回落 owner, sessionId=${sessionId}: ${e instanceof Error ? e.message : String(e)}`);
+      }
       await this.options.harnessService.execute(
         sessionId, null,
         CompositeAgentEventListener.of(listener, cardListener),

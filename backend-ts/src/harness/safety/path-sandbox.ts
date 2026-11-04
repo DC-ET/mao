@@ -85,17 +85,20 @@ export class PathSandbox {
     const identity = this.identity;
     if (identity == null) return null;
     const uid = String(identity.userId);
-    const firstSegmentOf = (root: string | null | undefined): string | null => {
+    // 只认「{root}/{纯数字 uid}/…」形态：uploads 根下平台平坦文件与 releases/、runtime 下
+    // channels/ 等非用户目录不参与跨成员判定（回落通用越界文案，避免错误归因）。
+    const memberDirOf = (root: string | null | undefined): string | null => {
       if (root == null || root === '') return null;
       const rel = path.relative(path.resolve(root), resolved);
       if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) return null;
-      return rel.split(path.sep)[0] ?? null;
+      const first = rel.split(path.sep)[0] ?? null;
+      return first != null && /^\d+$/.test(first) ? first : null;
     };
-    const runtimeFirst = firstSegmentOf(identity.runtimeRoot);
+    const runtimeFirst = memberDirOf(identity.runtimeRoot);
     if (runtimeFirst != null && runtimeFirst !== uid) {
       return `该路径属于其他用户的会话运行目录（当前执行身份 ${identity.userId}），本地不可访问: ${resolved}`;
     }
-    const uploadFirst = firstSegmentOf(identity.uploadDir);
+    const uploadFirst = memberDirOf(identity.uploadDir);
     if (uploadFirst != null && uploadFirst !== uid) {
       return `该文件属于其他成员的产物目录（当前执行身份 ${identity.userId}），本地不可访问；`
         + `如需转发，请让该成员本人操作，或改用公开 URL 方式: ${resolved}`;

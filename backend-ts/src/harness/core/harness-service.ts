@@ -359,15 +359,24 @@ export class HarnessService {
     // 运行身份（技术方案 2026-11-04 §5.2）：先算身份、落库，再同步技能/构建（恢复窗口最小）。
     const runtimeUserId = this.runtimeUserFor(session, executionUserId);
     await this.persistRuntimeUser(sessionId, runtimeUserId);
-    const runtimeUserDisplayName = await this.resolveUserDisplayName(runtimeUserId);
+    // 身份段只在两侧不一致时渲染：显示名查询也只在需要时做（避免私聊/定时任务每轮多一次查库）。
+    const identityMismatch = runtimeUserId != null && (session.userId ?? null) !== runtimeUserId;
+    const runtimeUserDisplayName = identityMismatch ? await this.resolveUserDisplayName(runtimeUserId) : null;
     // 本轮技能同步失败的技能名（§5.3 D7）：从可用清单剔除，避免「清单有、路径读不到」。
     let syncFailed: ReadonlySet<string> = new Set<string>();
+    // 顶层同步失败（如 mkdir 权限/磁盘错误）：本轮全部技能不可信，清单置空（不引导模型撞墙）。
+    let skillSyncHardFailed = false;
     if (executionMode.toUpperCase() === 'CLOUD') {
       try {
         const syncResult = await this.skillSyncService.syncToSession(agent, runtimeUserId, sessionId);
         syncFailed = new Set(syncResult.failed);
+        // 发布检查点（方案 §5.3/§9.3）：统一带 owner/runtimeUser，便于 grep 观测身份漂移。
+        harnessLog('info', `[skill-sync] session=${sessionId} owner=${session.userId ?? null}`
+          + ` runtimeUser=${runtimeUserId ?? null} failed=${JSON.stringify([...syncFailed])}`);
       } catch (e) {
-        harnessLog('warn', `Skill sync to session runtime failed for session ${sessionId}: ${(e as Error).message}`);
+        skillSyncHardFailed = true;
+        harnessLog('warn', `[skill-sync] session=${sessionId} owner=${session.userId ?? null}`
+          + ` runtimeUser=${runtimeUserId ?? null} hard-failed: ${(e as Error).message}`);
       }
     }
 
@@ -552,9 +561,10 @@ export class HarnessService {
     }
     // 同步失败的技能本轮剔除（§5.3 D7）：spawn/清单只反映「真实可读」的技能集，
     // 不允许出现「清单有技能、路径不存在」的组合把错误暴露给模型。
-    context.availableSkillNames = syncFailed.size === 0
-      ? mergedSkillNames
-      : mergedSkillNames.filter((name) => !syncFailed.has(name));
+    // 顶层同步失败时整轮不列技能（链接未建立，任何技能路径都不可读）。
+    context.availableSkillNames = skillSyncHardFailed
+      ? []
+      : (syncFailed.size === 0 ? mergedSkillNames : mergedSkillNames.filter((name) => !syncFailed.has(name)));
 
     const skillDocMap = new Map<string, SkillDocument>();
     for (const doc of this.skillLoader.getAllDocuments()) skillDocMap.set(doc.name, doc);

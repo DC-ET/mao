@@ -40,6 +40,37 @@ describe('SubagentInvocationService 来源继承', () => {
   });
 });
 
+describe('SubagentInvocationService 运行身份继承（§5.8）', () => {
+  it('spawn 继承父会话当前运行身份并写入 last_runtime_user_id', async () => {
+    const { service, connection } = setup();
+    const parentWithRuntime: Session = { id: 10, userId: 7, modelId: 3, lastRuntimeUserId: 67 };
+    const result = await service.createBackground(parentWithRuntime, 'worker', 'task', '子任务', 'tc-runtime');
+    expect(result.child.lastRuntimeUserId).toBe(67);
+    const insert = connection.execute.mock.calls.find(([sql]) => sql.startsWith('INSERT INTO `session`'));
+    expect(insert).toBeTruthy();
+    const [sql, params] = insert!;
+    const cols = sql.slice(sql.indexOf('(') + 1, sql.indexOf(')')).split(', ').map((c) => c.replace(/`/g, ''));
+    // 列名与值按位对齐：漏字段/串位都会在这里暴露。
+    expect(params[cols.indexOf('last_runtime_user_id')]).toBe(67);
+  });
+
+  it('父会话无运行身份时回落归属用户', async () => {
+    const { service } = setup();
+    const result = await service.createBackground(parent, 'worker', 'task', '子任务', 'tc-fallback');
+    expect(result.child.lastRuntimeUserId).toBe(7);
+  });
+
+  it('followup 按父会话当前运行身份刷新子会话', async () => {
+    const { service, connection } = setup();
+    const parentWithRuntime: Session = { id: 10, userId: 7, modelId: 3, lastRuntimeUserId: 67 };
+    const result = await service.createFollowupWithOptions(parentWithRuntime, 42, 'reviewer', '再审查', 'tc-fu', null);
+    expect(result?.child.lastRuntimeUserId).toBe(67);
+    expect(connection.execute).toHaveBeenCalledWith(
+      expect.stringContaining('last_runtime_user_id = ?'), [3, 67, 42],
+    );
+  });
+});
+
 describe('SubagentInvocationService followup todos', () => {
   it.each([undefined, '上一轮已中断，按新要求执行'])('clears only child todos within the new-round transaction (%s)', async (notice) => {
     const { connection, service } = setup();

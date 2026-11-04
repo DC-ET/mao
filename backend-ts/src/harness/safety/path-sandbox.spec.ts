@@ -74,8 +74,12 @@ describe('PathSandbox', () => {
       .toThrow(/其他用户的会话运行目录（当前执行身份 67）/);
     expect(() => sandbox.resolve(join(uploadDir, '17', 'gen.png')))
       .toThrow(/其他成员的产物目录（当前执行身份 67）/);
-    // 与身份无关的越界保持原文案
+    // 与身份无关的越界保持原文案；非 uid 首段（平台平坦文件 / releases 目录）不做跨成员归因
     expect(() => sandbox.resolve(join(dir, 'elsewhere', 'x.txt')))
+      .toThrow(/^Path escape attempt: /);
+    expect(() => sandbox.resolve(join(uploadDir, 'releases', 'latest.yml')))
+      .toThrow(/^Path escape attempt: /);
+    expect(() => sandbox.resolve(join(runtimeRoot, 'channels', 'x.sock')))
       .toThrow(/^Path escape attempt: /);
   });
 

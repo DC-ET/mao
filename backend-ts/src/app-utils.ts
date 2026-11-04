@@ -1,4 +1,4 @@
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync, readdirSync, rmSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import fastifyStatic from '@fastify/static';
@@ -49,9 +49,19 @@ export function parseSqlTimeMs(value: string | null | undefined): number | null 
 export function runtimeSessionCleanup(runtimeRoot: string): (userId: number, sessionId: number) => void {
   return (userId: number, sessionId: number): void => {
     try {
-      const sessionDir = resolve(runtimeRoot, String(userId), String(sessionId));
-      if (existsSync(sessionDir)) {
-        rmSync(sessionDir, { recursive: true, force: true });
+      // 群聊会话的运行期产物按「运行身份」分别落盘（技术方案 2026-11-04 §5.2/§5.9）：
+      // dump_user_messages / open_web_page 缓存 / 技能软链等都在 {runtimeRoot}/{发言者}/{sid} 下，
+      // 删除会话时不能只回收归属者目录，否则每个发言者都会留下永不回收的残留。
+      // sessionId 全局唯一，按 {runtimeRoot}/*/{sid} 扫描删除（删除是低频操作，可接受一次枚举）。
+      const cleaned = new Set<string>([resolve(runtimeRoot, String(userId), String(sessionId))]);
+      for (const entry of readdirSync(runtimeRoot, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        cleaned.add(resolve(runtimeRoot, entry.name, String(sessionId)));
+      }
+      for (const sessionDir of cleaned) {
+        if (existsSync(sessionDir)) {
+          rmSync(sessionDir, { recursive: true, force: true });
+        }
       }
     } catch (e) {
       console.error(`Failed to clean runtime dir for session ${sessionId}`, e);

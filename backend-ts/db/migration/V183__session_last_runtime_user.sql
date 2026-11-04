@@ -4,5 +4,5 @@
 -- 可空：存量行不回填，恢复/重试时回落 session.user_id。
 
 ALTER TABLE `session`
-    ADD COLUMN `last_runtime_user_id` INT NULL
+    ADD COLUMN `last_runtime_user_id` BIGINT NULL
     COMMENT '最近一次执行的运行身份（executionUserId ?? user_id）；恢复/子代理/重试事实源';

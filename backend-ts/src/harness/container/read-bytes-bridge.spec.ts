@@ -71,6 +71,23 @@ describe('DockerSendBytesBridge', () => {
     expect(await bridge.foreignPathMessage(join(uploadDir, '17', 'gen.png'), null)).toBeNull();
   });
 
+  it('foreignPathMessage: 非 uid 首段（平坦文件 / releases / channels）不做跨成员归因', async () => {
+    const { bridge, uploadDir, runtimeDir } = makeBridge(async () => 'https://mao.example.com');
+    expect(await bridge.foreignPathMessage(join(uploadDir, '0aa0dc1a-dead.png'), 67)).toBeNull();
+    expect(await bridge.foreignPathMessage(join(uploadDir, 'releases', 'latest.yml'), 67)).toBeNull();
+    expect(await bridge.foreignPathMessage(join(runtimeDir, 'channels', 'x.sock'), 67)).toBeNull();
+    // 纯数字首段仍按成员判定（170 与 17 是不同用户）
+    const hit = await bridge.foreignPathMessage(join(uploadDir, '170', 'x.png'), 67);
+    expect(hit).toContain('其他成员的产物目录');
+    expect(hit).toContain('/uploads/170/x.png');
+  });
+
+  it('foreignPathMessage: publicUrl 片段编码空格与 # ?', async () => {
+    const { bridge, uploadDir } = makeBridge(async () => 'https://mao.example.com');
+    const message = await bridge.foreignPathMessage(join(uploadDir, '17', 'a b#c?d.png'), 67);
+    expect(message).toContain('https://mao.example.com/uploads/17/a%20b%23c%3Fd.png');
+  });
+
   it('foreignPathMessage: edit 场景追加行为提示', async () => {
     const { bridge, uploadDir } = makeBridge(async () => 'https://mao.example.com');
     const message = await bridge.foreignPathMessage(

@@ -431,6 +431,56 @@ describe('HarnessService.buildContext and execute', () => {
     expect(ctx.runtimeUserId).toBe(67);  // 运行身份 = 本次发言者
     expect(skillSync.syncToSession).toHaveBeenCalledWith(expect.objectContaining({ id: 2 }), 67, 10);
     expect(sessionService.touchRuntimeUser).toHaveBeenCalledWith(10, 67);
+    // 用户技能清单/文档同样按运行身份取：否则「清单按发言者、路径按归属」再次漂移。
+    expect(skillSync.getUserSkillNames).toHaveBeenCalledWith(67);
+    expect(skillSync.getUserSkillDocuments).toHaveBeenCalledWith(67);
+  });
+
+  it('身份不一致时注入执行身份显示名，身份一致时不查库', async () => {
+    const queryOne = vi.fn(async () => ({ displayName: '杨佳毅' }));
+    const { service } = makeHarness({ db: { queryOne } });
+    const ctx = await service.buildContext(10, null, null, false, 67);
+    expect(ctx.runtimeUserDisplayName).toBe('杨佳毅');
+    expect(queryOne).toHaveBeenCalledWith(expect.stringContaining('display_name'), [67]);
+    // 私聊/定时任务等无发言者场景：跑在归属身份上，不渲染身份段，也就不该多查一次库。
+    queryOne.mockClear();
+    const same = await service.buildContext(10);
+    expect(same.runtimeUserDisplayName).toBeNull();
+    expect(queryOne).not.toHaveBeenCalled();
+    // 查库失败只降级显示名，不影响身份本身（best-effort）。
+    const failing = makeHarness({
+      db: { queryOne: vi.fn(async () => { throw new Error('db down'); }) },
+    });
+    const degraded = await failing.service.buildContext(10, null, null, false, 67);
+    expect(degraded.runtimeUserId).toBe(67);
+    expect(degraded.runtimeUserDisplayName).toBeNull();
+  });
+
+  it('execute 把本次发言者透传给 buildContext（第 5 参）', async () => {
+    const { service } = makeHarness();
+    const buildSpy = vi.spyOn(service, 'buildContext');
+    const listener = { onContentDelta: vi.fn() } as never;
+    await service.execute(10, null, listener, null, 67);
+    expect(buildSpy).toHaveBeenCalledWith(10, listener, null, false, 67);
+  });
+
+  it('顶层技能同步失败时本轮不列任何技能（清单与路径保持一致）', async () => {
+    const { service } = makeHarness({
+      skillSync: {
+        syncToSession: vi.fn(async () => { throw new Error('mkdir EACCES'); }),
+        getUserSkillNames: vi.fn(() => ['mine']),
+        getUserSkillDocuments: vi.fn(() => [{ name: 'mine', description: 'user skill' }]),
+        loadAgentServers: vi.fn(async () => []),
+        getLocalSessionTools: vi.fn(() => []),
+        connectForCloud: vi.fn(async () => ({ tools: [], warnings: [] })),
+        clearSession: vi.fn(),
+        clearLocalSession: vi.fn(),
+        clearCloudSnapshot: vi.fn(),
+      },
+    });
+    const ctx = await service.buildContext(10);
+    // 链接未建立：任何技能路径都不可读，清单置空避免引导模型撞墙。
+    expect(ctx.availableSkillNames).toEqual([]);
   });
 
   it('buildContext 无发言者时运行身份回落会话归属', async () => {

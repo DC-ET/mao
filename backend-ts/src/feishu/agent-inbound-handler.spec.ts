@@ -621,6 +621,36 @@ describe('AgentFeishuInboundHandler', () => {
     expect(harness.execute).toHaveBeenCalledWith(7, null, expect.anything(), expect.anything(), 67);
   });
 
+  it('retryExecution 读取运行身份失败时回落 owner 并留痕', async () => {
+    const sessionService = makeSessionService({
+      getPhase: vi.fn(async () => 'FAILED'),
+      getLastRuntimeUserId: vi.fn(async () => { throw new Error('db down'); }),
+    });
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const handler = new AgentFeishuInboundHandler({
+        sessionService,
+        harnessService: harness as never,
+        registry: { send: vi.fn() } as never,
+        resolveStreamUserId: vi.fn(async () => 9),
+        createCancelFlag: makeFlag,
+        releaseCancelFlag: vi.fn(),
+        listenerFactory: async () => listener,
+        onExecutionFinished: vi.fn(async () => undefined),
+      });
+      await handler.retryExecution(7, async () => ({ update: async () => undefined }));
+      // 读不到持久化身份 → 传 null，由 buildContext 按会话归属续跑（与崩溃恢复同源）。
+      await vi.waitFor(() => {
+        expect(harness.execute).toHaveBeenCalledWith(7, null, expect.anything(), expect.anything(), null);
+      });
+      // 必须留痕：否则「身份漂移」会在故障时静默复现。
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('读取运行身份失败'));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('drains the feishu queue after a successful retry', async () => {
     const sessionService = makeSessionService({
       getPhase: vi.fn(async () => 'FAILED'),
