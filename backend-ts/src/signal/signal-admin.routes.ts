@@ -63,6 +63,7 @@ export function registerSignalAdminRoutes(app: FastifyInstance, deps: SignalAdmi
       method: row.method,
       intervalMinutes: row.intervalMinutes,
       compareMode: row.compareMode,
+      jsonPath: row.jsonPath ?? null,
       triggerMode: row.triggerMode,
       status: row.status,
       lastCheckedAt: row.lastCheckedAt,

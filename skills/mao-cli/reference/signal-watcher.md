@@ -108,7 +108,7 @@ update 为部分更新：未传的字段保持原值；`--headers '{}'`、`--bod
 | `warning` | 非失败告警，当前仅 `TRIGGER_RATE_LIMITED` |
 | `durationMs` | 探针耗时 |
 
-哨兵列表行透出 `lastValueSnippet`（上次判定内容片段，失败行「上次正常值」用；失败不覆盖它）与 `lastChangeOldSnippet` / `lastChangeNewSnippet`（上次那次变化的旧/新值，列表卡一句「上次变化：旧 → 新」的数据源；从未变化 / 基线重置 / 重新启用后为 null，整句不渲染；暂停不清）。
+哨兵列表行透出 `lastValueSnippet`（上次判定内容片段，失败行「上次正常值」用；失败不覆盖它）与 `lastChangeOldSnippet` / `lastChangeNewSnippet`（上一次**成功触发**的旧/新值，与 `lastChangedAt` 同义；触发失败不改这两列，本轮新旧值只留在该条轮询记录。从未变化 / 基线重置 / 重新启用后为 null，整句不渲染；暂停不清）。管理后台列表同时返回 `jsonPath`，JSON 字段模式的「上次变化内容」带上取值路径。
 
 ## 常见排障
 

@@ -174,7 +174,7 @@
             </el-table-column>
             <el-table-column label="详情" min-width="160" show-overflow-tooltip>
               <template #default="{ row }">
-                <span :class="{ 'fail-text': row.error }">{{ checkDetailText(row) }}</span>
+                <span :class="{ 'fail-text': row.error }" class="detail-cell">{{ checkDetailText(row) }}</span>
               </template>
             </el-table-column>
           </el-table>
@@ -213,6 +213,8 @@ interface WatcherRow {
   method: string
   intervalMinutes: number
   compareMode: SignalCompareMode
+  /** JSON_FIELD 的取值路径；列表「上次变化内容」文案要用，不能写死空路径。 */
+  jsonPath: string | null
   triggerMode: SignalTriggerMode
   status: SignalWatcherStatus
   lastCheckedAt: string | null
@@ -232,7 +234,6 @@ interface WatcherDetail extends WatcherRow {
   headers: Record<string, string>
   hasBody: boolean
   bodyLength: number
-  jsonPath: string | null
   promptTemplate: string
   lastValueHash: string | null
   reuseSessionId: number | null
@@ -321,7 +322,7 @@ function lastChangeText(row: WatcherRow): string {
     compareMode: row.compareMode,
     oldText: row.lastChangeOldSnippet,
     newText: row.lastChangeNewSnippet,
-    jsonPath: null,
+    jsonPath: row.jsonPath,
   })
 }
 
@@ -507,6 +508,7 @@ onActivated(() => {
 }
 
 .detail-cell {
+  display: block;
   white-space: pre-wrap;
   word-break: break-all;
 }

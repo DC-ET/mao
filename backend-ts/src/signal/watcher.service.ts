@@ -568,13 +568,13 @@ export class WatcherService {
     // resetFailures 必须为 false：markChecked 默认在「库内值 == 传入快照」时把连败清零，
     // 紧接着 recordFailure 再 +1，连败会永远停在 1，到不了自动停用阈值。
     await this.markCheckError(checkId, failure);
-    // 本轮已 markChanged——watcher 行「上次变化」新旧值对同样要推进（列表卡读它），
-    // 失败的只是触发、值是好的。lastChangedAt 语义不变（保持上次「成功触发」时刻）。
+    // 列表卡「上次变化」与 lastChangedAt 同义：只表示上一次成功触发。
+    // 触发失败不改这两列，否则时间仍停在上次成功（或「从未」），内容却已换成这一轮。
+    // 本轮新旧值留在 check 行上，抽屉「详情」在错误下附出。基线 hash 仍要推进，
+    // 否则目标值不变时下一轮继续判为变化、反复发起 Agent。
     await this.deps.watcherRepo.markChecked(watcher.id, {
       lastValueHash: valueHash,
       lastValueSnippet: newText,
-      lastChangeOldSnippet: oldSnippet,
-      lastChangeNewSnippet: truncateSnippet(newText),
       lastChangedAt: watcher.lastChangedAt,
       consecutiveFailures: watcher.consecutiveFailures ?? 0,
       resetFailures: false,

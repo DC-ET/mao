@@ -501,7 +501,13 @@ describe('WatcherService.runCheck', () => {
   // 且基线 hash 不推进，目标值不变时下一轮再次判为「变化」并重新发起 Agent 运行。
   it('reuses the check row and advances the baseline when the trigger fails', async () => {
     const h = harness({
-      watcher: watcher({ lastValueHash: 'oldhash', lastValueSnippet: 'old-body' }),
+      watcher: watcher({
+        lastValueHash: 'oldhash',
+        lastValueSnippet: 'old-body',
+        lastChangeOldSnippet: 'prev-old',
+        lastChangeNewSnippet: 'prev-new',
+        lastChangedAt: '2026-10-11 10:00:00',
+      }),
       probe: () => probeResult({ body: 'new-body', bodyBytes: Buffer.from('new-body', 'utf8') }),
     });
     h.openRun.run.mockRejectedValue(new Error('budget blocked'));
@@ -515,15 +521,16 @@ describe('WatcherService.runCheck', () => {
     expect(h.recordFailure).toHaveBeenCalledTimes(1);
     // 只落一行即证明复用了已 markChanged 的那行；若未传 checkId，recordFailure 内部会另插一行
     // （harness 的 recordFailure mock 只收 3 参，故以行数作为复用的判据）
+    // 本轮新旧值留在 check 行，详情列附在错误下面
+    expect(h.checks[0]!.oldValueSnippet).toBe('old-body');
+    expect(h.checks[0]!.newValueSnippet).toBe('new-body');
 
     // 基线推进到本次读到的值：同值再次轮询不再判为「变化」
     expect(h.watchers.get(1)!.lastValueHash).toBe(sha256('new-body'));
-    // 变化时刻不因失败而刷新（这一次没有真正通知用户）
-    expect(h.watchers.get(1)!.lastChangedAt).toBeNull();
-    // 「上次变化」新旧值对随 markChanged 一并推进（轮询记录第三态展示用），
-    // 失败的只是触发、值是好的；lastChangedAt 语义保持不变（成功触发时刻）。
-    expect(h.watchers.get(1)!.lastChangeOldSnippet).toBe('old-body');
-    expect(h.watchers.get(1)!.lastChangeNewSnippet).toBe('new-body');
+    // 列表卡「上次变化」仍是上一次成功触发：时间与内容都不因这次失败改写
+    expect(h.watchers.get(1)!.lastChangedAt).toBe('2026-10-11 10:00:00');
+    expect(h.watchers.get(1)!.lastChangeOldSnippet).toBe('prev-old');
+    expect(h.watchers.get(1)!.lastChangeNewSnippet).toBe('prev-new');
 
     await h.service.runCheck(1);
     // 同值 → 不再触发，也不新增 check 行

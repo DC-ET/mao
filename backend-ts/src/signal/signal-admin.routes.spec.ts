@@ -103,6 +103,25 @@ describe('registerSignalAdminRoutes compareMode 入参', () => {
     await handler(req({ compareMode: 'NOT_A_MODE' }), reply);
     expect(listForAdmin).toHaveBeenCalledWith(1, 20, { status: null, userId: undefined, compareMode: null });
   });
+
+  it('列表行透出 jsonPath，JSON 字段模式的「上次变化内容」能带上路径', async () => {
+    const listForAdmin = vi.fn(async () => ({
+      rows: [watcher({ compareMode: 'JSON_FIELD', jsonPath: 'data.price', lastChangeOldSnippet: '1', lastChangeNewSnippet: '2' })],
+      total: 1,
+    }));
+    const app = { get: vi.fn() };
+    registerSignalAdminRoutes(app as never, {
+      watcherRepo: { listForAdmin } as never,
+      service: {} as never,
+      permissionService: { hasPermission: vi.fn(async () => true) } as never,
+      userLookup: { findByIds: vi.fn(async () => []) },
+    });
+    const handler = app.get.mock.calls[0]![1] as (req: unknown, reply: unknown) => Promise<unknown>;
+    const reply = makeReply();
+    const payload = parsePayload(await handler({ userId: 1, query: {} }, reply));
+    const data = payload.data as { records: Array<Record<string, unknown>> };
+    expect(data.records[0]).toMatchObject({ compareMode: 'JSON_FIELD', jsonPath: 'data.price' });
+  });
 });
 
 /** 造一个可走 sendOk 的 reply 桩（status → header → send 链式调用）。 */

@@ -952,7 +952,9 @@ onMounted(() => {
 }
 
 .detail-text {
+  display: block;
   white-space: pre-wrap;
+  word-break: break-all;
 }
 
 .last-change-text {
