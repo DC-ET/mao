@@ -325,6 +325,38 @@
 2. **三处同改清单**：均不新增内置工具、不新增 LLM 调用场景、不新增收件箱 kind，不触发既有「三处同改」规范。
 3. **相邻收敛点**：定时任务「立即执行」复用 `inFlight` 守卫与 `withSessionLock` 会话锁，但显式旁路 `nextFireTime` 推进、`once` 完结与 `consecutiveFailures` 累加，周期调度路径逐字节不变；环境变量「留空不修改值」直接复用 `MysqlEnvVariableRepository.updateBy` 已有的 `patch.envValue !== undefined` 分支。
 
+## 第二十一批（2026-11-04）
+
+背景：第二十批（定时任务立即执行等五件待评审）提出后，延续「**提升现有功能完整度和用户体验，尽量避免对现有功能逻辑产生回归影响**」方向，从「人与 Agent 的交接面」摸底得出三个断点：**审批散在会话里**（LOCAL 审批卡只出现在发起会话里，多任务并行时无人一处收口，批了没审计账）、**失败任务没法接着走**（整轮失败后只能从头复述目标，Run Trace 早已能定位失败 tool_call 但不给归因与续跑入口）、**子代理改到一半的文件拿不到**（父会话只在子代理完成后一次性全量拷变更，运行中黑盒、崩溃后半成品丢了）。三件互不依赖、全部零迁移、不碰 `AgentLoop` / `task-terminal.service.ts` 执行内核，均避开已否决方向与 README 贡献边界。
+
+| 提案 | 文档 | 一句话 | 规模 |
+|---|---|---|---|
+| 跨任务审批收件箱与审计 | [2026-11-04-cross-task-approval-inbox-and-audit.md](2026-11-04-cross-task-approval-inbox-and-audit.md)（已否决，存档） | 桌面审批抽屉聚合当前用户全部未决 `APPROVAL_PENDING`、点击跳转回原会话决策不在抽屉里二次执行；`tool_approval` 帧补审计账本（决策人/时间/超时） | 小~中 |
+| 失败任务重跑（归因与续跑） | [2026-11-04-failed-task-retry-with-context-reuse.md](2026-11-04-failed-task-retry-with-context-reuse.md)（已否决，存档） | 失败归因卡（派生一句「第 N 轮 · 工具/原因」给用户看，最后 tool_call 展开）+「从失败轮重跑」（以失败轮最后用户消息为锚点续跑，仅失败轮之后新轮次） | 中 |
+| 子代理增量同步与半成品回拷 | [2026-11-04-subagent-incremental-file-sync.md](2026-11-04-subagent-incremental-file-sync.md)（已否决，存档） | 子代理运行中聚合「已改文件数/最近文件名」只读端点（banner 透出）+ 子代理崩溃后复用既有 `copyFileChanges` 把半成品变更带回父会话（去重不动、通知明示「中途终止」） | 中 |
+
+排期注意：
+
+1. **迁移编号**：全部**零迁移**，不占 Flyway 版本号（当前最新 V181）。
+2. **三处同改清单**：三件均不新增内置工具、不新增 LLM 调用场景、不新增收件箱 kind（`APPROVAL_PENDING` / `TASK_FAILED` / `SUBAGENT_DONE` 均为既有），不触发既有「三处同改」规范。
+3. **相邻收敛点**：审批收件箱只读聚合不在抽屉里执行决策；失败重跑复用 `withSessionLock` + 忙检测、相位收敛写入逐字节不变；半成品回拷复用 `fileChangeCopyKey` 去重，`deliveryStatus` 状态机不改写。
+
+## 第二十二批（2026-11-04）
+
+背景：第二十一批（审批收件箱 / 失败重跑 / 子代理增量同步）全部驳回后，方向收回「**只把后端早已写好的字段翻到展示层**」——不再新起任何执行语义、不碰审批/重试/子代理管线。三件均零迁移、不碰 `AgentLoop` / `task-terminal.service.ts` / 调度器，均避开已否决方向与 README 贡献边界。
+
+| 提案 | 文档 | 一句话 | 规模 |
+|---|---|---|---|
+| 定时任务失败原因透出 | [2026-11-04-scheduled-run-failure-reason-visible.md](2026-11-04-scheduled-run-failure-reason-visible.md)（待评审） | `scheduled_task_run.error_summary` 后端早在写、VO 已回、两端从未渲染——桌面「最近运行」失败行内联展示原因 + admin 详情表加列 | 小 |
+| 分享一览与来源徽标 | [2026-11-04-session-share-management-and-source-badge.md](2026-11-04-session-share-management-and-source-badge.md)（已否决，存档） | 只读端点 `GET /v1/sessions/shares`（属主 + 未撤销）给桌面「我的分享」抽屉；桌面任务列表补与 admin 同文案的 `SessionSource` 徽标 | 小 |
+| 哨兵轮询记录值对比 | [2026-11-04-signal-watcher-check-value-compare.md](2026-11-04-signal-watcher-check-value-compare.md)（待评审） | checks 抽屉「详情」列值可读化（旧值 → 新值，复用 `{diff}` 片段）+ 哨兵列表卡一句「上次变化」 | 小 |
+
+排期注意：
+
+1. **迁移编号**：全部**零迁移**，不占 Flyway 版本号（当前最新 V181）。
+2. **三处同改清单**：均不新增内置工具、LLM 调用场景、收件箱 kind，不触发既有「三处同改」规范；来源徽标在桌面新增 `sessionSourceLabels.ts` 时，两边用同一份 `Record<SessionSource, string>` 文案吃编译期穷尽。
+3. **相邻收敛点**：三件均不碰 `task-terminal.service.ts`、调度器、探针判定、`deliveryStatus`；分享一览端点属主门与单会话分享同口径。
+
 ## 已评估、明确不做
 
 以下各项已复审定案，**不再重启、不再提案**（存档文档已标否决，勿再评审）：
@@ -358,6 +390,10 @@
 - **信号哨兵对话内配置（watcher 工具组）**：2026-10-25 评审：不采用。存档：[2026-10-25-signal-watcher-tools.md](2026-10-25-signal-watcher-tools.md)。
 - **会话移交（人员变动的会话交接）**：2026-10-25 评审：不采用。存档：[2026-10-25-session-handover.md](2026-10-25-session-handover.md)。
 - **记忆就地可见（对话内回执与「记住这个」）**：2026-10-27 评审：不采用。存档：[2026-10-27-memory-in-context.md](2026-10-27-memory-in-context.md)。
+- **跨任务审批收件箱与审计**：2026-11-04 评审驳回，存档勿再评审。存档：[2026-11-04-cross-task-approval-inbox-and-audit.md](2026-11-04-cross-task-approval-inbox-and-audit.md)。
+- **失败任务重跑（归因与续跑）**：2026-11-04 评审驳回，存档勿再评审。存档：[2026-11-04-failed-task-retry-with-context-reuse.md](2026-11-04-failed-task-retry-with-context-reuse.md)。
+- **子代理增量同步与半成品回拷**：2026-11-04 评审驳回，存档勿再评审。存档：[2026-11-04-subagent-incremental-file-sync.md](2026-11-04-subagent-incremental-file-sync.md)。
+- **分享一览与来源徽标**：2026-11-04 评审驳回，存档勿再评审。存档：[2026-11-04-session-share-management-and-source-badge.md](2026-11-04-session-share-management-and-source-badge.md)。
 
 ## 已排除的方向（与产品定位或约束冲突）
 
