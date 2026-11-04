@@ -116,6 +116,11 @@
           />
         </el-form-item>
         <el-form-item label="请求头">
+          <!--
+            el-form 渲染的是原生 <form>：内部 <button> 不写 type 默认就是 submit，
+            点击会触发表单提交导致整页重载（打包态 file:// + hash 路由下 hash 丢失，
+            表现为窗口自行关闭、页面重置）。增删请求头行的按钮必须显式 type="button"。
+          -->
           <div class="header-editor">
             <div v-for="(pair, index) in form.headers" :key="index" class="header-row">
               <el-input v-model="pair.key" placeholder="Header 名" />
@@ -123,11 +128,11 @@
                 v-model="pair.value"
                 :placeholder="editing && pair.masked ? '留空不修改' : '值'"
               />
-              <button class="action-btn action-btn-danger" @click="removeHeaderRow(index)">
+              <button type="button" class="action-btn action-btn-danger" @click="removeHeaderRow(index)">
                 <el-icon :size="14"><Delete /></el-icon>
               </button>
             </div>
-            <button class="add-header-btn" @click="addHeaderRow">
+            <button type="button" class="add-header-btn" @click="addHeaderRow">
               <el-icon :size="12"><Plus /></el-icon> 添加请求头
             </button>
           </div>
