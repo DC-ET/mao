@@ -1,3 +1,5 @@
+// 必须为首个 import：进程时区对齐要先于其余 import 的模块体副作用执行（见该文件注释）
+import './config/process-timezone.js';
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';

@@ -58,7 +58,7 @@ mao tool get --name bash
 由 Agent 在后端执行，不是 `mao tool` 的执行命令。
 
 - 未安装 ripgrep（`rg`）时，使用异步流式逐行读取，不再因文件超过 10 MiB 而静默跳过；本次流式化不涉及 `rg` 分支或 LOCAL 工具。
-- 保留正则表达式 `pattern`、大小写选项 `ignore_case`、文件过滤 `glob`、上下文 `context_lines` 与输出上限 `max_output_chars`；输出截断时返回 `truncated: true`。
+- 保留正则表达式 `pattern`、大小写选项 `ignore_case`、文件过滤 `glob`、上下文 `context_lines` 与输出上限 `max_output_chars`；输出截断时返回 `truncated: true`；负 `context_lines` 或 `<1` 的 `max_output_chars` 返回参数错误，不再静默按「0 命中」返回。
 - 无 `rg` 分支遇到文件读取或目录访问错误会明确返回 `error`，不应将其视为“没有匹配”。
 
 ## 对话内搜索：glob_search（CLOUD）

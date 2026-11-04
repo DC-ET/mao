@@ -308,6 +308,11 @@ export class LlmCallService {
     });
   }
 
+  /**
+   * 兜底价格查询（60s TTL 内存缓存）。只有「成功查到」才写缓存——含模型不存在/已软删的
+   * 负缓存（price=null）；查库抛异常是另一语义，缓存异常会把一次 DB 抖动放大成 60s 的
+   * 成本 NULL（SUM 忽略 NULL 行 → 当期消耗被低估 → 预算闸门静默穿透）。
+   */
   private async lookupPrice(modelId: number | undefined): Promise<CostPrice | null> {
     if (modelId == null || this.modelPriceLookup == null) return null;
     const now = Date.now();
@@ -326,10 +331,11 @@ export class LlmCallService {
           priceOutput: parsePriceColumn(row.priceOutput),
         };
       }
+      this.priceCache.set(modelId, { price, expiresAt: now + PRICE_CACHE_TTL_MS });
     } catch (e) {
       console.warn(`[llm-call] model price lookup failed for model ${modelId}: ${(e as Error).message}`);
+      // 不写缓存：保留重试机会，下次调用重新 lookup
     }
-    this.priceCache.set(modelId, { price, expiresAt: now + PRICE_CACHE_TTL_MS });
     return price;
   }
 

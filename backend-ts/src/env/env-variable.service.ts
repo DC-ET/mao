@@ -453,56 +453,67 @@ export class EnvVariableService {
     return keys;
   }
 
-  /** 开关与系统层共用一次缓存（同 TTL 同时失效，避免每条 exec 多一次往返）。 */
+  /**
+   * 开关与系统层共用一次缓存（同 TTL 同时失效，避免每条 exec 多一次往返）。
+   * 任一读取失败都不写缓存：失败结果（回落 enabled / 空 rows）不是成功语义，缓存它会把
+   * 一次 DB 抖动放大成整个 TTL 窗口内的变量缺失（shell/容器会话丢 API key）。
+   */
   private async loadBundle(): Promise<{ enabled: boolean; rows: EnvVariable[] }> {
     const cached = this.bundleCache;
     if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.value;
     let enabled = true;
+    let settingsOk = true;
     try {
       enabled = await this.settings.shellEnvVarsEnabled();
     } catch (e) {
+      settingsOk = false;
       harnessLog('warn', `[env] read shell.envVars.enabled failed, fallback to enabled: ${(e as Error).message}`);
     }
     let rows: EnvVariable[] = [];
+    let rowsOk = true;
     if (enabled) {
       try {
         rows = await this.repo.listSystem();
       } catch (e) {
+        rowsOk = false;
         harnessLog('warn', `[env] list system variables failed: ${(e as Error).message}`);
       }
     }
-    const value = { enabled, rows };
-    this.bundleCache = { value, at: Date.now() };
-    return value;
+    if (settingsOk && rowsOk) {
+      this.bundleCache = { value: { enabled, rows }, at: Date.now() };
+    }
+    return { enabled, rows };
   }
 
+  /** 查库失败时不写缓存（fail-open 返回 []，但保留重试机会），理由同 loadBundle。 */
   private async loadUser(userId: number): Promise<EnvVariable[]> {
     const cached = this.userCache.get(userId);
     if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.value;
-    let rows: EnvVariable[] = [];
     try {
-      rows = await this.repo.listUser(userId);
+      const rows = await this.repo.listUser(userId);
+      this.pruneCache(this.userCache, USER_CACHE_LIMIT);
+      this.userCache.set(userId, { value: rows, at: Date.now() });
+      return rows;
     } catch (e) {
       harnessLog('warn', `[env] list user variables failed for user=${userId}: ${(e as Error).message}`);
+      return [];
     }
-    this.pruneCache(this.userCache, USER_CACHE_LIMIT);
-    this.userCache.set(userId, { value: rows, at: Date.now() });
-    return rows;
   }
 
+  /** 同 loadUser：查库失败不写缓存。 */
   private async loadWorkspace(userId: number, workspacePath: string): Promise<EnvVariable[]> {
     const key = `${userId}:${workspacePath}`;
     const cached = this.workspaceCache.get(key);
     if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.value;
-    let rows: EnvVariable[] = [];
     try {
-      rows = await this.repo.listWorkspace(userId, workspacePath);
+      const rows = await this.repo.listWorkspace(userId, workspacePath);
+      this.pruneCache(this.workspaceCache, WORKSPACE_CACHE_LIMIT);
+      this.workspaceCache.set(key, { value: rows, at: Date.now() });
+      return rows;
     } catch (e) {
       harnessLog('warn', `[env] list workspace variables failed for user=${userId}: ${(e as Error).message}`);
+      return [];
     }
-    this.pruneCache(this.workspaceCache, WORKSPACE_CACHE_LIMIT);
-    this.workspaceCache.set(key, { value: rows, at: Date.now() });
-    return rows;
   }
 
   /** 进程内主动失效：单实例保存后立即生效；多实例（蓝绿/多 Pod）仍有 ≤5s 延迟。 */
