@@ -68,9 +68,11 @@ export class SkillSyncService {
           // 系统技能先物化「用户级只读视图」，链接指向视图（路径稳定，源永进不了容器）
           const viewPath = await this.skillViewService.ensureView(userId, skillName, entry.folder);
           if (viewPath == null) {
-            // 源已下线：清掉残留链接，避免指向不存在视图的悬空（视图已由 ensureView 清理）
+            // 源已下线：清掉残留链接，避免指向不存在视图的悬空（视图已由 ensureView 清理）；
+            // 本轮实际不可读，计入 failed 让调用侧从可用清单剔除（D7：清单与路径一致）。
             removeSkillLink(targetFolder);
             state.delete(skillName);
+            failed.add(skillName);
             continue;
           }
           linkSource = viewPath;

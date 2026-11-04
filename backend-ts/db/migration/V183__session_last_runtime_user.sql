@@ -5,4 +5,5 @@
 
 ALTER TABLE `session`
     ADD COLUMN `last_runtime_user_id` BIGINT NULL
-    COMMENT '最近一次执行的运行身份（executionUserId ?? user_id）；恢复/子代理/重试事实源';
+    COMMENT '最近一次执行的运行身份（executionUserId ?? user_id）；恢复/子代理/重试事实源'
+    AFTER `memory_injection_disabled`;

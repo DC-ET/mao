@@ -88,11 +88,23 @@ describe('DockerSendBytesBridge', () => {
     expect(message).toContain('https://mao.example.com/uploads/17/a%20b%23c%3Fd.png');
   });
 
-  it('foreignPathMessage: edit 场景追加行为提示', async () => {
-    const { bridge, uploadDir } = makeBridge(async () => 'https://mao.example.com');
+  it('foreignPathMessage: edit 场景（hint）URL 只标注转发用途，出路走 hint', async () => {
+    const { bridge, uploadDir, runtimeDir } = makeBridge(async () => 'https://mao.example.com');
     const message = await bridge.foreignPathMessage(
       join(uploadDir, '17', 'gen.png'), 67, '改图请重新生成，或由该成员本人操作',
     );
-    expect(message).toContain('改图请重新生成');
+    // edit_image 不接受 URL：不得再引导「请改用其转发」，URL 仅标注为 send_* 转发用途
+    expect(message).toContain('可用于 send_* 转发');
+    expect(message).not.toContain('请改用其转发');
+    expect(message).toContain('改图请重新生成，或由该成员本人操作');
+    // runtime 分支：hint 替代默认出路建议，避免两句建议连读
+    const runtimeMessage = await bridge.foreignPathMessage(
+      join(runtimeDir, '17', '1607', 'shellOutput', 'x.out'), 67, '改图请重新生成，或由该成员本人操作',
+    );
+    expect(runtimeMessage).toContain('改图请重新生成，或由该成员本人操作');
+    expect(runtimeMessage).not.toContain('请让该成员本人操作，或重新生成到共享位置');
+    // 无 hint（send_* 工具）：保持「请改用其转发」的可执行引导
+    const sendMessage = await bridge.foreignPathMessage(join(uploadDir, '17', 'gen.png'), 67);
+    expect(sendMessage).toContain('请改用其转发');
   });
 });

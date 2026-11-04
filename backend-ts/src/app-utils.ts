@@ -48,16 +48,24 @@ export function parseSqlTimeMs(value: string | null | undefined): number | null 
 
 export function runtimeSessionCleanup(runtimeRoot: string): (userId: number, sessionId: number) => void {
   return (userId: number, sessionId: number): void => {
+    // 归属者目录无条件回收（即使根目录枚举失败也不影响）。
+    const cleaned = new Set<string>([resolve(runtimeRoot, String(userId), String(sessionId))]);
     try {
       // 群聊会话的运行期产物按「运行身份」分别落盘（技术方案 2026-11-04 §5.2/§5.9）：
       // dump_user_messages / open_web_page 缓存 / 技能软链等都在 {runtimeRoot}/{发言者}/{sid} 下，
       // 删除会话时不能只回收归属者目录，否则每个发言者都会留下永不回收的残留。
       // sessionId 全局唯一，按 {runtimeRoot}/*/{sid} 扫描删除（删除是低频操作，可接受一次枚举）。
-      const cleaned = new Set<string>([resolve(runtimeRoot, String(userId), String(sessionId))]);
+      // 严格只认纯数字一级目录（用户 id 形态）：runtimeRoot 下还有 channels 等非用户目录，
+      // channel 目录名恰为 userId——若全量扫描，sessionId == 某 userId 时会误删该用户
+      // 的容器通道目录（socket/.token），打挂其 docker 运行面（评审 P0，2026-11-04）。
       for (const entry of readdirSync(runtimeRoot, { withFileTypes: true })) {
-        if (!entry.isDirectory()) continue;
+        if (!entry.isDirectory() || !/^\d+$/.test(entry.name)) continue;
         cleaned.add(resolve(runtimeRoot, entry.name, String(sessionId)));
       }
+    } catch (e) {
+      console.error(`Failed to enumerate runtime dirs for session ${sessionId}`, e);
+    }
+    try {
       for (const sessionDir of cleaned) {
         if (existsSync(sessionDir)) {
           rmSync(sessionDir, { recursive: true, force: true });

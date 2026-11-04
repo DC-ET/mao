@@ -289,6 +289,29 @@ describe('PromptEngine', () => {
     expect(getByUserIdAndName).toHaveBeenCalledWith(1, 'review');
   });
 
+  it('用户命令与用户技能 marker 按运行身份展开（群聊发言者而非归属者）', async () => {
+    const getByUserIdAndName = vi.fn(async (_uid: number, name: string) => (
+      name === 'review' ? { content: 'please review' } : null
+    ));
+    const getUserSkillDocuments = vi.fn(() => [{ name: 'mine-skill', description: 'x' }]);
+    const engine = new PromptEngine(
+      { hasSkill: () => false, getAllNames: () => [], getAllDocuments: () => [] } as never,
+      { getWorkspaceRoot: () => '/ws' } as never,
+      RuntimeDataResolver.forTest('/tmp/rt', '/tmp/home'),
+      { getByUserIdAndName } as never,
+      { getUserSkillDocuments } as never,
+    );
+    const context = new AgentExecutionContext();
+    context.userId = 17;          // 会话归属
+    context.runtimeUserId = 67;   // 本次发言者
+    context.messages = [{ role: 'user', content: '请执行 #{review}# 与 ${mine-skill}$' }];
+    const request = await engine.buildRequest(context);
+    expect(request.messages[1].content).toBe('请执行 please review 与 /mine-skill');
+    // 用户命令与用户技能都必须按运行身份查表（否则 B 的轮次会用到 A 的个人命令/技能）
+    expect(getByUserIdAndName).toHaveBeenCalledWith(67, 'review');
+    expect(getUserSkillDocuments).toHaveBeenCalledWith(67);
+  });
+
   it('buildRequestInjectsSessionScopedPromptCacheKey', async () => {
     const engine = new PromptEngine(
       { hasSkill: () => false, getAllNames: () => [], getAllDocuments: () => [] } as never,
@@ -1353,6 +1376,8 @@ describe('PromptEngine runtime identity', () => {
     expect(system).toContain('## 执行身份');
     expect(system).toContain('用户 #67 秦翌翔');
     expect(system).toContain('用户 #17');
+    // MCP 已知差异（§7）：避免模型把「MCP 走归属者」误判为身份漂移
+    expect(system).toContain('MCP 工具仍绑定会话归属者一侧');
   });
 
   it('身份一致时不渲染执行身份段（普通会话前缀零变化）', async () => {

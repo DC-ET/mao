@@ -1,11 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
 import { mcpWhitelistEnv } from '../../mcp/mcp-client-manager.js';
 import { loadSendFileBytes, readLocalBytes } from './send-file-bytes.js';
+import { fetchBytesWithLimits } from './fetch-bytes.js';
 import { StrictPathResolver } from '../../safety/strict-path.js';
 import { SecurityException } from '../../safety/path-sandbox.js';
 import { useTmpDir } from '../../../testing/tmp-dir.js';
 import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+
+// URL 源不发真实网络请求：只验证「预检不误拦 URL、也不走容器」的顺序不变量。
+vi.mock('./fetch-bytes.js', () => ({
+  fetchBytesWithLimits: vi.fn(async () => Buffer.from('url-bytes')),
+}));
 
 describe('mcp stdio env whitelist', () => {
   it('inheritsOnlyWhitelistedKeysAndMergesServerEnv', () => {
@@ -107,6 +113,27 @@ describe('send-file bytes loading', () => {
     expect(support.foreignPathMessage).toHaveBeenCalledWith(
       '/opt/mao-data/uploads/17/gen.png', 67, '改图请重新生成，或由该成员本人操作',
     );
+  });
+
+  it('URL 源不被跨成员预检拦截，直接走 URL 拉取（不触达容器）', async () => {
+    const base = useTmpDir('mao-sendbytes-url-');
+    const workspace = join(base, 'workspace', '7');
+    mkdirSync(workspace, { recursive: true });
+    const sandbox = { getEffectiveWorkspaceRoot: () => workspace } as never;
+    const readBytes = vi.fn(async () => Buffer.from('container'));
+    const support = {
+      readBytes,
+      extraRoots: vi.fn(() => []),
+      // 模拟真实 bridge：只对绝对本地路径做跨成员判定（URL 返回 null）
+      foreignPathMessage: vi.fn(async (src: string) => (src.startsWith('/') ? 'FOREIGN' : null)),
+    };
+    const bytes = await loadSendFileBytes(
+      'https://cdn.example.com/a.png', sandbox, support, { userId: 67, sessionId: 11, workspace }, 1024,
+    );
+    expect(bytes.toString()).toBe('url-bytes');
+    expect(vi.mocked(fetchBytesWithLimits)).toHaveBeenCalledWith('https://cdn.example.com/a.png', 1024);
+    // URL 不应落到容器读取分支
+    expect(readBytes).not.toHaveBeenCalled();
   });
 
   it('loadSendFileBytesPrefersContainerAndKeepsUrlOnHost', async () => {

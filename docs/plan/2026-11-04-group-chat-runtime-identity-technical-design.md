@@ -1,11 +1,11 @@
-# 群聊会话运行身份对齐技术方案（定稿 V1.2）
+# 群聊会话运行身份对齐技术方案（定稿 V1.3，已实施）
 
-> 日期：2026-11-04　状态：**定稿（V1.2）/ 未实施**
+> 日期：2026-11-04　状态：**定稿（V1.3）/ 已实施（0.0.429）**
 > 目标读者：Mao 后端与容器运行时维护者
 > 关联材料：调研 `docs/research/2026-11-04-group-chat-runtime-identity-gap.md`；初稿已被本文件取代（修订对照见附录 B）
 > 实施一句话：**一次发布（后端 + 一个可空字段迁移）修正「技能/工具路径与执行容器不一致」；容量优化作为独立第二阶段；隔离边界一行不动。**
 > 修订历史：2026-11-04 初稿 → 2026-11-04 定稿 → 2026-11-04 评审补充 V1.1 → 2026-11-04 复核修正 V1.2 → 2026-11-04 实施回写 V1.3。定稿吸收 13 项自查/评审修订（对照表见附录 B）；V1.1 吸收代码评审发现的 4 项 P1 + 6 项 P2（对照见附录 C）；V1.2 针对「跨成员诊断落点」「重试身份读取通路」「publicUrl 注入点」「微信严重度」「生产库名」等 8 项复核结论做修正（对照见附录 D）；V1.3 按实现落点回写 3 处（归档抑制调用侧、publicUrl 经桥接层注入、WS/桌面重试按 owner 的边界说明，对照见附录 E），**不改变 D1–D10 任何决策**。
-> 确认记录：2026-11-04 杨佳毅确认 —— ①「技能集合随发言者变化」可接受；②D4「产物归运行身份」及其跨成员限制面（§7.1）可接受。本轮仅落文档，**不实施**。
+> 确认记录：2026-11-04 杨佳毅确认 —— ①「技能集合随发言者变化」可接受；②D4「产物归运行身份」及其跨成员限制面（§7.1）可接受。**0.0.429 已实施**（worktree 分支开发 + 自测 + 子代理代码评审，含评审修正与 V1.3 回写）。
 
 ---
 
@@ -138,7 +138,7 @@ ALTER TABLE `session`
 
 1. 参数语义改为「运行身份」（`syncToSession(agent, runtimeUserId, sessionId)`，`getUserSkillNames/getUserSkillDocuments/getRemovedSkillNames` 同步改名），类型不变；
 2. `syncState` 键改为 `${agentId}:${userId}:${sessionId}`（把 userId 作为 key 分量统一升级 `getSyncState` 的**全部 3 个调用点**：`syncToSession`、`getRemovedSkillNames`、`writeSyncZip`），消除群聊内不同发言者互相清链；
-3. **返回值**：`Promise<{ failed: string[] }>`（视图物化失败或链接失败且已摘链的技能名集合）；单技能失败仍只影响该技能，不中断其余；
+3. **返回值**：`Promise<{ failed: string[] }>`（本轮实际不可读且已摘链的技能名集合：视图物化失败、链接失败，或源下线 `ensureView` 返回 null；V1.3 明确）；单技能失败仍只影响该技能，不中断其余；
 4. 目录布局不变（V1）：`{runtimeRoot}/{runtimeUserId}/{sessionId}/skills/{name} → skill-views/{runtimeUserId}/{name}`（系统）/ `userskills/{runtimeUserId}/{name}`（个人）。
 
 `HarnessService.buildContext`：
@@ -203,6 +203,7 @@ const runtimeToolUserId = RUNTIME_SCOPED_TOOLS.has(toolName) ? runtimeUserId : u
 
 - 当前执行身份：用户 #67 秦翌翔（本条消息的发送者；有显示名时展示）。shell、文件、技能、CLI 与凭据都属于该身份。
 - 会话归属：用户 #17（本群会话的创建者）。其个人技能、token 缓存与 CLI 依赖不在当前执行环境内，不要假设可用，也不要尝试读取其运行目录。
+- 已知限制：MCP 工具仍绑定会话归属者一侧（其容器与凭据），其文件/数据视图不代表当前执行身份。
 - 若任务必须使用某位成员自己的账号/凭据，请让该成员本人 @ 机器人触发，或明确告知用户需要其本人操作。
 ```
 
@@ -215,7 +216,7 @@ const runtimeToolUserId = RUNTIME_SCOPED_TOOLS.has(toolName) ? runtimeUserId : u
 3. **产物读字节的跨成员诊断**（宿主机侧 `send-file-bytes.ts`）：关键修正是**判定必须放在向容器分发 `read_bytes` 之前**（词法预检），host 与 docker 用户走同一条文案；否则 docker 用户（89/90）会先命中容器侧错误，拿不到含 URL 的可执行提示（附录 D #1）。`loadSendFileBytes` 按类别抛出**可执行**文案——
    - `uploads/{其他 uid}`：`该文件属于其他成员的产物目录（当前执行身份 {uid}），本地路径不可读；该文件有公开 URL，请改用其转发: {publicUrl}`。`publicUrl` 由宿主持 `upload.baseUrl` 推导 origin + `/uploads/{uid}/{file}` 现成拼出（复用 `toStaticUploadBase`；`/uploads/` GET 为公开静态路由，jwt 白名单 + UUID 文件名）——**不要求模型自行换算**：系统提示词与 send-* 工具描述均无 uploads 公开 base URL（评审实证；仅 `generate_image`/`edit_image` 的返回里带 `image_url`，跨轮或压缩后可能只剩路径）；
    - `runtime/{其他 uid}`（shellOutput / userMessages / webPages）：无公开路由，抛 `该文件属于其他成员的会话运行目录（当前执行身份 {uid}），本地路径不可读且无公开 URL；请让该成员本人操作，或重新生成到共享位置（如群共享工作区）: <path>`；
-   - `edit_image` 沿用同一文案并追加「改图请重新生成，或由该成员本人操作」（它不接受 URL，见 §7.1）。
+   - `edit_image` 沿用同一预检并传 `pathPolicyHint`：uploads 分支的 URL 仅标注「可用于 send_* 转发」、出路改走 hint；runtime 分支的 hint 替代默认出路建议——它不接受 URL（见 §7.1），不能再引导「请改用其转发」造成无效重试（V1.3 实施细化）。
    接线（V1.3 实施回写）：不在 `tool-registry.ts` 传 baseUrl，而是 `SendBytesSupport` 增可选钩子 `foreignPathMessage(src, userId, hint)`（`send-file-bytes.ts` 在容器分发前调用），由 `DockerSendBytesBridge`（`read-bytes-bridge.ts`）实现，origin 通过 `uploadOriginProvider` 注入（`app-container-runtime.ts` 装配，复用 `toStaticUploadBase` + `contextPath`，失败降级为不带 URL）；`SendBytesCallContext` 另加 `pathPolicyHint`（`edit_image` 用它追加「改图请重新生成，或由该成员本人操作」）。见 §5.11 #18。
    映射规则（V1.3 实施回写）：写进提示词「执行身份」段（仅运行身份 != 会话归属时渲染，不占普通会话的前缀 token）——说明产物按执行身份隔离、`/uploads/{他人 uid}/{file}` 公开可读、可直接把他人本地路径交给 `send_*`，系统会在报错中给出可用 URL。
 

@@ -460,6 +460,12 @@ export class HarnessService {
       try {
         const mcpServers = await this.mcpSyncService.loadAgentServers(agent, session.userId ?? null);
         if (mcpServers.length > 0) {
+          // MCP 身份保持 owner（§7 已知差异）：群会话里 MCP 工具仍绑归属者容器/凭据。
+          // 留一条可 grep 的观测日志，避免排障时把「MCP 走了 owner」当成新的身份漂移。
+          if (runtimeUserId != null && (session.userId ?? null) !== runtimeUserId) {
+            harnessLog('warn', `[mcp-identity] mcp session runtimeUser=${runtimeUserId} != owner=${session.userId ?? null}`
+              + ` (session=${sessionId}): MCP tools stay bound to owner container (§7 known gap)`);
+          }
           // 模式解析放在 server 清单非空判断之后：未配置 MCP 的用户零查库、零行为差异。
           const loadMode = this.mcpLoadModeResolver != null
             ? await this.mcpLoadModeResolver.resolve(session.userId ?? null)

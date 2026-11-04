@@ -7,6 +7,7 @@ import { AgentExecutionContext } from './agent-execution-context.js';
 import { CompactionConfig } from './compaction-config.js';
 import { HarnessService } from './harness-service.js';
 import { AtomicBoolean } from '../atomic-boolean.js';
+import * as harnessLogModule from '../log.js';
 import type { Tool } from '../tool/tool.js';
 import type { AgentLoop } from './agent-loop.js';
 import type { ToolRegistry } from '../tool/tool-registry.js';
@@ -481,6 +482,29 @@ describe('HarnessService.buildContext and execute', () => {
     const ctx = await service.buildContext(10);
     // 链接未建立：任何技能路径都不可读，清单置空避免引导模型撞墙。
     expect(ctx.availableSkillNames).toEqual([]);
+  });
+
+  it('MCP 保持 owner 且身份不一致时打可观测日志（§7 已知差异）', async () => {
+    const logSpy = vi.spyOn(harnessLogModule, 'harnessLog').mockImplementation(() => undefined);
+    try {
+      const { service } = makeHarness({
+        skillSync: {
+          syncToSession: vi.fn(async () => ({ failed: [] })),
+          getUserSkillNames: vi.fn(() => []),
+          getUserSkillDocuments: vi.fn(() => []),
+          loadAgentServers: vi.fn(async () => [{ name: 'srv' }]),
+          getLocalSessionTools: vi.fn(() => []),
+          connectForCloud: vi.fn(async () => ({ tools: [], warnings: [] })),
+          clearSession: vi.fn(),
+          clearLocalSession: vi.fn(),
+          clearCloudSnapshot: vi.fn(),
+        },
+      });
+      await service.buildContext(10, null, null, false, 67);
+      expect(logSpy).toHaveBeenCalledWith('warn', expect.stringContaining('[mcp-identity]'));
+    } finally {
+      logSpy.mockRestore();
+    }
   });
 
   it('buildContext 无发言者时运行身份回落会话归属', async () => {

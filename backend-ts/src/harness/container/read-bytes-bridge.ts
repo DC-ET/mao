@@ -37,7 +37,9 @@ export class DockerSendBytesBridge implements SendBytesSupport {
   async foreignPathMessage(src: string, userId: number | null, hint?: string | null): Promise<string | null> {
     if (userId == null || !path.isAbsolute(src)) return null;
     const uid = String(userId);
-    const hintSuffix = hint != null && hint !== '' ? `；${hint}` : '';
+    // hint（如 edit_image 的「改图请重新生成，或由该成员本人操作」）替代/补充默认出路建议：
+    // 替代是为了避免两句建议连读；补充是因为 URL 对不接受 URL 的调用方（edit_image）只能用于转发。
+    const hintText = hint != null && hint !== '' ? hint : null;
     const resolved = path.resolve(src);
     const memberDirOf = (root: string): { owner: string; rest: string[] } | null => {
       const rel = path.relative(path.resolve(root), resolved);
@@ -48,9 +50,9 @@ export class DockerSendBytesBridge implements SendBytesSupport {
     };
     const runtimeHit = memberDirOf(this.deps.runtimeDir);
     if (runtimeHit != null && runtimeHit.owner !== uid) {
-      return '该文件属于其他成员的会话运行目录（当前执行身份 ' + userId + '）' + hintSuffix
-        + '，本地路径不可读且无公开 URL；请让该成员本人操作，或重新生成到共享位置（如群共享工作区）。'
-        + '路径: ' + resolved;
+      const advice = hintText ?? '请让该成员本人操作，或重新生成到共享位置（如群共享工作区）';
+      return '该文件属于其他成员的会话运行目录（当前执行身份 ' + userId + '），本地路径不可读且无公开 URL；'
+        + advice + '。路径: ' + resolved;
     }
     const uploadHit = memberDirOf(this.deps.uploadDir);
     if (uploadHit != null && uploadHit.owner !== uid) {
@@ -60,13 +62,18 @@ export class DockerSendBytesBridge implements SendBytesSupport {
         .map((segment) => encodeURIComponent(segment))
         .join('/');
       if (origin != null && encodedRest !== '') {
-        return '该文件属于其他成员的产物目录（当前执行身份 ' + userId + '）' + hintSuffix
-          + '，本地路径不可读；该文件有公开 URL，请改用其转发: '
-          + origin + '/uploads/' + uploadHit.owner + '/' + encodedRest;
+        const url = origin + '/uploads/' + uploadHit.owner + '/' + encodedRest;
+        // 有 hint 时（edit_image 不接受 URL）URL 只标注转发用途，出路走 hint，避免引导无效重试。
+        return '该文件属于其他成员的产物目录（当前执行身份 ' + userId + '），本地路径不可读；'
+          + (hintText != null
+            ? '该文件有公开 URL（可用于 send_* 转发）: ' + url + '；' + hintText
+            : '该文件有公开 URL，请改用其转发: ' + url);
       }
-      return '该文件属于其他成员的产物目录（当前执行身份 ' + userId + '）' + hintSuffix
-        + '，本地路径不可读；该文件有公开 URL，可改用其转发（向系统索取链接），或让该成员本人操作。'
-        + '路径: ' + resolved;
+      return '该文件属于其他成员的产物目录（当前执行身份 ' + userId + '），本地路径不可读；'
+        + (hintText != null
+          ? '该文件有公开 URL，可向系统索取链接用于转发；' + hintText
+          : '该文件有公开 URL，可改用其转发（向系统索取链接），或让该成员本人操作')
+        + '。路径: ' + resolved;
     }
     return null;
   }

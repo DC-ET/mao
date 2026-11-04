@@ -101,6 +101,46 @@ describe('container tool executor', () => {
     expect(JSON.parse(own).content).toBe('mine');
   });
 
+  it('crossMemberReadsGetSpecializedDiagnosticsThroughExecutor', async () => {
+    // 接线守护（评审 P2）：identity 由 ContainerToolExecutor 构造时注入 PathSandbox，
+    // 若有人删掉那一行，这里读他人 runtime/uploads 会回落通用越界文案、断言失败。
+    const base = useTmpDir('mao-exec-identity-');
+    const workspaceRoot = join(base, 'workspace');
+    const runtimeDir = join(base, 'runtime');
+    const userHomeDir = join(base, 'users');
+    const userSkillsDir = join(base, 'userskills');
+    const uploadDir = join(base, 'uploads');
+    const userWorkspace = join(workspaceRoot, '7');
+    mkdirSync(userWorkspace, { recursive: true });
+    mkdirSync(join(runtimeDir, '8', '1607', 'shellOutput'), { recursive: true });
+    writeFileSync(join(runtimeDir, '8', '1607', 'shellOutput', 'x.out'), 'foreign');
+    mkdirSync(join(uploadDir, '8'), { recursive: true });
+    writeFileSync(join(uploadDir, '8', 'gen.png'), 'foreign');
+    mkdirSync(join(uploadDir, 'releases'), { recursive: true });
+    writeFileSync(join(uploadDir, 'releases', 'latest.yml'), 'release');
+    const executor = new ContainerToolExecutor({
+      workspaceRoot, runtimeDir, userHomeDir, userSkillsDir,
+      skillViewsDir: join(base, 'skill-views'), uploadDir, shareDir: join(base, 'share'),
+    }, USER_ID);
+    const env = envelopeOf(userWorkspace);
+
+    const runtimeRead = await executor.handleToolCall(
+      'read_file', JSON.stringify({ path: join(runtimeDir, '8', '1607', 'shellOutput', 'x.out') }), env,
+    );
+    expect(JSON.parse(runtimeRead).error).toContain('其他用户的会话运行目录');
+    const uploadRead = await executor.handleToolCall(
+      'read_file', JSON.stringify({ path: join(uploadDir, '8', 'gen.png') }), env,
+    );
+    expect(JSON.parse(uploadRead).error).toContain('其他成员的产物目录');
+    // 非身份目录（releases）回落通用越界文案，不误报为「其他成员」
+    const genericRead = await executor.handleToolCall(
+      'read_file', JSON.stringify({ path: join(uploadDir, 'releases', 'latest.yml') }), env,
+    );
+    const genericError = JSON.parse(genericRead).error as string;
+    expect(genericError).toBeDefined();
+    expect(genericError).not.toContain('其他成员');
+  });
+
   it('readBytesEnforcesSandboxAndSizeLimit', () => {
     const base = useTmpDir('mao-exec-bytes-');
     const workspaceRoot = join(base, 'workspace');

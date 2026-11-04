@@ -128,6 +128,14 @@ describe('HarnessService buildContext memory injection', () => {
     ]);
   });
 
+  it('loadsMemoriesByRuntimeIdentity（注入与抽取同源 D5）', async () => {
+    const memoryInjection = { listForInjection: vi.fn(async () => []) };
+    const { harness } = buildHarness(memoryInjection);
+    // 群聊里发言者 67 ≠ 归属者 7：记忆注入必须跟运行身份走，否则「注入按 owner、抽取按发言者」再次错位。
+    await harness.buildContext(11, null, null, false, 67);
+    expect(memoryInjection.listForInjection).toHaveBeenCalledWith(67, 'mao', '/Users/me/mao');
+  });
+
   it('memoryQueryFailureDegradesToNullAndSessionStillStarts', async () => {
     const memoryInjection = {
       listForInjection: vi.fn(async () => {

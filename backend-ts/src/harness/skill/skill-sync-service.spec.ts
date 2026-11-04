@@ -150,9 +150,11 @@ describe('SkillSyncService', () => {
 
     // 源侧技能下线（技能目录被删除），但 loader 缓存仍返回路径 → ensureView 检测源缺失
     rmSync(systemFolder, { recursive: true, force: true });
-    await svc.syncToSession(agent, 7, 61);
+    const result = await svc.syncToSession(agent, 7, 61);
     expect(existsSync(target)).toBe(false);
     expect(existsSync(join(viewsRoot, '7', 'java'))).toBe(false);
+    // 链接已摘除 → 本轮不可读，必须计入 failed 供调用侧从清单剔除（D7：清单与路径一致）
+    expect(result.failed).toContain('java');
   });
 
   it('degrades by removing the link when materialization fails', async () => {
