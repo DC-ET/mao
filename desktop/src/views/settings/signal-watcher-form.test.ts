@@ -208,6 +208,9 @@ describe('copyFormFromView 复制预填', () => {
       triggerMode: 'REUSE_SESSION' as const,
       reuseSessionId: 42,
       lastValueHash: null,
+      lastValueSnippet: null,
+      lastChangeOldSnippet: null,
+      lastChangeNewSnippet: null,
       lastCheckedAt: null,
       lastChangedAt: null,
       consecutiveFailures: 0,
@@ -235,7 +238,10 @@ describe('copyFormFromView 复制预填', () => {
       id: 9, name: 'w', agentId: 7, url: 'https://example.com', method: 'GET',
       headers: {}, hasBody: false, bodyLength: 0, intervalMinutes: 15,
       compareMode: 'HASH' as const, jsonPath: null, promptTemplate: 'p',
-      status: 'ACTIVE' as const, lastValueHash: null, lastCheckedAt: null,
+      status: 'ACTIVE' as const, lastValueHash: null, lastValueSnippet: null,
+      lastChangeOldSnippet: null,
+      lastChangeNewSnippet: null,
+      lastCheckedAt: null,
       lastChangedAt: null, consecutiveFailures: 0, createdAt: null
     } as Parameters<typeof copyFormFromView>[0]
     expect(copyFormFromView(view).triggerMode).toBe('NEW_SESSION')

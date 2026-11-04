@@ -62,6 +62,12 @@
       <el-table-column label="上次变化" width="160">
         <template #default="{ row }">{{ formatDateTime(row.lastChangedAt) }}</template>
       </el-table-column>
+      <el-table-column label="上次变化内容" min-width="240" show-overflow-tooltip>
+        <template #default="{ row }">
+          <span v-if="row.lastChangeOldSnippet != null || row.lastChangeNewSnippet != null">{{ lastChangeText(row) }}</span>
+          <span v-else>-</span>
+        </template>
+      </el-table-column>
       <el-table-column label="创建时间" width="160">
         <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
       </el-table-column>
@@ -168,7 +174,7 @@
             </el-table-column>
             <el-table-column label="详情" min-width="160" show-overflow-tooltip>
               <template #default="{ row }">
-                <span :class="{ 'fail-text': row.error }">{{ row.error || row.valueHash?.slice(0, 12) || '-' }}</span>
+                <span :class="{ 'fail-text': row.error }">{{ checkDetailText(row) }}</span>
               </template>
             </el-table-column>
           </el-table>
@@ -193,6 +199,7 @@ import { useRouter } from 'vue-router'
 import { Refresh } from '@element-plus/icons-vue'
 import { api } from '../../api'
 import type { SignalCompareMode, SignalTriggerMode, SignalWatcherStatus, SignalWatcherWarning } from '@mao/contracts'
+import { formatSignalChangeValue, formatSignalCheckDetail } from '@mao/contracts'
 import { formatDateTime } from '../../utils/datetime'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
@@ -210,6 +217,11 @@ interface WatcherRow {
   status: SignalWatcherStatus
   lastCheckedAt: string | null
   lastChangedAt: string | null
+  /** 上次判定内容片段（admin 列表透出，供失败「上次正常值」用）。 */
+  lastValueSnippet: string | null
+  /** 上次变化的旧/新值（列表卡一句的数据源；从未变化 / 已重置基线时为 null）。 */
+  lastChangeOldSnippet: string | null
+  lastChangeNewSnippet: string | null
   consecutiveFailures: number
   createdAt: string | null
 }
@@ -231,6 +243,9 @@ interface CheckRow {
   checkedAt: string | null
   httpStatus: number | null
   valueHash: string | null
+  /** 本次判定所对照的上次值 / 本次值片段（V183）；失败行与上线前历史行为 null。 */
+  oldValueSnippet: string | null
+  newValueSnippet: string | null
   changed: number
   triggeredSessionId: number | null
   error: string | null
@@ -299,6 +314,36 @@ const agentNames = ref<Record<number, string>>({})
 
 const headerEntries = computed(() => Object.entries(detail.value?.headers || {}))
 const detailTitle = computed(() => (detail.value ? `信号哨兵 · ${detail.value.name}` : '信号哨兵详情'))
+
+/** 列表行「上次变化内容」一句（§5.8，与桌面同一口径）。 */
+function lastChangeText(row: WatcherRow): string {
+  return formatSignalChangeValue({
+    compareMode: row.compareMode,
+    oldText: row.lastChangeOldSnippet,
+    newText: row.lastChangeNewSnippet,
+    jsonPath: null,
+  })
+}
+
+function detailCompareMode(): SignalCompareMode {
+  return detail.value?.compareMode ?? 'HASH'
+}
+
+function detailJsonPath(): string | null {
+  return detail.value?.jsonPath ?? null
+}
+
+/** 轮询记录「详情」列文案（§5.6 与桌面同列名、同文案格式；触发失败行附第二行新旧值对）。 */
+function checkDetailText(row: { changed: number; error: string | null; oldValueSnippet: string | null; newValueSnippet: string | null }): string {
+  return formatSignalCheckDetail({
+    compareMode: detailCompareMode(),
+    changed: row.changed,
+    error: row.error,
+    oldValueSnippet: row.oldValueSnippet,
+    newValueSnippet: row.newValueSnippet,
+    jsonPath: detailJsonPath(),
+  })
+}
 
 function warningLabel(warning: SignalWatcherWarning): string {
   return WARNING_LABELS[warning] ?? warning
@@ -459,6 +504,11 @@ onActivated(() => {
 .warn-text {
   color: var(--el-color-warning);
   font-size: 12px;
+}
+
+.detail-cell {
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 /* ── 详情抽屉 ─────────────────────────────────────────────────────────── */

@@ -101,11 +101,14 @@ update 为部分更新：未传的字段保持原值；`--headers '{}'`、`--bod
 |------|------|
 | `httpStatus` | 探针 HTTP 状态码（探针失败时为 null） |
 | `valueHash` | 本次判定值哈希（判定失败时为 null） |
+| `oldValueSnippet` / `newValueSnippet` | 本次判定所对照的上次值 / 本次值片段（V183，与触发 prompt 的 `{diff}` 同口径，各截 500 字）；探针失败 / 判定失败行为 null，上线前历史行为 null |
 | `changed` | 1 = 与上次判定值不同 |
 | `triggeredSessionId` | 本次变化触发新建的会话 ID |
 | `error` | 失败原因（已脱敏，只含错误码，不含目标 URL） |
 | `warning` | 非失败告警，当前仅 `TRIGGER_RATE_LIMITED` |
 | `durationMs` | 探针耗时 |
+
+哨兵列表行透出 `lastValueSnippet`（上次判定内容片段，失败行「上次正常值」用；失败不覆盖它）与 `lastChangeOldSnippet` / `lastChangeNewSnippet`（上次那次变化的旧/新值，列表卡一句「上次变化：旧 → 新」的数据源；从未变化 / 基线重置 / 重新启用后为 null，整句不渲染；暂停不清）。
 
 ## 常见排障
 

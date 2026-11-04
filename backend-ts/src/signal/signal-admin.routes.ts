@@ -67,6 +67,9 @@ export function registerSignalAdminRoutes(app: FastifyInstance, deps: SignalAdmi
       status: row.status,
       lastCheckedAt: row.lastCheckedAt,
       lastChangedAt: row.lastChangedAt,
+      lastValueSnippet: row.lastValueSnippet ?? null,
+      lastChangeOldSnippet: row.lastChangeOldSnippet ?? null,
+      lastChangeNewSnippet: row.lastChangeNewSnippet ?? null,
       consecutiveFailures: Number(row.consecutiveFailures ?? 0),
       createdAt: row.createdAt ?? null,
     }));

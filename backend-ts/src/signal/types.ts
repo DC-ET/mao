@@ -26,6 +26,12 @@ export interface SignalWatcher {
   lastValueHash: string | null;
   /** 上次判定内容片段（截断），供 {diff} 旧值侧使用。 */
   lastValueSnippet: string | null;
+  /**
+   * 上次那次变化的新旧值对（V184）：列表卡一句「上次变化：旧 → 新」的数据源。
+   * 变化触发成功时与 markChecked 同写；基线重置 / 重新启用时清空；暂停不清。
+   */
+  lastChangeOldSnippet: string | null;
+  lastChangeNewSnippet: string | null;
   lastCheckedAt: string | null;
   lastChangedAt: string | null;
   consecutiveFailures: number;
@@ -44,6 +50,12 @@ export interface SignalWatcherCheck {
   checkedAt?: string | null;
   httpStatus: number | null;
   valueHash: string | null;
+  /**
+   * 本次判定所对照的上次值 / 本次值片段（V183）：取 runCheck 开头那份快照的
+   * lastValueSnippet 与本轮 newText，均存 truncate(·, 500)。
+   */
+  oldValueSnippet: string | null;
+  newValueSnippet: string | null;
   changed: number;
   triggeredSessionId: number | null;
   error: string | null;

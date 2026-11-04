@@ -22,7 +22,8 @@ export type {
 } from './inbox';
 export type { QuickCommandItem, QuickCommandsVO } from './command';
 export type { LlmCallScene } from './usage';
-export type { SignalCompareMode, SignalWatcherStatus, SignalTriggerMode, SignalWatcherWarning } from './signal';
+export type { SignalCompareMode, SignalWatcherStatus, SignalTriggerMode, SignalWatcherWarning, SignalWhenChangeInput, SignalCheckDetailInput } from './signal';
+export { SIGNAL_SNIPPET_MAX_CHARS, truncateSignalSnippet, formatSignalChangeValue, formatSignalCheckDetail } from './signal';
 export type { MemoryScope, MemoryStatus, MemorySource } from './memory';
 export type { ApprovalRuleType, ApprovalRuleScope, ApprovalHint } from './approval-rule';
 export type { FeedbackReason, FeedbackSource, FeedbackStatus } from './feedback';

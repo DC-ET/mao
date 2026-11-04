@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { MysqlSignalWatcherRepository } from './signal.repository.js';
+import { MysqlSignalWatcherRepository, MysqlSignalCheckRepository } from './signal.repository.js';
 
 /**
  * 仓储 SQL 语义回归。
@@ -92,6 +92,66 @@ describe('markChecked 失败计数条件清零（BUG-G 回归）', () => {
     expect(update).toBeDefined();
     expect(update!.sql).toContain('last_checked_at = ?');
     expect(update!.params).toContain(null);
+  });
+
+  it('update 补上 lastValueSnippet 映射：基线重置的 null 必须落库（§5.7 存量缺陷）', async () => {
+    const h = capture();
+    await h.repo.update(1, 7, { lastValueHash: null, lastValueSnippet: null, lastChangeOldSnippet: null, lastChangeNewSnippet: null });
+    const update = h.calls.find((c) => c.sql.includes('UPDATE signal_watcher SET'));
+    expect(update).toBeDefined();
+    expect(update!.sql).toContain('last_value_snippet = ?');
+    expect(update!.sql).toContain('last_change_old_snippet = ?');
+    expect(update!.sql).toContain('last_change_new_snippet = ?');
+    expect(update!.params).toContain(null);
+    // 未下发 lastValueSnippet 时不得出现该列（缺省 = 不动）
+    const h2 = capture();
+    await h2.repo.update(1, 7, { lastCheckedAt: null });
+    const update2 = h2.calls.find((c) => c.sql.includes('UPDATE signal_watcher SET'));
+    expect(update2!.sql).not.toContain('last_value_snippet');
+  });
+
+  it('markChecked 带 lastChange* 键时才写两列（缺省行为逐字不变）', async () => {
+    const withPair = capture();
+    await withPair.repo.markChecked(1, {
+      lastValueHash: 'h',
+      lastValueSnippet: 'NEW',
+      lastChangedAt: '2026-11-04 00:00:00',
+      consecutiveFailures: 0,
+      lastChangeOldSnippet: 'OLD',
+      lastChangeNewSnippet: 'NEW',
+    });
+    const update = withPair.calls.find((c) => c.sql.includes('last_value_hash = ?'));
+    expect(update!.sql).toContain('last_change_old_snippet = ?');
+    expect(update!.sql).toContain('last_change_new_snippet = ?');
+    // 参数：hash, snippet, changedAt, now, resetFlag, failures, old, new, id
+    expect(update!.params).toEqual(['h', 'NEW', '2026-11-04 00:00:00', expect.any(String), 1, 0, 'OLD', 'NEW', 1]);
+
+    const withoutPair = capture();
+    await withoutPair.repo.markChecked(1, {
+      lastValueHash: 'h',
+      lastValueSnippet: 'NEW',
+      lastChangedAt: null,
+      consecutiveFailures: 0,
+    });
+    const plain = withoutPair.calls.find((c) => c.sql.includes('last_value_hash = ?'));
+    expect(plain!.sql).not.toContain('last_change_old_snippet');
+    expect(plain!.params).toHaveLength(7);
+  });
+
+  it('updateValue 一次 UPDATE 写哈希 + 新旧片段', async () => {
+    const calls: Array<{ sql: string; params: unknown[] }> = [];
+    const db = {
+      execute: vi.fn(async (sql: string, params: unknown[]) => {
+        calls.push({ sql, params });
+        return { affectedRows: 1, insertId: 0 };
+      }),
+    };
+    const repo = new MysqlSignalCheckRepository(db as never);
+    await repo.updateValue(9, { valueHash: 'hh', oldValueSnippet: 'O', newValueSnippet: 'N' });
+    const update = calls.find((c) => c.sql.includes('UPDATE signal_watcher_check SET'));
+    expect(update).toBeDefined();
+    expect(update!.sql).toBe('UPDATE signal_watcher_check SET value_hash = ?, old_value_snippet = ?, new_value_snippet = ? WHERE id = ?');
+    expect(update!.params).toEqual(['hh', 'O', 'N', 9]);
   });
 
   it('不再无条件覆盖（LEAST 取小等价于恒写 0，已废弃）', async () => {

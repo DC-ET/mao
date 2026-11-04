@@ -42,6 +42,8 @@ function watcher(overrides: Partial<SignalWatcher> = {}): SignalWatcher {
     status: 'ACTIVE',
     lastValueHash: null,
     lastValueSnippet: null,
+    lastChangeOldSnippet: null,
+    lastChangeNewSnippet: null,
     lastCheckedAt: null,
     lastChangedAt: null,
     consecutiveFailures: 0,
@@ -111,6 +113,8 @@ function harness(options: {
     if (row == null) return;
     row.lastValueHash = patch.lastValueHash;
     row.lastValueSnippet = patch.lastValueSnippet;
+    if ('lastChangeOldSnippet' in patch) row.lastChangeOldSnippet = patch.lastChangeOldSnippet ?? null;
+    if ('lastChangeNewSnippet' in patch) row.lastChangeNewSnippet = patch.lastChangeNewSnippet ?? null;
     row.lastChangedAt = patch.lastChangedAt;
     if (patch.resetFailures !== false && row.consecutiveFailures === patch.consecutiveFailures) row.consecutiveFailures = 0;
   });
@@ -170,6 +174,10 @@ function harness(options: {
     updateHash: vi.fn(async (id: number, hash: string) => {
       const row = checks.find((c) => c.id === id);
       if (row != null) row.valueHash = hash;
+    }),
+    updateValue: vi.fn(async (id: number, patch: { valueHash: string; oldValueSnippet: string | null; newValueSnippet: string | null }) => {
+      const row = checks.find((c) => c.id === id);
+      if (row != null) { row.valueHash = patch.valueHash; row.oldValueSnippet = patch.oldValueSnippet; row.newValueSnippet = patch.newValueSnippet; }
     }),
     markChanged: vi.fn(async (id: number) => {
       const row = checks.find((c) => c.id === id);
@@ -324,6 +332,44 @@ describe('WatcherService.runCheck', () => {
     expect(h.watchers.get(1)!.lastValueHash).toBeTruthy();
     expect(h.checks).toHaveLength(1);
     expect(h.checks[0]!.changed).toBe(0);
+    // 首轮建基线：新值非空、旧值为 NULL（无对照），watcher 行「上次变化」仍为 NULL
+    expect(h.checks[0]!.newValueSnippet).toBe('body');
+    expect(h.checks[0]!.oldValueSnippet).toBeNull();
+    expect(h.watchers.get(1)!.lastChangeOldSnippet).toBeNull();
+    expect(h.watchers.get(1)!.lastChangeNewSnippet).toBeNull();
+  });
+
+  it('writes the check snippets from the runCheck start snapshot (see §7.2)', async () => {
+    const h = harness({
+      watcher: watcher({ lastValueHash: 'different', lastValueSnippet: 'old-body' }),
+      probe: () => probeResult({ body: 'new-body', bodyBytes: Buffer.from('new-body', 'utf8') }),
+    });
+    // 探针在途期间用户编辑判定字段：触发前 fresh 复读到的是改后值（EDITED-BODY），
+    // 但旧值必须仍是 runCheck 开头快照的 old-body——不能改用 473 行复读的 fresh。
+    const repo = (h.service as unknown as { deps: { watcherRepo: { findById: ReturnType<typeof vi.fn> } } }).deps.watcherRepo;
+    repo.findById = vi.fn()
+      .mockResolvedValueOnce(watcher({ lastValueHash: 'different', lastValueSnippet: 'old-body' }))
+      .mockResolvedValue(watcher({ lastValueHash: 'different', lastValueSnippet: 'EDITED-BODY' }));
+    await h.service.runCheck(1);
+    expect(h.checks[0]!.changed).toBe(1);
+    expect(h.checks[0]!.oldValueSnippet).toBe('old-body');
+    expect(h.checks[0]!.newValueSnippet).toBe('new-body');
+    // watcher 行「上次变化」新旧值对同写
+    expect(h.watchers.get(1)!.lastChangeOldSnippet).toBe('old-body');
+    expect(h.watchers.get(1)!.lastChangeNewSnippet).toBe('new-body');
+  });
+
+  it('truncates stored snippets to the buildDiff 500-char contract', async () => {
+    const longOld = 'o'.repeat(600);
+    const longNew = 'n'.repeat(600);
+    const h = harness({
+      watcher: watcher({ lastValueHash: 'different', lastValueSnippet: longOld }),
+      probe: () => probeResult({ body: longNew, bodyBytes: Buffer.from(longNew, 'utf8') }),
+    });
+    await h.service.runCheck(1);
+    expect(h.checks[0]!.oldValueSnippet).toBe(`${longOld.slice(0, 500)}…（已截断）`);
+    expect(h.checks[0]!.newValueSnippet).toBe(`${longNew.slice(0, 500)}…（已截断）`);
+    expect(h.watchers.get(1)!.lastChangeNewSnippet).toBe(`${longNew.slice(0, 500)}…（已截断）`);
   });
 
   it('does not trigger when the value is unchanged', async () => {
@@ -474,6 +520,10 @@ describe('WatcherService.runCheck', () => {
     expect(h.watchers.get(1)!.lastValueHash).toBe(sha256('new-body'));
     // 变化时刻不因失败而刷新（这一次没有真正通知用户）
     expect(h.watchers.get(1)!.lastChangedAt).toBeNull();
+    // 「上次变化」新旧值对随 markChanged 一并推进（轮询记录第三态展示用），
+    // 失败的只是触发、值是好的；lastChangedAt 语义保持不变（成功触发时刻）。
+    expect(h.watchers.get(1)!.lastChangeOldSnippet).toBe('old-body');
+    expect(h.watchers.get(1)!.lastChangeNewSnippet).toBe('new-body');
 
     await h.service.runCheck(1);
     // 同值 → 不再触发，也不新增 check 行
@@ -645,6 +695,8 @@ describe('WatcherService.update 敏感字段保留语义（BUG-2/3/4/SUG-3 回�
       watcher: watcher({
         lastValueHash: 'abc',
         lastValueSnippet: 'OLD-SNIPPET',
+        lastChangeOldSnippet: 'PREV-OLD',
+        lastChangeNewSnippet: 'PREV-NEW',
         lastChangedAt: '2026-10-11 10:00:00',
       }),
     });
@@ -654,6 +706,51 @@ describe('WatcherService.update 敏感字段保留语义（BUG-2/3/4/SUG-3 回�
     expect(stored.lastValueHash).toBeNull();
     expect(stored.lastValueSnippet).toBeNull();
     expect(stored.lastChangedAt).toBeNull();
+    // 基线重置同时清空「上次变化」新旧对（§4.1 / §7.5）
+    expect(stored.lastChangeOldSnippet).toBeNull();
+    expect(stored.lastChangeNewSnippet).toBeNull();
+  });
+
+  it('setStatus DISABLED→ACTIVE clears the last-change snippet pair (§7.5)', async () => {
+    const h = harness({
+      watcher: watcher({
+        status: 'DISABLED',
+        consecutiveFailures: 5,
+        lastValueHash: 'abc',
+        lastValueSnippet: 'OLD',
+        lastChangeOldSnippet: 'PREV-OLD',
+        lastChangeNewSnippet: 'PREV-NEW',
+        lastChangedAt: '2026-10-11 10:00:00',
+      }),
+    });
+    await h.service.setStatus(7, 1, 'ACTIVE');
+    const stored = h.watchers.get(1)!;
+    expect(stored.status).toBe('ACTIVE');
+    expect(stored.consecutiveFailures).toBe(0);
+    expect(stored.lastValueSnippet).toBeNull();
+    expect(stored.lastChangeOldSnippet).toBeNull();
+    expect(stored.lastChangeNewSnippet).toBeNull();
+    expect(stored.lastChangedAt).toBeNull();
+  });
+
+  it('setStatus PAUSED→ACTIVE does NOT clear the snippet pair (§7.5)', async () => {
+    const h = harness({
+      watcher: watcher({
+        status: 'PAUSED',
+        lastValueHash: 'abc',
+        lastValueSnippet: 'OLD',
+        lastChangeOldSnippet: 'PREV-OLD',
+        lastChangeNewSnippet: 'PREV-NEW',
+        lastChangedAt: '2026-10-11 10:00:00',
+      }),
+    });
+    await h.service.setStatus(7, 1, 'ACTIVE');
+    const stored = h.watchers.get(1)!;
+    expect(stored.status).toBe('ACTIVE');
+    // 暂停后再启用不重置基线，两句（lastValueSnippet / 上次变化）仍在
+    expect(stored.lastValueSnippet).toBe('OLD');
+    expect(stored.lastChangeOldSnippet).toBe('PREV-OLD');
+    expect(stored.lastChangeNewSnippet).toBe('PREV-NEW');
   });
 
   it('replaces a masked header value with the stored one instead of storing the mask', async () => {
