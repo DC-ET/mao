@@ -67,8 +67,12 @@ export function runtimeSessionCleanup(runtimeRoot: string): (userId: number, ses
     }
     try {
       for (const sessionDir of cleaned) {
-        if (existsSync(sessionDir)) {
+        if (!existsSync(sessionDir)) continue;
+        try {
           rmSync(sessionDir, { recursive: true, force: true });
+        } catch (e) {
+          // 单个目录 EBUSY/EACCES 不应跳过其余发言者目录（残留可下次再清，但不能漏清）。
+          console.error(`Failed to clean runtime dir ${sessionDir} for session ${sessionId}`, e);
         }
       }
     } catch (e) {
