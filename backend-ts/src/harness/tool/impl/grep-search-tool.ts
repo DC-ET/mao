@@ -61,6 +61,12 @@ export class GrepSearchTool extends BaseTool {
       const ignoreCase = asBool(args.ignore_case, false);
       const contextLines = args.context_lines != null ? asInt(args.context_lines, 0) : 0;
       const maxOutputChars = args.max_output_chars != null ? asInt(args.max_output_chars, DEFAULT_MAX_OUTPUT_CHARS) : DEFAULT_MAX_OUTPUT_CHARS;
+      // 负数 / 零上限会让首个条目即触截断（0 + size > maxOutputChars 恒成立）→ 静默返回
+      // 「0 命中」无 error，模型误判无结果继续推进（搜错关键词 / 写错文件）。与 pattern 缺失
+      // 回 error、rg 失败不吞成 0 命中同一口径：宁可见的错误，不要静默的空结果。
+      if (contextLines < 0 || maxOutputChars < 1) {
+        return toJson({ matches: [], error: '参数 context_lines 必须 ≥ 0、max_output_chars 必须 ≥ 1' });
+      }
       const pathArg = asText(args.path);
       const resolvedPath = pathArg && pathArg !== ''
         ? this.pathSandbox.resolveLenient(pathArg, workspace)

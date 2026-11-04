@@ -11,6 +11,7 @@ import {
   buildShellPrefixValue,
   buildShellRuleCandidates,
   containsDenyToken,
+  denyScanTargetForShell,
   matchesShellPrefix,
   normalizeShellCommand,
   tokenizeCommand,
@@ -112,9 +113,10 @@ export class ApprovalRuleService implements ApprovalRuleFacade {
       if (userId == null) return null;
       const candidates = this.candidatesFor(toolName, argumentsJson);
       if (candidates.length === 0) return null;
-      // denylist 匹配拒绝：即使规则已存在，含 deny token 的请求规则失效、走正常审批
-      // （candidates[0] 对 shell 是归一化全命令、对 MCP 是工具全名，均为全量扫描对象）
-      if (await this.hasDenyToken(candidates[0].ruleValue)) return null;
+      // denylist 匹配拒绝：即使规则已存在，含 deny token 的请求规则失效、走正常审批。
+      // 扫描对象必须是未截断的全量命令——candidates[0] 是 512 截断后的 rule_value，
+      // 拿它扫描会让 512 之后的危险命令绕过（与 buildApprovalHint 同口径修正）
+      if (await this.hasDenyToken(this.denyScanTarget(toolName, argumentsJson, candidates[0].ruleValue))) return null;
       const rows = await this.repo.listEnabledForMatch(userId, sessionId);
       // 优先级：会话级优先于用户级；同级内更窄语义优先（EXACT/MCP 全等 → PREFIX 词边界前缀）
       for (const scope of ['SESSION', 'USER'] as const) {
@@ -157,6 +159,17 @@ export class ApprovalRuleService implements ApprovalRuleFacade {
 
   private async hasDenyToken(command: string): Promise<boolean> {
     return containsDenyToken(command, await this.denyTokens());
+  }
+
+  /**
+   * denylist 扫描对象：shell 用未截断的归一化全命令（rule_value 的 512 截断只服务于
+   * 存储宽度，不能缩小扫描面，否则长命令尾部的危险 token 绕过）；MCP 用工具全名。
+   */
+  private denyScanTarget(toolName: string, argumentsJson: string, fallback: string): string {
+    if (toolName === 'shell') {
+      return denyScanTargetForShell(argumentsJson) ?? fallback;
+    }
+    return fallback;
   }
 
   /**
