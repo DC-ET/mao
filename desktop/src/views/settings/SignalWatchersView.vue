@@ -223,6 +223,7 @@
                 会话 #{{ row.triggeredSessionId }}
               </a>
               <span v-if="row.warning" class="warn-text">{{ warningLabel(row.warning) }}</span>
+              <span v-if="!row.triggeredSessionId && !row.warning">-</span>
             </template>
           </el-table-column>
           <el-table-column label="详情" min-width="140" show-overflow-tooltip>
