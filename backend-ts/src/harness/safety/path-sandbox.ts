@@ -9,6 +9,20 @@ export interface PathSandboxOptions {
    * 防符号链接逃逸。宿主机模式保持 false（现状行为零变化）。
    */
   strict?: boolean;
+  /**
+   * 执行身份诊断（技术方案 2026-11-04 §5.9 第 2 条）：容器侧专用。路径越界且命中
+   * 「他人运行目录/他人产物目录」时给出专属文案（可被模型正确解释），其余越界保持原样。
+   */
+  identity?: PathSandboxIdentity | null;
+}
+
+export interface PathSandboxIdentity {
+  /** 运行目录根（{runtimeDir}）：识别 runtime/{他人 uid}。 */
+  runtimeRoot?: string | null;
+  /** 图片产物根（{uploadDir}）：识别 uploads/{他人 uid}。 */
+  uploadDir?: string | null;
+  /** 当前执行身份 userId（容器归属用户）。 */
+  userId: number;
 }
 
 export class PathSandbox {
@@ -16,10 +30,12 @@ export class PathSandbox {
   private readonly allowedRoots = new Set<string>();
   private readonly allowedRealRoots = new Set<string>();
   private readonly strict: boolean;
+  private readonly identity: PathSandboxIdentity | null;
 
   constructor(workspaceRoot: string, options: PathSandboxOptions = {}) {
     this.workspaceRoot = path.resolve(workspaceRoot);
     this.strict = options.strict === true;
+    this.identity = options.identity ?? null;
     try {
       mkdirSync(this.workspaceRoot, { recursive: true });
     } catch {
@@ -54,8 +70,40 @@ export class PathSandbox {
       return resolved;
     }
 
+    // 执行身份诊断（技术方案 2026-11-04 §5.9 第 2 条）：他人运行目录/产物目录给专属文案。
+    const foreign = this.describeForeignPath(resolved);
+    if (foreign != null) {
+      harnessLog('warn', `Path escape attempt blocked (foreign member path): ${resolved}`);
+      throw new SecurityException(foreign);
+    }
     harnessLog('warn', `Path escape attempt blocked: ${userPath} (resolved to ${resolved})`);
     throw new SecurityException('Path escape attempt: ' + userPath);
+  }
+
+  /** 命中「他人 runtime/uploads 目录」时的专属文案；非跨成员路径返回 null（保持原文案）。 */
+  private describeForeignPath(resolved: string): string | null {
+    const identity = this.identity;
+    if (identity == null) return null;
+    const uid = String(identity.userId);
+    // 只认「{root}/{纯数字 uid}/…」形态：uploads 根下平台平坦文件与 releases/、runtime 下
+    // channels/ 等非用户目录不参与跨成员判定（回落通用越界文案，避免错误归因）。
+    const memberDirOf = (root: string | null | undefined): string | null => {
+      if (root == null || root === '') return null;
+      const rel = path.relative(path.resolve(root), resolved);
+      if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) return null;
+      const first = rel.split(path.sep)[0] ?? null;
+      return first != null && /^\d+$/.test(first) ? first : null;
+    };
+    const runtimeFirst = memberDirOf(identity.runtimeRoot);
+    if (runtimeFirst != null && runtimeFirst !== uid) {
+      return `该路径属于其他用户的会话运行目录（当前执行身份 ${identity.userId}），本地不可访问: ${resolved}`;
+    }
+    const uploadFirst = memberDirOf(identity.uploadDir);
+    if (uploadFirst != null && uploadFirst !== uid) {
+      return `该文件属于其他成员的产物目录（当前执行身份 ${identity.userId}），本地不可访问；`
+        + `如需转发，请让该成员本人操作，或改用公开 URL 方式: ${resolved}`;
+    }
+    return null;
   }
 
   resolveLenient(userPath: string, sessionWorkspace?: string | null): string {

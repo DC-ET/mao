@@ -80,6 +80,17 @@ const SERVER_ONLY_TOOLS = new Set([
 ]);
 const WRITE_TOOLS = new Set(['write_file', 'edit_file']);
 
+/**
+ * 执行期资源类工具（技术方案 2026-11-04 §5.5）：读/写按「运行身份」寻址
+ * （产物目录、缓存、发送字节），与执行环境的文件视图保持一致。
+ * 其余工具保持会话归属身份（task_*、定时任务、ask_user_questions、web_search、http_*）。
+ */
+const RUNTIME_SCOPED_TOOLS = new Set<string>([
+  'dump_user_messages', 'open_web_page', 'generate_image', 'edit_image',
+  'feishu_send_image', 'feishu_send_file', 'dingtalk_send_image', 'dingtalk_send_file',
+  'send_wechat_image', 'send_wechat_file',
+]);
+
 export class IllegalArgumentException extends Error {
   constructor(message: string) {
     super(message);
@@ -196,6 +207,7 @@ export class ToolDispatcher {
         invocation.sessionId, invocation.userId, invocation.workspace,
         invocation.permissionLevel, invocation.modelConfig, invocation.sessionTools,
         invocation.executionUserId ?? null, invocation.contextSnapshot ?? null,
+        invocation.runtimeUserId ?? null,
       );
       const result = normalizeToolResult(invocation.callId, outcome.raw, Date.now() - started);
       if (outcome.approvalMark) {
@@ -271,15 +283,22 @@ export class ToolDispatcher {
     sessionTools: Tool[] | null,
     executionUserId: number | null = null,
     contextSnapshot: string | null = null,
+    /** 运行身份（技术方案 2026-11-04 §5.5）：由 ToolInvocation 透传；缺省回落执行用户/归属。 */
+    runtimeIdentity: number | null = null,
   ): Promise<DispatchOutcome> {
     const descriptor = this.resolveDescriptor(toolName, sessionTools);
+    // 运行身份口径（§5.5）：runtimeIdentity 优先（buildContext 统一算好），否则旧口径。
+    const runtimeUserId = runtimeIdentity ?? executionUserId ?? userId;
+    const runtimeToolUserId = RUNTIME_SCOPED_TOOLS.has(toolName) ? runtimeUserId : userId;
     if (toolName === ASK_USER_QUESTIONS) {
       return { raw: await this.dispatchAskUserQuestions(argumentsJson, sessionId), llmVerdict: null };
     }
     if (SERVER_ONLY_TOOLS.has(toolName) || toolName.startsWith('page_')) {
       const tool = this.toolRegistry.getTool(toolName);
       if (tool) {
-        return { raw: await callTool(tool, argumentsJson, sessionId, userId, workspace), llmVerdict: null };
+        // 产物/缓存类工具按运行身份寻址（§5.5）：dump_user_messages、open_web_page、
+        // generate_image、edit_image、send_wechat_* 均在 SERVER_ONLY 分支。
+        return { raw: await callTool(tool, argumentsJson, sessionId, runtimeToolUserId, workspace), llmVerdict: null };
       }
       throw new IllegalArgumentException('Unknown tool: ' + toolName);
     }
@@ -376,7 +395,7 @@ export class ToolDispatcher {
 
     // docker 运行时分支（§5.7.1）：审批/危险评估/规则命中已在宿主机完成，
     // 这里只把已放行的执行动作派发到该用户的容器。host 模式整体短路。
-    const routeUserId = executionUserId ?? userId;
+    const routeUserId = runtimeUserId;
     if (this.dockerRouter && routeUserId != null && isDockerOnlyTool(toolName)) {
       try {
         if (await this.dockerRouter.enabledFor(routeUserId)) {
@@ -398,7 +417,8 @@ export class ToolDispatcher {
       tool = sessionTools.find((t) => t.getName() === toolName);
     }
     if (tool) {
-      const toolUserId = toolName === 'shell' ? executionUserId ?? userId : userId;
+      // shell 与执行期资源类工具（发送等）按运行身份读字节；其余保持会话归属（§5.5）。
+      const toolUserId = (toolName === 'shell' || RUNTIME_SCOPED_TOOLS.has(toolName)) ? runtimeUserId : userId;
       return { raw: await callTool(tool, argumentsJson, sessionId, toolUserId, workspace), llmVerdict: null };
     }
     throw new IllegalArgumentException('Unknown tool: ' + toolName);

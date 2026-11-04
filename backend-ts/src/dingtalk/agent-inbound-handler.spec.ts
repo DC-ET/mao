@@ -128,3 +128,23 @@ describe('AgentDingtalkInboundHandler sessions', () => {
     expect(parts[0].text).toBe('图片已保存到会话工作区：chat-files/2026-10-13/dingtalk-image-msg_1.jpg');
   });
 });
+
+describe('AgentDingtalkInboundHandler retry identity', () => {
+  it('重试以持久化运行身份续跑（技术方案 2026-11-04 §5.2）', async () => {
+    const { handler: inbound, execute } = handler({
+      sessionService: {
+        getPhase: async () => 'FAILED',
+        cleanupIncompleteTail: async () => 0,
+        updatePhase: async () => undefined,
+        getMessages: async () => [],
+        getLatestAssistantReply: async () => '回复',
+        getLastRuntimeUserId: async () => 67,
+      },
+    });
+    const result = await inbound.retryExecution(20, async () => ({ update: async () => undefined }) as never);
+    expect(result).toEqual({ ok: true });
+    await vi.waitFor(() => {
+      expect(execute).toHaveBeenCalledWith(20, null, expect.anything(), expect.anything(), 67);
+    });
+  });
+});

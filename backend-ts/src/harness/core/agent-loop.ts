@@ -821,6 +821,7 @@ export class AgentLoop {
       sessionId: context.sessionId ?? null,
       userId: context.userId ?? null,
       executionUserId: context.executionUserId ?? null,
+      runtimeUserId: context.runtimeUserId ?? context.executionUserId ?? context.userId ?? null,
       workspace: context.workspace ?? null,
       permissionLevel: context.permissionLevel ?? null,
       modelConfig: context.modelConfig ?? null,

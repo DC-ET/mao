@@ -518,6 +518,30 @@ describe('BackgroundSubagentManager.buildSubContext', () => {
     const names = subCtx.tools.map((tool) => tool.getName());
     expect(names).toEqual(['read_file']);
   });
+
+  it('passes runtime identity to buildContext（child 缺失回落父会话）', async () => {
+    const calls: unknown[][] = [];
+    const manager = new BackgroundSubagentManager({
+      harnessService: () => ({
+        buildContext: async (...args: unknown[]) => {
+          calls.push(args);
+          return new AgentExecutionContext();
+        },
+      }),
+      sessionMapper: {
+        selectById: vi.fn(async () => ({ id: 1, userId: 17, lastRuntimeUserId: 67 })),
+      },
+    } as never);
+    // child 已有身份（spawn/追问时落值）：直接用 child 的
+    await manager.buildSubContext(
+      { id: 42, parentSessionId: 1, lastRuntimeUserId: 67 } as never, { name: 'default' },
+    );
+    expect(calls[0][0]).toBe(42);
+    expect(calls[0][4]).toBe(67);
+    // 升级前存量子会话（无身份）：回落父会话 lastRuntimeUserId，而非静默落到 owner
+    await manager.buildSubContext({ id: 43, parentSessionId: 1 } as never, { name: 'default' });
+    expect(calls[1][4]).toBe(67);
+  });
 });
 
 describe('BackgroundSubagentManager 收件箱写入（SUBAGENT_DONE）', () => {

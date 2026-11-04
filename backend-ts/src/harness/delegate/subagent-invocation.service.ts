@@ -42,6 +42,9 @@ export class SubagentInvocationService {
         projectKey: parent.projectKey,
         parentSessionId: parent.id,
         sessionType: 'SUBAGENT',
+        // 运行身份继承（技术方案 2026-11-04 §5.8）：子代理跟随父会话「本次执行身份」，
+        // 缺失回落父会话归属；buildSubContext 按该身份构建子会话上下文（不回落 owner）。
+        lastRuntimeUserId: parent.lastRuntimeUserId ?? parent.userId ?? null,
         // 子代理继承父会话来源：admin 按来源筛选时与父保持一致（技术方案 D8）。
         source: parent.source,
       };
@@ -91,9 +94,15 @@ export class SubagentInvocationService {
       await new SessionTodoMapper(tx).deleteBySessionId(childSessionId);
       // 追问/纠偏时让子代理跟随主代理当前模型：主代理切换模型后，子代理复用其既有上下文、但改用主代理正在用的新模型。
       // 首次 spawn 时子代理继承 parent.modelId；追问时需要重新同步，否则子代理会一直用创建时绑定的旧模型。
-      await tx.execute("UPDATE session SET phase = 'RUNNING', model_id = ? WHERE id = ?", [parent.modelId, childSessionId]);
+      // 运行身份同样按父会话当前值刷新（§5.8）：追问发生在父会话「当前发言者」的环境里。
+      const parentRuntimeUser = parent.lastRuntimeUserId ?? parent.userId ?? null;
+      await tx.execute(
+        "UPDATE session SET phase = 'RUNNING', model_id = ?, last_runtime_user_id = ? WHERE id = ?",
+        [parent.modelId, parentRuntimeUser, childSessionId],
+      );
       child.phase = 'RUNNING';
       child.modelId = parent.modelId;
+      child.lastRuntimeUserId = parentRuntimeUser;
       if (beforeUserMessage && beforeUserMessage.trim() !== '') {
         await tx.insert('message', assistantMessage(childSessionId, beforeUserMessage));
       }

@@ -67,7 +67,11 @@ export class ContainerToolExecutor {
   ) {
     const u = String(userId);
     // §5.5 允许根：每用户子目录 + /tmp（宿主 {tmpDir}/{userId} 的持久挂载，容器内路径为 /tmp）
-    this.pathSandbox = new PathSandbox(path.join(roots.workspaceRoot, u), { strict: true });
+    // identity（技术方案 2026-11-04 §5.9 第 2 条）：他人 runtime/uploads 目录给专属诊断文案。
+    this.pathSandbox = new PathSandbox(path.join(roots.workspaceRoot, u), {
+      strict: true,
+      identity: { runtimeRoot: roots.runtimeDir, uploadDir: roots.uploadDir, userId },
+    });
     this.runtimeResolver = new RuntimeDataResolver(roots.runtimeDir, roots.userHomeDir);
     this.pathSandbox.addAllowedRoot(path.join(roots.runtimeDir, u));
     this.pathSandbox.addAllowedRoot(path.join(roots.userHomeDir, u));

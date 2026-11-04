@@ -128,6 +128,11 @@ export interface AppConfig {
         shellOutputMaxAgeDays: number;
         cleanupSkills: boolean;
       };
+      /**
+       * 运行身份开关（MAO_RUNTIME_IDENTITY）：execution=执行期资源跟随本次发言者（默认）；
+       * owner=跟随会话归属（应急回退，群聊里等于「以建会话者身份执行」）。
+       */
+      runtimeIdentityMode: 'execution' | 'owner';
     };
     mcp: {
       secretKey: string;
@@ -265,6 +270,7 @@ const DEFAULTS: AppConfig = {
         shellOutputMaxAgeDays: 7,
         cleanupSkills: true,
       },
+      runtimeIdentityMode: 'execution',
     },
     mcp: {
       secretKey: 'mao-mcp-default-secret-change-me',
@@ -446,6 +452,15 @@ function coerceTypes(cfg: AppConfig): AppConfig {
   }
   if (process.env.MAO_USER_HOME_DIR) {
     cfg.app.harness.userHomeDir = process.env.MAO_USER_HOME_DIR;
+  }
+  // 运行身份开关（技术方案 2026-11-04 §5.10）：execution=跟随本次发言者（默认）；
+  // owner=跟随会话归属（应急回退）。非法值回落当前值（默认 execution）并告警，
+  // 避免应急时把 owner 拼错却静默留在 execution。
+  const runtimeIdentity = (process.env.MAO_RUNTIME_IDENTITY ?? '').trim();
+  if (runtimeIdentity === 'execution' || runtimeIdentity === 'owner') {
+    cfg.app.harness.runtimeIdentityMode = runtimeIdentity;
+  } else if (runtimeIdentity !== '') {
+    console.warn(`[config] 非法 MAO_RUNTIME_IDENTITY=${runtimeIdentity}（可选 execution|owner），已回落 ${cfg.app.harness.runtimeIdentityMode}`);
   }
   cfg.app.harness.cleanup.intervalMs = n(process.env.MAO_CLEANUP_INTERVAL_MS ?? cfg.app.harness.cleanup.intervalMs, 24 * 3600 * 1000);
   cfg.app.harness.cleanup.shellOutputMaxAgeDays = n(process.env.MAO_CLEANUP_SHELL_MAX_AGE_DAYS ?? cfg.app.harness.cleanup.shellOutputMaxAgeDays, 7);

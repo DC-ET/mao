@@ -41,7 +41,7 @@ describe('B-1 CLOUD MCP snapshot survives across executions', () => {
       { execute: vi.fn(async () => undefined), removeCancelFlag: vi.fn() } as never,
       toolRegistry,
       { hasSkill: vi.fn(() => false), getAllNames: vi.fn(() => []), getAllDocuments: vi.fn(() => []) } as never,
-      { syncToSession: vi.fn(async () => undefined), getUserSkillNames: vi.fn(() => []), getUserSkillDocuments: vi.fn(() => []) } as never,
+      { syncToSession: vi.fn(async () => ({ failed: [] })), getUserSkillNames: vi.fn(() => []), getUserSkillDocuments: vi.fn(() => []) } as never,
       { get: vi.fn(() => []) } as never,
       { get: vi.fn(() => null) } as never,
       sessionMapper,

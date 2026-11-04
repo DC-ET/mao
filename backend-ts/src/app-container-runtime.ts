@@ -23,6 +23,7 @@ import { DockerSendBytesBridge } from './harness/container/read-bytes-bridge.js'
 import { RoutingMcpClientManager } from './harness/container/routing-mcp-client-manager.js';
 import { PtyChannelHub } from './harness/container/pty-bridge.js';
 import { isChannelWorkspace } from './harness/container/channel-workspace.js';
+import { toStaticUploadBase } from './harness/tool/impl/generate-image-tool.js';
 import { nodePtyFactory } from './harness/terminal/remote-terminal.js';
 import { createContainerPtyFactory } from './app-utils.js';
 
@@ -164,6 +165,17 @@ export async function assembleContainerRuntime(deps: ContainerRuntimeDeps): Prom
     runtimeResolver,
     runtimeDir: cfg.app.harness.runtimeDir,
     uploadDir,
+    // uploads 公开 URL origin（技术方案 2026-11-04 §5.9 第 3 条）：与 generate_image 同口径
+    // 派生静态 origin（upload.baseUrl 去 contextPath 后缀）；失败时文案降级为不带 URL。
+    uploadOriginProvider: async () => {
+      try {
+        const upload = await settingService.getUploadConfig();
+        const origin = toStaticUploadBase(upload.baseUrl ?? '', cfg.server.servlet.contextPath || '/api');
+        return origin.trim() !== '' ? origin : null;
+      } catch {
+        return null;
+      }
+    },
   });
   const mcpRuntimeProbe = {
     shouldHandle: async (sessionId: number): Promise<boolean> => {

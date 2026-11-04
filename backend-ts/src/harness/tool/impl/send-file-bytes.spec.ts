@@ -1,11 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
 import { mcpWhitelistEnv } from '../../mcp/mcp-client-manager.js';
 import { loadSendFileBytes, readLocalBytes } from './send-file-bytes.js';
+import { fetchBytesWithLimits } from './fetch-bytes.js';
 import { StrictPathResolver } from '../../safety/strict-path.js';
 import { SecurityException } from '../../safety/path-sandbox.js';
 import { useTmpDir } from '../../../testing/tmp-dir.js';
 import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+
+// URL 源不发真实网络请求：只验证「预检不误拦 URL、也不走容器」的顺序不变量。
+vi.mock('./fetch-bytes.js', () => ({
+  fetchBytesWithLimits: vi.fn(async () => Buffer.from('url-bytes')),
+}));
 
 describe('mcp stdio env whitelist', () => {
   it('inheritsOnlyWhitelistedKeysAndMergesServerEnv', () => {
@@ -63,6 +69,71 @@ describe('send-file bytes loading', () => {
     writeFileSync(join(runtime, 'out.bin'), 'rt');
     const rt = await readLocalBytes(join(runtime, 'out.bin'), sandbox, [runtime], workspace, 1024);
     expect(rt.toString()).toBe('rt');
+  });
+
+  it('跨成员预检先于容器分发：命中时不调用 readBytes（docker 用户也能拿到可执行文案）', async () => {
+    const base = useTmpDir('mao-sendbytes-precheck-');
+    const workspace = join(base, 'workspace', '7');
+    mkdirSync(workspace, { recursive: true });
+    const sandbox = { getEffectiveWorkspaceRoot: () => workspace } as never;
+    const readBytes = vi.fn(async () => Buffer.from('should-not-be-read'));
+    const support = {
+      readBytes,
+      extraRoots: vi.fn(() => []),
+      foreignPathMessage: vi.fn(async () => 'FOREIGN-MEMBER-MESSAGE'),
+    };
+    const foreignPath = join(base, 'uploads', '17', 'gen.png');
+
+    await expect(loadSendFileBytes(foreignPath, sandbox, support, { userId: 67, sessionId: 11, workspace }, 1024))
+      .rejects.toThrow('FOREIGN-MEMBER-MESSAGE');
+    // 关键不变量：命中预检时容器读取不得被调用（否则 docker 用户先拿容器通用错误）
+    expect(readBytes).not.toHaveBeenCalled();
+    expect(support.foreignPathMessage).toHaveBeenCalledWith(foreignPath, 67, null);
+
+    // 预检不命中时才走容器读取
+    support.foreignPathMessage.mockResolvedValue(null);
+    const bytes = await loadSendFileBytes('a.txt', sandbox, support, { userId: 67, sessionId: 11, workspace }, 1024);
+    expect(bytes.toString()).toBe('should-not-be-read');
+    expect(readBytes).toHaveBeenCalled();
+  });
+
+  it('预检透传 pathPolicyHint（edit_image 的行为提示）', async () => {
+    const base = useTmpDir('mao-sendbytes-hint-');
+    const workspace = join(base, 'workspace', '7');
+    mkdirSync(workspace, { recursive: true });
+    const sandbox = { getEffectiveWorkspaceRoot: () => workspace } as never;
+    const support = {
+      readBytes: vi.fn(async () => Buffer.from('x')),
+      extraRoots: vi.fn(() => []),
+      foreignPathMessage: vi.fn(async () => 'MSG'),
+    };
+    await expect(loadSendFileBytes('/opt/mao-data/uploads/17/gen.png', sandbox, support, {
+      userId: 67, sessionId: 11, workspace, pathPolicyHint: '改图请重新生成，或由该成员本人操作',
+    }, 1024)).rejects.toThrow('MSG');
+    expect(support.foreignPathMessage).toHaveBeenCalledWith(
+      '/opt/mao-data/uploads/17/gen.png', 67, '改图请重新生成，或由该成员本人操作',
+    );
+  });
+
+  it('URL 源不被跨成员预检拦截，直接走 URL 拉取（不触达容器）', async () => {
+    const base = useTmpDir('mao-sendbytes-url-');
+    const workspace = join(base, 'workspace', '7');
+    mkdirSync(workspace, { recursive: true });
+    const sandbox = { getEffectiveWorkspaceRoot: () => workspace } as never;
+    const readBytes = vi.fn(async () => Buffer.from('container'));
+    const support = {
+      readBytes,
+      extraRoots: vi.fn(() => []),
+      // 模拟真实 bridge：只对绝对本地路径做跨成员判定（URL 返回 null）
+      foreignPathMessage: vi.fn(async (src: string) => (src.startsWith('/') ? 'FOREIGN' : null)),
+    };
+    const bytes = await loadSendFileBytes(
+      'https://cdn.example.com/a.png', sandbox, support, { userId: 67, sessionId: 11, workspace }, 1024,
+    );
+    expect(bytes.toString()).toBe('url-bytes');
+    expect(vi.mocked(fetchBytesWithLimits)).toHaveBeenCalledWith('https://cdn.example.com/a.png', 1024);
+    // URL 不应落到容器读取分支
+    expect(readBytes).not.toHaveBeenCalled();
   });
 
   it('loadSendFileBytesPrefersContainerAndKeepsUrlOnHost', async () => {

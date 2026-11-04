@@ -22,11 +22,17 @@ export class SkillSyncService {
     private readonly skillViewService: SkillViewService,
   ) {}
 
-  async syncToSession(agent: Agent, userId: number | null, sessionId: number | null): Promise<void> {
-    if (userId == null || sessionId == null) {
+  async syncToSession(
+    agent: Agent,
+    runtimeUserId: number | null,
+    sessionId: number | null,
+  ): Promise<{ failed: string[] }> {
+    if (runtimeUserId == null || sessionId == null) {
       harnessLog('warn', 'Cannot sync skills: userId or sessionId is null');
-      return;
+      return { failed: [] };
     }
+    const userId = runtimeUserId;
+    const failed = new Set<string>();
     const systemNames = this.resolveSkillNames(agent);
     const userSkillFolders = new Map<string, string>();
     for (const [name, doc] of Object.entries(this.loadUserSkillDocs(userId))) {
@@ -40,13 +46,13 @@ export class SkillSyncService {
       if (folder) merged.set(name, { folder, system: true });
     }
     for (const [k, v] of userSkillFolders) merged.set(k, { folder: v, system: false });
-    if (merged.size === 0) return;
+    if (merged.size === 0) return { failed: [] };
 
     const runtimeDir = this.runtimeDataResolver.resolveSessionRuntimeDir(userId, sessionId);
     const skillsDir = this.runtimeDataResolver.resolveSkillsDir(userId, sessionId);
     this.pathSandbox.addAllowedRoot(runtimeDir);
     mkdirSync(skillsDir, { recursive: true });
-    const state = this.getSyncState(agent.id, sessionId);
+    const state = this.getSyncState(agent.id, userId, sessionId);
     const toRemove = new Set(state.keys());
     for (const [skillName, entry] of merged) {
       toRemove.delete(skillName);
@@ -62,9 +68,11 @@ export class SkillSyncService {
           // 系统技能先物化「用户级只读视图」，链接指向视图（路径稳定，源永进不了容器）
           const viewPath = await this.skillViewService.ensureView(userId, skillName, entry.folder);
           if (viewPath == null) {
-            // 源已下线：清掉残留链接，避免指向不存在视图的悬空（视图已由 ensureView 清理）
+            // 源已下线：清掉残留链接，避免指向不存在视图的悬空（视图已由 ensureView 清理）；
+            // 本轮实际不可读，计入 failed 让调用侧从可用清单剔除（D7：清单与路径一致）。
             removeSkillLink(targetFolder);
             state.delete(skillName);
+            failed.add(skillName);
             continue;
           }
           linkSource = viewPath;
@@ -81,6 +89,7 @@ export class SkillSyncService {
           removeSkillLink(targetFolder);
         } catch { /* 链接清理失败不影响其余技能 */ }
         state.delete(skillName);
+        failed.add(skillName);
         harnessLog('error', `Failed to sync skill ${skillName} to session runtime: ${(e as Error).message}`);
       }
     }
@@ -93,6 +102,7 @@ export class SkillSyncService {
       } catch { /* ignore */ }
       state.delete(name);
     }
+    return { failed: [...failed] };
   }
 
   getUserSkillNames(userId: number): string[] {
@@ -102,7 +112,7 @@ export class SkillSyncService {
   /** Skills previously synced to this session that are no longer on the agent/user. */
   getRemovedSkillNames(agent: Agent | null | undefined, userId: number | null, sessionId: number | null): string[] {
     if (agent == null || sessionId == null) return [];
-    const state = this.syncState.get(`${agent.id}:${sessionId}`);
+    const state = userId == null ? undefined : this.syncState.get(`${agent.id}:${userId}:${sessionId}`);
     if (state == null || state.size === 0) return [];
     const current = new Set(this.resolveSkillNames(agent));
     if (userId != null) {
@@ -157,8 +167,8 @@ export class SkillSyncService {
     }
   }
 
-  private getSyncState(agentId: number | undefined, sessionId: number): Map<string, number> {
-    const key = `${agentId}:${sessionId}`;
+  private getSyncState(agentId: number | undefined, userId: number, sessionId: number): Map<string, number> {
+    const key = `${agentId}:${userId}:${sessionId}`;
     let state = this.syncState.get(key);
     if (!state) {
       state = new Map();
@@ -179,7 +189,9 @@ export class SkillSyncService {
         if (doc.folderPath) merged.set(name, doc.folderPath);
       }
     }
-    const state = sessionId != null ? this.getSyncState(agent.id, sessionId) : new Map<string, number>();
+    const state = sessionId != null && userId != null
+      ? this.getSyncState(agent.id, userId, sessionId)
+      : new Map<string, number>();
     const archive = archiver('zip', { zlib: { level: 5 } });
     const done = pipeline(archive, out);
     for (const [skillName, sourceFolder] of merged) {
