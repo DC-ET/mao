@@ -322,6 +322,7 @@ export function assembleHarnessEngine(deps: HarnessEngineDeps): HarnessEngineRes
     d.mcpLoadModeResolver,
     d.httpToolService,
     d.experienceMountService ?? null,
+    cfg.app.harness.runtimeIdentityMode,
   );
   d.holder.harness = harness;
 

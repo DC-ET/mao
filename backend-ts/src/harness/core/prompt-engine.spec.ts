@@ -1305,3 +1305,82 @@ describe('PromptEngine 自定义 HTTP 工具目录分节（技术方案 2026-10-
     expect(keys.indexOf('custom-http-tools')).toBeGreaterThan(keys.indexOf('mcp-workingset'));
   });
 });
+
+describe('PromptEngine runtime identity', () => {
+  function makeEngine(workspace: string) {
+    const skillLoader = {
+      hasSkill: vi.fn(() => false),
+      getAllNames: vi.fn(() => [] as string[]),
+      getAllDocuments: vi.fn(() => []),
+    };
+    const runtime = RuntimeDataResolver.forTest(join(workspace, 'runtime'), join(workspace, 'home'));
+    const skillSync = { getUserSkillDocuments: vi.fn(() => []) };
+    return new PromptEngine(
+      skillLoader as never,
+      { getWorkspaceRoot: () => workspace } as never,
+      runtime,
+      { getByUserIdAndName: vi.fn(async () => null) } as never,
+      skillSync as never,
+    );
+  }
+
+  function baseContext(workspace: string): AgentExecutionContext {
+    const context = new AgentExecutionContext();
+    context.sessionId = 100;
+    context.executionMode = 'CLOUD';
+    context.workspace = workspace;
+    context.messages = [];
+    return context;
+  }
+
+  it('run身份 != 归属：技能路径/上传目录按运行身份、渲染执行身份段', async () => {
+    const workspace = useTmpDir('pe-identity-');
+    const engine = makeEngine(workspace);
+    const context = baseContext(workspace);
+    context.userId = 17;
+    context.runtimeUserId = 67;
+    context.runtimeUserDisplayName = '秦翌翔';
+    context.availableSkillNames = ['java'];
+    context.availableSkillDocs.set('java', { name: 'java', description: 'Java skill' });
+
+    const request = await engine.buildRequest(context);
+    const system = request.messages[0].content as string;
+    // 技能路径与上传目录都取运行身份（67），不再出现归属者（17）路径空间
+    expect(system).toContain(join(workspace, 'runtime', '67', '100', 'skills', 'java', 'SKILL.md'));
+    expect(system).not.toContain(join(workspace, 'runtime', '17', '100'));
+    expect(system).toContain(join(workspace, 'runtime', '67', '100', 'incoming'));
+    // 执行身份段：声明两侧身份与出路
+    expect(system).toContain('## 执行身份');
+    expect(system).toContain('用户 #67 秦翌翔');
+    expect(system).toContain('用户 #17');
+  });
+
+  it('身份一致时不渲染执行身份段（普通会话前缀零变化）', async () => {
+    const workspace = useTmpDir('pe-identity-same-');
+    const engine = makeEngine(workspace);
+    const context = baseContext(workspace);
+    context.userId = 7;
+    context.runtimeUserId = 7;
+    context.availableSkillNames = ['java'];
+    context.availableSkillDocs.set('java', { name: 'java', description: 'Java skill' });
+
+    const request = await engine.buildRequest(context);
+    const system = request.messages[0].content as string;
+    expect(system).not.toContain('## 执行身份');
+    expect(system).toContain(join(workspace, 'runtime', '7', '100', 'skills', 'java', 'SKILL.md'));
+  });
+
+  it('runtimeUserId 缺省时回落 userId（兼容旧调用）', async () => {
+    const workspace = useTmpDir('pe-identity-fallback-');
+    const engine = makeEngine(workspace);
+    const context = baseContext(workspace);
+    context.userId = 9;
+    context.availableSkillNames = ['java'];
+    context.availableSkillDocs.set('java', { name: 'java', description: 'Java skill' });
+
+    const request = await engine.buildRequest(context);
+    const system = request.messages[0].content as string;
+    expect(system).toContain(join(workspace, 'runtime', '9', '100', 'skills', 'java', 'SKILL.md'));
+    expect(system).not.toContain('## 执行身份');
+  });
+});

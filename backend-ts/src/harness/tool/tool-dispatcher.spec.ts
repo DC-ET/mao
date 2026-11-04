@@ -1269,3 +1269,72 @@ describe('ToolDispatcher 自定义 HTTP 工具执行位置（2026-10-20 方案�
     expect(localToolExecutor.execute).not.toHaveBeenCalled();
   });
 });
+
+describe('ToolDispatcher runtime identity routing', () => {
+  function build(opts: { docker?: boolean } = {}) {
+    const feishuSend = mockTool('feishu_send_image');
+    const generate = mockTool('generate_image');
+    const task = mockTool('task_create');
+    const readFile = mockTool('read_file');
+    const registry = new ToolRegistry([feishuSend, generate, task, readFile]);
+    const localToolExecutor = { execute: vi.fn(async () => 'local-ok') };
+    const dangerAssessor = new DangerAssessor({ chat: vi.fn(), stream: vi.fn() } as unknown as LlmAdapter);
+    vi.spyOn(dangerAssessor, 'assess').mockResolvedValue({ needApproval: false, dangerReason: null });
+    const sessionMapper = { selectById: vi.fn(async () => null) };
+    const streamingWsRegistry = { hasConnection: vi.fn(() => true), send: vi.fn() };
+    const askUserQuestionsRegistry = { register: vi.fn(), waitForAnswer: vi.fn() };
+    const localToolSessionRegistry = { getUserIdForSession: vi.fn(async () => 9), isConnected: vi.fn(() => true) };
+    const treeSignalPublisher = { publishForSession: vi.fn() };
+    const dockerRouter = {
+      enabledFor: vi.fn(async () => opts.docker === true),
+      dispatch: vi.fn(async () => 'docker-ok'),
+    };
+    const dispatcher = new ToolDispatcher(
+      registry, localToolExecutor as never, dangerAssessor, sessionMapper as never, streamingWsRegistry as never,
+      askUserQuestionsRegistry as never, localToolSessionRegistry as never, treeSignalPublisher as never,
+      null, null, null, null, null, null, null, null, dockerRouter as never,
+    );
+    return { dispatcher, feishuSend, generate, task, readFile, dockerRouter, localToolExecutor };
+  }
+
+  function invocation(toolName: string, extra: Record<string, unknown> = {}) {
+    return {
+      callId: 'c', toolName, argumentsJson: '{}',
+      executionMode: 'CLOUD', sessionId: 7, userId: 17, executionUserId: 67,
+      runtimeUserId: 67, workspace: 'ws', permissionLevel: 'FULL', modelConfig: null, sessionTools: null,
+      ...extra,
+    };
+  }
+
+  it('feishu_send_image（宿主回退分支）按运行身份读字节', async () => {
+    const { dispatcher, feishuSend } = build();
+    feishuSend.execute.mockResolvedValue('ok');
+    await dispatcher.dispatchInvocation(invocation('feishu_send_image') as never);
+    expect(feishuSend.execute).toHaveBeenCalledWith('{}', 7, 67, 'ws');
+  });
+
+  it('generate_image（SERVER_ONLY 分支）按运行身份落盘；task_create 保持归属身份', async () => {
+    const { dispatcher, generate, task } = build();
+    generate.execute.mockResolvedValue('ok');
+    task.execute.mockResolvedValue('ok');
+    await dispatcher.dispatchInvocation(invocation('generate_image') as never);
+    expect(generate.execute).toHaveBeenCalledWith('{}', 7, 67, 'ws');
+    await dispatcher.dispatchInvocation(invocation('task_create') as never);
+    expect(task.execute).toHaveBeenCalledWith('{}', 7, 17, 'ws');
+  });
+
+  it('docker 分支按运行身份路由容器', async () => {
+    const { dispatcher, dockerRouter } = build({ docker: true });
+    await dispatcher.dispatchInvocation(invocation('read_file') as never);
+    expect(dockerRouter.dispatch).toHaveBeenCalledWith('read_file', '{}', { userId: 67, sessionId: 7, workspace: 'ws' });
+  });
+
+  it('runtimeUserId 缺省时回落 executionUserId（兼容旧调用）', async () => {
+    const { dispatcher, feishuSend } = build();
+    feishuSend.execute.mockResolvedValue('ok');
+    const inv = invocation('feishu_send_image');
+    delete (inv as Record<string, unknown>).runtimeUserId;
+    await dispatcher.dispatchInvocation(inv as never);
+    expect(feishuSend.execute).toHaveBeenCalledWith('{}', 7, 67, 'ws');
+  });
+});

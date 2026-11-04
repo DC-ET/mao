@@ -328,7 +328,8 @@ export class TaskTerminalService {
         void Promise.resolve()
           .then(() => extraction.extractForSession({
             sessionId: session.id!,
-            userId: session.userId,
+            // 注入与抽取同源（技术方案 2026-11-04 D5）：取运行身份，缺失回落会话归属。
+            userId: session.lastRuntimeUserId ?? session.userId,
             projectKey: session.projectKey ?? null,
             workspace: session.workspace ?? null,
             agentId: session.agentId ?? null,

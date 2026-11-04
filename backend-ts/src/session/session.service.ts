@@ -1513,6 +1513,15 @@ export class SessionService {
     await this.sessionRepo.updateFields(sessionId, { memoryInjectionDisabled: disabled ? 1 : 0 });
   }
 
+  /**
+   * 记录最近一次执行的运行身份（技术方案 2026-11-04 §5.2）。
+   * 仅供崩溃恢复 / 子代理继承 / 失败重试使用；不参与权限与查询过滤。
+   */
+  async touchRuntimeUser(sessionId: number, userId: number | null): Promise<void> {
+    if (userId == null) return;
+    await this.sessionRepo.updateFields(sessionId, { lastRuntimeUserId: userId });
+  }
+
   async updateModelId(sessionId: number, modelId: number): Promise<void> {
     await this.getSession(sessionId);
     await this.sessionRepo.updateFields(sessionId, { modelId });

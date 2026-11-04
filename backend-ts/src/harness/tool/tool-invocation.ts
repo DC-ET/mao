@@ -13,6 +13,11 @@ export interface ToolInvocation {
   sessionId: number | null;
   userId: number | null;
   executionUserId: number | null;
+  /**
+   * 运行身份（技术方案 2026-11-04 §5.5）：executionUserId ?? session.userId。
+   * 执行期资源类工具（产物/缓存/发送）按它寻址；缺省 null，dispatcher 回落 executionUserId/userId。
+   */
+  runtimeUserId?: number | null;
   workspace: string | null;
   permissionLevel: string | null;
   modelConfig: LlmModelConfig | null;

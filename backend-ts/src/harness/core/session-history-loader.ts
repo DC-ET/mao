@@ -44,8 +44,12 @@ export class SessionHistoryLoader {
     const incremental = MessageHistoryNormalizer.normalizeChatMessages(
       history.persistedMessages.map((p) => p.chatMessage),
     ) ?? [];
-    const archiveHint = this.compactionArchiveService.buildArchiveHint(
-      context.executionMode, context.userId, context.sessionId);
+    // D6（技术方案 2026-11-04 §5.7）：归档目录保持会话归属；非归属身份执行时不注入回读提示，
+    // 否则模型会去读一个当前身份不可达的路径（误导 > 收益）。
+    const sameIdentity = (context.runtimeUserId ?? context.userId ?? null) === (context.userId ?? null);
+    const archiveHint = sameIdentity
+      ? this.compactionArchiveService.buildArchiveHint(context.executionMode, context.userId, context.sessionId)
+      : null;
     const latestUserMessage = await this.resolveLatestUserMessage(context, summary, incremental);
     // 跨压缩边界的日期参照（技术方案 2026-10-12 §5.2）：窗口内第一条用户消息的「上一条
     // 用户消息」日期，让跨天提示能判出「边界前的会话与边界后的首条消息日期不同」。

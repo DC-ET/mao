@@ -27,12 +27,23 @@ export interface SendBytesSupport {
   readBytes(input: SendBytesReadInput): Promise<Buffer | null>;
   /** 宿主机本地严格读取的额外允许根（当前用户 runtime/HOME + /tmp）。 */
   extraRoots(userId: number | null): string[];
+  /**
+   * 跨成员本地路径的宿主侧预检（技术方案 2026-11-04 §5.9 第 3 条）：必须在向容器分发
+   * `read_bytes` 之前调用——docker 用户先命中容器会拿到通用 Path escape，拿不到含 URL 的文案。
+   * 命中他人 `runtime/{uid}` / `uploads/{uid}` 时返回可执行文案（uploads 带公开 URL）。
+   */
+  foreignPathMessage?(src: string, userId: number | null, hint?: string | null): Promise<string | null> | string | null;
 }
 
 export interface SendBytesCallContext {
   userId: number | null;
   sessionId: number | null;
   workspace: string | null;
+  /**
+   * 调用方附加的行为提示（如 edit_image 的「改图请重新生成」）：
+   * 仅在跨成员路径预检命中时追加到错误文案末尾。
+   */
+  pathPolicyHint?: string | null;
 }
 
 /**
@@ -46,6 +57,12 @@ export async function loadSendFileBytes(
   ctx: SendBytesCallContext,
   maxBytes: number,
 ): Promise<Buffer> {
+  // 跨成员路径预检（§5.9 第 3 条）：必须在容器分发之前——宿主侧才能拼出公开 URL，
+  // 且 host/docker 两种模式拿到同一条可执行文案。
+  if (support?.foreignPathMessage != null && ctx.userId != null) {
+    const message = await support.foreignPathMessage(src, ctx.userId, ctx.pathPolicyHint ?? null);
+    if (message != null) throw new Error(message);
+  }
   if (src.startsWith('http://') || src.startsWith('https://')) {
     return fetchBytesWithLimits(src, maxBytes);
   }

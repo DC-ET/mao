@@ -102,7 +102,43 @@ export class HarnessService {
      * 未注入时不补挂，行为与仅会话创建时挂载一致。
      */
     private readonly experienceMount?: { syncForSession(workspace: string, agentId: number, enabled: boolean, refreshIndex?: boolean): void } | null,
+    /**
+     * 运行身份开关（技术方案 2026-11-04 §5.10）：execution=执行期资源跟随本次发言者（默认）；
+     * owner=跟随会话归属（应急回退）。唯一分叉点，仅影响 buildContext 的 runtimeUserId 计算。
+     */
+    private readonly runtimeIdentityMode: 'execution' | 'owner' = 'execution',
   ) {}
+
+  /** 运行身份（技术方案 2026-11-04 §5.2）：execution 下为本次发言者，owner 下为会话归属。 */
+  private runtimeUserFor(session: Session, executionUserId?: number | null): number | null {
+    return this.runtimeIdentityMode === 'execution'
+      ? (executionUserId ?? session.userId ?? null)
+      : (session.userId ?? null);
+  }
+
+  /** 运行身份落库（§5.2）：失败仅告警不阻断本轮；身份以内存值为准。 */
+  private async persistRuntimeUser(sessionId: number, runtimeUserId: number | null): Promise<void> {
+    if (runtimeUserId == null) return;
+    const touch = this.sessionService.touchRuntimeUser;
+    if (touch == null) return;
+    try {
+      await touch.call(this.sessionService, sessionId, runtimeUserId);
+    } catch (e) {
+      harnessLog('warn', `touchRuntimeUser failed for session ${sessionId}: ${(e as Error).message}`);
+    }
+  }
+
+  /** 身份段显示名（best-effort 主键查询；db 不可用/查询失败返回 null，不阻断构建）。 */
+  private async resolveUserDisplayName(userId: number | null): Promise<string | null> {
+    if (userId == null || this.db == null) return null;
+    try {
+      const row = await this.db.queryOne<{ displayName: string | null }>(
+        'SELECT display_name FROM `user` WHERE id = ?', [userId]);
+      return row?.displayName ?? null;
+    } catch {
+      return null;
+    }
+  }
 
   prepareMessage(_sessionId: number, _userContent: unknown): string {
     return randomUUID();
@@ -118,7 +154,9 @@ export class HarnessService {
     sessionId: number, _userContent: string | null, listener: AgentEventListener, cancelFlag?: AtomicBoolean | null,
     executionUserId?: number | null,
   ): Promise<void> {
-    const context = await this.buildContext(sessionId, listener, cancelFlag);
+    // 运行身份由 buildContext 计算并落库（技术方案 2026-11-04 §5.2）：把本次发言者透传进去，
+    // 先落身份再同步技能/构建，崩溃恢复窗口最小。
+    const context = await this.buildContext(sessionId, listener, cancelFlag, false, executionUserId ?? null);
     if (executionUserId != null) context.executionUserId = executionUserId;
     const persistenceCallback = this.createPersistenceCallback(sessionId, context);
     try {
@@ -298,6 +336,8 @@ export class HarnessService {
   async buildContext(
     sessionId: number, listener?: AgentEventListener | null, cancelFlag?: AtomicBoolean | null,
     skipAutoCompact = false,
+    /** 本次执行身份（发言者）；缺省 null=无发言者语义（WS/定时任务/恢复等回落会话归属）。 */
+    executionUserId?: number | null,
   ): Promise<AgentExecutionContext> {
     const session = await this.sessionMapper.selectById(sessionId);
     if (session == null) throw new BusinessException(ErrorCode.SESSION_NOT_FOUND);
@@ -316,9 +356,16 @@ export class HarnessService {
     if (llmModel == null) throw new BusinessException(ErrorCode.MODEL_NOT_FOUND);
 
     const executionMode = session.executionMode ?? 'CLOUD';
+    // 运行身份（技术方案 2026-11-04 §5.2）：先算身份、落库，再同步技能/构建（恢复窗口最小）。
+    const runtimeUserId = this.runtimeUserFor(session, executionUserId);
+    await this.persistRuntimeUser(sessionId, runtimeUserId);
+    const runtimeUserDisplayName = await this.resolveUserDisplayName(runtimeUserId);
+    // 本轮技能同步失败的技能名（§5.3 D7）：从可用清单剔除，避免「清单有、路径读不到」。
+    let syncFailed: ReadonlySet<string> = new Set<string>();
     if (executionMode.toUpperCase() === 'CLOUD') {
       try {
-        await this.skillSyncService.syncToSession(agent, session.userId ?? null, sessionId);
+        const syncResult = await this.skillSyncService.syncToSession(agent, runtimeUserId, sessionId);
+        syncFailed = new Set(syncResult.failed);
       } catch (e) {
         harnessLog('warn', `Skill sync to session runtime failed for session ${sessionId}: ${(e as Error).message}`);
       }
@@ -332,6 +379,10 @@ export class HarnessService {
     context.sessionBaseYmd = await this.resolveSessionBaseYmd(sessionId);
     context.sessionId = sessionId;
     context.userId = session.userId;
+    // 运行身份（技术方案 2026-11-04 §5.2/§5.4）：执行期资源（技能/路径/工具/记忆）一律取它；
+    // userId 保留会话归属语义（权限、审计、订阅）。
+    context.runtimeUserId = runtimeUserId;
+    context.runtimeUserDisplayName = runtimeUserDisplayName;
     context.agentId = agent.id;
     context.projectKey = session.projectKey;
     context.systemPrompt = agent.systemPrompt;
@@ -356,7 +407,7 @@ export class HarnessService {
     }
     // 长期记忆注入（技术方案 5.2）：整段独立 try-catch——查询失败仅记 warn、memories 置 null，
     // 不阻断会话启动。注意降级逻辑与技能同步的 CLOUD 分支 try-catch 无关，勿对齐那个样板。
-    context.memories = await this.loadMemories(session);
+    context.memories = await this.loadMemories(session, runtimeUserId);
     context.agentName = agent.name;
     context.executionMode = executionMode;
     context.permissionLevel = session.permissionLevel;
@@ -480,7 +531,7 @@ export class HarnessService {
         harnessLog('warn', `Failed to parse skillNames for agent ${agent.id}: ${(e as Error).message}`);
       }
     }
-    const userSkillNames = this.skillSyncService.getUserSkillNames(session.userId ?? 0);
+    const userSkillNames = this.skillSyncService.getUserSkillNames(runtimeUserId ?? 0);
     const syncableNames = new Set<string>(userSkillNames);
     const mergedSkillNames: string[] = [];
     if (agentSkillNames != null) {
@@ -499,11 +550,15 @@ export class HarnessService {
         mergedSkillNames, syncableNames, this.localSkillRegistry.get(sessionId), context);
       context.agentsMdContent = this.localAgentsMdRegistry.get(sessionId);
     }
-    context.availableSkillNames = mergedSkillNames;
+    // 同步失败的技能本轮剔除（§5.3 D7）：spawn/清单只反映「真实可读」的技能集，
+    // 不允许出现「清单有技能、路径不存在」的组合把错误暴露给模型。
+    context.availableSkillNames = syncFailed.size === 0
+      ? mergedSkillNames
+      : mergedSkillNames.filter((name) => !syncFailed.has(name));
 
     const skillDocMap = new Map<string, SkillDocument>();
     for (const doc of this.skillLoader.getAllDocuments()) skillDocMap.set(doc.name, doc);
-    for (const doc of this.skillSyncService.getUserSkillDocuments(session.userId ?? 0)) {
+    for (const doc of this.skillSyncService.getUserSkillDocuments(runtimeUserId ?? 0)) {
       skillDocMap.set(doc.name, doc);
     }
     for (const ref of context.localUnsyncedSkills) {
@@ -639,8 +694,9 @@ export class HarnessService {
   }
 
   /** 记忆查询降级：任何异常都不阻断会话启动（技术方案 5.2 第 3 点）。 */
-  private async loadMemories(session: Session): Promise<MemoryHint[] | null> {
-    const userId = session.userId;
+  private async loadMemories(session: Session, runtimeUserId: number | null): Promise<MemoryHint[] | null> {
+    // 注入与抽取必须同源（技术方案 2026-11-04 D5）：都取运行身份，否则 B 的记忆会写进 A。
+    const userId = runtimeUserId ?? session.userId;
     if (this.memoryInjection == null || userId == null) return null;
     // 单会话关闭长期记忆注入（技术方案 5.1）：为真直接短路，memories=null → longTermMemoriesHint 自然不渲染。
     // 生效时机=下一次执行（本方法在 buildContext 一次性装载），运行中会话改开关不影响本轮，不做请求级回读。

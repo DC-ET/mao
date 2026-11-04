@@ -24,6 +24,8 @@ import { CrashRecoveryRunner, type RecoveryExtraListener } from './crash-recover
 interface RunnerOptions {
   cancelled?: boolean;
   executeError?: Error;
+  /** 会话持久化的运行身份（技术方案 2026-11-04 §5.8）：缺省 67。 */
+  lastRuntimeUserId?: number | null;
 }
 
 function makeRunner(
@@ -32,7 +34,10 @@ function makeRunner(
   runtimeDir = '/tmp/mao-crash-recovery-spec-runtime-missing',
 ) {
   const pending: Promise<void>[] = [];
-  const session = { id: 7, userId: 42, sessionType: 'DEFAULT', phase: 'RUNNING', modelId: null };
+  const session = {
+    id: 7, userId: 42, sessionType: 'DEFAULT', phase: 'RUNNING', modelId: null,
+    lastRuntimeUserId: options.lastRuntimeUserId === undefined ? 67 : options.lastRuntimeUserId,
+  };
   const sessionMapper = {
     selectByPhase: vi.fn().mockResolvedValue([session]),
     selectById: vi.fn().mockResolvedValue(session),
@@ -83,11 +88,21 @@ describe('CrashRecoveryRunner.createExtraListeners', () => {
     const { runner, harnessService, pending } = makeRunner(async () => extra);
     await runner.run();
     await Promise.all(pending);
+    // 恢复的是同一次执行（§5.8）：按持久化运行身份续跑，不回落 owner。
+    expect(harnessService.execute).toHaveBeenCalledWith(7, null, expect.anything(), expect.anything(), 67);
     const listener = harnessService.execute.mock.calls[0][2] as CompositeAgentEventListener;
     expect(listener).toBeInstanceOf(CompositeAgentEventListener);
     const inner = (listener as unknown as { listeners: AgentEventListener[] }).listeners;
     expect(inner.some((l) => (l as { marker?: string }).marker === 'ws-listener')).toBe(true);
     expect(inner).toContain(extra);
+  });
+
+  it('recoveryFallsBackToOwnerWhenRuntimeIdentityMissing', async () => {
+    const { runner, harnessService, pending } = makeRunner(undefined, { lastRuntimeUserId: null });
+    await runner.run();
+    await Promise.all(pending);
+    // 存量行（未写入 last_runtime_user_id）回落 null → execute 按 owner 续跑。
+    expect(harnessService.execute).toHaveBeenCalledWith(7, null, expect.anything(), expect.anything(), null);
   });
 
   it('nullExtraKeepsBareWsListener', async () => {

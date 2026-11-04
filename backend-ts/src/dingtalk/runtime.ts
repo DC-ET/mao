@@ -235,6 +235,9 @@ export function createDingtalkRuntime(deps: {
       updatePhase: (sessionId, phase) => deps.sessionService.updatePhase(sessionId, phase),
       cleanupIncompleteTail: (sessionId) => deps.sessionService.cleanupIncompleteTail(sessionId),
       getPhase: async (sessionId) => (await deps.sessionService.getSession(sessionId))?.phase ?? null,
+      // 最近一次执行的运行身份（技术方案 2026-11-04 §5.2）：重试透传；读取失败回落 owner。
+      getLastRuntimeUserId: async (sessionId) =>
+        (await deps.sessionService.getSession(sessionId).catch(() => null))?.lastRuntimeUserId ?? null,
       getLatestAssistantReply: async (sessionId) => {
         const rows = await deps.sessionService.getMessages(sessionId);
         // 渠道不发桌面来源区，[^n^] 标记原样露出会像没渲染干净的模板变量，统一剥掉

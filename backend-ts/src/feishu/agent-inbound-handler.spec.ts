@@ -37,6 +37,8 @@ function baseSessionService() {
     cleanupIncompleteTail: vi.fn(async () => 0),
     getPhase: vi.fn(async (): Promise<string | null> => null),
     getMessages: vi.fn(async () => []),
+    // 最近一次执行的运行身份（技术方案 2026-11-04 §5.2）：重试续跑时透传。
+    getLastRuntimeUserId: vi.fn(async () => 67),
   };
 }
 
@@ -614,6 +616,9 @@ describe('AgentFeishuInboundHandler', () => {
     expect(updates).toContainEqual({ status: 'RUNNING', content: '正在重试，请稍候…', messageId: undefined });
     // 重试路径同样回传终态消息 id，快照才绑到本卡对应的回复上
     expect(updates).toContainEqual({ status: 'COMPLETED', content: '重试后的答案', messageId: 12 });
+    // 重试以持久化运行身份续跑（技术方案 2026-11-04 §5.2）：stubContext 无发言者，
+    // 透传 session.lastRuntimeUserId，避免在身份不匹配的失败轮上回落 owner。
+    expect(harness.execute).toHaveBeenCalledWith(7, null, expect.anything(), expect.anything(), 67);
   });
 
   it('drains the feishu queue after a successful retry', async () => {

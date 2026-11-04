@@ -29,6 +29,8 @@ export interface DingtalkSessionAdapter {
   updatePhase?(sessionId: number, phase: string): Promise<void>;
   cleanupIncompleteTail?(sessionId: number): Promise<number>;
   getPhase?(sessionId: number): Promise<string | null>;
+  /** 最近一次执行的运行身份（技术方案 2026-11-04 §5.2）：重试续跑同一次执行时透传。 */
+  getLastRuntimeUserId?(sessionId: number): Promise<number | null>;
 }
 
 export interface DingtalkMediaDownload {
@@ -337,7 +339,14 @@ export class AgentDingtalkInboundHandler implements DingtalkInboundHandler {
       const executionId = randomUUID();
       await this.broadcastRunning(sessionId, executionId, null);
       const listener = await this.options.listenerFactory?.(sessionId, stub, executionId) ?? new NoopAgentEventListener();
-      await this.options.harnessService.execute(sessionId, null, CompositeAgentEventListener.of(listener, cardListener), cancelFlag);
+      // 重试续跑同一次执行（技术方案 2026-11-04 §5.2）：按持久化的运行身份恢复；读取失败回落 owner。
+      let retryRuntimeUserId: number | null = null;
+      try {
+        retryRuntimeUserId = (await this.options.sessionService.getLastRuntimeUserId?.(sessionId)) ?? null;
+      } catch { /* 读取失败回落 owner，与崩溃恢复同源语义 */ }
+      await this.options.harnessService.execute(
+        sessionId, null, CompositeAgentEventListener.of(listener, cardListener), cancelFlag, retryRuntimeUserId,
+      );
       if (cancelFlag.get()) {
         await this.options.sessionService.cleanupIncompleteTail?.(sessionId);
         await cardListener.cancel(this.interrupted.has(sessionId));

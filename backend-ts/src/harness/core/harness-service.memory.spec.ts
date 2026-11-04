@@ -69,6 +69,7 @@ function buildHarness(memoryInjection: { listForInjection: (...args: never[]) =>
     applyHistory: vi.fn(async () => undefined),
   };
   const skillSyncService = {
+    syncToSession: vi.fn(async () => ({ failed: [] })),
     getUserSkillNames: vi.fn(() => [] as string[]),
     getUserSkillDocuments: vi.fn(() => []),
   };

@@ -30,6 +30,11 @@ export interface FeishuSessionAdapter {
   cleanupIncompleteTail?(sessionId: number): Promise<number>;
   /** 读取会话当前 phase（DB 层），用于判定会话是否处于 RUNNING/RESUMING（含崩溃恢复中）。 */
   getPhase?(sessionId: number): Promise<string | null>;
+  /**
+   * 最近一次执行的运行身份（技术方案 2026-11-04 §5.2）：失败卡重试续跑同一次执行时透传给 execute，
+   * 避免在身份不匹配的失败轮上以 owner 身份重跑。
+   */
+  getLastRuntimeUserId?(sessionId: number): Promise<number | null>;
 }
 
 export interface FeishuMediaDownload {
@@ -310,10 +315,16 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
       await this.broadcastRunning(sessionId, executionId, null);
       const listener = await this.options.listenerFactory?.(sessionId, stubContext, executionId)
         ?? new NoopAgentEventListener();
+      // 重试续跑同一次执行（技术方案 2026-11-04 §5.2）：按持久化的运行身份恢复；读取失败回落 owner。
+      let retryRuntimeUserId: number | null = null;
+      try {
+        retryRuntimeUserId = (await this.options.sessionService.getLastRuntimeUserId?.(sessionId)) ?? null;
+      } catch { /* 读取失败回落 owner，与崩溃恢复同源语义 */ }
       await this.options.harnessService.execute(
         sessionId, null,
         CompositeAgentEventListener.of(listener, cardListener),
         cancelFlag,
+        retryRuntimeUserId,
       );
       if (cancelFlag.get()) {
         const wasInterrupted = this.interrupted.has(sessionId);
