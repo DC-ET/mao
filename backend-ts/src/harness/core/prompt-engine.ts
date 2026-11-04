@@ -137,6 +137,7 @@ const INJECTED_SECTION_KEYS = new Set([
   'workspace-rules',  // 工作区规则（AGENTS.md，可治理）
   'mcp-workingset',   // MCP 工作集（名单 + 工具名，不含 schema；可单独统计 token 开销）
   'custom-http-tools', // 自定义 HTTP 工具（目录：slug + 用途 + 方法 + 只读标记，不含 schema）
+  'runtime-identity', // 执行身份（仅运行身份 != 会话归属时渲染；2026-11-04 技术方案 §5.4）
 ]);
 const AGENTS_MD_TRUNCATED_HINT = '\n> 当前仅展示前200行规则，读取AGENTS.md文件以了解更多规则。\n';
 
@@ -225,7 +226,8 @@ export class PromptEngine {
   }
 
   private async replaceQuickCommandMarkers(messages: ChatMessage[], context: AgentExecutionContext): Promise<void> {
-    const userId = context.userId;
+    // 用户技能 / 用户命令按运行身份解析（技术方案 2026-11-04 §5.4）：群聊里是发言者，不是归属者。
+    const userId = this.runtimeUserIdOf(context);
     for (let i = 0; i < messages.length; i++) {
       const msg = messages[i];
       if (msg.role !== 'user' || typeof msg.content !== 'string') continue;
@@ -275,6 +277,14 @@ export class PromptEngine {
   private hasUserSkill(skillName: string, userId: number | null | undefined): boolean {
     if (userId == null) return false;
     return this.skillSyncService.getUserSkillDocuments(userId).some((d) => d.name === skillName);
+  }
+
+  /**
+   * 运行身份（技术方案 2026-11-04 §5.2）：executionUserId ?? session.userId；
+   * 由 harness-service.buildContext 统一算好放进 context；缺省回落 userId（兼容旧调用/测试）。
+   */
+  private runtimeUserIdOf(context: AgentExecutionContext): number | null {
+    return context.runtimeUserId ?? context.userId ?? null;
   }
 
   private hasLocalUnsyncedSkill(skillName: string, context: AgentExecutionContext): boolean {
@@ -349,6 +359,12 @@ export class PromptEngine {
     const sections: PromptSection[] = [];
     if (hasText(context.systemPrompt)) {
       sections.push({ key: 'system-prompt', label: 'Agent 人格', text: context.systemPrompt! + '\n\n' });
+    }
+    // 执行身份段（技术方案 2026-11-04 §5.4/D8）：仅在「运行身份 != 会话归属」时渲染；
+    // 私聊 / 普通会话 / 定时任务等两侧一致时零输出，系统提示前缀字节不变（缓存前提）。
+    const identityText = this.runtimeIdentityHint(context);
+    if (identityText.length > 0) {
+      sections.push({ key: 'runtime-identity', label: '执行身份', text: identityText });
     }
     const experiences = this.resolveExperiences(context);
     if (experiences.length > 0) {
@@ -594,11 +610,32 @@ export class PromptEngine {
     return sb;
   }
 
+  /**
+   * 执行身份段（技术方案 2026-11-04 §5.4 / D8）：仅在「运行身份 != 会话归属」时渲染。
+   * 文案固定、顺序固定，不随轮次变化（前缀缓存前提）；两侧一致时返回空串（零输出）。
+   */
+  private runtimeIdentityHint(context: AgentExecutionContext): string {
+    const runtimeUserId = this.runtimeUserIdOf(context);
+    const ownerUserId = context.userId ?? null;
+    if (runtimeUserId == null || ownerUserId == null || runtimeUserId === ownerUserId) return '';
+    const name = hasText(context.runtimeUserDisplayName) ? ` ${context.runtimeUserDisplayName}` : '';
+    let sb = '## 执行身份\n\n';
+    sb += `- 当前执行身份：用户 #${runtimeUserId}${name}（本条消息的发送者）。shell、文件、技能、CLI 与凭据都属于该身份。\n`;
+    sb += `- 会话归属：用户 #${ownerUserId}（本群会话的创建者）。其个人技能、token 缓存与 CLI 依赖不在当前执行环境内，不要假设可用，也不要尝试读取其运行目录。\n`;
+    sb += '- 图片与文件产物按执行身份隔离：本人产物在 `uploads/{本人 uid}/`；其他成员的产物对不同成员不可读，转发只能用 http(s) URL'
+      + '（`/uploads/{他人 uid}/{file}` 公开可读）。需要转发他人产物时，可直接把其本地路径交给 send_* 工具，'
+      + '系统会在报错中给出可用 URL，再按该 URL 重试。\n';
+    sb += '- 已知限制：MCP 工具仍绑定会话归属者一侧（其容器与凭据），其文件/数据视图不代表当前执行身份。\n';
+    sb += '- 若任务必须使用某位成员自己的账号/凭据，请让该成员本人 @ 机器人触发，或明确告知用户需要其本人操作。\n\n';
+    return sb;
+  }
+
   private buildSkillCatalog(context: AgentExecutionContext): string | null {
     const names = context.availableSkillNames;
     if (!names || names.length === 0) return null;
     const isLocal = context.executionMode?.toUpperCase() === 'LOCAL';
-    const userId = context.userId;
+    // 技能文档路径与运行身份一致（技术方案 2026-11-04 §5.4）：容器/宿主读的就是发言者的路径空间。
+    const userId = this.runtimeUserIdOf(context);
     const sessionId = context.sessionId;
     const localUnsyncedFolders = new Map<string, string>();
     for (const ref of context.localUnsyncedSkills ?? []) {
@@ -647,10 +684,11 @@ export class PromptEngine {
 
   /** 上传文件引用（@{绝对路径}@）说明：告知 Agent 如何理解并使用用户上传到 runtime 的文件。 */
   private incomingFileHint(context: AgentExecutionContext, effectiveWorkspace: string): string {
-    if (context.executionMode?.toUpperCase() === 'LOCAL' || context.userId == null || context.sessionId == null) {
+    const runtimeUserId = this.runtimeUserIdOf(context);
+    if (context.executionMode?.toUpperCase() === 'LOCAL' || runtimeUserId == null || context.sessionId == null) {
       return '';
     }
-    const incomingDir = this.runtimeDataResolver.resolveIncomingDir(context.userId, context.sessionId);
+    const incomingDir = this.runtimeDataResolver.resolveIncomingDir(runtimeUserId, context.sessionId);
     return '## 用户上传的文件\n\n'
       + '用户可以通过输入框上传任意类型的文件，文件上传后保存在服务端临时目录（如下），并由系统将其引用（`@{绝对路径}@`）写入消息正文。\n'
       + `- 上传目录：\`${incomingDir}\`\n`

@@ -234,3 +234,44 @@ describe('flyway files', () => {
     expect(tsFiles.some((f) => f.startsWith('V074'))).toBe(true);
   });
 });
+
+describe('runtime identity config', () => {
+  const ENV_KEYS = ['MAO_RUNTIME_IDENTITY'];
+
+  function withEnv(env: Record<string, string | undefined>, fn: () => void): void {
+    const prev: Record<string, string | undefined> = {};
+    for (const key of ENV_KEYS) {
+      prev[key] = process.env[key];
+      if (env[key] === undefined) delete process.env[key];
+      else process.env[key] = env[key];
+    }
+    try {
+      resetConfigCache();
+      fn();
+    } finally {
+      for (const key of ENV_KEYS) {
+        if (prev[key] === undefined) delete process.env[key];
+        else process.env[key] = prev[key];
+      }
+      resetConfigCache();
+    }
+  }
+
+  it('defaults to execution mode', () => {
+    withEnv({}, () => {
+      expect(loadConfig().app.harness.runtimeIdentityMode).toBe('execution');
+    });
+  });
+
+  it('accepts owner / execution and falls back on invalid values', () => {
+    withEnv({ MAO_RUNTIME_IDENTITY: 'owner' }, () => {
+      expect(loadConfig().app.harness.runtimeIdentityMode).toBe('owner');
+    });
+    withEnv({ MAO_RUNTIME_IDENTITY: 'execution' }, () => {
+      expect(loadConfig().app.harness.runtimeIdentityMode).toBe('execution');
+    });
+    withEnv({ MAO_RUNTIME_IDENTITY: 'Owner' }, () => {
+      expect(loadConfig().app.harness.runtimeIdentityMode).toBe('execution');
+    });
+  });
+});

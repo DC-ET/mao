@@ -1,4 +1,4 @@
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync, readdirSync, rmSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import fastifyStatic from '@fastify/static';
@@ -48,10 +48,32 @@ export function parseSqlTimeMs(value: string | null | undefined): number | null 
 
 export function runtimeSessionCleanup(runtimeRoot: string): (userId: number, sessionId: number) => void {
   return (userId: number, sessionId: number): void => {
+    // 归属者目录无条件回收（即使根目录枚举失败也不影响）。
+    const cleaned = new Set<string>([resolve(runtimeRoot, String(userId), String(sessionId))]);
     try {
-      const sessionDir = resolve(runtimeRoot, String(userId), String(sessionId));
-      if (existsSync(sessionDir)) {
-        rmSync(sessionDir, { recursive: true, force: true });
+      // 群聊会话的运行期产物按「运行身份」分别落盘（技术方案 2026-11-04 §5.2/§5.9）：
+      // dump_user_messages / open_web_page 缓存 / 技能软链等都在 {runtimeRoot}/{发言者}/{sid} 下，
+      // 删除会话时不能只回收归属者目录，否则每个发言者都会留下永不回收的残留。
+      // sessionId 全局唯一，按 {runtimeRoot}/*/{sid} 扫描删除（删除是低频操作，可接受一次枚举）。
+      // 严格只认纯数字一级目录（用户 id 形态）：runtimeRoot 下还有 channels 等非用户目录，
+      // channel 目录名恰为 userId——若全量扫描，sessionId == 某 userId 时会误删该用户
+      // 的容器通道目录（socket/.token），打挂其 docker 运行面（评审 P0，2026-11-04）。
+      for (const entry of readdirSync(runtimeRoot, { withFileTypes: true })) {
+        if (!entry.isDirectory() || !/^\d+$/.test(entry.name)) continue;
+        cleaned.add(resolve(runtimeRoot, entry.name, String(sessionId)));
+      }
+    } catch (e) {
+      console.error(`Failed to enumerate runtime dirs for session ${sessionId}`, e);
+    }
+    try {
+      for (const sessionDir of cleaned) {
+        if (!existsSync(sessionDir)) continue;
+        try {
+          rmSync(sessionDir, { recursive: true, force: true });
+        } catch (e) {
+          // 单个目录 EBUSY/EACCES 不应跳过其余发言者目录（残留可下次再清，但不能漏清）。
+          console.error(`Failed to clean runtime dir ${sessionDir} for session ${sessionId}`, e);
+        }
       }
     } catch (e) {
       console.error(`Failed to clean runtime dir for session ${sessionId}`, e);

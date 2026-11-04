@@ -11,6 +11,8 @@ export interface Session {
   workspace?: string | null;
   permissionLevel?: string | null;
   memoryInjectionDisabled?: number | null;
+  /** 最近一次执行的运行身份（executionUserId ?? userId）：恢复/子代理/重试事实源。 */
+  lastRuntimeUserId?: number | null;
   modelId?: number | null;
   isGit?: boolean | number | null;
   platform?: string | null;

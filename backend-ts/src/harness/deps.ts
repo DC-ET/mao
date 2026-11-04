@@ -14,6 +14,8 @@ export interface Session {
   executionMode?: string | null;
   permissionLevel?: string | null;
   memoryInjectionDisabled?: number | null;
+  /** 最近一次执行的运行身份（executionUserId ?? userId）：恢复/子代理/重试事实源。 */
+  lastRuntimeUserId?: number | null;
   workspace?: string | null;
   isGit?: boolean | number | null;
   platform?: string | null;
@@ -154,6 +156,8 @@ export interface SessionMapper {
 export interface SessionService {
   getSession(sessionId: number): Promise<Session | null>;
   getMaxMessageId(sessionId: number): Promise<number>;
+  /** 记录最近一次执行的运行身份（技术方案 2026-11-04 §5.2）：恢复/子代理/重试事实源。 */
+  touchRuntimeUser?(sessionId: number, userId: number | null): Promise<void>;
   loadContextAnchor(sessionId: number): Promise<ContextAnchor>;
   updateContextAnchor(sessionId: number, promptTokens: number, anchorMsgId: number): Promise<void>;
   clearContextAnchor(sessionId: number): Promise<void>;

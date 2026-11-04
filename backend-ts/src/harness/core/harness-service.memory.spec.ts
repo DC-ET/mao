@@ -69,6 +69,7 @@ function buildHarness(memoryInjection: { listForInjection: (...args: never[]) =>
     applyHistory: vi.fn(async () => undefined),
   };
   const skillSyncService = {
+    syncToSession: vi.fn(async () => ({ failed: [] })),
     getUserSkillNames: vi.fn(() => [] as string[]),
     getUserSkillDocuments: vi.fn(() => []),
   };
@@ -125,6 +126,14 @@ describe('HarnessService buildContext memory injection', () => {
       { scope: 'PROJECT', projectKey: 'mao', content: '该仓库测试用 Vitest' },
       { scope: 'USER', projectKey: null, content: '输出报告用中文' },
     ]);
+  });
+
+  it('loadsMemoriesByRuntimeIdentity（注入与抽取同源 D5）', async () => {
+    const memoryInjection = { listForInjection: vi.fn(async () => []) };
+    const { harness } = buildHarness(memoryInjection);
+    // 群聊里发言者 67 ≠ 归属者 7：记忆注入必须跟运行身份走，否则「注入按 owner、抽取按发言者」再次错位。
+    await harness.buildContext(11, null, null, false, 67);
+    expect(memoryInjection.listForInjection).toHaveBeenCalledWith(67, 'mao', '/Users/me/mao');
   });
 
   it('memoryQueryFailureDegradesToNullAndSessionStillStarts', async () => {

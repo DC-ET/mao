@@ -143,6 +143,10 @@ export function assembleFeishuHandler(deps: FeishuHandlerDeps): FeishuHandlerRes
       updatePhase: async (sessionId: number, phase: any) => { await d.sessionService.updatePhase(sessionId, phase); },
       cleanupIncompleteTail: async (sessionId: number) => d.sessionService.cleanupIncompleteTail(sessionId),
       getPhase: async (sessionId: number) => (await d.sessionService.getSession(sessionId))?.phase ?? null,
+      // 最近一次执行的运行身份（技术方案 2026-11-04 §5.2）：失败卡重试透传。
+      // 不在此吞错：读取异常交给 runRetry 的 catch 记录并回落 owner，避免「身份漂移」静默复现。
+      getLastRuntimeUserId: async (sessionId: number) =>
+        (await d.sessionService.getSession(sessionId))?.lastRuntimeUserId ?? null,
       getLatestAssistantReplyWithId: async (sessionId: number) => {
         const messages = await d.sessionService.getMessages(sessionId);
         let messageId: number | null = null;

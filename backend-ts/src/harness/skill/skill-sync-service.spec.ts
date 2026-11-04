@@ -150,9 +150,11 @@ describe('SkillSyncService', () => {
 
     // 源侧技能下线（技能目录被删除），但 loader 缓存仍返回路径 → ensureView 检测源缺失
     rmSync(systemFolder, { recursive: true, force: true });
-    await svc.syncToSession(agent, 7, 61);
+    const result = await svc.syncToSession(agent, 7, 61);
     expect(existsSync(target)).toBe(false);
     expect(existsSync(join(viewsRoot, '7', 'java'))).toBe(false);
+    // 链接已摘除 → 本轮不可读，必须计入 failed 供调用侧从清单剔除（D7：清单与路径一致）
+    expect(result.failed).toContain('java');
   });
 
   it('degrades by removing the link when materialization fails', async () => {
@@ -164,17 +166,53 @@ describe('SkillSyncService', () => {
     const target = join(runtime.resolveSkillsDir(7, 71), 'java');
     expect(existsSync(target)).toBe(true);
 
-    // 物化失败（如磁盘满）：本轮不挂载（删除已有链接），不留下指向不存在视图的悬空
+    // 物化失败（如磁盘满）：本轮不挂载（删除已有链接），不留下指向不存在视图的悬空，
+    // 且把失败技能名返回给调用方（§5.3 D7：清单剔除与路径一致）。
     const spy = vi.spyOn(SkillViewService.prototype, 'ensureView').mockRejectedValue(new Error('disk full'));
     try {
-      await svc.syncToSession(agent, 7, 71);
+      const result = await svc.syncToSession(agent, 7, 71);
       expect(existsSync(target)).toBe(false);
+      expect(result.failed).toContain('java');
     } finally {
       spy.mockRestore();
     }
     // 失败解除后下一轮恢复挂载
-    await svc.syncToSession(agent, 7, 71);
+    const recovered = await svc.syncToSession(agent, 7, 71);
     expect(existsSync(target)).toBe(true);
+    expect(recovered.failed).toEqual([]);
+  });
+
+  it('syncState 按（agent,user,session）隔离：不同发言者互不清链', async () => {
+    const root = useTmpDir('skills-multi-user-');
+    const systemFolder = makeSystemSkill(root);
+    const userDir = join(root, 'users');
+    // 用户 8 有一个个人技能，保证其 merged 非空（空 merged 走早退，不触发清理）
+    mkdirSync(join(userDir, '8', 'mine8'), { recursive: true });
+    writeFileSync(join(userDir, '8', 'mine8', 'SKILL.md'), '---\nname: mine8\ndescription: Mine8\n---\nu');
+    const { svc } = makeService(root, systemFolder, userDir);
+    const agent = { id: 12, name: 'a', systemPrompt: 'p', skillNames: '["java"]' };
+    const runtimeSkills = (uid: number) => join(root, 'runtime', String(uid), '91', 'skills');
+
+    // 发言者 7 先挂 java
+    await svc.syncToSession(agent, 7, 91);
+    expect(existsSync(join(runtimeSkills(7), 'java'))).toBe(true);
+
+    // 发言者 8 触发（agent 无系统技能）→ 只挂自己的 mine8，不碰 7 的链接
+    await svc.syncToSession({ ...agent, skillNames: '[]' }, 8, 91);
+    expect(existsSync(join(runtimeSkills(8), 'mine8'))).toBe(true);
+    expect(existsSync(join(runtimeSkills(8), 'java'))).toBe(false);
+    expect(existsSync(join(runtimeSkills(7), 'java'))).toBe(true);
+
+    // 8 也挂过 java 后再清空：只清 8 自己，7 不受影响（旧实现按 (agent,session) 键会误清）
+    await svc.syncToSession(agent, 8, 91);
+    expect(existsSync(join(runtimeSkills(8), 'java'))).toBe(true);
+    await svc.syncToSession({ ...agent, skillNames: '[]' }, 8, 91);
+    expect(existsSync(join(runtimeSkills(8), 'java'))).toBe(false);
+    expect(existsSync(join(runtimeSkills(7), 'java'))).toBe(true);
+
+    // removed 查询同样按身份隔离
+    expect(svc.getRemovedSkillNames({ ...agent, skillNames: '[]' }, 7, 91)).toEqual(['java']);
+    expect(svc.getRemovedSkillNames({ ...agent, skillNames: '[]' }, 8, 91)).toEqual([]);
   });
 
   it('does not materialize a deleted source that no agent references (no side effects)', async () => {
@@ -210,7 +248,11 @@ describe('SkillSyncService', () => {
     const { svc } = makeService(root, systemFolder, userDir);
     const agent = { id: 3, name: 'a', systemPrompt: 'p', skillNames: '["java"]' };
     await svc.syncToSession(agent, 7, 11);
-    expect(svc.getRemovedSkillNames({ ...agent, skillNames: '[]' }, null, 11)).toEqual(expect.arrayContaining(['java', 'mine']));
+    // 运行身份参与 state key（技术方案 2026-11-04 §5.3）：查询必须带 userId；
+    // 该用户的个人技能仍可用（'mine' 不算 removed），只有被 agent 移除的 'java' 返回。
+    expect(svc.getRemovedSkillNames({ ...agent, skillNames: '[]' }, 7, 11)).toEqual(['java']);
+    // 无身份时无 state 可查（多发言者下无法判定归属），返回空而不是误报。
+    expect(svc.getRemovedSkillNames({ ...agent, skillNames: '[]' }, null, 11)).toEqual([]);
     expect(svc.getRemovedSkillNames(null, 7, 11)).toEqual([]);
     expect(svc.getRemovedSkillNames(agent, 7, null)).toEqual([]);
   });

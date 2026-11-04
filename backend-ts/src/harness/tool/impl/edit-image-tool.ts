@@ -198,7 +198,11 @@ export class EditImageTool extends BaseTool {
         return errorJson('output_compression 必须是 0–100 的整数');
       }
 
-      const ctx: SendBytesCallContext = { userId, sessionId, workspace };
+      // 跨成员路径预检的行为提示（技术方案 2026-11-04 §5.9 第 3 条）：改图无 URL 兜底，明确出路。
+      const ctx: SendBytesCallContext = {
+        userId, sessionId, workspace,
+        pathPolicyHint: '改图请重新生成，或由该成员本人操作',
+      };
       const images: EditImageFile[] = [];
       for (let i = 0; i < pathArgs.length; i++) {
         images.push(await loadLocalImage(pathArgs[i]!, this.pathSandbox, this.sendBytesSupport, ctx, `image_paths[${i}]`));

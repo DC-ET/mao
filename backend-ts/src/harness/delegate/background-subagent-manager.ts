@@ -1030,7 +1030,18 @@ export class BackgroundSubagentManager {
     childSession: Session,
     definition: AgentDefinition,
   ): Promise<AgentExecutionContext> {
-    const ctx = await this.deps.harnessService().buildContext(childSession.id!);
+    // 运行身份（技术方案 2026-11-04 §5.8）：child 优先（spawn/追问时已按父会话落值），
+    // 升级前存量子会话可能为空 → 回落父会话 lastRuntimeUserId ?? userId，避免静默落到 owner。
+    const parent = childSession.parentSessionId != null
+      ? await this.deps.sessionMapper.selectById(childSession.parentSessionId)
+      : null;
+    const runtimeUser = childSession.lastRuntimeUserId
+      ?? parent?.lastRuntimeUserId
+      ?? parent?.userId
+      ?? null;
+    const ctx = await this.deps.harnessService().buildContext(
+      childSession.id!, undefined, undefined, false, runtimeUser,
+    );
     if (definition.systemPromptOverride) ctx.systemPrompt = definition.systemPromptOverride;
     ctx.agentName = definition.name + '-agent';
     const excluded = new Set([...BACKGROUND_SUBAGENT_TOOLS, ...SUBAGENT_EXCLUDED_TOOLS, ...(definition.excludedToolNames ?? [])]);

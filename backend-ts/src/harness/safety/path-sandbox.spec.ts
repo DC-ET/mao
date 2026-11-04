@@ -59,4 +59,34 @@ describe('PathSandbox', () => {
     sandbox.addAllowedRoot(allowed);
     expect(sandbox.resolve(file)).toBe(file);
   });
+
+  it('gives dedicated messages for another member runtime/uploads paths', () => {
+    const dir = useTmpDir('mao-sandbox-');
+    const runtimeRoot = join(dir, 'runtime');
+    const uploadDir = join(dir, 'uploads');
+    const workspace = join(dir, 'workspace', '67');
+    mkdirSync(workspace, { recursive: true });
+    const sandbox = new PathSandbox(workspace, {
+      strict: true,
+      identity: { runtimeRoot, uploadDir, userId: 67 },
+    });
+    expect(() => sandbox.resolve(join(runtimeRoot, '17', '1607', 'skills', 'x', 'SKILL.md')))
+      .toThrow(/其他用户的会话运行目录（当前执行身份 67）/);
+    expect(() => sandbox.resolve(join(uploadDir, '17', 'gen.png')))
+      .toThrow(/其他成员的产物目录（当前执行身份 67）/);
+    // 与身份无关的越界保持原文案；非 uid 首段（平台平坦文件 / releases 目录）不做跨成员归因
+    expect(() => sandbox.resolve(join(dir, 'elsewhere', 'x.txt')))
+      .toThrow(/^Path escape attempt: /);
+    expect(() => sandbox.resolve(join(uploadDir, 'releases', 'latest.yml')))
+      .toThrow(/^Path escape attempt: /);
+    expect(() => sandbox.resolve(join(runtimeRoot, 'channels', 'x.sock')))
+      .toThrow(/^Path escape attempt: /);
+  });
+
+  it('keeps the generic escape message when identity is absent', () => {
+    const dir = useTmpDir('mao-sandbox-');
+    const sandbox = new PathSandbox(join(dir, 'workspace', '67'), { strict: true });
+    expect(() => sandbox.resolve(join(dir, 'runtime', '17', 'x')))
+      .toThrow(/^Path escape attempt: /);
+  });
 });

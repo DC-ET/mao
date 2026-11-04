@@ -7,6 +7,7 @@ import { AgentExecutionContext } from './agent-execution-context.js';
 import { CompactionConfig } from './compaction-config.js';
 import { HarnessService } from './harness-service.js';
 import { AtomicBoolean } from '../atomic-boolean.js';
+import * as harnessLogModule from '../log.js';
 import type { Tool } from '../tool/tool.js';
 import type { AgentLoop } from './agent-loop.js';
 import type { ToolRegistry } from '../tool/tool-registry.js';
@@ -148,7 +149,25 @@ function model() {
   };
 }
 
-function makeHarness(overrides: Record<string, unknown> = {}) {
+function sessionServiceMock() {
+  return {
+    touchRuntimeUser: vi.fn(async () => undefined),
+    cleanupIncompleteTailAfterId: vi.fn(async () => 0),
+    loadContextAnchor: vi.fn(async () => ({ lastPromptTokens: 11, contextAnchorMsgId: 4 })),
+    getFirstUserStamp: vi.fn(async () => null),
+    getPreviousUserStamp: vi.fn(async () => null),
+    saveMessage: vi.fn(async () => ({ id: 99 })),
+    getMessages: vi.fn(async () => [
+      { role: 'USER', content: 'hello' },
+      { role: 'ASSISTANT', content: 'world'.repeat(80) },
+    ]),
+  };
+}
+
+function makeHarness(
+  overrides: Record<string, unknown> = {},
+  runtimeIdentityMode: 'execution' | 'owner' = 'execution',
+) {
   const agentLoop = {
     execute: vi.fn(async () => undefined),
     removeCancelFlag: vi.fn(),
@@ -164,7 +183,7 @@ function makeHarness(overrides: Record<string, unknown> = {}) {
     getAllDocuments: vi.fn(() => [{ name: 'java', description: 'Java skill' }]),
   };
   const skillSync = {
-    syncToSession: vi.fn(async () => undefined),
+    syncToSession: vi.fn(async () => ({ failed: [] })),
     getUserSkillNames: vi.fn(() => ['mine']),
     getUserSkillDocuments: vi.fn(() => [{ name: 'mine', description: 'user skill' }]),
     loadAgentServers: vi.fn(async () => []),
@@ -203,17 +222,7 @@ function makeHarness(overrides: Record<string, unknown> = {}) {
     selectDefault: vi.fn(async () => model()),
   };
   const fileChangeMapper = { insert: vi.fn(async () => 1) };
-  const sessionService = {
-    cleanupIncompleteTailAfterId: vi.fn(async () => 0),
-    loadContextAnchor: vi.fn(async () => ({ lastPromptTokens: 11, contextAnchorMsgId: 4 })),
-    getFirstUserStamp: vi.fn(async () => null),
-    getPreviousUserStamp: vi.fn(async () => null),
-    saveMessage: vi.fn(async () => ({ id: 99 })),
-    getMessages: vi.fn(async () => [
-      { role: 'USER', content: 'hello' },
-      { role: 'ASSISTANT', content: 'world'.repeat(80) },
-    ]),
-  };
+  const sessionService = sessionServiceMock();
   const sessionCompactionService = {
     loadValidated: vi.fn(async () => null),
     boundaryOf: vi.fn(() => 0),
@@ -277,6 +286,7 @@ function makeHarness(overrides: Record<string, unknown> = {}) {
     deps.mcpLoadModeResolver ?? null,
     deps.httpToolService ?? null,
     deps.experienceMount ?? null,
+    runtimeIdentityMode,
   );
   return { service, ...deps };
 }
@@ -415,6 +425,129 @@ describe('HarnessService.buildContext and execute', () => {
     expect(sessionService.getFirstUserStamp).toHaveBeenCalledWith(10);
   });
 
+  it('buildContext 以运行身份同步技能并持久化（默认 execution）', async () => {
+    const { service, skillSync, sessionService } = makeHarness();
+    const ctx = await service.buildContext(10, null, null, false, 67);
+    expect(ctx.userId).toBe(7);          // 会话归属不变
+    expect(ctx.runtimeUserId).toBe(67);  // 运行身份 = 本次发言者
+    expect(skillSync.syncToSession).toHaveBeenCalledWith(expect.objectContaining({ id: 2 }), 67, 10);
+    expect(sessionService.touchRuntimeUser).toHaveBeenCalledWith(10, 67);
+    // 用户技能清单/文档同样按运行身份取：否则「清单按发言者、路径按归属」再次漂移。
+    expect(skillSync.getUserSkillNames).toHaveBeenCalledWith(67);
+    expect(skillSync.getUserSkillDocuments).toHaveBeenCalledWith(67);
+  });
+
+  it('身份不一致时注入执行身份显示名，身份一致时不查库', async () => {
+    const queryOne = vi.fn(async () => ({ displayName: '杨佳毅' }));
+    const { service } = makeHarness({ db: { queryOne } });
+    const ctx = await service.buildContext(10, null, null, false, 67);
+    expect(ctx.runtimeUserDisplayName).toBe('杨佳毅');
+    expect(queryOne).toHaveBeenCalledWith(expect.stringContaining('display_name'), [67]);
+    // 私聊/定时任务等无发言者场景：跑在归属身份上，不渲染身份段，也就不该多查一次库。
+    queryOne.mockClear();
+    const same = await service.buildContext(10);
+    expect(same.runtimeUserDisplayName).toBeNull();
+    expect(queryOne).not.toHaveBeenCalled();
+    // 查库失败只降级显示名，不影响身份本身（best-effort）。
+    const failing = makeHarness({
+      db: { queryOne: vi.fn(async () => { throw new Error('db down'); }) },
+    });
+    const degraded = await failing.service.buildContext(10, null, null, false, 67);
+    expect(degraded.runtimeUserId).toBe(67);
+    expect(degraded.runtimeUserDisplayName).toBeNull();
+  });
+
+  it('execute 把本次发言者透传给 buildContext（第 5 参）', async () => {
+    const { service } = makeHarness();
+    const buildSpy = vi.spyOn(service, 'buildContext');
+    const listener = { onContentDelta: vi.fn() } as never;
+    await service.execute(10, null, listener, null, 67);
+    expect(buildSpy).toHaveBeenCalledWith(10, listener, null, false, 67);
+  });
+
+  it('顶层技能同步失败时本轮不列任何技能（清单与路径保持一致）', async () => {
+    const { service } = makeHarness({
+      skillSync: {
+        syncToSession: vi.fn(async () => { throw new Error('mkdir EACCES'); }),
+        getUserSkillNames: vi.fn(() => ['mine']),
+        getUserSkillDocuments: vi.fn(() => [{ name: 'mine', description: 'user skill' }]),
+        loadAgentServers: vi.fn(async () => []),
+        getLocalSessionTools: vi.fn(() => []),
+        connectForCloud: vi.fn(async () => ({ tools: [], warnings: [] })),
+        clearSession: vi.fn(),
+        clearLocalSession: vi.fn(),
+        clearCloudSnapshot: vi.fn(),
+      },
+    });
+    const ctx = await service.buildContext(10);
+    // 链接未建立：任何技能路径都不可读，清单置空避免引导模型撞墙。
+    expect(ctx.availableSkillNames).toEqual([]);
+  });
+
+  it('MCP 保持 owner 且身份不一致时打可观测日志（§7 已知差异）', async () => {
+    const logSpy = vi.spyOn(harnessLogModule, 'harnessLog').mockImplementation(() => undefined);
+    try {
+      const { service } = makeHarness({
+        skillSync: {
+          syncToSession: vi.fn(async () => ({ failed: [] })),
+          getUserSkillNames: vi.fn(() => []),
+          getUserSkillDocuments: vi.fn(() => []),
+          loadAgentServers: vi.fn(async () => [{ name: 'srv' }]),
+          getLocalSessionTools: vi.fn(() => []),
+          connectForCloud: vi.fn(async () => ({ tools: [], warnings: [] })),
+          clearSession: vi.fn(),
+          clearLocalSession: vi.fn(),
+          clearCloudSnapshot: vi.fn(),
+        },
+      });
+      await service.buildContext(10, null, null, false, 67);
+      expect(logSpy).toHaveBeenCalledWith('warn', expect.stringContaining('[mcp-identity]'));
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it('buildContext 无发言者时运行身份回落会话归属', async () => {
+    const { service, skillSync, sessionService } = makeHarness();
+    const ctx = await service.buildContext(10);
+    expect(ctx.runtimeUserId).toBe(7);
+    expect(skillSync.syncToSession).toHaveBeenCalledWith(expect.anything(), 7, 10);
+    expect(sessionService.touchRuntimeUser).toHaveBeenCalledWith(10, 7);
+  });
+
+  it('MAO_RUNTIME_IDENTITY=owner 时忽略执行用户（应急回退）', async () => {
+    const { service, skillSync, sessionService } = makeHarness({}, 'owner');
+    const ctx = await service.buildContext(10, null, null, false, 67);
+    expect(ctx.runtimeUserId).toBe(7);
+    expect(skillSync.syncToSession).toHaveBeenCalledWith(expect.anything(), 7, 10);
+    expect(sessionService.touchRuntimeUser).toHaveBeenCalledWith(10, 7);
+  });
+
+  it('touchRuntimeUser 失败只告警，不阻断 buildContext', async () => {
+    const failing = { touchRuntimeUser: vi.fn(async () => { throw new Error('db down'); }) };
+    const { service } = makeHarness({ sessionService: { ...sessionServiceMock(), ...failing } });
+    const ctx = await service.buildContext(10, null, null, false, 67);
+    expect(ctx.runtimeUserId).toBe(67);
+  });
+
+  it('同步失败的技能本轮从可用清单剔除（清单与路径保持一致）', async () => {
+    const { service } = makeHarness({
+      skillSync: {
+        syncToSession: vi.fn(async () => ({ failed: ['java'] })),
+        getUserSkillNames: vi.fn(() => ['mine']),
+        getUserSkillDocuments: vi.fn(() => [{ name: 'mine', description: 'user skill' }]),
+        loadAgentServers: vi.fn(async () => []),
+        getLocalSessionTools: vi.fn(() => []),
+        connectForCloud: vi.fn(async () => ({ tools: [], warnings: [] })),
+        clearSession: vi.fn(),
+        clearLocalSession: vi.fn(),
+        clearCloudSnapshot: vi.fn(),
+      },
+    });
+    const ctx = await service.buildContext(10);
+    expect(ctx.availableSkillNames).toEqual(['mine']);
+  });
+
   it('buildContext 保留开启页面能力的 embed 会话的 page_* 工具', async () => {
     const pageTools = [fakeTool('read_file'), fakeTool('page_inspect'), fakeTool('page_click')];
     const toolRegistry = {
@@ -470,7 +603,7 @@ describe('HarnessService.buildContext and execute', () => {
       inputSchema: { type: 'object', properties: {} }, annotations: { readOnlyHint: true },
     }];
     const mcpSync = {
-      syncToSession: vi.fn(async () => undefined),
+      syncToSession: vi.fn(async () => ({ failed: [] })),
       getUserSkillNames: vi.fn(() => []),
       getUserSkillDocuments: vi.fn(() => []),
       loadAgentServers: vi.fn(async () => [{ id: 5, name: 'fs', description: '文件系统' }]),
@@ -509,7 +642,7 @@ describe('HarnessService.buildContext and execute', () => {
       getTool: vi.fn((name: string) => builtin.find((tool) => tool.getName() === name)),
     };
     const mcpSync = {
-      syncToSession: vi.fn(async () => undefined),
+      syncToSession: vi.fn(async () => ({ failed: [] })),
       getUserSkillNames: vi.fn(() => []),
       getUserSkillDocuments: vi.fn(() => []),
       loadAgentServers: vi.fn(async () => []),
@@ -535,7 +668,7 @@ describe('HarnessService.buildContext and execute', () => {
       getTool: vi.fn((name: string) => builtin.find((tool) => tool.getName() === name)),
     };
     const mcpSync = {
-      syncToSession: vi.fn(async () => undefined),
+      syncToSession: vi.fn(async () => ({ failed: [] })),
       getUserSkillNames: vi.fn(() => []),
       getUserSkillDocuments: vi.fn(() => []),
       loadAgentServers: vi.fn(async () => [{ id: 5, name: 'fs', description: '' }]),

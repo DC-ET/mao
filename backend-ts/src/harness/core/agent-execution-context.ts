@@ -17,6 +17,13 @@ export class AgentExecutionContext {
   userId?: number | null;
   /** 本次外部消息触发者；群聊会话的 userId 仍保留为 owner。 */
   executionUserId?: number | null;
+  /**
+   * 运行身份（技术方案 2026-11-04 §5.2）：executionUserId ?? session.userId（owner 开关下恒为后者）。
+   * 执行期资源（技能路径、上传目录、工具读写、记忆）一律取它；userId 保留会话归属语义。
+   */
+  runtimeUserId?: number | null;
+  /** 运行身份的显示名（best-effort，仅身份段渲染用；查不到为 null）。 */
+  runtimeUserDisplayName?: string | null;
   agentId?: number | null;
   projectKey?: string | null;
   systemPrompt?: string | null;
