@@ -81,6 +81,7 @@
                 <span v-if="run.attempt > 1">第 {{ run.attempt }} 次尝试</span>
                 <span>{{ formatDuration(run.durationMs) }}</span>
                 <span>{{ formatCost(run.costMicros) }}</span>
+                <span v-if="run.errorSummary" class="run-error" :title="run.errorSummary">{{ run.errorSummary }}</span>
               </button>
             </div>
           </div>
@@ -371,6 +372,15 @@ onMounted(fetchTasks)
 
 .run-row:hover {
   background: var(--aw-surface-sunken, rgba(0, 0, 0, 0.03));
+}
+
+.run-error {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--aw-ink-muted);
 }
 
 .cron {
