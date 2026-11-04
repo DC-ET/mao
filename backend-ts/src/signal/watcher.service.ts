@@ -13,6 +13,7 @@ import {
   computeValueHash,
   ProbeValueError,
   renderWatcherPrompt,
+  truncateSnippet,
   valueTextForDiff,
 } from './watcher.logic.js';
 
@@ -108,6 +109,14 @@ export interface SignalWatcherView {
   triggerMode: SignalTriggerMode;
   /** REUSE_SESSION 模式当前复用的会话 id（只读展示；指针系统维护，不接受提交）。 */
   reuseSessionId: number | null;
+  /**
+   * 上次判定内容片段（透出供失败行「上次正常值」用；失败不覆盖它，见 D4）。
+   * 注：此处是 watcher 行的「当前最新值」，不是某一历史 check 行的旧值。
+   */
+  lastValueSnippet: string | null;
+  /** 上次那次变化的旧/新值（V184）：列表卡一句「上次变化」的数据源。 */
+  lastChangeOldSnippet: string | null;
+  lastChangeNewSnippet: string | null;
   createdAt: string | null;
 }
 
@@ -171,6 +180,8 @@ export class WatcherService {
       status: 'ACTIVE',
       lastValueHash: null,
       lastValueSnippet: null,
+      lastChangeOldSnippet: null,
+      lastChangeNewSnippet: null,
       lastCheckedAt: null,
       lastChangedAt: null,
       consecutiveFailures: 0,
@@ -238,6 +249,8 @@ export class WatcherService {
     if (resetBaseline) {
       patch.lastValueHash = null;
       patch.lastValueSnippet = null;
+      patch.lastChangeOldSnippet = null;
+      patch.lastChangeNewSnippet = null;
       patch.lastChangedAt = null;
       // 失败退避会把 last_checked_at 写成未来时刻。只清哈希不清这个时刻，
       // 改完判定字段后 listDue 仍要等完退避（日更最长约 17 天）才重建基线。
@@ -272,6 +285,8 @@ export class WatcherService {
       patch.consecutiveFailures = 0;
       patch.lastValueHash = null;
       patch.lastValueSnippet = null;
+      patch.lastChangeOldSnippet = null;
+      patch.lastChangeNewSnippet = null;
       patch.lastChangedAt = null;
       patch.lastCheckedAt = null;
     } else if (status === 'ACTIVE' && existing.status === 'PAUSED' && isFutureCheckedAt(existing.lastCheckedAt)) {
@@ -402,6 +417,8 @@ export class WatcherService {
       watcherId: watcher.id,
       httpStatus: result.httpStatus,
       valueHash: null,
+      oldValueSnippet: null,
+      newValueSnippet: null,
       changed: 0,
       triggeredSessionId: null,
       error: null,
@@ -433,7 +450,15 @@ export class WatcherService {
       return;
     }
 
-    await this.deps.checkRepo.updateHash(checkId, valueHash);
+    // 本次判定所用的旧值：372 行那份快照（与 lastValueHash 比对的同一份），
+    // **绝不用触发前复读的 fresh.lastValueSnippet**（473 行）——探针在途期间用户
+    // 若编辑判定字段，复读值与「是否变化」的判定基准已不一致（§4.1）。
+    const oldSnippet = watcher.lastValueSnippet == null ? null : truncateSnippet(watcher.lastValueSnippet);
+    await this.deps.checkRepo.updateValue(checkId, {
+      valueHash,
+      oldValueSnippet: oldSnippet,
+      newValueSnippet: truncateSnippet(newText),
+    });
 
     // 首轮：只建基线不触发
     if (watcher.lastValueHash == null || watcher.lastValueHash === '') {
@@ -527,6 +552,8 @@ export class WatcherService {
       await this.deps.watcherRepo.markChecked(watcher.id, {
         lastValueHash: valueHash,
         lastValueSnippet: newText,
+        lastChangeOldSnippet: oldSnippet,
+        lastChangeNewSnippet: truncateSnippet(newText),
         lastChangedAt: formatDateTime(Date.now()),
         consecutiveFailures: watcher.consecutiveFailures ?? 0,
       });
@@ -541,9 +568,13 @@ export class WatcherService {
     // resetFailures 必须为 false：markChecked 默认在「库内值 == 传入快照」时把连败清零，
     // 紧接着 recordFailure 再 +1，连败会永远停在 1，到不了自动停用阈值。
     await this.markCheckError(checkId, failure);
+    // 本轮已 markChanged——watcher 行「上次变化」新旧值对同样要推进（列表卡读它），
+    // 失败的只是触发、值是好的。lastChangedAt 语义不变（保持上次「成功触发」时刻）。
     await this.deps.watcherRepo.markChecked(watcher.id, {
       lastValueHash: valueHash,
       lastValueSnippet: newText,
+      lastChangeOldSnippet: oldSnippet,
+      lastChangeNewSnippet: truncateSnippet(newText),
       lastChangedAt: watcher.lastChangedAt,
       consecutiveFailures: watcher.consecutiveFailures ?? 0,
       resetFailures: false,
@@ -571,6 +602,8 @@ export class WatcherService {
       watcherId: watcher.id,
       httpStatus,
       valueHash: null,
+      oldValueSnippet: null,
+      newValueSnippet: null,
       changed: 0,
       triggeredSessionId: null,
       error: message.slice(0, 500),
@@ -860,6 +893,9 @@ export class WatcherService {
       consecutiveFailures: Number(row.consecutiveFailures ?? 0),
       triggerMode: row.triggerMode,
       reuseSessionId: row.reuseSessionId ?? null,
+      lastValueSnippet: row.lastValueSnippet ?? null,
+      lastChangeOldSnippet: row.lastChangeOldSnippet ?? null,
+      lastChangeNewSnippet: row.lastChangeNewSnippet ?? null,
       createdAt: row.createdAt ?? null,
     };
   }

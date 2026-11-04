@@ -66,6 +66,10 @@
             <span>间隔 {{ watcher.intervalMinutes }} 分钟</span>
             <span v-if="watcher.compareMode === 'JSON_FIELD'">路径 {{ watcher.jsonPath }}</span>
             <span>上次变化：{{ watcher.lastChangedAt ? formatTime(watcher.lastChangedAt) : '从未' }}</span>
+            <span v-if="watcher.lastChangeOldSnippet != null || watcher.lastChangeNewSnippet != null"
+              class="last-change-text">
+              {{ lastChangeText(watcher) }}
+            </span>
             <span>上次轮询：{{ watcher.lastCheckedAt ? formatTime(watcher.lastCheckedAt) : '从未' }}</span>
             <span v-if="watcher.consecutiveFailures > 0" class="fail-text">连续失败 {{ watcher.consecutiveFailures }} 次</span>
           </div>
@@ -228,7 +232,7 @@
           </el-table-column>
           <el-table-column label="详情" min-width="140" show-overflow-tooltip>
             <template #default="{ row }">
-              <span class="error-text">{{ row.error || row.valueHash?.slice(0, 12) || '-' }}</span>
+              <span :class="{ 'error-text': row.error }" class="detail-text">{{ checkDetailText(row) }}</span>
             </template>
           </el-table-column>
         </el-table>
@@ -291,6 +295,7 @@ import {
   type SignalWatcherStatus
 } from '../../api'
 import type { SignalWatcherWarning } from '@mao/contracts'
+import { formatSignalChangeValue, formatSignalCheckDetail } from '@mao/contracts'
 import {
   DISABLE_AFTER_FAILURES,
   TRIGGER_MODE_LABELS,
@@ -343,6 +348,8 @@ const checksLoading = ref(false)
 const checksWatcherId = ref<number | null>(null)
 const checks = ref<SignalWatcherCheckPage>({ rows: [], total: 0 })
 const checksPage = ref(1)
+/** 抽屉打开的那条哨兵：给 checks 行的文案提供 compareMode / jsonPath 口径。 */
+const checksWatcher = ref<SignalWatcherView | null>(null)
 
 const testVisible = ref(false)
 const testResult = ref<SignalWatcherTestResult | null>(null)
@@ -384,6 +391,40 @@ function warningLabel(warning: SignalWatcherWarning): string {
 function formatTime(value: string | null): string {
   if (!value) return '-'
   return value.replace('T', ' ').slice(0, 16)
+}
+
+/** 列表卡「上次变化：旧 → 新」一句（§5.8，数据源 V184；从未变化 / 已重置基线时整句不渲染，见模板 v-if）。 */
+function lastChangeText(watcher: SignalWatcherView): string {
+  return formatSignalChangeValue({
+    compareMode: watcher.compareMode,
+    oldText: watcher.lastChangeOldSnippet,
+    newText: watcher.lastChangeNewSnippet,
+    jsonPath: watcher.jsonPath,
+  })
+}
+
+function watcherCompareMode(): SignalCompareMode {
+  return checksWatcher.value?.compareMode ?? 'HASH'
+}
+
+function checksJsonPath(): string | null {
+  return checksWatcher.value?.jsonPath ?? null
+}
+
+/**
+ * checks「详情」列文案（§5.5：三态 + NULL 回落，与 admin 同口径）。
+ * formatSignalCheckDetail 已含「触发失败」附新旧值对的第二行，此处不再重复追加。
+ * 注：多行文本在单元格内由 pre-wrap 呈现。
+ */
+function checkDetailText(row: { changed: number; error: string | null; oldValueSnippet: string | null; newValueSnippet: string | null }): string {
+  return formatSignalCheckDetail({
+    compareMode: watcherCompareMode(),
+    changed: row.changed,
+    error: row.error,
+    oldValueSnippet: row.oldValueSnippet,
+    newValueSnippet: row.newValueSnippet,
+    jsonPath: checksJsonPath(),
+  })
 }
 
 async function fetchWatchers(): Promise<void> {
@@ -566,6 +607,7 @@ async function confirmDelete(watcher: SignalWatcherView): Promise<void> {
 
 async function openChecks(watcher: SignalWatcherView): Promise<void> {
   checksWatcherId.value = watcher.id
+  checksWatcher.value = watcher
   checksPage.value = 1
   checksVisible.value = true
   await fetchChecks()
@@ -906,6 +948,14 @@ onMounted(() => {
 .error-text {
   font-size: 12px;
   color: var(--aw-ink-muted);
+  word-break: break-all;
+}
+
+.detail-text {
+  white-space: pre-wrap;
+}
+
+.last-change-text {
   word-break: break-all;
 }
 

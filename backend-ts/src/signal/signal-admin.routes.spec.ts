@@ -20,6 +20,8 @@ function watcher(overrides: Partial<SignalWatcher> = {}): SignalWatcher {
     status: 'ACTIVE',
     lastValueHash: null,
     lastValueSnippet: null,
+    lastChangeOldSnippet: null,
+    lastChangeNewSnippet: null,
     lastCheckedAt: null,
     lastChangedAt: null,
     consecutiveFailures: 0,

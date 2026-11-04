@@ -102,8 +102,13 @@ export function computeValueHash(input: ComputeValueInput): string {
   return hashProbeValue(input.bodyBytes);
 }
 
-function truncate(text: string, max: number): string {
+/** 截断（diff 单侧片段的统一口径，check 行 / watcher 行均复用此口径）。 */
+export function truncateSnippet(text: string, max: number = DIFF_SNIPPET_MAX_CHARS): string {
   return text.length <= max ? text : `${text.slice(0, max)}…（已截断）`;
+}
+
+function truncate(text: string, max: number): string {
+  return truncateSnippet(text, max);
 }
 
 export interface DiffInput {

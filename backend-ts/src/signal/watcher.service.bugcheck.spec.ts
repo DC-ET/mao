@@ -41,6 +41,8 @@ function watcher(overrides: Partial<SignalWatcher> = {}): SignalWatcher {
     status: 'ACTIVE',
     lastValueHash: null,
     lastValueSnippet: null,
+    lastChangeOldSnippet: null,
+    lastChangeNewSnippet: null,
     lastCheckedAt: null,
     lastChangedAt: null,
     consecutiveFailures: 0,
@@ -79,6 +81,8 @@ function harness(initial: SignalWatcher, body = '{}'): Harness {
     if (row == null) return;
     row.lastValueHash = patch.lastValueHash;
     row.lastValueSnippet = patch.lastValueSnippet;
+    if ('lastChangeOldSnippet' in patch) row.lastChangeOldSnippet = patch.lastChangeOldSnippet ?? null;
+    if ('lastChangeNewSnippet' in patch) row.lastChangeNewSnippet = patch.lastChangeNewSnippet ?? null;
     row.lastChangedAt = patch.lastChangedAt;
     // 与真实 SQL 一致：仅当库内值仍等于本次读到的快照值时才清零；触发失败路径传 resetFailures=false
     if (patch.resetFailures !== false && row.consecutiveFailures === patch.consecutiveFailures) row.consecutiveFailures = 0;
@@ -108,6 +112,10 @@ function harness(initial: SignalWatcher, body = '{}'): Harness {
       nextCheckId.value += 1;
       checks.push({ ...row, id } as SignalWatcherCheck);
       return id;
+    }),
+    updateValue: vi.fn(async (id: number, patch: { valueHash: string; oldValueSnippet: string | null; newValueSnippet: string | null }) => {
+      const row = checks.find((c) => c.id === id);
+      if (row != null) { row.valueHash = patch.valueHash; row.oldValueSnippet = patch.oldValueSnippet; row.newValueSnippet = patch.newValueSnippet; }
     }),
     updateHash: vi.fn(async (id: number, hash: string) => {
       const row = checks.find((c) => c.id === id);
