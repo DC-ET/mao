@@ -222,6 +222,40 @@ describe('useWorkspaceFiles 预览状态机', () => {
     expect(files.state.preview?.pdfUrl).toBeNull()
   })
 
+  it('PDF 空 blob：不给 iframe/canvas 渲染空内容，直接报错', async () => {
+    // 回归（2026-11-04 线上）：字节流返回 0 字节时旧实现仍 createObjectURL，
+    // 渲染层拿到空文档后白屏且无任何提示。这里要求状态机就地把空响应判为失败。
+    const files = await loadComposable(undefined)
+    await files.open(3)
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      headers: { get: () => 'application/pdf' },
+      blob: async () => new Blob([]),
+    } as unknown as Response)))
+
+    await files.previewFile('docs/empty.pdf')
+
+    expect(files.state.preview?.loading).toBe(false)
+    expect(files.state.preview?.error).toBe('PDF 内容为空')
+    expect(files.state.preview?.pdfUrl).toBeNull()
+  })
+
+  it('切换 PDF 预览目标后，前一个 blob URL 被释放', async () => {
+    // blob URL 不释放会一直占着 PDF 字节的内存直到页面卸载
+    const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+    const files = await loadComposable(undefined)
+    await files.open(3)
+    await files.previewFile('docs/a.pdf')
+    const firstUrl = files.state.preview?.pdfUrl
+    expect(firstUrl).toBeTruthy()
+    await files.previewFile('docs/b.pdf')
+
+    expect(revoke).toHaveBeenCalledWith(firstUrl)
+    expect(files.state.preview?.path).toBe('docs/b.pdf')
+    expect(files.state.preview?.pdfUrl).not.toBe(firstUrl)
+    revoke.mockRestore()
+  })
+
   it('切换预览目标后，前一个请求的结果被丢弃', async () => {
     // 第一个请求慢、第二个快：慢的返回时当前目标已是第二个，不得覆盖
     let releaseFirst: (v: unknown) => void = () => {}

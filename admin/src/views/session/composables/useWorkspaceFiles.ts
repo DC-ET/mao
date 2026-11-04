@@ -321,9 +321,12 @@ export function useWorkspaceFiles() {
       const result = await fetchBytes(sessionFilesUrl(state.sessionId!, 'preview', { path: relativePath }))
       // 期间可能已切换预览目标：仅回填仍是当前目标的结果
       if (!isCurrentPreview(preview)) return
-      fillPreview(result.blob
-        ? { loading: false, pdfUrl: URL.createObjectURL(result.blob) }
-        : { loading: false, error: result.error ?? 'PDF 预览失败' })
+      // 0 字节 blob 也要判失败：否则渲染层拿到空文档只会白屏，没有任何提示
+      if (result.blob && result.blob.size > 0) {
+        fillPreview({ loading: false, pdfUrl: URL.createObjectURL(result.blob) })
+      } else {
+        fillPreview({ loading: false, error: result.error ?? (result.blob ? 'PDF 内容为空' : 'PDF 预览失败') })
+      }
       return
     }
     try {

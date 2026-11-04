@@ -32,7 +32,9 @@
         </div>
       </template>
       <template v-else-if="preview.pdfUrl">
-        <iframe class="wfp-pdf" :src="preview.pdfUrl" :title="preview.path" />
+        <div class="wfp-pdf-host">
+          <PdfViewer :blob-url="preview.pdfUrl" :file-name="preview.path" />
+        </div>
       </template>
       <template v-else-if="preview.data?.media_type === 'image'">
         <div class="wfp-image-summary">{{ preview.data.content }}</div>
@@ -51,6 +53,7 @@
 import { computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { renderMarkdown } from '../composables/useMarkdown'
+import PdfViewer from './PdfViewer.vue'
 import type { WorkspaceFilesController } from '../composables/useWorkspaceFiles'
 
 const props = defineProps<{
@@ -189,11 +192,12 @@ async function onDownloadPath(path: string) {
   border-radius: 4px;
 }
 
-.wfp-pdf {
-  width: 100%;
-  height: 64vh;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 4px;
+/* PDF 由 PdfViewer 自渲染（pdf.js canvas），样式收敛在组件内 */
+.wfp-pdf-host {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 
 /* Markdown 渲染态复用聊天记录样式（marked + DOMPurify 产物） */
