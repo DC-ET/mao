@@ -71,8 +71,9 @@ test('category card batch save round-trip', async ({ page }) => {
   await page.goto('/admin/settings')
   await page.waitForSelector('.settings-layout', { timeout: 10_000 })
 
-  const uiCard = page.locator('.group-card', { hasText: '审计' })
-  const input = uiCard.locator('input').first()
+  // 菜单可见性卡片里也有「审计日志」字样，不能用 hasText「审计」去撞第一张 group-card
+  const uiCard = page.locator('#setting-cat-审计')
+  const input = uiCard.getByRole('spinbutton', { name: '审计日志建议保留天数' })
   const original = await input.inputValue()
   expect(Number(original)).toBeGreaterThan(0)
 

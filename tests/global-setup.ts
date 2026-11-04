@@ -6,7 +6,7 @@
  *
  * 环境准备（建库/迁移/种子/.env.e2e）：bash scripts/e2e-setup.sh
  */
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -90,6 +90,35 @@ async function startIfFree(port: number, label: string, command: string, args: s
   await waitForHttp(readyUrl, 90_000, label)
 }
 
+/** 种子库复用后 created_at 会落在「今日」窗口外，分析页因此走空态。每次开跑前刷到现在。 */
+function refreshSeedTimestamps(env: Record<string, string>): void {
+  const url = env.MYSQL_URL ?? ''
+  const match = url.match(/jdbc:mysql:\/\/([^:/]+):(\d+)\/([^?]+)/)
+  if (!match) {
+    console.warn('[e2e] 无法解析 MYSQL_URL，跳过分析页时间戳刷新')
+    return
+  }
+  const sql = [
+    'UPDATE session SET created_at = NOW(), last_activity_at = NOW();',
+    'UPDATE message SET created_at = NOW();',
+    'UPDATE llm_usage SET created_at = NOW();',
+    'UPDATE llm_call SET created_at = NOW();',
+  ].join(' ')
+  const result = spawnSync('mysql', [
+    '-h', match[1],
+    '-P', match[2],
+    '-u', env.MYSQL_USERNAME ?? 'mao_e2e',
+    `-p${env.MYSQL_PASSWORD ?? ''}`,
+    match[3],
+    '-e', sql,
+  ], { encoding: 'utf8' })
+  if (result.status !== 0) {
+    console.warn(`[e2e] 刷新业务时间戳失败: ${(result.stderr || result.stdout || '').trim()}`)
+    return
+  }
+  console.log('[e2e] 已把种子业务时间戳刷新到当前时间')
+}
+
 export default async function globalSetup(): Promise<void> {
   if (!existsSync(join(ROOT, 'backend-ts', 'db', 'migration'))) {
     console.error('[e2e] 请在仓库根目录运行 playwright（npm test）')
@@ -99,6 +128,7 @@ export default async function globalSetup(): Promise<void> {
     console.error('[e2e] 缺少 backend-ts/.env.e2e。请先运行: bash scripts/e2e-setup.sh')
     process.exit(1)
   }
+  refreshSeedTimestamps(loadE2EEnv())
   const apiBase = `http://localhost:${API_PORT}`
   await startIfFree(
     API_PORT,

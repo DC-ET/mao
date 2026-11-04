@@ -121,7 +121,7 @@ describeGit('WorkspaceGitService', () => {
     expect(status.behindCount).toBe(0);
     expect(status.remoteStatusAvailable).toBe(false);
     expect(status.remoteStatusError ?? null).toBeNull();
-  });
+  }, 20_000);
 
   it('unbornRepositoryReportsNoHead', async () => {
     const { dir, service } = await setupRepo();

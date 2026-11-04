@@ -241,6 +241,7 @@ function makeSignalHarness(overrides: Partial<SignalWatcher> = {}): SignalHarnes
   const checkRepo = {
     insert: vi.fn(async () => checkId++),
     updateHash: vi.fn(async () => undefined),
+    updateValue: vi.fn(async () => undefined),
     markChanged: vi.fn(async () => undefined),
     markTriggered: vi.fn(async () => undefined),
     markWarning: vi.fn(async () => undefined),

@@ -101,7 +101,7 @@ update 为部分更新：未传的字段保持原值；`--headers '{}'`、`--bod
 |------|------|
 | `httpStatus` | 探针 HTTP 状态码（探针失败时为 null） |
 | `valueHash` | 本次判定值哈希（判定失败时为 null） |
-| `oldValueSnippet` / `newValueSnippet` | 本次判定所对照的上次值 / 本次值片段（V183，与触发 prompt 的 `{diff}` 同口径，各截 500 字）；探针失败 / 判定失败行为 null，上线前历史行为 null |
+| `oldValueSnippet` / `newValueSnippet` | 本次判定所对照的上次值 / 本次值片段（V185，与触发 prompt 的 `{diff}` 同口径，各截 500 字）；探针失败 / 判定失败行为 null，上线前历史行为 null |
 | `changed` | 1 = 与上次判定值不同 |
 | `triggeredSessionId` | 本次变化触发新建的会话 ID |
 | `error` | 失败原因（已脱敏，只含错误码，不含目标 URL） |

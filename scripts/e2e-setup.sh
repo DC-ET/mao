@@ -117,6 +117,17 @@ applied() {
   MYSQL_E2E -N -e "SELECT COUNT(*) FROM flyway_schema_history WHERE version='$1' AND success=1" 2>/dev/null
 }
 
+# 与 src/db/flyway.ts 同口径：同版本号只执行先看到的文件，后一个会被静默跳过。
+dups="$(
+  for f in "$MIGRATION_DIR"/V*.sql; do
+    basename "$f" | sed -E 's/^V([0-9.]+)__.*\.sql$/\1/'
+  done | sort | uniq -d
+)"
+if [[ -n "$dups" ]]; then
+  echo "错误：迁移版本号重复（$dups）。请改号后再执行，否则后一个文件不会进库。"
+  exit 1
+fi
+
 echo "==> 执行迁移（$(ls "$MIGRATION_DIR" | grep -c '^V') 个文件）"
 RANK=0
 for f in "$MIGRATION_DIR"/V*.sql; do

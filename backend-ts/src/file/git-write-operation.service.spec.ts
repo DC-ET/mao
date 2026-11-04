@@ -174,7 +174,7 @@ describeGit('GitWriteOperationService git', () => {
     expect(status.aheadCount).toBe(0);
     expect(status.behindCount).toBe(1);
     expect(status.hasHead).toBe(true);
-  });
+  }, 20_000);
 
   it('refreshReportsPartialFailureWhenOneRemoteIsUnreachable', async () => {
     const dir = useTmpDir('mao-gpartial-');

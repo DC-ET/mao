@@ -244,7 +244,7 @@ interface CheckRow {
   checkedAt: string | null
   httpStatus: number | null
   valueHash: string | null
-  /** 本次判定所对照的上次值 / 本次值片段（V183）；失败行与上线前历史行为 null。 */
+  /** 本次判定所对照的上次值 / 本次值片段（V185）；失败行与上线前历史行为 null。 */
   oldValueSnippet: string | null
   newValueSnippet: string | null
   changed: number

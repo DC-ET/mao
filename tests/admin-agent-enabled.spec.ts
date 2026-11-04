@@ -33,7 +33,12 @@ async function setup(page: Page) {
   await page.fill('input[placeholder="密码"]', 'admin123')
   await page.getByRole('button', { name: '登录', exact: true }).click()
   await page.waitForURL(/\/admin\/analytics/)
+  const listed = page.waitForResponse((resp) => {
+    if (resp.request().method() !== 'GET') return false
+    return new URL(resp.url()).pathname.endsWith('/agents')
+  })
   await page.goto('/admin/agents')
+  await listed
   await expect(page.getByRole('button', { name: '创建 Agent' })).toBeVisible()
   return {
     writes,

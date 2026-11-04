@@ -258,7 +258,7 @@ export class MysqlSignalCheckRepository {
   }
 
   /**
-   * 补写判定值哈希 + 新旧值片段（探针成功、判定值算出来后回填，V183）。
+   * 补写判定值哈希 + 新旧值片段（探针成功、判定值算出来后回填，V185）。
    * 一次 UPDATE 写三列：未变行 / 首轮建基线的行同样留痕（§5.2，不写在 markChanged 收尾处）。
    */
   async updateValue(id: number, patch: { valueHash: string; oldValueSnippet: string | null; newValueSnippet: string | null }): Promise<void> {

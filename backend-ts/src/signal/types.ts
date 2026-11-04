@@ -51,7 +51,7 @@ export interface SignalWatcherCheck {
   httpStatus: number | null;
   valueHash: string | null;
   /**
-   * 本次判定所对照的上次值 / 本次值片段（V183）：取 runCheck 开头那份快照的
+   * 本次判定所对照的上次值 / 本次值片段（V185）：取 runCheck 开头那份快照的
    * lastValueSnippet 与本轮 newText，均存 truncate(·, 500)。
    */
   oldValueSnippet: string | null;
