@@ -1,10 +1,10 @@
-# 群聊会话运行身份对齐技术方案（定稿）
+# 群聊会话运行身份对齐技术方案（定稿 V1.1）
 
-> 日期：2026-11-04　状态：**定稿（V1.0）/ 未实施**
+> 日期：2026-11-04　状态：**定稿（V1.1）/ 未实施**
 > 目标读者：Mao 后端与容器运行时维护者
 > 关联材料：调研 `docs/research/2026-11-04-group-chat-runtime-identity-gap.md`；初稿已被本文件取代（修订对照见附录 B）
 > 实施一句话：**一次发布（后端 + 一个可空字段迁移）修正「技能/工具路径与执行容器不一致」；容量优化作为独立第二阶段；隔离边界一行不动。**
-> 修订历史：2026-11-04 初稿 → 2026-11-04 定稿。定稿吸收 13 项自查/评审修订（对照表见附录 B），其中 3 项为正确性修订（记忆同源、归档不拆分、同步失败语义），1 项为架构决定（废弃 agent 级挂载、改用内容寻址+硬链接），1 项为可运营性（身份开关），1 项为影响面量化（跨成员可见性矩阵）。
+> 修订历史：2026-11-04 初稿 → 2026-11-04 定稿 → 2026-11-04 评审补充 V1.1。定稿吸收 13 项自查/评审修订（对照表见附录 B）；V1.1 吸收代码评审发现的 4 项 P1（execute 入口穷尽性含飞书重试、`send_wechat_*` 工具清单、URL 建议可执行性、部署 SOP 命令）+ 6 项 P2（对照见附录 C），**不改变 D1–D10 任何决策**。
 > 确认记录：2026-11-04 杨佳毅确认 —— ①「技能集合随发言者变化」可接受；②D4「产物归运行身份」及其跨成员限制面（§7.1）可接受。本轮仅落文档，**不实施**。
 
 ---
@@ -84,7 +84,7 @@ executionUserId    = 触发人（不变）                  // 审批规则、LL
 ### 5.0 实施顺序（按此顺序落码，每步可编译、可测）
 
 1. 迁移 + `Session.lastRuntimeUserId` + 类型三处（编译通过，空跑迁移）；
-2. 开关配置 + `buildContext` 身份解析 + `touchRuntimeUser`（此时行为尚未改变，仅落字段）；
+2. 开关配置 + `buildContext` 身份解析 + `touchRuntimeUser`（失败仅告警不阻断）+ **execute 入口全量审计**（按 §5.2 终态表逐入口定 `executionUserId`；此时行为尚未改变，仅落字段）；
 3. 技能同步目标/清单/提示词路径（**修复生效点**）+ 同步失败剔除；
 4. 工具身份表、记忆同源、归档提示抑制、子代理/恢复继承；
 5. 可解释性（提示词身份段 + PathSandbox 诊断）；
@@ -107,24 +107,28 @@ ALTER TABLE `session`
 
 | 位置 | 变更 |
 |---|---|
-| `app-config.ts` | 新增 `app.harness.runtimeIdentityMode`：读 `MAO_RUNTIME_IDENTITY`，取值 `execution`（默认）/`owner`，非法值回落默认；写入 `.env.example` 注释与 `DEPLOY.md` |
+| `app-config.ts` | 新增 `app.harness.runtimeIdentityMode`：读 `MAO_RUNTIME_IDENTITY`，取值 `execution`（默认）/`owner`，非法值回落默认；写入 `.env.example` 注释与 `skills/mao-cli/reference/config.md`（环境变量权威表，AGENTS.md 要求 mao-cli 同步；`DEPLOY.md` 现为索引表，顺带提及） |
 | `SessionService` | 新增 `touchRuntimeUser(sessionId, userId)`（内部 `sessionRepo.updateFields(id, { lastRuntimeUserId })`） |
 | `HarnessService.execute` | 把 `executionUserId` 透传给 `buildContext`（新增第 5 个可选参数） |
-| `HarnessService.buildContext` | 加载 session 后立即计算：`runtimeUserId = mode==='owner' ? session.userId : (executionUserId ?? session.userId)`；写入 `context.runtimeUserId`；随后 `touchRuntimeUser(sessionId, runtimeUserId)`（先落身份再同步技能/构建，崩溃恢复窗口最小）；保持 `context.executionUserId` 语义不变 |
+| `HarnessService.buildContext` | 加载 session 后立即计算：`runtimeUserId = mode==='owner' ? session.userId : (executionUserId ?? session.userId)`；写入 `context.runtimeUserId`；随后 `touchRuntimeUser(sessionId, runtimeUserId)`（先落身份再同步技能/构建，崩溃恢复窗口最小）；**`touchRuntimeUser` 失败（DB 异常）仅告警不阻断本轮**——身份以 `context.runtimeUserId` 内存值为准，落库失败不影响执行；保持 `context.executionUserId` 语义不变 |
 | `AgentExecutionContext` | 新增 `runtimeUserId?: number \| null` |
 
-说明：`touchRuntimeUser` 放在 `buildContext`（全执行链路唯一咽喉），而不是 `execute`——`buildContext` 同时覆盖恢复、手动压缩、侧任务、子代理等路径，语义统一为「最近一次执行的运行身份」。
+说明：`touchRuntimeUser` 放在 `buildContext`（全执行链路唯一咽喉），而不是 `execute`——`buildContext` 同时覆盖恢复、手动压缩、侧任务、子代理等路径，语义统一为「最近一次执行的运行身份」。自动压缩不经过 `buildContext` 二次调用（request_start 在 buildContext 内联、mid_loop 复用执行中 context），天然继承运行身份，不存在「压缩把身份打回 owner」问题。已知副作用：`requestCompaction`/`executeSideFirstMessage` 也经此咽喉，会把 `last_runtime_user_id` 覆写成 owner——侧任务写自己的会话行无碍；「B 发言后 owner 手动压缩」会改崩溃恢复身份，可接受（§10 风险 12）。
 
-调用点约定（终态）：
+调用点约定（终态，即 §5.0 第 2 步「execute 入口全量审计」的结果——D1 的正确性依赖此表穷尽，新增执行入口必须显式决策）：
 
 | 调用点 | executionUserId | 说明 |
 |---|---|---|
-| 飞书/钉钉入站 `execute` | 传触发人 | 主路径 |
+| 飞书入站 `execute`（主路径） | 传触发人 | `feishu/agent-inbound-handler.ts:701-706`，主路径 |
+| 飞书失败卡「重试」`execute` | 传 `session.lastRuntimeUserId ?? null` | `agent-inbound-handler.ts:313-317`（`retryExecution`/`runRetry`）。重试基于会话历史续跑、stubContext `senderId: null` 拿不到原发言者，与崩溃恢复同源取持久化身份——失败轮的 `touchRuntimeUser` 已在 buildContext 落过发言者；若期间 owner 触发过手动压缩会覆写，可接受（§10 风险 12） |
+| 钉钉入站 `execute`（主路径） | 传触发人 | `dingtalk/agent-inbound-handler.ts:293-297` |
+| 钉钉第二入口 `execute` | 实施时审计定：传触发人或显式回落 owner | `dingtalk/agent-inbound-handler.ts:340`（§10 风险 16） |
+| 微信入站 `execute` | 不传（owner） | `weixin/agent-inbound-handler.ts:208`。仓内无群会话分支（无 chat_type/group 处理），1:1 下 owner==发言者恒成立；若后续微信支持群需同步改造 |
+| WS / 定时任务 / OpenAPI（`executeFromEvent`） | 不传（owner） | `harness-service.ts:111-115`；调用方 `streaming-ws-handler.ts`、`scheduled-task.service.ts`、`open-run.service.ts`。无「发言者」语义，回落 owner 正确 |
 | `crash-recovery-runner` | 传 `session.lastRuntimeUserId ?? null` | 恢复同一次执行（§5.8） |
 | `background-subagent-manager.buildSubContext` | 传 `child.lastRuntimeUserId ?? null` | 子代理继承（§5.8） |
 | `requestCompaction`（手动压缩） | 不传 | owner |
-| `executeSideFirstMessage`（侧任务） | 不传 | owner |
-| 定时任务 | 不传 | owner |
+| `executeSideFirstMessage`（侧任务） | 不传 | owner（写自己的侧会话行） |
 
 ### 5.3 技能同步与失败语义
 
@@ -163,8 +167,8 @@ const runtimeUserId = runtimeIdentity ?? executionUserId ?? userId;
 const runtimeToolUserId = RUNTIME_SCOPED_TOOLS.has(toolName) ? runtimeUserId : userId;
 ```
 
-3. `RUNTIME_SCOPED_TOOLS = { dump_user_messages, open_web_page, generate_image, edit_image, feishu_send_image, feishu_send_file, dingtalk_send_image, dingtalk_send_file }`；
-4. docker-only 分支路由改用 `runtimeUserId`（原为 `executionUserId ?? userId`）；SERVER_ONLY 分支 `callTool(..., runtimeToolUserId, ...)`；宿主回退分支 `toolUserId = (toolName === 'shell' || RUNTIME_SCOPED_TOOLS.has(toolName)) ? runtimeUserId : userId`；
+3. `RUNTIME_SCOPED_TOOLS = { dump_user_messages, open_web_page, generate_image, edit_image, feishu_send_image, feishu_send_file, dingtalk_send_image, dingtalk_send_file, send_wechat_image, send_wechat_file }`（微信两个发送工具经评审补入：它们在 SERVER_ONLY 分支，漏列会导致 B 连自己 `uploads/{B}` 的产物都发不出，比 §7.1 描述的「跨成员受限」更糟）；
+4. docker-only 分支路由改用 `runtimeUserId`（原为 `executionUserId ?? userId`）；SERVER_ONLY 分支 `callTool(..., runtimeToolUserId, ...)`；宿主回退分支 `toolUserId = (toolName === 'shell' || RUNTIME_SCOPED_TOOLS.has(toolName)) ? runtimeUserId : userId`。注意两类发送工具落在不同分支、须分别回归：`send_wechat_*` 在 SERVER_ONLY（改 `runtimeToolUserId`），feishu/dingtalk send 在宿主回退（改 `toolUserId`）；工具构造与注册处（`tool-registry.ts`）无需改，`callTool → BaseTool.execute` 透传链已确认；
 5. 保持 owner 的工具不变：`task_*`、定时任务系列、`ask_user_questions`、`web_search`、`http_*`。
 
 ### 5.6 记忆（`harness-service.loadMemories` / `task-terminal.service`）
@@ -195,16 +199,20 @@ const runtimeToolUserId = RUNTIME_SCOPED_TOOLS.has(toolName) ? runtimeUserId : u
 ```
 ## 执行身份
 
-- 当前执行身份：用户 #67（本条消息的发送者）。shell、文件、技能、CLI 与凭据都属于该身份。
+- 当前执行身份：用户 #67 秦翌翔（本条消息的发送者；有显示名时展示）。shell、文件、技能、CLI 与凭据都属于该身份。
 - 会话归属：用户 #17（本群会话的创建者）。其个人技能、token 缓存与 CLI 依赖不在当前执行环境内，不要假设可用，也不要尝试读取其运行目录。
 - 若任务必须使用某位成员自己的账号/凭据，请让该成员本人 @ 机器人触发，或明确告知用户需要其本人操作。
 ```
 
 2. **PathSandbox 身份诊断**（容器侧）：`PathSandboxOptions` 新增 `identity?: { runtimeRoot; userId }`，`ContainerToolExecutor` 构造时传入；`resolve()` 抛错前判定——路径在 `runtimeRoot` 下且首段非本人 userId 时，抛
    `该路径属于其他用户的会话运行目录（当前执行身份 {uid}），不可访问: <path>`，其余越界保持原文案。覆盖 `read_file/write_file/edit_file/glob_search/grep_search/handleReadBytes`。
+   生效路径（评审补充）：容器内代码经 dist ro 挂载与宿主机同源，新文案靠 runtimeBuild 漂移检测→下次空闲自动重启进程加载；容器 busy 会延后、`autoUpgrade`（V178）被关时不自动生效。§8.2 须主动构造跨成员读并断言新文案出现，否则无法区分「已修复」与「代码未加载」。
 
-3. **产物读字节的跨成员诊断**（`send-file-bytes.ts`）：`loadSendFileBytes` 走 `StrictPathResolver` 拒绝前，若路径落在 `{file.uploadDir}/{其他 uid}` 或 `{runtimeDir}/{其他 uid}` 下，抛
-   `该文件属于其他成员的产物目录（当前执行身份 {uid}），本地路径不可读；转发请改用 http(s) URL，或让该成员本人操作: <path>`；`edit_image` 沿用同一文案并追加「改图请重新生成，或由该成员本人操作」（它不接受 URL，见 §7.1）。这条文案同时覆盖 host 与 docker 两种模式（`StrictPathResolver` 两侧同源）。
+3. **产物读字节的跨成员诊断**（`send-file-bytes.ts`，host 用户与 docker 降级路径生效；docker 用户本地路径先走容器 `read_bytes` 帧，由第 2 条容器侧文案覆盖）：`loadSendFileBytes` 走 `StrictPathResolver` 拒绝前，若路径落在 `{file.uploadDir}/{其他 uid}` 或 `{runtimeDir}/{其他 uid}` 下，按类别抛出**可执行**的文案——
+   - `uploads/{其他 uid}` 下：`该文件属于其他成员的产物目录（当前执行身份 {uid}），本地路径不可读；该文件有公开 URL，请改用其转发: {publicUrl}`。`publicUrl` 由宿主持 `upload.baseUrl` 推导的 origin + `/uploads/{uid}/{file}` 现成拼出（`/uploads/` GET 为公开静态路由，jwt 白名单 + UUID 文件名）——**不要求模型自行换算**：系统提示词与 send-* 工具描述中均无 uploads 公开 base URL（评审实证），模型拿到本地路径无法推知 URL；
+   - `runtime/{其他 uid}` 下（shellOutput / userMessages / webPages）：无公开路由，抛 `该文件属于其他成员的会话运行目录（当前执行身份 {uid}），本地路径不可读且无公开 URL；请先复制到本人 uploads 目录或群共享工作区再转发，或让该成员本人操作: <path>`；
+   - `edit_image` 沿用同一文案并追加「改图请重新生成，或由该成员本人操作」（它不接受 URL，见 §7.1）。
+   另在系统提示词（或 send-* 工具参数描述）补一条 uploads 本地路径 ↔ 公开 URL 的映射规则，让模型在跨成员场景能主动构造 URL，而不是只依赖报错文案（§10 风险 11）。
 
 ### 5.10 运营开关
 
@@ -220,7 +228,7 @@ const runtimeToolUserId = RUNTIME_SCOPED_TOOLS.has(toolName) ? runtimeUserId : u
 | 1 | `backend-ts/db/migration/V183__session_last_runtime_user.sql` | 新增可空列 |
 | 2 | `src/domain/types.ts`、`src/session/types.ts`、`src/harness/deps.ts` | `lastRuntimeUserId` 字段 |
 | 3 | `src/session/session.service.ts` | `touchRuntimeUser` |
-| 4 | `src/config/app-config.ts`、`.env.example`、`DEPLOY.md` | 身份开关 |
+| 4 | `src/config/app-config.ts`、`.env.example`、`skills/mao-cli/reference/config.md`、`DEPLOY.md` | 身份开关（config.md 为环境变量权威表；DEPLOY.md 为索引，顺带提及） |
 | 5 | `src/harness/core/harness-service.ts` | 身份解析/持久化、同步目标、清单剔除、记忆 |
 | 6 | `src/harness/core/agent-execution-context.ts` | `runtimeUserId` |
 | 7 | `src/harness/skill/skill-sync-service.ts` | 语义/state key/返回值 |
@@ -232,6 +240,7 @@ const runtimeToolUserId = RUNTIME_SCOPED_TOOLS.has(toolName) ? runtimeUserId : u
 | 13 | `src/harness/core/crash-recovery-runner.ts` | 恢复身份 |
 | 14 | `src/harness/safety/path-sandbox.ts`、`src/harness/container/container-tool-executor.ts`、`src/harness/tool/impl/send-file-bytes.ts`、`src/harness/tool/impl/edit-image-tool.ts` | 身份诊断（§5.9 第 2、3 条） |
 | 15 | 测试与文档 | 见 §8、CHANGELOG |
+| 16 | `src/session/ws/streaming-ws-handler.ts` | 第二处 `syncToSession`（:793，web 路径 userId=WS 认证用户=owner，语义不变）；随 SkillSyncService 签名/state 键改造一并 review，不改行为。另确认 `tool-registry.ts` 无需改（透传链已验） |
 
 ---
 
@@ -338,6 +347,9 @@ V1 后每个新发言者首次执行会物化一份技能视图（现网均值�
 5. `session.last_runtime_user_id` 随轮次在 A/B 间切换；
 6. 压缩一次长会话：A 轮次有归档提示且路径可读；B 轮次无归档提示；
 7. B 触发 `dump_user_messages` → 返回路径可被 B 的 `read_file` 读取；B 发送容器内文件成功。
+8. 【评审补充】重试路径：让 B 的轮次失败 → 点失败卡「重试」→ 验证仍以 B 身份执行（提示词技能路径 `runtime/B`、`[skill-sync]` 日志 `runtimeUser=B`、`last_runtime_user_id` 仍为 B）。
+9. 【评审补充】跨成员诊断：B 的轮次 `read_file` A 的 `uploads/{A}` 产物 → 断言容器内新诊断文案出现（同时证明 runtimeBuild 新代码已加载）；按提示用公开 URL 经 feishu/dingtalk/wechat send 转发成功；对 `runtime/{A}` 下文件断言「无公开 URL、先复制」文案。
+10. 【评审补充】`send_wechat_image/file`：B 发送**自己** `uploads/{B}` 的产物成功（回归 SERVER_ONLY 分支改造）。
 
 ### 8.3 回归矩阵
 
@@ -365,7 +377,7 @@ V1 后每个新发言者首次执行会物化一份技能视图（现网均值�
 
 ### 9.2 发布
 
-`bash deploy-mao.sh --backend-only`（蓝绿；无需重建容器、无需前端发布）。
+`cd /opt/mao && git pull` → 后端构建 → `bash scripts/restart-backend.sh`（蓝绿由 `scripts/lib/blue-green.sh` 完成；该脚本无 `--backend-only` 参数——后端发布即本次全部发布面；无需重建容器、无需前端发布）。注意：仓库内**不存在** `deploy-mao.sh`，勿照旧版本文档操作。
 
 ### 9.3 发布后 30 分钟检查点
 
@@ -379,7 +391,7 @@ V1 后每个新发言者首次执行会物化一份技能视图（现网均值�
 
 ### 9.4 回滚
 
-1. **秒级止血**：`.env` 设 `MAO_RUNTIME_IDENTITY=owner` → `bash deploy-mao.sh --backend-only`；群聊回到「按会话归属执行」；
+1. **秒级止血**：`.env` 设 `MAO_RUNTIME_IDENTITY=owner` → 重新构建 → `bash scripts/restart-backend.sh`；群聊回到「按会话归属执行」；
 2. **代码回滚**：revert 提交后重新部署；`V183` 列保留（可空，不影响旧代码）；
 3. 回滚不涉及数据修复：技能视图/软链为运行期产物，自动重建。
 
@@ -399,6 +411,12 @@ V1 后每个新发言者首次执行会物化一份技能视图（现网均值�
 | 8 | `owner` 模式在群聊等于「以归属者身份执行」 | 应急模式的安全语义弱于执行侧 | 仅应急、限时使用、需审计；DEPLOY.md 写明 |
 | 9 | 蓝绿期间旧实例不写新列 | 恢复回落 owner | 可接受（仅窗口期） |
 | 10 | 记忆写入归属变化 | 群聊记忆归发言者 | 符合 D5；产品需知晓 |
+| 11 | 提示词/send 工具描述无 uploads 公开 URL 映射 | 「改用 http(s) URL」建议模型无法执行 | V1.1 吸收：诊断文案按类别给出可执行指引 + 宿主持拼 URL + 提示词补映射规则（§5.9） |
+| 12 | 飞书重试无原发言者（stubContext `senderId: null`）；owner 手动压缩会覆写 `last_runtime_user_id` | 重试/恢复身份漂移到 owner | V1.1 吸收：重试传 `lastRuntimeUserId ?? null`（与崩溃恢复同源，§5.2）；覆写场景可接受 |
+| 13 | syncState 为内存 Map，部署即清空 | 发布后首轮全量重同步（指纹命中仅换链） | 低峰发布；监控 `[skill-sync]` 日志量与首轮延迟 |
+| 14 | 容器侧新诊断文案懒生效（runtimeBuild 漂移→进程重启；busy 延后、autoUpgrade 可关） | 跨成员报错仍是旧文案 | §8.2 冒烟断言新文案出现；autoUpgrade 关闭时运维手工重启容器 |
+| 15 | 提示词前缀随发言者切换失效 | prompt cache 命中率略降（同一执行内无影响） | 已知，接受 |
+| 16 | 钉钉第二入口、微信入站的身份语义未定 | 群聊钉钉/微信（若支持群）身份回落 owner | §5.0 第 2 步入口审计时定论并回填本文 |
 
 ---
 
@@ -406,10 +424,10 @@ V1 后每个新发言者首次执行会物化一份技能视图（现网均值�
 
 | 阶段 | 内容 | 估时 |
 |---|---|---|
-| V1 实现 | §5.1–5.10（14 个文件） | 1.5–2 人日 |
+| V1 实现 | §5.1–5.10（16 个文件，含评审补充的重试/wechat/诊断/入口审计） | 2–2.5 人日 |
 | V1 测试 | 单测 + 冒烟 + 回归 | 0.5–1 人日 |
 | V2 | 内容寻址 + 硬链接 + GC | 1–1.5 人日 |
-| 合计 | 含文档与发布 | 3–4.5 人日 |
+| 合计 | 含文档与发布 | 4–5 人日 |
 
 ---
 
@@ -450,12 +468,14 @@ ls -d /opt/mao-data/skill-views/<B>/<skill> /opt/mao-data/deps/<B>
 docker logs mao-user-<B> 2>&1 | grep "Path escape"
 
 # 4) 身份持久化（应为 B）
-mysql -h <host> -u <user> workbench_mao \
+#    库名与生产 .env 核对（.env.example 为 mao；旧版本文写 workbench_mao，待确认）
+mysql -h <host> -u <user> <db> \
   -e "SELECT id,user_id,last_runtime_user_id FROM session WHERE id=<sid>"
 
 # 5) 回退演练（可选，低峰）
-#    .env: MAO_RUNTIME_IDENTITY=owner → bash deploy-mao.sh --backend-only
+#    .env: MAO_RUNTIME_IDENTITY=owner → 重新构建 → bash scripts/restart-backend.sh
 #    验证群聊以 A 身份执行；验证后改回 execution 重新部署
+#    注意：仓库无 deploy-mao.sh；蓝绿由 scripts/lib/blue-green.sh 完成
 ```
 
 ## 附录 B：定稿修订对照（相对初稿）
@@ -475,4 +495,25 @@ mysql -h <host> -u <user> workbench_mao \
 | 11 | `incoming` 改动收益低 | 保留（与运行身份一致），跨成员引用列为已知限制（§10 风险 5） |
 | 12 | 工作量偏乐观、缺实施顺序 | §11 重估；§5 顺序即实施顺序；本次一次发布 |
 | 13 | 「产物归运行身份」的跨成员限制未量化，`edit_image` 被当成孤例 | 新增 §7.1 可见性矩阵（7 类受限 / 4 条可用通道）+ §5.9 第 3 条产物读字节诊断；明确 `edit_image` 是唯一无 URL 兜底的工具 |
+
+---
+
+## 附录 C：评审补充对照（V1.1，相对定稿 V1.0）
+
+> 2026-11-04 代码评审（五路核实：harness-service / 技能同步与提示词 / 工具派发 / 容器沙箱 / 压缩子代理恢复迁移）发现的缺口与吸收情况。决策 D1–D10 不变。
+
+| # | 评审发现 | 严重度 | V1.1 处理 |
+|---|---|---|---|
+| 1 | 飞书失败卡「重试」`execute`（`agent-inbound-handler.ts:313-317`）不传 `executionUserId`，重试轮以 owner 身份跑——恰好在身份不匹配的失败轮上复现 bug；钉钉 `:340` 同理 | P1 | §5.2 入口表补全并规定重试传 `lastRuntimeUserId ?? null`（stubContext 无原发言者，与崩溃恢复同源）；§8.2 加重试冒烟；§10 风险 12/16 |
+| 2 | `RUNTIME_SCOPED_TOOLS` 漏 `send_wechat_image/file`（§7.1 却提到它们）；它们在 SERVER_ONLY 分支按 owner 读字节，B 连自己 `uploads/{B}` 产物都发不出 | P1 | §5.5 清单补入 + 分支差异说明（wechat 走 SERVER_ONLY，feishu/dingtalk 走宿主回退，分别回归）；§8.2 补 wechat 冒烟 |
+| 3 | §5.9「转发请改用 http(s) URL」不可执行：提示词无 uploads 公开 base URL（实证），且 `runtime/` 下产物无公开路由 | P1 | §5.9 第 3 条重写为分类可执行文案（uploads→宿主持拼 `publicUrl`；runtime→先复制到 uploads/群工作区）+ 提示词补 uploads 路径↔URL 映射规则；§10 风险 11 |
+| 4 | §9.2/§9.4/附录 A 引用不存在的 `deploy-mao.sh --backend-only` | P1 | 改为 `scripts/restart-backend.sh`（蓝绿在 `scripts/lib/blue-green.sh`，无 `--backend-only`） |
+| 5 | 容器侧诊断文案生效路径未述（runtimeBuild 漂移→进程懒重启；busy 延后、autoUpgrade=V178 可关） | P2 | §5.9 第 2 条补生效路径；§8.2 断言新文案出现 |
+| 6 | §5.11 漏 `streaming-ws-handler.ts:793` 第二处 `syncToSession`（语义正确但需显式 review） | P2 | 清单补第 16 项 |
+| 7 | `touchRuntimeUser` 失败语义未定（DB 写失败会废掉本轮） | P2 | §5.2 规定仅告警不阻断，身份以内存值为准 |
+| 8 | syncState 为内存 Map，部署后清空→首轮全量重同步 | P2 | §10 风险 13（低峰发布+监控） |
+| 9 | 环境变量文档漏 `skills/mao-cli/reference/config.md`（AGENTS.md 要求 mao-cli 同步；DEPLOY.md 已只是索引） | P2 | §5.2/§5.11 补 config.md |
+| 10 | 工作量偏乐观 | P2 | §11 V1 实现改 2–2.5 人日，合计 4–5 人日 |
+| 11 | 附录 A 库名 `workbench_mao` 与 `.env.example` 的 `mao` 不一致 | P3 | 改为 `<db>` 并标注待核对 |
+| 12 | 提示词身份段只有原始 user id；prompt cache 前缀随发言者切换失效未入风险表 | P3 | §5.9 身份段补显示名；§10 风险 15 |
 
