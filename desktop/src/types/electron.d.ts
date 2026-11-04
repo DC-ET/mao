@@ -265,6 +265,7 @@ interface ElectronAPI {
     }): Promise<ServerConfigSetResult>
     probe(serverBaseUrl: string, options?: { allowHttp?: boolean }): Promise<ServerConfigProbeResult>
     openPicker(): Promise<{ ok: boolean }>
+    closePicker(): Promise<{ ok: boolean }>
   }
 
   getAppVersion(): Promise<string>

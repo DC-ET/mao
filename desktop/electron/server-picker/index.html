@@ -218,7 +218,12 @@
           updateFeedMode: 'follow-site',
         })
         if (result && result.ok) {
-          setMsg(`已连接 ${result.serverBaseUrl}`, 'ok')
+          setMsg(`已连接 ${result.serverBaseUrl}，窗口即将关闭…`, 'ok')
+          setTimeout(() => {
+            try {
+              window.electronAPI.serverConfig.closePicker?.()
+            } catch {}
+          }, 800)
         } else {
           setMsg(result?.error || '保存失败', 'error')
           $('saveBtn').disabled = false

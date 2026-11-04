@@ -1670,6 +1670,13 @@ ipcMain.handle('server-config-open-picker', () => {
   return { ok: true }
 })
 
+ipcMain.handle('server-picker-close', () => {
+  if (serverPickerWindow && !serverPickerWindow.isDestroyed()) {
+    serverPickerWindow.close()
+  }
+  return { ok: true }
+})
+
 // ========== Window control IPC handlers ==========
 
 ipcMain.handle('window-minimize', () => {
