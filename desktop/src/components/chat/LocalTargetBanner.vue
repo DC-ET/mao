@@ -1,8 +1,8 @@
 <template>
   <!-- 会话执行端提示（技术方案 2026-11-05 §4.1-3）：LOCAL 会话且当前设备不是绑定执行端时，
        在消息列表顶部提示执行端状态；当前设备即绑定设备时完全不渲染（无信息量）。
-       视觉语言对齐对话流：info 态同时间戳（小号 muted 纯文字），warning 态同历史锚点条
-      （柔和实底细条、无边框），避免像外来警告芯片。 -->
+       两态同款柔和实底细条（历史锚点条语言：无边框、8px 圆角、吸顶），仅文字颜色区分：
+       warning 橙（未登记 / 他端离线）、info 绿（绑定他端在线）。 -->
   <div
     v-if="visible"
     class="local-target-banner"
@@ -61,19 +61,9 @@ const bannerText = computed(() => {
 </script>
 
 <style scoped>
-/* info 态：时间戳语言——小号 muted 文字，无底无边框，随消息流自然滚走 */
-.local-target-banner.info {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  margin: 0 0 10px;
-  color: var(--aw-ink-muted-48);
-  font-size: var(--aw-text-fine);
-  line-height: 1.5;
-}
-
-/* warning 态：历史锚点条语言——柔和实底细条（吸顶），warning 色文字承担严重度 */
-.local-target-banner.warning {
+/* 两态同款柔和实底细条（历史锚点条语言）：无边框、8px 圆角、吸顶；
+   严重度 / 语义仅由文字颜色区分——warning 橙、info 绿（主题无关令牌）。 */
+.local-target-banner {
   position: sticky;
   top: 0;
   z-index: 5;
@@ -84,9 +74,16 @@ const bannerText = computed(() => {
   padding: 5px 10px;
   border-radius: var(--aw-radius-sm);
   background: var(--aw-surface-hover);
-  color: var(--aw-warning);
   font-size: var(--aw-text-fine);
   line-height: 1.5;
+}
+
+.local-target-banner.warning {
+  color: var(--aw-warning);
+}
+
+.local-target-banner.info {
+  color: var(--aw-success);
 }
 
 .local-target-banner .banner-icon {
