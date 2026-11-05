@@ -66,9 +66,9 @@
 }
 
 /* 新建会话宽按钮：取代原先头部的「+」图标入口（目标小、窄面板更难命中）。
-   视觉口径与 CommandManager / SignalWatchersView 的 .create-btn 同源（主色实底 +
-   白字 + 12px 字），但改为通栏；左右 8px 与下方 .panel-content 对齐，
-   顶部不额外留白（header 已有 12px 下内边距）。 */
+   主色描边而非实底：侧栏是羊皮纸底，一整块高饱和蓝实底过于突兀；描边保留
+   「新建」的语义色，同时与侧栏其他细边框按钮同一气质。
+   左右 8px 与下方 .panel-content 对齐，顶部不额外留白（header 已有 12px 下内边距）。 */
 .task-index-panel .new-session-btn {
   display: flex;
   align-items: center;
@@ -78,18 +78,18 @@
   margin: 0 8px 8px;
   height: var(--aw-btn-height);
   padding: var(--aw-btn-padding);
-  border: none;
+  border: 1px solid var(--aw-primary);
   border-radius: var(--aw-radius-xs);
-  background: var(--aw-primary);
-  color: #fff;
+  background: transparent;
+  color: var(--aw-primary);
   font-size: var(--aw-text-fine);
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.15s, opacity 0.15s;
+  transition: background 0.15s, border-color 0.15s;
 }
 
 .task-index-panel .new-session-btn:hover {
-  background: var(--aw-primary-focus);
+  background: var(--aw-primary-soft);
 }
 
 .task-index-panel .new-session-btn .new-session-label {
