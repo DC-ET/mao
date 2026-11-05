@@ -108,6 +108,68 @@ function getServerConfigPath(userDataDir) {
   return path.join(String(userDataDir || ''), 'server-config.json')
 }
 
+function getServerHistoryPath(userDataDir) {
+  return path.join(String(userDataDir || ''), 'server-history.json')
+}
+
+const HISTORY_LIMIT = 10
+
+function sanitizeHistoryEntry(entry) {
+  if (!entry || typeof entry !== 'object') return null
+  const normalized = normalizeServerBaseUrl(entry.serverBaseUrl, { allowHttp: true })
+  if (!normalized.ok) return null
+  return {
+    serverBaseUrl: normalized.baseUrl,
+    allowHttp: entry.allowHttp === true,
+    lastConnectedAt: typeof entry.lastConnectedAt === 'string' && entry.lastConnectedAt ? entry.lastConnectedAt : null,
+  }
+}
+
+/** MRU 插入：去重后置顶，超上限截断 */
+function mergeServerHistory(list, entry) {
+  const clean = sanitizeHistoryEntry(entry)
+  const filtered = (Array.isArray(list) ? list : [])
+    .map(sanitizeHistoryEntry)
+    .filter((e) => e && (!clean || e.serverBaseUrl !== clean.serverBaseUrl))
+  if (!clean) return filtered.slice(0, HISTORY_LIMIT)
+  return [clean, ...filtered].slice(0, HISTORY_LIMIT)
+}
+
+function readServerHistory(userDataDir) {
+  try {
+    const filePath = getServerHistoryPath(userDataDir)
+    if (!fs.existsSync(filePath)) return []
+    const data = JSON.parse(fs.readFileSync(filePath, 'utf8'))
+    const list = Array.isArray(data) ? data : data?.history
+    if (!Array.isArray(list)) return []
+    return list.map(sanitizeHistoryEntry).filter(Boolean).slice(0, HISTORY_LIMIT)
+  } catch {
+    return []
+  }
+}
+
+function writeServerHistory(userDataDir, entries) {
+  const filePath = getServerHistoryPath(userDataDir)
+  fs.mkdirSync(path.dirname(filePath), { recursive: true })
+  fs.writeFileSync(filePath, JSON.stringify(entries, null, 2), 'utf8')
+}
+
+function recordServerHistory(userDataDir, serverBaseUrl, allowHttp) {
+  const next = mergeServerHistory(readServerHistory(userDataDir), {
+    serverBaseUrl,
+    allowHttp: allowHttp === true,
+    lastConnectedAt: new Date().toISOString(),
+  })
+  writeServerHistory(userDataDir, next)
+  return next
+}
+
+function removeServerHistory(userDataDir, serverBaseUrl) {
+  const next = readServerHistory(userDataDir).filter((e) => e.serverBaseUrl !== serverBaseUrl)
+  writeServerHistory(userDataDir, next)
+  return next
+}
+
 function defaultServerConfig() {
   return {
     version: CONFIG_VERSION,
@@ -272,6 +334,14 @@ module.exports = {
   deriveUpdateFeedUrl,
   serverHostKey,
   getServerConfigPath,
+  getServerHistoryPath,
+  HISTORY_LIMIT,
+  readServerHistory,
+  writeServerHistory,
+  recordServerHistory,
+  removeServerHistory,
+  mergeServerHistory,
+  sanitizeHistoryEntry,
   defaultServerConfig,
   readServerConfig,
   writeServerConfig,
