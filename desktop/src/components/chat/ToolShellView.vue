@@ -72,7 +72,7 @@ async function copy(text: string) {
 .cmd-prompt {
   flex-shrink: 0;
   width: 1.1em;
-  color: var(--aw-primary);
+  color: var(--aw-ink-muted-60);
   user-select: none;
 }
 
@@ -89,11 +89,11 @@ async function copy(text: string) {
   user-select: none;
 }
 
-/* 命令用主色（与 $ 提示符同色）与输出区区分：--aw-text-code 与 --aw-ink 在两主题下同值，
-   直接复用会主次不分；提亮命令而非压暗输出——输出是负载主体，要保持可读性。 */
+/* 主次用墨色阶表达：命令取 --aw-ink（亮色近黑 / 暗色近白），输出取中性灰
+   --aw-ink-muted-64，两主题各自自动适配；提示符压更暗一档灰，不与输出抢注意力。 */
 .cmd-text {
   min-width: 0;
-  color: var(--aw-primary);
+  color: var(--aw-ink);
   white-space: pre-wrap;
   word-break: break-all;
 }
@@ -106,7 +106,7 @@ async function copy(text: string) {
 
 .cmd-output {
   margin: 0;
-  color: var(--aw-text-code);
+  color: var(--aw-ink-muted-64);
   white-space: pre;
 }
 
