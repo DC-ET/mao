@@ -36,20 +36,12 @@
                 JSON 收起在同一个开关后，避免转义噪音盖住命令、输出与文件内容本身 -->
           <ToolCallDiffView v-if="editDiffView" :blocks="editDiffView.blocks" />
           <template v-else-if="shellView">
-            <div v-if="shellView.primary" class="code-block-wrapper">
-              <div class="result-label">{{ shellView.primaryLabel }}</div>
-              <pre class="result-content"><code>{{ shellView.primary }}</code></pre>
-              <button class="copy-btn" title="复制" @click="copyText(shellView.primary)">
-                <el-icon :size="14"><CopyDocument /></el-icon>
-              </button>
-            </div>
-            <div v-if="shellView.output" class="code-block-wrapper">
-              <div class="result-label">输出</div>
-              <pre class="result-content"><code>{{ shellView.output }}</code></pre>
-              <button class="copy-btn" title="复制完整输出" @click="copyText(shellView.output)">
-                <el-icon :size="14"><CopyDocument /></el-icon>
-              </button>
-            </div>
+            <ToolShellView
+              :command="shellView.primary"
+              :label="shellView.primaryLabel"
+              :output="shellView.output"
+              :error="shellView.error"
+            />
           </template>
           <template v-else-if="fileView">
             <div v-if="fileView.content" class="code-block-wrapper">
@@ -61,7 +53,7 @@
             <span v-if="richBadge" class="exit-badge" :class="richBadge.ok ? 'ok' : 'fail'">
               {{ richBadge.text }}
             </span>
-            <span v-if="richSummary" class="edit-summary">{{ richSummary }}</span>
+            <span v-if="richSummary" class="edit-summary" :title="richTitle">{{ richSummary }}</span>
             <button class="expand-result-btn" @click="showRawIo = !showRawIo">
               {{ showRawIo ? '收起原始输入输出' : '查看原始输入输出' }}
             </button>
@@ -137,6 +129,7 @@ import { getToolDisplayName, getToolInputPreview } from '../../utils/toolDisplay
 import { buildEditDiff } from '../../utils/toolDiff'
 import ToolCallDiffView from './ToolCallDiffView.vue'
 import ToolFileContent from './ToolFileContent.vue'
+import ToolShellView from './ToolShellView.vue'
 
 /** 工具结果 JSON 的安全解析：非 JSON / 非对象返回 null，富视图据此回退原始展示。 */
 function parseResultNode(result?: string): Record<string, unknown> | null {
@@ -290,7 +283,7 @@ const editDiffView = computed(() => {
 })
 
 /**
- * shell 富视图：命令（exec）/ stdin（write_stdin）+ 终端输出原文 + exit code 徽标。
+ * shell 富视图：命令（exec）/ stdin（write_stdin）+ 终端输出原文，渲染为终端会话块。
  * 多动作工具：close/list 等无命令也无输出的动作拿不到可渲染内容，返回 null 走原始 JSON。
  */
 const shellView = computed(() => {
@@ -309,11 +302,10 @@ const shellView = computed(() => {
   const exitRaw = node?.exit_code
   const exitCode = typeof exitRaw === 'number' && Number.isFinite(exitRaw) ? exitRaw : null
   const summaryParts: string[] = []
-  if (error) summaryParts.push(error)
-  else {
+  if (!error) {
     if (node?.truncated === true) summaryParts.push('输出已截断')
     const workdir = textOf(node?.current_workdir)
-    if (workdir) summaryParts.push(workdir)
+    if (workdir) summaryParts.push(workdir.length > 40 ? `…${workdir.slice(-39)}` : workdir)
     const message = textOf(node?.message)
     if (message) summaryParts.push(message)
   }
@@ -321,6 +313,9 @@ const shellView = computed(() => {
     primary,
     primaryLabel: action === 'write_stdin' ? 'stdin' : '命令',
     output,
+    error,
+    /** 完整工作目录：底栏摘要里只显示截断末段，全路径走 title 悬浮查看 */
+    workdir: textOf(node?.current_workdir),
     badge: exitCode == null ? null : { text: `exit ${exitCode}`, ok: exitCode === 0 },
     summary: summaryParts.join(' · '),
   }
@@ -360,6 +355,8 @@ const richView = computed(() => editDiffView.value ?? shellView.value ?? fileVie
 const richSummary = computed(() =>
   editDiffView.value?.summary ?? shellView.value?.summary ?? fileView.value?.summary ?? '')
 const richBadge = computed(() => shellView.value?.badge ?? null)
+/** 底栏摘要的悬浮全量文案：目前只有 shell 的完整工作目录需要（摘要里显示的是截断末段） */
+const richTitle = computed(() => shellView.value?.workdir ?? '')
 
 const showRawIo = ref(false)
 

@@ -171,15 +171,17 @@ describe('ToolCallCard shell 富视图', () => {
   let mounted: ReturnType<typeof mountCard> | null = null
   afterEach(() => { mounted?.destroy() })
 
-  it('默认展示命令块 + 输出原文 + exit 徽标，无原始 JSON', async () => {
+  it('默认渲染终端会话块（$ 命令 + 输出原文）+ exit 徽标，无标签与原始 JSON', async () => {
     mounted = mountCard(makeShellCall())
     await nextTick()
 
-    expect(resultLabels()).toEqual(['命令', '输出'])
-    const pres = Array.from(document.querySelectorAll('pre.result-content code'))
-      .map(el => el.textContent ?? '')
-    expect(pres.some(t => t === 'npm run build')).toBe(true)
-    expect(pres.some(t => t === '> tsc\nbuild done')).toBe(true)
+    // 终端块内不再有「命令 / 输出」标签，也不再是 pre.result-content
+    expect(resultLabels()).toEqual([])
+    expect(document.querySelector('pre.result-content')).toBeNull()
+    expect(document.querySelector('.cmd-prompt')?.textContent).toBe('$')
+    expect(document.querySelector('.cmd-text')?.textContent).toBe('npm run build')
+    expect(document.querySelector('.cmd-output')?.textContent).toBe('> tsc\nbuild done')
+    expect(document.querySelector('.cmd-divider')).toBeTruthy()
 
     const badge = document.querySelector('.exit-badge')
     expect(badge?.textContent?.trim()).toBe('exit 0')
@@ -199,7 +201,7 @@ describe('ToolCallCard shell 富视图', () => {
     expect(badge?.classList.contains('fail')).toBe(true)
   })
 
-  it('命令错误（{error}）：底栏直显 error 文案，无 exit 徽标', async () => {
+  it('命令错误（{error}）：输出位红色直显 error，命令仍展示', async () => {
     mounted = mountCard(makeShellCall({
       status: 'error',
       result: JSON.stringify({ error: '命令被拒绝：rm -rf /' }),
@@ -207,20 +209,22 @@ describe('ToolCallCard shell 富视图', () => {
     await nextTick()
 
     expect(document.querySelector('.exit-badge')).toBeNull()
-    expect(document.querySelector('.diff-footer-row')?.textContent).toContain('命令被拒绝：rm -rf /')
-    // 命令本身仍展示，便于用户看清被拒的是什么
-    expect(resultLabels()).toContain('命令')
+    expect(document.querySelector('.cmd-error')?.textContent).toContain('命令被拒绝：rm -rf /')
+    expect(document.querySelector('.cmd-text')?.textContent).toBe('npm run build')
+    // error 已入块内展示，底栏摘要不再重复
+    expect(document.querySelector('.diff-footer-row')?.textContent).not.toContain('命令被拒绝')
   })
 
-  it('write_stdin 动作：主输入标签为 stdin', async () => {
+  it('write_stdin 动作：提示符为 › 且带 stdin 标签', async () => {
     mounted = mountCard(makeShellCall({
       input: { action: 'write_stdin', session_id: 'sh-1', input: 'yes\n' },
       result: JSON.stringify({ exit_code: 0, output: 'ok', truncated: false, completed: true }),
     }))
     await nextTick()
 
-    expect(resultLabels()).toEqual(['stdin', '输出'])
-    expect(document.querySelector('pre.result-content code')?.textContent).toBe('yes\n')
+    expect(document.querySelector('.cmd-prompt')?.textContent).toBe('›')
+    expect(document.querySelector('.cmd-tag')?.textContent).toBe('stdin')
+    expect(document.querySelector('.cmd-text')?.textContent).toBe('yes\n')
   })
 
   it('close 等无命令无输出动作：回退原始 输入/输出 两块', async () => {
@@ -235,13 +239,29 @@ describe('ToolCallCard shell 富视图', () => {
     expect(findButton('查看原始输入输出')).toBeNull()
   })
 
-  it('执行中（无结果）：只展示命令块与开关', async () => {
+  it('执行中（无结果）：只展示命令块与开关，无输出区', async () => {
     mounted = mountCard(makeShellCall({ status: 'running', result: undefined }))
     await nextTick()
 
-    expect(resultLabels()).toEqual(['命令'])
+    expect(document.querySelector('.cmd-text')?.textContent).toBe('npm run build')
+    expect(document.querySelector('.cmd-output')).toBeNull()
     expect(document.querySelector('.exit-badge')).toBeNull()
     expect(findButton('查看原始输入输出')).toBeTruthy()
+  })
+
+  it('超长工作目录截断为末段，完整值在 title 中', async () => {
+    const longCwd = '/opt/mao-data/workspace/2/projects/maomao-diary/apps/server/src/modules/ai'
+    mounted = mountCard(makeShellCall({
+      result: JSON.stringify({ exit_code: 0, output: 'x', truncated: false, completed: true, current_workdir: longCwd }),
+    }))
+    await nextTick()
+
+    const summary = document.querySelector('.edit-summary')
+    expect(summary?.textContent).toContain('…')
+    // 只保留末段：头部路径被丢弃，总长受控
+    expect(summary?.textContent).not.toContain('/opt/mao-data')
+    expect(summary?.textContent).toContain('modules/ai')
+    expect(summary?.getAttribute('title')).toBe(longCwd)
   })
 })
 
