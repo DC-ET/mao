@@ -429,15 +429,18 @@ export class StreamingWsHandler {
 
   afterConnectionClosed(session: WsSocket): void {
     const userId = this.deps.registry.getUserId(session);
-    // 设备身份必须在 unregister 前取：unregister 会清理 connectionDevice / deviceExecutors
+    // 设备身份与执行连接身份必须在 unregister 前取：unregister 会清理 connectionDevice / deviceExecutors
     const deviceId = this.deps.registry.getDeviceId(session);
+    const wasDeviceExecutor = deviceId != null && this.deps.registry.isDeviceExecutor(session, deviceId);
     // 页面连接断开：先让该连接上所有等待中的页面工具立即失败，再注销连接与绑定。
     for (const boundSessionId of this.deps.registry.getEmbedSessionsForConnection(session)) {
       this.deps.embedPageToolRegistry.failSession(boundSessionId, '页面连接已断开，页面操作已取消', 'embed_client_not_connected');
     }
     this.deps.registry.unregister(session);
-    if (userId != null && deviceId != null && !this.deps.registry.hasDeviceConnection(userId, deviceId)) {
-      // 目标设备已无执行连接：失败其绑定会话的 pending 工具请求（绑定保留，闪断重连可继续）
+    if (userId != null && deviceId != null && wasDeviceExecutor) {
+      // 工具请求只投给执行连接：执行连接断开时即使同设备还有可回落连接（同机多窗口/多进程），
+      // 已下发到本条连接的 pending 请求也无法被接手，必须立即失败（否则要等 900s 超时）。
+      // 绑定本身保留，设备闪断重连后可继续使用。
       this.deps.localToolSessionRegistry.failAllForDevice(userId, deviceId);
     }
     if (userId != null && !this.deps.registry.hasLocalClientConnection(userId)) {

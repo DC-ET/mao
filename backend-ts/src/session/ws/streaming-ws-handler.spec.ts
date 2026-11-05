@@ -38,7 +38,7 @@ describe('StreamingWsHandler', () => {
     closeConnection: vi.fn((socket: WsSocket, reason: string) => socket.close(1003, reason)),
     getUserId: vi.fn(), send: vi.fn(), subscribe: vi.fn(), unsubscribe: vi.fn(),
     register: vi.fn(), unregister: vi.fn(), hasLocalClientConnection: vi.fn(),
-    sendToLocalClients: vi.fn(), sendToDevice: vi.fn(() => ({ targetCount: 0, successCount: 0, failureCount: 0 })), hasDeviceConnection: vi.fn(() => false), getDeviceId: vi.fn(() => null), getDeviceInfo: vi.fn(() => null), getDevice: vi.fn(() => null), getOnlineDeviceIds: vi.fn(() => []), getActiveToolCalls: vi.fn(() => []), clearActiveToolCalls: vi.fn(),
+    sendToLocalClients: vi.fn(), sendToDevice: vi.fn(() => ({ targetCount: 0, successCount: 0, failureCount: 0 })), hasDeviceConnection: vi.fn(() => false), isDeviceExecutor: vi.fn(() => false), getDeviceId: vi.fn(() => null), getDeviceInfo: vi.fn(() => null), getDevice: vi.fn(() => null), getOnlineDeviceIds: vi.fn(() => []), getActiveToolCalls: vi.fn(() => []), clearActiveToolCalls: vi.fn(),
     isSessionThinking: vi.fn(() => false), setSessionThinking: vi.fn(),
     getSessionExecution: vi.fn(() => undefined), setSessionExecution: vi.fn(), clearSessionExecution: vi.fn(),
     getClientType: vi.fn(() => 'browser'), bindEmbedSession: vi.fn(), unbindEmbedSession: vi.fn(),
@@ -2052,8 +2052,7 @@ describe('StreamingWsHandler', () => {
     expect(harnessService.executeFromEvent).not.toHaveBeenCalled();
   });
 
-  it('usesExistingBindingWithoutClaimingAgain', async () => {
-    vi.clearAllMocks();
+  it('usesExistingBindingWithoutClaimingAgain', async () => {    vi.clearAllMocks();
     resetExecutionMocks();
     executor.tasks.length = 0;
     registry.getUserId.mockReturnValue(7);
@@ -2074,6 +2073,36 @@ describe('StreamingWsHandler', () => {
     expect(localToolSessionRegistry.setTargetForSession).toHaveBeenCalledWith(11, 7, 'dev-a');
   });
 
+  // 工具请求只投给执行连接：执行连接断开时，即使同设备还有可回落连接，
+  // 已下发的 pending 请求也必须立即失败（否则只能等 LocalToolExecutor 900s 超时）。
+  it('failsDeviceToolRequestsWhenExecutorConnectionClosesEvenIfSameDeviceStillOnline', () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    registry.getDeviceId.mockReturnValue('dev-a');
+    registry.isDeviceExecutor.mockReturnValue(true);
+    registry.hasDeviceConnection.mockReturnValue(true);
+    registry.hasLocalClientConnection.mockReturnValue(true);
+
+    handler.afterConnectionClosed(ws);
+
+    expect(localToolSessionRegistry.failAllForDevice).toHaveBeenCalledWith(7, 'dev-a');
+    expect(localToolSessionRegistry.failAllForUser).not.toHaveBeenCalled();
+  });
+
+  it('keepsPendingToolRequestsWhenNonExecutorConnectionCloses', () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    registry.getDeviceId.mockReturnValue('dev-a');
+    registry.isDeviceExecutor.mockReturnValue(false);
+    registry.hasDeviceConnection.mockReturnValue(true);
+    registry.hasLocalClientConnection.mockReturnValue(true);
+
+    handler.afterConnectionClosed(ws);
+
+    expect(localToolSessionRegistry.failAllForDevice).not.toHaveBeenCalled();
+    expect(localToolSessionRegistry.failAllForUser).not.toHaveBeenCalled();
+  });
+
 });
 
 describe('StreamingWsHandler tool_approval.alwaysAllow（V135）', () => {
@@ -2083,7 +2112,7 @@ describe('StreamingWsHandler tool_approval.alwaysAllow（V135）', () => {
     closeConnection: vi.fn((socket: WsSocket, reason: string) => socket.close(1003, reason)),
     getUserId: vi.fn(), send: vi.fn(), subscribe: vi.fn(), unsubscribe: vi.fn(),
     register: vi.fn(), unregister: vi.fn(), hasLocalClientConnection: vi.fn(),
-    sendToLocalClients: vi.fn(), sendToDevice: vi.fn(() => ({ targetCount: 0, successCount: 0, failureCount: 0 })), hasDeviceConnection: vi.fn(() => false), getDeviceId: vi.fn(() => null), getDeviceInfo: vi.fn(() => null), getDevice: vi.fn(() => null), getOnlineDeviceIds: vi.fn(() => []), getActiveToolCalls: vi.fn(() => []), clearActiveToolCalls: vi.fn(),
+    sendToLocalClients: vi.fn(), sendToDevice: vi.fn(() => ({ targetCount: 0, successCount: 0, failureCount: 0 })), hasDeviceConnection: vi.fn(() => false), isDeviceExecutor: vi.fn(() => false), getDeviceId: vi.fn(() => null), getDeviceInfo: vi.fn(() => null), getDevice: vi.fn(() => null), getOnlineDeviceIds: vi.fn(() => []), getActiveToolCalls: vi.fn(() => []), clearActiveToolCalls: vi.fn(),
     isSessionThinking: vi.fn(() => false), setSessionThinking: vi.fn(),
     getClientType: vi.fn(() => 'browser'), bindEmbedSession: vi.fn(), unbindEmbedSession: vi.fn(),
     getEmbedSessionsForConnection: vi.fn(() => []), getEmbedSessionConnection: vi.fn(() => null),

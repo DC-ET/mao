@@ -443,6 +443,18 @@ export class StreamingWsRegistry {
     return socket != null && socket.readyState === WS_OPEN && this.isConnectionAuthorized(socket);
   }
 
+  /**
+   * 该连接是否是指定设备当前的执行连接（断线清理用）。
+   * 工具请求只投给执行连接：执行连接断开时，即使同设备还有其它连接可回落，
+   * 已下发的 pending 请求也不可能被接手，必须立即失败而不是等超时。
+   */
+  isDeviceExecutor(session: WsSocket, deviceId: string | null | undefined): boolean {
+    if (deviceId == null || deviceId === '') return false;
+    const userId = this.sessionToUser.get(session.id);
+    if (userId == null) return false;
+    return this.deviceExecutors.get(userId)?.get(deviceId) === session;
+  }
+
   /** 当前用户在线执行设备的 deviceId 集合（Map key 天然去重；仅统计带设备身份的 local 连接）。 */
   getOnlineDeviceIds(userId: number): string[] {
     const executors = this.deviceExecutors.get(userId);

@@ -35,7 +35,7 @@ function makeHarness() {
   const executor = new CapturingExecutor();
   const registry = {
     send: vi.fn(), subscribe: vi.fn(), unsubscribe: vi.fn(), hasLocalClientConnection: vi.fn(() => false),
-    sendToLocalClients: vi.fn(), sendToDevice: vi.fn(() => ({ targetCount: 0, successCount: 0, failureCount: 0 })), hasDeviceConnection: vi.fn(() => false), getDeviceId: vi.fn(() => null), getDeviceInfo: vi.fn(() => null), getDevice: vi.fn(() => null), getOnlineDeviceIds: vi.fn(() => []), clearActiveToolCalls: vi.fn(), setSessionThinking: vi.fn(),
+    sendToLocalClients: vi.fn(), sendToDevice: vi.fn(() => ({ targetCount: 0, successCount: 0, failureCount: 0 })), hasDeviceConnection: vi.fn(() => false), isDeviceExecutor: vi.fn(() => false), getDeviceId: vi.fn(() => null), getDeviceInfo: vi.fn(() => null), getDevice: vi.fn(() => null), getOnlineDeviceIds: vi.fn(() => []), clearActiveToolCalls: vi.fn(), setSessionThinking: vi.fn(),
     getSessionExecution: vi.fn(() => undefined),
     // WS 入口（handleTextMessage）鉴权与用户解析
     getUserId: vi.fn(() => 7), isConnectionAuthorized: vi.fn(() => true), closeConnection: vi.fn(),
