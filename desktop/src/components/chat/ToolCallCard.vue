@@ -610,7 +610,8 @@ function toggleExpand() {
 }
 
 /* 单独渲染（无组头）时卡片头即组壳：与 ToolCallGroup 的 .tool-group-header 同口径——
-   同样的内边距、圆角与悬停底色，让单调用和多调用组长得一样、一样可点 */
+   同样的内边距、圆角、悬停底色与字号（组头走 --aw-text-caption，卡片头原本硬编码 12px，
+   单调用时若保留 12px 就会比多调用组的组头小一号），让单调用和多调用组长得一样 */
 .tool-call-card.standalone {
   margin-top: 2px;
   padding: 0;
@@ -624,6 +625,11 @@ function toggleExpand() {
 
 .tool-call-card.standalone .tool-header:hover {
   background: var(--aw-canvas-parchment);
+}
+
+/* 多调用组内仍是「组头 14px > 明细行 12px」的层级，只有充当组壳时才跟组头同字号 */
+.tool-call-card.standalone .tool-summary {
+  font-size: var(--aw-text-caption);
 }
 
 .tool-call-card.status-running {
