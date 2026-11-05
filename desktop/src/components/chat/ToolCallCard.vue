@@ -31,29 +31,48 @@
     </div>
     <div v-if="isExpanded && hasExpandableBody" class="tool-body">
       <div v-if="formattedInput" class="tool-result">
-        <div class="result-label">输入</div>
         <template v-if="editDiff">
+          <!-- edit_file：默认只展示 diff 块；原始输入/输出收起在一个开关后，避免 JSON 噪音盖住改动本身 -->
           <ToolCallDiffView :blocks="editDiff.blocks" />
-          <div class="raw-toggle-row">
-            <button class="expand-result-btn" @click="showRawInput = !showRawInput">
-              {{ showRawInput ? '收起原始参数' : '查看原始参数' }}
+          <div class="diff-footer-row">
+            <span v-if="editResultSummary" class="edit-summary">{{ editResultSummary }}</span>
+            <button class="expand-result-btn" @click="showRawIo = !showRawIo">
+              {{ showRawIo ? '收起原始输入输出' : '查看原始输入输出' }}
             </button>
           </div>
-          <div v-if="showRawInput" class="code-block-wrapper">
+          <template v-if="showRawIo">
+            <div class="result-label">输入</div>
+            <div class="code-block-wrapper">
+              <pre class="result-content"><code>{{ formattedInput }}</code></pre>
+              <button class="copy-btn" title="复制" @click="copyText(formattedInput)">
+                <el-icon :size="14"><CopyDocument /></el-icon>
+              </button>
+            </div>
+            <div class="result-label">输出</div>
+            <div v-if="displayResultText" class="code-block-wrapper">
+              <pre class="result-content"><code>{{ displayResultText }}</code></pre>
+              <button class="copy-btn" title="复制完整输出" @click="copyText(fullResultText)">
+                <el-icon :size="14"><CopyDocument /></el-icon>
+              </button>
+            </div>
+            <div v-if="isResultTruncated" class="result-expand-row">
+              <button class="expand-result-btn" @click="showFullResult = !showFullResult">
+                {{ showFullResult ? '收起完整输出' : '展开完整输出' }}
+              </button>
+            </div>
+          </template>
+        </template>
+        <template v-else>
+          <div class="result-label">输入</div>
+          <div class="code-block-wrapper">
             <pre class="result-content"><code>{{ formattedInput }}</code></pre>
             <button class="copy-btn" title="复制" @click="copyText(formattedInput)">
               <el-icon :size="14"><CopyDocument /></el-icon>
             </button>
           </div>
         </template>
-        <div v-else class="code-block-wrapper">
-          <pre class="result-content"><code>{{ formattedInput }}</code></pre>
-          <button class="copy-btn" title="复制" @click="copyText(formattedInput)">
-            <el-icon :size="14"><CopyDocument /></el-icon>
-          </button>
-        </div>
       </div>
-      <div v-if="toolCall.result || imagePreviewUrl" class="tool-result">
+      <div v-if="(toolCall.result || imagePreviewUrl) && !editDiff" class="tool-result">
         <div class="result-label">输出</div>
         <el-image
           v-if="imagePreviewUrl"
@@ -65,33 +84,17 @@
           :preview-teleported="true"
           @click.stop
         />
-        <template v-if="editResultSummary">
-          <div class="edit-summary">{{ editResultSummary }}</div>
-          <div class="raw-toggle-row">
-            <button class="expand-result-btn" @click="showRawOutput = !showRawOutput">
-              {{ showRawOutput ? '收起原始输出' : '查看原始输出' }}
-            </button>
-          </div>
-          <div v-if="showRawOutput" class="code-block-wrapper">
-            <pre class="result-content"><code>{{ displayResultText }}</code></pre>
-            <button class="copy-btn" title="复制完整输出" @click="copyText(fullResultText)">
-              <el-icon :size="14"><CopyDocument /></el-icon>
-            </button>
-          </div>
-        </template>
-        <template v-else>
-          <div v-if="displayResultText" class="code-block-wrapper">
-            <pre class="result-content"><code>{{ displayResultText }}</code></pre>
-            <button class="copy-btn" title="复制完整输出" @click="copyText(fullResultText)">
-              <el-icon :size="14"><CopyDocument /></el-icon>
-            </button>
-          </div>
-          <div v-if="isResultTruncated" class="result-expand-row">
-            <button class="expand-result-btn" @click="showFullResult = !showFullResult">
-              {{ showFullResult ? '收起完整输出' : '展开完整输出' }}
-            </button>
-          </div>
-        </template>
+        <div v-if="displayResultText" class="code-block-wrapper">
+          <pre class="result-content"><code>{{ displayResultText }}</code></pre>
+          <button class="copy-btn" title="复制完整输出" @click="copyText(fullResultText)">
+            <el-icon :size="14"><CopyDocument /></el-icon>
+          </button>
+        </div>
+        <div v-if="isResultTruncated" class="result-expand-row">
+          <button class="expand-result-btn" @click="showFullResult = !showFullResult">
+            {{ showFullResult ? '收起完整输出' : '展开完整输出' }}
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -251,8 +254,7 @@ const editResultSummary = computed(() => {
   return null
 })
 
-const showRawInput = ref(false)
-const showRawOutput = ref(false)
+const showRawIo = ref(false)
 
 const hasExpandableBody = computed(
   () => !!(formattedInput.value || props.toolCall.result || imagePreviewUrl.value)
@@ -499,18 +501,19 @@ function toggleExpand() {
   margin-top: 2px;
 }
 
-.raw-toggle-row {
+/* edit_file diff 视图底栏：左为结果摘要/失败原因，右为原始输入输出开关 */
+.diff-footer-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
   margin-top: 2px;
 }
 
 .edit-summary {
-  margin-bottom: 8px;
-  padding: 8px 12px;
-  background: var(--aw-surface-code);
-  border-radius: var(--aw-radius-sm);
   font-family: var(--aw-font-mono);
-  font-size: var(--aw-text-caption);
-  color: var(--aw-text-code);
+  font-size: var(--aw-text-fine);
+  color: var(--aw-ink-muted-48);
   white-space: pre-wrap;
   word-break: break-all;
 }
