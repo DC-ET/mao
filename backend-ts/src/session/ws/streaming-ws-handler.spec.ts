@@ -2073,6 +2073,56 @@ describe('StreamingWsHandler', () => {
     expect(localToolSessionRegistry.setTargetForSession).toHaveBeenCalledWith(11, 7, 'dev-a');
   });
 
+  it('claimsUnboundLocalSessionWhenElectronSubscribesToIdleSession', async () => {
+    // 订阅即认领放宽（技术方案 2026-11-05 D15 补充）：桌面端打开历史老会话不再限执行中，
+    // 连接自带设备身份即条件认领，用户尚未发送就完成登记。
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    registry.getDeviceInfo.mockReturnValue({ id: 'dev-a', name: 'Mac A', platform: 'darwin' });
+    registry.getOnlineDeviceIds.mockReturnValue([]);
+    localToolSessionRegistry.resolveTarget.mockResolvedValue(null);
+    sessionService.getSession.mockResolvedValue({ ...session('LOCAL', 'IDLE'), id: 11, platform: 'darwin' });
+    sessionService.claimTargetDevice.mockResolvedValue({ targetDeviceId: 'dev-a', targetDeviceName: 'Mac A' });
+
+    await handler.handleTextMessage(ws, JSON.stringify({ type: 'subscribe', sessionId: 11 }));
+
+    expect(sessionService.claimTargetDevice).toHaveBeenCalledWith(11, 'dev-a', 'Mac A');
+    expect(localToolSessionRegistry.setTargetForSession).toHaveBeenCalledWith(11, 7, 'dev-a');
+  });
+
+  it('doesNotClaimOnBrowserSubscribeToIdleSession', async () => {
+    // 浏览器无设备身份：空闲会话保持原口径不认领（仅执行中触发），不因放宽而扩大认领面。
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    registry.getDeviceInfo.mockReturnValue(null);
+    registry.getOnlineDeviceIds.mockReturnValue(['dev-a']);
+    registry.getDevice.mockReturnValue({ id: 'dev-a', name: 'Mac A', platform: 'darwin' });
+    localToolSessionRegistry.resolveTarget.mockResolvedValue(null);
+    sessionService.getSession.mockResolvedValue({ ...session('LOCAL', 'IDLE'), id: 11, platform: 'darwin' });
+
+    await handler.handleTextMessage(ws, JSON.stringify({ type: 'subscribe', sessionId: 11 }));
+
+    expect(sessionService.claimTargetDevice).not.toHaveBeenCalled();
+    expect(localToolSessionRegistry.setTargetForSession).not.toHaveBeenCalled();
+  });
+
+  it('claimsOnBrowserSubscribeToActiveSessionViaUniqueOnlineDevice', async () => {
+    // 放宽不回归原行为：浏览器订阅执行中会话，仍按唯一在线设备 + 平台一致认领。
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    registry.getDeviceInfo.mockReturnValue(null);
+    registry.getOnlineDeviceIds.mockReturnValue(['dev-a']);
+    registry.getDevice.mockReturnValue({ id: 'dev-a', name: 'Mac A', platform: 'darwin' });
+    localToolSessionRegistry.resolveTarget.mockResolvedValue(null);
+    sessionService.getSession.mockResolvedValue({ ...session('LOCAL', 'RUNNING'), id: 11, platform: 'darwin' });
+    sessionService.claimTargetDevice.mockResolvedValue({ targetDeviceId: 'dev-a', targetDeviceName: 'Mac A' });
+
+    await handler.handleTextMessage(ws, JSON.stringify({ type: 'subscribe', sessionId: 11 }));
+
+    expect(sessionService.claimTargetDevice).toHaveBeenCalledWith(11, 'dev-a', 'Mac A');
+    expect(localToolSessionRegistry.setTargetForSession).toHaveBeenCalledWith(11, 7, 'dev-a');
+  });
+
   // 工具请求按「请求 → 下发连接」归属清理：连接断开只失败它收到的请求，
   // 同设备其它连接（执行连接交接后）在途的请求必须保留。
   it('failsOnlyRequestsDispatchedToTheClosingConnection', () => {

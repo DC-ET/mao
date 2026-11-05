@@ -587,11 +587,16 @@ export class StreamingWsHandler {
       this.deps.registry.bindEmbedSession(sessionId, session);
     }
     const active = this.isSessionActive(s.phase);
-    if (s.executionMode === 'LOCAL' && active) {
-      // 订阅是入站点：桌面端打开历史会话时顺带完成惰性认领；失败静默（发送时会再引导）
-      const target = await this.prepareLocalTarget(session, s, userId);
-      if ('error' in target) {
-        this.deps.localToolSessionRegistry.setTargetForSession(sessionId, userId, null);
+    if (s.executionMode === 'LOCAL') {
+      // 订阅是入站点：桌面端 / CLI 打开任意 LOCAL 会话（连接自带设备身份）即条件认领，
+      // 不再限执行中——上线前的老会话一打开就静默登记，不必等首次发送；浏览器无设备身份，
+      // 保持原口径仅执行中触发。失败静默（发送时会再引导）。
+      const inboundDevice = this.deps.registry.getDeviceInfo(session);
+      if (inboundDevice != null || active) {
+        const target = await this.prepareLocalTarget(session, s, userId);
+        if ('error' in target) {
+          this.deps.localToolSessionRegistry.setTargetForSession(sessionId, userId, null);
+        }
       }
     }
     // 订阅既是流式事件通道，也是客户端断线后的状态校准点。即使任务已结束，
